@@ -29,18 +29,14 @@ def getidapi():
     idapi='https://sde.jita.space/universe/types'
     response=requests.get(idapi)
     if response.status_code != 200:
-        
-        
+        print(f"Failed to fetch data: {response.status_code}")
+        return None
+
 
     #cursor.execute("""
-        
 
 
 #""")
 
  
 
-    
-    
-if __name__ == "__main__":
-    create_tables()
