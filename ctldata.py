@@ -23,6 +23,8 @@ def create_tables():
             published BOOLEAN
         )
         ''')
+    conn.commit()
+    conn.close()
 def getidapi():
     idapi='https://sde.jita.space/universe/types'
     response=requests.get(idapi)
@@ -30,16 +32,15 @@ def getidapi():
         
         
 
-    cursor.execute("""
+    #cursor.execute("""
         
 
 
-""")
+#""")
 
  
 
-    conn.commit()
-    conn.close()
+    
     
 if __name__ == "__main__":
     create_tables()
