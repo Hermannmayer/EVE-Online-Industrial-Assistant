@@ -1,0 +1,60 @@
+eve_trader_assistant/
+│
+├── main.py                      # 应用入口
+├── config.py                    # 全局配置
+├── requirements.txt             # Python 依赖清单
+│
+├── data/                        # 数据层
+│   ├── __init__.py
+│   ├── database.py              # SQLite 连接管理、表迁移
+│   ├── models.py                # 数据表映射 dataclass
+│   ├── repositories/            # 数据仓库封装
+│   │   ├── __init__.py
+│   │   ├── items.py
+│   │   ├── blueprints.py
+│   │   ├── market_orders.py
+│   │   └── inventory.py
+│   ├── esi/                     # EVE ESI 接口层
+│   │   ├── __init__.py
+│   │   ├── client.py            # aiohttp 会话管理、缓存、限速
+│   │   ├── endpoints.py         # ESI 端点请求方法
+│   │   └── cache.py             # 内存+数据库二级缓存
+│   └── caches/                  # 缓存存储实现
+│       ├── __init__.py
+│       └── local_cache.py
+│
+├── services/                    # 业务层
+│   ├── __init__.py
+│   ├── scheduler.py             # 任务调度器（JobManager）
+│   ├── manufacturing.py         # 制造树组装、任务分发
+│   ├── market.py                # 市场订单聚合、价格计算编排
+│   ├── profit.py                # 利润分析
+│   └── workers/                 # 多进程执行的工作函数
+│       ├── __init__.py
+│       ├── compute_tree.py      # CPU密集型：制造树展开
+│       └── price_worker.py      # CPU密集型：价格聚合计算
+│
+├── ui/                          # 用户界面层
+│   ├── __init__.py
+│   ├── app.py                   # Flet 页面挂载与路由
+│   ├── views/                   # 功能页面
+│   │   ├── __init__.py
+│   │   ├── inventory_view.py
+│   │   ├── manufacturing_view.py
+│   │   ├── market_view.py
+│   │   └── profit_view.py
+│   ├── components/              # 可复用 UI 控件
+│   │   ├── __init__.py
+│   │   └── data_table.py       # 示例：数据表格组件
+│   └── callbacks.py             # 跨线程 UI 更新安全委托
+│
+├── core/                        # 通用工具与核心类型
+│   ├── __init__.py
+│   ├── types.py                 # 公共数据类型定义
+│   └── utils.py                 # 工具函数（数值处理、重试等）
+│
+└── tests/                       # 单元测试
+    ├── __init__.py
+    ├── test_manufacturing.py
+    ├── test_market.py
+    └── test_esi_client.py
