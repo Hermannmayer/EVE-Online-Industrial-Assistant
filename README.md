@@ -1,4 +1,4 @@
-# EVE 工业助手 (Python版) 开发文档
+# EVE 工业助手  开发文档
 
 > 版本：0.2 - 基础框架已搭建
 > 目标：为 EVE Online 玩家提供制造、市场、资产管理的桌面辅助工具
@@ -269,21 +269,3 @@ CREATE TABLE IF NOT EXISTS item (
 
 ---
 
-## 9. 关键注意事项
-
-- **GUI 框架**：使用 Python 标准库 `tkinter`，无需安装 Qt/PyQt 等重型依赖。简单、轻量、跨平台。
-- **数据来源**：物品基础数据通过 `sde.jita.space` REST API 在线获取，不需要用户手动下载 SDE 压缩包。
-- **离线能力**：物品查询完全基于本地 SQLite 数据库，数据抓取完成后可离线使用。
-- **中英文支持**：通过中文字体配置确保中英文物品名称正常显示。
-- **数据更新**：定期运行 `getitems.py` 脚本以获取最新的游戏物品数据。
-- **EULA 合规**：数据来自第三方 SDE 镜像和 ESI 公开接口，不违反 CCP 政策。
-- **可测试性**：核心计算逻辑应与界面完全解耦，便于用 pytest 进行单元测试。
-
----
-
-## 10. 参考资源
-
-- [EVE SDE 镜像](https://sde.jita.space/latest) - 含中英文名称的 SDE REST API
-- [ESI 文档](https://esi.evetech.net/ui/) - EVE ESI 公开接口文档
-- [tkinter 文档](https://docs.python.org/3/library/tkinter.html) - Python 标准库 GUI 框架
-- [aiohttp 文档](https://docs.aiohttp.org/) - Python 异步 HTTP 客户端
