@@ -13,9 +13,10 @@ import aiohttp
 import os
 import sys
 from pathlib import Path
+from core.paths import icon_cache_dir, database_path
 
 # ── 配置 ──
-ICON_CACHE_DIR = Path("data/caches/icons")
+ICON_CACHE_DIR = Path(icon_cache_dir())
 ESI_IMAGE_BASE = "https://images.evetech.net/types"
 CONCURRENCY = 20   # 并发数
 ICON_SIZE = 64     # 图标尺寸(px): 32, 64, 128, 256
@@ -108,7 +109,7 @@ async def main():
         type_ids = [int(arg) for arg in sys.argv[1:] if arg.isdigit()]
     else:
         # 从数据库获取所有可交易物品
-        db_path = "database/items.db"
+        db_path = database_path()
         if not os.path.exists(db_path):
             print(f"❌ 数据库不存在: {db_path}")
             sys.exit(1)

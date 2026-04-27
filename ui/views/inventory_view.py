@@ -1,93 +1,126 @@
-import tkinter as tk
+"""
+仓库页面 — Flet 实现
+
+功能：
+  - 展示选中的物品清单
+  - 顶部搜索/过滤栏
+  - 表格形式展示物品
+"""
+import flet as ft
+from typing import Optional
+import sqlite3
+import os
 from ui.config import CJK_FONT
 
 
-class WarehousePage(tk.Frame):
-    """仓库页面 — 包含物品仓库和蓝图仓库两个子页面"""
-
-    def __init__(self, parent, controller):
-        super().__init__(parent)
-        self.controller = controller
-        self.grid_rowconfigure(0, weight=1)
-        self.grid_columnconfigure(0, weight=1)
-
-        # 顶部二级导航栏
-        nav = tk.Frame(self)
-        nav.grid(row=0, column=0, sticky="ew")
-        btn_item = tk.Button(nav, text="物品仓库", font=CJK_FONT,
-                             command=lambda: self.show_subpage("item"))
-        btn_blueprint = tk.Button(nav, text="蓝图仓库", font=CJK_FONT,
-                                  command=lambda: self.show_subpage("blueprint"))
-        btn_item.pack(side="left", expand=True, fill="x")
-        btn_blueprint.pack(side="left", expand=True, fill="x")
-
-        # 二级页面容器
-        self.subpages = {}
-        self.subpage_container = tk.Frame(self)
-        self.subpage_container.grid(row=1, column=0, sticky="nsew")
-        self.rowconfigure(1, weight=1)
-        self.columnconfigure(0, weight=1)
-
-        self.subpages["item"] = ItemWarehousePage(self.subpage_container)
-        self.subpages["blueprint"] = BlueprintWarehousePage(self.subpage_container)
-        self.subpages["item"].grid(row=0, column=0, sticky="nsew")
-        self.subpages["blueprint"].grid(row=0, column=0, sticky="nsew")
-
-        self.show_subpage("item")
-
-    def show_subpage(self, name):
-        self.subpages[name].tkraise()
+from core.paths import DB_PATH
 
 
-class ItemWarehousePage(tk.Frame):
-    """物品仓库子页面"""
+class StoragePage(ft.Container):
+    """仓库页 — 物品清单与搜索"""
 
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.grid_rowconfigure(1, weight=1)
-        self.grid_columnconfigure(0, weight=1)
+    def __init__(self, page: ft.Page):
+        super().__init__()
+        self._page = page
+        self.expand = True
+        self.bgcolor = "#1a1a2e"
 
-        import_btn = tk.Button(
-            self, text="从剪贴板读取数据并导入物品",
-            font=CJK_FONT, command=self.import_from_clipboard
+        # 搜索输入
+        self.search_field = ft.TextField(
+            hint_text="输入物品名称搜索…",
+            border_color="#2a2a4a",
+            color="#ffffff",
+            hint_style=ft.TextStyle(color="#555555"),
+            border_radius=8,
+            expand=True,
+            text_size=14,
+            on_submit=lambda e: self._load_items(),
         )
-        import_btn.grid(row=0, column=0, pady=10, sticky="ew")
 
-        self.text = tk.Text(self, height=20, font=CJK_FONT)
-        self.text.grid(row=1, column=0, sticky="nsew")
-
-    def import_from_clipboard(self):
-        try:
-            data = self.clipboard_get()
-            self.text.delete(1.0, tk.END)
-            self.text.insert(tk.END, f"导入物品数据：\n{data}")
-        except Exception as e:
-            self.text.delete(1.0, tk.END)
-            self.text.insert(tk.END, f"读取剪贴板失败: {e}")
-
-
-class BlueprintWarehousePage(tk.Frame):
-    """蓝图仓库子页面"""
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.grid_rowconfigure(1, weight=1)
-        self.grid_columnconfigure(0, weight=1)
-
-        import_btn = tk.Button(
-            self, text="从剪贴板读取数据并导入蓝图",
-            font=CJK_FONT, command=self.import_from_clipboard
+        search_btn = ft.IconButton(
+            icon=ft.icons.Icons.SEARCH,
+            icon_color="#e94560",
+            on_click=lambda e: self._load_items(),
         )
-        import_btn.grid(row=0, column=0, pady=10, sticky="ew")
 
-        self.text = tk.Text(self, height=20, font=CJK_FONT)
-        self.text.grid(row=1, column=0, sticky="nsew")
+        # 表格列定义
+        columns = [
+            ft.DataColumn(ft.Text("物品ID", color="#888888", size=12)),
+            ft.DataColumn(ft.Text("名称", color="#888888", size=12)),
+            ft.DataColumn(ft.Text("类别", color="#888888", size=12)),
+            ft.DataColumn(ft.Text("数量", color="#888888", size=12)),
+        ]
 
-    def import_from_clipboard(self):
+        self.data_table = ft.DataTable(
+            columns=columns,
+            rows=[],
+            border=ft.border.all(1, "#2a2a4a"),
+            border_radius=8,
+            heading_row_color="#16213e",
+            data_row_color="#1a1a2e",
+            column_spacing=40,
+        )
+
+        self._content_area = ft.Container(
+            content=ft.Column(
+                controls=[
+                    self.data_table,
+                ],
+                scroll=ft.ScrollMode.AUTO,
+                expand=True,
+            ),
+            expand=True,
+            padding=20,
+        )
+
+        self.content = ft.Column(
+            controls=[
+                ft.Container(
+                    content=ft.Row(
+                        controls=[self.search_field, search_btn],
+                        spacing=8,
+                    ),
+                    padding=ft.padding.symmetric(horizontal=20, vertical=10),
+                    bgcolor="#16213e",
+                    border=ft.border.only(bottom=ft.BorderSide(1, "#2a2a4a")),
+                ),
+                self._content_area,
+            ],
+            spacing=0,
+            expand=True,
+        )
+
+    def _load_items(self):
+        """从数据库加载物品数据"""
+        keyword = self.search_field.value.strip()
         try:
-            data = self.clipboard_get()
-            self.text.delete(1.0, tk.END)
-            self.text.insert(tk.END, f"导入蓝图数据：\n{data}")
-        except Exception as e:
-            self.text.delete(1.0, tk.END)
-            self.text.insert(tk.END, f"读取剪贴板失败: {e}")
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            if keyword:
+                cursor.execute(
+                    "SELECT type_id, name, group_name, portion_size FROM items WHERE name LIKE ? LIMIT 200",
+                    (f"%{keyword}%",),
+                )
+            else:
+                cursor.execute(
+                    "SELECT type_id, name, group_name, portion_size FROM items LIMIT 200"
+                )
+            rows = cursor.fetchall()
+            conn.close()
+
+            self.data_table.rows.clear()
+            for row in rows:
+                self.data_table.rows.append(
+                    ft.DataRow(
+                        cells=[
+                            ft.DataCell(ft.Text(str(row[0]), color="#cccccc", size=12)),
+                            ft.DataCell(ft.Text(row[1], color="#ffffff", size=13)),
+                            ft.DataCell(ft.Text(row[2] or "", color="#aaaaaa", size=12)),
+                            ft.DataCell(ft.Text(str(row[3]), color="#cccccc", size=12)),
+                        ]
+                    )
+                )
+        except Exception as ex:
+            print(f"[DB Error] {ex}")
+
+        self._page.update()
