@@ -64,6 +64,15 @@ async def initialize_database():
                 iconID INTEGER
             )
         ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS market_tree (
+                market_group_id INTEGER PRIMARY KEY,
+                parent_group_id INTEGER,
+                en_name TEXT,
+                zh_name TEXT,
+                icon_id INTEGER
+            )
+        ''')
         await db.commit()
 
 async def fetch_valid_type_ids(client):
@@ -199,6 +208,68 @@ class DatabaseWriter:
         await self.conn.execute("DELETE FROM item WHERE type_id=?", (type_id,))
         await self.conn.commit()
 
+# ─── 市场分类树（market_tree） ───
+
+async def ensure_market_tree(client):
+    """确保 market_tree 表已填充（仅当为空时执行）"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM market_tree")
+        count = (await cursor.fetchone())[0]
+        if count > 0:
+            print(f"market_tree 已有 {count} 条记录，跳过")
+            return
+
+    print("正在拉取市场分类树 (market_tree)...")
+    # 获取所有 market_group_id 列表
+    ids_url = f"{API_BASE_URL}/markets/groups"
+    all_ids = await client.fetch(ids_url)
+    if not all_ids:
+        print("获取市场分类列表失败")
+        return
+
+    print(f"共 {len(all_ids)} 个市场分类，开始拉取详情...")
+    # 并发拉取每个组的详情
+    semaphore = asyncio.Semaphore(CONCURRENCY)
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    async def fetch_group_detail(gid):
+        async with semaphore:
+            url = f"{API_BASE_URL}/markets/groups/{gid}"
+            return await client.fetch(url)
+
+    async def fetch_group_with_retry(gid):
+        try:
+            return await fetch_group_detail(gid)
+        except Exception as e:
+            print(f"获取市场分类 {gid} 失败: {e}")
+            return None
+
+    tasks = [fetch_group_with_retry(gid) for gid in all_ids]
+    results = await asyncio.gather(*tasks)
+
+    # 写入数据库
+    rows = []
+    for data in results:
+        if data is None:
+            continue
+        gid = data.get('marketGroupID')
+        parent = data.get('parentGroupID')  # 根节点没有此字段
+        name_data = data.get('name', {})
+        en = name_data.get('en', '') if isinstance(name_data, dict) else ''
+        zh = name_data.get('zh', '') if isinstance(name_data, dict) else ''
+        icon = data.get('iconID', 0)
+        rows.append((gid, parent, en, zh, icon))
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("DELETE FROM market_tree")  # 清空重写
+        await db.executemany(
+            "INSERT INTO market_tree (market_group_id, parent_group_id, en_name, zh_name, icon_id) VALUES (?, ?, ?, ?, ?)",
+            rows
+        )
+        await db.commit()
+
+    print(f"market_tree 写入完成，共 {len(rows)} 条记录")
+
 async def worker(client, queue, writer, pbar):
     """工作协程"""
     while True:
@@ -219,6 +290,9 @@ async def main():
     await initialize_database()
 
     async with APIClient() as client, DatabaseWriter() as writer:
+        # 拉取市场分类树（首次）
+        await ensure_market_tree(client)
+
         await initialize_type_ids(client)
 
         queue = asyncio.Queue()
@@ -250,8 +324,7 @@ async def main():
         await asyncio.gather(*workers, return_exceptions=True)
         
         # 显式关闭连接池
-        await client.session.__aexit__(None, None, None)  # 新增
-        # 清理工作协程
+        await client.session.__aexit__(None, None, None)
         for task in workers:
             task.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
