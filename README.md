@@ -1,140 +1,218 @@
 # EVE 商人助手
 
-EVE Online 市场数据查询与分析工具，基于 Flet 构建的桌面应用程序。
+> 一个基于 Flet（Python UI 框架）的桌面应用程序，为 EVE Online 玩家提供吉他（Jita）市场价格查询、物品搜索、制造利润计算等功能。
 
-## 功能特性
+---
 
-- 📊 **市场价格查询**：实时抓取伏尔戈星域（The Forge，含吉他）的市场订单
-- 🔍 **物品搜索**：支持中英文名称模糊搜索
-- 🏭 **制造业计算**：BOM 材料清单与制造成本分析
-- 📦 **仓库管理**：物品清单与库存追踪
-- 📈 **贸易分析**：买卖价差与利润率计算
-- 🖼️ **物品图标**：自动缓存 EVE Image Server 物品图标
-
-## 目录结构
+## 📦 项目结构
 
 ```
-EVE商人助手_v1.0.0/
-├── EVE商人助手.exe        # 主程序（双击运行）
-├── database/               # 数据库目录（离线物品数据）
-│   └── items.db           #   物品信息数据库
-├── data/                   # 运行期数据目录
-│   ├── search_history.json    # 搜索历史
-│   ├── window_geometry.json   # 窗口位置记忆
-│   └── update_progress.json   # 价格更新进度
-└── README.md               # 本文件
+EVE-Online-Industrial-Assistant/
+├── Main.py                         # 入口点，Flet App
+├── build_release.py                # 打包脚本
+├── EVE商人助手.spec                 # PyInstaller 配置
+├── README.md                       # 本文件
+│
+├── core/
+│   ├── __init__.py
+│   └── paths.py                    # 所有路径集中管理
+│
+├── ui/
+│   ├── __init__.py
+│   ├── config.py                   # 全局配置（字体、ESI 地址等）
+│   └── views/
+│       ├── __init__.py
+│       ├── query_view.py           # 查询页面（已实现）
+│       ├── manufacturing_view.py   # 制造/精炼页面（占位符）
+│       ├── market_view.py          # 贸易页面（已删除功能）
+│       └── inventory_view.py       # 仓库页面（待修复）
+│
+├── services/
+│   ├── data/
+│   │   └── update_progress.json    # 进度文件（运行时）
+│   └── workers/
+│       ├── getitems.py             # 物品数据库初始化（SDE）
+│       ├── getprices.py            # 市场价格拉取（ESI，已优化并发）
+│       └── geticon.py              # 图标缓存下载
+│
+├── database/
+│   └── items.db                    # SQLite 数据库
+│
+├── data/
+│   ├── search_history.json         # 搜索历史
+│   ├── update_progress.json        # 更新进度
+│   ├── window_geometry.json        # 窗口状态
+│   └── caches/icons/              # 图标缓存目录
+│
+└── documents/
+    ├── 界面设计.md
+    ├── cursor_.md
+    └── EVE_ESI_API.xlsx
 ```
 
-> **说明**：图标缓存目录 `data/caches/icons/` 会在首次运行时自动创建。
+---
 
-## 安装使用
+## 🚀 快速开始
 
-### 方式一：下载 ZIP 发行包（推荐）
+### 环境要求
+- Python 3.10+
+- Windows / macOS / Linux
 
-1. 从 [Releases](../../releases) 页面下载 `EVE商人助手_v1.0.0.zip`
-2. 解压到任意目录（路径中建议不要包含中文/空格）
-3. 双击运行 `EVE商人助手.exe`
-
-> ⚠️ 首次运行时若 Windows Defender 提示风险，点击"更多信息" → "仍要运行"即可
-> ⚠️ 请确保解压后 `database/items.db` 与 exe 在同一级目录
-
-### 方式二：开发环境运行
+### 安装与运行
 
 ```bash
-# 1. 克隆仓库
-git clone https://github.com/Hermannmayer/eve.git
-cd eve
+# 克隆仓库
+git clone https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant.git
+cd EVE-Online-Industrial-Assistant
 
-# 2. 安装依赖
-pip install -r requirements.txt
+# 安装依赖
+pip install flet aiohttp aiosqlite tenacity tqdm pyperclip Pillow
 
-# 3. 初始化数据库（下载物品数据）
-python services/workers/getitems.py
-
-# 4. 可选：下载物品图标
-python services/workers/geticon.py
-
-# 5. 运行主程序
+# 运行开发版本
 python Main.py
 ```
 
-## 打包构建
+> 首次启动会自动：
+> 1. 创建 SQLite 数据库
+> 2. 从 SDE 拉取物品数据
+> 3. 从 ESI 拉取吉他（The Forge）市场价格
+> 4. 缓存物品图标
 
-本项目使用 **PyInstaller** 将 Python 代码打包为独立的 Windows exe 文件，
-`database/` 和 `data/` 等用户数据目录与 exe 分离放置。
-
-### 前置条件
-
-```bash
-pip install pyinstaller
-```
-
-### 一键打包
+### 打包为 EXE
 
 ```bash
 python build_release.py
 ```
 
-执行完毕后将在 `dist/` 目录生成：
-
-```
-dist/
-├── EVE商人助手_v1.0.0/          # 完整目录（可直接运行）
-│   ├── EVE商人助手.exe
-│   ├── database/items.db
-│   ├── data/
-│   └── README.md
-└── EVE商人助手_v1.0.0.zip        # 压缩包（用于分发）
-```
-
-### 仅打包 exe 不压缩
-
-```bash
-python build_release.py --skip-zip
-```
-
-### 手动打包步骤
-
-如果希望手动控制打包过程：
-
-1. **PyInstaller 打包**
-   ```bash
-   pyinstaller EVE商人助手.spec --noconfirm
-   ```
-
-2. **整理目录**（手动将 database/ 和 data/ 复制到 exe 同目录）
-
-3. **结果结构**
-   ```
-   EVE商人助手_v1.0.0/
-   ├── EVE商人助手.exe     ← PyInstaller 产物
-   ├── database/            ← 离线数据（手动复制）
-   │   └── items.db
-   ├── data/                ← 用户数据（运行期生成）
-   └── README.md
-   ```
-
-## 数据来源
-
-- **物品数据**：[SDE API](https://sde.jita.space/) (Static Data Export)
-- **市场价格**：[EVE ESI API](https://esi.evetech.net/) (EVE Swagger Interface)
-- **物品图标**：[EVE Image Server](https://images.evetech.net/)
-
-## 技术栈
-
-- **UI 框架**：[Flet](https://flet.dev/) — Python 原生桌面 UI
-- **异步 HTTP**：aiohttp + tenacity（自动重试）
-- **数据库**：SQLite（aiosqlite 异步访问）
-- **打包工具**：PyInstaller
-- **Python 版本**：3.10+
-
-## 开发计划
-
-- [ ] 多区域价格对比
-- [ ] 价格走势图（历史数据）
-- [ ] 批量导入导出
-- [ ] 自动更新检查
+输出目录：`dist/EVE商人助手/`
 
 ---
 
-*Made for EVE Online players* 🚀
+## ✅ 已完成功能
+
+### 一、物品查询（核心功能）
+
+| 功能 | 说明 |
+|------|------|
+| 🔍 **模糊搜索** | 输入中/英文名实时下拉候选 |
+| 📂 **类别搜索** | 输入类别名自动展示该类别所有物品 |
+| 📊 **结果表格** | 显示图标、ID、中/英文名、类别、买单/卖单/均价、体积 |
+| 🔢 **订单数量** | 价格后括号显示该方向订单数量 |
+| 📋 **单击复制** | 单击任意价格自动复制到剪贴板 |
+| 📖 **深度订单** | 双击行展开 Top5 买单 / Top5 卖单（实时拉取） |
+| ⬆️ **列排序** | 单击表头按 ID、价格、均价等排序 |
+| 🕐 **搜索历史** | 聚焦搜索框显示最近 20 条记录 |
+| 🚨 **倒挂高亮** | 买单高于卖单时行背景高亮 |
+
+### 二、价格数据（基础设施）
+
+| 功能 | 说明 |
+|------|------|
+| ⚡ **高速拉取** | 并发拉取 ESI 分页数据，3-5 秒完成全市场订单（优化前 20-30 秒） |
+| 🔄 **自动更新** | 启动检查价格是否在 30 分钟内，过期自动更新 |
+| 📈 **实时进度** | 底部状态栏显示进度条 + 阶段文字 |
+| 🗄️ **物品数据库** | 从 SDE 拉取中/英文名、类别、体积、图标 |
+| 🖼️ **图标缓存** | 本地缓存物品图片 |
+
+### 三、全局 UI
+
+| 功能 | 说明 |
+|------|------|
+| 🎨 **暗色主题** | #1a1a2e 深蓝主题 |
+| 📌 **紧凑导航** | 侧边栏 4 项（查询、制造/精炼、仓库、设置） |
+| 📊 **底部状态栏** | 价格更新时间、更新按钮、进度条 |
+
+---
+
+## 🔲 待开发功能
+
+### 🔧 第一阶段（高优先级）
+
+| 功能 | 说明 |
+|------|------|
+| 🏭 **估价与精炼** | 输入蓝图/材料，计算制造成本与利润 |
+| 🔧 **制造业** | 制造配方查询、材料需求计算（与估价合并） |
+| 📦 **仓库修复** | 修复 `inventory_view.py` 查询不存在的表，改为查 `item`+`market_prices` |
+| ⚙️ **设置页** | 数据库管理、代理配置、更新日志 |
+
+### 📐 已砍掉的功能
+- ❌ 价格监控（需历史数据 + 图表）
+- ❌ 运输分析（需跨区域数据）
+- ❌ 行星工业
+- ❌ 忠诚点价值
+
+---
+
+## 🗄️ 数据库结构
+
+### `item` 表（物品基础数据）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `type_id` | INTEGER PK | 物品 ID |
+| `en_name` | TEXT | 英文名 |
+| `zh_name` | TEXT | 中文名 |
+| `group_id` | INTEGER | 组 ID |
+| `en_group_name` | TEXT | 英文组名 |
+| `zh_group_name` | TEXT | 中文组名 |
+| `market_group_id` | INTEGER | 市场分类 ID |
+| `en_market_group_name` | TEXT | 英文市场分类名 |
+| `zh_market_group_name` | TEXT | 中文市场分类名 |
+| `volume` | REAL | 体积（m³） |
+| `iconID` | INTEGER | 图标 ID |
+
+### `market_prices` 表（市场价格快照）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | INTEGER PK AUTO | 自增主键 |
+| `type_id` | INTEGER | 物品 ID |
+| `buy_price` | REAL | 最高买单价格 |
+| `sell_price` | REAL | 最低卖单价格 |
+| `buy_volume` | BIGINT | 买单数量 |
+| `sell_volume` | BIGINT | 卖单数量 |
+| `fetch_time` | TIMESTAMP | 抓取时间（默认当前时间） |
+
+---
+
+## 🌐 数据源
+
+### SDE（Static Data Export）
+- 基础地址：`https://sde.jita.space/latest`
+- 用途：物品名称、组信息、市场分类、图标
+
+### ESI（EVE Swagger Interface）
+- 基础地址：`https://esi.evetech.net/latest`
+- 用途：市场价格、空间站名称
+- 区域：伏尔戈（The Forge，ID: 10000002）
+
+---
+
+## 🔧 技术栈
+
+| 技术 | 用途 |
+|------|------|
+| [Flet](https://flet.dev/) | Python UI 框架（Flutter 底层） |
+| [aiohttp](https://docs.aiohttp.org/) | 异步 HTTP 请求 |
+| [aiosqlite](https://aiosqlite.omnilib.dev/) | 异步 SQLite 操作 |
+| [tenacity](https://tenacity.readthedocs.io/) | 请求重试 + 指数退避 |
+| [PyInstaller](https://pyinstaller.org/) | 打包为可执行文件 |
+
+---
+
+## 📝 代码规范
+
+| 项目 | 规范 |
+|------|------|
+| 文件命名 | 小写蛇形（`query_view.py`） |
+| 类命名 | 大驼峰（`QueryPage`） |
+| 函数/方法 | 小写蛇形（`_do_search`） |
+| 常量 | 全大写蛇形（`CONCURRENCY`） |
+| 异步 | 所有网络/DB 操作使用 `async/await` |
+| UI 异步 | 通过 `page.run_task()` 启动 |
+
+---
+
+## 📄 许可
+
+本项目仅供学习交流使用。EVE Online 及相关商标属于 CCP Games。数据来源于 ESI 和 SDE，使用请遵守 EVE Online 第三方开发者协议。
