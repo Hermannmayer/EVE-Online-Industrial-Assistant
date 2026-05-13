@@ -65,8 +65,19 @@ EVE-Online-Industrial-Assistant/
 git clone https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant.git
 cd EVE-Online-Industrial-Assistant
 
+# 创建虚拟环境（推荐）
+python -m venv .venv
+
+# 激活虚拟环境
+# Windows (CMD/PowerShell):
+.venv\Scripts\activate
+# Windows (Git Bash):
+source .venv/Scripts/activate
+# macOS / Linux:
+source .venv/bin/activate
+
 # 安装依赖
-pip install flet aiohttp aiosqlite tenacity tqdm pyperclip Pillow
+pip install -r requirements.txt
 
 # 运行开发版本
 python Main.py
