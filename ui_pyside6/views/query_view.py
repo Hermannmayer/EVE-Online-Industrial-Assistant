@@ -405,25 +405,7 @@ class SuggestionPopup(QDialog):
         self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._list = QListWidget()
-        self._list.setStyleSheet(f"""
-            QListWidget {{
-                background-color: {BG_SURFACE};
-                border: 1px solid {PRIMARY};
-                border-radius: 4px;
-                font-size: 12px;
-                outline: none;
-            }}
-            QListWidget::item {{
-                padding: 5px 10px;
-                color: {TEXT_PRIMARY};
-            }}
-            QListWidget::item:hover {{
-                background-color: {BG_SURFACE_LIGHT};
-            }}
-            QListWidget::item:selected {{
-                background-color: {PRIMARY};
-            }}
-        """)
+        self._list.setObjectName("suggest_list")
         self._list.itemClicked.connect(self._on_clicked)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -482,47 +464,32 @@ class OrderPopup(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.Popup)
-        self.setMinimumSize(550, 350)
-        self.setStyleSheet(f"background-color: {BG_SURFACE};")
+        self.setMinimumSize(620, 480)
+        self.setObjectName("order_popup")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
         self._title_label = QLabel("")
-        self._title_label.setStyleSheet(f"color: {TEXT_PRIMARY}; font-weight: bold; font-size: 13px;")
+        self._title_label.setObjectName("order_title")
         layout.addWidget(self._title_label)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(1)
-
-        # 买单
-        buy_widget = QWidget()
-        buy_layout = QVBoxLayout(buy_widget)
-        buy_layout.setContentsMargins(4, 4, 4, 4)
-        buy_layout.setSpacing(2)
+        # 买单 (上半区)
         buy_header = QLabel("买单 (Buy)")
-        buy_header.setStyleSheet(f"color: {GREEN}; font-weight: bold; font-size: 12px;")
-        buy_layout.addWidget(buy_header)
+        buy_header.setObjectName("buy_header")
+        layout.addWidget(buy_header)
         self._buy_list = QListWidget()
-        self._buy_list.setStyleSheet(f"background-color: {BG_DARK}; border: 1px solid {BORDER}; border-radius: 4px;")
-        buy_layout.addWidget(self._buy_list)
-        splitter.addWidget(buy_widget)
+        self._buy_list.setObjectName("buy_list")
+        layout.addWidget(self._buy_list)
 
-        # 卖单
-        sell_widget = QWidget()
-        sell_layout = QVBoxLayout(sell_widget)
-        sell_layout.setContentsMargins(4, 4, 4, 4)
-        sell_layout.setSpacing(2)
+        # 卖单 (下半区)
         sell_header = QLabel("卖单 (Sell)")
-        sell_header.setStyleSheet(f"color: {RED}; font-weight: bold; font-size: 12px;")
-        sell_layout.addWidget(sell_header)
+        sell_header.setObjectName("sell_header")
+        layout.addWidget(sell_header)
         self._sell_list = QListWidget()
-        self._sell_list.setStyleSheet(f"background-color: {BG_DARK}; border: 1px solid {BORDER}; border-radius: 4px;")
-        sell_layout.addWidget(self._sell_list)
-        splitter.addWidget(sell_widget)
-
-        layout.addWidget(splitter)
+        self._sell_list.setObjectName("sell_list")
+        layout.addWidget(self._sell_list)
 
     def set_orders(self, type_id: int, name: str, buy_orders: list, sell_orders: list):
         self._title_label.setText(f"{name} (Type ID: {type_id})")
@@ -568,7 +535,7 @@ class QueryPage(QWidget):
     def __init__(self, main_window):
         super().__init__()
         self._main = main_window
-        self.setStyleSheet(f"background-color: {BG_DARK};")
+        self.setObjectName("query_page")
         self._all_groups: list = []
         self._order_cache: dict[int, tuple] = {}
         self._current_query: str = ""
@@ -579,10 +546,30 @@ class QueryPage(QWidget):
 
         # ── 搜索栏 ──
         search_bar = QWidget()
-        search_bar.setStyleSheet(f"background-color: {BG_SURFACE}; border-bottom: 1px solid {BORDER};")
+        search_bar.setObjectName("query_toolbar")
         sb_layout = QHBoxLayout(search_bar)
         sb_layout.setContentsMargins(12, 8, 12, 8)
         sb_layout.setSpacing(8)
+
+        self._all_items_btn = QPushButton("📦 全物品")
+        self._all_items_btn.setToolTip("打开全物品浏览器")
+        self._all_items_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_SURFACE_LIGHT};
+                color: {TEXT_PRIMARY};
+                border: 1px solid {BORDER};
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {PRIMARY};
+                color: white;
+                border: 1px solid {PRIMARY};
+            }}
+        """)
+        self._all_items_btn.clicked.connect(self._open_all_items)
+        sb_layout.addWidget(self._all_items_btn)
 
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("输入物品名称/ID/类别搜索...")
@@ -610,7 +597,7 @@ class QueryPage(QWidget):
 
         # ── 状态行 ──
         status_widget = QWidget()
-        status_widget.setStyleSheet(f"background-color: {BG_DARK}; padding: 2px 16px;")
+        status_widget.setObjectName("query_status")
         status_layout = QHBoxLayout(status_widget)
         status_layout.setContentsMargins(0, 2, 0, 2)
 
@@ -869,28 +856,7 @@ class QueryPage(QWidget):
         sell_price = row_data.get("sell_str", "—")
 
         menu = QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{
-                background-color: {BG_SURFACE};
-                border: 1px solid {BORDER};
-                border-radius: 6px;
-                padding: 4px;
-                color: {TEXT_PRIMARY};
-            }}
-            QMenu::item {{
-                padding: 6px 28px 6px 16px;
-                border-radius: 4px;
-            }}
-            QMenu::item:selected {{
-                background-color: {PRIMARY};
-                color: white;
-            }}
-            QMenu::separator {{
-                height: 1px;
-                background-color: {BORDER};
-                margin: 4px 8px;
-            }}
-        """)
+        menu.setObjectName("view_menu")
 
         # ── 复制组 ──
         copy_name = QAction(f"复制名称: {zh_name or en_name}", self)
@@ -1031,12 +997,16 @@ class QueryPage(QWidget):
     #  Public API
     # ═══════════════════════════════════════
 
+    def _open_all_items(self):
+        from ui_pyside6.views.all_items_view import AllItemsDialog
+        if not hasattr(self, '_all_items_dialog') or self._all_items_dialog is None:
+            self._all_items_dialog = AllItemsDialog(self)
+        self._all_items_dialog.show()
+        self._all_items_dialog.raise_()
+
     def eventFilter(self, obj, event):
         if obj is self._search_input:
-            if event.type() == QEvent.Type.FocusOut:
-                # Delay hide so click on popup item registers first
-                QTimer.singleShot(150, lambda: self._suggest_popup.hide() if not self._suggest_popup.isVisible() or True else None)
-            elif event.type() == QEvent.Type.KeyPress:
+            if event.type() == QEvent.Type.KeyPress:
                 key = event.key()
                 if key == Qt.Key.Key_Escape:
                     self._suggest_popup.hide()

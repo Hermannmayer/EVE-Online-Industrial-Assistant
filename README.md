@@ -1,6 +1,6 @@
 # EVE 商人助手
 
-> 一个基于 Flet（Python UI 框架）的桌面应用程序，为 EVE Online 玩家提供吉他（Jita）市场价格查询、物品搜索、制造利润计算等功能。
+> 一个基于 PySide6（Qt for Python）的桌面应用程序，为 EVE Online 玩家提供吉他（Jita）市场价格查询、物品搜索、制造利润计算等功能。
 
 ---
 
@@ -8,24 +8,25 @@
 
 ```
 EVE-Online-Industrial-Assistant/
-├── Main.py                         # 入口点，Flet App
+├── Main.py                         # 入口点，PySide6 App
 ├── build_release.py                # 打包脚本
-├── EVE商人助手.spec                 # PyInstaller 配置
 ├── README.md                       # 本文件
 │
 ├── core/
 │   ├── __init__.py
 │   └── paths.py                    # 所有路径集中管理
 │
-├── ui/
+├── ui_pyside6/
 │   ├── __init__.py
-│   ├── config.py                   # 全局配置（字体、ESI 地址等）
+│   ├── main_window.py              # 主窗口
+│   ├── theme.py                    # 主题与样式
 │   └── views/
 │       ├── __init__.py
-│       ├── query_view.py           # 查询页面（已实现）
-│       ├── manufacturing_view.py   # 制造/精炼页面（占位符）
-│       ├── market_view.py          # 贸易页面（已删除功能）
-│       └── inventory_view.py       # 仓库页面（待修复）
+│       ├── query_view.py           # 查询页面
+│       ├── industry_view.py        # 工业/制造页面
+│       ├── inventory_view.py       # 仓库页面
+│       ├── trade_view.py           # 贸易页面
+│       └── all_items_view.py       # 全物品查询弹窗
 │
 ├── services/
 │   ├── data/
@@ -33,7 +34,8 @@ EVE-Online-Industrial-Assistant/
 │   └── workers/
 │       ├── getitems.py             # 物品数据库初始化（SDE）
 │       ├── getprices.py            # 市场价格拉取（ESI，已优化并发）
-│       └── geticon.py              # 图标缓存下载
+│       ├── geticon.py              # 图标缓存下载
+│       └── getblueprints.py        # 蓝图数据
 │
 ├── database/
 │   └── items.db                    # SQLite 数据库
@@ -44,10 +46,12 @@ EVE-Online-Industrial-Assistant/
 │   ├── window_geometry.json        # 窗口状态
 │   └── caches/icons/              # 图标缓存目录
 │
-└── documents/
-    ├── 界面设计.md
-    ├── cursor_.md
-    └── EVE_ESI_API.xlsx
+├── documents/
+│   ├── 界面设计.md
+│   ├── cursor_.md
+│   └── EVE_ESI_API.xlsx
+│
+└── requirements.txt                # Python 依赖
 ```
 
 ---
@@ -130,7 +134,7 @@ python build_release.py
 | 功能 | 说明 |
 |------|------|
 | 🎨 **暗色主题** | #1a1a2e 深蓝主题 |
-| 📌 **紧凑导航** | 侧边栏 4 项（查询、制造/精炼、仓库、设置） |
+| 📌 **紧凑导航** | 侧边栏导航（查询、工业、贸易、仓库、全物品） |
 | 📊 **底部状态栏** | 价格更新时间、更新按钮、进度条 |
 
 ---
@@ -143,7 +147,7 @@ python build_release.py
 |------|------|
 | 🏭 **估价与精炼** | 输入蓝图/材料，计算制造成本与利润 |
 | 🔧 **制造业** | 制造配方查询、材料需求计算（与估价合并） |
-| 📦 **仓库修复** | 修复 `inventory_view.py` 查询不存在的表，改为查 `item`+`market_prices` |
+| 📦 **仓库修复** | 修复仓库页面查询不存在的表，改为查 `item`+`market_prices` |
 | ⚙️ **设置页** | 数据库管理、代理配置、更新日志 |
 
 ### 📐 已砍掉的功能
@@ -203,7 +207,7 @@ python build_release.py
 
 | 技术 | 用途 |
 |------|------|
-| [Flet](https://flet.dev/) | Python UI 框架（Flutter 底层） |
+| [PySide6](https://www.qt.io/qt-for-python) | Python UI 框架（Qt6） |
 | [aiohttp](https://docs.aiohttp.org/) | 异步 HTTP 请求 |
 | [aiosqlite](https://aiosqlite.omnilib.dev/) | 异步 SQLite 操作 |
 | [tenacity](https://tenacity.readthedocs.io/) | 请求重试 + 指数退避 |
@@ -220,7 +224,6 @@ python build_release.py
 | 函数/方法 | 小写蛇形（`_do_search`） |
 | 常量 | 全大写蛇形（`CONCURRENCY`） |
 | 异步 | 所有网络/DB 操作使用 `async/await` |
-| UI 异步 | 通过 `page.run_task()` 启动 |
 
 ---
 

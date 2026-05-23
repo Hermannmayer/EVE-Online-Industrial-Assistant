@@ -17,7 +17,7 @@ class TradePage(QWidget):
     def __init__(self, main_window):
         super().__init__()
         self._main = main_window
-        self.setStyleSheet(f"background-color: {BG_DARK};")
+        self.setObjectName("trade_page")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

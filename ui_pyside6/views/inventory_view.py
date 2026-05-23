@@ -19,7 +19,7 @@ class InventoryPage(QWidget):
     def __init__(self, main_window):
         super().__init__()
         self._main = main_window
-        self.setStyleSheet(f"background-color: {BG_DARK};")
+        self.setObjectName("inventory_page")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -27,7 +27,7 @@ class InventoryPage(QWidget):
 
         # 工具栏
         toolbar = QWidget()
-        toolbar.setStyleSheet(f"background-color: {BG_SURFACE}; border-bottom: 1px solid #2a2a4a;")
+        toolbar.setObjectName("query_toolbar")
         tb_layout = QHBoxLayout(toolbar)
         tb_layout.setContentsMargins(12, 8, 12, 8)
         tb_layout.setSpacing(8)

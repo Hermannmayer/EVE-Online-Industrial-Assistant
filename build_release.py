@@ -35,9 +35,23 @@ def step(msg: str):
 def run_pyinstaller():
     """步骤 1：运行 PyInstaller 打包 exe"""
     step("🔄 运行 PyInstaller 打包...")
-    spec_path = os.path.join(PROJECT_ROOT, "EVE商人助手.spec")
+    entry_path = os.path.join(PROJECT_ROOT, "Main.py")  # PySide6 入口
     result = subprocess.run(
-        [sys.executable, "-m", "PyInstaller", spec_path, "--distpath", DIST_DIR, "--noconfirm"],
+        [sys.executable, "-m", "PyInstaller", "--onefile", "--windowed",
+         "--add-data", f"ui_pyside6{os.pathsep}ui_pyside6",
+         "--add-data", f"services{os.pathsep}services",
+         "--add-data", f"core{os.pathsep}core",
+         "--hidden-import", "aiosqlite",
+         "--hidden-import", "aiosqlite.dump",
+         "--hidden-import", "aiohttp",
+         "--hidden-import", "tenacity",
+         "--hidden-import", "tqdm",
+         "--hidden-import", "pyperclip",
+         "--hidden-import", "PIL",
+         "--hidden-import", "yaml",
+         "--name", "EVE商人助手",
+         entry_path,
+         "--distpath", DIST_DIR, "--noconfirm"],
         cwd=PROJECT_ROOT,
         capture_output=False,
     )

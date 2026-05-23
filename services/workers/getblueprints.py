@@ -1,13 +1,19 @@
 """
-从 CCP SDE 导出包中拉取蓝图数据并写入 items.db
+蓝图数据拉取 — 从 SDE 解析 blueprints.yaml
 
-从 S3 下载 SDE zip (~107MB)，提取 fsd/blueprints.yaml，
-解析后写入 blueprint_activities/materials/products/skills 表。
+流程：
+  1. 检查本地缓存 data/blueprints.yaml 是否存在
+  2. 若不存在 → 下载 SDE zip(~112MB)，提取 blueprints.yaml 并缓存
+  3. 解析 YAML → 写入 blueprint_* 表
+  4. 后续打包分发时：带上 items.db 即可（表已填充），无需重新下载
+
+首次拉取需要下载一次，后续跳过。
 """
 import json
-import zipfile
 import yaml
 import io
+import os
+import sys
 import aiohttp
 import asyncio
 import aiosqlite
@@ -15,6 +21,8 @@ from tqdm import tqdm
 from core.paths import database_path
 
 DATABASE_PATH = database_path()
+CACHE_DIR = os.path.join(os.path.dirname(DATABASE_PATH), "..", "data")
+CACHE_FILE = os.path.join(CACHE_DIR, "blueprints.yaml")
 SDE_ZIP_URL = "https://eve-static-data-export.s3-eu-west-1.amazonaws.com/tranquility/sde.zip"
 
 
@@ -53,8 +61,49 @@ async def create_tables(db: aiosqlite.Connection):
     await db.commit()
 
 
+async def ensure_cache() -> str:
+    """
+    确保 blueprints.yaml 缓存文件存在。
+    返回缓存文件路径。
+    """
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+    if os.path.exists(CACHE_FILE):
+        size = os.path.getsize(CACHE_FILE)
+        print(f"使用本地缓存: {CACHE_FILE} ({size / 1024 / 1024:.1f} MB)")
+        return CACHE_FILE
+
+    # 下载 SDE zip（仅首次）
+    print("本地无缓存，从 S3 下载 SDE 数据包...")
+    print(f"  URL: {SDE_ZIP_URL}")
+    print(f"  大小: ~112 MB，首次下载后会自动缓存，后续跳过\n")
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(SDE_ZIP_URL, timeout=aiohttp.ClientTimeout(total=600)) as resp:
+            resp.raise_for_status()
+            data = await resp.read()
+
+    print(f"下载完成: {len(data) / 1024 / 1024:.1f} MB")
+
+    # 从 zip 中提取 blueprints.yaml
+    import zipfile
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        candidates = [p for p in zf.namelist() if p.endswith("blueprints.yaml")]
+        if not candidates:
+            raise FileNotFoundError("SDE 包中未找到 blueprints.yaml")
+        yaml_path = candidates[0]
+        print(f"找到: {yaml_path}")
+        raw = zf.read(yaml_path).decode("utf-8")
+
+    # 写入缓存
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        f.write(raw)
+    print(f"缓存已保存: {CACHE_FILE} ({len(raw) / 1024 / 1024:.1f} MB)")
+
+    return CACHE_FILE
+
+
 def parse_activities(bp_id: int, bp_data: dict):
-    """Parse a single blueprint entry into row tuples for all 4 tables."""
     max_limit = bp_data.get("maxProductionLimit", 1)
     activities_rows = []
     materials_rows = []
@@ -81,45 +130,33 @@ def parse_activities(bp_id: int, bp_data: dict):
 
 
 async def run_blueprint_update():
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        await create_tables(db)
+    os.makedirs(CACHE_DIR, exist_ok=True)
 
-    # Check if already populated
+    # 检查是否已填充
     async with aiosqlite.connect(DATABASE_PATH) as db:
         cursor = await db.execute("SELECT COUNT(*) FROM blueprint_activities")
         row = await cursor.fetchone()
         if row and row[0] > 1000:
-            print(f"蓝图数据已就绪 ({row[0]} 条活动记录)，跳过拉取")
+            print(f"蓝图数据已就绪 ({row[0]} 条活动记录)，跳过")
             return
 
-    # Download SDE zip from S3
-    print(f"从 S3 下载 SDE 数据包 ({SDE_ZIP_URL})...")
-    async with aiohttp.ClientSession() as session:
-        async with session.get(SDE_ZIP_URL, timeout=aiohttp.ClientTimeout(total=600)) as resp:
-            resp.raise_for_status()
-            data = await resp.read()
-    print(f"下载完成: {len(data) / 1024 / 1024:.1f} MB")
+    # 确保表存在
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await create_tables(db)
 
-    # Find and extract the blueprint YAML file
-    print("搜索蓝图文件...")
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        candidates = [p for p in zf.namelist() if "blueprint" in p.lower()]
-        # Prefer YAML files over directories
-        yaml_candidates = [p for p in candidates if p.endswith(".yaml")]
-        if not yaml_candidates:
-            raise FileNotFoundError(f"在 SDE zip 中找不到蓝图的 YAML 文件 (候选: {candidates[:5]})")
-        yaml_path = yaml_candidates[0]
-        print(f"找到: {yaml_path}")
-        raw = zf.read(yaml_path).decode("utf-8")
+    # 获取 blueprints.yaml 缓存
+    yaml_path = await ensure_cache()
 
-    # Parse YAML
+    # 解析 YAML
     print("解析 YAML...")
-    blueprints = yaml.safe_load(raw)
-    if not isinstance(blueprints, dict):
-        raise ValueError(f"期望 YAML 为 dict，实际为 {type(blueprints)}")
-    print(f"共 {len(blueprints)} 个蓝图，开始写入数据库...")
+    with open(yaml_path, "r", encoding="utf-8") as f:
+        blueprints = yaml.safe_load(f)
 
-    # Batch insert
+    if not isinstance(blueprints, dict):
+        raise ValueError(f"期望 dict，实际为 {type(blueprints)}")
+    print(f"共 {len(blueprints)} 个蓝图，写入数据库...")
+
+    # 分批写入
     batch_size = 200
     bp_items = list(blueprints.items())
 
@@ -143,25 +180,13 @@ async def run_blueprint_update():
                         )
             await db.commit()
 
-    # Verify
+    # 统计
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM blueprint_activities")
-        row = await cursor.fetchone()
-        activities_count = row[0] if row else 0
-        cursor = await db.execute("SELECT COUNT(*) FROM blueprint_materials")
-        row = await cursor.fetchone()
-        materials_count = row[0] if row else 0
-        cursor = await db.execute("SELECT COUNT(*) FROM blueprint_products")
-        row = await cursor.fetchone()
-        products_count = row[0] if row else 0
-        cursor = await db.execute("SELECT COUNT(*) FROM blueprint_skills")
-        row = await cursor.fetchone()
-        skills_count = row[0] if row else 0
-    print(f"\n写入完成:")
-    print(f"  blueprint_activities: {activities_count}")
-    print(f"  blueprint_materials: {materials_count}")
-    print(f"  blueprint_products:  {products_count}")
-    print(f"  blueprint_skills:    {skills_count}")
+        for t in ["blueprint_activities", "blueprint_materials", "blueprint_products", "blueprint_skills"]:
+            cursor = await db.execute(f"SELECT COUNT(*) FROM {t}")
+            print(f"  {t}: {cursor.fetchone()[0]}")
+
+    print("\n完成！缓存文件可保留用于后续重建，打包时只带 items.db 即可。")
 
 
 if __name__ == "__main__":

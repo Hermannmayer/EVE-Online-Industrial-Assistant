@@ -1,33 +1,136 @@
 """
-QSS 暗色主题 — 与原有 Flet 配色方案一致
+One Dark Pro / One Light 主题系统 — 支持运行时切换
 """
 import os
 import json
 from PySide6.QtCore import QDir
 
-# ── 基础色板 ──
-BG_DARK = "#1a1a2e"
-BG_SURFACE = "#16213e"
-BG_SURFACE_LIGHT = "#0f3460"
-PRIMARY = "#e94560"
-TEXT_PRIMARY = "#e0e0e0"
-TEXT_SECONDARY = "#888888"
-BORDER = "#2a2a4a"
-GREEN = "#00ff88"
-RED = "#ff6b6b"
-YELLOW = "#ffcc00"
+# ═══════════════════════════════════════════
+#  色板定义
+# ═══════════════════════════════════════════
+
+ONE_DARK_PRO = {
+    "BG_DARK": "#282c34",
+    "BG_SURFACE": "#21252b",
+    "BG_SURFACE_LIGHT": "#2c323c",  # 选中/悬浮
+    "BG_HOVER": "#3a3f4b",
+    "PRIMARY": "#61afef",           # 蓝色强调
+    "ACCENT_RED": "#e06c75",
+    "ACCENT_GREEN": "#98c379",
+    "ACCENT_YELLOW": "#e5c07b",
+    "ACCENT_ORANGE": "#d19a66",
+    "ACCENT_PURPLE": "#c678dd",
+    "ACCENT_CYAN": "#56b6c2",
+    "TEXT_PRIMARY": "#abb2bf",
+    "TEXT_BRIGHT": "#e5e7eb",
+    "TEXT_SECONDARY": "#5c6370",
+    "BORDER": "#3e4452",
+}
+
+ONE_LIGHT = {
+    "BG_DARK": "#f5f2ed",
+    "BG_SURFACE": "#eae7e2",
+    "BG_SURFACE_LIGHT": "#ddd9d2",
+    "BG_HOVER": "#d2cec7",
+    "PRIMARY": "#4078f2",
+    "ACCENT_RED": "#e45649",
+    "ACCENT_GREEN": "#50a14f",
+    "ACCENT_YELLOW": "#986801",
+    "ACCENT_ORANGE": "#da854d",
+    "ACCENT_PURPLE": "#a626a4",
+    "ACCENT_CYAN": "#0184bc",
+    "TEXT_PRIMARY": "#4a4a4a",
+    "TEXT_BRIGHT": "#2a2a2a",
+    "TEXT_SECONDARY": "#8a8a8a",
+    "BORDER": "#d4d0cb",
+}
+
+THEMES = {
+    "dark": ONE_DARK_PRO,
+    "light": ONE_LIGHT,
+}
+
+# ── 模块级变量（运行时被 apply_theme 更新） ──
+# 默认使用 One Dark Pro
+BG_DARK = ONE_DARK_PRO["BG_DARK"]
+BG_SURFACE = ONE_DARK_PRO["BG_SURFACE"]
+BG_SURFACE_LIGHT = ONE_DARK_PRO["BG_SURFACE_LIGHT"]
+BG_HOVER = ONE_DARK_PRO["BG_HOVER"]
+PRIMARY = ONE_DARK_PRO["PRIMARY"]
+ACCENT_RED = ONE_DARK_PRO["ACCENT_RED"]
+ACCENT_GREEN = ONE_DARK_PRO["ACCENT_GREEN"]
+ACCENT_YELLOW = ONE_DARK_PRO["ACCENT_YELLOW"]
+ACCENT_ORANGE = ONE_DARK_PRO["ACCENT_ORANGE"]
+ACCENT_PURPLE = ONE_DARK_PRO["ACCENT_PURPLE"]
+ACCENT_CYAN = ONE_DARK_PRO["ACCENT_CYAN"]
+TEXT_PRIMARY = ONE_DARK_PRO["TEXT_PRIMARY"]
+TEXT_BRIGHT = ONE_DARK_PRO["TEXT_BRIGHT"]
+TEXT_SECONDARY = ONE_DARK_PRO["TEXT_SECONDARY"]
+BORDER = ONE_DARK_PRO["BORDER"]
+
+_current_theme = "dark"
+_theme_listeners = []
+
+# ── 向后兼容别名 ──
+GREEN = ACCENT_GREEN
+RED = ACCENT_RED
+YELLOW = ACCENT_YELLOW
 
 WINDOW_GEOMETRY_FILE: str | None = None
 
 
+def apply_theme(theme_name: str) -> None:
+    """
+    切换主题并更新模块级变量。
+    所有 `from ui_pyside6.theme import XXX` 的地方会自动反映新值。
+    """
+    global _current_theme, BG_DARK, BG_SURFACE, BG_SURFACE_LIGHT, BG_HOVER
+    global PRIMARY, ACCENT_RED, ACCENT_GREEN, ACCENT_YELLOW
+    global ACCENT_ORANGE, ACCENT_PURPLE, ACCENT_CYAN
+    global TEXT_PRIMARY, TEXT_BRIGHT, TEXT_SECONDARY, BORDER
+    global GREEN, RED, YELLOW
+
+    colors = THEMES.get(theme_name)
+    if not colors:
+        return
+
+    _current_theme = theme_name
+    for key, value in colors.items():
+        globals()[key] = value
+
+    # 更新别名
+    globals()["GREEN"] = globals()["ACCENT_GREEN"]
+    globals()["RED"] = globals()["ACCENT_RED"]
+    globals()["YELLOW"] = globals()["ACCENT_YELLOW"]
+
+    # 通知监听器
+    for listener in _theme_listeners:
+        try:
+            listener()
+        except Exception:
+            pass
+
+
+def current_theme() -> str:
+    return _current_theme
+
+
+def add_theme_listener(callback):
+    """注册主题切换时的回调"""
+    _theme_listeners.append(callback)
+
+
+def remove_theme_listener(callback):
+    if callback in _theme_listeners:
+        _theme_listeners.remove(callback)
+
+
 def set_geometry_file(path: str):
-    """Set the path for saving/loading window geometry."""
     global WINDOW_GEOMETRY_FILE
     WINDOW_GEOMETRY_FILE = path
 
 
 def save_window_geometry(window):
-    """Save window position and size to JSON file."""
     if WINDOW_GEOMETRY_FILE is None:
         return
     try:
@@ -41,7 +144,6 @@ def save_window_geometry(window):
 
 
 def restore_window_geometry(window):
-    """Restore window position and size from JSON file."""
     if WINDOW_GEOMETRY_FILE is None:
         return
     try:
@@ -56,7 +158,7 @@ def restore_window_geometry(window):
 
 
 def get_stylesheet() -> str:
-    """Return the application-wide QSS stylesheet."""
+    """根据当前主题生成 QSS 样式表"""
     return f"""
     /* ── 全局 ── */
     QMainWindow {{
@@ -95,7 +197,8 @@ def get_stylesheet() -> str:
         border-radius: 4px;
     }}
     QMenu::item:selected {{
-        background-color: {PRIMARY};
+        background-color: {BG_HOVER};
+        color: {TEXT_BRIGHT};
     }}
     QMenu::separator {{
         height: 1px;
@@ -139,7 +242,7 @@ def get_stylesheet() -> str:
     }}
     QTreeWidget::item:selected {{
         background-color: {BG_SURFACE_LIGHT};
-        color: {TEXT_PRIMARY};
+        color: {TEXT_BRIGHT};
     }}
     QTreeWidget::item:hover {{
         background-color: {BG_SURFACE_LIGHT};
@@ -170,7 +273,7 @@ def get_stylesheet() -> str:
 
     /* ── 输入框 ── */
     QLineEdit {{
-        background-color: {BG_SURFACE_LIGHT};
+        background-color: {BG_SURFACE};
         color: {TEXT_PRIMARY};
         border: 1px solid {BORDER};
         border-radius: 6px;
@@ -183,7 +286,7 @@ def get_stylesheet() -> str:
 
     /* ── 下拉框 ── */
     QComboBox {{
-        background-color: {BG_SURFACE_LIGHT};
+        background-color: {BG_SURFACE};
         color: {TEXT_PRIMARY};
         border: 1px solid {BORDER};
         border-radius: 6px;
@@ -198,7 +301,7 @@ def get_stylesheet() -> str:
         color: {TEXT_PRIMARY};
         border: 1px solid {BORDER};
         border-radius: 4px;
-        selection-background-color: {PRIMARY};
+        selection-background-color: {BG_SURFACE_LIGHT};
         outline: none;
     }}
     QComboBox::drop-down {{
@@ -208,22 +311,23 @@ def get_stylesheet() -> str:
 
     /* ── 按钮 ── */
     QPushButton {{
-        background-color: {BG_SURFACE_LIGHT};
+        background-color: {BG_SURFACE};
         color: {TEXT_PRIMARY};
         border: 1px solid {BORDER};
         border-radius: 6px;
         padding: 6px 16px;
     }}
     QPushButton:hover {{
-        background-color: {PRIMARY};
+        background-color: {BG_HOVER};
         border-color: {PRIMARY};
+        color: {TEXT_BRIGHT};
     }}
     QPushButton:pressed {{
-        background-color: {PRIMARY};
+        background-color: {BG_SURFACE_LIGHT};
     }}
     QPushButton:disabled {{
-        background-color: #333;
-        color: #666;
+        background-color: {BG_SURFACE};
+        color: {TEXT_SECONDARY};
     }}
 
     QToolButton {{
@@ -234,7 +338,7 @@ def get_stylesheet() -> str:
         padding: 4px;
     }}
     QToolButton:hover {{
-        background-color: {BG_SURFACE_LIGHT};
+        background-color: {BG_HOVER};
         color: {TEXT_PRIMARY};
     }}
 
@@ -246,7 +350,7 @@ def get_stylesheet() -> str:
         border-radius: 6px;
         gridline-color: {BORDER};
         selection-background-color: {PRIMARY};
-        selection-color: white;
+        selection-color: {TEXT_BRIGHT};
         outline: none;
     }}
     QTableView::item {{
@@ -255,9 +359,10 @@ def get_stylesheet() -> str:
     }}
     QTableView::item:selected {{
         background-color: {PRIMARY};
+        color: {TEXT_BRIGHT};
     }}
     QHeaderView::section {{
-        background-color: {BG_SURFACE_LIGHT};
+        background-color: {BG_SURFACE};
         color: {TEXT_PRIMARY};
         padding: 6px 8px;
         border: none;
@@ -267,7 +372,7 @@ def get_stylesheet() -> str:
         font-size: 12px;
     }}
     QHeaderView::section:hover {{
-        background-color: #1a3a5e;
+        background-color: {BG_HOVER};
     }}
 
     /* ── 分割器 ── */
@@ -284,7 +389,7 @@ def get_stylesheet() -> str:
 
     /* ── 进度条 ── */
     QProgressBar {{
-        background-color: {BG_SURFACE_LIGHT};
+        background-color: {BG_SURFACE};
         border: none;
         border-radius: 2px;
         height: 4px;
@@ -305,7 +410,7 @@ def get_stylesheet() -> str:
         height: 16px;
         border: 1px solid {BORDER};
         border-radius: 3px;
-        background-color: {BG_SURFACE_LIGHT};
+        background-color: {BG_SURFACE};
     }}
     QCheckBox::indicator:checked {{
         background-color: {PRIMARY};
@@ -360,7 +465,8 @@ def get_stylesheet() -> str:
         border-bottom: 1px solid {BORDER};
     }}
     QListWidget::item:selected {{
-        background-color: {PRIMARY};
+        background-color: {BG_SURFACE_LIGHT};
+        color: {TEXT_BRIGHT};
     }}
 
     /* ── 文本浏览器 ── */
@@ -379,5 +485,121 @@ def get_stylesheet() -> str:
         border-radius: 4px;
         padding: 4px 8px;
         font-size: 12px;
+    }}
+
+    /* ═══════════════════════════════════
+       MainWindow 结构
+    ═══════════════════════════════════ */
+    #central_widget {{
+        background-color: {BG_DARK};
+    }}
+    #nav_panel {{
+        background-color: {BG_SURFACE};
+    }}
+    #content_stack {{
+        background-color: {BG_DARK};
+    }}
+    #nav_tree {{
+        background-color: transparent;
+        border: none;
+        outline: none;
+    }}
+    #nav_tree::item {{
+        padding: 6px 8px;
+        border-radius: 4px;
+        color: {TEXT_SECONDARY};
+    }}
+    #nav_tree::item:selected {{
+        background-color: {BG_SURFACE_LIGHT};
+        color: {TEXT_BRIGHT};
+    }}
+    #nav_tree::item:hover {{
+        background-color: {BG_SURFACE_LIGHT};
+        color: {TEXT_PRIMARY};
+    }}
+    #price_time_label {{
+        color: {TEXT_SECONDARY};
+        font-size: 11px;
+        padding-right: 16px;
+    }}
+    #status_label {{
+        color: {TEXT_SECONDARY};
+        font-size: 11px;
+    }}
+    #update_btn {{
+        background-color: {PRIMARY};
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-size: 11px;
+        padding: 2px 10px;
+        min-height: 22px;
+    }}
+    #update_btn:hover {{
+        background-color: {ACCENT_RED};
+    }}
+    #update_btn:disabled {{
+        background-color: {TEXT_SECONDARY};
+    }}
+    #char_settings_btn, #sys_settings_btn {{
+        background-color: {BG_DARK};
+        border: 1px solid {BORDER};
+        border-radius: 6px;
+        padding: 0px;
+    }}
+    #char_settings_btn:hover, #sys_settings_btn:hover {{
+        background-color: {BG_HOVER};
+        border: 1px solid {PRIMARY};
+    }}
+
+    /* ═══════════════════════════════════
+       页面视图
+    ═══════════════════════════════════ */
+    #query_page, #industry_page, #trade_page, #inventory_page {{
+        background-color: {BG_DARK};
+    }}
+    #query_toolbar, #industry_toolbar {{
+        background-color: {BG_SURFACE};
+        border-bottom: 1px solid {BORDER};
+    }}
+    #query_status {{
+        background-color: {BG_DARK};
+        padding: 2px 16px;
+    }}
+    #product_label {{
+        color: {TEXT_SECONDARY};
+        padding: 4px 16px;
+        font-size: 12px;
+    }}
+    #bp_selector {{
+        background-color: {BG_SURFACE};
+        border-bottom: 1px solid {BORDER};
+        padding: 4px 12px;
+    }}
+    #industry_summary {{
+        background-color: {BG_SURFACE};
+        color: {TEXT_PRIMARY};
+        border: 1px solid {BORDER};
+        border-radius: 6px;
+        font-size: 13px;
+        padding: 8px 12px;
+    }}
+
+    /* ═══════════════════════════════════
+       系统设置菜单
+    ═══════════════════════════════════ */
+    #sys_menu {{
+        background-color: {BG_SURFACE};
+        border: 1px solid {BORDER};
+        border-radius: 6px;
+        padding: 4px;
+    }}
+    #sys_menu::item {{
+        padding: 6px 24px;
+        border-radius: 4px;
+    }}
+    #sys_menu::item:selected {{
+        background-color: {BG_SURFACE_LIGHT};
+        color: {TEXT_BRIGHT};
     }}
     """

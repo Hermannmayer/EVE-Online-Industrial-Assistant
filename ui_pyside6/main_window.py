@@ -13,10 +13,10 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTreeWidget, QTreeWidgetItem,
     QStackedWidget, QStatusBar, QLabel,
     QHBoxLayout, QVBoxLayout, QSplitter, QPushButton,
-    QMessageBox, QProgressBar, QApplication, QFrame,
+    QMessageBox, QProgressBar, QApplication, QFrame, QMenu,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPainter, QPixmap, QPainterPath, QIcon, QPen, QFont
 
 from core.paths import (
     DB_PATH, ICON_DIR, ensure_dirs_exist,
@@ -24,8 +24,9 @@ from core.paths import (
 )
 from ui_pyside6.theme import (
     get_stylesheet, save_window_geometry, restore_window_geometry,
-    set_geometry_file, BG_SURFACE, PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY,
-    BG_DARK, BORDER,
+    set_geometry_file, BG_SURFACE, BG_SURFACE_LIGHT, PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY,
+    BG_DARK, BORDER, BG_HOVER, TEXT_BRIGHT,
+    apply_theme, current_theme, add_theme_listener, remove_theme_listener,
 )
 
 # ── 导航树节点定义 ──
@@ -104,10 +105,10 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
 
         self._price_time_label = QLabel("价格更新时间: —")
-        self._price_time_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; padding-right: 16px;")
+        self._price_time_label.setObjectName("price_time_label")
 
         self._status_label = QLabel("就绪")
-        self._status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._status_label.setObjectName("status_label")
 
         self._update_progress = QProgressBar()
         self._update_progress.setFixedWidth(160)
@@ -115,19 +116,8 @@ class MainWindow(QMainWindow):
         self._update_progress.setVisible(False)
 
         self._update_btn = QPushButton("更新价格")
+        self._update_btn.setObjectName("update_btn")
         self._update_btn.setFixedHeight(22)
-        self._update_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {PRIMARY};
-                color: white;
-                border: none;
-                border-radius: 4px;
-                font-size: 11px;
-                padding: 2px 10px;
-            }}
-            QPushButton:hover {{ background-color: #ff5a75; }}
-            QPushButton:disabled {{ background-color: #555; }}
-        """)
         self._update_btn.clicked.connect(self._trigger_price_update)
 
         self.status_bar.addWidget(self._price_time_label, 1)
@@ -137,7 +127,7 @@ class MainWindow(QMainWindow):
 
         # ── 中央布局 ──
         central = QWidget()
-        central.setStyleSheet(f"background-color: {BG_DARK};")
+        central.setObjectName("central_widget")
         self.setCentralWidget(central)
 
         h_layout = QHBoxLayout(central)
@@ -154,7 +144,7 @@ class MainWindow(QMainWindow):
 
         # ── 内容区 ──
         self.content_stack = QStackedWidget()
-        self.content_stack.setStyleSheet(f"background-color: {BG_DARK};")
+        self.content_stack.setObjectName("content_stack")
         splitter.addWidget(self.content_stack)
 
         splitter.setStretchFactor(0, 0)
@@ -176,7 +166,14 @@ class MainWindow(QMainWindow):
         self._price_worker: PriceUpdateWorker | None = None
         self._init_price_check()
 
+        # ── 主题切换监听 ──
+        add_theme_listener(self._on_theme_changed)
+
+        # ── 首次启动检测 ──
+        QTimer.singleShot(500, self._check_first_run)
+
     def closeEvent(self, event):
+        remove_theme_listener(self._on_theme_changed)
         save_window_geometry(self)
         # 等待后台线程安全退出
         for attr in ("_check_worker", "_price_worker"):
@@ -192,12 +189,13 @@ class MainWindow(QMainWindow):
 
     def _build_nav_tree(self) -> QWidget:
         panel = QWidget()
-        panel.setStyleSheet(f"background-color: {BG_SURFACE};")
+        panel.setObjectName("nav_panel")
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(4, 8, 4, 8)
         layout.setSpacing(0)
 
         tree = QTreeWidget()
+        tree.setObjectName("nav_tree")
         tree.setHeaderHidden(True)
         tree.setIndentation(0)
         tree.setRootIsDecorated(False)
@@ -206,30 +204,30 @@ class MainWindow(QMainWindow):
         self._nav_tree = tree
         self._nav_items: list[QTreeWidgetItem] = []
 
-        header_item = QTreeWidgetItem(["EVE 商人助手"])
-        header_item.setFlags(Qt.ItemFlag.NoItemFlags)
-        font = header_item.font(0)
+        self._nav_header = QTreeWidgetItem(["EVE 商人助手"])
+        self._nav_header.setFlags(Qt.ItemFlag.NoItemFlags)
+        font = self._nav_header.font(0)
         font.setBold(True)
         font.setPointSize(12)
-        header_item.setFont(0, font)
-        header_item.setForeground(0, QColor(PRIMARY))
-        header_item.setSizeHint(0, QSize(header_item.sizeHint(0).width(), 32))
-        tree.addTopLevelItem(header_item)
+        self._nav_header.setFont(0, font)
+        self._nav_header.setForeground(0, QColor(PRIMARY))
+        self._nav_header.setSizeHint(0, QSize(self._nav_header.sizeHint(0).width(), 32))
+        tree.addTopLevelItem(self._nav_header)
 
         spacer = QTreeWidgetItem([""])
         spacer.setFlags(Qt.ItemFlag.NoItemFlags)
         spacer.setSizeHint(0, QSize(spacer.sizeHint(0).width(), 8))
         tree.addTopLevelItem(spacer)
 
-        section_label = QTreeWidgetItem(["功能"])
-        section_label.setFlags(Qt.ItemFlag.NoItemFlags)
-        section_label.setForeground(0, QColor(TEXT_SECONDARY))
-        f = section_label.font(0)
+        self._nav_section = QTreeWidgetItem(["功能"])
+        self._nav_section.setFlags(Qt.ItemFlag.NoItemFlags)
+        self._nav_section.setForeground(0, QColor(TEXT_SECONDARY))
+        f = self._nav_section.font(0)
         f.setBold(True)
         f.setPointSize(10)
-        section_label.setFont(0, f)
-        section_label.setSizeHint(0, QSize(section_label.sizeHint(0).width(), 24))
-        tree.addTopLevelItem(section_label)
+        self._nav_section.setFont(0, f)
+        self._nav_section.setSizeHint(0, QSize(self._nav_section.sizeHint(0).width(), 24))
+        tree.addTopLevelItem(self._nav_section)
 
         for key, label, icon in NAV_TREE:
             item = QTreeWidgetItem([f" {icon}  {label}"])
@@ -240,6 +238,35 @@ class MainWindow(QMainWindow):
 
         tree.currentItemChanged.connect(self._on_nav_changed)
         layout.addWidget(tree)
+
+        # ── 底部设置按钮 ──
+        layout.addStretch()
+
+        bottom_btn_layout = QHBoxLayout()
+        bottom_btn_layout.setContentsMargins(4, 4, 4, 4)
+        bottom_btn_layout.setSpacing(6)
+
+        self._char_settings_btn = QPushButton()
+        self._char_settings_btn.setObjectName("char_settings_btn")
+        self._char_settings_btn.setToolTip("人物设置")
+        self._char_settings_btn.setFixedSize(36, 36)
+        self._char_settings_btn.setIcon(self._create_person_icon())
+        self._char_settings_btn.setIconSize(QSize(20, 20))
+        self._char_settings_btn.clicked.connect(self._show_char_settings)
+
+        self._sys_settings_btn = QPushButton()
+        self._sys_settings_btn.setObjectName("sys_settings_btn")
+        self._sys_settings_btn.setToolTip("系统设置")
+        self._sys_settings_btn.setFixedSize(36, 36)
+        self._sys_settings_btn.setIcon(self._create_settings_icon())
+        self._sys_settings_btn.setIconSize(QSize(20, 20))
+        self._sys_settings_btn.clicked.connect(self._show_sys_settings)
+
+        bottom_btn_layout.addStretch()
+        bottom_btn_layout.addWidget(self._char_settings_btn)
+        bottom_btn_layout.addWidget(self._sys_settings_btn)
+
+        layout.addLayout(bottom_btn_layout)
 
         return panel
 
@@ -339,8 +366,133 @@ class MainWindow(QMainWindow):
     #  其他事件
     # ═══════════════════════════════════════
 
+    # ── 图标绘制 ──
+
+    def _create_person_icon(self, size: int = 20) -> QIcon:
+        """绘制人物剪影图标"""
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(TEXT_SECONDARY))
+        # 头（圆形）
+        head_radius = size * 0.16
+        cx, cy = size / 2, size * 0.28
+        painter.drawEllipse(int(cx - head_radius), int(cy - head_radius),
+                            int(head_radius * 2), int(head_radius * 2))
+        # 身体（梯形）
+        body = QPainterPath()
+        body_w = size * 0.3
+        body_top_y = size * 0.44
+        body_bot_y = size * 0.88
+        body.moveTo(cx - body_w * 0.7, body_bot_y)
+        body.lineTo(cx + body_w * 0.7, body_bot_y)
+        body.lineTo(cx + body_w * 0.5, body_top_y)
+        body.lineTo(cx - body_w * 0.5, body_top_y)
+        body.closeSubpath()
+        painter.drawPath(body)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _create_settings_icon(self, size: int = 20) -> QIcon:
+        """绘制齿轮/设置图标"""
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(TEXT_SECONDARY), 2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        cx, cy = size / 2, size / 2
+        outer_r = size * 0.38
+        inner_r = size * 0.22
+
+        # 外圈 + 内圈
+        painter.drawEllipse(int(cx - outer_r), int(cy - outer_r),
+                            int(outer_r * 2), int(outer_r * 2))
+        painter.drawEllipse(int(cx - inner_r), int(cy - inner_r),
+                            int(inner_r * 2), int(inner_r * 2))
+
+        # 4个辐条
+        import math
+        for angle_deg in (0, 45, 90, 135):
+            rad = math.radians(angle_deg)
+            x1 = cx + inner_r * math.cos(rad)
+            y1 = cy + inner_r * math.sin(rad)
+            x2 = cx + outer_r * math.cos(rad)
+            y2 = cy + outer_r * math.sin(rad)
+            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+
+        painter.end()
+        return QIcon(pixmap)
+
+    # ── 主题切换 ──
+
+    def _on_theme_changed(self):
+        """主题切换后的 UI 刷新（全局 QSS 自动处理所有颜色）"""
+        self.setStyleSheet(get_stylesheet())
+        # 非 QSS 项：图标颜色和 QTreeWidgetItem 前景色
+        self._char_settings_btn.setIcon(self._create_person_icon())
+        self._sys_settings_btn.setIcon(self._create_settings_icon())
+        self._nav_header.setForeground(0, QColor(PRIMARY))
+        self._nav_section.setForeground(0, QColor(TEXT_SECONDARY))
+
+    def _toggle_theme(self):
+        """在暗色/亮色模式间切换"""
+        new_theme = "light" if current_theme() == "dark" else "dark"
+        apply_theme(new_theme)
+
+    # ── 事件处理 ──
+
+    def _show_char_settings(self):
+        from ui_pyside6.views.char_settings_view import CharSettingsDialog
+        dialog = CharSettingsDialog(self)
+        dialog.exec()
+
+    def _show_sys_settings(self):
+        menu = QMenu(self)
+        menu.setObjectName("sys_menu")
+
+        current = current_theme()
+        theme_action = menu.addAction(
+            "☀️ 切换到亮色模式" if current == "dark" else "🌙 切换到暗色模式"
+        )
+        theme_action.triggered.connect(self._toggle_theme)
+
+        menu.addSeparator()
+
+        init_action = menu.addAction("📦 数据初始化")
+        init_action.triggered.connect(self._show_init_wizard)
+
+        about_action = menu.addAction("ℹ️ 关于")
+        about_action.triggered.connect(self._show_about)
+
+        menu.exec(self._sys_settings_btn.mapToGlobal(
+            self._sys_settings_btn.rect().bottomLeft()
+        ))
+
+    def _check_first_run(self):
+        """首次启动检测：如果缺少关键数据，在状态栏提示"""
+        from services.init_check import missing_count, check_items
+        items = check_items()
+        missing = missing_count()
+        if items < 10000:
+            self._status_label.setText("⚠️ 首次使用？请打开 ⚙️ → 数据初始化")
+        elif missing > 0:
+            self._status_label.setText(f"⚠️ {missing} 项数据未初始化，点击 ⚙️ → 数据初始化")
+        else:
+            self._status_label.setText("就绪")
+
     def _show_settings(self):
         QMessageBox.information(self, "设置", "设置功能将在后续版本实现。\n\n可配置项：ESI 区域、字体大小、主题切换")
+
+    def _show_init_wizard(self):
+        from ui_pyside6.views.init_wizard import InitWizard
+        wizard = InitWizard(self)
+        wizard.exec()
 
     def _show_about(self):
         QMessageBox.about(
@@ -360,8 +512,10 @@ class MainWindow(QMainWindow):
 
     def _open_all_items(self):
         from ui_pyside6.views.all_items_view import AllItemsDialog
-        dialog = AllItemsDialog(self)
-        dialog.exec()
+        if not hasattr(self, '_all_items_dialog') or self._all_items_dialog is None:
+            self._all_items_dialog = AllItemsDialog(self)
+        self._all_items_dialog.show()
+        self._all_items_dialog.raise_()
 
     def refresh_price_time(self):
         self._refresh_price_time()
