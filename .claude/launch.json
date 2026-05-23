@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "PySide6 Desktop",
+      "runtimeExecutable": "C:/Users/Admin/Desktop/EVE-Online-Industrial-Assistant/venv/Scripts/python.exe",
+      "runtimeArgs": ["main_pyside6.py"],
+      "port": null
+    },
+    {
+      "name": "Flet Desktop",
+      "runtimeExecutable": "C:/Users/Admin/Desktop/EVE-Online-Industrial-Assistant/venv/Scripts/python.exe",
+      "runtimeArgs": ["Main.py"],
+      "port": null
+    },
+    {
+      "name": "Flet Web",
+      "runtimeExecutable": "C:/Users/Admin/Desktop/EVE-Online-Industrial-Assistant/venv/Scripts/flet.exe",
+      "runtimeArgs": ["run", "--web", "Main.py"],
+      "port": 8550
+    }
+  ]
+}
