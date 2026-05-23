@@ -5,3 +5,4 @@ tenacity>=8.2.0
 tqdm>=4.66.0
 pyperclip>=1.8.2
 Pillow>=10.0.0
+pyyaml>=6.0

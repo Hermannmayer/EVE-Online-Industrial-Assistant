@@ -54,7 +54,7 @@ class StoragePage(ft.Container):
         self.data_table = ft.DataTable(
             columns=columns,
             rows=[],
-            border=ft.border.all(1, "#2a2a4a"),
+            border=ft.Border(left=ft.BorderSide(1, "#2a2a4a"), top=ft.BorderSide(1, "#2a2a4a"), right=ft.BorderSide(1, "#2a2a4a"), bottom=ft.BorderSide(1, "#2a2a4a")),
             border_radius=8,
             heading_row_color="#16213e",
             data_row_color="#1a1a2e",
@@ -80,9 +80,9 @@ class StoragePage(ft.Container):
                         controls=[self.search_field, search_btn],
                         spacing=8,
                     ),
-                    padding=ft.padding.symmetric(horizontal=20, vertical=10),
+                    padding=ft.padding.Padding(left=20, top=10, right=20, bottom=10),
                     bgcolor="#16213e",
-                    border=ft.border.only(bottom=ft.BorderSide(1, "#2a2a4a")),
+                    border=ft.Border(bottom=ft.BorderSide(1, "#2a2a4a")),
                 ),
                 self._content_area,
             ],
@@ -98,12 +98,15 @@ class StoragePage(ft.Container):
             cursor = conn.cursor()
             if keyword:
                 cursor.execute(
-                    "SELECT type_id, name, group_name, portion_size FROM items WHERE name LIKE ? LIMIT 200",
-                    (f"%{keyword}%",),
+                    "SELECT type_id, zh_name, en_name, volume FROM item "
+                    "WHERE zh_name LIKE ? OR en_name LIKE ? "
+                    "ORDER BY zh_name LIMIT 200",
+                    (f"%{keyword}%", f"%{keyword}%"),
                 )
             else:
                 cursor.execute(
-                    "SELECT type_id, name, group_name, portion_size FROM items LIMIT 200"
+                    "SELECT type_id, zh_name, en_name, volume FROM item "
+                    "ORDER BY zh_name LIMIT 200"
                 )
             rows = cursor.fetchall()
             conn.close()

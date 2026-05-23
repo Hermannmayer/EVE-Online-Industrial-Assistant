@@ -16,6 +16,7 @@ a = Analysis(
     hiddenimports=[
         'aiosqlite', 'aiohttp', 'tenacity', 'tqdm', 'pyperclip', 'PIL',
         'aiosqlite.dump',
+        'all_items_window', 'yaml',
     ],
     excludes=[
         'PyQt5', 'PyQt6', 'PySide2', 'PySide6', 'pandas', 'numpy',
