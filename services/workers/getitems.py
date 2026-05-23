@@ -1,9 +1,8 @@
-import aiohttp
 import asyncio
 import aiosqlite
-from tenacity import retry, stop_after_attempt, wait_exponential
 from tqdm import tqdm
 from core.paths import database_path
+from services.client import APIClient
 
 # 配置常量
 DATABASE_PATH = database_path()
@@ -15,36 +14,6 @@ START_TYPE_ID = 178
 # 全局缓存
 group_cache = {}
 market_group_cache = {}
-
-class APIClient:
-    """异步API客户端"""
-    def __init__(self):
-        self.session = None
-        self.semaphore = asyncio.Semaphore(CONCURRENCY)
-
-    async def __aenter__(self):
-        self.session = aiohttp.ClientSession(headers={
-            'Accept': 'application/json',
-            'User-Agent': 'EveDataCrawler/1.0'
-        })
-        return self
-
-    async def __aexit__(self, *exc):
-        await self.session.close()
-
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    async def fetch(self, url):
-        """带重试机制的异步请求"""
-        async with self.semaphore:
-            try:
-                async with self.session.get(url) as response:
-                    response.raise_for_status()
-                    return await response.json()
-            except aiohttp.ClientResponseError as e:
-                if e.status == 404:
-                    print(f"资源不存在: {url}")
-                    return None
-                raise
 
 async def initialize_database():
     """初始化数据库结构"""
@@ -289,7 +258,7 @@ async def worker(client, queue, writer, pbar):
 async def main():
     await initialize_database()
 
-    async with APIClient() as client, DatabaseWriter() as writer:
+    async with APIClient(concurrency=CONCURRENCY) as client, DatabaseWriter() as writer:
         # 拉取市场分类树（首次）
         await ensure_market_tree(client)
 
