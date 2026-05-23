@@ -4,6 +4,8 @@ EVE 制造助手 — Flet 入口点
 import flet as ft
 import sqlite3
 import subprocess
+import sys
+import atexit
 import asyncio
 import os
 import json
@@ -75,12 +77,30 @@ def main(page: ft.Page):
     from ui.views.manufacturing_view import IndustryPage
     from ui.views.market_view import TradePage
     from ui.views.inventory_view import StoragePage
-
     pages = {}
     pages["query"] = QueryPage(page, refresh_price_time)
     pages["industry"] = IndustryPage(page)
     pages["trade"] = TradePage(page)
     pages["storage"] = StoragePage(page)
+
+    # ── 全物品查询独立窗口（子进程） ──
+    _all_items_process = None
+
+    def launch_all_items_window():
+        nonlocal _all_items_process
+        if _all_items_process is not None and _all_items_process.poll() is None:
+            return  # already running
+        _all_items_process = subprocess.Popen(
+            [sys.executable, __file__, "--all-items"],
+        )
+
+    def cleanup_all_items():
+        nonlocal _all_items_process
+        if _all_items_process is not None and _all_items_process.poll() is None:
+            _all_items_process.terminate()
+            _all_items_process.wait(timeout=3)
+
+    atexit.register(cleanup_all_items)
 
     # ── 紧凑侧边栏 ──
     _nav_selected_index = [0]  # 可变容器，闭包可写
@@ -108,7 +128,7 @@ def main(page: ft.Page):
                         ft.Icon(icon_name, color="#e94560" if is_sel else "#888888", size=18),
                         ft.Text(label, size=12, color="#e0e0e0" if is_sel else "#aaaaaa", weight=ft.FontWeight.BOLD if is_sel else ft.FontWeight.NORMAL),
                     ], spacing=6, alignment=ft.MainAxisAlignment.START),
-                    padding=ft.padding.symmetric(horizontal=10, vertical=7),
+padding=ft.padding.Padding(left=10, top=7, right=10, bottom=7),
                     bgcolor="#0f3460" if is_sel else "transparent",
                     border_radius=6,
                     on_click=lambda e, idx=i, k=key: _on_nav_click(idx, k),
@@ -117,7 +137,13 @@ def main(page: ft.Page):
             )
         return btns
 
+    def _hide_current_suggestions():
+        current = content_container.content
+        if hasattr(current, '_hide_suggestions'):
+            current._hide_suggestions()
+
     def _on_nav_click(idx, key):
+        _hide_current_suggestions()
         _nav_selected_index[0] = idx
         nav_items_container.controls = build_nav_buttons(idx)
         content_container.content = pages.get(key, pages["query"])
@@ -132,8 +158,8 @@ def main(page: ft.Page):
         ], spacing=0, expand=True),
         width=120,
         bgcolor="#16213e",
-        padding=ft.padding.symmetric(horizontal=4, vertical=0),
-        border=ft.border.only(right=ft.BorderSide(1, "#2a2a4a")),
+padding=ft.padding.Padding(left=4, top=0, right=4, bottom=0),
+border=ft.Border(right=ft.BorderSide(1, "#2a2a4a")),
     )
 
     # ── 顶部标题栏 ──
@@ -142,12 +168,24 @@ def main(page: ft.Page):
             controls=[
                 ft.Icon(ft.icons.Icons.ROCKET_LAUNCH, color="#e94560", size=28),
                 ft.Text("EVE 商人助手", size=20, weight=ft.FontWeight.BOLD, color="#e0e0e0"),
+                ft.Container(width=20),
+                ft.Container(
+                    content=ft.Row([
+                        ft.Icon(ft.icons.Icons.CATEGORY, color="#ffffff", size=16),
+                        ft.Text("全物品查询", color="#ffffff", size=13),
+                    ], spacing=4),
+                    bgcolor="#e94560",
+                    border_radius=6,
+padding=ft.padding.Padding(left=16, top=8, right=16, bottom=8),
+                    on_click=lambda e: launch_all_items_window(),
+                ),
             ],
             alignment=ft.MainAxisAlignment.CENTER,
         ),
         bgcolor="#16213e",
-        padding=ft.padding.symmetric(vertical=12, horizontal=20),
-        border=ft.border.only(bottom=ft.BorderSide(1, "#2a2a4a")),
+padding=ft.padding.Padding(left=20, top=12, right=20, bottom=12),
+border=ft.Border(bottom=ft.BorderSide(1, "#2a2a4a")),
+        on_click=lambda e: _hide_current_suggestions(),
     )
 
     # ── 底部状态栏 ──
@@ -239,7 +277,7 @@ def main(page: ft.Page):
         style=ft.ButtonStyle(
             color="#e0e0e0",
             bgcolor="#0f3460",
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+padding=ft.padding.Padding(left=16, top=6, right=16, bottom=6),
         ),
     )
 
@@ -262,8 +300,9 @@ def main(page: ft.Page):
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         ),
         bgcolor="#16213e",
-        padding=ft.padding.symmetric(horizontal=16, vertical=6),
-        border=ft.border.only(top=ft.BorderSide(1, "#2a2a4a")),
+padding=ft.padding.Padding(left=16, top=6, right=16, bottom=6),
+border=ft.Border(top=ft.BorderSide(1, "#2a2a4a")),
+        on_click=lambda e: _hide_current_suggestions(),
     )
 
     # ── 默认显示查询页 ──
@@ -327,4 +366,8 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    if "--all-items" in sys.argv:
+        from all_items_window import main as all_items_main
+        ft.run(all_items_main)
+    else:
+        ft.run(main)
