@@ -1,6 +1,9 @@
 import asyncio
+
 import aiosqlite
 from tqdm import tqdm
+
+from core.logger import log
 from core.paths import database_path
 from services.client import APIClient
 
@@ -63,15 +66,17 @@ async def initialize_type_ids(client):
             await db.executemany("INSERT OR IGNORE INTO item (type_id) VALUES (?)", new_ids)
             await db.commit()
             print(f"已初始化 {len(new_ids)} 个新type_id")
+        else:
+            log.info("无新的 type_id 需要初始化")
 
 async def get_group_info(client, group_id):
     """获取组信息带缓存"""
     if not group_id:
         return ("", "", 0)
-    
+
     if group_id in group_cache:
         return group_cache[group_id]
-    
+
     url = f"{API_BASE_URL}/universe/groups/{group_id}"
     data = await client.fetch(url)
     if data:
@@ -87,10 +92,10 @@ async def get_market_group_info(client, market_group_id):
     """获取市场组信息带缓存"""
     if not market_group_id:
         return ("", "", 0)
-    
+
     if market_group_id in market_group_cache:
         return market_group_cache[market_group_id]
-    
+
     url = f"{API_BASE_URL}/markets/groups/{market_group_id}"
     data = await client.fetch(url)
     if data:
@@ -116,7 +121,7 @@ async def process_type(client, type_id):
     group_id = data.get('groupID')
     volume = data.get('volume', 0.0)
     iconID = data.get('iconID', 0)
-    
+
     name_data = data.get('name', {})
     en_name = name_data.get('en', '') if isinstance(name_data, dict) else str(name_data)
     zh_name = name_data.get('zh', '') if isinstance(name_data, dict) else ''
@@ -159,7 +164,7 @@ class DatabaseWriter:
         """提交缓冲区数据"""
         if not self.buffer:
             return
-        
+
         query = '''
             UPDATE item SET
                 en_name=?, zh_name=?,
@@ -185,18 +190,18 @@ async def ensure_market_tree(client):
         cursor = await db.execute("SELECT COUNT(*) FROM market_tree")
         count = (await cursor.fetchone())[0]
         if count > 0:
-            print(f"market_tree 已有 {count} 条记录，跳过")
+            log.info(f"market_tree 已有 {count} 条记录，跳过")
             return
 
-    print("正在拉取市场分类树 (market_tree)...")
+    log.info("正在拉取市场分类树 (market_tree)...")
     # 获取所有 market_group_id 列表
     ids_url = f"{API_BASE_URL}/markets/groups"
     all_ids = await client.fetch(ids_url)
     if not all_ids:
-        print("获取市场分类列表失败")
+        log.info("获取市场分类列表失败")
         return
 
-    print(f"共 {len(all_ids)} 个市场分类，开始拉取详情...")
+    log.info(f"共 {len(all_ids)} 个市场分类，开始拉取详情...")
     # 并发拉取每个组的详情
     semaphore = asyncio.Semaphore(CONCURRENCY)
 
@@ -210,7 +215,7 @@ async def ensure_market_tree(client):
         try:
             return await fetch_group_detail(gid)
         except Exception as e:
-            print(f"获取市场分类 {gid} 失败: {e}")
+            log.error(f"获取市场分类 {gid} 失败: {e}")
             return None
 
     tasks = [fetch_group_with_retry(gid) for gid in all_ids]
@@ -237,7 +242,7 @@ async def ensure_market_tree(client):
         )
         await db.commit()
 
-    print(f"market_tree 写入完成，共 {len(rows)} 条记录")
+    log.info(f"market_tree 写入完成，共 {len(rows)} 条记录")
 
 async def worker(client, queue, writer, pbar):
     """工作协程"""
@@ -250,7 +255,7 @@ async def worker(client, queue, writer, pbar):
             else:
                 await writer.delete_data(type_id)
         except Exception as e:
-            print(f"处理type_id {type_id} 失败: {str(e)}")
+            log.exception(f"处理type_id {type_id} 失败: {e}")
         finally:
             queue.task_done()
             pbar.update(1)
@@ -265,7 +270,7 @@ async def main():
         await initialize_type_ids(client)
 
         queue = asyncio.Queue()
-        
+
         # 获取待处理type_id
         async with aiosqlite.connect(DATABASE_PATH) as db:
             cursor = await db.execute(f'''
@@ -291,7 +296,7 @@ async def main():
         for task in workers:
             task.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
-        
+
         # 显式关闭连接池
         await client.session.__aexit__(None, None, None)
         for task in workers:

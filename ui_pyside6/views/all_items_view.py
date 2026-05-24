@@ -1,44 +1,102 @@
 """
 全物品浏览器 — 非模态弹窗
 """
-import sqlite3, os, json
+import json
+import os
+import sqlite3
+
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSize, QSortFilterProxyModel, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QWidget, QTreeWidget, QTreeWidgetItem,
-    QTableView, QHeaderView, QLabel, QSplitter, QPushButton,
-    QCheckBox, QComboBox, QFormLayout, QDialogButtonBox, QDoubleSpinBox,
-    QAbstractItemView, QMenu, QMessageBox, QApplication,
-    QListWidget, QListWidgetItem, QProgressBar,
+    QAbstractItemView,
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSplitter,
+    QTableView,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Qt, Signal, QThread, QAbstractTableModel, QModelIndex, QSortFilterProxyModel, QSize
-from PySide6.QtGui import QAction, QPixmap, QColor, QIcon
+
 from core.paths import DB_PATH, ICON_DIR
-from ui_pyside6.theme import BG_DARK, BG_SURFACE, PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY, BORDER, ACCENT_GREEN, ACCENT_RED
-from services.scoring import calc_manufacturing_score, calc_trade_score
-from services.scoring_cache import cache_key as _ck, get as _cget, set as _cset
-from ui_pyside6.views.char_settings_view import get_character_list, get_character
+from services.scoring import TRADE_HUB_IDS, calc_manufacturing_score, calc_trade_score
+from services.scoring_cache import cache_key as _ck
+from services.scoring_cache import get as _cget
+from services.scoring_cache import set as _cset
+from ui_pyside6.theme import (
+    ACCENT_GREEN,
+    ACCENT_ORANGE,
+    ACCENT_RED,
+    BG_DARK,
+    BG_SURFACE,
+    BORDER,
+    PRIMARY,
+    TEXT_PRIMARY,
+    TEXT_SECONDARY,
+)
+from ui_pyside6.views.char_settings_view import get_character, get_character_list
 
 DASH = chr(8212)
+
+JITA_RID = TRADE_HUB_IDS["Jita"]
 REGIONS = ["Jita", "Amarr", "Dodixie", "Rens"]
+
+_SQL = "SELECT i.market_group_id,i.type_id,i.zh_name,i.en_name,i.volume,mp.buy_price,mp.sell_price,mp.buy_volume,mp.sell_volume FROM item i LEFT JOIN market_prices mp ON mp.type_id=i.type_id AND mp.region_id=? AND mp.fetch_time=(SELECT MAX(fetch_time) FROM market_prices WHERE type_id=i.type_id AND region_id=?) "
+
+
+def _fetch(sql, rid: int, params=None):
+    conn=sqlite3.connect(DB_PATH);c=conn.cursor()
+    if params: c.execute(sql, (rid, rid, *params))
+    else: c.execute(sql, (rid, rid))
+    r=[]
+    for row in c.fetchall():
+        mg,tid,zh,en,vol,bp,sp,bv,sv=row
+        ap=((bp or 0)+(sp or 0))/2 if bp and sp else (bp or sp)
+        r.append({"mg":mg,"id":tid,"z":zh or "","e":en or "","v":vol or 0,"bp":bp,"sp":sp,"ap":ap,"bv":bv or 0,"sv":sv or 0})
+    conn.close(); return r
+
+
 CATEGORIES = ["所有类别", "无法制造获得", "蓝图制造(T1)", "发明制造(T2)", "势力蓝图制造", "反应", "行星开发"]
-BCOLS = [("图标",36,"i"),("ID",60,"id"),("中文名",160,"z"),("English",180,"e"),
+BCOLS = [("图标",36,"i"),("中文名",160,"z"),("English",180,"e"),
          ("买价",100,"bp"),("卖价",100,"sp"),("均价",85,"ap"),("体积",70,"v")]
 MCOLS = [("成本",105,"mc"),("收入",105,"mr"),("产能/天",65,"mh"),("日利润",100,"mdp"),
-         ("状态",110,"ms"),("评分",65,"mfs"),("利润率%",70,"mm")]
-TCOLS = [("花费",105,"tc"),("收入",105,"tr"),("评分",65,"ts"),("利润率%",70,"tm"),("每方利率",90,"tpm")]
+         ("状态",110,"ms"),("收益",75,"_tag"),("利润率%",70,"mm")]
+TCOLS = [("花费",105,"tc"),("收入",105,"tr"),("收益",75,"_tag"),("利润率%",70,"tm"),("每方利率",90,"tpm")]
 
 
 class MfgDlg(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, current: dict | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("制造评分设置")
         self.setMinimumWidth(260)
         self.setStyleSheet(f"background:{BG_DARK};color:{TEXT_PRIMARY};")
         ss = f"background:{BG_DARK};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:2px 6px;"
         l = QFormLayout(self); l.setSpacing(4)
-        self.h = QComboBox(); self.h.addItems(REGIONS); self.h.setStyleSheet(ss); l.addRow("中心:", self.h)
+        cur = current or {}
+        self.h = QComboBox(); self.h.addItems(REGIONS); self.h.setStyleSheet(ss)
+        self.h.setCurrentText(cur.get("hub", "Jita")); l.addRow("中心:", self.h)
         self.c = QComboBox(); self.c.setStyleSheet(ss)
-        cs = get_character_list(); self.c.addItems(cs if cs else ["main"]); l.addRow("人物:", self.c)
-        self.t = QDoubleSpinBox(); self.t.setRange(0,100); self.t.setSuffix(" %"); self.t.setStyleSheet(ss); l.addRow("设施税:", self.t)
+        cs = get_character_list(); self.c.addItems(cs if cs else ["main"])
+        self.c.setCurrentText(cur.get("char", "main") if cur.get("char") in cs else "main")
+        l.addRow("人物:", self.c)
+        self.t = QDoubleSpinBox(); self.t.setRange(0,100); self.t.setSuffix(" %"); self.t.setStyleSheet(ss)
+        self.t.setValue(cur.get("tax", 0)); l.addRow("设施税:", self.t)
         b = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         b.accepted.connect(self.accept); b.rejected.connect(self.reject); l.addRow(b)
     def get(self):
@@ -47,19 +105,28 @@ class MfgDlg(QDialog):
 
 
 class TradeDlg(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, current: dict | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("贸易评分设置")
         self.setMinimumWidth(260)
         self.setStyleSheet(f"background:{BG_DARK};color:{TEXT_PRIMARY};")
         ss = f"background:{BG_DARK};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:2px 6px;"
         l = QFormLayout(self); l.setSpacing(4)
-        self.bh = QComboBox(); self.bh.addItems(REGIONS); self.bh.setStyleSheet(ss); l.addRow("买入:", self.bh)
-        self.sh = QComboBox(); self.sh.addItems(REGIONS); self.sh.setStyleSheet(ss); l.addRow("卖出:", self.sh)
-        self.bs = QComboBox(); self.bs.addItems(["卖单","买单"]); self.bs.setStyleSheet(ss); l.addRow("买价:", self.bs)
-        self.ss = QComboBox(); self.ss.addItems(["卖单","买单"]); self.ss.setStyleSheet(ss); l.addRow("卖价:", self.ss)
+        cur = current or {}
+        self.bh = QComboBox(); self.bh.addItems(REGIONS); self.bh.setStyleSheet(ss)
+        self.bh.setCurrentText(cur.get("bh", "Jita")); l.addRow("买入:", self.bh)
+        self.sh = QComboBox(); self.sh.addItems(REGIONS); self.sh.setStyleSheet(ss)
+        self.sh.setCurrentText(cur.get("sh", "Jita")); l.addRow("卖出:", self.sh)
+        self.bs = QComboBox(); self.bs.addItems(["卖单","买单"]); self.bs.setStyleSheet(ss)
+        self.bs.setCurrentText("卖单" if cur.get("bs", "sell") == "sell" else "买单")
+        l.addRow("买价:", self.bs)
+        self.ss = QComboBox(); self.ss.addItems(["卖单","买单"]); self.ss.setStyleSheet(ss)
+        self.ss.setCurrentText("卖单" if cur.get("ss", "sell") == "sell" else "买单")
+        l.addRow("卖价:", self.ss)
         self.c = QComboBox(); self.c.setStyleSheet(ss)
-        cs = get_character_list(); self.c.addItems(cs if cs else ["main"]); l.addRow("人物:", self.c)
+        cs = get_character_list(); self.c.addItems(cs if cs else ["main"])
+        self.c.setCurrentText(cur.get("char", "main") if cur.get("char") in cs else "main")
+        l.addRow("人物:", self.c)
         b = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         b.accepted.connect(self.accept); b.rejected.connect(self.reject); l.addRow(b)
     def get(self):
@@ -80,11 +147,17 @@ class MatDlg(QDialog):
         c.execute("SELECT zh_name,en_name FROM item WHERE type_id=?", (tid,))
         r = c.fetchone(); nm = (r[0]or r[1]or str(tid)) if r else str(tid)
         l.addWidget(QLabel(f"制造材料: {nm}", styleSheet=f"color:{PRIMARY};font-size:13px;font-weight:bold;"))
+        c.execute("SELECT blueprint_type_id FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' ORDER BY blueprint_type_id LIMIT 1", (tid,))
+        bp_row = c.fetchone()
+        if not bp_row:
+            l.addWidget(QLabel("此物品无制造蓝图", styleSheet=f"color:{ACCENT_RED};"))
+            b = QPushButton("关闭"); b.clicked.connect(self.accept); l.addWidget(b)
+            conn.close(); return
+        bp_id = bp_row[0]
         c.execute("""SELECT bm.material_type_id,bm.quantity,i.zh_name,i.en_name,mp.sell_price
             FROM blueprint_materials bm JOIN item i ON bm.material_type_id=i.type_id
             LEFT JOIN market_prices mp ON mp.type_id=i.type_id AND mp.fetch_time=(SELECT MAX(fetch_time) FROM market_prices WHERE type_id=i.type_id)
-            WHERE bm.blueprint_type_id IN (SELECT blueprint_type_id FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing')
-            AND bm.activity='manufacturing' ORDER BY i.zh_name""", (tid,))
+            WHERE bm.blueprint_type_id=? AND bm.activity='manufacturing' ORDER BY i.zh_name""", (bp_id,))
         mats = c.fetchall(); conn.close()
         lst = QListWidget()
         lst.setStyleSheet(f"background:{BG_SURFACE};border:1px solid {BORDER};border-radius:3px;")
@@ -111,13 +184,13 @@ class AModel(QAbstractTableModel):
         if role==Qt.ItemDataRole.DisplayRole:
             if k in ("bp","sp","ap","mc","mr","tc","tr"):
                 return f"{v:,.2f}" if isinstance(v,(int,float)) and v is not None else DASH
-            if k in ("mfs","ts"):
-                return f"{float(v):.0f}" if v and float(v)>0 else DASH
-            if k in ("mm","tm","tpm","mdp"):
+            if k in ("_tag",):
+                return v or DASH
+            if k in ("mm","tm","tpm","mdp","_tag_sort"):
                 return f"{float(v):,.1f}" if v is not None else DASH
             if k=="mh": return f"{v:.2f}" if isinstance(v,(int,float)) and v else DASH
             if k=="ms":
-                s={"no_blueprint":"无蓝图","no_price":"无价格","no_materials":"无材料"}
+                s={"no_blueprint":"无蓝图","no_price":"无价格","no_materials":"无材料","no_depth":"市场无买单"}
                 return s.get(v,v) or DASH
             if k in ("z","e"): return v or ""
             if k=="v": return f"{v:,.2f}" if v else DASH
@@ -132,17 +205,13 @@ class AModel(QAbstractTableModel):
         if role==Qt.ItemDataRole.TextAlignmentRole:
             if k not in ("i","z","e","ms"): return Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter
         if role==Qt.ItemDataRole.ForegroundRole:
-            if k=="mfs":
-                vf=float(r.get(k,0)or 0)
-                if vf>=80: return QColor(ACCENT_GREEN)
-                elif vf>=50: return QColor("#61afef")
-                elif vf>=20: return QColor("#e5c07b")
-                elif vf>0: return QColor(ACCENT_RED)
-            if k=="ts":
-                vf=float(r.get(k,0)or 0)
-                if vf>=60: return QColor(ACCENT_GREEN)
-                elif vf>=30: return QColor("#61afef")
-                elif vf>0: return QColor("#e5c07b")
+            if k=="_tag":
+                tag=str(v or "")
+                if tag.endswith("S"): return QColor(ACCENT_GREEN)
+                if tag.endswith("A"): return QColor("#61afef")
+                if tag.endswith("B"): return QColor("#e5c07b")
+                if tag.endswith("C"): return QColor(ACCENT_ORANGE)
+                if tag.endswith("D") and not tag.startswith("✗"): return QColor(ACCENT_RED)
             if k in ("mm","tm"):
                 vf=float(r.get(k,0)or 0)
                 if vf>0: return QColor(ACCENT_GREEN)
@@ -156,26 +225,17 @@ class AModel(QAbstractTableModel):
 
 class Proxy(QSortFilterProxyModel):
     def lessThan(self,l,r):
+        lv=str(l.data()or"");rv=str(r.data()or"")
+        # 收益列按等级排序: S > A > B > C > D > ✗
+        _rank={"S":5,"A":4,"B":3,"C":2,"D":1,"✗":0}
+        lr=next((_rank[k] for k in _rank if k in lv),-1)
+        rr=next((_rank[k] for k in _rank if k in rv),-1)
+        if lr>=0 and rr>=0: return lr<rr
         try:
-            ln=float(str(l.data()or"0").replace(",","").replace(DASH,"0"))
-            rn=float(str(r.data()or"0").replace(",","").replace(DASH,"0"))
+            ln=float(lv.replace(",","").replace(DASH,"0"))
+            rn=float(rv.replace(",","").replace(DASH,"0"))
             return ln<rn
-        except: return str(l.data()or"")<str(r.data()or"")
-
-
-_SQL = "SELECT i.market_group_id,i.type_id,i.zh_name,i.en_name,i.volume,mp.buy_price,mp.sell_price,mp.buy_volume,mp.sell_volume FROM item i LEFT JOIN market_prices mp ON mp.type_id=i.type_id AND mp.fetch_time=(SELECT MAX(fetch_time) FROM market_prices WHERE type_id=i.type_id) "
-
-
-def _fetch(sql,params=None):
-    conn=sqlite3.connect(DB_PATH);c=conn.cursor()
-    if params: c.execute(sql,params)
-    else: c.execute(sql)
-    r=[]
-    for row in c.fetchall():
-        mg,tid,zh,en,vol,bp,sp,bv,sv=row
-        ap=((bp or 0)+(sp or 0))/2 if bp and sp else (bp or sp)
-        r.append({"mg":mg,"id":tid,"z":zh or "","e":en or "","v":vol or 0,"bp":bp,"sp":sp,"ap":ap,"bv":bv or 0,"sv":sv or 0})
-    conn.close(); return r
+        except: return lv<rv
 
 
 class TreeW(QThread):
@@ -188,12 +248,13 @@ class TreeW(QThread):
 
 class ItemsW(QThread):
     done=Signal(list)
-    def __init__(self, ids=None, parent=None): super().__init__(parent); self._ids=ids
+    def __init__(self, ids=None, rid: int = 0, parent=None):
+        super().__init__(parent); self._ids=ids; self._rid=rid
     def run(self):
         if self._ids:
             ph=",".join("?"*len(self._ids))
-            r=_fetch(_SQL+f"WHERE i.market_group_id IN ({ph}) ORDER BY i.zh_name LIMIT 2000",self._ids)
-        else: r=_fetch(_SQL+"ORDER BY i.zh_name LIMIT 2000")
+            r=_fetch(_SQL+f"WHERE i.market_group_id IN ({ph}) ORDER BY i.zh_name LIMIT 2000", self._rid, self._ids)
+        else: r=_fetch(_SQL+"ORDER BY i.zh_name LIMIT 2000", self._rid)
         self.done.emit(r)
 
 
@@ -202,44 +263,124 @@ class ScoreW(QThread):
     def __init__(self,items,is_mfg,cfg,parent=None): super().__init__(parent);self._items=items;self._mfg=is_mfg;self._cfg=cfg
     def run(self):
         char=get_character(self._cfg.get("char","")) if self._cfg.get("char") else None
+        from services.scoring import get_price as _gp
         total=len(self._items)
+        conn=sqlite3.connect(DB_PATH)
         for i,row in enumerate(self._items):
             tid=row["id"]
             if self._mfg:
-                k=_ck(tid,"mfg",self._cfg["hub"],self._cfg["char"]);r=_cget(k)
+                hub=self._cfg["hub"]
+                k=_ck(tid,"mfg",hub,self._cfg["char"]);r=_cget(k)
                 if not r:
-                    r=calc_manufacturing_score(tid,char or {},self._cfg["hub"],self._cfg["hub"],self._cfg.get("tax",0))
+                    r=calc_manufacturing_score(tid,char or {},hub,hub,self._cfg.get("tax",0))
                     _cset(k,r)
                 h=r.get("hours_per_run",1) or 1
                 runs_per_day = 24/h
+                st=r.get("status","")
+                # 市场深度检查：卖出中心的买单量
+                depth=conn.execute("SELECT buy_volume FROM market_prices WHERE type_id=? AND region_id=? LIMIT 1",(tid,TRADE_HUB_IDS.get(hub,10000002))).fetchone()
+                bvol=depth[0] if depth else 0
+                prod_qty=r.get("breakdown",{}).get("isk_per_hour")or 1  # 不用这个
+                profit_per_run=r.get("profit_per_run",0)or 0
+                daily_max=bvol  # 市场能吃掉多少
+                daily_out=min(runs_per_day,daily_max)
+                daily_profit=profit_per_run*daily_out
+                tag=_fmt_tag(daily_profit,st or (bvol==0 and "no_depth"))
                 row.update({"mc":r.get("cost_per_unit"),"mr":r.get("revenue_per_unit"),
-                    "mh":runs_per_day,"ms":r.get("status",""),"mfs":r.get("score"),
-                    "mm":r.get("margin_pct"),"mdp":(r.get("profit_per_run",0) or 0)*runs_per_day})
+                    "mh":runs_per_day,"ms":st,"_tag":tag,
+                    "mm":r.get("margin_pct"),"mdp":daily_profit,
+                    "bp":_gp(tid,"buy",hub),"sp":_gp(tid,"sell",hub)})
             else:
-                k=_ck(tid,"trade",self._cfg["bh"]+self._cfg["sh"],self._cfg["char"]);r=_cget(k)
+                bh=self._cfg["bh"];sh=self._cfg["sh"]
+                k=_ck(tid,"trade",bh+sh,self._cfg["char"]);r=_cget(k)
                 if not r:
-                    r=calc_trade_score(tid,self._cfg["bh"],self._cfg["sh"],self._cfg["bs"],self._cfg["ss"],char or {})
+                    r=calc_trade_score(tid,bh,sh,self._cfg["bs"],self._cfg["ss"],char or {})
                     _cset(k,r)
-                row.update({"tc":r.get("buy_cost"),"tr":r.get("sell_revenue"),"ts":r.get("score"),"tm":r.get("margin_pct"),"tpm":r.get("profit_per_m3")})
-            if i%50==0: self.progress.emit(i,total)
+                st=r.get("status","")
+                depth=conn.execute("SELECT buy_volume FROM market_prices WHERE type_id=? AND region_id=? LIMIT 1",(tid,TRADE_HUB_IDS.get(sh,10000002))).fetchone()
+                bvol=depth[0] if depth else 0
+                gp=r.get("gross_profit",0)or 0
+                sellable=min(bvol,5000)  # 单趟最多5000个
+                daily_profit=gp*sellable
+                tag=_fmt_tag(daily_profit,st or (bvol==0 and "no_depth"))
+                row.update({"tc":r.get("buy_cost"),"tr":r.get("sell_revenue"),"_tag":tag,"tm":r.get("margin_pct"),"tpm":r.get("profit_per_m3"),
+                    "bp":_gp(tid,self._cfg["bs"],bh),"sp":_gp(tid,self._cfg["ss"],sh)})
+            if (i+1)%50==0 or i==total-1: self.progress.emit(i+1,total)
+        conn.close()
         self.done.emit(self._items)
+
+
+def _fmt_tag(daily_profit: float, veto: str = "") -> str:
+    """将日均利润格式化为等级标签"""
+    if veto:
+        return "✗"
+    if daily_profit >= 50_000_000:
+        return f"{daily_profit/100_000_000:.1f}亿 S"
+    if daily_profit >= 10_000_000:
+        return f"{daily_profit/10_000:.0f}万 A"
+    if daily_profit >= 1_000_000:
+        return f"{daily_profit/10_000:.0f}万 B"
+    if daily_profit >= 100_000:
+        return f"{daily_profit/10_000:.0f}万 C"
+    return f"{daily_profit/10_000:.0f}万 D"
+
+
+class SearchItemsW(QThread):
+    """按名称/ID 搜索物品"""
+    done = Signal(list)
+
+    def __init__(self, query: str, rid: int, parent=None):
+        super().__init__(parent)
+        self._query = query
+        self._rid = rid
+
+    def run(self):
+        q = self._query.strip()
+        if not q:
+            self.done.emit([])
+            return
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            c = conn.cursor()
+            rid = self._rid
+            like = f"%{q}%"
+            if q.isdigit():
+                c.execute(_SQL + "WHERE (i.type_id=? OR i.zh_name LIKE ? OR i.en_name LIKE ?) ORDER BY i.zh_name LIMIT 500", (rid, rid, int(q), like, like))
+            else:
+                c.execute(_SQL + "WHERE (i.zh_name LIKE ? OR i.en_name LIKE ?) ORDER BY CASE WHEN i.en_name LIKE ? THEN 0 WHEN i.zh_name LIKE ? THEN 1 ELSE 2 END, i.zh_name LIMIT 500", (rid, rid, like, like, f"{q}%", f"{q}%"))
+            r = []
+            for row in c.fetchall():
+                mg,tid,zh,en,vol,bp,sp,bv,sv=row
+                ap=((bp or 0)+(sp or 0))/2 if bp and sp else (bp or sp)
+                r.append({"mg":mg,"id":tid,"z":zh or "","e":en or "","v":vol or 0,"bp":bp,"sp":sp,"ap":ap,"bv":bv or 0,"sv":sv or 0})
+            self.done.emit(r)
+        finally:
+            conn.close()
 
 
 class AllItemsDialog(QDialog):
     def __init__(self,parent=None):
-        super().__init__(parent)
+        super().__init__()  # 无 parent，完全独立窗口
         self.setWindowTitle("全物品查询");self.resize(1100,680);self.setMinimumSize(800,400)
+        # 独立窗口 + 任务栏入口，断开与主窗口的关联
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint
+                            | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowMinMaxButtonsHint
+                            | Qt.WindowType.WindowCloseButtonHint)
         self._data=[];self._filt=[];self._bp_cached=None
         self._mfg={"hub":"Jita","char":"main","tax":0}
         self._trade={"bh":"Amarr","sh":"Jita","bs":"sell","ss":"sell","char":"main"}
-        self._show_m=False;self._show_t=False;self._wp=None;self._tw=None;self._iw=None
+        self._show_m=False;self._show_t=False;self._wp=None;self._tw=None;self._iw=None;self._sw=None
+        self._search_query = ""
+        self._debounce = QTimer()
+        self._debounce.setSingleShot(True)
+        self._debounce.timeout.connect(self._do_search)
         self._load_settings()
         self._build_ui()
         self._tw = TreeW(self); self._tw.done.connect(self._ot); self._tw.start()
-        self._iw = ItemsW(parent=self); self._iw.done.connect(self._od); self._iw.start()
+        self._iw = ItemsW(rid=JITA_RID, parent=self); self._iw.done.connect(self._od); self._iw.start()
 
     def closeEvent(self, ev):
-        for t in (self._tw, self._iw, self._wp):
+        for t in (self._tw, self._iw, self._wp, self._sw):
             if t and t.isRunning():
                 t.quit(); t.wait(2000)
         super().closeEvent(ev)
@@ -251,19 +392,22 @@ class AllItemsDialog(QDialog):
             b.clicked.connect(cb);return b
         tb=QWidget();tb.setStyleSheet(f"background:{BG_SURFACE};border-bottom:1px solid {BORDER};")
         bx=QHBoxLayout(tb);bx.setContentsMargins(4,2,4,2);bx.setSpacing(3)
-        bx.addWidget(QLabel("来源:",styleSheet=f"color:{TEXT_SECONDARY};font-size:11px;"))
-        self._hub=QComboBox();self._hub.addItems(REGIONS)
-        self._hub.setStyleSheet(f"background:{BG_DARK};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:1px 4px;font-size:11px;")
-        bx.addWidget(self._hub)
         bx.addWidget(_bt("制造评分",self._on_mfg));bx.addWidget(_bt("设置",self._smfg,30))
         bx.addWidget(_bt("贸易评分",self._on_trade));bx.addWidget(_bt("设置",self._strade,30))
         bx.addStretch()
         self._pin=QCheckBox("置顶")
         self._pin.setStyleSheet(f"color:{TEXT_PRIMARY};font-size:11px;")
-        self._pin.toggled.connect(lambda c:(self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,c),self.show()))
+        self._pin.toggled.connect(self._on_pin_toggled)
         bx.addWidget(self._pin);l.addWidget(tb)
         fb=QWidget();fb.setStyleSheet(f"background:{BG_DARK};border-bottom:1px solid {BORDER};")
         fx=QHBoxLayout(fb);fx.setContentsMargins(4,1,4,1);fx.setSpacing(3)
+        fx.addWidget(QLabel("搜索:",styleSheet=f"color:{TEXT_SECONDARY};font-size:11px;"))
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("名称/ID...")
+        self._search_input.setClearButtonEnabled(True)
+        self._search_input.setStyleSheet(f"background:{BG_SURFACE};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:1px 4px;font-size:11px;")
+        self._search_input.textChanged.connect(self._on_search_text)
+        fx.addWidget(self._search_input)
         fx.addWidget(QLabel("类别:",styleSheet=f"color:{TEXT_SECONDARY};font-size:11px;"))
         self._cat=QComboBox();self._cat.addItems(CATEGORIES)
         self._cat.setStyleSheet(f"background:{BG_SURFACE};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:1px 4px;font-size:11px;")
@@ -308,8 +452,30 @@ class AllItemsDialog(QDialog):
             for i in range(n.childCount()): c(n.child(i))
         c(item)
         if ids:
+            self._search_input.clear()
             self._data = []
-            self._iw=ItemsW(list(ids),parent=self);self._iw.done.connect(self._od);self._iw.start()
+            self._iw=ItemsW(list(ids), rid=JITA_RID, parent=self);self._iw.done.connect(self._od);self._iw.start()
+
+    # ── 搜索 ──
+
+    def _on_search_text(self, text):
+        self._search_query = text.strip()
+        self._debounce.start(200)
+
+    def _do_search(self):
+        q = self._search_query
+        if not q:
+            return
+        if self._sw and self._sw.isRunning():
+            self._sw.quit(); self._sw.wait(1000)
+        self._st.setText("搜索中...")
+        self._sw = SearchItemsW(q, JITA_RID, self)
+        self._sw.done.connect(self._on_search_done)
+        self._sw.start()
+
+    def _on_search_done(self, rows):
+        self._data = rows
+        self._apply()
 
     def _apply(self):
         data = self._data
@@ -365,7 +531,7 @@ class AllItemsDialog(QDialog):
         self._upd()
 
     def _load_settings(self):
-        import json, os
+        import os
         p = os.path.join(os.path.dirname(DB_PATH), '..', 'data', 'score_settings.json')
         if os.path.exists(p):
             try:
@@ -375,22 +541,34 @@ class AllItemsDialog(QDialog):
             except: pass
 
     def _save_settings(self):
-        import json, os
+        import os
         p = os.path.join(os.path.dirname(DB_PATH), '..', 'data', 'score_settings.json')
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, 'w', encoding='utf-8') as f:
             json.dump({"mfg": self._mfg, "trade": self._trade}, f, ensure_ascii=False, indent=2)
 
     def _upd(self):
+        vbar = self._tv.verticalScrollBar()
+        scroll_pos = vbar.value() if vbar else 0
         if self._show_m:
-            cols=BCOLS[:];cols.extend(MCOLS);self._md.set_cols(cols);self._setw(cols)
+            cols=list(BCOLS)
+            cols[4]=(f"买价（{self._mfg['hub']}）",100,"bp")
+            cols[5]=(f"卖价（{self._mfg['hub']}）",100,"sp")
+            cols.extend(MCOLS);self._md.set_cols(cols);self._setw(cols)
             if self._filt: self._calc(True)
             else: self._st.setText("无数据")
         elif self._show_t:
-            cols=BCOLS[:];cols.extend(TCOLS);self._md.set_cols(cols);self._setw(cols)
+            cols=list(BCOLS)
+            ptn={"buy":"买单","sell":"卖单"}
+            cols[4]=(f"买价（{self._trade['bh']}{ptn.get(self._trade['bs'],'')}）",100,"bp")
+            cols[5]=(f"卖价（{self._trade['sh']}{ptn.get(self._trade['ss'],'')}）",100,"sp")
+            cols.extend(TCOLS);self._md.set_cols(cols);self._setw(cols)
             if self._filt: self._calc(False)
             else: self._st.setText("无数据")
-        else: self._md.set_cols(BCOLS);self._setw(BCOLS);self._md.set_rows(self._filt);self._st.setText(f"共 {len(self._filt)} 条")
+        else:
+            self._md.set_cols(BCOLS);self._setw(BCOLS);self._md.set_rows(self._filt);self._st.setText(f"共 {len(self._filt)} 条")
+            if scroll_pos and vbar:
+                QTimer.singleShot(0, lambda: vbar.setValue(min(scroll_pos, vbar.maximum())))
 
     def _calc(self,is_mfg):
         self._pr.setVisible(True);self._pr.setRange(0,len(self._filt));self._st.setText("计算评分中...")
@@ -406,18 +584,49 @@ class AllItemsDialog(QDialog):
     def _on_trade(self): self._show_t=True;self._show_m=False;self._upd()
 
     def _smfg(self):
-        d=MfgDlg(self)
+        d=MfgDlg(self._mfg, self)
         if d.exec(): self._mfg=d.get();self._save_settings()
-        if self._show_m and self._filt: self._calc(True)
+        if self._show_m: self._upd()
 
     def _strade(self):
-        d=TradeDlg(self)
+        d=TradeDlg(self._trade, self)
         if d.exec(): self._trade=d.get();self._save_settings()
-        if self._show_t and self._filt: self._calc(False)
+        if self._show_t: self._upd()
+
+    def _on_pin_toggled(self, checked):
+        if os.name == 'nt':
+            import ctypes
+            import ctypes.wintypes
+            hwnd = int(self.winId())
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            HWND_TOPMOST = -1
+            HWND_NOTOPMOST = -2
+            swp = ctypes.windll.user32.SetWindowPos
+            swp.argtypes = [ctypes.wintypes.HWND, ctypes.wintypes.HWND,
+                            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+            swp.restype = ctypes.wintypes.BOOL
+            swp(hwnd, HWND_TOPMOST if checked else HWND_NOTOPMOST,
+                0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+        else:
+            flags = self.windowFlags()
+            if checked:
+                self.setWindowFlags(flags | Qt.WindowType.WindowStaysOnTopHint)
+            else:
+                self.setWindowFlags(flags & ~Qt.WindowType.WindowStaysOnTopHint)
+            self.setVisible(True)
 
     def _clk(self,idx):
-        t=idx.data(Qt.ItemDataRole.DisplayRole)
-        if t and t!=DASH: QApplication.instance().clipboard().setText(str(t))
+        row = idx.data(Qt.ItemDataRole.UserRole)
+        if not row:
+            return
+        cols = self._md._cols
+        col_idx = idx.column()
+        if col_idx < len(cols):
+            _, _, key = cols[col_idx]
+            val = row.get(key)
+            if val is not None and str(val).strip() and str(val) != DASH:
+                QApplication.instance().clipboard().setText(str(val))
 
     def _dbl(self,idx):
         r=idx.data(Qt.ItemDataRole.UserRole)
@@ -451,8 +660,53 @@ class AllItemsDialog(QDialog):
     def _ds(self,r,is_mfg):
         if is_mfg:
             b=r.get("breakdown",{});st=r.get("status","")
-            if st: return f"状态: {st}"
-            return (f"成本/个: {r.get('cost_per_unit',0):,.2f} ISK\n收入/个: {r.get('revenue_per_unit',0):,.2f} ISK\n单次利润: {r.get('profit_per_run',0):,.2f} ISK\n利润率: {r.get('margin_pct',0):.2f}%\n时间: {r.get('hours_per_run',0):.2f}h\n产能: {1/r.get('hours_per_run',1):.2f}个/h\n\n评分:\n利润率分: {b.get('profit_score',0):.1f}/40\n市场需求分: {b.get('volume_score',0):.1f}/30\n效率分: {b.get('efficiency_score',0):.1f}/30\nISK/h: {b.get('isk_per_hour',0):,.0f}\n\n总分: {r.get('score',0):.1f}/100")
+            if st:
+                tips={"no_blueprint":"此物品没有制造蓝图","no_price":"查不到价格数据，请在主界面更新价格","no_materials":"蓝图无材料数据","no_depth":"市场没有买单"}
+                return f"{tips.get(st,st)}"
+            c=r.get("cost_per_unit",0)or 0
+            rev=r.get("revenue_per_unit",0)or 0
+            prof=r.get("profit_per_run",0)or 0
+            hr=r.get("hours_per_run",0)or 1
+            mats=r.get("materials",[])or[]
+            mat_lines="\n".join(f"  {m['name']} x{m['qty']:,} @ {m['unit_price']:,.2f} = {m['subtotal']:,.0f}" for m in mats)
+            return (
+                f"每批利润核算\n"
+                f"{'─'*24}\n"
+                f"材料明细:\n{mat_lines}\n"
+                f"材料合计: {sum(m['subtotal'] for m in mats):,.0f} ISK\n\n"
+                f"成本/个: {c:,.2f} ISK\n"
+                f"收入/个: {rev:,.2f} ISK\n"
+                f"单批利润: {prof:,.2f} ISK\n"
+                f"利润率: {r.get('margin_pct',0):.2f}%\n"
+                f"制造时间: {hr:.2f}h\n"
+                f"产能: {24/hr:.2f}批/天\n\n"
+                f"费用明细\n"
+                f"经纪人(挂单): {b.get('broker_rate',0)*rev/100:.0f} ISK  ← {b.get('broker_rate',0):.3f}%\n"
+                f"经纪人(改单): {b.get('broker_rate',0)*rev/100*(1-b.get('relist_discount',50)/100):.0f} ISK  ← 改单折扣{b.get('relist_discount',50):.0f}%\n"
+                f"销售税: {b.get('sales_tax_rate',0)*rev/100:.0f} ISK  ← {b.get('sales_tax_rate',0):.2f}%\n"
+                f"{'─'*24}\n"
+                f"收益等级: {r.get('_tag','?')}\n"
+                f"日利润: {r.get('mdp',0):,.0f} ISK/天"
+            )
         st=r.get("status","")
         if st: return f"状态: {st}"
-        return (f"买入: {r.get('buy_cost',0):,.2f} ISK\n卖出: {r.get('sell_revenue',0):,.2f} ISK\n毛利: {r.get('gross_profit',0):,.2f} ISK\n利润率: {r.get('margin_pct',0):.2f}%\n每方利率: {r.get('profit_per_m3',0):.2f} ISK/m3\n\n总分: {r.get('score',0):.1f}/100")
+        tag=r.get("_tag","?")or"?"
+        bc=r.get("buy_cost",0)or 0
+        sr=r.get("sell_revenue",0)or 0
+        gp=r.get("gross_profit",0)or 0
+        mp=r.get("margin_pct",0)or 0
+        pm=r.get("profit_per_m3",0)or 0
+        return (
+            f"单件贸易核算\n"
+            f"{'─'*24}\n"
+            f"买入: {bc:,.2f} ISK\n"
+            f"  (含挂单经纪人费 + 改单费)\n"
+            f"卖出: {sr:,.2f} ISK\n"
+            f"  (扣挂单经纪人费 + 改单费 + 销售税)\n"
+            f"毛利: {gp:,.2f} ISK\n"
+            f"利润率: {mp:.2f}%\n"
+            f"每方利率: {pm:.2f} ISK/m³\n"
+            f"{'─'*24}\n"
+            f"收益等级: {tag}\n"
+            f"日利润: 查看收益列(×市场深度)"
+        )

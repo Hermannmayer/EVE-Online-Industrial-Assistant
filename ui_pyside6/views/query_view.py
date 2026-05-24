@@ -1,32 +1,53 @@
 """
 物品查询页面 — QTableView + 右键菜单 + 订单面板
 """
-import sqlite3
+import asyncio
 import json
 import os
+import sqlite3
 import time as _time
 from pathlib import Path
-from typing import Optional
 
 import aiohttp
-import asyncio
-
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QTableView, QHeaderView, QSplitter, QFrame, QListWidget, QListWidgetItem,
-    QProgressBar, QApplication, QAbstractItemView, QToolButton, QSizePolicy,
-    QMenu, QDialog,
-)
 from PySide6.QtCore import (
-    Qt, QAbstractTableModel, QModelIndex, QThread, Signal, QTimer,
-    QSize, QEvent, QPoint, QRect,
+    QAbstractTableModel,
+    QEvent,
+    QModelIndex,
+    QPoint,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
 )
-from PySide6.QtGui import QAction, QColor, QBrush, QFont, QPixmap, QIcon
+from PySide6.QtGui import QAction, QColor, QFont, QPixmap
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QProgressBar,
+    QPushButton,
+    QTableView,
+    QVBoxLayout,
+    QWidget,
+)
 
 from core.paths import DB_PATH, ICON_DIR, search_history_file
 from ui_pyside6.theme import (
-    BG_DARK, BG_SURFACE, BG_SURFACE_LIGHT, PRIMARY,
-    TEXT_PRIMARY, TEXT_SECONDARY, GREEN, RED, YELLOW, BORDER,
+    BG_DARK,
+    BG_SURFACE,
+    BG_SURFACE_LIGHT,
+    BORDER,
+    GREEN,
+    PRIMARY,
+    RED,
+    TEXT_PRIMARY,
+    TEXT_SECONDARY,
 )
 
 ICON_SIZE = 32
@@ -44,7 +65,6 @@ _station_name_cache: dict[int, str] = {}
 
 _COLUMNS = [
     ("图标", 50),
-    ("ID", 60),
     ("中文名", 140),
     ("英文名", 170),
     ("类别", 100),
@@ -54,7 +74,7 @@ _COLUMNS = [
     ("体积 m³", 80),
 ]
 
-_SORT_KEYS = [None, "type_id", "zh", "en", "group", "buy_val", "sell_val", "avg_price_val", "vol_val"]
+_SORT_KEYS = [None, "zh", "en", "group", "buy_val", "sell_val", "avg_price_val", "vol_val"]
 
 
 class QueryTableModel(QAbstractTableModel):
@@ -101,15 +121,15 @@ class QueryTableModel(QAbstractTableModel):
             return None
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
-            if col in (1, 5, 6, 7, 8):
+            if col in (1, 4, 5, 6, 7):
                 return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 
         elif role == Qt.ItemDataRole.ForegroundRole:
-            if col == 5:
+            if col == 4:
                 return QColor(GREEN) if row.get("buy_str") != "—" else QColor(TEXT_SECONDARY)
-            elif col == 6:
+            elif col == 5:
                 return QColor(RED) if row.get("sell_str") != "—" else QColor(TEXT_SECONDARY)
-            elif col == 7:
+            elif col == 6:
                 return QColor(GREEN) if row.get("avg_price_str") != "—" else QColor(TEXT_SECONDARY)
 
         elif role == Qt.ItemDataRole.BackgroundRole:
@@ -120,7 +140,7 @@ class QueryTableModel(QAbstractTableModel):
             return QColor(BG_DARK)
 
         elif role == Qt.ItemDataRole.FontRole:
-            if col in (1, 5, 6, 7, 8):
+            if col in (1, 4, 5, 6, 7):
                 font = QFont("Consolas", 10)
                 return font
 
@@ -131,20 +151,18 @@ class QueryTableModel(QAbstractTableModel):
 
     def _get_display(self, row: dict, col: int) -> str:
         if col == 1:
-            return str(row.get("type_id", ""))
-        elif col == 2:
             return row.get("zh", "")
-        elif col == 3:
+        elif col == 2:
             return row.get("en", "")
-        elif col == 4:
+        elif col == 3:
             return row.get("group", "")
-        elif col == 5:
+        elif col == 4:
             return row.get("buy_str", "—")
-        elif col == 6:
+        elif col == 5:
             return row.get("sell_str", "—")
-        elif col == 7:
+        elif col == 6:
             return row.get("avg_price_str", "—")
-        elif col == 8:
+        elif col == 7:
             return row.get("vol_str", "—")
         return ""
 
@@ -202,7 +220,7 @@ class SearchWorker(QThread):
             try:
                 rows = self._db_search_basic(self._query)
                 self.finished_signal.emit(rows, True)
-            except Exception as e2:
+            except Exception:
                 self.error_signal.emit(str(e))
 
     def _db_search(self, query: str):
