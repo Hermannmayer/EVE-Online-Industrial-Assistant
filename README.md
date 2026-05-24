@@ -1,6 +1,8 @@
 # EVE 商人助手
 
-> 一个基于 PySide6（Qt for Python）的桌面应用程序，为 EVE Online 玩家提供吉他（Jita）市场价格查询、物品搜索、制造利润计算等功能。
+> 一个基于 PySide6（Qt for Python）的桌面应用程序，为 EVE Online 玩家提供多区域市场价格查询、物品搜索、制造利润计算、贸易评分等功能。
+
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 ---
 
@@ -10,30 +12,35 @@
 EVE-Online-Industrial-Assistant/
 ├── Main.py                         # 入口点，PySide6 App
 ├── build_release.py                # 打包脚本
-├── README.md                       # 本文件
+├── README.md
+├── LICENSE                         # Apache 2.0
 │
 ├── core/
 │   ├── __init__.py
-│   └── paths.py                    # 所有路径集中管理
+│   ├── paths.py                    # 所有路径集中管理
+│   ├── logger.py                   # 日志配置
+│   └── scoring.py                  # 贸易/制造评分引擎
 │
 ├── ui_pyside6/
 │   ├── __init__.py
-│   ├── main_window.py              # 主窗口
+│   ├── main_window.py              # 主窗口 + 弹窗管理
 │   ├── theme.py                    # 主题与样式
 │   └── views/
 │       ├── __init__.py
-│       ├── query_view.py           # 查询页面
+│       ├── query_view.py           # 物品查询页面
 │       ├── industry_view.py        # 工业/制造页面
-│       ├── inventory_view.py       # 仓库页面
-│       ├── trade_view.py           # 贸易页面
-│       └── all_items_view.py       # 全物品查询弹窗
+│       ├── inventory_view.py       # 仓库/库存页面
+│       ├── trade_view.py           # 贸易评分页面
+│       ├── char_settings_view.py   # 角色设置页面
+│       ├── init_wizard.py          # 首次启动向导
+│       └── all_items_view.py       # 全物品浏览弹窗
 │
 ├── services/
-│   ├── data/
-│   │   └── update_progress.json    # 进度文件（运行时）
+│   ├── client.py                   # ESI HTTP 客户端
+│   ├── data/                       # 运行时数据
 │   └── workers/
 │       ├── getitems.py             # 物品数据库初始化（SDE）
-│       ├── getprices.py            # 市场价格拉取（ESI，已优化并发）
+│       ├── getprices.py            # 市场价格拉取（ESI，并发优化）
 │       ├── geticon.py              # 图标缓存下载
 │       └── getblueprints.py        # 蓝图数据
 │
@@ -44,12 +51,11 @@ EVE-Online-Industrial-Assistant/
 │   ├── search_history.json         # 搜索历史
 │   ├── update_progress.json        # 更新进度
 │   ├── window_geometry.json        # 窗口状态
-│   └── caches/icons/              # 图标缓存目录
+│   ├── char_config.json            # 角色配置（多角色）
+│   └── caches/icons/               # 图标缓存目录
 │
-├── documents/
-│   ├── 界面设计.md
-│   ├── cursor_.md
-│   └── EVE_ESI_API.xlsx
+├── .github/
+│   └── pull_request_template.md    # PR 模板
 │
 └── requirements.txt                # Python 依赖
 ```
@@ -119,7 +125,17 @@ python build_release.py
 | 🕐 **搜索历史** | 聚焦搜索框显示最近 20 条记录 |
 | 🚨 **倒挂高亮** | 买单高于卖单时行背景高亮 |
 
-### 二、价格数据（基础设施）
+### 二、贸易评分系统
+
+| 功能 | 说明 |
+|------|------|
+| ⭐ **利润评分** | 基于跨区域价差、日均成交量、税收综合评分 |
+| 🌍 **跨区域价格** | 支持遍历多个区域评估最优贸易路线 |
+| 📈 **每日真实利润** | 考虑税费、经纪费后的净利评估 |
+| 👤 **多角色支持** | 管理多个角色的技能、所在地和资金配置 |
+| 📊 **排序与筛选** | 按评分、利润率、成交量等多维度排序 |
+
+### 三、价格数据（基础设施）
 
 | 功能 | 说明 |
 |------|------|
@@ -129,30 +145,28 @@ python build_release.py
 | 🗄️ **物品数据库** | 从 SDE 拉取中/英文名、类别、体积、图标 |
 | 🖼️ **图标缓存** | 本地缓存物品图片 |
 
-### 三、全局 UI
+### 四、全局 UI
 
 | 功能 | 说明 |
 |------|------|
 | 🎨 **暗色主题** | #1a1a2e 深蓝主题 |
-| 📌 **紧凑导航** | 侧边栏导航（查询、工业、贸易、仓库、全物品） |
+| 📌 **紧凑导航** | 侧边栏导航（查询、贸易、工业、仓库、角色设置） |
 | 📊 **底部状态栏** | 价格更新时间、更新按钮、进度条 |
 
 ---
 
 ## 🔲 待开发功能
 
-### 🔧 第一阶段（高优先级）
-
 | 功能 | 说明 |
 |------|------|
-| 🏭 **估价与精炼** | 输入蓝图/材料，计算制造成本与利润 |
-| 🔧 **制造业** | 制造配方查询、材料需求计算（与估价合并） |
-| 📦 **仓库修复** | 修复仓库页面查询不存在的表，改为查 `item`+`market_prices` |
+| 🔧 **制造利润计算** | 输入蓝图/材料，计算制造成本与利润 |
+| 📦 **仓库管理** | 库存查询、导入与导出 |
 | ⚙️ **设置页** | 数据库管理、代理配置、更新日志 |
+| 📊 **价格走势图** | 历史价格趋势可视化 |
 
-### 📐 已砍掉的功能
+### 已砍掉的功能
 - ❌ 价格监控（需历史数据 + 图表）
-- ❌ 运输分析（需跨区域数据）
+- ❌ 运输分析（已合并入贸易评分）
 - ❌ 行星工业
 - ❌ 忠诚点价值
 
@@ -213,20 +227,18 @@ python build_release.py
 | [tenacity](https://tenacity.readthedocs.io/) | 请求重试 + 指数退避 |
 | [PyInstaller](https://pyinstaller.org/) | 打包为可执行文件 |
 
----
+## 📝 贡献指南
 
-## 📝 代码规范
+欢迎提交 Issue 和 Pull Request！
 
-| 项目 | 规范 |
-|------|------|
-| 文件命名 | 小写蛇形（`query_view.py`） |
-| 类命名 | 大驼峰（`QueryPage`） |
-| 函数/方法 | 小写蛇形（`_do_search`） |
-| 常量 | 全大写蛇形（`CONCURRENCY`） |
-| 异步 | 所有网络/DB 操作使用 `async/await` |
+- 提交 PR 前请确保代码风格符合项目规范
+- PR 描述请使用中文（参见 [PR 模板](.github/pull_request_template.md)）
+- 提交信息请使用中文
 
 ---
 
 ## 📄 许可
 
-本项目仅供学习交流使用。EVE Online 及相关商标属于 CCP Games。数据来源于 ESI 和 SDE，使用请遵守 EVE Online 第三方开发者协议。
+本项目基于 **Apache License 2.0** 协议开源，详情请参见 [LICENSE](LICENSE) 文件。
+
+EVE Online 及相关商标属于 CCP Games。数据来源于 ESI 和 SDE，使用请遵守 EVE Online 第三方开发者协议。
