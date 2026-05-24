@@ -1,32 +1,48 @@
 """
 主窗口 — QMainWindow + 导航树 + 内容区 + 状态栏
 """
-import sys
+import json
 import os
 import sqlite3
-import asyncio
-import json
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTreeWidget, QTreeWidgetItem,
-    QStackedWidget, QStatusBar, QLabel,
-    QHBoxLayout, QVBoxLayout, QSplitter, QPushButton,
-    QMessageBox, QProgressBar, QApplication, QFrame, QMenu,
+    QApplication,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSplitter,
+    QStackedWidget,
+    QStatusBar,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+    QToolButton,
 )
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize
-from PySide6.QtGui import QColor, QPainter, QPixmap, QPainterPath, QIcon, QPen, QFont
 
 from core.paths import (
-    DB_PATH, ICON_DIR, ensure_dirs_exist,
-    progress_file, window_geometry_file,
+    DB_PATH,
+    ensure_dirs_exist,
+    window_geometry_file,
 )
 from ui_pyside6.theme import (
-    get_stylesheet, save_window_geometry, restore_window_geometry,
-    set_geometry_file, BG_SURFACE, BG_SURFACE_LIGHT, PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY,
-    BG_DARK, BORDER, BG_HOVER, TEXT_BRIGHT,
-    apply_theme, current_theme, add_theme_listener, remove_theme_listener,
+    PRIMARY,
+    TEXT_SECONDARY,
+    add_theme_listener,
+    apply_theme,
+    current_theme,
+    get_stylesheet,
+    remove_theme_listener,
+    restore_window_geometry,
+    save_window_geometry,
+    set_geometry_file,
 )
 
 # ── 导航树节点定义 ──
@@ -44,13 +60,14 @@ class PriceUpdateWorker(QThread):
     """后台线程执行价格更新"""
     finished_signal = Signal(bool, str)  # success, message
 
-    def __init__(self, parent=None):
+    def __init__(self, regions: list[str] | None = None, parent=None):
         super().__init__(parent)
+        self._regions = regions
 
     def run(self):
         try:
             from services.workers.getprices import run_price_update
-            run_price_update()
+            run_price_update(self._regions)
             self.finished_signal.emit(True, "价格更新完成")
         except Exception as ex:
             self.finished_signal.emit(False, str(ex))
@@ -60,8 +77,9 @@ class PriceCheckWorker(QThread):
     """后台线程检查价格数据时效"""
     result = Signal(bool, str)  # needs_update, status_text
 
-    def __init__(self, parent=None):
+    def __init__(self, interval_minutes: int = 30, parent=None):
         super().__init__(parent)
+        self._interval = interval_minutes * 60
 
     def run(self):
         try:
@@ -75,7 +93,7 @@ class PriceCheckWorker(QThread):
                 dt = datetime.strptime(utc_str, "%Y-%m-%d %H:%M:%S")
                 now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
                 diff = (now_utc - dt).total_seconds()
-                if diff > 1800:
+                if diff > self._interval:
                     self.result.emit(True, f"价格数据已过期 {diff/60:.0f} 分钟，需要更新")
                 else:
                     self.result.emit(False, f"价格数据 {(diff/60):.0f} 分钟前更新，无需更新")
@@ -115,9 +133,12 @@ class MainWindow(QMainWindow):
         self._update_progress.setFixedHeight(4)
         self._update_progress.setVisible(False)
 
-        self._update_btn = QPushButton("更新价格")
+        self._update_btn = QToolButton()
+        self._update_btn.setText("更新价格")
         self._update_btn.setObjectName("update_btn")
         self._update_btn.setFixedHeight(22)
+        self._update_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self._update_btn.setMenu(self._build_update_menu())
         self._update_btn.clicked.connect(self._trigger_price_update)
 
         self.status_bar.addWidget(self._price_time_label, 1)
@@ -164,6 +185,8 @@ class MainWindow(QMainWindow):
 
         # ── 初始化定时器：价格检查 ──
         self._price_worker: PriceUpdateWorker | None = None
+        self._update_regions: list[str] = ["Jita", "Amarr", "Dodixie", "Rens"]
+        self._update_interval_minutes = self._load_interval()
         self._init_price_check()
 
         # ── 主题切换监听 ──
@@ -175,6 +198,11 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         remove_theme_listener(self._on_theme_changed)
         save_window_geometry(self)
+        # 关闭独立的全物品窗口
+        for w in QApplication.topLevelWidgets():
+            from ui_pyside6.views.all_items_view import AllItemsDialog
+            if isinstance(w, AllItemsDialog) and w.isVisible():
+                w.close()
         # 等待后台线程安全退出
         for attr in ("_check_worker", "_price_worker"):
             worker = getattr(self, attr, None)
@@ -286,10 +314,10 @@ class MainWindow(QMainWindow):
     # ═══════════════════════════════════════
 
     def _register_pages(self):
-        from ui_pyside6.views.query_view import QueryPage
         from ui_pyside6.views.industry_view import IndustryPage
-        from ui_pyside6.views.trade_view import TradePage
         from ui_pyside6.views.inventory_view import InventoryPage
+        from ui_pyside6.views.query_view import QueryPage
+        from ui_pyside6.views.trade_view import TradePage
 
         self._pages["query"] = QueryPage(self)
         self._pages["industry"] = IndustryPage(self)
@@ -304,7 +332,7 @@ class MainWindow(QMainWindow):
     # ═══════════════════════════════════════
 
     def _init_price_check(self):
-        self._check_worker = PriceCheckWorker(self)
+        self._check_worker = PriceCheckWorker(self._update_interval_minutes, self)
         self._check_worker.result.connect(self._on_price_check_done)
         self._check_worker.start()
 
@@ -322,11 +350,47 @@ class MainWindow(QMainWindow):
 
         self._update_progress.setVisible(True)
         self._update_progress.setRange(0, 0)  # indeterminate
-        self._status_label.setText("正在从 ESI 获取市场价格...")
 
-        self._price_worker = PriceUpdateWorker(self)
+        regions = None if set(self._update_regions) == {"Jita", "Amarr", "Dodixie", "Rens"} else self._update_regions
+        if regions:
+            self._status_label.setText(f"正在更新 {', '.join(regions)}...")
+        else:
+            self._status_label.setText("正在从 ESI 获取市场价格...")
+
+        self._price_worker = PriceUpdateWorker(regions, self)
         self._price_worker.finished_signal.connect(self._on_price_update_done)
         self._price_worker.start()
+
+    def _build_update_menu(self) -> QMenu:
+        menu = QMenu(self)
+        menu.setObjectName("sys_menu")
+        self._region_actions = {}
+        for name in ["Jita", "Amarr", "Dodixie", "Rens"]:
+            action = QAction(name, self)
+            action.setCheckable(True)
+            action.setChecked(True)
+            action.triggered.connect(lambda n=name: self._on_region_toggle(n))
+            self._region_actions[name] = action
+            menu.addAction(action)
+        return menu
+
+    def _on_region_toggle(self, name: str):
+        action = self._region_actions.get(name)
+        if not action:
+            return
+        if action.isChecked():
+            if name not in self._update_regions:
+                self._update_regions.append(name)
+        elif name in self._update_regions:
+            self._update_regions.remove(name)
+
+        all_selected = set(self._update_regions) == {"Jita", "Amarr", "Dodixie", "Rens"}
+        if all_selected:
+            self._update_btn.setText("更新价格")
+        elif self._update_regions:
+            self._update_btn.setText(f"更新 {', '.join(self._update_regions)}")
+        else:
+            self._update_btn.setText("更新价格（无选中）")
 
     def _on_price_update_done(self, success: bool, message: str):
         self._update_progress.setVisible(False)
@@ -464,6 +528,11 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
 
+        interval_action = menu.addAction(f"⏱ 价格更新间隔: {self._update_interval_minutes} 分钟")
+        interval_action.triggered.connect(self._show_interval_settings)
+
+        menu.addSeparator()
+
         init_action = menu.addAction("📦 数据初始化")
         init_action.triggered.connect(self._show_init_wizard)
 
@@ -474,9 +543,44 @@ class MainWindow(QMainWindow):
             self._sys_settings_btn.rect().bottomLeft()
         ))
 
+    def _show_interval_settings(self):
+        from PySide6.QtWidgets import QInputDialog
+        value, ok = QInputDialog.getInt(self, "价格更新间隔", "输入分钟数（0=关闭自动更新）:",
+                                        self._update_interval_minutes, 0, 1440, 5)
+        if ok and value != self._update_interval_minutes:
+            self._update_interval_minutes = value
+            self._save_interval(value)
+            self._status_label.setText(f"更新间隔已设为 {value} 分钟")
+
+    def _load_interval(self) -> int:
+        try:
+            import json
+            p = search_history_file().replace("search_history", "settings")
+            if os.path.exists(p):
+                with open(p, encoding="utf-8") as f:
+                    return json.load(f).get("update_interval", 30)
+        except Exception:
+            pass
+        return 30
+
+    def _save_interval(self, minutes: int):
+        try:
+            import json
+            p = search_history_file().replace("search_history", "settings")
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            data = {"update_interval": minutes}
+            if os.path.exists(p):
+                with open(p, encoding="utf-8") as f:
+                    data = json.load(f)
+            data["update_interval"] = minutes
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
     def _check_first_run(self):
         """首次启动检测：如果缺少关键数据，在状态栏提示"""
-        from services.init_check import missing_count, check_items
+        from services.init_check import check_items, missing_count
         items = check_items()
         missing = missing_count()
         if items < 10000:
@@ -491,8 +595,12 @@ class MainWindow(QMainWindow):
 
     def _show_init_wizard(self):
         from ui_pyside6.views.init_wizard import InitWizard
-        wizard = InitWizard(self)
-        wizard.exec()
+        if hasattr(self, '_init_wizard') and self._init_wizard and self._init_wizard.isVisible():
+            self._init_wizard.raise_()
+            return
+        self._init_wizard = InitWizard(self)
+        self._init_wizard.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self._init_wizard.show()
 
     def _show_about(self):
         QMessageBox.about(

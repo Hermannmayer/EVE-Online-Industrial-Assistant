@@ -1,8 +1,9 @@
 """
 数据初始化检测 — 检查各组件是否已就绪
 """
-import sqlite3
 import os
+import sqlite3
+
 from core.paths import database_path
 
 
@@ -67,12 +68,13 @@ def check_implants() -> int:
 
 
 def check_icons() -> tuple[int, int]:
-    """返回 (已缓存数, 总数)"""
+    """返回 (已缓存/免下载数, 总数)"""
     from core.paths import icon_cache_dir
     cache_dir = icon_cache_dir()
     if not os.path.exists(cache_dir):
         return 0, 0
     cached = len([f for f in os.listdir(cache_dir) if f.endswith(".png")])
+    noicon = len([f for f in os.listdir(cache_dir) if f.endswith(".noicon")])
     try:
         conn = sqlite3.connect(database_path())
         c = conn.cursor()
@@ -81,7 +83,7 @@ def check_icons() -> tuple[int, int]:
         conn.close()
     except Exception:
         total = 0
-    return cached, max(total, 1)
+    return cached + noicon, max(total, 1)
 
 
 def check_all() -> dict:
