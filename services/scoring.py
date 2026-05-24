@@ -2,45 +2,96 @@
 制造评分 / 贸易评分 计算逻辑
 """
 import sqlite3
-import math
+
 from core.paths import DB_PATH
 
-# 四大贸易中心的 market_prices 基准
-# buy_price = 最高买单, sell_price = 最低卖单
+# 四大贸易中心的 region_id 映射
 TRADE_HUB_IDS = {
     "Jita": 10000002,
     "Amarr": 10000043,
     "Dodixie": 10000032,
     "Rens": 10000030,
 }
+HUB_NAMES = {v: k for k, v in TRADE_HUB_IDS.items()}
+
+# 基础矿物 type_id → 中文名映射（type_id < 178，不在 item 表中）
+_MINERAL_NAMES = {
+    34: "三钛合金", 35: "类银超金属", 36: "同位聚合体",
+    37: "超新星诺克石", 38: "晶状石英核岩", 39: "碳纤维",
+    40: "建筑用预制块",
+}
+_RACE_ME = {4247: "****残余物", 4312: "****残余物"}  # 补全用
+_MINERAL_NAMES.update(_RACE_ME)
 
 
-def get_price(type_id: int, price_type: str) -> float | None:
+def _mat_name(mat_id: int, c) -> str:
+    """查询材料名称，优先查 item 表，基础矿物用硬编码"""
+    if mat_id in _MINERAL_NAMES:
+        return _MINERAL_NAMES[mat_id]
+    nrow = c.execute("SELECT zh_name, en_name FROM item WHERE type_id = ?", (mat_id,)).fetchone()
+    return (nrow[0] or nrow[1]) if nrow else str(mat_id)
+
+
+def _hub_region_id(hub: str | None) -> int:
+    """hub 名称 → region_id，None 或未知时默认 Jita"""
+    if hub is None:
+        return TRADE_HUB_IDS["Jita"]
+    return TRADE_HUB_IDS.get(hub, TRADE_HUB_IDS["Jita"])
+
+
+def get_price(type_id: int, price_type: str, hub: str | None = None) -> float | None:
     """
-    从 market_prices 获取价格。
+    从 market_prices 获取指定区域的价格。
     price_type: 'buy' → buy_price, 'sell' → sell_price
+    hub: 贸易中心名称, 如 'Jita', 'Amarr'；None 时返回任意区域
     """
-    # 注意：market_prices 中的 buy_price 是最高买单，sell_price 是最低卖单
     col = "buy_price" if price_type == "buy" else "sell_price"
     conn = sqlite3.connect(DB_PATH)
     try:
         c = conn.cursor()
-        c.execute(f"SELECT {col} FROM market_prices WHERE type_id = ? ORDER BY id DESC LIMIT 1", (type_id,))
+        if hub:
+            rid = _hub_region_id(hub)
+            c.execute(
+                f"SELECT {col} FROM market_prices WHERE type_id = ? AND region_id = ? LIMIT 1",
+                (type_id, rid),
+            )
+            row = c.fetchone()
+            if row and row[0] is not None:
+                return row[0]
+            # 降级：该区域无数据，尝试其他区域
+            c.execute(f"SELECT {col} FROM market_prices WHERE type_id = ? AND {col} IS NOT NULL LIMIT 1", (type_id,))
+        else:
+            c.execute(f"SELECT {col} FROM market_prices WHERE type_id = ? AND {col} IS NOT NULL LIMIT 1", (type_id,))
         row = c.fetchone()
         return row[0] if row else None
     finally:
         conn.close()
 
 
-def get_volume(type_id: int, vol_type: str = "total") -> int:
-    """获取成交量。vol_type: 'buy' / 'sell' / 'total'"""
+def get_volume(type_id: int, vol_type: str = "total", hub: str | None = None) -> int:
+    """获取指定区域的成交量。vol_type: 'buy' / 'sell' / 'total'"""
     conn = sqlite3.connect(DB_PATH)
     try:
         c = conn.cursor()
-        c.execute("""
-            SELECT buy_volume, sell_volume FROM market_prices
-            WHERE type_id = ? ORDER BY id DESC LIMIT 1
-        """, (type_id,))
+        if hub:
+            rid = _hub_region_id(hub)
+            c.execute(
+                "SELECT buy_volume, sell_volume FROM market_prices WHERE type_id = ? AND region_id = ? LIMIT 1",
+                (type_id, rid),
+            )
+            row = c.fetchone()
+            if row and (row[0] or row[1]):
+                return row[0] + row[1] if vol_type == "total" else (row[0] if vol_type == "buy" else row[1])
+            # 降级：该区域无数据，尝试其他区域
+            c.execute(
+                "SELECT buy_volume, sell_volume FROM market_prices WHERE type_id = ? LIMIT 1",
+                (type_id,),
+            )
+        else:
+            c.execute(
+                "SELECT buy_volume, sell_volume FROM market_prices WHERE type_id = ? LIMIT 1",
+                (type_id,),
+            )
         row = c.fetchone()
         if not row:
             return 0
@@ -70,12 +121,11 @@ def calc_manufacturing_score(
         "score": 0-100,
         "profit_per_run": float,
         "margin_pct": float,
-        "cost_per_unit": float,
-        "revenue_per_unit": float,
-        "hours_per_run": float,
-        "status": str,        # 空=可制造, "no_blueprint"=无蓝图, "no_price"=无价格
-        "breakdown": { ... }
-    }
+        ...
+
+    费用逻辑:
+      - 制造卖出时: 1次挂单经纪人费 + 1次改单经纪人费 + 销售税
+      - 买材料不产生经纪人费（直接吃现价卖单）
     """
     result = {
         "score": 0.0,
@@ -109,8 +159,8 @@ def calc_manufacturing_score(
         bp_id, prod_qty, base_time = bp_row
         prod_qty = prod_qty or 1
 
-        # 2. 成品价格
-        prod_price = get_price(type_id, price_type_prod)
+        # 2. 成品价格（使用 sell_hub 区域）
+        prod_price = get_price(type_id, price_type_prod, sell_hub)
         if not prod_price:
             result["status"] = "no_price"
             return result
@@ -121,18 +171,27 @@ def calc_manufacturing_score(
             FROM blueprint_materials bm
             WHERE bm.blueprint_type_id = ? AND bm.activity = 'manufacturing'
         """, (bp_id,))
-        materials = c.fetchall()
+        mat_rows = c.fetchall()
 
-        if not materials:
+        if not mat_rows:
             result["status"] = "no_materials"
             return result
 
         # 4. 计算材料成本
         total_mat_cost = 0.0
-        for mat_id, mat_qty in materials:
-            mat_price = get_price(mat_id, price_type_mat)
+        mat_detail = []
+        for mat_id, mat_qty in mat_rows:
+            mat_price = get_price(mat_id, price_type_mat, mat_source_hub)
             if mat_price:
                 total_mat_cost += mat_qty * mat_price
+            # 查材料名称
+            mat_name = _mat_name(mat_id, c)
+            mat_detail.append({
+                "name": mat_name, "qty": mat_qty,
+                "unit_price": mat_price or 0.0,
+                "subtotal": (mat_price or 0.0) * mat_qty,
+            })
+        result["materials"] = mat_detail
 
         # 5. 从人物配置读取费率
         skills = char_config.get("skills", {}) if char_config else {}
@@ -140,24 +199,29 @@ def calc_manufacturing_score(
         faction_standing = market_data.get("faction_standing", 5.0)
         corp_standing = market_data.get("corp_standing", 5.0)
 
-        # 计算经纪人费率
+        # 经纪人费率
         broker_rel = skills.get("经纪人关系学", 0)
         standing_factor = 2 ** (0.14 * max(0, faction_standing) + 0.06 * max(0, corp_standing))
         broker_rate = (1.0 - 0.05 * broker_rel) / standing_factor if standing_factor > 0 else 1.0
         broker_rate = max(0.1, broker_rate)  # %
 
+        # 改单折扣：高级经纪人关系学 每级+5%, 0级=50%
+        adv_rel = skills.get("高级经纪人关系学", 0)
+        relist_discount = min(50 + adv_rel * 5, 100)  # %
+
         # 销售税率
         accounting = skills.get("会计学", 0)
         sales_tax_rate = 2.0 * (1 - 0.03 * accounting)  # %
 
-        # 6. 计算单次利润
+        # 6. 计算单次利润（卖出时：1次挂单 + 1次改单）
         revenue = prod_price * prod_qty
         total_cost = total_mat_cost
         facility_fee = total_cost * (facility_tax_pct / 100)
         total_cost += facility_fee
-        bf = revenue * (broker_rate / 100)
-        st = revenue * (sales_tax_rate / 100)
-        total_cost += bf + st
+        broker_init = revenue * (broker_rate / 100)
+        broker_relist = revenue * (broker_rate / 100) * (1 - relist_discount / 100)
+        sales_tax = revenue * (sales_tax_rate / 100)
+        total_cost += broker_init + broker_relist + sales_tax
 
         profit = revenue - total_cost
         margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
@@ -182,7 +246,7 @@ def calc_manufacturing_score(
         margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
 
         # 成交量
-        volume = get_volume(type_id, "total")
+        volume = get_volume(type_id, "total", sell_hub)
 
         # 前置检查
         if volume == 0:
@@ -214,6 +278,7 @@ def calc_manufacturing_score(
                 "broker_rate": round(broker_rate, 3),
                 "sales_tax_rate": round(sales_tax_rate, 3),
                 "facility_fee": round(facility_fee, 2),
+                "relist_discount": round(relist_discount, 1),
             },
         })
 
@@ -256,8 +321,8 @@ def calc_trade_score(
         "status": "",
     }
 
-    buy_price = get_price(type_id, buy_price_type)
-    sell_price = get_price(type_id, sell_price_type)
+    buy_price = get_price(type_id, buy_price_type, buy_hub)
+    sell_price = get_price(type_id, sell_price_type, sell_hub)
 
     if not buy_price or not sell_price:
         result["status"] = "no_price"
@@ -277,26 +342,40 @@ def calc_trade_score(
     market_data_buy = char_config.get("market", {}).get(buy_hub.lower(), {}) if char_config else {}
     market_data_sell = char_config.get("market", {}).get(sell_hub.lower(), {}) if char_config else {}
 
-    # 买入方费用
+    # 经纪人费率（买入/卖出）
+    broker_lvl = skills.get("经纪人关系学", 0)
+
     fs_buy = market_data_buy.get("faction_standing", 5.0)
     cs_buy = market_data_buy.get("corp_standing", 5.0)
-    broker_buy = skills.get("经纪人关系学", 0)
     sf_buy = 2 ** (0.14 * max(0, fs_buy) + 0.06 * max(0, cs_buy))
-    buy_fee_rate = (1.0 - 0.05 * broker_buy) / sf_buy if sf_buy > 0 else 1.0
-    buy_fee_rate = max(0.1, buy_fee_rate)
+    broker_rate = (1.0 - 0.05 * broker_lvl) / sf_buy if sf_buy > 0 else 1.0
+    broker_rate = max(0.1, broker_rate)
 
-    # 卖出方费用
+    # 改单折扣：高级经纪人关系学 每级+5%, 0级=50%
+    adv_rel = skills.get("高级经纪人关系学", 0)
+    relist_discount = min(50 + adv_rel * 5, 100)
+
+    # 买入费用 = 1次挂单 + 1次改单
+    buy_init = broker_rate
+    buy_relist = broker_rate * (1 - relist_discount / 100)
+    buy_fee_total = buy_init + buy_relist
+
+    # 卖出费率（声望可能不同）
     fs_sell = market_data_sell.get("faction_standing", 5.0)
     cs_sell = market_data_sell.get("corp_standing", 5.0)
     sf_sell = 2 ** (0.14 * max(0, fs_sell) + 0.06 * max(0, cs_sell))
-    sell_fee_rate = (1.0 - 0.05 * broker_buy) / sf_sell if sf_sell > 0 else 1.0
-    sell_fee_rate = max(0.1, sell_fee_rate)
+    sell_rate = (1.0 - 0.05 * broker_lvl) / sf_sell if sf_sell > 0 else 1.0
+    sell_rate = max(0.1, sell_rate)
 
+    # 卖出费用 = 1次挂单 + 1次改单 + 销售税
+    sell_init = sell_rate
+    sell_relist = sell_rate * (1 - relist_discount / 100)
     accounting = skills.get("会计学", 0)
     sales_tax_rate = 2.0 * (1 - 0.03 * accounting)
+    sell_fee_total = sell_init + sell_relist + sales_tax_rate
 
-    buy_cost = buy_price * quantity + buy_price * quantity * (buy_fee_rate / 100)
-    sell_revenue = sell_price * quantity - sell_price * quantity * ((sell_fee_rate + sales_tax_rate) / 100)
+    buy_cost = buy_price * quantity + buy_price * quantity * (buy_fee_total / 100)
+    sell_revenue = sell_price * quantity - sell_price * quantity * (sell_fee_total / 100)
     gross_profit = sell_revenue - buy_cost
     margin_pct = gross_profit / buy_cost * 100 if buy_cost > 0 else 0
 
@@ -306,9 +385,8 @@ def calc_trade_score(
         result["sell_revenue"] = round(sell_revenue, 2)
         result["gross_profit"] = round(gross_profit, 2)
         return result
-        return result
 
-    volume = get_volume(type_id, "total")
+    volume = get_volume(type_id, "total", sell_hub)
     if volume == 0:
         return result
 

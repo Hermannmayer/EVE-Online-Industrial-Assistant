@@ -10,11 +10,13 @@ build_release.py — EVE 商人助手 发行版打包脚本
     dist/EVE商人助手_v{version}.zip   # ZIP 发行包
 """
 import os
-import sys
 import shutil
 import subprocess
+import sys
 import zipfile
 from datetime import datetime
+
+from core.logger import log
 
 # ── 版本号 ──
 VERSION = "1.0.0"
@@ -29,7 +31,7 @@ RELEASE_DIR = os.path.join(DIST_DIR, "EVE商人助手_v" + VERSION)
 def step(msg: str):
     """带时间戳的步骤提示"""
     ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}")
+    log.info(f"[{ts}] {msg}")
 
 
 def run_pyinstaller():
@@ -56,7 +58,7 @@ def run_pyinstaller():
         capture_output=False,
     )
     if result.returncode != 0:
-        print("❌ PyInstaller 打包失败！")
+        log.error("❌ PyInstaller 打包失败！")
         sys.exit(1)
     step("✅ PyInstaller 打包完成")
 
@@ -95,7 +97,7 @@ def organize_release():
             exe_src = candidate
             break
     if not exe_src:
-        print(f"❌ exe 文件未找到（查找路径: {exe_src_candidates}）")
+        log.error(f"❌ exe 文件未找到（查找路径: {exe_src_candidates}）")
         sys.exit(1)
     exe_dst = os.path.join(RELEASE_DIR, "EVE商人助手.exe")
     shutil.copy2(exe_src, exe_dst)
@@ -106,7 +108,7 @@ def organize_release():
     db_dst = os.path.join(RELEASE_DIR, "database")
     if os.path.exists(db_src):
         shutil.copytree(db_src, db_dst, ignore=shutil.ignore_patterns("__pycache__"))
-        step(f"   ✓ 复制 database/")
+        step("   ✓ 复制 database/")
 
     # 3. 复制 data/ 目录（运行期缓存和配置）
     data_src = os.path.join(PROJECT_ROOT, "data")
@@ -118,17 +120,17 @@ def organize_release():
             data_dst,
             ignore=shutil.ignore_patterns("__pycache__", "caches"),
         )
-        step(f"   ✓ 复制 data/（不含图标缓存）")
+        step("   ✓ 复制 data/（不含图标缓存）")
     else:
         os.makedirs(data_dst, exist_ok=True)
-        step(f"   ✓ 创建空的 data/")
+        step("   ✓ 创建空的 data/")
 
     # 4. 复制 README.md
     readme_src = os.path.join(PROJECT_ROOT, "README.md")
     readme_dst = os.path.join(RELEASE_DIR, "README.md")
     if os.path.exists(readme_src):
         shutil.copy2(readme_src, readme_dst)
-        step(f"   ✓ 复制 README.md")
+        step("   ✓ 复制 README.md")
 
     step(f"✅ 发行版目录已整理到: {RELEASE_DIR}")
 
@@ -173,10 +175,10 @@ def clean_build_artifacts():
 
 
 def main():
-    print("=" * 50)
-    print(f"  EVE 商人助手 v{VERSION} 发行版打包")
-    print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 50)
+    log.info("=" * 50)
+    log.info(f"  EVE 商人助手 v{VERSION} 发行版打包")
+    log.info(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    log.info("=" * 50)
 
     # 检查是否为开发环境
     skip_zip = "--skip-zip" in sys.argv
@@ -196,13 +198,13 @@ def main():
     else:
         step("⏭ 跳过 ZIP 压缩（--skip-zip）")
 
-    print("\n" + "=" * 50)
-    print(f"  🎉 打包完成！")
+    log.info("\n" + "=" * 50)
+    log.info("  🎉 打包完成！")
     if not skip_zip:
         zip_path = os.path.join(DIST_DIR, f"EVE商人助手_v{VERSION}.zip")
-        print(f"  发行包: {zip_path}")
-    print(f"  目录:   {RELEASE_DIR}/")
-    print("=" * 50)
+        log.info(f"  发行包: {zip_path}")
+    log.info(f"  目录:   {RELEASE_DIR}/")
+    log.info("=" * 50)
 
 
 if __name__ == "__main__":

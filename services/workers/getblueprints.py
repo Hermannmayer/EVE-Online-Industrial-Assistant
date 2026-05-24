@@ -9,15 +9,16 @@
 
 首次拉取需要下载一次，后续跳过。
 """
-import json
-import yaml
+import asyncio
 import io
 import os
-import sys
+
 import aiohttp
-import asyncio
 import aiosqlite
+import yaml
 from tqdm import tqdm
+
+from core.logger import log
 from core.paths import database_path
 
 DATABASE_PATH = database_path()
@@ -70,20 +71,20 @@ async def ensure_cache() -> str:
 
     if os.path.exists(CACHE_FILE):
         size = os.path.getsize(CACHE_FILE)
-        print(f"使用本地缓存: {CACHE_FILE} ({size / 1024 / 1024:.1f} MB)")
+        log.info(f"使用本地缓存: {CACHE_FILE} ({size / 1024 / 1024:.1f} MB)")
         return CACHE_FILE
 
     # 下载 SDE zip（仅首次）
-    print("本地无缓存，从 S3 下载 SDE 数据包...")
-    print(f"  URL: {SDE_ZIP_URL}")
-    print(f"  大小: ~112 MB，首次下载后会自动缓存，后续跳过\n")
+    log.info("本地无缓存，从 S3 下载 SDE 数据包...")
+    log.info(f"  URL: {SDE_ZIP_URL}")
+    log.info("  大小: ~112 MB，首次下载后会自动缓存，后续跳过\n")
 
     async with aiohttp.ClientSession() as session:
         async with session.get(SDE_ZIP_URL, timeout=aiohttp.ClientTimeout(total=600)) as resp:
             resp.raise_for_status()
             data = await resp.read()
 
-    print(f"下载完成: {len(data) / 1024 / 1024:.1f} MB")
+    log.info(f"下载完成: {len(data) / 1024 / 1024:.1f} MB")
 
     # 从 zip 中提取 blueprints.yaml
     import zipfile
@@ -92,13 +93,13 @@ async def ensure_cache() -> str:
         if not candidates:
             raise FileNotFoundError("SDE 包中未找到 blueprints.yaml")
         yaml_path = candidates[0]
-        print(f"找到: {yaml_path}")
+        log.info(f"找到: {yaml_path}")
         raw = zf.read(yaml_path).decode("utf-8")
 
     # 写入缓存
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         f.write(raw)
-    print(f"缓存已保存: {CACHE_FILE} ({len(raw) / 1024 / 1024:.1f} MB)")
+    log.info(f"缓存已保存: {CACHE_FILE} ({len(raw) / 1024 / 1024:.1f} MB)")
 
     return CACHE_FILE
 
@@ -137,7 +138,7 @@ async def run_blueprint_update():
         cursor = await db.execute("SELECT COUNT(*) FROM blueprint_activities")
         row = await cursor.fetchone()
         if row and row[0] > 1000:
-            print(f"蓝图数据已就绪 ({row[0]} 条活动记录)，跳过")
+            log.info(f"蓝图数据已就绪 ({row[0]} 条活动记录)，跳过")
             return
 
     # 确保表存在
@@ -148,13 +149,13 @@ async def run_blueprint_update():
     yaml_path = await ensure_cache()
 
     # 解析 YAML
-    print("解析 YAML...")
+    log.info("解析 YAML...")
     with open(yaml_path, "r", encoding="utf-8") as f:
         blueprints = yaml.safe_load(f)
 
     if not isinstance(blueprints, dict):
         raise ValueError(f"期望 dict，实际为 {type(blueprints)}")
-    print(f"共 {len(blueprints)} 个蓝图，写入数据库...")
+    log.info(f"共 {len(blueprints)} 个蓝图，写入数据库...")
 
     # 分批写入
     batch_size = 200
@@ -184,9 +185,9 @@ async def run_blueprint_update():
     async with aiosqlite.connect(DATABASE_PATH) as db:
         for t in ["blueprint_activities", "blueprint_materials", "blueprint_products", "blueprint_skills"]:
             cursor = await db.execute(f"SELECT COUNT(*) FROM {t}")
-            print(f"  {t}: {cursor.fetchone()[0]}")
+            log.info(f"  {t}: {cursor.fetchone()[0]}")
 
-    print("\n完成！缓存文件可保留用于后续重建，打包时只带 items.db 即可。")
+    log.info("完成！缓存文件可保留用于后续重建，打包时只带 items.db 即可。")
 
 
 if __name__ == "__main__":

@@ -2,10 +2,13 @@
 从 ESI 拉取工业系统成本指数和设施数据写入 items.db
 用法: python -m services.workers.getindustry
 """
-import aiosqlite
 import asyncio
 from datetime import datetime, timezone
+
+import aiosqlite
 from tqdm import tqdm
+
+from core.logger import log
 from core.paths import database_path
 from services.client import APIClient
 
@@ -72,9 +75,9 @@ async def run_industry_update():
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
         # ── 系统成本指数 ──
-        print("获取工业系统成本指数...")
+        log.info("获取工业系统成本指数...")
         systems = await client.fetch_required(f"{ESI_BASE}/industry/systems/")
-        print(f"  {len(systems)} 个星系")
+        log.info(f"  {len(systems)} 个星系")
 
         async with aiosqlite.connect(DATABASE_PATH) as db:
             for sys in tqdm(systems, desc="系统成本"):
@@ -87,9 +90,9 @@ async def run_industry_update():
             await db.commit()
 
         # ── 工业设施 ──
-        print("获取工业设施数据...")
+        log.info("获取工业设施数据...")
         facilities = await client.fetch_required(f"{ESI_BASE}/industry/facilities/")
-        print(f"  {len(facilities)} 个设施")
+        log.info(f"  {len(facilities)} 个设施")
 
         async with aiosqlite.connect(DATABASE_PATH) as db:
             for fac in tqdm(facilities, desc="设施"):
@@ -101,7 +104,7 @@ async def run_industry_update():
                 )
             await db.commit()
 
-    print("工业数据拉取完成")
+    log.info("工业数据拉取完成")
 
 
 if __name__ == "__main__":

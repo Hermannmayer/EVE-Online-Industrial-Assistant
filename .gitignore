@@ -6,14 +6,20 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
 
 # 构建产物
 build/
 dist/
 *.spec
+*.egg-info/
 
 # 项目数据（图标缓存、运行时 JSON）
 data/caches/
+
+# 运行日志和崩溃报告
+logs/
+crashes/
 
 # IDE
 .vscode/
@@ -22,3 +28,9 @@ data/caches/
 # 系统
 Thumbs.db
 .DS_Store
+
+# great_cto
+.great_cto/
+
+# 密钥
+.env.local

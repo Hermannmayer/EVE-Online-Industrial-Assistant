@@ -4,12 +4,13 @@
 """
 import asyncio
 import json
-import sqlite3
 import os
+import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from core.logger import log
 from services.client import APIClient
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -34,7 +35,7 @@ def get_industry_type_ids(db_path):
         rows = cur.fetchall()
         for row in rows:
             type_ids.add(row[0])
-        print(f"  {group_name}: {len(rows)} items")
+        log.info(f"  {group_name}: {len(rows)} items")
 
     conn.close()
     return sorted(type_ids)
@@ -78,15 +79,15 @@ async def fetch_attribute_name(client, attr_id):
 
 
 async def main():
-    print("=" * 50)
-    print("  植入体 dogma 数据拉取")
-    print("=" * 50)
+    log.info("=" * 50)
+    log.info("  植入体 dogma 数据拉取")
+    log.info("=" * 50)
 
     init_db(DB_PATH)
-    print(f"\n数据库: {DB_PATH}")
 
     type_ids = get_industry_type_ids(DB_PATH)
-    print(f"\n共计: {len(type_ids)} 个植入体")
+    log.info(f"\n数据库: {DB_PATH}")
+    log.info(f"\n共计: {len(type_ids)} 个植入体")
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -95,12 +96,12 @@ async def main():
     conn.close()
 
     to_fetch = [t for t in type_ids if t not in existing]
-    print(f"已缓存: {len(existing)}, 新拉取: {len(to_fetch)}")
+    log.info(f"已缓存: {len(existing)}, 新拉取: {len(to_fetch)}")
 
     async with APIClient(concurrency=20, timeout=30) as client:
         # 拉取 dogma 数据
         if to_fetch:
-            print(f"\n拉取 {len(to_fetch)} 个物品的 dogma...")
+            log.info(f"\n拉取 {len(to_fetch)} 个物品的 dogma...")
             results = []
             sem = asyncio.Semaphore(20)
 
@@ -122,12 +123,12 @@ async def main():
                 )
             conn.commit()
             conn.close()
-            print(f"✅ 写入 {len(results)} 条")
+            log.info(f"✅ 写入 {len(results)} 条")
         else:
-            print("数据已最新")
+            log.info("数据已最新")
 
         # 解析并展示
-        print("\n=== 植入体属性解析 ===")
+        log.info("\n=== 植入体属性解析 ===")
         all_attr_ids = set()
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
@@ -146,7 +147,7 @@ async def main():
                 all_attr_ids.add(a["attribute_id"])
 
         # 获取 attribute 名称
-        print(f"\n解析 {len(all_attr_ids)} 个 unique attributes...")
+        log.info(f"\n解析 {len(all_attr_ids)} 个 unique attributes...")
         attr_names = {}
         for attr_id in sorted(all_attr_ids):
             name = await fetch_attribute_name(client, attr_id)
@@ -155,11 +156,11 @@ async def main():
         # 显示每个植入体的属性
         for tid, en_name, group, dogma_json in rows:
             attrs = json.loads(dogma_json) if dogma_json else []
-            print(f"\nID={tid} | {en_name} [{group}]")
+            log.info(f"\nID={tid} | {en_name} [{group}]")
             for a in attrs:
                 aid = a["attribute_id"]
                 name = attr_names.get(aid, f"attr_{aid}")
-                print(f"  {name} = {a['value']}")
+                log.info(f"  {name} = {a['value']}")
 
         conn.close()
 

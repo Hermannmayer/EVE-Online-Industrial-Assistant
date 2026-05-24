@@ -1,9 +1,8 @@
 """
 One Dark Pro / One Light 主题系统 — 支持运行时切换
 """
-import os
 import json
-from PySide6.QtCore import QDir
+import os
 
 # ═══════════════════════════════════════════
 #  色板定义
