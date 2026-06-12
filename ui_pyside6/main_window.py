@@ -10,6 +10,7 @@ from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QStatusBar,
+    QToolBar,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -33,7 +35,9 @@ from core.paths import (
     window_geometry_file,
 )
 from ui_pyside6.theme import (
+    GREEN,
     PRIMARY,
+    TEXT_PRIMARY,
     TEXT_SECONDARY,
     add_theme_listener,
     apply_theme,
@@ -46,14 +50,23 @@ from ui_pyside6.theme import (
 )
 
 # ── 导航树节点定义 ──
+# 格式: ("key", "标签", "图标") — 导航项，可点击
+#        ("key", "标签", "图标", True) — 即将推出的导航项（Coming Soon，灰色不可点击）
+#        ("__section__", "分组名称") — 分组标题（不可点击）
 NAV_TREE = [
-    ("query",   "物品查询",   "🔍"),
-    ("industry","工业制造",   "🏭"),
-    ("trade",   "市场贸易",   "📊"),
-    ("storage", "我的仓库",   "📦"),
+    ("__section__", "⚡ 核心功能"),
+    ("query",       "物品查询",   "🔍"),
+    ("industry",    "工业制造",   "🏭"),
+    ("trade",       "市场贸易",   "📊"),
+    ("storage",     "仓库管理",   "📦"),
+    ("__section__", "📋 管理功能"),
+    ("blueprints",  "蓝图库",     "🗺️", True),
+    ("plans",       "生产计划",   "📋", True),
+    ("assets",      "资产统计",   "📈", True),
+    ("__section__", "🛠️ 工具"),
+    ("logistics",   "物流运输",   "🏗️", True),
+    ("planet",      "行星开发",   "⛏️", True),
 ]
-
-SEPARATOR = object()
 
 
 class PriceUpdateWorker(QThread):
@@ -103,6 +116,37 @@ class PriceCheckWorker(QThread):
             self.result.emit(False, f"价格检查失败: {ex}")
 
 
+class PlaceholderPage(QWidget):
+    """占位页面 — 用于 Coming Soon 的导航项"""
+    def __init__(self, name: str, description: str = "此功能正在开发中"):
+        super().__init__()
+        self.setObjectName(f"placeholder_{name}")
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setSpacing(16)
+
+        icon_label = QLabel("🚧")
+        icon_label.setStyleSheet("font-size: 48px;")
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(icon_label)
+
+        title = QLabel(name)
+        title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {TEXT_PRIMARY};")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        desc = QLabel(description)
+        desc.setStyleSheet(f"font-size: 13px; color: {TEXT_SECONDARY};")
+        desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(desc)
+
+        prog = QProgressBar()
+        prog.setFixedSize(200, 6)
+        prog.setRange(0, 100)
+        prog.setValue(15)
+        layout.addWidget(prog, alignment=Qt.AlignmentFlag.AlignCenter)
+
+
 class MainWindow(QMainWindow):
     """EVE 商人助手主窗口"""
 
@@ -118,33 +162,61 @@ class MainWindow(QMainWindow):
         # ── 主题 ──
         self.setStyleSheet(get_stylesheet())
 
-        # ── 状态栏 ──
+        # ── 顶部工具栏 ──
+        toolbar = QToolBar("主工具栏")
+        toolbar.setObjectName("main_toolbar")
+        toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(16, 16))
+
+        self._region_combo = QComboBox()
+        self._region_combo.addItems(["Jita", "Amarr", "Dodixie", "Rens", "全部区域"])
+        self._region_combo.setCurrentText("全部区域")
+        self._region_combo.setFixedWidth(120)
+        self._region_combo.currentTextChanged.connect(self._on_region_changed)
+        toolbar.addWidget(QLabel("  区域: "))
+        toolbar.addWidget(self._region_combo)
+        toolbar.addSeparator()
+
+        self._update_btn = QToolButton()
+        self._update_btn.setText("↻ 更新价格")
+        self._update_btn.setObjectName("toolbar_update_btn")
+        self._update_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self._update_btn.setMenu(self._build_update_menu())
+        self._update_btn.clicked.connect(self._trigger_price_update)
+        toolbar.addWidget(self._update_btn)
+
+        self._price_age_label = QLabel("⏳ 价格: —")
+        self._price_age_label.setObjectName("price_age_label")
+        self._price_age_label.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 0 8px;")
+        toolbar.addWidget(self._price_age_label)
+
+        toolbar.addSeparator()
+
+        self._item_count_label = QLabel("物品: —")
+        self._item_count_label.setObjectName("item_count_label")
+        self._item_count_label.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 0 8px;")
+        toolbar.addWidget(self._item_count_label)
+
+        self.addToolBar(toolbar)
+
+        # ── 状态栏（精简） ──
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-
-        self._price_time_label = QLabel("价格更新时间: —")
-        self._price_time_label.setObjectName("price_time_label")
 
         self._status_label = QLabel("就绪")
         self._status_label.setObjectName("status_label")
 
         self._update_progress = QProgressBar()
-        self._update_progress.setFixedWidth(160)
+        self._update_progress.setFixedWidth(120)
         self._update_progress.setFixedHeight(4)
         self._update_progress.setVisible(False)
 
-        self._update_btn = QToolButton()
-        self._update_btn.setText("更新价格")
-        self._update_btn.setObjectName("update_btn")
-        self._update_btn.setFixedHeight(22)
-        self._update_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self._update_btn.setMenu(self._build_update_menu())
-        self._update_btn.clicked.connect(self._trigger_price_update)
+        self._status_info_label = QLabel("")
+        self._status_info_label.setObjectName("status_info_label")
 
-        self.status_bar.addWidget(self._price_time_label, 1)
+        self.status_bar.addWidget(self._status_label, 1)
         self.status_bar.addWidget(self._update_progress)
-        self.status_bar.addPermanentWidget(self._update_btn)
-        self.status_bar.addPermanentWidget(self._status_label)
+        self.status_bar.addPermanentWidget(self._status_info_label)
 
         # ── 中央布局 ──
         central = QWidget()
@@ -227,42 +299,62 @@ class MainWindow(QMainWindow):
         tree.setHeaderHidden(True)
         tree.setIndentation(0)
         tree.setRootIsDecorated(False)
-        tree.setIconSize(tree.iconSize().scaled(1, 1, Qt.AspectRatioMode.IgnoreAspectRatio))
 
         self._nav_tree = tree
         self._nav_items: list[QTreeWidgetItem] = []
 
-        self._nav_header = QTreeWidgetItem(["EVE 商人助手"])
-        self._nav_header.setFlags(Qt.ItemFlag.NoItemFlags)
-        font = self._nav_header.font(0)
+        # ── 标题 ──
+        header = QTreeWidgetItem(["EVE 商人助手"])
+        header.setFlags(Qt.ItemFlag.NoItemFlags)
+        font = header.font(0)
         font.setBold(True)
         font.setPointSize(12)
-        self._nav_header.setFont(0, font)
-        self._nav_header.setForeground(0, QColor(PRIMARY))
-        self._nav_header.setSizeHint(0, QSize(self._nav_header.sizeHint(0).width(), 32))
-        tree.addTopLevelItem(self._nav_header)
+        header.setFont(0, font)
+        header.setForeground(0, QColor(PRIMARY))
+        header.setSizeHint(0, QSize(header.sizeHint(0).width(), 32))
+        tree.addTopLevelItem(header)
 
         spacer = QTreeWidgetItem([""])
         spacer.setFlags(Qt.ItemFlag.NoItemFlags)
         spacer.setSizeHint(0, QSize(spacer.sizeHint(0).width(), 8))
         tree.addTopLevelItem(spacer)
 
-        self._nav_section = QTreeWidgetItem(["功能"])
-        self._nav_section.setFlags(Qt.ItemFlag.NoItemFlags)
-        self._nav_section.setForeground(0, QColor(TEXT_SECONDARY))
-        f = self._nav_section.font(0)
-        f.setBold(True)
-        f.setPointSize(10)
-        self._nav_section.setFont(0, f)
-        self._nav_section.setSizeHint(0, QSize(self._nav_section.sizeHint(0).width(), 24))
-        tree.addTopLevelItem(self._nav_section)
+        self._nav_items_coming_soon: set[str] = set()
 
-        for key, label, icon in NAV_TREE:
-            item = QTreeWidgetItem([f" {icon}  {label}"])
-            item.setData(0, Qt.ItemDataRole.UserRole, key)
-            item.setSizeHint(0, QSize(item.sizeHint(0).width(), 30))
-            tree.addTopLevelItem(item)
-            self._nav_items.append(item)
+        for entry in NAV_TREE:
+            if entry[0] == "__section__":
+                # ── 分组标题 ──
+                sec = QTreeWidgetItem([entry[1]])
+                sec.setFlags(Qt.ItemFlag.NoItemFlags)
+                sec.setForeground(0, QColor(TEXT_SECONDARY))
+                f = sec.font(0)
+                f.setBold(True)
+                f.setPointSize(10)
+                sec.setFont(0, f)
+                sec.setSizeHint(0, QSize(sec.sizeHint(0).width(), 24))
+                tree.addTopLevelItem(sec)
+            else:
+                key, label, icon = entry[0], entry[1], entry[2]
+                is_coming = len(entry) >= 4 and entry[3] is True
+
+                text = f" {icon}  {label}"
+                if is_coming:
+                    text += "  ⏳"
+
+                item = QTreeWidgetItem([text])
+                item.setData(0, Qt.ItemDataRole.UserRole, key)
+                item.setSizeHint(0, QSize(item.sizeHint(0).width(), 28))
+
+                if is_coming:
+                    # Coming Soon — 灰色 + 不可选中
+                    item.setFlags(Qt.ItemFlag.NoItemFlags)
+                    item.setForeground(0, QColor(TEXT_SECONDARY))
+                    item.setToolTip(0, "即将推出")
+                    self._nav_items_coming_soon.add(key)
+                else:
+                    self._nav_items.append(item)
+
+                tree.addTopLevelItem(item)
 
         tree.currentItemChanged.connect(self._on_nav_changed)
         layout.addWidget(tree)
@@ -319,12 +411,25 @@ class MainWindow(QMainWindow):
         from ui_pyside6.views.query_view import QueryPage
         from ui_pyside6.views.trade_view import TradePage
 
+        # 已实现的页面
         self._pages["query"] = QueryPage(self)
         self._pages["industry"] = IndustryPage(self)
         self._pages["trade"] = TradePage(self)
         self._pages["storage"] = InventoryPage(self)
 
         for key in ["query", "industry", "trade", "storage"]:
+            self.content_stack.addWidget(self._pages[key])
+
+        # Coming Soon 页面 — 占位
+        placeholder_map = {
+            "blueprints": ("蓝图库", "管理你的蓝图收藏 — 导入、浏览、研究进度追踪"),
+            "plans":      ("生产计划", "查看和管理所有生产任务"),
+            "assets":     ("资产统计", "按角色、空间站、类别统计总资产"),
+            "logistics":  ("物流运输", "货运路线规划与运输成本分析"),
+            "planet":     ("行星开发", "行星工业管理与生产链优化"),
+        }
+        for key, (name, desc) in placeholder_map.items():
+            self._pages[key] = PlaceholderPage(name, desc)
             self.content_stack.addWidget(self._pages[key])
 
     # ═══════════════════════════════════════
@@ -337,8 +442,9 @@ class MainWindow(QMainWindow):
         self._check_worker.start()
 
     def _on_price_check_done(self, needs_update: bool, status_text: str):
-        self._price_time_label.setText(status_text)
-        self._refresh_price_time()
+        self._status_label.setText(status_text)
+        self._refresh_price_age()
+        self._refresh_item_count()
         if needs_update:
             self._status_label.setText("正在自动更新价格...")
             QTimer.singleShot(1000, self._trigger_price_update)
@@ -397,15 +503,17 @@ class MainWindow(QMainWindow):
         self._update_progress.setRange(0, 100)
 
         if success:
-            self._status_label.setText("价格更新完成")
-            self._refresh_price_time()
+            self._status_info_label.setText("价格更新完成")
+            self._refresh_price_age()
+            self._refresh_item_count()
             page = self._pages.get("query")
             if page and hasattr(page, "refresh_display"):
                 page.refresh_display()
         else:
-            self._status_label.setText(f"价格更新失败: {message}")
+            self._status_info_label.setText(f"价格更新失败: {message}")
 
-    def _refresh_price_time(self):
+    def _refresh_price_age(self):
+        """刷新工具栏上的价格年龄标签 + 状态栏信息"""
         try:
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
@@ -416,15 +524,60 @@ class MainWindow(QMainWindow):
                 utc_str = row[0]
                 try:
                     dt = datetime.strptime(utc_str, "%Y-%m-%d %H:%M:%S")
+                    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+                    diff_sec = (now_utc - dt).total_seconds()
+                    diff_min = int(diff_sec / 60)
+
+                    if diff_min < 10:
+                        color = GREEN
+                        age_text = f"🟢 {diff_min} 分钟前"
+                    elif diff_min < 30:
+                        color = "#e5c07b"  # yellow
+                        age_text = f"🟡 {diff_min} 分钟前"
+                    else:
+                        color = "#e06c75"  # red
+                        age_text = f"🔴 {diff_min} 分钟前"
+
                     bj_dt = dt.replace(tzinfo=timezone.utc) + timedelta(hours=8)
-                    bj_str = bj_dt.strftime("%Y-%m-%d %H:%M:%S")
-                    self._price_time_label.setText(f"价格更新: {bj_str} (北京)")
+                    bj_str = bj_dt.strftime("%H:%M")
+                    self._price_age_label.setText(f"⏳ 价格: {age_text} ({bj_str})")
+                    self._price_age_label.setStyleSheet(f"color: {color}; padding: 0 8px;")
+                    self._status_info_label.setText(f"价格: {bj_str} | {age_text}")
                 except Exception:
-                    self._price_time_label.setText(f"价格更新: {utc_str} UTC")
+                    self._price_age_label.setText("⏳ 价格: 解析异常")
             else:
-                self._price_time_label.setText("价格更新: 暂无数据")
+                self._price_age_label.setText("⏳ 价格: 暂无数据")
+                self._price_age_label.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 0 8px;")
+                self._status_info_label.setText("价格: 暂无数据")
         except Exception:
-            self._price_time_label.setText("价格更新: 数据库未就绪")
+            self._price_age_label.setText("⏳ 价格: 数据库未就绪")
+
+    def _refresh_item_count(self):
+        """刷新工具栏上的物品总数"""
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM item")
+            row = cursor.fetchone()
+            conn.close()
+            if row and row[0]:
+                count = row[0]
+                if count >= 10000:
+                    self._item_count_label.setText(f"物品: {count // 10000} 万+")
+                else:
+                    self._item_count_label.setText(f"物品: {count}")
+        except Exception:
+            self._item_count_label.setText("物品: —")
+
+    def _on_region_changed(self, region: str):
+        """工具栏区域选择变更"""
+        if region == "全部区域":
+            self._update_regions = ["Jita", "Amarr", "Dodixie", "Rens"]
+            self._update_btn.setText("↻ 更新价格")
+        else:
+            self._update_regions = [region]
+            self._update_btn.setText(f"↻ 更新 {region}")
+        self._status_info_label.setText(f"区域: {region}")
 
     # ═══════════════════════════════════════
     #  其他事件
@@ -496,13 +649,11 @@ class MainWindow(QMainWindow):
     # ── 主题切换 ──
 
     def _on_theme_changed(self):
-        """主题切换后的 UI 刷新（全局 QSS 自动处理所有颜色）"""
+        """主题切换后的 UI 刷新"""
         self.setStyleSheet(get_stylesheet())
-        # 非 QSS 项：图标颜色和 QTreeWidgetItem 前景色
+        # 非 QSS 项：图标颜色
         self._char_settings_btn.setIcon(self._create_person_icon())
         self._sys_settings_btn.setIcon(self._create_settings_icon())
-        self._nav_header.setForeground(0, QColor(PRIMARY))
-        self._nav_section.setForeground(0, QColor(TEXT_SECONDARY))
 
     def _toggle_theme(self):
         """在暗色/亮色模式间切换"""
@@ -626,4 +777,4 @@ class MainWindow(QMainWindow):
         self._all_items_dialog.raise_()
 
     def refresh_price_time(self):
-        self._refresh_price_time()
+        self._refresh_price_age()
