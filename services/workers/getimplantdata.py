@@ -11,10 +11,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from core.logger import log
+from core.paths import database_path
 from services.client import APIClient
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                       "database", "items.db")
+DB_PATH = database_path()
 
 # 工业相关的物品组（全部拉取）
 INDUSTRY_GROUP_NAMES = [
