@@ -45,7 +45,10 @@ def get_price(type_id: int, price_type: str, hub: str | None = None) -> float | 
     price_type: 'buy' → buy_price, 'sell' → sell_price
     hub: 贸易中心名称, 如 'Jita', 'Amarr'；None 时返回任意区域
     """
-    col = "buy_price" if price_type == "buy" else "sell_price"
+    _VALID_PRICE_COLS = {"buy": "buy_price", "sell": "sell_price"}
+    col = _VALID_PRICE_COLS.get(price_type)
+    if col is None:
+        return None
     conn = sqlite3.connect(DB_PATH)
     try:
         c = conn.cursor()

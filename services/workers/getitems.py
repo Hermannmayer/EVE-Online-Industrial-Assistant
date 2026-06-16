@@ -273,11 +273,11 @@ async def main():
 
         # 获取待处理type_id
         async with aiosqlite.connect(DATABASE_PATH) as db:
-            cursor = await db.execute(f'''
-                SELECT type_id FROM item 
-                WHERE type_id >= {START_TYPE_ID}
+            cursor = await db.execute('''
+                SELECT type_id FROM item
+                WHERE type_id >= ?
                 AND (en_name IS NULL OR market_group_id IS NULL)
-            ''')
+            ''', (START_TYPE_ID,))
             type_ids = [row[0] async for row in cursor]
 
         total = len(type_ids)
@@ -292,13 +292,7 @@ async def main():
 
         await queue.join()
         pbar.close()
-        # 等待关闭
-        for task in workers:
-            task.cancel()
-        await asyncio.gather(*workers, return_exceptions=True)
-
-        # 显式关闭连接池
-        await client.session.__aexit__(None, None, None)
+        # 清理工作协程
         for task in workers:
             task.cancel()
         await asyncio.gather(*workers, return_exceptions=True)

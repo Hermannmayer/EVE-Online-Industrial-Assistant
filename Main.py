@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from core.logger import log
 from core.paths import DB_PATH, database_path
+from services.scoring import TRADE_HUB_IDS
 
 
 def _migrate_db():
@@ -45,11 +46,11 @@ def _migrate_db():
                     PRIMARY KEY (type_id, region_id)
                 )
             """)
-            c.execute("INSERT INTO market_prices_new (type_id, region_id, buy_price, sell_price, buy_volume, sell_volume, fetch_time) SELECT type_id, 10000002, buy_price, sell_price, buy_volume, sell_volume, fetch_time FROM market_prices")
+            c.execute("INSERT INTO market_prices_new (type_id, region_id, buy_price, sell_price, buy_volume, sell_volume, fetch_time) SELECT type_id, ?, buy_price, sell_price, buy_volume, sell_volume, fetch_time FROM market_prices", (TRADE_HUB_IDS["Jita"],))
             c.execute("DROP TABLE market_prices")
             c.execute("ALTER TABLE market_prices_new RENAME TO market_prices")
             conn.commit()
-            log.info("market_prices 迁移完成（旧数据归入 Jita/10000002）")
+            log.info("market_prices 迁移完成（旧数据归入 Jita/%s）", TRADE_HUB_IDS["Jita"])
         # 检查 market_volume_snapshots
         c.execute("PRAGMA table_info(market_volume_snapshots)")
         cols = {row[1] for row in c.fetchall()}
@@ -68,7 +69,7 @@ def _migrate_db():
                     PRIMARY KEY (type_id, region_id, date)
                 )
             """)
-            c.execute("INSERT INTO mvs_new (type_id, region_id, date, buy_price, sell_price, buy_volume, sell_volume) SELECT type_id, 10000002, date, buy_price, sell_price, buy_volume, sell_volume FROM market_volume_snapshots")
+            c.execute("INSERT INTO mvs_new (type_id, region_id, date, buy_price, sell_price, buy_volume, sell_volume) SELECT type_id, ?, date, buy_price, sell_price, buy_volume, sell_volume FROM market_volume_snapshots", (TRADE_HUB_IDS["Jita"],))
             c.execute("DROP TABLE market_volume_snapshots")
             c.execute("ALTER TABLE mvs_new RENAME TO market_volume_snapshots")
             conn.commit()
