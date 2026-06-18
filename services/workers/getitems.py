@@ -4,11 +4,11 @@ import aiosqlite
 from tqdm import tqdm
 
 from core.logger import log
-from core.paths import database_path
+from core.paths import reference_db_path
 from services.client import APIClient
 
 # 配置常量
-DATABASE_PATH = database_path()
+DATABASE_PATH = reference_db_path()
 API_BASE_URL = 'https://sde.jita.space/latest'
 CONCURRENCY = 50
 BATCH_SIZE = 100

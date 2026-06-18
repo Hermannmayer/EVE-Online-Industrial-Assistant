@@ -16,7 +16,7 @@ from pathlib import Path
 import aiohttp
 
 from core.logger import log
-from core.paths import database_path, icon_cache_dir
+from core.paths import reference_db_path, icon_cache_dir
 
 # ── 配置 ──
 ICON_CACHE_DIR = Path(icon_cache_dir())
@@ -112,7 +112,7 @@ async def main():
         type_ids = [int(arg) for arg in sys.argv[1:] if arg.isdigit()]
     else:
         # 从数据库获取所有可交易物品
-        db_path = database_path()
+        db_path = reference_db_path()
         if not os.path.exists(db_path):
             log.error(f"❌ 数据库不存在: {db_path}")
             sys.exit(1)

@@ -4,13 +4,13 @@
 import os
 import sqlite3
 
-from core.paths import database_path
+from core.paths import REF_DB_PATH, MKT_DB_PATH
 
 
 def check_items() -> int:
     """返回 item 表行数，<10000 视为未初始化"""
     try:
-        conn = sqlite3.connect(database_path())
+        conn = sqlite3.connect(REF_DB_PATH)
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM item")
         cnt = c.fetchone()[0]
@@ -23,7 +23,7 @@ def check_items() -> int:
 def check_prices() -> int:
     """返回 market_prices 行数"""
     try:
-        conn = sqlite3.connect(database_path())
+        conn = sqlite3.connect(MKT_DB_PATH)
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM market_prices")
         cnt = c.fetchone()[0]
@@ -36,7 +36,7 @@ def check_prices() -> int:
 def check_blueprints() -> int:
     """返回 blueprint_activities 行数，>1000 视为已初始化"""
     try:
-        conn = sqlite3.connect(database_path())
+        conn = sqlite3.connect(REF_DB_PATH)
         c = conn.cursor()
         c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='blueprint_activities'")
         if not c.fetchone():
@@ -53,7 +53,7 @@ def check_blueprints() -> int:
 def check_implants() -> int:
     """返回 item_dogma 行数"""
     try:
-        conn = sqlite3.connect(database_path())
+        conn = sqlite3.connect(REF_DB_PATH)
         c = conn.cursor()
         c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='item_dogma'")
         if not c.fetchone():
@@ -76,7 +76,7 @@ def check_icons() -> tuple[int, int]:
     cached = len([f for f in os.listdir(cache_dir) if f.endswith(".png")])
     noicon = len([f for f in os.listdir(cache_dir) if f.endswith(".noicon")])
     try:
-        conn = sqlite3.connect(database_path())
+        conn = sqlite3.connect(REF_DB_PATH)
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM item WHERE iconID > 0")
         total = c.fetchone()[0]

@@ -1,9 +1,9 @@
 """
 制造评分 / 贸易评分 计算逻辑
 """
-import sqlite3
+from services.database_manager import get_db
 
-from core.paths import DB_PATH
+db = get_db()
 
 # 四大贸易中心的 region_id 映射
 TRADE_HUB_IDS = {
@@ -49,8 +49,7 @@ def get_price(type_id: int, price_type: str, hub: str | None = None) -> float | 
     col = _VALID_PRICE_COLS.get(price_type)
     if col is None:
         return None
-    conn = sqlite3.connect(DB_PATH)
-    try:
+    with db.connect("mkt") as conn:
         c = conn.cursor()
         if hub:
             rid = _hub_region_id(hub)
@@ -67,14 +66,11 @@ def get_price(type_id: int, price_type: str, hub: str | None = None) -> float | 
             c.execute(f"SELECT {col} FROM market_prices WHERE type_id = ? AND {col} IS NOT NULL LIMIT 1", (type_id,))
         row = c.fetchone()
         return row[0] if row else None
-    finally:
-        conn.close()
 
 
 def get_volume(type_id: int, vol_type: str = "total", hub: str | None = None) -> int:
     """获取指定区域的成交量。vol_type: 'buy' / 'sell' / 'total'"""
-    conn = sqlite3.connect(DB_PATH)
-    try:
+    with db.connect("mkt") as conn:
         c = conn.cursor()
         if hub:
             rid = _hub_region_id(hub)
@@ -103,8 +99,6 @@ def get_volume(type_id: int, vol_type: str = "total", hub: str | None = None) ->
         elif vol_type == "sell":
             return row[1] or 0
         return (row[0] or 0) + (row[1] or 0)
-    finally:
-        conn.close()
 
 
 def calc_manufacturing_score(
@@ -141,8 +135,8 @@ def calc_manufacturing_score(
         "breakdown": {},
     }
 
-    conn = sqlite3.connect(DB_PATH)
-    try:
+    conn = None  # will be set via context manager
+    with db.connect("ref", "mkt") as conn:
         c = conn.cursor()
 
         # 1. 查找有哪些蓝图产出此物品
@@ -285,9 +279,6 @@ def calc_manufacturing_score(
             },
         })
 
-    finally:
-        conn.close()
-
     return result
 
 
@@ -332,14 +323,11 @@ def calc_trade_score(
         return result
 
     # 获取体积
-    conn = sqlite3.connect(DB_PATH)
-    try:
+    with db.connect("ref") as conn:
         c = conn.cursor()
         c.execute("SELECT volume FROM item WHERE type_id = ?", (type_id,))
         row = c.fetchone()
         volume_m3 = row[0] or 1.0 if row else 1.0
-    finally:
-        conn.close()
 
     skills = char_config.get("skills", {}) if char_config else {}
     market_data_buy = char_config.get("market", {}).get(buy_hub.lower(), {}) if char_config else {}

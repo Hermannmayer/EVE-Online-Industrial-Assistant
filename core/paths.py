@@ -4,14 +4,21 @@
 开发环境：
     eve/
         Main.py
-        database/items.db
+        database/
+            items.db       ← 旧单库（迁移后保留备份）
+            reference.db   ← 静态参考数据（item, blueprint_*, industry_*, market_tree, item_dogma）
+            market.db      ← 市场价格数据（market_prices, market_volume_snapshots）
+            user.db        ← 用户自有数据（hangars, inventory_items, production_plans, user_skills）
         data/caches/icons/
         services/workers/getprices.py
 
 PyInstaller 打包后：
     dist/EVE商人助手/
         EVE商人助手.exe
-        database/items.db
+        database/
+            reference.db
+            market.db
+            user.db
         data/caches/icons/
         data/update_progress.json
         data/search_history.json
@@ -46,8 +53,23 @@ def database_dir() -> str:
 
 
 def database_path() -> str:
-    """数据库文件路径"""
+    """旧单库文件路径（迁移后保持兼容）"""
     return os.path.join(database_dir(), "items.db")
+
+
+def reference_db_path() -> str:
+    """参考数据库路径（item, blueprint_*, industry_*, market_tree, item_dogma）"""
+    return os.path.join(database_dir(), "reference.db")
+
+
+def market_db_path() -> str:
+    """市场价格数据库路径（market_prices, market_volume_snapshots）"""
+    return os.path.join(database_dir(), "market.db")
+
+
+def user_db_path() -> str:
+    """用户数据数据库路径（hangars, inventory_items, production_plans, user_skills）"""
+    return os.path.join(database_dir(), "user.db")
 
 
 def data_dir() -> str:
@@ -84,4 +106,7 @@ def ensure_dirs_exist():
 
 # 兼容旧版直接引用
 DB_PATH = database_path()
+REF_DB_PATH = reference_db_path()
+MKT_DB_PATH = market_db_path()
+USR_DB_PATH = user_db_path()
 ICON_DIR = icon_cache_dir()

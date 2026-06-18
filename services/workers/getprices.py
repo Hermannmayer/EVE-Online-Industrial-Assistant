@@ -14,9 +14,9 @@ import aiohttp
 import aiosqlite
 
 from core.logger import log
-from core.paths import database_path, progress_file
+from core.paths import market_db_path, progress_file
 
-DATABASE_PATH = database_path()
+DATABASE_PATH = market_db_path()
 ESI_BASE_URL = "https://esi.evetech.net/latest"
 
 TRADE_REGIONS = [

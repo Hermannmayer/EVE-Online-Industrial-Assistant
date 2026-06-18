@@ -15,7 +15,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QThread, Signal, QTimer
 from PySide6.QtGui import QColor
 
-from core.paths import DB_PATH
+from core.paths import data_dir
+from services.database_manager import get_db as _get_db_view
+
+_industry_db = _get_db_view()
 from ui_pyside6.theme import (
     BG_DARK, BG_SURFACE, BG_SURFACE_LIGHT, PRIMARY,
     TEXT_PRIMARY, TEXT_SECONDARY, GREEN, RED, BORDER,
@@ -55,9 +58,8 @@ CREATE TABLE IF NOT EXISTS production_plans (
 
 def init_plan_db():
     try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.executescript(PLAN_DB_SCHEMA)
-        conn.close()
+        with _industry_db.connect('user') as conn:
+            conn.executescript(PLAN_DB_SCHEMA)
     except Exception:
         pass
 
@@ -74,8 +76,7 @@ class SearchWorker(QThread):
         self._query = query
 
     def run(self):
-        conn = sqlite3.connect(DB_PATH)
-        try:
+        with _industry_db.connect('ref') as conn:
             c = conn.cursor()
             like = f"%{self._query}%"
             c.execute("""
@@ -87,8 +88,6 @@ class SearchWorker(QThread):
             """, (like, like, f"{self._query}%", f"{self._query}%"))
             rows = [{"type_id": r[0], "zh_name": r[1] or "", "en_name": r[2] or ""} for r in c.fetchall()]
             self.finished.emit(rows)
-        finally:
-            conn.close()
 
 
 class ScoreWorker(QThread):
@@ -514,7 +513,7 @@ class IndustryPage(QWidget):
         if not data:
             return
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = _industry_db.direct_connect('user')
         try:
             conn.execute("""
                 INSERT INTO production_plans
@@ -546,8 +545,7 @@ class IndustryPage(QWidget):
     # ═══════════════════════════════════
 
     def load_plans(self):
-        conn = sqlite3.connect(DB_PATH)
-        try:
+        with _industry_db.connect('user') as conn:
             f = self._filter.currentText()
             sql = "SELECT * FROM production_plans"
             if f == "待排产":
@@ -564,8 +562,6 @@ class IndustryPage(QWidget):
             self._plan_model = PlanTableModel(rows)
             self._plan_table.setModel(self._plan_model)
             self._plan_count.setText(f"共 {len(rows)} 条计划")
-        finally:
-            conn.close()
 
     def _on_delete(self):
         sel = self._plan_table.selectionModel().selectedRows()
@@ -575,10 +571,8 @@ class IndustryPage(QWidget):
         if QMessageBox.question(self, "确认", f"删除 {len(ids)} 条计划？",
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
-        conn = sqlite3.connect(DB_PATH)
-        conn.executemany("DELETE FROM production_plans WHERE id = ?", [(i,) for i in ids])
-        conn.commit()
-        conn.close()
+        with _industry_db.connect('user') as conn:
+            conn.executemany("DELETE FROM production_plans WHERE id = ?", [(i,) for i in ids])
         self.load_plans()
         self._refresh_material()
 
@@ -587,8 +581,7 @@ class IndustryPage(QWidget):
     # ═══════════════════════════════════
 
     def _refresh_material(self):
-        conn = sqlite3.connect(DB_PATH)
-        try:
+        with _industry_db.connect('user', 'ref', 'mkt') as conn:
             c = conn.cursor()
             c.execute("SELECT product_type_id, runs, parallels FROM production_plans WHERE status IN ('pending', 'running')")
             plans = c.fetchall()
@@ -602,8 +595,8 @@ class IndustryPage(QWidget):
             for pid, runs, parallels in plans:
                 c.execute("""
                     SELECT bm.material_type_id, bm.quantity
-                    FROM blueprint_products bp
-                    JOIN blueprint_materials bm ON bm.blueprint_type_id = bp.blueprint_type_id
+                    FROM ref.blueprint_products bp
+                    JOIN ref.blueprint_materials bm ON bm.blueprint_type_id = bp.blueprint_type_id
                         AND bm.activity = bp.activity
                     WHERE bp.product_type_id = ? AND bp.activity = 'manufacturing'
                 """, (pid,))
@@ -613,10 +606,10 @@ class IndustryPage(QWidget):
             rows = []
             total = 0
             for mid, need in material_map.items():
-                c.execute("SELECT zh_name, en_name FROM item WHERE type_id = ?", (mid,))
+                c.execute("SELECT zh_name, en_name FROM ref.item WHERE type_id = ?", (mid,))
                 r = c.fetchone()
                 name = (r[0] or r[1] or str(mid)) if r else str(mid)
-                c.execute("SELECT sell_price FROM market_prices WHERE type_id = ? AND region_id = 10000002 LIMIT 1", (mid,))
+                c.execute("SELECT sell_price FROM mkt.market_prices WHERE type_id = ? AND region_id = 10000002 LIMIT 1", (mid,))
                 pr = c.fetchone()
                 price = pr[0] or 0 if pr else 0
                 subtotal = need * price
@@ -626,8 +619,6 @@ class IndustryPage(QWidget):
             rows.sort(key=lambda x: x["total"], reverse=True)
             self._mat_table.setModel(MaterialTableModel(rows))
             self._mat_summary.setText(f"共 {len(rows)} 种材料 | 总成本: {total:,.0f} ISK")
-        finally:
-            conn.close()
 
     # ═══════════════════════════════════
     #  刷新

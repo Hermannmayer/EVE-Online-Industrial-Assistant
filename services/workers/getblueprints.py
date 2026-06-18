@@ -5,7 +5,7 @@
   1. 检查本地缓存 data/blueprints.yaml 是否存在
   2. 若不存在 → 下载 SDE zip(~112MB)，提取 blueprints.yaml 并缓存
   3. 解析 YAML → 写入 blueprint_* 表
-  4. 后续打包分发时：带上 items.db 即可（表已填充），无需重新下载
+  4. 后续打包分发时：带上 reference.db 即可（表已填充），无需重新下载
 
 首次拉取需要下载一次，后续跳过。
 """
@@ -19,9 +19,9 @@ import yaml
 from tqdm import tqdm
 
 from core.logger import log
-from core.paths import database_path
+from core.paths import reference_db_path
 
-DATABASE_PATH = database_path()
+DATABASE_PATH = reference_db_path()
 CACHE_DIR = os.path.join(os.path.dirname(DATABASE_PATH), "..", "data")
 CACHE_FILE = os.path.join(CACHE_DIR, "blueprints.yaml")
 SDE_ZIP_URL = "https://eve-static-data-export.s3-eu-west-1.amazonaws.com/tranquility/sde.zip"
@@ -187,7 +187,7 @@ async def run_blueprint_update():
             cursor = await db.execute(f"SELECT COUNT(*) FROM {t}")
             log.info(f"  {t}: {cursor.fetchone()[0]}")
 
-    log.info("完成！缓存文件可保留用于后续重建，打包时只带 items.db 即可。")
+    log.info("完成！缓存文件可保留用于后续重建，打包时只带 reference.db 即可。")
 
 
 if __name__ == "__main__":
