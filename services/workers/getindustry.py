@@ -1,5 +1,5 @@
 """
-从 ESI 拉取工业系统成本指数和设施数据写入 items.db
+从 ESI 拉取工业系统成本指数和设施数据写入 reference.db 和 user.db
 用法: python -m services.workers.getindustry
 """
 import asyncio
@@ -9,10 +9,11 @@ import aiosqlite
 from tqdm import tqdm
 
 from core.logger import log
-from core.paths import database_path
+from core.paths import reference_db_path, user_db_path
 from services.client import APIClient
 
-DATABASE_PATH = database_path()
+REF_DB_PATH = reference_db_path()
+USR_DB_PATH = user_db_path()
 ESI_BASE = "https://esi.evetech.net/latest"
 
 
@@ -32,54 +33,62 @@ KEY_MANUFACTURING_SKILLS = [
 ]
 
 
-async def create_tables(db: aiosqlite.Connection):
-    await db.executescript("""
-        CREATE TABLE IF NOT EXISTS industry_system_costs (
-            solar_system_id INTEGER,
-            activity TEXT,
-            cost_index REAL,
-            fetch_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (solar_system_id, activity)
-        );
-        CREATE TABLE IF NOT EXISTS industry_facilities (
-            facility_id INTEGER PRIMARY KEY,
-            solar_system_id INTEGER,
-            type_id INTEGER,
-            owner_id INTEGER,
-            region_id INTEGER,
-            tax REAL,
-            fetch_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE TABLE IF NOT EXISTS user_skills (
-            skill_type_id INTEGER PRIMARY KEY,
-            level INTEGER DEFAULT 5
-        );
-    """)
-    # Insert default skill values on first run
-    cursor = await db.execute("SELECT COUNT(*) FROM user_skills")
-    row = await cursor.fetchone()
-    if row and row[0] == 0:
-        for sk_id, name, default_lvl, desc in KEY_MANUFACTURING_SKILLS:
-            await db.execute(
-                "INSERT OR IGNORE INTO user_skills VALUES (?, ?)",
-                (sk_id, default_lvl),
-            )
-    await db.commit()
+async def create_tables():
+    """创建 reference.db 和 user.db 中的表"""
+    # reference.db: 工业系统成本指数 + 工业设施
+    async with aiosqlite.connect(REF_DB_PATH) as db:
+        await db.executescript("""
+            CREATE TABLE IF NOT EXISTS industry_system_costs (
+                solar_system_id INTEGER,
+                activity TEXT,
+                cost_index REAL,
+                fetch_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (solar_system_id, activity)
+            );
+            CREATE TABLE IF NOT EXISTS industry_facilities (
+                facility_id INTEGER PRIMARY KEY,
+                solar_system_id INTEGER,
+                type_id INTEGER,
+                owner_id INTEGER,
+                region_id INTEGER,
+                tax REAL,
+                fetch_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        await db.commit()
+
+    # user.db: 用户技能
+    async with aiosqlite.connect(USR_DB_PATH) as db:
+        await db.executescript("""
+            CREATE TABLE IF NOT EXISTS user_skills (
+                skill_type_id INTEGER PRIMARY KEY,
+                level INTEGER DEFAULT 5
+            );
+        """)
+        # Insert default skill values on first run
+        cursor = await db.execute("SELECT COUNT(*) FROM user_skills")
+        row = await cursor.fetchone()
+        if row and row[0] == 0:
+            for sk_id, name, default_lvl, desc in KEY_MANUFACTURING_SKILLS:
+                await db.execute(
+                    "INSERT OR IGNORE INTO user_skills VALUES (?, ?)",
+                    (sk_id, default_lvl),
+                )
+        await db.commit()
 
 
 async def run_industry_update():
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        await create_tables(db)
+    await create_tables()
 
     async with APIClient(concurrency=10) as client:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-        # ── 系统成本指数 ──
+        # ── 系统成本指数 (reference.db) ──
         log.info("获取工业系统成本指数...")
         systems = await client.fetch_required(f"{ESI_BASE}/industry/systems/")
         log.info(f"  {len(systems)} 个星系")
 
-        async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with aiosqlite.connect(REF_DB_PATH) as db:
             for sys in tqdm(systems, desc="系统成本"):
                 sid = sys["solar_system_id"]
                 for ci in sys.get("cost_indices", []):
@@ -89,12 +98,12 @@ async def run_industry_update():
                     )
             await db.commit()
 
-        # ── 工业设施 ──
+        # ── 工业设施 (reference.db) ──
         log.info("获取工业设施数据...")
         facilities = await client.fetch_required(f"{ESI_BASE}/industry/facilities/")
         log.info(f"  {len(facilities)} 个设施")
 
-        async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with aiosqlite.connect(REF_DB_PATH) as db:
             for fac in tqdm(facilities, desc="设施"):
                 await db.execute(
                     "INSERT OR REPLACE INTO industry_facilities VALUES (?, ?, ?, ?, ?, ?, ?)",

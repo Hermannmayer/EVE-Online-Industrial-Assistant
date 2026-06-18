@@ -2,8 +2,6 @@
 人物设置对话框 — 多角色 / 技能 / 增效体 / 市场费率
 """
 import json
-import os
-import sqlite3
 import math
 from typing import Optional
 
@@ -24,7 +22,10 @@ from ui_pyside6.theme import (
     ACCENT_GREEN, ACCENT_RED, ACCENT_CYAN,
 )
 
-from core.paths import DB_PATH
+from core.paths import data_dir
+from services.database_manager import get_db as _get_db_view
+
+_set_db = _get_db_view()
 
 # ═══════════════════════════════════════════
 #  游戏公式
@@ -155,8 +156,7 @@ TRADE_HUBS = [
 # ═══════════════════════════════════════════
 
 def char_config_path() -> str:
-    data_dir = os.path.join(os.path.dirname(DB_PATH), "..", "data")
-    return os.path.join(os.path.abspath(data_dir), "char_config.json")
+    return os.path.join(data_dir(), "char_config.json")
 
 
 def load_all_data() -> dict:
@@ -218,11 +218,12 @@ def load_implants() -> list[dict]:
     if IMPLANT_CACHE:
         return IMPLANT_CACHE
 
-    db_path = DB_PATH
-    if not os.path.exists(db_path):
+    from core.paths import REF_DB_PATH
+    import os
+    if not os.path.exists(REF_DB_PATH):
         return []
 
-    conn = sqlite3.connect(db_path)
+    conn = _set_db.direct_connect('ref')
     cur = conn.cursor()
     cur.execute("""
         SELECT i.type_id, i.en_name, i.zh_name, d.dogma_attrs

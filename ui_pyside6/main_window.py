@@ -3,7 +3,6 @@
 """
 import json
 import os
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
@@ -30,10 +29,12 @@ from PySide6.QtWidgets import (
 )
 
 from core.paths import (
-    DB_PATH,
+    REF_DB_PATH,
+    MKT_DB_PATH,
     ensure_dirs_exist,
     window_geometry_file,
 )
+from services.database_manager import get_db as _get_db_manager
 from ui_pyside6.theme import (
     GREEN,
     PRIMARY,
@@ -96,7 +97,7 @@ class PriceCheckWorker(QThread):
 
     def run(self):
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = _get_db_manager().direct_connect('mkt')
             cursor = conn.cursor()
             cursor.execute("SELECT MAX(fetch_time) FROM market_prices")
             row = cursor.fetchone()
@@ -515,7 +516,7 @@ class MainWindow(QMainWindow):
     def _refresh_price_age(self):
         """刷新工具栏上的价格年龄标签 + 状态栏信息"""
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = _get_db_manager().direct_connect('mkt')
             cursor = conn.cursor()
             cursor.execute("SELECT MAX(fetch_time) FROM market_prices")
             row = cursor.fetchone()
@@ -555,7 +556,7 @@ class MainWindow(QMainWindow):
     def _refresh_item_count(self):
         """刷新工具栏上的物品总数"""
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = _get_db_manager().direct_connect('ref')
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM item")
             row = cursor.fetchone()

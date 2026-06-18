@@ -2,7 +2,7 @@
 EVE 商人助手 — PySide6 入口点
 运行: python Main.py
 """
-import sqlite3
+import os
 import sys
 import traceback
 from datetime import datetime
@@ -11,72 +11,30 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from core.logger import log
-from core.paths import DB_PATH, database_path
-from services.scoring import TRADE_HUB_IDS
+from core.paths import DB_PATH, REF_DB_PATH, MKT_DB_PATH, USR_DB_PATH, ensure_dirs_exist
 
 
-def _migrate_db():
-    """数据库迁移：旧版 market_prices 无 region_id，重建为新表结构"""
-    db_path = database_path()
-    if not db_path or not Path(db_path).exists():
+def _migrate_split_db():
+    """数据库拆分迁移：将旧 items.db 拆分为 reference.db / market.db / user.db
+
+    只在旧 DB 存在且新 DB 尚未创建时执行。
+    迁移完成后 items.db 保留不动（作为备份），所有新代码读写三个新库。
+    """
+    old_db = DB_PATH
+    if not os.path.exists(old_db):
+        return
+    # 如果新库已存在，跳过迁移
+    if os.path.exists(REF_DB_PATH) and os.path.exists(MKT_DB_PATH) and os.path.exists(USR_DB_PATH):
         return
 
+    log.info("检测到旧版 items.db，正在迁移到拆分数据库...")
     try:
-        conn = sqlite3.connect(db_path)
-        c = conn.cursor()
-        # 检查是否为空表
-        c.execute("SELECT COUNT(*) FROM market_prices")
-        if c.fetchone()[0] == 0:
-            log.warning("market_prices 表为空，需要更新价格")
-        # 检查 market_prices 是否有 region_id 列
-        c.execute("PRAGMA table_info(market_prices)")
-        cols = {row[1] for row in c.fetchall()}
-        if "region_id" not in cols:
-            log.info("迁移 market_prices 表 → 增加 region_id 列")
-            c.execute("DROP TABLE IF EXISTS market_prices_new")
-            c.execute("""
-                CREATE TABLE market_prices_new (
-                    type_id INTEGER NOT NULL,
-                    region_id INTEGER NOT NULL,
-                    buy_price REAL,
-                    sell_price REAL,
-                    buy_volume BIGINT DEFAULT 0,
-                    sell_volume BIGINT DEFAULT 0,
-                    fetch_time TIMESTAMP NOT NULL DEFAULT (datetime('now')),
-                    PRIMARY KEY (type_id, region_id)
-                )
-            """)
-            c.execute("INSERT INTO market_prices_new (type_id, region_id, buy_price, sell_price, buy_volume, sell_volume, fetch_time) SELECT type_id, ?, buy_price, sell_price, buy_volume, sell_volume, fetch_time FROM market_prices", (TRADE_HUB_IDS["Jita"],))
-            c.execute("DROP TABLE market_prices")
-            c.execute("ALTER TABLE market_prices_new RENAME TO market_prices")
-            conn.commit()
-            log.info("market_prices 迁移完成（旧数据归入 Jita/%s）", TRADE_HUB_IDS["Jita"])
-        # 检查 market_volume_snapshots
-        c.execute("PRAGMA table_info(market_volume_snapshots)")
-        cols = {row[1] for row in c.fetchall()}
-        if "region_id" not in cols:
-            log.info("迁移 market_volume_snapshots 表 → 增加 region_id 列")
-            c.execute("DROP TABLE IF EXISTS mvs_new")
-            c.execute("""
-                CREATE TABLE mvs_new (
-                    type_id INTEGER NOT NULL,
-                    region_id INTEGER NOT NULL,
-                    date TEXT NOT NULL,
-                    buy_price REAL DEFAULT 0,
-                    sell_price REAL DEFAULT 0,
-                    buy_volume BIGINT DEFAULT 0,
-                    sell_volume BIGINT DEFAULT 0,
-                    PRIMARY KEY (type_id, region_id, date)
-                )
-            """)
-            c.execute("INSERT INTO mvs_new (type_id, region_id, date, buy_price, sell_price, buy_volume, sell_volume) SELECT type_id, ?, date, buy_price, sell_price, buy_volume, sell_volume FROM market_volume_snapshots", (TRADE_HUB_IDS["Jita"],))
-            c.execute("DROP TABLE market_volume_snapshots")
-            c.execute("ALTER TABLE mvs_new RENAME TO market_volume_snapshots")
-            conn.commit()
-            log.info("market_volume_snapshots 迁移完成")
-        conn.close()
+        # 动态导入以避免启动时 import 循环
+        from scripts.migrate_split_db import run_migration
+        run_migration()
     except Exception:
-        log.exception("数据库迁移失败（非致命，等下次价格更新自动重建）")
+        log.exception("数据库拆分迁移失败")
+        # 不阻止启动，后续仍可手动运行迁移脚本
 
 
 def _global_exception_handler(exc_type, exc_value, exc_traceback):
@@ -111,8 +69,10 @@ def _global_exception_handler(exc_type, exc_value, exc_traceback):
 
 
 def main():
-    # 数据库迁移（region_id 列）
-    _migrate_db()
+    ensure_dirs_exist()
+
+    # 数据库拆分迁移（items.db → reference.db + market.db + user.db）
+    _migrate_split_db()
 
     # 调试模式: python Main.py --debug
     if "--debug" in sys.argv:

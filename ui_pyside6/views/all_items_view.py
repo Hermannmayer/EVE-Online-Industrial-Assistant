@@ -34,7 +34,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.paths import DB_PATH, ICON_DIR
+from core.paths import ICON_DIR
+from services.database_manager import get_db as _get_db_view
+
+_all_items_db = _get_db_view()
 from services.scoring import TRADE_HUB_IDS, calc_manufacturing_score, calc_trade_score
 from services.scoring_cache import cache_key as _ck
 from services.scoring_cache import get as _cget
@@ -57,19 +60,22 @@ DASH = chr(8212)
 JITA_RID = TRADE_HUB_IDS["Jita"]
 REGIONS = ["Jita", "Amarr", "Dodixie", "Rens"]
 
-_SQL = "SELECT i.market_group_id,i.type_id,i.zh_name,i.en_name,i.volume,mp.buy_price,mp.sell_price,mp.buy_volume,mp.sell_volume FROM item i LEFT JOIN market_prices mp ON mp.type_id=i.type_id AND mp.region_id=? AND mp.fetch_time=(SELECT MAX(fetch_time) FROM market_prices WHERE type_id=i.type_id AND region_id=?) "
+_SQL = "SELECT i.market_group_id,i.type_id,i.zh_name,i.en_name,i.volume,mp.buy_price,mp.sell_price,mp.buy_volume,mp.sell_volume FROM item i LEFT JOIN mkt.market_prices mp ON mp.type_id=i.type_id AND mp.region_id=? AND mp.fetch_time=(SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id=i.type_id AND region_id=?) "
 
 
 def _fetch(sql, rid: int, params=None):
-    conn=sqlite3.connect(DB_PATH);c=conn.cursor()
-    if params: c.execute(sql, (rid, rid, *params))
-    else: c.execute(sql, (rid, rid))
-    r=[]
-    for row in c.fetchall():
-        mg,tid,zh,en,vol,bp,sp,bv,sv=row
-        ap=((bp or 0)+(sp or 0))/2 if bp and sp else (bp or sp)
-        r.append({"mg":mg,"id":tid,"z":zh or "","e":en or "","v":vol or 0,"bp":bp,"sp":sp,"ap":ap,"bv":bv or 0,"sv":sv or 0})
-    conn.close(); return r
+    with _all_items_db.connect('ref', 'mkt') as conn:
+        c = conn.cursor()
+        if params:
+            c.execute(sql, (rid, rid, *params))
+        else:
+            c.execute(sql, (rid, rid))
+        r = []
+        for row in c.fetchall():
+            mg, tid, zh, en, vol, bp, sp, bv, sv = row
+            ap = ((bp or 0) + (sp or 0)) / 2 if bp and sp else (bp or sp)
+            r.append({"mg": mg, "id": tid, "z": zh or "", "e": en or "", "v": vol or 0, "bp": bp, "sp": sp, "ap": ap, "bv": bv or 0, "sv": sv or 0})
+        return r
 
 
 CATEGORIES = ["所有类别", "无法制造获得", "蓝图制造(T1)", "发明制造(T2)", "势力蓝图制造", "反应", "行星开发"]
@@ -143,22 +149,25 @@ class MatDlg(QDialog):
         self.setWindowTitle("制造材料"); self.setMinimumSize(460,280)
         self.setStyleSheet(f"background:{BG_DARK};color:{TEXT_PRIMARY};")
         l = QVBoxLayout(self); l.setContentsMargins(10,10,10,10)
-        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-        c.execute("SELECT zh_name,en_name FROM item WHERE type_id=?", (tid,))
-        r = c.fetchone(); nm = (r[0]or r[1]or str(tid)) if r else str(tid)
-        l.addWidget(QLabel(f"制造材料: {nm}", styleSheet=f"color:{PRIMARY};font-size:13px;font-weight:bold;"))
-        c.execute("SELECT blueprint_type_id FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' ORDER BY blueprint_type_id LIMIT 1", (tid,))
-        bp_row = c.fetchone()
-        if not bp_row:
-            l.addWidget(QLabel("此物品无制造蓝图", styleSheet=f"color:{ACCENT_RED};"))
-            b = QPushButton("关闭"); b.clicked.connect(self.accept); l.addWidget(b)
-            conn.close(); return
-        bp_id = bp_row[0]
-        c.execute("""SELECT bm.material_type_id,bm.quantity,i.zh_name,i.en_name,mp.sell_price
-            FROM blueprint_materials bm JOIN item i ON bm.material_type_id=i.type_id
-            LEFT JOIN market_prices mp ON mp.type_id=i.type_id AND mp.fetch_time=(SELECT MAX(fetch_time) FROM market_prices WHERE type_id=i.type_id)
-            WHERE bm.blueprint_type_id=? AND bm.activity='manufacturing' ORDER BY i.zh_name""", (bp_id,))
-        mats = c.fetchall(); conn.close()
+        with _all_items_db.connect('ref', 'mkt') as conn:
+            c = conn.cursor()
+            c.execute("SELECT zh_name,en_name FROM item WHERE type_id=?", (tid,))
+            r = c.fetchone(); nm = (r[0]or r[1]or str(tid)) if r else str(tid)
+            l.addWidget(QLabel(f"制造材料: {nm}", styleSheet=f"color:{PRIMARY};font-size:13px;font-weight:bold;"))
+            c.execute("""SELECT blueprint_type_id
+                FROM blueprint_products
+                WHERE product_type_id=? AND activity='manufacturing' ORDER BY blueprint_type_id LIMIT 1""", (tid,))
+            bp_row = c.fetchone()
+            if not bp_row:
+                l.addWidget(QLabel("此物品无制造蓝图", styleSheet=f"color:{ACCENT_RED};"))
+                b = QPushButton("关闭"); b.clicked.connect(self.accept); l.addWidget(b)
+                return
+            bp_id = bp_row[0]
+            c.execute("""SELECT bm.material_type_id,bm.quantity,i.zh_name,i.en_name,mp.sell_price
+                FROM blueprint_materials bm JOIN item i ON bm.material_type_id=i.type_id
+                LEFT JOIN mkt.market_prices mp ON mp.type_id=i.type_id AND mp.fetch_time=(SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id=i.type_id)
+                WHERE bm.blueprint_type_id=? AND bm.activity='manufacturing' ORDER BY i.zh_name""", (bp_id,))
+            mats = c.fetchall()
         lst = QListWidget()
         lst.setStyleSheet(f"background:{BG_SURFACE};border:1px solid {BORDER};border-radius:3px;")
         total = 0.0
@@ -241,9 +250,11 @@ class Proxy(QSortFilterProxyModel):
 class TreeW(QThread):
     done=Signal(list)
     def run(self):
-        conn=sqlite3.connect(DB_PATH);c=conn.cursor()
-        c.execute("SELECT market_group_id,parent_group_id,zh_name FROM market_tree ORDER BY zh_name")
-        r=[{"id":i,"p":p,"n":z or f"G{i}"} for i,p,z in c.fetchall()]; conn.close(); self.done.emit(r)
+        with _all_items_db.connect('ref') as conn:
+            c = conn.cursor()
+            c.execute("SELECT market_group_id,parent_group_id,zh_name FROM market_tree ORDER BY zh_name")
+            r=[{"id":i,"p":p,"n":z or f"G{i}"} for i,p,z in c.fetchall()]
+            self.done.emit(r)
 
 
 class ItemsW(QThread):
@@ -265,49 +276,46 @@ class ScoreW(QThread):
         char=get_character(self._cfg.get("char","")) if self._cfg.get("char") else None
         from services.scoring import get_price as _gp
         total=len(self._items)
-        conn=sqlite3.connect(DB_PATH)
-        for i,row in enumerate(self._items):
-            tid=row["id"]
-            if self._mfg:
-                hub=self._cfg["hub"]
-                k=_ck(tid,"mfg",hub,self._cfg["char"]);r=_cget(k)
-                if not r:
-                    r=calc_manufacturing_score(tid,char or {},hub,hub,self._cfg.get("tax",0))
-                    _cset(k,r)
-                h=r.get("hours_per_run",1) or 1
-                runs_per_day = 24/h
-                st=r.get("status","")
-                # 市场深度检查：卖出中心的买单量
-                depth=conn.execute("SELECT buy_volume FROM market_prices WHERE type_id=? AND region_id=? LIMIT 1",(tid,TRADE_HUB_IDS.get(hub,10000002))).fetchone()
-                bvol=depth[0] if depth else 0
-                prod_qty=r.get("breakdown",{}).get("isk_per_hour")or 1  # 不用这个
-                profit_per_run=r.get("profit_per_run",0)or 0
-                daily_max=bvol  # 市场能吃掉多少
-                daily_out=min(runs_per_day,daily_max)
-                daily_profit=profit_per_run*daily_out
-                tag=_fmt_tag(daily_profit,st or (bvol==0 and "no_depth"))
-                row.update({"mc":r.get("cost_per_unit"),"mr":r.get("revenue_per_unit"),
-                    "mh":runs_per_day,"ms":st,"_tag":tag,
-                    "mm":r.get("margin_pct"),"mdp":daily_profit,
-                    "bp":_gp(tid,"buy",hub),"sp":_gp(tid,"sell",hub)})
-            else:
-                bh=self._cfg["bh"];sh=self._cfg["sh"]
-                k=_ck(tid,"trade",bh+sh,self._cfg["char"]);r=_cget(k)
-                if not r:
-                    r=calc_trade_score(tid,bh,sh,self._cfg["bs"],self._cfg["ss"],char or {})
-                    _cset(k,r)
-                st=r.get("status","")
-                depth=conn.execute("SELECT buy_volume FROM market_prices WHERE type_id=? AND region_id=? LIMIT 1",(tid,TRADE_HUB_IDS.get(sh,10000002))).fetchone()
-                bvol=depth[0] if depth else 0
-                gp=r.get("gross_profit",0)or 0
-                sellable=min(bvol,5000)  # 单趟最多5000个
-                daily_profit=gp*sellable
-                tag=_fmt_tag(daily_profit,st or (bvol==0 and "no_depth"))
-                row.update({"tc":r.get("buy_cost"),"tr":r.get("sell_revenue"),"_tag":tag,"tm":r.get("margin_pct"),"tpm":r.get("profit_per_m3"),
-                    "bp":_gp(tid,self._cfg["bs"],bh),"sp":_gp(tid,self._cfg["ss"],sh)})
-            if (i+1)%50==0 or i==total-1: self.progress.emit(i+1,total)
-        conn.close()
-        self.done.emit(self._items)
+        with _all_items_db.connect('ref', 'mkt') as conn:
+            c = conn.cursor()
+            for i,row in enumerate(self._items):
+                tid=row["id"]
+                if self._mfg:
+                    hub=self._cfg["hub"]
+                    k=_ck(tid,"mfg",hub,self._cfg["char"]);r=_cget(k)
+                    if not r:
+                        r=calc_manufacturing_score(tid,char or {},hub,hub,self._cfg.get("tax",0))
+                        _cset(k,r)
+                    h=r.get("hours_per_run",1) or 1
+                    runs_per_day = 24/h
+                    st=r.get("status","")
+                    # 市场深度检查
+                    depth=c.execute("SELECT buy_volume FROM mkt.market_prices WHERE type_id=? AND region_id=? LIMIT 1",(tid,TRADE_HUB_IDS.get(hub,10000002))).fetchone()
+                    bvol=depth[0] if depth else 0
+                    profit_per_run=r.get("profit_per_run",0)or 0
+                    daily_out=min(runs_per_day,bvol)
+                    daily_profit=profit_per_run*daily_out
+                    tag=_fmt_tag(daily_profit,st or (bvol==0 and "no_depth"))
+                    row.update({"mc":r.get("cost_per_unit"),"mr":r.get("revenue_per_unit"),
+                        "mh":runs_per_day,"ms":st,"_tag":tag,
+                        "mm":r.get("margin_pct"),"mdp":daily_profit,
+                        "bp":_gp(tid,"buy",hub),"sp":_gp(tid,"sell",hub)})
+                else:
+                    bh=self._cfg["bh"];sh=self._cfg["sh"]
+                    k=_ck(tid,"trade",bh+sh,self._cfg["char"]);r=_cget(k)
+                    if not r:
+                        r=calc_trade_score(tid,bh,sh,self._cfg["bs"],self._cfg["ss"],char or {})
+                        _cset(k,r)
+                    st=r.get("status","")
+                    depth=c.execute("SELECT buy_volume FROM mkt.market_prices WHERE type_id=? AND region_id=? LIMIT 1",(tid,TRADE_HUB_IDS.get(sh,10000002))).fetchone()
+                    bvol=depth[0] if depth else 0
+                    gp=r.get("gross_profit",0)or 0
+                    sellable=min(bvol,5000)
+                    daily_profit=gp*sellable
+                    tag=_fmt_tag(daily_profit,st or (bvol==0 and "no_depth"))
+                    row.update({"tc":r.get("buy_cost"),"tr":r.get("sell_revenue"),"_tag":tag,"tm":r.get("margin_pct"),"tpm":r.get("profit_per_m3"),
+                        "bp":_gp(tid,self._cfg["bs"],bh),"sp":_gp(tid,self._cfg["ss"],sh)})
+                if (i+1)%50==0 or i==total-1: self.progress.emit(i+1,total)
 
 
 def _fmt_tag(daily_profit: float, veto: str = "") -> str:
@@ -339,8 +347,7 @@ class SearchItemsW(QThread):
         if not q:
             self.done.emit([])
             return
-        conn = sqlite3.connect(DB_PATH)
-        try:
+        with _all_items_db.connect('ref', 'mkt') as conn:
             c = conn.cursor()
             rid = self._rid
             like = f"%{q}%"
@@ -354,8 +361,6 @@ class SearchItemsW(QThread):
                 ap=((bp or 0)+(sp or 0))/2 if bp and sp else (bp or sp)
                 r.append({"mg":mg,"id":tid,"z":zh or "","e":en or "","v":vol or 0,"bp":bp,"sp":sp,"ap":ap,"bv":bv or 0,"sv":sv or 0})
             self.done.emit(r)
-        finally:
-            conn.close()
 
 
 class AllItemsDialog(QDialog):
@@ -481,58 +486,59 @@ class AllItemsDialog(QDialog):
         data = self._data
         cat = self._cat.currentIndex()
         if data and cat > 0:
-            conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-            if cat == 1:  # 无法制造获得 — 没有任何蓝图
-                c.execute("SELECT DISTINCT product_type_id FROM blueprint_products")
-                bp_ids = {r[0] for r in c.fetchall()}
-                data = [r for r in data if r["id"] not in bp_ids]
-            elif cat == 2:  # 蓝图制造 T1 — 有制造蓝图，且该蓝图非发明产物
-                c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
-                    WHERE bp.activity='manufacturing'
-                    AND bp.blueprint_type_id NOT IN (
-                        SELECT product_type_id FROM blueprint_products WHERE activity='invention'
-                    )""")
-                bp_ids = {r[0] for r in c.fetchall()}
-                data = [r for r in data if r["id"] in bp_ids]
-            elif cat == 3:  # 发明制造 T2 — 有制造蓝图，且该蓝图由发明产出
-                c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
-                    WHERE bp.activity='manufacturing'
-                    AND bp.blueprint_type_id IN (
-                        SELECT product_type_id FROM blueprint_products WHERE activity='invention'
-                    )""")
-                bp_ids = {r[0] for r in c.fetchall()}
-                data = [r for r in data if r["id"] in bp_ids]
-            elif cat == 4:  # 势力蓝图制造 — 名称含 Navy/Faction/Imperial/Republic/Federation 的制造蓝图
-                c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
-                    JOIN item i ON bp.product_type_id=i.type_id
-                    WHERE bp.activity='manufacturing' AND (
-                        i.en_name LIKE '%Navy%' OR i.en_name LIKE '%Faction%'
-                        OR i.en_name LIKE '%Imperial%' OR i.en_name LIKE '%Republic%'
-                        OR i.en_name LIKE '%Federation%' OR i.en_name LIKE '%State%')""")
-                bp_ids = {r[0] for r in c.fetchall()}
-                data = [r for r in data if r["id"] in bp_ids]
-            elif cat == 5:  # 反应
-                c.execute("SELECT DISTINCT product_type_id FROM blueprint_products WHERE activity='reaction'")
-                bp_ids = {r[0] for r in c.fetchall()}
-                data = [r for r in data if r["id"] in bp_ids]
-            elif cat == 6:  # 行星开发 — 行星管理相关 market_group
-                c.execute("""SELECT DISTINCT i.type_id FROM item i
-                    JOIN market_tree mt ON i.market_group_id = mt.market_group_id
-                    WHERE mt.parent_group_id IN (
-                        SELECT market_group_id FROM market_tree WHERE zh_name LIKE '%行星%' OR en_name LIKE '%Planet%'
-                    ) OR mt.parent_group_id IN (
-                        WITH RECURSIVE s AS(SELECT market_group_id FROM market_tree WHERE zh_name LIKE '%行星%' OR en_name LIKE '%Planet%' OR en_name LIKE '%Command Center%'
-                        UNION ALL SELECT m.market_group_id FROM market_tree m JOIN s ON m.parent_group_id=s.market_group_id)
-                        SELECT market_group_id FROM s)""")
-                pi_ids = {r[0] for r in c.fetchall()}
-                data = [r for r in data if r["id"] in pi_ids]
-            conn.close()
+            with _all_items_db.connect('ref') as conn:
+                c = conn.cursor()
+                if cat == 1:  # 无法制造获得 — 没有任何蓝图
+                    c.execute("SELECT DISTINCT product_type_id FROM blueprint_products")
+                    bp_ids = {r[0] for r in c.fetchall()}
+                    data = [r for r in data if r["id"] not in bp_ids]
+                elif cat == 2:  # 蓝图制造 T1 — 有制造蓝图，且该蓝图非发明产物
+                    c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
+                        WHERE bp.activity='manufacturing'
+                        AND bp.blueprint_type_id NOT IN (
+                            SELECT product_type_id FROM blueprint_products WHERE activity='invention'
+                        )""")
+                    bp_ids = {r[0] for r in c.fetchall()}
+                    data = [r for r in data if r["id"] in bp_ids]
+                elif cat == 3:  # 发明制造 T2 — 有制造蓝图，且该蓝图由发明产出
+                    c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
+                        WHERE bp.activity='manufacturing'
+                        AND bp.blueprint_type_id IN (
+                            SELECT product_type_id FROM blueprint_products WHERE activity='invention'
+                        )""")
+                    bp_ids = {r[0] for r in c.fetchall()}
+                    data = [r for r in data if r["id"] in bp_ids]
+                elif cat == 4:  # 势力蓝图制造
+                    c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
+                        JOIN item i ON bp.product_type_id=i.type_id
+                        WHERE bp.activity='manufacturing' AND (
+                            i.en_name LIKE '%Navy%' OR i.en_name LIKE '%Faction%'
+                            OR i.en_name LIKE '%Imperial%' OR i.en_name LIKE '%Republic%'
+                            OR i.en_name LIKE '%Federation%' OR i.en_name LIKE '%State%')""")
+                    bp_ids = {r[0] for r in c.fetchall()}
+                    data = [r for r in data if r["id"] in bp_ids]
+                elif cat == 5:  # 反应
+                    c.execute("SELECT DISTINCT product_type_id FROM blueprint_products WHERE activity='reaction'")
+                    bp_ids = {r[0] for r in c.fetchall()}
+                    data = [r for r in data if r["id"] in bp_ids]
+                elif cat == 6:  # 行星开发
+                    c.execute("""SELECT DISTINCT i.type_id FROM item i
+                        JOIN market_tree mt ON i.market_group_id = mt.market_group_id
+                        WHERE mt.parent_group_id IN (
+                            SELECT market_group_id FROM market_tree WHERE zh_name LIKE '%行星%' OR en_name LIKE '%Planet%'
+                        ) OR mt.parent_group_id IN (
+                            WITH RECURSIVE s AS(SELECT market_group_id FROM market_tree WHERE zh_name LIKE '%行星%' OR en_name LIKE '%Planet%' OR en_name LIKE '%Command Center%'
+                            UNION ALL SELECT m.market_group_id FROM market_tree m JOIN s ON m.parent_group_id=s.market_group_id)
+                            SELECT market_group_id FROM s)""")
+                    pi_ids = {r[0] for r in c.fetchall()}
+                    data = [r for r in data if r["id"] in pi_ids]
         self._filt = data
         self._upd()
 
     def _load_settings(self):
         import os
-        p = os.path.join(os.path.dirname(DB_PATH), '..', 'data', 'score_settings.json')
+        from core.paths import data_dir
+        p = os.path.join(data_dir(), 'score_settings.json')
         if os.path.exists(p):
             try:
                 with open(p, 'r', encoding='utf-8') as f: s = json.load(f)
@@ -542,7 +548,8 @@ class AllItemsDialog(QDialog):
 
     def _save_settings(self):
         import os
-        p = os.path.join(os.path.dirname(DB_PATH), '..', 'data', 'score_settings.json')
+        from core.paths import data_dir
+        p = os.path.join(data_dir(), 'score_settings.json')
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, 'w', encoding='utf-8') as f:
             json.dump({"mfg": self._mfg, "trade": self._trade}, f, ensure_ascii=False, indent=2)
