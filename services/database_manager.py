@@ -14,14 +14,15 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Literal
 
-from core.paths import REF_DB_PATH, MKT_DB_PATH, USR_DB_PATH
+from core.paths import REF_DB_PATH, MKT_DB_PATH, USR_DB_PATH, BP_DB_PATH
 
 # 数据库标识符
-DB_ALIAS = Literal["ref", "mkt", "user"]
+DB_ALIAS = Literal["ref", "mkt", "user", "bp"]
 DB_PATH_MAP = {
     "ref": REF_DB_PATH,
     "mkt": MKT_DB_PATH,
     "user": USR_DB_PATH,
+    "bp": BP_DB_PATH,
 }
 
 # 各库的 WAL 模式初始化 SQL
@@ -38,6 +39,10 @@ _DB_INIT_SQL = {
         PRAGMA journal_mode=WAL;
         PRAGMA cache_size=-4000;
         PRAGMA foreign_keys=ON;
+    """,
+    "bp": """
+        PRAGMA journal_mode=WAL;
+        PRAGMA cache_size=-8000;
     """,
 }
 

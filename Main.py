@@ -11,7 +11,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from core.logger import log
-from core.paths import DB_PATH, REF_DB_PATH, MKT_DB_PATH, USR_DB_PATH, ensure_dirs_exist
+from core.paths import BP_DB_PATH, DB_PATH, REF_DB_PATH, MKT_DB_PATH, USR_DB_PATH, ensure_dirs_exist
 
 
 def _migrate_split_db():
@@ -35,6 +35,44 @@ def _migrate_split_db():
     except Exception:
         log.exception("数据库拆分迁移失败")
         # 不阻止启动，后续仍可手动运行迁移脚本
+
+
+def _migrate_blueprint_db():
+    """将蓝图表从 reference.db 分离到 blueprint.db"""
+    import sqlite3
+
+    if not os.path.exists(REF_DB_PATH):
+        return
+    if os.path.exists(BP_DB_PATH):
+        return
+
+    bp_tables = ["blueprint_activities", "blueprint_materials", "blueprint_products", "blueprint_skills"]
+
+    conn = sqlite3.connect(REF_DB_PATH)
+    c = conn.cursor()
+    placeholders = ",".join(repr(t) for t in bp_tables)
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ({})".format(placeholders))
+    existing = {r[0] for r in c.fetchall()}
+
+    if not existing:
+        conn.close()
+        return
+
+    log.info("正在将蓝图表迁移到 blueprint.db...")
+    bp_path = BP_DB_PATH.replace("\\", "/")
+    conn.execute(f"ATTACH DATABASE '{bp_path}' AS bp_db")
+    conn.execute("PRAGMA bp_db.journal_mode=WAL")
+
+    for table in bp_tables:
+        if table in existing:
+            conn.execute(f"CREATE TABLE bp_db.{table} AS SELECT * FROM main.{table}")
+            conn.execute(f"DROP TABLE main.{table}")
+            log.info(f"  已迁移: {table}")
+
+    conn.commit()
+    conn.execute("VACUUM")
+    conn.close()
+    log.info("蓝图数据库迁移完成")
 
 
 def _global_exception_handler(exc_type, exc_value, exc_traceback):
@@ -71,27 +109,65 @@ def _global_exception_handler(exc_type, exc_value, exc_traceback):
 def main():
     ensure_dirs_exist()
 
-    # 数据库拆分迁移（items.db → reference.db + market.db + user.db）
     _migrate_split_db()
+    _migrate_blueprint_db()
 
-    # 调试模式: python Main.py --debug
     if "--debug" in sys.argv:
         from core.logger import set_debug
         set_debug(True)
         log.debug("调试模式已启用")
 
-    # 注册全局异常处理器
     sys.excepthook = _global_exception_handler
 
     app = QApplication(sys.argv)
     app.setApplicationName("EVE 商人助手")
     app.setOrganizationName("EVEAssistant")
 
+    # 延迟补拉蓝图名称（不阻塞 UI 启动）
+    from PySide6.QtCore import QTimer
+    QTimer.singleShot(2000, lambda: _fill_blueprint_names_safe())
+
     from ui_pyside6.main_window import MainWindow
     window = MainWindow()
     window.show()
 
     sys.exit(app.exec())
+
+
+def _fill_blueprint_names_safe():
+    try:
+        _fill_blueprint_names()
+    except Exception:
+        pass
+
+
+def _fill_blueprint_names():
+    """检查并补拉 item 表中缺失的蓝图名称"""
+    import sqlite3
+    from core.paths import REF_DB_PATH, BP_DB_PATH
+
+    if not os.path.exists(REF_DB_PATH) or not os.path.exists(BP_DB_PATH):
+        return
+    conn = sqlite3.connect(REF_DB_PATH)
+    bp_path = BP_DB_PATH.replace("\\", "/")
+    conn.execute(f"ATTACH DATABASE '{bp_path}' AS bp")
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM item WHERE (zh_name IS NULL OR zh_name = '') AND type_id IN (SELECT DISTINCT blueprint_type_id FROM bp.blueprint_activities)")
+    missing = c.fetchone()[0]
+    conn.close()
+    if missing < 100:
+        return
+
+    log.info(f"发现 {missing} 个蓝图缺名，正在补拉...")
+    try:
+        import asyncio
+        from services.workers.getitems import fill_missing_blueprint_names
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(fill_missing_blueprint_names())
+        loop.close()
+    except Exception:
+        log.exception("蓝图名称补拉失败")
 
 
 if __name__ == "__main__":

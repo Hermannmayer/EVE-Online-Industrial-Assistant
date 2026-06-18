@@ -38,7 +38,7 @@ from core.paths import ICON_DIR
 from services.database_manager import get_db as _get_db_view
 
 _all_items_db = _get_db_view()
-from services.scoring import TRADE_HUB_IDS, calc_manufacturing_score, calc_trade_score
+from services.scoring import TRADE_HUB_IDS, calc_manufacturing_score, calc_trade_score, resolve_item_name
 from services.scoring_cache import cache_key as _ck
 from services.scoring_cache import get as _cget
 from services.scoring_cache import set as _cset
@@ -149,10 +149,9 @@ class MatDlg(QDialog):
         self.setWindowTitle("制造材料"); self.setMinimumSize(460,280)
         self.setStyleSheet(f"background:{BG_DARK};color:{TEXT_PRIMARY};")
         l = QVBoxLayout(self); l.setContentsMargins(10,10,10,10)
-        with _all_items_db.connect('ref', 'mkt') as conn:
+        with _all_items_db.connect('ref', 'mkt', 'bp') as conn:
             c = conn.cursor()
-            c.execute("SELECT zh_name,en_name FROM item WHERE type_id=?", (tid,))
-            r = c.fetchone(); nm = (r[0]or r[1]or str(tid)) if r else str(tid)
+            nm = resolve_item_name(c, tid)
             l.addWidget(QLabel(f"制造材料: {nm}", styleSheet=f"color:{PRIMARY};font-size:13px;font-weight:bold;"))
             c.execute("""SELECT blueprint_type_id
                 FROM blueprint_products
@@ -250,7 +249,7 @@ class Proxy(QSortFilterProxyModel):
 class TreeW(QThread):
     done=Signal(list)
     def run(self):
-        with _all_items_db.connect('ref') as conn:
+        with _all_items_db.connect('ref', 'bp') as conn:
             c = conn.cursor()
             c.execute("SELECT market_group_id,parent_group_id,zh_name FROM market_tree ORDER BY zh_name")
             r=[{"id":i,"p":p,"n":z or f"G{i}"} for i,p,z in c.fetchall()]
@@ -276,7 +275,7 @@ class ScoreW(QThread):
         char=get_character(self._cfg.get("char","")) if self._cfg.get("char") else None
         from services.scoring import get_price as _gp
         total=len(self._items)
-        with _all_items_db.connect('ref', 'mkt') as conn:
+        with _all_items_db.connect('ref', 'mkt', 'bp') as conn:
             c = conn.cursor()
             for i,row in enumerate(self._items):
                 tid=row["id"]
@@ -347,7 +346,7 @@ class SearchItemsW(QThread):
         if not q:
             self.done.emit([])
             return
-        with _all_items_db.connect('ref', 'mkt') as conn:
+        with _all_items_db.connect('ref', 'mkt', 'bp') as conn:
             c = conn.cursor()
             rid = self._rid
             like = f"%{q}%"
@@ -486,7 +485,7 @@ class AllItemsDialog(QDialog):
         data = self._data
         cat = self._cat.currentIndex()
         if data and cat > 0:
-            with _all_items_db.connect('ref') as conn:
+            with _all_items_db.connect('ref', 'bp') as conn:
                 c = conn.cursor()
                 if cat == 1:  # 无法制造获得 — 没有任何蓝图
                     c.execute("SELECT DISTINCT product_type_id FROM blueprint_products")

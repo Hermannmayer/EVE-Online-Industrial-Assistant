@@ -19,9 +19,9 @@ import yaml
 from tqdm import tqdm
 
 from core.logger import log
-from core.paths import reference_db_path
+from core.paths import blueprint_db_path
 
-DATABASE_PATH = reference_db_path()
+DATABASE_PATH = blueprint_db_path()
 CACHE_DIR = os.path.join(os.path.dirname(DATABASE_PATH), "..", "data")
 CACHE_FILE = os.path.join(CACHE_DIR, "blueprints.yaml")
 SDE_ZIP_URL = "https://eve-static-data-export.s3-eu-west-1.amazonaws.com/tranquility/sde.zip"
@@ -188,6 +188,10 @@ async def run_blueprint_update():
             log.info(f"  {t}: {cursor.fetchone()[0]}")
 
     log.info("完成！缓存文件可保留用于后续重建，打包时只带 reference.db 即可。")
+
+    # 补拉 T2/T3 蓝图名称到 item 表
+    from services.workers.getitems import fill_missing_blueprint_names
+    await fill_missing_blueprint_names()
 
 
 if __name__ == "__main__":
