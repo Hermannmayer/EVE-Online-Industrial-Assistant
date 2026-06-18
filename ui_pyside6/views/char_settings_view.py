@@ -3,6 +3,7 @@
 """
 import json
 import math
+import os
 from typing import Optional
 
 from PySide6.QtWidgets import (

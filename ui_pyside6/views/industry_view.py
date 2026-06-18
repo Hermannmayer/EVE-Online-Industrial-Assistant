@@ -581,7 +581,7 @@ class IndustryPage(QWidget):
     # ═══════════════════════════════════
 
     def _refresh_material(self):
-        with _industry_db.connect('user', 'ref', 'mkt') as conn:
+        with _industry_db.connect('user', 'ref', 'mkt', 'bp') as conn:
             c = conn.cursor()
             c.execute("SELECT product_type_id, runs, parallels FROM production_plans WHERE status IN ('pending', 'running')")
             plans = c.fetchall()
@@ -595,8 +595,8 @@ class IndustryPage(QWidget):
             for pid, runs, parallels in plans:
                 c.execute("""
                     SELECT bm.material_type_id, bm.quantity
-                    FROM ref.blueprint_products bp
-                    JOIN ref.blueprint_materials bm ON bm.blueprint_type_id = bp.blueprint_type_id
+                    FROM bp.blueprint_products bp
+                    JOIN bp.blueprint_materials bm ON bm.blueprint_type_id = bp.blueprint_type_id
                         AND bm.activity = bp.activity
                     WHERE bp.product_type_id = ? AND bp.activity = 'manufacturing'
                 """, (pid,))

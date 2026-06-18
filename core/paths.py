@@ -5,8 +5,8 @@
     eve/
         Main.py
         database/
-            items.db       ← 旧单库（迁移后保留备份）
-            reference.db   ← 静态参考数据（item, blueprint_*, industry_*, market_tree, item_dogma）
+            reference.db   ← 静态参考数据（item, industry_*, market_tree, item_dogma）
+            blueprint.db   ← 蓝图数据（blueprint_activities, _materials, _products, _skills）
             market.db      ← 市场价格数据（market_prices, market_volume_snapshots）
             user.db        ← 用户自有数据（hangars, inventory_items, production_plans, user_skills）
         data/caches/icons/
@@ -58,7 +58,7 @@ def database_path() -> str:
 
 
 def reference_db_path() -> str:
-    """参考数据库路径（item, blueprint_*, industry_*, market_tree, item_dogma）"""
+    """参考数据库路径（item, industry_*, market_tree, item_dogma）"""
     return os.path.join(database_dir(), "reference.db")
 
 
@@ -70,6 +70,11 @@ def market_db_path() -> str:
 def user_db_path() -> str:
     """用户数据数据库路径（hangars, inventory_items, production_plans, user_skills）"""
     return os.path.join(database_dir(), "user.db")
+
+
+def blueprint_db_path() -> str:
+    """蓝图数据库路径（blueprint_activities, blueprint_materials, blueprint_products, blueprint_skills）"""
+    return os.path.join(database_dir(), "blueprint.db")
 
 
 def data_dir() -> str:
@@ -109,4 +114,5 @@ DB_PATH = database_path()
 REF_DB_PATH = reference_db_path()
 MKT_DB_PATH = market_db_path()
 USR_DB_PATH = user_db_path()
+BP_DB_PATH = blueprint_db_path()
 ICON_DIR = icon_cache_dir()

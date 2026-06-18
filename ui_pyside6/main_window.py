@@ -60,13 +60,6 @@ NAV_TREE = [
     ("industry",    "工业制造",   "🏭"),
     ("trade",       "市场贸易",   "📊"),
     ("storage",     "仓库管理",   "📦"),
-    ("__section__", "📋 管理功能"),
-    ("blueprints",  "蓝图库",     "🗺️", True),
-    ("plans",       "生产计划",   "📋", True),
-    ("assets",      "资产统计",   "📈", True),
-    ("__section__", "🛠️ 工具"),
-    ("logistics",   "物流运输",   "🏗️", True),
-    ("planet",      "行星开发",   "⛏️", True),
 ]
 
 
@@ -115,37 +108,6 @@ class PriceCheckWorker(QThread):
                 self.result.emit(True, "无价格数据，需要更新")
         except Exception as ex:
             self.result.emit(False, f"价格检查失败: {ex}")
-
-
-class PlaceholderPage(QWidget):
-    """占位页面 — 用于 Coming Soon 的导航项"""
-    def __init__(self, name: str, description: str = "此功能正在开发中"):
-        super().__init__()
-        self.setObjectName(f"placeholder_{name}")
-        layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.setSpacing(16)
-
-        icon_label = QLabel("🚧")
-        icon_label.setStyleSheet("font-size: 48px;")
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(icon_label)
-
-        title = QLabel(name)
-        title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {TEXT_PRIMARY};")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title)
-
-        desc = QLabel(description)
-        desc.setStyleSheet(f"font-size: 13px; color: {TEXT_SECONDARY};")
-        desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(desc)
-
-        prog = QProgressBar()
-        prog.setFixedSize(200, 6)
-        prog.setRange(0, 100)
-        prog.setValue(15)
-        layout.addWidget(prog, alignment=Qt.AlignmentFlag.AlignCenter)
 
 
 class MainWindow(QMainWindow):
@@ -208,8 +170,8 @@ class MainWindow(QMainWindow):
         self._status_label.setObjectName("status_label")
 
         self._update_progress = QProgressBar()
-        self._update_progress.setFixedWidth(120)
-        self._update_progress.setFixedHeight(4)
+        self._update_progress.setFixedWidth(160)
+        self._update_progress.setFixedHeight(16)
         self._update_progress.setVisible(False)
 
         self._status_info_label = QLabel("")
@@ -268,6 +230,28 @@ class MainWindow(QMainWindow):
         # ── 首次启动检测 ──
         QTimer.singleShot(500, self._check_first_run)
 
+    def show_progress(self, text: str = "", maximum: int = 0):
+        """显示进度条（0=不确定模式）"""
+        self._status_label.setText(text or "处理中...")
+        self._update_progress.setVisible(True)
+        if maximum > 0:
+            self._update_progress.setRange(0, maximum)
+            self._update_progress.setValue(0)
+        else:
+            self._update_progress.setRange(0, 0)
+
+    def update_progress(self, value: int, text: str = ""):
+        """更新进度条"""
+        self._update_progress.setValue(value)
+        if text:
+            self._status_label.setText(text)
+
+    def hide_progress(self, text: str = "就绪"):
+        """隐藏进度条"""
+        self._update_progress.setVisible(False)
+        self._update_progress.setRange(0, 100)
+        self._status_label.setText(text)
+
     def closeEvent(self, event):
         remove_theme_listener(self._on_theme_changed)
         save_window_geometry(self)
@@ -320,8 +304,6 @@ class MainWindow(QMainWindow):
         spacer.setSizeHint(0, QSize(spacer.sizeHint(0).width(), 8))
         tree.addTopLevelItem(spacer)
 
-        self._nav_items_coming_soon: set[str] = set()
-
         for entry in NAV_TREE:
             if entry[0] == "__section__":
                 # ── 分组标题 ──
@@ -336,25 +318,11 @@ class MainWindow(QMainWindow):
                 tree.addTopLevelItem(sec)
             else:
                 key, label, icon = entry[0], entry[1], entry[2]
-                is_coming = len(entry) >= 4 and entry[3] is True
 
-                text = f" {icon}  {label}"
-                if is_coming:
-                    text += "  ⏳"
-
-                item = QTreeWidgetItem([text])
+                item = QTreeWidgetItem([f" {icon}  {label}"])
                 item.setData(0, Qt.ItemDataRole.UserRole, key)
                 item.setSizeHint(0, QSize(item.sizeHint(0).width(), 28))
-
-                if is_coming:
-                    # Coming Soon — 灰色 + 不可选中
-                    item.setFlags(Qt.ItemFlag.NoItemFlags)
-                    item.setForeground(0, QColor(TEXT_SECONDARY))
-                    item.setToolTip(0, "即将推出")
-                    self._nav_items_coming_soon.add(key)
-                else:
-                    self._nav_items.append(item)
-
+                self._nav_items.append(item)
                 tree.addTopLevelItem(item)
 
         tree.currentItemChanged.connect(self._on_nav_changed)
@@ -419,18 +387,6 @@ class MainWindow(QMainWindow):
         self._pages["storage"] = InventoryPage(self)
 
         for key in ["query", "industry", "trade", "storage"]:
-            self.content_stack.addWidget(self._pages[key])
-
-        # Coming Soon 页面 — 占位
-        placeholder_map = {
-            "blueprints": ("蓝图库", "管理你的蓝图收藏 — 导入、浏览、研究进度追踪"),
-            "plans":      ("生产计划", "查看和管理所有生产任务"),
-            "assets":     ("资产统计", "按角色、空间站、类别统计总资产"),
-            "logistics":  ("物流运输", "货运路线规划与运输成本分析"),
-            "planet":     ("行星开发", "行星工业管理与生产链优化"),
-        }
-        for key, (name, desc) in placeholder_map.items():
-            self._pages[key] = PlaceholderPage(name, desc)
             self.content_stack.addWidget(self._pages[key])
 
     # ═══════════════════════════════════════

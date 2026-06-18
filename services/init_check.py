@@ -4,7 +4,7 @@
 import os
 import sqlite3
 
-from core.paths import REF_DB_PATH, MKT_DB_PATH
+from core.paths import REF_DB_PATH, MKT_DB_PATH, BP_DB_PATH
 
 
 def check_items() -> int:
@@ -36,7 +36,7 @@ def check_prices() -> int:
 def check_blueprints() -> int:
     """返回 blueprint_activities 行数，>1000 视为已初始化"""
     try:
-        conn = sqlite3.connect(REF_DB_PATH)
+        conn = sqlite3.connect(BP_DB_PATH)
         c = conn.cursor()
         c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='blueprint_activities'")
         if not c.fetchone():

@@ -24,12 +24,17 @@ _RACE_ME = {4247: "****残余物", 4312: "****残余物"}  # 补全用
 _MINERAL_NAMES.update(_RACE_ME)
 
 
+def resolve_item_name(c, type_id: int) -> str:
+    """统一物品名称解析：item 表 → 矿物硬编码 → str(id)"""
+    if type_id in _MINERAL_NAMES:
+        return _MINERAL_NAMES[type_id]
+    nrow = c.execute("SELECT zh_name, en_name FROM item WHERE type_id = ?", (type_id,)).fetchone()
+    return (nrow[0] or nrow[1]) if nrow else str(type_id)
+
+
 def _mat_name(mat_id: int, c) -> str:
     """查询材料名称，优先查 item 表，基础矿物用硬编码"""
-    if mat_id in _MINERAL_NAMES:
-        return _MINERAL_NAMES[mat_id]
-    nrow = c.execute("SELECT zh_name, en_name FROM item WHERE type_id = ?", (mat_id,)).fetchone()
-    return (nrow[0] or nrow[1]) if nrow else str(mat_id)
+    return resolve_item_name(c, mat_id)
 
 
 def _hub_region_id(hub: str | None) -> int:
@@ -136,7 +141,7 @@ def calc_manufacturing_score(
     }
 
     conn = None  # will be set via context manager
-    with db.connect("ref", "mkt") as conn:
+    with db.connect("ref", "mkt", "bp") as conn:
         c = conn.cursor()
 
         # 1. 查找有哪些蓝图产出此物品
