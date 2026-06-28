@@ -35,6 +35,8 @@
 | trade_view | 65行 ❌ | 2个空白Tab | 占位页 |
 | inventory_view | 141行 ⚠️ | 基础物品清单 | 不是真正的仓库管理 |
 
+> **注：** 数据库已从单库 `items.db` 拆分为 `reference.db` / `market.db` / `user.db` / `blueprint.db`，评分逻辑已移至 `services/scoring.py`（不在 `core/` 下）。
+
 ### 参考设计 VS 当前
 
 参考设计（doc 13）有 15 个 Tab 页面，你的代码当前只有 4 个导航项。这不是一朝一夕能追平的。**关键决策是：UI 结构怎么设计，才能既承载未来的功能，又不让现在的空页面吓到人。**
@@ -331,4 +333,4 @@ NotifyIcon → QSystemTrayIcon
 
 ---
 
-> 你看这个方案方向对不对？有需要调整的（比如导航分组的分类方式、制造页的布局、功能优先级）就告诉我，我改完再开始实施。
+

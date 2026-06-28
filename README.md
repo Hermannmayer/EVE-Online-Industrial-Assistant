@@ -11,23 +11,23 @@
 ```
 EVE-Online-Industrial-Assistant/
 ├── Main.py                         # 入口点，PySide6 App
-├── build_release.py                # 打包脚本
+├── build_release.py                # PyInstaller 打包脚本
+├── dev.py                          # 热重载开发工具
 ├── README.md
 ├── LICENSE                         # Apache 2.0
 │
 ├── core/
 │   ├── __init__.py
-│   ├── paths.py                    # 所有路径集中管理
-│   ├── logger.py                   # 日志配置
-│   └── scoring.py                  # 贸易/制造评分引擎
+│   ├── paths.py                    # 所有路径集中管理（含4库路径）
+│   └── logger.py                   # 日志配置
 │
 ├── ui_pyside6/
 │   ├── __init__.py
-│   ├── main_window.py              # 主窗口 + 弹窗管理
-│   ├── theme.py                    # 主题与样式
+│   ├── main_window.py              # 主窗口 + 侧边导航 + 弹窗管理
+│   ├── theme.py                    # One Dark Pro / One Light 主题
 │   └── views/
 │       ├── __init__.py
-│       ├── query_view.py           # 物品查询页面
+│       ├── query_view.py           # 物品查询页面（核心功能）
 │       ├── industry_view.py        # 工业/制造页面
 │       ├── inventory_view.py       # 仓库/库存页面
 │       ├── trade_view.py           # 贸易评分页面
@@ -36,16 +36,28 @@ EVE-Online-Industrial-Assistant/
 │       └── all_items_view.py       # 全物品浏览弹窗
 │
 ├── services/
-│   ├── client.py                   # ESI HTTP 客户端
-│   ├── data/                       # 运行时数据
+│   ├── client.py                   # ESI HTTP 客户端（aiohttp）
+│   ├── database_manager.py         # 多库连接管理器（ATTACH DATABASE）
+│   ├── scoring.py                  # 制造/贸易评分计算逻辑
+│   ├── scoring_cache.py            # 评分结果缓存
+│   ├── inventory_manager.py        # 库存管理 CRUD
+│   ├── init_check.py               # 数据初始化状态检测
 │   └── workers/
 │       ├── getitems.py             # 物品数据库初始化（SDE）
 │       ├── getprices.py            # 市场价格拉取（ESI，并发优化）
 │       ├── geticon.py              # 图标缓存下载
-│       └── getblueprints.py        # 蓝图数据
+│       ├── getblueprints.py        # 蓝图数据拉取
+│       ├── getindustry.py          # 工业系统成本指数拉取
+│       └── getimplantdata.py       # 工业植入体数据拉取
 │
 ├── database/
-│   └── items.db                    # SQLite 数据库
+│   ├── reference.db                # 静态参考数据（item, industry_* 等）
+│   ├── market.db                   # 市场价格快照
+│   ├── user.db                     # 用户数据（机库、库存、生产计划）
+│   └── blueprint.db                # 蓝图数据（activities, materials 等）
+│
+├── scripts/
+│   └── migrate_split_db.py         # 单库→4库迁移脚本
 │
 ├── data/
 │   ├── search_history.json         # 搜索历史
@@ -54,9 +66,27 @@ EVE-Online-Industrial-Assistant/
 │   ├── char_config.json            # 角色配置（多角色）
 │   └── caches/icons/               # 图标缓存目录
 │
+├── EVE——docs/
+│   ├── 01-架构概览.md               # 精简版设计文档
+│   ├── 02-功能规格.md
+│   ├── 03-UI设计.md
+│   └── 04-开发路线图.md
+│
+├── tests/
+│   ├── __init__.py
+│   ├── test_core.py
+│   ├── test_logger.py
+│   ├── test_scoring.py
+│   └── test_scoring_cache.py
+│
 ├── .github/
 │   └── pull_request_template.md    # PR 模板
 │
+├── .claude/
+│   ├── CLAUDE.md                   # Claude Code 项目上下文
+│   └── PROJECT.md                  # 项目约定
+│
+├── pyproject.toml                  # Ruff + pytest 配置
 └── requirements.txt                # Python 依赖
 ```
 
@@ -172,35 +202,46 @@ python build_release.py
 
 ---
 
-## 🗄️ 数据库结构
+## 🗄️ 数据库架构
 
-### `item` 表（物品基础数据）
+数据库按数据生命周期拆分为 4 个独立 SQLite 文件（`database/` 目录下），通过 `services/database_manager.py` 的 `ATTACH DATABASE` 机制支持跨库联合查询。
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `type_id` | INTEGER PK | 物品 ID |
-| `en_name` | TEXT | 英文名 |
-| `zh_name` | TEXT | 中文名 |
-| `group_id` | INTEGER | 组 ID |
-| `en_group_name` | TEXT | 英文组名 |
-| `zh_group_name` | TEXT | 中文组名 |
-| `market_group_id` | INTEGER | 市场分类 ID |
-| `en_market_group_name` | TEXT | 英文市场分类名 |
-| `zh_market_group_name` | TEXT | 中文市场分类名 |
-| `volume` | REAL | 体积（m³） |
-| `iconID` | INTEGER | 图标 ID |
+### `reference.db` — 静态参考数据（SDE，只读，~4 MB）
 
-### `market_prices` 表（市场价格快照）
+| 表 | 说明 |
+|----|------|
+| `item` | 物品基础信息（16 字段：type_id, 中/英文名, 组, 市场分类, 体积, 图标等） |
+| `market_tree` | 市场分类树 |
+| `industry_system_costs` | 工业系统成本指数 |
+| `item_dogma` | 物品 dogma 属性 |
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | INTEGER PK AUTO | 自增主键 |
-| `type_id` | INTEGER | 物品 ID |
-| `buy_price` | REAL | 最高买单价格 |
-| `sell_price` | REAL | 最低卖单价格 |
-| `buy_volume` | BIGINT | 买单数量 |
-| `sell_volume` | BIGINT | 卖单数量 |
-| `fetch_time` | TIMESTAMP | 抓取时间（默认当前时间） |
+### `market.db` — 市场价格数据（频繁覆写，~18 MB）
+
+| 表 | 字段 | 说明 |
+|----|------|------|
+| `market_prices` | type_id, buy_price, sell_price, buy_volume, sell_volume, fetch_time | 实时订单价格快照 |
+| `market_volume_snapshots` | type_id, volume, fetch_time | 成交量快照 |
+
+### `blueprint.db` — 蓝图数据（只读）
+
+| 表 | 说明 |
+|----|------|
+| `blueprint_activities` | 蓝图活动信息 |
+| `blueprint_materials` | 蓝图材料清单 |
+| `blueprint_products` | 蓝图产出 |
+| `blueprint_skills` | 蓝图所需技能 |
+
+### `user.db` — 用户数据（增删改）
+
+| 表 | 说明 |
+|----|------|
+| `hangars` | 机库定义（矿仓/组件仓/产品仓等） |
+| `inventory_items` | 库存物品（type_id, 数量, 加权平均成本） |
+| `user_blueprints` | 用户拥有的蓝图（ME/TE/数量） |
+| `production_plans` | 生产计划 |
+| `user_skills` | 角色技能 |
+
+> 旧版单库 `items.db` 已通过迁移脚本拆分为以上 4 库，原文件保留不动作为备份。
 
 ---
 

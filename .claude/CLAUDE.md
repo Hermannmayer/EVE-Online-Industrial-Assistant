@@ -2,7 +2,7 @@
 
 ## Build & Run
 - **Run:** `python Main.py` (PySide6 desktop app)
-- **Dev server:** `python dev.py`
+- **Dev reload:** `python dev.py` (auto-restart on file changes)
 
 ## Test
 - **Run tests:** `pytest`
@@ -24,8 +24,7 @@
 - `Main.py` — Application entry point
 - `core/` — Core logic (paths, logging)
 - `services/` — Business logic (scoring, data fetching, workers)
-- `ui/` — Legacy UI
 - `ui_pyside6/` — PySide6 UI (main window, views, theme)
-- `database/` — SQLite database
+- `database/` — SQLite databases (4 files)
 - `data/` — Caches, search history, window geometry
 - `tests/` — pytest test suite
