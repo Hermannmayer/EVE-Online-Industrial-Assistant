@@ -42,20 +42,7 @@ from services.scoring import TRADE_HUB_IDS, resolve_item_name
 from services.scoring_cache import cache_key as _ck
 from services.scoring_cache import get as _cget
 from services.scoring_cache import set as _cset
-from ui_pyside6.theme import (
-    ACCENT_GREEN,
-    ACCENT_ORANGE,
-    ACCENT_RED,
-    ACCENT_YELLOW,
-    BG_DARK,
-    BG_SURFACE,
-    BORDER,
-    PRIMARY,
-    TEXT_ON_PRIMARY,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
-    add_theme_listener,
-)
+import ui_pyside6.theme as theme
 from ui_pyside6.views.char_settings_view import get_character, get_character_list
 
 DASH = chr(8212)
@@ -94,8 +81,8 @@ class MfgDlg(QDialog):
         super().__init__(parent)
         self.setWindowTitle("制造评分设置")
         self.setMinimumWidth(260)
-        self.setStyleSheet(f"background:{BG_DARK};color:{TEXT_PRIMARY};")
-        ss = f"background:{BG_DARK};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:2px 6px;"
+        self.setStyleSheet(f"background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};")
+        ss = f"background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};border:1px solid {theme.BORDER};border-radius:2px;padding:2px 6px;"
         l = QFormLayout(self); l.setSpacing(4)
         cur = current or {}
         self.h = QComboBox(); self.h.addItems(REGIONS); self.h.setStyleSheet(ss)
@@ -118,8 +105,8 @@ class TradeDlg(QDialog):
         super().__init__(parent)
         self.setWindowTitle("贸易评分设置")
         self.setMinimumWidth(260)
-        self.setStyleSheet(f"background:{BG_DARK};color:{TEXT_PRIMARY};")
-        ss = f"background:{BG_DARK};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:2px 6px;"
+        self.setStyleSheet(f"background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};")
+        ss = f"background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};border:1px solid {theme.BORDER};border-radius:2px;padding:2px 6px;"
         l = QFormLayout(self); l.setSpacing(4)
         cur = current or {}
         self.bh = QComboBox(); self.bh.addItems(REGIONS); self.bh.setStyleSheet(ss)
@@ -150,18 +137,18 @@ class MatDlg(QDialog):
     def __init__(self, tid, parent=None):
         super().__init__(parent)
         self.setWindowTitle("制造材料"); self.setMinimumSize(460,280)
-        self.setStyleSheet(f"background:{BG_DARK};color:{TEXT_PRIMARY};")
+        self.setStyleSheet(f"background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};")
         l = QVBoxLayout(self); l.setContentsMargins(10,10,10,10)
         with get_container().db.connect('ref', 'mkt', 'bp') as conn:
             c = conn.cursor()
             nm = resolve_item_name(c, tid)
-            l.addWidget(QLabel(f"制造材料: {nm}", styleSheet=f"color:{PRIMARY};font-size:13px;font-weight:bold;"))
+            l.addWidget(QLabel(f"制造材料: {nm}", styleSheet=f"color:{theme.PRIMARY};font-size:13px;font-weight:bold;"))
             c.execute("""SELECT blueprint_type_id
                 FROM blueprint_products
                 WHERE product_type_id=? AND activity='manufacturing' ORDER BY blueprint_type_id LIMIT 1""", (tid,))
             bp_row = c.fetchone()
             if not bp_row:
-                l.addWidget(QLabel("此物品无制造蓝图", styleSheet=f"color:{ACCENT_RED};"))
+                l.addWidget(QLabel("此物品无制造蓝图", styleSheet=f"color:{theme.ACCENT_RED};"))
                 b = QPushButton("关闭"); b.clicked.connect(self.accept); l.addWidget(b)
                 return
             bp_id = bp_row[0]
@@ -171,7 +158,7 @@ class MatDlg(QDialog):
                 WHERE bm.blueprint_type_id=? AND bm.activity='manufacturing' ORDER BY i.zh_name""", (bp_id,))
             mats = c.fetchall()
         lst = QListWidget()
-        lst.setStyleSheet(f"background:{BG_SURFACE};border:1px solid {BORDER};border-radius:3px;")
+        lst.setStyleSheet(f"background:{theme.BG_SURFACE};border:1px solid {theme.BORDER};border-radius:3px;")
         total = 0.0
         for mid,qty,zh,en,sp in mats:
             n = zh or en or str(mid); p = sp or 0; sub = p*qty; total += sub
@@ -179,7 +166,7 @@ class MatDlg(QDialog):
             it = QListWidgetItem(ic, f"  {n} x{qty:,} @ {p:,.2f} = {sub:,.2f}")
             it.setSizeHint(QSize(0,32)); lst.addItem(it)
         l.addWidget(lst)
-        l.addWidget(QLabel(f"总成本: {total:,.2f} ISK", styleSheet=f"color:{ACCENT_GREEN};font-size:12px;font-weight:bold;"))
+        l.addWidget(QLabel(f"总成本: {total:,.2f} ISK", styleSheet=f"color:{theme.ACCENT_GREEN};font-size:12px;font-weight:bold;"))
         b = QPushButton("关闭"); b.clicked.connect(self.accept); l.addWidget(b)
 
 
@@ -218,15 +205,15 @@ class AModel(QAbstractTableModel):
         if role==Qt.ItemDataRole.ForegroundRole:
             if k=="_tag":
                 tag=str(v or "")
-                if tag.endswith("S"): return QColor(ACCENT_GREEN)
-                if tag.endswith("A"): return QColor(PRIMARY)
-                if tag.endswith("B"): return QColor(ACCENT_YELLOW)
-                if tag.endswith("C"): return QColor(ACCENT_ORANGE)
-                if tag.endswith("D") and not tag.startswith("✗"): return QColor(ACCENT_RED)
+                if tag.endswith("S"): return QColor(theme.ACCENT_GREEN)
+                if tag.endswith("A"): return QColor(theme.PRIMARY)
+                if tag.endswith("B"): return QColor(theme.ACCENT_YELLOW)
+                if tag.endswith("C"): return QColor(theme.ACCENT_ORANGE)
+                if tag.endswith("D") and not tag.startswith("✗"): return QColor(theme.ACCENT_RED)
             if k in ("mm","tm"):
                 vf=float(r.get(k,0)or 0)
-                if vf>0: return QColor(ACCENT_GREEN)
-                elif vf<0: return QColor(ACCENT_RED)
+                if vf>0: return QColor(theme.ACCENT_GREEN)
+                elif vf<0: return QColor(theme.ACCENT_RED)
         if role==Qt.ItemDataRole.UserRole: return r
         return None
     def headerData(self,s,o,r=Qt.ItemDataRole.DisplayRole):
@@ -385,7 +372,7 @@ class AllItemsDialog(QDialog):
         self._build_ui()
         self._tw = TreeW(self); self._tw.done.connect(self._ot); self._tw.start()
         self._iw = ItemsW(rid=JITA_RID, parent=self); self._iw.done.connect(self._od); self._iw.start()
-        add_theme_listener(self._on_theme_changed)
+        theme.add_theme_listener(self._on_theme_changed)
 
     def closeEvent(self, ev):
         for t in (self._tw, self._iw, self._wp, self._sw):
@@ -402,21 +389,21 @@ class AllItemsDialog(QDialog):
             self._refresh_styles()
 
     def _refresh_styles(self):
-        self._toolbar.setStyleSheet(f"background:{BG_SURFACE};border-bottom:1px solid {BORDER};")
-        self._filter_bar.setStyleSheet(f"background:{BG_DARK};border-bottom:1px solid {BORDER};")
+        self._toolbar.setStyleSheet(f"background:{theme.BG_SURFACE};border-bottom:1px solid {theme.BORDER};")
+        self._filter_bar.setStyleSheet(f"background:{theme.BG_DARK};border-bottom:1px solid {theme.BORDER};")
         for b in self._toolbar_btns:
-            b.setStyleSheet(f"QPushButton{{background:{BG_DARK};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:2px 6px;font-size:11px;min-width:60px;}}QPushButton:hover{{background:{PRIMARY};color:{TEXT_ON_PRIMARY};}}")
-        self._pin.setStyleSheet(f"color:{TEXT_PRIMARY};font-size:11px;")
-        self._search_input.setStyleSheet(f"background:{BG_SURFACE};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:1px 4px;font-size:11px;")
-        self._cat.setStyleSheet(f"background:{BG_SURFACE};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:1px 4px;font-size:11px;")
-        self._st.setStyleSheet(f"color:{TEXT_SECONDARY};font-size:11px;")
+            b.setStyleSheet(f"QPushButton{{background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};border:1px solid {theme.BORDER};border-radius:2px;padding:2px 6px;font-size:11px;min-width:60px;}}QPushButton:hover{{background:{theme.PRIMARY};color:{theme.TEXT_ON_PRIMARY};}}")
+        self._pin.setStyleSheet(f"color:{theme.TEXT_PRIMARY};font-size:11px;")
+        self._search_input.setStyleSheet(f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};border:1px solid {theme.BORDER};border-radius:2px;padding:1px 4px;font-size:11px;")
+        self._cat.setStyleSheet(f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};border:1px solid {theme.BORDER};border-radius:2px;padding:1px 4px;font-size:11px;")
+        self._st.setStyleSheet(f"color:{theme.TEXT_SECONDARY};font-size:11px;")
 
     def _build_ui(self):
         l=QVBoxLayout(self);l.setContentsMargins(2,2,2,2);l.setSpacing(1)
         def _bt(t,cb,w=60):
-            b=QPushButton(t);b.setStyleSheet(f"QPushButton{{background:{BG_DARK};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:2px 6px;font-size:11px;min-width:{w}px;}}QPushButton:hover{{background:{PRIMARY};color:{TEXT_ON_PRIMARY};}}")
+            b=QPushButton(t);b.setStyleSheet(f"QPushButton{{background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};border:1px solid {theme.BORDER};border-radius:2px;padding:2px 6px;font-size:11px;min-width:{w}px;}}QPushButton:hover{{background:{theme.PRIMARY};color:{theme.TEXT_ON_PRIMARY};}}")
             b.clicked.connect(cb);return b
-        tb=QWidget();tb.setStyleSheet(f"background:{BG_SURFACE};border-bottom:1px solid {BORDER};")
+        tb=QWidget();tb.setStyleSheet(f"background:{theme.BG_SURFACE};border-bottom:1px solid {theme.BORDER};")
         self._toolbar = tb
         bx=QHBoxLayout(tb);bx.setContentsMargins(4,2,4,2);bx.setSpacing(3)
         bx.addWidget(_bt("制造评分",self._on_mfg));bx.addWidget(_bt("设置",self._smfg,30))
@@ -427,28 +414,28 @@ class AllItemsDialog(QDialog):
             bx.addWidget(b)
         bx.addStretch()
         self._pin=QCheckBox("置顶")
-        self._pin.setStyleSheet(f"color:{TEXT_PRIMARY};font-size:11px;")
+        self._pin.setStyleSheet(f"color:{theme.TEXT_PRIMARY};font-size:11px;")
         self._pin.toggled.connect(self._on_pin_toggled)
         bx.addWidget(self._pin);l.addWidget(tb)
-        fb=QWidget();fb.setStyleSheet(f"background:{BG_DARK};border-bottom:1px solid {BORDER};")
+        fb=QWidget();fb.setStyleSheet(f"background:{theme.BG_DARK};border-bottom:1px solid {theme.BORDER};")
         self._filter_bar = fb
         fx=QHBoxLayout(fb);fx.setContentsMargins(4,1,4,1);fx.setSpacing(3)
-        fx.addWidget(QLabel("搜索:",styleSheet=f"color:{TEXT_SECONDARY};font-size:11px;"))
+        fx.addWidget(QLabel("搜索:",styleSheet=f"color:{theme.TEXT_SECONDARY};font-size:11px;"))
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("名称/ID...")
         self._search_input.setClearButtonEnabled(True)
-        self._search_input.setStyleSheet(f"background:{BG_SURFACE};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:1px 4px;font-size:11px;")
+        self._search_input.setStyleSheet(f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};border:1px solid {theme.BORDER};border-radius:2px;padding:1px 4px;font-size:11px;")
         self._search_input.textChanged.connect(self._on_search_text)
         fx.addWidget(self._search_input)
-        fx.addWidget(QLabel("类别:",styleSheet=f"color:{TEXT_SECONDARY};font-size:11px;"))
+        fx.addWidget(QLabel("类别:",styleSheet=f"color:{theme.TEXT_SECONDARY};font-size:11px;"))
         self._cat=QComboBox();self._cat.addItems(CATEGORIES)
-        self._cat.setStyleSheet(f"background:{BG_SURFACE};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:1px 4px;font-size:11px;")
+        self._cat.setStyleSheet(f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};border:1px solid {theme.BORDER};border-radius:2px;padding:1px 4px;font-size:11px;")
         self._cat.currentIndexChanged.connect(self._apply)
         fx.addWidget(self._cat)
-        self._st=QLabel("就绪",styleSheet=f"color:{TEXT_SECONDARY};font-size:11px;");fx.addStretch();fx.addWidget(self._st)
+        self._st=QLabel("就绪",styleSheet=f"color:{theme.TEXT_SECONDARY};font-size:11px;");fx.addStretch();fx.addWidget(self._st)
         l.addWidget(fb)
         self._pr=QProgressBar();self._pr.setFixedHeight(3);self._pr.setVisible(False)
-        self._pr.setStyleSheet(f"QProgressBar{{background:{BG_SURFACE};border:none;border-radius:1px;}}QProgressBar::chunk{{background:{PRIMARY};border-radius:1px;}}");l.addWidget(self._pr)
+        self._pr.setStyleSheet(f"QProgressBar{{background:{theme.BG_SURFACE};border:none;border-radius:1px;}}QProgressBar::chunk{{background:{theme.PRIMARY};border-radius:1px;}}");l.addWidget(self._pr)
         sp=QSplitter(Qt.Orientation.Horizontal);sp.setHandleWidth(1)
         self._tr=QTreeWidget();self._tr.setHeaderHidden(True);self._tr.setMinimumWidth(100);self._tr.setMaximumWidth(250)
         self._tr.itemClicked.connect(self._on_tree);sp.addWidget(self._tr)

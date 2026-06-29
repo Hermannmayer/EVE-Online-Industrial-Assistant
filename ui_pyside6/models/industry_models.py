@@ -3,7 +3,7 @@
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QColor
 
-from ui_pyside6.theme import GREEN, PRIMARY, RED
+import ui_pyside6.theme as theme
 
 
 class RankTableModel(QAbstractTableModel):
@@ -38,10 +38,10 @@ class RankTableModel(QAbstractTableModel):
             ][c]
         elif role == Qt.ItemDataRole.ForegroundRole:
             if c == 1:
-                return QColor(GREEN) if r.get("profit_per_run", 0) > 0 else QColor(RED)
+                return QColor(theme.GREEN) if r.get("profit_per_run", 0) > 0 else QColor(theme.RED)
             if c == 4:
                 s = r.get("score", 0)
-                return QColor(GREEN) if s >= 70 else (QColor(RED) if s < 30 else QColor(PRIMARY))
+                return QColor(theme.GREEN) if s >= 70 else (QColor(theme.RED) if s < 30 else QColor(theme.PRIMARY))
         return None
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
@@ -102,10 +102,10 @@ class PlanTableModel(QAbstractTableModel):
             return cols[c]
         elif role == Qt.ItemDataRole.ForegroundRole:
             if c == 7:
-                return QColor(GREEN) if p.get("profit", 0) > 0 else QColor(RED)
+                return QColor(theme.GREEN) if p.get("profit", 0) > 0 else QColor(theme.RED)
             if c == 9:
                 s = p.get("score", 0)
-                return QColor(GREEN) if s >= 70 else (QColor(RED) if s < 30 else QColor(PRIMARY))
+                return QColor(theme.GREEN) if s >= 70 else (QColor(theme.RED) if s < 30 else QColor(theme.PRIMARY))
         return None
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):

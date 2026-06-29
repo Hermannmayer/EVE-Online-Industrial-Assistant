@@ -40,22 +40,7 @@ from core.paths import (
     search_history_file,
     window_geometry_file,
 )
-from ui_pyside6.theme import (
-    ACCENT_RED,
-    ACCENT_YELLOW,
-    GREEN,
-    PRIMARY,
-    TEXT_SECONDARY,
-    add_theme_listener,
-    apply_theme,
-    current_theme,
-    get_stylesheet,
-    load_theme_preference,
-    remove_theme_listener,
-    restore_window_geometry,
-    save_window_geometry,
-    set_geometry_file,
-)
+import ui_pyside6.theme as theme
 
 # ── 导航树节点定义 ──
 # 格式: ("key", "标签", "图标") — 导航项，可点击
@@ -127,18 +112,18 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        set_geometry_file(window_geometry_file())
+        theme.set_geometry_file(window_geometry_file())
         ensure_dirs_exist()
 
         self.setWindowTitle("EVE 商人助手")
         self.setMinimumSize(1200, 700)
 
         # ── 主题 ──
-        self.setStyleSheet(get_stylesheet())
-        # 加载上次主题偏好（apply_theme 会触发 _on_theme_changed 重设样式表）
-        saved_theme = load_theme_preference()
+        self.setStyleSheet(theme.get_stylesheet())
+        # 加载上次主题偏好（theme.apply_theme 会触发 _on_theme_changed 重设样式表）
+        saved_theme = theme.load_theme_preference()
         if saved_theme != "dark":
-            apply_theme(saved_theme)
+            theme.apply_theme(saved_theme)
 
         # ── 顶部工具栏 ──
         toolbar = QToolBar("主工具栏")
@@ -165,14 +150,14 @@ class MainWindow(QMainWindow):
 
         self._price_age_label = QLabel("⏳ 价格: —")
         self._price_age_label.setObjectName("price_age_label")
-        self._price_age_label.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 0 8px;")
+        self._price_age_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; padding: 0 8px;")
         toolbar.addWidget(self._price_age_label)
 
         toolbar.addSeparator()
 
         self._item_count_label = QLabel("物品: —")
         self._item_count_label.setObjectName("item_count_label")
-        self._item_count_label.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 0 8px;")
+        self._item_count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; padding: 0 8px;")
         toolbar.addWidget(self._item_count_label)
 
         self.addToolBar(toolbar)
@@ -231,7 +216,7 @@ class MainWindow(QMainWindow):
         self.content_stack.setCurrentIndex(0)
 
         # ── 窗口位置恢复 ──
-        restore_window_geometry(self)
+        theme.restore_window_geometry(self)
 
         # ── 初始化定时器：价格检查 ──
         self._price_worker: PriceUpdateWorker | None = None
@@ -246,7 +231,7 @@ class MainWindow(QMainWindow):
             self._start_price_timer()
 
         # ── 主题切换监听 ──
-        add_theme_listener(self._on_theme_changed)
+        theme.add_theme_listener(self._on_theme_changed)
 
         # ── 首次启动检测 ──
         QTimer.singleShot(500, self._check_first_run)
@@ -274,8 +259,8 @@ class MainWindow(QMainWindow):
         self._status_label.setText(text)
 
     def closeEvent(self, event):
-        remove_theme_listener(self._on_theme_changed)
-        save_window_geometry(self)
+        theme.remove_theme_listener(self._on_theme_changed)
+        theme.save_window_geometry(self)
         # 关闭独立的全物品窗口
         for w in QApplication.topLevelWidgets():
             from ui_pyside6.views.all_items_view import AllItemsDialog
@@ -317,7 +302,7 @@ class MainWindow(QMainWindow):
         font.setBold(True)
         font.setPointSize(12)
         header.setFont(0, font)
-        header.setForeground(0, QColor(PRIMARY))
+        header.setForeground(0, QColor(theme.PRIMARY))
         header.setSizeHint(0, QSize(header.sizeHint(0).width(), 32))
         tree.addTopLevelItem(header)
 
@@ -331,7 +316,7 @@ class MainWindow(QMainWindow):
                 # ── 分组标题 ──
                 sec = QTreeWidgetItem([entry[1]])
                 sec.setFlags(Qt.ItemFlag.NoItemFlags)
-                sec.setForeground(0, QColor(TEXT_SECONDARY))
+                sec.setForeground(0, QColor(theme.TEXT_SECONDARY))
                 f = sec.font(0)
                 f.setBold(True)
                 f.setPointSize(10)
@@ -510,13 +495,13 @@ class MainWindow(QMainWindow):
                     diff_min = int(diff_sec / 60)
 
                     if diff_min < 10:
-                        color = GREEN
+                        color = theme.GREEN
                         age_text = f"🟢 {diff_min} 分钟前"
                     elif diff_min < 30:
-                        color = ACCENT_YELLOW
+                        color = theme.ACCENT_YELLOW
                         age_text = f"🟡 {diff_min} 分钟前"
                     else:
-                        color = ACCENT_RED
+                        color = theme.ACCENT_RED
                         age_text = f"🔴 {diff_min} 分钟前"
 
                     bj_dt = dt.replace(tzinfo=timezone.utc) + timedelta(hours=8)
@@ -528,7 +513,7 @@ class MainWindow(QMainWindow):
                     self._price_age_label.setText("⏳ 价格: 解析异常")
             else:
                 self._price_age_label.setText("⏳ 价格: 暂无数据")
-                self._price_age_label.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 0 8px;")
+                self._price_age_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; padding: 0 8px;")
                 self._status_info_label.setText("价格: 暂无数据")
         except Exception:
             self._price_age_label.setText("⏳ 价格: 数据库未就绪")
@@ -573,7 +558,7 @@ class MainWindow(QMainWindow):
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(TEXT_SECONDARY))
+        painter.setBrush(QColor(theme.TEXT_SECONDARY))
         # 头（圆形）
         head_radius = size * 0.16
         cx, cy = size / 2, size * 0.28
@@ -598,7 +583,7 @@ class MainWindow(QMainWindow):
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QColor(TEXT_SECONDARY), 2)
+        pen = QPen(QColor(theme.TEXT_SECONDARY), 2)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -629,15 +614,15 @@ class MainWindow(QMainWindow):
 
     def _on_theme_changed(self):
         """主题切换后的 UI 刷新"""
-        self.setStyleSheet(get_stylesheet())
+        self.setStyleSheet(theme.get_stylesheet())
         # 非 QSS 项：图标颜色
         self._char_settings_btn.setIcon(self._create_person_icon())
         self._sys_settings_btn.setIcon(self._create_settings_icon())
 
     def _toggle_theme(self):
         """在暗色/亮色模式间切换"""
-        new_theme = "light" if current_theme() == "dark" else "dark"
-        apply_theme(new_theme)
+        new_theme = "light" if theme.current_theme() == "dark" else "dark"
+        theme.apply_theme(new_theme)
 
     # ── 事件处理 ──
 
@@ -657,7 +642,7 @@ class MainWindow(QMainWindow):
         # ── 主题切换 ──
         theme_group = QGroupBox("外观")
         tg = QVBoxLayout(theme_group)
-        current = current_theme()
+        current = theme.current_theme()
         theme_btn = QPushButton("☀️ 切换到亮色模式" if current == "dark" else "🌙 切换到暗色模式")
         theme_btn.clicked.connect(lambda: (self._toggle_theme(), dlg.accept()))
         tg.addWidget(theme_btn)
