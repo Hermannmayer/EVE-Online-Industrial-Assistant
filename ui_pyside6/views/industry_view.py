@@ -31,14 +31,7 @@ from core.container import get_container
 from services.scoring import TRADE_HUB_IDS
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 from ui_pyside6.models.industry_models import MaterialTableModel, PlanTableModel, RankTableModel
-from ui_pyside6.theme import (
-    BORDER,
-    GREEN,
-    RED,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
-    add_theme_listener,
-)
+import ui_pyside6.theme as theme
 from ui_pyside6.workers.industry_workers import RankWorker, ScoreWorker, SearchWorker
 
 # ════════════════════════════════════════════════════
@@ -117,25 +110,25 @@ class IndustryPage(QWidget):
         self._rank_results: list[dict] = []
         self.load_plans()
 
-        add_theme_listener(self._on_theme_changed)
+        theme.add_theme_listener(self._on_theme_changed)
 
     def _on_theme_changed(self):
         """主题切换时重新应用内联样式表"""
         self._tabs.setStyleSheet("QTabWidget::pane { border: none; }")
-        self._preview.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        self._preview.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
         self._score_group.setStyleSheet(f"""
-            QGroupBox {{ border: 1px solid {BORDER}; border-radius: 6px; padding: 8px; margin-top: 8px; }}
-            QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {TEXT_SECONDARY}; }}
+            QGroupBox {{ border: 1px solid {theme.BORDER}; border-radius: 6px; padding: 8px; margin-top: 8px; }}
+            QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {theme.TEXT_SECONDARY}; }}
         """)
         for lbl in self._profit_labels.values():
-            lbl.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 12px;")
-        self._rank_status.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
-        self._plan_count.setStyleSheet(f"color: {TEXT_SECONDARY};")
+            lbl.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
+        self._rank_status.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._plan_count.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
         self._mat_group.setStyleSheet(f"""
-            QGroupBox {{ border: 1px solid {BORDER}; border-radius: 6px; padding: 4px; margin-top: 8px; }}
-            QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {TEXT_SECONDARY}; }}
+            QGroupBox {{ border: 1px solid {theme.BORDER}; border-radius: 6px; padding: 4px; margin-top: 8px; }}
+            QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {theme.TEXT_SECONDARY}; }}
         """)
-        self._mat_summary.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._mat_summary.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
 
     # ═══════════════════════════════════
     #  Tab 0: 制造计算
@@ -224,7 +217,7 @@ class IndustryPage(QWidget):
         r2.addWidget(self._runs)
 
         self._preview = QLabel("搜索物品 → 计算 → 加入生产计划")
-        self._preview.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        self._preview.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
         r2.addWidget(self._preview, 1)
 
         v.addLayout(r2)
@@ -241,8 +234,8 @@ class IndustryPage(QWidget):
         """评分结果面板：利润卡片 + 材料清单"""
         self._score_group = QGroupBox("利润分析")
         self._score_group.setStyleSheet(f"""
-            QGroupBox {{ border: 1px solid {BORDER}; border-radius: 6px; padding: 8px; margin-top: 8px; }}
-            QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {TEXT_SECONDARY}; }}
+            QGroupBox {{ border: 1px solid {theme.BORDER}; border-radius: 6px; padding: 8px; margin-top: 8px; }}
+            QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {theme.TEXT_SECONDARY}; }}
         """)
         self._score_group.setVisible(False)
 
@@ -267,10 +260,10 @@ class IndustryPage(QWidget):
         for i, (label, key) in enumerate(label_specs):
             row, col_pair = i % 4, i // 4
             lbl = QLabel(label)
-            lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+            lbl.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
             val = QLabel("—")
             val.setObjectName(f"profit_{key}")
-            val.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 12px;")
+            val.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
             grid.addWidget(lbl, row, col_pair * 2)
             grid.addWidget(val, row, col_pair * 2 + 1)
             self._profit_labels[key] = val
@@ -347,7 +340,7 @@ class IndustryPage(QWidget):
         self._rank_progress.setVisible(False)
         status_bar.addWidget(self._rank_progress)
         self._rank_status = QLabel("")
-        self._rank_status.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._rank_status.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
         status_bar.addWidget(self._rank_status)
         status_bar.addStretch()
         layout.addLayout(status_bar)
@@ -412,7 +405,7 @@ class IndustryPage(QWidget):
         # 统计 + 过滤
         stats = QHBoxLayout()
         self._plan_count = QLabel("")
-        self._plan_count.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        self._plan_count.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
         stats.addWidget(self._plan_count)
 
         stats.addWidget(QLabel("  过滤:"))
@@ -426,8 +419,8 @@ class IndustryPage(QWidget):
         # 材料汇总
         self._mat_group = QGroupBox("材料需求汇总（所有活跃计划）")
         self._mat_group.setStyleSheet(f"""
-            QGroupBox {{ border: 1px solid {BORDER}; border-radius: 6px; padding: 4px; margin-top: 8px; }}
-            QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {TEXT_SECONDARY}; }}
+            QGroupBox {{ border: 1px solid {theme.BORDER}; border-radius: 6px; padding: 4px; margin-top: 8px; }}
+            QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {theme.TEXT_SECONDARY}; }}
         """)
         mv = QVBoxLayout(self._mat_group)
         mv.setContentsMargins(4, 4, 4, 4)
@@ -441,7 +434,7 @@ class IndustryPage(QWidget):
         mv.addWidget(self._mat_table)
 
         self._mat_summary = QLabel("")
-        self._mat_summary.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._mat_summary.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
         mv.addWidget(self._mat_summary)
 
         layout.addWidget(self._mat_group)
@@ -531,7 +524,7 @@ class IndustryPage(QWidget):
         iskph = result.get("isk_per_hour", 0) or bd.get("isk_per_hour", 0)
         score = result.get("score", 0)
         runs = self._runs.value()
-        profit_color = GREEN if profit > 0 else RED
+        profit_color = theme.GREEN if profit > 0 else theme.RED
 
         # 填充利润卡片
         revenue = bd.get("revenue", 0)

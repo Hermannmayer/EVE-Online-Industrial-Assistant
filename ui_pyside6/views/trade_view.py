@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
-from ui_pyside6.theme import BG_DARK, BG_SURFACE, PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY, add_theme_listener
+import ui_pyside6.theme as theme
 
 
 class TradePage(QWidget):
@@ -34,15 +34,15 @@ class TradePage(QWidget):
 
         layout.addWidget(self._tabs)
 
-        add_theme_listener(self._on_theme_changed)
+        theme.add_theme_listener(self._on_theme_changed)
 
     def _on_theme_changed(self):
         """主题切换时重新应用内联样式表"""
         self._tabs.setStyleSheet(f"""
             QTabWidget::pane {{ border: none; }}
         """)
-        self._monitor_placeholder.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 16px;")
-        self._transport_placeholder.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 16px;")
+        self._monitor_placeholder.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 16px;")
+        self._transport_placeholder.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 16px;")
 
     def _build_monitor_tab(self) -> QWidget:
         w = QWidget()
@@ -53,7 +53,7 @@ class TradePage(QWidget):
         # 占位
         self._monitor_placeholder = QLabel("价格监控 — 开发中\n\n关注物品的价格变化，设置提醒阈值。")
         self._monitor_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._monitor_placeholder.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 16px;")
+        self._monitor_placeholder.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 16px;")
         layout.addWidget(self._monitor_placeholder)
 
         return w
@@ -66,7 +66,7 @@ class TradePage(QWidget):
 
         self._transport_placeholder = QLabel("运输分析 — 开发中\n\n分析空间站间的价差与运输利润。")
         self._transport_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._transport_placeholder.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 16px;")
+        self._transport_placeholder.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 16px;")
         layout.addWidget(self._transport_placeholder)
 
         return w

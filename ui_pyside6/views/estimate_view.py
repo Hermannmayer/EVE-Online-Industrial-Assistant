@@ -36,19 +36,7 @@ from PySide6.QtWidgets import (
 from core.paths import ICON_DIR
 from core.container import get_container
 from services.scoring import TRADE_HUB_IDS, get_price
-from ui_pyside6.theme import (
-    ACCENT_GREEN,
-    ACCENT_RED,
-    BG_DARK,
-    BG_SURFACE,
-    BORDER,
-    GREEN,
-    PRIMARY,
-    RED,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
-    add_theme_listener,
-)
+import ui_pyside6.theme as theme
 
 ICON_SIZE = 32
 
@@ -287,11 +275,11 @@ class EstimateTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.ForegroundRole:
             if col == 4:  # 卖价合计 → green
-                return QColor(GREEN)
+                return QColor(theme.GREEN)
             elif col == 5:  # 买价合计 → red
-                return QColor(RED)
+                return QColor(theme.RED)
             elif col == 3:  # 单价
-                return QColor(GREEN)
+                return QColor(theme.GREEN)
 
         elif role == Qt.ItemDataRole.UserRole:
             return row
@@ -442,18 +430,18 @@ class EstimatePage(QWidget):
 
         self._refresh_hangar_list()
 
-        add_theme_listener(self._on_theme_changed)
+        theme.add_theme_listener(self._on_theme_changed)
 
     def _on_theme_changed(self):
         """主题切换时重新应用内联样式表"""
-        self._vol_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
-        self._total_vol.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 18px; font-weight: bold;")
-        self._sell_label.setText(f"<span style='color:{TEXT_SECONDARY};font-size:10px;'>卖价合计</span>")
-        self._sum_sell.setStyleSheet(f"color: {GREEN}; font-size: 16px; font-weight: bold;")
-        self._buy_label.setText(f"<span style='color:{TEXT_SECONDARY};font-size:10px;'>买价合计</span>")
-        self._sum_buy.setStyleSheet(f"color: {RED}; font-size: 16px; font-weight: bold;")
-        self._avg_label.setText(f"<span style='color:{TEXT_SECONDARY};font-size:10px;'>买卖均价</span>")
-        self._sum_avg.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 16px; font-weight: bold;")
+        self._vol_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._total_vol.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 18px; font-weight: bold;")
+        self._sell_label.setText(f"<span style='color:{theme.TEXT_SECONDARY};font-size:10px;'>卖价合计</span>")
+        self._sum_sell.setStyleSheet(f"color: {theme.GREEN}; font-size: 16px; font-weight: bold;")
+        self._buy_label.setText(f"<span style='color:{theme.TEXT_SECONDARY};font-size:10px;'>买价合计</span>")
+        self._sum_buy.setStyleSheet(f"color: {theme.RED}; font-size: 16px; font-weight: bold;")
+        self._avg_label.setText(f"<span style='color:{theme.TEXT_SECONDARY};font-size:10px;'>买卖均价</span>")
+        self._sum_avg.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 16px; font-weight: bold;")
         self._hangar_combo.setStyleSheet("QComboBox { font-weight: bold; }")
 
     def _build_import_bar(self) -> QWidget:
@@ -588,9 +576,9 @@ class EstimatePage(QWidget):
         vol_lay.setContentsMargins(0, 0, 0, 0)
         vol_lay.setSpacing(2)
         self._vol_label = QLabel("体积（精炼前）")
-        self._vol_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._vol_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
         self._total_vol = QLabel("—")
-        self._total_vol.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 18px; font-weight: bold;")
+        self._total_vol.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 18px; font-weight: bold;")
         vol_lay.addWidget(self._vol_label)
         vol_lay.addWidget(self._total_vol)
         bar.addWidget(vol_w)
@@ -604,15 +592,15 @@ class EstimatePage(QWidget):
         price_lay.setSpacing(2)
 
         self._sum_sell = QLabel("—")
-        self._sum_sell.setStyleSheet(f"color: {GREEN}; font-size: 16px; font-weight: bold;")
+        self._sum_sell.setStyleSheet(f"color: {theme.GREEN}; font-size: 16px; font-weight: bold;")
         self._sum_buy = QLabel("—")
-        self._sum_buy.setStyleSheet(f"color: {RED}; font-size: 16px; font-weight: bold;")
+        self._sum_buy.setStyleSheet(f"color: {theme.RED}; font-size: 16px; font-weight: bold;")
         self._sum_avg = QLabel("—")
-        self._sum_avg.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 16px; font-weight: bold;")
+        self._sum_avg.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 16px; font-weight: bold;")
 
-        self._sell_label = QLabel(f"<span style='color:{TEXT_SECONDARY};font-size:10px;'>卖价合计</span>")
-        self._buy_label = QLabel(f"<span style='color:{TEXT_SECONDARY};font-size:10px;'>买价合计</span>")
-        self._avg_label = QLabel(f"<span style='color:{TEXT_SECONDARY};font-size:10px;'>买卖均价</span>")
+        self._sell_label = QLabel(f"<span style='color:{theme.TEXT_SECONDARY};font-size:10px;'>卖价合计</span>")
+        self._buy_label = QLabel(f"<span style='color:{theme.TEXT_SECONDARY};font-size:10px;'>买价合计</span>")
+        self._avg_label = QLabel(f"<span style='color:{theme.TEXT_SECONDARY};font-size:10px;'>买卖均价</span>")
         price_lay.addWidget(self._sell_label)
         price_lay.addWidget(self._sum_sell)
         price_lay.addWidget(self._buy_label)

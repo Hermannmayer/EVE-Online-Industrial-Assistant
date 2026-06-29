@@ -155,11 +155,16 @@ class BlueprintNameWorker(QThread):
 
 def _start_blueprint_name_worker():
     """启动蓝图名称补拉 worker（延迟调用，不阻塞 UI）"""
-    worker = BlueprintNameWorker()
-    worker.finished.connect(
+    global _bp_worker
+    _bp_worker = BlueprintNameWorker()
+    _bp_worker.finished.connect(
         lambda success, msg: log.info("蓝图名称补拉完成") if success else log.error(f"蓝图名称补拉失败: {msg}")
     )
-    worker.start()
+    _bp_worker.finished.connect(lambda: _bp_worker.deleteLater())
+    _bp_worker.start()
+
+
+_bp_worker: BlueprintNameWorker | None = None
 
 
 def _fill_blueprint_names():

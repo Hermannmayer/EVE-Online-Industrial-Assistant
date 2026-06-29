@@ -41,20 +41,7 @@ from core.paths import ICON_DIR, search_history_file
 from core.container import get_container
 
 
-from ui_pyside6.theme import (
-    BG_DARK,
-    BG_HOVER,
-    BG_SURFACE,
-    BG_SURFACE_LIGHT,
-    BORDER,
-    GREEN,
-    PRIMARY,
-    RED,
-    TEXT_ON_PRIMARY,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
-    add_theme_listener,
-)
+import ui_pyside6.theme as theme
 
 ICON_SIZE = 32
 HISTORY_FILE = Path(search_history_file())
@@ -132,18 +119,18 @@ class QueryTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.ForegroundRole:
             if col == 4:
-                return QColor(GREEN) if row.get("buy_str") != "—" else QColor(TEXT_SECONDARY)
+                return QColor(theme.GREEN) if row.get("buy_str") != "—" else QColor(theme.TEXT_SECONDARY)
             elif col == 5:
-                return QColor(RED) if row.get("sell_str") != "—" else QColor(TEXT_SECONDARY)
+                return QColor(theme.RED) if row.get("sell_str") != "—" else QColor(theme.TEXT_SECONDARY)
             elif col == 6:
-                return QColor(GREEN) if row.get("avg_price_str") != "—" else QColor(TEXT_SECONDARY)
+                return QColor(theme.GREEN) if row.get("avg_price_str") != "—" else QColor(theme.TEXT_SECONDARY)
 
         elif role == Qt.ItemDataRole.BackgroundRole:
             if row.get("is_inverted"):
-                return QColor(BG_HOVER)
+                return QColor(theme.BG_HOVER)
             if index.row() % 2 == 0:
-                return QColor(BG_SURFACE)
-            return QColor(BG_DARK)
+                return QColor(theme.BG_SURFACE)
+            return QColor(theme.BG_DARK)
 
         elif role == Qt.ItemDataRole.FontRole:
             if col in (1, 4, 5, 6, 7):
@@ -514,11 +501,11 @@ class OrderPopup(QDialog):
                 loc_id = order["location_id"]
                 station = _station_name_cache.get(loc_id, str(loc_id))
                 item = QListWidgetItem(f"#{i+1}  {price} ISK  ×{vol}   {station} [{loc_id}]")
-                item.setForeground(QColor(GREEN))
+                item.setForeground(QColor(theme.GREEN))
                 self._buy_list.addItem(item)
         else:
             item = QListWidgetItem("无买单数据")
-            item.setForeground(QColor(TEXT_SECONDARY))
+            item.setForeground(QColor(theme.TEXT_SECONDARY))
             self._buy_list.addItem(item)
 
         self._sell_list.clear()
@@ -529,11 +516,11 @@ class OrderPopup(QDialog):
                 loc_id = order["location_id"]
                 station = _station_name_cache.get(loc_id, str(loc_id))
                 item = QListWidgetItem(f"#{i+1}  {price} ISK  ×{vol}   {station} [{loc_id}]")
-                item.setForeground(QColor(RED))
+                item.setForeground(QColor(theme.RED))
                 self._sell_list.addItem(item)
         else:
             item = QListWidgetItem("无卖单数据")
-            item.setForeground(QColor(TEXT_SECONDARY))
+            item.setForeground(QColor(theme.TEXT_SECONDARY))
             self._sell_list.addItem(item)
 
 
@@ -567,17 +554,17 @@ class QueryPage(QWidget):
         self._all_items_btn.setToolTip("打开全物品浏览器")
         self._all_items_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {BG_SURFACE_LIGHT};
-                color: {TEXT_PRIMARY};
-                border: 1px solid {BORDER};
+                background-color: {theme.BG_SURFACE_LIGHT};
+                color: {theme.TEXT_PRIMARY};
+                border: 1px solid {theme.BORDER};
                 border-radius: 6px;
                 padding: 6px 12px;
                 font-size: 12px;
             }}
             QPushButton:hover {{
-                background-color: {PRIMARY};
-                color: {TEXT_ON_PRIMARY};
-                border: 1px solid {PRIMARY};
+                background-color: {theme.PRIMARY};
+                color: {theme.TEXT_ON_PRIMARY};
+                border: 1px solid {theme.PRIMARY};
             }}
         """)
         self._all_items_btn.clicked.connect(self._open_all_items)
@@ -614,13 +601,13 @@ class QueryPage(QWidget):
         status_layout.setContentsMargins(0, 2, 0, 2)
 
         self._count_label = QLabel("")
-        self._count_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
         status_layout.addWidget(self._count_label)
 
         status_layout.addStretch()
 
         self._status_label = QLabel("输入物品名称/ID后搜索，双击行查看实时订单")
-        self._status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
         status_layout.addWidget(self._status_label)
 
         layout.addWidget(status_widget)
@@ -662,26 +649,26 @@ class QueryPage(QWidget):
         self._debounce_timer.timeout.connect(self._fetch_suggestions)
 
         # ── 主题监听 ──
-        add_theme_listener(self._on_theme_changed)
+        theme.add_theme_listener(self._on_theme_changed)
 
     def _on_theme_changed(self):
         self._all_items_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {BG_SURFACE_LIGHT};
-                color: {TEXT_PRIMARY};
-                border: 1px solid {BORDER};
+                background-color: {theme.BG_SURFACE_LIGHT};
+                color: {theme.TEXT_PRIMARY};
+                border: 1px solid {theme.BORDER};
                 border-radius: 6px;
                 padding: 6px 12px;
                 font-size: 12px;
             }}
             QPushButton:hover {{
-                background-color: {PRIMARY};
-                color: {TEXT_ON_PRIMARY};
-                border: 1px solid {PRIMARY};
+                background-color: {theme.PRIMARY};
+                color: {theme.TEXT_ON_PRIMARY};
+                border: 1px solid {theme.PRIMARY};
             }}
         """)
-        self._count_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
-        self._status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
 
         # ── 当前订单类型ID ──
         self._current_order_type_id: int | None = None

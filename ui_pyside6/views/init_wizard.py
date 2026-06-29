@@ -7,10 +7,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QThread, Signal
 
-from ui_pyside6.theme import (
-    BG_DARK, BG_HOVER, BG_SURFACE, PRIMARY, TEXT_ON_PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY,
-    ACCENT_GREEN, ACCENT_RED, BORDER,
-)
+import ui_pyside6.theme as theme
 from services.init_check import check_all, missing_count
 
 
@@ -69,7 +66,7 @@ class InitWizard(QDialog):
         super().__init__(parent)
         self.setWindowTitle("数据初始化")
         self.setMinimumSize(480, 400)
-        self.setStyleSheet(f"background-color: {BG_DARK};")
+        self.setStyleSheet(f"background-color: {theme.BG_DARK};")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
@@ -77,18 +74,18 @@ class InitWizard(QDialog):
 
         # 标题
         title = QLabel("首次启动 — 数据初始化")
-        title.setStyleSheet(f"color: {PRIMARY}; font-size: 16px; font-weight: bold;")
+        title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 16px; font-weight: bold;")
         layout.addWidget(title)
 
         desc = QLabel("需要下载游戏数据才能使用全部功能。已就绪的组件会自动跳过。")
         desc.setWordWrap(True)
-        desc.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        desc.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
         layout.addWidget(desc)
 
         # 分隔线
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet(f"background-color: {BORDER}; border: none;")
+        line.setStyleSheet(f"background-color: {theme.BORDER}; border: none;")
         line.setFixedHeight(1)
         layout.addWidget(line)
 
@@ -104,16 +101,16 @@ class InitWizard(QDialog):
         self._progress.setTextVisible(True)
         self._progress.setStyleSheet(f"""
             QProgressBar {{
-                background-color: {BG_SURFACE};
-                border: 1px solid {BORDER};
+                background-color: {theme.BG_SURFACE};
+                border: 1px solid {theme.BORDER};
                 border-radius: 4px;
                 height: 20px;
                 text-align: center;
-                color: {TEXT_PRIMARY};
+                color: {theme.TEXT_PRIMARY};
                 font-size: 12px;
             }}
             QProgressBar::chunk {{
-                background-color: {PRIMARY};
+                background-color: {theme.PRIMARY};
                 border-radius: 3px;
             }}
         """)
@@ -126,15 +123,15 @@ class InitWizard(QDialog):
         self._run_btn = QPushButton("开始初始化")
         self._run_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {PRIMARY};
-                color: {TEXT_ON_PRIMARY};
+                background-color: {theme.PRIMARY};
+                color: {theme.TEXT_ON_PRIMARY};
                 border: none;
                 border-radius: 6px;
                 padding: 8px 24px;
                 font-weight: bold;
             }}
-            QPushButton:hover {{ background-color: {BG_HOVER}; }}
-            QPushButton:disabled {{ background-color: {TEXT_SECONDARY}; }}
+            QPushButton:hover {{ background-color: {theme.BG_HOVER}; }}
+            QPushButton:disabled {{ background-color: {theme.TEXT_SECONDARY}; }}
         """)
         self._run_btn.clicked.connect(self._run_all)
         btn_bar.addWidget(self._run_btn)
@@ -142,13 +139,13 @@ class InitWizard(QDialog):
         close_btn = QPushButton("关闭")
         close_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {BG_SURFACE};
-                color: {TEXT_PRIMARY};
-                border: 1px solid {BORDER};
+                background-color: {theme.BG_SURFACE};
+                color: {theme.TEXT_PRIMARY};
+                border: 1px solid {theme.BORDER};
                 border-radius: 6px;
                 padding: 8px 20px;
             }}
-            QPushButton:hover {{ background-color: {BORDER}; }}
+            QPushButton:hover {{ background-color: {theme.BORDER}; }}
         """)
         close_btn.clicked.connect(self.accept)
         btn_bar.addWidget(close_btn)
@@ -170,12 +167,12 @@ class InitWizard(QDialog):
             row = QHBoxLayout()
             # 状态图标
             self._step_rows[key] = QLabel("⏸️")
-            self._step_rows[key].setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 14px;")
+            self._step_rows[key].setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 14px;")
             row.addWidget(self._step_rows[key])
 
             # 步骤名称
             name_label = QLabel(name)
-            name_label.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 13px;")
+            name_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 13px;")
             row.addWidget(name_label)
 
             row.addStretch()
@@ -190,11 +187,11 @@ class InitWizard(QDialog):
         for name, key, _, _ in STEPS:
             if status.get(key, False):
                 self._step_rows[key].setText(" ✅")
-                self._step_rows[key].setStyleSheet(f"color: {ACCENT_GREEN}; font-size: 14px;")
+                self._step_rows[key].setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 14px;")
                 done += 1
             else:
                 self._step_rows[key].setText(" ⏸️")
-                self._step_rows[key].setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 14px;")
+                self._step_rows[key].setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 14px;")
         self._progress.setValue(done)
 
     def _run_all(self):
@@ -205,7 +202,7 @@ class InitWizard(QDialog):
         # 重置所有状态
         for key in self._step_rows:
             self._step_rows[key].setText(" ⏸️")
-            self._step_rows[key].setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 14px;")
+            self._step_rows[key].setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 14px;")
 
         self._run_next()
 
@@ -226,7 +223,7 @@ class InitWizard(QDialog):
 
         name, key, module, _ = STEPS[self._current_idx]
         self._step_rows[key].setText(" ⏳")
-        self._step_rows[key].setStyleSheet(f"color: {PRIMARY}; font-size: 14px;")
+        self._step_rows[key].setStyleSheet(f"color: {theme.PRIMARY}; font-size: 14px;")
 
         self._worker = InitStepWorker(module, key, self)
         self._worker.result.connect(self._on_step_done)
@@ -235,10 +232,10 @@ class InitWizard(QDialog):
     def _on_step_done(self, step_key: str, success: bool, message: str):
         if success:
             self._step_rows[step_key].setText(" ✅")
-            self._step_rows[step_key].setStyleSheet(f"color: {ACCENT_GREEN}; font-size: 14px;")
+            self._step_rows[step_key].setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 14px;")
         else:
             self._step_rows[step_key].setText(" ❌")
-            self._step_rows[step_key].setStyleSheet(f"color: {ACCENT_RED}; font-size: 14px;")
+            self._step_rows[step_key].setStyleSheet(f"color: {theme.ACCENT_RED}; font-size: 14px;")
             # 显示错误但继续
             QMessageBox.warning(self, "初始化错误", f"{step_key}: {message}")
 

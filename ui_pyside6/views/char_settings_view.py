@@ -17,11 +17,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QColor, QFont
 
-from ui_pyside6.theme import (
-    BG_DARK, BG_SURFACE, BG_SURFACE_LIGHT, BG_HOVER,
-    PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_BRIGHT, TEXT_ON_PRIMARY, BORDER,
-    ACCENT_GREEN, ACCENT_RED, ACCENT_CYAN,
-)
+import ui_pyside6.theme as theme
 
 from core.paths import data_dir
 from core.container import get_container
@@ -337,7 +333,7 @@ class SkillSlider(QWidget):
 
         self.name_label = QLabel(skill_name)
         self.name_label.setFixedWidth(180)
-        self.name_label.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 12px;")
+        self.name_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
 
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 5)
@@ -348,7 +344,7 @@ class SkillSlider(QWidget):
 
         self.level_label = QLabel(str(level))
         self.level_label.setFixedWidth(20)
-        self.level_label.setStyleSheet(f"color: {PRIMARY}; font-size: 12px; font-weight: bold;")
+        self.level_label.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 12px; font-weight: bold;")
         self.level_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.slider.valueChanged.connect(self._on_value_changed)
@@ -383,23 +379,23 @@ class SkillsPage(QWidget):
         # 左侧：类别列表
         self._left_panel = QWidget()
         self._left_panel.setFixedWidth(160)
-        self._left_panel.setStyleSheet(f"background-color: {BG_SURFACE}; border-radius: 6px;")
+        self._left_panel.setStyleSheet(f"background-color: {theme.BG_SURFACE}; border-radius: 6px;")
         left_layout = QVBoxLayout(self._left_panel)
         left_layout.setContentsMargins(4, 4, 4, 4)
 
         self._cat_label = QLabel("技能分类")
-        self._cat_label.setStyleSheet(f"color: {PRIMARY}; font-size: 12px; font-weight: bold; padding: 4px;")
+        self._cat_label.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 12px; font-weight: bold; padding: 4px;")
         left_layout.addWidget(self._cat_label)
 
         self._cat_list = QListWidget()
         self._cat_list.setStyleSheet(f"""
             QListWidget {{
                 background-color: transparent; border: none; outline: none;
-                color: {TEXT_PRIMARY}; font-size: 12px;
+                color: {theme.TEXT_PRIMARY}; font-size: 12px;
             }}
             QListWidget::item {{ padding: 6px 8px; border-radius: 4px; }}
-            QListWidget::item:selected {{ background-color: {BG_SURFACE_LIGHT}; color: {TEXT_BRIGHT}; }}
-            QListWidget::item:hover {{ background-color: {BG_HOVER}; }}
+            QListWidget::item:selected {{ background-color: {theme.BG_SURFACE_LIGHT}; color: {theme.TEXT_BRIGHT}; }}
+            QListWidget::item:hover {{ background-color: {theme.BG_HOVER}; }}
         """)
         for cat_name, _ in SKILL_CATEGORIES:
             self._cat_list.addItem(cat_name)
@@ -409,12 +405,12 @@ class SkillsPage(QWidget):
 
         # 右侧：技能详情
         self._right_panel = QWidget()
-        self._right_panel.setStyleSheet(f"background-color: {BG_SURFACE}; border-radius: 6px;")
+        self._right_panel.setStyleSheet(f"background-color: {theme.BG_SURFACE}; border-radius: 6px;")
         right_layout = QVBoxLayout(self._right_panel)
         right_layout.setContentsMargins(8, 8, 8, 8)
 
         self._cat_title = QLabel("选择左侧分类")
-        self._cat_title.setStyleSheet(f"color: {PRIMARY}; font-size: 14px; font-weight: bold; padding: 4px 0;")
+        self._cat_title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 14px; font-weight: bold; padding: 4px 0;")
         right_layout.addWidget(self._cat_title)
 
         self._skill_scroll = QScrollArea()
@@ -436,19 +432,19 @@ class SkillsPage(QWidget):
 
     def _on_theme_changed(self):
         """主题切换时重新应用内联样式表"""
-        self._left_panel.setStyleSheet(f"background-color: {BG_SURFACE}; border-radius: 6px;")
-        self._cat_label.setStyleSheet(f"color: {PRIMARY}; font-size: 12px; font-weight: bold; padding: 4px;")
+        self._left_panel.setStyleSheet(f"background-color: {theme.BG_SURFACE}; border-radius: 6px;")
+        self._cat_label.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 12px; font-weight: bold; padding: 4px;")
         self._cat_list.setStyleSheet(f"""
             QListWidget {{
                 background-color: transparent; border: none; outline: none;
-                color: {TEXT_PRIMARY}; font-size: 12px;
+                color: {theme.TEXT_PRIMARY}; font-size: 12px;
             }}
             QListWidget::item {{ padding: 6px 8px; border-radius: 4px; }}
-            QListWidget::item:selected {{ background-color: {BG_SURFACE_LIGHT}; color: {TEXT_BRIGHT}; }}
-            QListWidget::item:hover {{ background-color: {BG_HOVER}; }}
+            QListWidget::item:selected {{ background-color: {theme.BG_SURFACE_LIGHT}; color: {theme.TEXT_BRIGHT}; }}
+            QListWidget::item:hover {{ background-color: {theme.BG_HOVER}; }}
         """)
-        self._right_panel.setStyleSheet(f"background-color: {BG_SURFACE}; border-radius: 6px;")
-        self._cat_title.setStyleSheet(f"color: {PRIMARY}; font-size: 14px; font-weight: bold; padding: 4px 0;")
+        self._right_panel.setStyleSheet(f"background-color: {theme.BG_SURFACE}; border-radius: 6px;")
+        self._cat_title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 14px; font-weight: bold; padding: 4px 0;")
 
     def _on_category_changed(self, row: int):
         if row < 0 or row >= len(SKILL_CATEGORIES):
@@ -490,11 +486,11 @@ class ImplantsPage(QWidget):
         layout.setSpacing(16)
 
         self._implant_title = QLabel("增效体插槽")
-        self._implant_title.setStyleSheet(f"color: {PRIMARY}; font-size: 16px; font-weight: bold;")
+        self._implant_title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 16px; font-weight: bold;")
         layout.addWidget(self._implant_title)
 
         self._implant_desc = QLabel("选择植入的工业增效体（最多 3 个），每个提供不同的生产/贸易加成")
-        self._implant_desc.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        self._implant_desc.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
         self._implant_desc.setWordWrap(True)
         layout.addWidget(self._implant_desc)
 
@@ -507,14 +503,14 @@ class ImplantsPage(QWidget):
             group = QGroupBox(slot_names[i])
             group.setStyleSheet(f"""
                 QGroupBox {{
-                    background-color: {BG_SURFACE};
-                    border: 1px solid {BORDER}; border-radius: 6px;
+                    background-color: {theme.BG_SURFACE};
+                    border: 1px solid {theme.BORDER}; border-radius: 6px;
                     margin-top: 12px; padding: 16px 12px 12px 12px;
-                    font-size: 12px; color: {TEXT_PRIMARY};
+                    font-size: 12px; color: {theme.TEXT_PRIMARY};
                 }}
                 QGroupBox::title {{
                     subcontrol-origin: margin; subcontrol-position: top left;
-                    padding: 2px 8px; color: {PRIMARY};
+                    padding: 2px 8px; color: {theme.PRIMARY};
                 }}
             """)
             glayout = QVBoxLayout(group)
@@ -535,15 +531,15 @@ class ImplantsPage(QWidget):
 
             combo.setStyleSheet(f"""
                 QComboBox {{
-                    background-color: {BG_DARK}; color: {TEXT_PRIMARY};
-                    border: 1px solid {BORDER}; border-radius: 4px;
+                    background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};
+                    border: 1px solid {theme.BORDER}; border-radius: 4px;
                     padding: 4px 8px; font-size: 12px;
                 }}
-                QComboBox:hover {{ border-color: {PRIMARY}; }}
+                QComboBox:hover {{ border-color: {theme.PRIMARY}; }}
                 QComboBox QAbstractItemView {{
-                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                    selection-background-color: {BG_SURFACE_LIGHT};
-                    border: 1px solid {BORDER};
+                    background-color: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};
+                    selection-background-color: {theme.BG_SURFACE_LIGHT};
+                    border: 1px solid {theme.BORDER};
                 }}
                 QComboBox::drop-down {{ border: none; width: 20px; }}
             """)
@@ -551,7 +547,7 @@ class ImplantsPage(QWidget):
 
             # 显示选中植入体的加成
             bonus_label = QLabel("")
-            bonus_label.setStyleSheet(f"color: {ACCENT_GREEN}; font-size: 11px; padding-left: 4px;")
+            bonus_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 11px; padding-left: 4px;")
             glayout.addWidget(bonus_label)
 
             def on_combo_change(idx, lbl=bonus_label, cb=combo):
@@ -577,38 +573,38 @@ class ImplantsPage(QWidget):
 
     def _on_theme_changed(self):
         """主题切换时重新应用内联样式表"""
-        self._implant_title.setStyleSheet(f"color: {PRIMARY}; font-size: 16px; font-weight: bold;")
-        self._implant_desc.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        self._implant_title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 16px; font-weight: bold;")
+        self._implant_desc.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
         for group in self._implant_groups:
             group.setStyleSheet(f"""
                 QGroupBox {{
-                    background-color: {BG_SURFACE};
-                    border: 1px solid {BORDER}; border-radius: 6px;
+                    background-color: {theme.BG_SURFACE};
+                    border: 1px solid {theme.BORDER}; border-radius: 6px;
                     margin-top: 12px; padding: 16px 12px 12px 12px;
-                    font-size: 12px; color: {TEXT_PRIMARY};
+                    font-size: 12px; color: {theme.TEXT_PRIMARY};
                 }}
                 QGroupBox::title {{
                     subcontrol-origin: margin; subcontrol-position: top left;
-                    padding: 2px 8px; color: {PRIMARY};
+                    padding: 2px 8px; color: {theme.PRIMARY};
                 }}
             """)
         for combo in self._combos:
             combo.setStyleSheet(f"""
                 QComboBox {{
-                    background-color: {BG_DARK}; color: {TEXT_PRIMARY};
-                    border: 1px solid {BORDER}; border-radius: 4px;
+                    background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};
+                    border: 1px solid {theme.BORDER}; border-radius: 4px;
                     padding: 4px 8px; font-size: 12px;
                 }}
-                QComboBox:hover {{ border-color: {PRIMARY}; }}
+                QComboBox:hover {{ border-color: {theme.PRIMARY}; }}
                 QComboBox QAbstractItemView {{
-                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                    selection-background-color: {BG_SURFACE_LIGHT};
-                    border: 1px solid {BORDER};
+                    background-color: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};
+                    selection-background-color: {theme.BG_SURFACE_LIGHT};
+                    border: 1px solid {theme.BORDER};
                 }}
                 QComboBox::drop-down {{ border: none; width: 20px; }}
             """)
         for bonus_label in self._bonus_labels:
-            bonus_label.setStyleSheet(f"color: {ACCENT_GREEN}; font-size: 11px; padding-left: 4px;")
+            bonus_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 11px; padding-left: 4px;")
 
     def get_data(self) -> list:
         return [c.itemData(c.currentIndex()) for c in self._combos]
@@ -631,11 +627,11 @@ class MarketPage(QWidget):
         layout.setSpacing(12)
 
         title = QLabel("市场费率配置")
-        title.setStyleSheet(f"color: {PRIMARY}; font-size: 16px; font-weight: bold;")
+        title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 16px; font-weight: bold;")
         layout.addWidget(title)
 
         desc = QLabel("为每个交易中心设置派系声望和军团声望，自动计算经纪人费率和销售税率")
-        desc.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        desc.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
@@ -657,14 +653,14 @@ class MarketPage(QWidget):
             group = QGroupBox(f"{hub_name}")
             group.setStyleSheet(f"""
                 QGroupBox {{
-                    background-color: {BG_SURFACE};
-                    border: 1px solid {BORDER}; border-radius: 6px;
+                    background-color: {theme.BG_SURFACE};
+                    border: 1px solid {theme.BORDER}; border-radius: 6px;
                     margin-top: 12px; padding: 16px 12px 12px 12px;
-                    font-size: 12px; color: {TEXT_PRIMARY};
+                    font-size: 12px; color: {theme.TEXT_PRIMARY};
                 }}
                 QGroupBox::title {{
                     subcontrol-origin: margin; subcontrol-position: top left;
-                    padding: 2px 8px; color: {PRIMARY};
+                    padding: 2px 8px; color: {theme.PRIMARY};
                 }}
             """)
             glayout = QGridLayout(group)
@@ -676,7 +672,7 @@ class MarketPage(QWidget):
             fs.setRange(-10.0, 10.0)
             fs.setSingleStep(0.1)
             fs.setValue(hub_data.get("faction_standing", 5.0))
-            fs.setStyleSheet(f"background-color: {BG_DARK}; color: {TEXT_PRIMARY}; border: 1px solid {BORDER}; border-radius: 4px; padding: 2px 4px;")
+            fs.setStyleSheet(f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; border: 1px solid {theme.BORDER}; border-radius: 4px; padding: 2px 4px;")
             glayout.addWidget(fs, 0, 1)
 
             # 军团声望
@@ -685,12 +681,12 @@ class MarketPage(QWidget):
             cs.setRange(-10.0, 10.0)
             cs.setSingleStep(0.1)
             cs.setValue(hub_data.get("corp_standing", 5.0))
-            cs.setStyleSheet(f"background-color: {BG_DARK}; color: {TEXT_PRIMARY}; border: 1px solid {BORDER}; border-radius: 4px; padding: 2px 4px;")
+            cs.setStyleSheet(f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; border: 1px solid {theme.BORDER}; border-radius: 4px; padding: 2px 4px;")
             glayout.addWidget(cs, 1, 1)
 
             # 计算结果
             result_label = QLabel("经纪人费率: -- | 销售税率: -- | 改单折扣: -- | 最大订单: --")
-            result_label.setStyleSheet(f"color: {ACCENT_GREEN}; font-size: 11px;")
+            result_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 11px;")
             glayout.addWidget(result_label, 2, 0, 1, 2)
 
             # 每次值变化时重新计算
@@ -747,7 +743,7 @@ class CharSettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("人物设置")
         self.setMinimumSize(750, 600)
-        self.setStyleSheet(f"background-color: {BG_DARK};")
+        self.setStyleSheet(f"background-color: {theme.BG_DARK};")
 
         # 加载所有数据
         self._all_data = load_all_data()
@@ -764,14 +760,14 @@ class CharSettingsDialog(QDialog):
         # ── 标签页 ──
         self._tabs = QTabWidget()
         self._tabs.setStyleSheet(f"""
-            QTabWidget::pane {{ background-color: {BG_DARK}; border: none; }}
+            QTabWidget::pane {{ background-color: {theme.BG_DARK}; border: none; }}
             QTabBar::tab {{
-                background-color: {BG_SURFACE}; color: {TEXT_SECONDARY};
-                padding: 8px 24px; border: none; border-right: 1px solid {BORDER};
+                background-color: {theme.BG_SURFACE}; color: {theme.TEXT_SECONDARY};
+                padding: 8px 24px; border: none; border-right: 1px solid {theme.BORDER};
                 font-size: 13px;
             }}
-            QTabBar::tab:selected {{ background-color: {BG_DARK}; color: {PRIMARY}; font-weight: bold; }}
-            QTabBar::tab:hover {{ color: {TEXT_PRIMARY}; }}
+            QTabBar::tab:selected {{ background-color: {theme.BG_DARK}; color: {theme.PRIMARY}; font-weight: bold; }}
+            QTabBar::tab:hover {{ color: {theme.TEXT_PRIMARY}; }}
         """)
 
         self._rebuild_pages()
@@ -784,18 +780,18 @@ class CharSettingsDialog(QDialog):
 
         cancel_btn = QPushButton("取消")
         cancel_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                border: 1px solid {BORDER}; border-radius: 6px; padding: 6px 20px; }}
-            QPushButton:hover {{ background-color: {BG_HOVER}; }}
+            QPushButton {{ background-color: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};
+                border: 1px solid {theme.BORDER}; border-radius: 6px; padding: 6px 20px; }}
+            QPushButton:hover {{ background-color: {theme.BG_HOVER}; }}
         """)
         cancel_btn.clicked.connect(self.reject)
         btn_bar.addWidget(cancel_btn)
 
         save_btn = QPushButton("保存")
         save_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {PRIMARY}; color: {TEXT_ON_PRIMARY};
+            QPushButton {{ background-color: {theme.PRIMARY}; color: {theme.TEXT_ON_PRIMARY};
                 border: none; border-radius: 6px; padding: 6px 20px; font-weight: bold; }}
-            QPushButton:hover {{ background-color: {BG_HOVER}; }}
+            QPushButton:hover {{ background-color: {theme.BG_HOVER}; }}
         """)
         save_btn.clicked.connect(self._on_save)
         btn_bar.addWidget(save_btn)
@@ -805,7 +801,7 @@ class CharSettingsDialog(QDialog):
     def _build_char_bar(self, parent_layout):
         """构建顶部角色切换栏"""
         bar = QWidget()
-        bar.setStyleSheet(f"background-color: {BG_SURFACE}; border-bottom: 1px solid {BORDER};")
+        bar.setStyleSheet(f"background-color: {theme.BG_SURFACE}; border-bottom: 1px solid {theme.BORDER};")
         blayout = QHBoxLayout(bar)
         blayout.setContentsMargins(12, 8, 12, 8)
         blayout.setSpacing(8)
@@ -814,13 +810,13 @@ class CharSettingsDialog(QDialog):
         self._char_combo = QComboBox()
         self._char_combo.setStyleSheet(f"""
             QComboBox {{
-                background-color: {BG_DARK}; color: {TEXT_PRIMARY};
-                border: 1px solid {BORDER}; border-radius: 4px;
+                background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};
+                border: 1px solid {theme.BORDER}; border-radius: 4px;
                 padding: 4px 8px; min-width: 120px;
             }}
             QComboBox QAbstractItemView {{
-                background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                selection-background-color: {BG_SURFACE_LIGHT};
+                background-color: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};
+                selection-background-color: {theme.BG_SURFACE_LIGHT};
             }}
         """)
         for cname in self._all_data["characters"].keys():
@@ -834,28 +830,28 @@ class CharSettingsDialog(QDialog):
         self._char_name_edit = QLineEdit(self._current_char_name)
         self._char_name_edit.setStyleSheet(f"""
             QLineEdit {{
-                background-color: {BG_DARK}; color: {TEXT_PRIMARY};
-                border: 1px solid {BORDER}; border-radius: 4px; padding: 4px 8px;
+                background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};
+                border: 1px solid {theme.BORDER}; border-radius: 4px; padding: 4px 8px;
             }}
-            QLineEdit:focus {{ border-color: {PRIMARY}; }}
+            QLineEdit:focus {{ border-color: {theme.PRIMARY}; }}
         """)
         blayout.addWidget(self._char_name_edit)
 
         add_btn = QPushButton("+ 添加")
         add_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {ACCENT_GREEN}; color: {TEXT_ON_PRIMARY};
+            QPushButton {{ background-color: {theme.ACCENT_GREEN}; color: {theme.TEXT_ON_PRIMARY};
                 border: none; border-radius: 4px; padding: 4px 12px; font-size: 12px; }}
-            QPushButton:hover {{ background-color: {BG_HOVER}; }}
+            QPushButton:hover {{ background-color: {theme.BG_HOVER}; }}
         """)
         add_btn.clicked.connect(self._on_add_character)
         blayout.addWidget(add_btn)
 
         del_btn = QPushButton("删除")
         del_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {ACCENT_RED}; color: {TEXT_ON_PRIMARY};
+            QPushButton {{ background-color: {theme.ACCENT_RED}; color: {theme.TEXT_ON_PRIMARY};
                 border: none; border-radius: 4px; padding: 4px 12px; font-size: 12px; }}
-            QPushButton:hover {{ background-color: {BG_HOVER}; }}
-            QPushButton:disabled {{ background-color: {TEXT_SECONDARY}; }}
+            QPushButton:hover {{ background-color: {theme.BG_HOVER}; }}
+            QPushButton:disabled {{ background-color: {theme.TEXT_SECONDARY}; }}
         """)
         if len(self._all_data["characters"]) <= 1:
             del_btn.setEnabled(False)

@@ -59,17 +59,7 @@ from services.inventory_manager import (
     update_quantity,
 )
 from services.scoring import TRADE_HUB_IDS, resolve_item_name
-from ui_pyside6.theme import (
-    ACCENT_GREEN,
-    ACCENT_RED,
-    BG_SURFACE,
-    BORDER,
-    PRIMARY,
-    TEXT_ON_PRIMARY,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
-    add_theme_listener,
-)
+import ui_pyside6.theme as theme
 
 ICON_DIR = icon_cache_dir()
 
@@ -163,7 +153,7 @@ class PasteImportDialog(QDialog):
             "2. EVE列表视图格式（自动识别）\n"
             "从游戏中复制（Ctrl+C）后粘贴到下面："
         )
-        self._hint.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._hint.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
         self._hint.setWordWrap(True)
         layout.addWidget(self._hint)
 
@@ -327,7 +317,7 @@ class PasteImportDialog(QDialog):
         self._reapply_styles()
 
     def _reapply_styles(self):
-        self._hint.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._hint.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
 
 
 # ════════════════════════════════════════════════════
@@ -415,7 +405,7 @@ class ImportReviewDialog(QDialog):
 
         # ── 统计栏 ──
         self._summary_label = QLabel("")
-        self._summary_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
         layout.addWidget(self._summary_label)
 
         # ── 底部按钮 ──
@@ -502,7 +492,7 @@ class ImportReviewDialog(QDialog):
             delta_item.setFlags(delta_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             delta_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if delta > 0:
-                delta_item.setForeground(QColor(ACCENT_GREEN))
+                delta_item.setForeground(QColor(theme.ACCENT_GREEN))
             table.setItem(row, self._COL_DELTA, delta_item)
 
             # 列5：变化（最终数量）
@@ -844,7 +834,7 @@ class ImportReviewDialog(QDialog):
         self._reapply_styles()
 
     def _reapply_styles(self):
-        self._summary_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
 
 
 # ════════════════════════════════════════════════════
@@ -927,7 +917,7 @@ class InventoryPage(QWidget):
 
         self._hangar_combo.currentIndexChanged.connect(self._on_hangar_changed)
 
-        add_theme_listener(self._on_theme_changed)
+        theme.add_theme_listener(self._on_theme_changed)
 
     def _on_theme_changed(self):
         """主题切换时重新应用内联样式表"""
@@ -1038,19 +1028,19 @@ class HangarTab(QWidget):
         bar.addStretch()
 
         self._count_label = QLabel("")
-        self._count_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        self._count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
         bar.addWidget(self._count_label)
 
         layout.addLayout(bar)
 
         self._total_label = QLabel("按卖单价格: -- ISK")
-        self._total_label.setStyleSheet(f"font-weight: bold; color: {PRIMARY}; font-size: 13px;")
+        self._total_label.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY}; font-size: 13px;")
         layout.addWidget(self._total_label)
 
     def _on_theme_changed(self):
         """主题切换时重新应用内联样式表"""
-        self._count_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
-        self._total_label.setStyleSheet(f"font-weight: bold; color: {PRIMARY}; font-size: 13px;")
+        self._count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
+        self._total_label.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY}; font-size: 13px;")
 
     # ── 剪贴板导入 ──
 
@@ -1347,7 +1337,7 @@ class BlueprintTableModel(QAbstractTableModel):
             if c == 10:
                 margin = r.get("margin")
                 if margin is not None:
-                    return QColor(ACCENT_GREEN) if margin >= 0 else QColor(ACCENT_RED)
+                    return QColor(theme.ACCENT_GREEN) if margin >= 0 else QColor(theme.ACCENT_RED)
             return None
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
@@ -1594,7 +1584,7 @@ class BlueprintTab(QWidget):
         # ── 状态栏 ──
         status_bar = QHBoxLayout()
         self._bp_count_label = QLabel("")
-        self._bp_count_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        self._bp_count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
         status_bar.addWidget(self._bp_count_label)
         status_bar.addStretch()
         layout.addLayout(status_bar)
@@ -1609,7 +1599,7 @@ class BlueprintTab(QWidget):
 
     def _on_theme_changed(self):
         """主题切换时重新应用内联样式表"""
-        self._bp_count_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        self._bp_count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
 
     def _load_market_categories(self):
         """加载根级市场分类到下拉框"""
