@@ -24,9 +24,9 @@ from ui_pyside6.theme import (
 )
 
 from core.paths import data_dir
-from services.database_manager import get_db as _get_db_view
+from core.container import get_container
 
-_set_db = _get_db_view()
+
 
 # ═══════════════════════════════════════════
 #  游戏公式
@@ -224,7 +224,7 @@ def load_implants() -> list[dict]:
     if not os.path.exists(REF_DB_PATH):
         return []
 
-    conn = _set_db.direct_connect('ref')
+    conn = get_container().db.direct_connect('ref')
     cur = conn.cursor()
     cur.execute("""
         SELECT i.type_id, i.en_name, i.zh_name, d.dogma_attrs

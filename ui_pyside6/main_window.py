@@ -1,6 +1,7 @@
 """
 主窗口 — QMainWindow + 导航树 + 内容区 + 状态栏
 """
+
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -33,12 +34,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.container import get_container
 from core.paths import (
     ensure_dirs_exist,
     search_history_file,
     window_geometry_file,
 )
-from services.database_manager import get_db as _get_db_manager
 from ui_pyside6.theme import (
     ACCENT_RED,
     ACCENT_YELLOW,
@@ -62,16 +63,17 @@ from ui_pyside6.theme import (
 #        ("__section__", "分组名称") — 分组标题（不可点击）
 NAV_TREE = [
     ("__section__", "⚡ 核心功能"),
-    ("estimate",    "估价",       "💰"),
-    ("query",       "物品查询",   "🔍"),
-    ("industry",    "工业制造",   "🏭"),
-    ("trade",       "市场贸易",   "📊"),
-    ("storage",     "仓库管理",   "📦"),
+    ("estimate", "估价", "💰"),
+    ("query", "物品查询", "🔍"),
+    ("industry", "工业制造", "🏭"),
+    ("trade", "市场贸易", "📊"),
+    ("storage", "仓库管理", "📦"),
 ]
 
 
 class PriceUpdateWorker(QThread):
     """后台线程执行价格更新"""
+
     finished_signal = Signal(bool, str)  # success, message
 
     def __init__(self, regions: list[str] | None = None, parent=None):
@@ -81,6 +83,7 @@ class PriceUpdateWorker(QThread):
     def run(self):
         try:
             from services.workers.getprices import run_price_update
+
             run_price_update(self._regions)
             self.finished_signal.emit(True, "价格更新完成")
         except Exception as ex:
@@ -89,6 +92,7 @@ class PriceUpdateWorker(QThread):
 
 class PriceCheckWorker(QThread):
     """后台线程检查价格数据时效"""
+
     result = Signal(bool, str)  # needs_update, status_text
 
     def __init__(self, interval_minutes: int = 30, parent=None):
@@ -97,7 +101,7 @@ class PriceCheckWorker(QThread):
 
     def run(self):
         try:
-            conn = _get_db_manager().direct_connect('mkt')
+            conn = get_container().db.direct_connect("mkt")
             cursor = conn.cursor()
             cursor.execute("SELECT MAX(fetch_time) FROM market_prices")
             row = cursor.fetchone()
@@ -108,9 +112,9 @@ class PriceCheckWorker(QThread):
                 now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
                 diff = (now_utc - dt).total_seconds()
                 if diff > self._interval:
-                    self.result.emit(True, f"价格数据已过期 {diff/60:.0f} 分钟，需要更新")
+                    self.result.emit(True, f"价格数据已过期 {diff / 60:.0f} 分钟，需要更新")
                 else:
-                    self.result.emit(False, f"价格数据 {(diff/60):.0f} 分钟前更新，无需更新")
+                    self.result.emit(False, f"价格数据 {(diff / 60):.0f} 分钟前更新，无需更新")
             else:
                 self.result.emit(True, "无价格数据，需要更新")
         except Exception as ex:
@@ -275,6 +279,7 @@ class MainWindow(QMainWindow):
         # 关闭独立的全物品窗口
         for w in QApplication.topLevelWidgets():
             from ui_pyside6.views.all_items_view import AllItemsDialog
+
             if isinstance(w, AllItemsDialog) and w.isVisible():
                 w.close()
         # 等待后台线程安全退出
@@ -491,7 +496,7 @@ class MainWindow(QMainWindow):
     def _refresh_price_age(self):
         """刷新工具栏上的价格年龄标签 + 状态栏信息"""
         try:
-            conn = _get_db_manager().direct_connect('mkt')
+            conn = get_container().db.direct_connect("mkt")
             cursor = conn.cursor()
             cursor.execute("SELECT MAX(fetch_time) FROM market_prices")
             row = cursor.fetchone()
@@ -531,7 +536,7 @@ class MainWindow(QMainWindow):
     def _refresh_item_count(self):
         """刷新工具栏上的物品总数"""
         try:
-            conn = _get_db_manager().direct_connect('ref')
+            conn = get_container().db.direct_connect("ref")
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM item")
             row = cursor.fetchone()
@@ -572,8 +577,7 @@ class MainWindow(QMainWindow):
         # 头（圆形）
         head_radius = size * 0.16
         cx, cy = size / 2, size * 0.28
-        painter.drawEllipse(int(cx - head_radius), int(cy - head_radius),
-                            int(head_radius * 2), int(head_radius * 2))
+        painter.drawEllipse(int(cx - head_radius), int(cy - head_radius), int(head_radius * 2), int(head_radius * 2))
         # 身体（梯形）
         body = QPainterPath()
         body_w = size * 0.3
@@ -604,13 +608,12 @@ class MainWindow(QMainWindow):
         inner_r = size * 0.22
 
         # 外圈 + 内圈
-        painter.drawEllipse(int(cx - outer_r), int(cy - outer_r),
-                            int(outer_r * 2), int(outer_r * 2))
-        painter.drawEllipse(int(cx - inner_r), int(cy - inner_r),
-                            int(inner_r * 2), int(inner_r * 2))
+        painter.drawEllipse(int(cx - outer_r), int(cy - outer_r), int(outer_r * 2), int(outer_r * 2))
+        painter.drawEllipse(int(cx - inner_r), int(cy - inner_r), int(inner_r * 2), int(inner_r * 2))
 
         # 4个辐条
         import math
+
         for angle_deg in (0, 45, 90, 135):
             rad = math.radians(angle_deg)
             x1 = cx + inner_r * math.cos(rad)
@@ -640,6 +643,7 @@ class MainWindow(QMainWindow):
 
     def _show_char_settings(self):
         from ui_pyside6.views.char_settings_view import CharSettingsDialog
+
         dialog = CharSettingsDialog(self)
         dialog.exec()
 
@@ -654,9 +658,7 @@ class MainWindow(QMainWindow):
         theme_group = QGroupBox("外观")
         tg = QVBoxLayout(theme_group)
         current = current_theme()
-        theme_btn = QPushButton(
-            "☀️ 切换到亮色模式" if current == "dark" else "🌙 切换到暗色模式"
-        )
+        theme_btn = QPushButton("☀️ 切换到亮色模式" if current == "dark" else "🌙 切换到暗色模式")
         theme_btn.clicked.connect(lambda: (self._toggle_theme(), dlg.accept()))
         tg.addWidget(theme_btn)
         layout.addWidget(theme_group)
@@ -775,6 +777,7 @@ class MainWindow(QMainWindow):
     def _check_first_run(self):
         """首次启动检测：如果缺少关键数据，在状态栏提示"""
         from services.init_check import check_items, missing_count
+
         items = check_items()
         missing = missing_count()
         if items < 10000:
@@ -789,8 +792,9 @@ class MainWindow(QMainWindow):
 
     def _show_init_wizard(self):
         from ui_pyside6.views.init_wizard import InitWizard
+
         try:
-            if hasattr(self, '_init_wizard') and self._init_wizard and self._init_wizard.isVisible():
+            if hasattr(self, "_init_wizard") and self._init_wizard and self._init_wizard.isVisible():
                 self._init_wizard.raise_()
                 return
         except RuntimeError:
@@ -801,12 +805,13 @@ class MainWindow(QMainWindow):
 
     def _show_about(self):
         QMessageBox.about(
-            self, "关于 EVE 商人助手",
+            self,
+            "关于 EVE 商人助手",
             "EVE 商人助手 v2.0\n\n"
             "基于 PySide6 重构\n"
             "为 EVE Online 玩家提供工业制造、市场贸易辅助工具。\n\n"
             "数据来源: EVE Swagger Interface (ESI)\n"
-            "© 2026"
+            "© 2026",
         )
 
     def _refresh_current_page(self):
@@ -817,7 +822,8 @@ class MainWindow(QMainWindow):
 
     def _open_all_items(self):
         from ui_pyside6.views.all_items_view import AllItemsDialog
-        if not hasattr(self, '_all_items_dialog') or self._all_items_dialog is None:
+
+        if not hasattr(self, "_all_items_dialog") or self._all_items_dialog is None:
             self._all_items_dialog = AllItemsDialog(self)
         self._all_items_dialog.show()
         self._all_items_dialog.raise_()

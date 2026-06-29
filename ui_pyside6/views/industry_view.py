@@ -1,16 +1,14 @@
 """
 生产计划管理 — 统一页面
 """
+
 from datetime import datetime, timezone
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QThread, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QModelIndex, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QDialog,
-    QDialogButtonBox,
-    QFormLayout,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -29,19 +27,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from services.database_manager import get_db as _get_db_view
-from services.scoring import TRADE_HUB_IDS, calc_manufacturing_score
+from core.container import get_container
+from services.scoring import TRADE_HUB_IDS
+from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
+from ui_pyside6.models.industry_models import MaterialTableModel, PlanTableModel, RankTableModel
 from ui_pyside6.theme import (
     BORDER,
     GREEN,
-    PRIMARY,
     RED,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
     add_theme_listener,
 )
-
-_industry_db = _get_db_view()
+from ui_pyside6.workers.industry_workers import RankWorker, ScoreWorker, SearchWorker
 
 # ════════════════════════════════════════════════════
 #  DB
@@ -75,7 +73,7 @@ CREATE TABLE IF NOT EXISTS production_plans (
 
 def init_plan_db():
     try:
-        with _industry_db.connect('user') as conn:
+        with get_container().db.connect("user") as conn:
             conn.executescript(PLAN_DB_SCHEMA)
             for col, col_type in [("iskph", "REAL DEFAULT 0"), ("material_cost", "REAL DEFAULT 0")]:
                 try:
@@ -87,306 +85,9 @@ def init_plan_db():
 
 
 # ════════════════════════════════════════════════════
-#  Workers
-# ════════════════════════════════════════════════════
-
-class SearchWorker(QThread):
-    finished = Signal(list)
-
-    def __init__(self, query: str, parent=None):
-        super().__init__(parent)
-        self._query = query
-
-    def run(self):
-        with _industry_db.connect('ref') as conn:
-            c = conn.cursor()
-            like = f"%{self._query}%"
-            c.execute("""
-                SELECT type_id, zh_name, en_name FROM item
-                WHERE en_name LIKE ? OR zh_name LIKE ?
-                ORDER BY CASE WHEN en_name LIKE ? THEN 0 WHEN zh_name LIKE ? THEN 1 ELSE 2 END,
-                         LENGTH(en_name), type_id
-                LIMIT 30
-            """, (like, like, f"{self._query}%", f"{self._query}%"))
-            rows = [{"type_id": r[0], "zh_name": r[1] or "", "en_name": r[2] or ""} for r in c.fetchall()]
-            self.finished.emit(rows)
-
-
-class ScoreWorker(QThread):
-    finished = Signal(dict)
-
-    def __init__(self, type_id: int, bp_me: int, bp_te: int,
-                 mat_hub: str, sell_hub: str, tax: float,
-                 mat_price_type: str = "sell", runs: int = 1,
-                 parent=None):
-        super().__init__(parent)
-        self._tid = type_id
-        self._bp_me = bp_me
-        self._bp_te = bp_te
-        self._mat_hub = mat_hub
-        self._sell_hub = sell_hub
-        self._tax = tax
-        self._mat_price_type = mat_price_type
-        self._runs = runs
-
-    def run(self):
-        result = calc_manufacturing_score(
-            type_id=self._tid,
-            char_config={"skills": {"工业理论": 5, "高级工业理论": 5}},
-            bp_me=self._bp_me,
-            bp_te=self._bp_te,
-            mat_source_hub=self._mat_hub,
-            sell_hub=self._sell_hub,
-            facility_tax_pct=self._tax,
-            price_type_mat=self._mat_price_type,
-            price_type_prod="sell",
-        )
-        self.finished.emit(result)
-
-
-class RankWorker(QThread):
-    """后台线程批量评分所有可制造物品"""
-    progress = Signal(int, int)  # current, total
-    result = Signal(list)        # list of scored dicts
-    done = Signal(float)         # elapsed seconds
-
-    def __init__(self, mat_hub: str, sell_hub: str, mat_price_type: str,
-                 bp_me: int, bp_te: int, tax: float, parent=None):
-        super().__init__(parent)
-        self._mat_hub = mat_hub
-        self._sell_hub = sell_hub
-        self._mat_price_type = mat_price_type
-        self._bp_me = bp_me
-        self._bp_te = bp_te
-        self._tax = tax
-
-    def run(self):
-        import time
-        started = time.time()
-        results = []
-
-        with _industry_db.connect('bp') as conn:
-            c = conn.cursor()
-            c.execute("""
-                SELECT DISTINCT product_type_id FROM blueprint_products
-                WHERE activity = 'manufacturing'
-            """)
-            tids = [r[0] for r in c.fetchall()]
-
-        total = len(tids)
-        for i, tid in enumerate(tids):
-            r = calc_manufacturing_score(
-                type_id=tid,
-                char_config={"skills": {"工业理论": 5, "高级工业理论": 5}},
-                bp_me=self._bp_me,
-                bp_te=self._bp_te,
-                mat_source_hub=self._mat_hub,
-                sell_hub=self._sell_hub,
-                facility_tax_pct=self._tax,
-                price_type_mat=self._mat_price_type,
-                price_type_prod="sell",
-            )
-            if not r.get("status"):
-                r["_type_id"] = tid
-                results.append(r)
-
-            if (i + 1) % 100 == 0:
-                self.progress.emit(i + 1, total)
-
-        results.sort(key=lambda x: x.get("isk_per_hour", 0), reverse=True)
-        self.result.emit(results)
-        self.done.emit(time.time() - started)
-
-
-class RankTableModel(QAbstractTableModel):
-    """利润排行表模型"""
-    _HEADERS = ["成品", "利润/run", "利润率%", "ISK/h", "评分", "成本/unit", "时/run"]
-
-    def __init__(self, rows: list[dict]):
-        super().__init__()
-        self._rows = rows
-
-    def rowCount(self, parent=QModelIndex()): return len(self._rows)
-    def columnCount(self, parent=QModelIndex()): return len(self._HEADERS)
-
-    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid():
-            return None
-        r = self._rows[index.row()]
-        c = index.column()
-        if role == Qt.ItemDataRole.DisplayRole:
-            return [
-                r.get("_name", f"ID:{r.get('_type_id')}"),
-                f"{r.get('profit_per_run', 0):,.0f}",
-                f"{r.get('margin_pct', 0):.1f}",
-                f"{r.get('isk_per_hour', 0):,.0f}",
-                f"{r.get('score', 0):.0f}",
-                f"{r.get('cost_per_unit', 0):,.0f}",
-                f"{r.get('hours_per_run', 0):.1f}",
-            ][c]
-        elif role == Qt.ItemDataRole.ForegroundRole:
-            if c == 1:
-                return QColor(GREEN) if r.get("profit_per_run", 0) > 0 else QColor(RED)
-            if c == 4:
-                s = r.get("score", 0)
-                return QColor(GREEN) if s >= 70 else (QColor(RED) if s < 30 else QColor(PRIMARY))
-        return None
-
-    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            return self._HEADERS[section]
-        return None
-
-    def get_row(self, row: int) -> dict:
-        return self._rows[row] if 0 <= row < len(self._rows) else {}
-
-
-# ════════════════════════════════════════════════════
-#  Table Models
-# ════════════════════════════════════════════════════
-
-class PlanTableModel(QAbstractTableModel):
-    _HEADERS = ["产品", "批次", "并行", "ME", "TE", "材料区域", "角色",
-                "利润", "利润率", "评分", "时均/h", "状态"]
-
-    def __init__(self, plans: list[dict]):
-        super().__init__()
-        self._plans = plans
-
-    def rowCount(self, parent=QModelIndex()): return len(self._plans)
-    def columnCount(self, parent=QModelIndex()): return len(self._HEADERS)
-
-    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid():
-            return None
-        p = self._plans[index.row()]
-        c = index.column()
-        if role == Qt.ItemDataRole.DisplayRole:
-            cols = [
-                p.get("product_name", f"ID:{p['product_type_id']}"),
-                str(p["runs"]), str(p["parallels"]),
-                str(p["me_level"]), str(p["te_level"]),
-                p.get("mat_hub", "Jita"),
-                p.get("char_name") or "-",
-                f"{p.get('profit', 0):,.0f}" if p.get('profit') else "-",
-                f"{p.get('margin', 0):.1f}%" if p.get('margin') else "-",
-                f"{p.get('score', 0):.0f}" if p.get('score') else "-",
-                f"{p.get('iskph', 0):,.0f}" if p.get('iskph') else "-",
-                {"pending": "待排", "running": "运行", "done": "完成"}.get(
-                    p.get("status", ""), p.get("status", "")),
-            ]
-            return cols[c]
-        elif role == Qt.ItemDataRole.ForegroundRole:
-            if c == 7:
-                return QColor(GREEN) if p.get("profit", 0) > 0 else QColor(RED)
-            if c == 9:
-                s = p.get("score", 0)
-                return QColor(GREEN) if s >= 70 else (QColor(RED) if s < 30 else QColor(PRIMARY))
-        return None
-
-    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            return self._HEADERS[section]
-        return None
-
-    def get_plan(self, row: int) -> dict:
-        return self._plans[row] if 0 <= row < len(self._plans) else {}
-
-
-class MaterialTableModel(QAbstractTableModel):
-    _HEADERS = ["材料", "总需求", "单价", "总价"]
-
-    def __init__(self, rows: list[dict]):
-        super().__init__()
-        self._rows = rows
-
-    def rowCount(self, parent=QModelIndex()): return len(self._rows)
-    def columnCount(self, parent=QModelIndex()): return len(self._HEADERS)
-
-    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid():
-            return None
-        r = self._rows[index.row()]
-        c = index.column()
-        if role == Qt.ItemDataRole.DisplayRole:
-            return [r.get("name", ""), str(r.get("need", 0)),
-                    f"{r.get('price', 0):,.2f}", f"{r.get('total', 0):,.2f}"][c]
-        return None
-
-    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            return self._HEADERS[section]
-        return None
-
-
-# ════════════════════════════════════════════════════
-#  Dialog: 加入计划
-# ════════════════════════════════════════════════════
-
-class AddPlanDialog(QDialog):
-    def __init__(self, product_name: str, score_result: dict, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"加入生产计划 — {product_name}")
-        self.setMinimumWidth(420)
-        self._result_data = None
-
-        layout = QFormLayout(self)
-        layout.addRow("物品:", QLabel(product_name))
-
-        profit = score_result.get("profit_per_run", 0)
-        margin = score_result.get("margin_pct", 0)
-        score = score_result.get("score", 0)
-        layout.addRow("评分:", QLabel(f"{score:.1f} | 利润: {profit:,.0f} ISK | 利润率: {margin:.1f}%"))
-
-        self._runs = QSpinBox()
-        self._runs.setRange(1, 10000)
-        self._runs.setValue(1)
-        layout.addRow("批次 (runs):", self._runs)
-
-        self._par = QSpinBox()
-        self._par.setRange(1, 100)
-        self._par.setValue(1)
-        layout.addRow("并行线:", self._par)
-
-        me_te = QHBoxLayout()
-        self._me = QSpinBox()
-        self._me.setRange(0, 10)
-        self._te = QSpinBox()
-        self._te.setRange(0, 20)
-        me_te.addWidget(QLabel("蓝图ME:"))
-        me_te.addWidget(self._me)
-        me_te.addWidget(QLabel("蓝图TE:"))
-        me_te.addWidget(self._te)
-        layout.addRow("蓝图参数:", me_te)
-
-        self._char = QLineEdit()
-        self._char.setPlaceholderText("角色名（可选）")
-        layout.addRow("角色:", self._char)
-
-        self._fac = QLineEdit()
-        self._fac.setPlaceholderText("设施名（可选）")
-        layout.addRow("设施:", self._fac)
-
-        btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btn.accepted.connect(self._on_ok)
-        btn.rejected.connect(self.reject)
-        layout.addRow(btn)
-
-    def _on_ok(self):
-        self._result_data = {
-            "runs": self._runs.value(), "parallels": self._par.value(),
-            "me": self._me.value(), "te": self._te.value(),
-            "char": self._char.text().strip(), "fac": self._fac.text().strip(),
-        }
-        self.accept()
-
-    def result_data(self) -> dict | None:
-        return self._result_data
-
-
-# ════════════════════════════════════════════════════
 #  Main Page
 # ════════════════════════════════════════════════════
+
 
 class IndustryPage(QWidget):
     """生产计划管理统一页面 — 3 Tab"""
@@ -553,10 +254,14 @@ class IndustryPage(QWidget):
         grid.setSpacing(4)
 
         label_specs = [
-            ("成品收入:", "revenue"), ("材料成本:", "material_cost"),
-            ("安装费:", "facility_fee"), ("经纪人费:", "broker_fee"),
-            ("销售税:", "sales_tax"), ("单次利润:", "profit"),
-            ("利润率:", "margin_pct"), ("ISK/小时:", "isk_per_hour"),
+            ("成品收入:", "revenue"),
+            ("材料成本:", "material_cost"),
+            ("安装费:", "facility_fee"),
+            ("经纪人费:", "broker_fee"),
+            ("销售税:", "sales_tax"),
+            ("单次利润:", "profit"),
+            ("利润率:", "margin_pct"),
+            ("ISK/小时:", "isk_per_hour"),
         ]
         self._profit_labels = {}
         for i, (label, key) in enumerate(label_specs):
@@ -750,7 +455,7 @@ class IndustryPage(QWidget):
         if not text.strip():
             self._search_list.setVisible(False)
             return
-        w = SearchWorker(text.strip(), self)
+        w = SearchWorker(text.strip(), get_container().db, self)
         w.finished.connect(self._on_search_result)
         w.start()
 
@@ -798,9 +503,13 @@ class IndustryPage(QWidget):
         mat_price_type = "sell" if self._mat_price_type.currentText() == "卖价" else "buy"
         w = ScoreWorker(
             self._selected_tid,
-            self._me.value(), self._te.value(),
-            self._mat_hub.currentText(), self._sell_hub.currentText(),
-            tax, mat_price_type, self._runs.value(),
+            self._me.value(),
+            self._te.value(),
+            self._mat_hub.currentText(),
+            self._sell_hub.currentText(),
+            tax,
+            mat_price_type,
+            self._runs.value(),
             self,
         )
         w.finished.connect(self._on_score)
@@ -846,12 +555,14 @@ class IndustryPage(QWidget):
         materials = result.get("materials", [])
         mat_rows = []
         for m in materials:
-            mat_rows.append({
-                "name": m["name"],
-                "need": round(m["qty"] * runs, 2),
-                "price": m.get("unit_price", 0),
-                "total": round(m.get("subtotal", 0) * runs, 2),
-            })
+            mat_rows.append(
+                {
+                    "name": m["name"],
+                    "need": round(m["qty"] * runs, 2),
+                    "price": m.get("unit_price", 0),
+                    "total": round(m.get("subtotal", 0) * runs, 2),
+                }
+            )
         self._scored_mat_table.setModel(MaterialTableModel(mat_rows))
 
         self._score_group.setVisible(True)
@@ -880,29 +591,40 @@ class IndustryPage(QWidget):
         if not data:
             return
 
-        conn = _industry_db.direct_connect('user')
+        conn = get_container().db.direct_connect("user")
         try:
-            iskph = self._ps_selected.get("isk_per_hour", 0) or \
-                    self._ps_selected.get("breakdown", {}).get("isk_per_hour", 0)
+            iskph = self._ps_selected.get("isk_per_hour", 0) or self._ps_selected.get("breakdown", {}).get(
+                "isk_per_hour", 0
+            )
             mat_cost = self._ps_selected.get("breakdown", {}).get("material_cost", 0)
 
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO production_plans
                 (product_type_id, product_name, runs, parallels, me_level, te_level,
                  mat_hub, sell_hub, facility, char_name, status,
                  profit, margin, score, iskph, material_cost, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
-            """, (
-                self._selected_tid, self._selected_name,
-                data["runs"], data["parallels"], data["me"], data["te"],
-                self._mat_hub.currentText(), self._sell_hub.currentText(),
-                data["fac"], data["char"],
-                self._ps_selected.get("profit_per_run", 0),
-                self._ps_selected.get("margin_pct", 0),
-                self._ps_selected.get("score", 0),
-                iskph, mat_cost,
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-            ))
+            """,
+                (
+                    self._selected_tid,
+                    self._selected_name,
+                    data["runs"],
+                    data["parallels"],
+                    data["me"],
+                    data["te"],
+                    self._mat_hub.currentText(),
+                    self._sell_hub.currentText(),
+                    data["fac"],
+                    data["char"],
+                    self._ps_selected.get("profit_per_run", 0),
+                    self._ps_selected.get("margin_pct", 0),
+                    self._ps_selected.get("score", 0),
+                    iskph,
+                    mat_cost,
+                    datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                ),
+            )
             conn.commit()
         finally:
             conn.close()
@@ -917,7 +639,7 @@ class IndustryPage(QWidget):
     # ═══════════════════════════════════
 
     def load_plans(self):
-        with _industry_db.connect('user') as conn:
+        with get_container().db.connect("user") as conn:
             f = self._filter.currentText()
             sql = "SELECT * FROM production_plans"
             if f == "待排产":
@@ -940,12 +662,17 @@ class IndustryPage(QWidget):
         if not sel:
             return
         ids = [self._plan_model._plans[r.row()]["id"] for r in sel]
-        if QMessageBox.question(
-            self, "确认", f"删除 {len(ids)} 条计划？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        ) != QMessageBox.StandardButton.Yes:
+        if (
+            QMessageBox.question(
+                self,
+                "确认",
+                f"删除 {len(ids)} 条计划？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
             return
-        with _industry_db.connect('user') as conn:
+        with get_container().db.connect("user") as conn:
             conn.executemany("DELETE FROM production_plans WHERE id = ?", [(i,) for i in ids])
         self.load_plans()
         self._refresh_material()
@@ -955,11 +682,10 @@ class IndustryPage(QWidget):
     # ═══════════════════════════════════
 
     def _refresh_material(self):
-        with _industry_db.connect('user', 'ref', 'mkt', 'bp') as conn:
+        with get_container().db.connect("user", "ref", "mkt", "bp") as conn:
             c = conn.cursor()
             c.execute(
-                "SELECT product_type_id, runs, parallels FROM production_plans"
-                " WHERE status IN ('pending', 'running')"
+                "SELECT product_type_id, runs, parallels FROM production_plans WHERE status IN ('pending', 'running')"
             )
             plans = c.fetchall()
 
@@ -970,13 +696,16 @@ class IndustryPage(QWidget):
 
             material_map: dict[int, int] = {}
             for pid, runs, parallels in plans:
-                c.execute("""
+                c.execute(
+                    """
                     SELECT bm.material_type_id, bm.quantity
                     FROM bp.blueprint_products bp
                     JOIN bp.blueprint_materials bm ON bm.blueprint_type_id = bp.blueprint_type_id
                         AND bm.activity = bp.activity
                     WHERE bp.product_type_id = ? AND bp.activity = 'manufacturing'
-                """, (pid,))
+                """,
+                    (pid,),
+                )
                 for mid, qty in c.fetchall():
                     material_map[mid] = material_map.get(mid, 0) + qty * runs * parallels
 
@@ -987,8 +716,7 @@ class IndustryPage(QWidget):
                 r = c.fetchone()
                 name = (r[0] or r[1] or str(mid)) if r else str(mid)
                 c.execute(
-                    "SELECT sell_price FROM mkt.market_prices"
-                    " WHERE type_id = ? AND region_id = 10000002 LIMIT 1",
+                    "SELECT sell_price FROM mkt.market_prices WHERE type_id = ? AND region_id = 10000002 LIMIT 1",
                     (mid,),
                 )
                 pr = c.fetchone()
@@ -1018,8 +746,14 @@ class IndustryPage(QWidget):
 
         mat_price_type = "sell" if self._rank_price_type.currentText() == "卖价" else "buy"
         self._rank_worker = RankWorker(
-            self._rank_mat_hub.currentText(), self._rank_sell_hub.currentText(),
-            mat_price_type, self._rank_me.value(), self._rank_te.value(), tax, self,
+            self._rank_mat_hub.currentText(),
+            self._rank_sell_hub.currentText(),
+            mat_price_type,
+            self._rank_me.value(),
+            self._rank_te.value(),
+            tax,
+            get_container().db,
+            self,
         )
         self._rank_worker.progress.connect(self._on_rank_progress)
         self._rank_worker.result.connect(self._on_rank_result)
@@ -1034,7 +768,7 @@ class IndustryPage(QWidget):
     def _on_rank_result(self, results: list):
         """接收排行结果，补充名称后展示"""
         # 批量查名称
-        with _industry_db.connect('ref') as conn:
+        with get_container().db.connect("ref") as conn:
             c = conn.cursor()
             for r in results:
                 tid = r.get("_type_id")
