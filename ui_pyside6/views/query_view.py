@@ -38,9 +38,9 @@ from PySide6.QtWidgets import (
 )
 
 from core.paths import ICON_DIR, search_history_file
-from services.database_manager import get_db as _get_db_view
+from core.container import get_container
 
-_query_db = _get_db_view()
+
 from ui_pyside6.theme import (
     BG_DARK,
     BG_HOVER,
@@ -230,7 +230,7 @@ class SearchWorker(QThread):
                 self.error_signal.emit(str(e))
 
     def _db_search(self, query: str):
-        with _query_db.connect('ref', 'mkt') as conn:
+        with get_container().db.connect('ref', 'mkt') as conn:
             c = conn.cursor()
             like = f"%{query}%"
             group_match = None
@@ -277,7 +277,7 @@ class SearchWorker(QThread):
             return c.fetchall()
 
     def _db_search_basic(self, query: str):
-        with _query_db.connect('ref') as conn:
+        with get_container().db.connect('ref') as conn:
             c = conn.cursor()
             if query.isdigit():
                 c.execute("SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume FROM item WHERE type_id = ?", (int(query),))
@@ -296,7 +296,7 @@ class SuggestionWorker(QThread):
         self._query = query
 
     def run(self):
-        with _query_db.connect('ref') as conn:
+        with get_container().db.connect('ref') as conn:
             c = conn.cursor()
             q = self._query
             if q.isdigit():
@@ -397,7 +397,7 @@ class GroupLoadWorker(QThread):
         super().__init__(parent)
 
     def run(self):
-        with _query_db.connect('ref') as conn:
+        with get_container().db.connect('ref') as conn:
             c = conn.cursor()
             c.execute("SELECT DISTINCT e.group_id, e.en_group_name, e.zh_group_name FROM item e WHERE e.group_id IS NOT NULL ORDER BY e.zh_group_name, e.en_group_name")
             result = c.fetchall()

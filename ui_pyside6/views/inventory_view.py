@@ -34,9 +34,9 @@ from PySide6.QtWidgets import (
 )
 
 from core.paths import icon_cache_dir
-from services.database_manager import get_db as _get_db_view
+from core.container import get_container
 
-_inv_db = _get_db_view()
+
 from services.inventory_manager import (
     add_item,
     create_hangar,
@@ -248,9 +248,9 @@ class PasteImportDialog(QDialog):
         errors = []
         price_source = self._get_price_source()
         discount = self._get_discount()
-        with _inv_db.connect("ref", "bp") as conn:
+        with get_container().db.connect("ref", "bp") as conn:
             c = conn.cursor()
-            with _inv_db.connect("mkt") as conn2:
+            with get_container().db.connect("mkt") as conn2:
                 c2 = conn2.cursor()
                 for line in lines:
                     line = line.strip()
@@ -444,7 +444,7 @@ class ImportReviewDialog(QDialog):
         type_ids = list({it["type_id"] for it in self._parsed_items})
         if not type_ids:
             return
-        with _inv_db.connect("mkt") as conn:
+        with get_container().db.connect("mkt") as conn:
             c = conn.cursor()
             placeholders = ",".join("?" * len(type_ids))
             c.execute(
@@ -741,7 +741,7 @@ class ImportReviewDialog(QDialog):
             self._populate_rows()
 
     def _set_price_from_market(self, type_id: int, price_type: str, spin: QDoubleSpinBox):
-        with _inv_db.connect("mkt") as conn:
+        with get_container().db.connect("mkt") as conn:
             cursor = conn.cursor()
             if price_type == "avg":
                 cursor.execute(
@@ -1064,7 +1064,7 @@ class HangarTab(QWidget):
         lines = raw.strip().split("\n")
         results = []
         errors = []
-        with _inv_db.connect("ref", "bp") as conn:
+        with get_container().db.connect("ref", "bp") as conn:
             c = conn.cursor()
             for line in lines:
                 line = line.strip()
@@ -1405,7 +1405,7 @@ class _BlueprintImportWorker(QThread):
     def run(self):
         # 1. 解析剪贴板
         pasted: list[tuple] = []  # (bpid, is_bpo, me, te, runs)
-        with _inv_db.connect("ref", "bp") as conn:
+        with get_container().db.connect("ref", "bp") as conn:
             c = conn.cursor()
             lines = [l for l in self._raw.split("\n") if l.strip()]
             total = len(lines)
@@ -1430,7 +1430,7 @@ class _BlueprintImportWorker(QThread):
 
         # 2. 读取库中现有蓝图（保留 id 用于精确删除）
         existing_map: dict[tuple, int] = {}  # (bpid, is_bpo, me, te, runs) → row_id
-        with _inv_db.connect("user") as uc:
+        with get_container().db.connect("user") as uc:
             c = uc.cursor()
             c.execute("SELECT id, blueprint_type_id, is_bpo, me_level, te_level, runs FROM user_blueprints WHERE hangar_id = ?",
                       (self._hangar_id,))
@@ -1470,7 +1470,7 @@ class _BlueprintImportWorker(QThread):
             return
 
         # 5. 增量更新
-        with _inv_db.connect("user") as uc:
+        with get_container().db.connect("user") as uc:
             c = uc.cursor()
             for row_id in to_remove:
                 c.execute("DELETE FROM user_blueprints WHERE id = ?", (row_id,))
@@ -1613,7 +1613,7 @@ class BlueprintTab(QWidget):
 
     def _load_market_categories(self):
         """加载根级市场分类到下拉框"""
-        with _inv_db.connect("ref") as conn:
+        with get_container().db.connect("ref") as conn:
             c = conn.cursor()
             c.execute("SELECT market_group_id, zh_name FROM market_tree WHERE parent_group_id IS NULL ORDER BY zh_name")
             for mgid, name in c.fetchall():
@@ -1678,7 +1678,7 @@ class BlueprintTab(QWidget):
         prices: dict[int, float] = {}
         all_ids = mat_ids | prod_ids
         if all_ids:
-            with _inv_db.connect("mkt") as conn:
+            with get_container().db.connect("mkt") as conn:
                 c = conn.cursor()
                 placeholders = ",".join("?" * len(all_ids))
                 c.execute(
@@ -1766,7 +1766,7 @@ class BlueprintTab(QWidget):
     def _get_market_descendants(self, market_group_id: int) -> set[int]:
         """递归获取指定市场分类下所有物品 type_id"""
         try:
-            with _inv_db.connect("ref") as conn:
+            with get_container().db.connect("ref") as conn:
                 c = conn.cursor()
                 c.execute("""
                     WITH RECURSIVE sub AS (

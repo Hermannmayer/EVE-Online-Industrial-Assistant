@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.paths import ICON_DIR
-from services.database_manager import get_db
+from core.container import get_container
 from services.scoring import TRADE_HUB_IDS, get_price
 from ui_pyside6.theme import (
     ACCENT_GREEN,
@@ -49,8 +49,6 @@ from ui_pyside6.theme import (
     TEXT_SECONDARY,
     add_theme_listener,
 )
-
-_db = get_db()
 
 ICON_SIZE = 32
 
@@ -129,7 +127,7 @@ def _search_item_by_name(name: str) -> dict | None:
     # 规范化引号 → 统一用 % 通配，兼容 ASCII/弯引号
     import re
     fuzzy_name = re.sub(r"[\"\"'']+", "%", name)
-    with _db.connect("ref") as conn:
+    with get_container().db.connect("ref") as conn:
         c = conn.cursor()
         # 精确匹配（原始名）
         c.execute(
