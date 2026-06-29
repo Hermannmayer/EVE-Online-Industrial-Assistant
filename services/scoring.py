@@ -1,9 +1,35 @@
 """
 制造评分 / 贸易评分 计算逻辑
 """
+
 from services.database_manager import get_db
 
 db = get_db()
+
+# ════════════════════════════════════════════════════
+#  EVE 公式常量 — 来源: https://wiki.eveuniversity.org/Trade
+# ════════════════════════════════════════════════════
+
+# 经纪人费 — Broker Fee = (1.0% - 0.05% × BrokerRelations) / standing_factor
+# standing_factor = 2^(0.14 × faction_standing + 0.06 × corp_standing)
+BROKER_FEE_BASE = 1.0
+BROKER_RELATION_MULT = 0.05  # 经纪人关系学每级降低
+STANDING_FACTION_WEIGHT = 0.14  # faction standing 指数权重
+STANDING_CORP_WEIGHT = 0.06  # corp standing 指数权重
+BROKER_FEE_MIN = 0.1  # 最低经纪人费率，来源: EVE Wiki
+
+# 制造 — 来源: https://wiki.eveuniversity.org/Manufacturing
+INSTALL_FEE_RATE = 0.05  # 安装费 = 5% × 成品收入
+INDUSTRY_SKILL_MULT = 0.04  # 工业理论 (3380) 每级 -4% 时间
+ADV_INDUSTRY_SKILL_MULT = 0.03  # 高级工业理论 (3388) 每级 -3% 时间
+TE_MULT_PER_LEVEL = 0.01  # TE 每级 -1% 时间
+ME_WASTE_BASE = 0.1  # ME 0 = 10% 浪费，每级 -1%
+
+# 贸易 — 来源: https://wiki.eveuniversity.org/Trade
+ACCOUNTING_MULT = 0.03  # 会计学每级 -3% 销售税
+SALES_TAX_BASE = 2.0  # 基础销售税率
+ADV_BROKER_DISCOUNT = 5  # 高级经纪人关系学每级 +5% 改单折扣
+RELIST_BASE_DISCOUNT = 50  # 0 级时改单折扣 50%
 
 # 四大贸易中心的 region_id 映射
 TRADE_HUB_IDS = {
@@ -16,8 +42,12 @@ HUB_NAMES = {v: k for k, v in TRADE_HUB_IDS.items()}
 
 # 基础矿物 type_id → 中文名映射（type_id < 178，不在 item 表中）
 _MINERAL_NAMES = {
-    34: "三钛合金", 35: "类银超金属", 36: "同位聚合体",
-    37: "超新星诺克石", 38: "晶状石英核岩", 39: "碳纤维",
+    34: "三钛合金",
+    35: "类银超金属",
+    36: "同位聚合体",
+    37: "超新星诺克石",
+    38: "晶状石英核岩",
+    39: "碳纤维",
     40: "建筑用预制块",
 }
 _RACE_ME = {4247: "****残余物", 4312: "****残余物"}  # 补全用
@@ -126,12 +156,12 @@ def calc_manufacturing_score(
     mat_source_hub: str = "Jita",
     sell_hub: str = "Jita",
     facility_tax_pct: float = 0.0,
-    price_type_mat: str = "sell",   # 材料用卖单价（你买入的价格）
+    price_type_mat: str = "sell",  # 材料用卖单价（你买入的价格）
     price_type_prod: str = "sell",  # 成品用卖单价（你卖出的价格）
-    bp_me: int = 0,                 # 蓝图材料效率 0-10，每级减1%浪费
-    bp_te: int = 0,                 # 蓝图时间效率 0-20，每级减1%时间
-    system_id: int | None = None,   # 制造星系ID，用于查询SCI
-    structure_bonus: float = 0.0,   # 建筑改装件减免 (0.0-0.05)，含ME/TE/cost rig
+    bp_me: int = 0,  # 蓝图材料效率 0-10，每级减1%浪费
+    bp_te: int = 0,  # 蓝图时间效率 0-20，每级减1%时间
+    system_id: int | None = None,  # 制造星系ID，用于查询SCI
+    structure_bonus: float = 0.0,  # 建筑改装件减免 (0.0-0.05)，含ME/TE/cost rig
 ) -> dict:
     """
     计算制造评分。
@@ -184,14 +214,17 @@ def calc_manufacturing_score(
         c = conn.cursor()
 
         # 1. 查找有哪些蓝图产出此物品
-        c.execute("""
+        c.execute(
+            """
             SELECT bp.blueprint_type_id, bp.quantity, ba.time
             FROM blueprint_products bp
             JOIN blueprint_activities ba ON ba.blueprint_type_id = bp.blueprint_type_id
                 AND ba.activity = bp.activity
             WHERE bp.product_type_id = ? AND bp.activity = 'manufacturing'
             LIMIT 1
-        """, (type_id,))
+        """,
+            (type_id,),
+        )
         bp_row = c.fetchone()
         if not bp_row:
             result["status"] = "no_blueprint"
@@ -207,11 +240,14 @@ def calc_manufacturing_score(
             return result
 
         # 3. 查材料
-        c.execute("""
+        c.execute(
+            """
             SELECT bm.material_type_id, bm.quantity
             FROM blueprint_materials bm
             WHERE bm.blueprint_type_id = ? AND bm.activity = 'manufacturing'
-        """, (bp_id,))
+        """,
+            (bp_id,),
+        )
         mat_rows = c.fetchall()
 
         if not mat_rows:
@@ -220,7 +256,7 @@ def calc_manufacturing_score(
 
         # 4. 计算材料成本（含 ME 浪费因子）
         # ME 0 → waste_factor 1.1 (10%浪费), ME 10 → 1.0 (无浪费)
-        waste_factor = 1 + 0.1 * (1 - bp_me / 10)
+        waste_factor = 1 + ME_WASTE_BASE * (1 - bp_me / 10)
         total_mat_cost = 0.0
         mat_detail = []
         for mat_id, mat_qty in mat_rows:
@@ -229,14 +265,16 @@ def calc_manufacturing_score(
             if mat_price:
                 total_mat_cost += waste_qty * mat_price
             mat_name = _mat_name(mat_id, c)
-            mat_detail.append({
-                "name": mat_name,
-                "base_qty": mat_qty,
-                "qty": round(waste_qty, 2),
-                "waste_factor": round(waste_factor, 2),
-                "unit_price": mat_price or 0.0,
-                "subtotal": round((mat_price or 0.0) * waste_qty, 2),
-            })
+            mat_detail.append(
+                {
+                    "name": mat_name,
+                    "base_qty": mat_qty,
+                    "qty": round(waste_qty, 2),
+                    "waste_factor": round(waste_factor, 2),
+                    "unit_price": mat_price or 0.0,
+                    "subtotal": round((mat_price or 0.0) * waste_qty, 2),
+                }
+            )
         result["materials"] = mat_detail
 
         # 5. 从人物配置读取费率
@@ -247,23 +285,29 @@ def calc_manufacturing_score(
 
         # 经纪人费率
         broker_rel = skills.get("经纪人关系学", 0)
-        standing_factor = 2 ** (0.14 * max(0, faction_standing) + 0.06 * max(0, corp_standing))
-        broker_rate = (1.0 - 0.05 * broker_rel) / standing_factor if standing_factor > 0 else 1.0
-        broker_rate = max(0.1, broker_rate)  # %
+        standing_factor = 2 ** (
+            STANDING_FACTION_WEIGHT * max(0, faction_standing) + STANDING_CORP_WEIGHT * max(0, corp_standing)
+        )
+        broker_rate = (
+            (BROKER_FEE_BASE - BROKER_RELATION_MULT * broker_rel) / standing_factor
+            if standing_factor > 0
+            else BROKER_FEE_BASE
+        )
+        broker_rate = max(BROKER_FEE_MIN, broker_rate)
 
         # 改单折扣：高级经纪人关系学 每级+5%, 0级=50%
         adv_rel = skills.get("高级经纪人关系学", 0)
-        relist_discount = min(50 + adv_rel * 5, 100)  # %
+        relist_discount = min(RELIST_BASE_DISCOUNT + adv_rel * ADV_BROKER_DISCOUNT, 100)
 
         # 销售税率
         accounting = skills.get("会计学", 0)
-        sales_tax_rate = 2.0 * (1 - 0.03 * accounting)  # %
+        sales_tax_rate = SALES_TAX_BASE * (1 - ACCOUNTING_MULT * accounting)
 
         # 6. 安装费：0.05 × 成品收入 × SCI × (1 - 建筑减免) × (1 + 设施税%)
         revenue = prod_price * prod_qty
         total_cost = total_mat_cost
         sci = get_system_cost_index(system_id, "manufacturing")
-        install_base = 0.05 * revenue
+        install_base = INSTALL_FEE_RATE * revenue
         facility_fee = install_base * sci * (1 - structure_bonus) * (1 + facility_tax_pct / 100)
         total_cost += facility_fee
         broker_init = revenue * (broker_rate / 100)
@@ -277,8 +321,8 @@ def calc_manufacturing_score(
         if profit <= 0:
             ind_lvl = skills.get("工业理论", 5)
             adv_lvl = skills.get("高级工业理论", 5)
-            skill_mod = (1 - 0.04 * ind_lvl) * (1 - 0.03 * adv_lvl)
-            te_modifier = 1 - bp_te * 0.01
+            skill_mod = (1 - INDUSTRY_SKILL_MULT * ind_lvl) * (1 - ADV_INDUSTRY_SKILL_MULT * adv_lvl)
+            te_modifier = 1 - bp_te * TE_MULT_PER_LEVEL
             result["margin_pct"] = round(margin_pct, 2)
             result["profit_per_run"] = round(profit, 2)
             result["cost_per_unit"] = round(total_cost / prod_qty, 2)
@@ -290,9 +334,9 @@ def calc_manufacturing_score(
         # 技能倍率：Industry(3380) -4%/级, Advanced Industry(3388) -3%/级
         ind_lvl = skills.get("工业理论", 5)  # 对应 type_id 3380
         adv_lvl = skills.get("高级工业理论", 5)  # 对应 type_id 3388
-        skill_mod = (1 - 0.04 * ind_lvl) * (1 - 0.03 * adv_lvl)
+        skill_mod = (1 - INDUSTRY_SKILL_MULT * ind_lvl) * (1 - ADV_INDUSTRY_SKILL_MULT * adv_lvl)
         # 蓝图 TE 修正：TE 0 → 1.0x, TE 20 → 0.8x
-        te_modifier = 1 - bp_te * 0.01
+        te_modifier = 1 - bp_te * TE_MULT_PER_LEVEL
         actual_time = base_time * skill_mod * te_modifier
         hours_per_run = actual_time / 3600
 
@@ -316,39 +360,41 @@ def calc_manufacturing_score(
 
         total_score = profit_score + volume_score + efficiency_score
 
-        result.update({
-            "score": round(total_score, 1),
-            "profit_per_run": round(profit, 2),
-            "margin_pct": round(margin_pct, 2),
-            "isk_per_hour": round(isk_per_hour, 2),
-            "cost_per_unit": round(total_cost / prod_qty, 2),
-            "revenue_per_unit": round(prod_price, 2),
-            "hours_per_run": round(hours_per_run, 2),
-            "status": "",
-            "breakdown": {
-                "bp_me": bp_me,
-                "bp_te": bp_te,
-                "waste_factor": round(waste_factor, 2),
-                "te_modifier": round(te_modifier, 2),
-                "profit_score": round(profit_score, 1),
-                "volume_score": round(volume_score, 1),
-                "efficiency_score": round(efficiency_score, 1),
+        result.update(
+            {
+                "score": round(total_score, 1),
+                "profit_per_run": round(profit, 2),
+                "margin_pct": round(margin_pct, 2),
                 "isk_per_hour": round(isk_per_hour, 2),
-                "revenue": round(revenue, 2),
-                "material_cost": round(total_mat_cost, 2),
-                "broker_init": round(broker_init, 2),
-                "broker_relist": round(broker_relist, 2),
-                "sales_tax": round(sales_tax, 2),
-                "facility_fee": round(facility_fee, 2),
-                "install_base": round(install_base, 2),
-                "sci": round(sci, 4),
-                "structure_bonus": round(structure_bonus, 4),
-                "facility_tax_pct": round(facility_tax_pct, 2),
-                "broker_rate": round(broker_rate, 3),
-                "sales_tax_rate": round(sales_tax_rate, 3),
-                "relist_discount": round(relist_discount, 1),
-            },
-        })
+                "cost_per_unit": round(total_cost / prod_qty, 2),
+                "revenue_per_unit": round(prod_price, 2),
+                "hours_per_run": round(hours_per_run, 2),
+                "status": "",
+                "breakdown": {
+                    "bp_me": bp_me,
+                    "bp_te": bp_te,
+                    "waste_factor": round(waste_factor, 2),
+                    "te_modifier": round(te_modifier, 2),
+                    "profit_score": round(profit_score, 1),
+                    "volume_score": round(volume_score, 1),
+                    "efficiency_score": round(efficiency_score, 1),
+                    "isk_per_hour": round(isk_per_hour, 2),
+                    "revenue": round(revenue, 2),
+                    "material_cost": round(total_mat_cost, 2),
+                    "broker_init": round(broker_init, 2),
+                    "broker_relist": round(broker_relist, 2),
+                    "sales_tax": round(sales_tax, 2),
+                    "facility_fee": round(facility_fee, 2),
+                    "install_base": round(install_base, 2),
+                    "sci": round(sci, 4),
+                    "structure_bonus": round(structure_bonus, 4),
+                    "facility_tax_pct": round(facility_tax_pct, 2),
+                    "broker_rate": round(broker_rate, 3),
+                    "sales_tax_rate": round(sales_tax_rate, 3),
+                    "relist_discount": round(relist_discount, 1),
+                },
+            }
+        )
 
     return result
 
@@ -357,8 +403,8 @@ def calc_trade_score(
     type_id: int,
     buy_hub: str = "Jita",
     sell_hub: str = "Jita",
-    buy_price_type: str = "buy",   # 买入价来源
-    sell_price_type: str = "sell", # 卖出价来源
+    buy_price_type: str = "buy",  # 买入价来源
+    sell_price_type: str = "sell",  # 卖出价来源
     char_config: dict = None,
     quantity: int = 1,
 ) -> dict:
@@ -409,13 +455,13 @@ def calc_trade_score(
 
     fs_buy = market_data_buy.get("faction_standing", 5.0)
     cs_buy = market_data_buy.get("corp_standing", 5.0)
-    sf_buy = 2 ** (0.14 * max(0, fs_buy) + 0.06 * max(0, cs_buy))
-    broker_rate = (1.0 - 0.05 * broker_lvl) / sf_buy if sf_buy > 0 else 1.0
-    broker_rate = max(0.1, broker_rate)
+    sf_buy = 2 ** (STANDING_FACTION_WEIGHT * max(0, fs_buy) + STANDING_CORP_WEIGHT * max(0, cs_buy))
+    broker_rate = (BROKER_FEE_BASE - BROKER_RELATION_MULT * broker_lvl) / sf_buy if sf_buy > 0 else BROKER_FEE_BASE
+    broker_rate = max(BROKER_FEE_MIN, broker_rate)
 
     # 改单折扣：高级经纪人关系学 每级+5%, 0级=50%
     adv_rel = skills.get("高级经纪人关系学", 0)
-    relist_discount = min(50 + adv_rel * 5, 100)
+    relist_discount = min(RELIST_BASE_DISCOUNT + adv_rel * ADV_BROKER_DISCOUNT, 100)
 
     # 买入费用 = 1次挂单 + 1次改单
     buy_init = broker_rate
@@ -425,15 +471,15 @@ def calc_trade_score(
     # 卖出费率（声望可能不同）
     fs_sell = market_data_sell.get("faction_standing", 5.0)
     cs_sell = market_data_sell.get("corp_standing", 5.0)
-    sf_sell = 2 ** (0.14 * max(0, fs_sell) + 0.06 * max(0, cs_sell))
-    sell_rate = (1.0 - 0.05 * broker_lvl) / sf_sell if sf_sell > 0 else 1.0
-    sell_rate = max(0.1, sell_rate)
+    sf_sell = 2 ** (STANDING_FACTION_WEIGHT * max(0, fs_sell) + STANDING_CORP_WEIGHT * max(0, cs_sell))
+    sell_rate = (BROKER_FEE_BASE - BROKER_RELATION_MULT * broker_lvl) / sf_sell if sf_sell > 0 else BROKER_FEE_BASE
+    sell_rate = max(BROKER_FEE_MIN, sell_rate)
 
     # 卖出费用 = 1次挂单 + 1次改单 + 销售税
     sell_init = sell_rate
     sell_relist = sell_rate * (1 - relist_discount / 100)
     accounting = skills.get("会计学", 0)
-    sales_tax_rate = 2.0 * (1 - 0.03 * accounting)
+    sales_tax_rate = SALES_TAX_BASE * (1 - ACCOUNTING_MULT * accounting)
     sell_fee_total = sell_init + sell_relist + sales_tax_rate
 
     buy_cost = buy_price * quantity + buy_price * quantity * (buy_fee_total / 100)
@@ -460,13 +506,15 @@ def calc_trade_score(
     vol_score = volume_factor * 50  # 500万 = 50分
     total_score = margin_score + vol_score
 
-    result.update({
-        "score": round(total_score, 1),
-        "buy_cost": round(buy_cost, 2),
-        "sell_revenue": round(sell_revenue, 2),
-        "gross_profit": round(gross_profit, 2),
-        "margin_pct": round(margin_pct, 2),
-        "profit_per_m3": round(profit_per_m3, 2),
-    })
+    result.update(
+        {
+            "score": round(total_score, 1),
+            "buy_cost": round(buy_cost, 2),
+            "sell_revenue": round(sell_revenue, 2),
+            "gross_profit": round(gross_profit, 2),
+            "margin_pct": round(margin_pct, 2),
+            "profit_per_m3": round(profit_per_m3, 2),
+        }
+    )
 
     return result
