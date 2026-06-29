@@ -14,6 +14,7 @@ EVE-Online-Industrial-Assistant/
 ├── build_release.py                # PyInstaller 打包脚本
 ├── dev.py                          # 热重载开发工具
 ├── README.md
+├── CHANGELOG.md                  # 更新日志
 ├── LICENSE                         # Apache 2.0
 │
 ├── core/
@@ -28,6 +29,7 @@ EVE-Online-Industrial-Assistant/
 │   └── views/
 │       ├── __init__.py
 │       ├── query_view.py           # 物品查询页面（核心功能）
+│       ├── estimate_view.py        # 估价页面（剪贴板粘贴→价格查询）
 │       ├── industry_view.py        # 工业/制造页面
 │       ├── inventory_view.py       # 仓库/库存页面
 │       ├── trade_view.py           # 贸易评分页面
@@ -61,6 +63,7 @@ EVE-Online-Industrial-Assistant/
 │
 ├── data/
 │   ├── search_history.json         # 搜索历史
+│   ├── settings.json               # 用户设置（主题、价格更新等）
 │   ├── update_progress.json        # 更新进度
 │   ├── window_geometry.json        # 窗口状态
 │   ├── char_config.json            # 角色配置（多角色）
@@ -179,9 +182,10 @@ python build_release.py
 
 | 功能 | 说明 |
 |------|------|
-| 🎨 **暗色主题** | #1a1a2e 深蓝主题 |
-| 📌 **紧凑导航** | 侧边栏导航（查询、贸易、工业、仓库、角色设置） |
-| 📊 **底部状态栏** | 价格更新时间、更新按钮、进度条 |
+| 🎨 **双主题** | One Dark Pro / One Light，运行时一键切换，偏好自动保存 |
+| 📌 **紧凑导航** | 侧边栏导航（估价、查询、制造、贸易、仓库） |
+| 📊 **底部状态栏** | 价格更新时间、更新按钮、进度条、自动更新开关 |
+| ⚙️ **系统设置** | 弹窗式设置面板：主题、价格更新、初始化、关于 |
 
 ---
 
@@ -189,10 +193,9 @@ python build_release.py
 
 | 功能 | 说明 |
 |------|------|
-| 🔧 **制造利润计算** | 输入蓝图/材料，计算制造成本与利润 |
-| 📦 **仓库管理** | 库存查询、导入与导出 |
-| ⚙️ **设置页** | 数据库管理、代理配置、更新日志 |
 | 📊 **价格走势图** | 历史价格趋势可视化 |
+| 📋 **批量导出** | 查询结果导出为 CSV/Excel |
+| 🌐 **多语言** | 英文 UI 支持 |
 
 ---
 

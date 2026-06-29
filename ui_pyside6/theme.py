@@ -23,6 +23,7 @@ ONE_DARK_PRO = {
     "TEXT_PRIMARY": "#abb2bf",
     "TEXT_BRIGHT": "#e5e7eb",
     "TEXT_SECONDARY": "#5c6370",
+    "TEXT_ON_PRIMARY": "#ffffff",
     "BORDER": "#3e4452",
 }
 
@@ -41,6 +42,7 @@ ONE_LIGHT = {
     "TEXT_PRIMARY": "#4a4a4a",
     "TEXT_BRIGHT": "#2a2a2a",
     "TEXT_SECONDARY": "#8a8a8a",
+    "TEXT_ON_PRIMARY": "#ffffff",
     "BORDER": "#d4d0cb",
 }
 
@@ -65,6 +67,7 @@ ACCENT_CYAN = ONE_DARK_PRO["ACCENT_CYAN"]
 TEXT_PRIMARY = ONE_DARK_PRO["TEXT_PRIMARY"]
 TEXT_BRIGHT = ONE_DARK_PRO["TEXT_BRIGHT"]
 TEXT_SECONDARY = ONE_DARK_PRO["TEXT_SECONDARY"]
+TEXT_ON_PRIMARY = ONE_DARK_PRO["TEXT_ON_PRIMARY"]
 BORDER = ONE_DARK_PRO["BORDER"]
 
 _current_theme = "dark"
@@ -86,7 +89,7 @@ def apply_theme(theme_name: str) -> None:
     global _current_theme, BG_DARK, BG_SURFACE, BG_SURFACE_LIGHT, BG_HOVER
     global PRIMARY, ACCENT_RED, ACCENT_GREEN, ACCENT_YELLOW
     global ACCENT_ORANGE, ACCENT_PURPLE, ACCENT_CYAN
-    global TEXT_PRIMARY, TEXT_BRIGHT, TEXT_SECONDARY, BORDER
+    global TEXT_PRIMARY, TEXT_BRIGHT, TEXT_SECONDARY, TEXT_ON_PRIMARY, BORDER
     global GREEN, RED, YELLOW
 
     colors = THEMES.get(theme_name)
@@ -101,6 +104,9 @@ def apply_theme(theme_name: str) -> None:
     globals()["GREEN"] = globals()["ACCENT_GREEN"]
     globals()["RED"] = globals()["ACCENT_RED"]
     globals()["YELLOW"] = globals()["ACCENT_YELLOW"]
+
+    # 持久化主题偏好
+    save_theme_preference(theme_name)
 
     # 通知监听器
     for listener in _theme_listeners:
@@ -122,6 +128,45 @@ def add_theme_listener(callback):
 def remove_theme_listener(callback):
     if callback in _theme_listeners:
         _theme_listeners.remove(callback)
+
+
+def save_theme_preference(theme_name: str):
+    """保存主题偏好到 settings.json"""
+    try:
+        from core.paths import search_history_file
+        p = search_history_file().replace("search_history", "settings")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        data = {}
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as f:
+                data = json.load(f)
+        data["theme"] = theme_name
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def load_theme_preference() -> str:
+    """从 settings.json 读取主题偏好，默认 dark"""
+    try:
+        from core.paths import search_history_file
+        p = search_history_file().replace("search_history", "settings")
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as f:
+                return json.load(f).get("theme", "dark")
+    except Exception:
+        pass
+    return "dark"
+
+
+def themed_menu(parent, object_name: str = ""):
+    """创建已应用全局主题的 QMenu，禁止调用方再 setStyleSheet"""
+    from PySide6.QtWidgets import QMenu
+    menu = QMenu(parent)
+    if object_name:
+        menu.setObjectName(object_name)
+    return menu
 
 
 def set_geometry_file(path: str):
@@ -196,8 +241,8 @@ def get_stylesheet() -> str:
         border-radius: 4px;
     }}
     QMenu::item:selected {{
-        background-color: {BG_HOVER};
-        color: {TEXT_BRIGHT};
+        background-color: {PRIMARY};
+        color: {TEXT_ON_PRIMARY};
     }}
     QMenu::separator {{
         height: 1px;
@@ -527,7 +572,7 @@ def get_stylesheet() -> str:
     }}
     #update_btn {{
         background-color: {PRIMARY};
-        color: white;
+        color: {TEXT_ON_PRIMARY};
         border: none;
         border-radius: 4px;
         font-size: 11px;

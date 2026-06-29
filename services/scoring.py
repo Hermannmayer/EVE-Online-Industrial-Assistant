@@ -106,6 +106,20 @@ def get_volume(type_id: int, vol_type: str = "total", hub: str | None = None) ->
         return (row[0] or 0) + (row[1] or 0)
 
 
+def get_system_cost_index(system_id: int | None, activity: str = "manufacturing") -> float:
+    """从数据库获取星系的制造成本指数(SCI)。默认1.0（无加成）。"""
+    if system_id is None:
+        return 1.0
+    with db.connect("ref") as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT cost_index FROM industry_system_costs WHERE solar_system_id = ? AND activity = ? LIMIT 1",
+            (system_id, activity),
+        )
+        row = c.fetchone()
+        return row[0] if row else 1.0
+
+
 def calc_manufacturing_score(
     type_id: int,
     char_config: dict,
@@ -114,25 +128,51 @@ def calc_manufacturing_score(
     facility_tax_pct: float = 0.0,
     price_type_mat: str = "sell",   # 材料用卖单价（你买入的价格）
     price_type_prod: str = "sell",  # 成品用卖单价（你卖出的价格）
+    bp_me: int = 0,                 # 蓝图材料效率 0-10，每级减1%浪费
+    bp_te: int = 0,                 # 蓝图时间效率 0-20，每级减1%时间
+    system_id: int | None = None,   # 制造星系ID，用于查询SCI
+    structure_bonus: float = 0.0,   # 建筑改装件减免 (0.0-0.05)，含ME/TE/cost rig
 ) -> dict:
     """
     计算制造评分。
+
+    参数:
+        type_id: 成品 type_id
+        char_config: 角色配置 {"skills": {"工业理论": 5, "高级工业理论": 5, ...}}
+        mat_source_hub: 材料购买区域
+        sell_hub: 成品出售区域
+        facility_tax_pct: 设施税百分比
+        price_type_mat: 材料价格类型 'buy'/'sell'
+        price_type_prod: 成品价格类型 'buy'/'sell'
+        bp_me: 蓝图材料效率 (0-10)，ME 0=1.1x材料, ME 10=1.0x
+        bp_te: 蓝图时间效率 (0-20)，TE 0=1.0x时间, TE 20=0.8x
+        system_id: 制造星系ID，None=不计安装费，否则查 industry_system_costs
+        structure_bonus: 建筑改装件总减免 (0.0-0.05)，乘入安装费折扣
 
     返回:
     {
         "score": 0-100,
         "profit_per_run": float,
         "margin_pct": float,
+        "isk_per_hour": float,
+        "breakdown": {...},
+        "materials": [...],
         ...
+    }
 
     费用逻辑:
+      - 安装费 = 0.05 × 成品收入 × SCI × (1 - 建筑减免) × (1 + 设施税%)
       - 制造卖出时: 1次挂单经纪人费 + 1次改单经纪人费 + 销售税
       - 买材料不产生经纪人费（直接吃现价卖单）
+      - ME 浪费: waste_factor = 1 + 0.1 * (1 - ME/10)
+      - TE 时间: te_modifier = 1 - TE * 0.01
+      - system_id=None 时 SCI=1.0（不计安装费）
     """
     result = {
         "score": 0.0,
         "profit_per_run": 0.0,
         "margin_pct": 0.0,
+        "isk_per_hour": 0.0,
         "cost_per_unit": 0.0,
         "revenue_per_unit": 0.0,
         "hours_per_run": 0.0,
@@ -140,7 +180,6 @@ def calc_manufacturing_score(
         "breakdown": {},
     }
 
-    conn = None  # will be set via context manager
     with db.connect("ref", "mkt", "bp") as conn:
         c = conn.cursor()
 
@@ -179,19 +218,24 @@ def calc_manufacturing_score(
             result["status"] = "no_materials"
             return result
 
-        # 4. 计算材料成本
+        # 4. 计算材料成本（含 ME 浪费因子）
+        # ME 0 → waste_factor 1.1 (10%浪费), ME 10 → 1.0 (无浪费)
+        waste_factor = 1 + 0.1 * (1 - bp_me / 10)
         total_mat_cost = 0.0
         mat_detail = []
         for mat_id, mat_qty in mat_rows:
             mat_price = get_price(mat_id, price_type_mat, mat_source_hub)
+            waste_qty = mat_qty * waste_factor
             if mat_price:
-                total_mat_cost += mat_qty * mat_price
-            # 查材料名称
+                total_mat_cost += waste_qty * mat_price
             mat_name = _mat_name(mat_id, c)
             mat_detail.append({
-                "name": mat_name, "qty": mat_qty,
+                "name": mat_name,
+                "base_qty": mat_qty,
+                "qty": round(waste_qty, 2),
+                "waste_factor": round(waste_factor, 2),
                 "unit_price": mat_price or 0.0,
-                "subtotal": (mat_price or 0.0) * mat_qty,
+                "subtotal": round((mat_price or 0.0) * waste_qty, 2),
             })
         result["materials"] = mat_detail
 
@@ -215,10 +259,12 @@ def calc_manufacturing_score(
         accounting = skills.get("会计学", 0)
         sales_tax_rate = 2.0 * (1 - 0.03 * accounting)  # %
 
-        # 6. 计算单次利润（卖出时：1次挂单 + 1次改单）
+        # 6. 安装费：0.05 × 成品收入 × SCI × (1 - 建筑减免) × (1 + 设施税%)
         revenue = prod_price * prod_qty
         total_cost = total_mat_cost
-        facility_fee = total_cost * (facility_tax_pct / 100)
+        sci = get_system_cost_index(system_id, "manufacturing")
+        install_base = 0.05 * revenue
+        facility_fee = install_base * sci * (1 - structure_bonus) * (1 + facility_tax_pct / 100)
         total_cost += facility_fee
         broker_init = revenue * (broker_rate / 100)
         broker_relist = revenue * (broker_rate / 100) * (1 - relist_discount / 100)
@@ -229,10 +275,14 @@ def calc_manufacturing_score(
         margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
 
         if profit <= 0:
+            ind_lvl = skills.get("工业理论", 5)
+            adv_lvl = skills.get("高级工业理论", 5)
+            skill_mod = (1 - 0.04 * ind_lvl) * (1 - 0.03 * adv_lvl)
+            te_modifier = 1 - bp_te * 0.01
             result["margin_pct"] = round(margin_pct, 2)
             result["profit_per_run"] = round(profit, 2)
             result["cost_per_unit"] = round(total_cost / prod_qty, 2)
-            result["hours_per_run"] = round(base_time / 3600, 2)
+            result["hours_per_run"] = round(base_time * skill_mod * te_modifier / 3600, 2)
             result["revenue_per_unit"] = round(prod_price, 2)
             return result  # score 保持 0
 
@@ -241,7 +291,9 @@ def calc_manufacturing_score(
         ind_lvl = skills.get("工业理论", 5)  # 对应 type_id 3380
         adv_lvl = skills.get("高级工业理论", 5)  # 对应 type_id 3388
         skill_mod = (1 - 0.04 * ind_lvl) * (1 - 0.03 * adv_lvl)
-        actual_time = base_time * skill_mod
+        # 蓝图 TE 修正：TE 0 → 1.0x, TE 20 → 0.8x
+        te_modifier = 1 - bp_te * 0.01
+        actual_time = base_time * skill_mod * te_modifier
         hours_per_run = actual_time / 3600
 
         # 8. 计算评分
@@ -268,18 +320,32 @@ def calc_manufacturing_score(
             "score": round(total_score, 1),
             "profit_per_run": round(profit, 2),
             "margin_pct": round(margin_pct, 2),
+            "isk_per_hour": round(isk_per_hour, 2),
             "cost_per_unit": round(total_cost / prod_qty, 2),
             "revenue_per_unit": round(prod_price, 2),
             "hours_per_run": round(hours_per_run, 2),
             "status": "",
             "breakdown": {
+                "bp_me": bp_me,
+                "bp_te": bp_te,
+                "waste_factor": round(waste_factor, 2),
+                "te_modifier": round(te_modifier, 2),
                 "profit_score": round(profit_score, 1),
                 "volume_score": round(volume_score, 1),
                 "efficiency_score": round(efficiency_score, 1),
                 "isk_per_hour": round(isk_per_hour, 2),
+                "revenue": round(revenue, 2),
+                "material_cost": round(total_mat_cost, 2),
+                "broker_init": round(broker_init, 2),
+                "broker_relist": round(broker_relist, 2),
+                "sales_tax": round(sales_tax, 2),
+                "facility_fee": round(facility_fee, 2),
+                "install_base": round(install_base, 2),
+                "sci": round(sci, 4),
+                "structure_bonus": round(structure_bonus, 4),
+                "facility_tax_pct": round(facility_tax_pct, 2),
                 "broker_rate": round(broker_rate, 3),
                 "sales_tax_rate": round(sales_tax_rate, 3),
-                "facility_fee": round(facility_fee, 2),
                 "relist_discount": round(relist_discount, 1),
             },
         })

@@ -60,11 +60,15 @@ from services.inventory_manager import (
 )
 from services.scoring import TRADE_HUB_IDS, resolve_item_name
 from ui_pyside6.theme import (
+    ACCENT_GREEN,
+    ACCENT_RED,
     BG_SURFACE,
     BORDER,
     PRIMARY,
+    TEXT_ON_PRIMARY,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
+    add_theme_listener,
 )
 
 ICON_DIR = icon_cache_dir()
@@ -153,15 +157,15 @@ class PasteImportDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        hint = QLabel(
+        self._hint = QLabel(
             "支持格式（每行一条，Tab 分隔）：\n"
             "1. 物品名[TAB]数量\n"
             "2. EVE列表视图格式（自动识别）\n"
             "从游戏中复制（Ctrl+C）后粘贴到下面："
         )
-        hint.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        self._hint.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._hint.setWordWrap(True)
+        layout.addWidget(self._hint)
 
         self._text = QLineEdit()
         self._text.setPlaceholderText("在此粘贴...")
@@ -316,6 +320,14 @@ class PasteImportDialog(QDialog):
 
     def result_data(self) -> list:
         return self._result
+
+    def showEvent(self, event):
+        """显示前重新应用主题样式"""
+        super().showEvent(event)
+        self._reapply_styles()
+
+    def _reapply_styles(self):
+        self._hint.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
 
 
 # ════════════════════════════════════════════════════
@@ -490,7 +502,7 @@ class ImportReviewDialog(QDialog):
             delta_item.setFlags(delta_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             delta_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if delta > 0:
-                delta_item.setForeground(QColor("#4caf50"))
+                delta_item.setForeground(QColor(ACCENT_GREEN))
             table.setItem(row, self._COL_DELTA, delta_item)
 
             # 列5：变化（最终数量）
@@ -561,11 +573,6 @@ class ImportReviewDialog(QDialog):
             return
 
         menu = QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{ background: {BG_SURFACE}; border: 1px solid {BORDER}; padding: 4px; }}
-            QMenu::item {{ padding: 6px 20px; }}
-            QMenu::item:selected {{ background: {PRIMARY}; color: #fff; }}
-        """)
 
         set_sell = menu.addAction("设置为卖单价")
         set_buy = menu.addAction("设置为买单价")
@@ -831,6 +838,14 @@ class ImportReviewDialog(QDialog):
             result.append((type_id, delta, price, src))
         return result
 
+    def showEvent(self, event):
+        """显示前重新应用主题样式"""
+        super().showEvent(event)
+        self._reapply_styles()
+
+    def _reapply_styles(self):
+        self._summary_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+
 
 # ════════════════════════════════════════════════════
 #  Dialog: 编辑数量
@@ -911,6 +926,13 @@ class InventoryPage(QWidget):
         layout.addWidget(self._tabs)
 
         self._hangar_combo.currentIndexChanged.connect(self._on_hangar_changed)
+
+        add_theme_listener(self._on_theme_changed)
+
+    def _on_theme_changed(self):
+        """主题切换时重新应用内联样式表"""
+        self._hangar_tab._on_theme_changed()
+        self._blueprint_tab._on_theme_changed()
 
     def hangar_id(self) -> int | None:
         return self._current_hangar_id
@@ -1024,6 +1046,11 @@ class HangarTab(QWidget):
         self._total_label = QLabel("按卖单价格: -- ISK")
         self._total_label.setStyleSheet(f"font-weight: bold; color: {PRIMARY}; font-size: 13px;")
         layout.addWidget(self._total_label)
+
+    def _on_theme_changed(self):
+        """主题切换时重新应用内联样式表"""
+        self._count_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        self._total_label.setStyleSheet(f"font-weight: bold; color: {PRIMARY}; font-size: 13px;")
 
     # ── 剪贴板导入 ──
 
@@ -1173,11 +1200,6 @@ class HangarTab(QWidget):
             return
 
         menu = QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{ background: {BG_SURFACE}; border: 1px solid {BORDER}; padding: 4px; }}
-            QMenu::item {{ padding: 6px 20px; }}
-            QMenu::item:selected {{ background: {PRIMARY}; color: #fff; }}
-        """)
 
         edit_act = QAction("编辑数量", self)
         edit_act.triggered.connect(lambda: self._on_edit_qty(item))
@@ -1325,7 +1347,7 @@ class BlueprintTableModel(QAbstractTableModel):
             if c == 10:
                 margin = r.get("margin")
                 if margin is not None:
-                    return QColor("#4caf50") if margin >= 0 else QColor("#f44336")
+                    return QColor(ACCENT_GREEN) if margin >= 0 else QColor(ACCENT_RED)
             return None
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
@@ -1585,6 +1607,10 @@ class BlueprintTab(QWidget):
         self._load_market_categories()
         self._load_blueprints()
 
+    def _on_theme_changed(self):
+        """主题切换时重新应用内联样式表"""
+        self._bp_count_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
+
     def _load_market_categories(self):
         """加载根级市场分类到下拉框"""
         with _inv_db.connect("ref") as conn:
@@ -1780,11 +1806,6 @@ class BlueprintTab(QWidget):
         bp_ids = [bp["id"] for bp in selected]
 
         menu = QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{ background: {BG_SURFACE}; border: 1px solid {BORDER}; padding: 4px; }}
-            QMenu::item {{ padding: 6px 20px; }}
-            QMenu::item:selected {{ background: {PRIMARY}; color: #fff; }}
-        """)
 
         research = menu.addAction("研究分析")
         menu.addSeparator()

@@ -9,7 +9,11 @@ from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -17,33 +21,35 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QSplitter,
     QStackedWidget,
     QStatusBar,
     QToolBar,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
-    QToolButton,
 )
 
 from core.paths import (
-    REF_DB_PATH,
-    MKT_DB_PATH,
     ensure_dirs_exist,
+    search_history_file,
     window_geometry_file,
 )
 from services.database_manager import get_db as _get_db_manager
 from ui_pyside6.theme import (
+    ACCENT_RED,
+    ACCENT_YELLOW,
     GREEN,
     PRIMARY,
-    TEXT_PRIMARY,
     TEXT_SECONDARY,
     add_theme_listener,
     apply_theme,
     current_theme,
     get_stylesheet,
+    load_theme_preference,
     remove_theme_listener,
     restore_window_geometry,
     save_window_geometry,
@@ -56,6 +62,7 @@ from ui_pyside6.theme import (
 #        ("__section__", "分组名称") — 分组标题（不可点击）
 NAV_TREE = [
     ("__section__", "⚡ 核心功能"),
+    ("estimate",    "估价",       "💰"),
     ("query",       "物品查询",   "🔍"),
     ("industry",    "工业制造",   "🏭"),
     ("trade",       "市场贸易",   "📊"),
@@ -124,6 +131,10 @@ class MainWindow(QMainWindow):
 
         # ── 主题 ──
         self.setStyleSheet(get_stylesheet())
+        # 加载上次主题偏好（apply_theme 会触发 _on_theme_changed 重设样式表）
+        saved_theme = load_theme_preference()
+        if saved_theme != "dark":
+            apply_theme(saved_theme)
 
         # ── 顶部工具栏 ──
         toolbar = QToolBar("主工具栏")
@@ -222,7 +233,13 @@ class MainWindow(QMainWindow):
         self._price_worker: PriceUpdateWorker | None = None
         self._update_regions: list[str] = ["Jita", "Amarr", "Dodixie", "Rens"]
         self._update_interval_minutes = self._load_interval()
+        self._auto_update_enabled = self._load_auto_update()
+        self._price_timer: QTimer | None = None
         self._init_price_check()
+
+        # ── 启动周期性价格定时器 ──
+        if self._auto_update_enabled and self._update_interval_minutes > 0:
+            self._start_price_timer()
 
         # ── 主题切换监听 ──
         add_theme_listener(self._on_theme_changed)
@@ -375,18 +392,20 @@ class MainWindow(QMainWindow):
     # ═══════════════════════════════════════
 
     def _register_pages(self):
+        from ui_pyside6.views.estimate_view import EstimatePage
         from ui_pyside6.views.industry_view import IndustryPage
         from ui_pyside6.views.inventory_view import InventoryPage
         from ui_pyside6.views.query_view import QueryPage
         from ui_pyside6.views.trade_view import TradePage
 
         # 已实现的页面
+        self._pages["estimate"] = EstimatePage(self)
         self._pages["query"] = QueryPage(self)
         self._pages["industry"] = IndustryPage(self)
         self._pages["trade"] = TradePage(self)
         self._pages["storage"] = InventoryPage(self)
 
-        for key in ["query", "industry", "trade", "storage"]:
+        for key in ["estimate", "query", "industry", "trade", "storage"]:
             self.content_stack.addWidget(self._pages[key])
 
     # ═══════════════════════════════════════
@@ -489,10 +508,10 @@ class MainWindow(QMainWindow):
                         color = GREEN
                         age_text = f"🟢 {diff_min} 分钟前"
                     elif diff_min < 30:
-                        color = "#e5c07b"  # yellow
+                        color = ACCENT_YELLOW
                         age_text = f"🟡 {diff_min} 分钟前"
                     else:
-                        color = "#e06c75"  # red
+                        color = ACCENT_RED
                         age_text = f"🔴 {diff_min} 分钟前"
 
                     bj_dt = dt.replace(tzinfo=timezone.utc) + timedelta(hours=8)
@@ -625,66 +644,133 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _show_sys_settings(self):
-        menu = QMenu(self)
-        menu.setObjectName("sys_menu")
+        dlg = QDialog(self)
+        dlg.setWindowTitle("系统设置")
+        dlg.setMinimumWidth(360)
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
 
+        # ── 主题切换 ──
+        theme_group = QGroupBox("外观")
+        tg = QVBoxLayout(theme_group)
         current = current_theme()
-        theme_action = menu.addAction(
+        theme_btn = QPushButton(
             "☀️ 切换到亮色模式" if current == "dark" else "🌙 切换到暗色模式"
         )
-        theme_action.triggered.connect(self._toggle_theme)
+        theme_btn.clicked.connect(lambda: (self._toggle_theme(), dlg.accept()))
+        tg.addWidget(theme_btn)
+        layout.addWidget(theme_group)
 
-        menu.addSeparator()
+        # ── 价格自动更新 ──
+        price_group = QGroupBox("价格更新")
+        pg = QVBoxLayout(price_group)
 
-        interval_action = menu.addAction(f"⏱ 价格更新间隔: {self._update_interval_minutes} 分钟")
-        interval_action.triggered.connect(self._show_interval_settings)
+        auto_row = QHBoxLayout()
+        self._auto_update_cb = QCheckBox("启用自动更新")
+        self._auto_update_cb.setChecked(self._auto_update_enabled)
+        self._auto_update_cb.toggled.connect(self._on_auto_update_toggled)
+        auto_row.addWidget(self._auto_update_cb)
+        auto_row.addStretch()
+        pg.addLayout(auto_row)
 
-        menu.addSeparator()
+        interval_row = QHBoxLayout()
+        interval_row.addWidget(QLabel("更新间隔（分钟）:"))
+        self._interval_spin = QSpinBox()
+        self._interval_spin.setRange(0, 1440)
+        self._interval_spin.setValue(self._update_interval_minutes)
+        self._interval_spin.setSingleStep(5)
+        self._interval_spin.setSuffix(" 分钟")
+        self._interval_spin.setSpecialValueText("关闭")
+        interval_row.addWidget(self._interval_spin)
+        pg.addLayout(interval_row)
 
-        init_action = menu.addAction("📦 数据初始化")
-        init_action.triggered.connect(self._show_init_wizard)
+        layout.addWidget(price_group)
 
-        about_action = menu.addAction("ℹ️ 关于")
-        about_action.triggered.connect(self._show_about)
+        # ── 工具 ──
+        tool_group = QGroupBox("工具")
+        tgl = QVBoxLayout(tool_group)
+        init_btn = QPushButton("📦 数据初始化")
+        init_btn.clicked.connect(lambda: (dlg.accept(), self._show_init_wizard()))
+        tgl.addWidget(init_btn)
+        about_btn = QPushButton("ℹ️ 关于")
+        about_btn.clicked.connect(lambda: (dlg.accept(), self._show_about()))
+        tgl.addWidget(about_btn)
+        layout.addWidget(tool_group)
 
-        menu.exec(self._sys_settings_btn.mapToGlobal(
-            self._sys_settings_btn.rect().bottomLeft()
-        ))
+        # ── 按钮 ──
+        btn_bar = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        btn_bar.accepted.connect(dlg.accept)
+        btn_bar.accepted.connect(self._on_settings_saved)
+        layout.addWidget(btn_bar)
 
-    def _show_interval_settings(self):
-        from PySide6.QtWidgets import QInputDialog
-        value, ok = QInputDialog.getInt(self, "价格更新间隔", "输入分钟数（0=关闭自动更新）:",
-                                        self._update_interval_minutes, 0, 1440, 5)
-        if ok and value != self._update_interval_minutes:
-            self._update_interval_minutes = value
-            self._save_interval(value)
-            self._status_label.setText(f"更新间隔已设为 {value} 分钟")
+        dlg.exec()
+
+    def _on_auto_update_toggled(self, checked: bool):
+        self._auto_update_enabled = checked
+        if checked and self._update_interval_minutes > 0:
+            self._start_price_timer()
+        else:
+            self._stop_price_timer()
+
+    def _on_settings_saved(self):
+        self._update_interval_minutes = self._interval_spin.value()
+        self._auto_update_enabled = self._auto_update_cb.isChecked()
+        self._save_settings()
+        if self._auto_update_enabled:
+            self._start_price_timer()
+        else:
+            self._stop_price_timer()
+        self._status_label.setText(f"设置已保存（间隔: {self._update_interval_minutes} 分钟）")
 
     def _load_interval(self) -> int:
         try:
-            import json
             p = search_history_file().replace("search_history", "settings")
             if os.path.exists(p):
                 with open(p, encoding="utf-8") as f:
-                    return json.load(f).get("update_interval", 30)
-        except Exception:
-            pass
+                    val = json.load(f).get("update_interval", 30)
+                    return max(0, min(1440, int(val)))
+        except Exception as e:
+            self._status_label.setText(f"加载设置失败: {e}")
         return 30
 
-    def _save_interval(self, minutes: int):
+    def _load_auto_update(self) -> bool:
         try:
-            import json
+            p = search_history_file().replace("search_history", "settings")
+            if os.path.exists(p):
+                with open(p, encoding="utf-8") as f:
+                    return json.load(f).get("auto_update_enabled", True)
+        except Exception:
+            pass
+        return True
+
+    def _save_settings(self):
+        try:
             p = search_history_file().replace("search_history", "settings")
             os.makedirs(os.path.dirname(p), exist_ok=True)
-            data = {"update_interval": minutes}
+            data = {}
             if os.path.exists(p):
                 with open(p, encoding="utf-8") as f:
                     data = json.load(f)
-            data["update_interval"] = minutes
+            data["update_interval"] = self._update_interval_minutes
+            data["auto_update_enabled"] = self._auto_update_enabled
             with open(p, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+        except Exception as e:
+            self._status_label.setText(f"保存设置失败: {e}")
+
+    def _start_price_timer(self):
+        if self._price_timer is not None:
+            self._price_timer.stop()
+        if self._update_interval_minutes <= 0:
+            return
+        self._price_timer = QTimer(self)
+        self._price_timer.timeout.connect(self._init_price_check)
+        self._price_timer.start(self._update_interval_minutes * 60 * 1000)
+
+    def _stop_price_timer(self):
+        if self._price_timer is not None:
+            self._price_timer.stop()
+            self._price_timer = None
 
     def _check_first_run(self):
         """首次启动检测：如果缺少关键数据，在状态栏提示"""
@@ -703,9 +789,12 @@ class MainWindow(QMainWindow):
 
     def _show_init_wizard(self):
         from ui_pyside6.views.init_wizard import InitWizard
-        if hasattr(self, '_init_wizard') and self._init_wizard and self._init_wizard.isVisible():
-            self._init_wizard.raise_()
-            return
+        try:
+            if hasattr(self, '_init_wizard') and self._init_wizard and self._init_wizard.isVisible():
+                self._init_wizard.raise_()
+                return
+        except RuntimeError:
+            pass  # C++ 对象已被删除
         self._init_wizard = InitWizard(self)
         self._init_wizard.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._init_wizard.show()

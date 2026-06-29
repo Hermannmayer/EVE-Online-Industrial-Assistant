@@ -1,30 +1,47 @@
 """
 生产计划管理 — 统一页面
 """
-import json
-import sqlite3
 from datetime import datetime, timezone
 
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QLineEdit, QComboBox, QPushButton, QTableView, QHeaderView,
-    QSplitter, QListWidget, QListWidgetItem, QFrame,
-    QSpinBox, QGroupBox, QAbstractItemView, QMessageBox, QDialog,
-    QDialogButtonBox, QFormLayout, QHeaderView,
-)
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QThread, Signal, QTimer
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QThread, Signal
 from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSpinBox,
+    QTableView,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
-from core.paths import data_dir
 from services.database_manager import get_db as _get_db_view
+from services.scoring import TRADE_HUB_IDS, calc_manufacturing_score
+from ui_pyside6.theme import (
+    BORDER,
+    GREEN,
+    PRIMARY,
+    RED,
+    TEXT_PRIMARY,
+    TEXT_SECONDARY,
+    add_theme_listener,
+)
 
 _industry_db = _get_db_view()
-from ui_pyside6.theme import (
-    BG_DARK, BG_SURFACE, BG_SURFACE_LIGHT, PRIMARY,
-    TEXT_PRIMARY, TEXT_SECONDARY, GREEN, RED, BORDER,
-)
-from services.scoring import calc_manufacturing_score, TRADE_HUB_IDS
-
 
 # ════════════════════════════════════════════════════
 #  DB
@@ -60,6 +77,11 @@ def init_plan_db():
     try:
         with _industry_db.connect('user') as conn:
             conn.executescript(PLAN_DB_SCHEMA)
+            for col, col_type in [("iskph", "REAL DEFAULT 0"), ("material_cost", "REAL DEFAULT 0")]:
+                try:
+                    conn.execute(f"ALTER TABLE production_plans ADD COLUMN {col} {col_type}")
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -93,26 +115,130 @@ class SearchWorker(QThread):
 class ScoreWorker(QThread):
     finished = Signal(dict)
 
-    def __init__(self, type_id: int, me: int, te: int, mat_hub: str, sell_hub: str, tax: float, parent=None):
+    def __init__(self, type_id: int, bp_me: int, bp_te: int,
+                 mat_hub: str, sell_hub: str, tax: float,
+                 mat_price_type: str = "sell", runs: int = 1,
+                 parent=None):
         super().__init__(parent)
         self._tid = type_id
-        self._me = me
-        self._te = te
+        self._bp_me = bp_me
+        self._bp_te = bp_te
         self._mat_hub = mat_hub
         self._sell_hub = sell_hub
         self._tax = tax
+        self._mat_price_type = mat_price_type
+        self._runs = runs
 
     def run(self):
         result = calc_manufacturing_score(
             type_id=self._tid,
-            char_config={"skills": {"工业理论": self._me, "高级工业理论": self._te}},
+            char_config={"skills": {"工业理论": 5, "高级工业理论": 5}},
+            bp_me=self._bp_me,
+            bp_te=self._bp_te,
             mat_source_hub=self._mat_hub,
             sell_hub=self._sell_hub,
             facility_tax_pct=self._tax,
-            price_type_mat="sell",
+            price_type_mat=self._mat_price_type,
             price_type_prod="sell",
         )
         self.finished.emit(result)
+
+
+class RankWorker(QThread):
+    """后台线程批量评分所有可制造物品"""
+    progress = Signal(int, int)  # current, total
+    result = Signal(list)        # list of scored dicts
+    done = Signal(float)         # elapsed seconds
+
+    def __init__(self, mat_hub: str, sell_hub: str, mat_price_type: str,
+                 bp_me: int, bp_te: int, tax: float, parent=None):
+        super().__init__(parent)
+        self._mat_hub = mat_hub
+        self._sell_hub = sell_hub
+        self._mat_price_type = mat_price_type
+        self._bp_me = bp_me
+        self._bp_te = bp_te
+        self._tax = tax
+
+    def run(self):
+        import time
+        started = time.time()
+        results = []
+
+        with _industry_db.connect('bp') as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT DISTINCT product_type_id FROM blueprint_products
+                WHERE activity = 'manufacturing'
+            """)
+            tids = [r[0] for r in c.fetchall()]
+
+        total = len(tids)
+        for i, tid in enumerate(tids):
+            r = calc_manufacturing_score(
+                type_id=tid,
+                char_config={"skills": {"工业理论": 5, "高级工业理论": 5}},
+                bp_me=self._bp_me,
+                bp_te=self._bp_te,
+                mat_source_hub=self._mat_hub,
+                sell_hub=self._sell_hub,
+                facility_tax_pct=self._tax,
+                price_type_mat=self._mat_price_type,
+                price_type_prod="sell",
+            )
+            if not r.get("status"):
+                r["_type_id"] = tid
+                results.append(r)
+
+            if (i + 1) % 100 == 0:
+                self.progress.emit(i + 1, total)
+
+        results.sort(key=lambda x: x.get("isk_per_hour", 0), reverse=True)
+        self.result.emit(results)
+        self.done.emit(time.time() - started)
+
+
+class RankTableModel(QAbstractTableModel):
+    """利润排行表模型"""
+    _HEADERS = ["成品", "利润/run", "利润率%", "ISK/h", "评分", "成本/unit", "时/run"]
+
+    def __init__(self, rows: list[dict]):
+        super().__init__()
+        self._rows = rows
+
+    def rowCount(self, parent=QModelIndex()): return len(self._rows)
+    def columnCount(self, parent=QModelIndex()): return len(self._HEADERS)
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        r = self._rows[index.row()]
+        c = index.column()
+        if role == Qt.ItemDataRole.DisplayRole:
+            return [
+                r.get("_name", f"ID:{r.get('_type_id')}"),
+                f"{r.get('profit_per_run', 0):,.0f}",
+                f"{r.get('margin_pct', 0):.1f}",
+                f"{r.get('isk_per_hour', 0):,.0f}",
+                f"{r.get('score', 0):.0f}",
+                f"{r.get('cost_per_unit', 0):,.0f}",
+                f"{r.get('hours_per_run', 0):.1f}",
+            ][c]
+        elif role == Qt.ItemDataRole.ForegroundRole:
+            if c == 1:
+                return QColor(GREEN) if r.get("profit_per_run", 0) > 0 else QColor(RED)
+            if c == 4:
+                s = r.get("score", 0)
+                return QColor(GREEN) if s >= 70 else (QColor(RED) if s < 30 else QColor(PRIMARY))
+        return None
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
+            return self._HEADERS[section]
+        return None
+
+    def get_row(self, row: int) -> dict:
+        return self._rows[row] if 0 <= row < len(self._rows) else {}
 
 
 # ════════════════════════════════════════════════════
@@ -146,7 +272,8 @@ class PlanTableModel(QAbstractTableModel):
                 f"{p.get('margin', 0):.1f}%" if p.get('margin') else "-",
                 f"{p.get('score', 0):.0f}" if p.get('score') else "-",
                 f"{p.get('iskph', 0):,.0f}" if p.get('iskph') else "-",
-                {"pending": "⏳待排", "running": "⚙运行", "done": "✅完成"}.get(p.get("status", ""), p.get("status", "")),
+                {"pending": "待排", "running": "运行", "done": "完成"}.get(
+                    p.get("status", ""), p.get("status", "")),
             ]
             return cols[c]
         elif role == Qt.ItemDataRole.ForegroundRole:
@@ -223,14 +350,14 @@ class AddPlanDialog(QDialog):
 
         me_te = QHBoxLayout()
         self._me = QSpinBox()
-        self._me.setRange(0, 20)
+        self._me.setRange(0, 10)
         self._te = QSpinBox()
         self._te.setRange(0, 20)
-        me_te.addWidget(QLabel("ME:"))
+        me_te.addWidget(QLabel("蓝图ME:"))
         me_te.addWidget(self._me)
-        me_te.addWidget(QLabel("TE:"))
+        me_te.addWidget(QLabel("蓝图TE:"))
         me_te.addWidget(self._te)
-        layout.addRow("参数:", me_te)
+        layout.addRow("蓝图参数:", me_te)
 
         self._char = QLineEdit()
         self._char.setPlaceholderText("角色名（可选）")
@@ -262,7 +389,7 @@ class AddPlanDialog(QDialog):
 # ════════════════════════════════════════════════════
 
 class IndustryPage(QWidget):
-    """生产计划管理统一页面"""
+    """生产计划管理统一页面 — 3 Tab"""
 
     def __init__(self, main_window):
         super().__init__()
@@ -271,37 +398,63 @@ class IndustryPage(QWidget):
         self.setObjectName("industry_page")
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # ── QTabWidget ──
+        self._tabs = QTabWidget()
+        self._tabs.setStyleSheet("QTabWidget::pane { border: none; }")
+
+        self._tabs.addTab(self._build_tab_calc(), "制造计算")
+        self._tabs.addTab(self._build_tab_rank(), "利润排行")
+        self._tabs.addTab(self._build_tab_plan(), "生产计划")
+
+        layout.addWidget(self._tabs)
+
+        # ── 状态 ──
+        self._ps_selected: dict | None = None
+        self._rank_results: list[dict] = []
+        self.load_plans()
+
+        add_theme_listener(self._on_theme_changed)
+
+    def _on_theme_changed(self):
+        """主题切换时重新应用内联样式表"""
+        self._tabs.setStyleSheet("QTabWidget::pane { border: none; }")
+        self._preview.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        self._score_group.setStyleSheet(f"""
+            QGroupBox {{ border: 1px solid {BORDER}; border-radius: 6px; padding: 8px; margin-top: 8px; }}
+            QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {TEXT_SECONDARY}; }}
+        """)
+        for lbl in self._profit_labels.values():
+            lbl.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 12px;")
+        self._rank_status.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._plan_count.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        self._mat_group.setStyleSheet(f"""
+            QGroupBox {{ border: 1px solid {BORDER}; border-radius: 6px; padding: 4px; margin-top: 8px; }}
+            QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {TEXT_SECONDARY}; }}
+        """)
+        self._mat_summary.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+
+    # ═══════════════════════════════════
+    #  Tab 0: 制造计算
+    # ═══════════════════════════════════
+
+    def _build_tab_calc(self) -> QWidget:
+        """搜索 + 评分 + 利润卡片"""
+        w = QWidget()
+        layout = QVBoxLayout(w)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        # ── 顶栏：搜索 + 快速参数 + 操作 ──
-        self._build_top_bar(layout)
-
-        # ── 中栏：计划列表（主区域） ──
-        self._build_plan_table(layout)
-
-        # ── 底栏：材料汇总 ──
-        self._build_material_bar(layout)
-
-        # ── 状态 ──
-        self._ps_suggest_visible = False
-        self._ps_results: list[dict] = []
-        self._ps_selected: dict | None = None
-        self.load_plans()
-
-    # ═══════════════════════════════════
-    #  UI
-    # ═══════════════════════════════════
-
-    def _build_top_bar(self, layout):
-        """搜索 + 参数 + 操作按钮"""
+        # 顶栏
         bar = QWidget()
         bar.setObjectName("industry_toolbar")
         v = QVBoxLayout(bar)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(4)
 
-        # 第1行：搜索
+        # 第1行：搜索 + 蓝图参数 + 区域 + 操作
         r1 = QHBoxLayout()
 
         self._search = QLineEdit()
@@ -314,32 +467,45 @@ class IndustryPage(QWidget):
         self._search_list.setVisible(False)
         self._search_list.itemClicked.connect(self._on_search_click)
 
-        r1.addWidget(QLabel("ME:"))
+        r1.addWidget(QLabel("蓝图ME:"))
         self._me = QSpinBox()
-        self._me.setRange(0, 20)
+        self._me.setRange(0, 10)
+        self._me.setValue(0)
         r1.addWidget(self._me)
 
-        r1.addWidget(QLabel("TE:"))
+        r1.addWidget(QLabel("蓝图TE:"))
         self._te = QSpinBox()
         self._te.setRange(0, 20)
+        self._te.setValue(0)
         r1.addWidget(self._te)
 
-        r1.addWidget(QLabel("区域:"))
-        self._hub = QComboBox()
-        self._hub.addItems(list(TRADE_HUB_IDS.keys()))
-        self._hub.setCurrentText("Jita")
-        r1.addWidget(self._hub)
+        r1.addWidget(QLabel("原料区域:"))
+        self._mat_hub = QComboBox()
+        self._mat_hub.addItems(list(TRADE_HUB_IDS.keys()))
+        self._mat_hub.setCurrentText("Jita")
+        r1.addWidget(self._mat_hub)
+
+        r1.addWidget(QLabel("出售区域:"))
+        self._sell_hub = QComboBox()
+        self._sell_hub.addItems(list(TRADE_HUB_IDS.keys()))
+        self._sell_hub.setCurrentText("Jita")
+        r1.addWidget(self._sell_hub)
+
+        r1.addWidget(QLabel("原料价:"))
+        self._mat_price_type = QComboBox()
+        self._mat_price_type.addItems(["卖价", "买价"])
+        r1.addWidget(self._mat_price_type)
 
         r1.addWidget(QLabel("税%:"))
         self._tax = QLineEdit("0")
         self._tax.setFixedWidth(40)
         r1.addWidget(self._tax)
 
-        self._calc_btn = QPushButton("🔍 计算")
+        self._calc_btn = QPushButton("计算")
         self._calc_btn.clicked.connect(self._on_calc)
         r1.addWidget(self._calc_btn)
 
-        self._add_btn = QPushButton("➕ 加入计划")
+        self._add_btn = QPushButton("加入计划")
         self._add_btn.setObjectName("ps_add_btn")
         self._add_btn.clicked.connect(self._on_add_plan)
         self._add_btn.setEnabled(False)
@@ -347,28 +513,188 @@ class IndustryPage(QWidget):
 
         v.addLayout(r1)
 
-        # 第2行：选中物品预览 + 操作
+        # 第2行：Runs + 预览
         r2 = QHBoxLayout()
-        self._preview = QLabel("☝️ 搜索物品 → 计算 → 加入生产计划")
+
+        r2.addWidget(QLabel("Runs:"))
+        self._runs = QSpinBox()
+        self._runs.setRange(1, 1000)
+        self._runs.setValue(1)
+        r2.addWidget(self._runs)
+
+        self._preview = QLabel("搜索物品 → 计算 → 加入生产计划")
         self._preview.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
         r2.addWidget(self._preview, 1)
 
-        self._del_btn = QPushButton("🗑 删除选中计划")
-        self._del_btn.setObjectName("del_btn")
-        self._del_btn.clicked.connect(self._on_delete)
-        r2.addWidget(self._del_btn)
-
-        self._refresh_btn = QPushButton("🔄 刷新材料汇总")
-        self._refresh_btn.clicked.connect(self._refresh_material)
-        r2.addWidget(self._refresh_btn)
-
         v.addLayout(r2)
-
         layout.addWidget(bar)
         layout.addWidget(self._search_list)
 
-    def _build_plan_table(self, layout):
-        """主计划列表"""
+        # 利润分析面板
+        self._build_score_group(layout)
+
+        layout.addStretch()
+        return w
+
+    def _build_score_group(self, layout):
+        """评分结果面板：利润卡片 + 材料清单"""
+        self._score_group = QGroupBox("利润分析")
+        self._score_group.setStyleSheet(f"""
+            QGroupBox {{ border: 1px solid {BORDER}; border-radius: 6px; padding: 8px; margin-top: 8px; }}
+            QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {TEXT_SECONDARY}; }}
+        """)
+        self._score_group.setVisible(False)
+
+        gv = QVBoxLayout(self._score_group)
+        gv.setSpacing(6)
+
+        self._profit_grid = QFrame()
+        grid = QGridLayout(self._profit_grid)
+        grid.setSpacing(4)
+
+        label_specs = [
+            ("成品收入:", "revenue"), ("材料成本:", "material_cost"),
+            ("安装费:", "facility_fee"), ("经纪人费:", "broker_fee"),
+            ("销售税:", "sales_tax"), ("单次利润:", "profit"),
+            ("利润率:", "margin_pct"), ("ISK/小时:", "isk_per_hour"),
+        ]
+        self._profit_labels = {}
+        for i, (label, key) in enumerate(label_specs):
+            row, col_pair = i % 4, i // 4
+            lbl = QLabel(label)
+            lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+            val = QLabel("—")
+            val.setObjectName(f"profit_{key}")
+            val.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 12px;")
+            grid.addWidget(lbl, row, col_pair * 2)
+            grid.addWidget(val, row, col_pair * 2 + 1)
+            self._profit_labels[key] = val
+
+        gv.addWidget(self._profit_grid)
+
+        self._scored_mat_table = QTableView()
+        self._scored_mat_table.setAlternatingRowColors(True)
+        self._scored_mat_table.setMaximumHeight(160)
+        self._scored_mat_table.horizontalHeader().setStretchLastSection(True)
+        self._scored_mat_table.verticalHeader().setDefaultSectionSize(22)
+        gv.addWidget(self._scored_mat_table)
+
+        layout.addWidget(self._score_group)
+
+    # ═══════════════════════════════════
+    #  Tab 1: 利润排行
+    # ═══════════════════════════════════
+
+    def _build_tab_rank(self) -> QWidget:
+        """批量评分所有可制造物品，按利润排序"""
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        # 工具栏
+        bar = QHBoxLayout()
+
+        bar.addWidget(QLabel("原料区域:"))
+        self._rank_mat_hub = QComboBox()
+        self._rank_mat_hub.addItems(list(TRADE_HUB_IDS.keys()))
+        self._rank_mat_hub.setCurrentText("Jita")
+        bar.addWidget(self._rank_mat_hub)
+
+        bar.addWidget(QLabel("出售区域:"))
+        self._rank_sell_hub = QComboBox()
+        self._rank_sell_hub.addItems(list(TRADE_HUB_IDS.keys()))
+        self._rank_sell_hub.setCurrentText("Jita")
+        bar.addWidget(self._rank_sell_hub)
+
+        bar.addWidget(QLabel("原料价:"))
+        self._rank_price_type = QComboBox()
+        self._rank_price_type.addItems(["卖价", "买价"])
+        bar.addWidget(self._rank_price_type)
+
+        bar.addWidget(QLabel("ME:"))
+        self._rank_me = QSpinBox()
+        self._rank_me.setRange(0, 10)
+        self._rank_me.setValue(0)
+        bar.addWidget(self._rank_me)
+
+        bar.addWidget(QLabel("TE:"))
+        self._rank_te = QSpinBox()
+        self._rank_te.setRange(0, 20)
+        self._rank_te.setValue(0)
+        bar.addWidget(self._rank_te)
+
+        bar.addWidget(QLabel("税%:"))
+        self._rank_tax = QLineEdit("0")
+        self._rank_tax.setFixedWidth(40)
+        bar.addWidget(self._rank_tax)
+
+        self._rank_btn = QPushButton("开始排行")
+        self._rank_btn.clicked.connect(self._on_rank_start)
+        bar.addWidget(self._rank_btn)
+
+        bar.addStretch()
+        layout.addLayout(bar)
+
+        # 进度条 + 状态
+        status_bar = QHBoxLayout()
+        self._rank_progress = QProgressBar()
+        self._rank_progress.setVisible(False)
+        status_bar.addWidget(self._rank_progress)
+        self._rank_status = QLabel("")
+        self._rank_status.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        status_bar.addWidget(self._rank_status)
+        status_bar.addStretch()
+        layout.addLayout(status_bar)
+
+        # 过滤栏
+        filter_bar = QHBoxLayout()
+        filter_bar.addWidget(QLabel("过滤:"))
+        self._rank_filter = QComboBox()
+        self._rank_filter.addItems(["全部", "T1 (利润率≥5%)", "T2 (利润率≥10%)", "利润率≥20%", "时均≥10M ISK/h"])
+        self._rank_filter.currentTextChanged.connect(self._apply_rank_filter)
+        filter_bar.addWidget(self._rank_filter)
+        filter_bar.addStretch()
+        layout.addLayout(filter_bar)
+
+        # 排列表
+        self._rank_table = QTableView()
+        self._rank_table.setAlternatingRowColors(True)
+        self._rank_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._rank_table.setSortingEnabled(True)
+        self._rank_table.horizontalHeader().setStretchLastSection(True)
+        self._rank_table.verticalHeader().setDefaultSectionSize(22)
+        self._rank_table.doubleClicked.connect(self._on_rank_double_click)
+        layout.addWidget(self._rank_table, 1)
+
+        return w
+
+    # ═══════════════════════════════════
+    #  Tab 2: 生产计划
+    # ═══════════════════════════════════
+
+    def _build_tab_plan(self) -> QWidget:
+        """计划列表 + 材料汇总"""
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        # 操作按钮
+        btn_row = QHBoxLayout()
+        self._del_btn = QPushButton("删除选中计划")
+        self._del_btn.setObjectName("del_btn")
+        self._del_btn.clicked.connect(self._on_delete)
+        btn_row.addWidget(self._del_btn)
+
+        self._refresh_btn = QPushButton("刷新材料汇总")
+        self._refresh_btn.clicked.connect(self._refresh_material)
+        btn_row.addWidget(self._refresh_btn)
+
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        # 计划表
         self._plan_table = QTableView()
         self._plan_table.setAlternatingRowColors(True)
         self._plan_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -378,7 +704,7 @@ class IndustryPage(QWidget):
         self._plan_table.verticalHeader().setDefaultSectionSize(26)
         layout.addWidget(self._plan_table, 1)
 
-        # 底部统计
+        # 统计 + 过滤
         stats = QHBoxLayout()
         self._plan_count = QLabel("")
         self._plan_count.setStyleSheet(f"color: {TEXT_SECONDARY};")
@@ -389,13 +715,11 @@ class IndustryPage(QWidget):
         self._filter.addItems(["全部", "待排产", "运行中", "已完成"])
         self._filter.currentTextChanged.connect(lambda: self.load_plans())
         stats.addWidget(self._filter)
-
         stats.addStretch()
         layout.addLayout(stats)
 
-    def _build_material_bar(self, layout):
-        """底部材料汇总"""
-        self._mat_group = QGroupBox("📦 材料需求汇总（所有活跃计划）")
+        # 材料汇总
+        self._mat_group = QGroupBox("材料需求汇总（所有活跃计划）")
         self._mat_group.setStyleSheet(f"""
             QGroupBox {{ border: 1px solid {BORDER}; border-radius: 6px; padding: 4px; margin-top: 8px; }}
             QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {TEXT_SECONDARY}; }}
@@ -416,6 +740,7 @@ class IndustryPage(QWidget):
         mv.addWidget(self._mat_summary)
 
         layout.addWidget(self._mat_group)
+        return w
 
     # ═══════════════════════════════════
     #  搜索
@@ -467,9 +792,17 @@ class IndustryPage(QWidget):
             tax = float(self._tax.text() or "0")
         except ValueError:
             tax = 0.0
-        self._preview.setText(f"⏳ 正在计算 {self._selected_name}...")
-        w = ScoreWorker(self._selected_tid, self._me.value(), self._te.value(),
-                        self._hub.currentText(), self._hub.currentText(), tax, self)
+        self._preview.setText(f"正在计算 {self._selected_name}...")
+        self._score_group.setVisible(False)
+
+        mat_price_type = "sell" if self._mat_price_type.currentText() == "卖价" else "buy"
+        w = ScoreWorker(
+            self._selected_tid,
+            self._me.value(), self._te.value(),
+            self._mat_hub.currentText(), self._sell_hub.currentText(),
+            tax, mat_price_type, self._runs.value(),
+            self,
+        )
         w.finished.connect(self._on_score)
         w.start()
 
@@ -478,24 +811,58 @@ class IndustryPage(QWidget):
         status = result.get("status", "")
 
         if status:
-            self._preview.setText(f"⚠️ {self._selected_name}: {status}")
+            self._preview.setText(f"{self._selected_name}: {status}")
             self._add_btn.setEnabled(False)
+            self._score_group.setVisible(False)
             return
 
-        score = result.get("score", 0)
+        bd = result.get("breakdown", {})
         profit = result.get("profit_per_run", 0)
         margin = result.get("margin_pct", 0)
-        iskph = result.get("breakdown", {}).get("isk_per_hour", 0)
-        cost = result.get("cost_per_unit", 0)
+        iskph = result.get("isk_per_hour", 0) or bd.get("isk_per_hour", 0)
+        score = result.get("score", 0)
+        runs = self._runs.value()
+        profit_color = GREEN if profit > 0 else RED
 
+        # 填充利润卡片
+        revenue = bd.get("revenue", 0)
+        mat_cost = bd.get("material_cost", 0)
+        facility_fee = bd.get("facility_fee", 0)
+        broker_fee = bd.get("broker_init", 0) + bd.get("broker_relist", 0)
+        sales_tax = bd.get("sales_tax", 0)
+
+        self._profit_labels["revenue"].setText(f"{revenue:,.0f} ISK")
+        self._profit_labels["material_cost"].setText(f"{mat_cost:,.0f} ISK")
+        self._profit_labels["facility_fee"].setText(f"{facility_fee:,.0f} ISK")
+        self._profit_labels["broker_fee"].setText(f"{broker_fee:,.0f} ISK")
+        self._profit_labels["sales_tax"].setText(f"{sales_tax:,.0f} ISK")
+        self._profit_labels["profit"].setText(f"{profit:,.0f} ISK")
+        self._profit_labels["profit"].setStyleSheet(f"color: {profit_color}; font-size: 12px; font-weight: bold;")
+        self._profit_labels["margin_pct"].setText(f"{margin:.1f}%")
+        self._profit_labels["margin_pct"].setStyleSheet(f"color: {profit_color}; font-size: 12px;")
+        self._profit_labels["isk_per_hour"].setText(f"{iskph:,.0f} ISK/h")
+
+        # 填充评分材料表（按 runs 倍数）
+        materials = result.get("materials", [])
+        mat_rows = []
+        for m in materials:
+            mat_rows.append({
+                "name": m["name"],
+                "need": round(m["qty"] * runs, 2),
+                "price": m.get("unit_price", 0),
+                "total": round(m.get("subtotal", 0) * runs, 2),
+            })
+        self._scored_mat_table.setModel(MaterialTableModel(mat_rows))
+
+        self._score_group.setVisible(True)
+
+        # 预览摘要
         self._preview.setText(
-            f"📊 {self._selected_name} | 评分: {score:.1f} | "
+            f"{self._selected_name} | 评分: {score:.1f} | "
             f"利润: {profit:,.0f} ISK | 利润率: {margin:.1f}% | "
-            f"时均: {iskph:,.0f} ISK/h | 成本: {cost:,.0f} ISK"
+            f"时均: {iskph:,.0f} ISK/h"
         )
-        self._preview.setStyleSheet(
-            f"color: {GREEN if profit > 0 else RED}; font-size: 12px;"
-        )
+        self._preview.setStyleSheet(f"color: {profit_color}; font-size: 12px;")
         self._add_btn.setEnabled(True)
 
     # ═══════════════════════════════════
@@ -515,20 +882,25 @@ class IndustryPage(QWidget):
 
         conn = _industry_db.direct_connect('user')
         try:
+            iskph = self._ps_selected.get("isk_per_hour", 0) or \
+                    self._ps_selected.get("breakdown", {}).get("isk_per_hour", 0)
+            mat_cost = self._ps_selected.get("breakdown", {}).get("material_cost", 0)
+
             conn.execute("""
                 INSERT INTO production_plans
                 (product_type_id, product_name, runs, parallels, me_level, te_level,
                  mat_hub, sell_hub, facility, char_name, status,
-                 profit, margin, score, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+                 profit, margin, score, iskph, material_cost, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
             """, (
                 self._selected_tid, self._selected_name,
                 data["runs"], data["parallels"], data["me"], data["te"],
-                self._hub.currentText(), self._hub.currentText(),
+                self._mat_hub.currentText(), self._sell_hub.currentText(),
                 data["fac"], data["char"],
                 self._ps_selected.get("profit_per_run", 0),
                 self._ps_selected.get("margin_pct", 0),
                 self._ps_selected.get("score", 0),
+                iskph, mat_cost,
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
             ))
             conn.commit()
@@ -568,8 +940,10 @@ class IndustryPage(QWidget):
         if not sel:
             return
         ids = [self._plan_model._plans[r.row()]["id"] for r in sel]
-        if QMessageBox.question(self, "确认", f"删除 {len(ids)} 条计划？",
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(
+            self, "确认", f"删除 {len(ids)} 条计划？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
             return
         with _industry_db.connect('user') as conn:
             conn.executemany("DELETE FROM production_plans WHERE id = ?", [(i,) for i in ids])
@@ -583,7 +957,10 @@ class IndustryPage(QWidget):
     def _refresh_material(self):
         with _industry_db.connect('user', 'ref', 'mkt', 'bp') as conn:
             c = conn.cursor()
-            c.execute("SELECT product_type_id, runs, parallels FROM production_plans WHERE status IN ('pending', 'running')")
+            c.execute(
+                "SELECT product_type_id, runs, parallels FROM production_plans"
+                " WHERE status IN ('pending', 'running')"
+            )
             plans = c.fetchall()
 
             if not plans:
@@ -609,7 +986,11 @@ class IndustryPage(QWidget):
                 c.execute("SELECT zh_name, en_name FROM ref.item WHERE type_id = ?", (mid,))
                 r = c.fetchone()
                 name = (r[0] or r[1] or str(mid)) if r else str(mid)
-                c.execute("SELECT sell_price FROM mkt.market_prices WHERE type_id = ? AND region_id = 10000002 LIMIT 1", (mid,))
+                c.execute(
+                    "SELECT sell_price FROM mkt.market_prices"
+                    " WHERE type_id = ? AND region_id = 10000002 LIMIT 1",
+                    (mid,),
+                )
                 pr = c.fetchone()
                 price = pr[0] or 0 if pr else 0
                 subtotal = need * price
@@ -619,6 +1000,98 @@ class IndustryPage(QWidget):
             rows.sort(key=lambda x: x["total"], reverse=True)
             self._mat_table.setModel(MaterialTableModel(rows))
             self._mat_summary.setText(f"共 {len(rows)} 种材料 | 总成本: {total:,.0f} ISK")
+
+    # ═══════════════════════════════════
+    #  利润排行
+    # ═══════════════════════════════════
+
+    def _on_rank_start(self):
+        """启动批量排行"""
+        self._rank_btn.setEnabled(False)
+        self._rank_progress.setVisible(True)
+        self._rank_status.setText("正在评分所有可制造物品...")
+
+        try:
+            tax = float(self._rank_tax.text() or "0")
+        except ValueError:
+            tax = 0.0
+
+        mat_price_type = "sell" if self._rank_price_type.currentText() == "卖价" else "buy"
+        self._rank_worker = RankWorker(
+            self._rank_mat_hub.currentText(), self._rank_sell_hub.currentText(),
+            mat_price_type, self._rank_me.value(), self._rank_te.value(), tax, self,
+        )
+        self._rank_worker.progress.connect(self._on_rank_progress)
+        self._rank_worker.result.connect(self._on_rank_result)
+        self._rank_worker.done.connect(self._on_rank_done)
+        self._rank_worker.start()
+
+    def _on_rank_progress(self, current: int, total: int):
+        self._rank_progress.setRange(0, total)
+        self._rank_progress.setValue(current)
+        self._rank_status.setText(f"已评分 {current}/{total}...")
+
+    def _on_rank_result(self, results: list):
+        """接收排行结果，补充名称后展示"""
+        # 批量查名称
+        with _industry_db.connect('ref') as conn:
+            c = conn.cursor()
+            for r in results:
+                tid = r.get("_type_id")
+                if tid:
+                    c.execute("SELECT zh_name, en_name FROM item WHERE type_id = ?", (tid,))
+                    row = c.fetchone()
+                    r["_name"] = (row[0] or row[1] or str(tid)) if row else str(tid)
+
+        self._rank_results = results
+        self._rank_btn.setEnabled(True)
+        self._apply_rank_filter()
+
+    def _on_rank_done(self, elapsed: float):
+        self._rank_progress.setVisible(False)
+        self._rank_status.setText(f"完成 {len(self._rank_results)} 项 | 耗时 {elapsed:.1f}s")
+
+    def _apply_rank_filter(self):
+        """根据过滤条件筛选排行结果"""
+        if not self._rank_results:
+            return
+        ft = self._rank_filter.currentText()
+        filtered = self._rank_results
+        if "利润率≥5%" in ft:
+            filtered = [r for r in filtered if r.get("margin_pct", 0) >= 5]
+        elif "利润率≥10%" in ft:
+            filtered = [r for r in filtered if r.get("margin_pct", 0) >= 10]
+        elif "利润率≥20%" in ft:
+            filtered = [r for r in filtered if r.get("margin_pct", 0) >= 20]
+        elif "10M ISK/h" in ft:
+            filtered = [r for r in filtered if r.get("isk_per_hour", 0) >= 10_000_000]
+        self._rank_table.setModel(RankTableModel(filtered))
+
+    def _on_rank_double_click(self, index: QModelIndex):
+        """双击排行行 → 跳到制造计算 Tab 并自动计算"""
+        model = self._rank_table.model()
+        if not isinstance(model, RankTableModel):
+            return
+        row_data = model.get_row(index.row())
+        tid = row_data.get("_type_id")
+        name = row_data.get("_name", "")
+        if not tid:
+            return
+
+        # 同步参数
+        self._me.setValue(self._rank_me.value())
+        self._te.setValue(self._rank_te.value())
+        self._mat_hub.setCurrentText(self._rank_mat_hub.currentText())
+        self._sell_hub.setCurrentText(self._rank_sell_hub.currentText())
+        self._mat_price_type.setCurrentText(self._rank_price_type.currentText())
+        self._tax.setText(self._rank_tax.text())
+
+        # 填入搜索 → 跳转 → 计算
+        self._search.setText(name)
+        self._selected_tid = tid
+        self._selected_name = name
+        self._tabs.setCurrentIndex(0)
+        self._on_calc()
 
     # ═══════════════════════════════════
     #  刷新
