@@ -2,16 +2,18 @@
 EVE 商人助手 — PySide6 入口点
 运行: python Main.py
 """
+
 import os
 import sys
 import traceback
 from datetime import datetime
 from pathlib import Path
 
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from core.logger import log
-from core.paths import BP_DB_PATH, DB_PATH, REF_DB_PATH, MKT_DB_PATH, USR_DB_PATH, ensure_dirs_exist
+from core.paths import BP_DB_PATH, DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH, ensure_dirs_exist
 
 
 def _migrate_split_db():
@@ -31,6 +33,7 @@ def _migrate_split_db():
     try:
         # 动态导入以避免启动时 import 循环
         from scripts.migrate_split_db import run_migration
+
         run_migration()
     except Exception:
         log.exception("数据库拆分迁移失败")
@@ -50,8 +53,11 @@ def _migrate_blueprint_db():
 
     conn = sqlite3.connect(REF_DB_PATH)
     c = conn.cursor()
-    placeholders = ",".join(repr(t) for t in bp_tables)
-    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ({})".format(placeholders))
+    placeholders = ",".join("?" * len(bp_tables))
+    c.execute(
+        f"SELECT name FROM sqlite_master WHERE type='table' AND name IN ({placeholders})",
+        bp_tables,
+    )
     existing = {r[0] for r in c.fetchall()}
 
     if not existing:
@@ -77,8 +83,7 @@ def _migrate_blueprint_db():
 
 def _global_exception_handler(exc_type, exc_value, exc_traceback):
     """全局未捕获异常处理器 — 记录日志并弹窗提示"""
-    log.error("未捕获异常",
-              exc_info=(exc_type, exc_value, exc_traceback))
+    log.error("未捕获异常", exc_info=(exc_type, exc_value, exc_traceback))
 
     # 写入崩溃转储文件
     try:
@@ -88,7 +93,7 @@ def _global_exception_handler(exc_type, exc_value, exc_traceback):
         with open(crash_file, "w", encoding="utf-8") as f:
             traceback.print_exception(exc_type, exc_value, exc_traceback, file=f)
     except Exception:
-        pass
+        log.exception("写入崩溃转储失败")
 
     # 仅在非 KeyboardInterrupt 时弹窗
     if not issubclass(exc_type, KeyboardInterrupt):
@@ -97,9 +102,7 @@ def _global_exception_handler(exc_type, exc_value, exc_traceback):
             msg.setIcon(QMessageBox.Icon.Critical)
             msg.setWindowTitle("EVE 商人助手 — 发生错误")
             msg.setText("程序遇到了意外错误，请重启应用。")
-            msg.setDetailedText(
-                "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
-            )
+            msg.setDetailedText("".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
             msg.setStandardButtons(QMessageBox.StandardButton.Ok)
             msg.exec()
         except Exception:
@@ -114,6 +117,7 @@ def main():
 
     if "--debug" in sys.argv:
         from core.logger import set_debug
+
         set_debug(True)
         log.debug("调试模式已启用")
 
@@ -125,26 +129,43 @@ def main():
 
     # 延迟补拉蓝图名称（不阻塞 UI 启动）
     from PySide6.QtCore import QTimer
-    QTimer.singleShot(2000, lambda: _fill_blueprint_names_safe())
+
+    QTimer.singleShot(2000, lambda: _start_blueprint_name_worker())
 
     from ui_pyside6.main_window import MainWindow
+
     window = MainWindow()
     window.show()
 
     sys.exit(app.exec())
 
 
-def _fill_blueprint_names_safe():
-    try:
-        _fill_blueprint_names()
-    except Exception:
-        pass
+class BlueprintNameWorker(QThread):
+    """后台线程补拉缺失的蓝图名称"""
+
+    finished = Signal(bool, str)
+
+    def run(self):
+        try:
+            _fill_blueprint_names()
+            self.finished.emit(True, "")
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+
+def _start_blueprint_name_worker():
+    """启动蓝图名称补拉 worker（延迟调用，不阻塞 UI）"""
+    worker = BlueprintNameWorker()
+    worker.finished.connect(
+        lambda success, msg: log.info("蓝图名称补拉完成") if success else log.error(f"蓝图名称补拉失败: {msg}")
+    )
+    worker.start()
 
 
 def _fill_blueprint_names():
     """检查并补拉 item 表中缺失的蓝图名称"""
+    import asyncio
     import sqlite3
-    from core.paths import REF_DB_PATH, BP_DB_PATH
 
     if not os.path.exists(REF_DB_PATH) or not os.path.exists(BP_DB_PATH):
         return
@@ -152,22 +173,20 @@ def _fill_blueprint_names():
     bp_path = BP_DB_PATH.replace("\\", "/")
     conn.execute(f"ATTACH DATABASE '{bp_path}' AS bp")
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM item WHERE (zh_name IS NULL OR zh_name = '') AND type_id IN (SELECT DISTINCT blueprint_type_id FROM bp.blueprint_activities)")
+    c.execute(
+        "SELECT COUNT(*) FROM item"
+        " WHERE (zh_name IS NULL OR zh_name = '')"
+        " AND type_id IN (SELECT DISTINCT blueprint_type_id FROM bp.blueprint_activities)"
+    )
     missing = c.fetchone()[0]
     conn.close()
     if missing < 100:
         return
 
     log.info(f"发现 {missing} 个蓝图缺名，正在补拉...")
-    try:
-        import asyncio
-        from services.workers.getitems import fill_missing_blueprint_names
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(fill_missing_blueprint_names())
-        loop.close()
-    except Exception:
-        log.exception("蓝图名称补拉失败")
+    from services.workers.getitems import fill_missing_blueprint_names
+
+    asyncio.run(fill_missing_blueprint_names())
 
 
 if __name__ == "__main__":
