@@ -43,14 +43,17 @@ from services.database_manager import get_db as _get_db_view
 _query_db = _get_db_view()
 from ui_pyside6.theme import (
     BG_DARK,
+    BG_HOVER,
     BG_SURFACE,
     BG_SURFACE_LIGHT,
     BORDER,
     GREEN,
     PRIMARY,
     RED,
+    TEXT_ON_PRIMARY,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
+    add_theme_listener,
 )
 
 ICON_SIZE = 32
@@ -137,7 +140,7 @@ class QueryTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.BackgroundRole:
             if row.get("is_inverted"):
-                return QColor("#1f1f3f")
+                return QColor(BG_HOVER)
             if index.row() % 2 == 0:
                 return QColor(BG_SURFACE)
             return QColor(BG_DARK)
@@ -573,7 +576,7 @@ class QueryPage(QWidget):
             }}
             QPushButton:hover {{
                 background-color: {PRIMARY};
-                color: white;
+                color: {TEXT_ON_PRIMARY};
                 border: 1px solid {PRIMARY};
             }}
         """)
@@ -657,6 +660,28 @@ class QueryPage(QWidget):
         self._debounce_timer = QTimer()
         self._debounce_timer.setSingleShot(True)
         self._debounce_timer.timeout.connect(self._fetch_suggestions)
+
+        # ── 主题监听 ──
+        add_theme_listener(self._on_theme_changed)
+
+    def _on_theme_changed(self):
+        self._all_items_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_SURFACE_LIGHT};
+                color: {TEXT_PRIMARY};
+                border: 1px solid {BORDER};
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {PRIMARY};
+                color: {TEXT_ON_PRIMARY};
+                border: 1px solid {PRIMARY};
+            }}
+        """)
+        self._count_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self._status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
 
         # ── 当前订单类型ID ──
         self._current_order_type_id: int | None = None

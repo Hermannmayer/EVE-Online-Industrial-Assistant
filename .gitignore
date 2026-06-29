@@ -34,3 +34,14 @@ Thumbs.db
 
 # 密钥
 .env.local
+
+# 用户数据文件（本地配置、蓝图缓存、评分设置）
+data/blueprints.yaml
+data/char_config.json
+data/score_settings.json
+
+# SDE 原始数据
+sde.zip
+
+# CI 产物
+greatcto-ci-output.sarif

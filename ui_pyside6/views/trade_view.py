@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
-from ui_pyside6.theme import BG_DARK, BG_SURFACE, PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY
+from ui_pyside6.theme import BG_DARK, BG_SURFACE, PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY, add_theme_listener
 
 
 class TradePage(QWidget):
@@ -24,15 +24,25 @@ class TradePage(QWidget):
         layout.setSpacing(0)
 
         # 子标签
-        tabs = QTabWidget()
-        tabs.setStyleSheet(f"""
+        self._tabs = QTabWidget()
+        self._tabs.setStyleSheet(f"""
             QTabWidget::pane {{ border: none; }}
         """)
 
-        tabs.addTab(self._build_monitor_tab(), "价格监控")
-        tabs.addTab(self._build_transport_tab(), "运输分析")
+        self._tabs.addTab(self._build_monitor_tab(), "价格监控")
+        self._tabs.addTab(self._build_transport_tab(), "运输分析")
 
-        layout.addWidget(tabs)
+        layout.addWidget(self._tabs)
+
+        add_theme_listener(self._on_theme_changed)
+
+    def _on_theme_changed(self):
+        """主题切换时重新应用内联样式表"""
+        self._tabs.setStyleSheet(f"""
+            QTabWidget::pane {{ border: none; }}
+        """)
+        self._monitor_placeholder.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 16px;")
+        self._transport_placeholder.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 16px;")
 
     def _build_monitor_tab(self) -> QWidget:
         w = QWidget()
@@ -41,10 +51,10 @@ class TradePage(QWidget):
         layout.setSpacing(8)
 
         # 占位
-        placeholder = QLabel("价格监控 — 开发中\n\n关注物品的价格变化，设置提醒阈值。")
-        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        placeholder.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 16px;")
-        layout.addWidget(placeholder)
+        self._monitor_placeholder = QLabel("价格监控 — 开发中\n\n关注物品的价格变化，设置提醒阈值。")
+        self._monitor_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._monitor_placeholder.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 16px;")
+        layout.addWidget(self._monitor_placeholder)
 
         return w
 
@@ -54,10 +64,10 @@ class TradePage(QWidget):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        placeholder = QLabel("运输分析 — 开发中\n\n分析空间站间的价差与运输利润。")
-        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        placeholder.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 16px;")
-        layout.addWidget(placeholder)
+        self._transport_placeholder = QLabel("运输分析 — 开发中\n\n分析空间站间的价差与运输利润。")
+        self._transport_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._transport_placeholder.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 16px;")
+        layout.addWidget(self._transport_placeholder)
 
         return w
 

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, Signal
 
 from ui_pyside6.theme import (
-    BG_DARK, BG_SURFACE, PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY,
+    BG_DARK, BG_HOVER, BG_SURFACE, PRIMARY, TEXT_ON_PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY,
     ACCENT_GREEN, ACCENT_RED, BORDER,
 )
 from services.init_check import check_all, missing_count
@@ -127,13 +127,13 @@ class InitWizard(QDialog):
         self._run_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {PRIMARY};
-                color: white;
+                color: {TEXT_ON_PRIMARY};
                 border: none;
                 border-radius: 6px;
                 padding: 8px 24px;
                 font-weight: bold;
             }}
-            QPushButton:hover {{ background-color: #5199e0; }}
+            QPushButton:hover {{ background-color: {BG_HOVER}; }}
             QPushButton:disabled {{ background-color: {TEXT_SECONDARY}; }}
         """)
         self._run_btn.clicked.connect(self._run_all)

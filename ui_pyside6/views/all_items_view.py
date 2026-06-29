@@ -46,12 +46,15 @@ from ui_pyside6.theme import (
     ACCENT_GREEN,
     ACCENT_ORANGE,
     ACCENT_RED,
+    ACCENT_YELLOW,
     BG_DARK,
     BG_SURFACE,
     BORDER,
     PRIMARY,
+    TEXT_ON_PRIMARY,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
+    add_theme_listener,
 )
 from ui_pyside6.views.char_settings_view import get_character, get_character_list
 
@@ -216,8 +219,8 @@ class AModel(QAbstractTableModel):
             if k=="_tag":
                 tag=str(v or "")
                 if tag.endswith("S"): return QColor(ACCENT_GREEN)
-                if tag.endswith("A"): return QColor("#61afef")
-                if tag.endswith("B"): return QColor("#e5c07b")
+                if tag.endswith("A"): return QColor(PRIMARY)
+                if tag.endswith("B"): return QColor(ACCENT_YELLOW)
                 if tag.endswith("C"): return QColor(ACCENT_ORANGE)
                 if tag.endswith("D") and not tag.startswith("✗"): return QColor(ACCENT_RED)
             if k in ("mm","tm"):
@@ -382,6 +385,7 @@ class AllItemsDialog(QDialog):
         self._build_ui()
         self._tw = TreeW(self); self._tw.done.connect(self._ot); self._tw.start()
         self._iw = ItemsW(rid=JITA_RID, parent=self); self._iw.done.connect(self._od); self._iw.start()
+        add_theme_listener(self._on_theme_changed)
 
     def closeEvent(self, ev):
         for t in (self._tw, self._iw, self._wp, self._sw):
@@ -389,21 +393,45 @@ class AllItemsDialog(QDialog):
                 t.quit(); t.wait(2000)
         super().closeEvent(ev)
 
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self._refresh_styles()
+
+    def _on_theme_changed(self):
+        if self.isVisible():
+            self._refresh_styles()
+
+    def _refresh_styles(self):
+        self._toolbar.setStyleSheet(f"background:{BG_SURFACE};border-bottom:1px solid {BORDER};")
+        self._filter_bar.setStyleSheet(f"background:{BG_DARK};border-bottom:1px solid {BORDER};")
+        for b in self._toolbar_btns:
+            b.setStyleSheet(f"QPushButton{{background:{BG_DARK};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:2px 6px;font-size:11px;min-width:60px;}}QPushButton:hover{{background:{PRIMARY};color:{TEXT_ON_PRIMARY};}}")
+        self._pin.setStyleSheet(f"color:{TEXT_PRIMARY};font-size:11px;")
+        self._search_input.setStyleSheet(f"background:{BG_SURFACE};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:1px 4px;font-size:11px;")
+        self._cat.setStyleSheet(f"background:{BG_SURFACE};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:1px 4px;font-size:11px;")
+        self._st.setStyleSheet(f"color:{TEXT_SECONDARY};font-size:11px;")
+
     def _build_ui(self):
         l=QVBoxLayout(self);l.setContentsMargins(2,2,2,2);l.setSpacing(1)
         def _bt(t,cb,w=60):
-            b=QPushButton(t);b.setStyleSheet(f"QPushButton{{background:{BG_DARK};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:2px 6px;font-size:11px;min-width:{w}px;}}QPushButton:hover{{background:{PRIMARY};color:white;}}")
+            b=QPushButton(t);b.setStyleSheet(f"QPushButton{{background:{BG_DARK};color:{TEXT_PRIMARY};border:1px solid {BORDER};border-radius:2px;padding:2px 6px;font-size:11px;min-width:{w}px;}}QPushButton:hover{{background:{PRIMARY};color:{TEXT_ON_PRIMARY};}}")
             b.clicked.connect(cb);return b
         tb=QWidget();tb.setStyleSheet(f"background:{BG_SURFACE};border-bottom:1px solid {BORDER};")
+        self._toolbar = tb
         bx=QHBoxLayout(tb);bx.setContentsMargins(4,2,4,2);bx.setSpacing(3)
         bx.addWidget(_bt("制造评分",self._on_mfg));bx.addWidget(_bt("设置",self._smfg,30))
         bx.addWidget(_bt("贸易评分",self._on_trade));bx.addWidget(_bt("设置",self._strade,30))
+        self._toolbar_btns = [_bt("制造评分",self._on_mfg), _bt("设置",self._smfg,30),
+                              _bt("贸易评分",self._on_trade), _bt("设置",self._strade,30)]
+        for b in self._toolbar_btns:
+            bx.addWidget(b)
         bx.addStretch()
         self._pin=QCheckBox("置顶")
         self._pin.setStyleSheet(f"color:{TEXT_PRIMARY};font-size:11px;")
         self._pin.toggled.connect(self._on_pin_toggled)
         bx.addWidget(self._pin);l.addWidget(tb)
         fb=QWidget();fb.setStyleSheet(f"background:{BG_DARK};border-bottom:1px solid {BORDER};")
+        self._filter_bar = fb
         fx=QHBoxLayout(fb);fx.setContentsMargins(4,1,4,1);fx.setSpacing(3)
         fx.addWidget(QLabel("搜索:",styleSheet=f"color:{TEXT_SECONDARY};font-size:11px;"))
         self._search_input = QLineEdit()
@@ -644,7 +672,6 @@ class AllItemsDialog(QDialog):
         r=idx.data(Qt.ItemDataRole.UserRole)
         if not r: return
         m=QMenu(self)
-        m.setStyleSheet(f"QMenu{{background:{BG_SURFACE};border:1px solid {BORDER};border-radius:4px;padding:4px;color:{TEXT_PRIMARY};}}QMenu::item{{padding:4px 24px;border-radius:3px;}}QMenu::item:selected{{background:{PRIMARY};color:white;}}")
         a1=QAction(f"复制: {r.get('z','')}",self);a1.triggered.connect(lambda:QApplication.instance().clipboard().setText(r.get('z','')));m.addAction(a1)
         a2=QAction(f"复制ID: {r['id']}",self);a2.triggered.connect(lambda:QApplication.instance().clipboard().setText(str(r['id'])));m.addAction(a2)
         m.addSeparator();tid=r["id"]
