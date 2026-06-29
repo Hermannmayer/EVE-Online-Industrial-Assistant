@@ -40,8 +40,8 @@ data/blueprints.yaml
 data/char_config.json
 data/score_settings.json
 
-# 数据库文件（本地运行时数据，不入库）
-database/*.db
+# 数据库目录（本地运行时数据，不入库，含 WAL 日志）
+database/
 
 # SDE 原始数据
 sde.zip
