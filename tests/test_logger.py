@@ -1,4 +1,5 @@
 """测试日志模块"""
+
 import logging
 
 from core.logger import log

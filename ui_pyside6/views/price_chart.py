@@ -1,6 +1,7 @@
 """
 价格走势图弹窗 — PySide6 QChart 实现
 """
+
 import asyncio
 
 from PySide6.QtCharts import QChart, QChartView, QDateTimeAxis, QLineSeries, QValueAxis
@@ -14,6 +15,7 @@ from services.price_history import fetch_history, get_cached_history, save_cache
 
 class PriceHistoryWorker(QThread):
     """后台线程：获取价格历史数据"""
+
     finished_signal = Signal(int, list)  # type_id, data
     error_signal = Signal(int, str)  # type_id, error
 
@@ -191,13 +193,11 @@ class PriceChartDialog(QDialog):
         self._apply_chart_theme()
         self._title_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 13px;")
         self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
-        self.setStyleSheet(
-            f"QDialog {{ background-color: {theme.BG_DARK}; }}"
-        )
+        self.setStyleSheet(f"QDialog {{ background-color: {theme.BG_DARK}; }}")
 
     def closeEvent(self, event):
         theme.remove_theme_listener(self._on_theme_changed)
-        if hasattr(self, '_worker') and self._worker.isRunning():
+        if hasattr(self, "_worker") and self._worker.isRunning():
             self._worker.quit()
             self._worker.wait(3000)
         super().closeEvent(event)

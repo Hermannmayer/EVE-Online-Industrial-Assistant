@@ -9,6 +9,7 @@ build_release.py — EVE 商人助手 发行版打包脚本
     dist/EVE商人助手/          # 目录结构
     dist/EVE商人助手_v{version}.zip   # ZIP 发行包
 """
+
 import os
 import shutil
 import subprocess
@@ -39,21 +40,41 @@ def run_pyinstaller():
     step("🔄 运行 PyInstaller 打包...")
     entry_path = os.path.join(PROJECT_ROOT, "Main.py")  # PySide6 入口
     result = subprocess.run(
-        [sys.executable, "-m", "PyInstaller", "--onefile", "--windowed",
-         "--add-data", f"ui_pyside6{os.pathsep}ui_pyside6",
-         "--add-data", f"services{os.pathsep}services",
-         "--add-data", f"core{os.pathsep}core",
-         "--hidden-import", "aiosqlite",
-         "--hidden-import", "aiosqlite.dump",
-         "--hidden-import", "aiohttp",
-         "--hidden-import", "tenacity",
-         "--hidden-import", "tqdm",
-         "--hidden-import", "pyperclip",
-         "--hidden-import", "PIL",
-         "--hidden-import", "yaml",
-         "--name", "EVE商人助手",
-         entry_path,
-         "--distpath", DIST_DIR, "--noconfirm"],
+        [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            "--onefile",
+            "--windowed",
+            "--add-data",
+            f"ui_pyside6{os.pathsep}ui_pyside6",
+            "--add-data",
+            f"services{os.pathsep}services",
+            "--add-data",
+            f"core{os.pathsep}core",
+            "--hidden-import",
+            "aiosqlite",
+            "--hidden-import",
+            "aiosqlite.dump",
+            "--hidden-import",
+            "aiohttp",
+            "--hidden-import",
+            "tenacity",
+            "--hidden-import",
+            "tqdm",
+            "--hidden-import",
+            "pyperclip",
+            "--hidden-import",
+            "PIL",
+            "--hidden-import",
+            "yaml",
+            "--name",
+            "EVE商人助手",
+            entry_path,
+            "--distpath",
+            DIST_DIR,
+            "--noconfirm",
+        ],
         cwd=PROJECT_ROOT,
         capture_output=False,
     )
@@ -88,8 +109,8 @@ def organize_release():
 
     # 1. 复制 exe（PyInstaller 无 COLLECT 时直接输出到 dist/ 目录）
     exe_src_candidates = [
-        os.path.join(BUILD_EXE_DIR, "EVE商人助手.exe"),   # 有 COLLECT 时
-        os.path.join(DIST_DIR, "EVE商人助手.exe"),        # 无 COLLECT 时
+        os.path.join(BUILD_EXE_DIR, "EVE商人助手.exe"),  # 有 COLLECT 时
+        os.path.join(DIST_DIR, "EVE商人助手.exe"),  # 无 COLLECT 时
     ]
     exe_src = None
     for candidate in exe_src_candidates:

@@ -331,10 +331,10 @@ class ImportReviewDialog(QDialog):
     _COL_CHECK = 0
     _COL_ICON = 1
     _COL_NAME = 2
-    _COL_CURRENT = 3   # 数量（机库现有）
-    _COL_DELTA = 4      # 比原纪录（本次增减）
-    _COL_FINAL = 5      # 变化（最终数量）
-    _COL_PRICE = 6      # 成本价
+    _COL_CURRENT = 3  # 数量（机库现有）
+    _COL_DELTA = 4  # 比原纪录（本次增减）
+    _COL_FINAL = 5  # 变化（最终数量）
+    _COL_PRICE = 6  # 成本价
     _HEADERS = ["", "图标", "名称", "数量", "比原纪录", "变化", "成本价"]
 
     def __init__(self, items: list[dict], hangar_name: str, target_hangar_id: int, parent=None):
@@ -345,9 +345,9 @@ class ImportReviewDialog(QDialog):
         self._parsed_items = items  # list of {type_id, zh_name, en_name, qty}
         self._target_hangar_id = target_hangar_id
         self._region_id = TRADE_HUB_IDS["Jita"]
-        self._sell_prices: dict[int, float] = {}       # type_id → sell_price
-        self._existing_qty: dict[int, int] = {}         # type_id → existing qty  in target
-        self._source_hangar: dict[int, int] = {}        # type_id → source hangar id (for cross-hangar)
+        self._sell_prices: dict[int, float] = {}  # type_id → sell_price
+        self._existing_qty: dict[int, int] = {}  # type_id → existing qty  in target
+        self._source_hangar: dict[int, int] = {}  # type_id → source hangar id (for cross-hangar)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -449,9 +449,9 @@ class ImportReviewDialog(QDialog):
         for row, item in enumerate(self._parsed_items):
             type_id = item["type_id"]
             name = item.get("zh_name") or item.get("en_name") or f"ID:{type_id}"
-            delta = item["qty"]                                 # 比原纪录 = 本次增减量
-            current = self._existing_qty.get(type_id, 0)         # 数量 = 机库现有
-            final = current + delta                               # 变化 = 最终数量
+            delta = item["qty"]  # 比原纪录 = 本次增减量
+            current = self._existing_qty.get(type_id, 0)  # 数量 = 机库现有
+            final = current + delta  # 变化 = 最终数量
 
             # 列0：勾选
             cb = QCheckBox()
@@ -472,9 +472,8 @@ class ImportReviewDialog(QDialog):
                 pix = QPixmap(icon_path)
                 if not pix.isNull():
                     icon_label.setPixmap(
-                        pix.scaled(24, 24,
-                            Qt.AspectRatioMode.KeepAspectRatio,
-                            Qt.TransformationMode.SmoothTransformation
+                        pix.scaled(
+                            24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
                         )
                     )
             table.setCellWidget(row, self._COL_ICON, icon_label)
@@ -975,8 +974,12 @@ class InventoryPage(QWidget):
         if not self._current_hangar_id:
             return
         name = self._hangar_combo.currentText()
-        reply = QMessageBox.question(self, "确认", f"删除机库「{name}」及其所有物品？",
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        reply = QMessageBox.question(
+            self,
+            "确认",
+            f"删除机库「{name}」及其所有物品？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
         if reply == QMessageBox.StandardButton.Yes:
             delete_hangar(self._current_hangar_id)
             self._load_hangars()
@@ -1267,9 +1270,21 @@ class HangarTab(QWidget):
 #  蓝图管理 Tab
 # ════════════════════════════════════════════════════
 
+
 class BlueprintTableModel(QAbstractTableModel):
-    _HEADERS = ["图标", "名称", "类型", "材料等级", "时间等级", "产物名称", "制造时间", "流程数量",
-                "材料成本", "销售收入", "利润率"]
+    _HEADERS = [
+        "图标",
+        "名称",
+        "类型",
+        "材料等级",
+        "时间等级",
+        "产物名称",
+        "制造时间",
+        "流程数量",
+        "材料成本",
+        "销售收入",
+        "利润率",
+    ]
 
     def __init__(self, rows: list[dict]):
         super().__init__()
@@ -1334,9 +1349,8 @@ class BlueprintTableModel(QAbstractTableModel):
                     if os.path.exists(icon_path):
                         pix = QPixmap(icon_path)
                         if not pix.isNull():
-                            return pix.scaled(24, 24,
-                                Qt.AspectRatioMode.KeepAspectRatio,
-                                Qt.TransformationMode.SmoothTransformation
+                            return pix.scaled(
+                                24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
                             )
             return None
 
@@ -1378,10 +1392,13 @@ class BlueprintTableModel(QAbstractTableModel):
         if not key and column != 0:
             return
         if column == 0:
+
             def key(r):
                 return r.get("product_type_id") or 0
+
         if isinstance(key, str):
             k = key
+
             def key(r):
                 return (r.get(k) or "") if isinstance(r.get(k), str) else str(r.get(k) or "")
 
@@ -1393,6 +1410,7 @@ class BlueprintTableModel(QAbstractTableModel):
 
 class _BlueprintImportWorker(QThread):
     """后台线程：解析剪贴板 → 比对库 → 替换写入"""
+
     progress = Signal(int, int, str)
     finished = Signal(int, int, int)  # added, removed, total
 
@@ -1434,12 +1452,14 @@ class _BlueprintImportWorker(QThread):
             c.execute(
                 "SELECT id, blueprint_type_id, is_bpo, me_level, te_level, runs"
                 " FROM user_blueprints WHERE hangar_id = ?",
-                      (self._hangar_id,))
+                (self._hangar_id,),
+            )
             for row in c.fetchall():
                 existing_map[(row[1], row[2], row[3], row[4], row[5])] = row[0]
 
         # 3. 比对变化（用 list 比较，保留重复数量）
         from collections import Counter
+
         pasted_counter = Counter(pasted)
         existing_counter = Counter(existing_map.keys())
         all_keys = set(pasted_counter) | set(existing_counter)
@@ -1482,7 +1502,8 @@ class _BlueprintImportWorker(QThread):
                     "INSERT INTO user_blueprints"
                     " (hangar_id, blueprint_type_id, is_bpo, me_level, te_level, runs, quantity)"
                     " VALUES (?, ?, ?, ?, ?, ?, 1)",
-                    (self._hangar_id, bp[0], bp[1], bp[2], bp[3], bp[4]))
+                    (self._hangar_id, bp[0], bp[1], bp[2], bp[3], bp[4]),
+                )
                 if i % 200 == 0 or i == len(to_add) - 1:
                     uc.commit()
                     self.progress.emit(i + 1, len(to_add), f"写入中... {i + 1}/{len(to_add)}")
@@ -1507,7 +1528,8 @@ class _BlueprintImportWorker(QThread):
                         "SELECT blueprint_type_id FROM blueprint_products"
                         " WHERE product_type_id = ?"
                         " AND activity = 'manufacturing' LIMIT 1",
-                        (r[0],))
+                        (r[0],),
+                    )
                     r2 = c.fetchone()
                     if r2:
                         return r2[0]
@@ -1689,7 +1711,8 @@ class BlueprintTab(QWidget):
                 c.execute(
                     f"SELECT type_id, sell_price FROM market_prices"
                     f" WHERE type_id IN ({placeholders}) AND region_id = 10000002",
-                    tuple(all_ids))
+                    tuple(all_ids),
+                )
                 for tid, price in c.fetchall():
                     if price:
                         prices[tid] = price
@@ -1758,7 +1781,8 @@ class BlueprintTab(QWidget):
         # 搜索过滤
         if search:
             filtered = [
-                r for r in filtered
+                r
+                for r in filtered
                 if search in (r.get("zh_name") or "").lower()
                 or search in (r.get("en_name") or "").lower()
                 or search in (r.get("product_name") or "").lower()
@@ -1774,7 +1798,8 @@ class BlueprintTab(QWidget):
         try:
             with get_container().db.connect("ref") as conn:
                 c = conn.cursor()
-                c.execute("""
+                c.execute(
+                    """
                     WITH RECURSIVE sub AS (
                         SELECT market_group_id FROM market_tree WHERE market_group_id = ?
                         UNION ALL
@@ -1782,7 +1807,9 @@ class BlueprintTab(QWidget):
                     )
                     SELECT DISTINCT i.type_id FROM item i
                     WHERE i.market_group_id IN (SELECT market_group_id FROM sub)
-                """, (market_group_id,))
+                """,
+                    (market_group_id,),
+                )
                 return {r[0] for r in c.fetchall()}
         except Exception:
             return set()
@@ -1845,8 +1872,12 @@ class BlueprintTab(QWidget):
 
     def _delete_blueprints(self, selected: list[dict]):
         n = len(selected)
-        reply = QMessageBox.question(self, "确认删除", f"确定要删除 {n} 行蓝图吗？",
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            f"确定要删除 {n} 行蓝图吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
         if reply != QMessageBox.StandardButton.Yes:
             return
         ids = [bp["id"] for bp in selected]
@@ -1904,8 +1935,7 @@ class BlueprintTab(QWidget):
         main_win = self._page._main
         main_win.show_progress("正在导入蓝图...", 0)
         self._worker = _BlueprintImportWorker(raw, self._page.hangar_id())
-        self._worker.progress.connect(
-            lambda cur, total, text: main_win.update_progress(cur, text) if total else None)
+        self._worker.progress.connect(lambda cur, total, text: main_win.update_progress(cur, text) if total else None)
         self._worker.finished.connect(self._on_import_done)
         self._worker.start()
 

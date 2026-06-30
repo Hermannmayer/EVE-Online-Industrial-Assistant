@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication
 #  辅助：创建标准临时数据库套件
 # ════════════════════════════════════════════════════════════════
 
+
 def _create_temp_databases(tmpdir: str):
     """在 tmpdir 中创建 ref/mkt/bp/user 四个数据库，返回 {alias: path} 字典"""
     ref_path = Path(tmpdir) / "reference.db"
@@ -113,6 +114,7 @@ def _create_temp_databases(tmpdir: str):
 #  Mock helpers
 # ════════════════════════════════════════════════════════════════
 
+
 def _mock_db_manager():
     """返回一个用于替换 database_manager.get_db 的 mock DatabaseManager"""
     manager = MagicMock()
@@ -136,6 +138,7 @@ def _mock_db_manager():
 #  Fixtures — Session / Qt
 # ════════════════════════════════════════════════════════════════
 
+
 @pytest.fixture(scope="session")
 def qapp():
     """提供全局 QApplication 实例，供 PySide6 UI 测试使用"""
@@ -149,6 +152,7 @@ def qapp():
 #  Fixtures — Mock Database
 # ════════════════════════════════════════════════════════════════
 
+
 @pytest.fixture
 def mock_db():
     """在 with 块内将 services.database_manager.get_db 替换为 mock"""
@@ -159,6 +163,7 @@ def mock_db():
 # ════════════════════════════════════════════════════════════════
 #  Fixtures — 真实临时数据库
 # ════════════════════════════════════════════════════════════════
+
 
 @pytest.fixture
 def temp_db():

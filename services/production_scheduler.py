@@ -7,6 +7,7 @@
   - suggest_production_order: 建议生产排序
   - optimize_material_purchase: 优化材料采购（有限预算）
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -18,11 +19,10 @@ db = get_db()
 
 # ── 内部辅助 ──
 
+
 def _get_plan(conn: sqlite3.Connection, plan_id: int) -> dict | None:
     """从 user.db 读取单条 production_plans 记录"""
-    row = conn.execute(
-        "SELECT * FROM production_plans WHERE id = ?", (plan_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM production_plans WHERE id = ?", (plan_id,)).fetchone()
     return dict(row) if row else None
 
 
@@ -37,9 +37,7 @@ def _get_item_name(conn: sqlite3.Connection, type_id: int) -> str:
     return str(type_id)
 
 
-def _get_blueprint_for_product(
-    conn: sqlite3.Connection, product_type_id: int
-) -> tuple[int | None, int]:
+def _get_blueprint_for_product(conn: sqlite3.Connection, product_type_id: int) -> tuple[int | None, int]:
     """根据 product_type_id 找到 blueprint_type_id 和默认产量"""
     row = conn.execute(
         """SELECT bp.blueprint_type_id, bp.quantity
@@ -53,9 +51,7 @@ def _get_blueprint_for_product(
     return None, 1
 
 
-def _get_materials(
-    conn: sqlite3.Connection, blueprint_type_id: int
-) -> list[tuple[int, int]]:
+def _get_materials(conn: sqlite3.Connection, blueprint_type_id: int) -> list[tuple[int, int]]:
     """获取蓝图的 (material_type_id, base_quantity) 列表"""
     rows = conn.execute(
         """SELECT material_type_id, quantity
@@ -66,13 +62,14 @@ def _get_materials(
     return [(r[0], r[1]) for r in rows]
 
 
-def _get_price(
-    conn: sqlite3.Connection, type_id: int, hub: str = "Jita"
-) -> float:
+def _get_price(conn: sqlite3.Connection, type_id: int, hub: str = "Jita") -> float:
     """获取物品在指定 Hub 的卖价"""
     region_map = {
-        "Jita": 10000002, "Amarr": 10000043, "Dodixie": 10000032,
-        "Rens": 10000030, "Hek": 10000028,
+        "Jita": 10000002,
+        "Amarr": 10000043,
+        "Dodixie": 10000032,
+        "Rens": 10000030,
+        "Hek": 10000028,
     }
     region_id = region_map.get(hub, 10000002)
     row = conn.execute(
@@ -146,6 +143,7 @@ def analyze_production_plan(
 
         # ME 浪费因子: ME 0 → 1.1, ME 10 → 1.0
         from core.eve_formulas import ME_WASTE_BASE
+
         waste_factor = 1 + ME_WASTE_BASE * (1 - me_level / 10)
 
         total_product_qty = runs * parallels * (prod_qty_per_run or 1)
@@ -164,14 +162,16 @@ def analyze_production_plan(
             mat_name = _get_item_name(conn, mat_id)
             if deficit > 0:
                 has_all = False
-                missing_materials.append({
-                    "type_id": mat_id,
-                    "name": mat_name,
-                    "needed": round(needed, 2),
-                    "available": round(available, 2),
-                    "deficit": round(deficit, 2),
-                    "cost": round(deficit * price, 2),
-                })
+                missing_materials.append(
+                    {
+                        "type_id": mat_id,
+                        "name": mat_name,
+                        "needed": round(needed, 2),
+                        "available": round(available, 2),
+                        "deficit": round(deficit, 2),
+                        "cost": round(deficit * price, 2),
+                    }
+                )
 
         # 按缺料成本降序
         missing_materials.sort(key=lambda m: m["cost"], reverse=True)
@@ -201,25 +201,25 @@ def get_all_plans_summary(
     用于 UI 显示计划列表。
     """
     with db.connect("user", "ref", "mkt", "bp") as conn:
-        rows = conn.execute(
-            "SELECT id FROM production_plans ORDER BY created_at DESC"
-        ).fetchall()
+        rows = conn.execute("SELECT id FROM production_plans ORDER BY created_at DESC").fetchall()
 
     summaries: list[dict] = []
     for (pid,) in rows:
         analysis = analyze_production_plan(pid, char_config, price_hub)
         if analysis.get("status") == "not_found":
             continue
-        summaries.append({
-            "plan_id": analysis["plan_id"],
-            "product_name": analysis.get("product_name", ""),
-            "quantity": analysis.get("quantity", 0),
-            "status": analysis.get("status", "pending"),
-            "material_cost": analysis.get("total_material_cost", 0),
-            "has_all_materials": analysis.get("has_all_materials", False),
-            "missing_count": len(analysis.get("missing_materials", [])),
-            "material_count": analysis.get("material_count", 0),
-        })
+        summaries.append(
+            {
+                "plan_id": analysis["plan_id"],
+                "product_name": analysis.get("product_name", ""),
+                "quantity": analysis.get("quantity", 0),
+                "status": analysis.get("status", "pending"),
+                "material_cost": analysis.get("total_material_cost", 0),
+                "has_all_materials": analysis.get("has_all_materials", False),
+                "missing_count": len(analysis.get("missing_materials", [])),
+                "material_count": analysis.get("material_count", 0),
+            }
+        )
 
     # 排序: 有原料的在前，缺料少的在前
     summaries.sort(key=lambda s: (not s["has_all_materials"], s["missing_count"]))
@@ -241,9 +241,7 @@ def suggest_production_order(
     返回: [{"plan_id", "product_name", "rank", "reason", ...}, ...]
     """
     with db.connect("user", "ref", "mkt", "bp") as conn:
-        rows = conn.execute(
-            "SELECT id FROM production_plans WHERE status = 'pending'"
-        ).fetchall()
+        rows = conn.execute("SELECT id FROM production_plans WHERE status = 'pending'").fetchall()
 
     if not rows:
         return []
@@ -280,17 +278,19 @@ def suggest_production_order(
         if analysis.get("status") == "not_found":
             continue
         is_dep = _is_intermediate(pid)
-        items.append({
-            "plan_id": pid,
-            "product_name": analysis.get("product_name", ""),
-            "quantity": analysis.get("quantity", 0),
-            "material_cost": analysis.get("total_material_cost", 0),
-            "has_all_materials": analysis.get("has_all_materials", False),
-            "missing_count": len(analysis.get("missing_materials", [])),
-            "is_intermediate": is_dep,
-            "status": analysis.get("status", "pending"),
-            # 用 profit 字段辅助排序（从 production_plans 读取）
-        })
+        items.append(
+            {
+                "plan_id": pid,
+                "product_name": analysis.get("product_name", ""),
+                "quantity": analysis.get("quantity", 0),
+                "material_cost": analysis.get("total_material_cost", 0),
+                "has_all_materials": analysis.get("has_all_materials", False),
+                "missing_count": len(analysis.get("missing_materials", [])),
+                "is_intermediate": is_dep,
+                "status": analysis.get("status", "pending"),
+                # 用 profit 字段辅助排序（从 production_plans 读取）
+            }
+        )
 
     # 从 user.db 补充 profit/score 字段用于排序
     with db.connect("user") as conn3:
@@ -309,10 +309,10 @@ def suggest_production_order(
     # 排序
     def _sort_key(it: dict) -> tuple:
         return (
-            not it["is_intermediate"],       # 中间产物优先（True=1 > False=0）
-            not it["has_all_materials"],     # 有材料优先
-            it["missing_count"],             # 缺料少优先
-            -(it["profit"] or 0),            # 利润高优先（负号反转）
+            not it["is_intermediate"],  # 中间产物优先（True=1 > False=0）
+            not it["has_all_materials"],  # 有材料优先
+            it["missing_count"],  # 缺料少优先
+            -(it["profit"] or 0),  # 利润高优先（负号反转）
         )
 
     items.sort(key=_sort_key)
@@ -330,11 +330,13 @@ def suggest_production_order(
         if it["profit"] > 0:
             reasons.append(f"利润 {it['profit']:,.0f} ISK")
 
-        result.append({
-            **it,
-            "rank": rank,
-            "reason": "; ".join(reasons),
-        })
+        result.append(
+            {
+                **it,
+                "rank": rank,
+                "reason": "; ".join(reasons),
+            }
+        )
 
     return result
 
@@ -390,9 +392,7 @@ def optimize_material_purchase(
     # 按单位成本/影响排序: 先买便宜的（覆盖更多计划）
     # 优先级: 影响计划数多的 > 总成本高的
     for item in material_demand.values():
-        item["priority_score"] = (
-            len(item["plans"]) * 1000 + item["total_cost"]
-        )
+        item["priority_score"] = len(item["plans"]) * 1000 + item["total_cost"]
 
     items = sorted(
         material_demand.values(),
@@ -405,11 +405,7 @@ def optimize_material_purchase(
     remaining = budget
 
     for item in items:
-        unit_price = (
-            item["total_cost"] / item["deficit"]
-            if item["deficit"] > 0
-            else 0
-        )
+        unit_price = item["total_cost"] / item["deficit"] if item["deficit"] > 0 else 0
         qty = item["deficit"]
 
         # 预算限制
@@ -424,20 +420,18 @@ def optimize_material_purchase(
         if remaining is not None:
             remaining -= cost
 
-        priority = (
-            "critical" if len(item["plans"]) >= 3
-            else "high" if len(item["plans"]) >= 2
-            else "normal"
-        )
+        priority = "critical" if len(item["plans"]) >= 3 else "high" if len(item["plans"]) >= 2 else "normal"
 
-        purchase_list.append({
-            "type_id": item["type_id"],
-            "name": item["name"],
-            "qty": round(qty, 2),
-            "cost": round(cost, 2),
-            "priority": priority,
-            "plan_count": len(item["plans"]),
-        })
+        purchase_list.append(
+            {
+                "type_id": item["type_id"],
+                "name": item["name"],
+                "qty": round(qty, 2),
+                "cost": round(cost, 2),
+                "priority": priority,
+                "plan_count": len(item["plans"]),
+            }
+        )
 
     return {
         "purchase_list": purchase_list,

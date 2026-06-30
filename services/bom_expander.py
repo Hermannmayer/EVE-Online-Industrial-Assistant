@@ -56,17 +56,13 @@ def _resolve_name(c, type_id: int) -> str:
 
     if type_id in _MINERAL_NAMES:
         return _MINERAL_NAMES[type_id]
-    row = c.execute(
-        "SELECT zh_name, en_name FROM item WHERE type_id = ?", (type_id,)
-    ).fetchone()
+    row = c.execute("SELECT zh_name, en_name FROM item WHERE type_id = ?", (type_id,)).fetchone()
     if row:
         return row[0] or row[1] or str(type_id)
     return str(type_id)
 
 
-def _find_blueprint_for_product(
-    conn, product_type_id: int, activity: str = "manufacturing"
-):
+def _find_blueprint_for_product(conn, product_type_id: int, activity: str = "manufacturing"):
     """查找产出指定物品的蓝图 → (bp_id, output_qty, base_time)"""
     row = conn.execute(
         """
@@ -347,11 +343,7 @@ def expand_bom(
                         "name": node.name,
                         "quantity": round(node.quantity, 2),
                         "blueprint_type_id": node.blueprint_type_id,
-                        "unit_cost": round(
-                            node.subtotal / node.quantity, 2
-                        )
-                        if node.quantity > 0
-                        else 0.0,
+                        "unit_cost": round(node.subtotal / node.quantity, 2) if node.quantity > 0 else 0.0,
                         "subtotal": round(node.subtotal, 2),
                         "depth": node.depth,
                     }

@@ -11,6 +11,7 @@ from core.paths import ICON_DIR
 
 class TradeHubTableModel(QAbstractTableModel):
     """跨区域价格对比表模型"""
+
     _HEADERS = ["贸易中心", "买价", "卖价", "价差", "价差%", "成交量"]
 
     def __init__(self, rows: list[dict]):
@@ -46,7 +47,8 @@ class TradeHubTableModel(QAbstractTableModel):
                         pix = QPixmap(icon_path)
                         if not pix.isNull():
                             return pix.scaled(
-                                32, 32,
+                                32,
+                                32,
                                 Qt.AspectRatioMode.KeepAspectRatio,
                                 Qt.TransformationMode.SmoothTransformation,
                             )

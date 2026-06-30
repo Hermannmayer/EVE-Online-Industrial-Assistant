@@ -9,6 +9,7 @@
 
 首次拉取需要下载一次，后续跳过。
 """
+
 import asyncio
 import io
 import os
@@ -88,6 +89,7 @@ async def ensure_cache() -> str:
 
     # 从 zip 中提取 blueprints.yaml
     import zipfile
+
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         candidates = [p for p in zf.namelist() if p.endswith("blueprints.yaml")]
         if not candidates:
@@ -118,11 +120,15 @@ def parse_activities(bp_id: int, bp_data: dict):
             materials_rows.append((bp_id, activity, mat["typeID"], mat["quantity"]))
 
         for prod in detail.get("products", []):
-            products_rows.append((
-                bp_id, activity, prod["typeID"],
-                prod.get("quantity", 1),
-                prod.get("probability", 1.0),
-            ))
+            products_rows.append(
+                (
+                    bp_id,
+                    activity,
+                    prod["typeID"],
+                    prod.get("quantity", 1),
+                    prod.get("probability", 1.0),
+                )
+            )
 
         for skill in detail.get("skills", []):
             skills_rows.append((bp_id, activity, skill["typeID"], skill["level"]))
@@ -162,7 +168,7 @@ async def run_blueprint_update():
     bp_items = list(blueprints.items())
 
     for i in tqdm(range(0, len(bp_items), batch_size), desc="蓝图"):
-        batch = bp_items[i:i + batch_size]
+        batch = bp_items[i : i + batch_size]
         async with aiosqlite.connect(DATABASE_PATH) as db:
             for bp_id_str, bp_data in batch:
                 bp_id = int(bp_id_str)
@@ -191,6 +197,7 @@ async def run_blueprint_update():
 
     # 补拉 T2/T3 蓝图名称到 item 表
     from services.workers.getitems import fill_missing_blueprint_names
+
     await fill_missing_blueprint_names()
 
 

@@ -9,6 +9,7 @@
 依赖:
     pip install watchdog    # 可选，更快的文件监听
 """
+
 import subprocess
 import sys
 import time
@@ -41,9 +42,9 @@ def start_app(debug: bool = False):
     args = [sys.executable, str(ROOT / "Main.py")]
     if debug:
         args.append("--debug")
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"  启动: {' '.join(args)}")
-    print(f"{'='*50}\n")
+    print(f"{'=' * 50}\n")
     return subprocess.Popen(args, cwd=ROOT)
 
 

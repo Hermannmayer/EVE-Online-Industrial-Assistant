@@ -1,6 +1,7 @@
 """
 人物设置对话框 — 多角色 / 技能 / 增效体 / 市场费率
 """
+
 import json
 import os
 from typing import Optional
@@ -34,8 +35,8 @@ from services.char_config_validator import load_char_config
 #  游戏公式
 # ═══════════════════════════════════════════
 
-def calc_broker_fee(skills: dict, faction_standing: float, corp_standing: float,
-                    base_rate: float = 1.0) -> float:
+
+def calc_broker_fee(skills: dict, faction_standing: float, corp_standing: float, base_rate: float = 1.0) -> float:
     """
     计算经纪人费率 (%)
     formula: (base_rate - 0.05 * broker_relations_level) / 2^(0.14 * faction + 0.06 * corp)
@@ -86,51 +87,108 @@ SKILL_CATEGORIES = [
     ("\U0001f5d1️ 化垃圾", ["碎铁处理技术"]),
     ("\U0001f527 基础精炼", ["提炼学概论", "提炼效率理论"]),
     ("\U0001f4a8 气云专精", ["气云解压效率"]),
-    ("\U0001f319 卫星矿专精", [
-        "常见卫星矿石处理技术", "普通卫星矿石处理技术",
-        "罕见卫星矿石处理技术", "稀有卫星矿石处理技术",
-        "非凡卫星矿石处理技术",
-    ]),
-    ("\U0001faa8 小行星矿专精", [
-        "基腹断岩处理技术", "普通矿石处理技术", "聚合矿石处理技术",
-        "斑驳矿石处理技术", "死亡空间矿石处理技术", "深渊矿石处理技术",
-    ]),
+    (
+        "\U0001f319 卫星矿专精",
+        [
+            "常见卫星矿石处理技术",
+            "普通卫星矿石处理技术",
+            "罕见卫星矿石处理技术",
+            "稀有卫星矿石处理技术",
+            "非凡卫星矿石处理技术",
+        ],
+    ),
+    (
+        "\U0001faa8 小行星矿专精",
+        [
+            "基腹断岩处理技术",
+            "普通矿石处理技术",
+            "聚合矿石处理技术",
+            "斑驳矿石处理技术",
+            "死亡空间矿石处理技术",
+            "深渊矿石处理技术",
+        ],
+    ),
     ("⚙️ T2 前置", ["机械学", "科学原理", "能量栅格管理学", "CPU管理学"]),
-    ("\U0001f52c T3", [
-        "防御子系统技术", "核心子系统技术", "电子子系统技术",
-        "攻击子系统技术", "推进子系统技术",
-    ]),
+    (
+        "\U0001f52c T3",
+        [
+            "防御子系统技术",
+            "核心子系统技术",
+            "电子子系统技术",
+            "攻击子系统技术",
+            "推进子系统技术",
+        ],
+    ),
     ("\U0001f4d6 故事线", ["塔洛迦技术研究", "冬眠者技术研究", "塔克玛技术研究", "殷郡技术研究"]),
-    ("\U0001f510 加密原理", [
-        "加达里加密技术原理", "米玛塔尔加密技术原理",
-        "艾玛加密技术原理", "盖伦特加密技术原理",
-    ]),
-    ("\U0001f9ea 科学", [
-        "高能物理学", "等离子物理学", "纳米工程学", "磁流体物理学",
-        "艾玛星舰工程学", "米玛塔尔星舰工程学", "引力子物理学",
-        "激光物理学", "电磁物理学", "火箭科学", "盖伦特星舰工程学",
-        "核芯物理学", "机械工程学", "电子工程学", "加达里星舰工程学",
-        "量子物理学", "分子工程学", "冬眠者加密技术原理",
-        "血袭者改造技术研究", "天蛇改造技术研究", "天使改造技术研究",
-        "古斯塔斯改造技术研究", "昇威星舰工程学", "突变稳定",
-    ]),
+    (
+        "\U0001f510 加密原理",
+        [
+            "加达里加密技术原理",
+            "米玛塔尔加密技术原理",
+            "艾玛加密技术原理",
+            "盖伦特加密技术原理",
+        ],
+    ),
+    (
+        "\U0001f9ea 科学",
+        [
+            "高能物理学",
+            "等离子物理学",
+            "纳米工程学",
+            "磁流体物理学",
+            "艾玛星舰工程学",
+            "米玛塔尔星舰工程学",
+            "引力子物理学",
+            "激光物理学",
+            "电磁物理学",
+            "火箭科学",
+            "盖伦特星舰工程学",
+            "核芯物理学",
+            "机械工程学",
+            "电子工程学",
+            "加达里星舰工程学",
+            "量子物理学",
+            "分子工程学",
+            "冬眠者加密技术原理",
+            "血袭者改造技术研究",
+            "天蛇改造技术研究",
+            "天使改造技术研究",
+            "古斯塔斯改造技术研究",
+            "昇威星舰工程学",
+            "突变稳定",
+        ],
+    ),
     ("\U0001f4d0 蓝图研究加速", ["研究概论", "冶金学"]),
     ("\U0001f300 深渊", ["三神裔量子工程学", "三神裔加密技术原理", "昇威加密技术原理"]),
     ("\U0001f52c 研究线", ["高级实验室运作理论", "实验室运作理论"]),
     ("\U0001f6f8 其他技能", ["气云采集理论", "无人机概论"]),
     ("\U0001f30d 行星基础", ["行星统筹管理学", "指挥中心升级理论", "海关操作专业理论"]),
-    ("\U0001f3d7️ T2 制造", [
-        "高级小型舰船建造研究", "高级工业舰船建造研究",
-        "高级中型舰船建造研究", "高级大型舰船建造研究",
-    ]),
+    (
+        "\U0001f3d7️ T2 制造",
+        [
+            "高级小型舰船建造研究",
+            "高级工业舰船建造研究",
+            "高级中型舰船建造研究",
+            "高级大型舰船建造研究",
+        ],
+    ),
     ("⚗️ 反应", ["反应理论"]),
     ("\U0001f9ea 反应线", ["大规模反应理论", "高级大规模反应理论"]),
-    ("\U0001f529 改装件", [
-        "构件改装技术", "装甲改装技术", "空间航行改装技术",
-        "无人机改装技术", "电子优势改装技术", "射弹武器改装技术",
-        "能量武器改装技术", "混合武器改装技术", "发射器改装技术",
-        "护盾改装技术",
-    ]),
+    (
+        "\U0001f529 改装件",
+        [
+            "构件改装技术",
+            "装甲改装技术",
+            "空间航行改装技术",
+            "无人机改装技术",
+            "电子优势改装技术",
+            "射弹武器改装技术",
+            "能量武器改装技术",
+            "混合武器改装技术",
+            "发射器改装技术",
+            "护盾改装技术",
+        ],
+    ),
     ("\U0001f3ed 工业基础", ["工业理论", "高级工业理论"]),
     ("\U0001f3db️ 建筑制造", ["空间定锚", "哨站建造研究"]),
     ("\U0001f6a2 旗舰制造", ["旗舰级船只建造研究", "高级旗舰建造"]),
@@ -147,16 +205,17 @@ for cat_name, skills in SKILL_CATEGORIES:
 # ═══════════════════════════════════════════
 
 TRADE_HUBS = [
-    ("jita",    "吉他 Jita",       "加达里 Caldari",       "加达里海军 Caldari Navy"),
-    ("amarr",   "艾玛 Amarr",      "艾玛 Amarr",           "皇族 Emperor Family"),
-    ("dodixie", "多迪 Dodixie",    "盖伦特 Gallente",      "盖伦特统计局"),
-    ("rens",    "伦斯 Rens",       "米玛塔尔 Minmatar",    "米玛塔尔矿业"),
+    ("jita", "吉他 Jita", "加达里 Caldari", "加达里海军 Caldari Navy"),
+    ("amarr", "艾玛 Amarr", "艾玛 Amarr", "皇族 Emperor Family"),
+    ("dodixie", "多迪 Dodixie", "盖伦特 Gallente", "盖伦特统计局"),
+    ("rens", "伦斯 Rens", "米玛塔尔 Minmatar", "米玛塔尔矿业"),
 ]
 
 
 # ═══════════════════════════════════════════
 #  配置文件路径
 # ═══════════════════════════════════════════
+
 
 def char_config_path() -> str:
     return os.path.join(data_dir(), "char_config.json")
@@ -191,10 +250,11 @@ def load_implants() -> list[dict]:
     import os
 
     from core.paths import REF_DB_PATH
+
     if not os.path.exists(REF_DB_PATH):
         return []
 
-    conn = get_container().db.direct_connect('ref')
+    conn = get_container().db.direct_connect("ref")
     cur = conn.cursor()
     cur.execute("""
         SELECT i.type_id, i.en_name, i.zh_name, d.dogma_attrs
@@ -208,12 +268,14 @@ def load_implants() -> list[dict]:
         attrs = json.loads(dogma_json) if dogma_json else []
         # 解析 bonus 描述
         bonus_desc = _parse_implant_bonus(attrs)
-        results.append({
-            "type_id": type_id,
-            "en_name": en_name,
-            "zh_name": zh_name or en_name,
-            "bonus_desc": bonus_desc,
-        })
+        results.append(
+            {
+                "type_id": type_id,
+                "en_name": en_name,
+                "zh_name": zh_name or en_name,
+                "bonus_desc": bonus_desc,
+            }
+        )
     conn.close()
     IMPLANT_CACHE = results
     return results
@@ -225,15 +287,15 @@ def _parse_implant_bonus(attrs: list) -> str:
     # 减少型: 负值=收益 (如 -1% 制造时间)
     # 增加型: 正值=收益 (如 +1% 采矿量)
     KNOWN = {
-        440: ("制造时间", True),       # manufacturingTimeBonus
-        452: ("复制速度", True),       # copySpeedBonus
-        453: ("蓝图制造时间", True),   # blueprintmanufactureTimeBonus
-        468: ("材料需求研究", True),   # mineralNeedResearchBonus
-        379: ("精炼产出", False),      # refiningYieldMutator
-        434: ("采矿量", False),        # miningAmountBonus
-        927: ("采矿升级CPU", True),    # miningUpgradeCPUReductionBonus
-        780: ("冰矿采集周期", True),   # iceHarvestCycleBonus
-        66:  ("循环时间", True),       # durationBonus
+        440: ("制造时间", True),  # manufacturingTimeBonus
+        452: ("复制速度", True),  # copySpeedBonus
+        453: ("蓝图制造时间", True),  # blueprintmanufactureTimeBonus
+        468: ("材料需求研究", True),  # mineralNeedResearchBonus
+        379: ("精炼产出", False),  # refiningYieldMutator
+        434: ("采矿量", False),  # miningAmountBonus
+        927: ("采矿升级CPU", True),  # miningUpgradeCPUReductionBonus
+        780: ("冰矿采集周期", True),  # iceHarvestCycleBonus
+        66: ("循环时间", True),  # durationBonus
     }
     descs = []
     for attr in attrs:
@@ -252,6 +314,7 @@ def _parse_implant_bonus(attrs: list) -> str:
 # ═══════════════════════════════════════════
 #  对外查询接口
 # ═══════════════════════════════════════════
+
 
 def get_character_list() -> list[str]:
     """获取所有角色名列表"""
@@ -294,6 +357,7 @@ def get_market_rate(char_name: str, hub: str, skills: dict = None) -> dict:
 # ═══════════════════════════════════════════
 #  技能滑块组件
 # ═══════════════════════════════════════════
+
 
 class SkillSlider(QWidget):
     changed = Signal(str, int)
@@ -339,6 +403,7 @@ class SkillSlider(QWidget):
 # ═══════════════════════════════════════════
 #  技能页面
 # ═══════════════════════════════════════════
+
 
 class SkillsPage(QWidget):
     def __init__(self, skills_data: dict, parent=None):
@@ -450,6 +515,7 @@ class SkillsPage(QWidget):
 #  增效体页面（3插槽下拉）
 # ═══════════════════════════════════════════
 
+
 class ImplantsPage(QWidget):
     def __init__(self, implant_ids: list, parent=None):
         super().__init__(parent)
@@ -493,8 +559,8 @@ class ImplantsPage(QWidget):
             combo = QComboBox()
             combo.addItem("-- 无 --", None)
             for imp in self._implants:
-                label = f"{imp['zh_name']} ({imp['bonus_desc']})" if imp['bonus_desc'] else imp['zh_name']
-                combo.addItem(label, imp['type_id'])
+                label = f"{imp['zh_name']} ({imp['bonus_desc']})" if imp["bonus_desc"] else imp["zh_name"]
+                combo.addItem(label, imp["type_id"])
 
             # 设置已保存的值
             saved_id = implant_ids[i] if i < len(implant_ids) else None
@@ -528,8 +594,8 @@ class ImplantsPage(QWidget):
                 data = cb.itemData(idx)
                 if data:
                     for imp in self._implants:
-                        if imp['type_id'] == data:
-                            lbl.setText(f"  {imp['bonus_desc']}" if imp['bonus_desc'] else "")
+                        if imp["type_id"] == data:
+                            lbl.setText(f"  {imp['bonus_desc']}" if imp["bonus_desc"] else "")
                             break
                 else:
                     lbl.setText("")
@@ -587,6 +653,7 @@ class ImplantsPage(QWidget):
 # ═══════════════════════════════════════════
 #  市场费率页面
 # ═══════════════════════════════════════════
+
 
 class MarketPage(QWidget):
     """市场费率标签页：4 大交易中心，声望输入 + 自动计算"""
@@ -646,11 +713,13 @@ class MarketPage(QWidget):
             fs.setRange(-10.0, 10.0)
             fs.setSingleStep(0.1)
             fs.setValue(hub_data.get("faction_standing", 5.0))
-            fs.setStyleSheet((
-                f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};"
-                f" border: 1px solid {theme.BORDER}; border-radius: 4px;"
-                f" padding: 2px 4px;"
-            ))
+            fs.setStyleSheet(
+                (
+                    f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};"
+                    f" border: 1px solid {theme.BORDER}; border-radius: 4px;"
+                    f" padding: 2px 4px;"
+                )
+            )
             glayout.addWidget(fs, 0, 1)
 
             # 军团声望
@@ -659,11 +728,13 @@ class MarketPage(QWidget):
             cs.setRange(-10.0, 10.0)
             cs.setSingleStep(0.1)
             cs.setValue(hub_data.get("corp_standing", 5.0))
-            cs.setStyleSheet((
-                f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};"
-                f" border: 1px solid {theme.BORDER}; border-radius: 4px;"
-                f" padding: 2px 4px;"
-            ))
+            cs.setStyleSheet(
+                (
+                    f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};"
+                    f" border: 1px solid {theme.BORDER}; border-radius: 4px;"
+                    f" padding: 2px 4px;"
+                )
+            )
             glayout.addWidget(cs, 1, 1)
 
             # 计算结果
@@ -685,6 +756,7 @@ class MarketPage(QWidget):
                         f"改单折扣: {rd:.0f}% | "
                         f"最大订单: {mo}"
                     )
+
                 return recalc
 
             recalc_fn = make_calc()
@@ -719,6 +791,7 @@ class MarketPage(QWidget):
 # ═══════════════════════════════════════════
 #  主对话框
 # ═══════════════════════════════════════════
+
 
 class CharSettingsDialog(QDialog):
     def __init__(self, parent=None):
@@ -899,7 +972,7 @@ class CharSettingsDialog(QDialog):
                 "amarr": {"faction_standing": 5.0, "corp_standing": 5.0},
                 "dodixie": {"faction_standing": 5.0, "corp_standing": 5.0},
                 "rens": {"faction_standing": 5.0, "corp_standing": 5.0},
-            }
+            },
         }
         self._char_combo.addItem(name, name)
         self._char_combo.setCurrentIndex(self._char_combo.count() - 1)
@@ -909,8 +982,10 @@ class CharSettingsDialog(QDialog):
         if len(self._all_data["characters"]) <= 1:
             return
         reply = QMessageBox.question(
-            self, "确认删除", f"确定要删除角色「{self._current_char_name}」吗？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            self,
+            "确认删除",
+            f"确定要删除角色「{self._current_char_name}」吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return

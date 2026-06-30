@@ -2,6 +2,7 @@
 
 验证各页面/对话框在主题切换后能正确重新应用内联样式表。
 """
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,12 +15,16 @@ from ui_pyside6.theme import ONE_LIGHT, apply_theme
 class _FakeModel(QAbstractItemModel):
     def index(self, row, col, parent=QModelIndex()):
         return self.createIndex(row, col)
+
     def parent(self, index):
         return QModelIndex()
+
     def rowCount(self, parent=QModelIndex()):
         return 0
+
     def columnCount(self, parent=QModelIndex()):
         return 0
+
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         return None
 
@@ -40,9 +45,11 @@ def _wait():
 
 # ── 已验证通过：import theme as module 后主题切换正确传播 ──
 
+
 def test_industry_page_theme_listener(qapp, mock_db):
     with patch("ui_pyside6.views.industry_view.init_plan_db"):
         from ui_pyside6.views.industry_view import IndustryPage
+
         page = IndustryPage(None)
         assert hasattr(page, "_on_theme_changed")
         apply_theme("light")
@@ -53,6 +60,7 @@ def test_industry_page_theme_listener(qapp, mock_db):
 
 def test_trade_page_theme_listener(qapp):
     from ui_pyside6.views.trade_view import TradePage
+
     page = TradePage(None)
     assert hasattr(page, "_on_theme_changed")
     apply_theme("light")
@@ -62,6 +70,7 @@ def test_trade_page_theme_listener(qapp):
 
 def test_estimate_page_theme_listener(qapp, mock_db):
     from ui_pyside6.views.estimate_view import EstimatePage
+
     page = EstimatePage(None)
     assert hasattr(page, "_on_theme_changed")
     apply_theme("light")
@@ -75,6 +84,7 @@ def test_inventory_page_theme_listener(qapp, mock_db):
         patch("ui_pyside6.views.inventory_view.get_hangars", return_value=[{"id": 1, "name": "默认", "notes": ""}]),
     ):
         from ui_pyside6.views.inventory_view import InventoryPage
+
         page = InventoryPage(None)
         assert hasattr(page, "_on_theme_changed")
         apply_theme("light")
@@ -84,6 +94,7 @@ def test_inventory_page_theme_listener(qapp, mock_db):
 
 def test_paste_import_dialog_show_event(qapp, mock_db):
     from ui_pyside6.views.inventory_view import PasteImportDialog
+
     dlg = PasteImportDialog("测试机库")
     assert hasattr(dlg, "showEvent")
     apply_theme("light")
@@ -93,6 +104,7 @@ def test_paste_import_dialog_show_event(qapp, mock_db):
 
 def test_import_review_dialog_show_event(qapp, mock_db):
     from ui_pyside6.views.inventory_view import ImportReviewDialog
+
     dlg = ImportReviewDialog([], "测试机库", 1)
     assert hasattr(dlg, "showEvent")
     apply_theme("light")
@@ -101,6 +113,7 @@ def test_import_review_dialog_show_event(qapp, mock_db):
 
 
 # ── showEvent 不更新对话框自身 stylesheet，仅更新子控件 — 待 dialog 自身也加入 showEvent 重绘 ──
+
 
 @pytest.mark.xfail(reason="showEvent 仅重绘子控件，未更新 dialog 自身 stylesheet")
 def test_char_settings_dialog_show_event(qapp, mock_db):
@@ -114,6 +127,7 @@ def test_char_settings_dialog_show_event(qapp, mock_db):
             "characters": {"main": {"skills": {}, "implants": [None, None, None], "market": {}}},
         }
         from ui_pyside6.views.char_settings_view import CharSettingsDialog
+
         dlg = CharSettingsDialog()
         apply_theme("light")
         dlg.showEvent(QShowEvent())
@@ -127,6 +141,7 @@ def test_init_wizard_show_event(qapp):
         patch("ui_pyside6.views.init_wizard.missing_count", return_value=5),
     ):
         from ui_pyside6.views.init_wizard import InitWizard
+
         wiz = InitWizard()
         apply_theme("light")
         wiz.showEvent(QShowEvent())
@@ -144,6 +159,7 @@ def test_all_items_dialog_show_event(qapp, mock_db):
         MockTree.return_value.start = MagicMock()
         MockItems.return_value.start = MagicMock()
         from ui_pyside6.views.all_items_view import AllItemsDialog
+
         dlg = AllItemsDialog()
         apply_theme("light")
         dlg.showEvent(QShowEvent())

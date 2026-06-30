@@ -10,6 +10,7 @@ ESI 端点：
   2. 对每个合同并发拉取其物品列表
   3. 批量写入数据库
 """
+
 import asyncio
 import json
 import os
@@ -149,9 +150,7 @@ async def fetch_contract_pages(session: aiohttp.ClientSession, region_id: int) -
     return all_contracts
 
 
-async def fetch_contract_items(
-    session: aiohttp.ClientSession, contract_ids: list[int]
-) -> dict[int, list[dict]]:
+async def fetch_contract_items(session: aiohttp.ClientSession, contract_ids: list[int]) -> dict[int, list[dict]]:
     """并发拉取多个合同的物品列表"""
     sem = asyncio.Semaphore(10)
     result: dict[int, list[dict]] = {}
@@ -171,7 +170,7 @@ async def fetch_contract_items(
 
     # 分批拉取，避免同时发起太多请求
     for i in range(0, len(contract_ids), 50):
-        batch = contract_ids[i:i + 50]
+        batch = contract_ids[i : i + 50]
         await asyncio.gather(*[get_items(cid) for cid in batch])
 
     return result
@@ -192,71 +191,84 @@ async def save_contracts(
         # 也清除对应的 items（通过 contract_id 级联）
         if region_ids:
             placeholders = ",".join("?" for _ in region_ids)
-            await db.execute(f"""
+            await db.execute(
+                f"""
                 DELETE FROM contract_items WHERE contract_id IN (
                     SELECT contract_id FROM public_contracts WHERE region_id IN ({placeholders})
                 )
-            """, region_ids)
+            """,
+                region_ids,
+            )
 
         # 写入合同
         contract_records = []
         for region_id, contracts in all_contracts.items():
             for c in contracts:
-                contract_records.append((
-                    c["contract_id"],
-                    region_id,
-                    c.get("type", ""),
-                    c.get("status", ""),
-                    c.get("title", ""),
-                    c.get("price", 0),
-                    c.get("reward", 0),
-                    c.get("collateral", 0),
-                    c.get("volume", 0),
-                    c.get("days_to_complete", 0),
-                    c.get("issuer_id"),
-                    c.get("assignee_id"),
-                    c.get("availability", ""),
-                    c.get("date_issued", ""),
-                    c.get("date_expired", ""),
-                    c.get("start_location_id"),
-                    c.get("end_location_id"),
-                    1 if c.get("for_corporation", False) else 0,
-                    fetch_time,
-                ))
+                contract_records.append(
+                    (
+                        c["contract_id"],
+                        region_id,
+                        c.get("type", ""),
+                        c.get("status", ""),
+                        c.get("title", ""),
+                        c.get("price", 0),
+                        c.get("reward", 0),
+                        c.get("collateral", 0),
+                        c.get("volume", 0),
+                        c.get("days_to_complete", 0),
+                        c.get("issuer_id"),
+                        c.get("assignee_id"),
+                        c.get("availability", ""),
+                        c.get("date_issued", ""),
+                        c.get("date_expired", ""),
+                        c.get("start_location_id"),
+                        c.get("end_location_id"),
+                        1 if c.get("for_corporation", False) else 0,
+                        fetch_time,
+                    )
+                )
 
         for i in range(0, len(contract_records), 500):
-            await db.executemany("""
+            await db.executemany(
+                """
                 INSERT OR REPLACE INTO public_contracts
                 (contract_id, region_id, type, status, title, price, reward, collateral,
                  volume, days_completed, issuer_id, assignee_id, availability,
                  date_issued, date_expired, start_location_id, end_location_id,
                  for_corporation, fetch_time)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, contract_records[i:i + 500])
+            """,
+                contract_records[i : i + 500],
+            )
 
         # 写入物品
         item_records = []
         for cid, items in all_items.items():
             for it in items:
-                item_records.append((
-                    cid,
-                    it.get("record_id", 0),
-                    it.get("type_id", 0),
-                    it.get("quantity", 0),
-                    1 if it.get("is_blueprint_copy", False) else 0,
-                    1 if it.get("is_included", True) else 0,
-                    it.get("material_efficiency", 0),
-                    it.get("time_efficiency", 0),
-                    it.get("run", 1),
-                ))
+                item_records.append(
+                    (
+                        cid,
+                        it.get("record_id", 0),
+                        it.get("type_id", 0),
+                        it.get("quantity", 0),
+                        1 if it.get("is_blueprint_copy", False) else 0,
+                        1 if it.get("is_included", True) else 0,
+                        it.get("material_efficiency", 0),
+                        it.get("time_efficiency", 0),
+                        it.get("run", 1),
+                    )
+                )
 
         for i in range(0, len(item_records), 500):
-            await db.executemany("""
+            await db.executemany(
+                """
                 INSERT OR REPLACE INTO contract_items
                 (contract_id, record_id, type_id, quantity, is_blueprint_copy,
                  is_included, material_efficiency, time_efficiency, run)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, item_records[i:i + 500])
+            """,
+                item_records[i : i + 500],
+            )
 
         await db.commit()
 
@@ -326,10 +338,7 @@ def run_contract_update(regions: list[str] | None = None):
                  None 或空列表则更新全部四大贸易中心
     """
     try:
-        target_regions = [
-            (name, rid) for name, rid in TRADE_REGIONS
-            if not regions or name in regions
-        ]
+        target_regions = [(name, rid) for name, rid in TRADE_REGIONS if not regions or name in regions]
         asyncio.run(main(target_regions))
     except KeyboardInterrupt:
         log.warning("用户中断")

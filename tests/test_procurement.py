@@ -95,8 +95,7 @@ class TestProcurementCrud:
         """更新状态后读取验证"""
         with temp_user_db.connect("user") as conn:
             conn.execute(
-                "INSERT INTO procurement_items (type_id, item_name, quantity, status) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO procurement_items (type_id, item_name, quantity, status) VALUES (?, ?, ?, ?)",
                 (2001, "渡鸦级", 1, "pending"),
             )
             row = conn.execute("SELECT id FROM procurement_items WHERE type_id=2001").fetchone()
@@ -113,19 +112,11 @@ class TestProcurementCrud:
                 "INSERT INTO procurement_items (type_id, item_name, status) VALUES (?, ?, ?)",
                 (2001, "渡鸦级", "pending"),
             )
-            item_id = conn.execute(
-                "SELECT id FROM procurement_items WHERE type_id=2001"
-            ).fetchone()["id"]
-            conn.execute(
-                "UPDATE procurement_items SET status = ? WHERE id = ?", ("ordered", item_id)
-            )
-            conn.execute(
-                "UPDATE procurement_items SET status = ? WHERE id = ?", ("received", item_id)
-            )
+            item_id = conn.execute("SELECT id FROM procurement_items WHERE type_id=2001").fetchone()["id"]
+            conn.execute("UPDATE procurement_items SET status = ? WHERE id = ?", ("ordered", item_id))
+            conn.execute("UPDATE procurement_items SET status = ? WHERE id = ?", ("received", item_id))
         with temp_user_db.connect("user") as conn:
-            row = conn.execute(
-                "SELECT status FROM procurement_items WHERE id = ?", (item_id,)
-            ).fetchone()
+            row = conn.execute("SELECT status FROM procurement_items WHERE id = ?", (item_id,)).fetchone()
         assert row["status"] == "received"
 
     def test_delete_item(self, temp_user_db):
@@ -135,9 +126,7 @@ class TestProcurementCrud:
                 "INSERT INTO procurement_items (type_id, item_name) VALUES (?, ?)",
                 (2001, "渡鸦级"),
             )
-            item_id = conn.execute(
-                "SELECT id FROM procurement_items WHERE type_id=2001"
-            ).fetchone()["id"]
+            item_id = conn.execute("SELECT id FROM procurement_items WHERE type_id=2001").fetchone()["id"]
             conn.execute("DELETE FROM procurement_items WHERE id = ?", (item_id,))
         with temp_user_db.connect("user") as conn:
             count = conn.execute("SELECT COUNT(*) FROM procurement_items").fetchone()[0]
@@ -154,9 +143,7 @@ class TestProcurementCrud:
                 "INSERT INTO procurement_items (type_id, item_name) VALUES (?, ?)",
                 (2002, "无人机"),
             )
-            item_id = conn.execute(
-                "SELECT id FROM procurement_items WHERE type_id=2001"
-            ).fetchone()["id"]
+            item_id = conn.execute("SELECT id FROM procurement_items WHERE type_id=2001").fetchone()["id"]
             conn.execute("DELETE FROM procurement_items WHERE id = ?", (item_id,))
         with temp_user_db.connect("user") as conn:
             rows = conn.execute("SELECT * FROM procurement_items").fetchall()
@@ -171,9 +158,7 @@ class TestProcurementCrud:
                 (2001, "渡鸦级"),
             )
         with temp_user_db.connect("user") as conn:
-            row = conn.execute(
-                "SELECT * FROM procurement_items WHERE type_id=2001"
-            ).fetchone()
+            row = conn.execute("SELECT * FROM procurement_items WHERE type_id=2001").fetchone()
         assert row["hub"] == "Jita"
         assert row["priority"] == "normal"
         assert row["status"] == "pending"
@@ -189,15 +174,9 @@ class TestProcurementCrud:
             conn.execute(stmt, (1001, "三钛合金", "received"))
 
         with temp_user_db.connect("user") as conn:
-            pending = conn.execute(
-                "SELECT COUNT(*) FROM procurement_items WHERE status='pending'"
-            ).fetchone()[0]
-            ordered = conn.execute(
-                "SELECT COUNT(*) FROM procurement_items WHERE status='ordered'"
-            ).fetchone()[0]
-            received = conn.execute(
-                "SELECT COUNT(*) FROM procurement_items WHERE status='received'"
-            ).fetchone()[0]
+            pending = conn.execute("SELECT COUNT(*) FROM procurement_items WHERE status='pending'").fetchone()[0]
+            ordered = conn.execute("SELECT COUNT(*) FROM procurement_items WHERE status='ordered'").fetchone()[0]
+            received = conn.execute("SELECT COUNT(*) FROM procurement_items WHERE status='received'").fetchone()[0]
         assert pending == 1
         assert ordered == 1
         assert received == 1

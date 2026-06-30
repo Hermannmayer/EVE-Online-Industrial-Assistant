@@ -10,7 +10,7 @@ from services.client import APIClient
 
 # 配置常量
 DATABASE_PATH = reference_db_path()
-API_BASE_URL = 'https://sde.jita.space/latest'
+API_BASE_URL = "https://sde.jita.space/latest"
 CONCURRENCY = 50
 BATCH_SIZE = 100
 START_TYPE_ID = 178
@@ -19,10 +19,11 @@ START_TYPE_ID = 178
 group_cache = {}
 market_group_cache = {}
 
+
 async def initialize_database():
     """初始化数据库结构"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute('''
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS item (
                 type_id INTEGER PRIMARY KEY,
                 en_name TEXT,
@@ -36,8 +37,8 @@ async def initialize_database():
                 volume REAL,
                 iconID INTEGER
             )
-        ''')
-        await db.execute('''
+        """)
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS market_tree (
                 market_group_id INTEGER PRIMARY KEY,
                 parent_group_id INTEGER,
@@ -45,14 +46,16 @@ async def initialize_database():
                 zh_name TEXT,
                 icon_id INTEGER
             )
-        ''')
+        """)
         await db.commit()
+
 
 async def fetch_valid_type_ids(client):
     """获取所有有效的type_id并过滤无market_group_id的条目"""
     url = f"{API_BASE_URL}/universe/types"
     data = await client.fetch(url)
     return sorted(tid for tid in data if tid >= START_TYPE_ID)
+
 
 async def initialize_type_ids(client):
     """初始化有效type_id到数据库"""
@@ -70,6 +73,7 @@ async def initialize_type_ids(client):
         else:
             log.info("无新的 type_id 需要初始化")
 
+
 async def get_group_info(client, group_id):
     """获取组信息带缓存"""
     if not group_id:
@@ -81,13 +85,14 @@ async def get_group_info(client, group_id):
     url = f"{API_BASE_URL}/universe/groups/{group_id}"
     data = await client.fetch(url)
     if data:
-        name_data = data.get('name', {})
-        en = name_data.get('en', '') if isinstance(name_data, dict) else str(name_data)
-        zh = name_data.get('zh', '') if isinstance(name_data, dict) else ''
-        iconID = data.get('iconID', 0)
+        name_data = data.get("name", {})
+        en = name_data.get("en", "") if isinstance(name_data, dict) else str(name_data)
+        zh = name_data.get("zh", "") if isinstance(name_data, dict) else ""
+        iconID = data.get("iconID", 0)
         group_cache[group_id] = (en, zh, iconID)
         return (en, zh, iconID)
     return ("", "", 0)
+
 
 async def get_market_group_info(client, market_group_id):
     """获取市场组信息带缓存"""
@@ -100,13 +105,14 @@ async def get_market_group_info(client, market_group_id):
     url = f"{API_BASE_URL}/markets/groups/{market_group_id}"
     data = await client.fetch(url)
     if data:
-        name_data = data.get('nameID', {})
-        en = name_data.get('en', '') if isinstance(name_data, dict) else str(name_data)
-        zh = name_data.get('zh', '') if isinstance(name_data, dict) else ''
-        iconID = data.get('iconID', 0)
+        name_data = data.get("nameID", {})
+        en = name_data.get("en", "") if isinstance(name_data, dict) else str(name_data)
+        zh = name_data.get("zh", "") if isinstance(name_data, dict) else ""
+        iconID = data.get("iconID", 0)
         market_group_cache[market_group_id] = (en, zh, iconID)
         return (en, zh, iconID)
     return ("", "", 0)
+
 
 async def process_type(client, type_id):
     """处理单个type_id"""
@@ -116,16 +122,16 @@ async def process_type(client, type_id):
         return None
 
     # 不再过滤 market_group_id，收录所有物品（含PLEX等无市场分类但有交易的物品）
-    market_group_id = data.get('marketGroupID')
+    market_group_id = data.get("marketGroupID")
 
     # 提取其他字段
-    group_id = data.get('groupID')
-    volume = data.get('volume', 0.0)
-    iconID = data.get('iconID', 0)
+    group_id = data.get("groupID")
+    volume = data.get("volume", 0.0)
+    iconID = data.get("iconID", 0)
 
-    name_data = data.get('name', {})
-    en_name = name_data.get('en', '') if isinstance(name_data, dict) else str(name_data)
-    zh_name = name_data.get('zh', '') if isinstance(name_data, dict) else ''
+    name_data = data.get("name", {})
+    en_name = name_data.get("en", "") if isinstance(name_data, dict) else str(name_data)
+    zh_name = name_data.get("zh", "") if isinstance(name_data, dict) else ""
 
     # 并行获取组信息
     group_task = get_group_info(client, group_id)
@@ -134,15 +140,23 @@ async def process_type(client, type_id):
     en_market, zh_market, market_icon = await market_task
 
     return (
-        en_name, zh_name,
-        group_id, en_group, zh_group,
-        market_group_id, en_market, zh_market,
-        volume, iconID or market_icon,
-        type_id
+        en_name,
+        zh_name,
+        group_id,
+        en_group,
+        zh_group,
+        market_group_id,
+        en_market,
+        zh_market,
+        volume,
+        iconID or market_icon,
+        type_id,
     )
+
 
 class DatabaseWriter:
     """异步批量写入器"""
+
     def __init__(self):
         self.buffer = []
         self.conn = None
@@ -166,14 +180,14 @@ class DatabaseWriter:
         if not self.buffer:
             return
 
-        query = '''
+        query = """
             UPDATE item SET
                 en_name=?, zh_name=?,
                 group_id=?, en_group_name=?, zh_group_name=?,
                 market_group_id=?, en_market_group_name=?, zh_market_group_name=?,
                 volume=?, iconID=?
             WHERE type_id=?
-        '''
+        """
         await self.conn.executemany(query, self.buffer)
         await self.conn.commit()
         self.buffer.clear()
@@ -183,7 +197,9 @@ class DatabaseWriter:
         await self.conn.execute("DELETE FROM item WHERE type_id=?", (type_id,))
         await self.conn.commit()
 
+
 # ─── 市场分类树（market_tree） ───
+
 
 async def ensure_market_tree(client):
     """确保 market_tree 表已填充（仅当为空时执行）"""
@@ -227,12 +243,12 @@ async def ensure_market_tree(client):
     for data in results:
         if data is None:
             continue
-        gid = data.get('marketGroupID')
-        parent = data.get('parentGroupID')  # 根节点没有此字段
-        name_data = data.get('name', {})
-        en = name_data.get('en', '') if isinstance(name_data, dict) else ''
-        zh = name_data.get('zh', '') if isinstance(name_data, dict) else ''
-        icon = data.get('iconID', 0)
+        gid = data.get("marketGroupID")
+        parent = data.get("parentGroupID")  # 根节点没有此字段
+        name_data = data.get("name", {})
+        en = name_data.get("en", "") if isinstance(name_data, dict) else ""
+        zh = name_data.get("zh", "") if isinstance(name_data, dict) else ""
+        icon = data.get("iconID", 0)
         rows.append((gid, parent, en, zh, icon))
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -241,11 +257,12 @@ async def ensure_market_tree(client):
             "INSERT INTO market_tree"
             " (market_group_id, parent_group_id, en_name, zh_name, icon_id)"
             " VALUES (?, ?, ?, ?, ?)",
-            rows
+            rows,
         )
         await db.commit()
 
     log.info(f"market_tree 写入完成，共 {len(rows)} 条记录")
+
 
 async def worker(client, queue, writer, pbar):
     """工作协程"""
@@ -263,6 +280,7 @@ async def worker(client, queue, writer, pbar):
             queue.task_done()
             pbar.update(1)
 
+
 async def main():
     await initialize_database()
 
@@ -276,22 +294,24 @@ async def main():
 
         # 获取待处理type_id
         async with aiosqlite.connect(DATABASE_PATH) as db:
-            cursor = await db.execute('''
+            cursor = await db.execute(
+                """
                 SELECT type_id FROM item
                 WHERE type_id >= ?
                 AND (en_name IS NULL OR market_group_id IS NULL)
-            ''', (START_TYPE_ID,))
+            """,
+                (START_TYPE_ID,),
+            )
             type_ids = [row[0] async for row in cursor]
 
         total = len(type_ids)
-        pbar = tqdm(total=total, desc='数据抓取进度', unit='item')
+        pbar = tqdm(total=total, desc="数据抓取进度", unit="item")
 
         for tid in type_ids:
             await queue.put(tid)
 
         # 启动工作协程
-        workers = [asyncio.create_task(worker(client, queue, writer, pbar))
-                  for _ in range(CONCURRENCY)]
+        workers = [asyncio.create_task(worker(client, queue, writer, pbar)) for _ in range(CONCURRENCY)]
 
         await queue.join()
         pbar.close()
@@ -299,6 +319,7 @@ async def main():
         for task in workers:
             task.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
+
 
 if __name__ == "__main__":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -312,6 +333,7 @@ async def fill_missing_blueprint_names():
     async with _aiosqlite.connect(DATABASE_PATH) as db:
         # 从 blueprint.db 获取所有 blueprint_type_id
         from core.paths import blueprint_db_path
+
         bp_db = blueprint_db_path()
         await db.execute(f"ATTACH DATABASE '{bp_db.replace(chr(92), '/')}' AS bp")
         cursor = await db.execute("SELECT DISTINCT blueprint_type_id FROM bp.blueprint_activities")
@@ -321,7 +343,8 @@ async def fill_missing_blueprint_names():
         placeholders = ",".join("?" * len(all_bp_ids))
         cursor = await db.execute(
             f"SELECT type_id FROM item WHERE type_id IN ({placeholders}) AND (zh_name IS NULL OR zh_name = '')",
-            all_bp_ids)
+            all_bp_ids,
+        )
         missing = [row[0] async for row in cursor]
 
     if not missing:
@@ -337,9 +360,9 @@ async def fill_missing_blueprint_names():
             url = f"{API_BASE_URL}/universe/types/{tid}"
             data = await client.fetch(url)
             if data:
-                name_data = data.get('name', {})
-                en = name_data.get('en', '') if isinstance(name_data, dict) else str(name_data)
-                zh = name_data.get('zh', '') if isinstance(name_data, dict) else ''
+                name_data = data.get("name", {})
+                en = name_data.get("en", "") if isinstance(name_data, dict) else str(name_data)
+                zh = name_data.get("zh", "") if isinstance(name_data, dict) else ""
                 if en or zh:
                     batch.append((en, zh, tid))
         except Exception:

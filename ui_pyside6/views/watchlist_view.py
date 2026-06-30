@@ -1,6 +1,7 @@
 """
 关注列表页面 — 物品搜索 + 自动补全 + 关注列表表格 + 阈值设置
 """
+
 import os
 
 from PySide6.QtCore import (
@@ -310,6 +311,7 @@ class WatchlistPage(QWidget):
     def __init__(self, main_window):
         super().__init__()
         from services.watchlist_manager import init_db as _init_watchlist_db
+
         _init_watchlist_db()
         self._main = main_window
         self.setObjectName("watchlist_page")
@@ -415,7 +417,6 @@ class WatchlistPage(QWidget):
         self._check_timer.start(60000)  # 60秒
         theme.add_theme_listener(self._on_theme_changed)
 
-
     def showEvent(self, event):
         """显示时启动定时器"""
         super().showEvent(event)
@@ -431,13 +432,14 @@ class WatchlistPage(QWidget):
         """定时检查价格变化"""
         try:
             from services.watchlist_manager import check_price_changes
+
             changes = check_price_changes()
-            self._price_changes = {c['type_id']: c for c in changes}
+            self._price_changes = {c["type_id"]: c for c in changes}
             self._model.set_price_changes(self._price_changes)
             self._refresh_data()
             self.update_status_bar()
         except Exception as ex:
-            print(f'价格变化检测失败: {ex}')
+            print(f"价格变化检测失败: {ex}")
 
     def trigger_price_check(self):
         """外部调用触发即时价格变化检查"""
@@ -466,9 +468,7 @@ class WatchlistPage(QWidget):
         if not items:
             self._popup.hide()
             return
-        pos = self._search_input.mapToGlobal(
-            QPoint(0, self._search_input.height())
-        )
+        pos = self._search_input.mapToGlobal(QPoint(0, self._search_input.height()))
         self._popup.show_suggestions(items, pos, self._search_input.width())
 
     def _on_search_return(self):
@@ -620,9 +620,7 @@ class WatchlistPage(QWidget):
             spinner.setValue(current)
         dlg_layout.addWidget(spinner)
 
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btn_box.accepted.connect(dlg.accept)
         btn_box.rejected.connect(dlg.reject)
         dlg_layout.addWidget(btn_box)

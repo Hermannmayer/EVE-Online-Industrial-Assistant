@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QStatusBar,
+    QSystemTrayIcon,
     QToolBar,
     QToolButton,
     QTreeWidget,
@@ -491,8 +492,39 @@ class MainWindow(QMainWindow):
             page = self._pages.get("query")
             if page and hasattr(page, "refresh_display"):
                 page.refresh_display()
+            # 价格变化检查 & 通知
+            self._check_and_notify_price_changes()
         else:
             self._status_info_label.setText(f"价格更新失败: {message}")
+
+    def _check_and_notify_price_changes(self):
+        """检查关注列表价格变化，有变化时弹系统通知或更新状态栏"""
+        try:
+            from services.watchlist_manager import check_price_changes
+
+            changes = check_price_changes()
+            if not changes:
+                return
+
+            count = len(changes)
+            msg = f"{count} 个物品价格发生变化"
+            self._status_label.setText(f"🔔 {msg}")
+
+            # 尝试系统托盘通知
+            if QSystemTrayIcon.isSystemTrayAvailable():
+                tray = QSystemTrayIcon(self)
+                tray.setIcon(self.windowIcon())
+                tray.show()
+                tray.showMessage(
+                    "EVE 商人助手",
+                    msg,
+                    QSystemTrayIcon.MessageIcon.Information,
+                    5000,
+                )
+                # 清理：通知消失后隐藏托盘图标
+                QTimer.singleShot(6000, tray.hide)
+        except Exception as ex:
+            self._status_label.setText(f"价格变化检测失败: {ex}")
 
     def _refresh_price_age(self):
         """刷新工具栏上的价格年龄标签 + 状态栏信息"""

@@ -1,6 +1,7 @@
 """
 库存管理数据层 — 机库 CRUD / 物品入库 / 加权平均成本 / 移动
 """
+
 from datetime import datetime, timezone
 
 from services.database_manager import get_db
@@ -96,7 +97,8 @@ def delete_hangar(hangar_id: int) -> bool:
 def get_items(hangar_id: int) -> list[dict]:
     with db.connect("user", "ref", "mkt", "bp") as conn:
         c = conn.cursor()
-        c.execute("""
+        c.execute(
+            """
             SELECT ii.id, ii.type_id, ii.quantity, ii.cost_price,
                    i.zh_name, i.en_name,
                    mp.sell_price, mp.buy_price
@@ -106,12 +108,15 @@ def get_items(hangar_id: int) -> list[dict]:
                 AND mp.region_id = 10000002
             WHERE ii.hangar_id = ?
             ORDER BY i.zh_name
-        """, (hangar_id,))
+        """,
+            (hangar_id,),
+        )
         items = []
         for r in c.fetchall():
             tid = r[1]
             # 查询生产计划中该物品的规划占用
-            c.execute("""
+            c.execute(
+                """
                 SELECT COALESCE(SUM(bm.quantity * pp.runs * pp.parallels), 0)
                 FROM production_plans pp
                 JOIN bp.blueprint_products bp ON bp.product_type_id = pp.product_type_id
@@ -119,22 +124,29 @@ def get_items(hangar_id: int) -> list[dict]:
                 JOIN bp.blueprint_materials bm ON bm.blueprint_type_id = bp.blueprint_type_id
                     AND bm.activity = 'manufacturing'
                 WHERE bm.material_type_id = ? AND pp.status IN ('pending', 'running')
-            """, (tid,))
+            """,
+                (tid,),
+            )
             row = c.fetchone()
             plan_qty = row[0] if row else 0
 
             stock_qty = r[2]
             remain = max(0, stock_qty - plan_qty)
 
-            items.append({
-                "id": r[0], "type_id": tid,
-                "quantity": stock_qty,
-                "cost_price": r[3] or 0,
-                "zh_name": r[4] or "", "en_name": r[5] or "",
-                "sell_price": r[6], "buy_price": r[7],
-                "plan_usage": plan_qty,
-                "plan_remain": remain,
-            })
+            items.append(
+                {
+                    "id": r[0],
+                    "type_id": tid,
+                    "quantity": stock_qty,
+                    "cost_price": r[3] or 0,
+                    "zh_name": r[4] or "",
+                    "en_name": r[5] or "",
+                    "sell_price": r[6],
+                    "buy_price": r[7],
+                    "plan_usage": plan_qty,
+                    "plan_remain": remain,
+                }
+            )
         return items
 
 
@@ -153,20 +165,27 @@ def add_item(hangar_id: int, type_id: int, quantity: int, cost_price: float = 0)
         c = conn.cursor()
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-        c.execute("SELECT id, quantity, cost_price FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
-                  (hangar_id, type_id))
+        c.execute(
+            "SELECT id, quantity, cost_price FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
+            (hangar_id, type_id),
+        )
         row = c.fetchone()
         if row:
             item_id, old_qty, old_cost = row
             old_cost = old_cost or 0
             total_qty = old_qty + quantity
             avg_cost = (old_qty * old_cost + quantity * cost_price) / total_qty if total_qty > 0 else 0
-            c.execute("UPDATE inventory_items SET quantity = ?, cost_price = ?, created_at = ? WHERE id = ?",
-                      (total_qty, round(avg_cost, 2), now, item_id))
+            c.execute(
+                "UPDATE inventory_items SET quantity = ?, cost_price = ?, created_at = ? WHERE id = ?",
+                (total_qty, round(avg_cost, 2), now, item_id),
+            )
             return item_id
         else:
-            c.execute("""INSERT INTO inventory_items (hangar_id, type_id, quantity, cost_price, created_at)
-                         VALUES (?, ?, ?, ?, ?)""", (hangar_id, type_id, quantity, cost_price, now))
+            c.execute(
+                """INSERT INTO inventory_items (hangar_id, type_id, quantity, cost_price, created_at)
+                         VALUES (?, ?, ?, ?, ?)""",
+                (hangar_id, type_id, quantity, cost_price, now),
+            )
             return c.lastrowid
 
 
@@ -199,32 +218,42 @@ def move_items(item_ids: list[int], to_hangar_id: int):
                 continue
             _, type_id, qty, cost = row
             c.execute("DELETE FROM inventory_items WHERE id = ?", (item_id,))
-            c.execute("SELECT id, quantity, cost_price FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
-                      (to_hangar_id, type_id))
+            c.execute(
+                "SELECT id, quantity, cost_price FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
+                (to_hangar_id, type_id),
+            )
             existing = c.fetchone()
             if existing:
                 tid, old_q, old_c = existing
                 old_c = old_c or 0
                 total_q = old_q + qty
                 avg_cost = (old_q * old_c + qty * cost) / total_q if total_q > 0 else 0
-                c.execute("UPDATE inventory_items SET quantity = ?, cost_price = ? WHERE id = ?",
-                          (total_q, round(avg_cost, 2), tid))
+                c.execute(
+                    "UPDATE inventory_items SET quantity = ?, cost_price = ? WHERE id = ?",
+                    (total_q, round(avg_cost, 2), tid),
+                )
             else:
-                c.execute("""INSERT INTO inventory_items (hangar_id, type_id, quantity, cost_price, created_at)
-                             VALUES (?, ?, ?, ?, datetime('now'))""", (to_hangar_id, type_id, qty, cost))
+                c.execute(
+                    """INSERT INTO inventory_items (hangar_id, type_id, quantity, cost_price, created_at)
+                             VALUES (?, ?, ?, ?, datetime('now'))""",
+                    (to_hangar_id, type_id, qty, cost),
+                )
 
 
 def get_total_value(hangar_id: int, price_type: str = "sell", discount: float = 0) -> dict:
     col = "sell_price" if price_type == "sell" else "buy_price"
     with db.connect("user", "mkt") as conn:
         c = conn.cursor()
-        c.execute(f"""
+        c.execute(
+            f"""
             SELECT ii.quantity, mkt.market_prices.{col}
             FROM inventory_items ii
             LEFT JOIN mkt.market_prices ON mkt.market_prices.type_id = ii.type_id
             AND mkt.market_prices.region_id = 10000002
             WHERE ii.hangar_id = ?
-        """, (hangar_id,))
+        """,
+            (hangar_id,),
+        )
         total = 0
         count = 0
         for qty, price in c.fetchall():
@@ -242,15 +271,25 @@ def get_total_value(hangar_id: int, price_type: str = "sell", discount: float = 
 
 # ── 用户蓝图管理 ──
 
-def add_blueprint(hangar_id: int, blueprint_type_id: int, is_bpo: bool = True,
-                  me_level: int = 0, te_level: int = 0, runs: int = 1,
-                  quantity: int = 1, notes: str = "") -> int:
+
+def add_blueprint(
+    hangar_id: int,
+    blueprint_type_id: int,
+    is_bpo: bool = True,
+    me_level: int = 0,
+    te_level: int = 0,
+    runs: int = 1,
+    quantity: int = 1,
+    notes: str = "",
+) -> int:
     with db.connect("user") as conn:
         c = conn.cursor()
-        c.execute("""INSERT INTO user_blueprints (hangar_id, blueprint_type_id, is_bpo,
+        c.execute(
+            """INSERT INTO user_blueprints (hangar_id, blueprint_type_id, is_bpo,
                      me_level, te_level, runs, quantity, notes)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                  (hangar_id, blueprint_type_id, int(is_bpo), me_level, te_level, runs, quantity, notes))
+            (hangar_id, blueprint_type_id, int(is_bpo), me_level, te_level, runs, quantity, notes),
+        )
         return c.lastrowid
 
 
@@ -259,13 +298,16 @@ def get_blueprints(hangar_id: int = None) -> list[dict]:
     with db.connect("user", "ref") as conn:
         c = conn.cursor()
         if hangar_id is not None:
-            c.execute("""SELECT ub.id, ub.hangar_id, ub.blueprint_type_id, ub.is_bpo,
+            c.execute(
+                """SELECT ub.id, ub.hangar_id, ub.blueprint_type_id, ub.is_bpo,
                          ub.me_level, ub.te_level, ub.runs, ub.quantity, ub.notes,
                          i.zh_name, i.en_name
                          FROM user_blueprints ub
                          LEFT JOIN ref.item i ON ub.blueprint_type_id = i.type_id
                          WHERE ub.hangar_id = ?
-                         ORDER BY i.zh_name""", (hangar_id,))
+                         ORDER BY i.zh_name""",
+                (hangar_id,),
+            )
         else:
             c.execute("""SELECT ub.id, ub.hangar_id, ub.blueprint_type_id, ub.is_bpo,
                          ub.me_level, ub.te_level, ub.runs, ub.quantity, ub.notes,
@@ -275,10 +317,17 @@ def get_blueprints(hangar_id: int = None) -> list[dict]:
                          ORDER BY i.zh_name""")
         return [
             {
-                "id": r[0], "hangar_id": r[1], "blueprint_type_id": r[2],
-                "is_bpo": bool(r[3]), "me_level": r[4], "te_level": r[5],
-                "runs": r[6], "quantity": r[7], "notes": r[8],
-                "zh_name": r[9] or "", "en_name": r[10] or "",
+                "id": r[0],
+                "hangar_id": r[1],
+                "blueprint_type_id": r[2],
+                "is_bpo": bool(r[3]),
+                "me_level": r[4],
+                "te_level": r[5],
+                "runs": r[6],
+                "quantity": r[7],
+                "notes": r[8],
+                "zh_name": r[9] or "",
+                "en_name": r[10] or "",
             }
             for r in c.fetchall()
         ]
@@ -349,46 +398,60 @@ def update_blueprints_batch(ids: list[int], **kwargs) -> int:
 def get_blueprint_product_info(blueprint_type_id: int) -> dict | None:
     """获取蓝图的产物信息（名称、产量、制造时间）"""
     from core.eve_formulas import resolve_item_name
+
     with db.connect("bp", "ref") as conn:
         c = conn.cursor()
-        c.execute("""
+        c.execute(
+            """
             SELECT bp.product_type_id, bp.quantity, ba.time
             FROM blueprint_products bp
             JOIN blueprint_activities ba ON ba.blueprint_type_id = bp.blueprint_type_id
                 AND ba.activity = bp.activity
             WHERE bp.blueprint_type_id = ? AND bp.activity = 'manufacturing'
             LIMIT 1
-        """, (blueprint_type_id,))
+        """,
+            (blueprint_type_id,),
+        )
         row = c.fetchone()
         if not row:
             return None
         prod_id, prod_qty, base_time = row
         prod_name = resolve_item_name(c, prod_id)
-        return {"product_type_id": prod_id, "product_name": prod_name,
-                "product_quantity": prod_qty or 1, "base_time": base_time}
+        return {
+            "product_type_id": prod_id,
+            "product_name": prod_name,
+            "product_quantity": prod_qty or 1,
+            "base_time": base_time,
+        }
 
 
 def get_blueprint_product_info_batch(bp_ids: list[int]) -> dict[int, dict]:
     """批量获取蓝图产物信息，返回 {blueprint_type_id: {product_type_id, product_name, product_quantity, base_time}}"""
     from core.eve_formulas import resolve_item_name
+
     if not bp_ids:
         return {}
     result = {}
     with db.connect("bp", "ref") as conn:
         c = conn.cursor()
         placeholders = ",".join("?" * len(bp_ids))
-        c.execute(f"""
+        c.execute(
+            f"""
             SELECT bp.blueprint_type_id, bp.product_type_id, bp.quantity, ba.time
             FROM blueprint_products bp
             JOIN blueprint_activities ba ON ba.blueprint_type_id = bp.blueprint_type_id
                 AND ba.activity = bp.activity
             WHERE bp.blueprint_type_id IN ({placeholders}) AND bp.activity = 'manufacturing'
-        """, tuple(bp_ids))
+        """,
+            tuple(bp_ids),
+        )
         for bpid, prod_id, prod_qty, base_time in c.fetchall():
             prod_name = resolve_item_name(c, prod_id)
             result[bpid] = {
-                "product_type_id": prod_id, "product_name": prod_name,
-                "product_quantity": prod_qty or 1, "base_time": base_time,
+                "product_type_id": prod_id,
+                "product_name": prod_name,
+                "product_quantity": prod_qty or 1,
+                "base_time": base_time,
             }
     return result
 
@@ -401,11 +464,14 @@ def get_blueprint_materials_batch(bp_ids: list[int]) -> dict[int, list[tuple[int
     with db.connect("bp") as conn:
         c = conn.cursor()
         placeholders = ",".join("?" * len(bp_ids))
-        c.execute(f"""
+        c.execute(
+            f"""
             SELECT blueprint_type_id, material_type_id, quantity
             FROM blueprint_materials
             WHERE blueprint_type_id IN ({placeholders}) AND activity = 'manufacturing'
-        """, tuple(bp_ids))
+        """,
+            tuple(bp_ids),
+        )
         for bpid, mid, qty in c.fetchall():
             result.setdefault(bpid, []).append((mid, qty))
     return result
