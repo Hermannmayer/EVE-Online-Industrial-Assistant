@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.container import get_container
 from core.paths import data_dir
+from services.char_config_validator import load_char_config
 
 # ═══════════════════════════════════════════
 #  游戏公式
@@ -164,40 +165,7 @@ def char_config_path() -> str:
 def load_all_data() -> dict:
     """加载完整配置"""
     path = char_config_path()
-    default = {
-        "current": "main",
-        "characters": {
-            "main": {
-                "skills": {},
-                "implants": [None, None, None],
-                "market": {
-                    "jita":  {"faction_standing": 5.0, "corp_standing": 5.0},
-                    "amarr": {"faction_standing": 5.0, "corp_standing": 5.0},
-                    "dodixie": {"faction_standing": 5.0, "corp_standing": 5.0},
-                    "rens":  {"faction_standing": 5.0, "corp_standing": 5.0},
-                }
-            }
-        }
-    }
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                # 合并默认值确保结构完整
-                for cname in data.get("characters", {}):
-                    c = data["characters"][cname]
-                    c.setdefault("skills", {})
-                    c.setdefault("implants", [None, None, None])
-                    c.setdefault("market", {
-                        "jita": {"faction_standing": 5.0, "corp_standing": 5.0},
-                        "amarr": {"faction_standing": 5.0, "corp_standing": 5.0},
-                        "dodixie": {"faction_standing": 5.0, "corp_standing": 5.0},
-                        "rens": {"faction_standing": 5.0, "corp_standing": 5.0},
-                    })
-                return data
-        except Exception:
-            pass
-    return default
+    return load_char_config(path)
 
 
 def save_all_data(data: dict):

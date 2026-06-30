@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.constants import TRADE_HUBS
 import ui_pyside6.theme as theme
 from core.container import get_container
 from core.paths import (
@@ -52,6 +53,8 @@ NAV_TREE = [
     ("query", "物品查询", "🔍"),
     ("industry", "工业制造", "🏭"),
     ("trade", "市场贸易", "📊"),
+    ("watchlist", "价格监控", "🔔"),
+    ("contract", "合同市场", "📄"),
     ("storage", "仓库管理", "📦"),
 ]
 
@@ -132,7 +135,7 @@ class MainWindow(QMainWindow):
         toolbar.setIconSize(QSize(16, 16))
 
         self._region_combo = QComboBox()
-        self._region_combo.addItems(["Jita", "Amarr", "Dodixie", "Rens", "全部区域"])
+        self._region_combo.addItems(TRADE_HUBS + ["全部区域"])
         self._region_combo.setCurrentText("全部区域")
         self._region_combo.setFixedWidth(120)
         self._region_combo.currentTextChanged.connect(self._on_region_changed)
@@ -220,7 +223,7 @@ class MainWindow(QMainWindow):
 
         # ── 初始化定时器：价格检查 ──
         self._price_worker: PriceUpdateWorker | None = None
-        self._update_regions: list[str] = ["Jita", "Amarr", "Dodixie", "Rens"]
+        self._update_regions: list[str] = list(TRADE_HUBS)
         self._update_interval_minutes = self._load_interval()
         self._auto_update_enabled = self._load_auto_update()
         self._price_timer: QTimer | None = None
@@ -376,26 +379,33 @@ class MainWindow(QMainWindow):
         page = self._pages.get(key)
         if page and self.content_stack.indexOf(page) >= 0:
             self.content_stack.setCurrentWidget(page)
+            # 页面切换时更新状态栏
+            if hasattr(page, "update_status_bar"):
+                page.update_status_bar()
 
     # ═══════════════════════════════════════
     #  页面注册
     # ═══════════════════════════════════════
 
     def _register_pages(self):
+        from ui_pyside6.views.contract_view import ContractPage
         from ui_pyside6.views.estimate_view import EstimatePage
         from ui_pyside6.views.industry_view import IndustryPage
         from ui_pyside6.views.inventory_view import InventoryPage
         from ui_pyside6.views.query_view import QueryPage
         from ui_pyside6.views.trade_view import TradePage
+        from ui_pyside6.views.watchlist_view import WatchlistPage
 
         # 已实现的页面
         self._pages["estimate"] = EstimatePage(self)
         self._pages["query"] = QueryPage(self)
         self._pages["industry"] = IndustryPage(self)
         self._pages["trade"] = TradePage(self)
+        self._pages["watchlist"] = WatchlistPage(self)
+        self._pages["contract"] = ContractPage(self)
         self._pages["storage"] = InventoryPage(self)
 
-        for key in ["estimate", "query", "industry", "trade", "storage"]:
+        for key in ["estimate", "query", "industry", "trade", "watchlist", "contract", "storage"]:
             self.content_stack.addWidget(self._pages[key])
 
     # ═══════════════════════════════════════
@@ -426,7 +436,7 @@ class MainWindow(QMainWindow):
         self._update_progress.setVisible(True)
         self._update_progress.setRange(0, 0)  # indeterminate
 
-        regions = None if set(self._update_regions) == {"Jita", "Amarr", "Dodixie", "Rens"} else self._update_regions
+        regions = None if set(self._update_regions) == set(TRADE_HUBS) else self._update_regions
         if regions:
             self._status_label.setText(f"正在更新 {', '.join(regions)}...")
         else:
@@ -440,7 +450,7 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         menu.setObjectName("sys_menu")
         self._region_actions = {}
-        for name in ["Jita", "Amarr", "Dodixie", "Rens"]:
+        for name in TRADE_HUBS:
             action = QAction(name, self)
             action.setCheckable(True)
             action.setChecked(True)
@@ -459,7 +469,7 @@ class MainWindow(QMainWindow):
         elif name in self._update_regions:
             self._update_regions.remove(name)
 
-        all_selected = set(self._update_regions) == {"Jita", "Amarr", "Dodixie", "Rens"}
+        all_selected = set(self._update_regions) == set(TRADE_HUBS)
         if all_selected:
             self._update_btn.setText("更新价格")
         elif self._update_regions:

@@ -34,9 +34,10 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
+from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.paths import ICON_DIR
-from services.scoring import TRADE_HUB_IDS, get_price
+from services.scoring import get_price
 
 ICON_SIZE = 32
 

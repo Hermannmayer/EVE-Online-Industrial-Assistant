@@ -347,7 +347,7 @@ def update_blueprints_batch(ids: list[int], **kwargs) -> int:
 
 def get_blueprint_product_info(blueprint_type_id: int) -> dict | None:
     """获取蓝图的产物信息（名称、产量、制造时间）"""
-    from services.scoring import resolve_item_name
+    from core.eve_formulas import resolve_item_name
     with db.connect("bp", "ref") as conn:
         c = conn.cursor()
         c.execute("""
@@ -369,7 +369,7 @@ def get_blueprint_product_info(blueprint_type_id: int) -> dict | None:
 
 def get_blueprint_product_info_batch(bp_ids: list[int]) -> dict[int, dict]:
     """批量获取蓝图产物信息，返回 {blueprint_type_id: {product_type_id, product_name, product_quantity, base_time}}"""
-    from services.scoring import resolve_item_name
+    from core.eve_formulas import resolve_item_name
     if not bp_ids:
         return {}
     result = {}

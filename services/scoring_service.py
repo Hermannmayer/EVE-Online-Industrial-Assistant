@@ -2,8 +2,7 @@
 评分服务 — 将制造/贸易评分逻辑封装为可注入的服务类
 """
 
-from services.database_manager import DatabaseManager
-from services.scoring import (
+from core.eve_formulas import (
     ACCOUNTING_MULT,
     ADV_BROKER_DISCOUNT,
     ADV_INDUSTRY_SKILL_MULT,
@@ -18,12 +17,15 @@ from services.scoring import (
     STANDING_CORP_WEIGHT,
     STANDING_FACTION_WEIGHT,
     TE_MULT_PER_LEVEL,
+    resolve_item_name,
+)
+from services.database_manager import DatabaseManager
+from services.scoring import (
+    ScoringCache,
     get_price,
     get_system_cost_index,
     get_volume,
-    resolve_item_name,
 )
-from services.scoring_cache import ScoringCache
 
 
 class ScoringService:

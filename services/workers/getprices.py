@@ -13,18 +13,14 @@ from datetime import datetime, timezone
 import aiohttp
 import aiosqlite
 
+from core.constants import TRADE_HUB_IDS
 from core.logger import log
 from core.paths import market_db_path, progress_file
 
 DATABASE_PATH = market_db_path()
 ESI_BASE_URL = "https://esi.evetech.net/latest"
 
-TRADE_REGIONS = [
-    ("Jita",    10000002),
-    ("Amarr",   10000043),
-    ("Dodixie", 10000032),
-    ("Rens",    10000030),
-]
+TRADE_REGIONS = [(name, rid) for name, rid in TRADE_HUB_IDS.items()]
 
 # 缓存已知页数，下次跳过 page-1 发现环节
 _PAGE_CACHE: dict[str, int] = {}
