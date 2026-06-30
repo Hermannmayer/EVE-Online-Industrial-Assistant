@@ -311,6 +311,55 @@ class TestContractTableModel:
         assert bg1 is not None
 
 
+
+    # ═══════════════════════════════════════
+    #  空数据状态测试
+    # ═══════════════════════════════════════
+
+    def test_empty_model_get_row_returns_none(self, qapp):
+        """空模型 get_row 返回 None"""
+        model = ContractTableModel()
+        assert model.get_row(0) is None
+        assert model.get_row(-1) is None
+
+    def test_set_rows_empty_clears_data(self, qapp):
+        """设置空列表时应清空数据"""
+        model = ContractTableModel()
+        model.set_rows(SAMPLE_CONTRACTS)
+        assert model.rowCount() == 5
+        model.set_rows([])
+        assert model.rowCount() == 0
+        assert model.get_row(0) is None
+
+    def test_get_row_out_of_range(self, qapp):
+        """越界索引返回 None"""
+        model = ContractTableModel()
+        model.set_rows(SAMPLE_CONTRACTS)
+        assert model.get_row(100) is None
+        assert model.get_row(-5) is None
+        assert model.get_row(5) is None  # 0-based, 共有 5 行
+
+    def test_column_count_constant(self, qapp):
+        """列数应为常量"""
+        model = ContractTableModel()
+        assert model.columnCount() == 10
+        model.set_rows(SAMPLE_CONTRACTS)
+        assert model.columnCount() == 10
+        model.set_rows([])
+        assert model.columnCount() == 10
+
+    def test_header_data_valid_section(self, qapp):
+        """有效 section 应返回列名"""
+        from PySide6.QtCore import Qt
+
+        model = ContractTableModel()
+        for s in range(model.columnCount()):
+            h = model.headerData(s, Qt.Orientation.Horizontal)
+            assert h is not None
+            assert isinstance(h, str)
+            assert len(h) > 0
+
+
 # ═══════════════════════════════════════
 #  ContractFilterProxy 测试
 # ═══════════════════════════════════════
