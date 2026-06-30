@@ -76,6 +76,14 @@ class DatabaseManager:
     def _get_or_create(self, primary: DB_ALIAS, attach: tuple[str, ...]) -> sqlite3.Connection:
         """从缓存获取连接，不存在则创建并缓存"""
         cache = self._get_cache()
+        # 校验别名有效性
+        valid_aliases = set(DB_PATH_MAP.keys())
+        if primary not in valid_aliases:
+            raise ValueError(f"Unknown database alias: {primary}")
+        for alias in attach:
+            if alias not in valid_aliases:
+                raise ValueError(f"Unknown database alias: {alias}")
+
         key = self._cache_key(primary, attach)
 
         if key in cache:
