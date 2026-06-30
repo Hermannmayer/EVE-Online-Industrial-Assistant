@@ -1,6 +1,7 @@
 """路径模块单元测试 — 验证 core.paths 的目录和文件路径函数"""
 
 import os
+import sys
 
 from core.paths import (
     app_root,
@@ -85,3 +86,59 @@ class TestDataPaths:
 
     def test_icon_cache_under_data_dir(self):
         assert icon_cache_dir().startswith(data_dir())
+
+
+class TestFrozenBoundary:
+    """边界测试：frozen 与非 frozen 模式下 app_root() 行为"""
+
+    def test_app_root_dev_contains_core(self, monkeypatch):
+        """开发模式下 app_root 应包含 core 目录"""
+        monkeypatch.delattr("sys.frozen", raising=False)
+        root = app_root()
+        assert os.path.isdir(os.path.join(root, "core"))
+
+    def test_app_root_frozen_uses_executable_dir(self, monkeypatch):
+        """frozen 模式下 app_root 应为 sys.executable 所在目录"""
+        monkeypatch.setattr("sys.frozen", True, raising=False)
+        root = app_root()
+        assert root == os.path.dirname(sys.executable)
+
+    def test_frozen_flag_off_by_default(self, monkeypatch):
+        """未设置 sys.frozen 时 is_frozen 应返回 False"""
+        monkeypatch.delattr("sys.frozen", raising=False)
+        from core.paths import is_frozen
+
+        assert is_frozen() is False
+
+
+class TestEnsureDirsBoundary:
+    """边界测试：ensure_dirs_exist 的幂等性"""
+
+    def test_ensure_dirs_exist_idempotent(self):
+        """重复调用 ensure_dirs_exist 不应抛出异常"""
+        from core.paths import ensure_dirs_exist
+
+        ensure_dirs_exist()
+        ensure_dirs_exist()  # 第二次调用，目录已存在
+
+
+class TestCompatBoundary:
+    """边界测试：旧兼容路径 database_path() 与各分库路径"""
+
+    def test_database_path_is_items_db(self):
+        """database_path() 应始终指向 items.db"""
+        assert database_path().endswith("items.db")
+
+    def test_database_path_differs_from_all_split_dbs(self):
+        """database_path()（items.db）不应与任何分库路径重叠"""
+        split_dbs = [
+            reference_db_path(),
+            market_db_path(),
+            user_db_path(),
+            blueprint_db_path(),
+        ]
+        assert database_path() not in split_dbs
+
+    def test_database_path_is_under_database_dir(self):
+        """database_path() 应在 database_dir 下"""
+        assert database_path().startswith(database_dir())
