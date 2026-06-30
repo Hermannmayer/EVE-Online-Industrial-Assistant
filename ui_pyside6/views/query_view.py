@@ -635,6 +635,12 @@ class QueryPage(QWidget):
         clear_btn.clicked.connect(self._clear_search)
         sb_layout.addWidget(clear_btn)
 
+        batch_btn = QPushButton("批量查价")
+        batch_btn.setObjectName("batch_price_btn")
+        batch_btn.setToolTip("一次性查询多个物品的价格")
+        batch_btn.clicked.connect(self._open_batch_price)
+        sb_layout.addWidget(batch_btn)
+
         layout.addWidget(search_bar)
 
         # ── 进度条 ──
@@ -719,6 +725,25 @@ class QueryPage(QWidget):
         """)
         self._count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
         self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+
+        # batch_btn uses the same style as all_items_btn
+        batch_btn = self.findChild(QPushButton, "batch_price_btn")
+        if batch_btn:
+            batch_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {theme.BG_SURFACE_LIGHT};
+                    color: {theme.TEXT_PRIMARY};
+                    border: 1px solid {theme.BORDER};
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                }}
+                QPushButton:hover {{
+                    background-color: {theme.PRIMARY};
+                    color: {theme.TEXT_ON_PRIMARY};
+                    border: 1px solid {theme.PRIMARY};
+                }}
+            """)
 
         # ── 当前订单类型ID ──
         self._current_order_type_id: int | None = None
@@ -1090,6 +1115,12 @@ class QueryPage(QWidget):
             self._all_items_dialog = AllItemsDialog(self)
         self._all_items_dialog.show()
         self._all_items_dialog.raise_()
+
+    def _open_batch_price(self):
+        from ui_pyside6.views.batch_price_dialog import BatchPriceDialog
+
+        dlg = BatchPriceDialog(self)
+        dlg.exec()
 
     def eventFilter(self, obj, event):
         if obj is self._search_input:
