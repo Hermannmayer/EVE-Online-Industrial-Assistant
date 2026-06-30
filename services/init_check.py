@@ -4,7 +4,7 @@
 import os
 import sqlite3
 
-from core.paths import REF_DB_PATH, MKT_DB_PATH, BP_DB_PATH
+from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH
 
 
 def check_items() -> int:
@@ -78,7 +78,7 @@ def check_icons() -> tuple[int, int]:
     try:
         conn = sqlite3.connect(REF_DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM item WHERE iconID > 0")
+        c.execute("SELECT COUNT(*) FROM item WHERE market_group_id IS NOT NULL AND market_group_id > 0")
         total = c.fetchone()[0]
         conn.close()
     except Exception:
@@ -87,16 +87,14 @@ def check_icons() -> tuple[int, int]:
 
 
 def check_all() -> dict:
-    """
-    返回各组件状态:
-    { "items": bool, "prices": bool, "blueprints": bool, "implants": bool, "icons": bool }
-    """
+    """返回各组件状态 { "items": bool, "prices": bool, "blueprints": bool, "implants": bool, "icons": bool }"""
+    cached, total = check_icons()
     return {
         "items": check_items() >= 10000,
         "prices": check_prices() > 0,
         "blueprints": check_blueprints() >= 1000,
         "implants": check_implants() > 0,
-        "icons": check_icons()[0] >= check_icons()[1],
+        "icons": cached >= total,
     }
 
 
