@@ -994,7 +994,7 @@ class AllItemsDialog(QDialog):
             mat_lines = "\n".join(
                 f"  {m['name']} x{m['qty']:,} @ {m['unit_price']:,.2f} = {m['subtotal']:,.0f}" for m in mats
             )
-            broker_relist_fee = b.get('broker_rate', 0) * rev / 100 * (1 - b.get('relist_discount', 50) / 100)
+            broker_relist_fee = b.get("broker_rate", 0) * rev / 100 * (1 - b.get("relist_discount", 50) / 100)
             return (
                 f"每批利润核算\n"
                 f"{'─' * 24}\n"
