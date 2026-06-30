@@ -155,8 +155,14 @@ def qapp():
 
 @pytest.fixture
 def mock_db():
-    """在 with 块内将 services.database_manager.get_db 替换为 mock"""
-    with patch("services.database_manager.get_db", return_value=_mock_db_manager()):
+    """在 with 块内将 DB 相关依赖替换为 mock"""
+    mock_mgr = _mock_db_manager()
+    with (
+        patch("services.database_manager.get_db", return_value=mock_mgr),
+        patch("core.container.get_container") as mock_cont,
+    ):
+        cont = mock_cont.return_value
+        cont.db = mock_mgr
         yield
 
 
