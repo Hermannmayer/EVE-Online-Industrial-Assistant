@@ -48,3 +48,5 @@ sde.zip
 
 # CI 产物
 greatcto-ci-output.sarif
+
+# Ruff cache.ruff_cache/
