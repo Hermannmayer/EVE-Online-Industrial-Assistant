@@ -154,7 +154,7 @@ class TestPlanTableModel:
         ]
         model = PlanTableModel(plans)
         assert model.rowCount() == 1
-        assert model.columnCount() == 12
+        assert model.columnCount() == 13  # 12 数据列 + 1 操作按钮列
 
     def test_header_data(self, qapp):
         """表头正确"""
@@ -178,26 +178,26 @@ class TestPlanTableModel:
                 "margin": 12.5,
                 "score": 85,
                 "iskph": 1_000_000,
-                "status": "running",
+                "status": "in_progress",
             }
         ]
         model = PlanTableModel(plans)
         assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == "渡鸦级"
         assert model.data(model.index(0, 1), Qt.ItemDataRole.DisplayRole) == "5"
         assert model.data(model.index(0, 7), Qt.ItemDataRole.DisplayRole) == "5,000,000"
-        assert model.data(model.index(0, 11), Qt.ItemDataRole.DisplayRole) == "运行"
+        assert model.data(model.index(0, 11), Qt.ItemDataRole.DisplayRole) == "生产中"
 
     def test_status_label_mapping(self, qapp):
-        """状态映射: pending→待排, running→运行, done→完成"""
+        """状态映射: pending→待生产, in_progress→生产中, completed→已完成"""
         plans = [
             {"product_type_id": 1, "runs": 1, "parallels": 1, "me_level": 0, "te_level": 0, "status": "pending"},
-            {"product_type_id": 2, "runs": 1, "parallels": 1, "me_level": 0, "te_level": 0, "status": "running"},
-            {"product_type_id": 3, "runs": 1, "parallels": 1, "me_level": 0, "te_level": 0, "status": "done"},
+            {"product_type_id": 2, "runs": 1, "parallels": 1, "me_level": 0, "te_level": 0, "status": "in_progress"},
+            {"product_type_id": 3, "runs": 1, "parallels": 1, "me_level": 0, "te_level": 0, "status": "completed"},
         ]
         model = PlanTableModel(plans)
-        assert model.data(model.index(0, 11), Qt.ItemDataRole.DisplayRole) == "待排"
-        assert model.data(model.index(1, 11), Qt.ItemDataRole.DisplayRole) == "运行"
-        assert model.data(model.index(2, 11), Qt.ItemDataRole.DisplayRole) == "完成"
+        assert model.data(model.index(0, 11), Qt.ItemDataRole.DisplayRole) == "待生产"
+        assert model.data(model.index(1, 11), Qt.ItemDataRole.DisplayRole) == "生产中"
+        assert model.data(model.index(2, 11), Qt.ItemDataRole.DisplayRole) == "已完成"
 
     def test_get_plan(self):
         """get_plan 返回正确"""
