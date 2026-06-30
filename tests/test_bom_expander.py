@@ -29,8 +29,11 @@ class TestBomNode:
 
     def test_default_construction(self):
         node = BomNode(
-            type_id=34, name="Tritanium", quantity=100.0,
-            base_quantity=100, is_intermediate=False,
+            type_id=34,
+            name="Tritanium",
+            quantity=100.0,
+            base_quantity=100,
+            is_intermediate=False,
         )
         assert node.type_id == 34
         assert node.name == "Tritanium"
@@ -45,14 +48,23 @@ class TestBomNode:
 
     def test_with_children(self):
         child = BomNode(
-            type_id=34, name="Tritanium", quantity=500.0,
-            base_quantity=500, is_intermediate=False,
+            type_id=34,
+            name="Tritanium",
+            quantity=500.0,
+            base_quantity=500,
+            is_intermediate=False,
         )
         parent = BomNode(
-            type_id=587, name="Raven", quantity=1.0,
-            base_quantity=1, is_intermediate=True,
-            children=[child], depth=1, unit_price=50_000_000,
-            subtotal=2500.0, blueprint_type_id=3001,
+            type_id=587,
+            name="Raven",
+            quantity=1.0,
+            base_quantity=1,
+            is_intermediate=True,
+            children=[child],
+            depth=1,
+            unit_price=50_000_000,
+            subtotal=2500.0,
+            blueprint_type_id=3001,
         )
         assert len(parent.children) == 1
         assert parent.children[0].type_id == 34
@@ -139,16 +151,23 @@ class TestExpand:
         # 但 _resolve_name 会查表，除非是矿物
         # 使用非矿物 type_id 确保走查询路径
         conn.execute.return_value.fetchone.side_effect = [
-            ("Widget", None),       # _resolve_name
-            None,                    # _find_blueprint_for_product → no bp
+            ("Widget", None),  # _resolve_name
+            None,  # _find_blueprint_for_product → no bp
         ]
 
         from services.bom_expander import _expand
 
         node = _expand(
-            conn=conn, type_id=9999, needed_qty=100.0,
-            bp_me=10, price_hub="Jita", price_type="sell",
-            depth=0, max_depth=5, seen=set(), cache={},
+            conn=conn,
+            type_id=9999,
+            needed_qty=100.0,
+            bp_me=10,
+            price_hub="Jita",
+            price_type="sell",
+            depth=0,
+            max_depth=5,
+            seen=set(),
+            cache={},
         )
 
         assert node.type_id == 9999
@@ -186,9 +205,16 @@ class TestExpand:
         from services.bom_expander import _expand
 
         node = _expand(
-            conn=conn, type_id=2001, needed_qty=1.0,
-            bp_me=10, price_hub="Jita", price_type="sell",
-            depth=0, max_depth=5, seen=set(), cache={},
+            conn=conn,
+            type_id=2001,
+            needed_qty=1.0,
+            bp_me=10,
+            price_hub="Jita",
+            price_type="sell",
+            depth=0,
+            max_depth=5,
+            seen=set(),
+            cache={},
         )
 
         assert node.type_id == 2001
@@ -206,9 +232,16 @@ class TestExpand:
         from services.bom_expander import _expand
 
         node = _expand(
-            conn=conn, type_id=999, needed_qty=5.0,
-            bp_me=0, price_hub="Jita", price_type="buy",
-            depth=6, max_depth=5, seen=set(), cache={},
+            conn=conn,
+            type_id=999,
+            needed_qty=5.0,
+            bp_me=0,
+            price_hub="Jita",
+            price_type="buy",
+            depth=6,
+            max_depth=5,
+            seen=set(),
+            cache={},
         )
         assert node.is_intermediate is False
         assert node.quantity == 5.0
@@ -222,9 +255,16 @@ class TestExpand:
         from services.bom_expander import _expand
 
         node = _expand(
-            conn=conn, type_id=2001, needed_qty=1.0,
-            bp_me=5, price_hub="Jita", price_type="sell",
-            depth=2, max_depth=5, seen={2001}, cache={},
+            conn=conn,
+            type_id=2001,
+            needed_qty=1.0,
+            bp_me=5,
+            price_hub="Jita",
+            price_type="sell",
+            depth=2,
+            max_depth=5,
+            seen={2001},
+            cache={},
         )
         assert node.is_intermediate is False
         assert node.type_id == 2001
@@ -253,9 +293,16 @@ class TestExpand:
         from services.bom_expander import _expand
 
         node = _expand(
-            conn=conn, type_id=2002, needed_qty=10.0,
-            bp_me=0, price_hub="Jita", price_type="sell",
-            depth=0, max_depth=5, seen=set(), cache={},
+            conn=conn,
+            type_id=2002,
+            needed_qty=10.0,
+            bp_me=0,
+            price_hub="Jita",
+            price_type="sell",
+            depth=0,
+            max_depth=5,
+            seen=set(),
+            cache={},
         )
         assert node.is_intermediate is False
         assert node.blueprint_type_id == 4001
@@ -279,7 +326,7 @@ class TestExpandBom:
         # Using type_id = 9999 (non-mineral, no blueprint)
         mock_conn.execute.return_value.fetchone.side_effect = [
             ("Simple", None),  # _resolve_name
-            None,               # _find_blueprint_for_product
+            None,  # _find_blueprint_for_product
         ]
 
         result = expand_bom(type_id=9999, quantity=100, bp_me=10)
@@ -369,13 +416,21 @@ class TestExpandBom:
     def test_print_tree(self):
         """print_tree 生成可读树结构"""
         child = BomNode(
-            type_id=34, name="Tritanium", quantity=500.0,
-            base_quantity=500, is_intermediate=False, subtotal=2500.0,
+            type_id=34,
+            name="Tritanium",
+            quantity=500.0,
+            base_quantity=500,
+            is_intermediate=False,
+            subtotal=2500.0,
         )
         parent = BomNode(
-            type_id=587, name="Raven", quantity=1.0,
-            base_quantity=1, is_intermediate=True,
-            children=[child], subtotal=2500.0,
+            type_id=587,
+            name="Raven",
+            quantity=1.0,
+            base_quantity=1,
+            is_intermediate=True,
+            children=[child],
+            subtotal=2500.0,
         )
         output = print_tree(parent)
         assert "[造]" in output or "[买]" in output
