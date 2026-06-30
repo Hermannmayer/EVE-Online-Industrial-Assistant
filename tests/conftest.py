@@ -1,5 +1,7 @@
 """pytest 共享配置与 fixtures"""
 
+import shutil
+import sqlite3
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -7,48 +9,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtWidgets import QApplication
 
+# ════════════════════════════════════════════════════════════════
+#  辅助：创建标准临时数据库套件
+# ════════════════════════════════════════════════════════════════
 
-def _mock_db_manager():
-    """返回一个用于替换 database_manager.get_db 的 mock DatabaseManager"""
-    manager = MagicMock()
-    conn = MagicMock()
-    cursor = MagicMock()
-    cursor.fetchall.return_value = []
-    cursor.fetchone.return_value = None
-    conn.cursor.return_value = cursor
-    conn.executescript = MagicMock()
-    conn.execute.return_value = cursor
-
-    cm = MagicMock()
-    cm.__enter__ = MagicMock(return_value=conn)
-    cm.__exit__ = MagicMock(return_value=False)
-    manager.connect.return_value = cm
-    manager.direct_connect.return_value = conn
-    return manager
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    """提供全局 QApplication 实例，供 PySide6 UI 测试使用"""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    yield app
-
-
-@pytest.fixture
-def mock_db():
-    """在 with 块内将 services.database_manager.get_db 替换为 mock"""
-    with patch("services.database_manager.get_db", return_value=_mock_db_manager()):
-        yield
-
-
-@pytest.fixture
-def temp_db():
-    """创建临时 SQLite 数据库用于评分服务集成测试"""
-    import sqlite3
-
-    tmpdir = tempfile.mkdtemp(prefix="eve_test_")
+def _create_temp_databases(tmpdir: str):
+    """在 tmpdir 中创建 ref/mkt/bp/user 四个数据库，返回 {alias: path} 字典"""
     ref_path = Path(tmpdir) / "reference.db"
     mkt_path = Path(tmpdir) / "market.db"
     bp_path = Path(tmpdir) / "blueprint.db"
@@ -88,10 +54,10 @@ def temp_db():
             sell_volume INTEGER DEFAULT 0,
             fetch_time TEXT
         );
-        -- 材料价格 (Jita)
+        -- 材料价格 (Jita region 10000002)
         INSERT INTO market_prices VALUES (1001, 10000002, 4.0, 5.0, 10000000, 8000000, '2026-01-01 00:00:00');
         INSERT INTO market_prices VALUES (1002, 10000002, 8.0, 9.0, 5000000, 4000000, '2026-01-01 00:00:00');
-        -- 成品价格 (Jita)
+        -- 成品价格 (Jita region 10000002)
         INSERT INTO market_prices VALUES (2001, 10000002, 50000000, 55000000, 1000000, 800000, '2026-01-01 00:00:00');
         INSERT INTO market_prices VALUES (2002, 10000002, 100000, 120000, 500000, 400000, '2026-01-01 00:00:00');
     """)
@@ -135,29 +101,144 @@ def temp_db():
     conn = sqlite3.connect(str(user_path))
     conn.close()
 
-    # Patch 路径
+    return {
+        "ref": str(ref_path),
+        "mkt": str(mkt_path),
+        "bp": str(bp_path),
+        "user": str(user_path),
+    }
+
+
+# ════════════════════════════════════════════════════════════════
+#  Mock helpers
+# ════════════════════════════════════════════════════════════════
+
+def _mock_db_manager():
+    """返回一个用于替换 database_manager.get_db 的 mock DatabaseManager"""
+    manager = MagicMock()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.fetchall.return_value = []
+    cursor.fetchone.return_value = None
+    conn.cursor.return_value = cursor
+    conn.executescript = MagicMock()
+    conn.execute.return_value = cursor
+
+    cm = MagicMock()
+    cm.__enter__ = MagicMock(return_value=conn)
+    cm.__exit__ = MagicMock(return_value=False)
+    manager.connect.return_value = cm
+    manager.direct_connect.return_value = conn
+    return manager
+
+
+# ════════════════════════════════════════════════════════════════
+#  Fixtures — Session / Qt
+# ════════════════════════════════════════════════════════════════
+
+@pytest.fixture(scope="session")
+def qapp():
+    """提供全局 QApplication 实例，供 PySide6 UI 测试使用"""
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    yield app
+
+
+# ════════════════════════════════════════════════════════════════
+#  Fixtures — Mock Database
+# ════════════════════════════════════════════════════════════════
+
+@pytest.fixture
+def mock_db():
+    """在 with 块内将 services.database_manager.get_db 替换为 mock"""
+    with patch("services.database_manager.get_db", return_value=_mock_db_manager()):
+        yield
+
+
+# ════════════════════════════════════════════════════════════════
+#  Fixtures — 真实临时数据库
+# ════════════════════════════════════════════════════════════════
+
+@pytest.fixture
+def temp_db():
+    """创建临时 SQLite 数据库（含标准测试数据），返回 DatabaseManager 实例。
+
+    数据包含:
+      - item 表: 三钛合金(1001), 类银超金属(1002), 渡鸦级(2001), 无人机(2002)
+      - market_prices: Jita 区域买卖价格
+      - blueprint: 渡鸦级蓝图(3001) + 无人机蓝图(3002)
+    """
     from services.database_manager import DB_PATH_MAP, DatabaseManager
 
+    tmpdir = tempfile.mkdtemp(prefix="eve_test_")
+    db_paths = _create_temp_databases(tmpdir)
+
     saved = dict(DB_PATH_MAP)
-    DB_PATH_MAP.update(
-        {
-            "ref": str(ref_path),
-            "mkt": str(mkt_path),
-            "user": str(user_path),
-            "bp": str(bp_path),
-        }
-    )
+    DB_PATH_MAP.update(db_paths)
 
-    # 创建新的 DatabaseManager 实例（绕过全局单例）
     db = DatabaseManager()
-
     yield db
 
-    # 恢复
+    # 恢复 & 清理
     DB_PATH_MAP.clear()
     DB_PATH_MAP.update(saved)
-
-    # 清理临时文件
-    import shutil
-
     shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@pytest.fixture
+def db_manager():
+    """创建一个使用临时数据库的 DatabaseManager，与 temp_db 功能相同。
+
+    区别：此 fixture 不预填充测试数据，适用于需要纯净数据库的测试。
+    """
+    from services.database_manager import DB_PATH_MAP, DatabaseManager
+
+    tmpdir = tempfile.mkdtemp(prefix="eve_dbmgr_")
+    ref_path = Path(tmpdir) / "reference.db"
+    mkt_path = Path(tmpdir) / "market.db"
+    bp_path = Path(tmpdir) / "blueprint.db"
+    user_path = Path(tmpdir) / "user.db"
+
+    # 创建空数据库（仅建表，不插入数据）
+    for p in (ref_path, mkt_path, bp_path, user_path):
+        conn = sqlite3.connect(str(p))
+        conn.close()
+
+    db_paths = {"ref": str(ref_path), "mkt": str(mkt_path), "bp": str(bp_path), "user": str(user_path)}
+
+    saved = dict(DB_PATH_MAP)
+    DB_PATH_MAP.update(db_paths)
+
+    db = DatabaseManager()
+    yield db
+
+    DB_PATH_MAP.clear()
+    DB_PATH_MAP.update(saved)
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@pytest.fixture
+def sample_char_config():
+    """返回一个标准的角色配置 dict，含满级技能和 Jita 声望"""
+    return {
+        "skills": {
+            "工业理论": 5,
+            "高级工业理论": 5,
+            "经纪人关系学": 5,
+            "高级经纪人关系学": 5,
+            "会计学": 5,
+        },
+        "market": {
+            "jita": {"faction_standing": 6.7, "corp_standing": 5.0},
+        },
+    }
+
+
+@pytest.fixture
+def sample_market_prices(temp_db):
+    """插入示例市场价格数据并返回 type_id。
+
+    使用 temp_db fixture（含完整测试数据库），直接返回无人机 type_id=2002。
+    """
+    return 2002

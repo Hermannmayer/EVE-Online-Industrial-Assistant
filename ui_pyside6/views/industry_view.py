@@ -28,10 +28,11 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
+from core.constants import TRADE_HUB_IDS
 from core.container import get_container
-from services.scoring import TRADE_HUB_IDS
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 from ui_pyside6.models.industry_models import MaterialTableModel, PlanTableModel, RankTableModel
+from ui_pyside6.views.compare_dialog import CompareDialog
 from ui_pyside6.workers.industry_workers import RankWorker, ScoreWorker, SearchWorker
 
 # ════════════════════════════════════════════════════
@@ -327,9 +328,23 @@ class IndustryPage(QWidget):
         self._rank_tax.setFixedWidth(40)
         bar.addWidget(self._rank_tax)
 
+        bar.addWidget(QLabel("Top N:"))
+        self._rank_top_n = QComboBox()
+        self._rank_top_n.addItems(["20", "50", "100", "200", "全部"])
+        self._rank_top_n.setCurrentText("100")
+        bar.addWidget(self._rank_top_n)
+
+        bar.addWidget(QLabel("排序:"))
+        self._rank_sort = QComboBox()
+        self._rank_sort.addItems(["时均 ISK/h", "利润/run", "利润率%", "评分"])
+        bar.addWidget(self._rank_sort)
+
         self._rank_btn = QPushButton("开始排行")
         self._rank_btn.clicked.connect(self._on_rank_start)
         bar.addWidget(self._rank_btn)
+        self._rank_compare_btn = QPushButton("批量对比选中")
+        self._rank_compare_btn.clicked.connect(self._on_rank_compare)
+        bar.addWidget(self._rank_compare_btn)
 
         bar.addStretch()
         layout.addLayout(bar)
@@ -352,6 +367,8 @@ class IndustryPage(QWidget):
         self._rank_filter.addItems(["全部", "T1 (利润率≥5%)", "T2 (利润率≥10%)", "利润率≥20%", "时均≥10M ISK/h"])
         self._rank_filter.currentTextChanged.connect(self._apply_rank_filter)
         filter_bar.addWidget(self._rank_filter)
+
+        self._rank_sort.currentTextChanged.connect(self._apply_rank_filter)
         filter_bar.addStretch()
         layout.addLayout(filter_bar)
 
@@ -738,6 +755,8 @@ class IndustryPage(QWidget):
             tax = 0.0
 
         mat_price_type = "sell" if self._rank_price_type.currentText() == "卖价" else "buy"
+        top_n_text = self._rank_top_n.currentText()
+        top_n = None if top_n_text == "全部" else int(top_n_text)
         self._rank_worker = RankWorker(
             self._rank_mat_hub.currentText(),
             self._rank_sell_hub.currentText(),
@@ -747,6 +766,7 @@ class IndustryPage(QWidget):
             tax,
             get_container().db,
             self,
+            top_n=top_n,
         )
         self._rank_worker.progress.connect(self._on_rank_progress)
         self._rank_worker.result.connect(self._on_rank_result)
@@ -777,9 +797,10 @@ class IndustryPage(QWidget):
     def _on_rank_done(self, elapsed: float):
         self._rank_progress.setVisible(False)
         self._rank_status.setText(f"完成 {len(self._rank_results)} 项 | 耗时 {elapsed:.1f}s")
+        self.update_status_bar()
 
     def _apply_rank_filter(self):
-        """根据过滤条件筛选排行结果"""
+        """根据过滤条件筛选排行结果，并按选择排序"""
         if not self._rank_results:
             return
         ft = self._rank_filter.currentText()
@@ -792,7 +813,36 @@ class IndustryPage(QWidget):
             filtered = [r for r in filtered if r.get("margin_pct", 0) >= 20]
         elif "10M ISK/h" in ft:
             filtered = [r for r in filtered if r.get("isk_per_hour", 0) >= 10_000_000]
+
+        # 按排序下拉框排序
+        sort_key = self._rank_sort.currentText()
+        sort_map = {
+            "时均 ISK/h": lambda x: x.get("isk_per_hour", 0),
+            "利润/run": lambda x: x.get("profit_per_run", 0),
+            "利润率%": lambda x: x.get("margin_pct", 0),
+            "评分": lambda x: x.get("score", 0),
+        }
+        key_fn = sort_map.get(sort_key, sort_map["时均 ISK/h"])
+        filtered.sort(key=key_fn, reverse=True)
         self._rank_table.setModel(RankTableModel(filtered))
+
+    def _on_rank_compare(self):
+        """选中排行结果行，打开批量对比"""
+        sel = self._rank_table.selectionModel().selectedRows()
+        if not sel:
+            return
+        model = self._rank_table.model()
+        if not isinstance(model, RankTableModel):
+            return
+        items = []
+        for s in sel:
+            row_data = model.get_row(s.row())
+            tid = row_data.get("_type_id")
+            name = row_data.get("_name", "")
+            if tid:
+                items.append({"type_id": tid, "name": name})
+        dlg = CompareDialog(initial_items=items)
+        dlg.show()
 
     def _on_rank_double_click(self, index: QModelIndex):
         """双击排行行 → 跳到制造计算 Tab 并自动计算"""
@@ -827,3 +877,10 @@ class IndustryPage(QWidget):
     def refresh_display(self):
         self.load_plans()
         self._refresh_material()
+
+    def update_status_bar(self):
+        """更新主窗口状态栏显示利润排行统计"""
+        count = len(self._rank_results) if hasattr(self, "_rank_results") else 0
+        hub = self._rank_mat_hub.currentText() if hasattr(self, "_rank_mat_hub") else ""
+        if self._main and hasattr(self._main, "statusBar"):
+            self._main.statusBar().showMessage(f"利润排行: {count} 项, 区域: {hub}")

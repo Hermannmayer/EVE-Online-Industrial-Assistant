@@ -36,31 +36,42 @@ class InitStepWorker(QThread):
         self._key = step_key
 
     def run(self):
-        try:
-            import asyncio
+        import asyncio
 
-            if self._module == "getitems":
-                from services.workers.getitems import main
-                asyncio.run(main())
-            elif self._module == "getprices":
+        if self._module == "getprices":
+            try:
                 from services.workers.getprices import run_price_update
                 run_price_update()
+                self.result.emit(self._key, True, "完成")
+            except Exception as e:
+                self.result.emit(self._key, False, str(e))
+            return
+
+        loop = None
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            if self._module == "getitems":
+                from services.workers.getitems import main
+                loop.run_until_complete(main())
             elif self._module == "getblueprints":
                 from services.workers.getblueprints import run_blueprint_update
-                asyncio.run(run_blueprint_update())
+                loop.run_until_complete(run_blueprint_update())
             elif self._module == "getimplantdata":
                 from services.workers.getimplantdata import main
-                asyncio.run(main())
+                loop.run_until_complete(main())
             elif self._module == "geticon":
                 from services.workers.geticon import main
-                asyncio.run(main())
+                loop.run_until_complete(main())
             else:
                 self.result.emit(self._key, False, f"未知步骤: {self._module}")
                 return
-
             self.result.emit(self._key, True, "完成")
         except Exception as e:
             self.result.emit(self._key, False, str(e))
+        finally:
+            if loop is not None:
+                loop.close()
 
 
 class InitWizard(QDialog):

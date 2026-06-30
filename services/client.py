@@ -42,7 +42,13 @@ class APIClient:
         @retry_deco
         async def _do_fetch():
             async with self.semaphore:
-                async with self.session.get(url, timeout=self._timeout) as resp:
+                async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
+                    if resp.status == 429:
+                        # ESI 限流处理：读取 Retry-After 响应头并等待
+                        retry_after = resp.headers.get("Retry-After", "30")
+                        wait_time = int(retry_after) if retry_after.isdigit() else 30
+                        await asyncio.sleep(min(wait_time, 120))  # 最多等120秒
+                        raise aiohttp.ClientError("Rate limited, retrying...")
                     if resp.status == 404:
                         return None
                     resp.raise_for_status()
@@ -58,16 +64,38 @@ class APIClient:
 
     async def fetch_required(self, url: str):
         """GET 请求，失败时抛出异常"""
-        async with self.semaphore:
-            async with self.session.get(url, timeout=self._timeout) as resp:
-                resp.raise_for_status()
-                return await resp.json()
+        # ESI 限流重试（最多5次）
+        retries_left = 5
+        while retries_left > 0:
+            async with self.semaphore:
+                async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
+                    if resp.status == 429:
+                        # 读取 Retry-After 响应头并等待
+                        retry_after = resp.headers.get("Retry-After", "30")
+                        wait_time = int(retry_after) if retry_after.isdigit() else 30
+                        await asyncio.sleep(min(wait_time, 120))  # 最多等120秒
+                        retries_left -= 1
+                        continue
+                    resp.raise_for_status()
+                    return await resp.json()
+        raise aiohttp.ClientError("Rate limit retries exhausted")
 
     async def get_text(self, url: str) -> str | None:
         """GET 请求，返回原始文本"""
-        async with self.semaphore:
-            async with self.session.get(url, timeout=self._timeout) as resp:
-                if resp.status == 404:
-                    return None
-                resp.raise_for_status()
-                return await resp.text()
+        # ESI 限流重试（最多5次）
+        retries_left = 5
+        while retries_left > 0:
+            async with self.semaphore:
+                async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
+                    if resp.status == 429:
+                        # 读取 Retry-After 响应头并等待
+                        retry_after = resp.headers.get("Retry-After", "30")
+                        wait_time = int(retry_after) if retry_after.isdigit() else 30
+                        await asyncio.sleep(min(wait_time, 120))  # 最多等120秒
+                        retries_left -= 1
+                        continue
+                    if resp.status == 404:
+                        return None
+                    resp.raise_for_status()
+                    return await resp.text()
+        return None

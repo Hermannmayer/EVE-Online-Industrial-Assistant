@@ -7,7 +7,6 @@ from services.scoring import calc_manufacturing_score
 
 class SearchWorker(QThread):
     """搜索可制造物品"""
-
     finished = Signal(list)
 
     def __init__(self, query: str, db, parent=None):
@@ -35,7 +34,6 @@ class SearchWorker(QThread):
 
 class ScoreWorker(QThread):
     """单项制造评分"""
-
     finished = Signal(dict)
 
     def __init__(
@@ -77,7 +75,6 @@ class ScoreWorker(QThread):
 
 class RankWorker(QThread):
     """批量评分所有可制造物品"""
-
     progress = Signal(int, int)
     result = Signal(list)
     done = Signal(float)
@@ -92,6 +89,7 @@ class RankWorker(QThread):
         tax: float,
         db,
         parent=None,
+        top_n: int | None = None,
     ):
         super().__init__(parent)
         self._mat_hub = mat_hub
@@ -101,6 +99,7 @@ class RankWorker(QThread):
         self._bp_te = bp_te
         self._tax = tax
         self._db = db
+        self._top_n = top_n
 
     def run(self):
         import time
@@ -108,7 +107,7 @@ class RankWorker(QThread):
         started = time.time()
         results = []
 
-        with self._db.connect("bp") as conn:
+        with self._db.connect("bp", "mkt") as conn:
             c = conn.cursor()
             c.execute("""
                 SELECT DISTINCT product_type_id FROM blueprint_products
@@ -137,5 +136,10 @@ class RankWorker(QThread):
                 self.progress.emit(i + 1, total)
 
         results.sort(key=lambda x: x.get("isk_per_hour", 0), reverse=True)
+
+        # 若指定了 Top N，先排序再截断（减少后续计算量）
+        if self._top_n and self._top_n < len(results):
+            results = results[: self._top_n]
+
         self.result.emit(results)
         self.done.emit(time.time() - started)

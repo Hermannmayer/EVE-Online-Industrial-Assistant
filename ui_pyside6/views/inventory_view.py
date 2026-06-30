@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
+from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.paths import icon_cache_dir
 from services.inventory_manager import (
@@ -56,7 +57,7 @@ from services.inventory_manager import (
     update_blueprints_batch,
     update_quantity,
 )
-from services.scoring import TRADE_HUB_IDS, resolve_item_name
+from core.eve_formulas import resolve_item_name
 
 ICON_DIR = icon_cache_dir()
 

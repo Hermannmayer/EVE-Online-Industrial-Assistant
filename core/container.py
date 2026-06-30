@@ -10,7 +10,7 @@ IOC 容器 — 创建并持有所有依赖，由 Main.py 组装，注入 UI/Serv
 import threading
 
 from services.database_manager import DatabaseManager, get_db
-from services.scoring_cache import ScoringCache
+from services.scoring import ScoringCache
 
 
 class AppContainer:

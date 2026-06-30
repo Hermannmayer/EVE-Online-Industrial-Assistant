@@ -315,14 +315,17 @@ class OrderFetchWorker(QThread):
         self._type_id = type_id
 
     def run(self):
+        loop = None
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             buy, sell = loop.run_until_complete(self._fetch())
-            loop.close()
             self.finished_signal.emit(self._type_id, buy, sell)
         except Exception as e:
             self.error_signal.emit(self._type_id, str(e))
+        finally:
+            if loop is not None:
+                loop.close()
 
     async def _fetch(self):
         timeout = aiohttp.ClientTimeout(total=30)
