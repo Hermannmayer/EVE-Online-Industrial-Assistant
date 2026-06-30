@@ -102,3 +102,54 @@ class TestExportExcel:
             assert ws.max_row == 1  # 只有表头
         finally:
             os.unlink(path)
+
+
+class TestExportCsvEmpty:
+    """CSV 空数据导出"""
+
+    def test_export_csv_empty_rows(self):
+        """无数据时仅表头"""
+        import csv
+        import os
+        import tempfile
+
+        from ui_pyside6.views.export_helper import export_to_csv
+
+        headers = ["物品名称", "数量"]
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+            path = f.name
+        try:
+            export_to_csv(headers, [], path)
+            with open(path, encoding="utf-8-sig") as f:
+                reader = csv.reader(f)
+                rows = list(reader)
+            assert len(rows) == 1  # 只有表头
+            assert rows[0] == headers
+        finally:
+            os.unlink(path)
+
+    def test_export_csv_none_values(self):
+        """None 值应转为空字符串"""
+        import csv
+        import os
+        import tempfile
+
+        from ui_pyside6.views.export_helper import export_to_csv
+
+        headers = ["A", "B"]
+        rows = [[None, "hello"], ["world", None]]
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+            path = f.name
+        try:
+            export_to_csv(headers, rows, path)
+            with open(path, encoding="utf-8-sig") as f:
+                reader = csv.reader(f)
+                result = list(reader)
+            assert len(result) == 3  # header + 2 data
+            # None → empty string in CSV
+            assert result[1][0] == ""  # None → ""
+            assert result[1][1] == "hello"
+            assert result[2][0] == "world"
+            assert result[2][1] == ""  # None → ""
+        finally:
+            os.unlink(path)
