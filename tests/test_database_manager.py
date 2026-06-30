@@ -2,6 +2,8 @@
 
 import sqlite3
 
+import pytest
+
 
 class TestConnectPrimary:
     """connect(primary) 主库连接"""
@@ -106,3 +108,122 @@ class TestDirectConnect:
             assert conn.row_factory == sqlite3.Row
         finally:
             conn.close()
+
+
+class TestBoundaryInvalidAlias:
+    """边界测试 1 — 无效数据库别名 → ValueError"""
+
+    def test_invalid_primary_raises_valueerror(self, temp_db):
+        """无效主库别名应抛出 ValueError"""
+        with pytest.raises(ValueError, match="Unknown database alias"):
+            with temp_db.connect("invalid"):
+                pass
+
+    def test_invalid_attach_raises_valueerror(self, temp_db):
+        """无效 ATTACH 别名应抛出 ValueError"""
+        with pytest.raises(ValueError, match="Unknown database alias"):
+            with temp_db.connect("ref", "invalid_attach"):
+                pass
+
+    def test_empty_string_primary_raises_valueerror(self, temp_db):
+        """空字符串主库别名应抛出 ValueError"""
+        with pytest.raises(ValueError, match="Unknown database alias"):
+            with temp_db.connect(""):
+                pass
+
+    def test_multiple_attach_all_valid(self, temp_db):
+        """全部有效的 ATTACH 别名不应报错"""
+        with temp_db.connect("ref", "mkt", "bp") as conn:
+            assert conn is not None
+            row = conn.execute("SELECT COUNT(*) FROM mkt.market_prices").fetchone()
+            assert row[0] >= 4
+
+
+class TestBoundaryConnectionReuse:
+    """边界测试 2 — 连接复用验证（同一 key 返回同一 conn）"""
+
+    def test_same_key_returns_same_connection(self, temp_db):
+        """同一 (primary,) key 应返回同一连接对象"""
+        with temp_db.connect("ref") as conn1:
+            conn1.execute("SELECT 1")
+        with temp_db.connect("ref") as conn2:
+            assert conn1 is conn2, "同一配置应复用连接"
+
+    def test_same_key_with_attach_returns_same_connection(self, temp_db):
+        """含 ATTACH 的同一 key 应返回同一连接对象"""
+        with temp_db.connect("ref", "mkt") as conn1:
+            conn1.execute("SELECT 1")
+        with temp_db.connect("ref", "mkt") as conn2:
+            assert conn1 is conn2, "含 ATTACH 的同一配置应复用连接"
+
+    def test_different_primary_returns_different_connection(self, temp_db):
+        """不同主库应返回不同连接对象"""
+        with temp_db.connect("ref") as conn_ref:
+            pass
+        with temp_db.connect("mkt") as conn_mkt:
+            assert conn_ref is not conn_mkt, "不同主库不应复用连接"
+
+    def test_different_attach_returns_different_connection(self, temp_db):
+        """不同 ATTACH 配置应返回不同连接对象"""
+        with temp_db.connect("ref") as conn_plain:
+            pass
+        with temp_db.connect("ref", "mkt") as conn_attached:
+            assert conn_plain is not conn_attached, "不同 ATTACH 配置不应复用连接"
+
+    def test_connection_stays_open_after_context(self, temp_db):
+        """连接在 with 块结束后应保持打开（留给后续复用）"""
+        with temp_db.connect("ref") as conn:
+            pass
+        # 连接应仍可查询
+        with temp_db.connect("ref") as conn2:
+            assert conn2 is conn  # 复用
+            row = conn2.execute("SELECT COUNT(*) FROM item").fetchone()
+            assert row[0] >= 4
+
+
+class TestBoundaryCrossDbQuery:
+    """边界测试 3 — ATTACH 后跨库查询"""
+
+    def test_cross_db_join_ref_mkt(self, temp_db):
+        """跨库 JOIN ref.item + mkt.market_prices 应返回正确数据"""
+        with temp_db.connect("ref", "mkt") as conn:
+            row = conn.execute(
+                "SELECT i.en_name, mp.sell_price "
+                "FROM item i "
+                "JOIN mkt.market_prices mp ON i.type_id = mp.type_id "
+                "WHERE i.type_id = ?",
+                (1001,),
+            ).fetchone()
+            assert row is not None, "跨库 JOIN 应返回结果"
+            assert row["en_name"] == "Tritanium"
+            assert row["sell_price"] == 5.0
+
+    def test_cross_db_join_ref_bp(self, temp_db):
+        """跨库 JOIN ref.item + bp.blueprint_products 应返回正确数据"""
+        with temp_db.connect("ref", "bp") as conn:
+            row = conn.execute(
+                "SELECT i.en_name, bp.quantity "
+                "FROM item i "
+                "JOIN bp.blueprint_products bp ON i.type_id = bp.product_type_id "
+                "WHERE i.type_id = ?",
+                (2001,),
+            ).fetchone()
+            assert row is not None, "跨库 JOIN ref + bp 应返回结果"
+            assert row["en_name"] == "Raven"
+            assert row["quantity"] == 1
+
+    def test_cross_db_three_way_join(self, temp_db):
+        """三库跨库 JOIN ref + mkt + bp 应返回完整数据"""
+        with temp_db.connect("ref", "mkt", "bp") as conn:
+            row = conn.execute(
+                "SELECT i.en_name, mp.sell_price, bp.quantity AS bp_qty "
+                "FROM item i "
+                "JOIN mkt.market_prices mp ON i.type_id = mp.type_id "
+                "JOIN bp.blueprint_products bp ON i.type_id = bp.product_type_id "
+                "WHERE i.type_id = ?",
+                (2001,),
+            ).fetchone()
+            assert row is not None, "三库跨库 JOIN 应返回结果"
+            assert row["en_name"] == "Raven"
+            assert row["sell_price"] == 55000000
+            assert row["bp_qty"] == 1
