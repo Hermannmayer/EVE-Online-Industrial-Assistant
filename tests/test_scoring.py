@@ -1,5 +1,7 @@
 """评分服务集成测试 — 使用临时数据库"""
 
+import pytest
+
 from services.scoring_cache import ScoringCache
 from services.scoring_service import ScoringService
 
@@ -139,3 +141,51 @@ class TestCache:
         cache.set("k", {"v": 1})
         cache.invalidate()
         assert cache.get("k") is None
+
+
+@pytest.mark.parametrize("me,te,expected_min_score", [(0, 0, 50), (5, 5, 60), (10, 20, 70)])
+def test_manufacturing_me_te_param(temp_db, me, te, expected_min_score):
+    """ME/TE 越高，综合评分下限越高"""
+    cache = ScoringCache(max_size=10)
+    svc = ScoringService(temp_db, cache)
+    result = svc.calc_manufacturing_score(
+        type_id=2001,
+        char_config={"skills": DEFAULT_SKILLS},
+        bp_me=me,
+        bp_te=te,
+        mat_source_hub="Jita",
+        sell_hub="Jita",
+    )
+    assert result["status"] == ""
+    assert result["score"] >= expected_min_score
+
+
+def test_profitable_trade_score_above_min(temp_db):
+    """有利可图的贸易评分应大于 0，且 sell_revenue > buy_cost"""
+    cache = ScoringCache(max_size=10)
+    svc = ScoringService(temp_db, cache)
+    result = svc.calc_trade_score(
+        type_id=2002,
+        buy_hub="Jita",
+        sell_hub="Jita",
+        char_config={"skills": DEFAULT_SKILLS},
+    )
+    assert result["score"] >= 0
+    assert result["buy_cost"] > 0
+    assert result["sell_revenue"] > result["buy_cost"]
+
+
+def test_manufacturing_breakdown_keys(temp_db):
+    """制造评分 breakdown 应包含所有关键子项"""
+    cache = ScoringCache(max_size=10)
+    svc = ScoringService(temp_db, cache)
+    result = svc.calc_manufacturing_score(
+        type_id=2001,
+        char_config={"skills": DEFAULT_SKILLS},
+        mat_source_hub="Jita",
+        sell_hub="Jita",
+    )
+    assert "profit_score" in result["breakdown"]
+    assert "volume_score" in result["breakdown"]
+    assert "efficiency_score" in result["breakdown"]
+    assert "material_cost" in result["breakdown"]
