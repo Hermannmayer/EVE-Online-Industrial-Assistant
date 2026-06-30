@@ -221,7 +221,8 @@ def get_total_value(hangar_id: int, price_type: str = "sell", discount: float = 
         c.execute(f"""
             SELECT ii.quantity, mkt.market_prices.{col}
             FROM inventory_items ii
-            LEFT JOIN mkt.market_prices ON mkt.market_prices.type_id = ii.type_id AND mkt.market_prices.region_id = 10000002
+            LEFT JOIN mkt.market_prices ON mkt.market_prices.type_id = ii.type_id
+            AND mkt.market_prices.region_id = 10000002
             WHERE ii.hangar_id = ?
         """, (hangar_id,))
         total = 0
@@ -431,11 +432,20 @@ def get_blueprint_tech_levels():
         t2_ids = {r[0] for r in c.fetchall()}
         # T3: 自身为 invention 产物（从 T2 BPC 发明得到的设计图）
         c.execute("SELECT DISTINCT blueprint_type_id FROM blueprint_products WHERE activity = 'invention'")
-        invention_sources = {r[0] for r in c.fetchall()}
-        c.execute("SELECT DISTINCT bp2.product_type_id FROM blueprint_products bp1 JOIN blueprint_products bp2 ON bp2.blueprint_type_id = bp1.product_type_id WHERE bp1.activity = 'invention' AND bp2.activity = 'invention'")
+        {r[0] for r in c.fetchall()}
+        c.execute(
+            "SELECT DISTINCT bp2.product_type_id FROM blueprint_products bp1"
+            " JOIN blueprint_products bp2"
+            " ON bp2.blueprint_type_id = bp1.product_type_id"
+            " WHERE bp1.activity = 'invention' AND bp2.activity = 'invention'"
+        )
         t3_ids = {r[0] for r in c.fetchall()}
         # 所有有 manufacturing 活动的蓝图
-        c.execute("SELECT DISTINCT blueprint_type_id FROM blueprint_activities WHERE activity IN ('manufacturing', 'reaction')")
+        c.execute(
+            "SELECT DISTINCT blueprint_type_id"
+            " FROM blueprint_activities"
+            " WHERE activity IN ('manufacturing', 'reaction')"
+        )
         for (bpid,) in c.fetchall():
             if bpid in t3_ids:
                 levels[bpid] = 3

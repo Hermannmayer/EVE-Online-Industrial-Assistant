@@ -34,8 +34,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.constants import TRADE_HUBS
 import ui_pyside6.theme as theme
+from core.constants import TRADE_HUBS
 from core.container import get_container
 from core.paths import (
     ensure_dirs_exist,

@@ -83,7 +83,12 @@ async def download_all(session: aiohttp.ClientSession, type_ids: list):
         else:
             need_download.append(tid)
 
-    log.info(f"\n统计: 总计={total}, 已有图标={existing_count}, 无图标标记={no_icon_count}, 需下载={len(need_download)}")
+    log.info(
+        (
+            f"\n统计: 总计={total}, 已有图标={existing_count},"
+            f" 无图标标记={no_icon_count}, 需下载={len(need_download)}"
+        )
+    )
     progress[0] = existing_count + no_icon_count
 
     if not need_download:

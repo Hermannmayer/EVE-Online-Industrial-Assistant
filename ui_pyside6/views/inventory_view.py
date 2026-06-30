@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
+from core.eve_formulas import resolve_item_name
 from core.paths import icon_cache_dir
 from services.inventory_manager import (
     add_item,
@@ -57,7 +58,6 @@ from services.inventory_manager import (
     update_blueprints_batch,
     update_quantity,
 )
-from core.eve_formulas import resolve_item_name
 
 ICON_DIR = icon_cache_dir()
 
@@ -280,7 +280,8 @@ class PasteImportDialog(QDialog):
                         price = r[0] or 0 if r else 0
                     elif price_source == "avg":
                         c2.execute(
-                            "SELECT sell_price, buy_price FROM market_prices WHERE type_id = ? AND region_id = 10000002 LIMIT 1",
+                            "SELECT sell_price, buy_price FROM market_prices"
+                            " WHERE type_id = ? AND region_id = 10000002 LIMIT 1",
                             (type_id,),
                         )
                         r = c2.fetchone()
@@ -470,7 +471,12 @@ class ImportReviewDialog(QDialog):
             if os.path.exists(icon_path):
                 pix = QPixmap(icon_path)
                 if not pix.isNull():
-                    icon_label.setPixmap(pix.scaled(24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                    icon_label.setPixmap(
+                        pix.scaled(24, 24,
+                            Qt.AspectRatioMode.KeepAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation
+                        )
+                    )
             table.setCellWidget(row, self._COL_ICON, icon_label)
 
             # 列2：名称
@@ -1328,7 +1334,10 @@ class BlueprintTableModel(QAbstractTableModel):
                     if os.path.exists(icon_path):
                         pix = QPixmap(icon_path)
                         if not pix.isNull():
-                            return pix.scaled(24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                            return pix.scaled(24, 24,
+                                Qt.AspectRatioMode.KeepAspectRatio,
+                                Qt.TransformationMode.SmoothTransformation
+                            )
             return None
 
         elif role == Qt.ItemDataRole.ForegroundRole:
@@ -1369,10 +1378,12 @@ class BlueprintTableModel(QAbstractTableModel):
         if not key and column != 0:
             return
         if column == 0:
-            key = lambda r: r.get("product_type_id") or 0
+            def key(r):
+                return r.get("product_type_id") or 0
         if isinstance(key, str):
             k = key
-            key = lambda r: (r.get(k) or "") if isinstance(r.get(k), str) else str(r.get(k) or "")
+            def key(r):
+                return (r.get(k) or "") if isinstance(r.get(k), str) else str(r.get(k) or "")
 
         rev = order == Qt.SortOrder.DescendingOrder
         self.beginResetModel()
@@ -1395,7 +1406,7 @@ class _BlueprintImportWorker(QThread):
         pasted: list[tuple] = []  # (bpid, is_bpo, me, te, runs)
         with get_container().db.connect("ref", "bp") as conn:
             c = conn.cursor()
-            lines = [l for l in self._raw.split("\n") if l.strip()]
+            lines = [ln for ln in self._raw.split("\n") if ln.strip()]
             total = len(lines)
             for i, line in enumerate(lines):
                 cols = line.split("\t")
@@ -1420,7 +1431,9 @@ class _BlueprintImportWorker(QThread):
         existing_map: dict[tuple, int] = {}  # (bpid, is_bpo, me, te, runs) → row_id
         with get_container().db.connect("user") as uc:
             c = uc.cursor()
-            c.execute("SELECT id, blueprint_type_id, is_bpo, me_level, te_level, runs FROM user_blueprints WHERE hangar_id = ?",
+            c.execute(
+                "SELECT id, blueprint_type_id, is_bpo, me_level, te_level, runs"
+                " FROM user_blueprints WHERE hangar_id = ?",
                       (self._hangar_id,))
             for row in c.fetchall():
                 existing_map[(row[1], row[2], row[3], row[4], row[5])] = row[0]
@@ -1466,7 +1479,9 @@ class _BlueprintImportWorker(QThread):
 
             for i, bp in enumerate(to_add):
                 c.execute(
-                    "INSERT INTO user_blueprints (hangar_id, blueprint_type_id, is_bpo, me_level, te_level, runs, quantity) VALUES (?, ?, ?, ?, ?, ?, 1)",
+                    "INSERT INTO user_blueprints"
+                    " (hangar_id, blueprint_type_id, is_bpo, me_level, te_level, runs, quantity)"
+                    " VALUES (?, ?, ?, ?, ?, ?, 1)",
                     (self._hangar_id, bp[0], bp[1], bp[2], bp[3], bp[4]))
                 if i % 200 == 0 or i == len(to_add) - 1:
                     uc.commit()
@@ -1489,7 +1504,9 @@ class _BlueprintImportWorker(QThread):
                 r = c.fetchone()
                 if r:
                     c.execute(
-                        "SELECT blueprint_type_id FROM blueprint_products WHERE product_type_id = ? AND activity = 'manufacturing' LIMIT 1",
+                        "SELECT blueprint_type_id FROM blueprint_products"
+                        " WHERE product_type_id = ?"
+                        " AND activity = 'manufacturing' LIMIT 1",
                         (r[0],))
                     r2 = c.fetchone()
                     if r2:
@@ -1670,7 +1687,8 @@ class BlueprintTab(QWidget):
                 c = conn.cursor()
                 placeholders = ",".join("?" * len(all_ids))
                 c.execute(
-                    f"SELECT type_id, sell_price FROM market_prices WHERE type_id IN ({placeholders}) AND region_id = 10000002",
+                    f"SELECT type_id, sell_price FROM market_prices"
+                    f" WHERE type_id IN ({placeholders}) AND region_id = 10000002",
                     tuple(all_ids))
                 for tid, price in c.fetchall():
                     if price:
@@ -1854,12 +1872,17 @@ class BlueprintTab(QWidget):
         dlg = QDialog(self)
         dlg.setWindowTitle("修改蓝图等级")
         fl = QFormLayout(dlg)
-        me = QDoubleSpinBox(); me.setRange(0, 10); me.setDecimals(0)
-        te = QDoubleSpinBox(); te.setRange(0, 10); te.setDecimals(0)
+        me = QDoubleSpinBox()
+        me.setRange(0, 10)
+        me.setDecimals(0)
+        te = QDoubleSpinBox()
+        te.setRange(0, 10)
+        te.setDecimals(0)
         fl.addRow("材料等级:", me)
         fl.addRow("时间等级:", te)
         btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btn.accepted.connect(dlg.accept); btn.rejected.connect(dlg.reject)
+        btn.accepted.connect(dlg.accept)
+        btn.rejected.connect(dlg.reject)
         fl.addRow(btn)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             update_blueprints_batch(bp_ids, me_level=int(me.value()), te_level=int(te.value()))

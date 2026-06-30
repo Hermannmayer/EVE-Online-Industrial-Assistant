@@ -1,22 +1,22 @@
 """测试评分缓存"""
-from services.scoring_cache import cache_key, get, invalidate, set
+from services.scoring import cache_key, get_cache, invalidate_cache, set_cache
 
 
 def test_cache_set_get():
-    invalidate()
+    invalidate_cache()
     key = cache_key(12345, "mfg", "Jita", "test")
     assert key == "12345|mfg|Jita|test"
-    set(key, {"score": 50})
-    result = get(key)
+    set_cache(key, {"score": 50})
+    result = get_cache(key)
     assert result is not None
     assert result["score"] == 50
 
 
 def test_cache_expiry():
-    invalidate()
+    invalidate_cache()
     key = cache_key(1, "trade", "Amarr", "test")
-    set(key, {"score": 80})
+    set_cache(key, {"score": 80})
     # 强制过期（通过 invalidate）
-    invalidate()
-    result = get(key)
+    invalidate_cache()
+    result = get_cache(key)
     assert result is None

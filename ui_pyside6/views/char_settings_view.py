@@ -646,7 +646,11 @@ class MarketPage(QWidget):
             fs.setRange(-10.0, 10.0)
             fs.setSingleStep(0.1)
             fs.setValue(hub_data.get("faction_standing", 5.0))
-            fs.setStyleSheet(f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; border: 1px solid {theme.BORDER}; border-radius: 4px; padding: 2px 4px;")
+            fs.setStyleSheet((
+                f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};"
+                f" border: 1px solid {theme.BORDER}; border-radius: 4px;"
+                f" padding: 2px 4px;"
+            ))
             glayout.addWidget(fs, 0, 1)
 
             # 军团声望
@@ -655,7 +659,11 @@ class MarketPage(QWidget):
             cs.setRange(-10.0, 10.0)
             cs.setSingleStep(0.1)
             cs.setValue(hub_data.get("corp_standing", 5.0))
-            cs.setStyleSheet(f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; border: 1px solid {theme.BORDER}; border-radius: 4px; padding: 2px 4px;")
+            cs.setStyleSheet((
+                f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};"
+                f" border: 1px solid {theme.BORDER}; border-radius: 4px;"
+                f" padding: 2px 4px;"
+            ))
             glayout.addWidget(cs, 1, 1)
 
             # 计算结果

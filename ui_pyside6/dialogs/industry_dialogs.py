@@ -1,6 +1,7 @@
 """工业制造 — 对话框"""
 
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -8,6 +9,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QSpinBox,
+    QVBoxLayout,
 )
 
 
@@ -68,6 +70,100 @@ class AddPlanDialog(QDialog):
             "te": self._te.value(),
             "char": self._char.text().strip(),
             "fac": self._fac.text().strip(),
+        }
+        self.accept()
+
+    def result_data(self) -> dict | None:
+        return self._result_data
+
+
+class ProcurementDialog(QDialog):
+    """代采购对话框"""
+
+    def __init__(self, type_id: int, item_name: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"加入代采购 — {item_name}")
+        self.setMinimumWidth(400)
+        self._result_data = None
+        self._type_id = type_id
+        self._item_name = item_name
+
+        import ui_pyside6.theme as theme
+
+        self.setStyleSheet(f"background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        # 物品名称（只读）
+        name_edit = QLineEdit(item_name)
+        name_edit.setReadOnly(True)
+        name_edit.setStyleSheet(
+            f"background:{theme.BG_SURFACE};color:{theme.TEXT_SECONDARY};"
+            f"border:1px solid {theme.BORDER};border-radius:3px;padding:4px;"
+        )
+        form.addRow("物品:", name_edit)
+
+        # 数量
+        self._quantity = QSpinBox()
+        self._quantity.setRange(1, 999999)
+        self._quantity.setValue(1)
+        self._quantity.setStyleSheet(
+            f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
+            f"border:1px solid {theme.BORDER};border-radius:3px;padding:4px;"
+        )
+        form.addRow("数量:", self._quantity)
+
+        # 采购中心
+        self._hub = QComboBox()
+        self._hub.addItems(["Jita", "Amarr", "Dodixie", "Rens", "Hek"])
+        self._hub.setStyleSheet(
+            f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
+            f"border:1px solid {theme.BORDER};border-radius:3px;padding:4px;"
+        )
+        form.addRow("采购中心:", self._hub)
+
+        # 优先级
+        self._priority = QComboBox()
+        self._priority.addItems(["紧急", "高", "中", "低"])
+        self._priority.setStyleSheet(
+            f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
+            f"border:1px solid {theme.BORDER};border-radius:3px;padding:4px;"
+        )
+        form.addRow("优先级:", self._priority)
+
+        # 备注
+        self._notes = QLineEdit()
+        self._notes.setPlaceholderText("备注（可选）")
+        self._notes.setStyleSheet(
+            f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
+            f"border:1px solid {theme.BORDER};border-radius:3px;padding:4px;"
+        )
+        form.addRow("备注:", self._notes)
+
+        layout.addLayout(form)
+
+        # 按钮
+        btn = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btn.accepted.connect(self._on_ok)
+        btn.rejected.connect(self.reject)
+        layout.addWidget(btn)
+
+    def _on_ok(self):
+        priority_map = {"紧急": "urgent", "高": "high", "中": "normal", "低": "low"}
+        self._result_data = {
+            "type_id": self._type_id,
+            "name": self._item_name,
+            "quantity": self._quantity.value(),
+            "hub": self._hub.currentText(),
+            "priority": priority_map[self._priority.currentText()],
+            "notes": self._notes.text().strip(),
         }
         self.accept()
 

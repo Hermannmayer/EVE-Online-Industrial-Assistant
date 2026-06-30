@@ -107,7 +107,10 @@ class QueryTableModel(QAbstractTableModel):
                     if os.path.exists(icon_path):
                         pix = QPixmap(icon_path)
                         if not pix.isNull():
-                            return pix.scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                            return pix.scaled(32, 32,
+                                Qt.AspectRatioMode.KeepAspectRatio,
+                                Qt.TransformationMode.SmoothTransformation
+                            )
             return None
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
@@ -264,9 +267,14 @@ class SearchWorker(QThread):
         with get_container().db.connect('ref') as conn:
             c = conn.cursor()
             if query.isdigit():
-                c.execute("SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume FROM item WHERE type_id = ?", (int(query),))
+                c.execute(
+                    "SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume"
+                    " FROM item WHERE type_id = ?", (int(query),)
+                )
             else:
-                c.execute("SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume FROM item WHERE en_name LIKE ? OR zh_name LIKE ? LIMIT 100",
+                c.execute(
+                    "SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume"
+                    " FROM item WHERE en_name LIKE ? OR zh_name LIKE ? LIMIT 100",
                           (f"%{query}%", f"%{query}%"))
             return c.fetchall()
 
@@ -294,7 +302,9 @@ class SuggestionWorker(QThread):
                 c.execute(
                     "SELECT type_id, en_name, zh_name FROM item "
                     "WHERE en_name LIKE ? OR zh_name LIKE ? "
-                    "ORDER BY CASE WHEN en_name LIKE ? THEN 0 WHEN zh_name LIKE ? THEN 1 ELSE 2 END, LENGTH(en_name), type_id LIMIT 10",
+                    "ORDER BY CASE WHEN en_name LIKE ? THEN 0"
+                    " WHEN zh_name LIKE ? THEN 1 ELSE 2 END,"
+                    " LENGTH(en_name), type_id LIMIT 10",
                     (f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%")
                 )
             result = []
@@ -386,7 +396,11 @@ class GroupLoadWorker(QThread):
     def run(self):
         with get_container().db.connect('ref') as conn:
             c = conn.cursor()
-            c.execute("SELECT DISTINCT e.group_id, e.en_group_name, e.zh_group_name FROM item e WHERE e.group_id IS NOT NULL ORDER BY e.zh_group_name, e.en_group_name")
+            c.execute(
+                "SELECT DISTINCT e.group_id, e.en_group_name, e.zh_group_name"
+                " FROM item e WHERE e.group_id IS NOT NULL"
+                " ORDER BY e.zh_group_name, e.en_group_name"
+            )
             result = c.fetchall()
             self.finished_signal.emit(result)
 
@@ -960,7 +974,10 @@ class QueryPage(QWidget):
         for i in range(self._model.rowCount()):
             row = self._model.get_row(i)
             if row and row["type_id"] == type_id:
-                name = f"{row['zh']} ({row['en']})" if row['zh'] and row['en'] else (row['zh'] or row['en'] or str(type_id))
+                if row['zh'] and row['en']:
+                    name = f"{row['zh']} ({row['en']})"
+                else:
+                    name = row['zh'] or row['en'] or str(type_id)
                 break
 
         # 显示弹窗并立即展示缓存数据（如有）
@@ -998,7 +1015,10 @@ class QueryPage(QWidget):
             for i in range(self._model.rowCount()):
                 row = self._model.get_row(i)
                 if row and row["type_id"] == type_id:
-                    name = f"{row['zh']} ({row['en']})" if row['zh'] and row['en'] else (row['zh'] or row['en'] or str(type_id))
+                    if row['zh'] and row['en']:
+                        name = f"{row['zh']} ({row['en']})"
+                    else:
+                        name = row['zh'] or row['en'] or str(type_id)
                     break
             self._order_popup.set_orders(type_id, name, buy_orders, sell_orders)
             self._status_label.setText("实时订单数据已加载")
