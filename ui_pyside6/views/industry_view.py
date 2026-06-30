@@ -163,6 +163,7 @@ class IndustryPage(QWidget):
             QGroupBox {{ border: 1px solid {theme.BORDER}; border-radius: 6px; padding: 4px; margin-top: 8px; }}
             QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {theme.TEXT_SECONDARY}; }}
         """)
+        self._setup_plan_actions()
         self._mat_summary.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
 
     # ═══════════════════════════════════
@@ -461,7 +462,7 @@ class IndustryPage(QWidget):
 
         stats.addWidget(QLabel("  过滤:"))
         self._filter = QComboBox()
-        self._filter.addItems(["全部", "待排产", "运行中", "已完成"])
+        self._filter.addItems(["全部", "待生产", "生产中", "已完成"])
         self._filter.currentTextChanged.connect(lambda: self.load_plans())
         stats.addWidget(self._filter)
         stats.addStretch()
@@ -473,6 +474,7 @@ class IndustryPage(QWidget):
             QGroupBox {{ border: 1px solid {theme.BORDER}; border-radius: 6px; padding: 4px; margin-top: 8px; }}
             QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {theme.TEXT_SECONDARY}; }}
         """)
+        self._setup_plan_actions()
         mv = QVBoxLayout(self._mat_group)
         mv.setContentsMargins(4, 4, 4, 4)
         mv.setSpacing(2)
@@ -686,12 +688,12 @@ class IndustryPage(QWidget):
         with get_container().db.connect("user") as conn:
             f = self._filter.currentText()
             sql = "SELECT * FROM production_plans"
-            if f == "待排产":
+            if f == "待生产":
                 sql += " WHERE status = 'pending'"
-            elif f == "运行中":
-                sql += " WHERE status = 'running'"
+            elif f == "生产中":
+                sql += " WHERE status IN ('in_progress', 'running')"
             elif f == "已完成":
-                sql += " WHERE status = 'done'"
+                sql += " WHERE status IN ('completed', 'done')"
             sql += " ORDER BY created_at DESC"
             c = conn.cursor()
             c.execute(sql)
@@ -700,6 +702,7 @@ class IndustryPage(QWidget):
             self._plan_model = PlanTableModel(rows)
             self._plan_table.setModel(self._plan_model)
             self._plan_count.setText(f"共 {len(rows)} 条计划")
+            self._setup_plan_actions()
 
     def _on_delete(self):
         sel = self._plan_table.selectionModel().selectedRows()
@@ -722,6 +725,102 @@ class IndustryPage(QWidget):
         self._refresh_material()
 
     # ═══════════════════════════════════
+    #  计划操作
+    # ═══════════════════════════════════
+
+    def _setup_plan_actions(self):
+        """为生产计划表格的操作列添加按钮控件"""
+        model = self._plan_table.model()
+        if not model or not self._plan_model:
+            return
+
+        source = self._plan_model
+        n_rows = model.rowCount()
+        last_col = source.columnCount() - 1
+
+        # 先清除旧按钮
+        for row in range(n_rows):
+            idx = model.index(row, last_col)
+            self._plan_table.removeCellWidget(idx.row(), idx.column())
+
+        # 为每行创建按钮
+        for row in range(n_rows):
+            # 处理 proxy 模型映射
+            if hasattr(model, 'mapToSource'):
+                src_row = model.mapToSource(model.index(row, 0)).row()
+            else:
+                src_row = row
+            plan = source.get_plan(src_row)
+            if not plan:
+                continue
+
+            idx = model.index(row, last_col)
+            widget = QWidget()
+            layout = QHBoxLayout(widget)
+            layout.setContentsMargins(2, 0, 2, 0)
+            layout.setSpacing(4)
+
+            plan_id = plan["id"]
+            status = plan.get("status", "")
+
+            if status == "pending":
+                btn = QPushButton("启动")
+                btn.setStyleSheet(f"color: {theme.GREEN}; font-size: 11px; padding: 1px 6px;")
+                btn.clicked.connect(lambda checked, pid=plan_id: self._on_plan_start(pid))
+                layout.addWidget(btn)
+
+            if status in ("pending", "in_progress", "running"):
+                btn = QPushButton("完成")
+                btn.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 11px; padding: 1px 6px;")
+                btn.clicked.connect(lambda checked, pid=plan_id: self._on_plan_complete(pid))
+                layout.addWidget(btn)
+
+            btn = QPushButton("删除")
+            btn.setStyleSheet(f"color: {theme.ACCENT_RED}; font-size: 11px; padding: 1px 6px;")
+            btn.clicked.connect(lambda checked, pid=plan_id: self._on_plan_delete(pid))
+            layout.addWidget(btn)
+
+            layout.addStretch()
+            self._plan_table.setIndexWidget(idx, widget)
+
+    def _on_plan_start(self, plan_id: int):
+        """启动生产 → status = in_progress"""
+        with get_container().db.connect("user") as conn:
+            conn.execute(
+                "UPDATE production_plans SET status = 'in_progress', started_at = ? WHERE id = ?",
+                (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), plan_id),
+            )
+        self.load_plans()
+        self._refresh_material()
+
+    def _on_plan_complete(self, plan_id: int):
+        """完成生产 → status = completed"""
+        with get_container().db.connect("user") as conn:
+            conn.execute(
+                "UPDATE production_plans SET status = 'completed', completed_at = ? WHERE id = ?",
+                (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), plan_id),
+            )
+        self.load_plans()
+        self._refresh_material()
+
+    def _on_plan_delete(self, plan_id: int):
+        """删除单条计划"""
+        if (
+            QMessageBox.question(
+                self,
+                "确认",
+                f"删除生产计划 #{plan_id}？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        with get_container().db.connect("user") as conn:
+            conn.execute("DELETE FROM production_plans WHERE id = ?", (plan_id,))
+        self.load_plans()
+        self._refresh_material()
+
+    # ═══════════════════════════════════
     #  材料汇总
     # ═══════════════════════════════════
 
@@ -729,7 +828,8 @@ class IndustryPage(QWidget):
         with get_container().db.connect("user", "ref", "mkt", "bp") as conn:
             c = conn.cursor()
             c.execute(
-                "SELECT product_type_id, runs, parallels FROM production_plans WHERE status IN ('pending', 'running')"
+                "SELECT product_type_id, runs, parallels FROM production_plans "
+                "WHERE status IN ('pending', 'in_progress', 'running')"
             )
             plans = c.fetchall()
 
