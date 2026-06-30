@@ -484,9 +484,18 @@ class OrderPopup(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(6)
 
+        # Title row with chart button
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
         self._title_label = QLabel("")
         self._title_label.setObjectName("order_title")
-        layout.addWidget(self._title_label)
+        title_row.addWidget(self._title_label)
+        title_row.addStretch()
+        self._chart_btn = QPushButton("📈 走势图")
+        self._chart_btn.setObjectName("order_chart_btn")
+        self._chart_btn.clicked.connect(self._on_chart_clicked)
+        title_row.addWidget(self._chart_btn)
+        layout.addLayout(title_row)
 
         # 买单 (上半区)
         buy_header = QLabel("买单 (Buy)")
@@ -506,6 +515,8 @@ class OrderPopup(QDialog):
 
     def set_orders(self, type_id: int, name: str, buy_orders: list, sell_orders: list):
         self._title_label.setText(f"{name} (Type ID: {type_id})")
+        self._type_id = type_id
+        self._name = name
 
         self._buy_list.clear()
         if buy_orders:
@@ -536,6 +547,13 @@ class OrderPopup(QDialog):
             item = QListWidgetItem("无卖单数据")
             item.setForeground(QColor(theme.TEXT_SECONDARY))
             self._sell_list.addItem(item)
+
+    def _on_chart_clicked(self):
+        """打开价格走势图"""
+        if self._type_id:
+            from ui_pyside6.views.price_chart import PriceChartDialog
+            dlg = PriceChartDialog(self._type_id, self._name, self.parent())
+            dlg.exec()
 
 
 # ═══════════════════════════════════════
