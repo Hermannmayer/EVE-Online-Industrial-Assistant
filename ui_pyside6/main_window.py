@@ -240,6 +240,10 @@ class MainWindow(QMainWindow):
         # ── 首次启动检测 ──
         QTimer.singleShot(500, self._check_first_run)
 
+        # ── 系统托盘图标（延迟创建，确保窗口初始化完成） ──
+        self._tray_icon: QSystemTrayIcon | None = None
+        QTimer.singleShot(100, self._init_tray_icon)
+
     def show_progress(self, text: str = "", maximum: int = 0):
         """显示进度条（0=不确定模式）"""
         self._status_label.setText(text or "处理中...")
@@ -277,6 +281,9 @@ class MainWindow(QMainWindow):
             if worker and worker.isRunning():
                 worker.quit()
                 worker.wait(3000)
+        # 隐藏托盘图标
+        if self._tray_icon:
+            self._tray_icon.hide()
         super().closeEvent(event)
 
     # ═══════════════════════════════════════
@@ -498,7 +505,7 @@ class MainWindow(QMainWindow):
             self._status_info_label.setText(f"价格更新失败: {message}")
 
     def _check_and_notify_price_changes(self):
-        """检查关注列表价格变化，有变化时弹系统通知或更新状态栏"""
+        """检查关注列表价格变化，使用持久托盘图标弹通知"""
         try:
             from services.watchlist_manager import check_price_changes
 
@@ -507,22 +514,30 @@ class MainWindow(QMainWindow):
                 return
 
             count = len(changes)
+            # 取前 3 个变化做详细描述
+            top = changes[:3]
+            parts = []
+            for c in top:
+                name = c["name"]
+                if c["old_buy"] and c["new_buy"] and abs(c["new_buy"] - c["old_buy"]) > 0.01:
+                    parts.append(f"{name}: 买 {c['old_buy']:.2f}→{c['new_buy']:.2f}")
+                elif c["old_sell"] and c["new_sell"] and abs(c["new_sell"] - c["old_sell"]) > 0.01:
+                    parts.append(f"{name}: 卖 {c['old_sell']:.2f}→{c['new_sell']:.2f}")
+            details = "; ".join(parts)
+            if len(changes) > 3:
+                details += f" …等 {count} 个"
+
             msg = f"{count} 个物品价格发生变化"
             self._status_label.setText(f"🔔 {msg}")
 
-            # 尝试系统托盘通知
-            if QSystemTrayIcon.isSystemTrayAvailable():
-                tray = QSystemTrayIcon(self)
-                tray.setIcon(self.windowIcon())
-                tray.show()
-                tray.showMessage(
-                    "EVE 商人助手",
-                    msg,
+            # 使用持久托盘图标通知
+            if self._tray_icon and self._tray_icon.isVisible():
+                self._tray_icon.showMessage(
+                    "EVE 商人助手 - 价格变化",
+                    details or msg,
                     QSystemTrayIcon.MessageIcon.Information,
                     5000,
                 )
-                # 清理：通知消失后隐藏托盘图标
-                QTimer.singleShot(6000, tray.hide)
         except Exception as ex:
             self._status_label.setText(f"价格变化检测失败: {ex}")
 
@@ -864,3 +879,93 @@ class MainWindow(QMainWindow):
 
     def refresh_price_time(self):
         self._refresh_price_age()
+
+    # ═══════════════════════════════════════
+    #  系统托盘
+    # ═══════════════════════════════════════
+
+    def _init_tray_icon(self):
+        """创建系统托盘图标（如果平台支持）"""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            self._tray_icon = None
+            return
+
+        # 从 data/caches/icons/ 取第一个可用图标
+        from core.paths import ICON_DIR
+
+        icon = None
+        if os.path.isdir(ICON_DIR):
+            for fname in sorted(os.listdir(ICON_DIR)):
+                fpath = os.path.join(ICON_DIR, fname)
+                if os.path.isfile(fpath) and fname.lower().endswith(
+                    (
+                        ".png",
+                        ".ico",
+                        ".svg",
+                        ".xpm",
+                    )
+                ):
+                    icon = QIcon(fpath)
+                    if not icon.isNull():
+                        break
+
+        if icon is None or icon.isNull():
+            # 回退：用窗口图标或自制图标
+            icon = self.windowIcon()
+        if icon is None or icon.isNull():
+            # 自制 "E" 字图标
+            pixmap = QPixmap(64, 64)
+            pixmap.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(theme.PRIMARY))
+            painter.drawRoundedRect(4, 4, 56, 56, 12, 12)
+            painter.setBrush(QColor(theme.TEXT_ON_PRIMARY))
+            font = painter.font()
+            font.setPointSize(28)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "E")
+            painter.end()
+            icon = QIcon(pixmap)
+
+        self._tray_icon = QSystemTrayIcon(self)
+        self._tray_icon.setIcon(icon)
+        self._tray_icon.setToolTip("EVE 商人助手")
+
+        # 右键菜单
+        menu = QMenu(self)
+        menu.setObjectName("sys_menu")
+
+        show_action = QAction("打开主窗口", self)
+        show_action.triggered.connect(self._tray_show_window)
+        menu.addAction(show_action)
+
+        menu.addSeparator()
+
+        exit_action = QAction("退出", self)
+        exit_action.triggered.connect(self._tray_quit_app)
+        menu.addAction(exit_action)
+
+        self._tray_icon.setContextMenu(menu)
+
+        # 双击托盘图标恢复窗口
+        self._tray_icon.activated.connect(self._on_tray_activated)
+
+        self._tray_icon.show()
+
+    def _tray_show_window(self):
+        """从托盘恢复主窗口"""
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_tray_activated(self, reason):
+        """托盘图标被激活（双击恢复窗口）"""
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._tray_show_window()
+
+    def _tray_quit_app(self):
+        """从托盘菜单退出应用"""
+        QApplication.quit()
