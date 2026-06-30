@@ -283,3 +283,89 @@ class TestPriceChanges:
         assert row is not None
         assert row["last_buy_price"] == 4.0
         assert row["last_sell_price"] == 5.0
+
+
+class TestWatchlistUpdateNotePreservesOtherFields:
+    """更新备注不改变其他字段"""
+
+    def test_update_note_preserves_thresholds(self, temp_watchlist_db):
+        """只更新备注，buy_threshold / sell_threshold 应保持不变"""
+        from services.watchlist_manager import (
+            add_to_watchlist,
+            get_watchlist,
+            init_db,
+            update_watchlist_item,
+        )
+
+        init_db()
+        item_id = add_to_watchlist(1001, note="原始备注", buy_threshold=3.0, sell_threshold=6.0)
+
+        # 只更新备注
+        update_watchlist_item(item_id, note="新备注")
+
+        items = get_watchlist()
+        item = next(i for i in items if i["type_id"] == 1001)
+        assert item["note"] == "新备注"
+        assert item["buy_threshold"] == 3.0  # 未改变
+        assert item["sell_threshold"] == 6.0  # 未改变
+
+    def test_update_note_preserves_type_id_and_region(self, temp_watchlist_db):
+        """只更新备注，type_id / region_id 应保持不变"""
+        from services.watchlist_manager import (
+            add_to_watchlist,
+            get_watchlist,
+            init_db,
+            update_watchlist_item,
+        )
+
+        init_db()
+        item_id = add_to_watchlist(2001, note="船", buy_threshold=4e7)
+
+        update_watchlist_item(item_id, note="主力战列舰")
+
+        items = get_watchlist()
+        item = next(i for i in items if i["type_id"] == 2001)
+        assert item["note"] == "主力战列舰"
+        assert item["type_id"] == 2001  # 未改变
+        assert item["region_id"] == 10000002  # 未改变
+        assert item["zh_name"] == "渡鸦级"  # 未改变
+
+    def test_update_note_without_prior_thresholds(self, temp_watchlist_db):
+        """未设阈值时更新备注，其他字段应保持 NULL"""
+        from services.watchlist_manager import (
+            add_to_watchlist,
+            get_watchlist,
+            init_db,
+            update_watchlist_item,
+        )
+
+        init_db()
+        item_id = add_to_watchlist(3001, note="蓝图")
+
+        update_watchlist_item(item_id, note="未知蓝图 - 已关注")
+
+        items = get_watchlist()
+        item = next(i for i in items if i["type_id"] == 3001)
+        assert item["note"] == "未知蓝图 - 已关注"
+        assert item["buy_threshold"] is None  # 未改变
+        assert item["sell_threshold"] is None  # 未改变
+
+    def test_consecutive_note_updates(self, temp_watchlist_db):
+        """连续两次更新备注，阈值始终不变"""
+        from services.watchlist_manager import (
+            add_to_watchlist,
+            get_watchlist,
+            init_db,
+            update_watchlist_item,
+        )
+
+        init_db()
+        item_id = add_to_watchlist(1001, note="v1", buy_threshold=3.5)
+
+        update_watchlist_item(item_id, note="v2")
+        update_watchlist_item(item_id, note="v3")
+
+        items = get_watchlist()
+        item = next(i for i in items if i["type_id"] == 1001)
+        assert item["note"] == "v3"
+        assert item["buy_threshold"] == 3.5  # 始终不变

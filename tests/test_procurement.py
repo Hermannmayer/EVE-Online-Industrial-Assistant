@@ -180,3 +180,105 @@ class TestProcurementCrud:
         assert pending == 1
         assert ordered == 1
         assert received == 1
+
+
+class TestProcurementBatchAndFilter:
+    """批量插入与按优先级筛选"""
+
+    BATCH_ITEMS = [
+        (2010, "巨鸟级", 1, "Jita", "urgent", "pending", "急造旗舰"),
+        (2011, "探索者级", 3, "Amarr", "low", "pending", "探险用"),
+        (2012, "狂怒者级", 2, "Hek", "high", "ordered", "PVP舰队"),
+        (2013, "弯刀级", 1, "Jita", "normal", "received", "已到货"),
+        (2014, "猎豹级", 2, "Rens", "urgent", "pending", "急需"),
+        (2015, "净化级", 5, "Dodixie", "high", "ordered", "舰队配置"),
+    ]
+
+    stmt = (
+        "INSERT INTO procurement_items "
+        "(type_id, item_name, quantity, hub, priority, status, notes) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)"
+    )
+
+    def test_batch_insert_all(self, temp_user_db):
+        """批量插入 6 条记录，验证全部写入"""
+        with temp_user_db.connect("user") as conn:
+            for item in self.BATCH_ITEMS:
+                conn.execute(self.stmt, item)
+        with temp_user_db.connect("user") as conn:
+            rows = conn.execute(
+                "SELECT type_id, item_name, quantity, hub, priority, status, notes "
+                "FROM procurement_items ORDER BY type_id"
+            ).fetchall()
+        assert len(rows) == 6
+        # 验证第一条
+        assert rows[0]["type_id"] == 2010
+        assert rows[0]["item_name"] == "巨鸟级"
+        assert rows[0]["priority"] == "urgent"
+        # 验证最后一条
+        assert rows[-1]["type_id"] == 2015
+        assert rows[-1]["item_name"] == "净化级"
+
+    def test_batch_insert_id_sequence(self, temp_user_db):
+        """批量插入后 id 应连续自增"""
+        with temp_user_db.connect("user") as conn:
+            for item in self.BATCH_ITEMS:
+                conn.execute(self.stmt, item)
+        with temp_user_db.connect("user") as conn:
+            ids = [
+                r["id"]
+                for r in conn.execute(
+                    "SELECT id FROM procurement_items ORDER BY id"
+                ).fetchall()
+            ]
+        assert ids == list(range(ids[0], ids[0] + 6))
+
+    def test_filter_by_priority_urgent(self, temp_user_db):
+        """按 urgent 筛出 2 条（巨鸟级、猎豹级）"""
+        with temp_user_db.connect("user") as conn:
+            for item in self.BATCH_ITEMS:
+                conn.execute(self.stmt, item)
+        with temp_user_db.connect("user") as conn:
+            rows = conn.execute(
+                "SELECT item_name FROM procurement_items "
+                "WHERE priority = 'urgent' ORDER BY type_id"
+            ).fetchall()
+        assert len(rows) == 2
+        names = [r["item_name"] for r in rows]
+        assert "巨鸟级" in names
+        assert "猎豹级" in names
+
+    def test_filter_by_priority_high(self, temp_user_db):
+        """按 high 筛出 2 条（狂怒者级、净化级）"""
+        with temp_user_db.connect("user") as conn:
+            for item in self.BATCH_ITEMS:
+                conn.execute(self.stmt, item)
+        with temp_user_db.connect("user") as conn:
+            rows = conn.execute(
+                "SELECT item_name FROM procurement_items "
+                "WHERE priority = 'high' ORDER BY type_id"
+            ).fetchall()
+        assert len(rows) == 2
+
+    def test_filter_by_priority_low(self, temp_user_db):
+        """按 low 筛出 1 条（探索者级）"""
+        with temp_user_db.connect("user") as conn:
+            for item in self.BATCH_ITEMS:
+                conn.execute(self.stmt, item)
+        with temp_user_db.connect("user") as conn:
+            rows = conn.execute(
+                "SELECT item_name FROM procurement_items "
+                "WHERE priority = 'low' ORDER BY type_id"
+            ).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["item_name"] == "探索者级"
+
+    def test_filter_by_priority_none_match(self, temp_user_db):
+        """不存在的优先级返回空列表"""
+        with temp_user_db.connect("user") as conn:
+            conn.execute(self.stmt, (2099, "测试", 1, "Jita", "normal", "pending", ""))
+        with temp_user_db.connect("user") as conn:
+            rows = conn.execute(
+                "SELECT * FROM procurement_items WHERE priority = 'critical'"
+            ).fetchall()
+        assert rows == []

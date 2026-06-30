@@ -153,3 +153,59 @@ class TestExportCsvEmpty:
             assert result[2][1] == ""  # None → ""
         finally:
             os.unlink(path)
+
+
+class TestExportToNonexistentDir:
+    """导出到不存在的目录应抛出 FileNotFoundError"""
+
+    def test_csv_nonexistent_dir_raises(self):
+        """export_to_csv 传入不存在的目录应抛 FileNotFoundError"""
+        import os
+        import tempfile
+
+        from ui_pyside6.views.export_helper import export_to_csv
+
+        headers = ["A"]
+        rows = [["1"]]
+        bad_path = os.path.join(tempfile.gettempdir(), "eve_test_nonexistent", "out.csv")
+        assert not os.path.exists(os.path.dirname(bad_path))
+        try:
+            export_to_csv(headers, rows, bad_path)
+            assert False, "应抛出 FileNotFoundError"
+        except FileNotFoundError:
+            pass
+
+    def test_excel_nonexistent_dir_raises(self):
+        """export_to_excel 传入不存在的目录应抛 FileNotFoundError"""
+        import os
+        import tempfile
+
+        from ui_pyside6.views.export_helper import export_to_excel
+
+        headers = ["A"]
+        rows = [["1"]]
+        bad_path = os.path.join(tempfile.gettempdir(), "eve_test_nonexistent", "out.xlsx")
+        assert not os.path.exists(os.path.dirname(bad_path))
+        try:
+            export_to_excel(headers, rows, bad_path)
+            assert False, "应抛出 FileNotFoundError"
+        except FileNotFoundError:
+            pass
+
+    def test_csv_nonexistent_dir_deep_path(self):
+        """深层不存在的目录也应抛出 FileNotFoundError"""
+        import os
+        import tempfile
+
+        from ui_pyside6.views.export_helper import export_to_csv
+
+        headers = ["A"]
+        rows = [["1"]]
+        bad_path = os.path.join(
+            tempfile.gettempdir(), "eve_test_nonexistent", "sub", "nested", "out.csv"
+        )
+        try:
+            export_to_csv(headers, rows, bad_path)
+            assert False, "应抛出 FileNotFoundError"
+        except FileNotFoundError:
+            pass
