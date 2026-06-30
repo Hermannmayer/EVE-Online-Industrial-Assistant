@@ -10,6 +10,7 @@ from PySide6.QtCore import (
     QPoint,
     Qt,
     QThread,
+    QTimer,
     Signal,
 )
 from PySide6.QtGui import QColor, QPixmap
@@ -64,11 +65,16 @@ class WatchlistTableModel(QAbstractTableModel):
     def __init__(self):
         super().__init__()
         self._rows: list[dict] = []
+        self._price_changes: dict[int, dict] = {}
 
     def set_rows(self, rows: list[dict]):
         self.beginResetModel()
         self._rows = rows
         self.endResetModel()
+
+    def set_price_changes(self, changes: dict[int, dict]):
+        """设置价格变化数据用于行高亮"""
+        self._price_changes = changes
 
     def rowCount(self, parent=QModelIndex()):
         return len(self._rows)
@@ -120,6 +126,22 @@ class WatchlistTableModel(QAbstractTableModel):
                 return QColor(theme.TEXT_SECONDARY)
 
         elif role == Qt.ItemDataRole.BackgroundRole:
+            # 价格变化高亮（优先于阈值触发）
+            type_id = row.get("type_id")
+            if type_id and type_id in self._price_changes:
+                ch = self._price_changes[type_id]
+                buy_up = ch.get("new_buy", 0) > ch.get("old_buy", 0)
+                buy_down = ch.get("new_buy", 0) < ch.get("old_buy", 0)
+                sell_up = ch.get("new_sell", 0) > ch.get("old_sell", 0)
+                sell_down = ch.get("new_sell", 0) < ch.get("old_sell", 0)
+                if buy_up or sell_up:
+                    c = QColor(theme.ACCENT_GREEN)
+                    c.setAlpha(50)
+                    return c
+                if buy_down or sell_down:
+                    c = QColor(theme.ACCENT_RED)
+                    c.setAlpha(50)
+                    return c
             buy_thresh = row.get("buy_threshold")
             sell_thresh = row.get("sell_threshold")
             buy_price = row.get("buy_price")
@@ -385,7 +407,41 @@ class WatchlistPage(QWidget):
         self._popup.item_selected.connect(self._on_item_selected)
 
         # ── 主题 ──
+
+        # ── 价格变化检测 ──
+        self._price_changes: dict[int, dict] = {}
+        self._check_timer = QTimer(self)
+        self._check_timer.timeout.connect(self._on_price_check_timer)
+        self._check_timer.start(60000)  # 60秒
         theme.add_theme_listener(self._on_theme_changed)
+
+
+    def showEvent(self, event):
+        """显示时启动定时器"""
+        super().showEvent(event)
+        if not self._check_timer.isActive():
+            self._check_timer.start(60000)
+
+    def hideEvent(self, event):
+        """隐藏时停止定时器"""
+        super().hideEvent(event)
+        self._check_timer.stop()
+
+    def _on_price_check_timer(self):
+        """定时检查价格变化"""
+        try:
+            from services.watchlist_manager import check_price_changes
+            changes = check_price_changes()
+            self._price_changes = {c['type_id']: c for c in changes}
+            self._model.set_price_changes(self._price_changes)
+            self._refresh_data()
+            self.update_status_bar()
+        except Exception as ex:
+            print(f'价格变化检测失败: {ex}')
+
+    def trigger_price_check(self):
+        """外部调用触发即时价格变化检查"""
+        self._on_price_check_timer()
 
     def _on_theme_changed(self):
         """主题切换时更新内联样式"""
@@ -504,6 +560,9 @@ class WatchlistPage(QWidget):
             msg = f"关注列表: {count} 项"
             if triggered:
                 msg += f", {triggered} 项触发提醒"
+            change_count = len(self._price_changes)
+            if change_count:
+                msg += f", {change_count} 项价格变化"
             self._main.statusBar().showMessage(msg)
 
     # ── 右键菜单 ──
