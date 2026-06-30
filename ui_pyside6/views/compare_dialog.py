@@ -1,6 +1,7 @@
 """
 批量对比模式 — 多物品同屏对比利润和评分
 """
+
 import csv
 import os
 
@@ -254,8 +255,10 @@ class CompareTableModel(QAbstractTableModel):
 #  对比计算 Worker
 # ═══════════════════════════════════════════
 
+
 class CompareWorker(QThread):
     """后台对比计算 Worker"""
+
     progress = Signal(int, int)
     item_done = Signal(int, dict)
     done = Signal(list)
@@ -312,23 +315,30 @@ class CompareWorker(QThread):
         r = _cget(k)
         if not r:
             r = calc_manufacturing_score(
-                tid, char_cfg or {}, hub, hub, tax,
-                bp_me=me, bp_te=te,
+                tid,
+                char_cfg or {},
+                hub,
+                hub,
+                tax,
+                bp_me=me,
+                bp_te=te,
             )
             _cset(k, r)
 
         h = r.get("hours_per_run", 1) or 1
         runs_per_day = 24 / h
-        row.update({
-            "cost": r.get("cost_per_unit", 0),
-            "revenue": r.get("revenue_per_unit", 0),
-            "profit": r.get("profit_per_run", 0),
-            "margin": r.get("margin_pct", 0),
-            "score": r.get("score", 0),
-            "isk_per_hour": r.get("isk_per_hour", 0),
-            "runs_per_day": runs_per_day,
-            "status": r.get("status", ""),
-        })
+        row.update(
+            {
+                "cost": r.get("cost_per_unit", 0),
+                "revenue": r.get("revenue_per_unit", 0),
+                "profit": r.get("profit_per_run", 0),
+                "margin": r.get("margin_pct", 0),
+                "score": r.get("score", 0),
+                "isk_per_hour": r.get("isk_per_hour", 0),
+                "runs_per_day": runs_per_day,
+                "status": r.get("status", ""),
+            }
+        )
 
     def _calc_trade(self, tid: int, row: dict, char_cfg: dict | None):
         bh = self._cfg.get("bh", "Jita")
@@ -342,15 +352,17 @@ class CompareWorker(QThread):
             r = calc_trade_score(tid, bh, sh, bs, ss, char_cfg or {})
             _cset(k, r)
 
-        row.update({
-            "buy_cost": r.get("buy_cost", 0),
-            "sell_revenue": r.get("sell_revenue", 0),
-            "gross_profit": r.get("gross_profit", 0),
-            "margin": r.get("margin_pct", 0),
-            "score": r.get("score", 0),
-            "profit_per_m3": r.get("profit_per_m3", 0),
-            "status": r.get("status", ""),
-        })
+        row.update(
+            {
+                "buy_cost": r.get("buy_cost", 0),
+                "sell_revenue": r.get("sell_revenue", 0),
+                "gross_profit": r.get("gross_profit", 0),
+                "margin": r.get("margin_pct", 0),
+                "score": r.get("score", 0),
+                "profit_per_m3": r.get("profit_per_m3", 0),
+                "status": r.get("status", ""),
+            }
+        )
 
     def _calc_reaction(self, tid: int, row: dict, char_cfg: dict | None):
         hub = self._cfg.get("hub", "Jita")
@@ -360,27 +372,34 @@ class CompareWorker(QThread):
         r = _cget(k)
         if not r:
             r = calc_reaction_score(
-                tid, char_cfg or {}, hub, hub, tax,
+                tid,
+                char_cfg or {},
+                hub,
+                hub,
+                tax,
             )
             _cset(k, r)
 
         h = r.get("hours_per_run", 1) or 1
         runs_per_day = 24 / h
-        row.update({
-            "cost": r.get("cost_per_unit", 0),
-            "revenue": r.get("revenue_per_unit", 0),
-            "profit": r.get("profit_per_run", 0),
-            "margin": r.get("margin_pct", 0),
-            "score": r.get("score", 0),
-            "isk_per_hour": r.get("isk_per_hour", 0),
-            "runs_per_day": runs_per_day,
-            "status": r.get("status", ""),
-        })
+        row.update(
+            {
+                "cost": r.get("cost_per_unit", 0),
+                "revenue": r.get("revenue_per_unit", 0),
+                "profit": r.get("profit_per_run", 0),
+                "margin": r.get("margin_pct", 0),
+                "score": r.get("score", 0),
+                "isk_per_hour": r.get("isk_per_hour", 0),
+                "runs_per_day": runs_per_day,
+                "status": r.get("status", ""),
+            }
+        )
 
 
 # ═══════════════════════════════════════════
 #  批量对比对话框
 # ═══════════════════════════════════════════
+
 
 class CompareDialog(QDialog):
     """批量对比模式 — 多物品同屏对比利润和评分"""
@@ -422,9 +441,7 @@ class CompareDialog(QDialog):
     def _on_theme_changed(self):
         """主题切换时重新应用内联样式表"""
         # 主背景
-        self.setStyleSheet(
-            f"QDialog {{ background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; }}"
-        )
+        self.setStyleSheet(f"QDialog {{ background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; }}")
         # 搜索框
         self._search_input.setStyleSheet(
             f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
@@ -484,17 +501,22 @@ class CompareDialog(QDialog):
             f"QPushButton:hover{{background:{theme.BG_HOVER};border-color:{theme.PRIMARY};}}"
         )
         # 状态栏
-        self._status.setStyleSheet(
-            f"color:{theme.TEXT_SECONDARY};font-size:11px;"
-        )
+        self._status.setStyleSheet(f"color:{theme.TEXT_SECONDARY};font-size:11px;")
         # 进度条
         self._progress.setStyleSheet(
             f"QProgressBar{{background:{theme.BG_SURFACE};border:none;border-radius:1px;height:3px;}}"
             f"QProgressBar::chunk{{background:{theme.PRIMARY};border-radius:1px;}}"
         )
         # 标签
-        for lbl in [self._lbl_hub, self._lbl_mode, self._lbl_char, self._lbl_me,
-                     self._lbl_te, self._lbl_tax, self._lbl_items]:
+        for lbl in [
+            self._lbl_hub,
+            self._lbl_mode,
+            self._lbl_char,
+            self._lbl_me,
+            self._lbl_te,
+            self._lbl_tax,
+            self._lbl_items,
+        ]:
             lbl.setStyleSheet(f"color:{theme.TEXT_SECONDARY};font-size:11px;")
         # 清空按钮
         self._clear_btn.setStyleSheet(
@@ -857,6 +879,7 @@ class CompareDialog(QDialog):
         mode = ["mfg", "trade", "reaction"][mode_index]
         if mode == "trade":
             from ui_pyside6.views.score_dialogs import TradeDlg
+
             cfg = {
                 "hub": self._hub_combo.currentText(),
                 "char": self._char_combo.currentText(),
@@ -867,6 +890,7 @@ class CompareDialog(QDialog):
             dlg.exec()
         else:
             from ui_pyside6.views.score_dialogs import MfgDlg
+
             cfg = {
                 "hub": self._hub_combo.currentText(),
                 "char": self._char_combo.currentText(),
@@ -907,6 +931,7 @@ class CompareDialog(QDialog):
 # ═══════════════════════════════════════════
 #  便捷入口函数
 # ═══════════════════════════════════════════
+
 
 def open_compare_dialog(
     parent=None,

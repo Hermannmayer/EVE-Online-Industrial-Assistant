@@ -9,6 +9,7 @@
     - market.db     (market_prices, market_volume_snapshots)
     - user.db       (hangars, inventory_items, production_plans, user_skills)
 """
+
 import os
 import sqlite3
 import sys
@@ -223,9 +224,15 @@ def run_migration():
     # ── 参考数据库 ──
     log.info("\n[1/3] 创建参考数据库 (reference.db)...")
     ref_tables = [
-        "item", "market_tree",
-        "blueprint_activities", "blueprint_materials", "blueprint_products", "blueprint_skills",
-        "industry_system_costs", "industry_facilities", "item_dogma",
+        "item",
+        "market_tree",
+        "blueprint_activities",
+        "blueprint_materials",
+        "blueprint_products",
+        "blueprint_skills",
+        "industry_system_costs",
+        "industry_facilities",
+        "item_dogma",
     ]
     ref_conn = sqlite3.connect(REF_DB_PATH)
     ref_conn.executescript(REFERENCE_SCHEMA)
@@ -268,5 +275,6 @@ def run_migration():
 
 if __name__ == "__main__":
     from core.logger import set_debug
+
     set_debug(True)
     run_migration()

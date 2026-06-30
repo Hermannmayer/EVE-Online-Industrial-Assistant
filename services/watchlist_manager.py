@@ -1,6 +1,7 @@
 """
 关注列表数据层 — 价格监控 CRUD / 阈值设置 / 价格变化检测
 """
+
 from services.database_manager import get_db
 
 db = get_db()

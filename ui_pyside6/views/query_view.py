@@ -1,6 +1,7 @@
 """
 物品查询页面 — QTableView + 右键菜单 + 订单面板
 """
+
 import asyncio
 import json
 import os
@@ -107,9 +108,8 @@ class QueryTableModel(QAbstractTableModel):
                     if os.path.exists(icon_path):
                         pix = QPixmap(icon_path)
                         if not pix.isNull():
-                            return pix.scaled(32, 32,
-                                Qt.AspectRatioMode.KeepAspectRatio,
-                                Qt.TransformationMode.SmoothTransformation
+                            return pix.scaled(
+                                32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
                             )
             return None
 
@@ -195,8 +195,10 @@ class QueryTableModel(QAbstractTableModel):
 #  Workers
 # ═══════════════════════════════════════
 
+
 class SearchWorker(QThread):
     """后台数据库搜索"""
+
     finished_signal = Signal(list, bool)  # rows, is_fallback
     error_signal = Signal(str)
 
@@ -217,7 +219,7 @@ class SearchWorker(QThread):
                 self.error_signal.emit(str(e))
 
     def _db_search(self, query: str):
-        with get_container().db.connect('ref', 'mkt') as conn:
+        with get_container().db.connect("ref", "mkt") as conn:
             c = conn.cursor()
             like = f"%{query}%"
             group_match = None
@@ -227,7 +229,8 @@ class SearchWorker(QThread):
                     break
 
             if query.isdigit():
-                c.execute("""
+                c.execute(
+                    """
                     SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume,
                            mp.buy_price, mp.sell_price, mp.buy_volume, mp.sell_volume
                     FROM item i
@@ -235,9 +238,12 @@ class SearchWorker(QThread):
                         AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = i.type_id)
                     WHERE i.type_id = ? OR i.en_name LIKE ? OR i.zh_name LIKE ?
                     ORDER BY i.type_id LIMIT 300
-                """, (int(query), like, like))
+                """,
+                    (int(query), like, like),
+                )
             elif group_match is not None:
-                c.execute("""
+                c.execute(
+                    """
                     SELECT sub.type_id, sub.zh_name, sub.en_name, sub.en_group_name, sub.zh_group_name, sub.volume,
                            mp.buy_price, mp.sell_price, mp.buy_volume, mp.sell_volume
                     FROM (
@@ -250,9 +256,12 @@ class SearchWorker(QThread):
                     LEFT JOIN mkt.market_prices mp ON sub.type_id = mp.type_id
                         AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = sub.type_id)
                     ORDER BY sub.type_id LIMIT 300
-                """, (group_match, like, like))
+                """,
+                    (group_match, like, like),
+                )
             else:
-                c.execute("""
+                c.execute(
+                    """
                     SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume,
                            mp.buy_price, mp.sell_price, mp.buy_volume, mp.sell_volume
                     FROM item i
@@ -260,27 +269,32 @@ class SearchWorker(QThread):
                         AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = i.type_id)
                     WHERE i.en_name LIKE ? OR i.zh_name LIKE ?
                     ORDER BY i.type_id LIMIT 300
-                """, (like, like))
+                """,
+                    (like, like),
+                )
             return c.fetchall()
 
     def _db_search_basic(self, query: str):
-        with get_container().db.connect('ref') as conn:
+        with get_container().db.connect("ref") as conn:
             c = conn.cursor()
             if query.isdigit():
                 c.execute(
                     "SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume"
-                    " FROM item WHERE type_id = ?", (int(query),)
+                    " FROM item WHERE type_id = ?",
+                    (int(query),),
                 )
             else:
                 c.execute(
                     "SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume"
                     " FROM item WHERE en_name LIKE ? OR zh_name LIKE ? LIMIT 100",
-                          (f"%{query}%", f"%{query}%"))
+                    (f"%{query}%", f"%{query}%"),
+                )
             return c.fetchall()
 
 
 class SuggestionWorker(QThread):
     """后台候选搜索"""
+
     finished_signal = Signal(list)  # list of (type_id, display, zh_name)
 
     def __init__(self, query: str, parent=None):
@@ -288,7 +302,7 @@ class SuggestionWorker(QThread):
         self._query = query
 
     def run(self):
-        with get_container().db.connect('ref') as conn:
+        with get_container().db.connect("ref") as conn:
             c = conn.cursor()
             q = self._query
             if q.isdigit():
@@ -296,7 +310,7 @@ class SuggestionWorker(QThread):
                     "SELECT type_id, en_name, zh_name FROM item "
                     "WHERE type_id = ? OR en_name LIKE ? OR zh_name LIKE ? "
                     "ORDER BY CASE WHEN type_id = ? THEN 0 ELSE 1 END, LENGTH(en_name), type_id LIMIT 10",
-                    (int(q), f"%{q}%", f"%{q}%", int(q))
+                    (int(q), f"%{q}%", f"%{q}%", int(q)),
                 )
             else:
                 c.execute(
@@ -305,7 +319,7 @@ class SuggestionWorker(QThread):
                     "ORDER BY CASE WHEN en_name LIKE ? THEN 0"
                     " WHEN zh_name LIKE ? THEN 1 ELSE 2 END,"
                     " LENGTH(en_name), type_id LIMIT 10",
-                    (f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%")
+                    (f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%"),
                 )
             result = []
             for tid, en, zh in c.fetchall():
@@ -317,6 +331,7 @@ class SuggestionWorker(QThread):
 
 class OrderFetchWorker(QThread):
     """后台获取 ESI 订单数据"""
+
     finished_signal = Signal(int, list, list)  # type_id, buy_orders, sell_orders
     error_signal = Signal(int, str)  # type_id, error
 
@@ -340,8 +355,7 @@ class OrderFetchWorker(QThread):
     async def _fetch(self):
         timeout = aiohttp.ClientTimeout(total=30)
         async with aiohttp.ClientSession(
-            headers={"Accept": "application/json", "User-Agent": "EveDataCrawler/1.0"},
-            timeout=timeout
+            headers={"Accept": "application/json", "User-Agent": "EveDataCrawler/1.0"}, timeout=timeout
         ) as session:
             url = f"{ESI_BASE_URL}/markets/{REGION_ID}/orders/"
             async with session.get(url, params={"type_id": self._type_id, "order_type": "buy"}) as resp:
@@ -368,11 +382,10 @@ class OrderFetchWorker(QThread):
         url = f"{ESI_BASE_URL}/universe/names/"
         timeout = aiohttp.ClientTimeout(total=30)
         async with aiohttp.ClientSession(
-            headers={"Accept": "application/json", "User-Agent": "EveDataCrawler/1.0"},
-            timeout=timeout
+            headers={"Accept": "application/json", "User-Agent": "EveDataCrawler/1.0"}, timeout=timeout
         ) as session:
             for i in range(0, len(need), 1000):
-                chunk = need[i:i + 1000]
+                chunk = need[i : i + 1000]
                 try:
                     async with session.post(url, json=chunk) as resp:
                         if resp.status == 200:
@@ -388,13 +401,14 @@ class OrderFetchWorker(QThread):
 
 class GroupLoadWorker(QThread):
     """加载类别列表"""
+
     finished_signal = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
     def run(self):
-        with get_container().db.connect('ref') as conn:
+        with get_container().db.connect("ref") as conn:
             c = conn.cursor()
             c.execute(
                 "SELECT DISTINCT e.group_id, e.en_group_name, e.zh_group_name"
@@ -409,8 +423,10 @@ class GroupLoadWorker(QThread):
 #  Popup dialogs
 # ═══════════════════════════════════════
 
+
 class SuggestionPopup(QDialog):
     """悬浮候选列表 — 出现在搜索框下方"""
+
     item_selected = Signal(int, str)  # type_id, zh_name
 
     def __init__(self, parent=None):
@@ -525,7 +541,7 @@ class OrderPopup(QDialog):
                 vol = f"{order['volume_remain']:,}"
                 loc_id = order["location_id"]
                 station = _station_name_cache.get(loc_id, str(loc_id))
-                item = QListWidgetItem(f"#{i+1}  {price} ISK  ×{vol}   {station} [{loc_id}]")
+                item = QListWidgetItem(f"#{i + 1}  {price} ISK  ×{vol}   {station} [{loc_id}]")
                 item.setForeground(QColor(theme.GREEN))
                 self._buy_list.addItem(item)
         else:
@@ -540,7 +556,7 @@ class OrderPopup(QDialog):
                 vol = f"{order['volume_remain']:,}"
                 loc_id = order["location_id"]
                 station = _station_name_cache.get(loc_id, str(loc_id))
-                item = QListWidgetItem(f"#{i+1}  {price} ISK  ×{vol}   {station} [{loc_id}]")
+                item = QListWidgetItem(f"#{i + 1}  {price} ISK  ×{vol}   {station} [{loc_id}]")
                 item.setForeground(QColor(theme.RED))
                 self._sell_list.addItem(item)
         else:
@@ -552,6 +568,7 @@ class OrderPopup(QDialog):
         """打开价格走势图"""
         if self._type_id:
             from ui_pyside6.views.price_chart import PriceChartDialog
+
             dlg = PriceChartDialog(self._type_id, self._name, self.parent())
             dlg.exec()
 
@@ -559,6 +576,7 @@ class OrderPopup(QDialog):
 # ═══════════════════════════════════════
 #  Main Query Page
 # ═══════════════════════════════════════
+
 
 class QueryPage(QWidget):
     """物品查询页面"""
@@ -858,14 +876,23 @@ class QueryPage(QWidget):
             sell_val = sell_p if sell_p is not None else 0.0
             is_inverted = buy_p is not None and sell_p is not None and buy_p > sell_p
 
-            parsed.append({
-                "type_id": tid, "zh": zh or "", "en": en or "", "group": group,
-                "buy_str": buy_str, "sell_str": sell_str,
-                "buy_val": buy_val, "sell_val": sell_val,
-                "avg_price_str": avg_price_str, "avg_price_val": avg_price_val,
-                "vol_str": f"{vol:,.2f}" if vol > 0 else "—",
-                "vol_val": vol, "is_inverted": is_inverted,
-            })
+            parsed.append(
+                {
+                    "type_id": tid,
+                    "zh": zh or "",
+                    "en": en or "",
+                    "group": group,
+                    "buy_str": buy_str,
+                    "sell_str": sell_str,
+                    "buy_val": buy_val,
+                    "sell_val": sell_val,
+                    "avg_price_str": avg_price_str,
+                    "avg_price_val": avg_price_val,
+                    "vol_str": f"{vol:,.2f}" if vol > 0 else "—",
+                    "vol_val": vol,
+                    "is_inverted": is_inverted,
+                }
+            )
 
         self._model.set_rows(parsed)
         self._count_label.setText(f"共 {len(rows)} 条结果" + (" (仅基本信息)" if is_fallback else ""))
@@ -992,10 +1019,10 @@ class QueryPage(QWidget):
         for i in range(self._model.rowCount()):
             row = self._model.get_row(i)
             if row and row["type_id"] == type_id:
-                if row['zh'] and row['en']:
+                if row["zh"] and row["en"]:
                     name = f"{row['zh']} ({row['en']})"
                 else:
-                    name = row['zh'] or row['en'] or str(type_id)
+                    name = row["zh"] or row["en"] or str(type_id)
                 break
 
         # 显示弹窗并立即展示缓存数据（如有）
@@ -1033,10 +1060,10 @@ class QueryPage(QWidget):
             for i in range(self._model.rowCount()):
                 row = self._model.get_row(i)
                 if row and row["type_id"] == type_id:
-                    if row['zh'] and row['en']:
+                    if row["zh"] and row["en"]:
                         name = f"{row['zh']} ({row['en']})"
                     else:
-                        name = row['zh'] or row['en'] or str(type_id)
+                        name = row["zh"] or row["en"] or str(type_id)
                     break
             self._order_popup.set_orders(type_id, name, buy_orders, sell_orders)
             self._status_label.setText("实时订单数据已加载")
@@ -1058,7 +1085,8 @@ class QueryPage(QWidget):
 
     def _open_all_items(self):
         from ui_pyside6.views.all_items_view import AllItemsDialog
-        if not hasattr(self, '_all_items_dialog') or self._all_items_dialog is None:
+
+        if not hasattr(self, "_all_items_dialog") or self._all_items_dialog is None:
             self._all_items_dialog = AllItemsDialog(self)
         self._all_items_dialog.show()
         self._all_items_dialog.raise_()

@@ -24,13 +24,14 @@ PyInstaller 打包后：
         data/search_history.json
         data/window_geometry.json
 """
+
 import os
 import sys
 
 
 def is_frozen() -> bool:
     """判断是否运行在 PyInstaller 打包后的环境中"""
-    return getattr(sys, 'frozen', False)
+    return getattr(sys, "frozen", False)
 
 
 def app_root() -> str:

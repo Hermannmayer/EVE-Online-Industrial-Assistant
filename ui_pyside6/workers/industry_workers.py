@@ -7,6 +7,7 @@ from services.scoring import calc_manufacturing_score
 
 class SearchWorker(QThread):
     """搜索可制造物品"""
+
     finished = Signal(list)
 
     def __init__(self, query: str, db, parent=None):
@@ -34,6 +35,7 @@ class SearchWorker(QThread):
 
 class ScoreWorker(QThread):
     """单项制造评分"""
+
     finished = Signal(dict)
 
     def __init__(
@@ -75,6 +77,7 @@ class ScoreWorker(QThread):
 
 class RankWorker(QThread):
     """批量评分所有可制造物品"""
+
     progress = Signal(int, int)
     result = Signal(list)
     done = Signal(float)

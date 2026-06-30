@@ -2,6 +2,7 @@
 Market price history — ESI /markets/{region_id}/history/
 Cache in market.db price_history table
 """
+
 from datetime import datetime, timezone
 
 import aiohttp

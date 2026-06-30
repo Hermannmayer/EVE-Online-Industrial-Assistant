@@ -1,6 +1,7 @@
 """
 评分弹窗与评分 Worker — 从 all_items_view.py 拆分而来
 """
+
 import os
 
 from PySide6.QtCore import QThread, Signal
@@ -30,13 +31,19 @@ REGIONS = TRADE_HUBS
 def _icon_label(type_id: int, size: int = 32) -> QLabel | None:
     """创建物品图标标签，无图标时返回 None"""
     from PySide6.QtCore import Qt as _Qt
+
     icon_path = os.path.join(ICON_DIR, f"{type_id}.png")
     if not os.path.exists(icon_path):
         return None
     lbl = QLabel()
-    lbl.setPixmap(QPixmap(icon_path).scaled(
-        size, size, _Qt.AspectRatioMode.KeepAspectRatio, _Qt.TransformationMode.SmoothTransformation,
-    ))
+    lbl.setPixmap(
+        QPixmap(icon_path).scaled(
+            size,
+            size,
+            _Qt.AspectRatioMode.KeepAspectRatio,
+            _Qt.TransformationMode.SmoothTransformation,
+        )
+    )
     return lbl
 
 
@@ -91,9 +98,7 @@ class MfgDlg(QDialog):
         self.t.setStyleSheet(ss)
         self.t.setValue(cur.get("tax", 0))
         form.addRow("设施税:", self.t)
-        b = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        b = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         b.accepted.connect(self.accept)
         b.rejected.connect(self.reject)
         form.addRow(b)
@@ -167,9 +172,7 @@ class TradeDlg(QDialog):
         self.c.addItems(cs if cs else ["main"])
         self.c.setCurrentText(cur.get("char", "main") if cur.get("char") in cs else "main")
         form.addRow("人物:", self.c)
-        b = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        b = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         b.accepted.connect(self.accept)
         b.rejected.connect(self.reject)
         form.addRow(b)
@@ -198,8 +201,9 @@ class ScoreW(QThread):
     def run(self):
         char = get_character(self._cfg.get("char", "")) if self._cfg.get("char") else None
         from services.scoring import get_price as _gp
+
         total = len(self._items)
-        with get_container().db.connect('ref', 'mkt', 'bp') as conn:
+        with get_container().db.connect("ref", "mkt", "bp") as conn:
             cur = conn.cursor()
             for i, row in enumerate(self._items):
                 tid = row["id"]
@@ -208,8 +212,16 @@ class ScoreW(QThread):
                     k = _ck(tid, "mfg", hub, self._cfg["char"])
                     r = _cget(k)
                     if not r:
-                        r = get_container().scoring_service().calc_manufacturing_score(
-                            tid, char or {}, hub, hub, self._cfg.get("tax", 0),
+                        r = (
+                            get_container()
+                            .scoring_service()
+                            .calc_manufacturing_score(
+                                tid,
+                                char or {},
+                                hub,
+                                hub,
+                                self._cfg.get("tax", 0),
+                            )
                         )
                         _cset(k, r)
                     h = r.get("hours_per_run", 1) or 1
@@ -218,8 +230,7 @@ class ScoreW(QThread):
                     # 市场深度检查
                     mkt_id = TRADE_HUB_IDS.get(hub, 10000002)
                     depth = cur.execute(
-                        "SELECT buy_volume FROM mkt.market_prices"
-                        " WHERE type_id=? AND region_id=? LIMIT 1",
+                        "SELECT buy_volume FROM mkt.market_prices WHERE type_id=? AND region_id=? LIMIT 1",
                         (tid, mkt_id),
                     ).fetchone()
                     bvol = depth[0] if depth else 0
@@ -228,32 +239,42 @@ class ScoreW(QThread):
                     daily_profit = profit_per_run * daily_out
                     veto = st or (bvol == 0 and "no_depth")
                     tag = _fmt_tag(daily_profit, veto)
-                    row.update({
-                        "mc": r.get("cost_per_unit"),
-                        "mr": r.get("revenue_per_unit"),
-                        "mh": runs_per_day,
-                        "ms": st,
-                        "_tag": tag,
-                        "mm": r.get("margin_pct"),
-                        "mdp": daily_profit,
-                        "bp": _gp(tid, "buy", hub),
-                        "sp": _gp(tid, "sell", hub),
-                    })
+                    row.update(
+                        {
+                            "mc": r.get("cost_per_unit"),
+                            "mr": r.get("revenue_per_unit"),
+                            "mh": runs_per_day,
+                            "ms": st,
+                            "_tag": tag,
+                            "mm": r.get("margin_pct"),
+                            "mdp": daily_profit,
+                            "bp": _gp(tid, "buy", hub),
+                            "sp": _gp(tid, "sell", hub),
+                        }
+                    )
                 else:
                     bh = self._cfg["bh"]
                     sh = self._cfg["sh"]
                     k = _ck(tid, "trade", bh + sh, self._cfg["char"])
                     r = _cget(k)
                     if not r:
-                        r = get_container().scoring_service().calc_trade_score(
-                            tid, bh, sh, self._cfg["bs"], self._cfg["ss"], char or {},
+                        r = (
+                            get_container()
+                            .scoring_service()
+                            .calc_trade_score(
+                                tid,
+                                bh,
+                                sh,
+                                self._cfg["bs"],
+                                self._cfg["ss"],
+                                char or {},
+                            )
                         )
                         _cset(k, r)
                     st = r.get("status", "")
                     mkt_id = TRADE_HUB_IDS.get(sh, 10000002)
                     depth = cur.execute(
-                        "SELECT buy_volume FROM mkt.market_prices"
-                        " WHERE type_id=? AND region_id=? LIMIT 1",
+                        "SELECT buy_volume FROM mkt.market_prices WHERE type_id=? AND region_id=? LIMIT 1",
                         (tid, mkt_id),
                     ).fetchone()
                     bvol = depth[0] if depth else 0
@@ -262,15 +283,17 @@ class ScoreW(QThread):
                     daily_profit = gp * sellable
                     veto = st or (bvol == 0 and "no_depth")
                     tag = _fmt_tag(daily_profit, veto)
-                    row.update({
-                        "tc": r.get("buy_cost"),
-                        "tr": r.get("sell_revenue"),
-                        "_tag": tag,
-                        "tm": r.get("margin_pct"),
-                        "tpm": r.get("profit_per_m3"),
-                        "bp": _gp(tid, self._cfg["bs"], bh),
-                        "sp": _gp(tid, self._cfg["ss"], sh),
-                    })
+                    row.update(
+                        {
+                            "tc": r.get("buy_cost"),
+                            "tr": r.get("sell_revenue"),
+                            "_tag": tag,
+                            "tm": r.get("margin_pct"),
+                            "tpm": r.get("profit_per_m3"),
+                            "bp": _gp(tid, self._cfg["bs"], bh),
+                            "sp": _gp(tid, self._cfg["ss"], sh),
+                        }
+                    )
                 if (i + 1) % 50 == 0 or i == total - 1:
                     self.progress.emit(i + 1, total)
 

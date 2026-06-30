@@ -1,6 +1,7 @@
 """
 数据初始化检测 — 检查各组件是否已就绪
 """
+
 import os
 import sqlite3
 
@@ -70,6 +71,7 @@ def check_implants() -> int:
 def check_icons() -> tuple[int, int]:
     """返回 (已缓存/免下载数, 总数)"""
     from core.paths import icon_cache_dir
+
     cache_dir = icon_cache_dir()
     if not os.path.exists(cache_dir):
         return 0, 0

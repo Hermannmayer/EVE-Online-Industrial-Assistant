@@ -2,6 +2,7 @@
 拉取工业/贸易相关植入体的 dogma 属性
 从 ESI 获取并存入 item_dogma 表
 """
+
 import asyncio
 import json
 import os
@@ -110,7 +111,7 @@ async def main():
                     return await fetch_type_dogma(client, tid)
 
             for i in range(0, len(to_fetch), 20):
-                batch = to_fetch[i:i + 20]
+                batch = to_fetch[i : i + 20]
                 batch_results = await asyncio.gather(*[fetch_one(t) for t in batch])
                 results.extend([r for r in batch_results if r])
 
@@ -119,7 +120,7 @@ async def main():
             for r in results:
                 cur.execute(
                     "INSERT OR REPLACE INTO item_dogma (type_id, dogma_attrs, dogma_effects) VALUES (?, ?, ?)",
-                    (r["type_id"], r["dogma_attrs"], r["dogma_effects"])
+                    (r["type_id"], r["dogma_attrs"], r["dogma_effects"]),
                 )
             conn.commit()
             conn.close()

@@ -8,6 +8,7 @@ from services.scoring import calc_trade_score, get_price, get_volume
 
 class CrossRegionPriceWorker(QThread):
     """获取物品在四大贸易中心的价格"""
+
     finished = Signal(list)
 
     def __init__(self, type_id: int, db, parent=None):
@@ -23,20 +24,23 @@ class CrossRegionPriceWorker(QThread):
             vol = get_volume(self._tid, "total", hub_name)
             spread = (sell - buy) if (sell and buy) else 0
             spread_pct = (spread / buy * 100) if (buy and buy > 0) else 0
-            results.append({
-                "hub": hub_name,
-                "region_id": region_id,
-                "buy_price": buy or 0,
-                "sell_price": sell or 0,
-                "spread": round(spread, 2),
-                "spread_pct": round(spread_pct, 2),
-                "volume": vol,
-            })
+            results.append(
+                {
+                    "hub": hub_name,
+                    "region_id": region_id,
+                    "buy_price": buy or 0,
+                    "sell_price": sell or 0,
+                    "spread": round(spread, 2),
+                    "spread_pct": round(spread_pct, 2),
+                    "volume": vol,
+                }
+            )
         self.finished.emit(results)
 
 
 class TradeScoreWorker(QThread):
     """单项贸易评分"""
+
     finished = Signal(dict)
 
     def __init__(
@@ -71,6 +75,7 @@ class TradeScoreWorker(QThread):
 
 class TransportWorker(QThread):
     """跨区域运输利润计算"""
+
     finished = Signal(dict)
 
     def __init__(

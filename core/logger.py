@@ -8,6 +8,7 @@
     log.error("错误")
     log.debug("调试")
 """
+
 import logging
 import sys
 from datetime import datetime

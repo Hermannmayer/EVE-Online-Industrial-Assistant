@@ -1,6 +1,7 @@
 """
 数据初始化向导 — 逐步运行各初始化脚本
 """
+
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QDialog,
@@ -28,6 +29,7 @@ STEPS = [
 
 class InitStepWorker(QThread):
     """在后台线程运行一个初始化步骤"""
+
     result = Signal(str, bool, str)  # step_key, success, message
 
     def __init__(self, module_name: str, step_key: str, parent=None):
@@ -41,6 +43,7 @@ class InitStepWorker(QThread):
         if self._module == "getprices":
             try:
                 from services.workers.getprices import run_price_update
+
                 run_price_update()
                 self.result.emit(self._key, True, "完成")
             except Exception as e:
@@ -53,15 +56,19 @@ class InitStepWorker(QThread):
             asyncio.set_event_loop(loop)
             if self._module == "getitems":
                 from services.workers.getitems import main
+
                 loop.run_until_complete(main())
             elif self._module == "getblueprints":
                 from services.workers.getblueprints import run_blueprint_update
+
                 loop.run_until_complete(run_blueprint_update())
             elif self._module == "getimplantdata":
                 from services.workers.getimplantdata import main
+
                 loop.run_until_complete(main())
             elif self._module == "geticon":
                 from services.workers.geticon import main
+
                 loop.run_until_complete(main())
             else:
                 self.result.emit(self._key, False, f"未知步骤: {self._module}")
@@ -263,10 +270,9 @@ class InitWizard(QDialog):
         self._run_btn.setEnabled(True)
         self._progress.setValue(5)
         QMessageBox.information(
-            self, "完成",
-            "数据初始化完成！\n\n"
-            "现在可以将 items.db 和 data/ 目录随程序一起打包分发，"
-            "其他用户无需再次下载。"
+            self,
+            "完成",
+            "数据初始化完成！\n\n现在可以将 items.db 和 data/ 目录随程序一起打包分发，其他用户无需再次下载。",
         )
         if self._on_done_callback:
             self._on_done_callback()

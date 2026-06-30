@@ -15,11 +15,17 @@ DEFAULT_CHAR_CONFIG = {
     "characters": {
         "main": {
             "skills": {
-                "工业理论": 5, "高级工业理论": 5, "工业配置学": 5,
-                "高级工业配置学": 5, "批量生产技术": 5,
-                "经纪人关系学": 5, "高级经纪人关系学": 5, "会计学": 5,
+                "工业理论": 5,
+                "高级工业理论": 5,
+                "工业配置学": 5,
+                "高级工业配置学": 5,
+                "批量生产技术": 5,
+                "经纪人关系学": 5,
+                "高级经纪人关系学": 5,
+                "会计学": 5,
                 "科学原理": 5,
-                "Mass Production": 5, "Advanced Mass Production": 5,
+                "Mass Production": 5,
+                "Advanced Mass Production": 5,
             },
             "market": {
                 "jita": {"faction_standing": 6.7, "corp_standing": 5.0},
@@ -123,9 +129,7 @@ def validate_char_config(data: dict) -> dict:
                             if standing_key in hub_data:
                                 val = hub_data[standing_key]
                                 if not isinstance(val, (int, float)):
-                                    errors.append(
-                                        f"角色 '{char_name}' {hub}.{standing_key} 类型错误：期望数字"
-                                    )
+                                    errors.append(f"角色 '{char_name}' {hub}.{standing_key} 类型错误：期望数字")
                                 elif not (STANDING_MIN <= val <= STANDING_MAX):
                                     warnings.append(
                                         f"角色 '{char_name}' {hub}.{standing_key} 值超出范围：{val}，"

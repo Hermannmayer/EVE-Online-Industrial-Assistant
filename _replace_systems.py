@@ -1,10 +1,10 @@
 import sys
 
-with open(sys.argv[1], 'r', encoding='utf-8') as f:
+with open(sys.argv[1], "r", encoding="utf-8") as f:
     content = f.read()
 
-start = content.find('async def _load_facilities')
-end = content.find('def _clear_search')  # go to the last function in the file
+start = content.find("async def _load_facilities")
+end = content.find("def _clear_search")  # go to the last function in the file
 
 # Keep everything before facilities, and replace with systems
 prefix = content[:start]
@@ -58,7 +58,7 @@ new_code = '''    # ------------------------
 # Find the end of the facilities section: the next def after _clear_search
 rest = content[end:]  # keep _clear_search and RIGHT constant
 
-with open(sys.argv[1], 'w', encoding='utf-8') as f:
+with open(sys.argv[1], "w", encoding="utf-8") as f:
     f.write(prefix + new_code + rest)
 
 print("Replaced facilities with systems")

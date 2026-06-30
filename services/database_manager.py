@@ -9,6 +9,7 @@ DatabaseManager — 多库连接管理器（连接复用版）
     with db.connect('user', 'ref', 'mkt') as conn:
         cursor = conn.execute("SELECT * FROM ref.item i JOIN mkt.market_prices mp ...")
 """
+
 import sqlite3
 import threading
 from collections.abc import Generator

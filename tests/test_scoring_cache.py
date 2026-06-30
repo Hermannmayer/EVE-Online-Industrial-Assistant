@@ -1,4 +1,5 @@
 """测试评分缓存"""
+
 from services.scoring import cache_key, get_cache, invalidate_cache, set_cache
 
 

@@ -18,6 +18,7 @@ DEFAULT_CHAR = {"skills": DEFAULT_SKILLS}
 #  制造评分
 # ════════════════════════════════════════════════════════════════
 
+
 class TestCalcManufacturingScore:
     """calc_manufacturing_score 返回结构验证"""
 
@@ -32,9 +33,16 @@ class TestCalcManufacturingScore:
         )
         # 必须包含的顶层 key
         expected_keys = {
-            "score", "profit_per_run", "margin_pct", "isk_per_hour",
-            "cost_per_unit", "revenue_per_unit", "hours_per_run",
-            "status", "breakdown", "materials",
+            "score",
+            "profit_per_run",
+            "margin_pct",
+            "isk_per_hour",
+            "cost_per_unit",
+            "revenue_per_unit",
+            "hours_per_run",
+            "status",
+            "breakdown",
+            "materials",
         }
         assert expected_keys.issubset(result.keys())
         assert result["score"] > 0
@@ -75,6 +83,7 @@ class TestCalcManufacturingScore:
 # ════════════════════════════════════════════════════════════════
 #  ME 浪费因子
 # ════════════════════════════════════════════════════════════════
+
 
 class TestMEWasteFactor:
     """验证 ME 对材料浪费的影响"""
@@ -124,6 +133,7 @@ class TestMEWasteFactor:
 #  TE 时间因子
 # ════════════════════════════════════════════════════════════════
 
+
 class TestTEFactor:
     """验证 TE 对制造时间的影响"""
 
@@ -168,6 +178,7 @@ class TestTEFactor:
 # ════════════════════════════════════════════════════════════════
 #  贸易评分
 # ════════════════════════════════════════════════════════════════
+
 
 class TestTradeScoreBasic:
     """calc_trade_score 基本逻辑"""

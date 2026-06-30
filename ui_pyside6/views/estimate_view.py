@@ -1,6 +1,7 @@
 """
 估价页面 — 剪贴板粘贴 → Jita 价格查询 → 表格展示
 """
+
 import os
 
 from PySide6.QtCore import (
@@ -75,6 +76,7 @@ def _parse_clipboard(text: str) -> list[tuple[str, int, float]]:
         else:
             # 空格分隔 — 按 2 个以上空格拆分（避免拆开物品名内部的单空格）
             import re
+
             parts = [p.strip() for p in re.split(r" {2,}", line) if p.strip()]
 
         if not parts:
@@ -115,6 +117,7 @@ def _search_item_by_name(name: str) -> dict | None:
     """按中文/英文名搜索物品，返回 {type_id, zh_name, en_name, iconID, volume} 或 None"""
     # 规范化引号 → 统一用 % 通配，兼容 ASCII/弯引号
     import re
+
     fuzzy_name = re.sub(r"[\"\"'']+", "%", name)
     with get_container().db.connect("ref") as conn:
         c = conn.cursor()
@@ -144,8 +147,11 @@ def _search_item_by_name(name: str) -> dict | None:
             row = c.fetchone()
             if row:
                 return {
-                    "type_id": row[0], "zh_name": row[1], "en_name": row[2],
-                    "iconID": row[3], "volume": row[4] or 0,
+                    "type_id": row[0],
+                    "zh_name": row[1],
+                    "en_name": row[2],
+                    "iconID": row[3],
+                    "volume": row[4] or 0,
                 }
     return None
 
@@ -263,7 +269,8 @@ class EstimateTableModel(QAbstractTableModel):
                         pix = QPixmap(icon_path)
                         if not pix.isNull():
                             return pix.scaled(
-                                32, 32,
+                                32,
+                                32,
                                 Qt.AspectRatioMode.KeepAspectRatio,
                                 Qt.TransformationMode.SmoothTransformation,
                             )
@@ -338,8 +345,9 @@ class EstimateTableModel(QAbstractTableModel):
 
 class ClipboardParseWorker(QThread):
     """后台解析剪贴板并查找物品/价格"""
+
     result_signal = Signal(list)  # list[dict] rows ready for table
-    status_signal = Signal(str)   # status message
+    status_signal = Signal(str)  # status message
 
     def __init__(self, text: str, price_type: str, hub: str, parent=None):
         super().__init__(parent)
@@ -359,12 +367,22 @@ class ClipboardParseWorker(QThread):
             self.status_signal.emit(f"正在查找... ({i + 1}/{total})")
             item = _search_item_by_name(name)
             if item is None:
-                rows.append({
-                    "type_id": None, "name": name, "qty": qty,
-                    "sell_price": 0, "buy_price": 0, "unit_price": 0,
-                    "sell_total": 0, "buy_total": 0, "volume": 0,
-                    "_volume": clip_vol, "bp_me": 0, "bp_te": 0,
-                })
+                rows.append(
+                    {
+                        "type_id": None,
+                        "name": name,
+                        "qty": qty,
+                        "sell_price": 0,
+                        "buy_price": 0,
+                        "unit_price": 0,
+                        "sell_total": 0,
+                        "buy_total": 0,
+                        "volume": 0,
+                        "_volume": clip_vol,
+                        "bp_me": 0,
+                        "bp_te": 0,
+                    }
+                )
                 continue
 
             display_name = item["zh_name"] or item["en_name"] or name
@@ -372,20 +390,22 @@ class ClipboardParseWorker(QThread):
             buy_p = get_price(item["type_id"], "buy", self._hub) or 0
             item_vol = item["volume"]
 
-            rows.append({
-                "type_id": item["type_id"],
-                "name": display_name,
-                "qty": qty,
-                "sell_price": sell_p,
-                "buy_price": buy_p,
-                "unit_price": 0,
-                "sell_total": 0,
-                "buy_total": 0,
-                "volume": 0,
-                "_volume": item_vol,
-                "bp_me": 0,
-                "bp_te": 0,
-            })
+            rows.append(
+                {
+                    "type_id": item["type_id"],
+                    "name": display_name,
+                    "qty": qty,
+                    "sell_price": sell_p,
+                    "buy_price": buy_p,
+                    "unit_price": 0,
+                    "sell_total": 0,
+                    "buy_total": 0,
+                    "volume": 0,
+                    "_volume": item_vol,
+                    "bp_me": 0,
+                    "bp_te": 0,
+                }
+            )
 
         self.result_signal.emit(rows)
         self.status_signal.emit(f"完成 — 共 {len(rows)} 项")
@@ -696,20 +716,22 @@ class EstimatePage(QWidget):
         sell_p = get_price(item["type_id"], "sell", self._hub) or 0
         buy_p = get_price(item["type_id"], "buy", self._hub) or 0
 
-        self._model.add_row({
-            "type_id": item["type_id"],
-            "name": display_name,
-            "qty": 1,
-            "sell_price": sell_p,
-            "buy_price": buy_p,
-            "unit_price": 0,
-            "sell_total": 0,
-            "buy_total": 0,
-            "volume": 0,
-            "_volume": item["volume"],
-            "bp_me": 0,
-            "bp_te": 0,
-        })
+        self._model.add_row(
+            {
+                "type_id": item["type_id"],
+                "name": display_name,
+                "qty": 1,
+                "sell_price": sell_p,
+                "buy_price": buy_p,
+                "unit_price": 0,
+                "sell_total": 0,
+                "buy_total": 0,
+                "volume": 0,
+                "_volume": item["volume"],
+                "bp_me": 0,
+                "bp_te": 0,
+            }
+        )
         self._model.set_discount(self._discount.value())
         self._search_input.clear()
         self._set_status(f"已添加: {display_name}")
@@ -821,8 +843,12 @@ class EstimatePage(QWidget):
 
     def _on_edit_qty(self, row: dict):
         qty, ok = QInputDialog.getInt(
-            self, "修改数量", f"{row.get('name', '?')} 的数量:",
-            value=row.get("qty", 1), minValue=1, maxValue=999999999,
+            self,
+            "修改数量",
+            f"{row.get('name', '?')} 的数量:",
+            value=row.get("qty", 1),
+            minValue=1,
+            maxValue=999999999,
         )
         if ok:
             row["qty"] = qty
@@ -835,8 +861,13 @@ class EstimatePage(QWidget):
 
     def _on_multiply_qty(self, row: dict):
         factor, ok = QInputDialog.getDouble(
-            self, "数量翻倍", f"将 {row.get('name', '?')} 数量乘以:",
-            value=2.0, minValue=0.01, maxValue=1000000.0, decimals=2,
+            self,
+            "数量翻倍",
+            f"将 {row.get('name', '?')} 数量乘以:",
+            value=2.0,
+            minValue=0.01,
+            maxValue=1000000.0,
+            decimals=2,
         )
         if ok:
             row["qty"] = max(1, round(row.get("qty", 1) * factor))
@@ -875,16 +906,14 @@ class EstimatePage(QWidget):
 
     def _copy_to_clipboard(self, mode: str = "sell"):
         """复制总价到剪贴板（纯数字，无单位）"""
-        total = sum(
-            r.get("sell_total" if mode == "sell" else "buy_total", 0) or 0
-            for r in self._model._rows
-        )
+        total = sum(r.get("sell_total" if mode == "sell" else "buy_total", 0) or 0 for r in self._model._rows)
         QApplication.clipboard().setText(f"{total:,.0f}")
         label = "卖价" if mode == "sell" else "买价"
         self._set_status(f"已复制总{label} {total:,.0f} ISK 到剪贴板")
 
     def _refresh_hangar_list(self):
         from services.inventory_manager import create_hangar, get_hangars
+
         hangars = get_hangars()
         if not hangars:
             create_hangar("默认机库")

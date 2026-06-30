@@ -484,15 +484,11 @@ class TradePage(QWidget):
         self._t_labels["t_buy_cost"].setText(f"{buy_cost:,.0f} ISK")
         self._t_labels["t_sell_revenue"].setText(f"{sell_revenue:,.0f} ISK")
         self._t_labels["t_freight_cost"].setText(f"{freight:,.0f} ISK")
-        self._t_labels["t_freight_cost"].setStyleSheet(
-            f"color: {theme.RED}; font-size: 12px;"
-        )
+        self._t_labels["t_freight_cost"].setStyleSheet(f"color: {theme.RED}; font-size: 12px;")
         self._t_labels["t_broker_cost"].setText(f"{broker:,.0f} ISK")
         self._t_labels["t_sales_tax"].setText(f"{tax:,.0f} ISK")
         self._t_labels["t_net_profit"].setText(f"{net:,.0f} ISK")
-        self._t_labels["t_net_profit"].setStyleSheet(
-            f"color: {profit_color}; font-size: 12px; font-weight: bold;"
-        )
+        self._t_labels["t_net_profit"].setStyleSheet(f"color: {profit_color}; font-size: 12px; font-weight: bold;")
         self._t_labels["t_margin_pct"].setText(f"{margin:.1f}%")
         self._t_labels["t_margin_pct"].setStyleSheet(f"color: {profit_color}; font-size: 12px;")
         self._t_labels["t_isk_per_m3"].setText(f"{isk_m3:,.0f} ISK/m³")
@@ -614,9 +610,7 @@ class TradePage(QWidget):
         if max_spread > 0:
             spread_info = f"  |  最大价差: {max_pair}"
 
-        self._preview.setText(
-            f"{self._selected_name} | {n_with_data} 个区域有数据{spread_info}"
-        )
+        self._preview.setText(f"{self._selected_name} | {n_with_data} 个区域有数据{spread_info}")
         self._preview.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
 
         # 自动填充最佳买卖区域
@@ -673,16 +667,13 @@ class TradePage(QWidget):
         self._score_labels["buy_cost"].setText(f"{buy_cost:,.0f} ISK")
         self._score_labels["sell_revenue"].setText(f"{sell_revenue:,.0f} ISK")
         self._score_labels["gross_profit"].setText(f"{gross_profit:,.0f} ISK")
-        self._score_labels["gross_profit"].setStyleSheet(
-            f"color: {profit_color}; font-size: 12px; font-weight: bold;"
-        )
+        self._score_labels["gross_profit"].setStyleSheet(f"color: {profit_color}; font-size: 12px; font-weight: bold;")
         self._score_labels["margin_pct"].setText(f"{margin_pct:.1f}%")
         self._score_labels["margin_pct"].setStyleSheet(f"color: {profit_color}; font-size: 12px;")
         self._score_labels["profit_per_m3"].setText(f"{profit_m3:,.0f} ISK/m³")
 
         self._preview.setText(
-            f"{self._selected_name} | 评分: {score:.0f} | "
-            f"利润: {gross_profit:,.0f} ISK | 利润率: {margin_pct:.1f}%"
+            f"{self._selected_name} | 评分: {score:.0f} | 利润: {gross_profit:,.0f} ISK | 利润率: {margin_pct:.1f}%"
         )
         self._preview.setStyleSheet(f"color: {profit_color}; font-size: 12px;")
 

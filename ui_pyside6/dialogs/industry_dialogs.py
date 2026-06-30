@@ -148,9 +148,7 @@ class ProcurementDialog(QDialog):
         layout.addLayout(form)
 
         # 按钮
-        btn = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btn.accepted.connect(self._on_ok)
         btn.rejected.connect(self.reject)
         layout.addWidget(btn)

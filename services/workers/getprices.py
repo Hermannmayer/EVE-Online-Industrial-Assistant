@@ -5,6 +5,7 @@
   1. 先拉 /markets/prices/（1次请求，极快）做兜底
   2. 并发拉取 4 区域订单，用真实买卖价覆盖
 """
+
 import asyncio
 import json
 import os
@@ -99,7 +100,7 @@ async def fetch_order_pages(session, region_id: int, order_type: str, total_page
     # 拉取全部页面
     pages = list(range(1, total_pages + 1))
     for i in range(0, len(pages), 50):
-        batch = pages[i:i + 50]
+        batch = pages[i : i + 50]
         results = await asyncio.gather(*[get_page(p) for p in batch])
         for r in results:
             all_data.extend(r)
@@ -171,8 +172,10 @@ async def fetch_orders(regions: list[tuple[str, int]] | None = None) -> dict[int
 
                     if tid not in region_data:
                         region_data[tid] = {
-                            "buy_price": 0.0, "sell_price": float("inf"),
-                            "buy_volume": 0, "sell_volume": 0,
+                            "buy_price": 0.0,
+                            "sell_price": float("inf"),
+                            "buy_volume": 0,
+                            "sell_volume": 0,
                         }
 
                     if is_buy:
@@ -203,13 +206,25 @@ async def save_snapshot(all_regions: dict[int, dict[int, dict]]):
         records = []
         for region_id, items in all_regions.items():
             for tid, p in items.items():
-                records.append((tid, region_id, today, p["buy_price"], p["sell_price"],
-                                int(p["buy_volume"]), int(p["sell_volume"])))
-        await db.executemany("""
+                records.append(
+                    (
+                        tid,
+                        region_id,
+                        today,
+                        p["buy_price"],
+                        p["sell_price"],
+                        int(p["buy_volume"]),
+                        int(p["sell_volume"]),
+                    )
+                )
+        await db.executemany(
+            """
             INSERT OR REPLACE INTO market_volume_snapshots
             (type_id, region_id, date, buy_price, sell_price, buy_volume, sell_volume)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, records)
+        """,
+            records,
+        )
         await db.commit()
     log.info(f"  快照已保存: {len(records)} 条（{len(all_regions)} 个区域）")
 
@@ -234,13 +249,17 @@ async def save_prices(
                 merged[tid] = prices
             for tid, p in merged.items():
                 if p["buy_price"] or p["sell_price"]:
-                    records.append((tid, region_id, p["buy_price"], p["sell_price"],
-                                    int(p["buy_volume"]), int(p["sell_volume"])))
+                    records.append(
+                        (tid, region_id, p["buy_price"], p["sell_price"], int(p["buy_volume"]), int(p["sell_volume"]))
+                    )
         for i in range(0, len(records), 500):
-            await db.executemany("""
+            await db.executemany(
+                """
                 INSERT INTO market_prices (type_id, region_id, buy_price, sell_price, buy_volume, sell_volume)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, records[i:i + 500])
+            """,
+                records[i : i + 500],
+            )
         await db.commit()
     return len(records)
 
@@ -285,10 +304,7 @@ def run_price_update(regions: list[str] | None = None):
                  None 或空列表则更新全部四大贸易中心
     """
     try:
-        target_regions = [
-            (name, rid) for name, rid in TRADE_REGIONS
-            if not regions or name in regions
-        ]
+        target_regions = [(name, rid) for name, rid in TRADE_REGIONS if not regions or name in regions]
         asyncio.run(main(target_regions))
     except KeyboardInterrupt:
         log.warning("用户中断")

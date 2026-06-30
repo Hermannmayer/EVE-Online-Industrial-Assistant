@@ -1,6 +1,7 @@
 """
 One Dark Pro / One Light 主题系统 — 支持运行时切换
 """
+
 import json
 import os
 
@@ -13,7 +14,7 @@ ONE_DARK_PRO = {
     "BG_SURFACE": "#21252b",
     "BG_SURFACE_LIGHT": "#2c323c",  # 选中/悬浮
     "BG_HOVER": "#3a3f4b",
-    "PRIMARY": "#61afef",           # 蓝色强调
+    "PRIMARY": "#61afef",  # 蓝色强调
     "ACCENT_RED": "#e06c75",
     "ACCENT_GREEN": "#98c379",
     "ACCENT_YELLOW": "#e5c07b",
@@ -134,6 +135,7 @@ def save_theme_preference(theme_name: str):
     """保存主题偏好到 settings.json"""
     try:
         from core.paths import search_history_file
+
         p = search_history_file().replace("search_history", "settings")
         os.makedirs(os.path.dirname(p), exist_ok=True)
         data = {}
@@ -151,6 +153,7 @@ def load_theme_preference() -> str:
     """从 settings.json 读取主题偏好，默认 dark"""
     try:
         from core.paths import search_history_file
+
         p = search_history_file().replace("search_history", "settings")
         if os.path.exists(p):
             with open(p, encoding="utf-8") as f:
@@ -163,6 +166,7 @@ def load_theme_preference() -> str:
 def themed_menu(parent, object_name: str = ""):
     """创建已应用全局主题的 QMenu，禁止调用方再 setStyleSheet"""
     from PySide6.QtWidgets import QMenu
+
     menu = QMenu(parent)
     if object_name:
         menu.setObjectName(object_name)

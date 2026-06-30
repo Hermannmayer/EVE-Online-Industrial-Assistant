@@ -8,6 +8,7 @@ geticon.py — 从 EVE Image Server 批量拉取物品图标
 图标缓存位置：data/caches/icons/{type_id}.png
 图片来源：https://images.evetech.net/types/{type_id}/icon?size=64
 """
+
 import asyncio
 import os
 import sys
@@ -21,15 +22,16 @@ from core.paths import icon_cache_dir, reference_db_path
 # ── 配置 ──
 ICON_CACHE_DIR = Path(icon_cache_dir())
 ESI_IMAGE_BASE = "https://images.evetech.net/types"
-CONCURRENCY = 20   # 并发数
-ICON_SIZE = 64     # 图标尺寸(px): 32, 64, 128, 256
+CONCURRENCY = 20  # 并发数
+ICON_SIZE = 64  # 图标尺寸(px): 32, 64, 128, 256
 
 # 确保缓存目录存在
 ICON_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-async def download_icon(session: aiohttp.ClientSession, type_id: int,
-                        semaphore: asyncio.Semaphore, progress: list) -> bool:
+async def download_icon(
+    session: aiohttp.ClientSession, type_id: int, semaphore: asyncio.Semaphore, progress: list
+) -> bool:
     """下载单个物品图标，已存在则跳过。返回 True 表示成功/已存在"""
     icon_path = ICON_CACHE_DIR / f"{type_id}.png"
     if icon_path.exists():
@@ -84,10 +86,7 @@ async def download_all(session: aiohttp.ClientSession, type_ids: list):
             need_download.append(tid)
 
     log.info(
-        (
-            f"\n统计: 总计={total}, 已有图标={existing_count},"
-            f" 无图标标记={no_icon_count}, 需下载={len(need_download)}"
-        )
+        (f"\n统计: 总计={total}, 已有图标={existing_count}, 无图标标记={no_icon_count}, 需下载={len(need_download)}")
     )
     progress[0] = existing_count + no_icon_count
 
@@ -97,7 +96,7 @@ async def download_all(session: aiohttp.ClientSession, type_ids: list):
 
     # 分批下载
     batch_size = 50
-    batches = [need_download[i:i + batch_size] for i in range(0, len(need_download), batch_size)]
+    batches = [need_download[i : i + batch_size] for i in range(0, len(need_download), batch_size)]
 
     for batch_idx, batch in enumerate(batches):
         tasks = [download_icon(session, tid, semaphore, progress) for tid in batch]
@@ -124,9 +123,7 @@ async def main():
 
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        cursor.execute(
-            "SELECT type_id FROM item WHERE market_group_id IS NOT NULL AND market_group_id > 0"
-        )
+        cursor.execute("SELECT type_id FROM item WHERE market_group_id IS NOT NULL AND market_group_id > 0")
         type_ids = [row[0] for row in cursor.fetchall()]
         conn.close()
 
@@ -134,8 +131,7 @@ async def main():
     log.info(f"需处理物品数: {len(type_ids)}")
 
     async with aiohttp.ClientSession(
-        headers={'Accept': 'image/png', 'User-Agent': 'EveDataCrawler/1.0'},
-        timeout=aiohttp.ClientTimeout(total=30)
+        headers={"Accept": "image/png", "User-Agent": "EveDataCrawler/1.0"}, timeout=aiohttp.ClientTimeout(total=30)
     ) as session:
         await download_all(session, type_ids)
 

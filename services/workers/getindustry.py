@@ -2,6 +2,7 @@
 从 ESI 拉取工业系统成本指数和设施数据写入 reference.db 和 user.db
 用法: python -m services.workers.getindustry
 """
+
 import asyncio
 from datetime import datetime, timezone
 
@@ -107,9 +108,15 @@ async def run_industry_update():
             for fac in tqdm(facilities, desc="设施"):
                 await db.execute(
                     "INSERT OR REPLACE INTO industry_facilities VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (fac["facility_id"], fac["solar_system_id"], fac["type_id"],
-                     fac.get("owner_id"), fac.get("region_id"),
-                     fac.get("tax", 0.0), now),
+                    (
+                        fac["facility_id"],
+                        fac["solar_system_id"],
+                        fac["type_id"],
+                        fac.get("owner_id"),
+                        fac.get("region_id"),
+                        fac.get("tax", 0.0),
+                        now,
+                    ),
                 )
             await db.commit()
 

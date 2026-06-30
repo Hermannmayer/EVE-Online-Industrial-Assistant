@@ -56,11 +56,13 @@ def temp_watchlist_db():
         sqlite3.connect(str(p)).close()
 
     saved = dict(DB_PATH_MAP)
-    DB_PATH_MAP.update({
-        "ref": str(ref_path),
-        "mkt": str(mkt_path),
-        "user": str(user_path),
-    })
+    DB_PATH_MAP.update(
+        {
+            "ref": str(ref_path),
+            "mkt": str(mkt_path),
+            "user": str(user_path),
+        }
+    )
 
     # 清空连接缓存使下次 connect 使用新路径
     mgr = get_db()
@@ -227,9 +229,7 @@ class TestPriceChanges:
         # 模拟市场价格变化
         mkt_path = DB_PATH_MAP["mkt"]
         conn = sqlite3.connect(mkt_path)
-        conn.execute(
-            "UPDATE market_prices SET buy_price=3.0, sell_price=4.0 WHERE type_id=1001"
-        )
+        conn.execute("UPDATE market_prices SET buy_price=3.0, sell_price=4.0 WHERE type_id=1001")
         conn.commit()
         conn.close()
 

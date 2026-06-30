@@ -1,6 +1,7 @@
 """
 共享 HTTP 客户端 — 所有 worker 统一使用
 """
+
 import asyncio
 import json
 
@@ -11,8 +12,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 class APIClient:
     """异步 HTTP 客户端（含重试、并发控制）"""
 
-    def __init__(self, concurrency: int = 20, timeout: int = 30,
-                 user_agent: str = "EveApp/1.0", retries: int = 3):
+    def __init__(self, concurrency: int = 20, timeout: int = 30, user_agent: str = "EveApp/1.0", retries: int = 3):
         self._concurrency = concurrency
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._user_agent = user_agent
@@ -22,10 +22,12 @@ class APIClient:
 
     async def __aenter__(self):
         self.semaphore = asyncio.Semaphore(self._concurrency)
-        self.session = aiohttp.ClientSession(headers={
-            "Accept": "application/json",
-            "User-Agent": self._user_agent,
-        })
+        self.session = aiohttp.ClientSession(
+            headers={
+                "Accept": "application/json",
+                "User-Agent": self._user_agent,
+            }
+        )
         return self
 
     async def __aexit__(self, *exc):
@@ -59,7 +61,7 @@ class APIClient:
 
         try:
             return await _do_fetch()
-        except (aiohttp.ClientError, asyncio.TimeoutError, Exception):
+        except aiohttp.ClientError, asyncio.TimeoutError, Exception:
             return None
 
     async def fetch_required(self, url: str):
