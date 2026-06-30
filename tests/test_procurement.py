@@ -21,7 +21,9 @@ PROCUREMENT_SCHEMA = """CREATE TABLE IF NOT EXISTS procurement_items (
     priority TEXT DEFAULT 'normal',
     status TEXT DEFAULT 'pending',
     notes TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now')),
+    ordered_at TEXT,
+    received_at TEXT
 );
 """
 

@@ -153,7 +153,7 @@ class MaterialTableModel(QAbstractTableModel):
 class ProcurementTableModel(QAbstractTableModel):
     """代采购表模型"""
 
-    _HEADERS = ["物品名", "数量", "采购中心", "优先级", "状态", "备注", "创建时间"]
+    _HEADERS = ["物品名", "数量", "采购中心", "优先级", "状态", "备注", "创建时间", "下单时间", "到货时间"]
 
     # 优先级显示映射
     PRIORITY_LABELS = {"urgent": "紧急", "high": "高", "normal": "中", "low": "低"}
@@ -184,6 +184,8 @@ class ProcurementTableModel(QAbstractTableModel):
                 self.STATUS_LABELS.get(item.get("status", ""), item.get("status", "")),
                 item.get("notes", "") or "-",
                 item.get("created_at", "") or "-",
+                item.get("ordered_at", "") or "-",
+                item.get("received_at", "") or "-",
             ][c]
         elif role == Qt.ItemDataRole.ForegroundRole:
             if c == 3:  # 优先级列

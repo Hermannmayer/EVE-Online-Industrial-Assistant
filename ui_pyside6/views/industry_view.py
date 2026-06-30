@@ -98,7 +98,9 @@ def init_procurement_db():
         with get_container().db.connect("user") as conn:
             conn.executescript(PROCUREMENT_DB_SCHEMA)
             # 兼容旧表：添加可能缺失的列
-            for col in [("status", "TEXT DEFAULT 'pending'")]:
+            for col in [("status", "TEXT DEFAULT 'pending'"),
+                       ("ordered_at", "TEXT"),
+                       ("received_at", "TEXT")]:
                 try:
                     conn.execute(f"ALTER TABLE procurement_items ADD COLUMN {col[0]} {col[1]}")
                 except Exception:
