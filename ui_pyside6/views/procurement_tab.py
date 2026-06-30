@@ -208,11 +208,24 @@ class ProcurementTab(QWidget):
 
     def _on_set_status(self, model, sel, status):
         ids = [model.get_item(r.row())["id"] for r in sel]
+        from datetime import datetime
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_container().db.connect("user") as conn:
-            conn.executemany(
-                "UPDATE procurement_items SET status = ? WHERE id = ?",
-                [(status, i) for i in ids],
-            )
+            if status == "ordered":
+                conn.executemany(
+                    "UPDATE procurement_items SET status = ?, ordered_at = ? WHERE id = ?",
+                    [(status, now, i) for i in ids],
+                )
+            elif status == "received":
+                conn.executemany(
+                    "UPDATE procurement_items SET status = ?, received_at = ? WHERE id = ?",
+                    [(status, now, i) for i in ids],
+                )
+            else:
+                conn.executemany(
+                    "UPDATE procurement_items SET status = ? WHERE id = ?",
+                    [(status, i) for i in ids],
+                )
         self.load_items()
 
     def _on_modify_qty(self, sel, model):

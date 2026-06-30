@@ -165,7 +165,7 @@ class TestProcurementTableModel:
         """空列表构造"""
         model = ProcurementTableModel([])
         assert model.rowCount() == 0
-        assert model.columnCount() == 7
+        assert model.columnCount() == 9
         assert model.get_item(0) == {}
 
     def test_fallback_display(self, qapp):

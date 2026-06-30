@@ -263,7 +263,7 @@ class TestProcurementTableModel:
         ]
         model = ProcurementTableModel(items)
         assert model.rowCount() == 1
-        assert model.columnCount() == 7
+        assert model.columnCount() == 9
 
     def test_header_data(self, qapp):
         """表头"""
