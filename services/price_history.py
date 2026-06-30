@@ -53,7 +53,8 @@ async def fetch_history(
         async with s.get(url, params=params) as resp:
             if resp.status == 404:
                 return None
-            resp.raise_for_status()
+            if not resp.ok:
+                resp.raise_for_status()
             return await resp.json()
 
     if session is not None:
