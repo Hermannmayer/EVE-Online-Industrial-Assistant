@@ -2,27 +2,32 @@
 人物设置对话框 — 多角色 / 技能 / 增效体 / 市场费率
 """
 import json
-import math
 import os
 from typing import Optional
 
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
-    QWidget, QLabel, QSlider, QGroupBox, QScrollArea,
-    QPushButton, QMessageBox, QGridLayout, QLineEdit,
-    QFormLayout, QDoubleSpinBox, QSpinBox, QComboBox,
-    QSplitter, QListWidget, QListWidgetItem,
-    QCompleter, QFrame,
+    QComboBox,
+    QDialog,
+    QDoubleSpinBox,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Qt, Signal, QSize
-from PySide6.QtGui import QColor, QFont
 
 import ui_pyside6.theme as theme
-
-from core.paths import data_dir
 from core.container import get_container
-
-
+from core.paths import data_dir
 
 # ═══════════════════════════════════════════
 #  游戏公式
@@ -215,8 +220,9 @@ def load_implants() -> list[dict]:
     if IMPLANT_CACHE:
         return IMPLANT_CACHE
 
-    from core.paths import REF_DB_PATH
     import os
+
+    from core.paths import REF_DB_PATH
     if not os.path.exists(REF_DB_PATH):
         return []
 

@@ -4,7 +4,6 @@
 import asyncio
 import json
 import os
-import sqlite3
 import time as _time
 from pathlib import Path
 
@@ -37,11 +36,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.paths import ICON_DIR, search_history_file
-from core.container import get_container
-
-
 import ui_pyside6.theme as theme
+from core.container import get_container
+from core.paths import ICON_DIR, search_history_file
 
 ICON_SIZE = 32
 HISTORY_FILE = Path(search_history_file())

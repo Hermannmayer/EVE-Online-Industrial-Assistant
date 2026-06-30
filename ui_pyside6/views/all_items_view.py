@@ -3,7 +3,6 @@
 """
 import json
 import os
-import sqlite3
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSize, QSortFilterProxyModel, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPixmap
@@ -34,15 +33,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.paths import ICON_DIR
+import ui_pyside6.theme as theme
 from core.container import get_container
-
-
+from core.paths import ICON_DIR
 from services.scoring import TRADE_HUB_IDS, resolve_item_name
 from services.scoring_cache import cache_key as _ck
 from services.scoring_cache import get as _cget
 from services.scoring_cache import set as _cset
-import ui_pyside6.theme as theme
 from ui_pyside6.views.char_settings_view import get_character, get_character_list
 
 DASH = chr(8212)
@@ -551,6 +548,7 @@ class AllItemsDialog(QDialog):
 
     def _load_settings(self):
         import os
+
         from core.paths import data_dir
         p = os.path.join(data_dir(), 'score_settings.json')
         if os.path.exists(p):
@@ -562,6 +560,7 @@ class AllItemsDialog(QDialog):
 
     def _save_settings(self):
         import os
+
         from core.paths import data_dir
         p = os.path.join(data_dir(), 'score_settings.json')
         os.makedirs(os.path.dirname(p), exist_ok=True)

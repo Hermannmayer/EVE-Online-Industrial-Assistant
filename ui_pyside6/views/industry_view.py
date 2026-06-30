@@ -27,11 +27,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import ui_pyside6.theme as theme
 from core.container import get_container
 from services.scoring import TRADE_HUB_IDS
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 from ui_pyside6.models.industry_models import MaterialTableModel, PlanTableModel, RankTableModel
-import ui_pyside6.theme as theme
 from ui_pyside6.workers.industry_workers import RankWorker, ScoreWorker, SearchWorker
 
 # ════════════════════════════════════════════════════

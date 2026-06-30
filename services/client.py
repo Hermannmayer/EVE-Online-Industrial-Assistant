@@ -1,9 +1,10 @@
 """
 共享 HTTP 客户端 — 所有 worker 统一使用
 """
-import aiohttp
 import asyncio
 import json
+
+import aiohttp
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 

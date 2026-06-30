@@ -16,7 +16,7 @@ from pathlib import Path
 import aiohttp
 
 from core.logger import log
-from core.paths import reference_db_path, icon_cache_dir
+from core.paths import icon_cache_dir, reference_db_path
 
 # ── 配置 ──
 ICON_CACHE_DIR = Path(icon_cache_dir())

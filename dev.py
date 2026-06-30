@@ -9,10 +9,9 @@
 依赖:
     pip install watchdog    # 可选，更快的文件监听
 """
-import os
+import subprocess
 import sys
 import time
-import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).parent.resolve()
@@ -60,8 +59,8 @@ def main():
 
     # 监听模式
     try:
-        from watchdog.observers import Observer
         from watchdog.events import FileSystemEventHandler
+        from watchdog.observers import Observer
 
         class RestartHandler(FileSystemEventHandler):
             def __init__(self):
@@ -94,8 +93,8 @@ def main():
             if target.exists():
                 observer.schedule(handler, str(target), recursive=True)
         observer.start()
-        print(f"📡 文件监听已启动 (watchdog)")
-        print(f"  按 Ctrl+C 退出\n")
+        print("📡 文件监听已启动 (watchdog)")
+        print("  按 Ctrl+C 退出\n")
 
         proc = start_app(debug)
         try:

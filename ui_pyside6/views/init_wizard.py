@@ -1,15 +1,20 @@
 """
 数据初始化向导 — 逐步运行各初始化脚本
 """
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QProgressBar, QFrame, QMessageBox,
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
 )
-from PySide6.QtCore import Qt, QThread, Signal
 
 import ui_pyside6.theme as theme
-from services.init_check import check_all, missing_count
-
+from services.init_check import check_all
 
 # 初始化步骤：名称, 检查函数, 是否需要网络
 STEPS = [
@@ -32,7 +37,6 @@ class InitStepWorker(QThread):
 
     def run(self):
         try:
-            import importlib
             import asyncio
 
             if self._module == "getitems":
@@ -62,7 +66,7 @@ class InitStepWorker(QThread):
 class InitWizard(QDialog):
     """数据初始化向导"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, on_done=None):
         super().__init__(parent)
         self.setWindowTitle("数据初始化")
         self.setMinimumSize(480, 400)
@@ -152,6 +156,7 @@ class InitWizard(QDialog):
 
         layout.addLayout(btn_bar)
 
+        self._on_done_callback = on_done
         self._current_idx = 0
         self._worker: InitStepWorker | None = None
 
@@ -252,3 +257,5 @@ class InitWizard(QDialog):
             "现在可以将 items.db 和 data/ 目录随程序一起打包分发，"
             "其他用户无需再次下载。"
         )
+        if self._on_done_callback:
+            self._on_done_callback()

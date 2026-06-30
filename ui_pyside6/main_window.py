@@ -34,13 +34,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import ui_pyside6.theme as theme
 from core.container import get_container
 from core.paths import (
     ensure_dirs_exist,
     search_history_file,
     window_geometry_file,
 )
-import ui_pyside6.theme as theme
 
 # ── 导航树节点定义 ──
 # 格式: ("key", "标签", "图标") — 导航项，可点击
@@ -412,8 +412,11 @@ class MainWindow(QMainWindow):
         self._refresh_price_age()
         self._refresh_item_count()
         if needs_update:
-            self._status_label.setText("正在自动更新价格...")
-            QTimer.singleShot(1000, self._trigger_price_update)
+            if self._auto_update_enabled:
+                self._status_label.setText("正在自动更新价格...")
+                QTimer.singleShot(1000, self._trigger_price_update)
+            else:
+                self._status_label.setText("价格数据需要更新（自动更新已关闭）")
 
     def _trigger_price_update(self):
         if self._price_worker and self._price_worker.isRunning():
@@ -761,11 +764,12 @@ class MainWindow(QMainWindow):
 
     def _check_first_run(self):
         """首次启动检测：如果缺少关键数据，在状态栏提示"""
-        from services.init_check import check_items, missing_count
+        from services.init_check import check_all
 
-        items = check_items()
-        missing = missing_count()
-        if items < 10000:
+        status = check_all()
+        has_items = status.get("items", False)
+        missing = sum(1 for v in status.values() if not v)
+        if not has_items:
             self._status_label.setText("⚠️ 首次使用？请打开 ⚙️ → 数据初始化")
         elif missing > 0:
             self._status_label.setText(f"⚠️ {missing} 项数据未初始化，点击 ⚙️ → 数据初始化")
@@ -784,7 +788,7 @@ class MainWindow(QMainWindow):
                 return
         except RuntimeError:
             pass  # C++ 对象已被删除
-        self._init_wizard = InitWizard(self)
+        self._init_wizard = InitWizard(self, on_done=self._check_first_run)
         self._init_wizard.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._init_wizard.show()
 

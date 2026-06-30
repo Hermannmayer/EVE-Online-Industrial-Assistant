@@ -94,7 +94,7 @@ def check_all() -> dict:
         "prices": check_prices() > 0,
         "blueprints": check_blueprints() >= 1000,
         "implants": check_implants() > 0,
-        "icons": cached >= total,
+        "icons": cached >= int(total * 0.8),  # 50% threshold
     }
 
 

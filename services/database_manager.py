@@ -14,7 +14,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Literal
 
-from core.paths import REF_DB_PATH, MKT_DB_PATH, USR_DB_PATH, BP_DB_PATH
+from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 
 # 数据库标识符
 DB_ALIAS = Literal["ref", "mkt", "user", "bp"]
