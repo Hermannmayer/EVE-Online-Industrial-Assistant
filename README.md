@@ -77,10 +77,21 @@ EVE-Online-Industrial-Assistant/
 │
 ├── tests/
 │   ├── __init__.py
+│   ├── conftest.py
+│   ├── test_contract_view.py
 │   ├── test_core.py
+│   ├── test_database_manager.py
+│   ├── test_export_helper.py
 │   ├── test_logger.py
+│   ├── test_logistics.py
+│   ├── test_paths.py
+│   ├── test_price_history.py
+│   ├── test_procurement.py
 │   ├── test_scoring.py
-│   └── test_scoring_cache.py
+│   ├── test_scoring_cache.py
+│   ├── test_scoring_core.py
+│   ├── test_theme_listeners.py
+│   └── test_watchlist_manager.py
 │
 ├── .github/
 │   └── pull_request_template.md    # PR 模板
@@ -157,6 +168,8 @@ python build_release.py
 | ⬆️ **列排序** | 单击表头按 ID、价格、均价等排序 |
 | 🕐 **搜索历史** | 聚焦搜索框显示最近 20 条记录 |
 | 🚨 **倒挂高亮** | 买单高于卖单时行背景高亮 |
+| 📊 **价格走势图** | 订单弹窗→走势图按钮，历史价格趋势可视化 |
+| 📋 **批量导出** | 查询结果导出为 CSV/Excel（查询页、全物品浏览页） |
 
 ### 二、贸易评分系统
 
@@ -177,6 +190,7 @@ python build_release.py
 | 📈 **实时进度** | 底部状态栏显示进度条 + 阶段文字 |
 | 🗄️ **物品数据库** | 从 SDE 拉取中/英文名、类别、体积、图标 |
 | 🖼️ **图标缓存** | 本地缓存物品图片 |
+| 🔔 **价格变化检测** | 关注列表 60s 定时器自动检测价格变化并通知 |
 
 ### 四、全局 UI
 
@@ -187,15 +201,19 @@ python build_release.py
 | 📊 **底部状态栏** | 价格更新时间、更新按钮、进度条、自动更新开关 |
 | ⚙️ **系统设置** | 弹窗式设置面板：主题切换、自动更新开关、更新间隔、数据初始化、关于 |
 
+### 五、代采购管理
+
+| 功能 | 说明 |
+|------|------|
+| 📋 **代采购管理** | IndustryPage 第4Tab，管理代采购订单与供应商 |
+
 ---
 
 ## 🔲 待开发功能
 
 | 功能 | 说明 |
 |------|------|
-| 📊 **价格走势图** | 历史价格趋势可视化 |
-| 📋 **批量导出** | 查询结果导出为 CSV/Excel |
-| 🌐 **多语言** | 英文 UI 支持 |
+| 🌐 **多语言** | 英文 UI 支持（待开发） |
 
 ---
 
@@ -239,6 +257,36 @@ python build_release.py
 | `user_skills` | 角色技能 |
 
 > 旧版单库 `items.db` 已通过迁移脚本拆分为以上 4 库，原文件保留不动作为备份。
+
+---
+
+## 🧪 测试
+
+| 指标 | 数值 |
+|------|------|
+| 📊 **测试总数** | 204 个 |
+| 🔧 **框架** | pytest |
+| 📁 **测试目录** | `tests/` |
+| 🏃 **运行命令** | `pytest` |
+
+### 测试文件
+
+| 文件 | 说明 |
+|------|------|
+| `test_core.py` | 核心路径与配置测试 |
+| `test_logger.py` | 日志模块测试 |
+| `test_paths.py` | 路径管理测试 |
+| `test_database_manager.py` | 数据库连接管理器测试 |
+| `test_scoring.py` | 贸易/制造评分计算测试 |
+| `test_scoring_cache.py` | 评分缓存测试 |
+| `test_scoring_core.py` | 评分核心逻辑测试 |
+| `test_price_history.py` | 价格走势图数据测试 |
+| `test_export_helper.py` | 批量导出测试 |
+| `test_procurement.py` | 代采购管理测试 |
+| `test_watchlist_manager.py` | 关注列表与价格变化检测测试 |
+| `test_contract_view.py` | 合同视图测试 |
+| `test_logistics.py` | 物流距离计算测试 |
+| `test_theme_listeners.py` | 主题监听模式测试 |
 
 ---
 
