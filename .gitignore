@@ -50,3 +50,4 @@ sde.zip
 greatcto-ci-output.sarif
 
 # Ruff cache.ruff_cache/
+data/user.db
