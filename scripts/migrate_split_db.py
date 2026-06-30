@@ -16,7 +16,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.logger import log
-from core.paths import database_path, REF_DB_PATH, MKT_DB_PATH, USR_DB_PATH
+from core.paths import MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH, database_path
 
 # ── Schema 定义 ──
 

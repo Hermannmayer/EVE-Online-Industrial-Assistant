@@ -33,10 +33,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.paths import ICON_DIR
-from core.container import get_container
-from services.scoring import TRADE_HUB_IDS, get_price
 import ui_pyside6.theme as theme
+from core.container import get_container
+from core.paths import ICON_DIR
+from services.scoring import TRADE_HUB_IDS, get_price
 
 ICON_SIZE = 32
 

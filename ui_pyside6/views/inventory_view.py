@@ -5,7 +5,7 @@
 import os
 import re
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QThread, Qt, Signal
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QThread, Signal
 from PySide6.QtGui import QAction, QColor, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -24,19 +24,17 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
-    QTabWidget,
     QTableView,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from core.paths import icon_cache_dir
+import ui_pyside6.theme as theme
 from core.container import get_container
-
-
+from core.paths import icon_cache_dir
 from services.inventory_manager import (
     add_item,
     create_hangar,
@@ -59,7 +57,6 @@ from services.inventory_manager import (
     update_quantity,
 )
 from services.scoring import TRADE_HUB_IDS, resolve_item_name
-import ui_pyside6.theme as theme
 
 ICON_DIR = icon_cache_dir()
 

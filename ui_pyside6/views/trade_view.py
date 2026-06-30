@@ -1,13 +1,14 @@
 """
 贸易页面 — 价格监控 & 运输分析
 """
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget,
-    QTableView, QHeaderView, QLineEdit, QPushButton,
-)
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMenu
+from PySide6.QtWidgets import (
+    QLabel,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
 import ui_pyside6.theme as theme
 
 
@@ -25,8 +26,8 @@ class TradePage(QWidget):
 
         # 子标签
         self._tabs = QTabWidget()
-        self._tabs.setStyleSheet(f"""
-            QTabWidget::pane {{ border: none; }}
+        self._tabs.setStyleSheet("""
+            QTabWidget::pane { border: none; }
         """)
 
         self._tabs.addTab(self._build_monitor_tab(), "价格监控")
@@ -38,8 +39,8 @@ class TradePage(QWidget):
 
     def _on_theme_changed(self):
         """主题切换时重新应用内联样式表"""
-        self._tabs.setStyleSheet(f"""
-            QTabWidget::pane {{ border: none; }}
+        self._tabs.setStyleSheet("""
+            QTabWidget::pane { border: none; }
         """)
         self._monitor_placeholder.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 16px;")
         self._transport_placeholder.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 16px;")
