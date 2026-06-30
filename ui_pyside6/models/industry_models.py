@@ -209,3 +209,68 @@ class ProcurementTableModel(QAbstractTableModel):
 
     def get_item(self, row: int) -> dict:
         return self._items[row] if 0 <= row < len(self._items) else {}
+
+
+class ProductionTableModel(QAbstractTableModel):
+    """生产执行跟踪表模型 — 面向 production_plans 表的字段"""
+
+    _HEADERS = [
+        "产品",
+        "批次",
+        "并行",
+        "材料成本",
+        "利润",
+        "利润率",
+        "评分",
+        "时均/h",
+        "状态",
+        "创建时间",
+    ]
+
+    # 状态 → 中文映射
+    STATUS_LABELS = {"pending": "待排", "running": "运行", "done": "完成", "paused": "暂停"}
+
+    def __init__(self, plans: list[dict]):
+        super().__init__()
+        self._plans = plans
+
+    def rowCount(self, parent=QModelIndex()):
+        return len(self._plans)
+
+    def columnCount(self, parent=QModelIndex()):
+        return len(self._HEADERS)
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        p = self._plans[index.row()]
+        c = index.column()
+        if role == Qt.ItemDataRole.DisplayRole:
+            cols = [
+                p.get("product_name", f"ID:{p.get('product_type_id', '')}"),
+                str(p.get("runs", 0)),
+                str(p.get("parallels", 1)),
+                f"{p.get('material_cost', 0):,.0f}" if p.get("material_cost") else "-",
+                f"{p.get('profit', 0):,.0f}" if p.get("profit") is not None else "-",
+                f"{p.get('margin', 0):.1f}%" if p.get("margin") else "-",
+                f"{p.get('score', 0):.0f}" if p.get("score") else "-",
+                f"{p.get('iskph', 0):,.0f}" if p.get("iskph") else "-",
+                self.STATUS_LABELS.get(p.get("status", ""), p.get("status", "")),
+                p.get("created_at", "") or "-",
+            ]
+            return cols[c]
+        elif role == Qt.ItemDataRole.ForegroundRole:
+            if c == 4:  # 利润列
+                return QColor(theme.GREEN) if p.get("profit", 0) > 0 else QColor(theme.RED)
+            if c == 6:  # 评分列
+                s = p.get("score", 0)
+                return QColor(theme.GREEN) if s >= 70 else (QColor(theme.RED) if s < 30 else QColor(theme.PRIMARY))
+        return None
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
+            return self._HEADERS[section]
+        return None
+
+    def get_plan(self, row: int) -> dict:
+        return self._plans[row] if 0 <= row < len(self._plans) else {}
