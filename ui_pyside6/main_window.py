@@ -382,6 +382,9 @@ class MainWindow(QMainWindow):
             # 页面切换时更新状态栏
             if hasattr(page, "update_status_bar"):
                 page.update_status_bar()
+            # 切换到关注列表时触发一次价格变化检查
+            if key == "watchlist" and hasattr(page, "trigger_price_check"):
+                page.trigger_price_check()
 
     # ═══════════════════════════════════════
     #  页面注册

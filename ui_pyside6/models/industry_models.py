@@ -148,3 +148,64 @@ class MaterialTableModel(QAbstractTableModel):
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
             return self._HEADERS[section]
         return None
+
+
+class ProcurementTableModel(QAbstractTableModel):
+    """代采购表模型"""
+
+    _HEADERS = ["物品名", "数量", "采购中心", "优先级", "状态", "备注", "创建时间"]
+
+    # 优先级显示映射
+    PRIORITY_LABELS = {"urgent": "紧急", "high": "高", "normal": "中", "low": "低"}
+    # 状态显示映射
+    STATUS_LABELS = {"pending": "待采购", "ordered": "已下单", "received": "已到货"}
+
+    def __init__(self, items: list[dict]):
+        super().__init__()
+        self._items = items
+
+    def rowCount(self, parent=QModelIndex()):
+        return len(self._items)
+
+    def columnCount(self, parent=QModelIndex()):
+        return len(self._HEADERS)
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        item = self._items[index.row()]
+        c = index.column()
+        if role == Qt.ItemDataRole.DisplayRole:
+            return [
+                item.get("item_name", f"ID:{item.get('type_id', '')}"),
+                str(item.get("quantity", 0)),
+                item.get("hub", "Jita"),
+                self.PRIORITY_LABELS.get(item.get("priority", ""), item.get("priority", "")),
+                self.STATUS_LABELS.get(item.get("status", ""), item.get("status", "")),
+                item.get("notes", "") or "-",
+                item.get("created_at", "") or "-",
+            ][c]
+        elif role == Qt.ItemDataRole.ForegroundRole:
+            if c == 3:  # 优先级列
+                pri = item.get("priority", "")
+                if pri == "urgent":
+                    return QColor(theme.RED)
+                elif pri == "high":
+                    return QColor(theme.ACCENT_ORANGE)
+                elif pri == "low":
+                    return QColor(theme.TEXT_SECONDARY)
+            if c == 4:  # 状态列
+                st = item.get("status", "")
+                if st == "received":
+                    return QColor(theme.GREEN)
+                elif st == "ordered":
+                    return QColor(theme.PRIMARY)
+        return None
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
+            return self._HEADERS[section]
+        return None
+
+    def get_item(self, row: int) -> dict:
+        return self._items[row] if 0 <= row < len(self._items) else {}

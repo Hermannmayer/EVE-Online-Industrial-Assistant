@@ -33,6 +33,7 @@ from core.container import get_container
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 from ui_pyside6.models.industry_models import MaterialTableModel, PlanTableModel, RankTableModel
 from ui_pyside6.views.compare_dialog import CompareDialog
+from ui_pyside6.views.procurement_tab import ProcurementTab
 from ui_pyside6.workers.industry_workers import RankWorker, ScoreWorker, SearchWorker
 
 # ════════════════════════════════════════════════════
@@ -78,24 +79,30 @@ def init_plan_db():
         pass
 
 
-
-PROCUREMENT_DB_SCHEMA = '''CREATE TABLE IF NOT EXISTS procurement_items (
+PROCUREMENT_DB_SCHEMA = """CREATE TABLE IF NOT EXISTS procurement_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     type_id INTEGER NOT NULL,
     item_name TEXT,
     quantity INTEGER DEFAULT 1,
     hub TEXT DEFAULT 'Jita',
     priority TEXT DEFAULT 'normal',
+    status TEXT DEFAULT 'pending',
     notes TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now'))
 );
-'''
+"""
 
 
 def init_procurement_db():
     try:
         with get_container().db.connect("user") as conn:
             conn.executescript(PROCUREMENT_DB_SCHEMA)
+            # 兼容旧表：添加可能缺失的列
+            for col in [("status", "TEXT DEFAULT 'pending'")]:
+                try:
+                    conn.execute(f"ALTER TABLE procurement_items ADD COLUMN {col[0]} {col[1]}")
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -126,6 +133,8 @@ class IndustryPage(QWidget):
         self._tabs.addTab(self._build_tab_calc(), "制造计算")
         self._tabs.addTab(self._build_tab_rank(), "利润排行")
         self._tabs.addTab(self._build_tab_plan(), "生产计划")
+        self._procurement_tab = ProcurementTab(self)
+        self._tabs.addTab(self._procurement_tab, "代采购")
 
         layout.addWidget(self._tabs)
 
@@ -900,6 +909,8 @@ class IndustryPage(QWidget):
     def refresh_display(self):
         self.load_plans()
         self._refresh_material()
+        if hasattr(self, "_procurement_tab"):
+            self._procurement_tab.refresh()
 
     def update_status_bar(self):
         """更新主窗口状态栏显示利润排行统计"""
