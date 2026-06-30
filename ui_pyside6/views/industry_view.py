@@ -78,6 +78,28 @@ def init_plan_db():
         pass
 
 
+
+PROCUREMENT_DB_SCHEMA = '''CREATE TABLE IF NOT EXISTS procurement_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type_id INTEGER NOT NULL,
+    item_name TEXT,
+    quantity INTEGER DEFAULT 1,
+    hub TEXT DEFAULT 'Jita',
+    priority TEXT DEFAULT 'normal',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+'''
+
+
+def init_procurement_db():
+    try:
+        with get_container().db.connect("user") as conn:
+            conn.executescript(PROCUREMENT_DB_SCHEMA)
+    except Exception:
+        pass
+
+
 # ════════════════════════════════════════════════════
 #  Main Page
 # ════════════════════════════════════════════════════
@@ -90,6 +112,7 @@ class IndustryPage(QWidget):
         super().__init__()
         self._main = main_window
         init_plan_db()
+        init_procurement_db()
         self.setObjectName("industry_page")
 
         layout = QVBoxLayout(self)

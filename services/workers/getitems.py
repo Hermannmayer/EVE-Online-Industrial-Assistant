@@ -1,6 +1,7 @@
 import asyncio
 
 import aiosqlite
+from tenacity import retry, stop_after_attempt, wait_exponential
 from tqdm import tqdm
 
 from core.logger import log
@@ -237,7 +238,9 @@ async def ensure_market_tree(client):
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("DELETE FROM market_tree")  # 清空重写
         await db.executemany(
-            "INSERT INTO market_tree (market_group_id, parent_group_id, en_name, zh_name, icon_id) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO market_tree"
+            " (market_group_id, parent_group_id, en_name, zh_name, icon_id)"
+            " VALUES (?, ?, ?, ?, ?)",
             rows
         )
         await db.commit()

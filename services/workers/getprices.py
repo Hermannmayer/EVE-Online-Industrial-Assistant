@@ -214,7 +214,11 @@ async def save_snapshot(all_regions: dict[int, dict[int, dict]]):
     log.info(f"  快照已保存: {len(records)} 条（{len(all_regions)} 个区域）")
 
 
-async def save_prices(baseline: dict[int, dict], order_prices: dict[int, dict[int, dict]], region_ids: list[int] | None = None) -> int:
+async def save_prices(
+    baseline: dict[int, dict],
+    order_prices: dict[int, dict[int, dict]],
+    region_ids: list[int] | None = None,
+) -> int:
     """写入各区域价格（仅覆盖指定区域）"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         if region_ids:

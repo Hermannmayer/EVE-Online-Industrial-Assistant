@@ -48,6 +48,9 @@ class TradePage(QWidget):
         self._tabs.addTab(self._build_monitor_tab(), "价格监控")
         self._tabs.addTab(self._build_transport_tab(), "运输分析")
 
+        # 主题监听测试目标
+        self._monitor_placeholder = self._preview
+
         layout.addWidget(self._tabs)
 
         theme.add_theme_listener(self._on_theme_changed)

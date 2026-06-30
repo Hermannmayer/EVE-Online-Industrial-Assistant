@@ -107,7 +107,7 @@ class ScoringService:
             bp_id, prod_qty, base_time = bp_row
             prod_qty = prod_qty or 1
 
-            prod_price = get_price(type_id, price_type_prod, sell_hub)
+            prod_price = get_price(type_id, price_type_prod, sell_hub, _db=self._db)
             if not prod_price:
                 result["status"] = "no_price"
                 return result
@@ -129,7 +129,7 @@ class ScoringService:
             total_mat_cost = 0.0
             mat_detail = []
             for mat_id, mat_qty in mat_rows:
-                mat_price = get_price(mat_id, price_type_mat, mat_source_hub)
+                mat_price = get_price(mat_id, price_type_mat, mat_source_hub, _db=self._db)
                 waste_qty = mat_qty * waste_factor
                 if mat_price:
                     total_mat_cost += waste_qty * mat_price
@@ -155,7 +155,7 @@ class ScoringService:
 
             revenue = prod_price * prod_qty
             total_cost = total_mat_cost
-            sci = get_system_cost_index(system_id, "manufacturing")
+            sci = get_system_cost_index(system_id, "manufacturing", _db=self._db)
             install_base = INSTALL_FEE_RATE * revenue
             facility_fee = install_base * sci * (1 - structure_bonus) * (1 + facility_tax_pct / 100)
             total_cost += facility_fee
@@ -187,7 +187,7 @@ class ScoringService:
             actual_time = base_time * skill_mod * te_modifier
             hours_per_run = actual_time / 3600
 
-            volume = get_volume(type_id, "total", sell_hub)
+            volume = get_volume(type_id, "total", sell_hub, _db=self._db)
             if volume == 0:
                 return result
 
@@ -258,8 +258,8 @@ class ScoringService:
             "status": "",
         }
 
-        buy_price = get_price(type_id, buy_price_type, buy_hub)
-        sell_price = get_price(type_id, sell_price_type, sell_hub)
+        buy_price = get_price(type_id, buy_price_type, buy_hub, _db=self._db)
+        sell_price = get_price(type_id, sell_price_type, sell_hub, _db=self._db)
         if not buy_price or not sell_price:
             result["status"] = "no_price"
             return result
@@ -295,7 +295,7 @@ class ScoringService:
             result["gross_profit"] = round(gross_profit, 2)
             return result
 
-        volume = get_volume(type_id, "total", sell_hub)
+        volume = get_volume(type_id, "total", sell_hub, _db=self._db)
         if volume == 0:
             return result
 

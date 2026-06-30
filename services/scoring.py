@@ -24,7 +24,7 @@ from core.eve_formulas import (
     _hub_region_id,
     _mat_name,
 )
-from services.database_manager import get_db
+from services.database_manager import DatabaseManager, get_db
 
 db = get_db()
 
@@ -101,17 +101,24 @@ def invalidate_cache():
     _default.invalidate()
 
 
-def get_price(type_id: int, price_type: str, hub: str | None = None) -> float | None:
+def get_price(
+    type_id: int,
+    price_type: str,
+    hub: str | None = None,
+    _db: DatabaseManager | None = None,
+) -> float | None:
     """
     从 market_prices 获取指定区域的价格。
     price_type: 'buy' → buy_price, 'sell' → sell_price
     hub: 贸易中心名称, 如 'Jita', 'Amarr'；None 时返回任意区域
+    _db: 可选注入的 DatabaseManager，用于测试隔离；None 时使用模块级单例。
     """
+    conn_mgr = _db or db
     _VALID_PRICE_COLS = {"buy": "buy_price", "sell": "sell_price"}
     col = _VALID_PRICE_COLS.get(price_type)
     if col is None:
         return None
-    with db.connect("mkt") as conn:
+    with conn_mgr.connect("mkt") as conn:
         c = conn.cursor()
         if hub:
             rid = _hub_region_id(hub)
@@ -130,9 +137,15 @@ def get_price(type_id: int, price_type: str, hub: str | None = None) -> float | 
         return row[0] if row else None
 
 
-def get_volume(type_id: int, vol_type: str = "total", hub: str | None = None) -> int:
+def get_volume(
+    type_id: int,
+    vol_type: str = "total",
+    hub: str | None = None,
+    _db: DatabaseManager | None = None,
+) -> int:
     """获取指定区域的成交量。vol_type: 'buy' / 'sell' / 'total'"""
-    with db.connect("mkt") as conn:
+    conn_mgr = _db or db
+    with conn_mgr.connect("mkt") as conn:
         c = conn.cursor()
         if hub:
             rid = _hub_region_id(hub)
@@ -163,11 +176,16 @@ def get_volume(type_id: int, vol_type: str = "total", hub: str | None = None) ->
         return (row[0] or 0) + (row[1] or 0)
 
 
-def get_system_cost_index(system_id: int | None, activity: str = "manufacturing") -> float:
+def get_system_cost_index(
+    system_id: int | None,
+    activity: str = "manufacturing",
+    _db: DatabaseManager | None = None,
+) -> float:
     """从数据库获取星系的制造成本指数(SCI)。默认1.0（无加成）。"""
     if system_id is None:
         return 1.0
-    with db.connect("ref") as conn:
+    conn_mgr = _db or db
+    with conn_mgr.connect("ref") as conn:
         c = conn.cursor()
         c.execute(
             "SELECT cost_index FROM industry_system_costs WHERE solar_system_id = ? AND activity = ? LIMIT 1",
