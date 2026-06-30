@@ -1,11 +1,13 @@
 """
 合同市场页面 — 公开合同浏览 + 物品详情
 """
+
 import os
 
 from PySide6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
+    QSortFilterProxyModel,
     Qt,
     QThread,
     Signal,
@@ -16,9 +18,12 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMenu,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSplitter,
@@ -31,6 +36,7 @@ import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS, TRADE_HUBS
 from core.container import get_container
 from core.paths import ICON_DIR
+from services.watchlist_manager import add_to_watchlist
 
 # ── 合同类型中文映射 ──
 CONTRACT_TYPE_CN = {
@@ -69,8 +75,16 @@ _CONTRACT_COLUMNS = [
 ]
 
 _CONTRACT_SORT_KEYS = [
-    "contract_id", "type", "title", "price", "collateral",
-    "volume", "days_completed", "status", "date_issued", "date_expired",
+    "contract_id",
+    "type",
+    "title",
+    "price",
+    "collateral",
+    "volume",
+    "days_completed",
+    "status",
+    "date_issued",
+    "date_expired",
 ]
 
 
@@ -246,7 +260,8 @@ class ContractItemTableModel(QAbstractTableModel):
                         pix = QPixmap(icon_path)
                         if not pix.isNull():
                             return pix.scaled(
-                                32, 32,
+                                32,
+                                32,
                                 Qt.AspectRatioMode.KeepAspectRatio,
                                 Qt.TransformationMode.SmoothTransformation,
                             )
@@ -294,11 +309,77 @@ class ContractItemTableModel(QAbstractTableModel):
 
 
 # ═══════════════════════════════════════
+#  合同列表过滤器（实时客户端过滤）
+# ═══════════════════════════════════════
+
+
+class ContractFilterProxy(QSortFilterProxyModel):
+    """合同列表实时过滤器 — 按名称/价格/买卖类型"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._search_text = ""
+        self._min_price = 0.0
+        self._max_price = 0.0  # 0 = unlimited
+        self._buy_sell = "全部"
+        self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+
+    def set_search_text(self, text: str) -> None:
+        self._search_text = text
+        self.invalidateFilter()
+
+    def set_price_range(self, min_p: float, max_p: float) -> None:
+        self._min_price = min_p
+        self._max_price = max_p
+        self.invalidateFilter()
+
+    def set_buy_sell(self, mode: str) -> None:
+        self._buy_sell = mode
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        model = self.sourceModel()
+        if not model:
+            return True
+        idx = model.index(source_row, 0, source_parent)
+        row = idx.data(Qt.ItemDataRole.UserRole)
+        if not row:
+            return True
+
+        # 1. 标题搜索
+        if self._search_text:
+            title = (row.get("title", "") or "").lower()
+            if self._search_text.lower() not in title:
+                return False
+
+        # 2. 价格区间
+        price = row.get("price", 0) or 0
+        if self._min_price > 0 and price < self._min_price:
+            return False
+        if self._max_price > 0 and price > self._max_price:
+            return False
+
+        # 3. 买卖类型
+        if self._buy_sell != "全部":
+            ctype = row.get("type", "")
+            if self._buy_sell == "我要买":
+                if ctype not in ("item_exchange", "auction"):
+                    return False
+            elif self._buy_sell == "我要卖":
+                if ctype != "item_exchange":
+                    return False
+
+        return True
+
+
+# ═══════════════════════════════════════
 #  后台 Worker
 # ═══════════════════════════════════════
 
+
 class ContractFetchWorker(QThread):
     """后台拉取公开合同数据"""
+
     finished_signal = Signal(bool, str)  # success, message
 
     def __init__(self, regions: list[str] | None = None, parent=None):
@@ -308,6 +389,7 @@ class ContractFetchWorker(QThread):
     def run(self):
         try:
             from services.workers.getcontracts import run_contract_update
+
             run_contract_update(self._regions)
             self.finished_signal.emit(True, "合同数据更新完成")
         except Exception as ex:
@@ -316,6 +398,7 @@ class ContractFetchWorker(QThread):
 
 class ContractLoadWorker(QThread):
     """后台从数据库加载合同列表"""
+
     finished_signal = Signal(list)  # list of contract dicts
 
     def __init__(self, region_id: int, contract_type: str, parent=None):
@@ -343,6 +426,7 @@ class ContractLoadWorker(QThread):
 
 class ContractItemsLoadWorker(QThread):
     """后台从数据库加载合同物品"""
+
     finished_signal = Signal(list)  # list of item dicts
 
     def __init__(self, contract_id: int, parent=None):
@@ -353,13 +437,16 @@ class ContractItemsLoadWorker(QThread):
         try:
             with get_container().db.connect("mkt", "ref") as conn:
                 c = conn.cursor()
-                c.execute("""
+                c.execute(
+                    """
                     SELECT ci.*, r.zh_name, r.en_name
                     FROM contract_items ci
                     LEFT JOIN ref.item r ON ci.type_id = r.type_id
                     WHERE ci.contract_id = ?
                     ORDER BY ci.record_id
-                """, (self._contract_id,))
+                """,
+                    (self._contract_id,),
+                )
                 rows = c.fetchall()
                 result = [dict(r) for r in rows]
                 self.finished_signal.emit(result)
@@ -370,6 +457,7 @@ class ContractItemsLoadWorker(QThread):
 # ═══════════════════════════════════════
 #  合同详情弹窗
 # ═══════════════════════════════════════
+
 
 class ContractDetailDialog(QDialog):
     """合同详情弹窗 — 显示合同信息 + 物品列表"""
@@ -451,6 +539,7 @@ class ContractDetailDialog(QDialog):
 #  主页面
 # ═══════════════════════════════════════
 
+
 class ContractPage(QWidget):
     """合同市场页面"""
 
@@ -496,6 +585,52 @@ class ContractPage(QWidget):
 
         layout.addWidget(toolbar)
 
+        # ── 搜索过滤栏 ──
+        filter_bar = QWidget()
+        filter_bar.setObjectName("contract_filter_bar")
+        fb_layout = QHBoxLayout(filter_bar)
+        fb_layout.setContentsMargins(12, 4, 12, 4)
+        fb_layout.setSpacing(8)
+
+        # 物品名搜索
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("🔍 物品名搜索…")
+        self._search_input.setClearButtonEnabled(True)
+        self._search_input.setFixedWidth(200)
+        self._search_input.textChanged.connect(self._on_filter_changed_client)
+        fb_layout.addWidget(self._search_input)
+
+        # 价格区间
+        fb_layout.addWidget(QLabel("价格:"))
+        self._price_min = QDoubleSpinBox()
+        self._price_min.setPrefix("≥ ")
+        self._price_min.setRange(0, 1e12)
+        self._price_min.setDecimals(0)
+        self._price_min.setSpecialValueText("无下限")
+        self._price_min.valueChanged.connect(self._on_filter_changed_client)
+        fb_layout.addWidget(self._price_min)
+
+        fb_layout.addWidget(QLabel("~"))
+        self._price_max = QDoubleSpinBox()
+        self._price_max.setPrefix("≤ ")
+        self._price_max.setRange(0, 1e12)
+        self._price_max.setDecimals(0)
+        self._price_max.setSpecialValueText("无上限")
+        self._price_max.valueChanged.connect(self._on_filter_changed_client)
+        fb_layout.addWidget(self._price_max)
+
+        # 买卖类型
+        fb_layout.addWidget(QLabel("买卖:"))
+        self._buy_sell_combo = QComboBox()
+        self._buy_sell_combo.addItems(["全部", "我要买", "我要卖"])
+        self._buy_sell_combo.setFixedWidth(100)
+        self._buy_sell_combo.currentTextChanged.connect(self._on_filter_changed_client)
+        fb_layout.addWidget(self._buy_sell_combo)
+
+        fb_layout.addStretch()
+
+        layout.addWidget(filter_bar)
+
         # ── 进度条 ──
         self._progress = QProgressBar()
         self._progress.setFixedHeight(3)
@@ -513,8 +648,11 @@ class ContractPage(QWidget):
         top_layout.setSpacing(0)
 
         self._contract_model = ContractTableModel()
+        self._contract_proxy = ContractFilterProxy(self)
+        self._contract_proxy.setSourceModel(self._contract_model)
+
         self._contract_table = QTableView()
-        self._contract_table.setModel(self._contract_model)
+        self._contract_table.setModel(self._contract_proxy)
         self._contract_table.setAlternatingRowColors(True)
         self._contract_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._contract_table.setSortingEnabled(True)
@@ -629,15 +767,17 @@ class ContractPage(QWidget):
         # 清空物品列表
         self._item_model.set_rows([])
 
-    def _on_contract_click(self, index: QModelIndex):
+    def _on_contract_click(self, proxy_index: QModelIndex):
         """单击合同行 → 加载物品"""
-        row_data = self._contract_model.get_row(index.row())
+        source_index = self._contract_proxy.mapToSource(proxy_index)
+        row_data = self._contract_model.get_row(source_index.row())
         if row_data:
             self._load_items(row_data.get("contract_id", 0))
 
-    def _on_contract_double_click(self, index: QModelIndex):
+    def _on_contract_double_click(self, proxy_index: QModelIndex):
         """双击合同行 → 弹出详情"""
-        row_data = self._contract_model.get_row(index.row())
+        source_index = self._contract_proxy.mapToSource(proxy_index)
+        row_data = self._contract_model.get_row(source_index.row())
         if not row_data:
             return
         dlg = ContractDetailDialog(row_data, self)
@@ -660,10 +800,11 @@ class ContractPage(QWidget):
 
     def _on_contract_context_menu(self, pos):
         """合同列表右键菜单"""
-        index = self._contract_table.indexAt(pos)
-        if not index.isValid():
+        proxy_index = self._contract_table.indexAt(pos)
+        if not proxy_index.isValid():
             return
-        row_data = self._contract_model.get_row(index.row())
+        source_index = self._contract_proxy.mapToSource(proxy_index)
+        row_data = self._contract_model.get_row(source_index.row())
         if not row_data:
             return
 
@@ -684,10 +825,20 @@ class ContractPage(QWidget):
 
         # 在新窗口查看
         view_detail = QAction("在新窗口查看", self)
-        view_detail.triggered.connect(
-            lambda: ContractDetailDialog(row_data, self).exec()
-        )
+        view_detail.triggered.connect(lambda: ContractDetailDialog(row_data, self).exec())
         menu.addAction(view_detail)
+
+        menu.addSeparator()
+
+        # 加入关注列表
+        add_watch = QAction("⭐ 加入关注列表", self)
+        add_watch.triggered.connect(lambda: self._add_contract_to_watchlist(row_data))
+        menu.addAction(add_watch)
+
+        # 查看物品详情
+        view_items = QAction("📋 查看物品详情", self)
+        view_items.triggered.connect(lambda: self._show_contract_item_detail(row_data))
+        menu.addAction(view_items)
 
         menu.exec(self._contract_table.viewport().mapToGlobal(pos))
 
@@ -711,6 +862,50 @@ class ContractPage(QWidget):
         text = "\n".join(lines)
         QApplication.instance().clipboard().setText(text)
         self._count_label.setText(f"已复制 {len(items)} 个物品到剪贴板")
+
+    def _on_filter_changed_client(self):
+        """客户端实时过滤（搜索框/价格/买卖类型变化时触发）"""
+        self._contract_proxy.set_search_text(self._search_input.text())
+        self._contract_proxy.set_price_range(self._price_min.value(), self._price_max.value())
+        self._contract_proxy.set_buy_sell(self._buy_sell_combo.currentText())
+        visible = self._contract_proxy.rowCount()
+        total = self._contract_model.rowCount()
+        self._count_label.setText(f"合同: {visible}/{total} 条")
+
+    def _add_contract_to_watchlist(self, contract: dict) -> None:
+        """将合同的物品加入关注列表"""
+        items = self._item_model._rows
+        if not items:
+            QMessageBox.information(self, "提示", "请先点击合同加载物品列表")
+            return
+        region_id = contract.get("region_id", 10000002)
+        added = 0
+        for item in items:
+            type_id = item.get("type_id", 0)
+            if type_id:
+                add_to_watchlist(type_id, region_id=region_id)
+                added += 1
+        QMessageBox.information(self, "关注列表", f"已添加 {added} 个物品到关注列表")
+
+    def _show_contract_item_detail(self, contract: dict) -> None:
+        """显示合同物品详情"""
+        items = self._item_model._rows
+        if not items:
+            QMessageBox.information(self, "提示", "请先点击合同加载物品列表")
+            return
+        lines = []
+        for item in items:
+            zh = item.get("zh_name", "") or ""
+            en = item.get("en_name", "") or ""
+            qty = item.get("quantity", 0)
+            name = zh or en or f"ID:{item.get('type_id', '?')}"
+            lines.append(f"• {name}  x{qty}")
+        text = "\n".join(lines)
+        QMessageBox.information(
+            self,
+            f"合同 #{contract.get('contract_id', '')} 物品详情",
+            text,
+        )
 
     def refresh_display(self):
         """刷新页面数据，更新状态栏"""
