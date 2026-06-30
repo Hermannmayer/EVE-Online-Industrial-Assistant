@@ -567,5 +567,8 @@ class BatchPriceDialog(QDialog):
                 r.get("vol_str", "—"),
             ])
 
-        export_to_csv(headers, rows, path)
-        self._status_label.setText(f"已导出: {path}")
+        try:
+            export_to_csv(headers, rows, path)
+            self._status_label.setText(f"已导出: {path}")
+        except Exception as e:
+            self._status_label.setText(f"导出失败: {e}")
