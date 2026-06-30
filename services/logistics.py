@@ -31,6 +31,11 @@ TRADE_HUB_DISTANCES: dict[tuple[str, str], int] = {
     ("Amarr", "Dodixie"): 62,
     ("Amarr", "Rens"): 60,
     ("Dodixie", "Rens"): 30,
+    # Hek — Metropolis 贸易中心
+    ("Hek", "Amarr"): 76,
+    ("Hek", "Dodixie"): 28,
+    ("Hek", "Jita"): 21,
+    ("Hek", "Rens"): 5,
 }
 # 反向对称
 for (a, b), d in list(TRADE_HUB_DISTANCES.items()):
