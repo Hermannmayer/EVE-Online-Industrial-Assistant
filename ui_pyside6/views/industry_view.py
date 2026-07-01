@@ -158,6 +158,7 @@ class IndustryPage(QWidget):
         self._toolbar.plan_add_requested.connect(self._on_plan_add)
         self._toolbar.batch_add_requested.connect(self._on_batch_add)
         self._toolbar.char_changed.connect(self.load_plans)
+        self._toolbar.predefault_requested.connect(self._on_predefault)
 
         # PlanTable
         self._plan_table_widget.plan_updated.connect(self.load_plans)
@@ -203,6 +204,28 @@ class IndustryPage(QWidget):
 
     # ── 对话框打开方法 ────────────────────────────────────────
 
+    def _on_predefault(self):
+        """预默认按钮 → 打开 PreDefaultDialog"""
+        from ui_pyside6.views.industry import PreDefaultDialog
+
+        plan_data = {}
+        model = self._plan_table_widget.get_model()
+        table = self._plan_table_widget.get_table()
+        sel = table.selectionModel().selectedRows()
+        if sel:
+            row = sel[0].row()
+            plan_data = model.get_plan(row) if model else {}
+        dlg = PreDefaultDialog(self, plan_data)
+        if dlg.exec():
+            config = dlg.get_config()
+            QMessageBox.information(
+                self,
+                "预默认配置（功能开发中）",
+                f"ME: {config['me']}, TE: {config['te']}\n"
+                f"设施: {config['facility']}, 输出: {config['output']}\n"
+                f"技能等级: {config['skill_level']}",
+            )
+
     def _on_plan_add(self, text: str):
         """从文本添加计划 — 阶段二占位"""
         QMessageBox.information(self, "添加计划", f"计划添加功能开发中: {text}")
@@ -212,8 +235,40 @@ class IndustryPage(QWidget):
         QMessageBox.information(self, "批量添加", "从蓝图列表批量添加功能开发中")
 
     def _on_plan_detail(self, plan_id: int):
-        """计划详情 — 阶段二占位"""
-        QMessageBox.information(self, "计划详情", f"计划 #{plan_id} 详情功能开发中")
+        """双击计划行 → 打开 PlanEditDialog"""
+        from ui_pyside6.views.industry import PlanEditDialog
+
+        model = self._plan_table_widget.get_model()
+        plan_data = {}
+        if model:
+            for row in range(model.rowCount()):
+                p = model.get_plan(row)
+                if p and p.get("id") == plan_id:
+                    plan_data = p
+                    break
+        if not plan_data:
+            return
+        dlg = PlanEditDialog(self, plan_data)
+        if dlg.exec():
+            updated = dlg.get_updated_data()
+            with get_container().db.connect("user") as conn:
+                conn.execute(
+                    "UPDATE production_plans SET runs=?, parallels=?, me_level=?, te_level=?, "
+                    "char_name=?, facility=?, output_location=?, mat_hub=?, notes=? WHERE id=?",
+                    (
+                        updated.get("runs", 1),
+                        updated.get("parallels", 1),
+                        updated.get("me", 0),
+                        updated.get("te", 0),
+                        updated.get("char_name", ""),
+                        updated.get("facility", ""),
+                        updated.get("output", ""),
+                        updated.get("material_hub", "Jita"),
+                        updated.get("notes", ""),
+                        plan_id,
+                    ),
+                )
+            self.load_plans()
 
     def _on_blueprint_list(self):
         dlg = BlueprintRequirementsDialog(self)
