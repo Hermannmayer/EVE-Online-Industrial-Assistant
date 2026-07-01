@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QWidget,
 )
@@ -121,7 +122,7 @@ class TopToolbar(QWidget):
 
     def _connect_signals(self):
         self._btn_add.clicked.connect(self._on_add)
-        self._btn_from_list.clicked.connect(self.batch_add_requested)
+        self._btn_from_list.clicked.connect(self._on_batch_clicked)
         self._hub_combo.currentTextChanged.connect(self.hub_changed)
         self._sell_mult.valueChanged.connect(self.sell_mult_changed)
         self._buy_mult.valueChanged.connect(self.buy_mult_changed)
@@ -133,17 +134,27 @@ class TopToolbar(QWidget):
     # ── 槽函数 ──────────────────────────────────────────────
 
     def _on_add(self):
+        """读取粘贴板/输入框文本，有内容则发射信号并清空，否则提示"""
         text = self._blueprint_input.text().strip()
         if text:
             self.plan_add_requested.emit(text)
             self._blueprint_input.clear()
+        else:
+            QMessageBox.information(self, "提示", "请输入蓝图名称或粘贴蓝图信息")
+
+    def _on_batch_clicked(self):
+        """从蓝图列表批量导入"""
+        self.batch_add_requested.emit()
 
     def get_filter(self) -> str:
         return self._filter_combo.currentText()
 
     def _on_optimize(self):
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.information(self, "提示", "功能开发中")
+        """打开预默认配置对话框"""
+        from ui_pyside6.views.industry.predefault_dialog import PreDefaultDialog
+
+        dlg = PreDefaultDialog(self)
+        dlg.exec()
 
     # ── 样式 ──────────────────────────────────────────────────
 
