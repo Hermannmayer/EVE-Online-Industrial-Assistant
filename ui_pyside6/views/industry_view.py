@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -21,6 +24,7 @@ from ui_pyside6.views.industry import (
     ActionButtons,
     BlueprintRequirementsDialog,
     CharacterUsageDialog,
+    GanttView,
     MaterialsSummaryDialog,
     OutputSummaryDialog,
     PlanTable,
@@ -119,17 +123,33 @@ class IndustryPage(QWidget):
         self._toolbar = TopToolbar()
         root.addWidget(self._toolbar)
 
-        # ── 3. 主表格区域 ──────────────────────────────────────
-        self._plan_table_widget = PlanTable()
-        root.addWidget(self._plan_table_widget, 1)  # stretch=1 填充剩余空间
+        # ── 3. 视图切换区域（数据表格 / 甘特图）──────────────────
+        self._view_stack = QStackedWidget()
 
-        # "从蓝图列表添加" 按钮（表格下方）
+        # 页0: 数据视图（表格 + 添加按钮）
+        data_page = QWidget()
+        data_layout = QVBoxLayout(data_page)
+        data_layout.setContentsMargins(0, 0, 0, 0)
+        data_layout.setSpacing(0)
+        self._plan_table_widget = PlanTable()
+        data_layout.addWidget(self._plan_table_widget, 1)
         bp_row = QHBoxLayout()
         bp_row.setContentsMargins(12, 4, 12, 4)
         self._btn_add_from_list = QPushButton("+ 从蓝图列表添加")
         bp_row.addWidget(self._btn_add_from_list)
         bp_row.addStretch(1)
-        root.addLayout(bp_row)
+        data_layout.addLayout(bp_row)
+        self._view_stack.addWidget(data_page)
+
+        # 页1: 甘特图
+        self._gantt_view = GanttView()
+        gantt_scroll = QScrollArea()
+        gantt_scroll.setWidget(self._gantt_view)
+        gantt_scroll.setWidgetResizable(True)
+        gantt_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._view_stack.addWidget(gantt_scroll)
+
+        root.addWidget(self._view_stack, 1)  # stretch=1 填充剩余空间
 
         # ── 4. 底部状态栏 ──────────────────────────────────────
         self._status_bar = StatusBar()
@@ -159,6 +179,7 @@ class IndustryPage(QWidget):
         self._toolbar.batch_add_requested.connect(self._on_batch_add)
         self._toolbar.char_changed.connect(self.load_plans)
         self._toolbar.predefault_requested.connect(self._on_predefault)
+        self._toolbar.view_changed.connect(self._on_view_changed)
 
         # PlanTable
         self._plan_table_widget.plan_updated.connect(self.load_plans)
@@ -201,6 +222,31 @@ class IndustryPage(QWidget):
         self._plan_table_widget.set_model(model)
         self._status_bar.update_stats(rows)
         self._plan_count.setText(f"共 {len(rows)} 条计划")
+
+        # 如果当前是甘特图模式，同步刷新甘特图
+        if self._view_stack.currentIndex() == 1:
+            self._refresh_gantt()
+
+    def _on_view_changed(self, view_mode: str):
+        if view_mode == "gantt":
+            self._view_stack.setCurrentIndex(1)
+            self._refresh_gantt()
+            self._status_bar.setVisible(False)
+            self._action_buttons.setVisible(False)
+        else:
+            self._view_stack.setCurrentIndex(0)
+            self._status_bar.setVisible(True)
+            self._action_buttons.setVisible(True)
+
+    def _refresh_gantt(self):
+        model = self._plan_table_widget.get_model()
+        plans = []
+        if model:
+            for row in range(model.rowCount()):
+                p = model.get_plan(row)
+                if p:
+                    plans.append(p)
+        self._gantt_view.load_from_plans(plans)
 
     # ── 对话框打开方法 ────────────────────────────────────────
 
