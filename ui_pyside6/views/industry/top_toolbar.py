@@ -138,6 +138,9 @@ class TopToolbar(QWidget):
             self.plan_add_requested.emit(text)
             self._blueprint_input.clear()
 
+    def get_filter(self) -> str:
+        return self._filter_combo.currentText()
+
     def _on_optimize(self):
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.information(self, "提示", "功能开发中")
