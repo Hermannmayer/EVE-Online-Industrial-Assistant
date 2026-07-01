@@ -135,17 +135,21 @@ def parse_activities(bp_id: int, bp_data: dict):
 
     return activities_rows, materials_rows, products_rows, skills_rows
 
+import sqlite3
 
 async def run_blueprint_update():
     os.makedirs(CACHE_DIR, exist_ok=True)
 
     # 检查是否已填充
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM blueprint_activities")
-        row = await cursor.fetchone()
-        if row and row[0] > 1000:
-            log.info(f"蓝图数据已就绪 ({row[0]} 条活动记录)，跳过")
-            return
+    try:
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            cursor = await db.execute("SELECT COUNT(*) FROM blueprint_activities")
+            row = await cursor.fetchone()
+            if row and row[0] > 1000:
+                log.info(f"蓝图数据已就绪 ({row[0]} 条活动记录)，跳过")
+                return
+    except sqlite3.OperationalError:
+        pass  # 表不存在，继续创建
 
     # 确保表存在
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -191,7 +195,8 @@ async def run_blueprint_update():
     async with aiosqlite.connect(DATABASE_PATH) as db:
         for t in ["blueprint_activities", "blueprint_materials", "blueprint_products", "blueprint_skills"]:
             cursor = await db.execute(f"SELECT COUNT(*) FROM {t}")
-            log.info(f"  {t}: {cursor.fetchone()[0]}")
+            row = await cursor.fetchone()
+            log.info(f"  {t}: {row[0]}")
 
     log.info("完成！缓存文件可保留用于后续重建，打包时只带 reference.db 即可。")
 

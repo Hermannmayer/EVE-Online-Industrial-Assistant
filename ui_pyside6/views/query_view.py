@@ -408,15 +408,18 @@ class GroupLoadWorker(QThread):
         super().__init__(parent)
 
     def run(self):
-        with get_container().db.connect("ref") as conn:
-            c = conn.cursor()
-            c.execute(
-                "SELECT DISTINCT e.group_id, e.en_group_name, e.zh_group_name"
-                " FROM item e WHERE e.group_id IS NOT NULL"
-                " ORDER BY e.zh_group_name, e.en_group_name"
-            )
-            result = c.fetchall()
-            self.finished_signal.emit(result)
+        try:
+            with get_container().db.connect("ref") as conn:
+                c = conn.cursor()
+                c.execute(
+                    "SELECT DISTINCT e.group_id, e.en_group_name, e.zh_group_name"
+                    " FROM item e WHERE e.group_id IS NOT NULL"
+                    " ORDER BY e.zh_group_name, e.en_group_name"
+                )
+                result = c.fetchall()
+                self.finished_signal.emit(result)
+        except Exception:
+            self.finished_signal.emit([])
 
 
 # ═══════════════════════════════════════

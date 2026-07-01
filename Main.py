@@ -115,6 +115,11 @@ def main():
     _migrate_split_db()
     _migrate_blueprint_db()
 
+    from services.inventory_manager import init_db
+
+    init_db()
+
+
     if "--debug" in sys.argv:
         from core.logger import set_debug
 

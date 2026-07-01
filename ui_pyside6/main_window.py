@@ -408,13 +408,35 @@ class MainWindow(QMainWindow):
         from ui_pyside6.views.watchlist_view import WatchlistPage
 
         # 已实现的页面
-        self._pages["estimate"] = EstimatePage(self)
-        self._pages["query"] = QueryPage(self)
-        self._pages["industry"] = IndustryPage(self)
-        self._pages["trade"] = TradePage(self)
-        self._pages["watchlist"] = WatchlistPage(self)
-        self._pages["contract"] = ContractPage(self)
-        self._pages["storage"] = InventoryPage(self)
+        import sqlite3
+
+        def _try_create(key, cls, *args, **kwargs):
+            try:
+                page = cls(*args, **kwargs)
+                self._pages[key] = page
+                return page
+            except sqlite3.OperationalError:
+                placeholder = QWidget()
+                layout = QVBoxLayout(placeholder)
+                layout.addWidget(QLabel("数据未初始化，请先通过 初始化 下载数据"))
+                layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._pages[key] = placeholder
+                return placeholder
+            except Exception:
+                placeholder = QWidget()
+                layout = QVBoxLayout(placeholder)
+                layout.addWidget(QLabel("页面加载失败，请先初始化数据"))
+                layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._pages[key] = placeholder
+                return placeholder
+
+        _try_create("estimate", EstimatePage, self)
+        _try_create("query", QueryPage, self)
+        _try_create("industry", IndustryPage, self)
+        _try_create("trade", TradePage, self)
+        _try_create("watchlist", WatchlistPage, self)
+        _try_create("contract", ContractPage, self)
+        _try_create("storage", InventoryPage, self)
 
         for key in ["estimate", "query", "industry", "trade", "watchlist", "contract", "storage"]:
             self.content_stack.addWidget(self._pages[key])
@@ -574,13 +596,11 @@ class MainWindow(QMainWindow):
                     self._status_info_label.setText(f"价格: {bj_str} | {age_text}")
                 except Exception:
                     self._price_age_label.setText("⏳ 价格: 解析异常")
-            else:
                 self._price_age_label.setText("⏳ 价格: 暂无数据")
                 self._price_age_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; padding: 0 8px;")
                 self._status_info_label.setText("价格: 暂无数据")
         except Exception:
             self._price_age_label.setText("⏳ 价格: 数据库未就绪")
-
     def _refresh_item_count(self):
         """刷新工具栏上的物品总数"""
         try:
@@ -597,7 +617,6 @@ class MainWindow(QMainWindow):
                     self._item_count_label.setText(f"物品: {count}")
         except Exception:
             self._item_count_label.setText("物品: —")
-
     def _on_region_changed(self, region: str):
         """工具栏区域选择变更"""
         if region == "全部区域":
@@ -791,7 +810,6 @@ class MainWindow(QMainWindow):
                     return json.load(f).get("auto_update_enabled", True)
         except Exception:
             pass
-        return True
 
     def _save_settings(self):
         try:
@@ -849,7 +867,6 @@ class MainWindow(QMainWindow):
         except RuntimeError:
             pass  # C++ 对象已被删除
         self._init_wizard = InitWizard(self, on_done=self._check_first_run)
-        self._init_wizard.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._init_wizard.show()
 
     def _show_about(self):

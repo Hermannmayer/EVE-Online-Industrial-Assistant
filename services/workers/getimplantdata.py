@@ -19,9 +19,16 @@ DB_PATH = reference_db_path()
 
 # 工业相关的物品组（全部拉取）
 INDUSTRY_GROUP_NAMES = [
-    "Cyber Production",
-    "Cyber Resource Processing",
-    "Cyber Science",
+    "Cyber Armor",
+    "Cyber Electronic Systems",
+    "Cyber Engineering",
+    "Cyber Gunnery",
+    "Cyber Leadership",
+    "Cyber Learning",
+    "Cyber Missile",
+    "Cyber Navigation",
+    "Cyber Shields",
+    "Cyber Targeting",
 ]
 
 
