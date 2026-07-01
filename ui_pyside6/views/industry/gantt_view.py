@@ -12,7 +12,8 @@ class GanttView(QWidget):
     ROW_HEIGHT = 32
     LABEL_WIDTH = 200
     HEADER_HEIGHT = 40
-    GRID_COLOR = QColor("#e0e0e0")
+    GRID_COLOR = None  # 在 _on_theme_changed 设置
+    BG_COLOR = None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -22,7 +23,8 @@ class GanttView(QWidget):
             theme.ACCENT_CYAN, theme.ACCENT_RED, theme.ACCENT_PURPLE,
         ]
         self._max_hours = 48
-        self._bg_color = QColor("#ffffff")
+        self.GRID_COLOR = QColor(theme.BORDER)
+        self.BG_COLOR = QColor(theme.BG_SURFACE) if hasattr(theme, "BG_SURFACE") else QColor("#ffffff")
 
     def set_items(self, items: list[dict]):
         self._items = items
@@ -59,10 +61,10 @@ class GanttView(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # 背景
-        painter.fillRect(self.rect(), self._bg_color)
+        painter.fillRect(self.rect(), self.BG_COLOR)
 
         if not self._items:
-            painter.setPen(QColor("#888888"))
+            painter.setPen(QColor(theme.TEXT_SECONDARY))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "暂无数据")
             return
 
@@ -73,7 +75,7 @@ class GanttView(QWidget):
         px_per_hour = total_w / self._max_hours
 
         # 绘制时间刻度
-        painter.setPen(QPen(QColor("#666666"), 1))
+        painter.setPen(QPen(QColor(theme.TEXT_SECONDARY), 1))
         font = painter.font()
         font.setPointSize(8)
         painter.setFont(font)
@@ -84,7 +86,7 @@ class GanttView(QWidget):
             # 垂直网格线
             painter.setPen(QPen(self.GRID_COLOR, 1, Qt.PenStyle.DotLine))
             painter.drawLine(int(x), self.HEADER_HEIGHT, int(x), self.height())
-            painter.setPen(QPen(QColor("#666666"), 1))
+            painter.setPen(QPen(QColor(theme.TEXT_SECONDARY), 1))
 
         # 绘制行
         for row, item in enumerate(self._items):
@@ -95,7 +97,7 @@ class GanttView(QWidget):
             painter.drawLine(self.LABEL_WIDTH, y, self.width(), y)
 
             # 标签
-            painter.setPen(QColor("#333333"))
+            painter.setPen(QColor(theme.TEXT_PRIMARY))
             label_rect = QRectF(5, y, self.LABEL_WIDTH - 10, self.ROW_HEIGHT)
             painter.drawText(label_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, item["name"])
 
@@ -108,7 +110,7 @@ class GanttView(QWidget):
             painter.fillRect(QRectF(start_x, bar_y, bar_w, bar_h), color)
 
             # 时长文字
-            painter.setPen(QColor("#ffffff"))
+            painter.setPen(QColor(theme.TEXT_ON_PRIMARY))
             if bar_w > 40:
                 dur_text = f"{item.get('duration', 0):.0f}h"
                 painter.drawText(QRectF(start_x + 2, bar_y, bar_w - 4, bar_h),
