@@ -83,8 +83,19 @@ def main():
                 nonlocal proc
                 if proc and proc.poll() is None:
                     print("  终止旧进程...")
-                    proc.terminate()
-                    proc.wait(5)
+                    from core.hot_reload import write_trigger
+                    write_trigger()
+                    print("  等待进程优雅退出...")
+                    try:
+                        proc.wait(5)
+                    except subprocess.TimeoutExpired:
+                        print("  超时，强制终止...")
+                        proc.terminate()
+                        try:
+                            proc.wait(3)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                            proc.wait(2)
                 proc = start_app(debug)
 
         handler = RestartHandler()
@@ -105,8 +116,19 @@ def main():
             print("\n🛑 正在退出...")
             observer.stop()
             if proc and proc.poll() is None:
-                proc.terminate()
-                proc.wait(5)
+                from core.hot_reload import write_trigger
+                write_trigger()
+                print("  等待进程优雅退出...")
+                try:
+                    proc.wait(5)
+                except subprocess.TimeoutExpired:
+                    print("  超时，强制终止...")
+                    proc.terminate()
+                    try:
+                        proc.wait(3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(2)
             observer.join()
 
     except ImportError:
@@ -122,15 +144,37 @@ def main():
                     for p in changed:
                         print(f"📁 变更: {p.relative_to(ROOT)}")
                     if proc and proc.poll() is None:
-                        proc.terminate()
-                        proc.wait(5)
+                        from core.hot_reload import write_trigger
+                        write_trigger()
+                        print("  等待进程优雅退出...")
+                        try:
+                            proc.wait(5)
+                        except subprocess.TimeoutExpired:
+                            print("  超时，强制终止...")
+                            proc.terminate()
+                            try:
+                                proc.wait(3)
+                            except subprocess.TimeoutExpired:
+                                proc.kill()
+                                proc.wait(2)
                     proc = start_app(debug)
                     last = current
         except KeyboardInterrupt:
             print("\n🛑 正在退出...")
             if proc and proc.poll() is None:
-                proc.terminate()
-                proc.wait(5)
+                from core.hot_reload import write_trigger
+                write_trigger()
+                print("  等待进程优雅退出...")
+                try:
+                    proc.wait(5)
+                except subprocess.TimeoutExpired:
+                    print("  超时，强制终止...")
+                    proc.terminate()
+                    try:
+                        proc.wait(3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(2)
 
 
 if __name__ == "__main__":
