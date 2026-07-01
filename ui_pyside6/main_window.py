@@ -1,4 +1,4 @@
-"""
+﻿"""
 主窗口 — QMainWindow + 导航树 + 内容区 + 状态栏
 """
 
@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSpinBox,
-    QSplitter,
     QStackedWidget,
     QStatusBar,
     QSystemTrayIcon,
@@ -195,21 +194,13 @@ class MainWindow(QMainWindow):
         h_layout.setSpacing(0)
 
         # ── 左侧导航 ──
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(1)
-
         nav_panel = self._build_nav_tree()
         nav_panel.setFixedWidth(160)
-        splitter.addWidget(nav_panel)
+        h_layout.addWidget(nav_panel)
 
-        # ── 内容区 ──
         self.content_stack = QStackedWidget()
         self.content_stack.setObjectName("content_stack")
-        splitter.addWidget(self.content_stack)
-
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        h_layout.addWidget(splitter)
+        h_layout.addWidget(self.content_stack, 1)
 
         # ── 页面注册 ──
         self._pages = {}

@@ -1,5 +1,5 @@
 {
   "theme": "dark",
   "update_interval": 30,
-  "auto_update_enabled": false
+  "auto_update_enabled": true
 }
