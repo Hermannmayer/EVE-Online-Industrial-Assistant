@@ -61,7 +61,7 @@ class APIClient:
 
         try:
             return await _do_fetch()
-        except (aiohttp.ClientError, asyncio.TimeoutError, Exception):
+        except aiohttp.ClientError, asyncio.TimeoutError, Exception:
             return None
 
     async def fetch_required(self, url: str):

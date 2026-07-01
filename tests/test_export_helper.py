@@ -201,9 +201,7 @@ class TestExportToNonexistentDir:
 
         headers = ["A"]
         rows = [["1"]]
-        bad_path = os.path.join(
-            tempfile.gettempdir(), "eve_test_nonexistent", "sub", "nested", "out.csv"
-        )
+        bad_path = os.path.join(tempfile.gettempdir(), "eve_test_nonexistent", "sub", "nested", "out.csv")
         try:
             export_to_csv(headers, rows, bad_path)
             assert False, "应抛出 FileNotFoundError"

@@ -43,9 +43,7 @@ class TestEnsureCache:
     @patch("services.workers.getblueprints.os.makedirs")
     @patch("services.workers.getblueprints.open", new_callable=mock_open)
     @patch("services.workers.getblueprints.os.path.getsize")
-    async def test_downloads_and_extracts_when_missing(
-        self, mock_getsize, mock_file, mock_makedirs, mock_exists
-    ):
+    async def test_downloads_and_extracts_when_missing(self, mock_getsize, mock_file, mock_makedirs, mock_exists):
         mock_exists.side_effect = [False, True]
         mock_getsize.return_value = 2 * 1024 * 1024
 
@@ -161,9 +159,7 @@ class TestRunBlueprintUpdate:
     @patch("services.workers.getblueprints.ensure_cache")
     @patch("services.workers.getblueprints.yaml.safe_load")
     @patch("services.workers.getblueprints.open", new_callable=mock_open)
-    async def test_full_update_flow(
-        self, mock_file, mock_yaml, mock_ensure_cache, mock_makedirs, mock_connect
-    ):
+    async def test_full_update_flow(self, mock_file, mock_yaml, mock_ensure_cache, mock_makedirs, mock_connect):
         # Connection 1: Check count
         mock_cursor_check = MagicMock()
         mock_cursor_check.fetchone = AsyncMock(return_value=(0,))
@@ -180,7 +176,7 @@ class TestRunBlueprintUpdate:
 
         # Connection 4: Stats (fetchone NOT awaited here)
         mock_cursor_stat = MagicMock()
-        mock_cursor_stat.fetchone = MagicMock(return_value=(1,))
+        mock_cursor_stat.fetchone = AsyncMock(return_value=(1,))
         mock_db_stat = MagicMock()
         mock_db_stat.execute = AsyncMock(return_value=mock_cursor_stat)
 

@@ -1,7 +1,6 @@
 ﻿"""工业制造 — 对话框"""
 
 from PySide6.QtWidgets import (
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -9,7 +8,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QSpinBox,
-    QVBoxLayout,
 )
 
 

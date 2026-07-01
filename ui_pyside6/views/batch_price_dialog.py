@@ -2,7 +2,6 @@
 批量查价对话框 — 同时查询多个物品的市场价格
 """
 
-
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QThread, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -138,11 +137,13 @@ class BatchPriceWorker(QThread):
                 result = self._query_one(item)
                 results.append(result)
             except Exception as e:
-                results.append({
-                    "name": item.get("name", str(item.get("type_id", "?"))),
-                    "not_found": True,
-                    "error": str(e),
-                })
+                results.append(
+                    {
+                        "name": item.get("name", str(item.get("type_id", "?"))),
+                        "not_found": True,
+                        "error": str(e),
+                    }
+                )
             self.progress_signal.emit(i + 1, total)
         self.finished_signal.emit(results)
 
@@ -399,9 +400,7 @@ class BatchPriceDialog(QDialog):
         layout.addWidget(input_label)
 
         self._input_text = QPlainTextEdit()
-        self._input_text.setPlaceholderText(
-            "例如:\n三神裔无畏舰\nTritanium\n10000002\nPlex"
-        )
+        self._input_text.setPlaceholderText("例如:\n三神裔无畏舰\nTritanium\n10000002\nPlex")
         self._input_text.setMinimumHeight(100)
         self._input_text.setMaximumHeight(160)
         layout.addWidget(self._input_text)
@@ -510,21 +509,23 @@ class BatchPriceDialog(QDialog):
 
         all_results = list(results)
         for nf in not_found_items:
-            all_results.append({
-                "name": nf["name"],
-                "type_id": 0,
-                "not_found": True,
-                "buy_str": "—",
-                "sell_str": "—",
-                "avg_str": "—",
-                "spread_str": "—",
-                "vol_str": "—",
-                "buy_val": 0.0,
-                "sell_val": 0.0,
-                "avg_val": 0.0,
-                "spread_val": 0.0,
-                "vol_val": 0,
-            })
+            all_results.append(
+                {
+                    "name": nf["name"],
+                    "type_id": 0,
+                    "not_found": True,
+                    "buy_str": "—",
+                    "sell_str": "—",
+                    "avg_str": "—",
+                    "spread_str": "—",
+                    "vol_str": "—",
+                    "buy_val": 0.0,
+                    "sell_val": 0.0,
+                    "avg_val": 0.0,
+                    "spread_val": 0.0,
+                    "vol_val": 0,
+                }
+            )
 
         self._current_results = all_results
         self._model.set_rows(all_results)
@@ -558,14 +559,16 @@ class BatchPriceDialog(QDialog):
         headers = ["物品名", "买价", "卖价", "均价", "价差", "成交量"]
         rows = []
         for r in self._current_results:
-            rows.append([
-                r.get("name", "—"),
-                r.get("buy_str", "—"),
-                r.get("sell_str", "—"),
-                r.get("avg_str", "—"),
-                r.get("spread_str", "—"),
-                r.get("vol_str", "—"),
-            ])
+            rows.append(
+                [
+                    r.get("name", "—"),
+                    r.get("buy_str", "—"),
+                    r.get("sell_str", "—"),
+                    r.get("avg_str", "—"),
+                    r.get("spread_str", "—"),
+                    r.get("vol_str", "—"),
+                ]
+            )
 
         try:
             export_to_csv(headers, rows, path)

@@ -33,9 +33,16 @@ class TestGetIndustryTypeIds:
 
         # 模拟按组名返回不同结果
         mock_cursor.fetchall.side_effect = [
-            [(101, "Implant A"), (102, "Implant B")],  # Cyber Production
-            [(103, "Implant C")],  # Cyber Resource Processing
-            [],  # Cyber Science (empty)
+            [(101, "Implant A"), (102, "Implant B")],  # Cyber Armor
+            [(103, "Implant C")],  # Cyber Electronic Systems
+            [],  # Cyber Engineering
+            [],  # Cyber Gunnery
+            [],  # Cyber Leadership
+            [],  # Cyber Learning
+            [],  # Cyber Missile
+            [],  # Cyber Navigation
+            [],  # Cyber Shields
+            [(104, "Implant D")],  # Cyber Targeting
         ]
         mock_conn.cursor.return_value = mock_cursor
         mock_connect.return_value = mock_cursor  # 注意: conn = sqlite3.connect(...)
@@ -43,7 +50,7 @@ class TestGetIndustryTypeIds:
 
         result = get_industry_type_ids(DB_PATH)
 
-        assert result == [101, 102, 103]
+        assert result == [101, 102, 103, 104]
         assert mock_cursor.execute.call_count == len(INDUSTRY_GROUP_NAMES)
 
     @patch("services.workers.getimplantdata.sqlite3.connect")
@@ -51,7 +58,7 @@ class TestGetIndustryTypeIds:
         """无匹配行时返回空列表"""
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
-        mock_cursor.fetchall.side_effect = [[], [], []]
+        mock_cursor.fetchall.side_effect = [[], [], [], [], [], [], [], [], [], []]
         mock_conn.cursor.return_value = mock_cursor
         mock_connect.return_value = mock_conn
 

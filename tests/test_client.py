@@ -33,6 +33,7 @@ class TestAPIClient:
 
     def test_create_session(self):
         """__aenter__ 应创建 ClientSession 和 Semaphore"""
+
         async def run():
             client = APIClient(concurrency=10, timeout=15, user_agent="TestApp/1.0")
             async with client:
@@ -42,12 +43,14 @@ class TestAPIClient:
                 assert client.semaphore._value == 10
                 assert client.session._default_headers["User-Agent"] == "TestApp/1.0"
             assert client.session.closed
+
         asyncio.run(run())
 
     # ── test_fetch_json ──────────────────────────────────────
 
     def test_fetch_json(self):
         """fetch 应返回解析后的 JSON"""
+
         async def run():
             client = APIClient(retries=1)
             async with client:
@@ -57,44 +60,46 @@ class TestAPIClient:
                 result = await client.fetch("https://esi.example.com/api")
                 assert result == {"key": "value"}
                 client.session.get.assert_called_once()
+
         asyncio.run(run())
 
     # ── test_fetch_retry ─────────────────────────────────────
 
     def test_fetch_retry(self):
         """失败后应重试，最终返回 None"""
+
         async def run():
             client = APIClient(retries=2)
             async with client:
                 mock_resp = self._make_mock_resp(text="{}")
                 # 第一次抛出网络错误，第二次成功
-                client.session.get = Mock(
-                    side_effect=[aiohttp.ClientError("reset"), mock_resp]
-                )
+                client.session.get = Mock(side_effect=[aiohttp.ClientError("reset"), mock_resp])
                 result = await client.fetch("https://esi.example.com/api")
                 assert result == {}
                 assert client.session.get.call_count == 2
+
         asyncio.run(run())
 
     # ── test_fetch_timeout ───────────────────────────────────
 
     def test_fetch_timeout(self):
         """超时 / 网络错误返回 None"""
+
         async def run():
             client = APIClient(retries=1)
             async with client:
-                client.session.get = Mock(
-                    side_effect=asyncio.TimeoutError("timed out")
-                )
+                client.session.get = Mock(side_effect=asyncio.TimeoutError("timed out"))
                 result = await client.fetch("https://esi.example.com/api")
                 assert result is None
                 assert client.session.get.call_count == 1
+
         asyncio.run(run())
 
     # ── test_fetch_404 ───────────────────────────────────────
 
     def test_fetch_404_returns_none(self):
         """404 应返回 None，不重试"""
+
         async def run():
             client = APIClient(retries=1)
             async with client:
@@ -103,4 +108,5 @@ class TestAPIClient:
                 result = await client.fetch("https://esi.example.com/api")
                 assert result is None
                 client.session.get.assert_called_once()
+
         asyncio.run(run())

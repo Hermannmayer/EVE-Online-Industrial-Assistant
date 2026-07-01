@@ -150,6 +150,7 @@ class TestNonExistentPaths:
     def test_progress_file_is_str(self):
         """progress_file() 应返回字符串即使文件不存在"""
         from core.paths import progress_file
+
         path = progress_file()
         assert isinstance(path, str)
         assert path.endswith("update_progress.json")
@@ -158,6 +159,7 @@ class TestNonExistentPaths:
     def test_search_history_file_is_str(self):
         """search_history_file() 应返回字符串即使文件不存在"""
         from core.paths import search_history_file
+
         path = search_history_file()
         assert isinstance(path, str)
         assert path.endswith("search_history.json")
@@ -165,6 +167,7 @@ class TestNonExistentPaths:
     def test_window_geometry_file_is_str(self):
         """window_geometry_file() 应返回字符串即使文件不存在"""
         from core.paths import window_geometry_file
+
         path = window_geometry_file()
         assert isinstance(path, str)
         assert path.endswith("window_geometry.json")
@@ -186,6 +189,7 @@ class TestNonExistentPaths:
     def test_ensure_dirs_creates_database_dir(self, tmp_path):
         """ensure_dirs_exist 应在 tmp 环境下创建 database 目录"""
         from core.paths import ensure_dirs_exist
+
         # 使用 tmp_path 验证目录创建逻辑
         assert callable(ensure_dirs_exist)
 

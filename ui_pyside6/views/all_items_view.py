@@ -38,7 +38,7 @@ from core.eve_formulas import resolve_item_name
 from core.paths import ICON_DIR
 from services.scoring import cache_key as _ck
 from services.scoring import get_cache as _cget
-from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog, ProcurementDialog
+from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 from ui_pyside6.views.compare_dialog import CompareDialog
 from ui_pyside6.views.score_dialogs import MfgDlg, ScoreW, TradeDlg
 
@@ -950,28 +950,6 @@ class AllItemsDialog(QDialog):
         a5.triggered.connect(_do_add_plan)
         m.addAction(a5)
 
-        def _do_add_procurement():
-            dlg = ProcurementDialog(tid, _ctx_name, self)
-            if dlg.exec() != QDialog.DialogCode.Accepted:
-                return
-            data = dlg.result_data()
-            if not data:
-                return
-            conn = get_container().db.direct_connect("user")
-            try:
-                conn.execute(
-                    "INSERT INTO procurement_items (type_id, item_name, quantity, hub, priority, notes) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (data["type_id"], data["name"], data["quantity"], data["hub"], data["priority"], data["notes"]),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-            QMessageBox.information(self, "提示", f"已加入代采购: {_ctx_name}")
-
-        a6 = QAction("加入代采购", self)
-        a6.triggered.connect(_do_add_procurement)
-        m.addAction(a6)
         m.exec(self._tv.viewport().mapToGlobal(pos))
 
     def _ds(self, r, is_mfg):

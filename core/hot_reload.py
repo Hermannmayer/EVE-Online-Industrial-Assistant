@@ -1,10 +1,16 @@
 """Hot reload helper -- trigger/state file I/O"""
+
 import json
 from pathlib import Path
 
 __all__ = [
-    "is_triggered", "write_trigger", "clear_trigger",
-    "write_state", "read_state", "clear_state", "clear_all",
+    "is_triggered",
+    "write_trigger",
+    "clear_trigger",
+    "write_state",
+    "read_state",
+    "clear_state",
+    "clear_all",
 ]
 
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -39,7 +45,7 @@ def read_state() -> dict | None:
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError, json.JSONDecodeError:
         return None
 
 
