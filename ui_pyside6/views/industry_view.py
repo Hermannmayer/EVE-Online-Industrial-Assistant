@@ -57,11 +57,36 @@ def init_plan_db():
     try:
         with get_container().db.connect("user") as conn:
             conn.executescript(PLAN_DB_SCHEMA)
-            for col, col_type in [("iskph", "REAL DEFAULT 0"), ("material_cost", "REAL DEFAULT 0")]:
+            # --- migration: production_plans 新字段 ---
+            new_cols = [
+                ("notes", "TEXT DEFAULT ''"),
+                ("group_number", "INTEGER DEFAULT 0"),
+                ("sub_level", "INTEGER DEFAULT 0"),
+                ("facility", "TEXT DEFAULT ''"),
+                ("output_location", "TEXT DEFAULT ''"),
+                ("sell_hub", "TEXT DEFAULT 'Jita'"),
+                ("market_margin", "REAL DEFAULT 0"),
+                ("personal_margin", "REAL DEFAULT 0"),
+                ("daily_output", "REAL DEFAULT 0"),
+                ("materials_ready", "INTEGER DEFAULT 0"),
+            ]
+            # 保留已有迁移
+            new_cols += [("iskph", "REAL DEFAULT 0"), ("material_cost", "REAL DEFAULT 0")]
+            for col, col_type in new_cols:
                 try:
                     conn.execute(f"ALTER TABLE production_plans ADD COLUMN {col} {col_type}")
                 except Exception:
                     pass
+            # --- price_snapshots 表 ---
+            conn.executescript("""CREATE TABLE IF NOT EXISTS price_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type_id INTEGER NOT NULL,
+                region_id INTEGER NOT NULL,
+                sell_price REAL,
+                buy_price REAL,
+                snapshot_time TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                UNIQUE(type_id, region_id, snapshot_time)
+            );""")
     except Exception:
         pass
 
