@@ -4,7 +4,7 @@
 
 from datetime import datetime, timezone
 
-from PySide6.QtCore import QModelIndex, Qt
+from PySide6.QtCore import QModelIndex, Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -98,9 +98,7 @@ def init_procurement_db():
         with get_container().db.connect("user") as conn:
             conn.executescript(PROCUREMENT_DB_SCHEMA)
             # 兼容旧表：添加可能缺失的列
-            for col in [("status", "TEXT DEFAULT 'pending'"),
-                       ("ordered_at", "TEXT"),
-                       ("received_at", "TEXT")]:
+            for col in [("status", "TEXT DEFAULT 'pending'"), ("ordered_at", "TEXT"), ("received_at", "TEXT")]:
                 try:
                     conn.execute(f"ALTER TABLE procurement_items ADD COLUMN {col[0]} {col[1]}")
                 except Exception:
@@ -166,9 +164,58 @@ class IndustryPage(QWidget):
         self._setup_plan_actions()
         self._mat_summary.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
 
-    # ═══════════════════════════════════
-    #  Tab 0: 制造计算
-    # ═══════════════════════════════════
+        # ═══════════════════════════════════
+        #  Tab 0: 制造计算
+        # ═══════════════════════════════════
+
+        def save_state(self) -> dict:
+            data = {
+                "tab_index": self._tabs.currentIndex(),
+                "search_text": self._search.text(),
+                "me": self._me.value(),
+                "te": self._te.value(),
+                "mat_hub": self._mat_hub.currentText(),
+                "sell_hub": self._sell_hub.currentText(),
+                "mat_price_type": self._mat_price_type.currentText(),
+                "tax": self._tax.text(),
+            }
+            header = self._rank_table.horizontalHeader()
+            if header and header.sortIndicatorSection() >= 0:
+                data["sort_column"] = header.sortIndicatorSection()
+                data["sort_order"] = 1 if header.sortIndicatorOrder() == Qt.SortOrder.AscendingOrder else 0
+            vs = self._rank_table.verticalScrollBar()
+            if vs:
+                data["v_scroll"] = vs.value()
+            return data
+
+        def restore_state(self, data: dict) -> None:
+            if not data:
+                return
+            if data.get("search_text"):
+                self._search.setText(data["search_text"])
+            self._me.setValue(data.get("me", 0))
+            self._te.setValue(data.get("te", 0))
+            for combo, key in [
+                (self._mat_hub, "mat_hub"),
+                (self._sell_hub, "sell_hub"),
+                (self._mat_price_type, "mat_price_type"),
+            ]:
+                val = data.get(key)
+                if val:
+                    idx = combo.findText(val)
+                    if idx >= 0:
+                        combo.setCurrentIndex(idx)
+            self._tax.setText(data.get("tax", "0"))
+            ti = data.get("tab_index", 0)
+            if 0 <= ti < self._tabs.count():
+                self._tabs.setCurrentIndex(ti)
+            col = data.get("sort_column", -1)
+            if col >= 0:
+                order = Qt.SortOrder.AscendingOrder if data.get("sort_order", 1) == 1 else Qt.SortOrder.DescendingOrder
+                self._rank_table.sortByColumn(col, order)
+            sv = data.get("v_scroll", 0)
+            if sv:
+                QTimer.singleShot(100, lambda: self._rank_table.verticalScrollBar().setValue(sv))
 
     def _build_tab_calc(self) -> QWidget:
         """搜索 + 评分 + 利润卡片"""
@@ -746,7 +793,7 @@ class IndustryPage(QWidget):
         # 为每行创建按钮
         for row in range(n_rows):
             # 处理 proxy 模型映射
-            if hasattr(model, 'mapToSource'):
+            if hasattr(model, "mapToSource"):
                 src_row = model.mapToSource(model.index(row, 0)).row()
             else:
                 src_row = row

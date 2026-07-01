@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
-from core.eve_formulas import resolve_item_name
+from core.eve_formulas import _MINERAL_NAMES, resolve_item_name
 from core.paths import icon_cache_dir
 from services.inventory_manager import (
     add_item,
@@ -1085,6 +1085,8 @@ class HangarTab(QWidget):
                 try:
                     qty = int(qty_str.replace(",", ""))
                 except ValueError:
+                    if not qty_str:
+                        continue
                     errors.append(f"数量无效: {qty_str}")
                     continue
 
@@ -1103,6 +1105,10 @@ class HangarTab(QWidget):
                     r = c.fetchone()
                     if r:
                         type_id = r[0]
+                # basic mineral fallback
+                if not type_id:
+                    _mr = {v: k for k, v in _MINERAL_NAMES.items()}
+                    type_id = _mr.get(name_clean)
                 if not type_id:
                     errors.append(f"未找到物品: {name_part}")
                     continue
@@ -1637,6 +1643,16 @@ class BlueprintTab(QWidget):
     def _on_theme_changed(self):
         """主题切换时重新应用内联样式表"""
         self._bp_count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
+
+        def save_state(self) -> dict:
+            data = {"tab_index": self._tabs.currentIndex()}
+            if self._hangar_combo.count() > 0:
+                data["hangar_index"] = self._hangar_combo.currentIndex()
+            return data
+
+        def restore_state(self, data: dict) -> None:
+            if data and 0 <= data.get("tab_index", 0) < self._tabs.count():
+                self._tabs.setCurrentIndex(data["tab_index"])
 
     def _load_market_categories(self):
         """加载根级市场分类到下拉框"""

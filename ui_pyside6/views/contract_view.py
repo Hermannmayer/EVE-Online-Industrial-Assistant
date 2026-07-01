@@ -917,3 +917,22 @@ class ContractPage(QWidget):
                 f"区域: {self._region_combo.currentText()} | "
                 f"类型: {self._type_combo.currentText()}"
             )
+
+    def save_state(self) -> dict:
+        return {
+            "region": self._region_combo.currentText(),
+            "type": self._type_combo.currentText(),
+            "search_text": self._search_input.text(),
+        }
+
+    def restore_state(self, data: dict) -> None:
+        if not data:
+            return
+        for combo, key in [(self._region_combo, "region"), (self._type_combo, "type")]:
+            val = data.get(key)
+            if val:
+                idx = combo.findText(val)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+        if data.get("search_text"):
+            self._search_input.setText(data["search_text"])

@@ -445,6 +445,28 @@ class WatchlistPage(QWidget):
         """外部调用触发即时价格变化检查"""
         self._on_price_check_timer()
 
+        def save_state(self) -> dict:
+            data = {}
+            header = self._table.horizontalHeader()
+            if header and header.sortIndicatorSection() >= 0:
+                data["sort_column"] = header.sortIndicatorSection()
+                data["sort_order"] = 1 if header.sortIndicatorOrder() == Qt.SortOrder.AscendingOrder else 0
+            vs = self._table.verticalScrollBar()
+            if vs:
+                data["v_scroll"] = vs.value()
+            return data
+
+        def restore_state(self, data: dict) -> None:
+            if not data:
+                return
+            col = data.get("sort_column", -1)
+            if col >= 0:
+                order = Qt.SortOrder.AscendingOrder if data.get("sort_order", 1) == 1 else Qt.SortOrder.DescendingOrder
+                self._table.sortByColumn(col, order)
+            sv = data.get("v_scroll", 0)
+            if sv:
+                QTimer.singleShot(100, lambda: self._table.verticalScrollBar().setValue(sv))
+
     def _on_theme_changed(self):
         """主题切换时更新内联样式"""
         self._selected_label.setStyleSheet(f"color: {theme.PRIMARY}; font-weight: bold;")

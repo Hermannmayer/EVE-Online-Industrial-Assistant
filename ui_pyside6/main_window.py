@@ -113,7 +113,7 @@ class PriceCheckWorker(QThread):
 class MainWindow(QMainWindow):
     """EVE 商人助手主窗口"""
 
-    def __init__(self):
+    def __init__(self, hot_reload: bool = False):
         super().__init__()
 
         theme.set_geometry_file(window_geometry_file())
@@ -237,6 +237,18 @@ class MainWindow(QMainWindow):
         # ── 主题切换监听 ──
         theme.add_theme_listener(self._on_theme_changed)
 
+        # -- Hot reload --
+        self._hot_reload_enabled = hot_reload
+        if self._hot_reload_enabled:
+            self._hot_reload_timer = QTimer(self)
+            self._hot_reload_timer.timeout.connect(self._check_hot_reload)
+            self._hot_reload_timer.start(500)
+            from core import hot_reload as _hr
+            state = _hr.read_state()
+            if state:
+                self.restore_state(state)
+                _hr.clear_state()
+
         # ── 首次启动检测 ──
         QTimer.singleShot(500, self._check_first_run)
 
@@ -267,6 +279,8 @@ class MainWindow(QMainWindow):
         self._status_label.setText(text)
 
     def closeEvent(self, event):
+        from core import hot_reload as _hr
+        _hr.clear_trigger()
         theme.remove_theme_listener(self._on_theme_changed)
         theme.save_window_geometry(self)
         # 关闭独立的全物品窗口
@@ -399,6 +413,9 @@ class MainWindow(QMainWindow):
     # ═══════════════════════════════════════
 
     def _register_pages(self):
+        # 已实现的页面
+        import sqlite3
+
         from ui_pyside6.views.contract_view import ContractPage
         from ui_pyside6.views.estimate_view import EstimatePage
         from ui_pyside6.views.industry_view import IndustryPage
@@ -406,9 +423,6 @@ class MainWindow(QMainWindow):
         from ui_pyside6.views.query_view import QueryPage
         from ui_pyside6.views.trade_view import TradePage
         from ui_pyside6.views.watchlist_view import WatchlistPage
-
-        # 已实现的页面
-        import sqlite3
 
         def _try_create(key, cls, *args, **kwargs):
             try:
@@ -839,6 +853,53 @@ class MainWindow(QMainWindow):
         if self._price_timer is not None:
             self._price_timer.stop()
             self._price_timer = None
+
+
+    # ==================================================
+    #  Hot Reload
+    # ==================================================
+
+    def _check_hot_reload(self):
+        from core import hot_reload as _hr
+        if _hr.is_triggered():
+            self._do_hot_reload()
+
+    def _do_hot_reload(self):
+        from core import hot_reload as _hr
+        state = self.save_state()
+        _hr.write_state(state)
+        _hr.clear_trigger()
+        QApplication.quit()
+
+    def save_state(self) -> dict:
+        state = {"version": 1, "current_page": "", "pages": {}}
+        current = self._nav_tree.currentItem()
+        if current:
+            key = current.data(0, Qt.ItemDataRole.UserRole)
+            if key:
+                state["current_page"] = key
+        for key, page in self._pages.items():
+            if hasattr(page, "save_state"):
+                try:
+                    state["pages"][key] = page.save_state()
+                except Exception:
+                    pass
+        return state
+
+    def restore_state(self, data: dict):
+        key = data.get("current_page")
+        if key and key in self._pages:
+            for item in self._nav_items:
+                if item.data(0, Qt.ItemDataRole.UserRole) == key:
+                    self._nav_tree.setCurrentItem(item)
+                    break
+            self.content_stack.setCurrentWidget(self._pages[key])
+        for pkey, pdata in data.get("pages", {}).items():
+            if pkey in self._pages and hasattr(self._pages[pkey], "restore_state"):
+                try:
+                    self._pages[pkey].restore_state(pdata)
+                except Exception:
+                    pass
 
     def _check_first_run(self):
         """首次启动检测：如果缺少关键数据，在状态栏提示"""
