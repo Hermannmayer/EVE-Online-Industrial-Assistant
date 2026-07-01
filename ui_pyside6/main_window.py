@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -244,6 +244,7 @@ class MainWindow(QMainWindow):
             self._hot_reload_timer.timeout.connect(self._check_hot_reload)
             self._hot_reload_timer.start(500)
             from core import hot_reload as _hr
+
             state = _hr.read_state()
             if state:
                 self.restore_state(state)
@@ -280,6 +281,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         from core import hot_reload as _hr
+
         _hr.clear_trigger()
         theme.remove_theme_listener(self._on_theme_changed)
         theme.save_window_geometry(self)
@@ -323,7 +325,7 @@ class MainWindow(QMainWindow):
         # ── 标题 ──
         header = QTreeWidgetItem(["EVE 商人助手"])
         header.setFlags(Qt.ItemFlag.NoItemFlags)
-        font = header.font(0)
+        font = QFont()
         font.setBold(True)
         font.setPointSize(12)
         header.setFont(0, font)
@@ -342,7 +344,7 @@ class MainWindow(QMainWindow):
                 sec = QTreeWidgetItem([entry[1]])
                 sec.setFlags(Qt.ItemFlag.NoItemFlags)
                 sec.setForeground(0, QColor(theme.TEXT_SECONDARY))
-                f = sec.font(0)
+                f = QFont()
                 f.setBold(True)
                 f.setPointSize(10)
                 sec.setFont(0, f)
@@ -615,6 +617,7 @@ class MainWindow(QMainWindow):
                 self._status_info_label.setText("价格: 暂无数据")
         except Exception:
             self._price_age_label.setText("⏳ 价格: 数据库未就绪")
+
     def _refresh_item_count(self):
         """刷新工具栏上的物品总数"""
         try:
@@ -631,6 +634,7 @@ class MainWindow(QMainWindow):
                     self._item_count_label.setText(f"物品: {count}")
         except Exception:
             self._item_count_label.setText("物品: —")
+
     def _on_region_changed(self, region: str):
         """工具栏区域选择变更"""
         if region == "全部区域":
@@ -854,18 +858,19 @@ class MainWindow(QMainWindow):
             self._price_timer.stop()
             self._price_timer = None
 
-
     # ==================================================
     #  Hot Reload
     # ==================================================
 
     def _check_hot_reload(self):
         from core import hot_reload as _hr
+
         if _hr.is_triggered():
             self._do_hot_reload()
 
     def _do_hot_reload(self):
         from core import hot_reload as _hr
+
         state = self.save_state()
         _hr.write_state(state)
         _hr.clear_trigger()
