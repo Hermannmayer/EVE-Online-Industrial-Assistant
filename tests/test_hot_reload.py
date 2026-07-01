@@ -1,4 +1,13 @@
+import pytest
 from core import hot_reload
+
+
+@pytest.fixture(autouse=True)
+def _isolate_data_dir(monkeypatch, tmp_path):
+    """Redirect hot_reload file operations to a temp directory."""
+    monkeypatch.setattr(hot_reload, "_DATA_DIR", tmp_path)
+    monkeypatch.setattr(hot_reload, "TRIGGER_FILE", tmp_path / ".hot_reload_trigger")
+    monkeypatch.setattr(hot_reload, "STATE_FILE", tmp_path / ".hot_reload_state")
 
 
 def test_write_and_read_state():
