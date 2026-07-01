@@ -1125,6 +1125,30 @@ class QueryPage(QWidget):
         dlg = BatchPriceDialog(self)
         dlg.exec()
 
+        def save_state(self) -> dict:
+            data = {"search_text": self._search_input.text()}
+            header = self._table.horizontalHeader()
+            if header.sortIndicatorSection() >= 0:
+                data["sort_column"] = header.sortIndicatorSection()
+                data["sort_order"] = 1 if header.sortIndicatorOrder() == Qt.SortOrder.AscendingOrder else 0
+            vs = self._table.verticalScrollBar()
+            if vs:
+                data["v_scroll"] = vs.value()
+            return data
+
+        def restore_state(self, data: dict) -> None:
+            if not data:
+                return
+            if data.get("search_text"):
+                self._search_input.setText(data["search_text"])
+            col = data.get("sort_column", -1)
+            if col >= 0:
+                order = Qt.SortOrder.AscendingOrder if data.get("sort_order", 1) == 1 else Qt.SortOrder.DescendingOrder
+                self._table.sortByColumn(col, order)
+            sv = data.get("v_scroll", 0)
+            if sv:
+                QTimer.singleShot(100, lambda: self._table.verticalScrollBar().setValue(sv))
+
     def eventFilter(self, obj, event):
         if obj is self._search_input:
             if event.type() == QEvent.Type.KeyPress:
