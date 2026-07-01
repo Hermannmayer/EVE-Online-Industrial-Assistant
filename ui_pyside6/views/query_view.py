@@ -1,4 +1,4 @@
-"""
+﻿"""
 物品查询页面 — QTableView + 右键菜单 + 订单面板
 """
 
@@ -21,6 +21,8 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QAction, QColor, QFont, QPixmap
 from PySide6.QtWidgets import (
+    QComboBox,
+
     QAbstractItemView,
     QApplication,
     QDialog,
@@ -45,7 +47,10 @@ ICON_SIZE = 32
 HISTORY_FILE = Path(search_history_file())
 MAX_HISTORY = 20
 ESI_BASE_URL = "https://esi.evetech.net/latest"
-REGION_ID = 10000002
+DEFAULT_REGION_ID = 10000002
+
+# current region for UI
+CURRENT_REGION_ID: int = DEFAULT_REGION_ID
 
 _station_name_cache: dict[int, str] = {}
 
@@ -202,9 +207,10 @@ class SearchWorker(QThread):
     finished_signal = Signal(list, bool)  # rows, is_fallback
     error_signal = Signal(str)
 
-    def __init__(self, query: str, all_groups: list, parent=None):
+    def __init__(self, query: str, all_groups: list, region_id: int = 10000002, parent=None):
         super().__init__(parent)
         self._query = query
+        self._region_id = region_id
         self._all_groups = all_groups
 
     def run(self):
@@ -234,8 +240,8 @@ class SearchWorker(QThread):
                     SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume,
                            mp.buy_price, mp.sell_price, mp.buy_volume, mp.sell_volume
                     FROM item i
-                    LEFT JOIN mkt.market_prices mp ON i.type_id = mp.type_id
-                        AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = i.type_id)
+                    LEFT JOIN mkt.market_prices mp ON i.type_id = mp.type_id AND mp.region_id = self._region_id
+                        AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = i.type_id AND region_id = self._region_id)
                     WHERE i.type_id = ? OR i.en_name LIKE ? OR i.zh_name LIKE ?
                     ORDER BY i.type_id LIMIT 300
                 """,
@@ -253,8 +259,8 @@ class SearchWorker(QThread):
                         SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume
                         FROM item i WHERE (i.en_name LIKE ? OR i.zh_name LIKE ?)
                     ) sub
-                    LEFT JOIN mkt.market_prices mp ON sub.type_id = mp.type_id
-                        AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = sub.type_id)
+                    LEFT JOIN mkt.market_prices mp ON sub.type_id = mp.type_id AND mp.region_id = self._region_id
+                        AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = sub.type_id AND region_id = self._region_id)
                     ORDER BY sub.type_id LIMIT 300
                 """,
                     (group_match, like, like),
@@ -265,8 +271,8 @@ class SearchWorker(QThread):
                     SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume,
                            mp.buy_price, mp.sell_price, mp.buy_volume, mp.sell_volume
                     FROM item i
-                    LEFT JOIN mkt.market_prices mp ON i.type_id = mp.type_id
-                        AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = i.type_id)
+                    LEFT JOIN mkt.market_prices mp ON i.type_id = mp.type_id AND mp.region_id = self._region_id
+                        AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = i.type_id AND region_id = self._region_id)
                     WHERE i.en_name LIKE ? OR i.zh_name LIKE ?
                     ORDER BY i.type_id LIMIT 300
                 """,
@@ -335,7 +341,7 @@ class OrderFetchWorker(QThread):
     finished_signal = Signal(int, list, list)  # type_id, buy_orders, sell_orders
     error_signal = Signal(int, str)  # type_id, error
 
-    def __init__(self, type_id: int, parent=None):
+    def __init__(self, type_id: int, region_id: int = 10000002, parent=None):
         super().__init__(parent)
         self._type_id = type_id
 
@@ -357,7 +363,7 @@ class OrderFetchWorker(QThread):
         async with aiohttp.ClientSession(
             headers={"Accept": "application/json", "User-Agent": "EveDataCrawler/1.0"}, timeout=timeout
         ) as session:
-            url = f"{ESI_BASE_URL}/markets/{REGION_ID}/orders/"
+            url = f"{ESI_BASE_URL}/markets/{self._region_id}/orders/"
             async with session.get(url, params={"type_id": self._type_id, "order_type": "buy"}) as resp:
                 resp.raise_for_status()
                 buy_data = await resp.json()
@@ -591,6 +597,7 @@ class QueryPage(QWidget):
         self._all_groups: list = []
         self._order_cache: dict[int, tuple] = {}
         self._current_query: str = ""
+        self._region_id = DEFAULT_REGION_ID
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -643,6 +650,14 @@ class QueryPage(QWidget):
         batch_btn.setToolTip("一次性查询多个物品的价格")
         batch_btn.clicked.connect(self._open_batch_price)
         sb_layout.addWidget(batch_btn)
+        sb_layout.addStretch()
+        sb_layout.addWidget(QLabel("区域:"))
+        self._region_combo = QComboBox()
+        from core.constants import TRADE_HUBS
+        self._region_combo.addItems(list(TRADE_HUBS))
+        self._region_combo.setCurrentText("Jita")
+        self._region_combo.currentIndexChanged.connect(self._on_region_changed)
+        sb_layout.addWidget(self._region_combo)
 
         layout.addWidget(search_bar)
 
@@ -847,7 +862,7 @@ class QueryPage(QWidget):
         self._progress.setVisible(True)
         self._progress.setRange(0, 0)  # indeterminate
 
-        worker = SearchWorker(query, self._all_groups, self)
+        worker = SearchWorker(query, self._all_groups, self._region_id, self)
         worker.finished_signal.connect(self._on_search_done)
         worker.error_signal.connect(self._on_search_error)
         worker.start()
@@ -1065,7 +1080,7 @@ class QueryPage(QWidget):
                 return
 
         self._status_label.setText("正在从 ESI 获取实时订单...")
-        worker = OrderFetchWorker(type_id, self)
+        worker = OrderFetchWorker(type_id, self._region_id, self)
         worker.finished_signal.connect(self._on_orders_fetched)
         worker.error_signal.connect(self._on_order_error)
         worker.start()
@@ -1110,6 +1125,15 @@ class QueryPage(QWidget):
     # ═══════════════════════════════════════
     #  Public API
     # ═══════════════════════════════════════
+
+
+    def _on_region_changed(self, index: int):
+        """区域选择变更时更新区域ID并重新搜索"""
+        from core.constants import TRADE_HUB_IDS
+        hub = self._region_combo.currentText()
+        self._region_id = TRADE_HUB_IDS.get(hub, 10000002)
+        if self._current_query:
+            self._do_search()
 
     def _open_all_items(self):
         from ui_pyside6.views.all_items_view import AllItemsDialog
