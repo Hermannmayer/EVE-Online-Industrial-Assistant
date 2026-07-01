@@ -34,7 +34,7 @@ def write_state(data: dict):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def read_state():
+def read_state() -> dict | None:
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
