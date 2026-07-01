@@ -25,6 +25,7 @@ class TopToolbar(QWidget):
     """水平工具栏：蓝图导入 | Hub/倍率 | 人物/筛选/操作"""
 
     plan_add_requested = Signal(str)
+    predefault_requested = Signal()
     batch_add_requested = Signal()
     hub_changed = Signal(str)
     sell_mult_changed = Signal(float)
@@ -150,11 +151,8 @@ class TopToolbar(QWidget):
         return self._filter_combo.currentText()
 
     def _on_optimize(self):
-        """打开预默认配置对话框"""
-        from ui_pyside6.views.industry.predefault_dialog import PreDefaultDialog
-
-        dlg = PreDefaultDialog(self)
-        dlg.exec()
+        """发射预默认请求信号，由父页面处理"""
+        self.predefault_requested.emit()
 
     # ── 样式 ──────────────────────────────────────────────────
 

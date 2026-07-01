@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QInputDialog,
     QMenu,
+    QMessageBox,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -208,11 +209,31 @@ class PlanTable(QWidget):
         # 12. 分隔线
         menu.addSeparator()
 
-        # 13. 查看原本图的NPC卖家（阶段三占位）
-        menu.addAction("查看原本图的NPC卖家", lambda: print("查看原本图的NPC卖家: 功能开发中"))
-
-        # 14. 删除行
+        # 13. 删除行
         menu.addAction("删除行", lambda: self._delete_row(row))
+
+        # --- Phase 3: 高级功能 ---
+        menu.addSeparator()
+
+        smart_menu = menu.addMenu("智能调整")
+        a = smart_menu.addAction("母项智能调整")
+        a.triggered.connect(lambda: self._phase3_placeholder("母项智能调整"))
+        a = smart_menu.addAction("子项智能调整")
+        a.triggered.connect(lambda: self._phase3_placeholder("子项智能调整"))
+        a = smart_menu.addAction("子项大规模产线并行")
+        a.triggered.connect(lambda: self._phase3_placeholder("子项大规模产线并行"))
+
+        a = menu.addAction("查看原本图的NPC卖家")
+        a.triggered.connect(lambda: self._phase3_placeholder("查看原本图的NPC卖家"))
+
+        view_menu = menu.addMenu("更多修改")
+        a = view_menu.addAction("为设施设置所在星系")
+        a.triggered.connect(lambda: self._phase3_placeholder("为设施设置所在星系"))
+        a = view_menu.addAction("为设施所在星系设置成本系数")
+        a.triggered.connect(lambda: self._phase3_placeholder("为设施所在星系设置成本系数"))
+
+        a = menu.addAction("产线启动小助手")
+        a.triggered.connect(lambda: self._phase3_placeholder("产线启动小助手"))
 
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
@@ -260,6 +281,11 @@ class PlanTable(QWidget):
             self._model._plans.pop(row)
             self._model.endResetModel()
             self.plan_updated.emit()
+
+    # ── Phase 3 占位 ────────────────────────────────────────
+
+    def _phase3_placeholder(self, feature_name: str):
+        QMessageBox.information(self, "功能开发中", f"「{feature_name}」功能将在阶段三实现。")
 
     # ── 主题 ─────────────────────────────────────────────────
 
