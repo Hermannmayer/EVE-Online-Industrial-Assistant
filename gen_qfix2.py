@@ -276,7 +276,7 @@ class SearchWorker(QThread):
                     WHERE i.en_name LIKE ? OR i.zh_name LIKE ?
                     ORDER BY i.type_id LIMIT 300
                 """,
-                    (self._region_id, self._region_id, like, like),
+                    (like, like),
                 )
             return c.fetchall()
 
