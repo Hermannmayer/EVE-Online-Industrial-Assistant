@@ -3,6 +3,7 @@
 """
 
 from PySide6.QtCore import QThread, Signal
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -138,6 +139,11 @@ class InitWizard(QDialog):
         """)
         layout.addWidget(self._progress)
 
+        # 当前状态
+        self._status_label = QLabel("就绪")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        layout.addWidget(self._status_label)
+
         # 按钮
         btn_bar = QHBoxLayout()
         btn_bar.addStretch()
@@ -169,7 +175,7 @@ class InitWizard(QDialog):
             }}
             QPushButton:hover {{ background-color: {theme.BORDER}; }}
         """)
-        close_btn.clicked.connect(self.accept)
+        close_btn.clicked.connect(self._hide_wizard)
         btn_bar.addWidget(close_btn)
 
         layout.addLayout(btn_bar)
@@ -177,6 +183,8 @@ class InitWizard(QDialog):
         self._on_done_callback = on_done
         self._current_idx = 0
         self._worker: InitStepWorker | None = None
+        self._workers: list[InitStepWorker] = []
+        self._step_names = {key: name for name, key, _, _ in STEPS}
 
         # 启动时刷新状态
         self._refresh_status()
@@ -222,6 +230,8 @@ class InitWizard(QDialog):
         self._current_idx = 0
         self._run_btn.setEnabled(False)
         self._progress.setValue(0)
+        self._status_label.setText("开始初始化...")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
         # 重置所有状态
         for key in self._step_rows:
             self._step_rows[key].setText(" ⏸️")
@@ -247,20 +257,29 @@ class InitWizard(QDialog):
         name, key, module, _ = STEPS[self._current_idx]
         self._step_rows[key].setText(" ⏳")
         self._step_rows[key].setStyleSheet(f"color: {theme.PRIMARY}; font-size: 14px;")
+        self._status_label.setText(f"正在下载：{name}...")
+        self._status_label.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 12px;")
 
-        self._worker = InitStepWorker(module, key, self)
+        self._worker = InitStepWorker(module, key, None)
+        self._workers.append(self._worker)
         self._worker.result.connect(self._on_step_done)
         self._worker.start()
 
     def _on_step_done(self, step_key: str, success: bool, message: str):
+        name = self._step_names.get(step_key, step_key)
         if success:
             self._step_rows[step_key].setText(" ✅")
             self._step_rows[step_key].setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 14px;")
+            self._status_label.setText(f"✓ {name} 完成")
+            self._status_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 12px;")
         else:
             self._step_rows[step_key].setText(" ❌")
             self._step_rows[step_key].setStyleSheet(f"color: {theme.ACCENT_RED}; font-size: 14px;")
+            self._status_label.setText(f"✗ {name} 失败：{message}")
+            self._status_label.setStyleSheet(f"color: {theme.ACCENT_RED}; font-size: 12px;")
             # 显示错误但继续
-            QMessageBox.warning(self, "初始化错误", f"{step_key}: {message}")
+            if self.isVisible():
+                QMessageBox.warning(self, "初始化错误", f"{step_key}: {message}")
 
         self._current_idx += 1
         self._progress.setValue(self._current_idx)
@@ -269,10 +288,28 @@ class InitWizard(QDialog):
     def _on_all_done(self):
         self._run_btn.setEnabled(True)
         self._progress.setValue(5)
-        QMessageBox.information(
-            self,
-            "完成",
-            "数据初始化完成！\n\n现在可以将 items.db 和 data/ 目录随程序一起打包分发，其他用户无需再次下载。",
-        )
+        self._status_label.setText("初始化完成！")
+        self._status_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 12px;")
+        if self.isVisible():
+            QMessageBox.information(
+                self,
+                "完成",
+                "数据初始化完成！\n\n现在可以将 items.db 和 data/ 目录随程序一起打包分发，其他用户无需再次下载。",
+            )
         if self._on_done_callback:
             self._on_done_callback()
+
+    def _hide_wizard(self):
+        """关闭窗口但不停止后台初始化"""
+        self.hide()
+        self._status_label.setText("后台运行中...")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+
+    def closeEvent(self, event: QCloseEvent):
+        """窗口 X 按钮：隐藏而非关闭，保持后台运行"""
+        event.ignore()
+        self._hide_wizard()
+
+    def reject(self):
+        """ESC 键：隐藏而非关闭"""
+        self._hide_wizard()
