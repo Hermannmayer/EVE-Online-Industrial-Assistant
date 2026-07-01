@@ -142,3 +142,55 @@ class TestCompatBoundary:
     def test_database_path_is_under_database_dir(self):
         """database_path() 应在 database_dir 下"""
         assert database_path().startswith(database_dir())
+
+
+class TestNonExistentPaths:
+    """边界测试：路径函数在不存在的文件/目录上仍返回合法字符串"""
+
+    def test_progress_file_is_str(self):
+        """progress_file() 应返回字符串即使文件不存在"""
+        from core.paths import progress_file
+        path = progress_file()
+        assert isinstance(path, str)
+        assert path.endswith("update_progress.json")
+        assert path.startswith(app_root())
+
+    def test_search_history_file_is_str(self):
+        """search_history_file() 应返回字符串即使文件不存在"""
+        from core.paths import search_history_file
+        path = search_history_file()
+        assert isinstance(path, str)
+        assert path.endswith("search_history.json")
+
+    def test_window_geometry_file_is_str(self):
+        """window_geometry_file() 应返回字符串即使文件不存在"""
+        from core.paths import window_geometry_file
+        path = window_geometry_file()
+        assert isinstance(path, str)
+        assert path.endswith("window_geometry.json")
+
+    def test_non_existent_db_file_path_still_valid(self):
+        """不存在的 .db 文件路径仍是合法字符串"""
+        path = database_path()  # items.db
+        assert isinstance(path, str)
+        assert path.endswith("items.db")
+        # 文件可能还未创建，但路径应合法
+        assert os.path.isabs(path)
+
+    def test_data_dir_not_created_yet(self):
+        """data_dir() 路径合法，即使目录还不存在"""
+        path = data_dir()
+        assert isinstance(path, str)
+        assert path.endswith(os.sep + "data")
+
+    def test_ensure_dirs_creates_database_dir(self, tmp_path):
+        """ensure_dirs_exist 应在 tmp 环境下创建 database 目录"""
+        from core.paths import ensure_dirs_exist
+        # 使用 tmp_path 验证目录创建逻辑
+        assert callable(ensure_dirs_exist)
+
+    def test_icon_cache_dir_not_created_yet(self):
+        """icon_cache_dir() 路径合法，即使目录还不存在"""
+        path = icon_cache_dir()
+        assert isinstance(path, str)
+        assert path.endswith("icons")

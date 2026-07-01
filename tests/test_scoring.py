@@ -189,3 +189,39 @@ def test_manufacturing_breakdown_keys(temp_db):
     assert "volume_score" in result["breakdown"]
     assert "efficiency_score" in result["breakdown"]
     assert "material_cost" in result["breakdown"]
+
+
+@pytest.mark.parametrize("invalid_price_type", ["nonexistent", "invalid", ""])
+def test_price_type_nonexistent(temp_db, invalid_price_type):
+    """不存在的价格类型应返回 no_price 状态（score=0, status='no_price'）"""
+    cache = ScoringCache(max_size=10)
+    svc = ScoringService(temp_db, cache)
+    result = svc.calc_manufacturing_score(
+        type_id=2001,
+        char_config={"skills": DEFAULT_SKILLS},
+        mat_source_hub="Jita",
+        sell_hub="Jita",
+        price_type_mat="sell",
+        price_type_prod=invalid_price_type,
+    )
+    # 产品价格使用无效类型 → get_price 返回 None → 标记 no_price
+    assert result["status"] == "no_price", f"expected no_price for price_type={invalid_price_type!r}"
+    assert result["score"] == 0.0
+    assert result["profit_per_run"] == 0.0
+
+
+def test_price_type_nonexistent_trade(temp_db):
+    """贸易评分中不存在的价格类型应返回 no_price 状态"""
+    cache = ScoringCache(max_size=10)
+    svc = ScoringService(temp_db, cache)
+    result = svc.calc_trade_score(
+        type_id=2002,
+        buy_hub="Jita",
+        sell_hub="Jita",
+        buy_price_type="nonexistent",
+        sell_price_type="sell",
+        char_config={"skills": DEFAULT_SKILLS},
+    )
+    assert result["status"] == "no_price"
+    assert result["score"] == 0.0
+    assert result["buy_cost"] == 0.0
