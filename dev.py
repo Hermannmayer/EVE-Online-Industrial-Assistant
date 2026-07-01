@@ -84,6 +84,7 @@ def main():
                 if proc and proc.poll() is None:
                     print("  终止旧进程...")
                     from core.hot_reload import write_trigger
+
                     write_trigger()
                     print("  等待进程优雅退出...")
                     try:
@@ -117,6 +118,7 @@ def main():
             observer.stop()
             if proc and proc.poll() is None:
                 from core.hot_reload import write_trigger
+
                 write_trigger()
                 print("  等待进程优雅退出...")
                 try:
@@ -145,6 +147,7 @@ def main():
                         print(f"📁 变更: {p.relative_to(ROOT)}")
                     if proc and proc.poll() is None:
                         from core.hot_reload import write_trigger
+
                         write_trigger()
                         print("  等待进程优雅退出...")
                         try:
@@ -163,6 +166,7 @@ def main():
             print("\n🛑 正在退出...")
             if proc and proc.poll() is None:
                 from core.hot_reload import write_trigger
+
                 write_trigger()
                 print("  等待进程优雅退出...")
                 try:

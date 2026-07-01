@@ -135,7 +135,9 @@ def parse_activities(bp_id: int, bp_data: dict):
 
     return activities_rows, materials_rows, products_rows, skills_rows
 
+
 import sqlite3
+
 
 async def run_blueprint_update():
     os.makedirs(CACHE_DIR, exist_ok=True)

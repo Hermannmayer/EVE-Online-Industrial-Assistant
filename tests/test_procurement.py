@@ -227,12 +227,7 @@ class TestProcurementBatchAndFilter:
             for item in self.BATCH_ITEMS:
                 conn.execute(self.stmt, item)
         with temp_user_db.connect("user") as conn:
-            ids = [
-                r["id"]
-                for r in conn.execute(
-                    "SELECT id FROM procurement_items ORDER BY id"
-                ).fetchall()
-            ]
+            ids = [r["id"] for r in conn.execute("SELECT id FROM procurement_items ORDER BY id").fetchall()]
         assert ids == list(range(ids[0], ids[0] + 6))
 
     def test_filter_by_priority_urgent(self, temp_user_db):
@@ -242,8 +237,7 @@ class TestProcurementBatchAndFilter:
                 conn.execute(self.stmt, item)
         with temp_user_db.connect("user") as conn:
             rows = conn.execute(
-                "SELECT item_name FROM procurement_items "
-                "WHERE priority = 'urgent' ORDER BY type_id"
+                "SELECT item_name FROM procurement_items WHERE priority = 'urgent' ORDER BY type_id"
             ).fetchall()
         assert len(rows) == 2
         names = [r["item_name"] for r in rows]
@@ -257,8 +251,7 @@ class TestProcurementBatchAndFilter:
                 conn.execute(self.stmt, item)
         with temp_user_db.connect("user") as conn:
             rows = conn.execute(
-                "SELECT item_name FROM procurement_items "
-                "WHERE priority = 'high' ORDER BY type_id"
+                "SELECT item_name FROM procurement_items WHERE priority = 'high' ORDER BY type_id"
             ).fetchall()
         assert len(rows) == 2
 
@@ -269,8 +262,7 @@ class TestProcurementBatchAndFilter:
                 conn.execute(self.stmt, item)
         with temp_user_db.connect("user") as conn:
             rows = conn.execute(
-                "SELECT item_name FROM procurement_items "
-                "WHERE priority = 'low' ORDER BY type_id"
+                "SELECT item_name FROM procurement_items WHERE priority = 'low' ORDER BY type_id"
             ).fetchall()
         assert len(rows) == 1
         assert rows[0]["item_name"] == "探索者级"
@@ -280,7 +272,5 @@ class TestProcurementBatchAndFilter:
         with temp_user_db.connect("user") as conn:
             conn.execute(self.stmt, (2099, "测试", 1, "Jita", "normal", "pending", ""))
         with temp_user_db.connect("user") as conn:
-            rows = conn.execute(
-                "SELECT * FROM procurement_items WHERE priority = 'critical'"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM procurement_items WHERE priority = 'critical'").fetchall()
         assert rows == []

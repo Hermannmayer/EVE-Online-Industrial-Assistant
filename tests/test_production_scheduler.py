@@ -101,6 +101,7 @@ class TestAnalyzeProductionPlan:
         """不存在的 plan_id 返回 not_found"""
         db_mgr, _ = ps_db
         import services.production_scheduler as ps
+
         ps.db = db_mgr
 
         result = ps.analyze_production_plan(plan_id=99999)
@@ -111,6 +112,7 @@ class TestAnalyzeProductionPlan:
         """物品无蓝图时返回 no_blueprint"""
         db_mgr, _ = ps_db
         import services.production_scheduler as ps
+
         ps.db = db_mgr
 
         result = ps.analyze_production_plan(plan_id=103)  # type_id=99999
@@ -127,6 +129,7 @@ class TestAnalyzeProductionPlan:
         conn.close()
 
         import services.production_scheduler as ps
+
         ps.db = db_mgr
 
         result = ps.analyze_production_plan(plan_id=101)
@@ -136,6 +139,7 @@ class TestAnalyzeProductionPlan:
         """正常计划应返回材料明细和成本"""
         db_mgr, _ = ps_db
         import services.production_scheduler as ps
+
         ps.db = db_mgr
 
         result = ps.analyze_production_plan(plan_id=101)
@@ -154,6 +158,7 @@ class TestAnalyzeProductionPlan:
         """材料缺量表应正确计算"""
         db_mgr, _ = ps_db
         import services.production_scheduler as ps
+
         ps.db = db_mgr
 
         result = ps.analyze_production_plan(plan_id=101)
@@ -172,6 +177,7 @@ class TestGetAllPlansSummary:
         """应返回所有计划"""
         db_mgr, _ = ps_db
         import services.production_scheduler as ps
+
         ps.db = db_mgr
 
         summary = ps.get_all_plans_summary()
@@ -186,6 +192,7 @@ class TestGetAllPlansSummary:
         """每条摘要应包含关键字段"""
         db_mgr, _ = ps_db
         import services.production_scheduler as ps
+
         ps.db = db_mgr
 
         summary = ps.get_all_plans_summary()
@@ -204,6 +211,7 @@ class TestSuggestProductionOrder:
         """应返回排序后的生产建议"""
         db_mgr, _ = ps_db
         import services.production_scheduler as ps
+
         ps.db = db_mgr
 
         result = ps.suggest_production_order()
@@ -222,6 +230,7 @@ class TestOptimizeMaterialPurchase:
         """多计划材料采购优化"""
         db_mgr, _ = ps_db
         import services.production_scheduler as ps
+
         ps.db = db_mgr
 
         result = ps.optimize_material_purchase(plan_ids=[101, 102])
@@ -234,6 +243,7 @@ class TestOptimizeMaterialPurchase:
         """有限预算应只购买部分材料"""
         db_mgr, _ = ps_db
         import services.production_scheduler as ps
+
         ps.db = db_mgr
 
         result = ps.optimize_material_purchase(plan_ids=[101, 102], budget=100)
@@ -247,6 +257,7 @@ class TestOptimizeMaterialPurchase:
         """空计划列表应返回空采购清单"""
         db_mgr, _ = ps_db
         import services.production_scheduler as ps
+
         ps.db = db_mgr
 
         result = ps.optimize_material_purchase(plan_ids=[])

@@ -119,7 +119,6 @@ def main():
 
     init_db()
 
-
     if "--debug" in sys.argv:
         from core.logger import set_debug
 

@@ -94,8 +94,7 @@ class TestRunIndustryUpdate:
                 await run_industry_update()
 
         insert_calls = [
-            c for c in mock_db.execute.call_args_list
-            if "INSERT OR REPLACE INTO industry_system_costs" in c[0][0]
+            c for c in mock_db.execute.call_args_list if "INSERT OR REPLACE INTO industry_system_costs" in c[0][0]
         ]
         assert len(insert_calls) >= 3
         mock_db.commit.assert_called()
@@ -112,12 +111,20 @@ class TestRunIndustryUpdate:
         systems_data = []
         facilities_data = [
             {
-                "facility_id": 60015000, "solar_system_id": 30000142,
-                "type_id": 2500, "owner_id": 1000001, "region_id": 10000002, "tax": 0.05,
+                "facility_id": 60015000,
+                "solar_system_id": 30000142,
+                "type_id": 2500,
+                "owner_id": 1000001,
+                "region_id": 10000002,
+                "tax": 0.05,
             },
             {
-                "facility_id": 60016000, "solar_system_id": 30000144,
-                "type_id": 2501, "owner_id": None, "region_id": None, "tax": 0.0,
+                "facility_id": 60016000,
+                "solar_system_id": 30000144,
+                "type_id": 2501,
+                "owner_id": None,
+                "region_id": None,
+                "tax": 0.0,
             },
         ]
 
@@ -137,8 +144,7 @@ class TestRunIndustryUpdate:
                 await run_industry_update()
 
         fac_calls = [
-            c for c in mock_db.execute.call_args_list
-            if "INSERT OR REPLACE INTO industry_facilities" in c[0][0]
+            c for c in mock_db.execute.call_args_list if "INSERT OR REPLACE INTO industry_facilities" in c[0][0]
         ]
         assert len(fac_calls) >= 2
 

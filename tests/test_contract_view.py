@@ -310,8 +310,6 @@ class TestContractTableModel:
         assert bg0 is not None
         assert bg1 is not None
 
-
-
     # ═══════════════════════════════════════
     #  空数据状态测试
     # ═══════════════════════════════════════

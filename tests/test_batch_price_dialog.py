@@ -89,15 +89,36 @@ def test_query_flow(qapp, mock_deps):
     dlg._input_text.setPlainText("三钛合金\n渡鸦级")
 
     mock_results = [
-        {"type_id": 1001, "name": "三钛合金", "buy_str": "4.00 (10000000)", "sell_str": "5.00 (8000000)",
-         "avg_str": "4.50", "spread_str": "+1.00", "vol_str": "18000000",
-         "buy_val": 4.0, "sell_val": 5.0, "avg_val": 4.5, "spread_val": 1.0, "vol_val": 18000000,
-         "not_found": False},
-        {"type_id": 2001, "name": "渡鸦级", "buy_str": "50000000.00 (1000000)", "sell_str": "55000000.00 (800000)",
-         "avg_str": "52500000.00", "spread_str": "+5000000.00", "vol_str": "1800000",
-         "buy_val": 50000000.0, "sell_val": 55000000.0, "avg_val": 52500000.0,
-         "spread_val": 5000000.0, "vol_val": 1800000,
-         "not_found": False},
+        {
+            "type_id": 1001,
+            "name": "三钛合金",
+            "buy_str": "4.00 (10000000)",
+            "sell_str": "5.00 (8000000)",
+            "avg_str": "4.50",
+            "spread_str": "+1.00",
+            "vol_str": "18000000",
+            "buy_val": 4.0,
+            "sell_val": 5.0,
+            "avg_val": 4.5,
+            "spread_val": 1.0,
+            "vol_val": 18000000,
+            "not_found": False,
+        },
+        {
+            "type_id": 2001,
+            "name": "渡鸦级",
+            "buy_str": "50000000.00 (1000000)",
+            "sell_str": "55000000.00 (800000)",
+            "avg_str": "52500000.00",
+            "spread_str": "+5000000.00",
+            "vol_str": "1800000",
+            "buy_val": 50000000.0,
+            "sell_val": 55000000.0,
+            "avg_val": 52500000.0,
+            "spread_val": 5000000.0,
+            "vol_val": 1800000,
+            "not_found": False,
+        },
     ]
 
     # Mock _search_items → 返回已知物品
@@ -163,10 +184,22 @@ def test_export_csv(qapp, mock_deps):
     """导出 CSV 调用 export_to_csv"""
     dlg = BatchPriceDialog(parent=None)
     dlg._current_results = [
-        {"name": "三钛合金", "buy_str": "4.00", "sell_str": "5.00",
-         "avg_str": "4.50", "spread_str": "+1.00", "vol_str": "18000000"},
-        {"name": "渡鸦级", "buy_str": "50000000.00", "sell_str": "55000000.00",
-         "avg_str": "52500000.00", "spread_str": "+5000000.00", "vol_str": "1800000"},
+        {
+            "name": "三钛合金",
+            "buy_str": "4.00",
+            "sell_str": "5.00",
+            "avg_str": "4.50",
+            "spread_str": "+1.00",
+            "vol_str": "18000000",
+        },
+        {
+            "name": "渡鸦级",
+            "buy_str": "50000000.00",
+            "sell_str": "55000000.00",
+            "avg_str": "52500000.00",
+            "spread_str": "+5000000.00",
+            "vol_str": "1800000",
+        },
     ]
 
     with (
@@ -200,8 +233,14 @@ def test_export_csv_cancelled(qapp, mock_deps):
     """用户取消保存对话框则不导出"""
     dlg = BatchPriceDialog(parent=None)
     dlg._current_results = [
-        {"name": "三钛合金", "buy_str": "4.00", "sell_str": "5.00",
-         "avg_str": "4.50", "spread_str": "+1.00", "vol_str": "18000000"},
+        {
+            "name": "三钛合金",
+            "buy_str": "4.00",
+            "sell_str": "5.00",
+            "avg_str": "4.50",
+            "spread_str": "+1.00",
+            "vol_str": "18000000",
+        },
     ]
 
     with (

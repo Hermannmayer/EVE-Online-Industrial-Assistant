@@ -782,8 +782,17 @@ class TestCalcTransportProfitExtended:
             )
 
         expected_fields = {
-            "buy_cost", "sell_revenue", "freight_cost", "broker_cost",
-            "sales_tax", "net_profit", "margin_pct", "isk_per_m3",
-            "total_volume_m3", "freight_breakdown", "freight_mode", "status",
+            "buy_cost",
+            "sell_revenue",
+            "freight_cost",
+            "broker_cost",
+            "sales_tax",
+            "net_profit",
+            "margin_pct",
+            "isk_per_m3",
+            "total_volume_m3",
+            "freight_breakdown",
+            "freight_mode",
+            "status",
         }
         assert expected_fields.issubset(result.keys())
