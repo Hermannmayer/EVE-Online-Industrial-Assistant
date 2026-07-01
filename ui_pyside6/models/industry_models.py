@@ -98,9 +98,13 @@ class PlanTableModel(QAbstractTableModel):
                 f"{p.get('margin', 0):.1f}%" if p.get("margin") else "-",
                 f"{p.get('score', 0):.0f}" if p.get("score") else "-",
                 f"{p.get('iskph', 0):,.0f}" if p.get("iskph") else "-",
-                {"pending": "待生产", "in_progress": "生产中",
-                 "completed": "已完成", "running": "生产中", "done": "已完成"}.get(
-                    p.get("status", ""), p.get("status", "")),
+                {
+                    "pending": "待生产",
+                    "in_progress": "生产中",
+                    "completed": "已完成",
+                    "running": "生产中",
+                    "done": "已完成",
+                }.get(p.get("status", ""), p.get("status", "")),
                 "",
             ]
             return cols[c]
