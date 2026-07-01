@@ -137,9 +137,12 @@ def main():
 
     QTimer.singleShot(2000, lambda: _start_blueprint_name_worker())
 
+    # -- Hot reload --
+    HOT_RELOAD = "--hot-reload" in sys.argv
+
     from ui_pyside6.main_window import MainWindow
 
-    window = MainWindow()
+    window = MainWindow(hot_reload=HOT_RELOAD)
     window.show()
 
     sys.exit(app.exec())
