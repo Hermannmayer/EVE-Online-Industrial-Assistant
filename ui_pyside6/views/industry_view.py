@@ -1,32 +1,32 @@
-# 生产计划管理 — 统一页面
-from datetime import datetime, timezone
+"""生产计划管理 — 统一页面（5 区布局）"""
 
-from PySide6.QtCore import QTimer
+from __future__ import annotations
+
 from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QComboBox,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
-    QTableView,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from core.container import get_container
-from ui_pyside6.models.industry_models import MaterialTableModel, PlanTableModel
 from ui_pyside6.theme import (
-    ACCENT_RED,
-    BORDER,
-    GREEN,
-    PRIMARY,
+    TEXT_PRIMARY,
     TEXT_SECONDARY,
     add_theme_listener,
 )
-from ui_pyside6.views.procurement_tab import ProcurementDialog
+from ui_pyside6.views.industry import (
+    ActionButtons,
+    BlueprintRequirementsDialog,
+    CharacterUsageDialog,
+    MaterialsSummaryDialog,
+    OutputSummaryDialog,
+    PlanTable,
+    StatusBar,
+    TopToolbar,
+)
 
 PLAN_DB_SCHEMA = """CREATE TABLE IF NOT EXISTS production_plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,7 +92,7 @@ def init_plan_db():
 
 
 class IndustryPage(QWidget):
-    """生产计划管理统一页面"""
+    """生产计划管理统一页面 — 5 区布局"""
 
     def __init__(self, main_window):
         super().__init__()
@@ -100,265 +100,150 @@ class IndustryPage(QWidget):
         init_plan_db()
         self.setObjectName("industry_page")
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        self._tabs = QTabWidget()
-        self._tabs.setStyleSheet("QTabWidget::pane { border: none; }")
-        self._tabs.addTab(self._build_tab_plan(), "生产计划")
-        layout.addWidget(self._tabs)
+        # ── 1. 页面标题栏 ──────────────────────────────────────
+        title_bar = QHBoxLayout()
+        title_bar.setContentsMargins(12, 8, 12, 4)
+        title_bar.setSpacing(12)
+        self._title_label = QLabel("生产规划")
+        title_bar.addWidget(self._title_label)
+        self._plan_count = QLabel("")
+        title_bar.addWidget(self._plan_count)
+        title_bar.addStretch(1)
+        root.addLayout(title_bar)
+
+        # ── 2. 顶部工具栏 ──────────────────────────────────────
+        self._toolbar = TopToolbar()
+        root.addWidget(self._toolbar)
+
+        # ── 3. 主表格区域 ──────────────────────────────────────
+        self._plan_table_widget = PlanTable()
+        root.addWidget(self._plan_table_widget, 1)  # stretch=1 填充剩余空间
+
+        # "从蓝图列表添加" 按钮（表格下方）
+        bp_row = QHBoxLayout()
+        bp_row.setContentsMargins(12, 4, 12, 4)
+        self._btn_add_from_list = QPushButton("+ 从蓝图列表添加")
+        bp_row.addWidget(self._btn_add_from_list)
+        bp_row.addStretch(1)
+        root.addLayout(bp_row)
+
+        # ── 4. 底部状态栏 ──────────────────────────────────────
+        self._status_bar = StatusBar()
+        root.addWidget(self._status_bar)
+
+        # ── 5. 底部功能按钮 ────────────────────────────────────
+        self._action_buttons = ActionButtons()
+        root.addWidget(self._action_buttons)
+
+        # ── 信号连接 ───────────────────────────────────────────
+        self._connect_signals()
+
+        # ── 初始加载 ───────────────────────────────────────────
         self.load_plans()
+
+        # ── 主题 ───────────────────────────────────────────────
         add_theme_listener(self._on_theme_changed)
 
-    def _on_theme_changed(self):
-        self._tabs.setStyleSheet("QTabWidget::pane { border: none; }")
-        self._plan_count.setStyleSheet(f"color: {TEXT_SECONDARY};")
-        self._mat_summary.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
-        self._setup_plan_actions()
+    # ── 信号连接 ──────────────────────────────────────────────
 
-    def save_state(self) -> dict:
-        data = {}
-        vs = self._plan_table.verticalScrollBar()
-        if vs:
-            data["v_scroll"] = vs.value()
-        return data
+    def _connect_signals(self):
+        # TopToolbar
+        self._toolbar.refresh_requested.connect(self.load_plans)
+        self._toolbar.filter_changed.connect(self.load_plans)
+        self._toolbar.hub_changed.connect(self.load_plans)
+        self._toolbar.plan_add_requested.connect(self._on_plan_add)
+        self._toolbar.batch_add_requested.connect(self._on_batch_add)
+        self._toolbar.char_changed.connect(self.load_plans)
 
-    def restore_state(self, data: dict) -> None:
-        if not data:
-            return
-        sv = data.get("v_scroll", 0)
-        if sv:
-            QTimer.singleShot(100, lambda: self._plan_table.verticalScrollBar().setValue(sv))
+        # PlanTable
+        self._plan_table_widget.plan_updated.connect(self.load_plans)
+        self._plan_table_widget.refresh_requested.connect(self.load_plans)
+        self._plan_table_widget.plan_detail_requested.connect(self._on_plan_detail)
 
-    def _build_tab_plan(self) -> QWidget:
-        """计划列表 + 材料汇总 + 待采购"""
-        w = QWidget()
-        layout = QVBoxLayout(w)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        # StatusBar
+        self._status_bar.save_price_requested.connect(self._on_save_prices)
 
-        # 操作按钮
-        btn_row = QHBoxLayout()
-        self._del_btn = QPushButton("删除选中计划")
-        self._del_btn.setObjectName("del_btn")
-        self._del_btn.clicked.connect(self._on_delete)
-        btn_row.addWidget(self._del_btn)
+        # ActionButtons
+        self._action_buttons.refresh_procurement_requested.connect(self._on_procurement)
+        self._action_buttons.blueprint_list_requested.connect(self._on_blueprint_list)
+        self._action_buttons.materials_summary_requested.connect(self._on_materials_summary)
+        self._action_buttons.output_summary_requested.connect(self._on_output_summary)
+        self._action_buttons.char_usage_requested.connect(self._on_char_usage)
 
-        self._refresh_btn = QPushButton("刷新材料汇总")
-        self._refresh_btn.clicked.connect(self._refresh_material)
-        btn_row.addWidget(self._refresh_btn)
+        # 蓝图列表快捷按钮
+        self._btn_add_from_list.clicked.connect(self._on_batch_add)
 
-        self._procure_btn = QPushButton("\U0001f4cb 待采购")
-        self._procure_btn.clicked.connect(self._on_procurement)
-        btn_row.addWidget(self._procure_btn)
-
-        btn_row.addWidget(QLabel("  机库:"))
-        self._hangar_combo = QComboBox()
-        self._hangar_combo.setMinimumWidth(120)
-        btn_row.addWidget(self._hangar_combo)
-        self._load_hangars()
-
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-        # 计划表
-        self._plan_table = QTableView()
-        self._plan_table.setAlternatingRowColors(True)
-        self._plan_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._plan_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._plan_table.horizontalHeader().setStretchLastSection(True)
-        self._plan_table.setSortingEnabled(True)
-        self._plan_table.verticalHeader().setDefaultSectionSize(26)
-        layout.addWidget(self._plan_table, 1)
-
-        # 统计 + 过滤
-        stats = QHBoxLayout()
-        self._plan_count = QLabel("")
-        self._plan_count.setStyleSheet(f"color: {TEXT_SECONDARY};")
-        stats.addWidget(self._plan_count)
-
-        stats.addWidget(QLabel("  过滤:"))
-        self._filter = QComboBox()
-        self._filter.addItems(["全部", "待生产", "生产中", "已完成"])
-        self._filter.currentTextChanged.connect(lambda: self.load_plans())
-        stats.addWidget(self._filter)
-        stats.addStretch()
-        layout.addLayout(stats)
-
-        # 材料汇总
-        self._mat_group = QGroupBox("材料需求汇总（所有活跃计划）")
-        self._mat_group.setStyleSheet(f"""
-            QGroupBox {{ border: 1px solid {BORDER}; border-radius: 6px; padding: 4px; margin-top: 8px; }}
-            QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {TEXT_SECONDARY}; }}
-        """)
-        mv = QVBoxLayout(self._mat_group)
-        mv.setContentsMargins(4, 4, 4, 4)
-        mv.setSpacing(2)
-
-        self._mat_table = QTableView()
-        self._mat_table.setAlternatingRowColors(True)
-        self._mat_table.horizontalHeader().setStretchLastSection(True)
-        self._mat_table.setMaximumHeight(160)
-        self._mat_table.verticalHeader().setDefaultSectionSize(22)
-        mv.addWidget(self._mat_table)
-
-        self._mat_summary = QLabel("")
-        self._mat_summary.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
-        mv.addWidget(self._mat_summary)
-
-        layout.addWidget(self._mat_group)
-        return w
+    # ── load_plans ────────────────────────────────────────────
 
     def load_plans(self):
         with get_container().db.connect("user") as conn:
-            f = self._filter.currentText()
+            f = self._toolbar.get_filter()
             sql = "SELECT * FROM production_plans"
-            if f == "待生产":
+            if f == "待排":
                 sql += " WHERE status = 'pending'"
-            elif f == "生产中":
-                sql += " WHERE status IN ('in_progress', 'running')"
+            elif f == "运行中":
+                sql += " WHERE status IN ('in_progress','running')"
             elif f == "已完成":
-                sql += " WHERE status IN ('completed', 'done')"
+                sql += " WHERE status IN ('completed','done')"
             sql += " ORDER BY created_at DESC"
             c = conn.cursor()
             c.execute(sql)
             cols = [d[0] for d in c.description]
             rows = [dict(zip(cols, r)) for r in c.fetchall()]
-            self._plan_model = PlanTableModel(rows)
-            self._plan_table.setModel(self._plan_model)
-            self._plan_count.setText(f"共 {len(rows)} 条计划")
-            self._setup_plan_actions()
+        from ui_pyside6.models.industry_models import PlanTableModel
 
-    def _on_delete(self):
-        sel = self._plan_table.selectionModel().selectedRows()
-        if not sel:
-            return
-        ids = [self._plan_model._plans[r.row()]["id"] for r in sel]
-        if (
-            QMessageBox.question(
-                self,
-                "确认",
-                f"删除 {len(ids)} 条计划？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            != QMessageBox.StandardButton.Yes
-        ):
-            return
-        with get_container().db.connect("user") as conn:
-            conn.executemany("DELETE FROM production_plans WHERE id = ?", [(i,) for i in ids])
-        self.load_plans()
-        self._refresh_material()
+        model = PlanTableModel(rows)
+        self._plan_table_widget.set_model(model)
+        self._status_bar.update_stats(rows)
+        self._plan_count.setText(f"共 {len(rows)} 条计划")
 
-    def _setup_plan_actions(self):
-        """为生产计划表格的操作列添加按钮控件"""
-        model = self._plan_table.model()
-        if not model or not self._plan_model:
-            return
+    # ── 对话框打开方法 ────────────────────────────────────────
 
-        source = self._plan_model
-        n_rows = model.rowCount()
-        last_col = source.columnCount() - 1
+    def _on_plan_add(self, text: str):
+        """从文本添加计划 — 阶段二占位"""
+        QMessageBox.information(self, "添加计划", f"计划添加功能开发中: {text}")
 
-        for row in range(n_rows):
-            idx = model.index(row, last_col)
-            try:
-                self._plan_table.removeCellWidget(idx.row(), idx.column())
-            except AttributeError:
-                pass
+    def _on_batch_add(self):
+        """从蓝图列表批量添加 — 阶段二占位"""
+        QMessageBox.information(self, "批量添加", "从蓝图列表批量添加功能开发中")
 
-        for row in range(n_rows):
-            if hasattr(model, "mapToSource"):
-                src_row = model.mapToSource(model.index(row, 0)).row()
-            else:
-                src_row = row
-            plan = source.get_plan(src_row)
-            if not plan:
-                continue
+    def _on_plan_detail(self, plan_id: int):
+        """计划详情 — 阶段二占位"""
+        QMessageBox.information(self, "计划详情", f"计划 #{plan_id} 详情功能开发中")
 
-            idx = model.index(row, last_col)
-            widget = QWidget()
-            layout_w = QHBoxLayout(widget)
-            layout_w.setContentsMargins(2, 0, 2, 0)
-            layout_w.setSpacing(4)
+    def _on_blueprint_list(self):
+        dlg = BlueprintRequirementsDialog(self)
+        dlg.exec()
 
-            plan_id = plan["id"]
-            status = plan.get("status", "")
+    def _on_materials_summary(self):
+        dlg = MaterialsSummaryDialog(self)
+        dlg.exec()
 
-            if status == "pending":
-                btn = QPushButton("启动")
-                btn.setStyleSheet(f"color: {GREEN}; font-size: 11px; padding: 1px 6px;")
-                btn.clicked.connect(lambda checked, pid=plan_id: self._on_plan_start(pid))
-                layout_w.addWidget(btn)
+    def _on_output_summary(self):
+        dlg = OutputSummaryDialog(self)
+        dlg.exec()
 
-            if status in ("pending", "in_progress", "running"):
-                btn = QPushButton("完成")
-                btn.setStyleSheet(f"color: {PRIMARY}; font-size: 11px; padding: 1px 6px;")
-                btn.clicked.connect(lambda checked, pid=plan_id: self._on_plan_complete(pid))
-                layout_w.addWidget(btn)
+    def _on_char_usage(self):
+        dlg = CharacterUsageDialog(self)
+        dlg.exec()
 
-            btn = QPushButton("删除")
-            btn.setStyleSheet(f"color: {ACCENT_RED}; font-size: 11px; padding: 1px 6px;")
-            btn.clicked.connect(lambda checked, pid=plan_id: self._on_plan_delete(pid))
-            layout_w.addWidget(btn)
+    def _on_procurement(self):
+        """打开待采购对话框"""
+        from ui_pyside6.views.procurement_tab import ProcurementDialog
 
-            layout_w.addStretch()
-            self._plan_table.setIndexWidget(idx, widget)
-
-    def _on_plan_start(self, plan_id: int):
-        """启动生产 -> status = in_progress"""
-        with get_container().db.connect("user") as conn:
-            conn.execute(
-                "UPDATE production_plans SET status = 'in_progress', started_at = ? WHERE id = ?",
-                (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), plan_id),
-            )
-        self.load_plans()
-        self._refresh_material()
-
-    def _on_plan_complete(self, plan_id: int):
-        """完成生产 -> status = completed"""
-        with get_container().db.connect("user") as conn:
-            conn.execute(
-                "UPDATE production_plans SET status = 'completed', completed_at = ? WHERE id = ?",
-                (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), plan_id),
-            )
-        self.load_plans()
-        self._refresh_material()
-
-    def _on_plan_delete(self, plan_id: int):
-        """删除单条计划"""
-        if (
-            QMessageBox.question(
-                self,
-                "确认",
-                f"删除生产计划 #{plan_id}？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            != QMessageBox.StandardButton.Yes
-        ):
-            return
-        with get_container().db.connect("user") as conn:
-            conn.execute("DELETE FROM production_plans WHERE id = ?", (plan_id,))
-        self.load_plans()
-        self._refresh_material()
-
-    def _refresh_material(self):
-        """刷新材料汇总 + 跟踪活跃计划"""
-        with get_container().db.connect("user", "ref", "mkt", "bp") as conn:
+        plans = []
+        with get_container().db.connect("user", "ref", "mkt") as conn:
             c = conn.cursor()
             c.execute(
                 "SELECT id, product_type_id, product_name, runs, parallels, me_level, mat_hub, sell_hub "
                 "FROM production_plans WHERE status IN ('pending', 'in_progress', 'running')"
             )
-            plan_rows = c.fetchall()
-            if not plan_rows:
-                self._mat_table.setModel(None)
-                self._mat_summary.setText("无活跃计划")
-                self._active_plans = []
-                return
-            self._active_plans = []
-            for pr in plan_rows:
-                self._active_plans.append(
+            for pr in c.fetchall():
+                plans.append(
                     {
                         "id": pr[0],
                         "product_type_id": pr[1],
@@ -370,65 +255,93 @@ class IndustryPage(QWidget):
                         "sell_hub": pr[7],
                     }
                 )
-            material_map: dict[int, int] = {}
-            for pr in plan_rows:
-                pid, runs, parallels = pr[1], pr[3], pr[4]
-                c.execute(
-                    """SELECT bm.material_type_id, bm.quantity
-                    FROM bp.blueprint_products bp
-                    JOIN bp.blueprint_materials bm ON bm.blueprint_type_id = bp.blueprint_type_id
-                        AND bm.activity = bp.activity
-                    WHERE bp.product_type_id = ? AND bp.activity = 'manufacturing'""",
-                    (pid,),
-                )
-                for mid, qty in c.fetchall():
-                    material_map[mid] = material_map.get(mid, 0) + qty * runs * parallels
-            rows = []
-            total = 0
-            for mid, need in material_map.items():
-                c.execute("SELECT zh_name, en_name, volume FROM ref.item WHERE type_id = ?", (mid,))
-                r = c.fetchone()
-                name = (r[0] or r[1] or str(mid)) if r else str(mid)
-                c.execute(
-                    "SELECT sell_price FROM mkt.market_prices WHERE type_id = ? AND region_id = 10000002 LIMIT 1",
-                    (mid,),
-                )
-                pr = c.fetchone()
-                price = pr[0] or 0 if pr else 0
-                subtotal = need * price
-                total += subtotal
-                rows.append({"name": name, "need": need, "price": price, "total": subtotal})
-            rows.sort(key=lambda x: x["total"], reverse=True)
-            self._mat_table.setModel(MaterialTableModel(rows))
-            self._mat_summary.setText(f"共 {len(rows)} 种材料 | 总成本: {total:,.0f} ISK")
-
-    def _on_procurement(self):
-        """打开待采购对话框"""
-        hangar_id = self._hangar_combo.currentData()
-        if hangar_id is None:
-            QMessageBox.information(self, "提示", "请先选择一个机库")
+        if not plans:
+            QMessageBox.information(self, "提示", "没有活跃计划")
             return
-        plans = getattr(self, "_active_plans", [])
-        dlg = ProcurementDialog(plans, hangar_id, self._hangar_combo.currentText(), self)
+        dlg = ProcurementDialog(plans, "Jita", "Jita", self)
         dlg.exec()
-        self._refresh_material()
+        self.load_plans()
 
-    def _load_hangars(self):
-        """加载机库列举"""
-        self._hangar_combo.clear()
-        try:
-            from services.inventory_manager import get_hangars
+    # ── 保存价格快照 ──────────────────────────────────────────
 
-            for h in get_hangars():
-                self._hangar_combo.addItem(h["name"], h["id"])
-        except Exception:
-            pass
+    def _on_save_prices(self):
+        with get_container().db.connect("user", "ref", "mkt") as conn:
+            c = conn.cursor()
+            c.execute(
+                "SELECT product_type_id FROM production_plans "
+                "WHERE status IN ('pending','in_progress','running')"
+            )
+            plan_pids = [r[0] for r in c.fetchall()]
+            if not plan_pids:
+                QMessageBox.information(self, "提示", "没有活跃计划")
+                return
+            placeholders = ",".join("?" for _ in plan_pids)
+            c.execute(
+                "SELECT DISTINCT bm.material_type_id "
+                "FROM bp.blueprint_products bp "
+                "JOIN bp.blueprint_materials bm "
+                "ON bm.blueprint_type_id=bp.blueprint_type_id "
+                "AND bm.activity=bp.activity "
+                f"WHERE bp.product_type_id IN ({placeholders}) "
+                "AND bp.activity='manufacturing'",
+                plan_pids,
+            )
+            type_ids = set(r[0] for r in c.fetchall())
+            type_ids.update(plan_pids)
+            count = 0
+            for tid in type_ids:
+                c.execute(
+                    "SELECT sell_price, buy_price FROM mkt.market_prices "
+                    "WHERE type_id=? AND region_id=10000002 LIMIT 1",
+                    (tid,),
+                )
+                row = c.fetchone()
+                if row:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO price_snapshots(type_id,region_id,sell_price,buy_price) "
+                        "VALUES (?,10000002,?,?)",
+                        (tid, row[0] or 0, row[1] or 0),
+                    )
+                    count += 1
+            QMessageBox.information(self, "完成", f"已保存 {count} 个价格快照")
+
+    # ── 状态保存/恢复 ─────────────────────────────────────────
+
+    def save_state(self) -> dict:
+        data = {}
+        table = self._plan_table_widget.get_table()
+        vs = table.verticalScrollBar()
+        if vs:
+            data["v_scroll"] = vs.value()
+        return data
+
+    def restore_state(self, data: dict) -> None:
+        if not data:
+            return
+        table = self._plan_table_widget.get_table()
+        vs = table.verticalScrollBar()
+        if vs and "v_scroll" in data:
+            vs.setValue(data["v_scroll"])
+
+    # ── 外部刷新接口 ──────────────────────────────────────────
 
     def refresh_display(self):
         self.load_plans()
-        self._refresh_material()
 
     def update_status_bar(self):
-        if self._main and hasattr(self._main, "statusBar"):
-            count = self._plan_model.rowCount() if self._plan_model else 0
-            self._main.statusBar().showMessage(f"生产计划: {count} 条")
+        self.load_plans()
+
+    # ── 主题 ──────────────────────────────────────────────────
+
+    def _on_theme_changed(self):
+        self._title_label.setStyleSheet(
+            f"color: {TEXT_PRIMARY}; font-size: 16px; font-weight: bold; background: transparent;"
+        )
+        self._plan_count.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 13px; background: transparent;"
+        )
+        self._btn_add_from_list.setStyleSheet(
+            f"QPushButton {{ padding: 4px 12px; border: 1px solid {TEXT_SECONDARY}; "
+            f"border-radius: 4px; background: transparent; color: {TEXT_PRIMARY}; font-size: 12px; }}"
+            f"QPushButton:hover {{ color: {TEXT_PRIMARY}; }}"
+        )
