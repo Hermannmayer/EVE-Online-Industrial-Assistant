@@ -2,6 +2,7 @@
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QComboBox,
     QDoubleSpinBox,
     QHBoxLayout,
@@ -9,6 +10,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QWidget,
 )
 
@@ -33,6 +35,7 @@ class TopToolbar(QWidget):
     char_changed = Signal(str)
     filter_changed = Signal(str)
     refresh_requested = Signal()
+    view_changed = Signal(str)
 
     HUBS = ["Jita", "Amarr", "Dodixie", "Rens", "Hek"]
     CHARS = ["main(技能全5)", "alt(技能全4)", "自定义"]
@@ -94,12 +97,25 @@ class TopToolbar(QWidget):
 
         root.addWidget(self._make_separator())
 
-        # ── 右侧：人物 + 筛选 + 操作 ──
+        # ── 右侧：人物 + 视图切换 + 筛选 + 操作 ──
         root.addWidget(QLabel("人物"))
         self._char_combo = QComboBox()
         self._char_combo.addItems(self.CHARS)
         self._char_combo.setMinimumWidth(130)
         root.addWidget(self._char_combo)
+
+        root.addWidget(self._make_separator())
+
+        # ── 视图切换：数据/甘特 ──
+        root.addWidget(QLabel("视图:"))
+        self._view_data = QRadioButton("数据视图")
+        self._view_data.setChecked(True)
+        self._view_gantt = QRadioButton("甘特图")
+        self._view_group = QButtonGroup(self)
+        self._view_group.addButton(self._view_data)
+        self._view_group.addButton(self._view_gantt)
+        root.addWidget(self._view_data)
+        root.addWidget(self._view_gantt)
 
         self._filter_combo = QComboBox()
         self._filter_combo.addItems(self.FILTERS)
@@ -131,6 +147,7 @@ class TopToolbar(QWidget):
         self._filter_combo.currentTextChanged.connect(self.filter_changed)
         self._btn_refresh.clicked.connect(self.refresh_requested)
         self._btn_optimize.clicked.connect(self._on_optimize)
+        self._view_data.toggled.connect(self._on_view_toggled)
 
     # ── 槽函数 ──────────────────────────────────────────────
 
@@ -154,6 +171,12 @@ class TopToolbar(QWidget):
         """发射预默认请求信号，由父页面处理"""
         self.predefault_requested.emit()
 
+    def _on_view_toggled(self, checked: bool):
+        if checked:
+            self.view_changed.emit("data")
+        else:
+            self.view_changed.emit("gantt")
+
     # ── 样式 ──────────────────────────────────────────────────
 
     def _apply_style(self):
@@ -170,6 +193,8 @@ class TopToolbar(QWidget):
             f"QComboBox QAbstractItemView {{ background: transparent; color: {TEXT_PRIMARY}; }}"
             f"QDoubleSpinBox {{ padding: 4px 6px; border: 1px solid {BORDER}; border-radius: 4px;"
             f"  background: transparent; color: {TEXT_PRIMARY}; font-size: 12px; }}"
+            f"QRadioButton {{ color: {TEXT_PRIMARY}; background: transparent; font-size: 12px; }}"
+            f"QRadioButton::indicator {{ width: 14px; height: 14px; }}"
         )
 
     def _on_theme_changed(self):
