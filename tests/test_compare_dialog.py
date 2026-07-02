@@ -47,9 +47,9 @@ def mock_deps():
     cont = MagicMock()
     cont.db = db
     with (
-        patch("ui_pyside6.views.compare_dialog.get_container", return_value=cont),
-        patch("ui_pyside6.views.compare_dialog.get_character_list", return_value=["main", "alt"]),
-        patch("ui_pyside6.views.compare_dialog.get_character", return_value={"skills": {}}),
+        patch("ui_pyside6.views.compare.compare_chart.get_container", return_value=cont),
+        patch("ui_pyside6.views.compare.compare_dialog.get_character_list", return_value=["main", "alt"]),
+        patch("ui_pyside6.views.compare.compare_chart.get_character", return_value={"skills": {}}),
     ):
         yield
 
