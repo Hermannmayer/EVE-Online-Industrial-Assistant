@@ -132,8 +132,20 @@ def main():
     app.setApplicationName("EVE 商人助手")
     app.setOrganizationName("EVEAssistant")
 
-    # 延迟补拉蓝图名称（不阻塞 UI 启动）
+    # -- Single instance lock --
     from PySide6.QtCore import QTimer
+
+    from core.single_instance import show_message, try_lock, unlock
+
+    if not try_lock(force="--force" in sys.argv):
+        show_message()
+        QTimer.singleShot(2000, app.quit)
+        sys.exit(app.exec())
+        return
+
+    app.aboutToQuit.connect(unlock)
+
+    # 延迟补拉蓝图名称（不阻塞 UI 启动）
 
     QTimer.singleShot(2000, lambda: _start_blueprint_name_worker())
 
