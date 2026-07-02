@@ -987,6 +987,22 @@ class InventoryPage(QWidget):
     def refresh_display(self):
         self._hangar_tab._refresh()
 
+    def save_state(self) -> dict:
+        data = {"tab_index": self._tabs.currentIndex()}
+        if self._hangar_combo.count() > 0:
+            data["hangar_index"] = self._hangar_combo.currentIndex()
+        return data
+
+    def restore_state(self, data: dict) -> None:
+        if not data:
+            return
+        tab_index = data.get("tab_index", 0)
+        if 0 <= tab_index < self._tabs.count():
+            self._tabs.setCurrentIndex(tab_index)
+        hangar_index = data.get("hangar_index")
+        if hangar_index is not None and 0 <= hangar_index < self._hangar_combo.count():
+            self._hangar_combo.setCurrentIndex(hangar_index)
+
 
 class HangarTab(QWidget):
     """机库管理 — 多机库库存管理"""
@@ -1643,16 +1659,6 @@ class BlueprintTab(QWidget):
     def _on_theme_changed(self):
         """主题切换时重新应用内联样式表"""
         self._bp_count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
-
-        def save_state(self) -> dict:
-            data = {"tab_index": self._tabs.currentIndex()}
-            if self._hangar_combo.count() > 0:
-                data["hangar_index"] = self._hangar_combo.currentIndex()
-            return data
-
-        def restore_state(self, data: dict) -> None:
-            if data and 0 <= data.get("tab_index", 0) < self._tabs.count():
-                self._tabs.setCurrentIndex(data["tab_index"])
 
     def _load_market_categories(self):
         """加载根级市场分类到下拉框"""
