@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from core.constants import TRADE_HUB_IDS
 from services.database_manager import get_db
 
 db = get_db()
@@ -64,14 +65,7 @@ def _get_materials(conn: sqlite3.Connection, blueprint_type_id: int) -> list[tup
 
 def _get_price(conn: sqlite3.Connection, type_id: int, hub: str = "Jita") -> float:
     """获取物品在指定 Hub 的卖价"""
-    region_map = {
-        "Jita": 10000002,
-        "Amarr": 10000043,
-        "Dodixie": 10000032,
-        "Rens": 10000030,
-        "Hek": 10000028,
-    }
-    region_id = region_map.get(hub, 10000002)
+    region_id = TRADE_HUB_IDS.get(hub, TRADE_HUB_IDS["Jita"])
     row = conn.execute(
         """SELECT sell_price FROM mkt.market_prices
            WHERE type_id = ? AND region_id = ? LIMIT 1""",
