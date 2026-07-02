@@ -148,6 +148,12 @@ def qapp():
     yield app
 
 
+@pytest.fixture(scope="session")
+def app(qapp):
+    """qapp 的别名，与默认 fixture 命名保持一致"""
+    yield qapp
+
+
 # ════════════════════════════════════════════════════════════════
 #  Fixtures — Mock Database
 # ════════════════════════════════════════════════════════════════
@@ -259,3 +265,71 @@ def sample_market_prices(temp_db):
     使用 temp_db fixture（含完整测试数据库），直接返回无人机 type_id=2002。
     """
     return 2002
+
+
+# ════════════════════════════════════════════════════════════════
+#  Fixtures — UI Pages
+# ════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def main_window(app, mock_db):
+    """创建 MainWindow 实例用于 UI 测试。
+
+    依赖 mock_db 避免真实数据库连接，测试完成后自动关闭窗口。
+    """
+    from ui_pyside6.main_window import MainWindow
+
+    window = MainWindow()
+    yield window
+    window.close()
+
+
+@pytest.fixture
+def industry_page(main_window):
+    """创建 IndustryPage 实例用于 UI 测试。"""
+    from ui_pyside6.views.industry_view import IndustryPage
+
+    page = IndustryPage(main_window)
+    yield page
+    page.deleteLater()
+
+
+@pytest.fixture
+def inventory_page(main_window):
+    """创建 InventoryPage 实例用于 UI 测试。
+
+    额外 patch services.inventory_manager.db 以确保 init_db() 使用 mock 数据库。
+    """
+    from unittest.mock import MagicMock, patch
+
+    from ui_pyside6.views.inventory_view import InventoryPage
+
+    mock_mgr = MagicMock()
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchone.return_value = (0,)
+    mock_cursor.fetchall.return_value = []
+    mock_conn.cursor.return_value = mock_cursor
+    mock_conn.executescript = MagicMock()
+    mock_conn.execute.return_value = mock_cursor
+
+    mock_cm = MagicMock()
+    mock_cm.__enter__ = MagicMock(return_value=mock_conn)
+    mock_cm.__exit__ = MagicMock(return_value=False)
+    mock_mgr.connect.return_value = mock_cm
+
+    with patch("services.inventory_manager.db", mock_mgr):
+        page = InventoryPage(main_window)
+    yield page
+    page.deleteLater()
+
+
+@pytest.fixture
+def query_page(main_window):
+    """创建 QueryPage 实例用于 UI 测试。"""
+    from ui_pyside6.views.query_view import QueryPage
+
+    page = QueryPage(main_window)
+    yield page
+    page.deleteLater()
