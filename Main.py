@@ -173,8 +173,8 @@ class BlueprintNameWorker(QThread):
 
     def run(self):
         try:
-            _fill_blueprint_names()
-            self.finished.emit(True, "")
+            did_work = _fill_blueprint_names()
+            self.finished.emit(True, "completed" if did_work else "skipped")
         except Exception as e:
             self.finished.emit(False, str(e))
 
@@ -184,7 +184,9 @@ def _start_blueprint_name_worker():
     global _bp_worker
     _bp_worker = BlueprintNameWorker()
     _bp_worker.finished.connect(
-        lambda success, msg: log.info("蓝图名称补拉完成") if success else log.error(f"蓝图名称补拉失败: {msg}")
+        lambda success, msg: log.info("蓝图名称补拉完成") if success and msg == "completed" else (
+            log.error(f"蓝图名称补拉失败: {msg}") if not success else None
+        )
     )
     _bp_worker.finished.connect(lambda: _bp_worker.deleteLater())
     _bp_worker.start()
@@ -199,7 +201,7 @@ def _fill_blueprint_names():
     import sqlite3
 
     if not os.path.exists(REF_DB_PATH) or not os.path.exists(BP_DB_PATH):
-        return
+        return False
     conn = sqlite3.connect(REF_DB_PATH)
     bp_path = BP_DB_PATH.replace("\\", "/")
     safe_path = bp_path.replace("'", "''")
@@ -213,12 +215,13 @@ def _fill_blueprint_names():
     missing = c.fetchone()[0]
     conn.close()
     if missing < 100:
-        return
+        return False
 
     log.info(f"发现 {missing} 个蓝图缺名，正在补拉...")
     from services.workers.getitems import fill_missing_blueprint_names
 
     asyncio.run(fill_missing_blueprint_names())
+    return True
 
 
 if __name__ == "__main__":
