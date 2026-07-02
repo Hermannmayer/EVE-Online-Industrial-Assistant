@@ -2,8 +2,10 @@
 库存管理数据层 — 机库 CRUD / 物品入库 / 加权平均成本 / 移动
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 
+from core.logger import log
 from services.database_manager import get_db
 
 db = get_db()
@@ -61,6 +63,45 @@ def init_db():
                 c.execute("INSERT INTO hangars (name) VALUES (?)", (name,))
             conn.commit()
 
+    # 检查并补拉蓝图名称（只在初始化时运行一次）
+    _fill_missing_blueprint_names()
+
+
+def _fill_missing_blueprint_names():
+    """检查并补拉 item 表中缺失的蓝图名称（只在有大量缺失时执行）"""
+    import asyncio
+    import sqlite3
+
+    from core.paths import BP_DB_PATH, REF_DB_PATH
+
+    if not Path(REF_DB_PATH).exists() or not Path(BP_DB_PATH).exists():
+        return
+
+    try:
+        conn = sqlite3.connect(REF_DB_PATH)
+        bp_path = BP_DB_PATH.replace("\\", "/")
+        safe_path = bp_path.replace("'", "''")
+        conn.execute(f"ATTACH DATABASE '{safe_path}' AS bp")
+        c = conn.cursor()
+        c.execute(
+            "SELECT COUNT(*) FROM item"
+            " WHERE (zh_name IS NULL OR zh_name = '')"
+            " AND type_id IN (SELECT DISTINCT blueprint_type_id FROM bp.blueprint_activities)"
+        )
+        missing = c.fetchone()[0]
+        conn.close()
+
+        if missing < 100:
+            return
+
+        log.info(f"发现 {missing} 个蓝图缺名，正在补拉...")
+        from services.workers.getitems import fill_missing_blueprint_names
+
+        asyncio.run(fill_missing_blueprint_names())
+        log.info("蓝图名称补拉完成")
+    except Exception:
+        log.exception("蓝图名称补拉失败")
+
 
 def get_hangars() -> list[dict]:
     with db.connect("user") as conn:
@@ -74,7 +115,7 @@ def create_hangar(name: str) -> int:
         with db.connect("user") as conn:
             c = conn.cursor()
             c.execute("INSERT INTO hangars (name) VALUES (?)", (name,))
-            return c.lastrowid
+            return c.lastrowid or 0
     except Exception:
         return -1
 
@@ -163,7 +204,7 @@ def add_item(hangar_id: int, type_id: int, quantity: int, cost_price: float = 0)
         return -1
     with db.connect("user") as conn:
         c = conn.cursor()
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
         c.execute(
             "SELECT id, quantity, cost_price FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
@@ -179,14 +220,14 @@ def add_item(hangar_id: int, type_id: int, quantity: int, cost_price: float = 0)
                 "UPDATE inventory_items SET quantity = ?, cost_price = ?, created_at = ? WHERE id = ?",
                 (total_qty, round(avg_cost, 2), now, item_id),
             )
-            return item_id
+            return int(item_id)
         else:
             c.execute(
                 """INSERT INTO inventory_items (hangar_id, type_id, quantity, cost_price, created_at)
                          VALUES (?, ?, ?, ?, ?)""",
                 (hangar_id, type_id, quantity, cost_price, now),
             )
-            return c.lastrowid
+            return c.lastrowid or 0
 
 
 def remove_item(item_id: int) -> bool:
@@ -290,10 +331,10 @@ def add_blueprint(
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (hangar_id, blueprint_type_id, int(is_bpo), me_level, te_level, runs, quantity, notes),
         )
-        return c.lastrowid
+        return c.lastrowid or 0
 
 
-def get_blueprints(hangar_id: int = None) -> list[dict]:
+def get_blueprints(hangar_id: int | None = None) -> list[dict]:
     """获取用户蓝图列表，可指定机库或全部"""
     with db.connect("user", "ref") as conn:
         c = conn.cursor()
@@ -482,7 +523,7 @@ def check_blueprint_exists(blueprint_type_id: int) -> bool:
     with db.connect("user") as conn:
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM user_blueprints WHERE blueprint_type_id = ?", (blueprint_type_id,))
-        return c.fetchone()[0] > 0
+        return bool(c.fetchone()[0])
 
 
 def get_blueprint_tech_levels():
