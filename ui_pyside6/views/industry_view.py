@@ -237,7 +237,10 @@ class IndustryPage(QWidget):
 
         for row in range(n_rows):
             idx = model.index(row, last_col)
-            self._plan_table.removeCellWidget(idx.row(), idx.column())
+            try:
+                self._plan_table.removeCellWidget(idx.row(), idx.column())
+            except AttributeError:
+                pass
 
         for row in range(n_rows):
             if hasattr(model, "mapToSource"):
