@@ -6,7 +6,7 @@
   - char_config=None / {} 时 ScoringService 的默认行为（技能用 fallback 值）
 """
 
-from services.scoring_cache import ScoringCache
+from services.scoring import ScoringCache
 from services.scoring_service import ScoringService
 
 

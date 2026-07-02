@@ -34,7 +34,7 @@ def write_progress(cur: int, total: int, phase: str = ""):
         with open(fp, "w") as f:
             json.dump({"current": cur, "total": total, "phase": phase}, f)
     except Exception:
-        pass
+        log.exception("写进度文件失败")
 
 
 async def init_db():
