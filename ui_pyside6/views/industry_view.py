@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -15,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.container import get_container
+from core.logger import log
 from ui_pyside6.theme import (
     TEXT_PRIMARY,
     TEXT_SECONDARY,
@@ -81,7 +84,7 @@ def init_plan_db():
                 try:
                     conn.execute(f"ALTER TABLE production_plans ADD COLUMN {col} {col_type}")
                 except Exception:
-                    pass
+                    log.debug("列已存在: %s", col)
             # --- price_snapshots 表 ---
             conn.executescript("""CREATE TABLE IF NOT EXISTS price_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,7 +96,7 @@ def init_plan_db():
                 UNIQUE(type_id, region_id, snapshot_time)
             );""")
     except Exception:
-        pass
+        log.exception("初始化生产计划数据库失败")
 
 
 class IndustryPage(QWidget):
@@ -217,7 +220,7 @@ class IndustryPage(QWidget):
             c = conn.cursor()
             c.execute(sql)
             cols = [d[0] for d in c.description]
-            rows = [dict(zip(cols, r)) for r in c.fetchall()]
+            rows = [dict(zip(cols, r, strict=False)) for r in c.fetchall()]
         from ui_pyside6.models.industry_models import PlanTableModel
 
         model = PlanTableModel(rows)
@@ -262,7 +265,7 @@ class IndustryPage(QWidget):
         text = text.strip()
         if not text:
             return
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from PySide6.QtWidgets import QDialog
 
@@ -352,7 +355,7 @@ class IndustryPage(QWidget):
                         result.get("score", 0),
                         iskph,
                         mat_cost,
-                        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                        datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
                     ),
                 )
                 conn3.commit()
@@ -479,7 +482,7 @@ class IndustryPage(QWidget):
                 "AND bp.activity='manufacturing'",
                 plan_pids,
             )
-            type_ids = set(r[0] for r in c.fetchall())
+            type_ids = {r[0] for r in c.fetchall()}
             type_ids.update(plan_pids)
             count = 0
             for tid in type_ids:

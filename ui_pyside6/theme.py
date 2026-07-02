@@ -205,22 +205,22 @@ def restore_window_geometry(window):
         window.resize(1400, 800)
 
 
-def get_stylesheet() -> str:
-    """根据当前主题生成 QSS 样式表"""
+def _global_styles() -> str:
     return f"""
-    /* ── 全局 ── */
     QMainWindow {{
         background-color: {BG_DARK};
     }}
-
     QWidget {{
         background-color: {BG_DARK};
         color: {TEXT_PRIMARY};
         font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
         font-size: 13px;
     }}
+    """
 
-    /* ── 菜单栏 ── */
+
+def _menu_styles() -> str:
+    return f"""
     QMenuBar {{
         background-color: {BG_SURFACE};
         color: {TEXT_PRIMARY};
@@ -253,8 +253,11 @@ def get_stylesheet() -> str:
         background-color: {BORDER};
         margin: 4px 8px;
     }}
+    """
 
-    /* ── 状态栏 ── */
+
+def _statusbar_toolbar_styles() -> str:
+    return f"""
     QStatusBar {{
         background-color: {BG_SURFACE};
         color: {TEXT_SECONDARY};
@@ -262,8 +265,6 @@ def get_stylesheet() -> str:
         font-size: 11px;
         padding: 2px 8px;
     }}
-
-    /* ── 工具栏 ── */
     QToolBar {{
         background-color: {BG_SURFACE};
         border-bottom: 1px solid {BORDER};
@@ -275,8 +276,11 @@ def get_stylesheet() -> str:
         background-color: {BORDER};
         margin: 4px 6px;
     }}
+    """
 
-    /* ── 树控件 (导航) ── */
+
+def _tree_tab_styles() -> str:
+    return f"""
     QTreeWidget {{
         background-color: {BG_SURFACE};
         border: none;
@@ -299,8 +303,6 @@ def get_stylesheet() -> str:
     QTreeWidget::branch {{
         background-color: {BG_SURFACE};
     }}
-
-    /* ── 选项卡 ── */
     QTabWidget::pane {{
         background-color: {BG_DARK};
         border: none;
@@ -318,8 +320,11 @@ def get_stylesheet() -> str:
     QTabBar::tab:hover {{
         color: {TEXT_PRIMARY};
     }}
+    """
 
-    /* ── 输入框 ── */
+
+def _input_styles() -> str:
+    return f"""
     QLineEdit {{
         background-color: {BG_SURFACE};
         color: {TEXT_PRIMARY};
@@ -331,8 +336,6 @@ def get_stylesheet() -> str:
     QLineEdit:focus {{
         border-color: {PRIMARY};
     }}
-
-    /* ── 下拉框 ── */
     QComboBox {{
         background-color: {BG_SURFACE};
         color: {TEXT_PRIMARY};
@@ -356,8 +359,11 @@ def get_stylesheet() -> str:
         border: none;
         width: 20px;
     }}
+    """
 
-    /* ── 按钮 ── */
+
+def _button_styles() -> str:
+    return f"""
     QPushButton {{
         background-color: {BG_SURFACE};
         color: {TEXT_PRIMARY};
@@ -377,7 +383,6 @@ def get_stylesheet() -> str:
         background-color: {BG_SURFACE};
         color: {TEXT_SECONDARY};
     }}
-
     QToolButton {{
         background-color: transparent;
         color: {TEXT_SECONDARY};
@@ -389,8 +394,11 @@ def get_stylesheet() -> str:
         background-color: {BG_HOVER};
         color: {TEXT_PRIMARY};
     }}
+    """
 
-    /* ── 表格 ── */
+
+def _table_styles() -> str:
+    return f"""
     QTableView {{
         background-color: {BG_DARK};
         alternate-background-color: {BG_SURFACE};
@@ -422,8 +430,11 @@ def get_stylesheet() -> str:
     QHeaderView::section:hover {{
         background-color: {BG_HOVER};
     }}
+    """
 
-    /* ── 分割器 ── */
+
+def _splitter_styles() -> str:
+    return f"""
     QSplitter::handle {{
         background-color: {BORDER};
         margin: 1px;
@@ -434,8 +445,11 @@ def get_stylesheet() -> str:
     QSplitter::handle:vertical {{
         height: 2px;
     }}
+    """
 
-    /* ── 进度条 ── */
+
+def _progress_checkbox_scroll_styles() -> str:
+    return f"""
     QProgressBar {{
         background-color: {BG_SURFACE};
         border: none;
@@ -447,8 +461,6 @@ def get_stylesheet() -> str:
         background-color: {PRIMARY};
         border-radius: 2px;
     }}
-
-    /* ── 复选框 ── */
     QCheckBox {{
         spacing: 8px;
         color: {TEXT_PRIMARY};
@@ -464,8 +476,6 @@ def get_stylesheet() -> str:
         background-color: {PRIMARY};
         border-color: {PRIMARY};
     }}
-
-    /* ── 滚动条 ── */
     QScrollBar:vertical {{
         background-color: {BG_DARK};
         width: 8px;
@@ -500,8 +510,11 @@ def get_stylesheet() -> str:
     QScrollBar::sub-line:horizontal {{
         width: 0;
     }}
+    """
 
-    /* ── 列表控件 ── */
+
+def _list_tooltip_styles() -> str:
+    return f"""
     QListWidget {{
         background-color: {BG_DARK};
         border: 1px solid {BORDER};
@@ -516,16 +529,12 @@ def get_stylesheet() -> str:
         background-color: {BG_SURFACE_LIGHT};
         color: {TEXT_BRIGHT};
     }}
-
-    /* ── 文本浏览器 ── */
     QTextBrowser {{
         background-color: {BG_DARK};
         border: 1px solid {BORDER};
         border-radius: 6px;
         color: {TEXT_PRIMARY};
     }}
-
-    /* ── 提示 ── */
     QToolTip {{
         background-color: {BG_SURFACE};
         color: {TEXT_PRIMARY};
@@ -534,10 +543,11 @@ def get_stylesheet() -> str:
         padding: 4px 8px;
         font-size: 12px;
     }}
+    """
 
-    /* ═══════════════════════════════════
-       MainWindow 结构
-    ═══════════════════════════════════ */
+
+def _mainwindow_specific_styles() -> str:
+    return f"""
     #central_widget {{
         background-color: {BG_DARK};
     }}
@@ -599,10 +609,11 @@ def get_stylesheet() -> str:
         background-color: {BG_HOVER};
         border: 1px solid {PRIMARY};
     }}
+    """
 
-    /* ═══════════════════════════════════
-       页面视图
-    ═══════════════════════════════════ */
+
+def _page_specific_styles() -> str:
+    return f"""
     #query_page, #industry_page, #trade_page, #inventory_page {{
         background-color: {BG_DARK};
     }}
@@ -632,10 +643,6 @@ def get_stylesheet() -> str:
         font-size: 13px;
         padding: 8px 12px;
     }}
-
-    /* ═══════════════════════════════════
-       系统设置菜单
-    ═══════════════════════════════════ */
     #sys_menu {{
         background-color: {BG_SURFACE};
         border: 1px solid {BORDER};
@@ -651,3 +658,21 @@ def get_stylesheet() -> str:
         color: {TEXT_BRIGHT};
     }}
     """
+
+
+def get_stylesheet() -> str:
+    """根据当前主题生成 QSS 样式表 — 按组件类别组装"""
+    return "".join([
+        _global_styles(),
+        _menu_styles(),
+        _statusbar_toolbar_styles(),
+        _tree_tab_styles(),
+        _input_styles(),
+        _button_styles(),
+        _table_styles(),
+        _splitter_styles(),
+        _progress_checkbox_scroll_styles(),
+        _list_tooltip_styles(),
+        _mainwindow_specific_styles(),
+        _page_specific_styles(),
+    ])

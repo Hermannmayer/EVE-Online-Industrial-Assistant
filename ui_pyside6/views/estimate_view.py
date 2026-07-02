@@ -223,10 +223,10 @@ class EstimateTableModel(QAbstractTableModel):
     def get_rows(self) -> list[dict]:
         return list(self._rows)
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=None):
         return len(self._rows)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=None):
         return len(_COLUMNS)
 
     def flags(self, index):
@@ -248,7 +248,7 @@ class EstimateTableModel(QAbstractTableModel):
                 self._recalc_totals()
                 self.dataChanged.emit(index, self.index(index.row(), 6))
                 return True
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 return False
         return False
 
@@ -466,36 +466,36 @@ class EstimatePage(QWidget):
         self._sum_avg.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 16px; font-weight: bold;")
         self._hangar_combo.setStyleSheet("QComboBox { font-weight: bold; }")
 
-        def save_state(self) -> dict:
-            data = {}
-            try:
-                text = QApplication.clipboard().text()
-                if text.strip():
-                    data["clipboard_text"] = text
-            except Exception:
-                pass
-            header = self._table.horizontalHeader()
-            if header and header.sortIndicatorSection() >= 0:
-                data["sort_column"] = header.sortIndicatorSection()
-                data["sort_order"] = 1 if header.sortIndicatorOrder() == Qt.SortOrder.AscendingOrder else 0
-            vs = self._table.verticalScrollBar()
-            if vs:
-                data["v_scroll"] = vs.value()
-            return data
+    def save_state(self) -> dict:
+        data = {}
+        try:
+            text = QApplication.clipboard().text()
+            if text.strip():
+                data["clipboard_text"] = text
+        except Exception:
+            pass
+        header = self._table.horizontalHeader()
+        if header and header.sortIndicatorSection() >= 0:
+            data["sort_column"] = header.sortIndicatorSection()
+            data["sort_order"] = 1 if header.sortIndicatorOrder() == Qt.SortOrder.AscendingOrder else 0
+        vs = self._table.verticalScrollBar()
+        if vs:
+            data["v_scroll"] = vs.value()
+        return data
 
-        def restore_state(self, data: dict) -> None:
-            if not data:
-                return
-            if data.get("clipboard_text"):
-                QApplication.clipboard().setText(data["clipboard_text"])
-                self._on_paste()
-            col = data.get("sort_column", -1)
-            if col >= 0:
-                order = Qt.SortOrder.AscendingOrder if data.get("sort_order", 1) == 1 else Qt.SortOrder.DescendingOrder
-                self._table.sortByColumn(col, order)
-            sv = data.get("v_scroll", 0)
-            if sv:
-                QTimer.singleShot(100, lambda: self._table.verticalScrollBar().setValue(sv))
+    def restore_state(self, data: dict) -> None:
+        if not data:
+            return
+        if data.get("clipboard_text"):
+            QApplication.clipboard().setText(data["clipboard_text"])
+            self._on_paste()
+        col = data.get("sort_column", -1)
+        if col >= 0:
+            order = Qt.SortOrder.AscendingOrder if data.get("sort_order", 1) == 1 else Qt.SortOrder.DescendingOrder
+            self._table.sortByColumn(col, order)
+        sv = data.get("v_scroll", 0)
+        if sv:
+            QTimer.singleShot(100, lambda: self._table.verticalScrollBar().setValue(sv))
 
     def _build_import_bar(self) -> QWidget:
         w = QWidget()
@@ -805,7 +805,7 @@ class EstimatePage(QWidget):
         if not rows:
             return
         self._set_status("正在刷新价格...")
-        for i, row in enumerate(rows):
+        for _i, row in enumerate(rows):
             tid = row.get("type_id")
             if not tid:
                 continue
