@@ -11,12 +11,10 @@ from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH
 def check_items() -> int:
     """返回 item 表行数，<10000 视为未初始化"""
     try:
-        conn = sqlite3.connect(REF_DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM item")
-        cnt = c.fetchone()[0]
-        conn.close()
-        return cnt
+        with sqlite3.connect(REF_DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM item")
+            return c.fetchone()[0]
     except Exception:
         return 0
 
@@ -24,12 +22,10 @@ def check_items() -> int:
 def check_prices() -> int:
     """返回 market_prices 行数"""
     try:
-        conn = sqlite3.connect(MKT_DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM market_prices")
-        cnt = c.fetchone()[0]
-        conn.close()
-        return cnt
+        with sqlite3.connect(MKT_DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM market_prices")
+            return c.fetchone()[0]
     except Exception:
         return 0
 
@@ -37,16 +33,13 @@ def check_prices() -> int:
 def check_blueprints() -> int:
     """返回 blueprint_activities 行数，>1000 视为已初始化"""
     try:
-        conn = sqlite3.connect(BP_DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='blueprint_activities'")
-        if not c.fetchone():
-            conn.close()
-            return 0
-        c.execute("SELECT COUNT(*) FROM blueprint_activities")
-        cnt = c.fetchone()[0]
-        conn.close()
-        return cnt
+        with sqlite3.connect(BP_DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='blueprint_activities'")
+            if not c.fetchone():
+                return 0
+            c.execute("SELECT COUNT(*) FROM blueprint_activities")
+            return c.fetchone()[0]
     except Exception:
         return 0
 
@@ -54,16 +47,13 @@ def check_blueprints() -> int:
 def check_implants() -> int:
     """返回 item_dogma 行数"""
     try:
-        conn = sqlite3.connect(REF_DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='item_dogma'")
-        if not c.fetchone():
-            conn.close()
-            return 0
-        c.execute("SELECT COUNT(*) FROM item_dogma")
-        cnt = c.fetchone()[0]
-        conn.close()
-        return cnt
+        with sqlite3.connect(REF_DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='item_dogma'")
+            if not c.fetchone():
+                return 0
+            c.execute("SELECT COUNT(*) FROM item_dogma")
+            return c.fetchone()[0]
     except Exception:
         return 0
 
@@ -78,11 +68,10 @@ def check_icons() -> tuple[int, int]:
     cached = len([f for f in os.listdir(cache_dir) if f.endswith(".png")])
     noicon = len([f for f in os.listdir(cache_dir) if f.endswith(".noicon")])
     try:
-        conn = sqlite3.connect(REF_DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM item WHERE market_group_id IS NOT NULL AND market_group_id > 0")
-        total = c.fetchone()[0]
-        conn.close()
+        with sqlite3.connect(REF_DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM item WHERE market_group_id IS NOT NULL AND market_group_id > 0")
+            total = c.fetchone()[0]
     except Exception:
         total = 0
     return cached + noicon, max(total, 1)
