@@ -66,7 +66,8 @@ def _migrate_blueprint_db():
 
     log.info("正在将蓝图表迁移到 blueprint.db...")
     bp_path = BP_DB_PATH.replace("\\", "/")
-    conn.execute(f"ATTACH DATABASE '{bp_path}' AS bp_db")
+    safe_path = bp_path.replace("'", "''")
+    conn.execute(f"ATTACH DATABASE '{safe_path}' AS bp_db")
     conn.execute("PRAGMA bp_db.journal_mode=WAL")
 
     for table in bp_tables:
@@ -183,7 +184,8 @@ def _fill_blueprint_names():
         return
     conn = sqlite3.connect(REF_DB_PATH)
     bp_path = BP_DB_PATH.replace("\\", "/")
-    conn.execute(f"ATTACH DATABASE '{bp_path}' AS bp")
+    safe_path = bp_path.replace("'", "''")
+    conn.execute(f"ATTACH DATABASE '{safe_path}' AS bp")
     c = conn.cursor()
     c.execute(
         "SELECT COUNT(*) FROM item"
