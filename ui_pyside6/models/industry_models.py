@@ -79,7 +79,6 @@ class PlanTableModel(QAbstractTableModel):
         "利润",       # 16
         "市场利润率%", # 17
         "个人利润率%", # 18
-        "操作",       # 19
     ]
 
     # 可编辑列集合（仅 active 状态下生效）
@@ -93,11 +92,11 @@ class PlanTableModel(QAbstractTableModel):
         11: "_calculated_time", 12: "_daily_output",
         13: "facility", 14: "output",
         15: "material_cost", 16: "profit",
-        17: "market_margin", 18: "personal_margin", 19: None,
+        17: "market_margin", 18: "personal_margin",
     }
 
     # 数值列（排序时按数字比较）
-    _NUMERIC_SORT_COLS = {3, 4, 5, 11, 12, 15, 16, 17, 18}
+    _NUMERIC_SORT_COLS = {2, 3, 4, 11, 12, 15, 16, 17, 18}
 
     # 状态 → 显示文本
     _STATUS_LABELS = {
@@ -118,7 +117,7 @@ class PlanTableModel(QAbstractTableModel):
         return len(self._plans)
 
     def columnCount(self, parent=QModelIndex()):
-        return 20
+        return 19
 
     # ── 图标列 DecorationRole ────────────────────────────────────
 
@@ -172,13 +171,13 @@ class PlanTableModel(QAbstractTableModel):
         if c == 1:
             return p.get("product_name", f"ID:{p.get('product_type_id', '')}")
         if c == 2:
-            return str(p.get("batch", ""))
+            return str(p.get("batch", 0))
         if c == 3:
             return str(p.get("parallels", 1))
         if c == 4:
-            return str(p.get("group_id", ""))
+            return str(p.get("group_id", 0))
         if c == 5:
-            return str(p.get("child_level", ""))
+            return str(p.get("child_level", 0))
         if c == 6:
             return self._STATUS_LABELS.get(p.get("status", ""), p.get("status", ""))
         if c == 7:
@@ -220,8 +219,6 @@ class PlanTableModel(QAbstractTableModel):
         if c == 18:
             margin = p.get("personal_margin", 0) or 0
             return f"{margin:.1f}%"
-        if c == 19:
-            return ""  # 操作列
         return ""
 
     # ── ForegroundRole ───────────────────────────────────────────

@@ -180,7 +180,7 @@ class IndustryPage(QWidget):
         self._toolbar.manufacturable_browser_requested.connect(self._on_manufacturable_browser)
         self._toolbar.batch_add_requested.connect(self._on_batch_add)
         self._toolbar.char_changed.connect(self.load_plans)
-        self._toolbar.predefault_requested.connect(self._on_predefault)
+
         self._toolbar.view_changed.connect(self._on_view_changed)
 
         # PlanTable
@@ -228,6 +228,7 @@ class IndustryPage(QWidget):
         # 如果当前是甘特图模式，同步刷新甘特图
         if self._view_stack.currentIndex() == 1:
             self._refresh_gantt()
+        self._auto_calculate_plans(rows)
 
     def _on_view_changed(self, view_mode: str):
         if view_mode == "gantt":
@@ -251,28 +252,6 @@ class IndustryPage(QWidget):
         self._gantt_view.load_from_plans(plans)
 
     # ── 对话框打开方法 ────────────────────────────────────────
-
-    def _on_predefault(self):
-        """预默认按钮 → 打开 PreDefaultDialog"""
-        from ui_pyside6.views.industry import PreDefaultDialog
-
-        plan_data = {}
-        model = self._plan_table_widget.get_model()
-        table = self._plan_table_widget.get_table()
-        sel = table.selectionModel().selectedRows()
-        if sel:
-            row = sel[0].row()
-            plan_data = model.get_plan(row) if model else {}
-        dlg = PreDefaultDialog(self, plan_data)
-        if dlg.exec():
-            config = dlg.get_config()
-            QMessageBox.information(
-                self,
-                "预默认配置（功能开发中）",
-                f"ME: {config['me']}, TE: {config['te']}\n"
-                f"设施: {config['facility']}, 输出: {config['output']}\n"
-                f"技能等级: {config['skill_level']}",
-            )
 
     def _on_plan_add(self, text: str):
         """???????????? -> ?? -> AddPlanDialog -> INSERT"""
