@@ -93,8 +93,14 @@ EVE-Online-Industrial-Assistant/
 │   ├── test_theme_listeners.py
 │   └── test_watchlist_manager.py
 │
+├── .pre-commit-config.yaml         # Pre-commit hooks 配置
 ├── .github/
+│   ├── workflows/
+│   │   └── ci.yml                  # GitHub Actions CI
 │   └── pull_request_template.md    # PR 模板
+├── CLAUDE.md                       # Claude Code 项目约束
+├── AGENTS.md                       # 开发规则和指令
+├── EVE-PROJECT-STATE.md            # 项目状态跟踪
 │
 ├── .claude/
 │   ├── CLAUDE.md                   # Claude Code 项目上下文
@@ -109,7 +115,7 @@ EVE-Online-Industrial-Assistant/
 ## 🚀 快速开始
 
 ### 环境要求
-- Python 3.10+
+- Python 3.14+
 - Windows / macOS / Linux
 
 ### 安装与运行
@@ -264,7 +270,7 @@ python build_release.py
 
 | 指标 | 数值 |
 |------|------|
-| 📊 **测试总数** | 204 个 |
+| 📊 **测试总数** | 599 个 |
 | 🔧 **框架** | pytest |
 | 📁 **测试目录** | `tests/` |
 | 🏃 **运行命令** | `pytest` |
@@ -287,6 +293,9 @@ python build_release.py
 | `test_contract_view.py` | 合同视图测试 |
 | `test_logistics.py` | 物流距离计算测试 |
 | `test_theme_listeners.py` | 主题监听模式测试 |
+| `test_ui_industry.py` | 工业页面 UI 测试 |
+| `test_ui_inventory.py` | 仓库页面 UI 测试 |
+| `test_ui_main_window.py` | 主窗口 UI 测试 |
 
 ---
 
@@ -312,6 +321,10 @@ python build_release.py
 | [aiosqlite](https://aiosqlite.omnilib.dev/) | 异步 SQLite 操作 |
 | [tenacity](https://tenacity.readthedocs.io/) | 请求重试 + 指数退避 |
 | [PyInstaller](https://pyinstaller.org/) | 打包为可执行文件 |
+| mypy | 类型检查 |
+| pre-commit | 提交前自动检查 |
+| pytest-qt | UI 测试框架 |
+| pytest-cov | 测试覆盖率 |
 
 ## 📝 贡献指南
 

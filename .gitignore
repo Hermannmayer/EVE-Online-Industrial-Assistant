@@ -5,6 +5,7 @@ venv/
 # Python 缓存
 __pycache__/
 *.pyc
+*.cover
 *.pyo
 .pytest_cache/
 

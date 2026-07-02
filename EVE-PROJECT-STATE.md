@@ -1,6 +1,6 @@
 # EVE Online Industrial Assistant — 项目状态
 
-> 最后更新: 2026-06-30 · 77 commits · 508 测试用例
+> 最后更新: 2026-07-03 · 77 commits · 599 测试用例
 
 ---
 
@@ -12,10 +12,10 @@
 | 测试文件 | 38 |
 | 总 Python 文件 | 99 |
 | 代码行数 | 29,636 |
-| 测试用例数 | 508 |
+| 测试用例数 | 599 |
 | SQLite 数据库 | 4 (`reference.db`, `market.db`, `user.db`, `blueprint.db`) |
 | Git 提交数 | 77 |
-| 外部依赖 | 9（PySide6, aiohttp, aiosqlite, tenacity, tqdm, pyperclip, Pillow, pyyaml, openpyxl） |
+| 外部依赖 | 8（PySide6, aiohttp, aiosqlite, tenacity, tqdm, pyperclip, pyyaml, openpyxl） |
 
 ---
 
@@ -65,6 +65,13 @@
 | 价格走势图 | `price_chart.py` | 历史价格可视化 |
 | 首次启动向导 | `init_wizard.py` | 数据库初始化引导 |
 | 关注列表 | `watchlist_view.py` | 价格变动监控 |
+
+### 开发基础设施
+- [x] **热重载开发模式** — 文件变更自动重启 + 状态保存/恢复
+- [x] **Pre-commit Hooks** — 提交前自动代码检查
+- [x] **mypy 类型检查** — 静态类型验证
+- [x] **UI 测试框架** — pytest-qt 集成测试
+- [x] **GitHub Actions CI** — 自动化测试流水线
 
 ---
 
@@ -133,6 +140,10 @@ Main.py  ──▶  ui_pyside6/main_window.py  ──▶  views / dialogs / work
 | **tqdm** | 进度条 |
 | **pytest** | 测试框架 |
 | **ruff** | 代码检查 + 格式化 |
+| **mypy** | 类型检查 |
+| **pre-commit** | 提交前自动检查 |
+| **pytest-qt** | UI 测试框架 |
+| **pytest-cov** | 测试覆盖率 |
 
 ---
 

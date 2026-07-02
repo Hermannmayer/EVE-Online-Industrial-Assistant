@@ -12,6 +12,8 @@
 - **Lint:** `ruff check .`
 - **Format:** `ruff format .`
 - **Config:** `pyproject.toml` (line-length 120, py314 target)
+- **Type check:** mypy . --ignore-missing-imports
+- **Pre-commit:** pre-commit run --all-files
 
 ## Stack
 - **Language:** Python 3.14
@@ -19,6 +21,8 @@
 - **Frameworks:** aiohttp (async HTTP), aiosqlite (async DB), tenacity (retry)
 - **Format:** Ruff (lint + format)
 - **Test:** pytest
+- **Type check:** mypy
+- **Pre-commit:** pre-commit (ruff + mypy + 通用检查)
 
 ## Project Structure
 - `Main.py` — Application entry point
