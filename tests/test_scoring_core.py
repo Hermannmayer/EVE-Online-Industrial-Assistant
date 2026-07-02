@@ -1,6 +1,6 @@
 """评分核心逻辑单元测试 — 测试 ScoringService 的关键计算路径"""
 
-from services.scoring_cache import ScoringCache
+from services.scoring import ScoringCache
 from services.scoring_service import ScoringService
 
 # ── 默认满级角色配置 ──

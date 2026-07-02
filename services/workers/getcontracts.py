@@ -56,7 +56,7 @@ def write_progress(cur: int, total: int, phase: str = ""):
         with open(fp, "w") as f:
             json.dump({"current": cur, "total": total, "phase": phase}, f)
     except Exception:
-        pass
+        log.exception("写进度文件失败")
 
 
 async def init_db():
@@ -135,7 +135,7 @@ async def fetch_contract_pages(session: aiohttp.ClientSession, region_id: int) -
                     if resp.status == 200:
                         return await resp.json()
             except Exception:
-                pass
+                log.exception("拉取合同页 %d 失败", p)
         return []
 
     # 分批拉取，每批 10 页
@@ -166,6 +166,7 @@ async def fetch_contract_items(session: aiohttp.ClientSession, contract_ids: lis
                     else:
                         result[cid] = []
             except Exception:
+                log.exception("拉取合同物品失败, contract_id=%d", cid)
                 result[cid] = []
 
     # 分批拉取，避免同时发起太多请求
