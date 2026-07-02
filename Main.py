@@ -127,6 +127,24 @@ def main():
 
     sys.excepthook = _global_exception_handler
 
+    # 自定义 Qt 消息处理器，过滤字体大小警告
+    from PySide6.QtCore import QtMsgType, qInstallMessageHandler
+
+    def _qt_message_handler(msg_type, context, message):
+        if "QFont::setPointSize" in message and "Point size <= 0" in message:
+            return  # 过滤字体大小警告
+        # 其他消息正常处理
+        if msg_type == QtMsgType.QtDebugMsg:
+            log.debug(message)
+        elif msg_type == QtMsgType.QtWarningMsg:
+            log.warning(message)
+        elif msg_type == QtMsgType.QtCriticalMsg:
+            log.error(message)
+        elif msg_type == QtMsgType.QtFatalMsg:
+            log.critical(message)
+
+    qInstallMessageHandler(_qt_message_handler)
+
     app = QApplication(sys.argv)
     app.setApplicationName("EVE 商人助手")
     app.setOrganizationName("EVEAssistant")
