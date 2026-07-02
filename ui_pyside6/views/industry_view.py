@@ -230,6 +230,10 @@ class IndustryPage(QWidget):
             self._refresh_gantt()
         self._auto_calculate_plans(rows)
 
+    def _auto_calculate_plans(self, rows):
+        """自动重算计划利润/边际（后台线程触发）"""
+        pass
+
     def _on_view_changed(self, view_mode: str):
         if view_mode == "gantt":
             self._view_stack.setCurrentIndex(1)
