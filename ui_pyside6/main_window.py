@@ -429,10 +429,12 @@ class MainWindow(QMainWindow):
                 layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._pages[key] = placeholder
                 return placeholder
-            except Exception:
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
                 placeholder = QWidget()
                 layout = QVBoxLayout(placeholder)
-                layout.addWidget(QLabel("页面加载失败，请先初始化数据"))
+                layout.addWidget(QLabel(f"页面加载失败: {e}"))
                 layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._pages[key] = placeholder
                 return placeholder
