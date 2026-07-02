@@ -1,4 +1,4 @@
-﻿"""
+"""
 主窗口 — QMainWindow + 导航树 + 内容区 + 状态栏
 """
 
@@ -898,18 +898,70 @@ class MainWindow(QMainWindow):
                     pass
 
     def _check_first_run(self):
-        """首次启动检测：如果缺少关键数据，在状态栏提示"""
+        """首次启动检测 + 初始化完成后重建页面"""
         from services.init_check import check_all
+        import sqlite3
 
         status = check_all()
         has_items = status.get("items", False)
         missing = sum(1 for v in status.values() if not v)
-        if not has_items:
-            self._status_label.setText("⚠️ 首次使用？请打开 ⚙️ → 数据初始化")
-        elif missing > 0:
-            self._status_label.setText(f"⚠️ {missing} 项数据未初始化，点击 ⚙️ → 数据初始化")
-        else:
+        if missing == 0 and has_items:
+            self._rebuild_placeholder_pages()
             self._status_label.setText("就绪")
+        elif not has_items:
+            self._status_label.setText("⚠️ 首次使用？请打开 ⚙️ → 数据初始化")
+        else:
+            self._status_label.setText(f"⚠️ {missing} 项数据未初始化，点击 ⚙️ → 数据初始化")
+
+    def _rebuild_placeholder_pages(self):
+        """检查哪些页面是 placeholder，重建为真实页面"""
+        from ui_pyside6.views.estimate_view import EstimatePage
+        from ui_pyside6.views.query_view import QueryPage
+        from ui_pyside6.views.industry_view import IndustryPage
+        from ui_pyside6.views.trade_view import TradePage
+        from ui_pyside6.views.watchlist_view import WatchlistPage
+        from ui_pyside6.views.contract_view import ContractPage
+        from ui_pyside6.views.inventory_view import InventoryPage
+
+        import sqlite3
+        from PySide6.QtWidgets import QLabel
+
+        page_classes = [
+            ("estimate", EstimatePage),
+            ("query", QueryPage),
+            ("industry", IndustryPage),
+            ("trade", TradePage),
+            ("watchlist", WatchlistPage),
+            ("contract", ContractPage),
+            ("storage", InventoryPage),
+        ]
+        old_idx = self.content_stack.currentIndex()
+
+        for key, cls in page_classes:
+            current = self._pages.get(key)
+            if current is None:
+                continue
+            children = current.findChildren(QLabel)
+            is_placeholder = any(
+                "未初始化" in c.text() or "加载失败" in c.text()
+                for c in children
+            )
+            if not is_placeholder:
+                continue
+            try:
+                new_page = cls(self)
+            except sqlite3.OperationalError:
+                continue
+            except Exception:
+                continue
+            idx = self.content_stack.indexOf(current)
+            if idx >= 0:
+                self.content_stack.removeWidget(current)
+                self.content_stack.insertWidget(idx, new_page)
+            self._pages[key] = new_page
+            current.deleteLater()
+
+        self.content_stack.setCurrentIndex(old_idx)
 
     def _show_settings(self):
         QMessageBox.information(self, "设置", "设置功能将在后续版本实现。\n\n可配置项：ESI 区域、字体大小、主题切换")
