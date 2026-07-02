@@ -20,7 +20,6 @@ from ui_pyside6.theme import (
     TEXT_SECONDARY,
     add_theme_listener,
 )
-from ui_pyside6.views.all_items_view import AllItemsDialog
 from ui_pyside6.views.industry import (
     ActionButtons,
     BlueprintRequirementsDialog,
@@ -32,6 +31,7 @@ from ui_pyside6.views.industry import (
     StatusBar,
     TopToolbar,
 )
+from ui_pyside6.views.manufacturable_items_dialog import ManufacturableItemsDialog
 
 PLAN_DB_SCHEMA = """CREATE TABLE IF NOT EXISTS production_plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -383,7 +383,7 @@ class IndustryPage(QWidget):
 
     def _on_manufacturable_browser(self):
         """??????????"""
-        dlg = AllItemsDialog(manufacturable_only=True)
+        dlg = ManufacturableItemsDialog()
         dlg.show()
 
     def _on_batch_add(self):

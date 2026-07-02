@@ -796,8 +796,8 @@ class AllItemsDialog(QDialog):
         scroll_pos = vbar.value() if vbar else 0
         if self._show_m:
             cols = list(BCOLS)
-            cols[4] = (f"买价（{self._mfg['hub']}）", 100, "bp")
-            cols[5] = (f"卖价（{self._mfg['hub']}）", 100, "sp")
+            cols[3] = (f"买价（{self._mfg['hub']}）", 100, "bp")
+            cols[4] = (f"卖价（{self._mfg['hub']}）", 100, "sp")
             cols.extend(MCOLS)
             self._md.set_cols(cols)
             self._setw(cols)
@@ -808,8 +808,8 @@ class AllItemsDialog(QDialog):
         elif self._show_t:
             cols = list(BCOLS)
             ptn = {"buy": "买单", "sell": "卖单"}
-            cols[4] = (f"买价（{self._trade['bh']}{ptn.get(self._trade['bs'], '')}）", 100, "bp")
-            cols[5] = (f"卖价（{self._trade['sh']}{ptn.get(self._trade['ss'], '')}）", 100, "sp")
+            cols[3] = (f"买价（{self._trade['bh']}{ptn.get(self._trade['bs'], '')}）", 100, "bp")
+            cols[4] = (f"卖价（{self._trade['sh']}{ptn.get(self._trade['ss'], '')}）", 100, "sp")
             cols.extend(TCOLS)
             self._md.set_cols(cols)
             self._setw(cols)
