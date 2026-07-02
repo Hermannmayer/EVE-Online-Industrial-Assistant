@@ -9,7 +9,6 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from core.logger import log
@@ -151,10 +150,6 @@ def main():
 
     app.aboutToQuit.connect(unlock)
 
-    # 延迟补拉蓝图名称（不阻塞 UI 启动）
-
-    QTimer.singleShot(2000, lambda: _start_blueprint_name_worker())
-
     # -- Hot reload --
     HOT_RELOAD = "--hot-reload" in sys.argv
 
@@ -164,64 +159,6 @@ def main():
     window.show()
 
     sys.exit(app.exec())
-
-
-class BlueprintNameWorker(QThread):
-    """后台线程补拉缺失的蓝图名称"""
-
-    finished = Signal(bool, str)
-
-    def run(self):
-        try:
-            did_work = _fill_blueprint_names()
-            self.finished.emit(True, "completed" if did_work else "skipped")
-        except Exception as e:
-            self.finished.emit(False, str(e))
-
-
-def _start_blueprint_name_worker():
-    """启动蓝图名称补拉 worker（延迟调用，不阻塞 UI）"""
-    global _bp_worker
-    _bp_worker = BlueprintNameWorker()
-    _bp_worker.finished.connect(
-        lambda success, msg: log.info("蓝图名称补拉完成") if success and msg == "completed" else (
-            log.error(f"蓝图名称补拉失败: {msg}") if not success else None
-        )
-    )
-    _bp_worker.finished.connect(lambda: _bp_worker.deleteLater())
-    _bp_worker.start()
-
-
-_bp_worker: BlueprintNameWorker | None = None
-
-
-def _fill_blueprint_names():
-    """检查并补拉 item 表中缺失的蓝图名称"""
-    import asyncio
-    import sqlite3
-
-    if not os.path.exists(REF_DB_PATH) or not os.path.exists(BP_DB_PATH):
-        return False
-    conn = sqlite3.connect(REF_DB_PATH)
-    bp_path = BP_DB_PATH.replace("\\", "/")
-    safe_path = bp_path.replace("'", "''")
-    conn.execute(f"ATTACH DATABASE '{safe_path}' AS bp")
-    c = conn.cursor()
-    c.execute(
-        "SELECT COUNT(*) FROM item"
-        " WHERE (zh_name IS NULL OR zh_name = '')"
-        " AND type_id IN (SELECT DISTINCT blueprint_type_id FROM bp.blueprint_activities)"
-    )
-    missing = c.fetchone()[0]
-    conn.close()
-    if missing < 100:
-        return False
-
-    log.info(f"发现 {missing} 个蓝图缺名，正在补拉...")
-    from services.workers.getitems import fill_missing_blueprint_names
-
-    asyncio.run(fill_missing_blueprint_names())
-    return True
 
 
 if __name__ == "__main__":
