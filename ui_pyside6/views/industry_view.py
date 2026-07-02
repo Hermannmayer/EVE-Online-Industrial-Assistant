@@ -20,6 +20,7 @@ from ui_pyside6.theme import (
     TEXT_SECONDARY,
     add_theme_listener,
 )
+from ui_pyside6.views.all_items_view import AllItemsDialog
 from ui_pyside6.views.industry import (
     ActionButtons,
     BlueprintRequirementsDialog,
@@ -176,6 +177,7 @@ class IndustryPage(QWidget):
         self._toolbar.filter_changed.connect(self.load_plans)
         self._toolbar.hub_changed.connect(self.load_plans)
         self._toolbar.plan_add_requested.connect(self._on_plan_add)
+        self._toolbar.manufacturable_browser_requested.connect(self._on_manufacturable_browser)
         self._toolbar.batch_add_requested.connect(self._on_batch_add)
         self._toolbar.char_changed.connect(self.load_plans)
         self._toolbar.predefault_requested.connect(self._on_predefault)
@@ -273,12 +275,120 @@ class IndustryPage(QWidget):
             )
 
     def _on_plan_add(self, text: str):
-        """从文本添加计划 — 阶段二占位"""
-        QMessageBox.information(self, "添加计划", f"计划添加功能开发中: {text}")
+        """???????????? -> ?? -> AddPlanDialog -> INSERT"""
+        text = text.strip()
+        if not text:
+            return
+        from datetime import datetime, timezone
+
+        from PySide6.QtWidgets import QDialog
+
+        from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
+
+        # 1) ????
+        conn = get_container().db.direct_connect("ref")
+        try:
+            like = f"%{text}%"
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT type_id, zh_name, en_name FROM item "
+                "WHERE (zh_name LIKE ? OR en_name LIKE ?) "
+                "ORDER BY CASE WHEN en_name=? OR zh_name=? THEN 0 ELSE 1 END, "
+                "LENGTH(en_name), type_id LIMIT 10",
+                (like, like, text, text),
+            )
+            items = cur.fetchall()
+        finally:
+            conn.close()
+
+        if not items:
+            QMessageBox.information(self, "???", f"????????: {text}")
+            return
+
+        type_id = items[0][0]
+        product_name = items[0][1] or items[0][2] or str(type_id)
+
+        # ?????????
+        conn2 = get_container().db.direct_connect("bp")
+        try:
+            cur = conn2.cursor()
+            cur.execute(
+                "SELECT 1 FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
+                (type_id,),
+            )
+            has_bp = cur.fetchone() is not None
+        finally:
+            conn2.close()
+
+        if not has_bp:
+            QMessageBox.information(self, "????", f"\u300c{product_name}\u300d??????")
+            return
+
+        # 3) ????
+        from ui_pyside6.workers.industry_workers import ScoreWorker
+
+        self._score_worker = ScoreWorker(
+            type_id=type_id,
+            bp_me=0,
+            bp_te=0,
+            mat_hub="Jita",
+            sell_hub="Jita",
+            tax=0.0,
+        )
+
+        def _on_score(result: dict):
+            dlg = AddPlanDialog(product_name, result, self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            data = dlg.result_data()
+            if not data:
+                return
+            conn3 = get_container().db.direct_connect("user")
+            try:
+                iskph = result.get("isk_per_hour", 0) or result.get("breakdown", {}).get("isk_per_hour", 0)
+                mat_cost = result.get("breakdown", {}).get("material_cost", 0)
+                conn3.execute(
+                    "INSERT INTO production_plans "
+                    "(product_type_id, product_name, runs, parallels, me_level, te_level, "
+                    "mat_hub, sell_hub, facility, char_name, status, "
+                    "profit, margin, score, iskph, material_cost, created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?)",
+                    (
+                        type_id,
+                        product_name,
+                        data["runs"],
+                        data["parallels"],
+                        data["me"],
+                        data["te"],
+                        "Jita",
+                        "Jita",
+                        data["fac"],
+                        data["char"],
+                        result.get("profit_per_run", 0),
+                        result.get("margin_pct", 0),
+                        result.get("score", 0),
+                        iskph,
+                        mat_cost,
+                        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                    ),
+                )
+                conn3.commit()
+            finally:
+                conn3.close()
+            self.load_plans()
+            QMessageBox.information(self, "??", f"???????: {product_name}")
+
+        self._score_worker.finished.connect(_on_score)
+        self._score_worker.start()
+
+    def _on_manufacturable_browser(self):
+        """??????????"""
+        dlg = AllItemsDialog(manufacturable_only=True)
+        dlg.show()
 
     def _on_batch_add(self):
-        """从蓝图列表批量添加 — 阶段二占位"""
-        QMessageBox.information(self, "批量添加", "从蓝图列表批量添加功能开发中")
+        """???????????????"""
+        self._on_manufacturable_browser()
 
     def _on_plan_detail(self, plan_id: int):
         """双击计划行 → 打开 PlanEditDialog"""
@@ -369,8 +479,7 @@ class IndustryPage(QWidget):
         with get_container().db.connect("user", "ref", "mkt") as conn:
             c = conn.cursor()
             c.execute(
-                "SELECT product_type_id FROM production_plans "
-                "WHERE status IN ('pending','in_progress','running')"
+                "SELECT product_type_id FROM production_plans WHERE status IN ('pending','in_progress','running')"
             )
             plan_pids = [r[0] for r in c.fetchall()]
             if not plan_pids:
@@ -438,9 +547,7 @@ class IndustryPage(QWidget):
         self._title_label.setStyleSheet(
             f"color: {TEXT_PRIMARY}; font-size: 16px; font-weight: bold; background: transparent;"
         )
-        self._plan_count.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; font-size: 13px; background: transparent;"
-        )
+        self._plan_count.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 13px; background: transparent;")
         self._btn_add_from_list.setStyleSheet(
             f"QPushButton {{ padding: 4px 12px; border: 1px solid {TEXT_SECONDARY}; "
             f"border-radius: 4px; background: transparent; color: {TEXT_PRIMARY}; font-size: 12px; }}"

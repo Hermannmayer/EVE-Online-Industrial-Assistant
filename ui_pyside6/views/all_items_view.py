@@ -85,6 +85,7 @@ def _fetch(sql, rid: int, params=None):
 
 
 CATEGORIES = ["所有类别", "无法制造获得", "蓝图制造(T1)", "发明制造(T2)", "势力蓝图制造", "反应", "行星开发"]
+MFG_CATEGORIES = ["所有可制造", "蓝图制造(T1)", "发明制造(T2)", "势力蓝图制造", "反应"]
 BCOLS = [
     ("图标", 36, "i"),
     ("中文名", 160, "z"),
@@ -350,9 +351,11 @@ class SearchItemsW(QThread):
 
 
 class AllItemsDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, manufacturable_only: bool = False):
         super().__init__()  # 无 parent，完全独立窗口
         self.setWindowTitle("全物品查询")
+        if manufacturable_only:
+            self.setWindowTitle("可制造物品 - 添加至生产计划")
         self.resize(1100, 680)
         self.setMinimumSize(800, 400)
         # 独立窗口 + 任务栏入口，断开与主窗口的关联
@@ -364,6 +367,7 @@ class AllItemsDialog(QDialog):
             | Qt.WindowType.WindowCloseButtonHint
         )
         self._data = []
+        self._manufacturable_only = manufacturable_only
         self._filt = []
         self._bp_cached = None
         self._mfg = {"hub": "Jita", "char": "main", "tax": 0}
@@ -530,7 +534,10 @@ class AllItemsDialog(QDialog):
         fx.addWidget(self._search_input)
         fx.addWidget(QLabel("类别:", styleSheet=f"color:{theme.TEXT_SECONDARY};font-size:11px;"))
         self._cat = QComboBox()
-        self._cat.addItems(CATEGORIES)
+        if self._manufacturable_only:
+            self._cat.addItems(MFG_CATEGORIES)
+        else:
+            self._cat.addItems(CATEGORIES)
         self._cat.setStyleSheet(
             f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
             f"border:1px solid {theme.BORDER};border-radius:2px;"
@@ -657,6 +664,51 @@ class AllItemsDialog(QDialog):
     def _apply(self):
         data = self._data
         cat = self._cat.currentIndex()
+        # manufacturable_only mode
+        if self._manufacturable_only:
+            if data and len(data) > 0:
+                with get_container().db.connect("ref", "bp") as conn:
+                    c = conn.cursor()
+                    if cat == 0:  # all manufacturable
+                        c.execute(
+                            "SELECT DISTINCT product_type_id FROM blueprint_products WHERE activity='manufacturing'"
+                        )
+                        bp_ids = {r[0] for r in c.fetchall()}
+                        data = [r for r in data if r["id"] in bp_ids]
+                    elif cat == 1:  # T1
+                        c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
+                            WHERE bp.activity='manufacturing'
+                            AND bp.blueprint_type_id NOT IN (
+                                SELECT product_type_id FROM blueprint_products WHERE activity='invention'
+                            )""")
+                        bp_ids = {r[0] for r in c.fetchall()}
+                        data = [r for r in data if r["id"] in bp_ids]
+                    elif cat == 2:  # T2 invention
+                        c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
+                            WHERE bp.activity='manufacturing'
+                            AND bp.blueprint_type_id IN (
+                                SELECT product_type_id FROM blueprint_products WHERE activity='invention'
+                            )""")
+                        bp_ids = {r[0] for r in c.fetchall()}
+                        data = [r for r in data if r["id"] in bp_ids]
+                    elif cat == 3:  # faction
+                        c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
+                            JOIN item i ON bp.product_type_id=i.type_id
+                            WHERE bp.activity='manufacturing' AND (
+                                i.en_name LIKE '%Navy%' OR i.en_name LIKE '%Faction%'
+                                OR i.en_name LIKE '%Imperial%' OR i.en_name LIKE '%Republic%'
+                                OR i.en_name LIKE '%Federation%' OR i.en_name LIKE '%State%')""")
+                        bp_ids = {r[0] for r in c.fetchall()}
+                        data = [r for r in data if r["id"] in bp_ids]
+                    elif cat == 4:  # reaction
+                        c.execute("SELECT DISTINCT product_type_id FROM blueprint_products WHERE activity='reaction'")
+                        bp_ids = {r[0] for r in c.fetchall()}
+                        data = [r for r in data if r["id"] in bp_ids]
+            self._filt = data
+            self._upd()
+            return
+
+        # original mode
         if data and cat > 0:
             with get_container().db.connect("ref", "bp") as conn:
                 c = conn.cursor()

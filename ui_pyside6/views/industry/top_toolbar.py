@@ -29,6 +29,7 @@ class TopToolbar(QWidget):
     plan_add_requested = Signal(str)
     predefault_requested = Signal()
     batch_add_requested = Signal()
+    manufacturable_browser_requested = Signal()
     hub_changed = Signal(str)
     sell_mult_changed = Signal(float)
     buy_mult_changed = Signal(float)
@@ -54,6 +55,12 @@ class TopToolbar(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(6, 4, 6, 4)
         root.setSpacing(8)
+
+        # ── 左侧：从全物品添加 ──
+        self._btn_all_items = QPushButton("从全物品添加")
+        root.addWidget(self._btn_all_items)
+
+        root.addWidget(self._make_separator())
 
         # ── 左侧：蓝图导入区 ──
         root.addWidget(QLabel("蓝图"))
@@ -138,6 +145,7 @@ class TopToolbar(QWidget):
     # ── 信号连接 ──────────────────────────────────────────────
 
     def _connect_signals(self):
+        self._btn_all_items.clicked.connect(self._on_all_items_clicked)
         self._btn_add.clicked.connect(self._on_add)
         self._btn_from_list.clicked.connect(self._on_batch_clicked)
         self._hub_combo.currentTextChanged.connect(self.hub_changed)
@@ -150,6 +158,10 @@ class TopToolbar(QWidget):
         self._view_data.toggled.connect(self._on_view_toggled)
 
     # ── 槽函数 ──────────────────────────────────────────────
+
+    def _on_all_items_clicked(self):
+        """从全物品列表中选择可制造物品"""
+        self.manufacturable_browser_requested.emit()
 
     def _on_add(self):
         """读取粘贴板/输入框文本，有内容则发射信号并清空，否则提示"""
