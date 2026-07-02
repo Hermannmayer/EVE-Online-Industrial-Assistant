@@ -1,9 +1,24 @@
 [tool.ruff]
 line-length = 120
-target-version = "py314"
+target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # Pyflakes
+    "B",  # flake8-bugbear
+    "I",  # isort
+    "M",  # flake8-mypy
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["core", "services", "ui_pyside6"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -33,7 +48,19 @@ module = [
 ]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "services.*"
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "core.*"
+disallow_untyped_defs = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "ui: marks tests as UI tests (deselect with '-m \"not ui\"')",
+]
