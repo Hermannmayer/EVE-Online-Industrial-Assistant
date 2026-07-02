@@ -105,7 +105,7 @@ class DatabaseManager:
                 continue
             attached.add(alias)
             other_path = DB_PATH_MAP[alias]
-            safe_path = other_path.replace("\\", "/")
+            safe_path = other_path.replace("\\", "/").replace("'", "''")
             conn.execute(f"ATTACH DATABASE '{safe_path}' AS {alias}")
 
         conn.row_factory = sqlite3.Row
