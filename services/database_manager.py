@@ -65,12 +65,13 @@ class DatabaseManager:
         """获取当前线程的连接缓存字典"""
         if not hasattr(self._local, "connections"):
             self._local.connections = {}
-        return self._local.connections
+        cache: dict[str, sqlite3.Connection] = self._local.connections
+        return cache
 
     @staticmethod
     def _cache_key(primary: str, attach: tuple[str, ...]) -> str:
         """生成连接配置的唯一缓存 key：primary:sorted_unique_attach"""
-        unique_attach = tuple(sorted(set(a for a in attach if a != primary)))
+        unique_attach = tuple(sorted({a for a in attach if a != primary}))
         return f"{primary}:{','.join(unique_attach)}"
 
     def _get_or_create(self, primary: DB_ALIAS, attach: tuple[str, ...]) -> sqlite3.Connection:
@@ -121,7 +122,7 @@ class DatabaseManager:
             raise ValueError(f"Unknown database alias: {db_alias}")
 
     @contextmanager
-    def connect(self, primary: DB_ALIAS, *attach: DB_ALIAS) -> Generator[sqlite3.Connection, None, None]:
+    def connect(self, primary: DB_ALIAS, *attach: DB_ALIAS) -> Generator[sqlite3.Connection]:
         """获取连接（自动复用），ATTACH 需要的辅助库。
 
         同一线程内相同配置的连接会自动复用，无需重复 ATTACH。
@@ -146,19 +147,19 @@ class DatabaseManager:
         # 注意：不再 conn.close()，连接留待复用
 
     @contextmanager
-    def connect_ref(self) -> Generator[sqlite3.Connection, None, None]:
+    def connect_ref(self) -> Generator[sqlite3.Connection]:
         """便捷方法：连接参考数据库"""
         with self.connect("ref") as conn:
             yield conn
 
     @contextmanager
-    def connect_mkt(self) -> Generator[sqlite3.Connection, None, None]:
+    def connect_mkt(self) -> Generator[sqlite3.Connection]:
         """便捷方法：连接市场数据库"""
         with self.connect("mkt") as conn:
             yield conn
 
     @contextmanager
-    def connect_user(self) -> Generator[sqlite3.Connection, None, None]:
+    def connect_user(self) -> Generator[sqlite3.Connection]:
         """便捷方法：连接用户数据库"""
         with self.connect("user") as conn:
             yield conn

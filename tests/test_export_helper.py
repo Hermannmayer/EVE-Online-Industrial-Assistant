@@ -171,7 +171,7 @@ class TestExportToNonexistentDir:
         assert not os.path.exists(os.path.dirname(bad_path))
         try:
             export_to_csv(headers, rows, bad_path)
-            assert False, "应抛出 FileNotFoundError"
+            raise AssertionError("应抛出 FileNotFoundError")
         except FileNotFoundError:
             pass
 
@@ -188,7 +188,7 @@ class TestExportToNonexistentDir:
         assert not os.path.exists(os.path.dirname(bad_path))
         try:
             export_to_excel(headers, rows, bad_path)
-            assert False, "应抛出 FileNotFoundError"
+            raise AssertionError("应抛出 FileNotFoundError")
         except FileNotFoundError:
             pass
 
@@ -204,6 +204,6 @@ class TestExportToNonexistentDir:
         bad_path = os.path.join(tempfile.gettempdir(), "eve_test_nonexistent", "sub", "nested", "out.csv")
         try:
             export_to_csv(headers, rows, bad_path)
-            assert False, "应抛出 FileNotFoundError"
+            raise AssertionError("应抛出 FileNotFoundError")
         except FileNotFoundError:
             pass

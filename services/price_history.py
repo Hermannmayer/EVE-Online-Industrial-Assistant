@@ -3,7 +3,7 @@ Market price history — ESI /markets/{region_id}/history/
 Cache in market.db price_history table
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiohttp
 
@@ -55,7 +55,7 @@ async def fetch_history(
                 return None
             if not resp.ok:
                 resp.raise_for_status()
-            return await resp.json()
+            return await resp.json()  # type: ignore[no-any-return]
 
     if session is not None:
         return await _do(session)
@@ -80,7 +80,7 @@ def get_cached_history(type_id: int, region_id: int = REGION_ID) -> list[dict] |
         ).fetchone()
         if row and row["latest"]:
             fetched = datetime.fromisoformat(row["latest"])
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            now = datetime.now(UTC).replace(tzinfo=None)
             if fetched.tzinfo:
                 fetched = fetched.replace(tzinfo=None)
             if (now - fetched).total_seconds() < CACHE_TTL_SECONDS:
@@ -104,7 +104,7 @@ def save_cache(type_id: int, region_id: int, data: list[dict]) -> None:
             "DELETE FROM price_history WHERE type_id=? AND region_id=?",
             (type_id, region_id),
         )
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for entry in data:
             conn.execute(
                 "INSERT INTO price_history "

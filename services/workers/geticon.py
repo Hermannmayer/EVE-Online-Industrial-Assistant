@@ -56,7 +56,7 @@ async def download_icon(
                 else:
                     log.warning(f"  ⚠ type_id={type_id} 状态码={resp.status}")
                     return False
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        except (TimeoutError, aiohttp.ClientError) as e:
             log.error(f"  ❌ type_id={type_id} 下载失败: {e}")
             return False
 
@@ -86,7 +86,7 @@ async def download_all(session: aiohttp.ClientSession, type_ids: list):
             need_download.append(tid)
 
     log.info(
-        (f"\n统计: 总计={total}, 已有图标={existing_count}, 无图标标记={no_icon_count}, 需下载={len(need_download)}")
+        f"\n统计: 总计={total}, 已有图标={existing_count}, 无图标标记={no_icon_count}, 需下载={len(need_download)}"
     )
     progress[0] = existing_count + no_icon_count
 
@@ -138,5 +138,5 @@ async def main():
 
 if __name__ == "__main__":
     if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())  # type: ignore[attr-defined]
     asyncio.run(main())

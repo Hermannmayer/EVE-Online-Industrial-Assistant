@@ -23,7 +23,7 @@ class TestCrossRegionPriceWorker:
     @patch("ui_pyside6.workers.trade_workers.get_volume")
     def test_run_emits_finished(self, mock_get_volume, mock_get_price, qapp):
         """run() 为每个贸易中心获取价格并通过 finished 返回"""
-        mock_get_price.side_effect = lambda tid, ptype, hub: {  # noqa: ARG005
+        mock_get_price.side_effect = lambda tid, ptype, hub: {
             ("sell", "Jita"): 5.0,
             ("buy", "Jita"): 4.0,
             ("sell", "Amarr"): 6.0,
@@ -47,7 +47,7 @@ class TestCrossRegionPriceWorker:
 
         assert len(received) == 1
         hubs = received[0]
-        assert len(hubs) == 4  # 四大贸易中心
+        assert len(hubs) == 5  # 五大贸易中心
 
         jita = next(h for h in hubs if h["hub"] == "Jita")
         assert jita["buy_price"] == 4.0

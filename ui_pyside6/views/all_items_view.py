@@ -4,6 +4,7 @@
 
 import json
 import os
+from datetime import UTC
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSize, QSortFilterProxyModel, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPixmap
@@ -774,7 +775,7 @@ class AllItemsDialog(QDialog):
         p = os.path.join(data_dir(), "score_settings.json")
         if os.path.exists(p):
             try:
-                with open(p, "r", encoding="utf-8") as f:
+                with open(p, encoding="utf-8") as f:
                     s = json.load(f)
                 self._mfg.update(s.get("mfg", {}))
                 self._trade.update(s.get("trade", {}))
@@ -956,7 +957,7 @@ class AllItemsDialog(QDialog):
                 cached = _cget(k)
                 if cached:
                     score = cached
-            from datetime import datetime, timezone
+            from datetime import datetime
 
             dlg = AddPlanDialog(_ctx_name, score, self)
             if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -990,7 +991,7 @@ class AllItemsDialog(QDialog):
                         score.get("score", 0),
                         iskph,
                         mat_cost,
-                        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                        datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
                     ),
                 )
                 conn.commit()

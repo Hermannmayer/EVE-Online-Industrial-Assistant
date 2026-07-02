@@ -4,7 +4,7 @@
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiosqlite
 from tqdm import tqdm
@@ -70,7 +70,7 @@ async def create_tables():
         cursor = await db.execute("SELECT COUNT(*) FROM user_skills")
         row = await cursor.fetchone()
         if row and row[0] == 0:
-            for sk_id, name, default_lvl, desc in KEY_MANUFACTURING_SKILLS:
+            for sk_id, _name, default_lvl, _desc in KEY_MANUFACTURING_SKILLS:
                 await db.execute(
                     "INSERT OR IGNORE INTO user_skills VALUES (?, ?)",
                     (sk_id, default_lvl),
@@ -82,7 +82,7 @@ async def run_industry_update():
     await create_tables()
 
     async with APIClient(concurrency=10) as client:
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
         # ── 系统成本指数 (reference.db) ──
         log.info("获取工业系统成本指数...")

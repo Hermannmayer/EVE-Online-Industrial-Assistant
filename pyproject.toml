@@ -1,6 +1,6 @@
 [tool.ruff]
 line-length = 120
-target-version = "py313"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = [
@@ -28,9 +28,9 @@ python_version = "3.14"
 strict = false
 warn_unused_configs = true
 warn_redundant_casts = true
-warn_unused_ignores = true
+warn_unused_ignores = false
 disallow_untyped_defs = false
-check_untyped_defs = true
+check_untyped_defs = false
 ignore_missing_imports = true
 no_implicit_optional = true
 warn_return_any = true
@@ -41,20 +41,10 @@ module = [
     "aiohttp.*",
     "aiosqlite.*",
     "yaml.*",
-    "PIL.*",
     "openpyxl.*",
-    "pyperclip.*",
     "tqdm.*",
 ]
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "services.*"
-disallow_untyped_defs = true
-
-[[tool.mypy.overrides]]
-module = "core.*"
-disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -50,7 +50,7 @@ def add_to_watchlist(
         )
         existing = c.fetchone()
         if existing:
-            return existing[0]
+            return int(existing[0])
         c.execute(
             """INSERT INTO watchlist_items
                (type_id, region_id, note, price_threshold_buy, price_threshold_sell)
@@ -58,7 +58,7 @@ def add_to_watchlist(
             (type_id, region_id, note, buy_threshold, sell_threshold),
         )
         conn.commit()
-        return c.lastrowid
+        return c.lastrowid or 0
 
 
 def remove_from_watchlist(item_id: int) -> bool:
@@ -123,7 +123,7 @@ def update_watchlist_item(
     sell_threshold: float | None = None,
 ) -> bool:
     """更新关注物品的备注或阈值"""
-    updates = {}
+    updates: dict[str, object] = {}
     if note is not None:
         updates["note"] = note
     if buy_threshold is not None:
@@ -136,7 +136,7 @@ def update_watchlist_item(
     with db.connect("user") as conn:
         c = conn.cursor()
         sets = ", ".join(f"{k} = ?" for k in updates)
-        vals = [v for v in updates.values()] + [item_id]
+        vals = list(updates.values()) + [item_id]
         c.execute(f"UPDATE watchlist_items SET {sets} WHERE id = ?", vals)
         conn.commit()
         return c.rowcount > 0

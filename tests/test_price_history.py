@@ -6,7 +6,7 @@
 import shutil
 import sqlite3
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -146,7 +146,7 @@ class TestCacheRoundtrip:
 
         # 直接写入过期缓存数据
         db = get_db()
-        old_time = (datetime.now(timezone.utc) - timedelta(seconds=CACHE_TTL_SECONDS + 3600)).isoformat()
+        old_time = (datetime.now(UTC) - timedelta(seconds=CACHE_TTL_SECONDS + 3600)).isoformat()
         with db.connect("mkt") as conn:
             conn.execute(
                 "INSERT INTO price_history "

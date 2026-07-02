@@ -225,4 +225,4 @@ class TestRunBlueprintUpdateYamlError:
         # 验证 yaml.safe_load 确实被调用（而非提前跳过）
         mock_yaml.assert_called_once()
         # 验证读取的是缓存文件
-        mock_file.assert_called_once_with("/tmp/blueprints.yaml", "r", encoding="utf-8")
+        mock_file.assert_called_once_with("/tmp/blueprints.yaml", encoding="utf-8")

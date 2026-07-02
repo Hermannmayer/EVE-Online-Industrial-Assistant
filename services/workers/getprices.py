@@ -9,7 +9,7 @@
 import asyncio
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiohttp
 import aiosqlite
@@ -155,7 +155,7 @@ async def fetch_orders(regions: list[tuple[str, int]] | None = None) -> dict[int
         log.info(f"  共 {total_reqs} 页，开始拉取...")
 
         result = {}
-        for name, rid in targets:
+        for _name, rid in targets:
             region_data = {}
             for ot in ("sell", "buy"):
                 key = f"{rid}_{ot}"
@@ -201,7 +201,7 @@ async def fetch_orders(regions: list[tuple[str, int]] | None = None) -> dict[int
 
 async def save_snapshot(all_regions: dict[int, dict[int, dict]]):
     """保存各区域当日成交量快照"""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     async with aiosqlite.connect(DATABASE_PATH) as db:
         records = []
         for region_id, items in all_regions.items():
@@ -291,7 +291,7 @@ async def main(regions: list[tuple[str, int]] | None = None):
     write_progress(4, 4, "完成")
     log.info(f"Done! {elapsed:.0f} seconds")
     for rid, items in sorted(order_prices.items()):
-        name = dict(TRADE_REGIONS).get(rid, rid)
+        name = {v: k for k, v in TRADE_REGIONS}.get(rid, str(rid))
         log.info(f"  {name} (id={rid}): {len(items)} items")
 
 

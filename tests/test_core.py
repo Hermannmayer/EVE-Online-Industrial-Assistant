@@ -29,14 +29,15 @@ def test_is_frozen_default_false():
 
 
 def test_trade_hubs_default_values():
-    """TRADE_HUBS 应包含四大贸易中心"""
+    """TRADE_HUBS 应包含五大贸易中心"""
     from core.constants import TRADE_HUBS
 
     assert "Jita" in TRADE_HUBS
     assert "Amarr" in TRADE_HUBS
     assert "Dodixie" in TRADE_HUBS
     assert "Rens" in TRADE_HUBS
-    assert len(TRADE_HUBS) == 4
+    assert "Hek" in TRADE_HUBS
+    assert len(TRADE_HUBS) == 5
 
 
 def test_trade_hub_ids_defaults():

@@ -196,7 +196,7 @@ def restore_window_geometry(window):
         return
     try:
         if os.path.exists(WINDOW_GEOMETRY_FILE):
-            with open(WINDOW_GEOMETRY_FILE, "r") as f:
+            with open(WINDOW_GEOMETRY_FILE) as f:
                 data = json.load(f)
             window.setGeometry(data["x"], data["y"], data["w"], data["h"])
         else:
@@ -662,17 +662,19 @@ def _page_specific_styles() -> str:
 
 def get_stylesheet() -> str:
     """根据当前主题生成 QSS 样式表 — 按组件类别组装"""
-    return "".join([
-        _global_styles(),
-        _menu_styles(),
-        _statusbar_toolbar_styles(),
-        _tree_tab_styles(),
-        _input_styles(),
-        _button_styles(),
-        _table_styles(),
-        _splitter_styles(),
-        _progress_checkbox_scroll_styles(),
-        _list_tooltip_styles(),
-        _mainwindow_specific_styles(),
-        _page_specific_styles(),
-    ])
+    return "".join(
+        [
+            _global_styles(),
+            _menu_styles(),
+            _statusbar_toolbar_styles(),
+            _tree_tab_styles(),
+            _input_styles(),
+            _button_styles(),
+            _table_styles(),
+            _splitter_styles(),
+            _progress_checkbox_scroll_styles(),
+            _list_tooltip_styles(),
+            _mainwindow_specific_styles(),
+            _page_specific_styles(),
+        ]
+    )

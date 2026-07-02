@@ -3,7 +3,12 @@
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QHeaderView, QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QHeaderView,
+    QLabel,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
 import ui_pyside6.theme as theme
@@ -92,7 +97,7 @@ class CostBreakdownDialog(QWidget):
         margin = result.get("margin_pct", 0) or 0
         score = result.get("score", 0) or 0
         isk_per_hour = result.get("isk_per_hour", 0) or 0
-        cost_unit = result.get("cost_per_unit", 0) or 0
+        result.get("cost_per_unit", 0) or 0
         hours = result.get("hours_per_run", 0) or 1
         facility_fee = bd.get("facility_fee", 0) or 0
         broker_init = bd.get("broker_init", 0) or 0

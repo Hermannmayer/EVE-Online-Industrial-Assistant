@@ -1,6 +1,6 @@
 import sys
 
-with open(sys.argv[1], "r", encoding="utf-8") as f:
+with open(sys.argv[1], encoding="utf-8") as f:
     content = f.read()
 
 start = content.find("async def _load_facilities")

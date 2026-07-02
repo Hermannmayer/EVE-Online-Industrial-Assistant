@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ui_pyside6.views.char_settings_view import get_character_list, load_all_data
 from ui_pyside6.theme import (
     BORDER,
     PRIMARY,
@@ -22,6 +21,7 @@ from ui_pyside6.theme import (
     TEXT_SECONDARY,
     add_theme_listener,
 )
+from ui_pyside6.views.char_settings_view import get_character_list, load_all_data
 
 
 class TopToolbar(QWidget):

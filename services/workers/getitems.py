@@ -16,8 +16,8 @@ BATCH_SIZE = 100
 START_TYPE_ID = 178
 
 # 全局缓存
-group_cache = {}
-market_group_cache = {}
+group_cache: dict[int, str] = {}
+market_group_cache: dict[int, str] = {}
 
 
 async def initialize_database():
@@ -322,7 +322,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())  # type: ignore[attr-defined]
 
 
 async def fill_missing_blueprint_names():

@@ -4,7 +4,7 @@
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
@@ -99,7 +99,7 @@ class PriceCheckWorker(QThread):
             if row and row[0]:
                 utc_str = row[0]
                 dt = datetime.strptime(utc_str, "%Y-%m-%d %H:%M:%S")
-                now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+                now_utc = datetime.now(UTC).replace(tzinfo=None)
                 diff = (now_utc - dt).total_seconds()
                 if diff > self._interval:
                     self.result.emit(True, f"价格数据已过期 {diff / 60:.0f} 分钟，需要更新")
@@ -589,7 +589,7 @@ class MainWindow(QMainWindow):
                 utc_str = row[0]
                 try:
                     dt = datetime.strptime(utc_str, "%Y-%m-%d %H:%M:%S")
-                    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+                    now_utc = datetime.now(UTC).replace(tzinfo=None)
                     diff_sec = (now_utc - dt).total_seconds()
                     diff_min = int(diff_sec / 60)
 
@@ -603,7 +603,7 @@ class MainWindow(QMainWindow):
                         color = theme.ACCENT_RED
                         age_text = f"🔴 {diff_min} 分钟前"
 
-                    bj_dt = dt.replace(tzinfo=timezone.utc) + timedelta(hours=8)
+                    bj_dt = dt.replace(tzinfo=UTC) + timedelta(hours=8)
                     bj_str = bj_dt.strftime("%H:%M")
                     self._price_age_label.setText(f"⏳ 价格: {age_text} ({bj_str})")
                     self._price_age_label.setStyleSheet(f"color: {color}; padding: 0 8px;")
@@ -953,10 +953,7 @@ class MainWindow(QMainWindow):
             if current is None:
                 continue
             children = current.findChildren(QLabel)
-            is_placeholder = any(
-                "未初始化" in c.text() or "加载失败" in c.text()
-                for c in children
-            )
+            is_placeholder = any("未初始化" in c.text() or "加载失败" in c.text() for c in children)
             if not is_placeholder:
                 continue
             try:

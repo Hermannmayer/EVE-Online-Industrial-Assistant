@@ -88,7 +88,7 @@ class TestAPIClient:
         async def run():
             client = APIClient(retries=1)
             async with client:
-                client.session.get = Mock(side_effect=asyncio.TimeoutError("timed out"))
+                client.session.get = Mock(side_effect=TimeoutError("timed out"))
                 result = await client.fetch("https://esi.example.com/api")
                 assert result is None
                 assert client.session.get.call_count == 1

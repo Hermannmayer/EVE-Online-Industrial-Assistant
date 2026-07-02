@@ -110,7 +110,7 @@ class TestContractTableModel:
     def test_display_type_cn(self, qapp):
         model = ContractTableModel()
         model.set_rows(SAMPLE_CONTRACTS)
-        for row_idx, (contract_type, expected_cn) in enumerate([
+        for row_idx, (_contract_type, expected_cn) in enumerate([
             ("item_exchange", CONTRACT_TYPE_CN["item_exchange"]),
             ("auction", CONTRACT_TYPE_CN["auction"]),
             ("courier", CONTRACT_TYPE_CN["courier"]),

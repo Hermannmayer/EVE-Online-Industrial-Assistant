@@ -168,7 +168,7 @@ def create_zip():
         os.remove(zip_path)
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for root, dirs, files in os.walk(RELEASE_DIR):
+        for root, _dirs, files in os.walk(RELEASE_DIR):
             for file in files:
                 file_path = os.path.join(root, file)
                 # 在 zip 中的路径：相对于 RELEASE_DIR 的路径
