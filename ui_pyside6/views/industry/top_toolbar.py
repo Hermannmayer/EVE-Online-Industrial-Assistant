@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ui_pyside6.views.char_settings_view import get_character_list, load_all_data
 from ui_pyside6.theme import (
     BORDER,
     PRIMARY,
@@ -27,10 +28,10 @@ class TopToolbar(QWidget):
     """水平工具栏：蓝图导入 | Hub/倍率 | 人物/筛选/操作"""
 
     plan_add_requested = Signal(str)
-    predefault_requested = Signal()
     batch_add_requested = Signal()
     manufacturable_browser_requested = Signal()
     hub_changed = Signal(str)
+    hangar_changed = Signal(str)
     sell_mult_changed = Signal(float)
     buy_mult_changed = Signal(float)
     char_changed = Signal(str)
@@ -39,7 +40,10 @@ class TopToolbar(QWidget):
     view_changed = Signal(str)
 
     HUBS = ["Jita", "Amarr", "Dodixie", "Rens", "Hek"]
-    CHARS = ["main(技能全5)", "alt(技能全4)", "自定义"]
+    HANGARS = ["物品机库", "公司机库1", "公司机库2", "公司机库3",
+               "公司机库4", "公司机库5", "公司机库6", "公司机库7"]
+    CHARS = []  # 从角色设置加载
+    _chars_loaded = False
     FILTERS = ["全部", "待排", "运行中", "已完成"]
 
     def __init__(self, parent=None):
@@ -48,6 +52,7 @@ class TopToolbar(QWidget):
         self._connect_signals()
         self._apply_style()
         add_theme_listener(self._on_theme_changed)
+        self._load_chars()
 
     # ── UI 构建 ──────────────────────────────────────────────
 
@@ -83,6 +88,12 @@ class TopToolbar(QWidget):
         self._hub_combo.addItems(self.HUBS)
         self._hub_combo.setMinimumWidth(90)
         root.addWidget(self._hub_combo)
+
+        root.addWidget(QLabel("机库"))
+        self._hangar_combo = QComboBox()
+        self._hangar_combo.addItems(self.HANGARS)
+        self._hangar_combo.setMinimumWidth(90)
+        root.addWidget(self._hangar_combo)
 
         root.addWidget(QLabel("卖出倍率"))
         self._sell_mult = QDoubleSpinBox()
@@ -129,13 +140,36 @@ class TopToolbar(QWidget):
         self._filter_combo.setMinimumWidth(80)
         root.addWidget(self._filter_combo)
 
-        self._btn_optimize = QPushButton("预默认/小部节接")
-        root.addWidget(self._btn_optimize)
-
         self._btn_refresh = QPushButton("刷新")
         root.addWidget(self._btn_refresh)
 
         root.addStretch(1)
+
+    def _load_chars(self):
+        """从角色设置加载人物列表"""
+        try:
+            chars = get_character_list()
+            if not chars:
+                chars = ["main"]
+            self._char_combo.clear()
+            self._char_combo.addItems(chars)
+            top_level = load_all_data().get("current", chars[0])
+            idx = self._char_combo.findText(top_level)
+            if idx >= 0:
+                self._char_combo.setCurrentIndex(idx)
+        except Exception:
+            # fallback
+            if self._char_combo.count() == 0:
+                self._char_combo.addItems(["main"])
+
+    def _on_hangar_changed(self, hangar: str):
+        self.hangar_changed.emit(hangar)
+
+    def get_hangar(self) -> str:
+        return self._hangar_combo.currentText()
+
+    def get_char_name(self) -> str:
+        return self._char_combo.currentText()
 
     def _make_separator(self) -> QLabel:
         sep = QLabel("│")
@@ -149,12 +183,12 @@ class TopToolbar(QWidget):
         self._btn_add.clicked.connect(self._on_add)
         self._btn_from_list.clicked.connect(self._on_batch_clicked)
         self._hub_combo.currentTextChanged.connect(self.hub_changed)
+        self._hangar_combo.currentTextChanged.connect(self.hangar_changed)
         self._sell_mult.valueChanged.connect(self.sell_mult_changed)
         self._buy_mult.valueChanged.connect(self.buy_mult_changed)
         self._char_combo.currentTextChanged.connect(self.char_changed)
         self._filter_combo.currentTextChanged.connect(self.filter_changed)
         self._btn_refresh.clicked.connect(self.refresh_requested)
-        self._btn_optimize.clicked.connect(self._on_optimize)
         self._view_data.toggled.connect(self._on_view_toggled)
 
     # ── 槽函数 ──────────────────────────────────────────────
@@ -178,10 +212,6 @@ class TopToolbar(QWidget):
 
     def get_filter(self) -> str:
         return self._filter_combo.currentText()
-
-    def _on_optimize(self):
-        """发射预默认请求信号，由父页面处理"""
-        self.predefault_requested.emit()
 
     def _on_view_toggled(self, checked: bool):
         if checked:

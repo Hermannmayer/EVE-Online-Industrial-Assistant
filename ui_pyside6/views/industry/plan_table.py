@@ -40,9 +40,9 @@ COL_COST = 15
 COL_PROFIT = 16
 COL_MARKET_MARGIN = 17
 COL_PERSONAL_MARGIN = 18
-COL_ACTIONS = 19
 
-_NUM_COLUMNS = 20
+
+_NUM_COLUMNS = 19
 
 
 class PlanTable(QWidget):
@@ -110,8 +110,6 @@ class PlanTable(QWidget):
     def _on_double_clicked(self, index) -> None:
         """双击操作列 → 不编辑；可编辑列 → QTableView 默认编辑；其余 → 发射 plan_detail_requested"""
         col = index.column()
-        if col == COL_ACTIONS:
-            return
         # 可编辑列交给 QTableView 默认编辑行为
         if self._model and col in PlanTableModel._EDITABLE_COLS:
             return
