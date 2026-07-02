@@ -3,20 +3,14 @@
 """
 
 from core.eve_formulas import (
-    ACCOUNTING_MULT,
-    ADV_BROKER_DISCOUNT,
     ADV_INDUSTRY_SKILL_MULT,
-    BROKER_FEE_BASE,
-    BROKER_FEE_MIN,
-    BROKER_RELATION_MULT,
     INDUSTRY_SKILL_MULT,
     INSTALL_FEE_RATE,
     ME_WASTE_BASE,
-    RELIST_BASE_DISCOUNT,
-    SALES_TAX_BASE,
-    STANDING_CORP_WEIGHT,
-    STANDING_FACTION_WEIGHT,
     TE_MULT_PER_LEVEL,
+    calc_broker_rate,
+    calc_relist_discount,
+    calc_sales_tax_rate,
     resolve_item_name,
 )
 from services.database_manager import DatabaseManager
@@ -33,29 +27,16 @@ class ScoringService:
         self._db = db
         self._cache = cache
 
-    # ── 经纪人费率计算（去重：制造/贸易共用） ──
+    # ── 经纪人费率计算（去重：制造/贸易共用，委托给 eve_formulas） ──
 
     def _calc_broker_rate(self, skills: dict, market_data: dict) -> float:
-        broker_rel = skills.get("经纪人关系学", 0)
-        faction_standing = market_data.get("faction_standing", 5.0)
-        corp_standing = market_data.get("corp_standing", 5.0)
-        standing_factor = 2 ** (
-            STANDING_FACTION_WEIGHT * max(0, faction_standing) + STANDING_CORP_WEIGHT * max(0, corp_standing)
-        )
-        rate = (
-            (BROKER_FEE_BASE - BROKER_RELATION_MULT * broker_rel) / standing_factor
-            if standing_factor > 0
-            else BROKER_FEE_BASE
-        )
-        return max(BROKER_FEE_MIN, rate)
+        return calc_broker_rate(skills, market_data)
 
     def _calc_relist_discount(self, skills: dict) -> float:
-        adv_rel = skills.get("高级经纪人关系学", 0)
-        return min(RELIST_BASE_DISCOUNT + adv_rel * ADV_BROKER_DISCOUNT, 100)
+        return calc_relist_discount(skills)
 
     def _calc_sales_tax_rate(self, skills: dict) -> float:
-        accounting = skills.get("会计学", 0)
-        return SALES_TAX_BASE * (1 - ACCOUNTING_MULT * accounting)
+        return calc_sales_tax_rate(skills)
 
     # ── 制造评分 ──
 

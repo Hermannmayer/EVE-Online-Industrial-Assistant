@@ -77,3 +77,41 @@ def _hub_region_id(hub: str | None) -> int:
     if hub is None:
         return TRADE_HUB_IDS["Jita"]
     return TRADE_HUB_IDS.get(hub, TRADE_HUB_IDS["Jita"])
+
+
+# ════════════════════════════════════════════════════
+#  共享费率计算 — 制造/贸易评分共用
+# ════════════════════════════════════════════════════
+
+
+def calc_broker_rate(skills: dict, market_data: dict) -> float:
+    """计算经纪人费率 (%)。
+
+    公式: (1.0% - 0.05% × 经纪人关系学等级) / 2^(0.14×faction+0.06×corp)
+    最低 0.1%。
+    """
+    broker_rel = skills.get("经纪人关系学", 0)
+    faction_standing = market_data.get("faction_standing", 5.0)
+    corp_standing = market_data.get("corp_standing", 5.0)
+    standing_factor = 2 ** (
+        STANDING_FACTION_WEIGHT * max(0, faction_standing)
+        + STANDING_CORP_WEIGHT * max(0, corp_standing)
+    )
+    rate = (
+        (BROKER_FEE_BASE - BROKER_RELATION_MULT * broker_rel) / standing_factor
+        if standing_factor > 0
+        else BROKER_FEE_BASE
+    )
+    return max(BROKER_FEE_MIN, rate)
+
+
+def calc_relist_discount(skills: dict) -> float:
+    """计算改单折扣 (%)。基础 50%，高级经纪人关系学每级 +5%，上限 100%。"""
+    adv_rel = skills.get("高级经纪人关系学", 0)
+    return min(RELIST_BASE_DISCOUNT + adv_rel * ADV_BROKER_DISCOUNT, 100)
+
+
+def calc_sales_tax_rate(skills: dict) -> float:
+    """计算销售税率 (%)。基础 2%，会计学每级 -3%。"""
+    accounting = skills.get("会计学", 0)
+    return SALES_TAX_BASE * (1 - ACCOUNTING_MULT * accounting)
