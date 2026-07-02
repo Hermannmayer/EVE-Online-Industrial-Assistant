@@ -215,7 +215,7 @@ class InitWizard(QDialog):
         """刷新所有步骤状态（从 DB 检查）"""
         status = check_all()
         done = 0
-        for name, key, _, _ in STEPS:
+        for _name, key, _, _ in STEPS:
             if status.get(key, False):
                 self._step_rows[key].setText(" ✅")
                 self._step_rows[key].setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 14px;")

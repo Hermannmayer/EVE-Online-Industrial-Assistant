@@ -54,8 +54,8 @@ def test_industry_page_theme_listener(qapp, mock_db):
         assert hasattr(page, "_on_theme_changed")
         apply_theme("light")
         _wait()
-        assert ONE_LIGHT["TEXT_SECONDARY"] in page._preview.styleSheet()
-        assert ONE_LIGHT["BORDER"] in page._score_group.styleSheet()
+        assert ONE_LIGHT["TEXT_PRIMARY"] in page._title_label.styleSheet()
+        assert ONE_LIGHT["TEXT_SECONDARY"] in page._plan_count.styleSheet()
 
 
 def test_trade_page_theme_listener(qapp):

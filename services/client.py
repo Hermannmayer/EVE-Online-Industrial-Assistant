@@ -46,11 +46,12 @@ class APIClient:
         retry_deco = retry(
             stop=stop_after_attempt(self._retries),
             wait=wait_exponential(multiplier=1, min=1, max=5),
+            reraise=True,
         )
 
         @retry_deco
         async def _do_fetch():
-            async with self.semaphore:
+            async with self.semaphore:  # type: ignore[union-attr]
                 async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
                     if resp.status == 429:
                         await self._handle_rate_limit(resp)
@@ -65,14 +66,14 @@ class APIClient:
 
         try:
             return await _do_fetch()
-        except (aiohttp.ClientError, asyncio.TimeoutError):
+        except (TimeoutError, aiohttp.ClientError):
             return None
 
     async def fetch_required(self, url: str):
         """GET 请求，失败时抛出异常"""
         retries_left = 5
         while retries_left > 0:
-            async with self.semaphore:
+            async with self.semaphore:  # type: ignore[union-attr]
                 async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
                     if resp.status == 429:
                         await self._handle_rate_limit(resp)
@@ -86,7 +87,7 @@ class APIClient:
         """GET 请求，返回原始文本"""
         retries_left = 5
         while retries_left > 0:
-            async with self.semaphore:
+            async with self.semaphore:  # type: ignore[union-attr]
                 async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
                     if resp.status == 429:
                         await self._handle_rate_limit(resp)

@@ -1,5 +1,4 @@
 """InventoryPage UI 测试。"""
-import pytest
 
 
 def test_inventory_page_init(inventory_page):

@@ -13,7 +13,6 @@ import pytest
 
 from services.logistics import calc_transport_profit, estimate_freight_cost
 
-
 # ═══════════════════════════════════════════════════════
 #  运费估算
 # ═══════════════════════════════════════════════════════

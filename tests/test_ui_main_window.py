@@ -1,5 +1,4 @@
 """MainWindow UI 测试。"""
-import pytest
 
 
 def test_main_window_init(main_window):

@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +11,7 @@ logger = logging.getLogger(__name__)
 #  默认配置
 # ═══════════════════════════════════════════
 
-DEFAULT_CHAR_CONFIG = {
+DEFAULT_CHAR_CONFIG: dict[str, Any] = {
     "current": "main",
     "characters": {
         "main": {
@@ -162,12 +163,12 @@ def migrate_char_config(data: dict) -> dict:
         result["current"] = DEFAULT_CHAR_CONFIG["current"]
 
     if "characters" not in result:
-        result["characters"] = dict(DEFAULT_CHAR_CONFIG["characters"])
+        result["characters"] = DEFAULT_CHAR_CONFIG["characters"].copy()
     elif not isinstance(result["characters"], dict):
-        result["characters"] = dict(DEFAULT_CHAR_CONFIG["characters"])
+        result["characters"] = DEFAULT_CHAR_CONFIG["characters"].copy()
 
     # 迁移每个角色的数据
-    for char_name, char_data in result["characters"].items():
+    for _char_name, char_data in result["characters"].items():
         if not isinstance(char_data, dict):
             continue
 
@@ -193,7 +194,7 @@ def migrate_char_config(data: dict) -> dict:
             char_data["market"] = {}
 
         # 确保所有交易中心存在并有正确的子字段
-        default_market = DEFAULT_CHAR_CONFIG["characters"]["main"]["market"]
+        default_market = DEFAULT_CHAR_CONFIG["characters"]["main"]["market"]  # type: ignore[index]
         for hub in MARKET_HUBS:
             if hub not in char_data["market"]:
                 char_data["market"][hub] = dict(default_market[hub])
@@ -223,7 +224,7 @@ def load_char_config(path: str) -> dict:
         return dict(DEFAULT_CHAR_CONFIG)
 
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         logger.error("配置文件 JSON 解析失败: %s, 错误: %s", path, e)

@@ -5,7 +5,7 @@
 实际实现在 ``ui_pyside6.views.compare`` 子包中。
 """
 
-from ui_pyside6.views.compare import (  # noqa: F401
+from ui_pyside6.views.compare import (
     COMPARE_COLS_MFG,
     COMPARE_COLS_REACTION,
     COMPARE_COLS_TRADE,

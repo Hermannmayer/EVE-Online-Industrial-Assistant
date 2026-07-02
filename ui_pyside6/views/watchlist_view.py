@@ -287,7 +287,7 @@ class SuggestionPopup(QWidget):
         self.item_selected.emit(tid, display)
 
     def eventFilter(self, watched, event):
-        if event.type() == QEvent.Type.KeyPress and watched is self._list:  # noqa: N802
+        if event.type() == QEvent.Type.KeyPress and watched is self._list:
             key = event.key()
             if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                 current = self._list.currentItem()
@@ -589,7 +589,7 @@ class WatchlistPage(QWidget):
 
     # ── 右键菜单 ──
 
-    def _on_context_menu(self, pos):  # noqa: N802
+    def _on_context_menu(self, pos):
         index = self._table.indexAt(pos)
         if not index.isValid():
             return

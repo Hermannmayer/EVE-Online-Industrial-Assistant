@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Any
 
 from core.eve_formulas import ME_WASTE_BASE
 from services.database_manager import get_db
@@ -288,7 +289,7 @@ def expand_bom(
             "intermediates": [...],           # 所有中间产品
         }
     """
-    result = {
+    result: dict[str, Any] = {
         "tree": None,
         "full_cost": 0.0,
         "leaf_only_cost": 0.0,
@@ -393,7 +394,7 @@ def get_material_tree(
         price_hub=price_hub,
         price_type=price_type,
     )
-    return result["tree"]
+    return result["tree"]  # type: ignore[no-any-return]
 
 
 def get_flat_materials(
@@ -411,7 +412,7 @@ def get_flat_materials(
         price_hub=price_hub,
         price_type=price_type,
     )
-    return result["raw_materials"]
+    return result["raw_materials"]  # type: ignore[no-any-return]
 
 
 def print_tree(node: BomNode, indent: int = 0) -> str:

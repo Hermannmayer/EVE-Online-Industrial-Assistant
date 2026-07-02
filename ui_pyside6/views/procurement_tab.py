@@ -307,7 +307,7 @@ class ProcurementDialog(QDialog):
             self._on_copy_line(sel, model)
 
     def _on_delete_row(self, sel, model):
-        rows = sorted(set(r.row() for r in sel), reverse=True)
+        rows = sorted({r.row() for r in sel}, reverse=True)
         for row in rows:
             model.remove_row(row)
         self._update_summary()

@@ -107,11 +107,11 @@ def calc_broker_rate(skills: dict, market_data: dict) -> float:
 
 def calc_relist_discount(skills: dict) -> float:
     """计算改单折扣 (%)。基础 50%，高级经纪人关系学每级 +5%，上限 100%。"""
-    adv_rel = skills.get("高级经纪人关系学", 0)
+    adv_rel = int(skills.get("高级经纪人关系学", 0))
     return min(RELIST_BASE_DISCOUNT + adv_rel * ADV_BROKER_DISCOUNT, 100)
 
 
 def calc_sales_tax_rate(skills: dict) -> float:
     """计算销售税率 (%)。基础 2%，会计学每级 -3%。"""
-    accounting = skills.get("会计学", 0)
+    accounting = int(skills.get("会计学", 0))
     return SALES_TAX_BASE * (1 - ACCOUNTING_MULT * accounting)

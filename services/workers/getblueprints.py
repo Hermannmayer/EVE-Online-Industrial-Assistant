@@ -162,7 +162,7 @@ async def run_blueprint_update():
 
     # 解析 YAML
     log.info("解析 YAML...")
-    with open(yaml_path, "r", encoding="utf-8") as f:
+    with open(yaml_path, encoding="utf-8") as f:
         blueprints = yaml.safe_load(f)
 
     if not isinstance(blueprints, dict):

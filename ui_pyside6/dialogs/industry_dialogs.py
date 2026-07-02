@@ -1,4 +1,4 @@
-﻿"""工业制造 — 对话框"""
+"""工业制造 — 对话框"""
 
 from PySide6.QtWidgets import (
     QDialog,

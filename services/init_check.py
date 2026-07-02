@@ -14,7 +14,7 @@ def check_items() -> int:
         with sqlite3.connect(REF_DB_PATH) as conn:
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM item")
-            return c.fetchone()[0]
+            return int(c.fetchone()[0])
     except Exception:
         return 0
 
@@ -25,7 +25,7 @@ def check_prices() -> int:
         with sqlite3.connect(MKT_DB_PATH) as conn:
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM market_prices")
-            return c.fetchone()[0]
+            return int(c.fetchone()[0])
     except Exception:
         return 0
 
@@ -39,7 +39,7 @@ def check_blueprints() -> int:
             if not c.fetchone():
                 return 0
             c.execute("SELECT COUNT(*) FROM blueprint_activities")
-            return c.fetchone()[0]
+            return int(c.fetchone()[0])
     except Exception:
         return 0
 
@@ -53,7 +53,7 @@ def check_implants() -> int:
             if not c.fetchone():
                 return 0
             c.execute("SELECT COUNT(*) FROM item_dogma")
-            return c.fetchone()[0]
+            return int(c.fetchone()[0])
     except Exception:
         return 0
 

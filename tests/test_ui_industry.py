@@ -1,6 +1,4 @@
 """IndustryPage UI 测试。"""
-import pytest
-from PySide6.QtCore import Qt
 
 
 def test_industry_page_init(industry_page):

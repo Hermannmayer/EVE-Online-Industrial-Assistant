@@ -18,11 +18,7 @@ from PySide6.QtWidgets import (
 
 from core.container import get_container
 from core.logger import log
-from ui_pyside6.theme import (
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
-    add_theme_listener,
-)
+import ui_pyside6.theme as theme
 from ui_pyside6.views.industry import (
     ActionButtons,
     BlueprintRequirementsDialog,
@@ -170,7 +166,7 @@ class IndustryPage(QWidget):
         self.load_plans()
 
         # ── 主题 ───────────────────────────────────────────────
-        add_theme_listener(self._on_theme_changed)
+        theme.add_theme_listener(self._on_theme_changed)
 
     # ── 信号连接 ──────────────────────────────────────────────
 
@@ -531,11 +527,11 @@ class IndustryPage(QWidget):
 
     def _on_theme_changed(self):
         self._title_label.setStyleSheet(
-            f"color: {TEXT_PRIMARY}; font-size: 16px; font-weight: bold; background: transparent;"
+            f"color: {theme.TEXT_PRIMARY}; font-size: 16px; font-weight: bold; background: transparent;"
         )
-        self._plan_count.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 13px; background: transparent;")
+        self._plan_count.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 13px; background: transparent;")
         self._btn_add_from_list.setStyleSheet(
-            f"QPushButton {{ padding: 4px 12px; border: 1px solid {TEXT_SECONDARY}; "
-            f"border-radius: 4px; background: transparent; color: {TEXT_PRIMARY}; font-size: 12px; }}"
-            f"QPushButton:hover {{ color: {TEXT_PRIMARY}; }}"
+            f"QPushButton {{ padding: 4px 12px; border: 1px solid {theme.TEXT_SECONDARY}; "
+            f"border-radius: 4px; background: transparent; color: {theme.TEXT_PRIMARY}; font-size: 12px; }}"
+            f"QPushButton:hover {{ color: {theme.TEXT_PRIMARY}; }}"
         )

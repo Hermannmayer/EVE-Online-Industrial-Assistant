@@ -4,7 +4,6 @@
 
 import json
 import os
-from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -196,7 +195,7 @@ SKILL_CATEGORIES = [
 ]
 
 ALL_SKILLS = []
-for cat_name, skills in SKILL_CATEGORIES:
+for _cat_name, skills in SKILL_CATEGORIES:
     for s in skills:
         ALL_SKILLS.append(s)
 
@@ -322,7 +321,7 @@ def get_character_list() -> list[str]:
     return list(data.get("characters", {}).keys())
 
 
-def get_character(name: str) -> Optional[dict]:
+def get_character(name: str) -> dict | None:
     """获取指定角色的完整配置"""
     data = load_all_data()
     return data.get("characters", {}).get(name)
@@ -714,11 +713,11 @@ class MarketPage(QWidget):
             fs.setSingleStep(0.1)
             fs.setValue(hub_data.get("faction_standing", 5.0))
             fs.setStyleSheet(
-                (
+
                     f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};"
                     f" border: 1px solid {theme.BORDER}; border-radius: 4px;"
                     f" padding: 2px 4px;"
-                )
+
             )
             glayout.addWidget(fs, 0, 1)
 
@@ -729,11 +728,11 @@ class MarketPage(QWidget):
             cs.setSingleStep(0.1)
             cs.setValue(hub_data.get("corp_standing", 5.0))
             cs.setStyleSheet(
-                (
+
                     f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};"
                     f" border: 1px solid {theme.BORDER}; border-radius: 4px;"
                     f" padding: 2px 4px;"
-                )
+
             )
             glayout.addWidget(cs, 1, 1)
 
@@ -774,7 +773,7 @@ class MarketPage(QWidget):
     def set_skills_data(self, skills_data: dict):
         """技能页面切换时更新计算公式"""
         self._skills_data = skills_data
-        for hub_key, (fs, cs) in self._hub_widgets.items():
+        for _hub_key, (fs, _cs) in self._hub_widgets.items():
             # 触发重新计算
             fs.valueChanged.emit(fs.value())
 
@@ -936,9 +935,10 @@ class CharSettingsDialog(QDialog):
         self._tabs.addTab(self._market_page, "市场费率")
 
         # 当技能变化时重新计算市场费率
-        self._skills_page._skill_widgets  # ensure initialized
+        # 确保通过属性访问触发初始化
+        _ = self._skills_page._skill_widgets
         # Connect skill changes to market recalc
-        for name, slider in self._skills_page._skill_widgets.items():
+        for _name, slider in self._skills_page._skill_widgets.items():
             slider.changed.connect(self._on_skill_for_market)
 
     def _on_skill_for_market(self, skill_name: str, level: int):

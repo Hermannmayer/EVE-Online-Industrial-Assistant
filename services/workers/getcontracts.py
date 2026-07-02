@@ -325,7 +325,7 @@ async def main(regions: list[tuple[str, int]] | None = None):
     log.info(f"合同拉取完成! 耗时 {elapsed:.0f} 秒")
 
     for rid in [rid for _, rid in targets]:
-        name = dict(TRADE_REGIONS).get(rid, rid)
+        name = {v: k for k, v in TRADE_REGIONS}.get(rid, str(rid))
         count = len(all_contracts.get(rid, []))
         log.info(f"  {name} (id={rid}): {count} 条合同")
 

@@ -132,7 +132,7 @@ def get_price(
             )
             row = c.fetchone()
             if row and row[0] is not None:
-                return row[0]
+                return float(row[0])
             # 降级：该区域无数据，尝试其他区域
             c.execute(
                 f"SELECT {col} FROM market_prices WHERE type_id = ? AND {col} IS NOT NULL LIMIT 1",
@@ -166,8 +166,8 @@ def get_volume(
             row = c.fetchone()
             if row and (row[0] or row[1]):
                 if vol_type == "total":
-                    return row[0] + row[1]
-                return row[0] if vol_type == "buy" else row[1]
+                    return int(row[0] + row[1])
+                return int(row[0] if vol_type == "buy" else row[1])
             # 降级：该区域无数据，尝试其他区域
             c.execute(
                 "SELECT buy_volume, sell_volume FROM market_prices WHERE type_id = ? LIMIT 1",
@@ -417,7 +417,7 @@ class ScoringService:
         sell_hub: str = "Jita",
         buy_price_type: str = "buy",
         sell_price_type: str = "sell",
-        char_config: dict = None,
+        char_config: dict | None = None,
         quantity: int = 1,
     ) -> dict:
         """计算贸易评分。"""
@@ -731,7 +731,7 @@ def calc_trade_score(
     sell_hub: str = "Jita",
     buy_price_type: str = "buy",
     sell_price_type: str = "sell",
-    char_config: dict = None,
+    char_config: dict | None = None,
     quantity: int = 1,
 ) -> dict:
     """模块级便利函数：创建临时 ScoringService 并委托。"""
