@@ -1,4 +1,4 @@
-﻿"""
+"""
 物品查询页面 — QTableView + 右键菜单 + 订单面板
 """
 
@@ -21,10 +21,9 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QAction, QColor, QFont, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox,
-
     QAbstractItemView,
     QApplication,
+    QComboBox,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -654,6 +653,7 @@ class QueryPage(QWidget):
         sb_layout.addWidget(QLabel("区域:"))
         self._region_combo = QComboBox()
         from core.constants import TRADE_HUBS
+
         self._region_combo.addItems(list(TRADE_HUBS))
         self._region_combo.setCurrentText("Jita")
         self._region_combo.currentIndexChanged.connect(self._on_region_changed)
@@ -1039,6 +1039,85 @@ class QueryPage(QWidget):
         QApplication.instance().clipboard().setText(text)
         self._status_label.setText("已复制整行数据 (TSV 格式)")
 
+    def _do_add_to_plan(self, type_id: int, product_name: str):
+        """???? -> ????????"""
+        from datetime import datetime, timezone
+
+        from PySide6.QtWidgets import QDialog, QMessageBox
+
+        from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
+        from ui_pyside6.workers.industry_workers import ScoreWorker
+
+        # ??????????
+        conn = get_container().db.direct_connect("bp")
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT 1 FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
+                (type_id,),
+            )
+            has_bp = cur.fetchone() is not None
+        finally:
+            conn.close()
+
+        if not has_bp:
+            QMessageBox.information(self, "????", f"\u300c{product_name}\u300d??????")
+            return
+
+        # ????
+        worker = ScoreWorker(
+            type_id=type_id,
+            bp_me=0,
+            bp_te=0,
+            mat_hub="Jita",
+            sell_hub="Jita",
+            tax=0.0,
+        )
+
+        def _on_score(result: dict):
+            dlg = AddPlanDialog(product_name, result, self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            data = dlg.result_data()
+            if not data:
+                return
+            conn3 = get_container().db.direct_connect("user")
+            try:
+                iskph = result.get("isk_per_hour", 0) or result.get("breakdown", {}).get("isk_per_hour", 0)
+                mat_cost = result.get("breakdown", {}).get("material_cost", 0)
+                conn3.execute(
+                    "INSERT INTO production_plans "
+                    "(product_type_id, product_name, runs, parallels, me_level, te_level, "
+                    "mat_hub, sell_hub, facility, char_name, status, "
+                    "profit, margin, score, iskph, material_cost, created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?)",
+                    (
+                        type_id,
+                        product_name,
+                        data["runs"],
+                        data["parallels"],
+                        data["me"],
+                        data["te"],
+                        "Jita",
+                        "Jita",
+                        data["fac"],
+                        data["char"],
+                        result.get("profit_per_run", 0),
+                        result.get("margin_pct", 0),
+                        result.get("score", 0),
+                        iskph,
+                        mat_cost,
+                        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                    ),
+                )
+                conn3.commit()
+            finally:
+                conn3.close()
+            QMessageBox.information(self, "??", f"???????: {product_name}")
+
+        worker.finished.connect(_on_score)
+        worker.start()
+
     def _view_manufacturing(self, type_id: int):
         # Switch to industry page
         self._main._nav_tree.setCurrentItem(self._main._nav_items[1])  # industry
@@ -1126,10 +1205,10 @@ class QueryPage(QWidget):
     #  Public API
     # ═══════════════════════════════════════
 
-
     def _on_region_changed(self, index: int):
         """区域选择变更时更新区域ID并重新搜索"""
         from core.constants import TRADE_HUB_IDS
+
         hub = self._region_combo.currentText()
         self._region_id = TRADE_HUB_IDS.get(hub, 10000002)
         if self._current_query:
@@ -1192,4 +1271,3 @@ class QueryPage(QWidget):
             self._do_search()
         else:
             self._status_label.setText("就绪 — 价格数据已更新")
-

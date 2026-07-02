@@ -39,6 +39,8 @@ Thumbs.db
 data/blueprints.yaml
 data/char_config.json
 data/score_settings.json
+data/search_history.json
+data/window_geometry.json
 
 # 数据库目录（本地运行时数据，不入库，含 WAL 日志）
 database/
@@ -51,3 +53,9 @@ greatcto-ci-output.sarif
 
 # Ruff cache.ruff_cache/
 data/user.db
+
+# 运行时临时文件
+tmp_*.txt
+
+# 调试/修复文件
+*_fix.py

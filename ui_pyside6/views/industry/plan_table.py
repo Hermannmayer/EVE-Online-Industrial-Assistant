@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
+from core.container import get_container
 from ui_pyside6.models.industry_models import PlanTableModel
 
 # ── 列索引常量（与 PlanTableModel._HEADERS 对齐） ────────────
@@ -186,10 +187,10 @@ class PlanTable(QWidget):
         menu.addAction("复制制造所需蓝图名称到剪切板", lambda: self._copy_blueprint_name(row))
 
         # 5. 查看核算（阶段二占位）
-        menu.addAction("查看核算", lambda: print("查看核算: 功能开发中"))
+        menu.addAction("查看核算", lambda: self._view_cost_breakdown(row))
 
         # 6. 查看物品详情（阶段二占位）
-        menu.addAction("查看物品详情", lambda: print("查看物品详情: 功能开发中"))
+        menu.addAction("查看物品详情", lambda: self._view_item_details(row))
 
         # 7. 分隔线
         menu.addSeparator()
@@ -246,6 +247,13 @@ class PlanTable(QWidget):
         if ok:
             plan["runs"] = val
             self._model.layoutChanged.emit()
+            if plan.get("id"):
+                conn = get_container().db.direct_connect("user")
+                try:
+                    conn.execute("UPDATE production_plans SET runs=? WHERE id=?", (val, plan["id"]))
+                    conn.commit()
+                finally:
+                    conn.close()
             self.plan_updated.emit()
 
     def _modify_parallels(self, row: int) -> None:
@@ -255,6 +263,13 @@ class PlanTable(QWidget):
         if ok:
             plan["parallels"] = max(1, val)
             self._model.layoutChanged.emit()
+            if plan.get("id"):
+                conn = get_container().db.direct_connect("user")
+                try:
+                    conn.execute("UPDATE production_plans SET parallels=? WHERE id=?", (val, plan["id"]))
+                    conn.commit()
+                finally:
+                    conn.close()
             self.plan_updated.emit()
 
     def _copy_blueprint_name(self, row: int) -> None:
@@ -267,22 +282,70 @@ class PlanTable(QWidget):
         plan = self._model.get_plan(row)
         plan["materials_ready"] = value
         self._model.layoutChanged.emit()
+        if plan.get("id"):
+            conn = get_container().db.direct_connect("user")
+            try:
+                conn.execute("UPDATE production_plans SET materials_ready=? WHERE id=?", (value, plan["id"]))
+                conn.commit()
+            finally:
+                conn.close()
         self.plan_updated.emit()
 
     def _set_status(self, row: int, status: str) -> None:
         plan = self._model.get_plan(row)
         plan["status"] = status
         self._model.layoutChanged.emit()
+        if plan.get("id"):
+            conn = get_container().db.direct_connect("user")
+            try:
+                conn.execute("UPDATE production_plans SET status=? WHERE id=?", (status, plan["id"]))
+                conn.commit()
+            finally:
+                conn.close()
         self.plan_updated.emit()
 
     def _delete_row(self, row: int) -> None:
         if 0 <= row < len(self._model._plans):
+            plan = self._model._plans[row]
+            if plan.get("id"):
+                conn = get_container().db.direct_connect("user")
+                try:
+                    conn.execute("DELETE FROM production_plans WHERE id=?", (plan["id"],))
+                    conn.commit()
+                finally:
+                    conn.close()
             self._model.beginResetModel()
             self._model._plans.pop(row)
             self._model.endResetModel()
             self.plan_updated.emit()
 
     # ── Phase 3 占位 ────────────────────────────────────────
+
+    def _view_item_details(self, row: int):
+        # 查看物品详情: 打开 MatDlg 显示制造材料
+        plan = self._model.get_plan(row) if self._model else {}
+        if not plan:
+            return
+        type_id = plan.get("product_type_id")
+        if not type_id:
+            return
+        from ui_pyside6.views.all_items_view import MatDlg
+
+        dlg = MatDlg(type_id)
+        dlg.exec()
+
+    def _view_cost_breakdown(self, row: int):
+        # 右键菜单 -> 查看核算：打开成本明细弹窗
+        from ui_pyside6.views.industry.cost_breakdown_dialog import CostBreakdownDialog
+
+        plan = self._model.get_plan(row) if self._model else {}
+        if not plan:
+            return
+        dlg = CostBreakdownDialog(plan)
+        from PySide6.QtCore import Qt
+
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dlg.show()
 
     def _phase3_placeholder(self, feature_name: str):
         QMessageBox.information(self, "功能开发中", f"「{feature_name}」功能将在阶段三实现。")

@@ -1,6 +1,7 @@
 from .action_buttons import ActionButtons
 from .blueprint_dialog import BlueprintRequirementsDialog
 from .char_usage_dialog import CharacterUsageDialog
+from .cost_breakdown_dialog import CostBreakdownDialog
 from .gantt_view import GanttView
 from .materials_dialog import MaterialsSummaryDialog
 from .output_dialog import OutputSummaryDialog
@@ -18,6 +19,7 @@ __all__ = [
     "MaterialsSummaryDialog",
     "OutputSummaryDialog",
     "PlanEditDialog",
+    "CostBreakdownDialog",
     "PlanTable",
     "PreDefaultDialog",
     "StatusBar",
