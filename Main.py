@@ -132,6 +132,12 @@ def main():
     app.setApplicationName("EVE 商人助手")
     app.setOrganizationName("EVEAssistant")
 
+    # 设置默认字体（避免系统字体配置中的无效值导致警告）
+    from PySide6.QtGui import QFont
+
+    default_font = QFont("Microsoft YaHei UI", 10)
+    app.setFont(default_font)
+
     # -- Single instance lock --
     from PySide6.QtCore import QTimer
 
