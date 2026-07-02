@@ -353,28 +353,26 @@ async def fill_missing_blueprint_names():
 
     log.info(f"发现 {len(missing)} 个蓝图缺少名称，开始补拉...")
 
-    client = APIClient()
-    batch = []
-    for i, tid in enumerate(missing):
-        try:
-            url = f"{API_BASE_URL}/universe/types/{tid}"
-            data = await client.fetch(url)
-            if data:
-                name_data = data.get("name", {})
-                en = name_data.get("en", "") if isinstance(name_data, dict) else str(name_data)
-                zh = name_data.get("zh", "") if isinstance(name_data, dict) else ""
-                if en or zh:
-                    batch.append((en, zh, tid))
-        except Exception:
-            pass
+    async with APIClient() as client:
+        batch = []
+        for i, tid in enumerate(missing):
+            try:
+                url = f"{API_BASE_URL}/universe/types/{tid}"
+                data = await client.fetch(url)
+                if data:
+                    name_data = data.get("name", {})
+                    en = name_data.get("en", "") if isinstance(name_data, dict) else str(name_data)
+                    zh = name_data.get("zh", "") if isinstance(name_data, dict) else ""
+                    if en or zh:
+                        batch.append((en, zh, tid))
+            except Exception:
+                pass
 
-        if len(batch) >= 50 or (i == len(missing) - 1 and batch):
-            async with _aiosqlite.connect(DATABASE_PATH) as db:
-                await db.executemany("UPDATE item SET en_name=?, zh_name=? WHERE type_id=?", batch)
-                await db.commit()
-            log.info(f"  已写入 {len(batch)} 条 ({i + 1}/{len(missing)})")
-            batch.clear()
+            if len(batch) >= 50 or (i == len(missing) - 1 and batch):
+                async with _aiosqlite.connect(DATABASE_PATH) as db:
+                    await db.executemany("UPDATE item SET en_name=?, zh_name=? WHERE type_id=?", batch)
+                    await db.commit()
+                log.info(f"  已写入 {len(batch)} 条 ({i + 1}/{len(missing)})")
+                batch.clear()
 
-    await client.close()
     log.info(f"补拉完成，共修复 {len(missing)} 个蓝图名称")
-    asyncio.run(main())
