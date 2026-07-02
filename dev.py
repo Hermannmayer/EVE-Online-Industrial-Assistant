@@ -10,6 +10,7 @@
     pip install watchdog    # 可选，更快的文件监听
 """
 
+import logging
 import subprocess
 import sys
 import time
@@ -19,6 +20,14 @@ ROOT = Path(__file__).parent.resolve()
 WATCH_DIRS = ["core", "services", "ui_pyside6", "."]
 WATCH_EXTS = (".py", ".qss", ".ui")
 IGNORE_DIRS = {"__pycache__", ".git", "venv", ".venv", "build", "dist", ".pytest_cache"}
+
+# 开发模式日志
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("dev")
 
 
 def get_mtimes():
@@ -42,18 +51,38 @@ def start_app(debug: bool = False):
     args = [sys.executable, str(ROOT / "Main.py")]
     if debug:
         args.append("--debug")
-    print(f"\n{'=' * 50}")
-    print(f"  启动: {' '.join(args)}")
-    print(f"{'=' * 50}\n")
+    log.info("启动: %s", " ".join(args))
     return subprocess.Popen(args, cwd=ROOT)
+
+
+def _wait_and_cleanup(proc, timeout: int = 5):
+    """等待进程优雅退出，超时则强制终止"""
+    from core.hot_reload import write_trigger
+
+    write_trigger()
+    log.info("等待进程优雅退出...")
+    try:
+        proc.wait(timeout)
+    except subprocess.TimeoutExpired:
+        log.warning("超时，强制终止...")
+        proc.terminate()
+        try:
+            proc.wait(3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(2)
 
 
 def main():
     debug = "--debug" in sys.argv
     no_watch = "--no-watch" in sys.argv
 
+    if debug:
+        log.setLevel(logging.DEBUG)
+        for handler in log.handlers:
+            handler.setLevel(logging.DEBUG)
+
     if no_watch:
-        # 单次启动
         proc = start_app(debug)
         proc.wait()
         return
@@ -79,24 +108,10 @@ def main():
                 if now - self.last_trigger < 1:
                     return
                 self.last_trigger = now
-                print(f"\n📁 变更: {src_path.relative_to(ROOT)}")
+                log.info("变更: %s", src_path.relative_to(ROOT))
                 nonlocal proc
                 if proc and proc.poll() is None:
-                    print("  终止旧进程...")
-                    from core.hot_reload import write_trigger
-
-                    write_trigger()
-                    print("  等待进程优雅退出...")
-                    try:
-                        proc.wait(5)
-                    except subprocess.TimeoutExpired:
-                        print("  超时，强制终止...")
-                        proc.terminate()
-                        try:
-                            proc.wait(3)
-                        except subprocess.TimeoutExpired:
-                            proc.kill()
-                            proc.wait(2)
+                    _wait_and_cleanup(proc)
                 proc = start_app(debug)
 
         handler = RestartHandler()
@@ -106,35 +121,22 @@ def main():
             if target.exists():
                 observer.schedule(handler, str(target), recursive=True)
         observer.start()
-        print("📡 文件监听已启动 (watchdog)")
-        print("  按 Ctrl+C 退出\n")
+        log.info("文件监听已启动 (watchdog)")
+        log.info("按 Ctrl+C 退出")
 
         proc = start_app(debug)
         try:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
-            print("\n🛑 正在退出...")
+            log.info("正在退出...")
             observer.stop()
             if proc and proc.poll() is None:
-                from core.hot_reload import write_trigger
-
-                write_trigger()
-                print("  等待进程优雅退出...")
-                try:
-                    proc.wait(5)
-                except subprocess.TimeoutExpired:
-                    print("  超时，强制终止...")
-                    proc.terminate()
-                    try:
-                        proc.wait(3)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait(2)
+                _wait_and_cleanup(proc)
             observer.join()
 
     except ImportError:
-        print("⚠ watchdog 未安装，使用轮询模式 (pip install watchdog 可加速)")
+        log.warning("watchdog 未安装，使用轮询模式 (pip install watchdog 可加速)")
         proc = start_app(debug)
         try:
             last = get_mtimes()
@@ -144,41 +146,15 @@ def main():
                 changed = [p for p in current if current.get(p) != last.get(p)]
                 if changed:
                     for p in changed:
-                        print(f"📁 变更: {p.relative_to(ROOT)}")
+                        log.info("变更: %s", p.relative_to(ROOT))
                     if proc and proc.poll() is None:
-                        from core.hot_reload import write_trigger
-
-                        write_trigger()
-                        print("  等待进程优雅退出...")
-                        try:
-                            proc.wait(5)
-                        except subprocess.TimeoutExpired:
-                            print("  超时，强制终止...")
-                            proc.terminate()
-                            try:
-                                proc.wait(3)
-                            except subprocess.TimeoutExpired:
-                                proc.kill()
-                                proc.wait(2)
+                        _wait_and_cleanup(proc)
                     proc = start_app(debug)
                     last = current
         except KeyboardInterrupt:
-            print("\n🛑 正在退出...")
+            log.info("正在退出...")
             if proc and proc.poll() is None:
-                from core.hot_reload import write_trigger
-
-                write_trigger()
-                print("  等待进程优雅退出...")
-                try:
-                    proc.wait(5)
-                except subprocess.TimeoutExpired:
-                    print("  超时，强制终止...")
-                    proc.terminate()
-                    try:
-                        proc.wait(3)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait(2)
+                _wait_and_cleanup(proc)
 
 
 if __name__ == "__main__":

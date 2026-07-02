@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUBS
 from core.container import get_container
+from core.logger import log
 from core.paths import (
     ensure_dirs_exist,
     search_history_file,
@@ -74,8 +75,9 @@ class PriceUpdateWorker(QThread):
 
             run_price_update(self._regions)
             self.finished_signal.emit(True, "价格更新完成")
-        except Exception as ex:
-            self.finished_signal.emit(False, str(ex))
+        except Exception as e:
+            log.exception("价格更新数据一致性检查失败: %s", e)
+            self.finished_signal.emit(False, str(e))
 
 
 class PriceCheckWorker(QThread):
@@ -106,6 +108,7 @@ class PriceCheckWorker(QThread):
             else:
                 self.result.emit(True, "无价格数据，需要更新")
         except Exception as ex:
+            log.exception("价格数据时效性检查失败: %s", ex)
             self.result.emit(False, f"价格检查失败: {ex}")
 
 
@@ -412,7 +415,7 @@ class MainWindow(QMainWindow):
         from ui_pyside6.views.contract_view import ContractPage
         from ui_pyside6.views.estimate_view import EstimatePage
         from ui_pyside6.views.industry_view import IndustryPage
-        from ui_pyside6.views.inventory_view import InventoryPage
+        from ui_pyside6.views.inventory.inventory_page import InventoryPage
         from ui_pyside6.views.query_view import QueryPage
         from ui_pyside6.views.trade_view import TradePage
         from ui_pyside6.views.watchlist_view import WatchlistPage
@@ -430,7 +433,9 @@ class MainWindow(QMainWindow):
                 self._pages[key] = placeholder
                 return placeholder
             except Exception as e:
+                log.exception("页面创建失败 %s: %s", key, e)
                 import traceback
+
                 traceback.print_exc()
                 placeholder = QWidget()
                 layout = QVBoxLayout(placeholder)
@@ -820,7 +825,8 @@ class MainWindow(QMainWindow):
                 with open(p, encoding="utf-8") as f:
                     return json.load(f).get("auto_update_enabled", True)
         except Exception:
-            pass
+            log.exception("加载自动更新设置失败")
+        return True
 
     def _save_settings(self):
         try:
@@ -881,10 +887,12 @@ class MainWindow(QMainWindow):
                 try:
                     state["pages"][key] = page.save_state()
                 except Exception:
-                    pass
+                    log.exception("保存页面状态失败: %s", key)
         return state
 
-    def restore_state(self, data: dict):
+    def restore_state(self, data: dict | None):
+        if not data:
+            return
         key = data.get("current_page")
         if key and key in self._pages:
             for item in self._nav_items:
@@ -897,12 +905,12 @@ class MainWindow(QMainWindow):
                 try:
                     self._pages[pkey].restore_state(pdata)
                 except Exception:
-                    pass
+                    log.exception("恢复页面状态失败: %s", pkey)
 
     def _check_first_run(self):
         """首次启动检测 + 初始化完成后重建页面"""
+
         from services.init_check import check_all
-        import sqlite3
 
         status = check_all()
         has_items = status.get("items", False)
@@ -917,16 +925,17 @@ class MainWindow(QMainWindow):
 
     def _rebuild_placeholder_pages(self):
         """检查哪些页面是 placeholder，重建为真实页面"""
+        import sqlite3
+
+        from PySide6.QtWidgets import QLabel
+
+        from ui_pyside6.views.contract_view import ContractPage
         from ui_pyside6.views.estimate_view import EstimatePage
-        from ui_pyside6.views.query_view import QueryPage
         from ui_pyside6.views.industry_view import IndustryPage
+        from ui_pyside6.views.inventory.inventory_page import InventoryPage
+        from ui_pyside6.views.query_view import QueryPage
         from ui_pyside6.views.trade_view import TradePage
         from ui_pyside6.views.watchlist_view import WatchlistPage
-        from ui_pyside6.views.contract_view import ContractPage
-        from ui_pyside6.views.inventory_view import InventoryPage
-
-        import sqlite3
-        from PySide6.QtWidgets import QLabel
 
         page_classes = [
             ("estimate", EstimatePage),

@@ -102,16 +102,12 @@ class TradePage(QWidget):
         for lbl in self._t_labels.values():
             lbl.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
 
-        # ═══════════════════════════════════════════
-        #  Tab 0: 价格监控
-        # ═══════════════════════════════════════════
+    def save_state(self) -> dict:
+        return {"tab_index": self._tabs.currentIndex()}
 
-        def save_state(self) -> dict:
-            return {"tab_index": self._tabs.currentIndex()}
-
-        def restore_state(self, data: dict) -> None:
-            if data and 0 <= data.get("tab_index", 0) < self._tabs.count():
-                self._tabs.setCurrentIndex(data["tab_index"])
+    def restore_state(self, data: dict) -> None:
+        if data and 0 <= data.get("tab_index", 0) < self._tabs.count():
+            self._tabs.setCurrentIndex(data["tab_index"])
 
     def _build_monitor_tab(self) -> QWidget:
         w = QWidget()
