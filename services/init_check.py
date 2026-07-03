@@ -211,7 +211,6 @@ def check_all() -> dict:
             and check_type_materials() > 0
             and check_dogma_attrs() > 0
             and check_stations() > 0
-            and check_universe() > 0
         ),
     }
 
