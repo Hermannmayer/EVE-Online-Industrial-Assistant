@@ -350,24 +350,22 @@ async def write_stations():
                 await db.commit()
             log.info(f"station_operation 写入完成 ({len(so_rows)} 条)")
 
-    # --- station_operation_service ---
-    os_data = _ensure_dict(load_yaml("operationServices.yaml"))
-    if os_data:
-        sos_rows = []
-        for _, od in os_data.items():
-            op_id = od.get("operationID")
-            svc_id = od.get("serviceID")
-            if op_id is not None and svc_id is not None:
-                sos_rows.append((int(op_id), int(svc_id)))
-        if sos_rows:
-            async with aiosqlite.connect(DATABASE_PATH) as db:
-                for i in range(0, len(sos_rows), BATCH_SIZE):
-                    await db.executemany(
-                        "INSERT OR REPLACE INTO station_operation_service (operation_id, service_id) VALUES (?, ?)",
-                        sos_rows[i:i + BATCH_SIZE],
-                    )
-                await db.commit()
-            log.info(f"station_operation_service 写入完成 ({len(sos_rows)} 条)")
+    # --- station_operation_service (从 stationOperations.yaml 的 services 字段提取) ---
+    sos_rows = []
+    for op_id_str, od in so_data.items():
+        op_id = int(op_id_str) if not isinstance(op_id_str, int) else op_id_str
+        for svc in od.get("services", []) or []:
+            if svc is not None:
+                sos_rows.append((op_id, int(svc)))
+    if sos_rows:
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            for i in range(0, len(sos_rows), BATCH_SIZE):
+                await db.executemany(
+                    "INSERT OR REPLACE INTO station_operation_service (operation_id, service_id) VALUES (?, ?)",
+                    sos_rows[i:i + BATCH_SIZE],
+                )
+            await db.commit()
+        log.info(f"station_operation_service 写入完成 ({len(sos_rows)} 条)")
 
     # --- station ---
     sta_data = _ensure_dict(load_yaml("staStations.yaml"))
