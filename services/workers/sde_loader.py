@@ -367,24 +367,21 @@ async def write_stations():
             await db.commit()
         log.info(f"station_operation_service 写入完成 ({len(sos_rows)} 条)")
 
-    # --- station ---
-    sta_data = _ensure_dict(load_yaml("staStations.yaml"))
-    if sta_data:
+    # --- station（BSD 格式：列表，用 stationID 而非 _id）---
+    sta_raw = load_yaml("staStations.yaml")
+    if isinstance(sta_raw, list) and sta_raw:
         sta_rows = []
-        for sid_str, sd in sta_data.items():
-            station_id = int(sid_str) if not isinstance(sid_str, int) else sid_str
-            station_name = sd.get("stationName", "") or ""
-            solar_system_id = sd.get("solarSystemID")
-            operation_id = sd.get("operationID")
-            station_type_id = sd.get("stationTypeID")
-            corporation_id = sd.get("corporationID")
+        for item in sta_raw:
+            station_id = item.get("stationID")
+            if station_id is None:
+                continue
             sta_rows.append((
-                station_id,
-                station_name,
-                int(solar_system_id) if solar_system_id is not None else None,
-                int(operation_id) if operation_id is not None else None,
-                int(station_type_id) if station_type_id is not None else None,
-                int(corporation_id) if corporation_id is not None else None,
+                int(station_id),
+                item.get("stationName", "") or "",
+                int(item["solarSystemID"]) if item.get("solarSystemID") else None,
+                int(item["operationID"]) if item.get("operationID") else None,
+                int(item["stationTypeID"]) if item.get("stationTypeID") else None,
+                int(item["corporationID"]) if item.get("corporationID") else None,
             ))
         if sta_rows:
             async with aiosqlite.connect(DATABASE_PATH) as db:
