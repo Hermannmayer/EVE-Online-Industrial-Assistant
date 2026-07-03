@@ -84,3 +84,7 @@ _test.txt
 
 # 日志文件
 *.log
+
+# SDE cache YAML files
+data/*.yaml
+data/sde.zip

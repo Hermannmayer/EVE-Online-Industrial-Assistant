@@ -21,8 +21,8 @@ SDE_ZIP_PATH = os.path.join(CACHE_DIR, "sde.zip")
 
 # 已知的 SDE YAML 文件名（来自 sde.zip/fsd/ 或 bsd/）
 YAML_FILES = {
-    "typeIDs.yaml",
-    "groupIDs.yaml",
+    "typeIDs.yaml",  # ← 缓存名，zip 内实际名为 types.yaml（见 ZIP_LOOKUP）
+    "groupIDs.yaml",  # ← 缓存名，zip 内实际名为 groups.yaml（见 ZIP_LOOKUP）
     "marketGroups.yaml",
     "metaGroups.yaml",
     "typeMaterials.yaml",
@@ -32,11 +32,16 @@ YAML_FILES = {
     "categories.yaml",
     "staStations.yaml",
     "stationOperations.yaml",
-    "operationServices.yaml",
     "stationServices.yaml",
     "researchAgents.yaml",
     "npcCorporations.yaml",
     "agents.yaml",
+}
+
+# 缓存文件名 → zip 内实际文件名（当两者不一致时）
+ZIP_LOOKUP = {
+    "typeIDs.yaml": "types.yaml",
+    "groupIDs.yaml": "groups.yaml",
 }
 
 
@@ -84,9 +89,10 @@ async def ensure_sde_cache():
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         for fname in sorted(YAML_FILES):
             # 用 endswith 匹配，兼容 fsd/ bsd/ 等不同路径前缀
-            candidates = [p for p in zf.namelist() if p.endswith(fname)]
+            zip_name = ZIP_LOOKUP.get(fname, fname)
+            candidates = [p for p in zf.namelist() if p.endswith(zip_name)]
             if not candidates:
-                log.warning(f"SDE 包中未找到 {fname}")
+                log.warning(f"SDE 包中未找到 {zip_name} (→ {fname})")
                 continue
             raw = zf.read(candidates[0]).decode("utf-8")
             dest = cache_path(fname)
@@ -131,24 +137,27 @@ async def ensure_universe_cache():
 
             parts = path.split("/")
 
-            if "region.yaml" in path and len(parts) >= 3:
+            if "region.yaml" in path:
                 # universe/<region_id>/region.yaml
-                region_id = int(parts[1])
-                data["region_id"] = region_id
-                regions.append(data)
+                region_id = data.get("regionID")
+                if region_id is not None:
+                    data["region_id"] = int(region_id)
+                    regions.append(data)
 
-            elif "constellation.yaml" in path and len(parts) >= 5:
+            elif "constellation.yaml" in path:
                 # universe/<region_id>/constellations/<constellation_id>/constellation.yaml
                 cid = data.get("constellationID")
                 if cid is not None:
-                    data["constellation_id"] = cid
+                    data["constellation_id"] = int(cid)
                     constellations.append(data)
 
-            elif "system.yaml" in path and len(parts) >= 7:
+            elif "system.yaml" in path:
                 # universe/<region_id>/constellations/<const_id>/systems/<system_id>/system.yaml
                 sid = data.get("solarSystemID")
                 if sid is not None:
-                    data["solar_system_id"] = sid
+                    data["solar_system_id"] = int(sid)
+                    data["solar_system_name"] = data.get("solarSystemName", "")
+                    data["security"] = data.get("security", data.get("securityStatus", 0.0))
                     systems.append(data)
 
             elif "stargates/" in path:
@@ -163,7 +172,7 @@ async def ensure_universe_cache():
                     stargates.append({
                         "stargate_id": sg_id,
                         "solar_system_id": sys_id,
-                        "destination_system_id": dest_id,
+                        "destination_system_id": int(dest_id),
                     })
 
     log.info(
