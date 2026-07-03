@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import sqlite3
 from datetime import UTC
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QThread, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -31,6 +33,49 @@ from ui_pyside6.views.industry import (
     TopToolbar,
 )
 from ui_pyside6.views.manufacturable_items_dialog import ManufacturableItemsDialog
+
+# ── 工业数据后台补拉 ──
+
+class IndustryDataWorker(QThread):
+    """后台线程拉取工业系统成本指数 + 设施数据"""
+
+    finished = Signal(bool, str)  # success, message
+
+    def run(self):
+        try:
+            import asyncio
+
+            from services.workers.getindustry import run_industry_update
+
+            asyncio.run(run_industry_update())
+            self.finished.emit(True, "工业数据拉取完成")
+        except Exception as e:
+            log.exception("工业数据拉取失败: %s", e)
+            self.finished.emit(False, str(e))
+
+
+def _ensure_industry_data(parent_status_callback=None):
+    """检查工业数据是否已就绪，若否则在后台拉取"""
+    from core.paths import REF_DB_PATH
+
+    if not os.path.exists(REF_DB_PATH):
+        return False
+    try:
+        conn = sqlite3.connect(REF_DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='industry_system_costs'")
+        if not c.fetchone():
+            conn.close()
+            return False
+        c.execute("SELECT COUNT(*) FROM industry_system_costs")
+        count = c.fetchone()[0]
+        conn.close()
+        if count > 0:
+            return True
+    except Exception:
+        return False
+    return False
+
 
 PLAN_DB_SCHEMA = """CREATE TABLE IF NOT EXISTS production_plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -165,6 +210,9 @@ class IndustryPage(QWidget):
         # ── 初始加载 ───────────────────────────────────────────
         self.load_plans()
 
+        # ── 后台补拉工业数据（成本指数/设施，首次访问时自动）───────
+        QTimer.singleShot(200, self._check_industry_data)
+
         # ── 主题 ───────────────────────────────────────────────
         theme.add_theme_listener(self._on_theme_changed)
 
@@ -232,6 +280,24 @@ class IndustryPage(QWidget):
     def _auto_calculate_plans(self, rows):
         """自动重算计划利润/边际（后台线程触发）"""
         pass
+
+    def _check_industry_data(self):
+        """检查工业数据，缺失时在后台拉取"""
+        if _ensure_industry_data():
+            return
+        log.info("工业数据（成本指数/设施）未就绪，后台开始拉取...")
+        self._status_bar.show_message("正在后台拉取工业数据...")
+        self._industry_worker = IndustryDataWorker()
+        self._industry_worker.finished.connect(self._on_industry_data_ready)
+        self._industry_worker.start()
+
+    def _on_industry_data_ready(self, success: bool, message: str):
+        if success:
+            log.info("工业数据后台拉取完成")
+            self._status_bar.show_message("工业数据拉取完成", timeout=5000)
+        else:
+            log.warning("工业数据拉取失败: %s", message)
+            self._status_bar.show_message(f"工业数据拉取失败: {message}", timeout=8000)
 
     def _on_view_changed(self, view_mode: str):
         if view_mode == "gantt":

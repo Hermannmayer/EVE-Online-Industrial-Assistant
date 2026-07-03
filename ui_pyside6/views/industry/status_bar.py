@@ -66,6 +66,14 @@ class StatusBar(QWidget):
             f"采购总额: {total_cost:,.2f} ISK | 体积: {volume:,.1f} m3"
         )
 
+    def show_message(self, text: str, timeout: int = 0):
+        """显示临时消息（可选自动清除）"""
+        self._stats_label.setText(text)
+        if timeout > 0:
+            from PySide6.QtCore import QTimer
+
+            QTimer.singleShot(timeout, lambda: self.update_stats([]))
+
     # ── 样式 ──────────────────────────────────────────────────
 
     def _apply_style(self):
