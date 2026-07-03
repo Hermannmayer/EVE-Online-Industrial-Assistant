@@ -100,6 +100,66 @@ def invalidate_cache():
     _default_cache.invalidate()
 
 
+# 模块级单例 ScoringService（供模块级便利函数复用，避免每次创建新实例）
+_scoring_service_instance: ScoringService | None = None
+
+
+def _get_scoring_service() -> ScoringService:
+    global _scoring_service_instance
+    if _scoring_service_instance is None:
+        _scoring_service_instance = ScoringService(db, _default_cache)
+    return _scoring_service_instance
+
+
+# ════════════════════════════════════════════════════════════════════
+#  角色配置统一解析
+# ════════════════════════════════════════════════════════════════════
+
+DEFAULT_SKILLS = {"工业理论": 5, "高级工业理论": 5}
+
+
+def resolve_char_config(
+    char_name: str | None = None,
+    char_data: dict | None = None,
+    skills: dict | None = None,
+) -> dict:
+    """
+    统一解析角色配置，返回 ScoringService 可用的 char_config dict。
+
+    优先级：skills > char_data > char_name → 查 char_config.json → DEFAULT_CHAR_CONFIG
+    返回结果保证包含 'skills' 和 'market' 键。
+    """
+    if skills is not None:
+        return {"skills": dict(skills), "market": {}}
+    if char_data is not None and char_data:  # 非空 dict 才直接返回
+        return dict(char_data) if isinstance(char_data, dict) else {"skills": {}, "market": {}}
+    if char_name is not None:
+        try:
+            from ui_pyside6.views.char_settings_view import get_character
+
+            char = get_character(char_name)
+            if char:
+                return dict(char)
+        except Exception:
+            pass
+        try:
+            from services.char_config_validator import load_char_config
+            from ui_pyside6.views.char_settings_view import char_config_path
+
+            data = load_char_config(char_config_path())
+            chars = data.get("characters", {})
+            if char_name in chars:
+                return dict(chars[char_name])
+            # fallback: 用 current
+            current = data.get("current", "main")
+            if current in chars:
+                return dict(chars[current])
+        except Exception:
+            pass
+    # 最终 fallback：默认技能
+    return {"skills": dict(DEFAULT_SKILLS), "market": {}}
+
+
 # ════════════════════════════════════════════════════════════════════
 #  定价查询（模块级 + ScoringService 实例方法共享）
 # ════════════════════════════════════════════════════════════════════
@@ -213,9 +273,10 @@ def get_system_cost_index(
 
 
 class ScoringService:
-    def __init__(self, db: DatabaseManager, cache: ScoringCache):
+    def __init__(self, db: DatabaseManager, cache: ScoringCache, char_config: dict | None = None):
         self._db = db
         self._cache = cache
+        self._char_config = char_config or {}
 
     # ── 经纪人费率计算（去重：制造/贸易共用） ──
 
@@ -708,9 +769,8 @@ def calc_manufacturing_score(
     system_id: int | None = None,
     structure_bonus: float = 0.0,
 ) -> dict:
-    """模块级便利函数：创建临时 ScoringService 并委托。"""
-    svc = ScoringService(db, _default_cache)
-    return svc.calc_manufacturing_score(
+    """模块级便利函数：复用模块级单例 ScoringService。"""
+    return _get_scoring_service().calc_manufacturing_score(
         type_id=type_id,
         char_config=char_config,
         mat_source_hub=mat_source_hub,
@@ -734,9 +794,8 @@ def calc_trade_score(
     char_config: dict | None = None,
     quantity: int = 1,
 ) -> dict:
-    """模块级便利函数：创建临时 ScoringService 并委托。"""
-    svc = ScoringService(db, _default_cache)
-    return svc.calc_trade_score(
+    """模块级便利函数：复用模块级单例 ScoringService。"""
+    return _get_scoring_service().calc_trade_score(
         type_id=type_id,
         buy_hub=buy_hub,
         sell_hub=sell_hub,
@@ -758,9 +817,8 @@ def calc_reaction_score(
     system_id: int | None = None,
     structure_bonus: float = 0.0,
 ) -> dict:
-    """模块级便利函数：创建临时 ScoringService 并委托。"""
-    svc = ScoringService(db, _default_cache)
-    return svc.calc_reaction_score(
+    """模块级便利函数：复用模块级单例 ScoringService。"""
+    return _get_scoring_service().calc_reaction_score(
         type_id=type_id,
         char_config=char_config,
         mat_source_hub=mat_source_hub,
