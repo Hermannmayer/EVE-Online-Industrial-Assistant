@@ -6,7 +6,7 @@ import os
 import sqlite3
 from datetime import UTC
 
-from PySide6.QtCore import QThread, Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -18,9 +18,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import ui_pyside6.theme as theme
 from core.container import get_container
 from core.logger import log
-import ui_pyside6.theme as theme
+from ui_pyside6.views.char_settings_view import load_all_data
 from ui_pyside6.views.industry import (
     ActionButtons,
     BlueprintRequirementsDialog,
@@ -33,6 +34,7 @@ from ui_pyside6.views.industry import (
     TopToolbar,
 )
 from ui_pyside6.views.manufacturable_items_dialog import ManufacturableItemsDialog
+from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker
 
 # ── 工业数据后台补拉 ──
 
@@ -121,6 +123,11 @@ def init_plan_db():
             ]
             # 保留已有迁移
             new_cols += [("iskph", "REAL DEFAULT 0"), ("material_cost", "REAL DEFAULT 0")]
+            # 制造时长（秒）
+            try:
+                conn.execute("ALTER TABLE production_plans ADD COLUMN calculated_time REAL DEFAULT 0")
+            except Exception:
+                log.debug("列已存在: calculated_time")
             for col, col_type in new_cols:
                 try:
                     conn.execute(f"ALTER TABLE production_plans ADD COLUMN {col} {col_type}")
@@ -148,6 +155,7 @@ class IndustryPage(QWidget):
         self._main = main_window
         init_plan_db()
         self.setObjectName("industry_page")
+        self._recalc_worker = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -279,7 +287,43 @@ class IndustryPage(QWidget):
 
     def _auto_calculate_plans(self, rows):
         """自动重算计划利润/边际（后台线程触发）"""
-        pass
+        # 避免重复启动
+        if self._recalc_worker and self._recalc_worker.isRunning():
+            return
+        # 只重算 pending/in_progress 的计划
+        todo = [r for r in rows if r.get("id") and r.get("status", "").lower() in ("pending", "in_progress", "running", "")]
+        if not todo:
+            return
+        # 加载角色配置
+        try:
+            char_data = load_all_data()
+            current_char = char_data.get("current", "main")
+            char_config = char_data.get("characters", {}).get(current_char, {})
+        except Exception:
+            current_char = "main"
+            char_config = {}
+        self._recalc_worker = BatchPlanCalcWorker(todo, char_config, char_name=current_char)
+        self._recalc_worker.finished.connect(self._on_recalc_done)
+        self._recalc_worker.start()
+
+    def _on_recalc_done(self, results: list):
+        """批量重算完成 → 更新数据库并刷新显示"""
+        if not results:
+            return
+        with get_container().db.connect("user") as conn:
+            for plan_id, profit, margin, score, iskph, mat_cost, hours_per_run in results:
+                try:
+                    # hours_per_run 转换为秒存入 calculated_time
+                    calculated_seconds = round(hours_per_run * 3600)
+                    conn.execute(
+                        "UPDATE production_plans SET profit=?, margin=?, score=?,"
+                        " iskph=?, material_cost=?, market_margin=?, personal_margin=?,"
+                        " calculated_time=? WHERE id=?",
+                        (profit, margin, score, iskph, mat_cost, margin, margin, calculated_seconds, plan_id),
+                    )
+                except Exception:
+                    log.exception("更新计划 %s 评分失败", plan_id)
+        self.load_plans()
 
     def _check_industry_data(self):
         """检查工业数据，缺失时在后台拉取"""
@@ -323,7 +367,7 @@ class IndustryPage(QWidget):
     # ── 对话框打开方法 ────────────────────────────────────────
 
     def _on_plan_add(self, text: str):
-        """???????????? -> ?? -> AddPlanDialog -> INSERT"""
+        """\u641c\u7d22\u7269\u54c1 -> \u8bc4\u5206 -> AddPlanDialog -> INSERT\uff08\u7528\u7528\u6237\u8bbe\u5b9a\u7684 ME/TE \u91cd\u7b97\uff09"""
         text = text.strip()
         if not text:
             return
@@ -331,9 +375,10 @@ class IndustryPage(QWidget):
 
         from PySide6.QtWidgets import QDialog
 
+        from services.scoring_service import calc_manufacturing_score
         from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 
-        # 1) ????
+        # 1) \u641c\u7d22\u7269\u54c1
         conn = get_container().db.direct_connect("ref")
         try:
             like = f"%{text}%"
@@ -350,13 +395,13 @@ class IndustryPage(QWidget):
             conn.close()
 
         if not items:
-            QMessageBox.information(self, "???", f"????????: {text}")
+            QMessageBox.information(self, "\u63d0\u793a", f"\u672a\u627e\u5230\u7269\u54c1: {text}")
             return
 
         type_id = items[0][0]
         product_name = items[0][1] or items[0][2] or str(type_id)
 
-        # ?????????
+        # 2) \u68c0\u67e5\u662f\u5426\u53ef\u5236\u9020
         conn2 = get_container().db.direct_connect("bp")
         try:
             cur = conn2.cursor()
@@ -369,10 +414,10 @@ class IndustryPage(QWidget):
             conn2.close()
 
         if not has_bp:
-            QMessageBox.information(self, "????", f"\u300c{product_name}\u300d??????")
+            QMessageBox.information(self, "\u63d0\u793a", f"\u300c{product_name}\u300d\u6ca1\u6709\u5236\u9020\u84dd\u56fe")
             return
 
-        # 3) ????
+        # 3) \u521d\u6b65\u8bc4\u5206\uff08ME=0/TE=0 \u9884\u89c8\u7528\uff09
         from ui_pyside6.workers.industry_workers import ScoreWorker
 
         self._score_worker = ScoreWorker(
@@ -391,10 +436,20 @@ class IndustryPage(QWidget):
             data = dlg.result_data()
             if not data:
                 return
+            # \u7528\u7528\u6237\u8bbe\u5b9a\u7684 ME/TE \u91cd\u65b0\u8ba1\u7b97\u5b9e\u9645\u5229\u6da6/\u8bc4\u5206
+            actual = calc_manufacturing_score(
+                type_id=type_id,
+                char_config={},
+                bp_me=data["me"],
+                bp_te=data["te"],
+                mat_source_hub="Jita",
+                sell_hub="Jita",
+                facility_tax_pct=0.0,
+            )
+            iskph = actual.get("isk_per_hour", 0) or actual.get("breakdown", {}).get("isk_per_hour", 0)
+            mat_cost = actual.get("breakdown", {}).get("material_cost", 0)
             conn3 = get_container().db.direct_connect("user")
             try:
-                iskph = result.get("isk_per_hour", 0) or result.get("breakdown", {}).get("isk_per_hour", 0)
-                mat_cost = result.get("breakdown", {}).get("material_cost", 0)
                 conn3.execute(
                     "INSERT INTO production_plans "
                     "(product_type_id, product_name, runs, parallels, me_level, te_level, "
@@ -412,9 +467,9 @@ class IndustryPage(QWidget):
                         "Jita",
                         data["fac"],
                         data["char"],
-                        result.get("profit_per_run", 0),
-                        result.get("margin_pct", 0),
-                        result.get("score", 0),
+                        actual.get("profit_per_run", 0),
+                        actual.get("margin_pct", 0),
+                        actual.get("score", 0),
                         iskph,
                         mat_cost,
                         datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
@@ -424,7 +479,7 @@ class IndustryPage(QWidget):
             finally:
                 conn3.close()
             self.load_plans()
-            QMessageBox.information(self, "??", f"???????: {product_name}")
+            QMessageBox.information(self, "\u5b8c\u6210", f"\u5df2\u6dfb\u52a0\u8ba1\u5212: {product_name}")
 
         self._score_worker.finished.connect(_on_score)
         self._score_worker.start()

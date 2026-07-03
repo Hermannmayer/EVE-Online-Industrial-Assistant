@@ -1,7 +1,9 @@
 """待采购对话框 - 根据生产计划和库存计算需要采购的材料"""
 
+import os
+
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPixmap, QPixmapCache
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -21,12 +23,44 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
+from core.eve_formulas import _MINERAL_NAMES
+from core.paths import ICON_DIR
+
+
+def _load_icon(type_id: int, size: int = 24) -> QPixmap | None:
+    """加载物品图标（缓存）"""
+    if not type_id:
+        return None
+    cache_key = f"procicon_{type_id}"
+    pixmap = QPixmap(cache_key)
+    if not pixmap.isNull():
+        return pixmap
+    path = os.path.join(ICON_DIR, f"{type_id}.png")
+    if os.path.isfile(path):
+        pixmap = QPixmap(path)
+        if not pixmap.isNull():
+            pixmap = pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            QPixmapCache.insert(cache_key, pixmap)
+            return pixmap
+    return None
+
+
+def _resolve_item_name(mid: int, zh_name: str | None, en_name: str | None) -> str:
+    """统一物品名解析：item 表 → mineral 硬编码 → str(id)"""
+    if zh_name:
+        return zh_name
+    if en_name:
+        return en_name
+    if mid in _MINERAL_NAMES:
+        return _MINERAL_NAMES[mid]
+    # 再试一次从 item 表查（矿物可能不在 ref.item 中但在 mineral 映射中）
+    return str(mid)
 
 
 class ProcureTableModel(QAbstractTableModel):
-    """待采购表格模型"""
+    """待采购表格模型，含图标列"""
 
-    _HEADERS = ["物品名称", "总需求", "库存", "需采购", "单价", "总价", "体积(m\\u00b3)"]
+    _HEADERS = ["物品名称", "总需求", "库存", "需采购", "单价", "总价", "体积(m³)"]
 
     def __init__(self, rows: list[dict]):
         super().__init__()
@@ -44,12 +78,23 @@ class ProcureTableModel(QAbstractTableModel):
         r = self._rows[index.row()]
         c = index.column()
         keys = ["name", "need", "owned", "to_buy", "price", "total", "volume"]
+
+        # 图标（DecorationRole）— 第 0 列
+        if role == Qt.ItemDataRole.DecorationRole and c == 0:
+            return _load_icon(r.get("type_id"))
+
         if role == Qt.ItemDataRole.DisplayRole:
             if c < len(keys):
                 val = r.get(keys[c], "")
+                if c == 0:
+                    return _resolve_item_name(r.get("type_id"), r.get("zh_name"), r.get("en_name"))
                 if isinstance(val, float):
-                    if c in (4, 5, 6):
-                        return f"{val:,.2f}"
+                    if c in (2, 3):
+                        return f"{val:,.0f}"  # 库存/需采购整数
+                    if c in (4, 5):
+                        return f"{val:,.2f}"  # 价格/总价
+                    if c == 6:
+                        return f"{val:,.2f}"  # 体积
                     return f"{val:.2f}"
                 return str(val)
             return ""
@@ -91,8 +136,9 @@ class ProcurementDialog(QDialog):
     def __init__(self, active_plans, hangar_id, hangar_name, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"待采购 - 材料需求 ({hangar_name})")
-        self.setMinimumSize(920, 560)
-        self.resize(1020, 620)
+        # 窄高窗口：方便一眼浏览全部待采购物品
+        self.setMinimumSize(620, 400)
+        self.resize(720, 800)
 
         self._active_plans = active_plans
         self._hangar_id = hangar_id
@@ -146,7 +192,7 @@ class ProcurementDialog(QDialog):
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.setSortingEnabled(False)
-        self._table.verticalHeader().setDefaultSectionSize(26)
+        self._table.verticalHeader().setDefaultSectionSize(28)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_context_menu)
         main_layout.addWidget(self._table, 1)
@@ -230,7 +276,9 @@ class ProcurementDialog(QDialog):
                     (mid,),
                 )
                 r = c.fetchone()
-                name = (r[0] or r[1] or str(mid)) if r else str(mid)
+                zh_name = r[0] if r else None
+                en_name = r[1] if r else None
+                name = _resolve_item_name(mid, zh_name, en_name)
                 volume = r[2] if r and r[2] else 0.01
 
                 # Get price
@@ -251,22 +299,34 @@ class ProcurementDialog(QDialog):
                         {
                             "type_id": mid,
                             "name": name,
+                            "zh_name": zh_name,
+                            "en_name": en_name,
                             "need": need,
                             "owned": owned,
                             "to_buy": to_buy,
                             "price": price,
                             "total": subtotal,
-                            "volume": volume * to_buy,
+                            "volume": to_buy * volume,
                         }
                     )
 
             self._rows.sort(key=lambda x: x["total"], reverse=True)
             self._table.setModel(ProcureTableModel(self._rows))
 
-            # Auto-size columns
+            # Auto-size columns — 自适应列宽
             header = self._table.horizontalHeader()
+            header.setStretchLastSection(False)
+            # 名称列 stretch，体积列按内容
             for i in range(header.count()):
-                header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+                if i == 0:  # 物品名称含图标 → stretch
+                    header.setSectionResizeMode(i, QHeaderView.Stretch)
+                elif i == 6:  # 体积
+                    header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+                else:
+                    header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+            # 确保名称列最小 160px
+            if header.sectionSize(0) < 160:
+                header.resizeSection(0, 160)
 
             self._summary_label.setText(
                 f"共 {len(self._rows)} 种材料 | "
@@ -316,13 +376,14 @@ class ProcurementDialog(QDialog):
         item = model.get_row(sel[0].row())
         if not item:
             return
+        from PySide6.QtWidgets import QInputDialog
         qty, ok = QInputDialog.getDouble(
             self,
             "修改采购数量",
             f"输入新采购数量 ({item['name']}):",
             value=item.get("to_buy", 0),
-            min=0,
-            max=99999999,
+            minValue=0,
+            maxValue=99999999,
             decimals=2,
         )
         if ok:

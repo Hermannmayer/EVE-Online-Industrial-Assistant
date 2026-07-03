@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
+    QHeaderView,
     QInputDialog,
     QMenu,
     QMessageBox,
@@ -64,9 +65,9 @@ class PlanTable(QWidget):
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._table.horizontalHeader().setStretchLastSection(True)
         self._table.setSortingEnabled(True)
         self._table.verticalHeader().setDefaultSectionSize(26)
+        self._configure_adaptive_columns()
 
         layout.addWidget(self._table)
 
@@ -89,10 +90,36 @@ class PlanTable(QWidget):
 
     # ── 公共方法 ──────────────────────────────────────────────
 
+    def _configure_adaptive_columns(self) -> None:
+        """配置列宽自适应：窄列固定，产品列拉伸，其余自适应内容"""
+        header = self._table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(40)
+
+        NARROW = {0, 2, 3, 4, 5}           # 图标/批次/并行/组号/子级
+        STRETCH = {1}                       # 产品名
+        # 其余：根据内容自适应 + interactive 可调
+
+        for col in range(19):
+            if col in NARROW:
+                header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+            elif col in STRETCH:
+                header.setSectionResizeMode(col, QHeaderView.Stretch)
+            else:
+                header.setSectionResizeMode(col, QHeaderView.Interactive)
+                header.resizeSection(col, 75)
+
     def set_model(self, model: PlanTableModel) -> None:
-        """设置 PlanTableModel"""
+        """设置 PlanTableModel 并自适应列宽"""
         self._model = model
         self._table.setModel(model)
+        # 内容自适应后，窄列自动收缩
+        self._table.resizeColumnsToContents()
+        header = self._table.horizontalHeader()
+        # 确保产品列至少有 120px，但不超过可用空间一半
+        product_w = header.sectionSize(1)
+        avail = header.width() if header.width() > 0 else 800
+        header.resizeSection(1, max(120, min(product_w, avail // 2)))
 
     def get_model(self) -> PlanTableModel | None:
         return self._model
