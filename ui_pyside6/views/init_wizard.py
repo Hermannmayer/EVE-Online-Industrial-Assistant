@@ -24,7 +24,9 @@ STEPS = [
     ("市场价格", "prices", "getprices", True),
     ("蓝图数据", "blueprints", "getblueprints", False),
     ("植入体数据", "implants", "getimplantdata", True),
+    ("工业数据", "industry", "getindustry", True),
     ("物品图标", "icons", "geticon", True),
+    ("SDE扩展数据", "sde_data", "sde_loader", False),
 ]
 
 
@@ -71,6 +73,14 @@ class InitStepWorker(QThread):
                 from services.workers.geticon import main
 
                 loop.run_until_complete(main())
+            elif self._module == "getindustry":
+                from services.workers.getindustry import run_industry_update
+
+                loop.run_until_complete(run_industry_update())
+            elif self._module == "sde_loader":
+                from services.workers.sde_loader import main as sde_loader_main
+
+                loop.run_until_complete(sde_loader_main())
             else:
                 self.result.emit(self._key, False, f"未知步骤: {self._module}")
                 return
@@ -119,7 +129,7 @@ class InitWizard(QDialog):
 
         # 进度条
         self._progress = QProgressBar()
-        self._progress.setRange(0, 5)
+        self._progress.setRange(0, 7)
         self._progress.setValue(0)
         self._progress.setTextVisible(True)
         self._progress.setStyleSheet(f"""
@@ -287,7 +297,7 @@ class InitWizard(QDialog):
 
     def _on_all_done(self):
         self._run_btn.setEnabled(True)
-        self._progress.setValue(5)
+        self._progress.setValue(7)
         self._status_label.setText("初始化完成！")
         self._status_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 12px;")
         if self.isVisible():

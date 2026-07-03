@@ -1,23 +1,26 @@
+"""
+物品数据拉取 — 从 SDE zip 本地解析 typeIDs.yaml / groupIDs.yaml / marketGroups.yaml
+
+流程：
+  1. 检查本地缓存 data/typeIDs.yaml 等是否存在
+  2. 若不存在 → 下载 SDE zip(~112MB)，提取所需的 YAML 文件并缓存
+  3. 解析 YAML → 批量写入 reference.db 的 item 表 + market_tree 表
+
+首次拉取需要下载一次 SDE zip，后续跳过。
+"""
+
 import asyncio
 
 import aiosqlite
-from tenacity import retry, stop_after_attempt, wait_exponential
 from tqdm import tqdm
 
 from core.logger import log
 from core.paths import reference_db_path
-from services.client import APIClient
+from services.workers.sde_cache import ensure_sde_cache, load_yaml
 
-# 配置常量
 DATABASE_PATH = reference_db_path()
-API_BASE_URL = "https://sde.jita.space/latest"
-CONCURRENCY = 50
-BATCH_SIZE = 100
+BATCH_SIZE = 500
 START_TYPE_ID = 178
-
-# 全局缓存
-group_cache: dict[int, str] = {}
-market_group_cache: dict[int, str] = {}
 
 
 async def initialize_database():
@@ -26,353 +29,235 @@ async def initialize_database():
         await db.execute("""
             CREATE TABLE IF NOT EXISTS item (
                 type_id INTEGER PRIMARY KEY,
-                en_name TEXT,
-                zh_name TEXT,
+                en_name TEXT, zh_name TEXT,
                 group_id INTEGER,
-                en_group_name TEXT,
-                zh_group_name TEXT,
+                en_group_name TEXT, zh_group_name TEXT,
                 market_group_id INTEGER,
-                en_market_group_name TEXT,
-                zh_market_group_name TEXT,
-                volume REAL,
-                iconID INTEGER
+                en_market_group_name TEXT, zh_market_group_name TEXT,
+                volume REAL, iconID INTEGER
             )
         """)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS market_tree (
                 market_group_id INTEGER PRIMARY KEY,
                 parent_group_id INTEGER,
-                en_name TEXT,
-                zh_name TEXT,
-                icon_id INTEGER
+                en_name TEXT, zh_name TEXT, icon_id INTEGER
             )
         """)
         await db.commit()
 
 
-async def fetch_valid_type_ids(client):
-    """获取所有有效的type_id并过滤无market_group_id的条目"""
-    url = f"{API_BASE_URL}/universe/types"
-    data = await client.fetch(url)
-    return sorted(tid for tid in data if tid >= START_TYPE_ID)
+# ─── 写入 item 表 ───
 
 
-async def initialize_type_ids(client):
-    """初始化有效type_id到数据库"""
+def _build_group_lookup(data: dict) -> dict[int, tuple[str, str]]:
+    result: dict[int, tuple[str, str]] = {}
+    for sid, item in data.items():
+        gid = int(sid) if not isinstance(sid, int) else sid
+        name = item.get("name", {}) or {}
+        en = (name.get("en") or "") if isinstance(name, dict) else ""
+        zh = (name.get("zh") or "") if isinstance(name, dict) else ""
+        result[gid] = (en, zh)
+    return result
+
+
+async def write_items():
+    """从缓存的 typeIDs.yaml + groupIDs.yaml + marketGroups.yaml 批量写入 item 表"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        cursor = await db.execute("SELECT type_id FROM item")
-        existing_ids = {row[0] async for row in cursor}
-
-        type_ids = await fetch_valid_type_ids(client)
-        new_ids = [(tid,) for tid in type_ids if tid not in existing_ids]
-
-        if new_ids:
-            await db.executemany("INSERT OR IGNORE INTO item (type_id) VALUES (?)", new_ids)
-            await db.commit()
-            print(f"已初始化 {len(new_ids)} 个新type_id")
-        else:
-            log.info("无新的 type_id 需要初始化")
-
-
-async def get_group_info(client, group_id):
-    """获取组信息带缓存"""
-    if not group_id:
-        return ("", "", 0)
-
-    if group_id in group_cache:
-        return group_cache[group_id]
-
-    url = f"{API_BASE_URL}/universe/groups/{group_id}"
-    data = await client.fetch(url)
-    if data:
-        name_data = data.get("name", {})
-        en = name_data.get("en", "") if isinstance(name_data, dict) else str(name_data)
-        zh = name_data.get("zh", "") if isinstance(name_data, dict) else ""
-        iconID = data.get("iconID", 0)
-        group_cache[group_id] = (en, zh, iconID)
-        return (en, zh, iconID)
-    return ("", "", 0)
-
-
-async def get_market_group_info(client, market_group_id):
-    """获取市场组信息带缓存"""
-    if not market_group_id:
-        return ("", "", 0)
-
-    if market_group_id in market_group_cache:
-        return market_group_cache[market_group_id]
-
-    url = f"{API_BASE_URL}/markets/groups/{market_group_id}"
-    data = await client.fetch(url)
-    if data:
-        name_data = data.get("nameID", {})
-        en = name_data.get("en", "") if isinstance(name_data, dict) else str(name_data)
-        zh = name_data.get("zh", "") if isinstance(name_data, dict) else ""
-        iconID = data.get("iconID", 0)
-        market_group_cache[market_group_id] = (en, zh, iconID)
-        return (en, zh, iconID)
-    return ("", "", 0)
-
-
-async def process_type(client, type_id):
-    """处理单个type_id"""
-    url = f"{API_BASE_URL}/universe/types/{type_id}"
-    data = await client.fetch(url)
-    if not data:
-        return None
-
-    # 不再过滤 market_group_id，收录所有物品（含PLEX等无市场分类但有交易的物品）
-    market_group_id = data.get("marketGroupID")
-
-    # 提取其他字段
-    group_id = data.get("groupID")
-    volume = data.get("volume", 0.0)
-    iconID = data.get("iconID", 0)
-
-    name_data = data.get("name", {})
-    en_name = name_data.get("en", "") if isinstance(name_data, dict) else str(name_data)
-    zh_name = name_data.get("zh", "") if isinstance(name_data, dict) else ""
-
-    # 并行获取组信息
-    group_task = get_group_info(client, group_id)
-    market_task = get_market_group_info(client, market_group_id)
-    en_group, zh_group, _ = await group_task
-    en_market, zh_market, market_icon = await market_task
-
-    return (
-        en_name,
-        zh_name,
-        group_id,
-        en_group,
-        zh_group,
-        market_group_id,
-        en_market,
-        zh_market,
-        volume,
-        iconID or market_icon,
-        type_id,
-    )
-
-
-class DatabaseWriter:
-    """异步批量写入器"""
-
-    def __init__(self):
-        self.buffer = []
-        self.conn = None
-
-    async def __aenter__(self):
-        self.conn = await aiosqlite.connect(DATABASE_PATH)
-        return self
-
-    async def __aexit__(self, *exc):
-        await self.commit()
-        await self.conn.close()
-
-    async def add_data(self, data):
-        """添加数据到缓冲区"""
-        self.buffer.append(data)
-        if len(self.buffer) >= BATCH_SIZE:
-            await self.commit()
-
-    async def commit(self):
-        """提交缓冲区数据"""
-        if not self.buffer:
+        c = await db.execute("SELECT COUNT(*) FROM item WHERE en_name IS NOT NULL AND en_name != ''")
+        named = (await c.fetchone())[0]
+        if named >= 50000:
+            log.info(f"所有物品信息已就绪 ({named} 条)，跳过")
             return
 
-        query = """
-            UPDATE item SET
-                en_name=?, zh_name=?,
-                group_id=?, en_group_name=?, zh_group_name=?,
-                market_group_id=?, en_market_group_name=?, zh_market_group_name=?,
-                volume=?, iconID=?
-            WHERE type_id=?
-        """
-        await self.conn.executemany(query, self.buffer)
-        await self.conn.commit()
-        self.buffer.clear()
+    log.info("加载 SDE YAML 数据...")
+    type_ids = load_yaml("typeIDs.yaml")
+    groups = load_yaml("groupIDs.yaml")
+    mkt_groups = load_yaml("marketGroups.yaml")
 
-    async def delete_data(self, type_id):
-        """删除无效条目"""
-        await self.conn.execute("DELETE FROM item WHERE type_id=?", (type_id,))
-        await self.conn.commit()
+    group_names = _build_group_lookup(groups)
+    mg_names = _build_group_lookup(mkt_groups)
 
+    items = []
+    for tid_str, tdata in type_ids.items():
+        tid = int(tid_str) if not isinstance(tid_str, int) else tid_str
+        if tid < START_TYPE_ID:
+            continue
 
-# ─── 市场分类树（market_tree） ───
+        name_data = tdata.get("name", {}) or {}
+        en_name = (name_data.get("en") or "") if isinstance(name_data, dict) else ""
+        zh_name = (name_data.get("zh") or "") if isinstance(name_data, dict) else ""
+        group_id = tdata.get("groupID")
+        volume = tdata.get("volume", 0.0)
+        market_group_id = tdata.get("marketGroupID")
 
+        en_group, zh_group = group_names.get(group_id, ("", ""))
+        en_mkt, zh_mkt = mg_names.get(market_group_id, ("", ""))
+        icon_id = (tdata.get("iconID") or 0) or (mg_names.get(market_group_id) and mkt_groups.get(str(market_group_id), {}).get("iconID", 0) or 0)
 
-async def ensure_market_tree(client):
-    """确保 market_tree 表已填充（仅当为空时执行）"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM market_tree")
-        count = (await cursor.fetchone())[0]
-        if count > 0:
-            log.info(f"market_tree 已有 {count} 条记录，跳过")
-            return
+        items.append((
+            en_name, zh_name, group_id, en_group, zh_group,
+            market_group_id, en_mkt, zh_mkt, volume, icon_id,
+            tid,
+        ))
 
-    log.info("正在拉取市场分类树 (market_tree)...")
-    # 获取所有 market_group_id 列表
-    ids_url = f"{API_BASE_URL}/markets/groups"
-    all_ids = await client.fetch(ids_url)
-    if not all_ids:
-        log.info("获取市场分类列表失败")
+    if not items:
+        log.info("没有需要写入的物品数据")
         return
 
-    log.info(f"共 {len(all_ids)} 个市场分类，开始拉取详情...")
-    # 并发拉取每个组的详情
-    semaphore = asyncio.Semaphore(CONCURRENCY)
+    log.info(f"共 {len(items)} 个物品，写入数据库...")
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        for i in tqdm(range(0, len(items), BATCH_SIZE), desc="物品"):
+            batch = items[i:i + BATCH_SIZE]
+            await db.executemany(
+                """INSERT OR REPLACE INTO item
+                   (en_name, zh_name, group_id, en_group_name, zh_group_name,
+                    market_group_id, en_market_group_name, zh_market_group_name,
+                    volume, iconID, type_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                batch,
+            )
+        await db.commit()
+    log.info("物品数据写入完成")
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    async def fetch_group_detail(gid):
-        async with semaphore:
-            url = f"{API_BASE_URL}/markets/groups/{gid}"
-            return await client.fetch(url)
 
-    async def fetch_group_with_retry(gid):
-        try:
-            return await fetch_group_detail(gid)
-        except Exception as e:
-            log.error(f"获取市场分类 {gid} 失败: {e}")
-            return None
+# ─── 写入 market_tree 表 ───
 
-    tasks = [fetch_group_with_retry(gid) for gid in all_ids]
-    results = await asyncio.gather(*tasks)
 
-    # 写入数据库
+async def write_market_tree():
+    """从 marketGroups.yaml 写入 market_tree 表"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        c = await db.execute("SELECT COUNT(*) FROM market_tree")
+        if (await c.fetchone())[0] > 500:
+            log.info("market_tree 已就绪，跳过")
+            return
+
+    data = load_yaml("marketGroups.yaml")
+    if not data:
+        return
+
     rows = []
-    for data in results:
-        if data is None:
-            continue
-        gid = data.get("marketGroupID")
-        parent = data.get("parentGroupID")  # 根节点没有此字段
-        name_data = data.get("name", {})
-        en = name_data.get("en", "") if isinstance(name_data, dict) else ""
-        zh = name_data.get("zh", "") if isinstance(name_data, dict) else ""
-        icon = data.get("iconID", 0)
-        rows.append((gid, parent, en, zh, icon))
+    for sid, item in data.items():
+        mgid = int(sid) if not isinstance(sid, int) else sid
+        name_data = item.get("nameID", item.get("name", {})) or {}
+        en = (name_data.get("en") or "") if isinstance(name_data, dict) else ""
+        zh = (name_data.get("zh") or "") if isinstance(name_data, dict) else ""
+        rows.append((mgid, item.get("parentGroupID"), en, zh, item.get("iconID", 0)))
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute("DELETE FROM market_tree")  # 清空重写
+        await db.execute("DELETE FROM market_tree")
         await db.executemany(
-            "INSERT INTO market_tree"
-            " (market_group_id, parent_group_id, en_name, zh_name, icon_id)"
-            " VALUES (?, ?, ?, ?, ?)",
-            rows,
+            "INSERT INTO market_tree VALUES (?, ?, ?, ?, ?)", rows,
         )
         await db.commit()
+    log.info(f"market_tree 写入完成，共 {len(rows)} 条")
 
-    log.info(f"market_tree 写入完成，共 {len(rows)} 条记录")
 
-
-async def worker(client, queue, writer, pbar):
-    """工作协程"""
-    while True:
-        type_id = await queue.get()
-        try:
-            result = await process_type(client, type_id)
-            if result:
-                await writer.add_data(result)
-            else:
-                await writer.delete_data(type_id)
-        except Exception as e:
-            log.exception(f"处理type_id {type_id} 失败: {e}")
-        finally:
-            queue.task_done()
-            pbar.update(1)
+# ─── 主入口 ───
 
 
 async def main():
+    """主流程：检查数据状态 → 如需更新则下载 SDE zip → 解析 YAML → 批量写入"""
     await initialize_database()
 
-    async with APIClient(concurrency=CONCURRENCY) as client, DatabaseWriter() as writer:
-        # 拉取市场分类树（首次）
-        await ensure_market_tree(client)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        c1 = await db.execute("SELECT COUNT(*) FROM item WHERE en_name IS NOT NULL AND en_name != ''")
+        named = (await c1.fetchone())[0]
+        c2 = await db.execute("SELECT COUNT(*) FROM market_tree")
+        mt_cnt = (await c2.fetchone())[0]
 
-        await initialize_type_ids(client)
+    if named >= 50000 and mt_cnt > 500:
+        log.info(f"所有数据已就绪（item={named}, market_tree={mt_cnt}），跳过")
+        return
 
-        queue = asyncio.Queue()
-
-        # 获取待处理type_id
-        async with aiosqlite.connect(DATABASE_PATH) as db:
-            cursor = await db.execute(
-                """
-                SELECT type_id FROM item
-                WHERE type_id >= ?
-                AND (en_name IS NULL OR market_group_id IS NULL)
-            """,
-                (START_TYPE_ID,),
-            )
-            type_ids = [row[0] async for row in cursor]
-
-        total = len(type_ids)
-        pbar = tqdm(total=total, desc="数据抓取进度", unit="item")
-
-        for tid in type_ids:
-            await queue.put(tid)
-
-        # 启动工作协程
-        workers = [asyncio.create_task(worker(client, queue, writer, pbar)) for _ in range(CONCURRENCY)]
-
-        await queue.join()
-        pbar.close()
-        # 清理工作协程
-        for task in workers:
-            task.cancel()
-        await asyncio.gather(*workers, return_exceptions=True)
+    await ensure_sde_cache()
+    if named < 50000:
+        await write_items()
+    if mt_cnt <= 500:
+        await write_market_tree()
+    log.info("物品数据初始化完成")
 
 
-if __name__ == "__main__":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())  # type: ignore[attr-defined]
+# ─── 蓝图名称补拉 ───
 
 
 async def fill_missing_blueprint_names():
-    """补充 item 表中缺失的 T2/T3 蓝图名称（从 SDE API 拉取）"""
+    """补充 item 表中缺失的蓝图名称
+
+    优先从缓存的 typeIDs.yaml 补拉，缓存不可用时降级到 SDE API。
+    """
     import aiosqlite as _aiosqlite
 
-    # 收集所有 blueprint_type_id
     async with _aiosqlite.connect(DATABASE_PATH) as db:
-        # 从 blueprint.db 获取所有 blueprint_type_id
         from core.paths import blueprint_db_path
 
         bp_db = blueprint_db_path()
         await db.execute(f"ATTACH DATABASE '{bp_db.replace(chr(92), '/')}' AS bp")
-        cursor = await db.execute("SELECT DISTINCT blueprint_type_id FROM bp.blueprint_activities")
-        all_bp_ids = [row[0] async for row in cursor]
+        c = await db.execute("SELECT DISTINCT blueprint_type_id FROM bp.blueprint_activities")
+        all_bp_ids = [r[0] async for r in c]
 
-        # 找出 item 表中缺名称的
-        placeholders = ",".join("?" * len(all_bp_ids))
-        cursor = await db.execute(
-            f"SELECT type_id FROM item WHERE type_id IN ({placeholders}) AND (zh_name IS NULL OR zh_name = '')",
+        ph = ",".join("?" * len(all_bp_ids))
+        c = await db.execute(
+            f"SELECT type_id FROM item WHERE type_id IN ({ph}) AND (zh_name IS NULL OR zh_name = '')",
             all_bp_ids,
         )
-        missing = [row[0] async for row in cursor]
+        missing = [r[0] async for r in c]
 
     if not missing:
         log.info("所有蓝图名称已完整，无需补拉")
         return
 
-    log.info(f"发现 {len(missing)} 个蓝图缺少名称，开始补拉...")
+    log.info(f"发现 {len(missing)} 个蓝图缺少名称，正在补拉...")
 
-    async with APIClient() as client:
+    type_ids_data = load_yaml("typeIDs.yaml")
+    if type_ids_data:
         batch = []
         for i, tid in enumerate(missing):
-            try:
-                url = f"{API_BASE_URL}/universe/types/{tid}"
-                data = await client.fetch(url)
-                if data:
-                    name_data = data.get("name", {})
-                    en = name_data.get("en", "") if isinstance(name_data, dict) else str(name_data)
-                    zh = name_data.get("zh", "") if isinstance(name_data, dict) else ""
-                    if en or zh:
-                        batch.append((en, zh, tid))
-            except Exception:
-                pass
-
+            td = type_ids_data.get(str(tid))
+            if not td:
+                continue
+            nd = td.get("name", {}) or {}
+            en = (nd.get("en") or "") if isinstance(nd, dict) else ""
+            zh = (nd.get("zh") or "") if isinstance(nd, dict) else ""
+            if en or zh:
+                batch.append((en, zh, tid))
             if len(batch) >= 50 or (i == len(missing) - 1 and batch):
                 async with _aiosqlite.connect(DATABASE_PATH) as db:
                     await db.executemany("UPDATE item SET en_name=?, zh_name=? WHERE type_id=?", batch)
                     await db.commit()
                 log.info(f"  已写入 {len(batch)} 条 ({i + 1}/{len(missing)})")
                 batch.clear()
+        log.info(f"补拉完成，共修复 {len(missing)} 个蓝图名称")
+        return
 
+    # 降级到 SDE API
+    import aiohttp
+
+    log.info("本地缓存不可用，降级到 SDE API 补拉...")
+    API_BASE = "https://sde.jita.space/latest"
+    async with aiohttp.ClientSession() as session:
+        batch = []
+        for i, tid in enumerate(missing):
+            try:
+                url = f"{API_BASE}/universe/types/{tid}"
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        nd = data.get("name", {})
+                        en = nd.get("en", "") if isinstance(nd, dict) else ""
+                        zh = nd.get("zh", "") if isinstance(nd, dict) else ""
+                        if en or zh:
+                            batch.append((en, zh, tid))
+            except Exception:
+                pass
+            if len(batch) >= 50 or (i == len(missing) - 1 and batch):
+                async with _aiosqlite.connect(DATABASE_PATH) as db:
+                    await db.executemany("UPDATE item SET en_name=?, zh_name=? WHERE type_id=?", batch)
+                    await db.commit()
+                log.info(f"  已写入 {len(batch)} 条 ({i + 1}/{len(missing)})")
+                batch.clear()
     log.info(f"补拉完成，共修复 {len(missing)} 个蓝图名称")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
