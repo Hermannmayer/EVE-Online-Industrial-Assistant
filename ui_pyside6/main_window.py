@@ -921,7 +921,10 @@ class MainWindow(QMainWindow):
         elif not has_items:
             self._status_label.setText("⚠️ 首次使用？请打开 ⚙️ → 数据初始化")
         else:
-            self._status_label.setText(f"⚠️ {missing} 项数据未初始化，点击 ⚙️ → 数据初始化")
+            # 找出哪个检查失败，显示具体名称
+            failed = [k for k, v in status.items() if not v]
+            msg = "⚠️ 1 项未初始化" if len(failed) == 1 else f"⚠️ {missing} 项未初始化"
+            self._status_label.setText(f"{msg} ({', '.join(failed)})")
 
     def _rebuild_placeholder_pages(self):
         """检查哪些页面是 placeholder，重建为真实页面"""
