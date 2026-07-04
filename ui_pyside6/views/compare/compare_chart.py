@@ -5,10 +5,10 @@
 from PySide6.QtCore import QThread, Signal
 
 from core.container import get_container
-from services.scoring import cache_key as _ck
-from services.scoring import calc_manufacturing_score, calc_reaction_score, calc_trade_score
-from services.scoring import get_cache as _cget
-from services.scoring import set_cache as _cset
+from services.scoring_service import cache_key as _ck
+from services.scoring_service import calc_manufacturing_score, calc_reaction_score, calc_trade_score
+from services.scoring_service import get_cache as _cget
+from services.scoring_service import set_cache as _cset
 from ui_pyside6.views.char_settings_view import get_character
 
 # ── 搜索 SQL（参数化） ──

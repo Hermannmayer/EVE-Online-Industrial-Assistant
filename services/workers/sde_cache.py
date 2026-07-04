@@ -3,11 +3,10 @@ SDE zip 缓存共享工具 — 下载/缓存/加载 SDE 的 YAML 数据文件
 
 被 getitems.py、geticon.py、getimplantdata.py、sde_loader.py 等模块共用。
 """
-import asyncio
 import io
+import json
 import os
 import zipfile
-from pathlib import Path
 
 import aiohttp
 import yaml
@@ -43,6 +42,9 @@ ZIP_LOOKUP = {
     "typeIDs.yaml": "types.yaml",
     "groupIDs.yaml": "groups.yaml",
 }
+
+# Universe 数据 JSON 缓存路径（避免每次从 ZIP 解析 50K+ YAML 文件）
+UNIVERSE_CACHE_PATH = os.path.join(CACHE_DIR, "universe_data.json")
 
 
 def cache_path(name: str) -> str:
@@ -115,6 +117,27 @@ async def ensure_universe_cache():
         log.warning("SDE 压缩包未缓存，无法处理 universe 数据")
         return [], [], [], []
 
+    # JSON 缓存快速路径：避免每次从 ZIP 解析 50K+ YAML 文件
+    if os.path.exists(UNIVERSE_CACHE_PATH):
+        try:
+            with open(UNIVERSE_CACHE_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+            log.info(
+                f"Universe JSON 缓存已加载: "
+                f"{len(data.get('regions', []))} regions, "
+                f"{len(data.get('constellations', []))} constellations, "
+                f"{len(data.get('systems', []))} systems, "
+                f"{len(data.get('stargates', []))} stargates"
+            )
+            return (
+                data.get("regions", []),
+                data.get("constellations", []),
+                data.get("systems", []),
+                data.get("stargates", []),
+            )
+        except Exception as e:
+            log.warning(f"Universe JSON 缓存读取失败，重新解析: {e}")
+
     log.info("正在解析 universe/ 目录下的 YAML 文件...")
     regions: list[dict] = []
     constellations: list[dict] = []
@@ -180,6 +203,20 @@ async def ensure_universe_cache():
         f"{len(regions)} regions, {len(constellations)} constellations, "
         f"{len(systems)} systems, {len(stargates)} stargates"
     )
+
+    # 缓存为 JSON（下次启动秒级加载）
+    try:
+        with open(UNIVERSE_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump({
+                "regions": regions,
+                "constellations": constellations,
+                "systems": systems,
+                "stargates": stargates,
+            }, f, ensure_ascii=False)
+        log.info(f"Universe 数据已缓存至: {UNIVERSE_CACHE_PATH}")
+    except Exception as e:
+        log.warning(f"Universe JSON 缓存写入失败（不影响使用）: {e}")
+
     return regions, constellations, systems, stargates
 
 

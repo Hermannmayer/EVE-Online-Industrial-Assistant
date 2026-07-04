@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -243,23 +245,23 @@ class PlanTable(QWidget):
 
         smart_menu = menu.addMenu("智能调整")
         a = smart_menu.addAction("母项智能调整")
-        a.triggered.connect(lambda: self._phase3_placeholder("母项智能调整"))
+        a.triggered.connect(lambda r=row: self._smart_adjust_parent(r))
         a = smart_menu.addAction("子项智能调整")
-        a.triggered.connect(lambda: self._phase3_placeholder("子项智能调整"))
+        a.triggered.connect(lambda r=row: self._smart_adjust_children(r))
         a = smart_menu.addAction("子项大规模产线并行")
-        a.triggered.connect(lambda: self._phase3_placeholder("子项大规模产线并行"))
+        a.triggered.connect(lambda r=row: self._smart_parallel_children(r))
 
         a = menu.addAction("查看原本图的NPC卖家")
-        a.triggered.connect(lambda: self._phase3_placeholder("查看原本图的NPC卖家"))
+        a.triggered.connect(lambda r=row: self._show_npc_seller(r))
 
         view_menu = menu.addMenu("更多修改")
         a = view_menu.addAction("为设施设置所在星系")
-        a.triggered.connect(lambda: self._phase3_placeholder("为设施设置所在星系"))
+        a.triggered.connect(lambda r=row: self._set_facility_system(r))
         a = view_menu.addAction("为设施所在星系设置成本系数")
-        a.triggered.connect(lambda: self._phase3_placeholder("为设施所在星系设置成本系数"))
+        a.triggered.connect(lambda r=row: self._set_facility_cost_index(r))
 
         a = menu.addAction("产线启动小助手")
-        a.triggered.connect(lambda: self._phase3_placeholder("产线启动小助手"))
+        a.triggered.connect(lambda r=row: self._show_production_wizard(r))
 
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
@@ -374,6 +376,342 @@ class PlanTable(QWidget):
 
     def _phase3_placeholder(self, feature_name: str):
         QMessageBox.information(self, "功能开发中", f"「{feature_name}」功能将在阶段三实现。")
+
+    # ── Phase 3: 智能调整 ─────────────────────────────────────
+
+    def _smart_adjust_parent(self, row: int) -> None:
+        """母项智能调整：设定目标产量 → 自动计算 runs"""
+        plan = self._model.get_plan(row)
+        if not plan:
+            return
+
+        blueprint_type_id = plan.get("blueprint_type_id")
+        if not blueprint_type_id:
+            QMessageBox.warning(self, "提示", "该计划无蓝图信息")
+            return
+
+        current_runs = int(plan.get("runs", 1))
+        current_parallels = max(int(plan.get("parallels", 1)), 1)
+
+        # 查蓝图单流程产出
+        conn = get_container().db.direct_connect("ref")
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT quantity FROM blueprint_products WHERE blueprint_type_id=? AND activity='manufacturing'",
+                (blueprint_type_id,),
+            )
+            row_data = cur.fetchone()
+            output_per_run = row_data[0] if row_data else 1
+        finally:
+            conn.close()
+
+        current_output = current_runs * output_per_run * current_parallels
+
+        target, ok = QInputDialog.getInt(
+            self, "母项智能调整",
+            f"当前 {current_runs} 流程 × {current_parallels} 并行 = {current_output} 件\n"
+            f"每流程产出: {output_per_run} 件\n\n目标产量:",
+            current_output, 1, 99999,
+        )
+        if not ok:
+            return
+
+        # 计算新 runs = ceil(target / (output_per_run * parallels))
+        new_runs = math.ceil(target / (output_per_run * current_parallels))
+        if new_runs == current_runs:
+            QMessageBox.information(self, "提示", f"流程数无需调整 ({current_runs})")
+            return
+
+        # 更新
+        plan["runs"] = new_runs
+        self._model.layoutChanged.emit()
+        if plan.get("id"):
+            conn = get_container().db.direct_connect("user")
+            try:
+                conn.execute("UPDATE production_plans SET runs=? WHERE id=?", (new_runs, plan["id"]))
+                conn.commit()
+            finally:
+                conn.close()
+        self.plan_updated.emit()
+
+    def _smart_adjust_children(self, row: int) -> None:
+        """子项智能调整：根据母项 runs 自动同步子项的 runs/batch"""
+        plan = self._model.get_plan(row)
+        if not plan:
+            return
+
+        group_id = plan.get("group_id")
+        if not group_id:
+            QMessageBox.warning(self, "提示", "该计划不在组中，无子项可调整")
+            return
+
+        current_parent_runs = int(plan.get("runs", 1))
+        prod_name = plan.get("product_name", "") or plan.get("blueprint_name", str(plan.get("id", "")))
+
+        # 查找同 group_id 的子项（child_level > 0）
+        all_plans = self._model._plans if hasattr(self._model, "_plans") else []
+        children = [p for p in all_plans if p.get("group_id") == group_id and p.get("child_level", 0) > 0]
+
+        if not children:
+            QMessageBox.warning(self, "提示", "未找到该计划的子项")
+            return
+
+        # 询问新的母项流程数
+        target_parent_runs, ok = QInputDialog.getInt(
+            self, "子项智能调整",
+            f"母项「{prod_name}」当前流程数: {current_parent_runs}\n"
+            f"共 {len(children)} 个子项\n\n"
+            f"调整后母项流程数:",
+            current_parent_runs, 1, 99999,
+        )
+        if not ok or target_parent_runs == current_parent_runs:
+            return
+
+        ratio = target_parent_runs / current_parent_runs
+        changed = 0
+        conn = get_container().db.direct_connect("user")
+        try:
+            for child in children:
+                child_runs = int(child.get("runs", 1))
+                child_new = max(1, round(child_runs * ratio))
+                if child_new != child_runs:
+                    child["runs"] = child_new
+                    if child.get("id"):
+                        conn.execute("UPDATE production_plans SET runs=? WHERE id=?", (child_new, child["id"]))
+                        changed += 1
+            # 同步更新母项的 runs
+            plan["runs"] = target_parent_runs
+            if plan.get("id"):
+                conn.execute("UPDATE production_plans SET runs=? WHERE id=?", (target_parent_runs, plan["id"]))
+            conn.commit()
+        finally:
+            conn.close()
+
+        self._model.layoutChanged.emit()
+        self.plan_updated.emit()
+        QMessageBox.information(
+            self, "子项调整完成",
+            f"母项「{prod_name}」: {current_parent_runs} → {target_parent_runs}\n"
+            f"已同步调整 {changed}/{len(children)} 个子项"
+        )
+
+    def _smart_parallel_children(self, row: int) -> None:
+        """子项大规模产线并行：批量设置子项的并行数"""
+        plan = self._model.get_plan(row)
+        if not plan:
+            return
+
+        group_id = plan.get("group_id")
+        if not group_id:
+            QMessageBox.warning(self, "提示", "该计划不在组中，无子项可调整")
+            return
+
+        all_plans = self._model._plans if hasattr(self._model, "_plans") else []
+        children = [p for p in all_plans if p.get("group_id") == group_id and p.get("child_level", 0) > 0]
+
+        if not children:
+            QMessageBox.warning(self, "提示", "未找到该计划的子项")
+            return
+
+        # 显示当前子项列表及并行数
+        msg = "子项当前并行数:\n" + "\n".join(
+            f"  {p.get('product_name', p.get('blueprint_name', '?'))}: "
+            f"并行 {p.get('parallels', 1)}"
+            for p in children
+        )
+        new_parallels, ok = QInputDialog.getInt(
+            self, "子项大规模产线并行",
+            msg + "\n\n设置所有子项并行数:",
+            1, 1, 100,
+        )
+        if not ok:
+            return
+
+        changed = 0
+        conn = get_container().db.direct_connect("user")
+        try:
+            for child in children:
+                old = int(child.get("parallels", 1))
+                if old != new_parallels:
+                    child["parallels"] = new_parallels
+                    if child.get("id"):
+                        conn.execute(
+                            "UPDATE production_plans SET parallels=? WHERE id=?",
+                            (new_parallels, child["id"]),
+                        )
+                        changed += 1
+            conn.commit()
+        finally:
+            conn.close()
+
+        self._model.layoutChanged.emit()
+        self.plan_updated.emit()
+        QMessageBox.information(
+            self, "并行调整完成",
+            f"已设置 {changed}/{len(children)} 个子项的并行数为 {new_parallels}"
+        )
+
+    def _show_npc_seller(self, row: int) -> None:
+        """查看原本图 NPC 卖家"""
+        plan = self._model.get_plan(row)
+        if not plan:
+            return
+        bp_id = plan.get("blueprint_type_id")
+        if not bp_id:
+            QMessageBox.warning(self, "提示", "该计划无蓝图信息")
+            return
+        bp_name = plan.get("blueprint_name", "") or plan.get("product_name", str(bp_id))
+        from ui_pyside6.dialogs.npc_seller_dialog import NpcSellerDialog
+
+        dlg = NpcSellerDialog(bp_id, bp_name, self)
+        dlg.exec()
+
+    def _set_facility_system(self, row: int) -> None:
+        """为设施设置所在星系 — 星系搜索 + 自动带出成本系数"""
+        plan = self._model.get_plan(row)
+        if not plan:
+            return
+
+        # 检查 universe 数据是否就绪
+        conn = get_container().db.direct_connect("ref")
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM solar_system")
+            has_systems = cur.fetchone()[0] > 0
+        finally:
+            conn.close()
+
+        if not has_systems:
+            QMessageBox.warning(
+                self, "数据未就绪",
+                "星系数据尚未加载。请先运行「数据初始化」中的 SDE 扩展数据。"
+            )
+            return
+
+        current_facility = plan.get("facility", "") or ""
+        system_name, ok = QInputDialog.getText(
+            self, "设置设施星系",
+            f"当前设施: {current_facility}\n\n输入星系名称（支持部分匹配）:",
+            text=current_facility,
+        )
+        if not ok or not system_name.strip():
+            return
+
+        # 查找星系
+        conn = get_container().db.direct_connect("ref")
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT solar_system_id, solar_system_name, security FROM solar_system "
+                "WHERE solar_system_name LIKE ? LIMIT 10",
+                (f"%{system_name.strip()}%",),
+            )
+            matches = [dict(r) for r in cur.fetchall()]
+        finally:
+            conn.close()
+
+        if not matches:
+            QMessageBox.warning(self, "未找到星系", f"未找到匹配「{system_name}」的星系")
+            return
+
+        if len(matches) == 1:
+            selected = matches[0]
+        else:
+            # 多匹配时让用户选择
+            items = [f"{m['solar_system_name']} (安全等级 {m['security']:.1f})" for m in matches]
+            sel, ok = QInputDialog.getItem(self, "选择星系", "找到多个匹配:", items, 0, False)
+            if not ok:
+                return
+            idx = items.index(sel)
+            selected = matches[idx]
+
+        # 更新 plan
+        ss_name = selected["solar_system_name"]
+        ss_id = selected["solar_system_id"]
+        plan["facility"] = ss_name
+
+        # 自动带出成本系数
+        from services.scoring_service import get_system_cost_index
+
+        sci = get_system_cost_index(ss_id, "manufacturing")
+
+        # 持久化
+        if plan.get("id"):
+            conn = get_container().db.direct_connect("user")
+            try:
+                conn.execute(
+                    "UPDATE production_plans SET facility=? WHERE id=?",
+                    (ss_name, plan["id"]),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        self._model.layoutChanged.emit()
+        self.plan_updated.emit()
+        QMessageBox.information(
+            self, "设置完成",
+            f"设施星系: {ss_name}\n"
+            f"安全等级: {selected['security']:.1f}\n"
+            f"制造成本指数(SCI): {sci:.4f}\n\n"
+            f"可在「成本系数」中调整附加费率。"
+        )
+
+    def _set_facility_cost_index(self, row: int) -> None:
+        """为设施所在星系设置成本系数 — 覆盖 SCI 或添加附加费率"""
+        plan = self._model.get_plan(row)
+        if not plan:
+            return
+
+        facility = plan.get("facility", "") or "未设置"
+
+        # 从 DB 读取当前系数（如果有 system_id 可以从 plan 推断，但当前没有这个字段）
+        # 这里只设一个简单的附加费率 multiplier
+        current_mult = float(plan.get("cost_multiplier", 1.0)) if "cost_multiplier" in plan else 1.0
+
+        val, ok = QInputDialog.getDouble(
+            self, "设施成本系数",
+            f"设施: {facility}\n"
+            f"当前系数: {current_mult:.2f}x\n\n"
+            f"新系数 (1.0 = 标准 SCI, >1 = 附加费用):",
+            current_mult, 0.1, 10.0, 2,
+        )
+        if not ok:
+            return
+
+        # 持久化到 plan（扩展字段：facility_cost_mult）
+        if plan.get("id"):
+            conn = get_container().db.direct_connect("user")
+            try:
+                conn.execute(
+                    "UPDATE production_plans SET facility_cost_mult=? WHERE id=?",
+                    (val, plan["id"]),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        QMessageBox.information(self, "设置完成", f"设施成本系数已设为 {val:.2f}x")
+
+    def _show_production_wizard(self, row: int) -> None:
+        """产线启动小助手：选择计划 → 配置角色/设施 → 启动"""
+        plan = self._model.get_plan(row)
+        if not plan:
+            return
+
+        # 收集同 group 或关联计划
+        group_id = plan.get("group_id")
+        all_plans = self._model._plans if hasattr(self._model, "_plans") else []
+        if group_id:
+            related = [p for p in all_plans if p.get("group_id") == group_id]
+        else:
+            related = [plan]
+        from ui_pyside6.dialogs.production_wizard import ProductionWizard
+
+        dlg = ProductionWizard(related, self)
+        dlg.exec()
+        self.plan_updated.emit()
 
     # ── 主题 ─────────────────────────────────────────────────
 

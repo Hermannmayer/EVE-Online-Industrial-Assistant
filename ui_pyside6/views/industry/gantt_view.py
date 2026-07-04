@@ -119,4 +119,11 @@ class GanttView(QWidget):
         painter.end()
 
     def _on_theme_changed(self):
-        pass
+        """主题切换时刷新 QPainter 绘制颜色"""
+        self.GRID_COLOR = QColor(theme.BORDER)
+        self.BG_COLOR = QColor(theme.BG_SURFACE) if hasattr(theme, "BG_SURFACE") else QColor("#ffffff")
+        self._colors = [
+            theme.PRIMARY, theme.ACCENT_GREEN, theme.ACCENT_ORANGE,
+            theme.ACCENT_CYAN, theme.ACCENT_RED, theme.ACCENT_PURPLE,
+        ]
+        self.update()

@@ -31,8 +31,8 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.container import get_container
 from core.paths import data_dir
-from services.scoring import cache_key as _ck
-from services.scoring import get_cache as _cget
+from services.scoring_service import cache_key as _ck
+from services.scoring_service import get_cache as _cget
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 from ui_pyside6.views.all_items_view import JITA_RID, AModel, ItemsW, Proxy, SearchItemsW
 from ui_pyside6.views.compare_dialog import CompareDialog

@@ -31,6 +31,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QTableView,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -39,7 +42,8 @@ import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.paths import ICON_DIR
-from services.scoring import get_price
+from services.scoring_service import get_price
+from ui_pyside6.workers.refine_worker import RefineWorker
 
 ICON_SIZE = 32
 
@@ -567,24 +571,22 @@ class EstimatePage(QWidget):
 
         self._refine_btn = QPushButton("一键精炼")
         self._refine_btn.setEnabled(False)
-        self._refine_btn.setToolTip("即将支持")
+        self._refine_btn.setToolTip("估算表格中物品的精炼矿物价值")
         bar.addWidget(self._refine_btn)
 
         self._char_fac_tabs = QComboBox()
         self._char_fac_tabs.addItems(["人物", "设施"])
-        self._char_fac_tabs.setEnabled(False)
         bar.addWidget(QLabel("模式"))
         bar.addWidget(self._char_fac_tabs)
 
         self._skill_preset = QComboBox()
-        self._skill_preset.addItem("技能全5")
-        self._skill_preset.setEnabled(False)
+        self._skill_preset.addItems(["技能全5", "当前人物", "技能全0"])
+        self._skill_preset.setCurrentText("技能全5")
         bar.addWidget(QLabel("技能"))
         bar.addWidget(self._skill_preset)
 
         self._gas_rate = QLineEdit("0")
         self._gas_rate.setFixedWidth(50)
-        self._gas_rate.setEnabled(False)
         bar.addWidget(QLabel("气云解压率(%)"))
         bar.addWidget(self._gas_rate)
 
@@ -593,10 +595,12 @@ class EstimatePage(QWidget):
         bar.addWidget(self._refresh_btn)
 
         self._residual_chk = QCheckBox("残余也精炼掉")
-        self._residual_chk.setEnabled(False)
         bar.addWidget(self._residual_chk)
 
         bar.addStretch()
+
+        # 连接精炼按钮
+        self._refine_btn.clicked.connect(self._on_refine)
         return w
 
     def _build_table(self):
@@ -734,6 +738,8 @@ class EstimatePage(QWidget):
         self._model.set_discount(self._discount.value())
         self._rebuild_unit_prices()
         self._refresh_summary()
+        # 有数据时启用精炼按钮
+        self._refine_btn.setEnabled(len(rows) > 0)
 
     def _on_add_item(self):
         name = self._search_input.text().strip()
@@ -821,6 +827,152 @@ class EstimatePage(QWidget):
             self._model.dataChanged.emit(top_left, bottom_right)
         self._set_status("价格已刷新")
         self._refresh_summary()
+
+    def _on_refine(self):
+        """一键精炼：计算表格中物品的精炼产出和价值"""
+        rows = self._model.get_rows()
+        if not rows:
+            self._set_status("表格中没有数据")
+            return
+
+        # 构建技能字典
+        skill_preset = self._skill_preset.currentText()
+        if skill_preset == "技能全5":
+            skills = {"精炼学概论": 5, "精炼效率理论": 5}
+        elif skill_preset == "技能全0":
+            skills = {"精炼学概论": 0, "精炼效率理论": 0}
+        else:
+            # 当前人物 — 从 char_config 读取
+            char_config = getattr(self._mw, "_current_char", None)
+            if char_config and "skills" in char_config:
+                skills = char_config["skills"]
+            else:
+                skills = {"精炼学概论": 5, "精炼效率理论": 5}
+
+        is_player_facility = self._char_fac_tabs.currentText() == "设施"
+        residual = self._residual_chk.isChecked()
+        try:
+            gas_rate_val = float(self._gas_rate.text() or "0")
+        except ValueError:
+            gas_rate_val = 0.0
+
+        items = [{"type_id": r["type_id"], "qty": r.get("qty", 1), "name": r.get("name", "")} for r in rows]
+
+        # 过滤不可精炼的物品（无 type_materials 数据）
+        model_items = []
+        with get_container().db.connect("ref") as conn:
+            cur = conn.cursor()
+            for item in items:
+                cur.execute("SELECT COUNT(*) FROM type_materials WHERE type_id = ?", (item["type_id"],))
+                if cur.fetchone()[0] > 0:
+                    model_items.append(item)
+
+        if not model_items:
+            self._set_status("表格中没有可精炼的物品（矿石/冰矿/残骸）")
+            return
+
+        self._set_status(f"正在精炼 {len(model_items)} 项物品...")
+        self._refine_btn.setEnabled(False)
+
+        self._refine_worker = RefineWorker(
+            model_items,
+            skills=skills,
+            is_player_facility=is_player_facility,
+            price_hub=self._hub,
+            gas_rate=gas_rate_val,
+            residual=residual,
+            parent=self,
+        )
+        self._refine_worker.status_signal.connect(self._set_status)
+        self._refine_worker.result_signal.connect(self._on_refine_done)
+        self._refine_worker.start()
+
+    def _on_refine_done(self, result: dict):
+        """精炼计算完成 — 显示结果弹窗"""
+        self._refine_btn.setEnabled(True)
+        self._set_status(f"精炼完成: {result['item_count']} 项")
+        self._show_refine_result(result)
+
+    def _show_refine_result(self, result: dict):
+        """显示精炼结果弹窗 — 复用 CostBreakdownDialog 风格"""
+        from ui_pyside6.views.industry.cost_breakdown_dialog import _fmt_isk
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("精炼产出估算")
+        dlg.setMinimumSize(650, 450)
+        dlg.setObjectName("refine_result_dialog")
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        # 汇总信息
+        total_input = result["total_input_value"]
+        total_output = result["total_output_value"]
+        profit = result["total_profit"]
+        profit_color = theme.GREEN if profit >= 0 else theme.RED
+
+        summary = QLabel(
+            f"原材料价值: {_fmt_isk(total_input)}  |  "
+            f"精炼产物价值: {_fmt_isk(total_output)}  |  "
+            f"利润: <span style='color:{profit_color};font-weight:bold;'>{_fmt_isk(profit)}</span>"
+        )
+        summary.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 13px; padding: 6px;")
+        summary.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(summary)
+
+        # 逐个物品展示
+        tab = QTabWidget()
+        for item_data in result.get("items", []):
+            scroll = QWidget()
+            sv = QVBoxLayout(scroll)
+            sv.setSpacing(4)
+
+            input_info = QLabel(
+                f"{item_data['input_name']} x{item_data['input_qty']}  "
+                f"| 产率: {item_data['yield_rate'] * 100:.1f}%  "
+                f"| 精炼前: {_fmt_isk(item_data['input_value'])}  "
+                f"| 精炼后: {_fmt_isk(item_data['output_value'])}  "
+                f"| {'+' if item_data['profit'] >= 0 else ''}{_fmt_isk(item_data['profit'])}"
+            )
+            input_info.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+            sv.addWidget(input_info)
+
+            table = QTableWidget()
+            table.setColumnCount(4)
+            table.setHorizontalHeaderLabels(["矿物", "数量", "单价 (ISK)", "小计 (ISK)"])
+            table.setAlternatingRowColors(True)
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            table.verticalHeader().setVisible(False)
+            header = table.horizontalHeader()
+            header.setStretchLastSection(True)
+            for i in range(3):
+                header.resizeSection(i, 140)
+
+            outputs = item_data.get("output", [])
+            table.setRowCount(len(outputs))
+            for r, mat in enumerate(outputs):
+                table.setItem(r, 0, QTableWidgetItem(mat.get("name", "")))
+                table.setItem(r, 1, QTableWidgetItem(f"{mat['qty']:.1f}"))
+                table.setItem(r, 2, QTableWidgetItem(f"{mat['price']:,.2f}"))
+                table.setItem(r, 3, QTableWidgetItem(f"{mat['total']:,.2f}"))
+
+            sv.addWidget(table)
+            tab.addTab(scroll, item_data["input_name"][:20])
+
+        layout.addWidget(tab, stretch=1)
+
+        errs = result.get("errors", [])
+        if errs:
+            err_label = QLabel(f"警告: {len(errs)} 项计算失败")
+            err_label.setStyleSheet(f"color: {theme.ACCENT_RED}; font-size: 11px;")
+            layout.addWidget(err_label)
+
+        btn_bar = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btn_bar.rejected.connect(dlg.close)
+        layout.addWidget(btn_bar)
+
+        dlg.exec()
 
     def _on_context_menu(self, pos):
         idx = self._table.indexAt(pos)

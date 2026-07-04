@@ -21,7 +21,6 @@ SDE 扩展数据加载器 — 将 16 个新表写入 reference.db
 import asyncio
 
 import aiosqlite
-import yaml
 
 from core.logger import log
 from core.paths import reference_db_path
@@ -624,8 +623,7 @@ async def main():
         ("write_icon_ids", write_icon_ids),
         ("write_stations", write_stations),
         ("write_research", write_research),
-        # write_universe 暂不启用（需遍历 zip 内 50000 文件，较慢）
-        # 待物流路由功能实现时再开启
+        ("write_universe", write_universe),
     ]
 
     for name, func in functions:

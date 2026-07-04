@@ -2,7 +2,7 @@
 
 import pytest
 
-from services.scoring import ScoringCache
+from services.scoring_service import ScoringCache
 from services.scoring_service import ScoringService
 
 DEFAULT_SKILLS = {"工业理论": 5, "高级工业理论": 5, "经纪人关系学": 5, "高级经纪人关系学": 5, "会计学": 5}

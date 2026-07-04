@@ -99,7 +99,8 @@ PLAN_DB_SCHEMA = """CREATE TABLE IF NOT EXISTS production_plans (
     material_cost REAL DEFAULT 0,
     created_at TEXT,
     started_at TEXT,
-    completed_at TEXT
+    completed_at TEXT,
+    facility_cost_mult REAL DEFAULT 1.0
 );
 """
 
@@ -123,6 +124,8 @@ def init_plan_db():
             ]
             # 保留已有迁移
             new_cols += [("iskph", "REAL DEFAULT 0"), ("material_cost", "REAL DEFAULT 0")]
+            # 设施成本系数
+            new_cols += [("facility_cost_mult", "REAL DEFAULT 1.0")]
             # 制造时长（秒）
             try:
                 conn.execute("ALTER TABLE production_plans ADD COLUMN calculated_time REAL DEFAULT 0")
