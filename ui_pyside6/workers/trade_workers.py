@@ -3,7 +3,8 @@
 from PySide6.QtCore import QThread, Signal
 
 from core.constants import TRADE_HUB_IDS
-from services.scoring import calc_trade_score, get_price, get_volume
+from services.scoring_service import calc_trade_score, get_price, get_volume
+from ui_pyside6.workers.base_worker import BaseScoreWorker
 
 
 class CrossRegionPriceWorker(QThread):
@@ -38,10 +39,8 @@ class CrossRegionPriceWorker(QThread):
         self.finished.emit(results)
 
 
-class TradeScoreWorker(QThread):
-    """单项贸易评分"""
-
-    finished = Signal(dict)
+class TradeScoreWorker(BaseScoreWorker):
+    """单项贸易评分 — 继承 BaseScoreWorker"""
 
     def __init__(
         self,
@@ -53,30 +52,27 @@ class TradeScoreWorker(QThread):
         quantity: int = 1,
         parent=None,
     ):
-        super().__init__(parent)
-        self._tid = type_id
+        super().__init__(type_id, parent=parent)
         self._buy_hub = buy_hub
         self._sell_hub = sell_hub
         self._buy_price_type = buy_price_type
         self._sell_price_type = sell_price_type
         self._quantity = quantity
 
-    def run(self):
-        result = calc_trade_score(
-            type_id=self._tid,
+    def _compute(self) -> dict:
+        return calc_trade_score(
+            type_id=self._type_id,
             buy_hub=self._buy_hub,
             sell_hub=self._sell_hub,
             buy_price_type=self._buy_price_type,
             sell_price_type=self._sell_price_type,
+            char_config=self._char_config,
             quantity=self._quantity,
         )
-        self.finished.emit(result)
 
 
-class TransportWorker(QThread):
-    """跨区域运输利润计算"""
-
-    finished = Signal(dict)
+class TransportWorker(BaseScoreWorker):
+    """跨区域运输利润计算 — 继承 BaseScoreWorker"""
 
     def __init__(
         self,
@@ -91,8 +87,7 @@ class TransportWorker(QThread):
         char_config: dict | None = None,
         parent=None,
     ):
-        super().__init__(parent)
-        self._tid = type_id
+        super().__init__(type_id, char_config=char_config, parent=parent)
         self._buy_hub = buy_hub
         self._sell_hub = sell_hub
         self._buy_price_type = buy_price_type
@@ -100,13 +95,12 @@ class TransportWorker(QThread):
         self._quantity = quantity
         self._distance_jumps = distance_jumps
         self._use_public_freight = use_public_freight
-        self._char_config = char_config
 
-    def run(self):
+    def _compute(self) -> dict:
         from services.logistics import calc_transport_profit
 
-        result = calc_transport_profit(
-            type_id=self._tid,
+        return calc_transport_profit(
+            type_id=self._type_id,
             buy_hub=self._buy_hub,
             sell_hub=self._sell_hub,
             buy_price_type=self._buy_price_type,
@@ -116,4 +110,3 @@ class TransportWorker(QThread):
             use_public_freight=self._use_public_freight,
             char_config=self._char_config,
         )
-        self.finished.emit(result)

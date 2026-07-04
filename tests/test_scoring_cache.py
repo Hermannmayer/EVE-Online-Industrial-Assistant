@@ -1,6 +1,6 @@
 """测试评分缓存"""
 
-from services.scoring import cache_key, get_cache, invalidate_cache, set_cache
+from services.scoring_service import cache_key, get_cache, invalidate_cache, set_cache
 
 
 def test_cache_set_get():

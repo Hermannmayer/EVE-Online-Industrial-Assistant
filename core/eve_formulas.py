@@ -39,6 +39,18 @@ ADV_BROKER_DISCOUNT = 5  # 高级经纪人关系学每级 +5% 改单折扣
 RELIST_BASE_DISCOUNT = 50  # 0 级时改单折扣 50%
 
 # ════════════════════════════════════════════════════
+#  精炼 — 来源: https://wiki.eveuniversity.org/Reprocessing
+# ════════════════════════════════════════════════════
+REPROCESSING_STATION_BASE = 0.50  # NPC 空间站基础精炼率
+REPROCESSING_FACILITY_BONUS = 0.52  # 玩家设施基础精炼率（部署精炼阵列后更高）
+REPROCESSING_IMPLANT_MULT = 0.02  # 精炼植入体插件每级加成
+SKILL_REPROCESSING = 0.02  # 精炼学（Reprocessing）每级 +2%
+SKILL_REPROCESSING_EFFICIENCY = 0.02  # 精炼效率（Reprocessing Efficiency）每级 +2%
+SKILL_SPECIALIZATION = 0.02  # 矿石专精技能每级 +2%（如 Veldspar Processing）
+REPROCESSING_MAX_YIELD_NPC = 0.575  # NPC 站最高 57.5%
+REPROCESSING_MAX_YIELD_FACILITY = 0.85  # 玩家结构最高 ~85%
+
+# ════════════════════════════════════════════════════
 #  基础矿物 type_id → 中文名映射（type_id < 178，不在 item 表中）
 # ════════════════════════════════════════════════════
 _MINERAL_NAMES = {
@@ -77,6 +89,42 @@ def _hub_region_id(hub: str | None) -> int:
     if hub is None:
         return TRADE_HUB_IDS["Jita"]
     return TRADE_HUB_IDS.get(hub, TRADE_HUB_IDS["Jita"])
+
+
+# ════════════════════════════════════════════════════
+#  精炼产出率计算
+# ════════════════════════════════════════════════════
+
+
+def calc_refining_yield(
+    skills: dict | None = None,
+    *,
+    is_player_facility: bool = False,
+    station_base: float | None = None,
+    implant_bonus: float = 0.0,
+) -> float:
+    """计算精炼产出率 (0.0~1.0)
+
+    Args:
+        skills: 角色技能字典，含 "精炼学概论"、"精炼效率理论" 及矿石专精
+        is_player_facility: 是否在玩家设施（NPC站 vs Upwell结构）
+        station_base: 自定义设施基础率（覆盖默认）
+        implant_bonus: 植入体精炼插件加成 (0.0~1.0)
+
+    Returns:
+        精炼产出率（例：0.725 = 72.5%）
+    """
+    skills = skills or {}
+    base = station_base or (
+        REPROCESSING_FACILITY_BONUS if is_player_facility else REPROCESSING_STATION_BASE
+    )
+    bonus = (
+        skills.get("精炼学概论", 0) * SKILL_REPROCESSING
+        + skills.get("精炼效率理论", 0) * SKILL_REPROCESSING_EFFICIENCY
+        + implant_bonus
+    )
+    max_yield = REPROCESSING_MAX_YIELD_FACILITY if is_player_facility else REPROCESSING_MAX_YIELD_NPC
+    return min(base + bonus, max_yield)
 
 
 # ════════════════════════════════════════════════════

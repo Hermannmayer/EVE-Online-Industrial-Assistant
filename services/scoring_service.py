@@ -268,6 +268,103 @@ def get_system_cost_index(
 
 
 # ════════════════════════════════════════════════════════════════════
+#  精炼价值计算
+# ════════════════════════════════════════════════════════════════════
+
+
+def calc_refining_value(
+    type_id: int,
+    quantity: int = 1,
+    *,
+    skills: dict | None = None,
+    is_player_facility: bool = False,
+    price_hub: str = "Jita",
+    yield_override: float | None = None,
+    ore_skill: int = 0,
+) -> dict:
+    """计算物品的精炼产出及总价值
+
+    Args:
+        type_id: 矿石/冰矿/残骸 type_id
+        quantity: 数量
+        skills: 角色技能字典
+        is_player_facility: 是否玩家设施
+        price_hub: 贸易中心
+        yield_override: 指定产率（覆盖计算）
+        ore_skill: 矿石专精技能等级
+
+    Returns:
+        {
+            "yield_rate": float,        # 精炼产率 0~1
+            "output": [                  # 产出物列表
+                {"type_id": id, "name": str, "qty": float, "price": float, "total": float}
+            ],
+            "total_value": float,        # 产物总价值
+            "input_value": float,        # 原材料市场价
+            "profit": float,             # 精炼后增值（可为负）
+            "margin_pct": float,         # 利润率 %
+        }
+    """
+    from core.eve_formulas import calc_refining_yield, resolve_item_name
+
+    yield_rate = (
+        yield_override
+        if yield_override is not None
+        else calc_refining_yield(
+            skills,
+            is_player_facility=is_player_facility,
+        )
+    )
+    # 加入矿石专精
+    yield_rate += ore_skill * 0.02
+    yield_rate = min(yield_rate, 0.85)
+
+    # 从数据库查询 reprocessing_materials
+    with db.connect("ref") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT material_type_id, quantity FROM type_materials WHERE type_id = ?",
+            (type_id,),
+        )
+        materials = cur.fetchall()
+
+    if not materials:
+        return {"yield_rate": yield_rate, "output": [], "total_value": 0, "input_value": 0, "profit": 0, "margin_pct": 0}
+
+    output = []
+    total_value = 0.0
+    with db.connect("ref") as rconn:
+        cur = rconn.cursor()
+        for mat_id, mat_qty in materials:
+            qty = mat_qty * yield_rate * quantity
+            price = get_price(mat_id, "sell", price_hub) or 0.0
+            total = round(qty * price, 2)
+            name = resolve_item_name(cur, mat_id)
+            output.append({
+                "type_id": mat_id,
+                "name": name,
+                "qty": round(qty, 2),
+                "price": price,
+                "total": total,
+            })
+            total_value += total
+
+    input_price = get_price(type_id, "sell", price_hub) or 0.0
+    input_value = input_price * quantity
+    profit = total_value - input_value
+    margin_pct = (profit / input_value * 100) if input_value > 0 else 0.0
+
+    return {
+        "yield_rate": round(yield_rate, 4),
+        "output": output,
+        "total_value": round(total_value, 2),
+        "input_value": round(input_value, 2),
+        "profit": round(profit, 2),
+        "margin_pct": round(margin_pct, 2),
+    }
+
+
+# ════════════════════════════════════════════════════════════════════
 #  ScoringService — 可注入的评分服务类
 # ════════════════════════════════════════════════════════════════════
 

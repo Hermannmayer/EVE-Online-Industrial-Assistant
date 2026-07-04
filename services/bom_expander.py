@@ -20,7 +20,7 @@ from typing import Any
 
 from core.eve_formulas import ME_WASTE_BASE
 from services.database_manager import get_db
-from services.scoring import get_price
+from services.scoring_service import get_price
 
 db = get_db()
 

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
-from services.scoring import calc_manufacturing_score
+from services.scoring_service import calc_manufacturing_score
 
 _COLUMNS = ["材料", "基础量", "ME效率", "实际量", "单价", "小计"]
 

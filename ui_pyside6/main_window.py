@@ -130,6 +130,8 @@ class MainWindow(QMainWindow):
         saved_theme = theme.load_theme_preference()
         if saved_theme != "dark":
             theme.apply_theme(saved_theme)
+            # 手动刷新样式表，因为 _on_theme_changed 监听器尚未注册
+            self.setStyleSheet(theme.get_stylesheet())
 
         # ── 顶部工具栏 ──
         toolbar = QToolBar("主工具栏")
@@ -208,6 +210,8 @@ class MainWindow(QMainWindow):
         # ── 页面注册 ──
         self._pages = {}
         self._register_pages()
+        # 页面创建完成后刷新样式表，强制 Qt 重新 polish 所有子控件
+        self.setStyleSheet(theme.get_stylesheet())
 
         # ── 默认显示查询页 ──
         self._nav_tree.setCurrentItem(self._nav_items[0])
@@ -731,63 +735,9 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _show_sys_settings(self):
-        dlg = QDialog(self)
-        dlg.setWindowTitle("系统设置")
-        dlg.setMinimumWidth(360)
-        layout = QVBoxLayout(dlg)
-        layout.setSpacing(12)
+        from ui_pyside6.views.settings_view import SettingsDialog
 
-        # ── 主题切换 ──
-        theme_group = QGroupBox("外观")
-        tg = QVBoxLayout(theme_group)
-        current = theme.current_theme()
-        theme_btn = QPushButton("☀️ 切换到亮色模式" if current == "dark" else "🌙 切换到暗色模式")
-        theme_btn.clicked.connect(lambda: (self._toggle_theme(), dlg.accept()))
-        tg.addWidget(theme_btn)
-        layout.addWidget(theme_group)
-
-        # ── 价格自动更新 ──
-        price_group = QGroupBox("价格更新")
-        pg = QVBoxLayout(price_group)
-
-        auto_row = QHBoxLayout()
-        self._auto_update_cb = QCheckBox("启用自动更新")
-        self._auto_update_cb.setChecked(self._auto_update_enabled)
-        self._auto_update_cb.toggled.connect(self._on_auto_update_toggled)
-        auto_row.addWidget(self._auto_update_cb)
-        auto_row.addStretch()
-        pg.addLayout(auto_row)
-
-        interval_row = QHBoxLayout()
-        interval_row.addWidget(QLabel("更新间隔（分钟）:"))
-        self._interval_spin = QSpinBox()
-        self._interval_spin.setRange(0, 1440)
-        self._interval_spin.setValue(self._update_interval_minutes)
-        self._interval_spin.setSingleStep(5)
-        self._interval_spin.setSuffix(" 分钟")
-        self._interval_spin.setSpecialValueText("关闭")
-        interval_row.addWidget(self._interval_spin)
-        pg.addLayout(interval_row)
-
-        layout.addWidget(price_group)
-
-        # ── 工具 ──
-        tool_group = QGroupBox("工具")
-        tgl = QVBoxLayout(tool_group)
-        init_btn = QPushButton("📦 数据初始化")
-        init_btn.clicked.connect(lambda: (dlg.accept(), self._show_init_wizard()))
-        tgl.addWidget(init_btn)
-        about_btn = QPushButton("ℹ️ 关于")
-        about_btn.clicked.connect(lambda: (dlg.accept(), self._show_about()))
-        tgl.addWidget(about_btn)
-        layout.addWidget(tool_group)
-
-        # ── 按钮 ──
-        btn_bar = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
-        btn_bar.accepted.connect(dlg.accept)
-        btn_bar.accepted.connect(self._on_settings_saved)
-        layout.addWidget(btn_bar)
-
+        dlg = SettingsDialog(self, self)
         dlg.exec()
 
     def _on_auto_update_toggled(self, checked: bool):
@@ -975,7 +925,11 @@ class MainWindow(QMainWindow):
         self.content_stack.setCurrentIndex(old_idx)
 
     def _show_settings(self):
-        QMessageBox.information(self, "设置", "设置功能将在后续版本实现。\n\n可配置项：ESI 区域、字体大小、主题切换")
+        """导航菜单 → 设置：打开完整设置对话框"""
+        from ui_pyside6.views.settings_view import SettingsDialog
+
+        dlg = SettingsDialog(self, self)
+        dlg.exec()
 
     def _show_init_wizard(self):
         from ui_pyside6.views.init_wizard import InitWizard

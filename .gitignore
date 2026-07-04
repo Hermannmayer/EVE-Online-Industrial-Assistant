@@ -88,3 +88,6 @@ _test.txt
 # SDE cache YAML files
 data/*.yaml
 data/sde.zip
+
+# Claude Code local config
+.claude/
