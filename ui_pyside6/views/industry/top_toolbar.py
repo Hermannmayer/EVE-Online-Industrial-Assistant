@@ -22,7 +22,6 @@ class TopToolbar(QWidget):
     """水平工具栏：蓝图导入 | Hub/倍率 | 人物/筛选/操作"""
 
     plan_add_requested = Signal(str)
-    batch_add_requested = Signal()
     manufacturable_browser_requested = Signal()
     hub_changed = Signal(str)
     hangar_changed = Signal(str)
@@ -72,9 +71,6 @@ class TopToolbar(QWidget):
 
         self._btn_add = QPushButton("添加")
         root.addWidget(self._btn_add)
-
-        self._btn_from_list = QPushButton("+ 从蓝图列表")
-        root.addWidget(self._btn_from_list)
 
         root.addWidget(self._make_separator())
 
@@ -188,7 +184,6 @@ class TopToolbar(QWidget):
     def _connect_signals(self):
         self._btn_all_items.clicked.connect(self._on_all_items_clicked)
         self._btn_add.clicked.connect(self._on_add)
-        self._btn_from_list.clicked.connect(self._on_batch_clicked)
         self._hub_combo.currentTextChanged.connect(self._on_hub_changed)
         self._hangar_combo.currentTextChanged.connect(self.hangar_changed)
         self._sell_mult.valueChanged.connect(self.sell_mult_changed)
@@ -220,10 +215,6 @@ class TopToolbar(QWidget):
             self._blueprint_input.clear()
         else:
             QMessageBox.information(self, "提示", "请输入蓝图名称或粘贴蓝图信息")
-
-    def _on_batch_clicked(self):
-        """从蓝图列表批量导入"""
-        self.batch_add_requested.emit()
 
     def get_filter(self) -> str:
         return self._filter_combo.currentText()

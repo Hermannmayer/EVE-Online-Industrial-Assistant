@@ -496,26 +496,49 @@ class ScoringService:
 
             profit = revenue - total_cost
 
-            if profit <= 0:
-                ind_lvl = skills.get("工业理论", 5)
-                adv_lvl = skills.get("高级工业理论", 5)
-                skill_mod = (1 - INDUSTRY_SKILL_MULT * ind_lvl) * (1 - ADV_INDUSTRY_SKILL_MULT * adv_lvl)
-                te_modifier = 1 - bp_te * TE_MULT_PER_LEVEL
-                margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
-                result["margin_pct"] = round(margin_pct, 2)
-                result["profit_per_run"] = round(profit, 2)
-                result["cost_per_unit"] = round(total_cost / prod_qty, 2)
-                result["hours_per_run"] = round(base_time * skill_mod * te_modifier / 3600, 2)
-                result["revenue_per_unit"] = round(prod_price, 2)
-                return result
-
-            margin_pct = profit / total_cost * 100
+            # 技能和时间计算（两个分支共用）
             ind_lvl = skills.get("工业理论", 5)
             adv_lvl = skills.get("高级工业理论", 5)
             skill_mod = (1 - INDUSTRY_SKILL_MULT * ind_lvl) * (1 - ADV_INDUSTRY_SKILL_MULT * adv_lvl)
             te_modifier = 1 - bp_te * TE_MULT_PER_LEVEL
             actual_time = base_time * skill_mod * te_modifier
             hours_per_run = actual_time / 3600
+            margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
+
+            # 费用明细字典（始终返回，供 UI 展示各项费用）
+            breakdown = {
+                "bp_me": bp_me,
+                "bp_te": bp_te,
+                "waste_factor": round(waste_factor, 2),
+                "te_modifier": round(te_modifier, 2),
+                "isk_per_hour": 0.0,
+                "revenue": round(revenue, 2),
+                "material_cost": round(total_mat_cost, 2),
+                "broker_init": round(broker_init, 2),
+                "broker_relist": round(broker_relist, 2),
+                "sales_tax": round(sales_tax, 2),
+                "facility_fee": round(facility_fee, 2),
+                "install_base": round(install_base, 2),
+                "sci": round(sci, 4),
+                "structure_bonus": round(structure_bonus, 4),
+                "facility_tax_pct": round(facility_tax_pct, 2),
+                "broker_rate": round(broker_rate, 3),
+                "sales_tax_rate": round(sales_tax_rate, 3),
+                "relist_discount": round(relist_discount, 1),
+            }
+
+            if profit <= 0:
+                result.update(
+                    {
+                        "margin_pct": round(margin_pct, 2),
+                        "profit_per_run": round(profit, 2),
+                        "cost_per_unit": round(total_cost / prod_qty, 2),
+                        "hours_per_run": round(hours_per_run, 2),
+                        "revenue_per_unit": round(prod_price, 2),
+                        "breakdown": breakdown,
+                    }
+                )
+                return result
 
             volume = get_volume(type_id, "total", sell_hub, _db=self._db)
             if volume == 0:
@@ -528,6 +551,15 @@ class ScoringService:
             efficiency_score = min(isk_per_hour / 50_000_000 * 30, 30)
             total_score = profit_score + volume_score + efficiency_score
 
+            breakdown.update(
+                {
+                    "profit_score": round(profit_score, 1),
+                    "volume_score": round(volume_score, 1),
+                    "efficiency_score": round(efficiency_score, 1),
+                    "isk_per_hour": round(isk_per_hour, 2),
+                }
+            )
+
             result.update(
                 {
                     "score": round(total_score, 1),
@@ -538,29 +570,7 @@ class ScoringService:
                     "revenue_per_unit": round(prod_price, 2),
                     "hours_per_run": round(hours_per_run, 2),
                     "status": "",
-                    "breakdown": {
-                        "bp_me": bp_me,
-                        "bp_te": bp_te,
-                        "waste_factor": round(waste_factor, 2),
-                        "te_modifier": round(te_modifier, 2),
-                        "profit_score": round(profit_score, 1),
-                        "volume_score": round(volume_score, 1),
-                        "efficiency_score": round(efficiency_score, 1),
-                        "isk_per_hour": round(isk_per_hour, 2),
-                        "revenue": round(revenue, 2),
-                        "material_cost": round(total_mat_cost, 2),
-                        "broker_init": round(broker_init, 2),
-                        "broker_relist": round(broker_relist, 2),
-                        "sales_tax": round(sales_tax, 2),
-                        "facility_fee": round(facility_fee, 2),
-                        "install_base": round(install_base, 2),
-                        "sci": round(sci, 4),
-                        "structure_bonus": round(structure_bonus, 4),
-                        "facility_tax_pct": round(facility_tax_pct, 2),
-                        "broker_rate": round(broker_rate, 3),
-                        "sales_tax_rate": round(sales_tax_rate, 3),
-                        "relist_discount": round(relist_discount, 1),
-                    },
+                    "breakdown": breakdown,
                 }
             )
 

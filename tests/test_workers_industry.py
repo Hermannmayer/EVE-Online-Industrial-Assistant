@@ -69,7 +69,7 @@ class TestScoreWorker:
             runs=5,
         )
         assert isinstance(w, QThread)
-        assert w._tid == 2001
+        assert w._type_id == 2001
         assert w._bp_me == 10
         assert w._bp_te == 20
         assert w._mat_hub == "Jita"
@@ -102,7 +102,7 @@ class TestScoreWorker:
 
         mock_calc.assert_called_once_with(
             type_id=2001,
-            char_config={"skills": {"工业理论": 5, "高级工业理论": 5}},
+            char_config={"skills": {"工业理论": 5, "高级工业理论": 5}, "market": {}},
             bp_me=10,
             bp_te=20,
             mat_source_hub="Jita",

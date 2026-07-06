@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from services.scoring_service import calc_manufacturing_score
 
-_COLUMNS = ["材料", "基础量", "ME效率", "实际量", "单价", "小计"]
+_COLUMNS = ["材料", "基础量", "损耗率", "实际量", "单价", "小计"]
 
 
 class CostBreakdownDialog(QWidget):
@@ -68,9 +68,10 @@ class CostBreakdownDialog(QWidget):
         mat_hub = self._plan.get("mat_hub", "Jita")
         sell_hub = self._plan.get("sell_hub", "Jita")
         char_config = self._char_config or {}
+        fac_tax = char_config.get("market", {}).get(sell_hub.lower(), {}).get("facility_tax", 0.0)
         result = calc_manufacturing_score(
             type_id=type_id, char_config=char_config, bp_me=me, bp_te=te,
-            mat_source_hub=mat_hub, sell_hub=sell_hub, facility_tax_pct=0.0,
+            mat_source_hub=mat_hub, sell_hub=sell_hub, facility_tax_pct=fac_tax,
             price_type_mat="sell", price_type_prod="sell",
         )
         status = result.get("status", "")
@@ -84,7 +85,7 @@ class CostBreakdownDialog(QWidget):
         for row_idx, mat in enumerate(materials):
             items = [
                 mat.get("name", ""), str(mat.get("base_qty", 0)),
-                f"{mat.get('waste_factor', 1):.2f}", f"{mat.get('qty', 0):,.2f}",
+                _fmt_waste_pct(mat.get("waste_factor", 1)), f"{mat.get('qty', 0):,.2f}",
                 _fmt_isk(mat.get("unit_price", 0)), _fmt_isk(mat.get("subtotal", 0)),
             ]
             for col_idx, text in enumerate(items):
@@ -153,3 +154,9 @@ def _fmt_isk(value: float) -> str:
     if abs(value) >= 1_000:
         return f"{value / 1_000:.1f}K"
     return f"{value:.0f}"
+
+
+def _fmt_waste_pct(waste_factor: float) -> str:
+    """将浪费乘数转为损耗百分比显示，如 1.10 → \"10%\"，1.00 → \"0%\"。"""
+    pct = (waste_factor - 1) * 100
+    return f"{pct:.0f}%"

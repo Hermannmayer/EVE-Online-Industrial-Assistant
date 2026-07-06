@@ -90,7 +90,11 @@ pre-commit run --all-files # 运行所有 pre-commit 检查
 │   ├── database_manager.py  # 数据库管理
 │   ├── scoring.py           # 评分计算
 │   ├── scoring_service.py   # 评分服务类
-│   └── workers/             # 后台任务
+│   └── workers/             # 运行时后台任务（价格/工业/合同更新）
+├── tools/                   # 独立初始化工具（一次性操作）
+│   ├── init.py              # CLI: python tools/init.py
+│   ├── downloaders/         # 初始化下载器（items/blueprints/SDE/图标/植入体）
+│   └── requirements.txt     # 额外依赖（pyyaml, aiosqlite）
 ├── ui_pyside6/              # UI 层
 │   ├── main_window.py       # 主窗口
 │   ├── views/               # 视图组件
