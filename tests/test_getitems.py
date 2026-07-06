@@ -1,4 +1,4 @@
-"""物品数据拉取流程测试 — services/workers/getitems.py
+"""物品数据拉取流程测试 — tools/downloaders/getitems.py
 
 覆盖 5 个场景:
   - initialize_database 建表 & 幂等性
@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from services.workers.getitems import (
+from tools.downloaders.getitems import (
     initialize_database,
     write_items,
     write_market_tree,

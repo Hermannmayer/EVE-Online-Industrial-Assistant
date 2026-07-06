@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from services.workers.getimplantdata import (
+from tools.downloaders.getimplantdata import (
     fetch_attribute_name,
     fetch_type_dogma,
     get_industry_type_ids,

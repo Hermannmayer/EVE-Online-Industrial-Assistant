@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QPushButton,
     QScrollArea,
     QStackedWidget,
     QVBoxLayout,
@@ -189,12 +188,6 @@ class IndustryPage(QWidget):
         data_layout.setSpacing(0)
         self._plan_table_widget = PlanTable()
         data_layout.addWidget(self._plan_table_widget, 1)
-        bp_row = QHBoxLayout()
-        bp_row.setContentsMargins(12, 4, 12, 4)
-        self._btn_add_from_list = QPushButton("+ 从蓝图列表添加")
-        bp_row.addWidget(self._btn_add_from_list)
-        bp_row.addStretch(1)
-        data_layout.addLayout(bp_row)
         self._view_stack.addWidget(data_page)
 
         # 页1: 甘特图
@@ -236,7 +229,6 @@ class IndustryPage(QWidget):
         self._toolbar.hub_changed.connect(self.load_plans)
         self._toolbar.plan_add_requested.connect(self._on_plan_add)
         self._toolbar.manufacturable_browser_requested.connect(self._on_manufacturable_browser)
-        self._toolbar.batch_add_requested.connect(self._on_batch_add)
         self._toolbar.char_changed.connect(self.load_plans)
 
         self._toolbar.view_changed.connect(self._on_view_changed)
@@ -255,9 +247,6 @@ class IndustryPage(QWidget):
         self._action_buttons.materials_summary_requested.connect(self._on_materials_summary)
         self._action_buttons.output_summary_requested.connect(self._on_output_summary)
         self._action_buttons.char_usage_requested.connect(self._on_char_usage)
-
-        # 蓝图列表快捷按钮
-        self._btn_add_from_list.clicked.connect(self._on_batch_add)
 
     # ── load_plans ────────────────────────────────────────────
 
@@ -421,7 +410,12 @@ class IndustryPage(QWidget):
             return
 
         # 3) \u521d\u6b65\u8bc4\u5206\uff08ME=0/TE=0 \u9884\u89c8\u7528\uff09
+        from services.scoring_service import resolve_char_config
         from ui_pyside6.workers.industry_workers import ScoreWorker
+
+        char_name = self._toolbar.get_char_name()
+        # \u89e3\u6790\u89d2\u8272\u914d\u7f6e\uff08\u542b\u6280\u80fd\u3001\u5e02\u573a\u58f0\u671b\u7b49\uff09
+        resolved_config = resolve_char_config(char_name=char_name)
 
         self._score_worker = ScoreWorker(
             type_id=type_id,
@@ -430,6 +424,7 @@ class IndustryPage(QWidget):
             mat_hub="Jita",
             sell_hub="Jita",
             tax=0.0,
+            char_name=char_name,
         )
 
         def _on_score(result: dict):
@@ -439,15 +434,17 @@ class IndustryPage(QWidget):
             data = dlg.result_data()
             if not data:
                 return
-            # \u7528\u7528\u6237\u8bbe\u5b9a\u7684 ME/TE \u91cd\u65b0\u8ba1\u7b97\u5b9e\u9645\u5229\u6da6/\u8bc4\u5206
+            # \u7528\u89d2\u8272\u914d\u7f6e\u91cd\u7b97\u5b9e\u9645\u5229\u6da6/\u8bc4\u5206
+            actual_char_name = data.get("char", "").strip() or char_name
+            actual_config = resolve_char_config(char_name=actual_char_name)
             actual = calc_manufacturing_score(
                 type_id=type_id,
-                char_config={},
+                char_config=actual_config,
                 bp_me=data["me"],
                 bp_te=data["te"],
                 mat_source_hub="Jita",
                 sell_hub="Jita",
-                facility_tax_pct=0.0,
+                facility_tax_pct=actual_config.get("market", {}).get("jita", {}).get("facility_tax", 0.0),
             )
             iskph = actual.get("isk_per_hour", 0) or actual.get("breakdown", {}).get("isk_per_hour", 0)
             mat_cost = actual.get("breakdown", {}).get("material_cost", 0)
@@ -491,10 +488,6 @@ class IndustryPage(QWidget):
         """??????????"""
         dlg = ManufacturableItemsDialog()
         dlg.show()
-
-    def _on_batch_add(self):
-        """???????????????"""
-        self._on_manufacturable_browser()
 
     def _on_plan_detail(self, plan_id: int):
         """双击计划行 → 打开 PlanEditDialog"""
@@ -654,8 +647,3 @@ class IndustryPage(QWidget):
             f"color: {theme.TEXT_PRIMARY}; font-size: 16px; font-weight: bold; background: transparent;"
         )
         self._plan_count.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 13px; background: transparent;")
-        self._btn_add_from_list.setStyleSheet(
-            f"QPushButton {{ padding: 4px 12px; border: 1px solid {theme.TEXT_SECONDARY}; "
-            f"border-radius: 4px; background: transparent; color: {theme.TEXT_PRIMARY}; font-size: 12px; }}"
-            f"QPushButton:hover {{ color: {theme.TEXT_PRIMARY}; }}"
-        )

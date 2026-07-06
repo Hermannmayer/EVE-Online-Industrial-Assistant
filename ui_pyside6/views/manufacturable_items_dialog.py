@@ -1,5 +1,5 @@
 """
-??????? ? ????
+可制造物品浏览窗口 — 非模态弹窗
 """
 
 import json
@@ -41,30 +41,30 @@ from ui_pyside6.views.score_dialogs import MfgDlg, ScoreW
 DASH = chr(8212)
 
 BCOLS = [
-    ("??", 36, "i"),
-    ("???", 160, "z"),
+    ("图标", 36, "i"),
+    ("中文名", 160, "z"),
     ("English", 180, "e"),
-    ("??", 100, "bp"),
-    ("??", 100, "sp"),
-    ("??", 85, "ap"),
-    ("??", 70, "v"),
+    ("买价", 100, "bp"),
+    ("卖价", 100, "sp"),
+    ("均价", 85, "ap"),
+    ("体积", 70, "v"),
 ]
 
 MCOLS = [
-    ("??", 105, "mc"),
-    ("??", 105, "mr"),
-    ("??/?", 65, "mh"),
-    ("???", 100, "mdp"),
-    ("??", 110, "ms"),
-    ("??", 75, "_tag"),
-    ("???%", 70, "mm"),
+    ("成本", 105, "mc"),
+    ("收入", 105, "mr"),
+    ("产能/天", 65, "mh"),
+    ("日利润", 100, "mdp"),
+    ("状态", 110, "ms"),
+    ("收益", 75, "_tag"),
+    ("利润率%", 70, "mm"),
 ]
 
-MFG_CATEGORIES = ["?????", "????(T1)", "????(T2)", "??????", "??"]
+MFG_CATEGORIES = ["所有可制造", "蓝图制造(T1)", "发明制造(T2)", "势力蓝图制造", "反应"]
 
 
 class MfgTreeW(QThread):
-    """???????????????"""
+    """加载可制造物品市场分类树"""
 
     done = Signal(list)
 
@@ -93,17 +93,18 @@ class MfgTreeW(QThread):
 
 
 class ManufacturableItemsDialog(QDialog):
-    """?????????"""
+    """可制造物品对话框"""
 
     def __init__(self, parent=None):
         super().__init__()
-        self.setWindowTitle("?????")
+        self.setWindowTitle("可制造物品")
         self.resize(1100, 680)
         self.setMinimumSize(800, 400)
         self._data = []
         self._filt = []
         self._mfg = {"hub": "Jita", "char": "main", "tax": 0}
-        self._show_score = True
+        self._wp = None
+        self._sw = None
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
         self._debounce.timeout.connect(self._do_search)
@@ -119,9 +120,11 @@ class ManufacturableItemsDialog(QDialog):
 
     def closeEvent(self, ev):
         for t in (self._tw, self._iw, self._wp, self._sw):
-            if t and t.isRunning():
+            if t is None:
+                continue
+            if t.isRunning():
                 t.quit()
-                t.wait(2000)
+                t.wait(300)
         super().closeEvent(ev)
 
     def showEvent(self, ev):
@@ -132,7 +135,7 @@ class ManufacturableItemsDialog(QDialog):
         from ui_pyside6.views.export_helper import export_to_csv, export_to_excel, get_save_filename
 
         if self._md.rowCount() == 0:
-            self._st.setText("???????")
+            self._st.setText("没有数据可导出")
             return
         try:
             path = get_save_filename(self, "manufacturable_items.csv", "CSV (*.csv);;Excel (*.xlsx)")
@@ -158,9 +161,9 @@ class ManufacturableItemsDialog(QDialog):
                 export_to_excel(headers, rows, path)
             else:
                 export_to_csv(headers, rows, path)
-            self._st.setText(f"??? {len(rows)} ?")
+            self._st.setText(f"已导出 {len(rows)} 行")
         except Exception as e:
-            self._st.setText(f"????: {e}")
+            self._st.setText(f"导出失败: {e}")
 
     def _on_theme_changed(self):
         self._refresh_styles()
@@ -191,13 +194,13 @@ class ManufacturableItemsDialog(QDialog):
         bx = QHBoxLayout()
         bx.setContentsMargins(2, 0, 2, 0)
         bx.setSpacing(2)
-        self._score_btn = _bt("????", self._on_mfg)
+        self._score_btn = _bt("重新算分", self._on_mfg)
         bx.addWidget(self._score_btn)
-        bx.addWidget(_bt("??", self._smfg, 30))
+        bx.addWidget(_bt("设", self._smfg, 30))
         bx.addStretch()
-        bx.addWidget(_bt("????", self._on_compare, 60))
-        bx.addWidget(_bt("??", self._export_data, 50))
-        self._pin_btn = _bt("??", self._on_pin_toggled, 35)
+        bx.addWidget(_bt("批量对比", self._on_compare, 60))
+        bx.addWidget(_bt("导出", self._export_data, 50))
+        self._pin_btn = _bt("钉", self._on_pin_toggled, 35)
         bx.addWidget(self._pin_btn)
         lay.addLayout(bx)
 
@@ -205,16 +208,16 @@ class ManufacturableItemsDialog(QDialog):
         fx.setContentsMargins(2, 0, 2, 0)
         fx.setSpacing(2)
         self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("??????? ID...")
+        self._search_input.setPlaceholderText("搜索物品名称/ID...")
         self._search_input.setFixedHeight(22)
         self._search_input.textChanged.connect(self._on_search_text)
         fx.addWidget(self._search_input)
-        fx.addWidget(QLabel("??:"))
+        fx.addWidget(QLabel("类别:"))
         self._cat = QComboBox()
         self._cat.addItems(MFG_CATEGORIES)
         self._cat.currentIndexChanged.connect(self._apply)
         fx.addWidget(self._cat)
-        self._st = QLabel("??")
+        self._st = QLabel("就绪")
         fx.addStretch()
         fx.addWidget(self._st)
         lay.addLayout(fx)
@@ -287,7 +290,7 @@ class ManufacturableItemsDialog(QDialog):
     def _od(self, rows):
         self._data = rows
         hp = any(r.get("bp") or r.get("sp") for r in rows[:100])
-        self._st.setText(f"? {len(rows)} ?" if hp else "?????????????")
+        self._st.setText(f"共 {len(rows)} 条" if hp else "暂无价格，请先在主界面更新")
         self._apply()
 
     def _on_tree(self, item):
@@ -319,7 +322,7 @@ class ManufacturableItemsDialog(QDialog):
         if self._sw and self._sw.isRunning():
             self._sw.quit()
             self._sw.wait(1000)
-        self._st.setText("???...")
+        self._st.setText("搜索中...")
         self._sw = SearchItemsW(q, JITA_RID, self)
         self._sw.done.connect(self._on_search_done)
         self._sw.start()
@@ -377,7 +380,6 @@ class ManufacturableItemsDialog(QDialog):
                 with open(p, encoding="utf-8") as f:
                     s = json.load(f)
                 self._mfg.update(s.get("mfg", {}))
-                self._show_score = s.get("show_score", True)
             except Exception:
                 pass
 
@@ -385,36 +387,31 @@ class ManufacturableItemsDialog(QDialog):
         p = os.path.join(data_dir(), "mfg_browser_settings.json")
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, "w", encoding="utf-8") as f:
-            json.dump({"mfg": self._mfg, "show_score": self._show_score}, f, ensure_ascii=False, indent=2)
+            json.dump({"mfg": self._mfg}, f, ensure_ascii=False, indent=2)
 
     def _upd(self):
-        scroll_pos = None
-        vbar = self._tv.verticalScrollBar()
-        if vbar:
-            scroll_pos = vbar.value()
-        if self._show_score:
-            cols = list(BCOLS)
-            cols[3] = (f"???{self._mfg['hub']}?", 100, "bp")
-            cols[4] = (f"???{self._mfg['hub']}?", 100, "sp")
-            cols.extend(MCOLS)
-            self._md.set_cols(cols)
-            self._setw(cols)
-            if self._filt:
-                self._calc()
-            else:
-                self._st.setText("???")
-        else:
-            self._md.set_cols(BCOLS)
-            self._setw(BCOLS)
+        """始终显示 BCOLS + MCOLS 所有列，数据先显示再异步算分"""
+        cols = list(BCOLS)
+        cols[3] = (f"买价（{self._mfg['hub']}）", 100, "bp")
+        cols[4] = (f"卖价（{self._mfg['hub']}）", 100, "sp")
+        cols.extend(MCOLS)
+        self._md.set_cols(cols)
+        self._setw(cols)
+        if self._filt:
             self._md.set_rows(self._filt)
-            self._st.setText(f"? {len(self._filt)} ?" if self._filt else "???")
-            if scroll_pos and vbar:
-                QTimer.singleShot(0, lambda: vbar.setValue(min(scroll_pos, vbar.maximum())))
+            self._st.setText(f"共 {len(self._filt)} 条 | 计算评分中...")
+            self._calc()
+        else:
+            self._md.set_rows([])
+            self._st.setText("无数据")
 
     def _calc(self):
+        if self._wp and self._wp.isRunning():
+            self._wp.quit()
+            self._wp.wait(500)
         self._pr.setVisible(True)
         self._pr.setRange(0, len(self._filt))
-        self._st.setText("?????...")
+        self._st.setText("计算评分中...")
         self._wp = ScoreW(list(self._filt), True, self._mfg, self)
         self._wp.progress.connect(lambda c, t: self._pr.setValue(c))
         self._wp.done.connect(self._cd)
@@ -424,13 +421,18 @@ class ManufacturableItemsDialog(QDialog):
         self._filt = rows
         self._md.set_rows(rows)
         self._pr.setVisible(False)
-        self._st.setText(f"? {len(self._filt)} ? | ?????")
+        self._st.setText(f"共 {len(self._filt)} 条 | 评分已计算")
+        # 自适应宽度：内容自适应，最后一列填满剩余空间
+        hh = self._tv.horizontalHeader()
+        for i in range(self._md.columnCount()):
+            hh.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setStretchLastSection(True)
 
     def _on_mfg(self):
-        self._show_score = not self._show_score
-        self._score_btn.setText("????" if self._show_score else "????")
-        self._save_settings()
-        self._upd()
+        """重新计算评分"""
+        if self._filt:
+            self._st.setText("重新计算中...")
+            self._calc()
 
     def _smfg(self):
         dlg = MfgDlg(self._mfg, self)
@@ -438,16 +440,16 @@ class ManufacturableItemsDialog(QDialog):
             before_hub = self._mfg.get("hub", "Jita")
             self._mfg.update(dlg.get())
             self._save_settings()
-            if before_hub != self._mfg.get("hub", "Jita") and self._show_score:
+            if before_hub != self._mfg.get("hub", "Jita"):
                 self._upd()
 
     def _on_pin_toggled(self, checked):
         if self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint:
             self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
-            self._pin_btn.setText("??")
+            self._pin_btn.setText("钉")
         else:
             self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-            self._pin_btn.setText("??")
+            self._pin_btn.setText("已钉")
         self.show()
 
     def _clk(self, idx):
@@ -492,25 +494,24 @@ class ManufacturableItemsDialog(QDialog):
             f"QMenu::item:selected{{background:{theme.PRIMARY};color:{theme.TEXT_ON_PRIMARY};}}"
         )
 
-        if self._show_score:
-            k = _ck(tid, "mfg", self._mfg["hub"], self._mfg["char"])
-            res = _cget(k)
-            if res:
-                d = self._ds(res, True)
-                a_brkd = QAction("??????", self)
-                a_brkd.triggered.connect(lambda *a: QMessageBox.information(self, "??????", d))
-                m.addAction(a_brkd)
+        # 始终显示评分详情（该窗口专为制造评分设计）
+        k = _ck(tid, "mfg", self._mfg["hub"], self._mfg["char"])
+        res = _cget(k)
+        if res:
+            d = self._ds(res, True)
+            a_brkd = QAction("制造核算明细", self)
+            a_brkd.triggered.connect(lambda *a: QMessageBox.information(self, "制造核算明细", d))
+            m.addAction(a_brkd)
 
         m.addSeparator()
         _ctx_name = r.get("z", "") or r.get("e", "") or str(tid)
 
         def _do_add_plan():
             score = {}
-            if self._show_score:
-                k = _ck(tid, "mfg", self._mfg["hub"], self._mfg["char"])
-                cached = _cget(k)
-                if cached:
-                    score = cached
+            k = _ck(tid, "mfg", self._mfg["hub"], self._mfg["char"])
+            cached = _cget(k)
+            if cached:
+                score = cached
             from datetime import datetime
 
             dlg = AddPlanDialog(_ctx_name, score, self)
@@ -547,9 +548,9 @@ class ManufacturableItemsDialog(QDialog):
                         datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
                     ),
                 )
-            QMessageBox.information(self, "??", f"???????: {_ctx_name}")
+            QMessageBox.information(self, "提示", f"已加入制造列表: {_ctx_name}")
 
-        a_add = QAction("??????", self)
+        a_add = QAction("加入制造列表", self)
         a_add.triggered.connect(_do_add_plan)
         m.addAction(a_add)
         m.exec(self._tv.viewport().mapToGlobal(pos))
@@ -559,27 +560,27 @@ class ManufacturableItemsDialog(QDialog):
             b = r.get("breakdown", {})
             st = r.get("status", "")
             if st:
-                tips = {"no_blueprint": "???", "no_price": "?????", "no_mats": "??????"}
-                return f"??: {tips.get(st, st)}"
+                tips = {"no_blueprint": "此物品没有制造蓝图", "no_price": "查不到价格数据", "no_mats": "蓝图无材料数据"}
+                return f"状态: {tips.get(st, st)}"
             lines = [
-                f"??: {r.get('score', 0):.0f}",
-                f"????: {r.get('profit_per_run', 0):,.0f} ISK",
-                f"???: {r.get('margin_pct', 0):.1f}%",
-                f"?????: {r.get('isk_per_hour', 0):,.0f} ISK",
-                f"????: {b.get('material_cost', 0):,.0f} ISK",
+                f"评分: {r.get('score', 0):.0f}",
+                f"单批利润: {r.get('profit_per_run', 0):,.0f} ISK",
+                f"利润率: {r.get('margin_pct', 0):.1f}%",
+                f"每小时利润: {r.get('isk_per_hour', 0):,.0f} ISK",
+                f"材料成本: {b.get('material_cost', 0):,.0f} ISK",
             ]
             run_cost = b.get("run_cost", 0)
             if run_cost:
-                lines.append(f"????: {run_cost:,.0f} ISK")
+                lines.append(f"运行成本: {run_cost:,.0f} ISK")
             install = b.get("install_fee", 0)
             if install:
-                lines.append(f"???: {install:,.0f} ISK")
+                lines.append(f"安装费: {install:,.0f} ISK")
             broker = b.get("broker_fee", 0)
             if broker:
-                lines.append(f"???: {broker:,.0f} ISK")
+                lines.append(f"经纪人费: {broker:,.0f} ISK")
             sales_tax = b.get("sales_tax", 0)
             if sales_tax:
-                lines.append(f"???: {sales_tax:,.0f} ISK")
+                lines.append(f"销售税: {sales_tax:,.0f} ISK")
             _nl = chr(10)
             return _nl.join(lines)
         return ""

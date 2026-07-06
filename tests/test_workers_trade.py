@@ -97,7 +97,7 @@ class TestTradeScoreWorker:
             quantity=10,
         )
         assert isinstance(w, QThread)
-        assert w._tid == 2001
+        assert w._type_id == 2001
         assert w._buy_hub == "Jita"
         assert w._sell_hub == "Amarr"
         assert w._quantity == 10
@@ -128,6 +128,7 @@ class TestTradeScoreWorker:
             sell_hub="Amarr",
             buy_price_type="buy",
             sell_price_type="sell",
+            char_config={"skills": {"工业理论": 5, "高级工业理论": 5}, "market": {}},
             quantity=1,
         )
         assert received[0]["score"] == 50000.0
@@ -147,7 +148,7 @@ class TestTransportWorker:
             use_public_freight=True,
         )
         assert isinstance(w, QThread)
-        assert w._tid == 2001
+        assert w._type_id == 2001
         assert w._distance_jumps == 80
         assert w._quantity == 10
         assert w._use_public_freight is True

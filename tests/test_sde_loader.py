@@ -15,7 +15,7 @@ from unittest.mock import patch
 import aiosqlite
 import pytest
 
-from services.workers.sde_loader import (
+from tools.downloaders.sde_loader import (
     initialize_database,
     write_meta_groups,
 )

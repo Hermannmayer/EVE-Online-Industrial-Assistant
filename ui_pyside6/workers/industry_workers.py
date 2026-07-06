@@ -85,14 +85,17 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         if not plan_id:
             return None
         try:
+            sell_hub = item.get("sell_hub", "Jita")
+            # 从角色配置读取设施税率（如未设置则为 0）
+            fac_tax = self._char_config.get("market", {}).get(sell_hub.lower(), {}).get("facility_tax", 0.0)
             r = calc_manufacturing_score(
                 type_id=item.get("product_type_id"),
                 char_config=self._char_config,
                 bp_me=item.get("me_level", 0),
                 bp_te=item.get("te_level", 0),
                 mat_source_hub=item.get("mat_hub", "Jita"),
-                sell_hub=item.get("sell_hub", "Jita"),
-                facility_tax_pct=0.0,
+                sell_hub=sell_hub,
+                facility_tax_pct=fac_tax,
                 price_type_mat="sell",
                 price_type_prod="sell",
             )

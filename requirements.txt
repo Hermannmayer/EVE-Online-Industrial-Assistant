@@ -1,10 +1,11 @@
+# EVE Assistant — 主程序依赖
+# 初始化工具依赖见 tools/requirements.txt
 PySide6~=6.8.0
 aiohttp~=3.11.0
 aiosqlite~=0.20.0
 tenacity~=9.0.0
 tqdm~=4.67.0
 pyperclip~=1.9.0
-pyyaml~=6.0
 
 # Export
 openpyxl~=3.1.0

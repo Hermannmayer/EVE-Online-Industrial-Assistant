@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from services.workers.geticon import ICON_SIZE, download_all, download_icon
+from tools.downloaders.geticon import ICON_SIZE, download_all, download_icon
 
 
 class TestDownloadIconCacheHit:

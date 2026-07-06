@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
 
-from services.workers.getblueprints import (
+from tools.downloaders.getblueprints import (
     SDE_ZIP_URL,
     ensure_cache,
     parse_activities,

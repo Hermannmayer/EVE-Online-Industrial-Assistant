@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
 
-from services.workers.getblueprints import (
+from tools.downloaders.getblueprints import (
     CACHE_FILE,
     SDE_ZIP_URL,
     create_tables,

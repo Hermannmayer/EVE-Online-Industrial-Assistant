@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from services.workers.getimplantdata import (
+from tools.downloaders.getimplantdata import (
     DB_PATH,
     INDUSTRY_GROUP_NAMES,
     get_industry_type_ids,

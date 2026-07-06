@@ -1,6 +1,13 @@
 """
-数据初始化向导 — 逐步运行各初始化脚本
+数据初始化向导 — subprocess 调用 tools/init.py
+
+每个步骤通过 subprocess 在独立进程中执行，
+不阻塞主程序 UI，也不再直接 import 初始化模块。
 """
+
+import subprocess
+import sys
+from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QCloseEvent
@@ -18,15 +25,19 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from services.init_check import check_all
 
-# 初始化步骤：名称, 检查函数, 是否需要网络
+# 项目根目录（用于定位 tools/init.py）
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+TOOLS_INIT = str(_PROJECT_ROOT / "tools" / "init.py")
+
+# 步骤定义：名称, key, 是否需要网络
 STEPS = [
-    ("物品数据", "items", "getitems", True),
-    ("市场价格", "prices", "getprices", True),
-    ("蓝图数据", "blueprints", "getblueprints", False),
-    ("植入体数据", "implants", "getimplantdata", True),
-    ("工业数据", "industry", "getindustry", True),
-    ("物品图标", "icons", "geticon", True),
-    ("SDE扩展数据", "sde_data", "sde_loader", False),
+    ("物品数据", "items", True),
+    ("市场价格", "prices", True),
+    ("蓝图数据", "blueprints", True),
+    ("植入体数据", "implants", True),
+    ("工业数据", "industry", True),
+    ("物品图标", "icons", True),
+    ("SDE扩展数据", "sde_data", False),
 ]
 
 
@@ -35,61 +46,27 @@ class InitStepWorker(QThread):
 
     result = Signal(str, bool, str)  # step_key, success, message
 
-    def __init__(self, module_name: str, step_key: str, parent=None):
+    def __init__(self, step_key: str, parent=None):
         super().__init__(parent)
-        self._module = module_name
         self._key = step_key
 
     def run(self):
-        import asyncio
-
-        if self._module == "getprices":
-            try:
-                from services.workers.getprices import run_price_update
-
-                run_price_update()
-                self.result.emit(self._key, True, "完成")
-            except Exception as e:
-                self.result.emit(self._key, False, str(e))
-            return
-
-        loop = None
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            if self._module == "getitems":
-                from services.workers.getitems import main
-
-                loop.run_until_complete(main())
-            elif self._module == "getblueprints":
-                from services.workers.getblueprints import run_blueprint_update
-
-                loop.run_until_complete(run_blueprint_update())
-            elif self._module == "getimplantdata":
-                from services.workers.getimplantdata import main
-
-                loop.run_until_complete(main())
-            elif self._module == "geticon":
-                from services.workers.geticon import main
-
-                loop.run_until_complete(main())
-            elif self._module == "getindustry":
-                from services.workers.getindustry import run_industry_update
-
-                loop.run_until_complete(run_industry_update())
-            elif self._module == "sde_loader":
-                from services.workers.sde_loader import main as sde_loader_main
-
-                loop.run_until_complete(sde_loader_main())
-            else:
-                self.result.emit(self._key, False, f"未知步骤: {self._module}")
-                return
-            self.result.emit(self._key, True, "完成")
+            proc = subprocess.run(
+                [sys.executable, TOOLS_INIT, "--step", self._key],
+                capture_output=True,
+                text=True,
+                timeout=1800,  # 30 min per step
+            )
+            ok = proc.returncode == 0
+            msg = proc.stdout.strip().split("\n")[-1] if proc.stdout else ""
+            if not ok and proc.stderr:
+                msg = proc.stderr.strip().split("\n")[-1]
+            self.result.emit(self._key, ok, msg or ("完成" if ok else "失败"))
+        except subprocess.TimeoutExpired:
+            self.result.emit(self._key, False, "超时")
         except Exception as e:
             self.result.emit(self._key, False, str(e))
-        finally:
-            if loop is not None:
-                loop.close()
 
 
 class InitWizard(QDialog):
@@ -106,7 +83,7 @@ class InitWizard(QDialog):
         layout.setSpacing(12)
 
         # 标题
-        title = QLabel("首次启动 — 数据初始化")
+        title = QLabel("数据初始化")
         title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 16px; font-weight: bold;")
         layout.addWidget(title)
 
@@ -129,7 +106,7 @@ class InitWizard(QDialog):
 
         # 进度条
         self._progress = QProgressBar()
-        self._progress.setRange(0, 7)
+        self._progress.setRange(0, len(STEPS))
         self._progress.setValue(0)
         self._progress.setTextVisible(True)
         self._progress.setStyleSheet(f"""
@@ -194,7 +171,7 @@ class InitWizard(QDialog):
         self._current_idx = 0
         self._worker: InitStepWorker | None = None
         self._workers: list[InitStepWorker] = []
-        self._step_names = {key: name for name, key, _, _ in STEPS}
+        self._step_names = {key: name for name, key, _ in STEPS}
 
         # 启动时刷新状态
         self._refresh_status()
@@ -204,14 +181,12 @@ class InitWizard(QDialog):
         layout = QVBoxLayout()
         layout.setSpacing(6)
 
-        for name, key, _, _ in STEPS:
+        for name, key, _ in STEPS:
             row = QHBoxLayout()
-            # 状态图标
             self._step_rows[key] = QLabel("⏸️")
             self._step_rows[key].setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 14px;")
             row.addWidget(self._step_rows[key])
 
-            # 步骤名称
             name_label = QLabel(name)
             name_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 13px;")
             row.addWidget(name_label)
@@ -225,7 +200,7 @@ class InitWizard(QDialog):
         """刷新所有步骤状态（从 DB 检查）"""
         status = check_all()
         done = 0
-        for _name, key, _, _ in STEPS:
+        for name, key, _ in STEPS:
             if status.get(key, False):
                 self._step_rows[key].setText(" ✅")
                 self._step_rows[key].setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 14px;")
@@ -254,7 +229,7 @@ class InitWizard(QDialog):
         # 跳过已完成的
         status = check_all()
         while self._current_idx < len(STEPS):
-            _, key, module, _ = STEPS[self._current_idx]
+            _, key, _ = STEPS[self._current_idx]
             if not status.get(key, False):
                 break
             self._progress.setValue(self._current_idx + 1)
@@ -264,13 +239,13 @@ class InitWizard(QDialog):
             self._on_all_done()
             return
 
-        name, key, module, _ = STEPS[self._current_idx]
+        name, key, _ = STEPS[self._current_idx]
         self._step_rows[key].setText(" ⏳")
         self._step_rows[key].setStyleSheet(f"color: {theme.PRIMARY}; font-size: 14px;")
         self._status_label.setText(f"正在下载：{name}...")
         self._status_label.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 12px;")
 
-        self._worker = InitStepWorker(module, key, None)
+        self._worker = InitStepWorker(key, None)
         self._workers.append(self._worker)
         self._worker.result.connect(self._on_step_done)
         self._worker.start()
@@ -287,7 +262,6 @@ class InitWizard(QDialog):
             self._step_rows[step_key].setStyleSheet(f"color: {theme.ACCENT_RED}; font-size: 14px;")
             self._status_label.setText(f"✗ {name} 失败：{message}")
             self._status_label.setStyleSheet(f"color: {theme.ACCENT_RED}; font-size: 12px;")
-            # 显示错误但继续
             if self.isVisible():
                 QMessageBox.warning(self, "初始化错误", f"{step_key}: {message}")
 
@@ -297,14 +271,14 @@ class InitWizard(QDialog):
 
     def _on_all_done(self):
         self._run_btn.setEnabled(True)
-        self._progress.setValue(7)
+        self._progress.setValue(len(STEPS))
         self._status_label.setText("初始化完成！")
         self._status_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 12px;")
         if self.isVisible():
             QMessageBox.information(
                 self,
                 "完成",
-                "数据初始化完成！\n\n现在可以将 items.db 和 data/ 目录随程序一起打包分发，其他用户无需再次下载。",
+                "数据初始化完成！\n\n现在可以将 database/ 目录随程序一起打包分发，其他用户无需再次下载。",
             )
         if self._on_done_callback:
             self._on_done_callback()
