@@ -56,15 +56,11 @@ class StatusBar(QWidget):
         total = len(plans)
         running = sum(1 for p in plans if p.get("status") == "running")
         pending = sum(1 for p in plans if p.get("status") == "pending")
-        self._stats_label.setText(
-            f"计划总数: {total} | 运行中: {running} | 待排: {pending}"
-        )
+        self._stats_label.setText(f"计划总数: {total} | 运行中: {running} | 待排: {pending}")
 
     def update_material(self, total_cost: float, volume: float):
         """更新采购总额与体积"""
-        self._material_label.setText(
-            f"采购总额: {total_cost:,.2f} ISK | 体积: {volume:,.1f} m3"
-        )
+        self._material_label.setText(f"采购总额: {total_cost:,.2f} ISK | 体积: {volume:,.1f} m3")
 
     def show_message(self, text: str, timeout: int = 0):
         """显示临时消息（可选自动清除）"""

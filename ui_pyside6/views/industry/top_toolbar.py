@@ -33,11 +33,14 @@ class TopToolbar(QWidget):
     view_changed = Signal(str)
 
     HUBS = ["Jita", "Amarr", "Dodixie", "Rens", "Hek"]
-    HUB_DISPLAY = {"Jita": "价格取自（吉他）", "Amarr": "价格取自（艾玛）",
-                   "Dodixie": "价格取自（多迪）", "Rens": "价格取自（伦斯）",
-                   "Hek": "价格取自（赫克）"}
-    HANGARS = ["物品机库", "公司机库1", "公司机库2", "公司机库3",
-               "公司机库4", "公司机库5", "公司机库6", "公司机库7"]
+    HUB_DISPLAY = {
+        "Jita": "价格取自（吉他）",
+        "Amarr": "价格取自（艾玛）",
+        "Dodixie": "价格取自（多迪）",
+        "Rens": "价格取自（伦斯）",
+        "Hek": "价格取自（赫克）",
+    }
+    HANGARS = ["物品机库", "公司机库1", "公司机库2", "公司机库3", "公司机库4", "公司机库5", "公司机库6", "公司机库7"]
     CHARS = []  # 从角色设置加载
     _chars_loaded = False
     FILTERS = ["全部", "待排", "运行中", "已完成"]
@@ -241,7 +244,7 @@ class TopToolbar(QWidget):
             f"QComboBox QAbstractItemView {{"
             f"  background-color: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};"
             f"  border: 1px solid {theme.BORDER}; border-radius: 4px;"
-            f"  selection-background-color: {theme.BG_SURFACE_LIGHT};"
+            f"  selection-background-color: {theme.PRIMARY};"
             f"  outline: none; }}"
             f"QDoubleSpinBox {{ padding: 4px 6px; border: 1px solid {theme.BORDER}; border-radius: 4px;"
             f"  background: transparent; color: {theme.TEXT_PRIMARY}; font-size: 12px; }}"

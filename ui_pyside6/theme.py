@@ -417,6 +417,10 @@ def _table_styles() -> str:
         background-color: {PRIMARY};
         color: {TEXT_BRIGHT};
     }}
+    QTableView::item:selected:!active {{
+        background-color: {PRIMARY};
+        color: {TEXT_BRIGHT};
+    }}
     QHeaderView::section {{
         background-color: {BG_SURFACE};
         color: {TEXT_PRIMARY};

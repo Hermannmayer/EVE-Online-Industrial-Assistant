@@ -105,27 +105,5 @@ class CharacterUsageDialog(QWidget):
         self._status_label.setText(f"共 {len(rows)} 个角色，{total_plans} 个活跃计划")
 
     def _on_theme_changed(self):
-        self.setStyleSheet(
-            f"QWidget {{ background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; }}"
-        )
-        self._table.setStyleSheet(
-            f"QTableWidget {{"
-            f"  background-color: {theme.BG_DARK};"
-            f"  alternate-background-color: {theme.BG_SURFACE};"
-            f"  border: 1px solid {theme.BORDER};"
-            f"  border-radius: 4px;"
-            f"  gridline-color: {theme.BORDER};"
-            f"  selection-background-color: {theme.BG_SURFACE_LIGHT};"
-            f"}}"
-            f"QHeaderView::section {{"
-            f"  background-color: {theme.BG_SURFACE};"
-            f"  color: {theme.TEXT_PRIMARY};"
-            f"  border: 1px solid {theme.BORDER};"
-            f"  padding: 4px 8px;"
-            f"  font-weight: bold;"
-            f"}}"
-            f"QTableWidget::item {{"
-            f"  padding: 2px 6px;"
-            f"}}"
-        )
+        self.setStyleSheet(theme.get_stylesheet() + "QTableWidget::item { padding: 2px 6px; }")
         self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")

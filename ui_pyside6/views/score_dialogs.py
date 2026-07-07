@@ -4,7 +4,7 @@
 
 import os
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QLabel,
 )
 
-import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS, TRADE_HUBS
 from core.container import get_container
 from core.paths import ICON_DIR
@@ -53,11 +52,6 @@ class MfgDlg(QDialog):
         super().__init__(parent)
         self.setWindowTitle("制造评分设置")
         self.setMinimumWidth(260)
-        self.setStyleSheet(f"background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};")
-        ss = (
-            f"background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};"
-            f"border:1px solid {theme.BORDER};border-radius:2px;padding:2px 6px;"
-        )
         form = QFormLayout(self)
         form.setSpacing(4)
 
@@ -84,11 +78,9 @@ class MfgDlg(QDialog):
         cur = current or {}
         self.h = QComboBox()
         self.h.addItems(REGIONS)
-        self.h.setStyleSheet(ss)
         self.h.setCurrentText(cur.get("hub", "Jita"))
         form.addRow("中心:", self.h)
         self.c = QComboBox()
-        self.c.setStyleSheet(ss)
         cs = get_character_list()
         self.c.addItems(cs if cs else ["main"])
         self.c.setCurrentText(cur.get("char", "main") if cur.get("char") in cs else "main")
@@ -96,7 +88,6 @@ class MfgDlg(QDialog):
         self.t = QDoubleSpinBox()
         self.t.setRange(0, 100)
         self.t.setSuffix(" %")
-        self.t.setStyleSheet(ss)
         self.t.setValue(cur.get("tax", 0))
         form.addRow("设施税:", self.t)
         b = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -118,11 +109,6 @@ class TradeDlg(QDialog):
         super().__init__(parent)
         self.setWindowTitle("贸易评分设置")
         self.setMinimumWidth(260)
-        self.setStyleSheet(f"background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};")
-        ss = (
-            f"background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};"
-            f"border:1px solid {theme.BORDER};border-radius:2px;padding:2px 6px;"
-        )
         form = QFormLayout(self)
         form.setSpacing(4)
 
@@ -149,26 +135,21 @@ class TradeDlg(QDialog):
         cur = current or {}
         self.bh = QComboBox()
         self.bh.addItems(REGIONS)
-        self.bh.setStyleSheet(ss)
         self.bh.setCurrentText(cur.get("bh", "Jita"))
         form.addRow("买入:", self.bh)
         self.sh = QComboBox()
         self.sh.addItems(REGIONS)
-        self.sh.setStyleSheet(ss)
         self.sh.setCurrentText(cur.get("sh", "Jita"))
         form.addRow("卖出:", self.sh)
         self.bs = QComboBox()
         self.bs.addItems(["卖单", "买单"])
-        self.bs.setStyleSheet(ss)
         self.bs.setCurrentText("卖单" if cur.get("bs", "sell") == "sell" else "买单")
         form.addRow("买价:", self.bs)
         self.ss = QComboBox()
         self.ss.addItems(["卖单", "买单"])
-        self.ss.setStyleSheet(ss)
         self.ss.setCurrentText("卖单" if cur.get("ss", "sell") == "sell" else "买单")
         form.addRow("卖价:", self.ss)
         self.c = QComboBox()
-        self.c.setStyleSheet(ss)
         cs = get_character_list()
         self.c.addItems(cs if cs else ["main"])
         self.c.setCurrentText(cur.get("char", "main") if cur.get("char") in cs else "main")

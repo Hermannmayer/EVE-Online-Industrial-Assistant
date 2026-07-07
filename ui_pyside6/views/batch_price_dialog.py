@@ -290,8 +290,6 @@ class BatchPriceDialog(QDialog):
         super().closeEvent(event)
 
     def _on_theme_changed(self):
-        self.setStyleSheet(f"QDialog {{ background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; }}")
-
         self._input_text.setStyleSheet(
             f"QPlainTextEdit {{"
             f"  background-color: {theme.BG_SURFACE};"

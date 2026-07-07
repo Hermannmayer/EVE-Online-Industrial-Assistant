@@ -1,4 +1,5 @@
 """甘特图组件 — QPainter 自定义绘制"""
+
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QWidget
@@ -19,8 +20,12 @@ class GanttView(QWidget):
         super().__init__(parent)
         self._items: list[dict] = []
         self._colors = [
-            theme.PRIMARY, theme.ACCENT_GREEN, theme.ACCENT_ORANGE,
-            theme.ACCENT_CYAN, theme.ACCENT_RED, theme.ACCENT_PURPLE,
+            theme.PRIMARY,
+            theme.ACCENT_GREEN,
+            theme.ACCENT_ORANGE,
+            theme.ACCENT_CYAN,
+            theme.ACCENT_RED,
+            theme.ACCENT_PURPLE,
         ]
         self._max_hours = 48
         self.GRID_COLOR = QColor(theme.BORDER)
@@ -43,12 +48,14 @@ class GanttView(QWidget):
         items = []
         for i, plan in enumerate(plans):
             hours = plan.get("runs", 1) * plan.get("parallels", 1) * 2
-            items.append({
-                "name": plan.get("product_name", f"计划#{plan.get('id', i)}"),
-                "start": 0,
-                "duration": hours,
-                "color": self._colors[i % len(self._colors)],
-            })
+            items.append(
+                {
+                    "name": plan.get("product_name", f"计划#{plan.get('id', i)}"),
+                    "start": 0,
+                    "duration": hours,
+                    "color": self._colors[i % len(self._colors)],
+                }
+            )
         self.set_items(items)
 
     def minimumSizeHint(self):
@@ -113,8 +120,7 @@ class GanttView(QWidget):
             painter.setPen(QColor(theme.TEXT_ON_PRIMARY))
             if bar_w > 40:
                 dur_text = f"{item.get('duration', 0):.0f}h"
-                painter.drawText(QRectF(start_x + 2, bar_y, bar_w - 4, bar_h),
-                                 Qt.AlignmentFlag.AlignCenter, dur_text)
+                painter.drawText(QRectF(start_x + 2, bar_y, bar_w - 4, bar_h), Qt.AlignmentFlag.AlignCenter, dur_text)
 
         painter.end()
 
@@ -123,7 +129,11 @@ class GanttView(QWidget):
         self.GRID_COLOR = QColor(theme.BORDER)
         self.BG_COLOR = QColor(theme.BG_SURFACE) if hasattr(theme, "BG_SURFACE") else QColor("#ffffff")
         self._colors = [
-            theme.PRIMARY, theme.ACCENT_GREEN, theme.ACCENT_ORANGE,
-            theme.ACCENT_CYAN, theme.ACCENT_RED, theme.ACCENT_PURPLE,
+            theme.PRIMARY,
+            theme.ACCENT_GREEN,
+            theme.ACCENT_ORANGE,
+            theme.ACCENT_CYAN,
+            theme.ACCENT_RED,
+            theme.ACCENT_PURPLE,
         ]
         self.update()

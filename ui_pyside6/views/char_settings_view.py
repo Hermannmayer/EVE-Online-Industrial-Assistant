@@ -577,7 +577,7 @@ class ImplantsPage(QWidget):
                 QComboBox:hover {{ border-color: {theme.PRIMARY}; }}
                 QComboBox QAbstractItemView {{
                     background-color: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};
-                    selection-background-color: {theme.BG_SURFACE_LIGHT};
+                    selection-background-color: {theme.PRIMARY};
                     border: 1px solid {theme.BORDER};
                 }}
                 QComboBox::drop-down {{ border: none; width: 20px; }}
@@ -637,7 +637,7 @@ class ImplantsPage(QWidget):
                 QComboBox:hover {{ border-color: {theme.PRIMARY}; }}
                 QComboBox QAbstractItemView {{
                     background-color: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};
-                    selection-background-color: {theme.BG_SURFACE_LIGHT};
+                    selection-background-color: {theme.PRIMARY};
                     border: 1px solid {theme.BORDER};
                 }}
                 QComboBox::drop-down {{ border: none; width: 20px; }}
@@ -713,11 +713,9 @@ class MarketPage(QWidget):
             fs.setSingleStep(0.1)
             fs.setValue(hub_data.get("faction_standing", 5.0))
             fs.setStyleSheet(
-
-                    f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};"
-                    f" border: 1px solid {theme.BORDER}; border-radius: 4px;"
-                    f" padding: 2px 4px;"
-
+                f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};"
+                f" border: 1px solid {theme.BORDER}; border-radius: 4px;"
+                f" padding: 2px 4px;"
             )
             glayout.addWidget(fs, 0, 1)
 
@@ -728,11 +726,9 @@ class MarketPage(QWidget):
             cs.setSingleStep(0.1)
             cs.setValue(hub_data.get("corp_standing", 5.0))
             cs.setStyleSheet(
-
-                    f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};"
-                    f" border: 1px solid {theme.BORDER}; border-radius: 4px;"
-                    f" padding: 2px 4px;"
-
+                f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};"
+                f" border: 1px solid {theme.BORDER}; border-radius: 4px;"
+                f" padding: 2px 4px;"
             )
             glayout.addWidget(cs, 1, 1)
 
@@ -870,7 +866,7 @@ class CharSettingsDialog(QDialog):
             }}
             QComboBox QAbstractItemView {{
                 background-color: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};
-                selection-background-color: {theme.BG_SURFACE_LIGHT};
+                selection-background-color: {theme.PRIMARY};
             }}
         """)
         for cname in self._all_data["characters"].keys():

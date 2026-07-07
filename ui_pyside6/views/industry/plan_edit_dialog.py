@@ -100,9 +100,7 @@ class PlanEditDialog(QDialog):
         root.addLayout(form)
 
         # 按钮
-        self._buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        self._buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self._buttons.accepted.connect(self.accept)
         self._buttons.rejected.connect(self.reject)
         root.addWidget(self._buttons)
@@ -182,7 +180,7 @@ class PlanEditDialog(QDialog):
             f"QComboBox::drop-down {{ border: none; width: 20px; }}"
             f"QComboBox QAbstractItemView {{"
             f"  background: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};"
-            f"  selection-background-color: {theme.BG_SURFACE_LIGHT};"
+            f"  selection-background-color: {theme.PRIMARY};"
             f"}}"
             f"QTextEdit {{"
             f"  background: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};"
