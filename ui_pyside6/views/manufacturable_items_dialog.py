@@ -7,7 +7,7 @@ import os
 from datetime import UTC
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -169,9 +169,19 @@ class ManufacturableItemsDialog(QDialog):
         self._refresh_styles()
 
     def _refresh_styles(self):
-        self.setStyleSheet(
-            f"QDialog{{background:{theme.BG_DARK};}}QLabel{{color:{theme.TEXT_SECONDARY};font-size:11px;}}"
-        )
+        """全局主题 + 紧凑布局覆盖（字体 11px、精简间距）"""
+        compact = """
+            QDialog, QDialog * { font-size: 11px; }
+            QLineEdit { border-radius: 2px; padding: 2px 4px; }
+            QComboBox { border-radius: 2px; padding: 2px 4px; }
+            QComboBox::drop-down { border: none; width: 16px; }
+            QTableView { border-radius: 0px; }
+            QHeaderView::section { padding: 2px 4px; }
+            QTreeWidget { border-radius: 0px; }
+            QTreeWidget::item { padding: 2px 4px; }
+            QPushButton { border-radius: 2px; padding: 0 6px; }
+        """
+        self.setStyleSheet(theme.get_stylesheet() + compact)
         self._st.setStyleSheet(f"color:{theme.TEXT_SECONDARY};font-size:11px;")
 
     def _build_ui(self):
@@ -179,29 +189,28 @@ class ManufacturableItemsDialog(QDialog):
         lay.setContentsMargins(2, 2, 2, 2)
         lay.setSpacing(1)
 
-        def _bt(t, cb, w=60):
+        def _bt(t, cb, w=70):
             b = QPushButton(t)
             b.setFixedHeight(24)
             b.setFixedWidth(w)
-            b.setStyleSheet(
-                f"QPushButton{{background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
-                f"border:1px solid {theme.BORDER};border-radius:2px;font-size:11px;padding:0 2px;}}"
-                f"QPushButton:hover{{background:{theme.PRIMARY};color:{theme.TEXT_ON_PRIMARY};}}"
-            )
             b.clicked.connect(cb)
             return b
 
         bx = QHBoxLayout()
         bx.setContentsMargins(2, 0, 2, 0)
-        bx.setSpacing(2)
-        self._score_btn = _bt("重新算分", self._on_mfg)
-        bx.addWidget(self._score_btn)
-        bx.addWidget(_bt("设", self._smfg, 30))
+        bx.setSpacing(4)
         bx.addStretch()
-        bx.addWidget(_bt("批量对比", self._on_compare, 60))
-        bx.addWidget(_bt("导出", self._export_data, 50))
+        self._score_btn = _bt("刷新计算", self._on_mfg)
+        bx.addWidget(self._score_btn)
+        b_sett = _bt("设置", self._smfg, 50)
+        bx.addWidget(b_sett)
+        b_comp = _bt("批量对比", self._on_compare, 70)
+        bx.addWidget(b_comp)
+        b_exp = _bt("导出", self._export_data, 50)
+        bx.addWidget(b_exp)
         self._pin_btn = _bt("钉", self._on_pin_toggled, 35)
         bx.addWidget(self._pin_btn)
+        bx.addStretch()
         lay.addLayout(bx)
 
         fx = QHBoxLayout()
@@ -422,17 +431,68 @@ class ManufacturableItemsDialog(QDialog):
         self._md.set_rows(rows)
         self._pr.setVisible(False)
         self._st.setText(f"共 {len(self._filt)} 条 | 评分已计算")
-        # 自适应宽度：内容自适应，最后一列填满剩余空间
+        # 固定图标列宽，其余自适应
         hh = self._tv.horizontalHeader()
         for i in range(self._md.columnCount()):
-            hh.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+            if i == 0:
+                hh.setSectionResizeMode(i, QHeaderView.ResizeMode.Fixed)
+            else:
+                hh.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         hh.setStretchLastSection(True)
 
+    def keyPressEvent(self, ev):
+        if ev.matches(QKeySequence.StandardKey.Copy):
+            self._copy_selection()
+            ev.accept()
+            return
+        if ev.modifiers() & Qt.KeyboardModifier.ControlModifier and ev.key() == Qt.Key.Key_A:
+            self._tv.selectAll()
+            self._copy_selection()
+            ev.accept()
+            return
+        super().keyPressEvent(ev)
+
+    def _copy_selection(self):
+        sel = self._tv.selectionModel().selectedRows()
+        if not sel:
+            self._st.setText("没有选中行")
+            return
+        lines = []
+        for idx in sel:
+            row = self._md._rows[idx.row()]
+            parts = []
+            for _, _, key in self._md._cols:
+                if key == "i":
+                    parts.append(str(row.get("id", "")))
+                else:
+                    parts.append(str(row.get(key, "")))
+            lines.append("\t".join(parts))
+        if lines:
+            QApplication.instance().clipboard().setText("\n".join(lines))
+            self._st.setText(f"已复制 {len(lines)} 行")
+
     def _on_mfg(self):
-        """重新计算评分"""
-        if self._filt:
+        """刷新计算前先确认数据库有价格数据，无价格时保留缓存"""
+        if not self._filt:
+            return
+        # 单条 SQL 确认 market_prices 是否有数据，避免 N 次 get_price 调用
+        from core.container import get_container
+
+        with get_container().db.connect("mkt") as conn:
+            row = conn.cursor().execute("SELECT COUNT(*) FROM market_prices").fetchone()
+            has_prices = row and row[0] > 0
+
+        if has_prices:
+            # 数据库有价格 → 清评分缓存 → 用最新价格重算
+            # 注意：invalidate_cache 清的是全局缓存，TradeView 的贸易评分也会被清除
+            # 但缓存是惰性重建的，下次访问时会自动重算，不会报错
+            from services.scoring_service import invalidate_cache
+
+            invalidate_cache()
             self._st.setText("重新计算中...")
             self._calc()
+        else:
+            self._st.setText("暂无价格数据，请先在主界面更新价格")
 
     def _smfg(self):
         dlg = MfgDlg(self._mfg, self)

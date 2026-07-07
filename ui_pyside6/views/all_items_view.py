@@ -113,7 +113,6 @@ class MatDlg(QDialog):
         super().__init__(parent)
         self.setWindowTitle("制造材料")
         self.setMinimumSize(460, 280)
-        self.setStyleSheet(f"background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 10, 10, 10)
         with get_container().db.connect("ref", "mkt", "bp") as conn:
@@ -146,7 +145,6 @@ class MatDlg(QDialog):
             )
             mats = c.fetchall()
         lst = QListWidget()
-        lst.setStyleSheet(f"background:{theme.BG_SURFACE};border:1px solid {theme.BORDER};border-radius:3px;")
         total = 0.0
         for mid, qty, zh, en, sp in mats:
             n = zh or en or str(mid)

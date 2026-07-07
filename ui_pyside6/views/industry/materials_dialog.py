@@ -140,15 +140,11 @@ class MaterialsSummaryDialog(QWidget):
                 return
 
             # 3) 库存
-            inv_rows = conn.execute(
-                "SELECT type_id, SUM(quantity) FROM inventory_items GROUP BY type_id"
-            ).fetchall()
+            inv_rows = conn.execute("SELECT type_id, SUM(quantity) FROM inventory_items GROUP BY type_id").fetchall()
             inventory: dict[int, int] = {r[0]: r[1] or 0 for r in inv_rows}
 
             # 4) 市场单价（均价）
-            price_rows = conn.execute(
-                "SELECT type_id, average_price FROM market_prices"
-            ).fetchall()
+            price_rows = conn.execute("SELECT type_id, average_price FROM market_prices").fetchall()
             prices: dict[int, float] = {r[0]: r[1] or 0.0 for r in price_rows}
 
         finally:
@@ -188,54 +184,23 @@ class MaterialsSummaryDialog(QWidget):
                 self._table.setItem(row_idx, col_idx, item)
 
         total = len(sorted_mats)
-        total_gap = sum(
-            max(0, m["total_qty"] - inventory.get(tid, 0))
-            for tid, m in sorted_mats
-        )
-        self._status_label.setText(
-            f"共 {total} 种材料，缺口 {total_gap} 项，缺口总价 {_fmt_isk(total_cost)}"
-        )
+        total_gap = sum(max(0, m["total_qty"] - inventory.get(tid, 0)) for tid, m in sorted_mats)
+        self._status_label.setText(f"共 {total} 种材料，缺口 {total_gap} 项，缺口总价 {_fmt_isk(total_cost)}")
 
     def _on_theme_changed(self):
-        self.setStyleSheet(
-            f"QWidget {{ background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; }}"
-        )
-        self._table.setStyleSheet(
-            f"QTableWidget {{"
-            f"  background-color: {theme.BG_DARK};"
-            f"  alternate-background-color: {theme.BG_SURFACE};"
-            f"  border: 1px solid {theme.BORDER};"
-            f"  border-radius: 4px;"
-            f"  gridline-color: {theme.BORDER};"
-            f"  selection-background-color: {theme.BG_SURFACE_LIGHT};"
-            f"}}"
-            f"QHeaderView::section {{"
-            f"  background-color: {theme.BG_SURFACE};"
-            f"  color: {theme.TEXT_PRIMARY};"
-            f"  border: 1px solid {theme.BORDER};"
-            f"  padding: 4px 8px;"
-            f"  font-weight: bold;"
-            f"}}"
-            f"QTableWidget::item {{"
-            f"  padding: 2px 6px;"
-            f"}}"
-        )
+        self.setStyleSheet(theme.get_stylesheet() + "QTableWidget::item { padding: 2px 6px; }")
         self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
 
 
 def _get_name(conn, type_id: int) -> str:
-    row = conn.execute(
-        "SELECT zh_name, en_name FROM item WHERE type_id = ?", (type_id,)
-    ).fetchone()
+    row = conn.execute("SELECT zh_name, en_name FROM item WHERE type_id = ?", (type_id,)).fetchone()
     if row:
         return row[0] or row[1] or str(type_id)
     return str(type_id)
 
 
 def _get_volume(conn, type_id: int) -> float:
-    row = conn.execute(
-        "SELECT volume FROM item WHERE type_id = ?", (type_id,)
-    ).fetchone()
+    row = conn.execute("SELECT volume FROM item WHERE type_id = ?", (type_id,)).fetchone()
     return row[0] if row else 0.0
 
 

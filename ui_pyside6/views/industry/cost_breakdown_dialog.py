@@ -1,4 +1,3 @@
-
 """成本明细 — 从 PlanTable 右键打开查看核算"""
 
 from PySide6.QtCore import Qt
@@ -70,9 +69,15 @@ class CostBreakdownDialog(QWidget):
         char_config = self._char_config or {}
         fac_tax = char_config.get("market", {}).get(sell_hub.lower(), {}).get("facility_tax", 0.0)
         result = calc_manufacturing_score(
-            type_id=type_id, char_config=char_config, bp_me=me, bp_te=te,
-            mat_source_hub=mat_hub, sell_hub=sell_hub, facility_tax_pct=fac_tax,
-            price_type_mat="sell", price_type_prod="sell",
+            type_id=type_id,
+            char_config=char_config,
+            bp_me=me,
+            bp_te=te,
+            mat_source_hub=mat_hub,
+            sell_hub=sell_hub,
+            facility_tax_pct=fac_tax,
+            price_type_mat="sell",
+            price_type_prod="sell",
         )
         status = result.get("status", "")
         if status:
@@ -84,9 +89,12 @@ class CostBreakdownDialog(QWidget):
         self._table.setRowCount(len(materials))
         for row_idx, mat in enumerate(materials):
             items = [
-                mat.get("name", ""), str(mat.get("base_qty", 0)),
-                _fmt_waste_pct(mat.get("waste_factor", 1)), f"{mat.get('qty', 0):,.2f}",
-                _fmt_isk(mat.get("unit_price", 0)), _fmt_isk(mat.get("subtotal", 0)),
+                mat.get("name", ""),
+                str(mat.get("base_qty", 0)),
+                _fmt_waste_pct(mat.get("waste_factor", 1)),
+                f"{mat.get('qty', 0):,.2f}",
+                _fmt_isk(mat.get("unit_price", 0)),
+                _fmt_isk(mat.get("subtotal", 0)),
             ]
             for col_idx, text in enumerate(items):
                 item = QTableWidgetItem(text)
@@ -109,18 +117,26 @@ class CostBreakdownDialog(QWidget):
         sep40 = "=" * 40
         sep36 = "=" * 36
         lines = [
-            f"  {sep40}", f"  材料费: {_fmt_isk(mat_cost)} ({material_cost_val:,.0f} ISK)",
-            f"  安装费: {_fmt_isk(facility_fee)}", f"  经纪人(挂单): {_fmt_isk(broker_init)}",
-            f"  经纪人(改单): {_fmt_isk(broker_relist)}", f"  销售税: {_fmt_isk(sales_tax)}",
+            f"  {sep40}",
+            f"  材料费: {_fmt_isk(mat_cost)} ({material_cost_val:,.0f} ISK)",
+            f"  安装费: {_fmt_isk(facility_fee)}",
+            f"  经纪人(挂单): {_fmt_isk(broker_init)}",
+            f"  经纪人(改单): {_fmt_isk(broker_relist)}",
+            f"  销售税: {_fmt_isk(sales_tax)}",
             f"  {sep36}",
         ]
         cost_data = mat_cost + facility_fee + broker_init + broker_relist + sales_tax
         lines += [
-            f"  总成本: {_fmt_isk(cost_data)}", f"  收入: {_fmt_isk(revenue)}",
-            f"  利润: {_fmt_isk(profit)}", f"  利润率: {margin:.2f}%",
-            f"  耗时: {hours:.2f}h/run", f"  日产能: {24/hours:.2f}run/天",
-            f"  日利润: {_fmt_isk(profit * 24 / hours)}/天", f"  {sep40}",
-            f"  评分: {score:.1f}", f"  ISK/h: {_fmt_isk(isk_per_hour)}",
+            f"  总成本: {_fmt_isk(cost_data)}",
+            f"  收入: {_fmt_isk(revenue)}",
+            f"  利润: {_fmt_isk(profit)}",
+            f"  利润率: {margin:.2f}%",
+            f"  耗时: {hours:.2f}h/run",
+            f"  日产能: {24 / hours:.2f}run/天",
+            f"  日利润: {_fmt_isk(profit * 24 / hours)}/天",
+            f"  {sep40}",
+            f"  评分: {score:.1f}",
+            f"  ISK/h: {_fmt_isk(isk_per_hour)}",
         ]
         self._summary_label.setText("\n".join(lines))
         self._status_label.setText(
@@ -128,17 +144,7 @@ class CostBreakdownDialog(QWidget):
         )
 
     def _on_theme_changed(self):
-        self.setStyleSheet(f"QWidget {{ background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; }}")
-        self._table.setStyleSheet(
-            f"QTableWidget {{"
-            f"  background-color: {theme.BG_DARK}; alternate-background-color: {theme.BG_SURFACE};"
-            f"  border: 1px solid {theme.BORDER}; border-radius: 4px; gridline-color: {theme.BORDER};"
-            f"  selection-background-color: {theme.BG_SURFACE_LIGHT};}}"
-            f"QHeaderView::section {{"
-            f"  background-color: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};"
-            f"  border: 1px solid {theme.BORDER}; padding: 4px 8px; font-weight: bold;}}"
-            f"QTableWidget::item {{ padding: 2px 6px;}}"
-        )
+        self.setStyleSheet(theme.get_stylesheet() + "QTableWidget::item { padding: 2px 6px; }")
         self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
         self._summary_label.setStyleSheet(
             f"color: {theme.TEXT_PRIMARY}; font-size: 12px;"

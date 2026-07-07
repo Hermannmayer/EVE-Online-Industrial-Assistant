@@ -39,7 +39,9 @@ def _load_icon(type_id: int, size: int = 24) -> QPixmap | None:
     if os.path.isfile(path):
         pixmap = QPixmap(path)
         if not pixmap.isNull():
-            pixmap = pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            pixmap = pixmap.scaled(
+                size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            )
             QPixmapCache.insert(cache_key, pixmap)
             return pixmap
     return None
@@ -209,7 +211,6 @@ class ProcurementDialog(QDialog):
         self._calculate()
 
     def _on_theme_changed(self):
-        self.setStyleSheet(f"QDialog {{ background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; }}")
         self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
 
     def _on_price_type_changed(self):
@@ -376,7 +377,6 @@ class ProcurementDialog(QDialog):
         item = model.get_row(sel[0].row())
         if not item:
             return
-        from PySide6.QtWidgets import QInputDialog
         qty, ok = QInputDialog.getDouble(
             self,
             "修改采购数量",

@@ -98,8 +98,8 @@ class PlanTable(QWidget):
         header.setStretchLastSection(False)
         header.setMinimumSectionSize(40)
 
-        NARROW = {0, 2, 3, 4, 5}           # 图标/批次/并行/组号/子级
-        STRETCH = {1}                       # 产品名
+        NARROW = {0, 2, 3, 4, 5}  # 图标/批次/并行/组号/子级
+        STRETCH = {1}  # 产品名
         # 其余：根据内容自适应 + interactive 可调
 
         for col in range(19):
@@ -409,10 +409,13 @@ class PlanTable(QWidget):
         current_output = current_runs * output_per_run * current_parallels
 
         target, ok = QInputDialog.getInt(
-            self, "母项智能调整",
+            self,
+            "母项智能调整",
             f"当前 {current_runs} 流程 × {current_parallels} 并行 = {current_output} 件\n"
             f"每流程产出: {output_per_run} 件\n\n目标产量:",
-            current_output, 1, 99999,
+            current_output,
+            1,
+            99999,
         )
         if not ok:
             return
@@ -459,11 +462,12 @@ class PlanTable(QWidget):
 
         # 询问新的母项流程数
         target_parent_runs, ok = QInputDialog.getInt(
-            self, "子项智能调整",
-            f"母项「{prod_name}」当前流程数: {current_parent_runs}\n"
-            f"共 {len(children)} 个子项\n\n"
-            f"调整后母项流程数:",
-            current_parent_runs, 1, 99999,
+            self,
+            "子项智能调整",
+            f"母项「{prod_name}」当前流程数: {current_parent_runs}\n共 {len(children)} 个子项\n\n调整后母项流程数:",
+            current_parent_runs,
+            1,
+            99999,
         )
         if not ok or target_parent_runs == current_parent_runs:
             return
@@ -491,9 +495,10 @@ class PlanTable(QWidget):
         self._model.layoutChanged.emit()
         self.plan_updated.emit()
         QMessageBox.information(
-            self, "子项调整完成",
+            self,
+            "子项调整完成",
             f"母项「{prod_name}」: {current_parent_runs} → {target_parent_runs}\n"
-            f"已同步调整 {changed}/{len(children)} 个子项"
+            f"已同步调整 {changed}/{len(children)} 个子项",
         )
 
     def _smart_parallel_children(self, row: int) -> None:
@@ -516,14 +521,15 @@ class PlanTable(QWidget):
 
         # 显示当前子项列表及并行数
         msg = "子项当前并行数:\n" + "\n".join(
-            f"  {p.get('product_name', p.get('blueprint_name', '?'))}: "
-            f"并行 {p.get('parallels', 1)}"
-            for p in children
+            f"  {p.get('product_name', p.get('blueprint_name', '?'))}: 并行 {p.get('parallels', 1)}" for p in children
         )
         new_parallels, ok = QInputDialog.getInt(
-            self, "子项大规模产线并行",
+            self,
+            "子项大规模产线并行",
             msg + "\n\n设置所有子项并行数:",
-            1, 1, 100,
+            1,
+            1,
+            100,
         )
         if not ok:
             return
@@ -548,8 +554,7 @@ class PlanTable(QWidget):
         self._model.layoutChanged.emit()
         self.plan_updated.emit()
         QMessageBox.information(
-            self, "并行调整完成",
-            f"已设置 {changed}/{len(children)} 个子项的并行数为 {new_parallels}"
+            self, "并行调整完成", f"已设置 {changed}/{len(children)} 个子项的并行数为 {new_parallels}"
         )
 
     def _show_npc_seller(self, row: int) -> None:
@@ -583,15 +588,13 @@ class PlanTable(QWidget):
             conn.close()
 
         if not has_systems:
-            QMessageBox.warning(
-                self, "数据未就绪",
-                "星系数据尚未加载。请先运行「数据初始化」中的 SDE 扩展数据。"
-            )
+            QMessageBox.warning(self, "数据未就绪", "星系数据尚未加载。请先运行「数据初始化」中的 SDE 扩展数据。")
             return
 
         current_facility = plan.get("facility", "") or ""
         system_name, ok = QInputDialog.getText(
-            self, "设置设施星系",
+            self,
+            "设置设施星系",
             f"当前设施: {current_facility}\n\n输入星系名称（支持部分匹配）:",
             text=current_facility,
         )
@@ -651,11 +654,12 @@ class PlanTable(QWidget):
         self._model.layoutChanged.emit()
         self.plan_updated.emit()
         QMessageBox.information(
-            self, "设置完成",
+            self,
+            "设置完成",
             f"设施星系: {ss_name}\n"
             f"安全等级: {selected['security']:.1f}\n"
             f"制造成本指数(SCI): {sci:.4f}\n\n"
-            f"可在「成本系数」中调整附加费率。"
+            f"可在「成本系数」中调整附加费率。",
         )
 
     def _set_facility_cost_index(self, row: int) -> None:
@@ -671,11 +675,13 @@ class PlanTable(QWidget):
         current_mult = float(plan.get("cost_multiplier", 1.0)) if "cost_multiplier" in plan else 1.0
 
         val, ok = QInputDialog.getDouble(
-            self, "设施成本系数",
-            f"设施: {facility}\n"
-            f"当前系数: {current_mult:.2f}x\n\n"
-            f"新系数 (1.0 = 标准 SCI, >1 = 附加费用):",
-            current_mult, 0.1, 10.0, 2,
+            self,
+            "设施成本系数",
+            f"设施: {facility}\n当前系数: {current_mult:.2f}x\n\n新系数 (1.0 = 标准 SCI, >1 = 附加费用):",
+            current_mult,
+            0.1,
+            10.0,
+            2,
         )
         if not ok:
             return
@@ -716,7 +722,8 @@ class PlanTable(QWidget):
     # ── 主题 ─────────────────────────────────────────────────
 
     def _on_theme_changed(self) -> None:
-        self._table.setStyleSheet(
-            f"QTableView {{ gridline-color: {theme.BORDER}; color: {theme.TEXT_PRIMARY}; }}"
-            f"QTableView::item:selected {{ background-color: {theme.BG_SURFACE_LIGHT}; color: {theme.TEXT_BRIGHT}; }}"
+        # 紧凑表头覆盖全局（全局 padding 6x8, font-size 12px）
+        self._table.horizontalHeader().setStyleSheet(
+            f"QHeaderView::section {{ background: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};"
+            f" border: 1px solid {theme.BORDER}; padding: 2px 4px; font-size: 11px; }}"
         )
