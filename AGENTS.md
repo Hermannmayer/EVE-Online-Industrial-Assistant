@@ -3,6 +3,11 @@
 ## Build & Run
 - **Run:** `python Main.py` (PySide6 desktop app)
 - **Dev reload:** `python dev.py` (auto-restart on file changes)
+- **Build release:** `python build_release.py` (PyInstaller 打包)
+
+## Test
+- **Run tests:** `pytest`
+- **Failing collection fix:** `pip install -e .` 或确保 `__init__.py` 正确
 
 ## Test
 - **Run tests:** `pytest`
@@ -19,19 +24,23 @@
 - **Language:** Python 3.14
 - **GUI:** PySide6 (Qt6 Widgets)
 - **Frameworks:** aiohttp (async HTTP), aiosqlite (async DB), tenacity (retry)
-- **Format:** Ruff (lint + format)
-- **Test:** pytest
+- **Format:** Ruff (lint + format, line-length=120)
+- **Test:** pytest + pytest-qt + pytest-cov
 - **Type check:** mypy
 - **Pre-commit:** pre-commit (ruff + mypy + 通用检查)
 
 ## Project Structure
 - `Main.py` — Application entry point
-- `core/` — Core logic (paths, logging)
-- `services/` — Business logic (scoring, data fetching, workers)
-- `ui_pyside6/` — PySide6 UI (main window, views, theme)
-- `database/` — SQLite databases (4 files)
-- `data/` — Caches, search history, window geometry
-- `tests/` — pytest test suite
+- `dev.py` — Hot-reload development mode
+- `build_release.py` — PyInstaller packaging
+- `core/` — Core logic (paths, logging, constants, container, formulas)
+- `services/` — Business logic (scoring, SDE, logistics, BOM, workers)
+- `ui_pyside6/` — PySide6 UI (main window, views, dialogs, theme, models)
+- `database/` — SQLite databases (reference / market / user / blueprint)
+- `data/` — Caches, settings, YAML data
+- `scripts/` — Maintenance scripts (migration)
+- `specs/` — Implementation specs
+- `tests/` — pytest test suite (50 test files, 620+ tests)
 
 ## 自主运行规则
 - 技术方案不明确 → 选最简方案，改动最小
