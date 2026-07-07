@@ -1,6 +1,6 @@
 # EVE Online Industrial Assistant — 项目状态
 
-> 最后更新: 2026-07-03 · 77 commits · 599 测试用例
+> 最后更新: 2026-07-07 · 146 commits · 620 测试用例
 
 ---
 
@@ -8,13 +8,13 @@
 
 | 指标 | 数值 |
 |---|---|
-| Python 源文件（不含测试） | 59 |
-| 测试文件 | 38 |
-| 总 Python 文件 | 99 |
-| 代码行数 | 29,636 |
-| 测试用例数 | 599 |
+| Python 源文件（不含测试） | 100 |
+| 测试文件 | 50 |
+| 总 Python 文件 | 152 |
+| 代码行数 | 37,884 |
+| 测试用例数 | 620 |
 | SQLite 数据库 | 4 (`reference.db`, `market.db`, `user.db`, `blueprint.db`) |
-| Git 提交数 | 77 |
+| Git 提交数 | 146 |
 | 外部依赖 | 8（PySide6, aiohttp, aiosqlite, tenacity, tqdm, pyperclip, pyyaml, openpyxl） |
 
 ---
@@ -35,7 +35,10 @@
 - [x] **物流距离计算** — 自动计算并补全物流距离数据（Wave 6）
 - [x] **批量查价功能** — 批量价格查询窗口（Wave 18）
 - [x] **批量导出 CSV/Excel** — 查询页、全物品浏览页均支持导出
-- [x] **生产计划管理** — 生产排程、BOM 材料汇总
+- [x] **生产计划管理** — 生产排程、BOM 材料汇总、计划表编辑、甘特图
+- [x] **精炼计算** — 矿物精炼产出与效率计算
+- [x] **设置对话框** — 应用设置集中管理界面
+- [x] **Universe 数据缓存** — SDE 星系/空间站数据缓存加速
 
 ### 技术基础设施
 - [x] **PySide6 桌面 GUI** — 响应式布局、侧边导航、多 Tab 页面
@@ -78,16 +81,24 @@
 ## 🏗 架构概览
 
 ```
-Main.py  ──▶  ui_pyside6/main_window.py  ──▶  views / dialogs / workers
+Main.py ──▶ ui_pyside6/
+               ├── main_window.py (13+ 视图/对话框)
+               ├── views/industry/  (制造: 甘特图、计划表、物料…)
+               ├── views/inventory/ (库存: 机库、蓝图、导入)
+               ├── views/compare/   (价格对比)
+               ├── views/query/     (查询: 搜索、走势图、订单)
+               ├── dialogs/         (通用弹窗)
+               └── workers/         (QThread 后台 UI Worker)
                   │
                   ▼
             services/  (业务逻辑层)
+               ├── scoring, logistics, bom_expander, production...
+               └── workers/  (ESI 数据拉取: blueprint/price/icon/contract...)
                   │
-                  ▼
-            database/  (SQLite × 4)
-                  │
-                  ▼
-            core/  (工具 + 常量)
+          ┌──────┴──────┐
+          ▼              ▼
+    database/         core/
+   (SQLite × 4)      (工具 + 常量)
 ```
 
 ### 分层说明
@@ -95,7 +106,7 @@ Main.py  ──▶  ui_pyside6/main_window.py  ──▶  views / dialogs / work
 | 层 | 目录 | 职责 |
 |---|---|---|
 | **入口** | `Main.py` | App 初始化、数据库迁移、主题加载 |
-| **UI** | `ui_pyside6/` | 主窗口、13 个视图、对话框、后台 Worker |
+| **UI** | `ui_pyside6/` | 主窗口、20+ 视图/对话框、子包视图 |
 | **业务** | `services/` | ESI 客户端、评分、库存、物流、价格历史、Woker 数据拉取 |
 | **数据** | `database/` | 4 个 SQLite 库（参考/市场/用户/蓝图） |
 | **工具** | `core/` | 路径管理、日志、常量、EVE 公式 |
@@ -112,16 +123,17 @@ Main.py  ──▶  ui_pyside6/main_window.py  ──▶  views / dialogs / work
 
 | 模块 | 测试文件 | 重点覆盖 |
 |---|---|---|
-| Core | `test_core.py`, `test_paths.py`, `test_logger.py` | 路径、日志、常量 |
+| Core | `test_core.py`, `test_paths.py`, `test_logger.py`, `test_single_instance.py` | 路径、日志、常量、单例 |
 | Services | `test_scoring.py`, `test_scoring_cache.py`, `test_scoring_service.py`, `test_scoring_core.py` | 评分逻辑、缓存 |
 | Services | `test_client.py`, `test_database_manager.py`, `test_init_check.py` | HTTP 客户端、DB 连接、初始化 |
-| Services | `test_inventory_manager.py`, `test_logistics.py`, `test_price_history.py` | 库存、物流、价格历史 |
+| Services | `test_inventory_manager.py`, `test_logistics_cost.py`, `test_logistics_distance.py`, `test_price_history.py` | 库存、物流距离、价格历史 |
 | Services | `test_bom_expander.py`, `test_production_scheduler.py`, `test_watchlist_manager.py` | BOM、排程、关注列表 |
 | Services | `test_char_config_validator.py` | 角色配置校验 |
-| Workers | `test_getblueprints.py`, `test_getcontracts.py`, `test_geticon.py`, `test_getitems.py`, `test_getprices.py`, `test_getimplantdata.py`, `test_getindustry.py` | 所有 7 个数据拉取 Worker |
+| Workers | `test_getblueprints.py`, `test_getcontracts.py`, `test_geticon.py`, `test_getitems.py`, `test_getprices.py`, `test_getimplantdata.py`, `test_getindustry.py`, `test_sde_loader.py` | 数据拉取 Worker + SDE 导入 |
 | UI Models | `test_industry_models.py`, `test_trade_models.py`, `test_models_industry.py`, `test_models_trade.py` | Qt 数据模型 |
-| UI Views | `test_contract_view.py`, `test_compare_dialog.py`, `test_score_dialogs.py`, `test_export_helper.py`, `test_theme_listeners.py`, `test_procurement.py` | 视图功能、主题监听 |
-| Workers | `test_workers_getblueprints.py`, `test_workers_getimplantdata.py`, `test_workers_industry.py`, `test_workers_trade.py` | UI Worker 线程 |
+| UI Views | `test_contract_view.py`, `test_compare_dialog.py`, `test_score_dialogs.py`, `test_export_helper.py`, `test_theme_listeners.py`, `test_procurement.py`, `test_contract_ui.py`, `test_batch_price_dialog.py` | 视图功能、主题监听、批量查价 |
+| UI Views | `test_industry_view.py`, `test_inventory_view.py`, `test_ui_industry.py`, `test_ui_inventory.py`, `test_ui_main_window.py` | 集成 UI 测试 |
+| UI Workers | `test_workers_getblueprints.py`, `test_workers_getimplantdata.py`, `test_workers_industry.py`, `test_workers_trade.py` | UI Worker 线程 |
 
 ---
 
