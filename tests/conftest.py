@@ -51,16 +51,17 @@ def _create_temp_databases(tmpdir: str):
             region_id INTEGER,
             buy_price REAL,
             sell_price REAL,
+            adjusted_price REAL DEFAULT 0.0,
             buy_volume INTEGER DEFAULT 0,
             sell_volume INTEGER DEFAULT 0,
             fetch_time TEXT
         );
         -- 材料价格 (Jita region 10000002)
-        INSERT INTO market_prices VALUES (1001, 10000002, 4.0, 5.0, 10000000, 8000000, '2026-01-01 00:00:00');
-        INSERT INTO market_prices VALUES (1002, 10000002, 8.0, 9.0, 5000000, 4000000, '2026-01-01 00:00:00');
+        INSERT INTO market_prices VALUES (1001, 10000002, 4.0, 5.0, 0.0, 10000000, 8000000, '2026-01-01 00:00:00');
+        INSERT INTO market_prices VALUES (1002, 10000002, 8.0, 9.0, 0.0, 5000000, 4000000, '2026-01-01 00:00:00');
         -- 成品价格 (Jita region 10000002)
-        INSERT INTO market_prices VALUES (2001, 10000002, 50000000, 55000000, 1000000, 800000, '2026-01-01 00:00:00');
-        INSERT INTO market_prices VALUES (2002, 10000002, 100000, 120000, 500000, 400000, '2026-01-01 00:00:00');
+        INSERT INTO market_prices VALUES (2001, 10000002, 50000000, 55000000, 50000000, 1000000, 800000, '2026-01-01 00:00:00');
+        INSERT INTO market_prices VALUES (2002, 10000002, 100000, 120000, 110000, 500000, 400000, '2026-01-01 00:00:00');
     """)
     conn.commit()
     conn.close()
@@ -83,17 +84,18 @@ def _create_temp_databases(tmpdir: str):
             blueprint_type_id INTEGER,
             activity TEXT,
             material_type_id INTEGER,
-            quantity INTEGER
+            quantity INTEGER,
+            wastefactor INTEGER DEFAULT 10
         );
         -- 渡鸦级蓝图: 需要 1000 Trit + 500 Pyer, 产出 1 个, 时间 3600s
         INSERT INTO blueprint_activities VALUES (3001, 'manufacturing', 3600);
         INSERT INTO blueprint_products VALUES (3001, 'manufacturing', 2001, 1);
-        INSERT INTO blueprint_materials VALUES (3001, 'manufacturing', 1001, 1000);
-        INSERT INTO blueprint_materials VALUES (3001, 'manufacturing', 1002, 500);
+        INSERT INTO blueprint_materials VALUES (3001, 'manufacturing', 1001, 1000, 10);
+        INSERT INTO blueprint_materials VALUES (3001, 'manufacturing', 1002, 500, 10);
         -- 无人机蓝图: 需要 100 Trit, 产出 1 个, 时间 600s
         INSERT INTO blueprint_activities VALUES (3002, 'manufacturing', 600);
         INSERT INTO blueprint_products VALUES (3002, 'manufacturing', 2002, 1);
-        INSERT INTO blueprint_materials VALUES (3002, 'manufacturing', 1001, 100);
+        INSERT INTO blueprint_materials VALUES (3002, 'manufacturing', 1001, 100, 10);
     """)
     conn.commit()
     conn.close()

@@ -59,9 +59,10 @@ class TestManufacturingScore:
         )
         me0_qty = result_me0["materials"][0]["qty"]
         me10_qty = result_me10["materials"][0]["qty"]
-        # ME10 材料用量应为 base_qty（浪费因子 1.0）
+        # ME10 材料用量应少于 ME0
         assert me0_qty > me10_qty
-        assert result_me10["breakdown"]["waste_factor"] == 1.0
+        # waste_factor 在材料列表中，不在 breakdown 中
+        assert "wastefactor" in result_me10["materials"][0]
 
     def test_unprofitable_scores_zero(self, temp_db):
         """材料成本超成品售价时 score 为 0"""

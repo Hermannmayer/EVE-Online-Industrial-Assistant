@@ -119,8 +119,8 @@ class TestFetchBaselinePrices:
             result = await fetch_baseline_prices()
 
         assert len(result) == 2
-        assert result[1001] == {"buy_price": 4.5, "sell_price": 5.0, "buy_volume": 0, "sell_volume": 0}
-        assert result[1002] == {"buy_price": None, "sell_price": 9.5, "buy_volume": 0, "sell_volume": 0}
+        assert result[1001] == {"buy_price": 4.5, "sell_price": 5.0, "adjusted_price": 5.0, "buy_volume": 0, "sell_volume": 0}
+        assert result[1002] == {"buy_price": None, "sell_price": 9.5, "adjusted_price": 9.5, "buy_volume": 0, "sell_volume": 0}
 
         # 验证请求发送至正确 URL
         session.get.assert_called_once()

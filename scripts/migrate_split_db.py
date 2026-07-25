@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS blueprint_materials (
     activity TEXT,
     material_type_id INTEGER,
     quantity INTEGER,
+    wastefactor INTEGER DEFAULT 10,
     PRIMARY KEY (blueprint_type_id, activity, material_type_id)
 );
 
@@ -203,6 +204,28 @@ def copy_table(src: sqlite3.Connection, dst: sqlite3.Connection, table: str):
     log.info(f"  ✅ {table}: {len(rows)} 行")
 
 
+def _upgrade_schema(db_path: str, label: str):
+    """升级已有数据库的 schema（添加新列，忽略已存在的情况）"""
+    try:
+        conn = sqlite3.connect(db_path)
+        upgrades = [
+            "ALTER TABLE blueprint_materials ADD COLUMN wastefactor INTEGER DEFAULT 10",
+        ]
+        for sql in upgrades:
+            try:
+                conn.execute(sql)
+                log.info(f"  ✅ {label}: 执行 \"{sql.split('ADD')[1].strip()}\"")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" in str(e).lower():
+                    log.info(f"  ℹ️ {label}: 列已存在，跳过")
+                else:
+                    log.warning(f"  ⚠️ {label}: {e}")
+        conn.commit()
+        conn.close()
+    except Exception:
+        log.exception(f"  ❌ {label}: Schema 升级失败")
+
+
 def run_migration():
     """主迁移流程"""
     src_path = database_path()
@@ -262,6 +285,10 @@ def run_migration():
     usr_conn.close()
 
     src_conn.close()
+
+    # ── Schema 升级（处理已有旧表的 ALTER TABLE） ──
+    log.info("\n[4/4] Schema 升级检查...")
+    _upgrade_schema(REF_DB_PATH, "蓝图表")
 
     # ── 统计 ──
     log.info("\n" + "=" * 50)

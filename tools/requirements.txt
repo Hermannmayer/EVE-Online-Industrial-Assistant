@@ -1,0 +1,6 @@
+# tools/ 初始化工具依赖（主程序不需要）
+# 仅在 python tools/init.py 时使用
+aiohttp~=3.11.0
+aiosqlite~=0.20.0
+pyyaml~=6.0
+tqdm~=4.67.0

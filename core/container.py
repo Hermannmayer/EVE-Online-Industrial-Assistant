@@ -21,6 +21,9 @@ class AppContainer:
         self._db: DatabaseManager | None = None
         self._scoring_cache: ScoringCache | None = None
         self._scoring_service = None
+        self._manufacturing_calculator = None
+        self._blueprint_reader = None
+        self._name_resolver = None
 
     @property
     def db(self) -> DatabaseManager:
@@ -47,6 +50,39 @@ class AppContainer:
 
                     self._scoring_service = ScoringService(self.db, self.scoring_cache)
         return self._scoring_service
+
+    @property
+    def manufacturing_calculator(self):
+        """制造计算器（纯函数，无状态）"""
+        if self._manufacturing_calculator is None:
+            with self._lock:
+                if self._manufacturing_calculator is None:
+                    from services import manufacturing_calculator
+
+                    self._manufacturing_calculator = manufacturing_calculator
+        return self._manufacturing_calculator
+
+    @property
+    def blueprint_reader(self):
+        """蓝图数据访问层"""
+        if self._blueprint_reader is None:
+            with self._lock:
+                if self._blueprint_reader is None:
+                    from services import blueprint_reader
+
+                    self._blueprint_reader = blueprint_reader
+        return self._blueprint_reader
+
+    @property
+    def name_resolver(self):
+        """物品名称解析服务"""
+        if self._name_resolver is None:
+            with self._lock:
+                if self._name_resolver is None:
+                    from services import name_resolver
+
+                    self._name_resolver = name_resolver
+        return self._name_resolver
 
 
 # 全局容器单例（过渡期兼容，后续逐步消除）

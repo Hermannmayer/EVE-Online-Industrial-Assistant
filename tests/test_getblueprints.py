@@ -112,7 +112,7 @@ class TestParseActivities:
         }
         a_rows, m_rows, p_rows, s_rows = parse_activities(3001, bp_data)
         assert a_rows[0] == (3001, "manufacturing", 3600, 10)
-        assert m_rows[0] == (3001, "manufacturing", 34, 100)
+        assert m_rows[0] == (3001, "manufacturing", 34, 100, 10)
         assert p_rows[0] == (3001, "manufacturing", 587, 1, 1.0)
         assert s_rows[0] == (3001, "manufacturing", 3380, 1)
 
