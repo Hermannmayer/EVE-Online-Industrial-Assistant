@@ -48,8 +48,9 @@ class ScoreWorker(BaseScoreWorker):
         mat_price_type: str = "sell",
         runs: int = 1,
         parent=None,
+        char_name: str | None = None,
     ):
-        super().__init__(type_id, parent=parent)
+        super().__init__(type_id, char_name=char_name, parent=parent)
         self._bp_me = bp_me
         self._bp_te = bp_te
         self._mat_hub = mat_hub

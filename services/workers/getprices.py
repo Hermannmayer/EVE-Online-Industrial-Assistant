@@ -46,6 +46,7 @@ async def init_db():
                 region_id INTEGER NOT NULL,
                 buy_price REAL,
                 sell_price REAL,
+                adjusted_price REAL DEFAULT 0.0,
                 buy_volume BIGINT DEFAULT 0,
                 sell_volume BIGINT DEFAULT 0,
                 fetch_time TIMESTAMP NOT NULL DEFAULT (datetime('now')),
@@ -78,6 +79,7 @@ async def fetch_baseline_prices() -> dict[int, dict]:
         result[item["type_id"]] = {
             "buy_price": item.get("average_price"),
             "sell_price": item.get("adjusted_price"),
+            "adjusted_price": item.get("adjusted_price"),
             "buy_volume": 0,
             "sell_volume": 0,
         }
@@ -250,13 +252,13 @@ async def save_prices(
             for tid, p in merged.items():
                 if p["buy_price"] or p["sell_price"]:
                     records.append(
-                        (tid, region_id, p["buy_price"], p["sell_price"], int(p["buy_volume"]), int(p["sell_volume"]))
+                        (tid, region_id, p["buy_price"], p["sell_price"], p.get("adjusted_price", 0.0), int(p["buy_volume"]), int(p["sell_volume"]))
                     )
         for i in range(0, len(records), 500):
             await db.executemany(
                 """
-                INSERT INTO market_prices (type_id, region_id, buy_price, sell_price, buy_volume, sell_volume)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO market_prices (type_id, region_id, buy_price, sell_price, adjusted_price, buy_volume, sell_volume)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
                 records[i : i + 500],
             )

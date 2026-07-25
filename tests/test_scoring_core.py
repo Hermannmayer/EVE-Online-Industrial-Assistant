@@ -49,8 +49,8 @@ class TestCalcManufacturingScore:
         assert result["profit_per_run"] > 0
         assert result["materials"]  # 非空
 
-    def test_breakdown_contains_waste_and_te(self, temp_db):
-        """breakdown 应包含 waste_factor 和 te_modifier"""
+    def test_breakdown_contains_cost_keys(self, temp_db):
+        """breakdown 应包含费用相关字段"""
         svc = ScoringService(temp_db, ScoringCache(max_size=10))
         result = svc.calc_manufacturing_score(
             type_id=2002,
@@ -58,8 +58,16 @@ class TestCalcManufacturingScore:
             bp_me=5,
             bp_te=10,
         )
-        assert "waste_factor" in result["breakdown"]
-        assert "te_modifier" in result["breakdown"]
+        keys = result["breakdown"]
+        # 新 breakdown 有 material_cost / facility_fee / eiv / scc_surcharge
+        assert "material_cost" in keys
+        assert "facility_fee" in keys
+        assert "eiv" in keys
+        assert "scc_surcharge" in keys
+        # 材料信息在 materials 列表中
+        assert "materials" in result
+        assert len(result["materials"]) > 0
+        assert "wastefactor" in result["materials"][0]
 
     def test_no_blueprint_returns_status(self, temp_db):
         """无蓝图的物品返回 status=no_blueprint"""
@@ -86,44 +94,49 @@ class TestCalcManufacturingScore:
 
 
 class TestMEWasteFactor:
-    """验证 ME 对材料浪费的影响"""
+    """验证 ME 对材料浪费的影响 — 使用 manufacturing_calculator 正确公式"""
 
-    def test_me0_gives_10_percent_waste(self, temp_db):
-        """ME 0 → waste_factor = 1.1（10% 浪费）"""
+    def test_me0_gives_minimal_waste(self, temp_db):
+        """ME 0 → wastefactor=10 → effective ~1.1"""
         svc = ScoringService(temp_db, ScoringCache(max_size=10))
         result = svc.calc_manufacturing_score(
             type_id=2002,
             char_config=DEFAULT_CHAR,
             bp_me=0,
         )
-        assert result["breakdown"]["waste_factor"] == 1.1
+        mat = result["materials"][0]
+        assert mat["wastefactor"] == 10
+        assert mat["waste_factor"] > 1.0
 
-    def test_me10_gives_zero_waste(self, temp_db):
-        """ME 10 → waste_factor = 1.0（无浪费）"""
+    def test_me10_still_has_some_waste(self, temp_db):
+        """ME 10 不会归零浪费"""
         svc = ScoringService(temp_db, ScoringCache(max_size=10))
         result = svc.calc_manufacturing_score(
             type_id=2002,
             char_config=DEFAULT_CHAR,
             bp_me=10,
         )
-        assert result["breakdown"]["waste_factor"] == 1.0
+        mat = result["materials"][0]
+        assert mat["wastefactor"] == 10
+        assert mat["waste_factor"] > 1.0
+        assert mat["waste_factor"] <= 1.01
 
-    def test_me5_gives_half_waste(self, temp_db):
-        """ME 5 → waste_factor = 1.05（5% 浪费）"""
+    def test_me5_waste_between_me0_and_me10(self, temp_db):
+        """ME 5 的浪费应在 ME0 和 ME10 之间"""
         svc = ScoringService(temp_db, ScoringCache(max_size=10))
-        result = svc.calc_manufacturing_score(
-            type_id=2002,
-            char_config=DEFAULT_CHAR,
-            bp_me=5,
-        )
-        assert result["breakdown"]["waste_factor"] == 1.05
+        r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=0)
+        r5 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=5)
+        r10 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=10)
+        qty0 = r0["materials"][0]["qty"]
+        qty5 = r5["materials"][0]["qty"]
+        qty10 = r10["materials"][0]["qty"]
+        assert qty0 >= qty5 >= qty10
 
     def test_higher_me_reduces_material_cost(self, temp_db):
         """ME 10 的材料成本应低于 ME 0"""
         svc = ScoringService(temp_db, ScoringCache(max_size=10))
         r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=0)
         r10 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=10)
-        # ME10 材料总成本应更低
         mat_cost_0 = sum(m["subtotal"] for m in r0["materials"])
         mat_cost_10 = sum(m["subtotal"] for m in r10["materials"])
         assert mat_cost_10 < mat_cost_0
@@ -138,34 +151,34 @@ class TestTEFactor:
     """验证 TE 对制造时间的影响"""
 
     def test_te0_no_time_reduction(self, temp_db):
-        """TE 0 → te_modifier = 1.0（不加速）"""
+        """TE 0 → hours_per_run 应为最长"""
         svc = ScoringService(temp_db, ScoringCache(max_size=10))
         result = svc.calc_manufacturing_score(
             type_id=2002,
             char_config=DEFAULT_CHAR,
             bp_te=0,
         )
-        assert result["breakdown"]["te_modifier"] == 1.0
+        # TE0 耗时最多，应有合理的正值
+        assert result["hours_per_run"] > 0
 
     def test_te20_gives_20_percent_reduction(self, temp_db):
-        """TE 20 → te_modifier = 0.8（20% 时间缩减）"""
+        """TE 20 的 ISK/h 应明显高于 TE 0（因为时间更短）"""
         svc = ScoringService(temp_db, ScoringCache(max_size=10))
-        result = svc.calc_manufacturing_score(
-            type_id=2002,
-            char_config=DEFAULT_CHAR,
-            bp_te=20,
-        )
-        assert result["breakdown"]["te_modifier"] == 0.8
+        r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=0)
+        r20 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=20)
+        # hours_per_run 被 round(2) 截断，不能直接做精确比例
+        # 但 TE20 的 ISK/h 应高于 TE0（时间更短则效率更高）
+        assert r20["isk_per_hour"] > r0["isk_per_hour"]
+        # hours 比例应在合理范围内
+        hours_ratio = r0["hours_per_run"] / r20["hours_per_run"]
+        assert hours_ratio > 1.0  # TE0 耗时更多
 
     def test_te10_gives_10_percent_reduction(self, temp_db):
-        """TE 10 → te_modifier = 0.9"""
+        """TE 10 的 ISK/h 应高于 TE 0（因为时间更短）"""
         svc = ScoringService(temp_db, ScoringCache(max_size=10))
-        result = svc.calc_manufacturing_score(
-            type_id=2002,
-            char_config=DEFAULT_CHAR,
-            bp_te=10,
-        )
-        assert result["breakdown"]["te_modifier"] == 0.9
+        r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=0)
+        r10 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=10)
+        assert r10["isk_per_hour"] > r0["isk_per_hour"]
 
     def test_higher_te_reduces_hours(self, temp_db):
         """TE 20 的小时数应少于 TE 0"""

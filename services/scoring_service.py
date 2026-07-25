@@ -12,19 +12,22 @@ import time
 from collections import OrderedDict
 
 from core.eve_formulas import (
-    ADV_INDUSTRY_SKILL_MULT,
-    INDUSTRY_SKILL_MULT,
-    INSTALL_FEE_RATE,
-    ME_WASTE_BASE,
-    TE_MULT_PER_LEVEL,
     _hub_region_id,
-    _mat_name,
     calc_broker_rate,
     calc_relist_discount,
     calc_sales_tax_rate,
-    resolve_item_name,
 )
 from services.database_manager import DatabaseManager, get_db
+from services.blueprint_reader import get_blueprint_materials
+from services.manufacturing_calculator import (
+    calc_job_cost_fees,
+    calc_material_for_runs,
+    calc_material_per_run,
+    calc_production_time,
+    SCC_SURCHARGE,
+    STRUCTURE_MAT_SAVING,
+)
+from services.name_resolver import resolve_item_name
 
 db = get_db()
 
@@ -401,8 +404,16 @@ class ScoringService:
         bp_te: int = 0,
         system_id: int | None = None,
         structure_bonus: float = 0.0,
+        structure_time_mod: float = 1.0,
+        is_alpha: bool = False,
     ) -> dict:
-        """计算制造评分。"""
+        """计算制造评分。
+
+        重构后使用 manufacturing_calculator 中的公式：
+        - 材料浪费: calc_material_per_run / calc_material_for_runs
+        - 安装费: calc_job_cost_fees（加法结构）
+        - 时间: calc_production_time
+        """
         result = {
             "score": 0.0,
             "profit_per_run": 0.0,
@@ -442,34 +453,35 @@ class ScoringService:
                 result["status"] = "no_price"
                 return result
 
-            c.execute(
-                """
-                SELECT bm.material_type_id, bm.quantity
-                FROM blueprint_materials bm
-                WHERE bm.blueprint_type_id = ? AND bm.activity = 'manufacturing'
-            """,
-                (bp_id,),
-            )
-            mat_rows = c.fetchall()
+            # 用 blueprint_reader 获取材料（含 wastefactor）
+            mat_rows = get_blueprint_materials(c, bp_id)
             if not mat_rows:
                 result["status"] = "no_materials"
                 return result
 
-            waste_factor = 1 + ME_WASTE_BASE * (1 - bp_me / 10)
+            # 材料成本计算（使用正确的浪费公式 + ceil 取整）
             total_mat_cost = 0.0
             mat_detail = []
-            for mat_id, mat_qty in mat_rows:
+            eiv_materials: list[tuple[int, float]] = []
+            for mat_id, mat_qty, wastefactor in mat_rows:
+                wastefactor = wastefactor or 10  # 兜底 T1
                 mat_price = get_price(mat_id, price_type_mat, mat_source_hub, _db=self._db)
-                waste_qty = mat_qty * waste_factor
+                # 正确公式：ceil(base_qty × waste_factor) 每轮次
+                per_run_qty = calc_material_per_run(mat_qty, wastefactor, bp_me, STRUCTURE_MAT_SAVING)
+                waste_qty = per_run_qty * prod_qty  # 多轮次
                 if mat_price:
                     total_mat_cost += waste_qty * mat_price
                 mat_name = resolve_item_name(c, mat_id)
+                # EIV 基础材料量（ME0 无浪费）
+                base_qty_no_waste = mat_qty
+                eiv_materials.append((base_qty_no_waste, mat_price or 0.0))
                 mat_detail.append(
                     {
                         "name": mat_name,
                         "base_qty": mat_qty,
-                        "qty": round(waste_qty, 2),
-                        "waste_factor": round(waste_factor, 2),
+                        "qty": waste_qty,
+                        "wastefactor": wastefactor,
+                        "waste_factor": round(per_run_qty / mat_qty, 4) if mat_qty > 0 else 1.0,
                         "unit_price": mat_price or 0.0,
                         "subtotal": round((mat_price or 0.0) * waste_qty, 2),
                     }
@@ -486,9 +498,23 @@ class ScoringService:
             revenue = prod_price * prod_qty
             total_cost = total_mat_cost
             sci = get_system_cost_index(system_id, "manufacturing", _db=self._db)
-            install_base = INSTALL_FEE_RATE * revenue
-            facility_fee = install_base * sci * (1 - structure_bonus) * (1 + facility_tax_pct / 100)
+
+            # EIV 计算 & 安装费（加法结构）
+            eiv = sum(qty * price for qty, price in eiv_materials)
+            # structure_bonus: 传入的 0.0 表示 NPC 无加成 → 乘数 1.0
+            # 传入的负值表示折扣（如 -0.1 → 乘数 0.9）
+            sb_mult = 1.0 + structure_bonus
+            alpha_tax = 0.0025 if is_alpha else 0.0
+            fee_detail = calc_job_cost_fees(
+                eiv=eiv,
+                sci=sci,
+                structure_mult=sb_mult,
+                facility_tax=facility_tax_pct / 100,
+                alpha_tax=alpha_tax,
+            )
+            facility_fee = fee_detail["total_fee"]
             total_cost += facility_fee
+
             broker_init = revenue * (broker_rate / 100)
             broker_relist = revenue * (broker_rate / 100) * (1 - relist_discount / 100)
             sales_tax = revenue * (sales_tax_rate / 100)
@@ -496,21 +522,23 @@ class ScoringService:
 
             profit = revenue - total_cost
 
-            # 技能和时间计算（两个分支共用）
+            # 时间计算（使用 calc_production_time）
             ind_lvl = skills.get("工业理论", 5)
             adv_lvl = skills.get("高级工业理论", 5)
-            skill_mod = (1 - INDUSTRY_SKILL_MULT * ind_lvl) * (1 - ADV_INDUSTRY_SKILL_MULT * adv_lvl)
-            te_modifier = 1 - bp_te * TE_MULT_PER_LEVEL
-            actual_time = base_time * skill_mod * te_modifier
+            actual_time = calc_production_time(
+                base_time=base_time,
+                industry_skill=ind_lvl,
+                adv_industry_skill=adv_lvl,
+                te_level=bp_te,
+                structure_time_mod=structure_time_mod,
+            )
             hours_per_run = actual_time / 3600
             margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
 
-            # 费用明细字典（始终返回，供 UI 展示各项费用）
+            # 费用明细字典
             breakdown = {
                 "bp_me": bp_me,
                 "bp_te": bp_te,
-                "waste_factor": round(waste_factor, 2),
-                "te_modifier": round(te_modifier, 2),
                 "isk_per_hour": 0.0,
                 "revenue": round(revenue, 2),
                 "material_cost": round(total_mat_cost, 2),
@@ -518,10 +546,12 @@ class ScoringService:
                 "broker_relist": round(broker_relist, 2),
                 "sales_tax": round(sales_tax, 2),
                 "facility_fee": round(facility_fee, 2),
-                "install_base": round(install_base, 2),
+                "eiv": round(eiv, 2),
                 "sci": round(sci, 4),
                 "structure_bonus": round(structure_bonus, 4),
+                "structure_time_mod": round(structure_time_mod, 4),
                 "facility_tax_pct": round(facility_tax_pct, 2),
+                "scc_surcharge": round(fee_detail["scc"], 2),
                 "broker_rate": round(broker_rate, 3),
                 "sales_tax_rate": round(sales_tax_rate, 3),
                 "relist_discount": round(relist_discount, 1),
@@ -875,6 +905,8 @@ def calc_manufacturing_score(
     bp_te: int = 0,
     system_id: int | None = None,
     structure_bonus: float = 0.0,
+    structure_time_mod: float = 1.0,
+    is_alpha: bool = False,
 ) -> dict:
     """模块级便利函数：复用模块级单例 ScoringService。"""
     return _get_scoring_service().calc_manufacturing_score(
@@ -889,6 +921,8 @@ def calc_manufacturing_score(
         bp_te=bp_te,
         system_id=system_id,
         structure_bonus=structure_bonus,
+        structure_time_mod=structure_time_mod,
+        is_alpha=is_alpha,
     )
 
 

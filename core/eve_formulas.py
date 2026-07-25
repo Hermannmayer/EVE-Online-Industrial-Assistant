@@ -24,11 +24,14 @@ BROKER_FEE_MIN = 0.1  # 最低经纪人费率，来源: EVE Wiki
 # ════════════════════════════════════════════════════
 #  制造 — 来源: https://wiki.eveuniversity.org/Manufacturing
 # ════════════════════════════════════════════════════
-INSTALL_FEE_RATE = 0.05  # 安装费 = 5% × 成品收入
+# NOTE: INSTALL_FEE_RATE 和 ME_WASTE_BASE 是错误的虚构常量。
+#       真正的制造公式请使用 services.manufacturing_calculator。
+#       这两个常量将在消费者全面迁移后删除。
+INSTALL_FEE_RATE = 0.05  # 虚构常量 — 实际安装费基于 EIV（见 manufacturing_calculator）
 INDUSTRY_SKILL_MULT = 0.04  # 工业理论 (3380) 每级 -4% 时间
 ADV_INDUSTRY_SKILL_MULT = 0.03  # 高级工业理论 (3388) 每级 -3% 时间
 TE_MULT_PER_LEVEL = 0.01  # TE 每级 -1% 时间
-ME_WASTE_BASE = 0.1  # ME 0 = 10% 浪费，每级 -1%
+ME_WASTE_BASE = 0.1  # 线性化近似 — 实际公式见 manufacturing_calculator.calc_waste_factor
 
 # ════════════════════════════════════════════════════
 #  贸易 — 来源: https://wiki.eveuniversity.org/Trade
@@ -51,9 +54,10 @@ REPROCESSING_MAX_YIELD_NPC = 0.575  # NPC 站最高 57.5%
 REPROCESSING_MAX_YIELD_FACILITY = 0.85  # 玩家结构最高 ~85%
 
 # ════════════════════════════════════════════════════
-#  基础矿物 type_id → 中文名映射（type_id < 178，不在 item 表中）
+#  基础矿物 type_id → 中文名映射（已迁移至 services.name_resolver）
+#  此处保留仅为了存量代码兼容，新代码请从 services.name_resolver 导入。
 # ════════════════════════════════════════════════════
-_MINERAL_NAMES = {
+_MINERAL_NAMES: dict[int, str] = {
     34: "三钛合金",
     35: "类银超金属",
     36: "同位聚合体",
@@ -62,7 +66,7 @@ _MINERAL_NAMES = {
     39: "碳纤维",
     40: "建筑用预制块",
 }
-_RACE_ME = {4247: "****残余物", 4312: "****残余物"}  # 补全用
+_RACE_ME: dict[int, str] = {4247: "****残余物", 4312: "****残余物"}  # 补全用
 _MINERAL_NAMES.update(_RACE_ME)
 
 
@@ -72,16 +76,17 @@ _MINERAL_NAMES.update(_RACE_ME)
 
 
 def resolve_item_name(c, type_id: int) -> str:
-    """统一物品名称解析：item 表 → 矿物硬编码 → str(id)"""
-    if type_id in _MINERAL_NAMES:
-        return _MINERAL_NAMES[type_id]
-    nrow = c.execute("SELECT zh_name, en_name FROM item WHERE type_id = ?", (type_id,)).fetchone()
-    return (nrow[0] or nrow[1]) if nrow else str(type_id)
+    """统一物品名称解析 — 已迁移至 services.name_resolver。"""
+    from services.name_resolver import resolve_item_name as _resolve
+
+    return _resolve(c, type_id)
 
 
 def _mat_name(mat_id: int, c) -> str:
-    """查询材料名称，优先查 item 表，基础矿物用硬编码"""
-    return resolve_item_name(c, mat_id)
+    """查询材料名称 — 已迁移至 services.name_resolver。"""
+    from services.name_resolver import mat_name as _mname
+
+    return _mname(mat_id, c)
 
 
 def _hub_region_id(hub: str | None) -> int:
