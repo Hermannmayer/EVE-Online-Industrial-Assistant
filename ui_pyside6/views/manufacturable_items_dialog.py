@@ -32,6 +32,7 @@ import ui_pyside6.theme as theme
 from core.cache import TtlLRUCache
 from core.container import get_container
 from core.paths import data_dir
+from services.terminology import term
 
 _cache = TtlLRUCache(max_size=500, ttl_seconds=1800)
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
@@ -61,7 +62,13 @@ MCOLS = [
     ("利润率%", 70, "mm"),
 ]
 
-MFG_CATEGORIES = ["所有可制造", "蓝图制造(T1)", "发明制造(T2)", "势力蓝图制造", "反应"]
+MFG_CATEGORIES = [
+    term.market_category("all_manufacturable"),
+    term.market_category("t1_mfg"),
+    term.market_category("t2_invention"),
+    term.market_category("faction"),
+    term.market_category("reaction"),
+]
 
 
 class MfgTreeW(QThread):

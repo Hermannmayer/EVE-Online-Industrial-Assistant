@@ -3,11 +3,15 @@
 
 将 type_id 转换为可读的中文/英文物品名称。
 从 core/eve_formulas.py 迁移至此，原位置保留 deprecated wrapper。
+
+解析优先级: terminology.item_overrides > 矿物硬编码 > item.zh_name > item.en_name
 """
 
 from __future__ import annotations
 
 import sqlite3
+
+from services.terminology import term
 
 # ═══════════════════════════════════════════════════════
 #  基础矿物 type_id → 中文名映射（type_id < 178，不在 item 表中）
@@ -26,7 +30,7 @@ _MINERAL_NAMES: dict[int, str] = {
 
 
 def resolve_item_name(conn: sqlite3.Connection, type_id: int) -> str:
-    """统一物品名称解析：item 表 → 矿物硬编码 → str(id)。
+    """统一物品名称解析：term override → 矿物硬编码 → item 表 → str(id)。
 
     Args:
         conn: reference.db 的数据库连接
@@ -35,6 +39,9 @@ def resolve_item_name(conn: sqlite3.Connection, type_id: int) -> str:
     Returns:
         物品名称（优先中文，其次英文，最后回退到字符串 id）
     """
+    override = term.item_override(type_id)
+    if override is not None:
+        return override
     if type_id in _MINERAL_NAMES:
         return _MINERAL_NAMES[type_id]
     cur = conn.execute(

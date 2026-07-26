@@ -38,6 +38,7 @@ from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.paths import ICON_DIR
 from services.name_resolver import resolve_item_name
+from services.terminology import term
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 from ui_pyside6.views.compare_dialog import CompareDialog
 from ui_pyside6.views.score_dialogs import MfgDlg, ScoreW, TradeDlg
@@ -86,8 +87,22 @@ def _fetch(sql, rid: int, params=None):
         return r
 
 
-CATEGORIES = ["所有类别", "无法制造获得", "蓝图制造(T1)", "发明制造(T2)", "势力蓝图制造", "反应", "行星开发"]
-MFG_CATEGORIES = ["所有可制造", "蓝图制造(T1)", "发明制造(T2)", "势力蓝图制造", "反应"]
+CATEGORIES = [
+    term.market_category("all"),
+    term.market_category("unmanufacturable"),
+    term.market_category("t1_mfg"),
+    term.market_category("t2_invention"),
+    term.market_category("faction"),
+    term.market_category("reaction"),
+    term.market_category("planetary"),
+]
+MFG_CATEGORIES = [
+    term.market_category("all_manufacturable"),
+    term.market_category("t1_mfg"),
+    term.market_category("t2_invention"),
+    term.market_category("faction"),
+    term.market_category("reaction"),
+]
 BCOLS = [
     ("图标", 36, "i"),
     ("中文名", 160, "z"),
