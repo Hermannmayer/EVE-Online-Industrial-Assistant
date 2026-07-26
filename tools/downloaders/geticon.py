@@ -39,7 +39,9 @@ def _load_type_ids_with_icons() -> set[int]:
         tid = int(tid_str) if isinstance(tid_str, str) else tid_str
         if tid < 178:
             continue
-        icon_id = tdata.get("iconID") or tdata.get("icon", {}).get("iconID") if isinstance(tdata.get("icon"), dict) else 0
+        icon_id = (
+            tdata.get("iconID") or tdata.get("icon", {}).get("iconID") if isinstance(tdata.get("icon"), dict) else 0
+        )
         if icon_id and int(icon_id) > 0:
             result.add(tid)
     return result
@@ -92,6 +94,16 @@ def _build_icon_groups(type_ids: list[int], type_icon_map: dict[int, int]) -> di
         icon_id = type_icon_map.get(tid, tid)  # 无映射时以自身为分组 key
         groups.setdefault(icon_id, []).append(tid)
     return groups
+
+
+async def download_icon(
+    session: aiohttp.ClientSession,
+    type_id: int,
+    semaphore: asyncio.Semaphore,
+    progress: list,
+) -> bool:
+    """为单个 type_id 下载图标（向后兼容包装，委托给 download_icon_for_group）"""
+    return await download_icon_for_group(session, type_id, [type_id], semaphore, progress)
 
 
 async def download_icon_for_group(
@@ -154,8 +166,7 @@ async def download_all(session: aiohttp.ClientSession, type_ids: list):
     log.info(f"总计={total}, 按 iconID 分组后共 {len(icon_groups)} 个唯一图标")
 
     tasks = [
-        download_icon_for_group(session, icon_id, tids, semaphore, progress)
-        for icon_id, tids in icon_groups.items()
+        download_icon_for_group(session, icon_id, tids, semaphore, progress) for icon_id, tids in icon_groups.items()
     ]
     if tasks:
         await asyncio.gather(*tasks)
@@ -164,8 +175,6 @@ async def download_all(session: aiohttp.ClientSession, type_ids: list):
 
 
 async def main():
-    import sqlite3
-
     # 命令行参数：只下载指定 type_id
     if len(sys.argv) > 1:
         type_ids = [int(arg) for arg in sys.argv[1:] if arg.isdigit()]

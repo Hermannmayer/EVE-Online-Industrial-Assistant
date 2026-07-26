@@ -9,7 +9,7 @@
 
 from PySide6.QtCore import QThread, Signal
 
-from services.scoring_service import resolve_char_config
+from services.char_config_resolver import resolve_char_config
 
 
 class BaseScoreWorker(QThread):
@@ -20,9 +20,7 @@ class BaseScoreWorker(QThread):
     def __init__(self, type_id: int, *, char_config=None, char_name=None, parent=None):
         super().__init__(parent)
         self._type_id = type_id
-        self._char_config = resolve_char_config(
-            char_name=char_name, char_data=char_config
-        )
+        self._char_config = resolve_char_config(char_name=char_name, char_data=char_config)
 
     def run(self):
         try:
@@ -45,9 +43,7 @@ class BaseBatchScoreWorker(QThread):
     def __init__(self, items: list, *, char_config=None, char_name=None, parent=None):
         super().__init__(parent)
         self._items = list(items)
-        self._char_config = resolve_char_config(
-            char_name=char_name, char_data=char_config
-        )
+        self._char_config = resolve_char_config(char_name=char_name, char_data=char_config)
 
     def run(self):
         import time

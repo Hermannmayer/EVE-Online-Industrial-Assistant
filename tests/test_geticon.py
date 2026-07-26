@@ -26,7 +26,7 @@ class TestDownloadIconCacheHit:
         semaphore = asyncio.Semaphore(1)
         progress = [0, 0]
 
-        with patch("services.workers.geticon.ICON_CACHE_DIR", tmp_path):
+        with patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path):
             result = await download_icon(session, 12345, semaphore, progress)
 
         assert result is True
@@ -53,12 +53,15 @@ class TestDownloadIconSuccess:
         semaphore = asyncio.Semaphore(1)
         progress = [0, 0]
 
-        with patch("services.workers.geticon.ICON_CACHE_DIR", tmp_path):
+        with patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path):
             result = await download_icon(session, 12345, semaphore, progress)
 
         assert result is True
         assert progress == [1, 1]  # total +1, new_downloads +1
-        session.get.assert_called_once_with(f"https://images.evetech.net/types/12345/icon?size={ICON_SIZE}")
+        session.get.assert_called_once_with(
+            f"https://images.evetech.net/types/12345/icon?size={ICON_SIZE}",
+            timeout=aiohttp.ClientTimeout(total=15),
+        )
         written = (tmp_path / "12345.png").read_bytes()
         assert written == b"fake_png_data"
 
@@ -80,7 +83,7 @@ class TestDownloadIconNoIcon:
         semaphore = asyncio.Semaphore(1)
         progress = [0, 0]
 
-        with patch("services.workers.geticon.ICON_CACHE_DIR", tmp_path):
+        with patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path):
             result = await download_icon(session, 12345, semaphore, progress)
 
         assert result is False
@@ -103,8 +106,8 @@ class TestDownloadIconClientError:
         progress = [0, 0]
 
         with (
-            patch("services.workers.geticon.ICON_CACHE_DIR", tmp_path),
-            patch("services.workers.geticon.log"),  # 抑制错误日志
+            patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path),
+            patch("tools.downloaders.geticon.log"),  # 抑制错误日志
         ):
             result = await download_icon(session, 12345, semaphore, progress)
 
@@ -125,19 +128,27 @@ class TestDownloadAllFilter:
         # type_ids: 1(有png), 2(缺), 3(有noicon), 4(缺), 5(缺)
         type_ids = [1, 2, 3, 4, 5]
 
-        downloaded = []
+        # mock session.get 对所有请求返回 200
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read = AsyncMock(return_value=b"fake_png_data")
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
 
-        async def fake_download_icon(_session, type_id, _semaphore, progress):
-            downloaded.append(type_id)
-            progress[0] += 1
-            progress[1] += 1
-            return True
+        session = MagicMock()
+        session.get = MagicMock(return_value=mock_cm)
 
         with (
-            patch("services.workers.geticon.ICON_CACHE_DIR", tmp_path),
-            patch("services.workers.geticon.download_icon", side_effect=fake_download_icon),
-            patch("services.workers.geticon.log"),
+            patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path),
+            patch("tools.downloaders.geticon.log"),
+            patch("tools.downloaders.geticon._load_type_icon_map", return_value={}),
         ):
-            await download_all(MagicMock(), type_ids)
+            await download_all(session, type_ids)
 
-        assert downloaded == [2, 4, 5], f"应只下载缺失的 type_id, 实际: {downloaded}"
+        # 只有 2, 4, 5 被下载（1 和 3 因缓存跳过）
+        assert (tmp_path / "2.png").exists(), "type_id 2 应被下载"
+        assert (tmp_path / "4.png").exists(), "type_id 4 应被下载"
+        assert (tmp_path / "5.png").exists(), "type_id 5 应被下载"
+        assert (tmp_path / "1.png").read_bytes() == b"", "type_id 1 不应被覆盖"
+        assert not (tmp_path / "3.png").exists(), "type_id 3 不应有 .png（有 .noicon）"

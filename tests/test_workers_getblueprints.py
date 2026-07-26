@@ -51,8 +51,8 @@ class TestParseActivitiesInvention:
         assert a_rows[0] == (20414, "invention", 14400, 1)
 
         assert len(m_rows) == 2
-        assert m_rows[0] == (20414, "invention", 20418, 1)
-        assert m_rows[1] == (20414, "invention", 20420, 1)
+        assert m_rows[0] == (20414, "invention", 20418, 1, 10)
+        assert m_rows[1] == (20414, "invention", 20420, 1, 10)
 
         # 概率字段保留
         assert len(p_rows) == 2
@@ -132,8 +132,8 @@ class TestEnsureCacheHttpError:
     """ensure_cache — 下载阶段 HTTP 异常"""
 
     @pytest.mark.asyncio
-    @patch("services.workers.getblueprints.os.path.exists")
-    @patch("services.workers.getblueprints.os.makedirs")
+    @patch("tools.downloaders.getblueprints.os.path.exists")
+    @patch("tools.downloaders.getblueprints.os.makedirs")
     async def test_raises_on_http_error(self, mock_makedirs, mock_exists):
         """S3 返回非 200 时 raise_for_status 抛出异常"""
         mock_exists.return_value = False
@@ -151,7 +151,7 @@ class TestEnsureCacheHttpError:
         mock_session.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "services.workers.getblueprints.aiohttp.ClientSession",
+            "tools.downloaders.getblueprints.aiohttp.ClientSession",
             return_value=mock_session,
         ):
             with pytest.raises(Exception, match="HTTP 403 Forbidden"):
@@ -203,11 +203,11 @@ class TestRunBlueprintUpdateYamlError:
         return mocks
 
     @pytest.mark.asyncio
-    @patch("services.workers.getblueprints.aiosqlite.connect")
-    @patch("services.workers.getblueprints.os.makedirs")
-    @patch("services.workers.getblueprints.ensure_cache")
-    @patch("services.workers.getblueprints.yaml.safe_load")
-    @patch("services.workers.getblueprints.open", new_callable=mock_open)
+    @patch("tools.downloaders.getblueprints.aiosqlite.connect")
+    @patch("tools.downloaders.getblueprints.os.makedirs")
+    @patch("tools.downloaders.getblueprints.ensure_cache")
+    @patch("tools.downloaders.getblueprints.yaml.safe_load")
+    @patch("tools.downloaders.getblueprints.open", new_callable=mock_open)
     async def test_raises_value_error_when_yaml_is_not_dict(
         self, mock_file, mock_yaml, mock_ensure_cache, mock_makedirs, mock_connect
     ):

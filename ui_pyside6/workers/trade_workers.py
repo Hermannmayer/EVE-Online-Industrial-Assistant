@@ -3,7 +3,7 @@
 from PySide6.QtCore import QThread, Signal
 
 from core.constants import TRADE_HUB_IDS
-from services.scoring_service import calc_trade_score, get_price, get_volume
+from core.container import get_container
 from ui_pyside6.workers.base_worker import BaseScoreWorker
 
 
@@ -18,11 +18,12 @@ class CrossRegionPriceWorker(QThread):
         self._db = db
 
     def run(self):
+        pricing = get_container().pricing_service
         results = []
         for hub_name, region_id in TRADE_HUB_IDS.items():
-            sell = get_price(self._tid, "sell", hub_name)
-            buy = get_price(self._tid, "buy", hub_name)
-            vol = get_volume(self._tid, "total", hub_name)
+            sell = pricing.get_price(self._tid, "sell", hub_name)
+            buy = pricing.get_price(self._tid, "buy", hub_name)
+            vol = pricing.get_volume(self._tid, "total", hub_name)
             spread = (sell - buy) if (sell and buy) else 0
             spread_pct = (spread / buy * 100) if (buy and buy > 0) else 0
             results.append(
@@ -60,14 +61,18 @@ class TradeScoreWorker(BaseScoreWorker):
         self._quantity = quantity
 
     def _compute(self) -> dict:
-        return calc_trade_score(
-            type_id=self._type_id,
-            buy_hub=self._buy_hub,
-            sell_hub=self._sell_hub,
-            buy_price_type=self._buy_price_type,
-            sell_price_type=self._sell_price_type,
-            char_config=self._char_config,
-            quantity=self._quantity,
+        return (
+            get_container()
+            .scoring_service()
+            .calc_trade_score(
+                type_id=self._type_id,
+                buy_hub=self._buy_hub,
+                sell_hub=self._sell_hub,
+                buy_price_type=self._buy_price_type,
+                sell_price_type=self._sell_price_type,
+                char_config=self._char_config,
+                quantity=self._quantity,
+            )
         )
 
 
@@ -97,9 +102,7 @@ class TransportWorker(BaseScoreWorker):
         self._use_public_freight = use_public_freight
 
     def _compute(self) -> dict:
-        from services.logistics import calc_transport_profit
-
-        return calc_transport_profit(
+        return get_container().logistics_service.calc_transport_profit(
             type_id=self._type_id,
             buy_hub=self._buy_hub,
             sell_hub=self._sell_hub,

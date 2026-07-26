@@ -795,6 +795,11 @@ class CharSettingsDialog(QDialog):
         self.setMinimumSize(750, 600)
         self.setStyleSheet(f"background-color: {theme.BG_DARK};")
 
+    def showEvent(self, ev):
+        """showEvent 时重新应用当前主题样式表"""
+        super().showEvent(ev)
+        self.setStyleSheet(f"background-color: {theme.BG_DARK};")
+
         # 加载所有数据
         self._all_data = load_all_data()
         self._current_char_name = self._all_data.get("current", "main")

@@ -81,7 +81,10 @@ def test_estimate_page_theme_listener(qapp, mock_db):
 def test_inventory_page_theme_listener(qapp, mock_db):
     with (
         patch("ui_pyside6.views.inventory.inventory_page.init_db"),
-        patch("ui_pyside6.views.inventory.inventory_page.get_hangars", return_value=[{"id": 1, "name": "默认", "notes": ""}]),
+        patch(
+            "ui_pyside6.views.inventory.inventory_page.get_hangars",
+            return_value=[{"id": 1, "name": "默认", "notes": ""}],
+        ),
     ):
         from ui_pyside6.views.inventory_view import InventoryPage
 
@@ -115,7 +118,6 @@ def test_import_review_dialog_show_event(qapp, mock_db):
 # ── showEvent 不更新对话框自身 stylesheet，仅更新子控件 — 待 dialog 自身也加入 showEvent 重绘 ──
 
 
-@pytest.mark.xfail(reason="showEvent 仅重绘子控件，未更新 dialog 自身 stylesheet")
 def test_char_settings_dialog_show_event(qapp, mock_db):
     with (
         patch("ui_pyside6.views.char_settings_view.load_all_data") as mock_load,
@@ -134,11 +136,20 @@ def test_char_settings_dialog_show_event(qapp, mock_db):
         assert ONE_LIGHT["BG_DARK"] in dlg.styleSheet()
 
 
-@pytest.mark.xfail(reason="showEvent 仅重绘子控件，未更新 dialog 自身 stylesheet")
 def test_init_wizard_show_event(qapp):
     with (
-        patch("ui_pyside6.views.init_wizard.check_all", return_value={}),
-        patch("ui_pyside6.views.init_wizard.missing_count", return_value=5),
+        patch(
+            "ui_pyside6.views.init_wizard.check_all",
+            return_value={
+                "items": True,
+                "prices": True,
+                "blueprints": True,
+                "implants": False,
+                "icons": False,
+                "industry": False,
+                "sde_data": False,
+            },
+        ),
     ):
         from ui_pyside6.views.init_wizard import InitWizard
 
@@ -148,7 +159,6 @@ def test_init_wizard_show_event(qapp):
         assert ONE_LIGHT["BG_DARK"] in wiz.styleSheet()
 
 
-@pytest.mark.xfail(reason="AllItemsDialog 构造依赖完整 Proxy model，fake 不兼容 — 需 E2E 测试")
 def test_all_items_dialog_show_event(qapp, mock_db):
     with (
         patch("ui_pyside6.views.all_items_view.TreeW") as MockTree,
@@ -163,4 +173,4 @@ def test_all_items_dialog_show_event(qapp, mock_db):
         dlg = AllItemsDialog()
         apply_theme("light")
         dlg.showEvent(QShowEvent())
-        assert ONE_LIGHT["BG_SURFACE"] in dlg._toolbar_bg.styleSheet()
+        assert ONE_LIGHT["BG_SURFACE"] in dlg._toolbar.styleSheet()

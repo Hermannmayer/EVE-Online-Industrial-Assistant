@@ -6,7 +6,7 @@
   - char_config=None / {} 时 ScoringService 的默认行为（技能用 fallback 值）
 """
 
-from services.scoring_service import ScoringCache
+from core.cache import TtlLRUCache
 from services.scoring_service import ScoringService
 
 
@@ -15,7 +15,7 @@ class TestBrokerCalculations:
 
     def test_calc_broker_rate_default(self, temp_db):
         """默认声望(5.0/5.0) + 经纪人关系学 0级 → 0.5%"""
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         rate = svc._calc_broker_rate({}, {})
         # standing_factor = 2^(0.14*5 + 0.06*5) = 2^1 = 2
@@ -24,7 +24,7 @@ class TestBrokerCalculations:
 
     def test_calc_broker_rate_custom(self, temp_db):
         """高声望 + 满技能 → 费率明显低于默认（< 0.35%）"""
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         skills = {"经纪人关系学": 5}
         market_data = {"faction_standing": 9.0, "corp_standing": 8.0}
@@ -35,7 +35,7 @@ class TestBrokerCalculations:
 
     def test_calc_relist_discount(self, temp_db):
         """改单折扣 = min(50 + 高级经纪人关系学*5, 100)"""
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         assert svc._calc_relist_discount({"高级经纪人关系学": 5}) == 75.0
         assert svc._calc_relist_discount({"高级经纪人关系学": 0}) == 50.0
@@ -44,7 +44,7 @@ class TestBrokerCalculations:
 
     def test_calc_sales_tax_rate(self, temp_db):
         """销售税 = 2% * (1 - 0.03 * 会计学)"""
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         assert svc._calc_sales_tax_rate({"会计学": 5}) == 1.7
         assert svc._calc_sales_tax_rate({"会计学": 0}) == 2.0
@@ -56,7 +56,7 @@ class TestManufacturingEdgeCases:
 
     def test_manufacturing_empty_char_config(self, temp_db):
         """char_config={} 时全部技能缺省，但内部有 fallback → 仍能算出正利润"""
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         result = svc.calc_manufacturing_score(
             type_id=2001,
@@ -76,7 +76,7 @@ class TestManufacturingEdgeCases:
 
     def test_manufacturing_no_char_config(self, temp_db):
         """char_config=None 应等效于 {}，沿用全部默认值"""
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         result = svc.calc_manufacturing_score(
             type_id=2001,
@@ -97,7 +97,7 @@ class TestTradeScoreEdgeCases:
 
     def test_trade_full_path(self, temp_db):
         """贸易正利润全路径：score/margin/profit_per_m3 均应 >0"""
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         char_config = {
             "skills": {"经纪人关系学": 5, "高级经纪人关系学": 5, "会计学": 5},
@@ -118,7 +118,7 @@ class TestTradeScoreEdgeCases:
 
     def test_trade_empty_char_config(self, temp_db):
         """char_config={} 时沿用默认值（技能全 0, 声望 5/5），利润仍为正"""
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         result = svc.calc_trade_score(
             type_id=2002,
@@ -130,7 +130,7 @@ class TestTradeScoreEdgeCases:
 
     def test_trade_no_char_config(self, temp_db):
         """char_config=None 时应与 {} 行为一致"""
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         result = svc.calc_trade_score(
             type_id=2002,

@@ -78,9 +78,9 @@ class TestScoreWorker:
         assert w._mat_price_type == "buy"
         assert w._runs == 5
 
-    @patch("ui_pyside6.workers.industry_workers.calc_manufacturing_score")
-    def test_run_emits_finished(self, mock_calc, qapp):
-        """run() 调用 calc_manufacturing_score 并通过 finished 返回结果"""
+    @patch("ui_pyside6.workers.industry_workers.get_container")
+    def test_run_emits_finished(self, mock_get_container, qapp):
+        """run() 调用 scoring_service().calc_manufacturing_score 并通过 finished 返回结果"""
         expected = {
             "status": "",
             "score": 123.45,
@@ -89,7 +89,9 @@ class TestScoreWorker:
             "breakdown": {},
             "materials": [],
         }
-        mock_calc.return_value = expected
+        mock_svc = MagicMock()
+        mock_svc.calc_manufacturing_score.return_value = expected
+        mock_get_container.return_value.scoring_service.return_value = mock_svc
 
         received = []
 
@@ -100,7 +102,7 @@ class TestScoreWorker:
         w.finished.connect(collect)
         w.run()
 
-        mock_calc.assert_called_once_with(
+        mock_svc.calc_manufacturing_score.assert_called_once_with(
             type_id=2001,
             char_config={"skills": {"工业理论": 5, "高级工业理论": 5}, "market": {}},
             bp_me=10,
@@ -137,9 +139,12 @@ class TestRankWorker:
         assert w._bp_te == 20
         assert w._top_n == 50
 
-    @patch("ui_pyside6.workers.industry_workers.calc_manufacturing_score")
-    def test_run_with_no_products(self, mock_calc, qapp):
+    @patch("ui_pyside6.workers.industry_workers.get_container")
+    def test_run_with_no_products(self, mock_get_container, qapp):
         """无可制造物品时 result 信号发出空列表"""
+        mock_svc = MagicMock()
+        mock_get_container.return_value.scoring_service.return_value = mock_svc
+
         db = MagicMock()
         fake_cursor = MagicMock()
         fake_cursor.fetchall.return_value = []
@@ -161,4 +166,4 @@ class TestRankWorker:
         assert len(results) == 1
         assert results[0] == []
         assert len(done) == 1
-        mock_calc.assert_not_called()
+        mock_svc.calc_manufacturing_score.assert_not_called()

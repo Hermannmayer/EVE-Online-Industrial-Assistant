@@ -635,9 +635,7 @@ class PlanTable(QWidget):
         plan["facility"] = ss_name
 
         # 自动带出成本系数
-        from services.scoring_service import get_system_cost_index
-
-        sci = get_system_cost_index(ss_id, "manufacturing")
+        sci = get_container().pricing_service.get_system_cost_index(ss_id, "manufacturing")
 
         # 持久化
         if plan.get("id"):

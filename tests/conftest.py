@@ -166,10 +166,11 @@ def mock_db():
     """在 with 块内将 DB 相关依赖替换为 mock"""
     mock_mgr = _mock_db_manager()
 
-    # 清除 scoring 模块级单例的连接缓存，防止旧连接指向已清理的 tempdir
-    from services.scoring_service import db as scoring_db
+    # 清除数据库管理器的线程局部连接缓存，防止旧连接指向已清理的 tempdir
+    from services.database_manager import get_db as _get_db
 
-    scoring_db._local.connections.clear() if hasattr(scoring_db._local, "connections") else None
+    _scoring_db = _get_db()
+    _scoring_db._local.connections.clear() if hasattr(_scoring_db._local, "connections") else None
 
     with (
         patch("services.database_manager.get_db", return_value=mock_mgr),

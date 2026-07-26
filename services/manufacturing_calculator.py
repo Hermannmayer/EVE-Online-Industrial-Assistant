@@ -27,20 +27,20 @@ WASTEFACTOR_BY_CATEGORY: dict[str, int] = {
     "faction": 15,
 }
 
-SCC_SURCHARGE = 0.04        # 固定 4%，Viridian 引入
-FACILITY_TAX_NPC = 0.0025   # NPC 空间站设施税率 0.25%
-ALPHA_TAX = 0.0025          # Alpha 克隆额外税（Omega=0）
+SCC_SURCHARGE = 0.04  # 固定 4%，Viridian 引入
+FACILITY_TAX_NPC = 0.0025  # NPC 空间站设施税率 0.25%
+ALPHA_TAX = 0.0025  # Alpha 克隆额外税（Omega=0）
 
-STRUCTURE_TIME_RAITARU = 0.85    # 小型工程站 -15%
-STRUCTURE_TIME_ATHANOR = 0.80    # 中型 -20%
-STRUCTURE_TIME_TATARA = 0.75     # 大型 -25%
-STRUCTURE_TIME_SOTIYO = 0.70     # 超大型 -30%
+STRUCTURE_TIME_RAITARU = 0.85  # 小型工程站 -15%
+STRUCTURE_TIME_ATHANOR = 0.80  # 中型 -20%
+STRUCTURE_TIME_TATARA = 0.75  # 大型 -25%
+STRUCTURE_TIME_SOTIYO = 0.70  # 超大型 -30%
 
-STRUCTURE_MAT_SAVING = 1.0        # 工程站材料减免乘数（默认无，Upwell 结构 0.99 = -1%）
+STRUCTURE_MAT_SAVING = 1.0  # 工程站材料减免乘数（默认无，Upwell 结构 0.99 = -1%）
 
-INDUSTRY_SKILL_MULT = 0.04       # 工业理论 (3380) 每级 -4% 时间
-ADV_INDUSTRY_SKILL_MULT = 0.03   # 高级工业理论 (3388) 每级 -3% 时间
-TE_MULT_PER_LEVEL = 0.01         # TE 每级 -1% 时间
+INDUSTRY_SKILL_MULT = 0.04  # 工业理论 (3380) 每级 -4% 时间
+ADV_INDUSTRY_SKILL_MULT = 0.03  # 高级工业理论 (3388) 每级 -3% 时间
+TE_MULT_PER_LEVEL = 0.01  # TE 每级 -1% 时间
 
 
 # ═══════════════════════════════════════════════════════════
@@ -48,48 +48,50 @@ TE_MULT_PER_LEVEL = 0.01         # TE 每级 -1% 时间
 # ═══════════════════════════════════════════════════════════
 
 
-def calc_waste_factor(wastefactor: int, me_level: int) -> float:
-    """计算材料浪费倍率。
+def _waste_mult(wastefactor: int, me_level: int) -> float:
+    """计算 ME 等级带来的浪费乘数（相对真实基础量）。
 
-    公式: 1 + (wasteFactor/100) / (1 + ME)
-
-    参数:
-        wastefactor: SDE wasteFactor（T1=10, T2=2, T3=5, 旗舰=12）
-        me_level: 材料效率研究等级
-
-    返回:
-        浪费倍率（永远 > 1.0，永远不会到 0）
+    公式: 1 + (wastefactor / 100) / (1 + me_level)
     """
     if me_level < 0:
         me_level = 0
     return 1.0 + (wastefactor / 100.0) / (1.0 + me_level)
 
 
+def calc_waste_factor(wastefactor: int, me_level: int) -> float:
+    """计算材料浪费倍率（相对 SDE quantity，SDE quantity=ME0 含损耗量）。
+
+    公式: _waste_mult(me) / _waste_mult(0)
+
+    这样 ME 0 时 waste_factor=1.0，ME 上升时逐步逼近 1/(1+wf/100)。
+    """
+    return _waste_mult(wastefactor, me_level) / _waste_mult(wastefactor, 0)
+
+
 def calc_material_per_run(
-    base_qty: int,
+    db_qty: int,
     wastefactor: int,
     me_level: int,
     structure_mat_saving: float = 1.0,
 ) -> int:
-    """计算每轮次制造所需材料数量（含浪费 + 向上取整）。
+    """计算每轮次制造所需材料数量。
 
-    公式: ceil(base_qty × waste_factor × structure_mat_saving)
+    SDE 中的 quantity 已是 ME 0 的实际用量（含 base waste）。
+    公式先反推真实基础量，再按当前 ME 重新计算。
 
-    参数:
-        base_qty: 蓝图材料基础数量
-        wastefactor: SDE wasteFactor
-        me_level: ME 等级
-        structure_mat_saving: 工程站材料减免乘数（默认 1.0，Upwell 结构 0.99）
-
-    返回:
-        每轮次需要的材料数量（整数）
+    actual = ceil(db_qty × (1 + wf/100/(1+ME)) / (1 + wf/100) × structure_mat_saving)
     """
-    waste_factor = calc_waste_factor(wastefactor, me_level)
-    return math.ceil(base_qty * waste_factor * structure_mat_saving - _FP_EPSILON)
+    if me_level < 0:
+        me_level = 0
+    # 反推真实基础量：db_qty = true_base × (1 + wf/100)
+    # 再按 ME 等级重新计算
+    ratio = _waste_mult(wastefactor, me_level) / _waste_mult(wastefactor, 0)
+    result = db_qty * ratio * structure_mat_saving
+    return math.ceil(result - _FP_EPSILON)
 
 
 def calc_material_for_runs(
-    base_qty: int,
+    db_qty: int,
     wastefactor: int,
     me_level: int,
     runs: int,
@@ -99,7 +101,7 @@ def calc_material_for_runs(
 
     参数与 calc_material_per_run 相同。
     """
-    per_run = calc_material_per_run(base_qty, wastefactor, me_level, structure_mat_saving)
+    per_run = calc_material_per_run(db_qty, wastefactor, me_level, structure_mat_saving)
     return per_run * max(1, runs)
 
 

@@ -1,6 +1,36 @@
 # 更新日志
 
-## v1.3.0 (2026-07-07)
+## v1.4.0 (2026-07-27)
+
+### 架构重构
+- IOC 容器化：`AppContainer` 统一管理 15+ 服务生命周期，消除模块级全局 DB 单例
+- 新增 `core/cache.py`：`TtlLRUCache` 线程安全 LRU+TTL 缓存，替代旧 `ScoringCache`
+- 新增 `services/repositories/`：4 个数据仓库（Item/Market/Blueprint/PlanRepository），封装跨库查询
+- 新增 `services/pricing_service.py`：`PricingService` 统一定价 + 成交量 + 系统成本指数查询
+- 新增 `services/char_config_resolver.py`：角色配置四源合并解析器
+- 新增 `services/refining_service.py`：精炼价值计算独立服务
+- 新增 `services/bom_expander.py BomExpander` / `services/logistics.py LogisticsService` 等 6 个可注入服务类
+- `services/scoring_service.py` 瘦身：972 行 → 536 行，移除 437 行死代码（ScoringCache、模块级缓存函数、resolve_char_config、get_price 等迁移到新模块）
+
+### 安装费修复
+- 安装费改为读取 ESI **adjusted_price**（7 日均价）计算 EIV，而非市场实时卖出价
+- 系统成本指数（SCI）降级：`system_id=None` 时自动从 `sell_hub` 名称（Jita/Amarr等）查找对应太阳系 ID，使用真实 SCI 值
+- 安装费 breakdown 按游戏类目拆分：`system_cost` / `facility_tax` / `scc_surcharge` / `installation_fee`
+
+### 材料损耗公式修正
+- **关键修复**：SDE `blueprint_materials.quantity` 存储的是 **ME 0 实际用量**（已含基础浪费），旧代码当作「真实基础量」又加了一层浪费
+- 新公式：`actual = ceil(db_qty × (1 + wf/100/(1+ME)) / (1 + wf/100) × 结构减免)`
+- ME 0 时用量与游戏完全一致，ME 上升时逐步减少
+
+### 消费者迁移
+- 4 个 UI Worker → 通过容器注入服务，不再模块级引用
+- 8 个 UI View → 改用容器 + `TtlLRUCache`
+- 2 个 Service 文件 → `PricingService` 替代模块级 `get_price`
+- 6 个测试文件 → 更新 mock 路径与断言
+
+### 测试
+- 653 测试全部通过，0 失败 0 错误
+- 测试基础设施改进：`conftest.py` 修复 18 个 UI 测试 RuntimeError
 
 ### 新功能
 - 生产计划管理：计划表编辑、甘特图视图、多计划切换（Phase 3）

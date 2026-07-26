@@ -33,12 +33,11 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
+from core.cache import TtlLRUCache
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
-from core.eve_formulas import resolve_item_name
 from core.paths import ICON_DIR
-from services.scoring_service import cache_key as _ck
-from services.scoring_service import get_cache as _cget
+from services.name_resolver import resolve_item_name
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 from ui_pyside6.views.compare_dialog import CompareDialog
 from ui_pyside6.views.score_dialogs import MfgDlg, ScoreW, TradeDlg
@@ -46,6 +45,8 @@ from ui_pyside6.views.score_dialogs import MfgDlg, ScoreW, TradeDlg
 DASH = chr(8212)
 
 JITA_RID = TRADE_HUB_IDS["Jita"]
+
+_cache = TtlLRUCache(max_size=500, ttl_seconds=1800)
 
 _SQL = (
     "SELECT i.market_group_id,i.type_id,i.zh_name,i.en_name,i.volume,"
@@ -930,16 +931,16 @@ class AllItemsDialog(QDialog):
         m.addSeparator()
         tid = r["id"]
         if self._show_m:
-            k = _ck(tid, "mfg", self._mfg["hub"], self._mfg["char"])
-            res = _cget(k)
+            k = f"{tid}|mfg|{self._mfg['hub']}|{self._mfg['char']}"
+            res = _cache.get(k)
             if res:
                 d = self._ds(res, True)
                 a3 = QAction("制造核算明细", self)
                 a3.triggered.connect(lambda *a: QMessageBox.information(self, "制造核算明细", d))
                 m.addAction(a3)
         if self._show_t:
-            k = _ck(tid, "trade", self._trade["bh"] + self._trade["sh"], self._trade["char"])
-            res = _cget(k)
+            k = f"{tid}|trade|{self._trade['bh'] + self._trade['sh']}|{self._trade['char']}"
+            res = _cache.get(k)
             if res:
                 d = self._ds(res, False)
                 a4 = QAction("贸易核算明细", self)
@@ -951,8 +952,8 @@ class AllItemsDialog(QDialog):
         def _do_add_plan():
             score = {}
             if self._show_m:
-                k = _ck(tid, "mfg", self._mfg["hub"], self._mfg["char"])
-                cached = _cget(k)
+                k = f"{tid}|mfg|{self._mfg['hub']}|{self._mfg['char']}"
+                cached = _cache.get(k)
                 if cached:
                     score = cached
             from datetime import datetime

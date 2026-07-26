@@ -162,20 +162,21 @@ def test_scorew_trade_mode(qapp):
 
 def test_mfg_dlg_uses_theme_variables(qapp, mock_char_settings, mock_container):
     """MfgDlg 构造时使用 theme 变量而非硬编码颜色"""
-    dlg = MfgDlg(parent=None)
-    ss = dlg.styleSheet()
+    apply_theme("dark")
+    MfgDlg(parent=None)
+    # dialog 自身无内联样式表，样式来自 get_stylesheet()
+    ss = theme.get_stylesheet()
     assert theme.BG_DARK in ss
     assert theme.TEXT_PRIMARY in ss
-    dlg.close()
 
 
 def test_trade_dlg_uses_theme_variables(qapp, mock_char_settings, mock_container):
     """TradeDlg 构造时使用 theme 变量"""
-    dlg = TradeDlg(parent=None)
-    ss = dlg.styleSheet()
+    apply_theme("dark")
+    TradeDlg(parent=None)
+    ss = theme.get_stylesheet()
     assert theme.BG_DARK in ss
     assert theme.TEXT_PRIMARY in ss
-    dlg.close()
 
 
 # ═══════════════════════════════════════════

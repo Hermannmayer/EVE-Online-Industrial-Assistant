@@ -29,9 +29,9 @@ class TestCreateTables:
 
 class TestEnsureCache:
     @pytest.mark.asyncio
-    @patch("services.workers.getblueprints.os.path.exists")
-    @patch("services.workers.getblueprints.os.path.getsize")
-    @patch("services.workers.getblueprints.os.makedirs")
+    @patch("tools.downloaders.getblueprints.os.path.exists")
+    @patch("tools.downloaders.getblueprints.os.path.getsize")
+    @patch("tools.downloaders.getblueprints.os.makedirs")
     async def test_returns_cached_path_when_exists(self, mock_makedirs, mock_getsize, mock_exists):
         mock_exists.return_value = True
         mock_getsize.return_value = 1 * 1024 * 1024
@@ -39,10 +39,10 @@ class TestEnsureCache:
         assert result == CACHE_FILE
 
     @pytest.mark.asyncio
-    @patch("services.workers.getblueprints.os.path.exists")
-    @patch("services.workers.getblueprints.os.makedirs")
-    @patch("services.workers.getblueprints.open", new_callable=mock_open)
-    @patch("services.workers.getblueprints.os.path.getsize")
+    @patch("tools.downloaders.getblueprints.os.path.exists")
+    @patch("tools.downloaders.getblueprints.os.makedirs")
+    @patch("tools.downloaders.getblueprints.open", new_callable=mock_open)
+    @patch("tools.downloaders.getblueprints.os.path.getsize")
     async def test_downloads_and_extracts_when_missing(self, mock_getsize, mock_file, mock_makedirs, mock_exists):
         mock_exists.side_effect = [False, True]
         mock_getsize.return_value = 2 * 1024 * 1024
@@ -59,7 +59,7 @@ class TestEnsureCache:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("services.workers.getblueprints.aiohttp.ClientSession", return_value=mock_session):
+        with patch("tools.downloaders.getblueprints.aiohttp.ClientSession", return_value=mock_session):
             with patch("zipfile.ZipFile") as mock_zf:
                 mock_zf_instance = MagicMock()
                 mock_zf_instance.namelist.return_value = ["sde/fsd/blueprints.yaml"]
@@ -71,8 +71,8 @@ class TestEnsureCache:
         assert mock_session.get.call_args[0][0] == SDE_ZIP_URL
 
     @pytest.mark.asyncio
-    @patch("services.workers.getblueprints.os.path.exists")
-    @patch("services.workers.getblueprints.os.makedirs")
+    @patch("tools.downloaders.getblueprints.os.path.exists")
+    @patch("tools.downloaders.getblueprints.os.makedirs")
     async def test_raises_when_no_yaml_in_zip(self, mock_makedirs, mock_exists):
         mock_exists.return_value = False
 
@@ -88,7 +88,7 @@ class TestEnsureCache:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("services.workers.getblueprints.aiohttp.ClientSession", return_value=mock_session):
+        with patch("tools.downloaders.getblueprints.aiohttp.ClientSession", return_value=mock_session):
             with patch("zipfile.ZipFile") as mock_zf:
                 mock_zf_instance = MagicMock()
                 mock_zf_instance.namelist.return_value = ["sde/fsd/other.yaml"]
@@ -139,8 +139,8 @@ class TestParseActivities:
 
 class TestRunBlueprintUpdate:
     @pytest.mark.asyncio
-    @patch("services.workers.getblueprints.aiosqlite.connect")
-    @patch("services.workers.getblueprints.os.makedirs")
+    @patch("tools.downloaders.getblueprints.aiosqlite.connect")
+    @patch("tools.downloaders.getblueprints.os.makedirs")
     async def test_skips_when_data_exists(self, mock_makedirs, mock_connect):
         mock_cursor = MagicMock()
         mock_cursor.fetchone = AsyncMock(return_value=(2000,))
@@ -154,11 +154,11 @@ class TestRunBlueprintUpdate:
         mock_makedirs.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("services.workers.getblueprints.aiosqlite.connect")
-    @patch("services.workers.getblueprints.os.makedirs")
-    @patch("services.workers.getblueprints.ensure_cache")
-    @patch("services.workers.getblueprints.yaml.safe_load")
-    @patch("services.workers.getblueprints.open", new_callable=mock_open)
+    @patch("tools.downloaders.getblueprints.aiosqlite.connect")
+    @patch("tools.downloaders.getblueprints.os.makedirs")
+    @patch("tools.downloaders.getblueprints.ensure_cache")
+    @patch("tools.downloaders.getblueprints.yaml.safe_load")
+    @patch("tools.downloaders.getblueprints.open", new_callable=mock_open)
     async def test_full_update_flow(self, mock_file, mock_yaml, mock_ensure_cache, mock_makedirs, mock_connect):
         # Connection 1: Check count
         mock_cursor_check = MagicMock()
@@ -218,7 +218,7 @@ class TestRunBlueprintUpdate:
         }
         mock_file.return_value.__enter__.return_value.read.return_value = "fake_yaml"
 
-        with patch("services.workers.getitems.fill_missing_blueprint_names", AsyncMock()) as mock_fill:
+        with patch("tools.downloaders.getitems.fill_missing_blueprint_names", AsyncMock()) as mock_fill:
             await run_blueprint_update()
 
         assert mock_db_check.execute.called

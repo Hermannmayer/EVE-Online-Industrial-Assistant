@@ -42,7 +42,6 @@ import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.paths import ICON_DIR
-from services.scoring_service import get_price
 from ui_pyside6.workers.refine_worker import RefineWorker
 
 ICON_SIZE = 32
@@ -391,8 +390,8 @@ class ClipboardParseWorker(QThread):
                 continue
 
             display_name = item["zh_name"] or item["en_name"] or name
-            sell_p = get_price(item["type_id"], "sell", self._hub) or 0
-            buy_p = get_price(item["type_id"], "buy", self._hub) or 0
+            sell_p = get_container().pricing_service.get_price(item["type_id"], "sell", self._hub) or 0
+            buy_p = get_container().pricing_service.get_price(item["type_id"], "buy", self._hub) or 0
             item_vol = item["volume"]
 
             rows.append(
@@ -751,8 +750,8 @@ class EstimatePage(QWidget):
             return
 
         display_name = item["zh_name"] or item["en_name"] or name
-        sell_p = get_price(item["type_id"], "sell", self._hub) or 0
-        buy_p = get_price(item["type_id"], "buy", self._hub) or 0
+        sell_p = get_container().pricing_service.get_price(item["type_id"], "sell", self._hub) or 0
+        buy_p = get_container().pricing_service.get_price(item["type_id"], "buy", self._hub) or 0
 
         self._model.add_row(
             {
@@ -815,8 +814,8 @@ class EstimatePage(QWidget):
             tid = row.get("type_id")
             if not tid:
                 continue
-            sell_p = get_price(tid, "sell", self._hub) or 0
-            buy_p = get_price(tid, "buy", self._hub) or 0
+            sell_p = get_container().pricing_service.get_price(tid, "sell", self._hub) or 0
+            buy_p = get_container().pricing_service.get_price(tid, "buy", self._hub) or 0
             row["sell_price"] = sell_p
             row["buy_price"] = buy_p
         self._model.set_discount(self._discount.value())

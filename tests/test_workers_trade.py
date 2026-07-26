@@ -19,11 +19,11 @@ class TestCrossRegionPriceWorker:
         assert isinstance(w, QThread)
         assert w._tid == 2001
 
-    @patch("ui_pyside6.workers.trade_workers.get_price")
-    @patch("ui_pyside6.workers.trade_workers.get_volume")
-    def test_run_emits_finished(self, mock_get_volume, mock_get_price, qapp):
+    @patch("ui_pyside6.workers.trade_workers.get_container")
+    def test_run_emits_finished(self, mock_get_container, qapp):
         """run() 为每个贸易中心获取价格并通过 finished 返回"""
-        mock_get_price.side_effect = lambda tid, ptype, hub: {
+        mock_pricing = MagicMock()
+        mock_pricing.get_price.side_effect = lambda tid, ptype, hub: {
             ("sell", "Jita"): 5.0,
             ("buy", "Jita"): 4.0,
             ("sell", "Amarr"): 6.0,
@@ -33,7 +33,8 @@ class TestCrossRegionPriceWorker:
             ("sell", "Rens"): 4.8,
             ("buy", "Rens"): 3.8,
         }.get((ptype, hub), 0)
-        mock_get_volume.return_value = 1000
+        mock_pricing.get_volume.return_value = 1000
+        mock_get_container.return_value.pricing_service = mock_pricing
 
         db = MagicMock()
         received = []
@@ -60,12 +61,13 @@ class TestCrossRegionPriceWorker:
         amarr = next(h for h in hubs if h["hub"] == "Amarr")
         assert amarr["region_id"] == 10000043
 
-    @patch("ui_pyside6.workers.trade_workers.get_price")
-    @patch("ui_pyside6.workers.trade_workers.get_volume")
-    def test_no_price_returns_zero(self, mock_get_volume, mock_get_price, qapp):
+    @patch("ui_pyside6.workers.trade_workers.get_container")
+    def test_no_price_returns_zero(self, mock_get_container, qapp):
         """无价格数据时 spread 和 spread_pct 为 0"""
-        mock_get_price.return_value = None
-        mock_get_volume.return_value = 0
+        mock_pricing = MagicMock()
+        mock_pricing.get_price.return_value = None
+        mock_pricing.get_volume.return_value = 0
+        mock_get_container.return_value.pricing_service = mock_pricing
 
         db = MagicMock()
         received = []
@@ -102,16 +104,18 @@ class TestTradeScoreWorker:
         assert w._sell_hub == "Amarr"
         assert w._quantity == 10
 
-    @patch("ui_pyside6.workers.trade_workers.calc_trade_score")
-    def test_run_emits_finished(self, mock_calc, qapp):
-        """run() 调用 calc_trade_score 并通过 finished 返回"""
+    @patch("ui_pyside6.workers.trade_workers.get_container")
+    def test_run_emits_finished(self, mock_get_container, qapp):
+        """run() 调用 scoring_service().calc_trade_score 并通过 finished 返回"""
         expected = {
             "status": "",
             "score": 50000.0,
             "buy_cost": 1000000.0,
             "sell_revenue": 1100000.0,
         }
-        mock_calc.return_value = expected
+        mock_svc = MagicMock()
+        mock_svc.calc_trade_score.return_value = expected
+        mock_get_container.return_value.scoring_service.return_value = mock_svc
 
         received = []
 
@@ -122,7 +126,7 @@ class TestTradeScoreWorker:
         w.finished.connect(collect)
         w.run()
 
-        mock_calc.assert_called_once_with(
+        mock_svc.calc_trade_score.assert_called_once_with(
             type_id=2001,
             buy_hub="Jita",
             sell_hub="Amarr",
@@ -153,9 +157,9 @@ class TestTransportWorker:
         assert w._quantity == 10
         assert w._use_public_freight is True
 
-    @patch("services.logistics.calc_transport_profit")
-    def test_run_emits_finished(self, mock_calc, qapp):
-        """run() 调用 calc_transport_profit（延迟导入）并通过 finished 返回"""
+    @patch("ui_pyside6.workers.trade_workers.get_container")
+    def test_run_emits_finished(self, mock_get_container, qapp):
+        """run() 调用 logistics_service.calc_transport_profit 并通过 finished 返回"""
         expected = {
             "buy_cost": 1000000.0,
             "sell_revenue": 1200000.0,
@@ -164,7 +168,9 @@ class TestTransportWorker:
             "margin_pct": 15.0,
             "status": "",
         }
-        mock_calc.return_value = expected
+        mock_logistics = MagicMock()
+        mock_logistics.calc_transport_profit.return_value = expected
+        mock_get_container.return_value.logistics_service = mock_logistics
 
         received = []
 
@@ -184,7 +190,7 @@ class TestTransportWorker:
         w.finished.connect(collect)
         w.run()
 
-        mock_calc.assert_called_once_with(
+        mock_logistics.calc_transport_profit.assert_called_once_with(
             type_id=2001,
             buy_hub="Jita",
             sell_hub="Amarr",
