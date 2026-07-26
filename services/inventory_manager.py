@@ -4,7 +4,6 @@
 
 from datetime import UTC, datetime
 
-from core.logger import log
 from services.database_manager import get_db
 
 db = get_db()

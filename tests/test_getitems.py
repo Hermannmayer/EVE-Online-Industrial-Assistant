@@ -39,7 +39,7 @@ def temp_db_path():
 
 def _update_imported_database_path(temp_db_path):
     """Patch getitems.DATABASE_PATH to point at temp_db_path"""
-    return patch("services.workers.getitems.DATABASE_PATH", temp_db_path)
+    return patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path)
 
 
 # ─── Test: initialize_database ───────────────────────────
@@ -51,7 +51,7 @@ class TestInitializeDatabase:
     @pytest.mark.asyncio
     async def test_creates_tables(self, temp_db_path):
         """调用后 item 和 market_tree 两张表存在"""
-        with patch("services.workers.getitems.DATABASE_PATH", temp_db_path):
+        with patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path):
             await initialize_database()
 
         conn = sqlite3.connect(temp_db_path)
@@ -63,14 +63,14 @@ class TestInitializeDatabase:
     @pytest.mark.asyncio
     async def test_idempotent(self, temp_db_path):
         """重复调用不报错"""
-        with patch("services.workers.getitems.DATABASE_PATH", temp_db_path):
+        with patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path):
             await initialize_database()
             await initialize_database()  # 第二次不应抛异常
 
     @pytest.mark.asyncio
     async def test_item_table_columns(self, temp_db_path):
         """item 表包含预期的全部 11 列"""
-        with patch("services.workers.getitems.DATABASE_PATH", temp_db_path):
+        with patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path):
             await initialize_database()
 
         conn = sqlite3.connect(temp_db_path)
@@ -98,13 +98,7 @@ class TestInitializeDatabase:
 class TestWriteItems:
     """write_items — 从 SDE YAML 批量写入 item 表"""
 
-    # NOTE: write_items 当前有生产环境 bug：
-    #   items.append((…, tid, tid,)) 元组共 12 个元素，
-    #   但 SQL INSERT 仅有 11 个绑定占位符。
-    #   修复生产代码后移除 xfail 标记。
-
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="生产代码 items 元组 12 元素/SQL 11 绑定，待修复", strict=True)
     async def test_write_items_creates_records(self, temp_db_path):
         """write_items 写入 item 表并正确填充字段"""
         mock_type_ids = {
@@ -123,8 +117,10 @@ class TestWriteItems:
             "200": {"name": {"en": "Raw Materials", "zh": "原材料"}},
         }
 
-        with patch("services.workers.getitems.DATABASE_PATH", temp_db_path), \
-             patch("services.workers.getitems.load_yaml") as mock_load_yaml:
+        with (
+            patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
+            patch("tools.downloaders.getitems.load_yaml") as mock_load_yaml,
+        ):
             mock_load_yaml.side_effect = lambda name: {
                 "typeIDs.yaml": mock_type_ids,
                 "groupIDs.yaml": mock_groups,
@@ -139,8 +135,7 @@ class TestWriteItems:
         conn.close()
 
         assert row is not None
-        (type_id, en_name, zh_name, group_id, en_group, zh_group,
-         mkt_grp_id, en_mkt, zh_mkt, volume, icon) = row
+        (type_id, en_name, zh_name, group_id, en_group, zh_group, mkt_grp_id, en_mkt, zh_mkt, volume, icon) = row
 
         assert type_id == 12345
         assert en_name == "Tritanium"
@@ -155,7 +150,6 @@ class TestWriteItems:
         assert icon == 42
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="生产代码 items 元组 12 元素/SQL 11 绑定，待修复", strict=True)
     async def test_skips_below_start_type_id(self, temp_db_path):
         """type_id < START_TYPE_ID=178 时跳过"""
         mock_type_ids = {
@@ -173,8 +167,10 @@ class TestWriteItems:
         mock_groups = {"10": {"name": {"en": "Group"}}}
         mock_market_groups = {}
 
-        with patch("services.workers.getitems.DATABASE_PATH", temp_db_path), \
-             patch("services.workers.getitems.load_yaml") as mock_load_yaml:
+        with (
+            patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
+            patch("tools.downloaders.getitems.load_yaml") as mock_load_yaml,
+        ):
             mock_load_yaml.side_effect = lambda name: {
                 "typeIDs.yaml": mock_type_ids,
                 "groupIDs.yaml": mock_groups,
@@ -214,8 +210,10 @@ class TestWriteMarketTree:
             },
         }
 
-        with patch("services.workers.getitems.DATABASE_PATH", temp_db_path), \
-             patch("services.workers.getitems.load_yaml", return_value=mock_data):
+        with (
+            patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
+            patch("tools.downloaders.getitems.load_yaml", return_value=mock_data),
+        ):
             await initialize_database()
             await write_market_tree()
 
@@ -230,8 +228,10 @@ class TestWriteMarketTree:
     @pytest.mark.asyncio
     async def test_handles_empty_yaml(self, temp_db_path):
         """YAML 数据为空时跳过，不报错"""
-        with patch("services.workers.getitems.DATABASE_PATH", temp_db_path), \
-             patch("services.workers.getitems.load_yaml", return_value=None):
+        with (
+            patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
+            patch("tools.downloaders.getitems.load_yaml", return_value=None),
+        ):
             await initialize_database()
             await write_market_tree()
 

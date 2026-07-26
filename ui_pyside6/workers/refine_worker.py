@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import QThread, Signal
 
-from services.scoring_service import calc_refining_value
+from core.container import get_container
 
 
 class RefineWorker(QThread):
@@ -49,7 +49,7 @@ class RefineWorker(QThread):
                 continue
 
             try:
-                result = calc_refining_value(
+                result = get_container().refining_service.calc_value(
                     type_id,
                     quantity=qty,
                     skills=self._skills,
@@ -66,22 +66,26 @@ class RefineWorker(QThread):
 
             total_input_value += result["input_value"]
             total_output_value += result["total_value"]
-            all_output.append({
-                "input_name": name,
-                "input_qty": qty,
-                "yield_rate": result["yield_rate"],
-                "output": result["output"],
-                "input_value": result["input_value"],
-                "output_value": result["total_value"],
-                "profit": result["profit"],
-                "margin_pct": result["margin_pct"],
-            })
+            all_output.append(
+                {
+                    "input_name": name,
+                    "input_qty": qty,
+                    "yield_rate": result["yield_rate"],
+                    "output": result["output"],
+                    "input_value": result["input_value"],
+                    "output_value": result["total_value"],
+                    "profit": result["profit"],
+                    "margin_pct": result["margin_pct"],
+                }
+            )
 
-        self.result_signal.emit({
-            "items": all_output,
-            "total_input_value": round(total_input_value, 2),
-            "total_output_value": round(total_output_value, 2),
-            "total_profit": round(total_output_value - total_input_value, 2),
-            "item_count": len(all_output),
-            "errors": errors,
-        })
+        self.result_signal.emit(
+            {
+                "items": all_output,
+                "total_input_value": round(total_input_value, 2),
+                "total_output_value": round(total_output_value, 2),
+                "total_profit": round(total_output_value - total_input_value, 2),
+                "item_count": len(all_output),
+                "errors": errors,
+            }
+        )

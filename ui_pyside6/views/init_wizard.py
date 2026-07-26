@@ -176,6 +176,11 @@ class InitWizard(QDialog):
         # 启动时刷新状态
         self._refresh_status()
 
+    def showEvent(self, ev):
+        """showEvent 时重新应用当前主题样式表"""
+        super().showEvent(ev)
+        self.setStyleSheet(f"background-color: {theme.BG_DARK};")
+
     def _build_display(self, prefix: str):
         """构建步骤状态显示"""
         layout = QVBoxLayout()

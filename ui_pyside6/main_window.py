@@ -10,11 +10,7 @@ from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QComboBox,
-    QDialog,
-    QDialogButtonBox,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -22,7 +18,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QSpinBox,
     QStackedWidget,
     QStatusBar,
     QSystemTrayIcon,

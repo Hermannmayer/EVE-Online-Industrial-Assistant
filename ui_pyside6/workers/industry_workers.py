@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import QThread, Signal
 
-from services.scoring_service import calc_manufacturing_score
+from core.container import get_container
 from ui_pyside6.workers.base_worker import BaseBatchScoreWorker, BaseScoreWorker
 
 
@@ -60,16 +60,20 @@ class ScoreWorker(BaseScoreWorker):
         self._runs = runs
 
     def _compute(self) -> dict:
-        return calc_manufacturing_score(
-            type_id=self._type_id,
-            char_config=self._char_config,
-            bp_me=self._bp_me,
-            bp_te=self._bp_te,
-            mat_source_hub=self._mat_hub,
-            sell_hub=self._sell_hub,
-            facility_tax_pct=self._tax,
-            price_type_mat=self._mat_price_type,
-            price_type_prod="sell",
+        return (
+            get_container()
+            .scoring_service()
+            .calc_manufacturing_score(
+                type_id=self._type_id,
+                char_config=self._char_config,
+                bp_me=self._bp_me,
+                bp_te=self._bp_te,
+                mat_source_hub=self._mat_hub,
+                sell_hub=self._sell_hub,
+                facility_tax_pct=self._tax,
+                price_type_mat=self._mat_price_type,
+                price_type_prod="sell",
+            )
         )
 
 
@@ -89,16 +93,20 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
             sell_hub = item.get("sell_hub", "Jita")
             # 从角色配置读取设施税率（如未设置则为 0）
             fac_tax = self._char_config.get("market", {}).get(sell_hub.lower(), {}).get("facility_tax", 0.0)
-            r = calc_manufacturing_score(
-                type_id=item.get("product_type_id"),
-                char_config=self._char_config,
-                bp_me=item.get("me_level", 0),
-                bp_te=item.get("te_level", 0),
-                mat_source_hub=item.get("mat_hub", "Jita"),
-                sell_hub=sell_hub,
-                facility_tax_pct=fac_tax,
-                price_type_mat="sell",
-                price_type_prod="sell",
+            r = (
+                get_container()
+                .scoring_service()
+                .calc_manufacturing_score(
+                    type_id=item.get("product_type_id"),
+                    char_config=self._char_config,
+                    bp_me=item.get("me_level", 0),
+                    bp_te=item.get("te_level", 0),
+                    mat_source_hub=item.get("mat_hub", "Jita"),
+                    sell_hub=sell_hub,
+                    facility_tax_pct=fac_tax,
+                    price_type_mat="sell",
+                    price_type_prod="sell",
+                )
             )
             return (
                 plan_id,
@@ -156,7 +164,7 @@ class RankWorker(QThread):
     def run(self):
         import time
 
-        from services.scoring_service import resolve_char_config
+        from services.char_config_resolver import resolve_char_config
 
         started = time.time()
         results = []
@@ -174,16 +182,20 @@ class RankWorker(QThread):
 
         total = len(tids)
         for i, tid in enumerate(tids):
-            r = calc_manufacturing_score(
-                type_id=tid,
-                char_config=char_config,
-                bp_me=self._bp_me,
-                bp_te=self._bp_te,
-                mat_source_hub=self._mat_hub,
-                sell_hub=self._sell_hub,
-                facility_tax_pct=self._tax,
-                price_type_mat=self._mat_price_type,
-                price_type_prod="sell",
+            r = (
+                get_container()
+                .scoring_service()
+                .calc_manufacturing_score(
+                    type_id=tid,
+                    char_config=char_config,
+                    bp_me=self._bp_me,
+                    bp_te=self._bp_te,
+                    mat_source_hub=self._mat_hub,
+                    sell_hub=self._sell_hub,
+                    facility_tax_pct=self._tax,
+                    price_type_mat=self._mat_price_type,
+                    price_type_prod="sell",
+                )
             )
             if not r.get("status"):
                 r["_type_id"] = tid

@@ -37,6 +37,7 @@ from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker
 
 # ── 工业数据后台补拉 ──
 
+
 class IndustryDataWorker(QThread):
     """后台线程拉取工业系统成本指数 + 设施数据"""
 
@@ -283,7 +284,9 @@ class IndustryPage(QWidget):
         if self._recalc_worker and self._recalc_worker.isRunning():
             return
         # 只重算 pending/in_progress 的计划
-        todo = [r for r in rows if r.get("id") and r.get("status", "").lower() in ("pending", "in_progress", "running", "")]
+        todo = [
+            r for r in rows if r.get("id") and r.get("status", "").lower() in ("pending", "in_progress", "running", "")
+        ]
         if not todo:
             return
         # 加载角色配置
@@ -367,7 +370,6 @@ class IndustryPage(QWidget):
 
         from PySide6.QtWidgets import QDialog
 
-        from services.scoring_service import calc_manufacturing_score
         from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 
         # 1) \u641c\u7d22\u7269\u54c1
@@ -406,11 +408,13 @@ class IndustryPage(QWidget):
             conn2.close()
 
         if not has_bp:
-            QMessageBox.information(self, "\u63d0\u793a", f"\u300c{product_name}\u300d\u6ca1\u6709\u5236\u9020\u84dd\u56fe")
+            QMessageBox.information(
+                self, "\u63d0\u793a", f"\u300c{product_name}\u300d\u6ca1\u6709\u5236\u9020\u84dd\u56fe"
+            )
             return
 
         # 3) \u521d\u6b65\u8bc4\u5206\uff08ME=0/TE=0 \u9884\u89c8\u7528\uff09
-        from services.scoring_service import resolve_char_config
+        from services.char_config_resolver import resolve_char_config
         from ui_pyside6.workers.industry_workers import ScoreWorker
 
         char_name = self._toolbar.get_char_name()
@@ -437,14 +441,18 @@ class IndustryPage(QWidget):
             # \u7528\u89d2\u8272\u914d\u7f6e\u91cd\u7b97\u5b9e\u9645\u5229\u6da6/\u8bc4\u5206
             actual_char_name = data.get("char", "").strip() or char_name
             actual_config = resolve_char_config(char_name=actual_char_name)
-            actual = calc_manufacturing_score(
-                type_id=type_id,
-                char_config=actual_config,
-                bp_me=data["me"],
-                bp_te=data["te"],
-                mat_source_hub="Jita",
-                sell_hub="Jita",
-                facility_tax_pct=actual_config.get("market", {}).get("jita", {}).get("facility_tax", 0.0),
+            actual = (
+                get_container()
+                .scoring_service()
+                .calc_manufacturing_score(
+                    type_id=type_id,
+                    char_config=actual_config,
+                    bp_me=data["me"],
+                    bp_te=data["te"],
+                    mat_source_hub="Jita",
+                    sell_hub="Jita",
+                    facility_tax_pct=actual_config.get("market", {}).get("jita", {}).get("facility_tax", 0.0),
+                )
             )
             iskph = actual.get("isk_per_hour", 0) or actual.get("breakdown", {}).get("isk_per_hour", 0)
             mat_cost = actual.get("breakdown", {}).get("material_cost", 0)

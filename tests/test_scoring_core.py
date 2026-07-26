@@ -1,6 +1,6 @@
 """评分核心逻辑单元测试 — 测试 ScoringService 的关键计算路径"""
 
-from services.scoring_service import ScoringCache
+from core.cache import TtlLRUCache
 from services.scoring_service import ScoringService
 
 # ── 默认满级角色配置 ──
@@ -24,7 +24,7 @@ class TestCalcManufacturingScore:
 
     def test_valid_data_returns_correct_keys(self, temp_db):
         """正常数据应返回完整的结果字典"""
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         result = svc.calc_manufacturing_score(
             type_id=2001,
             char_config=DEFAULT_CHAR,
@@ -50,8 +50,8 @@ class TestCalcManufacturingScore:
         assert result["materials"]  # 非空
 
     def test_breakdown_contains_cost_keys(self, temp_db):
-        """breakdown 应包含费用相关字段"""
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        """breakdown 应包含费用相关字段（安装费按游戏类目拆分）"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         result = svc.calc_manufacturing_score(
             type_id=2002,
             char_config=DEFAULT_CHAR,
@@ -59,9 +59,9 @@ class TestCalcManufacturingScore:
             bp_te=10,
         )
         keys = result["breakdown"]
-        # 新 breakdown 有 material_cost / facility_fee / eiv / scc_surcharge
+        # 新 breakdown 有 material_cost / installation_fee / eiv / scc_surcharge
         assert "material_cost" in keys
-        assert "facility_fee" in keys
+        assert "installation_fee" in keys
         assert "eiv" in keys
         assert "scc_surcharge" in keys
         # 材料信息在 materials 列表中
@@ -71,7 +71,7 @@ class TestCalcManufacturingScore:
 
     def test_no_blueprint_returns_status(self, temp_db):
         """无蓝图的物品返回 status=no_blueprint"""
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         result = svc.calc_manufacturing_score(type_id=99999, char_config=DEFAULT_CHAR)
         assert result["status"] == "no_blueprint"
         assert result["score"] == 0.0
@@ -80,7 +80,7 @@ class TestCalcManufacturingScore:
         """成品无市场价格时返回 status=no_price"""
         from unittest.mock import patch
 
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         # Mock get_price 以模拟无价格场景（避免连接缓存导致的可见性问题）
         with patch("services.scoring_service.get_price", return_value=None):
             result = svc.calc_manufacturing_score(type_id=2001, char_config=DEFAULT_CHAR)
@@ -97,8 +97,8 @@ class TestMEWasteFactor:
     """验证 ME 对材料浪费的影响 — 使用 manufacturing_calculator 正确公式"""
 
     def test_me0_gives_minimal_waste(self, temp_db):
-        """ME 0 → wastefactor=10 → effective ~1.1"""
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        """ME 0 → wastefactor=10 → waste_factor=1.0（SDE quantity=ME0 含损耗量）"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         result = svc.calc_manufacturing_score(
             type_id=2002,
             char_config=DEFAULT_CHAR,
@@ -106,11 +106,11 @@ class TestMEWasteFactor:
         )
         mat = result["materials"][0]
         assert mat["wastefactor"] == 10
-        assert mat["waste_factor"] > 1.0
+        assert mat["waste_factor"] == 1.0
 
     def test_me10_still_has_some_waste(self, temp_db):
-        """ME 10 不会归零浪费"""
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        """ME 10 → waste_factor < 1.0（相对 ME0 减量）"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         result = svc.calc_manufacturing_score(
             type_id=2002,
             char_config=DEFAULT_CHAR,
@@ -118,12 +118,12 @@ class TestMEWasteFactor:
         )
         mat = result["materials"][0]
         assert mat["wastefactor"] == 10
-        assert mat["waste_factor"] > 1.0
-        assert mat["waste_factor"] <= 1.01
+        assert mat["waste_factor"] < 1.0
+        assert mat["waste_factor"] > 0.9
 
     def test_me5_waste_between_me0_and_me10(self, temp_db):
         """ME 5 的浪费应在 ME0 和 ME10 之间"""
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=0)
         r5 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=5)
         r10 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=10)
@@ -134,7 +134,7 @@ class TestMEWasteFactor:
 
     def test_higher_me_reduces_material_cost(self, temp_db):
         """ME 10 的材料成本应低于 ME 0"""
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=0)
         r10 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=10)
         mat_cost_0 = sum(m["subtotal"] for m in r0["materials"])
@@ -152,7 +152,7 @@ class TestTEFactor:
 
     def test_te0_no_time_reduction(self, temp_db):
         """TE 0 → hours_per_run 应为最长"""
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         result = svc.calc_manufacturing_score(
             type_id=2002,
             char_config=DEFAULT_CHAR,
@@ -163,7 +163,7 @@ class TestTEFactor:
 
     def test_te20_gives_20_percent_reduction(self, temp_db):
         """TE 20 的 ISK/h 应明显高于 TE 0（因为时间更短）"""
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=0)
         r20 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=20)
         # hours_per_run 被 round(2) 截断，不能直接做精确比例
@@ -175,14 +175,14 @@ class TestTEFactor:
 
     def test_te10_gives_10_percent_reduction(self, temp_db):
         """TE 10 的 ISK/h 应高于 TE 0（因为时间更短）"""
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=0)
         r10 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=10)
         assert r10["isk_per_hour"] > r0["isk_per_hour"]
 
     def test_higher_te_reduces_hours(self, temp_db):
         """TE 20 的小时数应少于 TE 0"""
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=0)
         r20 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=20)
         assert r20["hours_per_run"] < r0["hours_per_run"]
@@ -198,7 +198,7 @@ class TestTradeScoreBasic:
 
     def test_basic_trade_returns_structure(self, temp_db):
         """有价格的物品应返回完整结构"""
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         result = svc.calc_trade_score(
             type_id=2002,
             buy_hub="Jita",
@@ -213,7 +213,7 @@ class TestTradeScoreBasic:
 
     def test_no_price_returns_status(self, temp_db):
         """无价格返回 status=no_price"""
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         result = svc.calc_trade_score(type_id=99999, char_config=DEFAULT_CHAR)
         assert result["status"] == "no_price"
         assert result["score"] == 0.0
@@ -221,7 +221,7 @@ class TestTradeScoreBasic:
     def test_profitable_trade_has_positive_score(self, temp_db):
         """买低卖高应有正评分"""
         # 无人机: buy=100000, sell=120000 — 正利润
-        svc = ScoringService(temp_db, ScoringCache(max_size=10))
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
         result = svc.calc_trade_score(
             type_id=2002,
             buy_hub="Jita",

@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
-from services.scoring_service import calc_manufacturing_score
+from core.container import get_container
 
 _COLUMNS = ["材料", "基础量", "损耗率", "实际量", "单价", "小计"]
 
@@ -68,16 +68,20 @@ class CostBreakdownDialog(QWidget):
         sell_hub = self._plan.get("sell_hub", "Jita")
         char_config = self._char_config or {}
         fac_tax = char_config.get("market", {}).get(sell_hub.lower(), {}).get("facility_tax", 0.0)
-        result = calc_manufacturing_score(
-            type_id=type_id,
-            char_config=char_config,
-            bp_me=me,
-            bp_te=te,
-            mat_source_hub=mat_hub,
-            sell_hub=sell_hub,
-            facility_tax_pct=fac_tax,
-            price_type_mat="sell",
-            price_type_prod="sell",
+        result = (
+            get_container()
+            .scoring_service()
+            .calc_manufacturing_score(
+                type_id=type_id,
+                char_config=char_config,
+                bp_me=me,
+                bp_te=te,
+                mat_source_hub=mat_hub,
+                sell_hub=sell_hub,
+                facility_tax_pct=fac_tax,
+                price_type_mat="sell",
+                price_type_prod="sell",
+            )
         )
         status = result.get("status", "")
         if status:
@@ -108,24 +112,40 @@ class CostBreakdownDialog(QWidget):
         isk_per_hour = result.get("isk_per_hour", 0) or 0
         result.get("cost_per_unit", 0) or 0
         hours = result.get("hours_per_run", 0) or 1
-        facility_fee = bd.get("facility_fee", 0) or 0
+        installation_fee = bd.get("installation_fee", 0) or 0
+        eiv = bd.get("eiv", 0) or 0
+        system_cost = bd.get("system_cost", 0) or 0
+        facility_tax = bd.get("facility_tax", 0) or 0
+        scc = bd.get("scc_surcharge", 0) or 0
+        alpha_tax = bd.get("alpha_tax", 0) or 0
         broker_init = bd.get("broker_init", 0) or 0
         broker_relist = bd.get("broker_relist", 0) or 0
         sales_tax = bd.get("sales_tax", 0) or 0
         revenue = bd.get("revenue", 0) or 0
         material_cost_val = bd.get("material_cost", 0) or 0
+        sci = bd.get("sci", 0) or 0
         sep40 = "=" * 40
         sep36 = "=" * 36
+        sep28 = "=" * 28
         lines = [
             f"  {sep40}",
+            f"  预估物品价值(EIV): {_fmt_isk(eiv)}",
+            "  项目毛成本",
+            f"    星系成本指数 {sci*100:.2f}% EIV",
+            f"    项目总计毛成本 {_fmt_isk(system_cost)}",
+            "  税收",
+            f"    设施税 0.25% EIV {_fmt_isk(facility_tax)}",
+            f"    SCC 商业安全委员会 4.00% EIV {_fmt_isk(scc)}",
+            f"    税收总额 {_fmt_isk(facility_tax + scc + alpha_tax)}",
+            f"  {sep28}",
+            f"  安装费小计: {_fmt_isk(installation_fee)}",
             f"  材料费: {_fmt_isk(mat_cost)} ({material_cost_val:,.0f} ISK)",
-            f"  安装费: {_fmt_isk(facility_fee)}",
             f"  经纪人(挂单): {_fmt_isk(broker_init)}",
             f"  经纪人(改单): {_fmt_isk(broker_relist)}",
             f"  销售税: {_fmt_isk(sales_tax)}",
             f"  {sep36}",
         ]
-        cost_data = mat_cost + facility_fee + broker_init + broker_relist + sales_tax
+        cost_data = mat_cost + installation_fee + broker_init + broker_relist + sales_tax
         lines += [
             f"  总成本: {_fmt_isk(cost_data)}",
             f"  收入: {_fmt_isk(revenue)}",

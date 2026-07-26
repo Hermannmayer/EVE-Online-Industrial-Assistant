@@ -29,10 +29,11 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
+from core.cache import TtlLRUCache
 from core.container import get_container
 from core.paths import data_dir
-from services.scoring_service import cache_key as _ck
-from services.scoring_service import get_cache as _cget
+
+_cache = TtlLRUCache(max_size=500, ttl_seconds=1800)
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 from ui_pyside6.views.all_items_view import JITA_RID, AModel, ItemsW, Proxy, SearchItemsW
 from ui_pyside6.views.compare_dialog import CompareDialog
@@ -484,11 +485,8 @@ class ManufacturableItemsDialog(QDialog):
 
         if has_prices:
             # 数据库有价格 → 清评分缓存 → 用最新价格重算
-            # 注意：invalidate_cache 清的是全局缓存，TradeView 的贸易评分也会被清除
-            # 但缓存是惰性重建的，下次访问时会自动重算，不会报错
-            from services.scoring_service import invalidate_cache
-
-            invalidate_cache()
+            # 注意：清缓存后会惰性重建
+            _cache.invalidate()
             self._st.setText("重新计算中...")
             self._calc()
         else:
@@ -555,8 +553,8 @@ class ManufacturableItemsDialog(QDialog):
         )
 
         # 始终显示评分详情（该窗口专为制造评分设计）
-        k = _ck(tid, "mfg", self._mfg["hub"], self._mfg["char"])
-        res = _cget(k)
+        k = f"{tid}|mfg|{self._mfg['hub']}|{self._mfg['char']}"
+        res = _cache.get(k)
         if res:
             d = self._ds(res, True)
             a_brkd = QAction("制造核算明细", self)
@@ -568,8 +566,8 @@ class ManufacturableItemsDialog(QDialog):
 
         def _do_add_plan():
             score = {}
-            k = _ck(tid, "mfg", self._mfg["hub"], self._mfg["char"])
-            cached = _cget(k)
+            k = f"{tid}|mfg|{self._mfg['hub']}|{self._mfg['char']}"
+            cached = _cache.get(k)
             if cached:
                 score = cached
             from datetime import datetime

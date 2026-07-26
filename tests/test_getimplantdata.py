@@ -7,8 +7,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from tools.downloaders.getimplantdata import (
     DB_PATH,
     INDUSTRY_GROUP_NAMES,
@@ -20,7 +18,7 @@ from tools.downloaders.getimplantdata import (
 class TestGetIndustryTypeIds:
     """从数据库获取工业植入体 type_id"""
 
-    @patch("services.workers.getimplantdata.sqlite3.connect")
+    @patch("tools.downloaders.getimplantdata.sqlite3.connect")
     def test_returns_type_ids_for_groups(self, mock_connect):
         """按 INDUSTRY_GROUP_NAMES 查询返回正确的 type_id"""
         mock_conn = MagicMock()
@@ -47,7 +45,7 @@ class TestGetIndustryTypeIds:
         assert result == [101, 102, 103, 104]
         assert mock_cursor.execute.call_count == len(INDUSTRY_GROUP_NAMES)
 
-    @patch("services.workers.getimplantdata.sqlite3.connect")
+    @patch("tools.downloaders.getimplantdata.sqlite3.connect")
     def test_returns_empty_when_no_rows(self, mock_connect):
         """无匹配行时返回空列表"""
         mock_conn = MagicMock()
@@ -63,7 +61,7 @@ class TestGetIndustryTypeIds:
 class TestInitDb:
     """初始化 item_dogma 表"""
 
-    @patch("services.workers.getimplantdata.sqlite3.connect")
+    @patch("tools.downloaders.getimplantdata.sqlite3.connect")
     def test_creates_item_dogma_table(self, mock_connect):
         """init_db 执行建表 SQL"""
         mock_conn = MagicMock()

@@ -50,13 +50,35 @@ def _patch_init_check(paths):
 @pytest.fixture
 def full_dbs(db_paths):
     """创建含完整数据的数据库"""
-    # reference.db — item 表 10000 行 + item_dogma
+    # reference.db — item 表 10000 行 + item_dogma + 扩展表
     conn = sqlite3.connect(db_paths["ref"])
-    conn.execute("CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT)")
+    conn.execute("CREATE TABLE item (type_id INTEGER PRIMARY KEY, en_name TEXT, zh_name TEXT, market_group_id INTEGER)")
     for i in range(1, 10001):
-        conn.execute("INSERT INTO item (type_id, zh_name) VALUES (?, ?)", (i, f"item_{i}"))
+        # 前 200 行设 market_group_id（check_icons 计数用）
+        mkt_grp = i if i <= 500 else None
+        conn.execute(
+            "INSERT INTO item (type_id, en_name, zh_name, market_group_id) VALUES (?, ?, ?, ?)",
+            (i, f"item_{i}", f"物品{i}", mkt_grp),
+        )
     conn.execute("CREATE TABLE item_dogma (type_id INTEGER, attribute_id INTEGER)")
-    conn.execute("INSERT INTO item_dogma VALUES (1, 1)")
+    for i in range(1, 301):
+        conn.execute("INSERT INTO item_dogma VALUES (?, 1)", (i,))
+    conn.execute("CREATE TABLE market_tree (market_group_id INTEGER PRIMARY KEY, parent_group_id INTEGER)")
+    for i in range(1, 502):
+        conn.execute("INSERT INTO market_tree VALUES (?, ?)", (i, None))
+    conn.execute("CREATE TABLE industry_system_costs (solar_system_id INTEGER PRIMARY KEY, cost REAL)")
+    for i in range(1, 102):
+        conn.execute("INSERT INTO industry_system_costs VALUES (?, 1.0)", (i,))
+    conn.execute("CREATE TABLE meta_group (meta_group_id INTEGER PRIMARY KEY, en_name TEXT)")
+    conn.execute("INSERT INTO meta_group VALUES (1, 'Tech I')")
+    conn.execute("CREATE TABLE reprocessing_materials (type_id INTEGER, material_type_id INTEGER)")
+    conn.execute("INSERT INTO reprocessing_materials VALUES (1, 1)")
+    conn.execute("CREATE TABLE dogma_attribute (attribute_id INTEGER PRIMARY KEY, en_name TEXT)")
+    conn.execute("INSERT INTO dogma_attribute VALUES (1, 'test')")
+    conn.execute("CREATE TABLE station (station_id INTEGER PRIMARY KEY, station_name TEXT)")
+    conn.execute("INSERT INTO station VALUES (1, 'test')")
+    conn.execute("CREATE TABLE region (region_id INTEGER PRIMARY KEY, en_name TEXT)")
+    conn.execute("INSERT INTO region VALUES (1, 'test')")
     conn.commit()
     conn.close()
 
@@ -199,7 +221,7 @@ def test_missing_count_zero(full_dbs):
     ):
         mock_icon.return_value = "C:/Users/NIGHTW~1//AppData//Local//Temp/test_icons_zero"
         os.makedirs("C:/Users/NIGHTW~1/AppData/Local/Temp/test_icons_zero", exist_ok=True)
-        for i in range(80):
+        for i in range(401):
             Path(f"C:/Users/NIGHTW~1/AppData/Local/Temp/test_icons_zero/{i}.png").touch()
         assert missing_count() == 0
     shutil.rmtree("C:/Users/NIGHTW~1/AppData/Local/Temp/test_icons_zero", ignore_errors=True)
@@ -230,5 +252,6 @@ def test_missing_count_partial(db_paths):
         patch("core.paths.icon_cache_dir", return_value="/nonexistent_icons"),
     ):
         cnt = missing_count()
-        # items=True, 其余全 False = 4 missing
-        assert cnt == 3  # icons 在 cached=0, total=0 时 0>=0 为 True
+        # items=False, prices=False, blueprints=False, implants=False,
+        # industry=False, sde_data=False, icons=True (0>=0)
+        assert cnt == 6

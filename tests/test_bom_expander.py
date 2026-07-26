@@ -141,7 +141,7 @@ class TestGetMaterials:
 class TestExpand:
     """内部 _expand 递归展开"""
 
-    @patch("services.bom_expander.get_price")
+    @patch("services.bom_expander._pricing.get_price")
     def test_leaf_node_no_blueprint(self, mock_get_price):
         """无蓝图的物品 → 叶子节点"""
         mock_get_price.return_value = 5.0
@@ -177,7 +177,7 @@ class TestExpand:
         assert node.unit_price == 5.0
         assert node.subtotal == 500.0
 
-    @patch("services.bom_expander.get_price")
+    @patch("services.bom_expander._pricing.get_price")
     def test_intermediate_node_with_materials(self, mock_get_price):
         """有蓝图的物品 → 中间产品 + 子节点"""
         mock_get_price.return_value = 50_000_000.0
@@ -223,7 +223,7 @@ class TestExpand:
         assert len(node.children) == 1
         assert node.children[0].is_intermediate is False
 
-    @patch("services.bom_expander.get_price")
+    @patch("services.bom_expander._pricing.get_price")
     def test_depth_limit(self, mock_get_price):
         mock_get_price.return_value = 10.0
         conn = MagicMock()
@@ -246,7 +246,7 @@ class TestExpand:
         assert node.is_intermediate is False
         assert node.quantity == 5.0
 
-    @patch("services.bom_expander.get_price")
+    @patch("services.bom_expander._pricing.get_price")
     def test_cycle_detection(self, mock_get_price):
         mock_get_price.return_value = 99.0
         conn = MagicMock()
@@ -269,7 +269,7 @@ class TestExpand:
         assert node.is_intermediate is False
         assert node.type_id == 2001
 
-    @patch("services.bom_expander.get_price")
+    @patch("services.bom_expander._pricing.get_price")
     def test_empty_materials_list(self, mock_get_price):
         """蓝图无材料记录时降级为叶子"""
         mock_get_price.return_value = 5000.0
@@ -312,7 +312,7 @@ class TestExpandBom:
     """公开 API expand_bom"""
 
     @patch("services.bom_expander.db")
-    @patch("services.bom_expander.get_price")
+    @patch("services.bom_expander._pricing.get_price")
     def test_expand_simple_item(self, mock_get_price, mock_db):
         """展开一个无蓝图的简单物品"""
         mock_get_price.return_value = 5.0
@@ -339,7 +339,7 @@ class TestExpandBom:
         assert result["raw_materials"][0]["name"] == "Simple"
 
     @patch("services.bom_expander.db")
-    @patch("services.bom_expander.get_price")
+    @patch("services.bom_expander._pricing.get_price")
     def test_expand_with_blueprint(self, mock_get_price, mock_db):
         """展开一个含蓝图的物品"""
         mock_get_price.return_value = 1000.0
@@ -381,7 +381,7 @@ class TestExpandBom:
         assert "intermediates" in result
 
     @patch("services.bom_expander.db")
-    @patch("services.bom_expander.get_price")
+    @patch("services.bom_expander._pricing.get_price")
     def test_get_material_tree_convenience(self, mock_get_price, mock_db):
         """get_material_tree 返回树根节点"""
         mock_get_price.return_value = 5.0
@@ -397,7 +397,7 @@ class TestExpandBom:
         assert tree.type_id == 9999
 
     @patch("services.bom_expander.db")
-    @patch("services.bom_expander.get_price")
+    @patch("services.bom_expander._pricing.get_price")
     def test_get_flat_materials_convenience(self, mock_get_price, mock_db):
         """get_flat_materials 返回扁平材料列表"""
         mock_get_price.return_value = 5.0

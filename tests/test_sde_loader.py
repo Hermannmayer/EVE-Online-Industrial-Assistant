@@ -65,20 +65,18 @@ class TestInitializeDatabase:
     @pytest.mark.asyncio
     async def test_creates_meta_group_table(self, temp_db_path):
         """调用后 meta_group 表存在"""
-        with patch("services.workers.sde_loader.DATABASE_PATH", temp_db_path):
+        with patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path):
             await initialize_database()
 
         conn = sqlite3.connect(temp_db_path)
-        tables = {row[0] for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()}
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         conn.close()
         assert "meta_group" in tables
 
     @pytest.mark.asyncio
     async def test_idempotent(self, temp_db_path):
         """重复调用不报错"""
-        with patch("services.workers.sde_loader.DATABASE_PATH", temp_db_path):
+        with patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path):
             await initialize_database()
             await initialize_database()
 
@@ -99,8 +97,10 @@ class TestWriteMetaGroups:
             "2": {"nameID": {"en": "Tech II", "zh": "科技 II"}},
         }
 
-        with patch("services.workers.sde_loader.DATABASE_PATH", temp_db_path), \
-             patch("services.workers.sde_loader.load_yaml", return_value=mock_data):
+        with (
+            patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path),
+            patch("tools.downloaders.sde_loader.load_yaml", return_value=mock_data),
+        ):
             await initialize_database()
             await write_meta_groups()
 
@@ -119,8 +119,10 @@ class TestWriteMetaGroups:
 
         mock_data = {"1": {"nameID": {"en": "Tech I"}}}
 
-        with patch("services.workers.sde_loader.DATABASE_PATH", temp_db_path), \
-             patch("services.workers.sde_loader.load_yaml", return_value=mock_data):
+        with (
+            patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path),
+            patch("tools.downloaders.sde_loader.load_yaml", return_value=mock_data),
+        ):
             await initialize_database()
             await write_meta_groups()  # 首次调用写入
             await write_meta_groups()  # 第二次应当跳过
@@ -148,9 +150,7 @@ class TestWriteMetaGroups:
                 )
             """)
             for tid in (12345, 12346, 12347):
-                await db.execute(
-                    "INSERT INTO item (type_id, en_name) VALUES (?, ?)", (tid, f"Item_{tid}")
-                )
+                await db.execute("INSERT INTO item (type_id, en_name) VALUES (?, ?)", (tid, f"Item_{tid}"))
             await db.commit()
 
         mock_meta = {
@@ -166,16 +166,16 @@ class TestWriteMetaGroups:
         def _load_yaml_side_effect(name):
             return {"metaGroups.yaml": mock_meta, "typeIDs.yaml": mock_type_ids}[name]
 
-        with patch("services.workers.sde_loader.DATABASE_PATH", temp_db_path), \
-             patch("services.workers.sde_loader.load_yaml") as mock_load:
+        with (
+            patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path),
+            patch("tools.downloaders.sde_loader.load_yaml") as mock_load,
+        ):
             mock_load.side_effect = _load_yaml_side_effect
             await initialize_database()
             await write_meta_groups()
 
         conn = sqlite3.connect(temp_db_path)
-        rows = conn.execute(
-            "SELECT type_id, meta_group_id FROM item ORDER BY type_id"
-        ).fetchall()
+        rows = conn.execute("SELECT type_id, meta_group_id FROM item ORDER BY type_id").fetchall()
         conn.close()
 
         assert rows == [

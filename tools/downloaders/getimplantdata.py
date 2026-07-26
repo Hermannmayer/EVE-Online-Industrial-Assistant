@@ -68,6 +68,44 @@ def get_industry_type_ids(db_path):
     return sorted(type_ids)
 
 
+async def fetch_type_dogma(client, type_id: int) -> dict | None:
+    """从 ESI 获取 type 的 dogma 属性
+
+    Args:
+        client: ESI HTTP 客户端（需实现 async fetch(url) -> dict | None）
+        type_id: 物品 type ID
+
+    Returns:
+        {"type_id": int, "dogma_attrs": json_str, "dogma_effects": json_str} | None
+    """
+    url = f"https://esi.evetech.net/latest/universe/types/{type_id}/?datasource=tranquility"
+    data = await client.fetch(url)
+    if data is None:
+        return None
+    return {
+        "type_id": type_id,
+        "dogma_attrs": json.dumps(data.get("dogma_attributes", []) or []),
+        "dogma_effects": json.dumps(data.get("dogma_effects", []) or []),
+    }
+
+
+async def fetch_attribute_name(client, attribute_id: int) -> tuple[int, str]:
+    """从 ESI 获取 dogma attribute 的名称
+
+    Args:
+        client: ESI HTTP 客户端（需实现 async fetch(url) -> dict | None）
+        attribute_id: dogma attribute ID
+
+    Returns:
+        (attribute_id, name) | (attribute_id, "unknown")
+    """
+    url = f"https://esi.evetech.net/latest/dogma/attributes/{attribute_id}/?datasource=tranquility"
+    data = await client.fetch(url)
+    if data is None:
+        return (attribute_id, "unknown")
+    return (attribute_id, data.get("name", "unknown"))
+
+
 async def main():
     log.info("=" * 50)
     log.info("  植入体 dogma 数据拉取")
@@ -112,11 +150,13 @@ async def main():
         dogma_attrs = entry.get("dogmaAttributes", []) or []
         dogma_effects = entry.get("dogmaEffects", []) or []
 
-        rows.append((
-            tid,
-            json.dumps(dogma_attrs, ensure_ascii=False),
-            json.dumps(dogma_effects, ensure_ascii=False),
-        ))
+        rows.append(
+            (
+                tid,
+                json.dumps(dogma_attrs, ensure_ascii=False),
+                json.dumps(dogma_effects, ensure_ascii=False),
+            )
+        )
 
     if not rows:
         log.info("没有找到 dogma 数据")
@@ -133,7 +173,7 @@ async def main():
     log.info(f"写入 {len(rows)} 条 dogma 数据")
 
     # 展示摘要
-    log.info(f"\n=== 植入体属性摘要 ===")
+    log.info("\n=== 植入体属性摘要 ===")
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("""
@@ -151,4 +191,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

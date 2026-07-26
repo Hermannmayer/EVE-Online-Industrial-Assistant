@@ -7,27 +7,43 @@
   - ScoringService：可注入的评分服务类（同接口 + calc_reaction_score）
 """
 
+from __future__ import annotations
+
 import threading
 import time
 from collections import OrderedDict
 
 from core.eve_formulas import (
+    ADV_INDUSTRY_SKILL_MULT,
     _hub_region_id,
     calc_broker_rate,
     calc_relist_discount,
     calc_sales_tax_rate,
 )
-from services.database_manager import DatabaseManager, get_db
 from services.blueprint_reader import get_blueprint_materials
+from services.database_manager import DatabaseManager, get_db
 from services.manufacturing_calculator import (
+    STRUCTURE_MAT_SAVING,
     calc_job_cost_fees,
-    calc_material_for_runs,
     calc_material_per_run,
     calc_production_time,
-    SCC_SURCHARGE,
-    STRUCTURE_MAT_SAVING,
 )
 from services.name_resolver import resolve_item_name
+
+# 贸易中心 → 太阳系 ID 映射（用于 SCI 降级）
+_TRADE_HUB_SYSTEM_IDS: dict[str, int] = {
+    "Jita": 30000142,
+    "Amarr": 30002187,
+    "Dodixie": 30002659,
+    "Rens": 30002510,
+    "Hek": 30002070,
+}
+
+
+def _hub_to_system_id(hub: str) -> int | None:
+    """将贸易中心名称映射为太阳系 ID。"""
+    return _TRADE_HUB_SYSTEM_IDS.get(hub)
+
 
 db = get_db()
 
@@ -255,10 +271,13 @@ def get_system_cost_index(
     system_id: int | None,
     activity: str = "manufacturing",
     _db: DatabaseManager | None = None,
+    hub: str = "Jita",
 ) -> float:
-    """从数据库获取星系的制造成本指数(SCI)。默认1.0（无加成）。"""
+    """从数据库获取星系的制造成本指数(SCI)。system_id=None 时从 hub 推断。"""
     if system_id is None:
-        return 1.0
+        system_id = _hub_to_system_id(hub)
+    if system_id is None:
+        return 0.05
     conn_mgr = _db or db
     with conn_mgr.connect("ref") as conn:
         c = conn.cursor()
@@ -268,6 +287,20 @@ def get_system_cost_index(
         )
         row = c.fetchone()
         return row[0] if row else 1.0
+
+
+def get_adjusted_price(
+    type_id: int,
+    _db: DatabaseManager | None = None,
+) -> float | None:
+    """获取 ESI adjusted price（EIV 计算用）。兜底 None → 用 sell_price。"""
+    conn_mgr = _db or db
+    with conn_mgr.connect("mkt") as conn:
+        r = conn.execute(
+            "SELECT adjusted_price FROM market_prices WHERE type_id = ? AND adjusted_price > 0 LIMIT 1",
+            (type_id,),
+        ).fetchone()
+        return float(r[0]) if r else None
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -332,7 +365,14 @@ def calc_refining_value(
         materials = cur.fetchall()
 
     if not materials:
-        return {"yield_rate": yield_rate, "output": [], "total_value": 0, "input_value": 0, "profit": 0, "margin_pct": 0}
+        return {
+            "yield_rate": yield_rate,
+            "output": [],
+            "total_value": 0,
+            "input_value": 0,
+            "profit": 0,
+            "margin_pct": 0,
+        }
 
     output = []
     total_value = 0.0
@@ -343,13 +383,15 @@ def calc_refining_value(
             price = get_price(mat_id, "sell", price_hub) or 0.0
             total = round(qty * price, 2)
             name = resolve_item_name(cur, mat_id)
-            output.append({
-                "type_id": mat_id,
-                "name": name,
-                "qty": round(qty, 2),
-                "price": price,
-                "total": total,
-            })
+            output.append(
+                {
+                    "type_id": mat_id,
+                    "name": name,
+                    "qty": round(qty, 2),
+                    "price": price,
+                    "total": total,
+                }
+            )
             total_value += total
 
     input_price = get_price(type_id, "sell", price_hub) or 0.0
@@ -466,15 +508,17 @@ class ScoringService:
             for mat_id, mat_qty, wastefactor in mat_rows:
                 wastefactor = wastefactor or 10  # 兜底 T1
                 mat_price = get_price(mat_id, price_type_mat, mat_source_hub, _db=self._db)
+                # EIV 使用 adjusted_price（更稳定），兜底用 mat_price
+                adj_price = get_adjusted_price(mat_id, _db=self._db) or mat_price or 0.0
                 # 正确公式：ceil(base_qty × waste_factor) 每轮次
                 per_run_qty = calc_material_per_run(mat_qty, wastefactor, bp_me, STRUCTURE_MAT_SAVING)
                 waste_qty = per_run_qty * prod_qty  # 多轮次
                 if mat_price:
                     total_mat_cost += waste_qty * mat_price
                 mat_name = resolve_item_name(c, mat_id)
-                # EIV 基础材料量（ME0 无浪费）
+                # EIV 基础材料量（ME0 无浪费）× adjusted_price
                 base_qty_no_waste = mat_qty
-                eiv_materials.append((base_qty_no_waste, mat_price or 0.0))
+                eiv_materials.append((base_qty_no_waste, adj_price))
                 mat_detail.append(
                     {
                         "name": mat_name,
@@ -497,7 +541,7 @@ class ScoringService:
 
             revenue = prod_price * prod_qty
             total_cost = total_mat_cost
-            sci = get_system_cost_index(system_id, "manufacturing", _db=self._db)
+            sci = get_system_cost_index(system_id, "manufacturing", _db=self._db, hub=sell_hub)
 
             # EIV 计算 & 安装费（加法结构）
             eiv = sum(qty * price for qty, price in eiv_materials)
@@ -512,8 +556,12 @@ class ScoringService:
                 facility_tax=facility_tax_pct / 100,
                 alpha_tax=alpha_tax,
             )
-            facility_fee = fee_detail["total_fee"]
-            total_cost += facility_fee
+            system_cost_fee = fee_detail["system_cost"]
+            facility_tax_fee = fee_detail["facility_tax"]
+            scc_fee = fee_detail["scc"]
+            alpha_fee = fee_detail["alpha_tax"]
+            installation_fee = fee_detail["total_fee"]
+            total_cost += installation_fee
 
             broker_init = revenue * (broker_rate / 100)
             broker_relist = revenue * (broker_rate / 100) * (1 - relist_discount / 100)
@@ -535,7 +583,7 @@ class ScoringService:
             hours_per_run = actual_time / 3600
             margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
 
-            # 费用明细字典
+            # 费用明细字典（与游戏安装费类目对齐）
             breakdown = {
                 "bp_me": bp_me,
                 "bp_te": bp_te,
@@ -545,13 +593,17 @@ class ScoringService:
                 "broker_init": round(broker_init, 2),
                 "broker_relist": round(broker_relist, 2),
                 "sales_tax": round(sales_tax, 2),
-                "facility_fee": round(facility_fee, 2),
-                "eiv": round(eiv, 2),
-                "sci": round(sci, 4),
+                # 安装费（Job Cost）— 与游戏内显示结构一致
+                "eiv": round(eiv, 2),  # 预估物品价值
+                "sci": round(sci, 4),  # 星系成本指数
+                "system_cost": round(system_cost_fee, 2),  # 项目毛成本（星系成本指数 × EIV）
+                "facility_tax": round(facility_tax_fee, 2),  # 设施税
+                "scc_surcharge": round(scc_fee, 2),  # SCC 附加费
+                "alpha_tax": round(alpha_fee, 2),  # Alpha 税
+                "installation_fee": round(installation_fee, 2),  # 项目总费用
                 "structure_bonus": round(structure_bonus, 4),
                 "structure_time_mod": round(structure_time_mod, 4),
                 "facility_tax_pct": round(facility_tax_pct, 2),
-                "scc_surcharge": round(fee_detail["scc"], 2),
                 "broker_rate": round(broker_rate, 3),
                 "sales_tax_rate": round(sales_tax_rate, 3),
                 "relist_discount": round(relist_discount, 1),
@@ -779,7 +831,7 @@ class ScoringService:
                 waste_qty = mat_qty * waste_factor
                 if mat_price:
                     total_mat_cost += waste_qty * mat_price
-                mat_name = _mat_name(mat_id, c)
+                mat_name = resolve_item_name(c, mat_id)
                 mat_detail.append(
                     {
                         "name": mat_name,
@@ -803,10 +855,10 @@ class ScoringService:
             # 6. 安装费
             revenue = prod_price * prod_qty
             total_cost = total_mat_cost
-            sci = get_system_cost_index(system_id, "reaction", _db=self._db)
+            sci = get_system_cost_index(system_id, "reaction", _db=self._db, hub=mat_source_hub)
             install_base = REACTION_INSTALL_FEE_RATE * revenue
-            facility_fee = install_base * sci * (1 - structure_bonus) * (1 + facility_tax_pct / 100)
-            total_cost += facility_fee
+            reaction_install_fee = install_base * sci * (1 - structure_bonus) * (1 + facility_tax_pct / 100)
+            total_cost += reaction_install_fee
             broker_init = revenue * (broker_rate / 100)
             broker_relist = revenue * (broker_rate / 100) * (1 - relist_discount / 100)
             sales_tax = revenue * (sales_tax_rate_val / 100)
@@ -865,7 +917,7 @@ class ScoringService:
                         "broker_init": round(broker_init, 2),
                         "broker_relist": round(broker_relist, 2),
                         "sales_tax": round(sales_tax, 2),
-                        "facility_fee": round(facility_fee, 2),
+                        "reaction_install_fee": round(reaction_install_fee, 2),
                         "install_base": round(install_base, 2),
                         "sci": round(sci, 4),
                         "structure_bonus": round(structure_bonus, 4),

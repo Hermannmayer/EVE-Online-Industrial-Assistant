@@ -1,15 +1,12 @@
-"""
-对比后台计算 — CompareWorker + 物品搜索/名称辅助函数
-"""
+"""对比后台计算 — CompareWorker + 物品搜索/名称辅助函数"""
 
 from PySide6.QtCore import QThread, Signal
 
+from core.cache import TtlLRUCache
 from core.container import get_container
-from services.scoring_service import cache_key as _ck
-from services.scoring_service import calc_manufacturing_score, calc_reaction_score, calc_trade_score
-from services.scoring_service import get_cache as _cget
-from services.scoring_service import set_cache as _cset
 from ui_pyside6.views.char_settings_view import get_character
+
+_cache = TtlLRUCache(max_size=500, ttl_seconds=1800)
 
 # ── 搜索 SQL（参数化） ──
 _SEARCH_SQL = (
@@ -101,19 +98,23 @@ class CompareWorker(QThread):
         me = self._cfg.get("me", 0)
         te = self._cfg.get("te", 0)
 
-        k = _ck(tid, "mfg", hub, self._cfg.get("char", ""))
-        r = _cget(k)
+        k = f"{tid}|mfg|{hub}|{self._cfg.get('char', '')}"
+        r = _cache.get(k)
         if not r:
-            r = calc_manufacturing_score(
-                tid,
-                char_cfg or {},
-                hub,
-                hub,
-                tax,
-                bp_me=me,
-                bp_te=te,
+            r = (
+                get_container()
+                .scoring_service()
+                .calc_manufacturing_score(
+                    tid,
+                    char_cfg or {},
+                    hub,
+                    hub,
+                    tax,
+                    bp_me=me,
+                    bp_te=te,
+                )
             )
-            _cset(k, r)
+            _cache.set(k, r)
 
         h = r.get("hours_per_run", 1) or 1
         runs_per_day = 24 / h
@@ -136,11 +137,11 @@ class CompareWorker(QThread):
         bs = self._cfg.get("bs", "sell")
         ss = self._cfg.get("ss", "sell")
 
-        k = _ck(tid, "trade", bh + sh, self._cfg.get("char", ""))
-        r = _cget(k)
+        k = f"{tid}|trade|{bh + sh}|{self._cfg.get('char', '')}"
+        r = _cache.get(k)
         if not r:
-            r = calc_trade_score(tid, bh, sh, bs, ss, char_cfg or {})
-            _cset(k, r)
+            r = get_container().scoring_service().calc_trade_score(tid, bh, sh, bs, ss, char_cfg or {})
+            _cache.set(k, r)
 
         row.update(
             {
@@ -158,17 +159,21 @@ class CompareWorker(QThread):
         hub = self._cfg.get("hub", "Jita")
         tax = self._cfg.get("tax", 0)
 
-        k = _ck(tid, "reaction", hub, self._cfg.get("char", ""))
-        r = _cget(k)
+        k = f"{tid}|reaction|{hub}|{self._cfg.get('char', '')}"
+        r = _cache.get(k)
         if not r:
-            r = calc_reaction_score(
-                tid,
-                char_cfg or {},
-                hub,
-                hub,
-                tax,
+            r = (
+                get_container()
+                .scoring_service()
+                .calc_reaction_score(
+                    tid,
+                    char_cfg or {},
+                    hub,
+                    hub,
+                    tax,
+                )
             )
-            _cset(k, r)
+            _cache.set(k, r)
 
         h = r.get("hours_per_run", 1) or 1
         runs_per_day = 24 / h

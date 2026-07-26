@@ -17,9 +17,10 @@ from core.eve_formulas import (
     STANDING_FACTION_WEIGHT,
 )
 from services.database_manager import get_db
-from services.scoring_service import get_price
+from services.pricing_service import PricingService as _PricingService
 
 db = get_db()
+_pricing = _PricingService(get_db())
 
 # ════════════════════════════════════════════════════
 #  四大贸易中心之间的跳跃数（High-sec 安全路线）
@@ -182,8 +183,8 @@ def calc_transport_profit(
     }
 
     # 1. 获取买卖价格
-    buy_price = get_price(type_id, buy_price_type, buy_hub)
-    sell_price = get_price(type_id, sell_price_type, sell_hub)
+    buy_price = _pricing.get_price(type_id, buy_price_type, buy_hub)
+    sell_price = _pricing.get_price(type_id, sell_price_type, sell_hub)
 
     if not buy_price or not sell_price:
         result["status"] = "no_price"

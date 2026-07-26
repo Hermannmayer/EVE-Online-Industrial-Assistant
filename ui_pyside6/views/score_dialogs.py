@@ -16,14 +16,14 @@ from PySide6.QtWidgets import (
     QLabel,
 )
 
+from core.cache import TtlLRUCache
 from core.constants import TRADE_HUB_IDS, TRADE_HUBS
 from core.container import get_container
 from core.paths import ICON_DIR
-from services.scoring_service import cache_key as _ck
-from services.scoring_service import get_cache as _cget
-from services.scoring_service import set_cache as _cset
 from ui_pyside6.views.char_settings_view import get_character, get_character_list
 from ui_pyside6.workers.base_worker import BaseBatchScoreWorker
+
+_cache = TtlLRUCache(max_size=500, ttl_seconds=1800)
 
 REGIONS = TRADE_HUBS
 
@@ -185,14 +185,15 @@ class ScoreW(BaseBatchScoreWorker):
         tid = row.get("id")
         if not tid:
             return None
-        from services.scoring_service import get_price as _gp
+
+        _pricing = get_container().pricing_service
 
         with get_container().db.connect("ref", "mkt", "bp") as conn:
             cur = conn.cursor()
             if self._mfg:
                 hub = self._cfg["hub"]
-                k = _ck(tid, "mfg", hub, self._cfg["char"])
-                r = _cget(k)
+                k = f"{tid}|mfg|{hub}|{self._cfg['char']}"
+                r = _cache.get(k)
                 if not r:
                     r = (
                         get_container()
@@ -205,7 +206,7 @@ class ScoreW(BaseBatchScoreWorker):
                             self._cfg.get("tax", 0),
                         )
                     )
-                    _cset(k, r)
+                    _cache.set(k, r)
                 h = r.get("hours_per_run", 1) or 1
                 runs_per_day = 24 / h
                 st = r.get("status", "")
@@ -229,15 +230,15 @@ class ScoreW(BaseBatchScoreWorker):
                         "_tag": tag,
                         "mm": r.get("margin_pct"),
                         "mdp": daily_profit,
-                        "bp": _gp(tid, "buy", hub),
-                        "sp": _gp(tid, "sell", hub),
+                        "bp": _pricing.get_price(tid, "buy", hub),
+                        "sp": _pricing.get_price(tid, "sell", hub),
                     }
                 )
             else:
                 bh = self._cfg["bh"]
                 sh = self._cfg["sh"]
-                k = _ck(tid, "trade", bh + sh, self._cfg["char"])
-                r = _cget(k)
+                k = f"{tid}|trade|{bh + sh}|{self._cfg['char']}"
+                r = _cache.get(k)
                 if not r:
                     r = (
                         get_container()
@@ -251,7 +252,7 @@ class ScoreW(BaseBatchScoreWorker):
                             self._char_config,
                         )
                     )
-                    _cset(k, r)
+                    _cache.set(k, r)
                 st = r.get("status", "")
                 mkt_id = TRADE_HUB_IDS.get(sh, 10000002)
                 depth = cur.execute(
@@ -271,8 +272,8 @@ class ScoreW(BaseBatchScoreWorker):
                         "_tag": tag,
                         "tm": r.get("margin_pct"),
                         "tpm": r.get("profit_per_m3"),
-                        "bp": _gp(tid, self._cfg["bs"], bh),
-                        "sp": _gp(tid, self._cfg["ss"], sh),
+                        "bp": _pricing.get_price(tid, self._cfg["bs"], bh),
+                        "sp": _pricing.get_price(tid, self._cfg["ss"], sh),
                     }
                 )
             return row

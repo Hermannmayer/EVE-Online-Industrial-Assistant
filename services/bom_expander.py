@@ -20,9 +20,10 @@ from typing import Any
 
 from core.eve_formulas import ME_WASTE_BASE
 from services.database_manager import get_db
-from services.scoring_service import get_price
+from services.pricing_service import PricingService as _PricingService
 
 db = get_db()
+_pricing = _PricingService(get_db())
 
 
 # ════════════════════════════════════════════════════
@@ -129,7 +130,7 @@ def _expand(
         BomNode 根节点
     """
     name = _resolve_name(conn, type_id)
-    unit_price = get_price(type_id, price_type, price_hub) or 0.0
+    unit_price = _pricing.get_price(type_id, price_type, price_hub) or 0.0
 
     # 循环检测 / 深度限制
     if depth > max_depth or type_id in seen:

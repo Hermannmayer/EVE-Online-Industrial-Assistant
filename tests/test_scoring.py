@@ -2,7 +2,7 @@
 
 import pytest
 
-from services.scoring_service import ScoringCache
+from core.cache import TtlLRUCache
 from services.scoring_service import ScoringService
 
 DEFAULT_SKILLS = {"工业理论": 5, "高级工业理论": 5, "经纪人关系学": 5, "高级经纪人关系学": 5, "会计学": 5}
@@ -11,7 +11,7 @@ DEFAULT_SKILLS = {"工业理论": 5, "高级工业理论": 5, "经纪人关系�
 class TestManufacturingScore:
     def test_profitable_item(self, temp_db):
         """渡鸦级应产出正利润"""
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         result = svc.calc_manufacturing_score(
             type_id=2001,
@@ -30,7 +30,7 @@ class TestManufacturingScore:
 
     def test_no_blueprint_returns_status(self, temp_db):
         """无蓝图的物品返回 'no_blueprint'"""
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         result = svc.calc_manufacturing_score(
             type_id=99999,
@@ -40,8 +40,8 @@ class TestManufacturingScore:
         assert result["score"] == 0.0
 
     def test_me_reduces_waste(self, temp_db):
-        """ME 10 应消除材料浪费 (waste_factor=1.0)"""
-        cache = ScoringCache(max_size=10)
+        """ME 10 材料用量应少于 ME 0"""
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         result_me0 = svc.calc_manufacturing_score(
             type_id=2002,
@@ -72,7 +72,7 @@ class TestManufacturingScore:
         mkt.commit()
         mkt.close()
 
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         result = svc.calc_manufacturing_score(
             type_id=2001,
@@ -90,7 +90,7 @@ class TestManufacturingScore:
 class TestTradeScore:
     def test_basic_trade(self, temp_db):
         """基本贸易评分计算"""
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         result = svc.calc_trade_score(
             type_id=2002,
@@ -105,7 +105,7 @@ class TestTradeScore:
 
     def test_no_price_returns_status(self, temp_db):
         """无价格的物品返回 'no_price'"""
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         result = svc.calc_trade_score(
             type_id=99999,
@@ -117,19 +117,19 @@ class TestTradeScore:
 class TestCache:
     def test_get_set_and_ttl(self):
         """缓存写入和读取"""
-        cache = ScoringCache(max_size=10, ttl=3600)
+        cache = TtlLRUCache(max_size=10, ttl_seconds=3600)
         cache.set("key1", {"a": 1})
         assert cache.get("key1") == {"a": 1}
 
     def test_expired_returns_none(self):
         """过期缓存返回 None"""
-        cache = ScoringCache(max_size=10, ttl=-1)  # 立即过期
+        cache = TtlLRUCache(max_size=10, ttl_seconds=-1)  # 立即过期
         cache.set("key1", {"a": 1})
         assert cache.get("key1") is None
 
     def test_max_size_eviction(self):
         """超 max_size 淘汰最旧条目"""
-        cache = ScoringCache(max_size=3, ttl=3600)
+        cache = TtlLRUCache(max_size=3, ttl_seconds=3600)
         for i in range(5):
             cache.set(f"key{i}", {"i": i})
         assert cache.get("key0") is None  # 最旧被淘汰
@@ -138,7 +138,7 @@ class TestCache:
 
     def test_invalidate(self):
         """清空缓存"""
-        cache = ScoringCache(max_size=10)
+        cache = TtlLRUCache(max_size=10)
         cache.set("k", {"v": 1})
         cache.invalidate()
         assert cache.get("k") is None
@@ -147,7 +147,7 @@ class TestCache:
 @pytest.mark.parametrize("me,te,expected_min_score", [(0, 0, 50), (5, 5, 60), (10, 20, 70)])
 def test_manufacturing_me_te_param(temp_db, me, te, expected_min_score):
     """ME/TE 越高，综合评分下限越高"""
-    cache = ScoringCache(max_size=10)
+    cache = TtlLRUCache(max_size=10)
     svc = ScoringService(temp_db, cache)
     result = svc.calc_manufacturing_score(
         type_id=2001,
@@ -163,7 +163,7 @@ def test_manufacturing_me_te_param(temp_db, me, te, expected_min_score):
 
 def test_profitable_trade_score_above_min(temp_db):
     """有利可图的贸易评分应大于 0，且 sell_revenue > buy_cost"""
-    cache = ScoringCache(max_size=10)
+    cache = TtlLRUCache(max_size=10)
     svc = ScoringService(temp_db, cache)
     result = svc.calc_trade_score(
         type_id=2002,
@@ -178,7 +178,7 @@ def test_profitable_trade_score_above_min(temp_db):
 
 def test_manufacturing_breakdown_keys(temp_db):
     """制造评分 breakdown 应包含所有关键子项"""
-    cache = ScoringCache(max_size=10)
+    cache = TtlLRUCache(max_size=10)
     svc = ScoringService(temp_db, cache)
     result = svc.calc_manufacturing_score(
         type_id=2001,
@@ -195,7 +195,7 @@ def test_manufacturing_breakdown_keys(temp_db):
 @pytest.mark.parametrize("invalid_price_type", ["nonexistent", "invalid", ""])
 def test_price_type_nonexistent(temp_db, invalid_price_type):
     """不存在的价格类型应返回 no_price 状态（score=0, status='no_price'）"""
-    cache = ScoringCache(max_size=10)
+    cache = TtlLRUCache(max_size=10)
     svc = ScoringService(temp_db, cache)
     result = svc.calc_manufacturing_score(
         type_id=2001,
@@ -213,7 +213,7 @@ def test_price_type_nonexistent(temp_db, invalid_price_type):
 
 def test_price_type_nonexistent_trade(temp_db):
     """贸易评分中不存在的价格类型应返回 no_price 状态"""
-    cache = ScoringCache(max_size=10)
+    cache = TtlLRUCache(max_size=10)
     svc = ScoringService(temp_db, cache)
     result = svc.calc_trade_score(
         type_id=2002,

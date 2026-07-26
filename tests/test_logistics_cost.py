@@ -51,10 +51,13 @@ class TestEstimateFreightCost:
         assert result["collateral_fee"] == 0.0
         assert result["fuel_cost"] == 5_000_000.0
 
-    @pytest.mark.parametrize("volume, expected_cost, desc", [
-        (0, 200.0, "clamped to 1.0 * 200 = 200"),
-        (-100, 200.0, "negative clamped to 1.0 * 200 = 200"),
-    ])
+    @pytest.mark.parametrize(
+        "volume, expected_cost, desc",
+        [
+            (0, 200.0, "clamped to 1.0 * 200 = 200"),
+            (-100, 200.0, "negative clamped to 1.0 * 200 = 200"),
+        ],
+    )
     def test_extreme_volume_clamped(self, volume, expected_cost, desc):
         """体积为 0 或负数时被限制为 1.0"""
         result = estimate_freight_cost(
@@ -267,7 +270,7 @@ class TestCalcTransportProfit:
 
     def test_no_price_returns_status(self):
         """无价格数据时返回 no_price 状态"""
-        with patch("services.logistics.get_price", return_value=None):
+        with patch("services.logistics._pricing.get_price", return_value=None):
             result = calc_transport_profit(
                 type_id=99999,
                 buy_hub="Jita",
@@ -279,7 +282,7 @@ class TestCalcTransportProfit:
             )
         assert result["status"] == "no_price"
 
-    @patch("services.logistics.get_price")
+    @patch("services.logistics._pricing.get_price")
     def test_no_volume_returns_default(self, mock_get_price):
         """物品无体积数据时使用 1.0 默认值"""
         mock_get_price.side_effect = lambda tid, pt, hub: {
@@ -304,7 +307,7 @@ class TestCalcTransportProfit:
         assert result["status"] == ""
         assert result["total_volume_m3"] >= 1.0
 
-    @patch("services.logistics.get_price")
+    @patch("services.logistics._pricing.get_price")
     def test_basic_profit_calculation(self, mock_get_price):
         """基础利润计算：买入→卖出有正利润"""
         mock_get_price.side_effect = lambda tid, pt, hub: {
@@ -340,7 +343,7 @@ class TestCalcTransportProfit:
         assert result["freight_cost"] > 0
         assert result["total_volume_m3"] == 1000.0
 
-    @patch("services.logistics.get_price")
+    @patch("services.logistics._pricing.get_price")
     def test_profit_negative_when_sell_lower(self, mock_get_price):
         """卖价低于买价时利润为负"""
         mock_get_price.side_effect = lambda tid, pt, hub: {
@@ -372,7 +375,7 @@ class TestCalcTransportProfit:
         assert result["status"] == ""
         assert result["net_profit"] < 0
 
-    @patch("services.logistics.get_price")
+    @patch("services.logistics._pricing.get_price")
     def test_result_fields_present(self, mock_get_price):
         """返回结果包含所有必需字段"""
         mock_get_price.side_effect = lambda tid, pt, hub: {
@@ -395,14 +398,23 @@ class TestCalcTransportProfit:
                 distance_jumps=72,
             )
         required = [
-            "buy_cost", "sell_revenue", "freight_cost", "broker_cost",
-            "sales_tax", "net_profit", "margin_pct", "isk_per_m3",
-            "total_volume_m3", "freight_breakdown", "freight_mode", "status",
+            "buy_cost",
+            "sell_revenue",
+            "freight_cost",
+            "broker_cost",
+            "sales_tax",
+            "net_profit",
+            "margin_pct",
+            "isk_per_m3",
+            "total_volume_m3",
+            "freight_breakdown",
+            "freight_mode",
+            "status",
         ]
         for field in required:
             assert field in result, f"Missing field: {field}"
 
-    @patch("services.logistics.get_price")
+    @patch("services.logistics._pricing.get_price")
     def test_self_transport_mode(self, mock_get_price):
         """自有运输模式的计算"""
         mock_get_price.side_effect = lambda tid, pt, hub: {
@@ -428,7 +440,7 @@ class TestCalcTransportProfit:
         assert result["freight_mode"] == "self_transport"
         assert result["freight_cost"] > 0
 
-    @patch("services.logistics.get_price")
+    @patch("services.logistics._pricing.get_price")
     def test_zero_standing_values(self, mock_get_price):
         """所有声望为 0 时仍正常计算"""
         mock_get_price.side_effect = lambda tid, pt, hub: {
@@ -461,7 +473,7 @@ class TestCalcTransportProfit:
         assert result["freight_cost"] > 0
         assert result["broker_cost"] > 0
 
-    @patch("services.logistics.get_price")
+    @patch("services.logistics._pricing.get_price")
     def test_sell_price_as_buy_type(self, mock_get_price):
         """使用卖价作为买入价（即买断）"""
         mock_get_price.side_effect = lambda tid, pt, hub: {
@@ -494,7 +506,7 @@ class TestCalcTransportProfit:
         assert result["buy_cost"] > 0
         assert result["sell_revenue"] > 0
 
-    @patch("services.logistics.get_price")
+    @patch("services.logistics._pricing.get_price")
     def test_hek_to_rens_short_route(self, mock_get_price):
         """短距离路线（Hek→Rens 5 跳）"""
         mock_get_price.side_effect = lambda tid, pt, hub: {
