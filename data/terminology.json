@@ -1,0 +1,60 @@
+{
+  "activities": {
+    "manufacturing": "制造",
+    "copying": "复制",
+    "invention": "发明",
+    "research_material": "材料效率研究",
+    "research_time": "生产效率研究",
+    "reaction": "反应"
+  },
+  "market_categories": {
+    "t1_mfg": "蓝图制造(T1)",
+    "t2_invention": "发明制造(T2)",
+    "faction": "势力蓝图制造",
+    "reaction": "反应",
+    "planetary": "行星开发",
+    "unmanufacturable": "无法制造获得",
+    "all_manufacturable": "所有可制造",
+    "all": "所有类别"
+  },
+  "ui_labels": {
+    "product": "成品",
+    "profit_per_run": "利润/run",
+    "profit_margin": "利润率%",
+    "isk_per_hour": "ISK/h",
+    "score": "评分",
+    "cost_per_unit": "成本/unit",
+    "hours_per_run": "时/run",
+    "material": "材料",
+    "total_demand": "总需求",
+    "unit_price": "单价",
+    "total_price": "总价",
+    "quantity": "数量",
+    "item_name": "物品名",
+    "blueprint": "蓝图",
+    "blueprint_original": "蓝图原图",
+    "blueprint_copy": "蓝图拷贝",
+    "type": "类型",
+    "trade_hub": "贸易中心",
+    "buy_price": "买价",
+    "sell_price": "卖价",
+    "spread": "价差",
+    "spread_pct": "价差%",
+    "volume": "成交量"
+  },
+  "item_overrides": {
+    "34": "三钛合金"
+  },
+  "group_overrides": {},
+  "skill_aliases": {
+    "Advanced Broker Relations": "高级经纪人关系学",
+    "Advanced Industrial Theory": "高级工业理论",
+    "Mass Production": "批量生产技术",
+    "Advanced Mass Production": "高级批量生产技术",
+    "Supply Chain Management": "供应链管理",
+    "Scientific Networking": "科学网络学",
+    "Laboratory Operation": "实验室运作理论",
+    "Refining": "精炼学概论",
+    "Refinery Efficiency": "精炼效率理论"
+  }
+}
