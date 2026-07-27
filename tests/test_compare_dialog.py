@@ -4,6 +4,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from PySide6.QtCore import QCoreApplication
+import pytest
+
+pytestmark = pytest.mark.slow
+
 
 from ui_pyside6.theme import ONE_LIGHT, apply_theme
 from ui_pyside6.views.compare_dialog import (

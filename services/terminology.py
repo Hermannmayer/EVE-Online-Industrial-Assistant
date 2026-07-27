@@ -17,10 +17,9 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
-
-import json
 
 _DATA_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "data"
 _TERM_FILE = _DATA_DIR / "terminology.json"
@@ -82,6 +81,21 @@ class Terminology:
     def skill_alias(self, en_name: str) -> str | None:
         self._ensure()
         return self._data.get("skill_aliases", {}).get(en_name)
+
+    # ── 技能名（正式注册表） ──
+
+    def skill_name(self, en_name: str) -> str | None:
+        """获取技能官方中文名。
+
+        优先查 skill_names 注册表，fallback 到 skill_aliases，再 fallback 到原文。
+        """
+        self._ensure()
+        names = self._data.get("skill_names", {})
+        if en_name in names:
+            return names[en_name]
+        # fallback: skill_aliases 兼容旧引用
+        aliases = self._data.get("skill_aliases", {})
+        return aliases.get(en_name)
 
     # ── 重载 ──
 

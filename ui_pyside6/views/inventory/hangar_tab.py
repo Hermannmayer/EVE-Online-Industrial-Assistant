@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
-from core.eve_formulas import _MINERAL_NAMES, resolve_item_name
+from core.eve_formulas import resolve_item_name
 from services.inventory_manager import (
     add_item,
     get_hangars,
@@ -380,10 +380,14 @@ class HangarTab(QWidget):
                     r = c.fetchone()
                     if r:
                         type_id = r[0]
-                # basic mineral fallback
+                # basic mineral fallback (from terminology.json item_overrides)
                 if not type_id:
-                    _mr = {v: k for k, v in _MINERAL_NAMES.items()}
-                    type_id = _mr.get(name_clean)
+                    from services.terminology import term
+
+                    term._ensure()
+                    overrides = (term._data.get("item_overrides") or {})
+                    _mr = {v: k for k, v in overrides.items()}
+                    type_id = int(_mr.get(name_clean, 0))
                 if not type_id:
                     errors.append(f"未找到物品: {name_part}")
                     continue

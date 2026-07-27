@@ -131,6 +131,15 @@ def init_plan_db():
                 conn.execute("ALTER TABLE production_plans ADD COLUMN calculated_time REAL DEFAULT 0")
             except Exception:
                 log.debug("列已存在: calculated_time")
+            # 成品入库字段
+            for col, col_type in [
+                ("deposit_hangar_id", "INTEGER DEFAULT NULL"),
+                ("deposited", "INTEGER DEFAULT 0"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE production_plans ADD COLUMN {col} {col_type}")
+                except Exception:
+                    log.debug("列已存在: %s", col)
             for col, col_type in new_cols:
                 try:
                     conn.execute(f"ALTER TABLE production_plans ADD COLUMN {col} {col_type}")
@@ -259,6 +268,8 @@ class IndustryPage(QWidget):
                 sql += " WHERE status = 'pending'"
             elif f == "运行中":
                 sql += " WHERE status IN ('in_progress','running')"
+            elif f == "待下线":
+                sql += " WHERE status = 'ready'"
             elif f == "已完成":
                 sql += " WHERE status IN ('completed','done')"
             sql += " ORDER BY created_at DESC"
@@ -292,9 +303,10 @@ class IndustryPage(QWidget):
         # 避免重复启动
         if self._recalc_worker and self._recalc_worker.isRunning():
             return
-        # 只重算 pending/in_progress 的计划
+        # 只重算 pending/in_progress/ready 的计划
         todo = [
-            r for r in rows if r.get("id") and r.get("status", "").lower() in ("pending", "in_progress", "running", "")
+            r for r in rows
+            if r.get("id") and r.get("status", "").lower() in ("pending", "in_progress", "running", "ready", "")
         ]
         if not todo:
             return
@@ -318,15 +330,16 @@ class IndustryPage(QWidget):
         self._recalc_busy = True
         try:
             with get_container().db.connect("user") as conn:
-                for plan_id, profit, margin, score, iskph, mat_cost, hours_per_run in results:
+                for plan_id, profit, margin, score, iskph, mat_cost, hours_total, daily_output in results:
                     try:
-                        # hours_per_run 转换为秒存入 calculated_time
-                        calculated_seconds = round(hours_per_run * 3600)
+                        # hours_total 转换为秒存入 calculated_time
+                        calculated_seconds = round(hours_total * 3600)
                         conn.execute(
                             "UPDATE production_plans SET profit=?, margin=?, score=?,"
                             " iskph=?, material_cost=?, market_margin=?, personal_margin=?,"
-                            " calculated_time=? WHERE id=?",
-                            (profit, margin, score, iskph, mat_cost, margin, margin, calculated_seconds, plan_id),
+                            " calculated_time=?, daily_output=? WHERE id=?",
+                            (profit, margin, score, iskph, mat_cost, margin, margin,
+                             calculated_seconds, daily_output, plan_id),
                         )
                     except Exception:
                         log.exception("更新计划 %s 评分失败", plan_id)
@@ -468,16 +481,29 @@ class IndustryPage(QWidget):
                     facility_tax_pct=actual_config.get("market", {}).get("jita", {}).get("facility_tax", 0.0),
                 )
             )
-            iskph = actual.get("isk_per_hour", 0) or actual.get("breakdown", {}).get("isk_per_hour", 0)
-            mat_cost = actual.get("breakdown", {}).get("material_cost", 0)
+            # \u6309 runs/parallels \u7f29\u653e\u5230\u8ba1\u5212\u603b\u6570\u503c
+            runs = data.get("runs", 1) or 1
+            parallels = data.get("parallels", 1) or 1
+            total = (
+                get_container()
+                .scoring_service()
+                .calculate_total_metrics(actual, runs, parallels)
+            )
+            iskph = total.get("total_isk_per_hour", 0)
+            mat_cost = total.get("total_material_cost", 0)
+            profit = total.get("total_profit", 0)
+            daily_output = total.get("total_daily_output", 0)
+            total_hours = total.get("total_time_hours", 0)
+            calculated_seconds = round(total_hours * 3600)
             conn3 = get_container().db.direct_connect("user")
             try:
                 conn3.execute(
                     "INSERT INTO production_plans "
                     "(product_type_id, product_name, runs, parallels, me_level, te_level, "
                     "mat_hub, sell_hub, facility, char_name, status, "
-                    "profit, margin, score, iskph, material_cost, created_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?)",
+                    "profit, margin, score, iskph, material_cost, "
+                    "calculated_time, daily_output, created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?)",
                     (
                         type_id,
                         product_name,
@@ -489,11 +515,13 @@ class IndustryPage(QWidget):
                         "Jita",
                         data["fac"],
                         data["char"],
-                        actual.get("profit_per_run", 0),
-                        actual.get("margin_pct", 0),
-                        actual.get("score", 0),
+                        profit,
+                        actual.get("margin_pct", 0),  # \u6bd4\u503c\u4e0d\u53d8
+                        actual.get("score", 0),  # \u8bc4\u5206\u4e0d\u53d8
                         iskph,
                         mat_cost,
+                        calculated_seconds,
+                        daily_output,
                         datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
                     ),
                 )
@@ -535,8 +563,8 @@ class IndustryPage(QWidget):
                     (
                         updated.get("runs", 1),
                         updated.get("parallels", 1),
-                        updated.get("me", 0),
-                        updated.get("te", 0),
+                        updated.get("me_level", 0),
+                        updated.get("te_level", 0),
                         updated.get("char_name", ""),
                         updated.get("facility", ""),
                         updated.get("output", ""),
@@ -571,8 +599,9 @@ class IndustryPage(QWidget):
         with get_container().db.connect("user", "ref", "mkt") as conn:
             c = conn.cursor()
             c.execute(
-                "SELECT id, product_type_id, product_name, runs, parallels, me_level, mat_hub, sell_hub "
-                "FROM production_plans WHERE status IN ('pending', 'in_progress', 'running')"
+                "SELECT id, product_type_id, product_name, runs, parallels, me_level, mat_hub, sell_hub, "
+                "materials_ready, status, deposit_hangar_id, deposited "
+                "FROM production_plans WHERE status IN ('pending', 'in_progress', 'running', 'ready')"
             )
             for pr in c.fetchall():
                 plans.append(
@@ -585,6 +614,10 @@ class IndustryPage(QWidget):
                         "me_level": pr[5],
                         "mat_hub": pr[6],
                         "sell_hub": pr[7],
+                        "materials_ready": pr[8],
+                        "status": pr[9],
+                        "deposit_hangar_id": pr[10],
+                        "deposited": pr[11],
                     }
                 )
         if not plans:

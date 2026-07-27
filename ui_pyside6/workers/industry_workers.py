@@ -90,10 +90,12 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         if not plan_id:
             return None
         try:
+            runs = max(int(item.get("runs", 1)), 1)
+            parallels = max(int(item.get("parallels", 1)), 1)
             sell_hub = item.get("sell_hub", "Jita")
             # 从角色配置读取设施税率（如未设置则为 0）
             fac_tax = self._char_config.get("market", {}).get(sell_hub.lower(), {}).get("facility_tax", 0.0)
-            r = (
+            per_run = (
                 get_container()
                 .scoring_service()
                 .calc_manufacturing_score(
@@ -108,17 +110,24 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
                     price_type_prod="sell",
                 )
             )
+            # 用 runs/parallels 缩放到计划总数值
+            total = (
+                get_container()
+                .scoring_service()
+                .calculate_total_metrics(per_run, runs, parallels)
+            )
             return (
                 plan_id,
-                r.get("profit_per_run", 0),
-                r.get("margin_pct", 0),
-                r.get("score", 0),
-                r.get("isk_per_hour", 0),
-                r.get("breakdown", {}).get("material_cost", 0),
-                r.get("hours_per_run", 0),  # 制造时长（小时）
+                total.get("total_profit", 0),
+                total.get("total_margin_pct", 0),
+                per_run.get("score", 0),  # 评分保持 per-run 不变
+                total.get("total_isk_per_hour", 0),
+                total.get("total_material_cost", 0),
+                total.get("total_time_hours", 0),  # 总时长（小时）
+                total.get("total_daily_output", 0),  # 日产能
             )
         except Exception:
-            return (plan_id, 0, 0, 0, 0, 0, 0)
+            return (plan_id, 0, 0, 0, 0, 0, 0, 0)
 
     def run(self):
         """BatchPlanCalcWorker 的 run 覆盖：直接遍历 _items 生成结果列表"""

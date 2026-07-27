@@ -18,8 +18,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.eve_formulas import ME_WASTE_BASE
 from services.database_manager import get_db
+from services.manufacturing_calculator import calc_material_for_runs
 from services.pricing_service import PricingService as _PricingService
 
 db = get_db()
@@ -53,15 +53,10 @@ class BomNode:
 
 
 def _resolve_name(c, type_id: int) -> str:
-    """解析物品名称 — item 表 → 矿物硬编码 → str(id)"""
-    from core.eve_formulas import _MINERAL_NAMES
+    """解析物品名称 — 委托给 name_resolver"""
+    from services.name_resolver import resolve_item_name
 
-    if type_id in _MINERAL_NAMES:
-        return _MINERAL_NAMES[type_id]
-    row = c.execute("SELECT zh_name, en_name FROM item WHERE type_id = ?", (type_id,)).fetchone()
-    if row:
-        return row[0] or row[1] or str(type_id)
-    return str(type_id)
+    return resolve_item_name(c, type_id)
 
 
 def _find_blueprint_for_product(conn, product_type_id: int, activity: str = "manufacturing"):
@@ -188,9 +183,6 @@ def _expand(
     # 计算需要制造多少次（向上取整）
     runs = math.ceil(needed_qty / output_qty)
 
-    # ME 浪费因子：ME 0 → 1.1, ME 10 → 1.0
-    waste_factor = 1.0 + ME_WASTE_BASE * (1.0 - bp_me / 10.0)
-
     # 获取材料
     mat_rows = _get_materials(conn, bp_id, "manufacturing")
     if not mat_rows:
@@ -214,9 +206,9 @@ def _expand(
 
     children: list[BomNode] = []
     for mat_id, mat_base_qty in mat_rows:
-        # 每次制造需要 mat_base_qty × waste_factor
+        # 每次制造需要的材料量（含 ME 损耗）
         # runs 次制造共需要：
-        child_qty = mat_base_qty * waste_factor * runs
+        child_qty = calc_material_for_runs(mat_base_qty, 10, bp_me, runs)
 
         child = _expand(
             conn,

@@ -1,5 +1,8 @@
 """Top toolbar for the industry plan view — blueprint import, hub/pricing, character & filter."""
 
+import json
+import os
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -14,6 +17,8 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
+from core.paths import data_dir
+from services import inventory_manager
 from ui_pyside6.views.char_settings_view import get_character_list, load_all_data
 from ui_pyside6.views.industry.flow_layout import FlowLayout
 
@@ -40,10 +45,10 @@ class TopToolbar(QWidget):
         "Rens": "价格取自（伦斯）",
         "Hek": "价格取自（赫克）",
     }
-    HANGARS = ["物品机库", "公司机库1", "公司机库2", "公司机库3", "公司机库4", "公司机库5", "公司机库6", "公司机库7"]
+    HANGARS = []  # 从 inventory_manager.get_hangars() 加载
     CHARS = []  # 从角色设置加载
     _chars_loaded = False
-    FILTERS = ["全部", "待排", "运行中", "已完成"]
+    FILTERS = ["全部", "待排", "运行中", "待下线", "已完成"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -52,6 +57,7 @@ class TopToolbar(QWidget):
         self._apply_style()
         theme.add_theme_listener(self._on_theme_changed)
         self._load_chars()
+        self._load_hangars()
 
     # ── UI 构建 ──────────────────────────────────────────────
 
@@ -86,7 +92,6 @@ class TopToolbar(QWidget):
 
         root.addWidget(QLabel("机库"))
         self._hangar_combo = QComboBox()
-        self._hangar_combo.addItems(self.HANGARS)
         self._hangar_combo.setMinimumWidth(90)
         root.addWidget(self._hangar_combo)
 
@@ -155,11 +160,61 @@ class TopToolbar(QWidget):
             if self._char_combo.count() == 0:
                 self._char_combo.addItems(["main"])
 
+    def _load_hangars(self):
+        """从 inventory_manager 加载真实机库列表"""
+        try:
+            hangars = inventory_manager.get_hangars()
+            self._hangar_combo.clear()
+            self._hangar_combo.addItem("不自动入库", -1)
+            for h in hangars:
+                self._hangar_combo.addItem(h["name"], h["id"])
+            # 从 settings 恢复上次选择的机库
+            try:
+                settings_path = os.path.join(data_dir(), "settings.json")
+                if os.path.exists(settings_path):
+                    with open(settings_path, encoding="utf-8") as f:
+                        s = json.load(f)
+                    saved_id = s.get("default_deposit_hangar_id")
+                    if saved_id is not None:
+                        idx = self._hangar_combo.findData(saved_id)
+                        if idx >= 0:
+                            self._hangar_combo.setCurrentIndex(idx)
+            except Exception:
+                pass
+        except Exception:
+            if self._hangar_combo.count() == 0:
+                self._hangar_combo.addItem("不自动入库", -1)
+        self._hangar_combo.currentIndexChanged.connect(self._save_hangar_setting)
+
+    def _save_hangar_setting(self):
+        """将机库选择保存到 settings.json"""
+        hangar_id = self._hangar_combo.currentData()
+        if hangar_id is None or hangar_id == -1:
+            return
+        try:
+            settings_path = os.path.join(data_dir(), "settings.json")
+            data = {}
+            if os.path.exists(settings_path):
+                with open(settings_path, encoding="utf-8") as f:
+                    data = json.load(f)
+            data["default_deposit_hangar_id"] = hangar_id
+            with open(settings_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def get_hangar_id(self) -> int:
+        """获取选中的入库机库 ID，无选择时返回 None"""
+        return self._hangar_combo.currentData() if self._hangar_combo.count() > 0 else None
+
     def _on_hangar_changed(self, hangar: str):
         self.hangar_changed.emit(hangar)
 
     def get_hangar(self) -> str:
-        return self._hangar_combo.currentText()
+        return self._hangar_combo.currentData() if self._hangar_combo.count() > 0 else -1
+
+    def get_hangar_name(self) -> str:
+        return self._hangar_combo.currentText() if self._hangar_combo.count() > 0 else ""
 
     def get_char_name(self) -> str:
         return self._char_combo.currentText()
@@ -188,7 +243,6 @@ class TopToolbar(QWidget):
         self._btn_all_items.clicked.connect(self._on_all_items_clicked)
         self._btn_add.clicked.connect(self._on_add)
         self._hub_combo.currentTextChanged.connect(self._on_hub_changed)
-        self._hangar_combo.currentTextChanged.connect(self.hangar_changed)
         self._sell_mult.valueChanged.connect(self.sell_mult_changed)
         self._buy_mult.valueChanged.connect(self.buy_mult_changed)
         self._char_combo.currentTextChanged.connect(self.char_changed)

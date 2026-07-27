@@ -24,10 +24,6 @@ BROKER_FEE_MIN = 0.1  # 最低经纪人费率，来源: EVE Wiki
 # ════════════════════════════════════════════════════
 #  制造 — 来源: https://wiki.eveuniversity.org/Manufacturing
 # ════════════════════════════════════════════════════
-# NOTE: INSTALL_FEE_RATE 和 ME_WASTE_BASE 是错误的虚构常量。
-#       真正的制造公式请使用 services.manufacturing_calculator。
-#       这两个常量将在消费者全面迁移后删除。
-INSTALL_FEE_RATE = 0.05  # 虚构常量 — 实际安装费基于 EIV（见 manufacturing_calculator）
 INDUSTRY_SKILL_MULT = 0.04  # 工业理论 (3380) 每级 -4% 时间
 ADV_INDUSTRY_SKILL_MULT = 0.03  # 高级工业理论 (3388) 每级 -3% 时间
 TE_MULT_PER_LEVEL = 0.01  # TE 每级 -1% 时间
@@ -52,23 +48,6 @@ SKILL_REPROCESSING_EFFICIENCY = 0.02  # 精炼效率（Reprocessing Efficiency�
 SKILL_SPECIALIZATION = 0.02  # 矿石专精技能每级 +2%（如 Veldspar Processing）
 REPROCESSING_MAX_YIELD_NPC = 0.575  # NPC 站最高 57.5%
 REPROCESSING_MAX_YIELD_FACILITY = 0.85  # 玩家结构最高 ~85%
-
-# ════════════════════════════════════════════════════
-#  基础矿物 type_id → 中文名映射（已迁移至 services.name_resolver）
-#  此处保留仅为了存量代码兼容，新代码请从 services.name_resolver 导入。
-# ════════════════════════════════════════════════════
-_MINERAL_NAMES: dict[int, str] = {
-    34: "三钛合金",
-    35: "类银超金属",
-    36: "同位聚合体",
-    37: "超新星诺克石",
-    38: "晶状石英核岩",
-    39: "碳纤维",
-    40: "建筑用预制块",
-}
-_RACE_ME: dict[int, str] = {4247: "****残余物", 4312: "****残余物"}  # 补全用
-_MINERAL_NAMES.update(_RACE_ME)
-
 
 # ════════════════════════════════════════════════════
 #  辅助函数
@@ -111,7 +90,7 @@ def calc_refining_yield(
     """计算精炼产出率 (0.0~1.0)
 
     Args:
-        skills: 角色技能字典，含 "精炼学概论"、"精炼效率理论" 及矿石专精
+        skills: 角色技能字典，含 "提炼学概论"、"提炼效率理论" 及矿石专精
         is_player_facility: 是否在玩家设施（NPC站 vs Upwell结构）
         station_base: 自定义设施基础率（覆盖默认）
         implant_bonus: 植入体精炼插件加成 (0.0~1.0)
@@ -124,8 +103,8 @@ def calc_refining_yield(
         REPROCESSING_FACILITY_BONUS if is_player_facility else REPROCESSING_STATION_BASE
     )
     bonus = (
-        skills.get("精炼学概论", 0) * SKILL_REPROCESSING
-        + skills.get("精炼效率理论", 0) * SKILL_REPROCESSING_EFFICIENCY
+        skills.get("提炼学概论", 0) * SKILL_REPROCESSING
+        + skills.get("提炼效率理论", 0) * SKILL_REPROCESSING_EFFICIENCY
         + implant_bonus
     )
     max_yield = REPROCESSING_MAX_YIELD_FACILITY if is_player_facility else REPROCESSING_MAX_YIELD_NPC

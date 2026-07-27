@@ -2,9 +2,8 @@
 统一物品名称解析服务。
 
 将 type_id 转换为可读的中文/英文物品名称。
-从 core/eve_formulas.py 迁移至此，原位置保留 deprecated wrapper。
 
-解析优先级: terminology.item_overrides > 矿物硬编码 > item.zh_name > item.en_name
+解析优先级: terminology.item_overrides > item.zh_name > item.en_name > str(id)
 """
 
 from __future__ import annotations
@@ -13,24 +12,9 @@ import sqlite3
 
 from services.terminology import term
 
-# ═══════════════════════════════════════════════════════
-#  基础矿物 type_id → 中文名映射（type_id < 178，不在 item 表中）
-# ═══════════════════════════════════════════════════════
-_MINERAL_NAMES: dict[int, str] = {
-    34: "三钛合金",
-    35: "类银超金属",
-    36: "同位聚合体",
-    37: "超新星诺克石",
-    38: "晶状石英核岩",
-    39: "碳纤维",
-    40: "建筑用预制块",
-    4247: "****残余物",
-    4312: "****残余物",
-}
-
 
 def resolve_item_name(conn: sqlite3.Connection, type_id: int) -> str:
-    """统一物品名称解析：term override → 矿物硬编码 → item 表 → str(id)。
+    """统一物品名称解析：term override → item 表 → str(id)。
 
     Args:
         conn: reference.db 的数据库连接
@@ -42,8 +26,6 @@ def resolve_item_name(conn: sqlite3.Connection, type_id: int) -> str:
     override = term.item_override(type_id)
     if override is not None:
         return override
-    if type_id in _MINERAL_NAMES:
-        return _MINERAL_NAMES[type_id]
     cur = conn.execute(
         "SELECT zh_name, en_name FROM item WHERE type_id = ?",
         (type_id,),
@@ -51,7 +33,8 @@ def resolve_item_name(conn: sqlite3.Connection, type_id: int) -> str:
     row = cur.fetchone()
     if row:
         name: str = row[0] or row[1]
-        return name
+        if name:
+            return name
     return str(type_id)
 
 
@@ -71,18 +54,21 @@ def resolve_item_names_batch(
     if not type_ids:
         return {}
 
-    # 先从矿物硬编码中找
-    result: dict[int, str] = {
-        tid: _MINERAL_NAMES[tid]
-        for tid in type_ids
-        if tid in _MINERAL_NAMES
-    }
+    result: dict[int, str] = {}
+    remaining: list[int] = []
 
-    # 剩下的查数据库
-    remaining = [tid for tid in type_ids if tid not in result]
+    # 先查 terminology.json 覆盖
+    for tid in type_ids:
+        override = term.item_override(tid)
+        if override is not None:
+            result[tid] = override
+        else:
+            remaining.append(tid)
+
     if not remaining:
         return result
 
+    # 剩下的查数据库
     placeholders = ",".join("?" * len(remaining))
     cur = conn.execute(
         f"SELECT type_id, zh_name, en_name FROM item WHERE type_id IN ({placeholders})",
@@ -98,5 +84,5 @@ def resolve_item_names_batch(
 
 
 def mat_name(mat_id: int, conn: sqlite3.Connection) -> str:
-    """查询材料名称，优先查 item 表，基础矿物用硬编码。"""
+    """查询材料名称，优先查 item 表，基础矿物走 terminology.json 覆盖。"""
     return resolve_item_name(conn, mat_id)

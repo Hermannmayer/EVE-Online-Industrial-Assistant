@@ -159,10 +159,9 @@ class BlueprintRequirementsDialog(QWidget):
             # 4) 查询蓝图名称
             bp_names: dict[int, str] = {}
             bp_name_rows = conn.execute(
-                "SELECT b.blueprint_type_id, COALESCE(iz.zh_name, ie.en_name, '') "
+                "SELECT DISTINCT b.blueprint_type_id, COALESCE(i.zh_name, i.en_name, '') "
                 "FROM blueprint_products b "
-                "LEFT JOIN item iz ON b.blueprint_type_id = iz.type_id "
-                "LEFT JOIN item ie ON b.blueprint_type_id = ie.type_id "
+                "LEFT JOIN item i ON b.blueprint_type_id = i.type_id "
                 "WHERE b.activity = 'manufacturing'"
             ).fetchall()
             for row in bp_name_rows:

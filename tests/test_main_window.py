@@ -10,6 +10,10 @@
 from unittest.mock import patch
 
 from ui_pyside6.main_window import NAV_TREE, MainWindow, PriceCheckWorker, PriceUpdateWorker
+import pytest
+
+pytestmark = pytest.mark.slow
+
 
 # ══════════════════════════════════════
 #  NAV_TREE — 导航定义

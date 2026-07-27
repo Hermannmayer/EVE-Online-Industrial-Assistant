@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 class AddPlanDialog(QDialog):
     def __init__(self, product_name: str, score_result: dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"加入生产计划 — {product_name}")
+        self.setWindowTitle(f"加入制造计划 — {product_name}")
         self.setMinimumWidth(420)
         self._result_data = None
 
@@ -29,12 +29,12 @@ class AddPlanDialog(QDialog):
         self._runs = QSpinBox()
         self._runs.setRange(1, 10000)
         self._runs.setValue(1)
-        layout.addRow("批次 (runs):", self._runs)
+        layout.addRow("流程数:", self._runs)
 
         self._par = QSpinBox()
         self._par.setRange(1, 100)
         self._par.setValue(1)
-        layout.addRow("并行线:", self._par)
+        layout.addRow("并行数:", self._par)
 
         me_te = QHBoxLayout()
         self._me = QSpinBox()

@@ -21,31 +21,32 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
+from core.logger import log
 from ui_pyside6.models.industry_models import PlanTableModel
 
 # ── 列索引常量（与 PlanTableModel._HEADERS 对齐） ────────────
-COL_ICON = 0
-COL_PRODUCT = 1
-COL_BATCH = 2
-COL_PARALLELS = 3
-COL_GROUP = 4
-COL_CHILD_LEVEL = 5
-COL_STATUS = 6
-COL_NOTES = 7
-COL_CHAR_NAME = 8
-COL_RUNS = 9
-COL_BLUEPRINT = 10
-COL_TIME = 11
-COL_OUTPUT_RATE = 12
-COL_FACILITY = 13
-COL_OUTPUT = 14
-COL_COST = 15
-COL_PROFIT = 16
-COL_MARKET_MARGIN = 17
-COL_PERSONAL_MARGIN = 18
+COL_CHECKBOX = 0
+COL_ICON = 1
+COL_PRODUCT = 2
+COL_NOTES = 3
+COL_BATCH = 4
+COL_PARALLELS = 5
+COL_GROUP = 6
+COL_CHILD_LEVEL = 7
+COL_STATUS = 8
+COL_CHAR_NAME = 9
+COL_RUNS = 10
+COL_BLUEPRINT = 11
+COL_TIME = 12
+COL_OUTPUT_RATE = 13
+COL_FACILITY = 14
+COL_OUTPUT = 15
+COL_COST = 16
+COL_PROFIT = 17
+COL_MARKET_MARGIN = 18
+COL_PERSONAL_MARGIN = 19
 
-
-_NUM_COLUMNS = 19
+_NUM_COLUMNS = 20
 
 
 class PlanTable(QWidget):
@@ -69,6 +70,7 @@ class PlanTable(QWidget):
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setSortingEnabled(True)
         self._table.verticalHeader().setDefaultSectionSize(26)
+        self._table.verticalHeader().setVisible(False)
         self._configure_adaptive_columns()
 
         layout.addWidget(self._table)
@@ -77,6 +79,7 @@ class PlanTable(QWidget):
 
         # ── 连接信号 ─────────────────────────────────────────
         self._table.doubleClicked.connect(self._on_double_clicked)
+        self._table.clicked.connect(self._on_cell_clicked)
 
         # ── 头部右键菜单（列可见性控制） ─────────────────────
         self._table.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -96,14 +99,21 @@ class PlanTable(QWidget):
         """配置列宽自适应：窄列固定，产品列拉伸，其余自适应内容"""
         header = self._table.horizontalHeader()
         header.setStretchLastSection(False)
-        header.setMinimumSectionSize(40)
+        header.setMinimumSectionSize(24)
 
-        NARROW = {0, 2, 3, 4, 5}  # 图标/批次/并行/组号/子级
-        STRETCH = {1}  # 产品名
-        # 其余：根据内容自适应 + interactive 可调
+        # 隐藏并行和批次列（数据仍保留用于计算）
+        self._table.setColumnHidden(COL_BATCH, True)
+        self._table.setColumnHidden(COL_PARALLELS, True)
 
-        for col in range(19):
-            if col in NARROW:
+        NARROW = {1, 6, 7}  # 图标/组号/子级
+        STRETCH = {2}  # 产品名
+        FIXED = {0}  # 勾选列固定 24px
+
+        for col in range(_NUM_COLUMNS):
+            if col in FIXED:
+                header.setSectionResizeMode(col, QHeaderView.Fixed)
+                header.resizeSection(col, 24)
+            elif col in NARROW:
                 header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
             elif col in STRETCH:
                 header.setSectionResizeMode(col, QHeaderView.Stretch)
@@ -119,9 +129,9 @@ class PlanTable(QWidget):
         self._table.resizeColumnsToContents()
         header = self._table.horizontalHeader()
         # 确保产品列至少有 120px，但不超过可用空间一半
-        product_w = header.sectionSize(1)
+        product_w = header.sectionSize(COL_PRODUCT)
         avail = header.width() if header.width() > 0 else 800
-        header.resizeSection(1, max(120, min(product_w, avail // 2)))
+        header.resizeSection(COL_PRODUCT, max(120, min(product_w, avail // 2)))
 
     def get_model(self) -> PlanTableModel | None:
         return self._model
@@ -137,18 +147,10 @@ class PlanTable(QWidget):
     # ── 双击事件 ─────────────────────────────────────────────
 
     def _on_double_clicked(self, index) -> None:
-        """双击操作列 → 不编辑；可编辑列 → QTableView 默认编辑；其余 → 发射 plan_detail_requested"""
-        col = index.column()
-        # 可编辑列交给 QTableView 默认编辑行为
-        if self._model and col in PlanTableModel._EDITABLE_COLS:
-            return
-        # 发射详情请求
+        """双击 → 直接打开编辑生产计划"""
         row = index.row()
         if self._model:
-            plan = self._model.get_plan(row)
-            plan_id = plan.get("id")
-            if plan_id is not None:
-                self.plan_detail_requested.emit(int(plan_id))
+            self._edit_plan(row)
 
     # ── 头部右键菜单（列可见性控制） ─────────────────────────
 
@@ -186,7 +188,7 @@ class PlanTable(QWidget):
                 return
         self._table.setColumnHidden(col, not visible)
 
-    # ── 行右键菜单（14 个菜单项） ────────────────────────────
+    # ── 行右键菜单 ────────────────────────────────────────────
 
     def _on_table_context_menu(self, pos) -> None:
         """右键行 → 操作菜单"""
@@ -201,47 +203,36 @@ class PlanTable(QWidget):
 
         menu = QMenu(self)
 
-        # 1. 修改流程数
-        menu.addAction("修改流程数", lambda: self._modify_runs(row))
-
-        # 2. 修改并行数
-        menu.addAction("修改并行数", lambda: self._modify_parallels(row))
-
-        # 3. 分隔线
+        # ── 编辑 ─────────────────────────────────────────
+        menu.addAction("编辑生产计划", lambda: self._edit_plan(row))
         menu.addSeparator()
 
-        # 4. 复制制造所需蓝图名称到剪切板
-        menu.addAction("复制制造所需蓝图名称到剪切板", lambda: self._copy_blueprint_name(row))
-
-        # 5. 查看核算（阶段二占位）
+        # ── 查看 ─────────────────────────────────────────
         menu.addAction("查看核算", lambda: self._view_cost_breakdown(row))
-
-        # 6. 查看物品详情（阶段二占位）
         menu.addAction("查看物品详情", lambda: self._view_item_details(row))
-
-        # 7. 分隔线
         menu.addSeparator()
 
-        # 8. 勾选备料
-        menu.addAction("勾选备料", lambda: self._set_materials_ready(row, 1))
-
-        # 9. 取消勾选备料
-        menu.addAction("取消勾选备料", lambda: self._set_materials_ready(row, 0))
-
-        # 10. 项目启动
+        # ── 状态 ─────────────────────────────────────────
+        # 备料 toggle
+        mats_ready = bool(plan.get("materials_ready", 0))
+        if mats_ready:
+            a = menu.addAction("取消勾选备料")
+        else:
+            a = menu.addAction("勾选备料")
+        a.triggered.connect(lambda r=row, v=not mats_ready: self._set_materials_ready(r, int(v)))
         menu.addAction("项目启动", lambda: self._set_status(row, "in_progress"))
-
-        # 11. 项目完成
+        menu.addAction("待下线", lambda: self._set_status(row, "ready"))
         menu.addAction("项目完成", lambda: self._set_status(row, "completed"))
-
-        # 12. 分隔线
         menu.addSeparator()
 
-        # 13. 删除行
-        menu.addAction("删除行", lambda: self._delete_row(row))
-
-        # --- Phase 3: 高级功能 ---
+        # ── 备注 ─────────────────────────────────────────
+        menu.addAction("添加备注", lambda: self._add_notes(row))
+        menu.addAction("复制蓝图名称", lambda: self._copy_blueprint_name(row))
         menu.addSeparator()
+
+        # ── 高级 ─────────────────────────────────────────
+        menu.addAction("查看蓝图原图的NPC卖家", lambda: self._show_npc_seller(row))
+        menu.addAction("产线启动小助手", lambda: self._show_production_wizard(row))
 
         smart_menu = menu.addMenu("智能调整")
         a = smart_menu.addAction("母项智能调整")
@@ -251,27 +242,107 @@ class PlanTable(QWidget):
         a = smart_menu.addAction("子项大规模产线并行")
         a.triggered.connect(lambda r=row: self._smart_parallel_children(r))
 
-        a = menu.addAction("查看原本图的NPC卖家")
-        a.triggered.connect(lambda r=row: self._show_npc_seller(r))
-
-        view_menu = menu.addMenu("更多修改")
-        a = view_menu.addAction("为设施设置所在星系")
+        fac_menu = menu.addMenu("设施设置")
+        a = fac_menu.addAction("为设施设置所在星系")
         a.triggered.connect(lambda r=row: self._set_facility_system(r))
-        a = view_menu.addAction("为设施所在星系设置成本系数")
+        a = fac_menu.addAction("为设施所在星系设置成本系数")
         a.triggered.connect(lambda r=row: self._set_facility_cost_index(r))
 
-        a = menu.addAction("产线启动小助手")
-        a.triggered.connect(lambda r=row: self._show_production_wizard(r))
+        menu.addSeparator()
+
+        # ── 危险操作 ─────────────────────────────────────
+        a = menu.addAction("删除行")
+        a.triggered.connect(lambda r=row: self._delete_row(r))
 
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
-    # ── 行菜单操作 ───────────────────────────────────────────
+    # ── 单击事件 ─────────────────────────────────────────────
+
+    def _on_cell_clicked(self, index) -> None:
+        """单击勾选列 → 切换备料状态"""
+        if index.column() == COL_CHECKBOX and self._model:
+            row = index.row()
+            plan = self._model.get_plan(row)
+            if plan:
+                new_val = 0 if plan.get("materials_ready", 0) else 1
+                self._set_materials_ready(row, new_val)
+
+    def _edit_plan(self, row: int) -> None:
+        """编辑生产计划 — 打开 PlanEditDialog"""
+        from ui_pyside6.views.industry import PlanEditDialog
+
+        plan = self._model.get_plan(row)
+        if not plan:
+            return
+        dlg = PlanEditDialog(self, plan)
+        if dlg.exec():
+            updated = dlg.get_updated_data()
+            conn = get_container().db.direct_connect("user")
+            try:
+                conn.execute(
+                    "UPDATE production_plans SET runs=?, parallels=?, me_level=?, te_level=?, "
+                    "char_name=?, facility=?, output_location=?, mat_hub=?, notes=? WHERE id=?",
+                    (
+                        updated["runs"],
+                        updated["parallels"],
+                        updated["me_level"],
+                        updated["te_level"],
+                        updated["char_name"],
+                        updated["facility"],
+                        updated["output"],
+                        updated["material_hub"],
+                        updated["notes"],
+                        plan["id"],
+                    ),
+                )
+                conn.commit()
+                # 更新内存模型
+                plan["runs"] = updated["runs"]
+                plan["parallels"] = updated["parallels"]
+                plan["me_level"] = updated["me_level"]
+                plan["te_level"] = updated["te_level"]
+                plan["char_name"] = updated["char_name"]
+                plan["facility"] = updated["facility"]
+                plan["output"] = updated["output"]
+                plan["notes"] = updated["notes"]
+            finally:
+                conn.close()
+            self._model.layoutChanged.emit()
+            self.plan_updated.emit()
+
+    def _add_notes(self, row: int) -> None:
+        """添加备注 — 弹出文本输入框"""
+        from PySide6.QtWidgets import QInputDialog
+
+        plan = self._model.get_plan(row)
+        if not plan:
+            return
+        current = plan.get("notes", "") or ""
+        text, ok = QInputDialog.getMultiLineText(
+            self, "添加备注", "输入备注内容:", current
+        )
+        if ok:
+            plan["notes"] = text.strip()
+            self._model.layoutChanged.emit()
+            if plan.get("id"):
+                conn = get_container().db.direct_connect("user")
+                try:
+                    conn.execute("UPDATE production_plans SET notes=? WHERE id=?", (text.strip(), plan["id"]))
+                    conn.commit()
+                finally:
+                    conn.close()
+            self.plan_updated.emit()
 
     def _modify_runs(self, row: int) -> None:
         plan = self._model.get_plan(row)
         current = int(plan.get("runs", 0))
         val, ok = QInputDialog.getInt(self, "修改流程数", "流程数:", current, 1, 99999)
         if ok:
+            # 按比值即时更新时长和产能
+            if current > 0:
+                ratio = val / current
+                plan["calculated_time"] = round(plan.get("calculated_time", 0) * ratio)
+                plan["daily_output"] = plan.get("daily_output", 0) / ratio if ratio > 0 else 0
             plan["runs"] = val
             self._model.layoutChanged.emit()
             if plan.get("id"):
@@ -288,7 +359,12 @@ class PlanTable(QWidget):
         current = int(plan.get("parallels", 1))
         val, ok = QInputDialog.getInt(self, "修改并行数", "并行数:", current, 1, 99999)
         if ok:
-            plan["parallels"] = max(1, val)
+            val = max(1, val)
+            # 按比值即时更新时长（并行只影响时长公式中的总流程，不增加实际耗时）
+            if current > 0 and val > 0:
+                ratio = val / current
+                plan["daily_output"] = plan.get("daily_output", 0) * ratio if plan.get("daily_output", 0) else 0
+            plan["parallels"] = val
             self._model.layoutChanged.emit()
             if plan.get("id"):
                 conn = get_container().db.direct_connect("user")
@@ -325,11 +401,57 @@ class PlanTable(QWidget):
         if plan.get("id"):
             conn = get_container().db.direct_connect("user")
             try:
-                conn.execute("UPDATE production_plans SET status=? WHERE id=?", (status, plan["id"]))
+                # 如果状态改为 completed 且尚未入库，自动入库
+                deposit_hangar_id = plan.get("deposit_hangar_id")
+                deposited = plan.get("deposited", 0)
+                if status == "completed" and not deposited and deposit_hangar_id:
+                    self._auto_deposit(conn, plan)
+                # 如果状态从 completed 改回，重置 deposited
+                elif status != "completed" and deposited:
+                    plan["deposited"] = 0
+                    conn.execute("UPDATE production_plans SET deposited=0 WHERE id=?", (plan["id"],))
+
+                conn.execute(
+                    "UPDATE production_plans SET status=?, deposited=? WHERE id=?",
+                    (status, plan.get("deposited", 0), plan["id"]),
+                )
                 conn.commit()
             finally:
                 conn.close()
         self.plan_updated.emit()
+
+    def _auto_deposit(self, conn, plan: dict) -> None:
+        """自动将成品加入目标机库，更新 deposited 标记"""
+        from services.inventory_manager import add_item
+
+        try:
+            product_type_id = plan.get("product_type_id")
+            runs = max(int(plan.get("runs", 1)), 1)
+            parallels = max(int(plan.get("parallels", 1)), 1)
+            hangar_id = plan.get("deposit_hangar_id")
+            if not hangar_id or not product_type_id:
+                return
+
+            # 查询蓝图单流程产出
+            ref_conn = get_container().db.direct_connect("ref")
+            cur = ref_conn.cursor()
+            cur.execute(
+                "SELECT quantity FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
+                (product_type_id,),
+            )
+            row = cur.fetchone()
+            ref_conn.close()
+            output_per_run = row[0] if row else 1
+
+            total_qty = runs * parallels * output_per_run
+            # 成本价 = material_cost / 总数量（每个成品的加权成本）
+            mat_cost = plan.get("material_cost", 0) or 0
+            cost_price = mat_cost / max(total_qty, 1)
+
+            add_item(hangar_id, product_type_id, total_qty, round(cost_price, 2))
+            plan["deposited"] = 1
+        except Exception:
+            log.exception("自动入库失败: plan_id=%s", plan.get("id"))
 
     def _delete_row(self, row: int) -> None:
         if 0 <= row < len(self._model._plans):

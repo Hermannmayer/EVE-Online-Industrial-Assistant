@@ -837,16 +837,16 @@ class EstimatePage(QWidget):
         # 构建技能字典
         skill_preset = self._skill_preset.currentText()
         if skill_preset == "技能全5":
-            skills = {"精炼学概论": 5, "精炼效率理论": 5}
+            skills = {"提炼学概论": 5, "提炼效率理论": 5}
         elif skill_preset == "技能全0":
-            skills = {"精炼学概论": 0, "精炼效率理论": 0}
+            skills = {"提炼学概论": 0, "提炼效率理论": 0}
         else:
             # 当前人物 — 从 char_config 读取
             char_config = getattr(self._mw, "_current_char", None)
             if char_config and "skills" in char_config:
                 skills = char_config["skills"]
             else:
-                skills = {"精炼学概论": 5, "精炼效率理论": 5}
+                skills = {"提炼学概论": 5, "提炼效率理论": 5}
 
         is_player_facility = self._char_fac_tabs.currentText() == "设施"
         residual = self._residual_chk.isChecked()

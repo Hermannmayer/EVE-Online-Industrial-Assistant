@@ -9,6 +9,23 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtWidgets import QApplication
 
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--quick",
+        action="store_true",
+        default=False,
+        help="快速模式：跳过 @pytest.mark.slow 的测试（Qt 界面测试）",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--quick"):
+        skip_slow = pytest.mark.skip(reason="已跳过慢速测试（--quick 模式）")
+        for item in items:
+            if "slow" in item.keywords:
+                item.add_marker(skip_slow)
+
 # ════════════════════════════════════════════════════════════════
 #  辅助：创建标准临时数据库套件
 # ════════════════════════════════════════════════════════════════
