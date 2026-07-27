@@ -135,10 +135,7 @@ def analyze_production_plan(
                 "quantity": runs * parallels,
             }
 
-        # ME 浪费因子: ME 0 → 1.1, ME 10 → 1.0
-        from core.eve_formulas import ME_WASTE_BASE
-
-        waste_factor = 1 + ME_WASTE_BASE * (1 - me_level / 10)
+        from services.manufacturing_calculator import calc_material_for_runs
 
         total_product_qty = runs * parallels * (prod_qty_per_run or 1)
         total_mat_cost = 0.0
@@ -147,7 +144,7 @@ def analyze_production_plan(
         has_all = True
 
         for mat_id, base_qty in raw_mats:
-            needed = base_qty * waste_factor * runs * parallels
+            needed = calc_material_for_runs(base_qty, 10, me_level, int(runs * parallels))
             available = _get_inventory_qty(conn, mat_id)
             price = _get_price(conn, mat_id, price_hub)
             subtotal = needed * price

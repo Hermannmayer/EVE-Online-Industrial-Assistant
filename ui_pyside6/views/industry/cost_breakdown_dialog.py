@@ -2,8 +2,12 @@
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QFormLayout,
+    QGroupBox,
     QHeaderView,
     QLabel,
+    QScrollArea,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -24,19 +28,37 @@ class CostBreakdownDialog(QWidget):
         self._plan = plan_data
         self._char_config = char_config or {}
         product_name = plan_data.get("product_name", "未知产品")
-        self.setWindowTitle(f"核算 - {product_name}")
-        self.setMinimumSize(750, 500)
-        self.setMaximumSize(1100, 800)
+        self.setWindowTitle(f"核算 — {product_name}")
+        self.setMinimumSize(800, 600)
+        self.resize(960, 720)
         self._setup_ui()
         theme.add_theme_listener(self._on_theme_changed)
         self._on_theme_changed()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
-        self._status_label = QLabel("正在加载...")
-        layout.addWidget(self._status_label)
+        # ── root scroll ─────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        inner = QWidget()
+        scroll.setWidget(inner)
+
+        root = QVBoxLayout(inner)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
+
+        # ── 状态栏 ──────────────────────────────────────────
+        self._status_label = QLabel("正在加载…")
+        root.addWidget(self._status_label)
+
+        # ── 双列: 左侧材料 | 右侧核算 ──────────────────────
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(2)
+
+        # ── 左侧: 材料清单 ──────────────────────────────────
+        mat_box = QGroupBox("材料清单")
+        mat_layout = QVBoxLayout(mat_box)
+        mat_layout.setContentsMargins(6, 6, 6, 6)
         self._table = QTableWidget()
         self._table.setColumnCount(len(_COLUMNS))
         self._table.setHorizontalHeaderLabels(_COLUMNS)
@@ -46,11 +68,83 @@ class CostBreakdownDialog(QWidget):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setVisible(False)
-        layout.addWidget(self._table, 1)
-        self._summary_label = QLabel("")
-        self._summary_label.setWordWrap(True)
-        self._summary_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self._summary_label)
+        mat_layout.addWidget(self._table)
+        splitter.addWidget(mat_box)
+
+        # ── 右侧: 核算明细 ─────────────────────────────────
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(6)
+
+        # ── 2. 制造作业费 ───────────────────────────────────
+        job_box = QGroupBox("制造作业费")
+        self._job_form = QFormLayout(job_box)
+        self._job_form.setContentsMargins(8, 6, 8, 6)
+        self._job_form.setSpacing(2)
+        self._job_eiv = QLabel("—")
+        self._job_form.addRow("预估物品价值 (EIV):", self._job_eiv)
+        self._job_sci = QLabel("—")
+        self._job_form.addRow("系统成本 (SCI × EIV):", self._job_sci)
+        self._job_fac_tax = QLabel("—")
+        self._job_form.addRow("设施税:", self._job_fac_tax)
+        self._job_scc = QLabel("—")
+        self._job_form.addRow("SCC 附加费:", self._job_scc)
+        self._job_total = QLabel("—")
+        self._job_total.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY};")
+        self._job_form.addRow("制造作业费:", self._job_total)
+        right_layout.addWidget(job_box)
+
+        # ── 3. 市场费用 ─────────────────────────────────────
+        mkt_box = QGroupBox("市场费用")
+        self._mkt_form = QFormLayout(mkt_box)
+        self._mkt_form.setContentsMargins(8, 6, 8, 6)
+        self._mkt_form.setSpacing(2)
+        self._mkt_broker = QLabel("—")
+        self._mkt_form.addRow("经纪人费:", self._mkt_broker)
+        self._mkt_relist = QLabel("—")
+        self._mkt_form.addRow("改单费:", self._mkt_relist)
+        self._mkt_sales_tax = QLabel("—")
+        self._mkt_form.addRow("销售税:", self._mkt_sales_tax)
+        self._mkt_fee_total = QLabel("—")
+        self._mkt_fee_total.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY};")
+        self._mkt_form.addRow("市场费用合计:", self._mkt_fee_total)
+        right_layout.addWidget(mkt_box)
+
+        # ── 4. 汇总 ─────────────────────────────────────────
+        summary_box = QGroupBox("汇总")
+        self._summary_form = QFormLayout(summary_box)
+        self._summary_form.setContentsMargins(8, 6, 8, 6)
+        self._summary_form.setSpacing(2)
+        self._summary_labels: dict[str, QLabel] = {}
+        for key, label in [
+            ("total_cost", "总成本"),
+            ("revenue", "收入"),
+            ("profit", "利润"),
+            ("margin", "利润率"),
+            ("hours", "耗时"),
+            ("daily_output", "日产能"),
+            ("daily_profit", "日利润"),
+            ("score", "评分"),
+            ("iskph", "ISK/h"),
+        ]:
+            val = QLabel("—")
+            val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            self._summary_form.addRow(f"{label}:", val)
+            self._summary_labels[key] = val
+        right_layout.addWidget(summary_box)
+        right_layout.addStretch()
+
+        splitter.addWidget(right_panel)
+        splitter.setSizes([580, 360])
+        splitter.setStretchFactor(0, 3)  # 材料表多占
+        splitter.setStretchFactor(1, 2)
+        root.addWidget(splitter, 1)  # stretch=1 充满
+
+        # ── 填充外层 ────────────────────────────────────────
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -68,7 +162,13 @@ class CostBreakdownDialog(QWidget):
         sell_hub = self._plan.get("sell_hub", "Jita")
         char_config = self._char_config or {}
         fac_tax = char_config.get("market", {}).get(sell_hub.lower(), {}).get("facility_tax", 0.0)
-        result = (
+
+        # 读取计划设定的 runs/parallels
+        runs = max(int(self._plan.get("runs", 1)), 1)
+        parallels = max(int(self._plan.get("parallels", 1)), 1)
+        total_mult = runs * parallels
+
+        per_run = (
             get_container()
             .scoring_service()
             .calc_manufacturing_score(
@@ -83,93 +183,96 @@ class CostBreakdownDialog(QWidget):
                 price_type_prod="sell",
             )
         )
-        status = result.get("status", "")
+        # 按 runs/parallels 缩放到计划总数值
+        total = (
+            get_container()
+            .scoring_service()
+            .calculate_total_metrics(per_run, runs, parallels)
+        )
+        status = per_run.get("status", "")
         if status:
             tips = {"no_blueprint": "未找到蓝图", "no_price": "无价格数据", "no_materials": "无需材料"}
             self._status_label.setText(tips.get(status, f"状态: {status}"))
-            self._summary_label.setText("")
             return
-        materials = result.get("materials", [])
+        materials = per_run.get("materials", [])
         self._table.setRowCount(len(materials))
         for row_idx, mat in enumerate(materials):
             items = [
                 mat.get("name", ""),
                 str(mat.get("base_qty", 0)),
                 _fmt_waste_pct(mat.get("waste_factor", 1)),
-                f"{mat.get('qty', 0):,.2f}",
+                f"{mat.get('qty', 0) * total_mult:,.2f}",
                 _fmt_isk(mat.get("unit_price", 0)),
-                _fmt_isk(mat.get("subtotal", 0)),
+                _fmt_isk(mat.get("subtotal", 0) * total_mult),
             ]
             for col_idx, text in enumerate(items):
                 item = QTableWidgetItem(text)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._table.setItem(row_idx, col_idx, item)
-        bd = result.get("breakdown", {})
-        mat_cost = sum(m.get("subtotal", 0) for m in materials)
-        profit = result.get("profit_per_run", 0) or 0
-        margin = result.get("margin_pct", 0) or 0
-        score = result.get("score", 0) or 0
-        isk_per_hour = result.get("isk_per_hour", 0) or 0
-        result.get("cost_per_unit", 0) or 0
-        hours = result.get("hours_per_run", 0) or 1
-        installation_fee = bd.get("installation_fee", 0) or 0
+
+        bd = per_run.get("breakdown", {})
+        mat_cost = total.get("total_material_cost", 0)
+        profit = total.get("total_profit", 0)
+        margin = total.get("total_margin_pct", 0)
+        score = per_run.get("score", 0) or 0
+        isk_per_hour = total.get("total_isk_per_hour", 0)
+        hours = total.get("total_time_hours", 0) or 1
+        daily_output = total.get("total_daily_output", 0)
         eiv = bd.get("eiv", 0) or 0
         system_cost = bd.get("system_cost", 0) or 0
-        facility_tax = bd.get("facility_tax", 0) or 0
+        installation_fee = bd.get("installation_fee", 0) or 0
+        facility_tax_v = bd.get("facility_tax", 0) or 0
         scc = bd.get("scc_surcharge", 0) or 0
-        alpha_tax = bd.get("alpha_tax", 0) or 0
         broker_init = bd.get("broker_init", 0) or 0
         broker_relist = bd.get("broker_relist", 0) or 0
         sales_tax = bd.get("sales_tax", 0) or 0
         revenue = bd.get("revenue", 0) or 0
-        material_cost_val = bd.get("material_cost", 0) or 0
         sci = bd.get("sci", 0) or 0
-        sep40 = "=" * 40
-        sep36 = "=" * 36
-        sep28 = "=" * 28
-        lines = [
-            f"  {sep40}",
-            f"  预估物品价值(EIV): {_fmt_isk(eiv)}",
-            "  项目毛成本",
-            f"    星系成本指数 {sci*100:.2f}% EIV",
-            f"    项目总计毛成本 {_fmt_isk(system_cost)}",
-            "  税收",
-            f"    设施税 0.25% EIV {_fmt_isk(facility_tax)}",
-            f"    SCC 商业安全委员会 4.00% EIV {_fmt_isk(scc)}",
-            f"    税收总额 {_fmt_isk(facility_tax + scc + alpha_tax)}",
-            f"  {sep28}",
-            f"  安装费小计: {_fmt_isk(installation_fee)}",
-            f"  材料费: {_fmt_isk(mat_cost)} ({material_cost_val:,.0f} ISK)",
-            f"  经纪人(挂单): {_fmt_isk(broker_init)}",
-            f"  经纪人(改单): {_fmt_isk(broker_relist)}",
-            f"  销售税: {_fmt_isk(sales_tax)}",
-            f"  {sep36}",
-        ]
-        cost_data = mat_cost + installation_fee + broker_init + broker_relist + sales_tax
-        lines += [
-            f"  总成本: {_fmt_isk(cost_data)}",
-            f"  收入: {_fmt_isk(revenue)}",
-            f"  利润: {_fmt_isk(profit)}",
-            f"  利润率: {margin:.2f}%",
-            f"  耗时: {hours:.2f}h/run",
-            f"  日产能: {24 / hours:.2f}run/天",
-            f"  日利润: {_fmt_isk(profit * 24 / hours)}/天",
-            f"  {sep40}",
-            f"  评分: {score:.1f}",
-            f"  ISK/h: {_fmt_isk(isk_per_hour)}",
-        ]
-        self._summary_label.setText("\n".join(lines))
+        # 总安装费和市场费用 = per-run × total_mult
+        total_installation_fee = installation_fee * total_mult
+        total_broker = (broker_init + broker_relist + sales_tax) * total_mult
+        cost_data = mat_cost + total_installation_fee + total_broker
+
+        # ── 顶部信息：显示 runs/parallels ──
         self._status_label.setText(
-            f"共 {len(materials)} 种材料 | 评分 {score:.1f} | 利润 {_fmt_isk(profit)} | 利润率 {margin:.1f}%"
+            f"计划设定: {runs} 流程 × {parallels} 并行 = {total_mult} 总流程 "
+            f"| 共 {len(materials)} 种材料 | 评分 {score:.1f} | 利润 {_fmt_isk(profit)} | 利润率 {margin:.1f}%"
         )
+
+        # ── 制造作业费（per-job 不变，因为 EIV 是 per-run 值） ──
+        self._job_eiv.setText(_fmt_isk(eiv))
+        self._job_sci.setText(f"{_fmt_isk(system_cost)}  (SCI={sci*100:.4f}%)")
+        self._job_fac_tax.setText(_fmt_isk(facility_tax_v))
+        self._job_scc.setText(_fmt_isk(scc))
+        self._job_total.setText(_fmt_isk(installation_fee))
+
+        # ── 市场费用（per-job 不变） ──
+        self._mkt_broker.setText(_fmt_isk(broker_init))
+        self._mkt_relist.setText(_fmt_isk(broker_relist))
+        self._mkt_sales_tax.setText(_fmt_isk(sales_tax))
+        self._mkt_fee_total.setText(_fmt_isk(broker_init + broker_relist + sales_tax))
+
+        # ── 汇总（总数值） ──
+        self._summary_labels["total_cost"].setText(_fmt_isk(cost_data))
+        self._summary_labels["revenue"].setText(_fmt_isk(revenue * total_mult))
+        p_label = self._summary_labels["profit"]
+        p_label.setText(_fmt_isk(profit))
+        p_label.setStyleSheet(
+            f"color: {theme.GREEN if profit >= 0 else theme.RED}; font-weight: bold;"
+        )
+        self._summary_labels["margin"].setText(f"{margin:.2f}%")
+        self._summary_labels["hours"].setText(f"{hours:.2f}h")
+        self._summary_labels["daily_output"].setText(f"{daily_output:.1f} run/天")
+        daily_profit = profit / hours * 24 if hours > 0 else 0
+        self._summary_labels["daily_profit"].setText(_fmt_isk(daily_profit))
+        self._summary_labels["score"].setText(f"{score:.1f}")
+        self._summary_labels["iskph"].setText(_fmt_isk(isk_per_hour))
 
     def _on_theme_changed(self):
         self.setStyleSheet(theme.get_stylesheet() + "QTableWidget::item { padding: 2px 6px; }")
-        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
-        self._summary_label.setStyleSheet(
-            f"color: {theme.TEXT_PRIMARY}; font-size: 12px;"
-            f"background-color: {theme.BG_SURFACE}; border: 1px solid {theme.BORDER}; border-radius: 4px; padding: 8px;"
-        )
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px; font-weight: bold;")
+        self._job_total.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY};")
+        self._mkt_fee_total.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY};")
 
 
 def _fmt_isk(value: float) -> str:
@@ -183,6 +286,8 @@ def _fmt_isk(value: float) -> str:
 
 
 def _fmt_waste_pct(waste_factor: float) -> str:
-    """将浪费乘数转为损耗百分比显示，如 1.10 → \"10%\"，1.00 → \"0%\"。"""
+    """Convert waste multiplier to waste percentage display, e.g. 1.10 -> 10%, 1.00 -> 0%."""
+    pct = (waste_factor - 1) * 100
+    return f"{pct:.0f}%"
     pct = (waste_factor - 1) * 100
     return f"{pct:.0f}%"

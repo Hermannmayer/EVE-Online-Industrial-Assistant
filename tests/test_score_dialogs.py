@@ -5,6 +5,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import ui_pyside6.theme as theme
+import pytest
+
+pytestmark = pytest.mark.slow
+
 from ui_pyside6.theme import apply_theme
 from ui_pyside6.views.score_dialogs import MfgDlg, ScoreW, TradeDlg, _fmt_tag
 

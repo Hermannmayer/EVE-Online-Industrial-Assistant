@@ -23,8 +23,9 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
-from core.eve_formulas import _MINERAL_NAMES
+from core.logger import log
 from core.paths import ICON_DIR
+from services.manufacturing_calculator import calc_material_for_runs
 
 
 def _load_icon(type_id: int, size: int = 24) -> QPixmap | None:
@@ -48,14 +49,16 @@ def _load_icon(type_id: int, size: int = 24) -> QPixmap | None:
 
 
 def _resolve_item_name(mid: int, zh_name: str | None, en_name: str | None) -> str:
-    """统一物品名解析：item 表 → mineral 硬编码 → str(id)"""
+    """统一物品名解析：item 表 → terminology.json → str(id)"""
     if zh_name:
         return zh_name
     if en_name:
         return en_name
-    if mid in _MINERAL_NAMES:
-        return _MINERAL_NAMES[mid]
-    # 再试一次从 item 表查（矿物可能不在 ref.item 中但在 mineral 映射中）
+    from services.terminology import term
+
+    override = term.item_override(mid)
+    if override:
+        return override
     return str(mid)
 
 
@@ -185,6 +188,11 @@ class ProcurementDialog(QDialog):
         self._copy_btn.clicked.connect(self._on_copy_to_clipboard)
         toolbar.addWidget(self._copy_btn)
 
+        self._complete_all_btn = QPushButton("完成所有")
+        self._complete_all_btn.clicked.connect(self._on_complete_all)
+        self._complete_all_btn.setVisible(False)
+        toolbar.addWidget(self._complete_all_btn)
+
         main_layout.addLayout(toolbar)
 
         # Table
@@ -229,10 +237,29 @@ class ProcurementDialog(QDialog):
         with get_container().db.connect("user", "ref", "mkt", "bp") as conn:
             c = conn.cursor()
             for plan in self._active_plans:
+                if not plan.get("materials_ready", 0):
+                    continue
                 pid = plan["product_type_id"]
-                runs = plan["runs"] * plan["parallels"]
-                me = plan["me_level"]
-                waste = 1.0 + 0.1 * (1.0 - me / 10.0)
+                total_runs = plan["runs"] * plan["parallels"]
+                me = plan["me_level"] or 0
+
+                # 确定浪费因子类别
+                c.execute(
+                    "SELECT mg.meta_group_id FROM bp.blueprint_products bp "
+                    "LEFT JOIN item i ON i.type_id = bp.product_type_id "
+                    "LEFT JOIN meta_group mg ON mg.meta_group_id = i.meta_group_id "
+                    "WHERE bp.product_type_id = ? AND bp.activity = 'manufacturing' LIMIT 1",
+                    (pid,),
+                )
+                mg_row = c.fetchone()
+                mg_id = mg_row[0] if mg_row else None
+                # T1=1 / T2=2 / faction=4 → 映射浪费因子
+                if mg_id == 2:
+                    wf = 2   # T2
+                elif mg_id == 4:
+                    wf = 15  # 势力
+                else:
+                    wf = 10  # T1/兜底
 
                 c.execute(
                     """SELECT bm.material_type_id, bm.quantity
@@ -243,7 +270,7 @@ class ProcurementDialog(QDialog):
                     (pid,),
                 )
                 for mid, qty in c.fetchall():
-                    need = round(qty * waste * runs, 2)
+                    need = calc_material_for_runs(qty, wf, me, int(total_runs))
                     if mid in material_map:
                         material_map[mid]["need"] += need
                     else:
@@ -336,6 +363,14 @@ class ProcurementDialog(QDialog):
                 f"来源: {hub} ({price_type})"
             )
 
+            # 检查是否有「待下线」的计划，显示「完成所有」按钮
+            ready_plans = [p for p in self._active_plans if p.get("status") == "ready"]
+            if ready_plans:
+                self._complete_all_btn.setText(f"完成所有 ({len(ready_plans)} 项)")
+                self._complete_all_btn.setVisible(True)
+            else:
+                self._complete_all_btn.setVisible(False)
+
     def _on_context_menu(self, pos):
         sel = self._table.selectionModel().selectedRows()
         if not sel:
@@ -404,7 +439,7 @@ class ProcurementDialog(QDialog):
             QApplication.clipboard().setText(text)
 
     def _on_copy_to_clipboard(self):
-        """将待采购清单复制到剪贴板"""
+        """将待采购清单复制到剪贴板（格式：凡晶石*4）"""
         model = self._table.model()
         if not model or not isinstance(model, ProcureTableModel):
             return
@@ -412,21 +447,72 @@ class ProcurementDialog(QDialog):
         if not rows:
             return
 
-        lines = ["物品名称\\t总需求\\t库存\\t需采购\\t单价\\t总价\\t体积(m\\u00b3)"]
-        total_cost = 0.0
-        total_volume = 0.0
+        lines = []
         for r in rows:
-            lines.append(
-                f"{r['name']}\\t{r['need']:,.2f}\\t{r['owned']:,.0f}\\t"
-                f"{r['to_buy']:,.2f}\\t{r['price']:,.2f}\\t{r['total']:,.2f}\\t{r['volume']:,.2f}"
-            )
-            total_cost += r["total"]
-            total_volume += r["volume"]
-        lines.append("")
-        lines.append(f"合计\\t\\t\\t\\t\\t{total_cost:,.0f} ISK\\t{total_volume:,.2f} m\\u00b3")
+            name = r.get("name", "?")
+            to_buy = r.get("to_buy", 0)
+            lines.append(f"{name}* {to_buy:.0f}")
 
-        QApplication.clipboard().setText("\\n".join(lines))
-        QMessageBox.information(self, "已复制", f"待采购清单 ({len(rows)} 项, {total_cost:,.0f} ISK) 已复制到剪贴板")
+        QApplication.clipboard().setText("\n".join(lines))
+        total_qty = sum(r.get("to_buy", 0) for r in rows)
+        QMessageBox.information(self, "已复制", f"已复制 {len(rows)} 种材料（共 {total_qty:,.0f} 个）到剪贴板")
+
+    def _on_complete_all(self):
+        """一键完成所有待下线计划：标记为 completed + 自动入库"""
+        ready_plans = [p for p in self._active_plans if p.get("status") == "ready"]
+        if not ready_plans:
+            return
+
+        completed = 0
+        with get_container().db.connect("user") as conn:
+            c = conn.cursor()
+            for plan in ready_plans:
+                plan_id = plan.get("id")
+                if not plan_id:
+                    continue
+                try:
+                    # 入库
+                    deposit_hangar_id = plan.get("deposit_hangar_id")
+                    if deposit_hangar_id:
+                        product_type_id = plan.get("product_type_id")
+                        runs = max(int(plan.get("runs", 1)), 1)
+                        parallels = max(int(plan.get("parallels", 1)), 1)
+                        total_mult = runs * parallels
+
+                        ref_conn = get_container().db.direct_connect("ref")
+                        cur = ref_conn.cursor()
+                        cur.execute(
+                            "SELECT quantity FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
+                            (product_type_id,),
+                        )
+                        row = cur.fetchone()
+                        ref_conn.close()
+                        output_per_run = row[0] if row else 1
+
+                        total_qty = total_mult * output_per_run
+                        mat_cost = plan.get("material_cost", 0) or 0
+                        cost_price = mat_cost / max(total_qty, 1)
+                        from services.inventory_manager import add_item
+                        add_item(deposit_hangar_id, product_type_id, total_qty, round(cost_price, 2))
+
+                    # 标记为 completed + deposited
+                    c.execute(
+                        "UPDATE production_plans SET status='completed', deposited=1 WHERE id=?",
+                        (plan_id,),
+                    )
+                    completed += 1
+                except Exception:
+                    log.exception("完成计划 %s 失败", plan_id)
+
+            conn.commit()
+
+        if completed > 0:
+            QMessageBox.information(
+                self, "完成", f"已完成 {completed}/{len(ready_plans)} 项计划\n成品已自动入库"
+            )
+            self._calculate()
+        else:
+            QMessageBox.information(self, "提示", "没有可完成的计划")
 
     def _update_summary(self):
         """更新底部统计"""

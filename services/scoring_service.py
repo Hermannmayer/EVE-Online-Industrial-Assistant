@@ -439,6 +439,49 @@ class ScoringService:
     def _calc_sales_tax_rate(self, skills: dict) -> float:
         return calc_sales_tax_rate(skills)
 
+    # ── runs/parallels 总数值辅助计算 ──
+
+    @staticmethod
+    def calculate_total_metrics(
+        per_run: dict,
+        runs: int = 1,
+        parallels: int = 1,
+    ) -> dict:
+        """将 per-run 评分结果按 runs/parallels 缩放到计划总数值。
+
+        Args:
+            per_run: calc_manufacturing_score() 的返回 dict（含 profit_per_run 等）
+            runs: 流程数
+            parallels: 并行数
+
+        Returns:
+            更新后的 dict，包含 total_ 前缀的总数值字段。
+        """
+        total_mult = max(runs, 1) * max(parallels, 1)
+        runs_only = max(runs, 1)
+        hours_per_run = per_run.get("hours_per_run", 0) or 1
+        profit_per_run = per_run.get("profit_per_run", 0) or 0
+        mat_cost = per_run.get("breakdown", {}).get("material_cost", 0) or 0
+        margin = per_run.get("margin_pct", 0) or 0
+
+        total_mat_cost = mat_cost * total_mult
+        total_profit = profit_per_run * total_mult
+        total_time_hours = hours_per_run * runs_only
+        total_iskph = total_profit / total_time_hours if total_time_hours > 0 else 0
+        daily_output = (24.0 / hours_per_run) * parallels if hours_per_run > 0 else 0
+
+        # 保留原始 per_run 字段 + 新增 total_ 字段
+        result = dict(per_run)
+        result.update({
+            "total_material_cost": round(total_mat_cost, 2),
+            "total_profit": round(total_profit, 2),
+            "total_time_hours": round(total_time_hours, 2),
+            "total_isk_per_hour": round(total_iskph, 2),
+            "total_daily_output": round(daily_output, 1),
+            "total_margin_pct": margin,  # 比值不变
+        })
+        return result
+
     # ── 制造评分 ──
 
     def calc_manufacturing_score(

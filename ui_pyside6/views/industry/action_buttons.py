@@ -34,7 +34,7 @@ class ActionButtons(QWidget):
         root.setContentsMargins(6, 4, 6, 4)
         root.setSpacing(10)
 
-        self._btn_refresh_procurement = QPushButton("刷新材料表/采购小助手")
+        self._btn_refresh_procurement = QPushButton("采购小助手")
         root.addWidget(self._btn_refresh_procurement)
 
         self._btn_blueprint_list = QPushButton("所需蓝图表")

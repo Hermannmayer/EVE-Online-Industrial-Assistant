@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = pytest.mark.slow
+
 """InventoryPage UI 测试。"""
 
 

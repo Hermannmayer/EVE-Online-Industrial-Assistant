@@ -46,7 +46,7 @@ class TestProductionTableModel:
     def test_header_data(self):
         """表头正确"""
         model = ProductionTableModel([])
-        headers = ["产品", "批次", "并行", "材料成本", "利润", "利润率", "评分", "时均/h", "状态", "创建时间"]
+        headers = ["产品", "批次", "并行", "材料成本", "利润", "利润率", "评分", "时均产量", "状态", "创建时间"]
         for i, h in enumerate(headers):
             assert model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == h
 

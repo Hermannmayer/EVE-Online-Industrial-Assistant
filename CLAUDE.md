@@ -25,6 +25,7 @@ EVE Online 工业制造助手，使用 PySide6 + SQLite 构建的桌面应用。
 - ✅ 新代码添加类型注解
 - ✅ 新功能添加测试（覆盖率 > 70%）
 - ✅ 每个 except 块记录日志 `logger.exception(...)`
+- ✅ **术语铁律**：EVE 游戏术语（技能名/蓝图活动名/UI 标签）必须通过 `services.terminology` 获取。禁止直接硬编码中文术语。公式代码中使用的技能 key 必须与 `data/terminology.json` 的 `skill_names` 一致
 
 ### 架构约束
 - 三层分离：`core/`（工具）→ `services/`（业务）→ `ui_pyside6/`（UI）
@@ -39,6 +40,9 @@ EVE Online 工业制造助手，使用 PySide6 + SQLite 构建的桌面应用。
 - 单元测试使用 `pytest`
 - UI 测试使用 `pytest-qt`
 - 集成测试使用真实数据库（temp_db fixture）
+- **日常开发推荐**: `pytest tests/ -q --quick --maxfail=1`（跳过 Qt 界面测试，报错即停，~20s）
+- **全量回归**: `pytest tests/`（含 Qt 界面测试，~1.5min）
+- **快速检查你的改动**: `pytest tests/test_terminology_consistency.py -v`（~0.1s）
 - 运行：`pytest tests/ -v`
 
 ### 提交前检查清单
@@ -53,6 +57,15 @@ EVE Online 工业制造助手，使用 PySide6 + SQLite 构建的桌面应用。
 - ✅ 使用 `yaml.safe_load()` 加载 YAML
 - ✅ 对用户输入进行验证
 - ✅ 使用参数化查询防止 SQL 注入
+
+### EVE 术语查询指南
+术语来源按优先级排列：
+
+1. **SDE 数据库**（`database/reference.db` → `item` 表）— CCP 官方中英文翻译
+   - 技能查询: `SELECT zh_name FROM item WHERE category_id=16 AND en_name='Reprocessing'`
+   - 物品查询: `SELECT zh_name FROM item WHERE type_id=34`
+2. **`data/terminology.json`** — 项目术语中心，`services/terminology.py` 提供统一查询
+3. **公式代码中的技能 key** → 必须先在 `terminology.json` 的 `skill_names` 中注册
 
 ## 常用命令
 

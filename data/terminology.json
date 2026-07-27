@@ -5,6 +5,8 @@
     "invention": "发明",
     "research_material": "材料效率研究",
     "research_time": "生产效率研究",
+    "researching_material_efficiency": "材料效率研究",
+    "researching_time_efficiency": "生产效率研究",
     "reaction": "反应"
   },
   "market_categories": {
@@ -19,12 +21,12 @@
   },
   "ui_labels": {
     "product": "成品",
-    "profit_per_run": "利润/run",
+    "profit_per_run": "利润/流程",
     "profit_margin": "利润率%",
     "isk_per_hour": "ISK/h",
     "score": "评分",
-    "cost_per_unit": "成本/unit",
-    "hours_per_run": "时/run",
+    "cost_per_unit": "成本/单位",
+    "hours_per_run": "时/流程",
     "material": "材料",
     "total_demand": "总需求",
     "unit_price": "单价",
@@ -40,10 +42,20 @@
     "sell_price": "卖价",
     "spread": "价差",
     "spread_pct": "价差%",
-    "volume": "成交量"
+    "volume": "成交量",
+    "runs": "流程数",
+    "parallels": "并行数"
   },
   "item_overrides": {
-    "34": "三钛合金"
+    "34": "三钛合金",
+    "35": "类晶体胶矿",
+    "36": "类银超金属",
+    "37": "同位聚合体",
+    "38": "超新星诺克石",
+    "39": "晶状石英核岩",
+    "40": "超噬矿",
+    "4247": "****残余物",
+    "4312": "****残余物"
   },
   "group_overrides": {},
   "skill_aliases": {
@@ -54,7 +66,24 @@
     "Supply Chain Management": "供应链管理",
     "Scientific Networking": "科学网络学",
     "Laboratory Operation": "实验室运作理论",
-    "Refining": "精炼学概论",
-    "Refinery Efficiency": "精炼效率理论"
+    "Refining": "提炼学概论",
+    "Refinery Efficiency": "提炼效率理论"
+  },
+  "skill_names": {
+    "Accounting": "会计学",
+    "Advanced Broker Relations": "高级经纪人关系学",
+    "Advanced Industry": "高级工业理论",
+    "Advanced Mass Production": "高级量产技术",
+    "Broker Relations": "经纪人关系学",
+    "Industry": "工业理论",
+    "Mass Production": "批量生产学",
+    "Refining": "提炼学概论",
+    "Reprocessing": "提炼学概论",
+    "Reprocessing Efficiency": "提炼效率理论",
+    "Refinery Efficiency": "提炼效率理论",
+    "Metallurgy": "冶金学",
+    "Research": "研究概论",
+    "Science": "科学原理",
+    "Mechanics": "机械学"
   }
 }

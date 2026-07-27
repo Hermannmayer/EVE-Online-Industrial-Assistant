@@ -111,54 +111,54 @@ class TestPlanTableIntegration:
         assert model.get_plan(0) == {}
 
     def test_plan_display_name(self, qapp):
-        """产品名称展示（列1）"""
+        """产品名称展示（列2）"""
         model = PlanTableModel(self.SAMPLE_PLANS)
-        assert model.data(model.index(0, 1), Qt.ItemDataRole.DisplayRole) == "渡鸦级"
+        assert model.data(model.index(0, 2), Qt.ItemDataRole.DisplayRole) == "渡鸦级"
 
     def test_plan_display_runs_and_parallels(self, qapp):
-        """批次列展示（列9: runs x parallels）"""
+        """流程列展示（列10: runs x parallels）"""
         model = PlanTableModel(self.SAMPLE_PLANS)
-        val = model.data(model.index(0, 9), Qt.ItemDataRole.DisplayRole)
+        val = model.data(model.index(0, 10), Qt.ItemDataRole.DisplayRole)
         assert "5 x 2" in val
 
     def test_plan_display_margin(self, qapp):
-        """市场利润率列展示（列17）"""
+        """市场利润率列展示（列18）"""
         model = PlanTableModel(self.SAMPLE_PLANS)
-        val = model.data(model.index(0, 17), Qt.ItemDataRole.DisplayRole)
+        val = model.data(model.index(0, 18), Qt.ItemDataRole.DisplayRole)
         assert "20.0%" in str(val)
 
     def test_plan_status_pending(self, qapp):
-        """待生产状态展示（列6）"""
+        """待生产状态展示（列8）"""
         model = PlanTableModel(self.SAMPLE_PLANS)
-        assert model.data(model.index(0, 6), Qt.ItemDataRole.DisplayRole) == "待生产"
+        assert model.data(model.index(0, 8), Qt.ItemDataRole.DisplayRole) == "待生产"
 
     def test_plan_status_in_progress(self, qapp):
-        """生产中状态展示（列6）"""
+        """生产中状态展示（列8）"""
         model = PlanTableModel(self.SAMPLE_PLANS)
-        assert model.data(model.index(1, 6), Qt.ItemDataRole.DisplayRole) == "生产中"
+        assert model.data(model.index(1, 8), Qt.ItemDataRole.DisplayRole) == "生产中"
 
     def test_plan_profit_foreground_positive(self, qapp):
-        """利润列（16）正值绿色"""
+        """利润列（17）正值绿色"""
         from ui_pyside6 import theme
 
         model = PlanTableModel(self.SAMPLE_PLANS)
-        color = model.data(model.index(0, 16), Qt.ItemDataRole.ForegroundRole)
+        color = model.data(model.index(0, 17), Qt.ItemDataRole.ForegroundRole)
         assert color.name() == theme.GREEN
 
     def test_plan_profit_foreground_negative(self, qapp):
-        """利润列（16）负值红色"""
+        """利润列（17）负值红色"""
         from ui_pyside6 import theme
 
         plans = [dict(self.SAMPLE_PLANS[0], profit=-5_000_000)]
         model = PlanTableModel(plans)
-        color = model.data(model.index(0, 16), Qt.ItemDataRole.ForegroundRole)
+        color = model.data(model.index(0, 17), Qt.ItemDataRole.ForegroundRole)
         assert color.name() == theme.RED
 
     def test_plan_profit_foreground_zero(self, qapp):
         """利润为零时无特殊颜色"""
         plans = [dict(self.SAMPLE_PLANS[0], profit=0)]
         model = PlanTableModel(plans)
-        color = model.data(model.index(0, 16), Qt.ItemDataRole.ForegroundRole)
+        color = model.data(model.index(0, 17), Qt.ItemDataRole.ForegroundRole)
         assert color is None
 
     def test_set_model_replace(self, qapp):
@@ -172,17 +172,17 @@ class TestPlanTableIntegration:
     def test_plan_status_column_headers(self, qapp):
         """状态列表头"""
         model = PlanTableModel([])
-        assert model.headerData(6, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == "状态"
+        assert model.headerData(8, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == "状态"
 
     def test_plan_icon_column_returns_empty_string(self, qapp):
         """图标列 DisplayRole 返回空字符串"""
         model = PlanTableModel(self.SAMPLE_PLANS)
-        val = model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole)
+        val = model.data(model.index(0, 1), Qt.ItemDataRole.DisplayRole)
         assert val == ""
 
     def test_plan_display_char_name_default_dash(self, qapp):
-        """角色列（8）无人名时显示横线"""
+        """角色列（9）无人名时显示横线"""
         model = PlanTableModel(self.SAMPLE_PLANS)
         # 第二个计划有 char_name=""
-        val = model.data(model.index(1, 8), Qt.ItemDataRole.DisplayRole)
+        val = model.data(model.index(1, 9), Qt.ItemDataRole.DisplayRole)
         assert val == "-"

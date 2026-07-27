@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = pytest.mark.slow
+
 """MainWindow UI 测试。"""
 
 

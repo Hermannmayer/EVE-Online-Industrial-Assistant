@@ -57,51 +57,54 @@ class RankTableModel(QAbstractTableModel):
 
 
 class PlanTableModel(QAbstractTableModel):
-    """20 列生产计划模型 — 支持图标、行内编辑、排序"""
+    """21 列生产计划模型 — 支持 checkbox、图标、行内编辑、排序"""
 
     _HEADERS = [
-        "图标",       # 0
-        "产品",       # 1
-        "批次",       # 2
-        "并行",       # 3
-        "组号",       # 4
-        "子级",       # 5
-        "状态",       # 6
-        "备注",       # 7
-        "人物",       # 8
-        "流程",       # 9
-        "蓝图",       # 10
-        "时长",       # 11
-        "产能",       # 12
-        "设施",       # 13
-        "输出",       # 14
-        "成本",       # 15
-        "利润",       # 16
-        "市场利润率%", # 17
-        "个人利润率%", # 18
+        "☐",         # 0  勾选/备料
+        "图标",       # 1
+        "产品",       # 2
+        "备注",       # 3
+        "批次",       # 4
+        "并行",       # 5
+        "组号",       # 6
+        "子级",       # 7
+        "状态",       # 8
+        "人物",       # 9
+        "流程",       # 10
+        "蓝图",       # 11
+        "时长",       # 12
+        "产能",       # 13
+        "设施",       # 14
+        "输出",       # 15
+        "成本",       # 16
+        "利润",       # 17
+        "市场利润率%", # 18
+        "个人利润率%", # 19
     ]
 
     # 可编辑列集合（仅 active 状态下生效）
-    _EDITABLE_COLS = {2, 3, 7, 8, 13, 14}
+    _EDITABLE_COLS = {3, 4, 5, 9, 14, 15}
 
     # 排序键映射: column index → dict key
     _SORT_KEYS = {
-        0: None, 1: "product_name", 2: "batch", 3: "parallels",
-        4: "group_id", 5: "child_level", 6: "status", 7: "notes",
-        8: "char_name", 9: "_runs", 10: "_me_level",
-        11: "_calculated_time", 12: "_daily_output",
-        13: "facility", 14: "output",
-        15: "material_cost", 16: "profit",
-        17: "market_margin", 18: "personal_margin",
+        0: "materials_ready", 1: None, 2: "product_name",
+        3: "notes", 4: "batch", 5: "parallels",
+        6: "group_id", 7: "child_level", 8: "status",
+        9: "char_name", 10: "_runs", 11: "_me_level",
+        12: "_calculated_time", 13: "_daily_output",
+        14: "facility", 15: "output",
+        16: "material_cost", 17: "profit",
+        18: "market_margin", 19: "personal_margin",
     }
 
     # 数值列（排序时按数字比较）
-    _NUMERIC_SORT_COLS = {2, 3, 4, 11, 12, 15, 16, 17, 18}
+    _NUMERIC_SORT_COLS = {0, 4, 5, 6, 12, 13, 16, 17, 18, 19}
 
     # 状态 → 显示文本
     _STATUS_LABELS = {
         "pending": "待生产",
         "in_progress": "生产中",
+        "ready": "待下线",
         "completed": "已完成",
         "running": "生产中",
         "done": "已完成",
@@ -117,7 +120,7 @@ class PlanTableModel(QAbstractTableModel):
         return len(self._plans)
 
     def columnCount(self, parent=QModelIndex()):
-        return 19
+        return 20
 
     # ── 图标列 DecorationRole ────────────────────────────────────
 
@@ -148,11 +151,11 @@ class PlanTableModel(QAbstractTableModel):
         c = index.column()
 
         # DecorationRole — 图标列
-        if role == Qt.ItemDataRole.DecorationRole and c == 0:
+        if role == Qt.ItemDataRole.DecorationRole and c == 1:
             return self._load_icon(p.get("product_type_id"))
 
         # SizeHintRole — 图标列行高
-        if role == Qt.ItemDataRole.SizeHintRole and c == 0:
+        if role == Qt.ItemDataRole.SizeHintRole and c == 1:
             from PySide6.QtCore import QSize
             return QSize(36, 36)
 
@@ -167,56 +170,58 @@ class PlanTableModel(QAbstractTableModel):
     def _display_text(self, p: dict, c: int) -> str:
         """列 0~19 的 DisplayRole 文本"""
         if c == 0:
-            return ""  # 图标列不显示文本
+            return "☑" if p.get("materials_ready", 0) else "☐"
         if c == 1:
-            return p.get("product_name", f"ID:{p.get('product_type_id', '')}")
+            return ""  # 图标列不显示文本
         if c == 2:
-            return str(p.get("batch", 0))
+            return p.get("product_name", f"ID:{p.get('product_type_id', '')}")
         if c == 3:
-            return str(p.get("parallels", 1))
-        if c == 4:
-            return str(p.get("group_id", 0))
-        if c == 5:
-            return str(p.get("child_level", 0))
-        if c == 6:
-            return self._STATUS_LABELS.get(p.get("status", ""), p.get("status", ""))
-        if c == 7:
             return p.get("notes", "") or ""
+        if c == 4:
+            return str(p.get("batch", 0))
+        if c == 5:
+            return str(p.get("parallels", 1))
+        if c == 6:
+            return str(p.get("group_id", 0))
+        if c == 7:
+            return str(p.get("child_level", 0))
         if c == 8:
-            return p.get("char_name", "") or "-"
+            return self._STATUS_LABELS.get(p.get("status", ""), p.get("status", ""))
         if c == 9:
+            return p.get("char_name", "") or "-"
+        if c == 10:
             runs = p.get("runs", 0)
             parallels = p.get("parallels", 1)
             return f"{runs} x {parallels}"
-        if c == 10:
+        if c == 11:
             me = p.get("me_level", 0)
             te = p.get("te_level", 0)
             has_img = "有图" if p.get("has_image", False) else "没图"
             return f"{me}-{te}[{has_img}]"
-        if c == 11:
+        if c == 12:
             seconds = p.get("calculated_time", 0) or 0
             h = int(seconds) // 3600
             m = (int(seconds) % 3600) // 60
             s = int(seconds) % 60
             return f"{h:02d}:{m:02d}:{s:02d}"
-        if c == 12:
+        if c == 13:
             daily = p.get("daily_output", 0) or 0
             return f"{daily:,.0f}"
-        if c == 13:
-            return p.get("facility", "") or "-"
         if c == 14:
+            return p.get("facility", "") or "-"
+        if c == 15:
             output = p.get("output", 0) or 0
             return f"{output:,.0f}"
-        if c == 15:
+        if c == 16:
             cost = p.get("material_cost", 0) or 0
             return f"{cost:,.0f}"
-        if c == 16:
+        if c == 17:
             profit = p.get("profit", 0) or 0
             return f"{profit:,.0f}"
-        if c == 17:
+        if c == 18:
             margin = p.get("market_margin", 0) or 0
             return f"{margin:.1f}%"
-        if c == 18:
+        if c == 19:
             margin = p.get("personal_margin", 0) or 0
             return f"{margin:.1f}%"
         return ""
@@ -224,17 +229,19 @@ class PlanTableModel(QAbstractTableModel):
     # ── ForegroundRole ───────────────────────────────────────────
 
     def _foreground(self, p: dict, c: int):
-        if c == 16:
+        if c == 17:
             profit = p.get("profit", 0) or 0
             if profit > 0:
                 return QColor(theme.GREEN)
             if profit < 0:
                 return QColor(theme.RED)
-        if c == 6:
+        if c == 8:
             status = p.get("status", "")
             if status in ("completed", "done"):
                 return QColor(theme.GREEN)
             if status in ("in_progress", "running"):
+                return QColor(theme.PRIMARY)
+            if status == "ready":
                 return QColor(theme.ACCENT_ORANGE)
             if status == "pending":
                 return QColor(theme.TEXT_SECONDARY)
@@ -255,7 +262,8 @@ class PlanTableModel(QAbstractTableModel):
 
     def flags(self, index):
         base = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
-        if index.column() in self._EDITABLE_COLS:
+        col = index.column()
+        if col in self._EDITABLE_COLS:
             row = self._plans[index.row()] if index.row() < len(self._plans) else {}
             if row.get("status") not in ("completed", "done"):
                 return base | Qt.ItemFlag.ItemIsEditable
@@ -270,23 +278,23 @@ class PlanTableModel(QAbstractTableModel):
             return False
         plan = self._plans[row_idx]
         # 直接写内存模型
-        if col == 2:
+        if col == 4:
             try:
                 plan["batch"] = int(value)
             except (ValueError, TypeError):
                 plan["batch"] = 0
-        elif col == 3:
+        elif col == 5:
             try:
                 plan["parallels"] = max(1, int(value))
             except (ValueError, TypeError):
                 plan["parallels"] = 1
-        elif col == 7:
+        elif col == 3:
             plan["notes"] = str(value)
-        elif col == 8:
+        elif col == 9:
             plan["char_name"] = str(value)
-        elif col == 13:
-            plan["facility"] = str(value)
         elif col == 14:
+            plan["facility"] = str(value)
+        elif col == 15:
             try:
                 plan["output"] = int(value)
             except (ValueError, TypeError):
@@ -432,7 +440,7 @@ class ProductionTableModel(QAbstractTableModel):
         "利润",
         "利润率",
         "评分",
-        "时均/h",
+        "时均产量",
         "状态",
         "创建时间",
     ]
