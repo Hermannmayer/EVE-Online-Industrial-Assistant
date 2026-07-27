@@ -720,6 +720,28 @@ class PlanTable(QWidget):
     # ── 主题 ─────────────────────────────────────────────────
 
     def _on_theme_changed(self) -> None:
+        # 表格体样式：直接设置完整 QTableView QSS（含选中行颜色），
+        # 绕过原生 windowsvista 风格对 ::item:selected 伪状态的限制
+        self._table.setStyleSheet(
+            f"QTableView {{"
+            f"  background-color: {theme.BG_DARK};"
+            f"  alternate-background-color: {theme.BG_SURFACE};"
+            f"  border: 1px solid {theme.BORDER};"
+            f"  border-radius: 6px;"
+            f"  gridline-color: {theme.BORDER};"
+            f"  selection-background-color: {theme.PRIMARY};"
+            f"  selection-color: {theme.TEXT_BRIGHT};"
+            f"  outline: none;"
+            f"}}"
+            f"QTableView::item {{"
+            f"  padding: 4px 8px;"
+            f"  border-bottom: 1px solid {theme.BORDER};"
+            f"}}"
+            f"QTableView::item:selected {{"
+            f"  background-color: {theme.PRIMARY};"
+            f"  color: {theme.TEXT_BRIGHT};"
+            f"}}"
+        )
         # 紧凑表头覆盖全局（全局 padding 6x8, font-size 12px）
         self._table.horizontalHeader().setStyleSheet(
             f"QHeaderView::section {{ background: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};"

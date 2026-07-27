@@ -268,8 +268,14 @@ class IndustryPage(QWidget):
             rows = [dict(zip(cols, r, strict=False)) for r in c.fetchall()]
         from ui_pyside6.models.industry_models import PlanTableModel
 
-        model = PlanTableModel(rows)
-        self._plan_table_widget.set_model(model)
+        # 复用已有 model，避免 setModel 清除选中状态
+        model = self._plan_table_widget.get_model()
+        if model is None:
+            model = PlanTableModel(rows)
+            self._plan_table_widget.set_model(model)
+        else:
+            model.set_plans(rows)
+
         self._status_bar.update_stats(rows)
         self._plan_count.setText(f"共 {len(rows)} 条计划")
 
@@ -280,6 +286,9 @@ class IndustryPage(QWidget):
 
     def _auto_calculate_plans(self, rows):
         """自动重算计划利润/边际（后台线程触发）"""
+        # 避免重入 — 防止 on_recalc_done → load_plans → _auto_calculate 循环
+        if getattr(self, "_recalc_busy", False):
+            return
         # 避免重复启动
         if self._recalc_worker and self._recalc_worker.isRunning():
             return
@@ -305,20 +314,25 @@ class IndustryPage(QWidget):
         """批量重算完成 → 更新数据库并刷新显示"""
         if not results:
             return
-        with get_container().db.connect("user") as conn:
-            for plan_id, profit, margin, score, iskph, mat_cost, hours_per_run in results:
-                try:
-                    # hours_per_run 转换为秒存入 calculated_time
-                    calculated_seconds = round(hours_per_run * 3600)
-                    conn.execute(
-                        "UPDATE production_plans SET profit=?, margin=?, score=?,"
-                        " iskph=?, material_cost=?, market_margin=?, personal_margin=?,"
-                        " calculated_time=? WHERE id=?",
-                        (profit, margin, score, iskph, mat_cost, margin, margin, calculated_seconds, plan_id),
-                    )
-                except Exception:
-                    log.exception("更新计划 %s 评分失败", plan_id)
-        self.load_plans()
+        # 设置重入锁，避免 load_plans → _auto_calculate → 新 worker -> ... 无限循环
+        self._recalc_busy = True
+        try:
+            with get_container().db.connect("user") as conn:
+                for plan_id, profit, margin, score, iskph, mat_cost, hours_per_run in results:
+                    try:
+                        # hours_per_run 转换为秒存入 calculated_time
+                        calculated_seconds = round(hours_per_run * 3600)
+                        conn.execute(
+                            "UPDATE production_plans SET profit=?, margin=?, score=?,"
+                            " iskph=?, material_cost=?, market_margin=?, personal_margin=?,"
+                            " calculated_time=? WHERE id=?",
+                            (profit, margin, score, iskph, mat_cost, margin, margin, calculated_seconds, plan_id),
+                        )
+                    except Exception:
+                        log.exception("更新计划 %s 评分失败", plan_id)
+            self.load_plans()
+        finally:
+            self._recalc_busy = False
 
     def _check_industry_data(self):
         """检查工业数据，缺失时在后台拉取"""
