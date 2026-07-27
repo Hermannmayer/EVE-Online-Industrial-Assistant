@@ -86,10 +86,18 @@ class MarketRepository:
             return r[0] if r else None
 
     def get_adjusted_price(self, type_id: int) -> float | None:
-        """获取 ESI adjusted_price（EIV 计算用）。无数据时返回 None。"""
+        """获取 ESI adjusted_price（EIV 计算用）。列不存在时回退 sell_price。"""
         with self._db.connect("mkt") as conn:
-            r = conn.execute(
-                "SELECT adjusted_price FROM market_prices WHERE type_id = ? AND adjusted_price > 0 LIMIT 1",
-                (type_id,),
-            ).fetchone()
-            return float(r[0]) if r else None
+            try:
+                r = conn.execute(
+                    "SELECT adjusted_price FROM market_prices WHERE type_id = ? AND adjusted_price > 0 LIMIT 1",
+                    (type_id,),
+                ).fetchone()
+                return float(r[0]) if r else None
+            except Exception:
+                # 列不存在（旧数据库）→ 回退 sell_price
+                r = conn.execute(
+                    "SELECT sell_price FROM market_prices WHERE type_id = ? AND sell_price > 0 LIMIT 1",
+                    (type_id,),
+                ).fetchone()
+                return float(r[0]) if r else None

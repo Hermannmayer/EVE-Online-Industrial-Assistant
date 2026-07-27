@@ -312,6 +312,15 @@ class PlanTableModel(QAbstractTableModel):
         self._sort_order = order
         self.endResetModel()
 
+    # ── 原地更新数据（保留选中 / selection model）───────────────
+
+    def set_plans(self, plans: list[dict]) -> None:
+        """替换所有数据 — 保持同一个 model 实例，避免 setModel 清除选中"""
+        self.beginResetModel()
+        self._plans = plans
+        self._sort_col = -1
+        self.endResetModel()
+
     def get_plan(self, row: int) -> dict:
         return self._plans[row] if 0 <= row < len(self._plans) else {}
 
