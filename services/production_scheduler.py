@@ -28,14 +28,10 @@ def _get_plan(conn: sqlite3.Connection, plan_id: int) -> dict | None:
 
 
 def _get_item_name(conn: sqlite3.Connection, type_id: int) -> str:
-    """从 ref.item 获取物品名称"""
-    row = conn.execute(
-        "SELECT zh_name, en_name FROM ref.item WHERE type_id = ?",
-        (type_id,),
-    ).fetchone()
-    if row:
-        return row[0] or row[1] or str(type_id)
-    return str(type_id)
+    """从 name_resolver 获取物品名称（有 terminology 覆盖兜底）"""
+    from services.name_resolver import resolve_item_name
+
+    return resolve_item_name(conn, type_id)
 
 
 def _get_blueprint_for_product(conn: sqlite3.Connection, product_type_id: int) -> tuple[int | None, int]:
