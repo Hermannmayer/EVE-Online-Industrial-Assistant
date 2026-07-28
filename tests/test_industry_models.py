@@ -159,7 +159,28 @@ class TestPlanTableModel:
     def test_header_data(self, qapp):
         """表头正确"""
         model = PlanTableModel([])
-        headers = ["☐", "图标", "产品", "备注", "批次", "并行", "组号", "子级", "状态", "人物", "流程", "蓝图", "时长", "产能", "设施", "输出", "成本", "利润", "市场利润率%", "个人利润率%"]
+        headers = [
+            "☐",
+            "图标",
+            "产品",
+            "备注",
+            "批次",
+            "并行",
+            "组号",
+            "子级",
+            "状态",
+            "人物",
+            "流程",
+            "蓝图",
+            "时长",
+            "产能",
+            "设施",
+            "输出",
+            "成本",
+            "利润",
+            "市场利润率%",
+            "个人利润率%",
+        ]
         for i, h in enumerate(headers):
             assert model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == h
 

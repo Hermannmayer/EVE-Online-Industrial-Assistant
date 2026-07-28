@@ -99,9 +99,7 @@ def calc_refining_yield(
         精炼产出率（例：0.725 = 72.5%）
     """
     skills = skills or {}
-    base = station_base or (
-        REPROCESSING_FACILITY_BONUS if is_player_facility else REPROCESSING_STATION_BASE
-    )
+    base = station_base or (REPROCESSING_FACILITY_BONUS if is_player_facility else REPROCESSING_STATION_BASE)
     bonus = (
         skills.get("提炼学概论", 0) * SKILL_REPROCESSING
         + skills.get("提炼效率理论", 0) * SKILL_REPROCESSING_EFFICIENCY
@@ -126,8 +124,7 @@ def calc_broker_rate(skills: dict, market_data: dict) -> float:
     faction_standing = market_data.get("faction_standing", 5.0)
     corp_standing = market_data.get("corp_standing", 5.0)
     standing_factor = 2 ** (
-        STANDING_FACTION_WEIGHT * max(0, faction_standing)
-        + STANDING_CORP_WEIGHT * max(0, corp_standing)
+        STANDING_FACTION_WEIGHT * max(0, faction_standing) + STANDING_CORP_WEIGHT * max(0, corp_standing)
     )
     rate = (
         (BROKER_FEE_BASE - BROKER_RELATION_MULT * broker_rel) / standing_factor

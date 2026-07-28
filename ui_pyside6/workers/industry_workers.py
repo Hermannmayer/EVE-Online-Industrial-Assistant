@@ -84,23 +84,42 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
 
     def __init__(self, plans: list[dict], char_config: dict, parent=None, char_name: str | None = None):
         super().__init__(plans, char_config=char_config, char_name=char_name, parent=parent)
+        self._char_name_internal = char_name or ""
+        self._char_config_cache: dict[str, dict] = {self._char_name_internal: self._char_config}  # char_name → config
+
+    def _resolve_char_config(self, plan_char_name: str) -> dict:
+        """按计划角色名解析配置，带缓存"""
+        if not plan_char_name or plan_char_name == self._char_name_internal:
+            return self._char_config
+        if plan_char_name not in self._char_config_cache:
+            from services.char_config_resolver import resolve_char_config
+
+            self._char_config_cache[plan_char_name] = resolve_char_config(char_name=plan_char_name) or {}
+        return self._char_config_cache[plan_char_name]
 
     def _calc_item(self, item) -> dict:
         plan_id = item.get("id")
         if not plan_id:
             return None
         try:
+            # 按计划实际设定人物解析配置
+            plan_char = (item.get("char_name") or "").strip()
+            char_config = self._resolve_char_config(plan_char)
+
             runs = max(int(item.get("runs", 1)), 1)
             parallels = max(int(item.get("parallels", 1)), 1)
             sell_hub = item.get("sell_hub", "Jita")
             # 从角色配置读取设施税率（如未设置则为 0）
-            fac_tax = self._char_config.get("market", {}).get(sell_hub.lower(), {}).get("facility_tax", 0.0)
+            fac_tax = char_config.get("market", {}).get(sell_hub.lower(), {}).get("facility_tax", 0.0)
+            # 设施成本系数 → structure_bonus（1.0 = 标准, 0.9 = 10% 折扣）
+            facility_cost_mult = float(item.get("facility_cost_mult", 1.0))
+            structure_bonus = facility_cost_mult - 1.0
             per_run = (
                 get_container()
                 .scoring_service()
                 .calc_manufacturing_score(
                     type_id=item.get("product_type_id"),
-                    char_config=self._char_config,
+                    char_config=char_config,
                     bp_me=item.get("me_level", 0),
                     bp_te=item.get("te_level", 0),
                     mat_source_hub=item.get("mat_hub", "Jita"),
@@ -108,14 +127,11 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
                     facility_tax_pct=fac_tax,
                     price_type_mat="sell",
                     price_type_prod="sell",
+                    structure_bonus=structure_bonus,
                 )
             )
             # 用 runs/parallels 缩放到计划总数值
-            total = (
-                get_container()
-                .scoring_service()
-                .calculate_total_metrics(per_run, runs, parallels)
-            )
+            total = get_container().scoring_service().calculate_total_metrics(per_run, runs, parallels)
             return (
                 plan_id,
                 total.get("total_profit", 0),

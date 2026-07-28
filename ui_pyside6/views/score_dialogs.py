@@ -23,7 +23,7 @@ from core.paths import ICON_DIR
 from ui_pyside6.views.char_settings_view import get_character, get_character_list
 from ui_pyside6.workers.base_worker import BaseBatchScoreWorker
 
-_cache = TtlLRUCache(max_size=500, ttl_seconds=1800)
+_cache = TtlLRUCache(max_size=5000, ttl_seconds=1800)
 
 REGIONS = TRADE_HUBS
 
@@ -181,107 +181,34 @@ class ScoreW(BaseBatchScoreWorker):
         self._mfg = is_mfg
         self._cfg = cfg
 
-    def _calc_item(self, row) -> dict | None:
-        tid = row.get("id")
-        if not tid:
-            return None
-
-        _pricing = get_container().pricing_service
-
-        with get_container().db.connect("ref", "mkt", "bp") as conn:
-            cur = conn.cursor()
-            if self._mfg:
-                hub = self._cfg["hub"]
-                k = f"{tid}|mfg|{hub}|{self._cfg['char']}"
-                r = _cache.get(k)
-                if not r:
-                    r = (
-                        get_container()
-                        .scoring_service()
-                        .calc_manufacturing_score(
-                            tid,
-                            self._char_config,
-                            hub,
-                            hub,
-                            self._cfg.get("tax", 0),
-                        )
-                    )
-                    _cache.set(k, r)
-                h = r.get("hours_per_run", 1) or 1
-                runs_per_day = 24 / h
-                st = r.get("status", "")
-                mkt_id = TRADE_HUB_IDS.get(hub, 10000002)
-                depth = cur.execute(
-                    "SELECT buy_volume FROM mkt.market_prices WHERE type_id=? AND region_id=? LIMIT 1",
-                    (tid, mkt_id),
-                ).fetchone()
-                bvol = depth[0] if depth else 0
-                profit_per_run = r.get("profit_per_run", 0) or 0
-                daily_out = min(runs_per_day, bvol)
-                daily_profit = profit_per_run * daily_out
-                veto = st or (bvol == 0 and "no_depth")
-                tag = _fmt_tag(daily_profit, veto)
-                row.update(
-                    {
-                        "mc": r.get("cost_per_unit"),
-                        "mr": r.get("revenue_per_unit"),
-                        "mh": runs_per_day,
-                        "ms": st,
-                        "_tag": tag,
-                        "mm": r.get("margin_pct"),
-                        "mdp": daily_profit,
-                        "bp": _pricing.get_price(tid, "buy", hub),
-                        "sp": _pricing.get_price(tid, "sell", hub),
-                    }
-                )
-            else:
-                bh = self._cfg["bh"]
-                sh = self._cfg["sh"]
-                k = f"{tid}|trade|{bh + sh}|{self._cfg['char']}"
-                r = _cache.get(k)
-                if not r:
-                    r = (
-                        get_container()
-                        .scoring_service()
-                        .calc_trade_score(
-                            tid,
-                            bh,
-                            sh,
-                            self._cfg["bs"],
-                            self._cfg["ss"],
-                            self._char_config,
-                        )
-                    )
-                    _cache.set(k, r)
-                st = r.get("status", "")
-                mkt_id = TRADE_HUB_IDS.get(sh, 10000002)
-                depth = cur.execute(
-                    "SELECT buy_volume FROM mkt.market_prices WHERE type_id=? AND region_id=? LIMIT 1",
-                    (tid, mkt_id),
-                ).fetchone()
-                bvol = depth[0] if depth else 0
-                gp = r.get("gross_profit", 0) or 0
-                sellable = min(bvol, 5000)
-                daily_profit = gp * sellable
-                veto = st or (bvol == 0 and "no_depth")
-                tag = _fmt_tag(daily_profit, veto)
-                row.update(
-                    {
-                        "tc": r.get("buy_cost"),
-                        "tr": r.get("sell_revenue"),
-                        "_tag": tag,
-                        "tm": r.get("margin_pct"),
-                        "tpm": r.get("profit_per_m3"),
-                        "bp": _pricing.get_price(tid, self._cfg["bs"], bh),
-                        "sp": _pricing.get_price(tid, self._cfg["ss"], sh),
-                    }
-                )
-            return row
-
     def run(self):
-        """ScoreW 自定义 run：迭代 _calc_item 并 emit done(list)"""
+        """ScoreW 自定义 run：预加载市场数据，迭代 _calc_item 并 emit done(list)"""
         total = len(self._items)
+        # 批量预加载所有物品的市场价和成交量（一次查询代替 N 次）
+        hub = self._cfg.get("hub", "Jita") if self._mfg else self._cfg.get("sh", "Jita")
+        mkt_id = TRADE_HUB_IDS.get(hub, 10000002)
+        self._batch_market: dict[int, dict[str, float | int | None]] = {}
+        try:
+            tids = [row.get("id") for row in self._items if row.get("id")]
+            if tids:
+                with get_container().db.connect("mkt") as conn:
+                    ph = ",".join("?" * len(tids))
+                    cur = conn.cursor()
+                    cur.execute(
+                        f"SELECT type_id, buy_price, sell_price, buy_volume, sell_volume "
+                        f"FROM market_prices WHERE region_id=? AND type_id IN ({ph})",
+                        (mkt_id, *tids),
+                    )
+                    for r in cur.fetchall():
+                        self._batch_market[r[0]] = {
+                            "bp": r[1], "sp": r[2], "bv": r[3] or 0, "sv": r[4] or 0,
+                        }
+        except Exception:
+            self._batch_market = {}
+
         for i, item in enumerate(self._items):
+            if self.isInterruptionRequested():
+                return
             try:
                 self._calc_item(item)
             except Exception:
@@ -289,6 +216,91 @@ class ScoreW(BaseBatchScoreWorker):
             if (i + 1) % 50 == 0 or i == total - 1:
                 self.progress.emit(i + 1, total)
         self.done.emit(self._items)
+
+    def _calc_item(self, row) -> dict | None:
+        tid = row.get("id")
+        if not tid:
+            return None
+
+        if self._mfg:
+            hub = self._cfg["hub"]
+            k = f"{tid}|mfg|{hub}|{self._cfg['char']}"
+            r = _cache.get(k)
+            if not r:
+                r = (
+                    get_container()
+                    .scoring_service()
+                    .calc_manufacturing_score(
+                        tid,
+                        self._char_config,
+                        hub,
+                        hub,
+                        self._cfg.get("tax", 0),
+                    )
+                )
+                _cache.set(k, r)
+            h = r.get("hours_per_run", 1) or 1
+            runs_per_day = 24 / h
+            st = r.get("status", "")
+            mkt = self._batch_market.get(tid, {})
+            bvol = mkt.get("bv", 0) or 0
+            profit_per_run = r.get("profit_per_run", 0) or 0
+            daily_out = min(runs_per_day, bvol)
+            daily_profit = profit_per_run * daily_out
+            veto = st or (bvol == 0 and "no_depth")
+            tag = _fmt_tag(daily_profit, veto)
+            row.update(
+                {
+                    "mc": r.get("cost_per_unit"),
+                    "mr": r.get("revenue_per_unit"),
+                    "mh": runs_per_day,
+                    "ms": st,
+                    "_tag": tag,
+                    "mm": r.get("margin_pct"),
+                    "mdp": daily_profit,
+                    "bp": mkt.get("bp"),
+                    "sp": mkt.get("sp"),
+                }
+            )
+        else:
+            bh = self._cfg["bh"]
+            sh = self._cfg["sh"]
+            k = f"{tid}|trade|{bh + sh}|{self._cfg['char']}"
+            r = _cache.get(k)
+            if not r:
+                r = (
+                    get_container()
+                    .scoring_service()
+                    .calc_trade_score(
+                        tid,
+                        bh,
+                        sh,
+                        self._cfg["bs"],
+                        self._cfg["ss"],
+                        self._char_config,
+                    )
+                )
+                _cache.set(k, r)
+            st = r.get("status", "")
+            mkt = self._batch_market.get(tid, {})
+            bvol = mkt.get("bv", 0) or 0
+            gp = r.get("gross_profit", 0) or 0
+            sellable = min(bvol, 5000)
+            daily_profit = gp * sellable
+            veto = st or (bvol == 0 and "no_depth")
+            tag = _fmt_tag(daily_profit, veto)
+            row.update(
+                {
+                    "tc": r.get("buy_cost"),
+                    "tr": r.get("sell_revenue"),
+                    "_tag": tag,
+                    "tm": r.get("margin_pct"),
+                    "tpm": r.get("profit_per_m3"),
+                    "bp": mkt.get("bp"),
+                    "sp": mkt.get("sp"),
+                }
+            )
+        return row
 
 
 def _fmt_tag(daily_profit: float, veto: str | bool = "") -> str:

@@ -47,6 +47,7 @@ class TestPlanDbSchema:
 # 注意: 完整的 PlanTableModel 测试已在 test_industry_models.py 中覆盖
 # 这里只补充 IndustryPage 相关的集成测试
 
+
 class TestPlanTableIntegration:
     """生产计划表模型集成操作"""
 

@@ -9,8 +9,9 @@
 
 from unittest.mock import patch
 
-from ui_pyside6.main_window import NAV_TREE, MainWindow, PriceCheckWorker, PriceUpdateWorker
 import pytest
+
+from ui_pyside6.main_window import NAV_TREE, MainWindow, PriceCheckWorker, PriceUpdateWorker
 
 pytestmark = pytest.mark.slow
 
@@ -207,6 +208,7 @@ class TestMainWindowIcons:
         window = MainWindow()
         icon = window._create_person_icon()
         from PySide6.QtGui import QIcon
+
         assert isinstance(icon, QIcon)
 
     def test_create_settings_icon_returns_qicon(self, qapp):
@@ -214,6 +216,7 @@ class TestMainWindowIcons:
         window = MainWindow()
         icon = window._create_settings_icon()
         from PySide6.QtGui import QIcon
+
         assert isinstance(icon, QIcon)
 
     def test_create_person_icon_custom_size(self, qapp):

@@ -472,14 +472,16 @@ class ScoringService:
 
         # 保留原始 per_run 字段 + 新增 total_ 字段
         result = dict(per_run)
-        result.update({
-            "total_material_cost": round(total_mat_cost, 2),
-            "total_profit": round(total_profit, 2),
-            "total_time_hours": round(total_time_hours, 2),
-            "total_isk_per_hour": round(total_iskph, 2),
-            "total_daily_output": round(daily_output, 1),
-            "total_margin_pct": margin,  # 比值不变
-        })
+        result.update(
+            {
+                "total_material_cost": round(total_mat_cost, 2),
+                "total_profit": round(total_profit, 2),
+                "total_time_hours": round(total_time_hours, 2),
+                "total_isk_per_hour": round(total_iskph, 2),
+                "total_daily_output": round(daily_output, 1),
+                "total_margin_pct": margin,  # 比值不变
+            }
+        )
         return result
 
     # ── 制造评分 ──
@@ -563,7 +565,7 @@ class ScoringService:
                 adj_price = get_adjusted_price(mat_id, _db=self._db) or mat_price or 0.0
                 # 正确公式：ceil(base_qty × waste_factor) 每轮次
                 per_run_qty = calc_material_per_run(mat_qty, wastefactor, bp_me, STRUCTURE_MAT_SAVING)
-                waste_qty = per_run_qty * prod_qty  # 多轮次
+                waste_qty = per_run_qty  # 每轮次仅用 per_run_qty（已含 ME 调整）
                 if mat_price:
                     total_mat_cost += waste_qty * mat_price
                 mat_name = resolve_item_name(c, mat_id)
