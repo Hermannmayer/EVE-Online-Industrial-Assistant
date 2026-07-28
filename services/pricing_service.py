@@ -4,6 +4,7 @@
 替代 scoring_service.py 中的模块级 get_price/get_volume/get_system_cost_index。
 """
 
+from services.database_manager import DatabaseManager
 from services.repositories.market_repository import MarketRepository
 
 # 贸易中心 → 太阳系 ID 映射（用于 SCI 查询）
@@ -24,7 +25,7 @@ def trade_hub_to_system_id(hub: str) -> int | None:
 class PricingService:
     """统一定价查询"""
 
-    def __init__(self, db):
+    def __init__(self, db: DatabaseManager) -> None:
         self._db = db
         self._market_repo = MarketRepository(db)
 

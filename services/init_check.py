@@ -73,7 +73,8 @@ def check_blueprint_names() -> int:
             " WHERE (zh_name IS NULL OR zh_name = '')"
             " AND type_id IN (SELECT DISTINCT blueprint_type_id FROM bp.blueprint_activities)"
         )
-        count = c.fetchone()[0]
+        row = c.fetchone()
+        count: int = int(row[0]) if row else 0
         conn.close()
         return count
     except Exception:

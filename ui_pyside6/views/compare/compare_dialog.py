@@ -448,6 +448,7 @@ class CompareDialog(QDialog):
             "char": self._char_combo.currentText(),
             "tax": self._tax_spin.value(),
         }
+        dlg: QDialog
         if mode == "trade":
             from ui_pyside6.views.score_dialogs import TradeDlg
 

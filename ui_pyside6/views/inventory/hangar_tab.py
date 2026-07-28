@@ -136,8 +136,8 @@ class PasteImportDialog(QDialog):
         layout.addLayout(price_row)
 
         # 互斥
-        for btn in (self._price_use_sell, self._price_use_buy, self._price_use_avg, self._price_use_disc):
-            btn.toggled.connect(lambda checked, b=btn: self._on_price_toggle(b) if checked else None)
+        for rb in (self._price_use_sell, self._price_use_buy, self._price_use_avg, self._price_use_disc):
+            rb.toggled.connect(lambda checked, b=rb: self._on_price_toggle(b) if checked else None)
 
         btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btn.accepted.connect(self._parse)

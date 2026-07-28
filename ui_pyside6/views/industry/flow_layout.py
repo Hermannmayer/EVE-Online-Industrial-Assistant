@@ -22,15 +22,21 @@ class FlowLayout(QLayout):
     def horizontalSpacing(self) -> int:
         if self._h_spacing >= 0:
             return self._h_spacing
-        if self.parent():
-            return self.parent().style().pixelMetric(QStyle.PM_LayoutHorizontalSpacing, None, self.parent())
+        parent = self.parent()
+        if parent is not None:
+            s = parent.style()  # type: ignore[attr-defined]
+            if s is not None:
+                return s.pixelMetric(QStyle.PixelMetric.PM_LayoutHorizontalSpacing, None, parent)  # type: ignore[attr-defined,no-any-return]
         return -1
 
     def verticalSpacing(self) -> int:
         if self._v_spacing >= 0:
             return self._v_spacing
-        if self.parent():
-            return self.parent().style().pixelMetric(QStyle.PM_LayoutVerticalSpacing, None, self.parent())
+        parent = self.parent()
+        if parent is not None:
+            s = parent.style()  # type: ignore[attr-defined]
+            if s is not None:
+                return s.pixelMetric(QStyle.PixelMetric.PM_LayoutVerticalSpacing, None, parent)  # type: ignore[attr-defined,no-any-return]
         return -1
 
     def count(self) -> int:

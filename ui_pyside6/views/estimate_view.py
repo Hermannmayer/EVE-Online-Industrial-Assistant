@@ -3,6 +3,7 @@
 """
 
 import os
+from typing import Any
 
 from PySide6.QtCore import (
     QAbstractTableModel,
@@ -68,7 +69,7 @@ def _parse_clipboard(text: str) -> list[tuple[str, int, float]]:
       空格分隔：物品名*  数量  分组*  体积  估价
     物品名末尾的 * 会被自动去除。
     """
-    results: list[tuple[str, int]] = []
+    results: list[tuple[str, int, float]] = []
     for line in text.strip().split("\n"):
         line = line.strip()
         if not line:
@@ -301,7 +302,7 @@ class EstimateTableModel(QAbstractTableModel):
         if col == 0:
             return ""
         elif col == 1:
-            return row.get("name", "?")
+            return row.get("name", "?")  # type: ignore[no-any-return]
         elif col == 2:
             return f"{row.get('qty', 0):,}"
         elif col == 3:
@@ -470,7 +471,7 @@ class EstimatePage(QWidget):
         self._hangar_combo.setStyleSheet("QComboBox { font-weight: bold; }")
 
     def save_state(self) -> dict:
-        data = {}
+        data: dict[str, Any] = {}
         try:
             text = QApplication.clipboard().text()
             if text.strip():
@@ -1014,7 +1015,7 @@ class EstimatePage(QWidget):
 
     def _row_index(self, row: dict) -> int | None:
         try:
-            return self._model._rows.index(row)
+            return self._model._rows.index(row)  # type: ignore[no-any-return]
         except ValueError:
             return None
 

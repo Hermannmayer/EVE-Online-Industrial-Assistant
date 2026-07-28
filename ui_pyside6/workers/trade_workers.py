@@ -61,7 +61,7 @@ class TradeScoreWorker(BaseScoreWorker):
         self._quantity = quantity
 
     def _compute(self) -> dict:
-        return (
+        return (  # type: ignore[no-any-return]
             get_container()
             .scoring_service()
             .calc_trade_score(
@@ -102,7 +102,7 @@ class TransportWorker(BaseScoreWorker):
         self._use_public_freight = use_public_freight
 
     def _compute(self) -> dict:
-        return get_container().logistics_service.calc_transport_profit(
+        return get_container().logistics_service.calc_transport_profit(  # type: ignore[no-any-return]
             type_id=self._type_id,
             buy_hub=self._buy_hub,
             sell_hub=self._sell_hub,

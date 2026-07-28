@@ -5,6 +5,8 @@
 """
 
 import os
+from collections.abc import Callable
+from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, Qt
 from PySide6.QtGui import QColor, QPixmap
@@ -198,31 +200,31 @@ class BlueprintTableModel(QAbstractTableModel):
         return self._rows[row] if 0 <= row < len(self._rows) else None
 
     def sort(self, column: int, order=Qt.SortOrder.AscendingOrder):
-        _SORT_KEYS = {
+        _SORT_KEYS: dict[int, Callable[[dict], Any]] = {
             1: lambda r: r.get("zh_name") or r.get("display_name") or "",
             2: lambda r: "蓝图原图" if r.get("is_bpo") else "蓝图拷贝",
             3: lambda r: r.get("me_level", 0),
             4: lambda r: r.get("te_level", 0),
-            5: "product_name",
+            5: lambda r: str(r.get("product_name") or ""),
             6: lambda r: r.get("base_time", 0),
             7: lambda r: r.get("runs", 1) if r.get("runs", 1) != -1 else float("inf"),
             8: lambda r: r.get("material_cost") or 0,
             9: lambda r: r.get("revenue") or 0,
             10: lambda r: r.get("margin") or float("-inf"),
         }
-        key = _SORT_KEYS.get(column)
-        if not key and column != 0:
+        key_fn = _SORT_KEYS.get(column)
+        if not key_fn and column != 0:
             return
+        key: Callable[[dict], Any]
         if column == 0:
-
-            def key(r):
+            def _sort_key(r: dict) -> Any:
                 return r.get("product_type_id") or 0
-
-        if isinstance(key, str):
-            k = key
-
-            def key(r):
-                return (r.get(k) or "") if isinstance(r.get(k), str) else str(r.get(k) or "")
+            key = _sort_key
+        else:
+            key_fn = _SORT_KEYS.get(column)
+            if key_fn is None:
+                return
+            key = key_fn
 
         rev = order == Qt.SortOrder.DescendingOrder
         self.beginResetModel()

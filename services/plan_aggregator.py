@@ -222,6 +222,7 @@ def expand_material_requirements(
 
     for plan in plans:
         pid = plan.get("product_type_id")
+        assert pid is not None, "product_type_id required"
         runs = plan.get("runs", 1) or 1
         parallels = plan.get("parallels", 1) or 1
         me = plan.get("me_level", me_level) or me_level
@@ -442,6 +443,7 @@ def calculate_output_with_overflow(
 
     for plan in plans:
         pid = plan.get("product_type_id")
+        assert pid is not None, "product_type_id required"
         runs = plan.get("runs", 1) or 1
         parallels = plan.get("parallels", 1) or 1
         me = plan.get("me_level", me_level) or me_level

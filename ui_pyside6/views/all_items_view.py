@@ -381,9 +381,9 @@ class AllItemsDialog(QDialog):
             | Qt.WindowType.WindowMinMaxButtonsHint
             | Qt.WindowType.WindowCloseButtonHint
         )
-        self._data = []
+        self._data: list[dict] = []
         self._manufacturable_only = manufacturable_only
-        self._filt = []
+        self._filt: list[dict] = []
         self._bp_cached = None
         self._mfg = {"hub": "Jita", "char": "main", "tax": 0}
         self._trade = {"bh": "Amarr", "sh": "Jita", "bs": "sell", "ss": "sell", "char": "main"}

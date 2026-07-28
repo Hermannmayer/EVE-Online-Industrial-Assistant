@@ -1,6 +1,7 @@
 """工业制造 — Table Model 类"""
 
 import os
+from typing import cast
 
 from PySide6.QtCore import QAbstractTableModel, Qt
 from PySide6.QtGui import QColor, QPixmap, QPixmapCache
@@ -187,9 +188,9 @@ class PlanTableModel(QAbstractTableModel):
         if c == 1:
             return ""  # 图标列不显示文本
         if c == 2:
-            return p.get("product_name", f"ID:{p.get('product_type_id', '')}")
+            return cast(str, p.get("product_name", f"ID:{p.get('product_type_id', '')}"))
         if c == 3:
-            return p.get("notes", "") or ""
+            return cast(str, p.get("notes", "")) or ""
         if c == 4:
             return str(p.get("batch", 0))
         if c == 5:
@@ -199,7 +200,7 @@ class PlanTableModel(QAbstractTableModel):
         if c == 7:
             return str(p.get("child_level", 0))
         if c == 8:
-            return self._STATUS_LABELS.get(p.get("status", ""), p.get("status", ""))
+            return cast(str, self._STATUS_LABELS.get(p.get("status", ""), p.get("status", "")))
         if c == 9:
             return p.get("char_name", "") or "-"
         if c == 10:

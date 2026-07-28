@@ -44,8 +44,8 @@ def calc_broker_fee(skills: dict, faction_standing: float, corp_standing: float,
     standing_factor = 2 ** (0.14 * max(0, faction_standing) + 0.06 * max(0, corp_standing))
     if standing_factor == 0:
         return base_rate
-    return max(0.1, (base_rate - 0.05 * broker_rel) / standing_factor)
-
+    return max(0.1, (base_rate - 0.05 * broker_rel) / standing_factor)  # type: ignore[no-any-return]
+  # type: ignore[no-any-return]
 
 def calc_relist_discount(skills: dict) -> float:
     """
@@ -53,14 +53,14 @@ def calc_relist_discount(skills: dict) -> float:
     Advanced Broker Relations: 每级 +5%，0级=50%，5级=75%
     """
     adv = skills.get("高级经纪人关系学", 0)
-    return 50 + adv * 5
-
+    return 50 + adv * 5  # type: ignore[no-any-return]
+  # type: ignore[no-any-return]
 
 def calc_sales_tax(skills: dict, base_tax: float = 2.0) -> float:
     """计算销售税率 (%)  accounting: 每级 -3%"""
     accounting = skills.get("会计学", 0)
-    return base_tax * (1 - 0.03 * accounting)
-
+    return base_tax * (1 - 0.03 * accounting)  # type: ignore[no-any-return]
+  # type: ignore[no-any-return]
 
 def calc_max_orders(skills: dict, base_orders: int = 15) -> int:
     """计算最大订单数"""
@@ -68,8 +68,8 @@ def calc_max_orders(skills: dict, base_orders: int = 15) -> int:
     retail = skills.get("零售技巧", 0)
     wholesale = skills.get("批发技巧", 0)
     tycoon = skills.get("商业巨头", 0)
-    return base_orders + 4 * trade + 8 * retail + 16 * wholesale + 32 * tycoon
-
+    return base_orders + 4 * trade + 8 * retail + 16 * wholesale + 32 * tycoon  # type: ignore[no-any-return]
+  # type: ignore[no-any-return]
 
 def format_pct(value: float) -> str:
     return f"{value:.2f}%"
@@ -237,7 +237,7 @@ def save_all_data(data: dict):
 #  植入体数据查询
 # ═══════════════════════════════════════════
 
-IMPLANT_CACHE = []
+IMPLANT_CACHE: list[dict] = []
 
 
 def load_implants() -> list[dict]:
@@ -324,10 +324,10 @@ def get_character_list() -> list[str]:
 def get_character(name: str) -> dict | None:
     """获取指定角色的完整配置"""
     data = load_all_data()
-    return data.get("characters", {}).get(name)
+    return data.get("characters", {}).get(name)  # type: ignore[no-any-return]
+  # type: ignore[no-any-return]
 
-
-def get_market_rate(char_name: str, hub: str, skills: dict = None) -> dict:
+def get_market_rate(char_name: str, hub: str, skills: dict | None = None) -> dict:
     """
     获取角色在指定交易中心的完整费率信息
     返回: {broker_fee, sales_tax, relist_discount, max_orders, faction_standing, corp_standing}
@@ -492,8 +492,9 @@ class SkillsPage(QWidget):
 
         while self._skill_layout.count() > 0:
             item = self._skill_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
 
         for skill_name in skills:
             level = self._data.get(skill_name, 0)

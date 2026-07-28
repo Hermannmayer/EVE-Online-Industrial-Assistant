@@ -7,6 +7,7 @@ import os
 from PySide6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
+    QPersistentModelIndex,
     QSortFilterProxyModel,
     Qt,
     QThread,
@@ -156,7 +157,7 @@ class ContractTableModel(QAbstractTableModel):
             return str(row.get("contract_id", ""))
         elif col == 1:
             raw = row.get("type", "")
-            return CONTRACT_TYPE_CN.get(raw, raw)
+            return CONTRACT_TYPE_CN.get(raw, raw)  # type: ignore[no-any-return]
         elif col == 2:
             return row.get("title", "") or "—"
         elif col == 3:
@@ -173,7 +174,7 @@ class ContractTableModel(QAbstractTableModel):
             return str(v) if v else "—"
         elif col == 7:
             raw = row.get("status", "")
-            return CONTRACT_STATUS_CN.get(raw, raw)
+            return CONTRACT_STATUS_CN.get(raw, raw)  # type: ignore[no-any-return]
         elif col == 8:
             return row.get("date_issued", "") or "—"
         elif col == 9:
@@ -337,7 +338,7 @@ class ContractFilterProxy(QSortFilterProxyModel):
         self._buy_sell = mode
         self.invalidateFilter()
 
-    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex | QPersistentModelIndex) -> bool:
         model = self.sourceModel()
         if not model:
             return True

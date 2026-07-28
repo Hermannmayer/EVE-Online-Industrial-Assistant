@@ -45,8 +45,8 @@ class TopToolbar(QWidget):
         "Rens": "价格取自（伦斯）",
         "Hek": "价格取自（赫克）",
     }
-    HANGARS = []  # 从 inventory_manager.get_hangars() 加载
-    CHARS = []  # 从角色设置加载
+    HANGARS: list[dict] = []  # 从 inventory_manager.get_hangars() 加载
+    CHARS: list[str] = []  # 从角色设置加载
     _chars_loaded = False
     FILTERS = ["全部", "待排", "运行中", "待下线", "已完成"]
 
@@ -203,21 +203,21 @@ class TopToolbar(QWidget):
         except Exception:
             pass
 
-    def get_hangar_id(self) -> int:
+    def get_hangar_id(self) -> int | None:
         """获取选中的入库机库 ID，无选择时返回 None"""
         return self._hangar_combo.currentData() if self._hangar_combo.count() > 0 else None
 
     def _on_hangar_changed(self, hangar: str):
         self.hangar_changed.emit(hangar)
 
-    def get_hangar(self) -> str:
+    def get_hangar(self) -> int:
         return self._hangar_combo.currentData() if self._hangar_combo.count() > 0 else -1
 
     def get_hangar_name(self) -> str:
         return self._hangar_combo.currentText() if self._hangar_combo.count() > 0 else ""
 
     def get_char_name(self) -> str:
-        return self._char_combo.currentText()
+        return self._char_combo.currentText()  # type: ignore[no-any-return]
 
     def get_hub_name(self) -> str:
         """返回 Hub 英文名（内部使用）"""
@@ -226,7 +226,7 @@ class TopToolbar(QWidget):
         for eng, disp in self.HUB_DISPLAY.items():
             if disp == display:
                 return eng
-        return display
+        return display  # type: ignore[no-any-return]
 
     @classmethod
     def HUBS_DISPLAY_LIST(cls) -> list[str]:
@@ -274,7 +274,7 @@ class TopToolbar(QWidget):
             QMessageBox.information(self, "提示", "请输入蓝图名称或粘贴蓝图信息")
 
     def get_filter(self) -> str:
-        return self._filter_combo.currentText()
+        return self._filter_combo.currentText()  # type: ignore[no-any-return]
 
     def _on_view_toggled(self, checked: bool):
         if checked:
