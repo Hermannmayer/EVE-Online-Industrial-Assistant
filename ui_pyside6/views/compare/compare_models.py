@@ -4,7 +4,7 @@
 
 import os
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtCore import QAbstractTableModel, Qt
 from PySide6.QtGui import QColor, QIcon
 
 import ui_pyside6.theme as theme
@@ -63,10 +63,10 @@ class CompareTableModel(QAbstractTableModel):
         self._rows = rows
         self.endResetModel()
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=None):
         return len(self._rows)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=None):
         return len(self._cols)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):

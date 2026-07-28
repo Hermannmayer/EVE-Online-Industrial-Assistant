@@ -8,7 +8,7 @@ import time as _time
 from datetime import UTC
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractTableModel, QEvent, QModelIndex, QPoint, Qt, QThread, Signal
+from PySide6.QtCore import QAbstractTableModel, QEvent, QPoint, Qt, QThread, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -62,10 +62,10 @@ class QueryTableModel(QAbstractTableModel):
         self._sort_col = -1
         self.endResetModel()
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=None):
         return len(self._rows)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=None):
         return len(_COLUMNS)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):

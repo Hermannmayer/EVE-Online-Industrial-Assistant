@@ -9,23 +9,22 @@ import pytest
 from PySide6.QtCore import QAbstractItemModel, QCoreApplication, QModelIndex, QSortFilterProxyModel, Qt
 from PySide6.QtGui import QShowEvent
 
+from ui_pyside6.theme import ONE_LIGHT, apply_theme
+
 pytestmark = pytest.mark.slow
 
 
-from ui_pyside6.theme import ONE_LIGHT, apply_theme
-
-
 class _FakeModel(QAbstractItemModel):
-    def index(self, row, col, parent=QModelIndex()):
+    def index(self, row, col, parent=None):
         return self.createIndex(row, col)
 
     def parent(self, index):
         return QModelIndex()
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=None):
         return 0
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=None):
         return 0
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):

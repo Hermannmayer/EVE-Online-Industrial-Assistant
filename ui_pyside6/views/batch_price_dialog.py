@@ -2,7 +2,7 @@
 批量查价对话框 — 同时查询多个物品的市场价格
 """
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QThread, Signal
+from PySide6.QtCore import QAbstractTableModel, Qt, QThread, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -46,10 +46,10 @@ class BatchPriceModel(QAbstractTableModel):
         self._rows = rows
         self.endResetModel()
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=None):
         return len(self._rows)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=None):
         return len(_COLUMNS)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):

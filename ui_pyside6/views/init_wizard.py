@@ -186,13 +186,13 @@ class InitWizard(QDialog):
         layout = QVBoxLayout()
         layout.setSpacing(6)
 
-        for name, key, _ in STEPS:
+        for _name, key, _ in STEPS:
             row = QHBoxLayout()
             self._step_rows[key] = QLabel("⏸️")
             self._step_rows[key].setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 14px;")
             row.addWidget(self._step_rows[key])
 
-            name_label = QLabel(name)
+            name_label = QLabel(_name)
             name_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 13px;")
             row.addWidget(name_label)
 
@@ -205,7 +205,7 @@ class InitWizard(QDialog):
         """刷新所有步骤状态（从 DB 检查）"""
         status = check_all()
         done = 0
-        for name, key, _ in STEPS:
+        for _name, key, _ in STEPS:
             if status.get(key, False):
                 self._step_rows[key].setText(" ✅")
                 self._step_rows[key].setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 14px;")

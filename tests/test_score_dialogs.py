@@ -5,11 +5,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import ui_pyside6.theme as theme
-
-pytestmark = pytest.mark.slow
-
 from ui_pyside6.theme import apply_theme
 from ui_pyside6.views.score_dialogs import MfgDlg, ScoreW, TradeDlg, _fmt_tag
+
+pytestmark = pytest.mark.slow
 
 # ═══════════════════════════════════════════
 #  Fixtures
@@ -88,7 +87,7 @@ def test_mfg_dlg_get(qapp, mock_char_settings, mock_container):
     assert "char" in result
     assert "tax" in result
     assert isinstance(result["hub"], str)
-    assert isinstance(result["tax"], (int, float))
+    assert isinstance(result["tax"], int | float)
     dlg.close()
 
 

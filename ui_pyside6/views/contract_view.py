@@ -103,10 +103,10 @@ class ContractTableModel(QAbstractTableModel):
         self._sort_col = -1
         self.endResetModel()
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=None):
         return len(self._rows)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=None):
         return len(_CONTRACT_COLUMNS)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -237,10 +237,10 @@ class ContractItemTableModel(QAbstractTableModel):
         self._rows = rows
         self.endResetModel()
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=None):
         return len(self._rows)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=None):
         return len(_ITEM_COLUMNS)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):

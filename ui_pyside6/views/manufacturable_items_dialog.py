@@ -33,12 +33,12 @@ from core.cache import TtlLRUCache
 from core.container import get_container
 from core.paths import data_dir
 from services.terminology import term
-
-_cache = TtlLRUCache(max_size=5000, ttl_seconds=1800)
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 from ui_pyside6.views.all_items_view import JITA_RID, AModel, ItemsW, Proxy, SearchItemsW
 from ui_pyside6.views.compare_dialog import CompareDialog
 from ui_pyside6.views.score_dialogs import MfgDlg, ScoreW
+
+_cache = TtlLRUCache(max_size=5000, ttl_seconds=1800)
 
 DASH = chr(8212)
 

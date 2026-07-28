@@ -13,6 +13,7 @@
 import asyncio
 import io
 import os
+import sqlite3
 
 import aiohttp
 import aiosqlite
@@ -135,9 +136,6 @@ def parse_activities(bp_id: int, bp_data: dict):
             skills_rows.append((bp_id, activity, skill["typeID"], skill["level"]))
 
     return activities_rows, materials_rows, products_rows, skills_rows
-
-
-import sqlite3
 
 
 async def run_blueprint_update():
