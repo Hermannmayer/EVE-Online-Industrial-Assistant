@@ -35,12 +35,11 @@ def search_items(query: str) -> list[dict]:
 
 
 def item_name(type_id: int) -> str:
-    """获取物品中文名"""
+    """获取物品中文名（name_resolver 有 terminology 覆盖兜底）"""
+    from services.name_resolver import resolve_item_name
+
     with get_container().db.connect("ref") as conn:
-        c = conn.cursor()
-        c.execute("SELECT zh_name, en_name FROM item WHERE type_id = ?", (type_id,))
-        row = c.fetchone()
-        return (row[0] or row[1] or str(type_id)) if row else str(type_id)
+        return resolve_item_name(conn, type_id)
 
 
 class CompareWorker(QThread):
