@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import cast
 
 _DATA_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "data"
 _TERM_FILE = _DATA_DIR / "terminology.json"
@@ -47,7 +48,7 @@ class Terminology:
     def activity(self, key: str) -> str:
         """蓝图活动名英译中，未知 key 返回原文。"""
         self._ensure()
-        return self._data.get("activities", {}).get(key, key)
+        return cast(str, self._data.get("activities", {}).get(key, key))
 
     # ── 物品名覆盖 ──
 
@@ -68,19 +69,19 @@ class Terminology:
     def label(self, key: str) -> str:
         """UI 标签翻译。"""
         self._ensure()
-        return self._data.get("ui_labels", {}).get(key, key)
+        return cast(str, self._data.get("ui_labels", {}).get(key, key))
 
     # ── 市场分类 ──
 
     def market_category(self, key: str) -> str:
         self._ensure()
-        return self._data.get("market_categories", {}).get(key, key)
+        return cast(str, self._data.get("market_categories", {}).get(key, key))
 
     # ── 技能别名 ──
 
     def skill_alias(self, en_name: str) -> str | None:
         self._ensure()
-        return self._data.get("skill_aliases", {}).get(en_name)
+        return cast(str | None, self._data.get("skill_aliases", {}).get(en_name))
 
     # ── 技能名（正式注册表） ──
 
@@ -92,10 +93,10 @@ class Terminology:
         self._ensure()
         names = self._data.get("skill_names", {})
         if en_name in names:
-            return names[en_name]
+            return cast(str, names[en_name])
         # fallback: skill_aliases 兼容旧引用
         aliases = self._data.get("skill_aliases", {})
-        return aliases.get(en_name)
+        return cast(str | None, aliases.get(en_name))
 
     # ── 重载 ──
 

@@ -49,7 +49,7 @@ def terminology_data() -> dict:
     if not _TERM_FILE.exists():
         return {}
     with open(_TERM_FILE, encoding="utf-8") as f:
-        return json.load(f)
+        return json.load(f)  # type: ignore[no-any-return]
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -63,6 +63,8 @@ def _get_skills_from_charsettings() -> list[str]:
         "char_settings_view",
         _PROJECT_ROOT / "ui_pyside6" / "views" / "char_settings_view.py",
     )
+    if spec is None or spec.loader is None:
+        return []
     mod = importlib.util.module_from_spec(spec)
     # 该模块有大量 UI 依赖，只读取 SKILL_CATEGORIES 常量
     try:
@@ -72,8 +74,8 @@ def _get_skills_from_charsettings() -> list[str]:
         pass
     skills = []
     if hasattr(mod, "ALL_SKILLS"):
-        return mod.ALL_SKILLS
-    # fallback: 从文件直接提取
+        return mod.ALL_SKILLS  # type: ignore[no-any-return]
+    # fallback: 从文件直接提取  # type: ignore[no-any-return]
     import ast
 
     src = _PROJECT_ROOT / "ui_pyside6" / "views" / "char_settings_view.py"
@@ -133,7 +135,7 @@ def _extract_skill_keys_from_eve_formulas() -> set[str]:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr == "get":
                 if node.args and isinstance(node.args[0], ast.Constant):
-                    keys.add(node.args[0].value)
+                    keys.add(str(node.args[0].value))
     return keys
 
 

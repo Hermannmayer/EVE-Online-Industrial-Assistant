@@ -92,9 +92,9 @@ class PlanRepository:
             sets = ", ".join(f"{k} = ?" for k in fields)
             vals = list(fields.values()) + [plan_id]
             conn.execute(f"UPDATE production_plans SET {sets} WHERE id = ?", vals)
-            return conn.total_changes > 0
+            return conn.total_changes > 0  # type: ignore[no-any-return]
 
     def delete(self, plan_id: int) -> bool:
         with self._db.connect("user") as conn:
             conn.execute("DELETE FROM production_plans WHERE id = ?", (plan_id,))
-            return conn.total_changes > 0
+            return conn.total_changes > 0  # type: ignore[no-any-return]

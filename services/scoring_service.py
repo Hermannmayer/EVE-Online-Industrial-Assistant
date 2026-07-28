@@ -549,7 +549,7 @@ class ScoringService:
                 return result
 
             # 用 blueprint_reader 获取材料（含 wastefactor）
-            mat_rows = get_blueprint_materials(c, bp_id)
+            mat_rows = get_blueprint_materials(conn, bp_id)
             if not mat_rows:
                 result["status"] = "no_materials"
                 return result
@@ -568,7 +568,7 @@ class ScoringService:
                 waste_qty = per_run_qty  # 每轮次仅用 per_run_qty（已含 ME 调整）
                 if mat_price:
                     total_mat_cost += waste_qty * mat_price
-                mat_name = resolve_item_name(c, mat_id)
+                mat_name = resolve_item_name(conn, mat_id)
                 # EIV 基础材料量（ME0 无浪费）× adjusted_price
                 base_qty_no_waste = mat_qty
                 eiv_materials.append((base_qty_no_waste, adj_price))
@@ -884,7 +884,7 @@ class ScoringService:
                 waste_qty = mat_qty * waste_factor
                 if mat_price:
                     total_mat_cost += waste_qty * mat_price
-                mat_name = resolve_item_name(c, mat_id)
+                mat_name = resolve_item_name(conn, mat_id)
                 mat_detail.append(
                     {
                         "name": mat_name,

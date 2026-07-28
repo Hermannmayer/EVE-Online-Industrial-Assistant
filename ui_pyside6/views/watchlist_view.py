@@ -171,9 +171,9 @@ class WatchlistTableModel(QAbstractTableModel):
 
     def _get_display(self, row: dict, col: int) -> str:
         if col == 1:
-            return row.get("zh_name", "")
+            return row.get("zh_name", "")  # type: ignore[no-any-return]
         elif col == 2:
-            return row.get("en_name", "")
+            return row.get("en_name", "")  # type: ignore[no-any-return]
         elif col == 3:
             return _REGION_LABELS.get(row.get("region_id", 0), str(row.get("region_id", "")))
         elif col == 4:
@@ -196,7 +196,7 @@ class WatchlistTableModel(QAbstractTableModel):
             st = row.get("sell_threshold")
             return f"{st:,.2f}" if st is not None else "—"
         elif col == 9:
-            return row.get("note", "")
+            return row.get("note", "")  # type: ignore[no-any-return]
         return ""
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
@@ -669,5 +669,5 @@ class WatchlistPage(QWidget):
 
     def _get_row(self, row_idx: int) -> dict | None:
         if 0 <= row_idx < len(self._model._rows):
-            return self._model._rows[row_idx]
+            return self._model._rows[row_idx]  # type: ignore[no-any-return]
         return None

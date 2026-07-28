@@ -123,19 +123,19 @@ class QueryTableModel(QAbstractTableModel):
 
     def _get_display(self, row: dict, col: int) -> str:
         if col == 1:
-            return row.get("zh", "")
+            return row.get("zh", "")  # type: ignore[no-any-return]
         elif col == 2:
-            return row.get("en", "")
+            return row.get("en", "")  # type: ignore[no-any-return]
         elif col == 3:
-            return row.get("group", "")
+            return row.get("group", "")  # type: ignore[no-any-return]
         elif col == 4:
-            return row.get("buy_str", "—")
+            return row.get("buy_str", "—")  # type: ignore[no-any-return]
         elif col == 5:
-            return row.get("sell_str", "—")
+            return row.get("sell_str", "—")  # type: ignore[no-any-return]
         elif col == 6:
-            return row.get("avg_price_str", "—")
+            return row.get("avg_price_str", "—")  # type: ignore[no-any-return]
         elif col == 7:
-            return row.get("vol_str", "—")
+            return row.get("vol_str", "—")  # type: ignore[no-any-return]
         return ""
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
@@ -425,7 +425,7 @@ def load_search_history() -> list:
     """从文件加载搜索历史"""
     try:
         if HISTORY_FILE.exists():
-            return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+            return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
     except Exception:
         pass
     return []

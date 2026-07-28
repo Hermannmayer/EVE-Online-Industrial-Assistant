@@ -3,6 +3,7 @@
 """
 
 import os
+from typing import cast
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor, QPixmap
@@ -244,7 +245,7 @@ class ImportReviewDialog(QDialog):
             name_item = self._table.item(row, self._COL_NAME)
             if name_item:
                 type_id = name_item.data(Qt.ItemDataRole.UserRole)
-                spin = self._table.cellWidget(row, self._COL_PRICE)
+                spin = cast(QDoubleSpinBox | None, self._table.cellWidget(row, self._COL_PRICE))
                 if spin and type_id:
                     spin.setValue(self._sell_prices.get(type_id, 0))
         self._update_summary()
@@ -337,7 +338,7 @@ class ImportReviewDialog(QDialog):
         """对单行设置价格（由批量循环调用）"""
         name_item = self._table.item(row, self._COL_NAME)
         type_id = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-        spin = self._table.cellWidget(row, self._COL_PRICE)
+        spin = cast(QDoubleSpinBox | None, self._table.cellWidget(row, self._COL_PRICE))
         if type_id and spin:
             self._set_price_from_market(type_id, price_type, spin)
 
@@ -534,7 +535,7 @@ class ImportReviewDialog(QDialog):
             except ValueError:
                 continue
 
-            spin = self._table.cellWidget(row, self._COL_PRICE)
+            spin = cast(QDoubleSpinBox | None, self._table.cellWidget(row, self._COL_PRICE))
             price = spin.value() if spin else 0.0
 
             src = self._source_hangar.get(type_id)

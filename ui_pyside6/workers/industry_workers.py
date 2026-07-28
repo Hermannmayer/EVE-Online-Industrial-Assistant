@@ -1,5 +1,7 @@
 """工业制造 — 后台 Worker 线程"""
 
+from typing import Any
+
 from PySide6.QtCore import QThread, Signal
 
 from core.container import get_container
@@ -60,7 +62,7 @@ class ScoreWorker(BaseScoreWorker):
         self._runs = runs
 
     def _compute(self) -> dict:
-        return (
+        return (  # type: ignore[no-any-return]
             get_container()
             .scoring_service()
             .calc_manufacturing_score(
@@ -97,7 +99,7 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
             self._char_config_cache[plan_char_name] = resolve_char_config(char_name=plan_char_name) or {}
         return self._char_config_cache[plan_char_name]
 
-    def _calc_item(self, item) -> dict:
+    def _calc_item(self, item) -> Any:
         plan_id = item.get("id")
         if not plan_id:
             return None

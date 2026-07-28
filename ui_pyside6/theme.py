@@ -4,6 +4,8 @@ One Dark Pro / One Light 主题系统 — 支持运行时切换
 
 import json
 import os
+from collections.abc import Callable
+from typing import cast
 
 # ═══════════════════════════════════════════
 #  色板定义
@@ -72,7 +74,7 @@ TEXT_ON_PRIMARY = ONE_DARK_PRO["TEXT_ON_PRIMARY"]
 BORDER = ONE_DARK_PRO["BORDER"]
 
 _current_theme = "dark"
-_theme_listeners = []
+_theme_listeners: list[Callable[[], None]] = []
 
 # ── 向后兼容别名 ──
 GREEN = ACCENT_GREEN
@@ -157,7 +159,7 @@ def load_theme_preference() -> str:
         p = search_history_file().replace("search_history", "settings")
         if os.path.exists(p):
             with open(p, encoding="utf-8") as f:
-                return json.load(f).get("theme", "dark")
+                return cast(str, json.load(f).get("theme", "dark"))
     except Exception:
         pass
     return "dark"

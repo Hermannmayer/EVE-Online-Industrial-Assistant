@@ -67,9 +67,9 @@ class MfgDlg(QDialog):
             # 在标题中显示物品名
             try:
                 with get_container().db.connect("ref") as conn:
-                    cur = conn.cursor()
-                    cur.execute("SELECT zh_name FROM item WHERE type_id = ?", (type_id,))
-                    r = cur.fetchone()
+                    curs = conn.cursor()
+                    curs.execute("SELECT zh_name FROM item WHERE type_id = ?", (type_id,))
+                    r = curs.fetchone()
                     if r and r[0]:
                         self.setWindowTitle(f"制造评分 — {r[0]}")
             except Exception:
@@ -124,9 +124,9 @@ class TradeDlg(QDialog):
             # 在标题中显示物品名
             try:
                 with get_container().db.connect("ref") as conn:
-                    cur = conn.cursor()
-                    cur.execute("SELECT zh_name FROM item WHERE type_id = ?", (type_id,))
-                    r = cur.fetchone()
+                    curs = conn.cursor()
+                    curs.execute("SELECT zh_name FROM item WHERE type_id = ?", (type_id,))
+                    r = curs.fetchone()
                     if r and r[0]:
                         self.setWindowTitle(f"贸易评分 — {r[0]}")
             except Exception:
@@ -220,10 +220,10 @@ class ScoreW(BaseBatchScoreWorker):
                 self.progress.emit(i + 1, total)
         self.done.emit(self._items)
 
-    def _calc_item(self, row) -> dict | None:
+    def _calc_item(self, row) -> dict:
         tid = row.get("id")
         if not tid:
-            return None
+            return row  # type: ignore[no-any-return]
 
         if self._mfg:
             hub = self._cfg["hub"]
@@ -303,7 +303,7 @@ class ScoreW(BaseBatchScoreWorker):
                     "sp": mkt.get("sp"),
                 }
             )
-        return row
+        return row  # type: ignore[no-any-return]
 
 
 def _fmt_tag(daily_profit: float, veto: str | bool = "") -> str:

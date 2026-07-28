@@ -5,6 +5,7 @@
 import json
 import os
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
@@ -203,7 +204,7 @@ class MainWindow(QMainWindow):
         h_layout.addWidget(self.content_stack, 1)
 
         # ── 页面注册 ──
-        self._pages = {}
+        self._pages: dict[str, QWidget] = {}
         self._register_pages()
         # 页面创建完成后刷新样式表，强制 Qt 重新 polish 所有子控件
         self.setStyleSheet(theme.get_stylesheet())
@@ -768,7 +769,7 @@ class MainWindow(QMainWindow):
             p = search_history_file().replace("search_history", "settings")
             if os.path.exists(p):
                 with open(p, encoding="utf-8") as f:
-                    return json.load(f).get("auto_update_enabled", True)
+                    return json.load(f).get("auto_update_enabled", True)  # type: ignore[no-any-return]
         except Exception:
             log.exception("加载自动更新设置失败")
         return True
@@ -821,7 +822,8 @@ class MainWindow(QMainWindow):
         QApplication.quit()
 
     def save_state(self) -> dict:
-        state = {"version": 1, "current_page": "", "pages": {}}
+        pages: dict[str, Any] = {}
+        state = {"version": 1, "current_page": "", "pages": pages}
         current = self._nav_tree.currentItem()
         if current:
             key = current.data(0, Qt.ItemDataRole.UserRole)
@@ -830,7 +832,7 @@ class MainWindow(QMainWindow):
         for key, page in self._pages.items():
             if hasattr(page, "save_state"):
                 try:
-                    state["pages"][key] = page.save_state()
+                    pages[key] = page.save_state()
                 except Exception:
                     log.exception("保存页面状态失败: %s", key)
         return state
@@ -846,11 +848,13 @@ class MainWindow(QMainWindow):
                     break
             self.content_stack.setCurrentWidget(self._pages[key])
         for pkey, pdata in data.get("pages", {}).items():
-            if pkey in self._pages and hasattr(self._pages[pkey], "restore_state"):
-                try:
-                    self._pages[pkey].restore_state(pdata)
-                except Exception:
-                    log.exception("恢复页面状态失败: %s", pkey)
+            if pkey in self._pages:
+                page: Any = self._pages[pkey]
+                if hasattr(page, "restore_state"):
+                    try:
+                        page.restore_state(pdata)
+                    except Exception:
+                        log.exception("恢复页面状态失败: %s", pkey)
 
     def _check_first_run(self):
         """首次启动检测 + 初始化完成后重建页面"""

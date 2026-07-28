@@ -6,6 +6,8 @@ EVE Online 游戏公式常量。
 - 贸易: https://wiki.eveuniversity.org/Trade
 """
 
+from typing import cast
+
 from core.constants import (
     HUB_NAMES,  # noqa: F401 — re-export
     TRADE_HUB_IDS,
@@ -106,7 +108,7 @@ def calc_refining_yield(
         + implant_bonus
     )
     max_yield = REPROCESSING_MAX_YIELD_FACILITY if is_player_facility else REPROCESSING_MAX_YIELD_NPC
-    return min(base + bonus, max_yield)
+    return cast(float, min(base + bonus, max_yield))
 
 
 # ════════════════════════════════════════════════════

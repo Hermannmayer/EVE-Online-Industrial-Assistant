@@ -111,14 +111,14 @@ class PlanTable(QWidget):
 
         for col in range(_NUM_COLUMNS):
             if col in FIXED:
-                header.setSectionResizeMode(col, QHeaderView.Fixed)
+                header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
                 header.resizeSection(col, 24)
             elif col in NARROW:
-                header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+                header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
             elif col in STRETCH:
-                header.setSectionResizeMode(col, QHeaderView.Stretch)
+                header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
             else:
-                header.setSectionResizeMode(col, QHeaderView.Interactive)
+                header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
                 header.resizeSection(col, 75)
 
     def set_model(self, model: PlanTableModel) -> None:
@@ -269,6 +269,8 @@ class PlanTable(QWidget):
 
     def _edit_plan(self, row: int) -> None:
         """编辑生产计划 — 打开 PlanEditDialog"""
+        if self._model is None:
+            return
         from ui_pyside6.views.industry import PlanEditDialog
 
         plan = self._model.get_plan(row)
@@ -312,6 +314,8 @@ class PlanTable(QWidget):
 
     def _add_notes(self, row: int) -> None:
         """添加备注 — 弹出文本输入框"""
+        if self._model is None:
+            return
         from PySide6.QtWidgets import QInputDialog
 
         plan = self._model.get_plan(row)
@@ -332,6 +336,8 @@ class PlanTable(QWidget):
             self.plan_updated.emit()
 
     def _modify_runs(self, row: int) -> None:
+        if self._model is None:
+            return
         plan = self._model.get_plan(row)
         current = int(plan.get("runs", 0))
         val, ok = QInputDialog.getInt(self, "修改流程数", "流程数:", current, 1, 99999)
@@ -353,6 +359,8 @@ class PlanTable(QWidget):
             self.plan_updated.emit()
 
     def _modify_parallels(self, row: int) -> None:
+        if self._model is None:
+            return
         plan = self._model.get_plan(row)
         current = int(plan.get("parallels", 1))
         val, ok = QInputDialog.getInt(self, "修改并行数", "并行数:", current, 1, 99999)
@@ -374,12 +382,16 @@ class PlanTable(QWidget):
             self.plan_updated.emit()
 
     def _copy_blueprint_name(self, row: int) -> None:
+        if self._model is None:
+            return
         plan = self._model.get_plan(row)
         bp_name = plan.get("blueprint_name") or plan.get("product_name", "")
         if bp_name:
             QApplication.clipboard().setText(bp_name)
 
     def _set_materials_ready(self, row: int, value: int) -> None:
+        if self._model is None:
+            return
         plan = self._model.get_plan(row)
         plan["materials_ready"] = value
         self._model.layoutChanged.emit()
@@ -393,6 +405,8 @@ class PlanTable(QWidget):
         self.plan_updated.emit()
 
     def _set_status(self, row: int, status: str) -> None:
+        if self._model is None:
+            return
         plan = self._model.get_plan(row)
         plan["status"] = status
         self._model.layoutChanged.emit()
@@ -452,6 +466,8 @@ class PlanTable(QWidget):
             log.exception("自动入库失败: plan_id=%s", plan.get("id"))
 
     def _delete_row(self, row: int) -> None:
+        if self._model is None:
+            return
         if 0 <= row < len(self._model._plans):
             plan = self._model._plans[row]
             if plan.get("id"):
@@ -501,6 +517,8 @@ class PlanTable(QWidget):
 
     def _smart_adjust_parent(self, row: int) -> None:
         """母项智能调整：设定目标产量 → 自动计算 runs"""
+        if self._model is None:
+            return
         plan = self._model.get_plan(row)
         if not plan:
             return
@@ -560,6 +578,8 @@ class PlanTable(QWidget):
 
     def _smart_adjust_children(self, row: int) -> None:
         """子项智能调整：根据母项 runs 自动同步子项的 runs/batch"""
+        if self._model is None:
+            return
         plan = self._model.get_plan(row)
         if not plan:
             return
@@ -623,6 +643,8 @@ class PlanTable(QWidget):
 
     def _smart_parallel_children(self, row: int) -> None:
         """子项大规模产线并行：批量设置子项的并行数"""
+        if self._model is None:
+            return
         plan = self._model.get_plan(row)
         if not plan:
             return
@@ -679,6 +701,8 @@ class PlanTable(QWidget):
 
     def _show_npc_seller(self, row: int) -> None:
         """查看原本图 NPC 卖家"""
+        if self._model is None:
+            return
         plan = self._model.get_plan(row)
         if not plan:
             return
@@ -694,6 +718,8 @@ class PlanTable(QWidget):
 
     def _set_facility_system(self, row: int) -> None:
         """为设施设置所在星系 — 星系搜索 + 自动带出成本系数"""
+        if self._model is None:
+            return
         plan = self._model.get_plan(row)
         if not plan:
             return
@@ -782,6 +808,8 @@ class PlanTable(QWidget):
 
     def _set_facility_cost_index(self, row: int) -> None:
         """为设施所在星系设置成本系数 — 覆盖 SCI 或添加附加费率"""
+        if self._model is None:
+            return
         plan = self._model.get_plan(row)
         if not plan:
             return
@@ -820,6 +848,8 @@ class PlanTable(QWidget):
 
     def _show_production_wizard(self, row: int) -> None:
         """产线启动小助手：选择计划 → 配置角色/设施 → 启动"""
+        if self._model is None:
+            return
         plan = self._model.get_plan(row)
         if not plan:
             return
