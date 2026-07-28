@@ -201,7 +201,10 @@ class ScoreW(BaseBatchScoreWorker):
                     )
                     for r in cur.fetchall():
                         self._batch_market[r[0]] = {
-                            "bp": r[1], "sp": r[2], "bv": r[3] or 0, "sv": r[4] or 0,
+                            "bp": r[1],
+                            "sp": r[2],
+                            "bv": r[3] or 0,
+                            "sv": r[4] or 0,
                         }
         except Exception:
             self._batch_market = {}

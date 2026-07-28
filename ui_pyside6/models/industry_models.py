@@ -2,7 +2,7 @@
 
 import os
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtCore import QAbstractTableModel, Qt
 from PySide6.QtGui import QColor, QPixmap, QPixmapCache
 
 import ui_pyside6.theme as theme
@@ -18,10 +18,10 @@ class RankTableModel(QAbstractTableModel):
         super().__init__()
         self._rows = rows
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=None):
         return len(self._rows)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=None):
         return len(self._HEADERS)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -128,10 +128,10 @@ class PlanTableModel(QAbstractTableModel):
         self._sort_col: int = -1
         self._sort_order = Qt.SortOrder.AscendingOrder
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=None):
         return len(self._plans)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=None):
         return 20
 
     # ── 图标列 DecorationRole ────────────────────────────────────
@@ -353,10 +353,10 @@ class MaterialTableModel(QAbstractTableModel):
         super().__init__()
         self._rows = rows
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=None):
         return len(self._rows)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=None):
         return len(self._HEADERS)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -393,10 +393,10 @@ class ProcurementTableModel(QAbstractTableModel):
         super().__init__()
         self._items = items
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=None):
         return len(self._items)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=None):
         return len(self._HEADERS)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -465,10 +465,10 @@ class ProductionTableModel(QAbstractTableModel):
         super().__init__()
         self._plans = plans
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=None):
         return len(self._plans)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=None):
         return len(self._HEADERS)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):

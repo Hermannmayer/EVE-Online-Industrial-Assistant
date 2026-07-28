@@ -2,7 +2,7 @@
 
 import os
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtCore import QAbstractTableModel, Qt
 from PySide6.QtGui import QColor, QPixmap
 
 import ui_pyside6.theme as theme
@@ -18,10 +18,10 @@ class TradeHubTableModel(QAbstractTableModel):
         super().__init__()
         self._rows = rows
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=None):
         return len(self._rows)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=None):
         return len(self._HEADERS)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):

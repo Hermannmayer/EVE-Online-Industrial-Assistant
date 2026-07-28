@@ -455,8 +455,6 @@ class IndustryPage(QWidget):
         from ui_pyside6.workers.industry_workers import ScoreWorker
 
         char_name = self._toolbar.get_char_name()
-        # \u89e3\u6790\u89d2\u8272\u914d\u7f6e\uff08\u542b\u6280\u80fd\u3001\u5e02\u573a\u58f0\u671b\u7b49\uff09
-        resolved_config = resolve_char_config(char_name=char_name)
 
         self._score_worker = ScoreWorker(
             type_id=type_id,

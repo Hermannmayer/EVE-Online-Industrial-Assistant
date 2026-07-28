@@ -77,10 +77,10 @@ class WatchlistTableModel(QAbstractTableModel):
         """设置价格变化数据用于行高亮"""
         self._price_changes = changes
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=None):
         return len(self._rows)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=None):
         return len(_COLUMNS)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):

@@ -6,7 +6,7 @@ import json
 import os
 from datetime import UTC
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSize, QSortFilterProxyModel, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QAbstractTableModel, QSize, QSortFilterProxyModel, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -199,10 +199,10 @@ class AModel(QAbstractTableModel):
         self._cols = c
         self.endResetModel()
 
-    def rowCount(self, p=QModelIndex()):
+    def rowCount(self, p=None):
         return len(self._rows)
 
-    def columnCount(self, p=QModelIndex()):
+    def columnCount(self, p=None):
         return len(self._cols)
 
     def data(self, idx, role=Qt.ItemDataRole.DisplayRole):

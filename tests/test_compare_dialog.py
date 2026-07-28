@@ -5,9 +5,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtCore import QCoreApplication
 
-pytestmark = pytest.mark.slow
-
-
 from ui_pyside6.theme import ONE_LIGHT, apply_theme
 from ui_pyside6.views.compare_dialog import (
     COMPARE_COLS_MFG,
@@ -16,6 +13,8 @@ from ui_pyside6.views.compare_dialog import (
     _fmt_tag,
     _format_isk,
 )
+
+pytestmark = pytest.mark.slow
 
 # ═══════════════════════════════════════════
 #  Fixtures
