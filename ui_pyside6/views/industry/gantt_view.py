@@ -47,7 +47,11 @@ class GanttView(QWidget):
     def load_from_plans(self, plans: list[dict]):
         items = []
         for i, plan in enumerate(plans):
-            hours = plan.get("runs", 1) * plan.get("parallels", 1) * 2
+            calculated = plan.get("calculated_time", 0) or 0
+            if calculated > 0:
+                hours = calculated / 3600  # 秒 → 小时
+            else:
+                hours = plan.get("runs", 1) * plan.get("parallels", 1) * 2  # 兜底占位
             items.append(
                 {
                     "name": plan.get("product_name", f"计划#{plan.get('id', i)}"),

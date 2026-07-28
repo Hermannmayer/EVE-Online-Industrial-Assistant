@@ -255,7 +255,7 @@ class ProcurementDialog(QDialog):
                 mg_id = mg_row[0] if mg_row else None
                 # T1=1 / T2=2 / faction=4 → 映射浪费因子
                 if mg_id == 2:
-                    wf = 2   # T2
+                    wf = 2  # T2
                 elif mg_id == 4:
                     wf = 15  # 势力
                 else:
@@ -493,6 +493,7 @@ class ProcurementDialog(QDialog):
                         mat_cost = plan.get("material_cost", 0) or 0
                         cost_price = mat_cost / max(total_qty, 1)
                         from services.inventory_manager import add_item
+
                         add_item(deposit_hangar_id, product_type_id, total_qty, round(cost_price, 2))
 
                     # 标记为 completed + deposited
@@ -507,9 +508,7 @@ class ProcurementDialog(QDialog):
             conn.commit()
 
         if completed > 0:
-            QMessageBox.information(
-                self, "完成", f"已完成 {completed}/{len(ready_plans)} 项计划\n成品已自动入库"
-            )
+            QMessageBox.information(self, "完成", f"已完成 {completed}/{len(ready_plans)} 项计划\n成品已自动入库")
             self._calculate()
         else:
             QMessageBox.information(self, "提示", "没有可完成的计划")

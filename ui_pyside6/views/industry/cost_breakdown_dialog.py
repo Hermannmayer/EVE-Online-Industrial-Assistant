@@ -26,7 +26,17 @@ class CostBreakdownDialog(QWidget):
     def __init__(self, plan_data: dict, parent: QWidget | None = None, char_config: dict | None = None):
         super().__init__(parent)
         self._plan = plan_data
-        self._char_config = char_config or {}
+        # 优先使用传入的角色配置；否则按计划角色的 char_name 解析
+        if char_config is not None:
+            self._char_config = char_config
+        else:
+            plan_char = (plan_data.get("char_name") or "").strip()
+            if plan_char:
+                from services.char_config_resolver import resolve_char_config
+
+                self._char_config = resolve_char_config(char_name=plan_char) or {}
+            else:
+                self._char_config = {}
         product_name = plan_data.get("product_name", "未知产品")
         self.setWindowTitle(f"核算 — {product_name}")
         self.setMinimumSize(800, 600)
@@ -184,11 +194,7 @@ class CostBreakdownDialog(QWidget):
             )
         )
         # 按 runs/parallels 缩放到计划总数值
-        total = (
-            get_container()
-            .scoring_service()
-            .calculate_total_metrics(per_run, runs, parallels)
-        )
+        total = get_container().scoring_service().calculate_total_metrics(per_run, runs, parallels)
         status = per_run.get("status", "")
         if status:
             tips = {"no_blueprint": "未找到蓝图", "no_price": "无价格数据", "no_materials": "无需材料"}
@@ -239,30 +245,28 @@ class CostBreakdownDialog(QWidget):
             f"| 共 {len(materials)} 种材料 | 评分 {score:.1f} | 利润 {_fmt_isk(profit)} | 利润率 {margin:.1f}%"
         )
 
-        # ── 制造作业费（per-job 不变，因为 EIV 是 per-run 值） ──
+        # ── 制造作业费（按 runs × parallels 缩放到总数值） ──
         self._job_eiv.setText(_fmt_isk(eiv))
-        self._job_sci.setText(f"{_fmt_isk(system_cost)}  (SCI={sci*100:.4f}%)")
-        self._job_fac_tax.setText(_fmt_isk(facility_tax_v))
-        self._job_scc.setText(_fmt_isk(scc))
-        self._job_total.setText(_fmt_isk(installation_fee))
+        self._job_sci.setText(f"{_fmt_isk(system_cost * total_mult)}  (SCI={sci*100:.4f}%)")
+        self._job_fac_tax.setText(_fmt_isk(facility_tax_v * total_mult))
+        self._job_scc.setText(_fmt_isk(scc * total_mult))
+        self._job_total.setText(_fmt_isk(installation_fee * total_mult))
 
-        # ── 市场费用（per-job 不变） ──
-        self._mkt_broker.setText(_fmt_isk(broker_init))
-        self._mkt_relist.setText(_fmt_isk(broker_relist))
-        self._mkt_sales_tax.setText(_fmt_isk(sales_tax))
-        self._mkt_fee_total.setText(_fmt_isk(broker_init + broker_relist + sales_tax))
+        # ── 市场费用（按 runs × parallels 缩放） ──
+        self._mkt_broker.setText(_fmt_isk(broker_init * total_mult))
+        self._mkt_relist.setText(_fmt_isk(broker_relist * total_mult))
+        self._mkt_sales_tax.setText(_fmt_isk(sales_tax * total_mult))
+        self._mkt_fee_total.setText(_fmt_isk((broker_init + broker_relist + sales_tax) * total_mult))
 
         # ── 汇总（总数值） ──
         self._summary_labels["total_cost"].setText(_fmt_isk(cost_data))
         self._summary_labels["revenue"].setText(_fmt_isk(revenue * total_mult))
         p_label = self._summary_labels["profit"]
         p_label.setText(_fmt_isk(profit))
-        p_label.setStyleSheet(
-            f"color: {theme.GREEN if profit >= 0 else theme.RED}; font-weight: bold;"
-        )
+        p_label.setStyleSheet(f"color: {theme.GREEN if profit >= 0 else theme.RED}; font-weight: bold;")
         self._summary_labels["margin"].setText(f"{margin:.2f}%")
         self._summary_labels["hours"].setText(f"{hours:.2f}h")
-        self._summary_labels["daily_output"].setText(f"{daily_output:.1f} run/天")
+        self._summary_labels["daily_output"].setText(f"{daily_output:.1f} 件/天")
         daily_profit = profit / hours * 24 if hours > 0 else 0
         self._summary_labels["daily_profit"].setText(_fmt_isk(daily_profit))
         self._summary_labels["score"].setText(f"{score:.1f}")

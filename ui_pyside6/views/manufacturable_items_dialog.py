@@ -34,7 +34,7 @@ from core.container import get_container
 from core.paths import data_dir
 from services.terminology import term
 
-_cache = TtlLRUCache(max_size=500, ttl_seconds=1800)
+_cache = TtlLRUCache(max_size=5000, ttl_seconds=1800)
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 from ui_pyside6.views.all_items_view import JITA_RID, AModel, ItemsW, Proxy, SearchItemsW
 from ui_pyside6.views.compare_dialog import CompareDialog
@@ -113,17 +113,22 @@ class ManufacturableItemsDialog(QDialog):
         self._mfg = {"hub": "Jita", "char": "main", "tax": 0}
         self._wp = None
         self._sw = None
+        self._load_settings()
+        self._build_ui()
+        # 搜索防抖
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
         self._debounce.timeout.connect(self._do_search)
-        self._load_settings()
-        self._build_ui()
+        # 树节点点击防抖
+        self._tree_debounce = QTimer()
+        self._tree_debounce.setSingleShot(True)
+        self._tree_debounce.timeout.connect(self._on_tree_delayed)
+        self._tree_item = None
         self._tw = MfgTreeW(self)
         self._tw.done.connect(self._ot)
         self._tw.start()
-        self._iw = ItemsW(rid=JITA_RID, parent=self)
-        self._iw.done.connect(self._od)
-        self._iw.start()
+        self._iw = None
+        self._st.setText("请选择分类或搜索物品")
         theme.add_theme_listener(self._on_theme_changed)
 
     def closeEvent(self, ev):
@@ -311,6 +316,15 @@ class ManufacturableItemsDialog(QDialog):
         self._apply()
 
     def _on_tree(self, item):
+        """树节点点击 — 防抖后加载"""
+        self._tree_item = item
+        self._tree_debounce.start(200)
+
+    def _on_tree_delayed(self):
+        """树节点点击防抖回调 — 加载该分类下所有物品"""
+        item = self._tree_item
+        if not item:
+            return
         ids = set()
 
         def c(n):
@@ -321,12 +335,26 @@ class ManufacturableItemsDialog(QDialog):
                 c(n.child(i))
 
         c(item)
-        if ids:
-            self._search_input.clear()
-            self._data = []
-            self._iw = ItemsW(list(ids), rid=JITA_RID, parent=self)
-            self._iw.done.connect(self._od)
-            self._iw.start()
+        if not ids:
+            return
+
+        self._search_input.clear()
+        self._data = []
+
+        # 断开旧 ItemsW 信号，避免遗留回调覆盖数据
+        if hasattr(self, "_iw") and self._iw is not None:
+            try:
+                self._iw.done.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            if self._iw.isRunning():
+                self._iw.quit()
+                self._iw.wait(300)
+
+        iw = ItemsW(list(ids), rid=JITA_RID, parent=self)
+        iw.done.connect(self._od)
+        iw.start()
+        self._iw = iw
 
     def _on_search_text(self, text):
         self._search_query = text.strip()
@@ -423,9 +451,16 @@ class ManufacturableItemsDialog(QDialog):
             self._st.setText("无数据")
 
     def _calc(self):
-        if self._wp and self._wp.isRunning():
+        if self._wp is not None:
+            self._wp.requestInterruption()
             self._wp.quit()
-            self._wp.wait(500)
+            # 断开旧信号避免遗留回调触发 _cd
+            try:
+                self._wp.progress.disconnect()
+                self._wp.done.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            self._wp = None
         self._pr.setVisible(True)
         self._pr.setRange(0, len(self._filt))
         self._st.setText("计算评分中...")

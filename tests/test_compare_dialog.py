@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from PySide6.QtCore import QCoreApplication
-import pytest
 
 pytestmark = pytest.mark.slow
 

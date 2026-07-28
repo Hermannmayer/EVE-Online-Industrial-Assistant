@@ -305,7 +305,8 @@ class IndustryPage(QWidget):
             return
         # 只重算 pending/in_progress/ready 的计划
         todo = [
-            r for r in rows
+            r
+            for r in rows
             if r.get("id") and r.get("status", "").lower() in ("pending", "in_progress", "running", "ready", "")
         ]
         if not todo:
@@ -336,10 +337,19 @@ class IndustryPage(QWidget):
                         calculated_seconds = round(hours_total * 3600)
                         conn.execute(
                             "UPDATE production_plans SET profit=?, margin=?, score=?,"
-                            " iskph=?, material_cost=?, market_margin=?, personal_margin=?,"
+                            " iskph=?, material_cost=?, market_margin=?,"
                             " calculated_time=?, daily_output=? WHERE id=?",
-                            (profit, margin, score, iskph, mat_cost, margin, margin,
-                             calculated_seconds, daily_output, plan_id),
+                            (
+                                profit,
+                                margin,
+                                score,
+                                iskph,
+                                mat_cost,
+                                margin,
+                                calculated_seconds,
+                                daily_output,
+                                plan_id,
+                            ),
                         )
                     except Exception:
                         log.exception("更新计划 %s 评分失败", plan_id)
@@ -484,11 +494,7 @@ class IndustryPage(QWidget):
             # \u6309 runs/parallels \u7f29\u653e\u5230\u8ba1\u5212\u603b\u6570\u503c
             runs = data.get("runs", 1) or 1
             parallels = data.get("parallels", 1) or 1
-            total = (
-                get_container()
-                .scoring_service()
-                .calculate_total_metrics(actual, runs, parallels)
-            )
+            total = get_container().scoring_service().calculate_total_metrics(actual, runs, parallels)
             iskph = total.get("total_isk_per_hour", 0)
             mat_cost = total.get("total_material_cost", 0)
             profit = total.get("total_profit", 0)

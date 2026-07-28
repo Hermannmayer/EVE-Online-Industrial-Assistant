@@ -385,7 +385,7 @@ class HangarTab(QWidget):
                     from services.terminology import term
 
                     term._ensure()
-                    overrides = (term._data.get("item_overrides") or {})
+                    overrides = term._data.get("item_overrides") or {}
                     _mr = {v: k for k, v in overrides.items()}
                     type_id = int(_mr.get(name_clean, 0))
                 if not type_id:

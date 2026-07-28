@@ -26,6 +26,7 @@ def pytest_collection_modifyitems(config, items):
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
 
+
 # ════════════════════════════════════════════════════════════════
 #  辅助：创建标准临时数据库套件
 # ════════════════════════════════════════════════════════════════

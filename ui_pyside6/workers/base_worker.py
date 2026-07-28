@@ -52,6 +52,8 @@ class BaseBatchScoreWorker(QThread):
         results = []
         total = len(self._items)
         for i, item in enumerate(self._items):
+            if self.isInterruptionRequested():
+                return
             try:
                 r = self._calc_item(item)
                 results.append(r)

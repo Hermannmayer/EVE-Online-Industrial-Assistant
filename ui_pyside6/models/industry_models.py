@@ -60,26 +60,26 @@ class PlanTableModel(QAbstractTableModel):
     """21 列生产计划模型 — 支持 checkbox、图标、行内编辑、排序"""
 
     _HEADERS = [
-        "☐",         # 0  勾选/备料
-        "图标",       # 1
-        "产品",       # 2
-        "备注",       # 3
-        "批次",       # 4
-        "并行",       # 5
-        "组号",       # 6
-        "子级",       # 7
-        "状态",       # 8
-        "人物",       # 9
-        "流程",       # 10
-        "蓝图",       # 11
-        "时长",       # 12
-        "产能",       # 13
-        "设施",       # 14
-        "输出",       # 15
-        "成本",       # 16
-        "利润",       # 17
-        "市场利润率%", # 18
-        "个人利润率%", # 19
+        "☐",  # 0  勾选/备料
+        "图标",  # 1
+        "产品",  # 2
+        "备注",  # 3
+        "批次",  # 4
+        "并行",  # 5
+        "组号",  # 6
+        "子级",  # 7
+        "状态",  # 8
+        "人物",  # 9
+        "流程",  # 10
+        "蓝图",  # 11
+        "时长",  # 12
+        "产能",  # 13
+        "设施",  # 14
+        "输出",  # 15
+        "成本",  # 16
+        "利润",  # 17
+        "市场利润率%",  # 18
+        "个人利润率%",  # 19
     ]
 
     # 可编辑列集合（仅 active 状态下生效）
@@ -87,14 +87,26 @@ class PlanTableModel(QAbstractTableModel):
 
     # 排序键映射: column index → dict key
     _SORT_KEYS = {
-        0: "materials_ready", 1: None, 2: "product_name",
-        3: "notes", 4: "batch", 5: "parallels",
-        6: "group_id", 7: "child_level", 8: "status",
-        9: "char_name", 10: "_runs", 11: "_me_level",
-        12: "_calculated_time", 13: "_daily_output",
-        14: "facility", 15: "output",
-        16: "material_cost", 17: "profit",
-        18: "market_margin", 19: "personal_margin",
+        0: "materials_ready",
+        1: None,
+        2: "product_name",
+        3: "notes",
+        4: "batch",
+        5: "parallels",
+        6: "group_id",
+        7: "child_level",
+        8: "status",
+        9: "char_name",
+        10: "_runs",
+        11: "_me_level",
+        12: "_calculated_time",
+        13: "_daily_output",
+        14: "facility",
+        15: "output",
+        16: "material_cost",
+        17: "profit",
+        18: "market_margin",
+        19: "personal_margin",
     }
 
     # 数值列（排序时按数字比较）
@@ -157,6 +169,7 @@ class PlanTableModel(QAbstractTableModel):
         # SizeHintRole — 图标列行高
         if role == Qt.ItemDataRole.SizeHintRole and c == 1:
             from PySide6.QtCore import QSize
+
             return QSize(36, 36)
 
         if role == Qt.ItemDataRole.DisplayRole:

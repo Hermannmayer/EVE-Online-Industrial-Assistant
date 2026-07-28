@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import ui_pyside6.theme as theme
-import pytest
 
 pytestmark = pytest.mark.slow
 

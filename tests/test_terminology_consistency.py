@@ -27,6 +27,7 @@ _TERM_FILE = _DATA_DIR / "terminology.json"
 #  Helper: 加载 SDE 技能名
 # ═══════════════════════════════════════════════════════════════════
 
+
 @pytest.fixture(scope="module")
 def sde_skills() -> dict[str, str]:
     """返回 SDE 中所有技能的 {zh_name: en_name} 映射"""
@@ -54,6 +55,7 @@ def terminology_data() -> dict:
 # ═══════════════════════════════════════════════════════════════════
 #  Test 1: char_settings_view.py 技能名 vs SDE
 # ═══════════════════════════════════════════════════════════════════
+
 
 def _get_skills_from_charsettings() -> list[str]:
     """从 char_settings_view.py 提取所有技能名"""
@@ -119,6 +121,7 @@ def test_charsettings_skills_match_sde(sde_skills):
 #  Test 2: eve_formulas.py 技能名 vs terminology.json
 # ═══════════════════════════════════════════════════════════════════
 
+
 def _extract_skill_keys_from_eve_formulas() -> set[str]:
     """从 eve_formulas.py 中提取所有 skills.get() 调用的技能名 key"""
     import ast
@@ -161,13 +164,16 @@ def test_eve_formulas_skill_keys_match_terminology(terminology_data):
         "以下技能名在 terminology.json 的 skill_names/skill_aliases 中缺失:\n"
         + "\n".join(f"  - {s}" for s in not_found)
         + "\n提示: 在 terminology.json 的 skill_names 中添加，如 "
-        f'  "Reprocessing": "{not_found[0]}"' if not_found else ""
+        f'  "Reprocessing": "{not_found[0]}"'
+        if not_found
+        else ""
     )
 
 
 # ═══════════════════════════════════════════════════════════════════
 #  Test 3: 矿物名覆盖
 # ═══════════════════════════════════════════════════════════════════
+
 
 def test_mineral_names_covered_by_terminology(terminology_data):
     """terminology.json 的 item_overrides 必须覆盖所有基础矿物"""
@@ -176,15 +182,15 @@ def test_mineral_names_covered_by_terminology(terminology_data):
     overrides = {int(k): v for k, v in terminology_data.get("item_overrides", {}).items()}
 
     missing = [tid for tid in sorted(KNOWN_MINERALS) if tid not in overrides]
-    assert not missing, (
-        "以下矿物 type_id 未在 terminology.json 的 item_overrides 中定义:\n"
-        + "\n".join(f"  - {tid}" for tid in missing)
+    assert not missing, "以下矿物 type_id 未在 terminology.json 的 item_overrides 中定义:\n" + "\n".join(
+        f"  - {tid}" for tid in missing
     )
 
 
 # ═══════════════════════════════════════════════════════════════════
 #  Test 4: 精炼技能名一致性（Regression: P0 Bug）
 # ═══════════════════════════════════════════════════════════════════
+
 
 def test_refining_skill_name_consistency(sde_skills, terminology_data):
     """验证精炼相关技能名在 SDE、terminology、公式代码中一致"""
@@ -199,18 +205,10 @@ def test_refining_skill_name_consistency(sde_skills, terminology_data):
     registered_zh = set(terminology_data.get("skill_names", {}).values())
     registered_zh.update(terminology_data.get("skill_aliases", {}).values())
 
-    assert "提炼学概论" in registered_zh, (
-        '"提炼学概论" 不在 terminology.json 的 skill_names 中'
-    )
-    assert "提炼效率理论" in registered_zh, (
-        '"提炼效率理论" 不在 terminology.json 的 skill_names 中'
-    )
+    assert "提炼学概论" in registered_zh, '"提炼学概论" 不在 terminology.json 的 skill_names 中'
+    assert "提炼效率理论" in registered_zh, '"提炼效率理论" 不在 terminology.json 的 skill_names 中'
 
     # 公式代码中的技能 key 应包含 SDE 官方名
     formula_keys = _extract_skill_keys_from_eve_formulas()
-    assert "提炼学概论" in formula_keys, (
-        'eve_formulas.py 中没有使用 "提炼学概论" 作为技能 key'
-    )
-    assert "提炼效率理论" in formula_keys, (
-        'eve_formulas.py 中没有使用 "提炼效率理论" 作为技能 key'
-    )
+    assert "提炼学概论" in formula_keys, 'eve_formulas.py 中没有使用 "提炼学概论" 作为技能 key'
+    assert "提炼效率理论" in formula_keys, 'eve_formulas.py 中没有使用 "提炼效率理论" 作为技能 key'

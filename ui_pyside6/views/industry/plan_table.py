@@ -318,9 +318,7 @@ class PlanTable(QWidget):
         if not plan:
             return
         current = plan.get("notes", "") or ""
-        text, ok = QInputDialog.getMultiLineText(
-            self, "添加备注", "输入备注内容:", current
-        )
+        text, ok = QInputDialog.getMultiLineText(self, "添加备注", "输入备注内容:", current)
         if ok:
             plan["notes"] = text.strip()
             self._model.layoutChanged.emit()
