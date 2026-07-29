@@ -1,13 +1,15 @@
-"""Top toolbar for the industry plan view — blueprint import, hub/pricing, character & filter."""
+"""Top toolbar for the industry plan view — blueprint import, price source, character & filter."""
+
+from __future__ import annotations
 
 import json
 import os
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QStringListModel, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
-    QDoubleSpinBox,
+    QCompleter,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -19,36 +21,27 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.paths import data_dir
 from services import inventory_manager
-from ui_pyside6.views.char_settings_view import get_character_list, load_all_data
+from ui_pyside6.views.compare.compare_chart import search_items
 from ui_pyside6.views.industry.flow_layout import FlowLayout
+from ui_pyside6.views.industry.price_source_widget import DualPriceSourceWidget
 
 
 class TopToolbar(QWidget):
-    """水平工具栏：蓝图导入 | Hub/倍率 | 人物/筛选/操作"""
+    """水平工具栏：蓝图导入 | 材料/成品价格设置 | 筛选/操作"""
 
     plan_add_requested = Signal(str)
     manufacturable_browser_requested = Signal()
-    hub_changed = Signal(str)
     hangar_changed = Signal(str)
-    sell_mult_changed = Signal(float)
-    buy_mult_changed = Signal(float)
-    char_changed = Signal(str)
     filter_changed = Signal(str)
     refresh_requested = Signal()
     view_changed = Signal(str)
+    price_setting_changed = Signal()  # 任何价格设置变化
 
-    HUBS = ["Jita", "Amarr", "Dodixie", "Rens", "Hek"]
-    HUB_DISPLAY = {
-        "Jita": "价格取自（吉他）",
-        "Amarr": "价格取自（艾玛）",
-        "Dodixie": "价格取自（多迪）",
-        "Rens": "价格取自（伦斯）",
-        "Hek": "价格取自（赫克）",
-    }
-    HANGARS: list[dict] = []  # 从 inventory_manager.get_hangars() 加载
-    CHARS: list[str] = []  # 从角色设置加载
-    _chars_loaded = False
+    HANGARS: list[dict] = []
     FILTERS = ["全部", "待排", "运行中", "待下线", "已完成"]
+
+    # 搜索候选防抖延迟 (ms)
+    _SEARCH_DEBOUNCE_MS = 200
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -56,8 +49,8 @@ class TopToolbar(QWidget):
         self._connect_signals()
         self._apply_style()
         theme.add_theme_listener(self._on_theme_changed)
-        self._load_chars()
         self._load_hangars()
+        self._load_price_settings()
 
     # ── UI 构建 ──────────────────────────────────────────────
 
@@ -65,13 +58,13 @@ class TopToolbar(QWidget):
         root = FlowLayout(self, margin=6, h_spacing=8, v_spacing=6)
         root.setContentsMargins(6, 4, 6, 4)
 
-        # ── 左侧：从全物品添加 ──
+        # ── 从全物品添加 ──
         self._btn_all_items = QPushButton("从全物品添加")
         root.addWidget(self._btn_all_items)
 
         root.addWidget(self._make_separator())
 
-        # ── 左侧：蓝图导入区 ──
+        # ── 蓝图输入区（含搜索候选） ──
         root.addWidget(QLabel("蓝图"))
         self._blueprint_input = QLineEdit()
         self._blueprint_input.setPlaceholderText("蓝图 粘贴板切导入")
@@ -83,48 +76,21 @@ class TopToolbar(QWidget):
 
         root.addWidget(self._make_separator())
 
-        # ── 中间：材料/价格设置区 ──
-        root.addWidget(QLabel("Hub"))
-        self._hub_combo = QComboBox()
-        self._hub_combo.addItems(self.HUBS_DISPLAY_LIST())
-        self._hub_combo.setMinimumWidth(130)
-        root.addWidget(self._hub_combo)
+        # ── 双行价格来源设置（材料 + 成品） ──
+        self._price_widget = DualPriceSourceWidget()
+        root.addWidget(self._price_widget)
 
+        root.addWidget(self._make_separator())
+
+        # ── 机库 ──
         root.addWidget(QLabel("机库"))
         self._hangar_combo = QComboBox()
         self._hangar_combo.setMinimumWidth(90)
         root.addWidget(self._hangar_combo)
 
-        root.addWidget(QLabel("卖出倍率"))
-        self._sell_mult = QDoubleSpinBox()
-        self._sell_mult.setRange(0.1, 10.0)
-        self._sell_mult.setSingleStep(0.05)
-        self._sell_mult.setValue(1.00)
-        self._sell_mult.setDecimals(2)
-        self._sell_mult.setFixedWidth(90)
-        root.addWidget(self._sell_mult)
-
-        root.addWidget(QLabel("买入倍率"))
-        self._buy_mult = QDoubleSpinBox()
-        self._buy_mult.setRange(0.1, 10.0)
-        self._buy_mult.setSingleStep(0.05)
-        self._buy_mult.setValue(1.00)
-        self._buy_mult.setDecimals(2)
-        self._buy_mult.setFixedWidth(90)
-        root.addWidget(self._buy_mult)
-
         root.addWidget(self._make_separator())
 
-        # ── 右侧：人物 + 视图切换 + 筛选 + 操作 ──
-        root.addWidget(QLabel("人物"))
-        self._char_combo = QComboBox()
-        self._char_combo.addItems(self.CHARS)
-        self._char_combo.setMinimumWidth(130)
-        root.addWidget(self._char_combo)
-
-        root.addWidget(self._make_separator())
-
-        # ── 视图切换：数据/甘特 ──
+        # ── 视图切换 + 筛选 + 刷新 ──
         root.addWidget(QLabel("视图:"))
         self._view_data = QRadioButton("数据视图")
         self._view_data.setChecked(True)
@@ -138,37 +104,95 @@ class TopToolbar(QWidget):
         self._filter_combo = QComboBox()
         self._filter_combo.addItems(self.FILTERS)
         self._filter_combo.setMinimumWidth(80)
+        self._filter_combo.setToolTip("按计划状态筛选")
         root.addWidget(self._filter_combo)
 
         self._btn_refresh = QPushButton("刷新")
         root.addWidget(self._btn_refresh)
 
-    def _load_chars(self):
-        """从角色设置加载人物列表"""
-        try:
-            chars = get_character_list()
-            if not chars:
-                chars = ["main"]
-            self._char_combo.clear()
-            self._char_combo.addItems(chars)
-            top_level = load_all_data().get("current", chars[0])
-            idx = self._char_combo.findText(top_level)
-            if idx >= 0:
-                self._char_combo.setCurrentIndex(idx)
-        except Exception:
-            # fallback
-            if self._char_combo.count() == 0:
-                self._char_combo.addItems(["main"])
+    # ── 搜索候选（QCompleter + 防抖） ──────────────────────────
+
+    def _setup_search_suggestions(self) -> None:
+        """为蓝图输入框设置搜索候选自动补全。"""
+        self._completer = QCompleter(self)
+        self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self._completer.setMaxVisibleItems(12)
+        self._completer_model = QStringListModel()
+        self._completer.setModel(self._completer_model)
+
+        # 选中候选 → 提取物品名 → 触发添加
+        self._completer.activated.connect(self._on_completer_activated)
+
+        self._blueprint_input.setCompleter(self._completer)
+
+        # 防抖搜索定时器
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.timeout.connect(self._do_search_suggestions)
+
+        self._blueprint_input.textChanged.connect(self._on_search_text_changed)
+
+    def _on_search_text_changed(self, text: str) -> None:
+        """输入框文本变化 → 重启防抖定时器。"""
+        text = text.strip()
+        if not text:
+            popup = self._completer.popup()
+            if popup:
+                popup.hide()
+            self._completer_model.setStringList([])
+            self._search_timer.stop()
+            return
+        # 少于 2 个字不搜索
+        if len(text) < 2:
+            popup = self._completer.popup()
+            if popup:
+                popup.hide()
+            self._completer_model.setStringList([])
+            self._search_timer.stop()
+            return
+        self._search_timer.start(self._SEARCH_DEBOUNCE_MS)
+
+    def _do_search_suggestions(self) -> None:
+        """执行搜索并更新候选列表。"""
+        text = self._blueprint_input.text().strip()
+        if not text or len(text) < 2:
+            return
+        items = search_items(text)
+        if not items:
+            popup = self._completer.popup()
+            if popup:
+                popup.hide()
+            self._completer_model.setStringList([])
+            return
+        # 显示 "中文名 (EnglishName)" 格式
+        suggestions = [f"{i['zh_name']} ({i['en_name']})" if i["zh_name"] else i["en_name"] for i in items]
+        self._completer_model.setStringList(suggestions)
+        # 主动触发候选弹出（QCompleter 不会自动弹出）
+        self._completer.complete()
+
+    def _on_completer_activated(self, text: str) -> None:
+        """从搜索候选中选择 → 提取物品名 → 直接触发添加。"""
+        # "中文名 (EnglishName)" → 取中文名；仅有英文名则直接取
+        if " (" in text:
+            text = text.split(" (")[0]
+        elif "（" in text:
+            text = text.split("（")[0]
+        name = text.strip()
+        if name:
+            self._blueprint_input.setText(name)
+            # 直接触发添加（选完候选自动添加，不用再点按钮）
+            self._on_add()
+
+    # ── 机库 / 设置加载 ─────────────────────────────────────
 
     def _load_hangars(self):
-        """从 inventory_manager 加载真实机库列表"""
         try:
             hangars = inventory_manager.get_hangars()
             self._hangar_combo.clear()
             self._hangar_combo.addItem("不自动入库", -1)
             for h in hangars:
                 self._hangar_combo.addItem(h["name"], h["id"])
-            # 从 settings 恢复上次选择的机库
             try:
                 settings_path = os.path.join(data_dir(), "settings.json")
                 if os.path.exists(settings_path):
@@ -186,8 +210,21 @@ class TopToolbar(QWidget):
                 self._hangar_combo.addItem("不自动入库", -1)
         self._hangar_combo.currentIndexChanged.connect(self._save_hangar_setting)
 
+    def _load_price_settings(self) -> None:
+        """从 settings.json 恢复上次的价格设置。"""
+        try:
+            settings_path = os.path.join(data_dir(), "settings.json")
+            if not os.path.exists(settings_path):
+                return
+            with open(settings_path, encoding="utf-8") as f:
+                s = json.load(f)
+            price_settings = s.get("price_settings")
+            if price_settings:
+                self._price_widget.set_settings(price_settings)
+        except Exception:
+            pass
+
     def _save_hangar_setting(self):
-        """将机库选择保存到 settings.json"""
         hangar_id = self._hangar_combo.currentData()
         if hangar_id is None or hangar_id == -1:
             return
@@ -203,34 +240,39 @@ class TopToolbar(QWidget):
         except Exception:
             pass
 
+    def _save_price_settings(self) -> None:
+        """将当前价格设置持久化到 settings.json。"""
+        try:
+            settings_path = os.path.join(data_dir(), "settings.json")
+            data = {}
+            if os.path.exists(settings_path):
+                with open(settings_path, encoding="utf-8") as f:
+                    data = json.load(f)
+            data["price_settings"] = self._price_widget.get_settings()
+            with open(settings_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
     def get_hangar_id(self) -> int | None:
-        """获取选中的入库机库 ID，无选择时返回 None"""
         return self._hangar_combo.currentData() if self._hangar_combo.count() > 0 else None
 
     def _on_hangar_changed(self, hangar: str):
         self.hangar_changed.emit(hangar)
 
     def get_hangar(self) -> int:
-        return self._hangar_combo.currentData() if self._hangar_combo.count() > 0 else -1
+        return self._hangar_combo.currentData() if self._hangar_combo.count() > 0 else -1  # type: ignore[no-any-return]
 
     def get_hangar_name(self) -> str:
-        return self._hangar_combo.currentText() if self._hangar_combo.count() > 0 else ""
+        return self._hangar_combo.currentText() if self._hangar_combo.count() > 0 else ""  # type: ignore[no-any-return]
 
     def get_char_name(self) -> str:
-        return self._char_combo.currentText()  # type: ignore[no-any-return]
+        """返回默认角色名（人物选择已移除，固定返回 main）"""
+        return "main"
 
-    def get_hub_name(self) -> str:
-        """返回 Hub 英文名（内部使用）"""
-        display = self._hub_combo.currentText()
-        # 逆查映射
-        for eng, disp in self.HUB_DISPLAY.items():
-            if disp == display:
-                return eng
-        return display  # type: ignore[no-any-return]
-
-    @classmethod
-    def HUBS_DISPLAY_LIST(cls) -> list[str]:
-        return list(cls.HUB_DISPLAY.values())
+    def get_price_settings(self) -> dict[str, str | float]:
+        """返回当前材料/成品价格设置。"""
+        return self._price_widget.get_settings()  # type: ignore[no-any-return]
 
     def _make_separator(self) -> QLabel:
         sep = QLabel("│")
@@ -242,30 +284,27 @@ class TopToolbar(QWidget):
     def _connect_signals(self):
         self._btn_all_items.clicked.connect(self._on_all_items_clicked)
         self._btn_add.clicked.connect(self._on_add)
-        self._hub_combo.currentTextChanged.connect(self._on_hub_changed)
-        self._sell_mult.valueChanged.connect(self.sell_mult_changed)
-        self._buy_mult.valueChanged.connect(self.buy_mult_changed)
-        self._char_combo.currentTextChanged.connect(self.char_changed)
         self._filter_combo.currentTextChanged.connect(self.filter_changed)
         self._btn_refresh.clicked.connect(self.refresh_requested)
         self._view_data.toggled.connect(self._on_view_toggled)
 
+        # 搜索候选
+        self._setup_search_suggestions()
+
+        # 价格设置变化 → 持久化 + 通知
+        self._price_widget.mat_hub_changed.connect(self._on_price_setting_changed)
+        self._price_widget.mat_price_type_changed.connect(self._on_price_setting_changed)
+        self._price_widget.mat_mult_changed.connect(self._on_price_setting_changed)
+        self._price_widget.prod_hub_changed.connect(self._on_price_setting_changed)
+        self._price_widget.prod_price_type_changed.connect(self._on_price_setting_changed)
+        self._price_widget.prod_mult_changed.connect(self._on_price_setting_changed)
+
     # ── 槽函数 ──────────────────────────────────────────────
 
-    def _on_hub_changed(self, display_text: str):
-        """将中文 Hub 名转回英文后发射信号"""
-        for eng, disp in self.HUB_DISPLAY.items():
-            if disp == display_text:
-                self.hub_changed.emit(eng)
-                return
-        self.hub_changed.emit(display_text)
-
     def _on_all_items_clicked(self):
-        """从全物品列表中选择可制造物品"""
         self.manufacturable_browser_requested.emit()
 
     def _on_add(self):
-        """读取粘贴板/输入框文本，有内容则发射信号并清空，否则提示"""
         text = self._blueprint_input.text().strip()
         if text:
             self.plan_add_requested.emit(text)
@@ -275,6 +314,11 @@ class TopToolbar(QWidget):
 
     def get_filter(self) -> str:
         return self._filter_combo.currentText()  # type: ignore[no-any-return]
+
+    def _on_price_setting_changed(self):
+        """价格设置变化 → 持久化 + 通知外部。"""
+        self._save_price_settings()
+        self.price_setting_changed.emit()
 
     def _on_view_toggled(self, checked: bool):
         if checked:
@@ -300,14 +344,12 @@ class TopToolbar(QWidget):
             f"  border: 1px solid {theme.BORDER}; border-radius: 4px;"
             f"  selection-background-color: {theme.PRIMARY};"
             f"  outline: none; }}"
-            f"QDoubleSpinBox {{ padding: 4px 6px; border: 1px solid {theme.BORDER}; border-radius: 4px;"
-            f"  background: transparent; color: {theme.TEXT_PRIMARY}; font-size: 12px; }}"
-            f"QDoubleSpinBox::up-button {{ width: 14px; border: none;"
-            f"  background: transparent; subcontrol-position: top right; }}"
-            f"QDoubleSpinBox::down-button {{ width: 14px; border: none;"
-            f"  background: transparent; subcontrol-position: bottom right; }}"
-            f"QRadioButton {{ color: {theme.TEXT_PRIMARY}; background: transparent; font-size: 12px; }}"
+            f"QRadioButton {{ color: {theme.TEXT_SECONDARY}; background: transparent; font-size: 12px; spacing: 4px; }}"
+            f"QRadioButton:hover {{ color: {theme.PRIMARY}; }}"
+            f"QRadioButton:checked {{ color: {theme.TEXT_BRIGHT}; font-weight: bold; }}"
             f"QRadioButton::indicator {{ width: 14px; height: 14px; }}"
+            f"QRadioButton::indicator:checked {{ background-color: {theme.PRIMARY}; border-radius: 7px; border: 2px solid {theme.PRIMARY}; }}"
+            f"QRadioButton::indicator:unchecked {{ border: 2px solid {theme.BORDER}; border-radius: 7px; background: transparent; }}"
         )
 
     def _on_theme_changed(self):

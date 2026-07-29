@@ -159,6 +159,159 @@ def init_plan_db():
         log.exception("初始化生产计划数据库失败")
 
 
+class PlanPriceRefreshWorker(QThread):
+    """定向拉取计划涉及物品的 ESI 市场价格——带 5 分钟缓存"""
+
+    finished = Signal(bool, str)  # success, message
+
+    _CACHE_TTL = 300  # 5 分钟缓存有效期（秒）
+
+    def __init__(self, type_ids: set[int], parent=None):
+        super().__init__(parent)
+        self._type_ids = type_ids
+
+    def run(self):
+        import asyncio
+
+        try:
+            count = asyncio.run(self._fetch_and_save())
+            if count == 0:
+                self.finished.emit(True, "价格数据在缓存有效期内（5分钟），直接使用缓存数据")
+            else:
+                self.finished.emit(True, f"已刷新 {count} 个物品的价格")
+        except Exception as e:
+            log.exception("定向价格刷新失败")
+            self.finished.emit(False, str(e))
+
+    async def _check_cache(self, db) -> set[int]:
+        """检查哪些 type_id 已过期（无数据或超过 TTL），返回需要刷新的 type_id 集合。"""
+        stale: set[int] = set()
+        from datetime import datetime
+
+        now = datetime.now(UTC)
+        cursor = await db.execute(
+            "SELECT type_id, fetch_time FROM market_prices " "WHERE type_id IN ({}) AND region_id=10000002".format(
+                ",".join("?" for _ in self._type_ids)
+            ),
+            list(self._type_ids),
+        )
+        rows = await cursor.fetchall()
+        fetched = {r[0] for r in rows}
+        # 无数据 → 需要刷新
+        stale.update(self._type_ids - fetched)
+        for tid, ft_str in rows:
+            try:
+                # fetch_time 格式: "YYYY-MM-DD HH:MM:SS" (SQLite localtime)
+                ft = datetime.strptime(ft_str, "%Y-%m-%d %H:%M:%S")
+                ft = ft.replace(tzinfo=UTC)
+                if (now - ft).total_seconds() > self._CACHE_TTL:
+                    stale.add(tid)
+            except (ValueError, TypeError):
+                stale.add(tid)
+        return stale
+
+    async def _fetch_and_save(self) -> int:
+        """异步拉取 ESI + 写入 market.db（仅拉取缓存过期的物品）"""
+        import asyncio
+
+        import aiosqlite
+
+        from core.paths import market_db_path
+
+        MKT_DB = market_db_path()
+
+        # 1. 检查缓存：哪些 type_id 需要刷新
+        async with aiosqlite.connect(MKT_DB) as db:
+            stale_ids = await self._check_cache(db)
+
+        if not stale_ids:
+            log.info("定向价格: 所有物品均在缓存有效期内，跳过刷新")
+            return 0
+
+        # 2. 并发拉取过期物品的 Jita 订单
+        import aiohttp
+
+        ESI_BASE = "https://esi.evetech.net/latest"
+        HEADERS = {"Accept": "application/json", "User-Agent": "EveDataCrawler/1.0"}
+        REGION_JITA = 10000002
+
+        type_orders: dict[int, dict] = {}
+        timeout = aiohttp.ClientTimeout(total=180)
+
+        async with aiohttp.ClientSession(headers=HEADERS, timeout=timeout) as session:
+            # 更大并发：顺序 per-item fetch_one（不套 sem），asyncio.gather 自带 concurrency
+            sem = asyncio.Semaphore(50)
+
+            async def fetch_item_orders(tid: int) -> tuple[int, dict]:
+                url = f"{ESI_BASE}/markets/{REGION_JITA}/orders/"
+                result: dict = {"buy_price": 0.0, "sell_price": float("inf"), "buy_volume": 0, "sell_volume": 0}
+
+                async def fetch_one(order_type: str) -> list[dict]:
+                    async with sem:
+                        try:
+                            async with session.get(url, params={"type_id": tid, "order_type": order_type}) as resp:
+                                if resp.status == 200:
+                                    return await resp.json()
+                        except Exception:
+                            log.warning("拉取 %s type_id=%s 失败", order_type, tid)
+                        return []
+
+                buy_data, sell_data = await asyncio.gather(fetch_one("buy"), fetch_one("sell"))
+
+                for o in buy_data:
+                    if o["price"] > result["buy_price"]:
+                        result["buy_price"] = o["price"]
+                    result["buy_volume"] += o.get("volume_remain", 0)
+
+                for o in sell_data:
+                    if o["price"] < result["sell_price"]:
+                        result["sell_price"] = o["price"]
+                    result["sell_volume"] += o.get("volume_remain", 0)
+
+                if result["sell_price"] == float("inf"):
+                    result["sell_price"] = 0.0
+
+                return tid, result
+
+            tasks = [fetch_item_orders(tid) for tid in stale_ids]
+            gathered = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for g in gathered:
+                if isinstance(g, Exception):
+                    log.warning("物品订单拉取异常: %s", g)
+                    continue
+                tid, result = g  # type: ignore[misc]
+                type_orders[tid] = result
+
+        # 3. 写入 market_prices（只写入实际拉取到的过期物品）
+        count = 0
+        async with aiosqlite.connect(MKT_DB) as db:
+            for tid in stale_ids:
+                p = type_orders.get(tid)
+                if not p:
+                    continue
+                await db.execute(
+                    """INSERT OR REPLACE INTO market_prices
+                       (type_id, region_id, buy_price, sell_price, adjusted_price,
+                        buy_volume, sell_volume, fetch_time)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+                    (
+                        tid,
+                        REGION_JITA,
+                        p["buy_price"],
+                        p["sell_price"],
+                        0.0,
+                        int(p["buy_volume"]),
+                        int(p["sell_volume"]),
+                    ),
+                )
+                count += 1
+            await db.commit()
+
+        log.info("定向价格刷新完成: %s 个物品（缓存跳过 %s 个）", count, len(self._type_ids) - len(stale_ids))
+        return count
+
+
 class IndustryPage(QWidget):
     """生产计划管理统一页面 — 5 区布局"""
 
@@ -234,12 +387,11 @@ class IndustryPage(QWidget):
 
     def _connect_signals(self):
         # TopToolbar
-        self._toolbar.refresh_requested.connect(self.load_plans)
+        self._toolbar.refresh_requested.connect(self._on_industry_refresh)
         self._toolbar.filter_changed.connect(self.load_plans)
-        self._toolbar.hub_changed.connect(self.load_plans)
+        self._toolbar.price_setting_changed.connect(self.load_plans)
         self._toolbar.plan_add_requested.connect(self._on_plan_add)
         self._toolbar.manufacturable_browser_requested.connect(self._on_manufacturable_browser)
-        self._toolbar.char_changed.connect(self.load_plans)
 
         self._toolbar.view_changed.connect(self._on_view_changed)
 
@@ -319,7 +471,17 @@ class IndustryPage(QWidget):
         except Exception:
             current_char = "main"
             char_config = {}
-        self._recalc_worker = BatchPlanCalcWorker(todo, char_config, char_name=current_char)
+        # 获取工具栏当前价格设置
+        ps = self._toolbar.get_price_settings()
+        self._recalc_worker = BatchPlanCalcWorker(
+            todo,
+            char_config,
+            char_name=current_char,
+            mat_hub=ps["mat_hub"],
+            mat_price_type=ps["mat_price_type"],
+            prod_hub=ps["prod_hub"],
+            prod_price_type=ps["prod_price_type"],
+        )
         self._recalc_worker.finished.connect(self._on_recalc_done)
         self._recalc_worker.start()
 
@@ -396,6 +558,71 @@ class IndustryPage(QWidget):
                     plans.append(p)
         self._gantt_view.load_from_plans(plans)
 
+    # ── 价格定向刷新 ────────────────────────────────────────────
+
+    def _on_industry_refresh(self):
+        """刷新按钮点击 → 收集 type_id → 启动定向 ESI 价格拉取"""
+        # 1. 获取活跃计划
+        with get_container().db.connect("user") as conn:
+            c = conn.execute(
+                "SELECT id, product_type_id FROM production_plans "
+                "WHERE status IN ('pending','in_progress','running','ready')"
+            )
+            plans = c.fetchall()
+
+        if not plans:
+            self.load_plans()
+            return
+
+        # 2. 收集产品 type_ids
+        product_ids = {r[1] for r in plans}
+
+        # 3. 从 blueprint.db 查物料 type_ids（复用 _on_save_prices 的 JOIN 写法）
+        with get_container().db.connect("bp") as conn:
+            placeholders = ",".join("?" for _ in product_ids)
+            c = conn.execute(
+                "SELECT DISTINCT bm.material_type_id "
+                "FROM blueprint_products bp "
+                "JOIN blueprint_materials bm ON bm.blueprint_type_id=bp.blueprint_type_id "
+                "AND bm.activity=bp.activity "
+                f"WHERE bp.product_type_id IN ({placeholders}) AND bp.activity='manufacturing'",
+                list(product_ids),
+            )
+            material_ids = {r[0] for r in c.fetchall()}
+
+        # 4. 合并为唯一 type_ids
+        all_ids: set[int] = product_ids | material_ids
+        if not all_ids:
+            self.load_plans()
+            return
+
+        # 5. 进度反馈 + 启动后台拉取
+        # 先检查缓存是否有效（如果全部已缓存则跳过进度提示）
+        is_cached = 0
+        with get_container().db.connect("mkt") as conn:
+            ph = ",".join("?" for _ in all_ids)
+            c = conn.execute(
+                f"SELECT COUNT(*) FROM market_prices WHERE type_id IN ({ph}) "
+                "AND region_id=10000002 "
+                "AND fetch_time > datetime('now', '-5 minutes', 'utc')",
+                list(all_ids),
+            )
+            is_cached = (c.fetchone() or [0])[0]
+
+        suffix = "（可能使用缓存）" if is_cached == len(all_ids) else ""
+        self._status_bar.show_message(f"正在获取 {len(all_ids)} 个物品的价格{suffix}...")
+        self._refresh_worker = PlanPriceRefreshWorker(all_ids, self)
+        self._refresh_worker.finished.connect(self._on_industry_refresh_done)
+        self._refresh_worker.start()
+
+    def _on_industry_refresh_done(self, success: bool, message: str):
+        """价格拉取完成 → 刷新显示 + 状态栏反馈"""
+        if success:
+            self._status_bar.show_message(message, timeout=5000)
+        else:
+            self._status_bar.show_message(f"价格刷新失败: {message}", timeout=8000)
+        self.load_plans()
+
     # ── 对话框打开方法 ────────────────────────────────────────
 
     def _on_plan_add(self, text: str):
@@ -455,13 +682,14 @@ class IndustryPage(QWidget):
         from ui_pyside6.workers.industry_workers import ScoreWorker
 
         char_name = self._toolbar.get_char_name()
+        ps = self._toolbar.get_price_settings()
 
         self._score_worker = ScoreWorker(
             type_id=type_id,
             bp_me=0,
             bp_te=0,
-            mat_hub="Jita",
-            sell_hub="Jita",
+            mat_hub=ps["mat_hub"],
+            sell_hub=ps["prod_hub"],
             tax=0.0,
             char_name=char_name,
         )
@@ -484,8 +712,8 @@ class IndustryPage(QWidget):
                     char_config=actual_config,
                     bp_me=data["me"],
                     bp_te=data["te"],
-                    mat_source_hub="Jita",
-                    sell_hub="Jita",
+                    mat_source_hub=ps["mat_hub"],
+                    sell_hub=ps["prod_hub"],
                     facility_tax_pct=actual_config.get("market", {}).get("jita", {}).get("facility_tax", 0.0),
                 )
             )
@@ -515,8 +743,8 @@ class IndustryPage(QWidget):
                         data["parallels"],
                         data["me"],
                         data["te"],
-                        "Jita",
-                        "Jita",
+                        ps["mat_hub"],
+                        ps["prod_hub"],
                         data["fac"],
                         data["char"],
                         profit,
@@ -627,7 +855,8 @@ class IndustryPage(QWidget):
         if not plans:
             QMessageBox.information(self, "提示", "没有活跃计划")
             return
-        dlg = ProcurementDialog(plans, "Jita", "Jita", self)
+        ps = self._toolbar.get_price_settings()
+        dlg = ProcurementDialog(plans, ps["mat_hub"], ps["prod_hub"], self)
         dlg.exec()
         self.load_plans()
 

@@ -84,10 +84,24 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
 
     finished = Signal(list)  # [(plan_id, profit, margin, score, iskph, material_cost), ...]
 
-    def __init__(self, plans: list[dict], char_config: dict, parent=None, char_name: str | None = None):
+    def __init__(
+        self,
+        plans: list[dict],
+        char_config: dict,
+        parent=None,
+        char_name: str | None = None,
+        mat_hub: str = "Jita",
+        mat_price_type: str = "sell",
+        prod_hub: str = "Jita",
+        prod_price_type: str = "sell",
+    ):
         super().__init__(plans, char_config=char_config, char_name=char_name, parent=parent)
         self._char_name_internal = char_name or ""
-        self._char_config_cache: dict[str, dict] = {self._char_name_internal: self._char_config}  # char_name → config
+        self._char_config_cache: dict[str, dict] = {self._char_name_internal: self._char_config}
+        self._mat_hub = mat_hub
+        self._mat_price_type = mat_price_type
+        self._prod_hub = prod_hub
+        self._prod_price_type = prod_price_type
 
     def _resolve_char_config(self, plan_char_name: str) -> dict:
         """按计划角色名解析配置，带缓存"""
@@ -110,7 +124,9 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
 
             runs = max(int(item.get("runs", 1)), 1)
             parallels = max(int(item.get("parallels", 1)), 1)
-            sell_hub = item.get("sell_hub", "Jita")
+            # 使用工具栏的价格设置（覆盖每条计划的 DB 值）
+            sell_hub = self._prod_hub
+            mat_hub = self._mat_hub
             # 从角色配置读取设施税率（如未设置则为 0）
             fac_tax = char_config.get("market", {}).get(sell_hub.lower(), {}).get("facility_tax", 0.0)
             # 设施成本系数 → structure_bonus（1.0 = 标准, 0.9 = 10% 折扣）
@@ -124,11 +140,11 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
                     char_config=char_config,
                     bp_me=item.get("me_level", 0),
                     bp_te=item.get("te_level", 0),
-                    mat_source_hub=item.get("mat_hub", "Jita"),
+                    mat_source_hub=mat_hub,
                     sell_hub=sell_hub,
                     facility_tax_pct=fac_tax,
-                    price_type_mat="sell",
-                    price_type_prod="sell",
+                    price_type_mat=self._mat_price_type,
+                    price_type_prod=self._prod_price_type,
                     structure_bonus=structure_bonus,
                 )
             )

@@ -1,14 +1,19 @@
 """工业制造 — 对话框"""
 
+from __future__ import annotations
+
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QSpinBox,
 )
+
+from services import inventory_manager
+from ui_pyside6.views.char_settings_view import get_character_list
 
 
 class AddPlanDialog(QDialog):
@@ -39,20 +44,38 @@ class AddPlanDialog(QDialog):
         me_te = QHBoxLayout()
         self._me = QSpinBox()
         self._me.setRange(0, 10)
+        self._me.setToolTip("材料效率等级（0-10）")
         self._te = QSpinBox()
         self._te.setRange(0, 20)
-        me_te.addWidget(QLabel("蓝图ME:"))
+        self._te.setToolTip("时间效率等级（0-20）")
+        me_te.addWidget(QLabel("材料效率(ME):"))
         me_te.addWidget(self._me)
-        me_te.addWidget(QLabel("蓝图TE:"))
+        me_te.addWidget(QLabel("时间效率(TE):"))
         me_te.addWidget(self._te)
         layout.addRow("蓝图参数:", me_te)
 
-        self._char = QLineEdit()
-        self._char.setPlaceholderText("角色名（可选）")
+        # 角色下拉
+        self._char = QComboBox()
+        chars = get_character_list()
+        if chars:
+            self._char.addItems(chars)
+            self._char.setCurrentText(chars[0])
+        else:
+            self._char.addItem("main")
         layout.addRow("角色:", self._char)
 
-        self._fac = QLineEdit()
-        self._fac.setPlaceholderText("设施名（可选）")
+        # 设施下拉
+        self._fac = QComboBox()
+        self._fac.setEditable(True)
+        self._fac.setPlaceholderText("选择或输入设施名称")
+        # 从机库列表填充常用选项
+        try:
+            hangars = inventory_manager.get_hangars()
+            for h in hangars:
+                self._fac.addItem(h.get("name", ""))
+        except Exception:
+            pass
+        self._fac.setCurrentIndex(-1)
         layout.addRow("设施:", self._fac)
 
         btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -66,8 +89,8 @@ class AddPlanDialog(QDialog):
             "parallels": self._par.value(),
             "me": self._me.value(),
             "te": self._te.value(),
-            "char": self._char.text().strip(),
-            "fac": self._fac.text().strip(),
+            "char": self._char.currentText().strip(),
+            "fac": self._fac.currentText().strip(),
         }
         self.accept()
 

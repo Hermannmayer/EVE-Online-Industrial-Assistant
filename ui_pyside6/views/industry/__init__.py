@@ -7,6 +7,7 @@ from .materials_dialog import MaterialsSummaryDialog
 from .output_dialog import OutputSummaryDialog
 from .plan_edit_dialog import PlanEditDialog
 from .plan_table import PlanTable
+from .price_source_widget import DualPriceSourceWidget, PriceSourceRow
 from .status_bar import StatusBar
 from .top_toolbar import TopToolbar
 
@@ -20,6 +21,8 @@ __all__ = [
     "PlanEditDialog",
     "CostBreakdownDialog",
     "PlanTable",
+    "DualPriceSourceWidget",
+    "PriceSourceRow",
     "StatusBar",
     "TopToolbar",
 ]
