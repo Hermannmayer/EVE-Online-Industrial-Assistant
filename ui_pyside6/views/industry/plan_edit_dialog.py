@@ -1,5 +1,7 @@
 """计划编辑对话框 — 右键"编辑生产计划"时弹出"""
 
+from __future__ import annotations
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
@@ -7,15 +9,16 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QLabel,
-    QLineEdit,
+    QMessageBox,
     QSpinBox,
     QTextEdit,
     QVBoxLayout,
 )
 
 import ui_pyside6.theme as theme
+from services import inventory_manager
+from ui_pyside6.views.char_settings_view import get_character_list
 
-CHAR_OPTIONS = ["main(技能全5)", "alt(技能全4)", "自定义"]
 HUB_OPTIONS = ["Jita", "Amarr", "Dodixie", "Rens", "Hek"]
 
 
@@ -59,29 +62,43 @@ class PlanEditDialog(QDialog):
         self._parallel_spin.setValue(1)
         form.addRow("并行数", self._parallel_spin)
 
-        # ME
+        # 材料效率(ME)
         self._me_spin = QSpinBox()
         self._me_spin.setRange(0, 20)
         self._me_spin.setValue(0)
-        form.addRow("ME 等级", self._me_spin)
+        self._me_spin.setToolTip("材料效率等级（0-10 有效，最高 20）")
+        form.addRow("材料效率(ME):", self._me_spin)
 
-        # TE
+        # 时间效率(TE)
         self._te_spin = QSpinBox()
         self._te_spin.setRange(0, 20)
         self._te_spin.setValue(0)
-        form.addRow("TE 等级", self._te_spin)
+        self._te_spin.setToolTip("时间效率等级（0-20）")
+        form.addRow("时间效率(TE):", self._te_spin)
 
-        # 人物
+        # 人物（可编辑下拉，从真实角色列表加载）
         self._char_combo = QComboBox()
-        self._char_combo.addItems(CHAR_OPTIONS)
+        self._char_combo.setEditable(True)
+        chars = get_character_list()
+        if chars:
+            self._char_combo.addItems(chars)
+        else:
+            self._char_combo.addItem("main")
         form.addRow("人物", self._char_combo)
 
-        # 设施（兼材料来源地）
-        self._facility_edit = QLineEdit()
-        self._facility_edit.setPlaceholderText("设施/星系名称")
-        form.addRow("设施/材料源", self._facility_edit)
+        # 设施（可编辑下拉，带机库候选）
+        self._facility_combo = QComboBox()
+        self._facility_combo.setEditable(True)
+        self._facility_combo.setPlaceholderText("选择或输入设施/星系名称")
+        try:
+            hangars = inventory_manager.get_hangars()
+            for h in hangars:
+                self._facility_combo.addItem(h.get("name", ""))
+        except Exception:
+            pass
+        form.addRow("设施/材料源", self._facility_combo)
 
-        # 输出位置（从机库选择）
+        # 输出位置
         self._output_combo = QComboBox()
         self._output_combo.setEditable(True)
         self._output_combo.setPlaceholderText("选择或输入输出位置…")
@@ -98,7 +115,7 @@ class PlanEditDialog(QDialog):
 
         # 按钮
         self._buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        self._buttons.accepted.connect(self.accept)
+        self._buttons.accepted.connect(self._validate_and_accept)
         self._buttons.rejected.connect(self.reject)
         root.addWidget(self._buttons)
 
@@ -126,11 +143,16 @@ class PlanEditDialog(QDialog):
             idx = self._char_combo.findText(char)
             if idx >= 0:
                 self._char_combo.setCurrentIndex(idx)
+            else:
+                self._char_combo.setEditText(char)
 
         facility = d.get("facility", d.get("mat_hub", ""))
         if facility:
-            # 优先设施名，其次材料 Hub
-            self._facility_edit.setText(facility)
+            idx = self._facility_combo.findText(facility)
+            if idx >= 0:
+                self._facility_combo.setCurrentIndex(idx)
+            else:
+                self._facility_combo.setEditText(facility)
 
         output = d.get("output", d.get("output_location", ""))
         if output:
@@ -144,8 +166,29 @@ class PlanEditDialog(QDialog):
         if raw_notes:
             self._notes_edit.setPlainText(raw_notes)
 
+    def _validate_and_accept(self):
+        """校验输入后保存"""
+        char_name = self._char_combo.currentText().strip()
+        if not char_name:
+            QMessageBox.warning(self, "校验", "请输入角色名")
+            self._char_combo.setFocus()
+            return
+        facility = self._facility_combo.currentText().strip()
+        if not facility:
+            ret = QMessageBox.question(
+                self,
+                "校验",
+                "设施/材料源为空，是否继续？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if ret != QMessageBox.StandardButton.Yes:
+                self._facility_combo.setFocus()
+                return
+        self.accept()
+
     def get_updated_data(self) -> dict:
         """返回更新后的字段字典"""
+        facility_text = self._facility_combo.currentText().strip()
         output_text = self._output_combo.currentText().strip()
         return {
             "product_name": self._product_label.text(),
@@ -153,10 +196,11 @@ class PlanEditDialog(QDialog):
             "parallels": self._parallel_spin.value(),
             "me_level": self._me_spin.value(),
             "te_level": self._te_spin.value(),
-            "char_name": self._char_combo.currentText(),
-            "facility": self._facility_edit.text().strip(),
+            "char_name": self._char_combo.currentText().strip(),
+            "facility": facility_text,
             "output": output_text,
-            "material_hub": self._facility_edit.text().strip(),
+            # material_hub 沿用设施字段（后续可由 PriceSourceWidget 的材料行设置覆盖）
+            "material_hub": facility_text,
             "notes": self._notes_edit.toPlainText().strip(),
         }
 
