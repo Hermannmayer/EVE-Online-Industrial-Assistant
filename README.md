@@ -31,11 +31,30 @@ EVE-Online-Industrial-Assistant/
 │       ├── query_view.py           # 物品查询页面（核心功能）
 │       ├── estimate_view.py        # 估价页面（剪贴板粘贴→价格查询）
 │       ├── industry_view.py        # 工业/制造页面
+│       └── views/industry/
+│           ├── __init__.py
+│           ├── top_toolbar.py       # 工具栏（蓝图导入 + 双行价格设置 + 搜索候选）
+│           ├── price_source_widget.py # 材料/成品独立价格来源设置组件
+│           ├── plan_table.py        # 生产计划表格
+│           ├── plan_edit_dialog.py  # 计划编辑对话框
+│           ├── gantt_view.py        # 甘特图
+│           ├── flow_layout.py       # 自动换行布局
+│           ├── status_bar.py        # 底部状态栏
+│           ├── action_buttons.py    # 底部操作按钮
+│           ├── blueprint_dialog.py  # 所需蓝图表
+│           ├── char_usage_dialog.py # 人物占用表
+│           ├── cost_breakdown_dialog.py # 成本明细
+│           ├── materials_dialog.py  # 材料汇总表
+│           └── output_dialog.py     # 产出总表
 │       ├── inventory_view.py       # 仓库/库存页面
 │       ├── trade_view.py           # 贸易评分页面
 │       ├── char_settings_view.py   # 角色设置页面
 │       ├── init_wizard.py          # 首次启动向导
-│       └── all_items_view.py       # 全物品浏览弹窗
+│       ├── all_items_view.py       # 全物品浏览弹窗
+│       └── dialogs/
+│           ├── industry_dialogs.py   # 加入制造计划对话框
+│           ├── npc_seller_dialog.py  # 蓝图 NPC 卖家查询
+│           └── production_wizard.py  # 产线启动小助手
 │
 ├── services/
 │   ├── client.py                   # ESI HTTP 客户端（aiohttp）
@@ -207,11 +226,17 @@ python build_release.py
 | 📊 **底部状态栏** | 价格更新时间、更新按钮、进度条、自动更新开关 |
 | ⚙️ **系统设置** | 弹窗式设置面板：主题切换、自动更新开关、更新间隔、数据初始化、关于 |
 
-### 五、代采购管理
+### 五、工业制造
 
 | 功能 | 说明 |
 |------|------|
-| 📋 **代采购管理** | IndustryPage 第4Tab，管理代采购订单与供应商 |
+| 📋 **生产计划管理** | 添加、编辑、删除生产计划，表格展示 19 列完整信息 |
+| 🔍 **蓝图搜索候选** | 输入框实时搜索建议，支持中/英文名称模糊匹配，选择即添加 |
+| 🏷️ **双行价格设置** | 材料/成品独立配置 Hub 来源、卖价/买价、倍率系数 |
+| ⚡ **定向价格刷新** | 仅拉取活跃计划涉及物品，5 分钟缓存 TTL + 并发 50 请求 |
+| 📊 **数据视图/甘特图** | 表格数据视图和产线甘特图一键切换 |
+| 📋 **多种汇总弹窗** | 采购小助手、所需蓝图表、材料总表、产出总表、人物占用 |
+| 📦 **自动入库** | 成品制造完成后自动存入指定机库 |
 
 ---
 
@@ -270,7 +295,7 @@ python build_release.py
 
 | 指标 | 数值 |
 |------|------|
-| 📊 **测试总数** | 599 个 |
+| 📊 **测试总数** | 661 个 |
 | 🔧 **框架** | pytest |
 | 📁 **测试目录** | `tests/` |
 | 🏃 **运行命令** | `pytest` |
@@ -292,10 +317,13 @@ python build_release.py
 | `test_watchlist_manager.py` | 关注列表与价格变化检测测试 |
 | `test_contract_view.py` | 合同视图测试 |
 | `test_logistics.py` | 物流距离计算测试 |
+| `test_logistics_cost.py` | 物流成本计算测试 |
 | `test_theme_listeners.py` | 主题监听模式测试 |
 | `test_ui_industry.py` | 工业页面 UI 测试 |
 | `test_ui_inventory.py` | 仓库页面 UI 测试 |
 | `test_ui_main_window.py` | 主窗口 UI 测试 |
+| `test_workers_industry.py` | 制造评分 Worker 测试 |
+| `test_workers_plan_refresh.py` | 计划价格刷新测试 |
 
 ---
 
