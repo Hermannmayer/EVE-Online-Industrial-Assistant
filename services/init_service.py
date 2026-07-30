@@ -38,6 +38,7 @@ except ImportError:
 @dataclass
 class InitStep:
     """单个初始化步骤的元信息"""
+
     key: str
     name: str
     needs_network: bool = True
@@ -57,13 +58,14 @@ class StepStatus(Enum):
 # ── 默认步骤列表 ──
 
 STEPS = [
-    InitStep("items",      "物品数据",   needs_network=True,  critical=True),
-    InitStep("prices",     "市场价格",   needs_network=True,  critical=True,  depends_on=["items"]),
-    InitStep("blueprints", "蓝图数据",   needs_network=True,  critical=True,  depends_on=["items"]),
-    InitStep("implants",   "植入体数据", needs_network=True,  critical=False),
-    InitStep("industry",   "工业数据",   needs_network=True,  critical=True,  depends_on=["items"]),
-    InitStep("icons",      "物品图标",   needs_network=True,  critical=False),
-    InitStep("sde_data",   "SDE扩展数据",needs_network=False, critical=True,  depends_on=["items"]),
+    InitStep("schema", "数据库结构", needs_network=False, critical=True),
+    InitStep("items", "物品数据", needs_network=True, critical=True),
+    InitStep("prices", "市场价格", needs_network=True, critical=True, depends_on=["items"]),
+    InitStep("blueprints", "蓝图数据", needs_network=True, critical=True, depends_on=["items"]),
+    InitStep("implants", "植入体数据", needs_network=True, critical=False),
+    InitStep("industry", "工业数据", needs_network=True, critical=True, depends_on=["items"]),
+    InitStep("icons", "物品图标", needs_network=True, critical=False),
+    InitStep("sde_data", "SDE扩展数据", needs_network=False, critical=True, depends_on=["items"]),
 ]
 
 STEP_MAP: dict[str, InitStep] = {s.key: s for s in STEPS}
@@ -71,10 +73,10 @@ STEP_MAP: dict[str, InitStep] = {s.key: s for s in STEPS}
 
 # ── 回调类型（CLI 模式） ──
 
-StepStartedCb = Callable[[str, str], None]       # step_key, step_name
+StepStartedCb = Callable[[str, str], None]  # step_key, step_name
 StepProgressCb = Callable[[str, int, str], None]  # step_key, percent, message
 StepCompletedCb = Callable[[str, bool, str], None]  # step_key, success, message
-AllCompletedCb = Callable[[bool, str], None]      # all_done, summary
+AllCompletedCb = Callable[[bool, str], None]  # all_done, summary
 
 
 def _noop(*args, **kwargs):
@@ -125,11 +127,11 @@ class InitService(QObject):
     """
 
     # Qt 信号
-    step_started = Signal(str, str)             # step_key, step_name
-    step_progress = Signal(str, int, str)       # step_key, percent_0_100, message
-    step_completed = Signal(str, bool, str)     # step_key, success, message
-    all_completed = Signal(bool, str)           # all_done, summary
-    network_status = Signal(bool, str)          # ok, message
+    step_started = Signal(str, str)  # step_key, step_name
+    step_progress = Signal(str, int, str)  # step_key, percent_0_100, message
+    step_completed = Signal(str, bool, str)  # step_key, success, message
+    all_completed = Signal(bool, str)  # all_done, summary
+    network_status = Signal(bool, str)  # ok, message
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -304,10 +306,7 @@ class InitService(QObject):
 
     def _deps_satisfied(self, step: InitStep) -> bool:
         """检查前置步骤是否已完成"""
-        return all(
-            self._status.get(dep) in (StepStatus.COMPLETED, StepStatus.SKIPPED)
-            for dep in step.depends_on
-        )
+        return all(self._status.get(dep) in (StepStatus.COMPLETED, StepStatus.SKIPPED) for dep in step.depends_on)
 
     async def _run_step(self, key: str) -> tuple[bool, str]:
         """实际执行一个初始化步骤
@@ -318,13 +317,14 @@ class InitService(QObject):
         # 映射 key → (module_path, entry_func_name, param_name)
         # param_name: 入口函数的 progress_cb 参数名（None=不支持）
         entry_map = {
-            "items":      ("tools.downloaders.getitems", "main", True),
-            "prices":     ("services.workers.getprices", "main", True),
+            "schema": ("services.schema_migrations", "ensure_all_schemas", False),
+            "items": ("tools.downloaders.getitems", "main", True),
+            "prices": ("services.workers.getprices", "main", True),
             "blueprints": ("tools.downloaders.getblueprints", "run_blueprint_update", True),
-            "implants":   ("tools.downloaders.getimplantdata", "main", True),
-            "icons":      ("tools.downloaders.geticon", "main", True),
-            "industry":   ("services.workers.getindustry", "run_industry_update", True),
-            "sde_data":   ("tools.downloaders.sde_loader", "main", True),
+            "implants": ("tools.downloaders.getimplantdata", "main", True),
+            "icons": ("tools.downloaders.geticon", "main", True),
+            "industry": ("services.workers.getindustry", "run_industry_update", True),
+            "sde_data": ("tools.downloaders.sde_loader", "main", True),
         }
 
         mapping = entry_map.get(key)

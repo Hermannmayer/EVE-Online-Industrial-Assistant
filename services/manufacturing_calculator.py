@@ -49,60 +49,59 @@ TE_MULT_PER_LEVEL = 0.01  # TE 每级 -1% 时间
 
 
 def _waste_mult(wastefactor: int, me_level: int) -> float:
-    """计算 ME 等级带来的浪费乘数（相对真实基础量）。
-
-    公式: 1 + (wastefactor / 100) / (1 + me_level)
-    """
+    """保留兼容，新公式已不使用 wastefactor。"""
     if me_level < 0:
         me_level = 0
     return 1.0 + (wastefactor / 100.0) / (1.0 + me_level)
 
 
 def calc_waste_factor(wastefactor: int, me_level: int) -> float:
-    """计算材料浪费倍率（相对 SDE quantity，SDE quantity=ME0 含损耗量）。
+    """计算材料减成倍率（相对 SDE quantity）。
 
-    公式: _waste_mult(me) / _waste_mult(0)
-
-    这样 ME 0 时 waste_factor=1.0，ME 上升时逐步逼近 1/(1+wf/100)。
+    线性公式: (100 - me_level) / 100
+    ME 0 → 1.0（100%），ME 10 → 0.9（90%），每级减 1%。
     """
-    return _waste_mult(wastefactor, me_level) / _waste_mult(wastefactor, 0)
+    if me_level < 0:
+        me_level = 0
+    return (100.0 - me_level) / 100.0
 
 
 def calc_material_per_run(
     db_qty: int,
-    wastefactor: int,
-    me_level: int,
+    wastefactor: int = 10,
+    me_level: int = 0,
     structure_mat_saving: float = 1.0,
 ) -> int:
     """计算每轮次制造所需材料数量。
 
-    SDE 中的 quantity 已是 ME 0 的实际用量（含 base waste）。
-    公式先反推真实基础量，再按当前 ME 重新计算。
-
-    actual = ceil(db_qty × (1 + wf/100/(1+ME)) / (1 + wf/100) × structure_mat_saving)
+    线性公式: ceil(db_qty × (100 - ME) / 100 × 结构减免)
+    ME 每级减 1%，最高 10 级（ME 10 = 基础量的 90%）。
+    wastefactor 参数保留仅做兼容，不再参与计算。
     """
     if me_level < 0:
         me_level = 0
-    # 反推真实基础量：db_qty = true_base × (1 + wf/100)
-    # 再按 ME 等级重新计算
-    ratio = _waste_mult(wastefactor, me_level) / _waste_mult(wastefactor, 0)
-    result = db_qty * ratio * structure_mat_saving
+    me_level = min(me_level, 10)
+    result = db_qty * (100.0 - me_level) / 100.0 * structure_mat_saving
     return math.ceil(result - _FP_EPSILON)
 
 
 def calc_material_for_runs(
     db_qty: int,
-    wastefactor: int,
-    me_level: int,
-    runs: int,
+    wastefactor: int = 10,
+    me_level: int = 0,
+    runs: int = 1,
     structure_mat_saving: float = 1.0,
 ) -> int:
-    """计算多轮次制造所需材料总量 = per_run × runs。
+    """计算多轮次制造所需材料总量。
 
-    参数与 calc_material_per_run 相同。
+    材料效率适用于整个项目总量（不逐轮次取整）:
+    ceil(db_qty × runs × (100 - ME) / 100 × 结构减免)
     """
-    per_run = calc_material_per_run(db_qty, wastefactor, me_level, structure_mat_saving)
-    return per_run * max(1, runs)
+    if me_level < 0:
+        me_level = 0
+    me_level = min(me_level, 10)
+    total = db_qty * max(1, runs) * (100.0 - me_level) / 100.0 * structure_mat_saving
+    return math.ceil(total - _FP_EPSILON)
 
 
 # ═══════════════════════════════════════════════════════════

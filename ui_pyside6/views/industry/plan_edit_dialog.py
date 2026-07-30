@@ -8,10 +8,8 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QHBoxLayout,
     QLabel,
     QMessageBox,
-    QSlider,
     QSpinBox,
     QTextEdit,
     QVBoxLayout,
@@ -23,14 +21,19 @@ from ui_pyside6.views.char_settings_view import get_character_list
 
 
 class PlanEditDialog(QDialog):
-    """右键"编辑生产计划"时弹出的编辑对话框"""
+    """编辑/批量编辑生产计划对话框（不含 ME/TE，由"设置蓝图等级"单独设置）"""
 
-    def __init__(self, parent=None, plan_data: dict | None = None):
+    def __init__(self, parent=None, plan_data: dict | None = None, *, batch_mode: bool = False, row_count: int = 0):
         super().__init__(parent)
         self._plan_data = plan_data or {}
+        self._batch_mode = batch_mode
         product_name = self._plan_data.get("product_name", "未知产品")
-        self.setWindowTitle(f"编辑生产计划 - {product_name}")
-        self.setMinimumWidth(420)
+        if batch_mode:
+            self.setWindowTitle(f"批量编辑生产计划 ({row_count} 行)")
+        else:
+            self.setWindowTitle(f"编辑生产计划 - {product_name}")
+        self.setMinimumWidth(480)
+        self.setMinimumHeight(400)
         self._build_ui()
         self._load_data()
         theme.add_theme_listener(self._on_theme_changed)
@@ -61,40 +64,6 @@ class PlanEditDialog(QDialog):
         self._parallel_spin.setRange(1, 100)
         self._parallel_spin.setValue(1)
         form.addRow("并行数", self._parallel_spin)
-
-        # 材料效率(ME) — 滑块 + 手动输入 0-10
-        me_layout = QHBoxLayout()
-        self._me_slider = QSlider(Qt.Orientation.Horizontal)
-        self._me_slider.setRange(0, 10)
-        self._me_slider.setValue(0)
-        self._me_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self._me_slider.setTickInterval(1)
-        self._me_spin = QSpinBox()
-        self._me_spin.setRange(0, 10)
-        self._me_spin.setValue(0)
-        self._me_spin.setFixedWidth(56)
-        self._me_slider.valueChanged.connect(self._me_spin.setValue)
-        self._me_spin.valueChanged.connect(self._me_slider.setValue)
-        me_layout.addWidget(self._me_slider)
-        me_layout.addWidget(self._me_spin)
-        form.addRow("材料效率(ME):", me_layout)
-
-        # 时间效率(TE) — 滑块 + 手动输入 0-20
-        te_layout = QHBoxLayout()
-        self._te_slider = QSlider(Qt.Orientation.Horizontal)
-        self._te_slider.setRange(0, 20)
-        self._te_slider.setValue(0)
-        self._te_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self._te_slider.setTickInterval(5)
-        self._te_spin = QSpinBox()
-        self._te_spin.setRange(0, 20)
-        self._te_spin.setValue(0)
-        self._te_spin.setFixedWidth(56)
-        self._te_slider.valueChanged.connect(self._te_spin.setValue)
-        self._te_spin.valueChanged.connect(self._te_slider.setValue)
-        te_layout.addWidget(self._te_slider)
-        te_layout.addWidget(self._te_spin)
-        form.addRow("时间效率(TE):", te_layout)
 
         # 人物（纯下拉，从真实角色列表加载）
         self._char_combo = QComboBox()
@@ -134,6 +103,7 @@ class PlanEditDialog(QDialog):
         form.addRow("备注", self._notes_edit)
 
         root.addLayout(form)
+        root.addStretch()
 
         # 按钮
         self._buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -145,20 +115,16 @@ class PlanEditDialog(QDialog):
 
     def _load_data(self):
         d = self._plan_data
-        self._product_label.setText(str(d.get("product_name", "—")))
-
-        if "runs" in d:
-            self._runs_spin.setValue(d["runs"])
-        if "parallels" in d:
-            self._parallel_spin.setValue(d["parallels"])
-        if "me_level" in d:
-            self._me_slider.setValue(d["me_level"])
-        elif "me" in d:
-            self._me_slider.setValue(d["me"])
-        if "te_level" in d:
-            self._te_slider.setValue(d["te_level"])
-        elif "te" in d:
-            self._te_slider.setValue(d["te"])
+        if self._batch_mode:
+            self._product_label.setText(f"已选中 {len(d.get('_selected_rows', []))} 行")
+            self._runs_spin.setValue(1)
+            self._parallel_spin.setValue(1)
+        else:
+            self._product_label.setText(str(d.get("product_name", "—")))
+            if "runs" in d:
+                self._runs_spin.setValue(d["runs"])
+            if "parallels" in d:
+                self._parallel_spin.setValue(d["parallels"])
 
         char = d.get("char_name", d.get("character", ""))
         if char:
@@ -215,19 +181,18 @@ class PlanEditDialog(QDialog):
         """返回更新后的字段字典"""
         facility_text = self._facility_combo.currentText().strip()
         output_text = self._output_combo.currentText().strip()
-        return {
-            "product_name": self._product_label.text(),
+        result = {
             "runs": self._runs_spin.value(),
             "parallels": self._parallel_spin.value(),
-            "me_level": self._me_slider.value(),
-            "te_level": self._te_slider.value(),
             "char_name": self._char_combo.currentText().strip(),
             "facility": facility_text,
             "output": output_text,
-            # material_hub 沿用设施字段（后续可由 PriceSourceWidget 的材料行设置覆盖）
             "material_hub": facility_text,
             "notes": self._notes_edit.toPlainText().strip(),
         }
+        if not self._batch_mode:
+            result["product_name"] = self._product_label.text()
+        return result
 
     # ── 主题 ──────────────────────────────────────────────────
 

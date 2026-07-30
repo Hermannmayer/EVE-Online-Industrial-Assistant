@@ -115,6 +115,11 @@ def main():
     _migrate_split_db()
     _migrate_blueprint_db()
 
+    # 执行 Schema 迁移（wastefactor 列等）
+    from services.schema_migrations import ensure_all_schemas
+
+    ensure_all_schemas()
+
     from services.inventory_manager import init_db
 
     init_db()

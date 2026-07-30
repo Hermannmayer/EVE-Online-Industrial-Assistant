@@ -310,5 +310,3 @@ def _fmt_waste_pct(waste_factor: float) -> str:
     """Convert waste multiplier to waste percentage display, e.g. 1.10 -> 10%, 1.00 -> 0%."""
     pct = (waste_factor - 1) * 100
     return f"{pct:.0f}%"
-    pct = (waste_factor - 1) * 100
-    return f"{pct:.0f}%"

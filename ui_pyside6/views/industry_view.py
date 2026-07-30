@@ -498,13 +498,23 @@ class IndustryPage(QWidget):
         self._recalc_busy = True
         try:
             with get_container().db.connect("user") as conn:
-                for plan_id, profit, margin, score, iskph, mat_cost, hours_total, daily_output in results:
+                for (
+                    plan_id,
+                    profit,
+                    margin,
+                    score,
+                    iskph,
+                    mat_cost,
+                    hours_total,
+                    daily_output,
+                    personal_margin,
+                ) in results:
                     try:
                         # hours_total 转换为秒存入 calculated_time
                         calculated_seconds = round(hours_total * 3600)
                         conn.execute(
                             "UPDATE production_plans SET profit=?, margin=?, score=?,"
-                            " iskph=?, material_cost=?, market_margin=?,"
+                            " iskph=?, material_cost=?, market_margin=?, personal_margin=?,"
                             " calculated_time=?, daily_output=? WHERE id=?",
                             (
                                 profit,
@@ -513,6 +523,7 @@ class IndustryPage(QWidget):
                                 iskph,
                                 mat_cost,
                                 margin,
+                                personal_margin,
                                 calculated_seconds,
                                 daily_output,
                                 plan_id,
@@ -759,7 +770,9 @@ class IndustryPage(QWidget):
                         data["char"],
                         profit,
                         margin,  # \u603b\u5229\u6da6\u7387\uff08\u4e0e per-run \u6bd4\u503c\u76f8\u540c\uff09
-                        metrics.get("score", 0),  # \u8bc4\u5206\uff08per-run\uff0c\u4e0d\u56e0\u7f29\u653e\u53d8\u5316\uff09
+                        metrics.get(
+                            "score", 0
+                        ),  # \u8bc4\u5206\uff08per-run\uff0c\u4e0d\u56e0\u7f29\u653e\u53d8\u5316\uff09
                         iskph,
                         mat_cost,
                         calculated_seconds,

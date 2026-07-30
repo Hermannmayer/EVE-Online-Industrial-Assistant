@@ -119,7 +119,7 @@ class TestMEWasteFactor:
         mat = result["materials"][0]
         assert mat["wastefactor"] == 10
         assert mat["waste_factor"] < 1.0
-        assert mat["waste_factor"] > 0.9
+        assert mat["waste_factor"] >= 0.9
 
     def test_me5_waste_between_me0_and_me10(self, temp_db):
         """ME 5 的浪费应在 ME0 和 ME10 之间"""
