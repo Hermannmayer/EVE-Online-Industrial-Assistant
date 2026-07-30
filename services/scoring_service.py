@@ -515,8 +515,15 @@ class ScoringService:
         """
         type_id = plan_data.get("product_type_id")
         if not type_id:
-            return {"material_cost": 0, "profit": 0, "margin": 0, "score": 0,
-                    "iskph": 0, "calculated_time": 0, "daily_output": 0}
+            return {
+                "material_cost": 0,
+                "profit": 0,
+                "margin": 0,
+                "score": 0,
+                "iskph": 0,
+                "calculated_time": 0,
+                "daily_output": 0,
+            }
 
         me = int(plan_data.get("me_level", 0) or 0)
         te = int(plan_data.get("te_level", 0) or 0)
@@ -530,11 +537,7 @@ class ScoringService:
         resolved_price_type_prod = price_type_prod or "sell"
 
         # facility_tax 始终从 sell_hub 对应的角色配置读取
-        fac_tax = (
-            char_config.get("market", {})
-            .get(resolved_sell_hub.lower(), {})
-            .get("facility_tax", 0.0)
-        )
+        fac_tax = char_config.get("market", {}).get(resolved_sell_hub.lower(), {}).get("facility_tax", 0.0)
 
         facility_cost_mult = float(plan_data.get("facility_cost_mult", 1.0))
         structure_bonus = facility_cost_mult - 1.0
@@ -650,8 +653,14 @@ class ScoringService:
                 mat_price = get_price(mat_id, price_type_mat, mat_source_hub, _db=self._db)
                 # EIV 使用 adjusted_price（更稳定），兜底用 mat_price
                 adj_price = get_adjusted_price(mat_id, _db=self._db) or mat_price or 0.0
-                # 正确公式：ceil(base_qty × waste_factor) 每轮次
-                per_run_qty = calc_material_per_run(mat_qty, wastefactor, bp_me, STRUCTURE_MAT_SAVING)
+                # 单件材料(基础量=1)不受ME影响——如T1舰船、矿物、组件等
+                # 因为 ceil(1×(100-ME)/100)=1，ME 无法将 1 个减到 0 个
+                if mat_qty <= 1:
+                    per_run_qty = mat_qty
+                    is_whole_item = True
+                else:
+                    per_run_qty = calc_material_per_run(mat_qty, wastefactor, bp_me, STRUCTURE_MAT_SAVING)
+                    is_whole_item = False
                 waste_qty = per_run_qty  # 每轮次仅用 per_run_qty（已含 ME 调整）
                 if mat_price:
                     total_mat_cost += waste_qty * mat_price
@@ -668,6 +677,7 @@ class ScoringService:
                         "waste_factor": round(per_run_qty / mat_qty, 4) if mat_qty > 0 else 1.0,
                         "unit_price": mat_price or 0.0,
                         "subtotal": round((mat_price or 0.0) * waste_qty, 2),
+                        "is_whole_item": is_whole_item,
                     }
                 )
             result["materials"] = mat_detail

@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.container import get_container
 
-_COLUMNS = ["材料", "基础量", "损耗率", "实际量", "单价", "小计"]
+_COLUMNS = ["材料", "基础量", "材料减成%", "实际量", "单价", "小计"]
 
 
 class CostBreakdownDialog(QWidget):
@@ -228,16 +228,26 @@ class CostBreakdownDialog(QWidget):
             self._status_label.setText(tips.get(status, f"状态: {status}"))
             return
 
+        from services.manufacturing_calculator import calc_material_for_runs
+
         materials = per_run.get("materials", [])
         self._table.setRowCount(len(materials))
         for row_idx, mat in enumerate(materials):
+            base = mat.get("base_qty", 0)
+            # 单件材料(基础量≤1)不受ME影响
+            if base <= 1:
+                total_qty = base * total_mult
+            else:
+                wf = mat.get("wastefactor", 10) or 10
+                me = self._plan.get("me_level", 0) or 0
+                total_qty = calc_material_for_runs(base, wf, me, total_mult)
             items = [
                 mat.get("name", ""),
-                str(mat.get("base_qty", 0)),
-                _fmt_waste_pct(mat.get("waste_factor", 1)),
-                f"{mat.get('qty', 0) * total_mult:,.2f}",
+                str(base),
+                _fmt_material_saving(total_qty, base, total_mult),
+                f"{total_qty:,.0f}",
                 _fmt_isk(mat.get("unit_price", 0)),
-                _fmt_isk(mat.get("subtotal", 0) * total_mult),
+                _fmt_isk((mat.get("unit_price", 0) or 0) * total_qty),
             ]
             for col_idx, text in enumerate(items):
                 item = QTableWidgetItem(text)
@@ -297,16 +307,15 @@ class CostBreakdownDialog(QWidget):
 
 
 def _fmt_isk(value: float) -> str:
-    if abs(value) >= 1_000_000_000:
-        return f"{value / 1_000_000_000:.2f}B"
-    if abs(value) >= 1_000_000:
-        return f"{value / 1_000_000:.2f}M"
-    if abs(value) >= 1_000:
-        return f"{value / 1_000:.1f}K"
-    return f"{value:.0f}"
+    if value == int(value):
+        return f"{int(value):,}"
+    return f"{value:,.2f}"
 
 
-def _fmt_waste_pct(waste_factor: float) -> str:
-    """Convert waste multiplier to waste percentage display, e.g. 1.10 -> 10%, 1.00 -> 0%."""
-    pct = (waste_factor - 1) * 100
-    return f"{pct:.0f}%"
+def _fmt_material_saving(total_qty: int, base_qty: int, total_mult: int) -> str:
+    """材料减成百分比：按总量计算 (1 - total_with_ME / total_without_ME)"""
+    total_base = base_qty * total_mult
+    if total_base <= 0:
+        return "0%"
+    pct = (1 - total_qty / total_base) * 100
+    return f"{pct:.1f}%"

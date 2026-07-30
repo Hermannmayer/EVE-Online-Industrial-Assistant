@@ -225,7 +225,6 @@ class PlanTable(QWidget):
 
         # ── 查看 ─────────────────────────────────────────
         menu.addAction("查看核算", lambda: self._view_cost_breakdown(row))
-        menu.addAction("查看物品详情", lambda: self._view_item_details(row))
         menu.addSeparator()
 
         # ── 状态（批量适用） ──────────────────────────────
@@ -239,8 +238,7 @@ class PlanTable(QWidget):
             a.triggered.connect(lambda: batch(lambda r: self._set_materials_ready(r, 1)))
         a = menu.addAction("项目启动")
         a.triggered.connect(lambda: batch(lambda r: self._set_status(r, "in_progress")))
-        a = menu.addAction("待下线")
-        a.triggered.connect(lambda: batch(lambda r: self._set_status(r, "ready")))
+
         a = menu.addAction("项目完成")
         a.triggered.connect(lambda: batch(lambda r: self._set_status(r, "completed")))
         menu.addSeparator()
@@ -262,12 +260,6 @@ class PlanTable(QWidget):
         a.triggered.connect(lambda: batch(lambda r: self._smart_adjust_children(r)))
         a = smart_menu.addAction("子项大规模产线并行")
         a.triggered.connect(lambda: batch(lambda r: self._smart_parallel_children(r)))
-
-        fac_menu = menu.addMenu("设施设置")
-        a = fac_menu.addAction("为设施设置所在星系")
-        a.triggered.connect(lambda r=row: self._set_facility_system(r))
-        a = fac_menu.addAction("为设施所在星系设置成本系数")
-        a.triggered.connect(lambda r=row: self._set_facility_cost_index(r))
 
         menu.addSeparator()
 
