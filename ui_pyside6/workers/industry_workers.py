@@ -82,7 +82,9 @@ class ScoreWorker(BaseScoreWorker):
 class BatchPlanCalcWorker(BaseBatchScoreWorker):
     """后台批量重算所有生产计划的利润/评分"""
 
-    finished = Signal(list)  # [(plan_id, profit, margin, score, iskph, material_cost), ...]
+    finished = Signal(
+        list
+    )  # [(plan_id, profit, margin, score, iskph, material_cost, hours, daily, personal_margin), ...]
 
     def __init__(
         self,
@@ -142,9 +144,89 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
                 result.get("material_cost", 0),
                 result.get("calculated_time", 0) / 3600,  # 秒→小时
                 result.get("daily_output", 0),
+                self._calc_personal_margin(item, result.get("material_cost", 0), result.get("margin", 0)),
             )
         except Exception:
-            return (plan_id, 0, 0, 0, 0, 0, 0, 0)
+            return (plan_id, 0, 0, 0, 0, 0, 0, 0, 0)
+
+    def _calc_personal_margin(self, plan: dict, market_mat_cost: float, market_margin: float) -> float:
+        """计算考虑库存成本的个人利润率"""
+        import sqlite3
+
+        from core.paths import BP_DB_PATH, USR_DB_PATH
+        from services.manufacturing_calculator import calc_material_for_runs
+        from services.scoring_service import get_price
+
+        type_id = plan.get("product_type_id")
+        me = int(plan.get("me_level", 0) or 0)
+        runs = max(int(plan.get("runs", 1)), 1)
+        parallels = max(int(plan.get("parallels", 1)), 1)
+        total_mult = runs * parallels
+
+        try:
+            # 1. 获取蓝图材料列表
+            conn_bp = sqlite3.connect(BP_DB_PATH)
+            c = conn_bp.cursor()
+            c.execute(
+                "SELECT bm.material_type_id, bm.quantity, ba.quantity AS prod_qty "
+                "FROM blueprint_products bp "
+                "JOIN blueprint_materials bm ON bm.blueprint_type_id = bp.blueprint_type_id "
+                "    AND bm.activity = bp.activity "
+                "JOIN blueprint_activities ba ON ba.blueprint_type_id = bp.blueprint_type_id "
+                "    AND ba.activity = bp.activity "
+                "WHERE bp.product_type_id = ? AND bp.activity = 'manufacturing'",
+                (type_id,),
+            )
+            mat_rows = c.fetchall()
+            conn_bp.close()
+            if not mat_rows:
+                return market_margin
+
+            # 2. 获取库存数据
+            conn_usr = sqlite3.connect(USR_DB_PATH)
+            cur = conn_usr.cursor()
+            cur.execute(
+                "SELECT type_id, SUM(quantity), AVG(cost_price) FROM inventory_items "
+                "WHERE quantity > 0 AND cost_price > 0 GROUP BY type_id"
+            )
+            inv_rows = cur.fetchall()
+            conn_usr.close()
+            inv_map: dict[int, tuple[int, float]] = {}
+            for tid, qty, cost in inv_rows:
+                inv_map[tid] = (int(qty), float(cost or 0))
+
+            # 3. 计算个人材料成本（考虑库存）
+            total_personal_cost = 0.0
+            revenue = 0.0
+            for mat_id, mat_qty, _prod_qty in mat_rows:
+                need = calc_material_for_runs(mat_qty, 10, me, total_mult)
+                stock_qty, stock_cost = inv_map.get(mat_id, (0, 0))
+                market_price = get_price(mat_id, self._mat_price_type, self._mat_hub, _db=get_container().db) or 0
+
+                if stock_qty >= need:
+                    # 库存足够：全部用库存成本
+                    mat_cost = need * stock_cost if stock_cost > 0 else need * market_price
+                elif stock_qty > 0:
+                    # 部分库存：混合成本
+                    mat_cost = stock_qty * stock_cost + (need - stock_qty) * market_price
+                else:
+                    # 无库存：全用市场价
+                    mat_cost = need * market_price
+
+                total_personal_cost += mat_cost
+
+            # 4. 计算收入（用市场价）
+            prod_price = get_price(type_id, self._prod_price_type, self._prod_hub, _db=get_container().db) or 0
+            revenue = prod_price * total_mult
+
+            # 5. 个人利润率
+            if total_personal_cost <= 0:
+                return 0.0
+            personal_profit = revenue - total_personal_cost
+            return round(personal_profit / total_personal_cost * 100, 2)
+
+        except Exception:
+            return market_margin
 
     def run(self):
         """BatchPlanCalcWorker 的 run 覆盖：直接遍历 _items 生成结果列表"""

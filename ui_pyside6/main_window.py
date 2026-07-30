@@ -279,11 +279,9 @@ class MainWindow(QMainWindow):
         _hr.clear_trigger()
         theme.remove_theme_listener(self._on_theme_changed)
         theme.save_window_geometry(self)
-        # 关闭独立的全物品窗口
+        # 关闭所有子窗口（含独立弹窗）
         for w in QApplication.topLevelWidgets():
-            from ui_pyside6.views.all_items_view import AllItemsDialog
-
-            if isinstance(w, AllItemsDialog) and w.isVisible():
+            if w is not self and w.isVisible():
                 w.close()
         # 等待后台线程安全退出
         for attr in ("_check_worker", "_price_worker"):

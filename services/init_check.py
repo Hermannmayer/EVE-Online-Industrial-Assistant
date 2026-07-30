@@ -197,10 +197,24 @@ def check_universe() -> int:
         return 0
 
 
+def check_schema() -> bool:
+    """检查所有 4 个库的 schema 版本是否匹配预期
+
+    与 services/schema_migrations.py 配合，防止数据库结构变更导致崩溃。
+    """
+    try:
+        from services.schema_migrations import DB_SCHEMA_VERSIONS, get_db_version
+
+        return all(get_db_version(alias) == expected for alias, expected in DB_SCHEMA_VERSIONS.items())
+    except Exception:
+        return False
+
+
 def check_all() -> dict:
     """返回各组件状态 { "items": bool, "prices": bool, "blueprints": bool, ... }"""
     cached, total = check_icons()
     return {
+        "schema": check_schema(),
         "items": check_items() >= 10000 and check_item_names_ratio() < 0.05 and check_market_tree() > 500,
         "prices": check_prices() > 0,
         "blueprints": check_blueprints() >= 1000 and check_blueprint_names() < 100,
@@ -208,10 +222,7 @@ def check_all() -> dict:
         "icons": cached >= int(total * 0.8),
         "industry": check_industry() > 100,
         "sde_data": (
-            check_meta_groups() > 0
-            and check_type_materials() > 0
-            and check_dogma_attrs() > 0
-            and check_stations() > 0
+            check_meta_groups() > 0 and check_type_materials() > 0 and check_dogma_attrs() > 0 and check_stations() > 0
         ),
     }
 

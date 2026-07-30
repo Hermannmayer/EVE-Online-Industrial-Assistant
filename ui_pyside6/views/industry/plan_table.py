@@ -29,24 +29,22 @@ COL_CHECKBOX = 0
 COL_ICON = 1
 COL_PRODUCT = 2
 COL_NOTES = 3
-COL_BATCH = 4
-COL_PARALLELS = 5
-COL_GROUP = 6
-COL_CHILD_LEVEL = 7
-COL_STATUS = 8
-COL_CHAR_NAME = 9
-COL_RUNS = 10
-COL_BLUEPRINT = 11
-COL_TIME = 12
-COL_OUTPUT_RATE = 13
-COL_FACILITY = 14
-COL_OUTPUT = 15
-COL_COST = 16
-COL_PROFIT = 17
-COL_MARKET_MARGIN = 18
-COL_PERSONAL_MARGIN = 19
+COL_GROUP = 4
+COL_CHILD_LEVEL = 5
+COL_STATUS = 6
+COL_CHAR_NAME = 7
+COL_RUNS = 8
+COL_BLUEPRINT = 9
+COL_TIME = 10
+COL_OUTPUT_RATE = 11
+COL_FACILITY = 12
+COL_OUTPUT = 13
+COL_COST = 14
+COL_PROFIT = 15
+COL_MARKET_MARGIN = 16
+COL_PERSONAL_MARGIN = 17
 
-_NUM_COLUMNS = 20
+_NUM_COLUMNS = 18
 
 
 class PlanTable(QWidget):
@@ -102,10 +100,8 @@ class PlanTable(QWidget):
         header.setMinimumSectionSize(24)
 
         # 隐藏并行和批次列（数据仍保留用于计算）
-        self._table.setColumnHidden(COL_BATCH, True)
-        self._table.setColumnHidden(COL_PARALLELS, True)
 
-        NARROW = {1, 6, 7}  # 图标/组号/子级
+        NARROW = {1, 4, 5}  # 图标/组号/子级
         STRETCH = {2}  # 产品名
         FIXED = {0}  # 勾选列固定 24px
 
@@ -191,20 +187,40 @@ class PlanTable(QWidget):
     # ── 行右键菜单 ────────────────────────────────────────────
 
     def _on_table_context_menu(self, pos) -> None:
-        """右键行 → 操作菜单"""
+        """右键行 → 操作菜单（多选时批量操作对选中行全部生效）"""
         index = self._table.indexAt(pos)
         if not index.isValid() or not self._model:
             return
+
+        # 收集选中行：右键点击的行不在选中集时只用当前行
+        selection_model = self._table.selectionModel()
+        selected_indexes = selection_model.selectedRows() if selection_model else []
+        if not any(idx.row() == index.row() for idx in selected_indexes):
+            selected_rows = [index.row()]
+        else:
+            selected_rows = [idx.row() for idx in selected_indexes]
 
         row = index.row()
         plan = self._model.get_plan(row)
         if not plan:
             return
 
+        def batch(fn):
+            """批量操作：对每行执行 fn(row)"""
+            for r in selected_rows:
+                fn(r)
+
         menu = QMenu(self)
 
-        # ── 编辑 ─────────────────────────────────────────
-        menu.addAction("编辑生产计划", lambda: self._edit_plan(row))
+        # ── 编辑（批量适用：一次编辑对所有行生效，不含 ME/TE） ─
+        menu.addAction(
+            "编辑生产计划",
+            lambda: self._batch_edit_plans(selected_rows) if len(selected_rows) > 1 else self._edit_plan(row),
+        )
+        menu.addSeparator()
+
+        # ── 材料/时间效率（批量适用） — 不影响其他属性 ──
+        menu.addAction("设置蓝图等级...", lambda: self._batch_set_me_te(selected_rows))
         menu.addSeparator()
 
         # ── 查看 ─────────────────────────────────────────
@@ -212,35 +228,40 @@ class PlanTable(QWidget):
         menu.addAction("查看物品详情", lambda: self._view_item_details(row))
         menu.addSeparator()
 
-        # ── 状态 ─────────────────────────────────────────
-        # 备料 toggle
+        # ── 状态（批量适用） ──────────────────────────────
+        # 备料 toggle — 使用右键点击行的状态决定勾选/取消
         mats_ready = bool(plan.get("materials_ready", 0))
         if mats_ready:
             a = menu.addAction("取消勾选备料")
+            a.triggered.connect(lambda: batch(lambda r: self._set_materials_ready(r, 0)))
         else:
             a = menu.addAction("勾选备料")
-        a.triggered.connect(lambda r=row, v=not mats_ready: self._set_materials_ready(r, int(v)))
-        menu.addAction("项目启动", lambda: self._set_status(row, "in_progress"))
-        menu.addAction("待下线", lambda: self._set_status(row, "ready"))
-        menu.addAction("项目完成", lambda: self._set_status(row, "completed"))
+            a.triggered.connect(lambda: batch(lambda r: self._set_materials_ready(r, 1)))
+        a = menu.addAction("项目启动")
+        a.triggered.connect(lambda: batch(lambda r: self._set_status(r, "in_progress")))
+        a = menu.addAction("待下线")
+        a.triggered.connect(lambda: batch(lambda r: self._set_status(r, "ready")))
+        a = menu.addAction("项目完成")
+        a.triggered.connect(lambda: batch(lambda r: self._set_status(r, "completed")))
         menu.addSeparator()
 
-        # ── 备注 ─────────────────────────────────────────
+        # ── 备注（批量适用） ──────────────────────────────
         menu.addAction("添加备注", lambda: self._add_notes(row))
         menu.addAction("复制蓝图名称", lambda: self._copy_blueprint_name(row))
         menu.addSeparator()
 
-        # ── 高级 ─────────────────────────────────────────
-        menu.addAction("查看蓝图原图的NPC卖家", lambda: self._show_npc_seller(row))
+        # ── 高级（批量适用） ──────────────────────────────
+        menu.addAction("查看蓝图原图的NPC卖家", lambda: batch(lambda r: self._show_npc_seller(r)))
         menu.addAction("产线启动小助手", lambda: self._show_production_wizard(row))
 
+        # ── 智能调整（批量适用） ──────────────────────────
         smart_menu = menu.addMenu("智能调整")
         a = smart_menu.addAction("母项智能调整")
-        a.triggered.connect(lambda r=row: self._smart_adjust_parent(r))
+        a.triggered.connect(lambda: batch(lambda r: self._smart_adjust_parent(r)))
         a = smart_menu.addAction("子项智能调整")
-        a.triggered.connect(lambda r=row: self._smart_adjust_children(r))
+        a.triggered.connect(lambda: batch(lambda r: self._smart_adjust_children(r)))
         a = smart_menu.addAction("子项大规模产线并行")
-        a.triggered.connect(lambda r=row: self._smart_parallel_children(r))
+        a.triggered.connect(lambda: batch(lambda r: self._smart_parallel_children(r)))
 
         fac_menu = menu.addMenu("设施设置")
         a = fac_menu.addAction("为设施设置所在星系")
@@ -250,9 +271,9 @@ class PlanTable(QWidget):
 
         menu.addSeparator()
 
-        # ── 危险操作 ─────────────────────────────────────
+        # ── 危险操作（批量适用） ──────────────────────────
         a = menu.addAction("删除行")
-        a.triggered.connect(lambda r=row: self._delete_row(r))
+        a.triggered.connect(lambda: self._delete_rows(selected_rows))
 
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
@@ -282,13 +303,11 @@ class PlanTable(QWidget):
             conn = get_container().db.direct_connect("user")
             try:
                 conn.execute(
-                    "UPDATE production_plans SET runs=?, parallels=?, me_level=?, te_level=?, "
+                    "UPDATE production_plans SET runs=?, parallels=?, "
                     "char_name=?, facility=?, output_location=?, mat_hub=?, notes=? WHERE id=?",
                     (
                         updated["runs"],
                         updated["parallels"],
-                        updated["me_level"],
-                        updated["te_level"],
                         updated["char_name"],
                         updated["facility"],
                         updated["output"],
@@ -298,11 +317,9 @@ class PlanTable(QWidget):
                     ),
                 )
                 conn.commit()
-                # 更新内存模型的基础字段
+                # 更新内存模型的基础字段（保留现有 ME/TE 值，编辑对话框不含 ME/TE）
                 plan["runs"] = updated["runs"]
                 plan["parallels"] = updated["parallels"]
-                plan["me_level"] = updated["me_level"]
-                plan["te_level"] = updated["te_level"]
                 plan["char_name"] = updated["char_name"]
                 plan["facility"] = updated["facility"]
                 plan["output"] = updated["output"]
@@ -317,15 +334,151 @@ class PlanTable(QWidget):
 
             char_name = updated.get("char_name", "").strip()
             char_config = resolve_char_config(char_name=char_name) or {}
-            metrics = (
-                get_container()
-                .scoring_service()
-                .calculate_plan_metrics(plan, char_config)
-            )
+            metrics = get_container().scoring_service().calculate_plan_metrics(plan, char_config)
             plan.update(metrics)
 
             self._model.layoutChanged.emit()
             self.plan_updated.emit()
+
+    def _batch_edit_plans(self, rows: list[int]) -> None:
+        """批量编辑生产计划 — 一次修改所有选中行（不含 ME/TE）"""
+        if self._model is None or not rows:
+            return
+        from ui_pyside6.views.industry.plan_edit_dialog import PlanEditDialog
+
+        dlg = PlanEditDialog(self, {"_selected_rows": rows}, batch_mode=True, row_count=len(rows))
+        if dlg.exec():
+            updated = dlg.get_updated_data()
+            conn = get_container().db.direct_connect("user")
+            try:
+                for r in rows:
+                    plan = self._model.get_plan(r)
+                    if not plan:
+                        continue
+                    conn.execute(
+                        "UPDATE production_plans SET runs=?, parallels=?, char_name=?, facility=?, "
+                        "output_location=?, mat_hub=?, notes=? WHERE id=?",
+                        (
+                            updated.get("runs", plan.get("runs", 1)),
+                            updated.get("parallels", plan.get("parallels", 1)),
+                            updated["char_name"],
+                            updated["facility"],
+                            updated["output"],
+                            updated["material_hub"],
+                            updated["notes"],
+                            plan["id"],
+                        ),
+                    )
+                    plan["runs"] = updated.get("runs", plan.get("runs", 1))
+                    plan["parallels"] = updated.get("parallels", plan.get("parallels", 1))
+                    plan["char_name"] = updated["char_name"]
+                    plan["facility"] = updated["facility"]
+                    plan["output"] = updated["output"]
+                    plan["notes"] = updated["notes"]
+                    plan["mat_hub"] = updated["material_hub"]
+                    plan["sell_hub"] = updated["output"]
+                conn.commit()
+            finally:
+                conn.close()
+            self._model.layoutChanged.emit()
+            self.plan_updated.emit()
+
+    def _batch_set_me_te(self, rows: list[int]) -> None:
+        """批量设置 ME/TE — 带滑块的合并对话框"""
+        if self._model is None or not rows:
+            return
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QSlider, QSpinBox, QVBoxLayout
+
+        import ui_pyside6.theme as theme
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("设置蓝图等级")
+        dlg.setMinimumWidth(360)
+        dlg.setStyleSheet(f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; font-size: 12px;")
+
+        root = QVBoxLayout(dlg)
+        root.setContentsMargins(16, 12, 16, 12)
+        root.setSpacing(8)
+
+        # 从首行加载当前值
+        first = self._model.get_plan(rows[0]) if rows else None
+        cur_me = int(first.get("me_level", 0)) if first else 0
+        cur_te = int(first.get("te_level", 0)) if first else 0
+
+        # ME
+        root.addWidget(QLabel("材料效率(ME) 0-10:"))
+        me_row = QHBoxLayout()
+        me_slider = QSlider(Qt.Orientation.Horizontal)
+        me_slider.setRange(0, 10)
+        me_slider.setValue(cur_me)
+        me_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        me_slider.setTickInterval(1)
+        me_spin = QSpinBox()
+        me_spin.setRange(0, 10)
+        me_spin.setValue(cur_me)
+        me_spin.setFixedWidth(56)
+        me_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        me_slider.valueChanged.connect(me_spin.setValue)
+        me_spin.valueChanged.connect(me_slider.setValue)
+        me_row.addWidget(me_slider, 1)
+        me_row.addWidget(me_spin)
+        root.addLayout(me_row)
+
+        # TE
+        root.addWidget(QLabel("时间效率(TE) 0-20:"))
+        te_row = QHBoxLayout()
+        te_slider = QSlider(Qt.Orientation.Horizontal)
+        te_slider.setRange(0, 20)
+        te_slider.setValue(cur_te)
+        te_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        te_slider.setTickInterval(5)
+        te_spin = QSpinBox()
+        te_spin.setRange(0, 20)
+        te_spin.setValue(cur_te)
+        te_spin.setFixedWidth(56)
+        te_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        te_slider.valueChanged.connect(te_spin.setValue)
+        te_spin.valueChanged.connect(te_slider.setValue)
+        te_row.addWidget(te_slider, 1)
+        te_row.addWidget(te_spin)
+        root.addLayout(te_row)
+
+        root.addStretch()
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        root.addWidget(buttons)
+
+        theme.add_theme_listener(
+            lambda: dlg.setStyleSheet(
+                f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; font-size: 12px;"
+            )
+        )
+
+        if not dlg.exec():
+            return
+
+        me_val = me_slider.value()
+        te_val = te_slider.value()
+        conn = get_container().db.direct_connect("user")
+        try:
+            for r in rows:
+                plan = self._model.get_plan(r)
+                if not plan:
+                    continue
+                plan["me_level"] = me_val
+                plan["te_level"] = te_val
+                if plan.get("id"):
+                    conn.execute(
+                        "UPDATE production_plans SET me_level=?, te_level=? WHERE id=?",
+                        (me_val, te_val, plan["id"]),
+                    )
+            conn.commit()
+        finally:
+            conn.close()
+        self._model.layoutChanged.emit()
+        self.plan_updated.emit()
 
     def _add_notes(self, row: int) -> None:
         """添加备注 — 弹出文本输入框"""
@@ -481,21 +634,30 @@ class PlanTable(QWidget):
             log.exception("自动入库失败: plan_id=%s", plan.get("id"))
 
     def _delete_row(self, row: int) -> None:
+        self._delete_rows([row])
+
+    def _delete_rows(self, rows: list[int]) -> None:
+        """批量删除多行（从后往前删避免行号偏移）"""
         if self._model is None:
             return
-        if 0 <= row < len(self._model._plans):
-            plan = self._model._plans[row]
-            if plan.get("id"):
-                conn = get_container().db.direct_connect("user")
-                try:
-                    conn.execute("DELETE FROM production_plans WHERE id=?", (plan["id"],))
-                    conn.commit()
-                finally:
-                    conn.close()
-            self._model.beginResetModel()
-            self._model._plans.pop(row)
-            self._model.endResetModel()
-            self.plan_updated.emit()
+        ids_to_delete = []
+        for r in sorted(rows, reverse=True):
+            if 0 <= r < len(self._model._plans):
+                plan = self._model._plans[r]
+                if plan.get("id"):
+                    ids_to_delete.append(plan["id"])
+                self._model._plans.pop(r)
+        if ids_to_delete:
+            conn = get_container().db.direct_connect("user")
+            try:
+                placeholders = ",".join("?" for _ in ids_to_delete)
+                conn.execute(f"DELETE FROM production_plans WHERE id IN ({placeholders})", ids_to_delete)
+                conn.commit()
+            finally:
+                conn.close()
+        self._model.beginResetModel()
+        self._model.endResetModel()
+        self.plan_updated.emit()
 
     # ── Phase 3 占位 ────────────────────────────────────────
 
