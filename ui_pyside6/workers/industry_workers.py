@@ -122,43 +122,26 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
             plan_char = (item.get("char_name") or "").strip()
             char_config = self._resolve_char_config(plan_char)
 
-            runs = max(int(item.get("runs", 1)), 1)
-            parallels = max(int(item.get("parallels", 1)), 1)
-            # 使用工具栏的价格设置（覆盖每条计划的 DB 值）
-            sell_hub = self._prod_hub
-            mat_hub = self._mat_hub
-            # 从角色配置读取设施税率（如未设置则为 0）
-            fac_tax = char_config.get("market", {}).get(sell_hub.lower(), {}).get("facility_tax", 0.0)
-            # 设施成本系数 → structure_bonus（1.0 = 标准, 0.9 = 10% 折扣）
-            facility_cost_mult = float(item.get("facility_cost_mult", 1.0))
-            structure_bonus = facility_cost_mult - 1.0
-            per_run = (
+            # 统一调用 calculate_plan_metrics()，所有路径参数决议一致
+            result = (
                 get_container()
                 .scoring_service()
-                .calc_manufacturing_score(
-                    type_id=item.get("product_type_id"),
-                    char_config=char_config,
-                    bp_me=item.get("me_level", 0),
-                    bp_te=item.get("te_level", 0),
-                    mat_source_hub=mat_hub,
-                    sell_hub=sell_hub,
-                    facility_tax_pct=fac_tax,
+                .calculate_plan_metrics(
+                    item,
+                    char_config,
                     price_type_mat=self._mat_price_type,
                     price_type_prod=self._prod_price_type,
-                    structure_bonus=structure_bonus,
                 )
             )
-            # 用 runs/parallels 缩放到计划总数值
-            total = get_container().scoring_service().calculate_total_metrics(per_run, runs, parallels)
             return (
                 plan_id,
-                total.get("total_profit", 0),
-                total.get("total_margin_pct", 0),
-                per_run.get("score", 0),  # 评分保持 per-run 不变
-                total.get("total_isk_per_hour", 0),
-                total.get("total_material_cost", 0),
-                total.get("total_time_hours", 0),  # 总时长（小时）
-                total.get("total_daily_output", 0),  # 日产能
+                result.get("profit", 0),
+                result.get("margin", 0),
+                result.get("score", 0),
+                result.get("iskph", 0),
+                result.get("material_cost", 0),
+                result.get("calculated_time", 0) / 3600,  # 秒→小时
+                result.get("daily_output", 0),
             )
         except Exception:
             return (plan_id, 0, 0, 0, 0, 0, 0, 0)

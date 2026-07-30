@@ -10,7 +10,9 @@
 """
 
 import asyncio
+from collections.abc import Callable
 
+import aiohttp
 import aiosqlite
 from tqdm import tqdm
 
@@ -20,7 +22,7 @@ from tools.downloaders.sde_cache import ensure_sde_cache, load_yaml
 
 DATABASE_PATH = reference_db_path()
 BATCH_SIZE = 500
-START_TYPE_ID = 178
+START_TYPE_ID = 17  # 基础矿物 34+ 也在范围内
 
 
 async def initialize_database():
@@ -61,7 +63,7 @@ def _build_group_lookup(data: dict) -> dict[int, tuple[str, str]]:
     return result
 
 
-async def write_items():
+async def write_items(progress_cb: Callable[[int, str], None] | None = None):
     """从缓存的 typeIDs.yaml + groupIDs.yaml + marketGroups.yaml 批量写入 item 表"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         c = await db.execute("SELECT COUNT(*) FROM item WHERE en_name IS NOT NULL AND en_name != ''")
@@ -71,8 +73,11 @@ async def write_items():
             return
 
     log.info("加载 SDE YAML 数据...")
+    if progress_cb: progress_cb(45, "加载 typeIDs.yaml...")
     type_ids = load_yaml("typeIDs.yaml")
+    if progress_cb: progress_cb(55, "加载 groupIDs.yaml...")
     groups = load_yaml("groupIDs.yaml")
+    if progress_cb: progress_cb(60, "加载 marketGroups.yaml...")
     mkt_groups = load_yaml("marketGroups.yaml")
 
     group_names = _build_group_lookup(groups)
@@ -106,7 +111,9 @@ async def write_items():
         return
 
     log.info(f"共 {len(items)} 个物品，写入数据库...")
+    if progress_cb: progress_cb(70, f"写入 {len(items)} 条物品数据...")
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        batch_count = max(1, len(items) // BATCH_SIZE)
         for i in tqdm(range(0, len(items), BATCH_SIZE), desc="物品"):
             batch = items[i:i + BATCH_SIZE]
             await db.executemany(
@@ -117,6 +124,8 @@ async def write_items():
                    VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 batch,
             )
+            pct = 70 + int((i + len(batch)) / len(items) * 15)
+            if progress_cb: progress_cb(pct, f"写入物品数据... {min(i + BATCH_SIZE, len(items))}/{len(items)}")
         await db.commit()
     log.info("物品数据写入完成")
 
@@ -156,9 +165,14 @@ async def write_market_tree():
 # ─── 主入口 ───
 
 
-async def main():
-    """主流程：检查数据状态 → 如需更新则下载 SDE zip → 解析 YAML → 批量写入"""
+async def main(progress_cb: Callable[[int, str], None] | None = None):
+    """主流程：检查数据状态 → 如需更新则下载 SDE zip → 解析 YAML → 批量写入
+
+    Args:
+        progress_cb: 可选进度回调 (percent: 0-100, message: str)
+    """
     await initialize_database()
+    if progress_cb: progress_cb(5, "检查数据状态...")
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
         c1 = await db.execute("SELECT COUNT(*) FROM item WHERE en_name IS NOT NULL AND en_name != ''")
@@ -168,13 +182,23 @@ async def main():
 
     if named >= 50000 and mt_cnt > 500:
         log.info(f"所有数据已就绪（item={named}, market_tree={mt_cnt}），跳过")
+        if progress_cb: progress_cb(90, "检查缺失名称...")
+        await fill_missing_item_names_from_esi(progress_cb)
+        if progress_cb: progress_cb(100, "数据已就绪")
         return
 
+    if progress_cb: progress_cb(10, "下载/加载 SDE 数据包...")
     await ensure_sde_cache()
     if named < 50000:
-        await write_items()
+        if progress_cb: progress_cb(40, "解析物品 YAML 数据...")
+        await write_items(progress_cb)
     if mt_cnt <= 500:
+        if progress_cb: progress_cb(85, "写入市场分类树...")
         await write_market_tree()
+    # ESI 补拉：SDE YAML 中缺失名称的物品（如 21009 等）
+    if progress_cb: progress_cb(90, "补拉缺失名称...")
+    await fill_missing_item_names_from_esi(progress_cb)
+    if progress_cb: progress_cb(100, "完成")
     log.info("物品数据初始化完成")
 
 
@@ -259,5 +283,72 @@ async def fill_missing_blueprint_names():
     log.info(f"补拉完成，共修复 {len(missing)} 个蓝图名称")
 
 
+async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], None] | None = None):
+    """从 ESI 补拉 item 表中缺失名称的物品。
+
+    用于:
+      1. type_id < 178（被 START_TYPE_ID 跳过的基础矿物等）
+      2. type_id >= 178 但 YAML 中没有 name 字段（如 21009 等）
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        c = await db.execute(
+            "SELECT type_id FROM item WHERE (zh_name IS NULL OR zh_name = '')"
+            " OR (en_name IS NULL OR en_name = '')"
+        )
+        missing = [r[0] async for r in c]
+
+    if not missing:
+        log.info("所有物品名称已完整，无需补拉")
+        if progress_cb:
+            progress_cb(100, "名称已完整")
+        return
+
+    log.info(f"发现 {len(missing)} 个物品缺少名称，从 ESI 补拉...")
+    BATCH = 50
+    fixed = 0
+    async with aiohttp.ClientSession() as session:
+        for start in range(0, len(missing), BATCH):
+            batch = missing[start:start + BATCH]
+            updates = []
+            for tid in batch:
+                try:
+                    url = f"https://esi.evetech.net/latest/universe/types/{tid}/?datasource=tranquility&language=zh"
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            zh_name = data.get("name", "") or ""
+                            en_name = ""
+                            try:
+                                url_en = f"https://esi.evetech.net/latest/universe/types/{tid}/?datasource=tranquility&language=en"
+                                async with session.get(url_en, timeout=aiohttp.ClientTimeout(total=15)) as resp_en:
+                                    if resp_en.status == 200:
+                                        en_name = (await resp_en.json()).get("name", "") or ""
+                            except Exception:
+                                pass
+                            if en_name or zh_name:
+                                updates.append((en_name, zh_name, tid))
+                except Exception:
+                    continue
+
+            if updates:
+                async with aiosqlite.connect(DATABASE_PATH) as db:
+                    await db.executemany(
+                        "UPDATE item SET en_name=?, zh_name=? WHERE type_id=?",
+                        updates,
+                    )
+                    await db.commit()
+                fixed += len(updates)
+
+            pct = min(95, int((start + BATCH) / len(missing) * 100))
+            if progress_cb:
+                progress_cb(pct, f"名称补拉... {min(start + BATCH, len(missing))}/{len(missing)}")
+            await asyncio.sleep(0.5)
+
+    log.info(f"ESI 补拉完成，共修复 {fixed}/{len(missing)} 个物品名称")
+    if progress_cb:
+        progress_cb(100, f"名称修复: {fixed}/{len(missing)}")
+
+
 if __name__ == "__main__":
     asyncio.run(main())
+

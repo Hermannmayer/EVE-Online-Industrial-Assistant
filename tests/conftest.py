@@ -58,6 +58,7 @@ def _create_temp_databases(tmpdir: str):
         INSERT INTO item VALUES (2001, '渡鸦级', 'Raven', 50000);
         INSERT INTO item VALUES (2002, '无人机', 'Drone', 5);
     """)
+    conn.execute("PRAGMA user_version = 1")
     conn.commit()
     conn.close()
 
@@ -81,6 +82,7 @@ def _create_temp_databases(tmpdir: str):
         INSERT INTO market_prices VALUES (2001, 10000002, 50000000, 55000000, 50000000, 1000000, 800000, '2026-01-01 00:00:00');
         INSERT INTO market_prices VALUES (2002, 10000002, 100000, 120000, 110000, 500000, 400000, '2026-01-01 00:00:00');
     """)
+    conn.execute("PRAGMA user_version = 2")
     conn.commit()
     conn.close()
 
@@ -107,19 +109,21 @@ def _create_temp_databases(tmpdir: str):
         );
         -- 渡鸦级蓝图: 需要 1000 Trit + 500 Pyer, 产出 1 个, 时间 3600s
         INSERT INTO blueprint_activities VALUES (3001, 'manufacturing', 3600);
+        INSERT INTO blueprint_activities VALUES (3002, 'manufacturing', 600);
         INSERT INTO blueprint_products VALUES (3001, 'manufacturing', 2001, 1);
+        INSERT INTO blueprint_products VALUES (3002, 'manufacturing', 2002, 1);
         INSERT INTO blueprint_materials VALUES (3001, 'manufacturing', 1001, 1000, 10);
         INSERT INTO blueprint_materials VALUES (3001, 'manufacturing', 1002, 500, 10);
-        -- 无人机蓝图: 需要 100 Trit, 产出 1 个, 时间 600s
-        INSERT INTO blueprint_activities VALUES (3002, 'manufacturing', 600);
-        INSERT INTO blueprint_products VALUES (3002, 'manufacturing', 2002, 1);
         INSERT INTO blueprint_materials VALUES (3002, 'manufacturing', 1001, 100, 10);
     """)
+    conn.execute("PRAGMA user_version = 2")
     conn.commit()
     conn.close()
 
     # ── user.db ──
     conn = sqlite3.connect(str(user_path))
+    conn.execute("PRAGMA user_version = 1")
+    conn.commit()
     conn.close()
 
     return {

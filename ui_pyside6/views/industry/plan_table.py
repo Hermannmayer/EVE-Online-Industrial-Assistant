@@ -268,7 +268,7 @@ class PlanTable(QWidget):
                 self._set_materials_ready(row, new_val)
 
     def _edit_plan(self, row: int) -> None:
-        """编辑生产计划 — 打开 PlanEditDialog"""
+        """编辑生产计划 — 打开 PlanEditDialog，保存后同步重算"""
         if self._model is None:
             return
         from ui_pyside6.views.industry import PlanEditDialog
@@ -298,7 +298,7 @@ class PlanTable(QWidget):
                     ),
                 )
                 conn.commit()
-                # 更新内存模型
+                # 更新内存模型的基础字段
                 plan["runs"] = updated["runs"]
                 plan["parallels"] = updated["parallels"]
                 plan["me_level"] = updated["me_level"]
@@ -307,8 +307,23 @@ class PlanTable(QWidget):
                 plan["facility"] = updated["facility"]
                 plan["output"] = updated["output"]
                 plan["notes"] = updated["notes"]
+                plan["mat_hub"] = updated["material_hub"]
+                plan["sell_hub"] = updated["output"]  # 输出位置作为成品销售枢纽
             finally:
                 conn.close()
+
+            # 同步重算该条计划，立即更新派生字段
+            from services.char_config_resolver import resolve_char_config
+
+            char_name = updated.get("char_name", "").strip()
+            char_config = resolve_char_config(char_name=char_name) or {}
+            metrics = (
+                get_container()
+                .scoring_service()
+                .calculate_plan_metrics(plan, char_config)
+            )
+            plan.update(metrics)
+
             self._model.layoutChanged.emit()
             self.plan_updated.emit()
 
@@ -497,14 +512,24 @@ class PlanTable(QWidget):
         dlg = MatDlg(type_id)
         dlg.exec()
 
-    def _view_cost_breakdown(self, row: int):
+    def _view_cost_breakdown(
+        self,
+        row: int,
+        *,
+        price_type_mat: str | None = None,
+        price_type_prod: str | None = None,
+    ):
         # 右键菜单 -> 查看核算：打开成本明细弹窗
         from ui_pyside6.views.industry.cost_breakdown_dialog import CostBreakdownDialog
 
         plan = self._model.get_plan(row) if self._model else {}
         if not plan:
             return
-        dlg = CostBreakdownDialog(plan)
+        dlg = CostBreakdownDialog(
+            plan,
+            price_type_mat=price_type_mat,
+            price_type_prod=price_type_prod,
+        )
         from PySide6.QtCore import Qt
 
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)

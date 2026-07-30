@@ -484,6 +484,93 @@ class ScoringService:
         )
         return result
 
+    # ── 统一计划计算方法 ──
+
+    @staticmethod
+    def calculate_plan_metrics(
+        plan_data: dict,
+        char_config: dict,
+        *,
+        mat_hub: str | None = None,
+        sell_hub: str | None = None,
+        price_type_mat: str | None = None,
+        price_type_prod: str | None = None,
+    ) -> dict:
+        """从一条生产计划数据计算所有派生指标。
+
+        统一所有计算路径的参数决议逻辑，确保结果一致。
+
+        参数优先级：显式传入 override > plan_data 字段值 > 默认值。
+
+        Args:
+            plan_data: 生产计划 dict（至少含 product_type_id, me_level, te_level, runs, parallels）
+            char_config: 角色配置（含 skills, market 等）
+            mat_hub: 覆盖材料贸易枢纽（不传则用 plan_data 的 mat_hub，为空则用 Jita）
+            sell_hub: 覆盖销售枢纽（不传则用 plan_data 的 sell_hub，为空则用 Jita）
+            price_type_mat: 覆盖材料价格类型（不传则用 plan_data 的或 "sell"）
+            price_type_prod: 覆盖成品价格类型（不传则用 plan_data 的或 "sell"）
+
+        Returns:
+            dict 包含：material_cost, profit, margin, score, iskph, calculated_time(秒), daily_output
+        """
+        type_id = plan_data.get("product_type_id")
+        if not type_id:
+            return {"material_cost": 0, "profit": 0, "margin": 0, "score": 0,
+                    "iskph": 0, "calculated_time": 0, "daily_output": 0}
+
+        me = int(plan_data.get("me_level", 0) or 0)
+        te = int(plan_data.get("te_level", 0) or 0)
+        runs = max(int(plan_data.get("runs", 1)), 1)
+        parallels = max(int(plan_data.get("parallels", 1)), 1)
+
+        # 统一的参数决议：传入 > plan 字段 > 默认值
+        resolved_mat_hub = mat_hub or plan_data.get("mat_hub") or "Jita"
+        resolved_sell_hub = sell_hub or plan_data.get("sell_hub") or "Jita"
+        resolved_price_type_mat = price_type_mat or "sell"
+        resolved_price_type_prod = price_type_prod or "sell"
+
+        # facility_tax 始终从 sell_hub 对应的角色配置读取
+        fac_tax = (
+            char_config.get("market", {})
+            .get(resolved_sell_hub.lower(), {})
+            .get("facility_tax", 0.0)
+        )
+
+        facility_cost_mult = float(plan_data.get("facility_cost_mult", 1.0))
+        structure_bonus = facility_cost_mult - 1.0
+
+        from core.container import get_container
+
+        per_run: dict = {}
+        total: dict = {}
+        svc = get_container().scoring_service()
+        try:
+            per_run = svc.calc_manufacturing_score(
+                type_id=type_id,
+                char_config=char_config,
+                bp_me=me,
+                bp_te=te,
+                mat_source_hub=resolved_mat_hub,
+                sell_hub=resolved_sell_hub,
+                facility_tax_pct=fac_tax,
+                price_type_mat=resolved_price_type_mat,
+                price_type_prod=resolved_price_type_prod,
+                structure_bonus=structure_bonus,
+            )
+            total = ScoringService.calculate_total_metrics(per_run, runs, parallels) or {}
+        except Exception:
+            pass
+
+        return {
+            "material_cost": round(total.get("total_material_cost", 0), 2),
+            "profit": round(total.get("total_profit", 0), 2),
+            "margin": round(total.get("total_margin_pct", 0), 2),
+            "score": per_run.get("score", 0),
+            "iskph": round(total.get("total_isk_per_hour", 0), 2),
+            "calculated_time": round(total.get("total_time_hours", 0) * 3600),
+            "daily_output": round(total.get("total_daily_output", 0), 1),
+        }
+
     # ── 制造评分 ──
 
     def calc_manufacturing_score(

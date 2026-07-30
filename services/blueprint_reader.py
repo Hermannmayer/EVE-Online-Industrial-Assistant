@@ -61,7 +61,7 @@ def get_blueprint_materials(
     """
     cur = conn.execute(
         """
-        SELECT material_type_id, quantity, ?
+        SELECT material_type_id, quantity, COALESCE(wastefactor, ?)
         FROM blueprint_materials
         WHERE blueprint_type_id = ? AND activity = ?
         """,

@@ -23,9 +23,19 @@ _COLUMNS = ["材料", "基础量", "损耗率", "实际量", "单价", "小计"]
 class CostBreakdownDialog(QWidget):
     """成本明细对话框"""
 
-    def __init__(self, plan_data: dict, parent: QWidget | None = None, char_config: dict | None = None):
+    def __init__(
+        self,
+        plan_data: dict,
+        parent: QWidget | None = None,
+        char_config: dict | None = None,
+        *,
+        price_type_mat: str | None = None,
+        price_type_prod: str | None = None,
+    ):
         super().__init__(parent)
         self._plan = plan_data
+        self._price_type_mat = price_type_mat
+        self._price_type_prod = price_type_prod
         # 优先使用传入的角色配置；否则按计划角色的 char_name 解析
         if char_config is not None:
             self._char_config = char_config
@@ -166,40 +176,58 @@ class CostBreakdownDialog(QWidget):
         if not type_id:
             self._status_label.setText("缺少 type_id")
             return
-        me = self._plan.get("me_level", 0) or 0
-        te = self._plan.get("te_level", 0) or 0
-        mat_hub = self._plan.get("mat_hub", "Jita")
-        sell_hub = self._plan.get("sell_hub", "Jita")
-        char_config = self._char_config or {}
-        fac_tax = char_config.get("market", {}).get(sell_hub.lower(), {}).get("facility_tax", 0.0)
 
-        # 读取计划设定的 runs/parallels
         runs = max(int(self._plan.get("runs", 1)), 1)
         parallels = max(int(self._plan.get("parallels", 1)), 1)
         total_mult = runs * parallels
 
+        # 统一调用 calculate_plan_metrics()，与主表批量重算路径一致
+        metrics = (
+            get_container()
+            .scoring_service()
+            .calculate_plan_metrics(
+                self._plan,
+                self._char_config or {},
+                price_type_mat=self._price_type_mat,
+                price_type_prod=self._price_type_prod,
+            )
+        )
+
+        material_cost = metrics.get("material_cost", 0)
+        profit = metrics.get("profit", 0)
+        margin = metrics.get("margin", 0)
+        score = metrics.get("score", 0) or 0
+        isk_per_hour = metrics.get("iskph", 0)
+        hours = metrics.get("calculated_time", 0) / 3600 if metrics.get("calculated_time") else 0
+        daily_output = metrics.get("daily_output", 0)
+
+        # 从 calc_manufacturing_score 的 breakdown 获取费用明细
         per_run = (
             get_container()
             .scoring_service()
             .calc_manufacturing_score(
                 type_id=type_id,
-                char_config=char_config,
-                bp_me=me,
-                bp_te=te,
-                mat_source_hub=mat_hub,
-                sell_hub=sell_hub,
-                facility_tax_pct=fac_tax,
-                price_type_mat="sell",
-                price_type_prod="sell",
+                char_config=self._char_config or {},
+                bp_me=self._plan.get("me_level", 0) or 0,
+                bp_te=self._plan.get("te_level", 0) or 0,
+                mat_source_hub=self._plan.get("mat_hub", "Jita"),
+                sell_hub=self._plan.get("sell_hub", "Jita"),
+                facility_tax_pct=(
+                    (self._char_config or {})
+                    .get("market", {})
+                    .get((self._plan.get("sell_hub", "Jita")).lower(), {})
+                    .get("facility_tax", 0.0)
+                ),
+                price_type_mat=self._price_type_mat or "sell",
+                price_type_prod=self._price_type_prod or "sell",
             )
         )
-        # 按 runs/parallels 缩放到计划总数值
-        total = get_container().scoring_service().calculate_total_metrics(per_run, runs, parallels)
         status = per_run.get("status", "")
         if status:
             tips = {"no_blueprint": "未找到蓝图", "no_price": "无价格数据", "no_materials": "无需材料"}
             self._status_label.setText(tips.get(status, f"状态: {status}"))
             return
+
         materials = per_run.get("materials", [])
         self._table.setRowCount(len(materials))
         for row_idx, mat in enumerate(materials):
@@ -217,13 +245,6 @@ class CostBreakdownDialog(QWidget):
                 self._table.setItem(row_idx, col_idx, item)
 
         bd = per_run.get("breakdown", {})
-        mat_cost = total.get("total_material_cost", 0)
-        profit = total.get("total_profit", 0)
-        margin = total.get("total_margin_pct", 0)
-        score = per_run.get("score", 0) or 0
-        isk_per_hour = total.get("total_isk_per_hour", 0)
-        hours = total.get("total_time_hours", 0) or 1
-        daily_output = total.get("total_daily_output", 0)
         eiv = bd.get("eiv", 0) or 0
         system_cost = bd.get("system_cost", 0) or 0
         installation_fee = bd.get("installation_fee", 0) or 0
@@ -234,32 +255,28 @@ class CostBreakdownDialog(QWidget):
         sales_tax = bd.get("sales_tax", 0) or 0
         revenue = bd.get("revenue", 0) or 0
         sci = bd.get("sci", 0) or 0
-        # 总安装费和市场费用 = per-run × total_mult
-        total_installation_fee = installation_fee * total_mult
-        total_broker = (broker_init + broker_relist + sales_tax) * total_mult
-        cost_data = mat_cost + total_installation_fee + total_broker
 
-        # ── 顶部信息：显示 runs/parallels ──
+        # ── 顶部信息 ──
         self._status_label.setText(
             f"计划设定: {runs} 流程 × {parallels} 并行 = {total_mult} 总流程 "
             f"| 共 {len(materials)} 种材料 | 评分 {score:.1f} | 利润 {_fmt_isk(profit)} | 利润率 {margin:.1f}%"
         )
 
-        # ── 制造作业费（按 runs × parallels 缩放到总数值） ──
+        # ── 制造作业费 ──
         self._job_eiv.setText(_fmt_isk(eiv))
         self._job_sci.setText(f"{_fmt_isk(system_cost * total_mult)}  (SCI={sci*100:.4f}%)")
         self._job_fac_tax.setText(_fmt_isk(facility_tax_v * total_mult))
         self._job_scc.setText(_fmt_isk(scc * total_mult))
         self._job_total.setText(_fmt_isk(installation_fee * total_mult))
 
-        # ── 市场费用（按 runs × parallels 缩放） ──
+        # ── 市场费用 ──
         self._mkt_broker.setText(_fmt_isk(broker_init * total_mult))
         self._mkt_relist.setText(_fmt_isk(broker_relist * total_mult))
         self._mkt_sales_tax.setText(_fmt_isk(sales_tax * total_mult))
         self._mkt_fee_total.setText(_fmt_isk((broker_init + broker_relist + sales_tax) * total_mult))
 
-        # ── 汇总（总数值） ──
-        self._summary_labels["total_cost"].setText(_fmt_isk(cost_data))
+        # ── 汇总 ──
+        self._summary_labels["total_cost"].setText(_fmt_isk(round(material_cost, 2)))
         self._summary_labels["revenue"].setText(_fmt_isk(revenue * total_mult))
         p_label = self._summary_labels["profit"]
         p_label.setText(_fmt_isk(profit))

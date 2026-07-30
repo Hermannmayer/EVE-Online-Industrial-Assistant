@@ -8,8 +8,10 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QMessageBox,
+    QSlider,
     QSpinBox,
     QTextEdit,
     QVBoxLayout,
@@ -18,8 +20,6 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from services import inventory_manager
 from ui_pyside6.views.char_settings_view import get_character_list
-
-HUB_OPTIONS = ["Jita", "Amarr", "Dodixie", "Rens", "Hek"]
 
 
 class PlanEditDialog(QDialog):
@@ -62,23 +62,43 @@ class PlanEditDialog(QDialog):
         self._parallel_spin.setValue(1)
         form.addRow("并行数", self._parallel_spin)
 
-        # 材料效率(ME)
+        # 材料效率(ME) — 滑块 + 手动输入 0-10
+        me_layout = QHBoxLayout()
+        self._me_slider = QSlider(Qt.Orientation.Horizontal)
+        self._me_slider.setRange(0, 10)
+        self._me_slider.setValue(0)
+        self._me_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self._me_slider.setTickInterval(1)
         self._me_spin = QSpinBox()
-        self._me_spin.setRange(0, 20)
+        self._me_spin.setRange(0, 10)
         self._me_spin.setValue(0)
-        self._me_spin.setToolTip("材料效率等级（0-10 有效，最高 20）")
-        form.addRow("材料效率(ME):", self._me_spin)
+        self._me_spin.setFixedWidth(56)
+        self._me_slider.valueChanged.connect(self._me_spin.setValue)
+        self._me_spin.valueChanged.connect(self._me_slider.setValue)
+        me_layout.addWidget(self._me_slider)
+        me_layout.addWidget(self._me_spin)
+        form.addRow("材料效率(ME):", me_layout)
 
-        # 时间效率(TE)
+        # 时间效率(TE) — 滑块 + 手动输入 0-20
+        te_layout = QHBoxLayout()
+        self._te_slider = QSlider(Qt.Orientation.Horizontal)
+        self._te_slider.setRange(0, 20)
+        self._te_slider.setValue(0)
+        self._te_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self._te_slider.setTickInterval(5)
         self._te_spin = QSpinBox()
         self._te_spin.setRange(0, 20)
         self._te_spin.setValue(0)
-        self._te_spin.setToolTip("时间效率等级（0-20）")
-        form.addRow("时间效率(TE):", self._te_spin)
+        self._te_spin.setFixedWidth(56)
+        self._te_slider.valueChanged.connect(self._te_spin.setValue)
+        self._te_spin.valueChanged.connect(self._te_slider.setValue)
+        te_layout.addWidget(self._te_slider)
+        te_layout.addWidget(self._te_spin)
+        form.addRow("时间效率(TE):", te_layout)
 
-        # 人物（可编辑下拉，从真实角色列表加载）
+        # 人物（纯下拉，从真实角色列表加载）
         self._char_combo = QComboBox()
-        self._char_combo.setEditable(True)
+        self._char_combo.setEditable(False)
         chars = get_character_list()
         if chars:
             self._char_combo.addItems(chars)
@@ -86,24 +106,26 @@ class PlanEditDialog(QDialog):
             self._char_combo.addItem("main")
         form.addRow("人物", self._char_combo)
 
-        # 设施（可编辑下拉，带机库候选）
+        # 设施（纯下拉，从机库列表加载）
         self._facility_combo = QComboBox()
-        self._facility_combo.setEditable(True)
-        self._facility_combo.setPlaceholderText("选择或输入设施/星系名称")
-        try:
-            hangars = inventory_manager.get_hangars()
-            for h in hangars:
-                self._facility_combo.addItem(h.get("name", ""))
-        except Exception:
-            pass
+        self._facility_combo.setEditable(False)
+        self._facility_combo.setPlaceholderText("选择设施/星系名称")
         form.addRow("设施/材料源", self._facility_combo)
 
-        # 输出位置
+        # 输出位置（纯下拉，共用机库列表）
         self._output_combo = QComboBox()
-        self._output_combo.setEditable(True)
-        self._output_combo.setPlaceholderText("选择或输入输出位置…")
-        self._output_combo.addItems(HUB_OPTIONS)
+        self._output_combo.setEditable(False)
+        self._output_combo.setPlaceholderText("选择输出位置…")
         form.addRow("输出位置", self._output_combo)
+
+        # 从机库列表填充设施和输出位置
+        try:
+            hangars = inventory_manager.get_hangars()
+            names = [h.get("name", "") for h in hangars if h.get("name")]
+            self._facility_combo.addItems(names)
+            self._output_combo.addItems(names)
+        except Exception:
+            pass
 
         # 备注
         self._notes_edit = QTextEdit()
@@ -130,13 +152,13 @@ class PlanEditDialog(QDialog):
         if "parallels" in d:
             self._parallel_spin.setValue(d["parallels"])
         if "me_level" in d:
-            self._me_spin.setValue(d["me_level"])
+            self._me_slider.setValue(d["me_level"])
         elif "me" in d:
-            self._me_spin.setValue(d["me"])
+            self._me_slider.setValue(d["me"])
         if "te_level" in d:
-            self._te_spin.setValue(d["te_level"])
+            self._te_slider.setValue(d["te_level"])
         elif "te" in d:
-            self._te_spin.setValue(d["te"])
+            self._te_slider.setValue(d["te"])
 
         char = d.get("char_name", d.get("character", ""))
         if char:
@@ -144,7 +166,8 @@ class PlanEditDialog(QDialog):
             if idx >= 0:
                 self._char_combo.setCurrentIndex(idx)
             else:
-                self._char_combo.setEditText(char)
+                self._char_combo.insertItem(0, char)
+                self._char_combo.setCurrentIndex(0)
 
         facility = d.get("facility", d.get("mat_hub", ""))
         if facility:
@@ -152,7 +175,8 @@ class PlanEditDialog(QDialog):
             if idx >= 0:
                 self._facility_combo.setCurrentIndex(idx)
             else:
-                self._facility_combo.setEditText(facility)
+                self._facility_combo.insertItem(0, facility)
+                self._facility_combo.setCurrentIndex(0)
 
         output = d.get("output", d.get("output_location", ""))
         if output:
@@ -160,7 +184,8 @@ class PlanEditDialog(QDialog):
             if idx >= 0:
                 self._output_combo.setCurrentIndex(idx)
             else:
-                self._output_combo.setEditText(output)
+                self._output_combo.insertItem(0, output)
+                self._output_combo.setCurrentIndex(0)
 
         raw_notes = d.get("notes", "")
         if raw_notes:
@@ -194,8 +219,8 @@ class PlanEditDialog(QDialog):
             "product_name": self._product_label.text(),
             "runs": self._runs_spin.value(),
             "parallels": self._parallel_spin.value(),
-            "me_level": self._me_spin.value(),
-            "te_level": self._te_spin.value(),
+            "me_level": self._me_slider.value(),
+            "te_level": self._te_slider.value(),
             "char_name": self._char_combo.currentText().strip(),
             "facility": facility_text,
             "output": output_text,
@@ -231,5 +256,18 @@ class PlanEditDialog(QDialog):
             f"QTextEdit {{"
             f"  background: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};"
             f"  border: 1px solid {theme.BORDER}; border-radius: 4px;"
+            f"}}"
+            f"QSlider::groove:horizontal {{"
+            f"  height: 6px; border-radius: 3px; background: {theme.BORDER};"
+            f"}}"
+            f"QSlider::handle:horizontal {{"
+            f"  width: 14px; height: 14px; margin: -4px 0; border-radius: 7px;"
+            f"  background: {theme.PRIMARY};"
+            f"}}"
+            f"QSlider::sub-page:horizontal {{"
+            f"  background: {theme.PRIMARY}; border-radius: 3px;"
+            f"}}"
+            f"QSlider::tick-mark:horizontal {{"
+            f"  color: {theme.TEXT_SECONDARY};"
             f"}}"
         )
