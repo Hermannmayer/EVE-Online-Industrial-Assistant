@@ -106,6 +106,11 @@ PLAN_DB_SCHEMA = """CREATE TABLE IF NOT EXISTS production_plans (
 
 
 def init_plan_db():
+    """初始化 production_plans 表。
+
+    注：扩展列迁移已由 schema_migrations user v2→v3 处理。
+    以下 ALTER TABLE 保留为旧库兼容 fallback，可后续移除。
+    """
     try:
         with get_container().db.connect("user") as conn:
             conn.executescript(PLAN_DB_SCHEMA)
@@ -701,32 +706,37 @@ class IndustryPage(QWidget):
             data = dlg.result_data()
             if not data:
                 return
-            # \u7528\u89d2\u8272\u914d\u7f6e\u91cd\u7b97\u5b9e\u9645\u5229\u6da6/\u8bc4\u5206
+            # \u6784\u9020\u4e34\u65f6 plan dict\uff0c\u7528\u7edf\u4e00\u65b9\u6cd5\u8ba1\u7b97\u6d3e\u751f\u6307\u6807
+            plan_input = {
+                "product_type_id": type_id,
+                "product_name": product_name,
+                "runs": data.get("runs", 1),
+                "parallels": data.get("parallels", 1),
+                "me_level": data.get("me", 0),
+                "te_level": data.get("te", 0),
+                "mat_hub": ps["mat_hub"],
+                "sell_hub": ps["prod_hub"],
+                "char_name": data.get("char", ""),
+                "facility": data.get("fac", ""),
+            }
             actual_char_name = data.get("char", "").strip() or char_name
             actual_config = resolve_char_config(char_name=actual_char_name)
-            actual = (
+            metrics = (
                 get_container()
                 .scoring_service()
-                .calc_manufacturing_score(
-                    type_id=type_id,
-                    char_config=actual_config,
-                    bp_me=data["me"],
-                    bp_te=data["te"],
-                    mat_source_hub=ps["mat_hub"],
-                    sell_hub=ps["prod_hub"],
-                    facility_tax_pct=actual_config.get("market", {}).get("jita", {}).get("facility_tax", 0.0),
+                .calculate_plan_metrics(
+                    plan_input,
+                    actual_config,
+                    price_type_mat=ps.get("mat_price_type"),
+                    price_type_prod=ps.get("prod_price_type"),
                 )
             )
-            # \u6309 runs/parallels \u7f29\u653e\u5230\u8ba1\u5212\u603b\u6570\u503c
-            runs = data.get("runs", 1) or 1
-            parallels = data.get("parallels", 1) or 1
-            total = get_container().scoring_service().calculate_total_metrics(actual, runs, parallels)
-            iskph = total.get("total_isk_per_hour", 0)
-            mat_cost = total.get("total_material_cost", 0)
-            profit = total.get("total_profit", 0)
-            daily_output = total.get("total_daily_output", 0)
-            total_hours = total.get("total_time_hours", 0)
-            calculated_seconds = round(total_hours * 3600)
+            profit = metrics.get("profit", 0)
+            margin = metrics.get("margin", 0)
+            iskph = metrics.get("iskph", 0)
+            mat_cost = metrics.get("material_cost", 0)
+            calculated_seconds = metrics.get("calculated_time", 0)
+            daily_output = metrics.get("daily_output", 0)
             conn3 = get_container().db.direct_connect("user")
             try:
                 conn3.execute(
@@ -748,8 +758,8 @@ class IndustryPage(QWidget):
                         data["fac"],
                         data["char"],
                         profit,
-                        actual.get("margin_pct", 0),  # \u6bd4\u503c\u4e0d\u53d8
-                        actual.get("score", 0),  # \u8bc4\u5206\u4e0d\u53d8
+                        margin,  # \u603b\u5229\u6da6\u7387\uff08\u4e0e per-run \u6bd4\u503c\u76f8\u540c\uff09
+                        metrics.get("score", 0),  # \u8bc4\u5206\uff08per-run\uff0c\u4e0d\u56e0\u7f29\u653e\u53d8\u5316\uff09
                         iskph,
                         mat_cost,
                         calculated_seconds,
@@ -772,40 +782,15 @@ class IndustryPage(QWidget):
         dlg.show()
 
     def _on_plan_detail(self, plan_id: int):
-        """双击计划行 → 打开 PlanEditDialog"""
-        from ui_pyside6.views.industry import PlanEditDialog
-
+        """双击计划行 → 打开 PlanEditDialog（通过 plan_table 的统一路径）"""
         model = self._plan_table_widget.get_model()
-        plan_data = {}
-        if model:
-            for row in range(model.rowCount()):
-                p = model.get_plan(row)
-                if p and p.get("id") == plan_id:
-                    plan_data = p
-                    break
-        if not plan_data:
+        if not model:
             return
-        dlg = PlanEditDialog(self, plan_data)
-        if dlg.exec():
-            updated = dlg.get_updated_data()
-            with get_container().db.connect("user") as conn:
-                conn.execute(
-                    "UPDATE production_plans SET runs=?, parallels=?, me_level=?, te_level=?, "
-                    "char_name=?, facility=?, output_location=?, mat_hub=?, notes=? WHERE id=?",
-                    (
-                        updated.get("runs", 1),
-                        updated.get("parallels", 1),
-                        updated.get("me_level", 0),
-                        updated.get("te_level", 0),
-                        updated.get("char_name", ""),
-                        updated.get("facility", ""),
-                        updated.get("output", ""),
-                        updated.get("material_hub", "Jita"),
-                        updated.get("notes", ""),
-                        plan_id,
-                    ),
-                )
-            self.load_plans()
+        for row in range(model.rowCount()):
+            p = model.get_plan(row)
+            if p and p.get("id") == plan_id:
+                self._plan_table_widget._edit_plan(row)
+                return
 
     def _on_blueprint_list(self):
         dlg = BlueprintRequirementsDialog(self)

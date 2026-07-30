@@ -1,0 +1,241 @@
+"""
+集中式数据库 Schema 版本管理 — PRAGMA user_version
+
+用法: ensure_all_schemas() 在 Main.py 启动时调用。
+所有 schema 变更必须在此注册迁移函数，不得在业务代码中写 ALTER TABLE。
+
+版本号: 整数，从 1 开始。PRAGMA user_version = 0 视为"未知旧库"。
+"""
+
+import os
+import sqlite3
+from collections.abc import Callable
+
+from core.logger import log
+from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
+
+# ── 当前 Schema 版本 ──
+# 每次有 schema 变更时加 1
+DB_SCHEMA_VERSIONS: dict[str, int] = {
+    "ref": 1,
+    "mkt": 2,  # v1→v2: adjusted_price 列
+    "user": 3,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列
+    "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
+}
+
+# 数据库路径映射（与 database_manager.py 保持同步）
+_DB_PATH_MAP = {
+    "ref": REF_DB_PATH,
+    "mkt": MKT_DB_PATH,
+    "user": USR_DB_PATH,
+    "bp": BP_DB_PATH,
+}
+
+# ── 迁移函数 ──
+# 签名: (db_path: str) -> str  返回人类可读描述
+
+
+def _migrate_mkt_v1_to_v2(db_path: str) -> str:
+    """v1→v2: market_prices 新增 adjusted_price 列（EIV 计算用）"""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("ALTER TABLE market_prices ADD COLUMN adjusted_price REAL DEFAULT 0.0")
+        conn.commit()
+        return "新增 adjusted_price 列"
+    except sqlite3.OperationalError as e:
+        if "duplicate" in str(e).lower():
+            return "adjusted_price 列已存在（跳过）"
+        raise
+    finally:
+        conn.close()
+
+
+def _migrate_user_v1_to_v2(db_path: str) -> str:
+    """v1→v2: user_blueprints 新增 cost_per_run 列"""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("ALTER TABLE user_blueprints ADD COLUMN cost_per_run REAL DEFAULT 0")
+        conn.commit()
+        return "新增 cost_per_run 列"
+    except sqlite3.OperationalError as e:
+        if "duplicate" in str(e).lower():
+            return "cost_per_run 列已存在（跳过）"
+        raise
+    finally:
+        conn.close()
+
+
+def _migrate_user_v2_to_v3(db_path: str) -> str:
+    """v2→v3: production_plans 新增各扩展列"""
+    net = _add_columns(
+        db_path,
+        "production_plans",
+        [
+            ("calculated_time", "REAL DEFAULT 0"),
+            ("notes", "TEXT DEFAULT ''"),
+            ("group_number", "INTEGER DEFAULT 0"),
+            ("sub_level", "INTEGER DEFAULT 0"),
+            ("output_location", "TEXT DEFAULT ''"),
+            ("market_margin", "REAL DEFAULT 0"),
+            ("personal_margin", "REAL DEFAULT 0"),
+            ("daily_output", "REAL DEFAULT 0"),
+            ("materials_ready", "INTEGER DEFAULT 0"),
+            ("iskph", "REAL DEFAULT 0"),
+            ("deposit_hangar_id", "INTEGER DEFAULT NULL"),
+            ("deposited", "INTEGER DEFAULT 0"),
+        ],
+    )
+    return f"production_plans 扩展列 (新增 {net} 列)"
+
+
+def _migrate_bp_v1_to_v2(db_path: str) -> str:
+    """v1→v2: blueprint_materials 新增 wastefactor 列"""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("ALTER TABLE blueprint_materials ADD COLUMN wastefactor INTEGER DEFAULT 10")
+        conn.commit()
+        return "新增 wastefactor 列"
+    except sqlite3.OperationalError as e:
+        if "duplicate" in str(e).lower():
+            return "wastefactor 列已存在（跳过）"
+        raise
+    finally:
+        conn.close()
+
+
+# ── 迁移函数注册 ──
+# {库别名: {起始版本: 迁移函数}}
+_MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
+    "mkt": {
+        1: _migrate_mkt_v1_to_v2,
+    },
+    "user": {
+        1: _migrate_user_v1_to_v2,
+        2: _migrate_user_v2_to_v3,
+    },
+    "bp": {
+        1: _migrate_bp_v1_to_v2,
+    },
+}
+
+
+# ═══════════════════════════════════════════
+#  工具函数
+# ═══════════════════════════════════════════
+
+
+def _add_columns(db_path: str, table: str, columns: list[tuple[str, str]]) -> int:
+    """批量 ADD COLUMN，忽略已存在的列。返回实际新增的列数。"""
+    added = 0
+    conn = sqlite3.connect(db_path)
+    try:
+        for col_name, col_type in columns:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
+                added += 1
+            except sqlite3.OperationalError as e:
+                if "duplicate" in str(e).lower():
+                    continue
+                raise
+        conn.commit()
+        return added
+    finally:
+        conn.close()
+
+
+def _get_version(db_path: str) -> int:
+    """读取 PRAGMA user_version"""
+    conn = sqlite3.connect(db_path)
+    try:
+        v = conn.execute("PRAGMA user_version").fetchone()[0]
+        return int(v)
+    finally:
+        conn.close()
+
+
+def _set_version(db_path: str, version: int):
+    """写入 PRAGMA user_version"""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(f"PRAGMA user_version = {version}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════
+#  公开 API
+# ═══════════════════════════════════════════
+
+
+def ensure_schema(db_alias: str) -> dict:
+    """检查并迁移单个库的 schema。
+
+    Args:
+        db_alias: 库别名 ('ref', 'mkt', 'user', 'bp')
+
+    Returns:
+        {"before": int|None, "after": int|None, "applied": list[str]}
+        None 表示库文件不存在或无法打开（跳过）。
+    """
+    db_path = _DB_PATH_MAP.get(db_alias)
+    if not db_path or not os.path.exists(db_path):
+        return {"before": None, "after": None, "applied": []}
+
+    try:
+        current = DB_SCHEMA_VERSIONS.get(db_alias, 1)
+        on_disk = _get_version(db_path)
+        applied: list[str] = []
+
+        if on_disk == 0:
+            # 首次接触：打标 v1（表已在初始化脚本中创建完毕）
+            _set_version(db_path, 1)
+            on_disk = 1
+
+        if on_disk > current:
+            # 数据库版本比代码还新 → 可能是降级或手改过，跳过
+            log.warning("  ⚠️ %s: 数据库版本 v%s > 代码版本 v%s，跳过", db_alias, on_disk, current)
+            return {"before": on_disk, "after": on_disk, "applied": []}
+
+        for v in range(on_disk, current):
+            mig = _MIGRATIONS.get(db_alias, {}).get(v)
+            if mig:
+                label = mig(db_path)
+                applied.append(f"v{v}→v{ v + 1}: {label}")
+            _set_version(db_path, v + 1)
+
+        after = current if on_disk > 0 else None
+        return {"before": on_disk, "after": after, "applied": applied}
+
+    except Exception:
+        log.exception("  ❌ %s: Schema 检查/迁移失败", db_alias)
+        return {"before": None, "after": None, "applied": []}
+
+
+def ensure_all_schemas() -> dict[str, dict]:
+    """遍历所有 4 个库，执行必要的 schema 迁移。
+
+    Returns:
+        {别名: {"before": int|None, "after": int|None, "applied": [str]}}
+        方便 Main.py 展示日志。
+    """
+    results: dict[str, dict] = {}
+    for alias in DB_SCHEMA_VERSIONS:
+        results[alias] = ensure_schema(alias)
+    return results
+
+
+def get_db_version(db_alias: str) -> int | None:
+    """读取当前库的磁盘版本号（诊断用）"""
+    db_path = _DB_PATH_MAP.get(db_alias)
+    if not db_path or not os.path.exists(db_path):
+        return None
+    try:
+        return _get_version(db_path)
+    except Exception:
+        return None
+
+
+def get_expected_version(db_alias: str) -> int | None:
+    """返回代码中定义的预期版本号（诊断用）"""
+    return DB_SCHEMA_VERSIONS.get(db_alias)
