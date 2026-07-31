@@ -93,6 +93,15 @@ def test_inventory_page_theme_listener(qapp, mock_db):
         patch("ui_pyside6.views.inventory.blueprint_tab.get_container") as mock_cont,
         patch("ui_pyside6.views.inventory.hangar_tab.get_items", return_value=[]),
         patch("ui_pyside6.views.inventory.hangar_tab.get_hangars", return_value=[]),
+        patch(
+            "ui_pyside6.views.inventory.blueprint_tab.get_blueprint_tech_levels",
+            return_value=[],
+        ),
+        patch(
+            "ui_pyside6.views.inventory.blueprint_tab.get_blueprint_reaction_ids",
+            return_value=[],
+        ),
+        patch("ui_pyside6.views.inventory.blueprint_tab.get_blueprints", return_value=[]),
     ):
         mock_cont.return_value.db.connect.return_value.__enter__.return_value = mock_conn
         from ui_pyside6.views.inventory_view import InventoryPage
