@@ -6,6 +6,41 @@
 
 <!-- version list -->
 
+## v0.8.0 (2026-07-31)
+
+### Bug Fixes
+
+- 审计 P0 — 精炼查错表、迁移原子性、char_config 反依赖下沉
+  ([`79e9128`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/79e9128c546580351d8c4c83702c9b6b5ae16505))
+
+- 审计 P1 — 评分缓存接线、ESI 限流、费用差额计费、busy_timeout 等 10 项
+  ([`71006bf`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/71006bf6d7c9b0d2b0df4f3b4a7b41ff84fe1565))
+
+- 审计 P1 尾 — theme 监听器弱引用、fetch_time 索引、schema 迁移收敛、删 scheduler
+  ([`79b93d2`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/79b93d254206dec892d7223cebc2f8220f2d8ed3))
+
+### Chores
+
+- Ruff 格式化存量文件（21 个历史未格式化文件清零）
+  ([`2452e0a`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/2452e0a98731173845f249de5b6986d5daa210f3))
+
+- 清理过期文档与残留文件（-1022 行）+ 修正引用
+  ([`bb4909d`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/bb4909d7b81f1cd035b33382acce28605eff2246))
+
+### Documentation
+
+- 新增 2026-07-31 审计报告 — 4 P0 + 20 P1 问题清单与修复状态
+  ([`49f7a1c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/49f7a1c92059591d3011ce04c29b677e290dc6d3))
+
+- 澄清材料浪费公式误报 + 防错机制落地（字段契约 + 金标准测试）
+  ([`d410f58`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d410f58220539d4b07c1a8f8f0b8c236965b087d))
+
+### Features
+
+- 文档联动机制 — 提交时自动生成 API 文档 + README/链接校验 + 变更提醒
+  ([`e3015db`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/e3015dbf04e51f414a769df5fd7f99989599dd14))
+
+
 ## v0.7.0 (2026-07-31)
 
 ### Bug Fixes
