@@ -1,6 +1,6 @@
 [project]
 name = "eve-industrial-assistant"
-version = "0.2.0"
+version = "0.7.0"
 description = "EVE Online 工业制造助手（PySide6 桌面应用）"
 requires-python = ">=3.14"
 dependencies = [
@@ -93,13 +93,12 @@ markers = [
 # ─────────────────────────────────────────────────────────────
 #  python-semantic-release（自动发版）
 #
-#  0.x 阶段规则（见 docs/semver-zh.md）：
-#     - 每次发版递增 MINOR（0.2.0 → 0.3.0 → …），PATCH 位不用
+#  版本规则（semver 2.0.0，0.x 阶段同样适用）：
+#     - feat 递增 MINOR（0.7.0 → 0.8.0）
+#     - fix/perf 递增 PATCH（0.7.0 → 0.7.1）
+#     - 其余类型（docs/ci/chore/refactor/test/build/style）不触发发版
 #     - allow_zero_version = true：允许停留在 0.x，不会因任何提交直接跳到 1.0.0
-#     - major_on_zero = false：破坏性变更在 0.x 下只升 MINOR
-#     - minor_tags 并入 fix/perf：让所有提交在 0.x 下都走 MINOR
-#   ⚠️ 升到 1.0.0 后需回改：major_on_zero = true，minor_tags = ["feat"]，
-#      patch_tags = ["fix", "perf"]
+#     - major_on_zero = false：大版本（1.0.0 及以后）由用户手动决定
 # ─────────────────────────────────────────────────────────────
 [tool.semantic_release]
 commit_parser = "conventional"   # angular 在 v10 已废弃，改用其继承者
@@ -116,8 +115,8 @@ match = "(main|master)"
 prerelease = false
 
 [tool.semantic_release.commit_parser_options]
-minor_tags = ["feat", "fix", "perf"]
-patch_tags = []
+minor_tags = ["feat"]
+patch_tags = ["fix", "perf"]
 other_allowed_tags = ["build", "chore", "ci", "docs", "style", "refactor", "test"]
 allowed_tags = ["feat", "fix", "perf", "build", "chore", "ci", "docs", "style", "refactor", "test"]
 default_bump_level = 0
@@ -140,4 +139,3 @@ ignore_token_for_push = false
 [tool.semantic_release.publish]
 dist_glob_patterns = []          # 安装包由 release.yml 另行上传
 upload_to_vcs_release = true     # 创建 GitHub Release（changelog 作为 release notes）
-

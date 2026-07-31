@@ -858,12 +858,15 @@ class EstimatePage(QWidget):
 
         items = [{"type_id": r["type_id"], "qty": r.get("qty", 1), "name": r.get("name", "")} for r in rows]
 
-        # 过滤不可精炼的物品（无 type_materials 数据）
+        # 过滤不可精炼的物品（无精炼材料数据）
         model_items = []
         with get_container().db.connect("ref") as conn:
             cur = conn.cursor()
             for item in items:
-                cur.execute("SELECT COUNT(*) FROM type_materials WHERE type_id = ?", (item["type_id"],))
+                cur.execute(
+                    "SELECT COUNT(*) FROM reprocessing_materials WHERE type_id = ?",
+                    (item["type_id"],),
+                )
                 if cur.fetchone()[0] > 0:
                     model_items.append(item)
 

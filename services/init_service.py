@@ -232,7 +232,7 @@ class InitService(QObject):
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get("https://esi.evetech.net/status/") as resp:
-                    ok = resp.status == 200
+                    ok: bool = resp.status == 200
                     msg = "ESI 连接正常" if ok else f"ESI 返回 {resp.status}"
                     self._emit_network(ok, msg)
                     return ok
