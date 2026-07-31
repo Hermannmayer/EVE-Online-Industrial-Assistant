@@ -4,8 +4,8 @@ PySide6 + SQLite 构建的 EVE Online 工业制造助手桌面应用。
 
 ## 语言和工具
 
-- Python 3.14+ / PySide6 6.8+ / ruff 格式化 + linting
-- 所有依赖使用 `~=` 固定版本
+- Python 3.14+ / PySide6 6.11+ / ruff 格式化 + linting
+- 所有依赖使用 `~=` 固定版本，声明于 `pyproject.toml`，用 uv 管理：`uv sync --dev`（生成 `uv.lock`）
 
 ## 代码规则
 
@@ -35,6 +35,7 @@ PySide6 + SQLite 构建的 EVE Online 工业制造助手桌面应用。
 ### 铁律
 - 🎨 **配色**：所有颜色从 `ui_pyside6.theme` 导入，禁止 hex/rgb/颜色名
 - 📖 **术语**：EVE 术语（技能名/蓝图活动/UI 标签）通过 `services.terminology` 获取，技能 key 需在 `data/terminology.json` 注册
+- 🗄️ **Schema 变更**：所有数据库表结构变更必须在 `services/schema_migrations.py` 注册迁移函数：`DB_SCHEMA_VERSIONS[库名] += 1`，新增 `MIGRATIONS[库名][旧版本] = 迁移函数`。不得在业务代码中写 ALTER TABLE。`tests/conftest.py` 中对应表的 PRAGMA user_version 同步更新。
 
 ## 测试
 
@@ -48,9 +49,11 @@ pytest tests/                           # 全量回归（含 Qt，~1.5min）
 ## 常用命令
 
 ```bash
+uv sync --dev              # 安装依赖（首次 / 依赖变更后）
 python dev.py              # 热重载开发
 python Main.py             # 生产启动
 ruff check . --fix         # 自动修复风格
+mypy .                     # 类型检查
 pre-commit run --all-files # 预提交检查
 ```
 

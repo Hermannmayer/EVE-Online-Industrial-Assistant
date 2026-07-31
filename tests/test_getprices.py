@@ -64,8 +64,8 @@ class TestInitDb:
     """init_db — 数据库表结构创建"""
 
     @pytest.mark.asyncio
-    async def test_drops_and_creates_tables(self):
-        """验证 DROP TABLE + CREATE TABLE 语句正确执行，commit 被调用"""
+    async def test_creates_tables_and_migrates(self):
+        """验证 CREATE IF NOT EXISTS + ALTER 兜底迁移，commit 被调用，不再 DROP"""
         db = MagicMock()
         db.execute = AsyncMock()
         db.commit = AsyncMock()
@@ -76,16 +76,17 @@ class TestInitDb:
         with patch("services.workers.getprices.aiosqlite.connect", return_value=cm):
             await init_db()
 
-        # 2 DROP + 2 CREATE = 4 次 execute
-        assert db.execute.await_count == 4
+        # CREATE market_prices + ALTER 补列 + CREATE volume_snapshots = 3 次
+        assert db.execute.await_count == 3
         sqls = [c[0][0] for c in db.execute.await_args_list]
 
-        assert any("DROP TABLE IF EXISTS market_prices" in s for s in sqls)
-        assert any("DROP TABLE IF EXISTS market_volume_snapshots" in s for s in sqls)
-        assert any("CREATE TABLE market_prices" in s for s in sqls)
-        assert any("CREATE TABLE market_volume_snapshots" in s for s in sqls)
+        assert any("CREATE TABLE IF NOT EXISTS market_prices" in s for s in sqls)
+        assert any("ALTER TABLE market_prices ADD COLUMN adjusted_price" in s for s in sqls)
+        assert any("CREATE TABLE IF NOT EXISTS market_volume_snapshots" in s for s in sqls)
         # 验证 volume_snapshots 表有复合主键
         assert any("PRIMARY KEY (type_id, region_id, date)" in s for s in sqls)
+        # 不再 DROP TABLE（保留已有价格数据）
+        assert not any(s.strip().upper().startswith("DROP") for s in sqls)
 
         db.commit.assert_awaited_once()
 

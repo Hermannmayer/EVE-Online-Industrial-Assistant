@@ -35,6 +35,17 @@ _CHECK_SIZE = (380, 220)    # 紧凑模式尺寸
 _EXPAND_SIZE = (620, 500)   # 展开模式尺寸
 
 
+class _StepRow(QWidget):
+    """步骤行 — 携带动态控件引用，供 _update_row_state 更新"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._icon: QLabel
+        self._bar: QProgressBar
+        self._msg: QLabel
+        self._retry_btn: QPushButton
+
+
 class StartupCheckDialog(QDialog):
     """启动检查对话框 — 精致紧凑 → 按需展开"""
 
@@ -50,7 +61,7 @@ class StartupCheckDialog(QDialog):
         self._worker: InitServiceWorker | None = None
         self._step_status: dict[str, StepStatus] = {}
         self._step_dots: dict[str, QLabel] = {}
-        self._step_rows: dict[str, QWidget] = {}
+        self._step_rows: dict[str, _StepRow] = {}
         self._timer: QTimer | None = None
 
         self._build_compact_ui()
@@ -110,7 +121,7 @@ class StartupCheckDialog(QDialog):
         dot_grid = QGridLayout()
         dot_grid.setSpacing(4)
         row, col = 0, 0
-        for i, step in enumerate(STEPS):
+        for _, step in enumerate(STEPS):
             dot = QLabel("○")
             dot.setStyleSheet(f"font-size: 11px; color: {theme.TEXT_SECONDARY};")
             dot.setFixedWidth(80)
@@ -325,9 +336,9 @@ class StartupCheckDialog(QDialog):
         self._skip_btn.hide()
         self._start_init()
 
-    def _build_step_row(self, step: InitStep) -> QWidget:
+    def _build_step_row(self, step: InitStep) -> _StepRow:
         """构建单个步骤行"""
-        row = QWidget()
+        row = _StepRow()
         row.setStyleSheet(f"""
             QWidget {{
                 background-color: {theme.BG_SURFACE};

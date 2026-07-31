@@ -125,8 +125,8 @@ EVE-Online-Industrial-Assistant/
 │   ├── CLAUDE.md                   # Claude Code 项目上下文
 │   └── PROJECT.md                  # 项目约定
 │
-├── pyproject.toml                  # Ruff + pytest 配置
-└── requirements.txt                # Python 依赖
+├── pyproject.toml                  # 项目配置 + 依赖声明（uv 管理）
+└── uv.lock                         # 依赖锁文件（uv sync 生成）
 ```
 
 ---
@@ -144,8 +144,9 @@ EVE-Online-Industrial-Assistant/
 git clone https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant.git
 cd EVE-Online-Industrial-Assistant
 
-# 创建虚拟环境（推荐）
-python -m venv .venv
+# 创建虚拟环境并安装依赖（含 dev 测试工具）
+# 需要先安装 uv：pip install uv
+uv sync --dev
 
 # 激活虚拟环境
 # Windows (CMD/PowerShell):
@@ -154,9 +155,6 @@ python -m venv .venv
 source .venv/Scripts/activate
 # macOS / Linux:
 source .venv/bin/activate
-
-# 安装依赖
-pip install -r requirements.txt
 
 # 运行开发版本
 python Main.py

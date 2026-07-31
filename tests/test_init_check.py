@@ -4,7 +4,6 @@ import os
 import shutil
 import sqlite3
 import tempfile
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -195,36 +194,34 @@ def test_check_icons_cache_missing(full_dbs):
 # ═══════════════════════════════════════════
 
 
-def test_check_all_full(full_dbs):
+def test_check_all_full(full_dbs, tmp_path):
     """所有组件就绪时 check_all 全 True"""
+    icons_dir = tmp_path / "icons_all"
+    icons_dir.mkdir()
+    for i in range(80):
+        (icons_dir / f"{i}.png").touch()
     with (
         _patch_init_check(full_dbs),
-        patch("core.paths.icon_cache_dir") as mock_icon,
+        patch("core.paths.icon_cache_dir", return_value=str(icons_dir)),
     ):
-        mock_icon.return_value = "C:/Users/NIGHTW~1//AppData//Local//Temp/test_icons_all"
-        os.makedirs("C:/Users/NIGHTW~1/AppData/Local/Temp/test_icons_all", exist_ok=True)
-        for i in range(80):
-            Path(f"C:/Users/NIGHTW~1/AppData/Local/Temp/test_icons_all/{i}.png").touch()
         status = check_all()
         assert status["items"] is True
         assert status["prices"] is True
         assert status["blueprints"] is True
         assert status["implants"] is True
-    shutil.rmtree("C:/Users/NIGHTW~1/AppData/Local/Temp/test_icons_all", ignore_errors=True)
 
 
-def test_missing_count_zero(full_dbs):
+def test_missing_count_zero(full_dbs, tmp_path):
     """全就绪时 missing_count 为 0"""
+    icons_dir = tmp_path / "icons_zero"
+    icons_dir.mkdir()
+    for i in range(401):
+        (icons_dir / f"{i}.png").touch()
     with (
         _patch_init_check(full_dbs),
-        patch("core.paths.icon_cache_dir") as mock_icon,
+        patch("core.paths.icon_cache_dir", return_value=str(icons_dir)),
     ):
-        mock_icon.return_value = "C:/Users/NIGHTW~1//AppData//Local//Temp/test_icons_zero"
-        os.makedirs("C:/Users/NIGHTW~1/AppData/Local/Temp/test_icons_zero", exist_ok=True)
-        for i in range(401):
-            Path(f"C:/Users/NIGHTW~1/AppData/Local/Temp/test_icons_zero/{i}.png").touch()
         assert missing_count() == 0
-    shutil.rmtree("C:/Users/NIGHTW~1/AppData/Local/Temp/test_icons_zero", ignore_errors=True)
 
 
 def test_missing_db_file_returns_zero():

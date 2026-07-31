@@ -511,7 +511,8 @@ class ScoringService:
             price_type_prod: 覆盖成品价格类型（不传则用 plan_data 的或 "sell"）
 
         Returns:
-            dict 包含：material_cost, profit, margin, score, iskph, calculated_time(秒), daily_output
+            dict 包含：material_cost, profit, margin, score, iskph, calculated_time(秒), daily_output，
+            以及个人利润率输入 revenue/fees/materials/revenue_per_run/fees_per_run
         """
         type_id = plan_data.get("product_type_id")
         if not type_id:
@@ -523,6 +524,11 @@ class ScoringService:
                 "iskph": 0,
                 "calculated_time": 0,
                 "daily_output": 0,
+                "revenue": 0,
+                "fees": 0,
+                "materials": [],
+                "revenue_per_run": 0,
+                "fees_per_run": 0,
             }
 
         me = int(plan_data.get("me_level", 0) or 0)
@@ -564,6 +570,10 @@ class ScoringService:
         except Exception:
             pass
 
+        revenue_per_run = per_run.get("revenue_per_run", 0) or 0
+        fees_per_run = per_run.get("fees_per_run", 0) or 0
+        total_mult = runs * parallels
+
         return {
             "material_cost": round(total.get("total_material_cost", 0), 2),
             "profit": round(total.get("total_profit", 0), 2),
@@ -572,7 +582,74 @@ class ScoringService:
             "iskph": round(total.get("total_isk_per_hour", 0), 2),
             "calculated_time": round(total.get("total_time_hours", 0) * 3600),
             "daily_output": round(total.get("total_daily_output", 0), 1),
+            # ── 个人利润率输入（新增）──
+            "revenue": round(revenue_per_run * total_mult, 2),
+            "fees": round(fees_per_run * total_mult, 2),
+            "materials": per_run.get("materials", []),  # 每轮量（含 ME 单件豁免）
+            "revenue_per_run": revenue_per_run,  # 未取整，供精确计算
+            "fees_per_run": fees_per_run,
         }
+
+    @staticmethod
+    def calculate_personal_margin(
+        result: dict,
+        inv_map: dict[int, tuple[int, float]],
+        runs: int = 1,
+        parallels: int = 1,
+    ) -> float:
+        """计算考虑库存成本的个人利润率（%）。
+
+        与市场利润率同口径：仅把材料成本替换为库存成本
+        （库存不足部分按材料市场 unit_price 补齐），安装费/经纪人费/销售税与市场列完全一致。
+        无库存时返回值与 result 的市场 margin 在 2 位小数内严格相等。
+
+        Args:
+            result: calculate_plan_metrics() 的返回 dict
+                    （需含 revenue_per_run / fees_per_run / materials / margin）
+            inv_map: get_inventory_cost_map() 的返回 {type_id: (总数量, 加权平均成本)}
+            runs / parallels: 流程数 / 并行数
+
+        Returns:
+            个人利润率（%），round 到 2 位小数。异常或无效输入回退 result 的市场 margin。
+
+        精度契约：必须读未取整的 revenue_per_run / fees_per_run，
+        禁用已 round 的 revenue / fees，否则"无库存=市场列"的严格相等会被破坏。
+        """
+        try:
+            total_mult = max(runs, 1) * max(parallels, 1)
+            fallback = result.get("margin", 0) or 0
+            revenue_per_run = result.get("revenue_per_run", 0) or 0
+            fees_per_run = result.get("fees_per_run", 0) or 0
+            materials = result.get("materials", []) or []
+
+            if not materials or revenue_per_run <= 0:
+                return fallback
+
+            total_personal_cost = 0.0
+            for mat in materials:
+                qty_per_run = mat.get("qty", 0) or 0
+                if qty_per_run <= 0:
+                    continue
+                need = qty_per_run * total_mult
+                unit_price = mat.get("unit_price", 0) or 0
+                stock_qty, stock_cost = inv_map.get(mat.get("type_id"), (0, 0))
+                if stock_qty >= need:
+                    mat_cost = need * stock_cost
+                elif stock_qty > 0:
+                    mat_cost = stock_qty * stock_cost + (need - stock_qty) * unit_price
+                else:
+                    mat_cost = need * unit_price
+                total_personal_cost += mat_cost
+
+            total_cost = total_personal_cost + fees_per_run * total_mult
+            if total_cost <= 0:
+                return fallback
+
+            total_revenue = revenue_per_run * total_mult
+            margin = (total_revenue - total_cost) / total_cost * 100
+            return round(margin, 2)
+        except Exception:
+            return result.get("margin", 0) or 0
 
     # ── 制造评分 ──
 
@@ -671,6 +748,7 @@ class ScoringService:
                 mat_detail.append(
                     {
                         "name": mat_name,
+                        "type_id": mat_id,
                         "base_qty": mat_qty,
                         "qty": waste_qty,
                         "wastefactor": wastefactor,
@@ -717,6 +795,11 @@ class ScoringService:
             broker_relist = revenue * (broker_rate / 100) * (1 - relist_discount / 100)
             sales_tax = revenue * (sales_tax_rate / 100)
             total_cost += broker_init + broker_relist + sales_tax
+
+            # 未取整原始值：供 calculate_personal_margin 复用，
+            # 保证无库存时个人利润率与市场利润率在 2 位小数内严格相等
+            result["revenue_per_run"] = revenue
+            result["fees_per_run"] = installation_fee + broker_init + broker_relist + sales_tax
 
             profit = revenue - total_cost
 

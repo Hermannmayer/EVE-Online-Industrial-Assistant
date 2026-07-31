@@ -576,7 +576,7 @@ def show_context_menu(page, pos):
 
 
 def _copy_to_clipboard(page, text: str):
-    QApplication.instance().clipboard().setText(text)
+    QApplication.clipboard().setText(text)
     page._status_label.setText(f"已复制: {text}")
 
 
@@ -592,7 +592,7 @@ def _copy_row_tsv(page, row_data: dict):
         row_data.get("vol_str", "—"),
     ]
     text = "\t".join(parts)
-    QApplication.instance().clipboard().setText(text)
+    QApplication.clipboard().setText(text)
     page._status_label.setText("已复制整行数据 (TSV 格式)")
 
 

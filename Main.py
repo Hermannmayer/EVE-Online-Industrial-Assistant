@@ -115,10 +115,28 @@ def main():
     _migrate_split_db()
     _migrate_blueprint_db()
 
-    # 执行 Schema 迁移（wastefactor 列等）
+    # -- Schema 迁移 --
     from services.schema_migrations import ensure_all_schemas
 
-    ensure_all_schemas()
+    results = ensure_all_schemas()
+    log.info("Schema 检查 ─────────────────────────")
+    for alias, r in results.items():
+        if r["applied"]:
+            for step in r["applied"]:
+                log.info("  [OK] %s  %s", alias, step)
+        elif r["after"] is not None:
+            log.info("  [OK] %s  v%s (current)", alias, r["after"])
+        else:
+            log.info("  [--] %s  db missing, skip", alias)
+
+    # -- 数据初始化检查 --
+    from services.init_check import missing_count
+
+    missing = missing_count()
+    if missing > 0:
+        log.info("Data init: %d components not ready (use Settings -> Data Init)", missing)
+    else:
+        log.info("Data init: ALL ready")
 
     from services.inventory_manager import init_db
 
@@ -176,6 +194,13 @@ def main():
     # -- Hot reload --
     HOT_RELOAD = "--hot-reload" in sys.argv
 
+    # -- 启动检查（紧凑小窗 → 按需自动初始化） --
+    from ui_pyside6.views.startup_check import StartupCheckDialog
+
+    check_dlg = StartupCheckDialog()
+    check_dlg.exec()
+
+    # -- 主窗口 --
     from ui_pyside6.main_window import MainWindow
 
     window = MainWindow(hot_reload=HOT_RELOAD)

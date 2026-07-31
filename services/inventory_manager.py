@@ -4,7 +4,7 @@
 
 from datetime import UTC, datetime
 
-from services.database_manager import get_db
+from services.database_manager import DatabaseManager, get_db
 
 db = get_db()
 
@@ -49,11 +49,7 @@ DEFAULT_HANGARS = ["矿仓", "组件仓", "产品仓", "通用仓库"]
 def init_db():
     with db.connect("user") as conn:
         conn.executescript(SCHEMA)
-        # 迁移：为旧版 user_blueprints 补加 cost_per_run 列
-        try:
-            conn.execute("ALTER TABLE user_blueprints ADD COLUMN cost_per_run REAL DEFAULT 0")
-        except Exception:
-            pass
+        # cost_per_run 列已由 schema_migrations user v1→v2 处理，此处不再需要
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM hangars")
         if c.fetchone()[0] == 0:
@@ -161,6 +157,37 @@ def get_item_price(type_id: int) -> float | None:
         c.execute("SELECT sell_price FROM market_prices WHERE type_id = ? AND region_id = 10000002 LIMIT 1", (type_id,))
         r = c.fetchone()
         return r[0] if r else None
+
+
+def get_inventory_cost_map(_db: DatabaseManager | None = None) -> dict[int, tuple[int, float]]:
+    """跨机库汇总各物品库存数量与加权平均成本（成本按数量加权）。
+
+    零成本库存（cost_price 为 0 或 NULL）也计入库存，加权成本按 0 处理；
+    quantity <= 0 的行不计入（视为无库存）。
+
+    Args:
+        _db: 可选注入的 DatabaseManager（便于测试）；None 时用模块级单例。
+
+    Returns:
+        {type_id: (总数量, 加权平均成本)}，仅含 quantity > 0 的物品。
+    """
+    conn_mgr = _db or db
+    result: dict[int, tuple[int, float]] = {}
+    with conn_mgr.connect("user") as conn:
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT type_id,
+                   SUM(quantity) AS total_qty,
+                   SUM(quantity * COALESCE(cost_price, 0)) / NULLIF(SUM(quantity), 0) AS avg_cost
+            FROM inventory_items
+            WHERE quantity > 0
+            GROUP BY type_id
+            """
+        )
+        for tid, qty, cost in c.fetchall():
+            result[int(tid)] = (int(qty), float(cost or 0))
+    return result
 
 
 def add_item(hangar_id: int, type_id: int, quantity: int, cost_price: float = 0) -> int:

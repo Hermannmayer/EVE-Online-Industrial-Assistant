@@ -91,7 +91,7 @@ def is_step_satisfied(step_key: str) -> bool:
     from services.init_check import check_all
 
     status = check_all()
-    return status.get(step_key, False)
+    return bool(status.get(step_key, False))
 
 
 def get_missing_steps() -> list[InitStep]:

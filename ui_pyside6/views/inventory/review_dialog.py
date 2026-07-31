@@ -420,8 +420,8 @@ class ImportReviewDialog(QDialog):
             w = table.cellWidget(i, 0)
             if not w:
                 continue
-            cb = w.findChild(QCheckBox)
-            if not cb or not cb.isChecked():
+            cb_box: QCheckBox | None = w.findChild(QCheckBox)
+            if not cb_box or not cb_box.isChecked():
                 continue
             name_item = table.item(i, 1)
             qty_item = table.item(i, 2)

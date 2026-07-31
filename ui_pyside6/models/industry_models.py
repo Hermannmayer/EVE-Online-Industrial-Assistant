@@ -43,6 +43,9 @@ class RankTableModel(QAbstractTableModel):
         elif role == Qt.ItemDataRole.ForegroundRole:
             if c == 1:
                 return QColor(theme.GREEN) if r.get("profit_per_run", 0) > 0 else QColor(theme.RED)
+            if c == 4:
+                s = r.get("score", 0)
+                return QColor(theme.GREEN) if s >= 70 else (QColor(theme.RED) if s < 30 else QColor(theme.PRIMARY))
             return None
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
@@ -55,27 +58,27 @@ class RankTableModel(QAbstractTableModel):
 
 
 class PlanTableModel(QAbstractTableModel):
-    """21 列生产计划模型 — 支持 checkbox、图标、行内编辑、排序"""
+    """18 列生产计划模型 — 支持 checkbox、图标、行内编辑、排序"""
 
     _HEADERS = [
         "☐",  # 0  勾选/备料
         "图标",  # 1
         "产品",  # 2
         "备注",  # 3
-        "组号",  # 6
-        "子级",  # 7
-        "状态",  # 8
-        "人物",  # 9
-        "流程",  # 10
-        "蓝图",  # 11
-        "时长",  # 12
-        "产能",  # 13
-        "设施",  # 14
-        "输出",  # 15
-        "成本",  # 16
-        "利润",  # 17
-        "市场利润率%",  # 18
-        "个人利润率%",  # 19
+        "组号",  # 4
+        "子级",  # 5
+        "状态",  # 6
+        "人物",  # 7
+        "流程",  # 8
+        "蓝图",  # 9
+        "时长",  # 10
+        "产能",  # 11
+        "设施",  # 12
+        "输出",  # 13
+        "成本",  # 14
+        "利润",  # 15
+        "市场利润率%",  # 16
+        "个人利润率%",  # 17
     ]
 
     # 可编辑列集合（仅 active 状态下生效）
@@ -175,7 +178,7 @@ class PlanTableModel(QAbstractTableModel):
         return None
 
     def _display_text(self, p: dict, c: int) -> str:
-        """列 0~19 的 DisplayRole 文本"""
+        """列 0~17 的 DisplayRole 文本"""
         if c == 0:
             return "☑" if p.get("materials_ready", 0) else "☐"
         if c == 1:
@@ -192,10 +195,6 @@ class PlanTableModel(QAbstractTableModel):
             return cast(str, self._STATUS_LABELS.get(p.get("status", ""), p.get("status", "")))
         if c == 7:
             return p.get("char_name", "") or "-"
-        if c == 8:
-            runs = p.get("runs", 0)
-            parallels = p.get("parallels", 1)
-            return f"{runs} x {parallels}"
         if c == 8:
             runs = p.get("runs", 0)
             parallels = p.get("parallels", 1)
@@ -291,11 +290,11 @@ class PlanTableModel(QAbstractTableModel):
         # 直接写内存模型
         if col == 3:
             plan["notes"] = str(value)
-        if col == 7:
+        elif col == 7:
             plan["char_name"] = str(value)
-        if col == 12:
+        elif col == 12:
             plan["facility"] = str(value)
-        if col == 13:
+        elif col == 13:
             try:
                 plan["output"] = int(value)
             except (ValueError, TypeError):
@@ -413,6 +412,7 @@ class ProcurementTableModel(QAbstractTableModel):
                     return QColor(theme.ACCENT_ORANGE)
                 elif pri == "low":
                     return QColor(theme.TEXT_SECONDARY)
+            if c == 4:  # 状态列
                 st = item.get("status", "")
                 if st == "received":
                     return QColor(theme.GREEN)
@@ -464,8 +464,6 @@ class ProductionTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole:
             cols = [
                 p.get("product_name", f"ID:{p.get('product_type_id', '')}"),
-                str(p.get("runs", 0)),
-                str(p.get("parallels", 1)),
                 f"{p.get('material_cost', 0):,.0f}" if p.get("material_cost") else "-",
                 f"{p.get('profit', 0):,.0f}" if p.get("profit") is not None else "-",
                 f"{p.get('margin', 0):.1f}%" if p.get("margin") else "-",
@@ -476,9 +474,9 @@ class ProductionTableModel(QAbstractTableModel):
             ]
             return cols[c]
         elif role == Qt.ItemDataRole.ForegroundRole:
-            if c == 4:
+            if c == 2:
                 return QColor(theme.GREEN) if p.get("profit", 0) > 0 else QColor(theme.RED)
-            if c == 6:
+            if c == 4:
                 s = p.get("score", 0)
                 return QColor(theme.GREEN) if s >= 70 else (QColor(theme.RED) if s < 30 else QColor(theme.PRIMARY))
         return None

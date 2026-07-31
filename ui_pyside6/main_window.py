@@ -855,8 +855,11 @@ class MainWindow(QMainWindow):
                         log.exception("恢复页面状态失败: %s", pkey)
 
     def _check_first_run(self):
-        """首次启动检测 + 初始化完成后重建页面"""
+        """启动后检查数据状态 + 重建页面
 
+        数据初始化由 StartupCheckDialog（Main.py 启动时）自动处理，
+        此处仅负责页面重建和状态展示。
+        """
         from services.init_check import check_all
 
         status = check_all()
@@ -865,10 +868,7 @@ class MainWindow(QMainWindow):
         if missing == 0 and has_items:
             self._rebuild_placeholder_pages()
             self._status_label.setText("就绪")
-        elif not has_items:
-            self._status_label.setText("⚠️ 首次使用？请打开 ⚙️ → 数据初始化")
         else:
-            # 找出哪个检查失败，显示具体名称
             failed = [k for k, v in status.items() if not v]
             msg = "⚠️ 1 项未初始化" if len(failed) == 1 else f"⚠️ {missing} 项未初始化"
             self._status_label.setText(f"{msg} ({', '.join(failed)})")
@@ -928,16 +928,17 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self, self)
         dlg.exec()
 
-    def _show_init_wizard(self):
+    def _show_init_wizard(self, auto_mode: bool = False):
         from ui_pyside6.views.init_wizard import InitWizard
 
         try:
-            if hasattr(self, "_init_wizard") and self._init_wizard and self._init_wizard.isVisible():
-                self._init_wizard.raise_()
+            wizard = getattr(self, "_init_wizard", None)
+            if not auto_mode and wizard is not None and wizard.isVisible():
+                wizard.raise_()
                 return
         except RuntimeError:
             pass  # C++ 对象已被删除
-        self._init_wizard = InitWizard(self, on_done=self._check_first_run)
+        self._init_wizard = InitWizard(self, on_done=self._check_first_run, auto_mode=auto_mode)
         self._init_wizard.show()
 
     def _show_about(self):

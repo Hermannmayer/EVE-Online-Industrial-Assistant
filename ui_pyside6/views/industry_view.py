@@ -256,7 +256,8 @@ class PlanPriceRefreshWorker(QThread):
                         try:
                             async with session.get(url, params={"type_id": tid, "order_type": order_type}) as resp:
                                 if resp.status == 200:
-                                    return await resp.json()
+                                    data = await resp.json()
+                                    return data if isinstance(data, list) else []
                         except Exception:
                             log.warning("拉取 %s type_id=%s 失败", order_type, tid)
                         return []

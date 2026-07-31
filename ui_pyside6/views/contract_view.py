@@ -844,7 +844,7 @@ class ContractPage(QWidget):
         menu.exec(self._contract_table.viewport().mapToGlobal(pos))
 
     def _copy_to_clipboard(self, text: str):
-        QApplication.instance().clipboard().setText(text)
+        QApplication.clipboard().setText(text)
         self._count_label.setText(f"已复制: {text}")
 
     def _copy_contract_items(self, contract: dict):
@@ -861,7 +861,7 @@ class ContractPage(QWidget):
             qty = item.get("quantity", 0)
             lines.append(f"{zh or en}\tx{qty}")
         text = "\n".join(lines)
-        QApplication.instance().clipboard().setText(text)
+        QApplication.clipboard().setText(text)
         self._count_label.setText(f"已复制 {len(items)} 个物品到剪贴板")
 
     def _on_filter_changed_client(self):

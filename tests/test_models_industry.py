@@ -41,12 +41,12 @@ class TestProductionTableModel:
         ]
         model = ProductionTableModel(plans)
         assert model.rowCount() == 1
-        assert model.columnCount() == 10  # 10 列
+        assert model.columnCount() == 8  # 8 列
 
     def test_header_data(self):
         """表头正确"""
         model = ProductionTableModel([])
-        headers = ["产品", "批次", "并行", "材料成本", "利润", "利润率", "评分", "时均产量", "状态", "创建时间"]
+        headers = ["产品", "材料成本", "利润", "利润率", "评分", "时均产量", "状态", "创建时间"]
         for i, h in enumerate(headers):
             assert model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == h
 
@@ -70,15 +70,13 @@ class TestProductionTableModel:
         model = ProductionTableModel(plans)
 
         assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == "渡鸦级"
-        assert model.data(model.index(0, 1), Qt.ItemDataRole.DisplayRole) == "10"
-        assert model.data(model.index(0, 2), Qt.ItemDataRole.DisplayRole) == "2"
-        assert model.data(model.index(0, 3), Qt.ItemDataRole.DisplayRole) == "300,000,000"
-        assert model.data(model.index(0, 4), Qt.ItemDataRole.DisplayRole) == "50,000,000"
-        assert model.data(model.index(0, 5), Qt.ItemDataRole.DisplayRole) == "16.7%"
-        assert model.data(model.index(0, 6), Qt.ItemDataRole.DisplayRole) == "85"
-        assert model.data(model.index(0, 7), Qt.ItemDataRole.DisplayRole) == "12,500,000"
-        assert model.data(model.index(0, 8), Qt.ItemDataRole.DisplayRole) == "运行"  # running → 运行
-        assert model.data(model.index(0, 9), Qt.ItemDataRole.DisplayRole) == "2026-06-01 10:00:00"
+        assert model.data(model.index(0, 1), Qt.ItemDataRole.DisplayRole) == "300,000,000"
+        assert model.data(model.index(0, 2), Qt.ItemDataRole.DisplayRole) == "50,000,000"
+        assert model.data(model.index(0, 3), Qt.ItemDataRole.DisplayRole) == "16.7%"
+        assert model.data(model.index(0, 4), Qt.ItemDataRole.DisplayRole) == "85"
+        assert model.data(model.index(0, 5), Qt.ItemDataRole.DisplayRole) == "12,500,000"
+        assert model.data(model.index(0, 6), Qt.ItemDataRole.DisplayRole) == "运行"  # running → 运行
+        assert model.data(model.index(0, 7), Qt.ItemDataRole.DisplayRole) == "2026-06-01 10:00:00"
 
     def test_data_fallback_display(self, qapp):
         """字段缺失时的回退显示"""
@@ -88,19 +86,19 @@ class TestProductionTableModel:
         # product_name 缺失 → ID:2001
         assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == "ID:2001"
         # material_cost 缺失 → "-"
-        assert model.data(model.index(0, 3), Qt.ItemDataRole.DisplayRole) == "-"
+        assert model.data(model.index(0, 1), Qt.ItemDataRole.DisplayRole) == "-"
         # profit = 0 → "0"
-        assert model.data(model.index(0, 4), Qt.ItemDataRole.DisplayRole) == "0"
+        assert model.data(model.index(0, 2), Qt.ItemDataRole.DisplayRole) == "0"
         # margin = 0 → "-" (falsy → "-")
-        assert model.data(model.index(0, 5), Qt.ItemDataRole.DisplayRole) == "-"
+        assert model.data(model.index(0, 3), Qt.ItemDataRole.DisplayRole) == "-"
         # score = 0 → "-" (falsy → "-")
-        assert model.data(model.index(0, 6), Qt.ItemDataRole.DisplayRole) == "-"
+        assert model.data(model.index(0, 4), Qt.ItemDataRole.DisplayRole) == "-"
         # iskph 缺失 → "-"
-        assert model.data(model.index(0, 7), Qt.ItemDataRole.DisplayRole) == "-"
+        assert model.data(model.index(0, 5), Qt.ItemDataRole.DisplayRole) == "-"
         # 未知状态 → 原样返回
-        assert model.data(model.index(0, 8), Qt.ItemDataRole.DisplayRole) == "unknown"
+        assert model.data(model.index(0, 6), Qt.ItemDataRole.DisplayRole) == "unknown"
         # created_at 缺失 → "-"
-        assert model.data(model.index(0, 9), Qt.ItemDataRole.DisplayRole) == "-"
+        assert model.data(model.index(0, 7), Qt.ItemDataRole.DisplayRole) == "-"
 
     def test_data_foreground(self, qapp):
         """利润/评分前景色正确"""
@@ -109,16 +107,16 @@ class TestProductionTableModel:
         # 利润 > 0 绿色, 利润 < 0 红色
         pos = ProductionTableModel([{"profit": 1000, "score": 80}])
         neg = ProductionTableModel([{"profit": -500, "score": 20}])
-        assert pos.data(pos.index(0, 4), Qt.ItemDataRole.ForegroundRole).name() == theme.GREEN
-        assert neg.data(neg.index(0, 4), Qt.ItemDataRole.ForegroundRole).name() == theme.RED
+        assert pos.data(pos.index(0, 2), Qt.ItemDataRole.ForegroundRole).name() == theme.GREEN
+        assert neg.data(neg.index(0, 2), Qt.ItemDataRole.ForegroundRole).name() == theme.RED
 
         # 评分 ≥ 70 → 绿色, < 30 → 红色, 中间 → PRIMARY
         high = ProductionTableModel([{"profit": 0, "score": 85}])
         mid = ProductionTableModel([{"profit": 0, "score": 50}])
         low = ProductionTableModel([{"profit": 0, "score": 15}])
-        assert high.data(high.index(0, 6), Qt.ItemDataRole.ForegroundRole).name() == theme.GREEN
-        assert mid.data(mid.index(0, 6), Qt.ItemDataRole.ForegroundRole).name() == theme.PRIMARY
-        assert low.data(low.index(0, 6), Qt.ItemDataRole.ForegroundRole).name() == theme.RED
+        assert high.data(high.index(0, 4), Qt.ItemDataRole.ForegroundRole).name() == theme.GREEN
+        assert mid.data(mid.index(0, 4), Qt.ItemDataRole.ForegroundRole).name() == theme.PRIMARY
+        assert low.data(low.index(0, 4), Qt.ItemDataRole.ForegroundRole).name() == theme.RED
 
     def test_get_plan(self):
         """get_plan 返回正确行数据，越界返回空 dict"""
@@ -135,7 +133,7 @@ class TestProductionTableModel:
         """空列表构造"""
         model = ProductionTableModel([])
         assert model.rowCount() == 0
-        assert model.columnCount() == 10
+        assert model.columnCount() == 8
         assert model.get_plan(0) == {}
 
     def test_status_labels(self, qapp):
@@ -150,7 +148,7 @@ class TestProductionTableModel:
         for raw, expected in status_cases:
             plans = [{"product_name": "测试", "runs": 1, "status": raw}]
             model = ProductionTableModel(plans)
-            assert model.data(model.index(0, 8), Qt.ItemDataRole.DisplayRole) == expected
+            assert model.data(model.index(0, 6), Qt.ItemDataRole.DisplayRole) == expected
 
 
 # ══════════════════════════════════════
