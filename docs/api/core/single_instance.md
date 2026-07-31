@@ -16,7 +16,7 @@ def try_lock(force: bool=False) -> bool
 
 Attempt to acquire the single-instance lock.
 
-定义行：`8`
+定义行：`9`
 
 ### `_is_pid_alive`
 
@@ -28,7 +28,7 @@ def _is_pid_alive(pid: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`38`
+定义行：`39`
 
 ### `_win32_is_pid_alive`
 
@@ -40,7 +40,7 @@ def _win32_is_pid_alive(pid: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`50`
+定义行：`51`
 
 ### `unlock`
 
@@ -50,7 +50,7 @@ def unlock()
 
 Release the single-instance lock.
 
-定义行：`71`
+定义行：`72`
 
 ### `show_message`
 
@@ -60,4 +60,4 @@ def show_message()
 
 Print a notice to stderr that another instance is already running.
 
-定义行：`79`
+定义行：`80`

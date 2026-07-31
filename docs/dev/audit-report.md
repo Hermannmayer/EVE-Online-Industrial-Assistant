@@ -59,7 +59,7 @@
 
 1. **GitHub Pages 设置**（网页端，Claude 无法代做）：
    > 仓库 → Settings → Pages → Source: 选择 **GitHub Actions**
-   
+
    完成后，下一次 push main（或手动重跑 docs.yml 的 workflow）即可部署文档站。
 
 ### 建议（可选）

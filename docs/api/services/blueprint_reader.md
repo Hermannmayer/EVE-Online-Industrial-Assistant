@@ -26,7 +26,7 @@ def get_blueprint_materials(conn: sqlite3.Connection, blueprint_type_id: int, ac
 
 获取蓝图所需材料列表。
 
-定义行：`46`
+定义行：`50`
 
 ### `get_blueprint_products`
 
@@ -36,4 +36,4 @@ def get_blueprint_products(conn: sqlite3.Connection, product_type_id: int, activ
 
 根据产品 type_id 查找对应的蓝图信息。
 
-定义行：`73`
+定义行：`77`

@@ -289,35 +289,33 @@ python build_release.py
 
 | 指标 | 数值 |
 |------|------|
-| 📊 **测试总数** | 661 个 |
+| 📊 **测试总数** | 649 个 |
 | 🔧 **框架** | pytest |
 | 📁 **测试目录** | `tests/` |
 | 🏃 **运行命令** | `pytest` |
 
 ### 测试文件
 
+覆盖主要模块（完整清单以 `tests/` 目录为准，pytest 自动收集）：
+
 | 文件 | 说明 |
 |------|------|
-| `test_core.py` | 核心路径与配置测试 |
-| `test_logger.py` | 日志模块测试 |
-| `test_paths.py` | 路径管理测试 |
+| `test_core.py` / `test_paths.py` / `test_logger.py` | 核心工具层测试 |
 | `test_database_manager.py` | 数据库连接管理器测试 |
-| `test_scoring.py` | 贸易/制造评分计算测试 |
-| `test_scoring_cache.py` | 评分缓存测试 |
-| `test_scoring_core.py` | 评分核心逻辑测试 |
+| `test_scoring.py` / `test_scoring_core.py` / `test_scoring_service.py` | 评分计算测试 |
+| `test_personal_margin.py` | 个人利润率测试 |
+| `test_bom_expander.py` | BOM 展开测试 |
+| `test_refining_service.py` | 精炼价值测试 |
+| `test_manufacturing_calculator_golden.py` | 制造公式金标准（游戏实测数值锁定） |
+| `test_schema_migrations.py` / `test_migration_recovery.py` | Schema 迁移与失败恢复测试 |
+| `test_client.py` / `test_getprices.py` | ESI 客户端与价格拉取测试 |
 | `test_price_history.py` | 价格走势图数据测试 |
-| `test_export_helper.py` | 批量导出测试 |
-| `test_procurement.py` | 代采购管理测试 |
 | `test_watchlist_manager.py` | 关注列表与价格变化检测测试 |
-| `test_contract_view.py` | 合同视图测试 |
-| `test_logistics.py` | 物流距离计算测试 |
-| `test_logistics_cost.py` | 物流成本计算测试 |
+| `test_contract_models.py` / `test_contract_ui.py` | 合同视图测试 |
+| `test_logistics_cost.py` / `test_logistics_distance.py` | 物流计算测试 |
 | `test_theme_listeners.py` | 主题监听模式测试 |
-| `test_ui_industry.py` | 工业页面 UI 测试 |
-| `test_ui_inventory.py` | 仓库页面 UI 测试 |
-| `test_ui_main_window.py` | 主窗口 UI 测试 |
-| `test_workers_industry.py` | 制造评分 Worker 测试 |
-| `test_workers_plan_refresh.py` | 计划价格刷新测试 |
+| `test_ui_industry.py` / `test_ui_inventory.py` / `test_ui_main_window.py` | UI 冒烟测试 |
+| `test_workers_*.py` | 后台 Worker 测试 |
 
 ---
 
