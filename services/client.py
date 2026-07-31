@@ -4,13 +4,45 @@
 
 import asyncio
 import json
+import time
 
 import aiohttp
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 
+class RateLimiter:
+    """异步令牌桶限流器 — ESI 要求 ≤20 req/s，超发时自动排队等待。
+
+    用法：请求前 `await limiter.acquire()`。rate 为每秒令牌数，
+    burst 为瞬时突发上限（桶容量）。
+    """
+
+    def __init__(self, rate: float = 20.0, burst: int = 40):
+        self._rate = rate
+        self._burst = burst
+        self._tokens = float(burst)
+        self._updated = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        """获取一个令牌（不足时按速率等待）"""
+        async with self._lock:
+            while True:
+                now = time.monotonic()
+                self._tokens = min(self._burst, self._tokens + (now - self._updated) * self._rate)
+                self._updated = now
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+                await asyncio.sleep((1.0 - self._tokens) / self._rate)
+
+    @property
+    def rate(self) -> float:
+        return self._rate
+
+
 class APIClient:
-    """异步 HTTP 客户端（含重试、并发控制）"""
+    """异步 HTTP 客户端（含重试、并发控制、全局限流）"""
 
     def __init__(self, concurrency: int = 20, timeout: int = 30, user_agent: str = "EveApp/1.0", retries: int = 3):
         self._concurrency = concurrency
@@ -19,6 +51,13 @@ class APIClient:
         self._retries = retries
         self.session: aiohttp.ClientSession | None = None
         self.semaphore: asyncio.Semaphore | None = None
+        # ESI 全局限流：≤20 req/s（全部请求共享同一个限流器）
+        self._limiter = RateLimiter(rate=20.0, burst=40)
+
+    @property
+    def limiter(self) -> RateLimiter:
+        """共享限流器 — worker 直接用它保护裸请求"""
+        return self._limiter
 
     async def __aenter__(self):
         self.semaphore = asyncio.Semaphore(self._concurrency)
@@ -51,6 +90,7 @@ class APIClient:
 
         @retry_deco
         async def _do_fetch() -> dict | None:
+            await self._limiter.acquire()
             async with self.semaphore:  # type: ignore[union-attr]
                 async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
                     if resp.status == 429:
@@ -69,6 +109,35 @@ class APIClient:
             return await _do_fetch()
         except (TimeoutError, aiohttp.ClientError):
             return None
+
+    async def fetch_raw(self, url: str) -> list | None:
+        """GET 请求，返回原始 JSON（列表响应，如订单簿页），404/超时返回 None"""
+        await self._limiter.acquire()
+        async with self.semaphore:  # type: ignore[union-attr]
+            async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
+                if resp.status == 429:
+                    await self._handle_rate_limit(resp)
+                    return None
+                if resp.status == 404:
+                    return None
+                resp.raise_for_status()
+                text = await resp.text()
+                if not text.strip():
+                    return None
+                parsed = json.loads(text)
+                return parsed if isinstance(parsed, list) else None
+
+    async def get_headers(self, url: str) -> dict[str, str] | None:
+        """GET 请求，返回响应头（X-Pages 等）；非 200 返回 None"""
+        await self._limiter.acquire()
+        async with self.semaphore:  # type: ignore[union-attr]
+            async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
+                if resp.status == 429:
+                    await self._handle_rate_limit(resp)
+                    return None
+                if resp.status != 200:
+                    return None
+                return dict(resp.headers)
 
     async def fetch_required(self, url: str):
         """GET 请求，失败时抛出异常"""

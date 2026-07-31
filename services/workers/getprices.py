@@ -12,20 +12,23 @@ import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-import aiohttp
 import aiosqlite
 
 from core.constants import TRADE_HUB_IDS
 from core.logger import log
 from core.paths import market_db_path, progress_file
+from services.client import APIClient, RateLimiter
 
 DATABASE_PATH = market_db_path()
 ESI_BASE_URL = "https://esi.evetech.net/latest"
 
-TRADE_REGIONS = [(name, rid) for name, rid in TRADE_HUB_IDS.items()]
+TRADE_REGIONS = list(TRADE_HUB_IDS.items())
 
 # 缓存已知页数，下次跳过 page-1 发现环节
 _PAGE_CACHE: dict[str, int] = {}
+
+# ESI 全局限流（20 req/s）— 与 APIClient 内部限流器独立，直接保护裸请求
+_rate_limiter = RateLimiter(rate=20.0, burst=40)
 
 
 def write_progress(cur: int, total: int, phase: str = ""):
@@ -80,9 +83,11 @@ async def init_db():
 
 async def fetch_baseline_prices() -> dict[int, dict]:
     """/markets/prices/ — 1次请求，极快"""
-    async with aiohttp.ClientSession(headers={"User-Agent": "EveDataCrawler/1.0"}) as s:
-        async with s.get(f"{ESI_BASE_URL}/markets/prices/") as resp:
-            data = await resp.json()
+    async with APIClient(timeout=60) as client:
+        data = await client.fetch_raw(f"{ESI_BASE_URL}/markets/prices/")
+    if data is None:
+        log.warning("基准价格拉取失败（网络/限流），本次价格更新将缺少兜底数据")
+        return {}
     result = {}
     for item in data:
         result[item["type_id"]] = {
@@ -95,30 +100,35 @@ async def fetch_baseline_prices() -> dict[int, dict]:
     return result
 
 
-async def fetch_order_pages(session, region_id: int, order_type: str, total_pages: int) -> list:
-    """并发拉取一个区域指定方向的所有订单页"""
+async def fetch_order_pages(client: APIClient, region_id: int, order_type: str, total_pages: int) -> list:
+    """并发拉取一个区域指定方向的所有订单页（全局限流 ≤20 req/s）"""
     all_data = []
-    sem = asyncio.Semaphore(50)
+    sem = asyncio.Semaphore(8)
 
     async def get_page(p: int):
         url = f"{ESI_BASE_URL}/markets/{region_id}/orders/?order_type={order_type}&page={p}"
         async with sem:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-        return []
+            try:
+                data = await client.fetch_raw(url)
+            except Exception:
+                log.exception("订单页拉取异常: %s", url)
+                return []
+            if data is None:
+                log.warning("订单页拉取失败（非 200/限流/超时）: %s", url)
+                return []
+            return data
 
     # 拉取全部页面
     pages = list(range(1, total_pages + 1))
-    for i in range(0, len(pages), 50):
-        batch = pages[i : i + 50]
+    for i in range(0, len(pages), 8):
+        batch = pages[i : i + 8]
         results = await asyncio.gather(*[get_page(p) for p in batch])
         for r in results:
             all_data.extend(r)
     return all_data
 
 
-async def discover_pages(session, targets: list[tuple[str, int]] | None = None) -> dict:
+async def discover_pages(client: APIClient, targets: list[tuple[str, int]] | None = None) -> dict:
     """并发获取所有流的总页数（8次请求）"""
     targets = targets or TRADE_REGIONS
     keys = {}
@@ -130,11 +140,13 @@ async def discover_pages(session, targets: list[tuple[str, int]] | None = None) 
             keys[cache_key] = _PAGE_CACHE[cache_key]
             return
         url = f"{ESI_BASE_URL}/markets/{rid}/orders/?order_type={ot}&page=1"
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                pages = int(resp.headers.get("X-Pages", 1))
-                _PAGE_CACHE[cache_key] = pages
-                keys[cache_key] = pages
+        headers = await client.get_headers(url)
+        if headers is None:
+            log.warning("页数发现失败（非 200/限流）: %s", url)
+            return
+        pages = int(headers.get("X-Pages", 1))
+        _PAGE_CACHE[cache_key] = pages
+        keys[cache_key] = pages
 
     for _, rid in targets:
         for ot in ("sell", "buy"):
@@ -155,15 +167,11 @@ async def fetch_orders(regions: list[tuple[str, int]] | None = None) -> dict[int
     """
     targets = regions or TRADE_REGIONS
     log.info("发现订单页数...")
-    timeout = aiohttp.ClientTimeout(total=120)
-    async with aiohttp.ClientSession(
-        headers={"Accept": "application/json", "User-Agent": "EveDataCrawler/1.0"},
-        timeout=timeout,
-    ) as session:
-        page_map = await discover_pages(session)
+    async with APIClient(timeout=120) as client:
+        page_map = await discover_pages(client)
 
         total_reqs = sum(page_map.values())
-        log.info(f"  共 {total_reqs} 页，开始拉取...")
+        log.info("  共 %s 页，开始拉取...", total_reqs)
 
         result = {}
         for _name, rid in targets:
@@ -173,7 +181,7 @@ async def fetch_orders(regions: list[tuple[str, int]] | None = None) -> dict[int
                 pages = page_map.get(key, 0)
                 if not pages:
                     continue
-                data = await fetch_order_pages(session, rid, ot, pages)
+                data = await fetch_order_pages(client, rid, ot, pages)
 
                 for o in data:
                     tid = o["type_id"]
@@ -206,7 +214,7 @@ async def fetch_orders(regions: list[tuple[str, int]] | None = None) -> dict[int
             result[rid] = region_data
 
     total_items = sum(len(d) for d in result.values())
-    log.info(f"  获取 {total_items} 条聚合记录（{len(result)} 个区域）")
+    log.info("  获取 %s 条聚合记录（%s 个区域）", total_items, len(result))
     return result
 
 
@@ -245,23 +253,39 @@ async def save_prices(
     order_prices: dict[int, dict[int, dict]],
     region_ids: list[int] | None = None,
 ) -> int:
-    """写入各区域价格（仅覆盖指定区域）"""
+    """写入各区域价格（仅覆盖指定区域）。
+
+    失败保护：拉取失败的区域（order_prices 中无该 region 或为空 dict）跳过
+    删除与插入，保留该区域旧价格 —— 避免「先 DELETE 后 INSERT」在拉取失败时
+    清空整区数据。
+    """
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        if region_ids:
-            # 只删除被更新的区域
-            for rid in region_ids:
-                await db.execute("DELETE FROM market_prices WHERE region_id = ?", (rid,))
-        else:
-            await db.execute("DELETE FROM market_prices")
+        # 确定本次实际成功的区域（order_prices 中存在且有数据）
+        target_regions = region_ids or list(order_prices.keys())
+        succeeded = [rid for rid in target_regions if order_prices.get(rid)]
+        failed = [rid for rid in target_regions if rid not in succeeded]
+        if failed:
+            log.warning("  以下区域拉取失败，保留旧价格: %s", failed)
+
         records = []
-        for region_id, items in order_prices.items():
+        for region_id in succeeded:
+            await db.execute("DELETE FROM market_prices WHERE region_id = ?", (region_id,))
+            items = order_prices[region_id]
             merged = dict(baseline)
             for tid, prices in items.items():
                 merged[tid] = prices
             for tid, p in merged.items():
                 if p["buy_price"] or p["sell_price"]:
                     records.append(
-                        (tid, region_id, p["buy_price"], p["sell_price"], p.get("adjusted_price", 0.0), int(p["buy_volume"]), int(p["sell_volume"]))
+                        (
+                            tid,
+                            region_id,
+                            p["buy_price"],
+                            p["sell_price"],
+                            p.get("adjusted_price", 0.0),
+                            int(p["buy_volume"]),
+                            int(p["sell_volume"]),
+                        )
                     )
         for i in range(0, len(records), 500):
             await db.executemany(

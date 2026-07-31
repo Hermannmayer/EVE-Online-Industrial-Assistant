@@ -227,3 +227,69 @@ class TestBoundaryCrossDbQuery:
             assert row["en_name"] == "Raven"
             assert row["sell_price"] == 55000000
             assert row["bp_qty"] == 1
+
+
+def test_direct_connect_applies_busy_timeout(temp_db):
+    """direct_connect 也应设置 busy_timeout（审计发现：绕过 PRAGMA 会在并发写时 locked）"""
+    conn = temp_db.direct_connect("user")
+    try:
+        pragma = conn.execute("PRAGMA busy_timeout").fetchone()
+        assert pragma[0] == 30000, f"busy_timeout 应为 30000，实际 {pragma[0]}"
+    finally:
+        conn.close()
+
+
+def test_connect_sets_busy_timeout(temp_db):
+    """缓存连接应设置 busy_timeout"""
+    with temp_db.connect("user") as conn:
+        pragma = conn.execute("PRAGMA busy_timeout").fetchone()
+        assert pragma[0] == 30000
+
+
+def test_parallel_write_no_locked_error(tmp_path):
+    """两个连接并发写同一库不应抛 database is locked（busy_timeout 兜底）"""
+    import sqlite3 as _sqlite3
+    import threading
+
+    db = tmp_path / "user.db"
+
+    # 主线程建表
+    setup = _sqlite3.connect(str(db))
+    setup.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS hangars (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE
+        );
+        PRAGMA busy_timeout=30000;
+        """
+    )
+    setup.commit()
+    setup.close()
+
+    errors = []
+
+    def writer(rows):
+        # sqlite3 连接不可跨线程使用（check_same_thread）→ 线程内自建
+        conn = _sqlite3.connect(str(db), timeout=30)
+        try:
+            for r in rows:
+                conn.execute("INSERT INTO hangars (name) VALUES (?)", (r,))
+            conn.commit()
+        except Exception as e:  # - 测试收集错误
+            errors.append(e)
+        finally:
+            conn.close()
+
+    t1 = threading.Thread(target=writer, args=([f"a{i}" for i in range(50)],))
+    t2 = threading.Thread(target=writer, args=([f"b{i}" for i in range(50)],))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert not errors, f"并发写不应报 locked: {errors}"
+    conn = _sqlite3.connect(str(db))
+    cnt = conn.execute("SELECT COUNT(*) FROM hangars").fetchone()[0]
+    conn.close()
+    assert cnt == 100
