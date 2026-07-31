@@ -29,3 +29,39 @@ repos:
       - id: check-yaml
       - id: check-added-large-files
         args: [--maxkb=1000]
+
+  # ── 文档联动（本地钩子，system python）──
+  - repo: local
+    hooks:
+      # 1) 业务代码变更时自动重新生成 API 文档（docs/api/*.md 跟随提交，
+      #    与 GitHub Pages 部署同步；有改动则需 git add 后重新提交）
+      - id: gen-api-docs
+        name: generate api docs from source
+        entry: python scripts/gen_api_docs.py
+        language: system
+        pass_filenames: false
+        files: ^(core/|services/|ui_pyside6/(models|workers)/)
+
+      # 2) README 动态数据校验（测试总数 / 测试文件清单与实际一致）
+      - id: check-readme
+        name: check readme dynamic data
+        entry: python scripts/check_readme.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # 3) 文档站内部链接检查（防孤儿链接：删文件后残留引用自动报警）
+      - id: check-docs-links
+        name: check docs internal links
+        entry: python scripts/check_docs_links.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # 4) 业务代码变更 → 提醒同步更新说明文档（不阻塞提交）
+      - id: docs-stale-reminder
+        name: remind to update docs on code changes
+        entry: python scripts/check_docs_stale.py
+        language: system
+        pass_filenames: false
+        always_run: true

@@ -16,7 +16,7 @@ def _hub_to_system_id(hub: str) -> int | None
 
 将贸易中心名称映射为太阳系 ID。
 
-定义行：`43`
+定义行：`41`
 
 ### `cache_key`
 
@@ -28,7 +28,7 @@ def cache_key(type_id: int, mode: str, hub: str, char_name: str) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`102`
+定义行：`55`
 
 ### `get_cache`
 
@@ -40,7 +40,7 @@ def get_cache(key: str) -> dict | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`110`
+定义行：`63`
 
 ### `set_cache`
 
@@ -52,7 +52,7 @@ def set_cache(key: str, result: dict)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`114`
+定义行：`67`
 
 ### `invalidate_cache`
 
@@ -64,7 +64,7 @@ def invalidate_cache()
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`118`
+定义行：`71`
 
 ### `_get_scoring_service`
 
@@ -76,17 +76,7 @@ def _get_scoring_service() -> ScoringService
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`126`
-
-### `resolve_char_config`
-
-```python
-def resolve_char_config(char_name: str | None=None, char_data: dict | None=None, skills: dict | None=None) -> dict
-```
-
-统一解析角色配置，返回 ScoringService 可用的 char_config dict。
-
-定义行：`140`
+定义行：`79`
 
 ### `get_price`
 
@@ -99,7 +89,7 @@ price_type: 'buy' → buy_price, 'sell' → sell_price
 hub: 贸易中心名称, 如 'Jita', 'Amarr'；None 时返回任意区域
 _db: 可选注入的 DatabaseManager；None 时使用模块级单例。
 
-定义行：`187`
+定义行：`91`
 
 ### `get_volume`
 
@@ -109,7 +99,7 @@ def get_volume(type_id: int, vol_type: str='total', hub: str | None=None, _db: D
 
 获取指定区域的成交量。vol_type: 'buy' / 'sell' / 'total'
 
-定义行：`229`
+定义行：`133`
 
 ### `get_system_cost_index`
 
@@ -119,7 +109,7 @@ def get_system_cost_index(system_id: int | None, activity: str='manufacturing', 
 
 从数据库获取星系的制造成本指数(SCI)。system_id=None 时从 hub 推断。
 
-定义行：`270`
+定义行：`174`
 
 ### `get_adjusted_price`
 
@@ -129,7 +119,7 @@ def get_adjusted_price(type_id: int, _db: DatabaseManager | None=None) -> float 
 
 获取 ESI adjusted price（EIV 计算用）。兜底 None → 用 sell_price。
 
-定义行：`292`
+定义行：`196`
 
 ### `calc_refining_value`
 
@@ -139,7 +129,7 @@ def calc_refining_value(type_id: int, quantity: int=1, *, skills: dict | None=No
 
 计算物品的精炼产出及总价值
 
-定义行：`319`
+定义行：`223`
 
 ### `calc_manufacturing_score`
 
@@ -149,7 +139,7 @@ def calc_manufacturing_score(type_id: int, char_config: dict, mat_source_hub: st
 
 模块级便利函数：复用模块级单例 ScoringService。
 
-定义行：`1181`
+定义行：`1142`
 
 ### `calc_trade_score`
 
@@ -159,7 +149,7 @@ def calc_trade_score(type_id: int, buy_hub: str='Jita', sell_hub: str='Jita', bu
 
 模块级便利函数：复用模块级单例 ScoringService。
 
-定义行：`1214`
+定义行：`1175`
 
 ### `calc_reaction_score`
 
@@ -169,84 +159,9 @@ def calc_reaction_score(type_id: int, char_config: dict, mat_source_hub: str='Ji
 
 模块级便利函数：复用模块级单例 ScoringService。
 
-定义行：`1235`
+定义行：`1196`
 
 ## 类
-
-### `class ScoringCache`
-
-线程安全的有界评分缓存，过期被动清理 + LRU 淘汰
-
-定义行：`56`
-
-#### 方法
-
-##### `__init__`
-
-```python
-def __init__(self, max_size: int=500, ttl: int=1800)
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`59`
-##### `get`
-
-```python
-def get(self, key: str) -> dict | None
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`65`
-##### `set`
-
-```python
-def set(self, key: str, result: dict)
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`78`
-##### `invalidate`
-
-```python
-def invalidate(self)
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`87`
-##### `_evict_expired_locked`
-
-```python
-def _evict_expired_locked(self)
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`91`
-##### `__len__`
-
-```python
-def __len__(self) -> int
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`97`
 
 ### `class ScoringService`
 
@@ -254,21 +169,30 @@ def __len__(self) -> int
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`425`
+定义行：`329`
 
 #### 方法
 
 ##### `__init__`
 
 ```python
-def __init__(self, db: DatabaseManager, cache: ScoringCache, char_config: dict | None=None)
+def __init__(self, db: DatabaseManager, cache: TtlLRUCache, char_config: dict | None=None)
 ```
 
 ::: warning ⚠️ 待补 docstring
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`426`
+定义行：`330`
+##### `invalidate_cache`
+
+```python
+def invalidate_cache(self) -> None
+```
+
+清空评分缓存（价格刷新后调用，避免旧价格评分被复用）
+
+定义行：`335`
 ##### `_calc_broker_rate`
 
 ```python
@@ -279,7 +203,7 @@ def _calc_broker_rate(self, skills: dict, market_data: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`433`
+定义行：`342`
 ##### `_calc_relist_discount`
 
 ```python
@@ -290,7 +214,7 @@ def _calc_relist_discount(self, skills: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`436`
+定义行：`345`
 ##### `_calc_sales_tax_rate`
 
 ```python
@@ -301,7 +225,7 @@ def _calc_sales_tax_rate(self, skills: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`439`
+定义行：`348`
 ##### `calculate_total_metrics`
 
 ```python
@@ -310,7 +234,7 @@ def calculate_total_metrics(per_run: dict, runs: int=1, parallels: int=1) -> dic
 
 将 per-run 评分结果按 runs/parallels 缩放到计划总数值。
 
-定义行：`445`
+定义行：`354`
 ##### `calculate_plan_metrics`
 
 ```python
@@ -319,7 +243,7 @@ def calculate_plan_metrics(plan_data: dict, char_config: dict, *, mat_hub: str |
 
 从一条生产计划数据计算所有派生指标。
 
-定义行：`490`
+定义行：`399`
 ##### `calculate_personal_margin`
 
 ```python
@@ -328,7 +252,7 @@ def calculate_personal_margin(result: dict, inv_map: dict[int, tuple[int, float]
 
 计算考虑库存成本的个人利润率（%）。
 
-定义行：`594`
+定义行：`510`
 ##### `calc_manufacturing_score`
 
 ```python
@@ -337,7 +261,7 @@ def calc_manufacturing_score(self, type_id: int, char_config: dict, mat_source_h
 
 计算制造评分。
 
-定义行：`656`
+定义行：`572`
 ##### `calc_trade_score`
 
 ```python
@@ -346,7 +270,7 @@ def calc_trade_score(self, type_id: int, buy_hub: str='Jita', sell_hub: str='Jit
 
 计算贸易评分。
 
-定义行：`896`
+定义行：`832`
 ##### `calc_reaction_score`
 
 ```python
@@ -355,4 +279,4 @@ def calc_reaction_score(self, type_id: int, char_config: dict, mat_source_hub: s
 
 计算反应（Reaction）利润评分。
 
-定义行：`981`
+定义行：`942`

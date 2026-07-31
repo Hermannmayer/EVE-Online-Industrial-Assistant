@@ -26,7 +26,7 @@ def __init__(self, step_keys: list[str] | None=None, parent: QThread | None=None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`30`
+定义行：`33`
 ##### `run`
 
 ```python
@@ -35,7 +35,7 @@ def run(self)
 
 在后台线程中执行初始化
 
-定义行：`35`
+定义行：`38`
 ##### `_relay_signals`
 
 ```python
@@ -44,7 +44,7 @@ def _relay_signals(self)
 
 将 InitService 的 Qt 信号转发到本 Worker 的信号
 
-定义行：`41`
+定义行：`44`
 ##### `cancel`
 
 ```python
@@ -53,7 +53,7 @@ def cancel(self)
 
 取消初始化
 
-定义行：`54`
+定义行：`57`
 ##### `retry`
 
 ```python
@@ -62,7 +62,7 @@ def retry(self, step_key: str)
 
 重试单个步骤
 
-定义行：`58`
+定义行：`61`
 ##### `retry_all_failed`
 
 ```python
@@ -71,7 +71,7 @@ def retry_all_failed(self)
 
 重试所有失败步骤
 
-定义行：`62`
+定义行：`65`
 ##### `skip`
 
 ```python
@@ -80,7 +80,7 @@ def skip(self, step_key: str) -> bool
 
 跳过非关键步骤
 
-定义行：`66`
+定义行：`69`
 ##### `get_status`
 
 ```python
@@ -89,7 +89,7 @@ def get_status(self) -> dict
 
 获取步骤状态快照
 
-定义行：`70`
+定义行：`73`
 ##### `get_errors`
 
 ```python
@@ -98,7 +98,7 @@ def get_errors(self) -> dict[str, str]
 
 获取错误信息
 
-定义行：`74`
+定义行：`77`
 ##### `check_network`
 
 ```python
@@ -107,13 +107,13 @@ async def check_network(self) -> bool
 
 检查网络连通性
 
-定义行：`78`
+定义行：`81`
 
 ### `class _SingleStepWorker`（继承 `InitServiceWorker`）
 
 单个初始化步骤的专用 Worker 基类
 
-定义行：`85`
+定义行：`89`
 
 #### 方法
 
@@ -127,7 +127,7 @@ def __init__(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`88`
+定义行：`92`
 
 ### `class ItemsWorker`（继承 `_SingleStepWorker`）
 
@@ -135,7 +135,7 @@ def __init__(self, parent=None)
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`92`
+定义行：`96`
 
 ### `class PricesWorker`（继承 `_SingleStepWorker`）
 
@@ -143,7 +143,7 @@ def __init__(self, parent=None)
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`96`
+定义行：`100`
 
 ### `class BlueprintsWorker`（继承 `_SingleStepWorker`）
 
@@ -151,7 +151,7 @@ def __init__(self, parent=None)
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`100`
+定义行：`104`
 
 ### `class ImplantsWorker`（继承 `_SingleStepWorker`）
 
@@ -159,7 +159,7 @@ def __init__(self, parent=None)
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`104`
+定义行：`108`
 
 ### `class IconsWorker`（继承 `_SingleStepWorker`）
 
@@ -167,7 +167,7 @@ def __init__(self, parent=None)
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`108`
+定义行：`112`
 
 ### `class IndustryWorker`（继承 `_SingleStepWorker`）
 
@@ -175,7 +175,7 @@ def __init__(self, parent=None)
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`112`
+定义行：`116`
 
 ### `class SdeDataWorker`（继承 `_SingleStepWorker`）
 
@@ -183,4 +183,4 @@ def __init__(self, parent=None)
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`116`
+定义行：`120`

@@ -49,6 +49,13 @@ jobs:
       env:
         QT_QPA_PLATFORM: offscreen   # 无显示环境下跑 Qt 测试
 
+    # 文档联动校验：README 动态数据 + 文档站内部链接（防止提交时绕过本地 pre-commit）
+    - name: Check README dynamic data
+      run: uv run python scripts/check_readme.py
+
+    - name: Check docs internal links
+      run: uv run python scripts/check_docs_links.py
+
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
       with:
