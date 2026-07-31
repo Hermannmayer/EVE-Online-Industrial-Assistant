@@ -2,7 +2,7 @@
 
 本项目的版本遵循[语义化版本 2.0.0](https://semver.org/lang/zh-CN/)。当前处于 **0.x 开发阶段**：功能与 API 均可能随时变化，每次发版递增次版本号（MINOR），PATCH 位在 0.x 阶段不用于常规递增。
 
-本文件是唯一更新日志源：发版时由 python-semantic-release 自动在 `
+本文件是唯一更新日志源：发版时由 python-semantic-release 自动在版本列表标记处插入新版本段，无需手动维护。
 
 <!-- version list -->
 
@@ -17,11 +17,6 @@
 
 - 触发文档站部署（GitHub Pages 已启用）
   ([`c84a9eb`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/c84a9eb46727943b30eeb34d564126c09240b230))
-
-
-` 处插入新版本段，无需手动维护。
-
-<!-- version list -->
 
 ## v0.2.0 (2026-07-31)
 
