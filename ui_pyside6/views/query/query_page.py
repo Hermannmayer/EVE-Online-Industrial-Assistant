@@ -2,7 +2,6 @@
 物品查询页面 — QueryPage 主容器
 """
 
-
 from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,

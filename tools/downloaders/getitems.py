@@ -102,13 +102,25 @@ async def write_items(progress_cb: Callable[[int, str], None] | None = None):
 
         en_group, zh_group = group_names.get(group_id, ("", ""))
         en_mkt, zh_mkt = mg_names.get(market_group_id, ("", ""))
-        icon_id = (tdata.get("iconID") or 0) or (mg_names.get(market_group_id) and mkt_groups.get(str(market_group_id), {}).get("iconID", 0) or 0)
+        icon_id = (tdata.get("iconID") or 0) or (
+            mg_names.get(market_group_id) and mkt_groups.get(str(market_group_id), {}).get("iconID", 0) or 0
+        )
 
-        items.append((
-            en_name, zh_name, group_id, en_group, zh_group,
-            market_group_id, en_mkt, zh_mkt, volume, icon_id,
-            tid,
-        ))
+        items.append(
+            (
+                en_name,
+                zh_name,
+                group_id,
+                en_group,
+                zh_group,
+                market_group_id,
+                en_mkt,
+                zh_mkt,
+                volume,
+                icon_id,
+                tid,
+            )
+        )
 
     if not items:
         log.info("没有需要写入的物品数据")
@@ -119,7 +131,7 @@ async def write_items(progress_cb: Callable[[int, str], None] | None = None):
         progress_cb(70, f"写入 {len(items)} 条物品数据...")
     async with aiosqlite.connect(DATABASE_PATH) as db:
         for i in tqdm(range(0, len(items), BATCH_SIZE), desc="物品"):
-            batch = items[i:i + BATCH_SIZE]
+            batch = items[i : i + BATCH_SIZE]
             await db.executemany(
                 """INSERT OR REPLACE INTO item
                    (en_name, zh_name, group_id, en_group_name, zh_group_name,
@@ -161,7 +173,8 @@ async def write_market_tree():
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("DELETE FROM market_tree")
         await db.executemany(
-            "INSERT INTO market_tree VALUES (?, ?, ?, ?, ?)", rows,
+            "INSERT INTO market_tree VALUES (?, ?, ?, ?, ?)",
+            rows,
         )
         await db.commit()
     log.info(f"market_tree 写入完成，共 {len(rows)} 条")
@@ -307,8 +320,7 @@ async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], Non
     """
     async with aiosqlite.connect(DATABASE_PATH) as db:
         c = await db.execute(
-            "SELECT type_id FROM item WHERE (zh_name IS NULL OR zh_name = '')"
-            " OR (en_name IS NULL OR en_name = '')"
+            "SELECT type_id FROM item WHERE (zh_name IS NULL OR zh_name = '')" " OR (en_name IS NULL OR en_name = '')"
         )
         missing = [r[0] async for r in c]
 
@@ -323,7 +335,7 @@ async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], Non
     fixed = 0
     async with aiohttp.ClientSession() as session:
         for start in range(0, len(missing), BATCH):
-            batch = missing[start:start + BATCH]
+            batch = missing[start : start + BATCH]
             updates = []
             for tid in batch:
                 try:
@@ -366,4 +378,3 @@ async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], Non
 
 if __name__ == "__main__":
     asyncio.run(main())
-

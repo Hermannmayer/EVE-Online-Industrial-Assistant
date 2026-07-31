@@ -102,13 +102,16 @@ class TestContractFilterProxy:
 
     # ── 文本搜索 ──
 
-    @pytest.mark.parametrize("search_text, expected_count", [
-        ("Tritanium", 1),
-        ("Bulk", 1),
-        ("tritanium", 1),
-        ("NonExistentXYZ", 0),
-        ("Ji", 1),
-    ])
+    @pytest.mark.parametrize(
+        "search_text, expected_count",
+        [
+            ("Tritanium", 1),
+            ("Bulk", 1),
+            ("tritanium", 1),
+            ("NonExistentXYZ", 0),
+            ("Ji", 1),
+        ],
+    )
     def test_filter_by_title(self, setup_proxy, search_text, expected_count):
         _, proxy = setup_proxy
         proxy.set_search_text(search_text)
@@ -123,13 +126,16 @@ class TestContractFilterProxy:
 
     # ── 价格区间 ──
 
-    @pytest.mark.parametrize("price_min, price_max, expected_count", [
-        (100_000_000, 0, 2),    # min 100M, no max → 2 (100M + 750M)
-        (0, 1_000_000, 2),      # max 1M → 2 (0 + 1200.5)
-        (4_000_000, 6_000_000, 1),  # range → 1 (5M)
-        (0, 0, 5),              # no range → all
-        (50_000_000, 0, 2),     # min 50M, no max → 2
-    ])
+    @pytest.mark.parametrize(
+        "price_min, price_max, expected_count",
+        [
+            (100_000_000, 0, 2),  # min 100M, no max → 2 (100M + 750M)
+            (0, 1_000_000, 2),  # max 1M → 2 (0 + 1200.5)
+            (4_000_000, 6_000_000, 1),  # range → 1 (5M)
+            (0, 0, 5),  # no range → all
+            (50_000_000, 0, 2),  # min 50M, no max → 2
+        ],
+    )
     def test_filter_price_range(self, setup_proxy, price_min, price_max, expected_count):
         _, proxy = setup_proxy
         proxy.set_price_range(price_min, price_max)
@@ -137,21 +143,27 @@ class TestContractFilterProxy:
 
     # ── 买卖类型 ──
 
-    @pytest.mark.parametrize("buy_sell, expected_count, desc", [
-        ("全部", 5, "全部不过滤"),
-        ("我要买", 4, "item_exchange + auction，排除 courier"),
-        ("我要卖", 3, "仅 item_exchange"),
-    ])
+    @pytest.mark.parametrize(
+        "buy_sell, expected_count, desc",
+        [
+            ("全部", 5, "全部不过滤"),
+            ("我要买", 4, "item_exchange + auction，排除 courier"),
+            ("我要卖", 3, "仅 item_exchange"),
+        ],
+    )
     def test_filter_buy_sell(self, setup_proxy, buy_sell, expected_count, desc):
         _, proxy = setup_proxy
         proxy.set_buy_sell(buy_sell)
         assert proxy.rowCount() == expected_count, desc
 
-    @pytest.mark.parametrize("buy_sell, excluded_type", [
-        ("我要买", "courier"),
-        ("我要卖", "courier"),
-        ("我要卖", "auction"),
-    ])
+    @pytest.mark.parametrize(
+        "buy_sell, excluded_type",
+        [
+            ("我要买", "courier"),
+            ("我要卖", "courier"),
+            ("我要卖", "auction"),
+        ],
+    )
     def test_filter_buy_sell_excludes(self, setup_proxy, buy_sell, excluded_type):
         """验证特定类型被排除"""
         _, proxy = setup_proxy

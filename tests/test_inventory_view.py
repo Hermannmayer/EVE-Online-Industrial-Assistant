@@ -239,7 +239,19 @@ class TestBlueprintTableModel:
     def test_header_data(self, qapp):
         """表头正确"""
         model = BlueprintTableModel([])
-        expected = ["图标", "名称", "类型", "材料等级", "时间等级", "产物名称", "制造时间", "流程数量", "材料成本", "销售收入", "利润率"]
+        expected = [
+            "图标",
+            "名称",
+            "类型",
+            "材料等级",
+            "时间等级",
+            "产物名称",
+            "制造时间",
+            "流程数量",
+            "材料成本",
+            "销售收入",
+            "利润率",
+        ]
         for i, h in enumerate(expected):
             assert model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == h
 

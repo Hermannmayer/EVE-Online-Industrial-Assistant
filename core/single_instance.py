@@ -1,4 +1,5 @@
 """Single-instance lock using PID file."""
+
 import os
 from pathlib import Path
 

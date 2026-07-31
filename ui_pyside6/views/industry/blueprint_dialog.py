@@ -113,9 +113,7 @@ class BlueprintRequirementsDialog(QDialog):
 
         # 4) 填充表格
         self._table.setRowCount(len(needed))
-        for row_idx, (bp_tid, info) in enumerate(
-            sorted(needed.items(), key=lambda x: x[1].get("name", str(x[0])))
-        ):
+        for row_idx, (bp_tid, info) in enumerate(sorted(needed.items(), key=lambda x: x[1].get("name", str(x[0])))):
             name = info["name"]
             needed_runs = info["needed_runs"]
             inv = bp_inv.get(bp_tid, {})
@@ -171,18 +169,14 @@ class BlueprintRequirementsDialog(QDialog):
 
         self._table.setSortingEnabled(True)
         total = len(needed)
-        missing = sum(
-            1 for bp_tid, info in needed.items()
-            if bp_inv.get(bp_tid, {}).get("available_runs", 0) <= 0
-        )
+        missing = sum(1 for bp_tid, info in needed.items() if bp_inv.get(bp_tid, {}).get("available_runs", 0) <= 0)
         insufficient = sum(
-            1 for bp_tid, info in needed.items()
+            1
+            for bp_tid, info in needed.items()
             if 0 < bp_inv.get(bp_tid, {}).get("available_runs", 0) < info["needed_runs"]
         )
         enough = total - missing - insufficient
-        self._status_label.setText(
-            f"共 {total} 类蓝图，足够 {enough} 种，不足 {insufficient} 种，缺少 {missing} 种"
-        )
+        self._status_label.setText(f"共 {total} 类蓝图，足够 {enough} 种，不足 {insufficient} 种，缺少 {missing} 种")
 
     def _on_theme_changed(self):
         self.setStyleSheet(theme.get_stylesheet() + "QTableWidget::item { padding: 2px 6px; }")

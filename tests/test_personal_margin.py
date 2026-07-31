@@ -98,9 +98,7 @@ def test_partial_inventory_mixes_cost(svc, sample_char_config):
     expected = (result["revenue_per_run"] - exp_cost) / exp_cost * 100
     assert personal == pytest.approx(expected, abs=0.005)
     # 成本 9100 介于市场 9500 与全库存 8000 之间 → 利润率亦介于两者之间
-    full_margin = ScoringService.calculate_personal_margin(
-        result, {1001: (1000, 4.0), 1002: (500, 8.0)}, 1, 1
-    )
+    full_margin = ScoringService.calculate_personal_margin(result, {1001: (1000, 4.0), 1002: (500, 8.0)}, 1, 1)
     assert result["margin"] < personal < full_margin
 
 
@@ -182,23 +180,18 @@ def test_calculate_plan_metrics_exposes_personal_inputs(svc, sample_char_config)
     assert result["revenue_per_run"] == pytest.approx(55_000_000, abs=0.01)
     assert result["fees_per_run"] > 0 and result["fees"] > 0
     assert result["materials"] and all("type_id" in m for m in result["materials"])
-    assert ScoringService.calculate_personal_margin(result, {}, 1, 1) == pytest.approx(
-        result["margin"], abs=0.005
-    )
+    assert ScoringService.calculate_personal_margin(result, {}, 1, 1) == pytest.approx(result["margin"], abs=0.005)
 
 
 def test_prod_qty_gt_one_revenue_included(svc, sample_char_config):
     """产物数量 > 1（问题 2 回归：收入必须含 prod_qty）"""
     with svc._db.connect("bp") as conn:
         conn.execute(
-            "UPDATE blueprint_products SET quantity = 5 WHERE blueprint_type_id = 3002"
-            " AND product_type_id = 2002"
+            "UPDATE blueprint_products SET quantity = 5 WHERE blueprint_type_id = 3002" " AND product_type_id = 2002"
         )
     result = _per_run_result(svc, sample_char_config, type_id=2002)  # 无人机
     assert result["revenue_per_run"] == pytest.approx(120_000 * 5, abs=0.01)
-    assert ScoringService.calculate_personal_margin(result, {}, 1, 1) == pytest.approx(
-        result["margin"], abs=0.005
-    )
+    assert ScoringService.calculate_personal_margin(result, {}, 1, 1) == pytest.approx(result["margin"], abs=0.005)
 
 
 def test_single_item_material_exemption(svc, sample_char_config):

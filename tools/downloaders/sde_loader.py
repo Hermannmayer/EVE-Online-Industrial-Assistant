@@ -108,7 +108,7 @@ async def write_meta_groups():
             for i in range(0, len(rows), BATCH_SIZE):
                 await db.executemany(
                     "INSERT OR REPLACE INTO meta_group (meta_group_id, en_name, zh_name) VALUES (?, ?, ?)",
-                    rows[i:i + BATCH_SIZE],
+                    rows[i : i + BATCH_SIZE],
                 )
             await db.commit()
         log.info(f"meta_group 写入完成 ({len(rows)} 条)")
@@ -136,7 +136,7 @@ async def write_meta_groups():
             for i in range(0, len(updates), BATCH_SIZE):
                 await db.executemany(
                     "UPDATE item SET meta_group_id = ? WHERE type_id = ?",
-                    updates[i:i + BATCH_SIZE],
+                    updates[i : i + BATCH_SIZE],
                 )
             await db.commit()
         log.info(f"item.meta_group_id 更新完成 ({len(updates)} 条)")
@@ -167,7 +167,7 @@ async def write_type_materials():
             for i in range(0, len(rows), BATCH_SIZE):
                 await db.executemany(
                     "INSERT OR REPLACE INTO reprocessing_materials (type_id, material_type_id, quantity) VALUES (?, ?, ?)",
-                    rows[i:i + BATCH_SIZE],
+                    rows[i : i + BATCH_SIZE],
                 )
             await db.commit()
         log.info(f"reprocessing_materials 写入完成 ({len(rows)} 条)")
@@ -202,7 +202,7 @@ async def write_dogma_attributes():
             for i in range(0, len(rows), BATCH_SIZE):
                 await db.executemany(
                     "INSERT OR REPLACE INTO dogma_attribute (attribute_id, name, display_name, unit_id, icon_id) VALUES (?, ?, ?, ?, ?)",
-                    rows[i:i + BATCH_SIZE],
+                    rows[i : i + BATCH_SIZE],
                 )
             await db.commit()
         log.info(f"dogma_attribute 写入完成 ({len(rows)} 条)")
@@ -233,7 +233,7 @@ async def write_icon_ids():
             for i in range(0, len(rows), BATCH_SIZE):
                 await db.executemany(
                     "INSERT OR REPLACE INTO icon_ids (icon_id, icon_file, description) VALUES (?, ?, ?)",
-                    rows[i:i + BATCH_SIZE],
+                    rows[i : i + BATCH_SIZE],
                 )
             await db.commit()
         log.info(f"icon_ids 写入完成 ({len(rows)} 条)")
@@ -267,7 +267,7 @@ async def write_categories():
             for i in range(0, len(rows), BATCH_SIZE):
                 await db.executemany(
                     "INSERT OR REPLACE INTO category (category_id, en_name, zh_name) VALUES (?, ?, ?)",
-                    rows[i:i + BATCH_SIZE],
+                    rows[i : i + BATCH_SIZE],
                 )
             await db.commit()
         log.info(f"category 写入完成 ({len(rows)} 条)")
@@ -297,7 +297,7 @@ async def write_categories():
             for i in range(0, len(updates), BATCH_SIZE):
                 await db.executemany(
                     "UPDATE item SET category_id = ? WHERE group_id = ?",
-                    updates[i:i + BATCH_SIZE],
+                    updates[i : i + BATCH_SIZE],
                 )
             await db.commit()
         log.info(f"item.category_id 更新完成 ({len(updates)} 个 group 映射)")
@@ -324,7 +324,7 @@ async def write_stations():
                 for i in range(0, len(ss_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO station_service (service_id, service_name) VALUES (?, ?)",
-                        ss_rows[i:i + BATCH_SIZE],
+                        ss_rows[i : i + BATCH_SIZE],
                     )
                 await db.commit()
             log.info(f"station_service 写入完成 ({len(ss_rows)} 条)")
@@ -344,7 +344,7 @@ async def write_stations():
                 for i in range(0, len(so_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO station_operation (operation_id, en_name, zh_name) VALUES (?, ?, ?)",
-                        so_rows[i:i + BATCH_SIZE],
+                        so_rows[i : i + BATCH_SIZE],
                     )
                 await db.commit()
             log.info(f"station_operation 写入完成 ({len(so_rows)} 条)")
@@ -361,7 +361,7 @@ async def write_stations():
             for i in range(0, len(sos_rows), BATCH_SIZE):
                 await db.executemany(
                     "INSERT OR REPLACE INTO station_operation_service (operation_id, service_id) VALUES (?, ?)",
-                    sos_rows[i:i + BATCH_SIZE],
+                    sos_rows[i : i + BATCH_SIZE],
                 )
             await db.commit()
         log.info(f"station_operation_service 写入完成 ({len(sos_rows)} 条)")
@@ -374,20 +374,22 @@ async def write_stations():
             station_id = item.get("stationID")
             if station_id is None:
                 continue
-            sta_rows.append((
-                int(station_id),
-                item.get("stationName", "") or "",
-                int(item["solarSystemID"]) if item.get("solarSystemID") else None,
-                int(item["operationID"]) if item.get("operationID") else None,
-                int(item["stationTypeID"]) if item.get("stationTypeID") else None,
-                int(item["corporationID"]) if item.get("corporationID") else None,
-            ))
+            sta_rows.append(
+                (
+                    int(station_id),
+                    item.get("stationName", "") or "",
+                    int(item["solarSystemID"]) if item.get("solarSystemID") else None,
+                    int(item["operationID"]) if item.get("operationID") else None,
+                    int(item["stationTypeID"]) if item.get("stationTypeID") else None,
+                    int(item["corporationID"]) if item.get("corporationID") else None,
+                )
+            )
         if sta_rows:
             async with aiosqlite.connect(DATABASE_PATH) as db:
                 for i in range(0, len(sta_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO station (station_id, station_name, solar_system_id, operation_id, station_type_id, corporation_id) VALUES (?, ?, ?, ?, ?, ?)",
-                        sta_rows[i:i + BATCH_SIZE],
+                        sta_rows[i : i + BATCH_SIZE],
                     )
                 await db.commit()
             log.info(f"station 写入完成 ({len(sta_rows)} 条)")
@@ -419,7 +421,7 @@ async def write_universe():
                 for i in range(0, len(r_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO region (region_id, region_name) VALUES (?, ?)",
-                        r_rows[i:i + BATCH_SIZE],
+                        r_rows[i : i + BATCH_SIZE],
                     )
                 await db.commit()
             log.info(f"region 写入完成 ({len(r_rows)} 条)")
@@ -432,17 +434,19 @@ async def write_universe():
             name = c.get("constellationName", "") or ""
             rid = c.get("regionID")
             if cid is not None:
-                c_rows.append((
-                    int(cid),
-                    name,
-                    int(rid) if rid is not None else None,
-                ))
+                c_rows.append(
+                    (
+                        int(cid),
+                        name,
+                        int(rid) if rid is not None else None,
+                    )
+                )
         if c_rows:
             async with aiosqlite.connect(DATABASE_PATH) as db:
                 for i in range(0, len(c_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO constellation (constellation_id, constellation_name, region_id) VALUES (?, ?, ?)",
-                        c_rows[i:i + BATCH_SIZE],
+                        c_rows[i : i + BATCH_SIZE],
                     )
                 await db.commit()
             log.info(f"constellation 写入完成 ({len(c_rows)} 条)")
@@ -457,19 +461,21 @@ async def write_universe():
             cid = s.get("constellationID")
             sec = s.get("security", s.get("securityStatus", 0.0))
             if sid is not None:
-                s_rows.append((
-                    int(sid),
-                    name,
-                    int(rid) if rid is not None else None,
-                    int(cid) if cid is not None else None,
-                    float(sec) if sec is not None else 0.0,
-                ))
+                s_rows.append(
+                    (
+                        int(sid),
+                        name,
+                        int(rid) if rid is not None else None,
+                        int(cid) if cid is not None else None,
+                        float(sec) if sec is not None else 0.0,
+                    )
+                )
         if s_rows:
             async with aiosqlite.connect(DATABASE_PATH) as db:
                 for i in range(0, len(s_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO solar_system (solar_system_id, solar_system_name, region_id, constellation_id, security) VALUES (?, ?, ?, ?, ?)",
-                        s_rows[i:i + BATCH_SIZE],
+                        s_rows[i : i + BATCH_SIZE],
                     )
                 await db.commit()
             log.info(f"solar_system 写入完成 ({len(s_rows)} 条)")
@@ -478,17 +484,19 @@ async def write_universe():
     if stargates:
         g_rows = []
         for g in stargates:
-            g_rows.append((
-                int(g["stargate_id"]),
-                int(g["solar_system_id"]),
-                int(g["destination_system_id"]),
-            ))
+            g_rows.append(
+                (
+                    int(g["stargate_id"]),
+                    int(g["solar_system_id"]),
+                    int(g["destination_system_id"]),
+                )
+            )
         if g_rows:
             async with aiosqlite.connect(DATABASE_PATH) as db:
                 for i in range(0, len(g_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO stargate (stargate_id, solar_system_id, destination_system_id) VALUES (?, ?, ?)",
-                        g_rows[i:i + BATCH_SIZE],
+                        g_rows[i : i + BATCH_SIZE],
                     )
                 await db.commit()
             log.info(f"stargate 写入完成 ({len(g_rows)} 条)")
@@ -511,18 +519,20 @@ async def write_research():
             corp_id = ad.get("corporationID")
             skill_id = ad.get("skillTypeID")
             cost_mod = ad.get("researchCostModifier", 0.0)
-            ra_rows.append((
-                agent_id,
-                int(corp_id) if corp_id is not None else None,
-                int(skill_id) if skill_id is not None else None,
-                float(cost_mod) if cost_mod is not None else 0.0,
-            ))
+            ra_rows.append(
+                (
+                    agent_id,
+                    int(corp_id) if corp_id is not None else None,
+                    int(skill_id) if skill_id is not None else None,
+                    float(cost_mod) if cost_mod is not None else 0.0,
+                )
+            )
         if ra_rows:
             async with aiosqlite.connect(DATABASE_PATH) as db:
                 for i in range(0, len(ra_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO research_agent (agent_id, corporation_id, skill_type_id, research_cost_modifier) VALUES (?, ?, ?, ?)",
-                        ra_rows[i:i + BATCH_SIZE],
+                        ra_rows[i : i + BATCH_SIZE],
                     )
                 await db.commit()
             log.info(f"research_agent 写入完成 ({len(ra_rows)} 条)")
@@ -542,7 +552,7 @@ async def write_research():
                 for i in range(0, len(nc_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO npc_corporation (corporation_id, en_name, zh_name) VALUES (?, ?, ?)",
-                        nc_rows[i:i + BATCH_SIZE],
+                        nc_rows[i : i + BATCH_SIZE],
                     )
                 await db.commit()
             log.info(f"npc_corporation 写入完成 ({len(nc_rows)} 条)")
@@ -558,20 +568,22 @@ async def write_research():
             level = ad.get("level")
             loc_id = ad.get("locationID")
             quality = ad.get("quality")
-            ag_rows.append((
-                agent_id,
-                int(corp_id) if corp_id is not None else None,
-                int(div_id) if div_id is not None else None,
-                int(level) if level is not None else None,
-                int(loc_id) if loc_id is not None else None,
-                int(quality) if quality is not None else None,
-            ))
+            ag_rows.append(
+                (
+                    agent_id,
+                    int(corp_id) if corp_id is not None else None,
+                    int(div_id) if div_id is not None else None,
+                    int(level) if level is not None else None,
+                    int(loc_id) if loc_id is not None else None,
+                    int(quality) if quality is not None else None,
+                )
+            )
         if ag_rows:
             async with aiosqlite.connect(DATABASE_PATH) as db:
                 for i in range(0, len(ag_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO agent (agent_id, corporation_id, division_id, level, location_id, quality) VALUES (?, ?, ?, ?, ?, ?)",
-                        ag_rows[i:i + BATCH_SIZE],
+                        ag_rows[i : i + BATCH_SIZE],
                     )
                 await db.commit()
             log.info(f"agent 写入完成 ({len(ag_rows)} 条)")
@@ -603,7 +615,7 @@ async def write_dogma_effects():
             for i in range(0, len(rows), BATCH_SIZE):
                 await db.executemany(
                     "INSERT OR REPLACE INTO dogma_effect (effect_id, effect_name, description, icon_id) VALUES (?, ?, ?, ?)",
-                    rows[i:i + BATCH_SIZE],
+                    rows[i : i + BATCH_SIZE],
                 )
             await db.commit()
         log.info(f"dogma_effect 写入完成 ({len(rows)} 条)")
