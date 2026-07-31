@@ -253,9 +253,7 @@ class SettingsDialog(QDialog):
                 self._mw._stop_price_timer()
 
         if hasattr(self._mw, "_status_label"):
-            self._mw._status_label.setText(
-                f"设置已保存（间隔: {self._interval_spin.value()} 分钟）"
-            )
+            self._mw._status_label.setText(f"设置已保存（间隔: {self._interval_spin.value()} 分钟）")
 
     def _on_init(self):
         """打开数据初始化向导 — 先关设置，再弹向导"""
@@ -263,6 +261,7 @@ class SettingsDialog(QDialog):
             self.accept()  # 关闭 SettingsDialog，退出 exec 循环
             # 延迟弹窗：等 exec 返回后，主事件循环恢复再 show
             from PySide6.QtCore import QTimer
+
             QTimer.singleShot(0, lambda: self._mw._show_init_wizard())
 
     def _on_about(self):

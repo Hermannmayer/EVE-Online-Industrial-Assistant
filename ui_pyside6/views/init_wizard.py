@@ -75,9 +75,12 @@ class _StepRow(QWidget):
         super().__init__(parent)
         self.setObjectName("stepRow")
         self.step = step
-        self.setStyleSheet(_STEP_ROW_STYLE.format(
-            surface=theme.BG_SURFACE, border=theme.BORDER,
-        ))
+        self.setStyleSheet(
+            _STEP_ROW_STYLE.format(
+                surface=theme.BG_SURFACE,
+                border=theme.BORDER,
+            )
+        )
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
@@ -162,9 +165,7 @@ class _StepRow(QWidget):
         self.msg_label.setText(message)
 
         self.retry_btn.setVisible(status == StepStatus.FAILED)
-        self.skip_btn.setVisible(
-            status in (StepStatus.PENDING, StepStatus.FAILED) and not self.step.critical
-        )
+        self.skip_btn.setVisible(status in (StepStatus.PENDING, StepStatus.FAILED) and not self.step.critical)
         self.progress_bar.setVisible(status == StepStatus.RUNNING)
         if status == StepStatus.RUNNING:
             self.progress_bar.setValue(percent)
@@ -424,10 +425,7 @@ class InitWizard(QDialog):
         if row:
             row.set_state(StepStatus.RUNNING, message, percent)
         # 更新总进度
-        completed = sum(
-            1 for k, r in self._step_widgets.items()
-            if r.icon.text() in ("✅", "⏭️", "❌")
-        )
+        completed = sum(1 for k, r in self._step_widgets.items() if r.icon.text() in ("✅", "⏭️", "❌"))
         self._total_bar.setValue(completed + (percent / 100))
 
     def _on_step_completed(self, key: str, success: bool, message: str):
@@ -495,9 +493,7 @@ class InitWizard(QDialog):
         row = self._step_widgets.get(key)
         if row:
             row.set_state(StepStatus.SKIPPED, "已跳过")
-        self._total_bar.setValue(
-            sum(1 for k, r in self._step_widgets.items() if r.icon.text() in ("✅", "⏭️"))
-        )
+        self._total_bar.setValue(sum(1 for k, r in self._step_widgets.items() if r.icon.text() in ("✅", "⏭️")))
 
     def _on_retry_all(self):
         """全部重试"""
@@ -523,17 +519,13 @@ class InitWizard(QDialog):
         """更新已用时间"""
         if self._start_time:
             elapsed = time.time() - self._start_time
-            completed = sum(
-                1 for k, r in self._step_widgets.items()
-                if r.icon.text() in ("✅", "⏭️")
-            )
+            completed = sum(1 for k, r in self._step_widgets.items() if r.icon.text() in ("✅", "⏭️"))
             total = len(STEPS)
             if completed > 0 and elapsed > 5:
                 rate = elapsed / completed
                 remaining = (total - completed) * rate
                 self._eta_label.setText(
-                    f"🕐 已用 {self._elapsed_str(elapsed)}  · "
-                    f"剩余约 {self._elapsed_str(remaining)}"
+                    f"🕐 已用 {self._elapsed_str(elapsed)}  · " f"剩余约 {self._elapsed_str(remaining)}"
                 )
             else:
                 self._eta_label.setText(f"🕐 已用 {self._elapsed_str(elapsed)}")

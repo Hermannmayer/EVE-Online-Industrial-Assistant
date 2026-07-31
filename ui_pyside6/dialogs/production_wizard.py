@@ -66,9 +66,7 @@ class ProductionWizard(QDialog):
         layout.addWidget(config_group)
 
         # 启动按钮
-        btn_bar = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        btn_bar = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btn_bar.button(QDialogButtonBox.StandardButton.Ok).setText("启动产线")
         btn_bar.accepted.connect(self._on_start)
         btn_bar.rejected.connect(self.reject)
@@ -100,7 +98,6 @@ class ProductionWizard(QDialog):
             conn.close()
 
         QMessageBox.information(
-            self, "启动完成",
-            f"已启动 {updated}/{len(selected)} 条产线\n人物: {char}\n设施: {facility}"
+            self, "启动完成", f"已启动 {updated}/{len(selected)} 条产线\n人物: {char}\n设施: {facility}"
         )
         self.accept()

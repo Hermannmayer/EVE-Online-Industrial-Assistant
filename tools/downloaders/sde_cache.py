@@ -3,6 +3,7 @@ SDE zip 缓存共享工具 — 下载/缓存/加载 SDE 的 YAML 数据文件
 
 被 getitems.py、geticon.py、getimplantdata.py、sde_loader.py 等模块共用。
 """
+
 import asyncio
 import io
 import json
@@ -73,8 +74,7 @@ async def ensure_sde_cache():
         yamls_ok = _all_cached()
         if yamls_ok:
             sizes = ", ".join(
-                f"{fname}={os.path.getsize(cache_path(fname)) / 1024 / 1024:.1f}MB"
-                for fname in sorted(YAML_FILES)
+                f"{fname}={os.path.getsize(cache_path(fname)) / 1024 / 1024:.1f}MB" for fname in sorted(YAML_FILES)
             )
             log.info(f"SDE YAML 缓存已就绪 ({sizes})")
             return
@@ -84,8 +84,7 @@ async def ensure_sde_cache():
     zip_ok = os.path.exists(SDE_ZIP_PATH)
     if yamls_ok and zip_ok:
         sizes = ", ".join(
-            f"{fname}={os.path.getsize(cache_path(fname)) / 1024 / 1024:.1f}MB"
-            for fname in sorted(YAML_FILES)
+            f"{fname}={os.path.getsize(cache_path(fname)) / 1024 / 1024:.1f}MB" for fname in sorted(YAML_FILES)
         )
         log.info(f"SDE YAML 缓存已就绪 ({sizes})")
         return
@@ -218,11 +217,13 @@ async def ensure_universe_cache():
                     continue
                 dest_id = data.get("destinationID")
                 if sg_id and dest_id is not None:
-                    stargates.append({
-                        "stargate_id": sg_id,
-                        "solar_system_id": sys_id,
-                        "destination_system_id": int(dest_id),
-                    })
+                    stargates.append(
+                        {
+                            "stargate_id": sg_id,
+                            "solar_system_id": sys_id,
+                            "destination_system_id": int(dest_id),
+                        }
+                    )
 
         elapsed = time.time() - t0
         log.info(
@@ -235,12 +236,16 @@ async def ensure_universe_cache():
     # 缓存为 JSON（下次启动秒级加载）
     try:
         with open(UNIVERSE_CACHE_PATH, "w", encoding="utf-8") as f:
-            json.dump({
-                "regions": regions,
-                "constellations": constellations,
-                "systems": systems,
-                "stargates": stargates,
-            }, f, ensure_ascii=False)
+            json.dump(
+                {
+                    "regions": regions,
+                    "constellations": constellations,
+                    "systems": systems,
+                    "stargates": stargates,
+                },
+                f,
+                ensure_ascii=False,
+            )
         log.info(f"Universe 数据已缓存至: {UNIVERSE_CACHE_PATH}")
     except Exception as e:
         log.warning(f"Universe JSON 缓存写入失败（不影响使用）: {e}")

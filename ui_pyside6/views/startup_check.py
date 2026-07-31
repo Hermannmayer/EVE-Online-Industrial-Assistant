@@ -31,8 +31,8 @@ from ui_pyside6.workers.init_workers import InitServiceWorker
 
 # ── 常量 ──
 
-_CHECK_SIZE = (380, 220)    # 紧凑模式尺寸
-_EXPAND_SIZE = (620, 500)   # 展开模式尺寸
+_CHECK_SIZE = (380, 220)  # 紧凑模式尺寸
+_EXPAND_SIZE = (620, 500)  # 展开模式尺寸
 
 
 class _StepRow(QWidget):
@@ -55,8 +55,8 @@ class StartupCheckDialog(QDialog):
         self.setFixedSize(*_CHECK_SIZE)
         self.setStyleSheet(f"background-color: {theme.BG_DARK};")
 
-        self._on_ready = on_ready           # 检查/初始化完成后回调
-        self._expanded = False               # 是否已展开
+        self._on_ready = on_ready  # 检查/初始化完成后回调
+        self._expanded = False  # 是否已展开
         self._start_time = time.time()
         self._worker: InitServiceWorker | None = None
         self._step_status: dict[str, StepStatus] = {}
@@ -288,7 +288,7 @@ class StartupCheckDialog(QDialog):
 
     def _on_check_done(self, success: bool, summary: str):
         """所有步骤检查完成（可被 timer 和 worker 信号多次触发，幂等）"""
-        if getattr(self, '_check_done_flag', False):
+        if getattr(self, "_check_done_flag", False):
             return
         self._check_done_flag = True
 
@@ -400,13 +400,17 @@ class StartupCheckDialog(QDialog):
             return
 
         icon_map = {
-            StepStatus.PENDING: "○", StepStatus.RUNNING: "◉",
-            StepStatus.COMPLETED: "●", StepStatus.FAILED: "●",
+            StepStatus.PENDING: "○",
+            StepStatus.RUNNING: "◉",
+            StepStatus.COMPLETED: "●",
+            StepStatus.FAILED: "●",
             StepStatus.SKIPPED: "–",
         }
         color_map = {
-            StepStatus.PENDING: theme.TEXT_SECONDARY, StepStatus.RUNNING: theme.PRIMARY,
-            StepStatus.COMPLETED: theme.ACCENT_GREEN, StepStatus.FAILED: theme.ACCENT_RED,
+            StepStatus.PENDING: theme.TEXT_SECONDARY,
+            StepStatus.RUNNING: theme.PRIMARY,
+            StepStatus.COMPLETED: theme.ACCENT_GREEN,
+            StepStatus.FAILED: theme.ACCENT_RED,
             StepStatus.SKIPPED: theme.TEXT_SECONDARY,
         }
         row._icon.setText(icon_map.get(status, "○"))
@@ -427,12 +431,16 @@ class StartupCheckDialog(QDialog):
             return
 
         symbols = {
-            StepStatus.PENDING: "○", StepStatus.COMPLETED: "●",
-            StepStatus.FAILED: "●", StepStatus.RUNNING: "◉",
+            StepStatus.PENDING: "○",
+            StepStatus.COMPLETED: "●",
+            StepStatus.FAILED: "●",
+            StepStatus.RUNNING: "◉",
         }
         colors = {
-            StepStatus.PENDING: theme.TEXT_SECONDARY, StepStatus.COMPLETED: theme.ACCENT_GREEN,
-            StepStatus.FAILED: theme.ACCENT_RED, StepStatus.RUNNING: theme.PRIMARY,
+            StepStatus.PENDING: theme.TEXT_SECONDARY,
+            StepStatus.COMPLETED: theme.ACCENT_GREEN,
+            StepStatus.FAILED: theme.ACCENT_RED,
+            StepStatus.RUNNING: theme.PRIMARY,
         }
         dot.setText(f"{symbols.get(status, '○')} {step.name}")
         dot.setStyleSheet(f"font-size: 11px; color: {colors.get(status, theme.TEXT_SECONDARY)};")
@@ -474,9 +482,7 @@ class StartupCheckDialog(QDialog):
 
         # 更新总进度
         completed_count = sum(
-            1 for s in STEPS
-            if self._step_rows.get(s.key)
-            and self._step_rows[s.key]._icon.text() == "●"
+            1 for s in STEPS if self._step_rows.get(s.key) and self._step_rows[s.key]._icon.text() == "●"
         )
         self._total_bar.setValue(completed_count)
         self._total_bar.setFormat(f"{completed_count}/{len(STEPS)}")

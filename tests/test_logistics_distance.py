@@ -84,9 +84,12 @@ class TestGetDistanceJumps:
             unique_pairs.add(tuple(sorted([a, b])))
         assert len(unique_pairs) == 10  # C(5,2) = 10 个唯一对
 
-    @pytest.mark.parametrize("hub, expected_pairs", [
-        ("Hek", [("Hek", "Rens", 5), ("Hek", "Jita", 21), ("Hek", "Dodixie", 28), ("Hek", "Amarr", 76)]),
-    ])
+    @pytest.mark.parametrize(
+        "hub, expected_pairs",
+        [
+            ("Hek", [("Hek", "Rens", 5), ("Hek", "Jita", 21), ("Hek", "Dodixie", 28), ("Hek", "Amarr", 76)]),
+        ],
+    )
     def test_hek_to_all_hubs(self, hub, expected_pairs):
         """Hek 到其他 4 个贸易中心的距离"""
         for h, other, expected in expected_pairs:

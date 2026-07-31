@@ -15,16 +15,19 @@ from services.init_service import InitService
 class InitServiceWorker(QThread):
     """QThread wrapper — 在后台线程运行 InitService，支持全流程或单步执行"""
 
-    step_started = Signal(str, str)           # step_key, step_name
-    step_progress = Signal(str, int, str)     # step_key, percent, message
-    step_completed = Signal(str, bool, str)   # step_key, success, message
-    all_completed = Signal(bool, str)         # success, summary
-    network_status = Signal(bool, str)        # ok, message
+    step_started = Signal(str, str)  # step_key, step_name
+    step_progress = Signal(str, int, str)  # step_key, percent, message
+    step_completed = Signal(str, bool, str)  # step_key, success, message
+    all_completed = Signal(bool, str)  # success, summary
+    network_status = Signal(bool, str)  # ok, message
 
     # 重新发射信号（Qt 信号默认线程安全，跨线程 connect 自动排队）
     _SIGNAL_MAP: ClassVar[list[str]] = [
-        "step_started", "step_progress", "step_completed",
-        "all_completed", "network_status",
+        "step_started",
+        "step_progress",
+        "step_completed",
+        "all_completed",
+        "network_status",
     ]
 
     def __init__(self, step_keys: list[str] | None = None, parent: QThread | None = None):
@@ -82,6 +85,7 @@ class InitServiceWorker(QThread):
 
 # ── 单步 Worker（专用于单个步骤重试或单独执行） ──
 
+
 class _SingleStepWorker(InitServiceWorker):
     """单个初始化步骤的专用 Worker 基类"""
 
@@ -115,4 +119,3 @@ class IndustryWorker(_SingleStepWorker):
 
 class SdeDataWorker(_SingleStepWorker):
     step_key = "sde_data"
-

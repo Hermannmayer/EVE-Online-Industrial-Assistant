@@ -198,16 +198,19 @@ class MaterialsSummaryDialog(QDialog):
             self._table.setCellWidget(row_idx, 9, copy_btn)
 
             # 保存行数据供"一键复制"
-            self._data_rows.append({
-                "name": info["name"],
-                "gap": gap,
-                "unit_price": unit_price,
-            })
+            self._data_rows.append(
+                {
+                    "name": info["name"],
+                    "gap": gap,
+                    "unit_price": unit_price,
+                }
+            )
 
         total_types = len(sorted_mats)
         ready_count = sum(1 for r in self._data_rows if r["gap"] <= 0)
         partial_count = sum(
-            1 for tid, info in sorted_mats
+            1
+            for tid, info in sorted_mats
             if 0 < max(0, int(info["total_qty"]) - inventory.get(tid, 0)) < int(info["total_qty"])
         )
         # 部分到位的修正：排除已到位的
@@ -236,9 +239,7 @@ class MaterialsSummaryDialog(QDialog):
         QApplication.clipboard().setText("\n".join(lines))
         from PySide6.QtWidgets import QMessageBox
 
-        QMessageBox.information(
-            self, "已复制", f"已复制 {len(lines)} 种待采购材料（共 {total_gap:,.0f} 个）到剪贴板"
-        )
+        QMessageBox.information(self, "已复制", f"已复制 {len(lines)} 种待采购材料（共 {total_gap:,.0f} 个）到剪贴板")
 
     def _on_theme_changed(self):
         self.setStyleSheet(theme.get_stylesheet() + "QTableWidget::item { padding: 2px 6px; }")

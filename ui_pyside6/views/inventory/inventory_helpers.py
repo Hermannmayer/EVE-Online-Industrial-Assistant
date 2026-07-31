@@ -217,8 +217,10 @@ class BlueprintTableModel(QAbstractTableModel):
             return
         key: Callable[[dict], Any]
         if column == 0:
+
             def _sort_key(r: dict) -> Any:
                 return r.get("product_type_id") or 0
+
             key = _sort_key
         else:
             key_fn = _SORT_KEYS.get(column)

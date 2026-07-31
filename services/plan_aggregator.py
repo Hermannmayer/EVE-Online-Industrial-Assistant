@@ -62,8 +62,7 @@ def _resolve_bp_name(conn, bp_type_id: int) -> str:
 def _get_per_run_output(conn, bp_type_id: int) -> int:
     """获取蓝图每次制造的产出数量"""
     row = conn.execute(
-        "SELECT quantity FROM blueprint_products "
-        "WHERE blueprint_type_id = ? AND activity = 'manufacturing' LIMIT 1",
+        "SELECT quantity FROM blueprint_products " "WHERE blueprint_type_id = ? AND activity = 'manufacturing' LIMIT 1",
         (bp_type_id,),
     ).fetchone()
     return row[0] if row and row[0] else 1
@@ -190,9 +189,7 @@ def expand_material_requirements(
         if not bp_row:
             # 原材料 — 记录
             name = _resolve_name(conn, product_type_id)
-            vol_row = conn.execute(
-                "SELECT volume FROM item WHERE type_id = ?", (product_type_id,)
-            ).fetchone()
+            vol_row = conn.execute("SELECT volume FROM item WHERE type_id = ?", (product_type_id,)).fetchone()
             vol = vol_row[0] if vol_row else 0.0
             if product_type_id in materials:
                 materials[product_type_id]["total_qty"] += qty
@@ -491,15 +488,17 @@ def calculate_output_with_overflow(
 
             if overflow > 0:
                 mid_name = _resolve_name(conn, pid)
-                out.append({
-                    "type_id": pid,
-                    "name": mid_name,
-                    "needed": qty,
-                    "per_run": per_run_out,
-                    "runs": runs_needed,
-                    "produced": actual_output,
-                    "overflow": overflow,
-                })
+                out.append(
+                    {
+                        "type_id": pid,
+                        "name": mid_name,
+                        "needed": qty,
+                        "per_run": per_run_out,
+                        "runs": runs_needed,
+                        "produced": actual_output,
+                        "overflow": overflow,
+                    }
+                )
 
             mats = conn.execute(
                 "SELECT material_type_id, quantity "
@@ -513,20 +512,22 @@ def calculate_output_with_overflow(
         _find_overflow(pid, total_qty, me, max_depth, seen_over, overflow_details)
         overflow_text = _format_overflow(overflow_details)
 
-        results.append({
-            "plan_name": name,
-            "product_type_id": pid,
-            "total_qty": total_qty,
-            "plan_value": plan_value,
-            "material_cost": mat_cost,
-            "profit": profit,
-            "margin_pct": plan.get("margin", 0) * 100 if plan.get("margin") else 0,
-            "sell_price": plan_price,
-            "status": status,
-            "overflow_details": overflow_details,
-            "overflow_text": overflow_text,
-            "has_overflow": len(overflow_details) > 0,
-        })
+        results.append(
+            {
+                "plan_name": name,
+                "product_type_id": pid,
+                "total_qty": total_qty,
+                "plan_value": plan_value,
+                "material_cost": mat_cost,
+                "profit": profit,
+                "margin_pct": plan.get("margin", 0) * 100 if plan.get("margin") else 0,
+                "sell_price": plan_price,
+                "status": status,
+                "overflow_details": overflow_details,
+                "overflow_text": overflow_text,
+                "has_overflow": len(overflow_details) > 0,
+            }
+        )
 
     return results
 

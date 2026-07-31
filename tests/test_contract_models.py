@@ -110,11 +110,13 @@ class TestContractTableModel:
     def test_display_type_cn(self, qapp):
         model = ContractTableModel()
         model.set_rows(SAMPLE_CONTRACTS)
-        for row_idx, (_contract_type, expected_cn) in enumerate([
-            ("item_exchange", CONTRACT_TYPE_CN["item_exchange"]),
-            ("auction", CONTRACT_TYPE_CN["auction"]),
-            ("courier", CONTRACT_TYPE_CN["courier"]),
-        ]):
+        for row_idx, (_contract_type, expected_cn) in enumerate(
+            [
+                ("item_exchange", CONTRACT_TYPE_CN["item_exchange"]),
+                ("auction", CONTRACT_TYPE_CN["auction"]),
+                ("courier", CONTRACT_TYPE_CN["courier"]),
+            ]
+        ):
             assert model.index(row_idx, 1).data(Qt.ItemDataRole.DisplayRole) == expected_cn
 
     def test_display_title(self, qapp):
@@ -137,12 +139,15 @@ class TestContractTableModel:
         model.set_rows(SAMPLE_CONTRACTS)
         assert model.index(2, 3).data(Qt.ItemDataRole.DisplayRole) == "—"
 
-    @pytest.mark.parametrize("contract_idx, col, expected_substr", [
-        (0, 4, "1,000,000"),
-        (0, 5, "50,000"),
-        (0, 8, "2026-06-01 12:00:00"),
-        (0, 9, "2026-07-01 12:00:00"),
-    ])
+    @pytest.mark.parametrize(
+        "contract_idx, col, expected_substr",
+        [
+            (0, 4, "1,000,000"),
+            (0, 5, "50,000"),
+            (0, 8, "2026-06-01 12:00:00"),
+            (0, 9, "2026-07-01 12:00:00"),
+        ],
+    )
     def test_display_column_contains(self, qapp, contract_idx, col, expected_substr):
         model = ContractTableModel()
         model.set_rows(SAMPLE_CONTRACTS)
@@ -229,10 +234,13 @@ class TestContractTableModel:
 
     # ── 排序 ──
 
-    @pytest.mark.parametrize("col, order, expected_first_id", [
-        (3, Qt.SortOrder.DescendingOrder, 1004),
-        (3, Qt.SortOrder.AscendingOrder, 1003),
-    ])
+    @pytest.mark.parametrize(
+        "col, order, expected_first_id",
+        [
+            (3, Qt.SortOrder.DescendingOrder, 1004),
+            (3, Qt.SortOrder.AscendingOrder, 1003),
+        ],
+    )
     def test_sort_by_price(self, qapp, col, order, expected_first_id):
         model = ContractTableModel()
         model.set_rows(SAMPLE_CONTRACTS)
@@ -261,12 +269,15 @@ class TestContractTableModel:
         align = idx.data(Qt.ItemDataRole.TextAlignmentRole)
         assert align == (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-    @pytest.mark.parametrize("contract_idx, col, desc", [
-        (0, 3, "price > 0 → green foreground"),
-        (2, 3, "price = 0 → secondary foreground"),
-        (0, 7, "outstanding → green foreground"),
-        (3, 7, "cancelled → red foreground"),
-    ])
+    @pytest.mark.parametrize(
+        "contract_idx, col, desc",
+        [
+            (0, 3, "price > 0 → green foreground"),
+            (2, 3, "price = 0 → secondary foreground"),
+            (0, 7, "outstanding → green foreground"),
+            (3, 7, "cancelled → red foreground"),
+        ],
+    )
     def test_foreground_colors(self, qapp, contract_idx, col, desc):
         model = ContractTableModel()
         model.set_rows(SAMPLE_CONTRACTS)

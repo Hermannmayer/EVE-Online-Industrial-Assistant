@@ -1,4 +1,5 @@
 """Tests for core.single_instance module."""
+
 import pytest
 
 from core.single_instance import _LOCK_FILE, _is_pid_alive, try_lock, unlock
@@ -32,6 +33,7 @@ class TestTryLock:
 class TestIsPidAlive:
     def test_current_process_is_alive(self):
         import os
+
         assert _is_pid_alive(os.getpid()) is True
 
     def test_invalid_pid_is_dead(self):

@@ -28,19 +28,20 @@ from core.logger import log  # noqa: E402
 # 工具类模块（sde_loader/sde_cache）已移至 tools/downloaders/，
 # 运行时模块（getprices/getindustry/getcontracts）保留在 services/workers/。
 STEPS = [
-    ("items",        "物品数据",       "tools.downloaders.getitems",          True),
-    ("prices",       "市场价格",       "services.workers.getprices",          True),
-    ("blueprints",   "蓝图数据",       "tools.downloaders.getblueprints",     True),
-    ("implants",     "植入体数据",     "tools.downloaders.getimplantdata",    True),
-    ("industry",     "工业数据",       "services.workers.getindustry",        True),
-    ("icons",        "物品图标",       "tools.downloaders.geticon",           True),
-    ("sde_data",     "SDE扩展数据",    "tools.downloaders.sde_loader",        False),
+    ("items", "物品数据", "tools.downloaders.getitems", True),
+    ("prices", "市场价格", "services.workers.getprices", True),
+    ("blueprints", "蓝图数据", "tools.downloaders.getblueprints", True),
+    ("implants", "植入体数据", "tools.downloaders.getimplantdata", True),
+    ("industry", "工业数据", "services.workers.getindustry", True),
+    ("icons", "物品图标", "tools.downloaders.geticon", True),
+    ("sde_data", "SDE扩展数据", "tools.downloaders.sde_loader", False),
 ]
 
 
 def _import_module(module_path: str):
     """动态导入模块"""
     import importlib
+
     return importlib.import_module(module_path)
 
 
@@ -110,11 +111,13 @@ async def _run_all(steps: list | None = None):
 def main():
     parser = argparse.ArgumentParser(description="EVE Assistant — 数据初始化工具")
     parser.add_argument(
-        "--step", "-s",
+        "--step",
+        "-s",
         help="仅执行指定步骤 (items/prices/blueprints/implants/icons/industry/sde_data)",
     )
     parser.add_argument(
-        "--list", "-l",
+        "--list",
+        "-l",
         action="store_true",
         help="列出所有步骤",
     )

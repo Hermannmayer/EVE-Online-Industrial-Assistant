@@ -13,6 +13,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+# 兼容 Windows GBK 控制台：无法编码的字符（emoji 等）用 ? 替换
+try:
+    sys.stdout.reconfigure(errors="replace")  # type: ignore[union-attr]
+    sys.stderr.reconfigure(errors="replace")  # type: ignore[union-attr]
+except Exception:
+    pass
+
 ROOT = Path(__file__).resolve().parent.parent
 
 # 代码目录 → 应同步的文档目录
