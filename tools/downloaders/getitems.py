@@ -67,17 +67,21 @@ async def write_items(progress_cb: Callable[[int, str], None] | None = None):
     """从缓存的 typeIDs.yaml + groupIDs.yaml + marketGroups.yaml 批量写入 item 表"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         c = await db.execute("SELECT COUNT(*) FROM item WHERE en_name IS NOT NULL AND en_name != ''")
-        named = (await c.fetchone())[0]
+        row = await c.fetchone()
+        named = row[0] if row else 0
         if named >= 50000:
             log.info(f"所有物品信息已就绪 ({named} 条)，跳过")
             return
 
     log.info("加载 SDE YAML 数据...")
-    if progress_cb: progress_cb(45, "加载 typeIDs.yaml...")
+    if progress_cb:
+        progress_cb(45, "加载 typeIDs.yaml...")
     type_ids = load_yaml("typeIDs.yaml")
-    if progress_cb: progress_cb(55, "加载 groupIDs.yaml...")
+    if progress_cb:
+        progress_cb(55, "加载 groupIDs.yaml...")
     groups = load_yaml("groupIDs.yaml")
-    if progress_cb: progress_cb(60, "加载 marketGroups.yaml...")
+    if progress_cb:
+        progress_cb(60, "加载 marketGroups.yaml...")
     mkt_groups = load_yaml("marketGroups.yaml")
 
     group_names = _build_group_lookup(groups)
@@ -111,9 +115,9 @@ async def write_items(progress_cb: Callable[[int, str], None] | None = None):
         return
 
     log.info(f"共 {len(items)} 个物品，写入数据库...")
-    if progress_cb: progress_cb(70, f"写入 {len(items)} 条物品数据...")
+    if progress_cb:
+        progress_cb(70, f"写入 {len(items)} 条物品数据...")
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        batch_count = max(1, len(items) // BATCH_SIZE)
         for i in tqdm(range(0, len(items), BATCH_SIZE), desc="物品"):
             batch = items[i:i + BATCH_SIZE]
             await db.executemany(
@@ -125,7 +129,8 @@ async def write_items(progress_cb: Callable[[int, str], None] | None = None):
                 batch,
             )
             pct = 70 + int((i + len(batch)) / len(items) * 15)
-            if progress_cb: progress_cb(pct, f"写入物品数据... {min(i + BATCH_SIZE, len(items))}/{len(items)}")
+            if progress_cb:
+                progress_cb(pct, f"写入物品数据... {min(i + BATCH_SIZE, len(items))}/{len(items)}")
         await db.commit()
     log.info("物品数据写入完成")
 
@@ -172,33 +177,43 @@ async def main(progress_cb: Callable[[int, str], None] | None = None):
         progress_cb: 可选进度回调 (percent: 0-100, message: str)
     """
     await initialize_database()
-    if progress_cb: progress_cb(5, "检查数据状态...")
+    if progress_cb:
+        progress_cb(5, "检查数据状态...")
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
         c1 = await db.execute("SELECT COUNT(*) FROM item WHERE en_name IS NOT NULL AND en_name != ''")
-        named = (await c1.fetchone())[0]
+        r1 = await c1.fetchone()
+        named = r1[0] if r1 else 0
         c2 = await db.execute("SELECT COUNT(*) FROM market_tree")
-        mt_cnt = (await c2.fetchone())[0]
+        r2 = await c2.fetchone()
+        mt_cnt = r2[0] if r2 else 0
 
     if named >= 50000 and mt_cnt > 500:
         log.info(f"所有数据已就绪（item={named}, market_tree={mt_cnt}），跳过")
-        if progress_cb: progress_cb(90, "检查缺失名称...")
+        if progress_cb:
+            progress_cb(90, "检查缺失名称...")
         await fill_missing_item_names_from_esi(progress_cb)
-        if progress_cb: progress_cb(100, "数据已就绪")
+        if progress_cb:
+            progress_cb(100, "数据已就绪")
         return
 
-    if progress_cb: progress_cb(10, "下载/加载 SDE 数据包...")
+    if progress_cb:
+        progress_cb(10, "下载/加载 SDE 数据包...")
     await ensure_sde_cache()
     if named < 50000:
-        if progress_cb: progress_cb(40, "解析物品 YAML 数据...")
+        if progress_cb:
+            progress_cb(40, "解析物品 YAML 数据...")
         await write_items(progress_cb)
     if mt_cnt <= 500:
-        if progress_cb: progress_cb(85, "写入市场分类树...")
+        if progress_cb:
+            progress_cb(85, "写入市场分类树...")
         await write_market_tree()
     # ESI 补拉：SDE YAML 中缺失名称的物品（如 21009 等）
-    if progress_cb: progress_cb(90, "补拉缺失名称...")
+    if progress_cb:
+        progress_cb(90, "补拉缺失名称...")
     await fill_missing_item_names_from_esi(progress_cb)
-    if progress_cb: progress_cb(100, "完成")
+    if progress_cb:
+        progress_cb(100, "完成")
     log.info("物品数据初始化完成")
 
 

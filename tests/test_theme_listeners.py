@@ -141,16 +141,8 @@ def test_char_settings_dialog_show_event(qapp, mock_db):
 def test_init_wizard_show_event(qapp):
     with (
         patch(
-            "ui_pyside6.views.init_wizard.check_all",
-            return_value={
-                "items": True,
-                "prices": True,
-                "blueprints": True,
-                "implants": False,
-                "icons": False,
-                "industry": False,
-                "sde_data": False,
-            },
+            "ui_pyside6.views.init_wizard.is_step_satisfied",
+            side_effect=lambda key: key in ("items", "prices", "blueprints"),
         ),
     ):
         from ui_pyside6.views.init_wizard import InitWizard

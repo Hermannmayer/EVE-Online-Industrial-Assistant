@@ -9,6 +9,7 @@
 import asyncio
 import json
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import aiohttp
@@ -38,10 +39,14 @@ def write_progress(cur: int, total: int, phase: str = ""):
 
 
 async def init_db():
+    """确保 market_prices 和 market_volume_snapshots 表存在（幂等）
+
+    不再 DROP TABLE — 改用 CREATE TABLE IF NOT EXISTS + ALTER ADD COLUMN
+    保留已有价格数据。列缺失由 schema_migrations 或此处 ALTER TABLE 兜底。
+    """
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute("DROP TABLE IF EXISTS market_prices")
         await db.execute("""
-            CREATE TABLE market_prices (
+            CREATE TABLE IF NOT EXISTS market_prices (
                 type_id INTEGER NOT NULL,
                 region_id INTEGER NOT NULL,
                 buy_price REAL,
@@ -53,9 +58,13 @@ async def init_db():
                 PRIMARY KEY (type_id, region_id)
             )
         """)
-        await db.execute("DROP TABLE IF EXISTS market_volume_snapshots")
+        # 兼容旧库：补加 adjusted_price 列
+        try:
+            await db.execute("ALTER TABLE market_prices ADD COLUMN adjusted_price REAL DEFAULT 0.0")
+        except Exception:
+            pass
         await db.execute("""
-            CREATE TABLE market_volume_snapshots (
+            CREATE TABLE IF NOT EXISTS market_volume_snapshots (
                 type_id INTEGER NOT NULL,
                 region_id INTEGER NOT NULL,
                 date TEXT NOT NULL,
@@ -266,22 +275,30 @@ async def save_prices(
     return len(records)
 
 
-async def main(regions: list[tuple[str, int]] | None = None):
+async def main(regions: list[tuple[str, int]] | None = None, progress_cb: Callable[[int, str], None] | None = None):
     t0 = datetime.now()
     regions = regions or TRADE_REGIONS
     region_names = [n for n, _ in regions]
     log.info(f"=== 价格拉取: {', '.join(region_names)} ===")
-    write_progress(0, 4, "初始化数据库...")
+    write_progress(0, 4, pm := "初始化数据库...")
+    if progress_cb:
+        progress_cb(0, pm)
     await init_db()
 
-    write_progress(1, 4, "获取基准价格(/markets/prices/)...")
+    write_progress(1, 4, pm := "获取基准价格(/markets/prices/)...")
+    if progress_cb:
+        progress_cb(10, pm)
     baseline = await fetch_baseline_prices()
     log.info(f"  基准价格: {len(baseline)} 个物品")
 
-    write_progress(2, 4, "拉取实时订单簿...")
+    write_progress(2, 4, pm := "拉取实时订单簿...")
+    if progress_cb:
+        progress_cb(30, pm)
     order_prices = await fetch_orders(regions)
 
-    write_progress(3, 4, "写入数据库...")
+    write_progress(3, 4, pm := "写入数据库...")
+    if progress_cb:
+        progress_cb(70, pm)
     cnt = await save_prices(baseline, order_prices, [rid for _, rid in regions])
     log.info(f"  写入 {cnt} 条")
 

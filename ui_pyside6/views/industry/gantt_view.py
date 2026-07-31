@@ -27,13 +27,13 @@ class GanttView(QWidget):
             theme.ACCENT_RED,
             theme.ACCENT_PURPLE,
         ]
-        self._max_hours = 48
+        self._max_hours: int = 48
         self.GRID_COLOR = QColor(theme.BORDER)
         self.BG_COLOR = QColor(theme.BG_SURFACE) if hasattr(theme, "BG_SURFACE") else QColor("#ffffff")
 
     def set_items(self, items: list[dict]):
         self._items = items
-        self._max_hours = max((i.get("duration", 1) + i.get("start", 0) for i in items), default=48)
+        self._max_hours = int(max((i.get("duration", 1) + i.get("start", 0) for i in items), default=48))
         self._max_hours = max(self._max_hours, 24)
         # 向上取整到 12 的倍数
         self._max_hours = ((self._max_hours + 11) // 12) * 12
@@ -41,7 +41,7 @@ class GanttView(QWidget):
 
     def clear(self):
         self._items = []
-        self._max_hours = 48
+        self._max_hours: int = 48
         self.update()
 
     def load_from_plans(self, plans: list[dict]):

@@ -151,9 +151,9 @@ class TestWriteItems:
 
     @pytest.mark.asyncio
     async def test_skips_below_start_type_id(self, temp_db_path):
-        """type_id < START_TYPE_ID=178 时跳过"""
+        """type_id < START_TYPE_ID=17 时跳过"""
         mock_type_ids = {
-            "100": {
+            "16": {
                 "name": {"en": "Old Item"},
                 "groupID": 10,
                 "volume": 1.0,
@@ -184,7 +184,7 @@ class TestWriteItems:
         rows = conn.execute("SELECT type_id FROM item").fetchall()
         conn.close()
         type_ids = {r[0] for r in rows}
-        assert 100 not in type_ids  # below START_TYPE_ID
+        assert 16 not in type_ids  # below START_TYPE_ID
         assert 12345 in type_ids
 
 

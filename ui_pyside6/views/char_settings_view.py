@@ -492,6 +492,8 @@ class SkillsPage(QWidget):
 
         while self._skill_layout.count() > 0:
             item = self._skill_layout.takeAt(0)
+            if not item:
+                continue
             widget = item.widget()
             if widget:
                 widget.deleteLater()

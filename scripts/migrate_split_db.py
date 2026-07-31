@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS market_prices (
     region_id INTEGER NOT NULL,
     buy_price REAL,
     sell_price REAL,
+    adjusted_price REAL DEFAULT 0.0,
     buy_volume BIGINT DEFAULT 0,
     sell_volume BIGINT DEFAULT 0,
     fetch_time TIMESTAMP NOT NULL DEFAULT (datetime('now')),
@@ -167,7 +168,20 @@ CREATE TABLE IF NOT EXISTS production_plans (
     material_cost REAL DEFAULT 0,
     created_at TEXT,
     started_at TEXT,
-    completed_at TEXT
+    completed_at TEXT,
+    facility_cost_mult REAL DEFAULT 1.0,
+    notes TEXT DEFAULT '',
+    group_number INTEGER DEFAULT 0,
+    sub_level INTEGER DEFAULT 0,
+    output_location TEXT DEFAULT '',
+    market_margin REAL DEFAULT 0,
+    personal_margin REAL DEFAULT 0,
+    daily_output REAL DEFAULT 0,
+    materials_ready INTEGER DEFAULT 0,
+    iskph REAL DEFAULT 0,
+    deposit_hangar_id INTEGER DEFAULT NULL,
+    deposited INTEGER DEFAULT 0,
+    calculated_time REAL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS user_skills (
