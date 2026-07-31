@@ -23,7 +23,6 @@ class AppContainer:
         self._plan_repo = None
         self._bom_expander = None
         self._logistics_service = None
-        self._scheduler = None
         self._watchlist = None
         self._inventory_manager = None
         self._price_history_service = None
@@ -116,16 +115,6 @@ class AppContainer:
 
                     self._logistics_service = LogisticsService(self.db, self.pricing_service)
         return self._logistics_service
-
-    @property
-    def scheduler(self):
-        if self._scheduler is None:
-            with self._lock:
-                if self._scheduler is None:
-                    from services.production_scheduler import ProductionScheduler
-
-                    self._scheduler = ProductionScheduler(self.db)
-        return self._scheduler
 
     @property
     def watchlist_manager(self):

@@ -18,7 +18,7 @@ from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 # 每次有 schema 变更时加 1
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
-    "mkt": 2,  # v1→v2: adjusted_price 列
+    "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
     "user": 3,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列
     "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
 }
@@ -46,6 +46,17 @@ def _migrate_mkt_v1_to_v2(db_path: str) -> str:
         if "duplicate" in str(e).lower():
             return "adjusted_price 列已存在（跳过）"
         raise
+    finally:
+        conn.close()
+
+
+def _migrate_mkt_v2_to_v3(db_path: str) -> str:
+    """v2→v3: market_prices(fetch_time) 索引 — 加速 MAX(fetch_time) 与按时间过滤（主线程查询）"""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_market_prices_fetch_time ON market_prices(fetch_time)")
+        conn.commit()
+        return "新增 market_prices(fetch_time) 索引"
     finally:
         conn.close()
 
@@ -108,6 +119,7 @@ def _migrate_bp_v1_to_v2(db_path: str) -> str:
 _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
     "mkt": {
         1: _migrate_mkt_v1_to_v2,
+        2: _migrate_mkt_v2_to_v3,
     },
     "user": {
         1: _migrate_user_v1_to_v2,
@@ -188,8 +200,9 @@ def ensure_schema(db_alias: str) -> dict:
         applied: list[str] = []
 
         if on_disk == 0:
-            # 首次接触：打标 v1（表已在初始化脚本中创建完毕）
-            _set_version(db_path, 1)
+            # 版本 0：可能是「有表但未打版本号」的旧库/半迁移库。
+            # 不能直接标 v1 跳过 —— 缺列会导致业务崩溃。从 v1 起逐版本补跑
+            # 全部迁移（迁移函数均幂等：列已存在/索引已存在时跳过）。
             on_disk = 1
 
         if on_disk > current:

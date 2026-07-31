@@ -184,3 +184,54 @@ def test_all_items_dialog_show_event(qapp, mock_db):
         apply_theme("light")
         dlg.showEvent(QShowEvent())
         assert ONE_LIGHT["BG_SURFACE"] in dlg._toolbar.styleSheet()
+
+
+# ── weakref 基础设施（审计发现：监听器无 remove → 页面销毁后仍被引用泄漏） ──
+
+
+def test_listener_freed_after_object_gc():
+    """对象销毁后监听器自动失效（弱引用）：
+    1. 存活时收到通知；2. 销毁后 notify 不崩溃；3. 失效引用被清理
+    """
+    import gc
+
+    import ui_pyside6.theme as theme
+
+    n0 = len(theme._theme_listeners)
+
+    class _Listener:
+        def __init__(self):
+            self.called = 0
+
+        def on_theme(self):
+            self.called += 1
+
+    obj = _Listener()
+    theme.add_theme_listener(obj.on_theme)
+    assert len(theme._theme_listeners) == n0 + 1
+
+    apply_theme("light")
+    assert obj.called == 1, "存活对象应收到通知"
+
+    del obj
+    gc.collect()
+    # 销毁后 notify 不应崩溃（弱引用失效被过滤）
+    apply_theme("dark")
+
+    # 自己的监听器应被清理；其他测试的监听器也可能被 GC 清理（数量只会减少）
+    assert len(theme._theme_listeners) < n0 + 1, "对象销毁后其监听器应被移除"
+
+
+def test_remove_theme_listener_still_works():
+    """显式 remove 仍然有效（兼容旧调用方）"""
+    import ui_pyside6.theme as theme
+
+    class _Listener:
+        def on_theme(self):
+            pass
+
+    obj = _Listener()
+    theme.add_theme_listener(obj.on_theme)
+    before = len(theme._theme_listeners)
+    theme.remove_theme_listener(obj.on_theme)
+    assert len(theme._theme_listeners) == before - 1
