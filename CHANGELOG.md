@@ -6,6 +6,24 @@
 
 <!-- version list -->
 
+## v0.4.0 (2026-07-31)
+
+### Bug Fixes
+
+- 修复 test_init_check 依赖真实数据库路径导致 CI(Linux) 失败
+  ([`4ad8c53`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/4ad8c53cace2241303dfc55e347253898252f1f0))
+
+### Chores
+
+- 修复 CHANGELOG 头部被 semantic-release 拆断的结构
+  ([`a375571`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a37557106c58c43ee95c58f8ad9c5efef9a052db))
+
+### Continuous Integration
+
+- 添加 libEGL/libGL 系统库解决 Linux 上 PySide6 导入失败
+  ([`0655c94`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/0655c946e648914bc70b4e6d25f07921a18521f5))
+
+
 ## v0.3.0 (2026-07-31)
 
 ### Bug Fixes
