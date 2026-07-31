@@ -6,6 +6,14 @@
 
 <!-- version list -->
 
+## v0.7.0 (2026-07-31)
+
+### Bug Fixes
+
+- 补 blueprint_tab 蓝图函数 patch，修复 CI 主题监听测试
+  ([`4cd4f7b`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/4cd4f7be9a1a2fb971140f3b3bebd3c5f527ca60))
+
+
 ## v0.6.0 (2026-07-31)
 
 ### Bug Fixes
