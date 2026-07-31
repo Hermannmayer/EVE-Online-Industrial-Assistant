@@ -18,9 +18,7 @@ import zipfile
 from datetime import datetime
 
 from core.logger import log
-
-# ── 版本号 ──
-VERSION = "1.0.0"
+from core.version import __version__ as VERSION
 
 # ── 路径 ──
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -63,8 +61,6 @@ def run_pyinstaller():
             "--hidden-import",
             "tqdm",
             "--hidden-import",
-            "pyperclip",
-            "--hidden-import",
             "PIL",
             "--hidden-import",
             "yaml",
@@ -89,7 +85,7 @@ def organize_release():
     步骤 2：整理发行版目录
 
     最终结构：
-        dist/EVE商人助手_v1.0.0/
+        dist/EVE商人助手_v{version}/
             EVE商人助手.exe
             database/
                 items.db
@@ -173,7 +169,7 @@ def create_zip():
                 file_path = os.path.join(root, file)
                 # 在 zip 中的路径：相对于 RELEASE_DIR 的路径
                 arcname = os.path.relpath(file_path, RELEASE_DIR)
-                # 保持 EVE商人助手_v1.0.0/xxx 的目录结构
+                # 保持 EVE商人助手_v{version}/xxx 的目录结构
                 arcname = os.path.join(os.path.basename(RELEASE_DIR), arcname)
                 zf.write(file_path, arcname)
 

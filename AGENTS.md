@@ -7,7 +7,7 @@
 
 ## Test
 - **Run tests:** `pytest`
-- **Failing collection fix:** `pip install -e .` 或确保 `__init__.py` 正确
+- **Failing collection fix:** `uv sync --dev` 或确保 `__init__.py` 正确
 
 ## Test
 - **Run tests:** `pytest`

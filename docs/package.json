@@ -1,0 +1,16 @@
+{
+  "name": "eve-industrial-assistant-docs",
+  "private": true,
+  "type": "module",
+  "description": "EVE 工业助手 中文文档站（VitePress）",
+  "scripts": {
+    "dev": "vitepress dev .",
+    "build": "vitepress build .",
+    "preview": "vitepress preview ."
+  },
+  "devDependencies": {
+    "mermaid": "^11.16.0",
+    "vitepress": "^1.6.4",
+    "vitepress-plugin-mermaid": "^2.0.17"
+  }
+}

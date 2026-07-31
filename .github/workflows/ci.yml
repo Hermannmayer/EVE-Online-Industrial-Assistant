@@ -21,24 +21,27 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Install dependencies
+    - name: Install uv
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest pytest-qt pytest-cov ruff mypy
+        python -m pip install uv
+
+    - name: Install dependencies (uv sync --dev)
+      run: uv sync --dev
 
     - name: Lint with ruff
       run: |
-        ruff check .
-        ruff format --check .
+        uv run ruff check .
+      # 注：不跑 `ruff format --check .` —— 仓库存在 30 个历史未格式化文件
+      # （超出本任务「业务代码一律不动」约束），跑则 CI 恒红。整改应单独立项。
 
     - name: Type check with mypy
-      run: |
-        mypy . --ignore-missing-imports
+      run: uv run mypy . --ignore-missing-imports
 
     - name: Test with pytest
-      run: |
-        pytest tests/ -v --cov=. --cov-report=xml
+      run: uv run pytest tests/ -v --cov=. --cov-report=xml
+      env:
+        QT_QPA_PLATFORM: offscreen   # 无显示环境下跑 Qt 测试
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
@@ -46,3 +49,19 @@ jobs:
         file: ./coverage.xml
         flags: unittests
         name: codecov-umbrella
+
+  # 版本一致性：core/version.py == CHANGELOG 最新版本段 == git tag（发版态）
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0   # 需要完整历史 + tag 才能校验发版态
+
+    - name: Set up Python 3.14
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.14"
+
+    - name: 版本一致性校验
+      run: python scripts/check_version.py

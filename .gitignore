@@ -73,6 +73,11 @@ greatcto-ci-output.sarif
 # Pre-commit
 .pre-commit-cache/
 
+# 文档站（VitePress）
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+
 # 运行时临时文件
 tmp_*.txt
 
@@ -88,6 +93,7 @@ _test.txt
 # SDE cache YAML files
 data/*.yaml
 data/sde.zip
+data/universe_data.json
 
 # Claude Code local config
 .claude/
