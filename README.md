@@ -114,16 +114,10 @@ EVE-Online-Industrial-Assistant/
 │
 ├── .pre-commit-config.yaml         # Pre-commit hooks 配置
 ├── .github/
-│   ├── workflows/
-│   │   └── ci.yml                  # GitHub Actions CI
-│   └── pull_request_template.md    # PR 模板
+│   └── workflows/
+│       └── ci.yml                  # GitHub Actions CI
 ├── CLAUDE.md                       # Claude Code 项目约束
-├── AGENTS.md                       # 开发规则和指令
-├── EVE-PROJECT-STATE.md            # 项目状态跟踪
-│
-├── .claude/
-│   ├── CLAUDE.md                   # Claude Code 项目上下文
-│   └── PROJECT.md                  # 项目约定
+├── AUDIT-20260731.md               # 2026-07-31 代码审计报告
 │
 ├── pyproject.toml                  # 项目配置 + 依赖声明（uv 管理）
 └── uv.lock                         # 依赖锁文件（uv sync 生成）
