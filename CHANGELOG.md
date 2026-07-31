@@ -6,6 +6,14 @@
 
 <!-- version list -->
 
+## v0.6.0 (2026-07-31)
+
+### Bug Fixes
+
+- 补 hangar_tab 模块 patch，修复 CI 上 inventory 主题监听测试
+  ([`452d74b`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/452d74b313a72d29b35489fddff8224b77962f1c))
+
+
 ## v0.5.0 (2026-07-31)
 
 ### Bug Fixes
