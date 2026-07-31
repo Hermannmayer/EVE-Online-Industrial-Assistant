@@ -29,6 +29,12 @@ jobs:
     - name: Install dependencies (uv sync --dev)
       run: uv sync --dev
 
+    # PySide6 在无显示 Linux 上需要 EGL/GL 系统库（QT_QPA_PLATFORM=offscreen 依赖它们）
+    - name: Install Qt system libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libegl1 libgl1
+
     - name: Lint with ruff
       run: |
         uv run ruff check .
