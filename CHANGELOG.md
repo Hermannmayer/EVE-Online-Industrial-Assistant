@@ -6,6 +6,14 @@
 
 <!-- version list -->
 
+## v0.5.0 (2026-07-31)
+
+### Bug Fixes
+
+- 修复 UI 测试依赖真实数据库目录导致 CI(Linux) 失败（patch blueprint_tab get_container）
+  ([`d5e76f2`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d5e76f210e4c4280743ce61683429e57f27dac92))
+
+
 ## v0.4.0 (2026-07-31)
 
 ### Bug Fixes
