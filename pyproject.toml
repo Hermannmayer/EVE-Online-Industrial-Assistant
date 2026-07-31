@@ -23,6 +23,7 @@ dev = [
     "ruff~=0.15.0",
     "mypy~=2.3.0",
     "python-semantic-release~=10.6.1",
+    "pyinstaller~=6.20.0",   # build_release.py 打包（release.yml 用）
 ]
 
 [tool.uv]
@@ -55,6 +56,10 @@ quote-style = "double"
 
 [tool.mypy]
 python_version = "3.14"
+# 目标平台：Windows 桌面应用（打包/运行均在 Windows）。
+# 默认按 sys.platform（Linux CI 上为 linux）检查会使 ctypes.windll 等
+# Windows 专用代码在 CI 报错，这里固定为 win32。
+platform = "win32"
 strict = false
 warn_unused_configs = true
 warn_redundant_casts = true
