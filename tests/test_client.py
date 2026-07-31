@@ -110,3 +110,67 @@ class TestAPIClient:
                 client.session.get.assert_called_once()
 
         asyncio.run(run())
+
+
+# ── RateLimiter 令牌桶 ─────────────────────────────────────
+
+
+class TestRateLimiter:
+    """RateLimiter — 异步令牌桶限流"""
+
+    def test_immediate_acquire_when_bucket_full(self):
+        """桶满（burst）时 acquire 不等待"""
+        import asyncio
+        import time
+
+        from services.client import RateLimiter
+
+        limiter = RateLimiter(rate=100.0, burst=50)
+
+        async def run():
+            t0 = time.monotonic()
+            for _ in range(50):
+                await limiter.acquire()
+            return time.monotonic() - t0
+
+        elapsed = asyncio.run(run())
+        assert elapsed < 0.1, f"桶满时应瞬时通过，实际 {elapsed:.3f}s"
+
+    def test_rate_limits_after_bucket_exhausted(self):
+        """桶耗尽后按速率排队（50 个令牌 @100/s ≈ 0.5s）"""
+        import asyncio
+        import time
+
+        from services.client import RateLimiter
+
+        limiter = RateLimiter(rate=100.0, burst=10)
+
+        async def run():
+            t0 = time.monotonic()
+            for _ in range(60):
+                await limiter.acquire()
+            return time.monotonic() - t0
+
+        elapsed = asyncio.run(run())
+        # 10 个突发 + 50 个按 100/s → ≥0.5s
+        assert elapsed >= 0.45, f"超出突发容量的请求应被限流，实际 {elapsed:.3f}s"
+
+    def test_acquire_is_thread_safe_within_loop(self):
+        """并发 acquire 不超额发放（burst=10 时 20 个并发任务中 10 个立即通过）"""
+        import asyncio
+
+        from services.client import RateLimiter
+
+        limiter = RateLimiter(rate=1000.0, burst=10)
+        passed = []
+
+        async def worker(i):
+            t0 = asyncio.get_event_loop().time()
+            await limiter.acquire()
+            passed.append((i, asyncio.get_event_loop().time() - t0))
+
+        async def run():
+            await asyncio.gather(*[worker(i) for i in range(20)])
+
+        asyncio.run(run())
+        assert len(passed) == 20

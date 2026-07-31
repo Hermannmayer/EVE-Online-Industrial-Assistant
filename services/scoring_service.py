@@ -9,10 +9,7 @@
 
 from __future__ import annotations
 
-import threading
-import time
-from collections import OrderedDict
-
+from core.cache import TtlLRUCache
 from core.eve_formulas import (
     ADV_INDUSTRY_SKILL_MULT,
     _hub_region_id,
@@ -51,53 +48,8 @@ db = get_db()
 
 # ════════════════════════════════════════════════════════════════════
 #  评分结果缓存 — 30 分钟 TTL，有界 LRU 淘汰（线程安全）
+#  统一使用 core.cache.TtlLRUCache（容器注入与模块级共用同一实现）
 # ════════════════════════════════════════════════════════════════════
-
-
-class ScoringCache:
-    """线程安全的有界评分缓存，过期被动清理 + LRU 淘汰"""
-
-    def __init__(self, max_size: int = 500, ttl: int = 1800):
-        self._cache: OrderedDict[str, tuple[float, dict]] = OrderedDict()
-        self._max_size = max_size
-        self._ttl = ttl
-        self._lock = threading.Lock()
-
-    def get(self, key: str) -> dict | None:
-        with self._lock:
-            self._evict_expired_locked()
-            entry = self._cache.get(key)
-            if entry is None:
-                return None
-            timestamp, result = entry
-            if time.time() - timestamp >= self._ttl:
-                del self._cache[key]
-                return None
-            self._cache.move_to_end(key)
-            return result
-
-    def set(self, key: str, result: dict):
-        with self._lock:
-            self._evict_expired_locked()
-            if key in self._cache:
-                self._cache.move_to_end(key)
-            self._cache[key] = (time.time(), result)
-            while len(self._cache) > self._max_size:
-                self._cache.popitem(last=False)
-
-    def invalidate(self):
-        with self._lock:
-            self._cache.clear()
-
-    def _evict_expired_locked(self):
-        cutoff = time.time() - self._ttl
-        expired = [k for k, (ts, _) in self._cache.items() if ts < cutoff]
-        for k in expired:
-            del self._cache[k]
-
-    def __len__(self) -> int:
-        with self._lock:
-            return len(self._cache)
 
 
 def cache_key(type_id: int, mode: str, hub: str, char_name: str) -> str:
@@ -105,7 +57,7 @@ def cache_key(type_id: int, mode: str, hub: str, char_name: str) -> str:
 
 
 # 模块级缓存函数（委托给默认实例）
-_default_cache = ScoringCache()
+_default_cache = TtlLRUCache(max_size=500, ttl_seconds=1800)
 
 
 def get_cache(key: str) -> dict | None:
@@ -375,10 +327,15 @@ def calc_refining_value(
 
 
 class ScoringService:
-    def __init__(self, db: DatabaseManager, cache: ScoringCache, char_config: dict | None = None):
+    def __init__(self, db: DatabaseManager, cache: TtlLRUCache, char_config: dict | None = None):
         self._db = db
         self._cache = cache
         self._char_config = char_config or {}
+
+    def invalidate_cache(self) -> None:
+        """清空评分缓存（价格刷新后调用，避免旧价格评分被复用）"""
+        if self._cache:
+            self._cache.invalidate()
 
     # ── 经纪人费率计算（去重：制造/贸易共用） ──
 
@@ -520,7 +477,14 @@ class ScoringService:
             )
             total = ScoringService.calculate_total_metrics(per_run, runs, parallels) or {}
         except Exception:
-            pass
+            from core.logger import log
+
+            log.exception(
+                "计划评分计算失败 type_id=%s me=%s te=%s",
+                type_id,
+                me,
+                te,
+            )
 
         revenue_per_run = per_run.get("revenue_per_run", 0) or 0
         fees_per_run = per_run.get("fees_per_run", 0) or 0
@@ -628,6 +592,18 @@ class ScoringService:
         - 安装费: calc_job_cost_fees（加法结构）
         - 时间: calc_production_time
         """
+        # 缓存：同一 type_id × 配置 × ME 结果复用（TTL 1800s，价格刷新时 invalidate_cache）
+        char_name = (char_config.get("name") or char_config.get("char_name") or "default") if char_config else "default"
+        cache_k = cache_key(
+            type_id,
+            f"mfg|{mat_source_hub}|{sell_hub}|{bp_me}|{bp_te}|{price_type_mat}|{price_type_prod}",
+            "hub",
+            char_name,
+        )
+        cached = self._cache.get(cache_k) if self._cache else None
+        if cached is not None:
+            return dict(cached)
+
         result = {
             "score": 0.0,
             "profit_per_run": 0.0,
@@ -744,7 +720,11 @@ class ScoringService:
             total_cost += installation_fee
 
             broker_init = revenue * (broker_rate / 100)
-            broker_relist = revenue * (broker_rate / 100) * (1 - relist_discount / 100)
+            # 改单差额计费：改单只对「改价差额」部分收一次 broker 费（× 改单折扣）。
+            # 无历史挂单价时用成本价近似 —— 假设已按成本挂单、改价到售价只补差额。
+            unit_cost = total_cost / prod_qty if prod_qty > 0 else 0.0
+            relist_delta = max(0.0, prod_price - unit_cost) * prod_qty
+            broker_relist = relist_delta * (broker_rate / 100) * (1 - relist_discount / 100)
             sales_tax = revenue * (sales_tax_rate / 100)
             total_cost += broker_init + broker_relist + sales_tax
 
@@ -841,6 +821,10 @@ class ScoringService:
                 }
             )
 
+        # 写入缓存（仅缓存成功结果，失败状态不缓存）
+        score_val = result["score"]
+        if isinstance(score_val, int | float) and score_val > 0 and self._cache is not None:
+            self._cache.set(cache_k, dict(result))
         return result
 
     # ── 贸易评分 ──
@@ -856,6 +840,17 @@ class ScoringService:
         quantity: int = 1,
     ) -> dict:
         """计算贸易评分。"""
+        char_name = (char_config.get("name") or char_config.get("char_name") or "default") if char_config else "default"
+        cache_k = cache_key(
+            type_id,
+            f"trade|{buy_hub}|{sell_hub}|{buy_price_type}|{sell_price_type}|{quantity}",
+            "hub",
+            char_name,
+        )
+        cached = self._cache.get(cache_k) if self._cache else None
+        if cached is not None:
+            return dict(cached)
+
         result = {
             "score": 0.0,
             "buy_cost": 0.0,
@@ -886,10 +881,20 @@ class ScoringService:
         relist_discount = self._calc_relist_discount(skills)
         sales_tax_rate = self._calc_sales_tax_rate(skills)
 
+        # 差额计费：初始挂单全额 broker；改单只对「买/卖价差额」部分收一次 broker（× 改单折扣）
         buy_fee_total = broker_rate + broker_rate * (1 - relist_discount / 100)
 
         sell_rate = self._calc_broker_rate(skills, market_data_sell)
-        sell_fee_total = sell_rate + sell_rate * (1 - relist_discount / 100) + sales_tax_rate
+        # 卖出侧：初始挂单全额 broker（按买入成本近似）+ 改单差额 broker + 销售税
+        sell_fee_total = (
+            (
+                broker_rate
+                + (sell_price - buy_price) / sell_price * broker_rate * (1 - relist_discount / 100)
+                + sales_tax_rate
+            )
+            if sell_price > 0
+            else sell_rate + sell_rate * (1 - relist_discount / 100) + sales_tax_rate
+        )
 
         buy_cost = buy_price * quantity + buy_price * quantity * (buy_fee_total / 100)
         sell_revenue = sell_price * quantity - sell_price * quantity * (sell_fee_total / 100)
@@ -926,6 +931,10 @@ class ScoringService:
             }
         )
 
+        # 写入缓存（仅缓存成功结果）
+        score_val = result["score"]
+        if isinstance(score_val, int | float) and score_val > 0 and self._cache is not None:
+            self._cache.set(cache_k, dict(result))
         return result
 
     # ── 反应评分 ──

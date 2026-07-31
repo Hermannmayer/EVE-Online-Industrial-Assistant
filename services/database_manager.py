@@ -32,19 +32,23 @@ _DB_INIT_SQL = {
     "ref": """
         PRAGMA journal_mode=WAL;
         PRAGMA cache_size=-8000;
+        PRAGMA busy_timeout=30000;
     """,
     "mkt": """
         PRAGMA journal_mode=WAL;
         PRAGMA cache_size=-8000;
+        PRAGMA busy_timeout=30000;
     """,
     "user": """
         PRAGMA journal_mode=WAL;
         PRAGMA cache_size=-4000;
         PRAGMA foreign_keys=ON;
+        PRAGMA busy_timeout=30000;
     """,
     "bp": """
         PRAGMA journal_mode=WAL;
         PRAGMA cache_size=-8000;
+        PRAGMA busy_timeout=30000;
     """,
 }
 
@@ -172,6 +176,10 @@ class DatabaseManager:
         db_path = DB_PATH_MAP[db_alias]
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
+        # 与缓存连接保持一致：WAL 下写锁等待 30s（避免并发 DELETE+INSERT 时报 database is locked）
+        init_sql = _DB_INIT_SQL.get(db_alias, "")
+        if init_sql:
+            conn.executescript(init_sql)
         return conn
 
     def close_all(self):
@@ -183,50 +191,6 @@ class DatabaseManager:
                 except Exception:
                     pass
             self._local.connections.clear()
-
-    # ---- 跨库查询便捷方法 ----
-
-    def get_item_with_price(self, type_id: int) -> dict | None:
-        """获取物品信息及其市场价格（跨库 JOIN）"""
-        with self.connect("ref", "mkt") as conn:
-            row = conn.execute(
-                "SELECT i.type_id, i.name, i.group_id, mp.average_price "
-                "FROM ref.item i "
-                "LEFT JOIN mkt.market_prices mp ON i.type_id = mp.type_id "
-                "WHERE i.type_id = ?",
-                (type_id,),
-            ).fetchone()
-            return dict(row) if row else None
-
-    def get_bp_detail(self, type_id: int) -> dict | None:
-        """获取蓝图详情（跨库 JOIN ref + bp）"""
-        with self.connect("ref", "bp") as conn:
-            row = conn.execute(
-                "SELECT b.type_id, i.name, b.product_type_id, pi.name AS product_name, "
-                "b.quantity, b.time, b.me, b.pe "
-                "FROM bp.blueprints b "
-                "JOIN ref.item i ON b.type_id = i.type_id "
-                "LEFT JOIN ref.item pi ON b.product_type_id = pi.type_id "
-                "WHERE b.type_id = ? "
-                "ORDER BY b.me, b.pe LIMIT 1",
-                (type_id,),
-            ).fetchone()
-            return dict(row) if row else None
-
-    def get_market_summary(self, type_id: int) -> dict | None:
-        """获取市场汇总（跨库 JOIN ref + mkt + bp）"""
-        with self.connect("ref", "mkt", "bp") as conn:
-            row = conn.execute(
-                "SELECT i.type_id, i.name, "
-                "mp.average_price, mp.volume, "
-                "b.product_type_id "
-                "FROM ref.item i "
-                "LEFT JOIN mkt.market_prices mp ON i.type_id = mp.type_id "
-                "LEFT JOIN bp.blueprints b ON i.type_id = b.type_id "
-                "WHERE i.type_id = ?",
-                (type_id,),
-            ).fetchone()
-            return dict(row) if row else None
 
 
 # 全局单例

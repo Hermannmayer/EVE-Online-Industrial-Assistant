@@ -55,6 +55,19 @@ def _mock_response(status=200, json_data=None, headers=None):
     return resp
 
 
+def _mock_client():
+    """构造一个 mock APIClient（fetch_raw / get_headers / limiter）。
+
+    getprices 现在统一走 services.client.APIClient。
+    """
+    client = MagicMock()
+    client.fetch_raw = AsyncMock(return_value=[])
+    client.get_headers = AsyncMock(return_value={"X-Pages": "1"})
+    client.limiter = MagicMock()
+    client.limiter.acquire = AsyncMock()
+    return client
+
+
 # ════════════════════════════════════════════════════════════
 #  Test 1 — init_db
 # ════════════════════════════════════════════════════════════
@@ -110,23 +123,47 @@ class TestFetchBaselinePrices:
             {"type_id": 1002, "average_price": None, "adjusted_price": 9.5},
         ]
 
-        resp = _mock_response(json_data=fake_json)
-        cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=resp)
-        cm.__aexit__ = AsyncMock(return_value=False)
-        session = _mock_session(resp_get=cm)
+        client = _mock_client()
+        client.fetch_raw = AsyncMock(return_value=fake_json)
 
-        with patch("services.workers.getprices.aiohttp.ClientSession", return_value=session):
+        with patch("services.workers.getprices.APIClient") as mock_api:
+            mock_api.return_value.__aenter__ = AsyncMock(return_value=client)
+            mock_api.return_value.__aexit__ = AsyncMock(return_value=False)
             result = await fetch_baseline_prices()
 
         assert len(result) == 2
-        assert result[1001] == {"buy_price": 4.5, "sell_price": 5.0, "adjusted_price": 5.0, "buy_volume": 0, "sell_volume": 0}
-        assert result[1002] == {"buy_price": None, "sell_price": 9.5, "adjusted_price": 9.5, "buy_volume": 0, "sell_volume": 0}
+        assert result[1001] == {
+            "buy_price": 4.5,
+            "sell_price": 5.0,
+            "adjusted_price": 5.0,
+            "buy_volume": 0,
+            "sell_volume": 0,
+        }
+        assert result[1002] == {
+            "buy_price": None,
+            "sell_price": 9.5,
+            "adjusted_price": 9.5,
+            "buy_volume": 0,
+            "sell_volume": 0,
+        }
 
         # 验证请求发送至正确 URL
-        session.get.assert_called_once()
-        args, _ = session.get.call_args
-        assert "/markets/prices/" in args[0]
+        client.fetch_raw.assert_awaited_once()
+        url = client.fetch_raw.await_args.args[0]
+        assert "/markets/prices/" in url
+
+    @pytest.mark.asyncio
+    async def test_failed_baseline_returns_empty(self):
+        """拉取失败（None）→ 返回空 dict，不再抛异常（回归：无超时裸请求直接上抛）"""
+        client = _mock_client()
+        client.fetch_raw = AsyncMock(return_value=None)
+
+        with patch("services.workers.getprices.APIClient") as mock_api:
+            mock_api.return_value.__aenter__ = AsyncMock(return_value=client)
+            mock_api.return_value.__aexit__ = AsyncMock(return_value=False)
+            result = await fetch_baseline_prices()
+
+        assert result == {}
 
 
 # ════════════════════════════════════════════════════════════
@@ -142,22 +179,18 @@ class TestDiscoverPages:
         """验证 X-Pages 头被正确解析，_PAGE_CACHE 被填充"""
         _PAGE_CACHE.clear()
 
-        # 两个并发请求（sell + buy）共享同一响应
-        resp = _mock_response(headers={"X-Pages": "3"})
-        cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=resp)
-        cm.__aexit__ = AsyncMock(return_value=False)
-        session = _mock_session(resp_get=cm)
+        client = _mock_client()
+        client.get_headers = AsyncMock(return_value={"X-Pages": "3"})
 
         targets = [("Jita", 10000002)]
-        result = await discover_pages(session, targets)
+        result = await discover_pages(client, targets)
 
         assert result == {"10000002_sell": 3, "10000002_buy": 3}
         assert _PAGE_CACHE["10000002_sell"] == 3
         assert _PAGE_CACHE["10000002_buy"] == 3
 
-        # session.get 应被调用 2 次（sell + buy）
-        assert session.get.call_count == 2
+        # get_headers 应被调用 2 次（sell + buy）
+        assert client.get_headers.await_count == 2
 
     @pytest.mark.asyncio
     async def test_uses_cached_pages_skips_http(self):
@@ -166,30 +199,27 @@ class TestDiscoverPages:
         _PAGE_CACHE["10000002_sell"] = 1
         _PAGE_CACHE["10000002_buy"] = 2
 
-        session = _mock_session()  # 没有 mock session.get 返回值也没关系，因为不会被调用
+        client = _mock_client()
         targets = [("Jita", 10000002)]
 
-        result = await discover_pages(session, targets)
+        result = await discover_pages(client, targets)
 
         assert result == {"10000002_sell": 1, "10000002_buy": 2}
-        # 缓存命中，不应调用 session.get
-        session.get.assert_not_called()
+        # 缓存命中，不应调用 get_headers
+        client.get_headers.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_non_200_response_defaults_to_one_page(self):
-        """非 200 响应时 X-Pages defaults to 1"""
+    async def test_non_200_response_returns_empty(self):
+        """非 200 响应（get_headers=None）→ keys 为空且记日志"""
         _PAGE_CACHE.clear()
 
-        resp = _mock_response(status=500)
-        cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=resp)
-        cm.__aexit__ = AsyncMock(return_value=False)
-        session = _mock_session(resp_get=cm)
+        client = _mock_client()
+        client.get_headers = AsyncMock(return_value=None)
 
         targets = [("Jita", 10000002)]
-        result = await discover_pages(session, targets)
+        result = await discover_pages(client, targets)
 
-        # status != 200 → 不进入 if，keys 中无该 key
+        # get_headers None → 不进入写入分支，keys 中无该 key
         assert result == {}
 
 
@@ -207,35 +237,43 @@ class TestFetchOrderPages:
         page_size = 3
         page_data = [{"type_id": i, "price": float(i)} for i in range(page_size)]
 
-        resp = _mock_response(json_data=page_data)
-        cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=resp)
-        cm.__aexit__ = AsyncMock(return_value=False)
-        session = _mock_session(resp_get=cm)
+        client = _mock_client()
+        client.fetch_raw = AsyncMock(return_value=page_data)
 
-        result = await fetch_order_pages(session, 10000002, "sell", 4)
+        result = await fetch_order_pages(client, 10000002, "sell", 4)
 
         # 4 pages × 3 items each
         assert len(result) == 12
         assert result[0] == {"type_id": 0, "price": 0.0}
         assert result[-1] == {"type_id": 2, "price": 2.0}
-        # session.get 应被调用 4 次（每页一次）
-        assert session.get.call_count == 4
+        # fetch_raw 应被调用 4 次（每页一次）
+        assert client.fetch_raw.await_count == 4
         # 验证所有请求 URL 包含正确的 region_id 和 order_type
-        for call_args in session.get.call_args_list:
-            url = call_args[0][0]
+        for call_args in client.fetch_raw.await_args_list:
+            url = call_args.args[0]
             assert "10000002" in url
             assert "order_type=sell" in url
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_total_pages_is_zero(self):
         """total_pages=0 时不发起 HTTP 请求，返回空列表"""
-        session = _mock_session()
+        client = _mock_client()
 
-        result = await fetch_order_pages(session, 10000002, "buy", 0)
+        result = await fetch_order_pages(client, 10000002, "buy", 0)
 
         assert result == []
-        session.get.assert_not_called()
+        client.fetch_raw.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_failed_page_returns_empty_and_continues(self):
+        """单页失败（None）→ 该页为空不中断整体，且返回空页"""
+        client = _mock_client()
+        client.fetch_raw = AsyncMock(side_effect=[None, [{"type_id": 1}]])
+
+        result = await fetch_order_pages(client, 10000002, "buy", 2)
+
+        assert len(result) == 1  # 只含成功页数据
+        assert result[0] == {"type_id": 1}
 
 
 # ════════════════════════════════════════════════════════════
@@ -271,19 +309,17 @@ class TestFetchOrders:
         with (
             patch("services.workers.getprices.discover_pages") as mock_discover,
             patch("services.workers.getprices.fetch_order_pages") as mock_fetch_pages,
-            patch("services.workers.getprices.aiohttp.ClientSession") as mock_http,
+            patch("services.workers.getprices.APIClient") as mock_api,
         ):
-            # mock session 上下文管理器（不会被实际使用，但需要让 __aenter__ 通过）
-            fake_session = MagicMock()
-            fake_session.__aenter__ = AsyncMock(return_value=fake_session)
-            fake_session.__aexit__ = AsyncMock(return_value=False)
-            mock_http.return_value = fake_session
+            client = _mock_client()
+            mock_api.return_value.__aenter__ = AsyncMock(return_value=client)
+            mock_api.return_value.__aexit__ = AsyncMock(return_value=False)
 
             # discover_pages 返回单区域 Jita 均为 1 页
             mock_discover.return_value = {"10000002_buy": 1, "10000002_sell": 1}
 
             # fetch_order_pages 根据 order_type 返回不同数据
-            async def _fetch_side(session, region_id, order_type, total_pages):
+            async def _fetch_side(client, region_id, order_type, total_pages):
                 if order_type == "buy":
                     return buy_data
                 return sell_data
@@ -311,3 +347,68 @@ class TestFetchOrders:
         # 验证 discover_pages 和 fetch_order_pages 各被调用
         mock_discover.assert_awaited_once()
         assert mock_fetch_pages.await_count == 2  # buy + sell
+
+
+# ════════════════════════════════════════════════════════════
+#  Test — save_prices 失败保护
+# ════════════════════════════════════════════════════════════
+
+
+class TestSavePrices:
+    """save_prices — 拉取失败区域保留旧价格（回归：先 DELETE 后 INSERT 会清空旧数据）"""
+
+    @pytest.mark.asyncio
+    async def test_failed_region_skips_delete_and_insert(self):
+        """拉取失败的区域（order_prices 无该 region）→ 不 DELETE 旧价格"""
+        db = MagicMock()
+        db.execute = AsyncMock()
+        db.executemany = AsyncMock()
+        db.commit = AsyncMock()
+        cm = AsyncMock()
+        cm.__aenter__ = AsyncMock(return_value=db)
+        cm.__aexit__ = AsyncMock(return_value=False)
+
+        baseline = {
+            1: {"buy_price": 1.0, "sell_price": 2.0, "adjusted_price": 1.5, "buy_volume": 10, "sell_volume": 20}
+        }
+        # 仅 10000002 成功，10000043 失败（不在 order_prices）
+        order_prices = {
+            10000002: {
+                1: {"buy_price": 1.1, "sell_price": 2.1, "adjusted_price": 1.6, "buy_volume": 11, "sell_volume": 21}
+            },
+        }
+        from services.workers import getprices
+
+        with patch("services.workers.getprices.aiosqlite.connect", return_value=cm):
+            cnt = await getprices.save_prices(baseline, order_prices, region_ids=[10000002, 10000043])
+
+        # 只对成功区域执行 DELETE（1 次），失败区域无 DELETE
+        deletes = [c[0][0] for c in db.execute.await_args_list if c[0] and "DELETE" in c[0][0]]
+        assert len(deletes) == 1, f"只应对成功区域执行 1 次 DELETE，实际 {len(deletes)}"
+        assert "10000002" in str(db.execute.await_args_list[0][0]), "DELETE 应针对成功区域"
+        assert cnt == 1  # 只写入成功区域
+
+    @pytest.mark.asyncio
+    async def test_empty_region_data_keeps_old_prices(self):
+        """区域数据为空 dict（拉取无结果）→ 跳过删除，旧价格保留"""
+        db = MagicMock()
+        db.execute = AsyncMock()
+        db.executemany = AsyncMock()
+        db.commit = AsyncMock()
+        cm = AsyncMock()
+        cm.__aenter__ = AsyncMock(return_value=db)
+        cm.__aexit__ = AsyncMock(return_value=False)
+
+        baseline = {
+            1: {"buy_price": 1.0, "sell_price": 2.0, "adjusted_price": 1.5, "buy_volume": 10, "sell_volume": 20}
+        }
+        order_prices = {10000002: {}}  # 区域存在但拉取结果为空
+
+        from services.workers import getprices
+
+        with patch("services.workers.getprices.aiosqlite.connect", return_value=cm):
+            cnt = await getprices.save_prices(baseline, order_prices, region_ids=[10000002])
+
+        deletes = [c[0][0] for c in db.execute.await_args_list if c[0] and "DELETE" in c[0][0]]
+        assert deletes == [], "空数据区域不应执行 DELETE（旧价格保留）"
+        assert cnt == 0

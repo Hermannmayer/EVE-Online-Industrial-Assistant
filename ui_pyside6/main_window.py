@@ -528,6 +528,14 @@ class MainWindow(QMainWindow):
 
         if success:
             self._status_info_label.setText("价格更新完成")
+            # 价格已变 → 评分缓存失效（TTL 1800s 内的旧评分不能复用）
+            try:
+                from services.scoring_service import invalidate_cache
+
+                invalidate_cache()
+                get_container().scoring_service().invalidate_cache()
+            except Exception:
+                pass
             self._refresh_price_age()
             self._refresh_item_count()
             page = self._pages.get("query")
@@ -583,34 +591,35 @@ class MainWindow(QMainWindow):
             cursor.execute("SELECT MAX(fetch_time) FROM market_prices")
             row = cursor.fetchone()
             conn.close()
-            if row and row[0]:
-                utc_str = row[0]
-                try:
-                    dt = datetime.strptime(utc_str, "%Y-%m-%d %H:%M:%S")
-                    now_utc = datetime.now(UTC).replace(tzinfo=None)
-                    diff_sec = (now_utc - dt).total_seconds()
-                    diff_min = int(diff_sec / 60)
-
-                    if diff_min < 10:
-                        color = theme.GREEN
-                        age_text = f"🟢 {diff_min} 分钟前"
-                    elif diff_min < 30:
-                        color = theme.ACCENT_YELLOW
-                        age_text = f"🟡 {diff_min} 分钟前"
-                    else:
-                        color = theme.ACCENT_RED
-                        age_text = f"🔴 {diff_min} 分钟前"
-
-                    bj_dt = dt.replace(tzinfo=UTC) + timedelta(hours=8)
-                    bj_str = bj_dt.strftime("%H:%M")
-                    self._price_age_label.setText(f"⏳ 价格: {age_text} ({bj_str})")
-                    self._price_age_label.setStyleSheet(f"color: {color}; padding: 0 8px;")
-                    self._status_info_label.setText(f"价格: {bj_str} | {age_text}")
-                except Exception:
-                    self._price_age_label.setText("⏳ 价格: 解析异常")
+            if not (row and row[0]):
                 self._price_age_label.setText("⏳ 价格: 暂无数据")
                 self._price_age_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; padding: 0 8px;")
                 self._status_info_label.setText("价格: 暂无数据")
+                return
+            utc_str = row[0]
+            try:
+                dt = datetime.strptime(utc_str, "%Y-%m-%d %H:%M:%S")
+                now_utc = datetime.now(UTC).replace(tzinfo=None)
+                diff_sec = (now_utc - dt).total_seconds()
+                diff_min = int(diff_sec / 60)
+
+                if diff_min < 10:
+                    color = theme.GREEN
+                    age_text = f"🟢 {diff_min} 分钟前"
+                elif diff_min < 30:
+                    color = theme.ACCENT_YELLOW
+                    age_text = f"🟡 {diff_min} 分钟前"
+                else:
+                    color = theme.ACCENT_RED
+                    age_text = f"🔴 {diff_min} 分钟前"
+
+                bj_dt = dt.replace(tzinfo=UTC) + timedelta(hours=8)
+                bj_str = bj_dt.strftime("%H:%M")
+                self._price_age_label.setText(f"⏳ 价格: {age_text} ({bj_str})")
+                self._price_age_label.setStyleSheet(f"color: {color}; padding: 0 8px;")
+                self._status_info_label.setText(f"价格: {bj_str} | {age_text}")
+            except Exception:
+                self._price_age_label.setText("⏳ 价格: 解析异常")
         except Exception:
             self._price_age_label.setText("⏳ 价格: 数据库未就绪")
 
