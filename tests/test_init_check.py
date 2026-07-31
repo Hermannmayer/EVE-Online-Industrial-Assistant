@@ -220,6 +220,7 @@ def test_missing_count_zero(full_dbs, tmp_path):
     with (
         _patch_init_check(full_dbs),
         patch("core.paths.icon_cache_dir", return_value=str(icons_dir)),
+        patch("services.init_check.check_schema", return_value=True),
     ):
         assert missing_count() == 0
 
@@ -247,6 +248,7 @@ def test_missing_count_partial(db_paths):
     with (
         _patch_init_check(db_paths),
         patch("core.paths.icon_cache_dir", return_value="/nonexistent_icons"),
+        patch("services.init_check.check_schema", return_value=True),
     ):
         cnt = missing_count()
         # items=False, prices=False, blueprints=False, implants=False,
