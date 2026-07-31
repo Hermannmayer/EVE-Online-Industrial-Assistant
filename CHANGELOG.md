@@ -6,6 +6,14 @@
 
 <!-- version list -->
 
+## v0.9.0 (2026-07-31)
+
+### Features
+
+- 顶栏/状态栏精简重构 — 价格年龄定时刷新、更新按钮拆分+区域持久化、去重状态栏、分档测试脚本
+  ([`7c24921`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/7c249214657770fe9dd1231b262dfb1e1274dcad))
+
+
 ## v0.8.0 (2026-07-31)
 
 ### Bug Fixes
