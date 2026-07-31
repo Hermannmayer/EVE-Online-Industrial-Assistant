@@ -92,7 +92,6 @@ graph TB
 | `refining_service.py` | 精炼价值计算 |
 | `inventory_manager.py` | 库存 CRUD + 加权平均成本 |
 | `manufacturing_calculator.py` | 制造计算核心（材料/安装费/生产时长） |
-| `production_scheduler.py` | 生产调度（并行产线管理） |
 | `plan_aggregator.py` | 计划数据聚合（汇总多计划信息） |
 | `database_manager.py` | 多库连接管理（ATTACH DATABASE） |
 | `repositories/` | 4 个数据仓库（Item/Market/Blueprint/Plan） |
@@ -153,7 +152,7 @@ from services.pricing_service import PricingService  # 禁止
 ```python
 class DatabaseManager:
     """多库连接管理 — 按别名连接 4 个 SQLite 文件"""
-    
+
     def connect(self, alias: str = "ref"):
         """获取指定库的连接"""
         # alias: ref / mkt / bp / usr

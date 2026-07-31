@@ -32,7 +32,6 @@
 | [`services.refining_service`](/api/services/refining_service) | 精炼价值计算 |
 | [`services.inventory_manager`](/api/services/inventory_manager) | 库存 CRUD + 加权平均成本 |
 | [`services.plan_aggregator`](/api/services/plan_aggregator) | 计划数据聚合 |
-| [`services.production_scheduler`](/api/services/production_scheduler) | 生产调度 |
 | [`services.database_manager`](/api/services/database_manager) | 多库连接管理（ATTACH DATABASE） |
 | [`services.init_check`](/api/services/init_check) | 数据初始化状态检测 |
 | [`services.init_service`](/api/services/init_service) | 初始化服务（SDE/ESI 数据拉取） |
