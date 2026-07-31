@@ -4,6 +4,26 @@
 > 共收录 48 篇相关文章
 ---
 
+## SDE 数据字段语义与验证记录
+
+> 验证日期: 2026-07-31 | 验证方法: 实际解析最新 SDE (`eve-static-data-export.../tranquility/sde.zip`) + 游戏内实测
+> 用途: 判断公式/字段语义时以此为契约，避免凭过时记忆（如旧机制）误判
+
+| 字段 | 语义 | 验证方法 | 状态 |
+|------|------|---------|------|
+| `blueprints.yaml` materials.quantity | **含浪费的 ME0 需求量**（wasteFactor 已从 SDE 移除，quantity 直接包含浪费） | 实际解析最新 SDE（36,193 条材料 0 条含 wasteFactor；BP 683 三钛=24000）+ 游戏实测 | ✅ 已确认 |
+| `reprocessing_materials.quantity` | 不含回收率的基准量（实际产出 = quantity × yield_rate） | 实际数据（凡晶石→三钛 400） | ✅ 已确认 |
+| `item.volume` | 立方米 | 实际数据（舰船 20000.0、矿物 0.1） | ✅ 已确认 |
+| `blueprints.yaml` activities.time / products.probability / maxProductionLimit | 语义稳定 | 实际解析 | ✅ 已确认 |
+| ~~blueprints.yaml materials.wasteFactor~~ | **已移除**（旧格式字段；代码 `getblueprints.py:122` 用 `mat.get("wasteFactor", 10)` 兜底 → 数据库永远存 10，不参与计算） | 实际解析最新 SDE | ⚠️ 假数据，仅历史兼容 |
+
+**材料效率公式契约**（2026-07-31 核实，与游戏实测一致）：
+`每轮材料 = ceil(SDE_quantity × (100 - ME) / 100 × 结构减免)`，ME 每级 -1%，上限 10。
+旧公式 `1 + wf/(100×(1+ME))` 是 wasteFactor 时代（Crius 前）的过时实现，勿恢复。
+详见 `tests/test_manufacturing_calculator_golden.py`（金标准测试，数值来自游戏实测）。
+
+---
+
 ## 一、制造与科研
 
 涵盖蓝图、制造、拷贝、发明、材料/时间效率研究、反应、工业界面等。
