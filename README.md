@@ -145,7 +145,9 @@ git clone https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant.git
 cd EVE-Online-Industrial-Assistant
 
 # 创建虚拟环境并安装依赖（含 dev 测试工具）
-# 需要先安装 uv：pip install uv
+# 需要先安装 uv（官方安装脚本）：
+#   Windows (PowerShell): powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+#   macOS / Linux:        curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync --dev
 
 # 激活虚拟环境

@@ -1,0 +1,79 @@
+# services.workers.getcontracts
+
+> 源文件 `services/workers/getcontracts.py` · 由 `scripts/gen_api_docs.py` 自动生成，请勿手改
+
+> 模块说明：
+
+公开合同拉取 — 4 大贸易中心公开合同 + 合同内物品
+
+## 函数
+
+### `write_progress`
+
+```python
+def write_progress(cur: int, total: int, phase: str='')
+```
+
+写入进度文件供 UI 读取
+
+定义行：`51`
+
+### `init_db`
+
+```python
+async def init_db()
+```
+
+初始化合同相关数据库表
+
+定义行：`62`
+
+### `fetch_contract_pages`
+
+```python
+async def fetch_contract_pages(session: aiohttp.ClientSession, region_id: int) -> list[dict]
+```
+
+拉取一个区域的全部公开合同（分页）
+
+定义行：`111`
+
+### `fetch_contract_items`
+
+```python
+async def fetch_contract_items(session: aiohttp.ClientSession, contract_ids: list[int]) -> dict[int, list[dict]]
+```
+
+并发拉取多个合同的物品列表
+
+定义行：`153`
+
+### `save_contracts`
+
+```python
+async def save_contracts(all_contracts: dict[int, list[dict]], all_items: dict[int, list[dict]], region_ids: list[int]) -> tuple[int, int]
+```
+
+批量写入合同和物品数据
+
+定义行：`180`
+
+### `main`
+
+```python
+async def main(regions: list[tuple[str, int]] | None=None)
+```
+
+主流程：拉取合同并存入数据库
+
+定义行：`279`
+
+### `run_contract_update`
+
+```python
+def run_contract_update(regions: list[str] | None=None)
+```
+
+运行合同更新。
+
+定义行：`333`
