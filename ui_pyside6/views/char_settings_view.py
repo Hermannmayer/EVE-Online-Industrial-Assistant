@@ -27,8 +27,21 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
-from core.paths import data_dir
-from services.char_config_validator import load_char_config
+from services.char_config_resolver import (
+    char_config_path as services_char_config_path,
+)
+from services.char_config_resolver import (
+    get_character as services_get_character,
+)
+from services.char_config_resolver import (
+    get_character_list as services_get_character_list,
+)
+from services.char_config_resolver import (
+    load_all_data as services_load_all_data,
+)
+from services.char_config_resolver import (
+    save_all_data as services_save_all_data,
+)
 
 # ═══════════════════════════════════════════
 #  游戏公式
@@ -45,7 +58,10 @@ def calc_broker_fee(skills: dict, faction_standing: float, corp_standing: float,
     if standing_factor == 0:
         return base_rate
     return max(0.1, (base_rate - 0.05 * broker_rel) / standing_factor)  # type: ignore[no-any-return]
-  # type: ignore[no-any-return]
+
+
+# type: ignore[no-any-return]
+
 
 def calc_relist_discount(skills: dict) -> float:
     """
@@ -54,13 +70,19 @@ def calc_relist_discount(skills: dict) -> float:
     """
     adv = skills.get("高级经纪人关系学", 0)
     return 50 + adv * 5  # type: ignore[no-any-return]
-  # type: ignore[no-any-return]
+
+
+# type: ignore[no-any-return]
+
 
 def calc_sales_tax(skills: dict, base_tax: float = 2.0) -> float:
     """计算销售税率 (%)  accounting: 每级 -3%"""
     accounting = skills.get("会计学", 0)
     return base_tax * (1 - 0.03 * accounting)  # type: ignore[no-any-return]
-  # type: ignore[no-any-return]
+
+
+# type: ignore[no-any-return]
+
 
 def calc_max_orders(skills: dict, base_orders: int = 15) -> int:
     """计算最大订单数"""
@@ -69,7 +91,10 @@ def calc_max_orders(skills: dict, base_orders: int = 15) -> int:
     wholesale = skills.get("批发技巧", 0)
     tycoon = skills.get("商业巨头", 0)
     return base_orders + 4 * trade + 8 * retail + 16 * wholesale + 32 * tycoon  # type: ignore[no-any-return]
-  # type: ignore[no-any-return]
+
+
+# type: ignore[no-any-return]
+
 
 def format_pct(value: float) -> str:
     return f"{value:.2f}%"
@@ -212,25 +237,21 @@ TRADE_HUBS = [
 
 
 # ═══════════════════════════════════════════
-#  配置文件路径
+#  配置文件路径（实现已下沉至 services.char_config_resolver，此处仅 re-export 保持兼容）
 # ═══════════════════════════════════════════
 
 
 def char_config_path() -> str:
-    return os.path.join(data_dir(), "char_config.json")
+    return services_char_config_path()
 
 
 def load_all_data() -> dict:
     """加载完整配置"""
-    path = char_config_path()
-    return load_char_config(path)
+    return services_load_all_data()
 
 
 def save_all_data(data: dict):
-    path = char_config_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    services_save_all_data(data)
 
 
 # ═══════════════════════════════════════════
@@ -245,8 +266,6 @@ def load_implants() -> list[dict]:
     global IMPLANT_CACHE
     if IMPLANT_CACHE:
         return IMPLANT_CACHE
-
-    import os
 
     from core.paths import REF_DB_PATH
 
@@ -317,15 +336,16 @@ def _parse_implant_bonus(attrs: list) -> str:
 
 def get_character_list() -> list[str]:
     """获取所有角色名列表"""
-    data = load_all_data()
-    return list(data.get("characters", {}).keys())
+    return services_get_character_list()
 
 
 def get_character(name: str) -> dict | None:
     """获取指定角色的完整配置"""
-    data = load_all_data()
-    return data.get("characters", {}).get(name)  # type: ignore[no-any-return]
-  # type: ignore[no-any-return]
+    return services_get_character(name)
+
+
+# type: ignore[no-any-return]
+
 
 def get_market_rate(char_name: str, hub: str, skills: dict | None = None) -> dict:
     """

@@ -7,11 +7,19 @@ repos:
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.10.0
+    rev: v2.3.0
     hooks:
       - id: mypy
-        additional_dependencies: [types-PySide6]
-        args: [--ignore-missing-imports]
+        # 项目运行时依赖：mypy 隔离环境需真实类型才能正确解析（缺依赖 → Any 传播误报）
+        additional_dependencies:
+          - types-PySide6
+          - aiohttp~=3.13.0
+          - aiosqlite~=0.22.0
+          - tenacity~=9.0.0
+          - pyyaml~=6.0.0
+          - openpyxl~=3.1.0
+          - tqdm~=4.67.0
+        args: [--ignore-missing-imports, --config-file, pyproject.toml]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0

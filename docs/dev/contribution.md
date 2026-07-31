@@ -25,9 +25,9 @@
 
 | Type | 用途 | 影响版本 |
 |------|------|----------|
-| `feat` | 新功能 | MINOR（0.2.0 → 0.3.0）|
-| `fix` | Bug 修复 | MINOR（0.x 阶段）|
-| `perf` | 性能优化 | MINOR（0.x 阶段）|
+| `feat` | 新功能 | MINOR（0.7.0 → 0.8.0）|
+| `fix` | Bug 修复 | PATCH（0.7.0 → 0.7.1）|
+| `perf` | 性能优化 | PATCH（0.7.0 → 0.7.1）|
 | `docs` | 文档更新 | 不触发发版 |
 | `refactor` | 重构 | 不触发发版 |
 | `test` | 测试 | 不触发发版 |
@@ -43,7 +43,7 @@ fix: 修复安装费计算使用 adjusted_price 而非实时卖出价
 docs: 更新 API 参考文档
 ```
 
-> ⚠️ **0.x 阶段**：feat/fix/perf 都会触发 MINOR bump（PATCH 在 0.x 阶段不使用）。
+> ⚠️ **版本影响**：`feat` 触发 MINOR bump，`fix`/`perf` 触发 PATCH bump，其余类型不触发发版；大版本由发布者手动决定。
 
 ## Pull Request 流程
 

@@ -41,7 +41,7 @@ class APIClient:
         wait_time = int(retry_after) if retry_after.isdigit() else 30
         await asyncio.sleep(min(wait_time, 120))
 
-    async def fetch(self, url: str):
+    async def fetch(self, url: str) -> dict | None:
         """GET 请求，返回解析后的 JSON，404/超时返回 None"""
         retry_deco = retry(
             stop=stop_after_attempt(self._retries),
@@ -50,7 +50,7 @@ class APIClient:
         )
 
         @retry_deco
-        async def _do_fetch():
+        async def _do_fetch() -> dict | None:
             async with self.semaphore:  # type: ignore[union-attr]
                 async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
                     if resp.status == 429:
@@ -62,7 +62,8 @@ class APIClient:
                     text = await resp.text()
                     if not text.strip():
                         return None
-                    return json.loads(text)
+                    parsed = json.loads(text)
+                    return parsed if isinstance(parsed, dict) else None
 
         try:
             return await _do_fetch()

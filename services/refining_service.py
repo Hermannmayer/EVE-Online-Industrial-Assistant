@@ -36,7 +36,7 @@ class RefiningService:
         with self._db.connect("ref") as conn:
             cur = conn.cursor()
             cur.execute(
-                "SELECT material_type_id, quantity FROM type_materials WHERE type_id = ?",
+                "SELECT material_type_id, quantity FROM reprocessing_materials WHERE type_id = ?",
                 (type_id,),
             )
             materials = cur.fetchall()

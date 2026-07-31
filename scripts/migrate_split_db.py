@@ -188,6 +188,12 @@ CREATE TABLE IF NOT EXISTS user_skills (
     skill_type_id INTEGER PRIMARY KEY,
     level INTEGER DEFAULT 5
 );
+
+-- 迁移完成标记：Main.py 据此判断拆分是否完整，半途中断可重跑
+CREATE TABLE IF NOT EXISTS _split_migration_complete (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    completed_at TEXT DEFAULT (datetime('now'))
+);
 """
 
 
@@ -216,28 +222,6 @@ def copy_table(src: sqlite3.Connection, dst: sqlite3.Connection, table: str):
 
     dst.executemany(f"INSERT OR IGNORE INTO {table} ({cols_str}) VALUES ({placeholders})", rows)
     log.info(f"  ✅ {table}: {len(rows)} 行")
-
-
-def _upgrade_schema(db_path: str, label: str):
-    """升级已有数据库的 schema（添加新列，忽略已存在的情况）"""
-    try:
-        conn = sqlite3.connect(db_path)
-        upgrades = [
-            "ALTER TABLE blueprint_materials ADD COLUMN wastefactor INTEGER DEFAULT 10",
-        ]
-        for sql in upgrades:
-            try:
-                conn.execute(sql)
-                log.info(f"  ✅ {label}: 执行 \"{sql.split('ADD')[1].strip()}\"")
-            except sqlite3.OperationalError as e:
-                if "duplicate column" in str(e).lower():
-                    log.info(f"  ℹ️ {label}: 列已存在，跳过")
-                else:
-                    log.warning(f"  ⚠️ {label}: {e}")
-        conn.commit()
-        conn.close()
-    except Exception:
-        log.exception(f"  ❌ {label}: Schema 升级失败")
 
 
 def run_migration():
@@ -296,13 +280,12 @@ def run_migration():
     for table in user_tables:
         copy_table(src_conn, usr_conn, table)
     usr_conn.commit()
+    # 迁移完成标记（半途中断重跑：Main.py 检查该标记决定是否跳过）
+    usr_conn.execute("INSERT OR REPLACE INTO _split_migration_complete (id, completed_at) VALUES (1, datetime('now'))")
+    usr_conn.commit()
     usr_conn.close()
 
     src_conn.close()
-
-    # ── Schema 升级（处理已有旧表的 ALTER TABLE） ──
-    log.info("\n[4/4] Schema 升级检查...")
-    _upgrade_schema(REF_DB_PATH, "蓝图表")
 
     # ── 统计 ──
     log.info("\n" + "=" * 50)
