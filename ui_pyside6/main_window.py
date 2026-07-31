@@ -11,7 +11,6 @@ from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
-    QComboBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -129,26 +128,27 @@ class MainWindow(QMainWindow):
             # 手动刷新样式表，因为 _on_theme_changed 监听器尚未注册
             self.setStyleSheet(theme.get_stylesheet())
 
+        # ── 更新区域勾选（默认仅 Jita，可从 settings 读取）──
+        self._update_regions: list[str] = self._load_update_regions()
+
         # ── 顶部工具栏 ──
         toolbar = QToolBar("主工具栏")
         toolbar.setObjectName("main_toolbar")
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(16, 16))
 
-        self._region_combo = QComboBox()
-        self._region_combo.addItems(TRADE_HUBS + ["全部区域"])
-        self._region_combo.setCurrentText("全部区域")
-        self._region_combo.setFixedWidth(120)
-        self._region_combo.currentTextChanged.connect(self._on_region_changed)
-        toolbar.addWidget(QLabel("  区域: "))
-        toolbar.addWidget(self._region_combo)
-        toolbar.addSeparator()
+        # 区域勾选下拉（InstantPopup：点击直接弹出复选框菜单）
+        self._region_menu_btn = QToolButton()
+        self._region_menu_btn.setObjectName("region_menu_btn")
+        self._region_menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._region_menu_btn.setMenu(self._build_region_menu())
+        self._refresh_region_btn_text()
+        toolbar.addWidget(self._region_menu_btn)
 
+        # 更新价格（纯按钮）
         self._update_btn = QToolButton()
         self._update_btn.setText("↻ 更新价格")
         self._update_btn.setObjectName("toolbar_update_btn")
-        self._update_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self._update_btn.setMenu(self._build_update_menu())
         self._update_btn.clicked.connect(self._trigger_price_update)
         toolbar.addWidget(self._update_btn)
 
@@ -156,13 +156,6 @@ class MainWindow(QMainWindow):
         self._price_age_label.setObjectName("price_age_label")
         self._price_age_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; padding: 0 8px;")
         toolbar.addWidget(self._price_age_label)
-
-        toolbar.addSeparator()
-
-        self._item_count_label = QLabel("物品: —")
-        self._item_count_label.setObjectName("item_count_label")
-        self._item_count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; padding: 0 8px;")
-        toolbar.addWidget(self._item_count_label)
 
         self.addToolBar(toolbar)
 
@@ -178,12 +171,8 @@ class MainWindow(QMainWindow):
         self._update_progress.setFixedHeight(16)
         self._update_progress.setVisible(False)
 
-        self._status_info_label = QLabel("")
-        self._status_info_label.setObjectName("status_info_label")
-
         self.status_bar.addWidget(self._status_label, 1)
         self.status_bar.addWidget(self._update_progress)
-        self.status_bar.addPermanentWidget(self._status_info_label)
 
         # ── 中央布局 ──
         central = QWidget()
@@ -218,11 +207,24 @@ class MainWindow(QMainWindow):
 
         # ── 初始化定时器：价格检查 ──
         self._price_worker: PriceUpdateWorker | None = None
-        self._update_regions: list[str] = list(TRADE_HUBS)
         self._update_interval_minutes = self._load_interval()
         self._auto_update_enabled = self._load_auto_update()
         self._price_timer: QTimer | None = None
         self._init_price_check()
+
+        # ── 价格年龄标签细粒度刷新：让"X分钟前"随时间走动（独立于自动更新开关）──
+        self._price_age_timer = QTimer(self)
+        self._price_age_timer.timeout.connect(self.refresh_price_time)
+        self._price_age_timer.start(60 * 1000)
+
+        # ── 自动更新状态指示（点击切换开/关）──
+        self._auto_update_btn = QToolButton()
+        self._auto_update_btn.setObjectName("auto_update_btn")
+        self._auto_update_btn.setCheckable(True)
+        self._auto_update_btn.setToolTip("自动更新价格（点击切换开/关）")
+        self._refresh_auto_update_label()
+        self._auto_update_btn.toggled.connect(self._on_auto_update_toggled)
+        toolbar.addWidget(self._auto_update_btn)
 
         # ── 启动周期性价格定时器 ──
         if self._auto_update_enabled and self._update_interval_minutes > 0:
@@ -465,7 +467,6 @@ class MainWindow(QMainWindow):
     def _on_price_check_done(self, needs_update: bool, status_text: str):
         self._status_label.setText(status_text)
         self._refresh_price_age()
-        self._refresh_item_count()
         if needs_update:
             if self._auto_update_enabled:
                 self._status_label.setText("正在自动更新价格...")
@@ -482,6 +483,9 @@ class MainWindow(QMainWindow):
         self._update_progress.setRange(0, 0)  # indeterminate
 
         regions = None if set(self._update_regions) == set(TRADE_HUBS) else self._update_regions
+        if regions is not None and not regions:
+            self._status_label.setText("请先在区域菜单勾选至少一个贸易中心")
+            return
         if regions:
             self._status_label.setText(f"正在更新 {', '.join(regions)}...")
         else:
@@ -491,18 +495,32 @@ class MainWindow(QMainWindow):
         self._price_worker.finished_signal.connect(self._on_price_update_done)
         self._price_worker.start()
 
-    def _build_update_menu(self) -> QMenu:
+    def _build_region_menu(self) -> QMenu:
         menu = QMenu(self)
         menu.setObjectName("sys_menu")
         self._region_actions = {}
         for name in TRADE_HUBS:
             action = QAction(name, self)
             action.setCheckable(True)
-            action.setChecked(True)
-            action.triggered.connect(lambda n=name: self._on_region_toggle(n))
+            action.setChecked(name in self._update_regions)
+            # triggered(bool) 会传 checked 状态，用 n=name 固定区域名（否则 name 被 bool 覆盖）
+            action.triggered.connect(lambda checked, n=name: self._on_region_toggle(n))
             self._region_actions[name] = action
             menu.addAction(action)
         return menu
+
+    def _refresh_region_btn_text(self):
+        """按当前勾选集合刷新区域下拉按钮文本（多选截断 + tooltip 显示完整）"""
+        regions = self._update_regions
+        if set(regions) == set(TRADE_HUBS):
+            self._region_menu_btn.setText("区域: 全部")
+        elif not regions:
+            self._region_menu_btn.setText("区域: 无")
+        elif len(regions) <= 2:
+            self._region_menu_btn.setText(f"区域: {', '.join(regions)}")
+        else:
+            self._region_menu_btn.setText(f"区域: {', '.join(regions[:2])} +{len(regions) - 2}")
+        self._region_menu_btn.setToolTip(f"更新区域: {', '.join(regions) if regions else '无'}")
 
     def _on_region_toggle(self, name: str):
         action = self._region_actions.get(name)
@@ -513,21 +531,15 @@ class MainWindow(QMainWindow):
                 self._update_regions.append(name)
         elif name in self._update_regions:
             self._update_regions.remove(name)
-
-        all_selected = set(self._update_regions) == set(TRADE_HUBS)
-        if all_selected:
-            self._update_btn.setText("更新价格")
-        elif self._update_regions:
-            self._update_btn.setText(f"更新 {', '.join(self._update_regions)}")
-        else:
-            self._update_btn.setText("更新价格（无选中）")
+        self._refresh_region_btn_text()
+        self._save_settings()
 
     def _on_price_update_done(self, success: bool, message: str):
         self._update_progress.setVisible(False)
         self._update_progress.setRange(0, 100)
 
         if success:
-            self._status_info_label.setText("价格更新完成")
+            self._status_label.setText("价格更新完成")
             # 价格已变 → 评分缓存失效（TTL 1800s 内的旧评分不能复用）
             try:
                 from services.scoring_service import invalidate_cache
@@ -537,14 +549,13 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             self._refresh_price_age()
-            self._refresh_item_count()
             page = self._pages.get("query")
             if page and hasattr(page, "refresh_display"):
                 page.refresh_display()
             # 价格变化检查 & 通知
             self._check_and_notify_price_changes()
         else:
-            self._status_info_label.setText(f"价格更新失败: {message}")
+            self._status_label.setText(f"价格更新失败: {message}")
 
     def _check_and_notify_price_changes(self):
         """检查关注列表价格变化，使用持久托盘图标弹通知"""
@@ -584,7 +595,7 @@ class MainWindow(QMainWindow):
             self._status_label.setText(f"价格变化检测失败: {ex}")
 
     def _refresh_price_age(self):
-        """刷新工具栏上的价格年龄标签 + 状态栏信息"""
+        """刷新工具栏上的价格年龄标签"""
         try:
             conn = get_container().db.direct_connect("mkt")
             cursor = conn.cursor()
@@ -594,7 +605,6 @@ class MainWindow(QMainWindow):
             if not (row and row[0]):
                 self._price_age_label.setText("⏳ 价格: 暂无数据")
                 self._price_age_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; padding: 0 8px;")
-                self._status_info_label.setText("价格: 暂无数据")
                 return
             utc_str = row[0]
             try:
@@ -617,38 +627,10 @@ class MainWindow(QMainWindow):
                 bj_str = bj_dt.strftime("%H:%M")
                 self._price_age_label.setText(f"⏳ 价格: {age_text} ({bj_str})")
                 self._price_age_label.setStyleSheet(f"color: {color}; padding: 0 8px;")
-                self._status_info_label.setText(f"价格: {bj_str} | {age_text}")
             except Exception:
                 self._price_age_label.setText("⏳ 价格: 解析异常")
         except Exception:
             self._price_age_label.setText("⏳ 价格: 数据库未就绪")
-
-    def _refresh_item_count(self):
-        """刷新工具栏上的物品总数"""
-        try:
-            conn = get_container().db.direct_connect("ref")
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM item")
-            row = cursor.fetchone()
-            conn.close()
-            if row and row[0]:
-                count = row[0]
-                if count >= 10000:
-                    self._item_count_label.setText(f"物品: {count // 10000} 万+")
-                else:
-                    self._item_count_label.setText(f"物品: {count}")
-        except Exception:
-            self._item_count_label.setText("物品: —")
-
-    def _on_region_changed(self, region: str):
-        """工具栏区域选择变更"""
-        if region == "全部区域":
-            self._update_regions = ["Jita", "Amarr", "Dodixie", "Rens"]
-            self._update_btn.setText("↻ 更新价格")
-        else:
-            self._update_regions = [region]
-            self._update_btn.setText(f"↻ 更新 {region}")
-        self._status_info_label.setText(f"区域: {region}")
 
     # ═══════════════════════════════════════
     #  其他事件
@@ -744,11 +726,16 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_auto_update_toggled(self, checked: bool):
+        """顶栏自动更新指示点击切换"""
         self._auto_update_enabled = checked
+        self._refresh_auto_update_label()
+        self._save_settings()
         if checked and self._update_interval_minutes > 0:
             self._start_price_timer()
+            self._status_label.setText(f"已开启自动更新（每 {self._update_interval_minutes} 分钟）")
         else:
             self._stop_price_timer()
+            self._status_label.setText("已关闭自动更新")
 
     def _on_settings_saved(self):
         self._update_interval_minutes = self._interval_spin.value()
@@ -781,6 +768,21 @@ class MainWindow(QMainWindow):
             log.exception("加载自动更新设置失败")
         return True
 
+    def _load_update_regions(self) -> list[str]:
+        """从 settings.json 读取勾选的更新区域，缺省仅 Jita"""
+        try:
+            p = search_history_file().replace("search_history", "settings")
+            if os.path.exists(p):
+                with open(p, encoding="utf-8") as f:
+                    regions = json.load(f).get("update_regions", [])
+                if isinstance(regions, list):
+                    valid = [r for r in regions if r in TRADE_HUBS]
+                    if valid:
+                        return valid
+        except Exception:
+            log.exception("加载更新区域设置失败")
+        return ["Jita"]
+
     def _save_settings(self):
         try:
             p = search_history_file().replace("search_history", "settings")
@@ -791,12 +793,14 @@ class MainWindow(QMainWindow):
                     data = json.load(f)
             data["update_interval"] = self._update_interval_minutes
             data["auto_update_enabled"] = self._auto_update_enabled
+            data["update_regions"] = list(self._update_regions)
             with open(p, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
             self._status_label.setText(f"保存设置失败: {e}")
 
     def _start_price_timer(self):
+        self._refresh_auto_update_label()
         if self._price_timer is not None:
             self._price_timer.stop()
         if self._update_interval_minutes <= 0:
@@ -806,9 +810,20 @@ class MainWindow(QMainWindow):
         self._price_timer.start(self._update_interval_minutes * 60 * 1000)
 
     def _stop_price_timer(self):
+        self._refresh_auto_update_label()
         if self._price_timer is not None:
             self._price_timer.stop()
             self._price_timer = None
+
+    def _refresh_auto_update_label(self):
+        """按自动更新开关与间隔刷新顶栏指示（checked + 文本）"""
+        self._auto_update_btn.setChecked(self._auto_update_enabled)
+        if self._auto_update_enabled and self._update_interval_minutes > 0:
+            self._auto_update_btn.setText(f"⏱ 每 {self._update_interval_minutes} 分钟")
+            self._auto_update_btn.setStyleSheet(f"color: {theme.GREEN}; padding: 0 8px;")
+        else:
+            self._auto_update_btn.setText("⏱ 自动更新: 关")
+            self._auto_update_btn.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; padding: 0 8px;")
 
     # ==================================================
     #  Hot Reload

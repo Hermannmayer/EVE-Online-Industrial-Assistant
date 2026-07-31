@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QPushButton,
     QSpinBox,
@@ -24,7 +23,6 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
-from core.constants import TRADE_HUBS
 from ui_pyside6.views.char_settings_view import get_character_list
 
 
@@ -71,20 +69,6 @@ class SettingsDialog(QDialog):
         w = QWidget()
         layout = QVBoxLayout(w)
         layout.setSpacing(8)
-
-        # 贸易中心
-        hub_group = QGroupBox("贸易中心")
-        hg = QVBoxLayout(hub_group)
-        self._hub_checks: dict[str, QCheckBox] = {}
-        hub_row = QHBoxLayout()
-        for name in TRADE_HUBS:
-            cb = QCheckBox(name)
-            cb.setChecked(True)
-            self._hub_checks[name] = cb
-            hub_row.addWidget(cb)
-        hub_row.addStretch()
-        hg.addLayout(hub_row)
-        layout.addWidget(hub_group)
 
         # 更新间隔
         interval_group = QGroupBox("价格更新")
@@ -151,11 +135,6 @@ class SettingsDialog(QDialog):
         group = QGroupBox("制造/贸易默认值")
         form = QFormLayout(group)
 
-        self._default_hub = QComboBox()
-        self._default_hub.addItems(TRADE_HUBS)
-        self._default_hub.setCurrentText("Jita")
-        form.addRow("默认贸易中心:", self._default_hub)
-
         self._default_char = QComboBox()
         chars = get_character_list()
         self._default_char.addItems(chars if chars else ["main"])
@@ -191,9 +170,6 @@ class SettingsDialog(QDialog):
         """从 main_window 读取当前设置"""
         if not self._mw:
             return
-        hubs = getattr(self._mw, "_update_regions", list(TRADE_HUBS))
-        for name, cb in self._hub_checks.items():
-            cb.setChecked(name in hubs)
 
         interval = getattr(self._mw, "_update_interval_minutes", 0)
         self._interval_spin.setValue(interval)
@@ -215,11 +191,6 @@ class SettingsDialog(QDialog):
         """应用设置（不关闭）"""
         if not self._mw:
             return
-
-        # 更新区域
-        selected = [name for name, cb in self._hub_checks.items() if cb.isChecked()]
-        if hasattr(self._mw, "_update_regions"):
-            self._mw._update_regions = selected if selected else ["Jita"]
 
         # 更新间隔
         if hasattr(self._mw, "_update_interval_minutes"):
