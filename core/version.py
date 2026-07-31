@@ -9,4 +9,4 @@
 PATCH 位在 0.x 阶段不用于常规递增（详见 docs/semver-zh.md）。
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
