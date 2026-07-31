@@ -19,6 +19,10 @@ def get_blueprint_wastefactor(
 ) -> int:
     """查询蓝图的材料 wastefactor。
 
+    ⚠️ 历史兼容：SDE 已移除 wasteFactor 字段（机制改革后 materials.quantity
+    直接包含浪费），本函数/数据库列的值恒为兜底 DEFAULT_WASTEFACTOR（10），
+    不参与任何计算。保留仅为不破坏既有数据与调用方。
+
     Args:
         conn: blueprint.db 的数据库连接
         blueprint_type_id: 蓝图 type_id
