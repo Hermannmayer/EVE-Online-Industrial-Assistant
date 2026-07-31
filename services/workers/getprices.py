@@ -61,7 +61,7 @@ async def init_db():
                 PRIMARY KEY (type_id, region_id)
             )
         """)
-        # 兼容旧库：补加 adjusted_price 列
+        # 兼容旧库：补加 adjusted_price 列（schema_migrations v1→v2 已注册，此处兜底旧版流程）
         try:
             await db.execute("ALTER TABLE market_prices ADD COLUMN adjusted_price REAL DEFAULT 0.0")
         except Exception:

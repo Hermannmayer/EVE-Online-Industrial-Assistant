@@ -108,48 +108,12 @@ PLAN_DB_SCHEMA = """CREATE TABLE IF NOT EXISTS production_plans (
 def init_plan_db():
     """初始化 production_plans 表。
 
-    注：扩展列迁移已由 schema_migrations user v2→v3 处理。
-    以下 ALTER TABLE 保留为旧库兼容 fallback，可后续移除。
+    注：扩展列迁移已由 schema_migrations user v2→v3 集中处理（Main.py 启动时执行），
+    此处不再重复 ALTER TABLE。
     """
     try:
         with get_container().db.connect("user") as conn:
             conn.executescript(PLAN_DB_SCHEMA)
-            # --- migration: production_plans 新字段 ---
-            new_cols = [
-                ("notes", "TEXT DEFAULT ''"),
-                ("group_number", "INTEGER DEFAULT 0"),
-                ("sub_level", "INTEGER DEFAULT 0"),
-                ("facility", "TEXT DEFAULT ''"),
-                ("output_location", "TEXT DEFAULT ''"),
-                ("sell_hub", "TEXT DEFAULT 'Jita'"),
-                ("market_margin", "REAL DEFAULT 0"),
-                ("personal_margin", "REAL DEFAULT 0"),
-                ("daily_output", "REAL DEFAULT 0"),
-                ("materials_ready", "INTEGER DEFAULT 0"),
-            ]
-            # 保留已有迁移
-            new_cols += [("iskph", "REAL DEFAULT 0"), ("material_cost", "REAL DEFAULT 0")]
-            # 设施成本系数
-            new_cols += [("facility_cost_mult", "REAL DEFAULT 1.0")]
-            # 制造时长（秒）
-            try:
-                conn.execute("ALTER TABLE production_plans ADD COLUMN calculated_time REAL DEFAULT 0")
-            except Exception:
-                log.debug("列已存在: calculated_time")
-            # 成品入库字段
-            for col, col_type in [
-                ("deposit_hangar_id", "INTEGER DEFAULT NULL"),
-                ("deposited", "INTEGER DEFAULT 0"),
-            ]:
-                try:
-                    conn.execute(f"ALTER TABLE production_plans ADD COLUMN {col} {col_type}")
-                except Exception:
-                    log.debug("列已存在: %s", col)
-            for col, col_type in new_cols:
-                try:
-                    conn.execute(f"ALTER TABLE production_plans ADD COLUMN {col} {col_type}")
-                except Exception:
-                    log.debug("列已存在: %s", col)
             # --- price_snapshots 表 ---
             conn.executescript("""CREATE TABLE IF NOT EXISTS price_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

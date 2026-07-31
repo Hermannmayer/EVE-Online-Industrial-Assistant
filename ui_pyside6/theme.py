@@ -4,6 +4,7 @@ One Dark Pro / One Light 主题系统 — 支持运行时切换
 
 import json
 import os
+import weakref
 from collections.abc import Callable
 from typing import cast
 
@@ -74,7 +75,9 @@ TEXT_ON_PRIMARY = ONE_DARK_PRO["TEXT_ON_PRIMARY"]
 BORDER = ONE_DARK_PRO["BORDER"]
 
 _current_theme = "dark"
-_theme_listeners: list[Callable[[], None]] = []
+# 监听器以弱引用存储：页面销毁后自动失效（GC 回收 → 引用失效），
+# 避免「页面常驻 stack 不销毁 + 匿名 lambda 永不 remove」导致的内存泄漏。
+_theme_listeners: list[weakref.ref] = []
 
 # ── 向后兼容别名 ──
 GREEN = ACCENT_GREEN
@@ -111,26 +114,47 @@ def apply_theme(theme_name: str) -> None:
     # 持久化主题偏好
     save_theme_preference(theme_name)
 
-    # 通知监听器
-    for listener in _theme_listeners:
+    # 通知监听器（过滤已失效的弱引用）
+    dead = []
+    for ref in _theme_listeners:
+        try:
+            listener = ref()
+        except ReferenceError:
+            dead.append(ref)
+            continue
+        if listener is None:
+            dead.append(ref)
+            continue
         try:
             listener()
         except Exception:
             pass
+    for ref in dead:
+        _theme_listeners.remove(ref)
 
 
 def current_theme() -> str:
     return _current_theme
 
 
-def add_theme_listener(callback):
-    """注册主题切换时的回调"""
-    _theme_listeners.append(callback)
+def add_theme_listener(callback: Callable[[], None]):
+    """注册主题切换时的回调（以弱引用存储；返回 remove 函数便于显式注销）
+
+    用 WeakMethod 兼容绑定方法（self._on_theme_changed）——普通 weakref.ref
+    引用临时绑定方法对象会立即失效；WeakMethod 保持对实例的弱引用。
+    """
+    _theme_listeners.append(weakref.WeakMethod(callback))
+    return lambda: remove_theme_listener(callback)
 
 
-def remove_theme_listener(callback):
-    if callback in _theme_listeners:
-        _theme_listeners.remove(callback)
+def remove_theme_listener(callback: Callable[[], None]):
+    """移除主题监听器（兼容旧调用方；弱引用实现下通常无需手动移除）"""
+    for ref in list(_theme_listeners):
+        try:
+            if ref() == callback:  # 绑定方法按实例比较（weakref.WeakMethod 语义）
+                _theme_listeners.remove(ref)
+        except ReferenceError:
+            _theme_listeners.remove(ref)
 
 
 def save_theme_preference(theme_name: str):
