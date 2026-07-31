@@ -81,13 +81,18 @@ def test_estimate_page_theme_listener(qapp, mock_db):
 
 
 def test_inventory_page_theme_listener(qapp, mock_db):
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value.fetchall.return_value = []
+    mock_conn.cursor.return_value.fetchone.return_value = None
     with (
         patch("ui_pyside6.views.inventory.inventory_page.init_db"),
         patch(
             "ui_pyside6.views.inventory.inventory_page.get_hangars",
             return_value=[{"id": 1, "name": "默认", "notes": ""}],
         ),
+        patch("ui_pyside6.views.inventory.blueprint_tab.get_container") as mock_cont,
     ):
+        mock_cont.return_value.db.connect.return_value.__enter__.return_value = mock_conn
         from ui_pyside6.views.inventory_view import InventoryPage
 
         page = InventoryPage(None)
