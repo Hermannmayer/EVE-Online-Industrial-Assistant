@@ -181,7 +181,10 @@ CREATE TABLE IF NOT EXISTS production_plans (
     iskph REAL DEFAULT 0,
     deposit_hangar_id INTEGER DEFAULT NULL,
     deposited INTEGER DEFAULT 0,
-    calculated_time REAL DEFAULT 0
+    calculated_time REAL DEFAULT 0,
+    assigned_blueprint_id INTEGER DEFAULT NULL,
+    mat_hangar_id INTEGER DEFAULT NULL,
+    material_short TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS user_skills (

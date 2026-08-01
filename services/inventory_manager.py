@@ -115,7 +115,7 @@ def get_items(hangar_id: int) -> list[dict]:
         items = []
         for r in c.fetchall():
             tid = r[1]
-            # 查询生产计划中该物品的规划占用
+            # 查询生产计划中该物品的规划占用（仅 pending：已启动计划启动时已物理扣减材料）
             c.execute(
                 """
                 SELECT COALESCE(SUM(bm.quantity * pp.runs * pp.parallels), 0)
@@ -124,7 +124,7 @@ def get_items(hangar_id: int) -> list[dict]:
                     AND bp.activity = 'manufacturing'
                 JOIN bp.blueprint_materials bm ON bm.blueprint_type_id = bp.blueprint_type_id
                     AND bm.activity = 'manufacturing'
-                WHERE bm.material_type_id = ? AND pp.status IN ('pending', 'running')
+                WHERE bm.material_type_id = ? AND pp.status = 'pending'
             """,
                 (tid,),
             )
@@ -219,6 +219,51 @@ def add_item(hangar_id: int, type_id: int, quantity: int, cost_price: float = 0)
                 (hangar_id, type_id, quantity, cost_price, now),
             )
             return c.lastrowid or 0
+
+
+def get_hangar_stock(hangar_id: int) -> dict[int, int]:
+    """单机库库存快照 {type_id: quantity}（quantity > 0 才计入）。
+
+    供「启动生产计划」材料校验/扣减使用。
+    """
+    result: dict[int, int] = {}
+    with db.connect("user") as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT type_id, quantity FROM inventory_items WHERE hangar_id = ? AND quantity > 0",
+            (hangar_id,),
+        )
+        for tid, qty in c.fetchall():
+            result[int(tid)] = int(qty)
+    return result
+
+
+def deduct_item(hangar_id: int, type_id: int, quantity: int) -> int:
+    """从机库扣减 quantity，返回实际扣减量。
+
+    不足则扣到 0（不跨负、不报错）；扣减后余量为 0 则删除该行。
+    扣减不改变成本价（加权平均成本仅在 add_item 时变动）。
+    """
+    if quantity <= 0:
+        return 0
+    with db.connect("user") as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, quantity FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
+            (hangar_id, type_id),
+        )
+        row = c.fetchone()
+        if not row:
+            return 0
+        item_id, cur = row
+        deducted = min(int(cur), quantity)
+        remaining = int(cur) - deducted
+        if remaining <= 0:
+            c.execute("DELETE FROM inventory_items WHERE id = ?", (item_id,))
+        else:
+            c.execute("UPDATE inventory_items SET quantity = ? WHERE id = ?", (remaining, item_id))
+        conn.commit()
+        return deducted
 
 
 def remove_item(item_id: int) -> bool:
