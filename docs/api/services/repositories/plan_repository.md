@@ -37,7 +37,7 @@ def ensure_table(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`37`
+定义行：`40`
 ##### `get_by_id`
 
 ```python
@@ -48,7 +48,7 @@ def get_by_id(self, plan_id: int) -> dict | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`41`
+定义行：`44`
 ##### `get_all`
 
 ```python
@@ -59,7 +59,7 @@ def get_all(self, status: str | None=None) -> list[dict]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`46`
+定义行：`49`
 ##### `save`
 
 ```python
@@ -70,7 +70,7 @@ def save(self, plan: dict) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`56`
+定义行：`59`
 ##### `update`
 
 ```python
@@ -81,7 +81,7 @@ def update(self, plan_id: int, **fields) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`88`
+定义行：`91`
 ##### `delete`
 
 ```python
@@ -92,4 +92,4 @@ def delete(self, plan_id: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`97`
+定义行：`100`
