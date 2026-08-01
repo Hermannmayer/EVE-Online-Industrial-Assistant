@@ -13,6 +13,7 @@ from PySide6.QtGui import QColor, QPixmap
 
 import ui_pyside6.theme as theme
 from core.paths import icon_cache_dir
+from services.terminology import term
 
 ICON_DIR = icon_cache_dir()
 
@@ -25,7 +26,7 @@ ICON_DIR = icon_cache_dir()
 class InvTableModel(QAbstractTableModel):
     """机库物品表格模型"""
 
-    _HEADERS = ["图标", "名称", "库存数量", "单个成本记录", "规划占用", "规划剩余", "按卖单总价值"]
+    _HEADERS = ["图标", "名称", "库存数量", "单个成本记录", "规划占用", "生产中投入", "规划剩余", "按卖单总价值"]
 
     def __init__(self, items: list[dict]):
         super().__init__()
@@ -47,7 +48,7 @@ class InvTableModel(QAbstractTableModel):
             if c == 0:
                 return ""
             if c == 1:
-                return r.get("zh_name") or r.get("en_name") or f"ID:{r['type_id']}"
+                return r.get("display_name") or r.get("zh_name") or r.get("en_name") or f"ID:{r['type_id']}"
             if c == 2:
                 return f"{r['quantity']:,}"
             if c == 3:
@@ -55,10 +56,18 @@ class InvTableModel(QAbstractTableModel):
             if c == 4:
                 return f"{r['plan_usage']:,}" if r.get("plan_usage") else "0"
             if c == 5:
-                return f"{r['plan_remain']:,}" if r.get("plan_remain") else f"{r['quantity']:,}"
+                return f"{r['plan_active']:,}" if r.get("plan_active") else "0"
             if c == 6:
+                return f"{r['plan_remain']:,}" if r.get("plan_remain") else f"{r['quantity']:,}"
+            if c == 7:
                 sp = r.get("sell_price")
                 return f"{r['quantity'] * sp:,.0f}" if sp else "-"
+
+        elif role == Qt.ItemDataRole.ToolTipRole:
+            if c == 4:
+                return "待启动计划预留"
+            if c == 5:
+                return "已启动计划已物理扣减，核对参考"
 
         elif role == Qt.ItemDataRole.DecorationRole:
             if c == 0:
@@ -130,7 +139,12 @@ class BlueprintTableModel(QAbstractTableModel):
             if c == 0:
                 return ""
             if c == 1:
-                return r.get("zh_name") or r.get("display_name") or f"ID:{r['blueprint_type_id']}"
+                return (
+                    r.get("zh_name")
+                    or r.get("display_name")
+                    or term.item_override(r.get("blueprint_type_id", 0))
+                    or f"ID:{r['blueprint_type_id']}"
+                )
             if c == 2:
                 text = "蓝图原图" if r.get("is_bpo") else "蓝图拷贝"
                 if r.get("occupied"):

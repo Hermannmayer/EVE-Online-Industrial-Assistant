@@ -30,6 +30,7 @@ import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.logger import log
+from services.inventory_import import compute_row_delta
 from services.inventory_manager import get_hangars, get_items
 
 from .inventory_helpers import ICON_DIR
@@ -64,9 +65,17 @@ class ImportReviewDialog(QDialog):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        # ── 工具栏：贸易中心 + 全选/取消全选 + 折扣率 ──
+        # ── 工具栏：导入模式 + 贸易中心 + 全选/取消全选 + 折扣率 ──
         toolbar = QHBoxLayout()
         toolbar.setSpacing(8)
+
+        toolbar.addWidget(QLabel("导入模式:"))
+        self._mode_combo = QComboBox()
+        self._mode_combo.addItem("增量累加", "incremental")
+        self._mode_combo.addItem("全量同步", "full")
+        self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        toolbar.addWidget(self._mode_combo)
+        self._mode = "incremental"
 
         toolbar.addWidget(QLabel("贸易中心:"))
         self._hub_combo = QComboBox()
@@ -159,10 +168,11 @@ class ImportReviewDialog(QDialog):
         table = self._table
         for row, item in enumerate(self._parsed_items):
             type_id = item["type_id"]
-            name = item.get("zh_name") or item.get("en_name") or f"ID:{type_id}"
-            delta = item["qty"]  # 比原纪录 = 本次增减量
+            name = item.get("display_name") or item.get("zh_name") or item.get("en_name") or f"ID:{type_id}"
             current = self._existing_qty.get(type_id, 0)  # 数量 = 机库现有
-            final = current + delta  # 变化 = 最终数量
+            # 跨机库移动行始终按增量语义（不参与全量 set）；其余按当前导入模式计算
+            row_mode = "incremental" if type_id in self._source_hangar else self._mode
+            delta, final = compute_row_delta(row_mode, item["qty"], current)
 
             # 列0：勾选
             cb = QCheckBox()
@@ -207,6 +217,8 @@ class ImportReviewDialog(QDialog):
             delta_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if delta > 0:
                 delta_item.setForeground(QColor(theme.ACCENT_GREEN))
+            elif delta < 0:
+                delta_item.setForeground(QColor(theme.ACCENT_RED))
             table.setItem(row, self._COL_DELTA, delta_item)
 
             # 列5：变化（最终数量）
@@ -249,6 +261,42 @@ class ImportReviewDialog(QDialog):
                 if spin and type_id:
                     spin.setValue(self._sell_prices.get(type_id, 0))
         self._update_summary()
+
+    def _on_mode_changed(self, idx: int):
+        """导入模式切换：重算每行 delta/final。"""
+        self._mode = cast(str, self._mode_combo.itemData(idx))
+        self._populate_rows()
+
+    def mode(self) -> str:
+        """当前导入模式："incremental" 增量累加 | "full" 全量同步"""
+        return self._mode
+
+    def get_sync_targets(self) -> dict[int, int]:
+        """全量模式下返回 {type_id: 目标数量}。
+
+        跨机库移动行（_source_hangar）保持增量移动语义，不参与全量 set。
+        """
+        targets: dict[int, int] = {}
+        for row in range(self._table.rowCount()):
+            w = self._table.cellWidget(row, self._COL_CHECK)
+            if not w:
+                continue
+            cb = w.findChild(QCheckBox)
+            if not cb or not cb.isChecked():
+                continue
+            name_item = self._table.item(row, self._COL_NAME)
+            type_id = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not type_id:
+                continue
+            if type_id in self._source_hangar:
+                continue
+            final_item = self._table.item(row, self._COL_FINAL)
+            try:
+                final = int(final_item.text().replace(",", "")) if final_item else 0
+            except ValueError:
+                continue
+            targets[type_id] = final
+        return targets
 
     def _on_select_all(self):
         self._set_all_checked(True)
@@ -391,7 +439,7 @@ class ImportReviewDialog(QDialog):
             cb_l.addWidget(cb)
             table.setCellWidget(i, 0, cb_w)
 
-            nm = it.get("zh_name") or it.get("en_name") or f"ID:{it['type_id']}"
+            nm = it.get("display_name") or it.get("zh_name") or it.get("en_name") or f"ID:{it['type_id']}"
             ni = QTableWidgetItem(nm)
             ni.setFlags(ni.flags() & ~Qt.ItemFlag.ItemIsEditable)
             ni.setData(Qt.ItemDataRole.UserRole, it["type_id"])
@@ -549,3 +597,101 @@ class ImportReviewDialog(QDialog):
 
     def _reapply_styles(self):
         self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+
+
+# ════════════════════════════════════════════════════
+#  Dialog: 导入完成变动汇总
+# ════════════════════════════════════════════════════
+
+
+class ImportChangeDialog(QDialog):
+    """导入完成后的变动汇总 — 名称/数量 前→后/成本 前→后。
+
+    增量行绿色、减量行红色；原「成功导入 N 条」信息并入顶部汇总。
+    """
+
+    _HEADERS = ["名称", "数量（前 → 后）", "成本（前 → 后）"]
+
+    def __init__(self, changes: list[dict], added: int, moved: int, hangar_name: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"导入完成 — {hangar_name}")
+        self.setMinimumSize(520, 380)
+        self.resize(620, 460)
+        self._changes = changes
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        self._summary_label = QLabel(self._build_summary(changes, added, moved))
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        layout.addWidget(self._summary_label)
+
+        self._table = QTableWidget(len(changes), 3)
+        self._table.setHorizontalHeaderLabels(self._HEADERS)
+        self._table.setAlternatingRowColors(True)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.verticalHeader().setVisible(False)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        for row, ch in enumerate(changes):
+            name_item = QTableWidgetItem(ch["name"])
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._table.setItem(row, 0, name_item)
+
+            qty_item = QTableWidgetItem(f"{ch['qty_before']:,} → {ch['qty_after']:,}")
+            qty_item.setFlags(qty_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            qty_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            if ch["qty_delta"] > 0:
+                qty_item.setForeground(QColor(theme.ACCENT_GREEN))
+            elif ch["qty_delta"] < 0:
+                qty_item.setForeground(QColor(theme.ACCENT_RED))
+            self._table.setItem(row, 1, qty_item)
+
+            cost_item = QTableWidgetItem(f"{ch['cost_before']:,.2f} → {ch['cost_after']:,.2f}")
+            cost_item.setFlags(cost_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            cost_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._table.setItem(row, 2, cost_item)
+
+        hdr = self._table.horizontalHeader()
+        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 200)
+        self._table.setColumnWidth(1, 140)
+        self._table.setColumnWidth(2, 140)
+        layout.addWidget(self._table, 1)
+
+        btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btn.rejected.connect(self.reject)
+        layout.addWidget(btn)
+
+        theme.add_theme_listener(self._on_theme_changed)
+
+    @staticmethod
+    def _build_summary(changes: list[dict], added: int, moved: int) -> str:
+        """汇总文案：共 N 项变化（增加/减少）+ 成功导入 + 跨机库移动。"""
+        if not changes:
+            return f"成功导入 {added} 条，数量/成本均无变化"
+        inc = sum(1 for c in changes if c["qty_delta"] > 0)
+        dec = sum(1 for c in changes if c["qty_delta"] < 0)
+        parts = [f"共 {len(changes)} 项变化"]
+        if inc:
+            parts.append(f"增加 {inc}")
+        if dec:
+            parts.append(f"减少 {dec}")
+        if added:
+            parts.append(f"成功导入 {added} 条")
+        if moved:
+            parts.append(f"跨机库移动 {moved} 条")
+        return "，".join(parts)
+
+    def _on_theme_changed(self):
+        """主题切换时重设增量/减量前景色（跟随主题）"""
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        for row, ch in enumerate(self._changes):
+            qty_item = self._table.item(row, 1)
+            if qty_item is None:
+                continue
+            if ch["qty_delta"] > 0:
+                qty_item.setForeground(QColor(theme.ACCENT_GREEN))
+            elif ch["qty_delta"] < 0:
+                qty_item.setForeground(QColor(theme.ACCENT_RED))

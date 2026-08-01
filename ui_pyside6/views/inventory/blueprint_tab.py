@@ -113,6 +113,7 @@ class BlueprintTab(QWidget):
         self._bp_table.horizontalHeader().setStretchLastSection(True)
         self._bp_table.setSortingEnabled(True)
         self._bp_table.verticalHeader().setDefaultSectionSize(32)
+        self._bp_table.verticalHeader().setVisible(False)
         self._bp_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._bp_table.customContextMenuRequested.connect(self._on_context_menu)
         self._bp_table.clicked.connect(self._on_cell_clicked)

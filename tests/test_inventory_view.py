@@ -26,6 +26,7 @@ class TestInvTableModel:
             "quantity": 50000,
             "cost_price": 5.12,
             "plan_usage": 1000,
+            "plan_active": 500,
             "plan_remain": 49000,
             "sell_price": 5.50,
         },
@@ -36,6 +37,7 @@ class TestInvTableModel:
             "quantity": 10000,
             "cost_price": 10.50,
             "plan_usage": 0,
+            "plan_active": 0,
             "plan_remain": 10000,
             "sell_price": 11.00,
         },
@@ -46,6 +48,7 @@ class TestInvTableModel:
             "quantity": 1,
             "cost_price": 0,
             "plan_usage": None,
+            "plan_active": None,
             "plan_remain": None,
             "sell_price": None,
         },
@@ -55,18 +58,18 @@ class TestInvTableModel:
         """可构造，行数列数正确"""
         model = InvTableModel(self.SAMPLE_ITEMS)
         assert model.rowCount() == 3
-        assert model.columnCount() == 7
+        assert model.columnCount() == 8
 
     def test_empty_rows(self, qapp):
         """空数据构造"""
         model = InvTableModel([])
         assert model.rowCount() == 0
-        assert model.columnCount() == 7
+        assert model.columnCount() == 8
 
     def test_header_data(self, qapp):
-        """表头信息正确"""
+        """表头信息正确（含「生产中投入」）"""
         model = InvTableModel([])
-        expected = ["图标", "名称", "库存数量", "单个成本记录", "规划占用", "规划剩余", "按卖单总价值"]
+        expected = ["图标", "名称", "库存数量", "单个成本记录", "规划占用", "生产中投入", "规划剩余", "按卖单总价值"]
         for i, h in enumerate(expected):
             actual = model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
             assert actual == h, f"列 {i} 表头应为 '{h}', 得到 '{actual}'"
@@ -113,30 +116,72 @@ class TestInvTableModel:
         idx = model.index(2, 4)
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "0"
 
+    def test_plan_active_format(self, qapp):
+        """生产中投入格式化（千位分隔）"""
+        model = InvTableModel(self.SAMPLE_ITEMS)
+        idx = model.index(0, 5)
+        assert idx.data(Qt.ItemDataRole.DisplayRole) == "500"
+
+    def test_plan_active_none(self, qapp):
+        """生产中投入为 None 时显示 '0'"""
+        model = InvTableModel(self.SAMPLE_ITEMS)
+        idx = model.index(2, 5)
+        assert idx.data(Qt.ItemDataRole.DisplayRole) == "0"
+
     def test_plan_remain_with_value(self, qapp):
         """规划剩余正常显示"""
         model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(0, 5)
+        idx = model.index(0, 6)
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "49,000"
 
     def test_plan_remain_fallback_to_quantity(self, qapp):
         """规划剩余为 None 时回退为库存数量"""
         model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(2, 5)
+        idx = model.index(2, 6)
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "1"
 
     def test_total_value_with_sell_price(self, qapp):
         """总价值 = 库存数 × 卖单价"""
         model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(0, 6)
+        idx = model.index(0, 7)
         expected = f"{50000 * 5.50:,.0f}"
         assert idx.data(Qt.ItemDataRole.DisplayRole) == expected
 
     def test_total_value_no_sell_price(self, qapp):
         """无卖价时显示横线"""
         model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(2, 6)  # sell_price is None
+        idx = model.index(2, 7)  # sell_price is None
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "-"
+
+    def test_name_display_name_priority(self, qapp):
+        """display_name 优先（terminology override 等场景 zh/en 为空）"""
+        rows = [
+            {
+                "type_id": 34,
+                "zh_name": "",
+                "en_name": "",
+                "display_name": "三钛合金",
+                "quantity": 1,
+                "cost_price": 0,
+                "plan_usage": None,
+                "plan_active": None,
+                "plan_remain": None,
+                "sell_price": None,
+            }
+        ]
+        model = InvTableModel(rows)
+        idx = model.index(0, 1)
+        assert idx.data(Qt.ItemDataRole.DisplayRole) == "三钛合金"
+
+    def test_tooltip_plan_usage(self, qapp):
+        """规划占用列提示待启动计划预留"""
+        model = InvTableModel(self.SAMPLE_ITEMS)
+        assert model.data(model.index(0, 4), Qt.ItemDataRole.ToolTipRole) == "待启动计划预留"
+
+    def test_tooltip_plan_active(self, qapp):
+        """生产中投入列提示已启动计划物理扣减"""
+        model = InvTableModel(self.SAMPLE_ITEMS)
+        assert model.data(model.index(0, 5), Qt.ItemDataRole.ToolTipRole) == "已启动计划已物理扣减，核对参考"
 
     def test_text_alignment_numbers(self, qapp):
         """数量列为右对齐"""
