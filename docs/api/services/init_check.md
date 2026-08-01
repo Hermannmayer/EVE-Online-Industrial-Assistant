@@ -144,9 +144,19 @@ def check_stations() -> int
 def check_universe() -> int
 ```
 
-返回 region 表行数
+返回 solar_system 表行数，>0 视为 universe 星系数据已加载。
 
 定义行：`189`
+
+### `check_structure_rigs`
+
+```python
+def check_structure_rigs() -> int
+```
+
+返回 structure_rigs 行数，>80 视为改件加成已初始化
+
+定义行：`208`
 
 ### `check_schema`
 
@@ -156,7 +166,7 @@ def check_schema() -> bool
 
 检查已存在的库的 schema 版本是否匹配预期
 
-定义行：`200`
+定义行：`222`
 
 ### `check_all`
 
@@ -166,7 +176,7 @@ def check_all() -> dict
 
 返回各组件状态 &#123; "items": bool, "prices": bool, "blueprints": bool, ... &#125;
 
-定义行：`218`
+定义行：`240`
 
 ### `missing_count`
 
@@ -176,4 +186,4 @@ def missing_count() -> int
 
 返回未就绪的组件数量
 
-定义行：`235`
+定义行：`262`

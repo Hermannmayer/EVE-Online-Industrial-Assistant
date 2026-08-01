@@ -174,7 +174,7 @@ def _display_text(self, p: dict, c: int) -> str
 
 列 0~17 的 DisplayRole 文本
 
-定义行：`201`
+定义行：`207`
 ##### `_foreground`
 
 ```python
@@ -185,7 +185,7 @@ def _foreground(self, p: dict, c: int)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`267`
+定义行：`273`
 ##### `headerData`
 
 ```python
@@ -196,7 +196,7 @@ def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`297`
+定义行：`303`
 ##### `flags`
 
 ```python
@@ -207,7 +207,7 @@ def flags(self, index)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`308`
+定义行：`314`
 ##### `setData`
 
 ```python
@@ -218,7 +218,7 @@ def setData(self, index, value, role=Qt.ItemDataRole.EditRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`317`
+定义行：`323`
 ##### `sort`
 
 ```python
@@ -229,7 +229,7 @@ def sort(self, column: int, order=Qt.SortOrder.AscendingOrder)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`344`
+定义行：`350`
 ##### `set_plans`
 
 ```python
@@ -238,7 +238,7 @@ def set_plans(self, plans: list[dict]) -> None
 
 替换所有数据 — 保持同一个 model 实例，避免 setModel 清除选中
 
-定义行：`360`
+定义行：`366`
 ##### `get_plan`
 
 ```python
@@ -249,7 +249,7 @@ def get_plan(self, row: int) -> dict
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`367`
+定义行：`373`
 ##### `tick`
 
 ```python
@@ -258,7 +258,7 @@ def tick(self) -> list[int]
 
 倒计时 tick：遍历进行中行算剩余；≤0 内存置 ready；对变动行 emit dataChanged。
 
-定义行：`370`
+定义行：`376`
 
 ### `class MaterialTableModel`（继承 `QAbstractTableModel`）
 
@@ -266,7 +266,7 @@ def tick(self) -> list[int]
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`402`
+定义行：`408`
 
 #### 方法
 
@@ -280,7 +280,7 @@ def __init__(self, rows: list[dict])
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`405`
+定义行：`411`
 ##### `rowCount`
 
 ```python
@@ -291,7 +291,7 @@ def rowCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`409`
+定义行：`415`
 ##### `columnCount`
 
 ```python
@@ -302,7 +302,7 @@ def columnCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`412`
+定义行：`418`
 ##### `data`
 
 ```python
@@ -313,7 +313,7 @@ def data(self, index, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`415`
+定义行：`421`
 ##### `headerData`
 
 ```python
@@ -324,13 +324,13 @@ def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`429`
+定义行：`435`
 
 ### `class ProcurementTableModel`（继承 `QAbstractTableModel`）
 
 代采购表模型
 
-定义行：`435`
+定义行：`441`
 
 #### 方法
 
@@ -344,7 +344,7 @@ def __init__(self, items: list[dict])
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`445`
+定义行：`451`
 ##### `rowCount`
 
 ```python
@@ -355,7 +355,7 @@ def rowCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`449`
+定义行：`455`
 ##### `columnCount`
 
 ```python
@@ -366,7 +366,7 @@ def columnCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`452`
+定义行：`458`
 ##### `data`
 
 ```python
@@ -377,7 +377,7 @@ def data(self, index, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`455`
+定义行：`461`
 ##### `headerData`
 
 ```python
@@ -388,7 +388,7 @@ def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`489`
+定义行：`495`
 ##### `get_item`
 
 ```python
@@ -399,13 +399,13 @@ def get_item(self, row: int) -> dict
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`494`
+定义行：`500`
 
 ### `class ProductionTableModel`（继承 `QAbstractTableModel`）
 
 生产执行跟踪表模型 — 面向 production_plans 表的字段
 
-定义行：`498`
+定义行：`504`
 
 #### 方法
 
@@ -419,7 +419,7 @@ def __init__(self, plans: list[dict])
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`515`
+定义行：`521`
 ##### `rowCount`
 
 ```python
@@ -430,7 +430,7 @@ def rowCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`519`
+定义行：`525`
 ##### `columnCount`
 
 ```python
@@ -441,7 +441,7 @@ def columnCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`522`
+定义行：`528`
 ##### `data`
 
 ```python
@@ -452,7 +452,7 @@ def data(self, index, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`525`
+定义行：`531`
 ##### `headerData`
 
 ```python
@@ -463,7 +463,7 @@ def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`550`
+定义行：`556`
 ##### `get_plan`
 
 ```python
@@ -474,4 +474,4 @@ def get_plan(self, row: int) -> dict
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`555`
+定义行：`561`
