@@ -177,6 +177,17 @@ class CostBreakdownDialog(QWidget):
             self._status_label.setText("缺少 type_id")
             return
 
+        try:
+            self._load_data_inner(type_id)
+        except Exception as e:
+            # showEvent 中未捕获异常会导致 Qt 事件循环崩溃（闪退）。
+            # 兜底：显示错误信息而非崩溃。
+            from core.logger import log
+
+            log.exception("成本明细加载失败: %s", self._plan.get("product_name"))
+            self._status_label.setText(f"⚠ 加载失败: {e}")
+
+    def _load_data_inner(self, type_id: int):
         runs = max(int(self._plan.get("runs", 1)), 1)
         parallels = max(int(self._plan.get("parallels", 1)), 1)
         total_mult = runs * parallels

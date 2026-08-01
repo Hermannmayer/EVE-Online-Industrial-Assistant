@@ -75,9 +75,19 @@ TEXT_ON_PRIMARY = ONE_DARK_PRO["TEXT_ON_PRIMARY"]
 BORDER = ONE_DARK_PRO["BORDER"]
 
 _current_theme = "dark"
+class _StrongCallback:
+    """普通函数/lambda 的强引用包装（WeakMethod 只支持绑定方法）"""
+
+    def __init__(self, callback: Callable[[], None]):
+        self._callback = callback
+
+    def __call__(self) -> Callable[[], None]:
+        return self._callback
+
+
 # 监听器以弱引用存储：页面销毁后自动失效（GC 回收 → 引用失效），
 # 避免「页面常驻 stack 不销毁 + 匿名 lambda 永不 remove」导致的内存泄漏。
-_theme_listeners: list[weakref.ref] = []
+_theme_listeners: list[weakref.ref | _StrongCallback] = []
 
 # ── 向后兼容别名 ──
 GREEN = ACCENT_GREEN
@@ -138,12 +148,18 @@ def current_theme() -> str:
 
 
 def add_theme_listener(callback: Callable[[], None]):
-    """注册主题切换时的回调（以弱引用存储；返回 remove 函数便于显式注销）
+    """注册主题切换时的回调（返回 remove 函数便于显式注销）
 
-    用 WeakMethod 兼容绑定方法（self._on_theme_changed）——普通 weakref.ref
-    引用临时绑定方法对象会立即失效；WeakMethod 保持对实例的弱引用。
+    绑定方法用 WeakMethod 弱引用（不持有实例，避免泄漏）；普通函数/lambda
+    用强引用包装（weakref.ref 对 lambda 立即失效，回调不会触发）。
+    注意：强引用场景下，调用方在回调不再需要后应调用返回的 remove 函数，
+    否则闭包引用的对象会被长期持有。
     """
-    _theme_listeners.append(weakref.WeakMethod(callback))
+    try:
+        ref: weakref.ref | _StrongCallback = weakref.WeakMethod(callback)
+    except TypeError:
+        ref = _StrongCallback(callback)
+    _theme_listeners.append(ref)
     return lambda: remove_theme_listener(callback)
 
 
