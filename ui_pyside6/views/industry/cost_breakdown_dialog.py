@@ -212,28 +212,9 @@ class CostBreakdownDialog(QWidget):
         hours = metrics.get("calculated_time", 0) / 3600 if metrics.get("calculated_time") else 0
         daily_output = metrics.get("daily_output", 0)
 
-        # 从 calc_manufacturing_score 的 breakdown 获取费用明细
-        per_run = (
-            get_container()
-            .scoring_service()
-            .calc_manufacturing_score(
-                type_id=type_id,
-                char_config=self._char_config or {},
-                bp_me=self._plan.get("me_level", 0) or 0,
-                bp_te=self._plan.get("te_level", 0) or 0,
-                mat_source_hub=self._plan.get("mat_hub", "Jita"),
-                sell_hub=self._plan.get("sell_hub", "Jita"),
-                facility_tax_pct=(
-                    (self._char_config or {})
-                    .get("market", {})
-                    .get((self._plan.get("sell_hub", "Jita")).lower(), {})
-                    .get("facility_tax", 0.0)
-                ),
-                price_type_mat=self._price_type_mat or "sell",
-                price_type_prod=self._price_type_prod or "sell",
-            )
-        )
-        status = per_run.get("status", "")
+        # 统一从 calculate_plan_metrics 的结果取 breakdown/材料/状态（避免双重解析不一致，
+        # 也确保明细与主表利润使用相同的机库结构加成/设施税）
+        status = metrics.get("status", "")
         if status:
             tips = {"no_blueprint": "未找到蓝图", "no_price": "无价格数据", "no_materials": "无需材料"}
             self._status_label.setText(tips.get(status, f"状态: {status}"))
@@ -241,7 +222,8 @@ class CostBreakdownDialog(QWidget):
 
         from services.manufacturing_calculator import calc_material_for_runs
 
-        materials = per_run.get("materials", [])
+        materials = metrics.get("materials", [])
+        structure_mat_saving = metrics.get("structure_mat_saving", 1.0)
         self._table.setRowCount(len(materials))
         for row_idx, mat in enumerate(materials):
             base = mat.get("base_qty", 0)
@@ -251,7 +233,7 @@ class CostBreakdownDialog(QWidget):
             else:
                 wf = mat.get("wastefactor", 10) or 10
                 me = self._plan.get("me_level", 0) or 0
-                total_qty = calc_material_for_runs(base, wf, me, total_mult)
+                total_qty = calc_material_for_runs(base, wf, me, total_mult, structure_mat_saving=structure_mat_saving)
             items = [
                 mat.get("name", ""),
                 str(base),
@@ -265,7 +247,7 @@ class CostBreakdownDialog(QWidget):
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._table.setItem(row_idx, col_idx, item)
 
-        bd = per_run.get("breakdown", {})
+        bd = metrics.get("breakdown", {})
         eiv = bd.get("eiv", 0) or 0
         system_cost = bd.get("system_cost", 0) or 0
         installation_fee = bd.get("installation_fee", 0) or 0
@@ -285,7 +267,7 @@ class CostBreakdownDialog(QWidget):
 
         # ── 制造作业费 ──
         self._job_eiv.setText(_fmt_isk(eiv))
-        self._job_sci.setText(f"{_fmt_isk(system_cost * total_mult)}  (SCI={sci*100:.4f}%)")
+        self._job_sci.setText(f"{_fmt_isk(system_cost * total_mult)}  (SCI={sci * 100:.4f}%)")
         self._job_fac_tax.setText(_fmt_isk(facility_tax_v * total_mult))
         self._job_scc.setText(_fmt_isk(scc * total_mult))
         self._job_total.setText(_fmt_isk(installation_fee * total_mult))

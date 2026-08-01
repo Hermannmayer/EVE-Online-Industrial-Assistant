@@ -1,25 +1,23 @@
 """
 仓库页面 — 主容器（Tab 切换 + 机库选择）
+
+机库的增删改（新建/重命名/删除/设置星系）统一收拢到底部「机库设置」对话框，
+本页仅保留机库选择器用于切换查看内容。
 """
 
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
-    QMessageBox,
-    QPushButton,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from core.container import get_container
 from services.inventory_manager import (
-    create_hangar,
-    delete_hangar,
     get_hangars,
     init_db,
-    rename_hangar,
 )
 
 from .blueprint_tab import BlueprintTab
@@ -45,19 +43,6 @@ class InventoryPage(QWidget):
         self._hangar_combo = QComboBox()
         self._hangar_combo.setMinimumWidth(140)
         hangar_bar.addWidget(self._hangar_combo)
-
-        self._new_h_btn = QPushButton("+新建")
-        self._new_h_btn.clicked.connect(self._on_new_hangar)
-        hangar_bar.addWidget(self._new_h_btn)
-
-        self._rename_h_btn = QPushButton("重命名")
-        self._rename_h_btn.clicked.connect(self._on_rename_hangar)
-        hangar_bar.addWidget(self._rename_h_btn)
-
-        self._del_h_btn = QPushButton("删除")
-        self._del_h_btn.clicked.connect(self._on_del_hangar)
-        hangar_bar.addWidget(self._del_h_btn)
-
         hangar_bar.addStretch()
         layout.addLayout(hangar_bar)
 
@@ -91,14 +76,36 @@ class InventoryPage(QWidget):
 
     def _load_hangars(self):
         hs = get_hangars()
+        # 机库所在星系名映射（用于下拉显示）
+        sys_names = self._system_names([h["solar_system_id"] for h in hs if h.get("solar_system_id")])
         self._hangar_combo.blockSignals(True)
         self._hangar_combo.clear()
         for h in hs:
-            self._hangar_combo.addItem(h["name"], h["id"])
+            label = h["name"]
+            sid = h.get("solar_system_id")
+            if sid and sid in sys_names:
+                label = f"{label} ({sys_names[sid]})"
+            self._hangar_combo.addItem(label, h["id"])
         self._hangar_combo.blockSignals(False)
         if hs:
             self._current_hangar_id = hs[0]["id"]
             self._hangar_combo.setCurrentIndex(0)
+
+    def _system_names(self, solar_system_ids: list[int]) -> dict[int, str]:
+        """批量查询星系名 {solar_system_id: 名称}；星系数据未加载时返回空。"""
+        if not solar_system_ids:
+            return {}
+        try:
+            with get_container().db.connect("ref") as conn:
+                placeholders = ",".join("?" * len(solar_system_ids))
+                rows = conn.execute(
+                    f"SELECT solar_system_id, solar_system_name FROM solar_system"
+                    f" WHERE solar_system_id IN ({placeholders})",
+                    solar_system_ids,
+                ).fetchall()
+                return {int(r[0]): r[1] for r in rows}
+        except Exception:
+            return {}
 
     def _on_hangar_changed(self, idx):
         if idx < 0:
@@ -106,42 +113,6 @@ class InventoryPage(QWidget):
         self._current_hangar_id = self._hangar_combo.itemData(idx)
         self._hangar_tab._refresh()
         self._blueprint_tab._load_blueprints()
-
-    def _on_new_hangar(self):
-        name, ok = QInputDialog.getText(self, "新建机库", "机库名:")
-        if ok and name.strip():
-            rid = create_hangar(name.strip())
-            if rid == -1:
-                QMessageBox.warning(self, "提示", "机库名已存在")
-            else:
-                self._load_hangars()
-                for i in range(self._hangar_combo.count()):
-                    if self._hangar_combo.itemData(i) == rid:
-                        self._hangar_combo.setCurrentIndex(i)
-                        break
-
-    def _on_rename_hangar(self):
-        if not self._current_hangar_id:
-            return
-        old = self._hangar_combo.currentText()
-        name, ok = QInputDialog.getText(self, "重命名", "新名称:", text=old)
-        if ok and name.strip() and name != old:
-            rename_hangar(self._current_hangar_id, name.strip())
-            self._load_hangars()
-
-    def _on_del_hangar(self):
-        if not self._current_hangar_id:
-            return
-        name = self._hangar_combo.currentText()
-        reply = QMessageBox.question(
-            self,
-            "确认",
-            f"删除机库「{name}」及其所有物品？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            delete_hangar(self._current_hangar_id)
-            self._load_hangars()
 
     def refresh_display(self):
         self._hangar_tab._refresh()

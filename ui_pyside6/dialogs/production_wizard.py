@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QPushButton,
     QVBoxLayout,
 )
 
@@ -27,6 +28,7 @@ class ProductionWizard(QDialog):
 
         self._plans = plans
         self._mat_hangar_id = mat_hangar_id
+        self._selected_system: tuple[int, str] | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -58,10 +60,13 @@ class ProductionWizard(QDialog):
         chars = get_character_list()
         self._char_combo.addItems(chars if chars else ["main"])
         cg.addWidget(self._char_combo)
-        cg.addWidget(QLabel("设施:"))
-        self._facility_combo = QComboBox()
-        self._facility_combo.addItems(["Jita", "Amarr", "Dodixie", "Rens", "Hek"])
-        cg.addWidget(self._facility_combo)
+        cg.addWidget(QLabel("设施星系:"))
+        self._select_sys_btn = QPushButton("选择星系…")
+        self._select_sys_btn.clicked.connect(self._on_select_system)
+        cg.addWidget(self._select_sys_btn)
+        self._system_label = QLabel("未设置")
+        self._system_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
+        cg.addWidget(self._system_label)
         cg.addStretch()
         layout.addWidget(config_group)
 
@@ -72,6 +77,17 @@ class ProductionWizard(QDialog):
         btn_bar.rejected.connect(self.reject)
         layout.addWidget(btn_bar)
 
+    def _on_select_system(self):
+        """选择设施所在星系（星系成本指数影响安装费）"""
+        from ui_pyside6.dialogs.system_search_dialog import SystemSearchDialog
+
+        dlg = SystemSearchDialog(self, "选择设施星系")
+        if dlg.exec():
+            sel = dlg.get_selected()
+            if sel:
+                self._selected_system = sel
+                self._system_label.setText(sel[1])
+
     def _on_start(self):
         """启动选中的产线（经 start_plan_batch：校验材料 → 扣减 → 写 started_at → 绑蓝图）"""
         selected = [(cb, p) for cb, p in self._plan_checks if cb.isChecked()]
@@ -80,7 +96,11 @@ class ProductionWizard(QDialog):
             return
 
         char = self._char_combo.currentText()
-        facility = self._facility_combo.currentText()
+        facility = None
+        solar_system_id = None
+        if self._selected_system:
+            facility = self._selected_system[1]
+            solar_system_id = self._selected_system[0]
 
         from services import plan_execution
 
@@ -93,6 +113,23 @@ class ProductionWizard(QDialog):
             facility=facility,
         )
 
+        # 设施星系 → 批量写入 solar_system_id（成本指数参与后续重算）
+        if solar_system_id is not None:
+            ids = [p["id"] for p in plans if p.get("id")]
+            if ids:
+                from core.container import get_container
+
+                conn = get_container().db.direct_connect("user")
+                try:
+                    for pid in ids:
+                        conn.execute(
+                            "UPDATE production_plans SET solar_system_id=? WHERE id=?",
+                            (solar_system_id, pid),
+                        )
+                    conn.commit()
+                finally:
+                    conn.close()
+
         # 汇总每条计划的结果
         lines = []
         for item in res.get("results", []):
@@ -101,7 +138,7 @@ class ProductionWizard(QDialog):
             lines.append(f"{status}{name}: {item.get('message', '')}")
         ok_count = res.get("ok_count", 0)
         short_plans = [r for r in res.get("results", []) if r.get("code") == "material_short"]
-        msg = f"已启动 {ok_count}/{len(plans)} 条产线\n人物: {char}\n设施: {facility}"
+        msg = f"已启动 {ok_count}/{len(plans)} 条产线\n人物: {char}\n设施星系: {facility or '未设置'}"
         if lines:
             msg += "\n\n" + "\n".join(lines[:15])
         if short_plans:

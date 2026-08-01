@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
-from ui_pyside6.views.char_settings_view import get_character_list
 
 
 class SettingsDialog(QDialog):
@@ -60,6 +59,7 @@ class SettingsDialog(QDialog):
 
         # 读取当前设置
         self._load_state()
+        theme.add_theme_listener(self._on_theme_changed)
 
     # ═══════════════════════════════════════════
     #  标签页 1: ESI 与数据
@@ -103,8 +103,7 @@ class SettingsDialog(QDialog):
         self._theme_combo.addItems(["dark", "light"])
         self._theme_preview = QLabel("预览文本 — 切换主题后即时生效")
         self._theme_preview.setStyleSheet(
-            f"color: {theme.TEXT_SECONDARY}; padding: 4px; "
-            f"background-color: {theme.BG_SURFACE}; border-radius: 4px;"
+            f"color: {theme.TEXT_SECONDARY}; padding: 4px; background-color: {theme.BG_SURFACE}; border-radius: 4px;"
         )
         tg.addWidget(QLabel("当前主题:"))
         tg.addWidget(self._theme_combo)
@@ -132,22 +131,6 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(w)
         layout.setSpacing(8)
 
-        group = QGroupBox("制造/贸易默认值")
-        form = QFormLayout(group)
-
-        self._default_char = QComboBox()
-        chars = get_character_list()
-        self._default_char.addItems(chars if chars else ["main"])
-        form.addRow("默认人物:", self._default_char)
-
-        self._default_tax = QSpinBox()
-        self._default_tax.setRange(0, 100)
-        self._default_tax.setSuffix(" %")
-        self._default_tax.setValue(0)
-        form.addRow("默认设施税:", self._default_tax)
-
-        layout.addWidget(group)
-
         # 工具
         tool_group = QGroupBox("工具")
         tgl = QVBoxLayout(tool_group)
@@ -165,6 +148,14 @@ class SettingsDialog(QDialog):
     # ═══════════════════════════════════════════
     #  加载/保存
     # ═══════════════════════════════════════════
+
+    def _on_theme_changed(self):
+        """主题切换时刷新预览样式"""
+        if hasattr(self, "_theme_preview"):
+            self._theme_preview.setStyleSheet(
+                f"color: {theme.TEXT_SECONDARY}; padding: 4px; "
+                f"background-color: {theme.BG_SURFACE}; border-radius: 4px;"
+            )
 
     def _load_state(self):
         """从 main_window 读取当前设置"""

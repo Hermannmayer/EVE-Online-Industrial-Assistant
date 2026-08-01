@@ -211,6 +211,17 @@ class TestPlanTableModel:
         assert model.data(model.index(1, 6), Qt.ItemDataRole.DisplayRole) == "生产中"
         assert model.data(model.index(2, 6), Qt.ItemDataRole.DisplayRole) == "已完成"
 
+    def test_checkbox_column_check_state(self, qapp):
+        """备料勾选列以 CheckStateRole 渲染真实复选框（勾选/未勾选），DisplayRole 为空"""
+        plans = [
+            {"product_type_id": 1, "materials_ready": 1, "status": "pending"},
+            {"product_type_id": 2, "materials_ready": 0, "status": "pending"},
+        ]
+        model = PlanTableModel(plans)
+        assert model.data(model.index(0, 0), Qt.ItemDataRole.CheckStateRole) == Qt.CheckState.Checked
+        assert model.data(model.index(1, 0), Qt.ItemDataRole.CheckStateRole) == Qt.CheckState.Unchecked
+        assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == ""
+
     def test_get_plan(self):
         """get_plan 返回正确"""
         plans = [{"product_type_id": 2001}]

@@ -184,11 +184,17 @@ class PlanTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DecorationRole and c == 1:
             return self._load_icon(p.get("product_type_id"))
 
-        # SizeHintRole — 图标列行高
-        if role == Qt.ItemDataRole.SizeHintRole and c == 1:
+        # SizeHintRole — 图标列 / 备料勾选列（固定窄列，适配图标与复选框尺寸）
+        if role == Qt.ItemDataRole.SizeHintRole and c in (0, 1):
             from PySide6.QtCore import QSize
 
-            return QSize(36, 36)
+            return QSize(26, 26) if c == 0 else QSize(36, 36)
+
+        # 备料勾选列 → 真实复选框（CheckStateRole 渲染；点击切换由 view 的 clicked 处理）
+        if role == Qt.ItemDataRole.CheckStateRole and c == 0:
+            return Qt.CheckState.Checked if p.get("materials_ready", 0) else Qt.CheckState.Unchecked
+        if role == Qt.ItemDataRole.TextAlignmentRole and c == 0:
+            return Qt.AlignmentFlag.AlignCenter
 
         if role == Qt.ItemDataRole.DisplayRole:
             return self._display_text(p, c)
@@ -201,7 +207,7 @@ class PlanTableModel(QAbstractTableModel):
     def _display_text(self, p: dict, c: int) -> str:
         """列 0~17 的 DisplayRole 文本"""
         if c == 0:
-            return "☑" if p.get("materials_ready", 0) else "☐"
+            return ""  # 备料列由 CheckStateRole 渲染真实复选框
         if c == 1:
             return ""  # 图标列不显示文本
         if c == 2:

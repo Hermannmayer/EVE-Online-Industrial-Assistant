@@ -21,7 +21,6 @@ from services.blueprint_reader import get_blueprint_materials
 from services.char_config_resolver import DEFAULT_SKILLS, resolve_char_config  # noqa: F401  # 向后兼容 re-export
 from services.database_manager import DatabaseManager, get_db
 from services.manufacturing_calculator import (
-    STRUCTURE_MAT_SAVING,
     calc_job_cost_fees,
     calc_material_per_run,
     calc_production_time,
@@ -404,6 +403,7 @@ class ScoringService:
         sell_hub: str | None = None,
         price_type_mat: str | None = None,
         price_type_prod: str | None = None,
+        system_id: int | None = None,
     ) -> dict:
         """从一条生产计划数据计算所有派生指标。
 
@@ -450,18 +450,37 @@ class ScoringService:
         resolved_sell_hub = sell_hub or plan_data.get("sell_hub") or "Jita"
         resolved_price_type_mat = price_type_mat or "sell"
         resolved_price_type_prod = price_type_prod or "sell"
-
-        # facility_tax 始终从 sell_hub 对应的角色配置读取
-        fac_tax = char_config.get("market", {}).get(resolved_sell_hub.lower(), {}).get("facility_tax", 0.0)
-
-        facility_cost_mult = float(plan_data.get("facility_cost_mult", 1.0))
-        structure_bonus = facility_cost_mult - 1.0
+        # 星系：显式 override > plan 字段；None 时由 calc_manufacturing_score 回退到 sell_hub 推断
+        resolved_system_id = system_id if system_id is not None else plan_data.get("solar_system_id")
 
         from core.container import get_container
 
+        svc = get_container().scoring_service()
+        # 机库工业配置解析（材料机库决定设施类型/改件/税；用 svc._db 保证测试隔离）
+        from services.hangar_industry_config import resolve_hangar_industry_config
+        from services.manufacturing_calculator import FACILITY_TAX_NPC
+
+        hangar_cfg = resolve_hangar_industry_config(plan_data.get("mat_hangar_id"), _db=getattr(svc, "_db", None))
+        # 成本倍率：计划 facility_cost_mult 显式(≠1.0) > 机库 > 1.0
+        plan_mult = float(plan_data.get("facility_cost_mult", 1.0) or 1.0)
+        structure_cost_mult = plan_mult if plan_mult != 1.0 else hangar_cfg["structure_cost_mult"]
+        structure_bonus = structure_cost_mult - 1.0
+        structure_time_mod = hangar_cfg["structure_time_mod"]
+        structure_mat_saving = hangar_cfg["structure_mat_saving"]
+        # 设施税（%）：计划显式 > 机库 > char_config > NPC 0.25%
+        plan_tax = plan_data.get("facility_tax")
+        hub_mkt = char_config.get("market", {}).get(resolved_sell_hub.lower(), {})
+        if plan_tax is not None:
+            fac_tax = plan_tax
+        elif hangar_cfg["facility_tax"] is not None:
+            fac_tax = hangar_cfg["facility_tax"]
+        elif hub_mkt:
+            fac_tax = hub_mkt.get("facility_tax", 0.0)
+        else:
+            fac_tax = FACILITY_TAX_NPC * 100
+
         per_run: dict = {}
         total: dict = {}
-        svc = get_container().scoring_service()
         try:
             per_run = svc.calc_manufacturing_score(
                 type_id=type_id,
@@ -474,6 +493,9 @@ class ScoringService:
                 price_type_mat=resolved_price_type_mat,
                 price_type_prod=resolved_price_type_prod,
                 structure_bonus=structure_bonus,
+                structure_time_mod=structure_time_mod,
+                structure_mat_saving=structure_mat_saving,
+                system_id=resolved_system_id,
             )
             total = ScoringService.calculate_total_metrics(per_run, runs, parallels) or {}
         except Exception:
@@ -504,6 +526,12 @@ class ScoringService:
             "materials": per_run.get("materials", []),  # 每轮量（含 ME 单件豁免）
             "revenue_per_run": revenue_per_run,  # 未取整，供精确计算
             "fees_per_run": fees_per_run,
+            "structure_mat_saving": round(structure_mat_saving, 4),
+            "structure_time_mod": round(structure_time_mod, 4),
+            "structure_cost_mult": round(structure_cost_mult, 4),
+            "facility_tax_pct": round(fac_tax, 3),
+            "status": per_run.get("status", ""),
+            "breakdown": per_run.get("breakdown", {}),
         }
 
     @staticmethod
@@ -583,6 +611,7 @@ class ScoringService:
         system_id: int | None = None,
         structure_bonus: float = 0.0,
         structure_time_mod: float = 1.0,
+        structure_mat_saving: float = 1.0,
         is_alpha: bool = False,
     ) -> dict:
         """计算制造评分。
@@ -592,11 +621,12 @@ class ScoringService:
         - 安装费: calc_job_cost_fees（加法结构）
         - 时间: calc_production_time
         """
-        # 缓存：同一 type_id × 配置 × ME 结果复用（TTL 1800s，价格刷新时 invalidate_cache）
+        # 缓存：同一 type_id × 配置 × ME × 星系 结果复用（TTL 1800s，价格刷新时 invalidate_cache）
         char_name = (char_config.get("name") or char_config.get("char_name") or "default") if char_config else "default"
         cache_k = cache_key(
             type_id,
-            f"mfg|{mat_source_hub}|{sell_hub}|{bp_me}|{bp_te}|{price_type_mat}|{price_type_prod}",
+            f"mfg|{mat_source_hub}|{sell_hub}|{bp_me}|{bp_te}|{price_type_mat}|{price_type_prod}|{system_id or ''}"
+            f"|{structure_bonus}|{structure_time_mod}|{structure_mat_saving}",
             "hub",
             char_name,
         )
@@ -664,7 +694,7 @@ class ScoringService:
                     per_run_qty = mat_qty
                     is_whole_item = True
                 else:
-                    per_run_qty = calc_material_per_run(mat_qty, wastefactor, bp_me, STRUCTURE_MAT_SAVING)
+                    per_run_qty = calc_material_per_run(mat_qty, wastefactor, bp_me, structure_mat_saving)
                     is_whole_item = False
                 waste_qty = per_run_qty  # 每轮次仅用 per_run_qty（已含 ME 调整）
                 if mat_price:
@@ -768,6 +798,7 @@ class ScoringService:
                 "installation_fee": round(installation_fee, 2),  # 项目总费用
                 "structure_bonus": round(structure_bonus, 4),
                 "structure_time_mod": round(structure_time_mod, 4),
+                "structure_mat_saving": round(structure_mat_saving, 4),
                 "facility_tax_pct": round(facility_tax_pct, 2),
                 "broker_rate": round(broker_rate, 3),
                 "sales_tax_rate": round(sales_tax_rate, 3),

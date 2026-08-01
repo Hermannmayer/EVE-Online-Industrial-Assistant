@@ -19,7 +19,7 @@ from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
-    "user": 4,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列
+    "user": 6,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件
     "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
 }
 
@@ -130,13 +130,56 @@ def _migrate_user_v3_to_v4(db_path: str) -> str:
     )
     conn = sqlite3.connect(db_path)
     try:
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_prod_plans_assigned_bp ON production_plans(assigned_blueprint_id)"
-        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_prod_plans_assigned_bp ON production_plans(assigned_blueprint_id)")
         conn.commit()
     finally:
         conn.close()
     return f"production_plans 执行列 (新增 {net} 列 + 索引)"
+
+
+def _migrate_user_v4_to_v5(db_path: str) -> str:
+    """v4→v5: hangars/production_plans 加 solar_system_id，并补 v2→v3 遗漏的 facility_cost_mult。
+
+    facility_cost_mult 此前仅存在于 CREATE TABLE 路径，ALTER 迁移遗漏；
+    老库在此一并补齐，避免成本计算读到 NULL。
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        if not _table_exists(conn, "hangars") and not _table_exists(conn, "production_plans"):
+            return "hangars/production_plans 表不存在，跳过"
+    finally:
+        conn.close()
+    net = 0
+    net += _add_columns(db_path, "hangars", [("solar_system_id", "INTEGER DEFAULT NULL")])
+    net += _add_columns(
+        db_path,
+        "production_plans",
+        [
+            ("solar_system_id", "INTEGER DEFAULT NULL"),
+            ("facility_cost_mult", "REAL DEFAULT 1.0"),
+        ],
+    )
+    return f"机库/计划加 solar_system_id (新增 {net} 列)"
+
+
+def _migrate_user_v5_to_v6(db_path: str) -> str:
+    """v5→v6: hangars 加设施类型/设施税/改件 JSON 列（机库级工业配置）"""
+    conn = sqlite3.connect(db_path)
+    try:
+        if not _table_exists(conn, "hangars"):
+            return "hangars 表不存在，跳过"
+    finally:
+        conn.close()
+    net = _add_columns(
+        db_path,
+        "hangars",
+        [
+            ("facility_type", "TEXT DEFAULT NULL"),
+            ("facility_tax", "REAL DEFAULT NULL"),
+            ("rigs", "TEXT DEFAULT NULL"),
+        ],
+    )
+    return f"hangars 工业配置列 (新增 {net} 列)"
 
 
 def _migrate_bp_v1_to_v2(db_path: str) -> str:
@@ -167,6 +210,8 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
         1: _migrate_user_v1_to_v2,
         2: _migrate_user_v2_to_v3,
         3: _migrate_user_v3_to_v4,
+        4: _migrate_user_v4_to_v5,
+        5: _migrate_user_v5_to_v6,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,
@@ -268,7 +313,7 @@ def ensure_schema(db_alias: str) -> dict:
             mig = _MIGRATIONS.get(db_alias, {}).get(v)
             if mig:
                 label = mig(db_path)
-                applied.append(f"v{v}→v{ v + 1}: {label}")
+                applied.append(f"v{v}→v{v + 1}: {label}")
             _set_version(db_path, v + 1)
 
         # 从版本 0 起始的库（有表但未打版本号）：迁移循环可能为空
