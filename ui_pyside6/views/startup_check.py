@@ -26,13 +26,14 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
-from services.init_service import STEPS, InitStep, StepStatus, get_missing_steps, is_step_satisfied
+from services.init_service import STEPS, InitStep, StepStatus, get_missing_steps
 from ui_pyside6.workers.init_workers import InitServiceWorker
 
 # ── 常量 ──
 
 _CHECK_SIZE = (380, 220)  # 紧凑模式尺寸
 _EXPAND_SIZE = (620, 500)  # 展开模式尺寸
+_POLL_GRACE = 5  # 轮询宽限期（次）——给短暂的数据写入留时间后再进入下载
 
 
 class _StepRow(QWidget):
@@ -251,7 +252,7 @@ class StartupCheckDialog(QDialog):
     # ═══════════════════════════════════════
 
     def _start_check(self):
-        """启动后台快速检查（仅 is_step_satisfied 轮询，不执行实际初始化）"""
+        """启动后台快速检查（仅 check_all 轮询，不执行实际初始化）"""
 
         self._worker = None
         self._check_timer = QTimer(self)
@@ -260,9 +261,11 @@ class StartupCheckDialog(QDialog):
 
     def _poll_check(self):
         """轮询检查进度更新状态点"""
+        from services.init_check import check_all
+
+        status_map = check_all()
         for step in STEPS:
-            done = is_step_satisfied(step.key)
-            if done:
+            if status_map.get(step.key):
                 self._step_status[step.key] = StepStatus.COMPLETED
                 self._update_dot(step.key, StepStatus.COMPLETED)
             else:
@@ -274,10 +277,17 @@ class StartupCheckDialog(QDialog):
         self._progress.setValue(pct)
         self._status_label.setText(f"检查中  {done}/{total}")
 
-        if done == total:
+        missing = [s for s in STEPS if self._step_status.get(s.key) != StepStatus.COMPLETED]
+
+        # 兜底：连续轮询 _POLL_GRACE 次（给短暂的数据写入留时间）后，
+        # 无论就绪与否都进入下一步 —— 有缺失时触发自动下载，而不是永远轮询
+        self._poll_count = getattr(self, "_poll_count", 0) + 1
+        if not missing:
             self._check_timer.stop()
-            # 直接关闭（兜底：不等 worker 信号，已在 UI 线程检测到就绪）
-            self._on_check_done(True, "全部就绪")
+            self._on_check_done(True, "全部就绪", missing)
+        elif self._poll_count >= _POLL_GRACE:
+            self._check_timer.stop()
+            self._on_check_done(False, f"缺少 {len(missing)} 个组件", missing)
 
     def _on_step_check(self, key: str, success: bool, message: str):
         """检查阶段步骤完成"""
@@ -286,19 +296,20 @@ class StartupCheckDialog(QDialog):
         self._update_dot(key, status)
         # 检查失败→不阻塞，继续检查其他
 
-    def _on_check_done(self, success: bool, summary: str):
+    def _on_check_done(self, success: bool, summary: str, missing: list[InitStep] | None = None):
         """所有步骤检查完成（可被 timer 和 worker 信号多次触发，幂等）"""
         if getattr(self, "_check_done_flag", False):
             return
         self._check_done_flag = True
+        if self._check_timer:
+            self._check_timer.stop()
 
-        missing = get_missing_steps()
+        if missing is None:
+            missing = get_missing_steps()
         if not missing:
             # ✅ 全部就绪 → 延迟 300ms 给用户看清状态 → 关闭
             self._status_label.setText("✓ 全部就绪")
             self._progress.setValue(100)
-            if self._check_timer:
-                self._check_timer.stop()
             QTimer.singleShot(300, self._on_ready_close)
         else:
             # ❌ 有缺失 → 展开为下载界面

@@ -82,7 +82,7 @@ def check_blueprint_names() -> int:
 
 
 def check_implants() -> int:
-    """返回 item_dogma 行数，>200 视为已初始化（约 200-300 个植入体有 dogma）"""
+    """返回 item_dogma 行数，>20 视为已初始化（约 32 个工业/发明植入体有 dogma）"""
     try:
         with sqlite3.connect(REF_DB_PATH) as conn:
             c = conn.cursor()
@@ -198,14 +198,19 @@ def check_universe() -> int:
 
 
 def check_schema() -> bool:
-    """检查所有 4 个库的 schema 版本是否匹配预期
+    """检查已存在的库的 schema 版本是否匹配预期
 
-    与 services/schema_migrations.py 配合，防止数据库结构变更导致崩溃。
+    不存在的库视为「待初始化」（由 init 流程创建），不阻塞启动检查。
+    与 services/schema_migrations.py 配合。
     """
     try:
         from services.schema_migrations import DB_SCHEMA_VERSIONS, get_db_version
 
-        return all(get_db_version(alias) == expected for alias, expected in DB_SCHEMA_VERSIONS.items())
+        return all(
+            get_db_version(alias) == expected
+            for alias, expected in DB_SCHEMA_VERSIONS.items()
+            if get_db_version(alias) is not None
+        )
     except Exception:
         return False
 
@@ -218,7 +223,7 @@ def check_all() -> dict:
         "items": check_items() >= 10000 and check_item_names_ratio() < 0.05 and check_market_tree() > 500,
         "prices": check_prices() > 0,
         "blueprints": check_blueprints() >= 1000 and check_blueprint_names() < 100,
-        "implants": check_implants() > 200,
+        "implants": check_implants() > 20,
         "icons": cached >= int(total * 0.8),
         "industry": check_industry() > 100,
         "sde_data": (
