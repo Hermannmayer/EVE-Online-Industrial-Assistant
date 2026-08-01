@@ -12,7 +12,6 @@
 import asyncio
 from collections.abc import Callable
 
-import aiohttp
 import aiosqlite
 from tqdm import tqdm
 
@@ -265,7 +264,8 @@ async def fill_missing_blueprint_names():
     if type_ids_data:
         batch = []
         for i, tid in enumerate(missing):
-            td = type_ids_data.get(str(tid))
+            # typeIDs.yaml 键为 int（yaml 未加引号解析），兼容字符串键
+            td = type_ids_data.get(tid) or type_ids_data.get(str(tid))
             if not td:
                 continue
             nd = td.get("name", {}) or {}
@@ -312,7 +312,7 @@ async def fill_missing_blueprint_names():
 
 
 async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], None] | None = None):
-    """从 ESI 补拉 item 表中缺失名称的物品。
+    """从 ESI 补拉 item 表中缺失名称的物品（并发 + 全局限流）。
 
     用于:
       1. type_id < 178（被 START_TYPE_ID 跳过的基础矿物等）
@@ -330,33 +330,29 @@ async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], Non
             progress_cb(100, "名称已完整")
         return
 
-    log.info(f"发现 {len(missing)} 个物品缺少名称，从 ESI 补拉...")
-    BATCH = 50
+    log.info(f"发现 {len(missing)} 个物品缺少名称，从 ESI 并发补拉...")
+    from services.client import APIClient
+
+    BATCH = 100
     fixed = 0
-    async with aiohttp.ClientSession() as session:
+
+    async def _fetch_one(client: APIClient, tid: int) -> tuple[int, str, str]:
+        """并发获取单个物品的 zh + en 名称"""
+        base = f"https://esi.evetech.net/latest/universe/types/{tid}/?datasource=tranquility&language="
+
+        async def _get(lang: str) -> str:
+            data = await client.fetch(base + lang)
+            return (data or {}).get("name", "") or ""
+
+        zh, en = await asyncio.gather(_get("zh"), _get("en"))
+        return tid, en, zh
+
+    # APIClient 内部自带 ESI 全局限流(20 req/s) + 并发控制 + 429 重试
+    async with APIClient(concurrency=20, timeout=15) as client:
         for start in range(0, len(missing), BATCH):
             batch = missing[start : start + BATCH]
-            updates = []
-            for tid in batch:
-                try:
-                    url = f"https://esi.evetech.net/latest/universe/types/{tid}/?datasource=tranquility&language=zh"
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            zh_name = data.get("name", "") or ""
-                            en_name = ""
-                            try:
-                                url_en = f"https://esi.evetech.net/latest/universe/types/{tid}/?datasource=tranquility&language=en"
-                                async with session.get(url_en, timeout=aiohttp.ClientTimeout(total=15)) as resp_en:
-                                    if resp_en.status == 200:
-                                        en_name = (await resp_en.json()).get("name", "") or ""
-                            except Exception:
-                                pass
-                            if en_name or zh_name:
-                                updates.append((en_name, zh_name, tid))
-                except Exception:
-                    continue
-
+            results = await asyncio.gather(*[_fetch_one(client, tid) for tid in batch])
+            updates = [(en, zh, tid) for tid, en, zh in results if en or zh]
             if updates:
                 async with aiosqlite.connect(DATABASE_PATH) as db:
                     await db.executemany(
@@ -365,11 +361,11 @@ async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], Non
                     )
                     await db.commit()
                 fixed += len(updates)
+                log.info(f"  已修复 {fixed}/{len(missing)}")
 
             pct = min(95, int((start + BATCH) / len(missing) * 100))
             if progress_cb:
                 progress_cb(pct, f"名称补拉... {min(start + BATCH, len(missing))}/{len(missing)}")
-            await asyncio.sleep(0.5)
 
     log.info(f"ESI 补拉完成，共修复 {fixed}/{len(missing)} 个物品名称")
     if progress_cb:

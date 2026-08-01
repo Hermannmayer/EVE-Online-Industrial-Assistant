@@ -153,7 +153,7 @@ async def download_icon_for_group(
             return False
 
 
-async def download_all(session: aiohttp.ClientSession, type_ids: list):
+async def download_all(session: aiohttp.ClientSession, type_ids: list, progress_cb=None):
     """批量下载所有图标（按 iconID 去重，相同图标只下载一次）"""
     semaphore = asyncio.Semaphore(CONCURRENCY)
     progress: list = [0, 0]  # [total, new_downloads]
@@ -169,12 +169,25 @@ async def download_all(session: aiohttp.ClientSession, type_ids: list):
         download_icon_for_group(session, icon_id, tids, semaphore, progress) for icon_id, tids in icon_groups.items()
     ]
     if tasks:
-        await asyncio.gather(*tasks)
+        # 后台轮询共享进度并上报（不侵入单个下载函数）
+        async def _monitor():
+            last = -1
+            while progress[0] < total:
+                processed = min(progress[0], total)
+                if processed != last and progress_cb:
+                    progress_cb(int(processed / max(total, 1) * 100), f"图标 {processed}/{total}")
+                    last = processed
+                await asyncio.sleep(0.2)
+
+        await asyncio.gather(_monitor(), *tasks)
+
+    if progress_cb:
+        progress_cb(100, f"图标 {total}/{total}")
 
     log.info(f"完成! 总计 {total}, 新下载 {progress[1]} 个图标（{len(icon_groups)} 组）")
 
 
-async def main():
+async def main(progress_cb=None):
     # 命令行参数：只下载指定 type_id
     if len(sys.argv) > 1:
         type_ids = [int(arg) for arg in sys.argv[1:] if arg.isdigit()]
@@ -196,7 +209,7 @@ async def main():
         timeout=aiohttp.ClientTimeout(total=30),
         connector=aiohttp.TCPConnector(limit=CONCURRENCY, limit_per_host=CONCURRENCY),
     ) as session:
-        await download_all(session, type_ids)
+        await download_all(session, type_ids, progress_cb)
 
 
 if __name__ == "__main__":
