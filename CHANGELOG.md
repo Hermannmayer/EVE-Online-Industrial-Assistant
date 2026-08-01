@@ -6,6 +6,27 @@
 
 <!-- version list -->
 
+## v0.11.0 (2026-08-01)
+
+### Chores
+
+- **docs**: 同步 API 文档 + README 测试数
+  ([`273719c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/273719c71c580bef35f8dfc3ae067c1475ac1e52))
+
+### Features
+
+- 生产计划执行服务层 — schema v3→v4、材料校验/扣减/返还、蓝图占用/消耗、启动/完成/撤销
+  ([`af7f607`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/af7f6078ebc3a37160310053d2aedf9cc859a94e))
+
+- 生产追踪 UI — 材料机库设置、倒计时、蓝图绑定弹窗、完成入库收敛、撤销启动、编辑机库去重
+  ([`a344bc0`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a344bc02526e9458cdd391045485984adef1dfe8))
+
+### Testing
+
+- 生产追踪测试 — 执行/倒计时/迁移/蓝图占用用例
+  ([`d629aa6`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d629aa6465033a1ec9fb3b5ca128735e405e9892))
+
+
 ## v0.10.0 (2026-08-01)
 
 ### Bug Fixes
