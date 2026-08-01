@@ -49,6 +49,10 @@ ZIP_LOOKUP = {
 # Universe 数据 JSON 缓存路径（避免每次从 ZIP 解析 50K+ YAML 文件）
 UNIVERSE_CACHE_PATH = os.path.join(CACHE_DIR, "universe_data.json")
 
+# 进程内 YAML 解析缓存：避免初始化时反复解析大文件（typeIDs.yaml 148MB 解析 ~29s）
+# 初始化完成后由 clear_yaml_cache() 释放，避免长期占用内存
+_YAML_CACHE: dict[str, dict] = {}
+
 
 def cache_path(name: str) -> str:
     return os.path.join(CACHE_DIR, name)
@@ -121,62 +125,20 @@ async def ensure_sde_cache():
     log.info("SDE YAML 缓存完成")
 
 
-async def ensure_universe_cache():
-    """确保 SDE zip 已缓存，遍历 universe/ 目录树并返回解析后的数据字典
+def _parse_universe_chunk(paths: list[str], zip_path: str) -> tuple[list, list, list, list]:
+    """在线程池 worker 中解析一批 universe YAML 文件（CSafeLoader，每 worker 独立加载器）
 
-    返回: (regions, constellations, systems, stargates)
-      每个元素是字典列表，供 sde_loader.write_universe 写入数据库
+    Returns:
+        (regions, constellations, systems, stargates)
     """
-    await ensure_sde_cache()
-
-    if not os.path.exists(SDE_ZIP_PATH):
-        log.warning("SDE 压缩包未缓存，无法处理 universe 数据")
-        return [], [], [], []
-
-    # JSON 缓存快速路径：避免每次从 ZIP 解析 50K+ YAML 文件
-    if os.path.exists(UNIVERSE_CACHE_PATH):
-        try:
-            with open(UNIVERSE_CACHE_PATH, encoding="utf-8") as f:
-                data = json.load(f)
-            log.info(
-                f"Universe JSON 缓存已加载: "
-                f"{len(data.get('regions', []))} regions, "
-                f"{len(data.get('constellations', []))} constellations, "
-                f"{len(data.get('systems', []))} systems, "
-                f"{len(data.get('stargates', []))} stargates"
-            )
-            return (
-                data.get("regions", []),
-                data.get("constellations", []),
-                data.get("systems", []),
-                data.get("stargates", []),
-            )
-        except Exception as e:
-            log.warning(f"Universe JSON 缓存读取失败，重新解析: {e}")
-
-    log.info("正在解析 universe/ 目录下的 YAML 文件...")
+    _Loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
     regions: list[dict] = []
     constellations: list[dict] = []
     systems: list[dict] = []
     stargates: list[dict] = []
 
-    # 使用 CSafeLoader 加速（如有）
-    _Loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
-
-    with zipfile.ZipFile(SDE_ZIP_PATH, "r") as zf:
-        all_paths = [p for p in zf.namelist() if p.startswith("universe/") and p.endswith(".yaml")]
-        total = len(all_paths)
-        log.info(f"共 {total} 个 universe YAML 文件需要解析")
-
-        t0 = time.time()
-        for idx, path in enumerate(all_paths):
-            # 每 500 个文件报告一次进度
-            if idx > 0 and idx % 500 == 0:
-                elapsed = time.time() - t0
-                pct = idx / total * 100
-                log.info(f"  universe 解析进度: {idx}/{total} ({pct:.0f}%), 已用 {elapsed:.0f}s")
-                await asyncio.sleep(0)  # 让事件循环处理其他任务
-
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for path in paths:
             try:
                 raw = zf.read(path).decode("utf-8")
             except Exception:
@@ -225,13 +187,74 @@ async def ensure_universe_cache():
                         }
                     )
 
-        elapsed = time.time() - t0
-        log.info(
-            f"Universe 数据解析完成: "
-            f"{len(regions)} regions, {len(constellations)} constellations, "
-            f"{len(systems)} systems, {len(stargates)} stargates "
-            f"(耗时 {elapsed:.0f}s)"
-        )
+    return regions, constellations, systems, stargates
+
+
+async def ensure_universe_cache():
+    """确保 SDE zip 已缓存，遍历 universe/ 目录树并返回解析后的数据字典
+
+    返回: (regions, constellations, systems, stargates)
+      每个元素是字典列表，供 sde_loader.write_universe 写入数据库
+    """
+    await ensure_sde_cache()
+
+    if not os.path.exists(SDE_ZIP_PATH):
+        log.warning("SDE 压缩包未缓存，无法处理 universe 数据")
+        return [], [], [], []
+
+    # JSON 缓存快速路径：避免每次从 ZIP 解析 50K+ YAML 文件
+    if os.path.exists(UNIVERSE_CACHE_PATH):
+        try:
+            with open(UNIVERSE_CACHE_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+            log.info(
+                f"Universe JSON 缓存已加载: "
+                f"{len(data.get('regions', []))} regions, "
+                f"{len(data.get('constellations', []))} constellations, "
+                f"{len(data.get('systems', []))} systems, "
+                f"{len(data.get('stargates', []))} stargates"
+            )
+            return (
+                data.get("regions", []),
+                data.get("constellations", []),
+                data.get("systems", []),
+                data.get("stargates", []),
+            )
+        except Exception as e:
+            log.warning(f"Universe JSON 缓存读取失败，重新解析: {e}")
+
+    log.info("正在并行解析 universe/ 目录下的 YAML 文件...")
+    with zipfile.ZipFile(SDE_ZIP_PATH, "r") as zf:
+        all_paths = [p for p in zf.namelist() if p.startswith("universe/") and p.endswith(".yaml")]
+    total = len(all_paths)
+    log.info(f"共 {total} 个 universe YAML 文件需要解析")
+
+    # 按 CPU 核心数并行切块（yaml 解析为 CPU 密集型）
+    workers = min(os.cpu_count() or 2, 8)
+    chunks = [all_paths[i::workers] for i in range(workers) if all_paths[i::workers]]
+
+    t0 = time.time()
+    regions: list[dict] = []
+    constellations: list[dict] = []
+    systems: list[dict] = []
+    stargates: list[dict] = []
+
+    results = await asyncio.gather(
+        *[asyncio.to_thread(_parse_universe_chunk, chunk, SDE_ZIP_PATH) for chunk in chunks]
+    )
+    for r_regions, r_const, r_sys, r_sg in results:
+        regions.extend(r_regions)
+        constellations.extend(r_const)
+        systems.extend(r_sys)
+        stargates.extend(r_sg)
+
+    elapsed = time.time() - t0
+    log.info(
+        f"Universe 数据解析完成: "
+        f"{len(regions)} regions, {len(constellations)} constellations, "
+        f"{len(systems)} systems, {len(stargates)} stargates "
+        f"(耗时 {elapsed:.0f}s, {workers} 线程)"
+    )
 
     # 缓存为 JSON（下次启动秒级加载）
     try:
@@ -254,10 +277,22 @@ async def ensure_universe_cache():
 
 
 def load_yaml(name: str) -> dict:
-    """从本地缓存加载 SDE YAML 文件（使用 CLoader 加速）"""
+    """从本地缓存加载 SDE YAML 文件（使用 CLoader 加速，进程内二次解析缓存）
+
+    注意：返回的是共享对象，调用方不得修改其内容。
+    """
+    if name in _YAML_CACHE:
+        return _YAML_CACHE[name]
     path = cache_path(name)
     if not os.path.exists(path):
         return {}
     loader = getattr(yaml, "CLoader", yaml.SafeLoader)
     with open(path, encoding="utf-8") as f:
-        return yaml.load(f, Loader=loader) or {}
+        data = yaml.load(f, Loader=loader) or {}
+    _YAML_CACHE[name] = data
+    return data
+
+
+def clear_yaml_cache() -> None:
+    """释放 YAML 解析缓存（初始化完成后调用，释放 typeIDs.yaml 等大文件内存）"""
+    _YAML_CACHE.clear()
