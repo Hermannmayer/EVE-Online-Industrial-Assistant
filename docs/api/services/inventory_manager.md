@@ -114,6 +114,26 @@ def add_item(hangar_id: int, type_id: int, quantity: int, cost_price: float=0) -
 
 定义行：`193`
 
+### `get_hangar_stock`
+
+```python
+def get_hangar_stock(hangar_id: int) -> dict[int, int]
+```
+
+单机库库存快照 &#123;type_id: quantity&#125;（quantity > 0 才计入）。
+
+定义行：`224`
+
+### `deduct_item`
+
+```python
+def deduct_item(hangar_id: int, type_id: int, quantity: int) -> int
+```
+
+从机库扣减 quantity，返回实际扣减量。
+
+定义行：`241`
+
 ### `remove_item`
 
 ```python
@@ -124,7 +144,7 @@ def remove_item(item_id: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`224`
+定义行：`269`
 
 ### `update_quantity`
 
@@ -136,7 +156,7 @@ def update_quantity(item_id: int, quantity: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`231`
+定义行：`276`
 
 ### `move_items`
 
@@ -148,7 +168,7 @@ def move_items(item_ids: list[int], to_hangar_id: int)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`243`
+定义行：`288`
 
 ### `get_total_value`
 
@@ -160,7 +180,7 @@ def get_total_value(hangar_id: int, price_type: str='sell', discount: float=0) -
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`275`
+定义行：`320`
 
 ### `add_blueprint`
 
@@ -172,7 +192,7 @@ def add_blueprint(hangar_id: int, blueprint_type_id: int, is_bpo: bool=True, me_
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`307`
+定义行：`352`
 
 ### `get_blueprints`
 
@@ -182,7 +202,7 @@ def get_blueprints(hangar_id: int | None=None) -> list[dict]
 
 获取用户蓝图列表，可指定机库或全部
 
-定义行：`328`
+定义行：`373`
 
 ### `update_blueprint`
 
@@ -192,7 +212,7 @@ def update_blueprint(bp_id: int, **kwargs) -> bool
 
 更新蓝图属性，kwargs 可含 is_bpo, me_level, te_level, runs, quantity, notes
 
-定义行：`368`
+定义行：`413`
 
 ### `delete_blueprint`
 
@@ -204,7 +224,7 @@ def delete_blueprint(bp_id: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`384`
+定义行：`429`
 
 ### `delete_blueprints_batch`
 
@@ -214,7 +234,7 @@ def delete_blueprints_batch(ids: list[int]) -> int
 
 批量删除蓝图，返回删除行数
 
-定义行：`391`
+定义行：`436`
 
 ### `move_blueprints_to_hangar`
 
@@ -224,7 +244,7 @@ def move_blueprints_to_hangar(ids: list[int], hangar_id: int) -> int
 
 批量移动蓝图到目标机库
 
-定义行：`402`
+定义行：`447`
 
 ### `update_blueprints_batch`
 
@@ -234,7 +254,7 @@ def update_blueprints_batch(ids: list[int], **kwargs) -> int
 
 批量更新蓝图属性（me_level, te_level, runs, cost_per_run 等）
 
-定义行：`413`
+定义行：`458`
 
 ### `get_blueprint_product_info`
 
@@ -244,7 +264,7 @@ def get_blueprint_product_info(blueprint_type_id: int) -> dict | None
 
 获取蓝图的产物信息（名称、产量、制造时间）
 
-定义行：`430`
+定义行：`475`
 
 ### `get_blueprint_product_info_batch`
 
@@ -254,7 +274,7 @@ def get_blueprint_product_info_batch(bp_ids: list[int]) -> dict[int, dict]
 
 批量获取蓝图产物信息，返回 &#123;blueprint_type_id: &#123;product_type_id, product_name, product_quantity, base_time&#125;&#125;
 
-定义行：`460`
+定义行：`505`
 
 ### `get_blueprint_materials_batch`
 
@@ -264,7 +284,7 @@ def get_blueprint_materials_batch(bp_ids: list[int]) -> dict[int, list[tuple[int
 
 批量获取蓝图材料，返回 &#123;blueprint_type_id: [(material_type_id, quantity), ...]&#125;
 
-定义行：`491`
+定义行：`536`
 
 ### `check_blueprint_exists`
 
@@ -274,7 +294,7 @@ def check_blueprint_exists(blueprint_type_id: int) -> bool
 
 检查用户蓝图库中是否已存在指定类型的蓝图
 
-定义行：`512`
+定义行：`557`
 
 ### `get_blueprint_tech_levels`
 
@@ -284,7 +304,7 @@ def get_blueprint_tech_levels()
 
 从 reference.db 获取各蓝图的科技等级
 
-定义行：`520`
+定义行：`565`
 
 ### `get_blueprint_reaction_ids`
 
@@ -294,4 +314,4 @@ def get_blueprint_reaction_ids() -> set[int]
 
 获取所有反应公式的 blueprint_type_id
 
-定义行：`557`
+定义行：`602`
