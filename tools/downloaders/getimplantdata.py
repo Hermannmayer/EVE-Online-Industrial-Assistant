@@ -1,11 +1,13 @@
 """
-拉取工业/贸易相关植入体的 dogma 属性
-从 SDE zip 本地解析 typeIDs.yaml 中的 dogmaAttributes/dogmaEffects
+拉取工业/发明相关植入体的 dogma 属性（从 ESI /universe/types/ 并发拉取）
 
-流程：
-  1. 检查本地缓存 data/typeIDs.yaml 是否存在
-  2. 若不存在 → 下载 SDE zip(~112MB)，提取并缓存
-  3. 解析 YAML → 写入 item_dogma 表
+只处理与应用相关的工业/发明植入体组，避免全量 443 个战斗/通用植入体：
+  - Cyber Production          (3 个)  工业制造
+  - Cyber Science             (13 个) 发明/研究/科学
+  - Cyber Resource Processing (16 个) 采矿/精炼/冰
+
+说明：SDE 的 typeIDs.yaml 导出不含 dogmaAttributes/dogmaEffects，
+因此直接从 ESI 拉取真实 dogma 数据。
 """
 
 import asyncio
@@ -21,18 +23,11 @@ from core.paths import reference_db_path
 
 DB_PATH = reference_db_path()
 
-# 工业相关的物品组（全部拉取）
+# 工业/发明相关的物品组（其余 Cyber 组为战斗/通用类，不需要 dogma）
 INDUSTRY_GROUP_NAMES = [
-    "Cyber Armor",
-    "Cyber Electronic Systems",
-    "Cyber Engineering",
-    "Cyber Gunnery",
-    "Cyber Leadership",
-    "Cyber Learning",
-    "Cyber Missile",
-    "Cyber Navigation",
-    "Cyber Shields",
-    "Cyber Targeting",
+    "Cyber Production",  # 工业制造（Beancounter Industry BX）
+    "Cyber Science",  # 发明/研究/科学（Beancounter Research RR / Science SC）
+    "Cyber Resource Processing",  # 采矿/精炼/冰（Highwall MX / Yeti IH / Beancounter RX）
 ]
 
 
@@ -106,25 +101,17 @@ async def fetch_attribute_name(client, attribute_id: int) -> tuple[int, str]:
     return (attribute_id, data.get("name", "unknown"))
 
 
-async def main():
+async def main(progress_cb=None):
     log.info("=" * 50)
-    log.info("  植入体 dogma 数据拉取")
+    log.info("  工业/发明植入体 dogma 数据拉取（ESI）")
     log.info("=" * 50)
 
+    if progress_cb:
+        progress_cb(5, "初始化数据库")
     init_db(DB_PATH)
 
     type_ids = get_industry_type_ids(DB_PATH)
-    log.info(f"共计 {len(type_ids)} 个植入体")
-
-    # 确保 SDE 缓存就绪
-    from tools.downloaders.sde_cache import ensure_sde_cache, load_yaml
-
-    await ensure_sde_cache()
-    data = load_yaml("typeIDs.yaml")
-
-    if not data:
-        log.error("typeIDs.yaml 缓存不可用")
-        return
+    log.info(f"共计 {len(type_ids)} 个工业/发明植入体")
 
     # 查已缓存
     conn = sqlite3.connect(DB_PATH)
@@ -138,28 +125,32 @@ async def main():
 
     if not to_fetch:
         log.info("数据已最新，跳过")
+        if progress_cb:
+            progress_cb(100, "植入体数据已最新")
         return
 
-    # 从 typeIDs.yaml 提取 dogma 数据
+    # 从 ESI 并发拉取 dogma（APIClient 自带 20 req/s 全局限流 + 429 重试）
+    from services.client import APIClient
+
+    if progress_cb:
+        progress_cb(20, f"从 ESI 拉取 {len(to_fetch)} 个植入体 dogma")
     rows = []
-    for tid in to_fetch:
-        entry = data.get(str(tid))
-        if not entry:
-            continue
-
-        dogma_attrs = entry.get("dogmaAttributes", []) or []
-        dogma_effects = entry.get("dogmaEffects", []) or []
-
-        rows.append(
-            (
-                tid,
-                json.dumps(dogma_attrs, ensure_ascii=False),
-                json.dumps(dogma_effects, ensure_ascii=False),
-            )
-        )
+    BATCH = 20
+    async with APIClient(concurrency=10, timeout=15) as client:
+        for start in range(0, len(to_fetch), BATCH):
+            batch = to_fetch[start : start + BATCH]
+            results = await asyncio.gather(*[fetch_type_dogma(client, tid) for tid in batch])
+            for r in results:
+                if r:
+                    rows.append((r["type_id"], r["dogma_attrs"], r["dogma_effects"]))
+            pct = 20 + int((start + BATCH) / max(len(to_fetch), 1) * 65)
+            if progress_cb:
+                progress_cb(min(pct, 90), f"ESI 拉取 {min(start + BATCH, len(to_fetch))}/{len(to_fetch)}")
 
     if not rows:
-        log.info("没有找到 dogma 数据")
+        log.info("ESI 未返回有效 dogma 数据")
+        if progress_cb:
+            progress_cb(100, "未获取到 dogma 数据")
         return
 
     conn = sqlite3.connect(DB_PATH)
@@ -170,6 +161,8 @@ async def main():
     )
     conn.commit()
     conn.close()
+    if progress_cb:
+        progress_cb(92, f"写入 {len(rows)} 条 dogma 数据")
     log.info(f"写入 {len(rows)} 条 dogma 数据")
 
     # 展示摘要
@@ -187,6 +180,8 @@ async def main():
         attr_summary = ", ".join(f"{a['attribute_id']}={a['value']}" for a in attrs[:5])
         log.info(f"  ID={tid} | {en_name} [{group}]  {attr_summary}{'...' if len(attrs) > 5 else ''}")
     conn.close()
+    if progress_cb:
+        progress_cb(100, "植入体数据完成")
 
 
 if __name__ == "__main__":

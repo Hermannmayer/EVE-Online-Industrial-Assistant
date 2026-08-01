@@ -41,13 +41,13 @@ def temp_ref_db():
         "INSERT INTO item VALUES (?, ?, ?)",
         [
             # Cyber Production × 2
-            (48112, "Implant A", "Cyber Armor"),
-            (48114, "Implant B", "Cyber Armor"),
+            (48112, "Implant A", "Cyber Production"),
+            (48114, "Implant B", "Cyber Production"),
             # Cyber Resource Processing × 1
-            (48116, "Implant C", "Cyber Electronic Systems"),
+            (48116, "Implant C", "Cyber Resource Processing"),
             # Cyber Science × 2
-            (48118, "Implant D", "Cyber Engineering"),
-            (48120, "Implant E", "Cyber Engineering"),
+            (48118, "Implant D", "Cyber Science"),
+            (48120, "Implant E", "Cyber Science"),
             # 非工业组（不应被返回）
             (2001, "Raven", "Ship"),
             (2002, "Drone", "Drone"),

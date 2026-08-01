@@ -78,7 +78,9 @@ async def create_tables():
         await db.commit()
 
 
-async def run_industry_update():
+async def run_industry_update(progress_cb=None):
+    if progress_cb:
+        progress_cb(5, "创建表结构")
     await create_tables()
 
     async with APIClient(concurrency=10) as client:
@@ -88,24 +90,32 @@ async def run_industry_update():
         log.info("获取工业系统成本指数...")
         systems = await client.fetch_required(f"{ESI_BASE}/industry/systems/")
         log.info(f"  {len(systems)} 个星系")
+        if progress_cb:
+            progress_cb(25, f"获取系统成本指数 ({len(systems)} 个星系)")
 
         async with aiosqlite.connect(REF_DB_PATH) as db:
-            for sys in tqdm(systems, desc="系统成本"):
+            total = len(systems)
+            for i, sys in enumerate(tqdm(systems, desc="系统成本")):
                 sid = sys["solar_system_id"]
                 for ci in sys.get("cost_indices", []):
                     await db.execute(
                         "INSERT OR REPLACE INTO industry_system_costs VALUES (?, ?, ?, ?)",
                         (sid, ci["activity"], ci["cost_index"], now),
                     )
+                if progress_cb and (i + 1) % 20 == 0:
+                    progress_cb(25 + int((i + 1) / max(total, 1) * 25), f"系统成本 {i + 1}/{total}")
             await db.commit()
 
         # ── 工业设施 (reference.db) ──
         log.info("获取工业设施数据...")
         facilities = await client.fetch_required(f"{ESI_BASE}/industry/facilities/")
         log.info(f"  {len(facilities)} 个设施")
+        if progress_cb:
+            progress_cb(65, f"获取工业设施数据 ({len(facilities)} 个设施)")
 
         async with aiosqlite.connect(REF_DB_PATH) as db:
-            for fac in tqdm(facilities, desc="设施"):
+            total_f = len(facilities)
+            for i, fac in enumerate(tqdm(facilities, desc="设施")):
                 await db.execute(
                     "INSERT OR REPLACE INTO industry_facilities VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
@@ -118,8 +128,12 @@ async def run_industry_update():
                         now,
                     ),
                 )
+                if progress_cb and (i + 1) % 20 == 0:
+                    progress_cb(65 + int((i + 1) / max(total_f, 1) * 30), f"设施 {i + 1}/{total_f}")
             await db.commit()
 
+    if progress_cb:
+        progress_cb(100, "工业数据完成")
     log.info("工业数据拉取完成")
 
 

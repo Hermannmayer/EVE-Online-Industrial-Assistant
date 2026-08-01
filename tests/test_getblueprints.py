@@ -6,6 +6,7 @@ import pytest
 
 from tools.downloaders.getblueprints import (
     CACHE_FILE,
+    SDE_ZIP_PATH,
     SDE_ZIP_URL,
     create_tables,
     ensure_cache,
@@ -44,7 +45,8 @@ class TestEnsureCache:
     @patch("tools.downloaders.getblueprints.open", new_callable=mock_open)
     @patch("tools.downloaders.getblueprints.os.path.getsize")
     async def test_downloads_and_extracts_when_missing(self, mock_getsize, mock_file, mock_makedirs, mock_exists):
-        mock_exists.side_effect = [False, True]
+        # CACHE_FILE 与共享 SDE zip 都不存在 → 走下载路径
+        mock_exists.side_effect = [False, False]
         mock_getsize.return_value = 2 * 1024 * 1024
 
         mock_resp = MagicMock()
@@ -69,6 +71,27 @@ class TestEnsureCache:
 
         assert result == CACHE_FILE
         assert mock_session.get.call_args[0][0] == SDE_ZIP_URL
+
+    @pytest.mark.asyncio
+    @patch("tools.downloaders.getblueprints.os.path.exists")
+    @patch("tools.downloaders.getblueprints.os.makedirs")
+    @patch("tools.downloaders.getblueprints.open", new_callable=mock_open)
+    async def test_reuses_shared_sde_zip_when_present(self, mock_file, mock_makedirs, mock_exists):
+        # CACHE_FILE 缺失但共享 data/sde.zip 已存在 → 复用，不重复下载
+        mock_exists.side_effect = [False, True]  # CACHE_FILE 不存在, SDE_ZIP_PATH 存在
+
+        mock_zf_instance = MagicMock()
+        mock_zf_instance.namelist.return_value = ["sde/fsd/blueprints.yaml"]
+        mock_zf_instance.read.return_value = b"blueprint: data"
+
+        with patch("zipfile.ZipFile") as mock_zf:
+            mock_zf.return_value.__enter__.return_value = mock_zf_instance
+            result = await ensure_cache()
+
+        assert result == CACHE_FILE
+        # 未触发任何下载请求
+        mock_zf.return_value.__enter__.assert_called_once()
+        mock_zf.assert_called_once_with(SDE_ZIP_PATH, "r")
 
     @pytest.mark.asyncio
     @patch("tools.downloaders.getblueprints.os.path.exists")

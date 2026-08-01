@@ -24,18 +24,11 @@ class TestGetIndustryTypeIds:
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
 
-        # 模拟按组名返回不同结果
+        # 模拟按组名返回不同结果（3 个工业/发明组）
         mock_cursor.fetchall.side_effect = [
-            [(101, "Implant A"), (102, "Implant B")],  # Cyber Armor
-            [(103, "Implant C")],  # Cyber Electronic Systems
-            [],  # Cyber Engineering
-            [],  # Cyber Gunnery
-            [],  # Cyber Leadership
-            [],  # Cyber Learning
-            [],  # Cyber Missile
-            [],  # Cyber Navigation
-            [],  # Cyber Shields
-            [(104, "Implant D")],  # Cyber Targeting
+            [(101, "Implant A"), (102, "Implant B")],  # Cyber Production
+            [(103, "Implant C"), (104, "Implant D")],  # Cyber Science
+            [],  # Cyber Resource Processing
         ]
         mock_conn.cursor.return_value = mock_cursor
         mock_connect.return_value = mock_conn
@@ -50,7 +43,7 @@ class TestGetIndustryTypeIds:
         """无匹配行时返回空列表"""
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
-        mock_cursor.fetchall.side_effect = [[], [], [], [], [], [], [], [], [], []]
+        mock_cursor.fetchall.side_effect = [[], [], []]
         mock_conn.cursor.return_value = mock_cursor
         mock_connect.return_value = mock_conn
 
