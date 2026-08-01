@@ -95,8 +95,11 @@ def is_step_satisfied(step_key: str) -> bool:
 
 
 def get_missing_steps() -> list[InitStep]:
-    """返回所有未就绪的步骤"""
-    return [s for s in STEPS if not is_step_satisfied(s.key)]
+    """返回所有未就绪的步骤（check_all 只跑一次，避免 8 次重复查询）"""
+    from services.init_check import check_all
+
+    status = check_all()
+    return [s for s in STEPS if not status.get(s.key, False)]
 
 
 def get_missing_count() -> int:
@@ -144,6 +147,8 @@ class InitService(QObject):
         self._current_key: str | None = None
         # 是否已取消
         self._cancelled = False
+        # 本轮网络检查缓存（每轮只查一次，避免 6 个网络步骤各查一次）
+        self._net_ok: bool | None = None
 
         # CLI 模式回调
         self.on_step_started: StepStartedCb = _noop
@@ -160,6 +165,7 @@ class InitService(QObject):
             step_keys: 要执行的步骤 key 列表。None = 自动选择未就绪步骤。
         """
         self._cancelled = False
+        self._net_ok = None  # 重置本轮网络缓存
         targets = step_keys or [s.key for s in STEPS]
         # 过滤出需要执行的步骤
         to_run = [k for k in targets if self._status.get(k) in (StepStatus.PENDING, StepStatus.FAILED)]
@@ -266,10 +272,11 @@ class InitService(QObject):
             if self._status.get(key) in (StepStatus.COMPLETED, StepStatus.SKIPPED):
                 continue
 
-            # 网络检查
+            # 网络检查（本轮只查一次，结果缓存复用）
             if step.needs_network:
-                net_ok = await self.check_network()
-                if not net_ok:
+                if self._net_ok is None:
+                    self._net_ok = await self.check_network()
+                if not self._net_ok:
                     self._status[key] = StepStatus.FAILED
                     self._errors[key] = "网络不可用"
                     self._emit_step_completed(key, False, "网络不可用")
@@ -303,6 +310,14 @@ class InitService(QObject):
         if all_done:
             summary = "全部初始化完成"
         self._emit_all_completed(all_done, summary)
+
+        # 初始化结束，释放 YAML 解析缓存（typeIDs.yaml 148MB 等大文件）
+        try:
+            from tools.downloaders.sde_cache import clear_yaml_cache
+
+            clear_yaml_cache()
+        except Exception:
+            pass
 
     def _deps_satisfied(self, step: InitStep) -> bool:
         """检查前置步骤是否已完成"""
@@ -338,25 +353,26 @@ class InitService(QObject):
 
         try:
             import importlib
+            import inspect
 
             mod = importlib.import_module(mod_path)
             func = getattr(mod, func_name, None)
             if func is None:
                 return False, f"模块 {mod_path} 中未找到 {func_name}"
 
+            # 提前判断入口函数是否接受 progress_cb 参数，
+            # 避免用 except TypeError 兜底导致「真实 TypeError 被掩盖 + 函数执行两次」
+            accepts_cb = "progress_cb" in inspect.signature(func).parameters
+
             if asyncio.iscoroutinefunction(func):
-                if use_cb:
-                    try:
-                        await func(progress_cb=_progress)
-                    except TypeError:
-                        # 如果该函数不支持 progress_cb，不带参数重新调用
-                        await func()
+                if use_cb and accepts_cb:
+                    await func(progress_cb=_progress)
                 else:
                     await func()
             else:
                 # 同步函数放在线程池执行
                 loop = asyncio.get_event_loop()
-                if use_cb:
+                if use_cb and accepts_cb:
                     await loop.run_in_executor(None, lambda: func(progress_cb=_progress))
                 else:
                     await loop.run_in_executor(None, func)
