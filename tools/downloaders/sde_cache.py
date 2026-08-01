@@ -125,13 +125,51 @@ async def ensure_sde_cache():
     log.info("SDE YAML 缓存完成")
 
 
-def _parse_universe_chunk(paths: list[str], zip_path: str) -> tuple[list, list, list, list]:
+def _build_name_map(zip_path: str) -> dict[int, str]:
+    """从 bsd/invNames.yaml 构建 {itemID: itemName} 映射（名称按 itemID 索引）。
+
+    当前 SDE 的 region/constellation/solarsystem 名称不再内联，统一在 bsd/invNames.yaml。
+    解析失败时返回空 dict（星系名降级为空串，不中断写库）。
+    """
+    result: dict[int, str] = {}
+    _Loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            raw = zf.read("bsd/invNames.yaml").decode("utf-8")
+        rows = yaml.load(raw, Loader=_Loader) or []
+        for row in rows:
+            if isinstance(row, dict) and row.get("itemName"):
+                try:
+                    result[int(row["itemID"])] = row["itemName"]
+                except (TypeError, ValueError):
+                    continue
+    except Exception as e:
+        log.warning("invNames 名称解析失败，星系名将为空: %s", e)
+    return result
+
+
+def _parse_universe_chunk(
+    paths: list[str],
+    zip_path: str,
+    name_map: dict[int, str] | None = None,
+) -> tuple[list, list, list, list]:
     """在线程池 worker 中解析一批 universe YAML 文件（CSafeLoader，每 worker 独立加载器）
+
+    兼容新旧两种 SDE 格式：
+      - 新格式：region/constellation/solarsystem.yaml 仅含 ID，名称走 name_map
+        （bsd/invNames.yaml 按 itemID 索引）；stargates 内嵌在 solarsystem.yaml（键 destination）
+      - 旧格式：system.yaml 内联 solarSystemName；stargates 独立目录（destinationID）
+
+    Args:
+        paths: 该 worker 负责的 universe YAML 路径列表
+        zip_path: SDE zip 路径
+        name_map: {itemID: itemName} 名称映射（可选，缺失时名称兜底空串）
 
     Returns:
         (regions, constellations, systems, stargates)
     """
     _Loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    name_map = name_map or {}
     regions: list[dict] = []
     constellations: list[dict] = []
     systems: list[dict] = []
@@ -154,24 +192,41 @@ def _parse_universe_chunk(paths: list[str], zip_path: str) -> tuple[list, list, 
             if "region.yaml" in path:
                 region_id = data.get("regionID")
                 if region_id is not None:
-                    data["region_id"] = int(region_id)
+                    rid = int(region_id)
+                    data["region_id"] = rid
+                    data["region_name"] = name_map.get(rid, data.get("regionName", ""))
                     regions.append(data)
 
             elif "constellation.yaml" in path:
                 cid = data.get("constellationID")
                 if cid is not None:
-                    data["constellation_id"] = int(cid)
+                    cid = int(cid)
+                    data["constellation_id"] = cid
+                    data["constellation_name"] = name_map.get(cid, data.get("constellationName", ""))
                     constellations.append(data)
 
-            elif "system.yaml" in path:
+            elif path.endswith("solarsystem.yaml") or path.endswith("system.yaml"):
                 sid = data.get("solarSystemID")
                 if sid is not None:
-                    data["solar_system_id"] = int(sid)
-                    data["solar_system_name"] = data.get("solarSystemName", "")
+                    sid = int(sid)
+                    data["solar_system_id"] = sid
+                    data["solar_system_name"] = name_map.get(sid, data.get("solarSystemName", ""))
                     data["security"] = data.get("security", data.get("securityStatus", 0.0))
                     systems.append(data)
+                    # 新格式：stargates 内嵌（键为 stargate_id，值为 {"destination": system_id}）
+                    for sg_id, sg in (data.get("stargates") or {}).items():
+                        dest = sg.get("destination") if isinstance(sg, dict) else None
+                        if dest is not None:
+                            stargates.append(
+                                {
+                                    "stargate_id": int(sg_id),
+                                    "solar_system_id": sid,
+                                    "destination_system_id": int(dest),
+                                }
+                            )
 
             elif "stargates/" in path:
+                # 旧格式：独立目录，destinationID
                 try:
                     sg_id = int(parts[-1].replace(".yaml", ""))
                     sys_id = int(parts[-3])
@@ -224,6 +279,8 @@ async def ensure_universe_cache():
             log.warning(f"Universe JSON 缓存读取失败，重新解析: {e}")
 
     log.info("正在并行解析 universe/ 目录下的 YAML 文件...")
+    # 名称在 bsd/invNames.yaml（按 itemID 索引），解析前构建一次映射供各 worker 共享
+    name_map = _build_name_map(SDE_ZIP_PATH)
     with zipfile.ZipFile(SDE_ZIP_PATH, "r") as zf:
         all_paths = [p for p in zf.namelist() if p.startswith("universe/") and p.endswith(".yaml")]
     total = len(all_paths)
@@ -240,7 +297,7 @@ async def ensure_universe_cache():
     stargates: list[dict] = []
 
     results = await asyncio.gather(
-        *[asyncio.to_thread(_parse_universe_chunk, chunk, SDE_ZIP_PATH) for chunk in chunks]
+        *[asyncio.to_thread(_parse_universe_chunk, chunk, SDE_ZIP_PATH, name_map) for chunk in chunks]
     )
     for r_regions, r_const, r_sys, r_sg in results:
         regions.extend(r_regions)

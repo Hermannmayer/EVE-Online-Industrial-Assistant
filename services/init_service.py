@@ -63,6 +63,7 @@ STEPS = [
     InitStep("prices", "市场价格", needs_network=True, critical=True, depends_on=["items"]),
     InitStep("blueprints", "蓝图数据", needs_network=True, critical=True, depends_on=["items"]),
     InitStep("implants", "植入体数据", needs_network=True, critical=False),
+    InitStep("rigs", "结构改装件数据", needs_network=True, critical=False, depends_on=["items"]),
     InitStep("industry", "工业数据", needs_network=True, critical=True, depends_on=["items"]),
     InitStep("icons", "物品图标", needs_network=True, critical=False),
     InitStep("sde_data", "SDE扩展数据", needs_network=False, critical=True, depends_on=["items"]),
@@ -320,8 +321,22 @@ class InitService(QObject):
             pass
 
     def _deps_satisfied(self, step: InitStep) -> bool:
-        """检查前置步骤是否已完成"""
-        return all(self._status.get(dep) in (StepStatus.COMPLETED, StepStatus.SKIPPED) for dep in step.depends_on)
+        """检查前置步骤是否已完成。
+
+        本次未执行（PENDING）但已全局就绪的依赖（如单独初始化缺失步骤时，
+        依赖的 items 在本轮 _status 仍为 PENDING）也视为满足，避免误跳过。
+        """
+        for dep in step.depends_on:
+            st = self._status.get(dep)
+            if st in (StepStatus.COMPLETED, StepStatus.SKIPPED):
+                continue
+            try:
+                if is_step_satisfied(dep):
+                    continue
+            except Exception:
+                pass
+            return False
+        return True
 
     async def _run_step(self, key: str) -> tuple[bool, str]:
         """实际执行一个初始化步骤
@@ -339,6 +354,7 @@ class InitService(QObject):
             "implants": ("tools.downloaders.getimplantdata", "main", True),
             "icons": ("tools.downloaders.geticon", "main", True),
             "industry": ("services.workers.getindustry", "run_industry_update", True),
+            "rigs": ("tools.downloaders.getrigdata", "main", True),
             "sde_data": ("tools.downloaders.sde_loader", "main", True),
         }
 

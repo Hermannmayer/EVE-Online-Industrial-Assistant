@@ -76,8 +76,13 @@ def full_dbs(db_paths):
     conn.execute("INSERT INTO dogma_attribute VALUES (1, 'test')")
     conn.execute("CREATE TABLE station (station_id INTEGER PRIMARY KEY, station_name TEXT)")
     conn.execute("INSERT INTO station VALUES (1, 'test')")
-    conn.execute("CREATE TABLE region (region_id INTEGER PRIMARY KEY, en_name TEXT)")
-    conn.execute("INSERT INTO region VALUES (1, 'test')")
+    conn.execute(
+        "CREATE TABLE solar_system (solar_system_id INTEGER PRIMARY KEY, solar_system_name TEXT, security REAL)"
+    )
+    conn.execute("INSERT INTO solar_system VALUES (1, 'Jita', 0.9)")
+    conn.execute("CREATE TABLE structure_rigs (type_id INTEGER PRIMARY KEY, mat_bonus REAL, time_bonus REAL)")
+    for i in range(100):
+        conn.execute("INSERT INTO structure_rigs VALUES (?, 0, 0)", (i,))
     conn.commit()
     conn.close()
 
@@ -209,6 +214,43 @@ def test_check_all_full(full_dbs, tmp_path):
         assert status["prices"] is True
         assert status["blueprints"] is True
         assert status["implants"] is True
+        assert status["sde_data"] is True, "region 有行 + 其它扩展表就绪 → sde_data 应 True"
+
+
+def test_sde_data_false_when_solar_system_empty(db_paths):
+    """solar_system 表 0 行 → sde_data False（即使其它扩展表有数据）
+
+    修复目标：已有库永不触发 universe 写入 → solar_system 0 行 → sde_data 必须判 False。
+    """
+    conn = sqlite3.connect(db_paths["ref"])
+    for table, ddl in [
+        ("meta_group", "meta_group_id INTEGER PRIMARY KEY, en_name TEXT"),
+        ("reprocessing_materials", "type_id INTEGER, material_type_id INTEGER"),
+        ("dogma_attribute", "attribute_id INTEGER PRIMARY KEY"),
+        ("station", "station_id INTEGER PRIMARY KEY"),
+    ]:
+        conn.execute(f"CREATE TABLE {table} ({ddl})")
+    conn.execute("INSERT INTO meta_group VALUES (1, 'Tech I')")
+    conn.execute("INSERT INTO reprocessing_materials VALUES (1, 1)")
+    conn.execute("INSERT INTO dogma_attribute VALUES (1)")
+    conn.execute("INSERT INTO station VALUES (1)")
+    conn.execute(
+        "CREATE TABLE solar_system (solar_system_id INTEGER PRIMARY KEY, solar_system_name TEXT, security REAL)"
+    )  # 0 行
+    conn.commit()
+    conn.close()
+    sqlite3.connect(db_paths["mkt"]).close()
+    sqlite3.connect(db_paths["bp"]).close()
+    with _patch_init_check(db_paths):
+        status = check_all()
+        assert status["sde_data"] is False
+
+
+def test_sde_data_true_when_solar_system_has_rows(full_dbs):
+    """solar_system 有行 → sde_data True（full_dbs 已含 solar_system 1 行）"""
+    with _patch_init_check(full_dbs):
+        status = check_all()
+        assert status["sde_data"] is True
 
 
 def test_missing_count_zero(full_dbs, tmp_path):
@@ -252,5 +294,5 @@ def test_missing_count_partial(db_paths):
     ):
         cnt = missing_count()
         # items=False, prices=False, blueprints=False, implants=False,
-        # industry=False, sde_data=False, icons=True (0>=0)
-        assert cnt == 6
+        # industry=False, sde_data=False, rigs=False, icons=True (0>=0)
+        assert cnt == 7

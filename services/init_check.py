@@ -187,11 +187,33 @@ def check_stations() -> int:
 
 
 def check_universe() -> int:
-    """返回 region 表行数"""
+    """返回 solar_system 表行数，>0 视为 universe 星系数据已加载。
+
+    用于 sde_data 就绪判定：星系表（星系搜索/机库星系成本依赖）有行才说明
+    SDE universe 扩展数据成功写入，否则已有库永远不触发 sde_data 步骤重跑。
+    判据与星系搜索一致（solar_system），避免「初始化显示完成但星系表空」的矛盾。
+    """
     try:
         with sqlite3.connect(REF_DB_PATH) as conn:
             c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM region")
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='solar_system'")
+            if not c.fetchone():
+                return 0
+            c.execute("SELECT COUNT(*) FROM solar_system")
+            return int(c.fetchone()[0])
+    except Exception:
+        return 0
+
+
+def check_structure_rigs() -> int:
+    """返回 structure_rigs 行数，>80 视为改件加成已初始化"""
+    try:
+        with sqlite3.connect(REF_DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='structure_rigs'")
+            if not c.fetchone():
+                return 0
+            c.execute("SELECT COUNT(*) FROM structure_rigs")
             return int(c.fetchone()[0])
     except Exception:
         return 0
@@ -226,8 +248,13 @@ def check_all() -> dict:
         "implants": check_implants() > 20,
         "icons": cached >= int(total * 0.8),
         "industry": check_industry() > 100,
+        "rigs": check_structure_rigs() > 80,
         "sde_data": (
-            check_meta_groups() > 0 and check_type_materials() > 0 and check_dogma_attrs() > 0 and check_stations() > 0
+            check_meta_groups() > 0
+            and check_type_materials() > 0
+            and check_dogma_attrs() > 0
+            and check_stations() > 0
+            and check_universe() > 0
         ),
     }
 
