@@ -131,6 +131,51 @@ def check_materials(plan: dict, mat_hangar_id: int | None) -> list[dict]:
     return result
 
 
+def get_plans_for_mat_hangar(mat_hangar_id: int) -> list[dict]:
+    """列出以该机库为材料机库的活跃计划（status NOT IN ('completed','done')）。
+
+    供「材料覆盖率/缺口」视图聚合需求使用。
+    """
+    with _container().db.connect("user") as conn:
+        cur = conn.execute(
+            "SELECT * FROM production_plans WHERE mat_hangar_id = ? AND status NOT IN ('completed','done') ORDER BY id",
+            (mat_hangar_id,),
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
+
+
+def aggregate_material_requirements(plans: list[dict], mat_hangar_id: int) -> list[dict]:
+    """跨计划聚合材料需求：按 type_id 累加 need，对照材料机库库存算缺口。
+
+    评分失败的计划跳过（material_requirements 已返回空）；名称统一用
+    services.name_resolver.resolve_item_name 解析（terminology 覆盖优先）。
+
+    Returns:
+        [{type_id, name, need, owned, missing}]，按 need 降序。
+    """
+    from services import inventory_manager
+    from services.name_resolver import resolve_item_name
+
+    agg: dict[int, dict] = {}
+    for plan in plans:
+        for r in material_requirements(plan):
+            tid = int(r["type_id"])
+            entry = agg.setdefault(tid, {"type_id": tid, "need": 0})
+            entry["need"] += int(r.get("need") or 0)
+    if not agg:
+        return []
+    stock = inventory_manager.get_hangar_stock(mat_hangar_id)
+    with _container().db.connect("ref") as conn:
+        for entry in agg.values():
+            tid = entry["type_id"]
+            entry["name"] = resolve_item_name(conn, tid)
+            owned = int(stock.get(tid, 0))
+            entry["owned"] = owned
+            entry["missing"] = max(0, entry["need"] - owned)
+    return sorted(agg.values(), key=lambda e: e["need"], reverse=True)
+
+
 def deduct_materials(plan: dict, mat_hangar_id: int) -> list[dict]:
     """从材料机库逐个扣减，返回 [{type_id, name, need, owned, deducted, missing}]。"""
     from services import inventory_manager
@@ -161,18 +206,28 @@ def start_plan(
     """启动一条计划：校验 → 扣减材料 → 绑定蓝图 → 写 started_at/in_progress。
 
     char_name/facility: 可选，覆盖计划的人物/设施（产线启动小助手传入）。
+    mat_hangar_id: 生效材料机库会写入 production_plans.mat_hangar_id，
+    保证撤销时能按同一机库返还材料。
 
     Returns:
         {"ok": bool, "code": str, "message": str, "shortfalls": list, "plan_id": int}
     code 取值: already_started / already_completed / material_short / ok
     """
+    from services import inventory_manager
+
     plan_id = plan.get("id")
     if not plan_id:
         return {"ok": False, "code": "no_id", "message": "计划无 id", "shortfalls": [], "plan_id": None}
 
     status = plan.get("status", "pending")
     if status in ("in_progress", "running"):
-        return {"ok": False, "code": "already_started", "message": "计划已在生产中", "shortfalls": [], "plan_id": plan_id}
+        return {
+            "ok": False,
+            "code": "already_started",
+            "message": "计划已在生产中",
+            "shortfalls": [],
+            "plan_id": plan_id,
+        }
     if status in ("completed", "done"):
         return {
             "ok": False,
@@ -183,6 +238,7 @@ def start_plan(
         }
 
     # 1. 材料校验（mat_hangar_id 未设置则跳过）
+    reqs: list[dict] = []
     shortfalls: list[dict] = []
     short_json = ""
     if mat_hangar_id:
@@ -196,12 +252,10 @@ def start_plan(
                 "shortfalls": shortfalls,
                 "plan_id": plan_id,
             }
-        # 2. 扣减材料（强制启动时缺口写入 material_short JSON）
-        deduct_materials(plan, mat_hangar_id)
         if shortfalls:
             short_json = json.dumps({str(r["type_id"]): int(r["missing"]) for r in shortfalls}, ensure_ascii=False)
 
-    # 3. 绑定蓝图：以 DB 权威值为准（传入的 plan dict 可能是绑定前的旧值）；
+    # 2. 绑定蓝图：以 DB 权威值为准（传入的 plan dict 可能是绑定前的旧值）；
     #    未绑定时自动选最优（BPO 优先 → ME 最高的够用 BPC）
     assigned_bp = plan.get("assigned_blueprint_id")
     with _container().db.connect("user") as conn:
@@ -215,14 +269,18 @@ def start_plan(
         if assigned_bp:
             auto_bound = True
 
-    # 4. 持久化
+    # 3. 持久化：材料扣减 + 状态更新同一事务（任一步失败整体回滚，避免部分扣减残留）；
+    #    生效 mat_hangar_id 一并落库，供撤销按同一机库返还
     now = _now_str()
     with _container().db.connect("user") as conn:
+        if mat_hangar_id:
+            for r in reqs:
+                inventory_manager.deduct_item(mat_hangar_id, r["type_id"], r["need"], conn=conn)
         conn.execute(
             "UPDATE production_plans SET status='in_progress', started_at=?, "
             "assigned_blueprint_id=?, material_short=?, char_name=COALESCE(?, char_name), "
-            "facility=COALESCE(?, facility) WHERE id=?",
-            (now, assigned_bp, short_json, char_name, facility, plan_id),
+            "facility=COALESCE(?, facility), mat_hangar_id=COALESCE(?, mat_hangar_id) WHERE id=?",
+            (now, assigned_bp, short_json, char_name, facility, mat_hangar_id, plan_id),
         )
 
     message = "计划已启动"
@@ -265,6 +323,8 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
     """ready/pending/in_progress → completed：入库成品 + 消耗绑定 BPC。
 
     conn: 可选注入的用户库连接（UI 已持有事务时传入）；None 时自开。
+    成品入库 / BPC 消耗 / 状态更新在同一连接同一事务内完成，失败整体回滚；
+    已 completed 的计划幂等返回（不重复入库）。
     Returns: {"ok": bool, "message": str, "deposited": int}
     """
     plan_id = plan.get("id")
@@ -272,41 +332,49 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
         return {"ok": False, "message": "计划无 id", "deposited": 0}
     from services import inventory_manager
 
-    product_type_id = plan.get("product_type_id")
-    deposit_hangar_id = plan.get("deposit_hangar_id")
-    messages: list[str] = []
-
     own_conn = conn is None
     if own_conn:
         conn = _container().db.direct_connect("user")
+    messages: list[str] = []
+    deposited = 0
     try:
-        # 1. 成品入库
-        deposited = 0
+        # 以 DB 权威值为准（调用方传入的 plan dict 可能是完成前的旧值）+ 幂等
+        row = conn.execute(
+            "SELECT status, product_type_id, deposit_hangar_id, runs, parallels, material_cost, "
+            "assigned_blueprint_id FROM production_plans WHERE id=?",
+            (plan_id,),
+        ).fetchone()
+        if row is None:
+            return {"ok": False, "message": "计划不存在", "deposited": 0}
+        db_status, product_type_id, deposit_hangar_id, runs, parallels, mat_cost, assigned_bp = row
+        if db_status in ("completed", "done"):
+            return {"ok": True, "message": "计划已完成", "deposited": 0}
+
+        # 1. 成品入库（同一连接同一事务）
         if deposit_hangar_id and product_type_id:
-            runs = max(int(plan.get("runs", 1)), 1)
-            parallels = max(int(plan.get("parallels", 1)), 1)
-            total_mult = runs * parallels
-            with _container().db.direct_connect("bp") as ref_conn:
-                cur = ref_conn.execute(
+            total_mult = max(int(runs or 1), 1) * max(int(parallels or 1), 1)
+            bp_conn = _container().db.direct_connect("bp")
+            try:
+                cur = bp_conn.execute(
                     "SELECT quantity FROM blueprint_products "
                     "WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
                     (product_type_id,),
                 )
                 row = cur.fetchone()
+            finally:
+                bp_conn.close()
             output_per_run = row[0] if row else 1
             total_qty = total_mult * output_per_run
-            mat_cost = plan.get("material_cost", 0) or 0
-            cost_price = mat_cost / max(total_qty, 1)
-            inventory_manager.add_item(deposit_hangar_id, product_type_id, total_qty, round(cost_price, 2))
+            cost_price = (mat_cost or 0) / max(total_qty, 1)
+            inventory_manager.add_item(deposit_hangar_id, product_type_id, total_qty, round(cost_price, 2), conn=conn)
             deposited = 1
             messages.append(f"成品 {total_qty} 件已入库")
         else:
             messages.append("未设置产出机库，跳过入库")
 
         # 2. 消耗绑定 BPC（runs × parallels 个制造任务）
-        assigned_bp = plan.get("assigned_blueprint_id")
         if assigned_bp:
-            runs_used = max(int(plan.get("runs", 1)), 1) * max(int(plan.get("parallels", 1)), 1)
+            runs_used = max(int(runs or 1), 1) * max(int(parallels or 1), 1)
             res = consume_bpc_runs(conn, assigned_bp, runs_used)
             if res.get("deleted"):
                 messages.append("绑定蓝图已耗尽并移除")
@@ -324,7 +392,7 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
     except Exception:
         log.exception("完成计划 %s 失败", plan_id)
         if own_conn:
-            conn.close()
+            conn.rollback()
         return {"ok": False, "message": "完成失败，见日志", "deposited": 0}
     finally:
         if own_conn:
@@ -336,8 +404,11 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
 def cancel_plan(plan: dict) -> dict:
     """撤销启动：in_progress → pending，并返还已扣减材料到材料机库。
 
-    返还数量 = 需求 − 缺口（material_short 记录启动时的缺口，故 deducted = need − missing 精确还原）；
+    以 DB 权威值为准（调用方传入的 plan dict 可能是启动前的旧值）：
+    返还机库取 production_plans.mat_hangar_id（start_plan 已持久化生效机库）；
+    返还数量 = 需求 − 缺口（material_short 记录启动时的缺口，故 deducted = need − missing 精确还原）。
     返还按机库现有单位成本回补（避免加权平均成本被稀释）。
+    返还 + 状态重置在同一事务内完成，失败整体回滚（避免重复撤销重复返还）。
 
     Returns: {"ok": bool, "message": str, "returned": int, "returned_list": list[dict]}
     """
@@ -346,23 +417,32 @@ def cancel_plan(plan: dict) -> dict:
     plan_id = plan.get("id")
     if not plan_id:
         return {"ok": False, "message": "计划无 id", "returned": 0, "returned_list": []}
-    if plan.get("status") not in ("in_progress", "running"):
+
+    # 权威值重读
+    with _container().db.connect("user") as conn:
+        row = conn.execute(
+            "SELECT status, mat_hangar_id, material_short FROM production_plans WHERE id=?",
+            (plan_id,),
+        ).fetchone()
+    if row is None:
+        return {"ok": False, "message": "计划不存在", "returned": 0, "returned_list": []}
+    db_status, mat_hangar_id, material_short = row
+    if db_status not in ("in_progress", "running"):
         return {"ok": False, "message": "仅生产中计划可撤销", "returned": 0, "returned_list": []}
 
-    mat_hangar_id = plan.get("mat_hangar_id")
+    # 计算已扣减 = 需求 - 缺口（material_short JSON {type_id: missing_qty}）
     returned_list: list[dict] = []
+    cost_map: dict[int, float] = {}
     if mat_hangar_id:
-        # 计算已扣减 = 需求 - 缺口（material_short JSON {type_id: missing_qty}）
         reqs = material_requirements(plan)
         short: dict[int, int] = {}
-        raw = plan.get("material_short") or ""
+        raw = material_short or ""
         if raw:
             try:
                 short = {int(k): int(v) for k, v in json.loads(raw).items()}
             except Exception:
                 short = {}
-        # 机库现有单位成本（加权平均；返还时按原成本回补避免稀释）
-        cost_map: dict[int, float] = {}
+        # 机库现有单位成本（加权平均；返还时按原成本回补避免稀释）—— 读操作放在事务外
         for it in inventory_manager.get_items(mat_hangar_id):
             cost_map[it["type_id"]] = it.get("cost_price") or 0
         for r in reqs:
@@ -370,14 +450,15 @@ def cancel_plan(plan: dict) -> dict:
             missing = short.get(tid, 0)
             deducted = max(0, int(r["need"]) - missing)
             if deducted > 0:
-                inventory_manager.add_item(mat_hangar_id, tid, deducted, cost_map.get(tid, 0))
                 returned_list.append({"type_id": tid, "name": r.get("name", ""), "qty": deducted})
 
-    # 释放蓝图占用 + 清 started_at / material_short → pending
-    release_blueprint(plan_id)
+    # 返还材料 + 释放蓝图占用 + 重置状态（同一事务：失败整体回滚）
     with _container().db.connect("user") as conn:
+        for r in returned_list:
+            inventory_manager.add_item(mat_hangar_id, r["type_id"], r["qty"], cost_map.get(r["type_id"], 0), conn=conn)
         conn.execute(
-            "UPDATE production_plans SET status='pending', started_at=NULL, material_short='' WHERE id=?",
+            "UPDATE production_plans SET status='pending', started_at=NULL, material_short='', "
+            "assigned_blueprint_id=NULL WHERE id=?",
             (plan_id,),
         )
 
@@ -388,6 +469,30 @@ def cancel_plan(plan: dict) -> dict:
     elif not mat_hangar_id:
         msg += "（未设置材料机库，无材料返还）"
     return {"ok": True, "message": msg, "returned": returned_total, "returned_list": returned_list}
+
+
+def reset_plan_for_reuse(plan_id: int) -> dict:
+    """设为待生产：仅 completed 计划复用（不返还材料——材料已变为成品）。
+
+    清除 started_at / completed_at / deposited / material_short 与蓝图占用，
+    置回 pending 供再次启动。不触碰库存（成品已入库、材料不退回）。
+
+    Returns: {"ok": bool, "message": str}
+    """
+    if not plan_id:
+        return {"ok": False, "message": "计划无 id"}
+    with _container().db.connect("user") as conn:
+        row = conn.execute("SELECT status FROM production_plans WHERE id=?", (plan_id,)).fetchone()
+        if row is None:
+            return {"ok": False, "message": "计划不存在"}
+        if row[0] not in ("completed", "done"):
+            return {"ok": False, "message": "仅已完成计划可设为待生产"}
+        conn.execute(
+            "UPDATE production_plans SET status='pending', started_at=NULL, completed_at=NULL, "
+            "deposited=0, material_short='', assigned_blueprint_id=NULL WHERE id=?",
+            (plan_id,),
+        )
+    return {"ok": True, "message": "已重置为待生产"}
 
 
 # ════════════════════════════════════════════════════════════════

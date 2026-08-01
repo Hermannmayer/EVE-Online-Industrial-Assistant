@@ -24,6 +24,7 @@ from services.plan_execution import (
     material_requirements,
     release_blueprint,
     remaining_seconds,
+    reset_plan_for_reuse,
     start_plan,
     start_plan_batch,
 )
@@ -330,6 +331,47 @@ class TestStartPlan:
         assert res["ok"]
         assert _get_plan(user_env.db, pid)["status"] == "in_progress"
 
+    def test_start_persists_mat_hangar_id(self, user_env):
+        """生效材料机库应落库，供撤销时按同一机库返还"""
+        _insert_item(user_env.db, 1, 1001, 500)
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 1001, "name": "三钛合金", "qty": 100.0}]
+        }
+        pid = _insert_plan(user_env.db, runs=2)  # DB mat_hangar_id 未设置
+        plan = _get_plan(user_env.db, pid)
+        res = start_plan(plan, mat_hangar_id=1)
+        assert res["ok"]
+        assert _get_plan(user_env.db, pid)["mat_hangar_id"] == 1
+
+    def test_start_rolls_back_partial_deduction_on_failure(self, user_env, monkeypatch):
+        """扣减中途失败 → 已扣部分整体回滚，计划保持 pending（防双重扣减残留）"""
+        _insert_item(user_env.db, 1, 1001, 500)
+        _insert_item(user_env.db, 1, 1002, 500)
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [
+                {"type_id": 1001, "name": "三钛合金", "qty": 100.0},
+                {"type_id": 1002, "name": "类银超金属", "qty": 100.0},
+            ]
+        }
+        pid = _insert_plan(user_env.db, runs=1)
+        plan = _get_plan(user_env.db, pid)
+
+        real_deduct = inventory_manager.deduct_item
+
+        def flaky_deduct(hangar_id, type_id, quantity, *, conn=None):
+            if type_id == 1002:
+                raise RuntimeError("simulated deduct failure")
+            return real_deduct(hangar_id, type_id, quantity, conn=conn)
+
+        monkeypatch.setattr(inventory_manager, "deduct_item", flaky_deduct)
+        with pytest.raises(RuntimeError):
+            start_plan(plan, mat_hangar_id=1)
+
+        # 1001 的扣减被回滚，计划保持 pending
+        assert inventory_manager.get_hangar_stock(1)[1001] == 500
+        assert inventory_manager.get_hangar_stock(1)[1002] == 500
+        assert _get_plan(user_env.db, pid)["status"] == "pending"
+
 
 class TestStartPlanBatch:
     def test_mixed_results(self, user_env):
@@ -402,6 +444,59 @@ class TestCancelPlan:
         plan = _get_plan(user_env.db, pid)
         res = cancel_plan(plan)
         assert not res["ok"]
+
+    def test_cancel_uses_db_mat_hangar_when_dict_stale(self, user_env):
+        """撤销以 DB 权威机库为准：传入旧 dict（mat_hangar_id=None）仍能正确返还"""
+        _insert_item(user_env.db, 1, 1001, 500)
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 1001, "name": "三钛合金", "qty": 100.0}]
+        }
+        pid = _insert_plan(user_env.db, runs=2)  # DB mat_hangar_id 未设置
+        plan = _get_plan(user_env.db, pid)
+        start_plan(plan, mat_hangar_id=1)  # 生效机库 1 已由 start_plan 落库
+        assert inventory_manager.get_hangar_stock(1)[1001] == 300  # 扣 200
+
+        stale = dict(plan)
+        stale["mat_hangar_id"] = None  # 模拟启动前的旧 dict
+        stale["status"] = "in_progress"
+        res = cancel_plan(stale)
+        assert res["ok"]
+        assert res["returned"] == 200
+        assert inventory_manager.get_hangar_stock(1)[1001] == 500  # 返还 200
+
+
+class TestResetPlanForReuse:
+    def test_completed_resets_for_reuse(self, user_env):
+        """completed → pending，清除完成痕迹，不返还材料、不触碰库存"""
+        _insert_item(user_env.db, 1, 2001, 6)
+        pid = _insert_plan(
+            user_env.db,
+            status="completed",
+            started_at="2026-01-01 00:00:00",
+            completed_at="2026-01-02 00:00:00",
+            deposited=1,
+        )
+        res = reset_plan_for_reuse(pid)
+        assert res["ok"]
+        db_plan = _get_plan(user_env.db, pid)
+        assert db_plan["status"] == "pending"
+        assert db_plan["started_at"] is None
+        assert db_plan["completed_at"] is None
+        assert db_plan["deposited"] == 0
+        assert db_plan["material_short"] == ""
+        # 库存不受影响（材料已变为成品，不返还）
+        assert inventory_manager.get_hangar_stock(1)[2001] == 6
+
+    def test_rejects_non_completed(self, user_env):
+        """非 completed 计划拒绝复用，且状态不变"""
+        for status in ("pending", "in_progress", "ready"):
+            pid = _insert_plan(user_env.db, status=status)
+            res = reset_plan_for_reuse(pid)
+            assert not res["ok"]
+            assert _get_plan(user_env.db, pid)["status"] == status
+
+    def test_missing_plan_rejected(self, user_env):
+        assert not reset_plan_for_reuse(99999)["ok"]
 
 
 # ════════════════════════════════════════════════════════════════
@@ -550,5 +645,56 @@ class TestCompletePlan:
         )
         plan = _get_plan(user_env.db, pid)
         complete_plan(plan)
+        bp = inventory_manager.get_blueprints(1)[0]
+        assert bp["runs"] == 6  # 10 - 4 已消耗
+
+    def test_complete_rolls_back_deposit_on_consume_failure(self, user_env, monkeypatch):
+        """BPC 消耗失败 → 成品入库整体回滚，计划保持 ready（防重试重复入库）"""
+        bp_id = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10, quantity=1)
+        pid = _insert_plan(
+            user_env.db,
+            status="ready",
+            runs=2,
+            parallels=1,
+            deposit_hangar_id=1,
+            material_cost=600,
+            assigned_blueprint_id=bp_id,
+        )
+        plan = _get_plan(user_env.db, pid)
+
+        def boom(conn, bp_id, runs_used):
+            raise RuntimeError("simulated consume failure")
+
+        monkeypatch.setattr("services.plan_execution.consume_bpc_runs", boom)
+        res = complete_plan(plan)
+        assert not res["ok"]
+        assert 2001 not in inventory_manager.get_hangar_stock(1)  # 未入库
+        db_plan = _get_plan(user_env.db, pid)
+        assert db_plan["status"] == "ready"  # 未完成
+        assert db_plan["assigned_blueprint_id"] == bp_id  # 未释放
+
+    def test_complete_idempotent_no_double_deposit(self, user_env):
+        """重复完成不重复入库（幂等）"""
+        pid = _insert_plan(user_env.db, status="ready", runs=2, parallels=1, deposit_hangar_id=1, material_cost=600)
+        plan = _get_plan(user_env.db, pid)
+        res1 = complete_plan(plan)
+        assert res1["ok"] and res1["deposited"] == 1
+        stock1 = inventory_manager.get_hangar_stock(1)[2001]
+
+        res2 = complete_plan(plan)
+        assert res2["ok"]
+        assert inventory_manager.get_hangar_stock(1)[2001] == stock1  # 未翻倍
+
+    def test_complete_consumes_db_bound_blueprint_when_dict_stale(self, user_env):
+        """以 DB 绑定蓝图为准：传入旧 dict（无 assigned_blueprint_id）仍消耗 DB 绑定 BPC"""
+        bp_id = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10, quantity=1)
+        pid = _insert_plan(user_env.db, status="ready", runs=4, parallels=1, deposit_hangar_id=1)
+        plan = _get_plan(user_env.db, pid)
+        plan_execution.bind_blueprint(pid, bp_id)
+
+        stale = dict(plan)
+        stale["assigned_blueprint_id"] = None  # 模拟完成前的旧 dict
+        res = complete_plan(stale)
+        assert res["ok"]
         bp = inventory_manager.get_blueprints(1)[0]
         assert bp["runs"] == 6  # 10 - 4 已消耗
