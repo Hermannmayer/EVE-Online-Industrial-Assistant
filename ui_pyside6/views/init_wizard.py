@@ -349,7 +349,7 @@ class InitWizard(QDialog):
         # 部分就绪时显示 ETA
         remaining = len(STEPS) - done_count
         if remaining > 0:
-            self._eta_label.setText(f"剩余 {remaining}/7 个步骤")
+            self._eta_label.setText(f"剩余 {remaining}/{len(STEPS)} 个步骤")
             self._start_btn.setText(f"开始初始化（{remaining} 步）")
 
     # ── 生命周期 ──
@@ -525,7 +525,7 @@ class InitWizard(QDialog):
                 rate = elapsed / completed
                 remaining = (total - completed) * rate
                 self._eta_label.setText(
-                    f"🕐 已用 {self._elapsed_str(elapsed)}  · " f"剩余约 {self._elapsed_str(remaining)}"
+                    f"🕐 已用 {self._elapsed_str(elapsed)}  · 剩余约 {self._elapsed_str(remaining)}"
                 )
             else:
                 self._eta_label.setText(f"🕐 已用 {self._elapsed_str(elapsed)}")

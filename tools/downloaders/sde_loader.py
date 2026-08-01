@@ -397,8 +397,10 @@ async def write_stations():
 
 async def write_universe():
     """写入 region + constellation + solar_system + stargate 表"""
+    # 以 solar_system 表为关键表判空（与星系搜索/成本联动判据一致）：
+    # 若此前部分写入导致 region 有数据而 solar_system 空，这里必须重跑补齐。
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        c = await db.execute("SELECT COUNT(*) FROM region")
+        c = await db.execute("SELECT COUNT(*) FROM solar_system")
         if (await c.fetchone())[0] > 0:
             log.info("universe 相关表已就绪，跳过")
             return
@@ -413,7 +415,7 @@ async def write_universe():
         r_rows = []
         for r in regions:
             rid = r.get("region_id") or r.get("regionID")
-            name = r.get("regionName", "") or ""
+            name = r.get("region_name") or r.get("regionName", "") or ""
             if rid is not None:
                 r_rows.append((int(rid), name))
         if r_rows:
@@ -431,8 +433,8 @@ async def write_universe():
         c_rows = []
         for c in constellations:
             cid = c.get("constellation_id") or c.get("constellationID")
-            name = c.get("constellationName", "") or ""
-            rid = c.get("regionID")
+            name = c.get("constellation_name") or c.get("constellationName", "") or ""
+            rid = c.get("region_id") or c.get("regionID")
             if cid is not None:
                 c_rows.append(
                     (
@@ -456,9 +458,9 @@ async def write_universe():
         s_rows = []
         for s in systems:
             sid = s.get("solar_system_id") or s.get("solarSystemID")
-            name = s.get("solarSystemName", "") or ""
-            rid = s.get("regionID")
-            cid = s.get("constellationID")
+            name = s.get("solar_system_name") or s.get("solarSystemName", "") or ""
+            rid = s.get("region_id") or s.get("regionID")
+            cid = s.get("constellation_id") or s.get("constellationID")
             sec = s.get("security", s.get("securityStatus", 0.0))
             if sid is not None:
                 s_rows.append(
