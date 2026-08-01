@@ -116,3 +116,31 @@ def test_ensure_schema_missing_db_returns_none(tmp_path):
 
     result = sm.ensure_schema("ref")  # 用默认路径（不存在于 CI 环境）
     assert result["before"] is None or result["after"] is not None  # 不抛异常
+
+
+def test_v0_db_with_no_migrations_stamps_version(tmp_path, monkeypatch):
+    """ref 库 user_version=0 且已是当前版本（无迁移）→ 必须显式写入版本号
+
+    否则磁盘版本永远是 0，check_schema 每次启动都失败、每次都弹下载窗。
+    """
+    db_path = tmp_path / "reference.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE item (type_id INTEGER PRIMARY KEY)")
+    conn.execute("PRAGMA user_version = 0")
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setitem(sm._DB_PATH_MAP, "ref", str(db_path))
+
+    result = sm.ensure_schema("ref")
+
+    assert result["after"] == 1
+    assert any("版本号" in s for s in result["applied"]), "应记录版本号初始化"
+    conn = sqlite3.connect(str(db_path))
+    v = conn.execute("PRAGMA user_version").fetchone()[0]
+    conn.close()
+    assert v == 1, "磁盘 user_version 应落盘为 1"
+
+    # 二次运行不再标记（已是最新版本）
+    result2 = sm.ensure_schema("ref")
+    assert result2["applied"] == []

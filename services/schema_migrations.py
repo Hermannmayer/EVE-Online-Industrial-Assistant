@@ -39,6 +39,8 @@ def _migrate_mkt_v1_to_v2(db_path: str) -> str:
     """v1→v2: market_prices 新增 adjusted_price 列（EIV 计算用）"""
     conn = sqlite3.connect(db_path)
     try:
+        if not _table_exists(conn, "market_prices"):
+            return "market_prices 表不存在，跳过"
         conn.execute("ALTER TABLE market_prices ADD COLUMN adjusted_price REAL DEFAULT 0.0")
         conn.commit()
         return "新增 adjusted_price 列"
@@ -54,6 +56,8 @@ def _migrate_mkt_v2_to_v3(db_path: str) -> str:
     """v2→v3: market_prices(fetch_time) 索引 — 加速 MAX(fetch_time) 与按时间过滤（主线程查询）"""
     conn = sqlite3.connect(db_path)
     try:
+        if not _table_exists(conn, "market_prices"):
+            return "market_prices 表不存在，跳过"
         conn.execute("CREATE INDEX IF NOT EXISTS idx_market_prices_fetch_time ON market_prices(fetch_time)")
         conn.commit()
         return "新增 market_prices(fetch_time) 索引"
@@ -65,6 +69,8 @@ def _migrate_user_v1_to_v2(db_path: str) -> str:
     """v1→v2: user_blueprints 新增 cost_per_run 列"""
     conn = sqlite3.connect(db_path)
     try:
+        if not _table_exists(conn, "user_blueprints"):
+            return "user_blueprints 表不存在，跳过"
         conn.execute("ALTER TABLE user_blueprints ADD COLUMN cost_per_run REAL DEFAULT 0")
         conn.commit()
         return "新增 cost_per_run 列"
@@ -78,6 +84,12 @@ def _migrate_user_v1_to_v2(db_path: str) -> str:
 
 def _migrate_user_v2_to_v3(db_path: str) -> str:
     """v2→v3: production_plans 新增各扩展列"""
+    conn = sqlite3.connect(db_path)
+    try:
+        if not _table_exists(conn, "production_plans"):
+            return "production_plans 表不存在，跳过"
+    finally:
+        conn.close()
     net = _add_columns(
         db_path,
         "production_plans",
@@ -103,6 +115,8 @@ def _migrate_bp_v1_to_v2(db_path: str) -> str:
     """v1→v2: blueprint_materials 新增 wastefactor 列"""
     conn = sqlite3.connect(db_path)
     try:
+        if not _table_exists(conn, "blueprint_materials"):
+            return "blueprint_materials 表不存在，跳过"
         conn.execute("ALTER TABLE blueprint_materials ADD COLUMN wastefactor INTEGER DEFAULT 10")
         conn.commit()
         return "新增 wastefactor 列"
@@ -136,11 +150,22 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
 # ═══════════════════════════════════════════
 
 
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    """检查连接中是否存在指定表"""
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    )
+    return cur.fetchone() is not None
+
+
 def _add_columns(db_path: str, table: str, columns: list[tuple[str, str]]) -> int:
     """批量 ADD COLUMN，忽略已存在的列。返回实际新增的列数。"""
     added = 0
     conn = sqlite3.connect(db_path)
     try:
+        if not _table_exists(conn, table):
+            return 0
         for col_name, col_type in columns:
             try:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
@@ -216,6 +241,13 @@ def ensure_schema(db_alias: str) -> dict:
                 label = mig(db_path)
                 applied.append(f"v{v}→v{ v + 1}: {label}")
             _set_version(db_path, v + 1)
+
+        # 从版本 0 起始的库（有表但未打版本号）：迁移循环可能为空
+        # （如 ref 已是最新 v1），磁盘版本号仍是 0 → 必须显式落盘，
+        # 否则下次启动 schema 检查永远失败、每次都弹下载窗
+        if _get_version(db_path) == 0:
+            _set_version(db_path, current)
+            applied.append(f"v0→v{current}: 初始化版本号")
 
         after = current if on_disk > 0 else None
         return {"before": on_disk, "after": after, "applied": applied}
