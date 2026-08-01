@@ -284,6 +284,32 @@ class TestBlueprintTableModel:
         idx = model.index(1, 2)
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "蓝图拷贝"
 
+    def test_occupied_suffix(self, qapp):
+        """被生产计划占用的蓝图类型显示「占用中」后缀"""
+        rows = [dict(r) for r in self.SAMPLE_ROWS]
+        rows[1]["occupied"] = True
+        model = BlueprintTableModel(rows)
+        idx = model.index(1, 2)
+        assert idx.data(Qt.ItemDataRole.DisplayRole) == "蓝图拷贝（占用中）"
+
+    def test_occupied_foreground_orange(self, qapp):
+        """占用中的类型列用前景色高亮（非 None）"""
+        from PySide6.QtGui import QColor
+
+        rows = [dict(r) for r in self.SAMPLE_ROWS]
+        rows[1]["occupied"] = True
+        model = BlueprintTableModel(rows)
+        idx = model.index(1, 2)
+        color = idx.data(Qt.ItemDataRole.ForegroundRole)
+        assert isinstance(color, QColor)
+        assert color.name().startswith("#")
+
+    def test_unoccupied_no_suffix(self, qapp):
+        """未占用蓝图不显示后缀（兼容旧数据）"""
+        model = BlueprintTableModel(self.SAMPLE_ROWS)
+        idx = model.index(0, 2)
+        assert idx.data(Qt.ItemDataRole.DisplayRole) == "蓝图原图"
+
     def test_me_level(self, qapp):
         """材料等级"""
         model = BlueprintTableModel(self.SAMPLE_ROWS)

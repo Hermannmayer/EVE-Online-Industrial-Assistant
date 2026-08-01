@@ -144,3 +144,101 @@ def test_v0_db_with_no_migrations_stamps_version(tmp_path, monkeypatch):
     # 二次运行不再标记（已是最新版本）
     result2 = sm.ensure_schema("ref")
     assert result2["applied"] == []
+
+
+@pytest.fixture
+def tmp_user_db(tmp_path, monkeypatch):
+    """临时 user.db + 路径替换"""
+    db_path = tmp_path / "user.db"
+    monkeypatch.setitem(sm._DB_PATH_MAP, "user", str(db_path))
+    return db_path
+
+
+def _create_user_v3(db_path):
+    """构造 v3 的 production_plans 表（基础列，无执行列）"""
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """
+        CREATE TABLE production_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_type_id INTEGER NOT NULL,
+            product_name TEXT,
+            blueprint_type_id INTEGER,
+            runs INTEGER DEFAULT 1,
+            parallels INTEGER DEFAULT 1,
+            me_level INTEGER DEFAULT 0,
+            te_level INTEGER DEFAULT 0,
+            mat_hub TEXT DEFAULT 'Jita',
+            sell_hub TEXT DEFAULT 'Jita',
+            facility TEXT DEFAULT '',
+            char_name TEXT DEFAULT '',
+            status TEXT DEFAULT 'pending',
+            profit REAL DEFAULT 0,
+            margin REAL DEFAULT 0,
+            score REAL DEFAULT 0,
+            material_cost REAL DEFAULT 0,
+            created_at TEXT,
+            started_at TEXT,
+            completed_at TEXT,
+            facility_cost_mult REAL DEFAULT 1.0,
+            notes TEXT DEFAULT '',
+            group_number INTEGER DEFAULT 0,
+            sub_level INTEGER DEFAULT 0,
+            output_location TEXT DEFAULT '',
+            market_margin REAL DEFAULT 0,
+            personal_margin REAL DEFAULT 0,
+            daily_output REAL DEFAULT 0,
+            materials_ready INTEGER DEFAULT 0,
+            iskph REAL DEFAULT 0,
+            deposit_hangar_id INTEGER DEFAULT NULL,
+            deposited INTEGER DEFAULT 0,
+            calculated_time REAL DEFAULT 0
+        );
+        """
+    )
+    conn.execute("PRAGMA user_version = 3")
+    conn.commit()
+    conn.close()
+
+
+def test_user_v3_to_v4_adds_execution_columns(tmp_user_db):
+    """user v3→v4：新增生产执行列 + 占用索引"""
+    _create_user_v3(tmp_user_db)
+
+    result = sm.ensure_schema("user")
+
+    assert result["after"] == 4
+    conn = sqlite3.connect(str(tmp_user_db))
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
+    idxs = {r[1] for r in conn.execute("PRAGMA index_list(production_plans)")}
+    v = conn.execute("PRAGMA user_version").fetchone()[0]
+    conn.close()
+    assert v == 4
+    for col in ("assigned_blueprint_id", "mat_hangar_id", "material_short"):
+        assert col in cols, f"{col} 列应被 v3→v4 迁移添加"
+    assert "idx_prod_plans_assigned_bp" in idxs
+
+
+def test_user_v3_to_v4_idempotent(tmp_user_db):
+    """重复运行不报错，且不重复加列"""
+    _create_user_v3(tmp_user_db)
+
+    sm.ensure_schema("user")
+    result2 = sm.ensure_schema("user")
+
+    assert result2["applied"] == []
+    conn = sqlite3.connect(str(tmp_user_db))
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(production_plans)")]
+    conn.close()
+    assert cols.count("assigned_blueprint_id") == 1, "列不应重复添加"
+
+
+def test_user_v3_to_v4_skips_missing_table(tmp_user_db):
+    """无 production_plans 表时迁移跳过，不报错"""
+    conn = sqlite3.connect(str(tmp_user_db))
+    conn.execute("PRAGMA user_version = 3")
+    conn.commit()
+    conn.close()
+
+    result = sm.ensure_schema("user")
+    assert result["after"] == 4
