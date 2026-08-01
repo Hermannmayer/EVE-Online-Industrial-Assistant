@@ -132,7 +132,10 @@ class BlueprintTableModel(QAbstractTableModel):
             if c == 1:
                 return r.get("zh_name") or r.get("display_name") or f"ID:{r['blueprint_type_id']}"
             if c == 2:
-                return "蓝图原图" if r.get("is_bpo") else "蓝图拷贝"
+                text = "蓝图原图" if r.get("is_bpo") else "蓝图拷贝"
+                if r.get("occupied"):
+                    text += "（占用中）"
+                return text
             if c == 3:
                 return str(r.get("me_level", 0))
             if c == 4:
@@ -179,6 +182,8 @@ class BlueprintTableModel(QAbstractTableModel):
             return None
 
         elif role == Qt.ItemDataRole.ForegroundRole:
+            if c == 2 and r.get("occupied"):
+                return QColor(theme.ACCENT_ORANGE)
             if c == 10:
                 margin = r.get("margin")
                 if margin is not None:

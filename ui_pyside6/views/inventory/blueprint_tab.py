@@ -162,6 +162,16 @@ class BlueprintTab(QWidget):
         rows = []
         bps = get_blueprints(self._page.hangar_id())
 
+        # 标记被活跃生产计划占用的蓝图（占用中显示橙色）
+        try:
+            from services.plan_execution import get_occupied_blueprint_ids
+
+            occupied = get_occupied_blueprint_ids()
+        except Exception:
+            occupied = set()
+        for bp in bps:
+            bp["occupied"] = bp["id"] in occupied
+
         # 批量获取产物信息（1300 次 DB → 1 次）
         bp_ids = [bp["blueprint_type_id"] for bp in bps]
         prod_info_map = get_blueprint_product_info_batch(bp_ids)

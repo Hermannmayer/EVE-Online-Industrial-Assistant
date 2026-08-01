@@ -1,6 +1,7 @@
 """工业制造 — Table Model 类"""
 
 import os
+from datetime import UTC, datetime
 from typing import cast
 
 from PySide6.QtCore import QAbstractTableModel, Qt
@@ -8,6 +9,26 @@ from PySide6.QtGui import QColor, QPixmap, QPixmapCache
 
 import ui_pyside6.theme as theme
 from core.paths import ICON_DIR
+
+
+def _fmt_dhms(seconds) -> str:
+    """把秒格式化为 d/h/m"""
+    seconds = int(seconds or 0)
+    d = seconds // 86400
+    h = (seconds % 86400) // 3600
+    m = (seconds % 3600) // 60
+    if d > 0:
+        return f"{d}d{h}h{m}m"
+    if h > 0:
+        return f"{h}h{m}m"
+    return f"{m}m"
+
+
+def _remaining(p: dict, now: datetime | None = None) -> int | None:
+    """计划剩余秒（进行中）；非进行中/无 started_at 返回 None"""
+    from services.plan_execution import remaining_seconds
+
+    return remaining_seconds(p, now=now)
 
 
 class RankTableModel(QAbstractTableModel):
@@ -203,17 +224,22 @@ class PlanTableModel(QAbstractTableModel):
             me = p.get("me_level", 0)
             te = p.get("te_level", 0)
             has_img = "有图" if p.get("has_image", False) else "没图"
-            return f"{me}-{te}[{has_img}]"
+            bound = " *" if p.get("assigned_blueprint_id") else ""
+            return f"{me}-{te}[{has_img}]{bound}"
         if c == 10:
-            seconds = p.get("calculated_time", 0) or 0
-            d = int(seconds) // 86400
-            h = (int(seconds) % 86400) // 3600
-            m = (int(seconds) % 3600) // 60
-            if d > 0:
-                return f"{d}d{h}h{m}m"
-            if h > 0:
-                return f"{h}h{m}m"
-            return f"{m}m"
+            status = p.get("status", "")
+            if status in ("in_progress", "running"):
+                rem = _remaining(p)
+                if rem is None:
+                    return _fmt_dhms(p.get("calculated_time", 0))
+                if rem <= 0:
+                    return "已超时"
+                return f"剩余 {_fmt_dhms(rem)}"
+            if status == "ready":
+                return "待下线"
+            if status in ("completed", "done"):
+                return "已完成"
+            return _fmt_dhms(p.get("calculated_time", 0))
         if c == 11:
             daily = p.get("daily_output", 0) or 0
             return f"{daily:,.2f}"
@@ -245,6 +271,15 @@ class PlanTableModel(QAbstractTableModel):
                 return QColor(theme.GREEN)
             if profit < 0:
                 return QColor(theme.RED)
+        if c == 10:
+            status = p.get("status", "")
+            if status in ("in_progress", "running"):
+                rem = _remaining(p)
+                if rem is not None and rem <= 0:
+                    return QColor(theme.ACCENT_RED)
+                return QColor(theme.PRIMARY)
+            if status == "ready":
+                return QColor(theme.ACCENT_ORANGE)
         if c == 6:
             status = p.get("status", "")
             if status in ("completed", "done"):
@@ -331,6 +366,37 @@ class PlanTableModel(QAbstractTableModel):
 
     def get_plan(self, row: int) -> dict:
         return self._plans[row] if 0 <= row < len(self._plans) else {}
+
+    def tick(self) -> list[int]:
+        """倒计时 tick：遍历进行中行算剩余；≤0 内存置 ready；对变动行 emit dataChanged。
+
+        返回本次转为 ready 的 plan_id 列表，供上层一次 UPDATE 持久化（倒计时到期 → 待下线）。
+        """
+        now = datetime.now(UTC)
+        expired: list[int] = []
+        for row in range(len(self._plans)):
+            p = self._plans[row]
+            if p.get("status") not in ("in_progress", "running"):
+                continue
+            rem = _remaining(p, now=now)
+            if rem is None:
+                continue
+            if rem <= 0 and p.get("status") != "ready":
+                p["status"] = "ready"
+                if p.get("id"):
+                    expired.append(p["id"])
+                self.dataChanged.emit(
+                    self.index(row, 6),
+                    self.index(row, 10),
+                    [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ForegroundRole],
+                )
+            else:
+                self.dataChanged.emit(
+                    self.index(row, 10),
+                    self.index(row, 10),
+                    [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ForegroundRole],
+                )
+        return expired
 
 
 class MaterialTableModel(QAbstractTableModel):
