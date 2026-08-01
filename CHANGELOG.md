@@ -6,6 +6,35 @@
 
 <!-- version list -->
 
+## v0.10.0 (2026-08-01)
+
+### Bug Fixes
+
+- Schema 迁移加固 — 缺失表守卫跳过 + v0 库显式落盘版本号
+  ([`df8d538`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/df8d538b8b990288ad2fa31efe63719566e7969c))
+
+- UI 稳定性 — 主题 lambda 监听器强引用、非模态对话框 GC 引用、showEvent 异常兜底、子对话框传 parent
+  ([`866c122`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/866c122e6adf5419308ba7852e9054c629a23531))
+
+- 初始化流程优化 — check_all 单次轮询、网络检查缓存、inspect 签名检测 progress_cb、结束释放 YAML 缓存、schema 检查跳过不存在库
+  ([`94fac59`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/94fac59348d43939c302b25a6d7ed0aef63a2fe6))
+
+### Chores
+
+- **docs**: 同步 API 文档 + README 测试数（663）
+  ([`2c02420`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/2c02420b964478bbe34a4809f826f96ce4d86dbf))
+
+### Features
+
+- 下载器重构 — 植入体 dogma 改走 ESI 并发拉取、复用共享 SDE zip、ESI 名称并发补拉、进度回调上报
+  ([`7cd5b17`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/7cd5b1727e5330ed9debe8414aeca0aad6f67619))
+
+### Performance Improvements
+
+- SDE 解析并行化 + YAML 进程内缓存 — universe to_thread 多线程解析、load_yaml 二次解析缓存、clear_yaml_cache 释放大文件内存
+  ([`38af496`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/38af496d1684da2d98baf3071ccc65a087358b1c))
+
+
 ## v0.9.0 (2026-07-31)
 
 ### Features
