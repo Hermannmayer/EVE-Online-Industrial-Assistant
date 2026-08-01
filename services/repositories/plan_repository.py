@@ -31,7 +31,10 @@ class PlanRepository:
         material_cost REAL DEFAULT 0,
         created_at TEXT,
         started_at TEXT,
-        completed_at TEXT
+        completed_at TEXT,
+        assigned_blueprint_id INTEGER DEFAULT NULL,
+        mat_hangar_id INTEGER DEFAULT NULL,
+        material_short TEXT DEFAULT ''
     );"""
 
     def ensure_table(self):

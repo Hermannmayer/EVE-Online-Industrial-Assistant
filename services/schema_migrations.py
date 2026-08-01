@@ -19,7 +19,7 @@ from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
-    "user": 3,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列
+    "user": 4,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列
     "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
 }
 
@@ -111,6 +111,34 @@ def _migrate_user_v2_to_v3(db_path: str) -> str:
     return f"production_plans 扩展列 (新增 {net} 列)"
 
 
+def _migrate_user_v3_to_v4(db_path: str) -> str:
+    """v3→v4: production_plans 新增生产执行列（绑定蓝图/材料机库/缺口）"""
+    conn = sqlite3.connect(db_path)
+    try:
+        if not _table_exists(conn, "production_plans"):
+            return "production_plans 表不存在，跳过"
+    finally:
+        conn.close()
+    net = _add_columns(
+        db_path,
+        "production_plans",
+        [
+            ("assigned_blueprint_id", "INTEGER DEFAULT NULL"),
+            ("mat_hangar_id", "INTEGER DEFAULT NULL"),
+            ("material_short", "TEXT DEFAULT ''"),
+        ],
+    )
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_prod_plans_assigned_bp ON production_plans(assigned_blueprint_id)"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return f"production_plans 执行列 (新增 {net} 列 + 索引)"
+
+
 def _migrate_bp_v1_to_v2(db_path: str) -> str:
     """v1→v2: blueprint_materials 新增 wastefactor 列"""
     conn = sqlite3.connect(db_path)
@@ -138,6 +166,7 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
     "user": {
         1: _migrate_user_v1_to_v2,
         2: _migrate_user_v2_to_v3,
+        3: _migrate_user_v3_to_v4,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,
