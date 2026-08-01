@@ -100,7 +100,10 @@ PLAN_DB_SCHEMA = """CREATE TABLE IF NOT EXISTS production_plans (
     created_at TEXT,
     started_at TEXT,
     completed_at TEXT,
-    facility_cost_mult REAL DEFAULT 1.0
+    facility_cost_mult REAL DEFAULT 1.0,
+    assigned_blueprint_id INTEGER DEFAULT NULL,
+    mat_hangar_id INTEGER DEFAULT NULL,
+    material_short TEXT DEFAULT ''
 );
 """
 
@@ -347,11 +350,39 @@ class IndustryPage(QWidget):
         # ── 初始加载 ───────────────────────────────────────────
         self.load_plans()
 
+        # ── 倒计时定时器（进行中计划剩余时间 → 到期自动转待下线）──
+        self._countdown_timer = QTimer(self)
+        self._countdown_timer.setInterval(30 * 1000)
+        self._countdown_timer.timeout.connect(self._on_countdown_tick)
+        self._countdown_timer.start()
+
         # ── 后台补拉工业数据（成本指数/设施，首次访问时自动）───────
         QTimer.singleShot(200, self._check_industry_data)
 
         # ── 主题 ───────────────────────────────────────────────
         theme.add_theme_listener(self._on_theme_changed)
+
+    # ── 倒计时 ────────────────────────────────────────────────
+
+    def _on_countdown_tick(self) -> None:
+        """倒计时：刷新时长列 + 到期的进行中计划转 ready。
+
+        model.tick() 只处理当前筛选可见的行（刷新倒计时显示）；
+        expire_overdue_plans() 在 DB 层补算所有进行中计划，不受当前筛选影响。
+        """
+        model = self._plan_table_widget.get_model()
+        if model is None:
+            return
+        expired_visible = model.tick()
+        try:
+            from services.plan_execution import expire_overdue_plans
+
+            expired_db = expire_overdue_plans()
+        except Exception:
+            log.exception("倒计时补算失败")
+            expired_db = 0
+        if expired_visible or expired_db:
+            self.load_plans()
 
     # ── 信号连接 ──────────────────────────────────────────────
 
@@ -383,7 +414,17 @@ class IndustryPage(QWidget):
     # ── load_plans ────────────────────────────────────────────
 
     def load_plans(self):
-        with get_container().db.connect("user") as conn:
+        # 首次加载前补算：重启后已超时的进行中计划 → ready（避免永远停在生产中）
+        if not getattr(self, "_overdue_checked", False):
+            self._overdue_checked = True
+            try:
+                from services.plan_execution import expire_overdue_plans
+
+                expire_overdue_plans()
+            except Exception:
+                log.exception("补算过期计划失败")
+
+        with get_container().db.connect("user", "bp") as conn:
             f = self._toolbar.get_filter()
             sql = "SELECT * FROM production_plans"
             if f == "待排":
@@ -399,7 +440,24 @@ class IndustryPage(QWidget):
             c.execute(sql)
             cols = [d[0] for d in c.description]
             rows = [dict(zip(cols, r, strict=False)) for r in c.fetchall()]
+
+            # 填充蓝图列「有图/没图」：用户库存中是否有该产品对应蓝图
+            owned_bp = {r[0] for r in conn.execute("SELECT DISTINCT blueprint_type_id FROM user_blueprints").fetchall()}
+            prod_to_bp: dict[int, list[int]] = {}
+            for tid, bpid in conn.execute(
+                "SELECT product_type_id, blueprint_type_id FROM bp.blueprint_products WHERE activity='manufacturing'"
+            ).fetchall():
+                prod_to_bp.setdefault(tid, []).append(bpid)
+        for row in rows:
+            ptid = row.get("product_type_id")
+            has_bp = bool(row.get("assigned_blueprint_id")) or any(
+                b in owned_bp for b in prod_to_bp.get(ptid, [])
+            )
+            row["has_image"] = has_bp
         from ui_pyside6.models.industry_models import PlanTableModel
+
+        # 注入当前材料机库（启动旧计划时兜底）
+        self._plan_table_widget.set_mat_hangar_id(self._toolbar.get_mat_hangar_id())
 
         # 复用已有 model，避免 setModel 清除选中状态
         model = self._plan_table_widget.get_model()
@@ -720,8 +778,8 @@ class IndustryPage(QWidget):
                     "(product_type_id, product_name, runs, parallels, me_level, te_level, "
                     "mat_hub, sell_hub, facility, char_name, status, "
                     "profit, margin, score, iskph, material_cost, "
-                    "calculated_time, daily_output, created_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?)",
+                    "calculated_time, daily_output, created_at, deposit_hangar_id, mat_hangar_id) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?)",
                     (
                         type_id,
                         product_name,
@@ -743,6 +801,8 @@ class IndustryPage(QWidget):
                         calculated_seconds,
                         daily_output,
                         datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+                        self._toolbar.get_hangar_id(),
+                        self._toolbar.get_mat_hangar_id(),
                     ),
                 )
                 conn3.commit()
@@ -795,7 +855,8 @@ class IndustryPage(QWidget):
             c = conn.cursor()
             c.execute(
                 "SELECT id, product_type_id, product_name, runs, parallels, me_level, mat_hub, sell_hub, "
-                "materials_ready, status, deposit_hangar_id, deposited "
+                "materials_ready, status, deposit_hangar_id, deposited, material_cost, "
+                "assigned_blueprint_id, mat_hangar_id, material_short "
                 "FROM production_plans WHERE status IN ('pending', 'in_progress', 'running', 'ready')"
             )
             for pr in c.fetchall():
@@ -813,6 +874,10 @@ class IndustryPage(QWidget):
                         "status": pr[9],
                         "deposit_hangar_id": pr[10],
                         "deposited": pr[11],
+                        "material_cost": pr[12],
+                        "assigned_blueprint_id": pr[13],
+                        "mat_hangar_id": pr[14],
+                        "material_short": pr[15],
                     }
                 )
         if not plans:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from datetime import UTC, datetime
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -21,7 +22,6 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
-from core.logger import log
 from ui_pyside6.models.industry_models import PlanTableModel
 
 # ── 列索引常量（与 PlanTableModel._HEADERS 对齐） ────────────
@@ -74,6 +74,8 @@ class PlanTable(QWidget):
         layout.addWidget(self._table)
 
         self._model: PlanTableModel | None = None
+        # 工具栏当前材料机库 ID（由 IndustryPage 注入，启动时兜底）
+        self._mat_hangar_id: int | None = None
 
         # ── 连接信号 ─────────────────────────────────────────
         self._table.doubleClicked.connect(self._on_double_clicked)
@@ -131,6 +133,10 @@ class PlanTable(QWidget):
 
     def get_model(self) -> PlanTableModel | None:
         return self._model
+
+    def set_mat_hangar_id(self, mat_hangar_id: int | None) -> None:
+        """注入工具栏当前材料机库 ID（启动时用于兜底旧计划）。"""
+        self._mat_hangar_id = mat_hangar_id
 
     def get_table(self) -> QTableView:
         return self._table
@@ -221,6 +227,7 @@ class PlanTable(QWidget):
 
         # ── 材料/时间效率（批量适用） — 不影响其他属性 ──
         menu.addAction("设置蓝图等级...", lambda: self._batch_set_me_te(selected_rows))
+        menu.addAction("绑定库存蓝图...", lambda: self._show_blueprint_picker(row))
         menu.addSeparator()
 
         # ── 查看 ─────────────────────────────────────────
@@ -237,10 +244,16 @@ class PlanTable(QWidget):
             a = menu.addAction("勾选备料")
             a.triggered.connect(lambda: batch(lambda r: self._set_materials_ready(r, 1)))
         a = menu.addAction("项目启动")
-        a.triggered.connect(lambda: batch(lambda r: self._set_status(r, "in_progress")))
+        a.triggered.connect(lambda: batch(lambda r: self._start_plan(r)))
 
         a = menu.addAction("项目完成")
         a.triggered.connect(lambda: batch(lambda r: self._set_status(r, "completed")))
+
+        a = menu.addAction("设为待生产")
+        a.triggered.connect(lambda: batch(lambda r: self._cancel_plan(r)))
+
+        a = menu.addAction("撤销启动（返还材料）")
+        a.triggered.connect(lambda: batch(lambda r: self._undo_start(r)))
         menu.addSeparator()
 
         # ── 备注（批量适用） ──────────────────────────────
@@ -272,13 +285,18 @@ class PlanTable(QWidget):
     # ── 单击事件 ─────────────────────────────────────────────
 
     def _on_cell_clicked(self, index) -> None:
-        """单击勾选列 → 切换备料状态"""
-        if index.column() == COL_CHECKBOX and self._model:
-            row = index.row()
-            plan = self._model.get_plan(row)
-            if plan:
-                new_val = 0 if plan.get("materials_ready", 0) else 1
-                self._set_materials_ready(row, new_val)
+        """单击勾选列 → 切换备料状态；单击蓝图列 → 绑定库存蓝图弹窗"""
+        if not self._model:
+            return
+        row = index.row()
+        plan = self._model.get_plan(row)
+        if not plan:
+            return
+        if index.column() == COL_CHECKBOX:
+            new_val = 0 if plan.get("materials_ready", 0) else 1
+            self._set_materials_ready(row, new_val)
+        elif index.column() == COL_BLUEPRINT:
+            self._show_blueprint_picker(row)
 
     def _edit_plan(self, row: int) -> None:
         """编辑生产计划 — 打开 PlanEditDialog，保存后同步重算"""
@@ -296,28 +314,26 @@ class PlanTable(QWidget):
             try:
                 conn.execute(
                     "UPDATE production_plans SET runs=?, parallels=?, "
-                    "char_name=?, facility=?, output_location=?, mat_hub=?, notes=? WHERE id=?",
+                    "char_name=?, notes=?, deposit_hangar_id=?, mat_hangar_id=? WHERE id=?",
                     (
                         updated["runs"],
                         updated["parallels"],
                         updated["char_name"],
-                        updated["facility"],
-                        updated["output"],
-                        updated["material_hub"],
                         updated["notes"],
+                        updated.get("deposit_hangar_id"),
+                        updated.get("mat_hangar_id"),
                         plan["id"],
                     ),
                 )
                 conn.commit()
-                # 更新内存模型的基础字段（保留现有 ME/TE 值，编辑对话框不含 ME/TE）
+                # 更新内存模型的基础字段（保留现有 ME/TE 值，编辑对话框不含 ME/TE；
+                # facility/mat_hub/sell_hub 由工具栏价格设置与「设置设施星系」管理，编辑不改）
                 plan["runs"] = updated["runs"]
                 plan["parallels"] = updated["parallels"]
                 plan["char_name"] = updated["char_name"]
-                plan["facility"] = updated["facility"]
-                plan["output"] = updated["output"]
                 plan["notes"] = updated["notes"]
-                plan["mat_hub"] = updated["material_hub"]
-                plan["sell_hub"] = updated["output"]  # 输出位置作为成品销售枢纽
+                plan["deposit_hangar_id"] = updated.get("deposit_hangar_id")
+                plan["mat_hangar_id"] = updated.get("mat_hangar_id")
             finally:
                 conn.close()
 
@@ -347,28 +363,33 @@ class PlanTable(QWidget):
                     plan = self._model.get_plan(r)
                     if not plan:
                         continue
+                    # 批量模式：机库字段仅在用户显式选择（非「未设置」）时更新，避免清空既有值
+                    sets = ["runs=?", "parallels=?", "char_name=?", "notes=?"]
+                    vals = [
+                        updated.get("runs", plan.get("runs", 1)),
+                        updated.get("parallels", plan.get("parallels", 1)),
+                        updated["char_name"],
+                        updated["notes"],
+                    ]
+                    if updated.get("deposit_hangar_id") is not None:
+                        sets.append("deposit_hangar_id=?")
+                        vals.append(updated["deposit_hangar_id"])
+                    if updated.get("mat_hangar_id") is not None:
+                        sets.append("mat_hangar_id=?")
+                        vals.append(updated["mat_hangar_id"])
+                    vals.append(plan["id"])
                     conn.execute(
-                        "UPDATE production_plans SET runs=?, parallels=?, char_name=?, facility=?, "
-                        "output_location=?, mat_hub=?, notes=? WHERE id=?",
-                        (
-                            updated.get("runs", plan.get("runs", 1)),
-                            updated.get("parallels", plan.get("parallels", 1)),
-                            updated["char_name"],
-                            updated["facility"],
-                            updated["output"],
-                            updated["material_hub"],
-                            updated["notes"],
-                            plan["id"],
-                        ),
+                        f"UPDATE production_plans SET {', '.join(sets)} WHERE id=?",
+                        vals,
                     )
                     plan["runs"] = updated.get("runs", plan.get("runs", 1))
                     plan["parallels"] = updated.get("parallels", plan.get("parallels", 1))
                     plan["char_name"] = updated["char_name"]
-                    plan["facility"] = updated["facility"]
-                    plan["output"] = updated["output"]
                     plan["notes"] = updated["notes"]
-                    plan["mat_hub"] = updated["material_hub"]
-                    plan["sell_hub"] = updated["output"]
+                    if updated.get("deposit_hangar_id") is not None:
+                        plan["deposit_hangar_id"] = updated["deposit_hangar_id"]
+                    if updated.get("mat_hangar_id") is not None:
+                        plan["mat_hangar_id"] = updated["mat_hangar_id"]
                 conn.commit()
             finally:
                 conn.close()
@@ -566,66 +587,174 @@ class PlanTable(QWidget):
                 conn.close()
         self.plan_updated.emit()
 
-    def _set_status(self, row: int, status: str) -> None:
+    def _start_plan(self, row: int) -> None:
+        """启动计划：校验材料 → 不足弹确认（强制/取消）→ 扣减 → 写 started_at → 绑蓝图"""
         if self._model is None:
             return
         plan = self._model.get_plan(row)
-        plan["status"] = status
-        self._model.layoutChanged.emit()
-        if plan.get("id"):
-            conn = get_container().db.direct_connect("user")
-            try:
-                # 如果状态改为 completed 且尚未入库，自动入库
-                deposit_hangar_id = plan.get("deposit_hangar_id")
-                deposited = plan.get("deposited", 0)
-                if status == "completed" and not deposited and deposit_hangar_id:
-                    self._auto_deposit(conn, plan)
-                # 如果状态从 completed 改回，重置 deposited
-                elif status != "completed" and deposited:
-                    plan["deposited"] = 0
-                    conn.execute("UPDATE production_plans SET deposited=0 WHERE id=?", (plan["id"],))
+        if not plan or not plan.get("id"):
+            return
+        from services import plan_execution
 
-                conn.execute(
-                    "UPDATE production_plans SET status=?, deposited=? WHERE id=?",
-                    (status, plan.get("deposited", 0), plan["id"]),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-        self.plan_updated.emit()
+        mat_hangar_id = plan.get("mat_hangar_id") or getattr(self, "_mat_hangar_id", None)
+        allow_short = False
 
-    def _auto_deposit(self, conn, plan: dict) -> None:
-        """自动将成品加入目标机库，更新 deposited 标记"""
-        from services.inventory_manager import add_item
-
-        try:
-            product_type_id = plan.get("product_type_id")
-            runs = max(int(plan.get("runs", 1)), 1)
-            parallels = max(int(plan.get("parallels", 1)), 1)
-            hangar_id = plan.get("deposit_hangar_id")
-            if not hangar_id or not product_type_id:
+        if not mat_hangar_id:
+            ret = QMessageBox.question(
+                self,
+                "启动计划",
+                "材料机库未设置，跳过材料扣减？\n（可在顶部工具栏「材料机库」下拉选择）",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if ret != QMessageBox.StandardButton.Yes:
                 return
 
-            # 查询蓝图单流程产出
-            ref_conn = get_container().db.direct_connect("ref")
-            cur = ref_conn.cursor()
-            cur.execute(
-                "SELECT quantity FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-                (product_type_id,),
+        # 材料校验（仅材料机库已设置时）
+        shortfalls: list[dict] = []
+        if mat_hangar_id:
+            shortfalls = [
+                r for r in plan_execution.check_materials(plan, mat_hangar_id) if (r.get("missing") or 0) > 0
+            ]
+        if shortfalls:
+            lines = "\n".join(f"  {r.get('name')}: 缺 {r.get('missing'):,.0f}" for r in shortfalls[:10])
+            if len(shortfalls) > 10:
+                lines += f"\n  … 等 {len(shortfalls)} 种"
+            ret = QMessageBox.question(
+                self,
+                "材料不足",
+                f"以下材料不足：\n{lines}\n\n是否强制启动？（扣减现有库存，缺口标记待补）",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
-            row = cur.fetchone()
-            ref_conn.close()
-            output_per_run = row[0] if row else 1
+            if ret != QMessageBox.StandardButton.Yes:
+                return
+            allow_short = True
 
-            total_qty = runs * parallels * output_per_run
-            # 成本价 = material_cost / 总数量（每个成品的加权成本）
-            mat_cost = plan.get("material_cost", 0) or 0
-            cost_price = mat_cost / max(total_qty, 1)
+        res = plan_execution.start_plan(plan, mat_hangar_id=mat_hangar_id, allow_short=allow_short)
+        if not res.get("ok"):
+            QMessageBox.warning(self, "启动失败", res.get("message", "未知错误"))
+            return
+        # 同步内存模型（DB 已由 start_plan 写入；其余派生字段经 plan_updated → load_plans 重载）
+        plan["status"] = "in_progress"
+        plan["started_at"] = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        self._model.layoutChanged.emit()
+        self.plan_updated.emit()
 
-            add_item(hangar_id, product_type_id, total_qty, round(cost_price, 2))
-            plan["deposited"] = 1
-        except Exception:
-            log.exception("自动入库失败: plan_id=%s", plan.get("id"))
+    def _cancel_plan(self, row: int) -> None:
+        """取消计划 → 待生产：释放蓝图占用 + 清 started_at + 清缺口标记"""
+        if self._model is None:
+            return
+        plan = self._model.get_plan(row)
+        if not plan or not plan.get("id"):
+            return
+        from services import plan_execution
+
+        plan_execution.release_blueprint(plan["id"])
+        with get_container().db.direct_connect("user") as conn:
+            conn.execute(
+                "UPDATE production_plans SET status='pending', started_at=NULL, material_short='' WHERE id=?",
+                (plan["id"],),
+            )
+        plan["status"] = "pending"
+        plan["started_at"] = None
+        plan["material_short"] = ""
+        plan["assigned_blueprint_id"] = None
+        self._model.layoutChanged.emit()
+        self.plan_updated.emit()
+
+    def _undo_start(self, row: int) -> None:
+        """撤销启动：取消误启动的产线并返还已扣减材料到材料机库"""
+        model = self._model
+        if model is None:
+            return
+        plan = model.get_plan(row)
+        if not plan or not plan.get("id"):
+            return
+        if plan.get("status") not in ("in_progress", "running"):
+            QMessageBox.warning(self, "提示", "仅生产中计划可撤销启动")
+            return
+        from services import plan_execution
+
+        ret = QMessageBox.question(
+            self,
+            "撤销启动",
+            "确定撤销该产线启动？\n将取消生产，并返还已扣减材料到材料机库。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+
+        res = plan_execution.cancel_plan(plan)
+        if not res.get("ok"):
+            QMessageBox.warning(self, "撤销失败", res.get("message", "未知错误"))
+            return
+        plan["status"] = "pending"
+        plan["started_at"] = None
+        plan["material_short"] = ""
+        plan["assigned_blueprint_id"] = None
+        model.layoutChanged.emit()
+        QMessageBox.information(self, "已撤销", res.get("message", "已撤销启动"))
+        self.plan_updated.emit()
+
+    def _set_status(self, row: int, status: str) -> None:
+        """状态流转：completed → 完成入库（complete_plan）；其余 → 直接改状态。"""
+        if self._model is None:
+            return
+        plan = self._model.get_plan(row)
+        if not plan or not plan.get("id"):
+            return
+        if status == "completed":
+            self._complete_plan(plan)
+            return
+        plan["status"] = status
+        self._model.layoutChanged.emit()
+        with get_container().db.direct_connect("user") as conn:
+            # 状态从 completed 改回时重置入库标记
+            if status != "completed" and plan.get("deposited"):
+                plan["deposited"] = 0
+                conn.execute("UPDATE production_plans SET deposited=0 WHERE id=?", (plan["id"],))
+            conn.execute("UPDATE production_plans SET status=? WHERE id=?", (status, plan["id"]))
+        self.plan_updated.emit()
+
+    def _complete_plan(self, plan: dict) -> None:
+        """完成计划：成品入库 + 消耗 BPC + 置 completed（经 plan_execution.complete_plan）"""
+        model = self._model
+        if model is None:
+            return
+        from services import plan_execution
+
+        res = plan_execution.complete_plan(plan)
+        if not res.get("ok"):
+            QMessageBox.warning(self, "完成失败", res.get("message", "未知错误"))
+            return
+        plan["status"] = "completed"
+        plan["deposited"] = res.get("deposited", 0)
+        plan["completed_at"] = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        plan["assigned_blueprint_id"] = None
+        model.layoutChanged.emit()
+        if not res.get("deposited"):
+            QMessageBox.information(self, "完成", res.get("message", "计划已完成"))
+        self.plan_updated.emit()
+
+    def _show_blueprint_picker(self, row: int) -> None:
+        """单击蓝图列/右键菜单 → 绑定库存蓝图弹窗"""
+        model = self._model
+        if model is None:
+            return
+        plan = model.get_plan(row)
+        if not plan:
+            return
+        from ui_pyside6.views.industry.blueprint_picker_dialog import BlueprintPickerDialog
+
+        dlg = BlueprintPickerDialog(plan, self)
+        if dlg.exec():
+            if dlg.unbound:
+                plan["assigned_blueprint_id"] = None
+            elif dlg.selected_blueprint_id is not None:
+                plan["assigned_blueprint_id"] = dlg.selected_blueprint_id
+            else:
+                return
+            model.layoutChanged.emit()
+            self.plan_updated.emit()
 
     def _delete_row(self, row: int) -> None:
         self._delete_rows([row])
@@ -640,6 +769,11 @@ class PlanTable(QWidget):
                 plan = self._model._plans[r]
                 if plan.get("id"):
                     ids_to_delete.append(plan["id"])
+                    # 删除前释放蓝图占用
+                    if plan.get("assigned_blueprint_id"):
+                        from services import plan_execution
+
+                        plan_execution.release_blueprint(plan["id"])
                 self._model._plans.pop(r)
         if ids_to_delete:
             conn = get_container().db.direct_connect("user")
@@ -1047,7 +1181,8 @@ class PlanTable(QWidget):
             related = [plan]
         from ui_pyside6.dialogs.production_wizard import ProductionWizard
 
-        dlg = ProductionWizard(related, self)
+        mat_hangar_id = plan.get("mat_hangar_id") or getattr(self, "_mat_hangar_id", None)
+        dlg = ProductionWizard(related, self, mat_hangar_id=mat_hangar_id)
         dlg.exec()
         self.plan_updated.emit()
 

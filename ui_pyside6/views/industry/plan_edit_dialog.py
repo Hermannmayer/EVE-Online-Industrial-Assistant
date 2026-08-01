@@ -75,24 +75,25 @@ class PlanEditDialog(QDialog):
             self._char_combo.addItem("main")
         form.addRow("人物", self._char_combo)
 
-        # 设施（纯下拉，从机库列表加载）
-        self._facility_combo = QComboBox()
-        self._facility_combo.setEditable(False)
-        self._facility_combo.setPlaceholderText("选择设施/星系名称")
-        form.addRow("设施/材料源", self._facility_combo)
+        # 产出机库（完成入库目标）
+        self._deposit_combo = QComboBox()
+        self._deposit_combo.setEditable(False)
+        self._deposit_combo.addItem("未设置", -1)
+        form.addRow("产出机库", self._deposit_combo)
 
-        # 输出位置（纯下拉，共用机库列表）
-        self._output_combo = QComboBox()
-        self._output_combo.setEditable(False)
-        self._output_combo.setPlaceholderText("选择输出位置…")
-        form.addRow("输出位置", self._output_combo)
+        # 材料机库（启动扣料来源）
+        self._mat_hangar_combo = QComboBox()
+        self._mat_hangar_combo.setEditable(False)
+        self._mat_hangar_combo.addItem("未设置", -1)
+        form.addRow("材料机库", self._mat_hangar_combo)
 
-        # 从机库列表填充设施和输出位置
+        # 从机库列表填充机库下拉（设施/材料源、输出位置已移除：
+        # 它们本应是贸易枢纽/星系而非机库名，由工具栏价格设置与「设置设施星系」统一管理）
         try:
             hangars = inventory_manager.get_hangars()
-            names = [h.get("name", "") for h in hangars if h.get("name")]
-            self._facility_combo.addItems(names)
-            self._output_combo.addItems(names)
+            for h in hangars:
+                self._deposit_combo.addItem(h.get("name", ""), h.get("id"))
+                self._mat_hangar_combo.addItem(h.get("name", ""), h.get("id"))
         except Exception:
             pass
 
@@ -135,23 +136,16 @@ class PlanEditDialog(QDialog):
                 self._char_combo.insertItem(0, char)
                 self._char_combo.setCurrentIndex(0)
 
-        facility = d.get("facility", d.get("mat_hub", ""))
-        if facility:
-            idx = self._facility_combo.findText(facility)
+        deposit_id = d.get("deposit_hangar_id")
+        if deposit_id:
+            idx = self._deposit_combo.findData(deposit_id)
             if idx >= 0:
-                self._facility_combo.setCurrentIndex(idx)
-            else:
-                self._facility_combo.insertItem(0, facility)
-                self._facility_combo.setCurrentIndex(0)
-
-        output = d.get("output", d.get("output_location", ""))
-        if output:
-            idx = self._output_combo.findText(output)
+                self._deposit_combo.setCurrentIndex(idx)
+        mat_id = d.get("mat_hangar_id")
+        if mat_id:
+            idx = self._mat_hangar_combo.findData(mat_id)
             if idx >= 0:
-                self._output_combo.setCurrentIndex(idx)
-            else:
-                self._output_combo.insertItem(0, output)
-                self._output_combo.setCurrentIndex(0)
+                self._mat_hangar_combo.setCurrentIndex(idx)
 
         raw_notes = d.get("notes", "")
         if raw_notes:
@@ -164,31 +158,19 @@ class PlanEditDialog(QDialog):
             QMessageBox.warning(self, "校验", "请输入角色名")
             self._char_combo.setFocus()
             return
-        facility = self._facility_combo.currentText().strip()
-        if not facility:
-            ret = QMessageBox.question(
-                self,
-                "校验",
-                "设施/材料源为空，是否继续？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if ret != QMessageBox.StandardButton.Yes:
-                self._facility_combo.setFocus()
-                return
         self.accept()
 
     def get_updated_data(self) -> dict:
         """返回更新后的字段字典"""
-        facility_text = self._facility_combo.currentText().strip()
-        output_text = self._output_combo.currentText().strip()
+        dep_id = self._deposit_combo.currentData()
+        mat_id = self._mat_hangar_combo.currentData()
         result = {
             "runs": self._runs_spin.value(),
             "parallels": self._parallel_spin.value(),
             "char_name": self._char_combo.currentText().strip(),
-            "facility": facility_text,
-            "output": output_text,
-            "material_hub": facility_text,
             "notes": self._notes_edit.toPlainText().strip(),
+            "deposit_hangar_id": None if dep_id in (None, -1) else dep_id,
+            "mat_hangar_id": None if mat_id in (None, -1) else mat_id,
         }
         if not self._batch_mode:
             result["product_name"] = self._product_label.text()

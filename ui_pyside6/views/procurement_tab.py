@@ -1,5 +1,6 @@
 """待采购对话框 - 根据生产计划和库存计算需要采购的材料"""
 
+import json
 import os
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
@@ -281,6 +282,26 @@ class ProcurementDialog(QDialog):
                 self._summary_label.setText("无活跃计划材料需求")
                 return
 
+            # 合并强制启动计划的材料缺口（material_short JSON {type_id: missing_qty}），
+            # 使缺口自动进入待采购清单
+            for plan in self._active_plans:
+                raw = plan.get("material_short") or ""
+                if not raw:
+                    continue
+                try:
+                    short = json.loads(raw)
+                except Exception:
+                    continue
+                for mid_str, missing in short.items():
+                    try:
+                        mid = int(mid_str)
+                    except ValueError:
+                        continue
+                    if mid in material_map:
+                        material_map[mid]["need"] += int(missing)
+                    else:
+                        material_map[mid] = {"need": int(missing)}
+
             # Get inventory from the selected hangar
             inv_map: dict[int, float] = {}
             c.execute(
@@ -458,57 +479,34 @@ class ProcurementDialog(QDialog):
         QMessageBox.information(self, "已复制", f"已复制 {len(rows)} 种材料（共 {total_qty:,.0f} 个）到剪贴板")
 
     def _on_complete_all(self):
-        """一键完成所有待下线计划：标记为 completed + 自动入库"""
+        """一键完成所有待下线计划：标记为 completed + 自动入库（经 plan_execution.complete_plan）"""
         ready_plans = [p for p in self._active_plans if p.get("status") == "ready"]
         if not ready_plans:
             return
 
+        from services import plan_execution
+
         completed = 0
-        with get_container().db.connect("user") as conn:
-            c = conn.cursor()
-            for plan in ready_plans:
-                plan_id = plan.get("id")
-                if not plan_id:
-                    continue
-                try:
-                    # 入库
-                    deposit_hangar_id = plan.get("deposit_hangar_id")
-                    if deposit_hangar_id:
-                        product_type_id = plan.get("product_type_id")
-                        runs = max(int(plan.get("runs", 1)), 1)
-                        parallels = max(int(plan.get("parallels", 1)), 1)
-                        total_mult = runs * parallels
-
-                        ref_conn = get_container().db.direct_connect("ref")
-                        cur = ref_conn.cursor()
-                        cur.execute(
-                            "SELECT quantity FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-                            (product_type_id,),
-                        )
-                        row = cur.fetchone()
-                        ref_conn.close()
-                        output_per_run = row[0] if row else 1
-
-                        total_qty = total_mult * output_per_run
-                        mat_cost = plan.get("material_cost", 0) or 0
-                        cost_price = mat_cost / max(total_qty, 1)
-                        from services.inventory_manager import add_item
-
-                        add_item(deposit_hangar_id, product_type_id, total_qty, round(cost_price, 2))
-
-                    # 标记为 completed + deposited
-                    c.execute(
-                        "UPDATE production_plans SET status='completed', deposited=1 WHERE id=?",
-                        (plan_id,),
-                    )
+        deposited = 0
+        for plan in ready_plans:
+            plan_id = plan.get("id")
+            if not plan_id:
+                continue
+            try:
+                res = plan_execution.complete_plan(plan)
+                if res.get("ok"):
                     completed += 1
-                except Exception:
-                    log.exception("完成计划 %s 失败", plan_id)
-
-            conn.commit()
+                    deposited += 1 if res.get("deposited") else 0
+                else:
+                    log.warning("完成计划 %s 失败: %s", plan_id, res.get("message"))
+            except Exception:
+                log.exception("完成计划 %s 失败", plan_id)
 
         if completed > 0:
-            QMessageBox.information(self, "完成", f"已完成 {completed}/{len(ready_plans)} 项计划\n成品已自动入库")
+            msg = f"已完成 {completed}/{len(ready_plans)} 项计划"
+            if deposited > 0:
+                msg += f"\n{deposited} 项成品已自动入库"
+            QMessageBox.information(self, "完成", msg)
             self._calculate()
         else:
             QMessageBox.information(self, "提示", "没有可完成的计划")
