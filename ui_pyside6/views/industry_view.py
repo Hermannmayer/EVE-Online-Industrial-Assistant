@@ -103,7 +103,8 @@ PLAN_DB_SCHEMA = """CREATE TABLE IF NOT EXISTS production_plans (
     facility_cost_mult REAL DEFAULT 1.0,
     assigned_blueprint_id INTEGER DEFAULT NULL,
     mat_hangar_id INTEGER DEFAULT NULL,
-    material_short TEXT DEFAULT ''
+    material_short TEXT DEFAULT '',
+    solar_system_id INTEGER DEFAULT NULL
 );
 """
 
@@ -162,7 +163,7 @@ class PlanPriceRefreshWorker(QThread):
 
         now = datetime.now(UTC)
         cursor = await db.execute(
-            "SELECT type_id, fetch_time FROM market_prices " "WHERE type_id IN ({}) AND region_id=10000002".format(
+            "SELECT type_id, fetch_time FROM market_prices WHERE type_id IN ({}) AND region_id=10000002".format(
                 ",".join("?" for _ in self._type_ids)
             ),
             list(self._type_ids),
@@ -413,6 +414,20 @@ class IndustryPage(QWidget):
 
     # ── load_plans ────────────────────────────────────────────
 
+    def _system_name(self, solar_system_id: int | None) -> str:
+        """查询星系名称（设施列显示用）。"""
+        if not solar_system_id:
+            return ""
+        try:
+            with get_container().db.connect("ref") as conn:
+                r = conn.execute(
+                    "SELECT solar_system_name FROM solar_system WHERE solar_system_id=?",
+                    (solar_system_id,),
+                ).fetchone()
+                return r[0] if r else ""
+        except Exception:
+            return ""
+
     def load_plans(self):
         # 首次加载前补算：重启后已超时的进行中计划 → ready（避免永远停在生产中）
         if not getattr(self, "_overdue_checked", False):
@@ -450,9 +465,7 @@ class IndustryPage(QWidget):
                 prod_to_bp.setdefault(tid, []).append(bpid)
         for row in rows:
             ptid = row.get("product_type_id")
-            has_bp = bool(row.get("assigned_blueprint_id")) or any(
-                b in owned_bp for b in prod_to_bp.get(ptid, [])
-            )
+            has_bp = bool(row.get("assigned_blueprint_id")) or any(b in owned_bp for b in prod_to_bp.get(ptid, []))
             row["has_image"] = has_bp
         from ui_pyside6.models.industry_models import PlanTableModel
 
@@ -740,6 +753,14 @@ class IndustryPage(QWidget):
             data = dlg.result_data()
             if not data:
                 return
+            # \u4ece\u6750\u6599\u673a\u5e93\u5e26\u51fa\u6240\u5728\u661f\u7cfb\uff08\u661f\u7cfb\u6210\u672c\u6307\u6570\u5f71\u54cd\u5b89\u88c5\u8d39\uff09\uff1bfacility \u672a\u586b\u65f6\u7528\u661f\u7cfb\u540d
+            mat_hangar_id = self._toolbar.get_mat_hangar_id()
+            from services import inventory_manager
+
+            solar_system_id = inventory_manager.get_hangar_system_id(mat_hangar_id)
+            facility = data.get("fac", "")
+            if not facility and solar_system_id:
+                facility = self._system_name(solar_system_id)
             # \u6784\u9020\u4e34\u65f6 plan dict\uff0c\u7528\u7edf\u4e00\u65b9\u6cd5\u8ba1\u7b97\u6d3e\u751f\u6307\u6807
             plan_input = {
                 "product_type_id": type_id,
@@ -751,7 +772,8 @@ class IndustryPage(QWidget):
                 "mat_hub": ps["mat_hub"],
                 "sell_hub": ps["prod_hub"],
                 "char_name": data.get("char", ""),
-                "facility": data.get("fac", ""),
+                "facility": facility,
+                "solar_system_id": solar_system_id,
             }
             actual_char_name = data.get("char", "").strip() or char_name
             actual_config = resolve_char_config(char_name=actual_char_name)
@@ -778,8 +800,8 @@ class IndustryPage(QWidget):
                     "(product_type_id, product_name, runs, parallels, me_level, te_level, "
                     "mat_hub, sell_hub, facility, char_name, status, "
                     "profit, margin, score, iskph, material_cost, "
-                    "calculated_time, daily_output, created_at, deposit_hangar_id, mat_hangar_id) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?)",
+                    "calculated_time, daily_output, created_at, deposit_hangar_id, mat_hangar_id, solar_system_id) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         type_id,
                         product_name,
@@ -789,7 +811,7 @@ class IndustryPage(QWidget):
                         data["te"],
                         ps["mat_hub"],
                         ps["prod_hub"],
-                        data["fac"],
+                        facility,
                         data["char"],
                         profit,
                         margin,  # \u603b\u5229\u6da6\u7387\uff08\u4e0e per-run \u6bd4\u503c\u76f8\u540c\uff09
@@ -803,6 +825,7 @@ class IndustryPage(QWidget):
                         datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
                         self._toolbar.get_hangar_id(),
                         self._toolbar.get_mat_hangar_id(),
+                        solar_system_id,
                     ),
                 )
                 conn3.commit()

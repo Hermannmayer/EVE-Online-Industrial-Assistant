@@ -214,7 +214,6 @@ class TopToolbar(QWidget):
         except Exception:
             if self._hangar_combo.count() == 0:
                 self._hangar_combo.addItem("不自动入库", -1)
-        self._hangar_combo.currentIndexChanged.connect(self._save_hangar_setting)
 
     def _load_price_settings(self) -> None:
         """从 settings.json 恢复上次的价格设置。"""
@@ -269,7 +268,6 @@ class TopToolbar(QWidget):
         except Exception:
             if self._mat_hangar_combo.count() == 0:
                 self._mat_hangar_combo.addItem("未设置", -1)
-        self._mat_hangar_combo.currentIndexChanged.connect(self._save_mat_hangar_setting)
 
     def _save_mat_hangar_setting(self):
         hangar_id = self._mat_hangar_combo.currentData()
@@ -355,6 +353,15 @@ class TopToolbar(QWidget):
         self._price_widget.prod_hub_changed.connect(self._on_price_setting_changed)
         self._price_widget.prod_price_type_changed.connect(self._on_price_setting_changed)
         self._price_widget.prod_mult_changed.connect(self._on_price_setting_changed)
+
+        # 机库下拉变化 → 持久化（在 _connect_signals 只连一次，避免 reload 重复连接）
+        self._hangar_combo.currentIndexChanged.connect(self._save_hangar_setting)
+        self._mat_hangar_combo.currentIndexChanged.connect(self._save_mat_hangar_setting)
+
+    def reload_hangar_settings(self):
+        """重新加载产出/材料机库下拉（总设置界面改动默认机库后调用）。"""
+        self._load_hangars()
+        self._load_mat_hangars()
 
     # ── 槽函数 ──────────────────────────────────────────────
 

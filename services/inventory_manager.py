@@ -2,9 +2,11 @@
 库存管理数据层 — 机库 CRUD / 物品入库 / 加权平均成本 / 移动
 """
 
+import json
 from datetime import UTC, datetime
 
 from services.database_manager import DatabaseManager, get_db
+from services.terminology import term
 
 db = get_db()
 
@@ -14,7 +16,11 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS hangars (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
-    notes TEXT DEFAULT ''
+    notes TEXT DEFAULT '',
+    solar_system_id INTEGER DEFAULT NULL,
+    facility_type TEXT DEFAULT NULL,
+    facility_tax REAL DEFAULT NULL,
+    rigs TEXT DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS inventory_items (
@@ -66,15 +72,26 @@ def init_db():
 def get_hangars() -> list[dict]:
     with db.connect("user") as conn:
         c = conn.cursor()
-        c.execute("SELECT id, name, notes FROM hangars ORDER BY id")
-        return [{"id": r[0], "name": r[1], "notes": r[2]} for r in c.fetchall()]
+        c.execute("SELECT id, name, notes, solar_system_id, facility_type, facility_tax, rigs FROM hangars ORDER BY id")
+        return [
+            {
+                "id": r[0],
+                "name": r[1],
+                "notes": r[2],
+                "solar_system_id": r[3],
+                "facility_type": r[4],
+                "facility_tax": r[5],
+                "rigs": r[6],
+            }
+            for r in c.fetchall()
+        ]
 
 
-def create_hangar(name: str) -> int:
+def create_hangar(name: str, solar_system_id: int | None = None) -> int:
     try:
         with db.connect("user") as conn:
             c = conn.cursor()
-            c.execute("INSERT INTO hangars (name) VALUES (?)", (name,))
+            c.execute("INSERT INTO hangars (name, solar_system_id) VALUES (?, ?)", (name, solar_system_id))
             return c.lastrowid or 0
     except Exception:
         return -1
@@ -85,6 +102,59 @@ def rename_hangar(hangar_id: int, name: str) -> bool:
         c = conn.cursor()
         c.execute("UPDATE hangars SET name = ? WHERE id = ?", (name, hangar_id))
         return c.rowcount > 0
+
+
+def update_hangar_system(hangar_id: int, solar_system_id: int | None) -> bool:
+    """设置机库所在星系（None 清除）。"""
+    with db.connect("user") as conn:
+        c = conn.cursor()
+        c.execute("UPDATE hangars SET solar_system_id = ? WHERE id = ?", (solar_system_id, hangar_id))
+        return c.rowcount > 0
+
+
+def get_hangar_system_id(hangar_id: int | None) -> int | None:
+    """读取机库所在星系的 solar_system_id（无机库/未设置返回 None）。"""
+    if not hangar_id:
+        return None
+    with db.connect("user") as conn:
+        row = conn.execute("SELECT solar_system_id FROM hangars WHERE id = ?", (hangar_id,)).fetchone()
+        return row[0] if row and row[0] is not None else None
+
+
+def update_hangar_config(
+    hangar_id: int,
+    facility_type: str | None,
+    facility_tax: float | None,
+    rigs: list[int] | None,
+) -> bool:
+    """更新机库工业配置（设施类型/设施税/改件）。rigs 存 JSON 数组。"""
+    with db.connect("user") as conn:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE hangars SET facility_type=?, facility_tax=?, rigs=? WHERE id=?",
+            (facility_type, facility_tax, json.dumps(rigs or []) if rigs is not None else None, hangar_id),
+        )
+        return c.rowcount > 0
+
+
+def get_hangar_config(hangar_id: int | None) -> dict:
+    """读取机库工业配置 {facility_type, facility_tax, rigs: list[int]}；无机库/未配置返回默认。"""
+    default: dict = {"facility_type": None, "facility_tax": None, "rigs": []}
+    if not hangar_id:
+        return default
+    with db.connect("user") as conn:
+        row = conn.execute(
+            "SELECT facility_type, facility_tax, rigs FROM hangars WHERE id = ?",
+            (hangar_id,),
+        ).fetchone()
+    if not row:
+        return default
+    try:
+        rigs = json.loads(row[2]) if row[2] else []
+        rigs = [int(r) for r in rigs] if isinstance(rigs, list) else []
+    except (ValueError, TypeError):
+        rigs = []
+    return {"facility_type": row[0], "facility_tax": row[1], "rigs": rigs}
 
 
 def delete_hangar(hangar_id: int) -> bool:
@@ -108,28 +178,35 @@ def get_items(hangar_id: int) -> list[dict]:
             LEFT JOIN mkt.market_prices mp ON mp.type_id = i.type_id
                 AND mp.region_id = 10000002
             WHERE ii.hangar_id = ?
-            ORDER BY i.zh_name
         """,
             (hangar_id,),
         )
         items = []
         for r in c.fetchall():
             tid = r[1]
-            # 查询生产计划中该物品的规划占用（仅 pending：已启动计划启动时已物理扣减材料）
+            # 名称统一：terminology.item_overrides 优先（基础矿物 34-40 等不在 item 表，仅在此注册）
+            override = term.item_override(tid)
+            display_name = override or (r[4] or r[5]) or str(tid)
+            # 生产计划占用：pending 为待启动预留；in_progress/ready 已物理扣减，作核对参考
             c.execute(
                 """
-                SELECT COALESCE(SUM(bm.quantity * pp.runs * pp.parallels), 0)
+                SELECT
+                    COALESCE(SUM(CASE WHEN pp.status = 'pending'
+                                     THEN bm.quantity * pp.runs * pp.parallels ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN pp.status IN ('in_progress', 'ready')
+                                     THEN bm.quantity * pp.runs * pp.parallels ELSE 0 END), 0)
                 FROM production_plans pp
                 JOIN bp.blueprint_products bp ON bp.product_type_id = pp.product_type_id
                     AND bp.activity = 'manufacturing'
                 JOIN bp.blueprint_materials bm ON bm.blueprint_type_id = bp.blueprint_type_id
                     AND bm.activity = 'manufacturing'
-                WHERE bm.material_type_id = ? AND pp.status = 'pending'
+                WHERE bm.material_type_id = ?
             """,
                 (tid,),
             )
             row = c.fetchone()
             plan_qty = row[0] if row else 0
+            plan_active = row[1] if row else 0
 
             stock_qty = r[2]
             remain = max(0, stock_qty - plan_qty)
@@ -142,12 +219,16 @@ def get_items(hangar_id: int) -> list[dict]:
                     "cost_price": r[3] or 0,
                     "zh_name": r[4] or "",
                     "en_name": r[5] or "",
+                    "display_name": display_name,
                     "sell_price": r[6],
                     "buy_price": r[7],
                     "plan_usage": plan_qty,
+                    "plan_active": plan_active,
                     "plan_remain": remain,
                 }
             )
+        # 名称排序（terminology 覆盖项 SQL 无法排序，Python 端统一排）
+        items.sort(key=lambda it: it["display_name"])
         return items
 
 
@@ -190,18 +271,21 @@ def get_inventory_cost_map(_db: DatabaseManager | None = None) -> dict[int, tupl
     return result
 
 
-def add_item(hangar_id: int, type_id: int, quantity: int, cost_price: float = 0) -> int:
+def add_item(hangar_id: int, type_id: int, quantity: int, cost_price: float = 0, *, conn=None) -> int:
+    """把 quantity 件物品加入机库，按加权平均成本合并。
+
+    conn: 可选注入的连接——调用方持有事务时传入，在同一连接上执行且**不提交**，
+    由调用方统一 commit/rollback；None 时用缓存连接并自动提交。
+    """
     if quantity <= 0:
         return -1
-    with db.connect("user") as conn:
-        c = conn.cursor()
-        now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
-        c.execute(
+    def _do(c) -> int:
+        row = c.execute(
             "SELECT id, quantity, cost_price FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
             (hangar_id, type_id),
-        )
-        row = c.fetchone()
+        ).fetchone()
         if row:
             item_id, old_qty, old_cost = row
             old_cost = old_cost or 0
@@ -212,13 +296,75 @@ def add_item(hangar_id: int, type_id: int, quantity: int, cost_price: float = 0)
                 (total_qty, round(avg_cost, 2), now, item_id),
             )
             return int(item_id)
-        else:
+        cur = c.execute(
+            """INSERT INTO inventory_items (hangar_id, type_id, quantity, cost_price, created_at)
+                     VALUES (?, ?, ?, ?, ?)""",
+            (hangar_id, type_id, quantity, cost_price, now),
+        )
+        return cur.lastrowid or 0
+
+    if conn is not None:
+        return _do(conn)
+    with db.connect("user") as conn:
+        return _do(conn)
+
+
+def set_item_quantity(
+    hangar_id: int,
+    type_id: int,
+    quantity: int,
+    cost_price: float | None = None,
+    *,
+    conn=None,
+) -> int:
+    """全量同步：把 (hangar_id, type_id) 的数量设为 quantity。
+
+    quantity <= 0 时删除该行；cost_price 传入则覆盖单位成本，否则保留现值
+    （新行默认 0）。供「剪贴板全量导入」覆盖机库数量用。
+
+    conn: 可选注入的连接——调用方持有事务时传入，在同一连接上执行且**不提交**；
+    None 时用缓存连接并自动提交。返回受影响 item_id（删除/未命中返回 0）。
+    """
+    if quantity < 0:
+        return 0
+
+    def _do(c) -> int:
+        row = c.execute(
+            "SELECT id, cost_price FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
+            (hangar_id, type_id),
+        ).fetchone()
+        if quantity == 0:
+            if row:
+                c.execute("DELETE FROM inventory_items WHERE id = ?", (row[0],))
+                return int(row[0])
+            return 0
+        now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        new_cost = cost_price if cost_price is not None else ((row[1] or 0) if row else 0)
+        if row:
             c.execute(
-                """INSERT INTO inventory_items (hangar_id, type_id, quantity, cost_price, created_at)
-                         VALUES (?, ?, ?, ?, ?)""",
-                (hangar_id, type_id, quantity, cost_price, now),
+                "UPDATE inventory_items SET quantity = ?, cost_price = ?, created_at = ? WHERE id = ?",
+                (quantity, round(new_cost, 2), now, row[0]),
             )
-            return c.lastrowid or 0
+            return int(row[0])
+        cur = c.execute(
+            """INSERT INTO inventory_items (hangar_id, type_id, quantity, cost_price, created_at)
+                     VALUES (?, ?, ?, ?, ?)""",
+            (hangar_id, type_id, quantity, new_cost, now),
+        )
+        return cur.lastrowid or 0
+
+    if conn is not None:
+        return _do(conn)
+    with db.connect("user") as conn:
+        return _do(conn)
+
+
+def update_cost_price(item_id: int, cost_price: float) -> bool:
+    """直接覆盖该库存行的单位成本价（参数化 UPDATE，返回是否命中）。"""
+    with db.connect("user") as conn:
+        c = conn.cursor()
+        c.execute("UPDATE inventory_items SET cost_price = ? WHERE id = ?", (round(cost_price, 2), item_id))
+        return c.rowcount > 0
 
 
 def get_hangar_stock(hangar_id: int) -> dict[int, int]:
@@ -238,21 +384,23 @@ def get_hangar_stock(hangar_id: int) -> dict[int, int]:
     return result
 
 
-def deduct_item(hangar_id: int, type_id: int, quantity: int) -> int:
+def deduct_item(hangar_id: int, type_id: int, quantity: int, *, conn=None) -> int:
     """从机库扣减 quantity，返回实际扣减量。
 
     不足则扣到 0（不跨负、不报错）；扣减后余量为 0 则删除该行。
     扣减不改变成本价（加权平均成本仅在 add_item 时变动）。
+
+    conn: 可选注入的连接——调用方持有事务时传入，在同一连接上执行且**不提交**，
+    由调用方统一 commit/rollback；None 时用缓存连接并提交。
     """
     if quantity <= 0:
         return 0
-    with db.connect("user") as conn:
-        c = conn.cursor()
-        c.execute(
+
+    def _do(c) -> int:
+        row = c.execute(
             "SELECT id, quantity FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
             (hangar_id, type_id),
-        )
-        row = c.fetchone()
+        ).fetchone()
         if not row:
             return 0
         item_id, cur = row
@@ -262,6 +410,12 @@ def deduct_item(hangar_id: int, type_id: int, quantity: int) -> int:
             c.execute("DELETE FROM inventory_items WHERE id = ?", (item_id,))
         else:
             c.execute("UPDATE inventory_items SET quantity = ? WHERE id = ?", (remaining, item_id))
+        return deducted
+
+    if conn is not None:
+        return _do(conn)
+    with db.connect("user") as conn:
+        deducted = _do(conn)
         conn.commit()
         return deducted
 

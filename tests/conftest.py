@@ -134,6 +134,123 @@ def _create_temp_databases(tmpdir: str):
     }
 
 
+def _create_user_v4(db_path):
+    """构造 v4 的 user.db（模拟 ALTER 迁移缺口库）。
+
+    - hangars：**无** solar_system_id 列（v5 迁移待加）
+    - production_plans：**显式不含** facility_cost_mult 列
+      （该列现仅存在于 CREATE TABLE 路径，v2→v3 ALTER 迁移遗漏 → v4→v5 需补）
+    - 已含 v3→v4 执行列（assigned_blueprint_id / mat_hangar_id / material_short）
+    """
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        """
+        CREATE TABLE hangars (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            notes TEXT DEFAULT ''
+        );
+        CREATE TABLE production_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_type_id INTEGER NOT NULL,
+            product_name TEXT,
+            blueprint_type_id INTEGER,
+            runs INTEGER DEFAULT 1,
+            parallels INTEGER DEFAULT 1,
+            me_level INTEGER DEFAULT 0,
+            te_level INTEGER DEFAULT 0,
+            mat_hub TEXT DEFAULT 'Jita',
+            sell_hub TEXT DEFAULT 'Jita',
+            facility TEXT DEFAULT '',
+            char_name TEXT DEFAULT '',
+            status TEXT DEFAULT 'pending',
+            profit REAL DEFAULT 0,
+            margin REAL DEFAULT 0,
+            score REAL DEFAULT 0,
+            material_cost REAL DEFAULT 0,
+            created_at TEXT,
+            started_at TEXT,
+            completed_at TEXT,
+            calculated_time REAL DEFAULT 0,
+            notes TEXT DEFAULT '',
+            group_number INTEGER DEFAULT 0,
+            sub_level INTEGER DEFAULT 0,
+            output_location TEXT DEFAULT '',
+            market_margin REAL DEFAULT 0,
+            personal_margin REAL DEFAULT 0,
+            daily_output REAL DEFAULT 0,
+            materials_ready INTEGER DEFAULT 0,
+            iskph REAL DEFAULT 0,
+            deposit_hangar_id INTEGER DEFAULT NULL,
+            deposited INTEGER DEFAULT 0,
+            assigned_blueprint_id INTEGER DEFAULT NULL,
+            mat_hangar_id INTEGER DEFAULT NULL,
+            material_short TEXT DEFAULT ''
+        );
+        """
+    )
+    conn.execute("PRAGMA user_version = 4")
+    conn.commit()
+    conn.close()
+
+
+def _create_user_v5(db_path):
+    """构造 v5 的 user.db（hangars 含 solar_system_id、production_plans 含 v5 全列，无 v6 设施列）"""
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        """
+        CREATE TABLE hangars (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            notes TEXT DEFAULT '',
+            solar_system_id INTEGER DEFAULT NULL
+        );
+        CREATE TABLE production_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_type_id INTEGER NOT NULL,
+            product_name TEXT,
+            blueprint_type_id INTEGER,
+            runs INTEGER DEFAULT 1,
+            parallels INTEGER DEFAULT 1,
+            me_level INTEGER DEFAULT 0,
+            te_level INTEGER DEFAULT 0,
+            mat_hub TEXT DEFAULT 'Jita',
+            sell_hub TEXT DEFAULT 'Jita',
+            facility TEXT DEFAULT '',
+            char_name TEXT DEFAULT '',
+            status TEXT DEFAULT 'pending',
+            profit REAL DEFAULT 0,
+            margin REAL DEFAULT 0,
+            score REAL DEFAULT 0,
+            material_cost REAL DEFAULT 0,
+            created_at TEXT,
+            started_at TEXT,
+            completed_at TEXT,
+            facility_cost_mult REAL DEFAULT 1.0,
+            calculated_time REAL DEFAULT 0,
+            notes TEXT DEFAULT '',
+            group_number INTEGER DEFAULT 0,
+            sub_level INTEGER DEFAULT 0,
+            output_location TEXT DEFAULT '',
+            market_margin REAL DEFAULT 0,
+            personal_margin REAL DEFAULT 0,
+            daily_output REAL DEFAULT 0,
+            materials_ready INTEGER DEFAULT 0,
+            iskph REAL DEFAULT 0,
+            deposit_hangar_id INTEGER DEFAULT NULL,
+            deposited INTEGER DEFAULT 0,
+            assigned_blueprint_id INTEGER DEFAULT NULL,
+            mat_hangar_id INTEGER DEFAULT NULL,
+            material_short TEXT DEFAULT '',
+            solar_system_id INTEGER DEFAULT NULL
+        );
+        """
+    )
+    conn.execute("PRAGMA user_version = 5")
+    conn.commit()
+    conn.close()
+
+
 # ════════════════════════════════════════════════════════════════
 #  Mock helpers
 # ════════════════════════════════════════════════════════════════

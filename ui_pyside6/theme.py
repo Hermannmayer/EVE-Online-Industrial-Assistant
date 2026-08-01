@@ -75,6 +75,8 @@ TEXT_ON_PRIMARY = ONE_DARK_PRO["TEXT_ON_PRIMARY"]
 BORDER = ONE_DARK_PRO["BORDER"]
 
 _current_theme = "dark"
+
+
 class _StrongCallback:
     """普通函数/lambda 的强引用包装（WeakMethod 只支持绑定方法）"""
 
@@ -462,6 +464,17 @@ def _table_styles() -> str:
     QTableView::item:selected:!active {{
         background-color: {PRIMARY};
         color: {TEXT_BRIGHT};
+    }}
+    QTableView::indicator {{
+        width: 16px;
+        height: 16px;
+        border: 2px solid {BORDER};
+        border-radius: 4px;
+        background-color: {BG_SURFACE};
+    }}
+    QTableView::indicator:checked {{
+        background-color: {PRIMARY};
+        border-color: {PRIMARY};
     }}
     QHeaderView::section {{
         background-color: {BG_SURFACE};

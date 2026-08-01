@@ -363,6 +363,14 @@ class MainWindow(QMainWindow):
         bottom_btn_layout.setContentsMargins(4, 4, 4, 4)
         bottom_btn_layout.setSpacing(6)
 
+        self._hangar_settings_btn = QPushButton()
+        self._hangar_settings_btn.setObjectName("hangar_settings_btn")
+        self._hangar_settings_btn.setToolTip("机库设置：所在星系 / 设施类型 / 改装件 / 设施税 / 默认机库")
+        self._hangar_settings_btn.setFixedSize(36, 36)
+        self._hangar_settings_btn.setIcon(self._create_hangar_icon())
+        self._hangar_settings_btn.setIconSize(QSize(20, 20))
+        self._hangar_settings_btn.clicked.connect(self._show_hangar_settings)
+
         self._char_settings_btn = QPushButton()
         self._char_settings_btn.setObjectName("char_settings_btn")
         self._char_settings_btn.setToolTip("人物设置")
@@ -380,6 +388,7 @@ class MainWindow(QMainWindow):
         self._sys_settings_btn.clicked.connect(self._show_sys_settings)
 
         bottom_btn_layout.addStretch()
+        bottom_btn_layout.addWidget(self._hangar_settings_btn)
         bottom_btn_layout.addWidget(self._char_settings_btn)
         bottom_btn_layout.addWidget(self._sys_settings_btn)
 
@@ -697,12 +706,41 @@ class MainWindow(QMainWindow):
         painter.end()
         return QIcon(pixmap)
 
+    def _create_hangar_icon(self, size: int = 20) -> QIcon:
+        """绘制工厂/机库建筑图标"""
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(theme.TEXT_SECONDARY))
+
+        # 厂房主体
+        body_x0, body_x1 = size * 0.26, size * 0.76
+        body_top, body_bot = size * 0.5, size * 0.9
+        painter.drawRect(int(body_x0), int(body_top), int(body_x1 - body_x0), int(body_bot - body_top))
+
+        # 屋顶（三角）
+        roof = QPainterPath()
+        roof.moveTo(size * 0.16, body_top)
+        roof.lineTo(size * 0.5, size * 0.3)
+        roof.lineTo(size * 0.84, body_top)
+        roof.closeSubpath()
+        painter.drawPath(roof)
+
+        # 烟囱
+        painter.drawRect(int(size * 0.64), int(size * 0.34), int(size * 0.12), int(size * 0.18))
+
+        painter.end()
+        return QIcon(pixmap)
+
     # ── 主题切换 ──
 
     def _on_theme_changed(self):
         """主题切换后的 UI 刷新"""
         self.setStyleSheet(theme.get_stylesheet())
         # 非 QSS 项：图标颜色
+        self._hangar_settings_btn.setIcon(self._create_hangar_icon())
         self._char_settings_btn.setIcon(self._create_person_icon())
         self._sys_settings_btn.setIcon(self._create_settings_icon())
 
@@ -723,7 +761,24 @@ class MainWindow(QMainWindow):
         from ui_pyside6.views.settings_view import SettingsDialog
 
         dlg = SettingsDialog(self, self)
-        dlg.exec()
+        if dlg.exec():
+            # 默认机库可能被改动 → 刷新工业页工具栏的产出/材料机库下拉
+            page = self._pages.get("industry")
+            if page is not None and hasattr(page, "_toolbar"):
+                page._toolbar.reload_hangar_settings()
+
+    def _show_hangar_settings(self):
+        """机库设置对话框（独立一级入口）"""
+        from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog
+
+        dlg = HangarSettingsDialog(self)
+        if dlg.exec():
+            page = self._pages.get("industry")
+            if page is not None:
+                if hasattr(page, "_toolbar"):
+                    page._toolbar.reload_hangar_settings()
+                if hasattr(page, "load_plans"):
+                    page.load_plans()
 
     def _on_auto_update_toggled(self, checked: bool):
         """顶栏自动更新指示点击切换"""

@@ -46,6 +46,9 @@ COL_PERSONAL_MARGIN = 17
 
 _NUM_COLUMNS = 18
 
+# 固定窄列宽度（px）：备料勾选列需容纳 8px padding + 16px 复选框 + 余量；图标列适配 32px 图标
+_FIXED_WIDTHS = {COL_CHECKBOX: 34, COL_ICON: 36}
+
 
 class PlanTable(QWidget):
     """生产计划表格 — 封装 QTableView + PlanTableModel + 右键菜单"""
@@ -103,14 +106,14 @@ class PlanTable(QWidget):
 
         # 隐藏并行和批次列（数据仍保留用于计算）
 
-        NARROW = {1, 4, 5}  # 图标/组号/子级
-        STRETCH = {2}  # 产品名
-        FIXED = {0}  # 勾选列固定 24px
+        NARROW = {COL_GROUP, COL_CHILD_LEVEL}  # 组号/子级
+        STRETCH = {COL_PRODUCT}  # 产品名
+        # 备料勾选 / 图标列固定窄宽（适配复选框与图标，避免被内容/表头撑宽）
 
         for col in range(_NUM_COLUMNS):
-            if col in FIXED:
+            if col in _FIXED_WIDTHS:
                 header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
-                header.resizeSection(col, 24)
+                header.resizeSection(col, _FIXED_WIDTHS[col])
             elif col in NARROW:
                 header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
             elif col in STRETCH:
@@ -126,6 +129,10 @@ class PlanTable(QWidget):
         # 内容自适应后，窄列自动收缩
         self._table.resizeColumnsToContents()
         header = self._table.horizontalHeader()
+        # 收紧固定窄列（备料勾选/图标），避免被内容或表头撑宽
+        for col, w in _FIXED_WIDTHS.items():
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
+            header.resizeSection(col, w)
         # 确保产品列至少有 120px，但不超过可用空间一半
         product_w = header.sectionSize(COL_PRODUCT)
         avail = header.width() if header.width() > 0 else 800
@@ -137,6 +144,28 @@ class PlanTable(QWidget):
     def set_mat_hangar_id(self, mat_hangar_id: int | None) -> None:
         """注入工具栏当前材料机库 ID（启动时用于兜底旧计划）。"""
         self._mat_hangar_id = mat_hangar_id
+
+    def _solar_system_for_mat_hangar(self, mat_hangar_id: int | None) -> int | None:
+        """从材料机库带出所在星系 ID（材料在哪个星系造，成本指数就按它算）。"""
+        from services import inventory_manager
+
+        return inventory_manager.get_hangar_system_id(mat_hangar_id)
+
+    def _system_name(self, solar_system_id: int | None) -> str:
+        """查询星系名称（设施列显示用）。"""
+        if not solar_system_id:
+            return ""
+        try:
+            conn = get_container().db.direct_connect("ref")
+            try:
+                r = conn.execute(
+                    "SELECT solar_system_name FROM solar_system WHERE solar_system_id=?", (solar_system_id,)
+                ).fetchone()
+                return r[0] if r else ""
+            finally:
+                conn.close()
+        except Exception:
+            return ""
 
     def get_table(self) -> QTableView:
         return self._table
@@ -234,7 +263,7 @@ class PlanTable(QWidget):
         menu.addAction("查看核算", lambda: self._view_cost_breakdown(row))
         menu.addSeparator()
 
-        # ── 状态（批量适用） ──────────────────────────────
+        # ── 状态（按当前行状态显隐；批量时对选中行逐条生效） ──────────
         # 备料 toggle — 使用右键点击行的状态决定勾选/取消
         mats_ready = bool(plan.get("materials_ready", 0))
         if mats_ready:
@@ -243,17 +272,22 @@ class PlanTable(QWidget):
         else:
             a = menu.addAction("勾选备料")
             a.triggered.connect(lambda: batch(lambda r: self._set_materials_ready(r, 1)))
-        a = menu.addAction("项目启动")
-        a.triggered.connect(lambda: batch(lambda r: self._start_plan(r)))
 
-        a = menu.addAction("项目完成")
-        a.triggered.connect(lambda: batch(lambda r: self._set_status(r, "completed")))
-
-        a = menu.addAction("设为待生产")
-        a.triggered.connect(lambda: batch(lambda r: self._cancel_plan(r)))
-
-        a = menu.addAction("撤销启动（返还材料）")
-        a.triggered.connect(lambda: batch(lambda r: self._undo_start(r)))
+        status = (plan.get("status") or "").lower()
+        if status == "pending":
+            a = menu.addAction("项目启动")
+            a.triggered.connect(lambda: batch(lambda r: self._start_plan(r)))
+        elif status in ("in_progress", "running"):
+            # 仅「软件误点、游戏未启动」时可撤销并返还材料
+            a = menu.addAction("撤销启动（返还材料）")
+            a.triggered.connect(lambda: batch(lambda r: self._undo_start(r)))
+        elif status == "ready":
+            # 待下线：游戏产线已跑完、材料已扣，点击下线（不可逆）产出成品
+            a = menu.addAction("下线")
+            a.triggered.connect(lambda: batch(lambda r: self._set_status(r, "completed")))
+        elif status in ("completed", "done"):
+            a = menu.addAction("设为待生产（复用）")
+            a.triggered.connect(lambda: batch(lambda r: self._reset_for_reuse(r)))
         menu.addSeparator()
 
         # ── 备注（批量适用） ──────────────────────────────
@@ -312,16 +346,24 @@ class PlanTable(QWidget):
             updated = dlg.get_updated_data()
             conn = get_container().db.direct_connect("user")
             try:
+                final_mat = updated.get("mat_hangar_id")
+                solar_system_id = self._solar_system_for_mat_hangar(final_mat)
+                # 设施名：编辑对话框不含 facility；材料机库星系未设 facility 时自动带出星系名
+                facility = plan.get("facility", "") or ""
+                if solar_system_id and not facility:
+                    facility = self._system_name(solar_system_id)
                 conn.execute(
                     "UPDATE production_plans SET runs=?, parallels=?, "
-                    "char_name=?, notes=?, deposit_hangar_id=?, mat_hangar_id=? WHERE id=?",
+                    "char_name=?, notes=?, deposit_hangar_id=?, mat_hangar_id=?, solar_system_id=?, facility=? WHERE id=?",
                     (
                         updated["runs"],
                         updated["parallels"],
                         updated["char_name"],
                         updated["notes"],
                         updated.get("deposit_hangar_id"),
-                        updated.get("mat_hangar_id"),
+                        final_mat,
+                        solar_system_id,
+                        facility,
                         plan["id"],
                     ),
                 )
@@ -333,7 +375,9 @@ class PlanTable(QWidget):
                 plan["char_name"] = updated["char_name"]
                 plan["notes"] = updated["notes"]
                 plan["deposit_hangar_id"] = updated.get("deposit_hangar_id")
-                plan["mat_hangar_id"] = updated.get("mat_hangar_id")
+                plan["mat_hangar_id"] = final_mat
+                plan["solar_system_id"] = solar_system_id
+                plan["facility"] = facility
             finally:
                 conn.close()
 
@@ -377,6 +421,9 @@ class PlanTable(QWidget):
                     if updated.get("mat_hangar_id") is not None:
                         sets.append("mat_hangar_id=?")
                         vals.append(updated["mat_hangar_id"])
+                        # 显式设材料机库 → 同步重算所在星系（成本指数）
+                        sets.append("solar_system_id=?")
+                        vals.append(self._solar_system_for_mat_hangar(updated["mat_hangar_id"]))
                     vals.append(plan["id"])
                     conn.execute(
                         f"UPDATE production_plans SET {', '.join(sets)} WHERE id=?",
@@ -390,6 +437,7 @@ class PlanTable(QWidget):
                         plan["deposit_hangar_id"] = updated["deposit_hangar_id"]
                     if updated.get("mat_hangar_id") is not None:
                         plan["mat_hangar_id"] = updated["mat_hangar_id"]
+                        plan["solar_system_id"] = self._solar_system_for_mat_hangar(updated["mat_hangar_id"])
                 conn.commit()
             finally:
                 conn.close()
@@ -612,9 +660,7 @@ class PlanTable(QWidget):
         # 材料校验（仅材料机库已设置时）
         shortfalls: list[dict] = []
         if mat_hangar_id:
-            shortfalls = [
-                r for r in plan_execution.check_materials(plan, mat_hangar_id) if (r.get("missing") or 0) > 0
-            ]
+            shortfalls = [r for r in plan_execution.check_materials(plan, mat_hangar_id) if (r.get("missing") or 0) > 0]
         if shortfalls:
             lines = "\n".join(f"  {r.get('name')}: 缺 {r.get('missing'):,.0f}" for r in shortfalls[:10])
             if len(shortfalls) > 10:
@@ -636,29 +682,44 @@ class PlanTable(QWidget):
         # 同步内存模型（DB 已由 start_plan 写入；其余派生字段经 plan_updated → load_plans 重载）
         plan["status"] = "in_progress"
         plan["started_at"] = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        plan["mat_hangar_id"] = mat_hangar_id
         self._model.layoutChanged.emit()
         self.plan_updated.emit()
 
-    def _cancel_plan(self, row: int) -> None:
-        """取消计划 → 待生产：释放蓝图占用 + 清 started_at + 清缺口标记"""
-        if self._model is None:
+    def _reset_for_reuse(self, row: int) -> None:
+        """设为待生产：仅 completed 计划复用（材料已在成品中，不返还）。
+
+        清除完成痕迹（started_at/completed_at/deposited/material_short）与蓝图占用，
+        置回 pending 供再次启动，不触碰库存。
+        """
+        model = self._model
+        if model is None:
             return
-        plan = self._model.get_plan(row)
+        plan = model.get_plan(row)
         if not plan or not plan.get("id"):
             return
         from services import plan_execution
 
-        plan_execution.release_blueprint(plan["id"])
-        with get_container().db.direct_connect("user") as conn:
-            conn.execute(
-                "UPDATE production_plans SET status='pending', started_at=NULL, material_short='' WHERE id=?",
-                (plan["id"],),
-            )
+        ret = QMessageBox.question(
+            self,
+            "设为待生产",
+            "将已完成计划重置为待生产以便复用？\n材料不返还（已完成计划的材料已变为成品入库），并清除完成记录。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+
+        res = plan_execution.reset_plan_for_reuse(plan["id"])
+        if not res.get("ok"):
+            QMessageBox.warning(self, "操作失败", res.get("message", "未知错误"))
+            return
         plan["status"] = "pending"
         plan["started_at"] = None
+        plan["completed_at"] = None
+        plan["deposited"] = 0
         plan["material_short"] = ""
         plan["assigned_blueprint_id"] = None
-        self._model.layoutChanged.emit()
+        model.layoutChanged.emit()
         self.plan_updated.emit()
 
     def _undo_start(self, row: int) -> None:
@@ -677,7 +738,8 @@ class PlanTable(QWidget):
         ret = QMessageBox.question(
             self,
             "撤销启动",
-            "确定撤销该产线启动？\n将取消生产，并返还已扣减材料到材料机库。",
+            "确定撤销该产线启动？\n将取消生产，并返还已扣减材料到材料机库。\n"
+            "（仅当尚未在游戏中启动该产线时使用——游戏产线一经启动不退还材料）",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if ret != QMessageBox.StandardButton.Yes:
@@ -707,12 +769,16 @@ class PlanTable(QWidget):
             return
         plan["status"] = status
         self._model.layoutChanged.emit()
-        with get_container().db.direct_connect("user") as conn:
+        conn = get_container().db.direct_connect("user")
+        try:
             # 状态从 completed 改回时重置入库标记
             if status != "completed" and plan.get("deposited"):
                 plan["deposited"] = 0
                 conn.execute("UPDATE production_plans SET deposited=0 WHERE id=?", (plan["id"],))
             conn.execute("UPDATE production_plans SET status=? WHERE id=?", (status, plan["id"]))
+            conn.commit()
+        finally:
+            conn.close()
         self.plan_updated.emit()
 
     def _complete_plan(self, plan: dict) -> None:
@@ -1035,79 +1101,37 @@ class PlanTable(QWidget):
         dlg.exec()
 
     def _set_facility_system(self, row: int) -> None:
-        """为设施设置所在星系 — 星系搜索 + 自动带出成本系数"""
+        """为设施设置所在星系 — 星系搜索对话框 + 自动带出成本系数"""
         if self._model is None:
             return
         plan = self._model.get_plan(row)
         if not plan:
             return
 
-        # 检查 universe 数据是否就绪
-        conn = get_container().db.direct_connect("ref")
-        try:
-            cur = conn.cursor()
-            cur.execute("SELECT COUNT(*) FROM solar_system")
-            has_systems = cur.fetchone()[0] > 0
-        finally:
-            conn.close()
+        from ui_pyside6.dialogs.system_search_dialog import SystemSearchDialog
 
-        if not has_systems:
-            QMessageBox.warning(self, "数据未就绪", "星系数据尚未加载。请先运行「数据初始化」中的 SDE 扩展数据。")
+        dlg = SystemSearchDialog(self, "设置设施星系")
+        if not dlg.exec():
             return
-
-        current_facility = plan.get("facility", "") or ""
-        system_name, ok = QInputDialog.getText(
-            self,
-            "设置设施星系",
-            f"当前设施: {current_facility}\n\n输入星系名称（支持部分匹配）:",
-            text=current_facility,
-        )
-        if not ok or not system_name.strip():
+        sel = dlg.get_selected()
+        if not sel:
             return
+        ss_id, ss_name = sel
 
-        # 查找星系
-        conn = get_container().db.direct_connect("ref")
-        try:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT solar_system_id, solar_system_name, security FROM solar_system "
-                "WHERE solar_system_name LIKE ? LIMIT 10",
-                (f"%{system_name.strip()}%",),
-            )
-            matches = [dict(r) for r in cur.fetchall()]
-        finally:
-            conn.close()
-
-        if not matches:
-            QMessageBox.warning(self, "未找到星系", f"未找到匹配「{system_name}」的星系")
-            return
-
-        if len(matches) == 1:
-            selected = matches[0]
-        else:
-            # 多匹配时让用户选择
-            items = [f"{m['solar_system_name']} (安全等级 {m['security']:.1f})" for m in matches]
-            sel, ok = QInputDialog.getItem(self, "选择星系", "找到多个匹配:", items, 0, False)
-            if not ok:
-                return
-            idx = items.index(sel)
-            selected = matches[idx]
-
-        # 更新 plan
-        ss_name = selected["solar_system_name"]
-        ss_id = selected["solar_system_id"]
+        # 更新内存 plan
         plan["facility"] = ss_name
+        plan["solar_system_id"] = ss_id
 
         # 自动带出成本系数
         sci = get_container().pricing_service.get_system_cost_index(ss_id, "manufacturing")
 
-        # 持久化
+        # 持久化（设施名 + 星系列）
         if plan.get("id"):
             conn = get_container().db.direct_connect("user")
             try:
                 conn.execute(
-                    "UPDATE production_plans SET facility=? WHERE id=?",
-                    (ss_name, plan["id"]),
+                    "UPDATE production_plans SET facility=?, solar_system_id=? WHERE id=?",
+                    (ss_name, ss_id, plan["id"]),
                 )
                 conn.commit()
             finally:
@@ -1118,10 +1142,7 @@ class PlanTable(QWidget):
         QMessageBox.information(
             self,
             "设置完成",
-            f"设施星系: {ss_name}\n"
-            f"安全等级: {selected['security']:.1f}\n"
-            f"制造成本指数(SCI): {sci:.4f}\n\n"
-            f"可在「成本系数」中调整附加费率。",
+            f"设施星系: {ss_name}\n制造成本指数(SCI): {sci:.4f}\n\n可在「成本系数」中调整附加费率。",
         )
 
     def _set_facility_cost_index(self, row: int) -> None:
@@ -1136,7 +1157,7 @@ class PlanTable(QWidget):
 
         # 从 DB 读取当前系数（如果有 system_id 可以从 plan 推断，但当前没有这个字段）
         # 这里只设一个简单的附加费率 multiplier
-        current_mult = float(plan.get("cost_multiplier", 1.0)) if "cost_multiplier" in plan else 1.0
+        current_mult = float(plan.get("facility_cost_mult", 1.0) or 1.0)
 
         val, ok = QInputDialog.getDouble(
             self,
