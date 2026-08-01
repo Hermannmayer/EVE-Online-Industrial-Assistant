@@ -755,8 +755,8 @@ class IndustryPage(QWidget):
         self._score_worker.start()
 
     def _on_manufacturable_browser(self):
-        """??????????"""
-        dlg = ManufacturableItemsDialog()
+        """打开可制造物品浏览器"""
+        dlg = ManufacturableItemsDialog(parent=self)
         dlg.show()
 
     def _on_plan_detail(self, plan_id: int):

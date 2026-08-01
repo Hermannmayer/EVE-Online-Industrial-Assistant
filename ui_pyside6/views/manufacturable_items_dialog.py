@@ -104,7 +104,7 @@ class ManufacturableItemsDialog(QDialog):
     """可制造物品对话框"""
 
     def __init__(self, parent=None):
-        super().__init__()
+        super().__init__(parent)
         self.setWindowTitle("可制造物品")
         self.resize(1100, 680)
         self.setMinimumSize(800, 400)
@@ -291,7 +291,7 @@ class ManufacturableItemsDialog(QDialog):
             row = self._md.data(idx, Qt.ItemDataRole.UserRole)
             if row and row.get("id"):
                 items.append({"type_id": row["id"], "name": row.get("z", "")})
-        dlg = CompareDialog(initial_items=items)
+        dlg = CompareDialog(initial_items=items, parent=self)
         dlg.show()
 
     def _ot(self, items):

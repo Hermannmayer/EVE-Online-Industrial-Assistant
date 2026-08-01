@@ -442,14 +442,16 @@ class PlanTable(QWidget):
         buttons.rejected.connect(dlg.reject)
         root.addWidget(buttons)
 
-        theme.add_theme_listener(
+        remove_theme = theme.add_theme_listener(
             lambda: dlg.setStyleSheet(
                 f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; font-size: 12px;"
             )
         )
 
         if not dlg.exec():
+            remove_theme()
             return
+        remove_theme()
 
         me_val = me_slider.value()
         te_val = te_slider.value()
@@ -687,6 +689,9 @@ class PlanTable(QWidget):
         from PySide6.QtCore import Qt
 
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        # 保持引用：无 parent 的非模态对话框若仅靠局部变量持有，
+        # Python GC 可能在对话框仍显示时回收包装对象 → 原生段错误（闪退）
+        self._cost_breakdown_dlg = dlg
         dlg.show()
 
     def _phase3_placeholder(self, feature_name: str):

@@ -612,7 +612,7 @@ class AllItemsDialog(QDialog):
             row = self._md.data(idx, Qt.ItemDataRole.UserRole)
             if row and row.get("id"):
                 items.append({"type_id": row["id"], "name": row.get("z", "")})
-        dlg = CompareDialog(initial_items=items)
+        dlg = CompareDialog(initial_items=items, parent=self)
         dlg.show()
 
     def _ot(self, items):

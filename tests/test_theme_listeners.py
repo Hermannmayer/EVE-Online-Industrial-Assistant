@@ -235,3 +235,22 @@ def test_remove_theme_listener_still_works():
     before = len(theme._theme_listeners)
     theme.remove_theme_listener(obj.on_theme)
     assert len(theme._theme_listeners) == before - 1
+
+
+def test_add_theme_listener_accepts_lambda():
+    """add_theme_listener 支持普通函数/lambda（WeakMethod 只接受绑定方法，否则会崩）"""
+    import ui_pyside6.theme as theme
+
+    calls = {"n": 0}
+
+    def _cb():
+        calls["n"] += 1
+
+    remove = theme.add_theme_listener(_cb)  # 不再抛 TypeError
+
+    apply_theme("light")
+    assert calls["n"] == 1, "lambda 监听器应被调用"
+
+    remove()
+    apply_theme("dark")
+    assert calls["n"] == 1, "remove 后不应再被调用"
