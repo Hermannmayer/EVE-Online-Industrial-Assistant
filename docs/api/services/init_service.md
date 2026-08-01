@@ -36,7 +36,7 @@ def is_step_satisfied(step_key: str) -> bool
 def get_missing_steps() -> list[InitStep]
 ```
 
-返回所有未就绪的步骤
+返回所有未就绪的步骤（check_all 只跑一次，避免 8 次重复查询）
 
 定义行：`97`
 
@@ -48,7 +48,7 @@ def get_missing_count() -> int
 
 返回未就绪的步骤数
 
-定义行：`102`
+定义行：`105`
 
 ## 类
 
@@ -70,7 +70,7 @@ def get_missing_count() -> int
 
 初始化流程控制器
 
-定义行：`112`
+定义行：`115`
 
 #### 方法
 
@@ -84,7 +84,7 @@ def __init__(self, parent: QObject | None=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`136`
+定义行：`139`
 ##### `start`
 
 ```python
@@ -93,7 +93,7 @@ def start(self, step_keys: list[str] | None=None)
 
 开始初始化
 
-定义行：`156`
+定义行：`161`
 ##### `retry`
 
 ```python
@@ -102,7 +102,7 @@ def retry(self, step_key: str)
 
 重试单个失败步骤
 
-定义行：`172`
+定义行：`178`
 ##### `retry_all_failed`
 
 ```python
@@ -111,7 +111,7 @@ def retry_all_failed(self)
 
 重试所有失败步骤
 
-定义行：`180`
+定义行：`186`
 ##### `skip`
 
 ```python
@@ -120,7 +120,7 @@ def skip(self, step_key: str) -> bool
 
 跳过非关键步骤。返回 True 表示跳过成功。
 
-定义行：`190`
+定义行：`196`
 ##### `cancel`
 
 ```python
@@ -129,7 +129,7 @@ def cancel(self)
 
 取消当前执行
 
-定义行：`203`
+定义行：`209`
 ##### `get_status`
 
 ```python
@@ -138,7 +138,7 @@ def get_status(self) -> dict[str, StepStatus]
 
 返回所有步骤的当前状态
 
-定义行：`209`
+定义行：`215`
 ##### `get_errors`
 
 ```python
@@ -147,7 +147,7 @@ def get_errors(self) -> dict[str, str]
 
 返回所有失败步骤的错误消息
 
-定义行：`213`
+定义行：`219`
 ##### `reset`
 
 ```python
@@ -156,7 +156,7 @@ def reset(self)
 
 重置所有步骤为 PENDING
 
-定义行：`217`
+定义行：`223`
 ##### `check_network`
 
 ```python
@@ -165,7 +165,7 @@ async def check_network(self) -> bool
 
 检查 ESI 连通性
 
-定义行：`227`
+定义行：`233`
 ##### `_run_sequence`
 
 ```python
@@ -174,7 +174,7 @@ async def _run_sequence(self, keys: list[str])
 
 顺序执行步骤列表
 
-定义行：`246`
+定义行：`252`
 ##### `_deps_satisfied`
 
 ```python
@@ -183,7 +183,7 @@ def _deps_satisfied(self, step: InitStep) -> bool
 
 检查前置步骤是否已完成
 
-定义行：`307`
+定义行：`322`
 ##### `_run_step`
 
 ```python
@@ -192,7 +192,7 @@ async def _run_step(self, key: str) -> tuple[bool, str]
 
 实际执行一个初始化步骤
 
-定义行：`311`
+定义行：`326`
 ##### `_inject_progress_callback`
 
 ```python
@@ -201,7 +201,7 @@ def _inject_progress_callback(self, key: str)
 
 设置进度回调环境变量（给 write_progress 使用）
 
-定义行：`369`
+定义行：`385`
 ##### `_emit_step_started`
 
 ```python
@@ -212,7 +212,7 @@ def _emit_step_started(self, key: str, name: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`378`
+定义行：`394`
 ##### `_emit_step_progress`
 
 ```python
@@ -223,7 +223,7 @@ def _emit_step_progress(self, key: str, percent: int, message: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`385`
+定义行：`401`
 ##### `_emit_step_completed`
 
 ```python
@@ -234,7 +234,7 @@ def _emit_step_completed(self, key: str, success: bool, message: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`392`
+定义行：`408`
 ##### `_emit_all_completed`
 
 ```python
@@ -245,7 +245,7 @@ def _emit_all_completed(self, success: bool, summary: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`399`
+定义行：`415`
 ##### `_emit_network`
 
 ```python
@@ -256,4 +256,4 @@ def _emit_network(self, ok: bool, message: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`406`
+定义行：`422`

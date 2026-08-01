@@ -64,7 +64,7 @@ def check_blueprint_names() -> int
 def check_implants() -> int
 ```
 
-返回 item_dogma 行数，>200 视为已初始化（约 200-300 个植入体有 dogma）
+返回 item_dogma 行数，>20 视为已初始化（约 32 个工业/发明植入体有 dogma）
 
 定义行：`84`
 
@@ -154,7 +154,7 @@ def check_universe() -> int
 def check_schema() -> bool
 ```
 
-检查所有 4 个库的 schema 版本是否匹配预期
+检查已存在的库的 schema 版本是否匹配预期
 
 定义行：`200`
 
@@ -166,7 +166,7 @@ def check_all() -> dict
 
 返回各组件状态 &#123; "items": bool, "prices": bool, "blueprints": bool, ... &#125;
 
-定义行：`213`
+定义行：`218`
 
 ### `missing_count`
 
@@ -176,4 +176,4 @@ def missing_count() -> int
 
 返回未就绪的组件数量
 
-定义行：`230`
+定义行：`235`

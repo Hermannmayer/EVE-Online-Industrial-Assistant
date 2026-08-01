@@ -22,7 +22,7 @@ async def create_tables()
 ### `run_industry_update`
 
 ```python
-async def run_industry_update()
+async def run_industry_update(progress_cb=None)
 ```
 
 ::: warning ⚠️ 待补 docstring
