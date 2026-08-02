@@ -5,6 +5,7 @@
 import json
 from datetime import UTC, datetime
 
+from core.logger import log
 from services.database_manager import DatabaseManager, get_db
 from services.terminology import term
 
@@ -229,6 +230,16 @@ def get_items(hangar_id: int) -> list[dict]:
             )
         # 名称排序（terminology 覆盖项 SQL 无法排序，Python 端统一排）
         items.sort(key=lambda it: it["display_name"])
+        # 研究成本（拷贝/发明）批量填充 — ref/bp 主库含蓝图表
+        try:
+            from services.research_calculator import research_costs_batch
+
+            with db.connect("ref") as rconn:
+                costs = research_costs_batch(rconn, [it["type_id"] for it in items])
+            for it in items:
+                it["research_cost"] = costs.get(it["type_id"])
+        except Exception:
+            log.exception("计算研究成本失败")
         return items
 
 
@@ -469,6 +480,29 @@ def move_items(item_ids: list[int], to_hangar_id: int):
                              VALUES (?, ?, ?, ?, datetime('now'))""",
                     (to_hangar_id, type_id, qty, cost),
                 )
+
+
+def move_quantity(from_hangar_id: int, type_id: int, quantity: int, to_hangar_id: int) -> int:
+    """按数量把物品从源机库移到目标机库，成本沿用源库单位成本。
+
+    剪贴板数量超过源库现有量时按源库现有量扣减（clamp，不报错）；
+    源库行扣空则删除；目标库合并走 add_item 加权平均。同一事务内完成。
+    Returns: 实际移动数量（源库无该物品/数量<=0/同库返回 0）。
+    """
+    if quantity <= 0 or from_hangar_id == to_hangar_id:
+        return 0
+    with db.connect("user") as conn:
+        row = conn.execute(
+            "SELECT quantity, cost_price FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
+            (from_hangar_id, type_id),
+        ).fetchone()
+        if not row:
+            return 0
+        cost = row[1] or 0
+        deducted = deduct_item(from_hangar_id, type_id, quantity, conn=conn)
+        if deducted > 0:
+            add_item(to_hangar_id, type_id, deducted, cost, conn=conn)
+        return deducted
 
 
 def get_total_value(hangar_id: int, price_type: str = "sell", discount: float = 0) -> dict:

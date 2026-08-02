@@ -8,14 +8,34 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import QAbstractTableModel, Qt
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtCore import QAbstractTableModel, QSize, Qt
+from PySide6.QtGui import QColor, QPixmap, QPixmapCache
 
 import ui_pyside6.theme as theme
 from core.paths import icon_cache_dir
 from services.terminology import term
 
 ICON_DIR = icon_cache_dir()
+
+
+def _load_icon(type_id: int, size: int = 32) -> QPixmap | None:
+    """加载物品图标（QPixmapCache 缓存）"""
+    if not type_id:
+        return None
+    cache_key = f"invicon_{type_id}"
+    pixmap = QPixmap(cache_key)
+    if not pixmap.isNull():
+        return pixmap
+    path = os.path.join(ICON_DIR, f"{type_id}.png")
+    if os.path.isfile(path):
+        pixmap = QPixmap(path)
+        if not pixmap.isNull():
+            pixmap = pixmap.scaled(
+                size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            )
+            QPixmapCache.insert(cache_key, pixmap)
+            return pixmap
+    return None
 
 
 # ════════════════════════════════════════════════════
@@ -26,7 +46,7 @@ ICON_DIR = icon_cache_dir()
 class InvTableModel(QAbstractTableModel):
     """机库物品表格模型"""
 
-    _HEADERS = ["图标", "名称", "库存数量", "单个成本记录", "规划占用", "生产中投入", "规划剩余", "按卖单总价值"]
+    _HEADERS = ["图标", "名称", "库存数量", "单个成本记录", "规划占用", "规划剩余", "按卖单总价值", "拷贝/发明成本"]
 
     def __init__(self, items: list[dict]):
         super().__init__()
@@ -56,31 +76,26 @@ class InvTableModel(QAbstractTableModel):
             if c == 4:
                 return f"{r['plan_usage']:,}" if r.get("plan_usage") else "0"
             if c == 5:
-                return f"{r['plan_active']:,}" if r.get("plan_active") else "0"
+                remain = r.get("plan_remain")
+                return f"{remain:,}" if remain is not None else f"{r['quantity']:,}"
             if c == 6:
-                return f"{r['plan_remain']:,}" if r.get("plan_remain") else f"{r['quantity']:,}"
-            if c == 7:
                 sp = r.get("sell_price")
                 return f"{r['quantity'] * sp:,.0f}" if sp else "-"
+            if c == 7:
+                rc = r.get("research_cost")
+                return f"{rc:,.0f}" if rc else ""
 
         elif role == Qt.ItemDataRole.ToolTipRole:
             if c == 4:
                 return "待启动计划预留"
-            if c == 5:
-                return "已启动计划已物理扣减，核对参考"
 
         elif role == Qt.ItemDataRole.DecorationRole:
             if c == 0:
-                type_id = r.get("type_id")
-                if type_id:
-                    icon_path = os.path.join(ICON_DIR, f"{type_id}.png")
-                    if os.path.exists(icon_path):
-                        pix = QPixmap(icon_path)
-                        if not pix.isNull():
-                            return pix.scaled(
-                                24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-                            )
-            return None
+                return _load_icon(r.get("type_id"))
+
+        elif role == Qt.ItemDataRole.SizeHintRole:
+            if c == 0:
+                return QSize(36, 36)
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             if c >= 2:
@@ -95,6 +110,27 @@ class InvTableModel(QAbstractTableModel):
 
     def item_at(self, row: int) -> dict | None:
         return self._items[row] if 0 <= row < len(self._items) else None
+
+    def sort(self, column: int, order=Qt.SortOrder.AscendingOrder):
+        keys: dict[int, Callable[[dict], Any]] = {
+            1: lambda r: (
+                r.get("display_name") or r.get("zh_name") or r.get("en_name") or str(r["type_id"])
+            ).lower(),
+            2: lambda r: r.get("quantity", 0),
+            3: lambda r: r.get("cost_price") or 0,
+            4: lambda r: r.get("plan_usage") or 0,
+            5: lambda r: r.get("plan_remain") if r.get("plan_remain") is not None else r.get("quantity", 0),
+            6: lambda r: (r.get("quantity", 0) or 0) * (r.get("sell_price") or 0),
+            7: lambda r: r.get("research_cost") or 0,
+        }
+        key = keys.get(column)
+        if key is None:
+            return
+        rev = order == Qt.SortOrder.DescendingOrder
+        self.beginResetModel()
+        # 排序副本，避免原地修改调用方传入的列表
+        self._items = sorted(self._items, key=key, reverse=rev)
+        self.endResetModel()
 
 
 # ════════════════════════════════════════════════════

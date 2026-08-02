@@ -5,12 +5,14 @@
 """
 
 import re
+from typing import cast
 
 from PySide6.QtCore import QAbstractTableModel, Qt, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -30,8 +32,10 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
+from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.eve_formulas import resolve_item_name
+from services.inventory_import import split_clipboard_lines
 from services.inventory_manager import (
     add_item,
     get_hangars,
@@ -43,6 +47,7 @@ from services.inventory_manager import (
     update_cost_price,
     update_quantity,
 )
+from services.name_resolver import search_item_type_id
 
 from .inventory_helpers import InvTableModel
 
@@ -71,34 +76,85 @@ class EditQtyDialog(QDialog):
 
 
 # ════════════════════════════════════════════════════
-#  Dialog: 编辑成本价
+#  Dialog: 批量设置成本价
 # ════════════════════════════════════════════════════
 
 
-class EditCostDialog(QDialog):
-    """编辑成本价 — 仿 EditQtyDialog（直接覆盖单位成本，不重算加权平均）"""
+class BatchCostPriceDialog(QDialog):
+    """批量设置成本价 — 吉他卖价/买价/均价 × 折扣率，或手动输入数字。"""
 
-    def __init__(self, item_name: str, current_cost: float, parent=None):
+    _PRICE_TYPES = [
+        ("sell", "吉他卖价"),
+        ("buy", "吉他买价"),
+        ("avg", "吉他均价"),
+        ("manual", "手动输入价格"),
+    ]
+
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"编辑成本价 — {item_name}")
-        layout = QFormLayout(self)
-        self._cost = QDoubleSpinBox()
-        self._cost.setRange(0, 1e12)
-        self._cost.setDecimals(2)
-        self._cost.setSingleStep(100)
-        self._cost.setValue(current_cost)
-        layout.addRow("成本价 (ISK):", self._cost)
+        self.setWindowTitle("批量设置成本价")
+        self.setMinimumWidth(320)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        form = QFormLayout()
+        self._source = QComboBox()
+        for val, label in self._PRICE_TYPES:
+            self._source.addItem(label, val)
+        self._source.currentIndexChanged.connect(self._on_source_changed)
+        form.addRow("价格来源:", self._source)
+
+        self._discount = QDoubleSpinBox()
+        self._discount.setRange(0.01, 1.0)
+        self._discount.setDecimals(2)
+        self._discount.setSingleStep(0.05)
+        self._discount.setValue(0.9)
+        self._discount.setSuffix(" 折")
+        self._discount.setToolTip("市场价 × 折扣率")
+        form.addRow("折扣率:", self._discount)
+
+        self._manual = QDoubleSpinBox()
+        self._manual.setRange(0, 1e12)
+        self._manual.setDecimals(2)
+        self._manual.setSingleStep(1000)
+        form.addRow("价格 (ISK):", self._manual)
+
+        layout.addLayout(form)
+
         btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btn.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
         btn.accepted.connect(self.accept)
         btn.rejected.connect(self.reject)
-        layout.addRow(btn)
-        theme.add_theme_listener(self._on_theme_changed)
+        layout.addWidget(btn)
 
-    def cost_price(self) -> float:
-        return self._cost.value()
+        self._form = form
+        theme.add_theme_listener(self._on_theme_changed)
+        self._on_source_changed()
+
+    def _on_source_changed(self):
+        """切换价格来源：市场价显示折扣率，手动输入显示价格框"""
+        is_manual = self._source.currentData() == "manual"
+        d_label = self._form.labelForField(self._discount)
+        if d_label:
+            d_label.setVisible(not is_manual)
+        self._discount.setVisible(not is_manual)
+        m_label = self._form.labelForField(self._manual)
+        if m_label:
+            m_label.setVisible(is_manual)
+        self._manual.setVisible(is_manual)
+
+    def price_type(self) -> str:
+        return cast(str, self._source.currentData())
+
+    def discount(self) -> float:
+        return float(self._discount.value())
+
+    def manual_price(self) -> float:
+        return float(self._manual.value())
 
     def _on_theme_changed(self):
-        """无内联样式，主题切换由全局 QSS 处理"""
         pass
 
 
@@ -493,34 +549,31 @@ class HangarTab(QWidget):
         self._table.customContextMenuRequested.connect(self._on_context_menu)
         self._table.verticalHeader().setDefaultSectionSize(32)
         self._table.verticalHeader().setVisible(False)
-        hdr = self._table.horizontalHeader()
-        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        for col, w in {0: 28, 1: 150, 2: 70, 3: 90, 4: 65, 5: 65, 6: 65, 7: 100}.items():
-            self._table.setColumnWidth(col, w)
         layout.addWidget(self._table, 1)
 
         self._model: InvTableModel | None = None
         self._refresh()
+        self._apply_header_style()
 
     def _build_action_bar(self, layout):
         bar = QHBoxLayout()
         bar.setSpacing(6)
 
-        self._paste_btn = QPushButton("粘贴导入")
-        self._paste_btn.clicked.connect(self._on_paste_import)
-        bar.addWidget(self._paste_btn)
+        self._adjust_btn = QPushButton("库存修正")
+        self._adjust_btn.clicked.connect(self._on_adjust_inventory)
+        bar.addWidget(self._adjust_btn)
 
-        self._add_btn = QPushButton("添加物品")
-        self._add_btn.clicked.connect(self._on_add_item)
-        bar.addWidget(self._add_btn)
+        self._transfer_btn = QPushButton("移库")
+        self._transfer_btn.clicked.connect(self._on_transfer)
+        bar.addWidget(self._transfer_btn)
 
-        self._cov_btn = QPushButton("材料覆盖")
+        self._cov_btn = QPushButton("查看规划缺失材料")
         self._cov_btn.clicked.connect(self._on_material_coverage)
         bar.addWidget(self._cov_btn)
 
-        self._move_btn = QPushButton("移动到")
-        self._move_btn.clicked.connect(self._on_move_items)
-        bar.addWidget(self._move_btn)
+        self._add_btn = QPushButton("手动添加物品")
+        self._add_btn.clicked.connect(self._on_add_item)
+        bar.addWidget(self._add_btn)
 
         bar.addStretch()
 
@@ -538,94 +591,88 @@ class HangarTab(QWidget):
         """主题切换时重新应用内联样式表"""
         self._count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
         self._total_label.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY}; font-size: 13px;")
+        self._apply_header_style()
+
+    # ── 列布局 ──
+
+    def _apply_column_layout(self):
+        """列宽自适应：图标列 Fixed，其余内容自适应 + 最小宽度兜底 + 名称列上限。
+
+        顺序仿工业制造 PlanTable：全部 ResizeToContents → resizeColumnsToContents
+        → 再 re-fix 图标列（resize 会无视 Fixed 重置宽度，顺序不能反）。
+        """
+        if self._model is None:
+            return
+        header = self._table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(24)
+        ncols = len(InvTableModel._HEADERS)
+        for col in range(ncols):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.resizeColumnsToContents()
+        # 图标列收紧
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(0, 36)
+        # 名称列：最小 120，最大不超过可用宽度一半，允许手动调整
+        avail = max(header.width(), 800)
+        name_w = min(max(header.sectionSize(1), 120), avail // 2)
+        header.resizeSection(1, name_w)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        # 其余数字列最小宽度兜底（内容过窄时）
+        for col, min_w in {2: 70, 3: 90, 4: 70, 5: 70, 6: 100, 7: 100}.items():
+            if header.sectionSize(col) < min_w:
+                header.resizeSection(col, min_w)
+
+    def _apply_header_style(self):
+        """表头紧凑 QSS（仿工业制造 PlanTable），避免「图标」等短表头撑宽列。
+
+        作用在 horizontalHeader 上，不覆盖整表主题样式。
+        """
+        self._table.horizontalHeader().setStyleSheet(
+            f"QHeaderView::section {{ background: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};"
+            f" border: 1px solid {theme.BORDER}; padding: 2px 4px; font-size: 11px; }}"
+        )
 
     # ── 剪贴板导入 ──
 
     def _parse_clipboard(self, raw: str) -> list[dict]:
-        """解析 EVE 剪贴板格式 → list[{type_id, zh_name, en_name, qty}]
+        """解析 EVE 剪贴板 → list[{type_id|None, raw_name, zh_name, en_name, qty, status}]
 
-        支持两种格式（自动识别）：
-        1. 仓库/精简格式: 物品名\\t数量
-        2. 列表视图格式: 物品名\\t数量\\t分类\\t尺寸\\t槽位\\t体积\\t估价  (≥6个tab字段)
+        名称匹配走 search_item_type_id（精确 → 模糊 → 引号归一化 → terminology 反向）；
+        未命中 item 的行保留为 status='unmatched'（type_id=None），供弹窗手动映射。
         """
-
-        lines = raw.strip().split("\n")
-        results = []
-        errors = []
-        with get_container().db.connect("ref", "bp") as conn:
-            c = conn.cursor()
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                cols = line.split("\t")
-                if len(cols) < 2:
-                    errors.append(f"格式错误: {line}")
-                    continue
-
-                # 自动识别：列表视图格式（≥6 个 tab 字段，第6字段含 "m3"）
-                is_list_view = len(cols) >= 6 and "m3" in (cols[5] if len(cols) > 5 else "")
-
-                if is_list_view:
-                    name_part = cols[0].strip()
-                    qty_str = cols[1].strip()
+        rows: list[dict] = []
+        with get_container().db.connect("ref") as conn:
+            for entry in split_clipboard_lines(raw):
+                name = entry["name"]
+                type_id = search_item_type_id(conn, name)
+                if type_id:
+                    nm = resolve_item_name(conn, type_id)
+                    rows.append(
+                        {
+                            "type_id": type_id,
+                            "raw_name": name,
+                            "zh_name": nm if not nm.isdigit() else name,
+                            "en_name": "" if nm.isdigit() else nm,
+                            "qty": entry["qty"],
+                            "status": "matched",
+                        }
+                    )
                 else:
-                    name_part = cols[0].strip()
-                    qty_str = cols[1].strip()
+                    rows.append(
+                        {
+                            "type_id": None,
+                            "raw_name": name,
+                            "zh_name": "",
+                            "en_name": "",
+                            "qty": entry["qty"],
+                            "status": "unmatched",
+                        }
+                    )
+        return rows
 
-                try:
-                    qty = int(qty_str.replace(",", ""))
-                except ValueError:
-                    if not qty_str:
-                        continue
-                    errors.append(f"数量无效: {qty_str}")
-                    continue
-
-                # 去掉尾部星号（EVE 中 meta 等级标记等）
-                name_clean = name_part.rstrip("*")
-                if not name_clean:
-                    continue
-
-                type_id = None
-                c.execute("SELECT type_id FROM item WHERE zh_name = ? LIMIT 1", (name_clean,))
-                r = c.fetchone()
-                if r:
-                    type_id = r[0]
-                else:
-                    c.execute("SELECT type_id FROM item WHERE en_name = ? LIMIT 1", (name_clean,))
-                    r = c.fetchone()
-                    if r:
-                        type_id = r[0]
-                # basic mineral fallback (from terminology.json item_overrides)
-                if not type_id:
-                    from services.terminology import term
-
-                    term._ensure()
-                    overrides = term._data.get("item_overrides") or {}
-                    _mr = {v: k for k, v in overrides.items()}
-                    type_id = int(_mr.get(name_clean, 0))
-                if not type_id:
-                    errors.append(f"未找到物品: {name_part}")
-                    continue
-
-                # 查询名称
-                nm = resolve_item_name(c, type_id)
-                results.append(
-                    {
-                        "type_id": type_id,
-                        "qty": qty,
-                        "zh_name": nm if not nm.isdigit() else name_clean,
-                        "en_name": nm if not nm.isdigit() else "",
-                    }
-                )
-        if errors:
-            err_msg = "\n".join(errors[:3])
-            if len(errors) > 3:
-                err_msg += f"\n...还有 {len(errors) - 3} 个错误"
-            QMessageBox.warning(self, "解析警告", err_msg)
-        return results
-
-    def _on_paste_import(self):
+    def _on_adjust_inventory(self):
+        """库存修正 — 游戏全选复制 → 比对剪贴板与库存 → 逐物品确认增减/成本/是否变更。"""
         from services.inventory_import import compute_import_diff
 
         from .review_dialog import ImportChangeDialog, ImportReviewDialog
@@ -647,7 +694,8 @@ class HangarTab(QWidget):
         before = {it["type_id"]: (it["quantity"], it.get("cost_price") or 0) for it in before_items}
         names_before = {it["type_id"]: self._item_name(it) for it in before_items}
 
-        dlg = ImportReviewDialog(parsed, hangar_name, hid, self)
+        # 库存修正默认全量同步（以游戏剪贴板为权威覆盖）
+        dlg = ImportReviewDialog(parsed, hangar_name, hid, self, default_mode="full")
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         data = dlg.get_import_data()
@@ -691,6 +739,25 @@ class HangarTab(QWidget):
         changes = compute_import_diff(before, after, names, type_ids)
         ImportChangeDialog(changes, added, moved, hangar_name, self).exec()
 
+    def _on_transfer(self):
+        """移库 — 游戏全选复制源机库 → 选择来源机库 → 按剪贴板数量移到当前机库。"""
+        if not self._page.hangar_id():
+            return
+        raw = QApplication.clipboard().text().strip()
+        if not raw:
+            QMessageBox.warning(self, "提示", "剪贴板为空，请先在游戏中复制物品（Ctrl+C）")
+            return
+        parsed = self._parse_clipboard(raw)
+        if not parsed:
+            return
+        from .transfer_dialog import HangarTransferDialog
+
+        dlg = HangarTransferDialog(
+            parsed, self._page.hangar_id(), self._page._hangar_combo.currentText(), self
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._refresh()
+
     def _move_from_hangar(self, src_hangar: int, type_id: int) -> bool:
         """从源机库找到该物品并整体移动到当前机库，返回是否移动。"""
         src_item = next((it for it in get_items(src_hangar) if it["type_id"] == type_id), None)
@@ -723,44 +790,64 @@ class HangarTab(QWidget):
 
     # ── 右键菜单 ──
 
+    def _selected_rows(self) -> list[int]:
+        """当前选中行号（升序）"""
+        return sorted({idx.row() for idx in self._table.selectionModel().selectedRows()})
+
     def _on_context_menu(self, pos):
-        idx = self._table.currentIndex()
-        if not idx.isValid() or not self._model:
+        if not self._model:
             return
-        item = self._model.item_at(idx.row())
-        if not item:
+        # 多行选择：右键到选中区外则只操作该行
+        rows = self._selected_rows()
+        idx = self._table.indexAt(pos)
+        if idx.isValid() and idx.row() not in rows:
+            rows = [idx.row()]
+        if not rows:
             return
+        items = [self._model.item_at(r) for r in rows if self._model.item_at(r)]
+        if not items:
+            return
+        n = len(items)
 
         menu = QMenu(self)
 
-        edit_act = QAction("编辑数量", self)
-        edit_act.triggered.connect(lambda: self._on_edit_qty(item))
-        menu.addAction(edit_act)
+        # 编辑数量：仅单行生效（批量数量编辑语义不明确）
+        if n == 1:
+            edit_act = QAction("编辑数量", self)
+            edit_act.triggered.connect(lambda: self._on_edit_qty(items[0]))
+            menu.addAction(edit_act)
 
+        # 批量编辑成本价：吉他卖价/买价/均价 × 折扣率，或手动输入数字
         cost_act = QAction("编辑成本价", self)
-        cost_act.triggered.connect(lambda: self._on_edit_cost(item))
+        cost_act.triggered.connect(lambda: self._on_edit_cost_batch(items))
         menu.addAction(cost_act)
 
-        del_act = QAction("删除", self)
-        del_act.triggered.connect(lambda: self._on_del_item(item))
+        # 批量删除
+        del_act = QAction(f"删除 ({n})" if n > 1 else "删除", self)
+        del_act.triggered.connect(lambda: self._on_del_items(items))
         menu.addAction(del_act)
 
-        move_menu = menu.addMenu("移动到")
+        # 批量移动到
+        move_menu = menu.addMenu(f"移动到 ({n})" if n > 1 else "移动到")
+        ids = [it["id"] for it in items]
         for h in get_hangars():
             if h["id"] != self._page.hangar_id():
                 act = QAction(h["name"], self)
-                act.triggered.connect(
-                    lambda checked, hid=h["id"], iid=item["id"]: move_items([iid], hid) or self._refresh()
-                )
+                act.triggered.connect(lambda checked, hid=h["id"], ids_=ids: self._on_move_batch(ids_, hid))
                 move_menu.addAction(act)
 
         menu.addSeparator()
+        # 复制名称 / type_id（多行时换行拼接）
         copy_name = QAction("复制名称", self)
-        copy_name.triggered.connect(lambda: QApplication.instance().clipboard().setText(self._item_name(item)))
+        copy_name.triggered.connect(
+            lambda: QApplication.instance().clipboard().setText("\n".join(self._item_name(it) for it in items))
+        )
         menu.addAction(copy_name)
 
         copy_id = QAction("复制 type_id", self)
-        copy_id.triggered.connect(lambda: QApplication.instance().clipboard().setText(str(item["type_id"])))
+        copy_id.triggered.connect(
+            lambda: QApplication.instance().clipboard().setText("\n".join(str(it["type_id"]) for it in items))
+        )
         menu.addAction(copy_id)
 
         menu.exec(self._table.viewport().mapToGlobal(pos))
@@ -778,12 +865,6 @@ class HangarTab(QWidget):
                 update_quantity(item["id"], qty)
                 self._refresh()
 
-    def _on_edit_cost(self, item: dict):
-        dlg = EditCostDialog(self._item_name(item), item.get("cost_price") or 0, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            update_cost_price(item["id"], dlg.cost_price())
-            self._refresh()
-
     def _on_del_item(self, item: dict):
         name = self._item_name(item)
         if (
@@ -794,6 +875,93 @@ class HangarTab(QWidget):
         ):
             remove_item(item["id"])
             self._refresh()
+
+    def _on_edit_cost_batch(self, items: list[dict]):
+        """批量设置成本价：吉他卖价/买价/均价 × 折扣率，或手动输入数字。"""
+        dlg = BatchCostPriceDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        source = dlg.price_type()
+        updated = 0
+        skipped: list[str] = []
+        if source == "manual":
+            manual = dlg.manual_price()
+            for it in items:
+                update_cost_price(it["id"], manual)
+                updated += 1
+        else:
+            discount = dlg.discount()
+            prices = self._fetch_market_prices([it["type_id"] for it in items], source)
+            for it in items:
+                base = prices.get(it["type_id"])
+                if base is None:
+                    skipped.append(self._item_name(it))
+                    continue
+                update_cost_price(it["id"], round(base * discount, 2))
+                updated += 1
+        self._refresh()
+        msg = f"已更新 {updated} 项成本价"
+        if skipped:
+            shown = "、".join(skipped[:3])
+            if len(skipped) > 3:
+                shown += " 等"
+            msg += f"；{len(skipped)} 项无市场价未更新（{shown}）"
+        QMessageBox.information(self, "完成", msg)
+
+    def _fetch_market_prices(self, type_ids: list[int], price_type: str) -> dict[int, float]:
+        """批量查询吉他(Jita)市场价格 {type_id: 卖价/买价/均价}。"""
+        tids = list(dict.fromkeys(type_ids))
+        if not tids:
+            return {}
+        result: dict[int, float] = {}
+        placeholders = ",".join("?" * len(tids))
+        with get_container().db.connect("mkt") as conn:
+            c = conn.cursor()
+            if price_type == "avg":
+                c.execute(
+                    f"SELECT type_id, sell_price, buy_price FROM market_prices"
+                    f" WHERE type_id IN ({placeholders}) AND region_id = ?",
+                    (*tids, TRADE_HUB_IDS["Jita"]),
+                )
+                for tid, sell, buy in c.fetchall():
+                    if sell and buy:
+                        result[tid] = (sell + buy) / 2
+                    elif sell or buy:
+                        result[tid] = sell or buy
+            else:
+                col = "sell_price" if price_type == "sell" else "buy_price"
+                c.execute(
+                    f"SELECT type_id, {col} FROM market_prices"
+                    f" WHERE type_id IN ({placeholders}) AND region_id = ?",
+                    (*tids, TRADE_HUB_IDS["Jita"]),
+                )
+                for tid, price in c.fetchall():
+                    if price is not None:
+                        result[tid] = float(price)
+        return result
+
+    def _on_del_items(self, items: list[dict]):
+        """批量删除（含单行）"""
+        if len(items) == 1:
+            self._on_del_item(items[0])
+            return
+        names = "、".join(self._item_name(it) for it in items[:3])
+        if len(items) > 3:
+            names += f" 等 {len(items)} 项"
+        if (
+            QMessageBox.question(
+                self, "确认", f"删除 {names}？", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            == QMessageBox.StandardButton.Yes
+        ):
+            for it in items:
+                remove_item(it["id"])
+            self._refresh()
+
+    def _on_move_batch(self, item_ids: list[int], target_id: int):
+        """批量移动到目标机库"""
+        move_items(item_ids, target_id)
+        self._refresh()
 
     def _on_add_item(self):
         if not self._page.hangar_id():
@@ -828,6 +996,7 @@ class HangarTab(QWidget):
         items = get_items(self._page.hangar_id())
         self._model = InvTableModel(items)
         self._table.setModel(self._model)
+        self._apply_column_layout()
         self._count_label.setText(f"共 {len(items)} 项")
 
         # 计算总价

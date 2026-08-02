@@ -214,6 +214,31 @@ def get_adjusted_price(
             return float(r[0]) if r else None
 
 
+# 研究成本进程内缓存（type_id → cost|None）— 价格刷新时由 invalidate_cache 一并清空
+_research_cost_cache: dict[int, float | None] = {}
+
+
+def _research_cost_cached(_db: DatabaseManager, type_id: int) -> float:
+    """按 type_id 计算研究成本（拷贝/发明），带进程内缓存；失败返回 0。"""
+    if type_id in _research_cost_cache:
+        return _research_cost_cache[type_id] or 0.0
+    try:
+        from services.research_calculator import research_cost_for_item
+
+        with _db.connect("ref") as conn:
+            cost = research_cost_for_item(conn, type_id)
+        _research_cost_cache[type_id] = cost
+        return cost or 0.0
+    except Exception:
+        _research_cost_cache[type_id] = None
+        return 0.0
+
+
+def _clear_research_cost_cache() -> None:
+    """清空研究成本缓存（价格刷新时调用）。"""
+    _research_cost_cache.clear()
+
+
 # ════════════════════════════════════════════════════════════════════
 #  精炼价值计算
 # ════════════════════════════════════════════════════════════════════
@@ -333,6 +358,7 @@ class ScoringService:
 
     def invalidate_cache(self) -> None:
         """清空评分缓存（价格刷新后调用，避免旧价格评分被复用）"""
+        _clear_research_cost_cache()
         if self._cache:
             self._cache.invalidate()
 
@@ -763,6 +789,10 @@ class ScoringService:
             result["revenue_per_run"] = revenue
             result["fees_per_run"] = installation_fee + broker_init + broker_relist + sales_tax
 
+            # 研究成本（拷贝/发明）— T1 拷贝、T2/T3 发明，计入总成本（模块级缓存避免重复查）
+            research_cost = _research_cost_cached(self._db, type_id)
+            total_cost += research_cost
+
             profit = revenue - total_cost
 
             # 时间计算（使用 calc_production_time）
@@ -803,6 +833,7 @@ class ScoringService:
                 "broker_rate": round(broker_rate, 3),
                 "sales_tax_rate": round(sales_tax_rate, 3),
                 "relist_discount": round(relist_discount, 1),
+                "research_cost": round(research_cost, 2),  # 拷贝/发明研究成本
             }
 
             if profit <= 0:

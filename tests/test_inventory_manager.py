@@ -14,6 +14,7 @@ from services.inventory_manager import (
     get_hangar_config,
     get_hangar_system_id,
     get_hangars,
+    move_quantity,
     set_item_quantity,
     update_cost_price,
     update_hangar_config,
@@ -301,3 +302,82 @@ class TestHangarIndustryConfig:
         update_hangar_config(hid, "azbel", 0.3, [37170])
         assert update_hangar_config(hid, None, None, None) is True
         assert get_hangar_config(hid) == {"facility_type": None, "facility_tax": None, "rigs": []}
+
+
+class TestMoveQuantity:
+    """move_quantity 按数量跨机库移动（成本沿用源库，目标加权平均合并）"""
+
+    @staticmethod
+    def _qty(inv_db, hid, tid) -> int:
+        conn = sqlite3.connect(str(inv_db / "user.db"))
+        row = conn.execute(
+            "SELECT quantity FROM inventory_items WHERE hangar_id = ? AND type_id = ?", (hid, tid)
+        ).fetchone()
+        conn.close()
+        return row[0] if row else 0
+
+    @staticmethod
+    def _cost(inv_db, hid, tid) -> float:
+        conn = sqlite3.connect(str(inv_db / "user.db"))
+        row = conn.execute(
+            "SELECT cost_price FROM inventory_items WHERE hangar_id = ? AND type_id = ?", (hid, tid)
+        ).fetchone()
+        conn.close()
+        return row[0] if row else 0.0
+
+    def test_move_basic(self, inv_db):
+        """基本移动：源库扣减、目标入库、成本沿用源库"""
+        src = create_hangar("源仓")
+        dst = create_hangar("目标仓")
+        add_item(src, 1001, 100, 5.0)
+        moved = move_quantity(src, 1001, 30, dst)
+        assert moved == 30
+        assert self._qty(inv_db, src, 1001) == 70
+        assert self._qty(inv_db, dst, 1001) == 30
+        assert self._cost(inv_db, dst, 1001) == 5.0
+
+    def test_move_merge_weighted_avg(self, inv_db):
+        """目标已有物品时加权平均合并成本"""
+        src = create_hangar("源仓")
+        dst = create_hangar("目标仓")
+        add_item(src, 1001, 30, 5.0)
+        add_item(dst, 1001, 20, 10.0)
+        move_quantity(src, 1001, 30, dst)
+        assert self._qty(inv_db, dst, 1001) == 50
+        assert round(self._cost(inv_db, dst, 1001), 2) == 7.0  # (20*10 + 30*5)/50
+        assert self._qty(inv_db, src, 1001) == 0
+
+    def test_move_capped_by_source(self, inv_db):
+        """源库不足时 clamp 到现有量，源库行扣空删除"""
+        src = create_hangar("源仓")
+        dst = create_hangar("目标仓")
+        add_item(src, 1001, 10, 5.0)
+        moved = move_quantity(src, 1001, 50, dst)
+        assert moved == 10
+        assert self._qty(inv_db, src, 1001) == 0
+        assert self._qty(inv_db, dst, 1001) == 10
+
+    def test_move_empty_source(self, inv_db):
+        """源库无该物品 → 返回 0，目标不变"""
+        src = create_hangar("源仓")
+        dst = create_hangar("目标仓")
+        add_item(dst, 1001, 5)
+        assert move_quantity(src, 1001, 30, dst) == 0
+        assert self._qty(inv_db, dst, 1001) == 5
+
+    def test_move_same_hangar(self, inv_db):
+        """同机库移动 → 返回 0"""
+        hid = create_hangar("仓")
+        add_item(hid, 1001, 10)
+        assert move_quantity(hid, 1001, 5, hid) == 0
+        assert self._qty(inv_db, hid, 1001) == 10
+
+    def test_move_cost_zero(self, inv_db):
+        """源库成本 0 时目标成本按加权平均吸收"""
+        src = create_hangar("源仓")
+        dst = create_hangar("目标仓")
+        add_item(src, 1001, 10)  # 成本 0
+        add_item(dst, 1001, 10, 8.0)
+        move_quantity(src, 1001, 10, dst)
+        assert self._qty(inv_db, dst, 1001) == 20
+        assert round(self._cost(inv_db, dst, 1001), 2) == 4.0  # (10*8 + 10*0)/20

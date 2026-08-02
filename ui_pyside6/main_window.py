@@ -75,6 +75,17 @@ class PriceUpdateWorker(QThread):
             self.finished_signal.emit(False, str(e))
 
 
+def _needs_price_update(diff_seconds: float, interval_minutes: int) -> bool:
+    """价格是否过期需要更新（纯函数）。
+
+    diff_seconds: 距上次成功更新的秒数；interval_minutes: 更新间隔（分钟）。
+    带 60s 容差：旧实现用严格 `> interval`，更新后下一次 tick 的 diff≈interval 必然被跳过，
+    导致实际 ~2×interval 才更新（用户设 30 分钟却 56 分钟才更新）。加容差后固定网格
+    定时器每次 tick 都能稳定触发，达到"每 interval 更新一次"。
+    """
+    return diff_seconds >= interval_minutes * 60 - 60
+
+
 class PriceCheckWorker(QThread):
     """后台线程检查价格数据时效"""
 
@@ -96,7 +107,7 @@ class PriceCheckWorker(QThread):
                 dt = datetime.strptime(utc_str, "%Y-%m-%d %H:%M:%S")
                 now_utc = datetime.now(UTC).replace(tzinfo=None)
                 diff = (now_utc - dt).total_seconds()
-                if diff > self._interval:
+                if _needs_price_update(diff, self._interval // 60):
                     self.result.emit(True, f"价格数据已过期 {diff / 60:.0f} 分钟，需要更新")
                 else:
                     self.result.emit(False, f"价格数据 {(diff / 60):.0f} 分钟前更新，无需更新")
@@ -225,6 +236,19 @@ class MainWindow(QMainWindow):
         self._refresh_auto_update_label()
         self._auto_update_btn.toggled.connect(self._on_auto_update_toggled)
         toolbar.addWidget(self._auto_update_btn)
+
+        # ── 置顶按钮（工具栏最右侧） ──
+        self._pin_btn = QToolButton()
+        self._pin_btn.setObjectName("pin_btn")
+        self._pin_btn.setCheckable(True)
+        self._pin_btn.setText("📌 置顶")
+        self._pin_btn.setToolTip("窗口置顶（点击切换开/关）")
+        self._pin_btn.toggled.connect(self._on_pin_toggled)
+        toolbar.addWidget(self._pin_btn)
+        self._window_pin = self._load_window_pin()
+        self._pin_btn.blockSignals(True)
+        self._pin_btn.setChecked(self._window_pin)
+        self._pin_btn.blockSignals(False)
 
         # ── 启动周期性价格定时器 ──
         if self._auto_update_enabled and self._update_interval_minutes > 0:
@@ -849,10 +873,70 @@ class MainWindow(QMainWindow):
             data["update_interval"] = self._update_interval_minutes
             data["auto_update_enabled"] = self._auto_update_enabled
             data["update_regions"] = list(self._update_regions)
+            if hasattr(self, "_pin_btn"):
+                data["window_pin"] = self._pin_btn.isChecked()
             with open(p, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
             self._status_label.setText(f"保存设置失败: {e}")
+
+    def _load_window_pin(self) -> bool:
+        """读取置顶状态（settings.json 的 window_pin 键）。"""
+        try:
+            p = search_history_file().replace("search_history", "settings")
+            if os.path.exists(p):
+                with open(p, encoding="utf-8") as f:
+                    return bool(json.load(f).get("window_pin", False))
+        except Exception:
+            log.exception("加载置顶设置失败")
+        return False
+
+    def _on_pin_toggled(self, checked: bool):
+        self._apply_pin(checked)
+        self._save_settings()
+
+    def _apply_pin(self, checked: bool):
+        """置顶：Windows 用 SetWindowPos（不重建窗口不闪烁），其他平台 setWindowFlags。"""
+        if getattr(self, "_pin_applying", False):
+            return  # 防重入（setWindowFlags→show→showEvent）
+        self._pin_applying = True
+        try:
+            if os.name == "nt":
+                try:
+                    import ctypes
+                    import ctypes.wintypes
+
+                    hwnd = int(self.winId())
+                    SWP_NOMOVE, SWP_NOSIZE = 0x0002, 0x0001
+                    HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
+                    swp = ctypes.windll.user32.SetWindowPos
+                    swp.argtypes = [
+                        ctypes.wintypes.HWND,
+                        ctypes.wintypes.HWND,
+                        ctypes.c_int,
+                        ctypes.c_int,
+                        ctypes.c_int,
+                        ctypes.c_int,
+                        ctypes.c_uint,
+                    ]
+                    swp(hwnd, HWND_TOPMOST if checked else HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+                    return
+                except Exception:
+                    log.exception("SetWindowPos 置顶失败，回退 WindowStaysOnTopHint")
+            flags = self.windowFlags()
+            if checked:
+                self.setWindowFlags(flags | Qt.WindowType.WindowStaysOnTopHint)
+            else:
+                self.setWindowFlags(flags & ~Qt.WindowType.WindowStaysOnTopHint)
+            self.show()
+        finally:
+            self._pin_applying = False
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 启动/重新显示时应用置顶状态（Windows 走 SetWindowPos；其他平台需窗口可见后设 flag）
+        if getattr(self, "_pin_btn", None) and self._pin_btn.isChecked():
+            self._apply_pin(True)
 
     def _start_price_timer(self):
         self._refresh_auto_update_label()

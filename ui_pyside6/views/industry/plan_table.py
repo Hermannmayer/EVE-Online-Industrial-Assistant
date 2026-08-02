@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import math
 from datetime import UTC, datetime
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QMenu,
     QMessageBox,
+    QStyle,
+    QStyledItemDelegate,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -26,28 +28,59 @@ from ui_pyside6.models.industry_models import PlanTableModel
 
 # ── 列索引常量（与 PlanTableModel._HEADERS 对齐） ────────────
 COL_CHECKBOX = 0
-COL_ICON = 1
-COL_PRODUCT = 2
-COL_NOTES = 3
-COL_GROUP = 4
-COL_CHILD_LEVEL = 5
-COL_STATUS = 6
-COL_CHAR_NAME = 7
-COL_RUNS = 8
-COL_BLUEPRINT = 9
-COL_TIME = 10
-COL_OUTPUT_RATE = 11
-COL_FACILITY = 12
-COL_OUTPUT = 13
-COL_COST = 14
-COL_PROFIT = 15
-COL_MARKET_MARGIN = 16
-COL_PERSONAL_MARGIN = 17
+COL_CATEGORY = 1
+COL_ICON = 2
+COL_PRODUCT = 3
+COL_NOTES = 4
+COL_GROUP = 5
+COL_CHILD_LEVEL = 6
+COL_STATUS = 7
+COL_CHAR_NAME = 8
+COL_RUNS = 9
+COL_BLUEPRINT = 10
+COL_TIME = 11
+COL_OUTPUT_RATE = 12
+COL_FACILITY = 13
+COL_OUTPUT = 14
+COL_COST = 15
+COL_PROFIT = 16
+COL_MARKET_MARGIN = 17
+COL_PERSONAL_MARGIN = 18
 
-_NUM_COLUMNS = 18
+_NUM_COLUMNS = 19
 
 # 固定窄列宽度（px）：备料勾选列需容纳 8px padding + 16px 复选框 + 余量；图标列适配 32px 图标
 _FIXED_WIDTHS = {COL_CHECKBOX: 34, COL_ICON: 36}
+
+
+class _ReadyButtonDelegate(QStyledItemDelegate):
+    """状态列「待下线」渲染为按钮外观（点击仍走 _on_cell_clicked 单独下线）"""
+
+    def paint(self, painter, option, index):
+        if index.column() == COL_STATUS and index.data(Qt.ItemDataRole.DisplayRole) == "待下线":
+            self._paint_button(painter, option)
+            return
+        super().paint(painter, option, index)
+
+    def _paint_button(self, painter, option):
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = option.rect.adjusted(6, 3, -6, -3)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        bg = QColor(theme.ACCENT_ORANGE)
+        if hovered:
+            bg = bg.lighter(118)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(bg)
+        painter.drawRoundedRect(rect, 4, 4)
+        painter.setPen(QColor("#ffffff"))
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "待下线")
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        if index.column() == COL_STATUS and index.data(Qt.ItemDataRole.DisplayRole) == "待下线":
+            return QSize(64, 22)
+        return super().sizeHint(option, index)
 
 
 class PlanTable(QWidget):
@@ -73,6 +106,8 @@ class PlanTable(QWidget):
         self._table.verticalHeader().setDefaultSectionSize(26)
         self._table.verticalHeader().setVisible(False)
         self._configure_adaptive_columns()
+        # 状态列「待下线」渲染成按钮（点击走 _on_cell_clicked）
+        self._table.setItemDelegateForColumn(COL_STATUS, _ReadyButtonDelegate(self._table))
 
         layout.addWidget(self._table)
 
@@ -83,6 +118,7 @@ class PlanTable(QWidget):
         # ── 连接信号 ─────────────────────────────────────────
         self._table.doubleClicked.connect(self._on_double_clicked)
         self._table.clicked.connect(self._on_cell_clicked)
+        self._table.entered.connect(self._on_cell_entered)
 
         # ── 头部右键菜单（列可见性控制） ─────────────────────
         self._table.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -299,14 +335,14 @@ class PlanTable(QWidget):
         menu.addAction("查看蓝图原图的NPC卖家", lambda: batch(lambda r: self._show_npc_seller(r)))
         menu.addAction("产线启动小助手", lambda: self._show_production_wizard(row))
 
-        # ── 智能调整（批量适用） ──────────────────────────
+        # ── 智能调整（拆解/并行，作用于该行所属组） ──────────
         smart_menu = menu.addMenu("智能调整")
-        a = smart_menu.addAction("母项智能调整")
-        a.triggered.connect(lambda: batch(lambda r: self._smart_adjust_parent(r)))
-        a = smart_menu.addAction("子项智能调整")
-        a.triggered.connect(lambda: batch(lambda r: self._smart_adjust_children(r)))
+        a = smart_menu.addAction("母项调整（递归拆解）")
+        a.triggered.connect(lambda: self._decompose_parent(row))
+        a = smart_menu.addAction("子项调整（并行配置）")
+        a.triggered.connect(lambda: self._adjust_children(row))
         a = smart_menu.addAction("子项大规模产线并行")
-        a.triggered.connect(lambda: batch(lambda r: self._smart_parallel_children(r)))
+        a.triggered.connect(lambda: self._mass_parallel(row))
 
         menu.addSeparator()
 
@@ -319,7 +355,7 @@ class PlanTable(QWidget):
     # ── 单击事件 ─────────────────────────────────────────────
 
     def _on_cell_clicked(self, index) -> None:
-        """单击勾选列 → 切换备料状态；单击蓝图列 → 绑定库存蓝图弹窗"""
+        """单击勾选列 → 切换备料；蓝图列 → 绑定蓝图；待下线状态 → 确认后单独下线"""
         if not self._model:
             return
         row = index.row()
@@ -331,6 +367,43 @@ class PlanTable(QWidget):
             self._set_materials_ready(row, new_val)
         elif index.column() == COL_BLUEPRINT:
             self._show_blueprint_picker(row)
+        elif index.column() == COL_STATUS and (plan.get("status") or "").lower() == "ready":
+            self._complete_plan_with_dialog(plan)
+
+    def _on_cell_entered(self, index) -> None:
+        """悬停待下线状态单元格 → 手型光标（提示可点击单独下线）"""
+        if not self._model:
+            return
+        plan = self._model.get_plan(index.row())
+        clickable = (
+            index.column() == COL_STATUS and plan is not None and (plan.get("status") or "").lower() == "ready"
+        )
+        cursor = Qt.CursorShape.PointingHandCursor if clickable else Qt.CursorShape.ArrowCursor
+        self._table.viewport().setCursor(cursor)
+
+    def _complete_plan_with_dialog(self, plan: dict) -> None:
+        """状态列「待下线」→ 下线确认弹窗（选产出机库）→ 单独下线"""
+        from services.inventory_manager import get_hangars
+        from services.user_settings import get_default_hangar_id
+        from ui_pyside6.views.industry.complete_plans_dialog import CompletePlansDialog, complete_plans
+
+        hangars = get_hangars()
+        default_hid = get_default_hangar_id("default_deposit_hangar_id")
+        dlg = CompletePlansDialog([plan], hangars, default_hid, self)
+        if not dlg.exec():
+            return
+        result = complete_plans([plan], dlg.selected_hangar_id())
+        if not result["completed"]:
+            QMessageBox.warning(self, "下线失败", "、".join(result["failed"]) or "未知错误")
+            return
+        if self._model is None:
+            return
+        plan["status"] = "completed"
+        plan["deposited"] = 1 if result["deposited"] else 0
+        plan["completed_at"] = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        plan["assigned_blueprint_id"] = None
+        self._model.layoutChanged.emit()
+        self.plan_updated.emit()
 
     def _edit_plan(self, row: int) -> None:
         """编辑生产计划 — 打开 PlanEditDialog，保存后同步重算"""
@@ -897,192 +970,6 @@ class PlanTable(QWidget):
     def _phase3_placeholder(self, feature_name: str):
         QMessageBox.information(self, "功能开发中", f"「{feature_name}」功能将在阶段三实现。")
 
-    # ── Phase 3: 智能调整 ─────────────────────────────────────
-
-    def _smart_adjust_parent(self, row: int) -> None:
-        """母项智能调整：设定目标产量 → 自动计算 runs"""
-        if self._model is None:
-            return
-        plan = self._model.get_plan(row)
-        if not plan:
-            return
-
-        blueprint_type_id = plan.get("blueprint_type_id")
-        if not blueprint_type_id:
-            QMessageBox.warning(self, "提示", "该计划无蓝图信息")
-            return
-
-        current_runs = int(plan.get("runs", 1))
-        current_parallels = max(int(plan.get("parallels", 1)), 1)
-
-        # 查蓝图单流程产出
-        conn = get_container().db.direct_connect("ref")
-        try:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT quantity FROM blueprint_products WHERE blueprint_type_id=? AND activity='manufacturing'",
-                (blueprint_type_id,),
-            )
-            row_data = cur.fetchone()
-            output_per_run = row_data[0] if row_data else 1
-        finally:
-            conn.close()
-
-        current_output = current_runs * output_per_run * current_parallels
-
-        target, ok = QInputDialog.getInt(
-            self,
-            "母项智能调整",
-            f"当前 {current_runs} 流程 × {current_parallels} 并行 = {current_output} 件\n"
-            f"每流程产出: {output_per_run} 件\n\n目标产量:",
-            current_output,
-            1,
-            99999,
-        )
-        if not ok:
-            return
-
-        # 计算新 runs = ceil(target / (output_per_run * parallels))
-        new_runs = math.ceil(target / (output_per_run * current_parallels))
-        if new_runs == current_runs:
-            QMessageBox.information(self, "提示", f"流程数无需调整 ({current_runs})")
-            return
-
-        # 更新
-        plan["runs"] = new_runs
-        self._model.layoutChanged.emit()
-        if plan.get("id"):
-            conn = get_container().db.direct_connect("user")
-            try:
-                conn.execute("UPDATE production_plans SET runs=? WHERE id=?", (new_runs, plan["id"]))
-                conn.commit()
-            finally:
-                conn.close()
-        self.plan_updated.emit()
-
-    def _smart_adjust_children(self, row: int) -> None:
-        """子项智能调整：根据母项 runs 自动同步子项的 runs/batch"""
-        if self._model is None:
-            return
-        plan = self._model.get_plan(row)
-        if not plan:
-            return
-
-        group_id = plan.get("group_id")
-        if not group_id:
-            QMessageBox.warning(self, "提示", "该计划不在组中，无子项可调整")
-            return
-
-        current_parent_runs = int(plan.get("runs", 1))
-        prod_name = plan.get("product_name", "") or plan.get("blueprint_name", str(plan.get("id", "")))
-
-        # 查找同 group_id 的子项（child_level > 0）
-        all_plans = self._model._plans if hasattr(self._model, "_plans") else []
-        children = [p for p in all_plans if p.get("group_id") == group_id and p.get("child_level", 0) > 0]
-
-        if not children:
-            QMessageBox.warning(self, "提示", "未找到该计划的子项")
-            return
-
-        # 询问新的母项流程数
-        target_parent_runs, ok = QInputDialog.getInt(
-            self,
-            "子项智能调整",
-            f"母项「{prod_name}」当前流程数: {current_parent_runs}\n共 {len(children)} 个子项\n\n调整后母项流程数:",
-            current_parent_runs,
-            1,
-            99999,
-        )
-        if not ok or target_parent_runs == current_parent_runs:
-            return
-
-        ratio = target_parent_runs / current_parent_runs
-        changed = 0
-        conn = get_container().db.direct_connect("user")
-        try:
-            for child in children:
-                child_runs = int(child.get("runs", 1))
-                child_new = max(1, round(child_runs * ratio))
-                if child_new != child_runs:
-                    child["runs"] = child_new
-                    if child.get("id"):
-                        conn.execute("UPDATE production_plans SET runs=? WHERE id=?", (child_new, child["id"]))
-                        changed += 1
-            # 同步更新母项的 runs
-            plan["runs"] = target_parent_runs
-            if plan.get("id"):
-                conn.execute("UPDATE production_plans SET runs=? WHERE id=?", (target_parent_runs, plan["id"]))
-            conn.commit()
-        finally:
-            conn.close()
-
-        self._model.layoutChanged.emit()
-        self.plan_updated.emit()
-        QMessageBox.information(
-            self,
-            "子项调整完成",
-            f"母项「{prod_name}」: {current_parent_runs} → {target_parent_runs}\n"
-            f"已同步调整 {changed}/{len(children)} 个子项",
-        )
-
-    def _smart_parallel_children(self, row: int) -> None:
-        """子项大规模产线并行：批量设置子项的并行数"""
-        if self._model is None:
-            return
-        plan = self._model.get_plan(row)
-        if not plan:
-            return
-
-        group_id = plan.get("group_id")
-        if not group_id:
-            QMessageBox.warning(self, "提示", "该计划不在组中，无子项可调整")
-            return
-
-        all_plans = self._model._plans if hasattr(self._model, "_plans") else []
-        children = [p for p in all_plans if p.get("group_id") == group_id and p.get("child_level", 0) > 0]
-
-        if not children:
-            QMessageBox.warning(self, "提示", "未找到该计划的子项")
-            return
-
-        # 显示当前子项列表及并行数
-        msg = "子项当前并行数:\n" + "\n".join(
-            f"  {p.get('product_name', p.get('blueprint_name', '?'))}: 并行 {p.get('parallels', 1)}" for p in children
-        )
-        new_parallels, ok = QInputDialog.getInt(
-            self,
-            "子项大规模产线并行",
-            msg + "\n\n设置所有子项并行数:",
-            1,
-            1,
-            100,
-        )
-        if not ok:
-            return
-
-        changed = 0
-        conn = get_container().db.direct_connect("user")
-        try:
-            for child in children:
-                old = int(child.get("parallels", 1))
-                if old != new_parallels:
-                    child["parallels"] = new_parallels
-                    if child.get("id"):
-                        conn.execute(
-                            "UPDATE production_plans SET parallels=? WHERE id=?",
-                            (new_parallels, child["id"]),
-                        )
-                        changed += 1
-            conn.commit()
-        finally:
-            conn.close()
-
-        self._model.layoutChanged.emit()
-        self.plan_updated.emit()
-        QMessageBox.information(
-            self, "并行调整完成", f"已设置 {changed}/{len(children)} 个子项的并行数为 {new_parallels}"
-        )
-
     def _show_npc_seller(self, row: int) -> None:
         """查看原本图 NPC 卖家"""
         if self._model is None:
@@ -1099,6 +986,61 @@ class PlanTable(QWidget):
 
         dlg = NpcSellerDialog(bp_id, bp_name, self)
         dlg.exec()
+
+    def _group_subitems(self, plan: dict) -> list[dict]:
+        """该计划所在组的所有子项产线（child_level>0）。"""
+        if self._model is None:
+            return []
+        gid = plan.get("group_id")
+        if not gid:
+            return []
+        out = []
+        for i in range(self._model.rowCount()):
+            p = self._model.get_plan(i)
+            if p and p.get("group_id") == gid and int(p.get("child_level") or 0) > 0:
+                out.append(p)
+        return out
+
+    def _decompose_parent(self, row: int) -> None:
+        """母项调整：递归拆解成子项产线（sub_level 逐级 +1）"""
+        plan = self._model.get_plan(row) if self._model else None
+        if not plan:
+            return
+        from ui_pyside6.views.industry.parent_decompose_dialog import ParentDecomposeDialog
+
+        dlg = ParentDecomposeDialog(plan, self)
+        if dlg.exec():
+            self.plan_updated.emit()
+
+    def _adjust_children(self, row: int) -> None:
+        """子项调整：组内子项并行配置（runs/parallels + 需求校验）"""
+        plan = self._model.get_plan(row) if self._model else None
+        if not plan:
+            return
+        subitems = self._group_subitems(plan)
+        if not subitems:
+            QMessageBox.information(self, "提示", "该计划不在组中或无子项可调整")
+            return
+        from ui_pyside6.views.industry.child_parallel_dialog import ChildParallelDialog
+
+        dlg = ChildParallelDialog(subitems, self)
+        if dlg.exec():
+            self.plan_updated.emit()
+
+    def _mass_parallel(self, row: int) -> None:
+        """子项大规模产线并行：按产线数 / 按目标工期 两种模式"""
+        plan = self._model.get_plan(row) if self._model else None
+        if not plan:
+            return
+        subitems = self._group_subitems(plan)
+        if not subitems:
+            QMessageBox.information(self, "提示", "该计划不在组中或无子项可调整")
+            return
+        from ui_pyside6.views.industry.mass_parallel_dialog import MassParallelDialog
+
+        dlg = MassParallelDialog(subitems, self)
+        if dlg.exec():
+            self.plan_updated.emit()
 
     def _set_facility_system(self, row: int) -> None:
         """为设施设置所在星系 — 星系搜索对话框 + 自动带出成本系数"""

@@ -2,11 +2,10 @@
 仓库页面 — 剪贴板导入预览对话框（ImportReviewDialog）
 """
 
-import os
 from typing import cast
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QColor, QPixmap
+from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -33,7 +32,8 @@ from core.logger import log
 from services.inventory_import import compute_row_delta
 from services.inventory_manager import get_hangars, get_items
 
-from .inventory_helpers import ICON_DIR
+from .inventory_helpers import _load_icon
+from .item_search_dialog import ItemSearchDialog
 
 
 class ImportReviewDialog(QDialog):
@@ -49,17 +49,26 @@ class ImportReviewDialog(QDialog):
     _COL_PRICE = 6  # 成本价
     _HEADERS = ["", "图标", "名称", "数量", "比原纪录", "变化", "成本价"]
 
-    def __init__(self, items: list[dict], hangar_name: str, target_hangar_id: int, parent=None):
+    def __init__(
+        self,
+        items: list[dict],
+        hangar_name: str,
+        target_hangar_id: int,
+        parent=None,
+        *,
+        default_mode: str = "full",
+    ):
         super().__init__(parent)
         self.setWindowTitle(f"导入预览 → {hangar_name}")
         self.setMinimumSize(780, 420)
         self.resize(900, 520)
-        self._parsed_items = items  # list of {type_id, zh_name, en_name, qty}
+        self._parsed_items = items  # list of {type_id, zh_name, en_name, qty, ...}
         self._target_hangar_id = target_hangar_id
         self._region_id = TRADE_HUB_IDS["Jita"]
         self._sell_prices: dict[int, float] = {}  # type_id → sell_price
         self._existing_qty: dict[int, int] = {}  # type_id → existing qty  in target
         self._source_hangar: dict[int, int] = {}  # type_id → source hangar id (for cross-hangar)
+        self._updating = False  # 防 itemChanged 重入
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -75,7 +84,9 @@ class ImportReviewDialog(QDialog):
         self._mode_combo.addItem("全量同步", "full")
         self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         toolbar.addWidget(self._mode_combo)
-        self._mode = "incremental"
+        self._mode = default_mode
+        # 默认模式（库存修正=全量同步）；combo 触发时 _table 尚未创建，由守卫跳过
+        self._mode_combo.setCurrentIndex(0 if default_mode == "incremental" else 1)
 
         toolbar.addWidget(QLabel("贸易中心:"))
         self._hub_combo = QComboBox()
@@ -120,6 +131,7 @@ class ImportReviewDialog(QDialog):
         self._table.verticalHeader().setVisible(False)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_context_menu)
+        self._table.itemChanged.connect(self._on_final_changed)
         layout.addWidget(self._table, 1)
 
         # ── 统计栏 ──
@@ -150,7 +162,7 @@ class ImportReviewDialog(QDialog):
 
     def _fetch_sell_prices(self):
         """预加载所有物品在当前贸易中心的卖单价"""
-        type_ids = list({it["type_id"] for it in self._parsed_items})
+        type_ids = list({it["type_id"] for it in self._parsed_items if it.get("type_id")})
         if not type_ids:
             return
         with get_container().db.connect("mkt") as conn:
@@ -166,76 +178,78 @@ class ImportReviewDialog(QDialog):
 
     def _populate_rows(self):
         table = self._table
-        for row, item in enumerate(self._parsed_items):
-            type_id = item["type_id"]
-            name = item.get("display_name") or item.get("zh_name") or item.get("en_name") or f"ID:{type_id}"
-            current = self._existing_qty.get(type_id, 0)  # 数量 = 机库现有
-            # 跨机库移动行始终按增量语义（不参与全量 set）；其余按当前导入模式计算
-            row_mode = "incremental" if type_id in self._source_hangar else self._mode
-            delta, final = compute_row_delta(row_mode, item["qty"], current)
+        self._updating = True
+        try:
+            for row, item in enumerate(self._parsed_items):
+                type_id = item.get("type_id")
+                # 未匹配行：灰显、勾选禁用、数值 0、成本禁用
+                if not type_id:
+                    raw = item.get("raw_name") or item.get("zh_name") or item.get("en_name") or "?"
+                    self._fill_unmatched_row(row, raw)
+                    continue
+                name = item.get("display_name") or item.get("zh_name") or item.get("en_name") or f"ID:{type_id}"
+                current = self._existing_qty.get(type_id, 0)  # 数量 = 机库现有
+                # 跨机库移动行始终按增量语义（不参与全量 set）；其余按当前导入模式计算
+                row_mode = "incremental" if type_id in self._source_hangar else self._mode
+                delta, final = compute_row_delta(row_mode, item["qty"], current)
 
-            # 列0：勾选
-            cb = QCheckBox()
-            cb.setChecked(True)
-            cb_w = QWidget()
-            cb_l = QHBoxLayout(cb_w)
-            cb_l.setContentsMargins(0, 0, 0, 0)
-            cb_l.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            cb_l.addWidget(cb)
-            table.setCellWidget(row, self._COL_CHECK, cb_w)
+                # 列0：勾选（是否变更）
+                cb = QCheckBox()
+                cb.setChecked(True)
+                cb_w = QWidget()
+                cb_l = QHBoxLayout(cb_w)
+                cb_l.setContentsMargins(0, 0, 0, 0)
+                cb_l.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                cb_l.addWidget(cb)
+                table.setCellWidget(row, self._COL_CHECK, cb_w)
 
-            # 列1：图标
-            icon_path = os.path.join(ICON_DIR, f"{type_id}.png")
-            icon_label = QLabel()
-            icon_label.setFixedSize(24, 24)
-            icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            if os.path.exists(icon_path):
-                pix = QPixmap(icon_path)
-                if not pix.isNull():
-                    icon_label.setPixmap(
-                        pix.scaled(
-                            24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-                        )
-                    )
-            table.setCellWidget(row, self._COL_ICON, icon_label)
+                # 列1：图标
+                icon_label = QLabel()
+                icon_label.setFixedSize(24, 24)
+                icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                pix = _load_icon(type_id, size=24)
+                if pix:
+                    icon_label.setPixmap(pix)
+                table.setCellWidget(row, self._COL_ICON, icon_label)
 
-            # 列2：名称
-            name_item = QTableWidgetItem(name)
-            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            name_item.setData(Qt.ItemDataRole.UserRole, type_id)
-            table.setItem(row, self._COL_NAME, name_item)
+                # 列2：名称
+                name_item = QTableWidgetItem(name)
+                name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                name_item.setData(Qt.ItemDataRole.UserRole, type_id)
+                table.setItem(row, self._COL_NAME, name_item)
 
-            # 列3：数量（机库现有）
-            cur_item = QTableWidgetItem(f"{current:,}")
-            cur_item.setFlags(cur_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            cur_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            table.setItem(row, self._COL_CURRENT, cur_item)
+                # 列3：数量（机库现有）
+                cur_item = QTableWidgetItem(f"{current:,}")
+                cur_item.setFlags(cur_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                cur_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                table.setItem(row, self._COL_CURRENT, cur_item)
 
-            # 列4：比原纪录（本次增减）
-            delta_item = QTableWidgetItem(f"+{delta:,}" if delta >= 0 else f"{delta:,}")
-            delta_item.setFlags(delta_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            delta_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            if delta > 0:
-                delta_item.setForeground(QColor(theme.ACCENT_GREEN))
-            elif delta < 0:
-                delta_item.setForeground(QColor(theme.ACCENT_RED))
-            table.setItem(row, self._COL_DELTA, delta_item)
+                # 列4：比原纪录（本次增减）
+                delta_item = QTableWidgetItem(f"+{delta:,}" if delta >= 0 else f"{delta:,}")
+                delta_item.setFlags(delta_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                delta_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                if delta > 0:
+                    delta_item.setForeground(QColor(theme.ACCENT_GREEN))
+                elif delta < 0:
+                    delta_item.setForeground(QColor(theme.ACCENT_RED))
+                table.setItem(row, self._COL_DELTA, delta_item)
 
-            # 列5：变化（最终数量）
-            final_item = QTableWidgetItem(f"{final:,}")
-            final_item.setFlags(final_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            final_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            table.setItem(row, self._COL_FINAL, final_item)
+                # 列5：变化（最终数量）— 可编辑，供库存修正逐行修正数量
+                final_item = QTableWidgetItem(f"{final:,}")
+                final_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                table.setItem(row, self._COL_FINAL, final_item)
 
-            # 列6：成本价
-            spin = QDoubleSpinBox()
-            spin.setRange(0, 1e12)
-            spin.setDecimals(2)
-            spin.setSingleStep(1000)
-            spin.setValue(self._sell_prices.get(type_id, 0))
-            table.setCellWidget(row, self._COL_PRICE, spin)
+                # 列6：成本价
+                spin = QDoubleSpinBox()
+                spin.setRange(0, 1e12)
+                spin.setDecimals(2)
+                spin.setSingleStep(1000)
+                spin.setValue(self._sell_prices.get(type_id, 0))
+                table.setCellWidget(row, self._COL_PRICE, spin)
 
-            cb.toggled.connect(lambda: self._update_summary())
+                cb.toggled.connect(lambda: self._update_summary())
+        finally:
+            self._updating = False
 
         # 自适应列宽
         header = table.horizontalHeader()
@@ -247,6 +261,84 @@ class ImportReviewDialog(QDialog):
                 table.setColumnWidth(col, min_w)
 
         self._update_summary()
+
+    def _fill_unmatched_row(self, row: int, name: str):
+        """未匹配行：灰显、勾选禁用、数值 0、成本禁用"""
+        cb = QCheckBox()
+        cb.setChecked(False)
+        cb.setEnabled(False)
+        cb_w = QWidget()
+        cb_l = QHBoxLayout(cb_w)
+        cb_l.setContentsMargins(0, 0, 0, 0)
+        cb_l.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cb_l.addWidget(cb)
+        self._table.setCellWidget(row, self._COL_CHECK, cb_w)
+
+        name_item = QTableWidgetItem(f"{name}（未匹配）")
+        name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        name_item.setData(Qt.ItemDataRole.UserRole, None)
+        name_item.setForeground(QColor(theme.TEXT_SECONDARY))
+        self._table.setItem(row, self._COL_NAME, name_item)
+
+        for col in (self._COL_CURRENT, self._COL_DELTA, self._COL_FINAL):
+            it = QTableWidgetItem("0")
+            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            it.setForeground(QColor(theme.TEXT_SECONDARY))
+            self._table.setItem(row, col, it)
+
+        spin = QDoubleSpinBox()
+        spin.setRange(0, 1e12)
+        spin.setDecimals(2)
+        spin.setEnabled(False)
+        self._table.setCellWidget(row, self._COL_PRICE, spin)
+
+    def _on_final_changed(self, item):
+        """最终数量列被编辑：重算 delta（增减）并刷新颜色/汇总。"""
+        if self._updating or item.column() != self._COL_FINAL:
+            return
+        row = item.row()
+        cur_item = self._table.item(row, self._COL_CURRENT)
+        try:
+            final = int(item.text().replace(",", "").replace(" ", ""))
+            current = int(cur_item.text().replace(",", "")) if cur_item else 0
+        except ValueError:
+            return
+        delta = final - current
+        delta_item = self._table.item(row, self._COL_DELTA)
+        if delta_item:
+            delta_item.setText(f"+{delta:,}" if delta >= 0 else f"{delta:,}")
+            if delta > 0:
+                delta_item.setForeground(QColor(theme.ACCENT_GREEN))
+            elif delta < 0:
+                delta_item.setForeground(QColor(theme.ACCENT_RED))
+            else:
+                delta_item.setForeground(QColor(theme.TEXT_SECONDARY))
+        self._update_summary()
+
+    def _search_match(self, row: int):
+        """把未匹配行接到用户搜索选中的物品，然后重填"""
+        dlg = ItemSearchDialog(self, title="搜索匹配物品")
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        sel = dlg.selected_item()
+        if not sel:
+            return
+        # 表格行号 = _parsed_items 下标（_populate_rows 按顺序填充）
+        if not (0 <= row < len(self._parsed_items)) or self._parsed_items[row].get("type_id"):
+            return
+        entry = self._parsed_items[row]
+        entry.update(
+            {
+                "type_id": sel["type_id"],
+                "zh_name": sel["zh_name"],
+                "en_name": sel["en_name"],
+                "status": "matched",
+            }
+        )
+        self._fetch_existing_inventory()
+        self._fetch_sell_prices()
+        self._populate_rows()
 
     def _on_hub_changed(self, idx: int):
         hub_name = self._hub_combo.itemData(idx)
@@ -265,6 +357,8 @@ class ImportReviewDialog(QDialog):
     def _on_mode_changed(self, idx: int):
         """导入模式切换：重算每行 delta/final。"""
         self._mode = cast(str, self._mode_combo.itemData(idx))
+        if not hasattr(self, "_table"):
+            return  # __init__ 早期 setCurrentIndex 触发时表格尚未创建
         self._populate_rows()
 
     def mode(self) -> str:
@@ -348,6 +442,13 @@ class ImportReviewDialog(QDialog):
         menu.addSeparator()
         filter_nochange = menu.addAction("过滤无变化项")
 
+        # 未匹配行：提供手动搜索匹配
+        match_action = None
+        if len(rows) == 1:
+            name_item = self._table.item(rows[0], self._COL_NAME)
+            if name_item and name_item.data(Qt.ItemDataRole.UserRole) is None:
+                match_action = menu.addAction("搜索匹配物品…")
+
         action = menu.exec(self._table.viewport().mapToGlobal(pos))
 
         if action == set_sell:
@@ -379,6 +480,8 @@ class ImportReviewDialog(QDialog):
                     spin.setValue(round(spin.value() * disc_rate, 2))
         elif action == filter_nochange:
             self._filter_no_change()
+        elif match_action is not None and action == match_action:
+            self._search_match(rows[0])
         elif isinstance(action, (QAction,)) and action.data():
             self._add_from_hangar(action.data())
 
@@ -549,16 +652,23 @@ class ImportReviewDialog(QDialog):
 
     def _on_accept(self):
         has_checked = False
+        unmatched = 0
         for row in range(self._table.rowCount()):
             w = self._table.cellWidget(row, self._COL_CHECK)
-            if w:
-                cb = w.findChild(QCheckBox)
-                if cb and cb.isChecked():
-                    has_checked = True
-                    break
+            if not w:
+                continue
+            cb = w.findChild(QCheckBox)
+            if not cb or not cb.isChecked():
+                continue
+            has_checked = True
+            name_item = self._table.item(row, self._COL_NAME)
+            if name_item and name_item.data(Qt.ItemDataRole.UserRole) is None:
+                unmatched += 1
         if not has_checked:
             QMessageBox.warning(self, "提示", "没有勾选的物品，无法导入")
             return
+        if unmatched:
+            QMessageBox.information(self, "提示", f"{unmatched} 行未匹配物品未指定 type_id，导入时将跳过（可右键搜索匹配）")
         self.accept()
 
     def get_import_data(self) -> list[tuple[int, int, float, int | None]]:

@@ -627,8 +627,8 @@ def do_add_to_plan(page, type_id: int, product_name: str):
         QMessageBox.information(page, "提示", f"「{product_name}」无制造配方")
         return
 
-    # 计算评分
-    worker = ScoreWorker(
+    # 计算评分（强引用挂到 page，防局部 QThread 被 GC 闪退）
+    page._add_plan_worker = ScoreWorker(
         type_id=type_id,
         bp_me=0,
         bp_te=0,
@@ -636,47 +636,51 @@ def do_add_to_plan(page, type_id: int, product_name: str):
         sell_hub="Jita",
         tax=0.0,
     )
+    worker = page._add_plan_worker
 
     def _on_score(result: dict):
-        dlg = AddPlanDialog(product_name, result, page)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        data = dlg.result_data()
-        if not data:
-            return
-        conn3 = get_container().db.direct_connect("user")
         try:
-            iskph = result.get("isk_per_hour", 0) or result.get("breakdown", {}).get("isk_per_hour", 0)
-            mat_cost = result.get("breakdown", {}).get("material_cost", 0)
-            conn3.execute(
-                "INSERT INTO production_plans "
-                "(product_type_id, product_name, runs, parallels, me_level, te_level, "
-                "mat_hub, sell_hub, facility, char_name, status, "
-                "profit, margin, score, iskph, material_cost, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?)",
-                (
-                    type_id,
-                    product_name,
-                    data["runs"],
-                    data["parallels"],
-                    data["me"],
-                    data["te"],
-                    "Jita",
-                    "Jita",
-                    data["fac"],
-                    data["char"],
-                    result.get("profit_per_run", 0),
-                    result.get("margin_pct", 0),
-                    result.get("score", 0),
-                    iskph,
-                    mat_cost,
-                    datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
-                ),
-            )
-            conn3.commit()
+            dlg = AddPlanDialog(product_name, result, page)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            data = dlg.result_data()
+            if not data:
+                return
+            conn3 = get_container().db.direct_connect("user")
+            try:
+                iskph = result.get("isk_per_hour", 0) or result.get("breakdown", {}).get("isk_per_hour", 0)
+                mat_cost = result.get("breakdown", {}).get("material_cost", 0)
+                conn3.execute(
+                    "INSERT INTO production_plans "
+                    "(product_type_id, product_name, runs, parallels, me_level, te_level, "
+                    "mat_hub, sell_hub, facility, char_name, status, "
+                    "profit, margin, score, iskph, material_cost, created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?)",
+                    (
+                        type_id,
+                        product_name,
+                        data["runs"],
+                        data["parallels"],
+                        data["me"],
+                        data["te"],
+                        "Jita",
+                        "Jita",
+                        data["fac"],
+                        data["char"],
+                        result.get("profit_per_run", 0),
+                        result.get("margin_pct", 0),
+                        result.get("score", 0),
+                        iskph,
+                        mat_cost,
+                        datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+                    ),
+                )
+                conn3.commit()
+            finally:
+                conn3.close()
+            QMessageBox.information(page, "成功", f"已添加到计划: {product_name}")
         finally:
-            conn3.close()
-        QMessageBox.information(page, "成功", f"已添加到计划: {product_name}")
+            page._add_plan_worker = None  # 释放强引用
 
     worker.finished.connect(_on_score)
     worker.start()

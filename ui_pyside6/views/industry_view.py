@@ -32,6 +32,7 @@ from ui_pyside6.views.industry import (
     StatusBar,
     TopToolbar,
 )
+from ui_pyside6.views.industry.complete_plans_dialog import CompletePlansDialog, complete_plans
 from ui_pyside6.views.manufacturable_items_dialog import ManufacturableItemsDialog
 from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker
 
@@ -404,8 +405,10 @@ class IndustryPage(QWidget):
 
         # StatusBar
         self._status_bar.save_price_requested.connect(self._on_save_prices)
+        self._status_bar.complete_all_requested.connect(self._on_complete_all)
 
         # ActionButtons
+        self._action_buttons.launch_wizard_requested.connect(self._on_launch_wizard)
         self._action_buttons.refresh_procurement_requested.connect(self._on_procurement)
         self._action_buttons.blueprint_list_requested.connect(self._on_blueprint_list)
         self._action_buttons.materials_summary_requested.connect(self._on_materials_summary)
@@ -467,6 +470,20 @@ class IndustryPage(QWidget):
             ptid = row.get("product_type_id")
             has_bp = bool(row.get("assigned_blueprint_id")) or any(b in owned_bp for b in prod_to_bp.get(ptid, []))
             row["has_image"] = has_bp
+            # 兼容 key 映射：DB 列 group_number/sub_level → 模型读取的 group_id/child_level
+            row["group_id"] = row.get("group_number", 0)
+            row["child_level"] = row.get("sub_level", 0)
+
+        # 类别列：从蓝图活动批量推导（反应/发明/拷贝/制造）
+        from services.plan_category import load_category_map
+
+        bp_ids = [r.get("blueprint_type_id") for r in rows if r.get("blueprint_type_id")]
+        cat_map: dict[int, str] = {}
+        if bp_ids:
+            with get_container().db.connect("bp") as bp_conn:
+                cat_map = load_category_map(bp_conn, bp_ids)
+        for row in rows:
+            row["category"] = cat_map.get(row.get("blueprint_type_id"), "manufacturing")
         from ui_pyside6.models.industry_models import PlanTableModel
 
         # 注入当前材料机库（启动旧计划时兜底）
@@ -952,6 +969,56 @@ class IndustryPage(QWidget):
                     )
                     count += 1
             QMessageBox.information(self, "完成", f"已保存 {count} 个价格快照")
+
+    def _on_complete_all(self):
+        """全部下线：确认待下线计划清单 → 选择产出机库 → 完成入库。"""
+        model = self._plan_table_widget.get_model()
+        if model is None:
+            return
+        ready = []
+        for i in range(model.rowCount()):
+            plan = model.get_plan(i)
+            if plan and (plan.get("status") or "").lower() == "ready":
+                ready.append(plan)
+        if not ready:
+            QMessageBox.information(self, "提示", "没有待下线的计划")
+            return
+        from services.inventory_manager import get_hangars
+        from services.user_settings import get_default_hangar_id
+
+        hangars = get_hangars()
+        default_hid = get_default_hangar_id("default_deposit_hangar_id")
+        dlg = CompletePlansDialog(ready, hangars, default_hid, self)
+        if not dlg.exec():
+            return
+        result = complete_plans(ready, dlg.selected_hangar_id())
+        self.load_plans()
+        msg = f"已下线 {result['completed']} 项"
+        if result["deposited"]:
+            msg += f"，入库 {result['deposited']} 项"
+        if result["failed"]:
+            msg += f"，失败 {len(result['failed'])} 项"
+        QMessageBox.information(self, "完成", msg)
+
+    def _on_launch_wizard(self):
+        """产线启动小助手（一级菜单）：收集全部活跃计划 → 打开启动向导"""
+        model = self._plan_table_widget.get_model()
+        if model is None:
+            return
+        plans = []
+        for i in range(model.rowCount()):
+            plan = model.get_plan(i)
+            if plan and (plan.get("status") or "").lower() in ("pending", "in_progress", "running", "ready"):
+                plans.append(plan)
+        if not plans:
+            QMessageBox.information(self, "提示", "没有活跃的计划")
+            return
+        from ui_pyside6.dialogs.production_wizard import ProductionWizard
+
+        mat_hangar_id = self._toolbar.get_mat_hangar_id()
+        dlg = ProductionWizard(plans, self, mat_hangar_id=mat_hangar_id)
+        dlg.exec()
+        self.load_plans()
 
     # ── 状态保存/恢复 ─────────────────────────────────────────
 
