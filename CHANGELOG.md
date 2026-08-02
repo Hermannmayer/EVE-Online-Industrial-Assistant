@@ -6,6 +6,14 @@
 
 <!-- version list -->
 
+## v0.13.0 (2026-08-02)
+
+### Features
+
+- 蓝图批量加入制造规划 + 生产追踪增强 + 库存导入重构
+  ([`3658494`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/3658494d7ea7b6a60487b109797c9f4c73682e2e))
+
+
 ## v0.11.0 (2026-08-01)
 
 ### Chores
