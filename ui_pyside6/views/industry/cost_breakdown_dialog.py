@@ -113,6 +113,9 @@ class CostBreakdownDialog(QWidget):
         self._job_total = QLabel("—")
         self._job_total.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY};")
         self._job_form.addRow("制造作业费:", self._job_total)
+        self._job_research = QLabel("—")
+        self._job_research.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
+        self._job_form.addRow("拷贝/发明研究成本:", self._job_research)
         right_layout.addWidget(job_box)
 
         # ── 3. 市场费用 ─────────────────────────────────────
@@ -271,6 +274,10 @@ class CostBreakdownDialog(QWidget):
         self._job_fac_tax.setText(_fmt_isk(facility_tax_v * total_mult))
         self._job_scc.setText(_fmt_isk(scc * total_mult))
         self._job_total.setText(_fmt_isk(installation_fee * total_mult))
+        research_cost = bd.get("research_cost", 0) or 0
+        self._job_research.setText(
+            _fmt_isk(research_cost * total_mult) if research_cost else "—（无，原图或 T1 无需研究）"
+        )
 
         # ── 市场费用 ──
         self._mkt_broker.setText(_fmt_isk(broker_init * total_mult))

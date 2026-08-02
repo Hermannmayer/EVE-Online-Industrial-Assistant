@@ -154,13 +154,14 @@ class TestPlanTableModel:
         ]
         model = PlanTableModel(plans)
         assert model.rowCount() == 1
-        assert model.columnCount() == 18
+        assert model.columnCount() == 19
 
     def test_header_data(self, qapp):
         """表头正确"""
         model = PlanTableModel([])
         headers = [
             "☐",
+            "类别",
             "图标",
             "产品",
             "备注",
@@ -195,9 +196,22 @@ class TestPlanTableModel:
             }
         ]
         model = PlanTableModel(plans)
-        assert model.data(model.index(0, 2), Qt.ItemDataRole.DisplayRole) == "渡鸦级"
-        assert model.data(model.index(0, 15), Qt.ItemDataRole.DisplayRole) == "5,000,000"
-        assert model.data(model.index(0, 6), Qt.ItemDataRole.DisplayRole) == "生产中"
+        assert model.data(model.index(0, 3), Qt.ItemDataRole.DisplayRole) == "渡鸦级"
+        assert model.data(model.index(0, 16), Qt.ItemDataRole.DisplayRole) == "5,000,000"
+        assert model.data(model.index(0, 7), Qt.ItemDataRole.DisplayRole) == "生产中"
+
+    def test_category_column_symbol(self, qapp):
+        """类别列符号与行底色"""
+        plans = [
+            {"product_type_id": 1, "category": "invention", "status": "pending"},
+            {"product_type_id": 2, "category": "reaction", "status": "pending"},
+            {"product_type_id": 3, "category": "manufacturing", "status": "pending"},
+        ]
+        model = PlanTableModel(plans)
+        assert model.data(model.index(0, 1), Qt.ItemDataRole.DisplayRole) == "💡"
+        assert model.data(model.index(1, 1), Qt.ItemDataRole.DisplayRole) == "⚗"
+        # 制造默认无底色
+        assert model.data(model.index(2, 1), Qt.ItemDataRole.BackgroundRole) is None
 
     def test_status_label_mapping(self, qapp):
         """状态映射: pending→待生产, in_progress→生产中, completed→已完成"""
@@ -207,9 +221,9 @@ class TestPlanTableModel:
             {"product_type_id": 3, "batch": 1, "parallels": 1, "me_level": 0, "te_level": 0, "status": "completed"},
         ]
         model = PlanTableModel(plans)
-        assert model.data(model.index(0, 6), Qt.ItemDataRole.DisplayRole) == "待生产"
-        assert model.data(model.index(1, 6), Qt.ItemDataRole.DisplayRole) == "生产中"
-        assert model.data(model.index(2, 6), Qt.ItemDataRole.DisplayRole) == "已完成"
+        assert model.data(model.index(0, 7), Qt.ItemDataRole.DisplayRole) == "待生产"
+        assert model.data(model.index(1, 7), Qt.ItemDataRole.DisplayRole) == "生产中"
+        assert model.data(model.index(2, 7), Qt.ItemDataRole.DisplayRole) == "已完成"
 
     def test_checkbox_column_check_state(self, qapp):
         """备料勾选列以 CheckStateRole 渲染真实复选框（勾选/未勾选），DisplayRole 为空"""

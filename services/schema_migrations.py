@@ -19,7 +19,7 @@ from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
-    "user": 6,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件
+    "user": 7,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表
     "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
 }
 
@@ -182,6 +182,21 @@ def _migrate_user_v5_to_v6(db_path: str) -> str:
     return f"hangars 工业配置列 (新增 {net} 列)"
 
 
+def _migrate_user_v6_to_v7(db_path: str) -> str:
+    """v6→v7: plan_blueprint_bindings 多蓝图绑定表（一条计划绑定多张库存蓝图）"""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS plan_blueprint_bindings ("
+            "plan_id INTEGER NOT NULL, blueprint_id INTEGER NOT NULL, runs_used INTEGER DEFAULT 0, "
+            "PRIMARY KEY (plan_id, blueprint_id))"
+        )
+        conn.commit()
+        return "新增 plan_blueprint_bindings 多蓝图绑定表"
+    finally:
+        conn.close()
+
+
 def _migrate_bp_v1_to_v2(db_path: str) -> str:
     """v1→v2: blueprint_materials 新增 wastefactor 列"""
     conn = sqlite3.connect(db_path)
@@ -212,6 +227,7 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
         3: _migrate_user_v3_to_v4,
         4: _migrate_user_v4_to_v5,
         5: _migrate_user_v5_to_v6,
+        6: _migrate_user_v6_to_v7,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,

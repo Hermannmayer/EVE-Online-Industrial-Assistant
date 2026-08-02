@@ -67,9 +67,9 @@ class TestInvTableModel:
         assert model.columnCount() == 8
 
     def test_header_data(self, qapp):
-        """表头信息正确（含「生产中投入」）"""
+        """表头信息正确（已移除「生产中投入」）"""
         model = InvTableModel([])
-        expected = ["图标", "名称", "库存数量", "单个成本记录", "规划占用", "生产中投入", "规划剩余", "按卖单总价值"]
+        expected = ["图标", "名称", "库存数量", "单个成本记录", "规划占用", "规划剩余", "按卖单总价值", "拷贝/发明成本"]
         for i, h in enumerate(expected):
             actual = model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
             assert actual == h, f"列 {i} 表头应为 '{h}', 得到 '{actual}'"
@@ -116,41 +116,37 @@ class TestInvTableModel:
         idx = model.index(2, 4)
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "0"
 
-    def test_plan_active_format(self, qapp):
-        """生产中投入格式化（千位分隔）"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(0, 5)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "500"
-
-    def test_plan_active_none(self, qapp):
-        """生产中投入为 None 时显示 '0'"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(2, 5)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "0"
-
     def test_plan_remain_with_value(self, qapp):
         """规划剩余正常显示"""
         model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(0, 6)
+        idx = model.index(0, 5)
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "49,000"
 
     def test_plan_remain_fallback_to_quantity(self, qapp):
         """规划剩余为 None 时回退为库存数量"""
         model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(2, 6)
+        idx = model.index(2, 5)
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "1"
+
+    def test_plan_remain_zero_when_equal_to_quantity(self, qapp):
+        """规划剩余为 0（库存=规划占用）时显示 '0' 而非回退库存量"""
+        rows = [
+            {"type_id": 1, "quantity": 100, "cost_price": 0, "plan_usage": 100, "plan_remain": 0, "sell_price": None}
+        ]
+        model = InvTableModel(rows)
+        assert model.data(model.index(0, 5), Qt.ItemDataRole.DisplayRole) == "0"
 
     def test_total_value_with_sell_price(self, qapp):
         """总价值 = 库存数 × 卖单价"""
         model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(0, 7)
+        idx = model.index(0, 6)
         expected = f"{50000 * 5.50:,.0f}"
         assert idx.data(Qt.ItemDataRole.DisplayRole) == expected
 
     def test_total_value_no_sell_price(self, qapp):
         """无卖价时显示横线"""
         model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(2, 7)  # sell_price is None
+        idx = model.index(2, 6)  # sell_price is None
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "-"
 
     def test_name_display_name_priority(self, qapp):
@@ -178,10 +174,26 @@ class TestInvTableModel:
         model = InvTableModel(self.SAMPLE_ITEMS)
         assert model.data(model.index(0, 4), Qt.ItemDataRole.ToolTipRole) == "待启动计划预留"
 
-    def test_tooltip_plan_active(self, qapp):
-        """生产中投入列提示已启动计划物理扣减"""
+    def test_icon_size_hint(self, qapp):
+        """图标列返回固定 SizeHint（与工业制造一致，约束列宽）"""
+        from PySide6.QtCore import QSize
+
         model = InvTableModel(self.SAMPLE_ITEMS)
-        assert model.data(model.index(0, 5), Qt.ItemDataRole.ToolTipRole) == "已启动计划已物理扣减，核对参考"
+        hint = model.data(model.index(0, 0), Qt.ItemDataRole.SizeHintRole)
+        assert hint == QSize(36, 36)
+
+    def test_sort_quantity(self, qapp):
+        """按库存数量降序排序"""
+        model = InvTableModel(self.SAMPLE_ITEMS)
+        model.sort(2, Qt.SortOrder.DescendingOrder)
+        assert model.item_at(0)["quantity"] == 50000
+
+    def test_sort_name(self, qapp):
+        """按名称升序排序"""
+        model = InvTableModel(self.SAMPLE_ITEMS)
+        model.sort(1, Qt.SortOrder.AscendingOrder)
+        names = [model.item_at(i)["zh_name"] or model.item_at(i)["en_name"] for i in range(model.rowCount())]
+        assert names == sorted(names)
 
     def test_text_alignment_numbers(self, qapp):
         """数量列为右对齐"""
@@ -505,3 +517,47 @@ class TestBlueprintTableModel:
         name0 = model.row_at(0).get("zh_name") or model.row_at(0).get("display_name", "")
         name1 = model.row_at(1).get("zh_name") or model.row_at(1).get("display_name", "")
         assert name0 <= name1  # 按字典序
+
+
+# ══════════════════════════════════════
+#  BatchCostPriceDialog
+# ══════════════════════════════════════
+
+
+class TestBatchCostPriceDialog:
+    """批量设置成本价对话框 — 价格来源切换 / 折扣 / 手动输入"""
+
+    def test_defaults(self, qapp):
+        """默认吉他卖价 + 9 折，折扣可见、手动隐藏"""
+        from ui_pyside6.views.inventory.hangar_tab import BatchCostPriceDialog
+
+        dlg = BatchCostPriceDialog()
+        assert dlg.price_type() == "sell"
+        assert dlg.discount() == 0.9
+        assert not dlg._discount.isHidden()
+        assert dlg._manual.isHidden()
+
+    def test_switch_to_manual(self, qapp):
+        """切到手动输入：折扣隐藏、手动价格可见"""
+        from ui_pyside6.views.inventory.hangar_tab import BatchCostPriceDialog
+
+        dlg = BatchCostPriceDialog()
+        dlg._source.setCurrentIndex(3)
+        assert dlg.price_type() == "manual"
+        assert dlg._discount.isHidden()
+        assert not dlg._manual.isHidden()
+
+    def test_discount_roundtrip(self, qapp):
+        from ui_pyside6.views.inventory.hangar_tab import BatchCostPriceDialog
+
+        dlg = BatchCostPriceDialog()
+        dlg._discount.setValue(0.8)
+        assert dlg.discount() == 0.8
+
+    def test_manual_price_roundtrip(self, qapp):
+        from ui_pyside6.views.inventory.hangar_tab import BatchCostPriceDialog
+
+        dlg = BatchCostPriceDialog()
+        dlg._source.setCurrentIndex(3)
+        dlg._manual.setValue(1234.56)
+        assert dlg.manual_price() == 1234.56

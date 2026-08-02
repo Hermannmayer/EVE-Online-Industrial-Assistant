@@ -8,9 +8,53 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from services.terminology import term
+
+
+def search_item_type_id(conn: sqlite3.Connection, name: str) -> int | None:
+    """名称→type_id：精确 → terminology 反向 → LIKE 模糊 → 引号归一化 LIKE。
+
+    未命中返回 None。供剪贴板解析（库存修正/移库）使用。
+
+    注意：基础矿物（type_id 34-40）不在 item 表，仅在 terminology.json 注册，
+    因此 terminology 反向必须在 LIKE 之前，避免「三钛合金」被 LIKE 误匹配到
+    「三钛合金条」等名称含子串的无关物品。
+    """
+    name = name.strip()
+    if not name:
+        return None
+    # 1. 精确匹配
+    row = conn.execute(
+        "SELECT type_id FROM item WHERE zh_name = ? OR en_name = ? LIMIT 1", (name, name)
+    ).fetchone()
+    if row:
+        return int(row[0])
+    # 2. terminology.item_overrides 反向（基础矿物 34-40 等不在 item 表）
+    term._ensure()
+    overrides = term._data.get("item_overrides") or {}
+    for tid_str, override_name in overrides.items():
+        if override_name == name:
+            return int(tid_str)
+    # 3. LIKE 模糊匹配
+    like = f"%{name}%"
+    row = conn.execute(
+        "SELECT type_id FROM item WHERE zh_name LIKE ? OR en_name LIKE ? LIMIT 1", (like, like)
+    ).fetchone()
+    if row:
+        return int(row[0])
+    # 4. 引号归一化（ASCII/弯引号 → % 通配）
+    fuzzy = re.sub(r"[\"\"'']+", "%", name)
+    if fuzzy != name:
+        row = conn.execute(
+            "SELECT type_id FROM item WHERE zh_name LIKE ? OR en_name LIKE ? LIMIT 1",
+            (f"%{fuzzy}%", f"%{fuzzy}%"),
+        ).fetchone()
+        if row:
+            return int(row[0])
+    return None
 
 
 def resolve_item_name(conn: sqlite3.Connection, type_id: int) -> str:

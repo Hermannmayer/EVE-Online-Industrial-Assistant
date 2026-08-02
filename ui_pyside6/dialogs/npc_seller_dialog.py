@@ -1,134 +1,195 @@
-"""蓝图 NPC 卖家查询对话框"""
+"""蓝图 NPC 卖家查询对话框 — 从 ESI 拉该蓝图卖单，筛出 NPC 公司的直售单"""
 
+import asyncio
+from typing import cast
+
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
+    QHBoxLayout,
+    QHeaderView,
     QLabel,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
 )
 
 import ui_pyside6.theme as theme
+from core.constants import TRADE_HUB_IDS
 from core.container import get_container
+from core.logger import log
+from services.npc_seller import (
+    filter_npc_sell_orders,
+    load_corp_names,
+    load_npc_corp_ids,
+    resolve_stations,
+)
+
+ESI_BASE_URL = "https://esi.evetech.net/latest"
+
+
+class NpcOrderWorker(QThread):
+    """后台拉取指定蓝图的 ESI 卖单并按 NPC 公司过滤"""
+
+    result = Signal(list, str)  # rows: [(公司, 地点, 价格, 剩余量)], error
+
+    def __init__(self, region_id: int, blueprint_type_id: int, parent=None):
+        super().__init__(parent)
+        self._region_id = region_id
+        self._type_id = blueprint_type_id
+
+    def run(self):
+        try:
+            async def _fetch():
+                from services.client import APIClient
+
+                async with APIClient(timeout=20) as client:
+                    url = (
+                        f"{ESI_BASE_URL}/markets/{self._region_id}/orders/"
+                        f"?order_type=sell&type_id={self._type_id}"
+                    )
+                    return await client.fetch_raw(url) or []
+
+            orders = asyncio.run(_fetch())
+
+            conn = get_container().db.direct_connect("ref")
+            try:
+                npc_ids = load_npc_corp_ids(conn)
+                corp_names = load_corp_names(conn)
+                sellers = filter_npc_sell_orders(orders, npc_ids)
+                stations = resolve_stations(conn, {o.get("location_id") for o in sellers})
+            finally:
+                conn.close()
+
+            rows = []
+            for o in sorted(sellers, key=lambda x: x.get("price", 0)):
+                corp_id = o.get("corporation_id")
+                station, system = stations.get(o.get("location_id"), ("", ""))
+                loc = f"{station}（{system}）" if station else str(o.get("location_id") or "未知")
+                rows.append(
+                    (
+                        corp_names.get(corp_id, str(corp_id)),
+                        loc,
+                        float(o.get("price") or 0),
+                        int(o.get("volume_remain") or 0),
+                    )
+                )
+            self.result.emit(rows, "")
+        except Exception as ex:
+            log.exception("拉取蓝图NPC卖家失败 type_id=%s", self._type_id)
+            self.result.emit([], f"拉取失败：{ex}")
 
 
 class NpcSellerDialog(QDialog):
-    """蓝图 NPC 卖家信息弹窗 — 显示可购买 BPO 的 NPC 公司"""
+    """蓝图 NPC 卖家 — 该蓝图在当前贸易中心的 NPC 公司直售单（BPO）"""
+
+    _HUBS = [("吉他", "Jita"), ("艾玛", "Amarr"), ("多迪", "Dodixie"), ("伦斯", "Rens")]
 
     def __init__(self, blueprint_type_id: int, blueprint_name: str = "", parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"蓝图 NPC 卖家 — {blueprint_name}")
-        self.setMinimumSize(550, 350)
+        self.setMinimumSize(660, 420)
+        self.resize(720, 480)
         self.setObjectName("npc_seller_dialog")
+        self._type_id = blueprint_type_id
+        self._worker: NpcOrderWorker | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        # 蓝图基本信息
         header = QLabel(f"<b>{blueprint_name}</b>  (type_id: {blueprint_type_id})")
         header.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 14px;")
         layout.addWidget(header)
 
-        # 说明
         note = QLabel(
-            "以下为与蓝图相关的 NPC 公司和研究代理机构。\n"
-            "T1 蓝图原版(BPO)通常在 NPC 空间站有售，可通过市场界面购得。"
+            "T1 蓝图原版(BPO) 由 NPC 公司在其空间站直售；此处列出该蓝图在当前贸易中心的 NPC 直售单。\n"
+            "若列表为空：该蓝图可能非 NPC 直售（如 T2 蓝图），请到市场找玩家订单。"
         )
         note.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
         note.setWordWrap(True)
         layout.addWidget(note)
 
-        # 查询 NPC 数据
-        self._build_content(layout, blueprint_type_id)
+        # ── 区域选择 + 刷新 ──
+        top = QHBoxLayout()
+        top.addWidget(QLabel("贸易中心:"))
+        self._hub_combo = QComboBox()
+        for zh, en in self._HUBS:
+            self._hub_combo.addItem(f"{zh} ({en})", TRADE_HUB_IDS[en])
+        self._hub_combo.currentIndexChanged.connect(lambda *_: self._start_fetch())
+        top.addWidget(self._hub_combo)
+        self._refresh_btn = QPushButton("刷新")
+        self._refresh_btn.clicked.connect(self._start_fetch)
+        top.addWidget(self._refresh_btn)
+        top.addStretch()
+        layout.addLayout(top)
 
-        # 关闭按钮
+        # ── 状态/加载提示 ──
+        self._status_label = QLabel("")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        layout.addWidget(self._status_label)
+
+        # ── 卖单表 ──
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["NPC 公司", "空间站", "价格", "剩余量"])
+        self._table.setAlternatingRowColors(True)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.verticalHeader().setVisible(False)
+        hdr = self._table.horizontalHeader()
+        hdr.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self._table.setColumnWidth(0, 180)
+        layout.addWidget(self._table, 1)
+
+        # ── 关闭按钮 ──
         btn_bar = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         btn_bar.rejected.connect(self.close)
         layout.addWidget(btn_bar)
 
-    def _build_content(self, layout, blueprint_type_id: int):
-        """查询并显示 NPC 公司"""
-        db = get_container().db
-        rows = []
-        with db.connect("ref") as conn:
-            cur = conn.cursor()
+        self._start_fetch()
+        theme.add_theme_listener(self._on_theme_changed)
 
-            # 1. 查 blueprint 的 market group
-            market_path = ""
-            cur.execute(
-                "SELECT zh_name, en_name, market_group_id FROM item WHERE type_id = ?",
-                (blueprint_type_id,),
-            )
-            item = cur.fetchone()
-            if item:
-                mg_id = item[2]
-                if mg_id:
-                    # 回溯 market tree 构建路径
-                    path_parts = []
-                    current_id = mg_id
-                    while current_id:
-                        cur.execute(
-                            "SELECT parent_group_id, zh_name, en_name FROM market_tree WHERE market_group_id = ?",
-                            (current_id,),
-                        )
-                        mg = cur.fetchone()
-                        if mg:
-                            path_parts.append(mg[1] or mg[2] or str(current_id))
-                            current_id = mg[0]
-                        else:
-                            current_id = None
-                    market_path = " → ".join(reversed(path_parts))
+    # ── 抓取 ──
 
-            # 2. 查 NPC 公司信息
-            cur.execute(
-                """
-                SELECT nc.corporation_id, nc.zh_name, nc.en_name,
-                       s.station_name, s.solar_system_id
-                FROM npc_corporation nc
-                LEFT JOIN station s ON nc.corporation_id = s.corporation_id
-                WHERE nc.corporation_id IN (
-                    SELECT corporation_id FROM agent WHERE division_id = 22  -- 研究代理
-                    UNION
-                    SELECT corporation_id FROM npc_corporation
-                    WHERE corporation_id < 1001000  -- NPC 公司
-                )
-                ORDER BY nc.corporation_id
-                LIMIT 50
-            """,
-            )
-            rows = [dict(r) for r in cur.fetchall()]
+    def _start_fetch(self):
+        if self._worker and self._worker.isRunning():
+            return
+        region_id = cast(int, self._hub_combo.currentData())
+        self._refresh_btn.setEnabled(False)
+        self._status_label.setText("正在从 ESI 获取卖单…")
+        self._worker = NpcOrderWorker(region_id, self._type_id, self)
+        self._worker.result.connect(self._on_result)
+        self._worker.start()
 
-        # Market group info
-        if market_path:
-            mg_label = QLabel(f"市场分类: {market_path}")
-            mg_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
-            layout.addWidget(mg_label)
-
-        # 表格展示 NPC 公司
-        if rows:
-            table = QTableWidget()
-            table.setColumnCount(3)
-            table.setHorizontalHeaderLabels(["NPC 公司", "空间站", "研究代理"])
-            table.setAlternatingRowColors(True)
-            table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-            table.verticalHeader().setVisible(False)
-            hdr = table.horizontalHeader()
-            hdr.setStretchLastSection(True)
-            hdr.resizeSection(0, 180)
-            hdr.resizeSection(1, 200)
-
-            table.setRowCount(len(rows))
-            for i, r in enumerate(rows):
-                name = r.get("zh_name") or r.get("en_name") or str(r["corporation_id"])
-                station = r.get("station_name") or "—"
-                table.setItem(i, 0, QTableWidgetItem(name))
-                table.setItem(i, 1, QTableWidgetItem(station))
-                table.setItem(i, 2, QTableWidgetItem("是" if r.get("solar_system_id") else "—"))
-
-            layout.addWidget(table, stretch=1)
+    def _on_result(self, rows: list, error: str):
+        self._refresh_btn.setEnabled(True)
+        self._table.setRowCount(0)
+        self._table.setRowCount(len(rows))
+        for i, (corp, loc, price, vol) in enumerate(rows):
+            for col, text in [
+                (0, corp),
+                (1, loc),
+                (2, f"{price:,.2f}"),
+                (3, f"{vol:,}"),
+            ]:
+                it = QTableWidgetItem(text)
+                it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if col >= 2:
+                    it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self._table.setItem(i, col, it)
+        if error:
+            self._status_label.setText(error)
+        elif not rows:
+            self._status_label.setText("该蓝图在当前贸易中心没有 NPC 直售单（可能为 T2/高级蓝图，请到市场找玩家订单）")
         else:
-            no_data = QLabel("暂无 NPC 相关数据")
-            no_data.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
-            layout.addWidget(no_data)
+            self._status_label.setText(f"共 {len(rows)} 条 NPC 直售单")
+
+    def _on_theme_changed(self):
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+
+    def closeEvent(self, event):
+        if self._worker and self._worker.isRunning():
+            self._worker.requestInterruption()
+        super().closeEvent(event)

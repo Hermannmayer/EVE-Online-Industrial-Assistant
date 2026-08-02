@@ -10,8 +10,8 @@ from PySide6.QtCore import Qt
 
 from ui_pyside6.models.industry_models import PlanTableModel
 
-_COL_TIME = 10
-_COL_BLUEPRINT = 9
+_COL_TIME = 11
+_COL_BLUEPRINT = 10
 
 
 def _plan(**overrides) -> dict:

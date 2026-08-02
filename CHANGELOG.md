@@ -6,28 +6,6 @@
 
 <!-- version list -->
 
-## v0.12.0 (2026-08-01)
-
-### Chores
-
-- 变更集审计报告 + 后台测试 PostToolUse 钩子脚本
-  ([`d504978`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d504978655b21497270e39349131b470a86760ba))
-
-- **docs**: 同步 API 文档 + README 测试数（843）
-  ([`669614e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/669614ec4c6e32a54425a421de2211cab5d3b0fd))
-
-### Features
-
-- SDE 解析并行化 + 结构改装件数据初始化
-  ([`ef88ee0`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/ef88ee037fcf9d9a1d2aaa6418744509c2a047a6))
-
-- 机库工业配置 — 星系/设施类型/改装件/设施税 → 制造加成
-  ([`b9d91e3`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b9d91e38bbb7a4cb1f3e173f280ccbdd22354141))
-
-- 材料覆盖视图 + 剪贴板导入重构
-  ([`5dd9ab6`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5dd9ab6290f85f19ef996b8efa8fc6510b872a3e))
-
-
 ## v0.11.0 (2026-08-01)
 
 ### Chores

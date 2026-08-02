@@ -10,8 +10,15 @@
 from unittest.mock import patch
 
 import pytest
+from PySide6.QtCore import Qt
 
-from ui_pyside6.main_window import NAV_TREE, MainWindow, PriceCheckWorker, PriceUpdateWorker
+from ui_pyside6.main_window import (
+    NAV_TREE,
+    MainWindow,
+    PriceCheckWorker,
+    PriceUpdateWorker,
+    _needs_price_update,
+)
 
 pytestmark = pytest.mark.slow
 
@@ -107,6 +114,23 @@ class TestPriceCheckWorker:
         worker = PriceCheckWorker(interval_minutes=60)
         assert worker._interval == 60 * 60
 
+    def test_fresh_data_no_update(self, qapp):
+        """数据未到（间隔-60s）不需要更新"""
+        assert _needs_price_update(5 * 60, 30) is False  # 5 分钟前
+        assert _needs_price_update(28 * 60, 30) is False  # 28 分钟（容差窗口内）
+
+    def test_stale_data_triggers_update(self, qapp):
+        """数据 ≥ 间隔-60s 触发更新（消除严格 > 导致的 2× 周期跳过）"""
+        assert _needs_price_update(30 * 60, 30) is True  # 正好 30 分钟（旧实现会跳过）
+        assert _needs_price_update(29 * 60 + 5, 30) is True  # 29:05 分钟
+        assert _needs_price_update(56 * 60, 30) is True  # 用户观察到的 56 分钟
+
+    def test_interval_edge(self, qapp):
+        """其它间隔：容差为 60s"""
+        assert _needs_price_update(10 * 60, 10) is True  # 10 分钟正好到点
+        assert _needs_price_update(9 * 60 + 30, 10) is True  # 9:30
+        assert _needs_price_update(8 * 60, 10) is False  # 8 分钟（容差窗口内）
+
 
 # ══════════════════════════════════════
 #  MainWindow — save_state / restore_state
@@ -130,6 +154,21 @@ class TestMainWindowState:
         window = MainWindow()
         state = window.save_state()
         assert state["version"] == 1
+
+    def test_pin_button_toggles_window_stays_on_top(self, qapp):
+        """置顶按钮切换 → 非 Windows 平台 windowFlags 含 WindowStaysOnTopHint，并持久化"""
+        import os
+
+        if os.name == "nt":
+            return  # Windows 走 SetWindowPos，不设 windowFlags
+        window = MainWindow()
+        assert not window._pin_btn.isChecked()
+        window._pin_btn.setChecked(True)
+        assert window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+        assert window._load_window_pin() is True
+        window._pin_btn.setChecked(False)
+        assert not (window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
+        assert window._load_window_pin() is False
 
     @patch.object(MainWindow, "_register_pages", lambda self: None)
     @patch.object(MainWindow, "_init_price_check", lambda self: None)

@@ -14,6 +14,7 @@ from ui_pyside6.theme import (
 class ActionButtons(QWidget):
     """底部操作按钮组"""
 
+    launch_wizard_requested = Signal()
     refresh_procurement_requested = Signal()
     blueprint_list_requested = Signal()
     materials_summary_requested = Signal()
@@ -33,6 +34,9 @@ class ActionButtons(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(6, 4, 6, 4)
         root.setSpacing(10)
+
+        self._btn_launch_wizard = QPushButton("产线启动小助手")
+        root.addWidget(self._btn_launch_wizard)
 
         self._btn_refresh_procurement = QPushButton("采购小助手")
         root.addWidget(self._btn_refresh_procurement)
@@ -54,6 +58,7 @@ class ActionButtons(QWidget):
     # ── 信号连接 ──────────────────────────────────────────────
 
     def _connect_signals(self):
+        self._btn_launch_wizard.clicked.connect(self.launch_wizard_requested)
         self._btn_refresh_procurement.clicked.connect(self.refresh_procurement_requested)
         self._btn_blueprint_list.clicked.connect(self.blueprint_list_requested)
         self._btn_materials.clicked.connect(self.materials_summary_requested)

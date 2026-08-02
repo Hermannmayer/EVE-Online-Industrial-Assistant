@@ -2,7 +2,7 @@
 仓库页面 — 蓝图管理 Tab
 """
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -39,8 +39,60 @@ from services.inventory_manager import (
     update_blueprints_batch,
 )
 
-from .blueprint_import_worker import _BlueprintImportWorker
+from .blueprint_import_worker import _BlueprintImportWorker, apply_blueprint_diff
 from .inventory_helpers import BlueprintTableModel
+
+
+class _BulkPlanMetricsWorker(QThread):
+    """后台批量计算各组合并后的派生指标（评分较重，避免卡死 UI）。"""
+
+    done = Signal(list)
+
+    def __init__(self, group_items: list[list[dict]], product_name: str, char_name: str, parent=None):
+        super().__init__(parent)
+        self._group_items = group_items
+        self._product_name = product_name
+        self._char_name = char_name
+
+    def run(self):
+        from services import plan_service
+
+        rows = []
+        for bps in self._group_items:
+            parallels = len(bps)
+            d = {
+                "parallels": parallels,
+                "me": bps[0].get("me_level") or 0,
+                "te": bps[0].get("te_level") or 0,
+                "char": self._char_name,
+                "fac": "",
+                "runs": bps[0].get("runs") or 1,
+            }
+            metrics = plan_service.calculate_plan_metrics(
+                {
+                    "product_type_id": bps[0]["product_type_id"],
+                    "product_name": self._product_name,
+                    "runs": d["runs"],
+                    "parallels": parallels,
+                    "me_level": d["me"],
+                    "te_level": d["te"],
+                    "mat_hub": "Jita",
+                    "sell_hub": "Jita",
+                    "char_name": d["char"],
+                    "facility": "",
+                },
+                char_name=self._char_name,
+            )
+            rows.append(
+                {
+                    "type_id": bps[0]["product_type_id"],
+                    "product_name": self._product_name,
+                    "data": d,
+                    "metrics": metrics,
+                    "bp_ids": [b["id"] for b in bps],
+                }
+            )
+        self.done.emit(rows)
 
 
 class BlueprintTab(QWidget):
@@ -50,6 +102,8 @@ class BlueprintTab(QWidget):
         super().__init__()
         self._page = inventory_page
         self.setObjectName("blueprint_tab")
+        # QThread 强引用保活（防局部变量被 GC 导致闪退）
+        self._add_plan_bulk: QThread | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -380,8 +434,71 @@ class BlueprintTab(QWidget):
             self._edit_levels(bp_ids)
         elif action == edit_runs:
             self._edit_runs(bp_ids)
-        elif action in (research, auto_cost, add_plan, add_research):
+        elif action == add_plan:
+            self._on_add_to_plan(selected)
+        elif action in (research, auto_cost, add_research):
             QMessageBox.information(self, "提示", "此功能即将上线")
+
+    def _on_add_to_plan(self, selected: list[dict]):
+        """加入制造业规划：多选蓝图 → 相同(蓝图类型+ME+TE+流程)合并成一行并行 → 后台评分后批量落库绑定。
+
+        整张直接加入，不弹配置对话框：流程/蓝图等级/设施均按蓝图自身属性。
+        """
+        from services import plan_execution, plan_service
+
+        valid = [bp for bp in selected if bp.get("product_type_id")]
+        if not valid:
+            QMessageBox.information(self, "提示", "所选蓝图无产物信息")
+            return
+        # 完全相同（蓝图类型+ME+TE+每张流程）的蓝图合并成一行：parallels=张数, runs=每张流程
+        groups: dict[tuple, list[dict]] = {}
+        for bp in valid:
+            key = (
+                bp.get("blueprint_type_id"),
+                int(bp.get("me_level") or 0),
+                int(bp.get("te_level") or 0),
+                int(bp.get("runs") or 1),
+            )
+            groups.setdefault(key, []).append(bp)
+
+        product_name = valid[0].get("product_name") or valid[0].get("display_name") or "?"
+        char_name = ""
+        try:
+            from services.char_config_resolver import get_character_list
+
+            chars = get_character_list()
+            if chars:
+                char_name = chars[0]
+        except Exception:
+            pass
+
+        # 后台线程批量计算各组合并后的派生指标（评分较重，避免卡死 UI）
+        bulk = _BulkPlanMetricsWorker(
+            list(groups.values()),
+            product_name,
+            char_name,
+            parent=self,
+        )
+        self._add_plan_bulk = bulk  # 强引用保活，防止局部 QThread 被 GC 导致闪退
+
+        def _on_bulk_done(rows: list):
+            # 批量插入 + 批量绑定（一次连接），主线程只做轻量 SQL
+            try:
+                ids = plan_service.insert_plans_batch(rows)
+                bindings = [(pid, r["bp_ids"]) for pid, r in zip(ids, rows, strict=False) if pid and pid > 0]
+                if bindings:
+                    plan_execution.bind_blueprints_many(bindings)
+                QMessageBox.information(
+                    self,
+                    "完成",
+                    f"已加入制造业规划 {len(rows)} 行（{len(valid)} 张蓝图，合并 {len(groups)} 组）",
+                )
+                self._load_blueprints()
+            finally:
+                self._add_plan_bulk = None
+
+        bulk.done.connect(_on_bulk_done)
+        bulk.start()
 
     def _delete_blueprints(self, selected: list[dict]):
         n = len(selected)
@@ -439,29 +556,63 @@ class BlueprintTab(QWidget):
             self._load_blueprints()
 
     def _on_paste_blueprint(self):
+        """粘贴导入蓝图 — 材料式流程：解析 → 预览确认（增量/全量）→ 应用 → 变动汇总。"""
         if not self._page.hangar_id():
             return
         raw = QApplication.clipboard().text().strip()
         if not raw:
+            QMessageBox.warning(self, "提示", "剪贴板为空，请先在游戏中复制蓝图（Ctrl+C）")
             return
 
+        hid = self._page.hangar_id()
+        hangar_name = self._page._hangar_combo.currentText() if hasattr(self._page, "_hangar_combo") else ""
+
+        # 导入前快照（供全量同步差异对比）
+        before_map: dict[tuple, int] = {}
+        for bp in get_blueprints(hid):
+            before_map[(bp["blueprint_type_id"], bp["is_bpo"], bp["me_level"], bp["te_level"], bp["runs"])] = (
+                before_map.get((bp["blueprint_type_id"], bp["is_bpo"], bp["me_level"], bp["te_level"], bp["runs"]), 0)
+                + 1
+            )
+
         main_win = self._page._main
-        main_win.show_progress("正在导入蓝图...", 0)
-        self._worker = _BlueprintImportWorker(raw, self._page.hangar_id())
+        main_win.show_progress("正在解析蓝图...", 0)
+        self._worker = _BlueprintImportWorker(raw, hid)
         self._worker.progress.connect(lambda cur, total, text: main_win.update_progress(cur, text) if total else None)
-        self._worker.finished.connect(self._on_import_done)
+        self._worker.finished.connect(lambda diff: self._on_blueprint_diff_ready(diff, hid, hangar_name, before_map))
         self._worker.start()
 
-    def _on_import_done(self, added: int, removed: int, total: int):
-        self._page._main.hide_progress(f"共 {total} 条蓝图")
-        if added == 0 and removed == 0:
-            self._bp_count_label.setText("蓝图库无变化")
-        else:
-            parts = [f"共 {total} 条"]
-            if added:
-                parts.append(f"新增 {added}")
-            if removed:
-                parts.append(f"删除 {removed}")
-            self._bp_count_label.setText("，".join(parts))
-        self._load_blueprints()
+    def _on_blueprint_diff_ready(self, diff: list[dict], hid: int, hangar_name: str, before_map: dict[tuple, int]):
+        """diff 就绪 → 弹预览对话框 → 确认后应用 → 变动汇总。"""
+        from .blueprint_import_dialog import BlueprintImportChangeDialog, BlueprintImportReviewDialog
+        from .blueprint_import_worker import build_blueprint_changes
+
+        self._page._main.hide_progress(f"共 {len(diff)} 类蓝图")
         self._worker = None
+        if not diff:
+            self._bp_count_label.setText("剪贴板无有效蓝图数据")
+            return
+
+        dlg = BlueprintImportReviewDialog(diff, hangar_name, self, default_mode="full")
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        mode = dlg.mode()
+        applied = dlg.get_applied_rows()
+
+        added, removed = apply_blueprint_diff(applied, hid, mode)
+
+        # 导入后快照 → 变动汇总弹窗
+        after_map: dict[tuple, int] = {}
+        for bp in get_blueprints(hid):
+            after_map[(bp["blueprint_type_id"], bp["is_bpo"], bp["me_level"], bp["te_level"], bp["runs"])] = (
+                after_map.get((bp["blueprint_type_id"], bp["is_bpo"], bp["me_level"], bp["te_level"], bp["runs"]), 0)
+                + 1
+            )
+        names_map = {
+            bp["blueprint_type_id"]: bp["zh_name"] or bp.get("display_name") or f"ID:{bp['blueprint_type_id']}"
+            for bp in get_blueprints(hid)
+        }
+        changes = build_blueprint_changes(before_map, after_map, names_map)
+        BlueprintImportChangeDialog(changes, added, removed, hangar_name or "蓝图", self).exec()
+
+        self._load_blueprints()

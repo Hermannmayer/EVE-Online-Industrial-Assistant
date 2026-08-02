@@ -13,6 +13,8 @@ from services import inventory_manager, plan_execution
 from services.plan_execution import (
     _split_bpc_consumption,
     bind_blueprint,
+    bind_blueprints,
+    bind_blueprints_many,
     cancel_plan,
     check_materials,
     complete_plan,
@@ -21,6 +23,7 @@ from services.plan_execution import (
     expire_overdue_plans,
     find_available_blueprints,
     get_occupied_blueprint_ids,
+    get_plan_blueprints,
     material_requirements,
     release_blueprint,
     remaining_seconds,
@@ -80,6 +83,12 @@ def user_env(temp_db, monkeypatch):
     inventory_manager.init_db()
     with temp_db.connect("user") as conn:
         conn.executescript(_PLAN_SCHEMA)
+        # 多蓝图绑定关联表（schema v7）
+        conn.executescript(
+            "CREATE TABLE IF NOT EXISTS plan_blueprint_bindings ("
+            "plan_id INTEGER NOT NULL, blueprint_id INTEGER NOT NULL, runs_used INTEGER DEFAULT 0, "
+            "PRIMARY KEY (plan_id, blueprint_id))"
+        )
     scoring = MagicMock()
     container = SimpleNamespace(db=temp_db, scoring_service=lambda: scoring)
     monkeypatch.setattr(plan_execution, "_container", lambda: container)
@@ -509,10 +518,35 @@ class TestBlueprintBinding:
         bp_id = _insert_blueprint(user_env.db, 3001, is_bpo=True)
         pid = _insert_plan(user_env.db)
         assert bind_blueprint(pid, bp_id)
-        assert _get_plan(user_env.db, pid)["assigned_blueprint_id"] == bp_id
+        assert get_plan_blueprints(pid) == [bp_id]
         assert get_occupied_blueprint_ids(user_env.db) == {bp_id}
         assert release_blueprint(pid)
         assert get_occupied_blueprint_ids(user_env.db) == set()
+
+    def test_bind_multiple_blueprints(self, user_env):
+        """多蓝图绑定：同计划绑定 3 张 BPC → 关联表 3 行，全部占用"""
+        b1 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        b2 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        b3 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        pid = _insert_plan(user_env.db)
+        assert bind_blueprints(pid, [b1, b2, b3])
+        assert set(get_plan_blueprints(pid)) == {b1, b2, b3}
+        assert get_occupied_blueprint_ids(user_env.db) == {b1, b2, b3}
+        release_blueprint(pid)
+        assert get_occupied_blueprint_ids(user_env.db) == set()
+
+    def test_bind_blueprints_many(self, user_env):
+        """批量绑定多计划：一次调用绑 2 计划 × 各 2 张 BPC"""
+        b1 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        b2 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        b3 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        b4 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        p1 = _insert_plan(user_env.db)
+        p2 = _insert_plan(user_env.db)
+        assert bind_blueprints_many([(p1, [b1, b2]), (p2, [b3, b4])])
+        assert get_occupied_blueprint_ids(user_env.db) == {b1, b2, b3, b4}
+        assert set(get_plan_blueprints(p1)) == {b1, b2}
+        assert set(get_plan_blueprints(p2)) == {b3, b4}
 
     def test_bpc_occupied_by_other_plan_rejected(self, user_env):
         bp_id = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
@@ -638,6 +672,20 @@ class TestCompletePlan:
         assert "跳过入库" in res["message"]
         assert _get_plan(user_env.db, pid)["status"] == "completed"
 
+    def test_deposit_negative_skips(self, user_env):
+        """deposit_hangar_id=-1（「不自动入库」）跳过入库仍完成，不误入库到 -1"""
+        pid = _insert_plan(user_env.db, status="ready", deposit_hangar_id=-1)
+        plan = _get_plan(user_env.db, pid)
+        res = complete_plan(plan)
+        assert res["ok"]
+        assert res["deposited"] == 0
+        assert "跳过入库" in res["message"]
+        assert _get_plan(user_env.db, pid)["status"] == "completed"
+        # 不应创建 hangar_id=-1 的库存
+        with user_env.db.connect("user") as conn:
+            r = conn.execute("SELECT COUNT(*) FROM inventory_items WHERE hangar_id=-1").fetchone()
+        assert r[0] == 0
+
     def test_consumes_bpc_on_complete(self, user_env):
         bp_id = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10, quantity=1)
         pid = _insert_plan(
@@ -698,3 +746,56 @@ class TestCompletePlan:
         assert res["ok"]
         bp = inventory_manager.get_blueprints(1)[0]
         assert bp["runs"] == 6  # 10 - 4 已消耗
+
+
+class TestOutputPerRun:
+    """蓝图单流程产出量"""
+
+    def test_returns_blueprint_quantity(self, user_env):
+        assert plan_execution.output_per_run(2001) == 1
+
+    def test_unknown_type_returns_1(self, user_env):
+        assert plan_execution.output_per_run(999999) == 1
+
+
+class TestCompletePlansCoordinator:
+    """下线协调函数 complete_plans（更新产出机库后逐条完成）"""
+
+    @staticmethod
+    def _patch_container(user_env, monkeypatch):
+        from types import SimpleNamespace
+
+        container = SimpleNamespace(db=user_env.db, scoring_service=lambda: user_env.scoring)
+        monkeypatch.setattr(
+            "ui_pyside6.views.industry.complete_plans_dialog.get_container", lambda: container
+        )
+        return container
+
+    def test_complete_to_hangar(self, user_env, monkeypatch):
+        """下线到指定机库：更新 deposit_hangar_id 并入库"""
+        from ui_pyside6.views.industry.complete_plans_dialog import complete_plans
+
+        self._patch_container(user_env, monkeypatch)
+        pid = _insert_plan(user_env.db, status="ready", runs=2, parallels=1, deposit_hangar_id=None)
+        plan = _get_plan(user_env.db, pid)
+        result = complete_plans([plan], 1)
+        assert result == {"completed": 1, "deposited": 1, "failed": []}
+        db_plan = _get_plan(user_env.db, pid)
+        assert db_plan["status"] == "completed"
+        assert db_plan["deposit_hangar_id"] == 1
+        assert inventory_manager.get_hangar_stock(1)[2001] == 2  # runs×parallels×per_run
+
+    def test_no_auto_deposit(self, user_env, monkeypatch):
+        """hangar_id=-1（不自动入库）→ deposit 置 NULL，仍完成但不入库"""
+        from ui_pyside6.views.industry.complete_plans_dialog import complete_plans
+
+        self._patch_container(user_env, monkeypatch)
+        pid = _insert_plan(user_env.db, status="ready", runs=2, parallels=1, deposit_hangar_id=1)
+        plan = _get_plan(user_env.db, pid)
+        result = complete_plans([plan], -1)
+        assert result["completed"] == 1
+        assert result["deposited"] == 0
+        db_plan = _get_plan(user_env.db, pid)
+        assert db_plan["status"] == "completed"
+        assert db_plan["deposit_hangar_id"] is None
+        assert 2001 not in inventory_manager.get_hangar_stock(1)
