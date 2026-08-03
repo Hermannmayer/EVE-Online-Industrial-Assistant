@@ -752,6 +752,9 @@ class IndustryPage(QWidget):
 
         char_name = self._toolbar.get_char_name()
         ps = self._toolbar.get_price_settings()
+        from services import inventory_manager
+
+        preview_system_id = inventory_manager.get_hangar_system_id(self._toolbar.get_mat_hangar_id())
 
         self._score_worker = ScoreWorker(
             type_id=type_id,
@@ -761,6 +764,7 @@ class IndustryPage(QWidget):
             sell_hub=ps["prod_hub"],
             tax=0.0,
             char_name=char_name,
+            system_id=preview_system_id,
         )
 
         def _on_score(result: dict):

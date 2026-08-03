@@ -113,13 +113,38 @@ def update_hangar_system(hangar_id: int, solar_system_id: int | None) -> bool:
         return c.rowcount > 0
 
 
-def get_hangar_system_id(hangar_id: int | None) -> int | None:
+def get_hangar_system_id(hangar_id: int | None, *, _db: DatabaseManager | None = None) -> int | None:
     """读取机库所在星系的 solar_system_id（无机库/未设置返回 None）。"""
     if not hangar_id:
         return None
-    with db.connect("user") as conn:
+    conn_mgr = _db or db
+    with conn_mgr.connect("user") as conn:
         row = conn.execute("SELECT solar_system_id FROM hangars WHERE id = ?", (hangar_id,)).fetchone()
         return row[0] if row and row[0] is not None else None
+
+
+def get_default_mat_hangar_and_system() -> tuple[int | None, int | None]:
+    """返回 (默认材料机库 id, 其所在星系 id)。settings 未配置/读取失败 → (None, None)。
+
+    供新建计划/加单写路径同时写 mat_hangar_id + solar_system_id 使用。
+    星系查询失败（如 hangars 表未就绪）时降级返回 (机库 id, None)，不抛异常。
+    """
+    from services import user_settings
+
+    try:
+        settings = user_settings.load_settings()
+    except Exception:
+        return None, None
+    hid = settings.get("default_mat_hangar_id")
+    try:
+        return hid, get_hangar_system_id(hid)
+    except Exception:
+        return hid, None
+
+
+def get_default_mat_hangar_system_id() -> int | None:
+    """从 settings.json 默认材料机库带出星系（无计划上下文的 SCI 依据）。"""
+    return get_default_mat_hangar_and_system()[1]
 
 
 def update_hangar_config(
@@ -230,12 +255,13 @@ def get_items(hangar_id: int) -> list[dict]:
             )
         # 名称排序（terminology 覆盖项 SQL 无法排序，Python 端统一排）
         items.sort(key=lambda it: it["display_name"])
-        # 研究成本（拷贝/发明）批量填充 — ref/bp 主库含蓝图表
+        # 研究成本（拷贝/发明）批量填充 — 蓝图表在 blueprint.db；SCI 跟随该机库所在星系
         try:
             from services.research_calculator import research_costs_batch
 
-            with db.connect("ref") as rconn:
-                costs = research_costs_batch(rconn, [it["type_id"] for it in items])
+            sys_id = get_hangar_system_id(hangar_id)
+            with db.connect("bp") as bp_conn:
+                costs = research_costs_batch(bp_conn, [it["type_id"] for it in items], solar_system_id=sys_id)
             for it in items:
                 it["research_cost"] = costs.get(it["type_id"])
         except Exception:

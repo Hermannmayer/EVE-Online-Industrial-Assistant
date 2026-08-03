@@ -227,3 +227,34 @@ class TestGetRigCatalog:
         assert catalog[0]["category_label"] == "装备制造"
         assert catalog[0]["mat_bonus"] == -2.0
         assert catalog[1]["time_bonus"] == -20.0
+
+
+class TestRigCategoryLabel:
+    """改件类别标签必须使用标准术语（terminology 权威）"""
+
+    def test_me_research_standard(self):
+        assert hic.rig_category_label("me_research") == "材料效率研究"
+
+    def test_te_research_standard(self):
+        assert hic.rig_category_label("te_research") == "生产效率研究"
+
+    def test_equipment(self):
+        assert hic.rig_category_label("equipment") == "装备制造"
+
+    def test_unknown_fallback(self):
+        assert hic.rig_category_label("nope") == "nope"
+
+    def test_catalog_me_research_label_from_terminology(self, rig_db, monkeypatch):
+        """get_rig_catalog 对科研改件（组 1844 me_research）类别标签走 terminology"""
+        rows = [(43920, "材料效率I", "Rig", 1844, -2.0, 0.0)]
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.fetchall.return_value = rows
+        cm = MagicMock()
+        cm.__enter__.return_value = mock_conn
+        mock_db = MagicMock()
+        mock_db.connect.return_value = cm
+        monkeypatch.setattr(hic, "db", mock_db)
+
+        catalog = hic.get_rig_catalog("raitaru")
+        assert catalog[0]["category_key"] == "me_research"
+        assert catalog[0]["category_label"] == "材料效率研究"

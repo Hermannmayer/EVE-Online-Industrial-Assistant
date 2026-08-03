@@ -6,9 +6,9 @@ import pytest
 
 from tools.downloaders.getblueprints import (
     CACHE_FILE,
+    CREATE_TABLES_SQL,
     SDE_ZIP_PATH,
     SDE_ZIP_URL,
-    create_tables,
     ensure_cache,
     parse_activities,
     run_blueprint_update,
@@ -16,16 +16,14 @@ from tools.downloaders.getblueprints import (
 
 
 class TestCreateTables:
-    @pytest.mark.asyncio
-    async def test_creates_all_tables(self):
-        mock_conn = AsyncMock()
-        mock_conn.executescript = AsyncMock()
-        await create_tables(mock_conn)
-        mock_conn.executescript.assert_awaited_once()
-        sql = mock_conn.executescript.call_args[0][0]
+    def test_creates_all_tables(self):
+        """建表 SQL 含全部 4 张蓝图表（同步断言，不依赖 pytest-asyncio await 计数）。
+
+        create_tables 的 executescript/commit 调用行为由
+        TestRunBlueprintUpdate.test_full_update_flow 间接覆盖（run_blueprint_update 内部调用）。
+        """
         for tbl in ("blueprint_activities", "blueprint_materials", "blueprint_products", "blueprint_skills"):
-            assert f"CREATE TABLE IF NOT EXISTS {tbl}" in sql
-        mock_conn.commit.assert_awaited_once()
+            assert f"CREATE TABLE IF NOT EXISTS {tbl}" in CREATE_TABLES_SQL
 
 
 class TestEnsureCache:

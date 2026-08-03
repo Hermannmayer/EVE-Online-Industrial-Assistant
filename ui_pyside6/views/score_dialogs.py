@@ -209,6 +209,11 @@ class ScoreW(BaseBatchScoreWorker):
         except Exception:
             self._batch_market = {}
 
+        # SCI 按默认材料机库星系（制造/反应生效；None → 回退吉他，与旧行为一致）
+        from services.inventory_manager import get_default_mat_hangar_system_id
+
+        self._system_id = get_default_mat_hangar_system_id()
+
         for i, item in enumerate(self._items):
             if self.isInterruptionRequested():
                 return
@@ -227,7 +232,7 @@ class ScoreW(BaseBatchScoreWorker):
 
         if self._mfg:
             hub = self._cfg["hub"]
-            k = f"{tid}|mfg|{hub}|{self._cfg['char']}"
+            k = f"{tid}|mfg|{hub}|{self._cfg['char']}|{self._system_id or ''}"
             r = _cache.get(k)
             if not r:
                 r = (
@@ -239,6 +244,7 @@ class ScoreW(BaseBatchScoreWorker):
                         hub,
                         hub,
                         self._cfg.get("tax", 0),
+                        system_id=self._system_id,
                     )
                 )
                 _cache.set(k, r)

@@ -51,6 +51,7 @@ class ScoreWorker(BaseScoreWorker):
         runs: int = 1,
         parent=None,
         char_name: str | None = None,
+        system_id: int | None = None,
     ):
         super().__init__(type_id, char_name=char_name, parent=parent)
         self._bp_me = bp_me
@@ -60,6 +61,7 @@ class ScoreWorker(BaseScoreWorker):
         self._tax = tax
         self._mat_price_type = mat_price_type
         self._runs = runs
+        self._system_id = system_id
 
     def _compute(self) -> dict:
         return (  # type: ignore[no-any-return]
@@ -75,6 +77,7 @@ class ScoreWorker(BaseScoreWorker):
                 facility_tax_pct=self._tax,
                 price_type_mat=self._mat_price_type,
                 price_type_prod="sell",
+                system_id=self._system_id,
             )
         )
 
@@ -204,6 +207,7 @@ class RankWorker(QThread):
         parent=None,
         top_n: int | None = None,
         char_name: str | None = None,
+        system_id: int | None = None,
     ):
         super().__init__(parent)
         self._mat_hub = mat_hub
@@ -215,6 +219,7 @@ class RankWorker(QThread):
         self._db = db
         self._top_n = top_n
         self._char_name = char_name
+        self._system_id = system_id
 
     def run(self):
         import time
@@ -250,6 +255,7 @@ class RankWorker(QThread):
                     facility_tax_pct=self._tax,
                     price_type_mat=self._mat_price_type,
                     price_type_prod="sell",
+                    system_id=self._system_id,
                 )
             )
             if not r.get("status"):

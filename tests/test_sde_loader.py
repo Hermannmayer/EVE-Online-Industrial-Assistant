@@ -10,7 +10,7 @@
 import sqlite3
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 import pytest
@@ -18,6 +18,7 @@ import pytest
 from tools.downloaders.sde_loader import (
     initialize_database,
     write_meta_groups,
+    write_universe,
 )
 
 # ─── Fixtures ─────────────────────────────────────────────
@@ -183,3 +184,68 @@ class TestWriteMetaGroups:
             (12346, 2),
             (12347, None),
         ]
+
+
+# ─── Test: write_universe ─────────────────────────────────
+
+
+class TestWriteUniverse:
+    """write_universe — 以「是否存在非空星系名」为判空，全空名表触发补写"""
+
+    @pytest.mark.asyncio
+    async def test_repairs_when_names_all_empty(self, temp_db_path):
+        """solar_system 表全空名 → 判空不跳过，用 universe 数据补名"""
+        async with aiosqlite.connect(temp_db_path) as db:
+            await db.execute(
+                "CREATE TABLE solar_system (solar_system_id INTEGER PRIMARY KEY,"
+                " solar_system_name TEXT, region_id INTEGER, constellation_id INTEGER, security REAL)"
+            )
+            await db.execute(
+                "INSERT INTO solar_system (solar_system_id, solar_system_name) VALUES (30000142, '')"
+            )
+            await db.commit()
+
+        fake = (
+            [],
+            [],
+            [{"solar_system_id": 30000142, "solar_system_name": "Jita", "security": 0.9}],
+            [],
+        )
+        with (
+            patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path),
+            patch("tools.downloaders.sde_loader.ensure_universe_cache", new=AsyncMock(return_value=fake)),
+        ):
+            await write_universe()
+
+        conn = sqlite3.connect(temp_db_path)
+        name = conn.execute(
+            "SELECT solar_system_name FROM solar_system WHERE solar_system_id=30000142"
+        ).fetchone()[0]
+        conn.close()
+        assert name == "Jita"
+
+    @pytest.mark.asyncio
+    async def test_skips_when_names_present(self, temp_db_path):
+        """solar_system 表已有非空名 → 跳过（不重新解析 universe）"""
+        async with aiosqlite.connect(temp_db_path) as db:
+            await db.execute(
+                "CREATE TABLE solar_system (solar_system_id INTEGER PRIMARY KEY, solar_system_name TEXT, security REAL)"
+            )
+            await db.execute(
+                "INSERT INTO solar_system (solar_system_id, solar_system_name) VALUES (30000142, 'Jita')"
+            )
+            await db.commit()
+
+        with (
+            patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path),
+            patch("tools.downloaders.sde_loader.ensure_universe_cache", new=AsyncMock()) as m,
+        ):
+            await write_universe()
+
+        m.assert_not_awaited()
+        conn = sqlite3.connect(temp_db_path)
+        name = conn.execute(
+            "SELECT solar_system_name FROM solar_system WHERE solar_system_id=30000142"
+        ).fetchone()[0]
+        conn.close()
+        assert name == "Jita"  # 未被覆盖

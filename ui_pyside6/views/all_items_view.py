@@ -979,6 +979,9 @@ class AllItemsDialog(QDialog):
             data = dlg.result_data()
             if not data:
                 return
+            from services import inventory_manager
+
+            mat_hangar_id, solar_system_id = inventory_manager.get_default_mat_hangar_and_system()
             conn = get_container().db.direct_connect("user")
             try:
                 iskph = score.get("isk_per_hour", 0) or score.get("breakdown", {}).get("isk_per_hour", 0)
@@ -987,8 +990,8 @@ class AllItemsDialog(QDialog):
                     "INSERT INTO production_plans "
                     "(product_type_id, product_name, runs, parallels, me_level, te_level, "
                     "mat_hub, sell_hub, facility, char_name, status, "
-                    "profit, margin, score, iskph, material_cost, created_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?)",
+                    "profit, margin, score, iskph, material_cost, created_at, mat_hangar_id, solar_system_id) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?)",
                     (
                         tid,
                         _ctx_name,
@@ -1006,6 +1009,8 @@ class AllItemsDialog(QDialog):
                         iskph,
                         mat_cost,
                         datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+                        mat_hangar_id,
+                        solar_system_id,
                     ),
                 )
                 conn.commit()

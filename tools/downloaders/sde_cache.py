@@ -62,6 +62,17 @@ def _all_cached() -> bool:
     return all(os.path.exists(cache_path(fname)) for fname in YAML_FILES)
 
 
+def _universe_cache_has_names(systems: list) -> bool:
+    """universe JSON 缓存有效性：至少一个星系带非空名。
+
+    旧版缓存（名称全空，写入后污染 solar_system 表）应视为损坏，触发重新解析。
+    """
+    for s in systems:
+        if (s.get("solar_system_name") or "").strip():
+            return True
+    return False
+
+
 async def ensure_sde_cache():
     """确保 SDE zip 中所需的 YAML 文件已缓存到本地
 
@@ -262,19 +273,25 @@ async def ensure_universe_cache():
         try:
             with open(UNIVERSE_CACHE_PATH, encoding="utf-8") as f:
                 data = json.load(f)
-            log.info(
-                f"Universe JSON 缓存已加载: "
-                f"{len(data.get('regions', []))} regions, "
-                f"{len(data.get('constellations', []))} constellations, "
-                f"{len(data.get('systems', []))} systems, "
-                f"{len(data.get('stargates', []))} stargates"
-            )
-            return (
-                data.get("regions", []),
-                data.get("constellations", []),
-                data.get("systems", []),
-                data.get("stargates", []),
-            )
+            systems = data.get("systems", [])
+            if not _universe_cache_has_names(systems):
+                # 旧缓存星系名全空（写入会污染 solar_system 表）→ 丢弃缓存重新解析
+                log.warning("universe 缓存星系名为空，丢弃并重新解析")
+                data = None
+            else:
+                log.info(
+                    f"Universe JSON 缓存已加载: "
+                    f"{len(data.get('regions', []))} regions, "
+                    f"{len(data.get('constellations', []))} constellations, "
+                    f"{len(systems)} systems, "
+                    f"{len(data.get('stargates', []))} stargates"
+                )
+                return (
+                    data.get("regions", []),
+                    data.get("constellations", []),
+                    systems,
+                    data.get("stargates", []),
+                )
         except Exception as e:
             log.warning(f"Universe JSON 缓存读取失败，重新解析: {e}")
 

@@ -112,6 +112,7 @@ class TestScoreWorker:
             facility_tax_pct=0.015,
             price_type_mat="sell",
             price_type_prod="sell",
+            system_id=None,
         )
         assert len(received) == 1
         assert received[0]["status"] == ""

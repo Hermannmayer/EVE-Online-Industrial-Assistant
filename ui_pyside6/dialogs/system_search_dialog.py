@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
+from services.name_resolver import resolve_system_name
+from services.terminology import term
 
 
 class SystemSearchDialog(QDialog):
@@ -36,7 +38,7 @@ class SystemSearchDialog(QDialog):
         layout.setSpacing(6)
 
         self._search = QLineEdit()
-        self._search.setPlaceholderText("输入星系名（如 Jita）...")
+        self._search.setPlaceholderText("输入星系名（如 Jita / 吉他）...")
         self._search.setClearButtonEnabled(True)
         layout.addWidget(self._search)
 
@@ -90,24 +92,34 @@ class SystemSearchDialog(QDialog):
         if not self._data_ready:
             return
         q = self._search.text().strip()
+        self._data = []
         try:
             with get_container().db.connect("ref") as conn:
                 if q:
+                    # 英文 LIKE + 中文名反查（terminology.system_names）合并
+                    zh_ens = term.search_system_names(q)
+                    en_sql = "solar_system_name LIKE ?"
+                    params: list = [f"%{q}%"]
+                    if zh_ens:
+                        placeholders = ",".join("?" * len(zh_ens))
+                        en_sql += f" OR solar_system_name IN ({placeholders})"
+                        params.extend(zh_ens)
                     cur = conn.execute(
-                        "SELECT solar_system_id, solar_system_name, security FROM solar_system "
-                        "WHERE solar_system_name LIKE ? ORDER BY solar_system_name LIMIT 30",
-                        (f"%{q}%",),
+                        "SELECT solar_system_id, solar_system_name, security FROM solar_system"
+                        f" WHERE {en_sql} ORDER BY solar_system_name LIMIT 30",
+                        params,
                     )
                 else:
                     cur = conn.execute(
                         "SELECT solar_system_id, solar_system_name, security FROM solar_system "
                         "ORDER BY solar_system_name LIMIT 30"
                     )
-                rows = cur.fetchall()
+                for sid, _en, sec in cur.fetchall():
+                    display = resolve_system_name(conn, int(sid))
+                    self._data.append((int(sid), display, float(sec or 0)))
         except Exception:
-            rows = []
+            self._data = []
 
-        self._data = [(int(r[0]), r[1], float(r[2] or 0)) for r in rows]
         self._model.removeRows(0, self._model.rowCount())
         for sid, name, sec in self._data:
             self._model.appendRow(

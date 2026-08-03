@@ -98,6 +98,32 @@ class Terminology:
         aliases = self._data.get("skill_aliases", {})
         return cast(str | None, aliases.get(en_name))
 
+    # ── 星系中文名（常用星系对照表） ──
+
+    def system_name(self, en_name: str) -> str | None:
+        """星系中文名（按英文名查表）。未知返回 None，显示层回退英文名。
+
+        对照表仅内置常用星系（见 terminology.json system_names），其余回退英文。
+        """
+        self._ensure()
+        return cast(str | None, self._data.get("system_names", {}).get(en_name))
+
+    def search_system_names(self, keyword: str) -> list[str]:
+        """按中文名关键词反查星系英文名（用于星系搜索对话框中文输入）。"""
+        self._ensure()
+        return [
+            en
+            for en, zh in self._data.get("system_names", {}).items()
+            if keyword in zh
+        ]
+
+    # ── 结构改件类别标签 ──
+
+    def rig_category(self, key: str) -> str | None:
+        """结构改件制造类别标签（me_research→材料效率研究 等）。未知返回 None。"""
+        self._ensure()
+        return cast(str | None, self._data.get("rig_categories", {}).get(key))
+
     # ── 重载 ──
 
     def reload(self) -> None:

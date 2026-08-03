@@ -108,6 +108,10 @@ class ParentDecomposeDialog(QDialog):
 
     def _on_accept(self) -> None:
         gnum = self._target_group_number()
+        from services import inventory_manager
+
+        # 从材料机库带出星系（避免子计划空星系 → 回退吉他 SCI）
+        solar_system_id = inventory_manager.get_hangar_system_id(self._mat_hangar_id)
         conn = get_container().db.direct_connect("user")
         try:
             if self._plan.get("id"):
@@ -132,8 +136,9 @@ class ParentDecomposeDialog(QDialog):
                 else:
                     conn.execute(
                         "INSERT INTO production_plans (product_type_id, product_name, blueprint_type_id, "
-                        "runs, parallels, me_level, te_level, status, group_number, sub_level, mat_hangar_id) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        "runs, parallels, me_level, te_level, status, group_number, sub_level, mat_hangar_id, "
+                        "solar_system_id) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                         (
                             line["product_type_id"],
                             name,
@@ -146,6 +151,7 @@ class ParentDecomposeDialog(QDialog):
                             gnum,
                             line["sub_level"],
                             self._mat_hangar_id,
+                            solar_system_id,
                         ),
                     )
             conn.commit()

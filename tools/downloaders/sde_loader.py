@@ -397,10 +397,12 @@ async def write_stations():
 
 async def write_universe():
     """写入 region + constellation + solar_system + stargate 表"""
-    # 以 solar_system 表为关键表判空（与星系搜索/成本联动判据一致）：
-    # 若此前部分写入导致 region 有数据而 solar_system 空，这里必须重跑补齐。
+    # 以 solar_system 表是否有「非空星系名」为判空（与星系搜索/成本联动判据一致）：
+    # 若此前因空名缓存写入导致名称全空，这里必须重跑补齐（否则 UI 星系显示编号）。
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        c = await db.execute("SELECT COUNT(*) FROM solar_system")
+        c = await db.execute(
+            "SELECT COUNT(*) FROM solar_system WHERE solar_system_name IS NOT NULL AND solar_system_name != ''"
+        )
         if (await c.fetchone())[0] > 0:
             log.info("universe 相关表已就绪，跳过")
             return

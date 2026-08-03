@@ -207,13 +207,13 @@ def test_user_v3_to_v4_adds_execution_columns(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 7  # v3 库会一路补跑到最新 v6
+    assert result["after"] == 8  # v3 库会一路补跑到最新 v8
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     idxs = {r[1] for r in conn.execute("PRAGMA index_list(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 7
+    assert v == 8
     for col in ("assigned_blueprint_id", "mat_hangar_id", "material_short"):
         assert col in cols, f"{col} 列应被 v3→v4 迁移添加"
     assert "idx_prod_plans_assigned_bp" in idxs
@@ -241,7 +241,7 @@ def test_user_v3_to_v4_skips_missing_table(tmp_user_db):
     conn.close()
 
     result = sm.ensure_schema("user")
-    assert result["after"] == 7
+    assert result["after"] == 8
 
 
 # ────────────────────────────────────────────
@@ -257,13 +257,13 @@ def test_user_v4_to_v5_adds_solar_system_columns(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 7
+    assert result["after"] == 8
     conn = sqlite3.connect(str(tmp_user_db))
     h_cols = {r[1] for r in conn.execute("PRAGMA table_info(hangars)")}
     p_cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 7
+    assert v == 8
     assert "solar_system_id" in h_cols, "hangars.solar_system_id 列应被 v4→v5 迁移添加"
     assert "solar_system_id" in p_cols, "production_plans.solar_system_id 列应被 v4→v5 迁移添加"
     assert "facility_cost_mult" in p_cols, "v2→v3 遗漏的 facility_cost_mult 应在 v4→v5 补齐"
@@ -285,7 +285,7 @@ def test_user_v4_to_v5_idempotent(tmp_user_db):
     p_cols = [r[1] for r in conn.execute("PRAGMA table_info(production_plans)")]
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 7
+    assert v == 8
     assert h_cols.count("solar_system_id") == 1
     assert p_cols.count("solar_system_id") == 1
     assert p_cols.count("facility_cost_mult") == 1
@@ -299,7 +299,7 @@ def test_user_v4_to_v5_skips_missing_tables(tmp_user_db):
     conn.close()
 
     result = sm.ensure_schema("user")
-    assert result["after"] == 7
+    assert result["after"] == 8
     assert result["applied"], "应记录 v4→v5 迁移（即便无表可改）"
 
 
@@ -314,12 +314,12 @@ def test_user_v5_to_v6_adds_industry_columns(tmp_user_db):
 
     _create_user_v5(tmp_user_db)
     result = sm.ensure_schema("user")
-    assert result["after"] == 7
+    assert result["after"] == 8
     conn = sqlite3.connect(str(tmp_user_db))
     h_cols = {r[1] for r in conn.execute("PRAGMA table_info(hangars)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 7
+    assert v == 8
     for col in ("facility_type", "facility_tax", "rigs"):
         assert col in h_cols, f"{col} 列应被 v5→v6 迁移添加"
 
@@ -345,5 +345,96 @@ def test_user_v5_to_v6_skips_missing_table(tmp_user_db):
     conn.close()
 
     result = sm.ensure_schema("user")
-    assert result["after"] == 7
+    assert result["after"] == 8
     assert result["applied"], "应记录 v5→v6 迁移（即便无表可改）"
+
+
+# ────────────────────────────────────────────
+#  user v7 → v8：回填空星系计划（从材料机库带出）
+# ────────────────────────────────────────────
+
+
+def _create_user_v7_with_data(db_path):
+    """构造 v7 库：hangars + production_plans（含 solar_system_id/mat_hangar_id）+ 测试数据。"""
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        """
+        CREATE TABLE hangars (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            notes TEXT DEFAULT '',
+            solar_system_id INTEGER DEFAULT NULL,
+            facility_type TEXT DEFAULT NULL,
+            facility_tax REAL DEFAULT NULL,
+            rigs TEXT DEFAULT NULL
+        );
+        CREATE TABLE production_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_type_id INTEGER NOT NULL,
+            product_name TEXT,
+            runs INTEGER DEFAULT 1,
+            parallels INTEGER DEFAULT 1,
+            me_level INTEGER DEFAULT 0,
+            te_level INTEGER DEFAULT 0,
+            mat_hub TEXT DEFAULT 'Jita',
+            sell_hub TEXT DEFAULT 'Jita',
+            facility TEXT DEFAULT '',
+            char_name TEXT DEFAULT '',
+            status TEXT DEFAULT 'pending',
+            profit REAL DEFAULT 0,
+            margin REAL DEFAULT 0,
+            score REAL DEFAULT 0,
+            material_cost REAL DEFAULT 0,
+            created_at TEXT,
+            calculated_time REAL DEFAULT 0,
+            daily_output REAL DEFAULT 0,
+            deposit_hangar_id INTEGER DEFAULT NULL,
+            mat_hangar_id INTEGER DEFAULT NULL,
+            solar_system_id INTEGER DEFAULT NULL,
+            facility_cost_mult REAL DEFAULT 1.0
+        );
+        """
+    )
+    conn.executemany(
+        "INSERT INTO hangars (id, name, solar_system_id) VALUES (?,?,?)",
+        [(1, "矿仓", 30000145), (2, "空仓", None)],
+    )
+    # A: mat_hangar=1(新加达里) 但 solar_system_id=NULL → 应回填 30000145
+    # B: mat_hangar=2(机库无星系) 且 solar=NULL → 保持 NULL
+    # C: solar_system_id 已手动设置 → 不覆盖
+    conn.executemany(
+        "INSERT INTO production_plans (id, product_type_id, product_name, mat_hangar_id, solar_system_id) "
+        "VALUES (?,?,?,?,?)",
+        [(1, 2001, "A", 1, None), (2, 2001, "B", 2, None), (3, 2001, "C", 1, 30000142)],
+    )
+    conn.execute("PRAGMA user_version = 7")
+    conn.commit()
+    conn.close()
+
+
+def test_user_v7_to_v8_backfills_null_system(tmp_user_db):
+    """v7→v8：空星系计划从材料机库带出星系回填；机库无星系保持 NULL；手动覆盖不被覆盖"""
+    _create_user_v7_with_data(tmp_user_db)
+
+    result = sm.ensure_schema("user")
+
+    assert result["after"] == 8
+    assert any("回填" in s for s in result["applied"]), "应执行 v7→v8 回填迁移"
+    conn = sqlite3.connect(str(tmp_user_db))
+    rows = {r[0]: r[1] for r in conn.execute("SELECT id, solar_system_id FROM production_plans ORDER BY id")}
+    v = conn.execute("PRAGMA user_version").fetchone()[0]
+    conn.close()
+    assert v == 8
+    assert rows[1] == 30000145, "空星系计划应从材料机库(新加达里)带出星系"
+    assert rows[2] is None, "材料机库无星系 → 保持 NULL"
+    assert rows[3] == 30000142, "已手动设置的星系不应被覆盖"
+
+
+def test_user_v7_to_v8_idempotent(tmp_user_db):
+    """重复运行不再产生变更（幂等）"""
+    _create_user_v7_with_data(tmp_user_db)
+
+    sm.ensure_schema("user")
+    result2 = sm.ensure_schema("user")
+
+    assert result2["applied"] == []

@@ -55,7 +55,10 @@ class _BulkPlanMetricsWorker(QThread):
         self._char_name = char_name
 
     def run(self):
-        from services import plan_service
+        from services import inventory_manager, plan_service
+
+        # 从默认材料机库带出星系，写入计划（避免空星系 → 回退吉他 SCI）
+        mat_hangar_id, solar_system_id = inventory_manager.get_default_mat_hangar_and_system()
 
         rows = []
         for bps in self._group_items:
@@ -80,6 +83,8 @@ class _BulkPlanMetricsWorker(QThread):
                     "sell_hub": "Jita",
                     "char_name": d["char"],
                     "facility": "",
+                    "mat_hangar_id": mat_hangar_id,
+                    "solar_system_id": solar_system_id,
                 },
                 char_name=self._char_name,
             )
@@ -90,6 +95,8 @@ class _BulkPlanMetricsWorker(QThread):
                     "data": d,
                     "metrics": metrics,
                     "bp_ids": [b["id"] for b in bps],
+                    "mat_hangar_id": mat_hangar_id,
+                    "solar_system_id": solar_system_id,
                 }
             )
         self.done.emit(rows)

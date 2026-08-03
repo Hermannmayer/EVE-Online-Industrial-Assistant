@@ -214,23 +214,27 @@ def get_adjusted_price(
             return float(r[0]) if r else None
 
 
-# 研究成本进程内缓存（type_id → cost|None）— 价格刷新时由 invalidate_cache 一并清空
-_research_cost_cache: dict[int, float | None] = {}
+# 研究成本进程内缓存（(type_id, solar_system_id) → cost|None）— 价格刷新时由 invalidate_cache 一并清空
+_research_cost_cache: dict[tuple[int, int | None], float | None] = {}
 
 
-def _research_cost_cached(_db: DatabaseManager, type_id: int) -> float:
-    """按 type_id 计算研究成本（拷贝/发明），带进程内缓存；失败返回 0。"""
-    if type_id in _research_cost_cache:
-        return _research_cost_cache[type_id] or 0.0
+def _research_cost_cached(_db: DatabaseManager, type_id: int, *, solar_system_id: int | None = None) -> float:
+    """按 type_id + 设施星系计算研究成本（拷贝/发明），带进程内缓存；失败返回 0。
+
+    SCI 按设施星系 solar_system_id 查询；None → research_calculator 内部回落默认科研机库星系。
+    """
+    key = (type_id, solar_system_id)
+    if key in _research_cost_cache:
+        return _research_cost_cache[key] or 0.0
     try:
         from services.research_calculator import research_cost_for_item
 
-        with _db.connect("ref") as conn:
-            cost = research_cost_for_item(conn, type_id)
-        _research_cost_cache[type_id] = cost
+        with _db.connect("bp") as conn:
+            cost = research_cost_for_item(conn, type_id, solar_system_id=solar_system_id)
+        _research_cost_cache[key] = cost
         return cost or 0.0
     except Exception:
-        _research_cost_cache[type_id] = None
+        _research_cost_cache[key] = None
         return 0.0
 
 
@@ -435,7 +439,7 @@ class ScoringService:
 
         统一所有计算路径的参数决议逻辑，确保结果一致。
 
-        参数优先级：显式传入 override > plan_data 字段值 > 默认值。
+        参数优先级：显式传入 override > plan_data 字段值 > 材料机库所在星系 > sell_hub 推断（默认 Jita）。
 
         Args:
             plan_data: 生产计划 dict（至少含 product_type_id, me_level, te_level, runs, parallels）
@@ -476,12 +480,23 @@ class ScoringService:
         resolved_sell_hub = sell_hub or plan_data.get("sell_hub") or "Jita"
         resolved_price_type_mat = price_type_mat or "sell"
         resolved_price_type_prod = price_type_prod or "sell"
-        # 星系：显式 override > plan 字段；None 时由 calc_manufacturing_score 回退到 sell_hub 推断
+        # 星系：显式 override > 计划快照 > 材料机库所在星系 > sell_hub 推断（默认 Jita）
         resolved_system_id = system_id if system_id is not None else plan_data.get("solar_system_id")
 
         from core.container import get_container
 
         svc = get_container().scoring_service()
+        if resolved_system_id is None:
+            # 快照为空时从材料机库带出星系（与下方结构加成解析对称）
+            from services.inventory_manager import get_hangar_system_id
+
+            resolved_system_id = get_hangar_system_id(
+                plan_data.get("mat_hangar_id"), _db=getattr(svc, "_db", None)
+            )
+        # 仍为 None → calc_manufacturing_score 内部按 sell_hub 推断；此处算出实际生效星系供展示
+        effective_system_id = resolved_system_id if resolved_system_id is not None else _hub_to_system_id(
+            resolved_sell_hub
+        )
         # 机库工业配置解析（材料机库决定设施类型/改件/税；用 svc._db 保证测试隔离）
         from services.hangar_industry_config import resolve_hangar_industry_config
         from services.manufacturing_calculator import FACILITY_TAX_NPC
@@ -556,6 +571,7 @@ class ScoringService:
             "structure_time_mod": round(structure_time_mod, 4),
             "structure_cost_mult": round(structure_cost_mult, 4),
             "facility_tax_pct": round(fac_tax, 3),
+            "solar_system_id": effective_system_id,
             "status": per_run.get("status", ""),
             "breakdown": per_run.get("breakdown", {}),
         }
@@ -790,7 +806,7 @@ class ScoringService:
             result["fees_per_run"] = installation_fee + broker_init + broker_relist + sales_tax
 
             # 研究成本（拷贝/发明）— T1 拷贝、T2/T3 发明，计入总成本（模块级缓存避免重复查）
-            research_cost = _research_cost_cached(self._db, type_id)
+            research_cost = _research_cost_cached(self._db, type_id, solar_system_id=system_id)
             total_cost += research_cost
 
             profit = revenue - total_cost

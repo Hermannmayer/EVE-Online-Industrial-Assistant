@@ -31,12 +31,12 @@ import ui_pyside6.theme as theme
 from core.container import get_container
 from services import inventory_manager, user_settings
 from services.hangar_industry_config import (
-    RIG_CATEGORY_LABELS,
     STRUCTURE_BASE,
     get_rig_catalog,
     resolve_hangar_industry_config,
     validate_rig_set,
 )
+from services.name_resolver import resolve_system_name, resolve_system_names_batch
 
 _DEFAULT_HANGAR_KEYS = [
     ("default_research_hangar_id", "科研机库"),
@@ -47,16 +47,12 @@ _DEFAULT_HANGAR_KEYS = [
 
 
 def _system_name(solar_system_id: int | None) -> str:
-    """查询星系名称（机库列表/配置面板显示）。"""
+    """查询星系显示名（中文 (英文)，机库列表/配置面板显示）。"""
     if not solar_system_id:
         return ""
     try:
         with get_container().db.connect("ref") as conn:
-            row = conn.execute(
-                "SELECT solar_system_name FROM solar_system WHERE solar_system_id=?",
-                (solar_system_id,),
-            ).fetchone()
-            return row[0] if row else ""
+            return resolve_system_name(conn, solar_system_id)
     except Exception:
         return ""
 
@@ -187,7 +183,7 @@ class _HangarEditor(QWidget):
         for item in catalog:
             grouped.setdefault(item["category_key"], []).append(item)
         for cat_key, items in grouped.items():
-            group = QGroupBox(RIG_CATEGORY_LABELS.get(cat_key, cat_key))
+            group = QGroupBox(items[0]["category_label"] if items else cat_key)
             gl = QVBoxLayout(group)
             gl.setContentsMargins(8, 4, 8, 4)
             for item in items:
@@ -388,13 +384,7 @@ class HangarSettingsDialog(QDialog):
             return {}
         try:
             with get_container().db.connect("ref") as conn:
-                placeholders = ",".join("?" * len(solar_system_ids))
-                rows = conn.execute(
-                    f"SELECT solar_system_id, solar_system_name FROM solar_system"
-                    f" WHERE solar_system_id IN ({placeholders})",
-                    solar_system_ids,
-                ).fetchall()
-                return {int(r[0]): r[1] for r in rows}
+                return resolve_system_names_batch(conn, solar_system_ids)
         except Exception:
             return {}
 

@@ -19,7 +19,7 @@ from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
-    "user": 7,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表
+    "user": 8,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）
     "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
 }
 
@@ -197,6 +197,36 @@ def _migrate_user_v6_to_v7(db_path: str) -> str:
         conn.close()
 
 
+def _migrate_user_v7_to_v8(db_path: str) -> str:
+    """v7→v8: 回填 production_plans 空星系快照（从材料机库带出）。
+
+    修复成本核算用错星系（空快照 → 回退 sell_hub=吉他 SCI）的历史数据：
+    只填补 solar_system_id 为空且有材料机库的计划；机库无星系/未绑定 → 保持 NULL。
+    幂等：只 UPDATE 为 NULL 的行，重复运行不产生变化。
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        if not _table_exists(conn, "production_plans") or not _table_exists(conn, "hangars"):
+            return "production_plans/hangars 表不存在，跳过"
+        cur = conn.execute(
+            """
+            UPDATE production_plans
+            SET solar_system_id = (
+                SELECT solar_system_id FROM hangars WHERE hangars.id = production_plans.mat_hangar_id
+            )
+            WHERE solar_system_id IS NULL AND mat_hangar_id IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM hangars
+                  WHERE hangars.id = production_plans.mat_hangar_id AND solar_system_id IS NOT NULL
+              )
+            """
+        )
+        conn.commit()
+        return f"回填 {cur.rowcount} 条空星系计划"
+    finally:
+        conn.close()
+
+
 def _migrate_bp_v1_to_v2(db_path: str) -> str:
     """v1→v2: blueprint_materials 新增 wastefactor 列"""
     conn = sqlite3.connect(db_path)
@@ -228,6 +258,7 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
         4: _migrate_user_v4_to_v5,
         5: _migrate_user_v5_to_v6,
         6: _migrate_user_v6_to_v7,
+        7: _migrate_user_v7_to_v8,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,
