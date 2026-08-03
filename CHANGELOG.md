@@ -6,6 +6,14 @@
 
 <!-- version list -->
 
+## v0.13.1 (2026-08-03)
+
+### Bug Fixes
+
+- 制造成本 SCI 按材料机库星系核算，修复空星系回退吉他
+  ([`decba62`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/decba62c59568df3b69c86564b6722aa900992b6))
+
+
 ## v0.13.0 (2026-08-02)
 
 ### Features
