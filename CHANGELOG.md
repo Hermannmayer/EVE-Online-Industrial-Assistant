@@ -6,6 +6,14 @@
 
 <!-- version list -->
 
+## v0.14.0 (2026-08-03)
+
+### Features
+
+- 生产规划增强 — 智能调整多行、统计行新统计、流程列改序、自动勾选备料、删除级联子项并释放蓝图、待采购排除子项自制件、母项成本按子项制造价计个人利润、子项并行流程自动生成
+  ([`b72c11c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b72c11c1d13b5422e0c2b44b89210232ab752030))
+
+
 ## v0.13.1 (2026-08-03)
 
 ### Bug Fixes
