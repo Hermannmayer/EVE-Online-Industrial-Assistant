@@ -1,9 +1,9 @@
-"""子项并行配置弹窗 — 设置每个子项的并行产线数与每条流程
+"""子项并行配置弹窗 — 只设置并行产线数，每条流程自动生成
 
-校验：runs × parallels × 单流程产出 ≥ 母项需求（不足则红字并禁用确定）。
-保存：逐条 UPDATE production_plans 的 runs/parallels。
+用户只需调整「并行产线数」；「每条流程」自动按 需求 /（并行×单流程产出）向上取整生成，
+总产出（并行×流程×单流程产出）≥ 母项需求，无需手动核算。
+保存：逐条 UPDATE production_plans 的 parallels/runs。
 """
-
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
@@ -56,26 +56,27 @@ class ChildParallelDialog(QDialog):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
-        tip = QLabel("设置每个子项的并行产线数与每条流程。总产出（runs×并行×单流程产出）须 ≥ 母项需求。")
+        tip = QLabel(
+            "只需设置每个子项的「并行产线数」；「每条流程」自动生成以覆盖母项需求，"
+            "总产出（并行×流程×单流程产出）会实时显示。"
+        )
         tip.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
         tip.setWordWrap(True)
         layout.addWidget(tip)
 
         self._table = QTableWidget(len(self._plans), 6)
-        self._table.setHorizontalHeaderLabels(
-            ["子项", "母项需求", "当前产出", "并行产线数", "每条流程", "校验"]
-        )
+        self._table.setHorizontalHeaderLabels(["子项", "母项需求", "总产出", "并行产线数", "每条流程(自动)", "校验"])
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setVisible(False)
-        self._spins: list[tuple[QSpinBox, QSpinBox, QTableWidgetItem, QTableWidgetItem, dict]] = []
+        self._rows: list[tuple[QSpinBox, QTableWidgetItem, QTableWidgetItem, QTableWidgetItem, dict]] = []
         for row, p in enumerate(self._plans):
             pid = p["product_type_id"]
             name = self._resolve_name(pid)
             demand = self._demand.get(pid, 0)
-            runs = int(p.get("runs") or 1)
             parallels = int(p.get("parallels") or 1)
             per_run = self._output_per_run.get(pid, 1)
-            output = runs * parallels * per_run
+            runs = self._compute_runs(parallels, per_run, demand)
+            output = parallels * runs * per_run
             duration = self._durations.get(pid, "")
 
             name_item = QTableWidgetItem(name + (f"\n时长 {duration}" if duration else ""))
@@ -93,18 +94,15 @@ class ChildParallelDialog(QDialog):
             par_spin.setValue(parallels)
             self._table.setCellWidget(row, _COL_PAR, self._centered(par_spin))
 
-            runs_spin = QSpinBox()
-            runs_spin.setRange(1, 2_000_000_000)
-            runs_spin.setValue(runs)
-            self._table.setCellWidget(row, _COL_RUNS, self._centered(runs_spin))
+            runs_item = self._right_item(f"{runs:,}")  # 只读，自动生成
+            self._table.setItem(row, _COL_RUNS, runs_item)
 
             check_item = QTableWidgetItem("")
             check_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(row, _COL_CHECK, check_item)
 
-            self._spins.append((par_spin, runs_spin, check_item, output_item, p))
-            par_spin.valueChanged.connect(self._validate_row)
-            runs_spin.valueChanged.connect(self._validate_row)
+            self._rows.append((par_spin, runs_item, check_item, output_item, p))
+            par_spin.valueChanged.connect(self._on_parallels_changed)
 
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -164,16 +162,40 @@ class ChildParallelDialog(QDialog):
 
     # ── 校验 ──
 
+    @staticmethod
+    def _compute_runs(parallels: int, per_run: int, demand: int) -> int:
+        """自动生成每条流程数：向上取整覆盖母项需求，至少 1。"""
+        if demand <= 0:
+            return 1
+        per = max(per_run, 1) * max(parallels, 1)
+        return max(1, -(-demand // per))  # ceil(demand / per)
+
+    def _current_runs(self, idx: int) -> int:
+        """从只读 runs 单元格读取当前自动生成的流程数。"""
+        runs_item = self._rows[idx][1]
+        return int(runs_item.text().replace(",", "") or 0)
+
+    def _on_parallels_changed(self) -> None:
+        """并行产线数变化 → 逐行重新自动生成每条流程，再校验。"""
+        for _idx, (par, runs_item, _chk, _out, p) in enumerate(self._rows):
+            pid = p["product_type_id"]
+            per_run = self._output_per_run.get(pid, 1)
+            demand = self._demand.get(pid, 0)
+            runs = self._compute_runs(par.value(), per_run, demand)
+            runs_item.setText(f"{runs:,}")
+        self._validate_row()
+
     def _validate_all(self) -> None:
         self._validate_row()
 
     def _validate_row(self) -> None:
         ok = True
-        for _idx, (par, runs, check_item, output_item, p) in enumerate(self._spins):
+        for idx, (par, _runs_item, check_item, output_item, p) in enumerate(self._rows):
             pid = p["product_type_id"]
             per_run = self._output_per_run.get(pid, 1)
             demand = self._demand.get(pid, 0)
-            total = par.value() * runs.value() * per_run
+            runs = self._current_runs(idx)
+            total = par.value() * runs * per_run
             output_item.setText(f"{total:,}")
             if demand and total < demand:
                 check_item.setText(f"不足（还差 {demand - total:,}）")
@@ -187,15 +209,16 @@ class ChildParallelDialog(QDialog):
     def _on_accept(self) -> None:
         conn = get_container().db.direct_connect("user")
         try:
-            for par, runs, _chk, _out, p in self._spins:
+            for idx, (par, _runs_item, _chk, _out, p) in enumerate(self._rows):
+                runs = self._current_runs(idx)
                 conn.execute(
                     "UPDATE production_plans SET parallels=?, runs=? WHERE id=?",
-                    (par.value(), runs.value(), p["id"]),
+                    (par.value(), runs, p["id"]),
                 )
                 p["parallels"] = par.value()
-                p["runs"] = runs.value()
+                p["runs"] = runs
             conn.commit()
         finally:
             conn.close()
-        QMessageBox.information(self, "完成", f"已更新 {len(self._spins)} 个子项的并行配置")
+        QMessageBox.information(self, "完成", f"已更新 {len(self._rows)} 个子项的并行配置")
         self.accept()

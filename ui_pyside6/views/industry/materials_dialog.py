@@ -27,7 +27,6 @@ import ui_pyside6.theme as theme
 from core.container import get_container
 from services.plan_aggregator import (
     check_inventory,
-    expand_material_requirements,
     get_market_prices,
 )
 
@@ -106,12 +105,12 @@ class MaterialsSummaryDialog(QDialog):
         self._data_rows: list[dict] = []  # 存储行数据供"一键复制"使用
 
         with get_container().db.connect("user", "ref", "bp", "mkt") as conn:
-            # 1) 活跃计划
-            active_plans = conn.execute(
-                "SELECT product_type_id, runs, parallels, me_level "
+            # 1) 活跃计划（含 group/sub_level，用于识别子项自制件）
+            active_rows = conn.execute(
+                "SELECT product_type_id, runs, parallels, me_level, group_number, sub_level "
                 "FROM production_plans WHERE status IN ('pending','in_progress','running','ready')"
             ).fetchall()
-            if not active_plans:
+            if not active_rows:
                 self._status_label.setText("没有活跃计划")
                 return
 
@@ -121,12 +120,16 @@ class MaterialsSummaryDialog(QDialog):
                     "runs": r[1],
                     "parallels": r[2],
                     "me_level": r[3],
+                    "group_id": r[4],
+                    "child_level": r[5],
                 }
-                for r in active_plans
+                for r in active_rows
             ]
 
-            # 2) 展开 BOM 到叶子节点
-            materials = expand_material_requirements(conn, plans)
+            # 2) 直接材料（排除子项自制件；未拆解组件/子线被删 → 回到待采购）
+            from services.plan_aggregator import collect_direct_materials
+
+            materials = collect_direct_materials(conn, plans)
             if not materials:
                 self._status_label.setText("没有材料需求")
                 return

@@ -54,7 +54,7 @@ class TestCompletePlansDialog:
         assert dlg.selected_hangar_id() == 2
         assert dlg._table.rowCount() == 1
         assert dlg._table.item(0, 0).text() == "渡鸦级"
-        assert dlg._table.item(0, 1).text() == "2X3"
+        assert dlg._table.item(0, 1).text() == "3X2"
         assert dlg._table.item(0, 2).text() == "6"  # 产出量
 
     def test_default_fallback_first_hangar(self, qapp, monkeypatch):

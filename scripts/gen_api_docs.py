@@ -87,7 +87,7 @@ def _parse_class(node: ast.ClassDef) -> Class:
     bases = ", ".join(ast.unparse(b) for b in node.bases) if node.bases else ""
     methods: list[Func] = []
     for item in node.body:
-        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
             kind = "async def" if isinstance(item, ast.AsyncFunctionDef) else "def"
             methods.append(_parse_func(item, kind))
     return Class(
@@ -104,7 +104,7 @@ def _parse_module(path: Path, rel: Path) -> Module:
     funcs: list[Func] = []
     classes: list[Class] = []
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             kind = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
             funcs.append(_parse_func(node, kind))
         elif isinstance(node, ast.ClassDef):

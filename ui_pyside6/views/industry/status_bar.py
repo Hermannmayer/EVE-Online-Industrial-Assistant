@@ -35,7 +35,7 @@ class StatusBar(QWidget):
         root.setSpacing(12)
 
         # 左侧：统计
-        self._stats_label = QLabel("计划总数: 0 | 运行中: 0 | 待排: 0")
+        self._stats_label = QLabel("计划总数: 0 | 运行中: 0 | 待排: 0 | 产线(备料): 0")
         root.addWidget(self._stats_label)
 
         # 全部下线（有待下线计划时显示）
@@ -47,7 +47,7 @@ class StatusBar(QWidget):
         root.addStretch(1)
 
         # 右侧：采购汇总
-        self._material_label = QLabel("采购总额: 0.00 ISK | 体积: 0 m3")
+        self._material_label = QLabel("备料中采购: 0 ISK | 体积: 0.0 m3")
         root.addWidget(self._material_label)
 
         self._btn_save_price = QPushButton("保存价格")
@@ -65,10 +65,11 @@ class StatusBar(QWidget):
         """从 plans 计算统计信息并刷新标签；有待下线计划时显示「全部下线」按钮"""
         self._last_plans = plans
         total = len(plans)
-        running = sum(1 for p in plans if p.get("status") == "running")
+        running = sum(1 for p in plans if p.get("status") in ("in_progress", "running"))
         pending = sum(1 for p in plans if p.get("status") == "pending")
         ready = sum(1 for p in plans if p.get("status") == "ready")
-        self._stats_label.setText(f"计划总数: {total} | 运行中: {running} | 待排: {pending}")
+        mats_lines = sum(int(p.get("parallels") or 0) for p in plans if p.get("materials_ready", 0))
+        self._stats_label.setText(f"计划总数: {total} | 运行中: {running} | 待排: {pending} | 产线(备料): {mats_lines}")
         if ready:
             self._btn_complete_all.setText(f"全部下线 ({ready})")
             self._btn_complete_all.setVisible(True)
@@ -76,8 +77,8 @@ class StatusBar(QWidget):
             self._btn_complete_all.setVisible(False)
 
     def update_material(self, total_cost: float, volume: float):
-        """更新采购总额与体积"""
-        self._material_label.setText(f"采购总额: {total_cost:,.2f} ISK | 体积: {volume:,.1f} m3")
+        """更新备料中采购总额与体积"""
+        self._material_label.setText(f"备料中采购: {total_cost:,.0f} ISK | 体积: {volume:,.1f} m3")
 
     def show_message(self, text: str, timeout: int = 0):
         """显示临时消息（可选自动清除，恢复最近统计与按钮状态）"""

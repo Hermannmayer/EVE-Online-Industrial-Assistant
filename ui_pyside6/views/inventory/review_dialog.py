@@ -482,7 +482,7 @@ class ImportReviewDialog(QDialog):
             self._filter_no_change()
         elif match_action is not None and action == match_action:
             self._search_match(rows[0])
-        elif isinstance(action, (QAction,)) and action.data():
+        elif isinstance(action, QAction) and action.data():
             self._add_from_hangar(action.data())
 
     def _batch_set_price(self, row: int, price_type: str):
@@ -668,7 +668,9 @@ class ImportReviewDialog(QDialog):
             QMessageBox.warning(self, "提示", "没有勾选的物品，无法导入")
             return
         if unmatched:
-            QMessageBox.information(self, "提示", f"{unmatched} 行未匹配物品未指定 type_id，导入时将跳过（可右键搜索匹配）")
+            QMessageBox.information(
+                self, "提示", f"{unmatched} 行未匹配物品未指定 type_id，导入时将跳过（可右键搜索匹配）"
+            )
         self.accept()
 
     def get_import_data(self) -> list[tuple[int, int, float, int | None]]:

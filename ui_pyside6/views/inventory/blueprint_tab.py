@@ -55,8 +55,15 @@ class _BulkPlanMetricsWorker(QThread):
         self._char_name = char_name
 
     def run(self):
-        from services import inventory_manager, plan_service
+        from services import inventory_manager, plan_service, user_settings
 
+        # 价格来源设置（材料/成品 hub）替代硬编码 "Jita"，与单条添加流程口径一致
+        settings = user_settings.load_settings()
+        price_settings = settings.get("price_settings") or {}
+        mat_hub = price_settings.get("mat_hub", "Jita")
+        sell_hub = price_settings.get("prod_hub", "Jita")
+        # 产出机库默认（机库设置里配置）→ 写入计划，下线时自动入库
+        deposit_hangar_id = settings.get("default_deposit_hangar_id")
         # 从默认材料机库带出星系，写入计划（避免空星系 → 回退吉他 SCI）
         mat_hangar_id, solar_system_id = inventory_manager.get_default_mat_hangar_and_system()
 
@@ -79,8 +86,8 @@ class _BulkPlanMetricsWorker(QThread):
                     "parallels": parallels,
                     "me_level": d["me"],
                     "te_level": d["te"],
-                    "mat_hub": "Jita",
-                    "sell_hub": "Jita",
+                    "mat_hub": mat_hub,
+                    "sell_hub": sell_hub,
                     "char_name": d["char"],
                     "facility": "",
                     "mat_hangar_id": mat_hangar_id,
@@ -97,6 +104,9 @@ class _BulkPlanMetricsWorker(QThread):
                     "bp_ids": [b["id"] for b in bps],
                     "mat_hangar_id": mat_hangar_id,
                     "solar_system_id": solar_system_id,
+                    "deposit_hangar_id": deposit_hangar_id,
+                    "mat_hub": mat_hub,
+                    "sell_hub": sell_hub,
                 }
             )
         self.done.emit(rows)

@@ -176,7 +176,7 @@ class PriceChartDialog(QDialog):
         self._chart.setPlotAreaBackgroundVisible(True)
 
         for axis in self._chart.axes():
-            if isinstance(axis, (QDateTimeAxis, QValueAxis)):
+            if isinstance(axis, QDateTimeAxis | QValueAxis):
                 axis.setLabelsColor(QColor(theme.TEXT_PRIMARY))
                 axis.setTitleBrush(QColor(theme.TEXT_SECONDARY))
                 axis.setGridLineColor(QColor(theme.BORDER))

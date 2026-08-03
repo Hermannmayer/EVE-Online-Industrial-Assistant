@@ -542,3 +542,181 @@ def _format_overflow(details: list[dict]) -> str:
     if len(details) > 3:
         parts.append(f"…等{len(details)}项")
     return ", ".join(parts)
+
+
+# ════════════════════════════════════════════════════════════════
+#  7. 备料采购聚合（新加入产线自动勾选 → 待采购金额/体积）
+# ════════════════════════════════════════════════════════════════
+
+
+def _pick_price(price_map: dict[str, float], price_type: str) -> float:
+    """按价格类型取价；缺省回退另一个来源，均无数据返回 0.0"""
+    if price_type == "buy":
+        val = price_map.get("buy", 0.0) or 0.0
+        return val if val else price_map.get("sell", 0.0) or 0.0
+    val = price_map.get("sell", 0.0) or 0.0
+    return val if val else price_map.get("buy", 0.0) or 0.0
+
+
+def aggregate_procurement(
+    conn,
+    plans: list[dict],
+    *,
+    hangar_id: int | None = None,
+    default_hangar_id: int | None = None,
+    region_id: int = 10000002,
+    price_type: str = "sell",
+) -> tuple[list[dict], float, float]:
+    """聚合「备料中」计划的待采购材料并扣库存 → (rows, total_cost, total_volume)。
+
+    Args:
+        conn: 已 ATTACH user/ref/bp/mkt 的数据库连接
+        plans: 计划列表（需含 product_type_id / runs / parallels / me_level）
+        hangar_id: 非 None 时全部需求统一扣该机库库存（采购弹窗模式）；
+                   None 时按各计划 mat_hangar_id 分组各自扣减（统计条模式），
+                   计划无 mat_hangar_id 用 default_hangar_id 兜底
+        default_hangar_id: 统计条模式下无 mat_hangar_id 计划的后备机库
+        region_id: 市场价 region_id
+        price_type: "sell" / "buy"
+
+    Returns:
+        (rows, total_cost, total_volume)
+        rows: [{type_id, name, need, owned, to_buy, price, total, volume}]
+    """
+    # 1. 每个计划取直接材料；由子项产线自制的组件排除（其原材料由子线计划计入）。
+    #    未拆解的组件 / 子线被删后 → 回到待采购。
+    sub_prod_ids = {
+        p.get("product_type_id")
+        for p in plans
+        if p.get("product_type_id") and int(p.get("child_level") or p.get("sub_level") or 0) > 0
+    }
+    group_need: dict[int | None, dict[int, float]] = {}
+    names: dict[int, str] = {}
+    volumes: dict[int, float] = {}
+    for plan in plans:
+        pid = plan.get("product_type_id")
+        if not pid:
+            continue
+        total_runs = max(int(plan.get("runs") or 1), 1) * max(int(plan.get("parallels") or 1), 1)
+        me = int(plan.get("me_level") or 0)
+        bp = conn.execute(
+            "SELECT blueprint_type_id FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
+            (pid,),
+        ).fetchone()
+        if not bp:
+            continue
+        mats = conn.execute(
+            "SELECT material_type_id, quantity, COALESCE(wastefactor,10) FROM blueprint_materials "
+            "WHERE blueprint_type_id=? AND activity='manufacturing'",
+            (bp[0],),
+        ).fetchall()
+        gid = hangar_id if hangar_id is not None else (plan.get("mat_hangar_id") or default_hangar_id)
+        bucket = group_need.setdefault(gid, {})
+        for mid, qty, wf in mats:
+            if mid in sub_prod_ids:
+                continue  # 自制组件：由子项产线覆盖，买其原材料（子线计划已计入）
+            need = calc_material_for_runs(qty, wf, me, total_runs)
+            bucket[mid] = bucket.get(mid, 0.0) + float(need)
+            if mid not in names:
+                names[mid] = _resolve_name(conn, mid)
+            if mid not in volumes:
+                v = conn.execute("SELECT volume FROM item WHERE type_id=?", (mid,)).fetchone()
+                volumes[mid] = float(v[0]) if v and v[0] else 0.0
+
+    # 2. 每个出现过的机库各查一次库存（同机库跨计划合并后统一扣减）
+    inv_by_hangar: dict[int | None, dict[int, float]] = {}
+    for gid in group_need:
+        if gid is None:
+            continue
+        rows = conn.execute(
+            "SELECT type_id, SUM(quantity) FROM inventory_items WHERE hangar_id = ? GROUP BY type_id",
+            (gid,),
+        ).fetchall()
+        inv_by_hangar[gid] = {r[0]: r[1] or 0 for r in rows}
+
+    # 3. 跨计划合并 need / owned / to_buy
+    need_map: dict[int, float] = {}
+    owned_map: dict[int, float] = {}
+    to_buy_map: dict[int, float] = {}
+    for gid, bucket in group_need.items():
+        inv = inv_by_hangar.get(gid, {})
+        for tid, need_amt in bucket.items():
+            owned = inv.get(tid, 0)
+            to_buy = max(0, need_amt - owned)
+            need_map[tid] = need_map.get(tid, 0.0) + need_amt
+            owned_map[tid] = owned_map.get(tid, 0.0) + owned
+            to_buy_map[tid] = to_buy_map.get(tid, 0.0) + to_buy
+
+    # 4. 批量市场价
+    prices = get_market_prices(conn, set(to_buy_map), region_id=region_id)
+
+    # 5. 组装 rows + 汇总
+    rows_out: list[dict] = []
+    total_cost = 0.0
+    total_volume = 0.0
+    for tid in sorted(to_buy_map):
+        to_buy = to_buy_map[tid]
+        price = _pick_price(prices.get(tid, {}), price_type)
+        subtotal = to_buy * price
+        vol = to_buy * volumes.get(tid, 0.0)
+        rows_out.append(
+            {
+                "type_id": tid,
+                "name": names.get(tid, str(tid)),
+                "need": need_map[tid],
+                "owned": owned_map[tid],
+                "to_buy": to_buy,
+                "price": price,
+                "total": subtotal,
+                "volume": vol,
+            }
+        )
+        total_cost += subtotal
+        total_volume += vol
+    return rows_out, total_cost, total_volume
+
+
+def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]:
+    """聚合各计划的直接材料（recipe 一层，非递归），排除由子项产线自制的组件。
+
+    母项拆解后：有子线的组件改为买其原材料（子线计划已计入），未拆解的组件直接采购；
+    子线被删后组件回到待采购。返回格式对齐 expand_material_requirements：
+    {type_id: {"name", "total_qty", "volume"}}
+    """
+    sub_prod_ids = {
+        p.get("product_type_id")
+        for p in plans
+        if p.get("product_type_id") and int(p.get("child_level") or p.get("sub_level") or 0) > 0
+    }
+    result: dict[int, dict] = {}
+    for plan in plans:
+        pid = plan.get("product_type_id")
+        if not pid:
+            continue
+        total_runs = max(int(plan.get("runs") or 1), 1) * max(int(plan.get("parallels") or 1), 1)
+        me = int(plan.get("me_level") or 0)
+        bp = conn.execute(
+            "SELECT blueprint_type_id FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
+            (pid,),
+        ).fetchone()
+        if not bp:
+            continue
+        mats = conn.execute(
+            "SELECT material_type_id, quantity, COALESCE(wastefactor,10) FROM blueprint_materials "
+            "WHERE blueprint_type_id=? AND activity='manufacturing'",
+            (bp[0],),
+        ).fetchall()
+        for mid, qty, wf in mats:
+            if mid in sub_prod_ids:
+                continue  # 自制组件：由子项产线覆盖，买其原材料（子线计划已计入）
+            need = calc_material_for_runs(qty, wf, me, total_runs)
+            if mid in result:
+                result[mid]["total_qty"] += need
+            else:
+                v = conn.execute("SELECT volume FROM item WHERE type_id=?", (mid,)).fetchone()
+                result[mid] = {
+                    "name": _resolve_name(conn, mid),
+                    "total_qty": float(need),
+                    "volume": float(v[0]) if v and v[0] else 0.0,
+                }
+    return result

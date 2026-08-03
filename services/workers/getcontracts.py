@@ -26,7 +26,7 @@ from core.paths import market_db_path, progress_file
 DATABASE_PATH = market_db_path()
 ESI_BASE_URL = "https://esi.evetech.net/latest"
 
-TRADE_REGIONS = [(name, rid) for name, rid in TRADE_HUB_IDS.items()]
+TRADE_REGIONS = list(TRADE_HUB_IDS.items())
 
 # 合同类型映射
 CONTRACT_TYPE_MAP = {

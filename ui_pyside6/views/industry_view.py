@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
+from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.logger import log
 from ui_pyside6.views.char_settings_view import load_all_data
@@ -34,7 +35,7 @@ from ui_pyside6.views.industry import (
 )
 from ui_pyside6.views.industry.complete_plans_dialog import CompletePlansDialog, complete_plans
 from ui_pyside6.views.manufacturable_items_dialog import ManufacturableItemsDialog
-from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker
+from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker, ProcurementSummaryWorker
 
 # ── 工业数据后台补拉 ──
 
@@ -296,6 +297,9 @@ class IndustryPage(QWidget):
         init_plan_db()
         self.setObjectName("industry_page")
         self._recalc_worker = None
+        self._proc_worker: QThread | None = None
+        self._proc_fp: tuple | None = None
+        self._proc_result: tuple[float, float] | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -498,12 +502,67 @@ class IndustryPage(QWidget):
             model.set_plans(rows)
 
         self._status_bar.update_stats(rows)
+        self._refresh_procurement_summary(rows)
         self._plan_count.setText(f"共 {len(rows)} 条计划")
 
         # 如果当前是甘特图模式，同步刷新甘特图
         if self._view_stack.currentIndex() == 1:
             self._refresh_gantt()
         self._auto_calculate_plans(rows)
+
+    def _refresh_procurement_summary(self, rows: list[dict]):
+        """刷新状态栏「备料中采购」汇总。
+
+        DB 查询较重，放后台线程；带指纹缓存避免数据未变时重复查询。
+        「备料中」= 未运行（pending）且已勾选备料（materials_ready==1）；
+        ready 计划材料已扣库存，计入会虚高，排除。
+        """
+        procur = [p for p in rows if p.get("materials_ready", 0) and (p.get("status") or "pending") == "pending"]
+        fp = tuple(
+            sorted(
+                (
+                    p.get("id"),
+                    p.get("runs"),
+                    p.get("parallels"),
+                    p.get("me_level"),
+                    p.get("materials_ready"),
+                    p.get("status"),
+                    p.get("mat_hangar_id"),
+                )
+                for p in procur
+            )
+        )
+        if fp == self._proc_fp and self._proc_result is not None:
+            self._status_bar.update_material(*self._proc_result)
+            return
+        if not procur:
+            self._status_bar.update_material(0.0, 0.0)
+            self._proc_fp = None
+            self._proc_result = None
+            return
+        if self._proc_worker and self._proc_worker.isRunning():
+            return  # 已有汇总线程运行中（严禁 terminate），等其完成
+        ps = self._toolbar.get_price_settings()
+        mat_hub = ps.get("mat_hub")
+        mat_price_type = ps.get("mat_price_type") or "sell"
+        self._proc_fp = fp
+        self._proc_result = None
+        self._proc_worker = ProcurementSummaryWorker(
+            procur,
+            default_mat_hangar_id=self._toolbar.get_mat_hangar_id(),
+            region_id=TRADE_HUB_IDS.get(mat_hub, 10000002),
+            price_type=mat_price_type,
+            parent=self,
+        )
+        self._proc_worker.finished.connect(self._on_procurement_summary_done)
+        self._proc_worker.start()
+
+    def _on_procurement_summary_done(self, cost: float, vol: float):
+        """采购汇总线程完成 → 更新状态栏（stale guard 防旧线程结果覆盖新指纹）"""
+        if self._proc_worker is not self.sender():
+            return
+        self._proc_result = (cost, vol)
+        self._status_bar.update_material(cost, vol)
 
     def _auto_calculate_plans(self, rows):
         """自动重算计划利润/边际（后台线程触发）"""
@@ -821,8 +880,9 @@ class IndustryPage(QWidget):
                     "(product_type_id, product_name, runs, parallels, me_level, te_level, "
                     "mat_hub, sell_hub, facility, char_name, status, "
                     "profit, margin, score, iskph, material_cost, "
-                    "calculated_time, daily_output, created_at, deposit_hangar_id, mat_hangar_id, solar_system_id) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?)",
+                    "calculated_time, daily_output, created_at, deposit_hangar_id, mat_hangar_id, solar_system_id, "
+                    "materials_ready) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?,1)",
                     (
                         type_id,
                         product_name,
@@ -900,7 +960,7 @@ class IndustryPage(QWidget):
             c.execute(
                 "SELECT id, product_type_id, product_name, runs, parallels, me_level, mat_hub, sell_hub, "
                 "materials_ready, status, deposit_hangar_id, deposited, material_cost, "
-                "assigned_blueprint_id, mat_hangar_id, material_short "
+                "assigned_blueprint_id, mat_hangar_id, material_short, group_number, sub_level "
                 "FROM production_plans WHERE status IN ('pending', 'in_progress', 'running', 'ready')"
             )
             for pr in c.fetchall():
@@ -922,6 +982,8 @@ class IndustryPage(QWidget):
                         "assigned_blueprint_id": pr[13],
                         "mat_hangar_id": pr[14],
                         "material_short": pr[15],
+                        "group_id": pr[16],
+                        "child_level": pr[17],
                     }
                 )
         if not plans:

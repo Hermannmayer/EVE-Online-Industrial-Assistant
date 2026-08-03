@@ -239,7 +239,9 @@ class ProductionWizard(QDialog):
             if pid is None:
                 continue
             try:
-                missing = [r for r in plan_execution.check_materials(p, self._mat_hangar_id) if (r.get("missing") or 0) > 0]
+                missing = [
+                    r for r in plan_execution.check_materials(p, self._mat_hangar_id) if (r.get("missing") or 0) > 0
+                ]
                 self._shortfall[int(pid)] = len(missing)
             except Exception:
                 self._shortfall[int(pid)] = 0
@@ -295,7 +297,7 @@ class ProductionWizard(QDialog):
 
             runs = p.get("runs", 1)
             parallels = p.get("parallels", 1)
-            runs_item = QTableWidgetItem(f"{runs}X{parallels}")
+            runs_item = QTableWidgetItem(f"{parallels}X{runs}")
             runs_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(row, _COL_RUNS, runs_item)
 
@@ -333,7 +335,7 @@ class ProductionWizard(QDialog):
         self._detail_name.setText(f"{name}{level_tag}")
         runs = p.get("runs", 1)
         parallels = p.get("parallels", 1)
-        info = f"流程 {runs} x 并行 {parallels}"
+        info = f"并行 {parallels} x 流程 {runs}"
         if p.get("char_name"):
             info += f"  |  人物 {p['char_name']}"
         self._start_btn.hide()
@@ -380,9 +382,7 @@ class ProductionWizard(QDialog):
             )
             if ret != QMessageBox.StandardButton.Yes:
                 return
-        res = plan_execution.start_plan(
-            p, mat_hangar_id=self._mat_hangar_id, char_name=assign_char
-        )
+        res = plan_execution.start_plan(p, mat_hangar_id=self._mat_hangar_id, char_name=assign_char)
         if res.get("ok"):
             self._status_label.setText(f"已启动: {p.get('product_name', '')}")
             p["status"] = "in_progress"

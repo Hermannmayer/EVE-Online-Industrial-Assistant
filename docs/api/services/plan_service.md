@@ -24,7 +24,7 @@ def calculate_plan_metrics(plan_input: dict, *, char_name: str='', mat_price_typ
 def insert_plan(type_id: int, product_name: str, data: dict, *, mat_hub: str='Jita', sell_hub: str='Jita', facility: str='', solar_system_id: int | None=None, mat_hangar_id: int | None=None, deposit_hangar_id: int | None=None, metrics: dict | None=None) -> int
 ```
 
-INSERT 一条 pending 制造计划（23 列，含派生指标），返回 plan_id。
+INSERT 一条 pending 制造计划（24 列，含派生指标），返回 plan_id。
 
 定义行：`35`
 
@@ -36,7 +36,7 @@ def insert_plans_batch(rows: list[dict]) -> list[int]
 
 批量 INSERT 多条 pending 制造计划（一次连接/事务），返回 plan_id 列表。
 
-定义行：`86`
+定义行：`87`
 
 ### `datetime_now_str`
 
@@ -48,4 +48,4 @@ def datetime_now_str() -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`134`
+定义行：`136`

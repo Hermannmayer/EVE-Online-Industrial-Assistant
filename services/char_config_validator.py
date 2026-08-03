@@ -129,7 +129,7 @@ def validate_char_config(data: dict) -> dict:
                         for standing_key in ["faction_standing", "corp_standing"]:
                             if standing_key in hub_data:
                                 val = hub_data[standing_key]
-                                if not isinstance(val, (int, float)):
+                                if not isinstance(val, int | float):
                                     errors.append(f"角色 '{char_name}' {hub}.{standing_key} 类型错误：期望数字")
                                 elif not (STANDING_MIN <= val <= STANDING_MAX):
                                     warnings.append(
@@ -206,7 +206,7 @@ def migrate_char_config(data: dict) -> dict:
                 for key in ["faction_standing", "corp_standing"]:
                     if key not in hub_data:
                         hub_data[key] = default_market[hub][key]
-                    elif not isinstance(hub_data[key], (int, float)):
+                    elif not isinstance(hub_data[key], int | float):
                         hub_data[key] = default_market[hub][key]
 
     return result

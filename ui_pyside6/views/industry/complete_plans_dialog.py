@@ -91,7 +91,7 @@ class CompletePlansDialog(QDialog):
             total_qty += qty
             dep = p.get("deposit_hangar_id")
             dep_name = self._hangar_by_id.get(dep) if dep and dep > 0 else "不自动入库"
-            for col, text in [(0, name), (1, f"{runs}X{parallels}"), (2, f"{qty:,}"), (3, dep_name)]:
+            for col, text in [(0, name), (1, f"{parallels}X{runs}"), (2, f"{qty:,}"), (3, dep_name)]:
                 it = QTableWidgetItem(str(text))
                 it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 if col >= 1:

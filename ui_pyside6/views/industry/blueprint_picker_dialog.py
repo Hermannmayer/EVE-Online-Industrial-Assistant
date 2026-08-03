@@ -98,7 +98,7 @@ class BlueprintPickerDialog(QDialog):
         parallels = max(int(self._plan.get("parallels", 1)), 1)
         need_runs = runs * parallels
         self._need_label.setText(
-            f"产品 {self._plan.get('product_name', '')}  需要蓝图流程: {need_runs}（{runs} 流程 × {parallels} 并行）"
+            f"产品 {self._plan.get('product_name', '')}  需要蓝图流程: {need_runs}（{parallels} 并行 × {runs} 流程）"
         )
 
         assigned_id = self._plan.get("assigned_blueprint_id")

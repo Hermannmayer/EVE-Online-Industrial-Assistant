@@ -117,10 +117,10 @@ class TestPlanTableIntegration:
         assert model.data(model.index(0, 3), Qt.ItemDataRole.DisplayRole) == "渡鸦级"
 
     def test_plan_display_runs_and_parallels(self, qapp):
-        """流程列展示（列9: runsXparallels）"""
+        """流程列展示（列9: parallelsXruns）"""
         model = PlanTableModel(self.SAMPLE_PLANS)
         val = model.data(model.index(0, 9), Qt.ItemDataRole.DisplayRole)
-        assert "5X2" in val
+        assert "2X5" in val
 
     def test_plan_display_margin(self, qapp):
         """市场利润率列展示（列16）"""

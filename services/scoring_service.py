@@ -490,12 +490,10 @@ class ScoringService:
             # 快照为空时从材料机库带出星系（与下方结构加成解析对称）
             from services.inventory_manager import get_hangar_system_id
 
-            resolved_system_id = get_hangar_system_id(
-                plan_data.get("mat_hangar_id"), _db=getattr(svc, "_db", None)
-            )
+            resolved_system_id = get_hangar_system_id(plan_data.get("mat_hangar_id"), _db=getattr(svc, "_db", None))
         # 仍为 None → calc_manufacturing_score 内部按 sell_hub 推断；此处算出实际生效星系供展示
-        effective_system_id = resolved_system_id if resolved_system_id is not None else _hub_to_system_id(
-            resolved_sell_hub
+        effective_system_id = (
+            resolved_system_id if resolved_system_id is not None else _hub_to_system_id(resolved_sell_hub)
         )
         # 机库工业配置解析（材料机库决定设施类型/改件/税；用 svc._db 保证测试隔离）
         from services.hangar_industry_config import resolve_hangar_industry_config
@@ -582,6 +580,7 @@ class ScoringService:
         inv_map: dict[int, tuple[int, float]],
         runs: int = 1,
         parallels: int = 1,
+        cost_overrides: dict[int, float] | None = None,
     ) -> float:
         """计算考虑库存成本的个人利润率（%）。
 
@@ -594,6 +593,8 @@ class ScoringService:
                     （需含 revenue_per_run / fees_per_run / materials / margin）
             inv_map: get_inventory_cost_map() 的返回 {type_id: (总数量, 加权平均成本)}
             runs / parallels: 流程数 / 并行数
+            cost_overrides: 可选 {type_id: 固定成本}——拆解母项的子项自制件按其制造价计，
+                            不再走库存/市场价。
 
         Returns:
             个人利润率（%），round 到 2 位小数。异常或无效输入回退 result 的市场 margin。
@@ -616,15 +617,20 @@ class ScoringService:
                 qty_per_run = mat.get("qty", 0) or 0
                 if qty_per_run <= 0:
                     continue
+                mid = mat.get("type_id")
                 need = qty_per_run * total_mult
-                unit_price = mat.get("unit_price", 0) or 0
-                stock_qty, stock_cost = inv_map.get(mat.get("type_id"), (0, 0))
-                if stock_qty >= need:
-                    mat_cost = need * stock_cost
-                elif stock_qty > 0:
-                    mat_cost = stock_qty * stock_cost + (need - stock_qty) * unit_price
+                if cost_overrides and mid in cost_overrides:
+                    # 子项自制件：成本 = 子项制造价（合计，非库存/市场价）
+                    mat_cost = cost_overrides[mid]
                 else:
-                    mat_cost = need * unit_price
+                    unit_price = mat.get("unit_price", 0) or 0
+                    stock_qty, stock_cost = inv_map.get(mid, (0, 0))
+                    if stock_qty >= need:
+                        mat_cost = need * stock_cost
+                    elif stock_qty > 0:
+                        mat_cost = stock_qty * stock_cost + (need - stock_qty) * unit_price
+                    else:
+                        mat_cost = need * unit_price
                 total_personal_cost += mat_cost
 
             total_cost = total_personal_cost + fees_per_run * total_mult

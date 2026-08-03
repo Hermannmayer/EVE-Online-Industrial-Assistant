@@ -75,6 +75,95 @@ def parent_needs(conn: Connection, group_plans: list[dict]) -> dict[int, int]:
     return needs
 
 
+def is_leaf_plan(plan: dict, all_plans: list[dict]) -> bool:
+    """该计划是否为叶子产线（组内无更深子项）。
+
+    母项拆解后母项的直接材料 = 子项（自制件），不应再计入待采购；
+    只有叶子产线（无子项的普通计划、或拆解组内最深子项）的原材料才需采购。
+    """
+    gid = plan.get("group_id") or plan.get("group_number")
+    if not gid:
+        return True
+    lvl = int(plan.get("child_level") or plan.get("sub_level") or 0)
+    return not any(
+        (p.get("group_id") or p.get("group_number")) == gid
+        and int(p.get("child_level") or p.get("sub_level") or 0) > lvl
+        for p in all_plans
+    )
+
+
+def collect_cascade_delete_ids(plans: list[dict], selected_ids: set[int]) -> set[int]:
+    """删除指定计划时级联删除同组更深子项（含传递层级）。
+
+    plans: 全量计划；selected_ids: 用户选中删除的计划 id。
+    规则：计划 P 被删 → 同 group 内 sub_level 比 P 深的子项一并删除（母项 sub_level=0 删全部子项）。
+    迭代直至稳定，处理嵌套拆解（删 1 级 → 连带删 2 级…）。
+    """
+
+    def _gid(p: dict):
+        return p.get("group_id") or p.get("group_number")
+
+    def _lvl(p: dict) -> int:
+        return int(p.get("child_level") or p.get("sub_level") or 0)
+
+    ids = set(selected_ids)
+    changed = True
+    while changed:
+        changed = False
+        for p in plans:
+            if not p.get("id") or p["id"] in ids:
+                continue
+            gid = _gid(p)
+            if not gid:
+                continue
+            for sp in plans:
+                if not sp.get("id") or sp["id"] not in ids:
+                    continue
+                if _gid(sp) == gid and _lvl(sp) < _lvl(p):
+                    ids.add(p["id"])
+                    changed = True
+                    break
+    return ids
+
+
+def collect_group_members(all_plans: list[dict], selected: list[dict]) -> tuple[list[dict], list[dict]]:
+    """跨选中行聚合相关组的母项与子项（按 plan id 去重）→ (parents, children)。
+
+    组号取选中行的 group_id（UI 层已映射自 DB group_number）；遍历全量计划把同组行
+    按 child_level==0 分入母项/其余子项，再把选中行中的游离母项并入 parents
+    （覆盖"选了游离母项但组号未落库"的情形）。
+    """
+    group_ids = {p["group_id"] for p in selected if p.get("group_id")}
+    parents: list[dict] = []
+    children: list[dict] = []
+    seen_parent: set = set()
+    seen_child: set = set()
+
+    def _key(p: dict) -> int:
+        pid = p.get("id")
+        return int(pid) if pid is not None else id(p)
+
+    for p in all_plans:
+        if not p.get("group_id") or p["group_id"] not in group_ids:
+            continue
+        k = _key(p)
+        if int(p.get("child_level") or 0) == 0:
+            if k not in seen_parent:
+                seen_parent.add(k)
+                parents.append(p)
+        elif k not in seen_child:
+            seen_child.add(k)
+            children.append(p)
+    # 选中行中的游离母项并入（组号可能未落库/未在 all_plans 命中）
+    for p in selected:
+        if int(p.get("child_level") or 0) == 0:
+            k = _key(p)
+            if k not in seen_parent:
+                seen_parent.add(k)
+                parents.append(p)
+    return parents, children
+
+
 def _decompose(
     conn: Connection,
     type_id: int,

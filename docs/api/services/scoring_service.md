@@ -124,10 +124,10 @@ def get_adjusted_price(type_id: int, _db: DatabaseManager | None=None) -> float 
 ### `_research_cost_cached`
 
 ```python
-def _research_cost_cached(_db: DatabaseManager, type_id: int) -> float
+def _research_cost_cached(_db: DatabaseManager, type_id: int, *, solar_system_id: int | None=None) -> float
 ```
 
-按 type_id 计算研究成本（拷贝/发明），带进程内缓存；失败返回 0。
+按 type_id + 设施星系计算研究成本（拷贝/发明），带进程内缓存；失败返回 0。
 
 定义行：`221`
 
@@ -139,7 +139,7 @@ def _clear_research_cost_cache() -> None
 
 清空研究成本缓存（价格刷新时调用）。
 
-定义行：`237`
+定义行：`241`
 
 ### `calc_refining_value`
 
@@ -149,7 +149,7 @@ def calc_refining_value(type_id: int, quantity: int=1, *, skills: dict | None=No
 
 计算物品的精炼产出及总价值
 
-定义行：`247`
+定义行：`251`
 
 ### `calc_manufacturing_score`
 
@@ -159,7 +159,7 @@ def calc_manufacturing_score(type_id: int, char_config: dict, mat_source_hub: st
 
 模块级便利函数：复用模块级单例 ScoringService。
 
-定义行：`1204`
+定义行：`1226`
 
 ### `calc_trade_score`
 
@@ -169,7 +169,7 @@ def calc_trade_score(type_id: int, buy_hub: str='Jita', sell_hub: str='Jita', bu
 
 模块级便利函数：复用模块级单例 ScoringService。
 
-定义行：`1237`
+定义行：`1259`
 
 ### `calc_reaction_score`
 
@@ -179,7 +179,7 @@ def calc_reaction_score(type_id: int, char_config: dict, mat_source_hub: str='Ji
 
 模块级便利函数：复用模块级单例 ScoringService。
 
-定义行：`1258`
+定义行：`1280`
 
 ## 类
 
@@ -189,7 +189,7 @@ def calc_reaction_score(type_id: int, char_config: dict, mat_source_hub: str='Ji
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`353`
+定义行：`357`
 
 #### 方法
 
@@ -203,7 +203,7 @@ def __init__(self, db: DatabaseManager, cache: TtlLRUCache, char_config: dict | 
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`354`
+定义行：`358`
 ##### `invalidate_cache`
 
 ```python
@@ -212,7 +212,7 @@ def invalidate_cache(self) -> None
 
 清空评分缓存（价格刷新后调用，避免旧价格评分被复用）
 
-定义行：`359`
+定义行：`363`
 ##### `_calc_broker_rate`
 
 ```python
@@ -223,7 +223,7 @@ def _calc_broker_rate(self, skills: dict, market_data: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`367`
+定义行：`371`
 ##### `_calc_relist_discount`
 
 ```python
@@ -234,7 +234,7 @@ def _calc_relist_discount(self, skills: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`370`
+定义行：`374`
 ##### `_calc_sales_tax_rate`
 
 ```python
@@ -245,7 +245,7 @@ def _calc_sales_tax_rate(self, skills: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`373`
+定义行：`377`
 ##### `calculate_total_metrics`
 
 ```python
@@ -254,7 +254,7 @@ def calculate_total_metrics(per_run: dict, runs: int=1, parallels: int=1) -> dic
 
 将 per-run 评分结果按 runs/parallels 缩放到计划总数值。
 
-定义行：`379`
+定义行：`383`
 ##### `calculate_plan_metrics`
 
 ```python
@@ -263,16 +263,16 @@ def calculate_plan_metrics(plan_data: dict, char_config: dict, *, mat_hub: str |
 
 从一条生产计划数据计算所有派生指标。
 
-定义行：`424`
+定义行：`428`
 ##### `calculate_personal_margin`
 
 ```python
-def calculate_personal_margin(result: dict, inv_map: dict[int, tuple[int, float]], runs: int=1, parallels: int=1) -> float
+def calculate_personal_margin(result: dict, inv_map: dict[int, tuple[int, float]], runs: int=1, parallels: int=1, cost_overrides: dict[int, float] | None=None) -> float
 ```
 
 计算考虑库存成本的个人利润率（%）。
 
-定义行：`564`
+定义行：`578`
 ##### `calc_manufacturing_score`
 
 ```python
@@ -281,7 +281,7 @@ def calc_manufacturing_score(self, type_id: int, char_config: dict, mat_source_h
 
 计算制造评分。
 
-定义行：`626`
+定义行：`648`
 ##### `calc_trade_score`
 
 ```python
@@ -290,7 +290,7 @@ def calc_trade_score(self, type_id: int, buy_hub: str='Jita', sell_hub: str='Jit
 
 计算贸易评分。
 
-定义行：`894`
+定义行：`916`
 ##### `calc_reaction_score`
 
 ```python
@@ -299,4 +299,4 @@ def calc_reaction_score(self, type_id: int, char_config: dict, mat_source_hub: s
 
 计算反应（Reaction）利润评分。
 
-定义行：`1004`
+定义行：`1026`

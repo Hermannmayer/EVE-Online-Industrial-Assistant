@@ -118,8 +118,8 @@ class PlanEditDialog(QDialog):
         d = self._plan_data
         if self._batch_mode:
             self._product_label.setText(f"已选中 {len(d.get('_selected_rows', []))} 行")
-            self._runs_spin.setValue(1)
-            self._parallel_spin.setValue(1)
+            self._runs_spin.setValue(int(d.get("runs", 1)))
+            self._parallel_spin.setValue(int(d.get("parallels", 1)))
         else:
             self._product_label.setText(str(d.get("product_name", "—")))
             if "runs" in d:
