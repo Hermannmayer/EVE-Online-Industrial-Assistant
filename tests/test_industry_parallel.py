@@ -57,16 +57,15 @@ def _build_ref(db_manager):
             "material_type_id INTEGER, quantity INTEGER)"
         )
         conn.execute("INSERT INTO blueprint_materials VALUES (3001,'manufacturing',1001,1)")
-        conn.execute(
-            "CREATE TABLE blueprint_activities (blueprint_type_id INTEGER, activity TEXT, time REAL)"
-        )
+        conn.execute("CREATE TABLE blueprint_activities (blueprint_type_id INTEGER, activity TEXT, time REAL)")
         conn.execute("INSERT INTO blueprint_activities VALUES (3001,'manufacturing',7200)")
         conn.execute("INSERT INTO blueprint_activities VALUES (3002,'manufacturing',3600)")
     return db_manager
 
 
 class TestChildParallelDialog:
-    def test_validation_blocks_insufficient(self, db_manager, monkeypatch, qapp):
+    def test_auto_runs_covers_demand(self, db_manager, monkeypatch, qapp):
+        """只设并行数 → 每条流程自动生成覆盖母项需求。"""
         from ui_pyside6.views.industry.child_parallel_dialog import ChildParallelDialog
 
         _build_ref(db_manager)
@@ -79,10 +78,12 @@ class TestChildParallelDialog:
             {"id": 11, "product_type_id": 1001, "sub_level": 1, "runs": 1, "parallels": 1, "blueprint_type_id": 3002},
         ]
         dlg = ChildParallelDialog(plans)
-        # 母项需求 1001 = 2；子项 runs1×parallels1×per_run1 = 1 < 2 → 校验拦截
-        assert not dlg._ok_btn.isEnabled()
-        # 提高到 runs=2 → 产出 2 ≥ 2 → 通过
-        dlg._spins[0][1].setValue(2)
+        # 母项需求 1001 = 2；per_run=1 → 自动 runs = ceil(2/1) = 2 → 总产出 2 ≥ 2 → 通过
+        assert dlg._ok_btn.isEnabled()
+        assert dlg._current_runs(0) == 2
+        # 并行提到 3 → runs = ceil(2/3) = 1 → 总产出 3 ≥ 2，仍通过
+        dlg._rows[0][0].setValue(3)
+        assert dlg._current_runs(0) == 1
         assert dlg._ok_btn.isEnabled()
 
     def test_sufficient_passes(self, db_manager, monkeypatch, qapp):
@@ -98,4 +99,5 @@ class TestChildParallelDialog:
             {"id": 11, "product_type_id": 1001, "sub_level": 1, "runs": 2, "parallels": 1, "blueprint_type_id": 3002},
         ]
         dlg = ChildParallelDialog(plans)
-        assert dlg._ok_btn.isEnabled()  # runs2×1×1=2 ≥ 需求2
+        assert dlg._ok_btn.isEnabled()  # 自动 runs 覆盖需求
+        assert dlg._current_runs(0) == 2

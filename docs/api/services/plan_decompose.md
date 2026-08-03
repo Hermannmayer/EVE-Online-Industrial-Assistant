@@ -38,6 +38,36 @@ def parent_needs(conn: Connection, group_plans: list[dict]) -> dict[int, int]
 
 定义行：`59`
 
+### `is_leaf_plan`
+
+```python
+def is_leaf_plan(plan: dict, all_plans: list[dict]) -> bool
+```
+
+该计划是否为叶子产线（组内无更深子项）。
+
+定义行：`78`
+
+### `collect_cascade_delete_ids`
+
+```python
+def collect_cascade_delete_ids(plans: list[dict], selected_ids: set[int]) -> set[int]
+```
+
+删除指定计划时级联删除同组更深子项（含传递层级）。
+
+定义行：`95`
+
+### `collect_group_members`
+
+```python
+def collect_group_members(all_plans: list[dict], selected: list[dict]) -> tuple[list[dict], list[dict]]
+```
+
+跨选中行聚合相关组的母项与子项（按 plan id 去重）→ (parents, children)。
+
+定义行：`129`
+
 ### `_decompose`
 
 ```python
@@ -46,4 +76,4 @@ def _decompose(conn: Connection, type_id: int, needed_qty: float, depth: int, st
 
 递归展开一层。返回 (子项产线行, 本层可被库存覆盖的产出量)。
 
-定义行：`78`
+定义行：`167`

@@ -64,8 +64,8 @@ class PlanRepository:
                 """INSERT INTO production_plans
                    (product_type_id, product_name, blueprint_type_id, runs, parallels,
                     me_level, te_level, mat_hub, sell_hub, facility, char_name,
-                    status, profit, margin, score, material_cost, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    status, profit, margin, score, material_cost, created_at, materials_ready)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
                 (
                     plan.get("product_type_id"),
                     plan.get("product_name"),
@@ -99,5 +99,11 @@ class PlanRepository:
 
     def delete(self, plan_id: int) -> bool:
         with self._db.connect("user") as conn:
+            # 清理蓝图绑定关联表（若表存在），避免孤儿占用
+            has_bindings = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='plan_blueprint_bindings'"
+            ).fetchone()
+            if has_bindings:
+                conn.execute("DELETE FROM plan_blueprint_bindings WHERE plan_id = ?", (plan_id,))
             conn.execute("DELETE FROM production_plans WHERE id = ?", (plan_id,))
             return conn.total_changes > 0  # type: ignore[no-any-return]

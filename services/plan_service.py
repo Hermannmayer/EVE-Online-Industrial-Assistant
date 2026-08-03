@@ -45,7 +45,7 @@ def insert_plan(
     deposit_hangar_id: int | None = None,
     metrics: dict | None = None,
 ) -> int:
-    """INSERT 一条 pending 制造计划（23 列，含派生指标），返回 plan_id。"""
+    """INSERT 一条 pending 制造计划（24 列，含派生指标），返回 plan_id。"""
     metrics = metrics or {}
     with get_container().db.connect("user") as conn:
         cur = conn.execute(
@@ -53,8 +53,9 @@ def insert_plan(
             "(product_type_id, product_name, runs, parallels, me_level, te_level, "
             "mat_hub, sell_hub, facility, char_name, status, "
             "profit, margin, score, iskph, material_cost, "
-            "calculated_time, daily_output, created_at, deposit_hangar_id, mat_hangar_id, solar_system_id) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?)",
+            "calculated_time, daily_output, created_at, deposit_hangar_id, mat_hangar_id, solar_system_id, "
+            "materials_ready) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?,1)",
             (
                 type_id,
                 product_name,
@@ -100,8 +101,9 @@ def insert_plans_batch(rows: list[dict]) -> list[int]:
                 "(product_type_id, product_name, runs, parallels, me_level, te_level, "
                 "mat_hub, sell_hub, facility, char_name, status, "
                 "profit, margin, score, iskph, material_cost, "
-                "calculated_time, daily_output, created_at, deposit_hangar_id, mat_hangar_id, solar_system_id) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?)",
+                "calculated_time, daily_output, created_at, deposit_hangar_id, mat_hangar_id, solar_system_id, "
+                "materials_ready) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?,1)",
                 (
                     r["type_id"],
                     r.get("product_name", ""),

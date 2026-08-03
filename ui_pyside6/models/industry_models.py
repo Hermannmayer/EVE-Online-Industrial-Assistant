@@ -241,7 +241,7 @@ class PlanTableModel(QAbstractTableModel):
         if c == 9:
             runs = p.get("runs", 0)
             parallels = p.get("parallels", 1)
-            return f"{runs}X{parallels}"
+            return f"{parallels}X{runs}"
         if c == 10:
             me = p.get("me_level", 0)
             te = p.get("te_level", 0)

@@ -334,7 +334,7 @@ def temp_db():
       - market_prices: Jita 区域买卖价格
       - blueprint: 渡鸦级蓝图(3001) + 无人机蓝图(3002)
     """
-    from services.database_manager import DB_PATH_MAP, DatabaseManager
+    from services.database_manager import DB_PATH_MAP, DatabaseManager, get_db
 
     tmpdir = tempfile.mkdtemp(prefix="eve_test_")
     db_paths = _create_temp_databases(tmpdir)
@@ -348,6 +348,7 @@ def temp_db():
     # 恢复 & 清理
     DB_PATH_MAP.clear()
     DB_PATH_MAP.update(saved)
+    get_db().close_all()  # 清共享单例缓存的临时库连接，防泄漏污染后续测试
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 
@@ -357,7 +358,7 @@ def db_manager():
 
     区别：此 fixture 不预填充测试数据，适用于需要纯净数据库的测试。
     """
-    from services.database_manager import DB_PATH_MAP, DatabaseManager
+    from services.database_manager import DB_PATH_MAP, DatabaseManager, get_db
 
     tmpdir = tempfile.mkdtemp(prefix="eve_dbmgr_")
     ref_path = Path(tmpdir) / "reference.db"
@@ -380,6 +381,7 @@ def db_manager():
 
     DB_PATH_MAP.clear()
     DB_PATH_MAP.update(saved)
+    get_db().close_all()  # 清共享单例缓存的临时库连接，防泄漏污染后续测试
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 

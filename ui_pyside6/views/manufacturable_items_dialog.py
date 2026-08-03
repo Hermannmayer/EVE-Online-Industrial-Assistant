@@ -630,8 +630,9 @@ class ManufacturableItemsDialog(QDialog):
                     "INSERT INTO production_plans "
                     "(product_type_id, product_name, runs, parallels, me_level, te_level, "
                     "mat_hub, sell_hub, facility, char_name, status, "
-                    "profit, margin, score, iskph, material_cost, created_at, mat_hangar_id, solar_system_id) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?)",
+                    "profit, margin, score, iskph, material_cost, created_at, mat_hangar_id, solar_system_id, "
+                    "materials_ready) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,1)",
                     (
                         tid,
                         _ctx_name,

@@ -335,14 +335,14 @@ class PlanTable(QWidget):
         menu.addAction("查看蓝图原图的NPC卖家", lambda: batch(lambda r: self._show_npc_seller(r)))
         menu.addAction("产线启动小助手", lambda: self._show_production_wizard(row))
 
-        # ── 智能调整（拆解/并行，作用于该行所属组） ──────────
+        # ── 智能调整（拆解/并行，作用于选中行所属组） ──────────
         smart_menu = menu.addMenu("智能调整")
         a = smart_menu.addAction("母项调整（递归拆解）")
-        a.triggered.connect(lambda: self._decompose_parent(row))
+        a.triggered.connect(lambda: self._decompose_parent(selected_rows))
         a = smart_menu.addAction("子项调整（并行配置）")
-        a.triggered.connect(lambda: self._adjust_children(row))
+        a.triggered.connect(lambda: self._adjust_children(selected_rows))
         a = smart_menu.addAction("子项大规模产线并行")
-        a.triggered.connect(lambda: self._mass_parallel(row))
+        a.triggered.connect(lambda: self._mass_parallel(selected_rows))
 
         menu.addSeparator()
 
@@ -375,9 +375,7 @@ class PlanTable(QWidget):
         if not self._model:
             return
         plan = self._model.get_plan(index.row())
-        clickable = (
-            index.column() == COL_STATUS and plan is not None and (plan.get("status") or "").lower() == "ready"
-        )
+        clickable = index.column() == COL_STATUS and plan is not None and (plan.get("status") or "").lower() == "ready"
         cursor = Qt.CursorShape.PointingHandCursor if clickable else Qt.CursorShape.ArrowCursor
         self._table.viewport().setCursor(cursor)
 
@@ -471,7 +469,17 @@ class PlanTable(QWidget):
             return
         from ui_pyside6.views.industry.plan_edit_dialog import PlanEditDialog
 
-        dlg = PlanEditDialog(self, {"_selected_rows": rows}, batch_mode=True, row_count=len(rows))
+        first = self._model.get_plan(rows[0]) if rows else None
+        dlg = PlanEditDialog(
+            self,
+            {
+                "_selected_rows": rows,
+                "runs": first.get("runs", 1) if first else 1,
+                "parallels": first.get("parallels", 1) if first else 1,
+            },
+            batch_mode=True,
+            row_count=len(rows),
+        )
         if dlg.exec():
             updated = dlg.get_updated_data()
             conn = get_container().db.direct_connect("user")
@@ -899,29 +907,32 @@ class PlanTable(QWidget):
         self._delete_rows([row])
 
     def _delete_rows(self, rows: list[int]) -> None:
-        """批量删除多行（从后往前删避免行号偏移）"""
+        """批量删除多行（母项删除时级联删除同组更深子项）"""
         if self._model is None:
             return
-        ids_to_delete = []
-        for r in sorted(rows, reverse=True):
-            if 0 <= r < len(self._model._plans):
-                plan = self._model._plans[r]
-                if plan.get("id"):
-                    ids_to_delete.append(plan["id"])
-                    # 删除前释放蓝图占用
-                    if plan.get("assigned_blueprint_id"):
-                        from services import plan_execution
+        plans = self._model._plans
+        selected_ids = {plans[r]["id"] for r in rows if 0 <= r < len(plans) and plans[r].get("id")}
+        if not selected_ids:
+            return
 
-                        plan_execution.release_blueprint(plan["id"])
-                self._model._plans.pop(r)
-        if ids_to_delete:
-            conn = get_container().db.direct_connect("user")
-            try:
-                placeholders = ",".join("?" for _ in ids_to_delete)
-                conn.execute(f"DELETE FROM production_plans WHERE id IN ({placeholders})", ids_to_delete)
-                conn.commit()
-            finally:
-                conn.close()
+        from services.plan_decompose import collect_cascade_delete_ids
+
+        ids_to_delete = collect_cascade_delete_ids(plans, selected_ids)
+
+        # 删除前释放蓝图占用（清 plan_blueprint_bindings 关联表 + 旧单值列）
+        from services import plan_execution
+
+        for pid in ids_to_delete:
+            plan_execution.release_blueprint(pid)
+
+        conn = get_container().db.direct_connect("user")
+        try:
+            placeholders = ",".join("?" for _ in ids_to_delete)
+            conn.execute(f"DELETE FROM production_plans WHERE id IN ({placeholders})", list(ids_to_delete))
+            conn.commit()
+        finally:
+            conn.close()
+        self._model._plans = [p for p in plans if p.get("id") not in ids_to_delete]
         self._model.beginResetModel()
         self._model.endResetModel()
         self.plan_updated.emit()
@@ -987,58 +998,51 @@ class PlanTable(QWidget):
         dlg = NpcSellerDialog(bp_id, bp_name, self)
         dlg.exec()
 
-    def _group_subitems(self, plan: dict) -> list[dict]:
-        """该计划所在组的所有子项产线（child_level>0）。"""
-        if self._model is None:
-            return []
-        gid = plan.get("group_id")
-        if not gid:
-            return []
-        out = []
-        for i in range(self._model.rowCount()):
-            p = self._model.get_plan(i)
-            if p and p.get("group_id") == gid and int(p.get("child_level") or 0) > 0:
-                out.append(p)
-        return out
+    def _selected_groups_and_children(self, selected_rows: list[int]) -> tuple[list[dict], list[dict]]:
+        """从 model 全量 + 选中行索引聚合 (parents, children)。"""
+        from services.plan_decompose import collect_group_members
 
-    def _decompose_parent(self, row: int) -> None:
-        """母项调整：递归拆解成子项产线（sub_level 逐级 +1）"""
-        plan = self._model.get_plan(row) if self._model else None
-        if not plan:
+        if self._model is None:
+            return [], []
+        selected = [self._model.get_plan(r) for r in selected_rows if 0 <= r < self._model.rowCount()]
+        return collect_group_members(self._model._plans, [p for p in selected if p])
+
+    def _decompose_parent(self, rows: list[int]) -> None:
+        """母项调整：对选中母项递归拆解成子项产线（sub_level 逐级 +1）"""
+        if self._model is None:
+            return
+        selected = [self._model.get_plan(r) for r in rows if 0 <= r < self._model.rowCount()]
+        parents = [p for p in selected if p and int(p.get("child_level") or 0) == 0]
+        if not parents:
+            QMessageBox.information(self, "提示", "未选中母项")
             return
         from ui_pyside6.views.industry.parent_decompose_dialog import ParentDecomposeDialog
 
-        dlg = ParentDecomposeDialog(plan, self)
+        dlg = ParentDecomposeDialog(parents, self)
         if dlg.exec():
             self.plan_updated.emit()
 
-    def _adjust_children(self, row: int) -> None:
-        """子项调整：组内子项并行配置（runs/parallels + 需求校验）"""
-        plan = self._model.get_plan(row) if self._model else None
-        if not plan:
-            return
-        subitems = self._group_subitems(plan)
-        if not subitems:
-            QMessageBox.information(self, "提示", "该计划不在组中或无子项可调整")
+    def _adjust_children(self, rows: list[int]) -> None:
+        """子项调整：跨选中行组内子项并行配置（runs/parallels + 需求校验）"""
+        parents, children = self._selected_groups_and_children(rows)
+        if not children:
+            QMessageBox.information(self, "提示", "所选计划均不在组中或无子项可调整")
             return
         from ui_pyside6.views.industry.child_parallel_dialog import ChildParallelDialog
 
-        dlg = ChildParallelDialog(subitems, self)
+        dlg = ChildParallelDialog(parents + children, self)
         if dlg.exec():
             self.plan_updated.emit()
 
-    def _mass_parallel(self, row: int) -> None:
+    def _mass_parallel(self, rows: list[int]) -> None:
         """子项大规模产线并行：按产线数 / 按目标工期 两种模式"""
-        plan = self._model.get_plan(row) if self._model else None
-        if not plan:
-            return
-        subitems = self._group_subitems(plan)
-        if not subitems:
-            QMessageBox.information(self, "提示", "该计划不在组中或无子项可调整")
+        parents, children = self._selected_groups_and_children(rows)
+        if not children:
+            QMessageBox.information(self, "提示", "所选计划均不在组中或无子项可调整")
             return
         from ui_pyside6.views.industry.mass_parallel_dialog import MassParallelDialog
 
-        dlg = MassParallelDialog(subitems, self)
+        dlg = MassParallelDialog(parents + children, self)
         if dlg.exec():
             self.plan_updated.emit()
 

@@ -26,7 +26,7 @@ def load_npc_corp_ids(conn: Connection) -> set[int]
 
 reference.db 中全部 NPC 公司 id 集合。
 
-定义行：`24`
+定义行：`26`
 
 ### `load_corp_names`
 
@@ -36,7 +36,7 @@ def load_corp_names(conn: Connection) -> dict[int, str]
 
 corp_id → 显示名（zh 优先 → en → str(id)）。
 
-定义行：`30`
+定义行：`32`
 
 ### `resolve_stations`
 
@@ -46,4 +46,4 @@ def resolve_stations(conn: Connection, location_ids: set[int]) -> dict[int, tupl
 
 location_id → (空间站名, 星系名)。NPC 空间站的 location_id 即 station.station_id。
 
-定义行：`36`
+定义行：`38`

@@ -213,13 +213,13 @@ class AModel(QAbstractTableModel):
         v = r.get(k)
         if role == Qt.ItemDataRole.DisplayRole:
             if k in ("bp", "sp", "ap", "mc", "mr", "tc", "tr"):
-                return f"{v:,.2f}" if isinstance(v, (int, float)) and v is not None else DASH
+                return f"{v:,.2f}" if isinstance(v, int | float) and v is not None else DASH
             if k in ("_tag",):
                 return v or DASH
             if k in ("mm", "tm", "tpm", "mdp", "_tag_sort"):
                 return f"{float(v):,.1f}" if v is not None else DASH
             if k == "mh":
-                return f"{v:.2f}" if isinstance(v, (int, float)) and v else DASH
+                return f"{v:.2f}" if isinstance(v, int | float) and v else DASH
             if k == "ms":
                 s = {"no_blueprint": "无蓝图", "no_price": "无价格", "no_materials": "无材料", "no_depth": "市场无买单"}
                 return s.get(v, v) or DASH
@@ -442,7 +442,7 @@ class AllItemsDialog(QDialog):
                 v = row.get(key)
                 if v is None:
                     r.append("")
-                elif isinstance(v, (int, float)):
+                elif isinstance(v, int | float):
                     r.append(f"{v:,.2f}")
                 else:
                     r.append(str(v))
@@ -990,8 +990,9 @@ class AllItemsDialog(QDialog):
                     "INSERT INTO production_plans "
                     "(product_type_id, product_name, runs, parallels, me_level, te_level, "
                     "mat_hub, sell_hub, facility, char_name, status, "
-                    "profit, margin, score, iskph, material_cost, created_at, mat_hangar_id, solar_system_id) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?)",
+                    "profit, margin, score, iskph, material_cost, created_at, mat_hangar_id, solar_system_id, "
+                    "materials_ready) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,1)",
                     (
                         tid,
                         _ctx_name,

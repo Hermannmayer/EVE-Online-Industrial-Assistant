@@ -235,6 +235,13 @@ class ProcurementDialog(QDialog):
 
         # Get material requirements from all active plans
         material_map: dict[int, dict] = {}
+        # 子项产线自制的组件（由产线覆盖，不作为待采购；其原材料由子线计划计入）
+        sub_prod_ids = {
+            p["product_type_id"]
+            for p in self._active_plans
+            if p.get("product_type_id") and int(p.get("child_level") or p.get("sub_level") or 0) > 0
+        }
+
         with get_container().db.connect("user", "ref", "mkt", "bp") as conn:
             c = conn.cursor()
             for plan in self._active_plans:
@@ -271,6 +278,8 @@ class ProcurementDialog(QDialog):
                     (pid,),
                 )
                 for mid, qty in c.fetchall():
+                    if mid in sub_prod_ids:
+                        continue  # 自制组件：由子项产线覆盖，买其原材料（子线计划已计入）
                     need = calc_material_for_runs(qty, wf, me, int(total_runs))
                     if mid in material_map:
                         material_map[mid]["need"] += need

@@ -252,3 +252,85 @@ def test_worker_personal_margin(qapp, sample_char_config):
     # 成本 = 10×4(库存) + 100(费用) = 140
     assert personal == pytest.approx((1000 - 140) / 140 * 100, abs=0.005)
     assert w._inv_map is not None  # 快照只取一次
+
+
+def test_mother_cost_uses_subitem_manufacturing_cost(qapp, sample_char_config):
+    """拆解母项：子项自制件按其制造价计，未拆解材料按市场价。"""
+    from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker
+
+    w = BatchPlanCalcWorker(
+        [],
+        sample_char_config,
+        mat_hub="Jita",
+        mat_price_type="sell",
+        prod_hub="Jita",
+        prod_price_type="sell",
+    )
+    mother = {"id": 1, "group_id": 10, "child_level": 0, "runs": 1, "parallels": 1}
+    result = {
+        "materials": [
+            {"type_id": 1001, "qty": 10, "unit_price": 5.0},  # 未拆解 → 10×5=50
+            {"type_id": 2002, "qty": 2, "unit_price": 999.0},  # 子项自制 → 用制造价 5000
+        ],
+        "revenue": 20000.0,
+        "fees": 100.0,
+        "material_cost": 0,
+        "profit": 0,
+        "margin": 0,
+    }
+    base_results = {
+        1: (mother, result),
+        2: (
+            {"id": 2, "group_id": 10, "child_level": 1, "product_type_id": 2002},
+            {"material_cost": 5000.0},
+        ),
+    }
+    overrides = w._apply_mother_subitem_cost(mother, result, base_results)
+    # material_cost = 50(三钛) + 5000(子项制造价) = 5050
+    assert result["material_cost"] == pytest.approx(5050, abs=0.01)
+    assert overrides == {2002: 5000.0}
+    # profit = 20000 - 5050 - 100 = 14850；margin = 14850/5150
+    assert result["profit"] == pytest.approx(14850, abs=0.01)
+    assert result["margin"] == pytest.approx(14850 / 5150 * 100, abs=0.01)
+
+
+def test_ungrouped_mother_not_adjusted(qapp, sample_char_config):
+    """无子项的普通计划不受子项分摊影响。"""
+    from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker
+
+    w = BatchPlanCalcWorker(
+        [],
+        sample_char_config,
+        mat_hub="Jita",
+        mat_price_type="sell",
+        prod_hub="Jita",
+        prod_price_type="sell",
+    )
+    plan = {"id": 1, "group_id": 0, "child_level": 0, "runs": 1, "parallels": 1}
+    result = {
+        "materials": [{"type_id": 1001, "qty": 10, "unit_price": 5.0}],
+        "revenue": 1000.0,
+        "fees": 100.0,
+        "material_cost": 0,
+        "profit": 0,
+        "margin": 0,
+    }
+    overrides = w._apply_mother_subitem_cost(plan, result, {1: (plan, result)})
+    assert overrides == {}
+    assert result["material_cost"] == pytest.approx(0, abs=0.01)  # 未调整
+
+
+def test_personal_margin_uses_cost_override(qapp):
+    """子项自制件按其制造价计（覆盖库存/市场价）。"""
+    from services.scoring_service import ScoringService
+
+    result = {
+        "margin": 12.5,
+        "revenue_per_run": 1000.0,
+        "fees_per_run": 100.0,
+        "materials": [{"type_id": 2002, "qty": 2, "unit_price": 999.0}],
+    }
+    # 制造价 5000（覆盖 2×999 市场价 / 库存）
+    personal = ScoringService.calculate_personal_margin(result, {2002: (10, 1.0)}, 1, 1, cost_overrides={2002: 5000.0})
+    # 成本 = 5000 + 100 = 5100
+    assert personal == pytest.approx((1000 - 5100) / 5100 * 100, abs=0.005)

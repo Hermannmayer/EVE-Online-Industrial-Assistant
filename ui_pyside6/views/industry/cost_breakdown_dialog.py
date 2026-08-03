@@ -264,7 +264,7 @@ class CostBreakdownDialog(QWidget):
 
         # ── 顶部信息 ──
         self._status_label.setText(
-            f"计划设定: {runs} 流程 × {parallels} 并行 = {total_mult} 总流程 "
+            f"计划设定: {parallels} 并行 × {runs} 流程 = {total_mult} 总流程 "
             f"| 共 {len(materials)} 种材料 | 评分 {score:.1f} | 利润 {_fmt_isk(profit)} | 利润率 {margin:.1f}%"
         )
 

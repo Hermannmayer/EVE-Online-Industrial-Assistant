@@ -1,10 +1,9 @@
 """工业制造 — 后台 Worker 线程"""
 
-from typing import Any
-
 from PySide6.QtCore import QThread, Signal
 
 from core.container import get_container
+from services.plan_aggregator import aggregate_procurement
 from ui_pyside6.workers.base_worker import BaseBatchScoreWorker, BaseScoreWorker
 
 
@@ -119,17 +118,15 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
             self._char_config_cache[plan_char_name] = resolve_char_config(char_name=plan_char_name) or {}
         return self._char_config_cache[plan_char_name]
 
-    def _calc_item(self, item) -> Any:
+    def _calc_base(self, item) -> dict:
+        """单计划基准指标（calculate_plan_metrics），异常返回空 dict。"""
         plan_id = item.get("id")
         if not plan_id:
-            return None
+            return {}
         try:
-            # 按计划实际设定人物解析配置
             plan_char = (item.get("char_name") or "").strip()
             char_config = self._resolve_char_config(plan_char)
-
-            # 统一调用 calculate_plan_metrics()，所有路径参数决议一致
-            result = (
+            result: dict = (
                 get_container()
                 .scoring_service()
                 .calculate_plan_metrics(
@@ -139,34 +136,77 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
                     price_type_prod=self._prod_price_type,
                 )
             )
-            return (
-                plan_id,
-                result.get("profit", 0),
-                result.get("margin", 0),
-                result.get("score", 0),
-                result.get("iskph", 0),
-                result.get("material_cost", 0),
-                result.get("calculated_time", 0) / 3600,  # 秒→小时
-                result.get("daily_output", 0),
-                self._calc_personal_margin(item, result),
-            )
+            return result
         except Exception:
-            return (plan_id, 0, 0, 0, 0, 0, 0, 0, 0)
+            return {}
 
-    def _calc_personal_margin(self, plan: dict, result: dict) -> float:
+    def _apply_mother_subitem_cost(self, item, result, base_results) -> dict[int, float]:
+        """拆解母项成本改按子项制造价合计。
+
+        母项直接材料中由子项产线自制的组件，其成本从「市场价」改为「子项制造价」；
+        未拆解的直接材料仍按市场价。返回 cost_overrides {type_id: 子项制造价}，
+        供个人利润率计算使用。非母项/无子项时返回空 dict（不改动）。
+        """
+        gid = item.get("group_id") or item.get("group_number")
+        if not gid:
+            return {}
+        lvl = int(item.get("child_level") or item.get("sub_level") or 0)
+        subs = [
+            (p, r)
+            for pid, (p, r) in base_results.items()
+            if (p.get("group_id") or p.get("group_number")) == gid
+            and int(p.get("child_level") or p.get("sub_level") or 0) > lvl
+        ]
+        if not subs:
+            return {}
+        sub_cost_map = {p.get("product_type_id"): (r.get("material_cost", 0) or 0) for p, r in subs}
+
+        runs = max(int(item.get("runs", 1)), 1)
+        parallels = max(int(item.get("parallels", 1)), 1)
+        total_mult = runs * parallels
+        revenue = result.get("revenue", 0) or 0
+        fees = result.get("fees", 0) or 0
+
+        new_material_cost = 0.0
+        cost_overrides: dict[int, float] = {}
+        for mat in result.get("materials", []) or []:
+            mid = mat.get("type_id")
+            qty_per_run = mat.get("qty", 0) or 0
+            if qty_per_run <= 0:
+                continue
+            if mid in sub_cost_map:
+                new_material_cost += sub_cost_map[mid]
+                cost_overrides[mid] = sub_cost_map[mid]
+            else:
+                new_material_cost += qty_per_run * total_mult * (mat.get("unit_price", 0) or 0)
+        result["material_cost"] = round(new_material_cost, 2)
+        profit = revenue - new_material_cost - fees
+        result["profit"] = round(profit, 2)
+        denom = new_material_cost + fees
+        result["margin"] = round(profit / denom * 100, 2) if denom > 0 else 0.0
+        return cost_overrides
+
+    def _calc_personal_margin(self, plan: dict, result: dict, cost_overrides: dict[int, float] | None = None) -> float:
         """计算考虑库存成本的个人利润率（%）。
 
         数据源完全来自 calculate_plan_metrics 的 result
         （revenue_per_run / fees_per_run / materials），不再直连蓝图库/市场库；
         库存经 get_inventory_cost_map() 批量重算期间只取一次。
         无库存时结果与市场利润率在 2 位小数内严格相等。
+        拆解母项的子项自制件经 cost_overrides 按其制造价计。
         """
         from services.scoring_service import ScoringService
 
         runs = max(int(plan.get("runs", 1)), 1)
         parallels = max(int(plan.get("parallels", 1)), 1)
         try:
-            return ScoringService.calculate_personal_margin(result, self._get_inventory_cost_map(), runs, parallels)
+            return ScoringService.calculate_personal_margin(
+                result,
+                self._get_inventory_cost_map(),
+                runs,
+                parallels,
+                cost_overrides=cost_overrides,
+            )
         except Exception:
             return result.get("margin", 0) or 0
 
@@ -179,12 +219,30 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         return self._inv_map
 
     def run(self):
-        """BatchPlanCalcWorker 的 run 覆盖：直接遍历 _items 生成结果列表"""
-        results = []
+        """两遍计算：先算所有计划基准指标，再对拆解母项按子项制造价调整成本。"""
+        base_results: dict[int, tuple[dict, dict]] = {}
         for item in self._items:
-            r = self._calc_item(item)
-            if r is not None:
-                results.append(r)
+            pid = item.get("id")
+            if pid:
+                base_results[pid] = (item, self._calc_base(item))
+
+        results = []
+        for pid, (item, result) in base_results.items():
+            overrides = self._apply_mother_subitem_cost(item, result, base_results)
+            personal = self._calc_personal_margin(item, result, overrides)
+            results.append(
+                (
+                    pid,
+                    result.get("profit", 0),
+                    result.get("margin", 0),
+                    result.get("score", 0),
+                    result.get("iskph", 0),
+                    result.get("material_cost", 0),
+                    result.get("calculated_time", 0) / 3600,  # 秒→小时
+                    result.get("daily_output", 0),
+                    personal,
+                )
+            )
         self.finished.emit(results)
 
 
@@ -272,3 +330,42 @@ class RankWorker(QThread):
 
         self.result.emit(results)
         self.done.emit(time.time() - started)
+
+
+class ProcurementSummaryWorker(QThread):
+    """后台聚合「备料中」计划的待采购金额/体积（统计条模式，按计划机库扣库存）"""
+
+    finished = Signal(float, float)  # total_cost, total_volume
+
+    def __init__(
+        self,
+        plans: list[dict],
+        *,
+        default_mat_hangar_id: int | None = None,
+        region_id: int = 10000002,
+        price_type: str = "sell",
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._plans = plans
+        self._default_mat_hangar_id = default_mat_hangar_id
+        self._region_id = region_id
+        self._price_type = price_type
+
+    def run(self):
+        try:
+            with get_container().db.connect("user", "ref", "bp", "mkt") as conn:
+                _rows, cost, vol = aggregate_procurement(
+                    conn,
+                    self._plans,
+                    hangar_id=None,
+                    default_hangar_id=self._default_mat_hangar_id,
+                    region_id=self._region_id,
+                    price_type=self._price_type,
+                )
+            self.finished.emit(cost, vol)
+        except Exception:
+            from core.logger import log
+
+            log.exception("备料中采购汇总失败")
+            self.finished.emit(0.0, 0.0)

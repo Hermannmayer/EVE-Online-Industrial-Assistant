@@ -89,17 +89,17 @@ class CompareTableModel(QAbstractTableModel):
             if key == "name":
                 return value or ""
             if key in ("cost", "revenue", "profit", "buy_cost", "sell_revenue", "gross_profit"):
-                return _format_isk(value) if isinstance(value, (int, float)) and value is not None else "—"
+                return _format_isk(value) if isinstance(value, int | float) and value is not None else "—"
             if key == "margin":
                 return f"{value:.1f}%" if value is not None else "—"
             if key == "score":
-                return f"{value:.1f}" if isinstance(value, (int, float)) and value else "—"
+                return f"{value:.1f}" if isinstance(value, int | float) and value else "—"
             if key == "isk_per_hour":
-                return _format_isk(value) if isinstance(value, (int, float)) and value else "—"
+                return _format_isk(value) if isinstance(value, int | float) and value else "—"
             if key == "profit_per_m3":
-                return _format_isk(value) if isinstance(value, (int, float)) and value else "—"
+                return _format_isk(value) if isinstance(value, int | float) and value else "—"
             if key == "runs_per_day":
-                return f"{value:.1f}" if isinstance(value, (int, float)) and value else "—"
+                return f"{value:.1f}" if isinstance(value, int | float) and value else "—"
             if key == "status":
                 tips = {
                     "no_blueprint": "无蓝图",
