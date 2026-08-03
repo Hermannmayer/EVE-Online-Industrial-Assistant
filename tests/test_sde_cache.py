@@ -6,13 +6,20 @@
   - universe YAML 解析（新格式：名称走 name_map、stargates 内嵌 destination）
 """
 
+import asyncio
 import io
+import json
 import zipfile
 from unittest.mock import patch
 
 import yaml
 
-from tools.downloaders.sde_cache import clear_yaml_cache, load_yaml
+from tools.downloaders.sde_cache import (
+    _universe_cache_has_names,
+    clear_yaml_cache,
+    ensure_universe_cache,
+    load_yaml,
+)
 
 
 def _make_mini_universe_zip():
@@ -207,3 +214,73 @@ class TestUniverseParsing:
         assert len(regions) == 1
         assert regions[0]["region_id"] == 10000001
         assert regions[0].get("region_name", "") == ""
+
+
+class TestUniverseCacheSelfHeal:
+    """universe JSON 缓存星系名全空 → 判定损坏并重新解析（防污染 solar_system 表）"""
+
+    async def _async_noop(self, *args, **kwargs):
+        return None
+
+    def test_has_names_detection(self):
+        assert _universe_cache_has_names([{"solar_system_name": ""}, {"solar_system_name": None}]) is False
+        assert _universe_cache_has_names([{"solar_system_name": ""}, {"solar_system_name": "Jita"}]) is True
+
+    def test_empty_name_cache_triggers_reparse(self, tmp_path, monkeypatch):
+        """星系名全空的旧缓存 → 丢弃并重新解析，缓存与返回数据均带名字"""
+        cache_file = tmp_path / "universe_data.json"
+        cache_file.write_text(
+            json.dumps(
+                {
+                    "regions": [],
+                    "constellations": [],
+                    "systems": [{"solar_system_id": 30000142, "solar_system_name": ""}],
+                    "stargates": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("tools.downloaders.sde_cache.UNIVERSE_CACHE_PATH", str(cache_file))
+
+        zip_path = tmp_path / "sde.zip"
+        zip_path.write_bytes(_make_mini_universe_zip().getvalue())
+        monkeypatch.setattr("tools.downloaders.sde_cache.SDE_ZIP_PATH", str(zip_path))
+        monkeypatch.setattr("tools.downloaders.sde_cache.ensure_sde_cache", self._async_noop)
+
+        _regions, _const, systems, _sg = asyncio.run(ensure_universe_cache())
+
+        jita = [s for s in systems if s["solar_system_id"] == 30000142][0]
+        assert jita["solar_system_name"] == "Jita", "空名缓存应触发重新解析并补齐名称"
+        # 缓存被重写为带名字
+        with open(cache_file, encoding="utf-8") as f:
+            data = json.load(f)
+        assert data["systems"][0]["solar_system_name"] == "Jita"
+
+    def test_named_cache_uses_fast_path(self, tmp_path, monkeypatch):
+        """星系名非空的缓存 → 走快速路径（不触发重新解析）"""
+        cache_file = tmp_path / "universe_data.json"
+        cache_file.write_text(
+            json.dumps(
+                {
+                    "regions": [],
+                    "constellations": [],
+                    "systems": [{"solar_system_id": 30000142, "solar_system_name": "Jita"}],
+                    "stargates": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("tools.downloaders.sde_cache.UNIVERSE_CACHE_PATH", str(cache_file))
+        # ensure_sde_cache 总是被调用（快速路径也确保 zip 就绪），但不应触发 ZIP 重解析
+        monkeypatch.setattr("tools.downloaders.sde_cache.ensure_sde_cache", self._async_noop)
+        zip_path = tmp_path / "sde.zip"
+        zip_path.write_bytes(b"placeholder")  # 快速路径不读取 zip 内容
+        monkeypatch.setattr("tools.downloaders.sde_cache.SDE_ZIP_PATH", str(zip_path))
+
+        def _fail(*args, **kwargs):
+            raise AssertionError("星系名非空缓存不应触发重新解析")
+
+        monkeypatch.setattr("tools.downloaders.sde_cache._build_name_map", _fail)
+
+        _regions, _const, systems, _sg = asyncio.run(ensure_universe_cache())
+        assert systems[0]["solar_system_name"] == "Jita"

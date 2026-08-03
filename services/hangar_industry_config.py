@@ -11,6 +11,7 @@ import json
 
 from core.logger import log
 from services.database_manager import DatabaseManager, get_db
+from services.terminology import term
 
 db = get_db()
 
@@ -109,11 +110,16 @@ RIG_CATEGORY_LABELS: dict[str, str] = {
     "ship": "舰船(XL)",
     "structure_component": "建筑/组件(XL)",
     "invention": "发明",
-    "me_research": "ME 研究",
-    "te_research": "TE 研究",
+    "me_research": "材料效率研究",
+    "te_research": "生产效率研究",
     "bp_copy": "蓝图复制",
     "laboratory": "实验室(科研, XL)",
 }
+
+
+def rig_category_label(cat: str) -> str:
+    """改件类别标签：terminology.json（rig_categories）为权威来源，内置表兜底。"""
+    return term.rig_category(cat) or RIG_CATEGORY_LABELS.get(cat, cat)
 
 
 def parse_rigs(raw: str | None) -> list[int]:
@@ -175,7 +181,7 @@ def get_rig_catalog(facility_type: str | None, *, _db: DatabaseManager | None = 
                 "en_name": en or "",
                 "group_id": int(gid),
                 "category_key": cat,
-                "category_label": RIG_CATEGORY_LABELS.get(cat, cat),
+                "category_label": rig_category_label(cat),
                 "effect": effect,
                 "mat_bonus": float(mat or 0),
                 "time_bonus": float(tm or 0),

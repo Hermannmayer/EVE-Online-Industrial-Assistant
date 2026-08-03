@@ -28,6 +28,34 @@ MOCK_HANGARS = [
 
 
 @pytest.mark.slow
+def test_hangar_list_shows_system_pair(qapp):
+    """机库列表条目带星系中英对照后缀（吉他 (Jita)）"""
+    from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog
+
+    hangar = {
+        "id": 1,
+        "name": "制造仓",
+        "notes": "",
+        "solar_system_id": 30000142,
+        "facility_type": None,
+        "facility_tax": None,
+        "rigs": None,
+    }
+    with (
+        patch("ui_pyside6.views.hangar_settings_view.inventory_manager.get_hangars", return_value=[hangar]),
+        patch("services.hangar_industry_config.get_rig_catalog", return_value=[]),
+        patch("ui_pyside6.views.hangar_settings_view.resolve_hangar_industry_config", return_value=DEFAULT_CFG),
+        patch(
+            "ui_pyside6.views.hangar_settings_view.resolve_system_names_batch",
+            return_value={30000142: "吉他 (Jita)"},
+        ),
+    ):
+        dlg = HangarSettingsDialog(None)
+        assert dlg._hangar_list.item(0).text() == "制造仓 (吉他 (Jita))"
+        dlg.deleteLater()
+
+
+@pytest.mark.slow
 def test_hangar_settings_dialog_constructs(qapp):
     """对话框可构造，含机库列表 + 配置面板 + 默认机库 tab"""
     from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog

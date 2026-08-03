@@ -270,7 +270,18 @@ class CostBreakdownDialog(QWidget):
 
         # ── 制造作业费 ──
         self._job_eiv.setText(_fmt_isk(eiv))
-        self._job_sci.setText(f"{_fmt_isk(system_cost * total_mult)}  (SCI={sci * 100:.4f}%)")
+        # 展示实际使用的星系（快照/材料机库推导），帮助确认 SCI 按哪个星系计算
+        sys_id = metrics.get("solar_system_id")
+        sys_name = ""
+        if sys_id:
+            from services.name_resolver import resolve_system_name
+
+            with get_container().db.connect("ref") as conn:
+                sys_name = resolve_system_name(conn, sys_id)
+        sci_label = f"SCI={sci * 100:.4f}%"
+        if sys_name:
+            sci_label += f"（{sys_name}）"
+        self._job_sci.setText(f"{_fmt_isk(system_cost * total_mult)}  ({sci_label})")
         self._job_fac_tax.setText(_fmt_isk(facility_tax_v * total_mult))
         self._job_scc.setText(_fmt_isk(scc * total_mult))
         self._job_total.setText(_fmt_isk(installation_fee * total_mult))

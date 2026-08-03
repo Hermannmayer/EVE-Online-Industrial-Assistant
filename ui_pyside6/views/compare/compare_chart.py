@@ -66,6 +66,10 @@ class CompareWorker(QThread):
         char_name = self._cfg.get("char", "")
         if char_name:
             char_cfg = get_character(char_name)
+        from services.inventory_manager import get_default_mat_hangar_system_id
+
+        # SCI 按默认材料机库星系（None → 回退吉他，与旧行为一致）
+        self._system_id = get_default_mat_hangar_system_id()
 
         for i, item in enumerate(self._items):
             if self._cancelled:
@@ -97,7 +101,7 @@ class CompareWorker(QThread):
         me = self._cfg.get("me", 0)
         te = self._cfg.get("te", 0)
 
-        k = f"{tid}|mfg|{hub}|{self._cfg.get('char', '')}"
+        k = f"{tid}|mfg|{hub}|{self._cfg.get('char', '')}|{self._system_id or ''}"
         r = _cache.get(k)
         if not r:
             r = (
@@ -111,6 +115,7 @@ class CompareWorker(QThread):
                     tax,
                     bp_me=me,
                     bp_te=te,
+                    system_id=self._system_id,
                 )
             )
             _cache.set(k, r)
@@ -158,7 +163,7 @@ class CompareWorker(QThread):
         hub = self._cfg.get("hub", "Jita")
         tax = self._cfg.get("tax", 0)
 
-        k = f"{tid}|reaction|{hub}|{self._cfg.get('char', '')}"
+        k = f"{tid}|reaction|{hub}|{self._cfg.get('char', '')}|{self._system_id or ''}"
         r = _cache.get(k)
         if not r:
             r = (
@@ -170,6 +175,7 @@ class CompareWorker(QThread):
                     hub,
                     hub,
                     tax,
+                    system_id=self._system_id,
                 )
             )
             _cache.set(k, r)

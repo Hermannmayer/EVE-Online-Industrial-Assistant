@@ -130,3 +130,46 @@ def resolve_item_names_batch(
 def mat_name(mat_id: int, conn: sqlite3.Connection) -> str:
     """查询材料名称，优先查 item 表，基础矿物走 terminology.json 覆盖。"""
     return resolve_item_name(conn, mat_id)
+
+
+def resolve_system_name(conn: sqlite3.Connection, solar_system_id: int) -> str:
+    """星系显示名：中文 (英文)。中文优先 terminology.system_names，fallback 英文 → str(id)。
+
+    Args:
+        conn: reference.db 的数据库连接
+        solar_system_id: 星系 solar_system_id
+
+    Returns:
+        如 "吉他 (Jita)"；未注册中文且表无英文名时回退字符串 id。
+    """
+    row = conn.execute(
+        "SELECT solar_system_name FROM solar_system WHERE solar_system_id = ?",
+        (solar_system_id,),
+    ).fetchone()
+    en = row[0] if row and row[0] else ""
+    zh = term.system_name(en) if en else None
+    if zh:
+        return f"{zh} ({en})"
+    return en or str(solar_system_id)
+
+
+def resolve_system_names_batch(
+    conn: sqlite3.Connection,
+    solar_system_ids: list[int],
+) -> dict[int, str]:
+    """批量查询星系显示名（中英对照），减少数据库往返。"""
+    if not solar_system_ids:
+        return {}
+    placeholders = ",".join("?" * len(solar_system_ids))
+    rows = conn.execute(
+        f"SELECT solar_system_id, solar_system_name FROM solar_system"
+        f" WHERE solar_system_id IN ({placeholders})",
+        solar_system_ids,
+    ).fetchall()
+    result: dict[int, str] = {}
+    for sid, en in rows:
+        sid = int(sid)
+        en = en or ""
+        zh = term.system_name(en) if en else None
+        result[sid] = f"{zh} ({en})" if zh else (en or str(sid))
+    return result

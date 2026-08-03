@@ -270,8 +270,9 @@ def start_plan(
             auto_bound = True
 
     # 3. 持久化：材料扣减 + 状态更新同一事务（任一步失败整体回滚，避免部分扣减残留）；
-    #    生效 mat_hangar_id 一并落库，供撤销按同一机库返还
+    #    生效 mat_hangar_id 一并落库，供撤销按同一机库返还；星系随新机库同步（COALESCE 保留手动覆盖）
     now = _now_str()
+    new_solar = inventory_manager.get_hangar_system_id(mat_hangar_id) if mat_hangar_id else None
     with _container().db.connect("user") as conn:
         if mat_hangar_id:
             for r in reqs:
@@ -279,8 +280,9 @@ def start_plan(
         conn.execute(
             "UPDATE production_plans SET status='in_progress', started_at=?, "
             "assigned_blueprint_id=?, material_short=?, char_name=COALESCE(?, char_name), "
-            "facility=COALESCE(?, facility), mat_hangar_id=COALESCE(?, mat_hangar_id) WHERE id=?",
-            (now, assigned_bp, short_json, char_name, facility, mat_hangar_id, plan_id),
+            "facility=COALESCE(?, facility), mat_hangar_id=COALESCE(?, mat_hangar_id), "
+            "solar_system_id=COALESCE(?, solar_system_id) WHERE id=?",
+            (now, assigned_bp, short_json, char_name, facility, mat_hangar_id, new_solar, plan_id),
         )
 
     message = "计划已启动"

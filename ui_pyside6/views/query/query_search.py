@@ -628,6 +628,8 @@ def do_add_to_plan(page, type_id: int, product_name: str):
         return
 
     # 计算评分（强引用挂到 page，防局部 QThread 被 GC 闪退）
+    from services.inventory_manager import get_default_mat_hangar_system_id
+
     page._add_plan_worker = ScoreWorker(
         type_id=type_id,
         bp_me=0,
@@ -635,6 +637,7 @@ def do_add_to_plan(page, type_id: int, product_name: str):
         mat_hub="Jita",
         sell_hub="Jita",
         tax=0.0,
+        system_id=get_default_mat_hangar_system_id(),
     )
     worker = page._add_plan_worker
 
@@ -646,6 +649,9 @@ def do_add_to_plan(page, type_id: int, product_name: str):
             data = dlg.result_data()
             if not data:
                 return
+            from services import inventory_manager
+
+            mat_hangar_id, solar_system_id = inventory_manager.get_default_mat_hangar_and_system()
             conn3 = get_container().db.direct_connect("user")
             try:
                 iskph = result.get("isk_per_hour", 0) or result.get("breakdown", {}).get("isk_per_hour", 0)
@@ -654,8 +660,8 @@ def do_add_to_plan(page, type_id: int, product_name: str):
                     "INSERT INTO production_plans "
                     "(product_type_id, product_name, runs, parallels, me_level, te_level, "
                     "mat_hub, sell_hub, facility, char_name, status, "
-                    "profit, margin, score, iskph, material_cost, created_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?)",
+                    "profit, margin, score, iskph, material_cost, created_at, mat_hangar_id, solar_system_id) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?)",
                     (
                         type_id,
                         product_name,
@@ -673,6 +679,8 @@ def do_add_to_plan(page, type_id: int, product_name: str):
                         iskph,
                         mat_cost,
                         datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+                        mat_hangar_id,
+                        solar_system_id,
                     ),
                 )
                 conn3.commit()

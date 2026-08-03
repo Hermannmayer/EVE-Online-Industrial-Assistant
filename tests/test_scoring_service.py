@@ -244,6 +244,101 @@ class TestPlanMetricsSystemCostIndex:
         assert r_high["profit"] != r_low["profit"], "不同星系 SCI 不同 → 利润必须不同（缓存 key 含 system_id）"
         assert r_high["profit"] < r_low["profit"], "高 SCI 星系安装费更高 → 利润更低"
 
+    # ── 修复回归：快照为空时从材料机库带出星系（避免回退吉他 SCI） ──
+
+    @staticmethod
+    def _create_hangar(temp_db, hangar_id: int, solar_system_id: int | None):
+        """建完整 hangars 表（含设施列，供 resolve_hangar_industry_config 读取）并插入测试机库。"""
+        with temp_db.connect("user") as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS hangars ("
+                "id INTEGER PRIMARY KEY, name TEXT, notes TEXT DEFAULT '', "
+                "solar_system_id INTEGER DEFAULT NULL, "
+                "facility_type TEXT DEFAULT NULL, facility_tax REAL DEFAULT NULL, rigs TEXT DEFAULT NULL)"
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO hangars (id, name, solar_system_id) VALUES (?, ?, ?)",
+                (hangar_id, f"机库{hangar_id}", solar_system_id),
+            )
+
+    def test_plan_metrics_derives_system_from_mat_hangar(self, temp_db):
+        """无 solar_system_id + mat_hangar_id（机库在 30000150）→ 推导机库星系 SCI(0.15)"""
+        self._prepare(temp_db)
+        self._create_hangar(temp_db, 1, 30000150)
+        cache = TtlLRUCache(max_size=10)
+        plan = {
+            "product_type_id": 2001,
+            "me_level": 0,
+            "te_level": 0,
+            "runs": 1,
+            "parallels": 1,
+            "facility_tax": 0.0,
+            "mat_hangar_id": 1,
+        }
+        metrics = self._metrics(temp_db, cache, plan)
+        assert metrics["breakdown"]["sci"] == 0.15, "应从材料机库带出星系(30000150)的 SCI"
+        assert metrics["solar_system_id"] == 30000150
+
+    def test_plan_metrics_snapshot_takes_precedence_over_mat_hangar(self, temp_db):
+        """既有 solar_system_id 快照又绑定机库 → 快照优先（手动覆盖不被机库覆盖）"""
+        self._prepare(temp_db)
+        self._create_hangar(temp_db, 1, 30000150)
+        cache = TtlLRUCache(max_size=10)
+        plan = {
+            "product_type_id": 2001,
+            "me_level": 0,
+            "te_level": 0,
+            "runs": 1,
+            "parallels": 1,
+            "facility_tax": 0.0,
+            "mat_hangar_id": 1,
+            "solar_system_id": 30000142,  # 快照（如手动设置设施星系）→ 用 0.03
+        }
+        metrics = self._metrics(temp_db, cache, plan)
+        assert metrics["breakdown"]["sci"] == 0.03
+        assert metrics["solar_system_id"] == 30000142
+
+    def test_plan_metrics_mat_hangar_without_system_falls_back_to_sell_hub(self, temp_db):
+        """材料机库未设星系 → 仍回退 sell_hub(吉他 30000142)，不报错"""
+        self._prepare(temp_db)
+        self._create_hangar(temp_db, 1, None)
+        cache = TtlLRUCache(max_size=10)
+        plan = {
+            "product_type_id": 2001,
+            "me_level": 0,
+            "te_level": 0,
+            "runs": 1,
+            "parallels": 1,
+            "mat_hangar_id": 1,
+        }
+        metrics = self._metrics(temp_db, cache, plan)
+        assert metrics["breakdown"]["sci"] == 0.03  # 回落 sell_hub → 30000142
+        assert metrics["solar_system_id"] == 30000142
+
+    def test_research_cost_cache_keyed_by_system(self, temp_db):
+        """研究成本缓存 key 必须含 solar_system_id：不同星系研究成本不串缓存"""
+        from services import scoring_service as ss
+
+        ss._research_cost_cache.clear()
+        try:
+            calls: list[int | None] = []
+            with patch("services.research_calculator.research_cost_for_item") as mock_r:
+
+                def fake_rf(conn, type_id, *, solar_system_id=None):
+                    calls.append(solar_system_id)
+                    return 1.0 if solar_system_id == 30000142 else 2.0
+
+                mock_r.side_effect = fake_rf
+                v1 = ss._research_cost_cached(temp_db, 2001, solar_system_id=30000142)
+                v2 = ss._research_cost_cached(temp_db, 2001, solar_system_id=30000150)
+                v1_again = ss._research_cost_cached(temp_db, 2001, solar_system_id=30000142)
+
+            assert v1 == 1.0 and v2 == 2.0 and v1_again == 1.0
+            # 同 type 不同星系各自缓存；同一星系第二次命中缓存不再查询
+            assert calls == [30000142, 30000150]
+        finally:
+            ss._research_cost_cache.clear()
+
 
 class TestHangarStructureBonus:
     """机库结构加成联动 — structure_mat_saving / structure_time_mod / 设施税"""

@@ -31,39 +31,42 @@ SDE_ZIP_PATH = os.path.join(CACHE_DIR, "sde.zip")  # 与 sde_cache.py 共享的 
 SDE_ZIP_URL = "https://eve-static-data-export.s3-eu-west-1.amazonaws.com/tranquility/sde.zip"
 
 
+CREATE_TABLES_SQL = """
+    CREATE TABLE IF NOT EXISTS blueprint_activities (
+        blueprint_type_id INTEGER,
+        activity TEXT,
+        time INTEGER,
+        max_production_limit INTEGER DEFAULT 1,
+        PRIMARY KEY (blueprint_type_id, activity)
+    );
+    CREATE TABLE IF NOT EXISTS blueprint_materials (
+        blueprint_type_id INTEGER,
+        activity TEXT,
+        material_type_id INTEGER,
+        quantity INTEGER,
+        wastefactor INTEGER DEFAULT 10,
+        PRIMARY KEY (blueprint_type_id, activity, material_type_id)
+    );
+    CREATE TABLE IF NOT EXISTS blueprint_products (
+        blueprint_type_id INTEGER,
+        activity TEXT,
+        product_type_id INTEGER,
+        quantity INTEGER DEFAULT 1,
+        probability REAL DEFAULT 1.0,
+        PRIMARY KEY (blueprint_type_id, activity, product_type_id)
+    );
+    CREATE TABLE IF NOT EXISTS blueprint_skills (
+        blueprint_type_id INTEGER,
+        activity TEXT,
+        skill_type_id INTEGER,
+        level INTEGER,
+        PRIMARY KEY (blueprint_type_id, activity, skill_type_id)
+    );
+"""
+
+
 async def create_tables(db: aiosqlite.Connection):
-    await db.executescript("""
-        CREATE TABLE IF NOT EXISTS blueprint_activities (
-            blueprint_type_id INTEGER,
-            activity TEXT,
-            time INTEGER,
-            max_production_limit INTEGER DEFAULT 1,
-            PRIMARY KEY (blueprint_type_id, activity)
-        );
-        CREATE TABLE IF NOT EXISTS blueprint_materials (
-            blueprint_type_id INTEGER,
-            activity TEXT,
-            material_type_id INTEGER,
-            quantity INTEGER,
-            wastefactor INTEGER DEFAULT 10,
-            PRIMARY KEY (blueprint_type_id, activity, material_type_id)
-        );
-        CREATE TABLE IF NOT EXISTS blueprint_products (
-            blueprint_type_id INTEGER,
-            activity TEXT,
-            product_type_id INTEGER,
-            quantity INTEGER DEFAULT 1,
-            probability REAL DEFAULT 1.0,
-            PRIMARY KEY (blueprint_type_id, activity, product_type_id)
-        );
-        CREATE TABLE IF NOT EXISTS blueprint_skills (
-            blueprint_type_id INTEGER,
-            activity TEXT,
-            skill_type_id INTEGER,
-            level INTEGER,
-            PRIMARY KEY (blueprint_type_id, activity, skill_type_id)
-        );
-    """)
+    await db.executescript(CREATE_TABLES_SQL)
     await db.commit()
 
 
