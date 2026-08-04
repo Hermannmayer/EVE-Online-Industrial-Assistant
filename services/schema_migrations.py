@@ -19,7 +19,7 @@ from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
-    "user": 8,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）
+    "user": 9,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库
     "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
 }
 
@@ -82,6 +82,23 @@ def _migrate_user_v1_to_v2(db_path: str) -> str:
         conn.close()
 
 
+# production_plans 的 v2 扩展列（v2→v3 首次加入；v8→v9 对「迁移先于建表」的历史库重新补齐）
+_PRODUCTION_PLANS_V2_EXT_COLUMNS: list[tuple[str, str]] = [
+    ("calculated_time", "REAL DEFAULT 0"),
+    ("notes", "TEXT DEFAULT ''"),
+    ("group_number", "INTEGER DEFAULT 0"),
+    ("sub_level", "INTEGER DEFAULT 0"),
+    ("output_location", "TEXT DEFAULT ''"),
+    ("market_margin", "REAL DEFAULT 0"),
+    ("personal_margin", "REAL DEFAULT 0"),
+    ("daily_output", "REAL DEFAULT 0"),
+    ("materials_ready", "INTEGER DEFAULT 0"),
+    ("iskph", "REAL DEFAULT 0"),
+    ("deposit_hangar_id", "INTEGER DEFAULT NULL"),
+    ("deposited", "INTEGER DEFAULT 0"),
+]
+
+
 def _migrate_user_v2_to_v3(db_path: str) -> str:
     """v2→v3: production_plans 新增各扩展列"""
     conn = sqlite3.connect(db_path)
@@ -90,24 +107,7 @@ def _migrate_user_v2_to_v3(db_path: str) -> str:
             return "production_plans 表不存在，跳过"
     finally:
         conn.close()
-    net = _add_columns(
-        db_path,
-        "production_plans",
-        [
-            ("calculated_time", "REAL DEFAULT 0"),
-            ("notes", "TEXT DEFAULT ''"),
-            ("group_number", "INTEGER DEFAULT 0"),
-            ("sub_level", "INTEGER DEFAULT 0"),
-            ("output_location", "TEXT DEFAULT ''"),
-            ("market_margin", "REAL DEFAULT 0"),
-            ("personal_margin", "REAL DEFAULT 0"),
-            ("daily_output", "REAL DEFAULT 0"),
-            ("materials_ready", "INTEGER DEFAULT 0"),
-            ("iskph", "REAL DEFAULT 0"),
-            ("deposit_hangar_id", "INTEGER DEFAULT NULL"),
-            ("deposited", "INTEGER DEFAULT 0"),
-        ],
-    )
+    net = _add_columns(db_path, "production_plans", _PRODUCTION_PLANS_V2_EXT_COLUMNS)
     return f"production_plans 扩展列 (新增 {net} 列)"
 
 
@@ -227,6 +227,24 @@ def _migrate_user_v7_to_v8(db_path: str) -> str:
         conn.close()
 
 
+def _migrate_user_v8_to_v9(db_path: str) -> str:
+    """v8→v9: 对缺失 v2 扩展列的 production_plans 重新补列。
+
+    成因：v2→v3 迁移在 production_plans 尚未建表时运行会跳过加列但仍升版本，
+    之后按 CREATE TABLE 路径（industry_view.PLAN_DB_SCHEMA）建出的表缺这 12 列，
+    运行时报 no such column（倒计时补算 / 建计划 / 完成入库均受影响）。
+    幂等：已存在的列跳过，重复运行无变化。
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        if not _table_exists(conn, "production_plans"):
+            return "production_plans 表不存在，跳过"
+    finally:
+        conn.close()
+    net = _add_columns(db_path, "production_plans", _PRODUCTION_PLANS_V2_EXT_COLUMNS)
+    return f"production_plans 补齐 v2 扩展列 (新增 {net} 列)"
+
+
 def _migrate_bp_v1_to_v2(db_path: str) -> str:
     """v1→v2: blueprint_materials 新增 wastefactor 列"""
     conn = sqlite3.connect(db_path)
@@ -259,6 +277,7 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
         5: _migrate_user_v5_to_v6,
         6: _migrate_user_v6_to_v7,
         7: _migrate_user_v7_to_v8,
+        8: _migrate_user_v8_to_v9,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,

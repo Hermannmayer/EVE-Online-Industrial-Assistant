@@ -32,9 +32,23 @@ class PlanRepository:
         created_at TEXT,
         started_at TEXT,
         completed_at TEXT,
+        facility_cost_mult REAL DEFAULT 1.0,
+        calculated_time REAL DEFAULT 0,
+        notes TEXT DEFAULT '',
+        group_number INTEGER DEFAULT 0,
+        sub_level INTEGER DEFAULT 0,
+        output_location TEXT DEFAULT '',
+        market_margin REAL DEFAULT 0,
+        personal_margin REAL DEFAULT 0,
+        daily_output REAL DEFAULT 0,
+        materials_ready INTEGER DEFAULT 0,
+        iskph REAL DEFAULT 0,
+        deposit_hangar_id INTEGER DEFAULT NULL,
+        deposited INTEGER DEFAULT 0,
         assigned_blueprint_id INTEGER DEFAULT NULL,
         mat_hangar_id INTEGER DEFAULT NULL,
-        material_short TEXT DEFAULT ''
+        material_short TEXT DEFAULT '',
+        solar_system_id INTEGER DEFAULT NULL
     );"""
 
     def ensure_table(self):
