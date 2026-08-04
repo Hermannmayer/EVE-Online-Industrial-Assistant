@@ -76,8 +76,8 @@ graph TB
 | `eve_formulas.py` | EVE Online 游戏公式（税率、经纪人费率、精炼产出等） |
 | `cache.py` | `TtlLRUCache` 线程安全 LRU + TTL 缓存 |
 | `version.py` | 单一版本源（python-semantic-release 自动改写） |
-| `single_instance.py` | 单实例锁（防止多开） |
-| `hot_reload.py` | dev.py 热重载支持 |
+| `single_instance.py` | 单实例锁（防止多开），支持自定义锁路径（instance.lock / dev.lock） |
+| `hot_reload.py` | 热重载 trigger/state 文件 I/O，经 --hot-reload 启用优雅退出 |
 
 ### 业务层（services/）
 

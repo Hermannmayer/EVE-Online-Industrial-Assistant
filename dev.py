@@ -16,12 +16,18 @@ import sys
 import time
 from pathlib import Path
 
+from core.hot_reload import clear_trigger, write_trigger
+from core.single_instance import try_lock, unlock
+
 ROOT = Path(__file__).parent.resolve()
 WATCH_DIRS = ["core", "services", "ui_pyside6", "."]
 WATCH_EXTS = (".py", ".qss", ".ui")
 IGNORE_DIRS = {"__pycache__", ".git", "venv", ".venv", "build", "dist", ".pytest_cache"}
 RESTART_COOLDOWN = 15.0  # 重启后多少秒内忽略变更（agent 连续改文件时不会连环重启）
 DEBOUNCE_SECONDS = 12.0  # 变更后等待多久无新变更再重启
+
+# dev.py 自身的单实例锁：与 Main.py 的 instance.lock 分离，启动器才能启动应用子进程
+DEV_LOCK = Path.home() / ".eve-assistant" / "dev.lock"
 
 # 开发模式日志
 logging.basicConfig(
@@ -48,19 +54,28 @@ def get_mtimes():
     return mtimes
 
 
-def start_app(debug: bool = False):
-    """启动 Main.py 子进程"""
+def build_args(debug: bool = False) -> list[str]:
+    """构造 Main.py 子进程命令行；恒带 --hot-reload 以启用优雅退出（保存状态）。"""
     args = [sys.executable, str(ROOT / "Main.py")]
     if debug:
         args.append("--debug")
+    args.append("--hot-reload")
+    return args
+
+
+def start_app(debug: bool = False):
+    """启动 Main.py 子进程"""
+    clear_trigger()  # 清除残留 trigger，避免新进程启动即触发热重载退出
+    args = build_args(debug)
     log.info("启动: %s", " ".join(args))
     return subprocess.Popen(args, cwd=ROOT)
 
 
 def _wait_and_cleanup(proc, timeout: int = 5):
     """等待进程优雅退出，超时则强制终止"""
-    from core.hot_reload import write_trigger
-
+    if proc.poll() is not None:
+        log.info("子进程已退出，跳过优雅退出流程")
+        return
     write_trigger()
     log.info("等待进程优雅退出...")
     try:
@@ -75,7 +90,7 @@ def _wait_and_cleanup(proc, timeout: int = 5):
             proc.wait(2)
 
 
-def main():
+def _run():
     debug = "--debug" in sys.argv
     no_watch = "--no-watch" in sys.argv
 
@@ -179,6 +194,17 @@ def main():
             log.info("正在退出...")
             if proc and proc.poll() is None:
                 _wait_and_cleanup(proc)
+
+
+def main():
+    if not try_lock(lock_file=DEV_LOCK):
+        print("检测到另一个 dev.py 已在运行。", file=sys.stderr)
+        print(f"  若确认无残留实例，请删除该文件后重试: {DEV_LOCK}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        _run()
+    finally:
+        unlock(lock_file=DEV_LOCK)
 
 
 if __name__ == "__main__":

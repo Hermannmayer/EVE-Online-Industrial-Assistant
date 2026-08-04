@@ -46,7 +46,7 @@ def _migrate_user_v2_to_v3(db_path: str) -> str
 
 v2→v3: production_plans 新增各扩展列
 
-定义行：`85`
+定义行：`102`
 
 ### `_migrate_user_v3_to_v4`
 
@@ -98,6 +98,16 @@ v7→v8: 回填 production_plans 空星系快照（从材料机库带出）。
 
 定义行：`200`
 
+### `_migrate_user_v8_to_v9`
+
+```python
+def _migrate_user_v8_to_v9(db_path: str) -> str
+```
+
+v8→v9: 对缺失 v2 扩展列的 production_plans 重新补列。
+
+定义行：`230`
+
 ### `_migrate_bp_v1_to_v2`
 
 ```python
@@ -106,7 +116,7 @@ def _migrate_bp_v1_to_v2(db_path: str) -> str
 
 v1→v2: blueprint_materials 新增 wastefactor 列
 
-定义行：`230`
+定义行：`248`
 
 ### `_table_exists`
 
@@ -116,7 +126,7 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool
 
 检查连接中是否存在指定表
 
-定义行：`274`
+定义行：`293`
 
 ### `_add_columns`
 
@@ -126,7 +136,7 @@ def _add_columns(db_path: str, table: str, columns: list[tuple[str, str]]) -> in
 
 批量 ADD COLUMN，忽略已存在的列。返回实际新增的列数。
 
-定义行：`283`
+定义行：`302`
 
 ### `_get_version`
 
@@ -136,7 +146,7 @@ def _get_version(db_path: str) -> int
 
 读取 PRAGMA user_version
 
-定义行：`304`
+定义行：`323`
 
 ### `_set_version`
 
@@ -146,7 +156,7 @@ def _set_version(db_path: str, version: int)
 
 写入 PRAGMA user_version
 
-定义行：`314`
+定义行：`333`
 
 ### `ensure_schema`
 
@@ -156,7 +166,7 @@ def ensure_schema(db_alias: str) -> dict
 
 检查并迁移单个库的 schema。
 
-定义行：`329`
+定义行：`348`
 
 ### `ensure_all_schemas`
 
@@ -166,7 +176,7 @@ def ensure_all_schemas() -> dict[str, dict]
 
 遍历所有 4 个库，执行必要的 schema 迁移。
 
-定义行：`381`
+定义行：`400`
 
 ### `get_db_version`
 
@@ -176,7 +186,7 @@ def get_db_version(db_alias: str) -> int | None
 
 读取当前库的磁盘版本号（诊断用）
 
-定义行：`394`
+定义行：`413`
 
 ### `get_expected_version`
 
@@ -186,4 +196,4 @@ def get_expected_version(db_alias: str) -> int | None
 
 返回代码中定义的预期版本号（诊断用）
 
-定义行：`405`
+定义行：`424`

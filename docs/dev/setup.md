@@ -42,6 +42,8 @@ python dev.py
 
 监听 `.py` 文件变更，自动重启应用。无需手动 stop/restart。
 
+dev.py 会自动为子进程传入 `--hot-reload`：文件变更时旧进程保存 UI 状态后优雅退出，再启动新进程恢复状态。dev.py 自身带单实例锁（`~/.eve-assistant/dev.lock`），同时开两个会提示并以退出码 1 结束。
+
 ### build_release.py — 打包
 
 ```bash

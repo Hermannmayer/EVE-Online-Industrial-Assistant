@@ -15,6 +15,14 @@ htmlcov/
 .coverage
 coverage.xml
 
+# pytest basetemp 缓存 + 测试残留临时目录
+pytest-of-*/
+eve_dbmgr_*/
+eve_proc_*/
+eve_test_*
+init_check_*/
+inv_test_*
+
 # Type checking
 .mypy_cache/
 
