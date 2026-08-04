@@ -6,6 +6,14 @@
 
 <!-- version list -->
 
+## v0.14.1 (2026-08-04)
+
+### Bug Fixes
+
+- 修复 production_plans 缺 v2 扩展列 — 倒计时补算/建计划/完成入库 no such column
+  ([`415398d`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/415398d10a2eaeda6155886af7e015136e8a790c))
+
+
 ## v0.14.0 (2026-08-03)
 
 ### Features
