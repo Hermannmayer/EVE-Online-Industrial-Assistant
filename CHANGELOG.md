@@ -6,6 +6,15 @@
 
 <!-- version list -->
 
+## v0.14.2 (2026-08-04)
+
+### Bug Fixes
+
+- Dev.py 热重载链路修复 + 单实例锁防多开
+  ([#6](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/pull/6),
+  [`430673b`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/430673bb2a390890d28ef8d688d1b0011ef125e6))
+
+
 ## v0.14.1 (2026-08-04)
 
 ### Bug Fixes
