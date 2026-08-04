@@ -103,6 +103,18 @@ PLAN_DB_SCHEMA = """CREATE TABLE IF NOT EXISTS production_plans (
     started_at TEXT,
     completed_at TEXT,
     facility_cost_mult REAL DEFAULT 1.0,
+    calculated_time REAL DEFAULT 0,
+    notes TEXT DEFAULT '',
+    group_number INTEGER DEFAULT 0,
+    sub_level INTEGER DEFAULT 0,
+    output_location TEXT DEFAULT '',
+    market_margin REAL DEFAULT 0,
+    personal_margin REAL DEFAULT 0,
+    daily_output REAL DEFAULT 0,
+    materials_ready INTEGER DEFAULT 0,
+    iskph REAL DEFAULT 0,
+    deposit_hangar_id INTEGER DEFAULT NULL,
+    deposited INTEGER DEFAULT 0,
     assigned_blueprint_id INTEGER DEFAULT NULL,
     mat_hangar_id INTEGER DEFAULT NULL,
     material_short TEXT DEFAULT '',
@@ -114,8 +126,8 @@ PLAN_DB_SCHEMA = """CREATE TABLE IF NOT EXISTS production_plans (
 def init_plan_db():
     """初始化 production_plans 表。
 
-    注：扩展列迁移已由 schema_migrations user v2→v3 集中处理（Main.py 启动时执行），
-    此处不再重复 ALTER TABLE。
+    注：CREATE TABLE 已含全部扩展列（含 v2 扩展列），新库直接完整；
+    存量旧库缺列由 schema_migrations 迁移（v2→v3 / v8→v9）补齐。
     """
     try:
         with get_container().db.connect("user") as conn:
