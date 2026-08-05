@@ -123,6 +123,18 @@ def get_hangar_system_id(hangar_id: int | None, *, _db: DatabaseManager | None =
         return row[0] if row and row[0] is not None else None
 
 
+def get_hangar_name(hangar_id: int | None) -> str:
+    """读取机库名称（无机库/未设置返回空串）。"""
+    if not hangar_id:
+        return ""
+    try:
+        with db.connect("user") as conn:
+            row = conn.execute("SELECT name FROM hangars WHERE id = ?", (hangar_id,)).fetchone()
+            return row[0] if row else ""
+    except Exception:
+        return ""
+
+
 def get_default_mat_hangar_and_system() -> tuple[int | None, int | None]:
     """返回 (默认材料机库 id, 其所在星系 id)。settings 未配置/读取失败 → (None, None)。
 

@@ -243,6 +243,42 @@ class TestPlanTableModel:
         assert model.get_plan(0)["product_type_id"] == 2001
         assert model.get_plan(99) == {}
 
+    def test_output_column_displays_output_hangar(self, qapp):
+        """输出列显示输出机库名称，无则 '-'"""
+        plans = [
+            {"product_type_id": 1, "output_hangar": "成品仓库", "status": "pending"},
+            {"product_type_id": 2, "status": "pending"},
+        ]
+        model = PlanTableModel(plans)
+        assert model.data(model.index(0, 14), Qt.ItemDataRole.DisplayRole) == "成品仓库"
+        assert model.data(model.index(1, 14), Qt.ItemDataRole.DisplayRole) == "-"
+
+    def test_output_column_not_editable(self, qapp):
+        """输出列为派生值（输出机库），不可行内编辑"""
+        plans = [{"product_type_id": 1, "status": "pending"}]
+        model = PlanTableModel(plans)
+        flags = model.flags(model.index(0, 14))
+        assert not (flags & Qt.ItemFlag.ItemIsEditable)
+
+    def test_setdata_output_column_rejected(self, qapp):
+        """输出列 setData 被拒绝，不改数据"""
+        plans = [{"product_type_id": 1, "output_hangar": "成品仓库", "status": "pending"}]
+        model = PlanTableModel(plans)
+        assert model.setData(model.index(0, 14), "其它仓库", Qt.ItemDataRole.EditRole) is False
+        assert model.get_plan(0)["output_hangar"] == "成品仓库"
+
+    def test_output_column_sorts_by_hangar_name(self, qapp):
+        """按输出列排序：以 output_hangar 文本排序（空串最小）"""
+        plans = [
+            {"product_type_id": 1, "product_name": "A", "output_hangar": "Zeta", "status": "pending"},
+            {"product_type_id": 2, "product_name": "B", "output_hangar": "Alpha", "status": "pending"},
+            {"product_type_id": 3, "product_name": "C", "output_hangar": "", "status": "pending"},
+        ]
+        model = PlanTableModel(plans)
+        model.sort(14, Qt.SortOrder.AscendingOrder)
+        order = [model.data(model.index(r, 3), Qt.ItemDataRole.DisplayRole) for r in range(3)]
+        assert order == ["C", "B", "A"]
+
 
 # ══════════════════════════════════════
 #  MaterialTableModel

@@ -4,7 +4,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from services.workers.getindustry import KEY_MANUFACTURING_SKILLS, create_tables, run_industry_update
+from services.workers.getindustry import (
+    KEY_MANUFACTURING_SKILLS,
+    create_tables,
+    industry_data_is_fresh,
+    run_industry_update,
+)
 
 
 class TestCreateTables:
@@ -161,3 +166,55 @@ class TestRunIndustryUpdate:
         assert 3387 in skill_ids
         assert 3402 in skill_ids
         assert len(skill_ids) == 11
+
+
+class TestIndustryDataFresh:
+    """industry_data_is_fresh — 工业数据新鲜度判定（临时 SQLite）"""
+
+    @staticmethod
+    def _make_db(tmp_path, fetch_time, *, create_table=True) -> str:
+        import sqlite3
+
+        db_path = str(tmp_path / "ref.db")
+        conn = sqlite3.connect(db_path)
+        try:
+            if create_table:
+                conn.execute(
+                    "CREATE TABLE industry_system_costs ("
+                    "solar_system_id INTEGER, activity TEXT, cost_index REAL, fetch_time TIMESTAMP, "
+                    "PRIMARY KEY (solar_system_id, activity))"
+                )
+                if fetch_time is not None:
+                    conn.execute(
+                        "INSERT INTO industry_system_costs VALUES (1, 'manufacturing', 0.03, ?)",
+                        (fetch_time,),
+                    )
+            conn.commit()
+        finally:
+            conn.close()
+        return db_path
+
+    def test_missing_db_is_not_fresh(self, tmp_path):
+        assert industry_data_is_fresh(str(tmp_path / "none.db")) is False
+
+    def test_no_table_is_not_fresh(self, tmp_path):
+        db = self._make_db(tmp_path, None, create_table=False)
+        assert industry_data_is_fresh(db) is False
+
+    def test_empty_table_is_not_fresh(self, tmp_path):
+        db = self._make_db(tmp_path, None)
+        assert industry_data_is_fresh(db) is False
+
+    def test_recent_fetch_is_fresh(self, tmp_path):
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        db = self._make_db(tmp_path, now)
+        assert industry_data_is_fresh(db, max_age_days=1) is True
+
+    def test_stale_fetch_is_not_fresh(self, tmp_path):
+        from datetime import UTC, datetime, timedelta
+
+        old = (datetime.now(UTC) - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")
+        db = self._make_db(tmp_path, old)
+        assert industry_data_is_fresh(db, max_age_days=1) is False

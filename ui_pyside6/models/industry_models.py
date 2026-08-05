@@ -104,7 +104,7 @@ class PlanTableModel(QAbstractTableModel):
     ]
 
     # 可编辑列集合（仅 active 状态下生效）
-    _EDITABLE_COLS = {4, 8, 13, 14}
+    _EDITABLE_COLS = {4, 8, 13}
 
     # 排序键映射: column index → dict key
     _SORT_KEYS = {
@@ -122,7 +122,7 @@ class PlanTableModel(QAbstractTableModel):
         11: "_calculated_time",
         12: "_daily_output",
         13: "facility",
-        14: "output",
+        14: "output_hangar",
         15: "material_cost",
         16: "profit",
         17: "market_margin",
@@ -268,8 +268,7 @@ class PlanTableModel(QAbstractTableModel):
         if c == 13:
             return p.get("facility", "") or "-"
         if c == 14:
-            output = p.get("output", 0) or 0
-            return f"{output:,.0f}"
+            return p.get("output_hangar", "") or "-"
         if c == 15:
             cost = p.get("material_cost", 0) or 0
             return f"{cost:,.0f}"
@@ -351,11 +350,6 @@ class PlanTableModel(QAbstractTableModel):
             plan["char_name"] = str(value)
         elif col == 13:
             plan["facility"] = str(value)
-        elif col == 14:
-            try:
-                plan["output"] = int(value)
-            except (ValueError, TypeError):
-                plan["output"] = 0
         else:
             return False
         self.dataChanged.emit(index, index, [role])
