@@ -86,7 +86,7 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
 
     finished = Signal(
         list
-    )  # [(plan_id, profit, margin, score, iskph, material_cost, hours, daily, personal_margin), ...]
+    )  # [(plan_id, profit, margin, score, iskph, material_cost, hours, daily, personal_margin, market_margin), ...]
 
     def __init__(
         self,
@@ -141,12 +141,14 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
             return {}
 
     def _apply_mother_subitem_cost(self, item, result, base_results) -> dict[int, float]:
-        """拆解母项成本改按子项制造价合计。
+        """拆解母项成本改按子项制造价合计（材料 + 子项制造作业费）。
 
         母项直接材料中由子项产线自制的组件，其成本从「市场价」改为「子项制造价」；
         未拆解的直接材料仍按市场价。返回 cost_overrides {type_id: 子项制造价}，
         供个人利润率计算使用。非母项/无子项时返回空 dict（不改动）。
         """
+        from services.scoring_service import ScoringService
+
         gid = item.get("group_id") or item.get("group_number")
         if not gid:
             return {}
@@ -159,32 +161,18 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         ]
         if not subs:
             return {}
-        sub_cost_map = {p.get("product_type_id"): (r.get("material_cost", 0) or 0) for p, r in subs}
+        sub_cost_map = {
+            p.get("product_type_id"): ScoringService.child_manufacturing_cost(p, r) for p, r in subs
+        }
 
-        runs = max(int(item.get("runs", 1)), 1)
-        parallels = max(int(item.get("parallels", 1)), 1)
-        total_mult = runs * parallels
-        revenue = result.get("revenue", 0) or 0
-        fees = result.get("fees", 0) or 0
-
-        new_material_cost = 0.0
-        cost_overrides: dict[int, float] = {}
-        for mat in result.get("materials", []) or []:
-            mid = mat.get("type_id")
-            qty_per_run = mat.get("qty", 0) or 0
-            if qty_per_run <= 0:
-                continue
-            if mid in sub_cost_map:
-                new_material_cost += sub_cost_map[mid]
-                cost_overrides[mid] = sub_cost_map[mid]
-            else:
-                new_material_cost += qty_per_run * total_mult * (mat.get("unit_price", 0) or 0)
-        result["material_cost"] = round(new_material_cost, 2)
-        profit = revenue - new_material_cost - fees
-        result["profit"] = round(profit, 2)
-        denom = new_material_cost + fees
-        result["margin"] = round(profit / denom * 100, 2) if denom > 0 else 0.0
-        return cost_overrides
+        total_mult = max(int(item.get("runs", 1)), 1) * max(int(item.get("parallels", 1)), 1)
+        mat_cost, profit, margin, overrides = ScoringService.adjust_mother_metrics(
+            result, sub_cost_map, total_mult
+        )
+        result["material_cost"] = mat_cost
+        result["profit"] = profit
+        result["margin"] = margin
+        return overrides
 
     def _calc_personal_margin(self, plan: dict, result: dict, cost_overrides: dict[int, float] | None = None) -> float:
         """计算考虑库存成本的个人利润率（%）。
@@ -219,15 +207,24 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         return self._inv_map
 
     def run(self):
-        """两遍计算：先算所有计划基准指标，再对拆解母项按子项制造价调整成本。"""
+        """两遍计算：先算所有计划基准指标，再对拆解母项按子项制造价调整成本。
+
+        深度优先（子级深者先算），保证嵌套拆解里子项先按孙项制造价调整，
+        母项再读到正确的子项制造价；调整前留存市场利润率供「市场利润率」列使用。
+        """
         base_results: dict[int, tuple[dict, dict]] = {}
         for item in self._items:
             pid = item.get("id")
             if pid:
                 base_results[pid] = (item, self._calc_base(item))
 
+        ordered = sorted(
+            base_results.items(),
+            key=lambda kv: -(int(kv[1][0].get("child_level") or kv[1][0].get("sub_level") or 0)),
+        )
         results = []
-        for pid, (item, result) in base_results.items():
+        for pid, (item, result) in ordered:
+            market_margin = result.get("margin", 0) or 0  # 调整前留存市场口径利润率
             overrides = self._apply_mother_subitem_cost(item, result, base_results)
             personal = self._calc_personal_margin(item, result, overrides)
             results.append(
@@ -241,6 +238,7 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
                     result.get("calculated_time", 0) / 3600,  # 秒→小时
                     result.get("daily_output", 0),
                     personal,
+                    market_margin,
                 )
             )
         self.finished.emit(results)
