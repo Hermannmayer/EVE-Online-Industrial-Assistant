@@ -41,6 +41,21 @@ def reset_db_locks_each_test():
     reset_db_locks()
 
 
+@pytest.fixture(autouse=True)
+def no_auto_price_download():
+    """阻止测试中 MainWindow 构造触发真实价格检查/下载。
+
+    MainWindow.__init__ 会调用 _init_price_check → PriceCheckWorker → 本地
+    market_prices 过期时启动 PriceUpdateWorker 真实下载 ESI。测试不应发起
+    真实网络请求：后台下载线程会存活到后续测试，与 Qt 清理冲突导致
+    Segmentation fault（access violation）。全局静默该检查。
+    """
+    from ui_pyside6.main_window import MainWindow
+
+    with patch.object(MainWindow, "_init_price_check", lambda self: None):
+        yield
+
+
 # ════════════════════════════════════════════════════════════════
 #  辅助：创建标准临时数据库套件
 # ════════════════════════════════════════════════════════════════
