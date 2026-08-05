@@ -137,3 +137,26 @@ class TestParentDecomposeDialogMulti:
         dlg = ParentDecomposeDialog([_mother(5, group_number=0), _mother(6, group_number=0)])
         gnums = sorted(g for _, g, _ in dlg._assignments)
         assert gnums == [4, 5]
+
+    def test_redecompose_refreshes_existing_child(self, db_manager, monkeypatch, qapp):
+        """已拆解的母项重跑拆解 → 已存在子项的 runs/parallels 按新 line 整体刷新（不残留旧并行数）。"""
+        _build_dbs(db_manager)
+        _patch(db_manager, monkeypatch)
+        with db_manager.connect("user") as conn:
+            conn.execute(
+                "INSERT INTO production_plans (id, product_type_id, product_name, group_number, sub_level, "
+                "runs, parallels) VALUES (1, 2001, '渡鸦级', 7, 0, 2, 1)"
+            )
+            # 残留子项：并行 5（用户并行弹窗设过）、runs 与需求不符
+            conn.execute(
+                "INSERT INTO production_plans (id, product_type_id, product_name, blueprint_type_id, "
+                "group_number, sub_level, runs, parallels) VALUES (2, 1001, '碳纤维', 3002, 7, 1, 3, 5)"
+            )
+        dlg = ParentDecomposeDialog([_mother(1, group_number=7)])
+        dlg._on_accept()
+        with db_manager.connect("user") as conn:
+            row = conn.execute(
+                "SELECT runs, parallels, me_level, te_level FROM production_plans WHERE id=2"
+            ).fetchone()
+        # 需求=5×2=10，单轮产出 1 → runs=10；parallels 重置为拆解默认 1，ME-TE 刷新
+        assert tuple(row) == (10, 1, 0, 0)
