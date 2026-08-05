@@ -23,6 +23,29 @@ from ui_pyside6.main_window import (
 pytestmark = pytest.mark.slow
 
 
+@pytest.fixture(autouse=True)
+def _cleanup_windows():
+    """测试中创建的 MainWindow 结束后自动 close。
+
+    MainWindow 构造会注册全局 theme listener（main_window.py:258）并启动后台
+    线程；不 close 的 window 会残留，触发后续测试（theme 测试 apply_theme 调用
+    残留 listener 卡住 / 后台线程与 Qt 清理冲突 segfault）。closeEvent 会移除
+    listener 并停止价格线程，故统一在此清理。
+    """
+    created: list[MainWindow] = []
+    orig_init = MainWindow.__init__
+
+    def _tracked_init(self, *args, **kwargs):
+        orig_init(self, *args, **kwargs)
+        created.append(self)
+
+    MainWindow.__init__ = _tracked_init
+    yield
+    MainWindow.__init__ = orig_init
+    for w in created:
+        w.close()
+
+
 # ══════════════════════════════════════
 #  NAV_TREE — 导航定义
 # ══════════════════════════════════════
@@ -140,21 +163,30 @@ class TestPriceCheckWorker:
 class TestMainWindowState:
     """主窗口状态序列化"""
 
+    @patch.object(MainWindow, "_register_pages", lambda self: None)
     def test_save_state_returns_dict(self, qapp):
         """save_state 返回字典"""
         window = MainWindow()
-        state = window.save_state()
-        assert isinstance(state, dict)
-        assert "version" in state
-        assert "current_page" in state
-        assert "pages" in state
+        try:
+            state = window.save_state()
+            assert isinstance(state, dict)
+            assert "version" in state
+            assert "current_page" in state
+            assert "pages" in state
+        finally:
+            window.close()
 
+    @patch.object(MainWindow, "_register_pages", lambda self: None)
     def test_save_state_version(self, qapp):
         """save_state 版本号为 1"""
         window = MainWindow()
-        state = window.save_state()
-        assert state["version"] == 1
+        try:
+            state = window.save_state()
+            assert state["version"] == 1
+        finally:
+            window.close()
 
+    @patch.object(MainWindow, "_register_pages", lambda self: None)
     def test_pin_button_toggles_window_stays_on_top(self, qapp):
         """置顶按钮切换 → 非 Windows 平台 windowFlags 含 WindowStaysOnTopHint，并持久化"""
         import os
@@ -162,13 +194,16 @@ class TestMainWindowState:
         if os.name == "nt":
             return  # Windows 走 SetWindowPos，不设 windowFlags
         window = MainWindow()
-        assert not window._pin_btn.isChecked()
-        window._pin_btn.setChecked(True)
-        assert window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
-        assert window._load_window_pin() is True
-        window._pin_btn.setChecked(False)
-        assert not (window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
-        assert window._load_window_pin() is False
+        try:
+            assert not window._pin_btn.isChecked()
+            window._pin_btn.setChecked(True)
+            assert window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+            assert window._load_window_pin() is True
+            window._pin_btn.setChecked(False)
+            assert not (window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
+            assert window._load_window_pin() is False
+        finally:
+            window.close()
 
     @patch.object(MainWindow, "_register_pages", lambda self: None)
     @patch.object(MainWindow, "_init_price_check", lambda self: None)
