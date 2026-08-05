@@ -224,9 +224,17 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         )
         results = []
         for pid, (item, result) in ordered:
-            market_margin = result.get("margin", 0) or 0  # 调整前留存市场口径利润率
-            overrides = self._apply_mother_subitem_cost(item, result, base_results)
-            personal = self._calc_personal_margin(item, result, overrides)
+            try:
+                market_margin = result.get("margin", 0) or 0  # 调整前留存市场口径利润率
+                overrides = self._apply_mother_subitem_cost(item, result, base_results)
+                personal = self._calc_personal_margin(item, result, overrides)
+            except Exception:
+                # 单条计划数据异常（如子项制造价调整收到非法值）不应让整个批量重算线程
+                # 崩溃并抛到 Qt 事件循环；跳过该条，保留库中原值。
+                from core.logger import log
+
+                log.exception("批量重算计划 %s 失败，已跳过", pid)
+                continue
             results.append(
                 (
                     pid,
