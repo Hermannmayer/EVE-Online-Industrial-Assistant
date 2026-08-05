@@ -111,3 +111,51 @@ def test_insert_plans_batch_sets_materials_ready(db_manager, monkeypatch):
         for pid in ids:
             row = conn.execute("SELECT materials_ready FROM production_plans WHERE id=?", (pid,)).fetchone()
             assert row["materials_ready"] == 1
+
+
+# ══════════════════════════════════════
+#  enrich_plan_hangar_names — 设施/输出列显示补全
+# ══════════════════════════════════════
+
+
+class TestEnrichPlanHangarNames:
+    def test_facility_filled_from_material_hangar(self):
+        """空 facility + 有材料机库 → 填材料机库名称"""
+        rows = [{"mat_hangar_id": 3, "facility": "", "deposit_hangar_id": None}]
+        out = plan_service.enrich_plan_hangar_names(rows, {3: "材料仓库A"})
+        assert out[0]["facility"] == "材料仓库A"
+
+    def test_explicit_facility_preserved(self):
+        """显式 facility 不被覆盖"""
+        rows = [{"mat_hangar_id": 3, "facility": "自定义设施", "deposit_hangar_id": None}]
+        out = plan_service.enrich_plan_hangar_names(rows, {3: "材料仓库A"})
+        assert out[0]["facility"] == "自定义设施"
+
+    def test_no_mat_hangar_unchanged(self):
+        """无材料机库 → facility 保持空"""
+        rows = [{"mat_hangar_id": None, "facility": "", "deposit_hangar_id": None}]
+        out = plan_service.enrich_plan_hangar_names(rows, {})
+        assert out[0]["facility"] == ""
+
+    def test_unknown_hangar_id_unchanged(self):
+        """机库 id 不在映射中 → facility 保持空"""
+        rows = [{"mat_hangar_id": 99, "facility": "", "deposit_hangar_id": None}]
+        out = plan_service.enrich_plan_hangar_names(rows, {3: "材料仓库A"})
+        assert out[0]["facility"] == ""
+
+    def test_output_hangar_from_deposit(self):
+        """输出列显示输出机库：output_hangar 来自 deposit_hangar_id（不是输出数量）"""
+        rows = [{"mat_hangar_id": None, "facility": "", "deposit_hangar_id": 7}]
+        out = plan_service.enrich_plan_hangar_names(rows, {7: "成品仓库"})
+        assert out[0]["output_hangar"] == "成品仓库"
+
+    def test_no_deposit_output_empty(self):
+        """无输出机库 → output_hangar 为空"""
+        rows = [{"mat_hangar_id": None, "facility": "", "deposit_hangar_id": None}]
+        out = plan_service.enrich_plan_hangar_names(rows, {7: "成品仓库"})
+        assert out[0]["output_hangar"] == ""
+
+    def test_returns_same_list(self):
+        """原地修改并返回同一列表（与 load_plans 现有补全风格一致）"""
+        rows = [{"mat_hangar_id": 1, "facility": "", "deposit_hangar_id": 2}]
+        assert plan_service.enrich_plan_hangar_names(rows, {1: "A", 2: "B"}) is rows

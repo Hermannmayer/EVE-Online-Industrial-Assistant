@@ -187,22 +187,6 @@ class PlanTable(QWidget):
 
         return inventory_manager.get_hangar_system_id(mat_hangar_id)
 
-    def _system_name(self, solar_system_id: int | None) -> str:
-        """查询星系名称（设施列显示用）。"""
-        if not solar_system_id:
-            return ""
-        try:
-            conn = get_container().db.direct_connect("ref")
-            try:
-                r = conn.execute(
-                    "SELECT solar_system_name FROM solar_system WHERE solar_system_id=?", (solar_system_id,)
-                ).fetchone()
-                return r[0] if r else ""
-            finally:
-                conn.close()
-        except Exception:
-            return ""
-
     def get_table(self) -> QTableView:
         return self._table
 
@@ -419,10 +403,12 @@ class PlanTable(QWidget):
             try:
                 final_mat = updated.get("mat_hangar_id")
                 solar_system_id = self._solar_system_for_mat_hangar(final_mat)
-                # 设施名：编辑对话框不含 facility；材料机库星系未设 facility 时自动带出星系名
+                # 设施名：编辑对话框不含 facility；材料机库未设 facility 时自动带出机库名称
                 facility = plan.get("facility", "") or ""
-                if solar_system_id and not facility:
-                    facility = self._system_name(solar_system_id)
+                if not facility and final_mat:
+                    from services.inventory_manager import get_hangar_name
+
+                    facility = get_hangar_name(final_mat)
                 conn.execute(
                     "UPDATE production_plans SET runs=?, parallels=?, "
                     "char_name=?, notes=?, deposit_hangar_id=?, mat_hangar_id=?, solar_system_id=?, facility=? WHERE id=?",

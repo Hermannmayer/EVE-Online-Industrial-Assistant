@@ -159,5 +159,31 @@ async def run_industry_update(progress_cb=None):
     log.info("工业数据拉取完成")
 
 
+def industry_data_is_fresh(db_path: str, max_age_days: int = 1) -> bool:
+    """判断工业数据（成本指数/设施）是否就绪且新鲜。
+
+    表存在、有行、且最新 fetch_time 距今 ≤ max_age_days 天 → True；
+    库不存在 / 无表 / 空表 / 时间解析失败 → False（触发后台拉取）。
+    """
+    import os
+    import sqlite3
+
+    if not os.path.exists(db_path):
+        return False
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute("SELECT MAX(fetch_time) FROM industry_system_costs").fetchone()
+        finally:
+            conn.close()
+        if not row or not row[0]:
+            return False
+        latest = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+        age = datetime.now(UTC) - latest
+        return age.total_seconds() <= max_age_days * 86400
+    except Exception:
+        return False
+
+
 if __name__ == "__main__":
     asyncio.run(run_industry_update())

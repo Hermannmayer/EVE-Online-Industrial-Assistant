@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import sqlite3
 from datetime import UTC
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
@@ -56,29 +54,6 @@ class IndustryDataWorker(QThread):
         except Exception as e:
             log.exception("工业数据拉取失败: %s", e)
             self.finished.emit(False, str(e))
-
-
-def _ensure_industry_data(parent_status_callback=None):
-    """检查工业数据是否已就绪，若否则在后台拉取"""
-    from core.paths import REF_DB_PATH
-
-    if not os.path.exists(REF_DB_PATH):
-        return False
-    try:
-        conn = sqlite3.connect(REF_DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='industry_system_costs'")
-        if not c.fetchone():
-            conn.close()
-            return False
-        c.execute("SELECT COUNT(*) FROM industry_system_costs")
-        count = c.fetchone()[0]
-        conn.close()
-        if count > 0:
-            return True
-    except Exception:
-        return False
-    return False
 
 
 PLAN_DB_SCHEMA = """CREATE TABLE IF NOT EXISTS production_plans (
@@ -433,20 +408,6 @@ class IndustryPage(QWidget):
 
     # ── load_plans ────────────────────────────────────────────
 
-    def _system_name(self, solar_system_id: int | None) -> str:
-        """查询星系名称（设施列显示用）。"""
-        if not solar_system_id:
-            return ""
-        try:
-            with get_container().db.connect("ref") as conn:
-                r = conn.execute(
-                    "SELECT solar_system_name FROM solar_system WHERE solar_system_id=?",
-                    (solar_system_id,),
-                ).fetchone()
-                return r[0] if r else ""
-        except Exception:
-            return ""
-
     def load_plans(self):
         # 首次加载前补算：重启后已超时的进行中计划 → ready（避免永远停在生产中）
         if not getattr(self, "_overdue_checked", False):
@@ -482,6 +443,8 @@ class IndustryPage(QWidget):
                 "SELECT product_type_id, blueprint_type_id FROM bp.blueprint_products WHERE activity='manufacturing'"
             ).fetchall():
                 prod_to_bp.setdefault(tid, []).append(bpid)
+            # 机库名称映射：设施列（材料机库）/输出列（输出机库）显示用
+            hangar_names = dict(conn.execute("SELECT id, name FROM hangars").fetchall())
         for row in rows:
             ptid = row.get("product_type_id")
             has_bp = bool(row.get("assigned_blueprint_id")) or any(b in owned_bp for b in prod_to_bp.get(ptid, []))
@@ -500,6 +463,10 @@ class IndustryPage(QWidget):
                 cat_map = load_category_map(bp_conn, bp_ids)
         for row in rows:
             row["category"] = cat_map.get(row.get("blueprint_type_id"), "manufacturing")
+        # 设施列（材料机库名）/ 输出列（输出机库名）：显示层补全，不落库
+        from services.plan_service import enrich_plan_hangar_names
+
+        enrich_plan_hangar_names(rows, hangar_names)
         from ui_pyside6.models.industry_models import PlanTableModel
 
         # 注入当前材料机库（启动旧计划时兜底）
@@ -661,10 +628,15 @@ class IndustryPage(QWidget):
             self._recalc_busy = False
 
     def _check_industry_data(self):
-        """检查工业数据，缺失时在后台拉取"""
-        if _ensure_industry_data():
+        """检查工业数据，缺失或过时（fetch_time 超阈值）时在后台拉取"""
+        from core.paths import REF_DB_PATH
+        from services.workers.getindustry import industry_data_is_fresh
+
+        if industry_data_is_fresh(REF_DB_PATH):
             return
-        log.info("工业数据（成本指数/设施）未就绪，后台开始拉取...")
+        if getattr(self, "_industry_worker", None) and self._industry_worker.isRunning():
+            return  # 已有拉取线程在跑
+        log.info("工业数据（成本指数/设施）缺失或过时，后台开始拉取...")
         self._status_bar.show_message("正在后台拉取工业数据...")
         self._industry_worker = IndustryDataWorker()
         self._industry_worker.finished.connect(self._on_industry_data_ready)
@@ -846,14 +818,14 @@ class IndustryPage(QWidget):
             data = dlg.result_data()
             if not data:
                 return
-            # \u4ece\u6750\u6599\u673a\u5e93\u5e26\u51fa\u6240\u5728\u661f\u7cfb\uff08\u661f\u7cfb\u6210\u672c\u6307\u6570\u5f71\u54cd\u5b89\u88c5\u8d39\uff09\uff1bfacility \u672a\u586b\u65f6\u7528\u661f\u7cfb\u540d
+            # \u4ece\u6750\u6599\u673a\u5e93\u5e26\u51fa\u6240\u5728\u661f\u7cfb\uff08\u661f\u7cfb\u6210\u672c\u6307\u6570\u5f71\u54cd\u5b89\u88c5\u8d39\uff09\uff1bfacility \u672a\u586b\u65f6\u7528\u6750\u6599\u673a\u5e93\u540d\u79f0
             mat_hangar_id = self._toolbar.get_mat_hangar_id()
             from services import inventory_manager
 
             solar_system_id = inventory_manager.get_hangar_system_id(mat_hangar_id)
             facility = data.get("fac", "")
-            if not facility and solar_system_id:
-                facility = self._system_name(solar_system_id)
+            if not facility:
+                facility = inventory_manager.get_hangar_name(mat_hangar_id)
             # \u6784\u9020\u4e34\u65f6 plan dict\uff0c\u7528\u7edf\u4e00\u65b9\u6cd5\u8ba1\u7b97\u6d3e\u751f\u6307\u6807
             plan_input = {
                 "product_type_id": type_id,
