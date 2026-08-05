@@ -4,6 +4,7 @@
 
 import asyncio
 import json
+import threading
 import time
 
 import aiohttp
@@ -15,6 +16,10 @@ class RateLimiter:
 
     用法：请求前 `await limiter.acquire()`。rate 为每秒令牌数，
     burst 为瞬时突发上限（桶容量）。
+
+    用 threading.Lock 保护令牌更新：不绑定事件循环（模块级单例可被
+    多个 asyncio.run 复用，重试不会抛 "bound to a different event loop"），
+    同时线程安全。
     """
 
     def __init__(self, rate: float = 20.0, burst: int = 40):
@@ -22,37 +27,50 @@ class RateLimiter:
         self._burst = burst
         self._tokens = float(burst)
         self._updated = time.monotonic()
-        self._lock = asyncio.Lock()
+        self._lock = threading.Lock()
 
     async def acquire(self) -> None:
         """获取一个令牌（不足时按速率等待）"""
-        async with self._lock:
-            while True:
+        while True:
+            with self._lock:
                 now = time.monotonic()
                 self._tokens = min(self._burst, self._tokens + (now - self._updated) * self._rate)
                 self._updated = now
                 if self._tokens >= 1.0:
                     self._tokens -= 1.0
                     return
-                await asyncio.sleep((1.0 - self._tokens) / self._rate)
+                wait = (1.0 - self._tokens) / self._rate
+            await asyncio.sleep(wait)
 
     @property
     def rate(self) -> float:
         return self._rate
 
 
+# 全应用共享的 ESI 令牌桶：多个步骤并行下载时（prices/implants/rigs/industry），
+# 所有 APIClient 共用同一个桶，避免对 esi.evetech.net 的合速率超过 20 req/s 触发 429 雪崩。
+GLOBAL_ESI_LIMITER = RateLimiter(rate=20.0, burst=40)
+
+
 class APIClient:
     """异步 HTTP 客户端（含重试、并发控制、全局限流）"""
 
-    def __init__(self, concurrency: int = 20, timeout: int = 30, user_agent: str = "EveApp/1.0", retries: int = 3):
+    def __init__(
+        self,
+        concurrency: int = 20,
+        timeout: int = 30,
+        user_agent: str = "EveApp/1.0",
+        retries: int = 3,
+        limiter: RateLimiter | None = None,
+    ):
         self._concurrency = concurrency
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._user_agent = user_agent
         self._retries = retries
         self.session: aiohttp.ClientSession | None = None
         self.semaphore: asyncio.Semaphore | None = None
-        # ESI 全局限流：≤20 req/s（全部请求共享同一个限流器）
-        self._limiter = RateLimiter(rate=20.0, burst=40)
+        # ESI 全局限流：≤20 req/s（进程内全部请求共享同一个限流器，可传入独立实例供测试）
+        self._limiter = limiter if limiter is not None else GLOBAL_ESI_LIMITER
 
     @property
     def limiter(self) -> RateLimiter:
