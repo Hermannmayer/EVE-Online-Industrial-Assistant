@@ -6,6 +6,22 @@
 
 <!-- version list -->
 
+## v0.15.1 (2026-08-05)
+
+### Bug Fixes
+
+- 批量重算 worker 单条计划计算失败容错，不再崩线程
+  ([`01a814f`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/01a814fe636531d0e3068a7a5577232c20fdb679))
+
+- 生产规划设施/输出列显示机库名 + SCI 过期自动刷新
+  ([`8278cc7`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/8278cc7030c4dbe70d581e54ce7f9c88df283b57))
+
+### Testing
+
+- 阻止 UI 测试真实价格下载 + 自动清理 MainWindow 残留
+  ([`f1b2047`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/f1b2047f7e89089a0d34eef98e4c75bfe4422321))
+
+
 ## v0.15.0 (2026-08-05)
 
 ### Bug Fixes
