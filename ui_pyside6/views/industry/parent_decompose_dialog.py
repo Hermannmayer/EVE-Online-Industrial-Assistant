@@ -27,7 +27,7 @@ from services.plan_decompose import decompose_plan
 class ParentDecomposeDialog(QDialog):
     """母项拆解 — 预览子项产线并确认拆解落库（多母项批量）"""
 
-    _HEADERS = ["组号", "组件", "层", "流程", "并行", "ME-TE", "蓝图"]
+    _HEADERS = ["组号", "组件", "层", "需求", "流程", "并行", "ME-TE", "蓝图"]
 
     def __init__(self, plans: list[dict], parent=None):
         super().__init__(parent)
@@ -76,6 +76,7 @@ class ParentDecomposeDialog(QDialog):
                     str(gnum),
                     name,
                     str(line["sub_level"]),
+                    f"{line.get('demand', 0):,}",
                     str(line["runs"]),
                     str(line["parallels"]),
                     f"{line['me_level']}-{line['te_level']}",
@@ -86,7 +87,7 @@ class ParentDecomposeDialog(QDialog):
                     it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     if col != 1:
                         it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    if col == 6 and not line["has_blueprint"]:
+                    if col == 7 and not line["has_blueprint"]:
                         it.setForeground(QColor(theme.ACCENT_RED))
                     self._table.setItem(row_idx, col, it)
                 row_idx += 1
@@ -95,7 +96,10 @@ class ParentDecomposeDialog(QDialog):
         self._table.setColumnWidth(1, 200)
         layout.addWidget(self._table, 1)
 
-        tip = QLabel("提示：无蓝图的行需先买入对应蓝图才能运行。库存已有的组件会自动少造。")
+        tip = QLabel(
+            "提示：每个子项的「流程」按母项对它的需求自动生成（需求 ÷ 单轮产出，向上取整），"
+            "总产出 ≈ 需求（1X）。无蓝图的行需先买入对应蓝图才能运行。库存已有的组件会自动少造。"
+        )
         tip.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
         layout.addWidget(tip)
 
@@ -164,9 +168,17 @@ class ParentDecomposeDialog(QDialog):
                         (gnum, line["product_type_id"]),
                     ).fetchone()
                     if existing:
+                        # 重跑拆解：按新 line 整体刷新 runs/parallels/ME-TE，避免残留旧并行数导致超量
                         conn.execute(
-                            "UPDATE production_plans SET runs=?, materials_ready=1 WHERE id=?",
-                            (line["runs"], existing[0]),
+                            "UPDATE production_plans SET runs=?, parallels=?, me_level=?, te_level=?, "
+                            "materials_ready=1 WHERE id=?",
+                            (
+                                line["runs"],
+                                line["parallels"],
+                                line["me_level"],
+                                line["te_level"],
+                                existing[0],
+                            ),
                         )
                     else:
                         conn.execute(

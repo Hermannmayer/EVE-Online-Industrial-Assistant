@@ -55,6 +55,7 @@ class TestDecomposePlan:
         assert len(lines) == 1
         assert lines[0]["product_type_id"] == 1001
         assert lines[0]["sub_level"] == 1
+        assert lines[0]["demand"] == 10  # 母项对 1001 的总需求（1X）
         assert lines[0]["runs"] == 10
         assert lines[0]["parallels"] == 1
 

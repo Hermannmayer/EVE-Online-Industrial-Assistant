@@ -37,7 +37,10 @@ def best_inventory_blueprint(conn: Connection, blueprint_type_id: int) -> dict |
 def decompose_plan(plan: dict, *, mat_hangar_id: int | None = None) -> list[dict]:
     """递归拆解母项 → 子项产线行列表（不含母项自身）。
 
-    返回 [{product_type_id, blueprint_type_id, sub_level, runs, parallels:1,
+    每个子项的 runs 按母项对它的材料总需求（demand）1X 生成：
+    runs = ceil(demand / 单轮产出)，parallels=1，总产出 ≥ demand（最小超产）。
+
+    返回 [{product_type_id, blueprint_type_id, sub_level, demand, runs, parallels:1,
            me_level, te_level, has_blueprint}]。
     """
     stock = inventory_manager.get_hangar_stock(mat_hangar_id) if mat_hangar_id else {}
@@ -195,6 +198,7 @@ def _decompose(
                 "product_type_id": type_id,
                 "blueprint_type_id": bp_id,
                 "sub_level": depth,
+                "demand": needed_qty,
                 "runs": make_runs,
                 "parallels": 1,
                 "me_level": me,
