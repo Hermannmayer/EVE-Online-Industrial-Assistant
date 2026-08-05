@@ -137,3 +137,18 @@ def datetime_now_str() -> str:
     from datetime import UTC, datetime
 
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def enrich_plan_hangar_names(rows: list[dict], hangar_names: dict[int, str]) -> list[dict]:
+    """为计划行补派生显示字段（内存，不落库）。
+
+    - ``facility`` 为空且有材料机库 → 显示材料机库名称；
+    - ``output_hangar`` = 输出机库（deposit_hangar_id）名称，无则空串。
+    """
+    for row in rows:
+        hid = row.get("mat_hangar_id")
+        if not row.get("facility") and hid in hangar_names:
+            row["facility"] = hangar_names[hid]
+        deposit = row.get("deposit_hangar_id")
+        row["output_hangar"] = hangar_names.get(deposit, "") if deposit else ""
+    return rows

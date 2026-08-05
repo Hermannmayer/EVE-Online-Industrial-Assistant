@@ -66,6 +66,7 @@ class _BulkPlanMetricsWorker(QThread):
         deposit_hangar_id = settings.get("default_deposit_hangar_id")
         # 从默认材料机库带出星系，写入计划（避免空星系 → 回退吉他 SCI）
         mat_hangar_id, solar_system_id = inventory_manager.get_default_mat_hangar_and_system()
+        hangar_name = inventory_manager.get_hangar_name(mat_hangar_id)
 
         rows = []
         for bps in self._group_items:
@@ -75,7 +76,7 @@ class _BulkPlanMetricsWorker(QThread):
                 "me": bps[0].get("me_level") or 0,
                 "te": bps[0].get("te_level") or 0,
                 "char": self._char_name,
-                "fac": "",
+                "fac": hangar_name,
                 "runs": bps[0].get("runs") or 1,
             }
             metrics = plan_service.calculate_plan_metrics(
@@ -89,7 +90,7 @@ class _BulkPlanMetricsWorker(QThread):
                     "mat_hub": mat_hub,
                     "sell_hub": sell_hub,
                     "char_name": d["char"],
-                    "facility": "",
+                    "facility": hangar_name,
                     "mat_hangar_id": mat_hangar_id,
                     "solar_system_id": solar_system_id,
                 },

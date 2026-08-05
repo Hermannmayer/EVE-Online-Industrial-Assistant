@@ -12,6 +12,7 @@ from services.inventory_manager import (
     create_hangar,
     delete_hangar,
     get_hangar_config,
+    get_hangar_name,
     get_hangar_system_id,
     get_hangars,
     move_quantity,
@@ -65,6 +66,13 @@ class TestHangarBasicCRUD:
         conn.close()
         assert row is not None
         assert row[0] == "主仓库"
+
+    def test_get_hangar_name(self, inv_db):
+        """读取机库名称；无机库/不存在返回空串"""
+        hid = create_hangar("主仓库")
+        assert get_hangar_name(hid) == "主仓库"
+        assert get_hangar_name(None) == ""
+        assert get_hangar_name(99999) == ""
 
     def test_get_hangars(self, inv_db):
         """查询机库列表应返回所有已有记录"""
