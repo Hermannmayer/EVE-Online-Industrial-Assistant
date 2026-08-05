@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from core.logger import log
 from core.paths import reference_db_path
+from services.db_locks import get_db_write_lock
 
 DB_PATH = reference_db_path()
 
@@ -32,7 +33,7 @@ INDUSTRY_GROUP_NAMES = [
 
 
 def init_db(db_path):
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS item_dogma (
@@ -48,7 +49,7 @@ def init_db(db_path):
 
 def get_industry_type_ids(db_path):
     """从数据库获取工业相关 type_id 列表"""
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
     cur = conn.cursor()
 
     type_ids = set()
@@ -114,7 +115,7 @@ async def main(progress_cb=None):
     log.info(f"共计 {len(type_ids)} 个工业/发明植入体")
 
     # 查已缓存
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     cur = conn.cursor()
     cur.execute("SELECT type_id FROM item_dogma")
     existing = {row[0] for row in cur.fetchall()}
@@ -153,21 +154,24 @@ async def main(progress_cb=None):
             progress_cb(100, "未获取到 dogma 数据")
         return
 
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.executemany(
-        "INSERT OR REPLACE INTO item_dogma (type_id, dogma_attrs, dogma_effects) VALUES (?, ?, ?)",
-        rows,
-    )
-    conn.commit()
-    conn.close()
+    async with get_db_write_lock("ref"):
+        conn = sqlite3.connect(DB_PATH, timeout=30)
+        try:
+            cur = conn.cursor()
+            cur.executemany(
+                "INSERT OR REPLACE INTO item_dogma (type_id, dogma_attrs, dogma_effects) VALUES (?, ?, ?)",
+                rows,
+            )
+            conn.commit()
+        finally:
+            conn.close()
     if progress_cb:
         progress_cb(92, f"写入 {len(rows)} 条 dogma 数据")
     log.info(f"写入 {len(rows)} 条 dogma 数据")
 
     # 展示摘要
     log.info("\n=== 植入体属性摘要 ===")
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     cur = conn.cursor()
     cur.execute("""
         SELECT i.type_id, i.en_name, i.en_group_name, d.dogma_attrs

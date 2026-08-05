@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 import pytest
 
 from tools.downloaders.getblueprints import (
-    SDE_ZIP_URL,
     ensure_cache,
     parse_activities,
     run_blueprint_update,
@@ -134,33 +133,19 @@ class TestEnsureCacheHttpError:
     @pytest.mark.asyncio
     @patch("tools.downloaders.getblueprints.os.path.exists")
     @patch("tools.downloaders.getblueprints.os.makedirs")
-    async def test_raises_on_http_error(self, mock_makedirs, mock_exists):
-        """S3 返回非 200 时 raise_for_status 抛出异常"""
-        mock_exists.return_value = False
+    @patch(
+        "tools.downloaders.sde_cache.ensure_sde_zip",
+        new_callable=AsyncMock,
+        side_effect=Exception("HTTP 403 Forbidden"),
+    )
+    async def test_raises_on_http_error(self, mock_ensure_zip, mock_makedirs, mock_exists):
+        """S3 下载失败时 ensure_sde_zip 抛异常，ensure_cache 原样传播"""
+        mock_exists.return_value = False  # CACHE_FILE 与 SDE_ZIP_PATH 都不存在 → 走下载
 
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock(side_effect=Exception("HTTP 403 Forbidden"))
-        mock_resp.read = AsyncMock()
-        mock_get_cm = MagicMock()
-        mock_get_cm.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_get_cm.__aexit__ = AsyncMock(return_value=False)
+        with pytest.raises(Exception, match="HTTP 403 Forbidden"):
+            await ensure_cache()
 
-        mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=mock_get_cm)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "tools.downloaders.getblueprints.aiohttp.ClientSession",
-            return_value=mock_session,
-        ):
-            with pytest.raises(Exception, match="HTTP 403 Forbidden"):
-                await ensure_cache()
-
-        # 验证请求 URL（不比较 timeout 对象，它是真实 aiohttp.ClientTimeout）
-        mock_session.get.assert_called_once()
-        args, _ = mock_session.get.call_args
-        assert args[0] == SDE_ZIP_URL
+        mock_ensure_zip.assert_awaited_once()
 
 
 class TestRunBlueprintUpdateYamlError:
@@ -206,12 +191,12 @@ class TestRunBlueprintUpdateYamlError:
     @patch("tools.downloaders.getblueprints.aiosqlite.connect")
     @patch("tools.downloaders.getblueprints.os.makedirs")
     @patch("tools.downloaders.getblueprints.ensure_cache")
-    @patch("tools.downloaders.getblueprints.yaml.safe_load")
+    @patch("tools.downloaders.getblueprints.yaml.load")
     @patch("tools.downloaders.getblueprints.open", new_callable=mock_open)
     async def test_raises_value_error_when_yaml_is_not_dict(
         self, mock_file, mock_yaml, mock_ensure_cache, mock_makedirs, mock_connect
     ):
-        """yaml.safe_load 返回非 dict 时抛出 ValueError，且异常消息包含实际类型名"""
+        """yaml.load 返回非 dict 时抛出 ValueError，且异常消息包含实际类型名"""
         cms = self._make_db_mocks()
         mock_connect.side_effect = iter(cms)
         mock_ensure_cache.return_value = "/tmp/blueprints.yaml"
@@ -222,7 +207,7 @@ class TestRunBlueprintUpdateYamlError:
             await run_blueprint_update()
 
         assert "list" in str(exc_info.value)
-        # 验证 yaml.safe_load 确实被调用（而非提前跳过）
+        # 验证 yaml.load 确实被调用（而非提前跳过）
         mock_yaml.assert_called_once()
         # 验证读取的是缓存文件
         mock_file.assert_called_once_with("/tmp/blueprints.yaml", encoding="utf-8")

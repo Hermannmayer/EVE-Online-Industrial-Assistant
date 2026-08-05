@@ -11,12 +11,10 @@
 """
 
 import asyncio
-import io
 import os
 import sqlite3
 import zipfile
 
-import aiohttp
 import aiosqlite
 import yaml
 from tqdm import tqdm
@@ -28,7 +26,6 @@ DATABASE_PATH = blueprint_db_path()
 CACHE_DIR = os.path.join(os.path.dirname(DATABASE_PATH), "..", "data")
 CACHE_FILE = os.path.join(CACHE_DIR, "blueprints.yaml")
 SDE_ZIP_PATH = os.path.join(CACHE_DIR, "sde.zip")  # 与 sde_cache.py 共享的 zip 缓存
-SDE_ZIP_URL = "https://eve-static-data-export.s3-eu-west-1.amazonaws.com/tranquility/sde.zip"
 
 
 CREATE_TABLES_SQL = """
@@ -70,6 +67,21 @@ async def create_tables(db: aiosqlite.Connection):
     await db.commit()
 
 
+def _extract_blueprints_yaml() -> str:
+    """从共享 SDE zip 提取 blueprints.yaml 写入缓存，返回缓存文件路径。"""
+    with zipfile.ZipFile(SDE_ZIP_PATH, "r") as zf:
+        candidates = [p for p in zf.namelist() if p.endswith("blueprints.yaml")]
+        if not candidates:
+            raise FileNotFoundError("SDE 包中未找到 blueprints.yaml")
+        yaml_path = candidates[0]
+        log.info(f"找到: {yaml_path}")
+        raw = zf.read(yaml_path).decode("utf-8")
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        f.write(raw)
+    log.info(f"缓存已保存: {CACHE_FILE} ({len(raw) / 1024 / 1024:.1f} MB)")
+    return CACHE_FILE
+
+
 async def ensure_cache() -> str:
     """
     确保 blueprints.yaml 缓存文件存在。
@@ -85,42 +97,13 @@ async def ensure_cache() -> str:
     # 复用共享的 SDE zip（items 等步骤已下载），避免重复下载 112MB
     if os.path.exists(SDE_ZIP_PATH):
         log.info("复用共享 SDE zip，提取 blueprints.yaml...")
-        with zipfile.ZipFile(SDE_ZIP_PATH, "r") as zf:
-            candidates = [p for p in zf.namelist() if p.endswith("blueprints.yaml")]
-            if candidates:
-                raw = zf.read(candidates[0]).decode("utf-8")
-                with open(CACHE_FILE, "w", encoding="utf-8") as f:
-                    f.write(raw)
-                log.info(f"从共享 SDE 提取 blueprints.yaml ({len(raw) / 1024 / 1024:.1f} MB)")
-                return CACHE_FILE
+        return _extract_blueprints_yaml()
 
-    # 下载 SDE zip（仅首次）
-    log.info("本地无缓存，从 S3 下载 SDE 数据包...")
-    log.info(f"  URL: {SDE_ZIP_URL}")
-    log.info("  大小: ~112 MB，首次下载后会自动缓存，后续跳过\n")
+    # 复用 sde_cache 的下载函数（单飞锁 + 断点续传 + 流式写盘），不重复实现下载
+    from tools.downloaders.sde_cache import ensure_sde_zip
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(SDE_ZIP_URL, timeout=aiohttp.ClientTimeout(total=600)) as resp:
-            resp.raise_for_status()
-            data = await resp.read()
-
-    log.info(f"下载完成: {len(data) / 1024 / 1024:.1f} MB")
-
-    # 从 zip 中提取 blueprints.yaml
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        candidates = [p for p in zf.namelist() if p.endswith("blueprints.yaml")]
-        if not candidates:
-            raise FileNotFoundError("SDE 包中未找到 blueprints.yaml")
-        yaml_path = candidates[0]
-        log.info(f"找到: {yaml_path}")
-        raw = zf.read(yaml_path).decode("utf-8")
-
-    # 写入缓存
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        f.write(raw)
-    log.info(f"缓存已保存: {CACHE_FILE} ({len(raw) / 1024 / 1024:.1f} MB)")
-
-    return CACHE_FILE
+    await ensure_sde_zip()
+    return _extract_blueprints_yaml()
 
 
 def parse_activities(bp_id: int, bp_data: dict):
@@ -153,6 +136,12 @@ def parse_activities(bp_id: int, bp_data: dict):
     return activities_rows, materials_rows, products_rows, skills_rows
 
 
+def _load_blueprints_yaml(path: str, loader) -> dict:
+    """同步解析 blueprints.yaml（在 to_thread 中运行，避免阻塞事件循环）。"""
+    with open(path, encoding="utf-8") as f:
+        return yaml.load(f, Loader=loader) or {}
+
+
 async def run_blueprint_update(progress_cb=None):
     os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -180,25 +169,25 @@ async def run_blueprint_update(progress_cb=None):
         progress_cb(10, "获取 blueprints.yaml")
     yaml_path = await ensure_cache()
 
-    # 解析 YAML
+    # 解析 YAML（CSafeLoader 加速 + to_thread 不阻塞事件循环）
     log.info("解析 YAML...")
     if progress_cb:
         progress_cb(15, "解析 YAML")
-    with open(yaml_path, encoding="utf-8") as f:
-        blueprints = yaml.safe_load(f)
+    _Loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    blueprints = await asyncio.to_thread(_load_blueprints_yaml, yaml_path, _Loader)
 
     if not isinstance(blueprints, dict):
         raise ValueError(f"期望 dict，实际为 {type(blueprints)}")
     log.info(f"共 {len(blueprints)} 个蓝图，写入数据库...")
 
-    # 分批写入
+    # 分批写入（复用单个连接，每批 commit 缩短锁持有时间）
     batch_size = 200
     bp_items = list(blueprints.items())
     total = len(bp_items)
 
-    for i in tqdm(range(0, total, batch_size), desc="蓝图"):
-        batch = bp_items[i : i + batch_size]
-        async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with aiosqlite.connect(DATABASE_PATH, timeout=30) as db:
+        for i in tqdm(range(0, total, batch_size), desc="蓝图"):
+            batch = bp_items[i : i + batch_size]
             for bp_id_str, bp_data in batch:
                 bp_id = int(bp_id_str)
                 a_rows, m_rows, p_rows, s_rows = parse_activities(bp_id, bp_data)
@@ -215,9 +204,9 @@ async def run_blueprint_update(progress_cb=None):
                             rows,
                         )
             await db.commit()
-        if progress_cb:
-            done = min(i + len(batch), total)
-            progress_cb(15 + int(done / max(total, 1) * 80), f"写入蓝图 {done}/{total}")
+            if progress_cb:
+                done = min(i + len(batch), total)
+                progress_cb(15 + int(done / max(total, 1) * 80), f"写入蓝图 {done}/{total}")
 
     # 统计
     async with aiosqlite.connect(DATABASE_PATH) as db:

@@ -8,7 +8,6 @@ from tools.downloaders.getblueprints import (
     CACHE_FILE,
     CREATE_TABLES_SQL,
     SDE_ZIP_PATH,
-    SDE_ZIP_URL,
     ensure_cache,
     parse_activities,
     run_blueprint_update,
@@ -41,34 +40,21 @@ class TestEnsureCache:
     @patch("tools.downloaders.getblueprints.os.path.exists")
     @patch("tools.downloaders.getblueprints.os.makedirs")
     @patch("tools.downloaders.getblueprints.open", new_callable=mock_open)
-    @patch("tools.downloaders.getblueprints.os.path.getsize")
-    async def test_downloads_and_extracts_when_missing(self, mock_getsize, mock_file, mock_makedirs, mock_exists):
-        # CACHE_FILE 与共享 SDE zip 都不存在 → 走下载路径
+    @patch("tools.downloaders.sde_cache.ensure_sde_zip", new_callable=AsyncMock)
+    async def test_downloads_and_extracts_when_missing(self, mock_ensure_zip, mock_file, mock_makedirs, mock_exists):
+        # CACHE_FILE 与共享 SDE zip 都不存在 → 复用 ensure_sde_zip 下载
         mock_exists.side_effect = [False, False]
-        mock_getsize.return_value = 2 * 1024 * 1024
 
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.read = AsyncMock(return_value=b"fake_zip_content")
-        mock_get_cm = MagicMock()
-        mock_get_cm.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_get_cm.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=mock_get_cm)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("tools.downloaders.getblueprints.aiohttp.ClientSession", return_value=mock_session):
-            with patch("zipfile.ZipFile") as mock_zf:
-                mock_zf_instance = MagicMock()
-                mock_zf_instance.namelist.return_value = ["sde/fsd/blueprints.yaml"]
-                mock_zf_instance.read.return_value = b"blueprint: data"
-                mock_zf.return_value.__enter__.return_value = mock_zf_instance
-                result = await ensure_cache()
+        mock_zf_instance = MagicMock()
+        mock_zf_instance.namelist.return_value = ["sde/fsd/blueprints.yaml"]
+        mock_zf_instance.read.return_value = b"blueprint: data"
+        with patch("zipfile.ZipFile") as mock_zf:
+            mock_zf.return_value.__enter__.return_value = mock_zf_instance
+            result = await ensure_cache()
 
         assert result == CACHE_FILE
-        assert mock_session.get.call_args[0][0] == SDE_ZIP_URL
+        mock_ensure_zip.assert_awaited_once()
+        mock_zf.assert_called_once_with(SDE_ZIP_PATH, "r")
 
     @pytest.mark.asyncio
     @patch("tools.downloaders.getblueprints.os.path.exists")
@@ -94,28 +80,17 @@ class TestEnsureCache:
     @pytest.mark.asyncio
     @patch("tools.downloaders.getblueprints.os.path.exists")
     @patch("tools.downloaders.getblueprints.os.makedirs")
-    async def test_raises_when_no_yaml_in_zip(self, mock_makedirs, mock_exists):
+    @patch("tools.downloaders.sde_cache.ensure_sde_zip", new_callable=AsyncMock)
+    async def test_raises_when_no_yaml_in_zip(self, mock_ensure_zip, mock_makedirs, mock_exists):
         mock_exists.return_value = False
 
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.read = AsyncMock(return_value=b"fake_zip")
-        mock_get_cm = MagicMock()
-        mock_get_cm.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_get_cm.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=mock_get_cm)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("tools.downloaders.getblueprints.aiohttp.ClientSession", return_value=mock_session):
-            with patch("zipfile.ZipFile") as mock_zf:
-                mock_zf_instance = MagicMock()
-                mock_zf_instance.namelist.return_value = ["sde/fsd/other.yaml"]
-                mock_zf.return_value.__enter__.return_value = mock_zf_instance
-                with pytest.raises(FileNotFoundError, match="blueprints.yaml"):
-                    await ensure_cache()
+        mock_zf_instance = MagicMock()
+        mock_zf_instance.namelist.return_value = ["sde/fsd/other.yaml"]
+        with patch("zipfile.ZipFile") as mock_zf:
+            mock_zf.return_value.__enter__.return_value = mock_zf_instance
+            with pytest.raises(FileNotFoundError, match="blueprints.yaml"):
+                await ensure_cache()
+        mock_ensure_zip.assert_awaited_once()
 
 
 class TestParseActivities:
@@ -178,7 +153,7 @@ class TestRunBlueprintUpdate:
     @patch("tools.downloaders.getblueprints.aiosqlite.connect")
     @patch("tools.downloaders.getblueprints.os.makedirs")
     @patch("tools.downloaders.getblueprints.ensure_cache")
-    @patch("tools.downloaders.getblueprints.yaml.safe_load")
+    @patch("tools.downloaders.getblueprints.yaml.load")
     @patch("tools.downloaders.getblueprints.open", new_callable=mock_open)
     async def test_full_update_flow(self, mock_file, mock_yaml, mock_ensure_cache, mock_makedirs, mock_connect):
         # Connection 1: Check count
