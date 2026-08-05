@@ -19,15 +19,30 @@ SDE 扩展数据加载器 — 将 16 个新表写入 reference.db
 """
 
 import asyncio
+from contextlib import asynccontextmanager
 
 import aiosqlite
 
 from core.logger import log
 from core.paths import reference_db_path
-from tools.downloaders.sde_cache import ensure_sde_cache, ensure_universe_cache, load_yaml
+from services.db_locks import get_db_write_lock
+from tools.downloaders.sde_cache import ensure_sde_cache, ensure_universe_cache, load_yaml_async
 
 DATABASE_PATH = reference_db_path()
 BATCH_SIZE = 500
+
+
+@asynccontextmanager
+async def _ref_db():
+    """reference.db 写库上下文：per-DB 写锁 + 连接。
+
+    并行初始化时 sde_data 与 implants/rigs/industry 同时写 reference.db，
+    大事务会互相阻塞（database is locked）。写库阶段显式串行，
+    网络拉取 / YAML 解析保持并行。
+    """
+    async with get_db_write_lock("ref"):
+        async with aiosqlite.connect(DATABASE_PATH, timeout=30) as db:
+            yield db
 
 
 def _ensure_dict(data):
@@ -67,7 +82,7 @@ async def initialize_database():
         "CREATE TABLE IF NOT EXISTS solar_system (solar_system_id INTEGER PRIMARY KEY, solar_system_name TEXT, region_id INTEGER, constellation_id INTEGER, security REAL)",
         "CREATE TABLE IF NOT EXISTS stargate (stargate_id INTEGER PRIMARY KEY, solar_system_id INTEGER, destination_system_id INTEGER)",
     ]
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         for sql in sql_statements:
             await db.execute(sql)
         # item 表新增列
@@ -83,14 +98,14 @@ async def initialize_database():
 async def write_meta_groups():
     """写入 meta_group 表 + 更新 item.meta_group_id"""
     # --- 快速路径 ---
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM meta_group")
         if (await c.fetchone())[0] > 0:
             log.info("meta_group 已就绪，跳过")
             return
 
     # --- meta_group 表 ---
-    data = load_yaml("metaGroups.yaml")
+    data = await load_yaml_async("metaGroups.yaml")
     if not data:
         log.warning("metaGroups.yaml 为空，跳过")
         return
@@ -104,7 +119,7 @@ async def write_meta_groups():
         rows.append((mgid, en, zh))
 
     if rows:
-        async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with _ref_db() as db:
             for i in range(0, len(rows), BATCH_SIZE):
                 await db.executemany(
                     "INSERT OR REPLACE INTO meta_group (meta_group_id, en_name, zh_name) VALUES (?, ?, ?)",
@@ -114,13 +129,13 @@ async def write_meta_groups():
         log.info(f"meta_group 写入完成 ({len(rows)} 条)")
 
     # --- item.meta_group_id 更新 ---
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM item WHERE meta_group_id IS NOT NULL")
         if (await c.fetchone())[0] > 10000:
             log.info("item.meta_group_id 已就绪，跳过")
             return
 
-    type_ids = load_yaml("typeIDs.yaml")
+    type_ids = await load_yaml_async("typeIDs.yaml")
     if not type_ids:
         return
 
@@ -132,7 +147,7 @@ async def write_meta_groups():
             updates.append((int(mgid), tid))
 
     if updates:
-        async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with _ref_db() as db:
             for i in range(0, len(updates), BATCH_SIZE):
                 await db.executemany(
                     "UPDATE item SET meta_group_id = ? WHERE type_id = ?",
@@ -144,13 +159,13 @@ async def write_meta_groups():
 
 async def write_type_materials():
     """写入 reprocessing_materials 表"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM reprocessing_materials")
         if (await c.fetchone())[0] > 0:
             log.info("reprocessing_materials 已就绪，跳过")
             return
 
-    data = load_yaml("typeMaterials.yaml")
+    data = await load_yaml_async("typeMaterials.yaml")
     if not data:
         log.warning("typeMaterials.yaml 为空，跳过")
         return
@@ -163,7 +178,7 @@ async def write_type_materials():
             rows.append((tid, mat.get("materialTypeID", 0), mat.get("quantity", 0)))
 
     if rows:
-        async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with _ref_db() as db:
             for i in range(0, len(rows), BATCH_SIZE):
                 await db.executemany(
                     "INSERT OR REPLACE INTO reprocessing_materials (type_id, material_type_id, quantity) VALUES (?, ?, ?)",
@@ -177,13 +192,13 @@ async def write_type_materials():
 
 async def write_dogma_attributes():
     """写入 dogma_attribute 表"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM dogma_attribute")
         if (await c.fetchone())[0] > 500:
             log.info("dogma_attribute 已就绪，跳过")
             return
 
-    data = load_yaml("dogmaAttributes.yaml")
+    data = await load_yaml_async("dogmaAttributes.yaml")
     if not data:
         log.warning("dogmaAttributes.yaml 为空，跳过")
         return
@@ -198,7 +213,7 @@ async def write_dogma_attributes():
         rows.append((attribute_id, name, display_name, unit_id, icon_id))
 
     if rows:
-        async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with _ref_db() as db:
             for i in range(0, len(rows), BATCH_SIZE):
                 await db.executemany(
                     "INSERT OR REPLACE INTO dogma_attribute (attribute_id, name, display_name, unit_id, icon_id) VALUES (?, ?, ?, ?, ?)",
@@ -210,13 +225,13 @@ async def write_dogma_attributes():
 
 async def write_icon_ids():
     """写入 icon_ids 表"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM icon_ids")
         if (await c.fetchone())[0] > 0:
             log.info("icon_ids 已就绪，跳过")
             return
 
-    data = load_yaml("iconIDs.yaml")
+    data = await load_yaml_async("iconIDs.yaml")
     if not data:
         log.warning("iconIDs.yaml 为空，跳过")
         return
@@ -229,7 +244,7 @@ async def write_icon_ids():
         rows.append((icon_id, icon_file, description))
 
     if rows:
-        async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with _ref_db() as db:
             for i in range(0, len(rows), BATCH_SIZE):
                 await db.executemany(
                     "INSERT OR REPLACE INTO icon_ids (icon_id, icon_file, description) VALUES (?, ?, ?)",
@@ -242,14 +257,14 @@ async def write_icon_ids():
 async def write_categories():
     """写入 category 表 + 更新 item.category_id"""
     # --- 快速路径 ---
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM category")
         if (await c.fetchone())[0] > 0:
             log.info("category 已就绪，跳过")
             return
 
     # --- category 表 ---
-    data = load_yaml("categories.yaml")
+    data = await load_yaml_async("categories.yaml")
     if not data:
         log.warning("categories.yaml 为空，跳过")
         return
@@ -263,7 +278,7 @@ async def write_categories():
         rows.append((cid, en, zh))
 
     if rows:
-        async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with _ref_db() as db:
             for i in range(0, len(rows), BATCH_SIZE):
                 await db.executemany(
                     "INSERT OR REPLACE INTO category (category_id, en_name, zh_name) VALUES (?, ?, ?)",
@@ -273,13 +288,13 @@ async def write_categories():
         log.info(f"category 写入完成 ({len(rows)} 条)")
 
     # --- item.category_id 更新 ---
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM item WHERE category_id IS NOT NULL")
         if (await c.fetchone())[0] > 50000:
             log.info("item.category_id 已就绪，跳过")
             return
 
-    groups = load_yaml("groupIDs.yaml")
+    groups = await load_yaml_async("groupIDs.yaml")
     if not groups:
         return
 
@@ -293,7 +308,7 @@ async def write_categories():
 
     if group_to_cat:
         updates = [(cat_id, gid) for gid, cat_id in group_to_cat.items()]
-        async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with _ref_db() as db:
             for i in range(0, len(updates), BATCH_SIZE):
                 await db.executemany(
                     "UPDATE item SET category_id = ? WHERE group_id = ?",
@@ -305,14 +320,14 @@ async def write_categories():
 
 async def write_stations():
     """写入 station + station_operation + station_operation_service + station_service 表"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM station")
         if (await c.fetchone())[0] > 0:
             log.info("station 相关表已就绪，跳过")
             return
 
     # --- station_service ---
-    ss_data = _ensure_dict(load_yaml("stationServices.yaml"))
+    ss_data = _ensure_dict(await load_yaml_async("stationServices.yaml"))
     if ss_data:
         ss_rows = []
         for sid_str, sd in ss_data.items():
@@ -320,7 +335,7 @@ async def write_stations():
             service_name = sd.get("serviceName", "") or ""
             ss_rows.append((service_id, service_name))
         if ss_rows:
-            async with aiosqlite.connect(DATABASE_PATH) as db:
+            async with _ref_db() as db:
                 for i in range(0, len(ss_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO station_service (service_id, service_name) VALUES (?, ?)",
@@ -330,7 +345,7 @@ async def write_stations():
             log.info(f"station_service 写入完成 ({len(ss_rows)} 条)")
 
     # --- station_operation ---
-    so_data = _ensure_dict(load_yaml("stationOperations.yaml"))
+    so_data = _ensure_dict(await load_yaml_async("stationOperations.yaml"))
     if so_data:
         so_rows = []
         for oid_str, od in so_data.items():
@@ -340,7 +355,7 @@ async def write_stations():
             zh = (nd.get("zh") or "") if isinstance(nd, dict) else ""
             so_rows.append((op_id, en, zh))
         if so_rows:
-            async with aiosqlite.connect(DATABASE_PATH) as db:
+            async with _ref_db() as db:
                 for i in range(0, len(so_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO station_operation (operation_id, en_name, zh_name) VALUES (?, ?, ?)",
@@ -357,7 +372,7 @@ async def write_stations():
             if svc is not None:
                 sos_rows.append((op_id, int(svc)))
     if sos_rows:
-        async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with _ref_db() as db:
             for i in range(0, len(sos_rows), BATCH_SIZE):
                 await db.executemany(
                     "INSERT OR REPLACE INTO station_operation_service (operation_id, service_id) VALUES (?, ?)",
@@ -367,7 +382,7 @@ async def write_stations():
         log.info(f"station_operation_service 写入完成 ({len(sos_rows)} 条)")
 
     # --- station（BSD 格式：列表，用 stationID 而非 _id）---
-    sta_raw = load_yaml("staStations.yaml")
+    sta_raw = await load_yaml_async("staStations.yaml")
     if isinstance(sta_raw, list) and sta_raw:
         sta_rows = []
         for item in sta_raw:
@@ -385,7 +400,7 @@ async def write_stations():
                 )
             )
         if sta_rows:
-            async with aiosqlite.connect(DATABASE_PATH) as db:
+            async with _ref_db() as db:
                 for i in range(0, len(sta_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO station (station_id, station_name, solar_system_id, operation_id, station_type_id, corporation_id) VALUES (?, ?, ?, ?, ?, ?)",
@@ -395,11 +410,11 @@ async def write_stations():
             log.info(f"station 写入完成 ({len(sta_rows)} 条)")
 
 
-async def write_universe():
+async def write_universe(progress_cb=None):
     """写入 region + constellation + solar_system + stargate 表"""
     # 以 solar_system 表是否有「非空星系名」为判空（与星系搜索/成本联动判据一致）：
     # 若此前因空名缓存写入导致名称全空，这里必须重跑补齐（否则 UI 星系显示编号）。
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c = await db.execute(
             "SELECT COUNT(*) FROM solar_system WHERE solar_system_name IS NOT NULL AND solar_system_name != ''"
         )
@@ -407,7 +422,7 @@ async def write_universe():
             log.info("universe 相关表已就绪，跳过")
             return
 
-    regions, constellations, systems, stargates = await ensure_universe_cache()
+    regions, constellations, systems, stargates = await ensure_universe_cache(progress_cb)
     if not any([regions, constellations, systems, stargates]):
         log.warning("universe 数据为空，跳过")
         return
@@ -421,7 +436,7 @@ async def write_universe():
             if rid is not None:
                 r_rows.append((int(rid), name))
         if r_rows:
-            async with aiosqlite.connect(DATABASE_PATH) as db:
+            async with _ref_db() as db:
                 for i in range(0, len(r_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO region (region_id, region_name) VALUES (?, ?)",
@@ -446,7 +461,7 @@ async def write_universe():
                     )
                 )
         if c_rows:
-            async with aiosqlite.connect(DATABASE_PATH) as db:
+            async with _ref_db() as db:
                 for i in range(0, len(c_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO constellation (constellation_id, constellation_name, region_id) VALUES (?, ?, ?)",
@@ -475,7 +490,7 @@ async def write_universe():
                     )
                 )
         if s_rows:
-            async with aiosqlite.connect(DATABASE_PATH) as db:
+            async with _ref_db() as db:
                 for i in range(0, len(s_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO solar_system (solar_system_id, solar_system_name, region_id, constellation_id, security) VALUES (?, ?, ?, ?, ?)",
@@ -496,7 +511,7 @@ async def write_universe():
                 )
             )
         if g_rows:
-            async with aiosqlite.connect(DATABASE_PATH) as db:
+            async with _ref_db() as db:
                 for i in range(0, len(g_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO stargate (stargate_id, solar_system_id, destination_system_id) VALUES (?, ?, ?)",
@@ -508,14 +523,14 @@ async def write_universe():
 
 async def write_research():
     """写入 research_agent + npc_corporation + agent 表"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM research_agent")
         if (await c.fetchone())[0] > 0:
             log.info("research 相关表已就绪，跳过")
             return
 
     # --- research_agent ---
-    ra_data = _ensure_dict(load_yaml("researchAgents.yaml"))
+    ra_data = _ensure_dict(await load_yaml_async("researchAgents.yaml"))
     if ra_data:
         ra_rows = []
         for aid_str, ad in ra_data.items():
@@ -532,7 +547,7 @@ async def write_research():
                 )
             )
         if ra_rows:
-            async with aiosqlite.connect(DATABASE_PATH) as db:
+            async with _ref_db() as db:
                 for i in range(0, len(ra_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO research_agent (agent_id, corporation_id, skill_type_id, research_cost_modifier) VALUES (?, ?, ?, ?)",
@@ -542,7 +557,7 @@ async def write_research():
             log.info(f"research_agent 写入完成 ({len(ra_rows)} 条)")
 
     # --- npc_corporation ---
-    nc_data = _ensure_dict(load_yaml("npcCorporations.yaml"))
+    nc_data = _ensure_dict(await load_yaml_async("npcCorporations.yaml"))
     if nc_data:
         nc_rows = []
         for cid_str, cd in nc_data.items():
@@ -552,7 +567,7 @@ async def write_research():
             zh = (nd.get("zh") or "") if isinstance(nd, dict) else ""
             nc_rows.append((corp_id, en, zh))
         if nc_rows:
-            async with aiosqlite.connect(DATABASE_PATH) as db:
+            async with _ref_db() as db:
                 for i in range(0, len(nc_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO npc_corporation (corporation_id, en_name, zh_name) VALUES (?, ?, ?)",
@@ -562,7 +577,7 @@ async def write_research():
             log.info(f"npc_corporation 写入完成 ({len(nc_rows)} 条)")
 
     # --- agent ---
-    ag_data = _ensure_dict(load_yaml("agents.yaml"))
+    ag_data = _ensure_dict(await load_yaml_async("agents.yaml"))
     if ag_data:
         ag_rows = []
         for aid_str, ad in ag_data.items():
@@ -583,7 +598,7 @@ async def write_research():
                 )
             )
         if ag_rows:
-            async with aiosqlite.connect(DATABASE_PATH) as db:
+            async with _ref_db() as db:
                 for i in range(0, len(ag_rows), BATCH_SIZE):
                     await db.executemany(
                         "INSERT OR REPLACE INTO agent (agent_id, corporation_id, division_id, level, location_id, quality) VALUES (?, ?, ?, ?, ?, ?)",
@@ -595,13 +610,13 @@ async def write_research():
 
 async def write_dogma_effects():
     """写入 dogma_effect 表"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM dogma_effect")
         if (await c.fetchone())[0] > 500:
             log.info("dogma_effect 已就绪，跳过")
             return
 
-    data = load_yaml("dogmaEffects.yaml")
+    data = await load_yaml_async("dogmaEffects.yaml")
     if not data:
         log.warning("dogmaEffects.yaml 为空，跳过")
         return
@@ -615,7 +630,7 @@ async def write_dogma_effects():
         rows.append((effect_id, effect_name, description, icon_id))
 
     if rows:
-        async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with _ref_db() as db:
             for i in range(0, len(rows), BATCH_SIZE):
                 await db.executemany(
                     "INSERT OR REPLACE INTO dogma_effect (effect_id, effect_name, description, icon_id) VALUES (?, ?, ?, ?)",
@@ -625,10 +640,14 @@ async def write_dogma_effects():
         log.info(f"dogma_effect 写入完成 ({len(rows)} 条)")
 
 
-async def main():
+async def main(progress_cb=None):
     """主流程：确保 SDE 缓存就绪 → 初始化数据库 → 逐表写入（单表失败不影响其他）"""
-    await ensure_sde_cache()
+    if progress_cb:
+        progress_cb(5, "确保 SDE 缓存就绪...")
+    await ensure_sde_cache(progress_cb)
     await initialize_database()
+    if progress_cb:
+        progress_cb(15, "写入扩展数据表...")
 
     functions = [
         ("write_meta_groups", write_meta_groups),
@@ -642,13 +661,22 @@ async def main():
         ("write_universe", write_universe),
     ]
 
-    for name, func in functions:
+    for i, (name, func) in enumerate(functions):
+        if progress_cb:
+            pct = 15 + int(i / max(len(functions), 1) * 75)
+            progress_cb(pct, f"写入 {name}...")
         try:
-            await func()
+            if name == "write_universe":
+                # universe 解析耗时可长（首次 1-4 分钟），透传进度
+                await func(progress_cb=progress_cb)
+            else:
+                await func()
             log.info(f"[OK] {name} 完成")
         except Exception as e:
             log.error(f"[FAIL] {name}: {e}", exc_info=True)
 
+    if progress_cb:
+        progress_cb(100, "SDE 扩展数据完成")
     log.info("SDE 扩展数据初始化完成")
 
 

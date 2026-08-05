@@ -17,7 +17,7 @@ import aiosqlite
 from core.constants import TRADE_HUB_IDS
 from core.logger import log
 from core.paths import market_db_path, progress_file
-from services.client import APIClient, RateLimiter
+from services.client import APIClient
 
 DATABASE_PATH = market_db_path()
 ESI_BASE_URL = "https://esi.evetech.net/latest"
@@ -26,9 +26,6 @@ TRADE_REGIONS = list(TRADE_HUB_IDS.items())
 
 # 缓存已知页数，下次跳过 page-1 发现环节
 _PAGE_CACHE: dict[str, int] = {}
-
-# ESI 全局限流（20 req/s）— 与 APIClient 内部限流器独立，直接保护裸请求
-_rate_limiter = RateLimiter(rate=20.0, burst=40)
 
 
 def write_progress(cur: int, total: int, phase: str = ""):

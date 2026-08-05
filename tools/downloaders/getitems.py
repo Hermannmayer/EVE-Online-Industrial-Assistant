@@ -11,22 +11,40 @@
 
 import asyncio
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 
 import aiosqlite
 from tqdm import tqdm
 
 from core.logger import log
 from core.paths import reference_db_path
-from tools.downloaders.sde_cache import ensure_sde_cache, load_yaml
+from services.db_locks import get_db_write_lock
+from tools.downloaders.sde_cache import ensure_sde_cache, load_yaml_async
 
 DATABASE_PATH = reference_db_path()
 BATCH_SIZE = 500
 START_TYPE_ID = 17  # 基础矿物 34+ 也在范围内
 
 
+@asynccontextmanager
+async def _ref_db():
+    """reference.db 写库上下文：per-DB 写锁 + 连接。
+
+    blueprints 步骤的 fill_missing_blueprint_names 与 sde_data 的 item 表更新
+    可能并发写 reference.db，写库阶段显式串行防 database is locked。
+    """
+    async with get_db_write_lock("ref"):
+        db = aiosqlite.connect(DATABASE_PATH, timeout=30)
+        try:
+            await db.__aenter__()  # 激活连接（启动后台线程）
+            yield db
+        finally:
+            await db.close()
+
+
 async def initialize_database():
     """初始化数据库结构"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS item (
                 type_id INTEGER PRIMARY KEY,
@@ -64,7 +82,7 @@ def _build_group_lookup(data: dict) -> dict[int, tuple[str, str]]:
 
 async def write_items(progress_cb: Callable[[int, str], None] | None = None):
     """从缓存的 typeIDs.yaml + groupIDs.yaml + marketGroups.yaml 批量写入 item 表"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM item WHERE en_name IS NOT NULL AND en_name != ''")
         row = await c.fetchone()
         named = row[0] if row else 0
@@ -75,13 +93,13 @@ async def write_items(progress_cb: Callable[[int, str], None] | None = None):
     log.info("加载 SDE YAML 数据...")
     if progress_cb:
         progress_cb(45, "加载 typeIDs.yaml...")
-    type_ids = load_yaml("typeIDs.yaml")
+    type_ids = await load_yaml_async("typeIDs.yaml")
     if progress_cb:
         progress_cb(55, "加载 groupIDs.yaml...")
-    groups = load_yaml("groupIDs.yaml")
+    groups = await load_yaml_async("groupIDs.yaml")
     if progress_cb:
         progress_cb(60, "加载 marketGroups.yaml...")
-    mkt_groups = load_yaml("marketGroups.yaml")
+    mkt_groups = await load_yaml_async("marketGroups.yaml")
 
     group_names = _build_group_lookup(groups)
     mg_names = _build_group_lookup(mkt_groups)
@@ -128,7 +146,7 @@ async def write_items(progress_cb: Callable[[int, str], None] | None = None):
     log.info(f"共 {len(items)} 个物品，写入数据库...")
     if progress_cb:
         progress_cb(70, f"写入 {len(items)} 条物品数据...")
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         for i in tqdm(range(0, len(items), BATCH_SIZE), desc="物品"):
             batch = items[i : i + BATCH_SIZE]
             await db.executemany(
@@ -139,10 +157,12 @@ async def write_items(progress_cb: Callable[[int, str], None] | None = None):
                    VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 batch,
             )
+            # 每批提交一次：把单事务写锁持有时间从数秒降到 <200ms，
+            # 避免并行初始化时其它写 reference.db 的步骤撞锁报 database is locked
+            await db.commit()
             pct = 70 + int((i + len(batch)) / len(items) * 15)
             if progress_cb:
                 progress_cb(pct, f"写入物品数据... {min(i + BATCH_SIZE, len(items))}/{len(items)}")
-        await db.commit()
     log.info("物品数据写入完成")
 
 
@@ -151,13 +171,13 @@ async def write_items(progress_cb: Callable[[int, str], None] | None = None):
 
 async def write_market_tree():
     """从 marketGroups.yaml 写入 market_tree 表"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM market_tree")
         if (await c.fetchone())[0] > 500:
             log.info("market_tree 已就绪，跳过")
             return
 
-    data = load_yaml("marketGroups.yaml")
+    data = await load_yaml_async("marketGroups.yaml")
     if not data:
         return
 
@@ -169,7 +189,7 @@ async def write_market_tree():
         zh = (name_data.get("zh") or "") if isinstance(name_data, dict) else ""
         rows.append((mgid, item.get("parentGroupID"), en, zh, item.get("iconID", 0)))
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         await db.execute("DELETE FROM market_tree")
         await db.executemany(
             "INSERT INTO market_tree VALUES (?, ?, ?, ?, ?)",
@@ -192,7 +212,7 @@ async def main(progress_cb: Callable[[int, str], None] | None = None):
     if progress_cb:
         progress_cb(5, "检查数据状态...")
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c1 = await db.execute("SELECT COUNT(*) FROM item WHERE en_name IS NOT NULL AND en_name != ''")
         r1 = await c1.fetchone()
         named = r1[0] if r1 else 0
@@ -237,9 +257,7 @@ async def fill_missing_blueprint_names():
 
     优先从缓存的 typeIDs.yaml 补拉，缓存不可用时降级到 SDE API。
     """
-    import aiosqlite as _aiosqlite
-
-    async with _aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         from core.paths import blueprint_db_path
 
         bp_db = blueprint_db_path()
@@ -260,7 +278,7 @@ async def fill_missing_blueprint_names():
 
     log.info(f"发现 {len(missing)} 个蓝图缺少名称，正在补拉...")
 
-    type_ids_data = load_yaml("typeIDs.yaml")
+    type_ids_data = await load_yaml_async("typeIDs.yaml")
     if type_ids_data:
         batch = []
         for i, tid in enumerate(missing):
@@ -274,7 +292,7 @@ async def fill_missing_blueprint_names():
             if en or zh:
                 batch.append((en, zh, tid))
             if len(batch) >= 50 or (i == len(missing) - 1 and batch):
-                async with _aiosqlite.connect(DATABASE_PATH) as db:
+                async with _ref_db() as db:
                     await db.executemany("UPDATE item SET en_name=?, zh_name=? WHERE type_id=?", batch)
                     await db.commit()
                 log.info(f"  已写入 {len(batch)} 条 ({i + 1}/{len(missing)})")
@@ -282,33 +300,41 @@ async def fill_missing_blueprint_names():
         log.info(f"补拉完成，共修复 {len(missing)} 个蓝图名称")
         return
 
-    # 降级到 SDE API
-    import aiohttp
+    # 降级到 SDE API（并发 + 全局限流，复用 services.client 的 APIClient）
+    from services.client import APIClient
 
     log.info("本地缓存不可用，降级到 SDE API 补拉...")
     API_BASE = "https://sde.jita.space/latest"
-    async with aiohttp.ClientSession() as session:
-        batch = []
-        for i, tid in enumerate(missing):
-            try:
-                url = f"{API_BASE}/universe/types/{tid}"
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        nd = data.get("name", {})
-                        en = nd.get("en", "") if isinstance(nd, dict) else ""
-                        zh = nd.get("zh", "") if isinstance(nd, dict) else ""
-                        if en or zh:
-                            batch.append((en, zh, tid))
-            except Exception:
-                pass
-            if len(batch) >= 50 or (i == len(missing) - 1 and batch):
-                async with _aiosqlite.connect(DATABASE_PATH) as db:
-                    await db.executemany("UPDATE item SET en_name=?, zh_name=? WHERE type_id=?", batch)
+    BATCH = 50
+    fixed = 0
+
+    async def _fetch_one(client: APIClient, tid: int) -> tuple[int, str, str] | None:
+        data = await client.fetch(f"{API_BASE}/universe/types/{tid}")
+        if not data:
+            return None
+        nd = data.get("name", {})
+        en = nd.get("en", "") if isinstance(nd, dict) else ""
+        zh = nd.get("zh", "") if isinstance(nd, dict) else ""
+        return (tid, en, zh) if (en or zh) else None
+
+    async with APIClient(concurrency=10, timeout=30) as client:
+        for start in range(0, len(missing), BATCH):
+            batch_ids = missing[start : start + BATCH]
+            results = await asyncio.gather(*[_fetch_one(client, tid) for tid in batch_ids])
+            updates = []
+            for r in results:
+                if r is None:
+                    continue
+                tid, en, zh = r
+                if en or zh:
+                    updates.append((en, zh, tid))
+            if updates:
+                async with _ref_db() as db:
+                    await db.executemany("UPDATE item SET en_name=?, zh_name=? WHERE type_id=?", updates)
                     await db.commit()
-                log.info(f"  已写入 {len(batch)} 条 ({i + 1}/{len(missing)})")
-                batch.clear()
-    log.info(f"补拉完成，共修复 {len(missing)} 个蓝图名称")
+                fixed += len(updates)
+                log.info(f"  已修复 {fixed}/{len(missing)}")
+    log.info(f"补拉完成，共修复 {fixed} 个蓝图名称")
 
 
 async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], None] | None = None):
@@ -318,7 +344,7 @@ async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], Non
       1. type_id < 178（被 START_TYPE_ID 跳过的基础矿物等）
       2. type_id >= 178 但 YAML 中没有 name 字段（如 21009 等）
     """
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with _ref_db() as db:
         c = await db.execute(
             "SELECT type_id FROM item WHERE (zh_name IS NULL OR zh_name = '')" " OR (en_name IS NULL OR en_name = '')"
         )
@@ -354,7 +380,7 @@ async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], Non
             results = await asyncio.gather(*[_fetch_one(client, tid) for tid in batch])
             updates = [(en, zh, tid) for tid, en, zh in results if en or zh]
             if updates:
-                async with aiosqlite.connect(DATABASE_PATH) as db:
+                async with _ref_db() as db:
                     await db.executemany(
                         "UPDATE item SET en_name=?, zh_name=? WHERE type_id=?",
                         updates,
