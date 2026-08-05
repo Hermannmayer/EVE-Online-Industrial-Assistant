@@ -99,7 +99,7 @@ class TestDownloadIconClientError:
 
     @pytest.mark.asyncio
     async def test_returns_false_on_aiohttp_error(self, tmp_path):
-        """aiohttp.ClientError 时返回 False，不写任何文件"""
+        """aiohttp.ClientError 时重试 3 次后返回 False，不写任何文件"""
         session = MagicMock()
         session.get = MagicMock(side_effect=aiohttp.ClientError("Connection refused"))
         semaphore = asyncio.Semaphore(1)
@@ -108,11 +108,129 @@ class TestDownloadIconClientError:
         with (
             patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path),
             patch("tools.downloaders.geticon.log"),  # 抑制错误日志
+            patch("tools.downloaders.geticon.asyncio.sleep", AsyncMock()),  # 跳过重试等待
         ):
             result = await download_icon(session, 12345, semaphore, progress)
 
         assert result is False
+        assert session.get.call_count == 3, "瞬态错误应重试 3 次"
         assert not (tmp_path / "12345.png").exists()
+        assert not (tmp_path / "12345.noicon").exists(), "瞬态失败不应标记 noicon"
+
+
+class TestDownloadIconTransientRetry:
+    """download_icon — 429/5xx 瞬态失败不写 .noicon（下次初始化可重试）"""
+
+    @pytest.mark.asyncio
+    async def test_429_does_not_write_noicon(self, tmp_path):
+        """持续 429 → 3 次重试耗尽，返回 False 且不写 .noicon"""
+        mock_resp = MagicMock()
+        mock_resp.status = 429
+        mock_resp.headers = {"Retry-After": "0"}
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        session = MagicMock()
+        session.get = MagicMock(return_value=mock_cm)
+        semaphore = asyncio.Semaphore(1)
+        progress = [0, 0]
+
+        with (
+            patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path),
+            patch("tools.downloaders.geticon.asyncio.sleep", AsyncMock()),
+        ):
+            result = await download_icon(session, 12345, semaphore, progress)
+
+        assert result is False
+        assert session.get.call_count == 3
+        assert not (tmp_path / "12345.noicon").exists(), "429 不应标记 noicon"
+        assert not (tmp_path / "12345.png").exists()
+
+    @pytest.mark.asyncio
+    async def test_5xx_does_not_write_noicon(self, tmp_path):
+        """持续 5xx → 3 次重试耗尽，返回 False 且不写 .noicon"""
+        mock_resp = MagicMock()
+        mock_resp.status = 500
+        mock_resp.headers = {}
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        session = MagicMock()
+        session.get = MagicMock(return_value=mock_cm)
+        semaphore = asyncio.Semaphore(1)
+        progress = [0, 0]
+
+        with (
+            patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path),
+            patch("tools.downloaders.geticon.asyncio.sleep", AsyncMock()),
+        ):
+            result = await download_icon(session, 12345, semaphore, progress)
+
+        assert result is False
+        assert session.get.call_count == 3
+        assert not (tmp_path / "12345.noicon").exists()
+        assert not (tmp_path / "12345.png").exists()
+
+    @pytest.mark.asyncio
+    async def test_400_writes_noicon(self, tmp_path):
+        """HTTP 400（服务端拒绝该 type）→ 确定性失败：写 noicon 且不重试。
+
+        EVE Image Server 对无图标/被拒的 type 返回 400（与 404 同为确定性），
+        重试不会改变结果，避免大量 400 重复请求拖慢初始化。
+        """
+        mock_resp = MagicMock()
+        mock_resp.status = 400
+        mock_resp.headers = {}
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        session = MagicMock()
+        session.get = MagicMock(return_value=mock_cm)
+        semaphore = asyncio.Semaphore(1)
+        progress = [0, 0]
+
+        with patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path):
+            result = await download_icon(session, 12345, semaphore, progress)
+
+        assert result is False
+        assert session.get.call_count == 1, "400 是确定性失败，不应重试"
+        assert (tmp_path / "12345.noicon").exists(), "400 应标记 noicon"
+        assert not (tmp_path / "12345.png").exists()
+
+    @pytest.mark.asyncio
+    async def test_429_then_success_writes_png(self, tmp_path):
+        """429 后重试成功 → 写 png，不写 noicon"""
+        mock_429 = MagicMock()
+        mock_429.status = 429
+        mock_429.headers = {"Retry-After": "0"}
+        cm_429 = MagicMock()
+        cm_429.__aenter__ = AsyncMock(return_value=mock_429)
+        cm_429.__aexit__ = AsyncMock(return_value=False)
+
+        mock_ok = MagicMock()
+        mock_ok.status = 200
+        mock_ok.read = AsyncMock(return_value=b"png_data")
+        cm_ok = MagicMock()
+        cm_ok.__aenter__ = AsyncMock(return_value=mock_ok)
+        cm_ok.__aexit__ = AsyncMock(return_value=False)
+
+        session = MagicMock()
+        session.get = MagicMock(side_effect=[cm_429, cm_ok])
+        semaphore = asyncio.Semaphore(1)
+        progress = [0, 0]
+
+        with (
+            patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path),
+            patch("tools.downloaders.geticon.asyncio.sleep", AsyncMock()),
+        ):
+            result = await download_icon(session, 12345, semaphore, progress)
+
+        assert result is True
+        assert session.get.call_count == 2
+        assert (tmp_path / "12345.png").read_bytes() == b"png_data"
         assert not (tmp_path / "12345.noicon").exists()
 
 

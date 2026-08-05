@@ -113,7 +113,14 @@ async def download_icon_for_group(
     semaphore: asyncio.Semaphore,
     progress: list,
 ) -> bool:
-    """为同一 iconID 的一组 type_id 下载/复制图标（组内只下载一次）"""
+    """为同一 iconID 的一组 type_id 下载/复制图标（组内只下载一次）。
+
+    状态处理：
+      - 200 → 写 .png + 复制组内
+      - 400/404 → 确定性失败（服务端拒绝该 type / 无图标），写 .noicon，不重试
+      - 429 → 读 Retry-After 后重试（最多 3 次）
+      - 5xx/超时/ClientError → 瞬态失败，重试；耗尽后不写 .noicon（下次可重试）
+    """
     representative = type_ids[0]
     dest_path = ICON_CACHE_DIR / f"{representative}.png"
     noicon_path = ICON_CACHE_DIR / f"{representative}.noicon"
@@ -126,31 +133,49 @@ async def download_icon_for_group(
         progress[0] += len(type_ids)
         return False
 
-    # 下载代表 type_id 的图标
+    # 下载代表 type_id 的图标（100 并发 + 瞬态错误最多重试 3 次）
     url = f"{ESI_IMAGE_BASE}/{representative}/icon?size={ICON_SIZE}"
-    async with semaphore:
-        try:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                if resp.status == 200:
-                    icon_data = await resp.read()
-                    dest_path.write_bytes(icon_data)
-                    # 为组内其他 type_id 复制图标（不重复下载）
-                    for dup_tid in type_ids[1:]:
-                        dup_path = ICON_CACHE_DIR / f"{dup_tid}.png"
-                        if not dup_path.exists():
-                            dup_path.write_bytes(icon_data)
-                    progress[1] += 1
-                    progress[0] += len(type_ids)
-                    return True
-                else:
-                    # 标记组内所有 type_id 为无图标
-                    for dup_tid in type_ids:
-                        (ICON_CACHE_DIR / f"{dup_tid}.noicon").touch()
-                    progress[0] += len(type_ids)
-                    return False
-        except (TimeoutError, aiohttp.ClientError) as e:
-            log.error(f"  icon_id={icon_id} (代表 type_id={representative}) 下载失败: {e}")
-            return False
+    for attempt in range(3):
+        async with semaphore:
+            try:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status == 200:
+                        icon_data = await resp.read()
+                        dest_path.write_bytes(icon_data)
+                        # 为组内其他 type_id 复制图标（不重复下载）
+                        for dup_tid in type_ids[1:]:
+                            dup_path = ICON_CACHE_DIR / f"{dup_tid}.png"
+                            if not dup_path.exists():
+                                dup_path.write_bytes(icon_data)
+                        progress[1] += 1
+                        progress[0] += len(type_ids)
+                        return True
+                    if resp.status in (400, 404):
+                        # 确定性失败（EVE Image Server 对无图标/被拒 type 返回 400 或 404）：
+                        # 永久标记 noicon，重试不会改变结果
+                        for dup_tid in type_ids:
+                            (ICON_CACHE_DIR / f"{dup_tid}.noicon").touch()
+                        progress[0] += len(type_ids)
+                        return False
+                    if resp.status == 429:
+                        retry_after = resp.headers.get("Retry-After", "30")
+                        wait = int(retry_after) if retry_after.isdigit() else 30
+                        log.warning(f"  icon_id={icon_id} 429 限流，等待 {wait}s 后重试 ({attempt + 1}/3)")
+                        await asyncio.sleep(min(wait, 60))
+                        continue
+                    # 其他 5xx 等瞬态错误：不标记 noicon，等待后重试
+                    log.warning(f"  icon_id={icon_id} HTTP {resp.status}（瞬态，不标记 noicon）")
+                    await asyncio.sleep(1)
+                    continue
+            except (TimeoutError, aiohttp.ClientError) as e:
+                log.warning(f"  icon_id={icon_id} (代表 type_id={representative}) 下载异常: {e}（下次可重试）")
+                await asyncio.sleep(1)
+                continue
+
+    # 3 次重试耗尽（瞬态失败）：跳过本次，不写 noicon，下次初始化可重试
+    log.warning(f"  icon_id={icon_id} 重试 3 次仍失败，跳过（未标记 noicon）")
+    progress[0] += len(type_ids)
+    return False
 
 
 async def download_all(session: aiohttp.ClientSession, type_ids: list, progress_cb=None):
@@ -192,6 +217,11 @@ async def main(progress_cb=None):
     if len(sys.argv) > 1:
         type_ids = [int(arg) for arg in sys.argv[1:] if arg.isdigit()]
     else:
+        # 预热 typeIDs.yaml（to_thread 解析，不阻塞事件循环）——
+        # 让 _load_type_ids_with_icons 里的同步 load_yaml 命中缓存，避免卡住 29s
+        from tools.downloaders.sde_cache import load_yaml_async
+
+        await load_yaml_async("typeIDs.yaml")
         # 优先从 SDE 缓存获取有图标的 type_id（减少无效 404 请求）
         type_ids = list(_load_type_ids_with_icons())
         if not type_ids:
