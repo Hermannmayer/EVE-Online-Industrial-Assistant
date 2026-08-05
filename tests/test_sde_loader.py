@@ -100,7 +100,7 @@ class TestWriteMetaGroups:
 
         with (
             patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.sde_loader.load_yaml", return_value=mock_data),
+            patch("tools.downloaders.sde_loader.load_yaml_async", AsyncMock(return_value=mock_data)),
         ):
             await initialize_database()
             await write_meta_groups()
@@ -122,7 +122,7 @@ class TestWriteMetaGroups:
 
         with (
             patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.sde_loader.load_yaml", return_value=mock_data),
+            patch("tools.downloaders.sde_loader.load_yaml_async", AsyncMock(return_value=mock_data)),
         ):
             await initialize_database()
             await write_meta_groups()  # 首次调用写入
@@ -164,12 +164,12 @@ class TestWriteMetaGroups:
             "12347": {"name": {"en": "Item C"}, "groupID": 1, "volume": 1.0},
         }
 
-        def _load_yaml_side_effect(name):
+        async def _load_yaml_side_effect(name):
             return {"metaGroups.yaml": mock_meta, "typeIDs.yaml": mock_type_ids}[name]
 
         with (
             patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.sde_loader.load_yaml") as mock_load,
+            patch("tools.downloaders.sde_loader.load_yaml_async") as mock_load,
         ):
             mock_load.side_effect = _load_yaml_side_effect
             await initialize_database()

@@ -10,15 +10,18 @@ import asyncio
 import io
 import json
 import zipfile
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
+import pytest
 import yaml
 
 from tools.downloaders.sde_cache import (
     _universe_cache_has_names,
     clear_yaml_cache,
+    ensure_sde_zip,
     ensure_universe_cache,
     load_yaml,
+    load_yaml_async,
 )
 
 
@@ -284,3 +287,117 @@ class TestUniverseCacheSelfHeal:
 
         _regions, _const, systems, _sg = asyncio.run(ensure_universe_cache())
         assert systems[0]["solar_system_name"] == "Jita"
+
+
+class TestEnsureSdeZip:
+    """ensure_sde_zip — 断点续传 + 完整性校验"""
+
+    @staticmethod
+    def _mock_http(session_cls, status, headers, chunks):
+        """构造 aiohttp.ClientSession mock 链"""
+        mock_resp = MagicMock()
+        mock_resp.status = status
+        mock_resp.headers = headers
+        mock_resp.content = MagicMock()
+
+        async def _chunks():
+            for c in chunks:
+                yield c
+
+        mock_resp.content.iter_chunked.return_value = _chunks()
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=mock_cm)
+        session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        return mock_session
+
+    @pytest.mark.asyncio
+    @patch("tools.downloaders.sde_cache.os.path.exists")
+    @patch("tools.downloaders.sde_cache.os.path.getsize")
+    @patch("tools.downloaders.sde_cache.os.replace")
+    @patch("zipfile.ZipFile")
+    @patch("tools.downloaders.sde_cache.open", new_callable=mock_open)
+    @patch("tools.downloaders.sde_cache.aiohttp.ClientSession")
+    async def test_resume_with_range(
+        self, mock_session_cls, mock_file, mock_zf, mock_replace, mock_getsize, mock_exists
+    ):
+        """SDE_ZIP_PATH 不存在但 .part 残留 → Range 续传 + 追加模式 + 原子 rename"""
+        from tools.downloaders.sde_cache import SDE_ZIP_PATH, ZIP_PART_PATH
+
+        # 首次 exists 判断 SDE_ZIP_PATH → False；ZIP_PART_PATH → True（断点）
+        mock_exists.side_effect = [False, True]
+        mock_getsize.return_value = 5000  # 已下载 5000 字节
+
+        # zip 完整性校验通过
+        mock_zf_instance = MagicMock()
+        mock_zf_instance.testzip.return_value = None
+        mock_zf.return_value.__enter__.return_value = mock_zf_instance
+
+        mock_session = self._mock_http(mock_session_cls, 206, {"Content-Range": "bytes=5000-117964799/117964800"}, [b"x"])
+
+        result = await ensure_sde_zip()
+
+        assert result == SDE_ZIP_PATH
+        # Range 头带断点偏移
+        _args, kwargs = mock_session.get.call_args
+        assert kwargs["headers"] == {"Range": "bytes=5000-"}
+        # 追加模式写 .part
+        assert mock_file.call_args[0] == (ZIP_PART_PATH, "ab")
+        # 原子 rename 完成
+        mock_replace.assert_called_once_with(ZIP_PART_PATH, SDE_ZIP_PATH)
+
+    @pytest.mark.asyncio
+    @patch("tools.downloaders.sde_cache.os.path.exists")
+    @patch("tools.downloaders.sde_cache.os.remove")
+    @patch("zipfile.ZipFile")
+    @patch("tools.downloaders.sde_cache.open", new_callable=mock_open)
+    @patch("tools.downloaders.sde_cache.aiohttp.ClientSession")
+    async def test_zip_integrity_failure_deletes_part(
+        self, mock_session_cls, mock_file, mock_zf, mock_remove, mock_exists
+    ):
+        """下载完成后 testzip 校验损坏 → 删 .part 并抛错（下次从头下载）"""
+        from tools.downloaders.sde_cache import ZIP_PART_PATH
+
+        # SDE_ZIP_PATH 与 ZIP_PART_PATH 都不存在 → 全量下载
+        mock_exists.side_effect = [False, False]
+
+        # zip 校验失败（testzip 返回损坏成员名）
+        mock_zf_instance = MagicMock()
+        mock_zf_instance.testzip.return_value = "some_bad_member"
+        mock_zf.return_value.__enter__.return_value = mock_zf_instance
+
+        self._mock_http(mock_session_cls, 200, {"Content-Length": "100"}, [b"x"])
+
+        with pytest.raises(zipfile.BadZipFile):
+            await ensure_sde_zip()
+        # 损坏的 .part 被删除
+        mock_remove.assert_called_once_with(ZIP_PART_PATH)
+
+
+class TestLoadYamlAsync:
+    """load_yaml_async — 进程内缓存 + to_thread 只解析一次"""
+
+    @pytest.mark.asyncio
+    async def test_parses_once_via_to_thread(self, tmp_path, monkeypatch):
+        _make_loader(tmp_path, monkeypatch)
+        clear_yaml_cache()
+
+        calls = {"n": 0}
+        real_load = yaml.load
+
+        def counting_load(stream, Loader=None):
+            calls["n"] += 1
+            return real_load(stream, Loader=Loader)
+
+        with patch("tools.downloaders.sde_cache.yaml.load", side_effect=counting_load):
+            first = await load_yaml_async("test.yaml")
+            second = await load_yaml_async("test.yaml")
+
+        assert calls["n"] == 1, "二次调用应命中进程内缓存，不重复解析"
+        assert first is second
+        clear_yaml_cache()

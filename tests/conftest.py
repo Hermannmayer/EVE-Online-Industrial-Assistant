@@ -27,6 +27,20 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(skip_slow)
 
 
+@pytest.fixture(autouse=True)
+def reset_db_locks_each_test():
+    """每次测试后重置 per-DB 写锁。
+
+    services.db_locks 的 asyncio.Lock 是模块级持久，会绑定首次使用的事件循环；
+    pytest-asyncio 每个测试独立循环，跨测试复用同一把锁会抛
+    "bound to a different event loop"，故每个测试结束清空。
+    """
+    yield
+    from services.db_locks import reset_db_locks
+
+    reset_db_locks()
+
+
 # ════════════════════════════════════════════════════════════════
 #  辅助：创建标准临时数据库套件
 # ════════════════════════════════════════════════════════════════

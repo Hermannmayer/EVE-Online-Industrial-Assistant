@@ -4,18 +4,31 @@
 """
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import aiosqlite
-from tqdm import tqdm
 
 from core.logger import log
 from core.paths import reference_db_path, user_db_path
 from services.client import APIClient
+from services.db_locks import get_db_write_lock
 
 REF_DB_PATH = reference_db_path()
 USR_DB_PATH = user_db_path()
 ESI_BASE = "https://esi.evetech.net/latest"
+
+
+@asynccontextmanager
+async def _ref_db():
+    """reference.db 写库上下文：per-DB 写锁 + 连接。
+
+    并行初始化时 industry 与 implants/rigs/sde_data 同时写 reference.db，
+    写库阶段显式串行防 database is locked。
+    """
+    async with get_db_write_lock("ref"):
+        async with aiosqlite.connect(REF_DB_PATH, timeout=30) as db:
+            yield db
 
 
 # 关键制造技能ID
@@ -37,7 +50,7 @@ KEY_MANUFACTURING_SKILLS = [
 async def create_tables():
     """创建 reference.db 和 user.db 中的表"""
     # reference.db: 工业系统成本指数 + 工业设施
-    async with aiosqlite.connect(REF_DB_PATH) as db:
+    async with _ref_db() as db:
         await db.executescript("""
             CREATE TABLE IF NOT EXISTS industry_system_costs (
                 solar_system_id INTEGER,
@@ -59,7 +72,7 @@ async def create_tables():
         await db.commit()
 
     # user.db: 用户技能
-    async with aiosqlite.connect(USR_DB_PATH) as db:
+    async with aiosqlite.connect(USR_DB_PATH, timeout=30) as db:
         await db.executescript("""
             CREATE TABLE IF NOT EXISTS user_skills (
                 skill_type_id INTEGER PRIMARY KEY,
@@ -93,17 +106,21 @@ async def run_industry_update(progress_cb=None):
         if progress_cb:
             progress_cb(25, f"获取系统成本指数 ({len(systems)} 个星系)")
 
-        async with aiosqlite.connect(REF_DB_PATH) as db:
-            total = len(systems)
-            for i, sys in enumerate(tqdm(systems, desc="系统成本")):
-                sid = sys["solar_system_id"]
-                for ci in sys.get("cost_indices", []):
-                    await db.execute(
-                        "INSERT OR REPLACE INTO industry_system_costs VALUES (?, ?, ?, ?)",
-                        (sid, ci["activity"], ci["cost_index"], now),
-                    )
-                if progress_cb and (i + 1) % 20 == 0:
-                    progress_cb(25 + int((i + 1) / max(total, 1) * 25), f"系统成本 {i + 1}/{total}")
+        sys_rows = [
+            (sys["solar_system_id"], ci["activity"], ci["cost_index"], now)
+            for sys in systems
+            for ci in sys.get("cost_indices", [])
+        ]
+        async with _ref_db() as db:
+            total = len(sys_rows)
+            for i in range(0, total, 1000):
+                await db.executemany(
+                    "INSERT OR REPLACE INTO industry_system_costs VALUES (?, ?, ?, ?)",
+                    sys_rows[i : i + 1000],
+                )
+                if progress_cb:
+                    done = min(i + 1000, total)
+                    progress_cb(25 + int(done / max(total, 1) * 25), f"系统成本 {done}/{total}")
             await db.commit()
 
         # ── 工业设施 (reference.db) ──
@@ -113,23 +130,28 @@ async def run_industry_update(progress_cb=None):
         if progress_cb:
             progress_cb(65, f"获取工业设施数据 ({len(facilities)} 个设施)")
 
-        async with aiosqlite.connect(REF_DB_PATH) as db:
-            total_f = len(facilities)
-            for i, fac in enumerate(tqdm(facilities, desc="设施")):
-                await db.execute(
+        fac_rows = [
+            (
+                fac["facility_id"],
+                fac["solar_system_id"],
+                fac["type_id"],
+                fac.get("owner_id"),
+                fac.get("region_id"),
+                fac.get("tax", 0.0),
+                now,
+            )
+            for fac in facilities
+        ]
+        async with _ref_db() as db:
+            total_f = len(fac_rows)
+            for i in range(0, total_f, 1000):
+                await db.executemany(
                     "INSERT OR REPLACE INTO industry_facilities VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        fac["facility_id"],
-                        fac["solar_system_id"],
-                        fac["type_id"],
-                        fac.get("owner_id"),
-                        fac.get("region_id"),
-                        fac.get("tax", 0.0),
-                        now,
-                    ),
+                    fac_rows[i : i + 1000],
                 )
-                if progress_cb and (i + 1) % 20 == 0:
-                    progress_cb(65 + int((i + 1) / max(total_f, 1) * 30), f"设施 {i + 1}/{total_f}")
+                if progress_cb:
+                    done = min(i + 1000, total_f)
+                    progress_cb(65 + int(done / max(total_f, 1) * 30), f"设施 {done}/{total_f}")
             await db.commit()
 
     if progress_cb:

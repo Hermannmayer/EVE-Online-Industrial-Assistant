@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from core.logger import log
 from core.paths import reference_db_path
+from services.db_locks import get_db_write_lock
 
 DB_PATH = reference_db_path()
 
@@ -83,7 +84,7 @@ RIG_GROUP_IDS = [
 
 
 def init_db(db_path: str):
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS structure_rigs (
@@ -100,7 +101,7 @@ def init_db(db_path: str):
 
 def get_rig_type_ids(db_path: str) -> list[int]:
     """从 item 表按改装件组查询 type_id 列表"""
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
     try:
         placeholders = ",".join("?" * len(RIG_GROUP_IDS))
         rows = conn.execute(
@@ -143,7 +144,7 @@ async def main(progress_cb=None):
     type_ids = get_rig_type_ids(DB_PATH)
     log.info(f"共计 {len(type_ids)} 个结构改装件")
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
         existing = {r[0] for r in conn.execute("SELECT type_id FROM structure_rigs").fetchall()}
     finally:
@@ -180,15 +181,16 @@ async def main(progress_cb=None):
             progress_cb(100, "未获取到改件数据")
         return
 
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        conn.executemany(
-            "INSERT OR REPLACE INTO structure_rigs (type_id, mat_bonus, time_bonus) VALUES (?, ?, ?)",
-            rows,
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    async with get_db_write_lock("ref"):
+        conn = sqlite3.connect(DB_PATH, timeout=30)
+        try:
+            conn.executemany(
+                "INSERT OR REPLACE INTO structure_rigs (type_id, mat_bonus, time_bonus) VALUES (?, ?, ?)",
+                rows,
+            )
+            conn.commit()
+        finally:
+            conn.close()
     log.info(f"写入 {len(rows)} 条改件加成数据")
     if progress_cb:
         progress_cb(100, f"写入 {len(rows)} 条改件数据")

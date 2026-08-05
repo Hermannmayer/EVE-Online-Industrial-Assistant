@@ -9,7 +9,7 @@
 import sqlite3
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -119,13 +119,16 @@ class TestWriteItems:
 
         with (
             patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.getitems.load_yaml") as mock_load_yaml,
+            patch("tools.downloaders.getitems.load_yaml_async") as mock_load_yaml,
         ):
-            mock_load_yaml.side_effect = lambda name: {
-                "typeIDs.yaml": mock_type_ids,
-                "groupIDs.yaml": mock_groups,
-                "marketGroups.yaml": mock_market_groups,
-            }[name]
+            async def fake_load(name):
+                return {
+                    "typeIDs.yaml": mock_type_ids,
+                    "groupIDs.yaml": mock_groups,
+                    "marketGroups.yaml": mock_market_groups,
+                }[name]
+
+            mock_load_yaml.side_effect = fake_load
 
             await initialize_database()
             await write_items()
@@ -169,13 +172,16 @@ class TestWriteItems:
 
         with (
             patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.getitems.load_yaml") as mock_load_yaml,
+            patch("tools.downloaders.getitems.load_yaml_async") as mock_load_yaml,
         ):
-            mock_load_yaml.side_effect = lambda name: {
-                "typeIDs.yaml": mock_type_ids,
-                "groupIDs.yaml": mock_groups,
-                "marketGroups.yaml": mock_market_groups,
-            }[name]
+            async def fake_load(name):
+                return {
+                    "typeIDs.yaml": mock_type_ids,
+                    "groupIDs.yaml": mock_groups,
+                    "marketGroups.yaml": mock_market_groups,
+                }[name]
+
+            mock_load_yaml.side_effect = fake_load
 
             await initialize_database()
             await write_items()
@@ -212,7 +218,7 @@ class TestWriteMarketTree:
 
         with (
             patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.getitems.load_yaml", return_value=mock_data),
+            patch("tools.downloaders.getitems.load_yaml_async", AsyncMock(return_value=mock_data)),
         ):
             await initialize_database()
             await write_market_tree()
@@ -230,7 +236,7 @@ class TestWriteMarketTree:
         """YAML 数据为空时跳过，不报错"""
         with (
             patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.getitems.load_yaml", return_value=None),
+            patch("tools.downloaders.getitems.load_yaml_async", AsyncMock(return_value=None)),
         ):
             await initialize_database()
             await write_market_tree()

@@ -59,13 +59,13 @@ class StepStatus(Enum):
 
 STEPS = [
     InitStep("schema", "数据库结构", needs_network=False, critical=True),
-    InitStep("items", "物品数据", needs_network=True, critical=True),
+    InitStep("items", "物品数据", needs_network=True, critical=True, depends_on=["schema"]),
     InitStep("prices", "市场价格", needs_network=True, critical=True, depends_on=["items"]),
     InitStep("blueprints", "蓝图数据", needs_network=True, critical=True, depends_on=["items"]),
-    InitStep("implants", "植入体数据", needs_network=True, critical=False),
+    InitStep("implants", "植入体数据", needs_network=True, critical=False, depends_on=["items"]),
     InitStep("rigs", "结构改装件数据", needs_network=True, critical=False, depends_on=["items"]),
     InitStep("industry", "工业数据", needs_network=True, critical=True, depends_on=["items"]),
-    InitStep("icons", "物品图标", needs_network=True, critical=False),
+    InitStep("icons", "物品图标", needs_network=True, critical=False, depends_on=["items"]),
     InitStep("sde_data", "SDE扩展数据", needs_network=False, critical=True, depends_on=["items"]),
 ]
 
@@ -144,12 +144,14 @@ class InitService(QObject):
         self._status: dict[str, StepStatus] = {s.key: StepStatus.PENDING for s in STEPS}
         # 每步失败消息
         self._errors: dict[str, str] = {}
-        # 当前正在执行的步骤
-        self._current_key: str | None = None
+        # 当前正在执行的步骤（并行时可能多个）
+        self._running: set[str] = set()
+        # 本轮创建的 asyncio.Task 映射（并行调度用，key → Task）
+        self._task_map: dict[str, asyncio.Task] = {}
         # 是否已取消
         self._cancelled = False
-        # 本轮网络检查缓存（每轮只查一次，避免 6 个网络步骤各查一次）
-        self._net_ok: bool | None = None
+        # 本轮网络检查单飞任务（多个网络步骤并发时只查一次）
+        self._net_task: asyncio.Task[bool] | None = None
 
         # CLI 模式回调
         self.on_step_started: StepStartedCb = _noop
@@ -165,8 +167,15 @@ class InitService(QObject):
         Args:
             step_keys: 要执行的步骤 key 列表。None = 自动选择未就绪步骤。
         """
+        # 重置跨事件循环的异步锁（重试会新建 asyncio.run，旧锁绑定上一循环会报错）
+        from services.db_locks import reset_db_locks
+        from tools.downloaders.sde_cache import reset_async_locks
+
+        reset_db_locks()
+        reset_async_locks()
+
         self._cancelled = False
-        self._net_ok = None  # 重置本轮网络缓存
+        self._net_task = None  # 重置本轮网络检查单飞任务
         targets = step_keys or [s.key for s in STEPS]
         # 过滤出需要执行的步骤
         to_run = [k for k in targets if self._status.get(k) in (StepStatus.PENDING, StepStatus.FAILED)]
@@ -208,10 +217,10 @@ class InitService(QObject):
         return True
 
     def cancel(self):
-        """取消当前执行"""
+        """取消当前执行（并行时取消所有正在运行的步骤）"""
         self._cancelled = True
-        if self._current_key:
-            self._status[self._current_key] = StepStatus.CANCELLED
+        for key in list(self._running):
+            self._status[key] = StepStatus.CANCELLED
 
     def get_status(self) -> dict[str, StepStatus]:
         """返回所有步骤的当前状态"""
@@ -226,89 +235,77 @@ class InitService(QObject):
         for k in self._status:
             self._status[k] = StepStatus.PENDING
         self._errors.clear()
-        self._current_key = None
+        self._running.clear()
+        self._task_map.clear()
         self._cancelled = False
+        self._net_task = None
 
     # ── 网络检查 ──
 
     async def check_network(self) -> bool:
-        """检查 ESI 连通性"""
+        """检查 ESI 连通性（带重试：网络抖动/慢响应不误判为不可用）。
+
+        并行初始化时所有网络步骤共享这一次检查结果——单次 10s 超时且无重试时，
+        赶上网速波动或事件循环短暂被同步大循环阻塞就会误判，连累整批网络步骤
+        报"网络不可用"。重试 3 次、超时放宽到 15s、指数退避。
+        """
         import aiohttp
 
-        try:
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get("https://esi.evetech.net/status/") as resp:
-                    ok: bool = resp.status == 200
-                    msg = "ESI 连接正常" if ok else f"ESI 返回 {resp.status}"
-                    self._emit_network(ok, msg)
-                    return ok
-        except Exception as e:
-            msg = f"网络不可用: {e}"
-            self._emit_network(False, msg)
-            return False
+        last_err: str | None = None
+        for attempt in range(3):
+            try:
+                timeout = aiohttp.ClientTimeout(total=15)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get("https://esi.evetech.net/status/") as resp:
+                        if resp.status == 200:
+                            msg = "ESI 连接正常"
+                            self._emit_network(True, msg)
+                            return True
+                        last_err = f"ESI 返回 {resp.status}"
+            except Exception as e:
+                last_err = str(e)
+            if attempt < 2:
+                await asyncio.sleep(2 * (attempt + 1))  # 指数退避：2s, 4s
+
+        msg = f"网络不可用: {last_err}"
+        self._emit_network(False, msg)
+        return False
 
     # ── 内部执行逻辑 ──
 
     async def _run_sequence(self, keys: list[str]):
-        """顺序执行步骤列表"""
-        success_count = 0
-        fail_count = 0
+        """按依赖图并行执行步骤列表。
 
+        items 之前只有 schema/items（串行由 depends_on 保证）；
+        items 之后的 7 步互不依赖，全部并发执行——icons/sde_data 等大头
+        与 prices/implants/rigs/industry 重叠运行，总时长大幅缩短。
+        单个步骤失败只影响其后继，不阻塞同层其它步骤。
+        """
+        self._running.clear()
+        self._task_map.clear()
+        self._net_task = None
+        self._prepare_ref_db_for_parallel()
+
+        tasks: dict[str, asyncio.Task] = {}
         for key in keys:
-            if self._cancelled:
-                break
-
             step = STEP_MAP.get(key)
-            if not step:
+            if not step or self._status.get(key) in (StepStatus.COMPLETED, StepStatus.SKIPPED):
                 continue
+            tasks[key] = asyncio.create_task(self._run_one(key))
+        self._task_map = tasks
 
-            # 如果前置步骤未完成，跳过
-            if not self._deps_satisfied(step):
-                self._status[key] = StepStatus.SKIPPED
-                self._emit_step_completed(key, True, "前置步骤未就绪，跳过")
-                continue
+        await asyncio.gather(*tasks.values(), return_exceptions=True)
 
-            # 如果已经是 COMPLETED/SKIPPED，跳过
-            if self._status.get(key) in (StepStatus.COMPLETED, StepStatus.SKIPPED):
-                continue
-
-            # 网络检查（本轮只查一次，结果缓存复用）
-            if step.needs_network:
-                if self._net_ok is None:
-                    self._net_ok = await self.check_network()
-                if not self._net_ok:
-                    self._status[key] = StepStatus.FAILED
-                    self._errors[key] = "网络不可用"
-                    self._emit_step_completed(key, False, "网络不可用")
-                    fail_count += 1
-                    continue
-
-            # 执行
-            self._current_key = key
-            self._status[key] = StepStatus.RUNNING
-            self._emit_step_started(key, step.name)
-            try:
-                success, msg = await self._run_step(key)
-                self._status[key] = StepStatus.COMPLETED if success else StepStatus.FAILED
-                if not success:
-                    self._errors[key] = msg
-                    fail_count += 1
-                else:
-                    success_count += 1
-                self._emit_step_completed(key, success, msg)
-            except Exception as e:
-                self._status[key] = StepStatus.FAILED
-                msg = str(e)
-                self._errors[key] = msg
-                fail_count += 1
-                self._emit_step_completed(key, False, msg)
-            finally:
-                self._current_key = None
-
-        all_done = fail_count == 0
+        success_count = sum(1 for st in self._status.values() if st == StepStatus.COMPLETED)
+        fail_count = sum(1 for st in self._status.values() if st == StepStatus.FAILED)
+        # 只有关键步骤失败才阻止进入主窗口；非关键步骤（icons/implants/rigs）失败可跳过
+        # —— 否则个别可选步骤失败会让启动对话框永远不关闭、主窗口不出现
+        critical_failed = any(
+            self._status[k] == StepStatus.FAILED and bool(STEP_MAP[k].critical) for k in self._status
+        )
+        all_done = not critical_failed
         summary = f"完成 {success_count}/{success_count + fail_count}"
-        if all_done:
+        if fail_count == 0:
             summary = "全部初始化完成"
         self._emit_all_completed(all_done, summary)
 
@@ -318,6 +315,93 @@ class InitService(QObject):
 
             clear_yaml_cache()
         except Exception:
+            pass
+
+    async def _run_one(self, key: str):
+        """单个步骤任务：等依赖 → 网络检查 → 执行 → 上报（可并行运行）"""
+        step = STEP_MAP.get(key)
+        if not step:
+            return
+
+        # 1) 等待本轮执行的依赖任务完成（已完成/跳过/失败都不会抛异常，
+        #    依赖失败由 _deps_satisfied 兜底判定 SKIPPED）
+        for dep in step.depends_on:
+            t = self._task_map.get(dep)
+            if t:
+                await t
+
+        if self._cancelled:
+            self._status[key] = StepStatus.CANCELLED
+            self._emit_step_completed(key, False, "已取消")
+            return
+
+        # 2) 依赖就绪性（复用现有逻辑，含 is_step_satisfied 全局兜底）
+        if not self._deps_satisfied(step):
+            self._status[key] = StepStatus.SKIPPED
+            self._emit_step_completed(key, True, "前置步骤未就绪，跳过")
+            return
+
+        # 3) 网络检查（单飞：全部网络步骤共享一次结果）。
+        #    预检失败不立即 FAILED：大 YAML 解析（PyYAML C loader 持有 GIL）
+        #    会阻塞事件循环线程，导致 aiohttp 预检请求超时误判"网络不可用"，
+        #    连累整批网络步骤（用户看到"解析完网络就恢复了"）。让实际下载去验证
+        #    ——APIClient 自带重试/限流，真没网会在下载阶段失败。
+        if step.needs_network:
+            if not await self._ensure_net_once():
+                log.warning(
+                    "步骤 %s：网络预检未通过，继续尝试实际下载（可能因大 YAML 解析阻塞事件循环误判）",
+                    key,
+                )
+
+        # 4) 执行
+        self._running.add(key)
+        self._status[key] = StepStatus.RUNNING
+        self._emit_step_started(key, step.name)
+        try:
+            success, msg = await self._run_step(key)
+            if self._cancelled:
+                self._status[key] = StepStatus.CANCELLED
+                self._emit_step_completed(key, False, "已取消")
+            elif success:
+                self._status[key] = StepStatus.COMPLETED
+                self._emit_step_completed(key, True, msg)
+            else:
+                self._status[key] = StepStatus.FAILED
+                self._errors[key] = msg
+                self._emit_step_completed(key, False, msg)
+        except Exception as e:
+            self._status[key] = StepStatus.FAILED
+            msg = str(e)
+            self._errors[key] = msg
+            self._emit_step_completed(key, False, msg)
+        finally:
+            self._running.discard(key)
+
+    async def _ensure_net_once(self) -> bool:
+        """网络检查单飞：并发请求合并为一次 check_network，结果共享。"""
+        if self._net_task is None:
+            self._net_task = asyncio.create_task(self.check_network())
+        return await self._net_task
+
+    @staticmethod
+    def _prepare_ref_db_for_parallel():
+        """并行前准备 reference.db：WAL + 长 busy_timeout。
+
+        items/industry/implants/rigs/sde_data 五步都会写 reference.db，
+        WAL 允许读写并发、多写者排队而非立即报 database is locked；
+        busy_timeout 是本连接级参数，真正持久化的是 journal_mode=WAL。
+        """
+        import sqlite3
+
+        from core.paths import reference_db_path
+
+        try:
+            conn = sqlite3.connect(reference_db_path(), timeout=30)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=30000")
+            conn.close()
+        except Exception:
+            # 库尚不存在（全新初始化时 schema 步骤会创建），静默跳过
             pass
 
     def _deps_satisfied(self, step: InitStep) -> bool:
