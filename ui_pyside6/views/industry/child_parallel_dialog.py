@@ -45,7 +45,7 @@ class ChildParallelDialog(QDialog):
         self._output_per_run: dict[int, int] = {}
         self._durations: dict[int, str] = {}
 
-        with get_container().db.connect("ref", "user") as conn:
+        with get_container().db.connect("ref", "user", "bp") as conn:
             self._demand = parent_needs(conn, plans)
             for p in self._plans:
                 pid = p["product_type_id"]

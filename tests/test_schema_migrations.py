@@ -116,6 +116,26 @@ def test_ensure_schema_missing_db_returns_none(tmp_path):
 
     result = sm.ensure_schema("ref")  # 用默认路径（不存在于 CI 环境）
     assert result["before"] is None or result["after"] is not None  # 不抛异常
+    assert result.get("failed") is None  # 库缺失 ≠ 检查失败
+
+
+def test_ensure_schema_failure_marks_failed(tmp_path, monkeypatch):
+    """schema 检查抛异常（如强杀后的短暂 disk I/O error）→ failed=True，区别于库缺失"""
+
+    db_path = tmp_path / "reference.db"
+    sqlite3.connect(str(db_path)).close()
+    monkeypatch.setitem(sm._DB_PATH_MAP, "ref", str(db_path))
+
+    def _boom(_p):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(sm, "_get_version", _boom)
+
+    result = sm.ensure_schema("ref")
+    assert result["failed"] is True
+    assert result["before"] is None
+    assert result["after"] is None
+    assert result["applied"] == []
 
 
 def test_v0_db_with_no_migrations_stamps_version(tmp_path, monkeypatch):

@@ -9,13 +9,14 @@ from ui_pyside6.views.industry.parent_decompose_dialog import ParentDecomposeDia
 
 
 def _build_dbs(db_manager):
-    """ref 蓝图表 + user production_plans/hangars/inventory_items。"""
+    """ref item + bp 蓝图表 + user production_plans/hangars/inventory_items（与生产拆分一致）。"""
     with db_manager.connect("ref") as conn:
         conn.execute("CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT)")
         conn.execute("INSERT INTO item VALUES (1001,'碳纤维','Carbon Fiber')")
         conn.execute("INSERT INTO item VALUES (35,'三钛合金','Tritanium')")
         conn.execute("INSERT INTO item VALUES (34,'类银超金属','Pyerite')")
         conn.execute("INSERT INTO item VALUES (2001,'渡鸦级','Raven')")
+    with db_manager.connect("bp") as conn:
         conn.execute(
             "CREATE TABLE blueprint_products (blueprint_type_id INTEGER, activity TEXT, "
             "product_type_id INTEGER, quantity INTEGER)"
