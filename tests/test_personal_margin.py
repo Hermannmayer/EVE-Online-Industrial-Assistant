@@ -255,7 +255,7 @@ def test_worker_personal_margin(qapp, sample_char_config):
 
 
 def test_mother_cost_uses_subitem_manufacturing_cost(qapp, sample_char_config):
-    """拆解母项：子项自制件按其制造价计，未拆解材料按市场价。"""
+    """拆解母项：子项自制件按其制造价（材料+作业费）计，未拆解材料按市场价。"""
     from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker
 
     w = BatchPlanCalcWorker(
@@ -281,12 +281,19 @@ def test_mother_cost_uses_subitem_manufacturing_cost(qapp, sample_char_config):
     base_results = {
         1: (mother, result),
         2: (
-            {"id": 2, "group_id": 10, "child_level": 1, "product_type_id": 2002},
-            {"material_cost": 5000.0},
+            {
+                "id": 2,
+                "group_id": 10,
+                "child_level": 1,
+                "product_type_id": 2002,
+                "runs": 2,
+                "parallels": 1,
+            },
+            {"material_cost": 4800.0, "breakdown": {"installation_fee": 100.0}},
         ),
     }
     overrides = w._apply_mother_subitem_cost(mother, result, base_results)
-    # material_cost = 50(三钛) + 5000(子项制造价) = 5050
+    # 子项制造价 = 材料 4800 + 作业费 100×2 runs = 5000；material_cost = 50 + 5000 = 5050
     assert result["material_cost"] == pytest.approx(5050, abs=0.01)
     assert overrides == {2002: 5000.0}
     # profit = 20000 - 5050 - 100 = 14850；margin = 14850/5150
@@ -334,3 +341,103 @@ def test_personal_margin_uses_cost_override(qapp):
     personal = ScoringService.calculate_personal_margin(result, {2002: (10, 1.0)}, 1, 1, cost_overrides={2002: 5000.0})
     # 成本 = 5000 + 100 = 5100
     assert personal == pytest.approx((1000 - 5100) / 5100 * 100, abs=0.005)
+
+
+def test_child_manufacturing_cost_includes_job_fee():
+    """子项制造价 = 材料成本 + 作业费 × runs × parallels。"""
+    from services.scoring_service import ScoringService
+
+    plan = {"runs": 2, "parallels": 3}
+    metrics = {"material_cost": 1000.0, "breakdown": {"installation_fee": 50.0}}
+    assert ScoringService.child_manufacturing_cost(plan, metrics) == pytest.approx(1300, abs=0.01)
+    # breakdown 缺失时兜底仅材料成本
+    assert ScoringService.child_manufacturing_cost(plan, {"material_cost": 1000.0}) == pytest.approx(
+        1000, abs=0.01
+    )
+
+
+def test_adjust_mother_metrics_does_not_mutate_input():
+    """adjust_mother_metrics：自制子项按制造价计，返回 overrides，不改入参。"""
+    from services.scoring_service import ScoringService
+
+    metrics = {
+        "materials": [
+            {"type_id": 1001, "qty": 10, "unit_price": 5.0},
+            {"type_id": 2002, "qty": 2, "unit_price": 999.0},
+        ],
+        "revenue": 20000.0,
+        "fees": 100.0,
+    }
+    mat, profit, margin, overrides = ScoringService.adjust_mother_metrics(metrics, {2002: 5000.0}, 1)
+    assert mat == pytest.approx(5050, abs=0.01)  # 50(三钛) + 5000(子项制造价)
+    assert profit == pytest.approx(14850, abs=0.01)
+    assert margin == pytest.approx(14850 / 5150 * 100, abs=0.01)
+    assert overrides == {2002: 5000.0}
+    assert "material_cost" not in metrics  # 入参未被修改
+
+
+def test_worker_run_preserves_market_margin(qapp, sample_char_config):
+    """run() 留存调整前市场利润率：拆解母项个人利润率显著高于市场利润率。"""
+    from unittest.mock import patch
+
+    from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker
+
+    mother = {"id": 1, "group_id": 10, "child_level": 0, "runs": 1, "parallels": 1}
+    child = {"id": 2, "group_id": 10, "child_level": 1, "product_type_id": 2002, "runs": 2, "parallels": 1}
+    w = BatchPlanCalcWorker(
+        [mother, child],
+        sample_char_config,
+        mat_hub="Jita",
+        mat_price_type="sell",
+        prod_hub="Jita",
+        prod_price_type="sell",
+    )
+    # 市场口径: 材料 10×5 + 2×999 = 2048；子项制造价 = 1100 + 50×2 = 1200 < 市场买入 1998
+    mother_result = {
+        "materials": [
+            {"type_id": 1001, "qty": 10, "unit_price": 5.0},
+            {"type_id": 2002, "qty": 2, "unit_price": 999.0},
+        ],
+        "revenue": 20000.0,
+        "fees": 100.0,
+        "material_cost": 2048.0,
+        "profit": 20000.0 - 2048.0 - 100.0,
+        "margin": (20000.0 - 2048.0 - 100.0) / (2048.0 + 100.0) * 100.0,
+        "revenue_per_run": 20000.0,
+        "fees_per_run": 100.0,
+        "score": 0,
+        "iskph": 0,
+        "calculated_time": 3600,
+        "daily_output": 0,
+    }
+    child_result = {
+        "material_cost": 1100.0,
+        "breakdown": {"installation_fee": 50.0},
+        "margin": 0,
+        "score": 0,
+        "iskph": 0,
+        "calculated_time": 3600,
+        "daily_output": 0,
+    }
+    captured: list = []
+    w.finished.connect(captured.append)
+    with (
+        patch.object(
+            BatchPlanCalcWorker,
+            "_calc_base",
+            side_effect=lambda item: {1: mother_result, 2: child_result}.get(item.get("id"), {}),
+        ),
+        patch("services.inventory_manager.get_inventory_cost_map", return_value={}),
+    ):
+        w.run()
+    by_id = {r[0]: r for r in captured[0]}
+    mother_out = by_id[1]
+    market_margin = (20000.0 - 2048.0 - 100.0) / (2048.0 + 100.0) * 100.0
+    # 市场利润率列 = 调整前留存的市场口径
+    assert mother_out[9] == pytest.approx(market_margin, abs=0.01)
+    # 成本列 = 50 + 子项制造价 1200 = 1250
+    assert mother_out[5] == pytest.approx(1250, abs=0.01)
+    # 个人利润率（自制成本）显著高于市场利润率
+    assert mother_out[8] > market_margin
+    # 调整后 margin（自制口径）与市场口径不同
+    assert mother_out[2] != pytest.approx(market_margin, abs=0.005)
