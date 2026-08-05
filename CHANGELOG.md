@@ -6,6 +6,33 @@
 
 <!-- version list -->
 
+## v0.15.0 (2026-08-05)
+
+### Bug Fixes
+
+- Dev.py 热重载防连环重启 + 蓝图表连接修正 + schema 检查容错
+  ([`6d7b3ea`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/6d7b3ea90e9acb5f6cd905ebcce6eea56194115a))
+
+- 图标下载 — 400/404 确定性失败写 noicon，移除限流恢复 100 并发
+  ([`ba2daa3`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/ba2daa3a9de054b1b3f50750fab309f80cecd614))
+
+- 拆解母项子项按制造价计入成本 + 市场/个人利润率口径分离
+  ([`1e2a413`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/1e2a413bb118bb529d1dc7318bf52842b4214a36))
+
+- 母项拆解重跑整体刷新 runs/parallels + 预览加需求列
+  ([`b5d6f95`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b5d6f95be27d75ad96ec2da63a7feca3d245b327))
+
+### Features
+
+- 新增 setup_worktree.sh 快速初始化 worktree
+  ([`af8c85b`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/af8c85b82d993f31e35cf16e635c0d2930ad8cd0))
+
+### Performance Improvements
+
+- 数据初始化下载加速 — 步骤并行调度 + reference.db 并发写锁 + 下载器优化
+  ([`a190c2d`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a190c2dae5a5c61bd52dfd3e1ea4964648d0121b))
+
+
 ## v0.14.2 (2026-08-04)
 
 ### Bug Fixes
