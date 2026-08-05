@@ -632,6 +632,7 @@ class IndustryPage(QWidget):
                     hours_total,
                     daily_output,
                     personal_margin,
+                    market_margin,
                 ) in results:
                     try:
                         # hours_total 转换为秒存入 calculated_time
@@ -646,7 +647,7 @@ class IndustryPage(QWidget):
                                 score,
                                 iskph,
                                 mat_cost,
-                                margin,
+                                market_margin,
                                 personal_margin,
                                 calculated_seconds,
                                 daily_output,

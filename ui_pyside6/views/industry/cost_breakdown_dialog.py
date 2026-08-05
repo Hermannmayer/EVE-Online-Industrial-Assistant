@@ -207,9 +207,31 @@ class CostBreakdownDialog(QWidget):
             )
         )
 
-        material_cost = metrics.get("material_cost", 0)
-        profit = metrics.get("profit", 0)
-        margin = metrics.get("margin", 0)
+        # 拆解母项：自制子项按其制造价（材料+作业费）计入成本，而非市场买入价
+        sub_cost_map: dict[int, float] = {}
+        try:
+            gid = self._plan.get("group_id") or self._plan.get("group_number")
+            my_lvl = int(self._plan.get("sub_level") or self._plan.get("child_level") or 0)
+            if gid:
+                sub_cost_map = self._compute_subitem_costs(gid, my_lvl)
+        except Exception:
+            from core.logger import log
+
+            log.exception("计算拆解子项成本失败: %s", self._plan.get("product_name"))
+            sub_cost_map = {}
+        if sub_cost_map:
+            from services.scoring_service import ScoringService
+
+            adj_mat, adj_profit, adj_margin, _ = ScoringService.adjust_mother_metrics(
+                metrics, sub_cost_map, total_mult
+            )
+            material_cost = adj_mat
+            profit = adj_profit
+            margin = adj_margin
+        else:
+            material_cost = metrics.get("material_cost", 0)
+            profit = metrics.get("profit", 0)
+            margin = metrics.get("margin", 0)
         score = metrics.get("score", 0) or 0
         isk_per_hour = metrics.get("iskph", 0)
         hours = metrics.get("calculated_time", 0) / 3600 if metrics.get("calculated_time") else 0
@@ -237,13 +259,23 @@ class CostBreakdownDialog(QWidget):
                 wf = mat.get("wastefactor", 10) or 10
                 me = self._plan.get("me_level", 0) or 0
                 total_qty = calc_material_for_runs(base, wf, me, total_mult, structure_mat_saving=structure_mat_saving)
+            mid = mat.get("type_id")
+            if mid in sub_cost_map:
+                # 自制子项：单价 = 子项制造价 / 本计划总需求，小计 = 子项制造价
+                sub_total = sub_cost_map[mid]
+                unit_price = sub_total / total_qty if total_qty > 0 else 0.0
+                name_display = f"{mat.get('name', '')}（自制）"
+            else:
+                unit_price = mat.get("unit_price", 0) or 0
+                sub_total = unit_price * total_qty
+                name_display = mat.get("name", "")
             items = [
-                mat.get("name", ""),
+                name_display,
                 str(base),
                 _fmt_material_saving(total_qty, base, total_mult),
                 f"{total_qty:,.0f}",
-                _fmt_isk(mat.get("unit_price", 0)),
-                _fmt_isk((mat.get("unit_price", 0) or 0) * total_qty),
+                _fmt_isk(unit_price),
+                _fmt_isk(sub_total),
             ]
             for col_idx, text in enumerate(items):
                 item = QTableWidgetItem(text)
@@ -309,6 +341,52 @@ class CostBreakdownDialog(QWidget):
         self._summary_labels["daily_profit"].setText(_fmt_isk(daily_profit))
         self._summary_labels["score"].setText(f"{score:.1f}")
         self._summary_labels["iskph"].setText(_fmt_isk(isk_per_hour))
+
+    def _compute_subitem_costs(self, group_number: int, deeper_than: int) -> dict[int, float]:
+        """读同组更深子项产线，返回 {子项 product_type_id: 制造价合计（材料+作业费）}。
+
+        自底向上按 sub_level 降序计算：最深子项先算，父层用子层调整后的成本，
+        支持嵌套拆解。制造价经 ScoringService.child_manufacturing_cost 含子项制造作业费。
+        """
+        from services.scoring_service import ScoringService
+
+        with get_container().db.connect("user") as conn:
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM production_plans WHERE group_number=? AND sub_level>? "
+                    "ORDER BY sub_level DESC, id DESC",
+                    (group_number, deeper_than),
+                ).fetchall()
+            ]
+        if not rows:
+            return {}
+        for p in rows:
+            p["group_id"] = p.get("group_number", 0)
+            p["child_level"] = p.get("sub_level", 0)
+
+        svc = get_container().scoring_service()
+        cost_by_id: dict[int, float] = {}
+        for p in rows:
+            metrics = svc.calculate_plan_metrics(
+                p,
+                self._char_config or {},
+                price_type_mat=self._price_type_mat,
+                price_type_prod=self._price_type_prod,
+            )
+            lvl = int(p.get("sub_level") or 0)
+            kids = [c for c in rows if int(c.get("sub_level") or 0) > lvl]
+            if kids:
+                child_map = {
+                    int(k.get("product_type_id") or 0): cost_by_id.get(int(k.get("id") or 0), 0.0)
+                    for k in kids
+                }
+                total_mult = max(int(p.get("runs", 1)), 1) * max(int(p.get("parallels", 1)), 1)
+                adj_mat, _, _, _ = ScoringService.adjust_mother_metrics(metrics, child_map, total_mult)
+                metrics = dict(metrics)
+                metrics["material_cost"] = adj_mat
+            cost_by_id[int(p.get("id") or 0)] = ScoringService.child_manufacturing_cost(p, metrics)
+        return {int(p.get("product_type_id") or 0): cost_by_id.get(int(p.get("id") or 0), 0.0) for p in rows}
 
     def _on_theme_changed(self):
         self.setStyleSheet(theme.get_stylesheet() + "QTableWidget::item { padding: 2px 6px; }")

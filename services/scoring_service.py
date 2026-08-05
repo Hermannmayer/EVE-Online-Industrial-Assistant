@@ -643,6 +643,65 @@ class ScoringService:
         except Exception:
             return result.get("margin", 0) or 0
 
+    # ── 拆解母项成本（子项自制件按其制造价计）──
+
+    @staticmethod
+    def child_manufacturing_cost(plan: dict, metrics: dict) -> float:
+        """一条子项产线的总制造价 = 材料成本 + 制造作业费（安装费）。
+
+        Args:
+            plan: 子项计划 dict（runs/parallels 用于把单轮安装费放大到整条产线）。
+            metrics: calculate_plan_metrics() 对子项返回的 dict
+                     （须含 material_cost 与 breakdown.installation_fee）。
+
+        Returns:
+            子项产线制造价合计（材料 + 作业费）。breakdown 缺失时兜底仅材料成本。
+        """
+        material = metrics.get("material_cost", 0) or 0
+        breakdown = metrics.get("breakdown", {}) or {}
+        job_per_run = breakdown.get("installation_fee", 0) or 0
+        total_mult = max(int(plan.get("runs", 1)), 1) * max(int(plan.get("parallels", 1)), 1)
+        return round(material + job_per_run * total_mult, 2)
+
+    @staticmethod
+    def adjust_mother_metrics(
+        metrics: dict,
+        sub_cost_map: dict[int, float],
+        total_mult: int,
+    ) -> tuple[float, float, float, dict[int, float]]:
+        """把拆解母项的自制子项按其制造价计入成本，其余材料仍按市场价。
+
+        Args:
+            metrics: calculate_plan_metrics() 对母项返回的 dict
+                     （须含 materials/revenue/fees，materials 为每轮量）。
+            sub_cost_map: {子项 product_type_id: 子项制造价（整条产线合计，见 child_manufacturing_cost）}。
+            total_mult: runs × parallels。
+
+        Returns:
+            (调整后 material_cost, 调整后 profit, 调整后 margin, cost_overrides)。
+            cost_overrides 供 calculate_personal_margin 的个人利润率计算使用。
+            不修改入参 metrics。
+        """
+        revenue = metrics.get("revenue", 0) or 0
+        fees = metrics.get("fees", 0) or 0
+        new_material_cost = 0.0
+        cost_overrides: dict[int, float] = {}
+        for mat in metrics.get("materials", []) or []:
+            mid = mat.get("type_id")
+            qty_per_run = mat.get("qty", 0) or 0
+            if qty_per_run <= 0:
+                continue
+            if mid in sub_cost_map:
+                new_material_cost += sub_cost_map[mid]
+                cost_overrides[mid] = sub_cost_map[mid]
+            else:
+                new_material_cost += qty_per_run * total_mult * (mat.get("unit_price", 0) or 0)
+        new_material_cost = round(new_material_cost, 2)
+        profit = round(revenue - new_material_cost - fees, 2)
+        denom = new_material_cost + fees
+        margin = round(profit / denom * 100, 2) if denom > 0 else 0.0
+        return new_material_cost, profit, margin, cost_overrides
+
     # ── 制造评分 ──
 
     def calc_manufacturing_score(
