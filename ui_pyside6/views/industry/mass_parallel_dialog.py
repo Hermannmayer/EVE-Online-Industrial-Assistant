@@ -82,7 +82,7 @@ class MassParallelDialog(QDialog):
         self._duration: dict[int, int] = {}
         self._preview: list[dict] = []  # 最近一次计算 [{id, parallels}]
 
-        with get_container().db.connect("ref", "user") as conn:
+        with get_container().db.connect("ref", "user", "bp") as conn:
             self._demand = parent_needs(conn, plans)
             for p in self._plans:
                 pid = p["product_type_id"]

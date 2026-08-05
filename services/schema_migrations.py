@@ -320,9 +320,16 @@ def _add_columns(db_path: str, table: str, columns: list[tuple[str, str]]) -> in
         conn.close()
 
 
+def _open(db_path: str) -> sqlite3.Connection:
+    """打开连接（带 busy_timeout，容忍启动期短暂写锁/被强杀后的句柄未释放）"""
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA busy_timeout = 10000")
+    return conn
+
+
 def _get_version(db_path: str) -> int:
     """读取 PRAGMA user_version"""
-    conn = sqlite3.connect(db_path)
+    conn = _open(db_path)
     try:
         v = conn.execute("PRAGMA user_version").fetchone()[0]
         return int(v)
@@ -332,7 +339,7 @@ def _get_version(db_path: str) -> int:
 
 def _set_version(db_path: str, version: int):
     """写入 PRAGMA user_version"""
-    conn = sqlite3.connect(db_path)
+    conn = _open(db_path)
     try:
         conn.execute(f"PRAGMA user_version = {version}")
         conn.commit()
@@ -352,8 +359,9 @@ def ensure_schema(db_alias: str) -> dict:
         db_alias: 库别名 ('ref', 'mkt', 'user', 'bp')
 
     Returns:
-        {"before": int|None, "after": int|None, "applied": list[str]}
-        None 表示库文件不存在或无法打开（跳过）。
+        {"before": int|None, "after": int|None, "applied": list[str], "failed": bool}
+        before/after 为 None 表示库文件不存在或检查失败（跳过）；failed=True 表示
+        检查/迁移过程抛异常（区别于「库缺失」）。
     """
     db_path = _DB_PATH_MAP.get(db_alias)
     if not db_path or not os.path.exists(db_path):
@@ -394,7 +402,7 @@ def ensure_schema(db_alias: str) -> dict:
 
     except Exception:
         log.exception("  ❌ %s: Schema 检查/迁移失败", db_alias)
-        return {"before": None, "after": None, "applied": []}
+        return {"before": None, "after": None, "applied": [], "failed": True}
 
 
 def ensure_all_schemas() -> dict[str, dict]:

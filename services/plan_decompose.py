@@ -4,7 +4,8 @@
 无深度上限（递归到叶子）；按材料机库库存减流程；
 子项 ME/TE 读库存蓝图最优等级，无蓝图 → 0/0 且 has_blueprint=False。
 
-连接约定：ref 主库含蓝图表（未限定查询解析到 ref），user 附随含 user_blueprints（限定 user.）。
+连接约定：ref 主库（物品/星系表），bp 附随含蓝图表（未限定查询经附随解析到 bp），
+user 附随含 user_blueprints（限定 user.）。
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ def decompose_plan(plan: dict, *, mat_hangar_id: int | None = None) -> list[dict
     parent_me = int(plan.get("me_level") or 0)
     root_runs = max(int(plan.get("runs") or 1), 1) * max(int(plan.get("parallels") or 1), 1)
 
-    with get_container().db.connect("ref", "user") as conn:
+    with get_container().db.connect("ref", "user", "bp") as conn:
         bp = _find_blueprint_for_product(conn, plan["product_type_id"], "manufacturing")
         if not bp:
             return []

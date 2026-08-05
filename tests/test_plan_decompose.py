@@ -7,8 +7,8 @@ from services import inventory_manager
 
 
 def _build_dbs(db_manager):
-    """ref 主库含蓝图表；user 附随含 user_blueprints/hangars/inventory_items。"""
-    with db_manager.connect("ref") as conn:
+    """bp 蓝图表（与生产拆分一致）；user 附随含 user_blueprints/hangars/inventory_items。"""
+    with db_manager.connect("bp") as conn:
         conn.execute(
             "CREATE TABLE blueprint_products (blueprint_type_id INTEGER, activity TEXT, "
             "product_type_id INTEGER, quantity INTEGER)"

@@ -147,7 +147,9 @@ def main():
     results = ensure_all_schemas()
     log.info("Schema 检查 ─────────────────────────")
     for alias, r in results.items():
-        if r["applied"]:
+        if r.get("failed"):
+            log.error("  ❌ %s  Schema 检查失败（见上方 traceback，非「库缺失」）", alias)
+        elif r["applied"]:
             for step in r["applied"]:
                 log.info("  [OK] %s  %s", alias, step)
         elif r["after"] is not None:

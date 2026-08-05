@@ -1009,7 +1009,7 @@ class IndustryPage(QWidget):
     # ── 保存价格快照 ──────────────────────────────────────────
 
     def _on_save_prices(self):
-        with get_container().db.connect("user", "ref", "mkt") as conn:
+        with get_container().db.connect("user", "ref", "mkt", "bp") as conn:
             c = conn.cursor()
             c.execute(
                 "SELECT product_type_id FROM production_plans WHERE status IN ('pending','in_progress','running')"
