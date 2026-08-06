@@ -31,6 +31,19 @@ def _remaining(p: dict, now: datetime | None = None) -> int | None:
     return remaining_seconds(p, now=now)
 
 
+def _sort_key(value):
+    """列排序键：数值（含 bool）按大小、文本按小写，类型混合也不崩。
+
+    返回 (组, 值) 元组保证任何组合可比：数值组在前（0）、文本组在后（1）。
+    None/空值归入文本组空串，升序时排后。
+    """
+    if isinstance(value, bool):
+        return (0, int(value))
+    if isinstance(value, (int, float)):
+        return (0, value)
+    return (1, str(value or "").lower())
+
+
 class RankTableModel(QAbstractTableModel):
     """利润排行表模型"""
 
@@ -130,7 +143,7 @@ class PlanTableModel(QAbstractTableModel):
     }
 
     # 数值列（排序时按数字比较）
-    _NUMERIC_SORT_COLS = {0, 5, 11, 12, 15, 16, 17, 18}
+    _NUMERIC_SORT_COLS = {0, 5, 6, 9, 10, 11, 12, 15, 16, 17, 18}
 
     # 状态 → 显示文本
     _STATUS_LABELS = {
@@ -366,7 +379,7 @@ class PlanTableModel(QAbstractTableModel):
         if column in self._NUMERIC_SORT_COLS:
             self._plans.sort(key=lambda p: p.get(key, 0) or 0, reverse=reverse)
         else:
-            self._plans.sort(key=lambda p: (p.get(key, "") or "").lower(), reverse=reverse)
+            self._plans.sort(key=lambda p: _sort_key(p.get(key)), reverse=reverse)
         self._sort_col = column
         self._sort_order = order
         self.endResetModel()
