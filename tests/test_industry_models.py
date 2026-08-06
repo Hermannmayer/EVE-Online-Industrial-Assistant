@@ -279,6 +279,33 @@ class TestPlanTableModel:
         order = [model.data(model.index(r, 3), Qt.ItemDataRole.DisplayRole) for r in range(3)]
         assert order == ["C", "B", "A"]
 
+    def test_sort_int_columns_no_crash(self, qapp):
+        """int 列（子级/流程/蓝图）排序按数值序，不抛 .lower() on int（回归）"""
+        plans = [
+            {"product_type_id": 1, "product_name": "A", "child_level": 10, "_runs": 100, "_me_level": 5, "status": "pending"},
+            {"product_type_id": 2, "product_name": "B", "child_level": 2, "_runs": 3, "_me_level": 10, "status": "pending"},
+            {"product_type_id": 3, "product_name": "C", "child_level": 0, "_runs": 30, "_me_level": 0, "status": "pending"},
+        ]
+        model = PlanTableModel(plans)
+        # 列 6(子级)/9(流程)/10(蓝图) 均为 int，升序应按数值序
+        expected = {6: ["C", "B", "A"], 9: ["B", "C", "A"], 10: ["C", "A", "B"]}
+        for col, order_names in expected.items():
+            model.sort(col, Qt.SortOrder.AscendingOrder)
+            order = [model.data(model.index(r, 3), Qt.ItemDataRole.DisplayRole) for r in range(3)]
+            assert order == order_names, f"col {col}"
+
+    def test_sort_text_column_mixed_types_no_crash(self, qapp):
+        """非数值列混入 int/None 值排序不崩溃（_sort_key 容错）"""
+        plans = [
+            {"product_type_id": 1, "product_name": "A", "notes": 123, "status": "pending"},
+            {"product_type_id": 2, "product_name": "B", "notes": "b", "status": "pending"},
+            {"product_type_id": 3, "product_name": "C", "notes": None, "status": "pending"},
+        ]
+        model = PlanTableModel(plans)
+        model.sort(4, Qt.SortOrder.AscendingOrder)  # 备注列：int/str/None 混合
+        order = [model.data(model.index(r, 3), Qt.ItemDataRole.DisplayRole) for r in range(3)]
+        assert order == ["A", "C", "B"]  # 数值组排前，None 与文本按小写
+
 
 # ══════════════════════════════════════
 #  MaterialTableModel
