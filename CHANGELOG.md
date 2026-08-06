@@ -6,6 +6,14 @@
 
 <!-- version list -->
 
+## v0.15.2 (2026-08-06)
+
+### Bug Fixes
+
+- 生产计划 int 列排序崩溃（.lower() on int）
+  ([`bba5ccb`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/bba5ccb55c23640ad75f55efa39f7b58f21c5eac))
+
+
 ## v0.15.1 (2026-08-05)
 
 ### Bug Fixes
