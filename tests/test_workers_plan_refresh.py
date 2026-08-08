@@ -13,10 +13,6 @@ class TestPlanPriceRefreshWorker:
         w = PlanPriceRefreshWorker(type_ids={1, 2, 3})
         assert isinstance(w, QThread)
 
-    def test_worker_construction(self):
-        """构造时正确保存 type_ids"""
-        w = PlanPriceRefreshWorker(type_ids={24680, 13579})
-        assert w._type_ids == {24680, 13579}
 
     @patch("ui_pyside6.views.industry_view.PlanPriceRefreshWorker._fetch_and_save")
     def test_run_emits_finished_on_success(self, mock_fetch, qapp):

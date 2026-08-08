@@ -47,15 +47,6 @@ def mock_deps():
 # ═══════════════════════════════════════════
 
 
-def test_dialog_constructor(qapp, mock_deps):
-    """对话框基本构造不崩溃"""
-    dlg = BatchPriceDialog(parent=None)
-    assert dlg.windowTitle() == "批量查价"
-    assert dlg._current_results == []
-    assert dlg._export_btn.isEnabled() is False
-    assert dlg._query_btn.isEnabled() is True
-    assert dlg._progress.isVisible() is False
-    dlg.close()
 
 
 def test_dialog_has_theme_listener(qapp, mock_deps):

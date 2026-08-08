@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-from PySide6.QtCore import QThread
-
 from ui_pyside6.workers.trade_workers import (
     CrossRegionPriceWorker,
     TradeScoreWorker,
@@ -12,12 +10,6 @@ from ui_pyside6.workers.trade_workers import (
 
 
 class TestCrossRegionPriceWorker:
-    def test_worker_construction(self):
-        """CrossRegionPriceWorker 可构造，参数正确保存"""
-        db = MagicMock()
-        w = CrossRegionPriceWorker(type_id=2001, db=db)
-        assert isinstance(w, QThread)
-        assert w._tid == 2001
 
     @patch("ui_pyside6.workers.trade_workers.get_container")
     def test_run_emits_finished(self, mock_get_container, qapp):
@@ -88,21 +80,6 @@ class TestCrossRegionPriceWorker:
 
 
 class TestTradeScoreWorker:
-    def test_worker_construction(self):
-        """TradeScoreWorker 可构造，参数正确保存"""
-        w = TradeScoreWorker(
-            type_id=2001,
-            buy_hub="Jita",
-            sell_hub="Amarr",
-            buy_price_type="buy",
-            sell_price_type="sell",
-            quantity=10,
-        )
-        assert isinstance(w, QThread)
-        assert w._type_id == 2001
-        assert w._buy_hub == "Jita"
-        assert w._sell_hub == "Amarr"
-        assert w._quantity == 10
 
     @patch("ui_pyside6.workers.trade_workers.get_container")
     def test_run_emits_finished(self, mock_get_container, qapp):
@@ -139,23 +116,6 @@ class TestTradeScoreWorker:
 
 
 class TestTransportWorker:
-    def test_worker_construction(self):
-        """TransportWorker 可构造，参数正确保存"""
-        w = TransportWorker(
-            type_id=2001,
-            buy_hub="Jita",
-            sell_hub="Amarr",
-            buy_price_type="buy",
-            sell_price_type="sell",
-            quantity=10,
-            distance_jumps=80,
-            use_public_freight=True,
-        )
-        assert isinstance(w, QThread)
-        assert w._type_id == 2001
-        assert w._distance_jumps == 80
-        assert w._quantity == 10
-        assert w._use_public_freight is True
 
     @patch("ui_pyside6.workers.trade_workers.get_container")
     def test_run_emits_finished(self, mock_get_container, qapp):

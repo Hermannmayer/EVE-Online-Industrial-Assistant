@@ -1,10 +1,11 @@
-"""评分服务精细化测试 — 覆盖 test_scoring.py 未触及的分支
+"""评分服务测试 — 合并 test_scoring / test_scoring_core / test_scoring_service
 
-覆盖目标:
-  - 经纪人费率/改单折扣/销售税的独立单元测试（私有方法直接调用）
-  - 贸易评分全路径（正利润分支，含 score/margin/profit_per_m3）
-  - char_config=None / {} 时 ScoringService 的默认行为（技能用 fallback 值）
-  - 成本联动：solar_system_id 透传 → SCI（含缓存 key 修复）
+覆盖:
+  - 经纪人费率/改单折扣/销售税独立计算
+  - 制造评分（结构/ME 浪费/TE 时间/边缘情况/char_config 缺省）
+  - 贸易评分（全路径/无价格/边缘情况）
+  - cost 联动：solar_system_id 透传 → SCI（含缓存 key 修复）
+  - 机库结构加成联动
 """
 
 from unittest.mock import patch
@@ -13,6 +14,9 @@ import pytest
 
 from core.cache import TtlLRUCache
 from services.scoring_service import ScoringService
+
+DEFAULT_SKILLS = {"工业理论": 5, "高级工业理论": 5, "经纪人关系学": 5, "高级经纪人关系学": 5, "会计学": 5}
+DEFAULT_CHAR = {"skills": DEFAULT_SKILLS}
 
 
 class TestBrokerCalculations:
@@ -451,3 +455,422 @@ class TestHangarStructureBonus:
         mat_high = {m["type_id"]: m["qty"] for m in r_high["materials"]}
         assert mat_low[1001] == 1000
         assert mat_high[1001] == 500  # ceil(1000×0.5)
+
+
+# ════════════════════════════════════════════════════════════════
+#  制造评分 — 结构验证 / ME 浪费 / TE 时间
+# ════════════════════════════════════════════════════════════════
+
+
+class TestCalcManufacturingScore:
+    """calc_manufacturing_score 返回结构验证"""
+
+    def test_valid_data_returns_correct_keys(self, temp_db):
+        """正常数据应返回完整的结果字典"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        result = svc.calc_manufacturing_score(
+            type_id=2001,
+            char_config=DEFAULT_CHAR,
+            mat_source_hub="Jita",
+            sell_hub="Jita",
+        )
+        # 必须包含的顶层 key
+        expected_keys = {
+            "score",
+            "profit_per_run",
+            "margin_pct",
+            "isk_per_hour",
+            "cost_per_unit",
+            "revenue_per_unit",
+            "hours_per_run",
+            "status",
+            "breakdown",
+            "materials",
+        }
+        assert expected_keys.issubset(result.keys())
+        assert result["score"] > 0
+        assert result["profit_per_run"] > 0
+        assert result["materials"]  # 非空
+
+    def test_breakdown_contains_cost_keys(self, temp_db):
+        """breakdown 应包含费用相关字段（安装费按游戏类目拆分）"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        result = svc.calc_manufacturing_score(
+            type_id=2002,
+            char_config=DEFAULT_CHAR,
+            bp_me=5,
+            bp_te=10,
+        )
+        keys = result["breakdown"]
+        # 新 breakdown 有 material_cost / installation_fee / eiv / scc_surcharge
+        assert "material_cost" in keys
+        assert "installation_fee" in keys
+        assert "eiv" in keys
+        assert "scc_surcharge" in keys
+        # 材料信息在 materials 列表中
+        assert "materials" in result
+        assert len(result["materials"]) > 0
+        assert "wastefactor" in result["materials"][0]
+
+    def test_no_price_returns_status(self, temp_db):
+        """成品无市场价格时返回 status=no_price"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        # Mock get_price 以模拟无价格场景（避免连接缓存导致的可见性问题）
+        with patch("services.scoring_service.get_price", return_value=None):
+            result = svc.calc_manufacturing_score(type_id=2001, char_config=DEFAULT_CHAR)
+        assert result["status"] == "no_price"
+        assert result["score"] == 0.0
+
+
+class TestManufacturingScore:
+    """制造评分 — 利润/蓝图/ME/亏本场景"""
+
+    def test_profitable_item(self, temp_db):
+        """渡鸦级应产出正利润"""
+        cache = TtlLRUCache(max_size=10)
+        svc = ScoringService(temp_db, cache)
+        result = svc.calc_manufacturing_score(
+            type_id=2001,
+            char_config={"skills": DEFAULT_SKILLS},
+            mat_source_hub="Jita",
+            sell_hub="Jita",
+            price_type_mat="sell",
+            price_type_prod="sell",
+        )
+        assert result["status"] == ""
+        assert result["score"] > 0
+        assert result["profit_per_run"] > 0
+        assert result["margin_pct"] > 0
+        assert "materials" in result
+        assert len(result["materials"]) == 2
+
+    def test_no_blueprint_returns_status(self, temp_db):
+        """无蓝图的物品返回 'no_blueprint'"""
+        cache = TtlLRUCache(max_size=10)
+        svc = ScoringService(temp_db, cache)
+        result = svc.calc_manufacturing_score(
+            type_id=99999,
+            char_config={"skills": DEFAULT_SKILLS},
+        )
+        assert result["status"] == "no_blueprint"
+        assert result["score"] == 0.0
+
+    def test_me_reduces_waste(self, temp_db):
+        """ME 10 材料用量应少于 ME 0"""
+        cache = TtlLRUCache(max_size=10)
+        svc = ScoringService(temp_db, cache)
+        result_me0 = svc.calc_manufacturing_score(
+            type_id=2002,
+            char_config={"skills": DEFAULT_SKILLS},
+            bp_me=0,
+            mat_source_hub="Jita",
+            sell_hub="Jita",
+        )
+        result_me10 = svc.calc_manufacturing_score(
+            type_id=2002,
+            char_config={"skills": DEFAULT_SKILLS},
+            bp_me=10,
+            mat_source_hub="Jita",
+            sell_hub="Jita",
+        )
+        me0_qty = result_me0["materials"][0]["qty"]
+        me10_qty = result_me10["materials"][0]["qty"]
+        # ME10 材料用量应少于 ME0
+        assert me0_qty > me10_qty
+        # waste_factor 在材料列表中，不在 breakdown 中
+        assert "wastefactor" in result_me10["materials"][0]
+
+    def test_unprofitable_scores_zero(self, temp_db):
+        """材料成本超成品售价时 score 为 0"""
+        # 把渡鸦级卖价压到极低，但材料价保持高位 → 必然亏本
+        mkt = temp_db.direct_connect("mkt")
+        mkt.execute("UPDATE market_prices SET sell_price = 1 WHERE type_id = 2001 AND region_id = 10000002")
+        mkt.commit()
+        mkt.close()
+
+        cache = TtlLRUCache(max_size=10)
+        svc = ScoringService(temp_db, cache)
+        result = svc.calc_manufacturing_score(
+            type_id=2001,
+            char_config={"skills": DEFAULT_SKILLS},
+            mat_source_hub="Jita",
+            sell_hub="Jita",
+            price_type_mat="sell",
+            price_type_prod="sell",
+        )
+        assert result["status"] == ""
+        assert result["score"] == 0.0
+        assert result["profit_per_run"] <= 0
+
+
+class TestMEWasteFactor:
+    """验证 ME 对材料浪费的影响 — 使用 manufacturing_calculator 正确公式"""
+
+    def test_me0_gives_minimal_waste(self, temp_db):
+        """ME 0 → wastefactor=10 → waste_factor=1.0（SDE quantity=ME0 含损耗量）"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        result = svc.calc_manufacturing_score(
+            type_id=2002,
+            char_config=DEFAULT_CHAR,
+            bp_me=0,
+        )
+        mat = result["materials"][0]
+        assert mat["wastefactor"] == 10
+        assert mat["waste_factor"] == 1.0
+
+    def test_me10_still_has_some_waste(self, temp_db):
+        """ME 10 → waste_factor < 1.0（相对 ME0 减量）"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        result = svc.calc_manufacturing_score(
+            type_id=2002,
+            char_config=DEFAULT_CHAR,
+            bp_me=10,
+        )
+        mat = result["materials"][0]
+        assert mat["wastefactor"] == 10
+        assert mat["waste_factor"] < 1.0
+        assert mat["waste_factor"] >= 0.9
+
+    def test_me5_waste_between_me0_and_me10(self, temp_db):
+        """ME 5 的浪费应在 ME0 和 ME10 之间"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=0)
+        r5 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=5)
+        r10 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=10)
+        qty0 = r0["materials"][0]["qty"]
+        qty5 = r5["materials"][0]["qty"]
+        qty10 = r10["materials"][0]["qty"]
+        assert qty0 >= qty5 >= qty10
+
+    def test_higher_me_reduces_material_cost(self, temp_db):
+        """ME 10 的材料成本应低于 ME 0"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=0)
+        r10 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=10)
+        mat_cost_0 = sum(m["subtotal"] for m in r0["materials"])
+        mat_cost_10 = sum(m["subtotal"] for m in r10["materials"])
+        assert mat_cost_10 < mat_cost_0
+
+
+class TestTEFactor:
+    """验证 TE 对制造时间的影响"""
+
+    def test_te0_no_time_reduction(self, temp_db):
+        """TE 0 → hours_per_run 应为最长"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        result = svc.calc_manufacturing_score(
+            type_id=2002,
+            char_config=DEFAULT_CHAR,
+            bp_te=0,
+        )
+        # TE0 耗时最多，应有合理的正值
+        assert result["hours_per_run"] > 0
+
+    def test_te20_gives_20_percent_reduction(self, temp_db):
+        """TE 20 的 ISK/h 应明显高于 TE 0（因为时间更短）"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=0)
+        r20 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=20)
+        # hours_per_run 被 round(2) 截断，不能直接做精确比例
+        # 但 TE20 的 ISK/h 应高于 TE0（时间更短则效率更高）
+        assert r20["isk_per_hour"] > r0["isk_per_hour"]
+        # hours 比例应在合理范围内
+        hours_ratio = r0["hours_per_run"] / r20["hours_per_run"]
+        assert hours_ratio > 1.0  # TE0 耗时更多
+
+    def test_te10_gives_10_percent_reduction(self, temp_db):
+        """TE 10 的 ISK/h 应高于 TE 0（因为时间更短）"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=0)
+        r10 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=10)
+        assert r10["isk_per_hour"] > r0["isk_per_hour"]
+
+    def test_higher_te_reduces_hours(self, temp_db):
+        """TE 20 的小时数应少于 TE 0"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=0)
+        r20 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=20)
+        assert r20["hours_per_run"] < r0["hours_per_run"]
+
+
+# ════════════════════════════════════════════════════════════════
+#  贸易评分
+# ════════════════════════════════════════════════════════════════
+
+
+class TestTradeScoreBasic:
+    """calc_trade_score 基本逻辑"""
+
+    def test_basic_trade_returns_structure(self, temp_db):
+        """有价格的物品应返回完整结构"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        result = svc.calc_trade_score(
+            type_id=2002,
+            buy_hub="Jita",
+            sell_hub="Jita",
+            char_config=DEFAULT_CHAR,
+        )
+        assert result["status"] == ""
+        assert result["score"] >= 0
+        assert result["buy_cost"] > 0
+        assert result["sell_revenue"] > 0
+        assert result["gross_profit"] != 0  # 可正可负
+
+    def test_no_price_returns_status(self, temp_db):
+        """无价格返回 status=no_price"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        result = svc.calc_trade_score(type_id=99999, char_config=DEFAULT_CHAR)
+        assert result["status"] == "no_price"
+        assert result["score"] == 0.0
+
+
+def test_trade_score_relist_fee_is_delta_based():
+    """卖出改单 broker 只按买/卖价差额计（原为全额，高估费用）"""
+    import services.scoring_service as ss
+
+    class FakeSvc(ss.ScoringService):
+        def __init__(self):
+            super().__init__(db=None, cache=None)  # type: ignore[arg-type]
+
+        def _calc_broker_rate(self, skills, market_data):
+            return 0.5  # 0.5%
+
+        def _calc_relist_discount(self, skills):
+            return 50.0  # 50% 折扣
+
+        def _calc_sales_tax_rate(self, skills):
+            return 2.0  # 2%
+
+    FakeSvc()  # 实例化验证构造路径
+    # 直接调用私有计算路径验证 fee 构成：买 100 卖 200，qty 1
+    # 期望：sell_fee = 初始挂单 0.5% + 改单差额 (100/200)*0.5%*50% + 税 2%
+    buy_price, sell_price = 100.0, 200.0
+    broker_rate, relist_discount, sales_tax_rate = 0.5, 50.0, 2.0
+
+    sell_fee_total = (
+        broker_rate + (sell_price - buy_price) / sell_price * broker_rate * (1 - relist_discount / 100) + sales_tax_rate
+    )
+    expected_sell_fee = 0.5 + (100.0 / 200.0) * 0.5 * 0.5 + 2.0  # = 0.5 + 0.125 + 2.0 = 2.625
+
+    assert sell_fee_total == pytest.approx(expected_sell_fee, abs=1e-9)
+    # 旧公式（全额）是 0.5*0.5 + 0.5 + 2 = 2.75 → 差额计费应更小
+    assert sell_fee_total < 2.75
+
+
+# ════════════════════════════════════════════════════════════════
+#  缓存 / 参数化
+# ════════════════════════════════════════════════════════════════
+
+
+class TestCache:
+    def test_get_set_and_ttl(self):
+        """缓存写入和读取"""
+        cache = TtlLRUCache(max_size=10, ttl_seconds=3600)
+        cache.set("key1", {"a": 1})
+        assert cache.get("key1") == {"a": 1}
+
+    def test_expired_returns_none(self):
+        """过期缓存返回 None"""
+        cache = TtlLRUCache(max_size=10, ttl_seconds=-1)  # 立即过期
+        cache.set("key1", {"a": 1})
+        assert cache.get("key1") is None
+
+    def test_max_size_eviction(self):
+        """超 max_size 淘汰最旧条目"""
+        cache = TtlLRUCache(max_size=3, ttl_seconds=3600)
+        for i in range(5):
+            cache.set(f"key{i}", {"i": i})
+        assert cache.get("key0") is None  # 最旧被淘汰
+        assert cache.get("key4") == {"i": 4}
+        assert len(cache) <= 3
+
+    def test_invalidate(self):
+        """清空缓存"""
+        cache = TtlLRUCache(max_size=10)
+        cache.set("k", {"v": 1})
+        cache.invalidate()
+        assert cache.get("k") is None
+
+
+@pytest.mark.parametrize("me,te,expected_min_score", [(0, 0, 50), (5, 5, 60), (10, 20, 70)])
+def test_manufacturing_me_te_param(temp_db, me, te, expected_min_score):
+    """ME/TE 越高，综合评分下限越高"""
+    cache = TtlLRUCache(max_size=10)
+    svc = ScoringService(temp_db, cache)
+    result = svc.calc_manufacturing_score(
+        type_id=2001,
+        char_config={"skills": DEFAULT_SKILLS},
+        bp_me=me,
+        bp_te=te,
+        mat_source_hub="Jita",
+        sell_hub="Jita",
+    )
+    assert result["status"] == ""
+    assert result["score"] >= expected_min_score
+
+
+def test_profitable_trade_score_above_min(temp_db):
+    """有利可图的贸易评分应大于 0，且 sell_revenue > buy_cost"""
+    cache = TtlLRUCache(max_size=10)
+    svc = ScoringService(temp_db, cache)
+    result = svc.calc_trade_score(
+        type_id=2002,
+        buy_hub="Jita",
+        sell_hub="Jita",
+        char_config={"skills": DEFAULT_SKILLS},
+    )
+    assert result["score"] >= 0
+    assert result["buy_cost"] > 0
+    assert result["sell_revenue"] > result["buy_cost"]
+
+
+def test_manufacturing_breakdown_keys(temp_db):
+    """制造评分 breakdown 应包含所有关键子项"""
+    cache = TtlLRUCache(max_size=10)
+    svc = ScoringService(temp_db, cache)
+    result = svc.calc_manufacturing_score(
+        type_id=2001,
+        char_config={"skills": DEFAULT_SKILLS},
+        mat_source_hub="Jita",
+        sell_hub="Jita",
+    )
+    assert "profit_score" in result["breakdown"]
+    assert "volume_score" in result["breakdown"]
+    assert "efficiency_score" in result["breakdown"]
+    assert "material_cost" in result["breakdown"]
+
+
+@pytest.mark.parametrize("invalid_price_type", ["nonexistent", "invalid", ""])
+def test_price_type_nonexistent(temp_db, invalid_price_type):
+    """不存在的价格类型应返回 no_price 状态（score=0, status='no_price'）"""
+    cache = TtlLRUCache(max_size=10)
+    svc = ScoringService(temp_db, cache)
+    result = svc.calc_manufacturing_score(
+        type_id=2001,
+        char_config={"skills": DEFAULT_SKILLS},
+        mat_source_hub="Jita",
+        sell_hub="Jita",
+        price_type_mat="sell",
+        price_type_prod=invalid_price_type,
+    )
+    # 产品价格使用无效类型 → get_price 返回 None → 标记 no_price
+    assert result["status"] == "no_price", f"expected no_price for price_type={invalid_price_type!r}"
+    assert result["score"] == 0.0
+    assert result["profit_per_run"] == 0.0
+
+
+def test_price_type_nonexistent_trade(temp_db):
+    """贸易评分中不存在的价格类型应返回 no_price 状态"""
+    cache = TtlLRUCache(max_size=10)
+    svc = ScoringService(temp_db, cache)
+    result = svc.calc_trade_score(
+        type_id=2002,
+        buy_hub="Jita",
+        sell_hub="Jita",
+        buy_price_type="nonexistent",
+        sell_price_type="sell",
+        char_config={"skills": DEFAULT_SKILLS},
+    )
+    assert result["status"] == "no_price"
+    assert result["score"] == 0.0
+    assert result["buy_cost"] == 0.0

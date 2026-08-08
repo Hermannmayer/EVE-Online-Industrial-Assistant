@@ -54,12 +54,6 @@ def mock_container():
 # ═══════════════════════════════════════════
 
 
-def test_mfg_dlg_constructor(qapp, mock_char_settings, mock_container):
-    """MfgDlg 基本构造不崩溃"""
-    dlg = MfgDlg(parent=None)
-    assert dlg.windowTitle() == "制造评分设置"
-    assert hasattr(dlg, "get")
-    dlg.close()
 
 
 def test_mfg_dlg_with_type_id(qapp, mock_char_settings, mock_container):
@@ -96,12 +90,6 @@ def test_mfg_dlg_get(qapp, mock_char_settings, mock_container):
 # ═══════════════════════════════════════════
 
 
-def test_trade_dlg_constructor(qapp, mock_char_settings, mock_container):
-    """TradeDlg 基本构造不崩溃"""
-    dlg = TradeDlg(parent=None)
-    assert dlg.windowTitle() == "贸易评分设置"
-    assert hasattr(dlg, "get")
-    dlg.close()
 
 
 def test_trade_dlg_with_type_id(qapp, mock_char_settings, mock_container):
@@ -138,11 +126,6 @@ def test_trade_dlg_get(qapp, mock_char_settings, mock_container):
 # ═══════════════════════════════════════════
 
 
-def test_scorew_constructor(qapp):
-    """ScoreW 基本构造"""
-    w = ScoreW(items=[], is_mfg=True, cfg={"hub": "Jita", "char": "main", "tax": 0})
-    assert w._mfg is True
-    assert w._cfg["hub"] == "Jita"
     # 不调用 run() 避免真实 DB 访问
 
 

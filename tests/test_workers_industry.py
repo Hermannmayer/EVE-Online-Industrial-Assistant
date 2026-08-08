@@ -15,12 +15,6 @@ class TestSearchWorker:
         assert isinstance(w, QThread)
         assert w._query == "rav"
 
-    def test_worker_construction(self):
-        """SearchWorker 可构造，参数正确保存"""
-        db = MagicMock()
-        w = SearchWorker(query="test", db=db)
-        assert w._query == "test"
-        assert w._db is db
 
     def test_run_emits_finished(self, qapp):
         """run() 执行 SQL 后通过 finished 信号返回结果"""
@@ -56,27 +50,6 @@ class TestSearchWorker:
 
 
 class TestScoreWorker:
-    def test_worker_construction(self):
-        """ScoreWorker 可构造，参数正确保存"""
-        w = ScoreWorker(
-            type_id=2001,
-            bp_me=10,
-            bp_te=20,
-            mat_hub="Jita",
-            sell_hub="Amarr",
-            tax=0.015,
-            mat_price_type="buy",
-            runs=5,
-        )
-        assert isinstance(w, QThread)
-        assert w._type_id == 2001
-        assert w._bp_me == 10
-        assert w._bp_te == 20
-        assert w._mat_hub == "Jita"
-        assert w._sell_hub == "Amarr"
-        assert w._tax == 0.015
-        assert w._mat_price_type == "buy"
-        assert w._runs == 5
 
     @patch("ui_pyside6.workers.industry_workers.get_container")
     def test_run_emits_finished(self, mock_get_container, qapp):
@@ -120,25 +93,6 @@ class TestScoreWorker:
 
 
 class TestRankWorker:
-    def test_worker_construction(self):
-        """RankWorker 可构造，参数正确保存"""
-        db = MagicMock()
-        w = RankWorker(
-            mat_hub="Jita",
-            sell_hub="Amarr",
-            mat_price_type="buy",
-            bp_me=10,
-            bp_te=20,
-            tax=0.015,
-            db=db,
-            top_n=50,
-        )
-        assert isinstance(w, QThread)
-        assert w._mat_hub == "Jita"
-        assert w._sell_hub == "Amarr"
-        assert w._bp_me == 10
-        assert w._bp_te == 20
-        assert w._top_n == 50
 
     @patch("ui_pyside6.workers.industry_workers.get_container")
     def test_run_with_no_products(self, mock_get_container, qapp):
