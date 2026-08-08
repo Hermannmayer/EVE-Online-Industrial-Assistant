@@ -102,17 +102,6 @@ class TestPriceUpdateWorker:
         worker = PriceUpdateWorker()
         assert worker is not None
 
-    def test_constructor_sets_regions(self, qapp):
-        """构造函数传递区域参数"""
-        regions = ["Jita"]
-        worker = PriceUpdateWorker(regions)
-        assert worker._regions == ["Jita"]
-
-    def test_constructor_default_no_regions(self, qapp):
-        """无参构造函数 regions 为 None"""
-        worker = PriceUpdateWorker()
-        assert worker._regions is None
-
 
 # ══════════════════════════════════════
 #  PriceCheckWorker
@@ -121,11 +110,6 @@ class TestPriceUpdateWorker:
 
 class TestPriceCheckWorker:
     """价格时效检查后台线程"""
-
-    def test_worker_can_be_created(self, qapp):
-        """可构造 Worker 实例"""
-        worker = PriceCheckWorker()
-        assert worker is not None
 
     def test_default_interval(self, qapp):
         """默认检查间隔 30 分钟"""

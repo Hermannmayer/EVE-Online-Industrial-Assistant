@@ -106,9 +106,8 @@ EVE-Online-Industrial-Assistant/
 │   ├── test_paths.py
 │   ├── test_price_history.py
 │   ├── test_procurement.py
-│   ├── test_scoring.py
 │   ├── test_scoring_cache.py
-│   ├── test_scoring_core.py
+│   ├── test_scoring_service.py
 │   ├── test_theme_listeners.py
 │   └── test_watchlist_manager.py
 │

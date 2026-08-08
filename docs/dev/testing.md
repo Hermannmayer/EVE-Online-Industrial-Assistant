@@ -22,7 +22,7 @@ pytest tests/
 pytest tests/ --cov=core --cov=services --cov-report=term-missing
 
 # 运行指定文件
-pytest tests/test_scoring.py -v
+pytest tests/test_scoring_service.py -v
 
 # 运行匹配的测试名
 pytest tests/ -k "test_calc" -v
@@ -59,9 +59,8 @@ tests/
 ├── test_logger.py                 # 日志模块
 ├── test_paths.py                  # 路径管理
 ├── test_database_manager.py       # 数据库连接管理器
-├── test_scoring.py                # 贸易/制造评分计算
+├── test_scoring_service.py        # 制造/贸易评分 + 核心逻辑
 ├── test_scoring_cache.py          # 评分缓存
-├── test_scoring_core.py           # 评分核心逻辑
 ├── test_personal_margin.py        # 个人利润率
 ├── test_price_history.py          # 价格走势图数据
 ├── test_export_helper.py          # 批量导出

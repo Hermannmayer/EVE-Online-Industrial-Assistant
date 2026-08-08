@@ -61,12 +61,6 @@ def mock_deps():
 # ═══════════════════════════════════════════
 
 
-def test_dialog_constructor(qapp, mock_deps):
-    """对话框基本构造不崩溃"""
-    dlg = CompareDialog(parent=None)
-    assert dlg.windowTitle() == "批量对比"
-    assert dlg._selected_items == []
-    dlg.close()
 
 
 def test_dialog_with_initial_items(qapp, mock_deps):

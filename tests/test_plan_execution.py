@@ -75,14 +75,25 @@ CREATE TABLE IF NOT EXISTS production_plans (
 """
 
 
-@pytest.fixture
-def user_env(temp_db, monkeypatch):
-    """temp_db + 注入 container + 建 user 业务表（hangars/inventory_items/user_blueprints/production_plans）"""
-    # 关键：把 inventory_manager 的模块级单例 db 换成每个测试全新的 DatabaseManager，
-    # 避免线程本地连接缓存指向上一个测试已删除的临时库（导致「no such table/已删除」污染）
-    monkeypatch.setattr(inventory_manager, "db", temp_db)
-    inventory_manager.init_db()
-    with temp_db.connect("user") as conn:
+@pytest.fixture(scope="module")
+def _module_user_db():
+    """模块级共享临时库 — 建库 + user 业务表仅一次，测试间清空数据。
+
+    62 个测试原本每个都走 function-scope temp_db 重建 4 库（setup ~0.4s/个，
+    合计 ~20s）。共享一个库后每测试只清空业务表，建库成本摊薄到一次。
+    """
+    import shutil
+    import tempfile
+
+    from services.database_manager import DB_PATH_MAP, DatabaseManager, get_db
+    from tests.conftest import _create_temp_databases
+
+    tmpdir = tempfile.mkdtemp(prefix="eve_planexec_")
+    db_paths = _create_temp_databases(tmpdir)
+    saved = dict(DB_PATH_MAP)
+    DB_PATH_MAP.update(db_paths)
+    db = DatabaseManager()
+    with db.connect("user") as conn:
         conn.executescript(_PLAN_SCHEMA)
         # 多蓝图绑定关联表（schema v7）
         conn.executescript(
@@ -90,10 +101,29 @@ def user_env(temp_db, monkeypatch):
             "plan_id INTEGER NOT NULL, blueprint_id INTEGER NOT NULL, runs_used INTEGER DEFAULT 0, "
             "PRIMARY KEY (plan_id, blueprint_id))"
         )
+    yield db
+    DB_PATH_MAP.clear()
+    DB_PATH_MAP.update(saved)
+    get_db().close_all()
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@pytest.fixture
+def user_env(_module_user_db, monkeypatch):
+    """模块级共享库 + 注入 container + 每测试清空业务表（防跨测试污染）"""
+    db = _module_user_db
+    # 关键：把 inventory_manager 的模块级单例 db 换成共享的 DatabaseManager，
+    # 避免线程本地连接缓存指向上一个测试已删除的临时库（导致「no such table/已删除」污染）
+    monkeypatch.setattr(inventory_manager, "db", db)
+    inventory_manager.init_db()  # hangars 空时 seed 默认机库（hangar 1 等），测试依赖
+    with db.connect("user") as conn:
+        # 只清数据表，保留 hangars（init_db seed 的默认机库，inventory_items/user_blueprints 有 FK 引用）
+        for t in ("production_plans", "plan_blueprint_bindings", "inventory_items", "user_blueprints"):
+            conn.execute(f"DELETE FROM {t}")
     scoring = MagicMock()
-    container = SimpleNamespace(db=temp_db, scoring_service=lambda: scoring)
+    container = SimpleNamespace(db=db, scoring_service=lambda: scoring)
     monkeypatch.setattr(plan_execution, "_container", lambda: container)
-    return SimpleNamespace(db=temp_db, scoring=scoring)
+    return SimpleNamespace(db=db, scoring=scoring)
 
 
 def _insert_plan(db, **overrides) -> int:
