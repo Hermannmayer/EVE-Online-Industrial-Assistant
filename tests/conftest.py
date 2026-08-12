@@ -151,7 +151,7 @@ def _create_temp_databases(tmpdir: str):
 
     # ── user.db ──
     conn = sqlite3.connect(str(user_path))
-    conn.execute("PRAGMA user_version = 9")
+    conn.execute("PRAGMA user_version = 10")
     conn.commit()
     conn.close()
 
@@ -472,7 +472,7 @@ def industry_page(main_window):
 def inventory_page(main_window):
     """创建 InventoryPage 实例用于 UI 测试。
 
-    额外 patch services.inventory_manager.db 以确保 init_db() 使用 mock 数据库。
+    额外 patch services.inventory_manager._default_db 以确保 init_db() 使用 mock 数据库。
     BlueprintTab 通过模块级 get_container 访问 ref/mkt 库（market_tree 等），
     CI 无真实 database/ 目录，必须一并 patch。
     """
@@ -495,7 +495,7 @@ def inventory_page(main_window):
     mock_mgr.connect.return_value = mock_cm
 
     with (
-        patch("services.inventory_manager.db", mock_mgr),
+        patch("services.inventory_manager._default_db", return_value=mock_mgr),
         patch("ui_pyside6.views.inventory.blueprint_tab.get_container") as mock_cont,
     ):
         mock_cont.return_value.db = mock_mgr

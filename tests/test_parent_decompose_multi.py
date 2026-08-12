@@ -58,7 +58,7 @@ def _build_dbs(db_manager):
 
 def _patch(db_manager, monkeypatch):
     monkeypatch.setattr(pd, "get_container", lambda: SimpleNamespace(db=db_manager))
-    monkeypatch.setattr(inventory_manager, "db", db_manager)
+    monkeypatch.setattr(inventory_manager, "_default_db", lambda: db_manager)
     monkeypatch.setattr(dlg_mod, "get_container", lambda: SimpleNamespace(db=db_manager))
     monkeypatch.setattr(dlg_mod.QMessageBox, "information", lambda *a, **k: None)
 
@@ -155,8 +155,6 @@ class TestParentDecomposeDialogMulti:
         dlg = ParentDecomposeDialog([_mother(1, group_number=7)])
         dlg._on_accept()
         with db_manager.connect("user") as conn:
-            row = conn.execute(
-                "SELECT runs, parallels, me_level, te_level FROM production_plans WHERE id=2"
-            ).fetchone()
+            row = conn.execute("SELECT runs, parallels, me_level, te_level FROM production_plans WHERE id=2").fetchone()
         # 需求=5×2=10，单轮产出 1 → runs=10；parallels 重置为拆解默认 1，ME-TE 刷新
         assert tuple(row) == (10, 1, 0, 0)

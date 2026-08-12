@@ -404,15 +404,11 @@ class ProductionWizard(QDialog):
         rows = [idx.row() for idx in self._table.selectionModel().selectedRows()]
         if not rows:
             return
-        updated = 0
-        with get_container().db.connect("user") as conn:
-            for r in rows:
-                p = self._plans[r]
-                if p.get("id"):
-                    conn.execute("UPDATE production_plans SET char_name=? WHERE id=?", (self._current_char, p["id"]))
-                    p["char_name"] = self._current_char
-                    updated += 1
-        self._status_label.setText(f"已把 {updated} 条产线应用到人物 {self._current_char}")
+        ids = [self._plans[r]["id"] for r in rows if self._plans[r].get("id")]
+        get_container().plan_repo.update_many(ids, char_name=self._current_char)
+        for r in rows:
+            self._plans[r]["char_name"] = self._current_char
+        self._status_label.setText(f"已把 {len(ids)} 条产线应用到人物 {self._current_char}")
         self._build_occupancy()
         self._populate_table()
 

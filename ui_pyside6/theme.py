@@ -176,19 +176,11 @@ def remove_theme_listener(callback: Callable[[], None]):
 
 
 def save_theme_preference(theme_name: str):
-    """保存主题偏好到 settings.json"""
+    """保存主题偏好到 settings.json（走 services.user_settings 统一入口）"""
     try:
-        from core.paths import search_history_file
+        from services.user_settings import save_settings
 
-        p = search_history_file().replace("search_history", "settings")
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        data = {}
-        if os.path.exists(p):
-            with open(p, encoding="utf-8") as f:
-                data = json.load(f)
-        data["theme"] = theme_name
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        save_settings({"theme": theme_name})
     except Exception:
         pass
 
@@ -196,12 +188,9 @@ def save_theme_preference(theme_name: str):
 def load_theme_preference() -> str:
     """从 settings.json 读取主题偏好，默认 dark"""
     try:
-        from core.paths import search_history_file
+        from services.user_settings import load_settings
 
-        p = search_history_file().replace("search_history", "settings")
-        if os.path.exists(p):
-            with open(p, encoding="utf-8") as f:
-                return cast(str, json.load(f).get("theme", "dark"))
+        return cast(str, load_settings().get("theme", "dark"))
     except Exception:
         pass
     return "dark"

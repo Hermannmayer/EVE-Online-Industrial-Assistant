@@ -11,12 +11,12 @@ from __future__ import annotations
 
 from sqlite3 import Connection
 
+from core.constants import DEFAULT_SYSTEM_COST_INDEX
 from core.container import get_container
 from services import user_settings
 from services.manufacturing_calculator import calc_job_cost_fees
 
 # 默认参数：Jita 标准结构（Upwell 默认 1.0）、NPC 设施税率、Omega（无 Alpha 税）
-_DEFAULT_SCI = 0.05
 _STRUCTURE_MULT = 1.0
 _FACILITY_TAX = 0.0025
 _JITA_SYSTEM_ID = 30000142
@@ -50,7 +50,7 @@ def _installation_fee(activity: str, eiv: float, solar_system_id: int | None) ->
 
     SCI 从 reference.db 按设施星系查询；未提供星系时回退默认科研机库星系。
     """
-    sci = _DEFAULT_SCI
+    sci = DEFAULT_SYSTEM_COST_INDEX
     sid = int(solar_system_id) if solar_system_id else _default_research_system_id()
     try:
         with get_container().db.connect("ref") as conn:
@@ -74,8 +74,7 @@ def _prices(type_ids: list[int]) -> dict[int, float]:
     ph = ",".join("?" * len(ids))
     with get_container().db.connect("mkt") as conn:
         rows = conn.execute(
-            f"SELECT type_id, adjusted_price FROM market_prices "
-            f"WHERE type_id IN ({ph}) AND adjusted_price > 0",
+            f"SELECT type_id, adjusted_price FROM market_prices " f"WHERE type_id IN ({ph}) AND adjusted_price > 0",
             ids,
         ).fetchall()
     return {r[0]: float(r[1]) for r in rows}
@@ -84,8 +83,7 @@ def _prices(type_ids: list[int]) -> dict[int, float]:
 def _material_cost(conn: Connection, prices: dict[int, float], blueprint_type_id: int, activity: str) -> float:
     """蓝图某活动的材料总价（调整价 × 数量）。"""
     rows = conn.execute(
-        "SELECT material_type_id, quantity FROM blueprint_materials "
-        "WHERE blueprint_type_id=? AND activity=?",
+        "SELECT material_type_id, quantity FROM blueprint_materials " "WHERE blueprint_type_id=? AND activity=?",
         (blueprint_type_id, activity),
     ).fetchall()
     total = 0.0
@@ -94,9 +92,7 @@ def _material_cost(conn: Connection, prices: dict[int, float], blueprint_type_id
     return total
 
 
-def research_cost_for_item(
-    bp_conn: Connection, type_id: int, *, solar_system_id: int | None = None
-) -> float | None:
+def research_cost_for_item(bp_conn: Connection, type_id: int, *, solar_system_id: int | None = None) -> float | None:
     """单个物品的研究成本（拷贝或发明）；原图/无蓝图 → None。"""
     return research_costs_batch(bp_conn, [type_id], solar_system_id=solar_system_id).get(type_id)
 

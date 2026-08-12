@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 from core.cache import TtlLRUCache
+from core.constants import TRADE_HUB_SYSTEM_IDS
+from core.container import get_container
 from core.eve_formulas import (
     ADV_INDUSTRY_SKILL_MULT,
     _hub_region_id,
@@ -19,7 +21,7 @@ from core.eve_formulas import (
 )
 from services.blueprint_reader import get_blueprint_materials
 from services.char_config_resolver import DEFAULT_SKILLS, resolve_char_config  # noqa: F401  # 向后兼容 re-export
-from services.database_manager import DatabaseManager, get_db
+from services.database_manager import DatabaseManager
 from services.manufacturing_calculator import (
     calc_job_cost_fees,
     calc_material_per_run,
@@ -27,22 +29,15 @@ from services.manufacturing_calculator import (
 )
 from services.name_resolver import resolve_item_name
 
-# 贸易中心 → 太阳系 ID 映射（用于 SCI 降级）
-_TRADE_HUB_SYSTEM_IDS: dict[str, int] = {
-    "Jita": 30000142,
-    "Amarr": 30002187,
-    "Dodixie": 30002659,
-    "Rens": 30002510,
-    "Hek": 30002070,
-}
-
 
 def _hub_to_system_id(hub: str) -> int | None:
     """将贸易中心名称映射为太阳系 ID。"""
-    return _TRADE_HUB_SYSTEM_IDS.get(hub)
+    return TRADE_HUB_SYSTEM_IDS.get(hub)
 
 
-db = get_db()
+def _default_db() -> DatabaseManager:
+    """惰性获取 DatabaseManager（经容器，消除模块级单例双轨）。"""
+    return get_container().db
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -56,30 +51,15 @@ def cache_key(type_id: int, mode: str, hub: str, char_name: str) -> str:
 
 
 # 模块级缓存函数（委托给默认实例）
-_default_cache = TtlLRUCache(max_size=500, ttl_seconds=1800)
-
-
-def get_cache(key: str) -> dict | None:
-    return _default_cache.get(key)
-
-
-def set_cache(key: str, result: dict):
-    _default_cache.set(key, result)
 
 
 def invalidate_cache():
-    _default_cache.invalidate()
+    """清空模块级研究成本缓存（价格刷新后调用）。
 
-
-# 模块级单例 ScoringService（供模块级便利函数复用，避免每次创建新实例）
-_scoring_service_instance: ScoringService | None = None
-
-
-def _get_scoring_service() -> ScoringService:
-    global _scoring_service_instance
-    if _scoring_service_instance is None:
-        _scoring_service_instance = ScoringService(db, _default_cache)
-    return _scoring_service_instance
+    评分结果缓存走 ScoringService 实例（容器注入），由实例的 invalidate_cache 清理；
+    此处只负责模块级 _research_cost_cache，避免两套缓存失效遗漏。
+    """
+    _clear_research_cost_cache()
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -99,7 +79,7 @@ def get_price(
     hub: 贸易中心名称, 如 'Jita', 'Amarr'；None 时返回任意区域
     _db: 可选注入的 DatabaseManager；None 时使用模块级单例。
     """
-    conn_mgr = _db or db
+    conn_mgr = _db or _default_db()
     _VALID_PRICE_COLS = {"buy": "buy_price", "sell": "sell_price"}
     col = _VALID_PRICE_COLS.get(price_type)
     if col is None:
@@ -136,7 +116,7 @@ def get_volume(
     _db: DatabaseManager | None = None,
 ) -> int:
     """获取指定区域的成交量。vol_type: 'buy' / 'sell' / 'total'"""
-    conn_mgr = _db or db
+    conn_mgr = _db or _default_db()
     with conn_mgr.connect("mkt") as conn:
         c = conn.cursor()
         if hub:
@@ -177,11 +157,13 @@ def get_system_cost_index(
     hub: str = "Jita",
 ) -> float:
     """从数据库获取星系的制造成本指数(SCI)。system_id=None 时从 hub 推断。"""
+    from core.constants import DEFAULT_SYSTEM_COST_INDEX
+
     if system_id is None:
         system_id = _hub_to_system_id(hub)
     if system_id is None:
-        return 0.05
-    conn_mgr = _db or db
+        return DEFAULT_SYSTEM_COST_INDEX
+    conn_mgr = _db or _default_db()
     with conn_mgr.connect("ref") as conn:
         c = conn.cursor()
         c.execute(
@@ -189,7 +171,7 @@ def get_system_cost_index(
             (system_id, activity),
         )
         row = c.fetchone()
-        return row[0] if row else 1.0
+        return float(row[0]) if row else DEFAULT_SYSTEM_COST_INDEX
 
 
 def get_adjusted_price(
@@ -197,7 +179,7 @@ def get_adjusted_price(
     _db: DatabaseManager | None = None,
 ) -> float | None:
     """获取 ESI adjusted price（EIV 计算用）。兜底 None → 用 sell_price。"""
-    conn_mgr = _db or db
+    conn_mgr = _db or _default_db()
     with conn_mgr.connect("mkt") as conn:
         try:
             r = conn.execute(
@@ -241,112 +223,6 @@ def _research_cost_cached(_db: DatabaseManager, type_id: int, *, solar_system_id
 def _clear_research_cost_cache() -> None:
     """清空研究成本缓存（价格刷新时调用）。"""
     _research_cost_cache.clear()
-
-
-# ════════════════════════════════════════════════════════════════════
-#  精炼价值计算
-# ════════════════════════════════════════════════════════════════════
-
-
-def calc_refining_value(
-    type_id: int,
-    quantity: int = 1,
-    *,
-    skills: dict | None = None,
-    is_player_facility: bool = False,
-    price_hub: str = "Jita",
-    yield_override: float | None = None,
-    ore_skill: int = 0,
-) -> dict:
-    """计算物品的精炼产出及总价值
-
-    Args:
-        type_id: 矿石/冰矿/残骸 type_id
-        quantity: 数量
-        skills: 角色技能字典
-        is_player_facility: 是否玩家设施
-        price_hub: 贸易中心
-        yield_override: 指定产率（覆盖计算）
-        ore_skill: 矿石专精技能等级
-
-    Returns:
-        {
-            "yield_rate": float,        # 精炼产率 0~1
-            "output": [                  # 产出物列表
-                {"type_id": id, "name": str, "qty": float, "price": float, "total": float}
-            ],
-            "total_value": float,        # 产物总价值
-            "input_value": float,        # 原材料市场价
-            "profit": float,             # 精炼后增值（可为负）
-            "margin_pct": float,         # 利润率 %
-        }
-    """
-    from core.eve_formulas import calc_refining_yield, resolve_item_name
-
-    yield_rate = (
-        yield_override
-        if yield_override is not None
-        else calc_refining_yield(
-            skills,
-            is_player_facility=is_player_facility,
-        )
-    )
-    # 加入矿石专精
-    yield_rate += ore_skill * 0.02
-    yield_rate = min(yield_rate, 0.85)
-
-    # 从数据库查询 reprocessing_materials
-    with db.connect("ref") as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT material_type_id, quantity FROM type_materials WHERE type_id = ?",
-            (type_id,),
-        )
-        materials = cur.fetchall()
-
-    if not materials:
-        return {
-            "yield_rate": yield_rate,
-            "output": [],
-            "total_value": 0,
-            "input_value": 0,
-            "profit": 0,
-            "margin_pct": 0,
-        }
-
-    output = []
-    total_value = 0.0
-    with db.connect("ref") as rconn:
-        cur = rconn.cursor()
-        for mat_id, mat_qty in materials:
-            qty = mat_qty * yield_rate * quantity
-            price = get_price(mat_id, "sell", price_hub) or 0.0
-            total = round(qty * price, 2)
-            name = resolve_item_name(cur, mat_id)
-            output.append(
-                {
-                    "type_id": mat_id,
-                    "name": name,
-                    "qty": round(qty, 2),
-                    "price": price,
-                    "total": total,
-                }
-            )
-            total_value += total
-
-    input_price = get_price(type_id, "sell", price_hub) or 0.0
-    input_value = input_price * quantity
-    profit = total_value - input_value
-    margin_pct = (profit / input_value * 100) if input_value > 0 else 0.0
-
-    return {
-        "yield_rate": round(yield_rate, 4),
-        "output": output,
-        "total_value": round(total_value, 2),
-        "input_value": round(input_value, 2),
-        "profit": round(profit, 2),
-        "margin_pct": round(margin_pct, 2),
-    }
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -574,6 +450,8 @@ class ScoringService:
             "breakdown": per_run.get("breakdown", {}),
         }
 
+    # ── 计划指标（纯算法已抽到 services.plan_metrics，此处保留 thin delegate 向后兼容）──
+
     @staticmethod
     def calculate_personal_margin(
         result: dict,
@@ -582,86 +460,17 @@ class ScoringService:
         parallels: int = 1,
         cost_overrides: dict[int, float] | None = None,
     ) -> float:
-        """计算考虑库存成本的个人利润率（%）。
+        """计算考虑库存成本的个人利润率（%）。实现见 services.plan_metrics。"""
+        from services.plan_metrics import calculate_personal_margin as _f
 
-        与市场利润率同口径：仅把材料成本替换为库存成本
-        （库存不足部分按材料市场 unit_price 补齐），安装费/经纪人费/销售税与市场列完全一致。
-        无库存时返回值与 result 的市场 margin 在 2 位小数内严格相等。
-
-        Args:
-            result: calculate_plan_metrics() 的返回 dict
-                    （需含 revenue_per_run / fees_per_run / materials / margin）
-            inv_map: get_inventory_cost_map() 的返回 {type_id: (总数量, 加权平均成本)}
-            runs / parallels: 流程数 / 并行数
-            cost_overrides: 可选 {type_id: 固定成本}——拆解母项的子项自制件按其制造价计，
-                            不再走库存/市场价。
-
-        Returns:
-            个人利润率（%），round 到 2 位小数。异常或无效输入回退 result 的市场 margin。
-
-        精度契约：必须读未取整的 revenue_per_run / fees_per_run，
-        禁用已 round 的 revenue / fees，否则"无库存=市场列"的严格相等会被破坏。
-        """
-        try:
-            total_mult = max(runs, 1) * max(parallels, 1)
-            fallback = result.get("margin", 0) or 0
-            revenue_per_run = result.get("revenue_per_run", 0) or 0
-            fees_per_run = result.get("fees_per_run", 0) or 0
-            materials = result.get("materials", []) or []
-
-            if not materials or revenue_per_run <= 0:
-                return fallback
-
-            total_personal_cost = 0.0
-            for mat in materials:
-                qty_per_run = mat.get("qty", 0) or 0
-                if qty_per_run <= 0:
-                    continue
-                mid = mat.get("type_id")
-                need = qty_per_run * total_mult
-                if cost_overrides and mid in cost_overrides:
-                    # 子项自制件：成本 = 子项制造价（合计，非库存/市场价）
-                    mat_cost = cost_overrides[mid]
-                else:
-                    unit_price = mat.get("unit_price", 0) or 0
-                    stock_qty, stock_cost = inv_map.get(mid, (0, 0))
-                    if stock_qty >= need:
-                        mat_cost = need * stock_cost
-                    elif stock_qty > 0:
-                        mat_cost = stock_qty * stock_cost + (need - stock_qty) * unit_price
-                    else:
-                        mat_cost = need * unit_price
-                total_personal_cost += mat_cost
-
-            total_cost = total_personal_cost + fees_per_run * total_mult
-            if total_cost <= 0:
-                return fallback
-
-            total_revenue = revenue_per_run * total_mult
-            margin = (total_revenue - total_cost) / total_cost * 100
-            return round(margin, 2)
-        except Exception:
-            return result.get("margin", 0) or 0
-
-    # ── 拆解母项成本（子项自制件按其制造价计）──
+        return _f(result, inv_map, runs, parallels, cost_overrides)
 
     @staticmethod
     def child_manufacturing_cost(plan: dict, metrics: dict) -> float:
-        """一条子项产线的总制造价 = 材料成本 + 制造作业费（安装费）。
+        """一条子项产线的总制造价 = 材料成本 + 制造作业费。实现见 services.plan_metrics。"""
+        from services.plan_metrics import child_manufacturing_cost as _f
 
-        Args:
-            plan: 子项计划 dict（runs/parallels 用于把单轮安装费放大到整条产线）。
-            metrics: calculate_plan_metrics() 对子项返回的 dict
-                     （须含 material_cost 与 breakdown.installation_fee）。
-
-        Returns:
-            子项产线制造价合计（材料 + 作业费）。breakdown 缺失时兜底仅材料成本。
-        """
-        material = metrics.get("material_cost", 0) or 0
-        breakdown = metrics.get("breakdown", {}) or {}
-        job_per_run = breakdown.get("installation_fee", 0) or 0
-        total_mult = max(int(plan.get("runs", 1)), 1) * max(int(plan.get("parallels", 1)), 1)
-        return round(material + job_per_run * total_mult, 2)
+        return _f(plan, metrics)
 
     @staticmethod
     def adjust_mother_metrics(
@@ -669,38 +478,10 @@ class ScoringService:
         sub_cost_map: dict[int, float],
         total_mult: int,
     ) -> tuple[float, float, float, dict[int, float]]:
-        """把拆解母项的自制子项按其制造价计入成本，其余材料仍按市场价。
+        """把拆解母项的自制子项按其制造价计入成本。实现见 services.plan_metrics。"""
+        from services.plan_metrics import adjust_mother_metrics as _f
 
-        Args:
-            metrics: calculate_plan_metrics() 对母项返回的 dict
-                     （须含 materials/revenue/fees，materials 为每轮量）。
-            sub_cost_map: {子项 product_type_id: 子项制造价（整条产线合计，见 child_manufacturing_cost）}。
-            total_mult: runs × parallels。
-
-        Returns:
-            (调整后 material_cost, 调整后 profit, 调整后 margin, cost_overrides)。
-            cost_overrides 供 calculate_personal_margin 的个人利润率计算使用。
-            不修改入参 metrics。
-        """
-        revenue = metrics.get("revenue", 0) or 0
-        fees = metrics.get("fees", 0) or 0
-        new_material_cost = 0.0
-        cost_overrides: dict[int, float] = {}
-        for mat in metrics.get("materials", []) or []:
-            mid = mat.get("type_id")
-            qty_per_run = mat.get("qty", 0) or 0
-            if qty_per_run <= 0:
-                continue
-            if mid in sub_cost_map:
-                new_material_cost += sub_cost_map[mid]
-                cost_overrides[mid] = sub_cost_map[mid]
-            else:
-                new_material_cost += qty_per_run * total_mult * (mat.get("unit_price", 0) or 0)
-        new_material_cost = round(new_material_cost, 2)
-        profit = round(revenue - new_material_cost - fees, 2)
-        denom = new_material_cost + fees
-        margin = round(profit / denom * 100, 2) if denom > 0 else 0.0
-        return new_material_cost, profit, margin, cost_overrides
+        return _f(metrics, sub_cost_map, total_mult)
 
     # ── 制造评分 ──
 
@@ -733,7 +514,7 @@ class ScoringService:
         cache_k = cache_key(
             type_id,
             f"mfg|{mat_source_hub}|{sell_hub}|{bp_me}|{bp_te}|{price_type_mat}|{price_type_prod}|{system_id or ''}"
-            f"|{structure_bonus}|{structure_time_mod}|{structure_mat_saving}",
+            f"|{structure_bonus}|{structure_time_mod}|{structure_mat_saving}|{facility_tax_pct}|{int(is_alpha)}",
             "hub",
             char_name,
         )
@@ -1274,88 +1055,3 @@ class ScoringService:
 # ════════════════════════════════════════════════════════════════════
 
 REACTION_INSTALL_FEE_RATE = 0.05
-
-
-# ════════════════════════════════════════════════════════════════════
-#  模块级评分便利函数（使用默认 db 单例 + 默认缓存）
-#  向后兼容：保持与旧 services.scoring 相同的接口签名
-# ════════════════════════════════════════════════════════════════════
-
-
-def calc_manufacturing_score(
-    type_id: int,
-    char_config: dict,
-    mat_source_hub: str = "Jita",
-    sell_hub: str = "Jita",
-    facility_tax_pct: float = 0.0,
-    price_type_mat: str = "sell",
-    price_type_prod: str = "sell",
-    bp_me: int = 0,
-    bp_te: int = 0,
-    system_id: int | None = None,
-    structure_bonus: float = 0.0,
-    structure_time_mod: float = 1.0,
-    is_alpha: bool = False,
-) -> dict:
-    """模块级便利函数：复用模块级单例 ScoringService。"""
-    return _get_scoring_service().calc_manufacturing_score(
-        type_id=type_id,
-        char_config=char_config,
-        mat_source_hub=mat_source_hub,
-        sell_hub=sell_hub,
-        facility_tax_pct=facility_tax_pct,
-        price_type_mat=price_type_mat,
-        price_type_prod=price_type_prod,
-        bp_me=bp_me,
-        bp_te=bp_te,
-        system_id=system_id,
-        structure_bonus=structure_bonus,
-        structure_time_mod=structure_time_mod,
-        is_alpha=is_alpha,
-    )
-
-
-def calc_trade_score(
-    type_id: int,
-    buy_hub: str = "Jita",
-    sell_hub: str = "Jita",
-    buy_price_type: str = "buy",
-    sell_price_type: str = "sell",
-    char_config: dict | None = None,
-    quantity: int = 1,
-) -> dict:
-    """模块级便利函数：复用模块级单例 ScoringService。"""
-    return _get_scoring_service().calc_trade_score(
-        type_id=type_id,
-        buy_hub=buy_hub,
-        sell_hub=sell_hub,
-        buy_price_type=buy_price_type,
-        sell_price_type=sell_price_type,
-        char_config=char_config,
-        quantity=quantity,
-    )
-
-
-def calc_reaction_score(
-    type_id: int,
-    char_config: dict,
-    mat_source_hub: str = "Jita",
-    sell_hub: str = "Jita",
-    facility_tax_pct: float = 0.0,
-    price_type_mat: str = "sell",
-    price_type_prod: str = "sell",
-    system_id: int | None = None,
-    structure_bonus: float = 0.0,
-) -> dict:
-    """模块级便利函数：复用模块级单例 ScoringService。"""
-    return _get_scoring_service().calc_reaction_score(
-        type_id=type_id,
-        char_config=char_config,
-        mat_source_hub=mat_source_hub,
-        sell_hub=sell_hub,
-        facility_tax_pct=facility_tax_pct,
-        price_type_mat=price_type_mat,
-        price_type_prod=price_type_prod,
-        system_id=system_id,
-        structure_bonus=structure_bonus,
-    )

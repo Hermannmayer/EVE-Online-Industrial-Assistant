@@ -10,8 +10,10 @@ from core.container import get_container
 from services.char_config_resolver import resolve_char_config
 from services.terminology import term
 
-# "高级量产技术"（skill_names 注册；未命中时兜底中文名）
-_SKILL_KEY = term.skill_name("Advanced Mass Production") or "高级量产技术"
+
+def _skill_key() -> str:
+    """ "高级量产技术"（skill_names 注册；未命中时兜底中文名）。惰性求值，避免 import 时加载术语表。"""
+    return term.skill_name("Advanced Mass Production") or "高级量产技术"
 
 
 def max_production_lines(char_name: str | None) -> int:
@@ -19,7 +21,7 @@ def max_production_lines(char_name: str | None) -> int:
     if not char_name:
         return 1
     skills = (resolve_char_config(char_name=char_name) or {}).get("skills", {}) or {}
-    level = int(skills.get(_SKILL_KEY, 0) or 0)
+    level = int(skills.get(_skill_key(), 0) or 0)
     return 1 + max(0, level)
 
 

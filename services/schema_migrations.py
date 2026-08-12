@@ -19,7 +19,7 @@ from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
-    "user": 9,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库
+    "user": 10,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）
     "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
 }
 
@@ -245,6 +245,23 @@ def _migrate_user_v8_to_v9(db_path: str) -> str:
     return f"production_plans 补齐 v2 扩展列 (新增 {net} 列)"
 
 
+def _migrate_user_v9_to_v10(db_path: str) -> str:
+    """v9→v10: production_plans 新增 deducted_materials 列（启动扣减快照，撤销精确返还）。
+
+    撤销返还不再依赖评分重算（评分失败时静默丢材料），
+    改为 start_plan 持久化实际扣减 {type_id: qty} JSON，cancel_plan 直接读快照。
+    幂等：已存在的列跳过，重复运行无变化。
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        if not _table_exists(conn, "production_plans"):
+            return "production_plans 表不存在，跳过"
+    finally:
+        conn.close()
+    net = _add_columns(db_path, "production_plans", [("deducted_materials", "TEXT DEFAULT ''")])
+    return f"production_plans 扣减快照列 (新增 {net} 列)"
+
+
 def _migrate_bp_v1_to_v2(db_path: str) -> str:
     """v1→v2: blueprint_materials 新增 wastefactor 列"""
     conn = sqlite3.connect(db_path)
@@ -278,6 +295,7 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
         6: _migrate_user_v6_to_v7,
         7: _migrate_user_v7_to_v8,
         8: _migrate_user_v8_to_v9,
+        9: _migrate_user_v9_to_v10,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,

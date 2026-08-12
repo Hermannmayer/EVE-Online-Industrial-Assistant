@@ -2,7 +2,6 @@
 主窗口 — QMainWindow + 导航树 + 内容区 + 状态栏
 """
 
-import json
 import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -35,7 +34,6 @@ from core.container import get_container
 from core.logger import log
 from core.paths import (
     ensure_dirs_exist,
-    search_history_file,
     window_geometry_file,
 )
 
@@ -309,11 +307,11 @@ class MainWindow(QMainWindow):
         for w in QApplication.topLevelWidgets():
             if w is not self and w.isVisible():
                 w.close()
-        # 等待后台线程安全退出
-        for attr in ("_check_worker", "_price_worker"):
-            worker = getattr(self, attr, None)
-            if worker and worker.isRunning():
-                worker.quit()
+        # 等待后台线程安全退出（含各页面的评分/重算/更新 worker）
+        # 之前只等 _check_worker/_price_worker，页面内 QThread 可能在销毁时仍运行
+        for worker in self.findChildren(QThread):
+            if worker.isRunning():
+                worker.requestInterruption()
                 worker.wait(3000)
         # 隐藏托盘图标
         if self._tray_icon:
@@ -827,69 +825,50 @@ class MainWindow(QMainWindow):
         self._status_label.setText(f"设置已保存（间隔: {self._update_interval_minutes} 分钟）")
 
     def _load_interval(self) -> int:
+        from services.user_settings import load_settings
+
+        val = load_settings().get("update_interval", 30)
         try:
-            p = search_history_file().replace("search_history", "settings")
-            if os.path.exists(p):
-                with open(p, encoding="utf-8") as f:
-                    val = json.load(f).get("update_interval", 30)
-                    return max(0, min(1440, int(val)))
-        except Exception as e:
-            self._status_label.setText(f"加载设置失败: {e}")
-        return 30
+            return max(0, min(1440, int(val)))
+        except (TypeError, ValueError):
+            return 30
 
     def _load_auto_update(self) -> bool:
-        try:
-            p = search_history_file().replace("search_history", "settings")
-            if os.path.exists(p):
-                with open(p, encoding="utf-8") as f:
-                    return json.load(f).get("auto_update_enabled", True)  # type: ignore[no-any-return]
-        except Exception:
-            log.exception("加载自动更新设置失败")
-        return True
+        from services.user_settings import load_settings
+
+        return bool(load_settings().get("auto_update_enabled", True))
 
     def _load_update_regions(self) -> list[str]:
         """从 settings.json 读取勾选的更新区域，缺省仅 Jita"""
-        try:
-            p = search_history_file().replace("search_history", "settings")
-            if os.path.exists(p):
-                with open(p, encoding="utf-8") as f:
-                    regions = json.load(f).get("update_regions", [])
-                if isinstance(regions, list):
-                    valid = [r for r in regions if r in TRADE_HUBS]
-                    if valid:
-                        return valid
-        except Exception:
-            log.exception("加载更新区域设置失败")
+        from services.user_settings import load_settings
+
+        regions = load_settings().get("update_regions", [])
+        if isinstance(regions, list):
+            valid = [r for r in regions if r in TRADE_HUBS]
+            if valid:
+                return valid
         return ["Jita"]
 
     def _save_settings(self):
+        from services.user_settings import save_settings
+
+        data = {
+            "update_interval": self._update_interval_minutes,
+            "auto_update_enabled": self._auto_update_enabled,
+            "update_regions": list(self._update_regions),
+        }
+        if hasattr(self, "_pin_btn"):
+            data["window_pin"] = self._pin_btn.isChecked()
         try:
-            p = search_history_file().replace("search_history", "settings")
-            os.makedirs(os.path.dirname(p), exist_ok=True)
-            data = {}
-            if os.path.exists(p):
-                with open(p, encoding="utf-8") as f:
-                    data = json.load(f)
-            data["update_interval"] = self._update_interval_minutes
-            data["auto_update_enabled"] = self._auto_update_enabled
-            data["update_regions"] = list(self._update_regions)
-            if hasattr(self, "_pin_btn"):
-                data["window_pin"] = self._pin_btn.isChecked()
-            with open(p, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            save_settings(data)
         except Exception as e:
             self._status_label.setText(f"保存设置失败: {e}")
 
     def _load_window_pin(self) -> bool:
         """读取置顶状态（settings.json 的 window_pin 键）。"""
-        try:
-            p = search_history_file().replace("search_history", "settings")
-            if os.path.exists(p):
-                with open(p, encoding="utf-8") as f:
-                    return bool(json.load(f).get("window_pin", False))
-        except Exception:
-            log.exception("加载置顶设置失败")
-        return False
+        from services.user_settings import load_settings
+
+        return bool(load_settings().get("window_pin", False))
 
     def _on_pin_toggled(self, checked: bool):
         self._apply_pin(checked)
@@ -1105,10 +1084,12 @@ class MainWindow(QMainWindow):
         self._init_wizard.show()
 
     def _show_about(self):
+        from core.version import __version__
+
         QMessageBox.about(
             self,
             "关于 EVE 商人助手",
-            "EVE 商人助手 v2.0\n\n"
+            f"EVE 商人助手 v{__version__}\n\n"
             "基于 PySide6 重构\n"
             "为 EVE Online 玩家提供工业制造、市场贸易辅助工具。\n\n"
             "数据来源: EVE Swagger Interface (ESI)\n"

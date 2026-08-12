@@ -288,7 +288,7 @@ python build_release.py
 
 | 指标 | 数值 |
 |------|------|
-| 📊 **测试总数** | 1052 个 |
+| 📊 **测试总数** | 1088 个 |
 | 🔧 **框架** | pytest |
 | 📁 **测试目录** | `tests/` |
 | 🏃 **运行命令** | `pytest` |
@@ -301,7 +301,7 @@ python build_release.py
 |------|------|
 | `test_core.py` / `test_paths.py` / `test_logger.py` | 核心工具层测试 |
 | `test_database_manager.py` | 数据库连接管理器测试 |
-| `test_scoring.py` / `test_scoring_core.py` / `test_scoring_service.py` | 评分计算测试 |
+| `test_scoring_service.py` / `test_scoring_cache.py` | 评分计算测试 |
 | `test_personal_margin.py` | 个人利润率测试 |
 | `test_bom_expander.py` | BOM 展开测试 |
 | `test_refining_service.py` | 精炼价值测试 |

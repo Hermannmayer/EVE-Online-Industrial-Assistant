@@ -46,7 +46,7 @@ def _material_cost(conn: Connection, prices: dict[int, float], blueprint_type_id
 
 蓝图某活动的材料总价（调整价 × 数量）。
 
-定义行：`84`
+定义行：`83`
 
 ### `research_cost_for_item`
 
@@ -56,7 +56,7 @@ def research_cost_for_item(bp_conn: Connection, type_id: int, *, solar_system_id
 
 单个物品的研究成本（拷贝或发明）；原图/无蓝图 → None。
 
-定义行：`97`
+定义行：`95`
 
 ### `research_costs_batch`
 
@@ -66,4 +66,4 @@ def research_costs_batch(bp_conn: Connection, type_ids: list[int], *, solar_syst
 
 批量计算物品研究成本 &#123;type_id: cost|None&#125;（避免 N+1）。
 
-定义行：`104`
+定义行：`100`

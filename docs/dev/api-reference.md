@@ -58,7 +58,6 @@
 | [`services.watchlist_manager`](/api/services/watchlist_manager) | 关注列表管理 |
 | [`services.price_history`](/api/services/price_history) | 价格历史查询与缓存 |
 | [`services.client`](/api/services/client) | ESI HTTP 客户端 |
-| [`services.scoring`](/api/services/scoring) | 评分入口（委托给 ScoringService） |
 
 ## 业务层 — Workers（services/workers/）
 

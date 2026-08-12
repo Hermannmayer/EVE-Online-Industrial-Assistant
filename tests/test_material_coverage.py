@@ -61,7 +61,7 @@ def coverage_env(temp_db, monkeypatch):
     """temp_db + 注入 container + 建 user 业务表（hangars/inventory_items/production_plans）"""
     # 关键：把 inventory_manager 的模块级单例 db 换成每个测试全新的 DatabaseManager，
     # 避免线程本地连接缓存指向上一个测试已删除的临时库
-    monkeypatch.setattr(inventory_manager, "db", temp_db)
+    monkeypatch.setattr(inventory_manager, "_default_db", lambda: temp_db)
     inventory_manager.init_db()
     with temp_db.connect("user") as conn:
         conn.executescript(_PLAN_SCHEMA)

@@ -18,7 +18,7 @@ def write_progress(cur: int, total: int, phase: str='')
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`34`
+定义行：`31`
 
 ### `init_db`
 
@@ -28,7 +28,7 @@ async def init_db()
 
 确保 market_prices 和 market_volume_snapshots 表存在（幂等）
 
-定义行：`44`
+定义行：`41`
 
 ### `fetch_baseline_prices`
 
@@ -38,7 +38,7 @@ async def fetch_baseline_prices() -> dict[int, dict]
 
 /markets/prices/ — 1次请求，极快
 
-定义行：`84`
+定义行：`81`
 
 ### `fetch_order_pages`
 
@@ -48,7 +48,7 @@ async def fetch_order_pages(client: APIClient, region_id: int, order_type: str, 
 
 并发拉取一个区域指定方向的所有订单页（全局限流 ≤20 req/s）
 
-定义行：`103`
+定义行：`100`
 
 ### `discover_pages`
 
@@ -58,7 +58,7 @@ async def discover_pages(client: APIClient, targets: list[tuple[str, int]] | Non
 
 并发获取所有流的总页数（8次请求）
 
-定义行：`131`
+定义行：`128`
 
 ### `fetch_orders`
 
@@ -68,7 +68,7 @@ async def fetch_orders(regions: list[tuple[str, int]] | None=None) -> dict[int, 
 
 4 区域实时订单，按 region_id → type_id 组织
 
-定义行：`159`
+定义行：`156`
 
 ### `save_snapshot`
 
@@ -78,7 +78,7 @@ async def save_snapshot(all_regions: dict[int, dict[int, dict]])
 
 保存各区域当日成交量快照
 
-定义行：`221`
+定义行：`218`
 
 ### `save_prices`
 
@@ -88,7 +88,7 @@ async def save_prices(baseline: dict[int, dict], order_prices: dict[int, dict[in
 
 写入各区域价格（仅覆盖指定区域）。
 
-定义行：`251`
+定义行：`248`
 
 ### `main`
 
@@ -100,7 +100,7 @@ async def main(regions: list[tuple[str, int]] | None=None, progress_cb: Callable
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`302`
+定义行：`299`
 
 ### `run_price_update`
 
@@ -110,4 +110,4 @@ def run_price_update(regions: list[str] | None=None)
 
 运行价格更新。
 
-定义行：`341`
+定义行：`338`

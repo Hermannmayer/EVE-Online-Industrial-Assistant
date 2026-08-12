@@ -399,44 +399,35 @@ class PlanTable(QWidget):
         dlg = PlanEditDialog(self, plan)
         if dlg.exec():
             updated = dlg.get_updated_data()
-            conn = get_container().db.direct_connect("user")
-            try:
-                final_mat = updated.get("mat_hangar_id")
-                solar_system_id = self._solar_system_for_mat_hangar(final_mat)
-                # 设施名：编辑对话框不含 facility；材料机库未设 facility 时自动带出机库名称
-                facility = plan.get("facility", "") or ""
-                if not facility and final_mat:
-                    from services.inventory_manager import get_hangar_name
+            final_mat = updated.get("mat_hangar_id")
+            solar_system_id = self._solar_system_for_mat_hangar(final_mat)
+            # 设施名：编辑对话框不含 facility；材料机库未设 facility 时自动带出机库名称
+            facility = plan.get("facility", "") or ""
+            if not facility and final_mat:
+                from services.inventory_manager import get_hangar_name
 
-                    facility = get_hangar_name(final_mat)
-                conn.execute(
-                    "UPDATE production_plans SET runs=?, parallels=?, "
-                    "char_name=?, notes=?, deposit_hangar_id=?, mat_hangar_id=?, solar_system_id=?, facility=? WHERE id=?",
-                    (
-                        updated["runs"],
-                        updated["parallels"],
-                        updated["char_name"],
-                        updated["notes"],
-                        updated.get("deposit_hangar_id"),
-                        final_mat,
-                        solar_system_id,
-                        facility,
-                        plan["id"],
-                    ),
-                )
-                conn.commit()
-                # 更新内存模型的基础字段（保留现有 ME/TE 值，编辑对话框不含 ME/TE；
-                # facility/mat_hub/sell_hub 由工具栏价格设置与「设置设施星系」管理，编辑不改）
-                plan["runs"] = updated["runs"]
-                plan["parallels"] = updated["parallels"]
-                plan["char_name"] = updated["char_name"]
-                plan["notes"] = updated["notes"]
-                plan["deposit_hangar_id"] = updated.get("deposit_hangar_id")
-                plan["mat_hangar_id"] = final_mat
-                plan["solar_system_id"] = solar_system_id
-                plan["facility"] = facility
-            finally:
-                conn.close()
+                facility = get_hangar_name(final_mat)
+            get_container().plan_repo.update(
+                plan["id"],
+                runs=updated["runs"],
+                parallels=updated["parallels"],
+                char_name=updated["char_name"],
+                notes=updated["notes"],
+                deposit_hangar_id=updated.get("deposit_hangar_id"),
+                mat_hangar_id=final_mat,
+                solar_system_id=solar_system_id,
+                facility=facility,
+            )
+            # 更新内存模型的基础字段（保留现有 ME/TE 值，编辑对话框不含 ME/TE；
+            # facility/mat_hub/sell_hub 由工具栏价格设置与「设置设施星系」管理，编辑不改）
+            plan["runs"] = updated["runs"]
+            plan["parallels"] = updated["parallels"]
+            plan["char_name"] = updated["char_name"]
+            plan["notes"] = updated["notes"]
+            plan["deposit_hangar_id"] = updated.get("deposit_hangar_id")
+            plan["mat_hangar_id"] = final_mat
+            plan["solar_system_id"] = solar_system_id
+            plan["facility"] = facility
 
             # 同步重算该条计划，立即更新派生字段
             from services.char_config_resolver import resolve_char_config
@@ -468,46 +459,45 @@ class PlanTable(QWidget):
         )
         if dlg.exec():
             updated = dlg.get_updated_data()
-            conn = get_container().db.direct_connect("user")
-            try:
-                for r in rows:
-                    plan = self._model.get_plan(r)
-                    if not plan:
-                        continue
-                    # 批量模式：机库字段仅在用户显式选择（非「未设置」）时更新，避免清空既有值
-                    sets = ["runs=?", "parallels=?", "char_name=?", "notes=?"]
-                    vals = [
-                        updated.get("runs", plan.get("runs", 1)),
-                        updated.get("parallels", plan.get("parallels", 1)),
-                        updated["char_name"],
-                        updated["notes"],
-                    ]
-                    if updated.get("deposit_hangar_id") is not None:
-                        sets.append("deposit_hangar_id=?")
-                        vals.append(updated["deposit_hangar_id"])
-                    if updated.get("mat_hangar_id") is not None:
-                        sets.append("mat_hangar_id=?")
-                        vals.append(updated["mat_hangar_id"])
-                        # 显式设材料机库 → 同步重算所在星系（成本指数）
-                        sets.append("solar_system_id=?")
-                        vals.append(self._solar_system_for_mat_hangar(updated["mat_hangar_id"]))
-                    vals.append(plan["id"])
-                    conn.execute(
-                        f"UPDATE production_plans SET {', '.join(sets)} WHERE id=?",
-                        vals,
-                    )
-                    plan["runs"] = updated.get("runs", plan.get("runs", 1))
-                    plan["parallels"] = updated.get("parallels", plan.get("parallels", 1))
-                    plan["char_name"] = updated["char_name"]
-                    plan["notes"] = updated["notes"]
-                    if updated.get("deposit_hangar_id") is not None:
-                        plan["deposit_hangar_id"] = updated["deposit_hangar_id"]
-                    if updated.get("mat_hangar_id") is not None:
-                        plan["mat_hangar_id"] = updated["mat_hangar_id"]
-                        plan["solar_system_id"] = self._solar_system_for_mat_hangar(updated["mat_hangar_id"])
-                conn.commit()
-            finally:
-                conn.close()
+            # 批量模式：机库字段仅在用户显式选择（非「未设置」）时更新，避免清空既有值
+            fields: dict = {
+                "runs": updated.get("runs"),
+                "parallels": updated.get("parallels"),
+                "char_name": updated["char_name"],
+                "notes": updated["notes"],
+            }
+            fields = {k: v for k, v in fields.items() if v is not None}
+            if updated.get("deposit_hangar_id") is not None:
+                fields["deposit_hangar_id"] = updated["deposit_hangar_id"]
+            if updated.get("mat_hangar_id") is not None:
+                fields["mat_hangar_id"] = updated["mat_hangar_id"]
+                # 显式设材料机库 → 同步重算所在星系（成本指数）
+                fields["solar_system_id"] = self._solar_system_for_mat_hangar(updated["mat_hangar_id"])
+
+            ids: list[int] = []
+            for r in rows:
+                plan = self._model.get_plan(r)
+                if not plan:
+                    continue
+                if plan.get("id"):
+                    ids.append(plan["id"])
+            if ids:
+                get_container().plan_repo.update_many(ids, **fields)
+
+            # 同步内存模型
+            for r in rows:
+                plan = self._model.get_plan(r)
+                if not plan:
+                    continue
+                plan["runs"] = fields.get("runs", plan.get("runs", 1))
+                plan["parallels"] = fields.get("parallels", plan.get("parallels", 1))
+                plan["char_name"] = fields["char_name"]
+                plan["notes"] = fields["notes"]
+                if "deposit_hangar_id" in fields:
+                    plan["deposit_hangar_id"] = fields["deposit_hangar_id"]
+                if "mat_hangar_id" in fields:
+                    plan["mat_hangar_id"] = fields["mat_hangar_id"]
+                    plan["solar_system_id"] = fields["solar_system_id"]
             self._model.layoutChanged.emit()
             self.plan_updated.emit()
 
@@ -591,22 +581,17 @@ class PlanTable(QWidget):
 
         me_val = me_slider.value()
         te_val = te_slider.value()
-        conn = get_container().db.direct_connect("user")
-        try:
-            for r in rows:
-                plan = self._model.get_plan(r)
-                if not plan:
-                    continue
-                plan["me_level"] = me_val
-                plan["te_level"] = te_val
-                if plan.get("id"):
-                    conn.execute(
-                        "UPDATE production_plans SET me_level=?, te_level=? WHERE id=?",
-                        (me_val, te_val, plan["id"]),
-                    )
-            conn.commit()
-        finally:
-            conn.close()
+        ids: list[int] = []
+        for r in rows:
+            plan = self._model.get_plan(r)
+            if not plan:
+                continue
+            plan["me_level"] = me_val
+            plan["te_level"] = te_val
+            if plan.get("id"):
+                ids.append(plan["id"])
+        if ids:
+            get_container().plan_repo.update_many(ids, me_level=me_val, te_level=te_val)
         self._model.layoutChanged.emit()
         self.plan_updated.emit()
 
@@ -625,12 +610,7 @@ class PlanTable(QWidget):
             plan["notes"] = text.strip()
             self._model.layoutChanged.emit()
             if plan.get("id"):
-                conn = get_container().db.direct_connect("user")
-                try:
-                    conn.execute("UPDATE production_plans SET notes=? WHERE id=?", (text.strip(), plan["id"]))
-                    conn.commit()
-                finally:
-                    conn.close()
+                get_container().plan_repo.update(plan["id"], notes=text.strip())
             self.plan_updated.emit()
 
     def _modify_runs(self, row: int) -> None:
@@ -648,12 +628,7 @@ class PlanTable(QWidget):
             plan["runs"] = val
             self._model.layoutChanged.emit()
             if plan.get("id"):
-                conn = get_container().db.direct_connect("user")
-                try:
-                    conn.execute("UPDATE production_plans SET runs=? WHERE id=?", (val, plan["id"]))
-                    conn.commit()
-                finally:
-                    conn.close()
+                get_container().plan_repo.update(plan["id"], runs=val)
             self.plan_updated.emit()
 
     def _modify_parallels(self, row: int) -> None:
@@ -671,12 +646,7 @@ class PlanTable(QWidget):
             plan["parallels"] = val
             self._model.layoutChanged.emit()
             if plan.get("id"):
-                conn = get_container().db.direct_connect("user")
-                try:
-                    conn.execute("UPDATE production_plans SET parallels=? WHERE id=?", (val, plan["id"]))
-                    conn.commit()
-                finally:
-                    conn.close()
+                get_container().plan_repo.update(plan["id"], parallels=val)
             self.plan_updated.emit()
 
     def _copy_blueprint_name(self, row: int) -> None:
@@ -694,12 +664,7 @@ class PlanTable(QWidget):
         plan["materials_ready"] = value
         self._model.layoutChanged.emit()
         if plan.get("id"):
-            conn = get_container().db.direct_connect("user")
-            try:
-                conn.execute("UPDATE production_plans SET materials_ready=? WHERE id=?", (value, plan["id"]))
-                conn.commit()
-            finally:
-                conn.close()
+            get_container().plan_repo.update(plan["id"], materials_ready=value)
         self.plan_updated.emit()
 
     def _start_plan(self, row: int) -> None:
@@ -836,16 +801,12 @@ class PlanTable(QWidget):
             return
         plan["status"] = status
         self._model.layoutChanged.emit()
-        conn = get_container().db.direct_connect("user")
-        try:
-            # 状态从 completed 改回时重置入库标记
-            if status != "completed" and plan.get("deposited"):
-                plan["deposited"] = 0
-                conn.execute("UPDATE production_plans SET deposited=0 WHERE id=?", (plan["id"],))
-            conn.execute("UPDATE production_plans SET status=? WHERE id=?", (status, plan["id"]))
-            conn.commit()
-        finally:
-            conn.close()
+        repo = get_container().plan_repo
+        # 状态从 completed 改回时重置入库标记
+        if status != "completed" and plan.get("deposited"):
+            plan["deposited"] = 0
+            repo.update(plan["id"], deposited=0)
+        repo.update(plan["id"], status=status)
         self.plan_updated.emit()
 
     def _complete_plan(self, plan: dict) -> None:
@@ -911,13 +872,7 @@ class PlanTable(QWidget):
         for pid in ids_to_delete:
             plan_execution.release_blueprint(pid)
 
-        conn = get_container().db.direct_connect("user")
-        try:
-            placeholders = ",".join("?" for _ in ids_to_delete)
-            conn.execute(f"DELETE FROM production_plans WHERE id IN ({placeholders})", list(ids_to_delete))
-            conn.commit()
-        finally:
-            conn.close()
+        get_container().plan_repo.delete_many(list(ids_to_delete))
         self._model._plans = [p for p in plans if p.get("id") not in ids_to_delete]
         self._model.beginResetModel()
         self._model.endResetModel()
@@ -1059,15 +1014,7 @@ class PlanTable(QWidget):
 
         # 持久化（设施名 + 星系列）
         if plan.get("id"):
-            conn = get_container().db.direct_connect("user")
-            try:
-                conn.execute(
-                    "UPDATE production_plans SET facility=?, solar_system_id=? WHERE id=?",
-                    (ss_name, ss_id, plan["id"]),
-                )
-                conn.commit()
-            finally:
-                conn.close()
+            get_container().plan_repo.update(plan["id"], facility=ss_name, solar_system_id=ss_id)
 
         self._model.layoutChanged.emit()
         self.plan_updated.emit()
@@ -1105,15 +1052,7 @@ class PlanTable(QWidget):
 
         # 持久化到 plan（扩展字段：facility_cost_mult）
         if plan.get("id"):
-            conn = get_container().db.direct_connect("user")
-            try:
-                conn.execute(
-                    "UPDATE production_plans SET facility_cost_mult=? WHERE id=?",
-                    (val, plan["id"]),
-                )
-                conn.commit()
-            finally:
-                conn.close()
+            get_container().plan_repo.update(plan["id"], facility_cost_mult=val)
 
         QMessageBox.information(self, "设置完成", f"设施成本系数已设为 {val:.2f}x")
 

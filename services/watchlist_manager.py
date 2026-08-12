@@ -2,9 +2,14 @@
 关注列表数据层 — 价格监控 CRUD / 阈值设置 / 价格变化检测
 """
 
-from services.database_manager import get_db
+from core.container import get_container
+from services.database_manager import DatabaseManager
 
-db = get_db()
+
+def _db() -> DatabaseManager:
+    """惰性获取 DatabaseManager（经容器，消除模块级单例双轨）。"""
+    return get_container().db
+
 
 # ── Schema ──
 
@@ -26,7 +31,7 @@ CREATE TABLE IF NOT EXISTS watchlist_items (
 
 def init_db():
     """初始化关注列表表"""
-    with db.connect("user") as conn:
+    with _db().connect("user") as conn:
         conn.executescript(SCHEMA)
 
 
@@ -41,7 +46,7 @@ def add_to_watchlist(
     sell_threshold: float | None = None,
 ) -> int:
     """添加物品到关注列表，返回新记录 id"""
-    with db.connect("user") as conn:
+    with _db().connect("user") as conn:
         c = conn.cursor()
         # 检查是否已存在
         c.execute(
@@ -63,7 +68,7 @@ def add_to_watchlist(
 
 def remove_from_watchlist(item_id: int) -> bool:
     """删除关注列表中的物品"""
-    with db.connect("user") as conn:
+    with _db().connect("user") as conn:
         c = conn.cursor()
         c.execute("DELETE FROM watchlist_items WHERE id = ?", (item_id,))
         conn.commit()
@@ -72,7 +77,7 @@ def remove_from_watchlist(item_id: int) -> bool:
 
 def get_watchlist() -> list[dict]:
     """获取所有关注物品，JOIN item 表获取名称和市场价格"""
-    with db.connect("user", "ref", "mkt") as conn:
+    with _db().connect("user", "ref", "mkt") as conn:
         c = conn.cursor()
         c.execute(
             """
@@ -123,6 +128,8 @@ def update_watchlist_item(
     sell_threshold: float | None = None,
 ) -> bool:
     """更新关注物品的备注或阈值"""
+    from datetime import UTC, datetime
+
     updates: dict[str, object] = {}
     if note is not None:
         updates["note"] = note
@@ -132,8 +139,9 @@ def update_watchlist_item(
         updates["price_threshold_sell"] = sell_threshold
     if not updates:
         return False
-    updates["updated_at"] = "datetime('now')"
-    with db.connect("user") as conn:
+    # 用 Python 时间戳（参数化写入），不能把字符串 "datetime('now')" 当值存进去
+    updates["updated_at"] = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    with _db().connect("user") as conn:
         c = conn.cursor()
         sets = ", ".join(f"{k} = ?" for k in updates)
         vals = list(updates.values()) + [item_id]
@@ -147,7 +155,7 @@ def check_price_changes() -> list[dict]:
     返回有变化的物品列表：[(type_id, 名称, 原买价, 新买价, 原卖价, 新卖价), ...]
     同时更新 last_buy_price / last_sell_price。
     """
-    with db.connect("user", "ref", "mkt") as conn:
+    with _db().connect("user", "ref", "mkt") as conn:
         c = conn.cursor()
         c.execute(
             """

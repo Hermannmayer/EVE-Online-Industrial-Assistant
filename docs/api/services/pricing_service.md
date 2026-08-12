@@ -16,7 +16,7 @@ def trade_hub_to_system_id(hub: str) -> int | None
 
 将贸易中心名称映射为太阳系 ID。
 
-定义行：`20`
+定义行：`12`
 
 ## 类
 
@@ -24,7 +24,7 @@ def trade_hub_to_system_id(hub: str) -> int | None
 
 统一定价查询
 
-定义行：`25`
+定义行：`17`
 
 #### 方法
 
@@ -38,7 +38,7 @@ def __init__(self, db: DatabaseManager) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`28`
+定义行：`20`
 ##### `get_price`
 
 ```python
@@ -49,7 +49,7 @@ def get_price(self, type_id: int, price_type: str, hub: str | None=None) -> floa
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`32`
+定义行：`24`
 ##### `get_volume`
 
 ```python
@@ -60,16 +60,16 @@ def get_volume(self, type_id: int, vol_type: str='total', hub: str | None=None) 
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`35`
+定义行：`27`
 ##### `get_system_cost_index`
 
 ```python
 def get_system_cost_index(self, system_id: int | None, activity: str='manufacturing', hub: str='Jita') -> float
 ```
 
-获取系统成本指数。system_id=None 时从 hub 名称推断。
+获取系统成本指数。system_id=None 时从 hub 名称推断，查无/未知统一用默认 SCI。
 
-定义行：`38`
+定义行：`30`
 ##### `get_adjusted_price`
 
 ```python
@@ -78,4 +78,4 @@ def get_adjusted_price(self, type_id: int) -> float | None
 
 获取 ESI adjusted price（EIV 计算用）
 
-定义行：`51`
+定义行：`45`

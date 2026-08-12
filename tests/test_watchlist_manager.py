@@ -197,7 +197,7 @@ class TestPriceChanges:
 
     def test_check_price_changes_seeds_last_prices(self, temp_watchlist_db):
         """首次调用时 last_buy_price/last_sell_price 从 market_prices 填充"""
-        from services.watchlist_manager import add_to_watchlist, check_price_changes, get_db, init_db
+        from services.watchlist_manager import add_to_watchlist, check_price_changes, init_db
 
         init_db()
         add_to_watchlist(1001, note="材料")
@@ -265,7 +265,6 @@ class TestPriceChanges:
         from services.watchlist_manager import (
             add_to_watchlist,
             check_price_changes,
-            get_db,
             init_db,
         )
 

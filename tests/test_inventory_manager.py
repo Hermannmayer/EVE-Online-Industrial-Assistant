@@ -40,12 +40,12 @@ def inv_db():
     DB_PATH_MAP["user"] = str(user_db)
 
     db = DatabaseManager()
-    orig = im.db
-    im.db = db
+    orig = im._default_db
+    im._default_db = lambda: db
 
     yield tmpdir
 
-    im.db = orig
+    im._default_db = orig
     DB_PATH_MAP.clear()
     DB_PATH_MAP.update(saved)
     import shutil
@@ -195,7 +195,7 @@ class TestUpdateCostPrice:
 
 @pytest.fixture
 def full_db(temp_db):
-    """temp_db（4 库）+ patch inventory_manager.db + user 库补 production_plans 空表"""
+    """temp_db（4 库）+ patch inventory_manager._default_db + user 库补 production_plans 空表"""
     import services.inventory_manager as im
 
     with temp_db.connect("user") as conn:
@@ -211,10 +211,10 @@ def full_db(temp_db):
             )
             """
         )
-    orig = im.db
-    im.db = temp_db
+    orig = im._default_db
+    im._default_db = lambda: temp_db
     yield temp_db
-    im.db = orig
+    im._default_db = orig
 
 
 class TestGetItemsDisplayName:

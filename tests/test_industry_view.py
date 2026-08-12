@@ -7,8 +7,11 @@
 
 from PySide6.QtCore import Qt
 
+from services.repositories.plan_repository import PlanRepository
 from ui_pyside6.models.industry_models import PlanTableModel
-from ui_pyside6.views.industry_view import PLAN_DB_SCHEMA
+
+# production_plans schema 单一来源：PlanRepository.SCHEMA（原 industry_view.PLAN_DB_SCHEMA 已收敛）
+PLAN_DB_SCHEMA = PlanRepository.SCHEMA
 
 # ══════════════════════════════════════
 #  PLAN_DB_SCHEMA

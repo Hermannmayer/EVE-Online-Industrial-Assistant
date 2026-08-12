@@ -5,7 +5,7 @@
 import os
 import sqlite3
 
-from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH
+from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 
 
 def check_items() -> int:
@@ -82,7 +82,7 @@ def check_blueprint_names() -> int:
 
 
 def check_implants() -> int:
-    """返回 item_dogma 行数，>20 视为已初始化（约 32 个工业/发明植入体有 dogma）"""
+    """返回 item_dogma 行数，>30 视为已初始化（32 个工业/发明植入体有 dogma）。"""
     try:
         with sqlite3.connect(REF_DB_PATH) as conn:
             c = conn.cursor()
@@ -223,16 +223,20 @@ def check_schema() -> bool:
     """检查已存在的库的 schema 版本是否匹配预期
 
     不存在的库视为「待初始化」（由 init 流程创建），不阻塞启动检查。
-    与 services/schema_migrations.py 配合。
+    库文件存在但版本读取失败（损坏/不可读）→ 判为未就绪，触发修复，
+    避免「有文件但读不出版本」被静默跳过、误判 schema 就绪。
     """
-    try:
-        from services.schema_migrations import DB_SCHEMA_VERSIONS, get_db_version
+    from services.schema_migrations import DB_SCHEMA_VERSIONS, get_db_version
 
-        return all(
-            get_db_version(alias) == expected
-            for alias, expected in DB_SCHEMA_VERSIONS.items()
-            if get_db_version(alias) is not None
-        )
+    path_map = {"ref": REF_DB_PATH, "mkt": MKT_DB_PATH, "user": USR_DB_PATH, "bp": BP_DB_PATH}
+    try:
+        for alias, expected in DB_SCHEMA_VERSIONS.items():
+            db_path = path_map.get(alias)
+            if not db_path or not os.path.exists(db_path):
+                continue  # 库不存在 → 待初始化
+            if get_db_version(alias) != expected:
+                return False
+        return True
     except Exception:
         return False
 
@@ -245,7 +249,7 @@ def check_all() -> dict:
         "items": check_items() >= 10000 and check_item_names_ratio() < 0.05 and check_market_tree() > 500,
         "prices": check_prices() > 0,
         "blueprints": check_blueprints() >= 1000 and check_blueprint_names() < 100,
-        "implants": check_implants() > 20,
+        "implants": check_implants() > 30,
         "icons": cached >= int(total * 0.8),
         "industry": check_industry() > 100,
         "rigs": check_structure_rigs() > 80,

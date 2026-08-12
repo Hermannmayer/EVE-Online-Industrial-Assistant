@@ -66,7 +66,7 @@ async def main(regions: list[tuple[str, int]] | None=None)
 
 主流程：拉取合同并存入数据库
 
-定义行：`279`
+定义行：`280`
 
 ### `run_contract_update`
 
@@ -76,4 +76,4 @@ def run_contract_update(regions: list[str] | None=None)
 
 运行合同更新。
 
-定义行：`333`
+定义行：`334`

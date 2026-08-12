@@ -43,7 +43,7 @@ def _build_dbs(db_manager):
 
 def _patch(db_manager, monkeypatch):
     monkeypatch.setattr(pd, "get_container", lambda: SimpleNamespace(db=db_manager))
-    monkeypatch.setattr(inventory_manager, "db", db_manager)
+    monkeypatch.setattr(inventory_manager, "_default_db", lambda: db_manager)
 
 
 class TestDecomposePlan:
