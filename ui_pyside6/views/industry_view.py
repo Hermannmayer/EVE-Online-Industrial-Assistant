@@ -56,57 +56,15 @@ class IndustryDataWorker(QThread):
             self.finished.emit(False, str(e))
 
 
-PLAN_DB_SCHEMA = """CREATE TABLE IF NOT EXISTS production_plans (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    product_type_id INTEGER NOT NULL,
-    product_name TEXT,
-    blueprint_type_id INTEGER,
-    runs INTEGER DEFAULT 1,
-    parallels INTEGER DEFAULT 1,
-    me_level INTEGER DEFAULT 0,
-    te_level INTEGER DEFAULT 0,
-    mat_hub TEXT DEFAULT 'Jita',
-    sell_hub TEXT DEFAULT 'Jita',
-    facility TEXT DEFAULT '',
-    char_name TEXT DEFAULT '',
-    status TEXT DEFAULT 'pending',
-    profit REAL DEFAULT 0,
-    margin REAL DEFAULT 0,
-    score REAL DEFAULT 0,
-    material_cost REAL DEFAULT 0,
-    created_at TEXT,
-    started_at TEXT,
-    completed_at TEXT,
-    facility_cost_mult REAL DEFAULT 1.0,
-    calculated_time REAL DEFAULT 0,
-    notes TEXT DEFAULT '',
-    group_number INTEGER DEFAULT 0,
-    sub_level INTEGER DEFAULT 0,
-    output_location TEXT DEFAULT '',
-    market_margin REAL DEFAULT 0,
-    personal_margin REAL DEFAULT 0,
-    daily_output REAL DEFAULT 0,
-    materials_ready INTEGER DEFAULT 0,
-    iskph REAL DEFAULT 0,
-    deposit_hangar_id INTEGER DEFAULT NULL,
-    deposited INTEGER DEFAULT 0,
-    assigned_blueprint_id INTEGER DEFAULT NULL,
-    mat_hangar_id INTEGER DEFAULT NULL,
-    material_short TEXT DEFAULT '',
-    solar_system_id INTEGER DEFAULT NULL
-);
-"""
-
-
 def init_plan_db():
     """初始化 production_plans 表。
 
-    注：CREATE TABLE 已含全部扩展列（含 v2 扩展列），新库直接完整；
-    存量旧库缺列由 schema_migrations 迁移（v2→v3 / v8→v9）补齐。
+    注：production_plans 的 schema 单一来源是 PlanRepository.SCHEMA（含全部扩展列），
+    存量旧库缺列由 schema_migrations 迁移补齐。此处只额外建 price_snapshots 表。
     """
     try:
+        get_container().plan_repo.ensure_table()
         with get_container().db.connect("user") as conn:
-            conn.executescript(PLAN_DB_SCHEMA)
             # --- price_snapshots 表 ---
             conn.executescript("""CREATE TABLE IF NOT EXISTS price_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -588,41 +546,37 @@ class IndustryPage(QWidget):
         # 设置重入锁，避免 load_plans → _auto_calculate → 新 worker -> ... 无限循环
         self._recalc_busy = True
         try:
-            with get_container().db.connect("user") as conn:
-                for (
-                    plan_id,
-                    profit,
-                    margin,
-                    score,
-                    iskph,
-                    mat_cost,
-                    hours_total,
-                    daily_output,
-                    personal_margin,
-                    market_margin,
-                ) in results:
-                    try:
-                        # hours_total 转换为秒存入 calculated_time
-                        calculated_seconds = round(hours_total * 3600)
-                        conn.execute(
-                            "UPDATE production_plans SET profit=?, margin=?, score=?,"
-                            " iskph=?, material_cost=?, market_margin=?, personal_margin=?,"
-                            " calculated_time=?, daily_output=? WHERE id=?",
-                            (
-                                profit,
-                                margin,
-                                score,
-                                iskph,
-                                mat_cost,
-                                market_margin,
-                                personal_margin,
-                                calculated_seconds,
-                                daily_output,
-                                plan_id,
-                            ),
-                        )
-                    except Exception:
-                        log.exception("更新计划 %s 评分失败", plan_id)
+            rows = []
+            for (
+                plan_id,
+                profit,
+                margin,
+                score,
+                iskph,
+                mat_cost,
+                hours_total,
+                daily_output,
+                personal_margin,
+                market_margin,
+            ) in results:
+                # hours_total 转换为秒存入 calculated_time
+                rows.append(
+                    (
+                        plan_id,
+                        {
+                            "profit": profit,
+                            "margin": margin,
+                            "score": score,
+                            "iskph": iskph,
+                            "material_cost": mat_cost,
+                            "market_margin": market_margin,
+                            "personal_margin": personal_margin,
+                            "calculated_time": round(hours_total * 3600),
+                            "daily_output": daily_output,
+                        },
+                    )
+                )
+            get_container().plan_repo.update_batch(rows)
             self.load_plans()
         finally:
             self._recalc_busy = False
@@ -743,7 +697,6 @@ class IndustryPage(QWidget):
         text = text.strip()
         if not text:
             return
-        from datetime import datetime
 
         from PySide6.QtWidgets import QDialog
 
@@ -852,51 +805,27 @@ class IndustryPage(QWidget):
                     price_type_prod=ps.get("prod_price_type"),
                 )
             )
-            profit = metrics.get("profit", 0)
-            margin = metrics.get("margin", 0)
-            iskph = metrics.get("iskph", 0)
-            mat_cost = metrics.get("material_cost", 0)
-            calculated_seconds = metrics.get("calculated_time", 0)
-            daily_output = metrics.get("daily_output", 0)
-            conn3 = get_container().db.direct_connect("user")
-            try:
-                conn3.execute(
-                    "INSERT INTO production_plans "
-                    "(product_type_id, product_name, runs, parallels, me_level, te_level, "
-                    "mat_hub, sell_hub, facility, char_name, status, "
-                    "profit, margin, score, iskph, material_cost, "
-                    "calculated_time, daily_output, created_at, deposit_hangar_id, mat_hangar_id, solar_system_id, "
-                    "materials_ready) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?,1)",
-                    (
-                        type_id,
-                        product_name,
-                        data["runs"],
-                        data["parallels"],
-                        data["me"],
-                        data["te"],
-                        ps["mat_hub"],
-                        ps["prod_hub"],
-                        facility,
-                        data["char"],
-                        profit,
-                        margin,  # \u603b\u5229\u6da6\u7387\uff08\u4e0e per-run \u6bd4\u503c\u76f8\u540c\uff09
-                        metrics.get(
-                            "score", 0
-                        ),  # \u8bc4\u5206\uff08per-run\uff0c\u4e0d\u56e0\u7f29\u653e\u53d8\u5316\uff09
-                        iskph,
-                        mat_cost,
-                        calculated_seconds,
-                        daily_output,
-                        datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
-                        self._toolbar.get_hangar_id(),
-                        self._toolbar.get_mat_hangar_id(),
-                        solar_system_id,
-                    ),
-                )
-                conn3.commit()
-            finally:
-                conn3.close()
+            # \u7edf\u4e00\u8d70 plan_service \u843d\u5e93\uff08\u907f\u514d UI \u5185\u8054 INSERT \u91cd\u590d\uff09
+            from services.plan_service import insert_plan
+
+            insert_plan(
+                type_id,
+                product_name,
+                data={
+                    "runs": data["runs"],
+                    "parallels": data["parallels"],
+                    "me": data["me"],
+                    "te": data["te"],
+                    "char": data["char"],
+                },
+                mat_hub=ps["mat_hub"],
+                sell_hub=ps["prod_hub"],
+                facility=facility,
+                solar_system_id=solar_system_id,
+                mat_hangar_id=mat_hangar_id,
+                deposit_hangar_id=self._toolbar.get_hangar_id(),
+                metrics=metrics,
+            )
             self.load_plans()
             QMessageBox.information(self, "\u5b8c\u6210", f"\u5df2\u6dfb\u52a0\u8ba1\u5212: {product_name}")
 

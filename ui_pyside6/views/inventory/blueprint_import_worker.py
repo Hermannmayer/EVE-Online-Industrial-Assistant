@@ -211,7 +211,8 @@ def apply_blueprint_diff(diff_rows: list[dict], hangar_id: int, mode: str = "ful
     added = 0
     removed = 0
     with get_container().db.connect("user") as uc:
-        c = uc.cursor()
+        from services import inventory_manager
+
         for row in diff_rows:
             key = (row["blueprint_type_id"], int(row["is_bpo"]), int(row["me"]), int(row["te"]), int(row["runs"]))
             target = int(row.get("target_qty", 0))
@@ -222,17 +223,21 @@ def apply_blueprint_diff(diff_rows: list[dict], hangar_id: int, mode: str = "ful
             existing_cnt = len(row_ids)
             if target > existing_cnt:
                 for _ in range(target - existing_cnt):
-                    c.execute(
-                        "INSERT INTO user_blueprints"
-                        " (hangar_id, blueprint_type_id, is_bpo, me_level, te_level, runs, quantity)"
-                        " VALUES (?, ?, ?, ?, ?, ?, 1)",
-                        (hangar_id, *key),
+                    inventory_manager.add_blueprint(
+                        hangar_id,
+                        key[0],
+                        is_bpo=bool(key[1]),
+                        me_level=key[2],
+                        te_level=key[3],
+                        runs=key[4],
+                        quantity=1,
+                        conn=uc,
                     )
                     added += 1
             elif target < existing_cnt:
                 # 删除多余（保留 row_ids 尾部，删前面多余的）
                 for rid in row_ids[target - existing_cnt :]:
-                    c.execute("DELETE FROM user_blueprints WHERE id = ?", (rid,))
+                    inventory_manager.delete_blueprint(rid, conn=uc)
                     removed += 1
         uc.commit()
     return added, removed

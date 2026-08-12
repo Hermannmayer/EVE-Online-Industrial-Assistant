@@ -9,11 +9,16 @@
 
 import json
 
+from core.container import get_container
 from core.logger import log
-from services.database_manager import DatabaseManager, get_db
+from services.database_manager import DatabaseManager
 from services.terminology import term
 
-db = get_db()
+
+def _default_db() -> DatabaseManager:
+    """惰性获取 DatabaseManager（经容器，消除模块级单例双轨）。"""
+    return get_container().db
+
 
 # 结构本体基数（材料/成本/时间倍率 + 可装改件尺寸）
 # 来源：ESI 实测属性 strEngMatBonus=2600 / strEngCostBonus=2601 / strEngTimeBonus=2602
@@ -151,7 +156,7 @@ def get_rig_catalog(facility_type: str | None, *, _db: DatabaseManager | None = 
         return []
     size = base["rig_size"]
     group_ids = [g for g, (s, _, _) in RIG_GROUP_MAP.items() if s == size]
-    conn_mgr = _db or db
+    conn_mgr = _db or _default_db()
     placeholders = ",".join("?" * len(group_ids))
     try:
         with conn_mgr.connect("ref") as conn:
@@ -224,7 +229,7 @@ def resolve_rig_multipliers(
     time_mult = 1.0
     if not rig_ids:
         return mat_mult, time_mult
-    conn_mgr = _db or db
+    conn_mgr = _db or _default_db()
     try:
         with conn_mgr.connect("ref") as conn:
             placeholders = ",".join("?" * len(rig_ids))
@@ -251,7 +256,7 @@ def resolve_hangar_industry_config(
 ) -> dict:
     """解析机库工业配置 → {structure_mat_saving, structure_time_mod, structure_cost_mult,
     facility_tax, facility_type, rig_ids}。无机库/未配置 → 全默认（倍率 1.0、税 None）。"""
-    conn_mgr = _db or db
+    conn_mgr = _db or _default_db()
     facility_type: str | None = None
     facility_tax: float | None = None
     rig_ids: list[int] = []

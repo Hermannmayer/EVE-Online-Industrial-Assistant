@@ -14,7 +14,7 @@ ESI 端点：
 import asyncio
 import json
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 
 import aiohttp
 import aiosqlite
@@ -183,13 +183,12 @@ async def save_contracts(
     region_ids: list[int],
 ) -> tuple[int, int]:
     """批量写入合同和物品数据"""
-    fetch_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    fetch_time = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        # 清除被更新区域的旧数据
-        for rid in region_ids:
-            await db.execute("DELETE FROM public_contracts WHERE region_id = ?", (rid,))
-        # 也清除对应的 items（通过 contract_id 级联）
+        # 清除被更新区域的旧数据。注意顺序：必须先删 contract_items 再删
+        # public_contracts——若先删主表，子查询 SELECT contract_id FROM
+        # public_contracts 恒为空，contract_items 永远清不掉（孤儿残留）。
         if region_ids:
             placeholders = ",".join("?" for _ in region_ids)
             await db.execute(
@@ -200,6 +199,8 @@ async def save_contracts(
             """,
                 region_ids,
             )
+        for rid in region_ids:
+            await db.execute("DELETE FROM public_contracts WHERE region_id = ?", (rid,))
 
         # 写入合同
         contract_records = []

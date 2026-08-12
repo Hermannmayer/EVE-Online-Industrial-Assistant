@@ -48,6 +48,7 @@ class PlanRepository:
         assigned_blueprint_id INTEGER DEFAULT NULL,
         mat_hangar_id INTEGER DEFAULT NULL,
         material_short TEXT DEFAULT '',
+        deducted_materials TEXT DEFAULT '',
         solar_system_id INTEGER DEFAULT NULL
     );"""
 
@@ -110,6 +111,41 @@ class PlanRepository:
             vals = list(fields.values()) + [plan_id]
             conn.execute(f"UPDATE production_plans SET {sets} WHERE id = ?", vals)
             return conn.total_changes > 0  # type: ignore[no-any-return]
+
+    def update_many(self, plan_ids: list[int], **fields) -> int:
+        """批量更新多条计划的同一组字段（列名来自内部，参数化值）。返回受影响行数。"""
+        if not plan_ids or not fields:
+            return 0
+        with self._db.connect("user") as conn:
+            sets = ", ".join(f"{k} = ?" for k in fields)
+            ph = ",".join("?" * len(plan_ids))
+            vals = list(fields.values()) + list(plan_ids)
+            cur = conn.execute(f"UPDATE production_plans SET {sets} WHERE id IN ({ph})", vals)
+            return int(cur.rowcount)
+
+    def update_batch(self, rows: list[tuple[int, dict]]) -> int:
+        """批量异构更新：rows = [(plan_id, {field: value}), ...]，单连接单事务。返回更新行数。"""
+        if not rows:
+            return 0
+        total = 0
+        with self._db.connect("user") as conn:
+            for plan_id, fields in rows:
+                if not fields:
+                    continue
+                sets = ", ".join(f"{k} = ?" for k in fields)
+                vals = list(fields.values()) + [plan_id]
+                cur = conn.execute(f"UPDATE production_plans SET {sets} WHERE id = ?", vals)
+                total += int(cur.rowcount)
+        return total
+
+    def delete_many(self, plan_ids: list[int]) -> int:
+        """批量删除计划（蓝图表关联清理由调用方 release_blueprint 处理）。返回删除行数。"""
+        if not plan_ids:
+            return 0
+        with self._db.connect("user") as conn:
+            ph = ",".join("?" * len(plan_ids))
+            cur = conn.execute(f"DELETE FROM production_plans WHERE id IN ({ph})", list(plan_ids))
+            return int(cur.rowcount)
 
     def delete(self, plan_id: int) -> bool:
         with self._db.connect("user") as conn:

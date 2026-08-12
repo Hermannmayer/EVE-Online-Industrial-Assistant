@@ -28,15 +28,15 @@ Attempt to acquire the single-instance lock.
 
 定义行：`21`
 
-### `_acquire`
+### `_try_exclusive_acquire`
 
 ```python
-def _acquire(own_pid: int, target: Path) -> bool
+def _try_exclusive_acquire(own_pid: int, target: Path) -> bool | None
 ```
 
-写入锁文件；失败时降级为允许运行，避免 Windows 瞬时锁冲突导致启动崩溃。
+原子创建锁文件（O_EXCL），消除 check-then-act 竞态。
 
-定义行：`56`
+定义行：`74`
 
 ### `_safe_unlink`
 
@@ -46,7 +46,7 @@ def _safe_unlink(target: Path)
 
 删除锁文件；删除失败（句柄被占用）时不抛出。
 
-定义行：`66`
+定义行：`95`
 
 ### `_is_pid_alive`
 
@@ -58,7 +58,7 @@ def _is_pid_alive(pid: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`74`
+定义行：`103`
 
 ### `_win32_is_pid_alive`
 
@@ -70,7 +70,7 @@ def _win32_is_pid_alive(pid: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`86`
+定义行：`115`
 
 ### `unlock`
 
@@ -80,7 +80,7 @@ def unlock(lock_file: Path | str | None=None)
 
 Release the single-instance lock.
 
-定义行：`107`
+定义行：`136`
 
 ### `show_message`
 
@@ -90,4 +90,4 @@ def show_message()
 
 Print a notice to stderr that another instance is already running.
 
-定义行：`120`
+定义行：`149`

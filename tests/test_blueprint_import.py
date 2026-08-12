@@ -91,7 +91,7 @@ class TestApplyBlueprintDiff:
             conn.execute(
                 "CREATE TABLE user_blueprints (id INTEGER PRIMARY KEY AUTOINCREMENT, hangar_id INTEGER, "
                 "blueprint_type_id INTEGER, is_bpo INTEGER, me_level INTEGER, te_level INTEGER, "
-                "runs INTEGER, quantity INTEGER)"
+                "runs INTEGER, quantity INTEGER, notes TEXT DEFAULT '')"
             )
         return db_manager
 

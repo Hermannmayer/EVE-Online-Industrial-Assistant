@@ -35,32 +35,61 @@ def try_lock(force: bool = False, lock_file: Path | str | None = None) -> bool:
     target.parent.mkdir(parents=True, exist_ok=True)
     own_pid = os.getpid()
 
-    if target.exists():
-        try:
-            data = target.read_text().strip()
-            pid_str, _hostname = data.split(":", 1)
-            pid = int(pid_str)
-        except (ValueError, OSError):
-            # 锁文件损坏或读取失败（可能正被其他进程瞬时占用）→ 清理后重建
-            _safe_unlink(target)
-            return _acquire(own_pid, target)
-
-        if pid != own_pid:
-            if _is_pid_alive(pid):
-                return False
-            _safe_unlink(target)
-
-    return _acquire(own_pid, target)
-
-
-def _acquire(own_pid: int, target: Path) -> bool:
-    """写入锁文件；失败时降级为允许运行，避免 Windows 瞬时锁冲突导致启动崩溃。"""
-    try:
-        target.write_text(f"{own_pid}:{os.name}")
+    # 1) 原子获取（O_CREAT|O_EXCL）：成功即拿到锁，无双开竞态
+    got = _try_exclusive_acquire(own_pid, target)
+    if got is True:
         return True
+    if got is None:
+        return True  # IO 失败降级为允许运行
+
+    # 2) 文件已存在：读取 PID 判定是残留还是存活实例
+    try:
+        data = target.read_text().strip()
+        pid_str, _hostname = data.split(":", 1)
+        pid = int(pid_str)
+    except (ValueError, OSError):
+        # 锁文件损坏 → 清理后重试原子获取
+        _safe_unlink(target)
+        got = _try_exclusive_acquire(own_pid, target)
+        return True if got is not False else False
+
+    if pid == own_pid:
+        return True  # 自身已持有（重入）
+    if _is_pid_alive(pid):
+        return False  # 另一实例正在运行
+    # 残留 PID（已死进程）→ 清理后原子重取
+    _safe_unlink(target)
+    got = _try_exclusive_acquire(own_pid, target)
+    if got is True or got is None:
+        return True
+    # 极窄窗口：清理后又被另一进程占住 → 按其是否存活判定
+    try:
+        data = target.read_text().strip()
+        pid = int(data.split(":", 1)[0])
+        return not _is_pid_alive(pid)
+    except Exception:
+        return False
+
+
+def _try_exclusive_acquire(own_pid: int, target: Path) -> bool | None:
+    """原子创建锁文件（O_EXCL），消除 check-then-act 竞态。
+
+    Returns:
+        True = 本次成功取得锁；False = 文件已存在（被占/残留）；
+        None = IO 失败（调用方降级为允许运行，避免 Windows 瞬时锁冲突导致启动崩溃）。
+    """
+    try:
+        fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        try:
+            os.write(fd, f"{own_pid}:{os.name}".encode())
+        finally:
+            os.close(fd)
+        return True
+    except FileExistsError:
+        return False
     except OSError as e:
         log.warning("写入单实例锁文件失败 %s: %s — 降级运行", target, e)
-        return True
+        return None
 
 
 def _safe_unlink(target: Path):

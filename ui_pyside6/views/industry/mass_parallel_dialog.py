@@ -218,16 +218,11 @@ class MassParallelDialog(QDialog):
         if not self._preview:
             QMessageBox.warning(self, "提示", "请先点「计算预览」")
             return
-        conn = get_container().db.direct_connect("user")
-        try:
-            for r in self._preview:
-                conn.execute("UPDATE production_plans SET parallels=? WHERE id=?", (r["parallels"], r["id"]))
-                for p in self._plans:
-                    if p["id"] == r["id"]:
-                        p["parallels"] = r["parallels"]
-                        break
-            conn.commit()
-        finally:
-            conn.close()
+        get_container().plan_repo.update_batch([(r["id"], {"parallels": r["parallels"]}) for r in self._preview])
+        for r in self._preview:
+            for p in self._plans:
+                if p["id"] == r["id"]:
+                    p["parallels"] = r["parallels"]
+                    break
         QMessageBox.information(self, "完成", f"已更新 {len(self._preview)} 个子项的并行数")
         self.accept()

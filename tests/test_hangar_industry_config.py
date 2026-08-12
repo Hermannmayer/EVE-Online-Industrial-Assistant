@@ -198,7 +198,7 @@ class TestGetRigCatalog:
         cm.__enter__.return_value = mock_conn
         mock_db = MagicMock()
         mock_db.connect.return_value = cm
-        monkeypatch.setattr(hic, "db", mock_db)
+        monkeypatch.setattr(hic, "_default_db", lambda: mock_db)
 
         catalog = hic.get_rig_catalog("raitaru")
         assert len(catalog) == 1
@@ -219,7 +219,7 @@ class TestGetRigCatalog:
         cm.__enter__.return_value = mock_conn
         mock_db = MagicMock()
         mock_db.connect.return_value = cm
-        monkeypatch.setattr(hic, "db", mock_db)
+        monkeypatch.setattr(hic, "_default_db", lambda: mock_db)
 
         catalog = hic.get_rig_catalog("raitaru")
         assert len(catalog) == 2
@@ -253,7 +253,7 @@ class TestRigCategoryLabel:
         cm.__enter__.return_value = mock_conn
         mock_db = MagicMock()
         mock_db.connect.return_value = cm
-        monkeypatch.setattr(hic, "db", mock_db)
+        monkeypatch.setattr(hic, "_default_db", lambda: mock_db)
 
         catalog = hic.get_rig_catalog("raitaru")
         assert catalog[0]["category_key"] == "me_research"

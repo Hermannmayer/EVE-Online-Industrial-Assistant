@@ -9,6 +9,16 @@
 
 ## 函数
 
+### `_ref_db`
+
+```python
+async def _ref_db()
+```
+
+reference.db 写库上下文：per-DB 写锁 + 连接。
+
+定义行：`23`
+
 ### `create_tables`
 
 ```python
@@ -17,7 +27,7 @@ async def create_tables()
 
 创建 reference.db 和 user.db 中的表
 
-定义行：`37`
+定义行：`50`
 
 ### `run_industry_update`
 
@@ -29,4 +39,14 @@ async def run_industry_update(progress_cb=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`81`
+定义行：`94`
+
+### `industry_data_is_fresh`
+
+```python
+def industry_data_is_fresh(db_path: str, max_age_days: int=1) -> bool
+```
+
+判断工业数据（成本指数/设施）是否就绪且新鲜。
+
+定义行：`162`

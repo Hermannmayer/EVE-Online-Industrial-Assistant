@@ -70,7 +70,8 @@ CREATE TABLE IF NOT EXISTS production_plans (
     assigned_blueprint_id INTEGER DEFAULT NULL,
     mat_hangar_id INTEGER DEFAULT NULL,
     solar_system_id INTEGER DEFAULT NULL,
-    material_short TEXT DEFAULT ''
+    material_short TEXT DEFAULT '',
+    deducted_materials TEXT DEFAULT ''
 );
 """
 
@@ -114,7 +115,7 @@ def user_env(_module_user_db, monkeypatch):
     db = _module_user_db
     # 关键：把 inventory_manager 的模块级单例 db 换成共享的 DatabaseManager，
     # 避免线程本地连接缓存指向上一个测试已删除的临时库（导致「no such table/已删除」污染）
-    monkeypatch.setattr(inventory_manager, "db", db)
+    monkeypatch.setattr(inventory_manager, "_default_db", lambda: db)
     inventory_manager.init_db()  # hangars 空时 seed 默认机库（hangar 1 等），测试依赖
     with db.connect("user") as conn:
         # 只清数据表，保留 hangars（init_db seed 的默认机库，inventory_items/user_blueprints 有 FK 引用）
@@ -504,6 +505,60 @@ class TestCancelPlan:
         assert res["returned"] == 200
         assert inventory_manager.get_hangar_stock(1)[1001] == 500  # 返还 200
 
+    def test_start_records_deducted_snapshot(self, user_env):
+        """启动时把实际扣减量持久化为快照（撤销精确返还的依据）"""
+        _insert_item(user_env.db, 1, 1001, 500)
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 1001, "name": "三钛合金", "qty": 100.0}]
+        }
+        pid = _insert_plan(user_env.db, runs=2, mat_hangar_id=1)
+        plan = _get_plan(user_env.db, pid)
+        start_plan(plan, mat_hangar_id=1)
+        db_plan = _get_plan(user_env.db, pid)
+        assert db_plan["deducted_materials"]  # 快照 JSON 已落库
+        assert "1001" in db_plan["deducted_materials"]
+
+    def test_cancel_uses_snapshot_when_scoring_fails(self, user_env):
+        """撤销不依赖评分：即使评分抛异常，仍按快照精确返还（回归 P1-3）"""
+        _insert_item(user_env.db, 1, 1001, 500)
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 1001, "name": "三钛合金", "qty": 100.0}]
+        }
+        pid = _insert_plan(user_env.db, runs=2, mat_hangar_id=1)
+        plan = _get_plan(user_env.db, pid)
+        start_plan(plan, mat_hangar_id=1)
+        assert inventory_manager.get_hangar_stock(1)[1001] == 300  # 扣 200
+
+        # 评分开始抛异常（模拟撤销时数据缺失）—— 快照路径不触发评分
+        user_env.scoring.calculate_plan_metrics.side_effect = RuntimeError("scoring down")
+        plan = _get_plan(user_env.db, pid)
+        res = cancel_plan(plan)
+        assert res["ok"]
+        assert res["returned"] == 200
+        assert inventory_manager.get_hangar_stock(1)[1001] == 500  # 返还 200
+
+    def test_cancel_falls_back_to_recompute_without_snapshot(self, user_env):
+        """旧计划无快照（deducted_materials 为空）→ 回退「需求-缺口」推导"""
+        _insert_item(user_env.db, 1, 1001, 500)
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 1001, "name": "三钛合金", "qty": 100.0}]
+        }
+        pid = _insert_plan(
+            user_env.db,
+            runs=2,
+            mat_hangar_id=1,
+            status="in_progress",
+            started_at="2026-01-01 00:00:00",
+            material_short="",
+            deducted_materials="",
+        )
+        inventory_manager.deduct_item(1, 1001, 200)  # 模拟旧版启动的手工扣减
+        plan = _get_plan(user_env.db, pid)
+        res = cancel_plan(plan)
+        assert res["ok"]
+        assert res["returned"] == 200
+        assert inventory_manager.get_hangar_stock(1)[1001] == 500
+
 
 class TestResetPlanForReuse:
     def test_completed_resets_for_reuse(self, user_env):
@@ -797,9 +852,7 @@ class TestCompletePlansCoordinator:
         from types import SimpleNamespace
 
         container = SimpleNamespace(db=user_env.db, scoring_service=lambda: user_env.scoring)
-        monkeypatch.setattr(
-            "ui_pyside6.views.industry.complete_plans_dialog.get_container", lambda: container
-        )
+        monkeypatch.setattr("ui_pyside6.views.industry.complete_plans_dialog.get_container", lambda: container)
         return container
 
     def test_complete_to_hangar(self, user_env, monkeypatch):

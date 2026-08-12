@@ -64,7 +64,7 @@ def check_blueprint_names() -> int
 def check_implants() -> int
 ```
 
-返回 item_dogma 行数，>20 视为已初始化（约 32 个工业/发明植入体有 dogma）
+返回 item_dogma 行数，>30 视为已初始化（32 个工业/发明植入体有 dogma）。
 
 定义行：`84`
 
@@ -176,7 +176,7 @@ def check_all() -> dict
 
 返回各组件状态 &#123; "items": bool, "prices": bool, "blueprints": bool, ... &#125;
 
-定义行：`240`
+定义行：`244`
 
 ### `missing_count`
 
@@ -186,4 +186,4 @@ def missing_count() -> int
 
 返回未就绪的组件数量
 
-定义行：`262`
+定义行：`266`

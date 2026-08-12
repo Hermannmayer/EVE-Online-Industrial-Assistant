@@ -156,8 +156,14 @@ def expand_material_requirements(
     materials: dict[int, dict[str, Any]] = {}
     seen: set[int] = set()
 
-    def _expand(product_type_id: int, qty: int, me: int):
-        """递归展开 BOM，叶子节点加入 materials"""
+    def _expand(product_type_id: int, qty: int, me: int, depth: int = 0):
+        """递归展开 BOM，叶子节点加入 materials。
+
+        depth 递增并以 max_depth 封顶：真实环（A→B→A）或异常数据在此终止，
+        避免无限递归栈溢出（历史缺陷：seen 命中仍递归其材料、且无深度限制）。
+        """
+        if depth > max_depth:
+            return
         if product_type_id in seen:
             # 已处理过，累加需求
             if product_type_id in materials:
@@ -176,7 +182,7 @@ def expand_material_requirements(
                 ).fetchall()
                 for mat_id, mat_qty in mats:
                     mat_total = calc_material_for_runs(mat_qty, _DEFAULT_WASTE, me, math.ceil(qty / 1))
-                    _expand(mat_id, mat_total, me)
+                    _expand(mat_id, mat_total, me, depth + 1)
             return
         seen.add(product_type_id)
 
@@ -215,7 +221,7 @@ def expand_material_requirements(
         for mat_id, mat_qty in mats:
             mat_total = calc_material_for_runs(mat_qty, _DEFAULT_WASTE, me, runs_needed)
             # 由 _expand 内部统一记录，避免重复（父循环记录一次 + _expand 再记一次 → 翻倍）
-            _expand(mat_id, mat_total, me)
+            _expand(mat_id, mat_total, me, depth + 1)
 
     for plan in plans:
         pid = plan.get("product_type_id")
@@ -224,7 +230,7 @@ def expand_material_requirements(
         parallels = plan.get("parallels", 1) or 1
         me = plan.get("me_level", me_level) or me_level
         total_qty = runs * parallels
-        _expand(pid, total_qty, me)
+        _expand(pid, total_qty, me, 0)
 
     return materials
 

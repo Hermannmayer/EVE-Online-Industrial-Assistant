@@ -49,3 +49,13 @@ def datetime_now_str() -> str
 :::
 
 定义行：`136`
+
+### `enrich_plan_hangar_names`
+
+```python
+def enrich_plan_hangar_names(rows: list[dict], hangar_names: dict[int, str]) -> list[dict]
+```
+
+为计划行补派生显示字段（内存，不落库）。
+
+定义行：`142`

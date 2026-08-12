@@ -16,10 +16,10 @@ REGION_ID = 10000002  # The Forge
 CACHE_TTL_SECONDS = 3600
 
 
-def _ensure_table() -> None:
+def _ensure_table(db=None) -> None:
     """Ensure price_history table exists in market.db"""
-    db = get_db()
-    with db.connect("mkt") as conn:
+    conn_mgr = db or get_db()
+    with conn_mgr.connect("mkt") as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS price_history (
                 type_id INTEGER NOT NULL,
@@ -66,14 +66,14 @@ async def fetch_history(
         return await _do(sess)
 
 
-def get_cached_history(type_id: int, region_id: int = REGION_ID) -> list[dict] | None:
+def get_cached_history(type_id: int, region_id: int = REGION_ID, _db=None) -> list[dict] | None:
     """Read cached history from market.db
 
     Returns cached data if fresh (within CACHE_TTL), None otherwise.
     """
-    _ensure_table()
-    db = get_db()
-    with db.connect("mkt") as conn:
+    conn_mgr = _db or get_db()
+    _ensure_table(conn_mgr)
+    with conn_mgr.connect("mkt") as conn:
         row = conn.execute(
             "SELECT MAX(fetched_at) as latest FROM price_history WHERE type_id=? AND region_id=?",
             (type_id, region_id),
@@ -95,11 +95,11 @@ def get_cached_history(type_id: int, region_id: int = REGION_ID) -> list[dict] |
     return None
 
 
-def save_cache(type_id: int, region_id: int, data: list[dict]) -> None:
+def save_cache(type_id: int, region_id: int, data: list[dict], _db=None) -> None:
     """Save price history to market.db cache"""
-    _ensure_table()
-    db = get_db()
-    with db.connect("mkt") as conn:
+    conn_mgr = _db or get_db()
+    _ensure_table(conn_mgr)
+    with conn_mgr.connect("mkt") as conn:
         conn.execute(
             "DELETE FROM price_history WHERE type_id=? AND region_id=?",
             (type_id, region_id),
@@ -123,3 +123,22 @@ def save_cache(type_id: int, region_id: int, data: list[dict]) -> None:
                     now,
                 ),
             )
+
+
+class PriceHistoryService:
+    """价格历史服务 — 容器注入 DatabaseManager（替代模块级 get_db 单例）"""
+
+    def __init__(self, db):
+        self._db = db
+
+    async def fetch(self, type_id: int, region_id: int = REGION_ID, session=None) -> list[dict] | None:
+        """拉取 ESI 历史价格（失败返回 None）"""
+        return await fetch_history(type_id, region_id, session)
+
+    def get_cached(self, type_id: int, region_id: int = REGION_ID) -> list[dict] | None:
+        """读取缓存历史价格（TTL 内命中，否则 None）"""
+        return get_cached_history(type_id, region_id, _db=self._db)
+
+    def save(self, type_id: int, region_id: int, data: list[dict]) -> None:
+        """写入缓存历史价格"""
+        save_cache(type_id, region_id, data, _db=self._db)

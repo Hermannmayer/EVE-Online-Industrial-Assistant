@@ -48,7 +48,7 @@ def test_update_btn_is_plain(main_window):
 def test_load_update_regions_default_jita(qapp):
     """settings 无 update_regions 时默认仅 Jita。"""
     with (
-        patch("ui_pyside6.main_window.search_history_file", return_value="C:/nonexistent_eve_settings.json"),
+        patch("services.user_settings.load_settings", return_value={}),
         patch.object(MainWindow, "_init_price_check", lambda self: None),
         patch.object(MainWindow, "_register_pages", lambda self: None),
         patch.object(MainWindow, "setStyleSheet", lambda self, x: None),
@@ -60,10 +60,8 @@ def test_load_update_regions_default_jita(qapp):
 
 def test_load_update_regions_from_settings(qapp, tmp_path):
     """从 settings.json 读取勾选的更新区域。"""
-    settings = tmp_path / "settings.json"
-    settings.write_text('{"update_regions": ["Jita", "Hek"]}', encoding="utf-8")
     with (
-        patch("ui_pyside6.main_window.search_history_file", return_value=str(settings)),
+        patch("services.user_settings.load_settings", return_value={"update_regions": ["Jita", "Hek"]}),
         patch.object(MainWindow, "_init_price_check", lambda self: None),
         patch.object(MainWindow, "_register_pages", lambda self: None),
         patch.object(MainWindow, "setStyleSheet", lambda self, x: None),

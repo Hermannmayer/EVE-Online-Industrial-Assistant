@@ -303,7 +303,7 @@ wheels = [
 
 [[package]]
 name = "eve-industrial-assistant"
-version = "0.7.0"
+version = "0.15.2"
 source = { virtual = "." }
 dependencies = [
     { name = "aiohttp" },

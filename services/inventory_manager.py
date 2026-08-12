@@ -5,11 +5,16 @@
 import json
 from datetime import UTC, datetime
 
+from core.container import get_container
 from core.logger import log
-from services.database_manager import DatabaseManager, get_db
+from services.database_manager import DatabaseManager
 from services.terminology import term
 
-db = get_db()
+
+def _default_db() -> DatabaseManager:
+    """惰性获取 DatabaseManager（经容器，消除模块级单例双轨）。"""
+    return get_container().db
+
 
 # ── Schema ──
 
@@ -54,7 +59,7 @@ DEFAULT_HANGARS = ["矿仓", "组件仓", "产品仓", "通用仓库"]
 
 
 def init_db():
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         conn.executescript(SCHEMA)
         # cost_per_run 列已由 schema_migrations user v1→v2 处理，此处不再需要
         c = conn.cursor()
@@ -71,7 +76,7 @@ def init_db():
 
 
 def get_hangars() -> list[dict]:
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         c.execute("SELECT id, name, notes, solar_system_id, facility_type, facility_tax, rigs FROM hangars ORDER BY id")
         return [
@@ -90,7 +95,7 @@ def get_hangars() -> list[dict]:
 
 def create_hangar(name: str, solar_system_id: int | None = None) -> int:
     try:
-        with db.connect("user") as conn:
+        with _default_db().connect("user") as conn:
             c = conn.cursor()
             c.execute("INSERT INTO hangars (name, solar_system_id) VALUES (?, ?)", (name, solar_system_id))
             return c.lastrowid or 0
@@ -99,7 +104,7 @@ def create_hangar(name: str, solar_system_id: int | None = None) -> int:
 
 
 def rename_hangar(hangar_id: int, name: str) -> bool:
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         c.execute("UPDATE hangars SET name = ? WHERE id = ?", (name, hangar_id))
         return c.rowcount > 0
@@ -107,7 +112,7 @@ def rename_hangar(hangar_id: int, name: str) -> bool:
 
 def update_hangar_system(hangar_id: int, solar_system_id: int | None) -> bool:
     """设置机库所在星系（None 清除）。"""
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         c.execute("UPDATE hangars SET solar_system_id = ? WHERE id = ?", (solar_system_id, hangar_id))
         return c.rowcount > 0
@@ -117,7 +122,7 @@ def get_hangar_system_id(hangar_id: int | None, *, _db: DatabaseManager | None =
     """读取机库所在星系的 solar_system_id（无机库/未设置返回 None）。"""
     if not hangar_id:
         return None
-    conn_mgr = _db or db
+    conn_mgr = _db or _default_db()
     with conn_mgr.connect("user") as conn:
         row = conn.execute("SELECT solar_system_id FROM hangars WHERE id = ?", (hangar_id,)).fetchone()
         return row[0] if row and row[0] is not None else None
@@ -128,7 +133,7 @@ def get_hangar_name(hangar_id: int | None) -> str:
     if not hangar_id:
         return ""
     try:
-        with db.connect("user") as conn:
+        with _default_db().connect("user") as conn:
             row = conn.execute("SELECT name FROM hangars WHERE id = ?", (hangar_id,)).fetchone()
             return row[0] if row else ""
     except Exception:
@@ -166,7 +171,7 @@ def update_hangar_config(
     rigs: list[int] | None,
 ) -> bool:
     """更新机库工业配置（设施类型/设施税/改件）。rigs 存 JSON 数组。"""
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         c.execute(
             "UPDATE hangars SET facility_type=?, facility_tax=?, rigs=? WHERE id=?",
@@ -180,7 +185,7 @@ def get_hangar_config(hangar_id: int | None) -> dict:
     default: dict = {"facility_type": None, "facility_tax": None, "rigs": []}
     if not hangar_id:
         return default
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         row = conn.execute(
             "SELECT facility_type, facility_tax, rigs FROM hangars WHERE id = ?",
             (hangar_id,),
@@ -196,7 +201,7 @@ def get_hangar_config(hangar_id: int | None) -> dict:
 
 
 def delete_hangar(hangar_id: int) -> bool:
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         c.execute("DELETE FROM inventory_items WHERE hangar_id = ?", (hangar_id,))
         c.execute("DELETE FROM hangars WHERE id = ?", (hangar_id,))
@@ -204,7 +209,7 @@ def delete_hangar(hangar_id: int) -> bool:
 
 
 def get_items(hangar_id: int) -> list[dict]:
-    with db.connect("user", "ref", "mkt", "bp") as conn:
+    with _default_db().connect("user", "ref", "mkt", "bp") as conn:
         c = conn.cursor()
         c.execute(
             """
@@ -272,7 +277,7 @@ def get_items(hangar_id: int) -> list[dict]:
             from services.research_calculator import research_costs_batch
 
             sys_id = get_hangar_system_id(hangar_id)
-            with db.connect("bp") as bp_conn:
+            with _default_db().connect("bp") as bp_conn:
                 costs = research_costs_batch(bp_conn, [it["type_id"] for it in items], solar_system_id=sys_id)
             for it in items:
                 it["research_cost"] = costs.get(it["type_id"])
@@ -282,7 +287,7 @@ def get_items(hangar_id: int) -> list[dict]:
 
 
 def get_item_price(type_id: int) -> float | None:
-    with db.connect("mkt") as conn:
+    with _default_db().connect("mkt") as conn:
         c = conn.cursor()
         c.execute("SELECT sell_price FROM market_prices WHERE type_id = ? AND region_id = 10000002 LIMIT 1", (type_id,))
         r = c.fetchone()
@@ -301,7 +306,7 @@ def get_inventory_cost_map(_db: DatabaseManager | None = None) -> dict[int, tupl
     Returns:
         {type_id: (总数量, 加权平均成本)}，仅含 quantity > 0 的物品。
     """
-    conn_mgr = _db or db
+    conn_mgr = _db or _default_db()
     result: dict[int, tuple[int, float]] = {}
     with conn_mgr.connect("user") as conn:
         c = conn.cursor()
@@ -354,7 +359,7 @@ def add_item(hangar_id: int, type_id: int, quantity: int, cost_price: float = 0,
 
     if conn is not None:
         return _do(conn)
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         return _do(conn)
 
 
@@ -404,13 +409,13 @@ def set_item_quantity(
 
     if conn is not None:
         return _do(conn)
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         return _do(conn)
 
 
 def update_cost_price(item_id: int, cost_price: float) -> bool:
     """直接覆盖该库存行的单位成本价（参数化 UPDATE，返回是否命中）。"""
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         c.execute("UPDATE inventory_items SET cost_price = ? WHERE id = ?", (round(cost_price, 2), item_id))
         return c.rowcount > 0
@@ -422,7 +427,7 @@ def get_hangar_stock(hangar_id: int) -> dict[int, int]:
     供「启动生产计划」材料校验/扣减使用。
     """
     result: dict[int, int] = {}
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         c.execute(
             "SELECT type_id, quantity FROM inventory_items WHERE hangar_id = ? AND quantity > 0",
@@ -430,6 +435,22 @@ def get_hangar_stock(hangar_id: int) -> dict[int, int]:
         )
         for tid, qty in c.fetchall():
             result[int(tid)] = int(qty)
+    return result
+
+
+def get_hangar_cost_map(hangar_id: int) -> dict[int, float]:
+    """单机库物品成本快照 {type_id: 加权平均成本}。
+
+    轻量单查询（不走 get_items 的 N+1），供撤销启动返还时按原成本回补、避免稀释。
+    """
+    result: dict[int, float] = {}
+    with _default_db().connect("user") as conn:
+        rows = conn.execute(
+            "SELECT type_id, cost_price FROM inventory_items WHERE hangar_id = ?",
+            (hangar_id,),
+        ).fetchall()
+        for tid, cost in rows:
+            result[int(tid)] = float(cost or 0)
     return result
 
 
@@ -463,14 +484,14 @@ def deduct_item(hangar_id: int, type_id: int, quantity: int, *, conn=None) -> in
 
     if conn is not None:
         return _do(conn)
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         deducted = _do(conn)
         conn.commit()
         return deducted
 
 
 def remove_item(item_id: int) -> bool:
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         c.execute("DELETE FROM inventory_items WHERE id = ?", (item_id,))
         return c.rowcount > 0
@@ -479,7 +500,7 @@ def remove_item(item_id: int) -> bool:
 def update_quantity(item_id: int, quantity: int) -> bool:
     if quantity < 0:
         return False
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         if quantity == 0:
             c.execute("DELETE FROM inventory_items WHERE id = ?", (item_id,))
@@ -489,7 +510,7 @@ def update_quantity(item_id: int, quantity: int) -> bool:
 
 
 def move_items(item_ids: list[int], to_hangar_id: int):
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         for item_id in item_ids:
             c.execute("SELECT hangar_id, type_id, quantity, cost_price FROM inventory_items WHERE id = ?", (item_id,))
@@ -529,7 +550,7 @@ def move_quantity(from_hangar_id: int, type_id: int, quantity: int, to_hangar_id
     """
     if quantity <= 0 or from_hangar_id == to_hangar_id:
         return 0
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         row = conn.execute(
             "SELECT quantity, cost_price FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
             (from_hangar_id, type_id),
@@ -545,7 +566,7 @@ def move_quantity(from_hangar_id: int, type_id: int, quantity: int, to_hangar_id
 
 def get_total_value(hangar_id: int, price_type: str = "sell", discount: float = 0) -> dict:
     col = "sell_price" if price_type == "sell" else "buy_price"
-    with db.connect("user", "mkt") as conn:
+    with _default_db().connect("user", "mkt") as conn:
         c = conn.cursor()
         c.execute(
             f"""
@@ -584,21 +605,29 @@ def add_blueprint(
     runs: int = 1,
     quantity: int = 1,
     notes: str = "",
+    *,
+    conn=None,
 ) -> int:
-    with db.connect("user") as conn:
-        c = conn.cursor()
-        c.execute(
+    """新增蓝图。conn 传入时在同一连接执行且不提交（由调用方统一事务）。"""
+
+    def _do(c) -> int:
+        cur = c.execute(
             """INSERT INTO user_blueprints (hangar_id, blueprint_type_id, is_bpo,
                      me_level, te_level, runs, quantity, notes)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (hangar_id, blueprint_type_id, int(is_bpo), me_level, te_level, runs, quantity, notes),
         )
-        return c.lastrowid or 0
+        return cur.lastrowid or 0
+
+    if conn is not None:
+        return _do(conn)
+    with _default_db().connect("user") as conn:
+        return _do(conn)
 
 
 def get_blueprints(hangar_id: int | None = None) -> list[dict]:
     """获取用户蓝图列表，可指定机库或全部"""
-    with db.connect("user", "ref") as conn:
+    with _default_db().connect("user", "ref") as conn:
         c = conn.cursor()
         if hangar_id is not None:
             c.execute(
@@ -644,7 +673,7 @@ def update_blueprint(bp_id: int, **kwargs) -> bool:
         return False
     if "is_bpo" in updates:
         updates["is_bpo"] = int(updates["is_bpo"])
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         sets = ", ".join(f"{k} = ?" for k in updates)
         vals = list(updates.values()) + [bp_id]
@@ -652,18 +681,24 @@ def update_blueprint(bp_id: int, **kwargs) -> bool:
         return c.rowcount > 0
 
 
-def delete_blueprint(bp_id: int) -> bool:
-    with db.connect("user") as conn:
-        c = conn.cursor()
-        c.execute("DELETE FROM user_blueprints WHERE id = ?", (bp_id,))
-        return c.rowcount > 0
+def delete_blueprint(bp_id: int, *, conn=None) -> bool:
+    """删除蓝图。conn 传入时在同一连接执行且不提交（由调用方统一事务）。"""
+
+    def _do(c) -> bool:
+        cur = c.execute("DELETE FROM user_blueprints WHERE id = ?", (bp_id,))
+        return bool(cur.rowcount > 0)
+
+    if conn is not None:
+        return _do(conn)
+    with _default_db().connect("user") as conn:
+        return _do(conn)
 
 
 def delete_blueprints_batch(ids: list[int]) -> int:
     """批量删除蓝图，返回删除行数"""
     if not ids:
         return 0
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         placeholders = ",".join("?" * len(ids))
         c.execute(f"DELETE FROM user_blueprints WHERE id IN ({placeholders})", tuple(ids))
@@ -674,7 +709,7 @@ def move_blueprints_to_hangar(ids: list[int], hangar_id: int) -> int:
     """批量移动蓝图到目标机库"""
     if not ids:
         return 0
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         placeholders = ",".join("?" * len(ids))
         c.execute(f"UPDATE user_blueprints SET hangar_id = ? WHERE id IN ({placeholders})", (hangar_id, *ids))
@@ -689,7 +724,7 @@ def update_blueprints_batch(ids: list[int], **kwargs) -> int:
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return 0
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         sets = ", ".join(f"{k} = ?" for k in updates)
         placeholders = ",".join("?" * len(ids))
@@ -702,7 +737,7 @@ def get_blueprint_product_info(blueprint_type_id: int) -> dict | None:
     """获取蓝图的产物信息（名称、产量、制造时间）"""
     from core.eve_formulas import resolve_item_name
 
-    with db.connect("bp", "ref") as conn:
+    with _default_db().connect("bp", "ref") as conn:
         c = conn.cursor()
         c.execute(
             """
@@ -735,7 +770,7 @@ def get_blueprint_product_info_batch(bp_ids: list[int]) -> dict[int, dict]:
     if not bp_ids:
         return {}
     result = {}
-    with db.connect("bp", "ref") as conn:
+    with _default_db().connect("bp", "ref") as conn:
         c = conn.cursor()
         placeholders = ",".join("?" * len(bp_ids))
         c.execute(
@@ -764,7 +799,7 @@ def get_blueprint_materials_batch(bp_ids: list[int]) -> dict[int, list[tuple[int
     if not bp_ids:
         return {}
     result: dict[int, list[tuple[int, int]]] = {bpid: [] for bpid in bp_ids}
-    with db.connect("bp") as conn:
+    with _default_db().connect("bp") as conn:
         c = conn.cursor()
         placeholders = ",".join("?" * len(bp_ids))
         c.execute(
@@ -782,7 +817,7 @@ def get_blueprint_materials_batch(bp_ids: list[int]) -> dict[int, list[tuple[int
 
 def check_blueprint_exists(blueprint_type_id: int) -> bool:
     """检查用户蓝图库中是否已存在指定类型的蓝图"""
-    with db.connect("user") as conn:
+    with _default_db().connect("user") as conn:
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM user_blueprints WHERE blueprint_type_id = ?", (blueprint_type_id,))
         return bool(c.fetchone()[0])
@@ -794,7 +829,7 @@ def get_blueprint_tech_levels():
     返回 dict[blueprint_type_id, int] — 1=T1, 2=T2, 3=T3
     """
     levels = {}
-    with db.connect("bp") as conn:
+    with _default_db().connect("bp") as conn:
         c = conn.cursor()
         # T2: 作为 invention 产物的 blueprint_type_id
         c.execute("SELECT DISTINCT product_type_id FROM blueprint_products WHERE activity = 'invention'")
@@ -827,7 +862,7 @@ def get_blueprint_tech_levels():
 
 def get_blueprint_reaction_ids() -> set[int]:
     """获取所有反应公式的 blueprint_type_id"""
-    with db.connect("bp") as conn:
+    with _default_db().connect("bp") as conn:
         c = conn.cursor()
         c.execute("SELECT DISTINCT blueprint_type_id FROM blueprint_activities WHERE activity = 'reaction'")
         return {r[0] for r in c.fetchall()}

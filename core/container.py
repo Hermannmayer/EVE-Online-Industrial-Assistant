@@ -174,25 +174,25 @@ class AppContainer:
                     from services.char_config_resolver import CharConfigResolver
 
                     def _char_data_provider(char_name: str) -> dict | None:
-                        try:
-                            from ui_pyside6.views.char_settings_view import get_character
+                        # 只依赖 services 层（不 import UI，消除反向依赖）
+                        from services.char_config_resolver import char_config_path, get_character
+                        from services.char_config_validator import load_char_config
 
+                        try:
                             return get_character(char_name)
                         except Exception:
-                            try:
-                                from services.char_config_validator import load_char_config
-                                from ui_pyside6.views.char_settings_view import char_config_path
-
-                                data = load_char_config(char_config_path())
-                                chars = data.get("characters", {})
-                                if char_name in chars:
-                                    return dict(chars[char_name])
-                                current = data.get("current", "main")
-                                if current in chars:
-                                    return dict(chars[current])
-                            except Exception:
-                                pass
-                            return None
+                            pass
+                        try:
+                            data = load_char_config(char_config_path())
+                            chars = data.get("characters", {})
+                            if char_name in chars:
+                                return dict(chars[char_name])
+                            current = data.get("current", "main")
+                            if current in chars:
+                                return dict(chars[current])
+                        except Exception:
+                            pass
+                        return None
 
                     self._char_config_resolver = CharConfigResolver(char_data_provider=_char_data_provider)
         return self._char_config_resolver
