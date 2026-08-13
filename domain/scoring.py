@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.eve_formulas import calc_broker_rate, calc_relist_discount, calc_sales_tax_rate
+from core.eve_formulas import ADV_INDUSTRY_SKILL_MULT, calc_broker_rate, calc_relist_discount, calc_sales_tax_rate
 from domain.ports import PriceProvider
 from services.manufacturing_calculator import (
     calc_job_cost_fees,
@@ -246,6 +246,247 @@ def calc_manufacturing_score(
             "hours_per_run": round(hours_per_run, 2),
             "status": "",
             "breakdown": breakdown,
+        }
+    )
+
+    return result
+
+
+# ════════════════════════════════════════════════════════════════
+#  贸易评分纯函数
+# ════════════════════════════════════════════════════════════════
+
+
+def calc_trade_score(
+    *,
+    type_id: int,
+    buy_price: float,
+    sell_price: float,
+    volume_m3: float,
+    prices: PriceProvider,
+    char_config: dict | None,
+    buy_hub: str,
+    sell_hub: str,
+    quantity: int,
+) -> dict:
+    """纯函数：给定买卖价/体积/成交量，计算贸易评分结果 dict。
+
+    输出与重构前 ScoringService.calc_trade_score 完全一致。
+    """
+    result = {
+        "score": 0.0,
+        "buy_cost": 0.0,
+        "sell_revenue": 0.0,
+        "gross_profit": 0.0,
+        "margin_pct": 0.0,
+        "profit_per_m3": 0.0,
+        "status": "",
+    }
+
+    skills = char_config.get("skills", {}) if char_config else {}
+    market_data_buy = char_config.get("market", {}).get(buy_hub.lower(), {}) if char_config else {}
+    market_data_sell = char_config.get("market", {}).get(sell_hub.lower(), {}) if char_config else {}
+
+    broker_rate = calc_broker_rate(skills, market_data_buy)
+    relist_discount = calc_relist_discount(skills)
+    sales_tax_rate = calc_sales_tax_rate(skills)
+
+    # 差额计费：初始挂单全额 broker；改单只对「买/卖价差额」部分收一次 broker（× 改单折扣）
+    buy_fee_total = broker_rate + broker_rate * (1 - relist_discount / 100)
+
+    sell_rate = calc_broker_rate(skills, market_data_sell)
+    # 卖出侧：初始挂单全额 broker（按买入成本近似）+ 改单差额 broker + 销售税
+    sell_fee_total = (
+        (
+            broker_rate
+            + (sell_price - buy_price) / sell_price * broker_rate * (1 - relist_discount / 100)
+            + sales_tax_rate
+        )
+        if sell_price > 0
+        else sell_rate + sell_rate * (1 - relist_discount / 100) + sales_tax_rate
+    )
+
+    buy_cost = buy_price * quantity + buy_price * quantity * (buy_fee_total / 100)
+    sell_revenue = sell_price * quantity - sell_price * quantity * (sell_fee_total / 100)
+    gross_profit = sell_revenue - buy_cost
+    margin_pct = gross_profit / buy_cost * 100 if buy_cost > 0 else 0
+
+    if gross_profit <= 0:
+        result["margin_pct"] = round(margin_pct, 2)
+        result["buy_cost"] = round(buy_cost, 2)
+        result["sell_revenue"] = round(sell_revenue, 2)
+        result["gross_profit"] = round(gross_profit, 2)
+        return result
+
+    volume = prices.get_volume(type_id, "total", sell_hub)
+    if volume == 0:
+        return result
+
+    margin_pct = gross_profit / buy_cost * 100 if buy_cost > 0 else 0
+    profit_per_m3 = gross_profit / volume_m3 if volume_m3 > 0 else gross_profit
+
+    margin_score = min(margin_pct * 5, 50)
+    volume_factor = min(volume / 5_000_000, 1.0)
+    vol_score = volume_factor * 50
+    total_score = margin_score + vol_score
+
+    result.update(
+        {
+            "score": round(total_score, 1),
+            "buy_cost": round(buy_cost, 2),
+            "sell_revenue": round(sell_revenue, 2),
+            "gross_profit": round(gross_profit, 2),
+            "margin_pct": round(margin_pct, 2),
+            "profit_per_m3": round(profit_per_m3, 2),
+        }
+    )
+
+    return result
+
+
+# ════════════════════════════════════════════════════════════════
+#  反应评分纯函数
+# ════════════════════════════════════════════════════════════════
+
+REACTION_INSTALL_FEE_RATE = 0.05
+
+
+def calc_reaction_score(
+    *,
+    product_type_id: int,
+    prod_qty: int,
+    base_time: int,
+    prod_price: float,
+    materials: tuple[tuple[int, str, int], ...],
+    prices: PriceProvider,
+    char_config: dict | None,
+    mat_source_hub: str,
+    sell_hub: str,
+    price_type_mat: str,
+    system_id: int | None,
+    structure_bonus: float,
+    facility_tax_pct: float,
+) -> dict:
+    """纯函数：给定反应蓝图/材料/价格，计算反应评分结果 dict。
+
+    与制造评分差异：无 ME/TE（waste_factor=1.0）、时间仅受高级工业理论影响、专用 SCI。
+    输出与重构前 ScoringService.calc_reaction_score 完全一致。
+    """
+    result = {
+        "score": 0.0,
+        "profit_per_run": 0.0,
+        "margin_pct": 0.0,
+        "isk_per_hour": 0.0,
+        "cost_per_unit": 0.0,
+        "revenue_per_unit": 0.0,
+        "hours_per_run": 0.0,
+        "status": "",
+        "breakdown": {},
+    }
+
+    # 材料成本（反应无 ME 浪费，waste_factor=1.0）
+    waste_factor = 1.0
+    total_mat_cost = 0.0
+    mat_detail = []
+    for mat_id, mat_name, mat_qty in materials:
+        mat_price = prices.get_price(mat_id, price_type_mat, mat_source_hub)
+        waste_qty = mat_qty * waste_factor
+        if mat_price:
+            total_mat_cost += waste_qty * mat_price
+        mat_detail.append(
+            {
+                "name": mat_name,
+                "base_qty": mat_qty,
+                "qty": round(waste_qty, 2),
+                "waste_factor": round(waste_factor, 2),
+                "unit_price": mat_price or 0.0,
+                "subtotal": round((mat_price or 0.0) * waste_qty, 2),
+            }
+        )
+    result["materials"] = mat_detail
+
+    # 从人物配置读取费率
+    skills = char_config.get("skills", {}) if char_config else {}
+    market_data = char_config.get("market", {}).get(sell_hub.lower(), {}) if char_config else {}
+
+    broker_rate = calc_broker_rate(skills, market_data)
+    relist_discount = calc_relist_discount(skills)
+    sales_tax_rate_val = calc_sales_tax_rate(skills)
+
+    # 安装费
+    revenue = prod_price * prod_qty
+    total_cost = total_mat_cost
+    sci = prices.get_system_cost_index(system_id, "reaction", hub=mat_source_hub)
+    install_base = REACTION_INSTALL_FEE_RATE * revenue
+    reaction_install_fee = install_base * sci * (1 - structure_bonus) * (1 + facility_tax_pct / 100)
+    total_cost += reaction_install_fee
+    broker_init = revenue * (broker_rate / 100)
+    broker_relist = revenue * (broker_rate / 100) * (1 - relist_discount / 100)
+    sales_tax = revenue * (sales_tax_rate_val / 100)
+    total_cost += broker_init + broker_relist + sales_tax
+
+    profit = revenue - total_cost
+    margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
+
+    # 反应时间
+    adv_lvl = skills.get("高级工业理论", 5)
+    skill_mod = 1 - ADV_INDUSTRY_SKILL_MULT * adv_lvl
+    actual_time = base_time * skill_mod
+    hours_per_run = actual_time / 3600
+
+    # 负利润时提前返回
+    if profit <= 0:
+        result["margin_pct"] = round(margin_pct, 2)
+        result["profit_per_run"] = round(profit, 2)
+        result["cost_per_unit"] = round(total_cost / prod_qty, 2)
+        result["hours_per_run"] = round(hours_per_run, 2)
+        result["revenue_per_unit"] = round(prod_price, 2)
+        return result
+
+    # 评分
+    margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
+    volume = prices.get_volume(product_type_id, "total", sell_hub)
+    if volume == 0:
+        return result
+
+    profit_score = min(margin_pct * 4, 40)  # 10% = 40分
+    volume_factor = min(volume / 5_000_000, 1.0)
+    volume_score = volume_factor * 30  # 500万 = 30分
+    isk_per_hour = profit / hours_per_run if hours_per_run > 0 else 0
+    efficiency_score = min(isk_per_hour / 50_000_000 * 30, 30)  # 5000万/h = 30分
+
+    total_score = profit_score + volume_score + efficiency_score
+
+    result.update(
+        {
+            "score": round(total_score, 1),
+            "profit_per_run": round(profit, 2),
+            "margin_pct": round(margin_pct, 2),
+            "isk_per_hour": round(isk_per_hour, 2),
+            "cost_per_unit": round(total_cost / prod_qty, 2),
+            "revenue_per_unit": round(prod_price, 2),
+            "hours_per_run": round(hours_per_run, 2),
+            "status": "",
+            "breakdown": {
+                "waste_factor": round(waste_factor, 2),
+                "profit_score": round(profit_score, 1),
+                "volume_score": round(volume_score, 1),
+                "efficiency_score": round(efficiency_score, 1),
+                "isk_per_hour": round(isk_per_hour, 2),
+                "revenue": round(revenue, 2),
+                "material_cost": round(total_mat_cost, 2),
+                "broker_init": round(broker_init, 2),
+                "broker_relist": round(broker_relist, 2),
+                "sales_tax": round(sales_tax, 2),
+                "reaction_install_fee": round(reaction_install_fee, 2),
+                "install_base": round(install_base, 2),
+                "sci": round(sci, 4),
+                "structure_bonus": round(structure_bonus, 4),
+                "facility_tax_pct": round(facility_tax_pct, 2),
+                "broker_rate": round(broker_rate, 3),
+                "sales_tax_rate": round(sales_tax_rate_val, 3),
+                "relist_discount": round(relist_discount, 1),
+            },
         }
     )
 
