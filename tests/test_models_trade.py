@@ -8,7 +8,7 @@
   - 图标 DecorationRole
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from PySide6.QtCore import QModelIndex, Qt
 
@@ -96,18 +96,15 @@ class TestTradeHubTableModel:
         rows = [{"hub": "Jita", "type_id": 2001}]
         model = TradeHubTableModel(rows)
 
-        # 图标文件存在 → 返回 QPixmap
-        with patch("ui_pyside6.models.trade_models.os.path.exists") as mock_exists:
-            with patch("ui_pyside6.models.trade_models.QPixmap") as mock_pix:
-                mock_exists.return_value = True
-                mock_pix_instance = mock_pix.return_value
-                mock_pix_instance.isNull.return_value = False
-                result = model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole)
-                assert result is not None
+        fake_pix = MagicMock()
+
+        # 图标文件存在 → 返回 pixmap
+        with patch("ui_pyside6.models.trade_models.load_item_icon", return_value=fake_pix):
+            result = model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole)
+            assert result is not None
 
         # 图标文件不存在 → 返回 None
-        with patch("ui_pyside6.models.trade_models.os.path.exists") as mock_exists:
-            mock_exists.return_value = False
+        with patch("ui_pyside6.models.trade_models.load_item_icon", return_value=None):
             result = model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole)
             assert result is None
 

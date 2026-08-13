@@ -1,6 +1,6 @@
-# services.workers.getcontracts
+# services.importers.getcontracts
 
-> 源文件 `services/workers/getcontracts.py` · 由 `scripts/gen_api_docs.py` 自动生成，请勿手改
+> 源文件 `services/importers/getcontracts.py` · 由 `scripts/gen_api_docs.py` 自动生成，请勿手改
 
 > 模块说明：
 

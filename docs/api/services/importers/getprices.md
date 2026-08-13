@@ -1,6 +1,6 @@
-# services.workers.getprices
+# services.importers.getprices
 
-> 源文件 `services/workers/getprices.py` · 由 `scripts/gen_api_docs.py` 自动生成，请勿手改
+> 源文件 `services/importers/getprices.py` · 由 `scripts/gen_api_docs.py` 自动生成，请勿手改
 
 > 模块说明：
 
@@ -102,6 +102,16 @@ async def main(regions: list[tuple[str, int]] | None=None, progress_cb: Callable
 
 定义行：`299`
 
+### `fetch_baseline_only`
+
+```python
+async def fetch_baseline_only(progress_cb: Callable[[int, str], None] | None=None)
+```
+
+快速基础价格兜底 — 仅拉 /markets/prices/（1 次请求）。
+
+定义行：`338`
+
 ### `run_price_update`
 
 ```python
@@ -110,4 +120,4 @@ def run_price_update(regions: list[str] | None=None)
 
 运行价格更新。
 
-定义行：`338`
+定义行：`360`

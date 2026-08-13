@@ -2,8 +2,6 @@
 关注列表页面 — 物品搜索 + 自动补全 + 关注列表表格 + 阈值设置
 """
 
-import os
-
 from PySide6.QtCore import (
     QAbstractTableModel,
     QEvent,
@@ -14,7 +12,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -35,7 +33,7 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
-from core.paths import ICON_DIR
+from ui_pyside6.icon_cache import load_item_icon
 
 # ── 表格列定义 ──
 
@@ -96,18 +94,9 @@ class WatchlistTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.DecorationRole:
             if col == 0:
-                type_id = row.get("type_id")
-                if type_id:
-                    icon_path = os.path.join(ICON_DIR, f"{type_id}.png")
-                    if os.path.exists(icon_path):
-                        pix = QPixmap(icon_path)
-                        if not pix.isNull():
-                            return pix.scaled(
-                                32,
-                                32,
-                                Qt.AspectRatioMode.KeepAspectRatio,
-                                Qt.TransformationMode.SmoothTransformation,
-                            )
+                pix = load_item_icon(row.get("type_id"), size=32)
+                if pix is not None:
+                    return pix
             return None
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:

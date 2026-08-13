@@ -137,7 +137,7 @@ def __init__(self, parent=None)
 
 定义行：`96`
 
-### `class PricesWorker`（继承 `_SingleStepWorker`）
+### `class BlueprintsWorker`（继承 `_SingleStepWorker`）
 
 ::: warning ⚠️ 待补 docstring
 此类暂无 docstring，欢迎补充。
@@ -145,7 +145,7 @@ def __init__(self, parent=None)
 
 定义行：`100`
 
-### `class BlueprintsWorker`（继承 `_SingleStepWorker`）
+### `class ImplantsWorker`（继承 `_SingleStepWorker`）
 
 ::: warning ⚠️ 待补 docstring
 此类暂无 docstring，欢迎补充。
@@ -153,7 +153,7 @@ def __init__(self, parent=None)
 
 定义行：`104`
 
-### `class ImplantsWorker`（继承 `_SingleStepWorker`）
+### `class IconsWorker`（继承 `_SingleStepWorker`）
 
 ::: warning ⚠️ 待补 docstring
 此类暂无 docstring，欢迎补充。
@@ -161,7 +161,7 @@ def __init__(self, parent=None)
 
 定义行：`108`
 
-### `class IconsWorker`（继承 `_SingleStepWorker`）
+### `class IndustryWorker`（继承 `_SingleStepWorker`）
 
 ::: warning ⚠️ 待补 docstring
 此类暂无 docstring，欢迎补充。
@@ -169,18 +169,10 @@ def __init__(self, parent=None)
 
 定义行：`112`
 
-### `class IndustryWorker`（继承 `_SingleStepWorker`）
-
-::: warning ⚠️ 待补 docstring
-此类暂无 docstring，欢迎补充。
-:::
-
-定义行：`116`
-
 ### `class SdeDataWorker`（继承 `_SingleStepWorker`）
 
 ::: warning ⚠️ 待补 docstring
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`120`
+定义行：`116`

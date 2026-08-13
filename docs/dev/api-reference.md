@@ -59,13 +59,13 @@
 | [`services.price_history`](/api/services/price_history) | 价格历史查询与缓存 |
 | [`services.client`](/api/services/client) | ESI HTTP 客户端 |
 
-## 业务层 — Workers（services/workers/）
+## 业务层 — 数据导入器（services/importers/）
 
 | 模块 | 说明 |
 |------|------|
-| [`services.workers.getprices`](/api/services/workers/getprices) | 市场价格拉取 Worker |
-| [`services.workers.getindustry`](/api/services/workers/getindustry) | 工业系统成本指数拉取 |
-| [`services.workers.getcontracts`](/api/services/workers/getcontracts) | 合同数据拉取 |
+| [`services.importers.getprices`](/api/services/importers/getprices) | 市场价格拉取 |
+| [`services.importers.getindustry`](/api/services/importers/getindustry) | 工业系统成本指数拉取 |
+| [`services.importers.getcontracts`](/api/services/importers/getcontracts) | 合同数据拉取 |
 
 ## UI 数据模型（ui_pyside6/models/）
 

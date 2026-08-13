@@ -2,7 +2,7 @@
 初始化步骤 Worker — QThread 包装 InitService，供 InitWizard 使用
 
 每个步骤由 InitService 统一调度，通过信号向 UI 报告进度。
-单个步骤也可直接使用单步 Worker（ItemsWorker、PricesWorker 等）。
+单个步骤也可直接使用单步 Worker（ItemsWorker、BlueprintsWorker 等）。
 """
 
 from typing import ClassVar
@@ -95,10 +95,6 @@ class _SingleStepWorker(InitServiceWorker):
 
 class ItemsWorker(_SingleStepWorker):
     step_key = "items"
-
-
-class PricesWorker(_SingleStepWorker):
-    step_key = "prices"
 
 
 class BlueprintsWorker(_SingleStepWorker):

@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
-from services.init_service import STEPS, InitStep, StepStatus, get_missing_steps, is_step_satisfied
+from services.init_service import STEPS, InitStep, StepStatus, get_missing_steps
 from ui_pyside6.workers.init_workers import InitServiceWorker
 
 # ── 样式 ──
@@ -291,6 +291,13 @@ class InitWizard(QDialog):
 
         btn_row.addStretch()
 
+        # auto_mode（启动场景）下提供「跳过 → 直接进主界面」逃生口
+        self._skip_enter_btn = QPushButton("跳过，进入主界面")
+        self._skip_enter_btn.setStyleSheet(_btn_style(theme.TEXT_SECONDARY))
+        self._skip_enter_btn.setVisible(self._auto_mode)
+        self._skip_enter_btn.clicked.connect(self._on_skip_enter)
+        btn_row.addWidget(self._skip_enter_btn)
+
         self._start_btn = QPushButton("开始初始化" if not self._auto_mode else "开始下载")
         self._start_btn.setStyleSheet(f"""
             QPushButton {{
@@ -329,11 +336,12 @@ class InitWizard(QDialog):
         self._elapsed_timer.timeout.connect(self._update_eta)
 
     def _init_steps_from_check(self):
-        """根据 init_check 初始化步骤状态"""
+        """根据 init_check 初始化步骤状态（一次 check_all，避免 N 次全库扫描）"""
+        missing_keys = {s.key for s in get_missing_steps()}
         done_count = 0
         for step in STEPS:
             row = self._step_widgets[step.key]
-            if is_step_satisfied(step.key):
+            if step.key not in missing_keys:
                 row.set_state(StepStatus.COMPLETED, "数据已就绪")
                 done_count += 1
             else:
@@ -351,6 +359,15 @@ class InitWizard(QDialog):
         if remaining > 0:
             self._eta_label.setText(f"剩余 {remaining}/{len(STEPS)} 个步骤")
             self._start_btn.setText(f"开始初始化（{remaining} 步）")
+
+        # auto_mode（启动场景）：全部就绪 → 自动关闭；有缺失 → 自动开始下载。
+        # __init__ 与 showEvent 都会调用本方法，用 _auto_handled 保证只调度一次。
+        if self._auto_mode and not getattr(self, "_auto_handled", False):
+            self._auto_handled = True
+            if done_count == len(STEPS):
+                QTimer.singleShot(300, self.accept)
+            else:
+                QTimer.singleShot(0, self._start_init)
 
     # ── 生命周期 ──
 
@@ -454,9 +471,13 @@ class InitWizard(QDialog):
 
         if success:
             self._eta_label.setText(f"✅ {summary}  🕐 已用 {self._elapsed_str()}")
-            # 自动模式：触发回调后关闭
-            if self._auto_mode and self._on_done_callback:
-                self._on_done_callback()
+            # 自动模式（启动场景）：等待 worker 线程完全退出（含 clear_yaml_cache 收尾）
+            # 再触发回调并关闭；on_done 可能为空（Main.py 不传），也需 accept。
+            if self._auto_mode:
+                if self._worker:
+                    self._worker.wait()
+                if self._on_done_callback:
+                    self._on_done_callback()
                 self.accept()
         else:
             self._eta_label.setText(f"❌ {summary}  🕐 已用 {self._elapsed_str()}")
@@ -512,6 +533,12 @@ class InitWizard(QDialog):
         self._start_btn.setText("重新开始")
         self._start_btn.show()
         self._start_btn.setEnabled(True)
+
+    def _on_skip_enter(self):
+        """跳过 → 直接进入主界面（auto_mode 启动场景）"""
+        if self._worker:
+            self._worker.cancel()
+        self.accept()
 
     # ── ETA ──
 

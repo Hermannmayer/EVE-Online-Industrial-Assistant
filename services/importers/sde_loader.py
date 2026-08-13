@@ -15,7 +15,7 @@ SDE 扩展数据加载器 — 将 16 个新表写入 reference.db
   - researchAgents.yaml     → research_agent 表
   - npcCorporations.yaml    → npc_corporation 表
   - agents.yaml             → agent 表
-  - universe/               → region + constellation + solar_system + stargate 表
+  - universe/               → solar_system 表（星系名/安全等级；region/constellation/stargate 无业务使用，不再解析）
 """
 
 import asyncio
@@ -411,7 +411,10 @@ async def write_stations():
 
 
 async def write_universe(progress_cb=None):
-    """写入 region + constellation + solar_system + stargate 表"""
+    """写入 solar_system 表（星系名/安全等级）
+
+    region/constellation/stargate 无业务读取，不再解析与写入。
+    """
     # 以 solar_system 表是否有「非空星系名」为判空（与星系搜索/成本联动判据一致）：
     # 若此前因空名缓存写入导致名称全空，这里必须重跑补齐（否则 UI 星系显示编号）。
     async with _ref_db() as db:
@@ -422,103 +425,37 @@ async def write_universe(progress_cb=None):
             log.info("universe 相关表已就绪，跳过")
             return
 
-    regions, constellations, systems, stargates = await ensure_universe_cache(progress_cb)
-    if not any([regions, constellations, systems, stargates]):
+    _, _, systems, _ = await ensure_universe_cache(progress_cb)
+    if not systems:
         log.warning("universe 数据为空，跳过")
         return
 
-    # --- region ---
-    if regions:
-        r_rows = []
-        for r in regions:
-            rid = r.get("region_id") or r.get("regionID")
-            name = r.get("region_name") or r.get("regionName", "") or ""
-            if rid is not None:
-                r_rows.append((int(rid), name))
-        if r_rows:
-            async with _ref_db() as db:
-                for i in range(0, len(r_rows), BATCH_SIZE):
-                    await db.executemany(
-                        "INSERT OR REPLACE INTO region (region_id, region_name) VALUES (?, ?)",
-                        r_rows[i : i + BATCH_SIZE],
-                    )
-                await db.commit()
-            log.info(f"region 写入完成 ({len(r_rows)} 条)")
-
-    # --- constellation ---
-    if constellations:
-        c_rows = []
-        for c in constellations:
-            cid = c.get("constellation_id") or c.get("constellationID")
-            name = c.get("constellation_name") or c.get("constellationName", "") or ""
-            rid = c.get("region_id") or c.get("regionID")
-            if cid is not None:
-                c_rows.append(
-                    (
-                        int(cid),
-                        name,
-                        int(rid) if rid is not None else None,
-                    )
-                )
-        if c_rows:
-            async with _ref_db() as db:
-                for i in range(0, len(c_rows), BATCH_SIZE):
-                    await db.executemany(
-                        "INSERT OR REPLACE INTO constellation (constellation_id, constellation_name, region_id) VALUES (?, ?, ?)",
-                        c_rows[i : i + BATCH_SIZE],
-                    )
-                await db.commit()
-            log.info(f"constellation 写入完成 ({len(c_rows)} 条)")
-
-    # --- solar_system ---
-    if systems:
-        s_rows = []
-        for s in systems:
-            sid = s.get("solar_system_id") or s.get("solarSystemID")
-            name = s.get("solar_system_name") or s.get("solarSystemName", "") or ""
-            rid = s.get("region_id") or s.get("regionID")
-            cid = s.get("constellation_id") or s.get("constellationID")
-            sec = s.get("security", s.get("securityStatus", 0.0))
-            if sid is not None:
-                s_rows.append(
-                    (
-                        int(sid),
-                        name,
-                        int(rid) if rid is not None else None,
-                        int(cid) if cid is not None else None,
-                        float(sec) if sec is not None else 0.0,
-                    )
-                )
-        if s_rows:
-            async with _ref_db() as db:
-                for i in range(0, len(s_rows), BATCH_SIZE):
-                    await db.executemany(
-                        "INSERT OR REPLACE INTO solar_system (solar_system_id, solar_system_name, region_id, constellation_id, security) VALUES (?, ?, ?, ?, ?)",
-                        s_rows[i : i + BATCH_SIZE],
-                    )
-                await db.commit()
-            log.info(f"solar_system 写入完成 ({len(s_rows)} 条)")
-
-    # --- stargate ---
-    if stargates:
-        g_rows = []
-        for g in stargates:
-            g_rows.append(
+    s_rows = []
+    for s in systems:
+        sid = s.get("solar_system_id") or s.get("solarSystemID")
+        name = s.get("solar_system_name") or s.get("solarSystemName", "") or ""
+        rid = s.get("region_id") or s.get("regionID")
+        cid = s.get("constellation_id") or s.get("constellationID")
+        sec = s.get("security", s.get("securityStatus", 0.0))
+        if sid is not None:
+            s_rows.append(
                 (
-                    int(g["stargate_id"]),
-                    int(g["solar_system_id"]),
-                    int(g["destination_system_id"]),
+                    int(sid),
+                    name,
+                    int(rid) if rid is not None else None,
+                    int(cid) if cid is not None else None,
+                    float(sec) if sec is not None else 0.0,
                 )
             )
-        if g_rows:
-            async with _ref_db() as db:
-                for i in range(0, len(g_rows), BATCH_SIZE):
-                    await db.executemany(
-                        "INSERT OR REPLACE INTO stargate (stargate_id, solar_system_id, destination_system_id) VALUES (?, ?, ?)",
-                        g_rows[i : i + BATCH_SIZE],
-                    )
-                await db.commit()
-            log.info(f"stargate 写入完成 ({len(g_rows)} 条)")
+    if s_rows:
+        async with _ref_db() as db:
+            for i in range(0, len(s_rows), BATCH_SIZE):
+                await db.executemany(
+                    "INSERT OR REPLACE INTO solar_system (solar_system_id, solar_system_name, region_id, constellation_id, security) VALUES (?, ?, ?, ?, ?)",
+                    s_rows[i : i + BATCH_SIZE],
+                )
+            await db.commit()
+        log.info(f"solar_system 写入完成 ({len(s_rows)} 条)")
 
 
 async def write_research():

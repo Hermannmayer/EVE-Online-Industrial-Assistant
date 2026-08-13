@@ -1,12 +1,10 @@
 """全物品市场 — 表格模型 + 排序代理"""
 
-import os
-
 from PySide6.QtCore import QAbstractTableModel, QSortFilterProxyModel, Qt
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtGui import QColor
 
 import ui_pyside6.theme as theme
-from core.paths import ICON_DIR
+from ui_pyside6.icon_cache import load_item_icon
 
 DASH = chr(8212)
 
@@ -77,15 +75,9 @@ class AModel(QAbstractTableModel):
                 return f"{v:,.2f}" if v else DASH
             return str(v) if v is not None else ""
         if role == Qt.ItemDataRole.DecorationRole and k == "i":
-            tid = r.get("id")
-            if tid:
-                p = os.path.join(ICON_DIR, f"{tid}.png")
-                if os.path.exists(p):
-                    px = QPixmap(p)
-                    if not px.isNull():
-                        return px.scaled(
-                            30, 30, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-                        )
+            pix = load_item_icon(r.get("id"), size=30)
+            if pix is not None:
+                return pix
         if role == Qt.ItemDataRole.TextAlignmentRole:
             if k not in ("i", "z", "e", "ms"):
                 return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter

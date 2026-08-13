@@ -31,8 +31,8 @@ from core.container import get_container
 from core.logger import log
 from services.inventory_import import compute_row_delta
 from services.inventory_manager import get_hangars, get_items
+from ui_pyside6.icon_cache import load_item_icon
 
-from .inventory_helpers import _load_icon
 from .item_search_dialog import ItemSearchDialog
 
 
@@ -207,7 +207,7 @@ class ImportReviewDialog(QDialog):
                 icon_label = QLabel()
                 icon_label.setFixedSize(24, 24)
                 icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                pix = _load_icon(type_id, size=24)
+                pix = load_item_icon(type_id, size=24)
                 if pix:
                     icon_label.setPixmap(pix)
                 table.setCellWidget(row, self._COL_ICON, icon_label)

@@ -16,7 +16,7 @@ def _hub_to_system_id(hub: str) -> int | None
 
 将贸易中心名称映射为太阳系 ID。
 
-定义行：`33`
+定义行：`30`
 
 ### `_default_db`
 
@@ -26,7 +26,7 @@ def _default_db() -> DatabaseManager
 
 惰性获取 DatabaseManager（经容器，消除模块级单例双轨）。
 
-定义行：`38`
+定义行：`35`
 
 ### `cache_key`
 
@@ -38,7 +38,7 @@ def cache_key(type_id: int, mode: str, hub: str, char_name: str) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`49`
+定义行：`46`
 
 ### `invalidate_cache`
 
@@ -48,7 +48,7 @@ def invalidate_cache()
 
 清空模块级研究成本缓存（价格刷新后调用）。
 
-定义行：`56`
+定义行：`53`
 
 ### `get_price`
 
@@ -61,7 +61,7 @@ price_type: 'buy' → buy_price, 'sell' → sell_price
 hub: 贸易中心名称, 如 'Jita', 'Amarr'；None 时返回任意区域
 _db: 可选注入的 DatabaseManager；None 时使用模块级单例。
 
-定义行：`70`
+定义行：`67`
 
 ### `get_volume`
 
@@ -71,7 +71,7 @@ def get_volume(type_id: int, vol_type: str='total', hub: str | None=None, _db: D
 
 获取指定区域的成交量。vol_type: 'buy' / 'sell' / 'total'
 
-定义行：`112`
+定义行：`109`
 
 ### `get_system_cost_index`
 
@@ -81,7 +81,7 @@ def get_system_cost_index(system_id: int | None, activity: str='manufacturing', 
 
 从数据库获取星系的制造成本指数(SCI)。system_id=None 时从 hub 推断。
 
-定义行：`153`
+定义行：`150`
 
 ### `get_adjusted_price`
 
@@ -91,7 +91,7 @@ def get_adjusted_price(type_id: int, _db: DatabaseManager | None=None) -> float 
 
 获取 ESI adjusted price（EIV 计算用）。兜底 None → 用 sell_price。
 
-定义行：`177`
+定义行：`174`
 
 ### `_research_cost_cached`
 
@@ -101,7 +101,7 @@ def _research_cost_cached(_db: DatabaseManager, type_id: int, *, solar_system_id
 
 按 type_id + 设施星系计算研究成本（拷贝/发明），带进程内缓存；失败返回 0。
 
-定义行：`203`
+定义行：`200`
 
 ### `_clear_research_cost_cache`
 
@@ -111,7 +111,7 @@ def _clear_research_cost_cache() -> None
 
 清空研究成本缓存（价格刷新时调用）。
 
-定义行：`223`
+定义行：`220`
 
 ## 类
 
@@ -121,7 +121,7 @@ def _clear_research_cost_cache() -> None
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`233`
+定义行：`230`
 
 #### 方法
 
@@ -135,7 +135,7 @@ def __init__(self, db: DatabaseManager, cache: TtlLRUCache, char_config: dict | 
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`234`
+定义行：`231`
 ##### `invalidate_cache`
 
 ```python
@@ -144,7 +144,7 @@ def invalidate_cache(self) -> None
 
 清空评分缓存（价格刷新后调用，避免旧价格评分被复用）
 
-定义行：`239`
+定义行：`236`
 ##### `_calc_broker_rate`
 
 ```python
@@ -155,7 +155,7 @@ def _calc_broker_rate(self, skills: dict, market_data: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`247`
+定义行：`244`
 ##### `_calc_relist_discount`
 
 ```python
@@ -166,7 +166,7 @@ def _calc_relist_discount(self, skills: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`250`
+定义行：`247`
 ##### `_calc_sales_tax_rate`
 
 ```python
@@ -177,7 +177,7 @@ def _calc_sales_tax_rate(self, skills: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`253`
+定义行：`250`
 ##### `calculate_total_metrics`
 
 ```python
@@ -186,7 +186,7 @@ def calculate_total_metrics(per_run: dict, runs: int=1, parallels: int=1) -> dic
 
 将 per-run 评分结果按 runs/parallels 缩放到计划总数值。
 
-定义行：`259`
+定义行：`256`
 ##### `calculate_plan_metrics`
 
 ```python
@@ -195,7 +195,7 @@ def calculate_plan_metrics(plan_data: dict, char_config: dict, *, mat_hub: str |
 
 从一条生产计划数据计算所有派生指标。
 
-定义行：`304`
+定义行：`301`
 ##### `calculate_personal_margin`
 
 ```python
@@ -204,7 +204,7 @@ def calculate_personal_margin(result: dict, inv_map: dict[int, tuple[int, float]
 
 计算考虑库存成本的个人利润率（%）。实现见 services.plan_metrics。
 
-定义行：`456`
+定义行：`453`
 ##### `child_manufacturing_cost`
 
 ```python
@@ -213,7 +213,7 @@ def child_manufacturing_cost(plan: dict, metrics: dict) -> float
 
 一条子项产线的总制造价 = 材料成本 + 制造作业费。实现见 services.plan_metrics。
 
-定义行：`469`
+定义行：`466`
 ##### `adjust_mother_metrics`
 
 ```python
@@ -222,7 +222,7 @@ def adjust_mother_metrics(metrics: dict, sub_cost_map: dict[int, float], total_m
 
 把拆解母项的自制子项按其制造价计入成本。实现见 services.plan_metrics。
 
-定义行：`476`
+定义行：`473`
 ##### `calc_manufacturing_score`
 
 ```python
@@ -231,22 +231,22 @@ def calc_manufacturing_score(self, type_id: int, char_config: dict, mat_source_h
 
 计算制造评分。
 
-定义行：`488`
+定义行：`485`
 ##### `calc_trade_score`
 
 ```python
 def calc_trade_score(self, type_id: int, buy_hub: str='Jita', sell_hub: str='Jita', buy_price_type: str='buy', sell_price_type: str='sell', char_config: dict | None=None, quantity: int=1) -> dict
 ```
 
-计算贸易评分。
+计算贸易评分。纯算法在 domain.scoring，编排在 application.scoring_facade。
 
-定义行：`756`
+定义行：`530`
 ##### `calc_reaction_score`
 
 ```python
 def calc_reaction_score(self, type_id: int, char_config: dict, mat_source_hub: str='Jita', sell_hub: str='Jita', facility_tax_pct: float=0.0, price_type_mat: str='sell', price_type_prod: str='sell', system_id: int | None=None, structure_bonus: float=0.0) -> dict
 ```
 
-计算反应（Reaction）利润评分。
+计算反应（Reaction）利润评分。纯算法在 domain.scoring，编排在 application.scoring_facade。
 
-定义行：`866`
+定义行：`557`

@@ -7,6 +7,7 @@ SDE zip 缓存共享工具 — 下载/缓存/加载 SDE 的 YAML 数据文件
 import asyncio
 import json
 import os
+import pickle
 import time
 import zipfile
 from collections.abc import Callable
@@ -115,7 +116,10 @@ async def ensure_sde_zip(progress_cb: Callable[[int, str], None] | None = None) 
                     resp.raise_for_status()
                     return SDE_ZIP_PATH
 
-                log.info(f"下载 SDE 数据包: {total / 1024 / 1024:.1f} MB" + (f"（从 {offset / 1024 / 1024:.1f} MB 续传）" if offset else ""))
+                log.info(
+                    f"下载 SDE 数据包: {total / 1024 / 1024:.1f} MB"
+                    + (f"（从 {offset / 1024 / 1024:.1f} MB 续传）" if offset else "")
+                )
                 with open(ZIP_PART_PATH, mode) as f:
                     async for chunk in resp.content.iter_chunked(256 * 1024):
                         f.write(chunk)
@@ -316,10 +320,13 @@ def _parse_universe_chunk(
 
 
 async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None = None):
-    """确保 SDE zip 已缓存，遍历 universe/ 目录树并返回解析后的数据字典
+    """确保 SDE zip 已缓存，解析 universe/ 下全部星系并返回星系数据
 
-    返回: (regions, constellations, systems, stargates)
-      每个元素是字典列表，供 sde_loader.write_universe 写入数据库
+    region/constellation/stargate 无业务读取，不再解析与写入——
+    只保留 solar_system（星系名/安全等级），供星系搜索与星系名解析使用。
+
+    返回: (regions, constellations, systems, stargates)，其中 regions/constellations/
+          stargates 恒为空，systems 为星系 dict 列表，供 sde_loader.write_universe 写入。
     """
     await ensure_sde_cache(progress_cb)
 
@@ -327,7 +334,7 @@ async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None =
         log.warning("SDE 压缩包未缓存，无法处理 universe 数据")
         return [], [], [], []
 
-    # JSON 缓存快速路径：避免每次从 ZIP 解析 50K+ YAML 文件
+    # JSON 缓存快速路径：避免每次从 ZIP 解析 6000+ 星系 YAML
     if os.path.exists(UNIVERSE_CACHE_PATH):
         try:
             with open(UNIVERSE_CACHE_PATH, encoding="utf-8") as f:
@@ -336,101 +343,63 @@ async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None =
             if not _universe_cache_has_names(cached_systems):
                 # 旧缓存星系名全空（写入会污染 solar_system 表）→ 丢弃缓存重新解析
                 log.warning("universe 缓存星系名为空，丢弃并重新解析")
-                data = None
             else:
-                log.info(
-                    f"Universe JSON 缓存已加载: "
-                    f"{len(data.get('regions', []))} regions, "
-                    f"{len(data.get('constellations', []))} constellations, "
-                    f"{len(cached_systems)} systems, "
-                    f"{len(data.get('stargates', []))} stargates"
-                )
-                return (
-                    data.get("regions", []),
-                    data.get("constellations", []),
-                    cached_systems,
-                    data.get("stargates", []),
-                )
+                log.info(f"Universe JSON 缓存已加载: {len(cached_systems)} systems")
+                return [], [], cached_systems, []
         except Exception as e:
             log.warning(f"Universe JSON 缓存读取失败，重新解析: {e}")
 
-    log.info("正在并行解析 universe/ 目录下的 YAML 文件...")
+    log.info("正在并行解析 universe/ 星系 YAML 文件...")
     if progress_cb:
-        progress_cb(10, "解析 universe 目录...")
+        progress_cb(10, "解析星系目录...")
     # 名称在 bsd/invNames.yaml（按 itemID 索引），解析前构建一次映射供各 worker 共享
     name_map = _build_name_map(SDE_ZIP_PATH)
     with zipfile.ZipFile(SDE_ZIP_PATH, "r") as zf:
-        # 只解析实际会用的文件（region/constellation/solarsystem/stargates），
-        # 丢弃 planets/moons/asteroid belts 等解析后即丢弃的 ~60% 无用文件
+        # 只解析星系文件（region/constellation/stargates 无业务使用，跳过以提速）
         all_paths = [
             p
             for p in zf.namelist()
-            if p.startswith("universe/")
-            and p.endswith(".yaml")
-            and (
-                "region.yaml" in p
-                or "constellation.yaml" in p
-                or p.endswith("solarsystem.yaml")
-                or p.endswith("system.yaml")
-                or "stargates/" in p
-            )
+            if p.startswith("universe/") and (p.endswith("solarsystem.yaml") or p.endswith("system.yaml"))
         ]
     total = len(all_paths)
-    log.info(f"共 {total} 个 universe YAML 文件需要解析")
+    log.info(f"共 {total} 个星系 YAML 文件需要解析")
     if progress_cb:
-        progress_cb(15, f"解析 {total} 个 universe YAML...")
+        progress_cb(15, f"解析 {total} 个星系 YAML...")
 
     # 按 CPU 核心数并行切块（yaml 解析为 CPU 密集型）
     workers = min(os.cpu_count() or 2, 8)
     chunks = [all_paths[i::workers] for i in range(workers) if all_paths[i::workers]]
 
     t0 = time.time()
-    regions: list[dict] = []
-    constellations: list[dict] = []
     systems: list[dict] = []
-    stargates: list[dict] = []
 
     results = await asyncio.gather(
         *[asyncio.to_thread(_parse_universe_chunk, chunk, SDE_ZIP_PATH, name_map) for chunk in chunks]
     )
-    for r_regions, r_const, r_sys, r_sg in results:
-        regions.extend(r_regions)
-        constellations.extend(r_const)
+    for _r_regions, _r_const, r_sys, _r_sg in results:
         systems.extend(r_sys)
-        stargates.extend(r_sg)
 
     elapsed = time.time() - t0
-    log.info(
-        f"Universe 数据解析完成: "
-        f"{len(regions)} regions, {len(constellations)} constellations, "
-        f"{len(systems)} systems, {len(stargates)} stargates "
-        f"(耗时 {elapsed:.0f}s, {workers} 线程)"
-    )
+    log.info(f"Universe 星系解析完成: {len(systems)} systems（耗时 {elapsed:.0f}s, {workers} 线程）")
     if progress_cb:
-        progress_cb(70, "universe 数据解析完成")
+        progress_cb(70, "星系数据解析完成")
 
     # 缓存为 JSON（下次启动秒级加载）
     try:
         with open(UNIVERSE_CACHE_PATH, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "regions": regions,
-                    "constellations": constellations,
-                    "systems": systems,
-                    "stargates": stargates,
-                },
-                f,
-                ensure_ascii=False,
-            )
+            json.dump({"systems": systems}, f, ensure_ascii=False)
         log.info(f"Universe 数据已缓存至: {UNIVERSE_CACHE_PATH}")
     except Exception as e:
         log.warning(f"Universe JSON 缓存写入失败（不影响使用）: {e}")
 
-    return regions, constellations, systems, stargates
+    return [], [], systems, []
 
 
 def load_yaml(name: str) -> dict:
-    """从本地缓存加载 SDE YAML 文件（使用 CLoader 加速，进程内二次解析缓存）
+    """从本地缓存加载 SDE YAML 文件（CSafeLoader 加速；≥1MB 走磁盘 pickle 缓存；进程内二次缓存）
+
+    磁盘 pickle 缓存：typeIDs.yaml（148MB，解析 ~29s）解析一次后持久化到 name.pkl，
+    下次加载约 1-2s。SDE 版本更新（yaml 文件 mtime 变化）自动触发重新解析。
 
     注意：返回的是共享对象，调用方不得修改其内容。
     """
@@ -439,10 +408,46 @@ def load_yaml(name: str) -> dict:
     path = cache_path(name)
     if not os.path.exists(path):
         return {}
-    loader = getattr(yaml, "CLoader", yaml.SafeLoader)
+    data = _load_yaml_from_disk(name, path)
+    _YAML_CACHE[name] = data
+    return data
+
+
+_PICKLE_SIZE_THRESHOLD = 1024 * 1024  # ≥1MB 的 YAML 才启用磁盘 pickle 缓存（小文件解析本就快）
+
+
+def _pickle_cache_path(name: str) -> str:
+    """YAML 解析结果的磁盘缓存路径（name.yaml → name.pkl）"""
+    return cache_path(name[: -len(".yaml")] + ".pkl") if name.endswith(".yaml") else cache_path(name + ".pkl")
+
+
+def _load_yaml_from_disk(name: str, path: str) -> dict:
+    """解析 YAML，优先命中磁盘 pickle 缓存（缓存不可用/损坏时静默回退正常解析）"""
+    try:
+        if os.path.getsize(path) >= _PICKLE_SIZE_THRESHOLD:
+            pkl_path = _pickle_cache_path(name)
+            if os.path.exists(pkl_path) and os.path.getmtime(pkl_path) >= os.path.getmtime(path):
+                with open(pkl_path, "rb") as f:
+                    cached = pickle.load(f)
+                return cached if isinstance(cached, dict) else {}
+    except Exception:
+        pass  # 缓存读失败 → 走正常解析
+
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
     with open(path, encoding="utf-8") as f:
         data = yaml.load(f, Loader=loader) or {}
-    _YAML_CACHE[name] = data
+
+    # 原子写 pkl（临时文件 + os.replace），解析失败/并发写不中断主流程
+    try:
+        if os.path.getsize(path) >= _PICKLE_SIZE_THRESHOLD:
+            pkl_path = _pickle_cache_path(name)
+            os.makedirs(os.path.dirname(pkl_path), exist_ok=True)
+            tmp = pkl_path + ".tmp"
+            with open(tmp, "wb") as f:
+                pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp, pkl_path)
+    except Exception:
+        pass
     return data
 
 

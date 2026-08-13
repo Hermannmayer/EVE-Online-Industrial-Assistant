@@ -9,6 +9,8 @@
 import asyncio
 import io
 import json
+import os
+import time
 import zipfile
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
@@ -121,6 +123,59 @@ class TestLoadYamlCache:
         clear_yaml_cache()
         monkeypatch.setattr("tools.downloaders.sde_cache.cache_path", lambda name: str(tmp_path / name))
         assert load_yaml("nonexistent.yaml") == {}
+        clear_yaml_cache()
+
+
+class TestLoadYamlPickleCache:
+    """磁盘 pickle 缓存 — 大 YAML 解析一次后从 pkl 秒级加载"""
+
+    def test_big_yaml_writes_and_reuses_pkl(self, tmp_path, monkeypatch):
+        """首次解析写 pkl；清进程缓存后从 pkl 读（不再 yaml.load）"""
+        _make_loader(tmp_path, monkeypatch)
+        monkeypatch.setattr("tools.downloaders.sde_cache._PICKLE_SIZE_THRESHOLD", 0)
+        clear_yaml_cache()
+
+        calls = {"n": 0}
+        real_load = yaml.load
+
+        def counting_load(stream, Loader=None):
+            calls["n"] += 1
+            return real_load(stream, Loader=Loader)
+
+        with patch("tools.downloaders.sde_cache.yaml.load", side_effect=counting_load):
+            first = load_yaml("test.yaml")
+            assert (tmp_path / "test.pkl").exists(), "首次解析应生成 pkl 缓存"
+
+            clear_yaml_cache()  # 模拟下次启动（清进程内缓存，pkl 保留）
+            second = load_yaml("test.yaml")
+
+        assert calls["n"] == 1, "命中 pkl 缓存不应再次 yaml.load"
+        assert first == second
+        clear_yaml_cache()
+
+    def test_modified_yaml_forces_reparse(self, tmp_path, monkeypatch):
+        """yaml mtime 更新 → pkl 失效，重新解析"""
+        _make_loader(tmp_path, monkeypatch)
+        monkeypatch.setattr("tools.downloaders.sde_cache._PICKLE_SIZE_THRESHOLD", 0)
+        clear_yaml_cache()
+
+        load_yaml("test.yaml")  # 生成 pkl
+        clear_yaml_cache()
+
+        # touch yaml 使其比 pkl 新 → 应重新解析
+        future = time.time() + 10
+        os.utime(tmp_path / "test.yaml", (future, future))
+
+        calls = {"n": 0}
+        real_load = yaml.load
+
+        def counting_load(stream, Loader=None):
+            calls["n"] += 1
+            return real_load(stream, Loader=Loader)
+
+        with patch("tools.downloaders.sde_cache.yaml.load", side_effect=counting_load):
+            load_yaml("test.yaml")
+        assert calls["n"] == 1, "yaml mtime 更新后应重新解析"
         clear_yaml_cache()
 
 
@@ -288,6 +343,28 @@ class TestUniverseCacheSelfHeal:
         _regions, _const, systems, _sg = asyncio.run(ensure_universe_cache())
         assert systems[0]["solar_system_name"] == "Jita"
 
+    def test_universe_only_parses_systems(self, tmp_path, monkeypatch):
+        """只解析星系文件：返回的 regions/constellations/stargates 恒为空
+
+        mini zip 含 region.yaml/constellation.yaml/solarsystem.yaml（含内嵌 stargates），
+        但 ensure_universe_cache 只应解析并返回 solarsystem。
+        """
+        cache_file = tmp_path / "universe_data.json"  # 不存在 → 触发解析
+        monkeypatch.setattr("tools.downloaders.sde_cache.UNIVERSE_CACHE_PATH", str(cache_file))
+        zip_path = tmp_path / "sde.zip"
+        zip_path.write_bytes(_make_mini_universe_zip().getvalue())
+        monkeypatch.setattr("tools.downloaders.sde_cache.SDE_ZIP_PATH", str(zip_path))
+        monkeypatch.setattr("tools.downloaders.sde_cache.ensure_sde_cache", self._async_noop)
+
+        regions, constellations, systems, stargates = asyncio.run(ensure_universe_cache())
+
+        assert regions == []
+        assert constellations == []
+        assert stargates == []
+        assert len(systems) == 1
+        assert systems[0]["solar_system_id"] == 30000142
+        assert systems[0]["solar_system_name"] == "Jita"
+
 
 class TestEnsureSdeZip:
     """ensure_sde_zip — 断点续传 + 完整性校验"""
@@ -338,7 +415,9 @@ class TestEnsureSdeZip:
         mock_zf_instance.testzip.return_value = None
         mock_zf.return_value.__enter__.return_value = mock_zf_instance
 
-        mock_session = self._mock_http(mock_session_cls, 206, {"Content-Range": "bytes=5000-117964799/117964800"}, [b"x"])
+        mock_session = self._mock_http(
+            mock_session_cls, 206, {"Content-Range": "bytes=5000-117964799/117964800"}, [b"x"]
+        )
 
         result = await ensure_sde_zip()
 

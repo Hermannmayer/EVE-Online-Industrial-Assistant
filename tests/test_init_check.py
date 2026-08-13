@@ -183,15 +183,14 @@ def test_check_implants_no_table(db_paths):
 
 
 def test_check_icons_cache_missing(full_dbs):
-    """图标缓存目录不存在时返回 (0, 0)"""
+    """图标缓存目录不存在时 cached=0，但 total 反映 item 表（避免误判已就绪）"""
     with (
         _patch_init_check(full_dbs),
         patch("core.paths.icon_cache_dir", return_value="/nonexistent/icons"),
     ):
         cached, total = check_icons()
         assert cached == 0
-        # total 至少为 1（max(total, 1) 保护）
-        assert total == 0  # 缓存目录不存在时返回 (0, 0)
+        assert total == 500  # full_dbs 有 500 行 market_group_id
 
 
 # ═══════════════════════════════════════════
@@ -211,7 +210,7 @@ def test_check_all_full(full_dbs, tmp_path):
     ):
         status = check_all()
         assert status["items"] is True
-        assert status["prices"] is True
+        assert status["price_baseline"] is True
         assert status["blueprints"] is True
         assert status["implants"] is True
         assert status["sde_data"] is True, "region 有行 + 其它扩展表就绪 → sde_data 应 True"
@@ -293,6 +292,6 @@ def test_missing_count_partial(db_paths):
         patch("services.init_check.check_schema", return_value=True),
     ):
         cnt = missing_count()
-        # items=False, prices=False, blueprints=False, implants=False,
-        # industry=False, sde_data=False, rigs=False, icons=True (0>=0)
-        assert cnt == 7
+        # items=False, price_baseline=False, blueprints=False, implants=False,
+        # industry=False, sde_data=False, rigs=False, icons=False (item 无 market_group → total=1)
+        assert cnt == 8

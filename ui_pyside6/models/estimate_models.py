@@ -1,12 +1,10 @@
 """估价页面 — 表格模型"""
 
-import os
-
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtGui import QColor
 
 import ui_pyside6.theme as theme
-from core.paths import ICON_DIR
+from ui_pyside6.icon_cache import load_item_icon
 
 ICON_SIZE = 32
 
@@ -125,18 +123,9 @@ class EstimateTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.DecorationRole:
             if col == 0:
-                type_id = row.get("type_id")
-                if type_id:
-                    icon_path = os.path.join(ICON_DIR, f"{type_id}.png")
-                    if os.path.exists(icon_path):
-                        pix = QPixmap(icon_path)
-                        if not pix.isNull():
-                            return pix.scaled(
-                                32,
-                                32,
-                                Qt.AspectRatioMode.KeepAspectRatio,
-                                Qt.TransformationMode.SmoothTransformation,
-                            )
+                pix = load_item_icon(row.get("type_id"), size=ICON_SIZE)
+                if pix is not None:
+                    return pix
             return None
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:

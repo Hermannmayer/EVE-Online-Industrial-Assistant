@@ -12,7 +12,7 @@
 
 跨区域价格对比表模型
 
-定义行：`12`
+定义行：`10`
 
 #### 方法
 
@@ -26,7 +26,7 @@ def __init__(self, rows: list[dict])
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`17`
+定义行：`15`
 ##### `rowCount`
 
 ```python
@@ -37,7 +37,7 @@ def rowCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`21`
+定义行：`19`
 ##### `columnCount`
 
 ```python
@@ -48,7 +48,7 @@ def columnCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`24`
+定义行：`22`
 ##### `data`
 
 ```python
@@ -59,7 +59,7 @@ def data(self, index, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`27`
+定义行：`25`
 ##### `headerData`
 
 ```python
@@ -70,4 +70,4 @@ def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`62`
+定义行：`51`

@@ -1,12 +1,10 @@
 """贸易页面 — Table Model 类"""
 
-import os
-
 from PySide6.QtCore import QAbstractTableModel, Qt
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtGui import QColor
 
 import ui_pyside6.theme as theme
-from core.paths import ICON_DIR
+from ui_pyside6.icon_cache import load_item_icon
 
 
 class TradeHubTableModel(QAbstractTableModel):
@@ -40,18 +38,9 @@ class TradeHubTableModel(QAbstractTableModel):
             ][c]
         elif role == Qt.ItemDataRole.DecorationRole:
             if c == 0:  # 贸易中心列 — 显示物品图标
-                type_id = r.get("type_id")
-                if type_id:
-                    icon_path = os.path.join(ICON_DIR, f"{type_id}.png")
-                    if os.path.exists(icon_path):
-                        pix = QPixmap(icon_path)
-                        if not pix.isNull():
-                            return pix.scaled(
-                                32,
-                                32,
-                                Qt.AspectRatioMode.KeepAspectRatio,
-                                Qt.TransformationMode.SmoothTransformation,
-                            )
+                pix = load_item_icon(r.get("type_id"), size=32)
+                if pix is not None:
+                    return pix
                 return None
         elif role == Qt.ItemDataRole.ForegroundRole:
             if c == 4:

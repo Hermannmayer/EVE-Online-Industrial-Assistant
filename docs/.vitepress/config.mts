@@ -25,6 +25,7 @@ export default withMermaid(
         { text: '使用指南', link: '/guide/intro' },
         { text: '用户手册', link: '/user/overview' },
         { text: '开发者', link: '/dev/setup' },
+        { text: 'EVE 知识库', link: '/eve_wiki_knowledge_base' },
         { text: '更新日志', link: '/guide/changelog' },
       ],
 

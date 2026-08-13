@@ -222,11 +222,10 @@ def main():
     # -- Hot reload --
     HOT_RELOAD = "--hot-reload" in sys.argv
 
-    # -- 启动检查（紧凑小窗 → 按需自动初始化） --
-    from ui_pyside6.views.startup_check import StartupCheckDialog
+    # -- 启动检查（统一完整向导；全部就绪自动关闭，缺失时自动开始下载） --
+    from ui_pyside6.views.init_wizard import InitWizard
 
-    check_dlg = StartupCheckDialog()
-    check_dlg.exec()
+    InitWizard(auto_mode=True).exec()
 
     # -- 主窗口 --
     from ui_pyside6.main_window import MainWindow

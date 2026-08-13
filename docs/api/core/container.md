@@ -18,7 +18,7 @@ def get_container() -> AppContainer
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`216`
+定义行：`194`
 
 ### `init_container`
 
@@ -30,7 +30,7 @@ def init_container() -> AppContainer
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`225`
+定义行：`203`
 
 ## 类
 
@@ -65,7 +65,7 @@ def db(self) -> DatabaseManager
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`34`
+定义行：`32`
 ##### `scoring_cache`
 
 ```python
@@ -76,7 +76,7 @@ def scoring_cache(self) -> TtlLRUCache
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`42`
+定义行：`40`
 ##### `item_repo`
 
 ```python
@@ -87,7 +87,7 @@ def item_repo(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`50`
+定义行：`48`
 ##### `market_repo`
 
 ```python
@@ -98,7 +98,7 @@ def market_repo(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`60`
+定义行：`58`
 ##### `blueprint_repo`
 
 ```python
@@ -109,7 +109,7 @@ def blueprint_repo(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`70`
+定义行：`68`
 ##### `plan_repo`
 
 ```python
@@ -120,7 +120,7 @@ def plan_repo(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`80`
+定义行：`78`
 ##### `pricing_service`
 
 ```python
@@ -131,29 +131,7 @@ def pricing_service(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`90`
-##### `bom_expander`
-
-```python
-def bom_expander(self)
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`100`
-##### `logistics_service`
-
-```python
-def logistics_service(self)
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`110`
+定义行：`88`
 ##### `watchlist_manager`
 
 ```python
@@ -164,7 +142,7 @@ def watchlist_manager(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`120`
+定义行：`98`
 ##### `inventory_manager`
 
 ```python
@@ -175,7 +153,7 @@ def inventory_manager(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`130`
+定义行：`108`
 ##### `price_history_service`
 
 ```python
@@ -186,7 +164,7 @@ def price_history_service(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`140`
+定义行：`118`
 ##### `scoring_service`
 
 ```python
@@ -197,7 +175,7 @@ def scoring_service(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`149`
+定义行：`127`
 ##### `manufacturing_calculator`
 
 ```python
@@ -206,7 +184,7 @@ def manufacturing_calculator(self)
 
 制造计算器（纯函数模块，无状态）
 
-定义行：`159`
+定义行：`137`
 ##### `char_config_resolver`
 
 ```python
@@ -217,7 +195,7 @@ def char_config_resolver(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`170`
+定义行：`148`
 ##### `refining_service`
 
 ```python
@@ -228,4 +206,4 @@ def refining_service(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`201`
+定义行：`179`

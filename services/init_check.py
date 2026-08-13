@@ -124,14 +124,19 @@ def check_industry() -> int:
 
 
 def check_icons() -> tuple[int, int]:
-    """返回 (已缓存/免下载数, 总数)，缓存达到 80% 视为已初始化"""
+    """返回 (已缓存/免下载数, 总数)，缓存达到 80% 视为已初始化
+
+    缓存目录不存在时 cached=0，但 total 仍按 item 表统计——否则目录不存在
+    (0 >= 0) 会被 check_all 误判为图标已就绪，导致初始化从不下载图标。
+    """
     from core.paths import icon_cache_dir
 
     cache_dir = icon_cache_dir()
-    if not os.path.exists(cache_dir):
-        return 0, 0
-    cached = len([f for f in os.listdir(cache_dir) if f.endswith(".png")])
-    noicon = len([f for f in os.listdir(cache_dir) if f.endswith(".noicon")])
+    cached = 0
+    noicon = 0
+    if os.path.exists(cache_dir):
+        cached = len([f for f in os.listdir(cache_dir) if f.endswith(".png")])
+        noicon = len([f for f in os.listdir(cache_dir) if f.endswith(".noicon")])
     try:
         with sqlite3.connect(REF_DB_PATH) as conn:
             c = conn.cursor()
@@ -242,15 +247,19 @@ def check_schema() -> bool:
 
 
 def check_all() -> dict:
-    """返回各组件状态 { "items": bool, "prices": bool, "blueprints": bool, ... }"""
+    """返回各组件状态 { "items": bool, "price_baseline": bool, "blueprints": bool, ... }
+
+    注意：价格完整订单簿不属于初始化职责（由主窗口后台更新），
+    此处仅以 market_prices 是否有数据判定「价格基础数据」步骤就绪。
+    """
     cached, total = check_icons()
     return {
         "schema": check_schema(),
         "items": check_items() >= 10000 and check_item_names_ratio() < 0.05 and check_market_tree() > 500,
-        "prices": check_prices() > 0,
+        "price_baseline": check_prices() > 0,
         "blueprints": check_blueprints() >= 1000 and check_blueprint_names() < 100,
         "implants": check_implants() > 30,
-        "icons": cached >= int(total * 0.8),
+        "icons": total > 1 and cached >= int(total * 0.8),
         "industry": check_industry() > 100,
         "rigs": check_structure_rigs() > 80,
         "sde_data": (

@@ -16,7 +16,9 @@ import pytest
 
 from services.workers.getprices import (
     _PAGE_CACHE,
+    TRADE_REGIONS,
     discover_pages,
+    fetch_baseline_only,
     fetch_baseline_prices,
     fetch_order_pages,
     fetch_orders,
@@ -412,3 +414,47 @@ class TestSavePrices:
         deletes = [c[0][0] for c in db.execute.await_args_list if c[0] and "DELETE" in c[0][0]]
         assert deletes == [], "空数据区域不应执行 DELETE（旧价格保留）"
         assert cnt == 0
+
+
+# ════════════════════════════════════════════════════════════
+#  Test — fetch_baseline_only（初始化首启快速兜底）
+# ════════════════════════════════════════════════════════════
+
+
+class TestFetchBaselineOnly:
+    """fetch_baseline_only — 仅拉 /markets/prices/ 基准价写入 5 个贸易区域"""
+
+    @pytest.mark.asyncio
+    async def test_writes_baseline_to_all_trade_regions(self):
+        """非空 baseline → save_prices 被调用，覆盖全部贸易区域"""
+        baseline = {
+            1: {"buy_price": 1.0, "sell_price": 2.0, "adjusted_price": 1.5, "buy_volume": 10, "sell_volume": 20}
+        }
+        mock_save = AsyncMock(return_value=len(baseline))
+
+        with (
+            patch("services.workers.getprices.init_db", AsyncMock()),
+            patch("services.workers.getprices.fetch_baseline_prices", AsyncMock(return_value=baseline)),
+            patch("services.workers.getprices.save_prices", mock_save),
+        ):
+            await fetch_baseline_only(progress_cb=lambda pct, msg: None)
+
+        expected_regions = [rid for _, rid in TRADE_REGIONS]
+        assert len(expected_regions) == 5, "应有 5 个贸易区域"
+        mock_save.assert_awaited_once()
+        _args, _kwargs = mock_save.await_args
+        # save_prices(baseline, {rid: baseline for all}, region_ids) — region_ids 为第 3 位置参数
+        assert _args[2] == expected_regions
+        assert _args[1] == dict.fromkeys(expected_regions, baseline)
+
+    @pytest.mark.asyncio
+    async def test_empty_baseline_skips_save(self):
+        """baseline 为空（网络失败）→ 不写库，仅告警返回"""
+        with (
+            patch("services.workers.getprices.init_db", AsyncMock()),
+            patch("services.workers.getprices.fetch_baseline_prices", AsyncMock(return_value={})),
+            patch("services.workers.getprices.save_prices", AsyncMock()) as mock_save,
+        ):
+            await fetch_baseline_only()
+
+        mock_save.assert_not_awaited()

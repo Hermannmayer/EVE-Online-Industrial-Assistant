@@ -2,10 +2,7 @@
 评分弹窗与评分 Worker — 从 all_items_view.py 拆分而来
 """
 
-import os
-
 from PySide6.QtCore import Signal
-from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -19,7 +16,7 @@ from PySide6.QtWidgets import (
 from core.cache import TtlLRUCache
 from core.constants import TRADE_HUB_IDS, TRADE_HUBS
 from core.container import get_container
-from core.paths import ICON_DIR
+from ui_pyside6.icon_cache import load_item_icon
 from ui_pyside6.views.char_settings_view import get_character, get_character_list
 from ui_pyside6.workers.base_worker import BaseBatchScoreWorker
 
@@ -30,20 +27,11 @@ REGIONS = TRADE_HUBS
 
 def _icon_label(type_id: int, size: int = 32) -> QLabel | None:
     """创建物品图标标签，无图标时返回 None"""
-    from PySide6.QtCore import Qt as _Qt
-
-    icon_path = os.path.join(ICON_DIR, f"{type_id}.png")
-    if not os.path.exists(icon_path):
+    pix = load_item_icon(type_id, size=size)
+    if pix is None:
         return None
     lbl = QLabel()
-    lbl.setPixmap(
-        QPixmap(icon_path).scaled(
-            size,
-            size,
-            _Qt.AspectRatioMode.KeepAspectRatio,
-            _Qt.TransformationMode.SmoothTransformation,
-        )
-    )
+    lbl.setPixmap(pix)
     return lbl
 
 
