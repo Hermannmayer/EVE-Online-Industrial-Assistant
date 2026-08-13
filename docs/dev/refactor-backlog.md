@@ -1,6 +1,6 @@
 # 架构重构遗留项清单（Backlog）
 
-> 状态：**#1、#2、#3 已完成**（#4 未开始） · 关联：架构审计报告（`docs/dev/audit-report.md`）与已合入的 `refactor: 架构审计修复与分层收敛`
+> 状态：**#1、#2、#3 已完成，#4 进行中（4c 已完成）** · 关联：架构审计报告（`docs/dev/audit-report.md`）与已合入的 `refactor: 架构审计修复与分层收敛`
 >
 > 说明：本清单收录 4 项在上一轮重构中**刻意未做**的工作——其中 2 项属「纯风格、零功能收益」，2 项属「高风险大重构」。每项标注性质、现状位置、目标方案、风险、门禁与预计改动量，供后续分轮推进时按序领取。
 
@@ -199,7 +199,7 @@ def walk_bom(
 
 ---
 
-## 4. 巨型 View 拆分 + 下载器统一 + 模型/delegate 分层（最大）
+## 4. 巨型 View 拆分 + 下载器统一 + 模型/delegate 分层（最大）— 4c 已完成
 
 **性质**：最大。三件事可分轮独立推进。
 
@@ -219,7 +219,9 @@ def walk_bom(
 
 **风险**：中。`sde_loader.py`（684 行）/`sde_cache.py`（479 行）自身偏大，可一并拆。
 
-### 4c. 模型/delegate 分层
+### 4c. 模型/delegate 分层 ✅ 已完成（第一步：PlanTableModel）
+
+> **实际落地**：抽 `PlanTableDelegate(QStyledItemDelegate)`（`views/industry/plan_table.py`），把 `PlanTableModel.data()` 里的 ForegroundRole（染色）/ BackgroundRole（类别底色）/ DecorationRole（图标）/ CheckStateRole（复选框）/ TextAlignmentRole / SizeHintRole 全部移入 delegate；模型 `data()` 只保留 DisplayRole（已算文本）+ UserRole（原始行 dict）。其余 4 个 model（Rank/Material/Procurement/Production）染色仍内联，属后续同类收敛。
 
 **现状位置**：`ui_pyside6/models/industry_models.py`（5 个 model，`PlanTableModel` 占 ~337 行）在 `data()` 里内联数字格式化 + `QColor` 染色 + 图标 `QPixmap` 加载。
 

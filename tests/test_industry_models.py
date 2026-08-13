@@ -227,14 +227,24 @@ class TestPlanTableModel:
         assert model.data(model.index(2, 7), Qt.ItemDataRole.DisplayRole) == "已完成"
 
     def test_checkbox_column_check_state(self, qapp):
-        """备料勾选列以 CheckStateRole 渲染真实复选框（勾选/未勾选），DisplayRole 为空"""
+        """备料勾选列由 PlanTableDelegate 渲染为真实复选框（勾选/未勾选），DisplayRole 为空"""
+        from PySide6.QtWidgets import QStyleOptionViewItem
+
+        from ui_pyside6.views.industry.plan_table import PlanTableDelegate
+
         plans = [
             {"product_type_id": 1, "materials_ready": 1, "status": "pending"},
             {"product_type_id": 2, "materials_ready": 0, "status": "pending"},
         ]
         model = PlanTableModel(plans)
-        assert model.data(model.index(0, 0), Qt.ItemDataRole.CheckStateRole) == Qt.CheckState.Checked
-        assert model.data(model.index(1, 0), Qt.ItemDataRole.CheckStateRole) == Qt.CheckState.Unchecked
+        delegate = PlanTableDelegate()
+        opt = QStyleOptionViewItem()
+        delegate.initStyleOption(opt, model.index(0, 0))
+        assert opt.features & QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
+        assert opt.checkState == Qt.CheckState.Checked
+        opt2 = QStyleOptionViewItem()
+        delegate.initStyleOption(opt2, model.index(1, 0))
+        assert opt2.checkState == Qt.CheckState.Unchecked
         assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == ""
 
     def test_get_plan(self):
@@ -283,9 +293,30 @@ class TestPlanTableModel:
     def test_sort_int_columns_no_crash(self, qapp):
         """int 列（子级/流程/蓝图）排序按数值序，不抛 .lower() on int（回归）"""
         plans = [
-            {"product_type_id": 1, "product_name": "A", "child_level": 10, "_runs": 100, "_me_level": 5, "status": "pending"},
-            {"product_type_id": 2, "product_name": "B", "child_level": 2, "_runs": 3, "_me_level": 10, "status": "pending"},
-            {"product_type_id": 3, "product_name": "C", "child_level": 0, "_runs": 30, "_me_level": 0, "status": "pending"},
+            {
+                "product_type_id": 1,
+                "product_name": "A",
+                "child_level": 10,
+                "_runs": 100,
+                "_me_level": 5,
+                "status": "pending",
+            },
+            {
+                "product_type_id": 2,
+                "product_name": "B",
+                "child_level": 2,
+                "_runs": 3,
+                "_me_level": 10,
+                "status": "pending",
+            },
+            {
+                "product_type_id": 3,
+                "product_name": "C",
+                "child_level": 0,
+                "_runs": 30,
+                "_me_level": 0,
+                "status": "pending",
+            },
         ]
         model = PlanTableModel(plans)
         # 列 6(子级)/9(流程)/10(蓝图) 均为 int，升序应按数值序

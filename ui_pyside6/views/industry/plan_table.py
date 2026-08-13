@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor, QIcon, QPainter, QPalette, QPixmap, QPixmapCache
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QStyle,
     QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -24,6 +26,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
+from core.paths import ICON_DIR
 from ui_pyside6.models.industry_models import PlanTableModel
 
 # ── 列索引常量（与 PlanTableModel._HEADERS 对齐） ────────────
@@ -83,6 +86,100 @@ class _ReadyButtonDelegate(QStyledItemDelegate):
         return super().sizeHint(option, index)
 
 
+def _remaining(p: dict, now: datetime | None = None) -> int | None:
+    """计划剩余秒（进行中）；非进行中/无 started_at 返回 None"""
+    from services.plan_execution import remaining_seconds
+
+    return remaining_seconds(p, now=now)
+
+
+class PlanTableDelegate(QStyledItemDelegate):
+    """PlanTableModel 渲染 delegate — 染色/图标/类别底色/复选框/对齐/尺寸。
+
+    模型 data() 只暴露 DisplayRole（已算文本）+ UserRole（原始行 dict），
+    纯展示职责（前景色/底色/图标/复选框/对齐/尺寸）在此 delegate 完成。
+    """
+
+    def _load_icon(self, type_id: int) -> QPixmap | None:
+        """从缓存或磁盘加载 32px 图标，失败返回 None"""
+        if not type_id:
+            return None
+        cache_key = f"icon_{type_id}"
+        pixmap = QPixmap(cache_key)
+        if not pixmap.isNull():
+            return pixmap
+        path = os.path.join(ICON_DIR, f"{type_id}.png")
+        if not os.path.isfile(path):
+            return None
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            return None
+        pixmap = pixmap.scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        QPixmapCache.insert(cache_key, pixmap)
+        return pixmap
+
+    def _foreground(self, p: dict, c: int) -> QColor | None:
+        if c == COL_PROFIT:
+            profit = p.get("profit", 0) or 0
+            if profit > 0:
+                return QColor(theme.GREEN)
+            if profit < 0:
+                return QColor(theme.RED)
+        if c == COL_TIME:
+            status = p.get("status", "")
+            if status in ("in_progress", "running"):
+                rem = _remaining(p)
+                if rem is not None and rem <= 0:
+                    return QColor(theme.ACCENT_RED)
+                return QColor(theme.PRIMARY)
+            if status == "ready":
+                return QColor(theme.ACCENT_ORANGE)
+        if c == COL_STATUS:
+            status = p.get("status", "")
+            if status in ("completed", "done"):
+                return QColor(theme.GREEN)
+            if status in ("in_progress", "running"):
+                return QColor(theme.PRIMARY)
+            if status == "ready":
+                return QColor(theme.ACCENT_ORANGE)
+            if status == "pending":
+                return QColor(theme.TEXT_SECONDARY)
+        return None
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        p = index.data(Qt.ItemDataRole.UserRole) or {}
+        c = index.column()
+
+        fg = self._foreground(p, c)
+        if fg is not None:
+            option.palette.setColor(QPalette.ColorRole.Text, fg)
+
+        from services.plan_category import category_color
+
+        color = category_color(str(p.get("category", "manufacturing")))
+        if color:
+            option.palette.setColor(QPalette.ColorRole.Base, QColor(color))
+
+        if c == COL_ICON:
+            pixmap = self._load_icon(p.get("product_type_id"))
+            if pixmap is not None:
+                option.icon = QIcon(pixmap)
+
+        if c == COL_CHECKBOX:
+            option.features |= QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
+            option.checkState = Qt.CheckState.Checked if p.get("materials_ready", 0) else Qt.CheckState.Unchecked
+            option.displayAlignment = Qt.AlignmentFlag.AlignCenter
+
+    def sizeHint(self, option, index):
+        c = index.column()
+        if c == COL_CHECKBOX:
+            return QSize(26, 26)
+        if c == COL_ICON:
+            return QSize(36, 36)
+        return super().sizeHint(option, index)
+
+
 class PlanTable(QWidget):
     """生产计划表格 — 封装 QTableView + PlanTableModel + 右键菜单"""
 
@@ -108,6 +205,8 @@ class PlanTable(QWidget):
         self._configure_adaptive_columns()
         # 状态列「待下线」渲染成按钮（点击走 _on_cell_clicked）
         self._table.setItemDelegateForColumn(COL_STATUS, _ReadyButtonDelegate(self._table))
+        # 其余列展示职责（染色/图标/底色/复选框/对齐/尺寸）交给 PlanTableDelegate
+        self._table.setItemDelegate(PlanTableDelegate(self._table))
 
         layout.addWidget(self._table)
 
