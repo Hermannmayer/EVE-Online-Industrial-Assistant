@@ -6,6 +6,68 @@
 
 <!-- version list -->
 
+## v0.15.3 (2026-08-13)
+
+### Bug Fixes
+
+- Watchlist_manager _db 函数内 import get_container，避免 mock 污染测试
+  ([`45450c5`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/45450c5f13df66da92dae5c28943f68d9dbc785d))
+
+### Documentation
+
+- 架构重构遗留项清单（4 项高风险/纯风格工作）
+  ([`1f7a763`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/1f7a7638559a67ccc78ebfdace46851dc29e87f1))
+
+### Refactoring
+
+- 4a 拆 estimate_view + all_items_view — model/worker 抽到独立模块
+  ([`9e69032`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/9e690323a6dd855aef4f3b3a6f4941396e2605f9))
+
+- 4a 拆 hangar_tab — 4 个 dialog + 搜索 model 抽到 dialogs/hangar_dialogs
+  ([`d282c4e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d282c4e746c82266a356b300ab5c0a5f125050ad))
+
+- 4a 收尾 contract_view — workers + dialog 抽到独立模块
+  ([`749cca6`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/749cca6abed334ecf847e4fa618cf249ab431189))
+
+- 4a 第一步 — contract_view 的 3 个 model 抽到 contract_models
+  ([`da516dd`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/da516dd2e9bfd6dae8beb6f283bbdb2831fc1798))
+
+- 4b 下载器统一到 services/importers
+  ([`5ccfbf9`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5ccfbf9b788f6c5d28f64be39d15b97c2a959987))
+
+- 4c 收尾 — 删除 4 个死代码 model（Rank/Material/Procurement/Production）
+  ([`14e31ec`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/14e31ec330983c61390ca82f173ba3436d19ef3e))
+
+- BOM 展开收敛 — 删死代码 + 抽 domain/bom.py walk_bom
+  ([`a108851`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a108851891a022764d0a25c83b172b16e2caffe3))
+
+- Bom_expander/logistics DI 收敛到容器，修复 TransportWorker 坏调用
+  ([`8b6b1ca`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/8b6b1ca15a05c8704b125086c5366fbb97cb3c77))
+
+- 初始化提速与图标修复 + 文档站更新
+  ([`fe0c2d6`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/fe0c2d66c815d7f02d74e7d0adc173cf6b5c9826))
+
+- 架构审计修复与分层收敛
+  ([`fc1eaa5`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/fc1eaa5bb2a36c3df59ac8236858ed2ddab74d3b))
+
+- 模型/delegate 分层 — PlanTableModel 展示职责抽到 PlanTableDelegate（4c 第一步）
+  ([`0ef9e4e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/0ef9e4e9f0a45d06608ddc4863406d48c24467f8))
+
+- 评分算法纯度化 — calc_manufacturing_score 抽到 domain/application 层
+  ([`dc4d014`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/dc4d014a642a7a8022a9ee5402c9f766e6290b79))
+
+- 评分算法纯度化 — 抽 calc_trade_score / calc_reaction_score 到 domain/application
+  ([`1ab5f15`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/1ab5f156376818a42b52e48c18d01dc2b116264f))
+
+### Testing
+
+- 修复 ProductionWizard 测试访问真实库（worktree/CI 无 schema）
+  ([`d9d0c4e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d9d0c4e7817a422db7f4db999b38101acb77c095))
+
+- 精简测试 — 合并重复/删低价值构造测试 + fixture 优化省时
+  ([`85e60ad`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/85e60ad8f17e2d40406974e359adb196f86b7a59))
+
+
 ## v0.15.2 (2026-08-06)
 
 ### Bug Fixes
