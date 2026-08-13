@@ -203,7 +203,9 @@ def walk_bom(
 
 **性质**：最大。三件事可分轮独立推进。
 
-### 4a. 巨型 View 拆分
+### 4a. 巨型 View 拆分 — 进行中（contract_view models 已抽出）
+
+> **进度**：`contract_view.py` 的 3 个 model（`ContractTableModel`/`ContractItemTableModel`/`ContractFilterProxy`）+ 列定义/中文映射常量已抽到 `ui_pyside6/models/contract_models.py`，视图文件 939→607 行。workers / `ContractDetailDialog` 抽取 + 其余 4 个 View（estimate/hangar/all_items/plan_table）待做。
 
 **现状位置**（方法数）：`estimate_view`（49）、`hangar_tab`（53）、`contract_view`（50）、`all_items_view`（47）、`plan_table`（47）。
 
