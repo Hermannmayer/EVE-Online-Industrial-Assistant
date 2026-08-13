@@ -5,9 +5,10 @@
 保留此文件以确保旧导入路径继续工作。
 """
 
+from ui_pyside6.dialogs.hangar_dialogs import EditQtyDialog, PasteImportDialog
 from ui_pyside6.views.inventory.blueprint_import_worker import _BlueprintImportWorker
 from ui_pyside6.views.inventory.blueprint_tab import BlueprintTab
-from ui_pyside6.views.inventory.hangar_tab import EditQtyDialog, HangarTab, PasteImportDialog
+from ui_pyside6.views.inventory.hangar_tab import HangarTab
 from ui_pyside6.views.inventory.inventory_helpers import BlueprintTableModel, InvTableModel
 from ui_pyside6.views.inventory.inventory_page import InventoryPage
 from ui_pyside6.views.inventory.review_dialog import ImportReviewDialog
