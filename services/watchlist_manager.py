@@ -2,12 +2,17 @@
 关注列表数据层 — 价格监控 CRUD / 阈值设置 / 价格变化检测
 """
 
-from core.container import get_container
 from services.database_manager import DatabaseManager
 
 
 def _db() -> DatabaseManager:
-    """惰性获取 DatabaseManager（经容器，消除模块级单例双轨）。"""
+    """惰性获取 DatabaseManager（经容器，消除模块级单例双轨）。
+
+    必须在函数内 import：模块级 `from core.container import get_container` 会
+    在 mock_db 的 patch 生效期间 import 时永久绑定 mock 引用，污染后续真实测试。
+    """
+    from core.container import get_container
+
     return get_container().db
 
 
