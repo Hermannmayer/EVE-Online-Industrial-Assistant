@@ -6,7 +6,7 @@
 import pytest
 from PySide6.QtCore import QModelIndex
 
-from ui_pyside6.views.contract_view import ContractFilterProxy, ContractTableModel
+from ui_pyside6.models.contract_models import ContractFilterProxy, ContractTableModel
 
 # ── 测试数据（与 test_contract_models.py 共享结构） ──
 

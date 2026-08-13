@@ -26,7 +26,7 @@ import aiosqlite
 from core.logger import log
 from core.paths import reference_db_path
 from services.db_locks import get_db_write_lock
-from tools.downloaders.sde_cache import ensure_sde_cache, ensure_universe_cache, load_yaml_async
+from services.importers.sde_cache import ensure_sde_cache, ensure_universe_cache, load_yaml_async
 
 DATABASE_PATH = reference_db_path()
 BATCH_SIZE = 500

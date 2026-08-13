@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tools.downloaders import getrigdata
+from services.importers import getrigdata
 
 
 @pytest.fixture

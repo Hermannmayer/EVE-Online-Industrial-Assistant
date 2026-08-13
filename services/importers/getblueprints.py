@@ -100,7 +100,7 @@ async def ensure_cache() -> str:
         return _extract_blueprints_yaml()
 
     # 复用 sde_cache 的下载函数（单飞锁 + 断点续传 + 流式写盘），不重复实现下载
-    from tools.downloaders.sde_cache import ensure_sde_zip
+    from services.importers.sde_cache import ensure_sde_zip
 
     await ensure_sde_zip()
     return _extract_blueprints_yaml()
@@ -220,7 +220,7 @@ async def run_blueprint_update(progress_cb=None):
     # 补拉 T2/T3 蓝图名称到 item 表
     if progress_cb:
         progress_cb(98, "补拉蓝图名称")
-    from tools.downloaders.getitems import fill_missing_blueprint_names
+    from services.importers.getitems import fill_missing_blueprint_names
 
     await fill_missing_blueprint_names()
     if progress_cb:

@@ -169,7 +169,7 @@ class InitService(QObject):
         """
         # 重置跨事件循环的异步锁（重试会新建 asyncio.run，旧锁绑定上一循环会报错）
         from services.db_locks import reset_db_locks
-        from tools.downloaders.sde_cache import reset_async_locks
+        from services.importers.sde_cache import reset_async_locks
 
         reset_db_locks()
         reset_async_locks()
@@ -311,7 +311,7 @@ class InitService(QObject):
 
         # 初始化结束，释放 YAML 解析缓存（typeIDs.yaml 148MB 等大文件）
         try:
-            from tools.downloaders.sde_cache import clear_yaml_cache
+            from services.importers.sde_cache import clear_yaml_cache
 
             clear_yaml_cache()
         except Exception:
@@ -430,16 +430,17 @@ class InitService(QObject):
         """
         # 映射 key → (module_path, entry_func_name, param_name)
         # param_name: 入口函数的 progress_cb 参数名（None=不支持）
+        # 下载器统一在 services.importers（tools.downloaders / services.workers 为兼容 shim）
         entry_map = {
             "schema": ("services.schema_migrations", "ensure_all_schemas", False),
-            "items": ("tools.downloaders.getitems", "main", True),
-            "prices": ("services.workers.getprices", "main", True),
-            "blueprints": ("tools.downloaders.getblueprints", "run_blueprint_update", True),
-            "implants": ("tools.downloaders.getimplantdata", "main", True),
-            "icons": ("tools.downloaders.geticon", "main", True),
-            "industry": ("services.workers.getindustry", "run_industry_update", True),
-            "rigs": ("tools.downloaders.getrigdata", "main", True),
-            "sde_data": ("tools.downloaders.sde_loader", "main", True),
+            "items": ("services.importers.getitems", "main", True),
+            "prices": ("services.importers.getprices", "main", True),
+            "blueprints": ("services.importers.getblueprints", "run_blueprint_update", True),
+            "implants": ("services.importers.getimplantdata", "main", True),
+            "icons": ("services.importers.geticon", "main", True),
+            "industry": ("services.importers.getindustry", "run_industry_update", True),
+            "rigs": ("services.importers.getrigdata", "main", True),
+            "sde_data": ("services.importers.sde_loader", "main", True),
         }
 
         mapping = entry_map.get(key)

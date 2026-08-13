@@ -47,7 +47,7 @@ class IndustryDataWorker(QThread):
         try:
             import asyncio
 
-            from services.workers.getindustry import run_industry_update
+            from services.importers.getindustry import run_industry_update
 
             asyncio.run(run_industry_update())
             self.finished.emit(True, "工业数据拉取完成")
@@ -584,7 +584,7 @@ class IndustryPage(QWidget):
     def _check_industry_data(self):
         """检查工业数据，缺失或过时（fetch_time 超阈值）时在后台拉取"""
         from core.paths import REF_DB_PATH
-        from services.workers.getindustry import industry_data_is_fresh
+        from services.importers.getindustry import industry_data_is_fresh
 
         if industry_data_is_fresh(REF_DB_PATH):
             return

@@ -64,7 +64,7 @@ class PriceUpdateWorker(QThread):
 
     def run(self):
         try:
-            from services.workers.getprices import run_price_update
+            from services.importers.getprices import run_price_update
 
             run_price_update(self._regions)
             self.finished_signal.emit(True, "价格更新完成")
