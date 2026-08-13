@@ -8,6 +8,26 @@
 
 ## 函数
 
+### `_default_db`
+
+```python
+def _default_db()
+```
+
+惰性获取 DatabaseManager（经容器）。
+
+定义行：`22`
+
+### `_default_pricing`
+
+```python
+def _default_pricing()
+```
+
+惰性获取 PricingService（经容器）。
+
+定义行：`27`
+
 ### `get_distance_jumps`
 
 ```python
@@ -16,7 +36,7 @@ def get_distance_jumps(source: str, destination: str) -> int | None
 
 获取两个贸易中心之间的跳跃数，未知路线返回 None
 
-定义行：`46`
+定义行：`53`
 
 ### `estimate_freight_cost`
 
@@ -26,7 +46,7 @@ def estimate_freight_cost(volume_m3: float, distance_jumps: int, collateral: flo
 
 估算跨区域货物运输的运费。
 
-定义行：`51`
+定义行：`58`
 
 ### `calc_transport_profit`
 
@@ -36,7 +56,7 @@ def calc_transport_profit(type_id: int, buy_hub: str, sell_hub: str, buy_price_t
 
 计算跨区域运输的净利润（包含运费和贸易费用）。
 
-定义行：`133`
+定义行：`140`
 
 ### `list_trade_hub_distances`
 
@@ -46,4 +66,4 @@ def list_trade_hub_distances() -> list[dict]
 
 返回所有贸易中心对的跳跃距离，供 UI 使用
 
-定义行：`281`
+定义行：`288`

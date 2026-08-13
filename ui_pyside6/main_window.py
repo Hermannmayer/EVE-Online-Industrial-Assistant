@@ -999,7 +999,7 @@ class MainWindow(QMainWindow):
     def _check_first_run(self):
         """启动后检查数据状态 + 重建页面
 
-        数据初始化由 StartupCheckDialog（Main.py 启动时）自动处理，
+        数据初始化由 InitWizard（Main.py 启动时，auto_mode）自动处理，
         此处仅负责页面重建和状态展示。
         """
         from services.init_check import check_all

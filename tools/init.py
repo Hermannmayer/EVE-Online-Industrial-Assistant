@@ -29,7 +29,6 @@ from core.logger import log  # noqa: E402
 # 运行时模块（getprices/getindustry/getcontracts）保留在 services/workers/。
 STEPS = [
     ("items", "物品数据", "tools.downloaders.getitems", True),
-    ("prices", "市场价格", "services.workers.getprices", True),
     ("blueprints", "蓝图数据", "tools.downloaders.getblueprints", True),
     ("implants", "植入体数据", "tools.downloaders.getimplantdata", True),
     ("industry", "工业数据", "services.workers.getindustry", True),
@@ -56,7 +55,6 @@ async def _run_step(key: str, name: str, module_path: str) -> bool:
         # 每个模块的入口函数名不同
         entry_map = {
             "getitems": "main",
-            "getprices": "run_price_update",
             "getblueprints": "run_blueprint_update",
             "getimplantdata": "main",
             "geticon": "main",
@@ -113,7 +111,7 @@ def main():
     parser.add_argument(
         "--step",
         "-s",
-        help="仅执行指定步骤 (items/prices/blueprints/implants/icons/industry/sde_data)",
+        help="仅执行指定步骤 (items/blueprints/implants/icons/industry/sde_data)",
     )
     parser.add_argument(
         "--list",

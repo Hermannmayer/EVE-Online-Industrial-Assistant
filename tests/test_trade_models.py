@@ -4,7 +4,7 @@
   - TradeHubTableModel: 跨区域价格对比表模型
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from PySide6.QtCore import QModelIndex, Qt
 
@@ -83,22 +83,16 @@ class TestTradeHubTableModel:
         rows = [{"hub": "Jita", "type_id": 2001}]
         model = TradeHubTableModel(rows)
 
-        with patch("ui_pyside6.models.trade_models.os.path.exists") as mock_exists:
-            with patch("ui_pyside6.models.trade_models.QPixmap") as mock_pix:
-                mock_exists.return_value = True
-                mock_pix_instance = mock_pix.return_value
-                mock_pix_instance.isNull.return_value = False
-
-                result = model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole)
-                assert result is not None
+        with patch("ui_pyside6.models.trade_models.load_item_icon", return_value=MagicMock()):
+            result = model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole)
+            assert result is not None
 
     def test_data_decoration_no_icon(self, qapp):
         """无图标文件时 DecorationRole 返回 None"""
         rows = [{"hub": "Jita", "type_id": 99999}]
         model = TradeHubTableModel(rows)
 
-        with patch("ui_pyside6.models.trade_models.os.path.exists") as mock_exists:
-            mock_exists.return_value = False
+        with patch("ui_pyside6.models.trade_models.load_item_icon", return_value=None):
             result = model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole)
             assert result is None
 

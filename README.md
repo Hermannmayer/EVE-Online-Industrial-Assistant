@@ -4,122 +4,36 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
+📖 在线文档：[hermannmayer.github.io/EVE-Online-Industrial-Assistant](https://hermannmayer.github.io/EVE-Online-Industrial-Assistant/) — 使用手册 / 安装指南 / 开发文档 / API 参考
+
 ---
 
 ## 📦 项目结构
 
 ```
 EVE-Online-Industrial-Assistant/
-├── Main.py                         # 入口点，PySide6 App
-├── build_release.py                # PyInstaller 打包脚本
-├── dev.py                          # 热重载开发工具
-├── README.md
-├── CHANGELOG.md                  # 更新日志
-├── LICENSE                         # Apache 2.0
+├── Main.py                  # 入口点，PySide6 App
+├── build_release.py         # PyInstaller 打包脚本
+├── dev.py                   # 热重载开发工具
 │
-├── core/
-│   ├── __init__.py
-│   ├── paths.py                    # 所有路径集中管理（含4库路径）
-│   └── logger.py                   # 日志配置
+├── core/                    # 工具层（常量、路径、公式、容器、日志）
+├── domain/                  # 领域层（纯函数：评分、BOM 展开）
+├── application/             # 应用编排层（评分门面）
+├── services/                # 业务层（数据库、评分、库存、数据导入）
+│   └── importers/           # SDE/ESI 数据导入器（getitems/getprices/sde_loader 等）
+├── ui_pyside6/              # UI 层（主窗口、主题、模型、worker、视图、对话框）
+├── tools/                   # 独立初始化工具
+├── scripts/                 # 维护脚本（数据库拆分迁移等）
+├── docs/                    # 文档站（VitePress，在线版见顶部链接）
 │
-├── ui_pyside6/
-│   ├── __init__.py
-│   ├── main_window.py              # 主窗口 + 侧边导航 + 弹窗管理
-│   ├── theme.py                    # One Dark Pro / One Light 主题
-│   └── views/
-│       ├── __init__.py
-│       ├── query_view.py           # 物品查询页面（核心功能）
-│       ├── estimate_view.py        # 估价页面（剪贴板粘贴→价格查询）
-│       ├── industry_view.py        # 工业/制造页面
-│       └── views/industry/
-│           ├── __init__.py
-│           ├── top_toolbar.py       # 工具栏（蓝图导入 + 双行价格设置 + 搜索候选）
-│           ├── price_source_widget.py # 材料/成品独立价格来源设置组件
-│           ├── plan_table.py        # 生产计划表格
-│           ├── plan_edit_dialog.py  # 计划编辑对话框
-│           ├── gantt_view.py        # 甘特图
-│           ├── flow_layout.py       # 自动换行布局
-│           ├── status_bar.py        # 底部状态栏
-│           ├── action_buttons.py    # 底部操作按钮
-│           ├── blueprint_dialog.py  # 所需蓝图表
-│           ├── char_usage_dialog.py # 人物占用表
-│           ├── cost_breakdown_dialog.py # 成本明细
-│           ├── materials_dialog.py  # 材料汇总表
-│           └── output_dialog.py     # 产出总表
-│       ├── inventory_view.py       # 仓库/库存页面
-│       ├── trade_view.py           # 贸易评分页面
-│       ├── char_settings_view.py   # 角色设置页面
-│       ├── init_wizard.py          # 首次启动向导
-│       ├── all_items_view.py       # 全物品浏览弹窗
-│       └── dialogs/
-│           ├── industry_dialogs.py   # 加入制造计划对话框
-│           ├── npc_seller_dialog.py  # 蓝图 NPC 卖家查询
-│           └── production_wizard.py  # 产线启动小助手
+├── database/                # SQLite 库（运行时自动生成）
+├── data/                    # 运行时数据（设置、缓存、图标）
+├── tests/                   # pytest 测试
 │
-├── services/
-│   ├── client.py                   # ESI HTTP 客户端（aiohttp）
-│   ├── database_manager.py         # 多库连接管理器（ATTACH DATABASE）
-│   ├── scoring.py                  # 制造/贸易评分计算逻辑
-│   ├── scoring_cache.py            # 评分结果缓存
-│   ├── inventory_manager.py        # 库存管理 CRUD
-│   ├── init_check.py               # 数据初始化状态检测
-│   └── workers/
-│       ├── getitems.py             # 物品数据库初始化（SDE）
-│       ├── getprices.py            # 市场价格拉取（ESI，并发优化）
-│       ├── geticon.py              # 图标缓存下载
-│       ├── getblueprints.py        # 蓝图数据拉取
-│       ├── getindustry.py          # 工业系统成本指数拉取
-│       └── getimplantdata.py       # 工业植入体数据拉取
-│
-├── database/
-│   ├── reference.db                # 静态参考数据（item, industry_* 等）
-│   ├── market.db                   # 市场价格快照
-│   ├── user.db                     # 用户数据（机库、库存、生产计划）
-│   └── blueprint.db                # 蓝图数据（activities, materials 等）
-│
-├── scripts/
-│   └── migrate_split_db.py         # 单库→4库迁移脚本
-│
-├── data/
-│   ├── search_history.json         # 搜索历史
-│   ├── settings.json               # 用户设置（主题、价格更新等）
-│   ├── update_progress.json        # 更新进度
-│   ├── window_geometry.json        # 窗口状态
-│   ├── char_config.json            # 角色配置（多角色）
-│   └── caches/icons/               # 图标缓存目录
-│
-├── EVE——docs/
-│   ├── 01-架构概览.md               # 精简版设计文档
-│   ├── 02-功能规格.md
-│   ├── 03-UI设计.md
-│   └── 04-开发路线图.md
-│
-├── tests/
-│   ├── __init__.py
-│   ├── conftest.py
-│   ├── test_contract_view.py
-│   ├── test_core.py
-│   ├── test_database_manager.py
-│   ├── test_export_helper.py
-│   ├── test_logger.py
-│   ├── test_logistics.py
-│   ├── test_paths.py
-│   ├── test_price_history.py
-│   ├── test_procurement.py
-│   ├── test_scoring_cache.py
-│   ├── test_scoring_service.py
-│   ├── test_theme_listeners.py
-│   └── test_watchlist_manager.py
-│
-├── .pre-commit-config.yaml         # Pre-commit hooks 配置
-├── .github/
-│   └── workflows/
-│       └── ci.yml                  # GitHub Actions CI
-├── CLAUDE.md                       # Claude Code 项目约束
-├── AUDIT-20260731.md               # 2026-07-31 代码审计报告
-│
-├── pyproject.toml                  # 项目配置 + 依赖声明（uv 管理）
-└── uv.lock                         # 依赖锁文件（uv sync 生成）
+├── pyproject.toml           # 项目配置 + 依赖声明（uv 管理）
+├── uv.lock                  # 依赖锁文件
+├── CHANGELOG.md             # 更新日志
+└── CLAUDE.md                # Claude Code 项目约束
 ```
 
 ---
@@ -157,8 +71,8 @@ python Main.py
 
 > 首次启动会自动：
 > 1. 创建 SQLite 数据库
-> 2. 从 SDE 拉取物品数据
-> 3. 从 ESI 拉取吉他（The Forge）市场价格
+> 2. 从 SDE 拉取物品数据（YAML 解析结果磁盘缓存，后续启动秒级）
+> 3. 快速拉取基础价格兜底；完整订单簿由主窗口后台自动更新
 > 4. 缓存物品图标
 
 ### 打包为 EXE
@@ -288,7 +202,7 @@ python build_release.py
 
 | 指标 | 数值 |
 |------|------|
-| 📊 **测试总数** | 1088 个 |
+| 📊 **测试总数** | 1061 个 |
 | 🔧 **框架** | pytest |
 | 📁 **测试目录** | `tests/` |
 | 🏃 **运行命令** | `pytest` |
@@ -326,8 +240,8 @@ python build_release.py
 
 ### ESI（EVE Swagger Interface）
 - 基础地址：`https://esi.evetech.net/latest`
-- 用途：市场价格、空间站名称
-- 区域：伏尔戈（The Forge，ID: 10000002）
+- 用途：市场价格（完整订单簿由主窗口后台自动更新）、工业成本指数、合同、植入体等
+- 区域：Jita / Amarr / Dodixie / Rens / Hek 五大贸易中心
 
 ---
 

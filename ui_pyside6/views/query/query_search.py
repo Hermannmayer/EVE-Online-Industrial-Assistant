@@ -3,13 +3,12 @@
 """
 
 import json
-import os
 import time as _time
 from datetime import UTC
 from pathlib import Path
 
 from PySide6.QtCore import QAbstractTableModel, QEvent, QPoint, Qt, QThread, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QPixmap
+from PySide6.QtGui import QAction, QColor, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -21,7 +20,8 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
-from core.paths import ICON_DIR, search_history_file
+from core.paths import search_history_file
+from ui_pyside6.icon_cache import load_item_icon
 
 ICON_SIZE = 32
 HISTORY_FILE = Path(search_history_file())
@@ -81,15 +81,9 @@ class QueryTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.DecorationRole:
             if col == 0:
-                type_id = row.get("type_id")
-                if type_id:
-                    icon_path = os.path.join(ICON_DIR, f"{type_id}.png")
-                    if os.path.exists(icon_path):
-                        pix = QPixmap(icon_path)
-                        if not pix.isNull():
-                            return pix.scaled(
-                                32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-                            )
+                pix = load_item_icon(row.get("type_id"), size=ICON_SIZE)
+                if pix is not None:
+                    return pix
             return None
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:

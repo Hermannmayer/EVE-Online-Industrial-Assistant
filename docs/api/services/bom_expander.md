@@ -8,6 +8,26 @@ BOM 递归展开 — 支持 T2/T3 产业链的完整材料树
 
 ## 函数
 
+### `_default_db`
+
+```python
+def _default_db()
+```
+
+惰性获取 DatabaseManager（经容器）。
+
+定义行：`25`
+
+### `_default_pricing`
+
+```python
+def _default_pricing()
+```
+
+惰性获取 PricingService（经容器）。
+
+定义行：`30`
+
 ### `_resolve_name`
 
 ```python
@@ -16,7 +36,7 @@ def _resolve_name(c, type_id: int) -> str
 
 解析物品名称 — 委托给 name_resolver
 
-定义行：`55`
+定义行：`61`
 
 ### `_find_blueprint_for_product`
 
@@ -26,7 +46,7 @@ def _find_blueprint_for_product(conn, product_type_id: int, activity: str='manuf
 
 查找产出指定物品的蓝图 → (bp_id, output_qty, base_time)
 
-定义行：`62`
+定义行：`68`
 
 ### `_get_materials`
 
@@ -36,7 +56,7 @@ def _get_materials(conn, bp_id: int, activity: str='manufacturing')
 
 获取蓝图材料列表 → [(material_type_id, quantity), ...]
 
-定义行：`79`
+定义行：`85`
 
 ### `_expand`
 
@@ -46,7 +66,7 @@ def _expand(conn, type_id: int, needed_qty: float, bp_me: int, price_hub: str, p
 
 内部递归展开。
 
-定义行：`97`
+定义行：`103`
 
 ### `expand_bom`
 
@@ -56,7 +76,7 @@ def expand_bom(type_id: int, quantity: int=1, bp_me: int=0, price_hub: str='Jita
 
 递归展开 BOM 树，返回完整的材料层级结构。
 
-定义行：`254`
+定义行：`260`
 
 ### `get_material_tree`
 
@@ -66,7 +86,7 @@ def get_material_tree(type_id: int, quantity: int=1, bp_me: int=0, price_hub: st
 
 返回 BOM 树根节点（简洁接口）
 
-定义行：`375`
+定义行：`381`
 
 ### `get_flat_materials`
 
@@ -76,7 +96,7 @@ def get_flat_materials(type_id: int, quantity: int=1, bp_me: int=0, price_hub: s
 
 返回扁平化的所有叶子材料列表（购物清单）
 
-定义行：`393`
+定义行：`399`
 
 ### `print_tree`
 
@@ -86,7 +106,7 @@ def print_tree(node: BomNode, indent: int=0) -> str
 
 调试用：打印 BOM 树结构
 
-定义行：`411`
+定义行：`417`
 
 ## 类
 
@@ -94,4 +114,4 @@ def print_tree(node: BomNode, indent: int=0) -> str
 
 BOM 树节点 — 描述一个材料/中间产品的层级信息
 
-定义行：`35`
+定义行：`41`

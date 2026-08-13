@@ -335,6 +335,28 @@ async def main(regions: list[tuple[str, int]] | None = None, progress_cb: Callab
         log.info(f"  {name} (id={rid}): {len(items)} items")
 
 
+async def fetch_baseline_only(progress_cb: Callable[[int, str], None] | None = None):
+    """快速基础价格兜底 — 仅拉 /markets/prices/（1 次请求）。
+
+    完整订单簿由主窗口后台更新（PriceUpdateWorker）负责；初始化只在全新安装
+    （market_prices 为空）时调用本函数，让用户先有兜底价格数据。
+    baseline 为空（网络失败）时仅告警返回——价格仍由后台更新补全。
+    """
+    t0 = datetime.now()
+    if progress_cb:
+        progress_cb(0, "获取基准价格...")
+    await init_db()
+    baseline = await fetch_baseline_prices()
+    if not baseline:
+        log.warning("基准价格拉取失败，跳过（后台价格更新会补全）")
+        return
+    order_prices = {rid: baseline for _, rid in TRADE_REGIONS}
+    cnt = await save_prices(baseline, order_prices, [rid for _, rid in TRADE_REGIONS])
+    if progress_cb:
+        progress_cb(100, f"基准价格已写入 {cnt} 条")
+    log.info(f"基础价格兜底完成: {cnt} 条（{(datetime.now() - t0).total_seconds():.0f}s）")
+
+
 def run_price_update(regions: list[str] | None = None):
     """
     运行价格更新。

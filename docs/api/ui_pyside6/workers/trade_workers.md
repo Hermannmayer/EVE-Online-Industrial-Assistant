@@ -12,7 +12,7 @@
 
 获取物品在四大贸易中心的价格
 
-定义行：`10`
+定义行：`11`
 
 #### 方法
 
@@ -26,7 +26,7 @@ def __init__(self, type_id: int, db, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`15`
+定义行：`16`
 ##### `run`
 
 ```python
@@ -37,13 +37,13 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`20`
+定义行：`21`
 
 ### `class TradeScoreWorker`（继承 `BaseScoreWorker`）
 
 单项贸易评分 — 继承 BaseScoreWorker
 
-定义行：`43`
+定义行：`44`
 
 #### 方法
 
@@ -57,7 +57,7 @@ def __init__(self, type_id: int, buy_hub: str='Jita', sell_hub: str='Jita', buy_
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`46`
+定义行：`47`
 ##### `_compute`
 
 ```python
@@ -68,13 +68,13 @@ def _compute(self) -> dict
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`63`
+定义行：`64`
 
 ### `class TransportWorker`（继承 `BaseScoreWorker`）
 
 跨区域运输利润计算 — 继承 BaseScoreWorker
 
-定义行：`79`
+定义行：`80`
 
 #### 方法
 
@@ -88,7 +88,7 @@ def __init__(self, type_id: int, buy_hub: str, sell_hub: str, buy_price_type: st
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`82`
+定义行：`83`
 ##### `_compute`
 
 ```python
@@ -99,4 +99,4 @@ def _compute(self) -> dict
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`104`
+定义行：`105`

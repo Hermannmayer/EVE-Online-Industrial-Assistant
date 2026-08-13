@@ -49,7 +49,29 @@ def _wait():
 
 
 def test_industry_page_theme_listener(qapp, mock_db):
-    with patch("ui_pyside6.views.industry_view.init_plan_db"):
+    # mock_db 只 patch core.container.get_container，而 industry_view 通过
+    # `from core.container import get_container` 绑定旧引用，patch 不生效；
+    # 构造 IndustryPage 会触发后台重算 worker 访问真实容器写库（full 集合下暴露）。
+    # 这里显式 patch industry_view.get_container，隔离真实 DB/容器。
+    mock_cont = MagicMock()
+    mock_mgr = MagicMock()
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = []
+    mock_cursor.fetchone.return_value = None
+    mock_conn.cursor.return_value = mock_cursor
+    mock_conn.execute.return_value = mock_cursor
+    mock_cm = MagicMock()
+    mock_cm.__enter__ = MagicMock(return_value=mock_conn)
+    mock_cm.__exit__ = MagicMock(return_value=False)
+    mock_mgr.connect.return_value = mock_cm
+    mock_cont.db = mock_mgr
+    mock_cont.plan_repo = MagicMock()
+
+    with (
+        patch("ui_pyside6.views.industry_view.init_plan_db"),
+        patch("ui_pyside6.views.industry_view.get_container", return_value=mock_cont),
+    ):
         from ui_pyside6.views.industry_view import IndustryPage
 
         page = IndustryPage(None)
@@ -155,10 +177,12 @@ def test_char_settings_dialog_show_event(qapp, mock_db):
 
 
 def test_init_wizard_show_event(qapp):
+    from services.init_service import STEPS
+
     with (
         patch(
-            "ui_pyside6.views.init_wizard.is_step_satisfied",
-            side_effect=lambda key: key in ("items", "prices", "blueprints"),
+            "ui_pyside6.views.init_wizard.get_missing_steps",
+            return_value=[s for s in STEPS if s.key not in ("items", "blueprints")],
         ),
     ):
         from ui_pyside6.views.init_wizard import InitWizard

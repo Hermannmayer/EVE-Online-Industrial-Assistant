@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPalette, QPixmap, QPixmapCache
+from PySide6.QtGui import QColor, QIcon, QPainter, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -26,7 +25,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
-from core.paths import ICON_DIR
+from ui_pyside6.icon_cache import load_item_icon
 from ui_pyside6.models.industry_models import PlanTableModel
 
 # ── 列索引常量（与 PlanTableModel._HEADERS 对齐） ────────────
@@ -100,24 +99,6 @@ class PlanTableDelegate(QStyledItemDelegate):
     纯展示职责（前景色/底色/图标/复选框/对齐/尺寸）在此 delegate 完成。
     """
 
-    def _load_icon(self, type_id: int) -> QPixmap | None:
-        """从缓存或磁盘加载 32px 图标，失败返回 None"""
-        if not type_id:
-            return None
-        cache_key = f"icon_{type_id}"
-        pixmap = QPixmap(cache_key)
-        if not pixmap.isNull():
-            return pixmap
-        path = os.path.join(ICON_DIR, f"{type_id}.png")
-        if not os.path.isfile(path):
-            return None
-        pixmap = QPixmap(path)
-        if pixmap.isNull():
-            return None
-        pixmap = pixmap.scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        QPixmapCache.insert(cache_key, pixmap)
-        return pixmap
-
     def _foreground(self, p: dict, c: int) -> QColor | None:
         if c == COL_PROFIT:
             profit = p.get("profit", 0) or 0
@@ -162,9 +143,13 @@ class PlanTableDelegate(QStyledItemDelegate):
             option.palette.setColor(QPalette.ColorRole.Base, QColor(color))
 
         if c == COL_ICON:
-            pixmap = self._load_icon(p.get("product_type_id"))
+            pixmap = load_item_icon(p.get("product_type_id"))
             if pixmap is not None:
                 option.icon = QIcon(pixmap)
+                # super().initStyleOption 只在 DecorationRole 提供图标时设置
+                # HasDecoration；此处手动赋值 option.icon 后必须补上该标志，
+                # 否则 QStyle 绘制时跳过图标（生产规划表格图标不显示的根因）
+                option.features |= QStyleOptionViewItem.ViewItemFeature.HasDecoration
 
         if c == COL_CHECKBOX:
             option.features |= QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator

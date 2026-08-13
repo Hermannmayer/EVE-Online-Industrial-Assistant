@@ -19,6 +19,7 @@ coverage.xml
 pytest-of-*/
 eve_dbmgr_*/
 eve_proc_*/
+eve_planexec_*/
 eve_test_*
 init_check_*/
 inv_test_*
@@ -100,6 +101,8 @@ _test.txt
 
 # SDE cache YAML files
 data/*.yaml
+# SDE 解析结果的磁盘 pickle 缓存（运行时自动重新生成）
+data/*.pkl
 data/sde.zip
 data/universe_data.json
 

@@ -60,7 +60,10 @@ class StepStatus(Enum):
 STEPS = [
     InitStep("schema", "数据库结构", needs_network=False, critical=True),
     InitStep("items", "物品数据", needs_network=True, critical=True, depends_on=["schema"]),
-    InitStep("prices", "市场价格", needs_network=True, critical=True, depends_on=["items"]),
+    # 完整订单簿价格不属于初始化职责——由主窗口后台更新（自动更新默认开启）。
+    # 初始化只做「价格基础数据」兜底：全新安装（market_prices 为空）时快速拉一次
+    # /markets/prices/ 基准价，非关键步骤不阻塞主窗口。
+    InitStep("price_baseline", "价格基础数据", needs_network=True, critical=False, depends_on=["items"]),
     InitStep("blueprints", "蓝图数据", needs_network=True, critical=True, depends_on=["items"]),
     InitStep("implants", "植入体数据", needs_network=True, critical=False, depends_on=["items"]),
     InitStep("rigs", "结构改装件数据", needs_network=True, critical=False, depends_on=["items"]),
@@ -300,9 +303,7 @@ class InitService(QObject):
         fail_count = sum(1 for st in self._status.values() if st == StepStatus.FAILED)
         # 只有关键步骤失败才阻止进入主窗口；非关键步骤（icons/implants/rigs）失败可跳过
         # —— 否则个别可选步骤失败会让启动对话框永远不关闭、主窗口不出现
-        critical_failed = any(
-            self._status[k] == StepStatus.FAILED and bool(STEP_MAP[k].critical) for k in self._status
-        )
+        critical_failed = any(self._status[k] == StepStatus.FAILED and bool(STEP_MAP[k].critical) for k in self._status)
         all_done = not critical_failed
         summary = f"完成 {success_count}/{success_count + fail_count}"
         if fail_count == 0:
@@ -434,7 +435,7 @@ class InitService(QObject):
         entry_map = {
             "schema": ("services.schema_migrations", "ensure_all_schemas", False),
             "items": ("services.importers.getitems", "main", True),
-            "prices": ("services.importers.getprices", "main", True),
+            "price_baseline": ("services.importers.getprices", "fetch_baseline_only", True),
             "blueprints": ("services.importers.getblueprints", "run_blueprint_update", True),
             "implants": ("services.importers.getimplantdata", "main", True),
             "icons": ("services.importers.geticon", "main", True),

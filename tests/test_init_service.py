@@ -39,7 +39,7 @@ def _patch_execution(service, run_step):
 class TestDependencyOrder:
     @pytest.mark.asyncio
     async def test_schema_before_items_before_dependents(self, service):
-        """依赖顺序：schema 先于 items，items 先于 prices/blueprints/implants/rigs/industry/icons/sde_data"""
+        """依赖顺序：schema 先于 items，items 先于 blueprints/implants/rigs/industry/icons/sde_data/price_baseline"""
         order: list[str] = []
 
         async def fake_run_step(key):
@@ -52,7 +52,7 @@ class TestDependencyOrder:
         assert order[0] == "schema", "schema 无依赖，最先执行"
         idx = {k: order.index(k) for k in order}
         assert idx["schema"] < idx["items"]
-        for dep in ["prices", "blueprints", "implants", "rigs", "industry", "icons", "sde_data"]:
+        for dep in ["blueprints", "implants", "rigs", "industry", "icons", "sde_data", "price_baseline"]:
             assert idx["items"] < idx[dep], f"{dep} 应在 items 之后"
         assert all(service.get_status()[k] == StepStatus.COMPLETED for k in ALL_KEYS)
 
@@ -61,6 +61,7 @@ class TestParallelExecution:
     @pytest.mark.asyncio
     async def test_wall_clock_is_less_than_serial(self, service):
         """9 步各 50ms：串行需 450ms，并行关键路径仅 schema+items+max(其余)≈150ms"""
+
         async def fake_run_step(key):
             await asyncio.sleep(0.05)
             return True, "ok"
@@ -77,9 +78,10 @@ class TestParallelExecution:
 class TestFailureIsolation:
     @pytest.mark.asyncio
     async def test_one_failure_does_not_block_others(self, service):
-        """prices 失败 → 自身 FAILED，其它步骤正常 COMPLETED"""
+        """implants 失败 → 自身 FAILED，其它步骤正常 COMPLETED"""
+
         async def fake_run_step(key):
-            if key == "prices":
+            if key == "implants":
                 return False, "网络超时"
             return True, "ok"
 
@@ -87,10 +89,10 @@ class TestFailureIsolation:
             await service._run_sequence(ALL_KEYS)
 
         status = service.get_status()
-        assert status["prices"] == StepStatus.FAILED
-        assert service.get_errors()["prices"] == "网络超时"
-        for k in ["schema", "items", "blueprints", "implants", "rigs", "industry", "icons", "sde_data"]:
-            assert status[k] == StepStatus.COMPLETED, f"{k} 不应被 prices 失败影响"
+        assert status["implants"] == StepStatus.FAILED
+        assert service.get_errors()["implants"] == "网络超时"
+        for k in ["schema", "items", "blueprints", "rigs", "industry", "icons", "sde_data", "price_baseline"]:
+            assert status[k] == StepStatus.COMPLETED, f"{k} 不应被 implants 失败影响"
 
 
 class TestCancel:
@@ -119,7 +121,7 @@ class TestCancel:
 
         status = service.get_status()
         assert status["items"] == StepStatus.CANCELLED
-        assert status["prices"] == StepStatus.CANCELLED, "依赖 items 的步骤应被取消"
+        assert status["blueprints"] == StepStatus.CANCELLED, "依赖 items 的步骤应被取消"
 
 
 class TestNetworkPrecheck:
@@ -144,9 +146,8 @@ class TestNetworkPrecheck:
             await service._run_sequence(ALL_KEYS)
 
         # 所有网络步骤都实际执行了（而非被预检失败直接 FAILED）
-        assert "prices" in ran
         assert "blueprints" in ran
         assert "icons" in ran
         status = service.get_status()
-        assert status["prices"] == StepStatus.COMPLETED
+        assert status["blueprints"] == StepStatus.COMPLETED
         assert status["icons"] == StepStatus.COMPLETED

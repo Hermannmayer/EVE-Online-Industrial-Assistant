@@ -106,7 +106,7 @@ def check_meta_groups() -> int
 
 返回 meta_group 表行数
 
-定义行：`145`
+定义行：`150`
 
 ### `check_type_materials`
 
@@ -116,7 +116,7 @@ def check_type_materials() -> int
 
 返回 reprocessing_materials 表行数
 
-定义行：`156`
+定义行：`161`
 
 ### `check_dogma_attrs`
 
@@ -126,7 +126,7 @@ def check_dogma_attrs() -> int
 
 返回 dogma_attribute 表行数
 
-定义行：`167`
+定义行：`172`
 
 ### `check_stations`
 
@@ -136,7 +136,7 @@ def check_stations() -> int
 
 返回 station 表行数
 
-定义行：`178`
+定义行：`183`
 
 ### `check_universe`
 
@@ -146,7 +146,7 @@ def check_universe() -> int
 
 返回 solar_system 表行数，>0 视为 universe 星系数据已加载。
 
-定义行：`189`
+定义行：`194`
 
 ### `check_structure_rigs`
 
@@ -156,7 +156,7 @@ def check_structure_rigs() -> int
 
 返回 structure_rigs 行数，>80 视为改件加成已初始化
 
-定义行：`208`
+定义行：`213`
 
 ### `check_schema`
 
@@ -166,7 +166,7 @@ def check_schema() -> bool
 
 检查已存在的库的 schema 版本是否匹配预期
 
-定义行：`222`
+定义行：`227`
 
 ### `check_all`
 
@@ -174,9 +174,9 @@ def check_schema() -> bool
 def check_all() -> dict
 ```
 
-返回各组件状态 &#123; "items": bool, "prices": bool, "blueprints": bool, ... &#125;
+返回各组件状态 &#123; "items": bool, "price_baseline": bool, "blueprints": bool, ... &#125;
 
-定义行：`244`
+定义行：`249`
 
 ### `missing_count`
 
@@ -186,4 +186,4 @@ def missing_count() -> int
 
 返回未就绪的组件数量
 
-定义行：`266`
+定义行：`275`

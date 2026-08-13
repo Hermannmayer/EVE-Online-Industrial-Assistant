@@ -1,10 +1,9 @@
 """待采购对话框 - 根据生产计划和库存计算需要采购的材料"""
 
 import json
-import os
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
-from PySide6.QtGui import QColor, QPixmap, QPixmapCache
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -25,28 +24,8 @@ import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.logger import log
-from core.paths import ICON_DIR
 from services.manufacturing_calculator import calc_material_for_runs
-
-
-def _load_icon(type_id: int, size: int = 24) -> QPixmap | None:
-    """加载物品图标（缓存）"""
-    if not type_id:
-        return None
-    cache_key = f"procicon_{type_id}"
-    pixmap = QPixmap(cache_key)
-    if not pixmap.isNull():
-        return pixmap
-    path = os.path.join(ICON_DIR, f"{type_id}.png")
-    if os.path.isfile(path):
-        pixmap = QPixmap(path)
-        if not pixmap.isNull():
-            pixmap = pixmap.scaled(
-                size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-            )
-            QPixmapCache.insert(cache_key, pixmap)
-            return pixmap
-    return None
+from ui_pyside6.icon_cache import load_item_icon
 
 
 def _resolve_item_name(mid: int, zh_name: str | None, en_name: str | None) -> str:
@@ -87,7 +66,7 @@ class ProcureTableModel(QAbstractTableModel):
 
         # 图标（DecorationRole）— 第 0 列
         if role == Qt.ItemDataRole.DecorationRole and c == 0:
-            return _load_icon(r.get("type_id"))
+            return load_item_icon(r.get("type_id"), size=24)
 
         if role == Qt.ItemDataRole.DisplayRole:
             if c < len(keys):

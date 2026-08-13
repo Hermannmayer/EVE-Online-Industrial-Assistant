@@ -4,39 +4,15 @@
 包含 InvTableModel 和 BlueprintTableModel。
 """
 
-import os
 from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QSize, Qt
-from PySide6.QtGui import QColor, QPixmap, QPixmapCache
+from PySide6.QtGui import QColor
 
 import ui_pyside6.theme as theme
-from core.paths import icon_cache_dir
 from services.terminology import term
-
-ICON_DIR = icon_cache_dir()
-
-
-def _load_icon(type_id: int, size: int = 32) -> QPixmap | None:
-    """加载物品图标（QPixmapCache 缓存）"""
-    if not type_id:
-        return None
-    cache_key = f"invicon_{type_id}"
-    pixmap = QPixmap(cache_key)
-    if not pixmap.isNull():
-        return pixmap
-    path = os.path.join(ICON_DIR, f"{type_id}.png")
-    if os.path.isfile(path):
-        pixmap = QPixmap(path)
-        if not pixmap.isNull():
-            pixmap = pixmap.scaled(
-                size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-            )
-            QPixmapCache.insert(cache_key, pixmap)
-            return pixmap
-    return None
-
+from ui_pyside6.icon_cache import load_item_icon
 
 # ════════════════════════════════════════════════════
 #  InvTableModel
@@ -91,7 +67,7 @@ class InvTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.DecorationRole:
             if c == 0:
-                return _load_icon(r.get("type_id"))
+                return load_item_icon(r.get("type_id"))
 
         elif role == Qt.ItemDataRole.SizeHintRole:
             if c == 0:
@@ -113,9 +89,7 @@ class InvTableModel(QAbstractTableModel):
 
     def sort(self, column: int, order=Qt.SortOrder.AscendingOrder):
         keys: dict[int, Callable[[dict], Any]] = {
-            1: lambda r: (
-                r.get("display_name") or r.get("zh_name") or r.get("en_name") or str(r["type_id"])
-            ).lower(),
+            1: lambda r: (r.get("display_name") or r.get("zh_name") or r.get("en_name") or str(r["type_id"])).lower(),
             2: lambda r: r.get("quantity", 0),
             3: lambda r: r.get("cost_price") or 0,
             4: lambda r: r.get("plan_usage") or 0,
@@ -220,15 +194,9 @@ class BlueprintTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.DecorationRole:
             if c == 0:
-                prod_id = r.get("product_type_id")
-                if prod_id:
-                    icon_path = os.path.join(ICON_DIR, f"{prod_id}.png")
-                    if os.path.exists(icon_path):
-                        pix = QPixmap(icon_path)
-                        if not pix.isNull():
-                            return pix.scaled(
-                                24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-                            )
+                pix = load_item_icon(r.get("product_type_id"), size=24)
+                if pix is not None:
+                    return pix
             return None
 
         elif role == Qt.ItemDataRole.ForegroundRole:

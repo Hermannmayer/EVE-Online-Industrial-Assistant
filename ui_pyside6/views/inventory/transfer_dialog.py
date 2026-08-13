@@ -30,8 +30,8 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from services.inventory_import import compute_transfer_rows
 from services.inventory_manager import get_hangar_stock, get_hangars, get_items, move_quantity
+from ui_pyside6.icon_cache import load_item_icon
 
-from .inventory_helpers import _load_icon
 from .item_search_dialog import ItemSearchDialog
 
 
@@ -176,7 +176,7 @@ class HangarTransferDialog(QDialog):
         icon_label = QLabel()
         icon_label.setFixedSize(24, 24)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        pix = _load_icon(type_id, size=24)
+        pix = load_item_icon(type_id, size=24)
         if pix:
             icon_label.setPixmap(pix)
         self._table.setCellWidget(row, self._COL_ICON, icon_label)
