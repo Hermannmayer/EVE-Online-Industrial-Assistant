@@ -1,6 +1,6 @@
 # 架构重构遗留项清单（Backlog）
 
-> 状态：**未开始** · 关联：架构审计报告（`docs/dev/audit-report.md`）与已合入的 `refactor: 架构审计修复与分层收敛`
+> 状态：**#1 已完成**（#2–#4 未开始） · 关联：架构审计报告（`docs/dev/audit-report.md`）与已合入的 `refactor: 架构审计修复与分层收敛`
 >
 > 说明：本清单收录 4 项在上一轮重构中**刻意未做**的工作——其中 2 项属「纯风格、零功能收益」，2 项属「高风险大重构」。每项标注性质、现状位置、目标方案、风险、门禁与预计改动量，供后续分轮推进时按序领取。
 
@@ -15,13 +15,15 @@
 | 3 | BOM 展开逻辑合并 | 复杂 | 中高（语义对齐） | 中 |
 | 4 | 巨型 View 拆分 + 下载器统一 + 模型/delegate 分层 | 最大 | 中高 | 大 |
 
-**建议顺序**：先 1（收尾 DI），再 2（价值最高、需独立一轮专注回归防护），最后 3 → 4。
+**建议顺序**：#1 已完成，下一步 2（价值最高、需独立一轮专注回归防护），最后 3 → 4。
 
 ---
 
-## 1. `bom_expander` / `logistics` 的 DI 收敛（纯风格）
+## 1. `bom_expander` / `logistics` 的 DI 收敛（纯风格）✅ 已完成
 
 **性质**：纯风格。`db = get_db()` 与 `get_container().db` 返回**同一单例**，功能零变化；唯一成本是测试 mock 语义迁移。
+
+> **实际落地补充**：实施时发现 `core/container.py` 的 `bom_expander` / `logistics_service` 属性 import 了不存在的 `BomExpander` / `LogisticsService` 类，且 `TransportWorker._compute()` 经 `get_container().logistics_service.calc_transport_profit(...)` 调用——运行时会 `ImportError` 被 `BaseScoreWorker.run()` 吞成 `status: "error: ..."`（跨区域运输功能静默失效）。本次一并：删除两个坏属性 + `TransportWorker` 改为直接调模块级 `calc_transport_profit`。
 
 ### 现状位置
 
@@ -241,3 +243,4 @@ def walk_bom(
 - UI 写操作下沉仓储（plan_table 11 处 + industry_view/production_wizard/mass_parallel/blueprint_import）
 - production_plans DDL 单一来源、`plan_metrics.py` 纯算法抽取
 - DI 收敛（4 模块：watchlist_manager / hangar_industry_config / scoring_service / inventory_manager）、core→UI 反向依赖清零、死代码删除（scoring.py shim、calc_refining_value）
+- `bom_expander` / `logistics` DI 收敛（backlog #1）：移除模块级 `db`/`_pricing` 改惰性 `_default_db()`/`_default_pricing()`，删除容器坏属性 `bom_expander`/`logistics_service`，`TransportWorker` 改直调模块级 `calc_transport_profit`

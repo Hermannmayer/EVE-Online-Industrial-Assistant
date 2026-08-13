@@ -21,8 +21,6 @@ class AppContainer:
         self._market_repo = None
         self._blueprint_repo = None
         self._plan_repo = None
-        self._bom_expander = None
-        self._logistics_service = None
         self._watchlist = None
         self._inventory_manager = None
         self._price_history_service = None
@@ -95,26 +93,6 @@ class AppContainer:
 
                     self._pricing_service = PricingService(self.db)
         return self._pricing_service
-
-    @property
-    def bom_expander(self):
-        if self._bom_expander is None:
-            with self._lock:
-                if self._bom_expander is None:
-                    from services.bom_expander import BomExpander
-
-                    self._bom_expander = BomExpander(self.db, self.pricing_service)
-        return self._bom_expander
-
-    @property
-    def logistics_service(self):
-        if self._logistics_service is None:
-            with self._lock:
-                if self._logistics_service is None:
-                    from services.logistics import LogisticsService
-
-                    self._logistics_service = LogisticsService(self.db, self.pricing_service)
-        return self._logistics_service
 
     @property
     def watchlist_manager(self):
