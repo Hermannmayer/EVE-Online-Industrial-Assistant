@@ -5,6 +5,7 @@
 支持两种运输模式：公开货运（按体积+抵押计价）和自有运输（按跳跃数计价）。
 """
 
+from core.container import get_container
 from core.eve_formulas import (
     ACCOUNTING_MULT,
     ADV_BROKER_DISCOUNT,
@@ -16,11 +17,17 @@ from core.eve_formulas import (
     STANDING_CORP_WEIGHT,
     STANDING_FACTION_WEIGHT,
 )
-from services.database_manager import get_db
-from services.pricing_service import PricingService as _PricingService
 
-db = get_db()
-_pricing = _PricingService(get_db())
+
+def _default_db():
+    """惰性获取 DatabaseManager（经容器）。"""
+    return get_container().db
+
+
+def _default_pricing():
+    """惰性获取 PricingService（经容器）。"""
+    return get_container().pricing_service
+
 
 # ════════════════════════════════════════════════════
 #  四大贸易中心之间的跳跃数（High-sec 安全路线）
@@ -183,15 +190,15 @@ def calc_transport_profit(
     }
 
     # 1. 获取买卖价格
-    buy_price = _pricing.get_price(type_id, buy_price_type, buy_hub)
-    sell_price = _pricing.get_price(type_id, sell_price_type, sell_hub)
+    buy_price = _default_pricing().get_price(type_id, buy_price_type, buy_hub)
+    sell_price = _default_pricing().get_price(type_id, sell_price_type, sell_hub)
 
     if not buy_price or not sell_price:
         result["status"] = "no_price"
         return result
 
     # 2. 获取物品体积
-    with db.connect("ref") as conn:
+    with _default_db().connect("ref") as conn:
         c = conn.cursor()
         c.execute("SELECT volume FROM item WHERE type_id = ?", (type_id,))
         row = c.fetchone()

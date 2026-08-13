@@ -4,6 +4,7 @@ from PySide6.QtCore import QThread, Signal
 
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
+from services.logistics import calc_transport_profit
 from ui_pyside6.workers.base_worker import BaseScoreWorker
 
 
@@ -102,7 +103,7 @@ class TransportWorker(BaseScoreWorker):
         self._use_public_freight = use_public_freight
 
     def _compute(self) -> dict:
-        return get_container().logistics_service.calc_transport_profit(  # type: ignore[no-any-return]
+        return calc_transport_profit(  # type: ignore[no-any-return]
             type_id=self._type_id,
             buy_hub=self._buy_hub,
             sell_hub=self._sell_hub,

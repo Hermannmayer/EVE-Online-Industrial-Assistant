@@ -117,9 +117,9 @@ class TestTradeScoreWorker:
 
 class TestTransportWorker:
 
-    @patch("ui_pyside6.workers.trade_workers.get_container")
-    def test_run_emits_finished(self, mock_get_container, qapp):
-        """run() 调用 logistics_service.calc_transport_profit 并通过 finished 返回"""
+    @patch("ui_pyside6.workers.trade_workers.calc_transport_profit")
+    def test_run_emits_finished(self, mock_calc, qapp):
+        """run() 调用 calc_transport_profit 并通过 finished 返回"""
         expected = {
             "buy_cost": 1000000.0,
             "sell_revenue": 1200000.0,
@@ -128,9 +128,7 @@ class TestTransportWorker:
             "margin_pct": 15.0,
             "status": "",
         }
-        mock_logistics = MagicMock()
-        mock_logistics.calc_transport_profit.return_value = expected
-        mock_get_container.return_value.logistics_service = mock_logistics
+        mock_calc.return_value = expected
 
         received = []
 
@@ -150,7 +148,7 @@ class TestTransportWorker:
         w.finished.connect(collect)
         w.run()
 
-        mock_logistics.calc_transport_profit.assert_called_once_with(
+        mock_calc.assert_called_once_with(
             type_id=2001,
             buy_hub="Jita",
             sell_hub="Amarr",

@@ -18,12 +18,18 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from services.database_manager import get_db
+from core.container import get_container
 from services.manufacturing_calculator import calc_material_for_runs
-from services.pricing_service import PricingService as _PricingService
 
-db = get_db()
-_pricing = _PricingService(get_db())
+
+def _default_db():
+    """惰性获取 DatabaseManager（经容器）。"""
+    return get_container().db
+
+
+def _default_pricing():
+    """惰性获取 PricingService（经容器）。"""
+    return get_container().pricing_service
 
 
 # ════════════════════════════════════════════════════
@@ -125,7 +131,7 @@ def _expand(
         BomNode 根节点
     """
     name = _resolve_name(conn, type_id)
-    unit_price = _pricing.get_price(type_id, price_type, price_hub) or 0.0
+    unit_price = _default_pricing().get_price(type_id, price_type, price_hub) or 0.0
 
     # 循环检测 / 深度限制
     if depth > max_depth or type_id in seen:
@@ -291,7 +297,7 @@ def expand_bom(
         "intermediates": [],
     }
 
-    with db.connect("ref", "mkt", "bp") as conn:
+    with _default_db().connect("ref", "mkt", "bp") as conn:
         cache: dict[int, BomNode] = {}
         seen: set[int] = set()
 
