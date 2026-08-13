@@ -105,3 +105,19 @@ def get_blueprint_products(
     if row is None:
         return None
     return (int(row[0]), int(row[1]), int(row[2]))
+
+
+class SqliteBlueprintReader:
+    """BlueprintReader 适配 — 基于 sqlite 连接的蓝图查询（实现 domain.bom.BlueprintReader）。"""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def product(self, product_type_id: int, activity: str = "manufacturing") -> tuple[int, int] | None:
+        row = get_blueprint_products(self._conn, product_type_id, activity)
+        if row is None:
+            return None
+        return (row[0], row[1])  # (blueprint_type_id, per_run_output)
+
+    def materials(self, blueprint_type_id: int, activity: str = "manufacturing") -> list[tuple[int, int, int]]:
+        return get_blueprint_materials(self._conn, blueprint_type_id, activity)

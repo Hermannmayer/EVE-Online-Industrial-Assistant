@@ -1,6 +1,6 @@
 # 架构重构遗留项清单（Backlog）
 
-> 状态：**#1、#2 已完成**（#3–#4 未开始） · 关联：架构审计报告（`docs/dev/audit-report.md`）与已合入的 `refactor: 架构审计修复与分层收敛`
+> 状态：**#1、#2、#3 已完成**（#4 未开始） · 关联：架构审计报告（`docs/dev/audit-report.md`）与已合入的 `refactor: 架构审计修复与分层收敛`
 >
 > 说明：本清单收录 4 项在上一轮重构中**刻意未做**的工作——其中 2 项属「纯风格、零功能收益」，2 项属「高风险大重构」。每项标注性质、现状位置、目标方案、风险、门禁与预计改动量，供后续分轮推进时按序领取。
 
@@ -15,7 +15,7 @@
 | 3 | BOM 展开逻辑合并 | 复杂 | 中高（语义对齐） | 中 |
 | 4 | 巨型 View 拆分 + 下载器统一 + 模型/delegate 分层 | 最大 | 中高 | 大 |
 
-**建议顺序**：#1、#2 已完成，下一步 3（BOM 展开逻辑合并），最后 4。
+**建议顺序**：#1、#2、#3 已完成，最后 4。
 
 ---
 
@@ -154,7 +154,9 @@ def calc_manufacturing_score(
 
 ---
 
-## 3. BOM 展开逻辑合并（复杂）
+## 3. BOM 展开逻辑合并（复杂）✅ 已完成
+
+> **实际落地补充（前提已过时）**：实施时发现 `plan_aggregator._expand`（`expand_material_requirements`）已是**死代码**（全仓无调用者，`materials_dialog` 已改用非递归的 `collect_direct_materials`）。真正活的递归展开是 `bom_expander._expand`（成本树，需递归返回+定价+缓存）与 `plan_aggregator._find_overflow`（溢出清单）。两者结构不同（树 vs 扁平），故**不强行塞进同一 walker**：抽 `domain/bom.py` 的 `walk_bom`（DFS 生成器，统一查询+算量+环/深度守卫），`_find_overflow` 迁到它；删除死代码；`bom_expander._expand` 保留树递归（其查询 helper 与 plan_decompose 共用，属另一处待收敛）。
 
 **性质**：复杂。两套递归 BOM 展开语义不同、输出形状不同，合并需先统一语义。
 
