@@ -25,7 +25,7 @@ PySide6 + SQLite 构建的 EVE Online 工业制造助手桌面应用。
 - ✅ 安全：`yaml.safe_load()`、不硬编码密钥
 
 ### 架构
-- 三层分离：`core/`（工具）→ `services/`（业务）→ `ui_pyside6/`（UI）
+- 分层：`core/`（工具/公式）→ `domain/`（纯领域逻辑，无 DB/Qt/缓存）→ `services/`（业务/DB 访问）→ `application/`（编排门面）→ `ui_pyside6/`（UI）
 - 依赖注入用 `core/container.py`
 - 4 库独立：`reference.db` / `market.db` / `user.db` / `blueprint.db`
 - DB 管理用 `services/database_manager.py`
@@ -73,6 +73,8 @@ pre-commit run --all-files # 预提交检查
 
 ```
 core/          工具层（constants, container, eve_formulas, paths, logger）
+domain/        领域层（纯函数，无 DB/Qt/缓存 — ports, scoring）
+application/   应用编排层（门面 — scoring_facade）
 services/      业务层（database_manager, scoring_service, inventory_manager, etc.）
 ui_pyside6/    UI 层（main_window, theme, models/, workers/, views/, dialogs/）
 tools/         独立初始化工具
