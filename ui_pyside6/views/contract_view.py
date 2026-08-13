@@ -5,15 +5,12 @@
 from PySide6.QtCore import (
     QModelIndex,
     Qt,
-    QThread,
-    Signal,
 )
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
-    QDialog,
     QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
@@ -30,180 +27,20 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS, TRADE_HUBS
-from core.container import get_container
 from services.watchlist_manager import add_to_watchlist
+from ui_pyside6.dialogs.contract_detail_dialog import ContractDetailDialog
 from ui_pyside6.models.contract_models import (
     _CONTRACT_COLUMNS,
     _ITEM_COLUMNS,
-    CONTRACT_STATUS_CN,
-    CONTRACT_TYPE_CN,
     ContractFilterProxy,
     ContractItemTableModel,
     ContractTableModel,
 )
-
-# ═══════════════════════════════════════
-#  后台 Worker
-# ═══════════════════════════════════════
-
-
-class ContractFetchWorker(QThread):
-    """后台拉取公开合同数据"""
-
-    finished_signal = Signal(bool, str)  # success, message
-
-    def __init__(self, regions: list[str] | None = None, parent=None):
-        super().__init__(parent)
-        self._regions = regions
-
-    def run(self):
-        try:
-            from services.workers.getcontracts import run_contract_update
-
-            run_contract_update(self._regions)
-            self.finished_signal.emit(True, "合同数据更新完成")
-        except Exception as ex:
-            self.finished_signal.emit(False, str(ex))
-
-
-class ContractLoadWorker(QThread):
-    """后台从数据库加载合同列表"""
-
-    finished_signal = Signal(list)  # list of contract dicts
-
-    def __init__(self, region_id: int, contract_type: str, parent=None):
-        super().__init__(parent)
-        self._region_id = region_id
-        self._contract_type = contract_type
-
-    def run(self):
-        try:
-            with get_container().db.connect("mkt") as conn:
-                c = conn.cursor()
-                query = "SELECT * FROM public_contracts WHERE region_id = ?"
-                params: list = [self._region_id]
-                if self._contract_type != "all":
-                    query += " AND type = ?"
-                    params.append(self._contract_type)
-                query += " ORDER BY date_issued DESC LIMIT 2000"
-                c.execute(query, params)
-                rows = c.fetchall()
-                result = [dict(r) for r in rows]
-                self.finished_signal.emit(result)
-        except Exception:
-            self.finished_signal.emit([])
-
-
-class ContractItemsLoadWorker(QThread):
-    """后台从数据库加载合同物品"""
-
-    finished_signal = Signal(list)  # list of item dicts
-
-    def __init__(self, contract_id: int, parent=None):
-        super().__init__(parent)
-        self._contract_id = contract_id
-
-    def run(self):
-        try:
-            with get_container().db.connect("mkt", "ref") as conn:
-                c = conn.cursor()
-                c.execute(
-                    """
-                    SELECT ci.*, r.zh_name, r.en_name
-                    FROM contract_items ci
-                    LEFT JOIN ref.item r ON ci.type_id = r.type_id
-                    WHERE ci.contract_id = ?
-                    ORDER BY ci.record_id
-                """,
-                    (self._contract_id,),
-                )
-                rows = c.fetchall()
-                result = [dict(r) for r in rows]
-                self.finished_signal.emit(result)
-        except Exception:
-            self.finished_signal.emit([])
-
-
-# ═══════════════════════════════════════
-#  合同详情弹窗
-# ═══════════════════════════════════════
-
-
-class ContractDetailDialog(QDialog):
-    """合同详情弹窗 — 显示合同信息 + 物品列表"""
-
-    def __init__(self, contract: dict, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"合同详情 — #{contract.get('contract_id', '')}")
-        self.setMinimumSize(750, 500)
-        self.setObjectName("contract_detail_dialog")
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
-
-        # 合同基本信息
-        info = contract
-        title = info.get("title", "") or "无标题"
-        type_cn = CONTRACT_TYPE_CN.get(info.get("type", ""), info.get("type", ""))
-        status_cn = CONTRACT_STATUS_CN.get(info.get("status", ""), info.get("status", ""))
-
-        header_text = f"#{info.get('contract_id', '')}  {title}"
-        self._header = QLabel(header_text)
-        self._header.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {theme.PRIMARY};")
-        layout.addWidget(self._header)
-
-        detail_text = (
-            f"类型: {type_cn}  |  状态: {status_cn}  |  "
-            f"价格: {info.get('price', 0):,.2f} ISK  |  "
-            f"抵押: {info.get('collateral', 0):,.2f} ISK  |  "
-            f"体积: {info.get('volume', 0):,.1f} m³  |  "
-            f"运输天数: {info.get('days_completed', 0)}"
-        )
-        self._detail = QLabel(detail_text)
-        self._detail.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
-        layout.addWidget(self._detail)
-
-        dates_text = (
-            f"签发: {info.get('date_issued', '—')}  |  "
-            f"过期: {info.get('date_expired', '—')}  |  "
-            f"起始站: {info.get('start_location_id', '—')}  |  "
-            f"终点站: {info.get('end_location_id', '—')}  |  "
-            f"企业合同: {'是' if info.get('for_corporation') else '否'}"
-        )
-        self._dates = QLabel(dates_text)
-        self._dates.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
-        layout.addWidget(self._dates)
-
-        # 物品列表
-        items_label = QLabel("合同物品:")
-        items_label.setStyleSheet(f"font-weight: bold; color: {theme.TEXT_PRIMARY};")
-        layout.addWidget(items_label)
-
-        self._item_model = ContractItemTableModel()
-        self._items_table = QTableView()
-        self._items_table.setModel(self._item_model)
-        self._items_table.setAlternatingRowColors(False)
-        self._items_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._items_table.setSortingEnabled(True)
-        self._items_table.verticalHeader().setVisible(False)
-        header = self._items_table.horizontalHeader()
-        header.setStretchLastSection(True)
-        for i, (_, w) in enumerate(_ITEM_COLUMNS):
-            header.resizeSection(i, w)
-        layout.addWidget(self._items_table)
-
-        self._items_worker: ContractItemsLoadWorker | None = None
-        self._load_items(info.get("contract_id", 0))
-
-    def _load_items(self, contract_id: int):
-        self._items_worker = ContractItemsLoadWorker(contract_id, self)
-        self._items_worker.finished_signal.connect(self._on_items_loaded)
-        self._items_worker.start()
-
-    def _on_items_loaded(self, items: list[dict]):
-        self._item_model.set_rows(items)
-
+from ui_pyside6.workers.contract_workers import (
+    ContractFetchWorker,
+    ContractItemsLoadWorker,
+    ContractLoadWorker,
+)
 
 # ═══════════════════════════════════════
 #  主页面
