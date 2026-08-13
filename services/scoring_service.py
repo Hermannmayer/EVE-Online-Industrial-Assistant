@@ -13,18 +13,18 @@ from core.cache import TtlLRUCache
 from core.constants import TRADE_HUB_SYSTEM_IDS
 from core.container import get_container
 from core.eve_formulas import (
-    ADV_INDUSTRY_SKILL_MULT,
     _hub_region_id,
     calc_broker_rate,
     calc_relist_discount,
     calc_sales_tax_rate,
 )
+from domain.scoring import REACTION_INSTALL_FEE_RATE  # noqa: F401  # 向后兼容 re-export
 from services.blueprint_reader import (
     get_blueprint_materials,  # noqa: F401  # 由 application 门面经模块属性访问 + 测试 patch
 )
 from services.char_config_resolver import DEFAULT_SKILLS, resolve_char_config  # noqa: F401  # 向后兼容 re-export
 from services.database_manager import DatabaseManager
-from services.name_resolver import resolve_item_name
+from services.name_resolver import resolve_item_name  # noqa: F401  # 由 application 门面经模块属性访问
 
 
 def _hub_to_system_id(hub: str) -> int | None:
@@ -537,103 +537,20 @@ class ScoringService:
         char_config: dict | None = None,
         quantity: int = 1,
     ) -> dict:
-        """计算贸易评分。"""
-        char_name = (char_config.get("name") or char_config.get("char_name") or "default") if char_config else "default"
-        cache_k = cache_key(
-            type_id,
-            f"trade|{buy_hub}|{sell_hub}|{buy_price_type}|{sell_price_type}|{quantity}",
-            "hub",
-            char_name,
+        """计算贸易评分。纯算法在 domain.scoring，编排在 application.scoring_facade。"""
+        from application.scoring_facade import calc_trade_score as _facade
+
+        return _facade(
+            self._db,
+            self._cache,
+            type_id=type_id,
+            buy_hub=buy_hub,
+            sell_hub=sell_hub,
+            buy_price_type=buy_price_type,
+            sell_price_type=sell_price_type,
+            char_config=char_config,
+            quantity=quantity,
         )
-        cached = self._cache.get(cache_k) if self._cache else None
-        if cached is not None:
-            return dict(cached)
-
-        result = {
-            "score": 0.0,
-            "buy_cost": 0.0,
-            "sell_revenue": 0.0,
-            "gross_profit": 0.0,
-            "margin_pct": 0.0,
-            "profit_per_m3": 0.0,
-            "status": "",
-        }
-
-        buy_price = get_price(type_id, buy_price_type, buy_hub, _db=self._db)
-        sell_price = get_price(type_id, sell_price_type, sell_hub, _db=self._db)
-        if not buy_price or not sell_price:
-            result["status"] = "no_price"
-            return result
-
-        with self._db.connect("ref") as conn:
-            c = conn.cursor()
-            c.execute("SELECT volume FROM item WHERE type_id = ?", (type_id,))
-            row = c.fetchone()
-            volume_m3 = row[0] or 1.0 if row else 1.0
-
-        skills = char_config.get("skills", {}) if char_config else {}
-        market_data_buy = char_config.get("market", {}).get(buy_hub.lower(), {}) if char_config else {}
-        market_data_sell = char_config.get("market", {}).get(sell_hub.lower(), {}) if char_config else {}
-
-        broker_rate = self._calc_broker_rate(skills, market_data_buy)
-        relist_discount = self._calc_relist_discount(skills)
-        sales_tax_rate = self._calc_sales_tax_rate(skills)
-
-        # 差额计费：初始挂单全额 broker；改单只对「买/卖价差额」部分收一次 broker（× 改单折扣）
-        buy_fee_total = broker_rate + broker_rate * (1 - relist_discount / 100)
-
-        sell_rate = self._calc_broker_rate(skills, market_data_sell)
-        # 卖出侧：初始挂单全额 broker（按买入成本近似）+ 改单差额 broker + 销售税
-        sell_fee_total = (
-            (
-                broker_rate
-                + (sell_price - buy_price) / sell_price * broker_rate * (1 - relist_discount / 100)
-                + sales_tax_rate
-            )
-            if sell_price > 0
-            else sell_rate + sell_rate * (1 - relist_discount / 100) + sales_tax_rate
-        )
-
-        buy_cost = buy_price * quantity + buy_price * quantity * (buy_fee_total / 100)
-        sell_revenue = sell_price * quantity - sell_price * quantity * (sell_fee_total / 100)
-        gross_profit = sell_revenue - buy_cost
-        margin_pct = gross_profit / buy_cost * 100 if buy_cost > 0 else 0
-
-        if gross_profit <= 0:
-            result["margin_pct"] = round(margin_pct, 2)
-            result["buy_cost"] = round(buy_cost, 2)
-            result["sell_revenue"] = round(sell_revenue, 2)
-            result["gross_profit"] = round(gross_profit, 2)
-            return result
-
-        volume = get_volume(type_id, "total", sell_hub, _db=self._db)
-        if volume == 0:
-            return result
-
-        margin_pct = gross_profit / buy_cost * 100 if buy_cost > 0 else 0
-        profit_per_m3 = gross_profit / volume_m3 if volume_m3 > 0 else gross_profit
-
-        margin_score = min(margin_pct * 5, 50)
-        volume_factor = min(volume / 5_000_000, 1.0)
-        vol_score = volume_factor * 50
-        total_score = margin_score + vol_score
-
-        result.update(
-            {
-                "score": round(total_score, 1),
-                "buy_cost": round(buy_cost, 2),
-                "sell_revenue": round(sell_revenue, 2),
-                "gross_profit": round(gross_profit, 2),
-                "margin_pct": round(margin_pct, 2),
-                "profit_per_m3": round(profit_per_m3, 2),
-            }
-        )
-
-        # 写入缓存（仅缓存成功结果）
-        score_val = result["score"]
-        if isinstance(score_val, int | float) and score_val > 0 and self._cache is not None:
-            self._cache.set(cache_k, dict(result))
-        return result
 
     # ── 反应评分 ──
 
@@ -649,183 +566,18 @@ class ScoringService:
         system_id: int | None = None,
         structure_bonus: float = 0.0,
     ) -> dict:
-        """
-        计算反应（Reaction）利润评分。
+        """计算反应（Reaction）利润评分。纯算法在 domain.scoring，编排在 application.scoring_facade。"""
+        from application.scoring_facade import calc_reaction_score as _facade
 
-        与 calc_manufacturing_score 的差异:
-          - 查 activity='reaction' 的蓝图数据
-          - 无 ME/TE 概念：waste_factor=1.0, 无 TE 修正
-          - 时间仅受 Advanced Industry 技能影响（-3%/级）
-          - 安装费使用反应专用 SCI
-        """
-        result = {
-            "score": 0.0,
-            "profit_per_run": 0.0,
-            "margin_pct": 0.0,
-            "isk_per_hour": 0.0,
-            "cost_per_unit": 0.0,
-            "revenue_per_unit": 0.0,
-            "hours_per_run": 0.0,
-            "status": "",
-            "breakdown": {},
-        }
-
-        with self._db.connect("ref", "mkt", "bp") as conn:
-            c = conn.cursor()
-
-            # 1. 查找反应蓝图
-            c.execute(
-                """
-                SELECT bp.blueprint_type_id, bp.quantity, ba.time
-                FROM blueprint_products bp
-                JOIN blueprint_activities ba ON ba.blueprint_type_id = bp.blueprint_type_id
-                    AND ba.activity = bp.activity
-                WHERE bp.product_type_id = ? AND bp.activity = 'reaction'
-                LIMIT 1
-                """,
-                (type_id,),
-            )
-            bp_row = c.fetchone()
-            if not bp_row:
-                result["status"] = "no_blueprint"
-                return result
-
-            bp_id, prod_qty, base_time = bp_row
-            prod_qty = prod_qty or 1
-
-            # 2. 成品价格
-            prod_price = get_price(type_id, price_type_prod, sell_hub, _db=self._db)
-            if not prod_price:
-                result["status"] = "no_price"
-                return result
-
-            # 3. 查反应材料
-            c.execute(
-                """
-                SELECT bm.material_type_id, bm.quantity
-                FROM blueprint_materials bm
-                WHERE bm.blueprint_type_id = ? AND bm.activity = 'reaction'
-                """,
-                (bp_id,),
-            )
-            mat_rows = c.fetchall()
-
-            if not mat_rows:
-                result["status"] = "no_materials"
-                return result
-
-            # 4. 计算材料成本（反应无 ME 浪费，waste_factor=1.0）
-            waste_factor = 1.0
-            total_mat_cost = 0.0
-            mat_detail = []
-            for mat_id, mat_qty in mat_rows:
-                mat_price = get_price(mat_id, price_type_mat, mat_source_hub, _db=self._db)
-                waste_qty = mat_qty * waste_factor
-                if mat_price:
-                    total_mat_cost += waste_qty * mat_price
-                mat_name = resolve_item_name(conn, mat_id)
-                mat_detail.append(
-                    {
-                        "name": mat_name,
-                        "base_qty": mat_qty,
-                        "qty": round(waste_qty, 2),
-                        "waste_factor": round(waste_factor, 2),
-                        "unit_price": mat_price or 0.0,
-                        "subtotal": round((mat_price or 0.0) * waste_qty, 2),
-                    }
-                )
-            result["materials"] = mat_detail
-
-            # 5. 从人物配置读取费率
-            skills = char_config.get("skills", {}) if char_config else {}
-            market_data = char_config.get("market", {}).get(sell_hub.lower(), {}) if char_config else {}
-
-            broker_rate = calc_broker_rate(skills, market_data)
-            relist_discount = calc_relist_discount(skills)
-            sales_tax_rate_val = calc_sales_tax_rate(skills)
-
-            # 6. 安装费
-            revenue = prod_price * prod_qty
-            total_cost = total_mat_cost
-            sci = get_system_cost_index(system_id, "reaction", _db=self._db, hub=mat_source_hub)
-            install_base = REACTION_INSTALL_FEE_RATE * revenue
-            reaction_install_fee = install_base * sci * (1 - structure_bonus) * (1 + facility_tax_pct / 100)
-            total_cost += reaction_install_fee
-            broker_init = revenue * (broker_rate / 100)
-            broker_relist = revenue * (broker_rate / 100) * (1 - relist_discount / 100)
-            sales_tax = revenue * (sales_tax_rate_val / 100)
-            total_cost += broker_init + broker_relist + sales_tax
-
-            profit = revenue - total_cost
-            margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
-
-            # 7. 反应时间
-            adv_lvl = skills.get("高级工业理论", 5)
-            skill_mod = 1 - ADV_INDUSTRY_SKILL_MULT * adv_lvl
-            actual_time = base_time * skill_mod
-            hours_per_run = actual_time / 3600
-
-            # 8. 负利润时提前返回
-            if profit <= 0:
-                result["margin_pct"] = round(margin_pct, 2)
-                result["profit_per_run"] = round(profit, 2)
-                result["cost_per_unit"] = round(total_cost / prod_qty, 2)
-                result["hours_per_run"] = round(hours_per_run, 2)
-                result["revenue_per_unit"] = round(prod_price, 2)
-                return result
-
-            # 9. 评分
-            margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
-            volume = get_volume(type_id, "total", sell_hub, _db=self._db)
-            if volume == 0:
-                return result
-
-            profit_score = min(margin_pct * 4, 40)  # 10% = 40分
-            volume_factor = min(volume / 5_000_000, 1.0)
-            volume_score = volume_factor * 30  # 500万 = 30分
-            isk_per_hour = profit / hours_per_run if hours_per_run > 0 else 0
-            efficiency_score = min(isk_per_hour / 50_000_000 * 30, 30)  # 5000万/h = 30分
-
-            total_score = profit_score + volume_score + efficiency_score
-
-            result.update(
-                {
-                    "score": round(total_score, 1),
-                    "profit_per_run": round(profit, 2),
-                    "margin_pct": round(margin_pct, 2),
-                    "isk_per_hour": round(isk_per_hour, 2),
-                    "cost_per_unit": round(total_cost / prod_qty, 2),
-                    "revenue_per_unit": round(prod_price, 2),
-                    "hours_per_run": round(hours_per_run, 2),
-                    "status": "",
-                    "breakdown": {
-                        "waste_factor": round(waste_factor, 2),
-                        "profit_score": round(profit_score, 1),
-                        "volume_score": round(volume_score, 1),
-                        "efficiency_score": round(efficiency_score, 1),
-                        "isk_per_hour": round(isk_per_hour, 2),
-                        "revenue": round(revenue, 2),
-                        "material_cost": round(total_mat_cost, 2),
-                        "broker_init": round(broker_init, 2),
-                        "broker_relist": round(broker_relist, 2),
-                        "sales_tax": round(sales_tax, 2),
-                        "reaction_install_fee": round(reaction_install_fee, 2),
-                        "install_base": round(install_base, 2),
-                        "sci": round(sci, 4),
-                        "structure_bonus": round(structure_bonus, 4),
-                        "facility_tax_pct": round(facility_tax_pct, 2),
-                        "broker_rate": round(broker_rate, 3),
-                        "sales_tax_rate": round(sales_tax_rate_val, 3),
-                        "relist_discount": round(relist_discount, 1),
-                    },
-                }
-            )
-
-        return result
-
-
-# ════════════════════════════════════════════════════════════════════
-#  反应安装费常数（模块级导出供外部使用）
-# ════════════════════════════════════════════════════════════════════
-
-REACTION_INSTALL_FEE_RATE = 0.05
+        return _facade(
+            self._db,
+            type_id=type_id,
+            char_config=char_config,
+            mat_source_hub=mat_source_hub,
+            sell_hub=sell_hub,
+            facility_tax_pct=facility_tax_pct,
+            price_type_mat=price_type_mat,
+            price_type_prod=price_type_prod,
+            system_id=system_id,
+            structure_bonus=structure_bonus,
+        )
