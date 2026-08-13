@@ -1,14 +1,12 @@
 """工业制造 — Table Model 类"""
 
-import os
 from datetime import UTC, datetime
 from typing import cast
 
 from PySide6.QtCore import QAbstractTableModel, Qt
-from PySide6.QtGui import QColor, QPixmap, QPixmapCache
+from PySide6.QtGui import QColor
 
 import ui_pyside6.theme as theme
-from core.paths import ICON_DIR
 
 
 def _fmt_dhms(seconds) -> str:
@@ -167,66 +165,17 @@ class PlanTableModel(QAbstractTableModel):
     def columnCount(self, parent=None):
         return 19
 
-    # ── 图标列 DecorationRole ────────────────────────────────────
-
-    def _load_icon(self, type_id: int) -> QPixmap | None:
-        """从缓存或磁盘加载 32px 图标，失败返回 None"""
-        if not type_id:
-            return None
-        cache_key = f"icon_{type_id}"
-        pixmap = QPixmap(cache_key)
-        if not pixmap.isNull():
-            return pixmap
-        path = os.path.join(ICON_DIR, f"{type_id}.png")
-        if not os.path.isfile(path):
-            return None
-        pixmap = QPixmap(path)
-        if pixmap.isNull():
-            return None
-        pixmap = pixmap.scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        QPixmapCache.insert(cache_key, pixmap)
-        return pixmap
-
-    # ── DisplayRole ──────────────────────────────────────────────
+    # ── data() — 只暴露已算数据（DisplayRole）+ 原始行（UserRole） ──
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
         p = self._plans[index.row()]
         c = index.column()
-
-        # DecorationRole — 图标列
-        if role == Qt.ItemDataRole.DecorationRole and c == 2:
-            return self._load_icon(p.get("product_type_id"))
-
-        # SizeHintRole — 图标列 / 备料勾选列（固定窄列，适配图标与复选框尺寸）
-        if role == Qt.ItemDataRole.SizeHintRole and c in (0, 2):
-            from PySide6.QtCore import QSize
-
-            return QSize(26, 26) if c == 0 else QSize(36, 36)
-
-        # 类别行底色（制造默认透明，拷贝/发明/反应浅色底）
-        if role == Qt.ItemDataRole.BackgroundRole:
-            from services.plan_category import category_color
-
-            color = category_color(str(p.get("category", "manufacturing")))
-            if color:
-                from PySide6.QtGui import QColor as _QColor
-
-                return _QColor(color)
-
-        # 备料勾选列 → 真实复选框（CheckStateRole 渲染；点击切换由 view 的 clicked 处理）
-        if role == Qt.ItemDataRole.CheckStateRole and c == 0:
-            return Qt.CheckState.Checked if p.get("materials_ready", 0) else Qt.CheckState.Unchecked
-        if role == Qt.ItemDataRole.TextAlignmentRole and c == 0:
-            return Qt.AlignmentFlag.AlignCenter
-
+        if role == Qt.ItemDataRole.UserRole:
+            return p
         if role == Qt.ItemDataRole.DisplayRole:
             return self._display_text(p, c)
-
-        if role == Qt.ItemDataRole.ForegroundRole:
-            return self._foreground(p, c)
-
         return None
 
     def _display_text(self, p: dict, c: int) -> str:
@@ -295,36 +244,6 @@ class PlanTableModel(QAbstractTableModel):
             margin = p.get("personal_margin", 0) or 0
             return f"{margin:.1f}%"
         return ""
-
-    # ── ForegroundRole ───────────────────────────────────────────
-
-    def _foreground(self, p: dict, c: int):
-        if c == 16:
-            profit = p.get("profit", 0) or 0
-            if profit > 0:
-                return QColor(theme.GREEN)
-            if profit < 0:
-                return QColor(theme.RED)
-        if c == 11:
-            status = p.get("status", "")
-            if status in ("in_progress", "running"):
-                rem = _remaining(p)
-                if rem is not None and rem <= 0:
-                    return QColor(theme.ACCENT_RED)
-                return QColor(theme.PRIMARY)
-            if status == "ready":
-                return QColor(theme.ACCENT_ORANGE)
-        if c == 7:
-            status = p.get("status", "")
-            if status in ("completed", "done"):
-                return QColor(theme.GREEN)
-            if status in ("in_progress", "running"):
-                return QColor(theme.PRIMARY)
-            if status == "ready":
-                return QColor(theme.ACCENT_ORANGE)
-            if status == "pending":
-                return QColor(theme.TEXT_SECONDARY)
-        return None
 
     # ── headerData ───────────────────────────────────────────────
 

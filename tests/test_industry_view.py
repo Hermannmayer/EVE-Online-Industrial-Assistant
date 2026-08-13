@@ -142,27 +142,29 @@ class TestPlanTableIntegration:
         assert model.data(model.index(1, 7), Qt.ItemDataRole.DisplayRole) == "生产中"
 
     def test_plan_profit_foreground_positive(self, qapp):
-        """利润列（15）正值绿色"""
+        """利润列正值绿色（由 PlanTableDelegate 提供）"""
         from ui_pyside6 import theme
+        from ui_pyside6.views.industry.plan_table import COL_PROFIT, PlanTableDelegate
 
-        model = PlanTableModel(self.SAMPLE_PLANS)
-        color = model.data(model.index(0, 16), Qt.ItemDataRole.ForegroundRole)
+        delegate = PlanTableDelegate()
+        color = delegate._foreground(self.SAMPLE_PLANS[0], COL_PROFIT)
         assert color.name() == theme.GREEN
 
     def test_plan_profit_foreground_negative(self, qapp):
-        """利润列（15）负值红色"""
+        """利润列负值红色（由 PlanTableDelegate 提供）"""
         from ui_pyside6 import theme
+        from ui_pyside6.views.industry.plan_table import COL_PROFIT, PlanTableDelegate
 
-        plans = [dict(self.SAMPLE_PLANS[0], profit=-5_000_000)]
-        model = PlanTableModel(plans)
-        color = model.data(model.index(0, 16), Qt.ItemDataRole.ForegroundRole)
+        delegate = PlanTableDelegate()
+        color = delegate._foreground(dict(self.SAMPLE_PLANS[0], profit=-5_000_000), COL_PROFIT)
         assert color.name() == theme.RED
 
     def test_plan_profit_foreground_zero(self, qapp):
-        """利润为零时无特殊颜色"""
-        plans = [dict(self.SAMPLE_PLANS[0], profit=0)]
-        model = PlanTableModel(plans)
-        color = model.data(model.index(0, 16), Qt.ItemDataRole.ForegroundRole)
+        """利润为零时无特殊颜色（由 PlanTableDelegate 提供）"""
+        from ui_pyside6.views.industry.plan_table import COL_PROFIT, PlanTableDelegate
+
+        delegate = PlanTableDelegate()
+        color = delegate._foreground(dict(self.SAMPLE_PLANS[0], profit=0), COL_PROFIT)
         assert color is None
 
     def test_set_model_replace(self, qapp):
