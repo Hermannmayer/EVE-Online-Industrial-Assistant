@@ -34,9 +34,10 @@ from core.container import get_container
 from core.paths import data_dir
 from services.terminology import term
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
-from ui_pyside6.views.all_items_view import JITA_RID, AModel, ItemsW, Proxy, SearchItemsW
+from ui_pyside6.models.all_items_models import AModel, Proxy
 from ui_pyside6.views.compare_dialog import CompareDialog
 from ui_pyside6.views.score_dialogs import MfgDlg, ScoreW
+from ui_pyside6.workers.all_items_workers import JITA_RID, ItemsW, SearchItemsW
 
 _cache = TtlLRUCache(max_size=5000, ttl_seconds=1800)
 

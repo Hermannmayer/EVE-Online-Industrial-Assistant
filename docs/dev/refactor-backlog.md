@@ -1,6 +1,6 @@
 # 架构重构遗留项清单（Backlog）
 
-> 状态：**#1、#2、#3 已完成，#4 进行中（4c 已完成）** · 关联：架构审计报告（`docs/dev/audit-report.md`）与已合入的 `refactor: 架构审计修复与分层收敛`
+> 状态：**全部完成（#1–#4）** · 关联：架构审计报告（`docs/dev/audit-report.md`）与已合入的 `refactor: 架构审计修复与分层收敛`
 >
 > 说明：本清单收录 4 项在上一轮重构中**刻意未做**的工作——其中 2 项属「纯风格、零功能收益」，2 项属「高风险大重构」。每项标注性质、现状位置、目标方案、风险、门禁与预计改动量，供后续分轮推进时按序领取。
 
@@ -15,7 +15,7 @@
 | 3 | BOM 展开逻辑合并 | 复杂 | 中高（语义对齐） | 中 |
 | 4 | 巨型 View 拆分 + 下载器统一 + 模型/delegate 分层 | 最大 | 中高 | 大 |
 
-**建议顺序**：#1、#2、#3 已完成，最后 4。
+**建议顺序**：#1、#2、#3、#4 全部完成。
 
 ---
 
@@ -199,27 +199,17 @@ def walk_bom(
 
 ---
 
-## 4. 巨型 View 拆分 + 下载器统一 + 模型/delegate 分层（最大）— 4c 已完成
+## 4. 巨型 View 拆分 + 下载器统一 + 模型/delegate 分层（最大）✅ 全部完成
 
 **性质**：最大。三件事可分轮独立推进。
 
-### 4a. 巨型 View 拆分 — 进行中（contract_view models 已抽出）
+### 4a. 巨型 View 拆分 ✅ 已完成
 
-> **进度**：`contract_view.py` 的 3 个 model（`ContractTableModel`/`ContractItemTableModel`/`ContractFilterProxy`）+ 列定义/中文映射常量已抽到 `ui_pyside6/models/contract_models.py`，视图文件 939→607 行。workers / `ContractDetailDialog` 抽取 + 其余 4 个 View（estimate/hangar/all_items/plan_table）待做。
+> **实际落地**（5 个 View 全部拆完）：`contract_view`(939→445) models→`models/contract_models`、workers→`workers/contract_workers`、dialog→`dialogs/contract_detail_dialog`；`estimate_view`(1140→764) model→`models/estimate_models`、worker+剪贴板解析→`workers/estimate_workers`；`all_items_view`(1091→847) model→`models/all_items_models`、workers→`workers/all_items_workers`；`hangar_tab`(1004→530) 4 dialog→`dialogs/hangar_dialogs`；`plan_table` 已随 4c 做 delegate 分层。
 
-**现状位置**（方法数）：`estimate_view`（49）、`hangar_tab`（53）、`contract_view`（50）、`all_items_view`（47）、`plan_table`（47）。
+### 4b. 下载器统一 ✅ 已完成
 
-**目标**：拆「容器组件 + 行组件 + 对话框」，业务逻辑下沉 application 层。
-
-**风险**：中高。逐 View 拆，每个 View 拆完跑该 View 冒烟测试（`test_ui_*`）。
-
-### 4b. 下载器统一
-
-**现状位置**：`services/workers/`（getprices/getindustry/getcontracts）vs `tools/downloaders/`（getitems/getblueprints/geticon/getimplantdata/getrigdata/sde_loader/sde_cache），两套风格（APIClient vs 裸 aiosqlite）。`services/init_service.py:433-443` 的 `entry_map` 硬编码跨两个包。
-
-**目标**：统一到 `services/importers/`，下载器只负责「网络→落库」，进度/限流/重试策略共用。
-
-**风险**：中。`sde_loader.py`（684 行）/`sde_cache.py`（479 行）自身偏大，可一并拆。
+> **实际落地**：10 个下载器（getprices/getindustry/getcontracts/getitems/getblueprints/geticon/getimplantdata/getrigdata/sde_loader/sde_cache）统一到 `services/importers/`；`tools/downloaders` 与 `services/workers` 保留为 sys.modules 别名 shim（旧导入路径 + 测试 patch 语义兼容）；`init_service.entry_map` 与 UI 引用全部指向 `services.importers`。
 
 ### 4c. 模型/delegate 分层 ✅ 已完成
 

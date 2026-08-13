@@ -16,7 +16,7 @@ class ContractFetchWorker(QThread):
 
     def run(self):
         try:
-            from services.workers.getcontracts import run_contract_update
+            from services.importers.getcontracts import run_contract_update
 
             run_contract_update(self._regions)
             self.finished_signal.emit(True, "合同数据更新完成")

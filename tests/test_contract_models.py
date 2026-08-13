@@ -6,7 +6,11 @@
 import pytest
 from PySide6.QtCore import Qt
 
-from ui_pyside6.views.contract_view import CONTRACT_STATUS_CN, CONTRACT_TYPE_CN, ContractTableModel
+from ui_pyside6.models.contract_models import (
+    CONTRACT_STATUS_CN,
+    CONTRACT_TYPE_CN,
+    ContractTableModel,
+)
 
 # ── 测试数据 ──
 

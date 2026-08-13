@@ -28,7 +28,7 @@ ICON_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 def _load_type_ids_with_icons() -> set[int]:
     """从 SDE 缓存（typeIDs.yaml）读取有 iconID 的 type_id，避免无效请求"""
-    from tools.downloaders.sde_cache import load_yaml
+    from services.importers.sde_cache import load_yaml
 
     data = load_yaml("typeIDs.yaml")
     if not data:
@@ -66,7 +66,7 @@ def _get_type_ids_from_db() -> list[int]:
 
 def _load_type_icon_map() -> dict[int, int]:
     """从 typeIDs.yaml 构建 {type_id: iconID} 映射，用于 iconID 去重"""
-    from tools.downloaders.sde_cache import load_yaml
+    from services.importers.sde_cache import load_yaml
 
     data = load_yaml("typeIDs.yaml")
     if not data:
@@ -219,7 +219,7 @@ async def main(progress_cb=None):
     else:
         # 预热 typeIDs.yaml（to_thread 解析，不阻塞事件循环）——
         # 让 _load_type_ids_with_icons 里的同步 load_yaml 命中缓存，避免卡住 29s
-        from tools.downloaders.sde_cache import load_yaml_async
+        from services.importers.sde_cache import load_yaml_async
 
         await load_yaml_async("typeIDs.yaml")
         # 优先从 SDE 缓存获取有图标的 type_id（减少无效 404 请求）
