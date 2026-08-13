@@ -2,13 +2,11 @@
 计划聚合查询 — 为工业制造三张汇总表提供统一数据层
 
 将 blueprint_dialog / materials_dialog / output_dialog 公用的
-BOM 展开、蓝图库存、材料库存、产出溢出计算提取到这里，
-避免三个对话框各自重复实现 _expand 递归。
+蓝图库存、材料库存、产出溢出计算提取到这里。
 
 用法:
     from services.plan_aggregator import (
         expand_blueprint_requirements,
-        expand_material_requirements,
         check_user_blueprints,
         check_inventory,
         calculate_output_with_overflow,
@@ -17,7 +15,6 @@ BOM 展开、蓝图库存、材料库存、产出溢出计算提取到这里，
     with get_container().db.connect("user", "ref", "bp", "mkt") as conn:
         plans = ...  # list[dict]
         bps = expand_blueprint_requirements(conn, plans)
-        mats = expand_material_requirements(conn, plans)
         bp_inv = check_user_blueprints(conn, set(bps.keys()))
 """
 
@@ -26,12 +23,10 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from domain.bom import walk_bom
+from services.blueprint_reader import SqliteBlueprintReader
 from services.manufacturing_calculator import calc_material_for_runs
 from services.name_resolver import resolve_item_name
-
-# 默认 T1 wastefactor（兜底）
-_DEFAULT_WASTE = 10
-
 
 # ════════════════════════════════════════════════════════════════
 #  内部辅助
@@ -129,110 +124,6 @@ def expand_blueprint_requirements(
 
     return needed
 
-
-# ════════════════════════════════════════════════════════════════
-#  2. 材料需求展开（叶子节点）
-# ════════════════════════════════════════════════════════════════
-
-
-def expand_material_requirements(
-    conn,
-    plans: list[dict],
-    *,
-    me_level: int = 0,
-    max_depth: int = 5,
-) -> dict[int, dict[str, Any]]:
-    """展开 BOM 到叶子节点，返回所有原材料需求汇总。
-
-    Args:
-        conn: 已 ATTACH user/ref/bp/mkt 的数据库连接
-        plans: 计划列表
-        me_level: 默认材料等级
-        max_depth: 递归深度上限
-
-    Returns:
-        {type_id: {"name": str, "total_qty": float, "volume": float}}
-    """
-    materials: dict[int, dict[str, Any]] = {}
-    seen: set[int] = set()
-
-    def _expand(product_type_id: int, qty: int, me: int, depth: int = 0):
-        """递归展开 BOM，叶子节点加入 materials。
-
-        depth 递增并以 max_depth 封顶：真实环（A→B→A）或异常数据在此终止，
-        避免无限递归栈溢出（历史缺陷：seen 命中仍递归其材料、且无深度限制）。
-        """
-        if depth > max_depth:
-            return
-        if product_type_id in seen:
-            # 已处理过，累加需求
-            if product_type_id in materials:
-                materials[product_type_id]["total_qty"] += qty
-            # 继续递归其材料（即使已见过，也要把材料需求加上）
-            bp_row = conn.execute(
-                "SELECT blueprint_type_id FROM blueprint_products "
-                "WHERE product_type_id = ? AND activity = 'manufacturing' LIMIT 1",
-                (product_type_id,),
-            ).fetchone()
-            if bp_row:
-                mats = conn.execute(
-                    "SELECT material_type_id, quantity "
-                    "FROM blueprint_materials WHERE blueprint_type_id = ? AND activity = 'manufacturing'",
-                    (bp_row[0],),
-                ).fetchall()
-                for mat_id, mat_qty in mats:
-                    mat_total = calc_material_for_runs(mat_qty, _DEFAULT_WASTE, me, math.ceil(qty / 1))
-                    _expand(mat_id, mat_total, me, depth + 1)
-            return
-        seen.add(product_type_id)
-
-        # 找蓝图
-        bp_row = conn.execute(
-            "SELECT blueprint_type_id FROM blueprint_products "
-            "WHERE product_type_id = ? AND activity = 'manufacturing' LIMIT 1",
-            (product_type_id,),
-        ).fetchone()
-        if not bp_row:
-            # 原材料 — 记录
-            name = _resolve_name(conn, product_type_id)
-            vol_row = conn.execute("SELECT volume FROM item WHERE type_id = ?", (product_type_id,)).fetchone()
-            vol = vol_row[0] if vol_row else 0.0
-            if product_type_id in materials:
-                materials[product_type_id]["total_qty"] += qty
-            else:
-                materials[product_type_id] = {
-                    "name": name,
-                    "total_qty": float(qty),
-                    "volume": vol,
-                }
-            return
-
-        bp_tid = bp_row[0]
-        per_run = _get_per_run_output(conn, bp_tid)
-        if per_run < 1:
-            per_run = 1
-        runs_needed = math.ceil(qty / per_run)
-
-        mats = conn.execute(
-            "SELECT material_type_id, quantity "
-            "FROM blueprint_materials WHERE blueprint_type_id = ? AND activity = 'manufacturing'",
-            (bp_tid,),
-        ).fetchall()
-        for mat_id, mat_qty in mats:
-            mat_total = calc_material_for_runs(mat_qty, _DEFAULT_WASTE, me, runs_needed)
-            # 由 _expand 内部统一记录，避免重复（父循环记录一次 + _expand 再记一次 → 翻倍）
-            _expand(mat_id, mat_total, me, depth + 1)
-
-    for plan in plans:
-        pid = plan.get("product_type_id")
-        assert pid is not None, "product_type_id required"
-        runs = plan.get("runs", 1) or 1
-        parallels = plan.get("parallels", 1) or 1
-        me = plan.get("me_level", me_level) or me_level
-        total_qty = runs * parallels
-        _expand(pid, total_qty, me, 0)
-
-    return materials
 
 
 # ════════════════════════════════════════════════════════════════
@@ -460,62 +351,26 @@ def calculate_output_with_overflow(
         plan_value = plan_price * total_qty
         status = plan.get("status", "pending")
 
-        # 递归 BOM 查找中间产品溢出
+        # 递归 BOM 查找中间产品溢出（全局 seen：共享中间产品只计一次）
         overflow_details: list[dict] = []
-        seen_over: set[int] = set()
-
-        def _find_overflow(
-            pid: int,
-            qty: int,
-            me_lvl: int,
-            max_d: int,
-            seen: set[int],
-            out: list[dict],
-            depth: int = 0,
-        ):
-            if pid in seen or depth > max_d:
-                return
-            seen.add(pid)
-
-            bp_row = conn.execute(
-                "SELECT blueprint_type_id, bp.quantity FROM blueprint_products bp "
-                "WHERE bp.product_type_id = ? AND bp.activity = 'manufacturing' LIMIT 1",
-                (pid,),
-            ).fetchone()
-            if not bp_row:
-                return
-            bp_tid, per_run_out = bp_row
-            if not per_run_out or per_run_out < 1:
-                per_run_out = 1
-
-            runs_needed = math.ceil(qty / per_run_out)
-            actual_output = runs_needed * per_run_out
-            overflow = actual_output - qty
-
+        reader = SqliteBlueprintReader(conn)
+        for step in walk_bom(reader, pid, total_qty, me_level=me, max_depth=max_depth, seen_mode="global"):
+            if step.blueprint is None:
+                continue  # 叶子（无蓝图 / 环 / 深度封顶）→ 无溢出
+            per_run_out = step.blueprint[1]
+            overflow = step.runs * per_run_out - step.qty
             if overflow > 0:
-                mid_name = _resolve_name(conn, pid)
-                out.append(
+                overflow_details.append(
                     {
-                        "type_id": pid,
-                        "name": mid_name,
-                        "needed": qty,
+                        "type_id": step.type_id,
+                        "name": _resolve_name(conn, step.type_id),
+                        "needed": step.qty,
                         "per_run": per_run_out,
-                        "runs": runs_needed,
-                        "produced": actual_output,
+                        "runs": step.runs,
+                        "produced": step.runs * per_run_out,
                         "overflow": overflow,
                     }
                 )
-
-            mats = conn.execute(
-                "SELECT material_type_id, quantity "
-                "FROM blueprint_materials WHERE blueprint_type_id = ? AND activity = 'manufacturing'",
-                (bp_tid,),
-            ).fetchall()
-            for mid, mqty in mats:
-                mat_total = calc_material_for_runs(mqty, _DEFAULT_WASTE, me_lvl, runs_needed)
-                _find_overflow(mid, mat_total, me_lvl, max_d, seen, out, depth + 1)
-
-        _find_overflow(pid, total_qty, me, max_depth, seen_over, overflow_details)
         overflow_text = _format_overflow(overflow_details)
 
         results.append(
