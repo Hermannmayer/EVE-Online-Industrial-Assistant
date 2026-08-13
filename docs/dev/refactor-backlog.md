@@ -219,9 +219,9 @@ def walk_bom(
 
 **风险**：中。`sde_loader.py`（684 行）/`sde_cache.py`（479 行）自身偏大，可一并拆。
 
-### 4c. 模型/delegate 分层 ✅ 已完成（第一步：PlanTableModel）
+### 4c. 模型/delegate 分层 ✅ 已完成
 
-> **实际落地**：抽 `PlanTableDelegate(QStyledItemDelegate)`（`views/industry/plan_table.py`），把 `PlanTableModel.data()` 里的 ForegroundRole（染色）/ BackgroundRole（类别底色）/ DecorationRole（图标）/ CheckStateRole（复选框）/ TextAlignmentRole / SizeHintRole 全部移入 delegate；模型 `data()` 只保留 DisplayRole（已算文本）+ UserRole（原始行 dict）。其余 4 个 model（Rank/Material/Procurement/Production）染色仍内联，属后续同类收敛。
+> **实际落地**：抽 `PlanTableDelegate(QStyledItemDelegate)`（`views/industry/plan_table.py`），把 `PlanTableModel.data()` 里的 ForegroundRole（染色）/ BackgroundRole（类别底色）/ DecorationRole（图标）/ CheckStateRole（复选框）/ TextAlignmentRole / SizeHintRole 全部移入 delegate；模型 `data()` 只保留 DisplayRole（已算文本）+ UserRole（原始行 dict）。排查发现其余 4 个 model（Rank/Material/Procurement/Production）是**死代码**（全仓无调用者，仅测试引用）→ 一并删除。图标「异步加载」属性能优化（当前同步加载已用 QPixmapCache 缓存），另行单独立项。
 
 **现状位置**：`ui_pyside6/models/industry_models.py`（5 个 model，`PlanTableModel` 占 ~337 行）在 `data()` 里内联数字格式化 + `QColor` 染色 + 图标 `QPixmap` 加载。
 
