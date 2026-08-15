@@ -25,22 +25,9 @@ _SYMBOLS = {
     CATEGORY_REACTION: "⚗",
 }
 
-_COLORS = {
-    CATEGORY_MANUFACTURING: None,
-    CATEGORY_COPYING: "#3d6ea5",  # 浅蓝
-    CATEGORY_INVENTION: "#8b5fc7",  # 浅紫
-    CATEGORY_REACTION: "#3e8f4e",  # 浅绿
-}
-
-
 def category_symbol(cat: str) -> str:
     """类别符号（⚙📋💡⚗）。"""
     return _SYMBOLS.get(cat, "⚙")
-
-
-def category_color(cat: str) -> str | None:
-    """类别行底色（hex）；制造返回 None（默认底色）。"""
-    return _COLORS.get(cat)
 
 
 def load_category_map(conn: Connection, blueprint_type_ids: list[int]) -> dict[int, str]:

@@ -1,6 +1,6 @@
 """计划类别推导测试 — services/plan_category.py"""
 
-from services.plan_category import category_color, category_symbol, load_category_map
+from services.plan_category import category_symbol, load_category_map
 
 
 def _build_ref(db_manager):
@@ -63,7 +63,4 @@ class TestSymbolsAndColors:
         assert category_symbol("invention") == "💡"
         assert category_symbol("reaction") == "⚗"
 
-    def test_colors(self):
-        assert category_color("manufacturing") is None
-        assert category_color("invention") is not None
-        assert category_color("reaction") is not None
+
