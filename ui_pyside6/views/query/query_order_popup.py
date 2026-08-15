@@ -5,7 +5,6 @@
 import asyncio
 import time as _time
 
-import aiohttp
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -74,23 +73,19 @@ class OrderFetchWorker(QThread):
         if not need:
             return
         url = f"{ESI_BASE_URL}/universe/names/"
-        timeout = aiohttp.ClientTimeout(total=30)
-        async with aiohttp.ClientSession(
-            headers={"Accept": "application/json", "User-Agent": "EveDataCrawler/1.0"}, timeout=timeout
-        ) as session:
+        from services.client import APIClient
+
+        async with APIClient(timeout=30) as client:
             for i in range(0, len(need), 1000):
                 chunk = need[i : i + 1000]
                 try:
-                    from services.client import GLOBAL_ESI_LIMITER
-
-                    await GLOBAL_ESI_LIMITER.acquire()
-                    async with session.post(url, json=chunk) as resp:
-                        if resp.status == 200:
-                            for item in await resp.json():
-                                _station_name_cache[item["id"]] = item.get("name", str(item["id"]))
-                        else:
-                            for lid in chunk:
-                                _station_name_cache.setdefault(lid, str(lid))
+                    data = await client.post(url, json=chunk)
+                    if data:
+                        for item in data:
+                            _station_name_cache[item["id"]] = item.get("name", str(item["id"]))
+                    else:
+                        for lid in chunk:
+                            _station_name_cache.setdefault(lid, str(lid))
                 except Exception:
                     for lid in chunk:
                         _station_name_cache.setdefault(lid, str(lid))
