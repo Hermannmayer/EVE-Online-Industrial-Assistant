@@ -50,35 +50,40 @@ from services.char_config_resolver import (
 
 def calc_broker_fee(skills: dict, faction_standing: float, corp_standing: float, base_rate: float = 1.0) -> float:
     """
-    计算经纪人费率 (%)
-    formula: (base_rate - 0.05 * broker_relations_level) / 2^(0.14 * faction + 0.06 * corp)
+    计算经纪人费率 (%)。委托 core.eve_formulas.calc_broker_rate，避免公式漂移。
     """
-    broker_rel = skills.get("经纪人关系学", 0)
-    standing_factor = 2 ** (0.14 * max(0, faction_standing) + 0.06 * max(0, corp_standing))
-    if standing_factor == 0:
-        return base_rate
-    return max(0.1, (base_rate - 0.05 * broker_rel) / standing_factor)  # type: ignore[no-any-return]
+    from core.eve_formulas import calc_broker_rate
+
+    market_data = {"faction_standing": faction_standing, "corp_standing": corp_standing}
+    if base_rate != 1.0:
+        # core 公式固定 base=1.0；此处保留旧参数兼容，按比例换算。
+        rate = calc_broker_rate(skills, market_data)
+        return max(0.1, rate * base_rate)  # type: ignore[no-any-return]
+    return calc_broker_rate(skills, market_data)  # type: ignore[no-any-return]
 
 
 # type: ignore[no-any-return]
 
 
 def calc_relist_discount(skills: dict) -> float:
-    """
-    计算改单折扣 (%)
-    Advanced Broker Relations: 每级 +5%，0级=50%，5级=75%
-    """
-    adv = skills.get("高级经纪人关系学", 0)
-    return 50 + adv * 5  # type: ignore[no-any-return]
+    """计算改单折扣 (%)。委托 core.eve_formulas。"""
+    from core.eve_formulas import calc_relist_discount as _calc_relist_discount
+
+    return _calc_relist_discount(skills)  # type: ignore[no-any-return]
 
 
 # type: ignore[no-any-return]
 
 
 def calc_sales_tax(skills: dict, base_tax: float = 2.0) -> float:
-    """计算销售税率 (%)  accounting: 每级 -3%"""
-    accounting = skills.get("会计学", 0)
-    return base_tax * (1 - 0.03 * accounting)  # type: ignore[no-any-return]
+    """计算销售税率 (%)。委托 core.eve_formulas。"""
+    from core.eve_formulas import calc_sales_tax_rate
+
+    rate = calc_sales_tax_rate(skills)
+    if base_tax != 2.0:
+        # 保留旧参数兼容：按基础税率比例换算。
+        return rate * (base_tax / 2.0)  # type: ignore[no-any-return]
+    return rate  # type: ignore[no-any-return]
 
 
 # type: ignore[no-any-return]
@@ -273,28 +278,30 @@ def load_implants() -> list[dict]:
         return []
 
     conn = get_container().db.direct_connect("ref")
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT i.type_id, i.en_name, i.zh_name, d.dogma_attrs
-        FROM item i
-        JOIN item_dogma d ON i.type_id = d.type_id
-        ORDER BY i.en_name
-    """)
-    results = []
-    for row in cur.fetchall():
-        type_id, en_name, zh_name, dogma_json = row
-        attrs = json.loads(dogma_json) if dogma_json else []
-        # 解析 bonus 描述
-        bonus_desc = _parse_implant_bonus(attrs)
-        results.append(
-            {
-                "type_id": type_id,
-                "en_name": en_name,
-                "zh_name": zh_name or en_name,
-                "bonus_desc": bonus_desc,
-            }
-        )
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT i.type_id, i.en_name, i.zh_name, d.dogma_attrs
+            FROM item i
+            JOIN item_dogma d ON i.type_id = d.type_id
+            ORDER BY i.en_name
+        """)
+        results = []
+        for row in cur.fetchall():
+            type_id, en_name, zh_name, dogma_json = row
+            attrs = json.loads(dogma_json) if dogma_json else []
+            # 解析 bonus 描述
+            bonus_desc = _parse_implant_bonus(attrs)
+            results.append(
+                {
+                    "type_id": type_id,
+                    "en_name": en_name,
+                    "zh_name": zh_name or en_name,
+                    "bonus_desc": bonus_desc,
+                }
+            )
+    finally:
+        conn.close()
     IMPLANT_CACHE = results
     return results
 

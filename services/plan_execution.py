@@ -70,7 +70,10 @@ def expire_overdue_plans(db=None) -> int:
         updated = 0
         if overdue:
             ph = ",".join("?" for _ in overdue)
-            cur = conn.execute(f"UPDATE production_plans SET status='ready' WHERE id IN ({ph})", overdue)
+            cur = conn.execute(
+                f"UPDATE production_plans SET status='ready' WHERE id IN ({ph}) AND status IN ('in_progress','running')",
+                overdue,
+            )
             updated = cur.rowcount
     return updated
 
@@ -219,24 +222,6 @@ def start_plan(
     if not plan_id:
         return {"ok": False, "code": "no_id", "message": "计划无 id", "shortfalls": [], "plan_id": None}
 
-    status = plan.get("status", "pending")
-    if status in ("in_progress", "running"):
-        return {
-            "ok": False,
-            "code": "already_started",
-            "message": "计划已在生产中",
-            "shortfalls": [],
-            "plan_id": plan_id,
-        }
-    if status in ("completed", "done"):
-        return {
-            "ok": False,
-            "code": "already_completed",
-            "message": "计划已完成，请先重置为生产中",
-            "shortfalls": [],
-            "plan_id": plan_id,
-        }
-
     # 1. 材料校验（mat_hangar_id 未设置则跳过）
     reqs: list[dict] = []
     shortfalls: list[dict] = []
@@ -269,12 +254,41 @@ def start_plan(
         if assigned_bp:
             auto_bound = True
 
-    # 3. 持久化：材料扣减 + 状态更新同一事务（任一步失败整体回滚，避免部分扣减残留）；
-    #    生效 mat_hangar_id 一并落库，供撤销按同一机库返还；星系随新机库同步（COALESCE 保留手动覆盖）
+    # 3. 持久化：先用条件 UPDATE 原子抢占状态，再用同一事务扣减材料；
+    #    任一步失败整体回滚，避免部分扣减残留和并发重复启动。
     now = _now_str()
     new_solar = inventory_manager.get_hangar_system_id(mat_hangar_id) if mat_hangar_id else None
     deducted_json = ""
     with _container().db.connect("user") as conn:
+        cur = conn.execute(
+            "UPDATE production_plans SET status='in_progress', started_at=?, "
+            "assigned_blueprint_id=?, material_short=?, deducted_materials=?, "
+            "char_name=COALESCE(?, char_name), facility=COALESCE(?, facility), "
+            "mat_hangar_id=COALESCE(?, mat_hangar_id), solar_system_id=COALESCE(?, solar_system_id) "
+            "WHERE id=? AND status NOT IN ('in_progress','running','completed','done')",
+            (now, assigned_bp, short_json, deducted_json, char_name, facility, mat_hangar_id, new_solar, plan_id),
+        )
+        if cur.rowcount == 0:
+            row = conn.execute("SELECT status FROM production_plans WHERE id=?", (plan_id,)).fetchone()
+            status = row[0] if row else "missing"
+            if status in ("in_progress", "running"):
+                return {
+                    "ok": False,
+                    "code": "already_started",
+                    "message": "计划已在生产中",
+                    "shortfalls": [],
+                    "plan_id": plan_id,
+                }
+            if status in ("completed", "done"):
+                return {
+                    "ok": False,
+                    "code": "already_completed",
+                    "message": "计划已完成，请先重置为生产中",
+                    "shortfalls": [],
+                    "plan_id": plan_id,
+                }
+            return {"ok": False, "code": "no_id", "message": "计划不存在", "shortfalls": [], "plan_id": plan_id}
+
         if mat_hangar_id:
             deducted_snapshot: dict[str, int] = {}
             for r in reqs:
@@ -282,13 +296,10 @@ def start_plan(
                 if deducted > 0:
                     deducted_snapshot[str(r["type_id"])] = deducted
             deducted_json = json.dumps(deducted_snapshot, ensure_ascii=False)
-        conn.execute(
-            "UPDATE production_plans SET status='in_progress', started_at=?, "
-            "assigned_blueprint_id=?, material_short=?, deducted_materials=?, "
-            "char_name=COALESCE(?, char_name), facility=COALESCE(?, facility), "
-            "mat_hangar_id=COALESCE(?, mat_hangar_id), solar_system_id=COALESCE(?, solar_system_id) WHERE id=?",
-            (now, assigned_bp, short_json, deducted_json, char_name, facility, mat_hangar_id, new_solar, plan_id),
-        )
+            conn.execute(
+                "UPDATE production_plans SET deducted_materials=? WHERE id=?",
+                (deducted_json, plan_id),
+            )
 
     message = "计划已启动"
     if shortfalls:
@@ -375,7 +386,18 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
         if db_status in ("completed", "done"):
             return {"ok": True, "message": "计划已完成", "deposited": 0}
 
-        # 1. 成品入库（同一连接同一事务；deposit_hangar_id 为 -1/None 表示「不自动入库」跳过）
+        # 1. 原子抢占完成状态；若并发完成，只有一个事务能成功。
+        now = _now_str()
+        cur = conn.execute(
+            "UPDATE production_plans SET status='completed', completed_at=?, deposited=0, "
+            "assigned_blueprint_id=NULL, material_short='', deducted_materials='' "
+            "WHERE id=? AND status NOT IN ('completed','done')",
+            (now, plan_id),
+        )
+        if cur.rowcount == 0:
+            return {"ok": True, "message": "计划已完成", "deposited": 0}
+
+        # 2. 成品入库（同一连接同一事务；deposit_hangar_id 为 -1/None 表示「不自动入库」跳过）
         if deposit_hangar_id and deposit_hangar_id > 0 and product_type_id:
             total_mult = max(int(runs or 1), 1) * max(int(parallels or 1), 1)
             total_qty = total_mult * output_per_run(product_type_id)
@@ -386,28 +408,46 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
         else:
             messages.append("未设置产出机库，跳过入库")
 
-        # 2. 消耗绑定 BPC（runs × parallels 个制造任务；多蓝图逐张消耗）
-        runs_used = max(int(runs or 1), 1) * max(int(parallels or 1), 1)
+        # 3. 消耗绑定 BPC（runs × parallels 个制造任务；多蓝图按可用流程分摊）
+        total_jobs = max(int(runs or 1), 1) * max(int(parallels or 1), 1)
         bound_ids = get_plan_blueprints(plan_id)
         if not bound_ids and assigned_bp:
             bound_ids = [assigned_bp]
-        for bid in bound_ids:
-            res = consume_bpc_runs(conn, bid, runs_used)
-            if res.get("deleted"):
-                messages.append("绑定蓝图已耗尽并移除")
-            elif not res.get("skipped"):
-                messages.append(f"绑定蓝图剩余 {res.get('new_quantity')}×{res.get('new_runs')} 流程")
+        if bound_ids:
+            ph = ",".join("?" * len(bound_ids))
+            bp_rows = conn.execute(
+                f"SELECT id, is_bpo FROM user_blueprints WHERE id IN ({ph})", bound_ids
+            ).fetchall()
+            has_bpo = any(bool(r[1]) for r in bp_rows)
+        else:
+            has_bpo = False
+
+        if has_bpo:
+            messages.append("BPO 可无限次使用，跳过 BPC 消耗")
+        else:
+            remaining = total_jobs
+            for bid in bound_ids:
+                if remaining <= 0:
+                    break
+                res = consume_bpc_runs(conn, bid, remaining)
+                if res.get("skipped"):
+                    continue
+                consumed = int(res.get("consumed") or 0)
+                remaining = max(0, remaining - consumed)
+                if res.get("deleted"):
+                    messages.append("绑定蓝图已耗尽并移除")
+                else:
+                    messages.append(f"绑定蓝图剩余 {res.get('new_quantity')}×{res.get('new_runs')} 流程")
+
         # 完成：清理关联表绑定
         _clear_plan_bindings(conn, plan_id)
 
-        # 3. 状态
-        now = _now_str()
-        conn.execute(
-            "UPDATE production_plans SET status='completed', deposited=?, completed_at=?, "
-            "assigned_blueprint_id=NULL, material_short='', deducted_materials='' WHERE id=?",
-            (deposited, now, plan_id),
-        )
-        conn.commit()
+        # 4. 回写实际入库标记
+        if deposited:
+            conn.execute("UPDATE production_plans SET deposited=? WHERE id=?", (deposited, plan_id))
+
+        if own_conn:
+            conn.commit()
     except Exception:
         log.exception("完成计划 %s 失败", plan_id)
         if own_conn:
@@ -438,68 +478,71 @@ def cancel_plan(plan: dict) -> dict:
     if not plan_id:
         return {"ok": False, "message": "计划无 id", "returned": 0, "returned_list": []}
 
-    # 权威值重读
+    # 返还材料 + 释放蓝图占用 + 重置状态（同一事务：失败整体回滚）
+    # 先读权威值并构造返还清单，再用条件 UPDATE 原子抢占撤销权，避免并发重复返还。
+    returned_list: list[dict] = []
+    cost_map: dict[int, float] = {}
     with _container().db.connect("user") as conn:
         row = conn.execute(
             "SELECT status, mat_hangar_id, material_short, deducted_materials FROM production_plans WHERE id=?",
             (plan_id,),
         ).fetchone()
-    if row is None:
-        return {"ok": False, "message": "计划不存在", "returned": 0, "returned_list": []}
-    db_status, mat_hangar_id, material_short, deducted_materials = row
-    if db_status not in ("in_progress", "running"):
-        return {"ok": False, "message": "仅生产中计划可撤销", "returned": 0, "returned_list": []}
+        if row is None:
+            return {"ok": False, "message": "计划不存在", "returned": 0, "returned_list": []}
+        db_status, mat_hangar_id, material_short, deducted_materials = row
+        if db_status not in ("in_progress", "running"):
+            return {"ok": False, "message": "仅生产中计划可撤销", "returned": 0, "returned_list": []}
 
-    # 已扣减量优先取启动时持久化的快照（精确还原，不依赖评分重算——评分失败不再丢材料）；
-    # 旧计划无快照 → 回退「需求 − 缺口」推导（material_short JSON {type_id: missing_qty}）
-    returned_list: list[dict] = []
-    cost_map: dict[int, float] = {}
-    if mat_hangar_id:
-        # 机库现有单位成本（加权平均；返还时按原成本回补避免稀释）—— 读操作放在事务外
-        cost_map = inventory_manager.get_hangar_cost_map(mat_hangar_id)
-        snapshot: dict[int, int] = {}
-        raw_snapshot = deducted_materials or ""
-        if raw_snapshot:
-            try:
-                snapshot = {int(k): int(v) for k, v in json.loads(raw_snapshot).items()}
-            except Exception:
-                snapshot = {}
-        if snapshot:
-            try:
-                from services.name_resolver import resolve_item_names_batch
-
-                with _container().db.connect("ref") as ref_conn:
-                    names = resolve_item_names_batch(ref_conn, list(snapshot.keys()))
-            except Exception:
-                names = {}  # 名称解析失败不阻断返还（name 仅用于返回列表展示）
-            for tid, deducted in snapshot.items():
-                if deducted > 0:
-                    returned_list.append({"type_id": tid, "name": names.get(tid, ""), "qty": deducted})
-        else:
-            reqs = material_requirements(plan)
-            short: dict[int, int] = {}
-            raw = material_short or ""
-            if raw:
+        # 已扣减量优先取启动时持久化的快照（精确还原，不依赖评分重算——评分失败不再丢材料）；
+        # 旧计划无快照 → 回退「需求 − 缺口」推导（material_short JSON {type_id: missing_qty}）
+        if mat_hangar_id:
+            # 机库现有单位成本（加权平均；返还时按原成本回补避免稀释）
+            cost_map = inventory_manager.get_hangar_cost_map(mat_hangar_id)
+            snapshot: dict[int, int] = {}
+            raw_snapshot = deducted_materials or ""
+            if raw_snapshot:
                 try:
-                    short = {int(k): int(v) for k, v in json.loads(raw).items()}
+                    snapshot = {int(k): int(v) for k, v in json.loads(raw_snapshot).items()}
                 except Exception:
-                    short = {}
-            for r in reqs:
-                tid = int(r["type_id"])
-                missing = short.get(tid, 0)
-                deducted = max(0, int(r["need"]) - missing)
-                if deducted > 0:
-                    returned_list.append({"type_id": tid, "name": r.get("name", ""), "qty": deducted})
+                    snapshot = {}
+            if snapshot:
+                try:
+                    from services.name_resolver import resolve_item_names_batch
 
-    # 返还材料 + 释放蓝图占用 + 重置状态（同一事务：失败整体回滚）
-    with _container().db.connect("user") as conn:
-        for r in returned_list:
-            inventory_manager.add_item(mat_hangar_id, r["type_id"], r["qty"], cost_map.get(r["type_id"], 0), conn=conn)
-        conn.execute(
+                    with _container().db.connect("ref") as ref_conn:
+                        names = resolve_item_names_batch(ref_conn, list(snapshot.keys()))
+                except Exception:
+                    names = {}  # 名称解析失败不阻断返还（name 仅用于返回列表展示）
+                for tid, deducted in snapshot.items():
+                    if deducted > 0:
+                        returned_list.append({"type_id": tid, "name": names.get(tid, ""), "qty": deducted})
+            else:
+                reqs = material_requirements(plan)
+                short: dict[int, int] = {}
+                raw = material_short or ""
+                if raw:
+                    try:
+                        short = {int(k): int(v) for k, v in json.loads(raw).items()}
+                    except Exception:
+                        short = {}
+                for r in reqs:
+                    tid = int(r["type_id"])
+                    missing = short.get(tid, 0)
+                    deducted = max(0, int(r["need"]) - missing)
+                    if deducted > 0:
+                        returned_list.append({"type_id": tid, "name": r.get("name", ""), "qty": deducted})
+
+        cur = conn.execute(
             "UPDATE production_plans SET status='pending', started_at=NULL, material_short='', "
-            "deducted_materials='', assigned_blueprint_id=NULL WHERE id=?",
+            "deducted_materials='', assigned_blueprint_id=NULL "
+            "WHERE id=? AND status IN ('in_progress','running')",
             (plan_id,),
         )
+        if cur.rowcount == 0:
+            return {"ok": False, "message": "仅生产中计划可撤销", "returned": 0, "returned_list": []}
+
+        for r in returned_list:
+            inventory_manager.add_item(mat_hangar_id, r["type_id"], r["qty"], cost_map.get(r["type_id"], 0), conn=conn)
         _clear_plan_bindings(conn, plan_id)
 
     returned_total = sum(r["qty"] for r in returned_list)
@@ -727,16 +770,29 @@ def consume_bpc_runs(conn, bp_id: int, runs_used: int) -> dict:
         (bp_id,),
     ).fetchone()
     if not row:
-        return {"deleted": False, "new_quantity": 0, "new_runs": 0, "skipped": True}
+        return {"deleted": False, "new_quantity": 0, "new_runs": 0, "skipped": True, "consumed": 0}
     is_bpo, runs, quantity = row
     if is_bpo:
-        return {"deleted": False, "new_quantity": quantity, "new_runs": runs, "skipped": True}
+        return {"deleted": False, "new_quantity": quantity, "new_runs": runs, "skipped": True, "consumed": 0}
+    old_total = int(quantity) * int(runs)
     new_q, new_runs = _split_bpc_consumption(int(quantity), int(runs), int(runs_used))
     if new_q <= 0 or new_runs is None:
         conn.execute("DELETE FROM user_blueprints WHERE id=?", (bp_id,))
-        return {"deleted": True, "new_quantity": 0, "new_runs": 0, "skipped": False}
+        return {
+            "deleted": True,
+            "new_quantity": 0,
+            "new_runs": 0,
+            "skipped": False,
+            "consumed": old_total,
+        }
     conn.execute("UPDATE user_blueprints SET quantity=?, runs=? WHERE id=?", (new_q, new_runs, bp_id))
-    return {"deleted": False, "new_quantity": new_q, "new_runs": new_runs, "skipped": False}
+    return {
+        "deleted": False,
+        "new_quantity": new_q,
+        "new_runs": new_runs,
+        "skipped": False,
+        "consumed": old_total - int(new_q) * int(new_runs or 0),
+    }
 
 
 def _split_bpc_consumption(quantity: int, runs: int, used: int) -> tuple[int, int | None]:

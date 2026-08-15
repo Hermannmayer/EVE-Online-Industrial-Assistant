@@ -55,6 +55,7 @@ UNIVERSE_CACHE_PATH = os.path.join(CACHE_DIR, "universe_data.json")
 # 进程内 YAML 解析缓存：避免初始化时反复解析大文件（typeIDs.yaml 148MB 解析 ~29s）
 # 初始化完成后由 clear_yaml_cache() 释放，避免长期占用内存
 _YAML_CACHE: dict[str, dict] = {}
+_YAML_CACHE_LOCK = threading.Lock()
 
 # 大 YAML 首次解析的并发锁（load_yaml_async 双检锁，避免并发重复解析）
 _load_lock: asyncio.Lock | None = None
@@ -486,14 +487,15 @@ def load_yaml(name: str) -> dict:
 
     注意：返回的是共享对象，调用方不得修改其内容。
     """
-    if name in _YAML_CACHE:
-        return _YAML_CACHE[name]
-    path = cache_path(name)
-    if not os.path.exists(path):
-        return {}
-    data = _load_yaml_from_disk(name, path)
-    _YAML_CACHE[name] = data
-    return data
+    with _YAML_CACHE_LOCK:
+        if name in _YAML_CACHE:
+            return _YAML_CACHE[name]
+        path = cache_path(name)
+        if not os.path.exists(path):
+            return {}
+        data = _load_yaml_from_disk(name, path)
+        _YAML_CACHE[name] = data
+        return data
 
 
 _PICKLE_SIZE_THRESHOLD = 1024 * 1024  # ≥1MB 的 YAML 才启用磁盘 pickle 缓存（小文件解析本就快）
@@ -553,7 +555,8 @@ async def load_yaml_async(name: str) -> dict:
 
 def clear_yaml_cache() -> None:
     """释放 YAML 解析缓存（初始化完成后调用，释放 typeIDs.yaml 等大文件内存）"""
-    _YAML_CACHE.clear()
+    with _YAML_CACHE_LOCK:
+        _YAML_CACHE.clear()
 
 
 def reset_async_locks() -> None:

@@ -4,7 +4,6 @@
 
 import json
 import time as _time
-from datetime import UTC
 from pathlib import Path
 
 from PySide6.QtCore import QAbstractTableModel, QEvent, QPoint, Qt, QThread, Signal
@@ -598,8 +597,6 @@ def _view_manufacturing(page, type_id: int):
 
 def do_add_to_plan(page, type_id: int, product_name: str):
     """从上下文菜单添加到生产计划"""
-    from datetime import datetime
-
     from PySide6.QtWidgets import QDialog, QMessageBox
 
     from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
@@ -644,43 +641,31 @@ def do_add_to_plan(page, type_id: int, product_name: str):
             if not data:
                 return
             from services import inventory_manager
+            from services.plan_service import insert_plan
 
             mat_hangar_id, solar_system_id = inventory_manager.get_default_mat_hangar_and_system()
-            conn3 = get_container().db.direct_connect("user")
-            try:
-                iskph = result.get("isk_per_hour", 0) or result.get("breakdown", {}).get("isk_per_hour", 0)
-                mat_cost = result.get("breakdown", {}).get("material_cost", 0)
-                conn3.execute(
-                    "INSERT INTO production_plans "
-                    "(product_type_id, product_name, runs, parallels, me_level, te_level, "
-                    "mat_hub, sell_hub, facility, char_name, status, "
-                    "profit, margin, score, iskph, material_cost, created_at, mat_hangar_id, solar_system_id, "
-                    "materials_ready) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,1)",
-                    (
-                        type_id,
-                        product_name,
-                        data["runs"],
-                        data["parallels"],
-                        data["me"],
-                        data["te"],
-                        "Jita",
-                        "Jita",
-                        data["fac"],
-                        data["char"],
-                        result.get("profit_per_run", 0),
-                        result.get("margin_pct", 0),
-                        result.get("score", 0),
-                        iskph,
-                        mat_cost,
-                        datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
-                        mat_hangar_id,
-                        solar_system_id,
-                    ),
-                )
-                conn3.commit()
-            finally:
-                conn3.close()
+            iskph = result.get("isk_per_hour", 0) or result.get("breakdown", {}).get("isk_per_hour", 0)
+            mat_cost = result.get("breakdown", {}).get("material_cost", 0)
+            metrics = {
+                "profit": result.get("profit_per_run", 0) or 0,
+                "margin": result.get("margin_pct", 0) or 0,
+                "score": result.get("score", 0) or 0,
+                "iskph": iskph,
+                "material_cost": mat_cost,
+                "calculated_time": (result.get("hours_per_run", 0) or 0) * 3600,
+                "daily_output": 0,
+            }
+            insert_plan(
+                type_id,
+                product_name,
+                data,
+                mat_hub="Jita",
+                sell_hub="Jita",
+                facility=data["fac"],
+                solar_system_id=solar_system_id,
+                mat_hangar_id=mat_hangar_id,
+                metrics=metrics,
+            )
             QMessageBox.information(page, "成功", f"已添加到计划: {product_name}")
         finally:
             page._add_plan_worker = None  # 释放强引用

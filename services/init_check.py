@@ -4,6 +4,7 @@
 
 import os
 import sqlite3
+from contextlib import closing
 
 from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 
@@ -11,7 +12,7 @@ from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 def check_items() -> int:
     """返回 item 表中 **已填写名称** 的行数，<10000 视为未初始化"""
     try:
-        with sqlite3.connect(REF_DB_PATH) as conn:
+        with closing(sqlite3.connect(REF_DB_PATH)) as conn:
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM item WHERE en_name IS NOT NULL AND en_name != ''")
             return int(c.fetchone()[0])
@@ -22,7 +23,7 @@ def check_items() -> int:
 def check_item_names_ratio() -> float:
     """返回 item 表中缺名的比例（0~1），< 5% 视为可接受"""
     try:
-        with sqlite3.connect(REF_DB_PATH) as conn:
+        with closing(sqlite3.connect(REF_DB_PATH)) as conn:
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM item")
             total = int(c.fetchone()[0])
@@ -38,7 +39,7 @@ def check_item_names_ratio() -> float:
 def check_prices() -> int:
     """返回 market_prices 行数"""
     try:
-        with sqlite3.connect(MKT_DB_PATH) as conn:
+        with closing(sqlite3.connect(MKT_DB_PATH)) as conn:
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM market_prices")
             return int(c.fetchone()[0])
@@ -49,7 +50,7 @@ def check_prices() -> int:
 def check_blueprints() -> int:
     """返回 blueprint_activities 行数，>1000 视为已初始化"""
     try:
-        with sqlite3.connect(BP_DB_PATH) as conn:
+        with closing(sqlite3.connect(BP_DB_PATH)) as conn:
             c = conn.cursor()
             c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='blueprint_activities'")
             if not c.fetchone():
@@ -84,7 +85,7 @@ def check_blueprint_names() -> int:
 def check_implants() -> int:
     """返回 item_dogma 行数，>30 视为已初始化（32 个工业/发明植入体有 dogma）。"""
     try:
-        with sqlite3.connect(REF_DB_PATH) as conn:
+        with closing(sqlite3.connect(REF_DB_PATH)) as conn:
             c = conn.cursor()
             c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='item_dogma'")
             if not c.fetchone():
@@ -98,7 +99,7 @@ def check_implants() -> int:
 def check_market_tree() -> int:
     """返回 market_tree 行数，>500 视为已初始化"""
     try:
-        with sqlite3.connect(REF_DB_PATH) as conn:
+        with closing(sqlite3.connect(REF_DB_PATH)) as conn:
             c = conn.cursor()
             c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='market_tree'")
             if not c.fetchone():
@@ -112,7 +113,7 @@ def check_market_tree() -> int:
 def check_industry() -> int:
     """返回 industry_system_costs 行数，>100 视为已初始化"""
     try:
-        with sqlite3.connect(REF_DB_PATH) as conn:
+        with closing(sqlite3.connect(REF_DB_PATH)) as conn:
             c = conn.cursor()
             c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='industry_system_costs'")
             if not c.fetchone():
@@ -138,7 +139,7 @@ def check_icons() -> tuple[int, int]:
         cached = len([f for f in os.listdir(cache_dir) if f.endswith(".png")])
         noicon = len([f for f in os.listdir(cache_dir) if f.endswith(".noicon")])
     try:
-        with sqlite3.connect(REF_DB_PATH) as conn:
+        with closing(sqlite3.connect(REF_DB_PATH)) as conn:
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM item WHERE market_group_id IS NOT NULL AND market_group_id > 0")
             total = c.fetchone()[0]
@@ -150,7 +151,7 @@ def check_icons() -> tuple[int, int]:
 def check_meta_groups() -> int:
     """返回 meta_group 表行数"""
     try:
-        with sqlite3.connect(REF_DB_PATH) as conn:
+        with closing(sqlite3.connect(REF_DB_PATH)) as conn:
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM meta_group")
             return int(c.fetchone()[0])
@@ -161,7 +162,7 @@ def check_meta_groups() -> int:
 def check_type_materials() -> int:
     """返回 reprocessing_materials 表行数"""
     try:
-        with sqlite3.connect(REF_DB_PATH) as conn:
+        with closing(sqlite3.connect(REF_DB_PATH)) as conn:
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM reprocessing_materials")
             return int(c.fetchone()[0])
@@ -172,7 +173,7 @@ def check_type_materials() -> int:
 def check_dogma_attrs() -> int:
     """返回 dogma_attribute 表行数"""
     try:
-        with sqlite3.connect(REF_DB_PATH) as conn:
+        with closing(sqlite3.connect(REF_DB_PATH)) as conn:
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM dogma_attribute")
             return int(c.fetchone()[0])
@@ -183,7 +184,7 @@ def check_dogma_attrs() -> int:
 def check_stations() -> int:
     """返回 station 表行数"""
     try:
-        with sqlite3.connect(REF_DB_PATH) as conn:
+        with closing(sqlite3.connect(REF_DB_PATH)) as conn:
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM station")
             return int(c.fetchone()[0])
@@ -199,7 +200,7 @@ def check_universe() -> int:
     判据与星系搜索一致（solar_system），避免「初始化显示完成但星系表空」的矛盾。
     """
     try:
-        with sqlite3.connect(REF_DB_PATH) as conn:
+        with closing(sqlite3.connect(REF_DB_PATH)) as conn:
             c = conn.cursor()
             c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='solar_system'")
             if not c.fetchone():
@@ -213,7 +214,7 @@ def check_universe() -> int:
 def check_structure_rigs() -> int:
     """返回 structure_rigs 行数，>80 视为改件加成已初始化"""
     try:
-        with sqlite3.connect(REF_DB_PATH) as conn:
+        with closing(sqlite3.connect(REF_DB_PATH)) as conn:
             c = conn.cursor()
             c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='structure_rigs'")
             if not c.fetchone():

@@ -56,20 +56,6 @@ REPROCESSING_MAX_YIELD_FACILITY = 0.85  # 玩家结构最高 ~85%
 # ════════════════════════════════════════════════════
 
 
-def resolve_item_name(c, type_id: int) -> str:
-    """统一物品名称解析 — 已迁移至 services.name_resolver。"""
-    from services.name_resolver import resolve_item_name as _resolve
-
-    return _resolve(c, type_id)
-
-
-def _mat_name(mat_id: int, c) -> str:
-    """查询材料名称 — 已迁移至 services.name_resolver。"""
-    from services.name_resolver import mat_name as _mname
-
-    return _mname(mat_id, c)
-
-
 def _hub_region_id(hub: str | None) -> int:
     """hub 名称 → region_id，None 或未知时默认 Jita"""
     if hub is None:

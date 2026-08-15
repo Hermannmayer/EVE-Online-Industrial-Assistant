@@ -148,33 +148,25 @@ class PlanPriceRefreshWorker(QThread):
             log.info("定向价格: 所有物品均在缓存有效期内，跳过刷新")
             return 0
 
-        # 2. 并发拉取过期物品的 Jita 订单
-        import aiohttp
+        # 2. 并发拉取过期物品的 Jita 订单（统一走 APIClient 全局限流）
+        from services.client import APIClient
 
         ESI_BASE = "https://esi.evetech.net/latest"
-        HEADERS = {"Accept": "application/json", "User-Agent": "EveDataCrawler/1.0"}
         REGION_JITA = 10000002
 
         type_orders: dict[int, dict] = {}
-        timeout = aiohttp.ClientTimeout(total=180)
 
-        async with aiohttp.ClientSession(headers=HEADERS, timeout=timeout) as session:
-            # 更大并发：顺序 per-item fetch_one（不套 sem），asyncio.gather 自带 concurrency
-            sem = asyncio.Semaphore(50)
-
+        async with APIClient(timeout=180, concurrency=50) as client:
             async def fetch_item_orders(tid: int) -> tuple[int, dict]:
                 url = f"{ESI_BASE}/markets/{REGION_JITA}/orders/"
                 result: dict = {"buy_price": 0.0, "sell_price": float("inf"), "buy_volume": 0, "sell_volume": 0}
 
                 async def fetch_one(order_type: str) -> list[dict]:
-                    async with sem:
-                        try:
-                            async with session.get(url, params={"type_id": tid, "order_type": order_type}) as resp:
-                                if resp.status == 200:
-                                    data = await resp.json()
-                                    return data if isinstance(data, list) else []
-                        except Exception:
-                            log.warning("拉取 %s type_id=%s 失败", order_type, tid)
+                    try:
+                        data = await client.fetch_raw(f"{url}?type_id={tid}&order_type={order_type}")
+                        return data if isinstance(data, list) else []
+                    except Exception:
+                        log.warning("拉取 %s type_id=%s 失败", order_type, tid)
                         return []
 
                 buy_data, sell_data = await asyncio.gather(fetch_one("buy"), fetch_one("sell"))
@@ -211,21 +203,35 @@ class PlanPriceRefreshWorker(QThread):
                 p = type_orders.get(tid)
                 if not p:
                     continue
-                await db.execute(
-                    """INSERT OR REPLACE INTO market_prices
-                       (type_id, region_id, buy_price, sell_price, adjusted_price,
-                        buy_volume, sell_volume, fetch_time)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+                cur = await db.execute(
+                    """UPDATE market_prices
+                       SET buy_price=?, sell_price=?, buy_volume=?, sell_volume=?,
+                           fetch_time=datetime('now')
+                       WHERE type_id=? AND region_id=?""",
                     (
-                        tid,
-                        REGION_JITA,
                         p["buy_price"],
                         p["sell_price"],
-                        0.0,
                         int(p["buy_volume"]),
                         int(p["sell_volume"]),
+                        tid,
+                        REGION_JITA,
                     ),
                 )
+                if cur.rowcount == 0:
+                    await db.execute(
+                        """INSERT INTO market_prices
+                           (type_id, region_id, buy_price, sell_price, adjusted_price,
+                            buy_volume, sell_volume, fetch_time)
+                           VALUES (?, ?, ?, ?, 0.0, ?, ?, datetime('now'))""",
+                        (
+                            tid,
+                            REGION_JITA,
+                            p["buy_price"],
+                            p["sell_price"],
+                            int(p["buy_volume"]),
+                            int(p["sell_volume"]),
+                        ),
+                    )
                 count += 1
             await db.commit()
 

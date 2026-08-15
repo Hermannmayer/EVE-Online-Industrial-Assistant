@@ -60,10 +60,11 @@ async def fetch_history(
     if session is not None:
         return await _do(session)
 
-    headers = {"Accept": "application/json", "User-Agent": "EveApp/1.0"}
-    timeout = aiohttp.ClientTimeout(total=30)
-    async with aiohttp.ClientSession(headers=headers, timeout=timeout) as sess:
-        return await _do(sess)
+    from services.client import APIClient
+
+    query = "&".join(f"{k}={v}" for k, v in params.items())
+    async with APIClient(timeout=30) as client:
+        return await client.fetch_raw(f"{url}?{query}")
 
 
 def get_cached_history(type_id: int, region_id: int = REGION_ID, _db=None) -> list[dict] | None:

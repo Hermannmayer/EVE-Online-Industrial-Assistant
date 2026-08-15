@@ -9,6 +9,7 @@
 import asyncio
 import json
 import os
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -24,8 +25,10 @@ ESI_BASE_URL = "https://esi.evetech.net/latest"
 
 TRADE_REGIONS = list(TRADE_HUB_IDS.items())
 
-# 缓存已知页数，下次跳过 page-1 发现环节
+# 缓存已知页数，下次跳过 page-1 发现环节；带时间戳以便 TTL 失效
 _PAGE_CACHE: dict[str, int] = {}
+_PAGE_CACHE_TIME: dict[str, float] = {}
+_PAGE_CACHE_TTL_SECONDS = 1800
 
 
 def write_progress(cur: int, total: int, phase: str = ""):
@@ -97,21 +100,31 @@ async def fetch_baseline_prices() -> dict[int, dict]:
     return result
 
 
-async def fetch_order_pages(client: APIClient, region_id: int, order_type: str, total_pages: int) -> list:
-    """并发拉取一个区域指定方向的所有订单页（全局限流 ≤20 req/s）"""
+async def _fetch_order_pages_detailed(
+    client: APIClient, region_id: int, order_type: str, total_pages: int
+) -> tuple[list, bool]:
+    """并发拉取一个区域指定方向的所有订单页（全局限流 ≤20 req/s）。
+
+    Returns:
+        (all_data, complete)：complete=False 表示存在页面失败，调用方不应替换旧数据。
+    """
     all_data = []
+    failed = False
     sem = asyncio.Semaphore(8)
 
     async def get_page(p: int):
+        nonlocal failed
         url = f"{ESI_BASE_URL}/markets/{region_id}/orders/?order_type={order_type}&page={p}"
         async with sem:
             try:
                 data = await client.fetch_raw(url)
             except Exception:
                 log.exception("订单页拉取异常: %s", url)
+                failed = True
                 return []
             if data is None:
                 log.warning("订单页拉取失败（非 200/限流/超时）: %s", url)
+                failed = True
                 return []
             return data
 
@@ -122,7 +135,13 @@ async def fetch_order_pages(client: APIClient, region_id: int, order_type: str, 
         results = await asyncio.gather(*[get_page(p) for p in batch])
         for r in results:
             all_data.extend(r)
-    return all_data
+    return all_data, not failed
+
+
+async def fetch_order_pages(client: APIClient, region_id: int, order_type: str, total_pages: int) -> list:
+    """并发拉取一个区域指定方向的所有订单页（兼容旧签名，只返回数据）。"""
+    data, _complete = await _fetch_order_pages_detailed(client, region_id, order_type, total_pages)
+    return data
 
 
 async def discover_pages(client: APIClient, targets: list[tuple[str, int]] | None = None) -> dict:
@@ -133,7 +152,8 @@ async def discover_pages(client: APIClient, targets: list[tuple[str, int]] | Non
 
     async def discover(rid: int, ot: str):
         cache_key = f"{rid}_{ot}"
-        if cache_key in _PAGE_CACHE:
+        cached_ts = _PAGE_CACHE_TIME.get(cache_key)
+        if cache_key in _PAGE_CACHE and (cached_ts is None or time.time() - cached_ts < _PAGE_CACHE_TTL_SECONDS):
             keys[cache_key] = _PAGE_CACHE[cache_key]
             return
         url = f"{ESI_BASE_URL}/markets/{rid}/orders/?order_type={ot}&page=1"
@@ -143,24 +163,25 @@ async def discover_pages(client: APIClient, targets: list[tuple[str, int]] | Non
             return
         pages = int(headers.get("X-Pages", 1))
         _PAGE_CACHE[cache_key] = pages
+        _PAGE_CACHE_TIME[cache_key] = time.time()
         keys[cache_key] = pages
 
     for _, rid in targets:
         for ot in ("sell", "buy"):
             tasks.append(discover(rid, ot))
 
-    await asyncio.gather(*tasks)
+    await asyncio.gather(*tasks, return_exceptions=True)
     return keys
 
 
-async def fetch_orders(regions: list[tuple[str, int]] | None = None) -> dict[int, dict[int, dict]]:
-    """4 区域实时订单，按 region_id → type_id 组织
-
-    Args:
-        regions: 要拉取的区域列表 [(name, id), ...]，None 表示拉取全部
+async def fetch_orders_detailed(
+    regions: list[tuple[str, int]] | None = None,
+) -> tuple[dict[int, dict[int, dict]], set[int]]:
+    """4 区域实时订单，按 region_id → type_id 组织，并返回完整拉取成功的区域。
 
     Returns:
-        {region_id: {type_id: {buy_price, sell_price, buy_volume, sell_volume}}}
+        ({region_id: {type_id: {...}}}, complete_regions)
+        complete_regions 仅包含买卖两个方向所有页面都成功的区域。
     """
     targets = regions or TRADE_REGIONS
     log.info("发现订单页数...")
@@ -171,14 +192,18 @@ async def fetch_orders(regions: list[tuple[str, int]] | None = None) -> dict[int
         log.info("  共 %s 页，开始拉取...", total_reqs)
 
         result = {}
+        complete_regions: set[int] = set()
         for _name, rid in targets:
             region_data = {}
+            region_complete = True
             for ot in ("sell", "buy"):
                 key = f"{rid}_{ot}"
                 pages = page_map.get(key, 0)
                 if not pages:
                     continue
-                data = await fetch_order_pages(client, rid, ot, pages)
+                data, ok = await _fetch_order_pages_detailed(client, rid, ot, pages)
+                if not ok:
+                    region_complete = False
 
                 for o in data:
                     tid = o["type_id"]
@@ -209,9 +234,17 @@ async def fetch_orders(regions: list[tuple[str, int]] | None = None) -> dict[int
                     region_data[tid]["sell_price"] = 0.0
 
             result[rid] = region_data
+            if region_complete:
+                complete_regions.add(rid)
 
     total_items = sum(len(d) for d in result.values())
     log.info("  获取 %s 条聚合记录（%s 个区域）", total_items, len(result))
+    return result, complete_regions
+
+
+async def fetch_orders(regions: list[tuple[str, int]] | None = None) -> dict[int, dict[int, dict]]:
+    """兼容旧签名：只返回 {region_id: {type_id: {...}}}。"""
+    result, _complete = await fetch_orders_detailed(regions)
     return result
 
 
@@ -241,6 +274,8 @@ async def save_snapshot(all_regions: dict[int, dict[int, dict]]):
         """,
             records,
         )
+        # 保留最近 90 天，避免快照无限增长
+        await db.execute("DELETE FROM market_volume_snapshots WHERE date < date('now', '-90 days')")
         await db.commit()
     log.info(f"  快照已保存: {len(records)} 条（{len(all_regions)} 个区域）")
 
@@ -249,20 +284,27 @@ async def save_prices(
     baseline: dict[int, dict],
     order_prices: dict[int, dict[int, dict]],
     region_ids: list[int] | None = None,
+    complete_regions: set[int] | None = None,
 ) -> int:
     """写入各区域价格（仅覆盖指定区域）。
 
-    失败保护：拉取失败的区域（order_prices 中无该 region 或为空 dict）跳过
-    删除与插入，保留该区域旧价格 —— 避免「先 DELETE 后 INSERT」在拉取失败时
-    清空整区数据。
+    失败保护：只有完整拉取成功（complete_regions）的区域才允许替换旧数据；
+    拉取失败/部分失败的区域跳过删除与插入，保留旧价格。
     """
     async with aiosqlite.connect(DATABASE_PATH) as db:
         # 确定本次实际成功的区域（order_prices 中存在且有数据）
         target_regions = region_ids or list(order_prices.keys())
-        succeeded = [rid for rid in target_regions if order_prices.get(rid)]
+        if complete_regions is None:
+            succeeded = [rid for rid in target_regions if order_prices.get(rid)]
+        else:
+            succeeded = [
+                rid
+                for rid in target_regions
+                if order_prices.get(rid) and rid in complete_regions
+            ]
         failed = [rid for rid in target_regions if rid not in succeeded]
         if failed:
-            log.warning("  以下区域拉取失败，保留旧价格: %s", failed)
+            log.warning("  以下区域拉取失败/不完整，保留旧价格: %s", failed)
 
         records = []
         for region_id in succeeded:
@@ -315,12 +357,12 @@ async def main(regions: list[tuple[str, int]] | None = None, progress_cb: Callab
     write_progress(2, 4, pm := "拉取实时订单簿...")
     if progress_cb:
         progress_cb(30, pm)
-    order_prices = await fetch_orders(regions)
+    order_prices, complete_regions = await fetch_orders_detailed(regions)
 
     write_progress(3, 4, pm := "写入数据库...")
     if progress_cb:
         progress_cb(70, pm)
-    cnt = await save_prices(baseline, order_prices, [rid for _, rid in regions])
+    cnt = await save_prices(baseline, order_prices, [rid for _, rid in regions], complete_regions)
     log.info(f"  写入 {cnt} 条")
 
     # 保存当日快照

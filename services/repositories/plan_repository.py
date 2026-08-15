@@ -11,6 +11,20 @@ class PlanRepository:
     def __init__(self, db):
         self._db = db
 
+    # 允许通过动态更新写入的列白名单，防止任意字段名拼接进 SQL。
+    ALLOWED_FIELDS = frozenset(
+        {
+            "product_type_id", "product_name", "blueprint_type_id", "runs", "parallels",
+            "me_level", "te_level", "mat_hub", "sell_hub", "facility", "char_name",
+            "status", "profit", "margin", "score", "material_cost", "created_at",
+            "started_at", "completed_at", "facility_cost_mult", "calculated_time",
+            "notes", "group_number", "sub_level", "output_location", "market_margin",
+            "personal_margin", "daily_output", "materials_ready", "iskph",
+            "deposit_hangar_id", "deposited", "assigned_blueprint_id", "mat_hangar_id",
+            "material_short", "deducted_materials", "solar_system_id",
+        }
+    )
+
     SCHEMA = """CREATE TABLE IF NOT EXISTS production_plans (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_type_id INTEGER NOT NULL,
@@ -103,7 +117,12 @@ class PlanRepository:
             )
             return c.lastrowid or 0
 
+    @staticmethod
+    def _allowed_fields(fields: dict) -> dict:
+        return {k: v for k, v in fields.items() if k in PlanRepository.ALLOWED_FIELDS}
+
     def update(self, plan_id: int, **fields) -> bool:
+        fields = self._allowed_fields(fields)
         if not fields:
             return False
         with self._db.connect("user") as conn:
@@ -114,6 +133,7 @@ class PlanRepository:
 
     def update_many(self, plan_ids: list[int], **fields) -> int:
         """批量更新多条计划的同一组字段（列名来自内部，参数化值）。返回受影响行数。"""
+        fields = self._allowed_fields(fields)
         if not plan_ids or not fields:
             return 0
         with self._db.connect("user") as conn:
@@ -130,6 +150,7 @@ class PlanRepository:
         total = 0
         with self._db.connect("user") as conn:
             for plan_id, fields in rows:
+                fields = self._allowed_fields(fields)
                 if not fields:
                     continue
                 sets = ", ".join(f"{k} = ?" for k in fields)

@@ -100,7 +100,10 @@ async def write_meta_groups():
     # --- 快速路径 ---
     async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM meta_group")
-        if (await c.fetchone())[0] > 0:
+        meta_count = (await c.fetchone())[0]
+        c = await db.execute("SELECT COUNT(*) FROM item WHERE meta_group_id IS NOT NULL")
+        item_meta_count = (await c.fetchone())[0]
+        if meta_count > 0 and item_meta_count > 10000:
             log.info("meta_group 已就绪，跳过")
             return
 
@@ -259,7 +262,10 @@ async def write_categories():
     # --- 快速路径 ---
     async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM category")
-        if (await c.fetchone())[0] > 0:
+        category_count = (await c.fetchone())[0]
+        c = await db.execute("SELECT COUNT(*) FROM item WHERE category_id IS NOT NULL")
+        item_category_count = (await c.fetchone())[0]
+        if category_count > 0 and item_category_count > 50000:
             log.info("category 已就绪，跳过")
             return
 
@@ -325,7 +331,14 @@ async def write_stations():
     """写入 station + station_operation + station_operation_service + station_service 表"""
     async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM station")
-        if (await c.fetchone())[0] > 0:
+        station_count = (await c.fetchone())[0]
+        c = await db.execute("SELECT COUNT(*) FROM station_operation")
+        operation_count = (await c.fetchone())[0]
+        c = await db.execute("SELECT COUNT(*) FROM station_service")
+        service_count = (await c.fetchone())[0]
+        c = await db.execute("SELECT COUNT(*) FROM station_operation_service")
+        operation_service_count = (await c.fetchone())[0]
+        if station_count > 0 and operation_count > 0 and service_count > 0 and operation_service_count > 0:
             log.info("station 相关表已就绪，跳过")
             return
 
@@ -465,7 +478,12 @@ async def write_research():
     """写入 research_agent + npc_corporation + agent 表"""
     async with _ref_db() as db:
         c = await db.execute("SELECT COUNT(*) FROM research_agent")
-        if (await c.fetchone())[0] > 0:
+        research_count = (await c.fetchone())[0]
+        c = await db.execute("SELECT COUNT(*) FROM npc_corporation")
+        corp_count = (await c.fetchone())[0]
+        c = await db.execute("SELECT COUNT(*) FROM agent")
+        agent_count = (await c.fetchone())[0]
+        if research_count > 0 and corp_count > 0 and agent_count > 0:
             log.info("research 相关表已就绪，跳过")
             return
 

@@ -210,6 +210,7 @@ def main():
     from PySide6.QtCore import QTimer
 
     from core.single_instance import show_message, try_lock, unlock
+    from services.database_manager import get_db
 
     if not try_lock(force="--force" in sys.argv):
         show_message()
@@ -218,6 +219,7 @@ def main():
         return
 
     app.aboutToQuit.connect(unlock)
+    app.aboutToQuit.connect(get_db().close_all)
 
     # -- Hot reload --
     HOT_RELOAD = "--hot-reload" in sys.argv

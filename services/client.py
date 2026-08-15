@@ -130,59 +130,91 @@ class APIClient:
 
     async def fetch_raw(self, url: str) -> list | None:
         """GET 请求，返回原始 JSON（列表响应，如订单簿页），404/超时返回 None"""
-        await self._limiter.acquire()
-        async with self.semaphore:  # type: ignore[union-attr]
-            async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
-                if resp.status == 429:
-                    await self._handle_rate_limit(resp)
+        for attempt in range(self._retries):
+            try:
+                await self._limiter.acquire()
+                async with self.semaphore:  # type: ignore[union-attr]
+                    async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
+                        if resp.status == 429:
+                            await self._handle_rate_limit(resp)
+                            if attempt + 1 < self._retries:
+                                continue
+                            return None
+                        if resp.status == 404:
+                            return None
+                        resp.raise_for_status()
+                        text = await resp.text()
+                        if not text.strip():
+                            return None
+                        parsed = json.loads(text)
+                        return parsed if isinstance(parsed, list) else None
+            except (TimeoutError, aiohttp.ClientError):
+                if attempt + 1 >= self._retries:
                     return None
-                if resp.status == 404:
-                    return None
-                resp.raise_for_status()
-                text = await resp.text()
-                if not text.strip():
-                    return None
-                parsed = json.loads(text)
-                return parsed if isinstance(parsed, list) else None
+                await asyncio.sleep(min(2**attempt, 5))
+        return None
 
     async def get_headers(self, url: str) -> dict[str, str] | None:
         """GET 请求，返回响应头（X-Pages 等）；非 200 返回 None"""
-        await self._limiter.acquire()
-        async with self.semaphore:  # type: ignore[union-attr]
-            async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
-                if resp.status == 429:
-                    await self._handle_rate_limit(resp)
+        for attempt in range(self._retries):
+            try:
+                await self._limiter.acquire()
+                async with self.semaphore:  # type: ignore[union-attr]
+                    async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
+                        if resp.status == 429:
+                            await self._handle_rate_limit(resp)
+                            if attempt + 1 < self._retries:
+                                continue
+                            return None
+                        if resp.status != 200:
+                            return None
+                        return dict(resp.headers)
+            except (TimeoutError, aiohttp.ClientError):
+                if attempt + 1 >= self._retries:
                     return None
-                if resp.status != 200:
-                    return None
-                return dict(resp.headers)
+                await asyncio.sleep(min(2**attempt, 5))
+        return None
 
     async def fetch_required(self, url: str):
         """GET 请求，失败时抛出异常"""
-        retries_left = 5
+        retries_left = max(self._retries, 3)
         while retries_left > 0:
-            async with self.semaphore:  # type: ignore[union-attr]
-                async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
-                    if resp.status == 429:
-                        await self._handle_rate_limit(resp)
-                        retries_left -= 1
-                        continue
-                    resp.raise_for_status()
-                    return await resp.json()
+            try:
+                await self._limiter.acquire()
+                async with self.semaphore:  # type: ignore[union-attr]
+                    async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
+                        if resp.status == 429:
+                            await self._handle_rate_limit(resp)
+                            retries_left -= 1
+                            continue
+                        resp.raise_for_status()
+                        return await resp.json()
+            except (TimeoutError, aiohttp.ClientError):
+                retries_left -= 1
+                if retries_left <= 0:
+                    raise
+                await asyncio.sleep(min(2 ** (max(self._retries, 3) - retries_left), 5))
         raise aiohttp.ClientError("Rate limit retries exhausted")
 
     async def get_text(self, url: str) -> str | None:
         """GET 请求，返回原始文本"""
-        retries_left = 5
+        retries_left = max(self._retries, 3)
         while retries_left > 0:
-            async with self.semaphore:  # type: ignore[union-attr]
-                async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
-                    if resp.status == 429:
-                        await self._handle_rate_limit(resp)
-                        retries_left -= 1
-                        continue
-                    if resp.status == 404:
-                        return None
-                    resp.raise_for_status()
-                    return await resp.text()
+            try:
+                await self._limiter.acquire()
+                async with self.semaphore:  # type: ignore[union-attr]
+                    async with self.session.get(url, timeout=self._timeout) as resp:  # type: ignore[union-attr]
+                        if resp.status == 429:
+                            await self._handle_rate_limit(resp)
+                            retries_left -= 1
+                            continue
+                        if resp.status == 404:
+                            return None
+                        resp.raise_for_status()
+                        return await resp.text()
+            except (TimeoutError, aiohttp.ClientError):
+                retries_left -= 1
+                if retries_left <= 0:
+                    return None
+                await asyncio.sleep(min(2 ** (max(self._retries, 3) - retries_left), 5))
         return None

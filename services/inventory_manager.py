@@ -224,16 +224,15 @@ def get_items(hangar_id: int) -> list[dict]:
         """,
             (hangar_id,),
         )
-        items = []
-        for r in c.fetchall():
-            tid = r[1]
-            # 名称统一：terminology.item_overrides 优先（基础矿物 34-40 等不在 item 表，仅在此注册）
-            override = term.item_override(tid)
-            display_name = override or (r[4] or r[5]) or str(tid)
-            # 生产计划占用：pending 为待启动预留；in_progress/ready 已物理扣减，作核对参考
+        rows = c.fetchall()
+        type_ids = [r[1] for r in rows]
+        # 生产计划占用批量聚合：pending 为待启动预留；in_progress/ready 已物理扣减，作核对参考
+        usage_map: dict[int, tuple[int, int]] = {}
+        if type_ids:
+            placeholders = ",".join("?" * len(type_ids))
             c.execute(
-                """
-                SELECT
+                f"""
+                SELECT bm.material_type_id,
                     COALESCE(SUM(CASE WHEN pp.status = 'pending'
                                      THEN bm.quantity * pp.runs * pp.parallels ELSE 0 END), 0),
                     COALESCE(SUM(CASE WHEN pp.status IN ('in_progress', 'ready')
@@ -243,13 +242,21 @@ def get_items(hangar_id: int) -> list[dict]:
                     AND bp.activity = 'manufacturing'
                 JOIN bp.blueprint_materials bm ON bm.blueprint_type_id = bp.blueprint_type_id
                     AND bm.activity = 'manufacturing'
-                WHERE bm.material_type_id = ?
+                WHERE bm.material_type_id IN ({placeholders})
+                GROUP BY bm.material_type_id
             """,
-                (tid,),
+                type_ids,
             )
-            row = c.fetchone()
-            plan_qty = row[0] if row else 0
-            plan_active = row[1] if row else 0
+            for row in c.fetchall():
+                usage_map[int(row[0])] = (int(row[1] or 0), int(row[2] or 0))
+
+        items = []
+        for r in rows:
+            tid = r[1]
+            # 名称统一：terminology.item_overrides 优先（基础矿物 34-40 等不在 item 表，仅在此注册）
+            override = term.item_override(tid)
+            display_name = override or (r[4] or r[5]) or str(tid)
+            plan_qty, plan_active = usage_map.get(tid, (0, 0))
 
             stock_qty = r[2]
             remain = max(0, stock_qty - plan_qty)
@@ -735,7 +742,7 @@ def update_blueprints_batch(ids: list[int], **kwargs) -> int:
 
 def get_blueprint_product_info(blueprint_type_id: int) -> dict | None:
     """获取蓝图的产物信息（名称、产量、制造时间）"""
-    from core.eve_formulas import resolve_item_name
+    from services.name_resolver import resolve_item_name
 
     with _default_db().connect("bp", "ref") as conn:
         c = conn.cursor()
@@ -765,7 +772,7 @@ def get_blueprint_product_info(blueprint_type_id: int) -> dict | None:
 
 def get_blueprint_product_info_batch(bp_ids: list[int]) -> dict[int, dict]:
     """批量获取蓝图产物信息，返回 {blueprint_type_id: {product_type_id, product_name, product_quantity, base_time}}"""
-    from core.eve_formulas import resolve_item_name
+    from services.name_resolver import resolve_item_name
 
     if not bp_ids:
         return {}
