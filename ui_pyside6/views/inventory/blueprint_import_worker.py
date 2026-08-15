@@ -146,8 +146,8 @@ class _BlueprintImportWorker(QThread):
         list
     )  # diff rows: [{name, blueprint_type_id, is_bpo, me, te, runs, qty, existing_qty, row_id, delta, final}]
 
-    def __init__(self, raw: str, hangar_id: int):
-        super().__init__()
+    def __init__(self, raw: str, hangar_id: int, parent=None):
+        super().__init__(parent)
         self._raw = raw
         self._hangar_id = hangar_id
 

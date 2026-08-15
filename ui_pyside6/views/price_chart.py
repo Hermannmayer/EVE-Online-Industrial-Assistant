@@ -197,6 +197,6 @@ class PriceChartDialog(QDialog):
     def closeEvent(self, event):
         theme.remove_theme_listener(self._on_theme_changed)
         if hasattr(self, "_worker") and self._worker.isRunning():
-            self._worker.quit()
+            self._worker.requestInterruption()
             self._worker.wait(3000)
         super().closeEvent(event)
