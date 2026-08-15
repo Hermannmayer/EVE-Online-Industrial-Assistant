@@ -6,6 +6,14 @@
 
 <!-- version list -->
 
+## v0.15.4 (2026-08-15)
+
+### Performance Improvements
+
+- 初始化全面提速 + 单实例锁健壮化 + dev.py 全新开箱模式
+  ([`813b513`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/813b5133b351ebda80c1aaf5b8ef71f95c4a3c2e))
+
+
 ## v0.15.3 (2026-08-13)
 
 ### Bug Fixes
