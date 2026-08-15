@@ -80,7 +80,7 @@ class CompareDialog(QDialog):
     def closeEvent(self, event):
         if self._worker and self._worker.isRunning():
             self._worker.cancel()
-            self._worker.quit()
+            self._worker.requestInterruption()
             self._worker.wait(2000)
         super().closeEvent(event)
 

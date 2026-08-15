@@ -167,7 +167,7 @@ class AllItemsDialog(QDialog):
     def closeEvent(self, ev):
         for t in (self._tw, self._iw, self._wp, self._sw):
             if t and t.isRunning():
-                t.quit()
+                t.requestInterruption()
                 t.wait(2000)
         super().closeEvent(ev)
 
@@ -422,7 +422,7 @@ class AllItemsDialog(QDialog):
         if not q:
             return
         if self._sw and self._sw.isRunning():
-            self._sw.quit()
+            self._sw.requestInterruption()
             self._sw.wait(1000)
         self._st.setText("搜索中...")
         self._sw = SearchItemsW(q, JITA_RID, self)

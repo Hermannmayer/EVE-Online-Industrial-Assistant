@@ -470,7 +470,7 @@ class WatchlistPage(QWidget):
             self._popup.hide()
             return
         if self._suggest_worker and self._suggest_worker.isRunning():
-            self._suggest_worker.quit()
+            self._suggest_worker.requestInterruption()
         self._suggest_worker = SuggestionWorker(text, self)
         self._suggest_worker.finished_signal.connect(self._on_suggestions)
         self._suggest_worker.start()

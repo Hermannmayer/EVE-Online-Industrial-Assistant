@@ -191,6 +191,7 @@ class QueryPage(QWidget):
 
     def _load_groups(self):
         worker = GroupLoadWorker(self)
+        self._group_worker = worker
         worker.finished_signal.connect(self._on_groups_loaded)
         worker.start()
 
@@ -211,6 +212,7 @@ class QueryPage(QWidget):
         if len(query) < 1:
             return
         worker = SuggestionWorker(query, self)
+        self._suggest_worker = worker
         worker.finished_signal.connect(self._show_suggestions)
         worker.start()
 
@@ -261,6 +263,7 @@ class QueryPage(QWidget):
         self._progress.setRange(0, 0)  # indeterminate
 
         worker = SearchWorker(query, self._all_groups, self._region_id, self)
+        self._search_worker = worker
         worker.finished_signal.connect(self._on_search_done)
         worker.error_signal.connect(self._on_search_error)
         worker.start()

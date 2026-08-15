@@ -629,6 +629,7 @@ def do_add_to_plan(page, type_id: int, product_name: str):
         sell_hub="Jita",
         tax=0.0,
         system_id=get_default_mat_hangar_system_id(),
+        parent=page,
     )
     worker = page._add_plan_worker
 

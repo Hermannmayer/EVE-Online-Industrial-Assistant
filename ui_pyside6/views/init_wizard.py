@@ -423,7 +423,7 @@ class InitWizard(QDialog):
         self._eta_label.setText(f"正在初始化 {len(missing)} 个步骤...")
 
         # 启动 Worker
-        self._worker = InitServiceWorker(step_keys=missing)
+        self._worker = InitServiceWorker(step_keys=missing, parent=self)
         self._worker.step_started.connect(self._on_step_started)
         self._worker.step_progress.connect(self._on_step_progress)
         self._worker.step_completed.connect(self._on_step_completed)
@@ -500,7 +500,7 @@ class InitWizard(QDialog):
         else:
             # 还没启动单个重试 → 只重新这个
             self._step_widgets[key].set_state(StepStatus.PENDING)
-            self._worker = InitServiceWorker(step_keys=[key])
+            self._worker = InitServiceWorker(step_keys=[key], parent=self)
             self._worker.step_started.connect(self._on_step_started)
             self._worker.step_progress.connect(self._on_step_progress)
             self._worker.step_completed.connect(self._on_step_completed)

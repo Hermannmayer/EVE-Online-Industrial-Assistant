@@ -136,7 +136,7 @@ class ManufacturableItemsDialog(QDialog):
             if t is None:
                 continue
             if t.isRunning():
-                t.quit()
+                t.requestInterruption()
                 t.wait(300)
         super().closeEvent(ev)
 
@@ -348,7 +348,7 @@ class ManufacturableItemsDialog(QDialog):
             except (TypeError, RuntimeError):
                 pass
             if self._iw.isRunning():
-                self._iw.quit()
+                self._iw.requestInterruption()
                 self._iw.wait(300)
 
         iw = ItemsW(list(ids), rid=JITA_RID, parent=self)
@@ -365,7 +365,7 @@ class ManufacturableItemsDialog(QDialog):
         if not q:
             return
         if self._sw and self._sw.isRunning():
-            self._sw.quit()
+            self._sw.requestInterruption()
             self._sw.wait(1000)
         self._st.setText("搜索中...")
         self._sw = SearchItemsW(q, JITA_RID, self)
@@ -453,7 +453,7 @@ class ManufacturableItemsDialog(QDialog):
     def _calc(self):
         if self._wp is not None:
             self._wp.requestInterruption()
-            self._wp.quit()
+            self._wp.requestInterruption()
             # 断开旧信号避免遗留回调触发 _cd
             try:
                 self._wp.progress.disconnect()

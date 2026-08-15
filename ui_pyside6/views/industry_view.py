@@ -541,6 +541,7 @@ class IndustryPage(QWidget):
             mat_price_type=ps["mat_price_type"],
             prod_hub=ps["prod_hub"],
             prod_price_type=ps["prod_price_type"],
+            parent=self,
         )
         self._recalc_worker.finished.connect(self._on_recalc_done)
         self._recalc_worker.start()
@@ -598,7 +599,7 @@ class IndustryPage(QWidget):
             return  # 已有拉取线程在跑
         log.info("工业数据（成本指数/设施）缺失或过时，后台开始拉取...")
         self._status_bar.show_message("正在后台拉取工业数据...")
-        self._industry_worker = IndustryDataWorker()
+        self._industry_worker = IndustryDataWorker(parent=self)
         self._industry_worker.finished.connect(self._on_industry_data_ready)
         self._industry_worker.start()
 
@@ -768,6 +769,7 @@ class IndustryPage(QWidget):
             tax=0.0,
             char_name=char_name,
             system_id=preview_system_id,
+            parent=self,
         )
 
         def _on_score(result: dict):
