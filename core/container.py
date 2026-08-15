@@ -2,10 +2,15 @@
 IOC 容器 — 持有所有依赖，由 Main.py 组装
 """
 
+from __future__ import annotations
+
 import threading
+from typing import TYPE_CHECKING
 
 from core.cache import TtlLRUCache
-from services.database_manager import DatabaseManager, get_db
+
+if TYPE_CHECKING:
+    from services.database_manager import DatabaseManager
 
 
 class AppContainer:
@@ -31,6 +36,8 @@ class AppContainer:
         if self._db is None:
             with self._lock:
                 if self._db is None:
+                    from services.database_manager import get_db
+
                     self._db = get_db()
         return self._db
 
