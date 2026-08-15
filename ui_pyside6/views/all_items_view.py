@@ -39,7 +39,7 @@ from services.name_resolver import resolve_item_name
 from services.terminology import term
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 from ui_pyside6.models.all_items_models import BCOLS, DASH, MCOLS, TCOLS, AModel, Proxy
-from ui_pyside6.views.compare_dialog import CompareDialog
+from ui_pyside6.views.compare import CompareDialog
 from ui_pyside6.views.score_dialogs import MfgDlg, ScoreW, TradeDlg
 from ui_pyside6.workers.all_items_workers import JITA_RID, ItemsW, SearchItemsW, TreeW
 
