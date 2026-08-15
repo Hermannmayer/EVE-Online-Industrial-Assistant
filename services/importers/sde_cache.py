@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import pickle
+import tempfile
 import threading
 import time
 import zipfile
@@ -250,15 +251,22 @@ def _build_name_map(zip_path: str) -> dict[int, str]:
         log.warning("invNames 名称解析失败，星系名将为空: %s", e)
         return result
 
-    # 解析成功才原子写 pkl（写失败/并发写不中断主流程）
+    # 解析成功才原子写 pkl（写失败/并发写不中断主流程；临时文件名唯一避免多进程互踩）
     try:
         d = os.path.dirname(pkl_path)
         if d:
             os.makedirs(d, exist_ok=True)
-        tmp = pkl_path + ".tmp"
-        with open(tmp, "wb") as f:
-            pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
-        os.replace(tmp, pkl_path)
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".invnames_", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp, pkl_path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
     except Exception:
         pass
     return result
@@ -527,10 +535,17 @@ def _load_yaml_from_disk(name: str, path: str) -> dict:
         if os.path.getsize(path) >= _PICKLE_SIZE_THRESHOLD:
             pkl_path = _pickle_cache_path(name)
             os.makedirs(os.path.dirname(pkl_path), exist_ok=True)
-            tmp = pkl_path + ".tmp"
-            with open(tmp, "wb") as f:
-                pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
-            os.replace(tmp, pkl_path)
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(pkl_path), prefix=".yaml_", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+                os.replace(tmp, pkl_path)
+            except Exception:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
     except Exception:
         pass
     return data

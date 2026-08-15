@@ -127,8 +127,13 @@ async def download_icon_for_group(
     dest_path = ICON_CACHE_DIR / f"{representative}.png"
     noicon_path = ICON_CACHE_DIR / f"{representative}.noicon"
 
-    # 检查代表 type_id 的缓存状态
+    # 检查代表 type_id 的缓存状态；命中时补齐组内缺失的复制文件
     if dest_path.exists():
+        icon_data = dest_path.read_bytes()
+        for dup_tid in type_ids[1:]:
+            dup_path = ICON_CACHE_DIR / f"{dup_tid}.png"
+            if not dup_path.exists():
+                dup_path.write_bytes(icon_data)
         progress[0] += len(type_ids)
         return True
     if noicon_path.exists():
