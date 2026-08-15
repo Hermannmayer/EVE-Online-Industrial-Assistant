@@ -22,6 +22,7 @@ import aiosqlite
 from core.constants import TRADE_HUB_IDS
 from core.logger import log
 from core.paths import market_db_path, progress_file
+from services.client import GLOBAL_ESI_LIMITER
 
 DATABASE_PATH = market_db_path()
 ESI_BASE_URL = "https://esi.evetech.net/latest"
@@ -121,6 +122,7 @@ async def _fetch_contract_pages_detailed(
 
     # 先探测总页数
     url = f"{ESI_BASE_URL}/contracts/public/{region_id}/"
+    await GLOBAL_ESI_LIMITER.acquire()
     async with session.get(url, params={"page": 1}) as resp:
         if resp.status != 200:
             log.warning(f"  区域 {region_id} 合同请求失败: HTTP {resp.status}")
@@ -139,6 +141,7 @@ async def _fetch_contract_pages_detailed(
         nonlocal complete
         async with sem:
             try:
+                await GLOBAL_ESI_LIMITER.acquire()
                 async with session.get(url, params={"page": p}) as resp:
                     if resp.status == 200:
                         return await resp.json()
@@ -182,6 +185,7 @@ async def _fetch_contract_items_detailed(
         url = f"{ESI_BASE_URL}/contracts/public/items/{cid}/"
         async with sem:
             try:
+                await GLOBAL_ESI_LIMITER.acquire()
                 async with session.get(url) as resp:
                     if resp.status == 200:
                         data = await resp.json()

@@ -4,7 +4,6 @@
 
 import json
 import os
-from datetime import UTC
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
@@ -613,8 +612,6 @@ class ManufacturableItemsDialog(QDialog):
             cached = _cache.get(k)
             if cached:
                 score = cached
-            from datetime import datetime
-
             dlg = AddPlanDialog(_ctx_name, score, self)
             if dlg.exec() != QDialog.DialogCode.Accepted:
                 return
@@ -622,39 +619,31 @@ class ManufacturableItemsDialog(QDialog):
             if not data:
                 return
             from services import inventory_manager
+            from services.plan_service import insert_plan
 
             mat_hangar_id, solar_system_id = inventory_manager.get_default_mat_hangar_and_system()
-            with get_container().db.connect("user") as conn:
-                iskph = score.get("isk_per_hour", 0) or score.get("breakdown", {}).get("isk_per_hour", 0)
-                mat_cost = score.get("breakdown", {}).get("material_cost", 0)
-                conn.execute(
-                    "INSERT INTO production_plans "
-                    "(product_type_id, product_name, runs, parallels, me_level, te_level, "
-                    "mat_hub, sell_hub, facility, char_name, status, "
-                    "profit, margin, score, iskph, material_cost, created_at, mat_hangar_id, solar_system_id, "
-                    "materials_ready) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,1)",
-                    (
-                        tid,
-                        _ctx_name,
-                        data["runs"],
-                        data["parallels"],
-                        data["me"],
-                        data["te"],
-                        self._mfg.get("hub", "Jita"),
-                        self._mfg.get("hub", "Jita"),
-                        data.get("fac", ""),
-                        data.get("char", ""),
-                        score.get("profit_per_run", 0),
-                        score.get("margin_pct", 0),
-                        score.get("score", 0),
-                        iskph,
-                        mat_cost,
-                        datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
-                        mat_hangar_id,
-                        solar_system_id,
-                    ),
-                )
+            iskph = score.get("isk_per_hour", 0) or score.get("breakdown", {}).get("isk_per_hour", 0)
+            mat_cost = score.get("breakdown", {}).get("material_cost", 0)
+            metrics = {
+                "profit": score.get("profit_per_run", 0) or 0,
+                "margin": score.get("margin_pct", 0) or 0,
+                "score": score.get("score", 0) or 0,
+                "iskph": iskph,
+                "material_cost": mat_cost,
+                "calculated_time": (score.get("hours_per_run", 0) or 0) * 3600,
+                "daily_output": 0,
+            }
+            insert_plan(
+                tid,
+                _ctx_name,
+                data,
+                mat_hub=self._mfg.get("hub", "Jita"),
+                sell_hub=self._mfg.get("hub", "Jita"),
+                facility=data.get("fac", ""),
+                solar_system_id=solar_system_id,
+                mat_hangar_id=mat_hangar_id,
+                metrics=metrics,
+            )
             QMessageBox.information(self, "提示", f"已加入制造列表: {_ctx_name}")
 
         a_add = QAction("加入制造列表", self)
