@@ -29,7 +29,7 @@ class GanttView(QWidget):
         ]
         self._max_hours: int = 48
         self.GRID_COLOR = QColor(theme.BORDER)
-        self.BG_COLOR = QColor(theme.BG_SURFACE) if hasattr(theme, "BG_SURFACE") else QColor("#ffffff")
+        self.BG_COLOR = QColor(theme.BG_SURFACE)
 
     def set_items(self, items: list[dict]):
         self._items = items
@@ -131,7 +131,7 @@ class GanttView(QWidget):
     def _on_theme_changed(self):
         """主题切换时刷新 QPainter 绘制颜色"""
         self.GRID_COLOR = QColor(theme.BORDER)
-        self.BG_COLOR = QColor(theme.BG_SURFACE) if hasattr(theme, "BG_SURFACE") else QColor("#ffffff")
+        self.BG_COLOR = QColor(theme.BG_SURFACE)
         self._colors = [
             theme.PRIMARY,
             theme.ACCENT_GREEN,

@@ -165,7 +165,7 @@ class ProductionWizard(QDialog):
         self._detail_info.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
         self._start_btn = QPushButton("▶ 启动产线")
         self._start_btn.setStyleSheet(
-            f"QPushButton {{ background: {theme.ACCENT_GREEN}; color: #ffffff; padding: 8px 20px;"
+            f"QPushButton {{ background: {theme.ACCENT_GREEN}; color: {theme.TEXT_ON_PRIMARY}; padding: 8px 20px;"
             f" border: none; border-radius: 5px; font-size: 14px; }}"
             f"QPushButton:hover {{ background: {theme.ACCENT_GREEN}; }}"
         )
