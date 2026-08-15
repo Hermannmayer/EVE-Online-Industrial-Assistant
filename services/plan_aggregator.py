@@ -381,7 +381,7 @@ def calculate_output_with_overflow(
                 "plan_value": plan_value,
                 "material_cost": mat_cost,
                 "profit": profit,
-                "margin_pct": plan.get("margin", 0) * 100 if plan.get("margin") else 0,
+                "margin_pct": plan.get("margin", 0) or 0,
                 "sell_price": plan_price,
                 "status": status,
                 "overflow_details": overflow_details,

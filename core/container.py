@@ -21,8 +21,6 @@ class AppContainer:
         self._market_repo = None
         self._blueprint_repo = None
         self._plan_repo = None
-        self._watchlist = None
-        self._inventory_manager = None
         self._price_history_service = None
         self._char_config_resolver = None
         self._manufacturing_calculator = None
@@ -93,26 +91,6 @@ class AppContainer:
 
                     self._pricing_service = PricingService(self.db)
         return self._pricing_service
-
-    @property
-    def watchlist_manager(self):
-        if self._watchlist is None:
-            with self._lock:
-                if self._watchlist is None:
-                    from services.watchlist_manager import WatchlistManager
-
-                    self._watchlist = WatchlistManager(self.db)
-        return self._watchlist
-
-    @property
-    def inventory_manager(self):
-        if self._inventory_manager is None:
-            with self._lock:
-                if self._inventory_manager is None:
-                    from services.inventory_manager import InventoryManager
-
-                    self._inventory_manager = InventoryManager(self.db)
-        return self._inventory_manager
 
     @property
     def price_history_service(self):

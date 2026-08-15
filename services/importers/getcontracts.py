@@ -108,34 +108,44 @@ async def init_db():
     log.info("  合同数据库表已就绪")
 
 
-async def fetch_contract_pages(session: aiohttp.ClientSession, region_id: int) -> list[dict]:
-    """拉取一个区域的全部公开合同（分页）"""
+async def _fetch_contract_pages_detailed(
+    session: aiohttp.ClientSession, region_id: int
+) -> tuple[list[dict], bool]:
+    """拉取一个区域的全部公开合同（分页）。
+
+    Returns:
+        (contracts, complete)：complete=False 表示列表拉取不完整。
+    """
     all_contracts = []
+    complete = True
 
     # 先探测总页数
     url = f"{ESI_BASE_URL}/contracts/public/{region_id}/"
     async with session.get(url, params={"page": 1}) as resp:
         if resp.status != 200:
             log.warning(f"  区域 {region_id} 合同请求失败: HTTP {resp.status}")
-            return []
+            return [], False
         total_pages = int(resp.headers.get("X-Pages", 1))
         data = await resp.json()
         all_contracts.extend(data)
 
     if total_pages <= 1:
-        return all_contracts
+        return all_contracts, complete
 
     # 并发拉取剩余页面
     sem = asyncio.Semaphore(10)
 
     async def get_page(p: int):
+        nonlocal complete
         async with sem:
             try:
                 async with session.get(url, params={"page": p}) as resp:
                     if resp.status == 200:
                         return await resp.json()
+                    complete = False
             except Exception:
                 log.exception("拉取合同页 %d 失败", p)
+                complete = False
         return []
 
     # 分批拉取，每批 10 页
@@ -147,13 +157,26 @@ async def fetch_contract_pages(session: aiohttp.ClientSession, region_id: int) -
             if r:
                 all_contracts.extend(r)
 
-    return all_contracts
+    return all_contracts, complete
 
 
-async def fetch_contract_items(session: aiohttp.ClientSession, contract_ids: list[int]) -> dict[int, list[dict]]:
-    """并发拉取多个合同的物品列表"""
+async def fetch_contract_pages(session: aiohttp.ClientSession, region_id: int) -> list[dict]:
+    """拉取一个区域的全部公开合同（兼容旧签名，只返回列表）。"""
+    contracts, _complete = await _fetch_contract_pages_detailed(session, region_id)
+    return contracts
+
+
+async def _fetch_contract_items_detailed(
+    session: aiohttp.ClientSession, contract_ids: list[int]
+) -> tuple[dict[int, list[dict]], set[int]]:
+    """并发拉取多个合同的物品列表。
+
+    Returns:
+        (items, failed_ids)：failed_ids 为拉取失败的 contract_id。
+    """
     sem = asyncio.Semaphore(10)
     result: dict[int, list[dict]] = {}
+    failed_ids: set[int] = set()
 
     async def get_items(cid: int):
         url = f"{ESI_BASE_URL}/contracts/public/items/{cid}/"
@@ -165,47 +188,68 @@ async def fetch_contract_items(session: aiohttp.ClientSession, contract_ids: lis
                         result[cid] = data
                     else:
                         result[cid] = []
+                        failed_ids.add(cid)
             except Exception:
                 log.exception("拉取合同物品失败, contract_id=%d", cid)
                 result[cid] = []
+                failed_ids.add(cid)
 
     # 分批拉取，避免同时发起太多请求
     for i in range(0, len(contract_ids), 50):
         batch = contract_ids[i : i + 50]
         await asyncio.gather(*[get_items(cid) for cid in batch])
 
-    return result
+    return result, failed_ids
+
+
+async def fetch_contract_items(session: aiohttp.ClientSession, contract_ids: list[int]) -> dict[int, list[dict]]:
+    """并发拉取多个合同的物品列表（兼容旧签名，只返回 dict）。"""
+    items, _failed = await _fetch_contract_items_detailed(session, contract_ids)
+    return items
 
 
 async def save_contracts(
     all_contracts: dict[int, list[dict]],
     all_items: dict[int, list[dict]],
     region_ids: list[int],
+    complete_regions: set[int] | None = None,
 ) -> tuple[int, int]:
-    """批量写入合同和物品数据"""
+    """批量写入合同和物品数据。
+
+    只有 complete_regions（默认全部 region_ids）中的区域才允许替换旧数据。
+    """
     fetch_time = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    target_region_ids = [rid for rid in region_ids if complete_regions is None or rid in complete_regions]
+    if complete_regions is not None:
+        skipped = [rid for rid in region_ids if rid not in complete_regions]
+        if skipped:
+            log.warning("  以下区域合同拉取不完整，保留旧数据: %s", skipped)
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
         # 清除被更新区域的旧数据。注意顺序：必须先删 contract_items 再删
         # public_contracts——若先删主表，子查询 SELECT contract_id FROM
         # public_contracts 恒为空，contract_items 永远清不掉（孤儿残留）。
-        if region_ids:
-            placeholders = ",".join("?" for _ in region_ids)
+        if target_region_ids:
+            placeholders = ",".join("?" for _ in target_region_ids)
             await db.execute(
                 f"""
                 DELETE FROM contract_items WHERE contract_id IN (
                     SELECT contract_id FROM public_contracts WHERE region_id IN ({placeholders})
                 )
             """,
-                region_ids,
+                target_region_ids,
             )
-        for rid in region_ids:
+        for rid in target_region_ids:
             await db.execute("DELETE FROM public_contracts WHERE region_id = ?", (rid,))
 
-        # 写入合同
+        # 写入合同（只写完整区域）
+        complete_contract_ids: set[int] = set()
         contract_records = []
         for region_id, contracts in all_contracts.items():
+            if region_id not in target_region_ids:
+                continue
             for c in contracts:
+                complete_contract_ids.add(c["contract_id"])
                 contract_records.append(
                     (
                         c["contract_id"],
@@ -243,9 +287,11 @@ async def save_contracts(
                 contract_records[i : i + 500],
             )
 
-        # 写入物品
+        # 写入物品（只写完整区域的合同物品）
         item_records = []
         for cid, items in all_items.items():
+            if cid not in complete_contract_ids:
+                continue
             for it in items:
                 item_records.append(
                     (
@@ -295,12 +341,17 @@ async def main(regions: list[tuple[str, int]] | None = None):
         # 阶段 1: 拉取合同列表
         write_progress(1, 5, "拉取公开合同列表...")
         all_contracts: dict[int, list[dict]] = {}
+        page_complete: dict[int, bool] = {}
+        contract_region: dict[int, int] = {}
         total_contracts = 0
         for name, rid in targets:
             log.info(f"  拉取 {name} (region={rid}) 合同...")
-            contracts = await fetch_contract_pages(session, rid)
+            contracts, ok = await _fetch_contract_pages_detailed(session, rid)
             all_contracts[rid] = contracts
+            page_complete[rid] = ok
             total_contracts += len(contracts)
+            for c in contracts:
+                contract_region[c["contract_id"]] = rid
             log.info(f"    {name}: {len(contracts)} 条合同")
 
         write_progress(3, 5, f"获取 {total_contracts} 条合同的物品详情...")
@@ -312,13 +363,23 @@ async def main(regions: list[tuple[str, int]] | None = None):
                 all_contract_ids.append(c["contract_id"])
 
         log.info(f"  共 {len(all_contract_ids)} 个合同，获取物品详情...")
-        all_items = await fetch_contract_items(session, all_contract_ids)
+        all_items, failed_item_ids = await _fetch_contract_items_detailed(session, all_contract_ids)
         items_count = sum(len(v) for v in all_items.values())
         log.info(f"  获取 {items_count} 条物品记录")
 
+        # 完整区域 = 合同列表完整 + 该区域所有合同物品都拉取成功
+        complete_regions = {
+            rid
+            for rid in targets
+            if page_complete.get(rid[1], False)
+            and not any(cid in failed_item_ids for cid, crid in contract_region.items() if crid == rid[1])
+        }
+
     # 阶段 3: 写入数据库
     write_progress(4, 5, "写入数据库...")
-    c_cnt, i_cnt = await save_contracts(all_contracts, all_items, [rid for _, rid in targets])
+    c_cnt, i_cnt = await save_contracts(
+        all_contracts, all_items, [rid for _, rid in targets], complete_regions
+    )
     log.info(f"  写入 {c_cnt} 条合同, {i_cnt} 条物品")
 
     elapsed = (datetime.now() - t0).total_seconds()

@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
-from core.eve_formulas import resolve_item_name
 from services.inventory_import import split_clipboard_lines
 from services.inventory_manager import (
     add_item,
@@ -35,7 +34,7 @@ from services.inventory_manager import (
     update_cost_price,
     update_quantity,
 )
-from services.name_resolver import search_item_type_id
+from services.name_resolver import resolve_item_name, search_item_type_id
 from ui_pyside6.dialogs.hangar_dialogs import (
     AddItemDialog,
     BatchCostPriceDialog,

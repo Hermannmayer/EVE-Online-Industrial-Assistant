@@ -18,6 +18,9 @@ _LOCK_FILE = Path.home() / ".eve-assistant" / "instance.lock"
 # 崩溃也无需清理残留——比文件锁更健壮。
 _MUTEX_HANDLES: dict[str, int] = {}
 
+# 本进程实际持有并拥有删除权的锁文件（force 模式不会写入/拥有）。
+_OWNED_LOCKS: set[str] = set()
+
 
 def _resolve(lock_file: Path | str | None) -> Path:
     """None → 默认 instance.lock;str → Path 归一化(Path(Path) 幂等)。"""
@@ -103,6 +106,7 @@ def try_lock(force: bool = False, lock_file: Path | str | None = None) -> bool:
     # 1) 原子获取（O_CREAT|O_EXCL）：成功即拿到锁，无双开竞态
     got = _try_exclusive_acquire(own_pid, target)
     if got is True:
+        _OWNED_LOCKS.add(str(target))
         return True
     if got is None:
         return True  # IO 失败降级为允许运行
@@ -116,16 +120,23 @@ def try_lock(force: bool = False, lock_file: Path | str | None = None) -> bool:
         # 锁文件损坏 → 清理后重试原子获取
         _safe_unlink(target)
         got = _try_exclusive_acquire(own_pid, target)
-        return True if got is not False else False
+        if got is True:
+            _OWNED_LOCKS.add(str(target))
+            return True
+        return got is not False
 
     if pid == own_pid:
+        _OWNED_LOCKS.add(str(target))
         return True  # 自身已持有（重入）
     if _is_pid_alive(pid):
         return False  # 另一实例正在运行
     # 残留 PID（已死进程）→ 清理后原子重取
     _safe_unlink(target)
     got = _try_exclusive_acquire(own_pid, target)
-    if got is True or got is None:
+    if got is True:
+        _OWNED_LOCKS.add(str(target))
+        return True
+    if got is None:
         return True
     # 极窄窗口：清理后又被另一进程占住 → 按其是否存活判定
     try:
@@ -205,6 +216,11 @@ def unlock(lock_file: Path | str | None = None):
         lock_file: 要释放的自定义锁文件;None 释放默认 instance.lock。
     """
     target = _resolve(lock_file)
+    key = str(target)
+    if key not in _OWNED_LOCKS:
+        # force 模式或未成功持有锁的进程不应删除他人锁文件。
+        return
+    _OWNED_LOCKS.discard(key)
     _release_mutex(_mutex_name(target))
     try:
         target.unlink(missing_ok=True)

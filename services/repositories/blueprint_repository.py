@@ -33,20 +33,6 @@ class BlueprintRepository:
             ).fetchall()
             return [(r[0], r[1], r[2] or 10) for r in rows]
 
-    def get_bp_detail(self, type_id: int) -> dict | None:
-        """获取蓝图详情（跨库 JOIN ref + bp）"""
-        with self._db.connect("ref", "bp") as conn:
-            row = conn.execute(
-                """SELECT b.type_id, i.name, b.product_type_id, pi.name AS product_name,
-                          b.quantity, b.time, b.me, b.pe
-                   FROM bp.blueprints b
-                   JOIN ref.item i ON b.type_id = i.type_id
-                   LEFT JOIN ref.item pi ON b.product_type_id = pi.type_id
-                   WHERE b.type_id = ? ORDER BY b.me, b.pe LIMIT 1""",
-                (type_id,),
-            ).fetchone()
-            return dict(row) if row else None
-
     def get_all_product_ids(self, activity: str = "manufacturing") -> list[int]:
         with self._db.connect("bp") as conn:
             rows = conn.execute(

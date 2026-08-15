@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 import services.scoring_service as _ss
@@ -36,6 +38,17 @@ class _DbPriceProvider:
         return _ss.get_adjusted_price(type_id, _db=self._db)
 
 
+def _char_config_fingerprint(char_config: dict | None) -> str:
+    """生成角色配置的稳定摘要，用于缓存 key，避免角色配置变更后命中旧评分。"""
+    if not char_config:
+        return "default"
+    try:
+        raw = json.dumps(char_config, sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
+    except Exception:
+        return "unknown"
+
+
 def calc_manufacturing_score(
     db,
     cache,
@@ -60,7 +73,8 @@ def calc_manufacturing_score(
     cache_k = _ss.cache_key(
         type_id,
         f"mfg|{mat_source_hub}|{sell_hub}|{bp_me}|{bp_te}|{price_type_mat}|{price_type_prod}|{system_id or ''}"
-        f"|{structure_bonus}|{structure_time_mod}|{structure_mat_saving}|{facility_tax_pct}|{int(is_alpha)}",
+        f"|{structure_bonus}|{structure_time_mod}|{structure_mat_saving}|{facility_tax_pct}|{int(is_alpha)}"
+        f"|{_char_config_fingerprint(char_config)}",
         "hub",
         char_name,
     )
@@ -174,7 +188,8 @@ def calc_trade_score(
     char_name = (char_config.get("name") or char_config.get("char_name") or "default") if char_config else "default"
     cache_k = _ss.cache_key(
         type_id,
-        f"trade|{buy_hub}|{sell_hub}|{buy_price_type}|{sell_price_type}|{quantity}",
+        f"trade|{buy_hub}|{sell_hub}|{buy_price_type}|{sell_price_type}|{quantity}"
+        f"|{_char_config_fingerprint(char_config)}",
         "hub",
         char_name,
     )

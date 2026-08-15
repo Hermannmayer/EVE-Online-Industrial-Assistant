@@ -52,17 +52,12 @@ class OrderFetchWorker(QThread):
                 loop.close()
 
     async def _fetch(self):
-        timeout = aiohttp.ClientTimeout(total=30)
-        async with aiohttp.ClientSession(
-            headers={"Accept": "application/json", "User-Agent": "EveDataCrawler/1.0"}, timeout=timeout
-        ) as session:
+        from services.client import APIClient
+
+        async with APIClient(timeout=30) as client:
             url = f"{ESI_BASE_URL}/markets/{self._region_id}/orders/"
-            async with session.get(url, params={"type_id": self._type_id, "order_type": "buy"}) as resp:
-                resp.raise_for_status()
-                buy_data = await resp.json()
-            async with session.get(url, params={"type_id": self._type_id, "order_type": "sell"}) as resp:
-                resp.raise_for_status()
-                sell_data = await resp.json()
+            buy_data = await client.fetch_raw(f"{url}?type_id={self._type_id}&order_type=buy") or []
+            sell_data = await client.fetch_raw(f"{url}?type_id={self._type_id}&order_type=sell") or []
 
         buy_orders = sorted(buy_data, key=lambda o: o["price"], reverse=True)[:5]
         sell_orders = sorted(sell_data, key=lambda o: o["price"])[:5]

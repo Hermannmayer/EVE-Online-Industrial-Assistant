@@ -69,17 +69,6 @@ class MarketRepository:
                 return r[1] or 0
             return (r[0] or 0) + (r[1] or 0)
 
-    def get_item_with_price(self, type_id: int) -> dict | None:
-        """获取物品信息及其市场价格（跨库 JOIN）"""
-        with self._db.connect("ref", "mkt") as conn:
-            row = conn.execute(
-                "SELECT i.type_id, i.name, i.group_id, mp.average_price "
-                "FROM ref.item i LEFT JOIN mkt.market_prices mp ON i.type_id = mp.type_id "
-                "WHERE i.type_id = ?",
-                (type_id,),
-            ).fetchone()
-            return dict(row) if row else None
-
     def get_latest_fetch_time(self) -> str | None:
         with self._db.connect("mkt") as conn:
             r = conn.execute("SELECT MAX(fetch_time) FROM market_prices").fetchone()

@@ -232,6 +232,9 @@ class InitService(QObject):
         self._cancelled = True
         for key in list(self._running):
             self._status[key] = StepStatus.CANCELLED
+        for task in self._task_map.values():
+            if not task.done():
+                task.cancel()
 
     def get_status(self) -> dict[str, StepStatus]:
         """返回所有步骤的当前状态"""
@@ -378,6 +381,10 @@ class InitService(QObject):
                 self._status[key] = StepStatus.FAILED
                 self._errors[key] = msg
                 self._emit_step_completed(key, False, msg)
+        except asyncio.CancelledError:
+            self._status[key] = StepStatus.CANCELLED
+            self._emit_step_completed(key, False, "已取消")
+            raise
         except Exception as e:
             self._status[key] = StepStatus.FAILED
             msg = str(e)
@@ -477,16 +484,22 @@ class InitService(QObject):
 
             if asyncio.iscoroutinefunction(func):
                 if use_cb and accepts_cb:
-                    await func(progress_cb=_progress)
+                    result = await func(progress_cb=_progress)
                 else:
-                    await func()
+                    result = await func()
             else:
                 # 同步函数放在线程池执行
                 loop = asyncio.get_event_loop()
                 if use_cb and accepts_cb:
-                    await loop.run_in_executor(None, lambda: func(progress_cb=_progress))
+                    result = await loop.run_in_executor(None, lambda: func(progress_cb=_progress))
                 else:
-                    await loop.run_in_executor(None, func)
+                    result = await loop.run_in_executor(None, func)
+
+            # schema 步骤必须检查迁移是否真的全部成功，失败不能被“完成”吞掉。
+            if key == "schema" and isinstance(result, dict):
+                failed = [alias for alias, r in result.items() if isinstance(r, dict) and r.get("failed")]
+                if failed:
+                    return False, f"Schema 迁移失败: {', '.join(failed)}"
 
             return True, "完成"
         except Exception as e:

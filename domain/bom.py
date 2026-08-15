@@ -13,7 +13,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Protocol
 
-from services.manufacturing_calculator import calc_material_for_runs
+from domain.formulas import calc_material_for_runs
 
 DEFAULT_WASTE = 10  # T1 兜底（calc_material_for_runs 当前不参与计算，保留兼容）
 
