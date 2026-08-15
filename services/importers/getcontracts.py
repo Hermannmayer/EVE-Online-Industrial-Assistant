@@ -22,7 +22,7 @@ import aiosqlite
 from core.constants import TRADE_HUB_IDS
 from core.logger import log
 from core.paths import market_db_path, progress_file
-from services.client import GLOBAL_ESI_LIMITER
+from services.client import GLOBAL_ESI_LIMITER, APIClient
 
 DATABASE_PATH = market_db_path()
 ESI_BASE_URL = "https://esi.evetech.net/latest"
@@ -110,26 +110,36 @@ async def init_db():
 
 
 async def _fetch_contract_pages_detailed(
-    session: aiohttp.ClientSession, region_id: int
+    session, region_id: int
 ) -> tuple[list[dict], bool]:
     """拉取一个区域的全部公开合同（分页）。
 
+    兼容 aiohttp.ClientSession 与 services.client.APIClient。
     Returns:
         (contracts, complete)：complete=False 表示列表拉取不完整。
     """
     all_contracts = []
     complete = True
-
-    # 先探测总页数
     url = f"{ESI_BASE_URL}/contracts/public/{region_id}/"
-    await GLOBAL_ESI_LIMITER.acquire()
-    async with session.get(url, params={"page": 1}) as resp:
-        if resp.status != 200:
-            log.warning(f"  区域 {region_id} 合同请求失败: HTTP {resp.status}")
+    is_api_client = hasattr(session, "fetch_raw")
+
+    if is_api_client:
+        headers = await session.get_headers(f"{url}?page=1")
+        if headers is None:
+            log.warning(f"  区域 {region_id} 合同请求失败: 页数探测失败")
             return [], False
-        total_pages = int(resp.headers.get("X-Pages", 1))
-        data = await resp.json()
+        total_pages = int(headers.get("X-Pages", 1))
+        data = await session.fetch_raw(f"{url}?page=1") or []
         all_contracts.extend(data)
+    else:
+        await GLOBAL_ESI_LIMITER.acquire()
+        async with session.get(url, params={"page": 1}) as resp:
+            if resp.status != 200:
+                log.warning(f"  区域 {region_id} 合同请求失败: HTTP {resp.status}")
+                return [], False
+            total_pages = int(resp.headers.get("X-Pages", 1))
+            data = await resp.json()
+            all_contracts.extend(data)
 
     if total_pages <= 1:
         return all_contracts, complete
@@ -141,6 +151,12 @@ async def _fetch_contract_pages_detailed(
         nonlocal complete
         async with sem:
             try:
+                if is_api_client:
+                    data = await session.fetch_raw(f"{url}?page={p}")
+                    if data is None:
+                        complete = False
+                        return []
+                    return data
                 await GLOBAL_ESI_LIMITER.acquire()
                 async with session.get(url, params={"page": p}) as resp:
                     if resp.status == 200:
@@ -170,13 +186,15 @@ async def fetch_contract_pages(session: aiohttp.ClientSession, region_id: int) -
 
 
 async def _fetch_contract_items_detailed(
-    session: aiohttp.ClientSession, contract_ids: list[int]
+    session, contract_ids: list[int]
 ) -> tuple[dict[int, list[dict]], set[int]]:
     """并发拉取多个合同的物品列表。
 
+    兼容 aiohttp.ClientSession 与 services.client.APIClient。
     Returns:
         (items, failed_ids)：failed_ids 为拉取失败的 contract_id。
     """
+    is_api_client = hasattr(session, "fetch_raw")
     sem = asyncio.Semaphore(10)
     result: dict[int, list[dict]] = {}
     failed_ids: set[int] = set()
@@ -185,6 +203,14 @@ async def _fetch_contract_items_detailed(
         url = f"{ESI_BASE_URL}/contracts/public/items/{cid}/"
         async with sem:
             try:
+                if is_api_client:
+                    data = await session.fetch_raw(url)
+                    if data is None:
+                        result[cid] = []
+                        failed_ids.add(cid)
+                    else:
+                        result[cid] = data
+                    return
                 await GLOBAL_ESI_LIMITER.acquire()
                 async with session.get(url) as resp:
                     if resp.status == 200:
@@ -337,11 +363,7 @@ async def main(regions: list[tuple[str, int]] | None = None):
     write_progress(0, 5, "初始化数据库...")
     await init_db()
 
-    timeout = aiohttp.ClientTimeout(total=120)
-    async with aiohttp.ClientSession(
-        headers={"Accept": "application/json", "User-Agent": "EveContractCrawler/1.0"},
-        timeout=timeout,
-    ) as session:
+    async with APIClient(timeout=120) as session:
         # 阶段 1: 拉取合同列表
         write_progress(1, 5, "拉取公开合同列表...")
         all_contracts: dict[int, list[dict]] = {}
