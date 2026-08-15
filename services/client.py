@@ -196,6 +196,28 @@ class APIClient:
                 await asyncio.sleep(min(2 ** (max(self._retries, 3) - retries_left), 5))
         raise aiohttp.ClientError("Rate limit retries exhausted")
 
+    async def post(self, url: str, json: dict | list | None = None):
+        """POST JSON 请求，返回解析后的 JSON；404/超时返回 None。"""
+        for attempt in range(self._retries):
+            try:
+                await self._limiter.acquire()
+                async with self.semaphore:  # type: ignore[union-attr]
+                    async with self.session.post(url, json=json, timeout=self._timeout) as resp:  # type: ignore[union-attr]
+                        if resp.status == 429:
+                            await self._handle_rate_limit(resp)
+                            if attempt + 1 < self._retries:
+                                continue
+                            return None
+                        if resp.status == 404:
+                            return None
+                        resp.raise_for_status()
+                        return await resp.json()
+            except (TimeoutError, aiohttp.ClientError):
+                if attempt + 1 >= self._retries:
+                    return None
+                await asyncio.sleep(min(2**attempt, 5))
+        return None
+
     async def get_text(self, url: str) -> str | None:
         """GET 请求，返回原始文本"""
         retries_left = max(self._retries, 3)
