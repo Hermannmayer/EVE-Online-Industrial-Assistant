@@ -61,7 +61,15 @@ _STEP_ROW_STYLE = """
 """
 
 
-def _btn_style(bg: str, fg: str = "#fff", hover: str | None = None, disabled: str = "#666") -> str:
+def _btn_style(
+    bg: str,
+    fg: str = "",
+    hover: str | None = None,
+    disabled: str = "",
+) -> str:
+    fg = fg or theme.TEXT_ON_PRIMARY
+    disabled = disabled or theme.TEXT_SECONDARY
+    return _BTN_STYLE.format(bg=bg, fg=fg, hover=hover or bg, disabled=disabled)
     return _BTN_STYLE.format(bg=bg, fg=fg, hover=hover or bg, disabled=disabled)
 
 
@@ -310,7 +318,7 @@ class InitWizard(QDialog):
                 font-size: 14px;
             }}
             QPushButton:hover {{ background-color: {theme.BG_HOVER}; }}
-            QPushButton:disabled {{ background-color: {theme.TEXT_SECONDARY}; color: #888; }}
+            QPushButton:disabled {{ background-color: {theme.TEXT_SECONDARY}; color: {theme.TEXT_SECONDARY}; }}
         """)
         self._start_btn.clicked.connect(self._start_init)
         btn_row.addWidget(self._start_btn)

@@ -7,6 +7,7 @@ from ui_pyside6.theme import (
     ACCENT_ORANGE,
     BORDER,
     PRIMARY,
+    TEXT_ON_PRIMARY,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
     add_theme_listener,
@@ -98,7 +99,7 @@ class StatusBar(QWidget):
             f"  background: transparent; color: {TEXT_PRIMARY}; font-size: 12px; }}"
             f"QPushButton:hover {{ border-color: {PRIMARY}; color: {PRIMARY}; }}"
             f"QPushButton#complete_all_btn {{ border-color: {ACCENT_ORANGE}; color: {ACCENT_ORANGE}; }}"
-            f"QPushButton#complete_all_btn:hover {{ background: {ACCENT_ORANGE}; color: #ffffff; }}"
+            f"QPushButton#complete_all_btn:hover {{ background: {ACCENT_ORANGE}; color: {TEXT_ON_PRIMARY}; }}"
         )
 
     def _on_theme_changed(self):

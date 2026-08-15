@@ -75,7 +75,7 @@ class _ReadyButtonDelegate(QStyledItemDelegate):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(bg)
         painter.drawRoundedRect(rect, 4, 4)
-        painter.setPen(QColor("#ffffff"))
+        painter.setPen(QColor(theme.TEXT_ON_PRIMARY))
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "待下线")
         painter.restore()
 
