@@ -449,7 +449,7 @@ class MainWindow(QMainWindow):
         from ui_pyside6.views.estimate_view import EstimatePage
         from ui_pyside6.views.industry_view import IndustryPage
         from ui_pyside6.views.inventory.inventory_page import InventoryPage
-        from ui_pyside6.views.query_view import QueryPage
+        from ui_pyside6.views.query import QueryPage
         from ui_pyside6.views.trade_view import TradePage
         from ui_pyside6.views.watchlist_view import WatchlistPage
 
@@ -1029,7 +1029,7 @@ class MainWindow(QMainWindow):
         from ui_pyside6.views.estimate_view import EstimatePage
         from ui_pyside6.views.industry_view import IndustryPage
         from ui_pyside6.views.inventory.inventory_page import InventoryPage
-        from ui_pyside6.views.query_view import QueryPage
+        from ui_pyside6.views.query import QueryPage
         from ui_pyside6.views.trade_view import TradePage
         from ui_pyside6.views.watchlist_view import WatchlistPage
 
