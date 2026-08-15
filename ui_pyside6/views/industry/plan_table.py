@@ -136,9 +136,12 @@ class PlanTableDelegate(QStyledItemDelegate):
         if fg is not None:
             option.palette.setColor(QPalette.ColorRole.Text, fg)
 
-        from services.plan_category import category_color
-
-        color = category_color(str(p.get("category", "manufacturing")))
+        _CATEGORY_COLORS = {
+            "copying": theme.ACCENT_CYAN,
+            "invention": theme.ACCENT_PURPLE,
+            "reaction": theme.ACCENT_GREEN,
+        }
+        color = _CATEGORY_COLORS.get(str(p.get("category", "manufacturing")))
         if color:
             option.palette.setColor(QPalette.ColorRole.Base, QColor(color))
 
