@@ -309,6 +309,9 @@ async def write_categories():
     if group_to_cat:
         updates = [(cat_id, gid) for gid, cat_id in group_to_cat.items()]
         async with _ref_db() as db:
+            # group_id 无索引时每个 UPDATE 全表扫描 5 万行（1556 个 group → 数十秒）；
+            # 建索引后 O(log n) 定位。建在 items 写入之后，不影响 items 写入速度。
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_item_group_id ON item(group_id)")
             for i in range(0, len(updates), BATCH_SIZE):
                 await db.executemany(
                     "UPDATE item SET category_id = ? WHERE group_id = ?",
@@ -577,30 +580,29 @@ async def write_dogma_effects():
         log.info(f"dogma_effect 写入完成 ({len(rows)} 条)")
 
 
-async def main(progress_cb=None):
-    """主流程：确保 SDE 缓存就绪 → 初始化数据库 → 逐表写入（单表失败不影响其他）"""
-    if progress_cb:
-        progress_cb(5, "确保 SDE 缓存就绪...")
-    await ensure_sde_cache(progress_cb)
-    await initialize_database()
-    if progress_cb:
-        progress_cb(15, "写入扩展数据表...")
+# 不依赖 item 表的部分（仅需 SDE zip，可与 items 的下载/typeIDs 解析并行）
+CORE_WRITERS = [
+    ("write_type_materials", write_type_materials),
+    ("write_dogma_attributes", write_dogma_attributes),
+    ("write_dogma_effects", write_dogma_effects),
+    ("write_icon_ids", write_icon_ids),
+    ("write_stations", write_stations),
+    ("write_research", write_research),
+    ("write_universe", write_universe),
+]
 
-    functions = [
-        ("write_meta_groups", write_meta_groups),
-        ("write_categories", write_categories),
-        ("write_type_materials", write_type_materials),
-        ("write_dogma_attributes", write_dogma_attributes),
-        ("write_dogma_effects", write_dogma_effects),
-        ("write_icon_ids", write_icon_ids),
-        ("write_stations", write_stations),
-        ("write_research", write_research),
-        ("write_universe", write_universe),
-    ]
+# 依赖 item 表的部分（必须等 items 写完 item 表后执行）
+ITEM_WRITERS = [
+    ("write_meta_groups", write_meta_groups),
+    ("write_categories", write_categories),
+]
 
-    for i, (name, func) in enumerate(functions):
+
+async def _run_writers(writers, progress_cb):
+    """逐表写入（单表失败不影响其他）"""
+    for i, (name, func) in enumerate(writers):
         if progress_cb:
-            pct = 15 + int(i / max(len(functions), 1) * 75)
+            pct = 15 + int(i / max(len(writers), 1) * 75)
             progress_cb(pct, f"写入 {name}...")
         try:
             if name == "write_universe":
@@ -612,6 +614,52 @@ async def main(progress_cb=None):
         except Exception as e:
             log.error(f"[FAIL] {name}: {e}", exc_info=True)
 
+
+async def run_core(progress_cb=None):
+    """SDE 扩展数据（不依赖 item 表）— universe/stations/research/dogma/materials。
+
+    仅依赖 SDE zip，可与 items（下载 SDE / typeIDs 解析 / 写库）并行执行，
+    缩短 items 完成后的等待。
+    """
+    if progress_cb:
+        progress_cb(5, "确保 SDE 缓存就绪...")
+    await ensure_sde_cache(progress_cb)
+    await initialize_database()
+    await _run_writers(CORE_WRITERS, progress_cb)
+    if progress_cb:
+        progress_cb(100, "SDE 扩展数据完成")
+
+
+async def run_item_data(progress_cb=None):
+    """SDE 扩展数据（依赖 item 表）— meta_groups/categories + 蓝图名称补拉。
+
+    必须等 items 写入 item 表、blueprints 写入 blueprint 表之后执行。
+    """
+    await _run_writers(ITEM_WRITERS, progress_cb)
+    from services.importers.getitems import fill_missing_blueprint_names
+
+    if progress_cb:
+        progress_cb(95, "补拉蓝图名称")
+    await fill_missing_blueprint_names()
+    if progress_cb:
+        progress_cb(100, "SDE 扩展数据完成")
+
+
+async def main(progress_cb=None):
+    """主流程：确保 SDE 缓存就绪 → 初始化数据库 → 逐表写入（单表失败不影响其他）
+
+    CLI/兼容入口：跑全部写入（含依赖 item 表的部分）。初始化流程使用 run_core + run_item_data。
+    """
+    if progress_cb:
+        progress_cb(5, "确保 SDE 缓存就绪...")
+    await ensure_sde_cache(progress_cb)
+    await initialize_database()
+    await _run_writers(CORE_WRITERS + ITEM_WRITERS, progress_cb)
+    from services.importers.getitems import fill_missing_blueprint_names
+
+    if progress_cb:
+        progress_cb(95, "补拉蓝图名称")
+    await fill_missing_blueprint_names()
     if progress_cb:
         progress_cb(100, "SDE 扩展数据完成")
     log.info("SDE 扩展数据初始化完成")

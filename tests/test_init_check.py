@@ -213,13 +213,15 @@ def test_check_all_full(full_dbs, tmp_path):
         assert status["price_baseline"] is True
         assert status["blueprints"] is True
         assert status["implants"] is True
+        assert status["sde_core"] is True, "universe/materials/dogma/stations 都就绪 → sde_core 应 True"
         assert status["sde_data"] is True, "region 有行 + 其它扩展表就绪 → sde_data 应 True"
 
 
 def test_sde_data_false_when_solar_system_empty(db_paths):
-    """solar_system 表 0 行 → sde_data False（即使其它扩展表有数据）
+    """solar_system 表 0 行 → sde_core False（即使其它扩展表有数据）
 
-    修复目标：已有库永不触发 universe 写入 → solar_system 0 行 → sde_data 必须判 False。
+    修复目标：已有库永不触发 universe 写入 → solar_system 0 行 → sde_core 必须判 False，
+    从而触发 sde_core 步骤重跑 universe。
     """
     conn = sqlite3.connect(db_paths["ref"])
     for table, ddl in [
@@ -242,13 +244,14 @@ def test_sde_data_false_when_solar_system_empty(db_paths):
     sqlite3.connect(db_paths["bp"]).close()
     with _patch_init_check(db_paths):
         status = check_all()
-        assert status["sde_data"] is False
+        assert status["sde_core"] is False
 
 
 def test_sde_data_true_when_solar_system_has_rows(full_dbs):
-    """solar_system 有行 → sde_data True（full_dbs 已含 solar_system 1 行）"""
+    """solar_system 有行 → sde_core True；meta_group + 蓝图名全 → sde_data True（full_dbs 已含）"""
     with _patch_init_check(full_dbs):
         status = check_all()
+        assert status["sde_core"] is True
         assert status["sde_data"] is True
 
 
@@ -293,5 +296,5 @@ def test_missing_count_partial(db_paths):
     ):
         cnt = missing_count()
         # items=False, price_baseline=False, blueprints=False, implants=False,
-        # industry=False, sde_data=False, rigs=False, icons=False (item 无 market_group → total=1)
-        assert cnt == 8
+        # industry=False, sde_core=False, sde_data=False, rigs=False, icons=False（共 9 项，schema=True）
+        assert cnt == 9

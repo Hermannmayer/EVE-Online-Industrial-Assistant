@@ -231,7 +231,13 @@ async def main(progress_cb: Callable[[int, str], None] | None = None):
 
     if progress_cb:
         progress_cb(10, "下载/加载 SDE 数据包...")
-    await ensure_sde_cache()
+
+    def _sde_progress(pct: int, msg: str):
+        # SDE 下载 0-99 映射到步骤 10-39，与后续解析(40+)连续，避免进度条跳变
+        if progress_cb:
+            progress_cb(10 + int(pct * 0.3), msg)
+
+    await ensure_sde_cache(_sde_progress)
     if named < 50000:
         if progress_cb:
             progress_cb(40, "解析物品 YAML 数据...")

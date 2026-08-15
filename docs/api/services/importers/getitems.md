@@ -78,7 +78,7 @@ async def fill_missing_blueprint_names()
 
 补充 item 表中缺失的蓝图名称
 
-定义行：`255`
+定义行：`261`
 
 ### `fill_missing_item_names_from_esi`
 
@@ -88,4 +88,4 @@ async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], Non
 
 从 ESI 补拉 item 表中缺失名称的物品（并发 + 全局限流）。
 
-定义行：`340`
+定义行：`346`

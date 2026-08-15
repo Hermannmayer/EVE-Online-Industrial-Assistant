@@ -39,8 +39,10 @@ def _load_type_ids_with_icons() -> set[int]:
         tid = int(tid_str) if isinstance(tid_str, str) else tid_str
         if tid < 178:
             continue
-        icon_id = (
-            tdata.get("iconID") or tdata.get("icon", {}).get("iconID") if isinstance(tdata.get("icon"), dict) else 0
+        # 必须给三元表达式加括号：`or` 优先级高于 `if/else`，不加会解析为
+        # (iconID or iconID) if isinstance(icon, dict) else 0 → 无 icon 键时恒为 0
+        icon_id = tdata.get("iconID") or (
+            tdata.get("icon", {}).get("iconID") if isinstance(tdata.get("icon"), dict) else 0
         )
         if icon_id and int(icon_id) > 0:
             result.add(tid)

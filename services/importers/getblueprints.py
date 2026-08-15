@@ -82,7 +82,7 @@ def _extract_blueprints_yaml() -> str:
     return CACHE_FILE
 
 
-async def ensure_cache() -> str:
+async def ensure_cache(progress_cb=None) -> str:
     """
     确保 blueprints.yaml 缓存文件存在。
     返回缓存文件路径。
@@ -102,7 +102,7 @@ async def ensure_cache() -> str:
     # 复用 sde_cache 的下载函数（单飞锁 + 断点续传 + 流式写盘），不重复实现下载
     from services.importers.sde_cache import ensure_sde_zip
 
-    await ensure_sde_zip()
+    await ensure_sde_zip(progress_cb)
     return _extract_blueprints_yaml()
 
 
@@ -167,7 +167,13 @@ async def run_blueprint_update(progress_cb=None):
     # 获取 blueprints.yaml 缓存
     if progress_cb:
         progress_cb(10, "获取 blueprints.yaml")
-    yaml_path = await ensure_cache()
+
+    def _dl_progress(pct: int, msg: str):
+        # SDE 下载 0-99 映射到 10-14（下载只占蓝图步骤前段，主体是解析+写入 15-95）
+        if progress_cb:
+            progress_cb(10 + int(pct * 0.05), msg)
+
+    yaml_path = await ensure_cache(_dl_progress)
 
     # 解析 YAML（CSafeLoader 加速 + to_thread 不阻塞事件循环）
     log.info("解析 YAML...")
@@ -217,12 +223,8 @@ async def run_blueprint_update(progress_cb=None):
 
     log.info("完成！缓存文件可保留用于后续重建，打包时只带 reference.db 即可。")
 
-    # 补拉 T2/T3 蓝图名称到 item 表
-    if progress_cb:
-        progress_cb(98, "补拉蓝图名称")
-    from services.importers.getitems import fill_missing_blueprint_names
-
-    await fill_missing_blueprint_names()
+    # 蓝图名称补拉已移至 sde_data 步骤（run_item_data）：
+    # 它需 item 表（items 步骤）与 blueprint 表（本步骤）都就绪后才执行。
     if progress_cb:
         progress_cb(100, "蓝图数据完成")
 

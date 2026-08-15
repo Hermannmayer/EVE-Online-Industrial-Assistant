@@ -5,6 +5,8 @@
     python dev.py              # 普通开发模式（自动重启）
     python dev.py --debug      # 调试日志 + 自动重启
     python dev.py --no-watch   # 仅重启不动监测
+    python dev.py --fresh      # 全新开箱：隔离目录模拟发行版环境，走首次初始化
+    python dev.py --fresh --keep  # 复用已有隔离环境（模拟二次启动）
 
 依赖:
     pip install watchdog    # 可选，更快的文件监听
@@ -12,6 +14,7 @@
 
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -49,6 +52,11 @@ FORCE_KILL_SETTLE = 1.5  # 强制终止后等待 OS 释放 SQLite 文件句柄�
 
 # dev.py 自身的单实例锁：与 Main.py 的 instance.lock 分离，启动器才能启动应用子进程
 DEV_LOCK = Path.home() / ".eve-assistant" / "dev.lock"
+
+# 全新开箱模式（--fresh）：隔离目录模拟发行版环境。database/data 全部写入该目录，
+# 不碰开发仓库；core.paths.app_root() 通过环境变量 EVE_ASSISTANT_APP_ROOT 指向它。
+FRESH_ENV_DIR = ROOT / "fresh_env"
+FRESH_ENV_VAR = "EVE_ASSISTANT_APP_ROOT"
 
 # 开发模式日志
 logging.basicConfig(
@@ -124,11 +132,7 @@ class RestartState:
         self.restart_scheduled = True
 
     def should_restart(self, now: float) -> bool:
-        return (
-            self.restart_scheduled
-            and now - self.last_change_time >= self.debounce
-            and now >= self.cooldown_until
-        )
+        return self.restart_scheduled and now - self.last_change_time >= self.debounce and now >= self.cooldown_until
 
     def mark_restarted(self, now: float) -> None:
         self.restart_scheduled = False
@@ -150,6 +154,33 @@ def start_app(debug: bool = False):
     args = build_args(debug)
     log.info("启动: %s", " ".join(args))
     return subprocess.Popen(args, cwd=ROOT)
+
+
+def start_fresh(keep: bool = False):
+    """全新开箱模式：在隔离目录模拟发行版环境，跑真实首次初始化流程。
+
+    模拟发行版路径布局：应用根目录指向 fresh_env/（空的 database/ data/），
+    走 Main.py 的 InitWizard 自动初始化（下载 SDE → 建 4 库 → 写入数据）。
+
+    - 默认（--fresh）：清空 fresh_env/ 重建，模拟新用户到手
+    - --fresh --keep：保留已有环境，模拟二次启动
+    """
+    if not keep:
+        shutil.rmtree(FRESH_ENV_DIR, ignore_errors=True)
+    FRESH_ENV_DIR.mkdir(parents=True, exist_ok=True)
+
+    log.info("全新开箱模式（模拟发行版环境）")
+    log.info("  隔离目录: %s", FRESH_ENV_DIR)
+    log.info("  %s", "保留已有环境数据（--keep，模拟二次启动）" if keep else "已重置为全新环境")
+    log.info("  database/ 与 data/ 将写入该目录，不影响开发仓库")
+
+    # --force：跳过单实例锁（隔离数据下允许与开发实例共存）；
+    # 不传 --hot-reload：初始化中途被热重载退出会中断下载流程
+    cmd = [sys.executable, str(ROOT / "Main.py"), "--force"]
+    env = {**os.environ, FRESH_ENV_VAR: str(FRESH_ENV_DIR)}
+    log.info("启动: %s", " ".join(cmd))
+    proc = subprocess.Popen(cmd, cwd=ROOT, env=env)
+    proc.wait()
 
 
 def _wait_and_cleanup(proc, timeout: int = 5):
@@ -198,9 +229,7 @@ def _run():
         # 启动时的文件 mtime 基线。Windows 下 watchdog 首次扫描会误报大量
         # on_modified（文件并未改动），若不比对 mtime，启动约 12s 后会被误触发
         # 一次重启。只对 mtime 真变的文件视为变更。
-        _known_mtimes: dict[str, float] = {
-            os.path.normcase(str(p)): m for p, m in get_mtimes().items()
-        }
+        _known_mtimes: dict[str, float] = {os.path.normcase(str(p)): m for p, m in get_mtimes().items()}
 
         class RestartHandler(FileSystemEventHandler):
             def on_modified(self, event):
@@ -280,7 +309,10 @@ def main():
         print(f"  若确认无残留实例，请删除该文件后重试: {DEV_LOCK}", file=sys.stderr)
         sys.exit(1)
     try:
-        _run()
+        if "--fresh" in sys.argv:
+            start_fresh(keep="--keep" in sys.argv)
+        else:
+            _run()
     finally:
         unlock(lock_file=DEV_LOCK)
 

@@ -251,24 +251,28 @@ def check_all() -> dict:
 
     注意：价格完整订单簿不属于初始化职责（由主窗口后台更新），
     此处仅以 market_prices 是否有数据判定「价格基础数据」步骤就绪。
+
+    步骤拆分（加速并行）：
+      - blueprints 主体：只写 blueprint 表（仅需 SDE zip），可与 items 并行；
+        蓝图名称补拉（依赖 item 表）并入 sde_data。
+      - sde_core：SDE 扩展数据中不依赖 item 表的部分（universe/stations/dogma/materials），
+        仅需 SDE zip，可与 items 并行。
+      - sde_data：依赖 item 表的部分（meta_groups/categories 写 item 表 + 蓝图名称补拉）。
     """
     cached, total = check_icons()
     return {
         "schema": check_schema(),
         "items": check_items() >= 10000 and check_item_names_ratio() < 0.05 and check_market_tree() > 500,
         "price_baseline": check_prices() > 0,
-        "blueprints": check_blueprints() >= 1000 and check_blueprint_names() < 100,
+        "blueprints": check_blueprints() >= 1000,
         "implants": check_implants() > 30,
         "icons": total > 1 and cached >= int(total * 0.8),
         "industry": check_industry() > 100,
         "rigs": check_structure_rigs() > 80,
-        "sde_data": (
-            check_meta_groups() > 0
-            and check_type_materials() > 0
-            and check_dogma_attrs() > 0
-            and check_stations() > 0
-            and check_universe() > 0
+        "sde_core": (
+            check_type_materials() > 0 and check_dogma_attrs() > 0 and check_stations() > 0 and check_universe() > 0
         ),
+        "sde_data": check_meta_groups() > 0 and check_blueprint_names() < 100,
     }
 
 

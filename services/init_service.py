@@ -60,16 +60,24 @@ class StepStatus(Enum):
 STEPS = [
     InitStep("schema", "数据库结构", needs_network=False, critical=True),
     InitStep("items", "物品数据", needs_network=True, critical=True, depends_on=["schema"]),
-    # 完整订单簿价格不属于初始化职责——由主窗口后台更新（自动更新默认开启）。
-    # 初始化只做「价格基础数据」兜底：全新安装（market_prices 为空）时快速拉一次
-    # /markets/prices/ 基准价，非关键步骤不阻塞主窗口。
-    InitStep("price_baseline", "价格基础数据", needs_network=True, critical=False, depends_on=["items"]),
-    InitStep("blueprints", "蓝图数据", needs_network=True, critical=True, depends_on=["items"]),
+    # 仅依赖网络的 ESI 类步骤：SDE 下载期间即可并行，不必等 items 完成。
+    # 注意 implants/rigs 会查询 item 表（按分组找 type_id），必须等 items 建表。
+    InitStep("price_baseline", "价格基础数据", needs_network=True, critical=False, depends_on=["schema"]),
+    InitStep("industry", "工业数据", needs_network=True, critical=True, depends_on=["schema"]),
     InitStep("implants", "植入体数据", needs_network=True, critical=False, depends_on=["items"]),
     InitStep("rigs", "结构改装件数据", needs_network=True, critical=False, depends_on=["items"]),
-    InitStep("industry", "工业数据", needs_network=True, critical=True, depends_on=["items"]),
+    # 仅依赖 SDE zip 的部分：zip 就绪即并行（zip 由单飞锁保证只下载一次）
+    InitStep("blueprints", "蓝图数据", needs_network=True, critical=True, depends_on=["schema"]),
+    InitStep("sde_core", "SDE扩展数据(星系/设施)", needs_network=False, critical=True, depends_on=["schema"]),
+    # 依赖 item 表的部分：必须等 items 写入 item 表
     InitStep("icons", "物品图标", needs_network=True, critical=False, depends_on=["items"]),
-    InitStep("sde_data", "SDE扩展数据", needs_network=False, critical=True, depends_on=["items"]),
+    InitStep(
+        "sde_data",
+        "SDE扩展数据(分类)",
+        needs_network=False,
+        critical=True,
+        depends_on=["items", "blueprints", "sde_core"],
+    ),
 ]
 
 STEP_MAP: dict[str, InitStep] = {s.key: s for s in STEPS}
@@ -441,7 +449,8 @@ class InitService(QObject):
             "icons": ("services.importers.geticon", "main", True),
             "industry": ("services.importers.getindustry", "run_industry_update", True),
             "rigs": ("services.importers.getrigdata", "main", True),
-            "sde_data": ("services.importers.sde_loader", "main", True),
+            "sde_core": ("services.importers.sde_loader", "run_core", True),
+            "sde_data": ("services.importers.sde_loader", "run_item_data", True),
         }
 
         mapping = entry_map.get(key)
