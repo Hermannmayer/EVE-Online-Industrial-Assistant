@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import pickle
+import threading
 import time
 import zipfile
 from collections.abc import Callable
@@ -55,12 +56,13 @@ UNIVERSE_CACHE_PATH = os.path.join(CACHE_DIR, "universe_data.json")
 # 初始化完成后由 clear_yaml_cache() 释放，避免长期占用内存
 _YAML_CACHE: dict[str, dict] = {}
 
-# 并发单飞锁：并行初始化时 items/blueprints/sde_data 三个步骤可能同时请求 zip，
-# 保证 sde.zip 只下载一次；Python 3.10+ asyncio.Lock 不绑定事件循环，跨 asyncio.run 复用安全
-_zip_lock: asyncio.Lock | None = None
-
 # 大 YAML 首次解析的并发锁（load_yaml_async 双检锁，避免并发重复解析）
 _load_lock: asyncio.Lock | None = None
+
+# SDE zip 下载+提取的跨线程锁：asyncio.Lock 绑定事件循环，并行初始化步骤
+# （items/sde_core/blueprints）及重试跨 asyncio.run 时会报 "bound to a different
+# event loop"，并发下载冲突；threading.Lock 与线程/事件循环无关，保证只下载一次。
+_zip_dl_lock = threading.Lock()
 
 
 def cache_path(name: str) -> str:
@@ -82,109 +84,101 @@ def _universe_cache_has_names(systems: list) -> bool:
     return False
 
 
+def _validate_and_finalize() -> None:
+    """校验 zip 完整性并原子 rename；损坏则删 .part 抛错（下次从头下载）。"""
+    try:
+        with zipfile.ZipFile(ZIP_PART_PATH) as zf:
+            if zf.testzip() is not None:
+                raise zipfile.BadZipFile("corrupted member")
+    except (zipfile.BadZipFile, zipfile.LargeZipFile):
+        os.remove(ZIP_PART_PATH)
+        raise
+    os.replace(ZIP_PART_PATH, SDE_ZIP_PATH)
+
+
+async def _download_zip(progress_cb: Callable[[int, str], None] | None = None) -> str:
+    """下载 SDE zip 到 .part（断点续传 + 流式写盘）。由 _zip_dl_lock 保证串行。"""
+    offset = os.path.getsize(ZIP_PART_PATH) if os.path.exists(ZIP_PART_PATH) else 0
+    headers = {"Range": f"bytes={offset}-"} if offset else {}
+    timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=120)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(SDE_ZIP_URL, headers=headers) as resp:
+            if resp.status == 206:  # 断点续传
+                mode = "ab"
+                total = int(resp.headers.get("Content-Range", "/0").rsplit("/", 1)[1])
+            elif resp.status == 200:  # 服务器不支持 Range → 全量重下
+                offset = 0
+                mode = "wb"
+                total = int(resp.headers.get("Content-Length", 0))
+            elif resp.status == 416 and offset > 0:
+                # Range 不满足：.part 已完整（并发下载残留）→ 直接校验完成
+                log.info("SDE 包 Range 不满足（.part 已完整），直接校验...")
+                _validate_and_finalize()
+                return SDE_ZIP_PATH
+            else:
+                resp.raise_for_status()
+                return SDE_ZIP_PATH
+
+            log.info(
+                f"下载 SDE 数据包: {total / 1024 / 1024:.1f} MB"
+                + (f"（从 {offset / 1024 / 1024:.1f} MB 续传）" if offset else "")
+            )
+            t_start = time.time()
+            with open(ZIP_PART_PATH, mode) as f:
+                async for chunk in resp.content.iter_chunked(256 * 1024):
+                    f.write(chunk)
+                    if progress_cb:
+                        done = os.path.getsize(ZIP_PART_PATH)
+                        elapsed = max(0.001, time.time() - t_start)
+                        speed = done / elapsed / 1024 / 1024
+                        progress_cb(
+                            min(99, int(done / max(total, 1) * 100)),
+                            f"SDE 包下载 {done // 1048576}/{total // 1048576} MB ({speed:.1f} MB/s)",
+                        )
+
+    _validate_and_finalize()
+    return SDE_ZIP_PATH
+
+
+def _sync_ensure_zip(progress_cb: Callable[[int, str], None] | None = None) -> str:
+    """线程安全的 zip 下载（threading.Lock 串行，跨线程/事件循环安全）。"""
+    with _zip_dl_lock:
+        if os.path.exists(SDE_ZIP_PATH):
+            return SDE_ZIP_PATH
+        asyncio.run(_download_zip(progress_cb))
+        return SDE_ZIP_PATH
+
+
 async def ensure_sde_zip(progress_cb: Callable[[int, str], None] | None = None) -> str:
-    """确保 data/sde.zip 完整存在。支持断点续传 + 流式写盘 + 并发单飞。
+    """确保 data/sde.zip 完整存在（断点续传 + 流式写盘 + 跨线程串行单飞）。
 
     - `.part` 残留 → 带 Range 头从断点续传（S3 静态托管支持 206）
     - 流式写盘：`iter_chunked` 边下边写，不再 112MB 全进内存
     - 完成后 zipfile.testzip() 校验，损坏删 `.part` 从头再来
-    - `os.replace` 原子 rename；模块级 asyncio.Lock 保证并行时只下载一次
-
-    Args:
-        progress_cb: 可选进度回调 (percent: 0-100, message: str)
+    - 下载在后台线程执行：asyncio.Lock 绑定事件循环，并行步骤及重试跨
+      asyncio.run 时不可靠；threading.Lock 与线程/事件循环无关，只下载一次。
     """
-    global _zip_lock
-    if _zip_lock is None:
-        _zip_lock = asyncio.Lock()
-    async with _zip_lock:
-        if os.path.exists(SDE_ZIP_PATH):
-            return SDE_ZIP_PATH
-
-        offset = os.path.getsize(ZIP_PART_PATH) if os.path.exists(ZIP_PART_PATH) else 0
-        headers = {"Range": f"bytes={offset}-"} if offset else {}
-        timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=120)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(SDE_ZIP_URL, headers=headers) as resp:
-                if resp.status == 206:  # 断点续传
-                    mode = "ab"
-                    total = int(resp.headers.get("Content-Range", "/0").rsplit("/", 1)[1])
-                elif resp.status == 200:  # 服务器不支持 Range → 全量重下
-                    offset = 0
-                    mode = "wb"
-                    total = int(resp.headers.get("Content-Length", 0))
-                else:
-                    resp.raise_for_status()
-                    return SDE_ZIP_PATH
-
-                log.info(
-                    f"下载 SDE 数据包: {total / 1024 / 1024:.1f} MB"
-                    + (f"（从 {offset / 1024 / 1024:.1f} MB 续传）" if offset else "")
-                )
-                with open(ZIP_PART_PATH, mode) as f:
-                    async for chunk in resp.content.iter_chunked(256 * 1024):
-                        f.write(chunk)
-                        if progress_cb:
-                            done = os.path.getsize(ZIP_PART_PATH)
-                            progress_cb(
-                                min(99, int(done / max(total, 1) * 100)),
-                                f"SDE 包下载 {done // 1048576}/{total // 1048576} MB",
-                            )
-
-        # 完整性校验：损坏（含跨版本续传导致的前后段不一致）→ 删 .part 从头再来
-        try:
-            with zipfile.ZipFile(ZIP_PART_PATH) as zf:
-                if zf.testzip() is not None:
-                    raise zipfile.BadZipFile("corrupted member")
-        except (zipfile.BadZipFile, zipfile.LargeZipFile):
-            os.remove(ZIP_PART_PATH)
-            raise
-
-        os.replace(ZIP_PART_PATH, SDE_ZIP_PATH)  # 原子完成
-        return SDE_ZIP_PATH
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _sync_ensure_zip, progress_cb)
+    return SDE_ZIP_PATH
 
 
-async def ensure_sde_cache(progress_cb: Callable[[int, str], None] | None = None):
-    """确保 SDE zip 中所需的 YAML 文件已缓存到本地
-
-    只会下载一次 zip，提取所有需要的 YAML 文件后缓存到 data/ 目录，
-    同时将完整 zip 保存到磁盘以便 universe/ 目录遍历。
-
-    如果 universe JSON 缓存已存在（说明已有完整解析结果），
-    则跳过非必要 YAML 文件的下载，仅确保 universe 必要的 typeIDs.yaml 就绪。
-    """
-    os.makedirs(CACHE_DIR, exist_ok=True)
-
-    # universe JSON 缓存存在时，只需确保 typeIDs.yaml 等小文件就绪即可
-    if os.path.exists(UNIVERSE_CACHE_PATH):
-        yamls_ok = _all_cached()
-        if yamls_ok:
-            sizes = ", ".join(
-                f"{fname}={os.path.getsize(cache_path(fname)) / 1024 / 1024:.1f}MB" for fname in sorted(YAML_FILES)
-            )
-            log.info(f"SDE YAML 缓存已就绪 ({sizes})")
+def _sync_ensure_sde_cache(progress_cb: Callable[[int, str], None] | None = None) -> None:
+    """线程安全的下载+提取（threading.Lock 串行）。"""
+    with _zip_dl_lock:
+        if _all_cached():
             return
-        # 个别 YAML 缺失（如首次提取不完全），走下载流程补充
+        asyncio.run(_download_and_extract(progress_cb))
 
-    yamls_ok = _all_cached()
-    zip_ok = os.path.exists(SDE_ZIP_PATH)
-    if yamls_ok and zip_ok:
-        sizes = ", ".join(
-            f"{fname}={os.path.getsize(cache_path(fname)) / 1024 / 1024:.1f}MB" for fname in sorted(YAML_FILES)
-        )
-        log.info(f"SDE YAML 缓存已就绪 ({sizes})")
-        return
 
+async def _download_and_extract(progress_cb: Callable[[int, str], None] | None = None) -> None:
+    """下载 SDE zip + 提取所需 YAML（由 _zip_dl_lock 保证串行）。"""
     log.info("本地无 SDE 缓存，从 S3 下载 SDE 数据包 (~112 MB)...")
     log.info(f"  URL: {SDE_ZIP_URL}")
-
-    await ensure_sde_zip(progress_cb)
-
+    await _download_zip(progress_cb)
     log.info("下载完成，提取 YAML 文件...")
-
-    # 从磁盘 zip 提取各个 YAML 文件
     with zipfile.ZipFile(SDE_ZIP_PATH) as zf:
         for fname in sorted(YAML_FILES):
-            # 用 endswith 匹配，兼容 fsd/ bsd/ 等不同路径前缀
             zip_name = ZIP_LOOKUP.get(fname, fname)
             candidates = [p for p in zf.namelist() if p.endswith(zip_name)]
             if not candidates:
@@ -195,8 +189,29 @@ async def ensure_sde_cache(progress_cb: Callable[[int, str], None] | None = None
             with open(dest, "w", encoding="utf-8") as f:
                 f.write(raw)
             log.info(f"  已缓存: {fname} ({len(raw) / 1024 / 1024:.1f} MB)")
-
     log.info("SDE YAML 缓存完成")
+
+
+async def ensure_sde_cache(progress_cb: Callable[[int, str], None] | None = None):
+    """确保 SDE zip 中所需的 YAML 文件已缓存到本地
+
+    只会下载一次 zip，提取所有需要的 YAML 文件后缓存到 data/ 目录，
+    同时将完整 zip 保存到磁盘以便 universe/ 目录遍历。
+
+    下载+提取跨线程单飞（_zip_dl_lock）：items/sde_core/blueprints 等并行步骤
+    同时进入时只执行一次，避免并发重复提取 148MB typeIDs.yaml。
+    """
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+    if _all_cached():
+        sizes = ", ".join(
+            f"{fname}={os.path.getsize(cache_path(fname)) / 1024 / 1024:.1f}MB" for fname in sorted(YAML_FILES)
+        )
+        log.info(f"SDE YAML 缓存已就绪 ({sizes})")
+        return
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _sync_ensure_sde_cache, progress_cb)
 
 
 def _build_name_map(zip_path: str) -> dict[int, str]:
@@ -204,7 +219,20 @@ def _build_name_map(zip_path: str) -> dict[int, str]:
 
     当前 SDE 的 region/constellation/solarsystem 名称不再内联，统一在 bsd/invNames.yaml。
     解析失败时返回空 dict（星系名降级为空串，不中断写库）。
+
+    50 万条 itemID→name 首次解析约 28s，用 zip 同目录的 pkl 缓存持久化，
+    后续加载 <0.1s；zip mtime 更新（SDE 新版本）自动失效重解析。
     """
+    pkl_path = os.path.splitext(zip_path)[0] + "_invnames.pkl"
+    try:
+        if os.path.exists(pkl_path) and os.path.getmtime(pkl_path) >= os.path.getmtime(zip_path):
+            with open(pkl_path, "rb") as f:
+                cached = pickle.load(f)
+            if isinstance(cached, dict):
+                return cached
+    except Exception:
+        pass  # 缓存读失败 → 走正常解析
+
     result: dict[int, str] = {}
     _Loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
     try:
@@ -219,6 +247,19 @@ def _build_name_map(zip_path: str) -> dict[int, str]:
                     continue
     except Exception as e:
         log.warning("invNames 名称解析失败，星系名将为空: %s", e)
+        return result
+
+    # 解析成功才原子写 pkl（写失败/并发写不中断主流程）
+    try:
+        d = os.path.dirname(pkl_path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        tmp = pkl_path + ".tmp"
+        with open(tmp, "wb") as f:
+            pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp, pkl_path)
+    except Exception:
+        pass
     return result
 
 
@@ -227,7 +268,7 @@ def _parse_universe_chunk(
     zip_path: str,
     name_map: dict[int, str] | None = None,
 ) -> tuple[list, list, list, list]:
-    """在线程池 worker 中解析一批 universe YAML 文件（CSafeLoader，每 worker 独立加载器）
+    """在线程池/进程池 worker 中解析一批 universe YAML 文件（CSafeLoader）
 
     兼容新旧两种 SDE 格式：
       - 新格式：region/constellation/solarsystem.yaml 仅含 ID，名称走 name_map
@@ -283,10 +324,20 @@ def _parse_universe_chunk(
                 sid = data.get("solarSystemID")
                 if sid is not None:
                     sid = int(sid)
-                    data["solar_system_id"] = sid
-                    data["solar_system_name"] = name_map.get(sid, data.get("solarSystemName", ""))
-                    data["security"] = data.get("security", data.get("securityStatus", 0.0))
-                    systems.append(data)
+                    # 只保留业务字段（写入 solar_system 表用），避免把整个 YAML
+                    # （stargates/planets/position 等）塞进 JSON 缓存导致体积膨胀
+                    systems.append(
+                        {
+                            "solar_system_id": sid,
+                            "solar_system_name": name_map.get(sid, data.get("solarSystemName", "")),
+                            "security": data.get("security", data.get("securityStatus", 0.0)),
+                            # 兼容键：write_universe 走 solar_system_id/solarSystemID 等 or 读取
+                            "solarSystemID": sid,
+                            "solarSystemName": data.get("solarSystemName", ""),
+                            "regionID": data.get("regionID"),
+                            "constellationID": data.get("constellationID"),
+                        }
+                    )
                     # 新格式：stargates 内嵌（键为 stargate_id，值为 {"destination": system_id}）
                     for sg_id, sg in (data.get("stargates") or {}).items():
                         dest = sg.get("destination") if isinstance(sg, dict) else None
@@ -317,6 +368,16 @@ def _parse_universe_chunk(
                     )
 
     return regions, constellations, systems, stargates
+
+
+def _parse_universe_chunk_with_names(paths: list[str], zip_path: str) -> tuple[list, list, list, list]:
+    """进程池 worker：先加载名称映射（pkl 缓存秒级），再解析一批星系 YAML。
+
+    name_map 有 50 万条 itemID→name，若作为参数 pickle 传给每个子进程开销大；
+    改为各子进程独立从磁盘 pkl（_build_name_map 缓存）加载，参数只剩 paths/zip_path。
+    """
+    name_map = _build_name_map(zip_path)
+    return _parse_universe_chunk(paths, zip_path, name_map)
 
 
 async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None = None):
@@ -352,8 +413,9 @@ async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None =
     log.info("正在并行解析 universe/ 星系 YAML 文件...")
     if progress_cb:
         progress_cb(10, "解析星系目录...")
-    # 名称在 bsd/invNames.yaml（按 itemID 索引），解析前构建一次映射供各 worker 共享
-    name_map = _build_name_map(SDE_ZIP_PATH)
+    # 名称在 bsd/invNames.yaml（按 itemID 索引），解析前先确保主进程构建好
+    # invnames.pkl（首次 ~28s，之后秒级；子进程 worker 各自从 pkl 加载）
+    _build_name_map(SDE_ZIP_PATH)
     with zipfile.ZipFile(SDE_ZIP_PATH, "r") as zf:
         # 只解析星系文件（region/constellation/stargates 无业务使用，跳过以提速）
         all_paths = [
@@ -373,14 +435,35 @@ async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None =
     t0 = time.time()
     systems: list[dict] = []
 
-    results = await asyncio.gather(
-        *[asyncio.to_thread(_parse_universe_chunk, chunk, SDE_ZIP_PATH, name_map) for chunk in chunks]
-    )
+    # PyYAML C loader 的构造阶段持有 GIL，线程并行无效（8 线程 ≈ 单线程 ~168s），
+    # 多进程真并行是唯一出路。文件量小（<200）时进程池启动开销不划算，直接线程池；
+    # spawn 失败（如打包环境缺 freeze_support）时回退线程池。
+    if len(all_paths) < 200:
+        results = await asyncio.gather(
+            *[asyncio.to_thread(_parse_universe_chunk_with_names, chunk, SDE_ZIP_PATH) for chunk in chunks]
+        )
+    else:
+        loop = asyncio.get_running_loop()
+        try:
+            from concurrent.futures import ProcessPoolExecutor
+
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                results = await asyncio.gather(
+                    *[
+                        loop.run_in_executor(pool, _parse_universe_chunk_with_names, chunk, SDE_ZIP_PATH)
+                        for chunk in chunks
+                    ]
+                )
+        except Exception:
+            log.warning("多进程解析不可用，回退线程池（较慢）", exc_info=True)
+            results = await asyncio.gather(
+                *[asyncio.to_thread(_parse_universe_chunk_with_names, chunk, SDE_ZIP_PATH) for chunk in chunks]
+            )
     for _r_regions, _r_const, r_sys, _r_sg in results:
         systems.extend(r_sys)
 
     elapsed = time.time() - t0
-    log.info(f"Universe 星系解析完成: {len(systems)} systems（耗时 {elapsed:.0f}s, {workers} 线程）")
+    log.info(f"Universe 星系解析完成: {len(systems)} systems（耗时 {elapsed:.0f}s, {workers} workers）")
     if progress_cb:
         progress_cb(70, "星系数据解析完成")
 
@@ -474,11 +557,11 @@ def clear_yaml_cache() -> None:
 
 
 def reset_async_locks() -> None:
-    """重置模块级 asyncio.Lock（_zip_lock/_load_lock）。
+    """重置模块级 asyncio.Lock（_load_lock）。
 
     asyncio.Lock 惰性绑定首次使用的事件循环，初始化重试会新建 asyncio.run()
     导致跨循环复用报错，故每次 asyncio.run 前调用（由 InitService.start 负责）。
+    SDE 下载用 threading.Lock（_zip_dl_lock），与事件循环无关，无需重置。
     """
-    global _zip_lock, _load_lock
-    _zip_lock = None
+    global _load_lock
     _load_lock = None

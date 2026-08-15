@@ -39,7 +39,9 @@ def _patch_execution(service, run_step):
 class TestDependencyOrder:
     @pytest.mark.asyncio
     async def test_schema_before_items_before_dependents(self, service):
-        """依赖顺序：schema 先于 items，items 先于 blueprints/implants/rigs/industry/icons/sde_data/price_baseline"""
+        """依赖顺序：schema 先于一切；仅依赖 item 表的步骤（icons/sde_data）在 items 后，
+        仅依赖 zip/网络的步骤（blueprints/implants/rigs/industry/price_baseline/sde_core）在 schema 后即可并行。
+        """
         order: list[str] = []
 
         async def fake_run_step(key):
@@ -52,8 +54,15 @@ class TestDependencyOrder:
         assert order[0] == "schema", "schema 无依赖，最先执行"
         idx = {k: order.index(k) for k in order}
         assert idx["schema"] < idx["items"]
-        for dep in ["blueprints", "implants", "rigs", "industry", "icons", "sde_data", "price_baseline"]:
+        # 依赖 item 表（需 items 写完）→ 在 items 后
+        for dep in ["icons", "sde_data", "implants", "rigs"]:
             assert idx["items"] < idx[dep], f"{dep} 应在 items 之后"
+        # 仅依赖 zip/网络 → 与 items 并行（只需在 schema 后）
+        for dep in ["blueprints", "industry", "price_baseline", "sde_core"]:
+            assert idx["schema"] < idx[dep], f"{dep} 应在 schema 之后"
+        # sde_data 依赖 blueprints/sde_core/items 都完成
+        assert idx["blueprints"] < idx["sde_data"]
+        assert idx["sde_core"] < idx["sde_data"]
         assert all(service.get_status()[k] == StepStatus.COMPLETED for k in ALL_KEYS)
 
 
@@ -91,7 +100,17 @@ class TestFailureIsolation:
         status = service.get_status()
         assert status["implants"] == StepStatus.FAILED
         assert service.get_errors()["implants"] == "网络超时"
-        for k in ["schema", "items", "blueprints", "rigs", "industry", "icons", "sde_data", "price_baseline"]:
+        for k in [
+            "schema",
+            "items",
+            "blueprints",
+            "rigs",
+            "industry",
+            "icons",
+            "sde_core",
+            "sde_data",
+            "price_baseline",
+        ]:
             assert status[k] == StepStatus.COMPLETED, f"{k} 不应被 implants 失败影响"
 
 
@@ -121,7 +140,14 @@ class TestCancel:
 
         status = service.get_status()
         assert status["items"] == StepStatus.CANCELLED
-        assert status["blueprints"] == StepStatus.CANCELLED, "依赖 items 的步骤应被取消"
+        # 依赖 items 的步骤（icons/sde_data/implants/rigs）被取消
+        assert status["icons"] == StepStatus.CANCELLED, "依赖 items 的步骤应被取消"
+        assert status["sde_data"] == StepStatus.CANCELLED, "依赖 items 的步骤应被取消"
+        assert status["implants"] == StepStatus.CANCELLED, "依赖 items 的步骤应被取消"
+        assert status["rigs"] == StepStatus.CANCELLED, "依赖 items 的步骤应被取消"
+        # 仅依赖 zip/网络的步骤不再被 items 取消（提前并行）
+        assert status["blueprints"] == StepStatus.COMPLETED
+        assert status["sde_core"] == StepStatus.COMPLETED
 
 
 class TestNetworkPrecheck:

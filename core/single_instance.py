@@ -5,6 +5,8 @@
 应用实例的锁必须分离,二者才能共存。
 """
 
+import ctypes
+import hashlib
 import os
 from pathlib import Path
 
@@ -12,10 +14,66 @@ from core.logger import log
 
 _LOCK_FILE = Path.home() / ".eve-assistant" / "instance.lock"
 
+# 本进程持有的命名互斥体句柄（lock 名 → HANDLE）。进程退出时 OS 自动回收，
+# 崩溃也无需清理残留——比文件锁更健壮。
+_MUTEX_HANDLES: dict[str, int] = {}
+
 
 def _resolve(lock_file: Path | str | None) -> Path:
     """None → 默认 instance.lock;str → Path 归一化(Path(Path) 幂等)。"""
     return Path(lock_file) if lock_file else _LOCK_FILE
+
+
+def _mutex_name(target: Path) -> str:
+    """锁文件路径 → 命名互斥体名。
+
+    按路径 hash 区分：不同 lock_file（instance/dev/fresh）用不同互斥体，
+    与文件锁语义一致；测试 monkeypatch _LOCK_FILE 后也自然隔离。
+    """
+    digest = hashlib.md5(str(target).encode("utf-8")).hexdigest()[:24]
+    return f"EVEAssistant_{digest}"
+
+
+def _acquire_mutex(name: str) -> bool | None:
+    """获取 Windows 命名互斥体。
+
+    Returns:
+        True = 本进程持有；False = 另一实例已持有；None = 非 Windows/创建失败（降级回退文件锁）。
+
+    命名互斥体是内核对象，创建不需要文件写权限——受限沙箱 token 下
+    （.eve-assistant 目录只读导致文件锁必然 PermissionError）仍能正常防双开。
+    """
+    if os.name != "nt":
+        return None
+    if name in _MUTEX_HANDLES:
+        return True  # 本进程已持有（重入）
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        handle = kernel32.CreateMutexW(None, False, name)
+    except (AttributeError, OSError):
+        return None
+    if not handle:
+        return None
+    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS → 另一实例持有
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+        return False
+    _MUTEX_HANDLES[name] = handle
+    return True
+
+
+def _release_mutex(name: str) -> None:
+    handle = _MUTEX_HANDLES.pop(name, None)
+    if not handle:
+        return
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.ReleaseMutex(ctypes.c_void_p(handle))
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+    except Exception:
+        pass  # 句柄释放失败无碍：进程退出时 OS 会回收
 
 
 def try_lock(force: bool = False, lock_file: Path | str | None = None) -> bool:
@@ -34,6 +92,13 @@ def try_lock(force: bool = False, lock_file: Path | str | None = None) -> bool:
     target = _resolve(lock_file)
     target.parent.mkdir(parents=True, exist_ok=True)
     own_pid = os.getpid()
+
+    # 0) Windows 命名互斥体优先判定：不依赖文件权限，受限沙箱下文件锁必失败时
+    #    仍能正常防双开。mutex_ok False = 另一实例持有 → 直接拒绝。
+    mutex_name = _mutex_name(target)
+    mutex_ok = _acquire_mutex(mutex_name)
+    if mutex_ok is False:
+        return False
 
     # 1) 原子获取（O_CREAT|O_EXCL）：成功即拿到锁，无双开竞态
     got = _try_exclusive_acquire(own_pid, target)
@@ -140,6 +205,7 @@ def unlock(lock_file: Path | str | None = None):
         lock_file: 要释放的自定义锁文件;None 释放默认 instance.lock。
     """
     target = _resolve(lock_file)
+    _release_mutex(_mutex_name(target))
     try:
         target.unlink(missing_ok=True)
     except OSError as e:

@@ -121,6 +121,7 @@ class TestWriteItems:
             patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
             patch("tools.downloaders.getitems.load_yaml_async") as mock_load_yaml,
         ):
+
             async def fake_load(name):
                 return {
                     "typeIDs.yaml": mock_type_ids,
@@ -174,6 +175,7 @@ class TestWriteItems:
             patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
             patch("tools.downloaders.getitems.load_yaml_async") as mock_load_yaml,
         ):
+
             async def fake_load(name):
                 return {
                     "typeIDs.yaml": mock_type_ids,
@@ -245,3 +247,51 @@ class TestWriteMarketTree:
         count = conn.execute("SELECT COUNT(*) FROM market_tree").fetchone()[0]
         conn.close()
         assert count == 0
+
+
+# ─── Test: main 的 SDE 下载进度透传 ─────────────────────
+
+
+class TestMainSdeDownloadProgress:
+    """main() 下载 SDE 阶段透传 progress_cb，映射到步骤 10-39 区间"""
+
+    @pytest.mark.asyncio
+    async def test_forwards_sde_download_progress(self, temp_db_path):
+        """空库走下载路径，ensure_sde_cache 收到包装回调且映射正确"""
+        from tools.downloaders.getitems import main
+
+        calls: list[tuple[int, str]] = []
+        captured: dict = {}
+
+        async def fake_ensure_sde_cache(cb):
+            captured["cb"] = cb
+            assert cb is not None, "下载阶段应透传 progress_cb"
+            for pct in (0, 50, 99):
+                cb(pct, f"SDE 包下载 {pct} MB")
+            return None
+
+        async def fake_write_items(cb=None):
+            pass
+
+        async def fake_market_tree():
+            pass
+
+        async def fake_fill(cb=None):
+            if cb:
+                cb(100, "完成")
+
+        with (
+            patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
+            patch("tools.downloaders.getitems.ensure_sde_cache", fake_ensure_sde_cache),
+            patch("tools.downloaders.getitems.write_items", fake_write_items),
+            patch("tools.downloaders.getitems.write_market_tree", fake_market_tree),
+            patch("tools.downloaders.getitems.fill_missing_item_names_from_esi", fake_fill),
+        ):
+            await initialize_database()
+            await main(progress_cb=lambda p, m: calls.append((p, m)))
+
+        dl = [c for c in calls if "SDE 包下载" in c[1]]
+        assert len(dl) == 3, "下载进度回调应透传到 UI"
+        # 0/50/99 → 10/25/39（映射到步骤 10-39，避免进度条跳变）
+        assert [p for p, _ in dl] == [10, 25, 39]
+        assert captured["cb"] is not None

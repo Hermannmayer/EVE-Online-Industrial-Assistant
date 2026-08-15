@@ -108,3 +108,6 @@ data/universe_data.json
 
 # Claude Code local config
 .claude/
+
+# 全新开箱模式（dev.py --fresh）的隔离模拟环境
+fresh_env/

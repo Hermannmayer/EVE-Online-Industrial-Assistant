@@ -96,7 +96,7 @@ async def write_stations()
 
 写入 station + station_operation + station_operation_service + station_service 表
 
-定义行：`321`
+定义行：`324`
 
 ### `write_universe`
 
@@ -106,7 +106,7 @@ async def write_universe(progress_cb=None)
 
 写入 solar_system 表（星系名/安全等级）
 
-定义行：`413`
+定义行：`416`
 
 ### `write_research`
 
@@ -116,7 +116,7 @@ async def write_research()
 
 写入 research_agent + npc_corporation + agent 表
 
-定义行：`461`
+定义行：`464`
 
 ### `write_dogma_effects`
 
@@ -126,7 +126,37 @@ async def write_dogma_effects()
 
 写入 dogma_effect 表
 
-定义行：`548`
+定义行：`551`
+
+### `_run_writers`
+
+```python
+async def _run_writers(writers, progress_cb)
+```
+
+逐表写入（单表失败不影响其他）
+
+定义行：`601`
+
+### `run_core`
+
+```python
+async def run_core(progress_cb=None)
+```
+
+SDE 扩展数据（不依赖 item 表）— universe/stations/research/dogma/materials。
+
+定义行：`618`
+
+### `run_item_data`
+
+```python
+async def run_item_data(progress_cb=None)
+```
+
+SDE 扩展数据（依赖 item 表）— meta_groups/categories + 蓝图名称补拉。
+
+定义行：`633`
 
 ### `main`
 
@@ -136,4 +166,4 @@ async def main(progress_cb=None)
 
 主流程：确保 SDE 缓存就绪 → 初始化数据库 → 逐表写入（单表失败不影响其他）
 
-定义行：`580`
+定义行：`648`

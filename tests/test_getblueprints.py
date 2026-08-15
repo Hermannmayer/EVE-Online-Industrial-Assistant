@@ -219,4 +219,5 @@ class TestRunBlueprintUpdate:
 
         assert mock_db_check.execute.called
         assert mock_db_write.executemany.call_count >= 1
-        mock_fill.assert_awaited_once()
+        # 蓝图名称补拉已移到 sde_data 步骤（需 item 表就绪），blueprints 主体不再触发
+        mock_fill.assert_not_awaited()

@@ -110,6 +110,22 @@ class TestFrozenBoundary:
 
         assert is_frozen() is False
 
+    def test_app_root_env_override_wins(self, monkeypatch):
+        """EVE_ASSISTANT_APP_ROOT 覆盖 app_root，优先级高于 frozen"""
+        monkeypatch.setenv("EVE_ASSISTANT_APP_ROOT", "C:/fake/release/env")
+        monkeypatch.setattr("sys.frozen", True, raising=False)
+        assert app_root() == "C:/fake/release/env"
+        # 派生路径（database/data）跟随隔离根目录
+        assert database_dir().startswith("C:/fake/release/env")
+        assert data_dir().startswith("C:/fake/release/env")
+
+    def test_app_root_env_unset_uses_dev(self, monkeypatch):
+        """未设置环境变量时退回开发/打包逻辑"""
+        monkeypatch.delenv("EVE_ASSISTANT_APP_ROOT", raising=False)
+        monkeypatch.delattr("sys.frozen", raising=False)
+        root = app_root()
+        assert os.path.isdir(os.path.join(root, "core"))
+
 
 class TestEnsureDirsBoundary:
     """边界测试：ensure_dirs_exist 的幂等性"""

@@ -33,7 +33,7 @@ def _extract_blueprints_yaml() -> str
 ### `ensure_cache`
 
 ```python
-async def ensure_cache() -> str
+async def ensure_cache(progress_cb=None) -> str
 ```
 
 确保 blueprints.yaml 缓存文件存在。

@@ -35,11 +35,16 @@ def is_frozen() -> bool:
 
 
 def app_root() -> str:
-    """返回应用根目录
+    """返回应用根目录（优先级：环境变量覆盖 > 打包环境 > 开发环境）
 
     开发环境：项目根目录（eve/）
     打包环境：exe 所在目录（dist/EVE商人助手/）
+    环境变量 EVE_ASSISTANT_APP_ROOT：dev.py --fresh 用隔离目录模拟发行版开箱，
+    所有派生路径（database/data 等）随之隔离，不污染开发仓库。
     """
+    override = os.environ.get("EVE_ASSISTANT_APP_ROOT")
+    if override:
+        return override
     if is_frozen():
         # PyInstaller 打包后，exe 就在我们要的目录下
         return os.path.dirname(sys.executable)
