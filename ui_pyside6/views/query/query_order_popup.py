@@ -81,6 +81,9 @@ class OrderFetchWorker(QThread):
             for i in range(0, len(need), 1000):
                 chunk = need[i : i + 1000]
                 try:
+                    from services.client import GLOBAL_ESI_LIMITER
+
+                    await GLOBAL_ESI_LIMITER.acquire()
                     async with session.post(url, json=chunk) as resp:
                         if resp.status == 200:
                             for item in await resp.json():
