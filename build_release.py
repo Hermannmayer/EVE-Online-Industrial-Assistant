@@ -120,12 +120,16 @@ def organize_release():
     shutil.copy2(exe_src, exe_dst)
     step(f"   ✓ 复制 {exe_src} → {exe_dst}")
 
-    # 2. 复制 database/ 目录（用户离线数据）
+    # 2. 复制 database/ 目录（只带只读模板库，不打包用户/市场运行数据）
     db_src = os.path.join(PROJECT_ROOT, "database")
     db_dst = os.path.join(RELEASE_DIR, "database")
+    os.makedirs(db_dst, exist_ok=True)
     if os.path.exists(db_src):
-        shutil.copytree(db_src, db_dst, ignore=shutil.ignore_patterns("__pycache__"))
-        step("   ✓ 复制 database/")
+        for template_name in ("reference.db", "blueprint.db"):
+            src_file = os.path.join(db_src, template_name)
+            if os.path.exists(src_file):
+                shutil.copy2(src_file, os.path.join(db_dst, template_name))
+        step("   ✓ 复制 database/（仅只读模板，不含 user/market 运行数据）")
 
     # 3. 复制 data/ 目录（运行期缓存和配置）
     data_src = os.path.join(PROJECT_ROOT, "data")

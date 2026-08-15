@@ -193,8 +193,9 @@ def get_adjusted_price(
             return float(r[0]) if r else None
 
 
-# 研究成本进程内缓存（(type_id, solar_system_id) → cost|None）— 价格刷新时由 invalidate_cache 一并清空
-_research_cost_cache: dict[tuple[int, int | None], float | None] = {}
+# 研究成本进程内缓存（type_id|solar_system_id → cost|None）— 价格刷新时由 invalidate_cache 一并清空
+_research_cost_cache = TtlLRUCache(max_size=2000, ttl_seconds=3600)
+_RESEARCH_MISS = object()
 
 
 def _research_cost_cached(_db: DatabaseManager, type_id: int, *, solar_system_id: int | None = None) -> float:
@@ -202,24 +203,28 @@ def _research_cost_cached(_db: DatabaseManager, type_id: int, *, solar_system_id
 
     SCI 按设施星系 solar_system_id 查询；None → research_calculator 内部回落默认科研机库星系。
     """
-    key = (type_id, solar_system_id)
-    if key in _research_cost_cache:
-        return _research_cost_cache[key] or 0.0
+    key = f"{type_id}|{solar_system_id}"
+    cached = _research_cost_cache.get(key)
+    if cached is not None:
+        return 0.0 if cached is _RESEARCH_MISS else float(cached)
     try:
         from services.research_calculator import research_cost_for_item
 
         with _db.connect("bp") as conn:
             cost = research_cost_for_item(conn, type_id, solar_system_id=solar_system_id)
-        _research_cost_cache[key] = cost
-        return cost or 0.0
+        if cost is None:
+            _research_cost_cache.set(key, _RESEARCH_MISS)
+            return 0.0
+        _research_cost_cache.set(key, cost)
+        return float(cost)
     except Exception:
-        _research_cost_cache[key] = None
+        _research_cost_cache.set(key, _RESEARCH_MISS)
         return 0.0
 
 
 def _clear_research_cost_cache() -> None:
     """清空研究成本缓存（价格刷新时调用）。"""
-    _research_cost_cache.clear()
+    _research_cost_cache.invalidate()
 
 
 # ════════════════════════════════════════════════════════════════════
