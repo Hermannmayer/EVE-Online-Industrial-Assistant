@@ -64,9 +64,10 @@ class TestNavTree:
         sections = [e for e in NAV_TREE if e[0] == "__section__"]
         assert len(sections) >= 1
         for sec in sections:
-            assert len(sec) == 2
+            assert len(sec) == 3
             assert sec[0] == "__section__"
             assert isinstance(sec[1], str)
+            assert isinstance(sec[2], str)  # 图标语义键
 
     def test_nav_entries_have_correct_format(self):
         """导航项格式正确"""
@@ -236,9 +237,10 @@ class TestMainWindowHelpers:
         assert window._status_label.text() == "完成"
 
     def test_toggle_theme_changes_current(self, qapp):
-        """_toggle_theme 切换主题"""
+        """_toggle_theme 在 one-dark/one-light 间确定性互切"""
         import ui_pyside6.theme as theme
 
+        theme.apply_theme("one-dark")  # 确定性起点（此前测试可能改过主题）
         old_theme = theme.current_theme()
         window = MainWindow()
 

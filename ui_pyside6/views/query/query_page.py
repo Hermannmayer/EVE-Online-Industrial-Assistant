@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from ui_pyside6.views.query.query_order_popup import do_load_orders, hide_order_popup
 from ui_pyside6.views.query.query_search import (
@@ -84,7 +85,8 @@ class QueryPage(QWidget):
         sb_layout.setContentsMargins(12, 8, 12, 8)
         sb_layout.setSpacing(8)
 
-        self._all_items_btn = QPushButton("📦 全物品")
+        self._all_items_btn = QPushButton()
+        icons.set_button_icon(self._all_items_btn, "package", text="全物品")
         self._all_items_btn.setToolTip("打开全物品浏览器")
         self._style_toolbar_btn(self._all_items_btn)
         self._all_items_btn.clicked.connect(self._open_all_items)

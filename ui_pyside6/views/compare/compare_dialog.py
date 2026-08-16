@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUBS
 from ui_pyside6.views.char_settings_view import get_character_list
@@ -284,7 +285,8 @@ class CompareDialog(QDialog):
             lbl.setStyleSheet(f"color:{theme.TEXT_PRIMARY};font-size:11px;")
             layout.addWidget(lbl, 1)
 
-            del_btn = QPushButton("✕")
+            del_btn = QPushButton()
+            icons.set_button_icon(del_btn, "close", color=theme.ACCENT_RED, size=14)
             del_btn.setFixedSize(18, 18)
             del_btn.setStyleSheet(
                 f"QPushButton{{background:transparent;color:{theme.ACCENT_RED};"

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 
 ESI_BASE_URL = "https://esi.evetech.net/latest"
@@ -113,7 +114,8 @@ class OrderPopup(QDialog):
         self._title_label.setObjectName("order_title")
         title_row.addWidget(self._title_label)
         title_row.addStretch()
-        self._chart_btn = QPushButton("📈 走势图")
+        self._chart_btn = QPushButton()
+        icons.set_button_icon(self._chart_btn, "trend-up", text="走势图")
         self._chart_btn.setObjectName("order_chart_btn")
         self._chart_btn.clicked.connect(self._on_chart_clicked)
         title_row.addWidget(self._chart_btn)

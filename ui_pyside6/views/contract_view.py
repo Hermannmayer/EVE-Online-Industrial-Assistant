@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS, TRADE_HUBS
 from services.watchlist_manager import add_to_watchlist
@@ -82,7 +83,8 @@ class ContractPage(QWidget):
 
         tb_layout.addStretch()
 
-        self._refresh_btn = QPushButton("↻ 刷新合同数据")
+        self._refresh_btn = QPushButton()
+        icons.set_button_icon(self._refresh_btn, "refresh", text="刷新合同数据")
         self._refresh_btn.clicked.connect(self._on_refresh)
         tb_layout.addWidget(self._refresh_btn)
 
@@ -101,7 +103,8 @@ class ContractPage(QWidget):
 
         # 物品名搜索
         self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("🔍 物品名搜索…")
+        self._search_input.setPlaceholderText("物品名搜索…")
+        self._search_input.addAction(icons.themed_icon("search", 16), QLineEdit.ActionPosition.LeadingPosition)
         self._search_input.setClearButtonEnabled(True)
         self._search_input.setFixedWidth(200)
         self._search_input.textChanged.connect(self._on_filter_changed_client)
@@ -338,12 +341,14 @@ class ContractPage(QWidget):
         menu.addSeparator()
 
         # 加入关注列表
-        add_watch = QAction("⭐ 加入关注列表", self)
+        add_watch = QAction("加入关注列表", self)
+        add_watch.setIcon(icons.themed_icon("star", 16))
         add_watch.triggered.connect(lambda: self._add_contract_to_watchlist(row_data))
         menu.addAction(add_watch)
 
         # 查看物品详情
-        view_items = QAction("📋 查看物品详情", self)
+        view_items = QAction("查看物品详情", self)
+        view_items.setIcon(icons.themed_icon("details", 16))
         view_items.triggered.connect(lambda: self._show_contract_item_detail(row_data))
         menu.addAction(view_items)
 

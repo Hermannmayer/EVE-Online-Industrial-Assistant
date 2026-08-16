@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from core.container import get_container
 from core.paths import search_history_file
@@ -277,7 +278,8 @@ class SuggestionPopup(QDialog):
         self._list.clear()
         for h in history[:8]:
             q = h["query"]
-            item = QListWidgetItem(f"🕐  {q}")
+            item = QListWidgetItem(f" {q}")
+            item.setIcon(icons.themed_icon("clock", 16))
             item.setData(Qt.ItemDataRole.UserRole, q)
             self._list.addItem(item)
         h = min((len(history) + 2) * 28 + 8, 220)
