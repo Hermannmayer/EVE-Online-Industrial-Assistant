@@ -6,18 +6,43 @@
 
 import json
 import os
+from collections.abc import Callable
 
 from core.paths import data_dir
 
 SETTINGS_PATH = os.path.join(data_dir(), "settings.json")
 
+# settings.json 结构版本：键结构变更时 +1，并在 _SETTINGS_MIGRATIONS 注册升级函数。
+# v0→v1：无实际结构变更，仅落 settings_version 键，为后续迁移留版本基准。
+SETTINGS_SCHEMA_VERSION = 1
+_SETTINGS_MIGRATIONS: dict[int, Callable[[dict], dict]] = {}
+
+
+def _migrate_settings(data: dict) -> dict:
+    """惰性升级 settings 结构：版本 < CURRENT 时逐级迁移并落盘。
+
+    迁移函数只做键名映射/结构调整，保留所有未知键，绝不丢弃用户数据。
+    """
+    version = int(data.get("settings_version", 0) or 0)
+    if version >= SETTINGS_SCHEMA_VERSION:
+        return data
+    for v in range(version, SETTINGS_SCHEMA_VERSION):
+        mig = _SETTINGS_MIGRATIONS.get(v)
+        if mig:
+            data = mig(data) or data
+    data["settings_version"] = SETTINGS_SCHEMA_VERSION
+    _write_all(data)
+    return data
+
 
 def load_settings() -> dict:
-    """读取 settings.json，文件不存在或损坏时返回 {}。"""
+    """读取 settings.json，文件不存在或损坏时返回 {}；结构过期时先升级再返回。"""
     try:
         with open(SETTINGS_PATH, encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        return _migrate_settings(data)
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
 
