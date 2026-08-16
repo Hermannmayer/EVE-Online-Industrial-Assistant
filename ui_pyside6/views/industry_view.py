@@ -698,40 +698,18 @@ class IndustryPage(QWidget):
 
         from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 
-        # 1) \u641c\u7d22\u7269\u54c1
-        conn = get_container().db.direct_connect("ref")
-        try:
-            like = f"%{text}%"
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT type_id, zh_name, en_name FROM item "
-                "WHERE (zh_name LIKE ? OR en_name LIKE ?) "
-                "ORDER BY CASE WHEN en_name=? OR zh_name=? THEN 0 ELSE 1 END, "
-                "LENGTH(en_name), type_id LIMIT 10",
-                (like, like, text, text),
-            )
-            items = cur.fetchall()
-        finally:
-            conn.close()
+        # 1) \u641c\u7d22\u7269\u54c1\uff08\u8d70 repository\uff0c\u4e0d\u5728 UI \u76f4\u8fde SQLite\uff09
+        items = get_container().item_repo.search_by_name(text, limit=10)
 
         if not items:
             QMessageBox.information(self, "\u63d0\u793a", f"\u672a\u627e\u5230\u7269\u54c1: {text}")
             return
 
-        type_id = items[0][0]
-        product_name = items[0][1] or items[0][2] or str(type_id)
+        type_id = items[0]["type_id"]
+        product_name = items[0]["zh_name"] or items[0]["en_name"] or str(type_id)
 
-        # 2) \u68c0\u67e5\u662f\u5426\u53ef\u5236\u9020
-        conn2 = get_container().db.direct_connect("bp")
-        try:
-            cur = conn2.cursor()
-            cur.execute(
-                "SELECT 1 FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-                (type_id,),
-            )
-            has_bp = cur.fetchone() is not None
-        finally:
-            conn2.close()
+        # 2) \u68c0\u67e5\u662f\u5426\u53ef\u5236\u9020\uff08\u8d70 repository\uff09
+        has_bp = get_container().blueprint_repo.get_blueprint_for_product(type_id) is not None
 
         if not has_bp:
             QMessageBox.information(
