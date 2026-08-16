@@ -159,3 +159,78 @@ class TestEnrichPlanHangarNames:
         """原地修改并返回同一列表（与 load_plans 现有补全风格一致）"""
         rows = [{"mat_hangar_id": 1, "facility": "", "deposit_hangar_id": 2}]
         assert plan_service.enrich_plan_hangar_names(rows, {1: "A", 2: "B"}) is rows
+
+
+# ══════════════════════════════════════════
+#  group_and_sort_plans — 母项在前树状排序
+# ══════════════════════════════════════════
+
+
+class TestGroupAndSortPlans:
+    def test_parent_first_children_after(self):
+        plans = [
+            {"id": 1, "group_id": 10, "child_level": 0, "status": "pending"},
+            {"id": 3, "group_id": 10, "child_level": 2, "status": "pending"},
+            {"id": 2, "group_id": 10, "child_level": 1, "status": "pending"},
+            {"id": 9, "group_id": 0, "child_level": 0, "status": "pending"},
+        ]
+        ordered = plan_service.group_and_sort_plans(plans)
+        assert [p["id"] for p in ordered] == [1, 2, 3, 9]
+
+    def test_pending_children_attached_to_parent(self):
+        plans = [
+            {"id": 1, "group_id": 10, "child_level": 0, "status": "pending"},
+            {"id": 2, "group_id": 10, "child_level": 1, "status": "pending"},
+            {"id": 3, "group_id": 10, "child_level": 1, "status": "in_progress"},
+            {"id": 4, "group_id": 10, "child_level": 1, "status": "completed"},
+        ]
+        ordered = plan_service.group_and_sort_plans(plans)
+        assert ordered[0]["_pending_children"] == 2  # 完成态不计
+
+    def test_multiple_groups_then_standalone(self):
+        plans = [
+            {"id": 9, "group_id": 0, "child_level": 0, "status": "pending"},
+            {"id": 5, "group_id": 20, "child_level": 0, "status": "pending"},
+            {"id": 6, "group_id": 20, "child_level": 1, "status": "pending"},
+            {"id": 1, "group_id": 10, "child_level": 0, "status": "pending"},
+            {"id": 2, "group_id": 10, "child_level": 1, "status": "pending"},
+        ]
+        ordered = plan_service.group_and_sort_plans(plans)
+        ids = [p["id"] for p in ordered]
+        assert ids == [1, 2, 5, 6, 9]  # 组 10 → 组 20 → 独立计划殿后
+
+    def test_no_pending_children_key_on_standalone(self):
+        plans = [{"id": 9, "group_id": 0, "child_level": 0, "status": "pending"}]
+        ordered = plan_service.group_and_sort_plans(plans)
+        assert "_pending_children" not in ordered[0]
+
+
+# ══════════════════════════════════════════
+#  load_plans_for_wizard — 非完成计划数据源
+# ══════════════════════════════════════════
+
+
+class TestLoadPlansForWizard:
+    def test_excludes_completed_and_enriches(self, temp_db, monkeypatch):
+        _build_user(temp_db)
+        with temp_db.connect("user") as conn:
+            conn.execute("CREATE TABLE hangars (id INTEGER PRIMARY KEY, name TEXT, solar_system_id INTEGER)")
+            conn.execute(
+                "CREATE TABLE user_blueprints (id INTEGER PRIMARY KEY, blueprint_type_id INTEGER,"
+                " hangar_id INTEGER, is_bpo INTEGER, me_level INTEGER, te_level INTEGER,"
+                " runs INTEGER, quantity INTEGER, notes TEXT)"
+            )
+            for i, status in enumerate(["pending", "in_progress", "completed", "done"], start=1):
+                conn.execute(
+                    "INSERT INTO production_plans (id, product_type_id, product_name, status)" " VALUES (?,?,?,?)",
+                    (i, 2001, f"计划{i}", status),
+                )
+        _patch_container(temp_db, monkeypatch)
+        rows = plan_service.load_plans_for_wizard()
+        statuses = [r["status"] for r in rows]
+        assert "completed" not in statuses
+        assert "done" not in statuses
+        assert len(rows) == 2
+        assert all("category" in r for r in rows)
+        assert all("has_image" in r for r in rows)
+        assert all("group_id" in r for r in rows)

@@ -164,6 +164,7 @@ class IndustryPage(QWidget):
         self._plan_table_widget.plan_updated.connect(self.load_plans)
         self._plan_table_widget.refresh_requested.connect(self.load_plans)
         self._plan_table_widget.plan_detail_requested.connect(self._on_plan_detail)
+        self._plan_table_widget.launcher_requested.connect(self._on_launch_wizard_from_row)
 
         # StatusBar
         self._status_bar.save_price_requested.connect(self._on_save_prices)
@@ -630,24 +631,27 @@ class IndustryPage(QWidget):
         QMessageBox.information(self, "完成", msg)
 
     def _on_launch_wizard(self):
-        """产线启动小助手（一级菜单）：收集全部活跃计划 → 打开启动向导"""
-        model = self._plan_table_widget.get_model()
-        if model is None:
-            return
-        plans = []
-        for i in range(model.rowCount()):
-            plan = model.get_plan(i)
-            if plan and (plan.get("status") or "").lower() in ("pending", "in_progress", "running", "ready"):
-                plans.append(plan)
-        if not plans:
-            QMessageBox.information(self, "提示", "没有活跃的计划")
-            return
-        from ui_pyside6.dialogs.production_wizard import ProductionWizard
+        """产线启动小助手：非模态独立窗口（单实例，不随主窗最大化/最小化）。"""
+        self._open_launcher(None)
 
-        mat_hangar_id = _default_mat_hangar_id()
-        dlg = ProductionWizard(plans, self, mat_hangar_id=mat_hangar_id)
-        dlg.exec()
-        self.load_plans()
+    def _on_launch_wizard_from_row(self, char_name: str):
+        """行右键入口：初始定位到该行所属人物（空串=未分配）。"""
+        self._open_launcher(char_name)
+
+    def _open_launcher(self, char_name: str | None) -> None:
+        """打开共享的产线启动小助手窗口（单实例，重复打开复用）。"""
+        from ui_pyside6.views.industry.production_launcher import ProductionLauncher
+
+        w = getattr(self, "_launcher", None)
+        if w is None:
+            w = ProductionLauncher()
+            w.plans_changed.connect(self.load_plans)
+            self._launcher = w
+        if char_name is not None:
+            w.focus_character(char_name)
+        w.show()
+        w.raise_()
+        w.activateWindow()
 
     # ── 状态保存/恢复 ─────────────────────────────────────────
 

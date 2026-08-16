@@ -618,40 +618,9 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
 
     def _apply_pin(self, checked: bool):
         """置顶：Windows 用 SetWindowPos（不重建窗口不闪烁），其他平台 setWindowFlags。"""
-        if getattr(self, "_pin_applying", False):
-            return  # 防重入（setWindowFlags→show→showEvent）
-        self._pin_applying = True
-        try:
-            if os.name == "nt":
-                try:
-                    import ctypes
-                    import ctypes.wintypes
+        from ui_pyside6.pin_utils import apply_window_pin
 
-                    hwnd = int(self.winId())
-                    SWP_NOMOVE, SWP_NOSIZE = 0x0002, 0x0001
-                    HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
-                    swp = ctypes.windll.user32.SetWindowPos
-                    swp.argtypes = [
-                        ctypes.wintypes.HWND,
-                        ctypes.wintypes.HWND,
-                        ctypes.c_int,
-                        ctypes.c_int,
-                        ctypes.c_int,
-                        ctypes.c_int,
-                        ctypes.c_uint,
-                    ]
-                    swp(hwnd, HWND_TOPMOST if checked else HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
-                    return
-                except Exception:
-                    log.exception("SetWindowPos 置顶失败，回退 WindowStaysOnTopHint")
-            flags = self.windowFlags()
-            if checked:
-                self.setWindowFlags(flags | Qt.WindowType.WindowStaysOnTopHint)
-            else:
-                self.setWindowFlags(flags & ~Qt.WindowType.WindowStaysOnTopHint)
-            self.show()
-        finally:
-            self._pin_applying = False
+        apply_window_pin(self, checked)
 
     def showEvent(self, event):
         super().showEvent(event)

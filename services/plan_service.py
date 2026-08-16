@@ -154,32 +154,23 @@ def enrich_plan_hangar_names(rows: list[dict], hangar_names: dict[int, str]) -> 
     return rows
 
 
-def load_plans(filter_key: str) -> list[dict]:
-    """加载生产计划列表，并补全蓝图可用标记/类别/机库名称。"""
-    with get_container().db.connect("user", "bp") as conn:
-        sql = "SELECT * FROM production_plans"
-        if filter_key == "待排":
-            sql += " WHERE status = 'pending'"
-        elif filter_key == "运行中":
-            sql += " WHERE status IN ('in_progress','running')"
-        elif filter_key == "待下线":
-            sql += " WHERE status = 'ready'"
-        elif filter_key == "已完成":
-            sql += " WHERE status IN ('completed','done')"
-        sql += " ORDER BY created_at DESC"
-        c = conn.cursor()
-        c.execute(sql)
-        cols = [d[0] for d in c.description]
-        rows = [dict(zip(cols, r, strict=False)) for r in c.fetchall()]
+def _load_enrich_data(conn):
+    """一次连接内收集 owned_bp / prod_to_bp / hangar_names（供 _enrich_rows 复用）。"""
+    owned_bp = {r[0] for r in conn.execute("SELECT DISTINCT blueprint_type_id FROM user_blueprints").fetchall()}
+    prod_to_bp: dict[int, list[int]] = {}
+    for tid, bpid in conn.execute(
+        "SELECT product_type_id, blueprint_type_id FROM bp.blueprint_products WHERE activity='manufacturing'"
+    ).fetchall():
+        prod_to_bp.setdefault(tid, []).append(bpid)
+    hangar_names = dict(conn.execute("SELECT id, name FROM hangars").fetchall())
+    return {"owned_bp": owned_bp, "prod_to_bp": prod_to_bp, "hangar_names": hangar_names}
 
-        owned_bp = {r[0] for r in conn.execute("SELECT DISTINCT blueprint_type_id FROM user_blueprints").fetchall()}
-        prod_to_bp: dict[int, list[int]] = {}
-        for tid, bpid in conn.execute(
-            "SELECT product_type_id, blueprint_type_id FROM bp.blueprint_products WHERE activity='manufacturing'"
-        ).fetchall():
-            prod_to_bp.setdefault(tid, []).append(bpid)
-        hangar_names = dict(conn.execute("SELECT id, name FROM hangars").fetchall())
 
+def _enrich_rows(rows: list[dict], enrich: dict) -> list[dict]:
+    """补 has_image/group_id/child_level/category + 机库显示名（内存派生，不落库）。"""
+    owned_bp = enrich["owned_bp"]
+    prod_to_bp = enrich["prod_to_bp"]
+    hangar_names = enrich["hangar_names"]
     for row in rows:
         ptid = row.get("product_type_id")
         has_bp = bool(row.get("assigned_blueprint_id")) or any(
@@ -201,6 +192,75 @@ def load_plans(filter_key: str) -> list[dict]:
 
     enrich_plan_hangar_names(rows, hangar_names)
     return rows
+
+
+def _fetch_rows(where_sql: str = "", params: tuple = ()) -> list[dict]:
+    """SELECT * FROM production_plans（可选 WHERE），统一排序与 enrich。"""
+    with get_container().db.connect("user", "bp") as conn:
+        sql = "SELECT * FROM production_plans"
+        if where_sql:
+            sql += " WHERE " + where_sql
+        sql += " ORDER BY created_at DESC"
+        c = conn.cursor()
+        c.execute(sql, params)
+        cols = [d[0] for d in c.description]
+        rows = [dict(zip(cols, r, strict=False)) for r in c.fetchall()]
+        enrich = _load_enrich_data(conn)
+    return _enrich_rows(rows, enrich)
+
+
+def load_plans(filter_key: str) -> list[dict]:
+    """加载生产计划列表，并补全蓝图可用标记/类别/机库名称。"""
+    where = ""
+    if filter_key == "待排":
+        where = "status = 'pending'"
+    elif filter_key == "运行中":
+        where = "status IN ('in_progress','running')"
+    elif filter_key == "待下线":
+        where = "status = 'ready'"
+    elif filter_key == "已完成":
+        where = "status IN ('completed','done')"
+    return _fetch_rows(where)
+
+
+def load_plans_for_wizard() -> list[dict]:
+    """产线启动小助手数据源：全部非完成计划（completed/done 排除），走同一 enrich。
+
+    占用区与中部列表共用这一次查询，内存拆用（active 子集 → 占用；选中角色 → 列表）。
+    """
+    return _fetch_rows("status NOT IN ('completed','done')")
+
+
+def group_and_sort_plans(plans: list[dict]) -> list[dict]:
+    """母项在前树状排序 + 独立计划殿后；为母项补 `_pending_children`（未完成子项数）。
+
+    有组（group_id!=0）的计划按组聚成连续块，块内母项(child_level==0)居首、
+    子项按 sub_level 升序依次在下；独立计划（无组）按原顺序殿后。纯函数（无 DB）。
+    """
+    from services.plan_start_check import pending_children_count
+
+    grouped: dict[int, list[dict]] = {}
+    standalone: list[dict] = []
+    for p in plans:
+        gid = int(p.get("group_id") or p.get("group_number") or 0)
+        if gid:
+            grouped.setdefault(gid, []).append(p)
+        else:
+            standalone.append(p)
+
+    def _group_key(p: dict) -> tuple:
+        level = int(p.get("child_level") or p.get("sub_level") or 0)
+        return (0 if level == 0 else 1, level, int(p.get("id") or 0))
+
+    ordered: list[dict] = []
+    for gid in sorted(grouped):
+        members = sorted(grouped[gid], key=_group_key)
+        for p in members:
+            if int(p.get("child_level") or 0) == 0:
+                p["_pending_children"] = pending_children_count(p, plans)
+        ordered.extend(members)
+    ordered.extend(standalone)
+    return ordered
 
 
 def collect_refresh_type_ids() -> tuple[set[int], int]:
