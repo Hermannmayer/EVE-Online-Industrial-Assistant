@@ -126,18 +126,7 @@ class ItemSearchDialog(QDialog):
 
     def _search_items(self, text: str) -> list[dict]:
         """item 表模糊匹配 + terminology.item_overrides 反向匹配基础矿物"""
-        results: list[dict] = []
-        like = f"%{text}%"
-        with get_container().db.connect("ref") as conn:
-            c = conn.cursor()
-            c.execute(
-                "SELECT type_id, zh_name, en_name FROM item "
-                "WHERE (zh_name LIKE ? OR en_name LIKE ?) "
-                "ORDER BY CASE WHEN en_name=? OR zh_name=? THEN 0 ELSE 1 END, "
-                "LENGTH(en_name), type_id LIMIT 20",
-                (like, like, text, text),
-            )
-            results = [{"type_id": r[0], "zh_name": r[1] or "", "en_name": r[2] or ""} for r in c.fetchall()]
+        results = get_container().item_repo.search_by_name(text, limit=20)
         # terminology.item_overrides 反向匹配（基础矿物 34-40 等不在 item 表，仅在此注册）
         term._ensure()
         overrides = term._data.get("item_overrides") or {}
