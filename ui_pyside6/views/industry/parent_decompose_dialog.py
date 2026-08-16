@@ -147,62 +147,42 @@ class ParentDecomposeDialog(QDialog):
     def _on_accept(self) -> None:
         from services import inventory_manager
 
-        conn = get_container().db.direct_connect("user")
-        try:
-            for plan, gnum, lines in self._assignments:
-                # 从材料机库带出星系（避免子计划空星系 → 回退吉他 SCI）
-                solar_system_id = inventory_manager.get_hangar_system_id(plan.get("mat_hangar_id"))
-                if plan.get("id"):
-                    conn.execute(
-                        "UPDATE production_plans SET group_number=?, sub_level=0 WHERE id=?",
-                        (gnum, plan["id"]),
+        repo = get_container().plan_repo
+        for plan, gnum, lines in self._assignments:
+            # 从材料机库带出星系（避免子计划空星系 → 回退吉他 SCI）
+            solar_system_id = inventory_manager.get_hangar_system_id(plan.get("mat_hangar_id"))
+            if plan.get("id"):
+                repo.update(plan["id"], group_number=gnum, sub_level=0)
+                plan["group_number"] = gnum
+                plan["sub_level"] = 0
+                plan["group_id"] = gnum
+                plan["child_level"] = 0
+            for line in lines:
+                name = self._resolve_name(line["product_type_id"])
+                existing_id = repo.find_by_group_product(gnum, line["product_type_id"])
+                if existing_id:
+                    # 重跑拆解：按新 line 整体刷新 runs/parallels/ME-TE，避免残留旧并行数导致超量
+                    repo.update(
+                        existing_id,
+                        runs=line["runs"],
+                        parallels=line["parallels"],
+                        me_level=line["me_level"],
+                        te_level=line["te_level"],
+                        materials_ready=1,
                     )
-                    plan["group_number"] = gnum
-                    plan["sub_level"] = 0
-                    plan["group_id"] = gnum
-                    plan["child_level"] = 0
-                for line in lines:
-                    name = self._resolve_name(line["product_type_id"])
-                    existing = conn.execute(
-                        "SELECT id FROM production_plans WHERE group_number=? AND product_type_id=?",
-                        (gnum, line["product_type_id"]),
-                    ).fetchone()
-                    if existing:
-                        # 重跑拆解：按新 line 整体刷新 runs/parallels/ME-TE，避免残留旧并行数导致超量
-                        conn.execute(
-                            "UPDATE production_plans SET runs=?, parallels=?, me_level=?, te_level=?, "
-                            "materials_ready=1 WHERE id=?",
-                            (
-                                line["runs"],
-                                line["parallels"],
-                                line["me_level"],
-                                line["te_level"],
-                                existing[0],
-                            ),
-                        )
-                    else:
-                        conn.execute(
-                            "INSERT INTO production_plans (product_type_id, product_name, blueprint_type_id, "
-                            "runs, parallels, me_level, te_level, status, group_number, sub_level, mat_hangar_id, "
-                            "solar_system_id, materials_ready) "
-                            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)",
-                            (
-                                line["product_type_id"],
-                                name,
-                                line["blueprint_type_id"],
-                                line["runs"],
-                                line["parallels"],
-                                line["me_level"],
-                                line["te_level"],
-                                "pending",
-                                gnum,
-                                line["sub_level"],
-                                plan.get("mat_hangar_id"),
-                                solar_system_id,
-                            ),
-                        )
-            conn.commit()
-        finally:
-            conn.close()
+                else:
+                    repo.insert_child_plan(
+                        product_type_id=line["product_type_id"],
+                        product_name=name,
+                        blueprint_type_id=line["blueprint_type_id"],
+                        runs=line["runs"],
+                        parallels=line["parallels"],
+                        me_level=line["me_level"],
+                        te_level=line["te_level"],
+                        group_number=gnum,
+                        sub_level=line["sub_level"],
+                        mat_hangar_id=plan.get("mat_hangar_id"),
+                        solar_system_id=solar_system_id,
+                    )
         QMessageBox.information(self, "完成", f"已拆解 {self._total_lines} 个子项产线")
         self.accept()
