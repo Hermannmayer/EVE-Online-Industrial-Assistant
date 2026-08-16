@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPalette
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -14,9 +13,6 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QMenu,
     QMessageBox,
-    QStyle,
-    QStyledItemDelegate,
-    QStyleOptionViewItem,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -25,147 +21,18 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
-from ui_pyside6.icon_cache import load_item_icon
 from ui_pyside6.models.industry_models import PlanTableModel
-
-# ── 列索引常量（与 PlanTableModel._HEADERS 对齐） ────────────
-COL_CHECKBOX = 0
-COL_CATEGORY = 1
-COL_ICON = 2
-COL_PRODUCT = 3
-COL_NOTES = 4
-COL_GROUP = 5
-COL_CHILD_LEVEL = 6
-COL_STATUS = 7
-COL_CHAR_NAME = 8
-COL_RUNS = 9
-COL_BLUEPRINT = 10
-COL_TIME = 11
-COL_OUTPUT_RATE = 12
-COL_FACILITY = 13
-COL_OUTPUT = 14
-COL_COST = 15
-COL_PROFIT = 16
-COL_MARKET_MARGIN = 17
-COL_PERSONAL_MARGIN = 18
-
-_NUM_COLUMNS = 19
-
-# 固定窄列宽度（px）：备料勾选列需容纳 8px padding + 16px 复选框 + 余量；图标列适配 32px 图标
-_FIXED_WIDTHS = {COL_CHECKBOX: 34, COL_ICON: 36}
-
-
-class _ReadyButtonDelegate(QStyledItemDelegate):
-    """状态列「待下线」渲染为按钮外观（点击仍走 _on_cell_clicked 单独下线）"""
-
-    def paint(self, painter, option, index):
-        if index.column() == COL_STATUS and index.data(Qt.ItemDataRole.DisplayRole) == "待下线":
-            self._paint_button(painter, option)
-            return
-        super().paint(painter, option, index)
-
-    def _paint_button(self, painter, option):
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        rect = option.rect.adjusted(6, 3, -6, -3)
-        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
-        bg = QColor(theme.ACCENT_ORANGE)
-        if hovered:
-            bg = bg.lighter(118)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(bg)
-        painter.drawRoundedRect(rect, 4, 4)
-        painter.setPen(QColor(theme.TEXT_ON_PRIMARY))
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "待下线")
-        painter.restore()
-
-    def sizeHint(self, option, index):
-        if index.column() == COL_STATUS and index.data(Qt.ItemDataRole.DisplayRole) == "待下线":
-            return QSize(64, 22)
-        return super().sizeHint(option, index)
-
-
-def _remaining(p: dict, now: datetime | None = None) -> int | None:
-    """计划剩余秒（进行中）；非进行中/无 started_at 返回 None"""
-    from services.plan_execution import remaining_seconds
-
-    return remaining_seconds(p, now=now)
-
-
-class PlanTableDelegate(QStyledItemDelegate):
-    """PlanTableModel 渲染 delegate — 染色/图标/类别底色/复选框/对齐/尺寸。
-
-    模型 data() 只暴露 DisplayRole（已算文本）+ UserRole（原始行 dict），
-    纯展示职责（前景色/底色/图标/复选框/对齐/尺寸）在此 delegate 完成。
-    """
-
-    def _foreground(self, p: dict, c: int) -> QColor | None:
-        if c == COL_PROFIT:
-            profit = p.get("profit", 0) or 0
-            if profit > 0:
-                return QColor(theme.GREEN)
-            if profit < 0:
-                return QColor(theme.RED)
-        if c == COL_TIME:
-            status = p.get("status", "")
-            if status in ("in_progress", "running"):
-                rem = _remaining(p)
-                if rem is not None and rem <= 0:
-                    return QColor(theme.ACCENT_RED)
-                return QColor(theme.PRIMARY)
-            if status == "ready":
-                return QColor(theme.ACCENT_ORANGE)
-        if c == COL_STATUS:
-            status = p.get("status", "")
-            if status in ("completed", "done"):
-                return QColor(theme.GREEN)
-            if status in ("in_progress", "running"):
-                return QColor(theme.PRIMARY)
-            if status == "ready":
-                return QColor(theme.ACCENT_ORANGE)
-            if status == "pending":
-                return QColor(theme.TEXT_SECONDARY)
-        return None
-
-    def initStyleOption(self, option, index):
-        super().initStyleOption(option, index)
-        p = index.data(Qt.ItemDataRole.UserRole) or {}
-        c = index.column()
-
-        fg = self._foreground(p, c)
-        if fg is not None:
-            option.palette.setColor(QPalette.ColorRole.Text, fg)
-
-        _CATEGORY_COLORS = {
-            "copying": theme.ACCENT_CYAN,
-            "invention": theme.ACCENT_PURPLE,
-            "reaction": theme.ACCENT_GREEN,
-        }
-        color = _CATEGORY_COLORS.get(str(p.get("category", "manufacturing")))
-        if color:
-            option.palette.setColor(QPalette.ColorRole.Base, QColor(color))
-
-        if c == COL_ICON:
-            pixmap = load_item_icon(p.get("product_type_id"))
-            if pixmap is not None:
-                option.icon = QIcon(pixmap)
-                # super().initStyleOption 只在 DecorationRole 提供图标时设置
-                # HasDecoration；此处手动赋值 option.icon 后必须补上该标志，
-                # 否则 QStyle 绘制时跳过图标（生产规划表格图标不显示的根因）
-                option.features |= QStyleOptionViewItem.ViewItemFeature.HasDecoration
-
-        if c == COL_CHECKBOX:
-            option.features |= QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
-            option.checkState = Qt.CheckState.Checked if p.get("materials_ready", 0) else Qt.CheckState.Unchecked
-            option.displayAlignment = Qt.AlignmentFlag.AlignCenter
-
-    def sizeHint(self, option, index):
-        c = index.column()
-        if c == COL_CHECKBOX:
-            return QSize(26, 26)
-        if c == COL_ICON:
-            return QSize(36, 36)
-        return super().sizeHint(option, index)
+from ui_pyside6.views.industry.plan_table_constants import (
+    COL_BLUEPRINT,
+    COL_CHECKBOX,
+    COL_CHILD_LEVEL,
+    COL_GROUP,
+    COL_PRODUCT,
+    COL_STATUS,
+    FIXED_WIDTHS,
+    NUM_COLUMNS,
+)
+from ui_pyside6.views.industry.plan_table_delegate import PlanTableDelegate, ReadyButtonDelegate
 
 
 class PlanTable(QWidget):
@@ -192,7 +59,7 @@ class PlanTable(QWidget):
         self._table.verticalHeader().setVisible(False)
         self._configure_adaptive_columns()
         # 状态列「待下线」渲染成按钮（点击走 _on_cell_clicked）
-        self._table.setItemDelegateForColumn(COL_STATUS, _ReadyButtonDelegate(self._table))
+        self._table.setItemDelegateForColumn(COL_STATUS, ReadyButtonDelegate(self._table))
         # 其余列展示职责（染色/图标/底色/复选框/对齐/尺寸）交给 PlanTableDelegate
         self._table.setItemDelegate(PlanTableDelegate(self._table))
 
@@ -233,10 +100,10 @@ class PlanTable(QWidget):
         STRETCH = {COL_PRODUCT}  # 产品名
         # 备料勾选 / 图标列固定窄宽（适配复选框与图标，避免被内容/表头撑宽）
 
-        for col in range(_NUM_COLUMNS):
-            if col in _FIXED_WIDTHS:
+        for col in range(NUM_COLUMNS):
+            if col in FIXED_WIDTHS:
                 header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
-                header.resizeSection(col, _FIXED_WIDTHS[col])
+                header.resizeSection(col, FIXED_WIDTHS[col])
             elif col in NARROW:
                 header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
             elif col in STRETCH:
@@ -253,7 +120,7 @@ class PlanTable(QWidget):
         self._table.resizeColumnsToContents()
         header = self._table.horizontalHeader()
         # 收紧固定窄列（备料勾选/图标），避免被内容或表头撑宽
-        for col, w in _FIXED_WIDTHS.items():
+        for col, w in FIXED_WIDTHS.items():
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
             header.resizeSection(col, w)
         # 确保产品列至少有 120px，但不超过可用空间一半
@@ -318,7 +185,7 @@ class PlanTable(QWidget):
     def _toggle_column(self, col: int, visible: bool, checks: list[QCheckBox]) -> None:
         """切换列可见性，但至少保留 1 列"""
         if not visible:
-            visible_count = sum(1 for c in range(_NUM_COLUMNS) if c != col and not self._table.isColumnHidden(c))
+            visible_count = sum(1 for c in range(NUM_COLUMNS) if c != col and not self._table.isColumnHidden(c))
             if visible_count == 0:
                 checks[col].blockSignals(True)
                 checks[col].setChecked(True)
