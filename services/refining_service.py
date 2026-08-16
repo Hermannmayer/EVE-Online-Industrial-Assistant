@@ -11,6 +11,20 @@ class RefiningService:
         self._db = db
         self._pricing = pricing_service or PricingService(db)
 
+    def filter_refinable(self, items: list[dict]) -> list[dict]:
+        """过滤出有精炼材料数据的物品。"""
+        model_items = []
+        with self._db.connect("ref") as conn:
+            cur = conn.cursor()
+            for item in items:
+                cur.execute(
+                    "SELECT COUNT(*) FROM reprocessing_materials WHERE type_id = ?",
+                    (item["type_id"],),
+                )
+                if cur.fetchone()[0] > 0:
+                    model_items.append(item)
+        return model_items
+
     def calc_value(
         self,
         type_id,
