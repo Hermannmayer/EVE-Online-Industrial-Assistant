@@ -14,12 +14,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.container import get_container
 from services.inventory_manager import (
     get_hangars,
     init_db,
 )
-from services.name_resolver import resolve_system_names_batch
 
 from .blueprint_tab import BlueprintTab
 from .hangar_tab import HangarTab
@@ -94,13 +92,9 @@ class InventoryPage(QWidget):
 
     def _system_names(self, solar_system_ids: list[int]) -> dict[int, str]:
         """批量查询星系显示名（中文 (英文)）；星系数据未加载时返回空。"""
-        if not solar_system_ids:
-            return {}
-        try:
-            with get_container().db.connect("ref") as conn:
-                return resolve_system_names_batch(conn, solar_system_ids)
-        except Exception:
-            return {}
+        from services.name_resolver import resolve_system_display_names_batch
+
+        return resolve_system_display_names_batch(solar_system_ids)
 
     def _on_hangar_changed(self, idx):
         if idx < 0:
