@@ -6,6 +6,161 @@
 
 <!-- version list -->
 
+## v0.16.0 (2026-08-16)
+
+### Bug Fixes
+
+- Repair 16 tests and cancel semantics broken by recent refactor
+  ([`1b95a62`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/1b95a628db179248b13aa037437125dec1585302))
+
+### Chores
+
+- Remove compat shims query_view/compare_dialog/inventory_view and update test imports
+  ([`a29a57b`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a29a57b9ec75380712e9a086776b8e348fd23255))
+
+### Features
+
+- Auto-backup user data before schema migration and version settings.json
+  ([`5ef6e2b`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5ef6e2b67cef634760cbdef6be637c057f5e4bf1))
+
+### Refactoring
+
+- Add APIClient.post and route remaining ESI calls through shared client
+  ([`e9a7836`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/e9a783607402020a6326939737721d9e8ede7c7a))
+
+- Converge all UI direct SQL into services/repositories and sync uv.lock version
+  ([`8bb9f5f`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/8bb9f5f68753427b909192b78f3e3bb65670f7a1))
+
+- Extract all-items market browser queries to services/market_browser_service.py
+  ([`d3ce6d8`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d3ce6d8a759da7ddeac94058e14af253848eecaa))
+
+- Extract contract database queries to services/contract_service.py
+  ([`8b69ca2`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/8b69ca2c47093c4e25b6e7eaa46be7536590d9c6))
+
+- Extract implant data loading to services/implant_loader.py
+  ([`17cb358`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/17cb358999f813e0d7aedac6f40aef6a32a0b380))
+
+- Extract industry page workers to ui_pyside6/workers/industry_page_workers.py
+  ([`ac50ec6`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/ac50ec68aa960371ef003fd761a2c034ab646d4c))
+
+- Extract inventory clipboard parsing and market price batch to services
+  ([`f4863bd`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/f4863bded4e4a9e57b9588ce2b58881737e1ca33))
+
+- Extract main window navigation/page registration into MainWindowNavMixin
+  ([`0f7c575`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/0f7c5754cd0811bc2659ac7f3003e4503e65894a))
+
+- Extract main window price workers to ui_pyside6/workers/main_window_workers.py
+  ([`8409324`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/840932473a8bc1871283a764e6344336421b6178))
+
+- Extract procurement calculation to services/procurement_service.py
+  ([`5f5f26c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5f5f26c25e792e87c19c8d733accaba1bbada936))
+
+- Fix data integrity, concurrency, layering and tech debt from audit
+  ([`812fade`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/812fade2cbd5085bd65c3109554a8dd5a2d7a48b))
+
+- Further audit fixes for caches, packaging, hot reload, research cost, icons
+  ([`2823b7e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/2823b7ed312023b2c9727f446f6435b97ef5edf3))
+
+- Improve QThread parent/strong references and use requestInterruption instead of quit
+  ([`36ef5fb`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/36ef5fb0dc7cd71dd9252784766c93feb1b1b96b))
+
+- Make core.container services imports lazy to reduce import-time coupling
+  ([`ea0f5b5`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/ea0f5b5fe1962f3261c98312fc7856c687bc02b6))
+
+- Migrate contract fetcher to shared APIClient with global rate limiting
+  ([`b81626c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b81626ca6d6935770e57c91626bed594a355186e))
+
+- Move DI container to bootstrap/ and keep core/container as compatibility shim
+  ([`323925e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/323925ea5a4c3750839e14bebf53f332e8d8b047))
+
+- Move industry refresh type-id collection into plan_service
+  ([`9ba1ee1`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/9ba1ee160c3fc0abb0c86c714e1eab2f73e3bad8))
+
+- Move plan category colors from services to UI theme layer
+  ([`f5b2c8a`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/f5b2c8a2c95bbab382ca6cf0add2f554cdac7caa))
+
+- Move procurement loading and price snapshot saving into plan_service
+  ([`f1eb530`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/f1eb530b196462201f87de593d8f1ef97e342f09))
+
+- Move production plan loading into plan_service.load_plans
+  ([`435bb7d`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/435bb7d2113cf1846c96f4cf96653aaaf28c07e7))
+
+- Move refinable filtering into RefiningService
+  ([`c8d1499`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/c8d1499ef4cf7ec3de6072224d6dc3e587420d95))
+
+- Move scoring facade to services and eliminate services->application dependency
+  ([`afd7a9b`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/afd7a9b94cb72cfd368fa1c46d42baef852252a2))
+
+- Move system name lookup to name_resolver service for hangar settings
+  ([`34a7247`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/34a7247f2e910493af885aa552a1b8c959b7fc00))
+
+- Move targeted price refresh cache/save into services/price_refresh_service.py
+  ([`6e0eca4`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/6e0eca4bfc4506f1d3282b3d95763a63dbc065e3))
+
+- Point internal imports to new UI subpackages, reducing compat shim usage
+  ([`140d5db`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/140d5db94ff0471ce7ddd7cb96685fca422f648d))
+
+- Register price_snapshots DDL in schema_migrations user v10→v11 and remove UI DDL
+  ([`5f07486`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5f0748699a0d3d567804a1fb5daa8cb5546cd264))
+
+- Remove dead application layer and align architecture docs
+  ([`51618cf`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/51618cf68d825d5e1e749c6f1a310fa875895a58))
+
+- Replace hardcoded UI colors with theme constants
+  ([`56a79f7`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/56a79f7828278a9abe008af0a00bd77dbfed3c13))
+
+- Replace industry page item search/blueprint check with repositories
+  ([`0119f47`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/0119f47a4c3f7fd77671233f38b5c11255f9c7ce))
+
+- Route child parallel and parent decompose updates through PlanRepository
+  ([`288967c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/288967c4723ce268b653d96b2ee213889a728e02))
+
+- Split CharSettingsDialog pages/formulas into char_settings_common and char_settings_pages
+  ([`fc8e1a3`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/fc8e1a332b1271c5318089cf26795d680c5ecd2c))
+
+- Split PlanTable delegate and column constants into separate modules
+  ([`fdb422b`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/fdb422b137f898316edb92119f81a601488a8250))
+
+- Unify remaining production plan insert paths and add ESI limiter to contract/name calls
+  ([`2c041d1`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/2c041d1135b1a24bab36e5dc79d547709145800e))
+
+- Use blueprint repository in query search add-to-plan path
+  ([`2e6a5e7`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/2e6a5e7739a08a2e564089f486385d86be6e898f))
+
+- Use item repository for market tree queries in blueprint tab
+  ([`683f8db`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/683f8db102ae22c4cf463e24577245c2eca3fdd2))
+
+- Use item repository for score dialog titles
+  ([`ce3036e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/ce3036e883accc9e9e29d4174d45b2fe7c49d703))
+
+- Use item repository in compare chart search/name helpers
+  ([`6b3ac24`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/6b3ac249112a704364329f7376ec0241176b250e))
+
+- Use item repository in inventory item search dialog
+  ([`24f3592`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/24f359275e6e5ce6f417ca1485e0ae324b262911))
+
+- Use item repository in watchlist suggestion worker
+  ([`3b42486`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/3b424865a8f685f100f560c9d32439898056fd2d))
+
+- Use market repository batch price query in blueprint tab
+  ([`a3198e6`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a3198e6fdf5fe585d56ded9cd7cbd1c411552cbd))
+
+- Use market repository for main window price age query
+  ([`92a8d3d`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/92a8d3da748a85d6fc9ea2e4f8d20fb51d2aae58))
+
+- Use market repository in inventory review dialog price operations
+  ([`560ecf2`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/560ecf275b37d0d0456783f75f4027bfd9f1128b))
+
+- Use name resolver service in inventory page system name lookup
+  ([`08fe92c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/08fe92c40c5a5a8ac5230ddf6d658d52405225cd))
+
+- Use repositories in batch price dialog queries
+  ([`bf2b192`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/bf2b192e51fd74f8969ce487b40d82ef35995a36))
+
+- Use repositories in hangar paste import dialog
+  ([`a2b4243`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a2b4243d681af0fbb04b32c4af87520549f4e0b1))
+
+
 ## v0.15.4 (2026-08-15)
 
 ### Performance Improvements
