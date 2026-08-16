@@ -580,52 +580,13 @@ class IndustryPage(QWidget):
 
     def _on_industry_refresh(self):
         """刷新按钮点击 → 收集 type_id → 启动定向 ESI 价格拉取"""
-        # 1. 获取活跃计划
-        with get_container().db.connect("user") as conn:
-            c = conn.execute(
-                "SELECT id, product_type_id FROM production_plans "
-                "WHERE status IN ('pending','in_progress','running','ready')"
-            )
-            plans = c.fetchall()
+        # 1. 收集产品/物料 type_ids 并检查缓存
+        from services.plan_service import collect_refresh_type_ids
 
-        if not plans:
-            self.load_plans()
-            return
-
-        # 2. 收集产品 type_ids
-        product_ids = {r[1] for r in plans}
-
-        # 3. 从 blueprint.db 查物料 type_ids（复用 _on_save_prices 的 JOIN 写法）
-        with get_container().db.connect("bp") as conn:
-            placeholders = ",".join("?" for _ in product_ids)
-            c = conn.execute(
-                "SELECT DISTINCT bm.material_type_id "
-                "FROM blueprint_products bp "
-                "JOIN blueprint_materials bm ON bm.blueprint_type_id=bp.blueprint_type_id "
-                "AND bm.activity=bp.activity "
-                f"WHERE bp.product_type_id IN ({placeholders}) AND bp.activity='manufacturing'",
-                list(product_ids),
-            )
-            material_ids = {r[0] for r in c.fetchall()}
-
-        # 4. 合并为唯一 type_ids
-        all_ids: set[int] = product_ids | material_ids
+        all_ids, is_cached = collect_refresh_type_ids()
         if not all_ids:
             self.load_plans()
             return
-
-        # 5. 进度反馈 + 启动后台拉取
-        # 先检查缓存是否有效（如果全部已缓存则跳过进度提示）
-        is_cached = 0
-        with get_container().db.connect("mkt") as conn:
-            ph = ",".join("?" for _ in all_ids)
-            c = conn.execute(
-                f"SELECT COUNT(*) FROM market_prices WHERE type_id IN ({ph}) "
-                "AND region_id=10000002 "
-                "AND fetch_time > datetime('now', '-5 minutes', 'utc')",
-                list(all_ids),
-            )
-            is_cached = (c.fetchone() or [0])[0]
 
         suffix = "（可能使用缓存）" if is_cached == len(all_ids) else ""
         self._status_bar.show_message(f"正在获取 {len(all_ids)} 个物品的价格{suffix}...")
