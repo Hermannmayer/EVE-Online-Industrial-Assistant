@@ -6,6 +6,14 @@
 
 <!-- version list -->
 
+## v0.16.1 (2026-08-16)
+
+### Bug Fixes
+
+- Clear pre-commit debt left by refactor (format, mypy, docs)
+  ([`3819680`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/38196803a9f8f4e13d7d98c8837a0550f5b14fee))
+
+
 ## v0.16.0 (2026-08-16)
 
 ### Bug Fixes
