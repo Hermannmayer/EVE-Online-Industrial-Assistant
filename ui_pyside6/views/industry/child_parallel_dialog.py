@@ -207,18 +207,12 @@ class ChildParallelDialog(QDialog):
         self._ok_btn.setEnabled(ok)
 
     def _on_accept(self) -> None:
-        conn = get_container().db.direct_connect("user")
-        try:
-            for idx, (par, _runs_item, _chk, _out, p) in enumerate(self._rows):
-                runs = self._current_runs(idx)
-                conn.execute(
-                    "UPDATE production_plans SET parallels=?, runs=? WHERE id=?",
-                    (par.value(), runs, p["id"]),
-                )
-                p["parallels"] = par.value()
-                p["runs"] = runs
-            conn.commit()
-        finally:
-            conn.close()
+        rows = []
+        for idx, (par, _runs_item, _chk, _out, p) in enumerate(self._rows):
+            runs = self._current_runs(idx)
+            rows.append((p["id"], {"parallels": par.value(), "runs": runs}))
+            p["parallels"] = par.value()
+            p["runs"] = runs
+        get_container().plan_repo.update_batch(rows)
         QMessageBox.information(self, "完成", f"已更新 {len(self._rows)} 个子项的并行配置")
         self.accept()

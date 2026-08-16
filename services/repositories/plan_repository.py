@@ -85,6 +85,15 @@ class PlanRepository:
                 rows = conn.execute("SELECT * FROM production_plans ORDER BY created_at DESC").fetchall()
             return [dict(r) for r in rows]
 
+    def find_by_group_product(self, group_number: int, product_type_id: int) -> int | None:
+        """按分组号+产品查找已存在的子计划 id。"""
+        with self._db.connect("user") as conn:
+            r = conn.execute(
+                "SELECT id FROM production_plans WHERE group_number=? AND product_type_id=? LIMIT 1",
+                (group_number, product_type_id),
+            ).fetchone()
+            return int(r[0]) if r else None
+
     def save(self, plan: dict) -> int:
         with self._db.connect("user") as conn:
             now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
@@ -158,6 +167,46 @@ class PlanRepository:
                 cur = conn.execute(f"UPDATE production_plans SET {sets} WHERE id = ?", vals)
                 total += int(cur.rowcount)
         return total
+
+    def insert_child_plan(
+        self,
+        *,
+        product_type_id: int,
+        product_name: str,
+        blueprint_type_id: int,
+        runs: int,
+        parallels: int,
+        me_level: int,
+        te_level: int,
+        group_number: int,
+        sub_level: int,
+        mat_hangar_id: int | None,
+        solar_system_id: int | None,
+    ) -> int:
+        """插入一条拆解子计划（含分组/层级/机库字段）。"""
+        with self._db.connect("user") as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO production_plans
+                (product_type_id, product_name, blueprint_type_id, runs, parallels, me_level, te_level,
+                 status, group_number, sub_level, mat_hangar_id, solar_system_id, materials_ready)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, 1)
+                """,
+                (
+                    product_type_id,
+                    product_name,
+                    blueprint_type_id,
+                    runs,
+                    parallels,
+                    me_level,
+                    te_level,
+                    group_number,
+                    sub_level,
+                    mat_hangar_id,
+                    solar_system_id,
+                ),
+            )
+            return int(cur.lastrowid or 0)
 
     def delete_many(self, plan_ids: list[int]) -> int:
         """批量删除计划（蓝图表关联清理由调用方 release_blueprint 处理）。返回删除行数。"""
