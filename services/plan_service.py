@@ -199,3 +199,41 @@ def load_plans(filter_key: str) -> list[dict]:
 
     enrich_plan_hangar_names(rows, hangar_names)
     return rows
+
+
+def collect_refresh_type_ids() -> tuple[set[int], int]:
+    """收集工业页定向刷新所需的 type_id 集合，并返回其中 5 分钟内已缓存的条数。"""
+    with get_container().db.connect("user") as conn:
+        rows = conn.execute(
+            "SELECT id, product_type_id FROM production_plans "
+            "WHERE status IN ('pending','in_progress','running','ready')"
+        ).fetchall()
+        product_ids = {r[1] for r in rows}
+
+    material_ids: set[int] = set()
+    if product_ids:
+        with get_container().db.connect("bp") as conn:
+            placeholders = ",".join("?" for _ in product_ids)
+            material_rows = conn.execute(
+                "SELECT DISTINCT bm.material_type_id "
+                "FROM blueprint_products bp "
+                "JOIN blueprint_materials bm ON bm.blueprint_type_id=bp.blueprint_type_id "
+                "AND bm.activity=bp.activity "
+                f"WHERE bp.product_type_id IN ({placeholders}) AND bp.activity='manufacturing'",
+                list(product_ids),
+            ).fetchall()
+            material_ids = {r[0] for r in material_rows}
+
+    all_ids = product_ids | material_ids
+    is_cached = 0
+    if all_ids:
+        with get_container().db.connect("mkt") as conn:
+            ph = ",".join("?" for _ in all_ids)
+            row = conn.execute(
+                f"SELECT COUNT(*) FROM market_prices WHERE type_id IN ({ph}) "
+                "AND region_id=10000002 "
+                "AND fetch_time > datetime('now', '-5 minutes', 'utc')",
+                list(all_ids),
+            ).fetchone()
+            is_cached = int(row[0]) if row else 0
+    return all_ids, is_cached
