@@ -61,6 +61,9 @@ python_version = "3.14"
 # Windows 专用代码在 CI 报错，这里固定为 win32。
 platform = "win32"
 strict = false
+# 排除 pytest 的临时目录（test_mtime_changed 等在项目根生成 pytest-of-* 产物，
+# 全量测试后会被 mypy 扫描成重复模块）
+exclude = ["pytest-of-.*"]
 warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = false

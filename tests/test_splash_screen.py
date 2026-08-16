@@ -19,20 +19,21 @@ def test_set_stage_updates_label(splash):
 
 
 def test_init_all_steps_checking(splash):
-    """构造后全部步骤显示「检查中」状态。"""
+    """构造后全部步骤显示「检查中」状态（Phosphor 圆点图标）。"""
     for icon in splash._icon_rows.values():
-        assert icon.text() == "·"
+        assert not icon.pixmap().isNull()
+        assert icon.text() == ""
 
 
 def test_set_component_ready(splash):
     splash.set_component("items", "物品数据", True)
-    assert splash._icon_rows["items"].text() == "✓"
+    assert not splash._icon_rows["items"].pixmap().isNull()
     assert "就绪" in splash._msg_label.text()
 
 
 def test_set_component_missing(splash):
     splash.set_component("icons", "物品图标", False)
-    assert splash._icon_rows["icons"].text() == "✗"
+    assert not splash._icon_rows["icons"].pixmap().isNull()
     assert "未就绪" in splash._msg_label.text()
 
 

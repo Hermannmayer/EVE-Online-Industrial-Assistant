@@ -3,11 +3,12 @@
 """
 
 import os
+import sys
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from PySide6.QtCore import QSize, Qt, QThread, QTimer
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import QEvent, QSize, Qt, QThread, QTimer
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUBS
 from core.container import get_container
@@ -46,21 +48,34 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
         ensure_dirs_exist()
 
         self.setWindowTitle("EVE 商人助手")
+        # 无边框窗口：专属标题栏（拖动/窗口控制/边缘缩放）
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
+        # 透明窗口背景：让 DWM acrylic/mica 毛玻璃透过玻璃表面（solid 主题仍全不透明）
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumSize(1200, 700)
 
         # ── 主题 ──
         self.setStyleSheet(theme.get_stylesheet())
         # 加载上次主题偏好（theme.apply_theme 会触发 _on_theme_changed 重设样式表）
         saved_theme = theme.load_theme_preference()
-        if saved_theme != "dark":
-            theme.apply_theme(saved_theme)
-            # 手动刷新样式表，因为 _on_theme_changed 监听器尚未注册
-            self.setStyleSheet(theme.get_stylesheet())
+        theme.apply_theme(saved_theme)
+        # 手动刷新样式表，因为 _on_theme_changed 监听器尚未注册
+        self.setStyleSheet(theme.get_stylesheet())
 
         # ── 更新区域勾选（默认仅 Jita，可从 settings 读取）──
         self._update_regions: list[str] = self._load_update_regions()
 
-        # ── 顶部工具栏 ──
+        # ── 无边框窗口：标题栏（最顶行，右上角窗口控制/置顶） ──
+        from ui_pyside6.title_bar import FramelessResizeFilter, TitleBar
+
+        self._title_bar = TitleBar("EVE 商人助手")
+        self._pin_btn = self._title_bar._pin_btn
+        self._pin_btn.toggled.connect(self._on_pin_toggled)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self._title_bar)
+        # 强制标题栏与主工具栏分行（否则 QMainWindow 可能并排放置，标题栏被压缩）
+        self.addToolBarBreak(Qt.ToolBarArea.TopToolBarArea)
+
+        # ── 顶部工具栏（操作行） ──
         toolbar = QToolBar("主工具栏")
         toolbar.setObjectName("main_toolbar")
         toolbar.setMovable(False)
@@ -76,17 +91,28 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
 
         # 更新价格（纯按钮）
         self._update_btn = QToolButton()
-        self._update_btn.setText("↻ 更新价格")
         self._update_btn.setObjectName("toolbar_update_btn")
+        icons.set_button_icon(self._update_btn, "refresh", text="更新价格")
         self._update_btn.clicked.connect(self._trigger_price_update)
         toolbar.addWidget(self._update_btn)
 
-        self._price_age_label = QLabel("⏳ 价格: —")
+        price_wrap = QWidget()
+        price_wrap.setObjectName("price_wrap")
+        price_layout = QHBoxLayout(price_wrap)
+        price_layout.setContentsMargins(8, 0, 4, 0)
+        price_layout.setSpacing(4)
+        self._price_age_dot = QLabel()
+        self._price_age_dot.setFixedSize(12, 12)
+        self._price_age_label = QLabel("价格: —")
         self._price_age_label.setObjectName("price_age_label")
-        self._price_age_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; padding: 0 8px;")
-        toolbar.addWidget(self._price_age_label)
+        self._price_age_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
+        price_layout.addWidget(self._price_age_dot)
+        price_layout.addWidget(self._price_age_label)
+        toolbar.addWidget(price_wrap)
 
-        self.addToolBar(toolbar)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+
+        self._window_pin = self._load_window_pin()
 
         # ── 状态栏（精简） ──
         self.status_bar = QStatusBar()
@@ -155,17 +181,11 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
         self._auto_update_btn.toggled.connect(self._on_auto_update_toggled)
         toolbar.addWidget(self._auto_update_btn)
 
-        # ── 置顶按钮（工具栏最右侧） ──
-        self._pin_btn = QToolButton()
-        self._pin_btn.setObjectName("pin_btn")
-        self._pin_btn.setCheckable(True)
-        self._pin_btn.setText("📌 置顶")
-        self._pin_btn.setToolTip("窗口置顶（点击切换开/关）")
-        self._pin_btn.toggled.connect(self._on_pin_toggled)
-        toolbar.addWidget(self._pin_btn)
-        self._window_pin = self._load_window_pin()
+        # 置顶初始状态（按钮在标题栏，由 _on_pin_toggled / _apply_pin 管理）
         self._pin_btn.blockSignals(True)
         self._pin_btn.setChecked(self._window_pin)
+        if self._window_pin:
+            icons.set_button_icon(self._pin_btn, "pin", theme.TEXT_ON_PRIMARY, 14)
         self._pin_btn.blockSignals(False)
 
         # ── 启动周期性价格定时器 ──
@@ -194,6 +214,11 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
         # ── 系统托盘图标（延迟创建，确保窗口初始化完成） ──
         self._tray_icon: QSystemTrayIcon | None = None
         QTimer.singleShot(100, self._init_tray_icon)
+
+        # ── 无边框窗口：边缘缩放（Windows 由 WM_NCHITTEST 原生处理；其他平台用事件过滤器） ──
+        if sys.platform != "win32":
+            self._resize_filter = FramelessResizeFilter(self)
+            self.installEventFilter(self._resize_filter)
 
     def show_progress(self, text: str = "", maximum: int = 0):
         """显示进度条（0=不确定模式）"""
@@ -377,13 +402,18 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
         except Exception as ex:
             self._status_label.setText(f"价格变化检测失败: {ex}")
 
+    def _set_price_age(self, text: str, color: str):
+        """更新价格年龄标签（含状态圆点图标）"""
+        self._price_age_dot.setPixmap(icons.themed_icon("circle", 12, color).pixmap(12, 12))
+        self._price_age_label.setText(text)
+        self._price_age_label.setStyleSheet(f"color: {color};")
+
     def _refresh_price_age(self):
         """刷新工具栏上的价格年龄标签"""
         try:
             latest = get_container().market_repo.get_latest_fetch_time()
             if not latest:
-                self._price_age_label.setText("⏳ 价格: 暂无数据")
-                self._price_age_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; padding: 0 8px;")
+                self._set_price_age("价格: 暂无数据", theme.TEXT_SECONDARY)
                 return
             utc_str = latest
             try:
@@ -394,22 +424,18 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
 
                 if diff_min < 10:
                     color = theme.GREEN
-                    age_text = f"🟢 {diff_min} 分钟前"
                 elif diff_min < 30:
                     color = theme.ACCENT_YELLOW
-                    age_text = f"🟡 {diff_min} 分钟前"
                 else:
                     color = theme.ACCENT_RED
-                    age_text = f"🔴 {diff_min} 分钟前"
 
                 bj_dt = dt.replace(tzinfo=UTC) + timedelta(hours=8)
                 bj_str = bj_dt.strftime("%H:%M")
-                self._price_age_label.setText(f"⏳ 价格: {age_text} ({bj_str})")
-                self._price_age_label.setStyleSheet(f"color: {color}; padding: 0 8px;")
+                self._set_price_age(f"价格: {diff_min} 分钟前 ({bj_str})", color)
             except Exception:
-                self._price_age_label.setText("⏳ 价格: 解析异常")
+                self._set_price_age("价格: 解析异常", theme.TEXT_SECONDARY)
         except Exception:
-            self._price_age_label.setText("⏳ 价格: 数据库未就绪")
+            self._set_price_age("价格: 数据库未就绪", theme.TEXT_SECONDARY)
 
     # ═══════════════════════════════════════
     #  其他事件
@@ -418,106 +444,35 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
     # ── 图标绘制 ──
 
     def _create_person_icon(self, size: int = 20) -> QIcon:
-        """绘制人物剪影图标"""
-        pixmap = QPixmap(size, size)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(theme.TEXT_SECONDARY))
-        # 头（圆形）
-        head_radius = size * 0.16
-        cx, cy = size / 2, size * 0.28
-        painter.drawEllipse(int(cx - head_radius), int(cy - head_radius), int(head_radius * 2), int(head_radius * 2))
-        # 身体（梯形）
-        body = QPainterPath()
-        body_w = size * 0.3
-        body_top_y = size * 0.44
-        body_bot_y = size * 0.88
-        body.moveTo(cx - body_w * 0.7, body_bot_y)
-        body.lineTo(cx + body_w * 0.7, body_bot_y)
-        body.lineTo(cx + body_w * 0.5, body_top_y)
-        body.lineTo(cx - body_w * 0.5, body_top_y)
-        body.closeSubpath()
-        painter.drawPath(body)
-        painter.end()
-        return QIcon(pixmap)
+        """人物剪影图标 → Phosphor user"""
+        return icons.themed_icon("user", size, theme.TEXT_SECONDARY)
 
     def _create_settings_icon(self, size: int = 20) -> QIcon:
-        """绘制齿轮/设置图标"""
-        pixmap = QPixmap(size, size)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QColor(theme.TEXT_SECONDARY), 2)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-
-        cx, cy = size / 2, size / 2
-        outer_r = size * 0.38
-        inner_r = size * 0.22
-
-        # 外圈 + 内圈
-        painter.drawEllipse(int(cx - outer_r), int(cy - outer_r), int(outer_r * 2), int(outer_r * 2))
-        painter.drawEllipse(int(cx - inner_r), int(cy - inner_r), int(inner_r * 2), int(inner_r * 2))
-
-        # 4个辐条
-        import math
-
-        for angle_deg in (0, 45, 90, 135):
-            rad = math.radians(angle_deg)
-            x1 = cx + inner_r * math.cos(rad)
-            y1 = cy + inner_r * math.sin(rad)
-            x2 = cx + outer_r * math.cos(rad)
-            y2 = cy + outer_r * math.sin(rad)
-            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
-
-        painter.end()
-        return QIcon(pixmap)
+        """齿轮/设置图标 → Phosphor gear-six"""
+        return icons.themed_icon("settings", size, theme.TEXT_SECONDARY)
 
     def _create_hangar_icon(self, size: int = 20) -> QIcon:
-        """绘制工厂/机库建筑图标"""
-        pixmap = QPixmap(size, size)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(theme.TEXT_SECONDARY))
-
-        # 厂房主体
-        body_x0, body_x1 = size * 0.26, size * 0.76
-        body_top, body_bot = size * 0.5, size * 0.9
-        painter.drawRect(int(body_x0), int(body_top), int(body_x1 - body_x0), int(body_bot - body_top))
-
-        # 屋顶（三角）
-        roof = QPainterPath()
-        roof.moveTo(size * 0.16, body_top)
-        roof.lineTo(size * 0.5, size * 0.3)
-        roof.lineTo(size * 0.84, body_top)
-        roof.closeSubpath()
-        painter.drawPath(roof)
-
-        # 烟囱
-        painter.drawRect(int(size * 0.64), int(size * 0.34), int(size * 0.12), int(size * 0.18))
-
-        painter.end()
-        return QIcon(pixmap)
+        """工厂/机库建筑图标 → Phosphor warehouse"""
+        return icons.themed_icon("hangar", size, theme.TEXT_SECONDARY)
 
     # ── 主题切换 ──
 
     def _on_theme_changed(self):
         """主题切换后的 UI 刷新"""
         self.setStyleSheet(theme.get_stylesheet())
-        # 非 QSS 项：图标颜色
+        # 非 QSS 项：固定色图标重建 + 状态点重染（动态取色图标自动跟随）
         self._hangar_settings_btn.setIcon(self._create_hangar_icon())
         self._char_settings_btn.setIcon(self._create_person_icon())
         self._sys_settings_btn.setIcon(self._create_settings_icon())
+        title_bar = getattr(self, "_title_bar", None)
+        if title_bar is not None:
+            title_bar.refresh_icons()
+        self._refresh_auto_update_label()
+        self._refresh_price_age()
 
     def _toggle_theme(self):
-        """在暗色/亮色模式间切换"""
-        new_theme = "light" if theme.current_theme() == "dark" else "dark"
-        theme.apply_theme(new_theme)
+        """在暗色/亮色模式间切换（one-dark / one-light 确定性互切）"""
+        theme.toggle_theme()
 
     # ── 事件处理 ──
 
@@ -613,6 +568,8 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
         return bool(load_settings().get("window_pin", False))
 
     def _on_pin_toggled(self, checked: bool):
+        # 勾选态图标换白（PRIMARY 底上清晰）
+        icons.set_button_icon(self._pin_btn, "pin", theme.TEXT_ON_PRIMARY if checked else None, 14)
         self._apply_pin(checked)
         self._save_settings()
 
@@ -650,14 +607,97 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
             else:
                 self.setWindowFlags(flags & ~Qt.WindowType.WindowStaysOnTopHint)
             self.show()
+            # setWindowFlags 重建原生窗口 → DWM 毛玻璃/暗色属性需重放
+            self._apply_window_backdrop()
         finally:
             self._pin_applying = False
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._apply_window_backdrop()
         # 启动/重新显示时应用置顶状态（Windows 走 SetWindowPos；其他平台需窗口可见后设 flag）
         if getattr(self, "_pin_btn", None) and self._pin_btn.isChecked():
             self._apply_pin(True)
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.WindowStateChange:
+            title_bar = getattr(self, "_title_bar", None)
+            if title_bar is not None:
+                title_bar.set_maximized(self.isMaximized())
+        super().changeEvent(event)
+
+    def _apply_window_backdrop(self):
+        """恢复原生缩放/吸附样式 + 应用 DWM 毛玻璃/暗色（失败自动降级）"""
+        try:
+            hwnd = int(self.winId())
+            from ui_pyside6.dwm import apply_dwm_backdrop, enable_native_resize
+
+            enable_native_resize(hwnd)
+            spec = theme.current_theme_spec()
+            dark = bool(spec and spec["mode"] == "dark")
+            apply_dwm_backdrop(hwnd, theme.theme_material(), dark)
+        except Exception:
+            pass
+
+    def nativeEvent(self, eventType, message):
+        """Windows 无边框窗口消息：NCCALCSIZE 隐藏原生边框、NCHITTEST 命中码。"""
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                import ctypes.wintypes
+
+                msg = ctypes.wintypes.MSG.from_address(int(message))
+                WM_NCCALCSIZE, WM_NCHITTEST, WM_NCACTIVATE = 0x0083, 0x0084, 0x0086
+                if msg.message == WM_NCCALCSIZE:
+                    return True, 0  # 隐藏原生非客户区（保持无边框外观）
+                if msg.message == WM_NCACTIVATE:
+                    return True, 1  # 阻止激活/失活时绘制原生边框
+                if msg.message == WM_NCHITTEST:
+                    return True, self._nchittest(msg.lParam)
+            except Exception:
+                pass
+        return super().nativeEvent(eventType, message)
+
+    def _nchittest(self, lParam: int) -> int:
+        """WM_NCHITTEST 命中码：边缘缩放 + 标题栏 HTCAPTION（原生拖动）"""
+        HTCLIENT, HTCAPTION = 1, 2
+        HTLEFT, HTRIGHT, HTTOP = 10, 11, 12
+        HTTOPLEFT, HTTOPRIGHT = 13, 14
+        HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT = 15, 16, 17
+
+        if self.isMaximized() or self.isFullScreen():
+            return HTCLIENT
+        # 用 QCursor.pos()（Qt 逻辑坐标）而非 lParam（物理像素），
+        # 避免高 DPI 缩放下 mapFromGlobal 坐标错位导致按钮点不到/吸附失效。
+        from PySide6.QtGui import QCursor
+
+        pt = self.mapFromGlobal(QCursor.pos())
+        margin = 6
+        w, h = self.width(), self.height()
+        if pt.y() <= margin:
+            if pt.x() <= margin:
+                return HTTOPLEFT
+            if pt.x() >= w - margin:
+                return HTTOPRIGHT
+            return HTTOP
+        if pt.y() >= h - margin:
+            if pt.x() <= margin:
+                return HTBOTTOMLEFT
+            if pt.x() >= w - margin:
+                return HTBOTTOMRIGHT
+            return HTBOTTOM
+        if pt.x() <= margin:
+            return HTLEFT
+        if pt.x() >= w - margin:
+            return HTRIGHT
+        # 标题栏行：仅 spacer/标题/空白处 HTCAPTION（原生拖动+贴边吸附），按钮一律 HTCLIENT
+        title_bar = self.findChild(QToolBar, "title_bar")
+        if title_bar is not None and title_bar.geometry().contains(pt):
+            child = self.childAt(pt)
+            if child is not None and (child is title_bar or child.objectName() in ("title_spacer", "title_label")):
+                return HTCAPTION
+            return HTCLIENT
+        return HTCLIENT
 
     def _start_price_timer(self):
         self._refresh_auto_update_label()
@@ -679,10 +719,12 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
         """按自动更新开关与间隔刷新顶栏指示（checked + 文本）"""
         self._auto_update_btn.setChecked(self._auto_update_enabled)
         if self._auto_update_enabled and self._update_interval_minutes > 0:
-            self._auto_update_btn.setText(f"⏱ 每 {self._update_interval_minutes} 分钟")
+            icons.set_button_icon(
+                self._auto_update_btn, "clock", color=theme.GREEN, text=f"每 {self._update_interval_minutes} 分钟"
+            )
             self._auto_update_btn.setStyleSheet(f"color: {theme.GREEN}; padding: 0 8px;")
         else:
-            self._auto_update_btn.setText("⏱ 自动更新: 关")
+            icons.set_button_icon(self._auto_update_btn, "clock", text="自动更新: 关")
             self._auto_update_btn.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; padding: 0 8px;")
 
     # ==================================================
