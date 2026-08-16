@@ -14,11 +14,12 @@ from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QRadialGradient
 from PySide6.QtWidgets import QGridLayout, QLabel, QVBoxLayout, QWidget
 
+import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 
-_ICON_READY = "✓"
-_ICON_MISSING = "✗"
-_ICON_CHECKING = "·"
+_ICON_READY = "check"
+_ICON_MISSING = "close"
+_ICON_CHECKING = "circle"
 
 
 class _Loader(QWidget):
@@ -134,9 +135,10 @@ class SplashScreen(QWidget):
         grid.setHorizontalSpacing(18)
         grid.setVerticalSpacing(3)
         for i, step in enumerate(self._steps):
-            icon = QLabel(_ICON_CHECKING)
+            icon = QLabel()
             icon.setFixedWidth(14)
-            icon.setStyleSheet(self._icon_style(theme.PRIMARY))
+            icon.setFixedHeight(14)
+            self._set_icon_state(icon, _ICON_CHECKING, theme.PRIMARY)
             name = QLabel(step.name)
             name.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 11px;")
             row, col = divmod(i, 2)
@@ -153,14 +155,14 @@ class SplashScreen(QWidget):
         layout.addWidget(self._msg_label)
 
     @staticmethod
-    def _icon_style(color: str) -> str:
-        return f"font-size: 13px; font-weight: bold; color: {color};"
+    def _set_icon_state(label: QLabel, key: str, color: str):
+        """步骤状态图标（Phosphor，随主题色）"""
+        label.setPixmap(icons.themed_icon(key, 14, color).pixmap(14, 14))
 
     def _init_steps(self):
         for step in self._steps:
             row = self._icon_rows[step.key]
-            row.setText(_ICON_CHECKING)
-            row.setStyleSheet(self._icon_style(theme.PRIMARY))
+            self._set_icon_state(row, _ICON_CHECKING, theme.PRIMARY)
 
     # ── 窗口背景（半透明圆角） ──
 
@@ -182,11 +184,9 @@ class SplashScreen(QWidget):
         icon = self._icon_rows.get(key)
         if icon:
             if ready:
-                icon.setText(_ICON_READY)
-                icon.setStyleSheet(self._icon_style(theme.ACCENT_GREEN))
+                self._set_icon_state(icon, _ICON_READY, theme.ACCENT_GREEN)
             else:
-                icon.setText(_ICON_MISSING)
-                icon.setStyleSheet(self._icon_style(theme.ACCENT_RED))
+                self._set_icon_state(icon, _ICON_MISSING, theme.ACCENT_RED)
         self._msg_label.setText(f"{name}：{'就绪' if ready else '未就绪'}")
 
     # ── 生命周期 ──

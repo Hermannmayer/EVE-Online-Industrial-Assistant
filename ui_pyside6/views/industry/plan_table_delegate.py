@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import datetime
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QColor, QIcon, QPainter, QPalette
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
+import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from ui_pyside6.icon_cache import load_item_icon
 from ui_pyside6.views.industry.plan_table_constants import (
@@ -30,90 +30,15 @@ def _remaining(p: dict, now: datetime | None = None) -> int | None:
 
 
 # ═══════════════════════════════════════════════════════════
-#  自绘小图标（类别 + 子项层级）— 16×16，QPainter 绘制，theme 色
+#  类别/子项小图标 — Phosphor，随主题色（16×16）
 #  ═══════════════════════════════════════════════════════════
 
-
-def _make_icon(draw: Callable[[QPainter], None]) -> QIcon:
-    """在透明 16×16 QPixmap 上执行 draw(painter) 生成 QIcon。"""
-    pm = QPixmap(16, 16)
-    pm.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pm)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    draw(painter)
-    painter.end()
-    return QIcon(pm)
-
-
-def _draw_gear(p: QPainter) -> None:
-    """制造：齿轮（圆 + 8 齿，不挖中孔，16px 下清晰即可）。"""
-    color = QColor(theme.TEXT_SECONDARY)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(color)
-    for i in range(8):
-        p.save()
-        p.translate(8, 8)
-        p.rotate(i * 45)
-        p.drawRect(QRectF(-1, -6.5, 2, 3))
-        p.restore()
-    p.drawEllipse(QRectF(3.5, 3.5, 9, 9))
-
-
-def _draw_bulb(p: QPainter) -> None:
-    """发明：灯泡（圆 + 灯座 + 光晕线）。"""
-    color = QColor(theme.ACCENT_PURPLE)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(color)
-    p.drawEllipse(QRectF(4, 2, 8, 8))
-    p.drawRect(QRectF(6.5, 10, 3, 3))
-    p.setPen(QPen(color, 1))
-    p.drawLine(2, 5, 3, 5)
-    p.drawLine(13, 5, 14, 5)
-    p.drawLine(2, 8, 3, 8)
-
-
-def _draw_flask(p: QPainter) -> None:
-    """反应：三角烧瓶。"""
-    color = QColor(theme.ACCENT_GREEN)
-    path = QPainterPath()
-    path.moveTo(5, 3.5)
-    path.lineTo(5, 8)
-    path.lineTo(3, 12.5)
-    path.lineTo(13, 12.5)
-    path.lineTo(11, 8)
-    path.lineTo(11, 3.5)
-    path.closeSubpath()
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(color)
-    p.drawPath(path)
-
-
-def _draw_clipboard(p: QPainter) -> None:
-    """复制：剪贴板（带夹子的板）。"""
-    color = QColor(theme.ACCENT_CYAN)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(color)
-    p.drawRoundedRect(QRectF(4, 5, 8, 9), 1.5, 1.5)
-    p.drawRect(QRectF(6, 2.5, 4, 3.5))
-
-
-def _draw_level(p: QPainter) -> None:
-    """子项：右拐箭头 ↳（区别于剪贴板，避免视觉混淆）。"""
-    color = QColor(theme.TEXT_SECONDARY)
-    pen = QPen(color, 1.5)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    p.setPen(pen)
-    p.drawLine(QPointF(3, 4), QPointF(13, 4))
-    p.drawLine(QPointF(3, 4), QPointF(3, 10.5))
-    p.drawLine(QPointF(3, 10.5), QPointF(6, 8.5))
-    p.drawLine(QPointF(3, 10.5), QPointF(5, 12.5))
-
-
-_CATEGORY_ICON_DRAWERS = {
-    "manufacturing": _draw_gear,
-    "invention": _draw_bulb,
-    "reaction": _draw_flask,
-    "copying": _draw_clipboard,
+# 16px 下细线图标太淡，类别图标改用 Phosphor fill（实心）权重
+_CATEGORY_ICON_FILES = {
+    "manufacturing": ("gear-six-fill", "TEXT_SECONDARY"),
+    "invention": ("lightbulb-fill", "ACCENT_PURPLE"),
+    "reaction": ("flask-fill", "ACCENT_GREEN"),
+    "copying": ("clipboard-text-fill", "ACCENT_CYAN"),
 }
 
 _icon_cache: dict[str, QIcon] = {}
@@ -128,13 +53,13 @@ def _ensure_icons() -> None:
         return
     _icon_theme_token = token
     _icon_cache.clear()
-    for cat, drawer in _CATEGORY_ICON_DRAWERS.items():
-        _icon_cache[f"cat:{cat}"] = _make_icon(drawer)
-    _icon_cache["level"] = _make_icon(_draw_level)
+    for cat, (filename, color_token) in _CATEGORY_ICON_FILES.items():
+        _icon_cache[f"cat:{cat}"] = icons.themed_icon_from_file(filename, 16, getattr(theme, color_token))
+    _icon_cache["level"] = icons.themed_icon("caret-right", 16, theme.TEXT_SECONDARY)
 
 
 def _category_icon(category: str | None) -> QIcon | None:
-    """返回类别自绘图标；未知类别返回 None。"""
+    """返回类别图标；未知类别返回 None。"""
     _ensure_icons()
     return _icon_cache.get(f"cat:{category or 'manufacturing'}")
 

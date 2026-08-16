@@ -15,18 +15,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from core.logger import log
 
 NAV_TREE = [
-    ("__section__", "⚡ 核心功能"),
-    ("estimate", "估价", "💰"),
-    ("query", "物品查询", "🔍"),
-    ("industry", "工业制造", "🏭"),
-    ("trade", "市场贸易", "📊"),
-    ("watchlist", "价格监控", "🔔"),
-    ("contract", "合同市场", "📄"),
-    ("storage", "仓库管理", "📦"),
+    ("__section__", "核心功能", "lightning"),
+    ("estimate", "估价", "coins"),
+    ("query", "物品查询", "search"),
+    ("industry", "工业制造", "factory"),
+    ("trade", "市场贸易", "chart"),
+    ("watchlist", "价格监控", "bell"),
+    ("contract", "合同市场", "contract"),
+    ("storage", "仓库管理", "package"),
 ]
 
 
@@ -70,10 +71,10 @@ class MainWindowNavMixin:
         header.setFlags(Qt.ItemFlag.NoItemFlags)
         font = QFont()
         font.setBold(True)
-        font.setPointSize(12)
+        font.setPointSize(14)
         header.setFont(0, font)
         header.setForeground(0, QColor(theme.PRIMARY))
-        header.setSizeHint(0, QSize(header.sizeHint(0).width(), 32))
+        header.setSizeHint(0, QSize(header.sizeHint(0).width(), 36))
         tree.addTopLevelItem(header)
 
         spacer = QTreeWidgetItem([""])
@@ -85,6 +86,7 @@ class MainWindowNavMixin:
             if entry[0] == "__section__":
                 sec = QTreeWidgetItem([entry[1]])
                 sec.setFlags(Qt.ItemFlag.NoItemFlags)
+                sec.setIcon(0, icons.themed_icon(entry[2], 14))
                 sec.setForeground(0, QColor(theme.TEXT_SECONDARY))
                 f = QFont()
                 f.setBold(True)
@@ -93,8 +95,9 @@ class MainWindowNavMixin:
                 sec.setSizeHint(0, QSize(sec.sizeHint(0).width(), 24))
                 tree.addTopLevelItem(sec)
             else:
-                key, label, icon = entry[0], entry[1], entry[2]
-                item = QTreeWidgetItem([f" {icon}  {label}"])
+                key, label, icon_key = entry[0], entry[1], entry[2]
+                item = QTreeWidgetItem([f" {label}"])
+                item.setIcon(0, icons.themed_icon(icon_key, 16))
                 item.setData(0, Qt.ItemDataRole.UserRole, key)
                 item.setSizeHint(0, QSize(item.sizeHint(0).width(), 28))
                 self._nav_items.append(item)
@@ -106,7 +109,7 @@ class MainWindowNavMixin:
         layout.addStretch()
 
         bottom_btn_layout = QHBoxLayout()
-        bottom_btn_layout.setContentsMargins(4, 4, 4, 4)
+        bottom_btn_layout.setContentsMargins(4, 4, 4, 8)
         bottom_btn_layout.setSpacing(6)
 
         self._hangar_settings_btn = QPushButton()

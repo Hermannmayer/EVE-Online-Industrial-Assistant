@@ -9,12 +9,10 @@
 
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
-    QLabel,
     QPushButton,
     QSpinBox,
     QTabWidget,
@@ -22,7 +20,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
+from ui_pyside6.views.theme_selector import ThemeSelector
 
 
 class SettingsDialog(QDialog):
@@ -32,7 +32,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent or main_window)
         self._mw = main_window
         self.setWindowTitle("系统设置")
-        self.setMinimumSize(520, 420)
+        self.setMinimumSize(560, 520)
         self.setObjectName("settings_dialog")
 
         layout = QVBoxLayout(self)
@@ -59,7 +59,6 @@ class SettingsDialog(QDialog):
 
         # 读取当前设置
         self._load_state()
-        theme.add_theme_listener(self._on_theme_changed)
 
     # ═══════════════════════════════════════════
     #  标签页 1: ESI 与数据
@@ -99,15 +98,8 @@ class SettingsDialog(QDialog):
         # 主题
         theme_group = QGroupBox("主题")
         tg = QVBoxLayout(theme_group)
-        self._theme_combo = QComboBox()
-        self._theme_combo.addItems(["dark", "light"])
-        self._theme_preview = QLabel("预览文本 — 切换主题后即时生效")
-        self._theme_preview.setStyleSheet(
-            f"color: {theme.TEXT_SECONDARY}; padding: 4px; background-color: {theme.BG_SURFACE}; border-radius: 4px;"
-        )
-        tg.addWidget(QLabel("当前主题:"))
-        tg.addWidget(self._theme_combo)
-        tg.addWidget(self._theme_preview)
+        self._theme_selector = ThemeSelector()
+        tg.addWidget(self._theme_selector)
         layout.addWidget(theme_group)
 
         # 字体
@@ -134,10 +126,12 @@ class SettingsDialog(QDialog):
         # 工具
         tool_group = QGroupBox("工具")
         tgl = QVBoxLayout(tool_group)
-        init_btn = QPushButton("📦 数据初始化")
+        init_btn = QPushButton()
+        icons.set_button_icon(init_btn, "package", text="数据初始化")
         init_btn.clicked.connect(self._on_init)
         tgl.addWidget(init_btn)
-        about_btn = QPushButton("ℹ️ 关于")
+        about_btn = QPushButton()
+        icons.set_button_icon(about_btn, "info", text="关于")
         about_btn.clicked.connect(self._on_about)
         tgl.addWidget(about_btn)
         layout.addWidget(tool_group)
@@ -148,14 +142,6 @@ class SettingsDialog(QDialog):
     # ═══════════════════════════════════════════
     #  加载/保存
     # ═══════════════════════════════════════════
-
-    def _on_theme_changed(self):
-        """主题切换时刷新预览样式"""
-        if hasattr(self, "_theme_preview"):
-            self._theme_preview.setStyleSheet(
-                f"color: {theme.TEXT_SECONDARY}; padding: 4px; "
-                f"background-color: {theme.BG_SURFACE}; border-radius: 4px;"
-            )
 
     def _load_state(self):
         """从 main_window 读取当前设置"""
@@ -168,10 +154,7 @@ class SettingsDialog(QDialog):
         auto = getattr(self._mw, "_auto_update_enabled", False)
         self._auto_update_cb.setChecked(auto)
 
-        cur_theme = theme.current_theme()
-        idx = self._theme_combo.findText(cur_theme)
-        if idx >= 0:
-            self._theme_combo.setCurrentIndex(idx)
+        self._theme_selector.set_current(theme.current_theme())
 
     def _on_save(self):
         """保存并关闭"""
@@ -191,14 +174,10 @@ class SettingsDialog(QDialog):
         if hasattr(self._mw, "_auto_update_enabled"):
             self._mw._auto_update_enabled = self._auto_update_cb.isChecked()
 
-        # 主题切换
-        new_theme = self._theme_combo.currentText()
+        # 主题切换（卡片点击已即时生效，此处仅兜底）
+        new_theme = self._theme_selector.current_theme_id()
         if new_theme != theme.current_theme():
             theme.apply_theme(new_theme)
-            self._theme_preview.setStyleSheet(
-                f"color: {theme.TEXT_SECONDARY}; padding: 4px; "
-                f"background-color: {theme.BG_SURFACE}; border-radius: 4px;"
-            )
             if hasattr(self._mw, "_on_theme_changed"):
                 self._mw._on_theme_changed()
 

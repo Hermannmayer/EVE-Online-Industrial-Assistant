@@ -11,12 +11,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QScrollArea,
     QSlider,
     QVBoxLayout,
     QWidget,
 )
 
+import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from services.implant_loader import load_implants
 from ui_pyside6.views.char_settings_common import (
@@ -101,8 +103,10 @@ class SkillsPage(QWidget):
             QListWidget::item:selected {{ background-color: {theme.BG_SURFACE_LIGHT}; color: {theme.TEXT_BRIGHT}; }}
             QListWidget::item:hover {{ background-color: {theme.BG_HOVER}; }}
         """)
-        for cat_name, _ in SKILL_CATEGORIES:
-            self._cat_list.addItem(cat_name)
+        for cat_name, icon_key, _ in SKILL_CATEGORIES:
+            item = QListWidgetItem(cat_name)
+            item.setIcon(icons.themed_icon(icon_key, 16))
+            self._cat_list.addItem(item)
         self._cat_list.currentRowChanged.connect(self._on_category_changed)
         left_layout.addWidget(self._cat_list)
         layout.addWidget(self._left_panel)
@@ -151,7 +155,7 @@ class SkillsPage(QWidget):
     def _on_category_changed(self, row: int):
         if row < 0 or row >= len(SKILL_CATEGORIES):
             return
-        cat_name, skills = SKILL_CATEGORIES[row]
+        cat_name, _icon_key, skills = SKILL_CATEGORIES[row]
         self._cat_title.setText(cat_name)
 
         while self._skill_layout.count() > 0:

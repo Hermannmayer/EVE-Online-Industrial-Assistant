@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from core.container import get_container
 from services import plan_execution
@@ -81,7 +82,7 @@ class _UsageCard(QFrame):
         layout.setSpacing(4)
 
         color = theme.ACCENT_GREEN if active < mx else (theme.ACCENT_YELLOW if active == mx else theme.ACCENT_RED)
-        label = QLabel(f"👤 {char_name}  <span style='color:{color};font-weight:bold;'>{active}/{mx}</span>")
+        label = QLabel(f"{char_name}  <span style='color:{color};font-weight:bold;'>{active}/{mx}</span>")
         label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
         layout.addWidget(label)
 
@@ -98,7 +99,7 @@ class _UsageCard(QFrame):
         layout.addWidget(bar)
 
         if active > mx:
-            over = QLabel("⚠ 超员")
+            over = QLabel("超员")
             over.setStyleSheet(f"color: {theme.ACCENT_RED}; font-size: 10px;")
             layout.addWidget(over)
 
@@ -163,7 +164,8 @@ class ProductionWizard(QDialog):
         self._detail_info = QLabel("")
         self._detail_info.setWordWrap(True)
         self._detail_info.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
-        self._start_btn = QPushButton("▶ 启动产线")
+        self._start_btn = QPushButton()
+        icons.set_button_icon(self._start_btn, "play", color=theme.TEXT_ON_PRIMARY, text="启动产线")
         self._start_btn.setStyleSheet(
             f"QPushButton {{ background: {theme.ACCENT_GREEN}; color: {theme.TEXT_ON_PRIMARY}; padding: 8px 20px;"
             f" border: none; border-radius: 5px; font-size: 14px; }}"
@@ -338,7 +340,7 @@ class ProductionWizard(QDialog):
         if status == "pending":
             short = self._shortfall.get(int(p.get("id") or 0), 0)
             if short:
-                info += "\n\n⚠ 备料不足，缺 " + str(short) + " 种材料（请先填料或刷新备料）"
+                info += "\n\n备料不足，缺 " + str(short) + " 种材料（请先填料或刷新备料）"
                 self._detail_info.setStyleSheet(f"color: {theme.ACCENT_ORANGE}; font-size: 12px;")
             else:
                 info += "\n\n备料充足，可启动。"
