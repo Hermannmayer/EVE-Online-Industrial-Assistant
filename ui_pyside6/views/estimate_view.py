@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
@@ -142,7 +143,8 @@ class EstimatePage(QWidget):
         bar.addWidget(self._paste_btn)
 
         # 怎么用
-        self._help_btn = QPushButton("怎么用 ▾")
+        self._help_btn = QPushButton()
+        icons.set_button_icon(self._help_btn, "caret-down", text="怎么用")
         self._help_btn.setFlat(True)
         self._help_btn.setToolTip("从游戏内复制物品列表（Ctrl+C）\n然后点击「粘贴剪贴板」即可自动估价")
         bar.addWidget(self._help_btn)

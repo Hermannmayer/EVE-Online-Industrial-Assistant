@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
@@ -371,11 +372,13 @@ class WatchlistPage(QWidget):
         bottom_layout = QHBoxLayout()
         bottom_layout.setSpacing(8)
 
-        self._refresh_btn = QPushButton("🔄 刷新价格")
+        self._refresh_btn = QPushButton()
+        icons.set_button_icon(self._refresh_btn, "refresh", text="刷新价格")
         self._refresh_btn.clicked.connect(self._refresh_data)
         bottom_layout.addWidget(self._refresh_btn)
 
-        self._remove_btn = QPushButton("🗑️ 删除选中")
+        self._remove_btn = QPushButton()
+        icons.set_button_icon(self._remove_btn, "trash", text="删除选中")
         self._remove_btn.clicked.connect(self._on_remove_selected)
         bottom_layout.addWidget(self._remove_btn)
 
