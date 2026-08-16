@@ -126,7 +126,7 @@ def test_inventory_page_theme_listener(qapp, mock_db):
         patch("ui_pyside6.views.inventory.blueprint_tab.get_blueprints", return_value=[]),
     ):
         mock_cont.return_value.db.connect.return_value.__enter__.return_value = mock_conn
-        from ui_pyside6.views.inventory_view import InventoryPage
+        from ui_pyside6.views.inventory.inventory_page import InventoryPage
 
         page = InventoryPage(None)
         assert hasattr(page, "_on_theme_changed")
@@ -136,7 +136,7 @@ def test_inventory_page_theme_listener(qapp, mock_db):
 
 
 def test_paste_import_dialog_show_event(qapp, mock_db):
-    from ui_pyside6.views.inventory_view import PasteImportDialog
+    from ui_pyside6.dialogs.hangar_dialogs import PasteImportDialog
 
     dlg = PasteImportDialog("测试机库")
     assert hasattr(dlg, "showEvent")
@@ -146,7 +146,7 @@ def test_paste_import_dialog_show_event(qapp, mock_db):
 
 
 def test_import_review_dialog_show_event(qapp, mock_db):
-    from ui_pyside6.views.inventory_view import ImportReviewDialog
+    from ui_pyside6.views.inventory.review_dialog import ImportReviewDialog
 
     dlg = ImportReviewDialog([], "测试机库", 1)
     assert hasattr(dlg, "showEvent")
