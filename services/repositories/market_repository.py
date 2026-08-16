@@ -74,6 +74,23 @@ class MarketRepository:
             r = conn.execute("SELECT MAX(fetch_time) FROM market_prices").fetchone()
             return r[0] if r else None
 
+    def get_latest_price(self, type_id: int) -> tuple[float | None, float | None, int, int] | None:
+        """获取指定物品最新一条价格记录 (buy_price, sell_price, buy_volume, sell_volume)。"""
+        with self._db.connect("mkt") as conn:
+            r = conn.execute(
+                """
+                SELECT buy_price, sell_price, buy_volume, sell_volume
+                FROM market_prices
+                WHERE type_id = ?
+                ORDER BY fetch_time DESC
+                LIMIT 1
+                """,
+                (type_id,),
+            ).fetchone()
+            if not r:
+                return None
+            return (r[0], r[1], int(r[2] or 0), int(r[3] or 0))
+
     def get_adjusted_price(self, type_id: int) -> float | None:
         """获取 ESI adjusted_price（EIV 计算用）。列不存在时回退 sell_price。"""
         with self._db.connect("mkt") as conn:
