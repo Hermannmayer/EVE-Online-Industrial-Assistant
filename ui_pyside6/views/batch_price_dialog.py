@@ -152,26 +152,12 @@ class BatchPriceWorker(QThread):
         type_id = item["type_id"]
         name = item.get("name", str(type_id))
 
-        with get_container().db.connect("ref") as conn:
-            c = conn.cursor()
-            c.execute(
-                """
-                SELECT mp.buy_price, mp.sell_price, mp.buy_volume, mp.sell_volume
-                FROM mkt.market_prices mp
-                WHERE mp.type_id = ?
-                ORDER BY mp.fetch_time DESC
-                LIMIT 1
-                """,
-                (type_id,),
-            )
-            row = c.fetchone()
+        row = get_container().market_repo.get_latest_price(type_id)
 
         if not row:
             return {"type_id": type_id, "name": name, "not_found": True}
 
         buy_p, sell_p, buy_v, sell_v = row
-        buy_v = buy_v or 0
-        sell_v = sell_v or 0
 
         # 格式价格
         buy_str = "—"
@@ -237,32 +223,25 @@ def _search_items(queries: list[str]) -> list[dict]:
     """批量搜索物品，返回 [{type_id, name, raw_query}]"""
     results = []
     seen_type_ids = set()
-    with get_container().db.connect("ref") as conn:
-        c = conn.cursor()
-        for q in queries:
-            q = q.strip()
-            if not q:
-                continue
-            if q.isdigit():
-                c.execute(
-                    "SELECT type_id, zh_name, en_name FROM item WHERE type_id = ?",
-                    (int(q),),
-                )
-            else:
-                c.execute(
-                    "SELECT type_id, zh_name, en_name FROM item WHERE zh_name LIKE ? OR en_name LIKE ? LIMIT 1",
-                    (f"%{q}%", f"%{q}%"),
-                )
-            row = c.fetchone()
-            if row:
-                tid, zh, en = row
-                if tid not in seen_type_ids:
-                    seen_type_ids.add(tid)
-                    name = zh or en or str(tid)
-                    results.append({"type_id": tid, "name": name, "raw_query": q})
-            else:
-                # 未找到 — 保留占位
-                results.append({"type_id": 0, "name": q, "raw_query": q, "not_found": True})
+    repo = get_container().item_repo
+    for q in queries:
+        q = q.strip()
+        if not q:
+            continue
+        if q.isdigit():
+            item = repo.get_by_id(int(q))
+        else:
+            matches = repo.search_by_name(q, limit=1)
+            item = matches[0] if matches else None
+        if item:
+            tid = item["type_id"]
+            if tid not in seen_type_ids:
+                seen_type_ids.add(tid)
+                name = item["zh_name"] or item["en_name"] or str(tid)
+                results.append({"type_id": tid, "name": name, "raw_query": q})
+        else:
+            # 未找到 — 保留占位
+            results.append({"type_id": 0, "name": q, "raw_query": q, "not_found": True})
     return results
 
 
