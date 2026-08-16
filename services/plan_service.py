@@ -182,20 +182,22 @@ def load_plans(filter_key: str) -> list[dict]:
 
     for row in rows:
         ptid = row.get("product_type_id")
-        has_bp = bool(row.get("assigned_blueprint_id")) or any(b in owned_bp for b in prod_to_bp.get(ptid, []))
+        has_bp = bool(row.get("assigned_blueprint_id")) or any(
+            b in owned_bp for b in prod_to_bp.get(int(ptid or 0), [])
+        )
         row["has_image"] = has_bp
         row["group_id"] = row.get("group_number", 0)
         row["child_level"] = row.get("sub_level", 0)
 
     from services.plan_category import load_category_map
 
-    bp_ids = [r.get("blueprint_type_id") for r in rows if r.get("blueprint_type_id")]
+    bp_ids = [int(r["blueprint_type_id"]) for r in rows if r.get("blueprint_type_id")]
     cat_map: dict[int, str] = {}
     if bp_ids:
         with get_container().db.connect("bp") as bp_conn:
             cat_map = load_category_map(bp_conn, bp_ids)
     for row in rows:
-        row["category"] = cat_map.get(row.get("blueprint_type_id"), "manufacturing")
+        row["category"] = cat_map.get(int(row.get("blueprint_type_id") or 0), "manufacturing")
 
     enrich_plan_hangar_names(rows, hangar_names)
     return rows
@@ -263,8 +265,7 @@ def save_price_snapshots() -> int:
         count = 0
         for tid in type_ids:
             row = c.execute(
-                "SELECT sell_price, buy_price FROM mkt.market_prices "
-                "WHERE type_id=? AND region_id=10000002 LIMIT 1",
+                "SELECT sell_price, buy_price FROM mkt.market_prices WHERE type_id=? AND region_id=10000002 LIMIT 1",
                 (tid,),
             ).fetchone()
             if row:

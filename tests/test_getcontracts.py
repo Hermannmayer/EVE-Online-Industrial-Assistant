@@ -87,9 +87,7 @@ class TestFetchContractPages:
         """多页合同能拉取所有页面"""
         session = MagicMock()
         session.get_headers = AsyncMock(return_value={"X-Pages": "2"})
-        session.fetch_raw = AsyncMock(
-            side_effect=[[MOCK_CONTRACT], [{**MOCK_CONTRACT, "contract_id": 100002}]]
-        )
+        session.fetch_raw = AsyncMock(side_effect=[[MOCK_CONTRACT], [{**MOCK_CONTRACT, "contract_id": 100002}]])
 
         contracts = await fetch_contract_pages(session, 10000002)
         assert len(contracts) == 2

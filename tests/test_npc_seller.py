@@ -26,18 +26,14 @@ class TestFilterNpcSellOrders:
 
 def _build_ref(db_manager):
     with db_manager.connect("ref") as conn:
-        conn.execute(
-            "CREATE TABLE npc_corporation (corporation_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT)"
-        )
+        conn.execute("CREATE TABLE npc_corporation (corporation_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT)")
         conn.execute("INSERT INTO npc_corporation VALUES (1000001, 'NPC一', 'Npc One')")
         conn.execute(
             "CREATE TABLE station (station_id INTEGER PRIMARY KEY, station_name TEXT, "
             "solar_system_id INTEGER, corporation_id INTEGER)"
         )
         conn.execute("INSERT INTO station VALUES (60003760, 'Jita IV - Moon 4', 30000142, 1000001)")
-        conn.execute(
-            "CREATE TABLE solar_system (solar_system_id INTEGER PRIMARY KEY, solar_system_name TEXT)"
-        )
+        conn.execute("CREATE TABLE solar_system (solar_system_id INTEGER PRIMARY KEY, solar_system_name TEXT)")
         conn.execute("INSERT INTO solar_system VALUES (30000142, 'Jita')")
     return db_manager
 

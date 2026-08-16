@@ -75,6 +75,7 @@ class PlanPriceRefreshWorker(QThread):
         type_orders: dict[int, dict] = {}
 
         async with APIClient(timeout=180, concurrency=50) as client:
+
             async def fetch_item_orders(tid: int) -> tuple[int, dict]:
                 url = f"{ESI_BASE}/markets/{REGION_JITA}/orders/"
                 result: dict = {"buy_price": 0.0, "sell_price": float("inf"), "buy_volume": 0, "sell_volume": 0}

@@ -599,7 +599,7 @@ class ImportReviewDialog(QDialog):
             if price is not None:
                 spin.setValue(price)
             else:
-                    QMessageBox.information(self, "提示", "未找到该物品在所选区域的价格数据")
+                QMessageBox.information(self, "提示", "未找到该物品在所选区域的价格数据")
 
     def _update_summary(self):
         checked = 0

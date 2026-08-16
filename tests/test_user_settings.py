@@ -106,6 +106,7 @@ def test_load_current_version_does_not_rewrite(settings_path):
 
 def test_registered_migration_runs_and_keeps_unknown(settings_path, monkeypatch):
     """注册的迁移函数生效：键名映射执行 + 未知键保留"""
+
     def _migrate_v0(data):
         if "old_key" in data:
             data["new_key"] = data.pop("old_key")

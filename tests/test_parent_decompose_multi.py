@@ -115,7 +115,7 @@ class TestParentDecomposeDialogMulti:
         _patch(db_manager, monkeypatch)
         with db_manager.connect("user") as conn:
             conn.execute(
-                "INSERT INTO production_plans (id, product_type_id, group_number, sub_level) " "VALUES (1, 2001, 7, 0)"
+                "INSERT INTO production_plans (id, product_type_id, group_number, sub_level) VALUES (1, 2001, 7, 0)"
             )
         dlg = ParentDecomposeDialog([_mother(1, group_number=7)])
         assert dlg._assignments[0][1] == 7  # 已有组号 7 复用
@@ -134,7 +134,7 @@ class TestParentDecomposeDialogMulti:
         _patch(db_manager, monkeypatch)
         with db_manager.connect("user") as conn:
             conn.execute(
-                "INSERT INTO production_plans (id, product_type_id, group_number, sub_level) " "VALUES (1, 2001, 3, 0)"
+                "INSERT INTO production_plans (id, product_type_id, group_number, sub_level) VALUES (1, 2001, 3, 0)"
             )
         # 两个无组号母项 → 从 MAX(3)+1=4 起，得 4、5
         dlg = ParentDecomposeDialog([_mother(5, group_number=0), _mother(6, group_number=0)])

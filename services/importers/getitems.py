@@ -352,7 +352,7 @@ async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], Non
     """
     async with _ref_db() as db:
         c = await db.execute(
-            "SELECT type_id FROM item WHERE (zh_name IS NULL OR zh_name = '')" " OR (en_name IS NULL OR en_name = '')"
+            "SELECT type_id FROM item WHERE (zh_name IS NULL OR zh_name = '') OR (en_name IS NULL OR en_name = '')"
         )
         missing = [r[0] async for r in c]
 

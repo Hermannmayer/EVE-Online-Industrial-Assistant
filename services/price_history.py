@@ -64,7 +64,7 @@ async def fetch_history(
 
     query = "&".join(f"{k}={v}" for k, v in params.items())
     async with APIClient(timeout=30) as client:
-        return await client.fetch_raw(f"{url}?{query}")
+        return await client.fetch_raw(f"{url}?{query}")  # type: ignore[no-any-return]
 
 
 def get_cached_history(type_id: int, region_id: int = REGION_ID, _db=None) -> list[dict] | None:

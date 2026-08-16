@@ -61,8 +61,6 @@ def mock_deps():
 # ═══════════════════════════════════════════
 
 
-
-
 def test_dialog_with_initial_items(qapp, mock_deps):
     """带预选物品构造不崩溃"""
     items = [{"type_id": 2001, "name": "渡鸦级"}]

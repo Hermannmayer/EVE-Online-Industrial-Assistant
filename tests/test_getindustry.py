@@ -99,9 +99,7 @@ class TestRunIndustryUpdate:
                 await run_industry_update()
 
         insert_calls = [
-            c
-            for c in mock_db.executemany.call_args_list
-            if "INSERT OR REPLACE INTO industry_system_costs" in c[0][0]
+            c for c in mock_db.executemany.call_args_list if "INSERT OR REPLACE INTO industry_system_costs" in c[0][0]
         ]
         assert len(insert_calls) >= 1, "系统成本指数应通过 executemany 批量写入"
         mock_db.commit.assert_called()
@@ -151,9 +149,7 @@ class TestRunIndustryUpdate:
                 await run_industry_update()
 
         fac_calls = [
-            c
-            for c in mock_db.executemany.call_args_list
-            if "INSERT OR REPLACE INTO industry_facilities" in c[0][0]
+            c for c in mock_db.executemany.call_args_list if "INSERT OR REPLACE INTO industry_facilities" in c[0][0]
         ]
         assert len(fac_calls) >= 1, "工业设施应通过 executemany 批量写入"
 

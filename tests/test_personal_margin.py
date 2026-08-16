@@ -187,7 +187,7 @@ def test_prod_qty_gt_one_revenue_included(svc, sample_char_config):
     """产物数量 > 1（问题 2 回归：收入必须含 prod_qty）"""
     with svc._db.connect("bp") as conn:
         conn.execute(
-            "UPDATE blueprint_products SET quantity = 5 WHERE blueprint_type_id = 3002" " AND product_type_id = 2002"
+            "UPDATE blueprint_products SET quantity = 5 WHERE blueprint_type_id = 3002 AND product_type_id = 2002"
         )
     result = _per_run_result(svc, sample_char_config, type_id=2002)  # 无人机
     assert result["revenue_per_run"] == pytest.approx(120_000 * 5, abs=0.01)
@@ -351,9 +351,7 @@ def test_child_manufacturing_cost_includes_job_fee():
     metrics = {"material_cost": 1000.0, "breakdown": {"installation_fee": 50.0}}
     assert ScoringService.child_manufacturing_cost(plan, metrics) == pytest.approx(1300, abs=0.01)
     # breakdown 缺失时兜底仅材料成本
-    assert ScoringService.child_manufacturing_cost(plan, {"material_cost": 1000.0}) == pytest.approx(
-        1000, abs=0.01
-    )
+    assert ScoringService.child_manufacturing_cost(plan, {"material_cost": 1000.0}) == pytest.approx(1000, abs=0.01)
 
 
 def test_adjust_mother_metrics_does_not_mutate_input():

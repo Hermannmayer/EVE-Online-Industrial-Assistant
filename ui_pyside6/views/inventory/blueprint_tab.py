@@ -369,7 +369,7 @@ class BlueprintTab(QWidget):
     def _get_market_descendants(self, market_group_id: int) -> set[int]:
         """递归获取指定市场分类下所有物品 type_id"""
         try:
-            return get_container().item_repo.get_market_descendants(market_group_id)
+            return set(get_container().item_repo.get_market_descendants(market_group_id))
         except Exception:
             log.exception("获取市场分类后代失败")
             return set()

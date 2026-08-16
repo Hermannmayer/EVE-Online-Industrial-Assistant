@@ -82,9 +82,7 @@ class MassParallelDialog(QDialog):
         self._duration: dict[int, int] = {}
         self._preview: list[dict] = []  # 最近一次计算 [{id, parallels}]
 
-        self._demand, self._per_run, self._duration = get_mass_parallel_data(
-            get_container().db, plans, self._plans
-        )
+        self._demand, self._per_run, self._duration = get_mass_parallel_data(get_container().db, plans, self._plans)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)

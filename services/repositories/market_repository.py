@@ -106,9 +106,7 @@ class MarketRepository:
                 }
         return result
 
-    def get_prices_by_region(
-        self, type_ids: list[int], region_id: int, price_type: str
-    ) -> dict[int, float]:
+    def get_prices_by_region(self, type_ids: list[int], region_id: int, price_type: str) -> dict[int, float]:
         """批量获取指定区域价格（buy/sell/avg）。"""
         if not type_ids:
             return {}
@@ -130,8 +128,7 @@ class MarketRepository:
             else:
                 col = "sell_price" if price_type == "sell" else "buy_price"
                 rows = conn.execute(
-                    f"SELECT type_id, {col} FROM market_prices"
-                    f" WHERE type_id IN ({ph}) AND region_id = ?",
+                    f"SELECT type_id, {col} FROM market_prices WHERE type_id IN ({ph}) AND region_id = ?",
                     (*tids, region_id),
                 ).fetchall()
                 for tid, price in rows:
@@ -146,8 +143,7 @@ class MarketRepository:
         with self._db.connect("mkt") as conn:
             ph = ",".join("?" * len(type_ids))
             rows = conn.execute(
-                f"SELECT type_id, sell_price FROM market_prices "
-                f"WHERE type_id IN ({ph}) AND region_id = ?",
+                f"SELECT type_id, sell_price FROM market_prices WHERE type_id IN ({ph}) AND region_id = ?",
                 (*type_ids, region_id),
             ).fetchall()
             return {int(r[0]): float(r[1]) for r in rows if r[1]}

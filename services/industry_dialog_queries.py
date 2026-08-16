@@ -206,8 +206,7 @@ def get_subitem_plans(db, group_number: int, deeper_than: int) -> list[dict[str,
     """查询同组更深子项产线，按 sub_level DESC, id DESC。"""
     with db.connect("user") as conn:
         rows = conn.execute(
-            "SELECT * FROM production_plans WHERE group_number=? AND sub_level>? "
-            "ORDER BY sub_level DESC, id DESC",
+            "SELECT * FROM production_plans WHERE group_number=? AND sub_level>? ORDER BY sub_level DESC, id DESC",
             (group_number, deeper_than),
         ).fetchall()
         return [dict(r) for r in rows]

@@ -47,8 +47,6 @@ def mock_deps():
 # ═══════════════════════════════════════════
 
 
-
-
 def test_dialog_has_theme_listener(qapp, mock_deps):
     """对话框注册了 theme listener + _on_theme_changed 存在"""
     dlg = BatchPriceDialog(parent=None)

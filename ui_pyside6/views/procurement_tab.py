@@ -1,6 +1,5 @@
 """待采购对话框 - 根据生产计划和库存计算需要采购的材料"""
 
-
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (

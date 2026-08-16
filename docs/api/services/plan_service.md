@@ -59,3 +59,43 @@ def enrich_plan_hangar_names(rows: list[dict], hangar_names: dict[int, str]) -> 
 为计划行补派生显示字段（内存，不落库）。
 
 定义行：`142`
+
+### `load_plans`
+
+```python
+def load_plans(filter_key: str) -> list[dict]
+```
+
+加载生产计划列表，并补全蓝图可用标记/类别/机库名称。
+
+定义行：`157`
+
+### `collect_refresh_type_ids`
+
+```python
+def collect_refresh_type_ids() -> tuple[set[int], int]
+```
+
+收集工业页定向刷新所需的 type_id 集合，并返回其中 5 分钟内已缓存的条数。
+
+定义行：`206`
+
+### `save_price_snapshots`
+
+```python
+def save_price_snapshots() -> int
+```
+
+为活跃计划及其物料保存当前 Jita 价格快照，返回保存条数。
+
+定义行：`244`
+
+### `load_active_plans_for_procurement`
+
+```python
+def load_active_plans_for_procurement() -> list[dict]
+```
+
+加载采购对话框所需的活跃计划列表。
+
+定义行：`281`

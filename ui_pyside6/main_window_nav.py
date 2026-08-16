@@ -1,11 +1,14 @@
 """主窗口导航与页面注册 Mixin。"""
 
+from __future__ import annotations
+
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QStackedWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -29,6 +32,23 @@ NAV_TREE = [
 
 class MainWindowNavMixin:
     """主窗口左侧导航与页面注册。"""
+
+    # ── 由 MainWindow 提供（Mixin 引用声明，满足 mypy；运行时由 MainWindow 覆盖）──
+    _pages: dict[str, QWidget]
+    content_stack: QStackedWidget
+
+    def _create_hangar_icon(self) -> QIcon:
+        raise NotImplementedError
+
+    def _create_person_icon(self) -> QIcon:
+        raise NotImplementedError
+
+    def _create_settings_icon(self) -> QIcon:
+        raise NotImplementedError
+
+    def _show_hangar_settings(self) -> None: ...
+    def _show_char_settings(self) -> None: ...
+    def _show_sys_settings(self) -> None: ...
 
     def _build_nav_tree(self) -> QWidget:
         panel = QWidget()

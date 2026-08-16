@@ -74,7 +74,7 @@ def _prices(type_ids: list[int]) -> dict[int, float]:
     ph = ",".join("?" * len(ids))
     with get_container().db.connect("mkt") as conn:
         rows = conn.execute(
-            f"SELECT type_id, adjusted_price FROM market_prices " f"WHERE type_id IN ({ph}) AND adjusted_price > 0",
+            f"SELECT type_id, adjusted_price FROM market_prices WHERE type_id IN ({ph}) AND adjusted_price > 0",
             ids,
         ).fetchall()
     return {r[0]: float(r[1]) for r in rows}
@@ -83,7 +83,7 @@ def _prices(type_ids: list[int]) -> dict[int, float]:
 def _material_cost(conn: Connection, prices: dict[int, float], blueprint_type_id: int, activity: str) -> float:
     """蓝图某活动的材料总价（调整价 × 数量）。"""
     rows = conn.execute(
-        "SELECT material_type_id, quantity FROM blueprint_materials " "WHERE blueprint_type_id=? AND activity=?",
+        "SELECT material_type_id, quantity FROM blueprint_materials WHERE blueprint_type_id=? AND activity=?",
         (blueprint_type_id, activity),
     ).fetchall()
     total = 0.0

@@ -19,7 +19,7 @@ QThread wrapper — 在后台线程运行 InitService，支持全流程或单步
 ##### `__init__`
 
 ```python
-def __init__(self, step_keys: list[str] | None=None, parent: QThread | None=None)
+def __init__(self, step_keys: list[str] | None=None, parent: QObject | None=None)
 ```
 
 ::: warning ⚠️ 待补 docstring

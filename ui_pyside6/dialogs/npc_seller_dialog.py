@@ -41,14 +41,12 @@ class NpcOrderWorker(QThread):
 
     def run(self):
         try:
+
             async def _fetch():
                 from services.client import APIClient
 
                 async with APIClient(timeout=20) as client:
-                    url = (
-                        f"{ESI_BASE_URL}/markets/{self._region_id}/orders/"
-                        f"?order_type=sell&type_id={self._type_id}"
-                    )
+                    url = f"{ESI_BASE_URL}/markets/{self._region_id}/orders/?order_type=sell&type_id={self._type_id}"
                     return await client.fetch_raw(url) or []
 
             orders = asyncio.run(_fetch())

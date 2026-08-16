@@ -16,17 +16,7 @@ def category_symbol(cat: str) -> str
 
 类别符号（⚙📋💡⚗）。
 
-定义行：`36`
-
-### `category_color`
-
-```python
-def category_color(cat: str) -> str | None
-```
-
-类别行底色（hex）；制造返回 None（默认底色）。
-
-定义行：`41`
+定义行：`29`
 
 ### `load_category_map`
 
@@ -36,4 +26,4 @@ def load_category_map(conn: Connection, blueprint_type_ids: list[int]) -> dict[i
 
 蓝图 id → 类别。优先级：reaction → invention → copying → manufacturing。
 
-定义行：`46`
+定义行：`34`

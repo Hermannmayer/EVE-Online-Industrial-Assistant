@@ -239,9 +239,7 @@ class HangarTab(QWidget):
             return
         from .transfer_dialog import HangarTransferDialog
 
-        dlg = HangarTransferDialog(
-            parsed, self._page.hangar_id(), self._page._hangar_combo.currentText(), self
-        )
+        dlg = HangarTransferDialog(parsed, self._page.hangar_id(), self._page._hangar_combo.currentText(), self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._refresh()
 
@@ -397,7 +395,7 @@ class HangarTab(QWidget):
 
     def _fetch_market_prices(self, type_ids: list[int], price_type: str) -> dict[int, float]:
         """批量查询吉他(Jita)市场价格 {type_id: 卖价/买价/均价}。"""
-        return get_container().market_repo.get_prices_by_region(type_ids, TRADE_HUB_IDS["Jita"], price_type)
+        return dict(get_container().market_repo.get_prices_by_region(type_ids, TRADE_HUB_IDS["Jita"], price_type))
 
     def _on_del_items(self, items: list[dict]):
         """批量删除（含单行）"""

@@ -343,8 +343,7 @@ def output_per_run(product_type_id: int) -> int:
         bp_conn = _container().db.direct_connect("bp")
         try:
             row = bp_conn.execute(
-                "SELECT quantity FROM blueprint_products "
-                "WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
+                "SELECT quantity FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
                 (product_type_id,),
             ).fetchone()
             return int(row[0]) if row and row[0] else 1
@@ -415,9 +414,7 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
             bound_ids = [assigned_bp]
         if bound_ids:
             ph = ",".join("?" * len(bound_ids))
-            bp_rows = conn.execute(
-                f"SELECT id, is_bpo FROM user_blueprints WHERE id IN ({ph})", bound_ids
-            ).fetchall()
+            bp_rows = conn.execute(f"SELECT id, is_bpo FROM user_blueprints WHERE id IN ({ph})", bound_ids).fetchall()
             has_bpo = any(bool(r[1]) for r in bp_rows)
         else:
             has_bpo = False

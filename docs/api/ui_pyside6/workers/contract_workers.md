@@ -74,7 +74,7 @@ def run(self)
 
 后台从数据库加载合同物品
 
-定义行：`55`
+定义行：`44`
 
 #### 方法
 
@@ -88,7 +88,7 @@ def __init__(self, contract_id: int, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`60`
+定义行：`49`
 ##### `run`
 
 ```python
@@ -99,4 +99,4 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`64`
+定义行：`53`

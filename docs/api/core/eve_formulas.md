@@ -8,26 +8,6 @@ EVE Online 游戏公式常量。
 
 ## 函数
 
-### `resolve_item_name`
-
-```python
-def resolve_item_name(c, type_id: int) -> str
-```
-
-统一物品名称解析 — 已迁移至 services.name_resolver。
-
-定义行：`59`
-
-### `_mat_name`
-
-```python
-def _mat_name(mat_id: int, c) -> str
-```
-
-查询材料名称 — 已迁移至 services.name_resolver。
-
-定义行：`66`
-
 ### `_hub_region_id`
 
 ```python
@@ -36,7 +16,7 @@ def _hub_region_id(hub: str | None) -> int
 
 hub 名称 → region_id，None 或未知时默认 Jita
 
-定义行：`73`
+定义行：`59`
 
 ### `calc_refining_yield`
 
@@ -46,7 +26,7 @@ def calc_refining_yield(skills: dict | None=None, *, is_player_facility: bool=Fa
 
 计算精炼产出率 (0.0~1.0)
 
-定义行：`85`
+定义行：`71`
 
 ### `calc_broker_rate`
 
@@ -56,7 +36,7 @@ def calc_broker_rate(skills: dict, market_data: dict) -> float
 
 计算经纪人费率 (%)。
 
-定义行：`119`
+定义行：`105`
 
 ### `calc_relist_discount`
 
@@ -66,7 +46,7 @@ def calc_relist_discount(skills: dict) -> float
 
 计算改单折扣 (%)。基础 50%，高级经纪人关系学每级 +5%，上限 100%。
 
-定义行：`139`
+定义行：`125`
 
 ### `calc_sales_tax_rate`
 
@@ -76,4 +56,4 @@ def calc_sales_tax_rate(skills: dict) -> float
 
 计算销售税率 (%)。基础 2%，会计学每级 -3%。
 
-定义行：`145`
+定义行：`131`

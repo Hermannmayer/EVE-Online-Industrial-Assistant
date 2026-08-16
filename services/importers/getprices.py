@@ -297,11 +297,7 @@ async def save_prices(
         if complete_regions is None:
             succeeded = [rid for rid in target_regions if order_prices.get(rid)]
         else:
-            succeeded = [
-                rid
-                for rid in target_regions
-                if order_prices.get(rid) and rid in complete_regions
-            ]
+            succeeded = [rid for rid in target_regions if order_prices.get(rid) and rid in complete_regions]
         failed = [rid for rid in target_regions if rid not in succeeded]
         if failed:
             log.warning("  以下区域拉取失败/不完整，保留旧价格: %s", failed)
