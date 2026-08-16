@@ -209,30 +209,24 @@ class SuggestionWorker(QThread):
         self._query = query
 
     def run(self):
-        with get_container().db.connect("ref") as conn:
-            c = conn.cursor()
-            q = self._query
-            if q.isdigit():
-                c.execute(
-                    "SELECT type_id, en_name, zh_name FROM item "
-                    "WHERE type_id = ? OR en_name LIKE ? OR zh_name LIKE ? "
-                    "ORDER BY CASE WHEN type_id = ? THEN 0 ELSE 1 END, LENGTH(en_name), type_id LIMIT 10",
-                    (int(q), f"%{q}%", f"%{q}%", int(q)),
-                )
-            else:
-                c.execute(
-                    "SELECT type_id, en_name, zh_name FROM item "
-                    "WHERE en_name LIKE ? OR zh_name LIKE ? "
-                    "ORDER BY CASE WHEN en_name LIKE ? THEN 0 "
-                    "WHEN zh_name LIKE ? THEN 1 ELSE 2 END, "
-                    "LENGTH(en_name), type_id LIMIT 10",
-                    (f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%"),
-                )
-            result = []
-            for tid, en, zh in c.fetchall():
-                display = f"[{tid}] {zh or ''} ({en or ''})" if zh and en else f"[{tid}] {zh or en or str(tid)}"
-                result.append((tid, display))
-            self.finished_signal.emit(result)
+        q = self._query.strip()
+        if not q:
+            self.finished_signal.emit([])
+            return
+        repo = get_container().item_repo
+        if q.isdigit():
+            item = repo.get_by_id(int(q))
+            items = [item] if item else repo.search_by_name(q, limit=10)
+        else:
+            items = repo.search_by_name(q, limit=10)
+        result = []
+        for it in items:
+            tid = it["type_id"]
+            zh = it["zh_name"] or ""
+            en = it["en_name"] or ""
+            display = f"[{tid}] {zh or ''} ({en or ''})" if zh and en else f"[{tid}] {zh or en or str(tid)}"
+            result.append((tid, display))
+        self.finished_signal.emit(result)
 
 
 # ═══════════════════════════════════════
