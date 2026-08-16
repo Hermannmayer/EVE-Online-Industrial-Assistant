@@ -566,18 +566,12 @@ class MainWindow(QMainWindow):
     def _refresh_price_age(self):
         """刷新工具栏上的价格年龄标签"""
         try:
-            conn = get_container().db.direct_connect("mkt")
-            try:
-                cursor = conn.cursor()
-                cursor.execute("SELECT MAX(fetch_time) FROM market_prices")
-                row = cursor.fetchone()
-            finally:
-                conn.close()
-            if not (row and row[0]):
+            latest = get_container().market_repo.get_latest_fetch_time()
+            if not latest:
                 self._price_age_label.setText("⏳ 价格: 暂无数据")
                 self._price_age_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; padding: 0 8px;")
                 return
-            utc_str = row[0]
+            utc_str = latest
             try:
                 dt = datetime.strptime(utc_str, "%Y-%m-%d %H:%M:%S")
                 now_utc = datetime.now(UTC).replace(tzinfo=None)
