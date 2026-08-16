@@ -138,46 +138,36 @@ def _global_exception_handler(exc_type, exc_value, exc_traceback):
 def main():
     ensure_dirs_exist()
 
-    _migrate_split_db()
-    _migrate_blueprint_db()
+    HOT_RELOAD = "--hot-reload" in sys.argv
 
-    # -- Schema 迁移 --
-    from services.schema_migrations import ensure_all_schemas
+    # -- Single instance lock（前置：失败不闪 splash） --
+    from core.single_instance import show_message, try_lock, unlock
 
-    results = ensure_all_schemas()
-    log.info("Schema 检查 ─────────────────────────")
-    for alias, r in results.items():
-        if r.get("failed"):
-            log.error("  ❌ %s  Schema 检查失败（见上方 traceback，非「库缺失」）", alias)
-        elif r["applied"]:
-            if r.get("backup"):
-                log.info("  [OK] %s  迁移前已备份到 %s", alias, r["backup"])
-            for step in r["applied"]:
-                log.info("  [OK] %s  %s", alias, step)
-        elif r["after"] is not None:
-            log.info("  [OK] %s  v%s (current)", alias, r["after"])
-        else:
-            log.info("  [--] %s  db missing, skip", alias)
+    if not try_lock(force="--force" in sys.argv):
+        show_message()
+        sys.exit(1)
 
-    # -- 数据初始化检查 --
-    from services.init_check import missing_count
+    from PySide6.QtGui import QFont
 
-    missing = missing_count()
-    if missing > 0:
-        log.info("Data init: %d components not ready (use Settings -> Data Init)", missing)
-    else:
-        log.info("Data init: ALL ready")
+    app = QApplication(sys.argv)
+    app.setApplicationName("EVE 商人助手")
+    app.setOrganizationName("EVEAssistant")
 
-    from services.inventory_manager import init_db
+    # 设置默认字体（避免系统字体配置中的无效值导致警告）
+    app.setFont(QFont("Microsoft YaHei UI", 10))
 
-    init_db()
+    # splash 配色与主窗一致（启动早期主题未初始化时先应用偏好）
+    import ui_pyside6.theme as theme
 
-    if "--debug" in sys.argv:
-        from core.logger import set_debug
+    theme.apply_theme(theme.load_theme_preference())
 
-        set_debug(True)
-        log.debug("调试模式已启用")
+    # -- 启动界面：立即显示 splash，后台完成迁移 + 数据检查 --
+    from ui_pyside6.splash_screen import SplashScreen
 
+    splash = SplashScreen()
+    splash.show()
+
+    # 其余启动初始化在 splash 显示后进行（不阻塞首帧）
     sys.excepthook = _global_exception_handler
 
     # 自定义 Qt 消息处理器，过滤字体大小警告
@@ -198,44 +188,46 @@ def main():
 
     qInstallMessageHandler(_qt_message_handler)
 
-    app = QApplication(sys.argv)
-    app.setApplicationName("EVE 商人助手")
-    app.setOrganizationName("EVEAssistant")
+    if "--debug" in sys.argv:
+        from core.logger import set_debug
 
-    # 设置默认字体（避免系统字体配置中的无效值导致警告）
-    from PySide6.QtGui import QFont
+        set_debug(True)
+        log.debug("调试模式已启用")
 
-    default_font = QFont("Microsoft YaHei UI", 10)
-    app.setFont(default_font)
-
-    # -- Single instance lock --
-    from PySide6.QtCore import QTimer
-
-    from core.single_instance import show_message, try_lock, unlock
     from services.database_manager import get_db
-
-    if not try_lock(force="--force" in sys.argv):
-        show_message()
-        QTimer.singleShot(2000, app.quit)
-        sys.exit(app.exec())
-        return
 
     app.aboutToQuit.connect(unlock)
     app.aboutToQuit.connect(get_db().close_all)
 
-    # -- Hot reload --
-    HOT_RELOAD = "--hot-reload" in sys.argv
+    from ui_pyside6.workers.startup_worker import StartupCheckWorker
 
-    # -- 启动检查（统一完整向导；全部就绪自动关闭，缺失时自动开始下载） --
-    from ui_pyside6.views.init_wizard import InitWizard
+    worker = StartupCheckWorker(parent=splash)
+    worker.stage.connect(splash.set_stage)
+    worker.component_checked.connect(splash.set_component)
 
-    InitWizard(auto_mode=True).exec()
+    def _on_startup_done(ready: bool, missing_keys: list):
+        from ui_pyside6.main_window import MainWindow
 
-    # -- 主窗口 --
-    from ui_pyside6.main_window import MainWindow
+        if ready:
+            win = MainWindow(hot_reload=HOT_RELOAD)  # splash 仍在屏，构建期无空白
 
-    window = MainWindow(hot_reload=HOT_RELOAD)
-    window.show()
+            def _show_main():
+                win.show()
+                splash.close()
+
+            splash.complete(_show_main)
+        else:
+            # 有缺失 → 转交 InitWizard 自动下载（splash 已查过，免二次扫描）
+            from ui_pyside6.views.init_wizard import InitWizard
+
+            def _show_wizard_then_main():
+                InitWizard(auto_mode=True, prechecked_missing=missing_keys).exec()
+                MainWindow(hot_reload=HOT_RELOAD).show()
+
+            splash.complete(_show_wizard_then_main)
+
+    worker.finished_all.connect(_on_startup_done)
+    worker.start()
 
     sys.exit(app.exec())
 
