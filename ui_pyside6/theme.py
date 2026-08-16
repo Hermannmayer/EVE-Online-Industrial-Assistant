@@ -3,10 +3,13 @@ One Dark Pro / One Light 主题系统 — 支持运行时切换
 """
 
 import json
+import logging
 import os
 import weakref
 from collections.abc import Callable
 from typing import TypedDict, cast
+
+_logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════
 #  色板定义
@@ -121,7 +124,7 @@ FLUENT_BRIGHT = {
     "ACCENT_RED": "#c42b1c",
     "ACCENT_GREEN": "#0f7b0f",
     "ACCENT_YELLOW": "#9d5d00",
-    "ACCENT_ORANGE": "#c239b3",
+    "ACCENT_ORANGE": "#c55a11",
     "ACCENT_PURPLE": "#8764b8",
     "ACCENT_CYAN": "#038387",
     "TEXT_PRIMARY": "#1a1a1a",
@@ -404,7 +407,7 @@ def apply_theme(theme_name: str) -> None:
         try:
             listener()
         except Exception:
-            pass
+            _logger.exception("主题监听器回调失败")
     for ref in dead:
         _theme_listeners.remove(ref)
 
@@ -751,7 +754,7 @@ def _table_styles() -> str:
         border-radius: {RADIUS};
         gridline-color: {BORDER};
         selection-background-color: {PRIMARY};
-        selection-color: {TEXT_BRIGHT};
+        selection-color: {TEXT_ON_PRIMARY};
         outline: none;
     }}
     QTableView::item {{
@@ -760,11 +763,11 @@ def _table_styles() -> str:
     }}
     QTableView::item:selected {{
         background-color: {PRIMARY};
-        color: {TEXT_BRIGHT};
+        color: {TEXT_ON_PRIMARY};
     }}
     QTableView::item:selected:!active {{
         background-color: {PRIMARY};
-        color: {TEXT_BRIGHT};
+        color: {TEXT_ON_PRIMARY};
     }}
     QTableView::indicator {{
         width: 16px;
