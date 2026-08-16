@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import services.plan_decompose as pd
 from services import inventory_manager
+from services.repositories.plan_repository import PlanRepository
 from ui_pyside6.views.industry import parent_decompose_dialog as dlg_mod
 from ui_pyside6.views.industry.parent_decompose_dialog import ParentDecomposeDialog
 
@@ -59,7 +60,9 @@ def _build_dbs(db_manager):
 def _patch(db_manager, monkeypatch):
     monkeypatch.setattr(pd, "get_container", lambda: SimpleNamespace(db=db_manager))
     monkeypatch.setattr(inventory_manager, "_default_db", lambda: db_manager)
-    monkeypatch.setattr(dlg_mod, "get_container", lambda: SimpleNamespace(db=db_manager))
+    monkeypatch.setattr(
+        dlg_mod, "get_container", lambda: SimpleNamespace(db=db_manager, plan_repo=PlanRepository(db_manager))
+    )
     monkeypatch.setattr(dlg_mod.QMessageBox, "information", lambda *a, **k: None)
 
 

@@ -310,7 +310,7 @@ class TestFetchOrders:
         # ── patch 内层函数，避免真实 HTTP ──
         with (
             patch("services.workers.getprices.discover_pages") as mock_discover,
-            patch("services.workers.getprices.fetch_order_pages") as mock_fetch_pages,
+            patch("services.workers.getprices._fetch_order_pages_detailed") as mock_fetch_pages,
             patch("services.workers.getprices.APIClient") as mock_api,
         ):
             client = _mock_client()
@@ -320,11 +320,11 @@ class TestFetchOrders:
             # discover_pages 返回单区域 Jita 均为 1 页
             mock_discover.return_value = {"10000002_buy": 1, "10000002_sell": 1}
 
-            # fetch_order_pages 根据 order_type 返回不同数据
+            # _fetch_order_pages_detailed 根据 order_type 返回不同数据（(data, ok) 元组）
             async def _fetch_side(client, region_id, order_type, total_pages):
                 if order_type == "buy":
-                    return buy_data
-                return sell_data
+                    return buy_data, True
+                return sell_data, True
 
             mock_fetch_pages.side_effect = _fetch_side
 

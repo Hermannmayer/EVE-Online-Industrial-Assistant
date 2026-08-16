@@ -111,9 +111,10 @@ class TestReadyButtonDelegate:
     def test_ready_cell_button_size_hint(self, qapp):
         from PySide6.QtWidgets import QStyleOptionViewItem
 
-        from ui_pyside6.views.industry.plan_table import COL_STATUS, _ReadyButtonDelegate
+        from ui_pyside6.views.industry.plan_table_constants import COL_STATUS
+        from ui_pyside6.views.industry.plan_table_delegate import ReadyButtonDelegate
 
-        delegate = _ReadyButtonDelegate()
+        delegate = ReadyButtonDelegate()
         model = self._ready_model()  # 保持模型存活，避免 QModelIndex 悬空
         index = model.index(0, COL_STATUS)
         hint = delegate.sizeHint(QStyleOptionViewItem(), index)
@@ -124,9 +125,10 @@ class TestReadyButtonDelegate:
         from PySide6.QtWidgets import QStyleOptionViewItem
 
         from ui_pyside6.models.industry_models import PlanTableModel
-        from ui_pyside6.views.industry.plan_table import COL_STATUS, _ReadyButtonDelegate
+        from ui_pyside6.views.industry.plan_table_constants import COL_STATUS
+        from ui_pyside6.views.industry.plan_table_delegate import ReadyButtonDelegate
 
-        delegate = _ReadyButtonDelegate()
+        delegate = ReadyButtonDelegate()
         model = PlanTableModel([{"product_name": "渡鸦级", "status": "in_progress", "product_type_id": 2001}])
         index = model.index(0, COL_STATUS)
         hint = delegate.sizeHint(QStyleOptionViewItem(), index)
@@ -137,9 +139,10 @@ class TestReadyButtonDelegate:
         from PySide6.QtGui import QPainter, QPixmap
         from PySide6.QtWidgets import QStyleOptionViewItem
 
-        from ui_pyside6.views.industry.plan_table import COL_STATUS, _ReadyButtonDelegate
+        from ui_pyside6.views.industry.plan_table_constants import COL_STATUS
+        from ui_pyside6.views.industry.plan_table_delegate import ReadyButtonDelegate
 
-        delegate = _ReadyButtonDelegate()
+        delegate = ReadyButtonDelegate()
         model = self._ready_model()
         index = model.index(0, COL_STATUS)
         option = QStyleOptionViewItem()

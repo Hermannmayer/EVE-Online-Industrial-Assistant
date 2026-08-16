@@ -161,7 +161,7 @@ def test_import_review_dialog_show_event(qapp, mock_db):
 def test_char_settings_dialog_show_event(qapp, mock_db):
     with (
         patch("ui_pyside6.views.char_settings_view.load_all_data") as mock_load,
-        patch("ui_pyside6.views.char_settings_view.load_implants", return_value=[]),
+        patch("ui_pyside6.views.char_settings_pages.load_implants", return_value=[]),
         patch("ui_pyside6.views.char_settings_view.save_all_data"),
     ):
         mock_load.return_value = {

@@ -323,7 +323,7 @@ class TestPlanMetricsSystemCostIndex:
         """研究成本缓存 key 必须含 solar_system_id：不同星系研究成本不串缓存"""
         from services import scoring_service as ss
 
-        ss._research_cost_cache.clear()
+        ss._research_cost_cache.invalidate()
         try:
             calls: list[int | None] = []
             with patch("services.research_calculator.research_cost_for_item") as mock_r:
@@ -341,7 +341,7 @@ class TestPlanMetricsSystemCostIndex:
             # 同 type 不同星系各自缓存；同一星系第二次命中缓存不再查询
             assert calls == [30000142, 30000150]
         finally:
-            ss._research_cost_cache.clear()
+            ss._research_cost_cache.invalidate()
 
 
 class TestHangarStructureBonus:
