@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.container import get_container
 from services import plan_execution
+from services.industry_dialog_queries import set_plan_deposit_hangar
 
 
 def complete_plans(plans: list[dict], hangar_id: int) -> dict:
@@ -39,11 +40,7 @@ def complete_plans(plans: list[dict], hangar_id: int) -> dict:
     failed: list[str] = []
     deposit = hangar_id if hangar_id and hangar_id > 0 else None
     for plan in plans:
-        with get_container().db.connect("user") as conn:
-            conn.execute(
-                "UPDATE production_plans SET deposit_hangar_id=? WHERE id=?",
-                (deposit, plan["id"]),
-            )
+        set_plan_deposit_hangar(get_container().db, plan["id"], deposit)
         res = plan_execution.complete_plan(plan)
         if res.get("ok"):
             completed += 1

@@ -77,27 +77,7 @@ class MfgTreeW(QThread):
     done = Signal(list)
 
     def run(self):
-        with get_container().db.connect("ref", "bp") as conn:
-            c = conn.cursor()
-            c.execute("""
-                WITH RECURSIVE ancestors(id) AS (
-                    SELECT DISTINCT i.market_group_id
-                    FROM item i
-                    JOIN blueprint_products bp ON i.type_id = bp.product_type_id
-                    WHERE bp.activity = 'manufacturing'
-                    UNION ALL
-                    SELECT mt.parent_group_id
-                    FROM market_tree mt
-                    JOIN ancestors a ON mt.market_group_id = a.id
-                    WHERE mt.parent_group_id IS NOT NULL
-                )
-                SELECT DISTINCT mt.market_group_id, mt.parent_group_id, mt.zh_name
-                FROM market_tree mt
-                WHERE mt.market_group_id IN (SELECT id FROM ancestors)
-                ORDER BY mt.zh_name
-            """)
-            r = [{"id": i, "p": p, "n": z or f"G{i}"} for i, p, z in c.fetchall()]
-            self.done.emit(r)
+        self.done.emit(get_container().blueprint_repo.get_manufacturable_market_tree())
 
 
 class ManufacturableItemsDialog(QDialog):
@@ -380,41 +360,22 @@ class ManufacturableItemsDialog(QDialog):
         data = self._data
         cat = self._cat.currentIndex()
         if data and len(data) > 0:
-            with get_container().db.connect("ref", "bp") as conn:
-                c = conn.cursor()
-                if cat == 0:
-                    c.execute("SELECT DISTINCT product_type_id FROM blueprint_products WHERE activity='manufacturing'")
-                    bp_ids = {r[0] for r in c.fetchall()}
-                    data = [r for r in data if r["id"] in bp_ids]
-                elif cat == 1:
-                    c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
-                        WHERE bp.activity='manufacturing'
-                        AND bp.blueprint_type_id NOT IN (
-                            SELECT product_type_id FROM blueprint_products WHERE activity='invention'
-                        )""")
-                    bp_ids = {r[0] for r in c.fetchall()}
-                    data = [r for r in data if r["id"] in bp_ids]
-                elif cat == 2:
-                    c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
-                        WHERE bp.activity='manufacturing'
-                        AND bp.blueprint_type_id IN (
-                            SELECT product_type_id FROM blueprint_products WHERE activity='invention'
-                        )""")
-                    bp_ids = {r[0] for r in c.fetchall()}
-                    data = [r for r in data if r["id"] in bp_ids]
-                elif cat == 3:
-                    c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
-                        JOIN item i ON bp.product_type_id=i.type_id
-                        WHERE bp.activity='manufacturing' AND (
-                            i.en_name LIKE '%Navy%' OR i.en_name LIKE '%Faction%'
-                            OR i.en_name LIKE '%Imperial%' OR i.en_name LIKE '%Republic%'
-                            OR i.en_name LIKE '%Federation%' OR i.en_name LIKE '%State%')""")
-                    bp_ids = {r[0] for r in c.fetchall()}
-                    data = [r for r in data if r["id"] in bp_ids]
-                elif cat == 4:
-                    c.execute("SELECT DISTINCT product_type_id FROM blueprint_products WHERE activity='reaction'")
-                    bp_ids = {r[0] for r in c.fetchall()}
-                    data = [r for r in data if r["id"] in bp_ids]
+            blueprint_repo = get_container().blueprint_repo
+            if cat == 0:
+                bp_ids = set(blueprint_repo.get_all_product_ids("manufacturing"))
+                data = [r for r in data if r["id"] in bp_ids]
+            elif cat == 1:
+                bp_ids = blueprint_repo.get_t1_manufacturable_product_ids()
+                data = [r for r in data if r["id"] in bp_ids]
+            elif cat == 2:
+                bp_ids = blueprint_repo.get_t2_manufacturable_product_ids()
+                data = [r for r in data if r["id"] in bp_ids]
+            elif cat == 3:
+                bp_ids = blueprint_repo.get_faction_manufacturable_product_ids()
+                data = [r for r in data if r["id"] in bp_ids]
+            elif cat == 4:
+                bp_ids = set(blueprint_repo.get_all_product_ids("reaction"))
+                data = [r for r in data if r["id"] in bp_ids]
         self._filt = data
         self._upd()
 
@@ -519,11 +480,7 @@ class ManufacturableItemsDialog(QDialog):
         if not self._filt:
             return
         # 单条 SQL 确认 market_prices 是否有数据，避免 N 次 get_price 调用
-        from core.container import get_container
-
-        with get_container().db.connect("mkt") as conn:
-            row = conn.cursor().execute("SELECT COUNT(*) FROM market_prices").fetchone()
-            has_prices = row and row[0] > 0
+        has_prices = get_container().market_repo.has_any_prices()
 
         if has_prices:
             # 数据库有价格 → 清评分缓存 → 用最新价格重算

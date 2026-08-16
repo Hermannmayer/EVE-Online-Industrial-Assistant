@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
-from services.plan_decompose import parent_needs
+from services.industry_dialog_queries import get_item_name, get_mass_parallel_data
 
 
 def compute_parallel_by_lines(subitems: list[dict], total_lines: int) -> list[dict]:
@@ -82,13 +82,9 @@ class MassParallelDialog(QDialog):
         self._duration: dict[int, int] = {}
         self._preview: list[dict] = []  # 最近一次计算 [{id, parallels}]
 
-        with get_container().db.connect("ref", "user", "bp") as conn:
-            self._demand = parent_needs(conn, plans)
-            for p in self._plans:
-                pid = p["product_type_id"]
-                self._per_run[pid] = self._query_output(conn, pid)
-                dur = self._query_duration_sec(conn, p.get("blueprint_type_id"))
-                self._duration[pid] = dur * int(p.get("runs") or 1)  # 单线总时长
+        self._demand, self._per_run, self._duration = get_mass_parallel_data(
+            get_container().db, plans, self._plans
+        )
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -138,24 +134,8 @@ class MassParallelDialog(QDialog):
 
     # ── 工具 ──
 
-    def _query_output(self, conn, product_type_id: int) -> int:
-        row = conn.execute(
-            "SELECT quantity FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-            (product_type_id,),
-        ).fetchone()
-        return int(row[0]) if row and row[0] else 1
-
-    def _query_duration_sec(self, conn, blueprint_type_id) -> int:
-        row = conn.execute(
-            "SELECT time FROM blueprint_activities WHERE blueprint_type_id=? AND activity='manufacturing' LIMIT 1",
-            (blueprint_type_id,),
-        ).fetchone()
-        return int(row[0]) if row and row[0] else 0
-
     def _resolve_name(self, type_id: int) -> str:
-        with get_container().db.connect("ref") as conn:
-            row = conn.execute("SELECT zh_name, en_name FROM item WHERE type_id=?", (type_id,)).fetchone()
-        return (row[0] or row[1] or str(type_id)) if row else str(type_id)
+        return get_item_name(get_container().db, type_id)
 
     def _on_mode_changed(self) -> None:
         is_lines = self._mode.currentData() == "lines"

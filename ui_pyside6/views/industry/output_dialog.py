@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
-from services.plan_aggregator import calculate_output_with_overflow
+from services.industry_dialog_queries import get_output_summary
 
 _STATUS_MAP = {
     "pending": "待开始",
@@ -71,37 +71,10 @@ class OutputSummaryDialog(QDialog):
         """查询所有生产计划，计算产出价值 + 溢出"""
         self._table.setRowCount(0)
 
-        with get_container().db.connect("user", "ref", "bp", "mkt") as conn:
-            # 1) 所有计划
-            plan_rows = conn.execute(
-                "SELECT id, product_type_id, product_name, runs, parallels, "
-                "material_cost, profit, margin, market_margin, status, me_level "
-                "FROM production_plans ORDER BY created_at DESC"
-            ).fetchall()
-
-            if not plan_rows:
-                self._status_label.setText("没有生产计划")
-                return
-
-            plans = [
-                {
-                    "id": r[0],
-                    "product_type_id": r[1],
-                    "product_name": r[2],
-                    "runs": r[3] or 1,
-                    "parallels": r[4] or 1,
-                    "material_cost": r[5] or 0.0,
-                    "profit": r[6] or 0.0,
-                    "margin": r[7] or 0.0,
-                    "market_margin": r[8] or r[7] or 0.0,
-                    "status": r[9] or "pending",
-                    "me_level": r[10] or 0,
-                }
-                for r in plan_rows
-            ]
-
-            # 2) 计算产出 + 溢出
-            output_results = calculate_output_with_overflow(conn, plans)
+        output_results = get_output_summary(get_container().db)
+        if output_results is None:
+            self._status_label.setText("没有生产计划")
+            return
 
         # 3) 填充表格
         self._table.setRowCount(len(output_results))

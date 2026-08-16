@@ -64,45 +64,9 @@ def _parse_clipboard(text: str) -> list[tuple[str, int, float]]:
 
 def _search_item_by_name(name: str) -> dict | None:
     """按中文/英文名搜索物品，返回 {type_id, zh_name, en_name, iconID, volume} 或 None"""
-    # 规范化引号 → 统一用 % 通配，兼容 ASCII/弯引号
-    import re
+    from services.ui_data_service import search_item_by_name
 
-    fuzzy_name = re.sub(r"[\"\"'']+", "%", name)
-    with get_container().db.connect("ref") as conn:
-        c = conn.cursor()
-        # 精确匹配（原始名）
-        c.execute(
-            "SELECT type_id, zh_name, en_name, iconID, volume FROM item WHERE zh_name = ? OR en_name = ? LIMIT 1",
-            (name, name),
-        )
-        row = c.fetchone()
-        if row:
-            return {"type_id": row[0], "zh_name": row[1], "en_name": row[2], "iconID": row[3], "volume": row[4] or 0}
-        # 模糊匹配（原始名）
-        c.execute(
-            "SELECT type_id, zh_name, en_name, iconID, volume FROM item WHERE zh_name LIKE ? OR en_name LIKE ? LIMIT 1",
-            (f"%{name}%", f"%{name}%"),
-        )
-        row = c.fetchone()
-        if row:
-            return {"type_id": row[0], "zh_name": row[1], "en_name": row[2], "iconID": row[3], "volume": row[4] or 0}
-        # 引号归一化模糊匹配（引号 → % 通配符）
-        if fuzzy_name != name:
-            c.execute(
-                "SELECT type_id, zh_name, en_name, iconID, volume FROM item"
-                " WHERE zh_name LIKE ? OR en_name LIKE ? LIMIT 1",
-                (f"%{fuzzy_name}%", f"%{fuzzy_name}%"),
-            )
-            row = c.fetchone()
-            if row:
-                return {
-                    "type_id": row[0],
-                    "zh_name": row[1],
-                    "en_name": row[2],
-                    "iconID": row[3],
-                    "volume": row[4] or 0,
-                }
-    return None
+    return search_item_by_name(name, db=get_container().db)
 
 
 class ClipboardParseWorker(QThread):

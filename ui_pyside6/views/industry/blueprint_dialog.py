@@ -19,10 +19,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
-from services.plan_aggregator import (
-    check_user_blueprints,
-    expand_blueprint_requirements,
-)
+from services.industry_dialog_queries import get_blueprint_requirements
 
 
 class _StatusTableWidgetItem(QTableWidgetItem):
@@ -79,37 +76,15 @@ class BlueprintRequirementsDialog(QDialog):
         self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
 
-        with get_container().db.connect("user", "ref", "bp") as conn:
-            # 1) 查所有活跃计划
-            active_plans = conn.execute(
-                "SELECT id, product_type_id, product_name, runs, parallels, me_level "
-                "FROM production_plans WHERE status IN ('pending','in_progress','running','ready')"
-            ).fetchall()
-
-            if not active_plans:
-                self._status_label.setText("没有活跃计划")
-                return
-
-            plans = [
-                {
-                    "product_type_id": r[1],
-                    "product_name": r[2],
-                    "runs": r[3],
-                    "parallels": r[4],
-                    "me_level": r[5],
-                }
-                for r in active_plans
-            ]
-
-            # 2) 展开蓝图需求
-            needed = expand_blueprint_requirements(conn, plans)
-
-            if not needed:
-                self._status_label.setText("没有蓝图需求")
-                return
-
-            # 3) 查询用户蓝图库存
-            bp_inv = check_user_blueprints(conn, set(needed.keys()))
+        result = get_blueprint_requirements(get_container().db)
+        if result["status"] == "no_active":
+            self._status_label.setText("没有活跃计划")
+            return
+        if result["status"] == "no_needed":
+            self._status_label.setText("没有蓝图需求")
+            return
+        needed = result["needed"]
+        bp_inv = result["bp_inv"]
 
         # 4) 填充表格
         self._table.setRowCount(len(needed))

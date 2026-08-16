@@ -173,21 +173,7 @@ class ScoreW(BaseBatchScoreWorker):
         try:
             tids = [row.get("id") for row in self._items if row.get("id")]
             if tids:
-                with get_container().db.connect("mkt") as conn:
-                    ph = ",".join("?" * len(tids))
-                    cur = conn.cursor()
-                    cur.execute(
-                        f"SELECT type_id, buy_price, sell_price, buy_volume, sell_volume "
-                        f"FROM market_prices WHERE region_id=? AND type_id IN ({ph})",
-                        (mkt_id, *tids),
-                    )
-                    for r in cur.fetchall():
-                        self._batch_market[r[0]] = {
-                            "bp": r[1],
-                            "sp": r[2],
-                            "bv": r[3] or 0,
-                            "sv": r[4] or 0,
-                        }
+                self._batch_market = get_container().market_repo.get_batch_market_snapshot(tids, mkt_id)
         except Exception:
             self._batch_market = {}
 

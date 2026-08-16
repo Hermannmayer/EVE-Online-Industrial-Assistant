@@ -83,6 +83,28 @@ class ItemRepository:
             ).fetchall()
             return {int(r[0]) for r in rows}
 
+    def get_planetary_product_ids(self) -> set[int]:
+        """行星开发相关物品 type_id（market_tree 行星/指挥中心分类及其子分类）。"""
+        with self._db.connect("ref") as conn:
+            rows = conn.execute(
+                """SELECT DISTINCT i.type_id FROM item i
+                JOIN market_tree mt ON i.market_group_id = mt.market_group_id
+                WHERE mt.parent_group_id IN (
+                    SELECT market_group_id FROM market_tree
+                    WHERE zh_name LIKE '%行星%' OR en_name LIKE '%Planet%'
+                ) OR mt.parent_group_id IN (
+                    WITH RECURSIVE s AS(
+                    SELECT market_group_id FROM market_tree
+                    WHERE zh_name LIKE '%行星%'
+                    OR en_name LIKE '%Planet%'
+                    OR en_name LIKE '%Command Center%'
+                    UNION ALL
+                    SELECT m.market_group_id FROM market_tree m
+                    JOIN s ON m.parent_group_id=s.market_group_id)
+                    SELECT market_group_id FROM s)"""
+            ).fetchall()
+            return {int(r[0]) for r in rows}
+
     def count(self) -> int:
         with self._db.connect("ref") as conn:
             r = conn.execute("SELECT COUNT(*) FROM item").fetchone()

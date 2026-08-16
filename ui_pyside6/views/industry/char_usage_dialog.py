@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
+from services.industry_dialog_queries import get_character_usage
 
 
 class CharacterUsageDialog(QWidget):
@@ -55,19 +56,7 @@ class CharacterUsageDialog(QWidget):
         """按 char_name GROUP BY 统计活跃计划"""
         self._table.setRowCount(0)
 
-        conn_ctx = get_container().db.connect("user")
-        conn = conn_ctx.__enter__()
-        try:
-            rows = conn.execute(
-                "SELECT char_name, COUNT(*) as cnt, "
-                "GROUP_CONCAT(COALESCE(product_name, CAST(product_type_id TEXT)), ', ') as details "
-                "FROM production_plans "
-                "WHERE status IN ('pending', 'in_progress', 'running') "
-                "GROUP BY char_name "
-                "ORDER BY cnt DESC"
-            ).fetchall()
-        finally:
-            conn_ctx.__exit__(None, None, None)
+        rows = get_character_usage(get_container().db)
 
         if not rows:
             self._status_label.setText("没有活跃计划")
