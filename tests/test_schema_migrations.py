@@ -4,8 +4,11 @@
 - F9: v0 判定修复（有表但 user_version=0 的旧库应补跑迁移而非跳过）
 - F15: mkt v2→v3 market_prices(fetch_time) 索引
 - 幂等性：重复运行不报错
+- 迁移前自动备份（VACUUM INTO 快照 + 保留策略）
+- _rebuild_table 大变动重建（数据保留 / 失败回滚）
 """
 
+import os
 import sqlite3
 
 import pytest
@@ -649,3 +652,112 @@ def test_user_v9_to_v10_skips_missing_table(tmp_user_db):
     result = sm.ensure_schema("user")
     assert result["after"] == 11
     assert result["applied"], "应记录 v9→v11 迁移（即便无表可改）"
+
+
+# ────────────────────────────────────────────
+#  迁移前自动备份
+# ────────────────────────────────────────────
+
+
+def _backup_dir(tmp_user_db) -> str:
+    return str(tmp_user_db.parent / "backups")
+
+
+def test_migration_creates_pre_migration_backup(tmp_user_db):
+    """迁移前自动备份：构造 v9 库 → 迁移到 v11，备份存在且为迁移前版本 v9"""
+    _create_user_v9(tmp_user_db)
+    assert not os.path.exists(_backup_dir(tmp_user_db)), "迁移前不应有备份"
+
+    result = sm.ensure_schema("user")
+
+    backups = sorted(os.listdir(_backup_dir(tmp_user_db)))
+    assert len(backups) == 1
+    backup_path = os.path.join(_backup_dir(tmp_user_db), backups[0])
+    assert result["backup"] == backup_path, "返回 dict 应带 backup 键"
+    conn = sqlite3.connect(backup_path)
+    v = conn.execute("PRAGMA user_version").fetchone()[0]
+    conn.close()
+    assert v == 9, "备份应是迁移前的版本快照"
+
+
+def test_no_backup_when_already_current(tmp_user_db):
+    """库已是最新版本 → 不触发备份"""
+    conn = sqlite3.connect(str(tmp_user_db))
+    conn.execute("PRAGMA user_version = 11")
+    conn.commit()
+    conn.close()
+
+    result = sm.ensure_schema("user")
+
+    assert result["applied"] == []
+    assert result["backup"] is None
+    assert not os.path.exists(_backup_dir(tmp_user_db))
+
+
+def test_backup_cleanup_keeps_latest_n(tmp_path):
+    """保留最近 BACKUP_KEEP 份，删除更早的"""
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    for i in range(sm.BACKUP_KEEP + 2):
+        p = backup_dir / f"user-2026010{i}.db"
+        p.write_bytes(b"x")
+        os.utime(p, (i, i))  # mtime 递增，i 越大越新
+
+    sm._cleanup_old_backups(str(backup_dir), "user-*.db")
+
+    remaining = sorted(backup_dir.glob("user-*.db"))
+    assert len(remaining) == sm.BACKUP_KEEP
+    assert remaining[-1].name == "user-20260106.db", "应保留最新（mtime 最大）的份数"
+
+
+# ────────────────────────────────────────────
+#  _rebuild_table 大变动重建
+# ────────────────────────────────────────────
+
+
+def test_rebuild_table_preserves_data_and_adds_column(tmp_user_db):
+    """重建表加列：数据保留、新列存在且填默认值"""
+    conn = sqlite3.connect(str(tmp_user_db))
+    conn.execute("CREATE TABLE widget (id INTEGER PRIMARY KEY, name TEXT, qty INTEGER)")
+    conn.executemany("INSERT INTO widget (name, qty) VALUES (?,?)", [("a", 1), ("b", 2)])
+    conn.commit()
+    conn.close()
+
+    sm._rebuild_table(
+        str(tmp_user_db),
+        "widget",
+        create_sql="CREATE TABLE widget (id INTEGER PRIMARY KEY, name TEXT, qty INTEGER, unit_price REAL DEFAULT 0)",
+        copy_columns=["id", "name", "qty"],
+    )
+
+    conn = sqlite3.connect(str(tmp_user_db))
+    rows = conn.execute("SELECT id, name, qty, unit_price FROM widget ORDER BY id").fetchall()
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(widget)")}
+    conn.close()
+    assert rows == [(1, "a", 1, 0), (2, "b", 2, 0)]
+    assert "unit_price" in cols
+
+
+def test_rebuild_table_rolls_back_on_failure(tmp_user_db):
+    """create_sql 非法 → 整体回滚，原表与数据完好，无 __old 残留"""
+    conn = sqlite3.connect(str(tmp_user_db))
+    conn.execute("CREATE TABLE widget (id INTEGER PRIMARY KEY, name TEXT)")
+    conn.execute("INSERT INTO widget (name) VALUES ('keep')")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(sqlite3.OperationalError):
+        sm._rebuild_table(
+            str(tmp_user_db),
+            "widget",
+            create_sql="CREATE TABLE widget (id INTEGER PRIMARY KEY, bogus COLUMN)",  # 非法 DDL
+            copy_columns=["id", "name"],
+        )
+
+    conn = sqlite3.connect(str(tmp_user_db))
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    rows = conn.execute("SELECT name FROM widget").fetchall()
+    conn.close()
+    assert "widget" in tables
+    assert "widget__old" not in tables, "失败后不应残留 __old 表"
+    assert rows == [("keep",)], "原数据应完好"

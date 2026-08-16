@@ -5,14 +5,22 @@
 所有 schema 变更必须在此注册迁移函数，不得在业务代码中写 ALTER TABLE。
 
 版本号: 整数，从 1 开始。PRAGMA user_version = 0 视为"未知旧库"。
+
+自动备份: 每次检测到需要迁移的库，先 VACUUM INTO 一份快照到
+<库目录>/backups/ 下（保留最近 BACKUP_KEEP 份），迁移失败/回滚后可手动恢复。
 """
 
+import glob
 import os
 import sqlite3
 from collections.abc import Callable
+from datetime import datetime
 
 from core.logger import log
 from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
+
+# 迁移前自动备份保留份数
+BACKUP_KEEP = 5
 
 # ── 当前 Schema 版本 ──
 # 每次有 schema 变更时加 1
@@ -392,6 +400,83 @@ def _set_version(db_path: str, version: int):
         conn.close()
 
 
+def _backup_db(db_path: str) -> str | None:
+    """迁移前对库做一致快照（VACUUM INTO），返回备份文件路径；失败返回 None。
+
+    备份目录跟随库文件（<库目录>/backups/），打包环境与测试临时库自动各归其位。
+    保留最近 BACKUP_KEEP 份；备份失败不阻断迁移（仅告警）。
+    """
+    try:
+        backup_dir = os.path.join(os.path.dirname(db_path), "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        base = os.path.basename(db_path)
+        name, _ = os.path.splitext(base)
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        target = os.path.join(backup_dir, f"{name}-{ts}.db")
+        if os.path.exists(target):  # 秒级时间戳冲突（几乎不可能）
+            os.unlink(target)
+        conn = _open(db_path)
+        try:
+            conn.execute("VACUUM INTO ?", (target,))
+        finally:
+            conn.close()
+        _cleanup_old_backups(backup_dir, f"{name}-*.db")
+        log.info("  💾 已备份 %s → %s", base, target)
+        return target
+    except Exception:
+        log.warning("  ⚠️ 迁移前备份失败（不阻断迁移）: %s", db_path, exc_info=True)
+        return None
+
+
+def _cleanup_old_backups(backup_dir: str, pattern: str, keep: int = BACKUP_KEEP) -> None:
+    """保留最近 keep 份备份，删除更早的。删除失败仅告警，不阻断。"""
+    try:
+        backups = sorted(
+            glob.glob(os.path.join(backup_dir, pattern)),
+            key=os.path.getmtime,
+            reverse=True,
+        )
+    except OSError:
+        return
+    for old in backups[keep:]:
+        try:
+            os.remove(old)
+        except OSError:
+            log.warning("  ⚠️ 清理旧备份失败: %s", old, exc_info=True)
+
+
+def _rebuild_table(db_path: str, table: str, create_sql: str, copy_columns: list[str]) -> None:
+    """大变动迁移：重建表结构并保留数据（改列类型/拆表/合并/重命名列）。
+
+    SQLite 的 ALTER TABLE 只支持加列；要改列类型/拆表/合并时必须走
+    建新表→复制→换名的标准流程。本函数在单个事务内完成：
+    旧表改名 → 建新表 → INSERT...SELECT 复制 → 删旧表。
+    ALTER/DROP 在 SQLite 中均可回滚，任一步失败整体回滚，原表与数据完好。
+    幂等可重入：失败已回滚，无 __old 残留。
+
+    Args:
+        db_path: 库文件路径
+        table: 要重建的表名（create_sql 必须建同名表）
+        create_sql: 新表完整 CREATE TABLE 语句
+        copy_columns: 需从旧表复制的列名列表（新表须含这些列；新列留默认值）
+    """
+    old_table = f"{table}__old"
+    cols = ", ".join(copy_columns)
+    conn = _open(db_path)
+    try:
+        conn.execute("BEGIN")
+        conn.execute(f"ALTER TABLE {table} RENAME TO {old_table}")
+        conn.execute(create_sql)
+        conn.execute(f"INSERT INTO {table} ({cols}) SELECT {cols} FROM {old_table}")
+        conn.execute(f"DROP TABLE {old_table}")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 # ═══════════════════════════════════════════
 #  公开 API
 # ═══════════════════════════════════════════
@@ -410,12 +495,13 @@ def ensure_schema(db_alias: str) -> dict:
     """
     db_path = _DB_PATH_MAP.get(db_alias)
     if not db_path or not os.path.exists(db_path):
-        return {"before": None, "after": None, "applied": []}
+        return {"before": None, "after": None, "applied": [], "backup": None}
 
     try:
         current = DB_SCHEMA_VERSIONS.get(db_alias, 1)
         on_disk = _get_version(db_path)
         applied: list[str] = []
+        backup: str | None = None
 
         if on_disk == 0:
             # 版本 0：可能是「有表但未打版本号」的旧库/半迁移库。
@@ -426,7 +512,11 @@ def ensure_schema(db_alias: str) -> dict:
         if on_disk > current:
             # 数据库版本比代码还新 → 可能是降级或手改过，跳过
             log.warning("  ⚠️ %s: 数据库版本 v%s > 代码版本 v%s，跳过", db_alias, on_disk, current)
-            return {"before": on_disk, "after": on_disk, "applied": []}
+            return {"before": on_disk, "after": on_disk, "applied": [], "backup": None}
+
+        if on_disk < current:
+            # 需要迁移：先做一致快照，出问题可回滚
+            backup = _backup_db(db_path)
 
         for v in range(on_disk, current):
             mig = _MIGRATIONS.get(db_alias, {}).get(v)
@@ -443,11 +533,11 @@ def ensure_schema(db_alias: str) -> dict:
             applied.append(f"v0→v{current}: 初始化版本号")
 
         after = current if on_disk > 0 else None
-        return {"before": on_disk, "after": after, "applied": applied}
+        return {"before": on_disk, "after": after, "applied": applied, "backup": backup}
 
     except Exception:
         log.exception("  ❌ %s: Schema 检查/迁移失败", db_alias)
-        return {"before": None, "after": None, "applied": [], "failed": True}
+        return {"before": None, "after": None, "applied": [], "failed": True, "backup": None}
 
 
 def ensure_all_schemas() -> dict[str, dict]:

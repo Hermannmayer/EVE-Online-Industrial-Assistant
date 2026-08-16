@@ -73,3 +73,50 @@ def test_set_none_preserves_other_keys(settings_path):
     data = us.load_settings()
     assert "default_mat_hangar_id" not in data
     assert data.get("other") == "value"
+
+
+# ────────────────────────────────────────────
+#  settings 版本迁移
+# ────────────────────────────────────────────
+
+
+def test_load_migrates_missing_version_preserves_keys(settings_path):
+    """无 settings_version 键的旧文件 → 升级到当前版本、原键保留、磁盘写回"""
+    settings_path.write_text(json.dumps({"theme": "dark", "default_mat_hangar_id": 5}), encoding="utf-8")
+
+    data = us.load_settings()
+
+    assert data["settings_version"] == us.SETTINGS_SCHEMA_VERSION
+    assert data["theme"] == "dark"
+    assert data["default_mat_hangar_id"] == 5
+    on_disk = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert on_disk["settings_version"] == us.SETTINGS_SCHEMA_VERSION
+    assert on_disk["theme"] == "dark"
+
+
+def test_load_current_version_does_not_rewrite(settings_path):
+    """已是最新版本 → 读取不落盘（mtime 不变）"""
+    settings_path.write_text(json.dumps({"settings_version": us.SETTINGS_SCHEMA_VERSION, "a": 1}), encoding="utf-8")
+    mtime = settings_path.stat().st_mtime_ns
+
+    us.load_settings()
+
+    assert settings_path.stat().st_mtime_ns == mtime
+
+
+def test_registered_migration_runs_and_keeps_unknown(settings_path, monkeypatch):
+    """注册的迁移函数生效：键名映射执行 + 未知键保留"""
+    def _migrate_v0(data):
+        if "old_key" in data:
+            data["new_key"] = data.pop("old_key")
+        return data
+
+    monkeypatch.setitem(us._SETTINGS_MIGRATIONS, 0, _migrate_v0)
+    settings_path.write_text(json.dumps({"old_key": "v", "keep": 1}), encoding="utf-8")
+
+    data = us.load_settings()
+
+    assert data["settings_version"] == us.SETTINGS_SCHEMA_VERSION
+    assert data["new_key"] == "v"
+    assert "old_key" not in data
+    assert data["keep"] == 1, "未知键应保留，绝不丢弃"

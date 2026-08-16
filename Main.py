@@ -150,6 +150,8 @@ def main():
         if r.get("failed"):
             log.error("  ❌ %s  Schema 检查失败（见上方 traceback，非「库缺失」）", alias)
         elif r["applied"]:
+            if r.get("backup"):
+                log.info("  [OK] %s  迁移前已备份到 %s", alias, r["backup"])
             for step in r["applied"]:
                 log.info("  [OK] %s  %s", alias, step)
         elif r["after"] is not None:
