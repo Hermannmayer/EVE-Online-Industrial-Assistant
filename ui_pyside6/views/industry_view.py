@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC
-
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -92,54 +90,21 @@ class PlanPriceRefreshWorker(QThread):
             log.exception("定向价格刷新失败")
             self.finished.emit(False, str(e))
 
-    async def _check_cache(self, db) -> set[int]:
-        """检查哪些 type_id 已过期（无数据或超过 TTL），返回需要刷新的 type_id 集合。"""
-        stale: set[int] = set()
-        from datetime import datetime
-
-        now = datetime.now(UTC)
-        cursor = await db.execute(
-            "SELECT type_id, fetch_time FROM market_prices WHERE type_id IN ({}) AND region_id=10000002".format(
-                ",".join("?" for _ in self._type_ids)
-            ),
-            list(self._type_ids),
-        )
-        rows = await cursor.fetchall()
-        fetched = {r[0] for r in rows}
-        # 无数据 → 需要刷新
-        stale.update(self._type_ids - fetched)
-        for tid, ft_str in rows:
-            try:
-                # fetch_time 格式: "YYYY-MM-DD HH:MM:SS" (SQLite localtime)
-                ft = datetime.strptime(ft_str, "%Y-%m-%d %H:%M:%S")
-                ft = ft.replace(tzinfo=UTC)
-                if (now - ft).total_seconds() > self._CACHE_TTL:
-                    stale.add(tid)
-            except (ValueError, TypeError):
-                stale.add(tid)
-        return stale
-
     async def _fetch_and_save(self) -> int:
         """异步拉取 ESI + 写入 market.db（仅拉取缓存过期的物品）"""
         import asyncio
 
-        import aiosqlite
-
-        from core.paths import market_db_path
-
-        MKT_DB = market_db_path()
+        from services.client import APIClient
+        from services.price_refresh_service import check_stale_type_ids, save_refreshed_prices
 
         # 1. 检查缓存：哪些 type_id 需要刷新
-        async with aiosqlite.connect(MKT_DB) as db:
-            stale_ids = await self._check_cache(db)
+        stale_ids = await check_stale_type_ids(self._type_ids)
 
         if not stale_ids:
             log.info("定向价格: 所有物品均在缓存有效期内，跳过刷新")
             return 0
 
         # 2. 并发拉取过期物品的 Jita 订单（统一走 APIClient 全局限流）
-        from services.client import APIClient
-
         ESI_BASE = "https://esi.evetech.net/latest"
         REGION_JITA = 10000002
 
@@ -186,44 +151,7 @@ class PlanPriceRefreshWorker(QThread):
                 type_orders[tid] = result
 
         # 3. 写入 market_prices（只写入实际拉取到的过期物品）
-        count = 0
-        async with aiosqlite.connect(MKT_DB) as db:
-            for tid in stale_ids:
-                p = type_orders.get(tid)
-                if not p:
-                    continue
-                cur = await db.execute(
-                    """UPDATE market_prices
-                       SET buy_price=?, sell_price=?, buy_volume=?, sell_volume=?,
-                           fetch_time=datetime('now')
-                       WHERE type_id=? AND region_id=?""",
-                    (
-                        p["buy_price"],
-                        p["sell_price"],
-                        int(p["buy_volume"]),
-                        int(p["sell_volume"]),
-                        tid,
-                        REGION_JITA,
-                    ),
-                )
-                if cur.rowcount == 0:
-                    await db.execute(
-                        """INSERT INTO market_prices
-                           (type_id, region_id, buy_price, sell_price, adjusted_price,
-                            buy_volume, sell_volume, fetch_time)
-                           VALUES (?, ?, ?, ?, 0.0, ?, ?, datetime('now'))""",
-                        (
-                            tid,
-                            REGION_JITA,
-                            p["buy_price"],
-                            p["sell_price"],
-                            int(p["buy_volume"]),
-                            int(p["sell_volume"]),
-                        ),
-                    )
-                count += 1
-            await db.commit()
-
+        count = await save_refreshed_prices(type_orders, REGION_JITA)
         log.info("定向价格刷新完成: %s 个物品（缓存跳过 %s 个）", count, len(self._type_ids) - len(stale_ids))
         return count
 
