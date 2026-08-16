@@ -218,12 +218,9 @@ class BlueprintTab(QWidget):
 
     def _load_market_categories(self):
         """加载根级市场分类到下拉框"""
-        with get_container().db.connect("ref") as conn:
-            c = conn.cursor()
-            c.execute("SELECT market_group_id, zh_name FROM market_tree WHERE parent_group_id IS NULL ORDER BY zh_name")
-            for mgid, name in c.fetchall():
-                if name:
-                    self._market_filter.addItem(name, mgid)
+        for mgid, name in get_container().item_repo.get_root_market_categories():
+            if name:
+                self._market_filter.addItem(name, mgid)
 
     def _load_blueprints(self):
         """从 user_blueprints 加载用户拥有的蓝图"""
@@ -382,21 +379,7 @@ class BlueprintTab(QWidget):
     def _get_market_descendants(self, market_group_id: int) -> set[int]:
         """递归获取指定市场分类下所有物品 type_id"""
         try:
-            with get_container().db.connect("ref") as conn:
-                c = conn.cursor()
-                c.execute(
-                    """
-                    WITH RECURSIVE sub AS (
-                        SELECT market_group_id FROM market_tree WHERE market_group_id = ?
-                        UNION ALL
-                        SELECT m.market_group_id FROM market_tree m JOIN sub ON m.parent_group_id = sub.market_group_id
-                    )
-                    SELECT DISTINCT i.type_id FROM item i
-                    WHERE i.market_group_id IN (SELECT market_group_id FROM sub)
-                """,
-                    (market_group_id,),
-                )
-                return {r[0] for r in c.fetchall()}
+            return get_container().item_repo.get_market_descendants(market_group_id)
         except Exception:
             log.exception("获取市场分类后代失败")
             return set()
