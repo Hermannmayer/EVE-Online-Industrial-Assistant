@@ -74,6 +74,39 @@ class MarketRepository:
             r = conn.execute("SELECT MAX(fetch_time) FROM market_prices").fetchone()
             return r[0] if r else None
 
+    def get_prices_by_region(
+        self, type_ids: list[int], region_id: int, price_type: str
+    ) -> dict[int, float]:
+        """批量获取指定区域价格（buy/sell/avg）。"""
+        if not type_ids:
+            return {}
+        tids = list(dict.fromkeys(type_ids))
+        ph = ",".join("?" * len(tids))
+        result: dict[int, float] = {}
+        with self._db.connect("mkt") as conn:
+            if price_type == "avg":
+                rows = conn.execute(
+                    f"SELECT type_id, sell_price, buy_price FROM market_prices"
+                    f" WHERE type_id IN ({ph}) AND region_id = ?",
+                    (*tids, region_id),
+                ).fetchall()
+                for tid, sell, buy in rows:
+                    if sell and buy:
+                        result[int(tid)] = (sell + buy) / 2
+                    elif sell or buy:
+                        result[int(tid)] = sell or buy
+            else:
+                col = "sell_price" if price_type == "sell" else "buy_price"
+                rows = conn.execute(
+                    f"SELECT type_id, {col} FROM market_prices"
+                    f" WHERE type_id IN ({ph}) AND region_id = ?",
+                    (*tids, region_id),
+                ).fetchall()
+                for tid, price in rows:
+                    if price is not None:
+                        result[int(tid)] = float(price)
+        return result
+
     def get_sell_prices(self, type_ids: list[int], region_id: int) -> dict[int, float]:
         """批量获取指定区域卖单价。"""
         if not type_ids:
