@@ -33,6 +33,17 @@ class ItemRepository:
             ).fetchone()
             return dict(r) if r else None
 
+    def get_by_name(self, name: str) -> dict | None:
+        """按中/英文名精确查找单个物品。"""
+        with self._db.connect("ref") as conn:
+            r = conn.execute(
+                "SELECT type_id, zh_name, en_name FROM item WHERE zh_name=? OR en_name=? LIMIT 1",
+                (name, name),
+            ).fetchone()
+            if not r:
+                return None
+            return {"type_id": r[0], "zh_name": r[1] or "", "en_name": r[2] or ""}
+
     def search_by_name(self, keyword: str, limit: int = 50) -> list[dict]:
         with self._db.connect("ref") as conn:
             like = f"%{keyword}%"
