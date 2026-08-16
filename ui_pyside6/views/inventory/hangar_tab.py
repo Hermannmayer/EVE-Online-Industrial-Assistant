@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
-from services.inventory_import import split_clipboard_lines
 from services.inventory_manager import (
     add_item,
     get_hangars,
@@ -34,7 +33,6 @@ from services.inventory_manager import (
     update_cost_price,
     update_quantity,
 )
-from services.name_resolver import resolve_item_name, search_item_type_id
 from ui_pyside6.dialogs.hangar_dialogs import (
     AddItemDialog,
     BatchCostPriceDialog,
@@ -155,40 +153,10 @@ class HangarTab(QWidget):
     # ── 剪贴板导入 ──
 
     def _parse_clipboard(self, raw: str) -> list[dict]:
-        """解析 EVE 剪贴板 → list[{type_id|None, raw_name, zh_name, en_name, qty, status}]
+        """解析 EVE 剪贴板 → list[{type_id|None, raw_name, zh_name, en_name, qty, status}]"""
+        from services.inventory_clipboard_service import parse_clipboard
 
-        名称匹配走 search_item_type_id（精确 → 模糊 → 引号归一化 → terminology 反向）；
-        未命中 item 的行保留为 status='unmatched'（type_id=None），供弹窗手动映射。
-        """
-        rows: list[dict] = []
-        with get_container().db.connect("ref") as conn:
-            for entry in split_clipboard_lines(raw):
-                name = entry["name"]
-                type_id = search_item_type_id(conn, name)
-                if type_id:
-                    nm = resolve_item_name(conn, type_id)
-                    rows.append(
-                        {
-                            "type_id": type_id,
-                            "raw_name": name,
-                            "zh_name": nm if not nm.isdigit() else name,
-                            "en_name": "" if nm.isdigit() else nm,
-                            "qty": entry["qty"],
-                            "status": "matched",
-                        }
-                    )
-                else:
-                    rows.append(
-                        {
-                            "type_id": None,
-                            "raw_name": name,
-                            "zh_name": "",
-                            "en_name": "",
-                            "qty": entry["qty"],
-                            "status": "unmatched",
-                        }
-                    )
-        return rows
+        return parse_clipboard(raw)
 
     def _on_adjust_inventory(self):
         """库存修正 — 游戏全选复制 → 比对剪贴板与库存 → 逐物品确认增减/成本/是否变更。"""
@@ -429,35 +397,7 @@ class HangarTab(QWidget):
 
     def _fetch_market_prices(self, type_ids: list[int], price_type: str) -> dict[int, float]:
         """批量查询吉他(Jita)市场价格 {type_id: 卖价/买价/均价}。"""
-        tids = list(dict.fromkeys(type_ids))
-        if not tids:
-            return {}
-        result: dict[int, float] = {}
-        placeholders = ",".join("?" * len(tids))
-        with get_container().db.connect("mkt") as conn:
-            c = conn.cursor()
-            if price_type == "avg":
-                c.execute(
-                    f"SELECT type_id, sell_price, buy_price FROM market_prices"
-                    f" WHERE type_id IN ({placeholders}) AND region_id = ?",
-                    (*tids, TRADE_HUB_IDS["Jita"]),
-                )
-                for tid, sell, buy in c.fetchall():
-                    if sell and buy:
-                        result[tid] = (sell + buy) / 2
-                    elif sell or buy:
-                        result[tid] = sell or buy
-            else:
-                col = "sell_price" if price_type == "sell" else "buy_price"
-                c.execute(
-                    f"SELECT type_id, {col} FROM market_prices"
-                    f" WHERE type_id IN ({placeholders}) AND region_id = ?",
-                    (*tids, TRADE_HUB_IDS["Jita"]),
-                )
-                for tid, price in c.fetchall():
-                    if price is not None:
-                        result[tid] = float(price)
-        return result
+        return get_container().market_repo.get_prices_by_region(type_ids, TRADE_HUB_IDS["Jita"], price_type)
 
     def _on_del_items(self, items: list[dict]):
         """批量删除（含单行）"""
