@@ -54,12 +54,9 @@ class MfgDlg(QDialog):
                 form.addRow(icon_row)
             # 在标题中显示物品名
             try:
-                with get_container().db.connect("ref") as conn:
-                    curs = conn.cursor()
-                    curs.execute("SELECT zh_name FROM item WHERE type_id = ?", (type_id,))
-                    r = curs.fetchone()
-                    if r and r[0]:
-                        self.setWindowTitle(f"制造评分 — {r[0]}")
+                name = get_container().item_repo.get_name(type_id)
+                if name and name != str(type_id):
+                    self.setWindowTitle(f"制造评分 — {name}")
             except Exception:
                 pass
 
@@ -111,12 +108,9 @@ class TradeDlg(QDialog):
                 form.addRow(icon_row)
             # 在标题中显示物品名
             try:
-                with get_container().db.connect("ref") as conn:
-                    curs = conn.cursor()
-                    curs.execute("SELECT zh_name FROM item WHERE type_id = ?", (type_id,))
-                    r = curs.fetchone()
-                    if r and r[0]:
-                        self.setWindowTitle(f"贸易评分 — {r[0]}")
+                name = get_container().item_repo.get_name(type_id)
+                if name and name != str(type_id):
+                    self.setWindowTitle(f"贸易评分 — {name}")
             except Exception:
                 pass
 
