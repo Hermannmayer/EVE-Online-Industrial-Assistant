@@ -46,6 +46,32 @@ class ItemRepository:
             ).fetchall()
             return [{"type_id": r[0], "zh_name": r[1] or "", "en_name": r[2] or ""} for r in rows]
 
+    def get_root_market_categories(self) -> list[tuple[int, str]]:
+        """根级市场分类 [(market_group_id, zh_name), ...]。"""
+        with self._db.connect("ref") as conn:
+            rows = conn.execute(
+                "SELECT market_group_id, zh_name FROM market_tree "
+                "WHERE parent_group_id IS NULL ORDER BY zh_name"
+            ).fetchall()
+            return [(int(r[0]), str(r[1] or "")) for r in rows]
+
+    def get_market_descendants(self, market_group_id: int) -> set[int]:
+        """递归获取指定市场分类下所有物品 type_id。"""
+        with self._db.connect("ref") as conn:
+            rows = conn.execute(
+                """
+                WITH RECURSIVE sub AS (
+                    SELECT market_group_id FROM market_tree WHERE market_group_id = ?
+                    UNION ALL
+                    SELECT m.market_group_id FROM market_tree m JOIN sub ON m.parent_group_id = sub.market_group_id
+                )
+                SELECT DISTINCT i.type_id FROM item i
+                WHERE i.market_group_id IN (SELECT market_group_id FROM sub)
+                """,
+                (market_group_id,),
+            ).fetchall()
+            return {int(r[0]) for r in rows}
+
     def count(self) -> int:
         with self._db.connect("ref") as conn:
             r = conn.execute("SELECT COUNT(*) FROM item").fetchone()
