@@ -289,17 +289,7 @@ class BlueprintTab(QWidget):
         prices: dict[int, float] = {}
         all_ids = mat_ids | prod_ids
         if all_ids:
-            with get_container().db.connect("mkt") as conn:
-                c = conn.cursor()
-                placeholders = ",".join("?" * len(all_ids))
-                c.execute(
-                    f"SELECT type_id, sell_price FROM market_prices"
-                    f" WHERE type_id IN ({placeholders}) AND region_id = 10000002",
-                    tuple(all_ids),
-                )
-                for tid, price in c.fetchall():
-                    if price:
-                        prices[tid] = price
+            prices = get_container().market_repo.get_sell_prices(list(all_ids), 10000002)
 
         # 计算每行
         for row in self._all_rows:
