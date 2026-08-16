@@ -165,16 +165,7 @@ class ImportReviewDialog(QDialog):
         type_ids = list({it["type_id"] for it in self._parsed_items if it.get("type_id")})
         if not type_ids:
             return
-        with get_container().db.connect("mkt") as conn:
-            c = conn.cursor()
-            placeholders = ",".join("?" * len(type_ids))
-            c.execute(
-                f"SELECT type_id, sell_price FROM market_prices WHERE type_id IN ({placeholders}) AND region_id = ?",
-                (*type_ids, self._region_id),
-            )
-            for tid, price in c.fetchall():
-                if price:
-                    self._sell_prices[tid] = price
+        self._sell_prices = get_container().market_repo.get_sell_prices(type_ids, self._region_id)
 
     def _populate_rows(self):
         table = self._table
@@ -596,30 +587,18 @@ class ImportReviewDialog(QDialog):
             self._populate_rows()
 
     def _set_price_from_market(self, type_id: int, price_type: str, spin: "QDoubleSpinBox"):
-        with get_container().db.connect("mkt") as conn:
-            cursor = conn.cursor()
-            if price_type == "avg":
-                cursor.execute(
-                    "SELECT sell_price, buy_price FROM market_prices WHERE type_id = ? AND region_id = ? LIMIT 1",
-                    (type_id, self._region_id),
-                )
-                r = cursor.fetchone()
-                if r and r[0] and r[1]:
-                    spin.setValue(round((r[0] + r[1]) / 2, 2))
-                elif r:
-                    spin.setValue(r[0] or r[1] or 0)
-                else:
-                    QMessageBox.information(self, "提示", "未找到该物品在所选区域的价格数据")
+        repo = get_container().market_repo
+        if price_type == "avg":
+            price = repo.get_price_by_region(type_id, "avg", self._region_id)
+            if price is not None:
+                spin.setValue(price)
             else:
-                col = "sell_price" if price_type == "sell" else "buy_price"
-                cursor.execute(
-                    f"SELECT {col} FROM market_prices WHERE type_id = ? AND region_id = ? LIMIT 1",
-                    (type_id, self._region_id),
-                )
-                r = cursor.fetchone()
-                if r and r[0] is not None:
-                    spin.setValue(r[0])
-                else:
+                QMessageBox.information(self, "提示", "未找到该物品在所选区域的价格数据")
+        else:
+            price = repo.get_price_by_region(type_id, price_type, self._region_id)
+            if price is not None:
+                spin.setValue(price)
+            else:
                     QMessageBox.information(self, "提示", "未找到该物品在所选区域的价格数据")
 
     def _update_summary(self):
