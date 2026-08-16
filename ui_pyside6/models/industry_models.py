@@ -34,7 +34,7 @@ def _sort_key(value):
     """
     if isinstance(value, bool):
         return (0, int(value))
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return (0, value)
     return (1, str(value or "").lower())
 

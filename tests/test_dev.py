@@ -125,9 +125,9 @@ def test_restart_state_continuous_changes_push_debounce():
     s.on_change(0)
     s.on_change(4)
     s.on_change(8)
-    assert s.should_restart(9) is False   # 距上次变更 1s
+    assert s.should_restart(9) is False  # 距上次变更 1s
     assert s.should_restart(19) is False  # 距上次变更 11s，仍 < 12
-    assert s.should_restart(20) is True   # 安静满 12s → 可以重启
+    assert s.should_restart(20) is True  # 安静满 12s → 可以重启
 
 
 def test_restart_state_batch_fires_once_then_cooldown():
@@ -140,7 +140,7 @@ def test_restart_state_batch_fires_once_then_cooldown():
     assert s.should_restart(30) is False  # 冷却已过但无新变更 → 不重启
     s.on_change(30)  # agent 新一轮编辑
     assert s.should_restart(41) is False  # 距变更 11s
-    assert s.should_restart(42) is True   # 距变更 12s
+    assert s.should_restart(42) is True  # 距变更 12s
 
 
 def test_restart_state_change_during_cooldown_still_counts():

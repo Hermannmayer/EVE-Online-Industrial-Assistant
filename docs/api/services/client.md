@@ -133,7 +133,7 @@ async def get_headers(self, url: str) -> dict[str, str] | None
 
 GET 请求，返回响应头（X-Pages 等）；非 200 返回 None
 
-定义行：`148`
+定义行：`157`
 ##### `fetch_required`
 
 ```python
@@ -142,7 +142,16 @@ async def fetch_required(self, url: str)
 
 GET 请求，失败时抛出异常
 
-定义行：`160`
+定义行：`178`
+##### `post`
+
+```python
+async def post(self, url: str, json: dict | list | None=None)
+```
+
+POST JSON 请求，返回解析后的 JSON；404/超时返回 None。
+
+定义行：`199`
 ##### `get_text`
 
 ```python
@@ -151,4 +160,4 @@ async def get_text(self, url: str) -> str | None
 
 GET 请求，返回原始文本
 
-定义行：`174`
+定义行：`221`

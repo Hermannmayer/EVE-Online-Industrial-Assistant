@@ -223,9 +223,7 @@ class CostBreakdownDialog(QWidget):
         if sub_cost_map:
             from services.scoring_service import ScoringService
 
-            adj_mat, adj_profit, adj_margin, _ = ScoringService.adjust_mother_metrics(
-                metrics, sub_cost_map, total_mult
-            )
+            adj_mat, adj_profit, adj_margin, _ = ScoringService.adjust_mother_metrics(metrics, sub_cost_map, total_mult)
             material_cost = adj_mat
             profit = adj_profit
             margin = adj_margin
@@ -368,8 +366,7 @@ class CostBreakdownDialog(QWidget):
             kids = [c for c in rows if int(c.get("sub_level") or 0) > lvl]
             if kids:
                 child_map = {
-                    int(k.get("product_type_id") or 0): cost_by_id.get(int(k.get("id") or 0), 0.0)
-                    for k in kids
+                    int(k.get("product_type_id") or 0): cost_by_id.get(int(k.get("id") or 0), 0.0) for k in kids
                 }
                 total_mult = max(int(p.get("runs", 1)), 1) * max(int(p.get("parallels", 1)), 1)
                 adj_mat, _, _, _ = ScoringService.adjust_mother_metrics(metrics, child_map, total_mult)

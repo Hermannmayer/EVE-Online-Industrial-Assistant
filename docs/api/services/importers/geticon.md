@@ -76,7 +76,7 @@ async def download_all(session: aiohttp.ClientSession, type_ids: list, progress_
 
 批量下载所有图标（按 iconID 去重，相同图标只下载一次）
 
-定义行：`183`
+定义行：`188`
 
 ### `main`
 
@@ -88,4 +88,4 @@ async def main(progress_cb=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`217`
+定义行：`222`

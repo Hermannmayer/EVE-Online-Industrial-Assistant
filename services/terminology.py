@@ -111,11 +111,7 @@ class Terminology:
     def search_system_names(self, keyword: str) -> list[str]:
         """按中文名关键词反查星系英文名（用于星系搜索对话框中文输入）。"""
         self._ensure()
-        return [
-            en
-            for en, zh in self._data.get("system_names", {}).items()
-            if keyword in zh
-        ]
+        return [en for en, zh in self._data.get("system_names", {}).items() if keyword in zh]
 
     # ── 结构改件类别标签 ──
 

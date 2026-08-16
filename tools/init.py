@@ -46,9 +46,9 @@ def _import_module(module_path: str):
 
 async def _run_step(key: str, name: str, module_path: str) -> bool:
     """执行一个初始化步骤，返回是否成功"""
-    log.info(f"{'='*48}")
+    log.info(f"{'=' * 48}")
     log.info(f"  [{key}] {name}")
-    log.info(f"{'='*48}")
+    log.info(f"{'=' * 48}")
     try:
         mod = _import_module(module_path)
 
@@ -98,11 +98,11 @@ async def _run_all(steps: list | None = None):
             failed.append(name)
 
     elapsed = time.time() - t0
-    log.info(f"\n{'='*48}")
+    log.info(f"\n{'=' * 48}")
     log.info(f"  完成: {passed}/{total}  耗时: {elapsed:.0f}s")
     if failed:
         log.info(f"  失败: {', '.join(failed)}")
-    log.info(f"{'='*48}")
+    log.info(f"{'=' * 48}")
     return len(failed) == 0
 
 

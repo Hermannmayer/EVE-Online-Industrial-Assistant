@@ -5,9 +5,7 @@ from services.plan_category import category_symbol, load_category_map
 
 def _build_ref(db_manager):
     with db_manager.connect("ref") as conn:
-        conn.execute(
-            "CREATE TABLE blueprint_activities (blueprint_type_id INTEGER, activity TEXT, time INTEGER)"
-        )
+        conn.execute("CREATE TABLE blueprint_activities (blueprint_type_id INTEGER, activity TEXT, time INTEGER)")
         conn.execute("INSERT INTO blueprint_activities VALUES (3001,'manufacturing',3600)")
         conn.execute("INSERT INTO blueprint_activities VALUES (3001,'copying',4800)")
         conn.execute("INSERT INTO blueprint_activities VALUES (3002,'manufacturing',3600)")
@@ -62,5 +60,3 @@ class TestSymbolsAndColors:
         assert category_symbol("copying") == "📋"
         assert category_symbol("invention") == "💡"
         assert category_symbol("reaction") == "⚗"
-
-

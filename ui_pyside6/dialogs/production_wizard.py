@@ -218,7 +218,7 @@ class ProductionWizard(QDialog):
         """批量解析 blueprint_type_id → 蓝图名（reference.db item 表）。"""
         from services.ui_data_service import get_item_names_batch
 
-        bp_ids = {p.get("blueprint_type_id") for p in self._plans if p.get("blueprint_type_id")}
+        bp_ids = {int(p["blueprint_type_id"]) for p in self._plans if p.get("blueprint_type_id")}
         if not bp_ids:
             return
         self._bp_names.update(get_item_names_batch(list(bp_ids), db=get_container().db))

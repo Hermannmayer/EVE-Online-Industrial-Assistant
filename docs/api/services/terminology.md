@@ -135,7 +135,7 @@ def rig_category(self, key: str) -> str | None
 
 结构改件制造类别标签（me_research→材料效率研究 等）。未知返回 None。
 
-定义行：`122`
+定义行：`118`
 ##### `reload`
 
 ```python
@@ -146,4 +146,4 @@ def reload(self) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`129`
+定义行：`125`

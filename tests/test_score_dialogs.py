@@ -54,8 +54,6 @@ def mock_container():
 # ═══════════════════════════════════════════
 
 
-
-
 def test_mfg_dlg_with_type_id(qapp, mock_char_settings, mock_container):
     """带 type_id 的构造不崩溃（_icon_label + DB 查询）"""
     dlg = MfgDlg(type_id=2001, parent=None)
@@ -88,8 +86,6 @@ def test_mfg_dlg_get(qapp, mock_char_settings, mock_container):
 # ═══════════════════════════════════════════
 #  TradeDlg
 # ═══════════════════════════════════════════
-
-
 
 
 def test_trade_dlg_with_type_id(qapp, mock_char_settings, mock_container):
@@ -126,7 +122,7 @@ def test_trade_dlg_get(qapp, mock_char_settings, mock_container):
 # ═══════════════════════════════════════════
 
 
-    # 不调用 run() 避免真实 DB 访问
+# 不调用 run() 避免真实 DB 访问
 
 
 def test_scorew_trade_mode(qapp):

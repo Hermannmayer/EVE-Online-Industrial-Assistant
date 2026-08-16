@@ -18,7 +18,17 @@ def _ensure_dir()
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`12`
+定义行：`15`
+
+### `_atomic_write`
+
+```python
+def _atomic_write(path: str, content: str) -> None
+```
+
+原子写文件：临时文件 + os.replace，避免读到半写内容。
+
+定义行：`19`
 
 ### `is_triggered`
 
@@ -30,7 +40,7 @@ def is_triggered() -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`16`
+定义行：`35`
 
 ### `write_trigger`
 
@@ -42,7 +52,7 @@ def write_trigger()
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`20`
+定义行：`39`
 
 ### `clear_trigger`
 
@@ -54,7 +64,7 @@ def clear_trigger()
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`25`
+定义行：`43`
 
 ### `write_state`
 
@@ -66,7 +76,7 @@ def write_state(data: dict)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`32`
+定义行：`50`
 
 ### `read_state`
 
@@ -78,7 +88,7 @@ def read_state()
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`38`
+定义行：`54`
 
 ### `clear_state`
 
@@ -90,7 +100,7 @@ def clear_state()
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`46`
+定义行：`62`
 
 ### `clear_all`
 
@@ -102,4 +112,4 @@ def clear_all()
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`53`
+定义行：`69`

@@ -16,7 +16,7 @@ def _resolve(lock_file: Path | str | None) -> Path
 
 None → 默认 instance.lock;str → Path 归一化(Path(Path) 幂等)。
 
-定义行：`22`
+定义行：`25`
 
 ### `_mutex_name`
 
@@ -26,7 +26,7 @@ def _mutex_name(target: Path) -> str
 
 锁文件路径 → 命名互斥体名。
 
-定义行：`27`
+定义行：`30`
 
 ### `_acquire_mutex`
 
@@ -36,7 +36,7 @@ def _acquire_mutex(name: str) -> bool | None
 
 获取 Windows 命名互斥体。
 
-定义行：`37`
+定义行：`40`
 
 ### `_release_mutex`
 
@@ -48,7 +48,7 @@ def _release_mutex(name: str) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`67`
+定义行：`70`
 
 ### `try_lock`
 
@@ -58,7 +58,7 @@ def try_lock(force: bool=False, lock_file: Path | str | None=None) -> bool
 
 Attempt to acquire the single-instance lock.
 
-定义行：`79`
+定义行：`82`
 
 ### `_try_exclusive_acquire`
 
@@ -68,7 +68,7 @@ def _try_exclusive_acquire(own_pid: int, target: Path) -> bool | None
 
 原子创建锁文件（O_EXCL），消除 check-then-act 竞态。
 
-定义行：`139`
+定义行：`150`
 
 ### `_safe_unlink`
 
@@ -78,7 +78,7 @@ def _safe_unlink(target: Path)
 
 删除锁文件；删除失败（句柄被占用）时不抛出。
 
-定义行：`160`
+定义行：`171`
 
 ### `_is_pid_alive`
 
@@ -90,7 +90,7 @@ def _is_pid_alive(pid: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`168`
+定义行：`179`
 
 ### `_win32_is_pid_alive`
 
@@ -102,7 +102,7 @@ def _win32_is_pid_alive(pid: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`180`
+定义行：`191`
 
 ### `unlock`
 
@@ -112,7 +112,7 @@ def unlock(lock_file: Path | str | None=None)
 
 Release the single-instance lock.
 
-定义行：`201`
+定义行：`212`
 
 ### `show_message`
 
@@ -122,4 +122,4 @@ def show_message()
 
 Print a notice to stderr that another instance is already running.
 
-定义行：`215`
+定义行：`231`

@@ -124,7 +124,7 @@ def query_search_items(query: str, all_groups: list, region_id: int = 10000002, 
             """,
                 (region_id, region_id, like, like),
             )
-        return c.fetchall()
+        return list(c.fetchall())
 
 
 def query_search_items_basic(query: str, db=None) -> list[Any]:
@@ -133,8 +133,7 @@ def query_search_items_basic(query: str, db=None) -> list[Any]:
         c = conn.cursor()
         if query.isdigit():
             c.execute(
-                "SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume"
-                " FROM item WHERE type_id = ?",
+                "SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume FROM item WHERE type_id = ?",
                 (int(query),),
             )
         else:
@@ -143,7 +142,7 @@ def query_search_items_basic(query: str, db=None) -> list[Any]:
                 " FROM item WHERE en_name LIKE ? OR zh_name LIKE ? LIMIT 100",
                 (f"%{query}%", f"%{query}%"),
             )
-        return c.fetchall()
+        return list(c.fetchall())
 
 
 def query_suggest_items(query: str, db=None) -> list[Any]:
@@ -167,7 +166,7 @@ def query_suggest_items(query: str, db=None) -> list[Any]:
                 " LENGTH(en_name), type_id LIMIT 10",
                 (f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%"),
             )
-        return c.fetchall()
+        return list(c.fetchall())
 
 
 def load_item_groups(db=None) -> list[Any]:
@@ -179,7 +178,7 @@ def load_item_groups(db=None) -> list[Any]:
             " FROM item e WHERE e.group_id IS NOT NULL"
             " ORDER BY e.zh_group_name, e.en_group_name"
         )
-        return c.fetchall()
+        return list(c.fetchall())
 
 
 # ── 星系搜索对话框 ─────────────────────────────────────────────

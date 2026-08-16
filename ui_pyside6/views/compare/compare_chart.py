@@ -18,12 +18,12 @@ def search_items(query: str) -> list[dict]:
     if q.isdigit():
         item = repo.get_by_id(int(q))
         return [item] if item else []
-    return repo.search_by_name(q)
+    return list(repo.search_by_name(q))
 
 
 def item_name(type_id: int) -> str:
     """获取物品中文名（name_resolver 有 terminology 覆盖兜底）"""
-    return get_container().item_repo.get_name(type_id)
+    return str(get_container().item_repo.get_name(type_id))
 
 
 class CompareWorker(QThread):

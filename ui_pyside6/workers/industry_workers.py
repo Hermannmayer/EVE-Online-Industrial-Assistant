@@ -148,14 +148,10 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         ]
         if not subs:
             return {}
-        sub_cost_map = {
-            p.get("product_type_id"): ScoringService.child_manufacturing_cost(p, r) for p, r in subs
-        }
+        sub_cost_map = {p.get("product_type_id"): ScoringService.child_manufacturing_cost(p, r) for p, r in subs}
 
         total_mult = max(int(item.get("runs", 1)), 1) * max(int(item.get("parallels", 1)), 1)
-        mat_cost, profit, margin, overrides = ScoringService.adjust_mother_metrics(
-            result, sub_cost_map, total_mult
-        )
+        mat_cost, profit, margin, overrides = ScoringService.adjust_mother_metrics(result, sub_cost_map, total_mult)
         result["material_cost"] = mat_cost
         result["profit"] = profit
         result["margin"] = margin

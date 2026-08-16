@@ -29,6 +29,15 @@ def __init__(self, db, pricing_service=None)
 :::
 
 定义行：`10`
+##### `filter_refinable`
+
+```python
+def filter_refinable(self, items: list[dict]) -> list[dict]
+```
+
+过滤出有精炼材料数据的物品。
+
+定义行：`14`
 ##### `calc_value`
 
 ```python
@@ -37,4 +46,4 @@ def calc_value(self, type_id, quantity=1, *, skills=None, is_player_facility=Fal
 
 完整实现（从 scoring_service.py 迁移）
 
-定义行：`14`
+定义行：`28`

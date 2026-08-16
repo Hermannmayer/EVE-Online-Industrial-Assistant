@@ -200,9 +200,7 @@ class TestWriteUniverse:
                 "CREATE TABLE solar_system (solar_system_id INTEGER PRIMARY KEY,"
                 " solar_system_name TEXT, region_id INTEGER, constellation_id INTEGER, security REAL)"
             )
-            await db.execute(
-                "INSERT INTO solar_system (solar_system_id, solar_system_name) VALUES (30000142, '')"
-            )
+            await db.execute("INSERT INTO solar_system (solar_system_id, solar_system_name) VALUES (30000142, '')")
             await db.commit()
 
         fake = (
@@ -218,9 +216,7 @@ class TestWriteUniverse:
             await write_universe()
 
         conn = sqlite3.connect(temp_db_path)
-        name = conn.execute(
-            "SELECT solar_system_name FROM solar_system WHERE solar_system_id=30000142"
-        ).fetchone()[0]
+        name = conn.execute("SELECT solar_system_name FROM solar_system WHERE solar_system_id=30000142").fetchone()[0]
         conn.close()
         assert name == "Jita"
 
@@ -231,9 +227,7 @@ class TestWriteUniverse:
             await db.execute(
                 "CREATE TABLE solar_system (solar_system_id INTEGER PRIMARY KEY, solar_system_name TEXT, security REAL)"
             )
-            await db.execute(
-                "INSERT INTO solar_system (solar_system_id, solar_system_name) VALUES (30000142, 'Jita')"
-            )
+            await db.execute("INSERT INTO solar_system (solar_system_id, solar_system_name) VALUES (30000142, 'Jita')")
             await db.commit()
 
         with (
@@ -244,8 +238,6 @@ class TestWriteUniverse:
 
         m.assert_not_awaited()
         conn = sqlite3.connect(temp_db_path)
-        name = conn.execute(
-            "SELECT solar_system_name FROM solar_system WHERE solar_system_id=30000142"
-        ).fetchone()[0]
+        name = conn.execute("SELECT solar_system_name FROM solar_system WHERE solar_system_id=30000142").fetchone()[0]
         conn.close()
         assert name == "Jita"  # 未被覆盖

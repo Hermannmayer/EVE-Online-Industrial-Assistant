@@ -33,9 +33,7 @@ def filter_npc_sell_orders(orders: list[dict], npc_corp_ids: set[int]) -> list[d
     return [
         o
         for o in orders
-        if not o.get("is_buy_order")
-        and o.get("is_corporation_order")
-        and o.get("corporation_id") in npc_corp_ids
+        if not o.get("is_buy_order") and o.get("is_corporation_order") and o.get("corporation_id") in npc_corp_ids
     ]
 
 

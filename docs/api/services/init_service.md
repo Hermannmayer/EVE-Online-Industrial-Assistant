@@ -127,7 +127,7 @@ def skip(self, step_key: str) -> bool
 def cancel(self)
 ```
 
-取消当前执行（并行时取消所有正在运行的步骤）
+取消当前执行：所有未完成步骤（含等待依赖的）置 CANCELLED。
 
 定义行：`230`
 ##### `get_status`
@@ -138,7 +138,7 @@ def get_status(self) -> dict[str, StepStatus]
 
 返回所有步骤的当前状态
 
-定义行：`236`
+定义行：`244`
 ##### `get_errors`
 
 ```python
@@ -147,7 +147,7 @@ def get_errors(self) -> dict[str, str]
 
 返回所有失败步骤的错误消息
 
-定义行：`240`
+定义行：`248`
 ##### `reset`
 
 ```python
@@ -156,7 +156,7 @@ def reset(self)
 
 重置所有步骤为 PENDING
 
-定义行：`244`
+定义行：`252`
 ##### `check_network`
 
 ```python
@@ -165,7 +165,7 @@ async def check_network(self) -> bool
 
 检查 ESI 连通性（带重试：网络抖动/慢响应不误判为不可用）。
 
-定义行：`256`
+定义行：`264`
 ##### `_run_sequence`
 
 ```python
@@ -174,7 +174,7 @@ async def _run_sequence(self, keys: list[str])
 
 按依赖图并行执行步骤列表。
 
-定义行：`287`
+定义行：`294`
 ##### `_run_one`
 
 ```python
@@ -183,7 +183,7 @@ async def _run_one(self, key: str)
 
 单个步骤任务：等依赖 → 网络检查 → 执行 → 上报（可并行运行）
 
-定义行：`329`
+定义行：`336`
 ##### `_ensure_net_once`
 
 ```python
@@ -192,7 +192,7 @@ async def _ensure_net_once(self) -> bool
 
 网络检查单飞：并发请求合并为一次 check_network，结果共享。
 
-定义行：`389`
+定义行：`400`
 ##### `_prepare_ref_db_for_parallel`
 
 ```python
@@ -201,7 +201,7 @@ def _prepare_ref_db_for_parallel()
 
 并行前准备 reference.db：WAL + 长 busy_timeout。
 
-定义行：`396`
+定义行：`407`
 ##### `_deps_satisfied`
 
 ```python
@@ -210,7 +210,7 @@ def _deps_satisfied(self, step: InitStep) -> bool
 
 检查前置步骤是否已完成。
 
-定义行：`416`
+定义行：`427`
 ##### `_run_step`
 
 ```python
@@ -219,7 +219,7 @@ async def _run_step(self, key: str) -> tuple[bool, str]
 
 实际执行一个初始化步骤
 
-定义行：`434`
+定义行：`445`
 ##### `_inject_progress_callback`
 
 ```python
@@ -228,7 +228,7 @@ def _inject_progress_callback(self, key: str)
 
 设置进度回调环境变量（给 write_progress 使用）
 
-定义行：`496`
+定义行：`513`
 ##### `_emit_step_started`
 
 ```python
@@ -239,7 +239,7 @@ def _emit_step_started(self, key: str, name: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`505`
+定义行：`522`
 ##### `_emit_step_progress`
 
 ```python
@@ -250,7 +250,7 @@ def _emit_step_progress(self, key: str, percent: int, message: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`512`
+定义行：`529`
 ##### `_emit_step_completed`
 
 ```python
@@ -261,7 +261,7 @@ def _emit_step_completed(self, key: str, success: bool, message: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`519`
+定义行：`536`
 ##### `_emit_all_completed`
 
 ```python
@@ -272,7 +272,7 @@ def _emit_all_completed(self, success: bool, summary: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`526`
+定义行：`543`
 ##### `_emit_network`
 
 ```python
@@ -283,4 +283,4 @@ def _emit_network(self, ok: bool, message: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`533`
+定义行：`550`

@@ -28,7 +28,7 @@ class ItemRepository:
     def get_by_id(self, type_id: int) -> dict | None:
         with self._db.connect("ref") as conn:
             r = conn.execute(
-                "SELECT type_id, zh_name, en_name, volume, group_id, market_group_id " "FROM item WHERE type_id = ?",
+                "SELECT type_id, zh_name, en_name, volume, group_id, market_group_id FROM item WHERE type_id = ?",
                 (type_id,),
             ).fetchone()
             return dict(r) if r else None
@@ -61,8 +61,7 @@ class ItemRepository:
         """根级市场分类 [(market_group_id, zh_name), ...]。"""
         with self._db.connect("ref") as conn:
             rows = conn.execute(
-                "SELECT market_group_id, zh_name FROM market_tree "
-                "WHERE parent_group_id IS NULL ORDER BY zh_name"
+                "SELECT market_group_id, zh_name FROM market_tree WHERE parent_group_id IS NULL ORDER BY zh_name"
             ).fetchall()
             return [(int(r[0]), str(r[1] or "")) for r in rows]
 

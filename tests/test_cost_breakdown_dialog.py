@@ -36,8 +36,24 @@ def test_compute_subitem_costs_single_level(db_manager, qapp):
     _insert_plans(
         db_manager,
         [
-            {"id": 1, "product_type_id": 2001, "product_name": "母项", "runs": 1, "parallels": 1, "group_number": 7, "sub_level": 0},
-            {"id": 2, "product_type_id": 2002, "product_name": "子项", "runs": 2, "parallels": 1, "group_number": 7, "sub_level": 1},
+            {
+                "id": 1,
+                "product_type_id": 2001,
+                "product_name": "母项",
+                "runs": 1,
+                "parallels": 1,
+                "group_number": 7,
+                "sub_level": 0,
+            },
+            {
+                "id": 2,
+                "product_type_id": 2002,
+                "product_name": "子项",
+                "runs": 2,
+                "parallels": 1,
+                "group_number": 7,
+                "sub_level": 1,
+            },
         ],
     )
 
@@ -60,9 +76,33 @@ def test_compute_subitem_costs_nested(db_manager, qapp):
     _insert_plans(
         db_manager,
         [
-            {"id": 1, "product_type_id": 2001, "product_name": "母项", "runs": 1, "parallels": 1, "group_number": 7, "sub_level": 0},
-            {"id": 2, "product_type_id": 2002, "product_name": "子项", "runs": 1, "parallels": 1, "group_number": 7, "sub_level": 1},
-            {"id": 3, "product_type_id": 3003, "product_name": "孙项", "runs": 1, "parallels": 1, "group_number": 7, "sub_level": 2},
+            {
+                "id": 1,
+                "product_type_id": 2001,
+                "product_name": "母项",
+                "runs": 1,
+                "parallels": 1,
+                "group_number": 7,
+                "sub_level": 0,
+            },
+            {
+                "id": 2,
+                "product_type_id": 2002,
+                "product_name": "子项",
+                "runs": 1,
+                "parallels": 1,
+                "group_number": 7,
+                "sub_level": 1,
+            },
+            {
+                "id": 3,
+                "product_type_id": 3003,
+                "product_name": "孙项",
+                "runs": 1,
+                "parallels": 1,
+                "group_number": 7,
+                "sub_level": 2,
+            },
         ],
     )
 

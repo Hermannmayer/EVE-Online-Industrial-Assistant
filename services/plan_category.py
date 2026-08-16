@@ -25,6 +25,7 @@ _SYMBOLS = {
     CATEGORY_REACTION: "⚗",
 }
 
+
 def category_symbol(cat: str) -> str:
     """类别符号（⚙📋💡⚗）。"""
     return _SYMBOLS.get(cat, "⚙")

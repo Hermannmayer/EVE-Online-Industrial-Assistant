@@ -57,7 +57,7 @@ def _resolve_bp_name(conn, bp_type_id: int) -> str:
 def _get_per_run_output(conn, bp_type_id: int) -> int:
     """获取蓝图每次制造的产出数量"""
     row = conn.execute(
-        "SELECT quantity FROM blueprint_products " "WHERE blueprint_type_id = ? AND activity = 'manufacturing' LIMIT 1",
+        "SELECT quantity FROM blueprint_products WHERE blueprint_type_id = ? AND activity = 'manufacturing' LIMIT 1",
         (bp_type_id,),
     ).fetchone()
     return row[0] if row and row[0] else 1
@@ -123,7 +123,6 @@ def expand_blueprint_requirements(
             }
 
     return needed
-
 
 
 # ════════════════════════════════════════════════════════════════

@@ -21,12 +21,12 @@ def search_item_type_id(conn: sqlite3.Connection, name: str) -> int | None
 ### `resolve_item_name`
 
 ```python
-def resolve_item_name(conn: sqlite3.Connection, type_id: int) -> str
+def resolve_item_name(conn: sqlite3.Connection | sqlite3.Cursor, type_id: int) -> str
 ```
 
 统一物品名称解析：term override → item 表 → str(id)。
 
-定义行：`60`
+定义行：`58`
 
 ### `resolve_item_names_batch`
 
@@ -36,7 +36,7 @@ def resolve_item_names_batch(conn: sqlite3.Connection, type_ids: list[int]) -> d
 
 批量查询物品名称，减少数据库往返。
 
-定义行：`85`
+定义行：`83`
 
 ### `mat_name`
 
@@ -46,7 +46,7 @@ def mat_name(mat_id: int, conn: sqlite3.Connection) -> str
 
 查询材料名称，优先查 item 表，基础矿物走 terminology.json 覆盖。
 
-定义行：`130`
+定义行：`128`
 
 ### `resolve_system_name`
 
@@ -56,7 +56,7 @@ def resolve_system_name(conn: sqlite3.Connection, solar_system_id: int) -> str
 
 星系显示名：中文 (英文)。中文优先 terminology.system_names，fallback 英文 → str(id)。
 
-定义行：`135`
+定义行：`133`
 
 ### `resolve_system_names_batch`
 
@@ -66,4 +66,24 @@ def resolve_system_names_batch(conn: sqlite3.Connection, solar_system_ids: list[
 
 批量查询星系显示名（中英对照），减少数据库往返。
 
-定义行：`156`
+定义行：`154`
+
+### `resolve_system_display_name`
+
+```python
+def resolve_system_display_name(solar_system_id: int | None) -> str
+```
+
+按星系 ID 查询显示名（中文 (英文)）；无/异常返回空串。
+
+定义行：`175`
+
+### `resolve_system_display_names_batch`
+
+```python
+def resolve_system_display_names_batch(solar_system_ids: list[int]) -> dict[int, str]
+```
+
+批量查询星系显示名；异常返回空 dict。
+
+定义行：`188`

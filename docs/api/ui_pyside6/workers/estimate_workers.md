@@ -34,7 +34,7 @@ def _search_item_by_name(name: str) -> dict | None
 
 后台解析剪贴板并查找物品/价格
 
-定义行：`108`
+定义行：`72`
 
 #### 方法
 
@@ -48,7 +48,7 @@ def __init__(self, text: str, price_type: str, hub: str, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`114`
+定义行：`78`
 ##### `run`
 
 ```python
@@ -59,4 +59,4 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`120`
+定义行：`84`

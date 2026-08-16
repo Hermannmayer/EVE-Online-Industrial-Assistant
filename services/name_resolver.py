@@ -27,9 +27,7 @@ def search_item_type_id(conn: sqlite3.Connection, name: str) -> int | None:
     if not name:
         return None
     # 1. 精确匹配
-    row = conn.execute(
-        "SELECT type_id FROM item WHERE zh_name = ? OR en_name = ? LIMIT 1", (name, name)
-    ).fetchone()
+    row = conn.execute("SELECT type_id FROM item WHERE zh_name = ? OR en_name = ? LIMIT 1", (name, name)).fetchone()
     if row:
         return int(row[0])
     # 2. terminology.item_overrides 反向（基础矿物 34-40 等不在 item 表）
@@ -57,11 +55,11 @@ def search_item_type_id(conn: sqlite3.Connection, name: str) -> int | None:
     return None
 
 
-def resolve_item_name(conn: sqlite3.Connection, type_id: int) -> str:
+def resolve_item_name(conn: sqlite3.Connection | sqlite3.Cursor, type_id: int) -> str:
     """统一物品名称解析：term override → item 表 → str(id)。
 
     Args:
-        conn: reference.db 的数据库连接
+        conn: reference.db 的数据库连接（Connection 或 Cursor，均支持 execute/fetchone）
         type_id: 物品 type_id
 
     Returns:
@@ -162,8 +160,7 @@ def resolve_system_names_batch(
         return {}
     placeholders = ",".join("?" * len(solar_system_ids))
     rows = conn.execute(
-        f"SELECT solar_system_id, solar_system_name FROM solar_system"
-        f" WHERE solar_system_id IN ({placeholders})",
+        f"SELECT solar_system_id, solar_system_name FROM solar_system WHERE solar_system_id IN ({placeholders})",
         solar_system_ids,
     ).fetchall()
     result: dict[int, str] = {}

@@ -8,6 +8,26 @@
 
 ## 函数
 
+### `load_npc_corp_context`
+
+```python
+def load_npc_corp_context() -> tuple[set[int], dict[int, str]]
+```
+
+打开 reference.db 并返回 (npc_corp_ids, corp_names)。
+
+定义行：`11`
+
+### `resolve_stations_by_ids`
+
+```python
+def resolve_stations_by_ids(location_ids: set[int]) -> dict[int, tuple[str, str]]
+```
+
+打开 reference.db 并解析空间站名称。
+
+定义行：`19`
+
 ### `filter_npc_sell_orders`
 
 ```python
@@ -16,7 +36,7 @@ def filter_npc_sell_orders(orders: list[dict], npc_corp_ids: set[int]) -> list[d
 
 从 ESI 市场卖单里筛出 NPC 公司的卖单。
 
-定义行：`11`
+定义行：`27`
 
 ### `load_npc_corp_ids`
 
@@ -26,7 +46,7 @@ def load_npc_corp_ids(conn: Connection) -> set[int]
 
 reference.db 中全部 NPC 公司 id 集合。
 
-定义行：`26`
+定义行：`40`
 
 ### `load_corp_names`
 
@@ -36,7 +56,7 @@ def load_corp_names(conn: Connection) -> dict[int, str]
 
 corp_id → 显示名（zh 优先 → en → str(id)）。
 
-定义行：`32`
+定义行：`46`
 
 ### `resolve_stations`
 
@@ -46,4 +66,4 @@ def resolve_stations(conn: Connection, location_ids: set[int]) -> dict[int, tupl
 
 location_id → (空间站名, 星系名)。NPC 空间站的 location_id 即 station.station_id。
 
-定义行：`38`
+定义行：`52`

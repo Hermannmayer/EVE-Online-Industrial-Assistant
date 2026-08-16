@@ -10,7 +10,6 @@ from ui_pyside6.workers.trade_workers import (
 
 
 class TestCrossRegionPriceWorker:
-
     @patch("ui_pyside6.workers.trade_workers.get_container")
     def test_run_emits_finished(self, mock_get_container, qapp):
         """run() 为每个贸易中心获取价格并通过 finished 返回"""
@@ -80,7 +79,6 @@ class TestCrossRegionPriceWorker:
 
 
 class TestTradeScoreWorker:
-
     @patch("ui_pyside6.workers.trade_workers.get_container")
     def test_run_emits_finished(self, mock_get_container, qapp):
         """run() 调用 scoring_service().calc_trade_score 并通过 finished 返回"""
@@ -116,7 +114,6 @@ class TestTradeScoreWorker:
 
 
 class TestTransportWorker:
-
     @patch("ui_pyside6.workers.trade_workers.calc_transport_profit")
     def test_run_emits_finished(self, mock_calc, qapp):
         """run() 调用 calc_transport_profit 并通过 finished 返回"""

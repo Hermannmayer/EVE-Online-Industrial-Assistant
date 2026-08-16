@@ -13,7 +13,6 @@ class TestPlanPriceRefreshWorker:
         w = PlanPriceRefreshWorker(type_ids={1, 2, 3})
         assert isinstance(w, QThread)
 
-
     @patch("ui_pyside6.views.industry_view.PlanPriceRefreshWorker._fetch_and_save")
     def test_run_emits_finished_on_success(self, mock_fetch, qapp):
         """run() 成功拉取后通过 finished 信号返回成功消息"""

@@ -71,9 +71,7 @@ class MatDlg(QDialog):
         lay.setContentsMargins(10, 10, 10, 10)
         container = get_container()
         nm = container.item_repo.get_name(tid)
-        lay.addWidget(
-            QLabel(f"制造材料: {nm}", styleSheet=f"color:{theme.PRIMARY};font-size:13px;font-weight:bold;")
-        )
+        lay.addWidget(QLabel(f"制造材料: {nm}", styleSheet=f"color:{theme.PRIMARY};font-size:13px;font-weight:bold;"))
         materials = container.blueprint_repo.get_manufacturing_materials(tid)
         if materials is None:
             lay.addWidget(QLabel("此物品无制造蓝图", styleSheet=f"color:{theme.ACCENT_RED};"))

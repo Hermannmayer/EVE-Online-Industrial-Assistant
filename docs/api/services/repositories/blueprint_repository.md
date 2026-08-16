@@ -45,15 +45,6 @@ def get_materials(self, blueprint_type_id: int, activity: str='manufacturing') -
 获取蓝图材料 → [(material_type_id, quantity, wastefactor), ...]
 
 定义行：`24`
-##### `get_bp_detail`
-
-```python
-def get_bp_detail(self, type_id: int) -> dict | None
-```
-
-获取蓝图详情（跨库 JOIN ref + bp）
-
-定义行：`36`
 ##### `get_all_product_ids`
 
 ```python
@@ -64,4 +55,58 @@ def get_all_product_ids(self, activity: str='manufacturing') -> list[int]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`50`
+定义行：`36`
+##### `get_all_blueprint_product_ids`
+
+```python
+def get_all_blueprint_product_ids(self) -> set[int]
+```
+
+所有出现在 blueprint_products 中的产出物 type_id。
+
+定义行：`43`
+##### `get_t1_manufacturable_product_ids`
+
+```python
+def get_t1_manufacturable_product_ids(self) -> set[int]
+```
+
+T1 制造产物：有制造蓝图，且该蓝图不是发明产物。
+
+定义行：`49`
+##### `get_t2_manufacturable_product_ids`
+
+```python
+def get_t2_manufacturable_product_ids(self) -> set[int]
+```
+
+T2 发明产物：有制造蓝图，且该蓝图由发明产出。
+
+定义行：`61`
+##### `get_faction_manufacturable_product_ids`
+
+```python
+def get_faction_manufacturable_product_ids(self) -> set[int]
+```
+
+势力蓝图制造产物：制造产物名称匹配常见势力关键词。
+
+定义行：`73`
+##### `get_manufacturable_market_tree`
+
+```python
+def get_manufacturable_market_tree(self) -> list[dict]
+```
+
+可制造物品关联的市场分类树（id/parent/name 字典列表）。
+
+定义行：`86`
+##### `get_manufacturing_materials`
+
+```python
+def get_manufacturing_materials(self, product_type_id: int) -> tuple[int, list[tuple[int, int, str, str, float | None]]] | None
+```
+
+查询产品制造材料及最新卖价。
+
+定义行：`110`

@@ -126,7 +126,7 @@ class ItemSearchDialog(QDialog):
 
     def _search_items(self, text: str) -> list[dict]:
         """item 表模糊匹配 + terminology.item_overrides 反向匹配基础矿物"""
-        results = get_container().item_repo.search_by_name(text, limit=20)
+        results: list[dict] = get_container().item_repo.search_by_name(text, limit=20)
         # terminology.item_overrides 反向匹配（基础矿物 34-40 等不在 item 表，仅在此注册）
         term._ensure()
         overrides = term._data.get("item_overrides") or {}

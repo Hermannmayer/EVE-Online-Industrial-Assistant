@@ -15,7 +15,6 @@ class TestSearchWorker:
         assert isinstance(w, QThread)
         assert w._query == "rav"
 
-
     def test_run_emits_finished(self, qapp):
         """run() 执行 SQL 后通过 finished 信号返回结果"""
         db = MagicMock()
@@ -50,7 +49,6 @@ class TestSearchWorker:
 
 
 class TestScoreWorker:
-
     @patch("ui_pyside6.workers.industry_workers.get_container")
     def test_run_emits_finished(self, mock_get_container, qapp):
         """run() 调用 scoring_service().calc_manufacturing_score 并通过 finished 返回结果"""
@@ -93,7 +91,6 @@ class TestScoreWorker:
 
 
 class TestRankWorker:
-
     @patch("ui_pyside6.workers.industry_workers.get_container")
     def test_run_with_no_products(self, mock_get_container, qapp):
         """无可制造物品时 result 信号发出空列表"""

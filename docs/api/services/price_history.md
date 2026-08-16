@@ -37,7 +37,7 @@ def get_cached_history(type_id: int, region_id: int=REGION_ID, _db=None) -> list
 
 Read cached history from market.db
 
-定义行：`69`
+定义行：`70`
 
 ### `save_cache`
 
@@ -47,7 +47,7 @@ def save_cache(type_id: int, region_id: int, data: list[dict], _db=None) -> None
 
 Save price history to market.db cache
 
-定义行：`98`
+定义行：`99`
 
 ## 类
 
@@ -55,7 +55,7 @@ Save price history to market.db cache
 
 价格历史服务 — 容器注入 DatabaseManager（替代模块级 get_db 单例）
 
-定义行：`128`
+定义行：`129`
 
 #### 方法
 
@@ -69,7 +69,7 @@ def __init__(self, db)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`131`
+定义行：`132`
 ##### `fetch`
 
 ```python
@@ -78,7 +78,7 @@ async def fetch(self, type_id: int, region_id: int=REGION_ID, session=None) -> l
 
 拉取 ESI 历史价格（失败返回 None）
 
-定义行：`134`
+定义行：`135`
 ##### `get_cached`
 
 ```python
@@ -87,7 +87,7 @@ def get_cached(self, type_id: int, region_id: int=REGION_ID) -> list[dict] | Non
 
 读取缓存历史价格（TTL 内命中，否则 None）
 
-定义行：`138`
+定义行：`139`
 ##### `save`
 
 ```python
@@ -96,4 +96,4 @@ def save(self, type_id: int, region_id: int, data: list[dict]) -> None
 
 写入缓存历史价格
 
-定义行：`142`
+定义行：`143`

@@ -103,7 +103,7 @@ class BlueprintPickerDialog(QDialog):
         )
 
         assigned_id = self._plan.get("assigned_blueprint_id")
-        blueprint_type_id, options = get_blueprint_picker_data(get_container().db, product_type_id)
+        blueprint_type_id, options = get_blueprint_picker_data(get_container().db, int(product_type_id or 0))
         if blueprint_type_id is None:
             self._empty_hint.setText("无法确定该产品的蓝图类型")
             self._table.setEnabled(False)

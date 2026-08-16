@@ -7,7 +7,7 @@
 
 from typing import ClassVar
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 
 from services.init_service import InitService
 
@@ -30,7 +30,7 @@ class InitServiceWorker(QThread):
         "network_status",
     ]
 
-    def __init__(self, step_keys: list[str] | None = None, parent: QThread | None = None):
+    def __init__(self, step_keys: list[str] | None = None, parent: QObject | None = None):
         super().__init__(parent)
         self._step_keys = step_keys
         self._service = InitService()

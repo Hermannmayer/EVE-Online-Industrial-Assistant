@@ -32,9 +32,7 @@ def _build_bp(db_manager):
             "CREATE TABLE blueprint_materials (blueprint_type_id INTEGER, activity TEXT, "
             "material_type_id INTEGER, quantity INTEGER)"
         )
-        conn.execute(
-            "CREATE TABLE blueprint_activities (blueprint_type_id INTEGER, activity TEXT, time INTEGER)"
-        )
+        conn.execute("CREATE TABLE blueprint_activities (blueprint_type_id INTEGER, activity TEXT, time INTEGER)")
         # T1 物品 2001 ← 制造蓝图 3001；拷贝材料 1001×5
         conn.execute("INSERT INTO blueprint_products VALUES (3001,'manufacturing',2001,1,NULL)")
         conn.execute("INSERT INTO blueprint_materials VALUES (3001,'copying',1001,5)")
@@ -54,9 +52,7 @@ def _build_ref_sci(db_manager):
     """在 reference.db 建 industry_system_costs，模拟不同星系 SCI"""
     _clear_singleton_cache()
     with db_manager.connect("ref") as conn:
-        conn.execute(
-            "CREATE TABLE industry_system_costs (solar_system_id INTEGER, activity TEXT, cost_index REAL)"
-        )
+        conn.execute("CREATE TABLE industry_system_costs (solar_system_id INTEGER, activity TEXT, cost_index REAL)")
         conn.execute("INSERT INTO industry_system_costs VALUES (30000142, 'copying', 0.05)")
         conn.execute("INSERT INTO industry_system_costs VALUES (30002510, 'copying', 0.20)")
         conn.execute("INSERT INTO industry_system_costs VALUES (30000142, 'invention', 0.05)")

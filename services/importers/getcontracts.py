@@ -109,16 +109,14 @@ async def init_db():
     log.info("  合同数据库表已就绪")
 
 
-async def _fetch_contract_pages_detailed(
-    session, region_id: int
-) -> tuple[list[dict], bool]:
+async def _fetch_contract_pages_detailed(session, region_id: int) -> tuple[list[dict], bool]:
     """拉取一个区域的全部公开合同（分页）。
 
     兼容 aiohttp.ClientSession 与 services.client.APIClient。
     Returns:
         (contracts, complete)：complete=False 表示列表拉取不完整。
     """
-    all_contracts = []
+    all_contracts: list[dict] = []
     complete = True
     url = f"{ESI_BASE_URL}/contracts/public/{region_id}/"
     is_api_client = hasattr(session, "fetch_raw")
@@ -185,9 +183,7 @@ async def fetch_contract_pages(session: aiohttp.ClientSession, region_id: int) -
     return contracts
 
 
-async def _fetch_contract_items_detailed(
-    session, contract_ids: list[int]
-) -> tuple[dict[int, list[dict]], set[int]]:
+async def _fetch_contract_items_detailed(session, contract_ids: list[int]) -> tuple[dict[int, list[dict]], set[int]]:
     """并发拉取多个合同的物品列表。
 
     兼容 aiohttp.ClientSession 与 services.client.APIClient。
@@ -395,7 +391,7 @@ async def main(regions: list[tuple[str, int]] | None = None):
 
         # 完整区域 = 合同列表完整 + 该区域所有合同物品都拉取成功
         complete_regions = {
-            rid
+            rid[1]
             for rid in targets
             if page_complete.get(rid[1], False)
             and not any(cid in failed_item_ids for cid, crid in contract_region.items() if crid == rid[1])
@@ -403,9 +399,7 @@ async def main(regions: list[tuple[str, int]] | None = None):
 
     # 阶段 3: 写入数据库
     write_progress(4, 5, "写入数据库...")
-    c_cnt, i_cnt = await save_contracts(
-        all_contracts, all_items, [rid for _, rid in targets], complete_regions
-    )
+    c_cnt, i_cnt = await save_contracts(all_contracts, all_items, [rid for _, rid in targets], complete_regions)
     log.info(f"  写入 {c_cnt} 条合同, {i_cnt} 条物品")
 
     elapsed = (datetime.now() - t0).total_seconds()
