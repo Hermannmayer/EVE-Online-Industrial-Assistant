@@ -8,38 +8,22 @@ from ui_pyside6.views.char_settings_view import get_character
 
 _cache = TtlLRUCache(max_size=500, ttl_seconds=1800)
 
-# ── 搜索 SQL（参数化） ──
-_SEARCH_SQL = (
-    "SELECT i.type_id, i.zh_name, i.en_name "
-    "FROM item i "
-    "WHERE (i.type_id = ? OR i.zh_name LIKE ? OR i.en_name LIKE ?) "
-    "ORDER BY CASE WHEN i.en_name LIKE ? THEN 0 "
-    "WHEN i.zh_name LIKE ? THEN 1 ELSE 2 END, i.zh_name "
-    "LIMIT 50"
-)
-
 
 def search_items(query: str) -> list[dict]:
     """按名称/ID 搜索物品"""
     q = query.strip()
     if not q:
         return []
-    like = f"%{q}%"
-    with get_container().db.connect("ref") as conn:
-        c = conn.cursor()
-        if q.isdigit():
-            c.execute(_SEARCH_SQL, (int(q), like, like, f"{q}%", f"{q}%"))
-        else:
-            c.execute(_SEARCH_SQL, (0, like, like, f"{q}%", f"{q}%"))
-        return [{"type_id": r[0], "zh_name": r[1] or "", "en_name": r[2] or ""} for r in c.fetchall()]
+    repo = get_container().item_repo
+    if q.isdigit():
+        item = repo.get_by_id(int(q))
+        return [item] if item else []
+    return repo.search_by_name(q)
 
 
 def item_name(type_id: int) -> str:
     """获取物品中文名（name_resolver 有 terminology 覆盖兜底）"""
-    from services.name_resolver import resolve_item_name
-
-    with get_container().db.connect("ref") as conn:
-        return resolve_item_name(conn, type_id)
+    return get_container().item_repo.get_name(type_id)
 
 
 class CompareWorker(QThread):
