@@ -2,8 +2,6 @@
 人物设置对话框 — 多角色 / 技能 / 增效体 / 市场费率
 """
 
-import json
-import os
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -26,7 +24,6 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
-from core.container import get_container
 from services.char_config_resolver import (
     char_config_path as services_char_config_path,
 )
@@ -42,6 +39,7 @@ from services.char_config_resolver import (
 from services.char_config_resolver import (
     save_all_data as services_save_all_data,
 )
+from services.implant_loader import load_implants
 
 # ═══════════════════════════════════════════
 #  游戏公式
@@ -257,83 +255,6 @@ def load_all_data() -> dict:
 
 def save_all_data(data: dict):
     services_save_all_data(data)
-
-
-# ═══════════════════════════════════════════
-#  植入体数据查询
-# ═══════════════════════════════════════════
-
-IMPLANT_CACHE: list[dict] = []
-
-
-def load_implants() -> list[dict]:
-    """从 item_dogma 表加载所有工业植入体"""
-    global IMPLANT_CACHE
-    if IMPLANT_CACHE:
-        return IMPLANT_CACHE
-
-    from core.paths import REF_DB_PATH
-
-    if not os.path.exists(REF_DB_PATH):
-        return []
-
-    conn = get_container().db.direct_connect("ref")
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT i.type_id, i.en_name, i.zh_name, d.dogma_attrs
-            FROM item i
-            JOIN item_dogma d ON i.type_id = d.type_id
-            ORDER BY i.en_name
-        """)
-        results = []
-        for row in cur.fetchall():
-            type_id, en_name, zh_name, dogma_json = row
-            attrs = json.loads(dogma_json) if dogma_json else []
-            # 解析 bonus 描述
-            bonus_desc = _parse_implant_bonus(attrs)
-            results.append(
-                {
-                    "type_id": type_id,
-                    "en_name": en_name,
-                    "zh_name": zh_name or en_name,
-                    "bonus_desc": bonus_desc,
-                }
-            )
-    finally:
-        conn.close()
-    IMPLANT_CACHE = results
-    return results
-
-
-def _parse_implant_bonus(attrs: list) -> str:
-    """从 dogma 属性解析人类可读的加成描述"""
-    # attribute_id -> (显示名称, 是否减少型)
-    # 减少型: 负值=收益 (如 -1% 制造时间)
-    # 增加型: 正值=收益 (如 +1% 采矿量)
-    KNOWN = {
-        440: ("制造时间", True),  # manufacturingTimeBonus
-        452: ("复制速度", True),  # copySpeedBonus
-        453: ("蓝图制造时间", True),  # blueprintmanufactureTimeBonus
-        468: ("材料需求研究", True),  # mineralNeedResearchBonus
-        379: ("精炼产出", False),  # refiningYieldMutator
-        434: ("采矿量", False),  # miningAmountBonus
-        927: ("采矿升级CPU", True),  # miningUpgradeCPUReductionBonus
-        780: ("冰矿采集周期", True),  # iceHarvestCycleBonus
-        66: ("循环时间", True),  # durationBonus
-    }
-    descs = []
-    for attr in attrs:
-        aid = attr["attribute_id"]
-        val = attr["value"]
-        if aid in KNOWN:
-            name, is_reduction = KNOWN[aid]
-            if val != 0:
-                if is_reduction:
-                    descs.append(f"{name} -{abs(int(val))}%")
-                else:
-                    descs.append(f"{name} +{int(val)}%")
-    return ", ".join(descs) if descs else ""
 
 
 # ═══════════════════════════════════════════
