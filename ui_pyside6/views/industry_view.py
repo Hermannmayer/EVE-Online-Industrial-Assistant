@@ -39,6 +39,13 @@ from ui_pyside6.workers.industry_page_workers import (
 from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker, ProcurementSummaryWorker
 
 
+def _default_mat_hangar_id() -> int | None:
+    """默认材料机库（机库设置里配置，settings.default_mat_hangar_id）。"""
+    from services import inventory_manager
+
+    return inventory_manager.get_default_mat_hangar_and_system()[0]
+
+
 class IndustryPage(QWidget):
     """生产计划管理统一页面 — 5 区布局"""
 
@@ -189,7 +196,7 @@ class IndustryPage(QWidget):
         from ui_pyside6.models.industry_models import PlanTableModel
 
         # 注入当前材料机库（启动旧计划时兜底）
-        self._plan_table_widget.set_mat_hangar_id(self._toolbar.get_mat_hangar_id())
+        self._plan_table_widget.set_mat_hangar_id(_default_mat_hangar_id())
 
         # 复用已有 model，避免 setModel 清除选中状态
         model = self._plan_table_widget.get_model()
@@ -247,7 +254,7 @@ class IndustryPage(QWidget):
         self._proc_result = None
         self._proc_worker = ProcurementSummaryWorker(
             procur,
-            default_mat_hangar_id=self._toolbar.get_mat_hangar_id(),
+            default_mat_hangar_id=_default_mat_hangar_id(),
             region_id=TRADE_HUB_IDS.get(mat_hub, 10000002),
             price_type=mat_price_type,
             parent=self,
@@ -452,7 +459,7 @@ class IndustryPage(QWidget):
         ps = self._toolbar.get_price_settings()
         from services import inventory_manager
 
-        preview_system_id = inventory_manager.get_hangar_system_id(self._toolbar.get_mat_hangar_id())
+        preview_system_id = inventory_manager.get_hangar_system_id(_default_mat_hangar_id())
 
         self._score_worker = ScoreWorker(
             type_id=type_id,
@@ -474,7 +481,7 @@ class IndustryPage(QWidget):
             if not data:
                 return
             # \u4ece\u6750\u6599\u673a\u5e93\u5e26\u51fa\u6240\u5728\u661f\u7cfb\uff08\u661f\u7cfb\u6210\u672c\u6307\u6570\u5f71\u54cd\u5b89\u88c5\u8d39\uff09\uff1bfacility \u672a\u586b\u65f6\u7528\u6750\u6599\u673a\u5e93\u540d\u79f0
-            mat_hangar_id = self._toolbar.get_mat_hangar_id()
+            mat_hangar_id = _default_mat_hangar_id()
             from services import inventory_manager
 
             solar_system_id = inventory_manager.get_hangar_system_id(mat_hangar_id)
@@ -508,6 +515,7 @@ class IndustryPage(QWidget):
                 )
             )
             # \u7edf\u4e00\u8d70 plan_service \u843d\u5e93\uff08\u907f\u514d UI \u5185\u8054 INSERT \u91cd\u590d\uff09
+            from services import user_settings
             from services.plan_service import insert_plan
 
             insert_plan(
@@ -525,7 +533,7 @@ class IndustryPage(QWidget):
                 facility=facility,
                 solar_system_id=solar_system_id,
                 mat_hangar_id=mat_hangar_id,
-                deposit_hangar_id=self._toolbar.get_hangar_id(),
+                deposit_hangar_id=user_settings.get_default_hangar_id("default_deposit_hangar_id"),
                 metrics=metrics,
             )
             self.load_plans()
@@ -636,7 +644,7 @@ class IndustryPage(QWidget):
             return
         from ui_pyside6.dialogs.production_wizard import ProductionWizard
 
-        mat_hangar_id = self._toolbar.get_mat_hangar_id()
+        mat_hangar_id = _default_mat_hangar_id()
         dlg = ProductionWizard(plans, self, mat_hangar_id=mat_hangar_id)
         dlg.exec()
         self.load_plans()

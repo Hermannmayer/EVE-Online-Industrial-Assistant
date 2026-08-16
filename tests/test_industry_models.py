@@ -203,7 +203,8 @@ class TestPlanTableModel:
         expected = {6: ["C", "B", "A"], 9: ["B", "C", "A"], 10: ["C", "A", "B"]}
         for col, order_names in expected.items():
             model.sort(col, Qt.SortOrder.AscendingOrder)
-            order = [model.data(model.index(r, 3), Qt.ItemDataRole.DisplayRole) for r in range(3)]
+            # 子项 product_name 带层级缩进（child_level>0），strip 后比对排序顺序
+            order = [model.data(model.index(r, 3), Qt.ItemDataRole.DisplayRole).strip() for r in range(3)]
             assert order == order_names, f"col {col}"
 
     def test_sort_text_column_mixed_types_no_crash(self, qapp):

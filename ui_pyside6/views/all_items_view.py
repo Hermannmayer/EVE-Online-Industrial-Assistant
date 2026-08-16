@@ -660,7 +660,7 @@ class AllItemsDialog(QDialog):
             data = dlg.result_data()
             if not data:
                 return
-            from services import inventory_manager
+            from services import inventory_manager, user_settings
             from services.plan_service import insert_plan
 
             mat_hangar_id, solar_system_id = inventory_manager.get_default_mat_hangar_and_system()
@@ -684,6 +684,7 @@ class AllItemsDialog(QDialog):
                 facility=data["fac"],
                 solar_system_id=solar_system_id,
                 mat_hangar_id=mat_hangar_id,
+                deposit_hangar_id=user_settings.get_default_hangar_id("default_deposit_hangar_id"),
                 metrics=metrics,
             )
             QMessageBox.information(self, "提示", f"已加入制造列表: {_ctx_name}")

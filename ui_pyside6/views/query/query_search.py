@@ -545,7 +545,7 @@ def do_add_to_plan(page, type_id: int, product_name: str):
             data = dlg.result_data()
             if not data:
                 return
-            from services import inventory_manager
+            from services import inventory_manager, user_settings
             from services.plan_service import insert_plan
 
             mat_hangar_id, solar_system_id = inventory_manager.get_default_mat_hangar_and_system()
@@ -569,6 +569,7 @@ def do_add_to_plan(page, type_id: int, product_name: str):
                 facility=data["fac"],
                 solar_system_id=solar_system_id,
                 mat_hangar_id=mat_hangar_id,
+                deposit_hangar_id=user_settings.get_default_hangar_id("default_deposit_hangar_id"),
                 metrics=metrics,
             )
             QMessageBox.information(page, "成功", f"已添加到计划: {product_name}")
