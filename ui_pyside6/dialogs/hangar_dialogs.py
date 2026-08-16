@@ -238,18 +238,7 @@ class AddItemDialog(QDialog):
 
     def _search_items(self, text: str) -> list[dict]:
         """名称→type_id：item 表模糊匹配 + terminology.item_overrides 反向匹配基础矿物"""
-        results: list[dict] = []
-        like = f"%{text}%"
-        with get_container().db.connect("ref") as conn:
-            c = conn.cursor()
-            c.execute(
-                "SELECT type_id, zh_name, en_name FROM item "
-                "WHERE (zh_name LIKE ? OR en_name LIKE ?) "
-                "ORDER BY CASE WHEN en_name=? OR zh_name=? THEN 0 ELSE 1 END, "
-                "LENGTH(en_name), type_id LIMIT 20",
-                (like, like, text, text),
-            )
-            results = [{"type_id": r[0], "zh_name": r[1] or "", "en_name": r[2] or ""} for r in c.fetchall()]
+        results = get_container().item_repo.search_by_name(text, limit=20)
         # terminology.item_overrides 反向匹配（基础矿物 34-40 等不在 item 表，仅在此注册）
         from services.terminology import term
 
@@ -393,65 +382,46 @@ class PasteImportDialog(QDialog):
         errors = []
         price_source = self._get_price_source()
         discount = self._get_discount()
-        with get_container().db.connect("ref", "bp") as conn:
-            c = conn.cursor()
-            with get_container().db.connect("mkt") as conn2:
-                c2 = conn2.cursor()
-                for line in lines:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    parts = re.split(r"[\t,;|]\s*", line, maxsplit=1)
-                    if len(parts) < 2:
-                        errors.append(f"格式错误: {line}")
-                        continue
-                    key, qty_str = parts[0].strip(), parts[1].strip()
-                    try:
-                        qty = int(qty_str.replace(",", ""))
-                    except ValueError:
-                        errors.append(f"数量无效: {qty_str}")
-                        continue
+        item_repo = get_container().item_repo
+        market_repo = get_container().market_repo
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            parts = re.split(r"[\t,;|]\s*", line, maxsplit=1)
+            if len(parts) < 2:
+                errors.append(f"格式错误: {line}")
+                continue
+            key, qty_str = parts[0].strip(), parts[1].strip()
+            try:
+                qty = int(qty_str.replace(",", ""))
+            except ValueError:
+                errors.append(f"数量无效: {qty_str}")
+                continue
 
-                    type_id = None
-                    if key.isdigit():
-                        type_id = int(key)
-                    else:
-                        c.execute("SELECT type_id FROM item WHERE zh_name = ? OR en_name = ? LIMIT 1", (key, key))
-                        r = c.fetchone()
-                        if r:
-                            type_id = r[0]
-                    if not type_id:
-                        errors.append(f"未找到物品: {key}")
-                        continue
+            type_id = None
+            if key.isdigit():
+                item = item_repo.get_by_id(int(key))
+                type_id = item["type_id"] if item else None
+            else:
+                item = item_repo.get_by_name(key)
+                type_id = item["type_id"] if item else None
+            if not type_id:
+                errors.append(f"未找到物品: {key}")
+                continue
 
-                    if price_source in ("sell", "disc"):
-                        price = get_item_price(type_id) or 0
-                        if price_source == "disc":
-                            price *= discount
-                    elif price_source == "buy":
-                        c2.execute(
-                            "SELECT buy_price FROM market_prices WHERE type_id = ? AND region_id = 10000002 LIMIT 1",
-                            (type_id,),
-                        )
-                        r = c2.fetchone()
-                        price = r[0] or 0 if r else 0
-                    elif price_source == "avg":
-                        c2.execute(
-                            "SELECT sell_price, buy_price FROM market_prices"
-                            " WHERE type_id = ? AND region_id = 10000002 LIMIT 1",
-                            (type_id,),
-                        )
-                        r = c2.fetchone()
-                        if r and r[0] and r[1]:
-                            price = (r[0] + r[1]) / 2
-                        elif r:
-                            price = r[0] or r[1] or 0
-                        else:
-                            price = 0
-                    else:
-                        price = 0
+            if price_source in ("sell", "disc"):
+                price = get_item_price(type_id) or 0
+                if price_source == "disc":
+                    price *= discount
+            elif price_source == "buy":
+                price = market_repo.get_price_by_region(type_id, "buy", 10000002) or 0
+            elif price_source == "avg":
+                price = market_repo.get_price_by_region(type_id, "avg", 10000002) or 0
+            else:
+                price = 0
 
-                    results.append((type_id, qty, round(price, 2)))
+            results.append((type_id, qty, round(price, 2)))
 
         if not results:
             QMessageBox.warning(self, "导入结果", f"未能解析任何有效数据\n{chr(10).join(errors[:5])}")
