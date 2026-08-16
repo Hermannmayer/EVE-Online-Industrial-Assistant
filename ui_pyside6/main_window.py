@@ -50,8 +50,6 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
         self.setWindowTitle("EVE 商人助手")
         # 无边框窗口：专属标题栏（拖动/窗口控制/边缘缩放）
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
-        # 透明窗口背景：让 DWM acrylic/mica 毛玻璃透过玻璃表面（solid 主题仍全不透明）
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumSize(1200, 700)
 
         # ── 主题 ──
@@ -59,6 +57,9 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
         # 加载上次主题偏好（theme.apply_theme 会触发 _on_theme_changed 重设样式表）
         saved_theme = theme.load_theme_preference()
         theme.apply_theme(saved_theme)
+        # 透明窗口背景：仅 acrylic/mica 玻璃材质需要（solid 全不透明，避免合成开销/缩放伪影）
+        if theme.theme_material() != "solid":
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         # 手动刷新样式表，因为 _on_theme_changed 监听器尚未注册
         self.setStyleSheet(theme.get_stylesheet())
 
@@ -469,6 +470,8 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
             title_bar.refresh_icons()
         self._refresh_auto_update_label()
         self._refresh_price_age()
+        # DWM 毛玻璃/暗色/材质按新主题重放（窗口已显示时原生属性不会自动刷新）
+        self._apply_window_backdrop()
 
     def _toggle_theme(self):
         """在暗色/亮色模式间切换（one-dark / one-light 确定性互切）"""
@@ -637,7 +640,7 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
             dark = bool(spec and spec["mode"] == "dark")
             apply_dwm_backdrop(hwnd, theme.theme_material(), dark)
         except Exception:
-            pass
+            log.exception("应用 DWM 毛玻璃失败（降级 solid）")
 
     def nativeEvent(self, eventType, message):
         """Windows 无边框窗口消息：NCCALCSIZE 隐藏原生边框、NCHITTEST 命中码。"""
@@ -647,16 +650,45 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
                 import ctypes.wintypes
 
                 msg = ctypes.wintypes.MSG.from_address(int(message))
-                WM_NCCALCSIZE, WM_NCHITTEST, WM_NCACTIVATE = 0x0083, 0x0084, 0x0086
+                WM_NCCALCSIZE, WM_NCHITTEST, WM_NCACTIVATE, WM_GETMINMAXINFO = 0x0083, 0x0084, 0x0086, 0x0024
                 if msg.message == WM_NCCALCSIZE:
                     return True, 0  # 隐藏原生非客户区（保持无边框外观）
                 if msg.message == WM_NCACTIVATE:
                     return True, 1  # 阻止激活/失活时绘制原生边框
                 if msg.message == WM_NCHITTEST:
                     return True, self._nchittest(msg.lParam)
+                if msg.message == WM_GETMINMAXINFO:
+                    return True, self._minmax_info(msg.lParam)
             except Exception:
-                pass
+                log.exception("nativeEvent 处理失败")
         return super().nativeEvent(eventType, message)
+
+    @staticmethod
+    def _minmax_info(lParam: int) -> int:
+        """WM_GETMINMAXINFO：把最大化尺寸/位置钳制到工作区（无边框 + NCCALCSIZE=0 时默认会越界任务栏）。"""
+        import ctypes
+        import ctypes.wintypes
+
+        SPI_GETWORKAREA = 0x0030
+        work = ctypes.wintypes.RECT()
+        if not ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(work), 0):
+            return 0
+
+        class MINMAXINFO(ctypes.Structure):
+            _fields_ = [
+                ("ptReserved", ctypes.wintypes.POINT),
+                ("ptMaxSize", ctypes.wintypes.POINT),
+                ("ptMaxPosition", ctypes.wintypes.POINT),
+                ("ptMinTrackSize", ctypes.wintypes.POINT),
+                ("ptMaxTrackSize", ctypes.wintypes.POINT),
+            ]
+
+        info = MINMAXINFO.from_address(int(lParam))
+        info.ptMaxSize.x = work.right - work.left
+        info.ptMaxSize.y = work.bottom - work.top
+        info.ptMaxPosition.x = work.left
+        info.ptMaxPosition.y = work.top
+        return 0
 
     def _nchittest(self, lParam: int) -> int:
         """WM_NCHITTEST 命中码：边缘缩放 + 标题栏 HTCAPTION（原生拖动）"""

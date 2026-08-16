@@ -21,6 +21,24 @@ _WS_CAPTION = 0x00C00000  # WS_BORDER | WS_DLGFRAME
 _WIN11_22000 = (10, 0, 22000)
 _WIN11_22621 = (10, 0, 22621)
 
+_LONG_PTR = ctypes.c_ssize_t  # win64 LONG_PTR（否则 HWND/样式被 ctypes 默认 c_int 截断）
+
+
+def _get_window_style(hwnd: int) -> int:
+    user32 = ctypes.windll.user32
+    func = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
+    func.restype = _LONG_PTR
+    func.argtypes = [ctypes.wintypes.HWND, ctypes.c_int]
+    return int(func(hwnd, _GWL_STYLE))
+
+
+def _set_window_style(hwnd: int, style: int) -> None:
+    user32 = ctypes.windll.user32
+    func = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
+    func.restype = _LONG_PTR
+    func.argtypes = [ctypes.wintypes.HWND, ctypes.c_int, _LONG_PTR]
+    func(hwnd, _GWL_STYLE, style)
+
 
 def enable_native_resize(hwnd: int) -> bool:
     """给无边框窗口重新加上 WS_THICKFRAME，让 Windows 恢复原生边缘缩放与 Aero Snap 贴边吸附。
@@ -31,10 +49,9 @@ def enable_native_resize(hwnd: int) -> bool:
     if sys.platform != "win32" or not hwnd:
         return False
     try:
-        user32 = ctypes.windll.user32
-        style = user32.GetWindowLongPtrW(hwnd, _GWL_STYLE)
+        style = _get_window_style(hwnd)
         style |= _WS_THICKFRAME | _WS_CAPTION
-        user32.SetWindowLongPtrW(hwnd, _GWL_STYLE, style)
+        _set_window_style(hwnd, style)
         return True
     except Exception:
         return False
@@ -50,9 +67,15 @@ def _win_version() -> tuple[int, int, int] | None:
 
 def _set_attr(hwnd: int, attr: int, value: int) -> bool:
     try:
-        ok = ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            hwnd, attr, ctypes.byref(ctypes.c_int(value)), ctypes.sizeof(ctypes.c_int)
-        )
+        dwm = ctypes.windll.dwmapi
+        dwm.DwmSetWindowAttribute.restype = ctypes.c_long
+        dwm.DwmSetWindowAttribute.argtypes = [
+            ctypes.wintypes.HWND,
+            ctypes.c_uint,
+            ctypes.c_void_p,
+            ctypes.c_uint,
+        ]
+        ok = dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(ctypes.c_int(value)), ctypes.sizeof(ctypes.c_int))
         return bool(ok == 0)
     except Exception:
         return False
