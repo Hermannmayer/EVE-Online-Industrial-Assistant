@@ -42,10 +42,14 @@
 
 | 表 | 说明 |
 |----|------|
-| `hangars` | 机库定义（矿仓/组件仓/产品仓/通用仓库） |
+| `hangars` | 机库定义（名称/星系/设施类型/设施税/改件） |
 | `inventory_items` | 库存物品（type_id, 数量, 加权平均成本） |
 | `user_blueprints` | 用户蓝图（BPO/BPC, ME/TE, runs, quantity） |
 | `production_plans` | 生产计划 |
+| `plan_blueprint_bindings` | 计划 ↔ 蓝图 多对多绑定（runs_used） |
+| `price_snapshots` | 计划价格快照 |
+| `procurement_items` | 采购清单 |
+| `watchlist_items` | 自选清单 |
 | `user_skills` | 角色技能数据 |
 
 ## data/ 目录
@@ -54,7 +58,7 @@
 
 | 文件 | 说明 | 格式 |
 |------|------|------|
-| `data/settings.json` | 用户设置（主题、自动更新间隔等） | JSON |
+| `data/settings.json` | 用户设置（主题、自动更新间隔、默认机库引用等），含 `settings_version` 结构版本，由 `services/user_settings.py` 惰性迁移升级 | JSON |
 | `data/char_config.json` | 多角色配置（技能、所在地、资金） | JSON |
 | `data/score_settings.json` | 评分参数设置 | JSON |
 | `data/search_history.json` | 搜索历史（最近 20 条） | JSON |
@@ -63,28 +67,27 @@
 | `data/caches/icons/` | 物品图标缓存 | PNG |
 | `data/terminology.json` | EVE 术语映射表（技能名翻译等） | JSON |
 
-## Schema 迁移
+## Schema 迁移与备份
 
-所有数据库 Schema 变更通过 `services/schema_migrations.py` 注册：
+所有数据库 Schema 变更通过 `services/schema_migrations.py` 注册，用 `PRAGMA user_version` 追踪版本
+（当前：`ref=1, mkt=3, user=11, bp=2`）。
 
-```python
-# 全局版本号
-DB_SCHEMA_VERSIONS = {"ref": 2, "mkt": 1, "bp": 1, "usr": 2}
+启动时 `ensure_all_schemas()` 自动执行待应用的迁移；**每次检测到需要迁移的库，先 `VACUUM INTO`
+快照到 `database/backups/`**（保留最近 5 份），迁移出错可手动恢复。
 
-# 迁移函数注册
-MIGRATIONS = {
-    "usr": {
-        1: _migrate_user_v1_to_v2,  # 添加 cost_per_run 列
-    },
-    "ref": {
-        1: _migrate_ref_v1_to_v2,
-    },
-}
-```
+- 加列（最常见）→ `_add_columns`（幂等）
+- 大变动（改列类型/拆表/合并/重命名列）→ `_rebuild_table`（单事务重建表并保留数据）
 
-启动时调用 `ensure_all_schemas()` 自动执行待应用的迁移。
+完整规范见 [schema-migration.md](schema-migration.md)。
 
 > ⚠️ 禁止在业务代码中直接写 `ALTER TABLE`，必须通过迁移系统。
+
+## data/settings.json 版本迁移
+
+`settings.json` 的键结构变更走 `services/user_settings.py` 的 `SETTINGS_SCHEMA_VERSION` +
+`_SETTINGS_MIGRATIONS` 机制：读取时惰性升级、保留所有未知键、落盘后返回。
+设置里 `default_*_hangar_id` 引用 `hangars.id`，机库表被重建（id 漂移）时这些引用会失效——
+这是机库设置"变回默认"的典型场景，升级后如失效需重新指定默认机库。
 
 ## SDE 数据来源
 

@@ -506,7 +506,7 @@ class ScoringService:
     ) -> dict:
         """计算制造评分。
 
-        纯算法在 domain.scoring，编排（读 DB/缓存）在 application.scoring_facade，
+        纯算法在 domain.scoring，编排（读 DB/缓存）在 services.scoring_facade，
         本方法仅做薄委托，保持签名与默认值不变。
         """
         from services.scoring_facade import calc_manufacturing_score as _facade
@@ -542,7 +542,7 @@ class ScoringService:
         char_config: dict | None = None,
         quantity: int = 1,
     ) -> dict:
-        """计算贸易评分。纯算法在 domain.scoring，编排在 application.scoring_facade。"""
+        """计算贸易评分。纯算法在 domain.scoring，编排在 services.scoring_facade。"""
         from services.scoring_facade import calc_trade_score as _facade
 
         return _facade(
@@ -571,7 +571,7 @@ class ScoringService:
         system_id: int | None = None,
         structure_bonus: float = 0.0,
     ) -> dict:
-        """计算反应（Reaction）利润评分。纯算法在 domain.scoring，编排在 application.scoring_facade。"""
+        """计算反应（Reaction）利润评分。纯算法在 domain.scoring，编排在 services.scoring_facade。"""
         from services.scoring_facade import calc_reaction_score as _facade
 
         return _facade(
