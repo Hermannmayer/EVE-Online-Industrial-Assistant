@@ -602,17 +602,8 @@ def do_add_to_plan(page, type_id: int, product_name: str):
     from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
     from ui_pyside6.workers.industry_workers import ScoreWorker
 
-    # 检查是否有蓝图
-    conn = get_container().db.direct_connect("bp")
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT 1 FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-            (type_id,),
-        )
-        has_bp = cur.fetchone() is not None
-    finally:
-        conn.close()
+    # 检查是否有蓝图（走 repository）
+    has_bp = get_container().blueprint_repo.get_blueprint_for_product(type_id) is not None
 
     if not has_bp:
         QMessageBox.information(page, "提示", f"「{product_name}」无制造配方")
