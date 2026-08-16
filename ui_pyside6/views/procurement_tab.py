@@ -1,6 +1,5 @@
 """待采购对话框 - 根据生产计划和库存计算需要采购的材料"""
 
-import json
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QColor
@@ -22,9 +21,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
-from core.container import get_container
 from core.logger import log
-from services.manufacturing_calculator import calc_material_for_runs
 from ui_pyside6.icon_cache import load_item_icon
 
 
@@ -207,178 +204,55 @@ class ProcurementDialog(QDialog):
 
     def _calculate(self):
         """根据生产计划和库存计算需要采购的材料"""
+        from services.procurement_service import calculate_procurement
+
         self._rows = []
         price_type = "buy" if self._price_combo.currentText() == "买价" else "sell"
         hub = self._hub_combo.currentText()
-        region_id = TRADE_HUB_IDS.get(hub, 10000002)
 
-        # Get material requirements from all active plans
-        material_map: dict[int, dict] = {}
-        # 子项产线自制的组件（由产线覆盖，不作为待采购；其原材料由子线计划计入）
-        sub_prod_ids = {
-            p["product_type_id"]
-            for p in self._active_plans
-            if p.get("product_type_id") and int(p.get("child_level") or p.get("sub_level") or 0) > 0
-        }
+        rows, total_cost, total_volume = calculate_procurement(
+            self._active_plans,
+            hangar_id=self._hangar_id,
+            hub=hub,
+            price_type=price_type,
+        )
+        self._rows = rows
+        if not self._rows:
+            self._table.setModel(None)
+            self._summary_label.setText("无活跃计划材料需求")
+            return
 
-        with get_container().db.connect("user", "ref", "mkt", "bp") as conn:
-            c = conn.cursor()
-            for plan in self._active_plans:
-                if not plan.get("materials_ready", 0):
-                    continue
-                pid = plan["product_type_id"]
-                total_runs = plan["runs"] * plan["parallels"]
-                me = plan["me_level"] or 0
+        self._table.setModel(ProcureTableModel(self._rows))
 
-                # 确定浪费因子类别
-                c.execute(
-                    "SELECT mg.meta_group_id FROM bp.blueprint_products bp "
-                    "LEFT JOIN item i ON i.type_id = bp.product_type_id "
-                    "LEFT JOIN meta_group mg ON mg.meta_group_id = i.meta_group_id "
-                    "WHERE bp.product_type_id = ? AND bp.activity = 'manufacturing' LIMIT 1",
-                    (pid,),
-                )
-                mg_row = c.fetchone()
-                mg_id = mg_row[0] if mg_row else None
-                # T1=1 / T2=2 / faction=4 → 映射浪费因子
-                if mg_id == 2:
-                    wf = 2  # T2
-                elif mg_id == 4:
-                    wf = 15  # 势力
-                else:
-                    wf = 10  # T1/兜底
-
-                c.execute(
-                    """SELECT bm.material_type_id, bm.quantity
-                    FROM bp.blueprint_products bp
-                    JOIN bp.blueprint_materials bm ON bm.blueprint_type_id = bp.blueprint_type_id
-                        AND bm.activity = bp.activity
-                    WHERE bp.product_type_id = ? AND bp.activity = 'manufacturing'""",
-                    (pid,),
-                )
-                for mid, qty in c.fetchall():
-                    if mid in sub_prod_ids:
-                        continue  # 自制组件：由子项产线覆盖，买其原材料（子线计划已计入）
-                    need = calc_material_for_runs(qty, wf, me, int(total_runs))
-                    if mid in material_map:
-                        material_map[mid]["need"] += need
-                    else:
-                        material_map[mid] = {"need": need}
-
-            if not material_map:
-                self._table.setModel(None)
-                self._summary_label.setText("无活跃计划材料需求")
-                return
-
-            # 合并强制启动计划的材料缺口（material_short JSON {type_id: missing_qty}），
-            # 使缺口自动进入待采购清单
-            for plan in self._active_plans:
-                raw = plan.get("material_short") or ""
-                if not raw:
-                    continue
-                try:
-                    short = json.loads(raw)
-                except Exception:
-                    continue
-                for mid_str, missing in short.items():
-                    try:
-                        mid = int(mid_str)
-                    except ValueError:
-                        continue
-                    if mid in material_map:
-                        material_map[mid]["need"] += int(missing)
-                    else:
-                        material_map[mid] = {"need": int(missing)}
-
-            # Get inventory from the selected hangar
-            inv_map: dict[int, float] = {}
-            c.execute(
-                "SELECT type_id, quantity FROM inventory_items WHERE hangar_id = ?",
-                (self._hangar_id,),
-            )
-            for tid, qty in c.fetchall():
-                inv_map[tid] = qty
-
-            # Build rows
-            total_cost = 0.0
-            total_volume = 0.0
-            for mid, info in material_map.items():
-                need = info["need"]
-                owned = inv_map.get(mid, 0)
-                to_buy = max(0, need - owned)
-
-                # Get item info
-                c.execute(
-                    "SELECT zh_name, en_name, volume FROM ref.item WHERE type_id = ?",
-                    (mid,),
-                )
-                r = c.fetchone()
-                zh_name = r[0] if r else None
-                en_name = r[1] if r else None
-                name = _resolve_item_name(mid, zh_name, en_name)
-                volume = r[2] if r and r[2] else 0.01
-
-                # Get price
-                c.execute(
-                    f"SELECT {price_type + '_price'} FROM mkt.market_prices "
-                    "WHERE type_id = ? AND region_id = ? LIMIT 1",
-                    (mid, region_id),
-                )
-                pr = c.fetchone()
-                price = pr[0] if pr and pr[0] else 0.0
-
-                subtotal = to_buy * price
-                total_cost += subtotal
-                total_volume += to_buy * volume
-
-                if to_buy > 0 or True:
-                    self._rows.append(
-                        {
-                            "type_id": mid,
-                            "name": name,
-                            "zh_name": zh_name,
-                            "en_name": en_name,
-                            "need": need,
-                            "owned": owned,
-                            "to_buy": to_buy,
-                            "price": price,
-                            "total": subtotal,
-                            "volume": to_buy * volume,
-                        }
-                    )
-
-            self._rows.sort(key=lambda x: x["total"], reverse=True)
-            self._table.setModel(ProcureTableModel(self._rows))
-
-            # Auto-size columns — 自适应列宽
-            header = self._table.horizontalHeader()
-            header.setStretchLastSection(False)
-            # 名称列 stretch，体积列按内容
-            for i in range(header.count()):
-                if i == 0:  # 物品名称含图标 → stretch
-                    header.setSectionResizeMode(i, QHeaderView.Stretch)
-                elif i == 6:  # 体积
-                    header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
-                else:
-                    header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
-            # 确保名称列最小 160px
-            if header.sectionSize(0) < 160:
-                header.resizeSection(0, 160)
-
-            self._summary_label.setText(
-                f"共 {len(self._rows)} 种材料 | "
-                f"需采购总金额: {total_cost:,.0f} ISK | "
-                f"总体积: {total_volume:,.2f} m\\u00b3 | "
-                f"来源: {hub} ({price_type})"
-            )
-
-            # 检查是否有「待下线」的计划，显示「完成所有」按钮
-            ready_plans = [p for p in self._active_plans if p.get("status") == "ready"]
-            if ready_plans:
-                self._complete_all_btn.setText(f"完成所有 ({len(ready_plans)} 项)")
-                self._complete_all_btn.setVisible(True)
+        # Auto-size columns — 自适应列宽
+        header = self._table.horizontalHeader()
+        header.setStretchLastSection(False)
+        # 名称列 stretch，体积列按内容
+        for i in range(header.count()):
+            if i == 0:  # 物品名称含图标 → stretch
+                header.setSectionResizeMode(i, QHeaderView.Stretch)
+            elif i == 6:  # 体积
+                header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
             else:
-                self._complete_all_btn.setVisible(False)
+                header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+        # 确保名称列最小 160px
+        if header.sectionSize(0) < 160:
+            header.resizeSection(0, 160)
+
+        self._summary_label.setText(
+            f"共 {len(self._rows)} 种材料 | "
+            f"需采购总金额: {total_cost:,.0f} ISK | "
+            f"总体积: {total_volume:,.2f} m\\u00b3 | "
+            f"来源: {hub} ({price_type})"
+        )
+
+        # 检查是否有「待下线」的计划，显示「完成所有」按钮
+        ready_plans = [p for p in self._active_plans if p.get("status") == "ready"]
+        if ready_plans:
+            self._complete_all_btn.setText(f"完成所有 ({len(ready_plans)} 项)")
+            self._complete_all_btn.setVisible(True)
+        else:
+            self._complete_all_btn.setVisible(False)
 
     def _on_context_menu(self, pos):
         sel = self._table.selectionModel().selectedRows()
