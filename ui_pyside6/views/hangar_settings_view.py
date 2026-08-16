@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
-from core.container import get_container
 from services import inventory_manager, user_settings
 from services.hangar_industry_config import (
     STRUCTURE_BASE,
@@ -36,7 +35,6 @@ from services.hangar_industry_config import (
     resolve_hangar_industry_config,
     validate_rig_set,
 )
-from services.name_resolver import resolve_system_name, resolve_system_names_batch
 
 _DEFAULT_HANGAR_KEYS = [
     ("default_research_hangar_id", "科研机库"),
@@ -48,13 +46,9 @@ _DEFAULT_HANGAR_KEYS = [
 
 def _system_name(solar_system_id: int | None) -> str:
     """查询星系显示名（中文 (英文)，机库列表/配置面板显示）。"""
-    if not solar_system_id:
-        return ""
-    try:
-        with get_container().db.connect("ref") as conn:
-            return resolve_system_name(conn, solar_system_id)
-    except Exception:
-        return ""
+    from services.name_resolver import resolve_system_display_name
+
+    return resolve_system_display_name(solar_system_id)
 
 
 class _HangarEditor(QWidget):
@@ -380,13 +374,9 @@ class HangarSettingsDialog(QDialog):
             combo.blockSignals(False)
 
     def _system_names(self, solar_system_ids: list[int]) -> dict[int, str]:
-        if not solar_system_ids:
-            return {}
-        try:
-            with get_container().db.connect("ref") as conn:
-                return resolve_system_names_batch(conn, solar_system_ids)
-        except Exception:
-            return {}
+        from services.name_resolver import resolve_system_display_names_batch
+
+        return resolve_system_display_names_batch(solar_system_ids)
 
     def _on_hangar_selected(self, row: int):
         if 0 <= row < self._stack.count():
