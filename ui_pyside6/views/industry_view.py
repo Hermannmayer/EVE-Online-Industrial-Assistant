@@ -372,54 +372,9 @@ class IndustryPage(QWidget):
             except Exception:
                 log.exception("补算过期计划失败")
 
-        with get_container().db.connect("user", "bp") as conn:
-            f = self._toolbar.get_filter()
-            sql = "SELECT * FROM production_plans"
-            if f == "待排":
-                sql += " WHERE status = 'pending'"
-            elif f == "运行中":
-                sql += " WHERE status IN ('in_progress','running')"
-            elif f == "待下线":
-                sql += " WHERE status = 'ready'"
-            elif f == "已完成":
-                sql += " WHERE status IN ('completed','done')"
-            sql += " ORDER BY created_at DESC"
-            c = conn.cursor()
-            c.execute(sql)
-            cols = [d[0] for d in c.description]
-            rows = [dict(zip(cols, r, strict=False)) for r in c.fetchall()]
+        from services.plan_service import load_plans
 
-            # 填充蓝图列「有图/没图」：用户库存中是否有该产品对应蓝图
-            owned_bp = {r[0] for r in conn.execute("SELECT DISTINCT blueprint_type_id FROM user_blueprints").fetchall()}
-            prod_to_bp: dict[int, list[int]] = {}
-            for tid, bpid in conn.execute(
-                "SELECT product_type_id, blueprint_type_id FROM bp.blueprint_products WHERE activity='manufacturing'"
-            ).fetchall():
-                prod_to_bp.setdefault(tid, []).append(bpid)
-            # 机库名称映射：设施列（材料机库）/输出列（输出机库）显示用
-            hangar_names = dict(conn.execute("SELECT id, name FROM hangars").fetchall())
-        for row in rows:
-            ptid = row.get("product_type_id")
-            has_bp = bool(row.get("assigned_blueprint_id")) or any(b in owned_bp for b in prod_to_bp.get(ptid, []))
-            row["has_image"] = has_bp
-            # 兼容 key 映射：DB 列 group_number/sub_level → 模型读取的 group_id/child_level
-            row["group_id"] = row.get("group_number", 0)
-            row["child_level"] = row.get("sub_level", 0)
-
-        # 类别列：从蓝图活动批量推导（反应/发明/拷贝/制造）
-        from services.plan_category import load_category_map
-
-        bp_ids = [r.get("blueprint_type_id") for r in rows if r.get("blueprint_type_id")]
-        cat_map: dict[int, str] = {}
-        if bp_ids:
-            with get_container().db.connect("bp") as bp_conn:
-                cat_map = load_category_map(bp_conn, bp_ids)
-        for row in rows:
-            row["category"] = cat_map.get(row.get("blueprint_type_id"), "manufacturing")
-        # 设施列（材料机库名）/ 输出列（输出机库名）：显示层补全，不落库
-        from services.plan_service import enrich_plan_hangar_names
-
-        enrich_plan_hangar_names(rows, hangar_names)
+        rows = load_plans(self._toolbar.get_filter())
         from ui_pyside6.models.industry_models import PlanTableModel
 
         # 注入当前材料机库（启动旧计划时兜底）
