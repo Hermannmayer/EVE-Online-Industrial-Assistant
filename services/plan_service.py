@@ -152,3 +152,50 @@ def enrich_plan_hangar_names(rows: list[dict], hangar_names: dict[int, str]) -> 
         deposit = row.get("deposit_hangar_id")
         row["output_hangar"] = hangar_names.get(deposit, "") if deposit else ""
     return rows
+
+
+def load_plans(filter_key: str) -> list[dict]:
+    """加载生产计划列表，并补全蓝图可用标记/类别/机库名称。"""
+    with get_container().db.connect("user", "bp") as conn:
+        sql = "SELECT * FROM production_plans"
+        if filter_key == "待排":
+            sql += " WHERE status = 'pending'"
+        elif filter_key == "运行中":
+            sql += " WHERE status IN ('in_progress','running')"
+        elif filter_key == "待下线":
+            sql += " WHERE status = 'ready'"
+        elif filter_key == "已完成":
+            sql += " WHERE status IN ('completed','done')"
+        sql += " ORDER BY created_at DESC"
+        c = conn.cursor()
+        c.execute(sql)
+        cols = [d[0] for d in c.description]
+        rows = [dict(zip(cols, r, strict=False)) for r in c.fetchall()]
+
+        owned_bp = {r[0] for r in conn.execute("SELECT DISTINCT blueprint_type_id FROM user_blueprints").fetchall()}
+        prod_to_bp: dict[int, list[int]] = {}
+        for tid, bpid in conn.execute(
+            "SELECT product_type_id, blueprint_type_id FROM bp.blueprint_products WHERE activity='manufacturing'"
+        ).fetchall():
+            prod_to_bp.setdefault(tid, []).append(bpid)
+        hangar_names = dict(conn.execute("SELECT id, name FROM hangars").fetchall())
+
+    for row in rows:
+        ptid = row.get("product_type_id")
+        has_bp = bool(row.get("assigned_blueprint_id")) or any(b in owned_bp for b in prod_to_bp.get(ptid, []))
+        row["has_image"] = has_bp
+        row["group_id"] = row.get("group_number", 0)
+        row["child_level"] = row.get("sub_level", 0)
+
+    from services.plan_category import load_category_map
+
+    bp_ids = [r.get("blueprint_type_id") for r in rows if r.get("blueprint_type_id")]
+    cat_map: dict[int, str] = {}
+    if bp_ids:
+        with get_container().db.connect("bp") as bp_conn:
+            cat_map = load_category_map(bp_conn, bp_ids)
+    for row in rows:
+        row["category"] = cat_map.get(row.get("blueprint_type_id"), "manufacturing")
+
+    enrich_plan_hangar_names(rows, hangar_names)
+    return rows
