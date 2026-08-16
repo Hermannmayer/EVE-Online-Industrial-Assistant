@@ -389,6 +389,32 @@ class PlanTable(QWidget):
             char_name = updated.get("char_name", "").strip()
             char_config = resolve_char_config(char_name=char_name) or {}
             metrics = get_container().scoring_service().calculate_plan_metrics(plan, char_config)
+            # 编辑母项：同组有更深子项时，材料成本立即改按子项制造价（不再依赖后续批量重算，
+            # 避免瞬时显示市场价）
+            from services.plan_metrics import adjust_mother_metrics, mother_subitem_cost_map
+
+            gid = plan.get("group_id") or plan.get("group_number")
+            if gid:
+                from services.industry_dialog_queries import get_subitem_plans
+
+                subs = get_subitem_plans(
+                    get_container().db, gid, int(plan.get("child_level") or plan.get("sub_level") or 0)
+                )
+                if subs:
+                    base: dict[int, tuple[dict, dict]] = {}
+                    for s in subs:
+                        s["group_id"] = s.get("group_number", 0)
+                        s["child_level"] = s.get("sub_level", 0)
+                        sc = resolve_char_config(char_name=s.get("char_name") or "") or {}
+                        base[s["id"]] = (s, get_container().scoring_service().calculate_plan_metrics(s, sc))
+                    sub_cost_map = mother_subitem_cost_map(base, plan)
+                    if sub_cost_map:
+                        total_mult = max(int(plan.get("runs", 1)), 1) * max(int(plan.get("parallels", 1)), 1)
+                        adj_mat, adj_profit, adj_margin, _ = adjust_mother_metrics(metrics, sub_cost_map, total_mult)
+                        metrics = dict(metrics)
+                        metrics["material_cost"] = adj_mat
+                        metrics["profit"] = adj_profit
+                        metrics["margin"] = adj_margin
             plan.update(metrics)
 
             self._model.layoutChanged.emit()

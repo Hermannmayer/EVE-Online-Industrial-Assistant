@@ -28,6 +28,16 @@ def child_manufacturing_cost(plan: dict, metrics: dict) -> float
 
 定义行：`81`
 
+### `mother_subitem_cost_map`
+
+```python
+def mother_subitem_cost_map(base_results: dict[int, tuple[dict, dict]], mother: dict) -> dict[int, float]
+```
+
+母项同组更深子项的自制成本映射 &#123;子项 product_type_id: 制造价合计&#125;。
+
+定义行：`99`
+
 ### `adjust_mother_metrics`
 
 ```python
@@ -36,4 +46,4 @@ def adjust_mother_metrics(metrics: dict, sub_cost_map: dict[int, float], total_m
 
 把拆解母项的自制子项按其制造价计入成本，其余材料仍按市场价。
 
-定义行：`99`
+定义行：`124`

@@ -14,6 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from core.cache import TtlLRUCache
+from services.plan_metrics import mother_subitem_cost_map
 from services.scoring_service import ScoringService
 
 # ════════════════════════════════════════════════════════════════
@@ -439,3 +440,43 @@ def test_worker_run_preserves_market_margin(qapp, sample_char_config):
     assert mother_out[8] > market_margin
     # 调整后 margin（自制口径）与市场口径不同
     assert mother_out[2] != pytest.approx(market_margin, abs=0.005)
+
+
+# ════════════════════════════════════════════════════════════════
+#  mother_subitem_cost_map（母项子项制造价映射，纯函数）
+# ════════════════════════════════════════════════════════════════
+
+
+def test_mother_subitem_cost_map_basic():
+    """母项同组更深子项 → {子项 product_type_id: 制造价（材料+作业费×mult）}。"""
+    base = {
+        2: (
+            {"id": 2, "product_type_id": 42527, "group_number": 1, "sub_level": 1, "runs": 2, "parallels": 1},
+            {"material_cost": 1000.0, "breakdown": {"installation_fee": 10.0}},
+        )
+    }
+    mother = {"id": 1, "group_number": 1, "sub_level": 0}
+    assert mother_subitem_cost_map(base, mother) == {42527: 1020.0}  # 1000 + 10×2
+
+
+def test_mother_subitem_cost_map_no_group():
+    """母项无 group → 返回空 dict（不改动）。"""
+    base = {
+        2: (
+            {"id": 2, "product_type_id": 42527, "group_number": 1, "sub_level": 1, "runs": 1, "parallels": 1},
+            {"material_cost": 1000.0, "breakdown": {"installation_fee": 10.0}},
+        )
+    }
+    assert mother_subitem_cost_map(base, {"id": 1, "sub_level": 0}) == {}
+
+
+def test_mother_subitem_cost_map_no_deeper_sub():
+    """同组无更深子项（子项 sub_level 不高于母项）→ 空 dict。"""
+    base = {
+        2: (
+            {"id": 2, "product_type_id": 42527, "group_number": 1, "sub_level": 0, "runs": 1, "parallels": 1},
+            {"material_cost": 1000.0, "breakdown": {"installation_fee": 10.0}},
+        )
+    }
+    mother = {"id": 1, "group_number": 1, "sub_level": 0}
+    assert mother_subitem_cost_map(base, mother) == {}
