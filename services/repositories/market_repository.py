@@ -74,6 +74,40 @@ class MarketRepository:
             r = conn.execute("SELECT MAX(fetch_time) FROM market_prices").fetchone()
             return r[0] if r else None
 
+    def get_sell_prices(self, type_ids: list[int], region_id: int) -> dict[int, float]:
+        """批量获取指定区域卖单价。"""
+        if not type_ids:
+            return {}
+        with self._db.connect("mkt") as conn:
+            ph = ",".join("?" * len(type_ids))
+            rows = conn.execute(
+                f"SELECT type_id, sell_price FROM market_prices "
+                f"WHERE type_id IN ({ph}) AND region_id = ?",
+                (*type_ids, region_id),
+            ).fetchall()
+            return {int(r[0]): float(r[1]) for r in rows if r[1]}
+
+    def get_price_by_region(self, type_id: int, price_type: str, region_id: int) -> float | None:
+        """获取指定区域的价格；price_type: 'buy' / 'sell' / 'avg'。"""
+        with self._db.connect("mkt") as conn:
+            if price_type == "avg":
+                r = conn.execute(
+                    "SELECT buy_price, sell_price FROM market_prices WHERE type_id=? AND region_id=? LIMIT 1",
+                    (type_id, region_id),
+                ).fetchone()
+                if not r:
+                    return None
+                vals = [v for v in (r[0], r[1]) if v is not None]
+                return float(sum(vals) / len(vals)) if vals else None
+            col = self.VALID_PRICE_COLS.get(price_type)
+            if col is None:
+                return None
+            r = conn.execute(
+                f"SELECT {col} FROM market_prices WHERE type_id=? AND region_id=? LIMIT 1",
+                (type_id, region_id),
+            ).fetchone()
+            return float(r[0]) if r and r[0] is not None else None
+
     def get_latest_price(self, type_id: int) -> tuple[float | None, float | None, int, int] | None:
         """获取指定物品最新一条价格记录 (buy_price, sell_price, buy_volume, sell_volume)。"""
         with self._db.connect("mkt") as conn:
