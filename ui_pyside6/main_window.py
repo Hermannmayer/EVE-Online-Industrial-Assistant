@@ -531,11 +531,7 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
         from ui_pyside6.views.settings_view import SettingsDialog
 
         dlg = SettingsDialog(self, self)
-        if dlg.exec():
-            # 默认机库可能被改动 → 刷新工业页工具栏的产出/材料机库下拉
-            page = self._pages.get("industry")
-            if page is not None and hasattr(page, "_toolbar"):
-                page._toolbar.reload_hangar_settings()
+        dlg.exec()
 
     def _show_hangar_settings(self):
         """机库设置对话框（独立一级入口）"""
@@ -543,12 +539,10 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
 
         dlg = HangarSettingsDialog(self)
         if dlg.exec():
+            # 默认机库改动 → 刷新工业页（计划机库/成本可能变化）
             page = self._pages.get("industry")
-            if page is not None:
-                if hasattr(page, "_toolbar"):
-                    page._toolbar.reload_hangar_settings()
-                if hasattr(page, "load_plans"):
-                    page.load_plans()
+            if page is not None and hasattr(page, "load_plans"):
+                page.load_plans()
 
     def _on_auto_update_toggled(self, checked: bool):
         """顶栏自动更新指示点击切换"""

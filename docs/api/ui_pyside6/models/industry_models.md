@@ -111,7 +111,7 @@ def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`200`
+定义行：`204`
 ##### `flags`
 
 ```python
@@ -122,7 +122,7 @@ def flags(self, index)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`211`
+定义行：`215`
 ##### `setData`
 
 ```python
@@ -133,7 +133,7 @@ def setData(self, index, value, role=Qt.ItemDataRole.EditRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`220`
+定义行：`224`
 ##### `sort`
 
 ```python
@@ -144,7 +144,7 @@ def sort(self, column: int, order=Qt.SortOrder.AscendingOrder)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`242`
+定义行：`246`
 ##### `set_plans`
 
 ```python
@@ -153,7 +153,7 @@ def set_plans(self, plans: list[dict]) -> None
 
 替换所有数据 — 保持同一个 model 实例，避免 setModel 清除选中
 
-定义行：`258`
+定义行：`262`
 ##### `get_plan`
 
 ```python
@@ -164,7 +164,7 @@ def get_plan(self, row: int) -> dict
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`265`
+定义行：`269`
 ##### `tick`
 
 ```python
@@ -173,4 +173,4 @@ def tick(self) -> list[int]
 
 倒计时 tick：遍历进行中行算剩余；≤0 内存置 ready；对变动行 emit dataChanged。
 
-定义行：`268`
+定义行：`272`

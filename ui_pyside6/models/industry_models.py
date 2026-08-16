@@ -139,7 +139,11 @@ class PlanTableModel(QAbstractTableModel):
         if c == 2:
             return ""  # 图标列不显示文本
         if c == 3:
-            return cast(str, p.get("product_name", f"ID:{p.get('product_type_id', '')}"))
+            name = cast(str, p.get("product_name", f"ID:{p.get('product_type_id', '')}"))
+            lvl = int(p.get("child_level") or 0)
+            if lvl > 0:
+                return ("  " * lvl) + name  # 子项按层级缩进（配合 delegate 层级箭头）
+            return name
         if c == 4:
             return cast(str, p.get("notes", "")) or ""
         if c == 5:

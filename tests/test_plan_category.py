@@ -60,3 +60,36 @@ class TestSymbolsAndColors:
         assert category_symbol("copying") == "📋"
         assert category_symbol("invention") == "💡"
         assert category_symbol("reaction") == "⚗"
+
+
+class TestDelegateIcons:
+    """计划表格 delegate 的类别/层级自绘图标与列宽。"""
+
+    def test_category_column_fixed_width(self):
+        from ui_pyside6.views.industry.plan_table_constants import COL_CATEGORY, FIXED_WIDTHS
+
+        assert FIXED_WIDTHS[COL_CATEGORY] == 32
+
+    def test_category_icons_available(self, qapp):
+        from PySide6.QtGui import QIcon
+
+        from ui_pyside6.views.industry.plan_table_delegate import _category_icon
+
+        for cat in ("manufacturing", "copying", "invention", "reaction"):
+            icon = _category_icon(cat)
+            assert isinstance(icon, QIcon)
+            assert not icon.isNull(), f"{cat} 图标应为空"
+
+    def test_category_icon_unknown_returns_none(self, qapp):
+        from ui_pyside6.views.industry.plan_table_delegate import _category_icon
+
+        assert _category_icon("not_a_category") is None
+
+    def test_level_icon_available(self, qapp):
+        from PySide6.QtGui import QIcon
+
+        from ui_pyside6.views.industry.plan_table_delegate import _level_icon
+
+        icon = _level_icon()
+        assert isinstance(icon, QIcon)
+        assert not icon.isNull()

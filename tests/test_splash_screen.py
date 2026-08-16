@@ -36,12 +36,20 @@ def test_set_component_missing(splash):
     assert "未就绪" in splash._msg_label.text()
 
 
+def _wait_for_done(splash, done: list) -> None:
+    """轮询等待 complete 动画走完（负载下固定 qWait 可能不足，避免 flaky）。"""
+    for _ in range(120):  # 最多 12s
+        QTest.qWait(100)
+        if done and splash._loader._progress >= 100:
+            return
+
+
 def test_complete_fills_progress_to_100(splash):
     """检查完成后进度自然走满到 100%（匀速驱动，不受检查快慢影响）。"""
     splash._shown_at = 0.0
     done: list = []
     splash.complete(lambda: done.append(1))
-    QTest.qWait(4200)  # 进度 3s + 停留 400ms + 淡出 350ms + 余量
+    _wait_for_done(splash, done)
     assert splash._loader._progress == 100
     assert done == [1]
 
@@ -56,6 +64,6 @@ def test_complete_invokes_done_after_fill(splash):
     splash._shown_at = 0.0
     done: list = []
     splash.complete(lambda: done.append(1))
-    QTest.qWait(4200)
+    _wait_for_done(splash, done)
     assert done == [1]
     assert not splash.isVisible()

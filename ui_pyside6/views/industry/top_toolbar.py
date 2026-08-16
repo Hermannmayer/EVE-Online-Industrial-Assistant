@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.paths import data_dir
-from services import inventory_manager
 from ui_pyside6.views.compare.compare_chart import search_items
 from ui_pyside6.views.industry.flow_layout import FlowLayout
 from ui_pyside6.views.industry.price_source_widget import DualPriceSourceWidget
@@ -31,13 +30,11 @@ class TopToolbar(QWidget):
 
     plan_add_requested = Signal(str)
     manufacturable_browser_requested = Signal()
-    hangar_changed = Signal(str)
     filter_changed = Signal(str)
     refresh_requested = Signal()
     view_changed = Signal(str)
     price_setting_changed = Signal()  # 任何价格设置变化
 
-    HANGARS: list[dict] = []
     FILTERS = ["全部", "待排", "运行中", "待下线", "已完成"]
 
     # 搜索候选防抖延迟 (ms)
@@ -49,8 +46,6 @@ class TopToolbar(QWidget):
         self._connect_signals()
         self._apply_style()
         theme.add_theme_listener(self._on_theme_changed)
-        self._load_hangars()
-        self._load_mat_hangars()
         self._load_price_settings()
 
     # ── UI 构建 ──────────────────────────────────────────────
@@ -80,19 +75,6 @@ class TopToolbar(QWidget):
         # ── 双行价格来源设置（材料 + 成品） ──
         self._price_widget = DualPriceSourceWidget()
         root.addWidget(self._price_widget)
-
-        root.addWidget(self._make_separator())
-
-        # ── 机库 ──
-        root.addWidget(QLabel("产出机库"))
-        self._hangar_combo = QComboBox()
-        self._hangar_combo.setMinimumWidth(90)
-        root.addWidget(self._hangar_combo)
-
-        root.addWidget(QLabel("材料机库"))
-        self._mat_hangar_combo = QComboBox()
-        self._mat_hangar_combo.setMinimumWidth(90)
-        root.addWidget(self._mat_hangar_combo)
 
         root.addWidget(self._make_separator())
 
@@ -190,30 +172,7 @@ class TopToolbar(QWidget):
             # 直接触发添加（选完候选自动添加，不用再点按钮）
             self._on_add()
 
-    # ── 机库 / 设置加载 ─────────────────────────────────────
-
-    def _load_hangars(self):
-        try:
-            hangars = inventory_manager.get_hangars()
-            self._hangar_combo.clear()
-            self._hangar_combo.addItem("不自动入库", -1)
-            for h in hangars:
-                self._hangar_combo.addItem(h["name"], h["id"])
-            try:
-                settings_path = os.path.join(data_dir(), "settings.json")
-                if os.path.exists(settings_path):
-                    with open(settings_path, encoding="utf-8") as f:
-                        s = json.load(f)
-                    saved_id = s.get("default_deposit_hangar_id")
-                    if saved_id is not None:
-                        idx = self._hangar_combo.findData(saved_id)
-                        if idx >= 0:
-                            self._hangar_combo.setCurrentIndex(idx)
-            except Exception:
-                pass
-        except Exception:
-            if self._hangar_combo.count() == 0:
-                self._hangar_combo.addItem("不自动入库", -1)
+    # ── 设置加载 ─────────────────────────────────────────────
 
     def _load_price_settings(self) -> None:
         """从 settings.json 恢复上次的价格设置。"""
@@ -226,65 +185,6 @@ class TopToolbar(QWidget):
             price_settings = s.get("price_settings")
             if price_settings:
                 self._price_widget.set_settings(price_settings)
-        except Exception:
-            pass
-
-    def _save_hangar_setting(self):
-        hangar_id = self._hangar_combo.currentData()
-        if hangar_id is None or hangar_id == -1:
-            return
-        try:
-            settings_path = os.path.join(data_dir(), "settings.json")
-            data = {}
-            if os.path.exists(settings_path):
-                with open(settings_path, encoding="utf-8") as f:
-                    data = json.load(f)
-            data["default_deposit_hangar_id"] = hangar_id
-            with open(settings_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
-    def _load_mat_hangars(self):
-        """加载材料机库下拉（默认产出机库之外的独立设置）。"""
-        try:
-            hangars = inventory_manager.get_hangars()
-            self._mat_hangar_combo.clear()
-            self._mat_hangar_combo.addItem("未设置", -1)
-            for h in hangars:
-                self._mat_hangar_combo.addItem(h["name"], h["id"])
-            try:
-                settings_path = os.path.join(data_dir(), "settings.json")
-                if os.path.exists(settings_path):
-                    with open(settings_path, encoding="utf-8") as f:
-                        s = json.load(f)
-                    saved_id = s.get("default_mat_hangar_id")
-                    if saved_id is not None:
-                        idx = self._mat_hangar_combo.findData(saved_id)
-                        if idx >= 0:
-                            self._mat_hangar_combo.setCurrentIndex(idx)
-            except Exception:
-                pass
-        except Exception:
-            if self._mat_hangar_combo.count() == 0:
-                self._mat_hangar_combo.addItem("未设置", -1)
-
-    def _save_mat_hangar_setting(self):
-        hangar_id = self._mat_hangar_combo.currentData()
-        if hangar_id is None:
-            return
-        try:
-            settings_path = os.path.join(data_dir(), "settings.json")
-            data = {}
-            if os.path.exists(settings_path):
-                with open(settings_path, encoding="utf-8") as f:
-                    data = json.load(f)
-            if hangar_id == -1:
-                data.pop("default_mat_hangar_id", None)
-            else:
-                data["default_mat_hangar_id"] = hangar_id
-            with open(settings_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
 
@@ -301,25 +201,6 @@ class TopToolbar(QWidget):
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
-
-    def get_hangar_id(self) -> int | None:
-        return self._hangar_combo.currentData() if self._hangar_combo.count() > 0 else None
-
-    def get_mat_hangar_id(self) -> int | None:
-        """返回当前材料机库 ID；未设置（-1/空）返回 None。"""
-        if self._mat_hangar_combo.count() == 0:
-            return None
-        hid = self._mat_hangar_combo.currentData()
-        return None if hid is None or hid == -1 else hid
-
-    def _on_hangar_changed(self, hangar: str):
-        self.hangar_changed.emit(hangar)
-
-    def get_hangar(self) -> int:
-        return self._hangar_combo.currentData() if self._hangar_combo.count() > 0 else -1  # type: ignore[no-any-return]
-
-    def get_hangar_name(self) -> str:
-        return self._hangar_combo.currentText() if self._hangar_combo.count() > 0 else ""  # type: ignore[no-any-return]
 
     def get_char_name(self) -> str:
         """返回默认角色名（人物选择已移除，固定返回 main）"""
@@ -353,15 +234,6 @@ class TopToolbar(QWidget):
         self._price_widget.prod_hub_changed.connect(self._on_price_setting_changed)
         self._price_widget.prod_price_type_changed.connect(self._on_price_setting_changed)
         self._price_widget.prod_mult_changed.connect(self._on_price_setting_changed)
-
-        # 机库下拉变化 → 持久化（在 _connect_signals 只连一次，避免 reload 重复连接）
-        self._hangar_combo.currentIndexChanged.connect(self._save_hangar_setting)
-        self._mat_hangar_combo.currentIndexChanged.connect(self._save_mat_hangar_setting)
-
-    def reload_hangar_settings(self):
-        """重新加载产出/材料机库下拉（总设置界面改动默认机库后调用）。"""
-        self._load_hangars()
-        self._load_mat_hangars()
 
     # ── 槽函数 ──────────────────────────────────────────────
 
