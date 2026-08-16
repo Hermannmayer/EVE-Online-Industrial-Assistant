@@ -478,7 +478,7 @@ def inventory_page(main_window):
     """
     from unittest.mock import MagicMock, patch
 
-    from ui_pyside6.views.inventory_view import InventoryPage
+    from ui_pyside6.views.inventory.inventory_page import InventoryPage
 
     mock_mgr = MagicMock()
     mock_conn = MagicMock()
@@ -507,7 +507,7 @@ def inventory_page(main_window):
 @pytest.fixture
 def query_page(main_window):
     """创建 QueryPage 实例用于 UI 测试。"""
-    from ui_pyside6.views.query_view import QueryPage
+    from ui_pyside6.views.query import QueryPage
 
     page = QueryPage(main_window)
     yield page

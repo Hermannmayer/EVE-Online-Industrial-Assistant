@@ -8,7 +8,7 @@
 
 from PySide6.QtCore import Qt
 
-from ui_pyside6.views.inventory_view import BlueprintTableModel, InvTableModel
+from ui_pyside6.views.inventory.inventory_helpers import BlueprintTableModel, InvTableModel
 
 # ══════════════════════════════════════
 #  InvTableModel

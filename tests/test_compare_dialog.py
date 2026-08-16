@@ -6,7 +6,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication
 
 from ui_pyside6.theme import ONE_LIGHT, apply_theme
-from ui_pyside6.views.compare_dialog import (
+from ui_pyside6.views.compare import (
     COMPARE_COLS_MFG,
     CompareDialog,
     CompareTableModel,
