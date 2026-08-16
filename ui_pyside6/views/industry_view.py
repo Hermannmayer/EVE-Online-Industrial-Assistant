@@ -59,22 +59,11 @@ class IndustryDataWorker(QThread):
 def init_plan_db():
     """初始化 production_plans 表。
 
-    注：production_plans 的 schema 单一来源是 PlanRepository.SCHEMA（含全部扩展列），
-    存量旧库缺列由 schema_migrations 迁移补齐。此处只额外建 price_snapshots 表。
+    production_plans 的 schema 单一来源是 PlanRepository.SCHEMA；
+    price_snapshots 已由 schema_migrations user v10→v11 统一管理，不再在 UI 层建表。
     """
     try:
         get_container().plan_repo.ensure_table()
-        with get_container().db.connect("user") as conn:
-            # --- price_snapshots 表 ---
-            conn.executescript("""CREATE TABLE IF NOT EXISTS price_snapshots (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type_id INTEGER NOT NULL,
-                region_id INTEGER NOT NULL,
-                sell_price REAL,
-                buy_price REAL,
-                snapshot_time TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-                UNIQUE(type_id, region_id, snapshot_time)
-            );""")
     except Exception:
         log.exception("初始化生产计划数据库失败")
 
