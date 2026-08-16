@@ -757,40 +757,10 @@ class IndustryPage(QWidget):
 
     def _on_procurement(self):
         """打开待采购对话框"""
+        from services.plan_service import load_active_plans_for_procurement
         from ui_pyside6.views.procurement_tab import ProcurementDialog
 
-        plans = []
-        with get_container().db.connect("user", "ref", "mkt") as conn:
-            c = conn.cursor()
-            c.execute(
-                "SELECT id, product_type_id, product_name, runs, parallels, me_level, mat_hub, sell_hub, "
-                "materials_ready, status, deposit_hangar_id, deposited, material_cost, "
-                "assigned_blueprint_id, mat_hangar_id, material_short, group_number, sub_level "
-                "FROM production_plans WHERE status IN ('pending', 'in_progress', 'running', 'ready')"
-            )
-            for pr in c.fetchall():
-                plans.append(
-                    {
-                        "id": pr[0],
-                        "product_type_id": pr[1],
-                        "product_name": pr[2],
-                        "runs": pr[3],
-                        "parallels": pr[4],
-                        "me_level": pr[5],
-                        "mat_hub": pr[6],
-                        "sell_hub": pr[7],
-                        "materials_ready": pr[8],
-                        "status": pr[9],
-                        "deposit_hangar_id": pr[10],
-                        "deposited": pr[11],
-                        "material_cost": pr[12],
-                        "assigned_blueprint_id": pr[13],
-                        "mat_hangar_id": pr[14],
-                        "material_short": pr[15],
-                        "group_id": pr[16],
-                        "child_level": pr[17],
-                    }
-                )
+        plans = load_active_plans_for_procurement()
         if not plans:
             QMessageBox.information(self, "提示", "没有活跃计划")
             return
@@ -802,44 +772,13 @@ class IndustryPage(QWidget):
     # ── 保存价格快照 ──────────────────────────────────────────
 
     def _on_save_prices(self):
-        with get_container().db.connect("user", "ref", "mkt", "bp") as conn:
-            c = conn.cursor()
-            c.execute(
-                "SELECT product_type_id FROM production_plans WHERE status IN ('pending','in_progress','running')"
-            )
-            plan_pids = [r[0] for r in c.fetchall()]
-            if not plan_pids:
-                QMessageBox.information(self, "提示", "没有活跃计划")
-                return
-            placeholders = ",".join("?" for _ in plan_pids)
-            c.execute(
-                "SELECT DISTINCT bm.material_type_id "
-                "FROM bp.blueprint_products bp "
-                "JOIN bp.blueprint_materials bm "
-                "ON bm.blueprint_type_id=bp.blueprint_type_id "
-                "AND bm.activity=bp.activity "
-                f"WHERE bp.product_type_id IN ({placeholders}) "
-                "AND bp.activity='manufacturing'",
-                plan_pids,
-            )
-            type_ids = {r[0] for r in c.fetchall()}
-            type_ids.update(plan_pids)
-            count = 0
-            for tid in type_ids:
-                c.execute(
-                    "SELECT sell_price, buy_price FROM mkt.market_prices "
-                    "WHERE type_id=? AND region_id=10000002 LIMIT 1",
-                    (tid,),
-                )
-                row = c.fetchone()
-                if row:
-                    conn.execute(
-                        "INSERT OR IGNORE INTO price_snapshots(type_id,region_id,sell_price,buy_price) "
-                        "VALUES (?,10000002,?,?)",
-                        (tid, row[0] or 0, row[1] or 0),
-                    )
-                    count += 1
-            QMessageBox.information(self, "完成", f"已保存 {count} 个价格快照")
+        from services.plan_service import save_price_snapshots
+
+        count = save_price_snapshots()
+        if count == 0:
+            QMessageBox.information(self, "提示", "没有活跃计划")
+            return
+        QMessageBox.information(self, "完成", f"已保存 {count} 个价格快照")
 
     def _on_complete_all(self):
         """全部下线：确认待下线计划清单 → 选择产出机库 → 完成入库。"""
