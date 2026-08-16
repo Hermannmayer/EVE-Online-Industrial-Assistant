@@ -134,24 +134,13 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         未拆解的直接材料仍按市场价。返回 cost_overrides {type_id: 子项制造价}，
         供个人利润率计算使用。非母项/无子项时返回空 dict（不改动）。
         """
-        from services.scoring_service import ScoringService
+        from services.plan_metrics import adjust_mother_metrics, mother_subitem_cost_map
 
-        gid = item.get("group_id") or item.get("group_number")
-        if not gid:
+        sub_cost_map = mother_subitem_cost_map(base_results, item)
+        if not sub_cost_map:
             return {}
-        lvl = int(item.get("child_level") or item.get("sub_level") or 0)
-        subs = [
-            (p, r)
-            for pid, (p, r) in base_results.items()
-            if (p.get("group_id") or p.get("group_number")) == gid
-            and int(p.get("child_level") or p.get("sub_level") or 0) > lvl
-        ]
-        if not subs:
-            return {}
-        sub_cost_map = {p.get("product_type_id"): ScoringService.child_manufacturing_cost(p, r) for p, r in subs}
-
         total_mult = max(int(item.get("runs", 1)), 1) * max(int(item.get("parallels", 1)), 1)
-        mat_cost, profit, margin, overrides = ScoringService.adjust_mother_metrics(result, sub_cost_map, total_mult)
+        mat_cost, profit, margin, overrides = adjust_mother_metrics(result, sub_cost_map, total_mult)
         result["material_cost"] = mat_cost
         result["profit"] = profit
         result["margin"] = margin

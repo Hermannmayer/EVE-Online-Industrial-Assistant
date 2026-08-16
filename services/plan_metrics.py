@@ -96,6 +96,31 @@ def child_manufacturing_cost(plan: dict, metrics: dict) -> float:
     return round(material + job_per_run * total_mult, 2)
 
 
+def mother_subitem_cost_map(
+    base_results: dict[int, tuple[dict, dict]],
+    mother: dict,
+) -> dict[int, float]:
+    """母项同组更深子项的自制成本映射 {子项 product_type_id: 制造价合计}。
+
+    子项制造价 = child_manufacturing_cost（材料 + 作业费×runs×parallels）。
+    供批量重算 / 单条编辑复用：母项材料表中命中子项的行由市场价换成制造价。
+    非母项（无 group）或同组无更深子项时返回空 dict。
+    """
+    gid = mother.get("group_id") or mother.get("group_number")
+    if not gid:
+        return {}
+    lvl = int(mother.get("child_level") or mother.get("sub_level") or 0)
+    subs = [
+        (p, r)
+        for _pid, (p, r) in base_results.items()
+        if (p.get("group_id") or p.get("group_number")) == gid
+        and int(p.get("child_level") or p.get("sub_level") or 0) > lvl
+    ]
+    if not subs:
+        return {}
+    return {int(p["product_type_id"]): child_manufacturing_cost(p, r) for p, r in subs if p.get("product_type_id")}
+
+
 def adjust_mother_metrics(
     metrics: dict,
     sub_cost_map: dict[int, float],
