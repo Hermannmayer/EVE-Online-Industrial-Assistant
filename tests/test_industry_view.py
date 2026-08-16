@@ -144,7 +144,8 @@ class TestPlanTableIntegration:
     def test_plan_profit_foreground_positive(self, qapp):
         """利润列正值绿色（由 PlanTableDelegate 提供）"""
         from ui_pyside6 import theme
-        from ui_pyside6.views.industry.plan_table import COL_PROFIT, PlanTableDelegate
+        from ui_pyside6.views.industry.plan_table_constants import COL_PROFIT
+        from ui_pyside6.views.industry.plan_table_delegate import PlanTableDelegate
 
         delegate = PlanTableDelegate()
         color = delegate._foreground(self.SAMPLE_PLANS[0], COL_PROFIT)
@@ -153,7 +154,8 @@ class TestPlanTableIntegration:
     def test_plan_profit_foreground_negative(self, qapp):
         """利润列负值红色（由 PlanTableDelegate 提供）"""
         from ui_pyside6 import theme
-        from ui_pyside6.views.industry.plan_table import COL_PROFIT, PlanTableDelegate
+        from ui_pyside6.views.industry.plan_table_constants import COL_PROFIT
+        from ui_pyside6.views.industry.plan_table_delegate import PlanTableDelegate
 
         delegate = PlanTableDelegate()
         color = delegate._foreground(dict(self.SAMPLE_PLANS[0], profit=-5_000_000), COL_PROFIT)
@@ -161,7 +163,8 @@ class TestPlanTableIntegration:
 
     def test_plan_profit_foreground_zero(self, qapp):
         """利润为零时无特殊颜色（由 PlanTableDelegate 提供）"""
-        from ui_pyside6.views.industry.plan_table import COL_PROFIT, PlanTableDelegate
+        from ui_pyside6.views.industry.plan_table_constants import COL_PROFIT
+        from ui_pyside6.views.industry.plan_table_delegate import PlanTableDelegate
 
         delegate = PlanTableDelegate()
         color = delegate._foreground(dict(self.SAMPLE_PLANS[0], profit=0), COL_PROFIT)

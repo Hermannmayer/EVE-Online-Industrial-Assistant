@@ -64,13 +64,9 @@ class TestFetchContractPages:
     @pytest.mark.asyncio
     async def test_single_page(self):
         """单页合同列表应返回正确的数据"""
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.headers = {"X-Pages": "1"}
-        mock_resp.json.return_value = [MOCK_CONTRACT]
-
         session = MagicMock()
-        session.get.return_value.__aenter__ = AsyncMock(return_value=mock_resp)
+        session.get_headers = AsyncMock(return_value={"X-Pages": "1"})
+        session.fetch_raw = AsyncMock(return_value=[MOCK_CONTRACT])
 
         contracts = await fetch_contract_pages(session, 10000002)
         assert len(contracts) == 1
@@ -80,11 +76,8 @@ class TestFetchContractPages:
     @pytest.mark.asyncio
     async def test_http_error_returns_empty(self):
         """HTTP 非 200 响应返回空列表"""
-        mock_resp = AsyncMock()
-        mock_resp.status = 500
-
         session = MagicMock()
-        session.get.return_value.__aenter__ = AsyncMock(return_value=mock_resp)
+        session.get_headers = AsyncMock(return_value=None)
 
         contracts = await fetch_contract_pages(session, 10000002)
         assert contracts == []
@@ -92,17 +85,11 @@ class TestFetchContractPages:
     @pytest.mark.asyncio
     async def test_multi_page(self):
         """多页合同能拉取所有页面"""
-        page1_resp = AsyncMock()
-        page1_resp.status = 200
-        page1_resp.headers = {"X-Pages": "2"}
-        page1_resp.json.return_value = [MOCK_CONTRACT]
-
-        page2_resp = AsyncMock()
-        page2_resp.status = 200
-        page2_resp.json.return_value = [{**MOCK_CONTRACT, "contract_id": 100002}]
-
         session = MagicMock()
-        session.get.return_value.__aenter__ = AsyncMock(side_effect=[page1_resp, page2_resp])
+        session.get_headers = AsyncMock(return_value={"X-Pages": "2"})
+        session.fetch_raw = AsyncMock(
+            side_effect=[[MOCK_CONTRACT], [{**MOCK_CONTRACT, "contract_id": 100002}]]
+        )
 
         contracts = await fetch_contract_pages(session, 10000002)
         assert len(contracts) == 2
@@ -112,12 +99,8 @@ class TestFetchContractItems:
     @pytest.mark.asyncio
     async def test_items_return_correct_structure(self):
         """合同物品应包含 record_id, type_id, quantity 等字段"""
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.json.return_value = [MOCK_CONTRACT_ITEM]
-
         session = MagicMock()
-        session.get.return_value.__aenter__ = AsyncMock(return_value=mock_resp)
+        session.fetch_raw = AsyncMock(return_value=[MOCK_CONTRACT_ITEM])
 
         items = await fetch_contract_items(session, [100001])
         assert 100001 in items
@@ -130,11 +113,8 @@ class TestFetchContractItems:
     @pytest.mark.asyncio
     async def test_http_error_skips_item_fetch(self):
         """合同物品拉取失败时返回空列表，不抛出异常"""
-        mock_resp = AsyncMock()
-        mock_resp.status = 404
-
         session = MagicMock()
-        session.get.return_value.__aenter__ = AsyncMock(return_value=mock_resp)
+        session.fetch_raw = AsyncMock(return_value=None)
 
         items = await fetch_contract_items(session, [99999])
         assert 99999 in items

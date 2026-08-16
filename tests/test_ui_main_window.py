@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -128,6 +128,9 @@ def test_refresh_price_time_updates_label(qapp, temp_db):
         patch.object(MainWindow, "_init_price_check", lambda self: None),
     ):
         mock_cont.return_value.db = temp_db
+        mock_cont.return_value.market_repo.get_latest_fetch_time = MagicMock(
+            return_value="2026-08-16 12:00:00"
+        )
         window = MainWindow()
         window.refresh_price_time()
         assert "分钟前" in window._price_age_label.text()

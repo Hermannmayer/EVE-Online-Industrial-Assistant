@@ -68,28 +68,25 @@ def terminology_data() -> dict:
 
 
 def _get_skills_from_charsettings() -> list[str]:
-    """从 char_settings_view.py 提取所有技能名"""
-    spec = importlib.util.spec_from_file_location(
-        "char_settings_view",
-        _PROJECT_ROOT / "ui_pyside6" / "views" / "char_settings_view.py",
-    )
+    """从 char_settings_common.py 提取所有技能名"""
+    target = _PROJECT_ROOT / "ui_pyside6" / "views" / "char_settings_common.py"
+    spec = importlib.util.spec_from_file_location("char_settings_common", target)
     if spec is None or spec.loader is None:
         return []
     mod = importlib.util.module_from_spec(spec)
-    # 该模块有大量 UI 依赖，只读取 SKILL_CATEGORIES 常量
+    # 该模块只含 SKILL_CATEGORIES/ALL_SKILLS 常量
     try:
         spec.loader.exec_module(mod)
     except Exception:
-        # 如果加载失败（缺 PySide6 等），用硬编码的回退
+        # 如果加载失败，用硬编码的回退
         pass
-    skills = []
     if hasattr(mod, "ALL_SKILLS"):
         return mod.ALL_SKILLS  # type: ignore[no-any-return]
     # fallback: 从文件直接提取  # type: ignore[no-any-return]
     import ast
 
-    src = _PROJECT_ROOT / "ui_pyside6" / "views" / "char_settings_view.py"
-    tree = ast.parse(src.read_text(encoding="utf-8"))
+    skills: list[str] = []
+    tree = ast.parse(target.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, ast.List):
             # 找到包含技能名的列表
@@ -111,16 +108,26 @@ def test_charsettings_skills_match_sde(sde_skills):
         "天使改造技术研究",
         "古斯塔斯改造技术研究",
         "电子子系统技术",
+        # UI 沿用玩家习惯名，SDE 官方翻译不同（电子技术=电子工程学、核物理=核星体物理学、
+        # 高频激发物理学=高频能量物理学、生化反应学）→ 归入 UI 标签，不视为缺失
+        "电子技术",
+        "核物理",
+        "高频激发物理学",
+        "生化反应学",
     }
+    sde_zh = set(sde_skills)
+    sde_en = set(sde_skills.values())
     not_found = []
     for s in code_skills:
         if s in KNOWN_NON_SDE:
             continue
-        if s not in sde_skills:
-            # 模糊搜索（前 4 个字）
-            match = any(s[:4] in zh or zh[:4] in s for zh in sde_skills)
-            if not match:
-                not_found.append(s)
+        if s in sde_zh or s in sde_en:
+            # 中文名或 SDE 英文名（如 Advanced Industry）均视为一致
+            continue
+        # 模糊搜索（前 4 个字）
+        match = any(s[:4] in zh or zh[:4] in s for zh in sde_zh)
+        if not match:
+            not_found.append(s)
 
     assert not not_found, (
         f"SDE 中找不到以下技能名（{len(not_found)} 个）:\n"

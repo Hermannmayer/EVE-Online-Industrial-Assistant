@@ -46,7 +46,7 @@ def test_hangar_list_shows_system_pair(qapp):
         patch("services.hangar_industry_config.get_rig_catalog", return_value=[]),
         patch("ui_pyside6.views.hangar_settings_view.resolve_hangar_industry_config", return_value=DEFAULT_CFG),
         patch(
-            "ui_pyside6.views.hangar_settings_view.resolve_system_names_batch",
+            "services.name_resolver.resolve_system_display_names_batch",
             return_value={30000142: "吉他 (Jita)"},
         ),
     ):

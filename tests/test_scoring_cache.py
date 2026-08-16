@@ -210,8 +210,11 @@ def test_trade_score_caches_result():
         def __init__(self):
             super().__init__(db=FakeConnMgr(), cache=cache)  # type: ignore[arg-type]
 
+    calls = {"n": 0}
+
     # 桩函数（模块级签名）
     def _stub_get_price(type_id, price_type, hub=None, _db=None):
+        calls["n"] += 1
         # 买入价 100（买），卖出价 200（卖）→ 正毛利
         return 100.0 if price_type == "buy" else 200.0
 
@@ -223,8 +226,10 @@ def test_trade_score_caches_result():
 
     svc = FakeSvc()
     r1 = svc.calc_trade_score(12345, "Jita", "Jita", char_config={})
+    calls_after_first = calls["n"]
     r2 = svc.calc_trade_score(12345, "Jita", "Jita", char_config={})
     assert r1["score"] > 0
     assert r2["score"] > 0
-    # 二次调用命中缓存：结果同一对象引用（get 返回原 dict）
-    assert cache.get("12345|trade|Jita|Jita|buy|sell|1|hub|default")["score"] > 0
+    # 成功结果应写入缓存；二次调用命中（不重新取价）
+    assert len(cache) == 1, "成功结果应写入缓存"
+    assert calls["n"] == calls_after_first, "二次调用应命中缓存（不重新取价）"

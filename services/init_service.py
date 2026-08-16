@@ -228,10 +228,15 @@ class InitService(QObject):
         return True
 
     def cancel(self):
-        """取消当前执行（并行时取消所有正在运行的步骤）"""
+        """取消当前执行：所有未完成步骤（含等待依赖的）置 CANCELLED。
+
+        并行调度下，依赖步骤（如 icons 等 items）可能尚未启动——协程未执行，
+        task.cancel() 不会触发协程内 except 更新状态，故在此统一标记。
+        """
         self._cancelled = True
-        for key in list(self._running):
-            self._status[key] = StepStatus.CANCELLED
+        for key, st in list(self._status.items()):
+            if st not in (StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.CANCELLED):
+                self._status[key] = StepStatus.CANCELLED
         for task in self._task_map.values():
             if not task.done():
                 task.cancel()
