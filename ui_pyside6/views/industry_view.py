@@ -313,6 +313,43 @@ class IndustryPage(QWidget):
         """批量重算完成 → 更新数据库并刷新显示"""
         if not results:
             return
+        # 防御：后台 worker 可能晚于页面/测试 teardown 触发（指标为 MagicMock/None），
+        # 过滤掉非数值结果，避免把 mock 值绑进 SQL 导致后续测试被事件循环异常污染。
+        clean: list = []
+        for row in results:
+            try:
+                (
+                    plan_id,
+                    profit,
+                    margin,
+                    score,
+                    iskph,
+                    mat_cost,
+                    hours_total,
+                    daily_output,
+                    personal_margin,
+                    market_margin,
+                ) = row
+            except (ValueError, TypeError):
+                continue
+            metrics = (
+                profit,
+                margin,
+                score,
+                iskph,
+                mat_cost,
+                hours_total,
+                daily_output,
+                personal_margin,
+                market_margin,
+            )
+            if not isinstance(plan_id, int) or not all(
+                isinstance(m, int | float) and not isinstance(m, bool) for m in metrics
+            ):
+                continue
+            clean.append(row)
+        if not clean:
+            return
         # 设置重入锁，避免 load_plans → _auto_calculate → 新 worker -> ... 无限循环
         self._recalc_busy = True
         try:
@@ -328,7 +365,7 @@ class IndustryPage(QWidget):
                 daily_output,
                 personal_margin,
                 market_margin,
-            ) in results:
+            ) in clean:
                 # hours_total 转换为秒存入 calculated_time
                 rows.append(
                     (
