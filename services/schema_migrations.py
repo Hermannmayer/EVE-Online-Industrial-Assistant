@@ -19,7 +19,7 @@ from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
-    "user": 10,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）
+    "user": 11,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移
     "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
 }
 
@@ -262,6 +262,32 @@ def _migrate_user_v9_to_v10(db_path: str) -> str:
     return f"production_plans 扣减快照列 (新增 {net} 列)"
 
 
+def _migrate_user_v10_to_v11(db_path: str) -> str:
+    """v10→v11: price_snapshots 表从 UI 层收口到集中迁移。
+
+    该表用于保存计划价格快照，此前由 IndustryPage.init_plan_db 直接创建。
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS price_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type_id INTEGER NOT NULL,
+                region_id INTEGER NOT NULL,
+                sell_price REAL,
+                buy_price REAL,
+                snapshot_time TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                UNIQUE(type_id, region_id, snapshot_time)
+            )
+            """
+        )
+        conn.commit()
+        return "新增 price_snapshots 表"
+    finally:
+        conn.close()
+
+
 def _migrate_bp_v1_to_v2(db_path: str) -> str:
     """v1→v2: blueprint_materials 新增 wastefactor 列"""
     conn = sqlite3.connect(db_path)
@@ -296,6 +322,7 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
         7: _migrate_user_v7_to_v8,
         8: _migrate_user_v8_to_v9,
         9: _migrate_user_v9_to_v10,
+        10: _migrate_user_v10_to_v11,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,
