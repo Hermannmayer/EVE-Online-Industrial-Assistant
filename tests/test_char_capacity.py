@@ -72,3 +72,88 @@ class TestActiveProductionLines:
         _init_plans(db_manager)
         monkeypatch.setattr(cc, "resolve_char_config", lambda char_name=None: {"skills": {"高级量产技术": 3}})
         assert cc.character_line_usage("人物A") == (5, 4)
+
+
+# ════════════════════════════════════════════════════════════════
+#  三类产线容量（制造/科研/反应）
+# ════════════════════════════════════════════════════════════════
+
+
+class TestMaxLinesForCategory:
+    def test_full_level_eleven(self):
+        skills = {"高级量产技术": 5, "批量生产学": 5}
+        assert cc.max_lines_for_category("X", cc.CAPACITY_LINE_MANUFACTURING, skills=skills) == 11
+
+    def test_research_two_skills(self):
+        skills = {"高级实验室运作理论": 5, "科学网络学": 5}
+        assert cc.max_lines_for_category("X", cc.CAPACITY_LINE_RESEARCH, skills=skills) == 11
+
+    def test_reaction_two_skills(self):
+        skills = {"大规模反应理论": 5, "高级大规模反应理论": 5}
+        assert cc.max_lines_for_category("X", cc.CAPACITY_LINE_REACTION, skills=skills) == 11
+
+    def test_partial_levels(self):
+        skills = {"高级量产技术": 3, "批量生产学": 2}
+        assert cc.max_lines_for_category("X", cc.CAPACITY_LINE_MANUFACTURING, skills=skills) == 6
+
+    def test_no_skills_base_one(self):
+        assert cc.max_lines_for_category("X", cc.CAPACITY_LINE_MANUFACTURING, skills={}) == 1
+
+    def test_missing_skill_zero(self):
+        skills = {"高级量产技术": 5}
+        assert cc.max_lines_for_category("X", cc.CAPACITY_LINE_MANUFACTURING, skills=skills) == 6
+
+    def test_resolves_config_when_no_skills(self, monkeypatch):
+        monkeypatch.setattr(
+            cc,
+            "resolve_char_config",
+            lambda char_name=None: {"skills": {"高级实验室运作理论": 5, "科学网络学": 5}},
+        )
+        assert cc.max_lines_for_category("X", cc.CAPACITY_LINE_RESEARCH) == 11
+
+    def test_empty_char_defaults(self, monkeypatch):
+        monkeypatch.setattr(cc, "resolve_char_config", lambda char_name=None: {"skills": {}})
+        assert cc.max_lines_for_category("", cc.CAPACITY_LINE_MANUFACTURING) == 1
+
+
+class TestCapacityLineForCategory:
+    def test_mapping(self):
+        assert cc.capacity_line_for_category("manufacturing") == cc.CAPACITY_LINE_MANUFACTURING
+        assert cc.capacity_line_for_category("copying") == cc.CAPACITY_LINE_RESEARCH
+        assert cc.capacity_line_for_category("invention") == cc.CAPACITY_LINE_RESEARCH
+        assert cc.capacity_line_for_category("reaction") == cc.CAPACITY_LINE_REACTION
+        assert cc.capacity_line_for_category("unknown") == cc.CAPACITY_LINE_MANUFACTURING
+        assert cc.capacity_line_for_category("") == cc.CAPACITY_LINE_MANUFACTURING
+
+
+class TestActiveLinesByCategory:
+    def test_aggregates_by_char_and_line(self):
+        plans = [
+            {"char_name": "A", "category": "manufacturing", "parallels": 3, "status": "in_progress"},
+            {"char_name": "A", "category": "reaction", "parallels": 2, "status": "running"},
+            {"char_name": "", "category": "copying", "parallels": 4, "status": "in_progress"},
+            {"char_name": "A", "category": "manufacturing", "parallels": 9, "status": "pending"},
+            {"char_name": "A", "category": "manufacturing", "parallels": 1, "status": "completed"},
+        ]
+        usage = cc.active_lines_by_category(plans)
+        assert usage["A"] == {"manufacturing": 3, "reaction": 2}
+        assert usage[""] == {"research": 4}
+
+    def test_empty_plans(self):
+        assert cc.active_lines_by_category([]) == {}
+
+    def test_pending_excluded(self):
+        plans = [{"char_name": "A", "category": "manufacturing", "parallels": 5, "status": "pending"}]
+        assert cc.active_lines_by_category(plans) == {}
+
+    def test_null_char_grouped_as_empty(self):
+        plans = [{"char_name": None, "category": "reaction", "parallels": 2, "status": "in_progress"}]
+        assert cc.active_lines_by_category(plans) == {"": {"reaction": 2}}
+
+
+class TestLineLabel:
+    def test_labels(self):
+        assert cc.line_label(cc.CAPACITY_LINE_MANUFACTURING) == "制造"
+        assert cc.line_label(cc.CAPACITY_LINE_RESEARCH) == "科研"
+        assert cc.line_label(cc.CAPACITY_LINE_REACTION) == "反应"
+        assert cc.line_label("bogus") == "bogus"

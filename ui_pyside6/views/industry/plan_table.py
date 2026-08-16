@@ -41,6 +41,7 @@ class PlanTable(QWidget):
     plan_updated = Signal()
     refresh_requested = Signal()
     plan_detail_requested = Signal(int)
+    launcher_requested = Signal(str)  # 产线启动小助手（传初始人物名，空串=未分配）
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -1037,26 +1038,13 @@ class PlanTable(QWidget):
         QMessageBox.information(self, "设置完成", f"设施成本系数已设为 {val:.2f}x")
 
     def _show_production_wizard(self, row: int) -> None:
-        """产线启动小助手：选择计划 → 配置角色/设施 → 启动"""
+        """产线启动小助手：交给工业页统一打开（单实例），初始定位到该行所属人物。"""
         if self._model is None:
             return
         plan = self._model.get_plan(row)
         if not plan:
             return
-
-        # 收集同 group 或关联计划
-        group_id = plan.get("group_id")
-        all_plans = self._model._plans if hasattr(self._model, "_plans") else []
-        if group_id:
-            related = [p for p in all_plans if p.get("group_id") == group_id]
-        else:
-            related = [plan]
-        from ui_pyside6.dialogs.production_wizard import ProductionWizard
-
-        mat_hangar_id = plan.get("mat_hangar_id") or getattr(self, "_mat_hangar_id", None)
-        dlg = ProductionWizard(related, self, mat_hangar_id=mat_hangar_id)
-        dlg.exec()
-        self.plan_updated.emit()
+        self.launcher_requested.emit((plan.get("char_name") or "").strip())
 
     # ── 主题 ─────────────────────────────────────────────────
 
