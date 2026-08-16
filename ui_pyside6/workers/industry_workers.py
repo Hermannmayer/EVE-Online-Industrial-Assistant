@@ -3,7 +3,6 @@
 from PySide6.QtCore import QThread, Signal
 
 from core.container import get_container
-from services.plan_aggregator import aggregate_procurement
 from ui_pyside6.workers.base_worker import BaseBatchScoreWorker, BaseScoreWorker
 
 
@@ -18,21 +17,9 @@ class SearchWorker(QThread):
         self._db = db
 
     def run(self):
-        with self._db.connect("ref") as conn:
-            c = conn.cursor()
-            like = f"%{self._query}%"
-            c.execute(
-                """
-                SELECT type_id, zh_name, en_name FROM item
-                WHERE en_name LIKE ? OR zh_name LIKE ?
-                ORDER BY CASE WHEN en_name LIKE ? THEN 0 WHEN zh_name LIKE ? THEN 1 ELSE 2 END,
-                         LENGTH(en_name), type_id
-                LIMIT 30
-            """,
-                (like, like, f"{self._query}%", f"{self._query}%"),
-            )
-            rows = [{"type_id": r[0], "zh_name": r[1] or "", "en_name": r[2] or ""} for r in c.fetchall()]
-            self.finished.emit(rows)
+        from services.ui_data_service import search_manufacturable_items
+
+        self.finished.emit(search_manufacturable_items(self._query, db=self._db))
 
 
 class ScoreWorker(BaseScoreWorker):
@@ -296,13 +283,9 @@ class RankWorker(QThread):
         # 加载实际角色技能配置
         char_config = resolve_char_config(char_name=self._char_name)
 
-        with self._db.connect("bp", "mkt") as conn:
-            c = conn.cursor()
-            c.execute("""
-                SELECT DISTINCT product_type_id FROM blueprint_products
-                WHERE activity = 'manufacturing'
-            """)
-            tids = [r[0] for r in c.fetchall()]
+        from services.ui_data_service import get_all_manufacturable_product_ids
+
+        tids = get_all_manufacturable_product_ids(db=self._db)
 
         total = len(tids)
         for i, tid in enumerate(tids):
@@ -360,15 +343,15 @@ class ProcurementSummaryWorker(QThread):
 
     def run(self):
         try:
-            with get_container().db.connect("user", "ref", "bp", "mkt") as conn:
-                _rows, cost, vol = aggregate_procurement(
-                    conn,
-                    self._plans,
-                    hangar_id=None,
-                    default_hangar_id=self._default_mat_hangar_id,
-                    region_id=self._region_id,
-                    price_type=self._price_type,
-                )
+            from services.ui_data_service import aggregate_procurement_summary
+
+            cost, vol = aggregate_procurement_summary(
+                self._plans,
+                default_mat_hangar_id=self._default_mat_hangar_id,
+                region_id=self._region_id,
+                price_type=self._price_type,
+                db=get_container().db,
+            )
             self.finished.emit(cost, vol)
         except Exception:
             from core.logger import log

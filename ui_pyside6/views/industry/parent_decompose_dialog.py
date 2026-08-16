@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
+from services.industry_dialog_queries import get_item_name, get_max_group_number
 from services.plan_decompose import decompose_plan
 
 
@@ -123,9 +124,7 @@ class ParentDecomposeDialog(QDialog):
                 decomposable.append((plan, lines))
 
         existing = {int(p.get("group_number") or 0) for p, _ in decomposable if int(p.get("group_number") or 0) > 0}
-        with get_container().db.connect("user") as conn:
-            row = conn.execute("SELECT COALESCE(MAX(group_number),0) FROM production_plans").fetchone()
-        next_g = int(row[0]) + 1
+        next_g = get_max_group_number(get_container().db) + 1
 
         assignments: list[tuple[dict, int, list[dict]]] = []
         for plan, lines in decomposable:
@@ -140,9 +139,7 @@ class ParentDecomposeDialog(QDialog):
         return assignments
 
     def _resolve_name(self, type_id: int) -> str:
-        with get_container().db.connect("ref") as conn:
-            row = conn.execute("SELECT zh_name, en_name FROM item WHERE type_id=?", (type_id,)).fetchone()
-        return (row[0] or row[1] or str(type_id)) if row else str(type_id)
+        return get_item_name(get_container().db, type_id)
 
     def _on_accept(self) -> None:
         from services import inventory_manager

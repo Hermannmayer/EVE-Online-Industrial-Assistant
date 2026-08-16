@@ -8,6 +8,22 @@ from __future__ import annotations
 from sqlite3 import Connection
 
 
+def load_npc_corp_context() -> tuple[set[int], dict[int, str]]:
+    """打开 reference.db 并返回 (npc_corp_ids, corp_names)。"""
+    from core.container import get_container
+
+    with get_container().db.connect("ref") as conn:
+        return load_npc_corp_ids(conn), load_corp_names(conn)
+
+
+def resolve_stations_by_ids(location_ids: set[int]) -> dict[int, tuple[str, str]]:
+    """打开 reference.db 并解析空间站名称。"""
+    from core.container import get_container
+
+    with get_container().db.connect("ref") as conn:
+        return resolve_stations(conn, location_ids)
+
+
 def filter_npc_sell_orders(orders: list[dict], npc_corp_ids: set[int]) -> list[dict]:
     """从 ESI 市场卖单里筛出 NPC 公司的卖单。
 

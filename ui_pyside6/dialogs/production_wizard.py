@@ -216,16 +216,12 @@ class ProductionWizard(QDialog):
 
     def _load_blueprint_names(self) -> None:
         """批量解析 blueprint_type_id → 蓝图名（reference.db item 表）。"""
+        from services.ui_data_service import get_item_names_batch
+
         bp_ids = {p.get("blueprint_type_id") for p in self._plans if p.get("blueprint_type_id")}
         if not bp_ids:
             return
-        ph = ",".join("?" * len(bp_ids))
-        with get_container().db.connect("ref") as conn:
-            rows = conn.execute(
-                f"SELECT type_id, zh_name, en_name FROM item WHERE type_id IN ({ph})", tuple(bp_ids)
-            ).fetchall()
-        for tid, zh, en in rows:
-            self._bp_names[tid] = zh or en or str(tid)
+        self._bp_names.update(get_item_names_batch(list(bp_ids), db=get_container().db))
 
     def _compute_readiness(self) -> None:
         """对 pending 计划批量算缺料种数（mat_hangar_id 未设置则视为充足）。"""

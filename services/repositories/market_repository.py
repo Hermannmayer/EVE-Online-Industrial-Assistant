@@ -74,6 +74,38 @@ class MarketRepository:
             r = conn.execute("SELECT MAX(fetch_time) FROM market_prices").fetchone()
             return r[0] if r else None
 
+    def has_any_prices(self) -> bool:
+        """市场价表是否已有任意价格数据。"""
+        with self._db.connect("mkt") as conn:
+            r = conn.execute("SELECT COUNT(*) FROM market_prices").fetchone()
+            return bool(r and r[0] > 0)
+
+    def get_batch_market_snapshot(
+        self, type_ids: list[int], region_id: int
+    ) -> dict[int, dict[str, float | int | None]]:
+        """批量获取指定区域的市场价/量快照。
+
+        返回 {type_id: {"bp": buy_price, "sp": sell_price, "bv": buy_volume, "sv": sell_volume}}。
+        """
+        if not type_ids:
+            return {}
+        ph = ",".join("?" * len(type_ids))
+        result: dict[int, dict[str, float | int | None]] = {}
+        with self._db.connect("mkt") as conn:
+            rows = conn.execute(
+                f"SELECT type_id, buy_price, sell_price, buy_volume, sell_volume "
+                f"FROM market_prices WHERE region_id=? AND type_id IN ({ph})",
+                (region_id, *type_ids),
+            ).fetchall()
+            for r in rows:
+                result[int(r[0])] = {
+                    "bp": r[1],
+                    "sp": r[2],
+                    "bv": r[3] or 0,
+                    "sv": r[4] or 0,
+                }
+        return result
+
     def get_prices_by_region(
         self, type_ids: list[int], region_id: int, price_type: str
     ) -> dict[int, float]:

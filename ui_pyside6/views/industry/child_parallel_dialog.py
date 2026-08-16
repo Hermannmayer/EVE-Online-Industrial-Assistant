@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
-from services.plan_decompose import parent_needs
+from services.industry_dialog_queries import get_child_parallel_data, get_item_name
 
 _COL_NAME = 0
 _COL_DEMAND = 1  # 母项需求
@@ -45,12 +45,9 @@ class ChildParallelDialog(QDialog):
         self._output_per_run: dict[int, int] = {}
         self._durations: dict[int, str] = {}
 
-        with get_container().db.connect("ref", "user", "bp") as conn:
-            self._demand = parent_needs(conn, plans)
-            for p in self._plans:
-                pid = p["product_type_id"]
-                self._output_per_run[pid] = self._query_output(conn, pid)
-                self._durations[pid] = self._query_duration(conn, p.get("blueprint_type_id"))
+        self._demand, self._output_per_run, self._durations = get_child_parallel_data(
+            get_container().db, plans, self._plans
+        )
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -136,29 +133,8 @@ class ChildParallelDialog(QDialog):
         lay.addWidget(w)
         return wrap
 
-    def _query_output(self, conn, product_type_id: int) -> int:
-        row = conn.execute(
-            "SELECT quantity FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-            (product_type_id,),
-        ).fetchone()
-        return int(row[0]) if row and row[0] else 1
-
-    def _query_duration(self, conn, blueprint_type_id) -> str:
-        row = conn.execute(
-            "SELECT time FROM blueprint_activities WHERE blueprint_type_id=? AND activity='manufacturing' LIMIT 1",
-            (blueprint_type_id,),
-        ).fetchone()
-        if not row or not row[0]:
-            return ""
-        secs = int(row[0])
-        days, rem = divmod(secs, 86400)
-        hours, rem = divmod(rem, 3600)
-        return f"{days}d {hours}h" if days else f"{hours}h"
-
     def _resolve_name(self, type_id: int) -> str:
-        with get_container().db.connect("ref") as conn:
-            row = conn.execute("SELECT zh_name, en_name FROM item WHERE type_id=?", (type_id,)).fetchone()
-        return (row[0] or row[1] or str(type_id)) if row else str(type_id)
+        return get_item_name(get_container().db, type_id)
 
     # ── 校验 ──
 

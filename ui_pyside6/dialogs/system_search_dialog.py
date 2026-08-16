@@ -19,8 +19,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
-from services.name_resolver import resolve_system_name
-from services.terminology import term
+from services.ui_data_service import has_solar_system_data, search_solar_systems
 
 
 class SystemSearchDialog(QDialog):
@@ -81,12 +80,7 @@ class SystemSearchDialog(QDialog):
         theme.add_theme_listener(self._on_theme_changed)
 
     def _check_data(self) -> bool:
-        try:
-            with get_container().db.connect("ref") as conn:
-                row = conn.execute("SELECT COUNT(*) FROM solar_system").fetchone()
-                return bool(row and row[0] > 0)
-        except Exception:
-            return False
+        return has_solar_system_data(db=get_container().db)
 
     def _run_search(self):
         if not self._data_ready:
@@ -94,29 +88,7 @@ class SystemSearchDialog(QDialog):
         q = self._search.text().strip()
         self._data = []
         try:
-            with get_container().db.connect("ref") as conn:
-                if q:
-                    # 英文 LIKE + 中文名反查（terminology.system_names）合并
-                    zh_ens = term.search_system_names(q)
-                    en_sql = "solar_system_name LIKE ?"
-                    params: list = [f"%{q}%"]
-                    if zh_ens:
-                        placeholders = ",".join("?" * len(zh_ens))
-                        en_sql += f" OR solar_system_name IN ({placeholders})"
-                        params.extend(zh_ens)
-                    cur = conn.execute(
-                        "SELECT solar_system_id, solar_system_name, security FROM solar_system"
-                        f" WHERE {en_sql} ORDER BY solar_system_name LIMIT 30",
-                        params,
-                    )
-                else:
-                    cur = conn.execute(
-                        "SELECT solar_system_id, solar_system_name, security FROM solar_system "
-                        "ORDER BY solar_system_name LIMIT 30"
-                    )
-                for sid, _en, sec in cur.fetchall():
-                    display = resolve_system_name(conn, int(sid))
-                    self._data.append((int(sid), display, float(sec or 0)))
+            self._data = search_solar_systems(q, db=get_container().db)
         except Exception:
             self._data = []
 

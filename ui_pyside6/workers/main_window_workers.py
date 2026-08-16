@@ -52,15 +52,9 @@ class PriceCheckWorker(QThread):
 
     def run(self):
         try:
-            conn = get_container().db.direct_connect("mkt")
-            try:
-                cursor = conn.cursor()
-                cursor.execute("SELECT MAX(fetch_time) FROM market_prices")
-                row = cursor.fetchone()
-            finally:
-                conn.close()
-            if row and row[0]:
-                utc_str = row[0]
+            latest = get_container().market_repo.get_latest_fetch_time()
+            if latest:
+                utc_str = latest
                 dt = datetime.strptime(utc_str, "%Y-%m-%d %H:%M:%S")
                 now_utc = datetime.now(UTC).replace(tzinfo=None)
                 diff = (now_utc - dt).total_seconds()

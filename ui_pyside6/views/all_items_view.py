@@ -35,7 +35,6 @@ import ui_pyside6.theme as theme
 from core.cache import TtlLRUCache
 from core.container import get_container
 from core.paths import ICON_DIR
-from services.name_resolver import resolve_item_name
 from services.terminology import term
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 from ui_pyside6.models.all_items_models import BCOLS, DASH, MCOLS, TCOLS, AModel, Proxy
@@ -70,35 +69,19 @@ class MatDlg(QDialog):
         self.setMinimumSize(460, 280)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 10, 10, 10)
-        with get_container().db.connect("ref", "mkt", "bp") as conn:
-            c = conn.cursor()
-            nm = resolve_item_name(c, tid)
-            lay.addWidget(
-                QLabel(f"制造材料: {nm}", styleSheet=f"color:{theme.PRIMARY};font-size:13px;font-weight:bold;")
-            )
-            c.execute(
-                """SELECT blueprint_type_id
-                FROM blueprint_products
-                WHERE product_type_id=? AND activity='manufacturing' ORDER BY blueprint_type_id LIMIT 1""",
-                (tid,),
-            )
-            bp_row = c.fetchone()
-            if not bp_row:
-                lay.addWidget(QLabel("此物品无制造蓝图", styleSheet=f"color:{theme.ACCENT_RED};"))
-                b = QPushButton("关闭")
-                b.clicked.connect(self.accept)
-                lay.addWidget(b)
-                return
-            bp_id = bp_row[0]
-            c.execute(
-                """SELECT bm.material_type_id,bm.quantity,i.zh_name,i.en_name,mp.sell_price
-                FROM blueprint_materials bm JOIN item i ON bm.material_type_id=i.type_id
-                LEFT JOIN mkt.market_prices mp ON mp.type_id=i.type_id
-                AND mp.fetch_time=(SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id=i.type_id)
-                WHERE bm.blueprint_type_id=? AND bm.activity='manufacturing' ORDER BY i.zh_name""",
-                (bp_id,),
-            )
-            mats = c.fetchall()
+        container = get_container()
+        nm = container.item_repo.get_name(tid)
+        lay.addWidget(
+            QLabel(f"制造材料: {nm}", styleSheet=f"color:{theme.PRIMARY};font-size:13px;font-weight:bold;")
+        )
+        materials = container.blueprint_repo.get_manufacturing_materials(tid)
+        if materials is None:
+            lay.addWidget(QLabel("此物品无制造蓝图", styleSheet=f"color:{theme.ACCENT_RED};"))
+            b = QPushButton("关闭")
+            b.clicked.connect(self.accept)
+            lay.addWidget(b)
+            return
+        _, mats = materials
         lst = QListWidget()
         total = 0.0
         for mid, qty, zh, en, sp in mats:
@@ -439,102 +422,47 @@ class AllItemsDialog(QDialog):
         # manufacturable_only mode
         if self._manufacturable_only:
             if data and len(data) > 0:
-                with get_container().db.connect("ref", "bp") as conn:
-                    c = conn.cursor()
-                    if cat == 0:  # all manufacturable
-                        c.execute(
-                            "SELECT DISTINCT product_type_id FROM blueprint_products WHERE activity='manufacturing'"
-                        )
-                        bp_ids = {r[0] for r in c.fetchall()}
-                        data = [r for r in data if r["id"] in bp_ids]
-                    elif cat == 1:  # T1
-                        c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
-                            WHERE bp.activity='manufacturing'
-                            AND bp.blueprint_type_id NOT IN (
-                                SELECT product_type_id FROM blueprint_products WHERE activity='invention'
-                            )""")
-                        bp_ids = {r[0] for r in c.fetchall()}
-                        data = [r for r in data if r["id"] in bp_ids]
-                    elif cat == 2:  # T2 invention
-                        c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
-                            WHERE bp.activity='manufacturing'
-                            AND bp.blueprint_type_id IN (
-                                SELECT product_type_id FROM blueprint_products WHERE activity='invention'
-                            )""")
-                        bp_ids = {r[0] for r in c.fetchall()}
-                        data = [r for r in data if r["id"] in bp_ids]
-                    elif cat == 3:  # faction
-                        c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
-                            JOIN item i ON bp.product_type_id=i.type_id
-                            WHERE bp.activity='manufacturing' AND (
-                                i.en_name LIKE '%Navy%' OR i.en_name LIKE '%Faction%'
-                                OR i.en_name LIKE '%Imperial%' OR i.en_name LIKE '%Republic%'
-                                OR i.en_name LIKE '%Federation%' OR i.en_name LIKE '%State%')""")
-                        bp_ids = {r[0] for r in c.fetchall()}
-                        data = [r for r in data if r["id"] in bp_ids]
-                    elif cat == 4:  # reaction
-                        c.execute("SELECT DISTINCT product_type_id FROM blueprint_products WHERE activity='reaction'")
-                        bp_ids = {r[0] for r in c.fetchall()}
-                        data = [r for r in data if r["id"] in bp_ids]
+                blueprint_repo = get_container().blueprint_repo
+                if cat == 0:  # all manufacturable
+                    bp_ids = set(blueprint_repo.get_all_product_ids("manufacturing"))
+                    data = [r for r in data if r["id"] in bp_ids]
+                elif cat == 1:  # T1
+                    bp_ids = blueprint_repo.get_t1_manufacturable_product_ids()
+                    data = [r for r in data if r["id"] in bp_ids]
+                elif cat == 2:  # T2 invention
+                    bp_ids = blueprint_repo.get_t2_manufacturable_product_ids()
+                    data = [r for r in data if r["id"] in bp_ids]
+                elif cat == 3:  # faction
+                    bp_ids = blueprint_repo.get_faction_manufacturable_product_ids()
+                    data = [r for r in data if r["id"] in bp_ids]
+                elif cat == 4:  # reaction
+                    bp_ids = set(blueprint_repo.get_all_product_ids("reaction"))
+                    data = [r for r in data if r["id"] in bp_ids]
             self._filt = data
             self._upd()
             return
 
         # original mode
         if data and cat > 0:
-            with get_container().db.connect("ref", "bp") as conn:
-                c = conn.cursor()
-                if cat == 1:  # 无法制造获得 — 没有任何蓝图
-                    c.execute("SELECT DISTINCT product_type_id FROM blueprint_products")
-                    bp_ids = {r[0] for r in c.fetchall()}
-                    data = [r for r in data if r["id"] not in bp_ids]
-                elif cat == 2:  # 蓝图制造 T1 — 有制造蓝图，且该蓝图非发明产物
-                    c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
-                        WHERE bp.activity='manufacturing'
-                        AND bp.blueprint_type_id NOT IN (
-                            SELECT product_type_id FROM blueprint_products WHERE activity='invention'
-                        )""")
-                    bp_ids = {r[0] for r in c.fetchall()}
-                    data = [r for r in data if r["id"] in bp_ids]
-                elif cat == 3:  # 发明制造 T2 — 有制造蓝图，且该蓝图由发明产出
-                    c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
-                        WHERE bp.activity='manufacturing'
-                        AND bp.blueprint_type_id IN (
-                            SELECT product_type_id FROM blueprint_products WHERE activity='invention'
-                        )""")
-                    bp_ids = {r[0] for r in c.fetchall()}
-                    data = [r for r in data if r["id"] in bp_ids]
-                elif cat == 4:  # 势力蓝图制造
-                    c.execute("""SELECT DISTINCT bp.product_type_id FROM blueprint_products bp
-                        JOIN item i ON bp.product_type_id=i.type_id
-                        WHERE bp.activity='manufacturing' AND (
-                            i.en_name LIKE '%Navy%' OR i.en_name LIKE '%Faction%'
-                            OR i.en_name LIKE '%Imperial%' OR i.en_name LIKE '%Republic%'
-                            OR i.en_name LIKE '%Federation%' OR i.en_name LIKE '%State%')""")
-                    bp_ids = {r[0] for r in c.fetchall()}
-                    data = [r for r in data if r["id"] in bp_ids]
-                elif cat == 5:  # 反应
-                    c.execute("SELECT DISTINCT product_type_id FROM blueprint_products WHERE activity='reaction'")
-                    bp_ids = {r[0] for r in c.fetchall()}
-                    data = [r for r in data if r["id"] in bp_ids]
-                elif cat == 6:  # 行星开发
-                    c.execute("""SELECT DISTINCT i.type_id FROM item i
-                        JOIN market_tree mt ON i.market_group_id = mt.market_group_id
-                        WHERE mt.parent_group_id IN (
-                            SELECT market_group_id FROM market_tree
-                            WHERE zh_name LIKE '%行星%' OR en_name LIKE '%Planet%'
-                        ) OR mt.parent_group_id IN (
-                            WITH RECURSIVE s AS(
-                            SELECT market_group_id FROM market_tree
-                            WHERE zh_name LIKE '%行星%'
-                            OR en_name LIKE '%Planet%'
-                            OR en_name LIKE '%Command Center%'
-                            UNION ALL
-                            SELECT m.market_group_id FROM market_tree m
-                            JOIN s ON m.parent_group_id=s.market_group_id)
-                            SELECT market_group_id FROM s)""")
-                    pi_ids = {r[0] for r in c.fetchall()}
-                    data = [r for r in data if r["id"] in pi_ids]
+            blueprint_repo = get_container().blueprint_repo
+            if cat == 1:  # 无法制造获得 — 没有任何蓝图
+                bp_ids = blueprint_repo.get_all_blueprint_product_ids()
+                data = [r for r in data if r["id"] not in bp_ids]
+            elif cat == 2:  # 蓝图制造 T1 — 有制造蓝图，且该蓝图非发明产物
+                bp_ids = blueprint_repo.get_t1_manufacturable_product_ids()
+                data = [r for r in data if r["id"] in bp_ids]
+            elif cat == 3:  # 发明制造 T2 — 有制造蓝图，且该蓝图由发明产出
+                bp_ids = blueprint_repo.get_t2_manufacturable_product_ids()
+                data = [r for r in data if r["id"] in bp_ids]
+            elif cat == 4:  # 势力蓝图制造
+                bp_ids = blueprint_repo.get_faction_manufacturable_product_ids()
+                data = [r for r in data if r["id"] in bp_ids]
+            elif cat == 5:  # 反应
+                bp_ids = set(blueprint_repo.get_all_product_ids("reaction"))
+                data = [r for r in data if r["id"] in bp_ids]
+            elif cat == 6:  # 行星开发
+                pi_ids = get_container().item_repo.get_planetary_product_ids()
+                data = [r for r in data if r["id"] in pi_ids]
         self._filt = data
         self._upd()
 

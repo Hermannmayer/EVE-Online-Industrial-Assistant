@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.container import get_container
 from services import plan_execution
+from services.industry_dialog_queries import get_blueprint_picker_data
 
 
 class BlueprintPickerDialog(QDialog):
@@ -102,19 +103,12 @@ class BlueprintPickerDialog(QDialog):
         )
 
         assigned_id = self._plan.get("assigned_blueprint_id")
-        with get_container().db.connect("user", "bp", "ref") as conn:
-            cur = conn.execute(
-                "SELECT blueprint_type_id FROM bp.blueprint_products "
-                "WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-                (product_type_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                self._empty_hint.setText("无法确定该产品的蓝图类型")
-                self._table.setEnabled(False)
-                return
-            self._blueprint_type_id = row[0]
-            options = plan_execution.find_available_blueprints(conn, row[0])
+        blueprint_type_id, options = get_blueprint_picker_data(get_container().db, product_type_id)
+        if blueprint_type_id is None:
+            self._empty_hint.setText("无法确定该产品的蓝图类型")
+            self._table.setEnabled(False)
+            return
+        self._blueprint_type_id = blueprint_type_id
 
         self._options = options
         if not options:

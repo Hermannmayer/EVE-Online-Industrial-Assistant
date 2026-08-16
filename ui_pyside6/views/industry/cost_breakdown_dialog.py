@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.container import get_container
+from services.industry_dialog_queries import get_subitem_plans, get_system_name
 
 _COLUMNS = ["材料", "基础量", "材料减成%", "实际量", "单价", "小计"]
 
@@ -306,10 +307,7 @@ class CostBreakdownDialog(QWidget):
         sys_id = metrics.get("solar_system_id")
         sys_name = ""
         if sys_id:
-            from services.name_resolver import resolve_system_name
-
-            with get_container().db.connect("ref") as conn:
-                sys_name = resolve_system_name(conn, sys_id)
+            sys_name = get_system_name(get_container().db, sys_id)
         sci_label = f"SCI={sci * 100:.4f}%"
         if sys_name:
             sci_label += f"（{sys_name}）"
@@ -350,15 +348,7 @@ class CostBreakdownDialog(QWidget):
         """
         from services.scoring_service import ScoringService
 
-        with get_container().db.connect("user") as conn:
-            rows = [
-                dict(r)
-                for r in conn.execute(
-                    "SELECT * FROM production_plans WHERE group_number=? AND sub_level>? "
-                    "ORDER BY sub_level DESC, id DESC",
-                    (group_number, deeper_than),
-                ).fetchall()
-            ]
+        rows = get_subitem_plans(get_container().db, group_number, deeper_than)
         if not rows:
             return {}
         for p in rows:

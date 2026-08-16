@@ -20,6 +20,12 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.container import get_container
 from core.paths import search_history_file
+from services.ui_data_service import (
+    load_item_groups,
+    query_search_items,
+    query_search_items_basic,
+    query_suggest_items,
+)
 from ui_pyside6.icon_cache import load_item_icon
 
 ICON_SIZE = 32
@@ -192,77 +198,10 @@ class SearchWorker(QThread):
                 self.error_signal.emit(str(e))
 
     def _db_search(self, query: str):
-        with get_container().db.connect("ref", "mkt") as conn:
-            c = conn.cursor()
-            like = f"%{query}%"
-            group_match = None
-            for gid, en, zh in self._all_groups:
-                if (zh and query in zh) or (en and query in en):
-                    group_match = gid
-                    break
-
-            if query.isdigit():
-                c.execute(
-                    """
-                    SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume,
-                           mp.buy_price, mp.sell_price, mp.buy_volume, mp.sell_volume
-                    FROM item i
-                    LEFT JOIN mkt.market_prices mp ON i.type_id = mp.type_id AND mp.region_id = ?
-                        AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = i.type_id AND region_id = ?)
-                    WHERE i.type_id = ? OR i.en_name LIKE ? OR i.zh_name LIKE ?
-                    ORDER BY i.type_id LIMIT 300
-                """,
-                    (self._region_id, self._region_id, int(query), like, like),
-                )
-            elif group_match is not None:
-                c.execute(
-                    """
-                    SELECT sub.type_id, sub.zh_name, sub.en_name, sub.en_group_name, sub.zh_group_name, sub.volume,
-                           mp.buy_price, mp.sell_price, mp.buy_volume, mp.sell_volume
-                    FROM (
-                        SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume
-                        FROM item i WHERE i.group_id = ?
-                        UNION
-                        SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume
-                        FROM item i WHERE (i.en_name LIKE ? OR i.zh_name LIKE ?)
-                    ) sub
-                    LEFT JOIN mkt.market_prices mp ON sub.type_id = mp.type_id AND mp.region_id = ?
-                        AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = sub.type_id AND region_id = ?)
-                    ORDER BY sub.type_id LIMIT 300
-                """,
-                    (self._region_id, self._region_id, group_match, like, like),
-                )
-            else:
-                c.execute(
-                    """
-                    SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume,
-                           mp.buy_price, mp.sell_price, mp.buy_volume, mp.sell_volume
-                    FROM item i
-                    LEFT JOIN mkt.market_prices mp ON i.type_id = mp.type_id AND mp.region_id = ?
-                        AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = i.type_id AND region_id = ?)
-                    WHERE i.en_name LIKE ? OR i.zh_name LIKE ?
-                    ORDER BY i.type_id LIMIT 300
-                """,
-                    (self._region_id, self._region_id, like, like),
-                )
-            return c.fetchall()
+        return query_search_items(query, self._all_groups, self._region_id, db=get_container().db)
 
     def _db_search_basic(self, query: str):
-        with get_container().db.connect("ref") as conn:
-            c = conn.cursor()
-            if query.isdigit():
-                c.execute(
-                    "SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume"
-                    " FROM item WHERE type_id = ?",
-                    (int(query),),
-                )
-            else:
-                c.execute(
-                    "SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume"
-                    " FROM item WHERE en_name LIKE ? OR zh_name LIKE ? LIMIT 100",
-                    (f"%{query}%", f"%{query}%"),
-                )
-            return c.fetchall()
+        return query_search_items_basic(query, db=get_container().db)
 
 
 class SuggestionWorker(QThread):
@@ -275,31 +214,13 @@ class SuggestionWorker(QThread):
         self._query = query
 
     def run(self):
-        with get_container().db.connect("ref") as conn:
-            c = conn.cursor()
-            q = self._query
-            if q.isdigit():
-                c.execute(
-                    "SELECT type_id, en_name, zh_name FROM item "
-                    "WHERE type_id = ? OR en_name LIKE ? OR zh_name LIKE ? "
-                    "ORDER BY CASE WHEN type_id = ? THEN 0 ELSE 1 END, LENGTH(en_name), type_id LIMIT 10",
-                    (int(q), f"%{q}%", f"%{q}%", int(q)),
-                )
-            else:
-                c.execute(
-                    "SELECT type_id, en_name, zh_name FROM item "
-                    "WHERE en_name LIKE ? OR zh_name LIKE ? "
-                    "ORDER BY CASE WHEN en_name LIKE ? THEN 0"
-                    " WHEN zh_name LIKE ? THEN 1 ELSE 2 END,"
-                    " LENGTH(en_name), type_id LIMIT 10",
-                    (f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%"),
-                )
-            result = []
-            for tid, en, zh in c.fetchall():
-                zh_name = zh or en or str(tid)
-                display = f"[{tid}] {zh or ''} ({en or ''})" if zh and en else f"[{tid}] {zh or en or 'Unknown'}"
-                result.append((tid, display, zh_name))
-            self.finished_signal.emit(result)
+        rows = query_suggest_items(self._query, db=get_container().db)
+        result = []
+        for tid, en, zh in rows:
+            zh_name = zh or en or str(tid)
+            display = f"[{tid}] {zh or ''} ({en or ''})" if zh and en else f"[{tid}] {zh or en or 'Unknown'}"
+            result.append((tid, display, zh_name))
+        self.finished_signal.emit(result)
 
 
 class GroupLoadWorker(QThread):
@@ -312,15 +233,7 @@ class GroupLoadWorker(QThread):
 
     def run(self):
         try:
-            with get_container().db.connect("ref") as conn:
-                c = conn.cursor()
-                c.execute(
-                    "SELECT DISTINCT e.group_id, e.en_group_name, e.zh_group_name"
-                    " FROM item e WHERE e.group_id IS NOT NULL"
-                    " ORDER BY e.zh_group_name, e.en_group_name"
-                )
-                result = c.fetchall()
-                self.finished_signal.emit(result)
+            self.finished_signal.emit(load_item_groups(db=get_container().db))
         except Exception:
             self.finished_signal.emit([])
 

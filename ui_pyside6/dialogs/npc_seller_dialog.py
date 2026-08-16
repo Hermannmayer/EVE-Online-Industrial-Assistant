@@ -19,13 +19,11 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
-from core.container import get_container
 from core.logger import log
 from services.npc_seller import (
     filter_npc_sell_orders,
-    load_corp_names,
-    load_npc_corp_ids,
-    resolve_stations,
+    load_npc_corp_context,
+    resolve_stations_by_ids,
 )
 
 ESI_BASE_URL = "https://esi.evetech.net/latest"
@@ -55,14 +53,9 @@ class NpcOrderWorker(QThread):
 
             orders = asyncio.run(_fetch())
 
-            conn = get_container().db.direct_connect("ref")
-            try:
-                npc_ids = load_npc_corp_ids(conn)
-                corp_names = load_corp_names(conn)
-                sellers = filter_npc_sell_orders(orders, npc_ids)
-                stations = resolve_stations(conn, {o.get("location_id") for o in sellers})
-            finally:
-                conn.close()
+            npc_ids, corp_names = load_npc_corp_context()
+            sellers = filter_npc_sell_orders(orders, npc_ids)
+            stations = resolve_stations_by_ids({o.get("location_id") for o in sellers})
 
             rows = []
             for o in sorted(sellers, key=lambda x: x.get("price", 0)):
