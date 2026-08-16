@@ -186,13 +186,14 @@ class _StepRow(QWidget):
 class InitWizard(QDialog):
     """数据初始化向导 — 重构版（QThread 驱动）"""
 
-    def __init__(self, parent=None, on_done=None, auto_mode: bool = False):
+    def __init__(self, parent=None, on_done=None, auto_mode: bool = False, prechecked_missing: list[str] | None = None):
         super().__init__(parent)
         self.setWindowTitle("数据初始化")
         self.setMinimumSize(620, 520)
         self.setStyleSheet(f"background-color: {theme.BG_DARK};")
 
         self._auto_mode = auto_mode
+        self._prechecked_missing = prechecked_missing
         self._on_done_callback = on_done
         self._start_time: float | None = None
         self._elapsed_timer: QTimer | None = None
@@ -345,7 +346,10 @@ class InitWizard(QDialog):
 
     def _init_steps_from_check(self):
         """根据 init_check 初始化步骤状态（一次 check_all，避免 N 次全库扫描）"""
-        missing_keys = {s.key for s in get_missing_steps()}
+        if self._prechecked_missing is not None:
+            missing_keys = set(self._prechecked_missing)
+        else:
+            missing_keys = {s.key for s in get_missing_steps()}
         done_count = 0
         for step in STEPS:
             row = self._step_widgets[step.key]
@@ -415,8 +419,11 @@ class InitWizard(QDialog):
         if self._elapsed_timer:
             self._elapsed_timer.start(1000)  # 每秒更新
 
-        # 确定需要执行的步骤
-        missing = [s.key for s in get_missing_steps()]
+        # 确定需要执行的步骤（splash 已预查时复用，免二次全库扫描）
+        if self._prechecked_missing is not None:
+            missing = [k for k in self._prechecked_missing if k in self._step_widgets]
+        else:
+            missing = [s.key for s in get_missing_steps()]
         if not missing:
             self._on_all_done(True, "全部就绪")
             return
