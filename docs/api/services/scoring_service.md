@@ -238,7 +238,7 @@ def calc_manufacturing_score(self, type_id: int, char_config: dict, mat_source_h
 def calc_trade_score(self, type_id: int, buy_hub: str='Jita', sell_hub: str='Jita', buy_price_type: str='buy', sell_price_type: str='sell', char_config: dict | None=None, quantity: int=1) -> dict
 ```
 
-计算贸易评分。纯算法在 domain.scoring，编排在 application.scoring_facade。
+计算贸易评分。纯算法在 domain.scoring，编排在 services.scoring_facade。
 
 定义行：`530`
 ##### `calc_reaction_score`
@@ -247,6 +247,6 @@ def calc_trade_score(self, type_id: int, buy_hub: str='Jita', sell_hub: str='Jit
 def calc_reaction_score(self, type_id: int, char_config: dict, mat_source_hub: str='Jita', sell_hub: str='Jita', facility_tax_pct: float=0.0, price_type_mat: str='sell', price_type_prod: str='sell', system_id: int | None=None, structure_bonus: float=0.0) -> dict
 ```
 
-计算反应（Reaction）利润评分。纯算法在 domain.scoring，编排在 application.scoring_facade。
+计算反应（Reaction）利润评分。纯算法在 domain.scoring，编排在 services.scoring_facade。
 
 定义行：`557`

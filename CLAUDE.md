@@ -25,8 +25,8 @@ PySide6 + SQLite 构建的 EVE Online 工业制造助手桌面应用。
 - ✅ 安全：`yaml.safe_load()`、不硬编码密钥
 
 ### 架构
-- 分层：`core/`（工具/公式）→ `domain/`（纯领域逻辑，无 DB/Qt/缓存）→ `services/`（业务/DB 访问）→ `application/`（编排门面）→ `ui_pyside6/`（UI）
-- 依赖注入用 `core/container.py`
+- 分层：`bootstrap/`（组合根/IOC 容器）→ `core/`（工具/常量）→ `domain/`（纯领域逻辑，无 DB/Qt/缓存 — formulas, bom, scoring, ports）→ `services/`（业务/DB 访问/repositories/门面编排）→ `ui_pyside6/`（UI）
+- 依赖注入组合根在 `bootstrap/container.py`；`core/container.py` 仅为兼容转发，存量调用方随重构逐步迁移到 `bootstrap.container`
 - 4 库独立：`reference.db` / `market.db` / `user.db` / `blueprint.db`
 - DB 管理用 `services/database_manager.py`
 - UI 异步用 QThread + Signal 模式
@@ -35,7 +35,7 @@ PySide6 + SQLite 构建的 EVE Online 工业制造助手桌面应用。
 ### 铁律
 - 🎨 **配色**：所有颜色从 `ui_pyside6.theme` 导入，禁止 hex/rgb/颜色名
 - 📖 **术语**：EVE 术语（技能名/蓝图活动/UI 标签）通过 `services.terminology` 获取，技能 key 需在 `data/terminology.json` 注册
-- 🗄️ **Schema 变更**：所有数据库表结构变更必须在 `services/schema_migrations.py` 注册迁移函数：`DB_SCHEMA_VERSIONS[库名] += 1`，新增 `MIGRATIONS[库名][旧版本] = 迁移函数`。不得在业务代码中写 ALTER TABLE。`tests/conftest.py` 中对应表的 PRAGMA user_version 同步更新。
+- 🗄️ **Schema 变更**：所有数据库表结构变更必须在 `services/schema_migrations.py` 注册迁移函数：`DB_SCHEMA_VERSIONS[库名] += 1`，新增 `MIGRATIONS[库名][旧版本] = 迁移函数`。不得在业务代码中写 ALTER TABLE。`tests/conftest.py` 中对应表的 PRAGMA user_version 同步更新。迁移由 `ensure_schema` 自动备份到 `database/backups/`（保留最近 5 份）；大变动（改列类型/拆表/合并）用 `_rebuild_table`，规范见 `docs/dev/schema-migration.md`。
 
 ## 测试
 
@@ -72,16 +72,16 @@ pre-commit run --all-files # 预提交检查
 ## 项目结构
 
 ```
-core/          工具层（constants, container, eve_formulas, paths, logger）
-domain/        领域层（纯函数，无 DB/Qt/缓存 — ports, scoring）
-application/   应用编排层（门面 — scoring_facade）
-services/      业务层（database_manager, scoring_service, inventory_manager, etc.）
+bootstrap/     组合根 / IOC 容器（container.py）
+core/          工具层（constants, paths, logger, cache, hot_reload；eve_formulas=贸易费/经纪人费常量）
+domain/        领域层（纯函数，无 DB/Qt/缓存 — formulas 制造公式, bom, scoring, ports）
+services/      业务层（database_manager, scoring_service, scoring_facade, inventory_manager, repositories/, etc.）
 ui_pyside6/    UI 层（main_window, theme, models/, workers/, views/, dialogs/）
 tools/         独立初始化工具
-scripts/       维护脚本（migrate_split_db）
+scripts/       维护脚本（migrate_split_db, gen_api_docs）
 tests/         测试
-database/      SQLite 库（自动生成）
-data/          运行时数据（settings, score_settings, char_config）
+database/      SQLite 库 + backups/ 迁移前快照（自动生成）
+data/          运行时数据（settings, score_settings, char_config, terminology）
 ```
 
 ## Claude 技能
