@@ -173,3 +173,29 @@ def resolve_system_names_batch(
         zh = term.system_name(en) if en else None
         result[sid] = f"{zh} ({en})" if zh else (en or str(sid))
     return result
+
+
+def resolve_system_display_name(solar_system_id: int | None) -> str:
+    """按星系 ID 查询显示名（中文 (英文)）；无/异常返回空串。"""
+    if not solar_system_id:
+        return ""
+    try:
+        from core.container import get_container
+
+        with get_container().db.connect("ref") as conn:
+            return resolve_system_name(conn, solar_system_id)
+    except Exception:
+        return ""
+
+
+def resolve_system_display_names_batch(solar_system_ids: list[int]) -> dict[int, str]:
+    """批量查询星系显示名；异常返回空 dict。"""
+    if not solar_system_ids:
+        return {}
+    try:
+        from core.container import get_container
+
+        with get_container().db.connect("ref") as conn:
+            return resolve_system_names_batch(conn, solar_system_ids)
+    except Exception:
+        return {}
