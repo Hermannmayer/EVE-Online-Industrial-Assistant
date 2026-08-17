@@ -13,6 +13,8 @@ import pytest
 
 import services.user_settings as us
 
+pytestmark = pytest.mark.fast
+
 
 @pytest.fixture
 def settings_path(tmp_path, monkeypatch):

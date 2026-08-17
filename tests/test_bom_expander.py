@@ -12,6 +12,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from services.bom_expander import (
     BomNode,
     _find_blueprint_for_product,
@@ -22,6 +24,8 @@ from services.bom_expander import (
     get_material_tree,
     print_tree,
 )
+
+pytestmark = pytest.mark.fast
 
 
 class TestBomNode:

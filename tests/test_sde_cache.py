@@ -26,6 +26,8 @@ from tools.downloaders.sde_cache import (
     load_yaml_async,
 )
 
+pytestmark = pytest.mark.fast
+
 
 def _make_mini_universe_zip():
     """构造迷你 SDE zip：新格式 region/constellation/solarsystem + bsd/invNames。

@@ -5,6 +5,8 @@ import pytest
 import core.single_instance as si
 from core.single_instance import _is_pid_alive, try_lock, unlock
 
+pytestmark = pytest.mark.fast
+
 
 @pytest.fixture(autouse=True)
 def _clean_lock():

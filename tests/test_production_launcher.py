@@ -5,6 +5,8 @@ from PySide6.QtCore import Qt
 
 import services.plan_execution as plan_execution
 
+pytestmark = pytest.mark.ui
+
 SAMPLE_PLANS = [
     {
         "id": 1,
@@ -131,7 +133,6 @@ def _make_launcher(qapp, monkeypatch):
     return w, pl
 
 
-@pytest.mark.slow
 class TestProductionLauncher:
     def test_constructs_and_builds_rows(self, qapp, monkeypatch):
         w, _ = _make_launcher(qapp, monkeypatch)

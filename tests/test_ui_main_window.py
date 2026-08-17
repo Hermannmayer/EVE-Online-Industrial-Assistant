@@ -5,7 +5,7 @@ import pytest
 from core.constants import TRADE_HUBS
 from ui_pyside6.main_window import MainWindow
 
-pytestmark = pytest.mark.slow
+pytestmark = pytest.mark.ui
 
 """MainWindow UI 测试。"""
 
@@ -29,7 +29,6 @@ def test_main_window_save_restore_state(main_window):
 
     main_window.restore_state(state)
     # 恢复后不崩溃即可
-    assert True
 
 
 def test_region_menu_btn(main_window):

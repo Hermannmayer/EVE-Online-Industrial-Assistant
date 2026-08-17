@@ -3,6 +3,8 @@
 import os
 import sys
 
+import pytest
+
 from core.paths import (
     app_root,
     blueprint_db_path,
@@ -14,6 +16,8 @@ from core.paths import (
     reference_db_path,
     user_db_path,
 )
+
+pytestmark = pytest.mark.fast
 
 
 class TestAppRoot:

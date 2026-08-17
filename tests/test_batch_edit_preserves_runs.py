@@ -1,6 +1,10 @@
 """Bug A 回归测试 — 批量编辑不再把 runs/parallels 重置为 1X1"""
 
+import pytest
+
 from services import inventory_manager
+
+pytestmark = pytest.mark.ui
 
 
 class TestBatchEditPreservesRuns:

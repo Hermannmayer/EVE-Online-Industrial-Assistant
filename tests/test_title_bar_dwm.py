@@ -2,8 +2,12 @@
 
 from unittest.mock import patch
 
+import pytest
+
 from ui_pyside6.dwm import apply_dwm_backdrop
 from ui_pyside6.title_bar import TitleBar
+
+pytestmark = pytest.mark.ui
 
 
 def test_dwm_returns_false_without_hwnd():

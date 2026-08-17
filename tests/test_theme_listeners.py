@@ -9,9 +9,10 @@ import pytest
 from PySide6.QtCore import QAbstractItemModel, QCoreApplication, QModelIndex, QSortFilterProxyModel, Qt
 from PySide6.QtGui import QShowEvent
 
+import ui_pyside6.theme as theme
 from ui_pyside6.theme import ONE_LIGHT, apply_theme
 
-pytestmark = pytest.mark.slow
+pytestmark = pytest.mark.ui
 
 
 class _FakeModel(QAbstractItemModel):
@@ -278,3 +279,39 @@ def test_add_theme_listener_accepts_lambda():
     remove()
     apply_theme("dark")
     assert calls["n"] == 1, "remove 后不应再被调用"
+
+
+# ── ThemeSelector 卡片选择器（原 test_theme_selector.py） ──
+
+
+def test_selector_builds_all_cards(qapp):
+    from ui_pyside6.views.theme_selector import ThemeSelector
+
+    sel = ThemeSelector()
+    assert len(sel._cards) == len(theme.THEME_REGISTRY)
+    sel.deleteLater()
+
+
+def test_set_current_highlights_card(qapp):
+    from ui_pyside6.views.theme_selector import ThemeSelector
+
+    sel = ThemeSelector()
+    theme.apply_theme("eve-deep")
+    sel.set_current("eve-deep")
+    assert sel.current_theme_id() == "eve-deep"
+    assert sel._cards["eve-deep"].isChecked()
+    assert not sel._cards["one-dark"].isChecked()
+    sel.deleteLater()
+
+
+def test_card_click_switches_theme(qapp):
+    from ui_pyside6.views.theme_selector import ThemeSelector
+
+    sel = ThemeSelector()
+    theme.apply_theme("one-dark")
+    sel._cards["nord"].click()
+    assert theme.current_theme() == "nord"
+    assert sel.current_theme_id() == "nord"
+    # 恢复默认，避免污染 settings
+    theme.apply_theme("one-dark")
+    sel.deleteLater()

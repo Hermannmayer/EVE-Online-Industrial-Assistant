@@ -6,9 +6,12 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from PySide6.QtCore import QModelIndex, Qt
 
 from ui_pyside6.models.trade_models import TradeHubTableModel
+
+pytestmark = pytest.mark.ui
 
 
 class TestTradeHubTableModel:
@@ -33,6 +36,8 @@ class TestTradeHubTableModel:
         headers = ["贸易中心", "买价", "卖价", "价差", "价差%", "成交量"]
         for i, h in enumerate(headers):
             assert model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == h
+        # 垂直表头返回 None
+        assert model.headerData(0, Qt.Orientation.Vertical) is None
 
     def test_data_display(self, qapp):
         """数据展示格式正确"""
@@ -53,6 +58,15 @@ class TestTradeHubTableModel:
         assert model.data(model.index(0, 3), Qt.ItemDataRole.DisplayRole) == "1.56"
         assert model.data(model.index(0, 4), Qt.ItemDataRole.DisplayRole) == "37.7%"
         assert model.data(model.index(0, 5), Qt.ItemDataRole.DisplayRole) == "1,000,000"
+
+        # 字段缺失回退为空字符串
+        sparse = TradeHubTableModel([{}])
+        assert sparse.data(sparse.index(0, 0), Qt.ItemDataRole.DisplayRole) == ""
+
+    def test_data_foreground_other_column_none(self, qapp):
+        """非价差百分比列 ForegroundRole 返回 None"""
+        model = TradeHubTableModel([{"hub": "Jita", "spread_pct": 15.0}])
+        assert model.data(model.index(0, 0), Qt.ItemDataRole.ForegroundRole) is None
 
     def test_data_foreground_spread_positive(self, qapp):
         """价差为正时绿色"""
@@ -86,6 +100,11 @@ class TestTradeHubTableModel:
         with patch("ui_pyside6.models.trade_models.load_item_icon", return_value=MagicMock()):
             result = model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole)
             assert result is not None
+
+        # 非首列 DecorationRole → None
+        assert model.data(model.index(0, 1), Qt.ItemDataRole.DecorationRole) is None
+        # 无效索引 DecorationRole → None
+        assert model.data(QModelIndex(), Qt.ItemDataRole.DecorationRole) is None
 
     def test_data_decoration_no_icon(self, qapp):
         """无图标文件时 DecorationRole 返回 None"""

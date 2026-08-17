@@ -1,6 +1,10 @@
 """状态栏统计测试 — status_bar.py（需求2 + 运行中计数 bug 修复）"""
 
+import pytest
+
 from ui_pyside6.views.industry.status_bar import StatusBar
+
+pytestmark = pytest.mark.ui
 
 
 class TestStatusBarStats:

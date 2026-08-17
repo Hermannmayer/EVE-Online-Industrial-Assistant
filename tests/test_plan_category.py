@@ -1,6 +1,10 @@
 """计划类别推导测试 — services/plan_category.py"""
 
+import pytest
+
 from services.plan_category import category_symbol, load_category_map
+
+pytestmark = pytest.mark.ui
 
 
 def _build_ref(db_manager):

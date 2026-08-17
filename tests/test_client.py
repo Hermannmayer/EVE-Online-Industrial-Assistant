@@ -4,8 +4,11 @@ import asyncio
 from unittest.mock import AsyncMock, Mock
 
 import aiohttp
+import pytest
 
 from services.client import APIClient
+
+pytestmark = pytest.mark.fast
 
 
 class TestAPIClient:
