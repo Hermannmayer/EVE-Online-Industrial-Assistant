@@ -18,12 +18,12 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import cast
 
-_DATA_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "data"
-_TERM_FILE = _DATA_DIR / "terminology.json"
+from core.paths import data_dir as _data_dir_fn
+
+_TERM_FILE = Path(_data_dir_fn()) / "terminology.json"
 
 
 class Terminology:
