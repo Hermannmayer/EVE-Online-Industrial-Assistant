@@ -4,7 +4,11 @@ import logging
 import os
 import sys
 
+import pytest
+
 from core.paths import app_root
+
+pytestmark = pytest.mark.fast
 
 
 def test_app_root_exists():

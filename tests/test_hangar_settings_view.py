@@ -5,6 +5,8 @@ from unittest.mock import patch
 import pytest
 from PySide6.QtWidgets import QMessageBox
 
+pytestmark = pytest.mark.ui
+
 DEFAULT_CFG: dict = {
     "structure_mat_saving": 1.0,
     "structure_time_mod": 1.0,
@@ -27,7 +29,6 @@ MOCK_HANGARS = [
 ]
 
 
-@pytest.mark.slow
 def test_hangar_list_shows_system_pair(qapp):
     """机库列表条目带星系中英对照后缀（吉他 (Jita)）"""
     from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog
@@ -55,7 +56,6 @@ def test_hangar_list_shows_system_pair(qapp):
         dlg.deleteLater()
 
 
-@pytest.mark.slow
 def test_hangar_settings_dialog_constructs(qapp):
     """对话框可构造，含机库列表 + 配置面板 + 默认机库 tab"""
     from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog
@@ -74,7 +74,6 @@ def test_hangar_settings_dialog_constructs(qapp):
         dlg.deleteLater()
 
 
-@pytest.mark.slow
 def test_hangar_settings_dialog_has_mgmt_buttons(qapp):
     """机库设置对话框含新建/重命名/删除入口（从仓库管理页迁入）"""
     from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog
@@ -92,7 +91,6 @@ def test_hangar_settings_dialog_has_mgmt_buttons(qapp):
         dlg.deleteLater()
 
 
-@pytest.mark.slow
 def test_new_hangar_from_dialog(qapp):
     """对话框内新建机库 → create_hangar 被调用，机库列表刷新并选中新机库"""
     from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog
@@ -127,7 +125,6 @@ def test_new_hangar_from_dialog(qapp):
         dlg.deleteLater()
 
 
-@pytest.mark.slow
 def test_rename_hangar_from_dialog(qapp):
     """对话框内重命名 → rename_hangar 被调用"""
     from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog
@@ -147,7 +144,6 @@ def test_rename_hangar_from_dialog(qapp):
         dlg.deleteLater()
 
 
-@pytest.mark.slow
 def test_delete_hangar_from_dialog(qapp):
     """对话框内删除机库 → delete_hangar 被调用"""
     from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog
@@ -170,7 +166,6 @@ def test_delete_hangar_from_dialog(qapp):
         dlg.deleteLater()
 
 
-@pytest.mark.slow
 def test_hangar_editor_save(qapp, main_window):
     """编辑面板保存 → update_hangar_config 被调用"""
     from ui_pyside6.views.hangar_settings_view import _HangarEditor

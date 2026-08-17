@@ -8,7 +8,7 @@ import ui_pyside6.theme as theme
 from ui_pyside6.theme import apply_theme
 from ui_pyside6.views.score_dialogs import MfgDlg, ScoreW, TradeDlg, _fmt_tag
 
-pytestmark = pytest.mark.slow
+pytestmark = pytest.mark.ui
 
 # ═══════════════════════════════════════════
 #  Fixtures

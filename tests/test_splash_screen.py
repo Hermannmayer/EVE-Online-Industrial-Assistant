@@ -5,6 +5,8 @@ from PySide6.QtTest import QTest
 
 from ui_pyside6.splash_screen import SplashScreen
 
+pytestmark = pytest.mark.ui
+
 
 @pytest.fixture
 def splash(qapp):

@@ -2,8 +2,12 @@
 
 from unittest.mock import patch
 
+import pytest
+
 import Main
 from services.init_check import check_all as _real_check_all
+
+pytestmark = pytest.mark.ui
 
 
 def _ready_status() -> dict:

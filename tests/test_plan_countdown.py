@@ -6,9 +6,12 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
+import pytest
 from PySide6.QtCore import Qt
 
 from ui_pyside6.models.industry_models import PlanTableModel
+
+pytestmark = pytest.mark.ui
 
 _COL_TIME = 11
 _COL_BLUEPRINT = 10

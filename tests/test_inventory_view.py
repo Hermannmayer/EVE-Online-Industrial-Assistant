@@ -6,9 +6,12 @@
   - 空数据 / 边界情况 / 格式化
 """
 
+import pytest
 from PySide6.QtCore import Qt
 
 from ui_pyside6.views.inventory.inventory_helpers import BlueprintTableModel, InvTableModel
+
+pytestmark = pytest.mark.ui
 
 # ══════════════════════════════════════
 #  InvTableModel

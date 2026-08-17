@@ -4,6 +4,8 @@ import pytest
 
 from services.refining_service import RefiningService
 
+pytestmark = pytest.mark.fast
+
 
 class FakeDB:
     """最小 DatabaseManager 替身：connect("ref") 返回内存连接（含 reprocessing_materials）"""

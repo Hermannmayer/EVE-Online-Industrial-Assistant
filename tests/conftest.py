@@ -9,22 +9,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtWidgets import QApplication
 
-
-def pytest_addoption(parser):
-    parser.addoption(
-        "--quick",
-        action="store_true",
-        default=False,
-        help="快速模式：跳过 @pytest.mark.slow 的测试（Qt 界面测试）",
-    )
-
-
-def pytest_collection_modifyitems(config, items):
-    if config.getoption("--quick"):
-        skip_slow = pytest.mark.skip(reason="已跳过慢速测试（--quick 模式）")
-        for item in items:
-            if "slow" in item.keywords:
-                item.add_marker(skip_slow)
+# 测试分档由 marker 驱动（见 scripts/run_tests.sh）：
+#   fast  = 纯计算/轻服务白名单
+#   ui    = Qt 界面 + 真 QThread
+# validate = -m "not ui"，ui-retest = -m "ui"，二者互斥覆盖全部用例。
 
 
 @pytest.fixture(autouse=True)
@@ -340,12 +328,17 @@ def mock_db():
     _scoring_db = _get_db()
     _scoring_db._local.connections.clear() if hasattr(_scoring_db._local, "connections") else None
 
+    # plan_service 用 `from core.container import get_container` 绑定旧引用，
+    # patch core.container 无法覆盖已导入模块里的名字；须同时 patch 该模块引用，
+    # 否则依赖 load_plans 的 UI 测试会穿透到真实库（no such table）。
     with (
         patch("services.database_manager.get_db", return_value=mock_mgr),
         patch("core.container.get_container") as mock_cont,
+        patch("services.plan_service.get_container") as mock_plan_cont,
     ):
         cont = mock_cont.return_value
         cont.db = mock_mgr
+        mock_plan_cont.return_value = cont
         yield
 
 
@@ -512,3 +505,37 @@ def query_page(main_window):
     page = QueryPage(main_window)
     yield page
     page.deleteLater()
+
+
+# ════════════════════════════════════════════════════════════════
+#  共享蓝图测试数据 — plan_decompose / parent_decompose 等复用
+# ════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def seed_bp_blueprints():
+    """返回在指定 connection 上建立 bp 蓝图表并注入渡鸦级/组件数据的函数。
+
+    bp3001 → 产物 2001，材料 1001×5 + 35×10；bp3002 → 产物 1001，材料 34×2。
+    跨测试文件共享，避免 _build_dbs 逐行复制。
+    """
+
+    def _seed(conn):
+        conn.execute(
+            "CREATE TABLE blueprint_products (blueprint_type_id INTEGER, activity TEXT, "
+            "product_type_id INTEGER, quantity INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE blueprint_materials (blueprint_type_id INTEGER, activity TEXT, "
+            "material_type_id INTEGER, quantity INTEGER)"
+        )
+        conn.execute("CREATE TABLE blueprint_activities (blueprint_type_id INTEGER, activity TEXT, time REAL)")
+        conn.execute("INSERT INTO blueprint_products VALUES (3001,'manufacturing',2001,1)")
+        conn.execute("INSERT INTO blueprint_products VALUES (3002,'manufacturing',1001,1)")
+        conn.execute("INSERT INTO blueprint_materials VALUES (3001,'manufacturing',1001,5)")
+        conn.execute("INSERT INTO blueprint_materials VALUES (3001,'manufacturing',35,10)")
+        conn.execute("INSERT INTO blueprint_materials VALUES (3002,'manufacturing',34,2)")
+        conn.execute("INSERT INTO blueprint_activities VALUES (3001,'manufacturing',3600)")
+        conn.execute("INSERT INTO blueprint_activities VALUES (3002,'manufacturing',1800)")
+
+    return _seed

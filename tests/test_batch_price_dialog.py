@@ -10,7 +10,7 @@ from ui_pyside6.views.batch_price_dialog import (
     BatchPriceWorker,
 )
 
-pytestmark = pytest.mark.slow
+pytestmark = pytest.mark.ui
 
 # ═══════════════════════════════════════════
 #  Fixtures
@@ -64,7 +64,6 @@ def test_dialog_close_with_worker(qapp, mock_deps):
     worker.isRunning.return_value = True
     dlg._worker = worker
     dlg.close()
-    assert True
 
 
 # ═══════════════════════════════════════════

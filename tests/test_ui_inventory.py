@@ -1,6 +1,6 @@
 import pytest
 
-pytestmark = pytest.mark.slow
+pytestmark = pytest.mark.ui
 
 """InventoryPage UI 测试。"""
 
@@ -35,4 +35,3 @@ def test_inventory_page_save_restore_state(inventory_page):
 
     inventory_page.restore_state(state)
     # 恢复后不崩溃即可
-    assert True

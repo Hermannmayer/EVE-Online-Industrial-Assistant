@@ -4,12 +4,16 @@ import json
 import os
 import tempfile
 
+import pytest
+
 from services.char_config_validator import (
     DEFAULT_CHAR_CONFIG,
     load_char_config,
     migrate_char_config,
     validate_char_config,
 )
+
+pytestmark = pytest.mark.fast
 
 
 def _make_valid_config() -> dict:

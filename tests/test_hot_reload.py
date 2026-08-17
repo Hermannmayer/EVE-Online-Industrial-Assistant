@@ -2,6 +2,8 @@ import pytest
 
 from core import hot_reload
 
+pytestmark = pytest.mark.fast
+
 
 @pytest.fixture(autouse=True)
 def _isolate_data_dir(monkeypatch, tmp_path):

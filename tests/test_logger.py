@@ -2,7 +2,11 @@
 
 import logging
 
+import pytest
+
 from core.logger import log
+
+pytestmark = pytest.mark.fast
 
 
 def test_log_info(caplog):
