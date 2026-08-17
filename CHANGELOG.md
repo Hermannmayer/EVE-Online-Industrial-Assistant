@@ -6,6 +6,14 @@
 
 <!-- version list -->
 
+## v0.18.0 (2026-08-17)
+
+### Features
+
+- 生产规划蓝图绑定/子项联动/共享合并改造 + 修复
+  ([`d512b2e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d512b2e86647b85dc8cf2dcd163e56803626576a))
+
+
 ## v0.17.1 (2026-08-17)
 
 ### Bug Fixes
