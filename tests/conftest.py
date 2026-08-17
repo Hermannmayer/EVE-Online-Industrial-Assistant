@@ -151,7 +151,7 @@ def _create_temp_databases(tmpdir: str):
 
     # ── user.db ──
     conn = sqlite3.connect(str(user_path))
-    conn.execute("PRAGMA user_version = 11")
+    conn.execute("PRAGMA user_version = 12")
     conn.commit()
     conn.close()
 

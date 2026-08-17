@@ -695,7 +695,12 @@ def delete_blueprint(bp_id: int, *, conn=None) -> bool:
         try:
             c.execute("DELETE FROM plan_blueprint_bindings WHERE blueprint_id=?", (bp_id,))
         except Exception:
-            pass  # 表可能不存在（旧数据库）
+            log.debug("旧库无 plan_blueprint_bindings 表，跳过清理", exc_info=True)
+        # 清理引用该蓝图的旧单值列镜像，避免悬空引用（修 E）；无 production_plans 表时跳过
+        try:
+            c.execute("UPDATE production_plans SET assigned_blueprint_id=NULL WHERE assigned_blueprint_id=?", (bp_id,))
+        except Exception:
+            log.debug("旧库无 production_plans 表，跳过单列清理", exc_info=True)
         cur = c.execute("DELETE FROM user_blueprints WHERE id = ?", (bp_id,))
         return bool(cur.rowcount > 0)
 
@@ -715,7 +720,14 @@ def delete_blueprints_batch(ids: list[int]) -> int:
         try:
             c.execute(f"DELETE FROM plan_blueprint_bindings WHERE blueprint_id IN ({placeholders})", tuple(ids))
         except Exception:
-            pass  # 表可能不存在（旧数据库）
+            log.debug("旧库无 plan_blueprint_bindings 表，跳过清理", exc_info=True)
+        try:
+            c.execute(
+                f"UPDATE production_plans SET assigned_blueprint_id=NULL WHERE assigned_blueprint_id IN ({placeholders})",
+                tuple(ids),
+            )
+        except Exception:
+            log.debug("旧库无 production_plans 表，跳过单列清理", exc_info=True)
         c.execute(f"DELETE FROM user_blueprints WHERE id IN ({placeholders})", tuple(ids))
         return c.rowcount
 

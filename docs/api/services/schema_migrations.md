@@ -118,6 +118,16 @@ v9→v10: production_plans 新增 deducted_materials 列（启动扣减快照，
 
 定义行：`256`
 
+### `_migrate_user_v11_to_v12`
+
+```python
+def _migrate_user_v11_to_v12(db_path: str) -> str
+```
+
+v11→v12: production_plans 增引用式子项需求列（共享合并 / 母项联动重算）。
+
+定义行：`273`
+
 ### `_migrate_user_v10_to_v11`
 
 ```python
@@ -126,7 +136,7 @@ def _migrate_user_v10_to_v11(db_path: str) -> str
 
 v10→v11: price_snapshots 表从 UI 层收口到集中迁移。
 
-定义行：`273`
+定义行：`292`
 
 ### `_migrate_bp_v1_to_v2`
 
@@ -136,7 +146,7 @@ def _migrate_bp_v1_to_v2(db_path: str) -> str
 
 v1→v2: blueprint_materials 新增 wastefactor 列
 
-定义行：`299`
+定义行：`318`
 
 ### `_table_exists`
 
@@ -146,7 +156,7 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool
 
 检查连接中是否存在指定表
 
-定义行：`346`
+定义行：`366`
 
 ### `_add_columns`
 
@@ -156,7 +166,7 @@ def _add_columns(db_path: str, table: str, columns: list[tuple[str, str]]) -> in
 
 批量 ADD COLUMN，忽略已存在的列。返回实际新增的列数。
 
-定义行：`355`
+定义行：`375`
 
 ### `_open`
 
@@ -166,7 +176,7 @@ def _open(db_path: str) -> sqlite3.Connection
 
 打开连接（带 busy_timeout，容忍启动期短暂写锁/被强杀后的句柄未释放）
 
-定义行：`376`
+定义行：`396`
 
 ### `_get_version`
 
@@ -176,7 +186,7 @@ def _get_version(db_path: str) -> int
 
 读取 PRAGMA user_version
 
-定义行：`383`
+定义行：`403`
 
 ### `_set_version`
 
@@ -186,7 +196,7 @@ def _set_version(db_path: str, version: int)
 
 写入 PRAGMA user_version
 
-定义行：`393`
+定义行：`413`
 
 ### `_backup_db`
 
@@ -196,7 +206,7 @@ def _backup_db(db_path: str) -> str | None
 
 迁移前对库做一致快照（VACUUM INTO），返回备份文件路径；失败返回 None。
 
-定义行：`403`
+定义行：`423`
 
 ### `_cleanup_old_backups`
 
@@ -206,7 +216,7 @@ def _cleanup_old_backups(backup_dir: str, pattern: str, keep: int=BACKUP_KEEP) -
 
 保留最近 keep 份备份，删除更早的。删除失败仅告警，不阻断。
 
-定义行：`431`
+定义行：`451`
 
 ### `_rebuild_table`
 
@@ -216,7 +226,7 @@ def _rebuild_table(db_path: str, table: str, create_sql: str, copy_columns: list
 
 大变动迁移：重建表结构并保留数据（改列类型/拆表/合并/重命名列）。
 
-定义行：`448`
+定义行：`468`
 
 ### `ensure_schema`
 
@@ -226,7 +236,7 @@ def ensure_schema(db_alias: str) -> dict
 
 检查并迁移单个库的 schema。
 
-定义行：`485`
+定义行：`505`
 
 ### `ensure_all_schemas`
 
@@ -236,7 +246,7 @@ def ensure_all_schemas() -> dict[str, dict]
 
 遍历所有 4 个库，执行必要的 schema 迁移。
 
-定义行：`543`
+定义行：`563`
 
 ### `get_db_version`
 
@@ -246,7 +256,7 @@ def get_db_version(db_alias: str) -> int | None
 
 读取当前库的磁盘版本号（诊断用）
 
-定义行：`556`
+定义行：`576`
 
 ### `get_expected_version`
 
@@ -256,4 +266,4 @@ def get_expected_version(db_alias: str) -> int | None
 
 返回代码中定义的预期版本号（诊断用）
 
-定义行：`567`
+定义行：`587`

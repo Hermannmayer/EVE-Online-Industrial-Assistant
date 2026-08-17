@@ -240,19 +240,42 @@ def start_plan(
         if shortfalls:
             short_json = json.dumps({str(r["type_id"]): int(r["missing"]) for r in shortfalls}, ensure_ascii=False)
 
-    # 2. 绑定蓝图：以 DB 权威值为准（传入的 plan dict 可能是绑定前的旧值）；
-    #    未绑定时自动选最优（BPO 优先 → ME 最高的够用 BPC）
-    assigned_bp = plan.get("assigned_blueprint_id")
-    with _container().db.connect("user") as conn:
-        cur = conn.execute("SELECT assigned_blueprint_id FROM production_plans WHERE id=?", (plan_id,)).fetchone()
-        db_assigned = cur[0] if cur else None
+    # 2. 绑定蓝图：以 DB 权威关联表绑定为准。一条产线一张蓝图：
+    #    parallels 条产线需绑定 parallels 张、每张流程 ≥ runs。
+    #    未绑定时仅并行=1 自动选最优（BPO 优先 → ME 最高的够用 BPC）并写入关联表；
+    #    并行>1 未绑定 → 明确拒绝，引导用户在蓝图列勾选。
+    plan_parallels = max(int(plan.get("parallels") or 1), 1)
+    plan_runs = max(int(plan.get("runs") or 1), 1)
+    binding = get_plan_binding_state(plan_id)
+    bound_ids = binding["bound"]
     auto_bound = False
-    if db_assigned:
-        assigned_bp = db_assigned
-    if auto_bind and not assigned_bp:
+    if not bound_ids and auto_bind and plan_parallels == 1:
         assigned_bp = _auto_bind_blueprint(plan)
         if assigned_bp:
+            bind_blueprints(plan_id, [assigned_bp])
+            bound_ids = [assigned_bp]
             auto_bound = True
+    assigned_bp = None
+    if bound_ids:
+        with _container().db.connect("user") as conn:
+            short = _binding_shortfall(conn, bound_ids, plan_parallels, plan_runs)
+        if short:
+            return {
+                "ok": False,
+                "code": "blueprint_short",
+                "message": short,
+                "shortfalls": [],
+                "plan_id": plan_id,
+            }
+        assigned_bp = bound_ids[0]
+    elif plan_parallels > 1:
+        return {
+            "ok": False,
+            "code": "blueprint_short",
+            "message": f"请先在蓝图列绑定 {plan_parallels} 张蓝图（并行 {plan_parallels} 条产线各需一张）",
+            "shortfalls": [],
+            "plan_id": plan_id,
+        }
 
     # 3. 持久化：先用条件 UPDATE 原子抢占状态，再用同一事务扣减材料；
     #    任一步失败整体回滚，避免部分扣减残留和并发重复启动。
@@ -385,6 +408,21 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
         if db_status in ("completed", "done"):
             return {"ok": True, "message": "计划已完成", "deposited": 0}
 
+        # 0. 蓝图绑定校验：一条产线一张蓝图，每张流程 ≥ runs；不足拒绝完成（防 BPC 缺流程仍照常完成）
+        plan_parallels = max(int(parallels or 1), 1)
+        plan_runs = max(int(runs or 1), 1)
+        bound_ids = get_plan_blueprints(plan_id)
+        if not bound_ids and assigned_bp:
+            bound_ids = [assigned_bp]
+        if bound_ids:
+            short = _binding_shortfall(conn, bound_ids, plan_parallels, plan_runs)
+            if short:
+                return {
+                    "ok": False,
+                    "message": f"蓝图绑定不满足完成条件：{short}。请先在蓝图列补绑蓝图后重试。",
+                    "deposited": 0,
+                }
+
         # 1. 原子抢占完成状态；若并发完成，只有一个事务能成功。
         now = _now_str()
         cur = conn.execute(
@@ -407,34 +445,21 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
         else:
             messages.append("未设置产出机库，跳过入库")
 
-        # 3. 消耗绑定 BPC（runs × parallels 个制造任务；多蓝图按可用流程分摊）
-        total_jobs = max(int(runs or 1), 1) * max(int(parallels or 1), 1)
-        bound_ids = get_plan_blueprints(plan_id)
-        if not bound_ids and assigned_bp:
-            bound_ids = [assigned_bp]
-        if bound_ids:
-            ph = ",".join("?" * len(bound_ids))
-            bp_rows = conn.execute(f"SELECT id, is_bpo FROM user_blueprints WHERE id IN ({ph})", bound_ids).fetchall()
-            has_bpo = any(bool(r[1]) for r in bp_rows)
-        else:
-            has_bpo = False
-
-        if has_bpo:
-            messages.append("BPO 可无限次使用，跳过 BPC 消耗")
-        else:
-            remaining = total_jobs
-            for bid in bound_ids:
-                if remaining <= 0:
-                    break
-                res = consume_bpc_runs(conn, bid, remaining)
-                if res.get("skipped"):
-                    continue
-                consumed = int(res.get("consumed") or 0)
-                remaining = max(0, remaining - consumed)
-                if res.get("deleted"):
-                    messages.append("绑定蓝图已耗尽并移除")
-                else:
-                    messages.append(f"绑定蓝图剩余 {res.get('new_quantity')}×{res.get('new_runs')} 流程")
+        # 3. 消耗绑定 BPC：一条产线一张蓝图，每张消耗该产线的 runs 流程；BPO 无限跳过。
+        for bid in bound_ids:
+            brow = conn.execute("SELECT is_bpo FROM user_blueprints WHERE id=?", (bid,)).fetchone()
+            if not brow:
+                continue
+            if brow[0]:
+                messages.append("BPO 可无限次使用，跳过消耗")
+                continue
+            res = consume_bpc_runs(conn, bid, plan_runs)
+            if res.get("skipped"):
+                continue
+            if res.get("deleted"):
+                messages.append("绑定蓝图已耗尽并移除")
+            else:
+                messages.append(f"绑定蓝图剩余 {res.get('new_quantity')}×{res.get('new_runs')} 流程")
 
         # 完成：清理关联表绑定
         _clear_plan_bindings(conn, plan_id)
@@ -582,47 +607,65 @@ def reset_plan_for_reuse(plan_id: int) -> dict:
 
 
 def bind_blueprint(plan_id: int, blueprint_id: int) -> bool:
-    """把库存蓝图绑定到计划。BPC 已被其他活跃计划占用时拒绝；BPO 可共享。"""
+    """把一张库存蓝图绑定到计划（单条产线）。BPC 已被其他活跃计划占用时拒绝；BPO 可共享。"""
     return bind_blueprints(plan_id, [blueprint_id])
 
 
 def bind_blueprints(plan_id: int, blueprint_ids: list[int]) -> bool:
-    """批量把库存蓝图绑定到计划（多蓝图并行，对应 parallels）。
+    """全量替换绑定：一条产线一张蓝图。
 
-    写入 plan_blueprint_bindings 关联表（runs_used 按 0 初始，完成时按 runs×parallels 消耗）；
-    被其他活跃计划占用的 BPC 拒绝（返回 False）；BPO 可共享。
+    勾选集即最终绑定集（先清空 plan_id 全部关联行再写入），避免换绑残留旧行：
+    任一张仍是 UBP 的被其他活跃计划占用 → 拒绝整批（原绑定不动）。
+    runs_used = 该计划 runs（每条产线串行轮数）；绑定成功后把首个蓝图镜像到单列
+    assigned_blueprint_id（兼容旧单列口径消费方）。
     """
-    if not plan_id or not blueprint_ids:
+    if not plan_id:
         return False
-    rejected = False
     with _container().db.connect("user") as conn:
+        prow = conn.execute(
+            "SELECT COALESCE(runs,1), COALESCE(parallels,1) FROM production_plans WHERE id=?", (plan_id,)
+        ).fetchone()
+        if prow is None:
+            return False
+        runs = max(int(prow[0]), 1)
+        parallels = max(int(prow[1]), 1)
+        if len(blueprint_ids) > parallels:
+            log.warning("绑定蓝图 %d 张超过并行产线 %d 条（截断为前 %d 张）", len(blueprint_ids), parallels, parallels)
+            blueprint_ids = blueprint_ids[:parallels]
+        # 占用校验：任一张非 BPO 被其他活跃计划占用 → 整批拒绝
         for bp_id in blueprint_ids:
             row = conn.execute("SELECT is_bpo FROM user_blueprints WHERE id=?", (bp_id,)).fetchone()
-            if row is None:
-                rejected = True
-                continue
-            is_bpo = bool(row[0])
-            if not is_bpo:
-                cur = conn.execute(
-                    "SELECT COUNT(*) FROM plan_blueprint_bindings b "
-                    "JOIN production_plans pp ON pp.id=b.plan_id "
-                    "WHERE b.blueprint_id=? AND b.plan_id<>? AND pp.status NOT IN ('completed','done')",
-                    (bp_id, plan_id),
-                )
-                if cur.fetchone()[0] > 0:
-                    rejected = True
-                    continue  # 已被占用，跳过该张
-            conn.execute(
-                "INSERT OR REPLACE INTO plan_blueprint_bindings (plan_id, blueprint_id, runs_used) VALUES (?,?,0)",
-                (plan_id, bp_id),
+            if row is None or row[0]:
+                continue  # 不存在的行或 BPO（BPO 可共享）
+            cur = conn.execute(
+                "SELECT COUNT(*) FROM plan_blueprint_bindings b "
+                "JOIN production_plans pp ON pp.id=b.plan_id "
+                "WHERE b.blueprint_id=? AND b.plan_id<>? AND pp.status NOT IN ('completed','done')",
+                (bp_id, plan_id),
             )
-    return not rejected
+            if cur.fetchone()[0] > 0:
+                return False
+        try:
+            conn.execute("DELETE FROM plan_blueprint_bindings WHERE plan_id=?", (plan_id,))
+        except Exception:
+            log.debug("旧库无 plan_blueprint_bindings 表，跳过清空", exc_info=True)
+        for bp_id in blueprint_ids:
+            try:
+                conn.execute(
+                    "INSERT OR REPLACE INTO plan_blueprint_bindings (plan_id, blueprint_id, runs_used) VALUES (?,?,?)",
+                    (plan_id, bp_id, runs),
+                )
+            except Exception:
+                log.debug("写入关联表失败，跳过该张", exc_info=True)
+        first = blueprint_ids[0] if blueprint_ids else None
+        conn.execute("UPDATE production_plans SET assigned_blueprint_id=? WHERE id=?", (first, plan_id))
+    return True
 
 
 def bind_blueprints_many(bindings: list[tuple[int, list[int]]]) -> bool:
-    """批量绑定多计划（一次连接/事务）→ 多蓝图占用。
+    """批量全量替换绑定多计划（一次连接/事务）。
 
-    bindings: [(plan_id, [blueprint_id, ...]), ...]。被占用的 BPC 跳过。
+    bindings: [(plan_id, [blueprint_id, ...]), ...]。被其他活跃计划占用的 BPC → 该计划整体跳过。
     """
     if not bindings:
         return False
@@ -632,27 +675,92 @@ def bind_blueprints_many(bindings: list[tuple[int, list[int]]]) -> bool:
             if not plan_id or not bp_ids:
                 ok = False
                 continue
+            prow = conn.execute(
+                "SELECT COALESCE(runs,1), COALESCE(parallels,1) FROM production_plans WHERE id=?", (plan_id,)
+            ).fetchone()
+            if prow is None:
+                ok = False
+                continue
+            runs = max(int(prow[0]), 1)
+            parallels = max(int(prow[1]), 1)
+            bp_ids = bp_ids[:parallels]
+            bad = False
             for bp_id in bp_ids:
-                row = conn.execute("SELECT is_bpo FROM user_blueprints WHERE id=?", (bp_id,)).fetchone()
-                if row is None:
-                    ok = False
+                brow = conn.execute("SELECT is_bpo FROM user_blueprints WHERE id=?", (bp_id,)).fetchone()
+                if brow is None or brow[0]:
                     continue
-                is_bpo = bool(row[0])
-                if not is_bpo:
-                    cur = conn.execute(
-                        "SELECT COUNT(*) FROM plan_blueprint_bindings b "
-                        "JOIN production_plans pp ON pp.id=b.plan_id "
-                        "WHERE b.blueprint_id=? AND b.plan_id<>? AND pp.status NOT IN ('completed','done')",
-                        (bp_id, plan_id),
-                    )
-                    if cur.fetchone()[0] > 0:
-                        ok = False
-                        continue
-                conn.execute(
-                    "INSERT OR REPLACE INTO plan_blueprint_bindings (plan_id, blueprint_id, runs_used) VALUES (?,?,0)",
-                    (plan_id, bp_id),
+                cur = conn.execute(
+                    "SELECT COUNT(*) FROM plan_blueprint_bindings b "
+                    "JOIN production_plans pp ON pp.id=b.plan_id "
+                    "WHERE b.blueprint_id=? AND b.plan_id<>? AND pp.status NOT IN ('completed','done')",
+                    (bp_id, plan_id),
                 )
+                if cur.fetchone()[0] > 0:
+                    bad = True
+                    break
+            if bad:
+                ok = False
+                continue
+            try:
+                conn.execute("DELETE FROM plan_blueprint_bindings WHERE plan_id=?", (plan_id,))
+            except Exception:
+                log.debug("旧库无关联表，跳过清空", exc_info=True)
+            for bp_id in bp_ids:
+                try:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO plan_blueprint_bindings (plan_id, blueprint_id, runs_used) VALUES (?,?,?)",
+                        (plan_id, bp_id, runs),
+                    )
+                except Exception:
+                    log.debug("写入关联表失败，跳过该张", exc_info=True)
+            conn.execute("UPDATE production_plans SET assigned_blueprint_id=? WHERE id=?", (bp_ids[0], plan_id))
     return ok
+
+
+def get_plan_binding_state(plan_id: int) -> dict:
+    """返回计划蓝图绑定状态：bound(已绑张数清单)、need(需要的产线条数=parallels)、runs(每条产线流程)。
+
+    供 UI（蓝图列差几张显示/选择弹窗）与启动校验共用；关联表缺失时回退旧单值列。
+    """
+    with _container().db.connect("user") as conn:
+        prow = conn.execute(
+            "SELECT COALESCE(runs,1), COALESCE(parallels,1) FROM production_plans WHERE id=?", (plan_id,)
+        ).fetchone()
+        runs = max(int(prow[0]), 1) if prow else 1
+        parallels = max(int(prow[1]), 1) if prow else 1
+        try:
+            rows = conn.execute(
+                "SELECT blueprint_id FROM plan_blueprint_bindings WHERE plan_id=? "
+                # ORDER BY blueprint_id（表无自增 id 列，仅 (plan_id, blueprint_id) 复合主键）
+                "ORDER BY blueprint_id",
+                (plan_id,),
+            ).fetchall()
+            bound = [r[0] for r in rows]
+        except Exception:
+            log.debug("旧库无关联表，回退单值列", exc_info=True)
+            row = conn.execute("SELECT assigned_blueprint_id FROM production_plans WHERE id=?", (plan_id,)).fetchone()
+            bound = [row[0]] if row and row[0] else []
+    return {"bound": bound, "need": parallels, "runs": runs}
+
+
+def _bp_available_runs(conn, bp_id: int) -> int | float:
+    """连接内查 BPC 可用流程 = quantity×runs；BPO 返回大数（视为无限）。"""
+    row = conn.execute("SELECT is_bpo, runs, quantity FROM user_blueprints WHERE id=?", (bp_id,)).fetchone()
+    if not row:
+        return 0
+    if row[0]:
+        return 10**15
+    return int(row[2] or 0) * int(row[1] or 0)
+
+
+def _binding_shortfall(conn, bound_ids: list[int], parallels: int, runs: int) -> str | None:
+    """校验绑定是否满足一条产线一张蓝图且每张流程≥runs；不足返回原因文本，满足返回 None。"""
+    if len(bound_ids) < parallels:
+        return f"绑定蓝图 {len(bound_ids)} 张不足 {parallels} 条产线（还差 {parallels - len(bound_ids)} 张）"
+    for i, bid in enumerate(bound_ids, 1):
+        if _bp_available_runs(conn, bid) < runs:
+            return f"第 {i} 张绑定蓝图流程不足（需 ≥ {runs} 流程，当前产线每条要跑 {runs} 轮）"
+    return None
 
 
 def get_plan_blueprints(plan_id: int) -> list[int]:
@@ -679,7 +787,11 @@ def _clear_plan_bindings(conn, plan_id: int) -> None:
 
 
 def release_blueprint(plan_id: int) -> bool:
-    """计划取消/删除/回退时释放占用（清空关联表与旧单值列）。"""
+    """计划取消/删除/回退时释放占用（清空关联表与旧单值列）。
+
+    应用层模型：绑定不消耗流程，完成后才消耗——取消/回退只释放绑定、BPC 流程原样回到库存可再绑
+    （与游戏"启动即扣流程"不同，提示文案需写明；已启动产线若确已在游戏中开造，须按游戏侧流程消耗为准）。
+    """
     if not plan_id:
         return False
     with _container().db.connect("user") as conn:
@@ -694,27 +806,43 @@ def get_assigned_blueprint_id(plan_id: int) -> int | None:
         return row[0] if row else None
 
 
-def get_occupied_blueprint_ids(db=None) -> set[int]:
+def get_occupied_blueprint_ids(db=None, *, exclude_plan_id: int | None = None) -> set[int]:
     """返回被活跃计划（非 completed/done）占用的 user_blueprints.id 集合。
 
     兼容多蓝图关联表（plan_blueprint_bindings）与旧单值列（assigned_blueprint_id）。
+    exclude_plan_id: 传入计划 id 时排除其自身占用（查询本计划可选项时不把自己算作已占用）。
     """
     db_mgr = db or _container().db
     occupied: set[int] = set()
     with db_mgr.connect("user") as conn:
         try:
-            rows = conn.execute(
-                "SELECT DISTINCT b.blueprint_id FROM plan_blueprint_bindings b "
-                "JOIN production_plans pp ON pp.id=b.plan_id "
-                "WHERE pp.status NOT IN ('completed','done')"
-            ).fetchall()
+            if exclude_plan_id is not None:
+                rows = conn.execute(
+                    "SELECT DISTINCT b.blueprint_id FROM plan_blueprint_bindings b "
+                    "JOIN production_plans pp ON pp.id=b.plan_id "
+                    "WHERE pp.status NOT IN ('completed','done') AND b.plan_id<>?",
+                    (exclude_plan_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT DISTINCT b.blueprint_id FROM plan_blueprint_bindings b "
+                    "JOIN production_plans pp ON pp.id=b.plan_id "
+                    "WHERE pp.status NOT IN ('completed','done')"
+                ).fetchall()
             occupied = {r[0] for r in rows}
         except Exception:
-            pass  # 旧库无关联表
-        rows = conn.execute(
-            "SELECT DISTINCT assigned_blueprint_id FROM production_plans "
-            "WHERE assigned_blueprint_id IS NOT NULL AND status NOT IN ('completed','done')"
-        ).fetchall()
+            log.debug("旧库无 plan_blueprint_bindings 表，回退单值列", exc_info=True)
+        if exclude_plan_id is not None:
+            rows = conn.execute(
+                "SELECT DISTINCT assigned_blueprint_id FROM production_plans "
+                "WHERE assigned_blueprint_id IS NOT NULL AND status NOT IN ('completed','done') AND id<>?",
+                (exclude_plan_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT DISTINCT assigned_blueprint_id FROM production_plans "
+                "WHERE assigned_blueprint_id IS NOT NULL AND status NOT IN ('completed','done')"
+            ).fetchall()
         occupied.update(r[0] for r in rows)
     return occupied
 
@@ -824,22 +952,37 @@ def _container():
     return get_container()
 
 
-def _occupied_ids(conn) -> set[int]:
+def _occupied_ids(conn, *, exclude_plan_id: int | None = None) -> set[int]:
     """连接内查询占用蓝图 id 集合（兼容关联表与旧单值列）。"""
     occupied: set[int] = set()
     try:
-        rows = conn.execute(
-            "SELECT DISTINCT b.blueprint_id FROM plan_blueprint_bindings b "
-            "JOIN production_plans pp ON pp.id=b.plan_id "
-            "WHERE pp.status NOT IN ('completed','done')"
-        ).fetchall()
+        if exclude_plan_id is not None:
+            rows = conn.execute(
+                "SELECT DISTINCT b.blueprint_id FROM plan_blueprint_bindings b "
+                "JOIN production_plans pp ON pp.id=b.plan_id "
+                "WHERE pp.status NOT IN ('completed','done') AND b.plan_id<>?",
+                (exclude_plan_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT DISTINCT b.blueprint_id FROM plan_blueprint_bindings b "
+                "JOIN production_plans pp ON pp.id=b.plan_id "
+                "WHERE pp.status NOT IN ('completed','done')"
+            ).fetchall()
         occupied = {r[0] for r in rows}
     except Exception:
-        pass
-    rows = conn.execute(
-        "SELECT DISTINCT assigned_blueprint_id FROM production_plans "
-        "WHERE assigned_blueprint_id IS NOT NULL AND status NOT IN ('completed','done')"
-    ).fetchall()
+        log.debug("旧库无 plan_blueprint_bindings 表，回退单值列", exc_info=True)
+    if exclude_plan_id is not None:
+        rows = conn.execute(
+            "SELECT DISTINCT assigned_blueprint_id FROM production_plans "
+            "WHERE assigned_blueprint_id IS NOT NULL AND status NOT IN ('completed','done') AND id<>?",
+            (exclude_plan_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT DISTINCT assigned_blueprint_id FROM production_plans "
+            "WHERE assigned_blueprint_id IS NOT NULL AND status NOT IN ('completed','done')"
+        ).fetchall()
     occupied.update(r[0] for r in rows)
     return occupied
 

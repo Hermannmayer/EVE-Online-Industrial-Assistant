@@ -124,17 +124,27 @@ class PlanTableModel(QAbstractTableModel):
     def _is_visible(self, plan: dict) -> bool:
         """判断行是否可见（未被折叠隐藏）"""
         gid = plan.get("group_id") or plan.get("group_number") or 0
+        if plan.get("_synthetic"):
+            return True  # 共享组件根恒显
+        if gid == -1:
+            # 共享子行：随「共享组件」根（-1）折叠；合成根自身总是可见
+            return not self._is_shared_root_collapsed()
         lvl = int(plan.get("child_level") or plan.get("sub_level") or 0)
         if lvl == 0:
             return True  # 母项始终可见
         return gid not in self._collapsed_groups
+
+    def _is_shared_root_collapsed(self) -> bool:
+        return -1 in self._collapsed_groups
 
     def _visible_plans(self) -> list[dict]:
         """返回过滤后的可见行列表"""
         return [p for p in self._plans if self._is_visible(p)]
 
     def _has_children(self, group_id: int) -> bool:
-        """判断指定 group 是否有子项"""
+        """判断指定 group 是否有子项（含 -1 共享区）。"""
+        if group_id == -1:
+            return any(p.get("group_id") == -1 or p.get("group_number") == -1 for p in self._plans)
         return any(
             (p.get("group_id") or p.get("group_number") or 0) == group_id
             and int(p.get("child_level") or p.get("sub_level") or 0) > 0
@@ -188,7 +198,12 @@ class PlanTableModel(QAbstractTableModel):
             name = cast(str, p.get("product_name", f"ID:{p.get('product_type_id', '')}"))
             lvl = int(p.get("child_level") or 0)
             gid = p.get("group_id") or p.get("group_number") or 0
+            if p.get("_synthetic"):
+                # 「共享组件」合成根：显示标题，带折叠图标
+                icon = "▼" if gid != -1 or -1 not in self._collapsed_groups else "▶"
+                return f"{icon} {name}"
             if lvl > 0:
+                # 共享子行（归入 -1 区）：按相对层级缩进；非共享子行按原层级缩进
                 return ("  " * lvl) + name  # 子项按层级缩进（配合 delegate 层级箭头）
             # 母项：如果有子项，显示折叠/展开图标
             if gid and self._has_children(gid):
@@ -198,6 +213,8 @@ class PlanTableModel(QAbstractTableModel):
         if c == 4:
             return cast(str, p.get("notes", "")) or ""
         if c == 5:
+            if p.get("_synthetic"):
+                return "共享"
             return str(p.get("group_id", 0))
         if c == 6:
             return str(p.get("child_level", 0))
@@ -213,8 +230,17 @@ class PlanTableModel(QAbstractTableModel):
             me = p.get("me_level", 0)
             te = p.get("te_level", 0)
             has_img = "有图" if p.get("has_image", False) else "没图"
-            bound = " *" if p.get("assigned_blueprint_id") else ""
-            return f"{me}-{te}[{has_img}]{bound}"
+            bound = p.get("bound_blueprint_ids") or []
+            if not bound and p.get("assigned_blueprint_id"):
+                bound = [p["assigned_blueprint_id"]]
+            need = int(p.get("need_blueprints") or 1)
+            if not bound:
+                bp_mark = f" 差{need}张" if need > 0 else ""
+            elif len(bound) >= need:
+                bp_mark = f" ✔{len(bound)}/{need}"
+            else:
+                bp_mark = f" 差{need - len(bound)}张"
+            return f"{me}-{te}[{has_img}]{bp_mark}"
         if c == 11:
             status = p.get("status", "")
             if status in ("in_progress", "running"):

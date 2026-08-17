@@ -37,7 +37,7 @@ def ensure_table(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`98`
+定义行：`104`
 ##### `get_by_id`
 
 ```python
@@ -48,7 +48,7 @@ def get_by_id(self, plan_id: int) -> dict | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`102`
+定义行：`108`
 ##### `get_all`
 
 ```python
@@ -59,7 +59,7 @@ def get_all(self, status: str | None=None) -> list[dict]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`107`
+定义行：`113`
 ##### `find_by_group_product`
 
 ```python
@@ -68,7 +68,7 @@ def find_by_group_product(self, group_number: int, product_type_id: int) -> int 
 
 按分组号+产品查找已存在的子计划 id。
 
-定义行：`117`
+定义行：`123`
 ##### `save`
 
 ```python
@@ -79,7 +79,7 @@ def save(self, plan: dict) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`126`
+定义行：`132`
 ##### `_allowed_fields`
 
 ```python
@@ -90,7 +90,7 @@ def _allowed_fields(fields: dict) -> dict
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`159`
+定义行：`165`
 ##### `update`
 
 ```python
@@ -101,7 +101,7 @@ def update(self, plan_id: int, **fields) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`162`
+定义行：`168`
 ##### `update_many`
 
 ```python
@@ -110,7 +110,7 @@ def update_many(self, plan_ids: list[int], **fields) -> int
 
 批量更新多条计划的同一组字段（列名来自内部，参数化值）。返回受影响行数。
 
-定义行：`172`
+定义行：`178`
 ##### `update_batch`
 
 ```python
@@ -119,16 +119,16 @@ def update_batch(self, rows: list[tuple[int, dict]]) -> int
 
 批量异构更新：rows = [(plan_id, &#123;field: value&#125;), ...]，单连接单事务。返回更新行数。
 
-定义行：`184`
+定义行：`190`
 ##### `insert_child_plan`
 
 ```python
-def insert_child_plan(self, *, product_type_id: int, product_name: str, blueprint_type_id: int, runs: int, parallels: int, me_level: int, te_level: int, group_number: int, sub_level: int, mat_hangar_id: int | None, solar_system_id: int | None) -> int
+def insert_child_plan(self, *, product_type_id: int, product_name: str, blueprint_type_id: int, runs: int, parallels: int, me_level: int, te_level: int, group_number: int, sub_level: int, mat_hangar_id: int | None, solar_system_id: int | None, deposit_hangar_id: int | None=None, source_mother_ids: str='', component_parent_type_id: int | None=None, demand: int=0) -> int
 ```
 
-插入一条拆解子计划（含分组/层级/机库字段）。
+插入一条拆解子计划（含分组/层级/机库/引用式需求字段）。
 
-定义行：`200`
+定义行：`206`
 ##### `delete_many`
 
 ```python
@@ -137,7 +137,7 @@ def delete_many(self, plan_ids: list[int]) -> int
 
 批量删除计划（蓝图表关联清理由调用方 release_blueprint 处理）。返回删除行数。
 
-定义行：`240`
+定义行：`255`
 ##### `delete`
 
 ```python
@@ -148,4 +148,4 @@ def delete(self, plan_id: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`249`
+定义行：`264`

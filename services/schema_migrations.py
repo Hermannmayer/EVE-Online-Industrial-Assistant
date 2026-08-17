@@ -27,7 +27,7 @@ BACKUP_KEEP = 5
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
-    "user": 11,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移
+    "user": 12,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）
     "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
 }
 
@@ -270,6 +270,25 @@ def _migrate_user_v9_to_v10(db_path: str) -> str:
     return f"production_plans 扣减快照列 (新增 {net} 列)"
 
 
+def _migrate_user_v11_to_v12(db_path: str) -> str:
+    """v11→v12: production_plans 增引用式子项需求列（共享合并 / 母项联动重算）。
+
+    - source_mother_ids: 逗号分隔的母项 plan id（子项被哪些母项引用；空=普通计划/叶子）。
+    - component_parent_type_id: 共享树内父组件 type_id（层级/级联删除/采购排除单表推导）。
+    - demand: 全局聚合需求（跨所有引用母项）。
+    """
+    added = _add_columns(
+        db_path,
+        "production_plans",
+        [
+            ("source_mother_ids", "TEXT DEFAULT ''"),
+            ("component_parent_type_id", "INTEGER DEFAULT NULL"),
+            ("demand", "INTEGER DEFAULT 0"),
+        ],
+    )
+    return f"新增引用式子项需求列 {added} 个"
+
+
 def _migrate_user_v10_to_v11(db_path: str) -> str:
     """v10→v11: price_snapshots 表从 UI 层收口到集中迁移。
 
@@ -331,6 +350,7 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
         8: _migrate_user_v8_to_v9,
         9: _migrate_user_v9_to_v10,
         10: _migrate_user_v10_to_v11,
+        11: _migrate_user_v11_to_v12,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,

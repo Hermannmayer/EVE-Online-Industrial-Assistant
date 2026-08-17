@@ -105,6 +105,13 @@ class InventoryPage(QWidget):
 
     def refresh_display(self):
         self._hangar_tab._refresh()
+        # 刷新蓝图占用标记（重新计算被活跃生产计划绑定的蓝图），确保从计划页绑定后回到仓库可见
+        try:
+            self._blueprint_tab._load_blueprints()
+        except Exception:
+            from core.logger import log
+
+            log.exception("刷新蓝图页失败")
 
     def save_state(self) -> dict:
         data = {"tab_index": self._tabs.currentIndex()}

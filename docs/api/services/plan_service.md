@@ -16,7 +16,7 @@ def calculate_plan_metrics(plan_input: dict, *, char_name: str='', mat_price_typ
 
 用统一方法计算派生指标（profit/margin/score/iskph/material_cost/calculated_time/daily_output）。
 
-定义行：`13`
+定义行：`14`
 
 ### `insert_plan`
 
@@ -26,7 +26,7 @@ def insert_plan(type_id: int, product_name: str, data: dict, *, mat_hub: str='Ji
 
 INSERT 一条 pending 制造计划（24 列，含派生指标），返回 plan_id。
 
-定义行：`35`
+定义行：`36`
 
 ### `insert_plans_batch`
 
@@ -36,7 +36,7 @@ def insert_plans_batch(rows: list[dict]) -> list[int]
 
 批量 INSERT 多条 pending 制造计划（一次连接/事务），返回 plan_id 列表。
 
-定义行：`87`
+定义行：`88`
 
 ### `datetime_now_str`
 
@@ -48,7 +48,7 @@ def datetime_now_str() -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`136`
+定义行：`137`
 
 ### `enrich_plan_hangar_names`
 
@@ -58,7 +58,7 @@ def enrich_plan_hangar_names(rows: list[dict], hangar_names: dict[int, str]) -> 
 
 为计划行补派生显示字段（内存，不落库）。
 
-定义行：`142`
+定义行：`143`
 
 ### `_load_enrich_data`
 
@@ -66,9 +66,9 @@ def enrich_plan_hangar_names(rows: list[dict], hangar_names: dict[int, str]) -> 
 def _load_enrich_data(conn)
 ```
 
-一次连接内收集 owned_bp / prod_to_bp / hangar_names（供 _enrich_rows 复用）。
+一次连接内收集 owned_bp / prod_to_bp / hangar_names / 蓝图绑定张数（供 _enrich_rows 复用）。
 
-定义行：`157`
+定义行：`158`
 
 ### `_enrich_rows`
 
@@ -76,9 +76,9 @@ def _load_enrich_data(conn)
 def _enrich_rows(rows: list[dict], enrich: dict) -> list[dict]
 ```
 
-补 has_image/group_id/child_level/category + 机库显示名（内存派生，不落库）。
+补 has_image/group_id/child_level/category + 机库显示名 + 蓝图绑定张数（内存派生，不落库）。
 
-定义行：`169`
+定义行：`189`
 
 ### `_fetch_rows`
 
@@ -88,7 +88,7 @@ def _fetch_rows(where_sql: str='', params: tuple=()) -> list[dict]
 
 SELECT * FROM production_plans（可选 WHERE），统一排序与 enrich。
 
-定义行：`197`
+定义行：`230`
 
 ### `load_plans`
 
@@ -98,7 +98,7 @@ def load_plans(filter_key: str) -> list[dict]
 
 加载生产计划列表，并补全蓝图可用标记/类别/机库名称。
 
-定义行：`212`
+定义行：`245`
 
 ### `load_plans_for_wizard`
 
@@ -108,7 +108,29 @@ def load_plans_for_wizard() -> list[dict]
 
 产线启动小助手数据源：全部非完成计划（completed/done 排除），走同一 enrich。
 
-定义行：`226`
+定义行：`259`
+
+### `_sub_level`
+
+```python
+def _sub_level(p: dict) -> int
+```
+
+::: warning ⚠️ 待补 docstring
+此函数暂无 docstring，欢迎补充。
+:::
+
+定义行：`267`
+
+### `_is_shared_child`
+
+```python
+def _is_shared_child(p: dict) -> bool
+```
+
+跨 ≥2 个母项引用的子行归入「共享组件」区（引用式需求合并）。
+
+定义行：`271`
 
 ### `group_and_sort_plans`
 
@@ -116,9 +138,9 @@ def load_plans_for_wizard() -> list[dict]
 def group_and_sort_plans(plans: list[dict]) -> list[dict]
 ```
 
-母项在前树状排序 + 独立计划殿后；为母项补 `_pending_children`（未完成子项数）。
+母项在前树状排序 + 独立计划 + 独立「共享组件」区殿后。
 
-定义行：`234`
+定义行：`279`
 
 ### `collect_refresh_type_ids`
 
@@ -128,7 +150,7 @@ def collect_refresh_type_ids() -> tuple[set[int], int]
 
 收集工业页定向刷新所需的 type_id 集合，并返回其中 5 分钟内已缓存的条数。
 
-定义行：`266`
+定义行：`329`
 
 ### `save_price_snapshots`
 
@@ -138,7 +160,7 @@ def save_price_snapshots() -> int
 
 为活跃计划及其物料保存当前 Jita 价格快照，返回保存条数。
 
-定义行：`304`
+定义行：`367`
 
 ### `load_active_plans_for_procurement`
 
@@ -148,4 +170,4 @@ def load_active_plans_for_procurement() -> list[dict]
 
 加载采购对话框所需的活跃计划列表。
 
-定义行：`341`
+定义行：`404`

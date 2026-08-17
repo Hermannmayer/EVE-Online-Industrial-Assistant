@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from core.container import get_container
+from core.logger import log
 from services.char_config_resolver import resolve_char_config
 
 
@@ -155,7 +156,7 @@ def enrich_plan_hangar_names(rows: list[dict], hangar_names: dict[int, str]) -> 
 
 
 def _load_enrich_data(conn):
-    """一次连接内收集 owned_bp / prod_to_bp / hangar_names（供 _enrich_rows 复用）。"""
+    """一次连接内收集 owned_bp / prod_to_bp / hangar_names / 蓝图绑定张数（供 _enrich_rows 复用）。"""
     owned_bp = {r[0] for r in conn.execute("SELECT DISTINCT blueprint_type_id FROM user_blueprints").fetchall()}
     prod_to_bp: dict[int, list[int]] = {}
     for tid, bpid in conn.execute(
@@ -163,14 +164,35 @@ def _load_enrich_data(conn):
     ).fetchall():
         prod_to_bp.setdefault(tid, []).append(bpid)
     hangar_names = dict(conn.execute("SELECT id, name FROM hangars").fetchall())
-    return {"owned_bp": owned_bp, "prod_to_bp": prod_to_bp, "hangar_names": hangar_names}
+    # 蓝图绑定张数（关联表口径）：plan_id -> [blueprint_id,...]；并行产线条数 need 张
+    binding_map: dict[int, list[int]] = {}
+    try:
+        for pid, bpid in conn.execute(
+            "SELECT b.plan_id, b.blueprint_id FROM plan_blueprint_bindings b "
+            "JOIN production_plans pp ON pp.id=b.plan_id ORDER BY b.blueprint_id"
+        ).fetchall():
+            binding_map.setdefault(int(pid), []).append(int(bpid))
+    except Exception:
+        log.debug("旧库无 plan_blueprint_bindings 表，绑定张数回退单值列", exc_info=True)
+    need_map: dict[int, int] = {}
+    for pid, par in conn.execute("SELECT id, COALESCE(parallels,1) FROM production_plans").fetchall():
+        need_map[int(pid)] = max(int(par), 1)
+    return {
+        "owned_bp": owned_bp,
+        "prod_to_bp": prod_to_bp,
+        "hangar_names": hangar_names,
+        "binding_map": binding_map,
+        "need_map": need_map,
+    }
 
 
 def _enrich_rows(rows: list[dict], enrich: dict) -> list[dict]:
-    """补 has_image/group_id/child_level/category + 机库显示名（内存派生，不落库）。"""
+    """补 has_image/group_id/child_level/category + 机库显示名 + 蓝图绑定张数（内存派生，不落库）。"""
     owned_bp = enrich["owned_bp"]
     prod_to_bp = enrich["prod_to_bp"]
     hangar_names = enrich["hangar_names"]
+    binding_map = enrich["binding_map"]
+    need_map = enrich["need_map"]
     for row in rows:
         ptid = row.get("product_type_id")
         has_bp = bool(row.get("assigned_blueprint_id")) or any(
@@ -179,6 +201,17 @@ def _enrich_rows(rows: list[dict], enrich: dict) -> list[dict]:
         row["has_image"] = has_bp
         row["group_id"] = row.get("group_number", 0)
         row["child_level"] = row.get("sub_level", 0)
+        # 绑定张数：关联表优先，回退单值列
+        pid = row.get("id")
+        if pid is not None:
+            bound = binding_map.get(int(pid))
+            if bound is None and row.get("assigned_blueprint_id"):
+                bound = [row["assigned_blueprint_id"]]
+            row["bound_blueprint_ids"] = list(bound) if bound else []
+            row["need_blueprints"] = int(need_map.get(int(pid), 1))
+        else:
+            row["bound_blueprint_ids"] = []
+            row["need_blueprints"] = 1
 
     from services.plan_category import load_category_map
 
@@ -231,34 +264,64 @@ def load_plans_for_wizard() -> list[dict]:
     return _fetch_rows("status NOT IN ('completed','done')")
 
 
+def _sub_level(p: dict) -> int:
+    return int(p.get("child_level") or p.get("sub_level") or 0)
+
+
+def _is_shared_child(p: dict) -> bool:
+    """跨 ≥2 个母项引用的子行归入「共享组件」区（引用式需求合并）。"""
+    raw = (p.get("source_mother_ids") or "").strip()
+    if not raw:
+        return False
+    return sum(1 for x in raw.split(",") if x.strip().isdigit()) >= 2
+
+
 def group_and_sort_plans(plans: list[dict]) -> list[dict]:
-    """母项在前树状排序 + 独立计划殿后；为母项补 `_pending_children`（未完成子项数）。
+    """母项在前树状排序 + 独立计划 + 独立「共享组件」区殿后。
 
     有组（group_id!=0）的计划按组聚成连续块，块内母项(child_level==0)居首、
-    子项按 sub_level 升序依次在下；独立计划（无组）按原顺序殿后。纯函数（无 DB）。
+    子项按 sub_level 升序依次在下；跨多母项引用的共享子行提升到独立的
+    合成「共享组件」根节点（group_id=-1）下；独立计划（无组）按原顺序殿后。纯函数（无 DB）。
     """
     from services.plan_start_check import pending_children_count
 
     grouped: dict[int, list[dict]] = {}
     standalone: list[dict] = []
+    shared_children: list[dict] = []
     for p in plans:
         gid = int(p.get("group_id") or p.get("group_number") or 0)
-        if gid:
+        if _is_shared_child(p):
+            shared_children.append(p)
+        elif gid:
             grouped.setdefault(gid, []).append(p)
         else:
             standalone.append(p)
 
     def _group_key(p: dict) -> tuple:
-        level = int(p.get("child_level") or p.get("sub_level") or 0)
+        level = _sub_level(p)
         return (0 if level == 0 else 1, level, int(p.get("id") or 0))
 
     ordered: list[dict] = []
     for gid in sorted(grouped):
         members = sorted(grouped[gid], key=_group_key)
         for p in members:
-            if int(p.get("child_level") or 0) == 0:
+            if _sub_level(p) == 0:
                 p["_pending_children"] = pending_children_count(p, plans)
         ordered.extend(members)
+
+    if shared_children:
+        ordered.append(
+            {
+                "group_id": -1,
+                "group_number": -1,
+                "child_level": 0,
+                "sub_level": 0,
+                "_synthetic": True,
+                "product_name": "共享组件",
+                "id": None,
+            }
+        )
+        ordered.extend(sorted(shared_children, key=lambda p: (0, _sub_level(p), int(p.get("id") or 0))))
     ordered.extend(standalone)
     return ordered
 

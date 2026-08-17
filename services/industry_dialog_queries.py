@@ -136,9 +136,13 @@ def get_child_parallel_data(
     plans: list[dict],
     sub_plans: list[dict],
 ) -> tuple[dict[int, int], dict[int, int], dict[int, str]]:
-    """子项并行弹窗初始化数据：母项需求 / 单轮产出 / 格式化时长。"""
+    """子项并行弹窗初始化数据：母项需求 / 单轮产出 / 格式化时长。
+
+    需求优先读子项行的 demand 列（v12 引用式全局合并需求，避免重复求和）；
+    老库无该列时回退 parent_needs 按母项当前需求推导。
+    """
     with db.connect("ref", "user", "bp") as conn:
-        demand = parent_needs(conn, plans)
+        demand = _child_demand_from_rows(sub_plans, conn, plans)
         output_per_run: dict[int, int] = {}
         durations: dict[int, str] = {}
         for p in sub_plans:
@@ -155,7 +159,7 @@ def get_mass_parallel_data(
 ) -> tuple[dict[int, int], dict[int, int], dict[int, int]]:
     """大规模并行弹窗初始化数据：母项需求 / 单轮产出 / 单线总时长秒。"""
     with db.connect("ref", "user", "bp") as conn:
-        demand = parent_needs(conn, plans)
+        demand = _child_demand_from_rows(sub_plans, conn, plans)
         per_run: dict[int, int] = {}
         duration: dict[int, int] = {}
         for p in sub_plans:
@@ -164,6 +168,13 @@ def get_mass_parallel_data(
             dur = _query_blueprint_duration_sec(conn, p.get("blueprint_type_id"))
             duration[pid] = dur * int(p.get("runs") or 1)
         return demand, per_run, duration
+
+
+def _child_demand_from_rows(sub_plans: list[dict], conn, plans: list[dict]) -> dict[int, int]:
+    """共享子项需求：优先读 v12 引用式 demand 列；老库按母项 parent_needs 推导。"""
+    if sub_plans and all("demand" in p for p in sub_plans):
+        return {int(p["product_type_id"]): int(p.get("demand") or 0) for p in sub_plans}
+    return parent_needs(conn, plans)
 
 
 def get_materials_summary(db) -> dict[str, Any] | None:
