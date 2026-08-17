@@ -7,12 +7,16 @@
   - compute_transfer_rows: 移库计划（clamp/过滤未匹配）
 """
 
+import pytest
+
 from services.inventory_import import (
     compute_import_diff,
     compute_row_delta,
     compute_transfer_rows,
     split_clipboard_lines,
 )
+
+pytestmark = pytest.mark.fast
 
 # ════════════════════════════════════════════════════════════════
 #  compute_row_delta

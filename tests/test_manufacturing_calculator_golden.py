@@ -11,7 +11,11 @@
 - 旧公式 `1 + wf/(100*(1+ME))` 是 wasteFactor 时代（Crius 前）的过时实现
 """
 
+import pytest
+
 from services.manufacturing_calculator import calc_material_for_runs, calc_material_per_run
+
+pytestmark = pytest.mark.fast
 
 # ════════════════════════════════════════════════════════════
 #  金标准数值：BP 683 惩罚者级 Bantam（游戏内实测 + 最新 SDE）

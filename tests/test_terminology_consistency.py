@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.fast
+
 # ── 路径 ───────────────────────────────────────────────────────────
 _PROJECT_ROOT = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _DATA_DIR = _PROJECT_ROOT / "data"

@@ -5,10 +5,13 @@
   - 数据模型操作
 """
 
+import pytest
 from PySide6.QtCore import Qt
 
 from services.repositories.plan_repository import PlanRepository
 from ui_pyside6.models.industry_models import PlanTableModel
+
+pytestmark = pytest.mark.ui
 
 # production_plans schema 单一来源：PlanRepository.SCHEMA（原 industry_view.PLAN_DB_SCHEMA 已收敛）
 PLAN_DB_SCHEMA = PlanRepository.SCHEMA

@@ -39,15 +39,18 @@ PySide6 + SQLite 构建的 EVE Online 工业制造助手桌面应用。
 
 ## 测试
 
-按档位跑，避免每次都全量（全量含 Qt，~1.5min）：
+按档位跑，避免每次都全量。由 marker 驱动（`fast`=纯计算/轻服务白名单；`ui`=Qt 界面 + 真 QThread），其余默认 validate：
 
 ```bash
-scripts/run_tests.sh            # 日常快速回归（跳过 Qt，~23s）
-scripts/run_tests.sh target     # 只跑主窗口相关（~4s），改动涉及 UI 时优先
-scripts/run_tests.sh full       # 全量回归（含 Qt，~1.5min），仅提交前
+scripts/run_tests.sh            # validate：全部业务/DB/计算（跳过 Qt，~45s）
+scripts/run_tests.sh fast       # 纯计算/轻服务白名单（~4s）
+scripts/run_tests.sh ui-retest  # 只跑 Qt 界面 + 真 QThread（~40s），改动涉及 UI 时优先
+scripts/run_tests.sh target     # 只跑 git 变更文件相关（~5s）
+scripts/run_tests.sh full       # validate + ui-retest 两阶段全量（~1.5min），仅提交前
 ```
 
-- 开发循环只跑 `target` / `quick`；`full` 仅在提交前。
+- `validate`（`-m "not ui"`）与 `ui-retest`（`-m ui`）互斥，二者并集覆盖全部用例、恒等于 `full`。
+- 开发循环只跑 `target` / `fast`；`full` 仅在提交前。
 - `pytest --lf` 可只重跑上次失败的测试，快速确认无回归。
 - 提交前检查：`ruff check .` + `mypy .` + `scripts/run_tests.sh full` 全通过，无新增 `except: pass`。
 

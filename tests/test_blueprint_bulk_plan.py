@@ -2,7 +2,11 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from ui_pyside6.views.inventory.blueprint_tab import _BulkPlanMetricsWorker
+
+pytestmark = pytest.mark.ui
 
 
 def _build_ref(db_manager):

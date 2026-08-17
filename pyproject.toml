@@ -91,7 +91,7 @@ addopts = "-v --tb=short"
 # 测试运行超过该秒数时 dump 所有线程栈（faulthandler），便于定位偶发卡住的测试
 faulthandler_timeout = 120
 markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "fast: 纯计算/轻服务测试（-m fast）",
     "ui: marks tests as UI tests (deselect with '-m \"not ui\"')",
 ]
 

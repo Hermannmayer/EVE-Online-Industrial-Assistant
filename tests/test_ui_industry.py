@@ -1,6 +1,6 @@
 import pytest
 
-pytestmark = pytest.mark.slow
+pytestmark = pytest.mark.ui
 
 """IndustryPage UI 测试。"""
 
@@ -36,7 +36,6 @@ def test_industry_page_save_restore_state(industry_page):
 
     industry_page.restore_state(state)
     # 恢复后不崩溃即可
-    assert True
 
 
 def test_industry_page_plan_count_label(industry_page):

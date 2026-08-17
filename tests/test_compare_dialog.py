@@ -14,7 +14,7 @@ from ui_pyside6.views.compare import (
     _format_isk,
 )
 
-pytestmark = pytest.mark.slow
+pytestmark = pytest.mark.ui
 
 # ═══════════════════════════════════════════
 #  Fixtures
@@ -85,7 +85,6 @@ def test_dialog_close_without_worker(qapp, mock_deps):
     """关闭对话框（无 worker）不崩溃"""
     dlg = CompareDialog(parent=None)
     dlg.close()
-    assert True
 
 
 # ═══════════════════════════════════════════

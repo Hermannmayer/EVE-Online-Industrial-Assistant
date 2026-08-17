@@ -8,6 +8,8 @@ from PySide6.QtCore import QSize
 import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 
+pytestmark = pytest.mark.ui
+
 
 @pytest.fixture(autouse=True)
 def _reset_theme():

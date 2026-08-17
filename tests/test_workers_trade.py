@@ -2,11 +2,15 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from ui_pyside6.workers.trade_workers import (
     CrossRegionPriceWorker,
     TradeScoreWorker,
     TransportWorker,
 )
+
+pytestmark = pytest.mark.ui
 
 
 class TestCrossRegionPriceWorker:

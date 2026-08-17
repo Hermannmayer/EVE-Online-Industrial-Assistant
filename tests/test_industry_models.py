@@ -4,9 +4,12 @@
   - PlanTableModel: 生产计划表模型
 """
 
+import pytest
 from PySide6.QtCore import Qt
 
 from ui_pyside6.models.industry_models import PlanTableModel
+
+pytestmark = pytest.mark.ui
 
 # ══════════════════════════════════════
 #  PlanTableModel
