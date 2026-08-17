@@ -33,51 +33,75 @@ def step(msg: str):
     log.info(f"[{ts}] {msg}")
 
 
+def discover_local_packages() -> list[str]:
+    """自动扫描项目根目录下所有含 __init__.py 的 Python 包。
+
+    排除非包目录（tests/dist/build 等）和隐藏目录。
+    返回包名列表（如 ['core', 'domain', 'services', 'bootstrap', 'ui_pyside6']）。
+    """
+    skip = {".", "..", "tests", "dist", "build", "__pycache__", "docs", "scripts", "tools", "data", "database"}
+    packages = []
+    for entry in sorted(os.listdir(PROJECT_ROOT)):
+        if entry.startswith(".") or entry in skip:
+            continue
+        pkg_dir = os.path.join(PROJECT_ROOT, entry)
+        if os.path.isdir(pkg_dir) and os.path.isfile(os.path.join(pkg_dir, "__init__.py")):
+            packages.append(entry)
+    return packages
+
+
+# 第三方 hidden imports（PyInstaller 静态分析可能遗漏）
+THIRD_PARTY_HIDDEN_IMPORTS = [
+    "aiosqlite",
+    "aiosqlite.dump",
+    "aiohttp",
+    "tenacity",
+    "tqdm",
+    "PIL",
+    "yaml",
+    "openpyxl",
+]
+
+
 def run_pyinstaller():
     """步骤 1：运行 PyInstaller 打包 exe"""
     step("🔄 运行 PyInstaller 打包...")
     entry_path = os.path.join(PROJECT_ROOT, "Main.py")  # PySide6 入口
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "PyInstaller",
-            "--onefile",
-            "--windowed",
-            "--add-data",
-            f"ui_pyside6{os.pathsep}ui_pyside6",
-            "--add-data",
-            f"services{os.pathsep}services",
-            "--add-data",
-            f"core{os.pathsep}core",
-            "--hidden-import",
-            "aiosqlite",
-            "--hidden-import",
-            "aiosqlite.dump",
-            "--hidden-import",
-            "aiohttp",
-            "--hidden-import",
-            "tenacity",
-            "--hidden-import",
-            "tqdm",
-            "--hidden-import",
-            "PIL",
-            "--hidden-import",
-            "yaml",
-            "--name",
-            "EVE商人助手",
-            entry_path,
-            "--distpath",
-            DIST_DIR,
-            "--noconfirm",
-        ],
-        cwd=PROJECT_ROOT,
-        capture_output=False,
-    )
+    packages = discover_local_packages()
+    step(f"   📦 发现本地包: {', '.join(packages)}")
+
+    args = [
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        "--onefile",
+        "--windowed",
+    ]
+
+    # 动态生成 --add-data 和 --hidden-import（每个本地包）
+    for pkg in packages:
+        args.extend(["--add-data", f"{pkg}{os.pathsep}{pkg}"])
+        args.extend(["--hidden-import", pkg])
+
+    # 第三方 hidden imports
+    for hi in THIRD_PARTY_HIDDEN_IMPORTS:
+        args.extend(["--hidden-import", hi])
+
+    args.extend([
+        "--name",
+        "EVE商人助手",
+        entry_path,
+        "--distpath",
+        DIST_DIR,
+        "--noconfirm",
+    ])
+
+    result = subprocess.run(args, cwd=PROJECT_ROOT, capture_output=False)
     if result.returncode != 0:
         log.error("❌ PyInstaller 打包失败！")
         sys.exit(1)
     step("✅ PyInstaller 打包完成")
+    return packages
 
 
 def organize_release():
@@ -195,6 +219,27 @@ def clean_build_artifacts():
         step(f"   ✓ 删除 {BUILD_EXE_DIR}")
 
 
+def verify_packages_in_build(packages: list[str]):
+    """构建后验证：检查 PyInstaller build 目录中是否收集了所有本地包的 .pyc"""
+    step("🔍 验证构建完整性...")
+    build_dir = os.path.join(PROJECT_ROOT, "build")
+    pyc_dir = os.path.join(build_dir, "EVE商人助手", "localpycs")
+    if not os.path.isdir(pyc_dir):
+        # onefile 模式可能没有 localpycs 目录，跳过验证
+        step("   ⏭ onefile 模式跳过 .pyc 目录验证")
+        return
+
+    missing = []
+    for pkg in packages:
+        pkg_pyc = os.path.join(pyc_dir, pkg)
+        if not os.path.isdir(pkg_pyc):
+            missing.append(pkg)
+    if missing:
+        step(f"   ⚠️ 以下包未在构建中找到: {', '.join(missing)}")
+    else:
+        step(f"   ✓ 所有 {len(packages)} 个本地包已正确收集")
+
+
 def main():
     log.info("=" * 50)
     log.info(f"  EVE 商人助手 v{VERSION} 发行版打包")
@@ -205,15 +250,18 @@ def main():
     skip_zip = "--skip-zip" in sys.argv
 
     # 1. PyInstaller 打包
-    run_pyinstaller()
+    packages = run_pyinstaller()
 
-    # 2. 整理发行版目录
+    # 2. 构建后验证
+    verify_packages_in_build(packages)
+
+    # 3. 整理发行版目录
     organize_release()
 
-    # 3. 清理构建中间产物
+    # 4. 清理构建中间产物
     clean_build_artifacts()
 
-    # 4. 创建 ZIP
+    # 5. 创建 ZIP
     if not skip_zip:
         create_zip()
     else:
