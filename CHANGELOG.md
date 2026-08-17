@@ -6,6 +6,17 @@
 
 <!-- version list -->
 
+## v0.17.1 (2026-08-17)
+
+### Bug Fixes
+
+- 修复发行版打包遗漏 bootstrap/domain 包 + terminology 路径错误
+  ([`d8095e6`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d8095e6ee5dfaaf1ba0b5f400434aa4d8498d575))
+
+- 蓝图绑定交互修复 + 主表格折叠功能 + 子项机库继承
+  ([`cdc0ad0`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/cdc0ad0761e1e20d96814543c7ff31df0aab7f64))
+
+
 ## v0.17.0 (2026-08-16)
 
 
