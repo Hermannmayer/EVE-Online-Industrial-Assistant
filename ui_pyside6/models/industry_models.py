@@ -108,8 +108,53 @@ class PlanTableModel(QAbstractTableModel):
         self._plans = plans
         self._sort_col: int = -1
         self._sort_order = Qt.SortOrder.AscendingOrder
+        self._collapsed_groups: set[int] = set()  # 被折叠的 group_id 集合
+
+    # ── 折叠/展开 ──────────────────────────────────────────────
+
+    def toggle_collapse(self, group_id: int) -> None:
+        """切换指定组的折叠状态"""
+        if group_id in self._collapsed_groups:
+            self._collapsed_groups.discard(group_id)
+        else:
+            self._collapsed_groups.add(group_id)
+        self.beginResetModel()
+        self.endResetModel()
+
+    def _is_visible(self, plan: dict) -> bool:
+        """判断行是否可见（未被折叠隐藏）"""
+        gid = plan.get("group_id") or plan.get("group_number") or 0
+        lvl = int(plan.get("child_level") or plan.get("sub_level") or 0)
+        if lvl == 0:
+            return True  # 母项始终可见
+        return gid not in self._collapsed_groups
+
+    def _visible_plans(self) -> list[dict]:
+        """返回过滤后的可见行列表"""
+        return [p for p in self._plans if self._is_visible(p)]
+
+    def _has_children(self, group_id: int) -> bool:
+        """判断指定 group 是否有子项"""
+        return any(
+            (p.get("group_id") or p.get("group_number") or 0) == group_id
+            and int(p.get("child_level") or p.get("sub_level") or 0) > 0
+            for p in self._plans
+        )
+
+    def _row_map(self, filtered_row: int) -> int:
+        """过滤行号 → 原始行号映射"""
+        visible = self._visible_plans()
+        if filtered_row >= len(visible):
+            return filtered_row
+        target = visible[filtered_row]
+        for i, p in enumerate(self._plans):
+            if p is target:
+                return i
+        return filtered_row
 
     def rowCount(self, parent=None):
+        if self._collapsed_groups:
+            return len(self._visible_plans())
         return len(self._plans)
 
     def columnCount(self, parent=None):
@@ -120,7 +165,8 @@ class PlanTableModel(QAbstractTableModel):
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
-        p = self._plans[index.row()]
+        actual_row = self._row_map(index.row()) if self._collapsed_groups else index.row()
+        p = self._plans[actual_row]
         c = index.column()
         if role == Qt.ItemDataRole.UserRole:
             return p
@@ -141,8 +187,13 @@ class PlanTableModel(QAbstractTableModel):
         if c == 3:
             name = cast(str, p.get("product_name", f"ID:{p.get('product_type_id', '')}"))
             lvl = int(p.get("child_level") or 0)
+            gid = p.get("group_id") or p.get("group_number") or 0
             if lvl > 0:
                 return ("  " * lvl) + name  # 子项按层级缩进（配合 delegate 层级箭头）
+            # 母项：如果有子项，显示折叠/展开图标
+            if gid and self._has_children(gid):
+                icon = "▼" if gid not in self._collapsed_groups else "▶"
+                return f"{icon} {name}"
             return name
         if c == 4:
             return cast(str, p.get("notes", "")) or ""
@@ -216,7 +267,8 @@ class PlanTableModel(QAbstractTableModel):
         base = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
         col = index.column()
         if col in self._EDITABLE_COLS:
-            row = self._plans[index.row()] if index.row() < len(self._plans) else {}
+            actual_row = self._row_map(index.row()) if self._collapsed_groups else index.row()
+            row = self._plans[actual_row] if actual_row < len(self._plans) else {}
             if row.get("status") not in ("completed", "done"):
                 return base | Qt.ItemFlag.ItemIsEditable
         return base
@@ -224,11 +276,11 @@ class PlanTableModel(QAbstractTableModel):
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
         if not index.isValid() or role != Qt.ItemDataRole.EditRole:
             return False
-        row_idx = index.row()
+        actual_row = self._row_map(index.row()) if self._collapsed_groups else index.row()
         col = index.column()
         if col not in self._EDITABLE_COLS:
             return False
-        plan = self._plans[row_idx]
+        plan = self._plans[actual_row]
         # 直接写内存模型
         if col == 4:
             plan["notes"] = str(value)
@@ -267,7 +319,8 @@ class PlanTableModel(QAbstractTableModel):
         self.endResetModel()
 
     def get_plan(self, row: int) -> dict:
-        return self._plans[row] if 0 <= row < len(self._plans) else {}
+        actual_row = self._row_map(row) if self._collapsed_groups else row
+        return self._plans[actual_row] if 0 <= actual_row < len(self._plans) else {}
 
     def tick(self) -> list[int]:
         """倒计时 tick：遍历进行中行算剩余；≤0 内存置 ready；对变动行 emit dataChanged。

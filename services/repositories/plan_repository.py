@@ -211,6 +211,7 @@ class PlanRepository:
         sub_level: int,
         mat_hangar_id: int | None,
         solar_system_id: int | None,
+        deposit_hangar_id: int | None = None,
     ) -> int:
         """插入一条拆解子计划（含分组/层级/机库字段）。"""
         with self._db.connect("user") as conn:
@@ -218,8 +219,8 @@ class PlanRepository:
                 """
                 INSERT INTO production_plans
                 (product_type_id, product_name, blueprint_type_id, runs, parallels, me_level, te_level,
-                 status, group_number, sub_level, mat_hangar_id, solar_system_id, materials_ready)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, 1)
+                 status, group_number, sub_level, mat_hangar_id, solar_system_id, deposit_hangar_id, materials_ready)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 1)
                 """,
                 (
                     product_type_id,
@@ -233,6 +234,7 @@ class PlanRepository:
                     sub_level,
                     mat_hangar_id,
                     solar_system_id,
+                    deposit_hangar_id,
                 ),
             )
             return int(cur.lastrowid or 0)

@@ -692,6 +692,10 @@ def delete_blueprint(bp_id: int, *, conn=None) -> bool:
     """删除蓝图。conn 传入时在同一连接执行且不提交（由调用方统一事务）。"""
 
     def _do(c) -> bool:
+        try:
+            c.execute("DELETE FROM plan_blueprint_bindings WHERE blueprint_id=?", (bp_id,))
+        except Exception:
+            pass  # 表可能不存在（旧数据库）
         cur = c.execute("DELETE FROM user_blueprints WHERE id = ?", (bp_id,))
         return bool(cur.rowcount > 0)
 
@@ -708,6 +712,10 @@ def delete_blueprints_batch(ids: list[int]) -> int:
     with _default_db().connect("user") as conn:
         c = conn.cursor()
         placeholders = ",".join("?" * len(ids))
+        try:
+            c.execute(f"DELETE FROM plan_blueprint_bindings WHERE blueprint_id IN ({placeholders})", tuple(ids))
+        except Exception:
+            pass  # 表可能不存在（旧数据库）
         c.execute(f"DELETE FROM user_blueprints WHERE id IN ({placeholders})", tuple(ids))
         return c.rowcount
 
