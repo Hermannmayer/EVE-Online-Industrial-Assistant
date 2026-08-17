@@ -2,9 +2,12 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from PySide6.QtCore import QThread
 
 from ui_pyside6.workers.industry_workers import RankWorker, ScoreWorker, SearchWorker
+
+pytestmark = pytest.mark.ui
 
 
 class TestSearchWorker:

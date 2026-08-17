@@ -12,6 +12,8 @@ import pytest
 
 from services.logistics import TRADE_HUB_DISTANCES, get_distance_jumps, list_trade_hub_distances
 
+pytestmark = pytest.mark.fast
+
 TRADE_HUBS = {"Jita", "Amarr", "Dodixie", "Rens", "Hek"}
 
 # ── 参数化数据集 ──

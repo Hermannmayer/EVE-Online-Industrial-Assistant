@@ -20,7 +20,7 @@ from ui_pyside6.workers.main_window_workers import (
     needs_price_update,
 )
 
-pytestmark = pytest.mark.slow
+pytestmark = pytest.mark.ui
 
 
 @pytest.fixture(autouse=True)
@@ -193,26 +193,15 @@ class TestMainWindowState:
     @patch.object(MainWindow, "_register_pages", lambda self: None)
     @patch.object(MainWindow, "_init_price_check", lambda self: None)
     @patch.object(MainWindow, "setStyleSheet", lambda self, x: None)
-    def test_restore_state_empty(self, qapp):
-        """restore_state 空数据不崩溃"""
+    @pytest.mark.parametrize(
+        "state",
+        [({}), (None), ({"current_page": "nonexistent"})],
+        ids=["empty", "none", "unknown_page"],
+    )
+    def test_restore_state_tolerant(self, qapp, state):
+        """restore_state 对空/None/未知页面 key 均不崩溃"""
         window = MainWindow()
-        window.restore_state({})  # 不应报错
-
-    @patch.object(MainWindow, "_register_pages", lambda self: None)
-    @patch.object(MainWindow, "_init_price_check", lambda self: None)
-    @patch.object(MainWindow, "setStyleSheet", lambda self, x: None)
-    def test_restore_state_none(self, qapp):
-        """restore_state None 不崩溃"""
-        window = MainWindow()
-        window.restore_state(None)  # 不应报错
-
-    @patch.object(MainWindow, "_register_pages", lambda self: None)
-    @patch.object(MainWindow, "_init_price_check", lambda self: None)
-    @patch.object(MainWindow, "setStyleSheet", lambda self, x: None)
-    def test_restore_state_unknown_key_ignored(self, qapp):
-        """restore_state 未知页面 key 被忽略"""
-        window = MainWindow()
-        window.restore_state({"current_page": "nonexistent"})  # 不应报错
+        window.restore_state(state)  # 不应报错
 
 
 # ══════════════════════════════════════
@@ -223,12 +212,16 @@ class TestMainWindowState:
 class TestMainWindowHelpers:
     """MainWindow 辅助方法"""
 
+    @patch.object(MainWindow, "_register_pages", lambda self: None)
+    @patch.object(MainWindow, "_init_price_check", lambda self: None)
     def test_show_progress_sets_label(self, qapp):
         """show_progress 设置状态文本"""
         window = MainWindow()
         window.show_progress("测试处理")
         assert window._status_label.text() == "测试处理"
 
+    @patch.object(MainWindow, "_register_pages", lambda self: None)
+    @patch.object(MainWindow, "_init_price_check", lambda self: None)
     def test_hide_progress_resets_label(self, qapp):
         """hide_progress 重置状态文本"""
         window = MainWindow()
@@ -236,6 +229,8 @@ class TestMainWindowHelpers:
         window.hide_progress("完成")
         assert window._status_label.text() == "完成"
 
+    @patch.object(MainWindow, "_register_pages", lambda self: None)
+    @patch.object(MainWindow, "_init_price_check", lambda self: None)
     def test_toggle_theme_changes_current(self, qapp):
         """_toggle_theme 在 one-dark/one-light 间确定性互切"""
         import ui_pyside6.theme as theme
@@ -263,6 +258,8 @@ class TestMainWindowHelpers:
 class TestMainWindowIcons:
     """图标创建"""
 
+    @patch.object(MainWindow, "_register_pages", lambda self: None)
+    @patch.object(MainWindow, "_init_price_check", lambda self: None)
     def test_create_person_icon_returns_qicon(self, qapp):
         """_create_person_icon 返回 QIcon"""
         window = MainWindow()
@@ -271,6 +268,8 @@ class TestMainWindowIcons:
 
         assert isinstance(icon, QIcon)
 
+    @patch.object(MainWindow, "_register_pages", lambda self: None)
+    @patch.object(MainWindow, "_init_price_check", lambda self: None)
     def test_create_settings_icon_returns_qicon(self, qapp):
         """_create_settings_icon 返回 QIcon"""
         window = MainWindow()
@@ -279,6 +278,8 @@ class TestMainWindowIcons:
 
         assert isinstance(icon, QIcon)
 
+    @patch.object(MainWindow, "_register_pages", lambda self: None)
+    @patch.object(MainWindow, "_init_price_check", lambda self: None)
     def test_create_person_icon_custom_size(self, qapp):
         """自定义尺寸"""
         window = MainWindow()

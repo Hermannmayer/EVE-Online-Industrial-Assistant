@@ -4,9 +4,12 @@ import csv
 import os
 import tempfile
 
+import pytest
 from openpyxl import load_workbook
 
 from ui_pyside6.views.export_helper import export_to_csv, export_to_excel
+
+pytestmark = pytest.mark.fast
 
 HEADERS = ["物品名称", "数量", "价格", "备注"]
 ROWS = [

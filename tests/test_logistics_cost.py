@@ -13,6 +13,8 @@ import pytest
 
 from services.logistics import calc_transport_profit, estimate_freight_cost
 
+pytestmark = pytest.mark.fast
+
 # ═══════════════════════════════════════════════════════
 #  运费估算
 # ═══════════════════════════════════════════════════════

@@ -2,9 +2,12 @@
 
 from unittest.mock import patch
 
+import pytest
 from PySide6.QtCore import QThread
 
 from ui_pyside6.views.industry_view import PlanPriceRefreshWorker
+
+pytestmark = pytest.mark.ui
 
 
 class TestPlanPriceRefreshWorker:

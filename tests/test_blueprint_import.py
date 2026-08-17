@@ -2,11 +2,15 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from ui_pyside6.views.inventory.blueprint_import_worker import (
     apply_blueprint_diff,
     build_blueprint_changes,
     parse_blueprint_clipboard,
 )
+
+pytestmark = pytest.mark.ui
 
 
 def _ref_cursor(db_manager):

@@ -17,6 +17,8 @@ from core.cache import TtlLRUCache
 from services.plan_metrics import mother_subitem_cost_map
 from services.scoring_service import ScoringService
 
+pytestmark = pytest.mark.ui
+
 # ════════════════════════════════════════════════════════════════
 #  辅助 fixture / 构造器
 # ════════════════════════════════════════════════════════════════
