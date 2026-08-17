@@ -204,6 +204,29 @@ class TestGroupAndSortPlans:
         ordered = plan_service.group_and_sort_plans(plans)
         assert "_pending_children" not in ordered[0]
 
+    def test_shared_children_lifted_to_synthetic_root(self):
+        """跨 ≥2 母项引用的子行提升到「共享组件」合成根（group_id=-1），殿后于各母项组。"""
+        plans = [
+            {"id": 1, "group_id": 10, "child_level": 0, "status": "pending"},
+            {"id": 2, "group_id": 10, "child_level": 1, "status": "pending"},
+            {"id": 5, "group_id": 20, "child_level": 0, "status": "pending"},
+            {"id": 3, "group_id": 20, "child_level": 1, "source_mother_ids": "1,5", "status": "pending"},
+        ]
+        ordered = plan_service.group_and_sort_plans(plans)
+        assert [p["id"] for p in ordered] == [1, 2, 5, None, 3]  # 合成根 id=None
+        assert ordered[3]["_synthetic"] is True
+        assert ordered[3]["group_id"] == -1
+        assert ordered[3]["product_name"] == "共享组件"
+
+    def test_single_source_child_stays_in_mother_group(self):
+        """仅被一个母项引用的子行保留在原组（不提升共享区）。"""
+        plans = [
+            {"id": 1, "group_id": 10, "child_level": 0, "status": "pending"},
+            {"id": 2, "group_id": 10, "child_level": 1, "source_mother_ids": "1", "status": "pending"},
+        ]
+        ordered = plan_service.group_and_sort_plans(plans)
+        assert [p["id"] for p in ordered] == [1, 2]  # 不插入合成根
+
 
 # ══════════════════════════════════════════
 #  load_plans_for_wizard — 非完成计划数据源

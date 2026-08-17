@@ -23,6 +23,7 @@ from services.plan_execution import (
     expire_overdue_plans,
     find_available_blueprints,
     get_occupied_blueprint_ids,
+    get_plan_binding_state,
     get_plan_blueprints,
     material_requirements,
     release_blueprint,
@@ -610,11 +611,11 @@ class TestBlueprintBinding:
         assert get_occupied_blueprint_ids(user_env.db) == set()
 
     def test_bind_multiple_blueprints(self, user_env):
-        """多蓝图绑定：同计划绑定 3 张 BPC → 关联表 3 行，全部占用"""
+        """多端绑定：并行 3 条产线绑定 3 张 BPC → 关联表 3 行，全部占用"""
         b1 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
         b2 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
         b3 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
-        pid = _insert_plan(user_env.db)
+        pid = _insert_plan(user_env.db, parallels=3)
         assert bind_blueprints(pid, [b1, b2, b3])
         assert set(get_plan_blueprints(pid)) == {b1, b2, b3}
         assert get_occupied_blueprint_ids(user_env.db) == {b1, b2, b3}
@@ -622,17 +623,21 @@ class TestBlueprintBinding:
         assert get_occupied_blueprint_ids(user_env.db) == set()
 
     def test_bind_blueprints_many(self, user_env):
-        """批量绑定多计划：一次调用绑 2 计划 × 各 2 张 BPC"""
+        """批量绑定多计划：一次调用绑 2 计划 × 各 2 张 BPC（并行各 2 条产线）"""
         b1 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
         b2 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
         b3 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
         b4 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
-        p1 = _insert_plan(user_env.db)
-        p2 = _insert_plan(user_env.db)
+        p1 = _insert_plan(user_env.db, parallels=2)
+        p2 = _insert_plan(user_env.db, parallels=2)
         assert bind_blueprints_many([(p1, [b1, b2]), (p2, [b3, b4])])
         assert get_occupied_blueprint_ids(user_env.db) == {b1, b2, b3, b4}
         assert set(get_plan_blueprints(p1)) == {b1, b2}
         assert set(get_plan_blueprints(p2)) == {b3, b4}
+        # get_plan_binding_state 应返回全部绑定张数（防 ORDER BY 误用不存在的 id 列导致只回读第一张）
+        st1 = get_plan_binding_state(p1)
+        assert st1["need"] == 2 and st1["runs"] >= 1
+        assert set(st1["bound"]) == {b1, b2}
 
     def test_bpc_occupied_by_other_plan_rejected(self, user_env):
         bp_id = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
@@ -656,6 +661,101 @@ class TestBlueprintBinding:
         plan = _get_plan(user_env.db, p1)
         complete_plan(plan)
         assert get_occupied_blueprint_ids(user_env.db) == set()
+
+    def test_single_line_bind_truncates_to_parallels(self, user_env):
+        """单条产线（parallels=1）只能绑 1 张蓝图，多传截断到产线条数。"""
+        b1 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        b2 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        pid = _insert_plan(user_env.db, parallels=1, runs=2)
+        assert bind_blueprints(pid, [b1, b2])
+        assert get_plan_blueprints(pid) == [b1]
+        assert b2 not in get_occupied_blueprint_ids(user_env.db)
+
+    def test_binding_state_reports_need_and_runs(self, user_env):
+        b1 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        pid = _insert_plan(user_env.db, parallels=3, runs=4)
+        bind_blueprints(pid, [b1])
+        st = get_plan_binding_state(pid)
+        assert st["bound"] == [b1]
+        assert st["need"] == 3
+        assert st["runs"] == 4
+
+    def test_occupied_excludes_self_plan(self, user_env):
+        """占用查询排除本计划：自己的 BPC 不算被占用，可重新勾选。"""
+        bp_id = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        pid = _insert_plan(user_env.db, parallels=1)
+        bind_blueprint(pid, bp_id)
+        assert bp_id not in get_occupied_blueprint_ids(user_env.db, exclude_plan_id=pid)
+        assert bp_id in get_occupied_blueprint_ids(user_env.db)
+
+    def test_start_rejects_short_binding(self, user_env):
+        """并行 2 条产线只绑 1 张 → 启动被拒（差 N 张蓝图）。"""
+        b1 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        pid = _insert_plan(user_env.db, parallels=2, runs=2)
+        bind_blueprints(pid, [b1])
+        plan = _get_plan(user_env.db, pid)
+        res = start_plan(plan, mat_hangar_id=None)
+        assert not res["ok"]
+        assert res["code"] == "blueprint_short"
+        assert "差" in res["message"] and "1 张" in res["message"]
+
+    def test_start_rejects_unbound_parallel(self, user_env):
+        """并行 >1 且完全未绑定 → 拒绝并提示先绑定 N 张。"""
+        pid = _insert_plan(user_env.db, parallels=2, runs=2)
+        plan = _get_plan(user_env.db, pid)
+        res = start_plan(plan, mat_hangar_id=None)
+        assert not res["ok"]
+        assert res["code"] == "blueprint_short"
+
+    def test_start_rejects_insufficient_runs(self, user_env):
+        """绑定蓝图可用流程 < runs → 启动被拒（流程不足）。"""
+        b1 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=1)  # 可用 1 流程
+        pid = _insert_plan(user_env.db, parallels=1, runs=5)
+        bind_blueprints(pid, [b1])
+        plan = _get_plan(user_env.db, pid)
+        res = start_plan(plan, mat_hangar_id=None)
+        assert not res["ok"]
+        assert res["code"] == "blueprint_short"
+        assert "流程不足" in res["message"]
+
+    def test_complete_rejects_short_binding(self, user_env):
+        """完成时绑定不足（2 条产线仅 1 张）→ 拒绝完成。"""
+        b1 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        pid = _insert_plan(user_env.db, status="ready", parallels=2, runs=2)
+        bind_blueprints(pid, [b1])
+        plan = _get_plan(user_env.db, pid)
+        res = complete_plan(plan)
+        assert not res["ok"]
+        assert "绑定不满足" in res["message"]
+
+    def test_complete_consumes_per_bind_runs(self, user_env):
+        """完成时每张绑定 BPC 按 runs 精确扣减（2 条产线各扣 runs=2）。"""
+        b1 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10, quantity=1)
+        b2 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10, quantity=1)
+        pid = _insert_plan(user_env.db, status="ready", parallels=2, runs=2)
+        bind_blueprints(pid, [b1, b2])
+        plan = _get_plan(user_env.db, pid)
+        res = complete_plan(plan)
+        assert res["ok"]
+        with user_env.db.connect("user") as conn:
+            rows = {
+                r[0]: (int(r[1]), int(r[2]))
+                for r in conn.execute(
+                    "SELECT id, runs, quantity FROM user_blueprints WHERE id IN (?,?)", (b1, b2)
+                ).fetchall()
+            }
+        assert rows[b1] == (8, 1)  # 10 流程消耗 2 → 剩 8
+        assert rows[b2] == (8, 1)
+
+    def test_binding_replace_no_residue(self, user_env):
+        """换绑（全量替换）：改绑另一张 BPC 后旧关联行被清除。"""
+        b1 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        b2 = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        pid = _insert_plan(user_env.db, parallels=2, runs=2)
+        bind_blueprints(pid, [b1])
+        assert bind_blueprints(pid, [b2])
+        assert get_plan_blueprints(pid) == [b2]
+        assert b1 not in get_occupied_blueprint_ids(user_env.db)
 
 
 class TestFindAvailableBlueprints:

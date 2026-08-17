@@ -1,18 +1,21 @@
 """蓝图选择弹窗 — 单击计划蓝图列 / 右键「绑定库存蓝图」时弹出。
 
-列出该产品对应的库存蓝图（BPO/BPC、ME/TE、剩余流程、机库、占用状态），
-单选绑定到计划；BPC 已被其他活跃计划占用或容量不足的行置灰。
+一条产线（parallels 之一）独占一张库存蓝图：parallels 条产线需勾选 parallels 张蓝图，
+每张可用流程 ≥ runs（该产线串行轮数）。用复选框多选，勾选/取消即实时写入绑定
+（勾选集 = 最终绑定集，全量替换）；底部状态栏常显「已选 X / 需 Y 张」，不足提示还差几张。
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDialog,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -26,23 +29,38 @@ from core.container import get_container
 from services import plan_execution
 from services.industry_dialog_queries import get_blueprint_picker_data
 
+_COL_CHECK = 0
+_COL_TYPE = 1
+_COL_ME = 2
+_COL_TE = 3
+_COL_AVAIL = 4
+_COL_HANGAR = 5
+
+_BIG_INFINITY = 10**15
+
+
+def _available_runs(opt: dict) -> int:
+    """BPC 可用流程 = quantity×runs；BPO 视为无限。"""
+    if opt.get("is_bpo"):
+        return _BIG_INFINITY
+    return int(opt.get("available_runs") or 0)
+
 
 class BlueprintPickerDialog(QDialog):
-    """绑定库存蓝图弹窗"""
+    """蓝图多选绑定弹窗 — 一条产线一张蓝图，复选框即绑即生效"""
 
-    _HEADERS = ["选择", "类型", "ME", "TE", "可用流程", "机库", "状态"]
+    _HEADERS = ["勾选", "类型", "ME", "TE", "可用流程", "机库"]
 
     def __init__(self, plan: dict, parent: QWidget | None = None):
         super().__init__(parent)
         self._plan = plan
-        self.selected_blueprint_id: int | None = None
-        self.unbound: bool = False
+        self.selected_blueprint_ids: list[int] = []  # 确认后的绑定集合
+        self.need_count: int = 1  # 需要的产线条数（parallels）
         self._options: list[dict] = []
-        self._selected_row: int = -1
-        self._blueprint_type_id: int | None = None
+        self._loading = True  # 构建期屏蔽 _reconcile 的即时绑定
 
         self.setWindowTitle(f"绑定库存蓝图 - {plan.get('product_name', '')}")
-        self.setMinimumSize(640, 440)
+        self.setMinimumSize(680, 480)
         self._build_ui()
         self._load()
         theme.add_theme_listener(self._on_theme_changed)
@@ -62,30 +80,31 @@ class BlueprintPickerDialog(QDialog):
         self._table.setColumnCount(len(self._HEADERS))
         self._table.setHorizontalHeaderLabels(self._HEADERS)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
-        self._table.clicked.connect(self._on_row_clicked)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._show_context_menu)
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(_COL_HANGAR, QHeaderView.ResizeMode.Stretch)
         root.addWidget(self._table, 1)
+
+        self._status_label = QLabel("")
+        root.addWidget(self._status_label)
 
         self._empty_hint = QLabel("")
         self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(self._empty_hint)
 
-        btn_layout = QVBoxLayout()
+        btn_layout = QHBoxLayout()
         npc_btn = QPushButton("查看NPC卖家")
         npc_btn.clicked.connect(self._on_npc_seller)
         btn_layout.addWidget(npc_btn)
-        self._unbind_btn = QPushButton("解除绑定")
-        self._unbind_btn.clicked.connect(self._on_unbind)
-        self._unbind_btn.setEnabled(bool(self._plan.get("assigned_blueprint_id")))
-        btn_layout.addWidget(self._unbind_btn)
-        bind_btn = QPushButton("绑定选中蓝图")
-        bind_btn.clicked.connect(self._on_bind)
-        btn_layout.addWidget(bind_btn)
+        btn_layout.addStretch(1)
+        done_btn = QPushButton("完成")
+        done_btn.clicked.connect(self._on_done)
+        btn_layout.addWidget(done_btn)
         cancel_btn = QPushButton("取消")
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
@@ -94,45 +113,68 @@ class BlueprintPickerDialog(QDialog):
     # ── 数据加载 ──────────────────────────────────────────────
 
     def _load(self) -> None:
+        plan_id = self._plan.get("id")
         product_type_id = self._plan.get("product_type_id")
         runs = max(int(self._plan.get("runs", 1)), 1)
-        parallels = max(int(self._plan.get("parallels", 1)), 1)
-        need_runs = runs * parallels
+
+        # 以 DB 权威值为准读取当前绑定与产线数
+        state: dict = (
+            plan_execution.get_plan_binding_state(plan_id)
+            if plan_id
+            else {"bound": [], "need": int(self._plan.get("parallels") or 1), "runs": runs}
+        )
+        bound_ids = list(state.get("bound") or [])
+        need = max(int(state.get("need") or 1), 1)
+        db_runs = max(int(state.get("runs") or 1), 1)
+        self.need_count = need
+
         self._need_label.setText(
-            f"产品 {self._plan.get('product_name', '')}  需要蓝图流程: {need_runs}（{parallels} 并行 × {runs} 流程）"
+            f"产品 {self._plan.get('product_name', '')}  需 {need} 张蓝图（{need} 条并行产线）× 每条 {db_runs} 流程"
         )
 
-        assigned_id = self._plan.get("assigned_blueprint_id")
         blueprint_type_id, options = get_blueprint_picker_data(get_container().db, int(product_type_id or 0))
+        self._blueprint_type_id = blueprint_type_id
         if blueprint_type_id is None:
             self._empty_hint.setText("无法确定该产品的蓝图类型")
             self._table.setEnabled(False)
+            self._loading = False
             return
-        self._blueprint_type_id = blueprint_type_id
-
         self._options = options
         if not options:
             self._empty_hint.setText("库存中没有该蓝图。可通过「查看NPC卖家」购买原图，或从游戏粘贴导入。")
             self._table.setEnabled(False)
+            self._loading = False
             return
 
-        self._table.setRowCount(len(options))
-        for i, opt in enumerate(options):
-            # runs=-1 视为无限流程（防御 is_bpo 字段异常），不置灰
-            is_infinite = opt.get("is_bpo") or opt.get("runs") == -1
-            disabled = not is_infinite and (opt.get("occupied") or (opt.get("available_runs") or 0) < need_runs)
-            bp_type = "原图" if opt.get("is_bpo") else "拷贝"
-            avail = "无限" if is_infinite else f"{opt.get('available_runs', 0):,.0f}"
-            status = "占用中" if opt.get("occupied") else "可用"
-            if not is_infinite and not opt.get("occupied") and (opt.get("available_runs") or 0) < need_runs:
-                status = "流程不足"
+        # 占用校正：排除本计划自身占用（自己已绑定的 BPC 显示可用、默认勾选）
+        occupied_others = plan_execution.get_occupied_blueprint_ids(get_container().db, exclude_plan_id=plan_id)
+        bound_set = set(bound_ids)
 
+        self._table.setRowCount(len(options))
+        self._checkboxes: list[QCheckBox] = []
+        for i, opt in enumerate(options):
+            is_self = opt["id"] in bound_set
+            occupied = is_self or (opt.get("occupied") or opt["id"] in occupied_others)
+            # 只有被其他活跃计划占用的行禁勾选；流程不足仅黄字提示但仍可勾选
+            disabled = occupied and not is_self
+            avail = _available_runs(opt)
+            runs_short = not opt.get("is_bpo") and avail < db_runs
+
+            cb = QCheckBox()
+            cb.setEnabled(not disabled)
+            cb.setChecked(is_self)
+            cb.toggled.connect(self._on_toggled)
+            self._table.setCellWidget(i, _COL_CHECK, self._centered(cb))
+            self._checkboxes.append(cb)
+
+            bp_type = "原图" if opt.get("is_bpo") else "拷贝"
+            avail_text = "无限" if opt.get("is_bpo") else f"{avail:,}"
+            status = "占用中" if occupied and not is_self else ("流程不足" if runs_short else "可用")
             cells = [
-                "",
                 bp_type,
                 str(opt.get("me_level", 0)),
                 str(opt.get("te_level", 0)),
-                avail,
+                avail_text,
                 opt.get("hangar_name", "") or "-",
                 status,
             ]
@@ -140,68 +182,150 @@ class BlueprintPickerDialog(QDialog):
                 item = QTableWidgetItem(text)
                 if disabled:
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
-                    item.setForeground(QColor(theme.TEXT_SECONDARY))
-                else:
-                    item.setForeground(QColor(theme.TEXT_PRIMARY))
-                self._table.setItem(i, c, item)
-            if opt.get("id") == assigned_id and not disabled:
-                self._selected_row = i
+                self._table.setItem(i, c + 1, item)  # 0 列是复选框，文本列从 1 起
 
-        self._refresh_selector()
-        if self._selected_row >= 0:
-            self._table.selectRow(self._selected_row)
-        else:
-            self._table.selectRow(0)
-            self._selected_row = 0
-        self._table.resizeColumnsToContents()
+        self._loading = False
+        self._reconcile()
 
     # ── 交互 ──────────────────────────────────────────────────
 
-    def _on_row_clicked(self, index) -> None:
-        """单击表格行 → 选中该行（仅 enabled 行可选）"""
-        row = index.row()
-        # 检查该行是否被禁用（检查任意一列的 enabled 标志）
-        item = self._table.item(row, 1)
-        if item is None or not (item.flags() & Qt.ItemFlag.ItemIsEnabled):
-            return
-        self._selected_row = row
-        self._refresh_selector()
-        self._table.selectRow(row)
+    @staticmethod
+    def _centered(w: QWidget) -> QWidget:
+        wrap = QWidget()
+        lay = QHBoxLayout(wrap)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(w)
+        return wrap
 
-    def _refresh_selector(self) -> None:
-        for i in range(self._table.rowCount()):
-            item = self._table.item(i, 0)
-            if item is None:
-                continue
-            item.setText("●" if i == self._selected_row else "")
-
-    def _on_bind(self) -> None:
-        if self._selected_row < 0 or self._selected_row >= len(self._options):
+    def _on_toggled(self, _checked: bool) -> None:
+        if self._loading:
             return
-        opt = self._options[self._selected_row]
+        need = max(int(self.need_count), 1)
+        # 一条产线一张蓝图：最多勾 need 张，满额后新增勾选回滚并提示，
+        # 保证绑定的就是用户亲手勾选的那几张（无静默截断）。
+        if need and self._count_checked() > need:
+            cb = self.sender()
+            if isinstance(cb, QCheckBox):
+                cb.blockSignals(True)
+                cb.setChecked(False)
+                cb.blockSignals(False)
+            self._refresh_status(truncated=True)
+            return
+        self._reconcile()
+
+    def _count_checked(self) -> int:
+        return sum(1 for cb in self._checkboxes if cb.isChecked() and cb.isEnabled())
+
+    # ── 多选 + 右键批量勾选 ─────────────────────────────────
+
+    def _show_context_menu(self, pos) -> None:
+        """右键菜单：对多选行批量勾选/取消勾选（而非逐个点复选框）。"""
+        indexes = self._table.selectionModel().selectedRows() if self._table.selectionModel() else []
+        sel_rows = {idx.row() for idx in indexes}
+        # 右键未落在选中集时，补入右键所在行
+        hit = self._table.indexAt(pos)
+        if hit.isValid():
+            sel_rows.add(hit.row())
+        # 过滤掉 disabled 行（被其他计划占用不可勾选）
+        enabled_rows = [r for r in sel_rows if r < len(self._checkboxes) and self._checkboxes[r].isEnabled()]
+        if not enabled_rows:
+            return
+        menu = QMenu(self)
+        any_checked = any(self._checkboxes[r].isChecked() for r in enabled_rows)
+        menu.addAction("勾选所选蓝图", lambda: self._set_selected_checked(enabled_rows, True))
+        menu.addAction(
+            "取消勾选所选蓝图" if any_checked else "取消勾选所选蓝图",
+            lambda: self._set_selected_checked(enabled_rows, False),
+        )
+        menu.addSeparator()
+        if any_checked:
+            menu.addAction("仅保留所选（取消其他）", lambda: self._set_only_checked(enabled_rows))
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
+    def _set_selected_checked(self, rows: list[int], checked: bool) -> None:
+        self._loading = True  # 批量设值期间屏蔽逐次 reconcile（统一收尾一次写入）
+        try:
+            for r in rows:
+                if 0 <= r < len(self._checkboxes):
+                    self._checkboxes[r].setChecked(checked)
+        finally:
+            self._loading = False
+        self._reconcile()
+
+    def _set_only_checked(self, rows: list[int]) -> None:
+        keep = set(rows)
+        self._loading = True
+        try:
+            for r, cb in enumerate(self._checkboxes):
+                if cb.isEnabled():
+                    cb.setChecked(r in keep)
+        finally:
+            self._loading = False
+        self._reconcile()
+
+    def _reconcile(self) -> None:
+        """收集勾选集 → 全量替换写入绑定 → 刷新状态栏。"""
         plan_id = self._plan.get("id")
-        if not plan_id:
-            return
-        if not plan_execution.bind_blueprint(plan_id, opt["id"]):
-            QMessageBox.warning(self, "绑定失败", "该蓝图已被其他活跃计划占用")
-            return
-        self.selected_blueprint_id = int(opt["id"])
-        self.accept()
+        checked: list[int] = []
+        for i, cb in enumerate(self._checkboxes):
+            if cb.isEnabled() and cb.isChecked() and i < len(self._options):
+                checked.append(int(self._options[i]["id"]))
+        # 一条产线一张蓝图：最多绑 need 张（多余截断，避免用户误以为多绑了）
+        # 选项已按 BPO 优先排序，截断自然优先保留原图
+        need = max(int(self.need_count), 1)
+        truncated = len(checked) > need
+        if truncated:
+            checked = checked[:need]
 
-    def _on_unbind(self) -> None:
-        """解除当前蓝图绑定（释放占用），不消耗 BPC"""
-        plan_id = self._plan.get("id")
-        if not plan_id:
-            return
-        plan_execution.release_blueprint(plan_id)
-        self.unbound = True
+        if plan_id:
+            if not plan_execution.bind_blueprints(plan_id, checked):
+                # 竞态：刚被其他计划占用 → 还原勾选并重载占用
+                state = plan_execution.get_plan_binding_state(plan_id)
+                valid = set(state["bound"])
+                for i, cb in enumerate(self._checkboxes):
+                    if i >= len(self._options):
+                        continue
+                    cb.blockSignals(True)
+                    cb.setChecked(self._options[i]["id"] in valid)
+                    cb.blockSignals(False)
+                QMessageBox.warning(self, "绑定失败", "所选蓝图刚被其他活跃计划占用，请重新勾选")
+                checked = [int(self._options[i]["id"]) for i, cb in enumerate(self._checkboxes) if cb.isChecked()]
+
+        self.selected_blueprint_ids = checked
+        self._refresh_status(truncated=truncated)
+
+    def _refresh_status(self, *, truncated: bool = False) -> None:
+        count = len(self.selected_blueprint_ids)
+        need = max(int(self.need_count), 1)
+        if truncated:
+            self._status_label.setText(f"一条产线一张蓝图：已按需取前 {need} 张兑现（勾选 {count + 0} → 绑 {need} 张）")
+            self._status_label.setStyleSheet(f"color: {theme.ACCENT_ORANGE}; font-weight: 600; font-size: 12px;")
+        elif count >= need:
+            self._status_label.setText(f"已选 {count} / 需 {need} 张 ✔")
+            self._status_label.setStyleSheet(f"color: {theme.GREEN}; font-weight: 600; font-size: 12px;")
+        else:
+            self._status_label.setText(f"已选 {count} / 需 {need} 张 — 还差 {need - count} 张蓝图")
+            self._status_label.setStyleSheet(f"color: {theme.ACCENT_RED}; font-weight: 600; font-size: 12px;")
+
+    def _on_done(self) -> None:
+        count = len(self.selected_blueprint_ids)
+        if count < self.need_count:
+            ret = QMessageBox.question(
+                self,
+                "绑定不足",
+                f"当前仅绑定 {count}/{self.need_count} 条产线的蓝图，不足部分完成后无法启动。仍要关闭吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if ret != QMessageBox.StandardButton.Yes:
+                return
         self.accept()
 
     def _on_npc_seller(self) -> None:
         from ui_pyside6.dialogs.npc_seller_dialog import NpcSellerDialog
 
-        bp_id = self._blueprint_type_id
-        if not bp_id:
+        bp_id = self._blueprint_type_id if hasattr(self, "_blueprint_type_id") else None
+        if bp_id is None:
             return
         name = self._plan.get("product_name", str(bp_id))
         dlg = NpcSellerDialog(bp_id, name, self)
@@ -222,3 +346,5 @@ class BlueprintPickerDialog(QDialog):
             f" background: transparent; color: {theme.TEXT_PRIMARY}; font-size: 12px; }}"
             f"QPushButton:hover {{ border-color: {theme.PRIMARY}; color: {theme.PRIMARY}; }}"
         )
+        if hasattr(self, "_status_label"):
+            self._refresh_status()

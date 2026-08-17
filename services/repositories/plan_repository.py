@@ -51,6 +51,9 @@ class PlanRepository:
             "material_short",
             "deducted_materials",
             "solar_system_id",
+            "source_mother_ids",
+            "component_parent_type_id",
+            "demand",
         }
     )
 
@@ -92,7 +95,10 @@ class PlanRepository:
         mat_hangar_id INTEGER DEFAULT NULL,
         material_short TEXT DEFAULT '',
         deducted_materials TEXT DEFAULT '',
-        solar_system_id INTEGER DEFAULT NULL
+        solar_system_id INTEGER DEFAULT NULL,
+        source_mother_ids TEXT DEFAULT '',
+        component_parent_type_id INTEGER DEFAULT NULL,
+        demand INTEGER DEFAULT 0
     );"""
 
     def ensure_table(self):
@@ -212,15 +218,19 @@ class PlanRepository:
         mat_hangar_id: int | None,
         solar_system_id: int | None,
         deposit_hangar_id: int | None = None,
+        source_mother_ids: str = "",
+        component_parent_type_id: int | None = None,
+        demand: int = 0,
     ) -> int:
-        """插入一条拆解子计划（含分组/层级/机库字段）。"""
+        """插入一条拆解子计划（含分组/层级/机库/引用式需求字段）。"""
         with self._db.connect("user") as conn:
             cur = conn.execute(
                 """
                 INSERT INTO production_plans
                 (product_type_id, product_name, blueprint_type_id, runs, parallels, me_level, te_level,
-                 status, group_number, sub_level, mat_hangar_id, solar_system_id, deposit_hangar_id, materials_ready)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 1)
+                 status, group_number, sub_level, mat_hangar_id, solar_system_id, deposit_hangar_id,
+                 materials_ready, source_mother_ids, component_parent_type_id, demand)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?)
                 """,
                 (
                     product_type_id,
@@ -235,6 +245,9 @@ class PlanRepository:
                     mat_hangar_id,
                     solar_system_id,
                     deposit_hangar_id,
+                    source_mother_ids,
+                    component_parent_type_id,
+                    demand,
                 ),
             )
             return int(cur.lastrowid or 0)

@@ -41,7 +41,8 @@ def _build_dbs(db_manager):
             "product_name TEXT, blueprint_type_id INTEGER, runs INTEGER DEFAULT 1, parallels INTEGER DEFAULT 1, "
             "me_level INTEGER DEFAULT 0, te_level INTEGER DEFAULT 0, status TEXT DEFAULT 'pending', "
             "group_number INTEGER DEFAULT 0, sub_level INTEGER DEFAULT 0, mat_hangar_id INTEGER, "
-            "solar_system_id INTEGER, deposit_hangar_id INTEGER, materials_ready INTEGER DEFAULT 0)"
+            "solar_system_id INTEGER, deposit_hangar_id INTEGER, materials_ready INTEGER DEFAULT 0, "
+            "source_mother_ids TEXT DEFAULT '', component_parent_type_id INTEGER, demand INTEGER DEFAULT 0)"
         )
         conn.execute("CREATE TABLE hangars (id INTEGER PRIMARY KEY, name TEXT, solar_system_id INTEGER)")
         conn.execute("INSERT INTO hangars VALUES (1,'矿仓',30000145)")
@@ -101,14 +102,16 @@ class TestParentDecomposeDialogMulti:
             assert [m[2] for m in mothers] == [0, 0]  # sub_level=0
             assert len({m[1] for m in mothers}) == 2  # 组号互异
             subs = conn.execute(
-                "SELECT product_type_id, sub_level, materials_ready, group_number "
+                "SELECT product_type_id, sub_level, materials_ready "
                 "FROM production_plans WHERE id NOT IN (1,2) ORDER BY id"
             ).fetchall()
-            assert len(subs) == 2  # 每组各一个子项
-            assert all(s[0] == 1001 for s in subs)
-            assert all(s[1] == 1 for s in subs)  # 子级 1
-            assert all(s[2] == 1 for s in subs)  # materials_ready=1（需求4 自动勾选）
-            assert len({s[3] for s in subs}) == 2  # 落在各自组
+            # 共享组件 1001 被两母项引用 → 全局合并为一行（引用式需求）
+            assert len(subs) == 1
+            assert subs[0][0] == 1001
+            assert subs[0][1] == 1  # 子级 1
+            assert subs[0][2] == 1  # materials_ready=1（需求4 自动勾选）
+            src = conn.execute("SELECT source_mother_ids FROM production_plans WHERE product_type_id=1001").fetchone()
+            assert sorted(int(x) for x in src[0].split(",") if x) == [1, 2]
 
     def test_reuses_existing_group_number(self, db_manager, monkeypatch, qapp):
         _build_dbs(db_manager)
@@ -159,5 +162,5 @@ class TestParentDecomposeDialogMulti:
         dlg._on_accept()
         with db_manager.connect("user") as conn:
             row = conn.execute("SELECT runs, parallels, me_level, te_level FROM production_plans WHERE id=2").fetchone()
-        # 需求=5×2=10，单轮产出 1 → runs=10；parallels 重置为拆解默认 1，ME-TE 刷新
-        assert tuple(row) == (10, 1, 0, 0)
+        # 需求=5×2=10，单轮产出 1、并行保留 5 → runs=ceil(10/(5×1))=2；ME-TE 刷新
+        assert tuple(row) == (2, 5, 0, 0)

@@ -216,6 +216,36 @@ class BlueprintTab(QWidget):
         """主题切换时重新应用内联样式表"""
         self._bp_count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
 
+    def showEvent(self, event):
+        """每次蓝图页显示时重算占用标记（计划页绑定子项/蓝图后回到仓库可见橙色）。
+        不重置排序/选择，仅刷新占用状态并重绘。"""
+        super().showEvent(event)
+        try:
+            self.refresh_occupancy()
+        except Exception:
+            from core.logger import log
+
+            log.exception("刷新蓝图占用标记失败")
+
+    def refresh_occupancy(self):
+        """轻量重算被活跃生产计划绑定的蓝图占用标记（不重载全表）。"""
+        if not getattr(self, "_all_rows", None):
+            return
+        try:
+            from services.plan_execution import get_occupied_blueprint_ids
+
+            occupied = get_occupied_blueprint_ids()
+        except Exception:
+            return
+        changed = False
+        for r in self._all_rows:
+            oc = r["id"] in occupied
+            if r.get("occupied") != oc:
+                r["occupied"] = oc
+                changed = True
+        if changed and getattr(self, "_bp_table", None):
+            self._bp_table.viewport().update()
+
     def _load_market_categories(self):
         """加载根级市场分类到下拉框"""
         for mgid, name in get_container().item_repo.get_root_market_categories():

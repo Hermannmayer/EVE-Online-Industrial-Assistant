@@ -63,15 +63,19 @@ class TestTimeColumn:
 class TestBlueprintColumn:
     def test_shows_has_image(self):
         m = PlanTableModel([_plan(has_image=True)])
-        assert m.data(m.index(0, _COL_BLUEPRINT), Qt.ItemDataRole.DisplayRole).endswith("[有图]")
+        assert "[有图]" in m.data(m.index(0, _COL_BLUEPRINT), Qt.ItemDataRole.DisplayRole)
 
     def test_shows_no_image(self):
         m = PlanTableModel([_plan(has_image=False)])
-        assert m.data(m.index(0, _COL_BLUEPRINT), Qt.ItemDataRole.DisplayRole).endswith("[没图]")
+        assert "[没图]" in m.data(m.index(0, _COL_BLUEPRINT), Qt.ItemDataRole.DisplayRole)
 
     def test_bound_blueprint_marker(self):
         m = PlanTableModel([_plan(has_image=True, assigned_blueprint_id=5)])
-        assert m.data(m.index(0, _COL_BLUEPRINT), Qt.ItemDataRole.DisplayRole).endswith("[有图] *")
+        assert m.data(m.index(0, _COL_BLUEPRINT), Qt.ItemDataRole.DisplayRole).endswith("[有图] ✔1/1")
+
+    def test_short_blueprint_marker(self):
+        m = PlanTableModel([_plan(has_image=True, need_blueprints=3)])
+        assert m.data(m.index(0, _COL_BLUEPRINT), Qt.ItemDataRole.DisplayRole).endswith("[有图] 差3张")
 
 
 class TestTick:

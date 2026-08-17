@@ -12,6 +12,7 @@ import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from ui_pyside6.icon_cache import load_item_icon
 from ui_pyside6.views.industry.plan_table_constants import (
+    COL_BLUEPRINT,
     COL_CATEGORY,
     COL_CHECKBOX,
     COL_ICON,
@@ -133,6 +134,13 @@ class PlanTableDelegate(QStyledItemDelegate):
                 return QColor(theme.ACCENT_ORANGE)
             if status == "pending":
                 return QColor(theme.TEXT_SECONDARY)
+        if c == COL_BLUEPRINT:
+            # 蓝图绑定不足（非已完成的计划）标红，提示"差 N 张蓝图"
+            if (p.get("status") or "") not in ("completed", "done"):
+                bound = p.get("bound_blueprint_ids") or []
+                need = int(p.get("need_blueprints") or 1)
+                if len(bound) < need:
+                    return QColor(theme.ACCENT_RED)
         return None
 
     def initStyleOption(self, option, index):

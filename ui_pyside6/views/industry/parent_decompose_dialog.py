@@ -142,45 +142,24 @@ class ParentDecomposeDialog(QDialog):
         return get_item_name(get_container().db, type_id)
 
     def _on_accept(self) -> None:
-        from services import inventory_manager
-
         repo = get_container().plan_repo
-        for plan, gnum, lines in self._assignments:
-            # 从材料机库带出星系（避免子计划空星系 → 回退吉他 SCI）
-            solar_system_id = inventory_manager.get_hangar_system_id(plan.get("mat_hangar_id"))
+        for plan, gnum, _lines in self._assignments:
+            # 母项落组号（供 UI 折叠归组）；子项由 rebuild_children 统一生成/合并
             if plan.get("id"):
                 repo.update(plan["id"], group_number=gnum, sub_level=0)
                 plan["group_number"] = gnum
                 plan["sub_level"] = 0
                 plan["group_id"] = gnum
                 plan["child_level"] = 0
-            for line in lines:
-                name = self._resolve_name(line["product_type_id"])
-                existing_id = repo.find_by_group_product(gnum, line["product_type_id"])
-                if existing_id:
-                    # 重跑拆解：按新 line 整体刷新 runs/parallels/ME-TE，避免残留旧并行数导致超量
-                    repo.update(
-                        existing_id,
-                        runs=line["runs"],
-                        parallels=line["parallels"],
-                        me_level=line["me_level"],
-                        te_level=line["te_level"],
-                        materials_ready=1,
-                    )
-                else:
-                    repo.insert_child_plan(
-                        product_type_id=line["product_type_id"],
-                        product_name=name,
-                        blueprint_type_id=line["blueprint_type_id"],
-                        runs=line["runs"],
-                        parallels=line["parallels"],
-                        me_level=line["me_level"],
-                        te_level=line["te_level"],
-                        group_number=gnum,
-                        sub_level=line["sub_level"],
-                        mat_hangar_id=plan.get("mat_hangar_id"),
-                        solar_system_id=solar_system_id,
-                        deposit_hangar_id=line.get("deposit_hangar_id"),
-                    )
-        QMessageBox.information(self, "完成", f"已拆解 {self._total_lines} 个子项产线")
+
+        # 按全局引用式需求重放子项：共享组件跨母项合并为一行，需求=所有母项之和。
+        # 拆解模式 create+prune：补建缺失子项、清理不再被引用的旧子项。
+        from services.plan_rebuild import rebuild_children
+
+        res = rebuild_children(create=True, prune=True)
+        QMessageBox.information(
+            self,
+            "完成",
+            f"已重算子项产线：新增 {res['created']}、更新 {res['updated']}、清理 {res['deleted']} 条",
+        )
         self.accept()

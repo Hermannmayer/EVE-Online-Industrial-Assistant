@@ -71,7 +71,7 @@ def collect_group_members(all_plans: list[dict], selected: list[dict]) -> tuple[
 ### `_decompose`
 
 ```python
-def _decompose(conn: Connection, type_id: int, needed_qty: float, depth: int, stock: dict[int, int], seen: set[int]) -> tuple[list[dict], int]
+def _decompose(conn: Connection, type_id: int, needed_qty: float, depth: int, stock: dict[int, int], seen: set[int], mat_hangar_id: int | None=None) -> tuple[list[dict], int]
 ```
 
 递归展开一层。返回 (子项产线行, 本层可被库存覆盖的产出量)。

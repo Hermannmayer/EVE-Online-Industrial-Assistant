@@ -348,7 +348,7 @@ def delete_blueprints_batch(ids: list[int]) -> int
 
 批量删除蓝图，返回删除行数
 
-定义行：`704`
+定义行：`713`
 
 ### `move_blueprints_to_hangar`
 
@@ -358,7 +358,7 @@ def move_blueprints_to_hangar(ids: list[int], hangar_id: int) -> int
 
 批量移动蓝图到目标机库
 
-定义行：`715`
+定义行：`735`
 
 ### `update_blueprints_batch`
 
@@ -368,7 +368,7 @@ def update_blueprints_batch(ids: list[int], **kwargs) -> int
 
 批量更新蓝图属性（me_level, te_level, runs, cost_per_run 等）
 
-定义行：`726`
+定义行：`746`
 
 ### `get_blueprint_product_info`
 
@@ -378,7 +378,7 @@ def get_blueprint_product_info(blueprint_type_id: int) -> dict | None
 
 获取蓝图的产物信息（名称、产量、制造时间）
 
-定义行：`743`
+定义行：`763`
 
 ### `get_blueprint_product_info_batch`
 
@@ -388,7 +388,7 @@ def get_blueprint_product_info_batch(bp_ids: list[int]) -> dict[int, dict]
 
 批量获取蓝图产物信息，返回 &#123;blueprint_type_id: &#123;product_type_id, product_name, product_quantity, base_time&#125;&#125;
 
-定义行：`773`
+定义行：`793`
 
 ### `get_blueprint_materials_batch`
 
@@ -398,7 +398,7 @@ def get_blueprint_materials_batch(bp_ids: list[int]) -> dict[int, list[tuple[int
 
 批量获取蓝图材料，返回 &#123;blueprint_type_id: [(material_type_id, quantity), ...]&#125;
 
-定义行：`804`
+定义行：`824`
 
 ### `check_blueprint_exists`
 
@@ -408,7 +408,7 @@ def check_blueprint_exists(blueprint_type_id: int) -> bool
 
 检查用户蓝图库中是否已存在指定类型的蓝图
 
-定义行：`825`
+定义行：`845`
 
 ### `get_blueprint_tech_levels`
 
@@ -418,7 +418,7 @@ def get_blueprint_tech_levels()
 
 从 reference.db 获取各蓝图的科技等级
 
-定义行：`833`
+定义行：`853`
 
 ### `get_blueprint_reaction_ids`
 
@@ -428,4 +428,4 @@ def get_blueprint_reaction_ids() -> set[int]
 
 获取所有反应公式的 blueprint_type_id
 
-定义行：`870`
+定义行：`890`

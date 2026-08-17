@@ -215,6 +215,15 @@ class PlanTable(QWidget):
         if not plan:
             return
 
+        # 「共享组件」合成根节点：无计划 id，不支持行操作（仅作分组标题/折叠）
+        if plan.get("_synthetic"):
+            model = self._model
+            if model is not None:
+                menu = QMenu(self)
+                menu.addAction("展开/折叠共享组件", lambda: model.toggle_collapse(-1))
+                menu.exec(self._table.viewport().mapToGlobal(pos))
+            return
+
         def batch(fn):
             """批量操作：对每行执行 fn(row)"""
             for r in selected_rows:
@@ -282,6 +291,8 @@ class PlanTable(QWidget):
         a.triggered.connect(lambda: self._adjust_children(selected_rows))
         a = smart_menu.addAction("子项大规模产线并行")
         a.triggered.connect(lambda: self._mass_parallel(selected_rows))
+        a = smart_menu.addAction("重算子项（按母项当前需求）")
+        a.triggered.connect(lambda: self._recalc_children(selected_rows))
 
         menu.addSeparator()
 
@@ -307,6 +318,10 @@ class PlanTable(QWidget):
         elif index.column() == COL_BLUEPRINT:
             self._show_blueprint_picker(row)
         elif index.column() == COL_PRODUCT:
+            # 「共享组件」合成根：点击切换共享区折叠
+            if plan.get("_synthetic"):
+                self._model.toggle_collapse(-1)
+                return
             # 母项行（child_level==0）且有子项时，点击切换折叠
             gid = plan.get("group_id") or plan.get("group_number") or 0
             lvl = int(plan.get("child_level") or plan.get("sub_level") or 0)
@@ -325,7 +340,11 @@ class PlanTable(QWidget):
         elif index.column() == COL_PRODUCT and plan is not None:
             gid = plan.get("group_id") or plan.get("group_number") or 0
             lvl = int(plan.get("child_level") or plan.get("sub_level") or 0)
-            cursor = Qt.CursorShape.PointingHandCursor if (lvl == 0 and gid and self._model._has_children(gid)) else Qt.CursorShape.ArrowCursor
+            cursor = (
+                Qt.CursorShape.PointingHandCursor
+                if (lvl == 0 and gid and self._model._has_children(gid))
+                else Qt.CursorShape.ArrowCursor
+            )
         else:
             cursor = Qt.CursorShape.ArrowCursor
         self._table.viewport().setCursor(cursor)
@@ -352,6 +371,7 @@ class PlanTable(QWidget):
         plan["completed_at"] = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
         plan["assigned_blueprint_id"] = None
         self._model.layoutChanged.emit()
+        self._rebuild_subitems()
         self.plan_updated.emit()
 
     def _edit_plan(self, row: int) -> None:
@@ -430,6 +450,7 @@ class PlanTable(QWidget):
                         metrics["margin"] = adj_margin
             plan.update(metrics)
 
+            self._rebuild_subitems()
             self._model.layoutChanged.emit()
             self.plan_updated.emit()
 
@@ -491,6 +512,7 @@ class PlanTable(QWidget):
                 if "mat_hangar_id" in fields:
                     plan["mat_hangar_id"] = fields["mat_hangar_id"]
                     plan["solar_system_id"] = fields["solar_system_id"]
+            self._rebuild_subitems()
             self._model.layoutChanged.emit()
             self.plan_updated.emit()
 
@@ -585,6 +607,7 @@ class PlanTable(QWidget):
                 ids.append(plan["id"])
         if ids:
             get_container().plan_repo.update_many(ids, me_level=me_val, te_level=te_val)
+        self._rebuild_subitems()
         self._model.layoutChanged.emit()
         self.plan_updated.emit()
 
@@ -820,6 +843,7 @@ class PlanTable(QWidget):
         model.layoutChanged.emit()
         if not res.get("deposited"):
             QMessageBox.information(self, "完成", res.get("message", "计划已完成"))
+        self._rebuild_subitems()
         self.plan_updated.emit()
 
     def _show_blueprint_picker(self, row: int) -> None:
@@ -834,41 +858,83 @@ class PlanTable(QWidget):
 
         dlg = BlueprintPickerDialog(plan, self)
         if dlg.exec():
-            if dlg.unbound:
-                plan["assigned_blueprint_id"] = None
-            elif dlg.selected_blueprint_id is not None:
-                plan["assigned_blueprint_id"] = dlg.selected_blueprint_id
-            else:
-                return
+            bound = dlg.selected_blueprint_ids
+            plan["assigned_blueprint_id"] = bound[0] if bound else None
+            plan["bound_blueprint_ids"] = list(bound)
+            plan["need_blueprints"] = int(dlg.need_count or 1)
             model.layoutChanged.emit()
             self.plan_updated.emit()
 
     def _delete_row(self, row: int) -> None:
         self._delete_rows([row])
 
+    def _rebuild_subitems(self) -> None:
+        """计划（母项）变更后自动联动重放子项。幂等：无拆解时零副作用。"""
+        from services.plan_rebuild import rebuild_children
+
+        try:
+            rebuild_children()
+        except Exception:
+            from core.logger import log
+
+            log.exception("自动重放子项失败")
+
+    def _recalc_children(self, rows: list[int]) -> None:
+        """手动兜底：按母项当前需求全量重放子项（数量/并行/ME 联动）。"""
+        if self._model is None or not rows:
+            return
+        from PySide6.QtWidgets import QMessageBox
+
+        from services.plan_rebuild import rebuild_children
+
+        ret = QMessageBox.question(
+            self,
+            "重算子项",
+            "按所有母项当前的需求（数量/并行/ME）重新生成子项产线？\n已投产中的子项流程不会被改动。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+        res = rebuild_children(create=True, prune=True)
+        QMessageBox.information(
+            self,
+            "完成",
+            f"重算完成：新增 {res['created']}、更新 {res['updated']}、清理 {res['deleted']} 条子项",
+        )
+        self.plan_updated.emit()
+
     def _delete_rows(self, rows: list[int]) -> None:
-        """批量删除多行（母项删除时级联删除同组更深子项）"""
+        """批量删除多行。
+
+        - 删母项：其引用的子项若不再被任何母项引用则级联收缩；仍被其他母项引用则保留。
+        - 删子项（单独删某条产线）：删除后不会因后续编辑母项/重放被自动加回，
+          仅显式「母项拆解/重算子项」才会重新生成。
+        """
         if self._model is None:
             return
         plans = self._model._plans
-        selected_ids = {plans[r]["id"] for r in rows if 0 <= r < len(plans) and plans[r].get("id")}
+        deleted_rows = [plans[r] for r in rows if 0 <= r < len(plans)]
+        selected_ids = {p["id"] for p in deleted_rows if p.get("id")}
         if not selected_ids:
             return
 
-        from services.plan_decompose import collect_cascade_delete_ids
-
-        ids_to_delete = collect_cascade_delete_ids(plans, selected_ids)
-
-        # 删除前释放蓝图占用（清 plan_blueprint_bindings 关联表 + 旧单值列）
         from services import plan_execution
 
-        for pid in ids_to_delete:
+        for pid in selected_ids:
             plan_execution.release_blueprint(pid)
 
-        get_container().plan_repo.delete_many(list(ids_to_delete))
-        self._model._plans = [p for p in plans if p.get("id") not in ids_to_delete]
+        get_container().plan_repo.delete_many(list(selected_ids))
+        self._model._plans = [p for p in plans if p.get("id") not in selected_ids]
         self._model.beginResetModel()
         self._model.endResetModel()
+
+        from services.plan_rebuild import rebuild_children
+
+        # 含母项删除 → 收缩不再被引用的子项；仅删子项 → 不重建不收缩（保持已删产线消失）
+        if any(int(p.get("child_level") or p.get("sub_level") or 0) == 0 for p in deleted_rows):
+            rebuild_children(create=False, prune=True)
+        else:
+            rebuild_children()
         self.plan_updated.emit()
 
     # ── Phase 3 占位 ────────────────────────────────────────
