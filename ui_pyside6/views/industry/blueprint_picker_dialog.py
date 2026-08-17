@@ -11,7 +11,6 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
-    QDialogButtonBox,
     QHeaderView,
     QLabel,
     QMessageBox,
@@ -66,7 +65,7 @@ class BlueprintPickerDialog(QDialog):
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
-        self._table.cellClicked.connect(self._on_cell_clicked)
+        self._table.clicked.connect(self._on_row_clicked)
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
@@ -76,20 +75,21 @@ class BlueprintPickerDialog(QDialog):
         self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(self._empty_hint)
 
-        btns = QDialogButtonBox()
+        btn_layout = QVBoxLayout()
         npc_btn = QPushButton("查看NPC卖家")
         npc_btn.clicked.connect(self._on_npc_seller)
-        btns.addButton(npc_btn, QDialogButtonBox.ButtonRole.ActionRole)
+        btn_layout.addWidget(npc_btn)
         self._unbind_btn = QPushButton("解除绑定")
         self._unbind_btn.clicked.connect(self._on_unbind)
         self._unbind_btn.setEnabled(bool(self._plan.get("assigned_blueprint_id")))
-        btns.addButton(self._unbind_btn, QDialogButtonBox.ButtonRole.ActionRole)
-        bind_btn = QPushButton("绑定")
+        btn_layout.addWidget(self._unbind_btn)
+        bind_btn = QPushButton("绑定选中蓝图")
         bind_btn.clicked.connect(self._on_bind)
-        btns.addButton(bind_btn, QDialogButtonBox.ButtonRole.AcceptRole)
-        btns.addButton(QDialogButtonBox.StandardButton.Cancel)
-        btns.rejected.connect(self.reject)
-        root.addWidget(btns)
+        btn_layout.addWidget(bind_btn)
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+        root.addLayout(btn_layout)
 
     # ── 数据加载 ──────────────────────────────────────────────
 
@@ -118,11 +118,13 @@ class BlueprintPickerDialog(QDialog):
 
         self._table.setRowCount(len(options))
         for i, opt in enumerate(options):
-            disabled = not opt.get("is_bpo") and (opt.get("occupied") or (opt.get("available_runs") or 0) < need_runs)
+            # runs=-1 视为无限流程（防御 is_bpo 字段异常），不置灰
+            is_infinite = opt.get("is_bpo") or opt.get("runs") == -1
+            disabled = not is_infinite and (opt.get("occupied") or (opt.get("available_runs") or 0) < need_runs)
             bp_type = "原图" if opt.get("is_bpo") else "拷贝"
-            avail = "无限" if opt.get("is_bpo") else f"{opt.get('available_runs', 0):,.0f}"
+            avail = "无限" if is_infinite else f"{opt.get('available_runs', 0):,.0f}"
             status = "占用中" if opt.get("occupied") else "可用"
-            if not opt.get("is_bpo") and not opt.get("occupied") and (opt.get("available_runs") or 0) < need_runs:
+            if not is_infinite and not opt.get("occupied") and (opt.get("available_runs") or 0) < need_runs:
                 status = "流程不足"
 
             cells = [
@@ -155,8 +157,11 @@ class BlueprintPickerDialog(QDialog):
 
     # ── 交互 ──────────────────────────────────────────────────
 
-    def _on_cell_clicked(self, row: int, _col: int) -> None:
-        item = self._table.item(row, 0)
+    def _on_row_clicked(self, index) -> None:
+        """单击表格行 → 选中该行（仅 enabled 行可选）"""
+        row = index.row()
+        # 检查该行是否被禁用（检查任意一列的 enabled 标志）
+        item = self._table.item(row, 1)
         if item is None or not (item.flags() & Qt.ItemFlag.ItemIsEnabled):
             return
         self._selected_row = row

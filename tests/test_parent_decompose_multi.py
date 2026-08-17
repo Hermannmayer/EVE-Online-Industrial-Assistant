@@ -41,7 +41,7 @@ def _build_dbs(db_manager):
             "product_name TEXT, blueprint_type_id INTEGER, runs INTEGER DEFAULT 1, parallels INTEGER DEFAULT 1, "
             "me_level INTEGER DEFAULT 0, te_level INTEGER DEFAULT 0, status TEXT DEFAULT 'pending', "
             "group_number INTEGER DEFAULT 0, sub_level INTEGER DEFAULT 0, mat_hangar_id INTEGER, "
-            "solar_system_id INTEGER, materials_ready INTEGER DEFAULT 0)"
+            "solar_system_id INTEGER, deposit_hangar_id INTEGER, materials_ready INTEGER DEFAULT 0)"
         )
         conn.execute("CREATE TABLE hangars (id INTEGER PRIMARY KEY, name TEXT, solar_system_id INTEGER)")
         conn.execute("INSERT INTO hangars VALUES (1,'矿仓',30000145)")

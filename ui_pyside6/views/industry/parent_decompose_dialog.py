@@ -180,6 +180,7 @@ class ParentDecomposeDialog(QDialog):
                         sub_level=line["sub_level"],
                         mat_hangar_id=plan.get("mat_hangar_id"),
                         solar_system_id=solar_system_id,
+                        deposit_hangar_id=line.get("deposit_hangar_id"),
                     )
         QMessageBox.information(self, "完成", f"已拆解 {self._total_lines} 个子项产线")
         self.accept()

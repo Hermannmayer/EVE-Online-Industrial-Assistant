@@ -294,7 +294,7 @@ class PlanTable(QWidget):
     # ── 单击事件 ─────────────────────────────────────────────
 
     def _on_cell_clicked(self, index) -> None:
-        """单击勾选列 → 切换备料；蓝图列 → 绑定蓝图；待下线状态 → 确认后单独下线"""
+        """单击勾选列 → 切换备料；蓝图列 → 绑定蓝图；产品列 → 折叠/展开；待下线状态 → 确认后单独下线"""
         if not self._model:
             return
         row = index.row()
@@ -306,16 +306,28 @@ class PlanTable(QWidget):
             self._set_materials_ready(row, new_val)
         elif index.column() == COL_BLUEPRINT:
             self._show_blueprint_picker(row)
+        elif index.column() == COL_PRODUCT:
+            # 母项行（child_level==0）且有子项时，点击切换折叠
+            gid = plan.get("group_id") or plan.get("group_number") or 0
+            lvl = int(plan.get("child_level") or plan.get("sub_level") or 0)
+            if lvl == 0 and gid and self._model._has_children(gid):
+                self._model.toggle_collapse(gid)
         elif index.column() == COL_STATUS and (plan.get("status") or "").lower() == "ready":
             self._complete_plan_with_dialog(plan)
 
     def _on_cell_entered(self, index) -> None:
-        """悬停待下线状态单元格 → 手型光标（提示可点击单独下线）"""
+        """悬停待下线状态单元格 → 手型光标；悬停可折叠母项 → 手型光标"""
         if not self._model:
             return
         plan = self._model.get_plan(index.row())
-        clickable = index.column() == COL_STATUS and plan is not None and (plan.get("status") or "").lower() == "ready"
-        cursor = Qt.CursorShape.PointingHandCursor if clickable else Qt.CursorShape.ArrowCursor
+        if index.column() == COL_STATUS and plan is not None and (plan.get("status") or "").lower() == "ready":
+            cursor = Qt.CursorShape.PointingHandCursor
+        elif index.column() == COL_PRODUCT and plan is not None:
+            gid = plan.get("group_id") or plan.get("group_number") or 0
+            lvl = int(plan.get("child_level") or plan.get("sub_level") or 0)
+            cursor = Qt.CursorShape.PointingHandCursor if (lvl == 0 and gid and self._model._has_children(gid)) else Qt.CursorShape.ArrowCursor
+        else:
+            cursor = Qt.CursorShape.ArrowCursor
         self._table.viewport().setCursor(cursor)
 
     def _complete_plan_with_dialog(self, plan: dict) -> None:

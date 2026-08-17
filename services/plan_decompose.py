@@ -55,7 +55,7 @@ def decompose_plan(plan: dict, *, mat_hangar_id: int | None = None) -> list[dict
         lines: list[dict] = []
         for mat_id, mat_base in _get_materials(conn, bp_id, "manufacturing"):
             child_qty = calc_material_for_runs(mat_base, 10, parent_me, root_runs)
-            cl, _ = _decompose(conn, mat_id, child_qty, depth=1, stock=stock, seen=set())
+            cl, _ = _decompose(conn, mat_id, child_qty, depth=1, stock=stock, seen=set(), mat_hangar_id=mat_hangar_id)
             lines.extend(cl)
         return lines
 
@@ -175,6 +175,7 @@ def _decompose(
     depth: int,
     stock: dict[int, int],
     seen: set[int],
+    mat_hangar_id: int | None = None,
 ) -> tuple[list[dict], int]:
     """递归展开一层。返回 (子项产线行, 本层可被库存覆盖的产出量)。"""
     bp = _find_blueprint_for_product(conn, type_id, "manufacturing")
@@ -204,11 +205,12 @@ def _decompose(
                 "me_level": me,
                 "te_level": ibp["te_level"] if ibp else 0,
                 "has_blueprint": ibp is not None,
+                "deposit_hangar_id": mat_hangar_id,
             }
         ]
         for mat_id, mat_base in _get_materials(conn, bp_id, "manufacturing"):
             child_qty = calc_material_for_runs(mat_base, 10, me, make_runs)
-            cl, _ = _decompose(conn, mat_id, child_qty, depth + 1, stock, seen)
+            cl, _ = _decompose(conn, mat_id, child_qty, depth + 1, stock, seen, mat_hangar_id=mat_hangar_id)
             lines.extend(cl)
         return lines, covered * output_qty
     finally:
