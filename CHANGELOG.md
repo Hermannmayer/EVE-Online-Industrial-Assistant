@@ -6,6 +6,17 @@
 
 <!-- version list -->
 
+## v0.18.1 (2026-08-18)
+
+### Bug Fixes
+
+- 发行版初始化修复 + 初始化向导交互重设计 + 就绪阈值统一
+  ([`f6c73d5`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/f6c73d5c73b3ac1634a7fa8d1d12a4ac3d74fab2))
+
+- 无边框窗口拖动标题栏概率性抽搐抖动
+  ([`306b848`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/306b848ebabfd868079054dedf31fcbd6057038d))
+
+
 ## v0.18.0 (2026-08-17)
 
 ### Features
