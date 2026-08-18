@@ -160,7 +160,7 @@ def load_yaml(name: str) -> dict
 
 从本地缓存加载 SDE YAML 文件（CSafeLoader 加速；≥1MB 走磁盘 pickle 缓存；进程内二次缓存）
 
-定义行：`490`
+定义行：`493`
 
 ### `_pickle_cache_path`
 
@@ -170,7 +170,7 @@ def _pickle_cache_path(name: str) -> str
 
 YAML 解析结果的磁盘缓存路径（name.yaml → name.pkl）
 
-定义行：`512`
+定义行：`515`
 
 ### `_load_yaml_from_disk`
 
@@ -180,7 +180,7 @@ def _load_yaml_from_disk(name: str, path: str) -> dict
 
 解析 YAML，优先命中磁盘 pickle 缓存（缓存不可用/损坏时静默回退正常解析）
 
-定义行：`517`
+定义行：`520`
 
 ### `load_yaml_async`
 
@@ -191,7 +191,7 @@ async def load_yaml_async(name: str) -> dict
 异步加载 SDE YAML：首次大文件（typeIDs.yaml 148MB 约 29s）在
 to_thread 中解析，不阻塞事件循环；二次命中进程内缓存（瞬时）。
 
-定义行：`554`
+定义行：`557`
 
 ### `clear_yaml_cache`
 
@@ -201,7 +201,7 @@ def clear_yaml_cache() -> None
 
 释放 YAML 解析缓存（初始化完成后调用，释放 typeIDs.yaml 等大文件内存）
 
-定义行：`571`
+定义行：`574`
 
 ### `reset_async_locks`
 
@@ -211,4 +211,4 @@ def reset_async_locks() -> None
 
 重置模块级 asyncio.Lock（_load_lock）。
 
-定义行：`577`
+定义行：`580`

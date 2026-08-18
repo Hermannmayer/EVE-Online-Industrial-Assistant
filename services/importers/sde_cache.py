@@ -18,7 +18,7 @@ import aiohttp
 import yaml
 
 from core.logger import log
-from core.paths import reference_db_path
+from core.paths import is_frozen, reference_db_path
 
 CACHE_DIR = os.path.join(os.path.dirname(reference_db_path()), "..", "data")
 SDE_ZIP_URL = "https://eve-static-data-export.s3-eu-west-1.amazonaws.com/tranquility/sde.zip"
@@ -422,9 +422,12 @@ async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None =
     log.info("正在并行解析 universe/ 星系 YAML 文件...")
     if progress_cb:
         progress_cb(10, "解析星系目录...")
+    loop = asyncio.get_running_loop()
     # 名称在 bsd/invNames.yaml（按 itemID 索引），解析前先确保主进程构建好
-    # invnames.pkl（首次 ~28s，之后秒级；子进程 worker 各自从 pkl 加载）
-    _build_name_map(SDE_ZIP_PATH)
+    # invnames.pkl（首次 ~28s，之后秒级；子进程 worker 各自从 pkl 加载）。
+    # 同步解析会阻塞事件循环（进度停在 10% 的观感），移入默认线程池执行。
+    # 返回值丢弃：主进程只需预热 invnames.pkl 缓存（子进程/线程从磁盘各加载各的）。
+    await loop.run_in_executor(None, _build_name_map, SDE_ZIP_PATH)
     with zipfile.ZipFile(SDE_ZIP_PATH, "r") as zf:
         # 只解析星系文件（region/constellation/stargates 无业务使用，跳过以提速）
         all_paths = [
@@ -445,14 +448,14 @@ async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None =
     systems: list[dict] = []
 
     # PyYAML C loader 的构造阶段持有 GIL，线程并行无效（8 线程 ≈ 单线程 ~168s），
-    # 多进程真并行是唯一出路。文件量小（<200）时进程池启动开销不划算，直接线程池；
-    # spawn 失败（如打包环境缺 freeze_support）时回退线程池。
-    if len(all_paths) < 200:
+    # 多进程真并行是唯一出路。文件量小（<200）时进程池启动开销不划算，直接线程池。
+    # 冻结（PyInstaller）环境下 ProcessPoolExecutor 的 spawn 会重入主模块：
+    # 无 freeze_support 时子进程挂起且不抛异常，回退兜底救不了 → 一律走线程池。
+    if len(all_paths) < 200 or is_frozen():
         results = await asyncio.gather(
             *[asyncio.to_thread(_parse_universe_chunk_with_names, chunk, SDE_ZIP_PATH) for chunk in chunks]
         )
     else:
-        loop = asyncio.get_running_loop()
         try:
             from concurrent.futures import ProcessPoolExecutor
 
