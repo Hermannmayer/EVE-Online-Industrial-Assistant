@@ -660,8 +660,8 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
         return 0
 
     def _nchittest(self, lParam: int) -> int:
-        """WM_NCHITTEST 命中码：边缘缩放 + 标题栏 HTCAPTION（原生拖动）"""
-        HTCLIENT, HTCAPTION = 1, 2
+        """WM_NCHITTEST 命中码：边缘缩放。标题栏拖动统一走 startSystemMove（一次性 SC_MOVE，避免逐帧重判命中码导致拖动抖动）。"""
+        HTCLIENT = 1
         HTLEFT, HTRIGHT, HTTOP = 10, 11, 12
         HTTOPLEFT, HTTOPRIGHT = 13, 14
         HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT = 15, 16, 17
@@ -691,13 +691,7 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
             return HTLEFT
         if pt.x() >= w - margin:
             return HTRIGHT
-        # 标题栏行：仅 spacer/标题/空白处 HTCAPTION（原生拖动+贴边吸附），按钮一律 HTCLIENT
-        title_bar = self.findChild(QToolBar, "title_bar")
-        if title_bar is not None and title_bar.geometry().contains(pt):
-            child = self.childAt(pt)
-            if child is not None and (child is title_bar or child.objectName() in ("title_spacer", "title_label")):
-                return HTCAPTION
-            return HTCLIENT
+        # 标题栏区域一律 HTCLIENT，让按键落到 Qt → title_bar startSystemMove 统一拖动
         return HTCLIENT
 
     def _start_price_timer(self):
