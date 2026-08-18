@@ -9,10 +9,27 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtWidgets import QApplication, QMessageBox
+from core.null_streams import ensure_console_streams
 
-from core.logger import log
-from core.paths import BP_DB_PATH, DB_PATH, REF_DB_PATH, USR_DB_PATH, ensure_dirs_exist
+# --windowed 打包无控制台时 sys.stdout/stderr 为 None，必须先兜底再创建日志 handler，
+# 否则 tqdm/logging 第一行输出就抛 "NoneType' object has no attribute 'write'"。
+ensure_console_streams()
+# PyInstaller 冻结 + 多进程 spawn 需 freeze_support，防止子进程重入主模块挂起
+if sys.platform == "win32":
+    import multiprocessing
+
+    multiprocessing.freeze_support()
+
+from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+
+from core.logger import log  # noqa: E402
+from core.paths import (  # noqa: E402
+    BP_DB_PATH,
+    DB_PATH,
+    REF_DB_PATH,
+    USR_DB_PATH,
+    ensure_dirs_exist,
+)
 
 
 def _migrate_split_db():

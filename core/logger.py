@@ -14,6 +14,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from core.null_streams import NullWriter, ensure_console_streams
+
 _LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s"
 _DATE_FORMAT = "%H:%M:%S"
 
@@ -26,13 +28,17 @@ class _Logger:
         self._logger.setLevel(logging.DEBUG)
         self._logger.handlers.clear()
 
-        # 控制台 handler
+        # 控制台 handler。--windowed 无控制台时 sys.stdout/stderr 为 None，
+        # 先兜底为 NullWriter，避免 StreamHandler 接到 None 在 emit 时抛异常。
+        ensure_console_streams()
         console = logging.StreamHandler(sys.stdout)
         console.setLevel(logging.INFO)
         console.setFormatter(logging.Formatter(_LOG_FORMAT, _DATE_FORMAT))
         self._logger.addHandler(console)
 
-        # 文件 handler（仅 error 及以上级别写入文件）
+        # 文件 handler（仅 error 及以上级别写入文件）。
+        # 日志文件是发行版诊断的第一手材料，失败绝不静默：写 stderr（已兜底）
+        # 暴露问题，避免“日志没生成还不知情”。
         try:
             log_dir = Path.home() / ".eve-assistant" / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
@@ -42,7 +48,8 @@ class _Logger:
             fh.setFormatter(logging.Formatter(_LOG_FORMAT, _DATE_FORMAT))
             self._logger.addHandler(fh)
         except Exception:
-            pass  # 文件日志不可用时静默降级
+            stream = sys.stderr if sys.stderr is not None else NullWriter()
+            stream.write("[logger] 无法创建文件日志，运行信息不会落盘\n")
 
     def info(self, msg: str, *args, **kwargs):
         self._logger.info(msg, *args, **kwargs)

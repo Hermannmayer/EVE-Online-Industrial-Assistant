@@ -19,7 +19,7 @@
 
 import time
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QDialog,
@@ -199,6 +199,12 @@ class InitWizard(QDialog):
         self._elapsed_timer: QTimer | None = None
         self._worker: InitServiceWorker | None = None
         self._step_widgets: dict[str, _StepRow] = {}
+        # 运行态：worker 下载进行中为 True。true 时禁止关闭/重入，保证不静默放弃。
+        self._run_active = False
+        # 是否已跑过初始化：之后重新开始/继续时忽略启动预检，实时重算缺失步骤。
+        self._has_run = False
+        # UI 侧步骤状态映射（替代 icon 的 emoji 字符串判断，脆弱且不可测）
+        self._step_status: dict[str, StepStatus] = {s.key: StepStatus.PENDING for s in STEPS}
 
         self._build_ui()
         self._init_steps_from_check()
@@ -292,11 +298,11 @@ class InitWizard(QDialog):
         # 按钮行
         btn_row = QHBoxLayout()
 
-        self._retry_all_btn = QPushButton("全部重试")
-        self._retry_all_btn.setStyleSheet(_btn_style(theme.ACCENT_ORANGE))
-        self._retry_all_btn.clicked.connect(self._on_retry_all)
-        self._retry_all_btn.hide()
-        btn_row.addWidget(self._retry_all_btn)
+        self._continue_btn = QPushButton("继续（重试未完成）")
+        self._continue_btn.setStyleSheet(_btn_style(theme.ACCENT_ORANGE))
+        self._continue_btn.clicked.connect(self._on_continue)
+        self._continue_btn.hide()
+        btn_row.addWidget(self._continue_btn)
 
         btn_row.addStretch()
 
@@ -330,15 +336,19 @@ class InitWizard(QDialog):
         self._cancel_btn.hide()
         btn_row.addWidget(self._cancel_btn)
 
+        # 取消/失败后的明确关闭出口（auto 关闭=返回 exec()，Main 随后显示主窗口）
+        self._close_btn = QPushButton("关闭")
+        self._close_btn.setStyleSheet(_btn_style(theme.TEXT_SECONDARY))
+        self._close_btn.clicked.connect(self._request_close)
+        self._close_btn.hide()
+        btn_row.addWidget(self._close_btn)
+
         self._bg_btn = QPushButton("后台运行" if self._auto_mode else "最小化")
         self._bg_btn.setStyleSheet(_btn_style(theme.BG_SURFACE, theme.TEXT_PRIMARY, theme.BG_HOVER))
         self._bg_btn.clicked.connect(self._hide_wizard)
         btn_row.addWidget(self._bg_btn)
 
         layout.addLayout(btn_row)
-
-        if self._auto_mode:
-            self.setWindowFlags(self.windowFlags() & ~Qt.WindowCloseButtonHint)
 
         # ETA 定时器
         self._elapsed_timer = QTimer(self)
@@ -352,12 +362,11 @@ class InitWizard(QDialog):
             missing_keys = {s.key for s in get_missing_steps()}
         done_count = 0
         for step in STEPS:
-            row = self._step_widgets[step.key]
             if step.key not in missing_keys:
-                row.set_state(StepStatus.COMPLETED, "数据已就绪")
+                self._set_step(step.key, StepStatus.COMPLETED, "数据已就绪")
                 done_count += 1
             else:
-                row.set_state(StepStatus.PENDING)
+                self._set_step(step.key, StepStatus.PENDING)
         self._total_bar.setValue(done_count)
         self._total_bar.setFormat(f"{done_count}/{len(STEPS)} 就绪")
 
@@ -390,40 +399,66 @@ class InitWizard(QDialog):
         self._init_steps_from_check()
 
     def closeEvent(self, event: QCloseEvent):
-        """关闭行为取决于模式"""
-        if self._auto_mode:
-            event.ignore()  # 自动模式不可关闭
-        else:
-            self._hide_wizard()
+        """关闭行为：运行中不开窗（防静默放弃），空闲态走真实关闭。
+
+        真实关闭即结束 modal 循环（返回 exec()）。auto 模式时 Main.py 随后显示主窗口，
+        等价于「跳过进主界面」；手动模式则彻底关闭向导。
+        """
+        if self._run_active:
             event.ignore()
+            return
+        event.accept()
 
     def reject(self):
-        """ESC = 隐藏"""
-        self._hide_wizard()
+        """ESC：运行中忽略（不锁死），空闲态结束 modal 循环（真实关闭）。
+
+        必须调 super().reject() 让 exec() 返回，否则 auto 模式整个 app 卡住无主窗口。
+        """
+        if self._run_active:
+            return
+        super().reject()
+
+    def _request_close(self):
+        """「关闭」按钮：空闲态显式请求真实关闭。"""
+        self.close()
 
     def _hide_wizard(self):
-        """隐藏窗口但不停止后台"""
+        """隐藏窗口但不停止后台（后台继续运行）"""
         self.hide()
 
     # ── 初始化流程 ──
 
+    def _current_missing(self) -> list[str]:
+        """计算当前仍缺失的步骤。
+
+        首次（尚未跑过）复用启动时的预检结果，避免二次全库扫描；跑过之后忽略预检
+        （可能已过期），改用 check_all 实时重算，保证「继续」只补仍未就绪的步骤，
+        已完成的不重跑。
+        """
+        if not self._has_run and self._prechecked_missing is not None:
+            return [k for k in self._prechecked_missing if k in self._step_widgets]
+        return [s.key for s in get_missing_steps() if s.key in self._step_widgets]
+
     def _start_init(self):
-        """开始初始化"""
+        """开始（或继续）初始化"""
+        # 防双 Worker：上一个线程仍在跑时不新建，避免并发写库。
+        if self._worker is not None and self._worker.isRunning():
+            return
+
+        self._run_active = True
+        self._has_run = True
         self._start_btn.setEnabled(False)
         self._start_btn.hide()
         self._cancel_btn.show()
+        self._close_btn.hide()
+        self._continue_btn.hide()
         self._bg_btn.setEnabled(False)
-        self._retry_all_btn.hide()
         self._start_time = time.time()
 
         if self._elapsed_timer:
             self._elapsed_timer.start(1000)  # 每秒更新
 
-        # 确定需要执行的步骤（splash 已预查时复用，免二次全库扫描）
-        if self._prechecked_missing is not None:
-            missing = [k for k in self._prechecked_missing if k in self._step_widgets]
-        else:
-            missing = [s.key for s in get_missing_steps()]
+        missing = self._current_missing()
         if not missing:
             self._on_all_done(True, "全部就绪")
             return
@@ -443,39 +478,57 @@ class InitWizard(QDialog):
         self._worker.step_progress.connect(self._on_step_progress)
         self._worker.step_completed.connect(self._on_step_completed)
         self._worker.all_completed.connect(self._on_all_done)
+        self._worker.network_status.connect(self._on_network_status)
         self._worker.start()
+
+    def _set_step(self, key: str, status: StepStatus, message: str = "", percent: int = 0):
+        """统一更新某个步骤的行 UI 与内部状态映射。"""
+        self._step_status[key] = status
+        row = self._step_widgets.get(key)
+        if row:
+            row.set_state(status, message, percent)
+
+    def _done_count(self) -> int:
+        """已完成（不止重跑）步骤数：COMPLETED / SKIPPED。"""
+        return sum(1 for s in self._step_status.values() if s in (StepStatus.COMPLETED, StepStatus.SKIPPED))
+
+    def _on_network_status(self, ok: bool, message: str):
+        """网络连通性状态"""
+        if not ok:
+            self._net_label.setText(f"🌐 网络不可用: {message}")
+            self._net_label.setStyleSheet(f"color: {theme.ACCENT_RED}; font-size: 11px;")
+        else:
+            self._net_label.setText("🌐 ESI 已连接")
+            self._net_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 11px;")
+
+    def _refresh_total(self):
+        """总进度条 = 已完成步骤数（分进度在各自行内显示）。"""
+        done = self._done_count()
+        total = len(STEPS)
+        self._total_bar.setMaximum(total)
+        self._total_bar.setValue(done)
+        self._total_bar.setFormat(f"{done}/{total}")
 
     def _on_step_started(self, key: str, name: str):
         """步骤开始"""
-        row = self._step_widgets.get(key)
-        if row:
-            row.set_state(StepStatus.RUNNING, "正在下载...")
+        self._set_step(key, StepStatus.RUNNING, "正在下载...")
 
     def _on_step_progress(self, key: str, percent: int, message: str):
         """步骤进度更新"""
-        row = self._step_widgets.get(key)
-        if row:
-            row.set_state(StepStatus.RUNNING, message, percent)
-        # 更新总进度
-        completed = sum(1 for k, r in self._step_widgets.items() if r.icon.text() in ("✅", "⏭️", "❌"))
-        self._total_bar.setValue(completed + (percent / 100))
+        self._set_step(key, StepStatus.RUNNING, message, percent)
+        self._refresh_total()
 
     def _on_step_completed(self, key: str, success: bool, message: str):
         """步骤完成"""
-        row = self._step_widgets.get(key)
-        if row:
-            status = StepStatus.COMPLETED if success else StepStatus.FAILED
-            row.set_state(status, message)
-        # 更新总进度
-        done = sum(1 for k, r in self._step_widgets.items() if r.icon.text() in ("✅", "⏭️"))
-        total = len(STEPS)
-        self._total_bar.setValue(done)
-        self._total_bar.setFormat(f"{done}/{total}")
+        status = StepStatus.COMPLETED if success else StepStatus.FAILED
+        self._set_step(key, status, message)
+        self._refresh_total()
         if not success:
-            self._retry_all_btn.show()
+            self._continue_btn.show()
 
     def _on_all_done(self, success: bool, summary: str):
         """全部完成"""
+        self._run_active = False
         if self._elapsed_timer:
             self._elapsed_timer.stop()
 
@@ -485,7 +538,7 @@ class InitWizard(QDialog):
         self._total_bar.setFormat(summary)
 
         if success:
-            self._eta_label.setText(f"✅ {summary}  🕐 已用 {self._elapsed_str()}")
+            self._eta_label.setText(f"✅ {summary}  🕐 已用 {self._elapsed_now()}")
             # 自动模式（启动场景）：等待 worker 线程完全退出（含 clear_yaml_cache 收尾）
             # 再触发回调并关闭；on_done 可能为空（Main.py 不传），也需 accept。
             if self._auto_mode:
@@ -495,11 +548,11 @@ class InitWizard(QDialog):
                     self._on_done_callback()
                 self.accept()
         else:
-            self._eta_label.setText(f"❌ {summary}  🕐 已用 {self._elapsed_str()}")
+            self._eta_label.setText(f"❌ {summary}  🕐 已用 {self._elapsed_now()}")
             self._start_btn.setText("重试失败步骤")
             self._start_btn.show()
             self._start_btn.setEnabled(True)
-            self._retry_all_btn.show()
+            self._continue_btn.show()
             if self._auto_mode:
                 pass  # 保持窗口开放，用户可以重试
 
@@ -507,52 +560,62 @@ class InitWizard(QDialog):
 
     def _on_retry(self, key: str):
         """重试单个步骤"""
-        row = self._step_widgets.get(key)
-        if row:
-            row.set_state(StepStatus.PENDING)
-        if self._worker:
-            self._worker.retry(key)
-        else:
-            # 还没启动单个重试 → 只重新这个
-            self._step_widgets[key].set_state(StepStatus.PENDING)
-            self._worker = InitServiceWorker(step_keys=[key], parent=self)
-            self._worker.step_started.connect(self._on_step_started)
-            self._worker.step_progress.connect(self._on_step_progress)
-            self._worker.step_completed.connect(self._on_step_completed)
-            self._worker.all_completed.connect(self._on_all_done)
-            self._worker.start()
+        # worker 运行中不允许跨线程直接调 service.retry（内部会再开事件循环并发同状态）。
+        # 空闲态才允许：直接用单步 worker 重跑该步骤。
+        if self._worker is not None and self._worker.isRunning():
+            return
+        self._set_step(key, StepStatus.PENDING)
+        self._run_active = True
+        self._start_btn.hide()
+        self._cancel_btn.show()
+        self._close_btn.hide()
+        self._continue_btn.hide()
+        self._bg_btn.setEnabled(False)
+        self._worker = InitServiceWorker(step_keys=[key], parent=self)
+        self._worker.step_started.connect(self._on_step_started)
+        self._worker.step_progress.connect(self._on_step_progress)
+        self._worker.step_completed.connect(self._on_step_completed)
+        self._worker.all_completed.connect(self._on_all_done)
+        self._worker.network_status.connect(self._on_network_status)
+        self._worker.start()
 
     def _on_skip(self, key: str):
-        """跳过步骤"""
+        """跳过步骤（只允许空闲态，避免运行中跨线程调用）"""
+        if self._worker is not None and self._worker.isRunning():
+            return
         if self._worker:
             self._worker.skip(key)
-        row = self._step_widgets.get(key)
-        if row:
-            row.set_state(StepStatus.SKIPPED, "已跳过")
-        self._total_bar.setValue(sum(1 for k, r in self._step_widgets.items() if r.icon.text() in ("✅", "⏭️")))
+        self._set_step(key, StepStatus.SKIPPED, "已跳过")
+        self._refresh_total()
 
-    def _on_retry_all(self):
-        """全部重试"""
-        self._retry_all_btn.hide()
+    def _on_continue(self):
+        """继续（重试未完成）：只补仍未就绪的步骤，已完成的不重跑。"""
+        self._continue_btn.hide()
+        self._close_btn.hide()
         self._start_init()
 
     def _on_cancel(self):
         """取消初始化"""
-        if self._worker:
+        if self._worker is not None and self._worker.isRunning():
             self._worker.cancel()
+        self._run_active = False
         self._cancel_btn.hide()
         self._bg_btn.setEnabled(True)
+        self._close_btn.show()
+        self._continue_btn.show()
         if self._elapsed_timer:
             self._elapsed_timer.stop()
-        self._eta_label.setText(f"🚫 已取消  🕐 已用 {self._elapsed_str()}")
+        self._eta_label.setText(f"🚫 已取消  🕐 已用 {self._elapsed_now()}")
         self._start_btn.setText("重新开始")
         self._start_btn.show()
         self._start_btn.setEnabled(True)
 
     def _on_skip_enter(self):
         """跳过 → 直接进入主界面（auto_mode 启动场景）"""
-        if self._worker:
+        if self._worker is not None and self._worker.isRunning():
             self._worker.cancel()
+            self._worker.wait()
+        self._run_active = False
         self.accept()
 
     # ── ETA ──
@@ -561,7 +624,7 @@ class InitWizard(QDialog):
         """更新已用时间"""
         if self._start_time:
             elapsed = time.time() - self._start_time
-            completed = sum(1 for k, r in self._step_widgets.items() if r.icon.text() in ("✅", "⏭️"))
+            completed = self._done_count()
             total = len(STEPS)
             if completed > 0 and elapsed > 5:
                 rate = elapsed / completed
@@ -573,14 +636,15 @@ class InitWizard(QDialog):
                 self._eta_label.setText(f"🕐 已用 {self._elapsed_str(elapsed)}")
 
     @staticmethod
-    def _elapsed_str(seconds: float | None = None) -> str:
+    def _elapsed_str(seconds: float) -> str:
         """格式化时间字符串"""
-        if seconds is None:
-            if hasattr(InitWizard._elapsed_str, "_start"):
-                seconds = time.time() - InitWizard._elapsed_str._start
-            else:
-                return "0s"
         m, s = divmod(int(seconds), 60)
         if m > 0:
             return f"{m}m{s}s"
         return f"{s}s"
+
+    def _elapsed_now(self) -> str:
+        """从开始计时到现在经过的时长"""
+        if self._start_time:
+            return self._elapsed_str(time.time() - self._start_time)
+        return "0s"

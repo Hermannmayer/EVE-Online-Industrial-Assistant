@@ -8,9 +8,13 @@ from contextlib import closing
 
 from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 
+# item 表「已填名称」达到该数量即视为完整（typeIDs.yaml 全集约 4~5 万条）。
+# 初始化检测(getitems 跳过判定)共用此阈值，避免 1万~5万区间重复拉取。
+ITEMS_NAMED_READY = 50000
+
 
 def check_items() -> int:
-    """返回 item 表中 **已填写名称** 的行数，<10000 视为未初始化"""
+    """返回 item 表中 **已填写名称** 的行数，<ITEMS_NAMED_READY 视为未初始化"""
     try:
         with closing(sqlite3.connect(REF_DB_PATH)) as conn:
             c = conn.cursor()
@@ -27,7 +31,7 @@ def check_item_names_ratio() -> float:
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM item")
             total = int(c.fetchone()[0])
-            if total < 10000:
+            if total < ITEMS_NAMED_READY:
                 return 1.0  # 行数太少→未初始化
             c.execute("SELECT COUNT(*) FROM item WHERE en_name IS NULL OR en_name = ''")
             missing = int(c.fetchone()[0])
@@ -263,7 +267,7 @@ def check_all() -> dict:
     cached, total = check_icons()
     return {
         "schema": check_schema(),
-        "items": check_items() >= 10000 and check_item_names_ratio() < 0.05 and check_market_tree() > 500,
+        "items": check_items() >= ITEMS_NAMED_READY and check_item_names_ratio() < 0.05 and check_market_tree() > 500,
         "price_baseline": check_prices() > 0,
         "blueprints": check_blueprints() >= 1000,
         "implants": check_implants() > 30,

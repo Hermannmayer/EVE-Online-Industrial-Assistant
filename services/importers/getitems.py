@@ -20,6 +20,7 @@ from core.logger import log
 from core.paths import reference_db_path
 from services.db_locks import get_db_write_lock
 from services.importers.sde_cache import ensure_sde_cache, load_yaml_async
+from services.init_check import ITEMS_NAMED_READY
 
 DATABASE_PATH = reference_db_path()
 BATCH_SIZE = 500
@@ -86,7 +87,7 @@ async def write_items(progress_cb: Callable[[int, str], None] | None = None):
         c = await db.execute("SELECT COUNT(*) FROM item WHERE en_name IS NOT NULL AND en_name != ''")
         row = await c.fetchone()
         named = row[0] if row else 0
-        if named >= 50000:
+        if named >= ITEMS_NAMED_READY:
             log.info(f"所有物品信息已就绪 ({named} 条)，跳过")
             return
 
@@ -220,7 +221,7 @@ async def main(progress_cb: Callable[[int, str], None] | None = None):
         r2 = await c2.fetchone()
         mt_cnt = r2[0] if r2 else 0
 
-    if named >= 50000 and mt_cnt > 500:
+    if named >= ITEMS_NAMED_READY and mt_cnt > 500:
         log.info(f"所有数据已就绪（item={named}, market_tree={mt_cnt}），跳过")
         if progress_cb:
             progress_cb(90, "检查缺失名称...")
@@ -238,7 +239,7 @@ async def main(progress_cb: Callable[[int, str], None] | None = None):
             progress_cb(10 + int(pct * 0.3), msg)
 
     await ensure_sde_cache(_sde_progress)
-    if named < 50000:
+    if named < ITEMS_NAMED_READY:
         if progress_cb:
             progress_cb(40, "解析物品 YAML 数据...")
         await write_items(progress_cb)

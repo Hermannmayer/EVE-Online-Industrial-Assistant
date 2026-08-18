@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from services.init_check import (
+    ITEMS_NAMED_READY,
     check_all,
     check_blueprints,
     check_icons,
@@ -49,10 +50,10 @@ def _patch_init_check(paths):
 @pytest.fixture
 def full_dbs(db_paths):
     """创建含完整数据的数据库"""
-    # reference.db — item 表 10000 行 + item_dogma + 扩展表
+    # reference.db — item 表 ITEMS_NAMED_READY 行 + item_dogma + 扩展表
     conn = sqlite3.connect(db_paths["ref"])
     conn.execute("CREATE TABLE item (type_id INTEGER PRIMARY KEY, en_name TEXT, zh_name TEXT, market_group_id INTEGER)")
-    for i in range(1, 10001):
+    for i in range(1, ITEMS_NAMED_READY + 1):
         # 前 200 行设 market_group_id（check_icons 计数用）
         mkt_grp = i if i <= 500 else None
         conn.execute(
@@ -109,13 +110,13 @@ def full_dbs(db_paths):
 
 
 def test_check_items_full(full_dbs):
-    """check_items 返回 >=10000 表示就绪"""
+    """check_items 返回 >=ITEMS_NAMED_READY 表示就绪"""
     with _patch_init_check(full_dbs):
-        assert check_items() >= 10000
+        assert check_items() >= ITEMS_NAMED_READY
 
 
 def test_check_items_empty(db_paths):
-    """空的 item 表返回 <10000"""
+    """空的 item 表返回 <ITEMS_NAMED_READY"""
     conn = sqlite3.connect(db_paths["ref"])
     conn.execute("CREATE TABLE item (type_id INTEGER PRIMARY KEY)")
     conn.commit()
@@ -123,7 +124,7 @@ def test_check_items_empty(db_paths):
     for key in ("mkt", "bp"):
         sqlite3.connect(db_paths[key]).close()
     with _patch_init_check(db_paths):
-        assert check_items() < 10000
+        assert check_items() < ITEMS_NAMED_READY
 
 
 def test_check_prices_has_data(full_dbs):

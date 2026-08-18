@@ -70,6 +70,21 @@ def _make_mini_universe_zip():
     return buf
 
 
+def _make_large_universe_zip(n_systems=210):
+    """构造含 n 个 solarsystem 的 SDE zip（≥200 个才触发进程池分支判定）。"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for i in range(n_systems):
+            sid = 30000000 + i
+            zf.writestr(
+                f"universe/eve/10000001/1000000001/{sid}/solarsystem.yaml",
+                f"solarSystemID: {sid}\n" f"security: 0.5\n" f"constellationID: 1000000001\n" f"regionID: 10000001\n",
+            )
+        zf.writestr("bsd/invNames.yaml", "- itemID: 30000142\n  itemName: Jita\n")
+    buf.seek(0)
+    return buf
+
+
 def _make_loader(tmp_path, monkeypatch, filename="test.yaml", content="key: value"):
     """写临时 YAML 文件并把 cache_path 指向临时目录"""
     (tmp_path / filename).write_text(content, encoding="utf-8")
@@ -366,6 +381,33 @@ class TestUniverseCacheSelfHeal:
         assert len(systems) == 1
         assert systems[0]["solar_system_id"] == 30000142
         assert systems[0]["solar_system_name"] == "Jita"
+
+    def test_frozen_mode_uses_thread_pool_not_process_pool(self, tmp_path, monkeypatch):
+        """冻结（PyInstaller）环境一律走线程池，绝不实例化 ProcessPoolExecutor
+
+        冻结 exe 里 spawn 子进程会重入主模块，无 freeze_support 时挂起且不抛异常，
+        回退兜底救不了 → 必须在构建进程池前就拦截（is_frozen 分支）。
+        用 ≥200 个星系的 zip 让 <200 的线程池分支不生效，唯一能走线程池的
+        开关就是 is_frozen（若被绕过，会撞上 patched ProcessPoolExecutor 抛错）。
+        """
+        from unittest.mock import patch as _patch
+
+        cache_file = tmp_path / "universe_data.json"  # 不存在 → 触发解析
+        monkeypatch.setattr("tools.downloaders.sde_cache.UNIVERSE_CACHE_PATH", str(cache_file))
+        zip_path = tmp_path / "sde.zip"
+        zip_path.write_bytes(_make_large_universe_zip().getvalue())
+        monkeypatch.setattr("tools.downloaders.sde_cache.SDE_ZIP_PATH", str(zip_path))
+        monkeypatch.setattr("tools.downloaders.sde_cache.ensure_sde_cache", self._async_noop)
+        monkeypatch.setattr("tools.downloaders.sde_cache.is_frozen", lambda: True)
+
+        with _patch(
+            "concurrent.futures.ProcessPoolExecutor",
+            MagicMock(side_effect=AssertionError("冻结模式下不应创建进程池")),
+        ) as pool_cls:
+            _regions, _const, systems, _sg = asyncio.run(ensure_universe_cache())
+
+        pool_cls.assert_not_called()
+        assert len(systems) >= 200, "冻结模式应通过线程池正常解析大量星系"
 
 
 class TestEnsureSdeZip:

@@ -16,7 +16,7 @@ def set_debug(enabled: bool=True)
 
 切换 debug 模式
 
-定义行：`66`
+定义行：`73`
 
 ## 类
 
@@ -24,7 +24,7 @@ def set_debug(enabled: bool=True)
 
 轻量日志封装 — 控制台输出 + 文件日志
 
-定义行：`21`
+定义行：`23`
 
 #### 方法
 
@@ -38,7 +38,7 @@ def __init__(self, name: str='eve-assistant')
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`24`
+定义行：`26`
 ##### `info`
 
 ```python
@@ -49,7 +49,7 @@ def info(self, msg: str, *args, **kwargs)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`47`
+定义行：`54`
 ##### `warning`
 
 ```python
@@ -60,7 +60,7 @@ def warning(self, msg: str, *args, **kwargs)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`50`
+定义行：`57`
 ##### `error`
 
 ```python
@@ -71,7 +71,7 @@ def error(self, msg: str, *args, **kwargs)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`53`
+定义行：`60`
 ##### `debug`
 
 ```python
@@ -82,7 +82,7 @@ def debug(self, msg: str, *args, **kwargs)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`56`
+定义行：`63`
 ##### `exception`
 
 ```python
@@ -93,4 +93,4 @@ def exception(self, msg: str, *args, **kwargs)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`59`
+定义行：`66`

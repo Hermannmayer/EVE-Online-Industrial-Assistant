@@ -81,7 +81,9 @@ python Main.py
 python build_release.py
 ```
 
-输出目录：`dist/EVE商人助手/`
+输出目录：`dist/EVE商人助手_v{version}/`（同时生成同名 `.zip` 发行包）。
+
+> ⚠️ **整个目录必须一起解压**：exe 旁的 `data/`（含 `sde.zip`、`typeIDs.yaml`、`universe_data.json`）与 `database/`（`reference.db`、`blueprint.db`）不可删除。发行包已内置静态数据，首启初始化会走本地快路径，避免重新全量下载。若只复制 exe 单独运行，初始化会重新下载数据并解析，速度慢且可能触发发行版的多进程解析问题。
 
 ---
 
@@ -202,7 +204,7 @@ python build_release.py
 
 | 指标 | 数值 |
 |------|------|
-| 📊 **测试总数** | 1180 个 |
+| 📊 **测试总数** | 1192 个 |
 | 🔧 **框架** | pytest |
 | 📁 **测试目录** | `tests/` |
 | 🏃 **运行命令** | `pytest` |
