@@ -82,13 +82,23 @@ def insert_plan(
             ),
         )
         rowid = cur.lastrowid
-        return int(rowid) if rowid is not None else -1
+        plan_id = int(rowid) if rowid is not None else -1
+    if plan_id > 0:
+        from services.plan_execution import ensure_plan_auto_bind
+
+        try:
+            ensure_plan_auto_bind(plan_id)
+        except Exception:
+            log.exception("新增计划 %s 自动绑定失败", plan_id)
+    return plan_id
 
 
-def insert_plans_batch(rows: list[dict]) -> list[int]:
+def insert_plans_batch(rows: list[dict], *, auto_bind: bool = True) -> list[int]:
     """批量 INSERT 多条 pending 制造计划（一次连接/事务），返回 plan_id 列表。
 
     rows: 与 insert_plan 参数同构的 dict，含 type_id/product_name/data/metrics 及可选字段。
+    auto_bind: True 时每条新计划无绑定且库存有可用蓝图则自动绑定（供「加入制造规划」）。
+               调用方随后用 bind_blueprints_many 显式绑定时应传 False，避免抢图冲突。
     """
     if not rows:
         return []
@@ -131,6 +141,16 @@ def insert_plans_batch(rows: list[dict]) -> list[int]:
             )
             rowid = cur.lastrowid
             ids.append(int(rowid) if rowid is not None else -1)
+    if auto_bind:
+        from services.plan_execution import ensure_plan_auto_bind
+
+        for pid in ids:
+            if pid <= 0:
+                continue
+            try:
+                ensure_plan_auto_bind(pid)
+            except Exception:
+                log.warning("批量新增计划 %s 自动绑定失败", pid, exc_info=True)
     return ids
 
 
