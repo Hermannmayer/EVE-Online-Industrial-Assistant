@@ -57,8 +57,8 @@ def build_blueprint_changes(
 class _BlueprintImportWorker(QThread):
     """后台线程：解析剪贴板 → 比对库 → 产出 diff（增/删/不变）供预览确认"""
 
-    progress = Signal(int, int, str)
-    finished = Signal(
+    progress = Signal(int, int, str)  # type: ignore[assignment]  # QThread 基类 Signal 无参数，子类覆盖 arity 属存根误报
+    finished = Signal(  # type: ignore[assignment]  # QThread 基类 Signal 无参数，子类覆盖 arity 属存根误报
         list
     )  # diff rows: [{name, blueprint_type_id, is_bpo, me, te, runs, qty, existing_qty, row_id, delta, final}]
 

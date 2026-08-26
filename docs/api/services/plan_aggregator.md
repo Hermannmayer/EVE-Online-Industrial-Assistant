@@ -32,7 +32,7 @@ def _resolve_name(conn, type_id: int) -> str
 
 委托给 name_resolver（有 terminology 覆盖兜底）
 
-定义行：`36`
+定义行：`37`
 
 ### `_resolve_bp_name`
 
@@ -42,7 +42,7 @@ def _resolve_bp_name(conn, bp_type_id: int) -> str
 
 查出蓝图名称（优先从 item 表）
 
-定义行：`41`
+定义行：`42`
 
 ### `_get_per_run_output`
 
@@ -52,7 +52,7 @@ def _get_per_run_output(conn, bp_type_id: int) -> int
 
 获取蓝图每次制造的产出数量
 
-定义行：`57`
+定义行：`58`
 
 ### `expand_blueprint_requirements`
 
@@ -62,7 +62,7 @@ def expand_blueprint_requirements(conn, plans: list[dict], *, me_level: int=0) -
 
 收集每个生产计划顶层产物的蓝图需求（不递归展开 BOM 子项）。
 
-定义行：`71`
+定义行：`72`
 
 ### `check_user_blueprints`
 
@@ -72,7 +72,7 @@ def check_user_blueprints(conn, bp_type_ids: set[int]) -> dict[int, dict[str, An
 
 查询用户蓝图库存，返回每个 blueprint_type_id 的拥有情况。
 
-定义行：`133`
+定义行：`134`
 
 ### `check_inventory`
 
@@ -82,7 +82,7 @@ def check_inventory(conn, type_ids: set[int]) -> dict[int, int]
 
 查询用户库存（所有机库合计），返回 &#123;type_id: total_quantity&#125;
 
-定义行：`226`
+定义行：`227`
 
 ### `get_market_prices`
 
@@ -92,7 +92,7 @@ def get_market_prices(conn, type_ids: set[int], region_id: int=10000002) -> dict
 
 批量查询市场价，返回 &#123;type_id: &#123;"sell": float, "buy": float, "avg": float&#125;&#125;
 
-定义行：`253`
+定义行：`254`
 
 ### `get_batch_adjustment`
 
@@ -102,7 +102,7 @@ def get_batch_adjustment(per_run_output: int, needed_qty: int) -> tuple[int, int
 
 计算批次调整 — 当蓝图产出为批量时，可能需要向上取整。
 
-定义行：`286`
+定义行：`287`
 
 ### `calculate_output_with_overflow`
 
@@ -112,7 +112,7 @@ def calculate_output_with_overflow(conn, plans: list[dict], *, me_level: int=0, 
 
 计算所有计划的产出数据，含中间产品的 batch 溢出信息。
 
-定义行：`310`
+定义行：`311`
 
 ### `_format_overflow`
 
@@ -122,7 +122,7 @@ def _format_overflow(details: list[dict]) -> str
 
 格式化溢出信息为短文本
 
-定义行：`395`
+定义行：`396`
 
 ### `_pick_price`
 
@@ -132,7 +132,7 @@ def _pick_price(price_map: dict[str, float], price_type: str) -> float
 
 按价格类型取价；缺省回退另一个来源，均无数据返回 0.0
 
-定义行：`412`
+定义行：`413`
 
 ### `aggregate_procurement`
 
@@ -142,7 +142,7 @@ def aggregate_procurement(conn, plans: list[dict], *, hangar_id: int | None=None
 
 聚合「备料中」计划的待采购材料并扣库存 → (rows, total_cost, total_volume)。
 
-定义行：`421`
+定义行：`422`
 
 ### `collect_direct_materials`
 
@@ -152,4 +152,4 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]
 
 聚合各计划的直接材料（recipe 一层，非递归），排除由子项产线自制的组件。
 
-定义行：`539`
+定义行：`566`
