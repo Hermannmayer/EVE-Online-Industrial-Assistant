@@ -6,6 +6,28 @@
 
 <!-- version list -->
 
+## v0.19.0 (2026-08-26)
+
+### Bug Fixes
+
+- 待采购按计划材料机库扣库存 + 复用聚合函数收敛重复实现
+  ([`172d64e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/172d64e46cd88f6d92a618e0cfbdc709a3adc9a3))
+
+- 生产计划机库重设保持子项并行/流程 + 绑定丢失修复与自动绑定恢复
+  ([`5394ab5`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5394ab54a06dcd09b3921c0b3fd87e7feaee387c))
+
+### Features
+
+- 产线小助手复制蓝图名 + 采购/仓库增量粘贴入库
+  ([`f4893b9`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/f4893b9ea84820735e6a7292d649555988040d5c))
+
+- 计划自审机制 — CLAUDE.md 自检四问 + plan-auditor 第二意见代理
+  ([`dda589e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/dda589e53fb83aeb6161e116657d7a29a7e76240))
+
+- **docs**: 功能/函数速查基础设施
+  ([`a0403aa`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a0403aa5751a1107718f5eb8c01435906fd7e14f))
+
+
 ## v0.18.1 (2026-08-18)
 
 ### Bug Fixes
