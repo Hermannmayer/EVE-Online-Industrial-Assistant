@@ -164,6 +164,13 @@ class ProcurementDialog(QDialog):
         self._copy_btn.clicked.connect(self._on_copy_to_clipboard)
         toolbar.addWidget(self._copy_btn)
 
+        self._add_to_hangar_btn = QPushButton("增量添加到仓库")
+        self._add_to_hangar_btn.setToolTip(
+            "读取剪贴板（游戏内复制已购材料 Ctrl+C），按增量累加的方式加入默认材料机库（只增不减）"
+        )
+        self._add_to_hangar_btn.clicked.connect(self._on_add_to_hangar)
+        toolbar.addWidget(self._add_to_hangar_btn)
+
         self._complete_all_btn = QPushButton("完成所有")
         self._complete_all_btn.clicked.connect(self._on_complete_all)
         self._complete_all_btn.setVisible(False)
@@ -338,6 +345,19 @@ class ProcurementDialog(QDialog):
         QApplication.clipboard().setText("\n".join(lines))
         total_qty = sum(r.get("to_buy", 0) for r in rows)
         QMessageBox.information(self, "已复制", f"已复制 {len(rows)} 种材料（共 {total_qty:,.0f} 个）到剪贴板")
+
+    def _on_add_to_hangar(self):
+        """增量添加到仓库 — 读取剪贴板（游戏内复制已购材料），走仓库同款导入预览后增量入默认材料机库。"""
+        from services.inventory_manager import get_default_mat_hangar_and_system, get_hangar_name
+        from ui_pyside6.views.inventory.review_dialog import run_clipboard_import
+
+        hid, _sys = get_default_mat_hangar_and_system()
+        if not hid:
+            QMessageBox.warning(self, "提示", "未设置默认材料机库，请先在设置中指定")
+            return
+        hangar_name = get_hangar_name(hid) or f"机库{hid}"
+        run_clipboard_import(hid, hangar_name, self, mode="incremental")
+        self._calculate()
 
     def _on_complete_all(self):
         """一键完成所有待下线计划：标记为 completed + 自动入库（经 plan_execution.complete_plan）"""

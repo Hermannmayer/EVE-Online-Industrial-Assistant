@@ -29,7 +29,6 @@ from services.inventory_manager import (
     get_items,
     move_items,
     remove_item,
-    set_item_quantity,
     update_cost_price,
     update_quantity,
 )
@@ -79,6 +78,13 @@ class HangarTab(QWidget):
         self._adjust_btn = QPushButton("库存修正")
         self._adjust_btn.clicked.connect(self._on_adjust_inventory)
         bar.addWidget(self._adjust_btn)
+
+        self._incremental_btn = QPushButton("增量粘贴")
+        self._incremental_btn.setToolTip(
+            "读取剪贴板（游戏内复制物品 Ctrl+C），按增量累加的方式加入当前机库（只增不减）"
+        )
+        self._incremental_btn.clicked.connect(self._on_incremental_add)
+        bar.addWidget(self._incremental_btn)
 
         self._transfer_btn = QPushButton("移库")
         self._transfer_btn.clicked.connect(self._on_transfer)
@@ -159,72 +165,22 @@ class HangarTab(QWidget):
         return parse_clipboard(raw)
 
     def _on_adjust_inventory(self):
-        """库存修正 — 游戏全选复制 → 比对剪贴板与库存 → 逐物品确认增减/成本/是否变更。"""
-        from services.inventory_import import compute_import_diff
-
-        from .review_dialog import ImportChangeDialog, ImportReviewDialog
-
+        """库存修正 — 游戏全选复制 → 比对剪贴板与库存 → 逐物品确认增减/成本/是否变更（默认全量同步）。"""
         if not self._page.hangar_id():
             return
-        hid = self._page.hangar_id()
-        # 自动读取剪贴板
-        raw = QApplication.clipboard().text().strip()
-        if not raw:
-            QMessageBox.warning(self, "提示", "剪贴板为空，请先在游戏中复制物品（Ctrl+C）")
-            return
-        parsed = self._parse_clipboard(raw)
-        if not parsed:
-            return
-        hangar_name = self._page._hangar_combo.currentText()
-        # 导入前快照（数量+成本），供全量同步差异对比
-        before_items = get_items(hid)
-        before = {it["type_id"]: (it["quantity"], it.get("cost_price") or 0) for it in before_items}
-        names_before = {it["type_id"]: self._item_name(it) for it in before_items}
+        from .review_dialog import run_clipboard_import
 
-        # 库存修正默认全量同步（以游戏剪贴板为权威覆盖）
-        dlg = ImportReviewDialog(parsed, hangar_name, hid, self, default_mode="full")
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        data = dlg.get_import_data()
-        if not data:
-            return
-        mode = dlg.mode()
-        added = 0
-        moved = 0
-        if mode == "full":
-            # 全量同步：以剪贴板为权威覆盖（增/减/归零删除）；跨机库行保持移动语义
-            targets = dlg.get_sync_targets()
-            for type_id, _delta, price, src_hangar in data:
-                if src_hangar is not None:
-                    if self._move_from_hangar(src_hangar, type_id):
-                        moved += 1
-                    continue
-                final_qty = targets.get(type_id)
-                if final_qty is None:
-                    continue
-                if set_item_quantity(hid, type_id, final_qty, price):
-                    added += 1
-        else:
-            # 增量累加：delta>0 累加；跨机库行移动
-            for type_id, delta, price, src_hangar in data:
-                if delta <= 0:
-                    continue
-                if src_hangar is not None:
-                    if self._move_from_hangar(src_hangar, type_id):
-                        moved += 1
-                else:
-                    rid = add_item(hid, type_id, delta, price)
-                    if rid != -1:
-                        added += 1
+        run_clipboard_import(self._page.hangar_id(), self._page._hangar_combo.currentText(), self, mode="full")
         self._refresh()
-        # 导入后快照 → 差异对比 → 变动弹窗（原「成功导入 N 条」信息并入其中）
-        after_items = get_items(hid)
-        after = {it["type_id"]: (it["quantity"], it.get("cost_price") or 0) for it in after_items}
-        names_after = {it["type_id"]: self._item_name(it) for it in after_items}
-        type_ids = list(dict.fromkeys(list(before) + list(after)))
-        names = {**names_before, **names_after}
-        changes = compute_import_diff(before, after, names, type_ids)
-        ImportChangeDialog(changes, added, moved, hangar_name, self).exec()
+
+    def _on_incremental_add(self):
+        """增量粘贴 — 读取剪贴板（游戏内复制 Ctrl+C），按增量累加加入当前机库（只增不减）。"""
+        if not self._page.hangar_id():
+            return
+        from .review_dialog import run_clipboard_import
+
+        run_clipboard_import(self._page.hangar_id(), self._page._hangar_combo.currentText(), self, mode="incremental")
+        self._refresh()
 
     def _on_transfer(self):
         """移库 — 游戏全选复制源机库 → 选择来源机库 → 按剪贴板数量移到当前机库。"""
@@ -242,14 +198,6 @@ class HangarTab(QWidget):
         dlg = HangarTransferDialog(parsed, self._page.hangar_id(), self._page._hangar_combo.currentText(), self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._refresh()
-
-    def _move_from_hangar(self, src_hangar: int, type_id: int) -> bool:
-        """从源机库找到该物品并整体移动到当前机库，返回是否移动。"""
-        src_item = next((it for it in get_items(src_hangar) if it["type_id"] == type_id), None)
-        if src_item:
-            move_items([src_item["id"]], self._page.hangar_id())
-            return True
-        return False
 
     # ── 移动 ──
 

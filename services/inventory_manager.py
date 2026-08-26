@@ -548,6 +548,53 @@ def move_items(item_ids: list[int], to_hangar_id: int):
                 )
 
 
+def _move_item_between_hangars(src_hangar: int, type_id: int, target_hangar: int) -> bool:
+    """把 src 机库中 type_id 的物品整体移到 target 机库，返回是否移动。"""
+    src = next((it for it in get_items(src_hangar) if it["type_id"] == type_id), None)
+    if src is None:
+        return False
+    move_items([src["id"]], target_hangar)
+    return True
+
+
+def apply_inventory_import(
+    hangar_id: int,
+    data: list[tuple[int, int, float, int | None]],
+    mode: str,
+    targets: dict[int, int] | None = None,
+) -> tuple[int, int]:
+    """按导入数据应用库存变更，返回 (added, moved)。
+
+    data: ``ImportReviewDialog.get_import_data()`` 的逐行
+        ``(type_id, delta_qty, cost_price, src_hangar_id)``。
+    mode:
+        ``"incremental"`` 增量累加——`delta_qty > 0` 才累加，只增不减；
+        ``"full"`` 全量同步——按 ``targets`` 的最终数量覆盖（对话框算出的列）。
+    targets: full 模式下 ``{type_id: 最终数量}``；跨机库移动行（``src_hangar`` 非空）
+        不参与全量 set，保持移动语义。
+    """
+    added = 0
+    moved = 0
+    for type_id, delta, price, src_hangar in data:
+        if src_hangar is not None:
+            if _move_item_between_hangars(src_hangar, type_id, hangar_id):
+                moved += 1
+            continue
+        if mode == "full":
+            final_qty = (targets or {}).get(type_id)
+            if final_qty is None:
+                continue
+            if set_item_quantity(hangar_id, type_id, final_qty, price):
+                added += 1
+        else:
+            if delta <= 0:
+                continue
+            rid = add_item(hangar_id, type_id, delta, price)
+            if rid != -1:
+                added += 1
+    return added, moved
+
+
 def move_quantity(from_hangar_id: int, type_id: int, quantity: int, to_hangar_id: int) -> int:
     """按数量把物品从源机库移到目标机库，成本沿用源库单位成本。
 

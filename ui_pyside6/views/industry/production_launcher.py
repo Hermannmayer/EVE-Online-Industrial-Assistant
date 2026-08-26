@@ -382,7 +382,6 @@ class ProductionLauncher(QWidget):
         self._plan_map: dict[int, dict] = {}
         self._widgets: dict[int, PlanRow] = {}
         self._row_order: list[int] = []
-        self._bp_names: dict[int, str] = {}
         self._usage: dict[str, dict[str, int]] = {}
         self._shortfall_cache: dict[int, tuple] = {}
         self._collapsed: set[int] = set()  # 已折叠的组号（隐藏其子项）
@@ -600,7 +599,6 @@ class ProductionLauncher(QWidget):
         except Exception:
             log.exception("产线小助手轮询失败")
             return
-        self._load_blueprint_names()
         self._refresh_occupancy()
         self._apply_filters()
 
@@ -609,17 +607,6 @@ class ProductionLauncher(QWidget):
             plan = self._plan_map.get(pid)
             if plan and (plan.get("status") or "").lower() in ("in_progress", "running"):
                 w.update_tick()
-
-    def _load_blueprint_names(self) -> None:
-        from services.ui_data_service import get_item_names_batch
-
-        bp_ids = {
-            int(p["blueprint_type_id"])
-            for p in self._all_plans
-            if p.get("blueprint_type_id") and p.get("blueprint_type_id") not in self._bp_names
-        }
-        if bp_ids:
-            self._bp_names.update(get_item_names_batch(list(bp_ids), db=get_container().db))
 
     def _refresh_occupancy(self) -> None:
         self._usage = active_lines_by_category(self._all_plans)
@@ -880,12 +867,9 @@ class ProductionLauncher(QWidget):
         plan = self._plan_map.get(plan_id)
         if plan is None:
             return
-        bp_name = (
-            self._bp_names.get(int(plan.get("blueprint_type_id") or 0))
-            or plan.get("blueprint_name")
-            or plan.get("product_name")
-            or ""
-        )
+        from services.ui_data_service import resolve_plan_blueprint_name
+
+        bp_name = resolve_plan_blueprint_name(plan, db=get_container().db)
         if not bp_name:
             self._feedback.setText("该计划无蓝图信息")
             return

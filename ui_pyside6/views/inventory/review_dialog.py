@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -29,8 +30,9 @@ import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.logger import log
-from services.inventory_import import compute_row_delta
-from services.inventory_manager import get_hangars, get_items
+from services.inventory_clipboard_service import parse_clipboard
+from services.inventory_import import compute_import_diff, compute_row_delta
+from services.inventory_manager import apply_inventory_import, get_hangars, get_items
 from ui_pyside6.icon_cache import load_item_icon
 
 from .item_search_dialog import ItemSearchDialog
@@ -786,3 +788,63 @@ class ImportChangeDialog(QDialog):
                 qty_item.setForeground(QColor(theme.ACCENT_GREEN))
             elif ch["qty_delta"] < 0:
                 qty_item.setForeground(QColor(theme.ACCENT_RED))
+
+
+# ════════════════════════════════════════════════════
+#  剪贴板导入正式编排（仓库/采购共用）
+# ════════════════════════════════════════════════════
+
+
+def _item_display_name(item: dict) -> str:
+    """统一显示名：display_name（terminology 覆盖优先）→ zh → en → str(id)"""
+    return item.get("display_name") or item.get("zh_name") or item.get("en_name") or str(item.get("type_id", ""))
+
+
+def run_clipboard_import(
+    target_hangar_id: int,
+    hangar_name: str,
+    parent,
+    *,
+    mode: str = "incremental",
+) -> None:
+    """读剪贴板 → 解析 → 导入预览 → 应用 → 变动汇总。仓库/采购共用入口。
+
+    Args:
+        target_hangar_id: 目标机库 id
+        hangar_name: 目标机库显示名（预览/汇总标题）
+        parent: 父窗口（对话框宿主）
+        mode: ``"incremental"`` 增量累加 | ``"full"`` 全量同步（库存修正沿用）
+
+    行为与仓库「库存修正」原有实现逐行对齐（含跨机库移动、全量差异对比）。
+    剪贴板为空 / 无有效行 / 用户取消 → 静默返回，不弹错误。
+    """
+    raw = QApplication.clipboard().text().strip()
+    if not raw:
+        QMessageBox.warning(parent, "提示", "剪贴板为空，请先在游戏中复制物品（Ctrl+C）")
+        return
+    parsed = parse_clipboard(raw)
+    if not parsed:
+        return
+
+    # 导入前快照（数量+成本），供差异对比
+    before_items = get_items(target_hangar_id)
+    before = {it["type_id"]: (it["quantity"], it.get("cost_price") or 0) for it in before_items}
+    names_before = {it["type_id"]: _item_display_name(it) for it in before_items}
+
+    dlg = ImportReviewDialog(parsed, hangar_name, target_hangar_id, parent, default_mode=mode)
+    if dlg.exec() != QDialog.DialogCode.Accepted:
+        return
+    data = dlg.get_import_data()
+    if not data:
+        return
+    actual_mode = dlg.mode()
+    targets = dlg.get_sync_targets() if actual_mode == "full" else None
+    added, moved = apply_inventory_import(target_hangar_id, data, actual_mode, targets)
+
+    after_items = get_items(target_hangar_id)
+    after = {it["type_id"]: (it["quantity"], it.get("cost_price") or 0) for it in after_items}
+    names_after = {it["type_id"]: _item_display_name(it) for it in after_items}
+    type_ids = list(dict.fromkeys(list(before) + list(after)))
+    names = {**names_before, **names_after}
+    changes = compute_import_diff(before, after, names, type_ids)
+    ImportChangeDialog(changes, added, moved, hangar_name, parent).exec()
