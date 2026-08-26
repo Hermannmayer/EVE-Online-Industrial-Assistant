@@ -104,6 +104,25 @@ data/          运行时数据（settings, score_settings, char_config, terminol
 | 查/改 EVE 术语 | `data/terminology.json` + `services/terminology.py` | `docs/dev/glossary.md` |
 | 改 UI 配色 | `ui_pyside6/theme.py` | `docs/dev/architecture.md`（主题） |
 
+## 计划自检（写计划前必读）
+
+每次进入计划模式写实现计划，`ExitPlanMode` 前必须自检，并把结论写进计划文件：
+
+1. **架构符合性** — 改动静点是否符合「架构」分层与「铁律」？是否绕过组合根/迁移机制/主题取色/术语中心？
+2. **可复用性** — 是否已搜过 `core/` `domain/` `services/` `ui_pyside6/` 确认无现成实现？有没有复制粘贴已有逻辑？
+3. **隐患** — 会留下哪些技术债（无测试覆盖的关键路径/隐藏分支/破坏既有行为/并发与性能/迁移遗漏）？如何消除或显式声明接受？
+4. **更优解** — 有无更简替代？为什么不用这个替代？本方案的取舍是什么？
+
+小改动（≤2 文件、不碰架构）可用「自检通过」一句话带过。
+
+### 第二意见（plan-auditor）
+
+满足以下任一条件的改动，`ExitPlanMode` 前必须调用 `plan-auditor` 子代理（`.claude/agents/plan-auditor.md`），传入计划文件路径与涉及文档路径，拿到报告后把合理发现并入计划：
+
+- 涉及 3+ 个文件
+- 触碰架构分层 / 铁律 / schema 迁移 / 依赖变更
+- 新增服务、重构或删除既有行为
+
 ## Claude 技能
 
 - `/code-review` — 代码审查
