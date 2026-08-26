@@ -6,6 +6,13 @@
 
 物品数据拉取 — 从 SDE zip 本地解析 typeIDs.yaml / groupIDs.yaml / marketGroups.yaml
 
+流程：
+  1. 检查本地缓存 data/typeIDs.yaml 等是否存在
+  2. 若不存在 → 下载 SDE zip(~112MB)，提取所需的 YAML 文件并缓存
+  3. 解析 YAML → 批量写入 reference.db 的 item 表 + market_tree 表
+
+首次拉取需要下载一次 SDE zip，后续跳过。
+
 ## 函数
 
 ### `_ref_db`

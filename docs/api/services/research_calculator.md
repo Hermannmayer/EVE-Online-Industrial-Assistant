@@ -6,6 +6,12 @@
 
 研究成本计算 — 拷贝(copying) / 发明(invention) 成本。
 
+- T1 物品：拷贝成本 = Σ(拷贝材料×单价) + 安装费（EIV × SCI(copying) × 结构 + 税 + SCC）。
+- T2/T3 物品：发明成本 = Σ(数据核心 invention 材料×单价) + 安装费（SCI(invention)）÷ 成功率。
+- 蓝图原图 / 无制造蓝图：返回 None（不写成本）。
+
+蓝图数据经传入的 conn（ref/bp 主库）；物品价格（adjusted_price）从 mkt 库独立查询。
+
 ## 函数
 
 ### `_default_research_system_id`

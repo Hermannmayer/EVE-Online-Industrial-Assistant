@@ -6,6 +6,11 @@
 
 评分编排门面。
 
+职责：开连接 → 取蓝图/材料/名称/价格 → 组装输入 → 调 domain 纯函数 → 写缓存。
+
+数据访问经 `services.scoring_service` 模块级函数（`_ss.get_price` 等）在调用时解析，
+以保留测试对这些符号的 patch 语义（`@patch("services.scoring_service.get_price")`）。
+
 ## 函数
 
 ### `_char_config_fingerprint`

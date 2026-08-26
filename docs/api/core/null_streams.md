@@ -6,6 +6,12 @@
 
 无控制台（--windowed）GUI 下的标准流兜底。
 
+PyInstaller/--windowed 打包的应用没有控制台，`sys.stdout`/`sys.stderr` 为 None。
+任何写这两个流的库（logging、tqdm、print）会在第一行输出时抛
+`AttributeError: 'NoneType' object has no attribute 'write'`——例如 items/blueprints
+初始化步骤里的 `tqdm(...)` 直接导致步骤失败。本模块在应用最早期把 None 的流替换为
+静默丢弃的 `NullWriter`，让所有写流的地方都有可靠落点。
+
 ## 函数
 
 ### `ensure_console_streams`

@@ -62,6 +62,7 @@ export default withMermaid(
             items: [
               { text: '开发环境', link: '/dev/setup' },
               { text: '架构说明', link: '/dev/architecture' },
+              { text: '功能链路速查', link: '/dev/flows' },
               { text: '数据格式', link: '/dev/data' },
               { text: '数据库 ER 图', link: '/dev/database-er' },
               { text: '测试与规范', link: '/dev/testing' },

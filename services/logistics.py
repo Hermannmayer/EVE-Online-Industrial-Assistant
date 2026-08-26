@@ -3,6 +3,8 @@
 
 提供跨区域运输的运费估算和净利润计算功能。
 支持两种运输模式：公开货运（按体积+抵押计价）和自有运输（按跳跃数计价）。
+数据来源：硬编码 TRADE_HUB_DISTANCES 距离表、reference.db item.volume、
+market.db market_prices（经 PricingService）。被贸易页 TransportWorker 消费。
 """
 
 from core.container import get_container

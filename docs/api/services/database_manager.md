@@ -6,6 +6,14 @@
 
 DatabaseManager — 多库连接管理器（连接复用版）
 
+封装三个独立数据库的连接管理，支持 ATTACH DATABASE 跨库查询。
+同一线程内相同配置的连接自动复用，避免重复打开和 ATTACH 开销。
+
+用法:
+    db = DatabaseManager()
+    with db.connect('user', 'ref', 'mkt') as conn:
+        cursor = conn.execute("SELECT * FROM ref.item i JOIN mkt.market_prices mp ...")
+
 ## 函数
 
 ### `get_db`
@@ -23,6 +31,9 @@ def get_db() -> DatabaseManager
 ### `class DatabaseManager`
 
 线程安全的多数据库连接管理器（连接复用版）
+
+同一线程内，相同 (primary, attach) 配置的连接会自动复用，
+避免重复打开物理连接和执行 ATTACH DATABASE。
 
 定义行：`56`
 

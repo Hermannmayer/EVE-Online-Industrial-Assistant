@@ -6,6 +6,14 @@
 
 拉取结构改装件（Standup Engineering Rigs）的制造加成（从 ESI /universe/types/ 并发拉取）
 
+只处理制造相关的工程站改装件组（reference.db item 表 group 1816-1870，剔除
+1818 Strong Boxes 与 1817 空组，共 53 组 111 个改件）：
+  - 材料效率钻机（attributeEngRigMatBonus=2594）
+  - 时间效率钻机（attributeEngRigTimeBonus=2593）
+
+说明：SDE 的 typeIDs.yaml 导出不含 dogmaAttributes，改件加成直接走 ESI 拉取，
+写入 reference.db 的 structure_rigs 表（机库设置 UI 展示与成本解析使用）。
+
 ## 函数
 
 ### `init_db`

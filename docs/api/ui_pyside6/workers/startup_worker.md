@@ -6,6 +6,9 @@
 
 启动后台检查 Worker — 迁移 + schema + 数据就绪，信号上报 SplashScreen。
 
+将原 Main.py 启动时的耗时操作（旧库拆分迁移、蓝图表迁移、schema 版本迁移、
+user 表初始化、数据就绪扫描）移入子线程，避免主线程阻塞 splash 动画。
+
 ## 类
 
 ### `class StartupCheckWorker`（继承 `QThread`）

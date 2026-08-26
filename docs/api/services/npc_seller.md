@@ -6,6 +6,8 @@
 
 蓝图 NPC 卖家查询 — 从 ESI 卖单中筛出 NPC 公司的卖单。
 
+纯函数（filter_npc_sell_orders）便于单测；DB 查询（NPC 公司/空间站）走 reference.db。
+
 ## 函数
 
 ### `load_npc_corp_context`

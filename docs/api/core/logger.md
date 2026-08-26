@@ -6,6 +6,13 @@
 
 结构化日志模块 — 统一日志输出
 
+用法:
+    from core.logger import log
+    log.info("消息")
+    log.warning("警告")
+    log.error("错误")
+    log.debug("调试")
+
 ## 函数
 
 ### `set_debug`

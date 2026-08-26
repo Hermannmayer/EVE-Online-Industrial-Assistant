@@ -12,9 +12,9 @@ gen_api_docs.py — 函数级 API 文档自动生成。
 
 用法：
     python scripts/gen_api_docs.py            # 生成/更新
-    python scripts/gen_api_docs.py --check    # 只检查文档是否过期（docs.yml 用）
+    python scripts/gen_api_docs.py --check    # 只检查文档是否过期（本地/测试用）
 
-CI（docs.yml）在构建文档站前运行本脚本，保证 API 页与代码同步。
+CI（docs.yml）在构建文档站前运行本脚本重新生成 API 页，保证与代码同源。
 """
 
 from __future__ import annotations
@@ -112,14 +112,20 @@ def _parse_module(path: Path, rel: Path) -> Module:
     return Module(rel_path=rel, doc=ast.get_docstring(tree), funcs=tuple(funcs), classes=tuple(classes))
 
 
+def _escape_markdown(text: str) -> str:
+    """转义破坏 VitePress markdown-it-attrs 的花括号。
+
+    markdown-it-attrs 会把 `{..}` 解析为 HTML 属性（如 `{ "items": bool }`），
+    不转义会导致 Vue 编译报 Duplicate attribute。
+    """
+    return text.replace("{", "&#123;").replace("}", "&#125;")
+
+
 def _doc_first_paragraph(doc: str | None) -> str:
     """取 docstring 第一段（到第一个空行），并转义 markdown 特殊字符。"""
     if not doc:
         return ""
-    text = doc.strip().split("\n\n")[0].strip()
-    # 转义花括号：VitePress 的 markdown-it-attrs 会把 {..} 解析为 HTML 属性
-    # （如 { "items": bool } 会导致 Vue 编译报 Duplicate attribute）
-    return text.replace("{", "&#123;").replace("}", "&#125;")
+    return _escape_markdown(doc.strip().split("\n\n")[0].strip())
 
 
 def _render_func(f: Func) -> str:
@@ -141,7 +147,7 @@ def _render_class(c: Class) -> str:
         head += f"（继承 `{c.bases}`）"
     parts = [head]
     if c.doc:
-        parts += ["", _doc_first_paragraph(c.doc)]
+        parts += ["", _escape_markdown(c.doc.strip())]
     else:
         parts += ["", "::: warning ⚠️ 待补 docstring", "此类暂无 docstring，欢迎补充。", ":::"]
     parts += ["", f"定义行：`{c.lineno}`"]
@@ -161,7 +167,15 @@ def _render_module(m: Module) -> str:
         "",
     ]
     if m.doc:
-        parts += ["> 模块说明：", "", _doc_first_paragraph(m.doc), ""]
+        parts += ["> 模块说明：", "", _escape_markdown(m.doc.strip()), ""]
+    elif m.rel_path.name != "__init__.py":
+        parts += [
+            "",
+            "::: warning ⚠️ 待补模块 docstring",
+            "此模块暂无模块级 docstring，欢迎补充（应描述模块功能全貌、数据来源与被调用方）。",
+            ":::",
+            "",
+        ]
 
     if m.funcs:
         parts += ["## 函数", ""]

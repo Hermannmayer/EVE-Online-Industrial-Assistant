@@ -6,6 +6,16 @@
 
 BOM 递归展开 — 支持 T2/T3 产业链的完整材料树
 
+从目标成品 type_id 开始，递归查找蓝图 → 材料 → 子蓝图 → 子材料，
+构建完整的制造材料树。叶子节点为可直接购买的原材料。
+
+用法:
+    from services.bom_expander import expand_bom
+
+    result = expand_bom(type_id=30013, quantity=10, bp_me=10)
+    print(result["full_cost"])          # 总材料成本
+    print(result["raw_materials"])      # 叶子节点列表
+
 ## 函数
 
 ### `_default_db`

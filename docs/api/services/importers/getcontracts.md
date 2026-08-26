@@ -6,6 +6,15 @@
 
 公开合同拉取 — 4 大贸易中心公开合同 + 合同内物品
 
+ESI 端点：
+  GET /contracts/public/&#123;region_id&#125;/  — 分页，每页 500 条
+  GET /contracts/public/items/&#123;contract_id&#125;/  — 合同内物品详情
+
+两阶段：
+  1. 并发拉取各区域的合同列表（分页）
+  2. 对每个合同并发拉取其物品列表
+  3. 批量写入数据库
+
 ## 函数
 
 ### `write_progress`

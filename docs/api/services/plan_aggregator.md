@@ -6,6 +6,22 @@
 
 计划聚合查询 — 为工业制造三张汇总表提供统一数据层
 
+将 blueprint_dialog / materials_dialog / output_dialog 公用的
+蓝图库存、材料库存、产出溢出计算提取到这里。
+
+用法:
+    from services.plan_aggregator import (
+        expand_blueprint_requirements,
+        check_user_blueprints,
+        check_inventory,
+        calculate_output_with_overflow,
+    )
+
+    with get_container().db.connect("user", "ref", "bp", "mkt") as conn:
+        plans = ...  # list[dict]
+        bps = expand_blueprint_requirements(conn, plans)
+        bp_inv = check_user_blueprints(conn, set(bps.keys()))
+
 ## 函数
 
 ### `_resolve_name`

@@ -12,6 +12,13 @@
 
 异步令牌桶限流器 — ESI 要求 ≤20 req/s，超发时自动排队等待。
 
+用法：请求前 `await limiter.acquire()`。rate 为每秒令牌数，
+burst 为瞬时突发上限（桶容量）。
+
+用 threading.Lock 保护令牌更新：不绑定事件循环（模块级单例可被
+多个 asyncio.run 复用，重试不会抛 "bound to a different event loop"），
+同时线程安全。
+
 定义行：`14`
 
 #### 方法

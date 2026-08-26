@@ -6,6 +6,10 @@
 
 生产计划执行 — 倒计时 / 材料校验扣减 / 蓝图绑定占用消耗 / 完成入库
 
+把「生产计划」从静态排产升级为可执行产线追踪：
+  pending ──启动──▶ in_progress ──倒计时到期──▶ ready ──完成──▶ completed
+  本模块只做纯逻辑与参数化 SQL，不依赖任何 UI；DB 经 get_container().db 访问。
+
 ## 函数
 
 ### `_now_str`

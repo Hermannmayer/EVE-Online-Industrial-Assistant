@@ -6,6 +6,10 @@
 
 统一物品名称解析服务。
 
+将 type_id 转换为可读的中文/英文物品名称。
+
+解析优先级: terminology.item_overrides > item.zh_name > item.en_name > str(id)
+
 ## 函数
 
 ### `search_item_type_id`

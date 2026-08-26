@@ -6,6 +6,19 @@
 
 统一术语服务 — 加载 terminology.yaml 提供游戏术语查询。
 
+职责:
+  1. 蓝图活动名 (activity) 中文化
+  2. 物品名/分组名覆盖 (SDE 翻译不对时手动修正)
+  3. UI 标签统一
+  4. 技能/属性别名
+
+用法:
+  from services.terminology import term
+
+  term.activity("manufacturing")        # → "制造"
+  term.translate("材料", "ui_labels")    # → "材料" (自身)
+  term.resolve_name(34)                  # → "三钛合金" (若在 item_overrides 中)
+
 ## 类
 
 ### `class Terminology`

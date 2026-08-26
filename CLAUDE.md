@@ -87,6 +87,23 @@ database/      SQLite 库 + backups/ 迁移前快照（自动生成）
 data/          运行时数据（settings, score_settings, char_config, terminology）
 ```
 
+## 任务导航（改代码前先读）
+
+收到任务先定位所属链路，读对应文档与入口文件，不要通读全库。
+
+| 任务类型 | 入口文件（改这） | 相关文档（先读这） |
+|---|---|---|
+| 改制造/贸易/精炼公式 | `domain/formulas.py`、`domain/scoring.py`（纯算法）、`core/eve_formulas.py` | `docs/dev/flows.md`；`docs/api/…` |
+| 改评分编排/取价 | `services/scoring_facade.py`（编排）、`services/scoring_service.py`（薄委托入口） | `docs/dev/flows.md`（评分节） |
+| 改统一定价/市场查询 | `services/pricing_service.py`、`services/repositories/market_repository.py` | `docs/dev/data.md`（market.db 表） |
+| 改 BOM 展开 | `services/bom_expander.py`、`domain/bom.py` | `docs/dev/flows.md`（BOM 节） |
+| 改生产计划 | `services/plan_service.py` + `services/repositories/plan_repository.py` + `plan_*.py` | `docs/dev/flows.md`（计划节） |
+| 改数据库 Schema | `services/schema_migrations.py`（迁移函数注册） | `docs/dev/schema-migration.md`；`docs/dev/data.md` |
+| 改数据导入（SDE/ESI） | `services/importers/get*.py`、`services/init_service.py` | `docs/dev/flows.md`（初始化节） |
+| 改 UI 页面/异步任务 | `ui_pyside6/views/…`、`ui_pyside6/workers/…`、`ui_pyside6/models/…` | `docs/dev/architecture.md`；`docs/dev/api-reference.md` |
+| 查/改 EVE 术语 | `data/terminology.json` + `services/terminology.py` | `docs/dev/glossary.md` |
+| 改 UI 配色 | `ui_pyside6/theme.py` | `docs/dev/architecture.md`（主题） |
+
 ## Claude 技能
 
 - `/code-review` — 代码审查

@@ -6,6 +6,29 @@
 
 集中式路径管理 —— 兼容开发环境和 PyInstaller 打包环境
 
+开发环境：
+    eve/
+        Main.py
+        database/
+            reference.db   ← 静态参考数据（item, industry_*, market_tree, item_dogma）
+            blueprint.db   ← 蓝图数据（blueprint_activities, _materials, _products, _skills）
+            market.db      ← 市场价格数据（market_prices, market_volume_snapshots）
+            user.db        ← 用户自有数据（hangars, inventory_items, production_plans, user_skills）
+        data/caches/icons/
+        services/workers/getprices.py
+
+PyInstaller 打包后：
+    dist/EVE商人助手/
+        EVE商人助手.exe
+        database/
+            reference.db
+            market.db
+            user.db
+        data/caches/icons/
+        data/update_progress.json
+        data/search_history.json
+        data/window_geometry.json
+
 ## 函数
 
 ### `is_frozen`

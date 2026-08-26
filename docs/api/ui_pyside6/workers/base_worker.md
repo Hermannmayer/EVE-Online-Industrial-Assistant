@@ -6,6 +6,11 @@
 
 评分 Worker 基类 — 统一 QThread 模板，消除重复代码
 
+用法:
+    class MyScoreWorker(BaseScoreWorker):
+        def _compute(self) -> dict:
+            return calc_xxx_score(type_id=self._type_id, ...)
+
 ## 类
 
 ### `class BaseScoreWorker`（继承 `QThread`）

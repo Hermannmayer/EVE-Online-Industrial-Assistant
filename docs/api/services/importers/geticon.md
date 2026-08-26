@@ -6,6 +6,11 @@
 
 geticon.py — 从 EVE Image Server 批量拉取物品图标
 
+用共享的 SDE 缓存（typeIDs.yaml）预筛出有图标的物品，跳过无图标条目。
+按 iconID 去重，相同图标只下载一次后复制到其余 type_id。
+
+图标缓存位置：data/caches/icons/&#123;type_id&#125;.png
+
 ## 函数
 
 ### `_load_type_ids_with_icons`
