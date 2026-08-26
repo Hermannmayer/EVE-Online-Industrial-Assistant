@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from typing import Any
 
@@ -441,7 +442,7 @@ def aggregate_procurement(
 
     Returns:
         (rows, total_cost, total_volume)
-        rows: [{type_id, name, need, owned, to_buy, price, total, volume}]
+        rows: [{type_id, name, zh_name, en_name, need, owned, to_buy, price, total, volume}]
     """
     # 1. 每个计划取直接材料；由子项产线自制的组件排除（其原材料由子线计划计入）。
     #    未拆解的组件 / 子线被删后 → 回到待采购。
@@ -453,6 +454,7 @@ def aggregate_procurement(
     group_need: dict[int | None, dict[int, float]] = {}
     names: dict[int, str] = {}
     volumes: dict[int, float] = {}
+    zh_en: dict[int, tuple[str | None, str | None]] = {}
     for plan in plans:
         pid = plan.get("product_type_id")
         if not pid:
@@ -477,11 +479,34 @@ def aggregate_procurement(
                 continue  # 自制组件：由子项产线覆盖，买其原材料（子线计划已计入）
             need = calc_material_for_runs(qty, wf, me, total_runs)
             bucket[mid] = bucket.get(mid, 0.0) + float(need)
-            if mid not in names:
+            if mid not in zh_en:
+                r = conn.execute("SELECT zh_name, en_name, volume FROM item WHERE type_id=?", (mid,)).fetchone()
+                zh_en[mid] = (r[0], r[1]) if r else (None, None)
                 names[mid] = _resolve_name(conn, mid)
-            if mid not in volumes:
-                v = conn.execute("SELECT volume FROM item WHERE type_id=?", (mid,)).fetchone()
-                volumes[mid] = float(v[0]) if v and v[0] else 0.0
+                volumes[mid] = float(r[2]) if r and r[2] else 0.0
+
+    # 1b. 合并强制启动计划的材料缺口计入需求（计入该计划所在机库；不排除子项自制件，与旧口径一致）
+    for plan in plans:
+        raw = plan.get("material_short") or ""
+        if not raw:
+            continue
+        try:
+            short = json.loads(raw)
+        except Exception:
+            continue
+        gid = hangar_id if hangar_id is not None else (plan.get("mat_hangar_id") or default_hangar_id)
+        bucket = group_need.setdefault(gid, {})
+        for mid_str, missing in short.items():
+            try:
+                mid = int(mid_str)
+            except (TypeError, ValueError):
+                continue
+            bucket[mid] = bucket.get(mid, 0.0) + float(missing)
+            if mid not in zh_en:
+                r = conn.execute("SELECT zh_name, en_name, volume FROM item WHERE type_id=?", (mid,)).fetchone()
+                zh_en[mid] = (r[0], r[1]) if r else (None, None)
+                names[mid] = _resolve_name(conn, mid)
+                volumes[mid] = float(r[2]) if r and r[2] else 0.0
 
     # 2. 每个出现过的机库各查一次库存（同机库跨计划合并后统一扣减）
     inv_by_hangar: dict[int | None, dict[int, float]] = {}
@@ -523,6 +548,8 @@ def aggregate_procurement(
             {
                 "type_id": tid,
                 "name": names.get(tid, str(tid)),
+                "zh_name": (zh_en.get(tid) or (None, None))[0],
+                "en_name": (zh_en.get(tid) or (None, None))[1],
                 "need": need_map[tid],
                 "owned": owned_map[tid],
                 "to_buy": to_buy,
