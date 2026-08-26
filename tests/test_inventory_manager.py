@@ -9,6 +9,7 @@ import pytest
 from services.inventory_manager import (
     SCHEMA,
     add_item,
+    apply_inventory_import,
     create_hangar,
     delete_hangar,
     get_hangar_config,
@@ -389,3 +390,103 @@ class TestMoveQuantity:
         move_quantity(src, 1001, 10, dst)
         assert self._qty(inv_db, dst, 1001) == 20
         assert round(self._cost(inv_db, dst, 1001), 2) == 4.0  # (10*8 + 10*0)/20
+
+
+@pytest.fixture
+def import_db():
+    """全套临时库（ref/bp/mkt + user SCHEMA + 最小 production_plans），注入 _default_db。
+
+    apply_inventory_import 的跨机库行走 get_items → 需 production_plans 参与占用聚合。
+    """
+    import shutil
+    import tempfile
+
+    import services.inventory_manager as im
+    from services.database_manager import DB_PATH_MAP, DatabaseManager, get_db
+    from tests.conftest import _create_temp_databases
+
+    tmpdir = Path(tempfile.mkdtemp(prefix="inv_import_"))
+    db_paths = _create_temp_databases(str(tmpdir))
+    conn = sqlite3.connect(db_paths["user"])
+    conn.executescript(SCHEMA)
+    conn.executescript(
+        "CREATE TABLE production_plans ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, product_type_id INTEGER,"
+        " status TEXT DEFAULT 'pending', runs INTEGER DEFAULT 1, parallels INTEGER DEFAULT 1);"
+    )
+    conn.close()
+
+    saved = dict(DB_PATH_MAP)
+    DB_PATH_MAP.update(db_paths)
+    db = DatabaseManager()
+    orig = im._default_db
+    im._default_db = lambda: db
+    yield tmpdir
+    im._default_db = orig
+    db.close_all()
+    DB_PATH_MAP.clear()
+    DB_PATH_MAP.update(saved)
+    get_db().close_all()
+    shutil.rmtree(str(tmpdir), ignore_errors=True)
+
+
+class TestApplyInventoryImport:
+    """apply_inventory_import — 剪贴板导入应用（增量/全量/跨机库移动）"""
+
+    @staticmethod
+    def _stock(import_db, hid) -> dict[int, int]:
+        conn = sqlite3.connect(str(Path(import_db) / "user.db"))
+        rows = conn.execute("SELECT type_id, quantity FROM inventory_items WHERE hangar_id = ?", (hid,)).fetchall()
+        conn.close()
+        return dict(rows)
+
+    def test_incremental_adds_on_top(self, import_db):
+        """增量累加：在现有数量上累加 delta，返回 added 行数"""
+        hid = create_hangar("主仓")
+        add_item(hid, 1001, 10, 5.0)
+        added, moved = apply_inventory_import(hid, [(1001, 5, 5.0, None), (1002, 3, 8.0, None)], "incremental")
+        assert (added, moved) == (2, 0)
+        assert self._stock(import_db, hid) == {1001: 15, 1002: 3}
+
+    def test_incremental_skips_non_positive_delta(self, import_db):
+        """增量只加不减：delta<=0 跳过，库存不变"""
+        hid = create_hangar("主仓")
+        add_item(hid, 1001, 10, 5.0)
+        added, moved = apply_inventory_import(hid, [(1001, 0, 5.0, None), (1001, -3, 5.0, None)], "incremental")
+        assert (added, moved) == (0, 0)
+        assert self._stock(import_db, hid) == {1001: 10}
+
+    def test_full_sets_target_quantity(self, import_db):
+        """全量同步：按 targets 最终数量覆盖（更新既有行 + 插入新行）"""
+        hid = create_hangar("主仓")
+        add_item(hid, 1001, 10, 5.0)
+        added, moved = apply_inventory_import(
+            hid, [(1001, 0, 5.0, None), (1002, 0, 8.0, None)], "full", targets={1001: 7, 1002: 4}
+        )
+        assert (added, moved) == (2, 0)
+        assert self._stock(import_db, hid) == {1001: 7, 1002: 4}
+
+    def test_full_zero_removes_row(self, import_db):
+        """全量同步归零：目标 0 → 删除行；行仍计入 applied（added），实际增减由变动汇总展示"""
+        hid = create_hangar("主仓")
+        add_item(hid, 1001, 10, 5.0)
+        added, moved = apply_inventory_import(hid, [(1001, 0, 5.0, None)], "full", targets={1001: 0})
+        assert (added, moved) == (1, 0)
+        assert self._stock(import_db, hid) == {}
+
+    def test_move_from_other_hangar(self, import_db):
+        """跨机库行：源机库整体移动到目标，计入 moved"""
+        src = create_hangar("源仓")
+        dst = create_hangar("目标仓")
+        add_item(src, 1001, 20, 5.0)
+        added, moved = apply_inventory_import(dst, [(1001, 20, 5.0, src)], "incremental")
+        assert (added, moved) == (0, 1)
+        assert self._stock(import_db, src) == {}
+        assert self._stock(import_db, dst) == {1001: 20}
+
+    def test_move_missing_source_item_skipped(self, import_db):
+        """跨机库源库无该物品 → 不移动不报错"""
+        src = create_hangar("源仓")
+        dst = create_hangar("目标仓")
+        added, moved = apply_inventory_import(dst, [(9999, 1, 5.0, src)], "incremental")
+        assert (added, moved) == (0, 0)

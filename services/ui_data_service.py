@@ -13,7 +13,8 @@ from typing import Any
 
 from core.container import get_container
 from services import inventory_manager
-from services.name_resolver import resolve_system_name
+from services.blueprint_reader import get_blueprint_products
+from services.name_resolver import resolve_item_name, resolve_system_name
 from services.plan_aggregator import aggregate_procurement
 from services.terminology import term
 
@@ -238,6 +239,28 @@ def get_item_names_batch(type_ids: list[int], db=None) -> dict[int, str]:
             tuple(ids),
         ).fetchall()
     return {int(tid): zh or en or str(tid) for tid, zh, en in rows}
+
+
+def resolve_plan_blueprint_name(plan: dict, db=None) -> str:
+    """计划行 → 蓝图名（供产线小助手点击复制）。绝不把产物名当蓝图名。
+
+    1. ``plan.blueprint_type_id`` 直取 → ``resolve_item_name``（term→zh→en→id）；
+    2. 缺失 → ``blueprint_reader.get_blueprint_products`` 按产物反查制造蓝图；
+    3. 无蓝图（不可制造的共享材料子行）→ 回退 ``plan.product_name`` 保留旧行为。
+    """
+    db = _resolve_db(db)
+    bpid = plan.get("blueprint_type_id")
+    if not bpid:
+        pid = int(plan.get("product_type_id") or 0)
+        if pid:
+            with db.connect("bp") as conn:
+                row = get_blueprint_products(conn, pid, "manufacturing")
+            if row:
+                bpid = int(row[0])
+    if not bpid:
+        return plan.get("product_name") or ""
+    with db.connect("ref") as conn:
+        return resolve_item_name(conn, int(bpid))
 
 
 # ── 蓝图导入 Worker ────────────────────────────────────────────
