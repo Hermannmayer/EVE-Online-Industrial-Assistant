@@ -6,6 +6,9 @@
 
 用户设置集中读写 — settings.json。
 
+现有各调用方（TopToolbar 等）各自 json 读改写同一文件，本模块提供集中读写，
+不强迁既有调用方；新增的默认机库设置等统一走这里。
+
 ## 函数
 
 ### `_migrate_settings`

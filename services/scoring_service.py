@@ -4,7 +4,10 @@
 包含:
   - ScoringCache：线程安全、有界 TTL 缓存
   - 模块级便利函数：get_price / get_volume / get_system_cost_index / calc_*_score
-  - ScoringService：可注入的评分服务类（同接口 + calc_reaction_score）
+    （评分链路取价直查 market.db market_prices，不经 PricingService）
+  - ScoringService：可注入的评分服务类（同接口 + calc_reaction_score）；calc_*_score
+    为薄委托 → scoring_facade 编排（读 DB/缓存）→ domain.scoring 纯算法
+被 industry/trade 页各评分 Worker 消费。
 """
 
 from __future__ import annotations

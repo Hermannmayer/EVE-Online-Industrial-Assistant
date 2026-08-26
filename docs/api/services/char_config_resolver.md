@@ -6,6 +6,11 @@
 
 角色配置统一解析 — 四种来源合并，消除对 UI 层的反依赖。
 
+来源优先级：skills 参数 > char_data 参数 > char_name → char_config.json → 默认技能
+
+本模块同时提供 char_config.json 的读写入口（原 ui_pyside6.views.char_settings_view
+中的薄封装），使 services 层可直接使用，不再反向 import UI 层。
+
 ## 函数
 
 ### `char_config_path`

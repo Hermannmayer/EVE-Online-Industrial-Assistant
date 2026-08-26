@@ -6,6 +6,10 @@
 
 EVE Online 游戏公式常量。
 
+来源:
+- 制造: https://wiki.eveuniversity.org/Manufacturing
+- 贸易: https://wiki.eveuniversity.org/Trade
+
 ## 函数
 
 ### `_hub_region_id`

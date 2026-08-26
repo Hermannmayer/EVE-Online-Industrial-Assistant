@@ -6,6 +6,10 @@
 
 计划指标计算 — 个人利润率 / 拆解母项成本调整（纯函数，无 DB/Qt 依赖）。
 
+从 scoring_service.ScoringService 中抽出的纯算法：这些函数只做数值计算，
+输入全部显式传入（result dict + 库存成本映射 + 流程数），不触碰数据库/容器，
+便于脱离 SQLite/Qt 单测。ScoringService 保留 thin delegate 向后兼容。
+
 ## 函数
 
 ### `calculate_personal_margin`

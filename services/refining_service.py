@@ -1,5 +1,9 @@
 """
 精炼价值计算
+
+数据来源：reference.db reprocessing_materials（可精炼物料与产出）、
+market.db 价格（经 PricingService）。产率公式 calc_refining_yield 在 core.eve_formulas。
+被估算页 refine_worker 消费。
 """
 
 from core.eve_formulas import calc_refining_yield

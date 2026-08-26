@@ -6,6 +6,14 @@
 
 蓝图数据拉取 — 从 SDE 解析 blueprints.yaml
 
+流程：
+  1. 检查本地缓存 data/blueprints.yaml 是否存在
+  2. 若不存在 → 下载 SDE zip(~112MB)，提取 blueprints.yaml 并缓存
+  3. 解析 YAML → 写入 blueprint_* 表
+  4. 后续打包分发时：带上 reference.db 即可（表已填充），无需重新下载
+
+首次拉取需要下载一次，后续跳过。
+
 ## 函数
 
 ### `create_tables`

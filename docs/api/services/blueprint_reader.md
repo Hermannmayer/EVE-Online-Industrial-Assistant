@@ -6,6 +6,9 @@
 
 蓝图数据访问层 — 统一蓝图查询接口。
 
+替代多处分散的 SELECT FROM blueprint_materials 查询。
+依赖 blueprint.db 中的 blueprint_materials 表。
+
 ## 函数
 
 ### `get_blueprint_wastefactor`

@@ -6,6 +6,16 @@
 
 初始化流程控制器 — 状态管理 + 进度信号 + 重试/跳过
 
+用法(CLI):
+    from services.init_service import InitService
+    service = InitService()
+    asyncio.run(service.run_all())
+
+用法(GUI):
+    service = InitService()
+    service.step_progress.connect(on_progress)
+    service.start()
+
 ## 函数
 
 ### `_noop`
@@ -69,6 +79,19 @@ def get_missing_count() -> int
 ### `class InitService`（继承 `QObject`）
 
 初始化流程控制器
+
+信号（GUI 模式）：
+    step_started(key, name)
+    step_progress(key, percent, message)
+    step_completed(key, success, message)
+    all_completed(success, summary)
+    network_status(ok, message)
+
+回调（CLI 模式）：
+    on_step_started(key, name)
+    on_step_progress(key, percent, message)
+    on_step_completed(key, success, message)
+    on_all_completed(success, summary)
 
 定义行：`127`
 

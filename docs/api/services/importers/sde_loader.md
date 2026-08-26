@@ -6,6 +6,22 @@
 
 SDE 扩展数据加载器 — 将 16 个新表写入 reference.db
 
+功能:
+  - metaGroups.yaml         → meta_group 表 + item.meta_group_id
+  - categories.yaml         → category 表 + item.category_id (via groupIDs.yaml)
+  - typeMaterials.yaml      → reprocessing_materials 表
+  - dogmaAttributes.yaml    → dogma_attribute 表
+  - dogmaEffects.yaml       → dogma_effect 表
+  - iconIDs.yaml            → icon_ids 表
+  - staStations.yaml        → station 表
+  - stationOperations.yaml  → station_operation 表
+  - operationServices.yaml  → station_operation_service 表
+  - stationServices.yaml    → station_service 表
+  - researchAgents.yaml     → research_agent 表
+  - npcCorporations.yaml    → npc_corporation 表
+  - agents.yaml             → agent 表
+  - universe/               → solar_system 表（星系名/安全等级；region/constellation/stargate 无业务使用，不再解析）
+
 ## 函数
 
 ### `_ref_db`

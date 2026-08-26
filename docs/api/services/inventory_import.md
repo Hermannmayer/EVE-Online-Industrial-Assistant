@@ -6,6 +6,8 @@
 
 剪贴板导入纯函数 — 增量/全量行计算与导入前后差异对比。
 
+本模块只做纯逻辑（无 DB 依赖），供 ImportReviewDialog 与 HangarTab 复用。
+
 ## 函数
 
 ### `split_clipboard_lines`

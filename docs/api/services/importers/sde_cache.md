@@ -6,6 +6,8 @@
 
 SDE zip 缓存共享工具 — 下载/缓存/加载 SDE 的 YAML 数据文件
 
+被 getitems.py、geticon.py、getimplantdata.py、sde_loader.py 等模块共用。
+
 ## 函数
 
 ### `cache_path`

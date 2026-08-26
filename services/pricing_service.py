@@ -1,7 +1,10 @@
 """
-定价查询服务 — 市场价格 + 成交量 + 系统成本指数
+统一定价查询服务 — 市场价格 + 成交量 + 系统成本指数 + adjusted price
 
-替代 scoring_service.py 中的模块级 get_price/get_volume/get_system_cost_index。
+数据来源：market.db（market_prices 单张表含价格/成交量/adjusted price）、
+reference.db（industry_system_costs 系统成本指数）。
+被 UI 财务/运费/精炼/BOM 展开消费（经 bootstrap 容器 get_container().pricing_service）。
+注意：评分链路不经过本服务（走 scoring_service 模块级 get_price），改价需两边同步。
 """
 
 from core.constants import TRADE_HUB_SYSTEM_IDS

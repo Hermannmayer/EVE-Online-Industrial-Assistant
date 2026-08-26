@@ -6,6 +6,13 @@
 
 生产计划递归拆解 — 把母项拆成子项产线（sub_level 逐级 +1）。
 
+只拆 activity='manufacturing'（组件）；反应物按外购叶子，不拆；
+无深度上限（递归到叶子）；按材料机库库存减流程；
+子项 ME/TE 读库存蓝图最优等级，无蓝图 → 0/0 且 has_blueprint=False。
+
+连接约定：ref 主库（物品/星系表），bp 附随含蓝图表（未限定查询经附随解析到 bp），
+user 附随含 user_blueprints（限定 user.）。
+
 ## 函数
 
 ### `best_inventory_blueprint`

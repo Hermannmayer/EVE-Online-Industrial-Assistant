@@ -6,6 +6,9 @@
 
 生产计划共享落库 — 统一「加入制造规划」的检查/落库/重算。
 
+把 industry_view._on_plan_add 的完整流程抽为共享函数，供仓库右键、查询页复用。
+评分（ScoreWorker）与 AddPlanDialog 是 UI 层组件，编排由调用方（plan_service_add_flow）完成。
+
 ## 函数
 
 ### `calculate_plan_metrics`

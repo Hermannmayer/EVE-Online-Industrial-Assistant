@@ -6,6 +6,14 @@
 
 集中式数据库 Schema 版本管理 — PRAGMA user_version
 
+用法: ensure_all_schemas() 在 Main.py 启动时调用。
+所有 schema 变更必须在此注册迁移函数，不得在业务代码中写 ALTER TABLE。
+
+版本号: 整数，从 1 开始。PRAGMA user_version = 0 视为"未知旧库"。
+
+自动备份: 每次检测到需要迁移的库，先 VACUUM INTO 一份快照到
+<库目录>/backups/ 下（保留最近 BACKUP_KEEP 份），迁移失败/回滚后可手动恢复。
+
 ## 函数
 
 ### `_migrate_mkt_v1_to_v2`

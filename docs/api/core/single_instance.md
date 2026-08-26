@@ -6,6 +6,10 @@
 
 Single-instance lock using PID file.
 
+默认锁文件为 `~/.eve-assistant/instance.lock`(Main.py 使用)。可传入自定义
+`lock_file` 加独立锁,例如 dev.py 用 `~/.eve-assistant/dev.lock`——启动器与
+应用实例的锁必须分离,二者才能共存。
+
 ## 函数
 
 ### `_resolve`

@@ -45,5 +45,6 @@ features:
 - [界面总览](/user/overview) — 主窗口布局与各页面导航
 - [工业制造](/user/industry) — 生产计划、利润计算、甘特图使用说明
 - [EVE 知识库](/eve_wiki_knowledge_base) — SDE 数据字段、公式验证记录、游戏知识
+- [功能链路速查](/dev/flows) — 各核心功能从 UI 到 DB 的数据流
 - [API 参考](/dev/api-reference) — 函数级代码文档（自动生成）
 - [更新日志](/guide/changelog) — 版本发布历史（自动同步 CHANGELOG）

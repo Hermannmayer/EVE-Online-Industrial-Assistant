@@ -6,6 +6,8 @@
 
 主窗口后台 Worker — 价格更新与价格时效检查。
 
+从 ui_pyside6/main_window.py 拆出，降低主窗口上帝类体积。
+
 ## 函数
 
 ### `needs_price_update`
