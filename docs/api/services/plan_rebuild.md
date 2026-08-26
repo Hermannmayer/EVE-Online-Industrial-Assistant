@@ -138,7 +138,7 @@ def _resolve_name(type_id: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`315`
+定义行：`329`
 
 ### `_field_diff`
 
@@ -148,7 +148,7 @@ def _field_diff(row: dict, fields: dict) -> dict
 
 返回 fields 中与本行当前值不同的子集（幂等：值未变则跳过，计 0）。
 
-定义行：`321`
+定义行：`335`
 
 ### `_inherited_solar_system`
 
@@ -160,4 +160,4 @@ def _inherited_solar_system(mother: dict) -> int | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`335`
+定义行：`349`

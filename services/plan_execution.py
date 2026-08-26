@@ -249,11 +249,13 @@ def start_plan(
     binding = get_plan_binding_state(plan_id)
     bound_ids = binding["bound"]
     auto_bound = False
-    if not bound_ids and auto_bind and plan_parallels == 1:
-        assigned_bp = _auto_bind_blueprint(plan)
-        if assigned_bp:
-            bind_blueprints(plan_id, [assigned_bp])
-            bound_ids = [assigned_bp]
+    if not bound_ids and auto_bind:
+        # 自动选够并行所需张数（BPO 优先 → ME 最高的够用 BPC）；库存不足时仍绑已凑到的，
+        # 由下方 _binding_shortfall 提示补绑。并行=1 且无可用蓝图 → 保持「不绑也能启动」宽松语义。
+        picks = _auto_bind_blueprints(plan)
+        if picks:
+            bind_blueprints(plan_id, picks)
+            bound_ids = picks
             auto_bound = True
     assigned_bp = None
     if bound_ids:
@@ -987,12 +989,17 @@ def _occupied_ids(conn, *, exclude_plan_id: int | None = None) -> set[int]:
     return occupied
 
 
-def _auto_bind_blueprint(plan: dict) -> int | None:
-    """自动选最优库存蓝图：BPO 优先 → ME 最高的够用 BPC。返回 user_blueprints.id 或 None。"""
+def _auto_bind_blueprints(plan: dict) -> list[int]:
+    """自动选最优库存蓝图：BPO 优先，其次 ME 最高的够用 BPC。返回并行产线所需张数清单。
+
+    并行 parallels 条产线各需一张蓝图（每张流程 ≥ runs）；只选未被其他活跃计划占用的蓝图。
+    库存不足时返回已凑到的张数，由调用方经 _binding_shortfall 提示补绑。
+    """
     product_type_id = plan.get("product_type_id")
     if not product_type_id:
-        return None
-    needs_runs = max(int(plan.get("runs", 1)), 1) * max(int(plan.get("parallels", 1)), 1)
+        return []
+    runs = max(int(plan.get("runs", 1)), 1)
+    parallels = max(int(plan.get("parallels", 1)), 1)
     with _container().db.connect("user", "bp", "ref") as conn:
         cur = conn.execute(
             "SELECT blueprint_type_id FROM bp.blueprint_products "
@@ -1001,15 +1008,45 @@ def _auto_bind_blueprint(plan: dict) -> int | None:
         )
         row = cur.fetchone()
         if not row:
-            return None
-        options = find_available_blueprints(conn, row[0])
+            return []
+        options = [o for o in find_available_blueprints(conn, row[0]) if not o.get("occupied")]
     if not options:
-        return None
-    for bp in options:
-        if bp.get("is_bpo"):
-            return int(bp["id"])
-    capable = [bp for bp in options if not bp.get("occupied") and (bp.get("available_runs") or 0) >= needs_runs]
-    if not capable:
-        return None
-    capable.sort(key=lambda b: (b.get("me_level", 0), b.get("te_level", 0)), reverse=True)
-    return int(capable[0]["id"])
+        return []
+    picks: list[dict] = []
+    # BPO 无限流程优先占用；一条产线一张
+    for o in options:
+        if o.get("is_bpo"):
+            picks.append(o)
+            if len(picks) >= parallels:
+                break
+    if len(picks) < parallels:
+        capable = [o for o in options if not o.get("is_bpo") and (o.get("available_runs") or 0) >= runs]
+        capable.sort(key=lambda b: (b.get("me_level", 0), b.get("te_level", 0)), reverse=True)
+        for o in capable:
+            picks.append(o)
+            if len(picks) >= parallels:
+                break
+    return [int(o["id"]) for o in picks]
+
+
+def ensure_plan_auto_bind(plan_id: int) -> bool:
+    """计划尚无绑定且库存有可用蓝图时，自动绑定并行所需张数。返回是否新绑。
+
+    供添加计划 / 重建子项后调用；已绑定或库存不足则不动。
+    """
+    if not plan_id or plan_id <= 0:
+        return False
+    if get_plan_binding_state(plan_id)["bound"]:
+        return False
+    with _container().db.connect("user") as conn:
+        row = conn.execute(
+            "SELECT product_type_id, runs, parallels FROM production_plans WHERE id=?", (plan_id,)
+        ).fetchone()
+    if not row:
+        return False
+    plan = {"product_type_id": row[0], "runs": row[1], "parallels": row[2]}
+    picks = _auto_bind_blueprints(plan)
+    if not picks:
+        return False
+    bind_blueprints(plan_id, picks)
+    return True

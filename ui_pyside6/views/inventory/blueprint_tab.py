@@ -505,7 +505,7 @@ class BlueprintTab(QWidget):
         def _on_bulk_done(rows: list):
             # 批量插入 + 批量绑定（一次连接），主线程只做轻量 SQL
             try:
-                ids = plan_service.insert_plans_batch(rows)
+                ids = plan_service.insert_plans_batch(rows, auto_bind=False)
                 bindings = [(pid, r["bp_ids"]) for pid, r in zip(ids, rows, strict=False) if pid and pid > 0]
                 if bindings:
                     plan_execution.bind_blueprints_many(bindings)
