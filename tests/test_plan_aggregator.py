@@ -103,3 +103,32 @@ class TestAggregateProcurement:
         by_type = {r["type_id"]: r for r in rows}
         assert 2002 in by_type  # 无子线 → 组件需采购
         assert by_type[2002]["to_buy"] == 2
+
+    def test_material_short_merged_into_need(self, temp_db):
+        """强制启动缺口并入需求：material_short 的 300 三钛叠加到 BOM 需求 1000。"""
+        _inventory(temp_db, 5, 1001, 400)
+        plan = {
+            "product_type_id": 2001,
+            "runs": 1,
+            "parallels": 1,
+            "me_level": 0,
+            "mat_hangar_id": 5,
+            "material_short": '{"1001": 300}',
+        }
+        with temp_db.connect("user", "ref", "bp", "mkt") as conn:
+            rows, cost, _ = aggregate_procurement(conn, [plan], price_type="sell")
+        by_type = {r["type_id"]: r for r in rows}
+        assert by_type[1001]["need"] == 1300
+        assert by_type[1001]["owned"] == 400
+        assert by_type[1001]["to_buy"] == 900
+        assert cost == pytest.approx(900 * 5 + 500 * 9)
+
+    def test_rows_include_raw_names(self, temp_db):
+        """行携带 zh_name/en_name 原值供 UI 名称展示，而非回退 type_id。"""
+        plan = {"product_type_id": 2001, "runs": 1, "parallels": 1, "me_level": 0}
+        with temp_db.connect("user", "ref", "bp", "mkt") as conn:
+            rows, _cost, _vol = aggregate_procurement(conn, [plan], price_type="sell")
+        by_type = {r["type_id"]: r for r in rows}
+        assert by_type[1001]["zh_name"] == "三钛合金"
+        assert by_type[1001]["en_name"] == "Tritanium"
+        assert by_type[1001]["name"] != str(1001)

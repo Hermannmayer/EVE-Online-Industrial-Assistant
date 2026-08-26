@@ -114,16 +114,15 @@ class ProcureTableModel(QAbstractTableModel):
 class ProcurementDialog(QDialog):
     """待采购对话框 - 根据生产计划和库存计算需要采购的材料"""
 
-    def __init__(self, active_plans, hangar_id, hangar_name, parent=None):
+    def __init__(self, active_plans, default_mat_hangar_id: int | None, hangar_label: str, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"待采购 - 材料需求 ({hangar_name})")
+        self.setWindowTitle(f"待采购 - 材料需求 ({hangar_label})")
         # 窄高窗口：方便一眼浏览全部待采购物品
         self.setMinimumSize(620, 400)
         self.resize(720, 800)
 
         self._active_plans = active_plans
-        self._hangar_id = hangar_id
-        self._hangar_name = hangar_name
+        self._default_mat_hangar_id = default_mat_hangar_id
         self._rows: list[dict] = []
         self._price_type = "sell"
 
@@ -203,18 +202,27 @@ class ProcurementDialog(QDialog):
 
     def _calculate(self):
         """根据生产计划和库存计算需要采购的材料"""
-        from services.procurement_service import calculate_procurement
+        from core.container import get_container
+        from services.plan_aggregator import aggregate_procurement
 
         self._rows = []
         price_type = "buy" if self._price_combo.currentText() == "买价" else "sell"
         hub = self._hub_combo.currentText()
 
-        rows, total_cost, total_volume = calculate_procurement(
-            self._active_plans,
-            hangar_id=self._hangar_id,
-            hub=hub,
-            price_type=price_type,
-        )
+        # 与状态栏「备料中采购」口径一致：仅统计未运行且已勾选备料的计划，
+        # ready/running 计划材料已扣库存，计入会虚高。
+        proc_plans = [
+            p for p in self._active_plans if p.get("materials_ready", 0) and (p.get("status") or "pending") == "pending"
+        ]
+        with get_container().db.connect("user", "ref", "bp", "mkt") as conn:
+            rows, total_cost, total_volume = aggregate_procurement(
+                conn,
+                proc_plans,
+                hangar_id=None,
+                default_hangar_id=self._default_mat_hangar_id,
+                region_id=TRADE_HUB_IDS.get(hub, 10000002),
+                price_type=price_type,
+            )
         self._rows = rows
         if not self._rows:
             self._table.setModel(None)
