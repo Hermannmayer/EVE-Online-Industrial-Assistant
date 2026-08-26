@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from services import plan_service
+from services import plan_execution, plan_service
 
 
 def _build_user(db_manager):
@@ -14,13 +14,22 @@ def _build_user(db_manager):
             "char_name TEXT, status TEXT, profit REAL, margin REAL, score REAL, iskph REAL, "
             "material_cost REAL, calculated_time REAL, daily_output REAL, created_at TEXT, "
             "deposit_hangar_id INTEGER, mat_hangar_id INTEGER, solar_system_id INTEGER, "
-            "materials_ready INTEGER DEFAULT 0)"
+            "materials_ready INTEGER DEFAULT 0, assigned_blueprint_id INTEGER DEFAULT NULL)"
+        )
+        # 自动绑定/释放读取的关联表（schema v7 迁移产物），测试库补齐
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS plan_blueprint_bindings ("
+            "plan_id INTEGER NOT NULL, blueprint_id INTEGER NOT NULL, runs_used INTEGER DEFAULT 0, "
+            "PRIMARY KEY (plan_id, blueprint_id))"
         )
     return db_manager
 
 
 def _patch_container(db_manager, monkeypatch):
-    monkeypatch.setattr(plan_service, "get_container", lambda: SimpleNamespace(db=db_manager))
+    container = SimpleNamespace(db=db_manager)
+    monkeypatch.setattr(plan_service, "get_container", lambda: container)
+    # insert_plan/insert_plans_batch 内部自动绑定走 plan_execution._container，也指向临时库
+    monkeypatch.setattr(plan_execution, "_container", lambda: container)
 
 
 def test_insert_plan(db_manager, monkeypatch):

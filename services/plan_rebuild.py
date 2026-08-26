@@ -199,6 +199,9 @@ def rebuild_children(*, create: bool = False, prune: bool = False) -> dict:
     with db.connect("user") as conn:
         rows = [dict(r) for r in conn.execute("SELECT * FROM production_plans").fetchall()]
 
+    # 子项层级绑定联动：新建→自动配蓝图，删除→先释放绑定避免孤儿残留。
+    from services.plan_execution import ensure_plan_auto_bind, release_blueprint
+
     mothers = _collect_mothers(rows)
     active_mothers = [m for m in mothers if _is_active(m) and _mother_key(m)]
 
@@ -242,7 +245,7 @@ def rebuild_children(*, create: bool = False, prune: bool = False) -> dict:
             # 仅「拆解」模式创建缺失子项；普通编辑联动不创建（防已删子产线被自动加回）
             if not create:
                 continue
-            repo.insert_child_plan(
+            new_pid = repo.insert_child_plan(
                 product_type_id=tid,
                 product_name=name,
                 blueprint_type_id=node["blueprint_type_id"],
@@ -259,6 +262,10 @@ def rebuild_children(*, create: bool = False, prune: bool = False) -> dict:
                 demand=node["demand"],
             )
             created += 1
+            try:
+                ensure_plan_auto_bind(new_pid)
+            except Exception:
+                log.warning("新建子项 %s 自动绑定失败", new_pid, exc_info=True)
             continue
 
         # 已存在：投产/生产中子项保护 runs（已投产产线不砍）；已完成行整行冻结（历史记录不改写）
@@ -298,6 +305,13 @@ def rebuild_children(*, create: bool = False, prune: bool = False) -> dict:
         to_delete.extend(dup_rows)
     deleted = len(to_delete)
     if to_delete:
+        # 先释放子项蓝图绑定再删行：delete_many 不清理 plan_blueprint_bindings，
+        # 否则残留孤儿绑定行且蓝图仍被占用，等 create=True 重放按新 id 重建后表现为「绑定丢失」。
+        for pid in to_delete:
+            try:
+                release_blueprint(pid)
+            except Exception:
+                log.warning("释放子项 %s 蓝图绑定失败", pid, exc_info=True)
         repo.delete_many(to_delete)
 
     if created or updated or deleted:

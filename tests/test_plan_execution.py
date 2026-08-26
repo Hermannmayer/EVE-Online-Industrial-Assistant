@@ -11,6 +11,7 @@ import pytest
 
 from services import inventory_manager, plan_execution
 from services.plan_execution import (
+    _auto_bind_blueprints,
     _split_bpc_consumption,
     bind_blueprint,
     bind_blueprints,
@@ -20,6 +21,7 @@ from services.plan_execution import (
     complete_plan,
     consume_bpc_runs,
     deduct_materials,
+    ensure_plan_auto_bind,
     expire_overdue_plans,
     find_available_blueprints,
     get_occupied_blueprint_ids,
@@ -413,6 +415,72 @@ class TestStartPlan:
         assert inventory_manager.get_hangar_stock(1)[1001] == 500
         assert inventory_manager.get_hangar_stock(1)[1002] == 500
         assert _get_plan(user_env.db, pid)["status"] == "pending"
+
+
+class TestAutoBindBlueprints:
+    def test_bpo_priority_single_pick(self, user_env):
+        _insert_blueprint(user_env.db, 3001, is_bpo=True)
+        _insert_blueprint(user_env.db, 3001, is_bpo=False, me=10, runs=5)
+        picks = _auto_bind_blueprints({"product_type_id": 2001, "runs": 2, "parallels": 1})
+        assert len(picks) == 1
+
+    def test_fills_parallels_with_bpc_by_me(self, user_env):
+        b1 = _insert_blueprint(user_env.db, 3001, is_bpo=False, me=2, te=0, runs=10)
+        b2 = _insert_blueprint(user_env.db, 3001, is_bpo=False, me=5, te=0, runs=10)
+        b3 = _insert_blueprint(user_env.db, 3001, is_bpo=False, me=8, te=0, runs=10)
+        picks = _auto_bind_blueprints({"product_type_id": 2001, "runs": 2, "parallels": 3})
+        assert sorted(picks) == sorted([b1, b2, b3])
+
+    def test_insufficient_returns_available(self, user_env):
+        _insert_blueprint(user_env.db, 3001, is_bpo=False, me=5, runs=10)
+        picks = _auto_bind_blueprints({"product_type_id": 2001, "runs": 2, "parallels": 3})
+        assert len(picks) == 1
+
+    def test_no_blueprint_returns_empty(self, user_env):
+        assert _auto_bind_blueprints({"product_type_id": 2001, "runs": 2, "parallels": 1}) == []
+
+    def test_bpo_plus_bpc_fills_parallels(self, user_env):
+        _insert_blueprint(user_env.db, 3001, is_bpo=True)
+        _insert_blueprint(user_env.db, 3001, is_bpo=False, me=5, runs=10)
+        picks = _auto_bind_blueprints({"product_type_id": 2001, "runs": 2, "parallels": 2})
+        assert len(picks) == 2
+
+
+class TestEnsurePlanAutoBind:
+    def test_binds_unbound_plan(self, user_env):
+        _insert_blueprint(user_env.db, 3001, is_bpo=False, me=5, runs=10)
+        pid = _insert_plan(user_env.db, parallels=1)
+        assert ensure_plan_auto_bind(pid) is True
+        assert len(get_plan_blueprints(pid)) == 1
+
+    def test_skips_when_already_bound(self, user_env):
+        _insert_blueprint(user_env.db, 3001, is_bpo=True)
+        pid = _insert_plan(user_env.db, parallels=1)
+        assert ensure_plan_auto_bind(pid) is True
+        assert ensure_plan_auto_bind(pid) is False
+
+    def test_no_blueprint_returns_false(self, user_env):
+        pid = _insert_plan(user_env.db, parallels=1)
+        assert ensure_plan_auto_bind(pid) is False
+
+
+class TestStartPlanAutoBindParallel:
+    def test_auto_binds_two_for_parallel2(self, user_env):
+        _insert_blueprint(user_env.db, 3001, is_bpo=False, me=5, runs=10)
+        _insert_blueprint(user_env.db, 3001, is_bpo=False, me=3, runs=10)
+        pid = _insert_plan(user_env.db, parallels=2, runs=2)
+        plan = _get_plan(user_env.db, pid)
+        res = start_plan(plan, mat_hangar_id=1, auto_bind=True)
+        assert res["ok"], res
+        assert len(get_plan_blueprints(pid)) == 2
+
+    def test_parallel2_insufficient_rejects(self, user_env):
+        _insert_blueprint(user_env.db, 3001, is_bpo=False, me=5, runs=10)
+        pid = _insert_plan(user_env.db, parallels=2, runs=2)
+        plan = _get_plan(user_env.db, pid)
+        res = start_plan(plan, mat_hangar_id=1, auto_bind=True)
+        assert not res["ok"]
+        assert res["code"] == "blueprint_short"
 
 
 class TestStartPlanBatch:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -64,6 +65,12 @@ class PlanEditDialog(QDialog):
         self._parallel_spin.setRange(1, 100)
         self._parallel_spin.setValue(1)
         form.addRow("并行数", self._parallel_spin)
+
+        # 批量模式：流程/并行默认不改动各选中行，勾选后才统一同步（参照机库「显式选择才写」）
+        self._sync_runs_cb: QCheckBox | None = None
+        if self._batch_mode:
+            self._sync_runs_cb = QCheckBox("同步流程数与并行数到所有选中行")
+            form.addRow("", self._sync_runs_cb)
 
         # 人物（纯下拉，从真实角色列表加载）
         self._char_combo = QComboBox()
@@ -161,12 +168,17 @@ class PlanEditDialog(QDialog):
         self.accept()
 
     def get_updated_data(self) -> dict:
-        """返回更新后的字段字典"""
+        """返回更新后的字段字典。
+
+        批量模式默认不动各选中行的流程/并行（同步复选框未勾选时返回 None，
+        由调用方 is not None 过滤剔除）；勾选或单行编辑才返回 spin 值。
+        """
         dep_id = self._deposit_combo.currentData()
         mat_id = self._mat_hangar_combo.currentData()
+        sync = not self._batch_mode or bool(self._sync_runs_cb is not None and self._sync_runs_cb.isChecked())
         result = {
-            "runs": self._runs_spin.value(),
-            "parallels": self._parallel_spin.value(),
+            "runs": self._runs_spin.value() if sync else None,
+            "parallels": self._parallel_spin.value() if sync else None,
             "char_name": self._char_combo.currentText().strip(),
             "notes": self._notes_edit.toPlainText().strip(),
             "deposit_hangar_id": None if dep_id in (None, -1) else dep_id,
@@ -182,6 +194,7 @@ class PlanEditDialog(QDialog):
         self.setStyleSheet(
             f"QDialog {{ background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; }}"
             f"QLabel {{ color: {theme.TEXT_PRIMARY}; background: transparent; font-size: 12px; }}"
+            f"QCheckBox {{ color: {theme.TEXT_PRIMARY}; background: transparent; font-size: 12px; }}"
             f"QSpinBox, QComboBox, QLineEdit, QTextEdit {{"
             f"  padding: 4px 8px; border: 1px solid {theme.BORDER}; border-radius: 4px;"
             f"  background: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY}; font-size: 12px;"

@@ -10,7 +10,7 @@ BOM（在 conftest bp 库之上扩展中间件 2003「聚变反应堆」）：
 
 from types import SimpleNamespace
 
-from services import inventory_manager, plan_rebuild
+from services import inventory_manager, plan_execution, plan_rebuild
 from services.repositories.plan_repository import PlanRepository
 
 _BP_BOM_EXTRA = [
@@ -73,8 +73,17 @@ def _test_setup(temp_db, monkeypatch):
     # temp_db 的 user 库是空库（PRAGMA=v12）但无表：手动建 user_blueprints 等与 production_plans
     monkeypatch.setattr(inventory_manager, "_default_db", lambda: temp_db)
     inventory_manager.init_db()  # user_blueprints / hangars / inventory_items
+    with temp_db.connect("user") as conn:
+        # plan_blueprint_bindings 由 schema v7 迁移创建，测试库也补齐，供自动绑定/释放断言
+        conn.executescript(
+            "CREATE TABLE IF NOT EXISTS plan_blueprint_bindings ("
+            "plan_id INTEGER NOT NULL, blueprint_id INTEGER NOT NULL, runs_used INTEGER DEFAULT 0, "
+            "PRIMARY KEY (plan_id, blueprint_id))"
+        )
     PlanRepository(temp_db).ensure_table()  # production_plans (v12 结构)
     monkeypatch.setattr(plan_rebuild, "get_container", lambda: _container(temp_db))
+    # 自动绑定/释放走 plan_execution._container，也指向临时库，防污染真实 user.db
+    monkeypatch.setattr(plan_execution, "_container", lambda: _container(temp_db))
     return _container(temp_db)
 
 
@@ -258,3 +267,35 @@ def test_delete_child_keeps_shared_child_for_other_mother(temp_db, monkeypatch):
     kids = _child_rows(temp_db)
     assert len(kids) == 1
     assert [int(x) for x in kids[0]["source_mother_ids"].split(",") if x] == [m2]
+
+
+def test_prune_releases_child_binding(temp_db, monkeypatch):
+    """prune 删除子项时其蓝图绑定被释放：关联表清空、蓝图归还不再占用（无孤儿行）。"""
+    c = _test_setup(temp_db, monkeypatch)
+    m1 = _insert_mother(c.plan_repo, 2001, runs=2, group=1)
+    plan_rebuild.rebuild_children(create=True, prune=True)
+    kid = _child_rows(temp_db)[0]
+    # create 阶段库存为空未自动绑；这里手动绑给子项
+    bp_id = inventory_manager.add_blueprint(1, 3003, is_bpo=False, me_level=0, te_level=0, runs=10, quantity=1)
+    assert plan_execution.bind_blueprints(kid["id"], [bp_id])
+    assert plan_execution.get_plan_blueprints(kid["id"]) == [bp_id]
+
+    c.plan_repo.delete(m1)
+    res = plan_rebuild.rebuild_children(create=False, prune=True)
+    assert res["deleted"] == 1
+    assert _child_rows(temp_db) == []
+    with temp_db.connect("user") as conn:
+        rows = conn.execute("SELECT * FROM plan_blueprint_bindings WHERE plan_id=?", (kid["id"],)).fetchall()
+    assert rows == []  # 无孤儿绑定行
+    assert bp_id not in plan_execution.get_occupied_blueprint_ids()  # 蓝图归还
+
+
+def test_created_child_auto_binds_when_inventory_available(temp_db, monkeypatch):
+    """新建子项时若库存有可用蓝图 → 自动绑定；无蓝图 → 保持未绑。"""
+    c = _test_setup(temp_db, monkeypatch)
+    inventory_manager.add_blueprint(1, 3003, is_bpo=False, me_level=5, te_level=0, runs=10, quantity=1)
+    _insert_mother(c.plan_repo, 2001, runs=2, group=1)
+    plan_rebuild.rebuild_children(create=True, prune=True)
+    kid = _child_rows(temp_db)[0]
+    assert kid["product_type_id"] == 2003
+    assert plan_execution.get_plan_blueprints(kid["id"])  # 已自动绑定
