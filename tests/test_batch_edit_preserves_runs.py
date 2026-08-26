@@ -1,4 +1,4 @@
-"""Bug A 回归测试 — 批量编辑不再把 runs/parallels 重置为 1X1"""
+"""Bug A 回归测试 — 批量编辑不再把 runs/parallels 重置为 1X1 或首行值"""
 
 import pytest
 
@@ -22,6 +22,18 @@ class TestBatchEditPreservesRuns:
         dlg = self._make_dialog(monkeypatch, {"_selected_rows": [0, 1], "runs": 5, "parallels": 3})
         assert dlg._runs_spin.value() == 5
         assert dlg._parallel_spin.value() == 3
+
+    def test_batch_mode_defaults_to_none_not_writing(self, qapp, monkeypatch):
+        """批量模式默认不写流程/并行（同步复选未勾 → runs/parallels 为 None）。"""
+        dlg = self._make_dialog(monkeypatch, {"_selected_rows": [0, 1], "runs": 5, "parallels": 3})
+        data = dlg.get_updated_data()
+        assert data["runs"] is None
+        assert data["parallels"] is None
+
+    def test_batch_mode_sync_checkbox_returns_values(self, qapp, monkeypatch):
+        """勾选「同步流程/并行」后返回首行 spin 值（显式同步）。"""
+        dlg = self._make_dialog(monkeypatch, {"_selected_rows": [0, 1], "runs": 5, "parallels": 3})
+        dlg._sync_runs_cb.setChecked(True)
         data = dlg.get_updated_data()
         assert data["runs"] == 5
         assert data["parallels"] == 3
