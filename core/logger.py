@@ -11,10 +11,12 @@
 
 import logging
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
 from core.null_streams import NullWriter, ensure_console_streams
+from core.paths import log_dir
 
 _LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s"
 _DATE_FORMAT = "%H:%M:%S"
@@ -36,15 +38,16 @@ class _Logger:
         console.setFormatter(logging.Formatter(_LOG_FORMAT, _DATE_FORMAT))
         self._logger.addHandler(console)
 
-        # 文件 handler（仅 error 及以上级别写入文件）。
+        # 文件 handler（INFO 及以上级别写入文件）。
+        # info 级功能日志落盘，便于发行版定位问题与功能运行情况。
         # 日志文件是发行版诊断的第一手材料，失败绝不静默：写 stderr（已兜底）
-        # 暴露问题，避免“日志没生成还不知情”。
+        # 暴露问题，避免"日志没生成还不知情"。
         try:
-            log_dir = Path.home() / ".eve-assistant" / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / f"app_{datetime.now().strftime('%Y%m%d')}.log"
+            dir_path = log_dir()
+            dir_path.mkdir(parents=True, exist_ok=True)
+            log_file = dir_path / f"app_{datetime.now().strftime('%Y%m%d')}.log"
             fh = logging.FileHandler(log_file, encoding="utf-8")
-            fh.setLevel(logging.WARNING)
+            fh.setLevel(logging.INFO)
             fh.setFormatter(logging.Formatter(_LOG_FORMAT, _DATE_FORMAT))
             self._logger.addHandler(fh)
         except Exception:
@@ -63,6 +66,9 @@ class _Logger:
     def debug(self, msg: str, *args, **kwargs):
         self._logger.debug(msg, *args, **kwargs)
 
+    def critical(self, msg: str, *args, **kwargs):
+        self._logger.critical(msg, *args, **kwargs)
+
     def exception(self, msg: str, *args, **kwargs):
         self._logger.exception(msg, *args, **kwargs)
 
@@ -76,3 +82,27 @@ def set_debug(enabled: bool = True):
     for h in log._logger.handlers:
         if isinstance(h, logging.StreamHandler):
             h.setLevel(level)
+
+
+def prune_logs(logs_dir: Path, crashes_dir: Path, retention_days: int = 14) -> int:
+    """删除超过 retention_days 天的日志与崩溃转储文件，返回删除数量。
+
+    按 mtime 判定（不用文件名日期，容错）；单文件删除失败静默跳过，
+    目录无权限时写 stderr 提示、不抛出。
+    """
+    cutoff = time.time() - retention_days * 86400
+    removed = 0
+    for base_dir in (logs_dir, crashes_dir):
+        for pattern in ("app_*.log", "crash_*.log"):
+            try:
+                for path in base_dir.glob(pattern):
+                    try:
+                        if path.stat().st_mtime < cutoff:
+                            path.unlink(missing_ok=True)
+                            removed += 1
+                    except OSError:
+                        pass
+            except OSError:
+                stream = sys.stderr if sys.stderr is not None else NullWriter()
+                stream.write(f"[logger] 无法清理日志目录 {base_dir}\n")
+    return removed

@@ -39,7 +39,7 @@ def is_frozen() -> bool
 
 判断是否运行在 PyInstaller 打包后的环境中
 
-定义行：`32`
+定义行：`33`
 
 ### `app_root`
 
@@ -49,7 +49,7 @@ def app_root() -> str
 
 返回应用根目录（优先级：环境变量覆盖 > 打包环境 > 开发环境）
 
-定义行：`37`
+定义行：`38`
 
 ### `database_dir`
 
@@ -59,7 +59,7 @@ def database_dir() -> str
 
 数据库目录
 
-定义行：`56`
+定义行：`57`
 
 ### `database_path`
 
@@ -69,7 +69,7 @@ def database_path() -> str
 
 旧单库文件路径（迁移后保持兼容）
 
-定义行：`61`
+定义行：`62`
 
 ### `reference_db_path`
 
@@ -79,7 +79,7 @@ def reference_db_path() -> str
 
 参考数据库路径（item, industry_*, market_tree, item_dogma）
 
-定义行：`66`
+定义行：`67`
 
 ### `market_db_path`
 
@@ -89,7 +89,7 @@ def market_db_path() -> str
 
 市场价格数据库路径（market_prices, market_volume_snapshots）
 
-定义行：`71`
+定义行：`72`
 
 ### `user_db_path`
 
@@ -99,7 +99,7 @@ def user_db_path() -> str
 
 用户数据数据库路径（hangars, inventory_items, production_plans, user_skills）
 
-定义行：`76`
+定义行：`77`
 
 ### `blueprint_db_path`
 
@@ -109,7 +109,7 @@ def blueprint_db_path() -> str
 
 蓝图数据库路径（blueprint_activities, blueprint_materials, blueprint_products, blueprint_skills）
 
-定义行：`81`
+定义行：`82`
 
 ### `data_dir`
 
@@ -119,7 +119,7 @@ def data_dir() -> str
 
 数据目录（图标缓存、搜索历史等）
 
-定义行：`86`
+定义行：`87`
 
 ### `icon_cache_dir`
 
@@ -129,7 +129,7 @@ def icon_cache_dir() -> str
 
 图标缓存目录
 
-定义行：`91`
+定义行：`92`
 
 ### `progress_file`
 
@@ -139,7 +139,7 @@ def progress_file() -> str
 
 更新进度文件路径
 
-定义行：`96`
+定义行：`97`
 
 ### `search_history_file`
 
@@ -149,7 +149,7 @@ def search_history_file() -> str
 
 搜索历史文件路径
 
-定义行：`101`
+定义行：`102`
 
 ### `window_geometry_file`
 
@@ -159,7 +159,27 @@ def window_geometry_file() -> str
 
 窗口位置文件路径
 
-定义行：`106`
+定义行：`107`
+
+### `log_dir`
+
+```python
+def log_dir() -> Path
+```
+
+日志目录（用户主目录 .eve-assistant 下，不随 exe 目录移动）
+
+定义行：`112`
+
+### `crashes_dir`
+
+```python
+def crashes_dir() -> Path
+```
+
+崩溃转储目录（用户主目录 .eve-assistant 下，不随 exe 目录移动）
+
+定义行：`117`
 
 ### `ensure_dirs_exist`
 
@@ -169,4 +189,4 @@ def ensure_dirs_exist()
 
 确保所有必要目录存在（打包后首次运行时创建）
 
-定义行：`111`
+定义行：`122`

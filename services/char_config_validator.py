@@ -1,11 +1,10 @@
 """角色配置文件校验和迁移"""
 
 import json
-import logging
 import os
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from core.logger import log
 
 # ═══════════════════════════════════════════
 #  默认配置
@@ -153,7 +152,7 @@ def migrate_char_config(data: dict) -> dict:
     不会删除用户已有的配置项。
     """
     if not isinstance(data, dict):
-        logger.warning("配置数据格式错误，返回默认配置")
+        log.warning("配置数据格式错误，返回默认配置")
         return dict(DEFAULT_CHAR_CONFIG)
 
     result = dict(data)
@@ -220,27 +219,27 @@ def load_char_config(path: str) -> dict:
     如果格式有问题，尝试迁移修复。
     """
     if not os.path.exists(path):
-        logger.info("配置文件不存在: %s，使用默认配置", path)
+        log.info("配置文件不存在: %s，使用默认配置", path)
         return dict(DEFAULT_CHAR_CONFIG)
 
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        logger.error("配置文件 JSON 解析失败: %s, 错误: %s", path, e)
+        log.error("配置文件 JSON 解析失败: %s, 错误: %s", path, e)
         return dict(DEFAULT_CHAR_CONFIG)
     except Exception as e:
-        logger.error("读取配置文件失败: %s, 错误: %s", path, e)
+        log.error("读取配置文件失败: %s, 错误: %s", path, e)
         return dict(DEFAULT_CHAR_CONFIG)
 
     # 校验配置
     validation = validate_char_config(data)
     if validation["errors"]:
         for error in validation["errors"]:
-            logger.warning("配置校验错误: %s", error)
+            log.warning("配置校验错误: %s", error)
     if validation["warnings"]:
         for warning in validation["warnings"]:
-            logger.info("配置校验警告: %s", warning)
+            log.info("配置校验警告: %s", warning)
 
     # 迁移配置
     migrated = migrate_char_config(data)

@@ -16,7 +16,7 @@ def validate_char_config(data: dict) -> dict
 
 校验角色配置的结构和类型是否正确。
 
-定义行：`67`
+定义行：`66`
 
 ### `migrate_char_config`
 
@@ -26,7 +26,7 @@ def migrate_char_config(data: dict) -> dict
 
 迁移旧配置到新格式。添加缺失的默认字段。
 
-定义行：`148`
+定义行：`147`
 
 ### `load_char_config`
 
@@ -36,4 +36,4 @@ def load_char_config(path: str) -> dict
 
 读取、校验、迁移一站式函数。
 
-定义行：`215`
+定义行：`214`
