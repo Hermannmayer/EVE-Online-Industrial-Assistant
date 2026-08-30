@@ -44,7 +44,9 @@
     "spread_pct": "价差%",
     "volume": "成交量",
     "runs": "流程数",
-    "parallels": "并行数"
+    "parallels": "并行数",
+    "procure_buy": "需采购",
+    "procure_stocked": "库存已备足"
   },
   "item_overrides": {
     "34": "三钛合金",
