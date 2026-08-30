@@ -65,6 +65,16 @@ def collect_cascade_delete_ids(plans: list[dict], selected_ids: set[int]) -> set
 
 定义行：`99`
 
+### `collect_removed_child_ids`
+
+```python
+def collect_removed_child_ids(rows: list[dict], removed_type_ids: set[int]) -> set[int]
+```
+
+母项拆解删除集：被删组件类型的合并子项行 + 其同组子孙（沿 component_parent_type_id）。
+
+定义行：`133`
+
 ### `collect_group_members`
 
 ```python
@@ -73,7 +83,7 @@ def collect_group_members(all_plans: list[dict], selected: list[dict]) -> tuple[
 
 跨选中行聚合相关组的母项与子项（按 plan id 去重）→ (parents, children)。
 
-定义行：`133`
+定义行：`168`
 
 ### `_decompose`
 
@@ -83,4 +93,4 @@ def _decompose(conn: Connection, type_id: int, needed_qty: float, depth: int, st
 
 递归展开一层。返回 (子项产线行, 本层可被库存覆盖的产出量)。
 
-定义行：`171`
+定义行：`206`

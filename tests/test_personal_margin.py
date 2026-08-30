@@ -421,7 +421,7 @@ def test_worker_run_preserves_market_margin(qapp, sample_char_config):
         "daily_output": 0,
     }
     captured: list = []
-    w.finished.connect(captured.append)
+    w.finished_signal.connect(captured.append)
     with (
         patch.object(
             BatchPlanCalcWorker,

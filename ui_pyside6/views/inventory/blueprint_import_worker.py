@@ -58,7 +58,7 @@ class _BlueprintImportWorker(QThread):
     """后台线程：解析剪贴板 → 比对库 → 产出 diff（增/删/不变）供预览确认"""
 
     progress = Signal(int, int, str)  # type: ignore[assignment]  # QThread 基类 Signal 无参数，子类覆盖 arity 属存根误报
-    finished = Signal(  # type: ignore[assignment]  # QThread 基类 Signal 无参数，子类覆盖 arity 属存根误报
+    finished_signal = Signal(
         list
     )  # diff rows: [{name, blueprint_type_id, is_bpo, me, te, runs, qty, existing_qty, row_id, delta, final}]
 
@@ -107,7 +107,7 @@ class _BlueprintImportWorker(QThread):
                     "name": names.get(key[0], ""),
                 }
             )
-        self.finished.emit(diff)
+        self.finished_signal.emit(diff)
 
 
 def apply_blueprint_diff(diff_rows: list[dict], hangar_id: int, mode: str = "full") -> tuple[int, int]:

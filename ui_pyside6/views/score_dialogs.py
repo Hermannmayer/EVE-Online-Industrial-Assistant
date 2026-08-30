@@ -154,7 +154,7 @@ class TradeDlg(QDialog):
 
 class ScoreW(BaseBatchScoreWorker):
     progress = Signal(int, int)
-    done = Signal(list)
+    done = Signal(list)  # type: ignore[assignment]  # 自定义 run 用 done 带结果 list，与基类 done=Signal(float) 语义不同
 
     def __init__(self, items, is_mfg, cfg, parent=None):
         char_name = cfg.get("char", "")

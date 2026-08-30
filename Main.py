@@ -5,9 +5,8 @@ EVE 商人助手 — PySide6 入口点
 
 import os
 import sys
+import threading
 import traceback
-from datetime import datetime
-from pathlib import Path
 
 from core.null_streams import ensure_console_streams
 
@@ -22,13 +21,16 @@ if sys.platform == "win32":
 
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
-from core.logger import log  # noqa: E402
+from core.diagnostics import install_background_hooks, write_crash_dump  # noqa: E402
+from core.logger import log, prune_logs  # noqa: E402
 from core.paths import (  # noqa: E402
     BP_DB_PATH,
     DB_PATH,
     REF_DB_PATH,
     USR_DB_PATH,
+    crashes_dir,
     ensure_dirs_exist,
+    log_dir,
 )
 
 
@@ -125,35 +127,34 @@ def _migrate_blueprint_db():
 
 
 def _global_exception_handler(exc_type, exc_value, exc_traceback):
-    """全局未捕获异常处理器 — 记录日志并弹窗提示"""
+    """全局未捕获异常处理器 — 记录日志、写崩溃转储并弹窗提示"""
     log.error("未捕获异常", exc_info=(exc_type, exc_value, exc_traceback))
+    write_crash_dump((exc_type, exc_value, exc_traceback))
 
-    # 写入崩溃转储文件
-    try:
-        crash_dir = Path.home() / ".eve-assistant" / "crashes"
-        crash_dir.mkdir(parents=True, exist_ok=True)
-        crash_file = crash_dir / f"crash_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-        with open(crash_file, "w", encoding="utf-8") as f:
-            traceback.print_exception(exc_type, exc_value, exc_traceback, file=f)
-    except Exception:
-        log.exception("写入崩溃转储失败")
-
-    # 仅在非 KeyboardInterrupt 时弹窗
+    # 弹窗只在主线程且 QApplication 已创建时进行：后台线程建窗是 Qt 跨线程违规，
+    # QApplication 未就绪时 exec() 会挂死。后台线程崩溃只落盘不弹窗。
     if not issubclass(exc_type, KeyboardInterrupt):
-        try:
-            msg = QMessageBox()
-            msg.setIcon(QMessageBox.Icon.Critical)
-            msg.setWindowTitle("EVE 商人助手 — 发生错误")
-            msg.setText("程序遇到了意外错误，请重启应用。")
-            msg.setDetailedText("".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
-            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-            msg.exec()
-        except Exception:
-            pass
+        if threading.current_thread() is threading.main_thread() and QApplication.instance() is not None:
+            try:
+                msg = QMessageBox()
+                msg.setIcon(QMessageBox.Icon.Critical)
+                msg.setWindowTitle("EVE 商人助手 — 发生错误")
+                msg.setText("程序遇到了意外错误，请重启应用。")
+                msg.setDetailedText("".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+                msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg.exec()
+            except Exception:
+                pass
 
 
 def main():
     ensure_dirs_exist()
+
+    # 尽早安装崩溃钩子：threading.excepthook 兜底后台线程、faulthandler 捕获原生段错误、
+    # sys.excepthook 在主线程未捕获异常时写崩溃转储（弹窗守卫保证 QApplication 未创建时跳过）
+    install_background_hooks()
+    prune_logs(log_dir(), crashes_dir())
+    sys.excepthook = _global_exception_handler
 
     HOT_RELOAD = "--hot-reload" in sys.argv
 
@@ -185,7 +186,6 @@ def main():
     splash.show()
 
     # 其余启动初始化在 splash 显示后进行（不阻塞首帧）
-    sys.excepthook = _global_exception_handler
 
     # 自定义 Qt 消息处理器，过滤字体大小警告
     from PySide6.QtCore import QtMsgType, qInstallMessageHandler

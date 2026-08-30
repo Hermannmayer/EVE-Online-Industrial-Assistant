@@ -20,7 +20,7 @@ class TestProcurementSummaryWorker:
         plan = {"product_type_id": 2001, "runs": 1, "parallels": 1, "me_level": 0, "mat_hangar_id": 5}
         captured = []
         worker = iw.ProcurementSummaryWorker([plan], default_mat_hangar_id=5, region_id=10000002, price_type="sell")
-        worker.finished.connect(lambda c, v: captured.append((c, v)))
+        worker.finished_signal.connect(lambda c, v: captured.append((c, v)))
         worker.run()
 
         with temp_db.connect("user", "ref", "bp", "mkt") as conn:
@@ -33,7 +33,7 @@ class TestProcurementSummaryWorker:
         monkeypatch.setattr(iw, "get_container", lambda: SimpleNamespace(db=temp_db))
         captured = []
         worker = iw.ProcurementSummaryWorker([], default_mat_hangar_id=5)
-        worker.finished.connect(lambda c, v: captured.append((c, v)))
+        worker.finished_signal.connect(lambda c, v: captured.append((c, v)))
         worker.run()
         assert captured == [(0.0, 0.0)]
 
@@ -42,6 +42,6 @@ class TestProcurementSummaryWorker:
         monkeypatch.setattr(iw, "get_container", lambda: SimpleNamespace(db=temp_db))
         captured = []
         worker = iw.ProcurementSummaryWorker([None])  # type: ignore[list-item]
-        worker.finished.connect(lambda c, v: captured.append((c, v)))
+        worker.finished_signal.connect(lambda c, v: captured.append((c, v)))
         worker.run()
         assert captured == [(0.0, 0.0)]

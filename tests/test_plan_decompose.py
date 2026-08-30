@@ -227,6 +227,47 @@ class TestCollectCascadeDeleteIds:
         assert pd.collect_cascade_delete_ids(plans, {1}) == {1}
 
 
+class TestCollectRemovedChildIds:
+    """collect_removed_child_ids — 母项拆解删除集（组内血缘，不误伤兄弟支系）"""
+
+    def test_delete_type_and_its_group_descendants(self):
+        rows = [
+            {"id": 1, "product_type_id": 2003, "group_number": 1, "sub_level": 1, "component_parent_type_id": 2001},
+            {"id": 2, "product_type_id": 2004, "group_number": 1, "sub_level": 2, "component_parent_type_id": 2003},
+            {"id": 3, "product_type_id": 2005, "group_number": 1, "sub_level": 2, "component_parent_type_id": 2002},
+            {"id": 4, "product_type_id": 2004, "group_number": 2, "sub_level": 1, "component_parent_type_id": 9999},
+        ]
+        ids = pd.collect_removed_child_ids(rows, {2003})
+        assert ids == {1, 2}  # 2003 及其同组子孙；兄弟 2005 与他组 2004 不删
+
+    def test_transitive_depth(self):
+        rows = [
+            {"id": 1, "product_type_id": 2003, "group_number": 1, "sub_level": 1, "component_parent_type_id": 2001},
+            {"id": 2, "product_type_id": 2004, "group_number": 1, "sub_level": 2, "component_parent_type_id": 2003},
+            {"id": 3, "product_type_id": 2005, "group_number": 1, "sub_level": 3, "component_parent_type_id": 2004},
+        ]
+        assert pd.collect_removed_child_ids(rows, {2003}) == {1, 2, 3}
+
+    def test_cross_group_seed_rows_all_deleted(self):
+        rows = [
+            {"id": 1, "product_type_id": 2003, "group_number": 1, "sub_level": 1, "component_parent_type_id": 2001},
+            {"id": 4, "product_type_id": 2003, "group_number": 2, "sub_level": 1, "component_parent_type_id": 9999},
+            {"id": 5, "product_type_id": 2003, "group_number": 3, "sub_level": 2, "component_parent_type_id": None},
+        ]
+        assert pd.collect_removed_child_ids(rows, {2003}) == {1, 4, 5}
+
+    def test_empty_removed(self):
+        rows = [{"id": 1, "product_type_id": 2003, "group_number": 1, "sub_level": 1, "component_parent_type_id": 2001}]
+        assert pd.collect_removed_child_ids(rows, set()) == set()
+
+    def test_mother_rows_not_touched(self):
+        rows = [
+            {"id": 1, "product_type_id": 2001, "group_number": 1, "sub_level": 0, "component_parent_type_id": None},
+            {"id": 2, "product_type_id": 2003, "group_number": 1, "sub_level": 1, "component_parent_type_id": 2001},
+        ]
+        assert pd.collect_removed_child_ids(rows, {2003}) == {2}
+
+
 class TestBestInventoryBlueprint:
     def test_bpo_preferred_over_higher_me_bpc(self, db_manager):
         _build_dbs(db_manager)

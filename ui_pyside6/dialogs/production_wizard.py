@@ -290,7 +290,7 @@ class ProductionWizard(QDialog):
             )
             bp_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             bp_btn.setToolTip("复制蓝图名到剪贴板（在游戏中粘贴搜索）")
-            bp_btn.clicked.connect(lambda _, b=bp_name: self._copy_blueprint(b))
+            bp_btn.clicked.connect(lambda _=False, b=bp_name: self._copy_blueprint(b))
             self._table.setCellWidget(row, _COL_BLUEPRINT, bp_btn)
 
             runs = p.get("runs", 1)

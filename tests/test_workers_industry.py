@@ -36,7 +36,7 @@ class TestSearchWorker:
             received.append(data)
 
         w = SearchWorker(query="rav", db=db)
-        w.finished.connect(collect)
+        w.finished_signal.connect(collect)
         w.run()
 
         assert len(received) == 1
@@ -73,7 +73,7 @@ class TestScoreWorker:
             received.append(data)
 
         w = ScoreWorker(type_id=2001, bp_me=10, bp_te=20, mat_hub="Jita", sell_hub="Jita", tax=0.015)
-        w.finished.connect(collect)
+        w.finished_signal.connect(collect)
         w.run()
 
         mock_svc.calc_manufacturing_score.assert_called_once_with(

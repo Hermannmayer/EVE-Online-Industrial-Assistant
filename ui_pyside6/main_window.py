@@ -313,7 +313,7 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
             action.setCheckable(True)
             action.setChecked(name in self._update_regions)
             # triggered(bool) 会传 checked 状态，用 n=name 固定区域名（否则 name 被 bool 覆盖）
-            action.triggered.connect(lambda checked, n=name: self._on_region_toggle(n))
+            action.triggered.connect(lambda checked=False, n=name: self._on_region_toggle(n))
             self._region_actions[name] = action
             menu.addAction(action)
         return menu

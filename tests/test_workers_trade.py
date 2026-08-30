@@ -38,7 +38,7 @@ class TestCrossRegionPriceWorker:
             received.append(data)
 
         w = CrossRegionPriceWorker(type_id=2001, db=db)
-        w.finished.connect(collect)
+        w.finished_signal.connect(collect)
         w.run()
 
         assert len(received) == 1
@@ -71,7 +71,7 @@ class TestCrossRegionPriceWorker:
             received.append(data)
 
         w = CrossRegionPriceWorker(type_id=99999, db=db)
-        w.finished.connect(collect)
+        w.finished_signal.connect(collect)
         w.run()
 
         hubs = received[0]
@@ -102,7 +102,7 @@ class TestTradeScoreWorker:
             received.append(data)
 
         w = TradeScoreWorker(type_id=2001, buy_hub="Jita", sell_hub="Amarr")
-        w.finished.connect(collect)
+        w.finished_signal.connect(collect)
         w.run()
 
         mock_svc.calc_trade_score.assert_called_once_with(
@@ -146,7 +146,7 @@ class TestTransportWorker:
             distance_jumps=80,
             char_config={"skills": {"会计学": 5}},
         )
-        w.finished.connect(collect)
+        w.finished_signal.connect(collect)
         w.run()
 
         mock_calc.assert_called_once_with(
