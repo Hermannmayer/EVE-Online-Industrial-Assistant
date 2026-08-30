@@ -43,7 +43,7 @@ def _container(db):
     return SimpleNamespace(db=db, plan_repo=PlanRepository(db))
 
 
-def _insert_mother(repo, product_type_id: int, *, runs=2, parallels=1, group=1) -> int:
+def _insert_mother(repo, product_type_id: int, *, runs=2, parallels=1, group=1, mat_hangar_id=None) -> int:
     pid = repo.save(
         {
             "product_type_id": product_type_id,
@@ -55,7 +55,7 @@ def _insert_mother(repo, product_type_id: int, *, runs=2, parallels=1, group=1) 
             "status": "pending",
         }
     )
-    repo.update(pid, group_number=group, sub_level=0)
+    repo.update(pid, group_number=group, sub_level=0, mat_hangar_id=mat_hangar_id)
     return int(pid)
 
 
@@ -63,7 +63,8 @@ def _child_rows(db):
     with db.connect("user") as conn:
         rows = conn.execute(
             "SELECT id, product_type_id, runs, parallels, demand, source_mother_ids, "
-            "component_parent_type_id, sub_level, status FROM production_plans WHERE sub_level > 0"
+            "component_parent_type_id, sub_level, status, deposit_hangar_id "
+            "FROM production_plans WHERE sub_level > 0"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -299,3 +300,37 @@ def test_created_child_auto_binds_when_inventory_available(temp_db, monkeypatch)
     kid = _child_rows(temp_db)[0]
     assert kid["product_type_id"] == 2003
     assert plan_execution.get_plan_blueprints(kid["id"])  # 已自动绑定
+
+
+def test_new_child_deposit_defaults_to_mother_mat_hangar(temp_db, monkeypatch):
+    """新拆解子项输出机库默认=母项制造机库（随 insert_child_plan 落库）。"""
+    c = _test_setup(temp_db, monkeypatch)
+    _insert_mother(c.plan_repo, 2001, runs=2, group=1, mat_hangar_id=7)
+    plan_rebuild.rebuild_children(create=True, prune=True)
+    kid = _child_rows(temp_db)[0]
+    assert kid["deposit_hangar_id"] == 7
+
+
+def test_deposit_backfill_skips_locked_and_keeps_manual(temp_db, monkeypatch):
+    """存量 NULL 子项回填母项制造机库：锁定行跳过、手动非空不覆盖。"""
+    c = _test_setup(temp_db, monkeypatch)
+    m1 = _insert_mother(c.plan_repo, 2001, runs=2, group=1, mat_hangar_id=None)
+    plan_rebuild.rebuild_children(create=True, prune=True)
+    kid = _child_rows(temp_db)[0]
+    assert kid["deposit_hangar_id"] is None  # 母项无机库 → NULL
+
+    # 锁定行（投产中）不回填
+    c.plan_repo.update(m1, mat_hangar_id=7)
+    c.plan_repo.update(kid["id"], status="in_progress")
+    plan_rebuild.rebuild_children(create=True, prune=True)
+    assert _child_rows(temp_db)[0]["deposit_hangar_id"] is None
+
+    # 解锁后回填为母项制造机库
+    c.plan_repo.update(kid["id"], status="pending")
+    plan_rebuild.rebuild_children(create=True, prune=True)
+    assert _child_rows(temp_db)[0]["deposit_hangar_id"] == 7
+
+    # 手动已设置（非空）不被覆盖
+    c.plan_repo.update(kid["id"], deposit_hangar_id=99)
+    plan_rebuild.rebuild_children(create=True, prune=True)
+    assert _child_rows(temp_db)[0]["deposit_hangar_id"] == 99

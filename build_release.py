@@ -87,14 +87,16 @@ def run_pyinstaller():
     for hi in THIRD_PARTY_HIDDEN_IMPORTS:
         args.extend(["--hidden-import", hi])
 
-    args.extend([
-        "--name",
-        "EVE商人助手",
-        entry_path,
-        "--distpath",
-        DIST_DIR,
-        "--noconfirm",
-    ])
+    args.extend(
+        [
+            "--name",
+            "EVE商人助手",
+            entry_path,
+            "--distpath",
+            DIST_DIR,
+            "--noconfirm",
+        ]
+    )
 
     result = subprocess.run(args, cwd=PROJECT_ROOT, capture_output=False)
     if result.returncode != 0:

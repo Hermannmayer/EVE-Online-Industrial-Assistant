@@ -410,7 +410,7 @@ class TradePage(QWidget):
         from ui_pyside6.workers.industry_workers import SearchWorker
 
         w = SearchWorker(text.strip(), get_container().db, self)
-        w.finished.connect(self._on_t_search_result)
+        w.finished_signal.connect(self._on_t_search_result)
         w.start()
 
     def _on_t_search_result(self, results: list):
@@ -463,7 +463,7 @@ class TradePage(QWidget):
             use_public_freight=use_public,
             parent=self,
         )
-        w.finished.connect(self._on_transport_result)
+        w.finished_signal.connect(self._on_transport_result)
         w.start()
 
     def _on_transport_result(self, result: dict):
@@ -516,7 +516,7 @@ class TradePage(QWidget):
         from ui_pyside6.workers.industry_workers import SearchWorker
 
         w = SearchWorker(text.strip(), get_container().db, self)
-        w.finished.connect(self._on_search_result)
+        w.finished_signal.connect(self._on_search_result)
         w.start()
 
     def _on_search_result(self, results: list):
@@ -561,7 +561,7 @@ class TradePage(QWidget):
         self._hub_group.setEnabled(False)
 
         w = CrossRegionPriceWorker(self._selected_tid, get_container().db, self)
-        w.finished.connect(self._on_cross_region_result)
+        w.finished_signal.connect(self._on_cross_region_result)
         w.start()
 
     def _on_cross_region_result(self, rows: list):
@@ -645,7 +645,7 @@ class TradePage(QWidget):
             self._trade_qty.value(),
             self,
         )
-        w.finished.connect(self._on_trade_score_result)
+        w.finished_signal.connect(self._on_trade_score_result)
         w.start()
 
     def _on_trade_score_result(self, result: dict):

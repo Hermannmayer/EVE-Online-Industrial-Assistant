@@ -38,7 +38,7 @@ class EstimateTableModel(QAbstractTableModel):
             self._recalc_totals()
             top_left = self.index(0, 3)
             bottom_right = self.index(len(self._rows) - 1, 6)
-            self.dataChanged.emit(top_left, bottom_right)
+            self.dataChanged.emit(top_left, bottom_right, [])
 
     def set_rows(self, rows: list[dict]):
         self.beginResetModel()
@@ -66,7 +66,7 @@ class EstimateTableModel(QAbstractTableModel):
         self._recalc_totals()
         top_left = self.index(idx, 0)
         bottom_right = self.index(idx, 6)
-        self.dataChanged.emit(top_left, bottom_right)
+        self.dataChanged.emit(top_left, bottom_right, [])
 
     def remove_row(self, row_idx: int):
         if 0 <= row_idx < len(self._rows):

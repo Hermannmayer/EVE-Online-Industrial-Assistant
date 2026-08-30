@@ -578,5 +578,5 @@ def do_add_to_plan(page, type_id: int, product_name: str):
         finally:
             page._add_plan_worker = None  # 释放强引用
 
-    worker.finished.connect(_on_score)
+    worker.finished_signal.connect(_on_score)
     worker.start()

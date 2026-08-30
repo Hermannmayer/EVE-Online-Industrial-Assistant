@@ -13,17 +13,17 @@ from core.logger import log
 class IndustryDataWorker(QThread):
     """后台线程拉取工业系统成本指数 + 设施数据"""
 
-    finished = Signal(bool, str)  # success, message
+    finished_signal = Signal(bool, str)  # success, message
 
     def run(self):
         try:
             from services.importers.getindustry import run_industry_update
 
             asyncio.run(run_industry_update())
-            self.finished.emit(True, "工业数据拉取完成")
+            self.finished_signal.emit(True, "工业数据拉取完成")
         except Exception as e:
             log.exception("工业数据拉取失败: %s", e)
-            self.finished.emit(False, str(e))
+            self.finished_signal.emit(False, str(e))
 
 
 def init_plan_db():
@@ -41,7 +41,7 @@ def init_plan_db():
 class PlanPriceRefreshWorker(QThread):
     """定向拉取计划涉及物品的 ESI 市场价格——带 5 分钟缓存"""
 
-    finished = Signal(bool, str)  # success, message
+    finished_signal = Signal(bool, str)  # success, message
 
     def __init__(self, type_ids: set[int], parent=None):
         super().__init__(parent)
@@ -51,12 +51,12 @@ class PlanPriceRefreshWorker(QThread):
         try:
             count = asyncio.run(self._fetch_and_save())
             if count == 0:
-                self.finished.emit(True, "价格数据在缓存有效期内（5分钟），直接使用缓存数据")
+                self.finished_signal.emit(True, "价格数据在缓存有效期内（5分钟），直接使用缓存数据")
             else:
-                self.finished.emit(True, f"已刷新 {count} 个物品的价格")
+                self.finished_signal.emit(True, f"已刷新 {count} 个物品的价格")
         except Exception as e:
             log.exception("定向价格刷新失败")
-            self.finished.emit(False, str(e))
+            self.finished_signal.emit(False, str(e))
 
     async def _fetch_and_save(self) -> int:
         """异步拉取 ESI + 写入 market.db（仅拉取缓存过期的物品）"""

@@ -58,6 +58,8 @@ class IndustryPage(QWidget):
         self._proc_worker: QThread | None = None
         self._proc_fp: tuple | None = None
         self._proc_result: tuple[float, float] | None = None
+        self._refresh_worker = None
+        self._score_worker = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -87,6 +89,8 @@ class IndustryPage(QWidget):
         data_layout.setContentsMargins(0, 0, 0, 0)
         data_layout.setSpacing(0)
         self._plan_table_widget = PlanTable()
+        # 注入工具栏价格设置/人物访问器（母项拆解利润预览用）
+        self._plan_table_widget.set_price_context(self._toolbar.get_price_settings, self._toolbar.get_char_name)
         data_layout.addWidget(self._plan_table_widget, 1)
         self._view_stack.addWidget(data_page)
 
@@ -260,7 +264,7 @@ class IndustryPage(QWidget):
             price_type=mat_price_type,
             parent=self,
         )
-        self._proc_worker.finished.connect(self._on_procurement_summary_done)
+        self._proc_worker.finished_signal.connect(self._on_procurement_summary_done)
         self._proc_worker.start()
 
     def _on_procurement_summary_done(self, cost: float, vol: float):
@@ -306,11 +310,13 @@ class IndustryPage(QWidget):
             prod_price_type=ps["prod_price_type"],
             parent=self,
         )
-        self._recalc_worker.finished.connect(self._on_recalc_done)
+        self._recalc_worker.finished_signal.connect(self._on_recalc_done)
         self._recalc_worker.start()
 
     def _on_recalc_done(self, results: list):
         """批量重算完成 → 更新数据库并刷新显示"""
+        if self._recalc_worker is not self.sender():
+            return
         if not results:
             return
         # 防御：后台 worker 可能晚于页面/测试 teardown 触发（指标为 MagicMock/None），
@@ -400,10 +406,12 @@ class IndustryPage(QWidget):
         log.info("工业数据（成本指数/设施）缺失或过时，后台开始拉取...")
         self._status_bar.show_message("正在后台拉取工业数据...")
         self._industry_worker = IndustryDataWorker(parent=self)
-        self._industry_worker.finished.connect(self._on_industry_data_ready)
+        self._industry_worker.finished_signal.connect(self._on_industry_data_ready)
         self._industry_worker.start()
 
     def _on_industry_data_ready(self, success: bool, message: str):
+        if self._industry_worker is not self.sender():
+            return
         if success:
             log.info("工业数据后台拉取完成")
             self._status_bar.show_message("工业数据拉取完成", timeout=5000)
@@ -446,12 +454,17 @@ class IndustryPage(QWidget):
 
         suffix = "（可能使用缓存）" if is_cached == len(all_ids) else ""
         self._status_bar.show_message(f"正在获取 {len(all_ids)} 个物品的价格{suffix}...")
+        if self._refresh_worker and self._refresh_worker.isRunning():
+            self._status_bar.show_message("价格刷新进行中，请稍候", timeout=4000)
+            return
         self._refresh_worker = PlanPriceRefreshWorker(all_ids, self)
-        self._refresh_worker.finished.connect(self._on_industry_refresh_done)
+        self._refresh_worker.finished_signal.connect(self._on_industry_refresh_done)
         self._refresh_worker.start()
 
     def _on_industry_refresh_done(self, success: bool, message: str):
         """价格拉取完成 → 刷新显示 + 状态栏反馈"""
+        if self._refresh_worker is not self.sender():
+            return
         if success:
             self._status_bar.show_message(message, timeout=5000)
         else:
@@ -512,6 +525,8 @@ class IndustryPage(QWidget):
         )
 
         def _on_score(result: dict):
+            if self._score_worker is not self.sender():
+                return
             dlg = AddPlanDialog(product_name, result, self)
             if dlg.exec() != QDialog.DialogCode.Accepted:
                 return
@@ -577,7 +592,7 @@ class IndustryPage(QWidget):
             self.load_plans()
             QMessageBox.information(self, "\u5b8c\u6210", f"\u5df2\u6dfb\u52a0\u8ba1\u5212: {product_name}")
 
-        self._score_worker.finished.connect(_on_score)
+        self._score_worker.finished_signal.connect(_on_score)
         self._score_worker.start()
 
     def _on_manufacturable_browser(self):

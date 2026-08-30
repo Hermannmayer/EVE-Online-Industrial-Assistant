@@ -600,7 +600,9 @@ class BlueprintTab(QWidget):
         main_win.show_progress("正在解析蓝图...", 0)
         self._worker = _BlueprintImportWorker(raw, hid, parent=self)
         self._worker.progress.connect(lambda cur, total, text: main_win.update_progress(cur, text) if total else None)
-        self._worker.finished.connect(lambda diff: self._on_blueprint_diff_ready(diff, hid, hangar_name, before_map))
+        self._worker.finished_signal.connect(
+            lambda diff: self._on_blueprint_diff_ready(diff, hid, hangar_name, before_map)
+        )
         self._worker.start()
 
     def _on_blueprint_diff_ready(self, diff: list[dict], hid: int, hangar_name: str, before_map: dict[tuple, int]):

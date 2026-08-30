@@ -257,6 +257,7 @@ def rebuild_children(*, create: bool = False, prune: bool = False) -> dict:
                 sub_level=need,
                 mat_hangar_id=mat_hangar,
                 solar_system_id=solar_system_id,
+                deposit_hangar_id=mat_hangar,  # 子项输出机库默认=母项制造机库（可手动改）
                 source_mother_ids=sources_str,
                 component_parent_type_id=parent_tid,
                 demand=node["demand"],
@@ -285,6 +286,10 @@ def rebuild_children(*, create: bool = False, prune: bool = False) -> dict:
                 te_level=node["te_level"],
                 materials_ready=1,
             )
+            # 存量回填：未设置输出机库（NULL）且母项有制造机库 → 默认=母项制造机库。
+            # 跳过锁定行（开工中产线输出机库不静默改向）；非空已设置值（手动/下线）不覆盖。
+            if mat_hangar and not row.get("deposit_hangar_id"):
+                fields["deposit_hangar_id"] = mat_hangar
         changed_fields = _field_diff(row, fields)
         if changed_fields:
             repo.update(int(row["id"]), **changed_fields)

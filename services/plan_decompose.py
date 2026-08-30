@@ -130,6 +130,41 @@ def collect_cascade_delete_ids(plans: list[dict], selected_ids: set[int]) -> set
     return ids
 
 
+def collect_removed_child_ids(rows: list[dict], removed_type_ids: set[int]) -> set[int]:
+    """母项拆解删除集：被删组件类型的合并子项行 + 其同组子孙（沿 component_parent_type_id）。
+
+    子项按 product_type_id 全局合并：命中类型的所有 child 行作种子（含跨组共享行）；
+    同组内沿 component_parent_type_id 传递删除子孙。不按 sub_level 比较——避免兄弟组件
+    因层级差被误连带删除。仅处理 sub_level>0 的子项行，不含母项。
+    """
+    removed = {int(t) for t in removed_type_ids if t}
+    if not removed:
+        return set()
+    children = [r for r in rows if int(r.get("sub_level") or 0) > 0]
+    children_of: dict[tuple[int, int], list[dict]] = {}  # (group, parent_type) -> [child rows]
+    ids: set[int] = set()
+    frontier: list[dict] = []
+    for r in children:
+        g = int(r.get("group_number") or 0)
+        t = int(r.get("product_type_id") or 0)
+        p = r.get("component_parent_type_id")
+        if p:
+            children_of.setdefault((g, int(p)), []).append(r)
+        if t in removed:
+            ids.add(int(r["id"]))
+            frontier.append(r)
+    while frontier:
+        r = frontier.pop()
+        g = int(r.get("group_number") or 0)
+        t = int(r.get("product_type_id") or 0)
+        for child in children_of.get((g, t), []):
+            cid = int(child["id"])
+            if cid not in ids:
+                ids.add(cid)
+                frontier.append(child)
+    return ids
+
+
 def collect_group_members(all_plans: list[dict], selected: list[dict]) -> tuple[list[dict], list[dict]]:
     """跨选中行聚合相关组的母项与子项（按 plan id 去重）→ (parents, children)。
 

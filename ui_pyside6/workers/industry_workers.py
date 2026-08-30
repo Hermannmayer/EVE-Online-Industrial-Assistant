@@ -9,7 +9,7 @@ from ui_pyside6.workers.base_worker import BaseBatchScoreWorker, BaseScoreWorker
 class SearchWorker(QThread):
     """搜索可制造物品"""
 
-    finished = Signal(list)
+    finished_signal = Signal(list)
 
     def __init__(self, query: str, db, parent=None):
         super().__init__(parent)
@@ -19,7 +19,7 @@ class SearchWorker(QThread):
     def run(self):
         from services.ui_data_service import search_manufacturable_items
 
-        self.finished.emit(search_manufacturable_items(self._query, db=self._db))
+        self.finished_signal.emit(search_manufacturable_items(self._query, db=self._db))
 
 
 class ScoreWorker(BaseScoreWorker):
@@ -71,7 +71,7 @@ class ScoreWorker(BaseScoreWorker):
 class BatchPlanCalcWorker(BaseBatchScoreWorker):
     """后台批量重算所有生产计划的利润/评分"""
 
-    finished = Signal(
+    finished_signal = Signal(
         list
     )  # [(plan_id, profit, margin, score, iskph, material_cost, hours, daily, personal_margin, market_margin), ...]
 
@@ -221,7 +221,7 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
                     market_margin,
                 )
             )
-        self.finished.emit(results)
+        self.finished_signal.emit(results)
 
 
 class RankWorker(QThread):
@@ -309,7 +309,7 @@ class RankWorker(QThread):
 class ProcurementSummaryWorker(QThread):
     """后台聚合「备料中」计划的待采购金额/体积（统计条模式，按计划机库扣库存）"""
 
-    finished = Signal(float, float)  # total_cost, total_volume
+    finished_signal = Signal(float, float)  # total_cost, total_volume
 
     def __init__(
         self,
@@ -337,9 +337,9 @@ class ProcurementSummaryWorker(QThread):
                 price_type=self._price_type,
                 db=get_container().db,
             )
-            self.finished.emit(cost, vol)
+            self.finished_signal.emit(cost, vol)
         except Exception:
             from core.logger import log
 
             log.exception("备料中采购汇总失败")
-            self.finished.emit(0.0, 0.0)
+            self.finished_signal.emit(0.0, 0.0)

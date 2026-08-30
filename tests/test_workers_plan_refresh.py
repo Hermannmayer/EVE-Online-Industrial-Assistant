@@ -27,7 +27,7 @@ class TestPlanPriceRefreshWorker:
             received.append((success, message))
 
         w = PlanPriceRefreshWorker(type_ids={1, 2, 3, 4, 5})
-        w.finished.connect(collect)
+        w.finished_signal.connect(collect)
         w.run()
 
         assert len(received) == 1
@@ -45,7 +45,7 @@ class TestPlanPriceRefreshWorker:
             received.append((success, message))
 
         w = PlanPriceRefreshWorker(type_ids={1})
-        w.finished.connect(collect)
+        w.finished_signal.connect(collect)
         w.run()
 
         assert len(received) == 1

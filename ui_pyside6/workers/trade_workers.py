@@ -11,7 +11,7 @@ from ui_pyside6.workers.base_worker import BaseScoreWorker
 class CrossRegionPriceWorker(QThread):
     """获取物品在四大贸易中心的价格"""
 
-    finished = Signal(list)
+    finished_signal = Signal(list)
 
     def __init__(self, type_id: int, db, parent=None):
         super().__init__(parent)
@@ -38,7 +38,7 @@ class CrossRegionPriceWorker(QThread):
                     "volume": vol,
                 }
             )
-        self.finished.emit(results)
+        self.finished_signal.emit(results)
 
 
 class TradeScoreWorker(BaseScoreWorker):

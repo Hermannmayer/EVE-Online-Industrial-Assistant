@@ -10,14 +10,12 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 from collections.abc import Callable
 
+from core.logger import log
 from core.paths import data_dir
 from services.char_config_validator import load_char_config
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_SKILLS = {"工业理论": 5, "高级工业理论": 5}
 
@@ -75,7 +73,7 @@ class CharConfigResolver:
                 if result:
                     return dict(result)
             except Exception:
-                logger.exception("角色配置解析失败: %s", char_name)
+                log.exception("角色配置解析失败: %s", char_name)
         # 最终 fallback
         return {"skills": dict(DEFAULT_SKILLS), "market": {}}
 

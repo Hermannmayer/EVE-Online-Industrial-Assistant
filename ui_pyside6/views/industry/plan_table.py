@@ -69,6 +69,9 @@ class PlanTable(QWidget):
         self._model: PlanTableModel | None = None
         # 工具栏当前材料机库 ID（由 IndustryPage 注入，启动时兜底）
         self._mat_hangar_id: int | None = None
+        # 工具栏价格设置/人物访问器（由 IndustryPage 注入，母项拆解利润预览用）
+        self._get_price_settings = None
+        self._get_char_name = None
 
         # ── 连接信号 ─────────────────────────────────────────
         self._table.doubleClicked.connect(self._on_double_clicked)
@@ -135,6 +138,11 @@ class PlanTable(QWidget):
     def set_mat_hangar_id(self, mat_hangar_id: int | None) -> None:
         """注入工具栏当前材料机库 ID（启动时用于兜底旧计划）。"""
         self._mat_hangar_id = mat_hangar_id
+
+    def set_price_context(self, get_price_settings, get_char_name) -> None:
+        """注入工具栏价格设置/人物访问器（母项拆解利润预览用）。"""
+        self._get_price_settings = get_price_settings
+        self._get_char_name = get_char_name
 
     def _solar_system_for_mat_hangar(self, mat_hangar_id: int | None) -> int | None:
         """从材料机库带出所在星系 ID（材料在哪个星系造，成本指数就按它算）。"""
@@ -1018,7 +1026,12 @@ class PlanTable(QWidget):
             return
         from ui_pyside6.views.industry.parent_decompose_dialog import ParentDecomposeDialog
 
-        dlg = ParentDecomposeDialog(parents, self)
+        dlg = ParentDecomposeDialog(
+            parents,
+            self,
+            price_settings=self._get_price_settings() if self._get_price_settings else None,
+            default_char_name=self._get_char_name() if self._get_char_name else "",
+        )
         if dlg.exec():
             self.plan_updated.emit()
 

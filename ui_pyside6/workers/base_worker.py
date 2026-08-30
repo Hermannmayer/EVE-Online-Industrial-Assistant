@@ -15,7 +15,7 @@ from services.char_config_resolver import resolve_char_config
 class BaseScoreWorker(QThread):
     """单物品评分 Worker 基类 — 子类实现 _compute() → dict"""
 
-    finished = Signal(dict)
+    finished_signal = Signal(dict)
 
     def __init__(self, type_id: int, *, char_config=None, char_name=None, parent=None):
         super().__init__(parent)
@@ -25,9 +25,9 @@ class BaseScoreWorker(QThread):
     def run(self):
         try:
             result = self._compute()
-            self.finished.emit(result)
+            self.finished_signal.emit(result)
         except Exception as e:
-            self.finished.emit({"status": f"error: {e}"})
+            self.finished_signal.emit({"status": f"error: {e}"})
 
     def _compute(self) -> dict:
         raise NotImplementedError
