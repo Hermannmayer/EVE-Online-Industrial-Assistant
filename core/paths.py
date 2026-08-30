@@ -27,6 +27,7 @@ PyInstaller 打包后：
 
 import os
 import sys
+from pathlib import Path
 
 
 def is_frozen() -> bool:
@@ -106,6 +107,16 @@ def search_history_file() -> str:
 def window_geometry_file() -> str:
     """窗口位置文件路径"""
     return os.path.join(data_dir(), "window_geometry.json")
+
+
+def log_dir() -> Path:
+    """日志目录（用户主目录 .eve-assistant 下，不随 exe 目录移动）"""
+    return Path.home() / ".eve-assistant" / "logs"
+
+
+def crashes_dir() -> Path:
+    """崩溃转储目录（用户主目录 .eve-assistant 下，不随 exe 目录移动）"""
+    return Path.home() / ".eve-assistant" / "crashes"
 
 
 def ensure_dirs_exist():

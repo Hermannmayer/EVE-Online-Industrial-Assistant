@@ -3,13 +3,12 @@ One Dark Pro / One Light 主题系统 — 支持运行时切换
 """
 
 import json
-import logging
 import os
 import weakref
 from collections.abc import Callable
 from typing import TypedDict, cast
 
-_logger = logging.getLogger(__name__)
+from core.logger import log
 
 # ═══════════════════════════════════════════
 #  色板定义
@@ -407,7 +406,7 @@ def apply_theme(theme_name: str) -> None:
         try:
             listener()
         except Exception:
-            _logger.exception("主题监听器回调失败")
+            log.exception("主题监听器回调失败")
     for ref in dead:
         _theme_listeners.remove(ref)
 

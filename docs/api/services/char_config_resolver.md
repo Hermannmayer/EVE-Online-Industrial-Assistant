@@ -21,7 +21,7 @@ def char_config_path() -> str
 
 char_config.json 文件路径
 
-定义行：`25`
+定义行：`23`
 
 ### `load_all_data`
 
@@ -31,7 +31,7 @@ def load_all_data() -> dict
 
 加载完整角色配置
 
-定义行：`30`
+定义行：`28`
 
 ### `save_all_data`
 
@@ -41,7 +41,7 @@ def save_all_data(data: dict) -> None
 
 保存完整角色配置
 
-定义行：`35`
+定义行：`33`
 
 ### `get_character`
 
@@ -51,7 +51,7 @@ def get_character(name: str) -> dict | None
 
 获取指定角色的完整配置
 
-定义行：`43`
+定义行：`41`
 
 ### `get_character_list`
 
@@ -61,7 +61,7 @@ def get_character_list() -> list[str]
 
 获取所有角色名列表
 
-定义行：`49`
+定义行：`47`
 
 ### `get_default_resolver`
 
@@ -73,7 +73,7 @@ def get_default_resolver() -> CharConfigResolver
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`87`
+定义行：`85`
 
 ### `resolve_char_config`
 
@@ -83,7 +83,7 @@ def resolve_char_config(char_name: str | None=None, char_data: dict | None=None,
 
 模块级便利函数（向后兼容），使用默认解析器
 
-定义行：`94`
+定义行：`92`
 
 ## 类
 
@@ -91,7 +91,7 @@ def resolve_char_config(char_name: str | None=None, char_data: dict | None=None,
 
 角色配置解析器 — 注入回调避免反依赖 UI 层
 
-定义行：`55`
+定义行：`53`
 
 #### 方法
 
@@ -105,7 +105,7 @@ def __init__(self, char_data_provider: Callable[[str], dict | None] | None=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`58`
+定义行：`56`
 ##### `resolve`
 
 ```python
@@ -114,4 +114,4 @@ def resolve(self, char_name: str | None=None, char_data: dict | None=None, skill
 
 返回保证包含 'skills' 和 'market' 键的配置 dict
 
-定义行：`61`
+定义行：`59`
