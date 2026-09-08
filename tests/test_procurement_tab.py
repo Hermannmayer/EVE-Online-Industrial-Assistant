@@ -1,4 +1,4 @@
-"""待采购对话框改造测试：双表分区 / 表头排序 / 双击复制 / 整单复制范围"""
+"""待采购对话框改造测试：双表分区 / 表头排序 / 双击按列复制 / 整单复制范围 / 主题与复制提示"""
 
 from unittest.mock import MagicMock, patch
 
@@ -6,7 +6,14 @@ import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import QApplication
 
-from ui_pyside6.views.procurement_tab import ProcurementDialog, ProcureTableModel, _display_name, _split_sections
+import ui_pyside6.theme as theme
+from ui_pyside6.views.procurement_tab import (
+    ProcurementDialog,
+    ProcureTableModel,
+    _copy_cell_text,
+    _display_name,
+    _split_sections,
+)
 
 pytestmark = pytest.mark.ui
 
@@ -212,27 +219,62 @@ def test_empty_rows_hides_tables(qapp, make_dlg):
     assert dlg._stock_section.isHidden()
     assert not dlg._buy_label.isVisible()
     assert not dlg._stock_label.isVisible()
-    assert dlg._summary_label.text() == "无活跃计划材料需求"
+    assert dlg._summary_label.fullText() == "无活跃计划材料需求"
 
 
 # ═══════════════════════════════════════════════════
-#  双击复制（两表都要生效）
+#  双击复制（两表都要生效，按列取内容）
 # ═══════════════════════════════════════════════════
 
 
-def test_double_click_copies_name(qapp, make_dlg):
-    """双击行复制物品名（不含数量）。用 setText spy 断言，规避全量跑时系统剪贴板读回被前置测试扰动的偶发。"""
+def test_double_click_copies_clicked_column(qapp, make_dlg):
+    """双击哪列复制哪列：名称列→物品名，数量列→整数，价格/体积→两位小数（均无千分位）。
+    用 setText spy 断言，规避全量跑时系统剪贴板读回被前置测试扰动的偶发。"""
     dlg = make_dlg()
     buy_model = dlg._buy_table.model()
     clip = QApplication.clipboard()
-    with (
-        patch.object(clip, "setText") as m_set,
-        patch("ui_pyside6.views.procurement_tab.QToolTip"),
-    ):
-        dlg._on_row_double_click(buy_model.index(0, 0))
-        assert m_set.call_args.args[0] == "三钛合金"
+    expected = {0: "三钛合金", 1: "1000", 2: "0", 3: "1000", 4: "5.00", 5: "5000.00", 6: "10.00"}
+    with patch.object(clip, "setText") as m_set:
+        for col, text in expected.items():
+            dlg._on_row_double_click(buy_model.index(0, col))
+            assert m_set.call_args.args[0] == text, f"列 {col} 复制内容不符"
+            assert dlg._copy_hint.fullText() == f"已复制: {text}"
+    assert dlg._copy_hint_timer.isActive()
+
+    with patch.object(clip, "setText") as m_set:
         dlg._on_row_double_click(dlg._stock_table.model().index(0, 0))
         assert m_set.call_args.args[0] == "渡鸦级"
+
+
+def test_copy_text_matches_display(qapp, make_dlg):
+    """复制文本 = 显示文本去掉千分位（两处口径不得漂移）。"""
+    dlg = make_dlg()
+    model = dlg._buy_table.model()
+    for row in range(model.rowCount()):
+        r = model.get_row(row)
+        for col in range(model.columnCount()):
+            shown = model.data(model.index(row, col), Qt.ItemDataRole.DisplayRole)
+            assert _copy_cell_text(r, col) == str(shown).replace(",", ""), f"行{row} 列{col}"
+
+
+def test_copy_actions_use_status_hint_not_popup(qapp, make_dlg):
+    """右键「复制数量」与工具栏「复制到剪贴板」改走底部提示，不再弹模态框。"""
+    dlg = make_dlg()
+    clip = QApplication.clipboard()
+    buy_model = dlg._buy_table.model()
+    dlg._buy_table.selectRow(0)
+    sel = dlg._buy_table.selectionModel().selectedRows()
+    with (
+        patch.object(clip, "setText") as m_set,
+        patch("ui_pyside6.views.procurement_tab.QMessageBox") as m_box,
+    ):
+        dlg._on_copy_qty(dlg._buy_table, sel, buy_model)
+        assert m_set.call_args.args[0] == "1000"
+        assert dlg._copy_hint.fullText() == "已复制: 1000"
+
+        dlg._on_copy_to_clipboard()
+        assert "2 种材料" in dlg._copy_hint.fullText()
+    m_box.information.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════
@@ -273,6 +315,59 @@ def test_copy_button_when_no_buy_rows(qapp, make_dlg):
     ):
         dlg._on_copy_to_clipboard()
     m_set.assert_not_called()
+
+
+# ═══════════════════════════════════════════════════
+#  删除行（本次打开内生效，关闭窗口后恢复）
+# ═══════════════════════════════════════════════════
+
+
+def test_deleted_row_not_copied_after_recalculate(qapp, make_dlg):
+    """删除的行不得被轮询重算放回来，否则「复制到剪贴板」会带上已删条目。"""
+    dlg = make_dlg()
+    model = dlg._buy_table.model()
+    dlg._buy_table.selectRow(0)
+    sel = dlg._buy_table.selectionModel().selectedRows()
+    dlg._on_delete_row(dlg._buy_table, sel, model)
+    assert [r["type_id"] for r in dlg._buy_table.model()._rows] == [35]
+    assert "已移除 1 项" in dlg._copy_hint.fullText()
+
+    dlg._calculate()  # 模拟 10s 轮询 / 刷新计算
+    assert [r["type_id"] for r in dlg._buy_table.model()._rows] == [35]
+
+    clip = QApplication.clipboard()
+    with patch.object(clip, "setText") as m_set:
+        dlg._on_copy_to_clipboard()
+    assert "三钛合金" not in m_set.call_args.args[0]
+    assert "类银超金属" in m_set.call_args.args[0]
+
+
+def test_deleted_rows_return_after_reopen(qapp, make_dlg):
+    """删除只在本次打开内生效：关闭窗口再打开，被删的行要重新算回来。"""
+    dlg = make_dlg()
+    dlg._buy_table.selectRow(0)
+    sel = dlg._buy_table.selectionModel().selectedRows()
+    dlg._on_delete_row(dlg._buy_table, sel, dlg._buy_table.model())
+    assert dlg._deleted_ids
+
+    dlg.close()  # closeEvent 清空删除记录
+    assert dlg._deleted_ids == set()
+    dlg.show()  # showEvent → _reload_plans → _calculate
+    assert [r["type_id"] for r in dlg._buy_table.model()._rows] == [34, 35]
+
+
+def test_esc_close_also_resets_deletions(qapp, make_dlg):
+    """Esc 关闭走 QDialog.done()（不经 closeEvent），同样要重置删除记录。"""
+    dlg = make_dlg()
+    dlg._buy_table.selectRow(0)
+    sel = dlg._buy_table.selectionModel().selectedRows()
+    dlg._on_delete_row(dlg._buy_table, sel, dlg._buy_table.model())
+    assert dlg._deleted_ids
+
+    dlg.reject()  # 等价于按 Esc
+    assert dlg._deleted_ids == set()
+    dlg._calculate()
+    assert [r["type_id"] for r in dlg._buy_table.model()._rows] == [34, 35]
 
 
 # ═══════════════════════════════════════════════════
@@ -325,22 +420,44 @@ def test_edit_qty_crosses_section(qapp, make_dlg):
 
 
 # ═══════════════════════════════════════════════════
-#  排序状态重放（_calculate 重建后保持）
+#  排序保持（_calculate 重建后不丢）
 # ═══════════════════════════════════════════════════
 
 
-def test_sort_state_replayed_after_calculate(qapp, make_dlg):
+def test_sort_survives_recalculate(qapp, make_dlg):
+    """轮询重算不得丢排序。用升序：fixture 自然序 [1000, 100] 与排序序相反，
+    修复前（setModel 不重排 + setSortIndicator 同值不发声）这里会回退成 [1000, 100]。"""
     dlg = make_dlg()
-    # 模拟用户在需采购表点击表头按「需采购」降序
-    dlg._buy_table.horizontalHeader().setSortIndicator(3, Qt.SortOrder.DescendingOrder)
-    assert dlg._sort_state.get(id(dlg._buy_table)) == (3, Qt.SortOrder.DescendingOrder)
+    dlg._buy_table.horizontalHeader().setSortIndicator(3, Qt.SortOrder.AscendingOrder)
+    assert [r["to_buy"] for r in dlg._buy_table.model()._rows] == [100, 1000]
+
+    dlg._calculate()  # 模拟轮询 / 刷新重建分区
+    assert dlg._buy_table.horizontalHeader().sortIndicatorSection() == 3
+    assert dlg._buy_table.horizontalHeader().sortIndicatorOrder() == Qt.SortOrder.AscendingOrder
+    assert [r["to_buy"] for r in dlg._buy_table.model()._rows] == [100, 1000]
+
+
+def test_no_fake_sort_indicator_on_start(qapp, make_dlg):
+    """初始不得显示 Qt 默认的 (第 0 列, 降序) 假排序箭头，行序保持原始。"""
+    dlg = make_dlg()
+    assert dlg._buy_table.horizontalHeader().sortIndicatorSection() == -1
     assert [r["to_buy"] for r in dlg._buy_table.model()._rows] == [1000, 100]
 
-    # 重算（刷新/换价）→ _rebuild_sections 重建后重放排序
-    dlg._calculate()
-    assert dlg._buy_table.horizontalHeader().sortIndicatorSection() == 3
-    assert dlg._buy_table.horizontalHeader().sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
-    assert [r["to_buy"] for r in dlg._buy_table.model()._rows] == [1000, 100]
+
+# ═══════════════════════════════════════════════════
+#  主题（跟随全局主题）
+# ═══════════════════════════════════════════════════
+
+
+def test_dialog_applies_global_stylesheet(qapp, make_dlg):
+    """对话框必须整套套用全局 QSS：此前只给几个 label 设了内联颜色，窗口是系统默认灰白。"""
+    dlg = make_dlg()
+    assert "QTableView" in dlg.styleSheet()
+    try:
+        theme.apply_theme("light")
+        assert theme.ONE_LIGHT["BG_DARK"] in dlg.styleSheet()
+    finally:
+        theme.apply_theme("one-dark")
 
 
 # ═══════════════════════════════════════════════════

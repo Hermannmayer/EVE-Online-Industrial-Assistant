@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
-    QTableView,
     QVBoxLayout,
     QWidget,
 )
@@ -37,6 +36,7 @@ from ui_pyside6.dialogs.hangar_dialogs import (
     BatchCostPriceDialog,
     EditQtyDialog,
 )
+from ui_pyside6.table_sort import SortPreservingTableView
 
 from .inventory_helpers import InvTableModel
 
@@ -55,12 +55,11 @@ class HangarTab(QWidget):
 
         self._build_action_bar(layout)
 
-        self._table = QTableView()
+        self._table = SortPreservingTableView()
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.horizontalHeader().setStretchLastSection(True)
-        self._table.setSortingEnabled(True)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_context_menu)
         self._table.verticalHeader().setDefaultSectionSize(32)
