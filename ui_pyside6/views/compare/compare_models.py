@@ -205,7 +205,7 @@ def build_primary_btn_stylesheet():
     """构建主按钮样式表"""
     return (
         f"QPushButton{{background:{theme.PRIMARY};color:{theme.TEXT_ON_PRIMARY};"
-        f"border:none;border-radius:4px;padding:4px 12px;font-size:11px;}}"
+        f"border:none;border-radius:4px;padding:4px 12px;font-size:{theme.fs(11)}px;}}"
         f"QPushButton:hover{{background:{theme.ACCENT_CYAN};}}"
     )
 
@@ -214,7 +214,7 @@ def build_item_list_stylesheet():
     """构建物品列表样式表"""
     return (
         f"QListWidget{{background:{theme.BG_SURFACE};border:1px solid {theme.BORDER};"
-        f"border-radius:4px;font-size:11px;}}"
+        f"border-radius:4px;font-size:{theme.fs(11)}px;}}"
         f"QListWidget::item{{padding:3px 6px;border-bottom:1px solid {theme.BORDER};}}"
         f"QListWidget::item:hover{{background:{theme.BG_HOVER};}}"
     )
@@ -224,7 +224,7 @@ def build_combo_stylesheet():
     """构建下拉框样式表"""
     return (
         f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
-        f"border:1px solid {theme.BORDER};border-radius:4px;padding:3px 6px;font-size:11px;"
+        f"border:1px solid {theme.BORDER};border-radius:4px;padding:3px 6px;font-size:{theme.fs(11)}px;"
     )
 
 
@@ -240,7 +240,7 @@ def build_compare_btn_stylesheet():
     """构建对比按钮样式表"""
     return (
         f"QPushButton{{background:{theme.PRIMARY};color:{theme.TEXT_ON_PRIMARY};"
-        f"border:none;border-radius:4px;padding:5px 16px;font-size:12px;font-weight:bold;}}"
+        f"border:none;border-radius:4px;padding:5px 16px;font-size:{theme.fs(12)}px;font-weight:bold;}}"
         f"QPushButton:hover{{background:{theme.ACCENT_CYAN};}}"
         f"QPushButton:disabled{{background:{theme.TEXT_SECONDARY};color:{theme.BG_SURFACE};}}"
     )
@@ -250,14 +250,14 @@ def build_export_btn_stylesheet():
     """构建导出按钮样式表"""
     return (
         f"QPushButton{{background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
-        f"border:1px solid {theme.BORDER};border-radius:4px;padding:4px 12px;font-size:11px;}}"
+        f"border:1px solid {theme.BORDER};border-radius:4px;padding:4px 12px;font-size:{theme.fs(11)}px;}}"
         f"QPushButton:hover{{background:{theme.BG_HOVER};border-color:{theme.PRIMARY};}}"
     )
 
 
 def build_status_stylesheet():
     """构建状态栏样式表"""
-    return f"color:{theme.TEXT_SECONDARY};font-size:11px;"
+    return f"color:{theme.TEXT_SECONDARY};font-size:{theme.fs(11)}px;"
 
 
 def build_progress_stylesheet():
@@ -270,14 +270,14 @@ def build_progress_stylesheet():
 
 def build_label_stylesheet():
     """构建标签样式表"""
-    return f"color:{theme.TEXT_SECONDARY};font-size:11px;"
+    return f"color:{theme.TEXT_SECONDARY};font-size:{theme.fs(11)}px;"
 
 
 def build_clear_btn_stylesheet():
     """构建清空按钮样式表"""
     return (
         f"QPushButton{{background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
-        f"border:1px solid {theme.BORDER};border-radius:4px;padding:3px 8px;font-size:10px;}}"
+        f"border:1px solid {theme.BORDER};border-radius:4px;padding:3px 8px;font-size:{theme.fs(10)}px;}}"
         f"QPushButton:hover{{background:{theme.BG_HOVER};border-color:{theme.ACCENT_RED};}}"
     )
 
@@ -292,6 +292,6 @@ def build_table_stylesheet():
         f"QTableView::item:selected{{background:{theme.PRIMARY};color:{theme.TEXT_BRIGHT};}}"
         f"QHeaderView::section{{background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
         f"padding:4px 6px;border:none;border-right:1px solid {theme.BORDER};"
-        f"border-bottom:1px solid {theme.BORDER};font-weight:bold;font-size:11px;}}"
+        f"border-bottom:1px solid {theme.BORDER};font-weight:bold;font-size:{theme.fs(11)}px;}}"
         f"QHeaderView::section:hover{{background:{theme.BG_HOVER};}}"
     )

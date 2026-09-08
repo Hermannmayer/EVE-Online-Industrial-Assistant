@@ -97,7 +97,7 @@ class BlueprintImportReviewDialog(QDialog):
 
         # ── 统计栏 ──
         self._summary_label = QLabel("")
-        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         layout.addWidget(self._summary_label)
 
         # ── 底部按钮 ──
@@ -308,7 +308,7 @@ class BlueprintImportReviewDialog(QDialog):
     def showEvent(self, event):
         """显示前重新应用主题样式"""
         super().showEvent(event)
-        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
 
 
 # ════════════════════════════════════════════════════
@@ -336,7 +336,7 @@ class BlueprintImportChangeDialog(QDialog):
         layout.setSpacing(6)
 
         self._summary_label = QLabel(self._build_summary(changes, added, removed))
-        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         layout.addWidget(self._summary_label)
 
         self._table = QTableWidget(len(changes), 3)
@@ -397,7 +397,7 @@ class BlueprintImportChangeDialog(QDialog):
 
     def _on_theme_changed(self):
         """主题切换时重设增量/减量前景色（跟随主题）"""
-        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         for row, ch in enumerate(self._changes):
             qty_item = self._table.item(row, 2)
             if qty_item is None:

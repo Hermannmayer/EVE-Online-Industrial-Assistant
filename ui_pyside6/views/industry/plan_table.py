@@ -30,6 +30,7 @@ from ui_pyside6.views.industry.plan_table_constants import (
     COL_PRODUCT,
     COL_STATUS,
     FIXED_WIDTHS,
+    MAX_CONTENT_WIDTHS,
     NUM_COLUMNS,
 )
 from ui_pyside6.views.industry.plan_table_delegate import PlanTableDelegate, ReadyButtonDelegate
@@ -56,8 +57,11 @@ class PlanTable(QWidget):
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setSortingEnabled(True)
-        self._table.verticalHeader().setDefaultSectionSize(26)
+        # 行高随全局字号（13px 字号下为 26，与历史值一致）
+        self._table.verticalHeader().setDefaultSectionSize(max(26, theme.fs(13) + 13))
         self._table.verticalHeader().setVisible(False)
+        # 19 列全显示，超出窗口时横向滚动（用户明确选择，不默认隐藏列）
+        self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._configure_adaptive_columns()
         # 状态列「待下线」渲染成按钮（点击走 _on_cell_clicked）
         self._table.setItemDelegateForColumn(COL_STATUS, ReadyButtonDelegate(self._table))
@@ -92,6 +96,15 @@ class PlanTable(QWidget):
 
     # ── 公共方法 ──────────────────────────────────────────────
 
+    def _fixed_column_width(self, col: int) -> int:
+        """固定窄列宽度：图标/复选框的固有需求与表头文字宽度取大（随全局字号缩放）。
+
+        写死 32/36 在大字号下表头会互相挤压，因此以表头文字宽为下限。
+        """
+        header = self._table.horizontalHeader()
+        need = header.fontMetrics().horizontalAdvance(PlanTableModel._HEADERS[col]) + 16
+        return max(FIXED_WIDTHS[col], need)
+
     def _configure_adaptive_columns(self) -> None:
         """配置列宽自适应：窄列固定，产品列拉伸，其余自适应内容"""
         header = self._table.horizontalHeader()
@@ -107,7 +120,7 @@ class PlanTable(QWidget):
         for col in range(NUM_COLUMNS):
             if col in FIXED_WIDTHS:
                 header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
-                header.resizeSection(col, FIXED_WIDTHS[col])
+                header.resizeSection(col, self._fixed_column_width(col))
             elif col in NARROW:
                 header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
             elif col in STRETCH:
@@ -124,9 +137,14 @@ class PlanTable(QWidget):
         self._table.resizeColumnsToContents()
         header = self._table.horizontalHeader()
         # 收紧固定窄列（备料勾选/图标），避免被内容或表头撑宽
-        for col, w in FIXED_WIDTHS.items():
+        for col in FIXED_WIDTHS:
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
-            header.resizeSection(col, w)
+            header.resizeSection(col, self._fixed_column_width(col))
+        # 文本易过长的列封顶：否则 resizeColumnsToContents 会按内容无限膨胀，
+        # 把整张表推到远超窗口宽度（产品列是 Stretch，由视口兜底，无需封顶）
+        for col, max_w in MAX_CONTENT_WIDTHS.items():
+            if header.sectionSize(col) > max_w:
+                header.resizeSection(col, max_w)
         # 确保产品列至少有 120px，但不超过可用空间一半
         product_w = header.sectionSize(COL_PRODUCT)
         avail = header.width() if header.width() > 0 else 800
@@ -536,7 +554,9 @@ class PlanTable(QWidget):
         dlg = QDialog(self)
         dlg.setWindowTitle("设置蓝图等级")
         dlg.setMinimumWidth(360)
-        dlg.setStyleSheet(f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; font-size: 12px;")
+        dlg.setStyleSheet(
+            f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px;"
+        )
 
         root = QVBoxLayout(dlg)
         root.setContentsMargins(16, 12, 16, 12)
@@ -558,7 +578,6 @@ class PlanTable(QWidget):
         me_spin = QSpinBox()
         me_spin.setRange(0, 10)
         me_spin.setValue(cur_me)
-        me_spin.setFixedWidth(56)
         me_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         me_slider.valueChanged.connect(me_spin.setValue)
         me_spin.valueChanged.connect(me_slider.setValue)
@@ -577,7 +596,6 @@ class PlanTable(QWidget):
         te_spin = QSpinBox()
         te_spin.setRange(0, 20)
         te_spin.setValue(cur_te)
-        te_spin.setFixedWidth(56)
         te_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         te_slider.valueChanged.connect(te_spin.setValue)
         te_spin.valueChanged.connect(te_slider.setValue)
@@ -593,7 +611,7 @@ class PlanTable(QWidget):
 
         remove_theme = theme.add_theme_listener(
             lambda: dlg.setStyleSheet(
-                f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; font-size: 12px;"
+                f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px;"
             )
         )
 
@@ -1165,5 +1183,5 @@ class PlanTable(QWidget):
         # 紧凑表头覆盖全局（全局 padding 6x8, font-size 12px）
         self._table.horizontalHeader().setStyleSheet(
             f"QHeaderView::section {{ background: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};"
-            f" border: 1px solid {theme.BORDER}; padding: 2px 4px; font-size: 11px; }}"
+            f" border: 1px solid {theme.BORDER}; padding: 2px 4px; font-size: {theme.fs(11)}px; }}"
         )

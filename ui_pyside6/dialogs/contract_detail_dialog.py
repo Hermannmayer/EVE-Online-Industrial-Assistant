@@ -39,7 +39,7 @@ class ContractDetailDialog(QDialog):
 
         header_text = f"#{info.get('contract_id', '')}  {title}"
         self._header = QLabel(header_text)
-        self._header.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {theme.PRIMARY};")
+        self._header.setStyleSheet(f"font-size: {theme.fs(15)}px; font-weight: bold; color: {theme.PRIMARY};")
         layout.addWidget(self._header)
 
         detail_text = (
@@ -50,7 +50,7 @@ class ContractDetailDialog(QDialog):
             f"运输天数: {info.get('days_completed', 0)}"
         )
         self._detail = QLabel(detail_text)
-        self._detail.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        self._detail.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         layout.addWidget(self._detail)
 
         dates_text = (
@@ -61,7 +61,7 @@ class ContractDetailDialog(QDialog):
             f"企业合同: {'是' if info.get('for_corporation') else '否'}"
         )
         self._dates = QLabel(dates_text)
-        self._dates.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        self._dates.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         layout.addWidget(self._dates)
 
         # 物品列表

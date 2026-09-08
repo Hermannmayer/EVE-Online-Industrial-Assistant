@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -45,7 +45,16 @@ from ui_pyside6.icon_cache import load_item_icon
 from ui_pyside6.pin_utils import apply_window_pin
 
 MAX_SLOTS_PER_LINE = 11  # 单行每类产线最大格块数（技能满级 1+5+5）
-_NAME_W = 76  # 占用区角色名固定宽（保证产线方块跨行对齐）
+_NAME_W = 76  # 占用区角色名默认宽（由 ProductionLauncher 按最长角色名统一算出后传入）
+_MIN_NAME_W = 60
+_MAX_NAME_W = 120
+
+# 占用方块几何：按控件实际宽度反算，仅在极窄时退化到最小值
+_MIN_BLOCK_W = 4.0
+_MAX_BLOCK_W = 12.0
+_BLOCK_GAP = 3.0
+_MIN_BLOCK_GAP = 2.0
+_STATUS_PAD = 8.0  # 状态文字与方块区之间的留白
 
 _LINE_TYPES = (CAPACITY_LINE_MANUFACTURING, CAPACITY_LINE_RESEARCH, CAPACITY_LINE_REACTION)
 _LINE_COLORS = {
@@ -92,58 +101,128 @@ def _default_mat_hangar_id() -> int | None:
 class CapacitySlotBar(QWidget):
     """占用区单行：角色名 + 制造/科研/反应 各 11 格 + 状态。
 
-    paintEvent 自绘；技能不满时超过容量的槽位画暗格（锁定），占用超容量标红。
+    paintEvent 自绘；所有几何按控件实际宽度反算，字号/DPI/窗口宽度变化时不截断。
+    技能不满时超过容量的槽位画暗格（锁定），占用超容量标红。
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, name_width: int = _NAME_W):
         super().__init__(parent)
-        self.setMinimumHeight(26)
+        self._name_width = name_width
         self._char_name = ""
         self._usage: dict[str, tuple[int, int]] = {}
+        self._apply_metrics()
         theme.add_theme_listener(self._on_theme_changed)
+
+    def _apply_metrics(self) -> None:
+        """随全局字号刷新行高（方块高度跟随字号，避免大字号下比例失调）。"""
+        self._block_h = max(14.0, theme.fs(13) + 1.0)
+        self.setMinimumHeight(max(26, int(self._block_h) + 12))
 
     def set_usage(self, char_name: str, usage: dict[str, tuple[int, int]]) -> None:
         self._char_name = char_name or "(未分配)"
         self._usage = usage
+        self.updateGeometry()
         self.update()
 
     def _on_theme_changed(self):
+        self._apply_metrics()
+        self.updateGeometry()
         self.update()
+
+    # ── 尺寸 ────────────────────────────────────────────────
+
+    def _status_text(self) -> tuple[str, str]:
+        """(状态文本, 颜色) —— 超员 / 空闲 / 生产中。"""
+        active_total = sum(self._usage.get(line, (0, 0))[0] for line in _LINE_TYPES)
+        max_total = sum(self._usage.get(line, (0, 0))[1] for line in _LINE_TYPES)
+        if active_total > max_total:
+            return f"超员 +{active_total - max_total}", theme.ACCENT_RED
+        if active_total == 0:
+            return "空闲", theme.ACCENT_GREEN
+        return "生产中", theme.PRIMARY
+
+    def _chrome_width(self) -> int:
+        """角色名 + 线型标签 + 状态文字占用的固定宽度（不含方块区）。"""
+        fm = QFontMetrics(self.font())
+        label_w = max(fm.horizontalAdvance(line_label(line)) for line in _LINE_TYPES) + 4
+        status_w = fm.horizontalAdvance(self._status_text()[0]) + int(_STATUS_PAD)
+        return 8 + self._name_width + 12 + len(_LINE_TYPES) * (label_w + 6) + status_w + 8
+
+    def sizeHint(self) -> QSize:
+        stride = int(_MAX_BLOCK_W + _BLOCK_GAP)
+        width = self._chrome_width() + len(_LINE_TYPES) * MAX_SLOTS_PER_LINE * stride
+        return QSize(width, self.minimumHeight())
+
+    def minimumSizeHint(self) -> QSize:
+        stride = int(_MIN_BLOCK_W + _MIN_BLOCK_GAP)
+        width = self._chrome_width() + len(_LINE_TYPES) * MAX_SLOTS_PER_LINE * stride
+        return QSize(width, self.minimumHeight())
+
+    # ── 绘制 ────────────────────────────────────────────────
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        h = self.height()
-        x = 8
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            p.end()
+            return
+
+        fm = QFontMetrics(QFont())
+        label_w = max(fm.horizontalAdvance(line_label(line)) for line in _LINE_TYPES) + 4
+        status_text, status_color = self._status_text()
+        status_w = fm.horizontalAdvance(status_text) + int(_STATUS_PAD)
+
+        # 状态文字右对齐到控件右缘，先占位（不再用固定 x，避免被裁）
+        p.setFont(QFont())
+        p.setPen(QColor(status_color))
+        p.drawText(
+            QRect(w - status_w - 8, 0, status_w, h),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
+            status_text,
+        )
+
+        # 角色名（固定列宽保证跨行对齐，宽度由 ProductionLauncher 统一传入）
+        x = 8.0
         name_font = QFont()
         name_font.setBold(True)
         p.setFont(name_font)
         p.setPen(QColor(theme.TEXT_PRIMARY))
-        # 固定宽角色名列 → 不同名字长度下产线方块仍对齐
-        name_elided = QFontMetrics(name_font).elidedText(self._char_name, Qt.TextElideMode.ElideRight, _NAME_W)
-        p.drawText(QRect(x, 0, _NAME_W, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, name_elided)
-        x += _NAME_W + 12
+        name_elided = QFontMetrics(name_font).elidedText(self._char_name, Qt.TextElideMode.ElideRight, self._name_width)
+        p.drawText(
+            QRect(int(x), 0, self._name_width, h),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            name_elided,
+        )
+        x += self._name_width + 12
 
-        active_total = 0
-        max_total = 0
-        block_w, block_h, gap = 7, 14, 3
-        stride = block_w + gap
-        radius = 3
-        top = (h - block_h) // 2
+        # 方块区：剩余宽度均分给三条线 × 11 格
+        avail = w - x - status_w - 8 - len(_LINE_TYPES) * 6
+        if avail <= 0:
+            p.end()
+            return
+        stride = avail / (len(_LINE_TYPES) * MAX_SLOTS_PER_LINE)
+        block_w = max(_MIN_BLOCK_W, min(_MAX_BLOCK_W, stride - _BLOCK_GAP))
+        stride = block_w + _BLOCK_GAP
+        top = (h - self._block_h) / 2
+        radius = min(3.0, block_w / 2)
+
         for line in _LINE_TYPES:
             active, mx = self._usage.get(line, (0, 0))
-            active_total += active
-            max_total += mx
-            p.setFont(QFont())
-            p.setPen(QColor(getattr(theme, _LINE_COLORS[line])))
-            p.drawText(QRect(x, 0, 28, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, line_label(line))
-            x += 32
             base = QColor(getattr(theme, _LINE_COLORS[line]))
+            p.setFont(QFont())
+            p.setPen(base)
+            p.drawText(
+                QRect(int(x), 0, label_w, h),
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                line_label(line),
+            )
+            x += label_w
             for i in range(MAX_SLOTS_PER_LINE):
-                rect = QRectF(x, top, block_w, block_h)
+                rect = QRectF(x, top, block_w, self._block_h)
                 if i < mx:
                     if i < active:
-                        # 占用：渐变填充 + 圆角（去锯齿）
+                        # 占用：渐变填充 + 圆角
                         grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
                         grad.setColorAt(0.0, base.lighter(135))
                         grad.setColorAt(1.0, base.darker(110))
@@ -161,20 +240,6 @@ class CapacitySlotBar(QWidget):
                     p.drawRoundedRect(rect, radius, radius)
                 x += stride
             x += 6
-
-        # 右侧状态
-        x += 4
-        p.setFont(QFont())
-        if active_total > max_total:
-            text = f"超员 +{active_total - max_total}"
-            p.setPen(QColor(theme.ACCENT_RED))
-        elif active_total == 0:
-            text = "空闲"
-            p.setPen(QColor(theme.ACCENT_GREEN))
-        else:
-            text = "生产中"
-            p.setPen(QColor(theme.PRIMARY))
-        p.drawText(x, 0, 200, h, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
         p.end()
 
 
@@ -208,7 +273,7 @@ class PlanRow(QWidget):
         top = QHBoxLayout()
         top.setSpacing(6)
         self._name = QLabel("")
-        self._name.setStyleSheet(f"color: {theme.TEXT_BRIGHT}; font-size: 13px; font-weight: bold;")
+        self._name.setStyleSheet(f"color: {theme.TEXT_BRIGHT}; font-size: {theme.fs(13)}px; font-weight: bold;")
         top.addWidget(self._name)
         self._status = QLabel("")
         top.addWidget(self._status)
@@ -216,20 +281,20 @@ class PlanRow(QWidget):
         info.addLayout(top)
 
         self._duration = QLabel("")
-        self._duration.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._duration.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         info.addWidget(self._duration)
         self._process = QLabel("")
-        self._process.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._process.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         info.addWidget(self._process)
         root.addLayout(info, 1)
 
         self._btn_start = QPushButton("▶ 启动")
         self._btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_start.setFixedWidth(72)
+        self._btn_start.setMinimumWidth(72)
         self._btn_start.clicked.connect(self._on_start_clicked)
         self._btn_toggle = QPushButton("")
         self._btn_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_toggle.setFixedWidth(86)
+        self._btn_toggle.setMinimumWidth(86)
         self._btn_toggle.clicked.connect(self._on_toggle_clicked)
         self._action_box = QHBoxLayout()
         self._action_box.addWidget(self._btn_start)
@@ -272,7 +337,9 @@ class PlanRow(QWidget):
         }
         label = _STATUS_LABELS.get(status, status)
         self._status.setText(label)
-        self._status.setStyleSheet(f"color: {color_map.get(status, theme.TEXT_SECONDARY)}; font-size: 11px;")
+        self._status.setStyleSheet(
+            f"color: {color_map.get(status, theme.TEXT_SECONDARY)}; font-size: {theme.fs(11)}px;"
+        )
 
         total = int(plan.get("calculated_time") or 0)
         loc = self._location_text(plan)
@@ -295,7 +362,7 @@ class PlanRow(QWidget):
         self._load_icon(plan)
 
         # 操作区：母项有未完成子项 → 折叠/展开按钮；可启动 → 启动按钮；否则留白
-        self._name.setStyleSheet(f"color: {theme.TEXT_BRIGHT}; font-size: 13px; font-weight: bold;")
+        self._name.setStyleSheet(f"color: {theme.TEXT_BRIGHT}; font-size: {theme.fs(13)}px; font-weight: bold;")
         self.setStyleSheet("background-color: transparent;")
         if level == 0 and pending_children > 0:
             self._btn_start.hide()
@@ -312,7 +379,7 @@ class PlanRow(QWidget):
         self._btn_toggle.setStyleSheet(
             f"QPushButton {{ background: transparent; color: {theme.PRIMARY};"
             f" border: 1px solid {theme.PRIMARY}; border-radius: 4px;"
-            f" font-size: 11px; padding: 1px 4px; }}"
+            f" font-size: {theme.fs(11)}px; padding: 1px 4px; }}"
             f"QPushButton:hover {{ background: {theme.BG_HOVER}; }}"
         )
 
@@ -374,8 +441,8 @@ class ProductionLauncher(QWidget):
         super().__init__(parent)
         self.setWindowTitle("产线启动小助手")
         self.setWindowFlag(Qt.WindowType.Window, True)
-        self.resize(560, 700)
-        self.setMinimumSize(480, 520)
+        self.resize(820, 760)
+        self.setMinimumSize(560, 480)
 
         self._all_plans: list[dict] = []
         self._visible_plans: list[dict] = []
@@ -404,6 +471,7 @@ class ProductionLauncher(QWidget):
         self._poll_timer.start()
 
         self._on_poll()
+        self._fit_initial_size()
         self._restore_pin()
 
     # ── UI ──────────────────────────────────────────────
@@ -419,7 +487,7 @@ class ProductionLauncher(QWidget):
 
         title_row = QHBoxLayout()
         title = QLabel("产线启动小助手")
-        title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 14px; font-weight: bold;")
+        title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: {theme.fs(14)}px; font-weight: bold;")
         title_row.addWidget(title)
         title_row.addStretch(1)
         self._pin_btn = QToolButton()
@@ -473,11 +541,11 @@ class ProductionLauncher(QWidget):
         self._bottom_panel.setObjectName("launcher_bottom")
         bottom = QVBoxLayout(self._bottom_panel)
         bottom.setContentsMargins(10, 6, 10, 6)
-        bottom.setSpacing(5)
+        bottom.setSpacing(6)
 
         self._feedback = QLabel("")
         self._feedback.setMinimumHeight(16)
-        self._feedback.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._feedback.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         bottom.addWidget(self._feedback)
 
         sep = QFrame()
@@ -490,7 +558,7 @@ class ProductionLauncher(QWidget):
         params_box = QVBoxLayout()
         params_box.setSpacing(3)
         self._params_label = QLabel("")
-        self._params_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._params_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         self._params_label.setWordWrap(True)
         params_box.addWidget(self._params_label)
         self._executor_combo = QComboBox()
@@ -507,14 +575,14 @@ class ProductionLauncher(QWidget):
         self._status_icon = QLabel("")
         self._status_icon.setFixedSize(20, 20)
         self._status_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._status_icon.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 13px;")
+        self._status_icon.setStyleSheet(f"color: {theme.PRIMARY}; font-size: {theme.fs(13)}px;")
         status_row.addWidget(self._status_icon)
         self._status_duration = QLabel("")
-        self._status_duration.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 14px; font-weight: bold;")
+        self._status_duration.setStyleSheet(f"color: {theme.PRIMARY}; font-size: {theme.fs(14)}px; font-weight: bold;")
         status_row.addWidget(self._status_duration)
         status_row.addStretch(1)
         self._status_cost = QLabel("")
-        self._status_cost.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 15px; font-weight: bold;")
+        self._status_cost.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: {theme.fs(15)}px; font-weight: bold;")
         status_row.addWidget(self._status_cost)
         bottom.addLayout(status_row)
 
@@ -547,7 +615,7 @@ class ProductionLauncher(QWidget):
             f"QPushButton {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
             f" stop:0 {top}, stop:0.5 {mid}, stop:1 {bot});"
             f" color: {theme.TEXT_ON_PRIMARY}; border: 1px solid {bot}; border-radius: 6px;"
-            f" font-size: 13px; font-weight: bold; padding: 7px 12px; }}"
+            f" font-size: {theme.fs(13)}px; font-weight: bold; padding: 7px 12px; }}"
             f"QPushButton:hover {{ border: 1px solid {theme.TEXT_ON_PRIMARY}; }}"
             f"QPushButton:pressed {{ background: {bot}; }}"
         )
@@ -558,12 +626,12 @@ class ProductionLauncher(QWidget):
             f"#launcher_bottom {{ background-color: {theme.BG_SURFACE};"
             f" border-top: 1px solid {theme.BORDER}; border-radius: 0 0 6px 6px; }}"
         )
-        self._feedback.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
-        self._params_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._feedback.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
+        self._params_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         self._style_main_button()
-        self._status_icon.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 13px;")
-        self._status_duration.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 14px; font-weight: bold;")
-        self._status_cost.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 15px; font-weight: bold;")
+        self._status_icon.setStyleSheet(f"color: {theme.PRIMARY}; font-size: {theme.fs(13)}px;")
+        self._status_duration.setStyleSheet(f"color: {theme.PRIMARY}; font-size: {theme.fs(14)}px; font-weight: bold;")
+        self._status_cost.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: {theme.fs(15)}px; font-weight: bold;")
         if self._occ_container:
             for child in self._occ_container.findChildren(CapacitySlotBar):
                 child._on_theme_changed()
@@ -588,6 +656,12 @@ class ProductionLauncher(QWidget):
                 apply_window_pin(self, True)
         except Exception:
             pass
+
+    def _fit_initial_size(self) -> None:
+        """按占用区内容宽度定窗宽 —— 默认尺寸下占用条右侧状态会被裁。"""
+        hint = self._occ_container.sizeHint().width()
+        if hint > 0:
+            self.resize(max(self.width(), min(hint + 40, 1100)), self.height())
 
     # ── 数据刷新 ─────────────────────────────────────────
 
@@ -625,10 +699,15 @@ class ProductionLauncher(QWidget):
 
         if not chars:
             hint = QLabel("（无人物配置，请在人物设置中添加）")
-            hint.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+            hint.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
             self._occ_layout.addWidget(hint)
             self._occ_layout.addStretch(1)
             return
+
+        # 统一角色名列宽 → 各行的产线方块保持纵向对齐（逐行自算会错位）
+        fm = QFontMetrics(self.font())
+        name_width = max((fm.horizontalAdvance(c or "(未分配)") for c in chars), default=_NAME_W) + 8
+        name_width = max(_MIN_NAME_W, min(name_width, _MAX_NAME_W))
 
         for char in chars:
             skills = (chars_data.get(char, {}) or {}).get("skills", {}) or {}
@@ -638,7 +717,7 @@ class ProductionLauncher(QWidget):
                 mx = max_lines_for_category(char, line, skills=skills)
                 active = usage.get(line, 0)
                 per_line[line] = (active, mx)
-            bar = CapacitySlotBar(self._occ_container)
+            bar = CapacitySlotBar(self._occ_container, name_width=name_width)
             bar.set_usage(char, per_line)
             self._occ_layout.addWidget(bar)
         self._occ_layout.addStretch(1)
@@ -731,7 +810,7 @@ class ProductionLauncher(QWidget):
 
         if not visible:
             empty = QLabel("该角色无产线计划")
-            empty.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+            empty.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             item = QListWidgetItem()
             item.setSizeHint(empty.sizeHint())

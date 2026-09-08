@@ -37,6 +37,7 @@ from ui_pyside6.models.contract_models import (
     ContractItemTableModel,
     ContractTableModel,
 )
+from ui_pyside6.sizing import fit_line_edit_width
 from ui_pyside6.workers.contract_workers import (
     ContractFetchWorker,
     ContractItemsLoadWorker,
@@ -70,14 +71,14 @@ class ContractPage(QWidget):
         tb_layout.addWidget(QLabel("区域:"))
         self._region_combo = QComboBox()
         self._region_combo.addItems(TRADE_HUBS)
-        self._region_combo.setFixedWidth(100)
+        self._region_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._region_combo.currentTextChanged.connect(self._on_filter_changed)
         tb_layout.addWidget(self._region_combo)
 
         tb_layout.addWidget(QLabel("类型:"))
         self._type_combo = QComboBox()
         self._type_combo.addItems(["全部", "物品交换", "拍卖", "运输"])
-        self._type_combo.setFixedWidth(100)
+        self._type_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._type_combo.currentTextChanged.connect(self._on_filter_changed)
         tb_layout.addWidget(self._type_combo)
 
@@ -106,7 +107,7 @@ class ContractPage(QWidget):
         self._search_input.setPlaceholderText("物品名搜索…")
         self._search_input.addAction(icons.themed_icon("search", 16), QLineEdit.ActionPosition.LeadingPosition)
         self._search_input.setClearButtonEnabled(True)
-        self._search_input.setFixedWidth(200)
+        fit_line_edit_width(self._search_input)
         self._search_input.textChanged.connect(self._on_filter_changed_client)
         fb_layout.addWidget(self._search_input)
 
@@ -133,7 +134,7 @@ class ContractPage(QWidget):
         fb_layout.addWidget(QLabel("买卖:"))
         self._buy_sell_combo = QComboBox()
         self._buy_sell_combo.addItems(["全部", "我要买", "我要卖"])
-        self._buy_sell_combo.setFixedWidth(100)
+        self._buy_sell_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._buy_sell_combo.currentTextChanged.connect(self._on_filter_changed_client)
         fb_layout.addWidget(self._buy_sell_combo)
 

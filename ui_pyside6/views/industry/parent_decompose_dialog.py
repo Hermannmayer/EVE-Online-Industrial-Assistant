@@ -61,7 +61,7 @@ class ParentDecomposeDialog(QDialog):
         layout.setSpacing(8)
 
         self._group_label = QLabel()
-        self._group_label.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 13px;")
+        self._group_label.setStyleSheet(f"color: {theme.PRIMARY}; font-size: {theme.fs(13)}px;")
         layout.addWidget(self._group_label)
 
         if not self._assignments:
@@ -96,7 +96,7 @@ class ParentDecomposeDialog(QDialog):
             "删除一行 = 本轮不内造该组件（改外购）；下次显式「拆解/重算子项」仍会按需求重建。"
             "无蓝图的行需先买入对应蓝图才能运行。库存已有的组件会自动少造。"
         )
-        tip.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        tip.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         layout.addWidget(tip)
 
         # ── 删除按钮行 ──

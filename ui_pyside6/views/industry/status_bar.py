@@ -3,6 +3,7 @@
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
+import ui_pyside6.theme as theme
 from ui_pyside6.theme import (
     ACCENT_ORANGE,
     BORDER,
@@ -94,9 +95,9 @@ class StatusBar(QWidget):
     def _apply_style(self):
         self.setStyleSheet(
             f"StatusBar {{ background: transparent; }}"
-            f"QLabel {{ color: {TEXT_SECONDARY}; background: transparent; font-size: 12px; }}"
+            f"QLabel {{ color: {TEXT_SECONDARY}; background: transparent; font-size: {theme.fs(12)}px; }}"
             f"QPushButton {{ padding: 3px 8px; border: 1px solid {BORDER}; border-radius: 4px;"
-            f"  background: transparent; color: {TEXT_PRIMARY}; font-size: 12px; }}"
+            f"  background: transparent; color: {TEXT_PRIMARY}; font-size: {theme.fs(12)}px; }}"
             f"QPushButton:hover {{ border-color: {PRIMARY}; color: {PRIMARY}; }}"
             f"QPushButton#complete_all_btn {{ border-color: {ACCENT_ORANGE}; color: {ACCENT_ORANGE}; }}"
             f"QPushButton#complete_all_btn:hover {{ background: {ACCENT_ORANGE}; color: {TEXT_ON_PRIMARY}; }}"

@@ -48,31 +48,29 @@ class PriceSourceRow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(3)
 
-        # 行标签
+        # 行标签（宽度由文本决定，禁止固定像素）
         self._label = QLabel(self._label_text)
-        self._label.setFixedWidth(28)
         layout.addWidget(self._label)
 
-        # Hub 下拉
+        # Hub 下拉（宽度随最长项自适应）
         self._hub_combo = QComboBox()
         self._hub_combo.addItems(TRADE_HUBS)
-        self._hub_combo.setFixedWidth(76)
+        self._hub_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         layout.addWidget(self._hub_combo)
 
         # 价格类型下拉
         self._price_type_combo = QComboBox()
         for _val, display in _PRICE_TYPES:
             self._price_type_combo.addItem(display)
-        self._price_type_combo.setFixedWidth(56)
+        self._price_type_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         layout.addWidget(self._price_type_combo)
 
-        # 倍率
+        # 倍率（宽度由 sizeHint 决定：含最宽数值 "10.00" + 上下按钮）
         self._mult_spin = QDoubleSpinBox()
         self._mult_spin.setRange(0.1, 10.0)
         self._mult_spin.setSingleStep(0.05)
         self._mult_spin.setValue(1.00)
         self._mult_spin.setDecimals(2)
-        self._mult_spin.setFixedWidth(68)
         layout.addWidget(self._mult_spin)
 
     # ── 信号连接 ──────────────────────────────────────────
@@ -117,7 +115,7 @@ class PriceSourceRow(QWidget):
 
     def _apply_style(self) -> None:
         self._label.setStyleSheet(
-            f"color: {theme.TEXT_PRIMARY}; background: transparent; font-size: 12px; font-weight: bold;"
+            f"color: {theme.TEXT_PRIMARY}; background: transparent; font-size: {theme.fs(12)}px; font-weight: bold;"
         )
 
 
@@ -155,7 +153,7 @@ class DualPriceSourceWidget(QWidget):
 
         # 分隔
         sep = QLabel("|")
-        sep.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; background: transparent; font-size: 12px;")
+        sep.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; background: transparent; font-size: {theme.fs(12)}px;")
         layout.addWidget(sep)
 
         # 成品行

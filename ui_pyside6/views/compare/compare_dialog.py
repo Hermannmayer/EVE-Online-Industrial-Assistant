@@ -282,7 +282,7 @@ class CompareDialog(QDialog):
             layout.setSpacing(4)
 
             lbl = QLabel(f"{i + 1}. {name}")
-            lbl.setStyleSheet(f"color:{theme.TEXT_PRIMARY};font-size:11px;")
+            lbl.setStyleSheet(f"color:{theme.TEXT_PRIMARY};font-size:{theme.fs(11)}px;")
             layout.addWidget(lbl, 1)
 
             del_btn = QPushButton()
@@ -290,7 +290,7 @@ class CompareDialog(QDialog):
             del_btn.setFixedSize(18, 18)
             del_btn.setStyleSheet(
                 f"QPushButton{{background:transparent;color:{theme.ACCENT_RED};"
-                f"border:none;border-radius:9px;font-size:10px;font-weight:bold;}}"
+                f"border:none;border-radius:9px;font-size:{theme.fs(10)}px;font-weight:bold;}}"
                 f"QPushButton:hover{{background:{theme.ACCENT_RED};color:{theme.TEXT_ON_PRIMARY};}}"
             )
             del_btn.clicked.connect(lambda checked, idx=i: self._remove_item(idx))

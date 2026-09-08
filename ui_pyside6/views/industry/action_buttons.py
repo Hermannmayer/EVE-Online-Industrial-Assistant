@@ -3,6 +3,7 @@
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
+import ui_pyside6.theme as theme
 from ui_pyside6.theme import (
     BORDER,
     PRIMARY,
@@ -71,7 +72,7 @@ class ActionButtons(QWidget):
         self.setStyleSheet(
             f"ActionButtons {{ background: transparent; }}"
             f"QPushButton {{ padding: 5px 14px; border: 1px solid {BORDER}; border-radius: 4px;"
-            f"  background: transparent; color: {TEXT_PRIMARY}; font-size: 12px; }}"
+            f"  background: transparent; color: {TEXT_PRIMARY}; font-size: {theme.fs(12)}px; }}"
             f"QPushButton:hover {{ border-color: {PRIMARY}; color: {PRIMARY}; }}"
         )
 

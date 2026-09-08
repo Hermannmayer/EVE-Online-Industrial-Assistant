@@ -70,7 +70,7 @@ class CompletePlansDialog(QDialog):
         layout.setSpacing(6)
 
         tip = QLabel("以下「待下线」计划将被下线（产出成品入库，不可逆）：")
-        tip.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        tip.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         layout.addWidget(tip)
 
         # ── 计划清单表 ──
@@ -119,7 +119,7 @@ class CompletePlansDialog(QDialog):
 
         # ── 汇总 ──
         self._summary = QLabel(f"共 {len(plans)} 项计划，产出 {total_qty:,} 件")
-        self._summary.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._summary.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         layout.addWidget(self._summary)
 
         # ── 按钮 ──

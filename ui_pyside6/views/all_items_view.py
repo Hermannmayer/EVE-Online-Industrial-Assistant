@@ -71,7 +71,9 @@ class MatDlg(QDialog):
         lay.setContentsMargins(10, 10, 10, 10)
         container = get_container()
         nm = container.item_repo.get_name(tid)
-        lay.addWidget(QLabel(f"制造材料: {nm}", styleSheet=f"color:{theme.PRIMARY};font-size:13px;font-weight:bold;"))
+        lay.addWidget(
+            QLabel(f"制造材料: {nm}", styleSheet=f"color:{theme.PRIMARY};font-size:{theme.fs(13)}px;font-weight:bold;")
+        )
         materials = container.blueprint_repo.get_manufacturing_materials(tid)
         if materials is None:
             lay.addWidget(QLabel("此物品无制造蓝图", styleSheet=f"color:{theme.ACCENT_RED};"))
@@ -95,7 +97,8 @@ class MatDlg(QDialog):
         lay.addWidget(lst)
         lay.addWidget(
             QLabel(
-                f"总成本: {total:,.2f} ISK", styleSheet=f"color:{theme.ACCENT_GREEN};font-size:12px;font-weight:bold;"
+                f"总成本: {total:,.2f} ISK",
+                styleSheet=f"color:{theme.ACCENT_GREEN};font-size:{theme.fs(12)}px;font-weight:bold;",
             )
         )
         b = QPushButton("关闭")
@@ -206,22 +209,22 @@ class AllItemsDialog(QDialog):
             ss = (
                 f"QPushButton{{background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};"
                 f"border:1px solid {theme.BORDER};border-radius:2px;padding:2px 6px;"
-                f"font-size:11px;min-width:60px;}}"
+                f"font-size:{theme.fs(11)}px;min-width:60px;}}"
                 f"QPushButton:hover{{background:{theme.PRIMARY};color:{theme.TEXT_ON_PRIMARY};}}"
             )
             b.setStyleSheet(ss)
-        self._pin.setStyleSheet(f"color:{theme.TEXT_PRIMARY};font-size:11px;")
+        self._pin.setStyleSheet(f"color:{theme.TEXT_PRIMARY};font-size:{theme.fs(11)}px;")
         self._search_input.setStyleSheet(
             f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
             f"border:1px solid {theme.BORDER};border-radius:2px;"
-            f"padding:1px 4px;font-size:11px;"
+            f"padding:1px 4px;font-size:{theme.fs(11)}px;"
         )
         self._cat.setStyleSheet(
             f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
             f"border:1px solid {theme.BORDER};border-radius:2px;"
-            f"padding:1px 4px;font-size:11px;"
+            f"padding:1px 4px;font-size:{theme.fs(11)}px;"
         )
-        self._st.setStyleSheet(f"color:{theme.TEXT_SECONDARY};font-size:11px;")
+        self._st.setStyleSheet(f"color:{theme.TEXT_SECONDARY};font-size:{theme.fs(11)}px;")
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
@@ -233,7 +236,7 @@ class AllItemsDialog(QDialog):
             ss = (
                 f"QPushButton{{background:{theme.BG_DARK};color:{theme.TEXT_PRIMARY};"
                 f"border:1px solid {theme.BORDER};border-radius:2px;padding:2px 6px;"
-                f"font-size:11px;min-width:{w}px;}}"
+                f"font-size:{theme.fs(11)}px;min-width:{w}px;}}"
                 f"QPushButton:hover{{background:{theme.PRIMARY};color:{theme.TEXT_ON_PRIMARY};}}"
             )
             b.setStyleSheet(ss)
@@ -264,7 +267,7 @@ class AllItemsDialog(QDialog):
             bx.addWidget(b)
         bx.addStretch()
         self._pin = QCheckBox("置顶")
-        self._pin.setStyleSheet(f"color:{theme.TEXT_PRIMARY};font-size:11px;")
+        self._pin.setStyleSheet(f"color:{theme.TEXT_PRIMARY};font-size:{theme.fs(11)}px;")
         self._pin.toggled.connect(self._on_pin_toggled)
         bx.addWidget(self._pin)
         lay.addWidget(tb)
@@ -274,18 +277,18 @@ class AllItemsDialog(QDialog):
         fx = QHBoxLayout(fb)
         fx.setContentsMargins(4, 1, 4, 1)
         fx.setSpacing(3)
-        fx.addWidget(QLabel("搜索:", styleSheet=f"color:{theme.TEXT_SECONDARY};font-size:11px;"))
+        fx.addWidget(QLabel("搜索:", styleSheet=f"color:{theme.TEXT_SECONDARY};font-size:{theme.fs(11)}px;"))
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("名称/ID...")
         self._search_input.setClearButtonEnabled(True)
         self._search_input.setStyleSheet(
             f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
             f"border:1px solid {theme.BORDER};border-radius:2px;"
-            f"padding:1px 4px;font-size:11px;"
+            f"padding:1px 4px;font-size:{theme.fs(11)}px;"
         )
         self._search_input.textChanged.connect(self._on_search_text)
         fx.addWidget(self._search_input)
-        fx.addWidget(QLabel("类别:", styleSheet=f"color:{theme.TEXT_SECONDARY};font-size:11px;"))
+        fx.addWidget(QLabel("类别:", styleSheet=f"color:{theme.TEXT_SECONDARY};font-size:{theme.fs(11)}px;"))
         self._cat = QComboBox()
         if self._manufacturable_only:
             self._cat.addItems(MFG_CATEGORIES)
@@ -294,11 +297,11 @@ class AllItemsDialog(QDialog):
         self._cat.setStyleSheet(
             f"background:{theme.BG_SURFACE};color:{theme.TEXT_PRIMARY};"
             f"border:1px solid {theme.BORDER};border-radius:2px;"
-            f"padding:1px 4px;font-size:11px;"
+            f"padding:1px 4px;font-size:{theme.fs(11)}px;"
         )
         self._cat.currentIndexChanged.connect(self._apply)
         fx.addWidget(self._cat)
-        self._st = QLabel("就绪", styleSheet=f"color:{theme.TEXT_SECONDARY};font-size:11px;")
+        self._st = QLabel("就绪", styleSheet=f"color:{theme.TEXT_SECONDARY};font-size:{theme.fs(11)}px;")
         fx.addStretch()
         fx.addWidget(self._st)
         lay.addWidget(fb)

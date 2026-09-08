@@ -143,7 +143,8 @@ PySide6 界面，**禁止直接访问数据库**，通过容器获取服务：
 | 模块 | 职责 |
 |------|------|
 | `main_window.py` | 主窗口 + 侧边导航 + 页面切换 |
-| `theme.py` | One Dark Pro / One Light 双主题变量 |
+| `theme.py` | 主题色板 + 字体 token（`fs()` 字号缩放、`set_font_scale`） |
+| `sizing.py` | 控件尺寸自适应（`fit_line_edit_width` / `elide_label`，仅补 `sizeHint` 算不准的场景） |
 | `views/` | 页面组件（query/industry/trade/inventory 等） |
 | `views/industry/` | 工业制造子组件（甘特图/计划表/弹窗等） |
 | `views/query/` | 查询页面子组件（搜索/订单弹窗/走势图） |

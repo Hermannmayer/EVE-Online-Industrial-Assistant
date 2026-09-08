@@ -746,6 +746,8 @@ class IndustryPage(QWidget):
 
     def _on_theme_changed(self):
         self._title_label.setStyleSheet(
-            f"color: {theme.TEXT_PRIMARY}; font-size: 16px; font-weight: bold; background: transparent;"
+            f"color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(16)}px; font-weight: bold; background: transparent;"
         )
-        self._plan_count.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 13px; background: transparent;")
+        self._plan_count.setStyleSheet(
+            f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(13)}px; background: transparent;"
+        )

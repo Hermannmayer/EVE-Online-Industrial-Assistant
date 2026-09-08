@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QCompleter,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from core.paths import data_dir
+from ui_pyside6.sizing import fit_line_edit_width
 from ui_pyside6.views.compare.compare_chart import search_items
 from ui_pyside6.views.industry.flow_layout import FlowLayout
 from ui_pyside6.views.industry.price_source_widget import DualPriceSourceWidget
@@ -54,49 +56,71 @@ class TopToolbar(QWidget):
         root = FlowLayout(self, margin=6, h_spacing=8, v_spacing=6)
         root.setContentsMargins(6, 4, 6, 4)
 
-        # ── 从全物品添加 ──
+        # FlowLayout 按 item 换行，因此每个功能组包成一个整体：
+        # 换行只发生在分组边界，不会把「刷新」单独挤到下一行。
+        root.addWidget(self._build_import_group())
+        root.addWidget(self._build_price_group())
+        root.addWidget(self._build_view_group())
+
+    def _group(self, *, separator: bool) -> tuple[QWidget, QHBoxLayout]:
+        """新建一个工具栏分组容器（可选前置分隔符）。"""
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
+        if separator:
+            lay.addWidget(self._make_separator())
+        return w, lay
+
+    def _build_import_group(self) -> QWidget:
+        """蓝图导入组：从全物品添加 | 蓝图输入 + 添加"""
+        w, lay = self._group(separator=False)
+
         self._btn_all_items = QPushButton("从全物品添加")
-        root.addWidget(self._btn_all_items)
+        lay.addWidget(self._btn_all_items)
 
-        root.addWidget(self._make_separator())
+        lay.addWidget(self._make_separator())
 
-        # ── 蓝图输入区（含搜索候选） ──
-        root.addWidget(QLabel("蓝图"))
+        lay.addWidget(QLabel("蓝图"))
         self._blueprint_input = QLineEdit()
-        self._blueprint_input.setPlaceholderText("蓝图 粘贴板切导入")
-        self._blueprint_input.setMinimumWidth(200)
-        root.addWidget(self._blueprint_input)
+        self._blueprint_input.setPlaceholderText("粘贴蓝图名或剪贴板内容")
+        fit_line_edit_width(self._blueprint_input)
+        lay.addWidget(self._blueprint_input)
 
         self._btn_add = QPushButton("添加")
-        root.addWidget(self._btn_add)
+        lay.addWidget(self._btn_add)
+        return w
 
-        root.addWidget(self._make_separator())
-
-        # ── 双行价格来源设置（材料 + 成品） ──
+    def _build_price_group(self) -> QWidget:
+        """价格来源组：材料 / 成品 各自的 Hub、价格类型、倍率"""
+        w, lay = self._group(separator=True)
         self._price_widget = DualPriceSourceWidget()
-        root.addWidget(self._price_widget)
+        lay.addWidget(self._price_widget)
+        return w
 
-        root.addWidget(self._make_separator())
+    def _build_view_group(self) -> QWidget:
+        """视图·筛选·刷新组：三者是一个整体，不应被换行拆开"""
+        w, lay = self._group(separator=True)
 
-        # ── 视图切换 + 筛选 + 刷新 ──
-        root.addWidget(QLabel("视图:"))
+        lay.addWidget(QLabel("视图:"))
         self._view_data = QRadioButton("数据视图")
         self._view_data.setChecked(True)
         self._view_gantt = QRadioButton("甘特图")
         self._view_group = QButtonGroup(self)
         self._view_group.addButton(self._view_data)
         self._view_group.addButton(self._view_gantt)
-        root.addWidget(self._view_data)
-        root.addWidget(self._view_gantt)
+        lay.addWidget(self._view_data)
+        lay.addWidget(self._view_gantt)
 
         self._filter_combo = QComboBox()
         self._filter_combo.addItems(self.FILTERS)
         self._filter_combo.setMinimumWidth(80)
         self._filter_combo.setToolTip("按计划状态筛选")
-        root.addWidget(self._filter_combo)
+        lay.addWidget(self._filter_combo)
 
         self._btn_refresh = QPushButton("刷新")
-        root.addWidget(self._btn_refresh)
+        lay.addWidget(self._btn_refresh)
+        return w
 
     # ── 搜索候选（QCompleter + 防抖） ──────────────────────────
 
@@ -212,7 +236,7 @@ class TopToolbar(QWidget):
 
     def _make_separator(self) -> QLabel:
         sep = QLabel("│")
-        sep.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 14px; padding: 0 2px;")
+        sep.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(14)}px; padding: 0 2px;")
         return sep
 
     # ── 信号连接 ──────────────────────────────────────────────
@@ -266,21 +290,21 @@ class TopToolbar(QWidget):
 
     def _apply_style(self):
         self.setStyleSheet(
-            f"QLabel {{ color: {theme.TEXT_PRIMARY}; background: transparent; font-size: 12px; }}"
+            f"QLabel {{ color: {theme.TEXT_PRIMARY}; background: transparent; font-size: {theme.fs(12)}px; }}"
             f"QPushButton {{ padding: 4px 10px; border: 1px solid {theme.BORDER}; border-radius: 4px;"
-            f"  background: transparent; color: {theme.TEXT_PRIMARY}; font-size: 12px; }}"
+            f"  background: transparent; color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px; }}"
             f"QPushButton:hover {{ border-color: {theme.PRIMARY}; color: {theme.PRIMARY}; }}"
             f"QLineEdit {{ padding: 4px 8px; border: 1px solid {theme.BORDER}; border-radius: 4px;"
-            f"  background: transparent; color: {theme.TEXT_PRIMARY}; font-size: 12px; }}"
+            f"  background: transparent; color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px; }}"
             f"QComboBox {{ padding: 4px 8px; border: 1px solid {theme.BORDER}; border-radius: 4px;"
-            f"  background: transparent; color: {theme.TEXT_PRIMARY}; font-size: 12px; }}"
+            f"  background: transparent; color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px; }}"
             f"QComboBox::drop-down {{ border: none; width: 20px; }}"
             f"QComboBox QAbstractItemView {{"
             f"  background-color: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};"
             f"  border: 1px solid {theme.BORDER}; border-radius: 4px;"
             f"  selection-background-color: {theme.PRIMARY};"
             f"  outline: none; }}"
-            f"QRadioButton {{ color: {theme.TEXT_SECONDARY}; background: transparent; font-size: 12px; spacing: 4px; }}"
+            f"QRadioButton {{ color: {theme.TEXT_SECONDARY}; background: transparent; font-size: {theme.fs(12)}px; spacing: 4px; }}"
             f"QRadioButton:hover {{ color: {theme.PRIMARY}; }}"
             f"QRadioButton:checked {{ color: {theme.TEXT_BRIGHT}; font-weight: bold; }}"
             f"QRadioButton::indicator {{ width: 14px; height: 14px; }}"

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from services.implant_loader import load_implants
+from ui_pyside6.sizing import text_width
 from ui_pyside6.views.char_settings_common import (
     SKILL_CATEGORIES,
     TRADE_HUBS,
@@ -35,7 +36,7 @@ from ui_pyside6.views.char_settings_common import (
 class SkillSlider(QWidget):
     changed = Signal(str, int)
 
-    def __init__(self, skill_name: str, level: int = 0, parent=None):
+    def __init__(self, skill_name: str, level: int = 0, parent=None, *, name_width: int = 180):
         super().__init__(parent)
         self.skill_name = skill_name
         layout = QHBoxLayout(self)
@@ -43,8 +44,9 @@ class SkillSlider(QWidget):
         layout.setSpacing(8)
 
         self.name_label = QLabel(skill_name)
-        self.name_label.setFixedWidth(180)
-        self.name_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
+        # 同一分类内统一列宽以保证纵向对齐；宽度由 SkillsPage 按最长技能名算好后传入
+        self.name_label.setFixedWidth(name_width)
+        self.name_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px;")
 
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 5)
@@ -54,8 +56,8 @@ class SkillSlider(QWidget):
         self.slider.setTickInterval(1)
 
         self.level_label = QLabel(str(level))
-        self.level_label.setFixedWidth(20)
-        self.level_label.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 12px; font-weight: bold;")
+        self.level_label.setMinimumWidth(text_width(self.level_label, "0") + 12)
+        self.level_label.setStyleSheet(f"color: {theme.PRIMARY}; font-size: {theme.fs(12)}px; font-weight: bold;")
         self.level_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.slider.valueChanged.connect(self._on_value_changed)
@@ -90,14 +92,16 @@ class SkillsPage(QWidget):
         left_layout.setContentsMargins(4, 4, 4, 4)
 
         self._cat_label = QLabel("技能分类")
-        self._cat_label.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 12px; font-weight: bold; padding: 4px;")
+        self._cat_label.setStyleSheet(
+            f"color: {theme.PRIMARY}; font-size: {theme.fs(12)}px; font-weight: bold; padding: 4px;"
+        )
         left_layout.addWidget(self._cat_label)
 
         self._cat_list = QListWidget()
         self._cat_list.setStyleSheet(f"""
             QListWidget {{
                 background-color: transparent; border: none; outline: none;
-                color: {theme.TEXT_PRIMARY}; font-size: 12px;
+                color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px;
             }}
             QListWidget::item {{ padding: 6px 8px; border-radius: 4px; }}
             QListWidget::item:selected {{ background-color: {theme.BG_SURFACE_LIGHT}; color: {theme.TEXT_BRIGHT}; }}
@@ -117,7 +121,9 @@ class SkillsPage(QWidget):
         right_layout.setContentsMargins(8, 8, 8, 8)
 
         self._cat_title = QLabel("选择左侧分类")
-        self._cat_title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 14px; font-weight: bold; padding: 4px 0;")
+        self._cat_title.setStyleSheet(
+            f"color: {theme.PRIMARY}; font-size: {theme.fs(14)}px; font-weight: bold; padding: 4px 0;"
+        )
         right_layout.addWidget(self._cat_title)
 
         self._skill_scroll = QScrollArea()
@@ -139,18 +145,22 @@ class SkillsPage(QWidget):
 
     def _on_theme_changed(self):
         self._left_panel.setStyleSheet(f"background-color: {theme.BG_SURFACE}; border-radius: 6px;")
-        self._cat_label.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 12px; font-weight: bold; padding: 4px;")
+        self._cat_label.setStyleSheet(
+            f"color: {theme.PRIMARY}; font-size: {theme.fs(12)}px; font-weight: bold; padding: 4px;"
+        )
         self._cat_list.setStyleSheet(f"""
             QListWidget {{
                 background-color: transparent; border: none; outline: none;
-                color: {theme.TEXT_PRIMARY}; font-size: 12px;
+                color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px;
             }}
             QListWidget::item {{ padding: 6px 8px; border-radius: 4px; }}
             QListWidget::item:selected {{ background-color: {theme.BG_SURFACE_LIGHT}; color: {theme.TEXT_BRIGHT}; }}
             QListWidget::item:hover {{ background-color: {theme.BG_HOVER}; }}
         """)
         self._right_panel.setStyleSheet(f"background-color: {theme.BG_SURFACE}; border-radius: 6px;")
-        self._cat_title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 14px; font-weight: bold; padding: 4px 0;")
+        self._cat_title.setStyleSheet(
+            f"color: {theme.PRIMARY}; font-size: {theme.fs(14)}px; font-weight: bold; padding: 4px 0;"
+        )
 
     def _on_category_changed(self, row: int):
         if row < 0 or row >= len(SKILL_CATEGORIES):
@@ -166,9 +176,12 @@ class SkillsPage(QWidget):
             if widget:
                 widget.deleteLater()
 
+        # 按当前分类最长技能名算统一列宽，保证各行纵向对齐且不截断
+        name_width = max((text_width(self, s) for s in skills), default=0) + 16
+        name_width = max(120, min(name_width, 280))
         for skill_name in skills:
             level = self._data.get(skill_name, 0)
-            slider = SkillSlider(skill_name, level)
+            slider = SkillSlider(skill_name, level, name_width=name_width)
             slider.changed.connect(self._on_skill_changed)
             self._skill_layout.addWidget(slider)
             self._skill_widgets[skill_name] = slider
@@ -191,11 +204,11 @@ class ImplantsPage(QWidget):
         layout.setSpacing(16)
 
         self._implant_title = QLabel("增效体插槽")
-        self._implant_title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 16px; font-weight: bold;")
+        self._implant_title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: {theme.fs(16)}px; font-weight: bold;")
         layout.addWidget(self._implant_title)
 
         self._implant_desc = QLabel("选择植入的工业增效体（最多 3 个），每个提供不同的生产/贸易加成")
-        self._implant_desc.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        self._implant_desc.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         self._implant_desc.setWordWrap(True)
         layout.addWidget(self._implant_desc)
 
@@ -211,7 +224,7 @@ class ImplantsPage(QWidget):
                     background-color: {theme.BG_SURFACE};
                     border: 1px solid {theme.BORDER}; border-radius: 6px;
                     margin-top: 12px; padding: 16px 12px 12px 12px;
-                    font-size: 12px; color: {theme.TEXT_PRIMARY};
+                    font-size: {theme.fs(12)}px; color: {theme.TEXT_PRIMARY};
                 }}
                 QGroupBox::title {{
                     subcontrol-origin: margin; subcontrol-position: top left;
@@ -237,7 +250,7 @@ class ImplantsPage(QWidget):
                 QComboBox {{
                     background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};
                     border: 1px solid {theme.BORDER}; border-radius: 4px;
-                    padding: 4px 8px; font-size: 12px;
+                    padding: 4px 8px; font-size: {theme.fs(12)}px;
                 }}
                 QComboBox:hover {{ border-color: {theme.PRIMARY}; }}
                 QComboBox QAbstractItemView {{
@@ -250,7 +263,7 @@ class ImplantsPage(QWidget):
             glayout.addWidget(combo)
 
             bonus_label = QLabel("")
-            bonus_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 11px; padding-left: 4px;")
+            bonus_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: {theme.fs(11)}px; padding-left: 4px;")
             glayout.addWidget(bonus_label)
 
             def on_combo_change(idx, lbl=bonus_label, cb=combo):
@@ -274,15 +287,15 @@ class ImplantsPage(QWidget):
         layout.addStretch()
 
     def _on_theme_changed(self):
-        self._implant_title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 16px; font-weight: bold;")
-        self._implant_desc.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        self._implant_title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: {theme.fs(16)}px; font-weight: bold;")
+        self._implant_desc.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         for group in self._implant_groups:
             group.setStyleSheet(f"""
                 QGroupBox {{
                     background-color: {theme.BG_SURFACE};
                     border: 1px solid {theme.BORDER}; border-radius: 6px;
                     margin-top: 12px; padding: 16px 12px 12px 12px;
-                    font-size: 12px; color: {theme.TEXT_PRIMARY};
+                    font-size: {theme.fs(12)}px; color: {theme.TEXT_PRIMARY};
                 }}
                 QGroupBox::title {{
                     subcontrol-origin: margin; subcontrol-position: top left;
@@ -294,7 +307,7 @@ class ImplantsPage(QWidget):
                 QComboBox {{
                     background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY};
                     border: 1px solid {theme.BORDER}; border-radius: 4px;
-                    padding: 4px 8px; font-size: 12px;
+                    padding: 4px 8px; font-size: {theme.fs(12)}px;
                 }}
                 QComboBox:hover {{ border-color: {theme.PRIMARY}; }}
                 QComboBox QAbstractItemView {{
@@ -305,7 +318,7 @@ class ImplantsPage(QWidget):
                 QComboBox::drop-down {{ border: none; width: 20px; }}
             """)
         for bonus_label in self._bonus_labels:
-            bonus_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 11px; padding-left: 4px;")
+            bonus_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: {theme.fs(11)}px; padding-left: 4px;")
 
     def get_data(self) -> list:
         return [c.itemData(c.currentIndex()) for c in self._combos]
@@ -324,11 +337,11 @@ class MarketPage(QWidget):
         layout.setSpacing(12)
 
         title = QLabel("市场费率配置")
-        title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 16px; font-weight: bold;")
+        title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: {theme.fs(16)}px; font-weight: bold;")
         layout.addWidget(title)
 
         desc = QLabel("为每个交易中心设置派系声望和军团声望，自动计算经纪人费率和销售税率")
-        desc.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        desc.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
@@ -353,7 +366,7 @@ class MarketPage(QWidget):
                     background-color: {theme.BG_SURFACE};
                     border: 1px solid {theme.BORDER}; border-radius: 6px;
                     margin-top: 12px; padding: 16px 12px 12px 12px;
-                    font-size: 12px; color: {theme.TEXT_PRIMARY};
+                    font-size: {theme.fs(12)}px; color: {theme.TEXT_PRIMARY};
                 }}
                 QGroupBox::title {{
                     subcontrol-origin: margin; subcontrol-position: top left;
@@ -388,7 +401,7 @@ class MarketPage(QWidget):
             glayout.addWidget(cs, 1, 1)
 
             result_label = QLabel("经纪人费率: -- | 销售税率: -- | 改单折扣: -- | 最大订单: --")
-            result_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 11px;")
+            result_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: {theme.fs(11)}px;")
             glayout.addWidget(result_label, 2, 0, 1, 2)
 
             def make_calc(hk=hub_key, fl=fs, cl=cs, rl=result_label):

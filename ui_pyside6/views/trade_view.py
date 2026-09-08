@@ -65,9 +65,9 @@ class TradePage(QWidget):
 
         self._search.setStyleSheet(
             f"QLineEdit {{ background-color: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY}; "
-            f"border: 1px solid {theme.BORDER}; border-radius: 6px; padding: 6px 10px; font-size: 13px; }}"
+            f"border: 1px solid {theme.BORDER}; border-radius: 6px; padding: 6px 10px; font-size: {theme.fs(13)}px; }}"
         )
-        self._preview.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        self._preview.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
 
         self._hub_group.setStyleSheet(f"""
             QGroupBox {{ border: 1px solid {theme.BORDER}; border-radius: 6px; padding: 8px; margin-top: 8px; }}
@@ -80,16 +80,16 @@ class TradePage(QWidget):
         """)
 
         for lbl in self._score_labels.values():
-            lbl.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
+            lbl.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px;")
 
-        self._hub_status.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._hub_status.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
 
         # 运输分析 tab 主题
         self._t_search.setStyleSheet(
             f"QLineEdit {{ background-color: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY}; "
-            f"border: 1px solid {theme.BORDER}; border-radius: 6px; padding: 6px 10px; font-size: 13px; }}"
+            f"border: 1px solid {theme.BORDER}; border-radius: 6px; padding: 6px 10px; font-size: {theme.fs(13)}px; }}"
         )
-        self._t_preview.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        self._t_preview.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
 
         self._t_config_group.setStyleSheet(f"""
             QGroupBox {{ border: 1px solid {theme.BORDER}; border-radius: 6px; padding: 8px; margin-top: 8px; }}
@@ -100,7 +100,7 @@ class TradePage(QWidget):
             QGroupBox::title {{ subcontrol-origin: margin; padding: 2px 8px; color: {theme.TEXT_SECONDARY}; }}
         """)
         for lbl in self._t_labels.values():
-            lbl.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
+            lbl.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px;")
 
     def save_state(self) -> dict:
         return {"tab_index": self._tabs.currentIndex()}
@@ -137,7 +137,7 @@ class TradePage(QWidget):
 
         # 预览
         self._preview = QLabel("搜索物品 → 查看四大贸易中心价差 → 计算贸易评分")
-        self._preview.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        self._preview.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         layout.addWidget(self._preview)
 
         layout.addWidget(self._search_list)
@@ -160,7 +160,7 @@ class TradePage(QWidget):
         hg.addWidget(self._hub_table)
 
         self._hub_status = QLabel("")
-        self._hub_status.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._hub_status.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         hg.addWidget(self._hub_status)
 
         layout.addWidget(self._hub_group)
@@ -230,10 +230,10 @@ class TradePage(QWidget):
         for i, (label, key) in enumerate(label_specs):
             row, col_pair = i % 3, i // 3
             lbl = QLabel(label)
-            lbl.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+            lbl.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
             val = QLabel("—")
             val.setObjectName(f"trade_{key}")
-            val.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
+            val.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px;")
             grid.addWidget(lbl, row, col_pair * 2)
             grid.addWidget(val, row, col_pair * 2 + 1)
             self._score_labels[key] = val
@@ -253,7 +253,7 @@ class TradePage(QWidget):
 
         pv = QVBoxLayout(self._pair_group)
         self._pair_label = QLabel("")
-        self._pair_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
+        self._pair_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px;")
         self._pair_label.setWordWrap(True)
         pv.addWidget(self._pair_label)
 
@@ -289,7 +289,7 @@ class TradePage(QWidget):
 
         # 预览
         self._t_preview = QLabel("搜索物品 → 选择贸易中心 → 计算运输利润")
-        self._t_preview.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        self._t_preview.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         layout.addWidget(self._t_preview)
 
         layout.addWidget(self._t_search_list)
@@ -372,10 +372,10 @@ class TradePage(QWidget):
         for i, (label, key) in enumerate(t_label_specs):
             row, col_pair = i % 4, i // 4
             lbl = QLabel(label)
-            lbl.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+            lbl.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
             val = QLabel("—")
             val.setObjectName(key)
-            val.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
+            val.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px;")
             grid.addWidget(lbl, row, col_pair * 2)
             grid.addWidget(val, row, col_pair * 2 + 1)
             self._t_labels[key] = val
@@ -487,13 +487,15 @@ class TradePage(QWidget):
         self._t_labels["t_buy_cost"].setText(f"{buy_cost:,.0f} ISK")
         self._t_labels["t_sell_revenue"].setText(f"{sell_revenue:,.0f} ISK")
         self._t_labels["t_freight_cost"].setText(f"{freight:,.0f} ISK")
-        self._t_labels["t_freight_cost"].setStyleSheet(f"color: {theme.RED}; font-size: 12px;")
+        self._t_labels["t_freight_cost"].setStyleSheet(f"color: {theme.RED}; font-size: {theme.fs(12)}px;")
         self._t_labels["t_broker_cost"].setText(f"{broker:,.0f} ISK")
         self._t_labels["t_sales_tax"].setText(f"{tax:,.0f} ISK")
         self._t_labels["t_net_profit"].setText(f"{net:,.0f} ISK")
-        self._t_labels["t_net_profit"].setStyleSheet(f"color: {profit_color}; font-size: 12px; font-weight: bold;")
+        self._t_labels["t_net_profit"].setStyleSheet(
+            f"color: {profit_color}; font-size: {theme.fs(12)}px; font-weight: bold;"
+        )
         self._t_labels["t_margin_pct"].setText(f"{margin:.1f}%")
-        self._t_labels["t_margin_pct"].setStyleSheet(f"color: {profit_color}; font-size: 12px;")
+        self._t_labels["t_margin_pct"].setStyleSheet(f"color: {profit_color}; font-size: {theme.fs(12)}px;")
         self._t_labels["t_isk_per_m3"].setText(f"{isk_m3:,.0f} ISK/m³")
 
         mode_text = "公开货运" if result.get("freight_mode") == "public_freight" else "自有运输"
@@ -501,7 +503,7 @@ class TradePage(QWidget):
             f"{self._t_selected_name} | {mode_text} | "
             f"运费: {freight:,.0f} ISK | 净利润: {net:,.0f} ISK | 利润率: {margin:.1f}%"
         )
-        self._t_preview.setStyleSheet(f"color: {profit_color}; font-size: 12px;")
+        self._t_preview.setStyleSheet(f"color: {profit_color}; font-size: {theme.fs(12)}px;")
 
         self._t_result_group.setVisible(True)
 
@@ -614,7 +616,7 @@ class TradePage(QWidget):
             spread_info = f"  |  最大价差: {max_pair}"
 
         self._preview.setText(f"{self._selected_name} | {n_with_data} 个区域有数据{spread_info}")
-        self._preview.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
+        self._preview.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px;")
 
         # 自动填充最佳买卖区域
         if best_buy_hub:
@@ -665,20 +667,22 @@ class TradePage(QWidget):
 
         self._score_labels["score"].setText(f"{score:.0f}/100")
         self._score_labels["score"].setStyleSheet(
-            f"color: {theme.PRIMARY if score >= 50 else profit_color}; font-size: 14px; font-weight: bold;"
+            f"color: {theme.PRIMARY if score >= 50 else profit_color}; font-size: {theme.fs(14)}px; font-weight: bold;"
         )
         self._score_labels["buy_cost"].setText(f"{buy_cost:,.0f} ISK")
         self._score_labels["sell_revenue"].setText(f"{sell_revenue:,.0f} ISK")
         self._score_labels["gross_profit"].setText(f"{gross_profit:,.0f} ISK")
-        self._score_labels["gross_profit"].setStyleSheet(f"color: {profit_color}; font-size: 12px; font-weight: bold;")
+        self._score_labels["gross_profit"].setStyleSheet(
+            f"color: {profit_color}; font-size: {theme.fs(12)}px; font-weight: bold;"
+        )
         self._score_labels["margin_pct"].setText(f"{margin_pct:.1f}%")
-        self._score_labels["margin_pct"].setStyleSheet(f"color: {profit_color}; font-size: 12px;")
+        self._score_labels["margin_pct"].setStyleSheet(f"color: {profit_color}; font-size: {theme.fs(12)}px;")
         self._score_labels["profit_per_m3"].setText(f"{profit_m3:,.0f} ISK/m³")
 
         self._preview.setText(
             f"{self._selected_name} | 评分: {score:.0f} | 利润: {gross_profit:,.0f} ISK | 利润率: {margin_pct:.1f}%"
         )
-        self._preview.setStyleSheet(f"color: {profit_color}; font-size: 12px;")
+        self._preview.setStyleSheet(f"color: {profit_color}; font-size: {theme.fs(12)}px;")
 
         # 最佳贸易对
         if hasattr(self, "_hub_data") and self._hub_data:

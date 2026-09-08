@@ -123,7 +123,7 @@ class SplashScreen(QWidget):
         layout.addWidget(self._loader, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self._stage_label = QLabel("正在检查数据就绪状态...")
-        self._stage_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._stage_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         self._stage_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._stage_label)
 
@@ -140,7 +140,7 @@ class SplashScreen(QWidget):
             icon.setFixedHeight(14)
             self._set_icon_state(icon, _ICON_CHECKING, theme.PRIMARY)
             name = QLabel(step.name)
-            name.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 11px;")
+            name.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(11)}px;")
             row, col = divmod(i, 2)
             grid.addWidget(icon, row, col * 2)
             grid.addWidget(name, row, col * 2 + 1)
@@ -150,7 +150,7 @@ class SplashScreen(QWidget):
         layout.addStretch()
 
         self._msg_label = QLabel("")
-        self._msg_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 10px;")
+        self._msg_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(10)}px;")
         self._msg_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._msg_label)
 

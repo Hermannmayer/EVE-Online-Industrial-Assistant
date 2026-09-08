@@ -57,7 +57,7 @@ class ChildParallelDialog(QDialog):
             "只需设置每个子项的「并行产线数」；「每条流程」自动生成以覆盖母项需求，"
             "总产出（并行×流程×单流程产出）会实时显示。"
         )
-        tip.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        tip.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         tip.setWordWrap(True)
         layout.addWidget(tip)
 

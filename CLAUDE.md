@@ -101,8 +101,26 @@ data/          运行时数据（settings, score_settings, char_config, terminol
 | 改数据库 Schema | `services/schema_migrations.py`（迁移函数注册） | `docs/dev/schema-migration.md`；`docs/dev/data.md` |
 | 改数据导入（SDE/ESI） | `services/importers/get*.py`、`services/init_service.py` | `docs/dev/flows.md`（初始化节） |
 | 改 UI 页面/异步任务 | `ui_pyside6/views/…`、`ui_pyside6/workers/…`、`ui_pyside6/models/…` | `docs/dev/architecture.md`；`docs/dev/api-reference.md` |
+| 看界面实际效果 | `scripts/ui_snapshot.py`（截图 + 控件树） | 见下「界面感知」 |
 | 查/改 EVE 术语 | `data/terminology.json` + `services/terminology.py` | `docs/dev/glossary.md` |
 | 改 UI 配色 | `ui_pyside6/theme.py` | `docs/dev/architecture.md`（主题） |
+
+## 界面感知（改 UI 前必读）
+
+**区域命名以 `docs/dev/ui-blueprint.md` 为准**（窗口级 7 区 + 页面级 5 区，含标注图）。
+与用户沟通界面时用该文档的区域名，禁止说「上面那个栏」「左边那块」。
+
+只读代码理解不了界面。改 UI 前先跑一次快照，用截图确认现状，改完再跑一次对比：
+
+```bash
+python scripts/ui_snapshot.py                    # 全部页面 → .claude/ui-snapshots/
+python scripts/ui_snapshot.py --pages industry   # 单页
+python scripts/ui_snapshot.py --theme eve-deep   # 换主题渲染
+```
+
+产出 `<page>.png`（整窗截图）与 `<page>.tree.md`（控件树：类名/objectName/文本/几何/可见性）。
+默认走 Qt offscreen 平台——不弹窗、不抢焦点、不受单实例锁影响，可反复执行。
+截图是可用 Read 工具直接查看的图片，控件树用于精确核对层级与尺寸。
 
 ## 计划自检（写计划前必读）
 

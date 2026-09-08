@@ -101,7 +101,7 @@ class MaterialCoverageDialog(QDialog):
         # 顶部计划汇总
         self._plans_label = QLabel(self._plans_summary(plans))
         self._plans_label.setWordWrap(True)
-        self._plans_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._plans_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         layout.addWidget(self._plans_label)
 
         # 表格
@@ -116,7 +116,7 @@ class MaterialCoverageDialog(QDialog):
         if not plans:
             # 空态：未被任何计划用作材料机库
             self._empty_label = QLabel("该机库未被任何计划用作材料机库")
-            self._empty_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+            self._empty_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
             self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(self._empty_label)
             self._table.setModel(CoverageModel([]))
@@ -129,7 +129,7 @@ class MaterialCoverageDialog(QDialog):
             self._summary_label = QLabel(f"缺 {missing_kind} 种 / 共 {missing_total:,} 件")
 
         if self._summary_label is not None:
-            self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+            self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
             layout.addWidget(self._summary_label)
 
         btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -158,9 +158,9 @@ class MaterialCoverageDialog(QDialog):
     def _on_theme_changed(self):
         """主题切换时重新应用内联样式并重绘表格（缺口红色跟随主题）"""
         if self._plans_label is not None:
-            self._plans_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+            self._plans_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         if self._summary_label is not None:
-            self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+            self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         if self._empty_label is not None:
-            self._empty_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+            self._empty_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         self._table.viewport().update()
