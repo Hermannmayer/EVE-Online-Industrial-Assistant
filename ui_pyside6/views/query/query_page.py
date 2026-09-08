@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
+from ui_pyside6.sizing import ElidedLabel
 from ui_pyside6.views.query.query_order_popup import do_load_orders, hide_order_popup
 from ui_pyside6.views.query.query_search import (
     _COLUMNS,
@@ -140,12 +141,12 @@ class QueryPage(QWidget):
         status_layout.setContentsMargins(0, 2, 0, 2)
 
         self._count_label = QLabel("")
-        self._count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         status_layout.addWidget(self._count_label)
         status_layout.addStretch()
 
-        self._status_label = QLabel("输入物品名称/ID后搜索，双击行查看实时订单")
-        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._status_label = ElidedLabel("输入物品名称/ID后搜索，双击行查看实时订单")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         status_layout.addWidget(self._status_label)
 
         layout.addWidget(status_widget)
@@ -174,7 +175,7 @@ class QueryPage(QWidget):
     def _style_toolbar_btn(self, btn):
         btn.setStyleSheet(
             f"QPushButton{{background:{theme.BG_SURFACE_LIGHT};color:{theme.TEXT_PRIMARY};"
-            f"border:1px solid {theme.BORDER};border-radius:6px;padding:6px 12px;font-size:12px;}}"
+            f"border:1px solid {theme.BORDER};border-radius:6px;padding:6px 12px;font-size:{theme.fs(12)}px;}}"
             f"QPushButton:hover{{background:{theme.PRIMARY};color:{theme.TEXT_ON_PRIMARY};"
             f"border:1px solid {theme.PRIMARY};}}"
         )
@@ -183,8 +184,8 @@ class QueryPage(QWidget):
 
     def _on_theme_changed(self):
         self._style_toolbar_btn(self._all_items_btn)
-        self._count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
-        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         batch_btn = self.findChild(QPushButton, "batch_price_btn")
         if batch_btn:
             self._style_toolbar_btn(batch_btn)

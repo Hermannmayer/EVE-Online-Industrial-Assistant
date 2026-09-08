@@ -149,7 +149,7 @@ class OutputSummaryDialog(QDialog):
 
     def _on_theme_changed(self):
         self.setStyleSheet(theme.get_stylesheet() + "QTableWidget::item { padding: 2px 6px; }")
-        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
 
 
 def _fmt_isk(value: float) -> str:

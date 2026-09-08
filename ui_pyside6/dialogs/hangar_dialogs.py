@@ -297,7 +297,7 @@ class PasteImportDialog(QDialog):
             "2. EVE列表视图格式（自动识别）\n"
             "从游戏中复制（Ctrl+C）后粘贴到下面："
         )
-        self._hint.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._hint.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         self._hint.setWordWrap(True)
         layout.addWidget(self._hint)
 
@@ -336,7 +336,6 @@ class PasteImportDialog(QDialog):
         self._discount_spin.setSingleStep(0.05)
         self._discount_spin.setValue(0.9)
         self._discount_spin.setPrefix("× ")
-        self._discount_spin.setFixedWidth(72)
         self._discount_spin.setToolTip("折扣率：0.9=9折, 0.85=85折")
         price_row.addWidget(self._discount_spin)
 
@@ -443,4 +442,4 @@ class PasteImportDialog(QDialog):
         self._reapply_styles()
 
     def _reapply_styles(self):
-        self._hint.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._hint.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")

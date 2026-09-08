@@ -276,7 +276,7 @@ class BatchPriceDialog(QDialog):
             f"  border: 1px solid {theme.BORDER};"
             f"  border-radius: 4px;"
             f"  padding: 6px;"
-            f"  font-size: 12px;"
+            f"  font-size: {theme.fs(12)}px;"
             f"}}"
         )
 
@@ -287,7 +287,7 @@ class BatchPriceDialog(QDialog):
             f"  border: none;"
             f"  border-radius: 4px;"
             f"  padding: 6px 18px;"
-            f"  font-size: 12px;"
+            f"  font-size: {theme.fs(12)}px;"
             f"  font-weight: bold;"
             f"}}"
             f"QPushButton:hover {{"
@@ -306,7 +306,7 @@ class BatchPriceDialog(QDialog):
             f"  border: 1px solid {theme.BORDER};"
             f"  border-radius: 4px;"
             f"  padding: 5px 14px;"
-            f"  font-size: 11px;"
+            f"  font-size: {theme.fs(11)}px;"
             f"}}"
             f"QPushButton:hover {{"
             f"  background-color: {theme.BG_HOVER};"
@@ -318,7 +318,7 @@ class BatchPriceDialog(QDialog):
             f"}}"
         )
 
-        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
 
         self._progress.setStyleSheet(
             f"QProgressBar {{"
@@ -360,7 +360,7 @@ class BatchPriceDialog(QDialog):
             f"  border-right: 1px solid {theme.BORDER};"
             f"  border-bottom: 1px solid {theme.BORDER};"
             f"  font-weight: bold;"
-            f"  font-size: 11px;"
+            f"  font-size: {theme.fs(11)}px;"
             f"}}"
             f"QHeaderView::section:hover {{"
             f"  background-color: {theme.BG_HOVER};"

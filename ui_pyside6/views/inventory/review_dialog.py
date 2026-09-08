@@ -117,7 +117,6 @@ class ImportReviewDialog(QDialog):
         self._discount_spin.setSingleStep(0.05)
         self._discount_spin.setValue(0.9)
         self._discount_spin.setSuffix(" 折")
-        self._discount_spin.setFixedWidth(80)
         self._discount_spin.setToolTip("右键菜单中折后价使用的折扣率")
         toolbar.addWidget(self._discount_spin)
 
@@ -138,7 +137,7 @@ class ImportReviewDialog(QDialog):
 
         # ── 统计栏 ──
         self._summary_label = QLabel("")
-        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         layout.addWidget(self._summary_label)
 
         # ── 底部按钮 ──
@@ -689,7 +688,7 @@ class ImportReviewDialog(QDialog):
         self._reapply_styles()
 
     def _reapply_styles(self):
-        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
 
 
 # ════════════════════════════════════════════════════
@@ -717,7 +716,7 @@ class ImportChangeDialog(QDialog):
         layout.setSpacing(6)
 
         self._summary_label = QLabel(self._build_summary(changes, added, moved))
-        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         layout.addWidget(self._summary_label)
 
         self._table = QTableWidget(len(changes), 3)
@@ -779,7 +778,7 @@ class ImportChangeDialog(QDialog):
 
     def _on_theme_changed(self):
         """主题切换时重设增量/减量前景色（跟随主题）"""
-        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         for row, ch in enumerate(self._changes):
             qty_item = self._table.item(row, 1)
             if qty_item is None:

@@ -45,7 +45,7 @@ _BTN_STYLE = """
         border: none;
         border-radius: 4px;
         padding: 4px 12px;
-        font-size: 12px;
+        font-size: {fs}px;
     }}
     QPushButton:hover {{ background-color: {hover}; }}
     QPushButton:disabled {{ background-color: {bg}; color: {disabled}; }}
@@ -69,8 +69,7 @@ def _btn_style(
 ) -> str:
     fg = fg or theme.TEXT_ON_PRIMARY
     disabled = disabled or theme.TEXT_SECONDARY
-    return _BTN_STYLE.format(bg=bg, fg=fg, hover=hover or bg, disabled=disabled)
-    return _BTN_STYLE.format(bg=bg, fg=fg, hover=hover or bg, disabled=disabled)
+    return _BTN_STYLE.format(bg=bg, fg=fg, hover=hover or bg, disabled=disabled, fs=theme.fs(12))
 
 
 class _StepRow(QWidget):
@@ -97,7 +96,7 @@ class _StepRow(QWidget):
         # 状态图标
         self.icon = QLabel("⏸️")
         self.icon.setFixedWidth(24)
-        self.icon.setStyleSheet(f"font-size: 14px; color: {theme.TEXT_SECONDARY};")
+        self.icon.setStyleSheet(f"font-size: {theme.fs(14)}px; color: {theme.TEXT_SECONDARY};")
         layout.addWidget(self.icon)
 
         # 名称 + 进度文本
@@ -105,11 +104,11 @@ class _StepRow(QWidget):
         info_col.setSpacing(2)
 
         self.name_label = QLabel(step.name)
-        self.name_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 13px; font-weight: bold;")
+        self.name_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(13)}px; font-weight: bold;")
         info_col.addWidget(self.name_label)
 
         self.msg_label = QLabel("等待中" if step.critical else "可选")
-        self.msg_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self.msg_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         info_col.addWidget(self.msg_label)
 
         layout.addLayout(info_col, 1)
@@ -127,7 +126,7 @@ class _StepRow(QWidget):
                 border-radius: 3px;
                 text-align: center;
                 color: {theme.TEXT_SECONDARY};
-                font-size: 10px;
+                font-size: {theme.fs(10)}px;
             }}
             QProgressBar::chunk {{
                 background-color: {theme.PRIMARY};
@@ -169,7 +168,7 @@ class _StepRow(QWidget):
         }
 
         self.icon.setText(icon_map.get(status, "⏸️"))
-        self.icon.setStyleSheet(f"font-size: 14px; color: {color_map.get(status, theme.TEXT_SECONDARY)};")
+        self.icon.setStyleSheet(f"font-size: {theme.fs(14)}px; color: {color_map.get(status, theme.TEXT_SECONDARY)};")
         self.msg_label.setText(message)
 
         self.retry_btn.setVisible(status == StepStatus.FAILED)
@@ -220,19 +219,19 @@ class InitWizard(QDialog):
         # ---- 标题区 ----
         title_row = QHBoxLayout()
         title = QLabel("数据初始化")
-        title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 18px; font-weight: bold;")
+        title.setStyleSheet(f"color: {theme.PRIMARY}; font-size: {theme.fs(18)}px; font-weight: bold;")
         title_row.addWidget(title)
         title_row.addStretch()
 
         # 网络状态
         self._net_label = QLabel("🌐 检测中...")
-        self._net_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._net_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         title_row.addWidget(self._net_label)
         layout.addLayout(title_row)
 
         desc = QLabel("正在下载游戏数据以启用全部功能。已就绪的步骤将自动跳过。")
         desc.setWordWrap(True)
-        desc.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        desc.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         layout.addWidget(desc)
 
         # 分隔线
@@ -278,7 +277,7 @@ class InitWizard(QDialog):
                 height: 22px;
                 text-align: center;
                 color: {theme.TEXT_PRIMARY};
-                font-size: 12px;
+                font-size: {theme.fs(12)}px;
             }}
             QProgressBar::chunk {{
                 background-color: {theme.PRIMARY};
@@ -290,7 +289,7 @@ class InitWizard(QDialog):
         # ETA 文字
         eta_row = QHBoxLayout()
         self._eta_label = QLabel("")
-        self._eta_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._eta_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         eta_row.addWidget(self._eta_label)
         eta_row.addStretch()
         layout.addLayout(eta_row)
@@ -322,7 +321,7 @@ class InitWizard(QDialog):
                 border-radius: 6px;
                 padding: 8px 28px;
                 font-weight: bold;
-                font-size: 14px;
+                font-size: {theme.fs(14)}px;
             }}
             QPushButton:hover {{ background-color: {theme.BG_HOVER}; }}
             QPushButton:disabled {{ background-color: {theme.TEXT_SECONDARY}; color: {theme.TEXT_SECONDARY}; }}
@@ -496,10 +495,10 @@ class InitWizard(QDialog):
         """网络连通性状态"""
         if not ok:
             self._net_label.setText(f"🌐 网络不可用: {message}")
-            self._net_label.setStyleSheet(f"color: {theme.ACCENT_RED}; font-size: 11px;")
+            self._net_label.setStyleSheet(f"color: {theme.ACCENT_RED}; font-size: {theme.fs(11)}px;")
         else:
             self._net_label.setText("🌐 ESI 已连接")
-            self._net_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: 11px;")
+            self._net_label.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: {theme.fs(11)}px;")
 
     def _refresh_total(self):
         """总进度条 = 已完成步骤数（分进度在各自行内显示）。"""

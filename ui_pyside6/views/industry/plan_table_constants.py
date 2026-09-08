@@ -26,3 +26,12 @@ NUM_COLUMNS = 19
 # 固定窄列宽度（px）：备料勾选列需容纳 8px padding + 16px 复选框 + 余量；图标列适配 32px 图标；
 # 类别列仅显示 16px 自绘图标，与图标列同一逻辑（窄列不被内容/表头撑宽）
 FIXED_WIDTHS = {COL_CHECKBOX: 34, COL_ICON: 36, COL_CATEGORY: 32}
+
+# 文本易过长的列：resizeColumnsToContents() 后按此封顶，
+# 否则长备注/蓝图名会把整张表推到远超窗口宽度（产品列为 Stretch，由视口兜底，无需封顶）
+MAX_CONTENT_WIDTHS = {
+    COL_NOTES: 160,
+    COL_BLUEPRINT: 160,
+    COL_FACILITY: 120,
+    COL_OUTPUT: 120,
+}

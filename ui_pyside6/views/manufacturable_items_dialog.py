@@ -163,19 +163,19 @@ class ManufacturableItemsDialog(QDialog):
 
     def _refresh_styles(self):
         """全局主题 + 紧凑布局覆盖（字体 11px、精简间距）"""
-        compact = """
-            QDialog, QDialog * { font-size: 11px; }
-            QLineEdit { border-radius: 2px; padding: 2px 4px; }
-            QComboBox { border-radius: 2px; padding: 2px 4px; }
-            QComboBox::drop-down { border: none; width: 16px; }
-            QTableView { border-radius: 0px; }
-            QHeaderView::section { padding: 2px 4px; }
-            QTreeWidget { border-radius: 0px; }
-            QTreeWidget::item { padding: 2px 4px; }
-            QPushButton { border-radius: 2px; padding: 0 6px; }
+        compact = f"""
+            QDialog, QDialog * {{ font-size: {theme.fs(11)}px; }}
+            QLineEdit {{ border-radius: 2px; padding: 2px 4px; }}
+            QComboBox {{ border-radius: 2px; padding: 2px 4px; }}
+            QComboBox::drop-down {{ border: none; width: 16px; }}
+            QTableView {{ border-radius: 0px; }}
+            QHeaderView::section {{ padding: 2px 4px; }}
+            QTreeWidget {{ border-radius: 0px; }}
+            QTreeWidget::item {{ padding: 2px 4px; }}
+            QPushButton {{ border-radius: 2px; padding: 0 6px; }}
         """
         self.setStyleSheet(theme.get_stylesheet() + compact)
-        self._st.setStyleSheet(f"color:{theme.TEXT_SECONDARY};font-size:11px;")
+        self._st.setStyleSheet(f"color:{theme.TEXT_SECONDARY};font-size:{theme.fs(11)}px;")
 
     def _build_ui(self):
         lay = QVBoxLayout(self)

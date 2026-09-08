@@ -191,8 +191,8 @@ class PriceChartDialog(QDialog):
 
     def _on_theme_changed(self):
         self._apply_chart_theme()
-        self._title_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 13px;")
-        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._title_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(13)}px;")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
 
     def closeEvent(self, event):
         theme.remove_theme_listener(self._on_theme_changed)

@@ -247,3 +247,67 @@ class TestProductionLauncher:
         w.close()
         assert w._tick_timer.isActive() is False
         assert w._poll_timer.isActive() is False
+
+
+class TestCapacitySlotBar:
+    """占用条几何自适应。
+
+    回归点：旧版在 paintEvent 里按固定 x=544 绘制状态文字，控件被 QScrollArea
+    压缩到该宽度以下时「空闲」被裁掉。
+    """
+
+    USAGE = {"manufacturing": (1, 5), "research": (0, 5), "reaction": (0, 0)}
+
+    def _bar(self, name_width: int = 76):
+        from ui_pyside6.views.industry.production_launcher import CapacitySlotBar
+
+        bar = CapacitySlotBar(name_width=name_width)
+        bar.set_usage("新角色5", self.USAGE)
+        return bar
+
+    def test_size_hint_positive_and_ordered(self, qapp):
+        bar = self._bar()
+        assert bar.sizeHint().width() > 0
+        assert bar.minimumSizeHint().width() > 0
+        assert bar.minimumSizeHint().width() < bar.sizeHint().width()
+
+    def test_minimum_width_reserves_status_text_and_blocks(self, qapp):
+        from PySide6.QtGui import QFont, QFontMetrics
+
+        bar = self._bar()
+        status_w = QFontMetrics(QFont()).horizontalAdvance(bar._status_text()[0])
+        blocks = 3 * 11 * 6  # 3 条线 × 11 格 × (最小块宽 4 + 最小间距 2)
+        assert bar.minimumSizeHint().width() >= status_w + blocks
+
+    def test_renders_at_minimum_width(self, qapp):
+        bar = self._bar()
+        bar.resize(bar.minimumSizeHint().width(), bar.minimumHeight())
+        assert not bar.grab().isNull()
+
+    def test_longer_name_widens_hint(self, qapp):
+        assert self._bar(name_width=160).sizeHint().width() > self._bar(name_width=60).sizeHint().width()
+
+    def test_status_text_reflects_usage(self, qapp):
+        from ui_pyside6.views.industry.production_launcher import CapacitySlotBar
+
+        cases = [
+            ({"manufacturing": (0, 5), "research": (0, 5), "reaction": (0, 0)}, "空闲"),
+            ({"manufacturing": (2, 5), "research": (0, 5), "reaction": (0, 0)}, "生产中"),
+            # 超员按三条线求和判定：12 > 5+5+0
+            ({"manufacturing": (9, 5), "research": (3, 5), "reaction": (0, 0)}, "超员"),
+        ]
+        for usage, expected in cases:
+            bar = CapacitySlotBar()
+            bar.set_usage("甲", usage)
+            assert bar._status_text()[0].startswith(expected), usage
+
+    def test_window_is_wide_enough_for_occupancy(self, qapp, monkeypatch):
+        """默认窗宽必须容得下占用条，否则状态文字又会被裁。"""
+        w, pl = _make_launcher(qapp, monkeypatch)
+        try:
+            bars = w.findChildren(pl.CapacitySlotBar)
+            assert bars
+            widest = max(b.sizeHint().width() for b in bars)
+            assert w.width() >= min(widest, 1100)
+        finally:
+            w.close()

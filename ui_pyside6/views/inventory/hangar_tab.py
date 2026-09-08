@@ -107,13 +107,13 @@ class HangarTab(QWidget):
         layout.addLayout(bar)
 
         self._total_label = QLabel("按卖单价格: -- ISK")
-        self._total_label.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY}; font-size: 13px;")
+        self._total_label.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY}; font-size: {theme.fs(13)}px;")
         layout.addWidget(self._total_label)
 
     def _on_theme_changed(self):
         """主题切换时重新应用内联样式表"""
         self._count_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
-        self._total_label.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY}; font-size: 13px;")
+        self._total_label.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY}; font-size: {theme.fs(13)}px;")
         self._apply_header_style()
 
     # ── 列布局 ──
@@ -153,7 +153,7 @@ class HangarTab(QWidget):
         """
         self._table.horizontalHeader().setStyleSheet(
             f"QHeaderView::section {{ background: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};"
-            f" border: 1px solid {theme.BORDER}; padding: 2px 4px; font-size: 11px; }}"
+            f" border: 1px solid {theme.BORDER}; padding: 2px 4px; font-size: {theme.fs(11)}px; }}"
         )
 
     # ── 剪贴板导入 ──

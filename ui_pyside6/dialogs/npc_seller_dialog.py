@@ -93,14 +93,14 @@ class NpcSellerDialog(QDialog):
         layout.setSpacing(8)
 
         header = QLabel(f"<b>{blueprint_name}</b>  (type_id: {blueprint_type_id})")
-        header.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 14px;")
+        header.setStyleSheet(f"color: {theme.PRIMARY}; font-size: {theme.fs(14)}px;")
         layout.addWidget(header)
 
         note = QLabel(
             "T1 蓝图原版(BPO) 由 NPC 公司在其空间站直售；此处列出该蓝图在当前贸易中心的 NPC 直售单。\n"
             "若列表为空：该蓝图可能非 NPC 直售（如 T2 蓝图），请到市场找玩家订单。"
         )
-        note.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        note.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         note.setWordWrap(True)
         layout.addWidget(note)
 
@@ -120,7 +120,7 @@ class NpcSellerDialog(QDialog):
 
         # ── 状态/加载提示 ──
         self._status_label = QLabel("")
-        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         layout.addWidget(self._status_label)
 
         # ── 卖单表 ──
@@ -178,7 +178,7 @@ class NpcSellerDialog(QDialog):
             self._status_label.setText(f"共 {len(rows)} 条 NPC 直售单")
 
     def _on_theme_changed(self):
-        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
 
     def closeEvent(self, event):
         if self._worker and self._worker.isRunning():

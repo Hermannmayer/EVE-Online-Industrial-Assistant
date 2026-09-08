@@ -377,7 +377,9 @@ class CostBreakdownDialog(QWidget):
 
     def _on_theme_changed(self):
         self.setStyleSheet(theme.get_stylesheet() + "QTableWidget::item { padding: 2px 6px; }")
-        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px; font-weight: bold;")
+        self._status_label.setStyleSheet(
+            f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px; font-weight: bold;"
+        )
         self._job_total.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY};")
         self._mkt_fee_total.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY};")
 

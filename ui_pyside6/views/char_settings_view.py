@@ -131,7 +131,7 @@ class CharSettingsDialog(QDialog):
             QTabBar::tab {{
                 background-color: {theme.BG_SURFACE}; color: {theme.TEXT_SECONDARY};
                 padding: 8px 24px; border: none; border-right: 1px solid {theme.BORDER};
-                font-size: 13px;
+                font-size: {theme.fs(13)}px;
             }}
             QTabBar::tab:selected {{ background-color: {theme.BG_DARK}; color: {theme.PRIMARY}; font-weight: bold; }}
             QTabBar::tab:hover {{ color: {theme.TEXT_PRIMARY}; }}
@@ -207,7 +207,7 @@ class CharSettingsDialog(QDialog):
         add_btn = QPushButton("+ 添加")
         add_btn.setStyleSheet(f"""
             QPushButton {{ background-color: {theme.ACCENT_GREEN}; color: {theme.TEXT_ON_PRIMARY};
-                border: none; border-radius: 4px; padding: 4px 12px; font-size: 12px; }}
+                border: none; border-radius: 4px; padding: 4px 12px; font-size: {theme.fs(12)}px; }}
             QPushButton:hover {{ background-color: {theme.BG_HOVER}; }}
         """)
         add_btn.clicked.connect(self._on_add_character)
@@ -216,7 +216,7 @@ class CharSettingsDialog(QDialog):
         del_btn = QPushButton("删除")
         del_btn.setStyleSheet(f"""
             QPushButton {{ background-color: {theme.ACCENT_RED}; color: {theme.TEXT_ON_PRIMARY};
-                border: none; border-radius: 4px; padding: 4px 12px; font-size: 12px; }}
+                border: none; border-radius: 4px; padding: 4px 12px; font-size: {theme.fs(12)}px; }}
             QPushButton:hover {{ background-color: {theme.BG_HOVER}; }}
             QPushButton:disabled {{ background-color: {theme.TEXT_SECONDARY}; }}
         """)

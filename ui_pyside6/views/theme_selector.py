@@ -66,15 +66,15 @@ class _ThemeCard(QPushButton):
 
     def _badge_style(self) -> str:
         return (
-            f"color: {theme.TEXT_SECONDARY}; font-size: 10px; padding: 0 4px;"
+            f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(10)}px; padding: 0 4px;"
             f" border: 1px solid {theme.BORDER}; border-radius: 8px;"
         )
 
     def _name_style(self) -> str:
-        return f"color: {theme.TEXT_PRIMARY}; font-size: 12px; border: none;"
+        return f"color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px; border: none;"
 
     def _material_style(self) -> str:
-        return f"color: {theme.TEXT_SECONDARY}; font-size: 10px; border: none;"
+        return f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(10)}px; border: none;"
 
     def refresh(self):
         """主题切换后刷新依赖当前主题 token 的样式"""

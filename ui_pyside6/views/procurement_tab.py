@@ -237,7 +237,7 @@ class ProcurementDialog(QDialog):
         # Summary bar
         summary_bar = QHBoxLayout()
         self._summary_label = QLabel("")
-        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         summary_bar.addWidget(self._summary_label)
         summary_bar.addStretch()
         main_layout.addLayout(summary_bar)
@@ -301,7 +301,7 @@ class ProcurementDialog(QDialog):
         self._update_summary()
 
     def _on_theme_changed(self):
-        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         self._buy_label.setStyleSheet(f"color: {theme.ACCENT_RED}; font-weight: 600;")
         self._stock_label.setStyleSheet(f"color: {theme.GREEN}; font-weight: 600;")
 

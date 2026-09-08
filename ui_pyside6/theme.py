@@ -328,6 +328,24 @@ MATERIAL = "solid"
 RADIUS = 6
 RADIUS_SMALL = max(2, RADIUS - 2)
 
+# ── 字体 token（由「系统设置 → 全局字号」驱动） ──
+# 所有 QSS / 内联样式表的字号一律写 {fs(NN)}px，禁止写死像素值。
+FONT_FAMILY = "Microsoft YaHei UI"
+FONT_FAMILY_QSS = f'"{FONT_FAMILY}", "Segoe UI", sans-serif'
+BASE_FONT_PX = 13  # QSS 基准字号（与 settings.json 的 font_size 默认值一致）
+FONT_SCALE = 1.0  # 由 set_font_scale() 更新；1.0 = 出厂外观
+
+
+def fs(px: int) -> int:
+    """基准像素字号 → 当前缩放下的像素字号（scale=1.0 时恒等）。"""
+    return max(8, round(px * FONT_SCALE))
+
+
+def font_point_size() -> int:
+    """QApplication 默认字体的点值。13px ≈ 9.75pt，取整后与历史值 10pt 一致。"""
+    return max(6, round(BASE_FONT_PX * 0.75 * FONT_SCALE))
+
+
 _current_theme = "one-dark"
 
 
@@ -391,6 +409,9 @@ def apply_theme(theme_name: str) -> None:
 
     # 持久化主题偏好（canonical id）
     save_theme_preference(canonical)
+
+    # 同步 QApplication 默认字体（字号缩放后需要重设）
+    _apply_app_font()
 
     # 通知监听器（过滤已失效的弱引用）
     dead = []
@@ -485,6 +506,48 @@ def load_theme_preference() -> str:
     return canonical
 
 
+def _apply_app_font() -> None:
+    """同步 QApplication 默认字体。
+
+    无 QApplication 时静默跳过：测试会直接调用 apply_theme（见 tests/test_theme_registry.py），
+    此时 instance() 为 None，不判空会抛 AttributeError。
+    """
+    from PySide6.QtGui import QFont
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if isinstance(app, QApplication):
+        app.setFont(QFont(FONT_FAMILY, font_point_size()))
+
+
+def set_font_scale(scale: float) -> None:
+    """设置全局字号缩放并重放主题，触发监听器重新套用内联样式表。"""
+    global FONT_SCALE
+    FONT_SCALE = max(0.5, min(2.0, float(scale)))
+    apply_theme(_current_theme)
+
+
+def load_font_scale() -> float:
+    """从 settings.json 读取字号（像素值）并换算为缩放因子。"""
+    try:
+        from services.user_settings import load_settings
+
+        px = float(load_settings().get("font_size", BASE_FONT_PX))
+    except Exception:
+        return 1.0
+    return max(0.5, min(2.0, px / BASE_FONT_PX))
+
+
+def save_font_scale(scale: float) -> None:
+    """把缩放因子换算回像素值持久化（走 services.user_settings 统一入口）。"""
+    try:
+        from services.user_settings import save_settings
+
+        save_settings({"font_size": round(BASE_FONT_PX * scale)})
+    except Exception:
+        pass
+
+
 def themed_menu(parent, object_name: str = ""):
     """创建已应用全局主题的 QMenu，禁止调用方再 setStyleSheet"""
     from PySide6.QtWidgets import QMenu
@@ -560,8 +623,8 @@ def _global_styles() -> str:
     QWidget {{
         background-color: {BG_DARK};
         color: {TEXT_PRIMARY};
-        font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
-        font-size: 13px;
+        font-family: {FONT_FAMILY_QSS};
+        font-size: {fs(BASE_FONT_PX)}px;
     }}
     """
 
@@ -609,7 +672,7 @@ def _statusbar_toolbar_styles() -> str:
         background-color: {BG_SURFACE};
         color: {TEXT_SECONDARY};
         border-top: 1px solid {BORDER};
-        font-size: 11px;
+        font-size: {fs(11)}px;
         padding: 2px 8px;
     }}
     QToolBar {{
@@ -787,7 +850,7 @@ def _table_styles() -> str:
         border-right: 1px solid {BORDER};
         border-bottom: 1px solid {BORDER};
         font-weight: bold;
-        font-size: 12px;
+        font-size: {fs(12)}px;
     }}
     QHeaderView::section:hover {{
         background-color: {BG_HOVER};
@@ -903,7 +966,7 @@ def _list_tooltip_styles() -> str:
         border: 1px solid {BORDER};
         border-radius: {RADIUS_SMALL};
         padding: 4px 8px;
-        font-size: 12px;
+        font-size: {fs(12)}px;
     }}
     """
 
@@ -943,19 +1006,19 @@ def _mainwindow_specific_styles() -> str:
     }}
     #price_time_label {{
         color: {TEXT_SECONDARY};
-        font-size: 11px;
+        font-size: {fs(11)}px;
         padding-right: 16px;
     }}
     #status_label {{
         color: {TEXT_SECONDARY};
-        font-size: 11px;
+        font-size: {fs(11)}px;
     }}
     #update_btn {{
         background-color: {PRIMARY};
         color: {TEXT_ON_PRIMARY};
         border: none;
         border-radius: {RADIUS_SMALL};
-        font-size: 11px;
+        font-size: {fs(11)}px;
         padding: 2px 10px;
         min-height: 22px;
     }}
@@ -994,7 +1057,7 @@ def _page_specific_styles() -> str:
     #product_label {{
         color: {TEXT_SECONDARY};
         padding: 4px 16px;
-        font-size: 12px;
+        font-size: {fs(12)}px;
     }}
     #bp_selector {{
         background-color: {BG_SURFACE};
@@ -1006,7 +1069,7 @@ def _page_specific_styles() -> str:
         color: {TEXT_PRIMARY};
         border: 1px solid {BORDER};
         border-radius: {RADIUS};
-        font-size: 13px;
+        font-size: {fs(13)}px;
         padding: 8px 12px;
     }}
     #sys_menu {{
@@ -1040,7 +1103,7 @@ def _titlebar_styles() -> str:
     }}
     #title_label {{
         color: {TEXT_BRIGHT};
-        font-size: 13px;
+        font-size: {fs(13)}px;
         font-weight: bold;
         background: transparent;
     }}

@@ -155,6 +155,7 @@ class SettingsDialog(QDialog):
         self._auto_update_cb.setChecked(auto)
 
         self._theme_selector.set_current(theme.current_theme())
+        self._font_size.setValue(round(theme.BASE_FONT_PX * theme.FONT_SCALE))
 
     def _on_save(self):
         """保存并关闭"""
@@ -178,6 +179,14 @@ class SettingsDialog(QDialog):
         new_theme = self._theme_selector.current_theme_id()
         if new_theme != theme.current_theme():
             theme.apply_theme(new_theme)
+            if hasattr(self._mw, "_on_theme_changed"):
+                self._mw._on_theme_changed()
+
+        # 全局字号：改缩放因子并重放主题，触发各控件重新套用内联样式表
+        new_scale = self._font_size.value() / theme.BASE_FONT_PX
+        if abs(new_scale - theme.FONT_SCALE) > 1e-6:
+            theme.set_font_scale(new_scale)
+            theme.save_font_scale(new_scale)
             if hasattr(self._mw, "_on_theme_changed"):
                 self._mw._on_theme_changed()
 

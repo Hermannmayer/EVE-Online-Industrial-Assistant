@@ -83,7 +83,7 @@ class _UsageCard(QFrame):
 
         color = theme.ACCENT_GREEN if active < mx else (theme.ACCENT_YELLOW if active == mx else theme.ACCENT_RED)
         label = QLabel(f"{char_name}  <span style='color:{color};font-weight:bold;'>{active}/{mx}</span>")
-        label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
+        label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px;")
         layout.addWidget(label)
 
         bar = QProgressBar()
@@ -100,7 +100,7 @@ class _UsageCard(QFrame):
 
         if active > mx:
             over = QLabel("超员")
-            over.setStyleSheet(f"color: {theme.ACCENT_RED}; font-size: 10px;")
+            over.setStyleSheet(f"color: {theme.ACCENT_RED}; font-size: {theme.fs(10)}px;")
             layout.addWidget(over)
 
 
@@ -130,7 +130,7 @@ class ProductionWizard(QDialog):
 
         # ── 标题 ──
         header = QLabel(f"产线启动小助手 — 共 {len(plans)} 条产线")
-        header.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 15px; font-weight: bold;")
+        header.setStyleSheet(f"color: {theme.PRIMARY}; font-size: {theme.fs(15)}px; font-weight: bold;")
         layout.addWidget(header)
 
         # ── 顶部：产线占用卡片 ──
@@ -160,15 +160,15 @@ class ProductionWizard(QDialog):
         dl = QVBoxLayout(self._detail)
         dl.setContentsMargins(12, 8, 12, 8)
         self._detail_name = QLabel("")
-        self._detail_name.setStyleSheet(f"color: {theme.PRIMARY}; font-size: 14px; font-weight: bold;")
+        self._detail_name.setStyleSheet(f"color: {theme.PRIMARY}; font-size: {theme.fs(14)}px; font-weight: bold;")
         self._detail_info = QLabel("")
         self._detail_info.setWordWrap(True)
-        self._detail_info.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+        self._detail_info.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         self._start_btn = QPushButton()
         icons.set_button_icon(self._start_btn, "play", color=theme.TEXT_ON_PRIMARY, text="启动产线")
         self._start_btn.setStyleSheet(
             f"QPushButton {{ background: {theme.ACCENT_GREEN}; color: {theme.TEXT_ON_PRIMARY}; padding: 8px 20px;"
-            f" border: none; border-radius: 5px; font-size: 14px; }}"
+            f" border: none; border-radius: 5px; font-size: {theme.fs(14)}px; }}"
             f"QPushButton:hover {{ background: {theme.ACCENT_GREEN}; }}"
         )
         self._start_btn.clicked.connect(self._on_start)
@@ -203,7 +203,7 @@ class ProductionWizard(QDialog):
 
         bottom.addStretch()
         self._status_label = QLabel("")
-        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         bottom.addWidget(self._status_label)
         layout.addLayout(bottom)
 
@@ -258,7 +258,7 @@ class ProductionWizard(QDialog):
         chars = list(self._chars) + [c for c in usage if c and c not in self._chars]
         if not chars:
             hint = QLabel("（无人物配置，请在人物设置中添加）")
-            hint.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+            hint.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
             self._occ_layout.addWidget(hint)
             return
         for c in chars:
@@ -285,7 +285,7 @@ class ProductionWizard(QDialog):
             bp_btn = QPushButton(f"⧉ {bp_name}" if bp_name else "⧉ 复制")
             bp_btn.setFlat(True)
             bp_btn.setStyleSheet(
-                f"QPushButton {{ color: {theme.PRIMARY}; border: none; text-align: left; font-size: 12px; }}"
+                f"QPushButton {{ color: {theme.PRIMARY}; border: none; text-align: left; font-size: {theme.fs(12)}px; }}"
                 f"QPushButton:hover {{ text-decoration: underline; }}"
             )
             bp_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -341,21 +341,21 @@ class ProductionWizard(QDialog):
             short = self._shortfall.get(int(p.get("id") or 0), 0)
             if short:
                 info += "\n\n备料不足，缺 " + str(short) + " 种材料（请先填料或刷新备料）"
-                self._detail_info.setStyleSheet(f"color: {theme.ACCENT_ORANGE}; font-size: 12px;")
+                self._detail_info.setStyleSheet(f"color: {theme.ACCENT_ORANGE}; font-size: {theme.fs(12)}px;")
             else:
                 info += "\n\n备料充足，可启动。"
-                self._detail_info.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+                self._detail_info.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
                 self._start_btn.show()
         elif status in ("in_progress", "running"):
             rem = _fmt_remaining(p)
             info += f"\n\n运行中 · 剩余 {rem}"
-            self._detail_info.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+            self._detail_info.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         elif status == "ready":
             info += "\n\n待下线（请到主表下线入库）"
-            self._detail_info.setStyleSheet(f"color: {theme.ACCENT_ORANGE}; font-size: 12px;")
+            self._detail_info.setStyleSheet(f"color: {theme.ACCENT_ORANGE}; font-size: {theme.fs(12)}px;")
         else:
             info += "\n\n已完成"
-            self._detail_info.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
+            self._detail_info.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
         self._detail_info.setText(info)
 
     # ── 启动 ──
@@ -416,4 +416,4 @@ class ProductionWizard(QDialog):
         self._status_label.setText("已刷新备料状态")
 
     def _on_theme_changed(self) -> None:
-        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")

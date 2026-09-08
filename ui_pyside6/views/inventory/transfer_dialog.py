@@ -87,7 +87,7 @@ class HangarTransferDialog(QDialog):
 
         # ── 统计栏 ──
         self._summary_label = QLabel("")
-        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
         layout.addWidget(self._summary_label)
 
         # ── 底部按钮 ──
@@ -352,8 +352,8 @@ class HangarTransferDialog(QDialog):
         return self._result
 
     def _on_theme_changed(self):
-        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")

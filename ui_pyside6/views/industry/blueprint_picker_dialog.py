@@ -300,13 +300,17 @@ class BlueprintPickerDialog(QDialog):
         need = max(int(self.need_count), 1)
         if truncated:
             self._status_label.setText(f"一条产线一张蓝图：已按需取前 {need} 张兑现（勾选 {count + 0} → 绑 {need} 张）")
-            self._status_label.setStyleSheet(f"color: {theme.ACCENT_ORANGE}; font-weight: 600; font-size: 12px;")
+            self._status_label.setStyleSheet(
+                f"color: {theme.ACCENT_ORANGE}; font-weight: 600; font-size: {theme.fs(12)}px;"
+            )
         elif count >= need:
             self._status_label.setText(f"已选 {count} / 需 {need} 张 ✔")
-            self._status_label.setStyleSheet(f"color: {theme.GREEN}; font-weight: 600; font-size: 12px;")
+            self._status_label.setStyleSheet(f"color: {theme.GREEN}; font-weight: 600; font-size: {theme.fs(12)}px;")
         else:
             self._status_label.setText(f"已选 {count} / 需 {need} 张 — 还差 {need - count} 张蓝图")
-            self._status_label.setStyleSheet(f"color: {theme.ACCENT_RED}; font-weight: 600; font-size: 12px;")
+            self._status_label.setStyleSheet(
+                f"color: {theme.ACCENT_RED}; font-weight: 600; font-size: {theme.fs(12)}px;"
+            )
 
     def _on_done(self) -> None:
         count = len(self.selected_blueprint_ids)
@@ -336,14 +340,14 @@ class BlueprintPickerDialog(QDialog):
     def _on_theme_changed(self) -> None:
         self.setStyleSheet(
             f"QDialog {{ background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; }}"
-            f"QLabel {{ color: {theme.TEXT_PRIMARY}; background: transparent; font-size: 12px; }}"
+            f"QLabel {{ color: {theme.TEXT_PRIMARY}; background: transparent; font-size: {theme.fs(12)}px; }}"
             f"QTableWidget {{ background: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};"
             f" border: 1px solid {theme.BORDER}; border-radius: 4px; gridline-color: {theme.BORDER}; }}"
             f"QHeaderView::section {{ background: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};"
             f" border: 1px solid {theme.BORDER}; padding: 3px 6px; }}"
             f"QTableWidget::item:selected {{ background: {theme.PRIMARY}; color: {theme.TEXT_BRIGHT}; }}"
             f"QPushButton {{ padding: 4px 16px; border: 1px solid {theme.BORDER}; border-radius: 4px;"
-            f" background: transparent; color: {theme.TEXT_PRIMARY}; font-size: 12px; }}"
+            f" background: transparent; color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px; }}"
             f"QPushButton:hover {{ border-color: {theme.PRIMARY}; color: {theme.PRIMARY}; }}"
         )
         if hasattr(self, "_status_label"):
