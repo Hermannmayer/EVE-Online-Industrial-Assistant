@@ -6,6 +6,25 @@
 
 <!-- version list -->
 
+## v0.20.0 (2026-09-08)
+
+### Bug Fixes
+
+- 深度价取价 + 采购小助手独立置顶 + 母项拆解越界 + 默认机库设置丢失
+  ([`a853b34`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a853b3486d47a7ae81977e81075c8f8dbe0bc6f6))
+
+- 界面截断与字号自适应整改 + 界面感知工具
+  ([`c45d276`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/c45d276e3246e440cc99beb6bbad985dedf2685d))
+
+### Features
+
+- 待采购对话框双击复制物品名 + 需采购/已备足分栏 + 表头排序
+  ([`d30e32e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d30e32ea726c48c2c42e1b6ff2734f046c99b774))
+
+- 日志体系完善 — INFO 落盘 + 崩溃记录补全 + 14 天自动清理
+  ([`d247b1c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d247b1c85b8348b864c091cd0313c8df3053d3de))
+
+
 ## v0.19.0 (2026-08-26)
 
 ### Bug Fixes
