@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
-    QTableView,
     QVBoxLayout,
     QWidget,
 )
@@ -38,6 +37,7 @@ from services.inventory_manager import (
     move_blueprints_to_hangar,
     update_blueprints_batch,
 )
+from ui_pyside6.table_sort import SortPreservingTableView
 
 from .blueprint_import_worker import _BlueprintImportWorker, apply_blueprint_diff
 from .inventory_helpers import BlueprintTableModel
@@ -178,12 +178,11 @@ class BlueprintTab(QWidget):
         layout.addLayout(search_bar)
 
         # ── 蓝图列表 ──
-        self._bp_table = QTableView()
+        self._bp_table = SortPreservingTableView()
         self._bp_table.setAlternatingRowColors(True)
         self._bp_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._bp_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._bp_table.horizontalHeader().setStretchLastSection(True)
-        self._bp_table.setSortingEnabled(True)
         self._bp_table.verticalHeader().setDefaultSectionSize(32)
         self._bp_table.verticalHeader().setVisible(False)
         self._bp_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
