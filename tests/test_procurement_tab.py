@@ -86,10 +86,12 @@ def make_dlg(qapp):
                 "services.plan_aggregator.aggregate_procurement",
                 return_value=([dict(r) for r in rows], 0.0, 0.0),
             ),
+            patch("services.plan_service.load_active_plans_for_procurement", return_value=list(plans or [])),
+            patch("services.inventory_manager.get_default_mat_hangar_and_system", return_value=(None, None)),
         ]
         for p in patchers:
             p.start()
-        dlg = ProcurementDialog(active_plans=plans or [], default_mat_hangar_id=None, hangar_label="测试机库")
+        dlg = ProcurementDialog()
         created.append((dlg, patchers))
         return dlg
 
@@ -196,8 +198,8 @@ def test_dialog_two_sections(qapp, make_dlg):
     assert dlg._stock_table.model().rowCount() == 1
     assert "需采购" in dlg._buy_label.text()
     assert "库存已备足" in dlg._stock_label.text()
-    assert not dlg._buy_table.isHidden()
-    assert not dlg._stock_table.isHidden()
+    assert not dlg._buy_section.isHidden()
+    assert not dlg._stock_section.isHidden()
     assert "渡鸦级" not in dlg._buy_label.text()  # 渡鸦级属于已备足分区
 
 
@@ -205,10 +207,11 @@ def test_empty_rows_hides_tables(qapp, make_dlg):
     dlg = make_dlg(rows=[])
     assert dlg._buy_table.model() is None
     assert dlg._stock_table.model() is None
-    assert dlg._buy_table.isHidden()
-    assert dlg._stock_table.isHidden()
-    assert dlg._buy_label.isHidden()
-    assert dlg._stock_label.isHidden()
+    # 两栏包进 QSplitter 后，隐藏的是分区容器（子控件随之不可见）
+    assert dlg._buy_section.isHidden()
+    assert dlg._stock_section.isHidden()
+    assert not dlg._buy_label.isVisible()
+    assert not dlg._stock_label.isVisible()
     assert dlg._summary_label.text() == "无活跃计划材料需求"
 
 
@@ -262,7 +265,7 @@ def test_copy_button_when_no_buy_rows(qapp, make_dlg):
     """需采购为空时按钮不复制已备足行。"""
     rows = [dict(r) for r in ROWS if r["type_id"] == 2001]
     dlg = make_dlg(rows=rows)
-    assert dlg._buy_table.isHidden()
+    assert dlg._buy_section.isHidden()
     clip = QApplication.clipboard()
     with (
         patch.object(clip, "setText") as m_set,
@@ -338,3 +341,41 @@ def test_sort_state_replayed_after_calculate(qapp, make_dlg):
     assert dlg._buy_table.horizontalHeader().sortIndicatorSection() == 3
     assert dlg._buy_table.horizontalHeader().sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
     assert [r["to_buy"] for r in dlg._buy_table.model()._rows] == [1000, 100]
+
+
+# ═══════════════════════════════════════════════════
+#  两栏可拖动 + 轮询重算不丢手改
+# ═══════════════════════════════════════════════════
+
+
+def test_two_sections_in_splitter(qapp, make_dlg):
+    """回归：两栏必须放进可拖动的 QSplitter（固定比例会把「库存充足」挤到看不见）。"""
+    from PySide6.QtWidgets import QSplitter
+
+    dlg = make_dlg()
+    assert isinstance(dlg._splitter, QSplitter)
+    assert dlg._splitter.orientation() == Qt.Orientation.Vertical
+    assert dlg._splitter.count() == 2
+    assert dlg._splitter.childrenCollapsible() is False  # 不允许拖到折叠
+    assert dlg._splitter.isCollapsible(0) is False
+    assert dlg._splitter.isCollapsible(1) is False
+    assert dlg._splitter.widget(0) is dlg._buy_section
+    assert dlg._splitter.widget(1) is dlg._stock_section
+
+
+def test_manual_qty_survives_recalculate(qapp, make_dlg):
+    """轮询重算不得丢弃用户手改的采购量（_manual_overrides 回放）。"""
+    dlg = make_dlg()
+    model = dlg._buy_table.model()
+    dlg._buy_table.selectRow(0)
+    sel = dlg._buy_table.selectionModel().selectedRows()
+    tid = model.get_row(0)["type_id"]
+
+    with patch("ui_pyside6.views.procurement_tab.QInputDialog.getDouble", return_value=(7.0, True)):
+        dlg._on_edit_qty(dlg._buy_table, sel, model)
+    assert dlg._manual_overrides[int(tid)] == 7.0
+
+    dlg._calculate()  # 模拟轮询重算
+    row = next(r for r in dlg._buy_table.model()._rows if r["type_id"] == tid)
+    assert row["to_buy"] == 7.0
+    assert row["total"] == 7.0 * row["price"]

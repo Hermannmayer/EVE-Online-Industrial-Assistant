@@ -312,6 +312,32 @@ class TestParentDecomposeDialogMulti:
         # 需求=5×2=10、并行保留 5 → runs=ceil(10/(5×1))=2；ME-TE 刷新
         assert tuple(row) == (2, 5, 0, 0)
 
+    def test_row_refs_map_each_row_to_its_own_line(self, db_manager, monkeypatch, qapp):
+        """回归：同一母项的多行必须各自对应真实行下标。
+
+        早先 _append_row 用「子项列表长度 − 1」推断下标，导致该母项的所有预览行都指向
+        最后一行——删除时先删最后一行、再删就越界（IndexError）。
+        """
+        _build_dbs(db_manager)
+        _patch(db_manager, monkeypatch)
+        # 再给三钛合金配一张蓝图，使母项 2001 拆出两条子项线
+        with db_manager.connect("bp") as conn:
+            conn.execute("INSERT INTO blueprint_products VALUES (3003,'manufacturing',35,1)")
+            conn.execute("INSERT INTO blueprint_materials VALUES (3003,'manufacturing',34,1)")
+            conn.execute("INSERT INTO blueprint_activities VALUES (3003,'manufacturing',600)")
+        with db_manager.connect("user") as conn:
+            conn.execute("INSERT INTO production_plans (id, product_type_id) VALUES (1, 2001)")
+        dlg = ParentDecomposeDialog([_mother(1)])
+        n_rows = dlg._table.rowCount()
+        assert n_rows >= 2  # 渡鸦级拆出碳纤维 + 三钛合金
+        assert [l_idx for _a, l_idx, _line in dlg._row_refs] == list(range(n_rows))
+
+        # 选中同一母项的全部行一起删除 → 不得越界，且子项列表清空
+        dlg._table.selectAll()
+        dlg._delete_selected_rows()
+        assert dlg._table.rowCount() == 0
+        assert dlg._assignments[0][2] == []
+
 
 # ════════════════════════════════════════════════════════════════
 #  mass_parallel / ChildParallel — 并行（原 test_industry_parallel.py）

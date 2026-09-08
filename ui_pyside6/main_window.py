@@ -496,11 +496,11 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
         from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog
 
         dlg = HangarSettingsDialog(self)
-        if dlg.exec():
-            # 默认机库改动 → 刷新工业页（计划机库/成本可能变化）
-            page = self._pages.get("industry")
-            if page is not None and hasattr(page, "load_plans"):
-                page.load_plans()
+        dlg.exec()
+        # 机库可能被增删改（删除时还会重指向计划机库）→ 无条件刷新工业页
+        page = self._pages.get("industry")
+        if page is not None and hasattr(page, "load_plans"):
+            page.load_plans()
 
     def _on_auto_update_toggled(self, checked: bool):
         """顶栏自动更新指示点击切换"""

@@ -181,3 +181,83 @@ def test_hangar_editor_save(qapp, main_window):
         editor.save()
         upd.assert_called_once()
         editor.deleteLater()
+
+
+def test_stale_default_hangar_not_silently_cleared(qapp):
+    """回归：默认机库指向已删除的机库时，保存不得静默清空该设置。
+
+    场景：机库被删/重建后 id 变化 → 下拉框解析不到 → 旧实现会写回 None，
+    用户感知为「默认机库设置老是丢失」。
+    """
+    from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog
+
+    with (
+        patch("services.inventory_manager.get_hangars", return_value=MOCK_HANGARS),
+        patch("services.hangar_industry_config.get_rig_catalog", return_value=[]),
+        patch("ui_pyside6.views.hangar_settings_view.resolve_hangar_industry_config", return_value=DEFAULT_CFG),
+        patch("ui_pyside6.views.hangar_settings_view.inventory_manager.get_hangars", return_value=MOCK_HANGARS),
+        patch("ui_pyside6.views.hangar_settings_view.inventory_manager.update_hangar_config"),
+        patch(
+            "ui_pyside6.views.hangar_settings_view.user_settings.load_settings",
+            return_value={"default_mat_hangar_id": 42},  # 42 不在 MOCK_HANGARS 中
+        ),
+        patch("ui_pyside6.views.hangar_settings_view.user_settings.set_default_hangar_id") as m_set,
+    ):
+        dlg = HangarSettingsDialog(None)
+        combo = dlg._default_combos["default_mat_hangar_id"]
+        assert combo.currentData() == 42  # 保留原值，不静默回落「未设置」
+        assert "已删除" in combo.currentText()
+        dlg._on_save()
+
+    written = {c.args[0]: c.args[1] for c in m_set.call_args_list}
+    assert written["default_mat_hangar_id"] == 42
+    dlg.deleteLater()
+
+
+def test_delete_referenced_hangar_offers_repoint(qapp):
+    """删除被引用的机库 → 弹引用对话框，选替换机库后 delete_hangar 带 repoint_to。"""
+    from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog
+
+    with (
+        patch("ui_pyside6.views.hangar_settings_view.inventory_manager.get_hangars", return_value=MOCK_HANGARS),
+        patch("services.hangar_industry_config.get_rig_catalog", return_value=[]),
+        patch("ui_pyside6.views.hangar_settings_view.resolve_hangar_industry_config", return_value=DEFAULT_CFG),
+        patch(
+            "ui_pyside6.views.hangar_settings_view.inventory_manager.hangar_references",
+            return_value=["默认材料机库"],
+        ),
+        patch("ui_pyside6.views.hangar_settings_view.inventory_manager.delete_hangar") as m_del,
+        patch("ui_pyside6.views.hangar_settings_view._DeleteHangarDialog") as m_dlg,
+    ):
+        m_dlg.return_value.exec.return_value = 1
+        m_dlg.return_value.repoint_to.return_value = 9
+        dlg = HangarSettingsDialog(None)
+        dlg._hangar_list.setCurrentRow(0)
+        dlg._on_delete_hangar()
+
+    m_dlg.assert_called_once()
+    assert m_dlg.call_args.args[1] == ["默认材料机库"]  # 引用明细传给了对话框
+    m_del.assert_called_once_with(1, repoint_to=9)
+    dlg.deleteLater()
+
+
+def test_delete_unreferenced_hangar_simple_confirm(qapp):
+    """无引用的机库 → 仍是简单确认框，不弹引用对话框。"""
+    from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog
+
+    with (
+        patch("ui_pyside6.views.hangar_settings_view.inventory_manager.get_hangars", return_value=MOCK_HANGARS),
+        patch("services.hangar_industry_config.get_rig_catalog", return_value=[]),
+        patch("ui_pyside6.views.hangar_settings_view.resolve_hangar_industry_config", return_value=DEFAULT_CFG),
+        patch("ui_pyside6.views.hangar_settings_view.inventory_manager.hangar_references", return_value=[]),
+        patch("ui_pyside6.views.hangar_settings_view.inventory_manager.delete_hangar") as m_del,
+        patch("ui_pyside6.views.hangar_settings_view._DeleteHangarDialog") as m_dlg,
+        patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes),
+    ):
+        dlg = HangarSettingsDialog(None)
+        dlg._hangar_list.setCurrentRow(0)
+        dlg._on_delete_hangar()
+
+    m_dlg.assert_not_called()
+    m_del.assert_called_once_with(1)
+    dlg.deleteLater()

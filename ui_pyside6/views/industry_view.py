@@ -628,29 +628,17 @@ class IndustryPage(QWidget):
         dlg.exec()
 
     def _on_procurement(self):
-        """打开待采购对话框"""
-        from services import inventory_manager
-        from services.plan_service import load_active_plans_for_procurement
+        """采购小助手：非模态独立窗口（单实例复用，可置顶，不阻塞主界面）。"""
         from ui_pyside6.views.procurement_tab import ProcurementDialog
 
-        plans = load_active_plans_for_procurement()
-        if not plans:
-            QMessageBox.information(self, "提示", "没有活跃计划")
-            return
-        default_hid = _default_mat_hangar_id()
-        mat_hids = {p.get("mat_hangar_id") for p in plans if p.get("mat_hangar_id")}
-        if not mat_hids and default_hid is not None:
-            mat_hids = {default_hid}
-        if not mat_hids:
-            hangar_label = "未配置材料机库"
-        elif len(mat_hids) == 1:
-            hid = next(iter(mat_hids))
-            hangar_label = inventory_manager.get_hangar_name(hid) or f"机库 #{hid}"
-        else:
-            hangar_label = f"{len(mat_hids)} 个材料机库"
-        dlg = ProcurementDialog(plans, default_hid, hangar_label, self)
-        dlg.exec()
-        self.load_plans()
+        w = getattr(self, "_procurement", None)
+        if w is None:
+            w = ProcurementDialog()
+            w.plans_changed.connect(self.load_plans)
+            self._procurement = w
+        w.show()
+        w.raise_()
+        w.activateWindow()
 
     # ── 保存价格快照 ──────────────────────────────────────────
 

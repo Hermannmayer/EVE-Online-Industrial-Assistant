@@ -1,6 +1,6 @@
 """待采购对话框 - 根据生产计划和库存计算需要采购的材料"""
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -14,15 +14,19 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QTableView,
+    QToolButton,
     QToolTip,
     QVBoxLayout,
+    QWidget,
 )
 
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.logger import log
 from ui_pyside6.icon_cache import load_item_icon
+from ui_pyside6.pin_utils import apply_window_pin
 
 
 def _resolve_item_name(mid: int | None, zh_name: str | None, en_name: str | None) -> str:
@@ -155,31 +159,113 @@ class ProcureTableModel(QAbstractTableModel):
 
 
 class ProcurementDialog(QDialog):
-    """待采购对话框 - 根据生产计划和库存计算需要采购的材料"""
+    """待采购对话框 - 根据生产计划和库存计算需要采购的材料
 
-    def __init__(self, active_plans, default_mat_hangar_id: int | None, hangar_label: str, parent=None):
+    非模态独立工具窗：可置顶悬浮于游戏之上，不影响主界面操作。
+    计划/库存变化由 10s 轮询同步（见 showEvent）；本窗入库/下线后发
+    `plans_changed` 通知主界面刷新。
+    """
+
+    plans_changed = Signal()  # 入库/下线后通知主界面重载计划
+
+    POLL_INTERVAL_MS = 10_000
+
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"待采购 - 材料需求 ({hangar_label})")
+        self.setWindowFlag(Qt.WindowType.Window, True)  # 独立窗口，不随主窗最小化
+        self.setWindowTitle("待采购 - 材料需求")
         # 窄高窗口：方便一眼浏览全部待采购物品
         self.setMinimumSize(620, 400)
-        self.resize(720, 800)
+        self.resize(760, 820)
 
-        self._active_plans = active_plans
-        self._default_mat_hangar_id = default_mat_hangar_id
+        self._active_plans: list[dict] = []
+        self._default_mat_hangar_id: int | None = None
         self._rows: list[dict] = []
         self._price_type = "sell"
         self._sort_state: dict[int, tuple[int, Qt.SortOrder]] = {}
+        self._manual_overrides: dict[int, float] = {}  # 用户手改的采购量，重算后回放
+        self._poll_timer: QTimer | None = None
 
         self._build_ui()
-        self._calculate()
+        self._reload_plans()
+        self._restore_pin()
         theme.add_theme_listener(self._on_theme_changed)
         self._on_theme_changed()
+
+    # ── 数据加载 ──────────────────────────────────────────
+
+    def _reload_plans(self) -> None:
+        """重新加载活跃计划、推导机库标签并重算（自给自足，不由调用方传入）。"""
+        from services import inventory_manager
+        from services.plan_service import load_active_plans_for_procurement
+
+        self._active_plans = load_active_plans_for_procurement()
+        default_hid = inventory_manager.get_default_mat_hangar_and_system()[0]
+        self._default_mat_hangar_id = default_hid
+
+        mat_hids = {p.get("mat_hangar_id") for p in self._active_plans if p.get("mat_hangar_id")}
+        if not mat_hids and default_hid is not None:
+            mat_hids = {default_hid}
+        if not mat_hids:
+            label = "未配置材料机库"
+        elif len(mat_hids) == 1:
+            hid = next(iter(mat_hids))
+            label = inventory_manager.get_hangar_name(hid) or f"机库 #{hid}"
+        else:
+            label = f"{len(mat_hids)} 个材料机库"
+        self.setWindowTitle(f"待采购 - 材料需求 ({label})")
+        self._calculate()
+
+    # ── 生命周期（单实例复用：关闭后重开必须能继续刷新）──
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._reload_plans()
+        if self._poll_timer is None:
+            self._poll_timer = QTimer(self)
+            self._poll_timer.setInterval(self.POLL_INTERVAL_MS)
+            self._poll_timer.timeout.connect(self._on_poll)
+        self._poll_timer.start()
+
+    def hideEvent(self, event) -> None:
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
+        super().hideEvent(event)
+
+    def _on_poll(self) -> None:
+        """定时同步主界面：计划/库存变化后重算（手动改量由 _manual_overrides 回放保留）。"""
+        if not self.isVisible():
+            return
+        try:
+            self._reload_plans()
+        except Exception:
+            log.exception("待采购轮询失败")
+
+    # ── 置顶 ──────────────────────────────────────────────
+
+    def _restore_pin(self) -> None:
+        try:
+            from services.user_settings import load_settings
+
+            if load_settings().get("procurement_pin"):
+                self._pin_btn.setChecked(True)
+                apply_window_pin(self, True)
+        except Exception:
+            pass
+
+    def _on_pin_toggled(self, checked: bool) -> None:
+        apply_window_pin(self, checked)
+        try:
+            from services.user_settings import save_settings
+
+            save_settings({"procurement_pin": checked})
+        except Exception:
+            pass
 
     def _build_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(6)
-        self._body_layout = main_layout
 
         # Toolbar
         toolbar = QHBoxLayout()
@@ -220,19 +306,36 @@ class ProcurementDialog(QDialog):
         self._complete_all_btn.setVisible(False)
         toolbar.addWidget(self._complete_all_btn)
 
+        self._pin_btn = QToolButton()
+        self._pin_btn.setText("📌 置顶")
+        self._pin_btn.setCheckable(True)
+        self._pin_btn.setToolTip("切换窗口置顶（悬浮于游戏之上）")
+        self._pin_btn.toggled.connect(self._on_pin_toggled)
+        toolbar.addWidget(self._pin_btn)
+
         main_layout.addLayout(toolbar)
 
         # 分区一：需采购（to_buy > 0），分区二：库存已备足（to_buy <= 0）
+        # 两栏放进可拖动的 QSplitter —— 固定比例会让「库存充足」栏被挤到看不见
         self._buy_label = QLabel("")
         self._stock_label = QLabel("")
         self._buy_table = QTableView()
         self._stock_table = QTableView()
         for table in (self._buy_table, self._stock_table):
             self._style_table(table)
-        main_layout.addWidget(self._buy_label)
-        main_layout.addWidget(self._buy_table, 1)
-        main_layout.addWidget(self._stock_label)
-        main_layout.addWidget(self._stock_table, 1)
+
+        self._buy_section = self._make_section(self._buy_label, self._buy_table)
+        self._stock_section = self._make_section(self._stock_label, self._stock_table)
+        self._splitter = QSplitter(Qt.Orientation.Vertical)
+        self._splitter.setChildrenCollapsible(False)
+        self._splitter.addWidget(self._buy_section)
+        self._splitter.addWidget(self._stock_section)
+        for i in range(self._splitter.count()):
+            self._splitter.setCollapsible(i, False)
+        self._splitter.setStretchFactor(0, 3)
+        self._splitter.setStretchFactor(1, 2)
+        main_layout.addWidget(self._splitter, 1)
+        self._splitter_sized = False
 
         # Summary bar
         summary_bar = QHBoxLayout()
@@ -241,6 +344,36 @@ class ProcurementDialog(QDialog):
         summary_bar.addWidget(self._summary_label)
         summary_bar.addStretch()
         main_layout.addLayout(summary_bar)
+
+    @staticmethod
+    def _make_section(label: QLabel, table: QTableView) -> QWidget:
+        """分区容器：标题 + 表格，作为 splitter 的一个可拖动块。"""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        lay.addWidget(label)
+        lay.addWidget(table, 1)
+        return w
+
+    def _size_splitter_once(self) -> None:
+        """按行数比例给两栏设初值，只做一次——之后由用户拖动决定。"""
+        if self._splitter_sized:
+            return
+        buy_model, stock_model = self._buy_table.model(), self._stock_table.model()
+        buy_rows = buy_model.rowCount() if buy_model else 0
+        stock_rows = stock_model.rowCount() if stock_model else 0
+        if not buy_rows and not stock_rows:
+            return
+        height = max(self._splitter.height(), 400)
+        total = max(buy_rows + stock_rows, 1)
+        self._splitter.setSizes(
+            [
+                max(int(height * buy_rows / total), 1),
+                max(int(height * stock_rows / total), 1),
+            ]
+        )
+        self._splitter_sized = True
 
     def _style_table(self, table: QTableView):
         """两表共用的表格样式 + 双击复制 + 表头排序 + 右键菜单。"""
@@ -283,14 +416,11 @@ class ProcurementDialog(QDialog):
         self._size_columns(self._buy_table)
         self._size_columns(self._stock_table)
 
-        self._buy_label.setVisible(bool(buy_rows))
-        self._buy_table.setVisible(bool(buy_rows))
-        self._stock_label.setVisible(bool(stock_rows))
-        self._stock_table.setVisible(bool(stock_rows))
+        self._buy_section.setVisible(bool(buy_rows))
+        self._stock_section.setVisible(bool(stock_rows))
 
-        # 纵向空间按行数比例分配（PySide6 的 setStretch 只接受布局槽位 index）
-        self._body_layout.setStretch(self._body_layout.indexOf(self._buy_table), max(len(buy_rows), 1))
-        self._body_layout.setStretch(self._body_layout.indexOf(self._stock_table), max(len(stock_rows), 1))
+        # 注意：不在这里 setSizes —— 每次重算都设会把用户拖动的位置顶回去
+        self._size_splitter_once()
 
         for table in (self._buy_table, self._stock_table):
             state = self._sort_state.get(id(table))
@@ -335,6 +465,7 @@ class ProcurementDialog(QDialog):
                 price_type=price_type,
             )
         self._rows = rows
+        self._apply_manual_overrides()
 
         # 检查是否有「待下线」的计划，显示「完成所有」按钮
         ready_plans = [p for p in self._active_plans if p.get("status") == "ready"]
@@ -347,10 +478,8 @@ class ProcurementDialog(QDialog):
         if not self._rows:
             self._buy_table.setModel(None)
             self._stock_table.setModel(None)
-            self._buy_label.setVisible(False)
-            self._buy_table.setVisible(False)
-            self._stock_label.setVisible(False)
-            self._stock_table.setVisible(False)
+            self._buy_section.setVisible(False)
+            self._stock_section.setVisible(False)
             self._summary_label.setText("无活跃计划材料需求")
             return
 
@@ -408,6 +537,17 @@ class ProcurementDialog(QDialog):
             model.remove_row(row)
         self._update_summary()
 
+    def _apply_manual_overrides(self) -> None:
+        """把用户手改的采购量回放到刚算出的行上 —— 轮询重算不丢改动。"""
+        if not self._manual_overrides:
+            return
+        for row in self._rows:
+            tid = row.get("type_id")
+            if tid is not None and int(tid) in self._manual_overrides:
+                qty = self._manual_overrides[int(tid)]
+                row["to_buy"] = qty
+                row["total"] = qty * row.get("price", 0)
+
     def _on_edit_qty(self, table: QTableView, sel, model: ProcureTableModel):
         item = model.get_row(sel[0].row())
         if not item:
@@ -425,6 +565,9 @@ class ProcurementDialog(QDialog):
             return
         old = item.get("to_buy", 0)
         model.update_qty(sel[0].row(), qty)
+        tid = item.get("type_id")
+        if tid is not None:
+            self._manual_overrides[int(tid)] = qty  # 轮询重算后回放，不丢手改
         # 跨分区边界（>0 ↔ <=0）时把行搬去另一分区；否则就地更新保持选区
         if (old > 0) != (qty > 0):
             self._rebuild_sections()
@@ -471,6 +614,7 @@ class ProcurementDialog(QDialog):
         hangar_name = get_hangar_name(hid) or f"机库{hid}"
         run_clipboard_import(hid, hangar_name, self, mode="incremental")
         self._calculate()
+        self.plans_changed.emit()  # 库存变化 → 通知主界面重载计划
 
     def _on_complete_all(self):
         """一键完成所有待下线计划：标记为 completed + 自动入库（经 plan_execution.complete_plan）"""
@@ -502,6 +646,7 @@ class ProcurementDialog(QDialog):
                 msg += f"\n{deposited} 项成品已自动入库"
             QMessageBox.information(self, "完成", msg)
             self._calculate()
+            self.plans_changed.emit()  # 计划状态变化 → 通知主界面重载
         else:
             QMessageBox.information(self, "提示", "没有可完成的计划")
 
@@ -517,6 +662,6 @@ class ProcurementDialog(QDialog):
         hub = getattr(self, "_hub_text", "Jita")
         price_type = self._price_type
         self._summary_label.setText(
-            f"共 {len(all_rows)} 种材料 | 需采购总金额: {total_cost:,.0f} ISK | 总体积: {total_volume:,.2f} m\\u00b3"
+            f"共 {len(all_rows)} 种材料 | 需采购总金额: {total_cost:,.0f} ISK | 总体积: {total_volume:,.2f} m³"
             f" | 来源: {hub} ({price_type})"
         )

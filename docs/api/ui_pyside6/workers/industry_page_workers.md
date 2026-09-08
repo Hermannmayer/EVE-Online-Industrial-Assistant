@@ -16,7 +16,7 @@ def init_plan_db()
 
 初始化 production_plans 表。
 
-定义行：`29`
+定义行：`30`
 
 ## 类
 
@@ -24,7 +24,7 @@ def init_plan_db()
 
 后台线程拉取工业系统成本指数 + 设施数据
 
-定义行：`13`
+定义行：`14`
 
 #### 方法
 
@@ -38,13 +38,13 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`18`
+定义行：`19`
 
 ### `class PlanPriceRefreshWorker`（继承 `QThread`）
 
 定向拉取计划涉及物品的 ESI 市场价格——带 5 分钟缓存
 
-定义行：`41`
+定义行：`42`
 
 #### 方法
 
@@ -58,7 +58,7 @@ def __init__(self, type_ids: set[int], parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`46`
+定义行：`47`
 ##### `run`
 
 ```python
@@ -69,7 +69,7 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`50`
+定义行：`51`
 ##### `_fetch_and_save`
 
 ```python
@@ -78,4 +78,4 @@ async def _fetch_and_save(self) -> int
 
 异步拉取 ESI + 写入 market.db（仅拉取缓存过期的物品）
 
-定义行：`61`
+定义行：`62`
