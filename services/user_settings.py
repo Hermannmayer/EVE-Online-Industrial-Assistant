@@ -7,7 +7,9 @@
 import json
 import os
 from collections.abc import Callable
+from datetime import datetime
 
+from core.logger import log
 from core.paths import data_dir
 
 SETTINGS_PATH = os.path.join(data_dir(), "settings.json")
@@ -35,16 +37,41 @@ def _migrate_settings(data: dict) -> dict:
     return data
 
 
-def load_settings() -> dict:
-    """读取 settings.json，文件不存在或损坏时返回 {}；结构过期时先升级再返回。"""
+def _read_raw() -> dict | None:
+    """读原始 JSON：文件不存在 → {}；存在但读不出来（损坏/被占用）→ None。
+
+    区分这两种情况很重要：写入前的 read-modify-write 只有在「文件不存在」时
+    才可以从空字典起步；「读失败」时若也当作空，就会把用户其余设置全部抹掉。
+    """
     try:
         with open(SETTINGS_PATH, encoding="utf-8") as f:
             data = json.load(f)
-        if not isinstance(data, dict):
-            return {}
-        return _migrate_settings(data)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except FileNotFoundError:
         return {}
+    except (json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _backup_corrupt() -> None:
+    """settings.json 读不出来时先另存现场，再让调用方重建。"""
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = f"{SETTINGS_PATH}.corrupt-{stamp}"
+    try:
+        os.replace(SETTINGS_PATH, backup)
+        log.warning("settings.json 无法解析，已备份为 %s 后重建", backup)
+    except OSError:
+        log.exception("备份损坏的 settings.json 失败")
+
+
+def load_settings() -> dict:
+    """读取 settings.json，文件不存在或损坏时返回 {}；结构过期时先升级再返回。"""
+    if not os.path.exists(SETTINGS_PATH):
+        return {}  # 不存在 → 不触发迁移写盘（保持与历史行为一致）
+    data = _read_raw()
+    if data is None:
+        return {}
+    return _migrate_settings(data)
 
 
 def _write_all(data: dict) -> None:
@@ -55,8 +82,15 @@ def _write_all(data: dict) -> None:
 
 
 def save_settings(data: dict) -> None:
-    """read-modify-write：把传入键合并进现有 settings.json（保留其它键）。"""
-    merged = load_settings()
+    """read-modify-write：把传入键合并进现有 settings.json（保留其它键）。
+
+    读取失败（文件损坏/被占用）时先备份现场再重建，绝不用空字典静默覆盖——
+    否则一次读失败就会丢掉用户全部设置。
+    """
+    merged = _read_raw()
+    if merged is None:
+        _backup_corrupt()
+        merged = {}
     merged.update(data or {})
     _write_all(merged)
 
@@ -73,7 +107,10 @@ def set_default_hangar_id(key: str, hangar_id: int | None) -> None:
     注意：删除键必须全量写盘，不能走 save_settings 的 read-modify-write
     （后者会重新读盘，把待删除的键又合并回来）。
     """
-    data = load_settings()
+    data = _read_raw()
+    if data is None:
+        _backup_corrupt()
+        data = {}
     if hangar_id is None:
         data.pop(key, None)
     else:

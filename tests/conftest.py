@@ -44,6 +44,19 @@ def no_auto_price_download():
         yield
 
 
+@pytest.fixture(autouse=True)
+def isolate_user_settings(tmp_path, monkeypatch):
+    """把 settings.json 指向临时文件 —— 测试绝不写用户真实数据。
+
+    回归背景：tests/test_ui_main_window.py 用 patch 替换 user_settings.load_settings
+    后构造 MainWindow；MainWindow.__init__ → theme.apply_theme → save_theme_preference
+    → save_settings（read-modify-write）此时读到的是 patch 的返回值，于是把真实
+    data/settings.json 全量覆盖成那个字典（用户的默认机库等设置被擦除）。
+    """
+    monkeypatch.setattr("services.user_settings.SETTINGS_PATH", str(tmp_path / "settings.json"))
+    yield
+
+
 # ════════════════════════════════════════════════════════════════
 #  辅助：创建标准临时数据库套件
 # ════════════════════════════════════════════════════════════════

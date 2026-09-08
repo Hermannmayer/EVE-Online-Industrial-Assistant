@@ -18,6 +18,7 @@ import aiosqlite
 from core.constants import TRADE_HUB_IDS
 from core.logger import log
 from core.paths import market_db_path, progress_file
+from domain.market_depth import BUY, SELL, depth_price
 from services.client import APIClient
 
 DATABASE_PATH = market_db_path()
@@ -194,7 +195,9 @@ async def fetch_orders_detailed(
         result = {}
         complete_regions: set[int] = set()
         for _name, rid in targets:
-            region_data = {}
+            # 先按物品收集挂单档位，再统一算深度价（见 domain/market_depth.py）。
+            # 直接取 min/max 会被只有一两个单位的凑数挂单带偏。
+            levels: dict[int, dict[str, list[tuple[float, int]]]] = {}
             region_complete = True
             for ot in ("sell", "buy"):
                 key = f"{rid}_{ot}"
@@ -207,31 +210,19 @@ async def fetch_orders_detailed(
 
                 for o in data:
                     tid = o["type_id"]
-                    price = o["price"]
-                    vol = o.get("volume_remain", 0)
-                    is_buy = o.get("is_buy_order", False)
+                    side = BUY if o.get("is_buy_order", False) else SELL
+                    sides = levels.setdefault(tid, {SELL: [], BUY: []})
+                    sides[side].append((o["price"], o.get("volume_remain", 0)))
 
-                    if tid not in region_data:
-                        region_data[tid] = {
-                            "buy_price": 0.0,
-                            "sell_price": float("inf"),
-                            "buy_volume": 0,
-                            "sell_volume": 0,
-                        }
-
-                    if is_buy:
-                        if price > region_data[tid]["buy_price"]:
-                            region_data[tid]["buy_price"] = price
-                        region_data[tid]["buy_volume"] += vol
-                    else:
-                        if price < region_data[tid]["sell_price"]:
-                            region_data[tid]["sell_price"] = price
-                        region_data[tid]["sell_volume"] += vol
-
-            # 修复无卖单的物品
-            for tid in region_data:
-                if region_data[tid]["sell_price"] == float("inf"):
-                    region_data[tid]["sell_price"] = 0.0
+            region_data = {}
+            for tid, sides in levels.items():
+                buy_levels, sell_levels = sides[BUY], sides[SELL]
+                region_data[tid] = {
+                    "buy_price": depth_price(buy_levels, BUY) or 0.0,
+                    "sell_price": depth_price(sell_levels, SELL) or 0.0,
+                    "buy_volume": sum(v for _, v in buy_levels),
+                    "sell_volume": sum(v for _, v in sell_levels),
+                }
 
             result[rid] = region_data
             if region_complete:

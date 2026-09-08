@@ -123,3 +123,38 @@ def test_registered_migration_runs_and_keeps_unknown(settings_path, monkeypatch)
     assert data["new_key"] == "v"
     assert "old_key" not in data
     assert data["keep"] == 1, "未知键应保留，绝不丢弃"
+
+
+def test_settings_path_isolated_from_real_data():
+    """回归：测试必须写临时 settings.json，绝不碰用户真实数据。
+
+    背景：tests/test_ui_main_window.py 用 patch 替换 load_settings 后构造
+    MainWindow；MainWindow.__init__ → apply_theme → save_settings 是
+    read-modify-write，此时读到 patch 的返回值，于是把真实 data/settings.json
+    全量覆盖成那个字典（用户的默认机库等设置被静默擦除）。
+    """
+    from core.paths import data_dir
+
+    assert not us.SETTINGS_PATH.startswith(data_dir())
+
+
+def test_save_settings_backs_up_corrupt_file(settings_path):
+    """读取失败时先备份现场再写 —— 绝不用空字典覆盖用户其它设置。"""
+    settings_path.write_text("{ 这不是合法 JSON", encoding="utf-8")
+
+    us.save_settings({"theme": "one-dark"})
+
+    assert json.loads(settings_path.read_text(encoding="utf-8")) == {"theme": "one-dark"}
+    backups = list(settings_path.parent.glob("settings.json.corrupt-*"))
+    assert len(backups) == 1
+    assert "这不是合法 JSON" in backups[0].read_text(encoding="utf-8")
+
+
+def test_set_default_hangar_id_backs_up_corrupt_file(settings_path):
+    """同一保护也覆盖 set_default_hangar_id（它同样先读后写）。"""
+    settings_path.write_text("坏文件", encoding="utf-8")
+
+    us.set_default_hangar_id("default_mat_hangar_id", 4)
+
+    assert json.loads(settings_path.read_text(encoding="utf-8")) == {"default_mat_hangar_id": 4}
+    assert len(list(settings_path.parent.glob("settings.json.corrupt-*"))) == 1

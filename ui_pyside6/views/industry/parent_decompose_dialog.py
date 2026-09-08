@@ -83,8 +83,8 @@ class ParentDecomposeDialog(QDialog):
         self._table.verticalHeader().setVisible(False)
         self._profit_cache: dict[tuple, float | None] = {}
         for a_idx, (_plan, gnum, lines) in enumerate(self._assignments):
-            for line in lines:
-                self._append_row(a_idx, gnum, line)
+            for l_idx, line in enumerate(lines):
+                self._append_row(a_idx, l_idx, gnum, line)
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self._table.setColumnWidth(1, 200)
@@ -117,8 +117,12 @@ class ParentDecomposeDialog(QDialog):
 
         self._refresh_summary()
 
-    def _append_row(self, a_idx: int, gnum: int, line: dict) -> None:
-        """按一行拆解预览行；记录 _row_refs 供删除反向定位。"""
+    def _append_row(self, a_idx: int, l_idx: int, gnum: int, line: dict) -> None:
+        """按一行拆解预览行；记录 _row_refs 供删除反向定位。
+
+        l_idx 必须由调用方传入真实下标——早先用「列表长度 − 1」推断，导致同一母项的
+        所有子项行都指向最后一行，删除时越界（IndexError）。
+        """
         row_idx = self._table.rowCount()
         self._table.insertRow(row_idx)
         name = self._resolve_name(line["product_type_id"])
@@ -144,7 +148,7 @@ class ParentDecomposeDialog(QDialog):
             elif col == 7 and isinstance(profit, int | float) and profit < 0:
                 it.setForeground(QColor(theme.ACCENT_RED))
             self._table.setItem(row_idx, col, it)
-        self._row_refs.append((a_idx, len(self._assignments[a_idx][2]) - 1, line))
+        self._row_refs.append((a_idx, l_idx, line))
 
     def _line_profit(self, a_idx: int, line: dict) -> float | None:
         """预估单条子项产线利润（成品卖价 − 材料 − 作业费）。失败返回 None 显示 —。"""

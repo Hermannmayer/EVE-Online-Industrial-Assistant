@@ -200,7 +200,84 @@ def get_hangar_config(hangar_id: int | None) -> dict:
     return {"facility_type": row[0], "facility_tax": row[1], "rigs": rigs}
 
 
-def delete_hangar(hangar_id: int) -> bool:
+# 默认机库设置键 → 提示用中文名（删除机库时检查引用）
+_DEFAULT_HANGAR_SETTING_KEYS: dict[str, str] = {
+    "default_research_hangar_id": "默认科研机库",
+    "default_mat_hangar_id": "默认材料机库",
+    "default_deposit_hangar_id": "默认产出机库",
+    "default_trade_hangar_id": "默认商业机库",
+}
+
+
+def hangar_references(hangar_id: int) -> list[str]:
+    """返回引用该机库的位置描述，如 ['默认材料机库', '3 条计划的材料机库']。
+
+    用于删除机库前提示用户——删除会留下悬空引用（物品/蓝图由
+    ON DELETE CASCADE 连带删除，但 settings 与计划的机库列不会）。
+    """
+    from services import user_settings
+
+    refs: list[str] = []
+    settings = user_settings.load_settings()
+    for key, label in _DEFAULT_HANGAR_SETTING_KEYS.items():
+        val = settings.get(key)
+        if val is not None and int(val) == hangar_id:
+            refs.append(label)
+
+    with _default_db().connect("user") as conn:
+        mat_plans = conn.execute(
+            "SELECT COUNT(*) FROM production_plans WHERE mat_hangar_id = ?", (hangar_id,)
+        ).fetchone()[0]
+        dep_plans = conn.execute(
+            "SELECT COUNT(*) FROM production_plans WHERE deposit_hangar_id = ?", (hangar_id,)
+        ).fetchone()[0]
+    if mat_plans:
+        refs.append(f"{mat_plans} 条计划的材料机库")
+    if dep_plans:
+        refs.append(f"{dep_plans} 条计划的产出机库")
+    return refs
+
+
+def repoint_hangar_references(old_id: int, new_id: int) -> int:
+    """把指向 old_id 的引用改指到 new_id，返回改动处数。
+
+    材料机库改指时同步 `production_plans.solar_system_id`：评分链路优先用计划的
+    星系快照算系统成本指数，只改机库会让 SCI 与设施加成错配。
+    """
+    from services import user_settings
+
+    changed = 0
+    settings = user_settings.load_settings()
+    for key in _DEFAULT_HANGAR_SETTING_KEYS:
+        val = settings.get(key)
+        if val is not None and int(val) == old_id:
+            user_settings.set_default_hangar_id(key, new_id)
+            changed += 1
+
+    new_system = get_hangar_system_id(new_id)
+    with _default_db().connect("user") as conn:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE production_plans SET mat_hangar_id = ?, solar_system_id = ? WHERE mat_hangar_id = ?",
+            (new_id, new_system, old_id),
+        )
+        changed += c.rowcount
+        c.execute(
+            "UPDATE production_plans SET deposit_hangar_id = ? WHERE deposit_hangar_id = ?",
+            (new_id, old_id),
+        )
+        changed += c.rowcount
+    return changed
+
+
+def delete_hangar(hangar_id: int, *, repoint_to: int | None = None) -> bool:
+    """删除机库及其物品（蓝图/物品由 ON DELETE CASCADE 连带删除）。
+
+    repoint_to 非空时先把引用改指到该机库（见 repoint_hangar_references），
+    避免留下悬空引用——历史上悬空引用会导致默认机库设置在下次保存时被静默清空。
+    """
+    if repoint_to is not None:
+        repoint_hangar_references(hangar_id, repoint_to)
     with _default_db().connect("user") as conn:
         c = conn.cursor()
         c.execute("DELETE FROM inventory_items WHERE hangar_id = ?", (hangar_id,))

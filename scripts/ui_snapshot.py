@@ -45,6 +45,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--no-tree", action="store_true", help="不生成控件树")
     parser.add_argument("--no-shot", action="store_true", help="不生成截图")
     parser.add_argument("--max-depth", type=int, default=0, help="控件树最大深度，0=不限")
+    parser.add_argument("--dialog", default="", help="渲染独立对话框而非主页面（支持 procurement）")
     return parser.parse_args(argv)
 
 
@@ -143,6 +144,36 @@ def dump_tree(widget: Any, max_depth: int = 0) -> tuple[str, int]:
 
 # ── 主流程 ────────────────────────────────────────────────
 
+_DIALOGS = ("procurement",)
+
+
+def _render_dialog(app: Any, args: argparse.Namespace) -> int:
+    """渲染独立对话框（主页面之外的窗口），产物与页面快照同目录。"""
+    if args.dialog not in _DIALOGS:
+        print(f"未知对话框: {args.dialog}；可选: {', '.join(_DIALOGS)}", file=sys.stderr)
+        return 2
+
+    from ui_pyside6.views.procurement_tab import ProcurementDialog
+
+    win = ProcurementDialog()
+    win.resize(760, 820)
+    win.show()
+    _settle(app)
+
+    out_dir = (ROOT / args.out).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{args.dialog}.png"
+    print(f"[快照] {args.dialog:12s} {path.name if win.grab().save(str(path)) else '保存失败'}")
+
+    if not args.no_tree:
+        tree, count = dump_tree(win, args.max_depth)
+        header = f"# {args.dialog} — {type(win).__name__}\n\n- 控件数: {count}\n\n```\n"
+        (out_dir / f"{args.dialog}.tree.md").write_text(header + tree + "\n```\n", encoding="utf-8")
+
+    win.close()
+    _settle(app)
+    return 0
+
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
@@ -164,6 +195,9 @@ def main(argv: list[str] | None = None) -> int:
 
     theme.set_font_scale(args.font_scale if args.font_scale else theme.load_font_scale())
     theme.apply_theme(args.theme or theme.load_theme_preference())
+
+    if args.dialog:
+        return _render_dialog(app, args)
 
     from ui_pyside6.main_window import MainWindow
 

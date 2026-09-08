@@ -1008,6 +1008,16 @@ class ProductionLauncher(QWidget):
         else:
             self._char_filter.setCurrentIndex(0)
 
+    def showEvent(self, event) -> None:
+        """单实例复用时必须重启定时器 —— closeEvent 停表后不会自动恢复。
+
+        否则「关闭再打开」得到的是不刷新倒计时/计划列表的死窗口。
+        """
+        super().showEvent(event)
+        self._tick_timer.start()
+        self._poll_timer.start()
+        self._on_poll()
+
     def closeEvent(self, event) -> None:
         self._tick_timer.stop()
         self._poll_timer.stop()

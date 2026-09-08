@@ -208,7 +208,10 @@ def full_db(temp_db):
                 blueprint_type_id INTEGER,
                 runs INTEGER DEFAULT 1,
                 parallels INTEGER DEFAULT 1,
-                status TEXT DEFAULT 'pending'
+                status TEXT DEFAULT 'pending',
+                mat_hangar_id INTEGER,
+                deposit_hangar_id INTEGER,
+                solar_system_id INTEGER
             )
             """
         )
@@ -490,3 +493,77 @@ class TestApplyInventoryImport:
         dst = create_hangar("目标仓")
         added, moved = apply_inventory_import(dst, [(9999, 1, 5.0, src)], "incremental")
         assert (added, moved) == (0, 0)
+
+
+class TestHangarReferences:
+    """删除机库前的引用检查与重指向（回归：悬空引用会导致默认机库设置被静默清空）"""
+
+    def test_no_references(self, full_db):
+        import services.inventory_manager as im
+
+        im.init_db()
+        hid = im.create_hangar("独立仓")
+        assert im.hangar_references(hid) == []
+
+    def test_settings_and_plan_references(self, full_db, monkeypatch):
+        import services.inventory_manager as im
+        import services.user_settings as us
+
+        im.init_db()
+        hid = im.create_hangar("吉他仓库")
+        with full_db.connect("user") as conn:
+            conn.execute(
+                "INSERT INTO production_plans (id, mat_hangar_id, deposit_hangar_id) VALUES (1, ?, ?)", (hid, hid)
+            )
+            conn.execute("INSERT INTO production_plans (id, mat_hangar_id) VALUES (2, ?)", (hid,))
+        monkeypatch.setattr(us, "load_settings", lambda: {"default_mat_hangar_id": hid})
+
+        refs = im.hangar_references(hid)
+
+        assert "默认材料机库" in refs
+        assert "2 条计划的材料机库" in refs
+        assert "1 条计划的产出机库" in refs
+
+    def test_repoint_updates_settings_plans_and_solar_system(self, full_db, monkeypatch):
+        import services.inventory_manager as im
+        import services.user_settings as us
+
+        im.init_db()
+        old = im.create_hangar("旧仓")
+        new = im.create_hangar("新仓")
+        im.update_hangar_system(new, 30000142)
+        with full_db.connect("user") as conn:
+            conn.execute("INSERT INTO production_plans (id, mat_hangar_id, solar_system_id) VALUES (1, ?, 999)", (old,))
+            conn.execute("INSERT INTO production_plans (id, deposit_hangar_id) VALUES (2, ?)", (old,))
+        saved: dict = {}
+        monkeypatch.setattr(us, "load_settings", lambda: {"default_mat_hangar_id": old})
+        monkeypatch.setattr(us, "set_default_hangar_id", lambda k, v: saved.__setitem__(k, v))
+
+        changed = im.repoint_hangar_references(old, new)
+
+        assert saved == {"default_mat_hangar_id": new}
+        with full_db.connect("user") as conn:
+            # 材料机库改指必须同步星系快照，否则 SCI 与设施加成错配
+            row = conn.execute("SELECT mat_hangar_id, solar_system_id FROM production_plans WHERE id=1").fetchone()
+            assert (row[0], row[1]) == (new, 30000142)
+            assert conn.execute("SELECT deposit_hangar_id FROM production_plans WHERE id=2").fetchone()[0] == new
+        assert changed == 3  # 1 个设置键 + 2 条计划
+
+    def test_delete_hangar_with_repoint(self, full_db, monkeypatch):
+        import services.inventory_manager as im
+        import services.user_settings as us
+
+        im.init_db()
+        old = im.create_hangar("旧仓")
+        new = im.create_hangar("新仓")
+        im.add_item(old, 34, 5)
+        with full_db.connect("user") as conn:
+            conn.execute("INSERT INTO production_plans (id, mat_hangar_id) VALUES (1, ?)", (old,))
+        monkeypatch.setattr(us, "load_settings", lambda: {"default_mat_hangar_id": old})
+        monkeypatch.setattr(us, "set_default_hangar_id", lambda k, v: None)
+
+        assert im.delete_hangar(old, repoint_to=new) is True
+
+        assert im.get_hangar_name(old) == ""
+        with full_db.connect("user") as conn:
+            assert conn.execute("SELECT mat_hangar_id FROM production_plans WHERE id=1").fetchone()[0] == new

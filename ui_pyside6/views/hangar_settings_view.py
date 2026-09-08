@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
@@ -257,6 +258,59 @@ class _HangarEditor(QWidget):
         self._update_summary()
 
 
+class _DeleteHangarDialog(QDialog):
+    """删除机库确认框：列出引用明细，并可选把引用改指到其他机库。"""
+
+    def __init__(self, hangar_name: str, references: list[str], others: list[dict], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("删除机库")
+        self.setMinimumWidth(440)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(8)
+
+        self._warn = QLabel(f"「{hangar_name}」正被以下位置引用：")
+        self._warn.setWordWrap(True)
+        layout.addWidget(self._warn)
+
+        for ref in references:
+            layout.addWidget(QLabel(f"    • {ref}"))
+
+        self._note = QLabel("删除会一并移除该机库内的物品与蓝图（不可撤销）。")
+        self._note.setWordWrap(True)
+        layout.addWidget(self._note)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("将上述引用改为："))
+        self._combo = QComboBox()
+        self._combo.addItem("不修改（保留原引用）", None)
+        for h in others:
+            self._combo.addItem(h["name"], h["id"])
+        row.addWidget(self._combo, 1)
+        layout.addLayout(row)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        ok_btn = btns.button(QDialogButtonBox.StandardButton.Ok)
+        if ok_btn is not None:
+            ok_btn.setText("删除")
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+        theme.add_theme_listener(self._on_theme_changed)
+        self._on_theme_changed()
+
+    def repoint_to(self) -> int | None:
+        """用户选择的替换机库 id；「不修改」返回 None。"""
+        data = self._combo.currentData()
+        return int(data) if data is not None else None
+
+    def _on_theme_changed(self) -> None:
+        self._warn.setStyleSheet(f"color: {theme.ACCENT_ORANGE}; font-weight: 600;")
+        self._note.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
+
+
 class HangarSettingsDialog(QDialog):
     """机库设置对话框 — 机库配置（星系/设施/改装件/税）+ 默认机库"""
 
@@ -356,21 +410,25 @@ class HangarSettingsDialog(QDialog):
         self._refresh_defaults_combos()
 
     def _refresh_defaults_combos(self) -> None:
-        """按当前机库列表重建「默认机库」下拉（保留已选值；新建/删除后同步）。"""
+        """按当前机库列表重建「默认机库」下拉（保留已选值；新建/删除后同步）。
+
+        已选机库若已被删除，保留为一个可见项「（已删除的机库 #N）」——
+        否则保存时会被静默清空（默认机库设置「老是丢失」的另一条路径）。
+        """
         if not hasattr(self, "_default_combos"):
             return
         hangars = inventory_manager.get_hangars()
+        known = {h["id"] for h in hangars}
         for combo in self._default_combos.values():
             current = combo.currentData()
             combo.blockSignals(True)
             combo.clear()
             combo.addItem("未设置", -1)
-            new_selected = -1
             for h in hangars:
                 combo.addItem(h["name"], h["id"])
-                if h["id"] == current:
-                    new_selected = h["id"]
-            combo.setCurrentIndex(combo.findData(new_selected))
+            if current is not None and int(current) not in known and int(current) != -1:
+                combo.addItem(f"（已删除的机库 #{int(current)}）", int(current))
+            combo.setCurrentIndex(combo.findData(current))
             combo.blockSignals(False)
 
     def _system_names(self, solar_system_ids: list[int]) -> dict[int, str]:
@@ -416,15 +474,26 @@ class HangarSettingsDialog(QDialog):
             return
         hangar_id = list(self._editors)[row]
         name = self._hangar_list.item(row).text()
-        reply = QMessageBox.question(
-            self,
-            "确认",
-            f"删除机库「{name}」及其所有物品？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
+
+        refs = inventory_manager.hangar_references(hangar_id)
+        if not refs:
+            reply = QMessageBox.question(
+                self,
+                "确认",
+                f"删除机库「{name}」及其所有物品？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
             inventory_manager.delete_hangar(hangar_id)
-            self._reload_hangars()
+        else:
+            # 有引用 → 列出明细，并允许把引用改指到其他机库，避免留下悬空引用
+            others = [h for h in inventory_manager.get_hangars() if h["id"] != hangar_id]
+            dlg = _DeleteHangarDialog(name, refs, others, self)
+            if not dlg.exec():
+                return
+            inventory_manager.delete_hangar(hangar_id, repoint_to=dlg.repoint_to())
+        self._reload_hangars()
 
     # ── Tab 2: 默认机库 ────────────────────────────────────
 
@@ -437,22 +506,26 @@ class HangarSettingsDialog(QDialog):
         form = QFormLayout(group)
         self._default_combos: dict[str, QComboBox] = {}
         hangars = inventory_manager.get_hangars()
+        known_ids = {h["id"] for h in hangars}
+        settings = user_settings.load_settings()
         for key, label in _DEFAULT_HANGAR_KEYS:
             combo = QComboBox()
             combo.addItem("未设置", -1)
             for h in hangars:
                 combo.addItem(h["name"], h["id"])
+            val = settings.get(key)
+            if val is not None:
+                val = int(val)
+                if val not in known_ids:
+                    # 保存的机库已被删除：把原值作为可见项保留。
+                    # 否则下拉框解析不到 → 停在「未设置」→ 保存时被静默清空，
+                    # 用户感知为「默认机库设置老是丢失」。
+                    combo.addItem(f"（已删除的机库 #{val}）", val)
+                combo.setCurrentIndex(combo.findData(val))
             form.addRow(f"{label}:", combo)
             self._default_combos[key] = combo
         layout.addWidget(group)
 
-        settings = user_settings.load_settings()
-        for key, combo in self._default_combos.items():
-            val = settings.get(key)
-            if val is not None:
-                idx = combo.findData(int(val))
-                if idx >= 0:
-                    combo.setCurrentIndex(idx)
         layout.addStretch()
         return w
 

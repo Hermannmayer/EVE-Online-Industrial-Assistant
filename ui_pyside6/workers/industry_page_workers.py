@@ -8,6 +8,7 @@ from PySide6.QtCore import QThread, Signal
 
 from core.container import get_container
 from core.logger import log
+from domain.market_depth import BUY, SELL, depth_price
 
 
 class IndustryDataWorker(QThread):
@@ -78,7 +79,6 @@ class PlanPriceRefreshWorker(QThread):
 
             async def fetch_item_orders(tid: int) -> tuple[int, dict]:
                 url = f"{ESI_BASE}/markets/{REGION_JITA}/orders/"
-                result: dict = {"buy_price": 0.0, "sell_price": float("inf"), "buy_volume": 0, "sell_volume": 0}
 
                 async def fetch_one(order_type: str) -> list[dict]:
                     try:
@@ -89,21 +89,16 @@ class PlanPriceRefreshWorker(QThread):
                         return []
 
                 buy_data, sell_data = await asyncio.gather(fetch_one("buy"), fetch_one("sell"))
-
-                for o in buy_data:
-                    if o["price"] > result["buy_price"]:
-                        result["buy_price"] = o["price"]
-                    result["buy_volume"] += o.get("volume_remain", 0)
-
-                for o in sell_data:
-                    if o["price"] < result["sell_price"]:
-                        result["sell_price"] = o["price"]
-                    result["sell_volume"] += o.get("volume_remain", 0)
-
-                if result["sell_price"] == float("inf"):
-                    result["sell_price"] = 0.0
-
-                return tid, result
+                # 与全量更新同一套深度取价（domain/market_depth.py），
+                # 否则本路径会把深度价打回最低价
+                buy_levels = [(o["price"], o.get("volume_remain", 0)) for o in buy_data]
+                sell_levels = [(o["price"], o.get("volume_remain", 0)) for o in sell_data]
+                return tid, {
+                    "buy_price": depth_price(buy_levels, BUY) or 0.0,
+                    "sell_price": depth_price(sell_levels, SELL) or 0.0,
+                    "buy_volume": sum(v for _, v in buy_levels),
+                    "sell_volume": sum(v for _, v in sell_levels),
+                }
 
             tasks = [fetch_item_orders(tid) for tid in stale_ids]
             gathered = await asyncio.gather(*tasks, return_exceptions=True)

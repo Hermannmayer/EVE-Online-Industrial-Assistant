@@ -248,6 +248,23 @@ class TestProductionLauncher:
         assert w._tick_timer.isActive() is False
         assert w._poll_timer.isActive() is False
 
+    def test_reopen_restarts_timers(self, qapp, monkeypatch):
+        """回归：closeEvent 停表后不会自动恢复，单实例复用时重开必须重启定时器。
+
+        否则「关闭再打开」得到的是不刷新倒计时/计划列表的死窗口。
+        """
+        w, _ = _make_launcher(qapp, monkeypatch)
+        w._tick_timer.start()
+        w._poll_timer.start()
+        w.close()
+        assert w._tick_timer.isActive() is False
+
+        w.show()
+        qapp.processEvents()
+        assert w._tick_timer.isActive() is True
+        assert w._poll_timer.isActive() is True
+        w.close()
+
 
 class TestCapacitySlotBar:
     """占用条几何自适应。
