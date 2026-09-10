@@ -41,6 +41,8 @@ STRUCTURE_MAT_SAVING = 1.0  # 工程站材料减免乘数（默认无，Upwell �
 INDUSTRY_SKILL_MULT = 0.04  # 工业理论 (3380) 每级 -4% 时间
 ADV_INDUSTRY_SKILL_MULT = 0.03  # 高级工业理论 (3388) 每级 -3% 时间
 TE_MULT_PER_LEVEL = 0.01  # TE 每级 -1% 时间
+RESEARCH_SKILL_MULT = 0.02  # 研究概论 (3403) 每级 -2% 时间（拷贝/发明/研究）
+METALLURGY_SKILL_MULT = 0.01  # 冶金学 (3409) 每级 -1% 时间（仅 ME/TE 研究）
 
 
 # ═══════════════════════════════════════════════════════════

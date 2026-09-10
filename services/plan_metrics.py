@@ -1,12 +1,27 @@
 """
-计划指标计算 — 个人利润率 / 拆解母项成本调整（纯函数，无 DB/Qt 依赖）。
+计划指标计算 — 个人利润率 / 拆解母项成本调整 / 科研作业成本（纯函数，无 DB/Qt 依赖）。
 
 从 scoring_service.ScoringService 中抽出的纯算法：这些函数只做数值计算，
 输入全部显式传入（result dict + 库存成本映射 + 流程数），不触碰数据库/容器，
 便于脱离 SQLite/Qt 单测。ScoringService 保留 thin delegate 向后兼容。
+
+科研作业成本（拷贝/发明/研究）与制造共用 `domain.formulas` 的 EIV / 安装费 /
+材料量公式，区别只在「作业次数」的口径：制造按 runs×parallels，科研按作业次数。
 """
 
 from __future__ import annotations
+
+from domain.formulas import calc_eiv, calc_job_cost_fees, calc_material_for_runs
+from domain.research import (
+    Decryptor,
+    invention_attempts,
+    invention_output_runs,
+    invention_probability,
+)
+
+# 安装费税费兜底（与 services.manufacturing_calculator 的 NPC 口径一致）
+DEFAULT_FACILITY_TAX = 0.0025
+DEFAULT_SCC_SURCHARGE = 0.04
 
 
 def calculate_personal_margin(
@@ -158,3 +173,225 @@ def adjust_mother_metrics(
     denom = new_material_cost + fees
     margin = round(profit / denom * 100, 2) if denom > 0 else 0.0
     return new_material_cost, profit, margin, cost_overrides
+
+
+# ═══════════════════════════════════════════════════════════
+#  科研作业成本（拷贝 / 发明 / 研究）
+#
+#  与制造的区别：材料不受 ME 减免（拷贝/发明/研究都不吃 ME），作业次数由活动决定。
+#  输入全部显式传入（材料清单 + 单价 + SCI + 技能等级），无 DB/Qt 依赖。
+# ═══════════════════════════════════════════════════════════
+
+
+def job_batch_materials(
+    materials: list[tuple[int, int]],
+    job_count: int,
+    *,
+    me_level: int = 0,
+) -> list[tuple[int, int]]:
+    """一次科研作业批次的材料总量 [(type_id, qty)]。
+
+    materials: [(material_type_id, 蓝图基础量)]（来自 blueprint_materials）
+    job_count: 作业次数（发明=尝试次数，拷贝=总授权流程数，研究=目标级数）
+    me_level: 科研活动恒为 0（不吃材料效率），参数保留供扩展
+    """
+    n = max(1, int(job_count))
+    return [(int(mid), int(calc_material_for_runs(qty, 10, me_level, n))) for mid, qty in materials]
+
+
+def material_cost_of(
+    mats: list[tuple[int, int]],
+    prices: dict[int, float],
+    extra: list[tuple[int, float]] | None = None,
+) -> float:
+    """材料总价 = Σ(基础量 × 单价) + extra([(type_id, qty), ...] 小数量的附加项)。
+
+    extra 用于解码器（每次作业消耗 1 个，数量为作业次数而非整数材料）。
+    """
+    total: float = 0.0
+    for mid, qty in mats:
+        total += float(prices.get(mid, 0.0)) * float(qty)
+    for mid, extra_qty in extra or []:
+        total += float(prices.get(mid, 0.0)) * float(extra_qty)
+    return total
+
+
+def _installation_fee(
+    eiv_materials: list[tuple[int, int]],
+    prices: dict[int, float],
+    sci: float,
+    *,
+    structure_mult: float = 1.0,
+    facility_tax: float = DEFAULT_FACILITY_TAX,
+    alpha_tax: float = 0.0,
+    scc: float = DEFAULT_SCC_SURCHARGE,
+) -> float:
+    """按 EIV（材料基础量 × adjusted_price）算安装费。
+
+    EIV 用**基础量**（不含 ME），与游戏安装费口径一致。
+    """
+    eiv = calc_eiv([(qty, float(prices.get(mid, 0.0))) for mid, qty in eiv_materials])
+    fees = calc_job_cost_fees(eiv, sci, structure_mult, facility_tax, scc, alpha_tax)
+    return float(fees["total_fee"])
+
+
+def invention_plan_cost(
+    *,
+    base_probability: float,
+    materials: list[tuple[int, int]],
+    prices: dict[int, float],
+    sci: float,
+    science_skill_1: int = 0,
+    science_skill_2: int = 0,
+    encryption_skill: int = 0,
+    decryptor: Decryptor | None = None,
+    base_runs: int = 10,
+    output_runs_needed: int = 1,
+    input_bpc_cost_per_run: float = 0.0,
+    success_rate_override: float | None = None,
+    actual_output_runs: int | None = None,
+    structure_mult: float = 1.0,
+    facility_tax: float = DEFAULT_FACILITY_TAX,
+    alpha_tax: float = 0.0,
+) -> dict:
+    """发明作业成本（期望值口径）。
+
+    每次「尝试」消耗: 数据核心材料 + 解码器(可选) + 输入 T1 BPC 的 1 个授权流程。
+    成功时产出 T2 BPC: 流程数 = base_runs + 解码器修正。
+
+    参数:
+        base_probability: SDE 基础成功率
+        materials: 数据核心材料 [(type_id, 基础量)]（一次尝试的量）
+        prices: {type_id: 单价}（adjusted_price 优先，缺失用 sell_price）
+        sci: 设施星系该活动的成本指数
+        decryptor: 解码器（None = 不使用）
+        base_runs: 产出 BPC 的基础流程数（SDE 实测 = min(T1 拷贝上限, T2 制造上限)）
+        output_runs_needed: 需要的 T2 BPC 总流程数
+        input_bpc_cost_per_run: 输入 T1 BPC 的每流程成本（0 = 未配置，不计入）
+        success_rate_override: 用户手填的预期成功率（None = 按技能算）
+        actual_output_runs: 完成后手填的**实际**产出流程（None = 未回填，用期望值）
+
+    返回:
+        {success_rate, runs_per_bpc, attempts, material_cost, fee, input_bpc_cost,
+         total_cost, output_runs, expected_runs, bpc_unit_cost, is_actual, materials}
+    """
+    rate = (
+        float(success_rate_override)
+        if success_rate_override is not None
+        else invention_probability(
+            base_probability,
+            science_skill_1,
+            science_skill_2,
+            encryption_skill,
+            prob_mult=decryptor.prob_mult if decryptor else 1.0,
+        )
+    )
+    rate = min(1.0, max(0.0, rate))
+    runs_per_bpc = invention_output_runs(base_runs, decryptor)
+
+    attempts = invention_attempts(output_runs_needed, rate, runs_per_bpc)
+    # 每次尝试的数据核心；解码器每次消耗 1 个（成败都扣）
+    per_attempt_mats = job_batch_materials(materials, 1)
+    # 尝试次数为 0（成功率为 0 或产出为 0）→ 无作业、无消耗
+    batch_mats = job_batch_materials(materials, attempts) if attempts > 0 else []
+    if decryptor and attempts > 0:
+        batch_mats = batch_mats + [(decryptor.type_id, attempts)]
+
+    total_material_cost = material_cost_of(batch_mats, prices)
+    total_fee = _installation_fee(
+        batch_mats,
+        prices,
+        sci,
+        structure_mult=structure_mult,
+        facility_tax=facility_tax,
+        alpha_tax=alpha_tax,
+    )
+    input_bpc_cost = float(input_bpc_cost_per_run) * attempts
+    total_cost = total_material_cost + total_fee + input_bpc_cost
+
+    # 期望产出（未回填时使用）
+    expected_runs = attempts * runs_per_bpc
+    # 实际口径：用户回填后 output_runs 取实际值（0 = 失败）
+    is_actual = actual_output_runs is not None
+    output_runs = int(actual_output_runs) if actual_output_runs is not None else expected_runs
+    bpc_unit_cost = total_cost / output_runs if output_runs > 0 else 0.0
+
+    return {
+        "success_rate": round(rate, 6),
+        "runs_per_bpc": runs_per_bpc,
+        "attempts": attempts,
+        "material_cost": round(total_material_cost, 2),
+        "fee": round(total_fee, 2),
+        "input_bpc_cost": round(input_bpc_cost, 2),
+        "total_cost": round(total_cost, 2),
+        "output_runs": output_runs,
+        "expected_runs": expected_runs,
+        "bpc_unit_cost": round(bpc_unit_cost, 2),
+        "is_actual": is_actual,
+        "materials": per_attempt_mats,  # 每尝试一次的量（供采购/展示）
+    }
+
+
+def copying_plan_cost(
+    *,
+    materials: list[tuple[int, int]],
+    prices: dict[int, float],
+    sci: float,
+    total_copy_runs: int,
+    copies: int = 1,
+    structure_mult: float = 1.0,
+    facility_tax: float = DEFAULT_FACILITY_TAX,
+    alpha_tax: float = 0.0,
+) -> dict:
+    """拷贝作业成本。材料与时长按**总授权流程数**计，无概率项。
+
+    返回 {material_cost, fee, total_cost, per_copy_cost, copies, runs_per_copy}。
+    """
+    n = max(1, int(total_copy_runs))
+    copies = max(1, int(copies))
+    batch = job_batch_materials(materials, n)
+    mat = material_cost_of(batch, prices)
+    fee = _installation_fee(
+        batch, prices, sci, structure_mult=structure_mult, facility_tax=facility_tax, alpha_tax=alpha_tax
+    )
+    total = mat + fee
+    return {
+        "material_cost": round(mat, 2),
+        "fee": round(fee, 2),
+        "total_cost": round(total, 2),
+        "total_copy_runs": n,
+        "copies": copies,
+        "runs_per_copy": max(1, n // copies),
+        "per_copy_cost": round(total / copies, 2),
+        "materials": batch,
+    }
+
+
+def research_plan_cost(
+    *,
+    materials: list[tuple[int, int]],
+    prices: dict[int, float],
+    sci: float,
+    target_level: int = 1,
+    structure_mult: float = 1.0,
+    facility_tax: float = DEFAULT_FACILITY_TAX,
+    alpha_tax: float = 0.0,
+) -> dict:
+    """ME/TE 研究作业成本。
+
+    ⚠️ 材料按「每个等级固定量」线性外推（SDE 的 research_* 材料是单级量，
+    实际游戏里各级材料/时长递增）。目标是给出量级正确的估算，不追求精确。
+    """
+    n = max(1, int(target_level))
+    batch = job_batch_materials(materials, n)
+    mat = material_cost_of(batch, prices)
+    fee = _installation_fee(
+        batch, prices, sci, structure_mult=structure_mult, facility_tax=facility_tax, alpha_tax=alpha_tax
+    )
+    return {
+        "material_cost": round(mat, 2),
+        "fee": round(fee, 2),
+        "total_cost": round(mat + fee, 2),
+        "target_level": n,
+        "materials": batch,
+    }

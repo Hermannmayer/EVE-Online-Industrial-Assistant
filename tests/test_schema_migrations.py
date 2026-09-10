@@ -224,11 +224,14 @@ def _create_user_v3(db_path):
     conn.close()
 
 
-def _create_user_v12(db_path):
-    """构造 v12 的 production_plans 表（缺 v13 的 material_cost_snapshot 列）。
+def _create_user_v14(db_path):
+    """构造 v14 的 production_plans 表（缺 v15 的 material_cost_snapshot 列）。
 
-    直接用当前建表 DDL 剥掉 v13 新列 —— 不手抄一份 v12 全量列，避免将来加列时
+    直接用当前建表 DDL 剥掉 v15 新列 —— 不手抄一份 v14 全量列，避免将来加列时
     这里成为第二个需要同步的地方。剥离失败会当场断言，不会假通过。
+
+    注：另一个 `_create_user_v12`（科研列那条线）由本文件后半段定义，用途不同，
+    故本夹具改名为 v14 以免重名互相覆盖。
     """
     from services.repositories.plan_repository import PlanRepository
 
@@ -237,8 +240,8 @@ def _create_user_v12(db_path):
     conn = sqlite3.connect(str(db_path))
     conn.executescript(PlanRepository.SCHEMA.replace(line, ""))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
-    assert "material_cost_snapshot" not in cols, "夹具应模拟缺该列的 v12 库"
-    conn.execute("PRAGMA user_version = 12")
+    assert "material_cost_snapshot" not in cols, "夹具应模拟缺该列的 v14 库"
+    conn.execute("PRAGMA user_version = 14")
     conn.commit()
     conn.close()
 
@@ -249,34 +252,37 @@ def test_user_v3_to_v4_adds_execution_columns(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 13  # v3 库会一路补跑到最新 v13
+    assert result["after"] == 15  # v3 库会一路补跑到最新 v15
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     idxs = {r[1] for r in conn.execute("PRAGMA index_list(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 13
+    assert v == 15
     for col in ("assigned_blueprint_id", "mat_hangar_id", "material_short"):
         assert col in cols, f"{col} 列应被 v3→v4 迁移添加"
     assert "idx_prod_plans_assigned_bp" in idxs
     for col in ("source_mother_ids", "component_parent_type_id", "demand"):
         assert col in cols, f"{col} 列应被 v11→v12 迁移添加"
-    assert "material_cost_snapshot" in cols, "material_cost_snapshot 列应被 v12→v13 迁移添加"
+    assert "material_cost_snapshot" in cols, "material_cost_snapshot 列应被 v14→v15 迁移添加"
 
 
-def test_user_v12_to_v13_adds_material_cost_snapshot(tmp_user_db):
-    """user v12→v13：新增启动成本快照列，且不动其它列"""
-    _create_user_v12(tmp_user_db)
+def test_user_v14_to_v15_adds_material_cost_snapshot(tmp_user_db):
+    """user v14→v15：新增启动成本快照列，且不动其它列。
+
+    版本号说明：本迁移原登记为 v12→v13，与「科研作业列」相撞；合并时顺延到 v14→v15。
+    """
+    _create_user_v14(tmp_user_db)
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 13
-    assert any("启动成本快照" in s for s in result["applied"]), "应执行 v12→v13 加列迁移"
+    assert result["after"] == 15
+    assert any("启动成本快照" in s for s in result["applied"]), "应执行 v14→v15 加列迁移"
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 13
+    assert v == 15
     assert "material_cost_snapshot" in cols
     assert "deducted_materials" in cols, "旧列不应被迁移删除"
 
@@ -303,7 +309,7 @@ def test_user_v3_to_v4_skips_missing_table(tmp_user_db):
     conn.close()
 
     result = sm.ensure_schema("user")
-    assert result["after"] == 13
+    assert result["after"] == 15
 
 
 # ────────────────────────────────────────────
@@ -319,13 +325,13 @@ def test_user_v4_to_v5_adds_solar_system_columns(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 13
+    assert result["after"] == 15
     conn = sqlite3.connect(str(tmp_user_db))
     h_cols = {r[1] for r in conn.execute("PRAGMA table_info(hangars)")}
     p_cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 13
+    assert v == 15
     assert "solar_system_id" in h_cols, "hangars.solar_system_id 列应被 v4→v5 迁移添加"
     assert "solar_system_id" in p_cols, "production_plans.solar_system_id 列应被 v4→v5 迁移添加"
     assert "facility_cost_mult" in p_cols, "v2→v3 遗漏的 facility_cost_mult 应在 v4→v5 补齐"
@@ -347,7 +353,7 @@ def test_user_v4_to_v5_idempotent(tmp_user_db):
     p_cols = [r[1] for r in conn.execute("PRAGMA table_info(production_plans)")]
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 13
+    assert v == 15
     assert h_cols.count("solar_system_id") == 1
     assert p_cols.count("solar_system_id") == 1
     assert p_cols.count("facility_cost_mult") == 1
@@ -361,7 +367,7 @@ def test_user_v4_to_v5_skips_missing_tables(tmp_user_db):
     conn.close()
 
     result = sm.ensure_schema("user")
-    assert result["after"] == 13
+    assert result["after"] == 15
     assert result["applied"], "应记录 v4→v5 迁移（即便无表可改）"
 
 
@@ -376,12 +382,12 @@ def test_user_v5_to_v6_adds_industry_columns(tmp_user_db):
 
     _create_user_v5(tmp_user_db)
     result = sm.ensure_schema("user")
-    assert result["after"] == 13
+    assert result["after"] == 15
     conn = sqlite3.connect(str(tmp_user_db))
     h_cols = {r[1] for r in conn.execute("PRAGMA table_info(hangars)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 13
+    assert v == 15
     for col in ("facility_type", "facility_tax", "rigs"):
         assert col in h_cols, f"{col} 列应被 v5→v6 迁移添加"
 
@@ -407,7 +413,7 @@ def test_user_v5_to_v6_skips_missing_table(tmp_user_db):
     conn.close()
 
     result = sm.ensure_schema("user")
-    assert result["after"] == 13
+    assert result["after"] == 15
     assert result["applied"], "应记录 v5→v6 迁移（即便无表可改）"
 
 
@@ -480,13 +486,13 @@ def test_user_v7_to_v8_backfills_null_system(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 13
+    assert result["after"] == 15
     assert any("回填" in s for s in result["applied"]), "应执行 v7→v8 回填迁移"
     conn = sqlite3.connect(str(tmp_user_db))
     rows = {r[0]: r[1] for r in conn.execute("SELECT id, solar_system_id FROM production_plans ORDER BY id")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 13
+    assert v == 15
     assert rows[1] == 30000145, "空星系计划应从材料机库(新加达里)带出星系"
     assert rows[2] is None, "材料机库无星系 → 保持 NULL"
     assert rows[3] == 30000142, "已手动设置的星系不应被覆盖"
@@ -557,13 +563,13 @@ def test_user_v8_to_v9_heals_missing_v2_columns(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 13
+    assert result["after"] == 15
     assert any("补齐" in s for s in result["applied"]), "应执行 v8→v9 补列迁移"
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 13
+    assert v == 15
     for col in (
         "calculated_time",
         "notes",
@@ -657,13 +663,13 @@ def test_user_v9_to_v10_adds_deducted_materials(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 13
+    assert result["after"] == 15
     assert any("扣减快照" in s for s in result["applied"]), "应执行 v9→v11 扣减快照迁移"
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 13
+    assert v == 15
     assert "deducted_materials" in cols, "deducted_materials 列应被 v9→v11 迁移添加"
 
 
@@ -689,7 +695,7 @@ def test_user_v9_to_v10_skips_missing_table(tmp_user_db):
     conn.close()
 
     result = sm.ensure_schema("user")
-    assert result["after"] == 13
+    assert result["after"] == 15
     assert result["applied"], "应记录 v9→v11 迁移（即便无表可改）"
 
 
@@ -722,7 +728,7 @@ def test_migration_creates_pre_migration_backup(tmp_user_db):
 def test_no_backup_when_already_current(tmp_user_db):
     """库已是最新版本 → 不触发备份"""
     conn = sqlite3.connect(str(tmp_user_db))
-    conn.execute("PRAGMA user_version = 13")
+    conn.execute("PRAGMA user_version = 15")
     conn.commit()
     conn.close()
 
@@ -800,3 +806,162 @@ def test_rebuild_table_rolls_back_on_failure(tmp_user_db):
     assert "widget" in tables
     assert "widget__old" not in tables, "失败后不应残留 __old 表"
     assert rows == [("keep",)], "原数据应完好"
+
+
+# ────────────────────────────────────────────
+#  user v12 → v13：科研作业列
+# ────────────────────────────────────────────
+
+
+def _create_user_v12(db_path):
+    """构造 v12 的 production_plans（含到 v11→v12 为止的全部列，缺 v13 科研列）。"""
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """
+        CREATE TABLE production_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_type_id INTEGER NOT NULL,
+            product_name TEXT,
+            blueprint_type_id INTEGER,
+            runs INTEGER DEFAULT 1,
+            parallels INTEGER DEFAULT 1,
+            me_level INTEGER DEFAULT 0,
+            te_level INTEGER DEFAULT 0,
+            mat_hub TEXT DEFAULT 'Jita',
+            sell_hub TEXT DEFAULT 'Jita',
+            facility TEXT DEFAULT '',
+            char_name TEXT DEFAULT '',
+            status TEXT DEFAULT 'pending',
+            profit REAL DEFAULT 0,
+            margin REAL DEFAULT 0,
+            score REAL DEFAULT 0,
+            material_cost REAL DEFAULT 0,
+            created_at TEXT,
+            started_at TEXT,
+            completed_at TEXT,
+            facility_cost_mult REAL DEFAULT 1.0,
+            notes TEXT DEFAULT '',
+            group_number INTEGER DEFAULT 0,
+            sub_level INTEGER DEFAULT 0,
+            output_location TEXT DEFAULT '',
+            market_margin REAL DEFAULT 0,
+            personal_margin REAL DEFAULT 0,
+            daily_output REAL DEFAULT 0,
+            materials_ready INTEGER DEFAULT 0,
+            iskph REAL DEFAULT 0,
+            deposit_hangar_id INTEGER DEFAULT NULL,
+            deposited INTEGER DEFAULT 0,
+            calculated_time REAL DEFAULT 0,
+            assigned_blueprint_id INTEGER DEFAULT NULL,
+            mat_hangar_id INTEGER DEFAULT NULL,
+            material_short TEXT DEFAULT '',
+            deducted_materials TEXT DEFAULT '',
+            solar_system_id INTEGER DEFAULT NULL,
+            source_mother_ids TEXT DEFAULT '',
+            component_parent_type_id INTEGER DEFAULT NULL,
+            demand INTEGER DEFAULT 0
+        );
+        """
+    )
+    # 迁移前的旧行：必须是制造作业，且行为不变
+    conn.execute(
+        "INSERT INTO production_plans (product_type_id, product_name, runs, status, material_cost) "
+        "VALUES (2001, '渡鸦级', 3, 'pending', 12345.0)"
+    )
+    conn.execute("PRAGMA user_version = 12")
+    conn.commit()
+    conn.close()
+
+
+def test_user_v12_to_v13_adds_research_columns(tmp_user_db):
+    """user v12→v13：新增 5 个科研作业列"""
+    _create_user_v12(tmp_user_db)
+
+    result = sm.ensure_schema("user")
+
+    assert result["after"] == 15
+    conn = sqlite3.connect(str(tmp_user_db))
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
+    v = conn.execute("PRAGMA user_version").fetchone()[0]
+    conn.close()
+    assert v == 15
+    for col in (
+        "activity",
+        "decryptor_type_id",
+        "success_rate",
+        "research_target_level",
+        "actual_output_runs",
+    ):
+        assert col in cols, col
+
+
+def test_user_v12_to_v13_existing_rows_default_to_manufacturing(tmp_user_db):
+    """旧行补跑迁移后 activity='manufacturing'，其余科研列为 NULL/0（行为不变）"""
+    _create_user_v12(tmp_user_db)
+
+    sm.ensure_schema("user")
+
+    conn = sqlite3.connect(str(tmp_user_db))
+    row = conn.execute(
+        "SELECT product_type_id, runs, status, material_cost, activity, "
+        "decryptor_type_id, success_rate, research_target_level, actual_output_runs "
+        "FROM production_plans"
+    ).fetchone()
+    conn.close()
+    assert row == (2001, 3, "pending", 12345.0, "manufacturing", None, None, 0, None)
+
+
+def test_user_v12_to_v13_idempotent(tmp_user_db):
+    """重复迁移不报错、不重复加列"""
+    _create_user_v12(tmp_user_db)
+    sm.ensure_schema("user")
+
+    result2 = sm.ensure_schema("user")
+
+    assert result2["applied"] == []
+    conn = sqlite3.connect(str(tmp_user_db))
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(production_plans)")]
+    conn.close()
+    assert cols.count("activity") == 1
+
+
+def test_user_v13_repair_fills_missing_research_columns(tmp_user_db):
+    """v13 已盖章但科研列缺失（版本号与迁移函数错配的历史库）→ v13→v14 补齐。
+
+    复现：库被标记 user_version=13，但 production_plans 没有 activity 等 5 列。
+    没有 v13→v14 时，ensure_schema 认为无需迁移 → 列永久缺失且无从自愈。
+    """
+    _create_user_v12(tmp_user_db)  # 先造 v12 表结构（无科研列）
+    conn = sqlite3.connect(str(tmp_user_db))
+    conn.execute("PRAGMA user_version = 13")  # 模拟「版本先行」
+    conn.commit()
+    conn.close()
+
+    result = sm.ensure_schema("user")
+
+    assert result["after"] == 15
+    conn = sqlite3.connect(str(tmp_user_db))
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
+    activity = conn.execute("SELECT activity FROM production_plans").fetchone()[0]
+    conn.close()
+    for col in ("activity", "decryptor_type_id", "success_rate", "research_target_level", "actual_output_runs"):
+        assert col in cols, col
+    assert activity == "manufacturing", "既有行的 activity 必须被回填"
+
+
+def test_user_v13_repair_idempotent(tmp_user_db):
+    """重复跑 v13→v14 不报错、不重复加列。"""
+    _create_user_v12(tmp_user_db)
+    conn = sqlite3.connect(str(tmp_user_db))
+    conn.execute("PRAGMA user_version = 13")
+    conn.commit()
+    conn.close()
+    sm.ensure_schema("user")
+
+    result2 = sm.ensure_schema("user")
+
+    assert result2["applied"] == []
+    conn = sqlite3.connect(str(tmp_user_db))
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(production_plans)")]
+    conn.close()
+    assert cols.count("activity") == 1

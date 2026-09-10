@@ -265,15 +265,28 @@ def _enrich_rows(rows: list[dict], enrich: dict) -> list[dict]:
             row["need_blueprints"] = 1
             row["line_levels"] = []
 
-    from services.plan_category import load_category_map
+    # 类别：优先按行存的 activity（同一张蓝图可能既有制造计划又有拷贝计划，
+    # 蓝图反查无法区分）；activity 缺失/未知的历史行才回退蓝图反查。
+    from services.plan_category import category_for_activity, load_category_map
 
-    bp_ids = [int(r["blueprint_type_id"]) for r in rows if r.get("blueprint_type_id")]
+    rows_needing_lookup = [r for r in rows if not str(r.get("activity") or "").strip() and r.get("blueprint_type_id")]
     cat_map: dict[int, str] = {}
-    if bp_ids:
+    if rows_needing_lookup:
+        bp_ids = [int(r["blueprint_type_id"]) for r in rows_needing_lookup]
         with get_container().db.connect("bp") as bp_conn:
             cat_map = load_category_map(bp_conn, bp_ids)
     for row in rows:
-        row["category"] = cat_map.get(int(row.get("blueprint_type_id") or 0), "manufacturing")
+        act = str(row.get("activity") or "").strip()
+        if act:
+            row["category"] = category_for_activity(act)
+        else:
+            row["category"] = cat_map.get(int(row.get("blueprint_type_id") or 0), "manufacturing")
+        # 解码器名（计划表「解码器」列排序/展示用；无 → 空）
+        if row.get("decryptor_type_id"):
+            from domain.research import get_decryptor
+
+            d = get_decryptor(row.get("decryptor_type_id"))
+            row["decryptor_name"] = d.name if d else ""
 
     enrich_plan_hangar_names(rows, hangar_names)
     return rows

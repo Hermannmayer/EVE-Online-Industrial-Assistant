@@ -721,7 +721,7 @@ class IndustryPage(QWidget):
         dlg = CompletePlansDialog(ready, hangars, default_hid, self)
         if not dlg.exec():
             return
-        result = complete_plans(ready, dlg.selected_hangar_id())
+        result = complete_plans(ready, dlg.selected_hangar_id(), parent=self)
         self.load_plans()
         msg = f"已下线 {result['completed']} 项"
         if result["deposited"]:

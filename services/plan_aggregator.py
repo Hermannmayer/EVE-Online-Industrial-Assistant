@@ -28,6 +28,7 @@ from domain.bom import walk_bom
 from services.blueprint_reader import SqliteBlueprintReader
 from services.manufacturing_calculator import calc_material_for_runs
 from services.name_resolver import resolve_item_name
+from services.plan_job_kinds import is_science
 
 # ════════════════════════════════════════════════════════════════
 #  内部辅助
@@ -81,9 +82,13 @@ def expand_blueprint_requirements(
     子项材料直接购买成品，不会自己造子项的蓝图。
     所以只需查每个 plan.product_type_id 对应的制造蓝图即可。
 
+    ⚠️ 科研行（拷贝/发明/研究）**整行跳过**：它们的产物本身就是一张蓝图、
+    也不需要额外买制造蓝图——要买的只有作业材料（数据核心/解码器/拷贝材料），
+    那条需求由 material_requirements（经 plan_execution）覆盖。
+
     Args:
         conn: 已 ATTACH user/ref/bp/mkt 的数据库连接
-        plans: 计划列表，每项需含 product_type_id, runs, parallels
+        plans: 计划列表，每项需含 product_type_id, runs, parallels（科研行还需 activity）
         me_level: 默认材料等级（各计划不同时从 plan 中取）
 
     Returns:
@@ -92,6 +97,8 @@ def expand_blueprint_requirements(
     needed: dict[int, dict[str, Any]] = {}
 
     for plan in plans:
+        if is_science(plan.get("activity")):
+            continue
         pid = plan.get("product_type_id")
         if not pid:
             continue
@@ -466,6 +473,10 @@ def aggregate_procurement(
         pid = plan.get("product_type_id")
         if not pid:
             continue
+        # 科研行的材料口径与制造不同（且 attempts/目标等级已由评分算进总量），
+        # 走 plan_execution.material_requirements 的统一路径，这里跳过。
+        if is_science(plan.get("activity")):
+            continue
         total_runs = max(int(plan.get("runs") or 1), 1) * max(int(plan.get("parallels") or 1), 1)
         me = int(plan.get("me_level") or 0)
         bp = conn.execute(
@@ -584,6 +595,8 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]:
     }
     result: dict[int, dict] = {}
     for plan in plans:
+        if is_science(plan.get("activity")):
+            continue  # 科研行材料口径不同，走 plan_execution.material_requirements
         pid = plan.get("product_type_id")
         if not pid:
             continue

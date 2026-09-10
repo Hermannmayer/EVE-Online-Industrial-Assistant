@@ -21,6 +21,7 @@ import json
 from pathlib import Path
 from typing import cast
 
+from core.logger import log
 from core.paths import data_dir as _data_dir_fn
 
 _TERM_FILE = Path(_data_dir_fn()) / "terminology.json"
@@ -84,6 +85,35 @@ class Terminology:
         return cast(str | None, self._data.get("skill_aliases", {}).get(en_name))
 
     # ── 技能名（正式注册表） ──
+
+    def science_skills(self, conn=None) -> list[dict]:
+        """科研技能全集（reference.db item.group_id=270）。
+
+        这是「科研技能」列表的**唯一真源**——硬编码的名字会随游戏改版漂移
+        （历史上 43 个 UI 技能名里有 17 个是 2014 改名前的老名，读出来全是 0 级）。
+        conn 为空 / 查询失败 → 返回空列表（调用方回退静态表）。
+        """
+        if conn is None:
+            try:
+                from core.container import get_container
+
+                with get_container().db.connect("ref") as conn:
+                    return self._query_science_skills(conn)
+            except Exception:
+                log.debug("读取科研技能全集失败（无连接）", exc_info=True)
+                return []
+        return self._query_science_skills(conn)
+
+    @staticmethod
+    def _query_science_skills(conn) -> list[dict]:
+        try:
+            rows = conn.execute(
+                "SELECT type_id, zh_name, en_name FROM item WHERE group_id = 270 ORDER BY type_id"
+            ).fetchall()
+        except Exception:
+            log.debug("查询 group_id=270 技能失败", exc_info=True)
+            return []
+        return [{"type_id": int(r[0]), "zh_name": r[1] or "", "en_name": r[2] or ""} for r in rows if r[1] or r[2]]
 
     def skill_name(self, en_name: str) -> str | None:
         """获取技能官方中文名。

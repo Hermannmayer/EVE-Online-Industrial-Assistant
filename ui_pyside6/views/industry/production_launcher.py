@@ -872,6 +872,8 @@ class ProductionLauncher(QWidget):
         self._stock_cache: dict[int, dict[int, int]] = {}
         self._stock_fp: dict[int, frozenset] = {}
         self._bp_short_cache: dict[int, str | None] = {}  # 本轮蓝图流程预检结果
+        # 输入蓝图就绪缓存（按计划指纹），避免每行每次刷新都打 DB
+        self._bp_ready_cache: dict[int, tuple] = {}
         self._collapsed: set[int] = set()  # 已折叠的组号（隐藏其子项）
         self._occ_collapsed = False
         self._selected_id: int | None = None
@@ -1281,6 +1283,26 @@ class ProductionLauncher(QWidget):
                 self._bp_short_cache[pid] = None
         return self._bp_short_cache[pid]
 
+    def _blueprint_ready(self, plan: dict) -> bool:
+        """输入蓝图是否就绪（按活动规则，见 services.plan_job_kinds）。带指纹缓存。"""
+        pid = int(plan.get("id") or 0)
+        fp = (
+            plan.get("status"),
+            plan.get("activity"),
+            plan.get("runs"),
+            plan.get("parallels"),
+            plan.get("assigned_blueprint_id"),
+        )
+        cached = self._bp_ready_cache.get(pid)
+        if cached and cached[0] == fp:
+            return bool(cached[1])
+        try:
+            ready = plan_execution.plan_blueprint_ready(plan)
+        except Exception:
+            ready = True  # 读不到时不拦（与旧宽松语义一致）
+        self._bp_ready_cache[pid] = (fp, ready)
+        return ready
+
     def _block_reason(self, plan: dict) -> str | None:
         mat = plan.get("mat_hangar_id") or self._default_mat_hangar
         return plan_start_block_reason(
@@ -1289,6 +1311,7 @@ class ProductionLauncher(QWidget):
             self._all_plans,
             shortfall_count=self._shortfall_count(plan),
             bp_short=self._bp_short(plan),
+            blueprint_ready=self._blueprint_ready(plan),
         )
 
     def _can_force_start(self, plan: dict) -> bool:
@@ -1300,6 +1323,7 @@ class ProductionLauncher(QWidget):
             self._all_plans,
             shortfall_count=self._shortfall_count(plan),
             bp_short=self._bp_short(plan),
+            blueprint_ready=self._blueprint_ready(plan),
         )
 
     def _row_collapsed(self, plan: dict) -> bool:

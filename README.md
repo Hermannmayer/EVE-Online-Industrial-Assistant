@@ -139,7 +139,7 @@ python build_release.py
 
 | 功能 | 说明 |
 |------|------|
-| 📋 **生产计划管理** | 添加、编辑、删除生产计划，表格展示 19 列完整信息 |
+| 📋 **生产计划管理** | 添加、编辑、删除生产计划，表格展示 21 列完整信息（含科研成功率/解码器） |
 | 🔍 **蓝图搜索候选** | 输入框实时搜索建议，支持中/英文名称模糊匹配，选择即添加 |
 | 🏷️ **双行价格设置** | 材料/成品独立配置 Hub 来源、卖价/买价、倍率系数 |
 | ⚡ **定向价格刷新** | 仅拉取活跃计划涉及物品，5 分钟缓存 TTL + 并发 50 请求 |
@@ -204,7 +204,7 @@ python build_release.py
 
 | 指标 | 数值 |
 |------|------|
-| 📊 **测试总数** | 1407 个 |
+| 📊 **测试总数** | 1525 个 |
 | 🔧 **框架** | pytest |
 | 📁 **测试目录** | `tests/` |
 | 🏃 **运行命令** | `pytest` |
@@ -229,7 +229,6 @@ python build_release.py
 | `test_contract_models.py` / `test_contract_ui.py` | 合同视图测试 |
 | `test_logistics_cost.py` / `test_logistics_distance.py` | 物流计算测试 |
 | `test_theme_listeners.py` | 主题监听模式测试 |
-| `test_item_kind.py` | 物品/蓝图种类判定与剪贴板异类行过滤测试 |
 | `test_ui_industry.py` / `test_ui_inventory.py` / `test_ui_main_window.py` | UI 冒烟测试 |
 | `test_workers_*.py` | 后台 Worker 测试 |
 

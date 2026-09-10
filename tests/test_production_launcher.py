@@ -548,7 +548,11 @@ class TestForceStartOnShortfall:
             w.close()
 
     def test_non_material_block_still_question(self, qapp, monkeypatch):
-        """缺料之外还有阻塞（这里用无可用蓝图）→ 仍然只是问号。"""
+        """缺料之外还有阻塞 → 仍然只是问号。
+
+        这里用**拷贝作业**：制造计划在未绑蓝图时按「不绑也能启动」的宽松语义算就绪，
+        拷贝/研究则必须有输入蓝图（见 services.plan_job_kinds），所以换 activity 才拦得住。
+        """
         from services import plan_execution
 
         w, pl = _make_launcher(qapp, monkeypatch)
@@ -556,6 +560,7 @@ class TestForceStartOnShortfall:
             plans = [dict(p) for p in SAMPLE_PLANS]  # 深拷贝，别污染模块级夹具
             for p in plans:
                 if p["id"] == 1:
+                    p["activity"] = "copying"
                     p["has_image"] = False
                     p["assigned_blueprint_id"] = None
             monkeypatch.setattr(pl, "load_plans_for_wizard", lambda: plans)

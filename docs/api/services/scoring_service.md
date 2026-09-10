@@ -131,6 +131,36 @@ def _clear_research_cost_cache() -> None
 
 定义行：`249`
 
+### `_empty_plan_metrics`
+
+```python
+def _empty_plan_metrics() -> dict
+```
+
+计划指标的零值骨架（键与制造路径一致，供失败分支直接返回）。
+
+定义行：`259`
+
+### `_resolve_blueprint_for_product`
+
+```python
+def _resolve_blueprint_for_product(db, product_type_id) -> int
+```
+
+按产物 type_id 反查它的制造蓝图（旧计划行只带 product_type_id 时用）。缺失 → 0。
+
+定义行：`277`
+
+### `materials_with_names`
+
+```python
+def materials_with_names(db, mats: list[tuple[int, int]], prices: dict[int, float]) -> list[dict]
+```
+
+[(type_id, qty)] + 单价 → [&#123;type_id, name, qty, unit_price&#125;]（供个人利润率/明细展示）。
+
+定义行：`296`
+
 ## 类
 
 ### `class ScoringService`
@@ -139,7 +169,7 @@ def _clear_research_cost_cache() -> None
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`259`
+定义行：`330`
 
 #### 方法
 
@@ -153,7 +183,7 @@ def __init__(self, db: DatabaseManager, cache: TtlLRUCache, char_config: dict | 
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`260`
+定义行：`331`
 ##### `invalidate_cache`
 
 ```python
@@ -162,7 +192,7 @@ def invalidate_cache(self) -> None
 
 清空评分缓存（价格刷新后调用，避免旧价格评分被复用）
 
-定义行：`265`
+定义行：`336`
 ##### `_calc_broker_rate`
 
 ```python
@@ -173,7 +203,7 @@ def _calc_broker_rate(self, skills: dict, market_data: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`273`
+定义行：`344`
 ##### `_calc_relist_discount`
 
 ```python
@@ -184,7 +214,7 @@ def _calc_relist_discount(self, skills: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`276`
+定义行：`347`
 ##### `_calc_sales_tax_rate`
 
 ```python
@@ -195,7 +225,7 @@ def _calc_sales_tax_rate(self, skills: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`279`
+定义行：`350`
 ##### `calculate_total_metrics`
 
 ```python
@@ -204,7 +234,7 @@ def calculate_total_metrics(per_run: dict, runs: int=1, parallels: int=1) -> dic
 
 将 per-run 评分结果按 runs/parallels 缩放到计划总数值。
 
-定义行：`285`
+定义行：`356`
 ##### `combine_per_line`
 
 ```python
@@ -213,7 +243,7 @@ def combine_per_line(per_line: list[dict], runs: int=1) -> tuple[dict, dict]
 
 逐线结果 → 计划级 ``(per_run, total)``。
 
-定义行：`330`
+定义行：`401`
 ##### `calculate_plan_metrics`
 
 ```python
@@ -222,7 +252,25 @@ def calculate_plan_metrics(plan_data: dict, char_config: dict, *, mat_hub: str |
 
 从一条生产计划数据计算所有派生指标。
 
-定义行：`374`
+定义行：`445`
+##### `_research_skill_levels`
+
+```python
+def _research_skill_levels(conn, blueprint_type_id: int, activity: str, skills: dict) -> tuple[int, int, int, str]
+```
+
+从 blueprint_skills 解析该活动的技能要求并读角色等级。
+
+定义行：`680`
+##### `_calculate_research_metrics`
+
+```python
+def _calculate_research_metrics(plan_data: dict, char_config: dict, *, activity: str, mat_hub: str, sell_hub: str, price_type_mat: str, price_type_prod: str, system_id: int | None, effective_system_id: int | None, structure_cost_mult: float, structure_time_mod: float, fac_tax: float, runs: int, parallels: int) -> dict
+```
+
+拷贝/发明/研究作业的指标（编排：查蓝图/SDE → 调 services.plan_metrics 纯函数）。
+
+定义行：`720`
 ##### `calculate_personal_margin`
 
 ```python
@@ -231,7 +279,7 @@ def calculate_personal_margin(result: dict, inv_map: dict[int, tuple[int, float]
 
 计算考虑库存成本的个人利润率（%）。实现见 services.plan_metrics。
 
-定义行：`569`
+定义行：`1024`
 ##### `child_manufacturing_cost`
 
 ```python
@@ -240,7 +288,7 @@ def child_manufacturing_cost(plan: dict, metrics: dict) -> float
 
 一条子项产线的总制造价 = 材料成本 + 制造作业费。实现见 services.plan_metrics。
 
-定义行：`582`
+定义行：`1037`
 ##### `adjust_mother_metrics`
 
 ```python
@@ -249,7 +297,7 @@ def adjust_mother_metrics(metrics: dict, sub_cost_map: dict[int, float], total_m
 
 把拆解母项的自制子项按其制造价计入成本。实现见 services.plan_metrics。
 
-定义行：`589`
+定义行：`1044`
 ##### `calc_manufacturing_score`
 
 ```python
@@ -258,7 +306,7 @@ def calc_manufacturing_score(self, type_id: int, char_config: dict, mat_source_h
 
 计算制造评分。
 
-定义行：`601`
+定义行：`1056`
 ##### `calc_trade_score`
 
 ```python
@@ -267,7 +315,7 @@ def calc_trade_score(self, type_id: int, buy_hub: str='Jita', sell_hub: str='Jit
 
 计算贸易评分。纯算法在 domain.scoring，编排在 services.scoring_facade。
 
-定义行：`650`
+定义行：`1105`
 ##### `calc_reaction_score`
 
 ```python
@@ -276,4 +324,4 @@ def calc_reaction_score(self, type_id: int, char_config: dict, mat_source_hub: s
 
 计算反应（Reaction）利润评分。纯算法在 domain.scoring，编排在 services.scoring_facade。
 
-定义行：`677`
+定义行：`1132`
