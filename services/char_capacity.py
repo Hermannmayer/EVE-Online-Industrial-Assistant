@@ -35,8 +35,8 @@ _CATEGORY_SKILLS: dict[str, tuple[str, str]] = {
     CAPACITY_LINE_REACTION: ("大规模反应理论", "高级大规模反应理论"),
 }
 
-# 计划 category（plan_category）→ 线型：拷贝/发明归科研
-_RESEARCH_CATEGORIES = {"copying", "invention"}
+# 计划 category（plan_category）→ 线型：拷贝/发明/ME-TE 研究都占科研线
+_RESEARCH_CATEGORIES = {"copying", "invention", "research"}
 
 
 def capacity_line_for_category(category: str) -> str:

@@ -25,7 +25,7 @@
 
 单例术语表，线程安全（只读加载后不变）。
 
-定义行：`29`
+定义行：`30`
 
 #### 方法
 
@@ -39,7 +39,7 @@ def __init__(self) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`32`
+定义行：`33`
 ##### `_ensure`
 
 ```python
@@ -50,7 +50,7 @@ def _ensure(self) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`36`
+定义行：`37`
 ##### `activity`
 
 ```python
@@ -59,7 +59,7 @@ def activity(self, key: str) -> str
 
 蓝图活动名英译中，未知 key 返回原文。
 
-定义行：`48`
+定义行：`49`
 ##### `item_override`
 
 ```python
@@ -70,7 +70,7 @@ def item_override(self, type_id: int) -> str | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`55`
+定义行：`56`
 ##### `group_override`
 
 ```python
@@ -81,7 +81,7 @@ def group_override(self, group_id: int) -> str | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`62`
+定义行：`63`
 ##### `label`
 
 ```python
@@ -90,7 +90,7 @@ def label(self, key: str) -> str
 
 UI 标签翻译。
 
-定义行：`69`
+定义行：`70`
 ##### `market_category`
 
 ```python
@@ -101,7 +101,7 @@ def market_category(self, key: str) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`76`
+定义行：`77`
 ##### `skill_alias`
 
 ```python
@@ -112,7 +112,27 @@ def skill_alias(self, en_name: str) -> str | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`82`
+定义行：`83`
+##### `science_skills`
+
+```python
+def science_skills(self, conn=None) -> list[dict]
+```
+
+科研技能全集（reference.db item.group_id=270）。
+
+定义行：`89`
+##### `_query_science_skills`
+
+```python
+def _query_science_skills(conn) -> list[dict]
+```
+
+::: warning ⚠️ 待补 docstring
+此函数暂无 docstring，欢迎补充。
+:::
+
+定义行：`108`
 ##### `skill_name`
 
 ```python
@@ -121,7 +141,7 @@ def skill_name(self, en_name: str) -> str | None
 
 获取技能官方中文名。
 
-定义行：`88`
+定义行：`118`
 ##### `system_name`
 
 ```python
@@ -130,7 +150,7 @@ def system_name(self, en_name: str) -> str | None
 
 星系中文名（按英文名查表）。未知返回 None，显示层回退英文名。
 
-定义行：`103`
+定义行：`133`
 ##### `search_system_names`
 
 ```python
@@ -139,7 +159,7 @@ def search_system_names(self, keyword: str) -> list[str]
 
 按中文名关键词反查星系英文名（用于星系搜索对话框中文输入）。
 
-定义行：`111`
+定义行：`141`
 ##### `rig_category`
 
 ```python
@@ -148,7 +168,7 @@ def rig_category(self, key: str) -> str | None
 
 结构改件制造类别标签（me_research→材料效率研究 等）。未知返回 None。
 
-定义行：`118`
+定义行：`148`
 ##### `reload`
 
 ```python
@@ -159,4 +179,4 @@ def reload(self) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`125`
+定义行：`155`

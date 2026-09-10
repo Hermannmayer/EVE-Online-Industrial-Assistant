@@ -35,48 +35,11 @@ from services.plan_execution import (
     start_plan_batch,
 )
 
-_PLAN_SCHEMA = """
-CREATE TABLE IF NOT EXISTS production_plans (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    product_type_id INTEGER NOT NULL,
-    product_name TEXT,
-    blueprint_type_id INTEGER,
-    runs INTEGER DEFAULT 1,
-    parallels INTEGER DEFAULT 1,
-    me_level INTEGER DEFAULT 0,
-    te_level INTEGER DEFAULT 0,
-    mat_hub TEXT DEFAULT 'Jita',
-    sell_hub TEXT DEFAULT 'Jita',
-    facility TEXT DEFAULT '',
-    char_name TEXT DEFAULT '',
-    status TEXT DEFAULT 'pending',
-    profit REAL DEFAULT 0,
-    margin REAL DEFAULT 0,
-    score REAL DEFAULT 0,
-    material_cost REAL DEFAULT 0,
-    created_at TEXT,
-    started_at TEXT,
-    completed_at TEXT,
-    facility_cost_mult REAL DEFAULT 1.0,
-    notes TEXT DEFAULT '',
-    group_number INTEGER DEFAULT 0,
-    sub_level INTEGER DEFAULT 0,
-    output_location TEXT DEFAULT '',
-    market_margin REAL DEFAULT 0,
-    personal_margin REAL DEFAULT 0,
-    daily_output REAL DEFAULT 0,
-    materials_ready INTEGER DEFAULT 0,
-    iskph REAL DEFAULT 0,
-    deposit_hangar_id INTEGER DEFAULT NULL,
-    deposited INTEGER DEFAULT 0,
-    calculated_time REAL DEFAULT 0,
-    assigned_blueprint_id INTEGER DEFAULT NULL,
-    mat_hangar_id INTEGER DEFAULT NULL,
-    solar_system_id INTEGER DEFAULT NULL,
-    material_short TEXT DEFAULT '',
-    deducted_materials TEXT DEFAULT ''
-);
-"""
+# 直接复用生产 schema，避免测试表与 PlanRepository.SCHEMA 漂移
+# （历史上手工维护的副本漏过列，导致迁移/新列在测试里静默不存在）
+from services.repositories.plan_repository import PlanRepository
+
+_PLAN_SCHEMA = PlanRepository.SCHEMA
 
 
 @pytest.fixture(scope="module")
@@ -1031,7 +994,7 @@ class TestCompletePlansCoordinator:
         pid = _insert_plan(user_env.db, status="ready", runs=2, parallels=1, deposit_hangar_id=None)
         plan = _get_plan(user_env.db, pid)
         result = complete_plans([plan], 1)
-        assert result == {"completed": 1, "deposited": 1, "failed": []}
+        assert result == {"completed": 1, "deposited": 1, "failed": [], "skipped": []}
         db_plan = _get_plan(user_env.db, pid)
         assert db_plan["status"] == "completed"
         assert db_plan["deposit_hangar_id"] == 1

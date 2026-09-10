@@ -29,6 +29,7 @@ from ui_pyside6.views.industry.plan_table_constants import (
     COL_GROUP,
     COL_PRODUCT,
     COL_STATUS,
+    COL_SUCCESS_RATE,
     FIXED_WIDTHS,
     MAX_CONTENT_WIDTHS,
     NUM_COLUMNS,
@@ -60,7 +61,7 @@ class PlanTable(QWidget):
         # 行高随全局字号（13px 字号下为 26，与历史值一致）
         self._table.verticalHeader().setDefaultSectionSize(max(26, theme.fs(13) + 13))
         self._table.verticalHeader().setVisible(False)
-        # 19 列全显示，超出窗口时横向滚动（用户明确选择，不默认隐藏列）
+        # 21 列全显示，超出窗口时横向滚动（用户明确选择，不默认隐藏列）
         self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._configure_adaptive_columns()
         # 状态列「待下线」渲染成按钮（点击走 _on_cell_clicked）
@@ -113,7 +114,7 @@ class PlanTable(QWidget):
 
         # 隐藏并行和批次列（数据仍保留用于计算）
 
-        NARROW = {COL_GROUP, COL_CHILD_LEVEL}  # 组号/子级
+        NARROW = {COL_GROUP, COL_CHILD_LEVEL, COL_SUCCESS_RATE}  # 组号/子级/成功率
         STRETCH = {COL_PRODUCT}  # 产品名
         # 备料勾选 / 图标列固定窄宽（适配复选框与图标，避免被内容/表头撑宽）
 
@@ -386,7 +387,7 @@ class PlanTable(QWidget):
         dlg = CompletePlansDialog([plan], hangars, default_hid, self)
         if not dlg.exec():
             return
-        result = complete_plans([plan], dlg.selected_hangar_id())
+        result = complete_plans([plan], dlg.selected_hangar_id(), parent=self)
         if not result["completed"]:
             QMessageBox.warning(self, "下线失败", "、".join(result["failed"]) or "未知错误")
             return
@@ -1003,9 +1004,6 @@ class PlanTable(QWidget):
         # Python GC 可能在对话框仍显示时回收包装对象 → 原生段错误（闪退）
         self._cost_breakdown_dlg = dlg
         dlg.show()
-
-    def _phase3_placeholder(self, feature_name: str):
-        QMessageBox.information(self, "功能开发中", f"「{feature_name}」功能将在阶段三实现。")
 
     def _show_npc_seller(self, row: int) -> None:
         """查看原本图 NPC 卖家"""

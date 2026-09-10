@@ -40,7 +40,7 @@ def _sort_key(value):
 
 
 class PlanTableModel(QAbstractTableModel):
-    """19 列生产计划模型 — 支持 checkbox、类别、图标、行内编辑、排序"""
+    """21 列生产计划模型 — 支持 checkbox、类别、图标、行内编辑、排序；末两列为科研（成功率/解码器）"""
 
     _HEADERS = [
         "☐",  # 0  勾选/备料
@@ -62,10 +62,12 @@ class PlanTableModel(QAbstractTableModel):
         "利润",  # 16
         "市场利润率%",  # 17
         "个人利润率%",  # 18
+        "成功率%",  # 19 科研：发明预期/实际成功率（用户可覆盖）
+        "解码器",  # 20 科研：发明用解码器
     ]
 
     # 可编辑列集合（仅 active 状态下生效）
-    _EDITABLE_COLS = {4, 8, 13}
+    _EDITABLE_COLS = {4, 8, 13, 19, 20}  # 备注/人物/设施 + 科研的成功率/解码器
 
     # 排序键映射: column index → dict key
     _SORT_KEYS = {
@@ -88,10 +90,12 @@ class PlanTableModel(QAbstractTableModel):
         16: "profit",
         17: "market_margin",
         18: "personal_margin",
+        19: "_success_rate",
+        20: "decryptor_name",
     }
 
     # 数值列（排序时按数字比较）
-    _NUMERIC_SORT_COLS = {0, 5, 6, 9, 10, 11, 12, 15, 16, 17, 18}
+    _NUMERIC_SORT_COLS = {0, 5, 6, 9, 10, 11, 12, 15, 16, 17, 18, 19}
 
     # 状态 → 显示文本
     _STATUS_LABELS = {
@@ -168,7 +172,7 @@ class PlanTableModel(QAbstractTableModel):
         return len(self._plans)
 
     def columnCount(self, parent=None):
-        return 19
+        return 21
 
     # ── data() — 只暴露已算数据（DisplayRole）+ 原始行（UserRole） ──
 
@@ -274,7 +278,51 @@ class PlanTableModel(QAbstractTableModel):
         if c == 18:
             margin = p.get("personal_margin", 0) or 0
             return f"{margin:.1f}%"
+        if c == 19:
+            return self._success_rate_text(p)
+        if c == 20:
+            return self._decryptor_text(p)
         return ""
+
+    @staticmethod
+    def _success_rate_text(p: dict) -> str:
+        """成功率列：用户手填优先（实填值），否则显示评分算出的值并标「预计」。
+
+        仅发明行有意义；其余行显示 —。
+        实际产出已回填（actual_output_runs 非 NULL）时改成「实际产出」口径展示。
+        """
+        from services.plan_job_kinds import normalize
+
+        if normalize(p.get("activity")) != "invention":
+            return "—"
+        actual = p.get("actual_output_runs")
+        if actual is not None:
+            return f"实产 {int(actual)}"
+        override = p.get("success_rate")
+        if override is not None:
+            try:
+                return f"{float(override) * 100:.1f}%"
+            except (TypeError, ValueError):
+                return "—"
+        breakdown = p.get("breakdown") or {}
+        rate = breakdown.get("success_rate")
+        if rate is None:
+            return "—"
+        try:
+            return f"预计 {float(rate) * 100:.1f}%"
+        except (TypeError, ValueError):
+            return "—"
+
+    @staticmethod
+    def _decryptor_text(p: dict) -> str:
+        """解码器列：发明行显示解码器名（无 → —）。"""
+        from domain.research import get_decryptor
+        from services.plan_job_kinds import normalize
+
+        if normalize(p.get("activity")) != "invention":
+            return "—"
+        d = get_decryptor(p.get("decryptor_type_id"))
+        return d.name if d else "不使用"
 
     # ── headerData ───────────────────────────────────────────────
 
@@ -314,6 +362,28 @@ class PlanTableModel(QAbstractTableModel):
             plan["char_name"] = str(value)
         elif col == 13:
             plan["facility"] = str(value)
+        elif col == 19:
+            # 成功率手填（写入待持久化的原始值；空串 → 清除覆盖，回到按技能算）
+            text = str(value).strip().rstrip("%")
+            if not text:
+                plan["success_rate"] = None
+            else:
+                try:
+                    plan["success_rate"] = max(0.0, min(1.0, float(text) / 100.0))
+                except ValueError:
+                    return False
+        elif col == 20:
+            # 解码器按名字写回 type_id（空/「不使用」→ 清除）
+            from domain.research import DECRYPTORS
+
+            text = str(value).strip()
+            if text in ("", "不使用", "—"):
+                plan["decryptor_type_id"] = None
+            else:
+                hit = next((tid for tid, d in DECRYPTORS.items() if d.name == text), None)
+                if hit is None:
+                    return False
+                plan["decryptor_type_id"] = hit
         else:
             return False
         self.dataChanged.emit(index, index, [role])

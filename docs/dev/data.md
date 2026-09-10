@@ -45,7 +45,7 @@
 | `hangars` | 机库定义（名称/星系/设施类型/设施税/改件） |
 | `inventory_items` | 库存物品（type_id, 数量, 加权平均成本） |
 | `user_blueprints` | 用户蓝图（BPO/BPC, ME/TE, runs, quantity） |
-| `production_plans` | 生产计划 |
+| `production_plans` | 工业计划（`activity` 区分制造/拷贝/发明/ME-TE 研究；科研专属列 `decryptor_type_id`/`success_rate`/`research_target_level`/`actual_output_runs`，语义见 [flows.md](flows.md) 科研计划节） |
 | `plan_blueprint_bindings` | 计划 ↔ 蓝图 多对多绑定（runs_used） |
 | `price_snapshots` | 计划价格快照 |
 | `procurement_items` | 采购清单 |

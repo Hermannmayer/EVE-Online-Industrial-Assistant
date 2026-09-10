@@ -86,11 +86,16 @@ def expire_overdue_plans(db=None) -> int:
 def material_requirements(plan: dict) -> list[dict]:
     """计算计划总材料需求 [{type_id, name, need}]。
 
-    need = 每轮 ME 调整量 × runs × parallels，数据源为
-    scoring_service.calculate_plan_metrics 返回的 materials（每轮量）。
-    评分失败时返回空列表并记 log。
+    口径按活动分派（见 services.plan_job_kinds）：
+      - 制造/反应：每轮量 × runs × parallels（现状不变）；
+      - 科研作业：**直接用评分返回的量**——科研分支的 materials 已经按作业次数
+        （发明=尝试次数、拷贝=总授权流程、研究=目标等级）算好了总量，
+        再乘 runs×parallels 会重复放大。
+
+    数据源为 scoring_service.calculate_plan_metrics 返回的 materials；失败返回空并记 log。
     """
     from services.char_config_resolver import resolve_char_config
+    from services.plan_job_kinds import is_science
 
     char_name = (plan.get("char_name") or "").strip()
     try:
@@ -99,9 +104,12 @@ def material_requirements(plan: dict) -> list[dict]:
     except Exception:
         log.exception("计算计划 %s 材料需求失败", plan.get("id"))
         return []
-    runs = max(int(plan.get("runs", 1)), 1)
-    parallels = max(int(plan.get("parallels", 1)), 1)
-    total_mult = runs * parallels
+    if is_science(plan.get("activity")):
+        total_mult = 1
+    else:
+        runs = max(int(plan.get("runs", 1)), 1)
+        parallels = max(int(plan.get("parallels", 1)), 1)
+        total_mult = runs * parallels
     reqs = []
     for m in metrics.get("materials", []) or []:
         if not m.get("type_id"):
@@ -362,6 +370,90 @@ def start_plan_batch(
 # ════════════════════════════════════════════════════════════════
 
 
+def _deposit_research_output(
+    conn,
+    *,
+    plan_id: int,
+    activity: str,
+    product_type_id: int | None,
+    deposit_hangar_id: int | None,
+    runs: int,
+    parallels: int,
+    actual_output_runs: int | None,
+    decryptor_type_id: int | None,
+    messages: list[str],
+) -> int:
+    """把科研作业的产出（BPC）写入 user_blueprints。返回 1=有入库，0=跳过。
+
+    - 拷贝：产出 parallels 份 BPC，每份 runs 流程；ME/TE 继承输入原图（游戏口径）。
+    - 发明：产出 **1 份** T2 BPC，流程数取 actual_output_runs
+      （NULL=未回填不写；0=失败不产出），ME/TE 由解码器决定（见 domain.research）。
+
+    同机库 + 同蓝图 + 同 ME/TE + 同 runs 的已有 BPC → 累加 quantity，不新增行。
+    """
+    from domain.research import get_decryptor, invention_output_me_te
+    from services import inventory_manager
+
+    if not product_type_id:
+        messages.append("计划无产物 type_id，跳过产出蓝图入库")
+        return 0
+    if not deposit_hangar_id or deposit_hangar_id <= 0:
+        messages.append("未设置产出机库，跳过产出蓝图入库")
+        return 0
+
+    if activity == "invention":
+        if actual_output_runs is None:
+            messages.append("发明未回填实际产出，跳过入库")
+            return 0
+        if actual_output_runs <= 0:
+            messages.append("发明失败，无产出蓝图入库")
+            return 0
+        out_runs = int(actual_output_runs)
+        me, te = invention_output_me_te(get_decryptor(decryptor_type_id))
+        out_qty = 1
+    else:  # copying
+        out_runs = max(1, int(runs))
+        me, te = _input_blueprint_me_te(conn, plan_id)
+        out_qty = max(1, int(parallels))
+
+    existing = conn.execute(
+        "SELECT id, quantity FROM user_blueprints "
+        "WHERE hangar_id=? AND blueprint_type_id=? AND is_bpo=0 AND me_level=? AND te_level=? "
+        "AND runs=? AND COALESCE(notes,'')='' LIMIT 1",
+        (deposit_hangar_id, product_type_id, me, te, out_runs),
+    ).fetchone()
+    specs = f"{out_qty} 份 × {out_runs} 流程，ME{me}/TE{te}"
+    if existing:
+        conn.execute("UPDATE user_blueprints SET quantity = quantity + ? WHERE id=?", (out_qty, existing[0]))
+        messages.append(f"产出蓝图已并入库存同规格 BPC（{specs}）")
+    else:
+        inventory_manager.add_blueprint(
+            deposit_hangar_id,
+            product_type_id,
+            is_bpo=False,
+            me_level=me,
+            te_level=te,
+            runs=out_runs,
+            quantity=out_qty,
+            conn=conn,
+        )
+        messages.append(f"产出蓝图已入库（{specs}）")
+    return 1
+
+
+def _input_blueprint_me_te(conn, plan_id: int) -> tuple[int, int]:
+    """取计划绑定输入蓝图的 ME/TE（拷贝产出的 BPC 继承原图等级）。缺失 → (0, 0)。"""
+    row = conn.execute(
+        "SELECT ub.me_level, ub.te_level FROM user_blueprints ub "
+        "JOIN plan_blueprint_bindings b ON b.blueprint_id = ub.id "
+        "WHERE b.plan_id = ? ORDER BY b.blueprint_id LIMIT 1",
+        (plan_id,),
+    ).fetchone()
+    if row is None:
+        return (0, 0)
+    return (int(row[0] or 0), int(row[1] or 0))
+
+
 def output_per_run(product_type_id: int) -> int:
     """蓝图单流程产出量（查 blueprint_products，缺省 1）。"""
     try:
@@ -379,18 +471,76 @@ def output_per_run(product_type_id: int) -> int:
         return 1
 
 
-def complete_plan(plan: dict, *, conn=None) -> dict:
-    """ready/pending/in_progress → completed：入库成品 + 消耗绑定 BPC。
+def plan_blueprint_ready(plan: dict) -> bool:
+    """该计划的输入蓝图是否已就绪（按活动规则判定，取代旧的 has_image 口径）。
+
+    规则见 services.plan_job_kinds：
+      - 制造/反应：BPO，或流程够本计划跑的 BPC（现状语义，绑定过即算就绪）；
+      - 拷贝/研究：必须是 BPO；
+      - 发明：必须是 BPC，且剩余流程 ≥ 本计划要跑的流程。
+
+    绑定集合优先取关联表（get_plan_blueprints），回退单值列。
+    """
+    from services.plan_job_kinds import RULE_BPC_RUNS, RULE_BPO_ONLY, input_blueprint_rule
+
+    rule = input_blueprint_rule(plan.get("activity"))
+    plan_id = plan.get("id")
+    bound: list[int] = []
+    if plan_id:
+        try:
+            bound = get_plan_blueprints(int(plan_id))
+        except Exception:
+            log.debug("读取计划 %s 蓝图绑定失败", plan_id, exc_info=True)
+    if not bound and plan.get("assigned_blueprint_id"):
+        bound = [int(plan["assigned_blueprint_id"])]
+    if not bound:
+        # 尚未绑定：只有「制造/反应 且 并行=1」沿用旧的「不绑也能启动」宽松语义
+        return rule not in (RULE_BPO_ONLY, RULE_BPC_RUNS)
+
+    runs = max(int(plan.get("runs") or 1), 1)
+    parallels = max(int(plan.get("parallels") or 1), 1)
+    try:
+        with _container().db.connect("user") as conn:
+            for bid in bound:
+                row = conn.execute("SELECT is_bpo FROM user_blueprints WHERE id=?", (bid,)).fetchone()
+                if row is None:
+                    continue
+                is_bpo = bool(row[0])
+                if rule == RULE_BPO_ONLY and not is_bpo:
+                    return False
+                if rule == RULE_BPC_RUNS:
+                    if is_bpo:
+                        return False  # 发明只能用 BPC（BPO 不可用于发明）
+                    if _bp_available_runs(conn, bid) < runs:
+                        return False
+    except Exception:
+        log.debug("校验计划 %s 输入蓝图失败", plan_id, exc_info=True)
+        return True  # 读不到时不拦（与旧宽松语义一致）
+    # 张数要求沿用 _binding_shortfall 的口径：并行几条线就要几张
+    return len(bound) >= parallels or rule not in (RULE_BPO_ONLY, RULE_BPC_RUNS)
+
+
+def complete_plan(plan: dict, *, conn=None, actual_output_runs: int | None = None) -> dict:
+    """ready/pending/in_progress → completed：入库产出 + 消耗绑定 BPC。
+
+    按 activity 分派产出口径（见 services.plan_job_kinds.output_kind）：
+      - manufacturing / reaction → 物品入 inventory_items；
+      - copying                  → 产出的 BPC 入 user_blueprints（不消耗原图流程）；
+      - invention                → **必须先回填 actual_output_runs**（成功流程数 / 0=失败），
+                                   成功的 T2 BPC 入 user_blueprints，并消耗 T1 BPC 流程；
+      - researching_*_efficiency → 只提升蓝图等级（等级仍由用户手动维护，本轮不回写）。
 
     conn: 可选注入的用户库连接（UI 已持有事务时传入）；None 时自开。
-    成品入库 / BPC 消耗 / 状态更新在同一连接同一事务内完成，失败整体回滚；
+    产出入库 / BPC 消耗 / 状态更新在同一连接同一事务内完成，失败整体回滚；
     已 completed 的计划幂等返回（不重复入库）。
-    Returns: {"ok": bool, "message": str, "deposited": int}
+    Returns: {"ok": bool, "message": str, "deposited": int, "code"?: str}
+    code 取值: need_outcome（发明未回填产出）
     """
     plan_id = plan.get("id")
     if not plan_id:
         return {"ok": False, "message": "计划无 id", "deposited": 0}
     from services import inventory_manager
+    from services.plan_job_kinds import OUTPUT_BPC, is_science, output_kind
 
     own_conn = conn is None
     if own_conn:
@@ -401,14 +551,38 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
         # 以 DB 权威值为准（调用方传入的 plan dict 可能是完成前的旧值）+ 幂等
         row = conn.execute(
             "SELECT status, product_type_id, deposit_hangar_id, runs, parallels, material_cost, "
-            "assigned_blueprint_id FROM production_plans WHERE id=?",
+            "assigned_blueprint_id, activity, actual_output_runs, decryptor_type_id "
+            "FROM production_plans WHERE id=?",
             (plan_id,),
         ).fetchone()
         if row is None:
             return {"ok": False, "message": "计划不存在", "deposited": 0}
-        db_status, product_type_id, deposit_hangar_id, runs, parallels, mat_cost, assigned_bp = row
+        (
+            db_status,
+            product_type_id,
+            deposit_hangar_id,
+            runs,
+            parallels,
+            mat_cost,
+            assigned_bp,
+            activity,
+            actual_output_runs_db,
+            decryptor_type_id,
+        ) = row
         if db_status in ("completed", "done"):
             return {"ok": True, "message": "计划已完成", "deposited": 0}
+
+        effective_actual = actual_output_runs if actual_output_runs is not None else actual_output_runs_db
+
+        # 发明是概率作业：产出必须由用户按游戏实际结果回填后才算完成，
+        # 否则产出记不准、后续成本与库存全错（见 docs/dev/flows.md「科研计划」）。
+        if is_science(activity) and activity == "invention" and effective_actual is None:
+            return {
+                "ok": False,
+                "code": "need_outcome",
+                "message": "发明作业需要先填写实际产出流程数（成功）或标记发明失败",
+                "deposited": 0,
+            }
 
         # 0. 蓝图绑定校验：一条产线一张蓝图，每张流程 ≥ runs；不足拒绝完成（防 BPC 缺流程仍照常完成）
         plan_parallels = max(int(parallels or 1), 1)
@@ -418,12 +592,27 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
             bound_ids = [assigned_bp]
         if bound_ids:
             short = _binding_shortfall(conn, bound_ids, plan_parallels, plan_runs)
-            if short:
+            if short and not is_science(activity):
+                # 科研作业不吃「一条产线一张图」的张数规则（发明一次尝试只耗 1 流程）
                 return {
                     "ok": False,
                     "message": f"蓝图绑定不满足完成条件：{short}。请先在蓝图列补绑蓝图后重试。",
                     "deposited": 0,
                 }
+        elif is_science(activity):
+            return {
+                "ok": False,
+                "code": "need_blueprint",
+                "message": "科研作业需要先绑定输入蓝图才能完成",
+                "deposited": 0,
+            }
+
+        # 0.5 发明回填：先把用户填的实际产出落库，后续入库/成本口径都用它
+        if actual_output_runs is not None and is_science(activity):
+            conn.execute(
+                "UPDATE production_plans SET actual_output_runs=? WHERE id=?",
+                (int(actual_output_runs), plan_id),
+            )
 
         # 1. 原子抢占完成状态；若并发完成，只有一个事务能成功。
         now = _now_str()
@@ -436,8 +625,23 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
         if cur.rowcount == 0:
             return {"ok": True, "message": "计划已完成", "deposited": 0}
 
-        # 2. 成品入库（同一连接同一事务；deposit_hangar_id 为 -1/None 表示「不自动入库」跳过）
-        if deposit_hangar_id and deposit_hangar_id > 0 and product_type_id:
+        kind = output_kind(activity)
+
+        # 2. 产出入库（同一连接同一事务；deposit_hangar_id 为 -1/None 表示「不自动入库」跳过）
+        if kind == OUTPUT_BPC:
+            deposited = _deposit_research_output(
+                conn,
+                plan_id=plan_id,
+                activity=activity,
+                product_type_id=product_type_id,
+                deposit_hangar_id=deposit_hangar_id,
+                runs=plan_runs,
+                parallels=plan_parallels,
+                actual_output_runs=effective_actual,
+                decryptor_type_id=decryptor_type_id,
+                messages=messages,
+            )
+        elif deposit_hangar_id and deposit_hangar_id > 0 and product_type_id:
             total_mult = max(int(runs or 1), 1) * max(int(parallels or 1), 1)
             total_qty = total_mult * output_per_run(product_type_id)
             cost_price = (mat_cost or 0) / max(total_qty, 1)
@@ -447,21 +651,36 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
         else:
             messages.append("未设置产出机库，跳过入库")
 
-        # 3. 消耗绑定 BPC：一条产线一张蓝图，每张消耗该产线的 runs 流程；BPO 无限跳过。
-        for bid in bound_ids:
-            brow = conn.execute("SELECT is_bpo FROM user_blueprints WHERE id=?", (bid,)).fetchone()
-            if not brow:
-                continue
-            if brow[0]:
-                messages.append("BPO 可无限次使用，跳过消耗")
-                continue
-            res = consume_bpc_runs(conn, bid, plan_runs)
-            if res.get("skipped"):
-                continue
-            if res.get("deleted"):
-                messages.append("绑定蓝图已耗尽并移除")
-            else:
-                messages.append(f"绑定蓝图剩余 {res.get('new_quantity')}×{res.get('new_runs')} 流程")
+        # 3. 消耗绑定 BPC：
+        #    - 制造/反应：一条产线一张蓝图，每张消耗该产线的 runs 流程；
+        #    - 发明：每次尝试消耗输入 T1 BPC 的 1 个流程（本计划 attempts 轮）；
+        #    - 拷贝/研究：**不消耗**输入蓝图流程（拷贝不消耗原图流程；研究只提升等级）。
+        if kind == OUTPUT_BPC and activity == "invention":
+            for bid in bound_ids:
+                res = consume_bpc_runs(conn, bid, plan_runs)
+                if res.get("skipped"):
+                    continue
+                if res.get("deleted"):
+                    messages.append("输入蓝图已耗尽并移除")
+                else:
+                    messages.append(f"输入蓝图剩余 {res.get('new_quantity')}×{res.get('new_runs')} 流程")
+        elif not is_science(activity):
+            for bid in bound_ids:
+                brow = conn.execute("SELECT is_bpo FROM user_blueprints WHERE id=?", (bid,)).fetchone()
+                if not brow:
+                    continue
+                if brow[0]:
+                    messages.append("BPO 可无限次使用，跳过消耗")
+                    continue
+                res = consume_bpc_runs(conn, bid, plan_runs)
+                if res.get("skipped"):
+                    continue
+                if res.get("deleted"):
+                    messages.append("绑定蓝图已耗尽并移除")
+                else:
+                    messages.append(f"绑定蓝图剩余 {res.get('new_quantity')}×{res.get('new_runs')} 流程")
+        else:
+            messages.append("科研作业不消耗输入蓝图流程")
 
         # 完成：清理关联表绑定
         _clear_plan_bindings(conn, plan_id)
@@ -990,43 +1209,59 @@ def _occupied_ids(conn, *, exclude_plan_id: int | None = None) -> set[int]:
 
 
 def _auto_bind_blueprints(plan: dict) -> list[int]:
-    """自动选最优库存蓝图：BPO 优先，其次 ME 最高的够用 BPC。返回并行产线所需张数清单。
+    """自动选最优库存蓝图。返回应绑定的库存蓝图 id 清单（按活动规则）。
 
-    并行 parallels 条产线各需一张蓝图（每张流程 ≥ runs）；只选未被其他活跃计划占用的蓝图。
-    库存不足时返回已凑到的张数，由调用方经 _binding_shortfall 提示补绑。
+    活动规则（services.plan_job_kinds）：
+      - 制造/反应：BPO 优先，其次 ME 最高的够用 BPC；并行几条线绑几张，每张流程 ≥ runs。
+      - 拷贝/研究：**只挑 BPO**（BPC 不可再拷贝或研究）。
+      - 发明：**只挑 BPC**（且流程 ≥ runs），BPO 不能用于发明。
+
+    只选未被其他活跃计划占用的蓝图；库存不足时返回已凑到的张数，
+    由调用方经 _binding_shortfall / plan_blueprint_ready 提示补绑。
     """
+    from services.plan_job_kinds import RULE_BPC_RUNS, RULE_BPO_ONLY, input_blueprint_rule
+
     product_type_id = plan.get("product_type_id")
-    if not product_type_id:
+    blueprint_type_id = plan.get("blueprint_type_id")
+    if not product_type_id and not blueprint_type_id:
         return []
     runs = max(int(plan.get("runs", 1)), 1)
     parallels = max(int(plan.get("parallels", 1)), 1)
+    rule = input_blueprint_rule(plan.get("activity"))
+
+    # 绑定哪张蓝图：制造按产物反查制造蓝图；科研行直接用 blueprint_type_id
+    # （发明 = 被发明的 T2 蓝图；拷贝/研究 = 被操作的 BPO）。
+    target_bp = int(blueprint_type_id or 0)
     with _container().db.connect("user", "bp", "ref") as conn:
-        cur = conn.execute(
-            "SELECT blueprint_type_id FROM bp.blueprint_products "
-            "WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-            (product_type_id,),
-        )
-        row = cur.fetchone()
-        if not row:
-            return []
-        options = [o for o in find_available_blueprints(conn, row[0]) if not o.get("occupied")]
+        if not target_bp:
+            cur = conn.execute(
+                "SELECT blueprint_type_id FROM blueprint_products "
+                "WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
+                (product_type_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return []
+            target_bp = int(row[0])
+        options = [o for o in find_available_blueprints(conn, target_bp) if not o.get("occupied")]
     if not options:
         return []
-    picks: list[dict] = []
-    # BPO 无限流程优先占用；一条产线一张
-    for o in options:
-        if o.get("is_bpo"):
-            picks.append(o)
-            if len(picks) >= parallels:
-                break
-    if len(picks) < parallels:
+
+    if rule == RULE_BPO_ONLY:
+        picks = [o for o in options if o.get("is_bpo")]
+    elif rule == RULE_BPC_RUNS:
         capable = [o for o in options if not o.get("is_bpo") and (o.get("available_runs") or 0) >= runs]
         capable.sort(key=lambda b: (b.get("me_level", 0), b.get("te_level", 0)), reverse=True)
-        for o in capable:
-            picks.append(o)
-            if len(picks) >= parallels:
-                break
-    return [int(o["id"]) for o in picks]
+        picks = capable
+    else:
+        picks = [o for o in options if o.get("is_bpo")]
+        if len(picks) < parallels:
+            capable = [o for o in options if not o.get("is_bpo") and (o.get("available_runs") or 0) >= runs]
+            capable.sort(key=lambda b: (b.get("me_level", 0), b.get("te_level", 0)), reverse=True)
+            picks.extend(capable)
+    # 制造/反应：并行几条线绑几张；拷贝/研究/发明只需一张
+    need = parallels if rule not in (RULE_BPO_ONLY, RULE_BPC_RUNS) else 1
+    return [int(o["id"]) for o in picks[:need]]
 
 
 def ensure_plan_auto_bind(plan_id: int) -> bool:

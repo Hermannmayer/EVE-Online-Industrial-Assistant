@@ -69,7 +69,7 @@ def pending_children_count(plan: dict, all_plans: list[dict]) -> int
 ### `plan_start_block_reason`
 
 ```python
-def plan_start_block_reason(plan: dict, mat_hangar_id: int | None, all_plans: list[dict], *, shortfall_count: int=0, allow_short: bool=False) -> str | None
+def plan_start_block_reason(plan: dict, mat_hangar_id: int | None, all_plans: list[dict], *, shortfall_count: int=0, allow_short: bool=False, blueprint_ready: bool | None=None) -> str | None
 ```
 
 返回阻止启动的原因文本；None = 可启动。

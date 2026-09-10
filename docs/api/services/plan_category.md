@@ -16,6 +16,16 @@ production_plans 无 activity 字段（计划全为制造），类别从蓝图�
 
 ## 函数
 
+### `category_for_activity`
+
+```python
+def category_for_activity(activity: str | None, *, fallback: str=CATEGORY_MANUFACTURING) -> str
+```
+
+计划行的 activity → 展示类别。
+
+定义行：`41`
+
 ### `category_symbol`
 
 ```python
@@ -24,7 +34,7 @@ def category_symbol(cat: str) -> str
 
 类别符号（⚙📋💡⚗）。
 
-定义行：`29`
+定义行：`52`
 
 ### `load_category_map`
 
@@ -34,4 +44,4 @@ def load_category_map(conn: Connection, blueprint_type_ids: list[int]) -> dict[i
 
 蓝图 id → 类别。优先级：reaction → invention → copying → manufacturing。
 
-定义行：`34`
+定义行：`57`

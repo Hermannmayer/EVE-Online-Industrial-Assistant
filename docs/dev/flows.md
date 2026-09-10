@@ -85,6 +85,52 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
 - 读取：`plan_service.load_plans`；价格快照 `save_price_snapshots`
 - 旁路：`plan_aggregator` 是**采购/需求聚合**，不是计划展开
 
+## 科研计划（拷贝 / 发明 / ME-TE 研究）
+
+`production_plans.activity` 把「制造计划」泛化为「工业计划」；活动契约的唯一真源是
+`services/plan_job_kinds.py`（输入蓝图规则 / 产出口径 / 提示文案）。**所有消费方必须经它判定**，
+不得硬编码 `activity='manufacturing'`。
+
+```
+入口（手动加入，母项拆解不生成科研产线）
+  蓝图库右键 / 全物品页右键
+    → services/research_plans.create_research_plan（单次 INSERT，含科研专属列）
+      · 拷贝 CopyPlanDialog      份数 + 每份流程（≤ 蓝图 copying 的 max_production_limit）
+      · 发明 InventionPlanDialog 产物（多产物下拉）+ 解码器 + 预期成功率 + 尝试次数
+      · 研究 ResearchPlanDialog  ME/TE + 目标等级
+
+评分（按行 activity 分派）
+  ScoringService.calculate_plan_metrics
+    · manufacturing → scoring_facade（现状路径，零改动）
+    · copying/invention/researching_* → ScoringService._calculate_research_metrics
+        → services/plan_metrics.invention_plan_cost / copying_plan_cost / research_plan_cost
+        → domain/research.py（成功率 / 解码器表 / BPC 产出 / 科学作业时长）
+
+执行
+  启动：plan_start_check.plan_start_block_reason(blueprint_ready=plan_execution.plan_blueprint_ready)
+        · 拷贝/研究要 BPO；发明要够流程的 BPC（不能用 BPO）
+  完成：plan_execution.complete_plan 按 output_kind 分派
+        · copying            → 产出 BPC 入 user_blueprints（不消耗原图流程）
+        · invention          → **必须回填 actual_output_runs**；否则返回 code='need_outcome'
+                               拒绝静默完成 → 工业页弹 InventionOutcomeDialog
+                               （默认值 = 期望流程；「发明失败」按钮置 0）
+        · researching_*      → 只完成作业（等级仍由用户手动维护）
+  消耗：发明每次尝试扣输入 T1 BPC 的 1 个流程；拷贝/研究不扣
+```
+
+**语义契约**（`product_type_id` 恒为「本计划的产物」）：制造=物品、拷贝/研究=被操作的蓝图、
+发明=产出的 T2/T3 蓝图。科研行的产物**不在** `blueprint_products.activity='manufacturing'` 里，
+所以 `plan_aggregator` 对科研行整行跳过蓝图采购，材料（数据核心/解码器）走
+`plan_execution.material_requirements` 的科研分支（材料量已按作业次数算好，**不再乘 runs×parallels**）。
+
+**已知陷阱**（改这块前先看）：
+- `plan_execution.plan_blueprint_ready` 取代旧 `has_image` 口径；`has_image` 对科研行恒 False。
+- 研发活动的表名不一致：`blueprint_activities` 用 `researching_material_efficiency`，
+  而 `blueprint_materials` 用 `research_material`（映射见 `plan_job_kinds.material_activity`）。
+- 发明时长/产出上限在**输入 T1 蓝图**上，不在产物那张蓝图。
+- 发明产出的 BPC 基础流程数 = `min(T1 拷贝上限, T2 制造上限)`（SDE 实测 1125 条路径可校验），
+  不要按「舰船 1 / 其余 10」硬编码。
+
 ## 库存管理
 
 - 表：user 库 `hangars` / `inventory_items` / `user_blueprints`
