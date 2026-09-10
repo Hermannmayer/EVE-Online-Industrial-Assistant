@@ -114,6 +114,16 @@ class CostBreakdownDialog(QWidget):
         self._job_total = QLabel("—")
         self._job_total.setStyleSheet(f"font-weight: bold; color: {theme.PRIMARY};")
         self._job_form.addRow("制造作业费:", self._job_total)
+        # 科研行专属字段（制造行隐藏；见下方 _fill_job_fields 按活动分派）
+        self._job_success = QLabel("—")
+        self._job_success.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
+        self._job_form.addRow("发明成功率:", self._job_success)
+        self._job_attempts = QLabel("—")
+        self._job_attempts.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
+        self._job_form.addRow("尝试次数 / 作业量:", self._job_attempts)
+        self._job_bpc_cost = QLabel("—")
+        self._job_bpc_cost.setStyleSheet(f"color: {theme.ACCENT_CYAN};")
+        self._job_form.addRow("产出蓝图单位成本:", self._job_bpc_cost)
         self._job_research = QLabel("—")
         self._job_research.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
         self._job_form.addRow("拷贝/发明研究成本:", self._job_research)
@@ -313,10 +323,21 @@ class CostBreakdownDialog(QWidget):
         self._job_fac_tax.setText(_fmt_isk(facility_tax_v * total_mult))
         self._job_scc.setText(_fmt_isk(scc * total_mult))
         self._job_total.setText(_fmt_isk(installation_fee * total_mult))
-        research_cost = bd.get("research_cost", 0) or 0
-        self._job_research.setText(
-            _fmt_isk(research_cost * total_mult) if research_cost else "—（无，原图或 T1 无需研究）"
-        )
+        # 按活动分派：制造行显示既有「研究成本」一行；科研行换成专属明细
+        activity = str(bd.get("activity") or metrics.get("activity") or "manufacturing")
+        is_science = activity != "manufacturing" and activity != "reaction"
+        for w in (self._job_success, self._job_attempts, self._job_bpc_cost, self._job_research):
+            w.setVisible(True)
+        if is_science:
+            self._fill_research_fields(bd, activity)
+        else:
+            self._job_success.setVisible(False)
+            self._job_attempts.setVisible(False)
+            self._job_bpc_cost.setVisible(False)
+            research_cost = bd.get("research_cost", 0) or 0
+            self._job_research.setText(
+                _fmt_isk(research_cost * total_mult) if research_cost else "—（无，原图或 T1 无需研究）"
+            )
 
         # ── 市场费用 ──
         self._mkt_broker.setText(_fmt_isk(broker_init * total_mult))
@@ -337,6 +358,40 @@ class CostBreakdownDialog(QWidget):
         self._summary_labels["daily_profit"].setText(_fmt_isk(daily_profit))
         self._summary_labels["score"].setText(f"{score:.1f}")
         self._summary_labels["iskph"].setText(_fmt_isk(isk_per_hour))
+
+    def _fill_research_fields(self, bd: dict, activity: str) -> None:
+        """科研行的专属明细：成功率 / 作业量 / 蓝图单位成本 / 不消耗输入流程。"""
+        if activity == "invention":
+            rate = bd.get("success_rate")
+            base = bd.get("base_probability")
+            txt = f"{float(rate) * 100:.1f}%" if rate is not None else "—"
+            if base:
+                txt += f"（基础 {float(base) * 100:.0f}%"
+                if bd.get("decryptor"):
+                    txt += f"，解码器：{bd['decryptor']}"
+                txt += "）"
+            if bd.get("is_actual"):
+                txt += " · 已回填实际产出"
+            self._job_success.setText(txt)
+            self._job_attempts.setText(f"{bd.get('attempts', 0)} 次尝试 × {bd.get('runs_per_bpc', 0)} 流程/次")
+            unit = bd.get("bpc_unit_cost")
+            self._job_bpc_cost.setText(f"{_fmt_isk(unit)} ISK / 流程" if unit else "—")
+            self._job_research.setText("—（科研作业不消耗输入蓝图流程；发明按尝试消耗 T1 BPC 流程）")
+        elif activity == "copying":
+            self._job_success.setText("—（拷贝无成功率）")
+            self._job_attempts.setText(
+                f"{bd.get('copies', 1)} 份 × {bd.get('runs_per_copy', 1)} 流程"
+                f"，上限 {bd.get('max_production_limit', 0)}"
+            )
+            per_copy = bd.get("per_copy_cost") or 0
+            self._job_bpc_cost.setText(f"{_fmt_isk(per_copy)} ISK / 份（单份成本）" if per_copy else "—")
+            self._job_research.setText("—（拷贝不消耗原图流程，产出为 BPC）")
+        else:  # ME/TE 研究
+            self._job_success.setText("—（研究无成功率）")
+            self._job_attempts.setText(f"目标等级 {bd.get('target_level', 0)}")
+            self._job_bpc_cost.setText("—（产出是等级提升后的原图）")
+            approx = "（时长为首级近似）" if bd.get("time_is_approximate") else ""
+            self._job_research.setText(f"—（研究不消耗蓝图流程）{approx}")
 
     def _compute_subitem_costs(self, group_number: int, deeper_than: int) -> dict[int, float]:
         """读同组更深子项产线，返回 {子项 product_type_id: 制造价合计（材料+作业费）}。

@@ -28,6 +28,16 @@ def migrate_char_config(data: dict) -> dict
 
 定义行：`147`
 
+### `_migrate_legacy_skill_keys`
+
+```python
+def _migrate_legacy_skill_keys(skills: dict) -> None
+```
+
+把旧技能名的等级搬到现行名下（就地修改，幂等）。
+
+定义行：`238`
+
 ### `load_char_config`
 
 ```python
@@ -36,4 +46,4 @@ def load_char_config(path: str) -> dict
 
 读取、校验、迁移一站式函数。
 
-定义行：`214`
+定义行：`247`

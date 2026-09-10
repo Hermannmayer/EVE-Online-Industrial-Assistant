@@ -22,6 +22,35 @@
 旧公式 `1 + wf/(100×(1+ME))` 是 wasteFactor 时代（Crius 前）的过时实现，勿恢复。
 详见 `tests/test_manufacturing_calculator_golden.py`（金标准测试，数值来自游戏实测）。
 
+**发明公式契约**（2026-09-11 核实，来源：EVE University Wiki `Invention` + 本知识库「解码器」节）：
+
+```
+成功率 = blueprint_products.probability（T1 蓝图的 invention 行）
+        × (1 + (科学技能1 + 科学技能2)/30 + 加密技术原理/40)
+        × 解码器概率倍率
+```
+
+- **meta 物品已不参与**（Crius 后从公式移除），别按旧资料加 meta 修正项。
+- 两个「科学技能」= `blueprint_skills` 里该 T1 蓝图 invention 活动要求、名称不含
+  「加密技术原理」/`Encryption Methods` 的那两个（按 type_id 升序取前两个）。
+- 产出 BPC 流程数 = **min(T1 蓝图的 copying 上限, T2 蓝图的 manufacturing 上限)**
+  ——SDE 实测 1125 条发明路径全部可校验；按「舰船 1 / 其余 10」硬编码会错
+  （部分组件是 1、改装件是 5/20/300）。
+- 产出 ME/TE = `2%/4% + 解码器修正`（无解码器即 ME2/TE4）。
+- 解码器修正值**只能硬编码**：`reference.db.item_dogma` 里这 8 个 type_id 的
+  `dogma_attrs` 实测为空 `{}`，SDE 没有可查属性（见下方「解码器」表）。
+- 表名陷阱：`blueprint_activities` 用 `researching_material_efficiency`，
+  而 `blueprint_materials` 用 `research_material`（无 -ing 后缀）。
+
+实现与金标准测试：`domain/research.py`、`tests/test_research_formulas.py`、
+`tests/test_research_plan_metrics.py`。
+
+**技能名契约**（2026-09-11 核实）：技能名就是 `char_config.json` 的键，全链路按中文名读。
+UI 曾用过 2014 改名前的老名（实测 43 个里 17 个失效），导致等级静默读成 0。
+现行做法：科研技能组从 `reference.db` `item.group_id=270`（45 个技能）派生；
+旧键经 `char_config_validator._migrate_legacy_skill_keys` 搬运；
+`tests/test_skill_names_resolve.py` 是防漂移回归网。
+
 ---
 
 ## 一、制造与科研

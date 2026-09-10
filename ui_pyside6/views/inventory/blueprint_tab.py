@@ -38,6 +38,7 @@ from services.inventory_manager import (
     move_blueprints_to_hangar,
     update_blueprints_batch,
 )
+from services.research_plans import resolve_invention_source
 
 from .blueprint_import_worker import _BlueprintImportWorker, apply_blueprint_diff
 from .inventory_helpers import BlueprintTableModel
@@ -438,10 +439,12 @@ class BlueprintTab(QWidget):
         auto_cost = menu.addAction("自动填写每流程成本(T2发明)")
         menu.addSeparator()
         add_plan = menu.addAction("加入制造业规划")
+        add_copy = menu.addAction("加入拷贝规划")
+        add_invention = menu.addAction("加入发明规划")
+        add_research = menu.addAction("加入效率研究规划")
         menu.addSeparator()
         edit_level = menu.addAction("修改蓝图等级")
         edit_runs = menu.addAction("修改流程数")
-        add_research = menu.addAction("加入效率研究规划")
 
         action = menu.exec(self._bp_table.viewport().mapToGlobal(pos))
 
@@ -451,14 +454,252 @@ class BlueprintTab(QWidget):
             self._move_blueprints(bp_ids)
         elif action == cost_action:
             self._set_cost_per_run(bp_ids)
+        elif action == research:
+            self._show_research_analysis(selected)
+        elif action == auto_cost:
+            self._auto_fill_cost_per_run(selected)
         elif action == edit_level:
             self._edit_levels(bp_ids)
         elif action == edit_runs:
             self._edit_runs(bp_ids)
         elif action == add_plan:
             self._on_add_to_plan(selected)
-        elif action in (research, auto_cost, add_research):
-            QMessageBox.information(self, "提示", "此功能即将上线")
+        elif action == add_copy:
+            self._on_add_copy_plan(selected)
+        elif action == add_invention:
+            self._on_add_invention_plan(selected)
+        elif action == add_research:
+            self._on_add_research_plan(selected)
+
+    # ── 科研计划入口（拷贝 / 发明 / 效率研究） ──────────────────────
+
+    def _bp_for_selected(self, selected: list[dict]) -> dict | None:
+        """选中蓝图里取第一张有 blueprint_type_id 的（科研操作以单张为目标）。"""
+        for bp in selected:
+            if bp.get("blueprint_type_id"):
+                return bp
+        QMessageBox.information(self, "提示", "所选蓝图缺少蓝图信息")
+        return None
+
+    def _show_research_analysis(self, selected: list[dict]) -> None:
+        """研究分析：只读展示该蓝图的拷贝/发明成本明细。"""
+        bp = self._bp_for_selected(selected)
+        if not bp:
+            return
+        from core.container import get_container
+        from ui_pyside6.views.industry.research_cost_dialog import ResearchCostDialog
+
+        name = bp.get("display_name") or bp.get("zh_name") or str(bp["blueprint_type_id"])
+        dlg = ResearchCostDialog(get_container().db, int(bp["blueprint_type_id"]), name, parent=self)
+        dlg.exec()
+
+    def _on_add_copy_plan(self, selected: list[dict]) -> None:
+        """加入拷贝规划（只能基于 BPO）。"""
+        bp = self._bp_for_selected(selected)
+        if not bp:
+            return
+        if not bp.get("is_bpo"):
+            QMessageBox.information(self, "提示", "拷贝只能基于蓝图原本(BPO)，蓝图拷贝(BPC)不可再拷贝")
+            return
+        bid = int(bp["blueprint_type_id"])
+        try:
+            from core.container import get_container
+
+            with get_container().db.connect("bp") as conn:
+                row = conn.execute(
+                    "SELECT max_production_limit FROM blueprint_activities "
+                    "WHERE blueprint_type_id = ? AND activity = 'copying' LIMIT 1",
+                    (bid,),
+                ).fetchone()
+        except Exception:
+            row = None
+        if not row:
+            QMessageBox.information(self, "提示", "该蓝图没有拷贝活动")
+            return
+
+        from PySide6.QtWidgets import QDialog
+
+        from ui_pyside6.dialogs.research_plan_dialogs import CopyPlanDialog
+
+        name = bp.get("display_name") or bp.get("zh_name") or str(bid)
+        dlg = CopyPlanDialog(name, max_production_limit=int(row[0] or 1), parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        data = dlg.result_data() or {}
+        self._create_research_plan(
+            bid,
+            name,
+            activity="copying",
+            runs=int(data.get("runs_per_copy") or 1),
+            parallels=int(data.get("copies") or 1),
+            data=data,
+        )
+
+    def _on_add_invention_plan(self, selected: list[dict]) -> None:
+        """加入发明规划（用库存 T1 BPC 发明出 T2 BPC）。"""
+        bp = self._bp_for_selected(selected)
+        if not bp:
+            return
+        bid = int(bp["blueprint_type_id"])
+        try:
+            from core.container import get_container
+            from services.research_plans import invention_base_runs
+
+            with get_container().db.connect("bp", "ref") as conn:
+                src = resolve_invention_source(conn, bid)
+                if src is None:
+                    QMessageBox.information(self, "提示", "该蓝图不是发明产物（T2/T3），无法发明")
+                    return
+                t1_id = int(src["t1_blueprint_type_id"])
+                base_runs = {
+                    int(oc["blueprint_type_id"]): invention_base_runs(conn, int(oc["blueprint_type_id"]), t1_id)
+                    for oc in src["outcomes"]
+                }
+        except Exception:
+            log.exception("读取发明来源失败 bp=%s", bid)
+            QMessageBox.warning(self, "提示", "读取发明数据失败，见日志")
+            return
+
+        from PySide6.QtWidgets import QDialog
+
+        from ui_pyside6.dialogs.research_plan_dialogs import InventionPlanDialog
+
+        # 发明作业跑在 **T1 蓝图** 上，产物是选中的 T2 蓝图
+        dlg = InventionPlanDialog(
+            src["t1_name"],
+            outcomes=src["outcomes"],
+            base_runs_by_outcome=base_runs,
+            default_probability={int(o["blueprint_type_id"]): float(o["base_probability"]) for o in src["outcomes"]},
+            parent=self,
+        )
+        # 默认选中用户右键的那张产物
+        for i in range(dlg.outcome_combo().count()):
+            oc = dlg.outcome_combo().itemData(i) or {}
+            if int(oc.get("blueprint_type_id") or 0) == bid:
+                dlg.outcome_combo().setCurrentIndex(i)
+                break
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        data = dlg.result_data() or {}
+        prod_bp = int(data.get("product_blueprint_type_id") or 0)
+        if not prod_bp:
+            QMessageBox.information(self, "提示", "未选择发明产物")
+            return
+        self._create_research_plan(
+            prod_bp,
+            data.get("product_name") or str(prod_bp),
+            activity="invention",
+            runs=int(data.get("attempts") or 1),
+            parallels=1,
+            data=data,
+            decryptor_type_id=data.get("decryptor_type_id"),
+            success_rate=data.get("success_rate"),
+        )
+
+    def _on_add_research_plan(self, selected: list[dict]) -> None:
+        """加入效率研究规划（ME/TE，只能基于 BPO）。"""
+        bp = self._bp_for_selected(selected)
+        if not bp:
+            return
+        if not bp.get("is_bpo"):
+            QMessageBox.information(self, "提示", "研究只能基于蓝图原本(BPO)，蓝图拷贝(BPC)不可研究")
+            return
+        from PySide6.QtWidgets import QDialog
+
+        from ui_pyside6.dialogs.research_plan_dialogs import ResearchPlanDialog
+
+        bid = int(bp["blueprint_type_id"])
+        name = bp.get("display_name") or bp.get("zh_name") or str(bid)
+        dlg = ResearchPlanDialog(name, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        data = dlg.result_data() or {}
+        self._create_research_plan(
+            bid,
+            name,
+            activity=str(data.get("activity") or "researching_material_efficiency"),
+            runs=int(data.get("target_level") or 1),
+            parallels=1,
+            data=data,
+            research_target_level=int(data.get("target_level") or 1),
+        )
+
+    def _create_research_plan(
+        self,
+        blueprint_type_id: int,
+        name: str,
+        *,
+        activity: str,
+        runs: int,
+        parallels: int,
+        data: dict,
+        decryptor_type_id=None,
+        success_rate=None,
+        research_target_level: int = 0,
+    ) -> None:
+        """统一落库科研计划并提示结果。"""
+        from services.research_plans import create_research_plan
+
+        plan_id = create_research_plan(
+            blueprint_type_id,
+            activity=activity,
+            blueprint_name=name,
+            runs=runs,
+            parallels=parallels,
+            mat_hangar_id=data.get("mat_hangar_id"),
+            deposit_hangar_id=data.get("deposit_hangar_id"),
+            solar_system_id=data.get("solar_system_id"),
+            char_name=data.get("char_name") or "",
+            facility=data.get("facility") or "",
+            decryptor_type_id=decryptor_type_id,
+            success_rate=success_rate,
+            research_target_level=research_target_level,
+        )
+        if plan_id > 0:
+            QMessageBox.information(self, "完成", f"已加入规划：{name}（计划 #{plan_id}）")
+            self._load_blueprints()
+        else:
+            QMessageBox.warning(self, "失败", "加入规划失败，见日志")
+
+    def _auto_fill_cost_per_run(self, selected: list[dict]) -> None:
+        """按发明期望成本自动填写 cost_per_run（多产物时让用户选）。"""
+        bp = self._bp_for_selected(selected)
+        if not bp:
+            return
+        bid = int(bp["blueprint_type_id"])
+        from core.container import get_container
+        from services.research_plans import research_cost_per_run
+
+        try:
+            info = research_cost_per_run(get_container().db, bid)
+        except Exception:
+            log.exception("计算每流程成本失败 bp=%s", bid)
+            info = None
+        if not info:
+            QMessageBox.information(self, "提示", "该蓝图既无发明路径也无拷贝活动，无法估算每流程成本")
+            return
+
+        if info.get("kind") == "invention":
+            outcomes = info.get("outcomes") or []
+            if not outcomes:
+                QMessageBox.information(self, "提示", "未找到发明产物")
+                return
+            names = [
+                f"{o['name']} — {o['cost_per_run']:,.0f} ISK/流程（成功率 {o['success_rate'] * 100:.1f}%）"
+                for o in outcomes
+            ]
+            pick, ok = QInputDialog.getItem(self, "选择产物", "该 T1 蓝图有多个发明产物，按哪个算？", names, 0, False)
+            if not ok:
+                return
+            value = outcomes[names.index(pick)]["cost_per_run"]
+        else:
+            value = info.get("cost_per_run", 0.0)
+
+        from services.inventory_manager import update_blueprints_batch
+
+        update_blueprints_batch([bp["id"]], cost_per_run=float(value))
+        QMessageBox.information(self, "完成", f"已按研究成本填写每流程成本：{value:,.0f} ISK")
+        self._load_blueprints()
 
     def _on_add_to_plan(self, selected: list[dict]):
         """加入制造业规划：多选蓝图 → 相同(蓝图类型+ME+TE+流程)合并成一行并行 → 后台评分后批量落库绑定。

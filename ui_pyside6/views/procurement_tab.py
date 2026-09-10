@@ -626,6 +626,7 @@ class ProcurementDialog(QDialog):
 
         completed = 0
         deposited = 0
+        need_outcome = 0
         for plan in ready_plans:
             plan_id = plan.get("id")
             if not plan_id:
@@ -635,10 +636,23 @@ class ProcurementDialog(QDialog):
                 if res.get("ok"):
                     completed += 1
                     deposited += 1 if res.get("deposited") else 0
+                elif res.get("code") == "need_outcome":
+                    # 发明是概率作业：产出必须由用户按游戏结果回填，这里不静默完成
+                    need_outcome += 1
                 else:
                     log.warning("完成计划 %s 失败: %s", plan_id, res.get("message"))
             except Exception:
                 log.exception("完成计划 %s 失败", plan_id)
+
+        if need_outcome:
+            QMessageBox.information(
+                self,
+                "需回填发明结果",
+                "有 "
+                + str(need_outcome)
+                + " 条发明计划未填写实际产出，已跳过。请在「工业制造」页选中该行点「完成」填写"
+                + "（发明失败也需填 0）。",
+            )
 
         if completed > 0:
             msg = f"已完成 {completed}/{len(ready_plans)} 项计划"

@@ -54,17 +54,32 @@ class PlanEditDialog(QDialog):
         self._product_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         form.addRow("产品名称", self._product_label)
 
-        # 流程数
+        # 流程数：科研行的 runs 语义不同（发明=尝试次数 / 拷贝=每份流程 / 研究=目标等级）
+        from services.plan_job_kinds import normalize
+
+        _act = normalize(self._plan_data.get("activity"))
+        runs_label, runs_tip = {
+            "copying": ("每份流程", "每份 BPC 的授权生产流程数（上限=蓝图拷贝上限）"),
+            "invention": ("尝试次数", "要跑几次发明尝试；每次消耗 1 个输入 BPC 流程与一份数据核心"),
+            "researching_material_efficiency": ("目标 ME 等级", "材料效率研究的目标等级"),
+            "researching_time_efficiency": ("目标 TE 等级", "时间效率研究的目标等级"),
+        }.get(_act, ("流程数", ""))
         self._runs_spin = QSpinBox()
         self._runs_spin.setRange(1, 99999)
         self._runs_spin.setValue(1)
-        form.addRow("流程数", self._runs_spin)
+        if runs_tip:
+            self._runs_spin.setToolTip(runs_tip)
+        form.addRow(runs_label, self._runs_spin)
 
-        # 并行数
+        # 并行数：科研行恒为 1（拷贝的「份数」存在 parallels，见 design 说明）
         self._parallel_spin = QSpinBox()
         self._parallel_spin.setRange(1, 100)
         self._parallel_spin.setValue(1)
-        form.addRow("并行数", self._parallel_spin)
+        if _act == "copying":
+            self._parallel_spin.setToolTip("拷贝行表示产出的 BPC 份数")
+            form.addRow("产出份数", self._parallel_spin)
+        else:
+            form.addRow("并行数", self._parallel_spin)
 
         # 批量模式：流程/并行默认不改动各选中行，勾选后才统一同步（参照机库「显式选择才写」）
         self._sync_runs_cb: QCheckBox | None = None

@@ -17,13 +17,36 @@ CATEGORY_MANUFACTURING = "manufacturing"
 CATEGORY_COPYING = "copying"
 CATEGORY_INVENTION = "invention"
 CATEGORY_REACTION = "reaction"
+CATEGORY_RESEARCH = "research"  # ME/TE 效率研究（计划行的 activity 是 researching_*）
 
 _SYMBOLS = {
     CATEGORY_MANUFACTURING: "⚙",
     CATEGORY_COPYING: "📋",
     CATEGORY_INVENTION: "💡",
     CATEGORY_REACTION: "⚗",
+    CATEGORY_RESEARCH: "🔬",
 }
+
+# 计划行的 activity → 展示类别
+_ACTIVITY_TO_CATEGORY = {
+    "manufacturing": CATEGORY_MANUFACTURING,
+    "copying": CATEGORY_COPYING,
+    "invention": CATEGORY_INVENTION,
+    "reaction": CATEGORY_REACTION,
+    "researching_material_efficiency": CATEGORY_RESEARCH,
+    "researching_time_efficiency": CATEGORY_RESEARCH,
+}
+
+
+def category_for_activity(activity: str | None, *, fallback: str = CATEGORY_MANUFACTURING) -> str:
+    """计划行的 activity → 展示类别。
+
+    同一张蓝图可能既有制造计划又有拷贝计划，只有按行存出来的 activity 才能区分；
+    蓝图反查（load_category_map）对新行已不适用，保留仅作历史行兜底。
+    未知/空 → fallback。
+    """
+    act = str(activity or "").strip()
+    return _ACTIVITY_TO_CATEGORY.get(act, fallback)
 
 
 def category_symbol(cat: str) -> str:

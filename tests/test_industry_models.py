@@ -38,7 +38,7 @@ class TestPlanTableModel:
         ]
         model = PlanTableModel(plans)
         assert model.rowCount() == 1
-        assert model.columnCount() == 19
+        assert model.columnCount() == 21
 
     def test_header_data(self, qapp):
         """表头正确"""
@@ -63,9 +63,45 @@ class TestPlanTableModel:
             "利润",
             "市场利润率%",
             "个人利润率%",
+            "成功率%",
+            "解码器",
         ]
         for i, h in enumerate(headers):
             assert model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == h
+
+    def test_research_columns_display(self, qapp):
+        """科研列：发明行显示成功率与解码器，制造行显示 —。"""
+        plans = [
+            {
+                "product_type_id": 2001,
+                "product_name": "T2 产物",
+                "activity": "invention",
+                "success_rate": 0.42,
+                "decryptor_type_id": 34203,
+                "status": "pending",
+            },
+            {
+                "product_type_id": 2002,
+                "product_name": "普通制造品",
+                "activity": "manufacturing",
+                "status": "pending",
+            },
+        ]
+        model = PlanTableModel(plans)
+        # 发明行：手填成功率优先
+        assert model.data(model.index(0, 19)) == "42.0%"
+        assert model.data(model.index(0, 20)) == "放大装置解码器"
+        # 制造行：不适用
+        assert model.data(model.index(1, 19)) == "—"
+        assert model.data(model.index(1, 20)) == "—"
+
+    def test_research_columns_fall_back_to_computed_rate(self, qapp):
+        """未手填时显示评分算出的成功率，并标「预计」；回填后切「实产」。"""
+        base = {"product_type_id": 2001, "product_name": "T2", "activity": "invention", "status": "pending"}
+        model = PlanTableModel([{**base, "breakdown": {"success_rate": 0.34}}])
+        assert model.data(model.index(0, 19)) == "预计 34.0%"
+        model.set_plans([{**base, "actual_output_runs": 7}])
+        assert model.data(model.index(0, 19)) == "实产 7"
 
     def test_data_display(self, qapp):
         """数据展示"""
