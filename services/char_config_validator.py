@@ -176,6 +176,8 @@ def migrate_char_config(data: dict) -> dict:
             char_data["skills"] = {}
         elif not isinstance(char_data["skills"], dict):
             char_data["skills"] = {}
+        else:
+            _migrate_legacy_skill_keys(char_data["skills"])
 
         # 确保 implants 字段存在
         if "implants" not in char_data:
@@ -209,6 +211,37 @@ def migrate_char_config(data: dict) -> dict:
                         hub_data[key] = default_market[hub][key]
 
     return result
+
+
+# 技能名就是 char_config.json 的键。游戏 2014 年前后改过一批技能名，
+# 老配置里存的是旧名 → 改名后读出来全是 0 级（成功率/时长/产线容量全错）。
+# 读取时把旧键的值搬到新键；**旧键保留不删**（本函数契约：不删除用户已有配置项）。
+_LEGACY_SKILL_KEYS: dict[str, str] = {
+    "电子技术": "电子工程学",
+    "机械工程": "机械工程学",
+    "量子物理": "量子物理学",
+    "核物理": "核芯物理学",
+    "电磁物理": "电磁物理学",
+    "引力子物理": "引力子物理学",
+    "等离子物理": "等离子物理学",
+    "高频激发物理学": "高能物理学",
+    "小型舰船制造研究": "高级小型舰船建造研究",
+    "中型舰船制造研究": "高级中型舰船建造研究",
+    "大型舰船制造研究": "高级大型舰船建造研究",
+    "工业舰船制造研究": "高级工业舰船建造研究",
+    # 「量产技术」与「批量生产学」在 SDE 里是同一个技能（Mass Production），
+    # 前者是不存在的旧名；「高级量产技术」是 Advanced Mass Production 的正确名，勿动。
+    "量产技术": "批量生产学",
+}
+
+
+def _migrate_legacy_skill_keys(skills: dict) -> None:
+    """把旧技能名的等级搬到现行名下（就地修改，幂等）。"""
+    for old_name, new_name in _LEGACY_SKILL_KEYS.items():
+        if old_name not in skills:
+            continue
+        if new_name not in skills or not skills.get(new_name):
+            skills[new_name] = skills[old_name]
 
 
 def load_char_config(path: str) -> dict:

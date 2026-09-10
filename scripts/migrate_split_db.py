@@ -184,7 +184,12 @@ CREATE TABLE IF NOT EXISTS production_plans (
     calculated_time REAL DEFAULT 0,
     assigned_blueprint_id INTEGER DEFAULT NULL,
     mat_hangar_id INTEGER DEFAULT NULL,
-    material_short TEXT DEFAULT ''
+    material_short TEXT DEFAULT '',
+    activity TEXT DEFAULT 'manufacturing',
+    decryptor_type_id INTEGER DEFAULT NULL,
+    success_rate REAL DEFAULT NULL,
+    research_target_level INTEGER DEFAULT 0,
+    actual_output_runs INTEGER DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS user_skills (

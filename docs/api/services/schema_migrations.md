@@ -126,15 +126,35 @@ v9→v10: production_plans 新增 deducted_materials 列（启动扣减快照，
 
 定义行：`256`
 
+### `_migrate_user_v14_to_v15`
+
+```python
+def _migrate_user_v14_to_v15(db_path: str) -> str
+```
+
+v14→v15: production_plans 新增 material_cost_snapshot 列（启动时成本快照）。
+
+定义行：`273`
+
+### `_migrate_user_v13_to_v14`
+
+```python
+def _migrate_user_v13_to_v14(db_path: str) -> str
+```
+
+v13→v14: 修复「user_version 已是 13、但科研作业列不存在」的历史库。
+
+定义行：`298`
+
 ### `_migrate_user_v12_to_v13`
 
 ```python
 def _migrate_user_v12_to_v13(db_path: str) -> str
 ```
 
-v12→v13: production_plans 新增 material_cost_snapshot 列（启动时成本快照）。
+v12→v13: production_plans 增科研作业列（拷贝/发明/ME-TE 研究并入计划）。
 
-定义行：`273`
+定义行：`335`
 
 ### `_migrate_user_v11_to_v12`
 
@@ -144,7 +164,7 @@ def _migrate_user_v11_to_v12(db_path: str) -> str
 
 v11→v12: production_plans 增引用式子项需求列（共享合并 / 母项联动重算）。
 
-定义行：`295`
+定义行：`361`
 
 ### `_migrate_user_v10_to_v11`
 
@@ -154,7 +174,7 @@ def _migrate_user_v10_to_v11(db_path: str) -> str
 
 v10→v11: price_snapshots 表从 UI 层收口到集中迁移。
 
-定义行：`314`
+定义行：`380`
 
 ### `_migrate_bp_v1_to_v2`
 
@@ -164,7 +184,7 @@ def _migrate_bp_v1_to_v2(db_path: str) -> str
 
 v1→v2: blueprint_materials 新增 wastefactor 列
 
-定义行：`340`
+定义行：`406`
 
 ### `_table_exists`
 
@@ -174,7 +194,7 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool
 
 检查连接中是否存在指定表
 
-定义行：`389`
+定义行：`457`
 
 ### `_add_columns`
 
@@ -184,7 +204,7 @@ def _add_columns(db_path: str, table: str, columns: list[tuple[str, str]]) -> in
 
 批量 ADD COLUMN，忽略已存在的列。返回实际新增的列数。
 
-定义行：`398`
+定义行：`466`
 
 ### `_open`
 
@@ -194,7 +214,7 @@ def _open(db_path: str) -> sqlite3.Connection
 
 打开连接（带 busy_timeout，容忍启动期短暂写锁/被强杀后的句柄未释放）
 
-定义行：`419`
+定义行：`487`
 
 ### `_get_version`
 
@@ -204,7 +224,7 @@ def _get_version(db_path: str) -> int
 
 读取 PRAGMA user_version
 
-定义行：`426`
+定义行：`494`
 
 ### `_set_version`
 
@@ -214,7 +234,7 @@ def _set_version(db_path: str, version: int)
 
 写入 PRAGMA user_version
 
-定义行：`436`
+定义行：`504`
 
 ### `_backup_db`
 
@@ -224,7 +244,7 @@ def _backup_db(db_path: str) -> str | None
 
 迁移前对库做一致快照（VACUUM INTO），返回备份文件路径；失败返回 None。
 
-定义行：`446`
+定义行：`514`
 
 ### `_cleanup_old_backups`
 
@@ -234,7 +254,7 @@ def _cleanup_old_backups(backup_dir: str, pattern: str, keep: int=BACKUP_KEEP) -
 
 保留最近 keep 份备份，删除更早的。删除失败仅告警，不阻断。
 
-定义行：`474`
+定义行：`542`
 
 ### `_rebuild_table`
 
@@ -244,7 +264,7 @@ def _rebuild_table(db_path: str, table: str, create_sql: str, copy_columns: list
 
 大变动迁移：重建表结构并保留数据（改列类型/拆表/合并/重命名列）。
 
-定义行：`491`
+定义行：`559`
 
 ### `ensure_schema`
 
@@ -254,7 +274,7 @@ def ensure_schema(db_alias: str) -> dict
 
 检查并迁移单个库的 schema。
 
-定义行：`528`
+定义行：`596`
 
 ### `ensure_all_schemas`
 
@@ -264,7 +284,7 @@ def ensure_all_schemas() -> dict[str, dict]
 
 遍历所有 4 个库，执行必要的 schema 迁移。
 
-定义行：`586`
+定义行：`654`
 
 ### `get_db_version`
 
@@ -274,7 +294,7 @@ def get_db_version(db_alias: str) -> int | None
 
 读取当前库的磁盘版本号（诊断用）
 
-定义行：`599`
+定义行：`667`
 
 ### `get_expected_version`
 
@@ -284,4 +304,4 @@ def get_expected_version(db_alias: str) -> int | None
 
 返回代码中定义的预期版本号（诊断用）
 
-定义行：`610`
+定义行：`678`

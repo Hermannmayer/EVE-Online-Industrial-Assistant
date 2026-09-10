@@ -55,6 +55,12 @@ class PlanRepository:
             "source_mother_ids",
             "component_parent_type_id",
             "demand",
+            # v13 科研作业列
+            "activity",
+            "decryptor_type_id",
+            "success_rate",
+            "research_target_level",
+            "actual_output_runs",
         }
     )
 
@@ -100,7 +106,12 @@ class PlanRepository:
         solar_system_id INTEGER DEFAULT NULL,
         source_mother_ids TEXT DEFAULT '',
         component_parent_type_id INTEGER DEFAULT NULL,
-        demand INTEGER DEFAULT 0
+        demand INTEGER DEFAULT 0,
+        activity TEXT DEFAULT 'manufacturing',
+        decryptor_type_id INTEGER DEFAULT NULL,
+        success_rate REAL DEFAULT NULL,
+        research_target_level INTEGER DEFAULT 0,
+        actual_output_runs INTEGER DEFAULT NULL
     );"""
 
     def ensure_table(self):

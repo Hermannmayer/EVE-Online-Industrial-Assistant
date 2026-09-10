@@ -20,8 +20,11 @@ COL_COST = 15
 COL_PROFIT = 16
 COL_MARKET_MARGIN = 17
 COL_PERSONAL_MARGIN = 18
+# 科研作业列（仅拷贝/发明/研究行有值；其余行显示 —）
+COL_SUCCESS_RATE = 19
+COL_DECRYPTOR = 20
 
-NUM_COLUMNS = 19
+NUM_COLUMNS = 21
 
 # 固定窄列宽度（px）：备料勾选列需容纳 8px padding + 16px 复选框 + 余量；图标列适配 32px 图标；
 # 类别列仅显示 16px 自绘图标，与图标列同一逻辑（窄列不被内容/表头撑宽）
@@ -34,4 +37,5 @@ MAX_CONTENT_WIDTHS = {
     COL_BLUEPRINT: 160,
     COL_FACILITY: 120,
     COL_OUTPUT: 120,
+    COL_DECRYPTOR: 130,
 }

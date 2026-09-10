@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.cache import TtlLRUCache
 from core.container import get_container
+from core.logger import log
 from core.paths import ICON_DIR
 from services.terminology import term
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
@@ -696,7 +697,162 @@ class AllItemsDialog(QDialog):
         a5.triggered.connect(_do_add_plan)
         m.addAction(a5)
 
+        # 科研入口：仅在选中蓝图时有意义（对物品行点了会提示）
+        def _do_research(kind: str):
+            def _run():
+                self._add_research_plan(tid, _ctx_name, kind)
+
+            return _run
+
+        m.addSeparator()
+        a6 = QAction("加入拷贝规划", self)
+        a6.triggered.connect(_do_research("copying"))
+        m.addAction(a6)
+        a7 = QAction("加入发明规划", self)
+        a7.triggered.connect(_do_research("invention"))
+        m.addAction(a7)
+        a8 = QAction("加入效率研究规划", self)
+        a8.triggered.connect(_do_research("research"))
+        m.addAction(a8)
+
         m.exec(self._tv.viewport().mapToGlobal(pos))
+
+    def _add_research_plan(self, type_id: int, name: str, kind: str) -> None:
+        """从全物品页直接建科研计划。
+
+        物品 → 蓝图：制造蓝图查 blueprint_products；蓝图物品本身就是蓝图 type_id。
+        其余情况给出提示（不是所有物品都能拷贝/发明/研究）。
+        """
+        from core.container import get_container
+        from services.research_plans import (
+            create_research_plan,
+            invention_base_runs,
+            resolve_invention_source,
+        )
+
+        db = get_container().db
+        bp_id = int(type_id)
+        try:
+            with db.connect("bp", "ref") as conn:
+                is_bp_item = bool(
+                    conn.execute(
+                        "SELECT 1 FROM blueprint_activities WHERE blueprint_type_id = ? LIMIT 1", (bp_id,)
+                    ).fetchone()
+                )
+                if not is_bp_item:
+                    row = conn.execute(
+                        "SELECT blueprint_type_id FROM blueprint_products " "WHERE product_type_id = ? LIMIT 1",
+                        (bp_id,),
+                    ).fetchone()
+                    if not row:
+                        QMessageBox.information(self, "提示", f"「{name}」没有蓝图，无法加入科研规划")
+                        return
+                    bp_id = int(row[0])
+                src = resolve_invention_source(conn, bp_id) if kind == "invention" else None
+                copy_row = conn.execute(
+                    "SELECT max_production_limit FROM blueprint_activities "
+                    "WHERE blueprint_type_id = ? AND activity = 'copying' LIMIT 1",
+                    (bp_id,),
+                ).fetchone()
+                base_runs = (
+                    {
+                        int(oc["blueprint_type_id"]): invention_base_runs(
+                            conn, int(oc["blueprint_type_id"]), int(src["t1_blueprint_type_id"])
+                        )
+                        for oc in src["outcomes"]
+                    }
+                    if src
+                    else {}
+                )
+        except Exception:
+            log.exception("读取蓝图信息失败 type_id=%s", type_id)
+            QMessageBox.warning(self, "提示", "读取蓝图信息失败，见日志")
+            return
+
+        from ui_pyside6.dialogs.research_plan_dialogs import (
+            CopyPlanDialog,
+            InventionPlanDialog,
+            ResearchPlanDialog,
+        )
+
+        dlg: QDialog
+        if kind == "invention":
+            if src is None:
+                QMessageBox.information(self, "提示", f"「{name}」不是 T2/T3 蓝图，无法发明")
+                return
+            dlg = InventionPlanDialog(
+                src["t1_name"],
+                outcomes=src["outcomes"],
+                base_runs_by_outcome=base_runs,
+                default_probability={
+                    int(o["blueprint_type_id"]): float(o["base_probability"]) for o in src["outcomes"]
+                },
+                parent=self,
+            )
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            data = dlg.result_data() or {}
+            prod = int(data.get("product_blueprint_type_id") or 0)
+            if not prod:
+                QMessageBox.information(self, "提示", "未选择发明产物")
+                return
+            create_research_plan(
+                prod,
+                activity="invention",
+                blueprint_name=data.get("product_name") or str(prod),
+                runs=int(data.get("attempts") or 1),
+                mat_hangar_id=data.get("mat_hangar_id"),
+                deposit_hangar_id=data.get("deposit_hangar_id"),
+                solar_system_id=data.get("solar_system_id"),
+                char_name=data.get("char_name") or "",
+                facility=data.get("facility") or "",
+                decryptor_type_id=data.get("decryptor_type_id"),
+                success_rate=data.get("success_rate"),
+            )
+            QMessageBox.information(self, "完成", "已加入发明规划")
+            return
+
+        if kind == "copying":
+            if not copy_row:
+                QMessageBox.information(self, "提示", f"「{name}」没有拷贝活动")
+                return
+            dlg = CopyPlanDialog(name, max_production_limit=int(copy_row[0] or 1), parent=self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            data = dlg.result_data() or {}
+            create_research_plan(
+                bp_id,
+                activity="copying",
+                blueprint_name=name,
+                runs=int(data.get("runs_per_copy") or 1),
+                parallels=int(data.get("copies") or 1),
+                mat_hangar_id=data.get("mat_hangar_id"),
+                deposit_hangar_id=data.get("deposit_hangar_id"),
+                solar_system_id=data.get("solar_system_id"),
+                char_name=data.get("char_name") or "",
+                facility=data.get("facility") or "",
+            )
+            QMessageBox.information(self, "完成", "已加入拷贝规划")
+            return
+
+        # 效率研究
+        dlg = ResearchPlanDialog(name, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        data = dlg.result_data() or {}
+        create_research_plan(
+            bp_id,
+            activity=str(data.get("activity") or "researching_material_efficiency"),
+            blueprint_name=name,
+            runs=int(data.get("target_level") or 1),
+            mat_hangar_id=data.get("mat_hangar_id"),
+            deposit_hangar_id=data.get("deposit_hangar_id"),
+            solar_system_id=data.get("solar_system_id"),
+            char_name=data.get("char_name") or "",
+            facility=data.get("facility") or "",
+            research_target_level=int(data.get("target_level") or 1),
+        )
+        QMessageBox.information(self, "完成", "已加入效率研究规划")
 
     def _ds(self, r, is_mfg):
         if is_mfg:

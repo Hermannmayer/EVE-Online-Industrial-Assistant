@@ -102,7 +102,7 @@
 | 文件 | 功能 |
 |------|------|
 | `top_toolbar.py` | 工具栏（蓝图导入 + 双行价格设置） |
-| `plan_table.py` | 生产计划表格（19 列） |
+| `plan_table.py` | 生产计划表格（21 列） |
 | `plan_edit_dialog.py` | 计划编辑对话框 |
 | `gantt_view.py` | 甘特图视图 |
 | `price_source_widget.py` | 材料/成品独立价格来源 |

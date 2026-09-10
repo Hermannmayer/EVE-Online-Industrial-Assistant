@@ -252,6 +252,77 @@ def _clear_research_cost_cache() -> None:
 
 
 # ════════════════════════════════════════════════════════════════════
+#  科研作业辅助（拷贝/发明/研究的返回值组装）
+# ════════════════════════════════════════════════════════════════════
+
+
+def _empty_plan_metrics() -> dict:
+    """计划指标的零值骨架（键与制造路径一致，供失败分支直接返回）。"""
+    return {
+        "material_cost": 0,
+        "profit": 0,
+        "margin": 0,
+        "score": 0,
+        "iskph": 0,
+        "calculated_time": 0,
+        "daily_output": 0,
+        "revenue": 0,
+        "fees": 0,
+        "materials": [],
+        "revenue_per_run": 0,
+        "fees_per_run": 0,
+    }
+
+
+def _resolve_blueprint_for_product(db, product_type_id) -> int:
+    """按产物 type_id 反查它的制造蓝图（旧计划行只带 product_type_id 时用）。缺失 → 0。"""
+    if not product_type_id:
+        return 0
+    try:
+        with db.connect("bp") as conn:
+            row = conn.execute(
+                "SELECT blueprint_type_id FROM blueprint_products "
+                "WHERE product_type_id = ? AND activity = 'manufacturing' LIMIT 1",
+                (int(product_type_id),),
+            ).fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        from core.logger import log
+
+        log.debug("反查蓝图失败 product=%s", product_type_id, exc_info=True)
+        return 0
+
+
+def materials_with_names(db, mats: list[tuple[int, int]], prices: dict[int, float]) -> list[dict]:
+    """[(type_id, qty)] + 单价 → [{type_id, name, qty, unit_price}]（供个人利润率/明细展示）。
+
+    名称批量解析（一次查询），不在循环里逐个查库。
+    """
+    pairs = [(int(mid), int(qty)) for mid, qty in mats if mid]
+    if not pairs:
+        return []
+    names: dict[int, str] = {}
+    try:
+        from services.name_resolver import resolve_item_names_batch
+
+        with db.connect("ref") as conn:
+            names = resolve_item_names_batch(conn, [mid for mid, _q in pairs])
+    except Exception:
+        from core.logger import log
+
+        log.debug("科研材料名称解析失败", exc_info=True)
+    return [
+        {
+            "type_id": mid,
+            "name": names.get(mid, str(mid)),
+            "qty": qty,
+            "unit_price": float(prices.get(mid, 0.0)),
+        }
+        for mid, qty in pairs
+    ]
+
+
+# ════════════════════════════════════════════════════════════════════
 #  ScoringService — 可注入的评分服务类
 # ════════════════════════════════════════════════════════════════════
 
@@ -471,12 +542,52 @@ class ScoringService:
         per_run: dict = {}
         total: dict = {}
         try:
+            # 科研作业（拷贝/发明/研究）走独立分支：产物是蓝图而非制造品，
+            # 材料不吃 ME、作业次数口径也不同，不能复用制造评分链路。
+            from domain.research import SCIENCE_ACTIVITIES
+
+            activity = str(plan_data.get("activity") or "manufacturing")
+            if activity in SCIENCE_ACTIVITIES:
+                return ScoringService._calculate_research_metrics(
+                    plan_data,
+                    char_config,
+                    activity=activity,
+                    mat_hub=resolved_mat_hub,
+                    sell_hub=resolved_sell_hub,
+                    price_type_mat=resolved_price_type_mat,
+                    price_type_prod=resolved_price_type_prod,
+                    system_id=resolved_system_id,
+                    effective_system_id=effective_system_id,
+                    structure_cost_mult=structure_cost_mult,
+                    structure_time_mod=structure_time_mod,
+                    fac_tax=fac_tax,
+                    runs=runs,
+                    parallels=parallels,
+                )
+            per_run = svc.calc_manufacturing_score(
+                type_id=type_id,
+                char_config=char_config,
+                bp_me=me,
+                bp_te=te,
+                mat_source_hub=resolved_mat_hub,
+                sell_hub=resolved_sell_hub,
+                facility_tax_pct=fac_tax,
+                price_type_mat=resolved_price_type_mat,
+                price_type_prod=resolved_price_type_prod,
+                structure_bonus=structure_bonus,
+                structure_time_mod=structure_time_mod,
+                structure_mat_saving=structure_mat_saving,
+                system_id=resolved_system_id,
+                mat_price_mult=mat_mult,
+                prod_price_mult=prod_mult,
+            )
+            total = ScoringService.calculate_total_metrics(per_run, runs, parallels) or {}
+
             # 逐线：各并行产线按**各自绑定蓝图**的 ME/TE 独立结算。
             # 短路条件是「与**计划级**完全一致」——不是「各线彼此一致」：
             # 绑的 5 张都是 ME8、而计划级写着 10 时也必须走逐线，否则改绑等级不生效。
             line_levels = [(int(a), int(b)) for a, b in (plan_data.get("line_levels") or [])]
-            use_per_line = any(pair != (me, te) for pair in line_levels)
-            if use_per_line:
+            if any(pair != (me, te) for pair in line_levels):
                 per_line = [
                     svc.calc_manufacturing_score(
                         type_id=type_id,
@@ -561,6 +672,350 @@ class ScoringService:
             "solar_system_id": effective_system_id,
             "status": per_run.get("status", ""),
             "breakdown": per_run.get("breakdown", {}),
+        }
+
+    # ── 科研作业（拷贝 / 发明 / ME-TE 研究）──
+
+    @staticmethod
+    def _research_skill_levels(conn, blueprint_type_id: int, activity: str, skills: dict) -> tuple[int, int, int, str]:
+        """从 blueprint_skills 解析该活动的技能要求并读角色等级。
+
+        发明成功率需要「两个科学技能 + 一个加密技术原理」：
+        名称含「加密技术原理」/`Encryption Methods` 的归加密，其余按 type_id 升序取前两个。
+
+        Returns: (科学1等级, 科学2等级, 加密等级, 说明文本)
+        """
+        rows = conn.execute(
+            "SELECT bs.skill_type_id, i.zh_name, i.en_name FROM blueprint_skills bs "
+            "LEFT JOIN ref.item i ON i.type_id = bs.skill_type_id "
+            "WHERE bs.blueprint_type_id = ? AND bs.activity = ? ORDER BY bs.skill_type_id",
+            (blueprint_type_id, activity),
+        ).fetchall()
+        science: list[tuple[int, str]] = []
+        encryption: tuple[int, str] | None = None
+        for sid, zh, en in rows:
+            name = zh or en or str(sid)
+            if "加密技术原理" in name or "Encryption" in (en or ""):
+                if encryption is None:
+                    encryption = (int(sid), name)
+            else:
+                science.append((int(sid), name))
+
+        def _lv(name: str) -> int:
+            return int(skills.get(name, 0) or 0)
+
+        s1 = _lv(science[0][1]) if len(science) > 0 else 0
+        s2 = _lv(science[1][1]) if len(science) > 1 else 0
+        enc = _lv(encryption[1]) if encryption else 0
+        parts = []
+        if len(science) > 0:
+            parts.append(f"{science[0][1]} L{s1}")
+        if len(science) > 1:
+            parts.append(f"{science[1][1]} L{s2}")
+        if encryption:
+            parts.append(f"{encryption[1]} L{enc}")
+        return s1, s2, enc, " / ".join(parts)
+
+    @staticmethod
+    def _calculate_research_metrics(
+        plan_data: dict,
+        char_config: dict,
+        *,
+        activity: str,
+        mat_hub: str,
+        sell_hub: str,
+        price_type_mat: str,
+        price_type_prod: str,
+        system_id: int | None,
+        effective_system_id: int | None,
+        structure_cost_mult: float,
+        structure_time_mod: float,
+        fac_tax: float,
+        runs: int,
+        parallels: int,
+    ) -> dict:
+        """拷贝/发明/研究作业的指标（编排：查蓝图/SDE → 调 services.plan_metrics 纯函数）。
+
+        与制造的关键差异（见 services.plan_job_kinds 的活动契约）：
+        - 产物是**蓝图**（product_type_id = 蓝图 type_id），不是制造品；
+        - 材料不吃 ME；安装费 SCI 按本活动取；
+        - 「作业次数」口径：发明 = 尝试次数、拷贝 = 总授权流程、研究 = 目标等级。
+
+        plan_data 字段约定:
+            product_type_id    本计划产物（科研恒为蓝图 type_id）
+            blueprint_type_id  输入蓝图（发明 = T1 蓝图；拷贝/研究 = 同一张蓝图）
+            runs               发明 = 尝试次数 / 拷贝 = 每份拷贝流程 / 研究 = 目标等级
+            parallels          拷贝 = 产出份数（其余按 1 计）
+            decryptor_type_id / success_rate / actual_output_runs  仅发明使用
+        """
+        from core.container import get_container
+        from core.logger import log
+        from domain.research import (
+            ACTIVITY_COPYING,
+            ACTIVITY_INVENTION,
+            MATERIAL_ACTIVITY,
+            METALLURGY_TIME_SKILL,
+            RESEARCH_TIME_SKILL,
+            copy_job_runs,
+            get_decryptor,
+            science_job_time,
+        )
+        from services.plan_metrics import (
+            copying_plan_cost,
+            invention_plan_cost,
+            research_plan_cost,
+        )
+
+        empty = _empty_plan_metrics()
+        db = get_container().db
+        # 本计划的蓝图 = 输入/产出蓝图，两者对科研是同一张：
+        #   拷贝/研究 → 被拷贝/被研究的 BPO；发明 → 被发明的 T2 蓝图（T1 由它反查）。
+        # blueprint_type_id 缺失时按 product_type_id 反查制造蓝图（沿用旧计划行的口径）。
+        blueprint_type_id = int(plan_data.get("blueprint_type_id") or 0)
+        if not blueprint_type_id:
+            blueprint_type_id = _resolve_blueprint_for_product(db, plan_data.get("product_type_id"))
+        if not blueprint_type_id:
+            empty["status"] = "no_blueprint"
+            return empty
+
+        skills = (char_config or {}).get("skills", {}) or {}
+        decryptor = get_decryptor(plan_data.get("decryptor_type_id")) if activity == ACTIVITY_INVENTION else None
+
+        bp_materials: list[tuple[int, int]] = []
+        base_time = 0
+        max_production_limit = 0
+        base_probability = 0.0
+        input_bp_type_id = blueprint_type_id
+        s1 = s2 = enc = 0
+        skill_note = ""
+
+        with db.connect("bp", "ref") as conn:
+            mat_act = MATERIAL_ACTIVITY.get(activity, activity)
+            bp_materials = [
+                (int(r[0]), int(r[1] or 0))
+                for r in conn.execute(
+                    "SELECT material_type_id, quantity FROM blueprint_materials "
+                    "WHERE blueprint_type_id = ? AND activity = ?",
+                    (blueprint_type_id, mat_act),
+                ).fetchall()
+            ]
+            # 注意连接启用了 sqlite3.Row：不能元组解包，须按索引取
+            # blueprint_activities 的活动名：copying / invention / researching_material_efficiency …
+            # 旧数据里研究活动可能写作 research_material / research_time，做一次回退。
+            _act_name = activity
+            _act_row = conn.execute(
+                "SELECT time, max_production_limit FROM blueprint_activities "
+                "WHERE blueprint_type_id = ? AND activity = ? LIMIT 1",
+                (blueprint_type_id, _act_name),
+            ).fetchone()
+            if _act_row is None and activity in MATERIAL_ACTIVITY:
+                _act_row = conn.execute(
+                    "SELECT time, max_production_limit FROM blueprint_activities "
+                    "WHERE blueprint_type_id = ? AND activity = ? LIMIT 1",
+                    (blueprint_type_id, MATERIAL_ACTIVITY[activity]),
+                ).fetchone()
+            base_time = int(_act_row[0] or 0) if _act_row else 0
+            max_production_limit = int(_act_row[1] or 0) if _act_row else 0
+            if activity == ACTIVITY_INVENTION:
+                inv = conn.execute(
+                    "SELECT blueprint_type_id, probability FROM blueprint_products "
+                    "WHERE activity = 'invention' AND product_type_id = ? LIMIT 1",
+                    (blueprint_type_id,),
+                ).fetchone()
+                if not inv:
+                    empty["status"] = "no_blueprint"
+                    return empty
+                # 发明作业跑在**输入**（T1）蓝图上：基础时长/产出上限取自它，不是产物那张蓝图
+                ans = conn.execute(
+                    "SELECT time, max_production_limit FROM blueprint_activities "
+                    "WHERE blueprint_type_id = ? AND activity = 'invention' LIMIT 1",
+                    (int(inv[0]),),
+                ).fetchone()
+                if ans:
+                    base_time = int(ans[0] or 0)
+                    max_production_limit = int(ans[1] or 0)
+                input_bp_type_id, base_probability = int(inv[0]), float(inv[1] or 0.0)
+                # 数据核心来自 T1 蓝图的 invention 行
+                bp_materials = [
+                    (int(r[0]), int(r[1] or 0))
+                    for r in conn.execute(
+                        "SELECT material_type_id, quantity FROM blueprint_materials "
+                        "WHERE blueprint_type_id = ? AND activity = 'invention'",
+                        (input_bp_type_id,),
+                    ).fetchall()
+                ]
+                # 产出 BPC 基础流程数 = min(T1 拷贝上限, T2 制造上限)（SDE 实测，1125 条路径可校验）
+                t1_copy = conn.execute(
+                    "SELECT max_production_limit FROM blueprint_activities "
+                    "WHERE blueprint_type_id = ? AND activity = 'copying' LIMIT 1",
+                    (input_bp_type_id,),
+                ).fetchone()
+                t1_limit = int(t1_copy[0] or 0) if t1_copy else 0
+                caps = [c for c in (t1_limit, max_production_limit) if c > 0]
+                max_production_limit = min(caps) if caps else 10
+                s1, s2, enc, skill_note = ScoringService._research_skill_levels(
+                    conn, input_bp_type_id, "invention", skills
+                )
+
+        # 材料单价：adjusted_price 优先（0/缺失 → sell_price）
+        prices: dict[int, float] = {}
+        mat_ids = {mid for mid, _q in bp_materials if mid}
+        if decryptor:
+            mat_ids.add(decryptor.type_id)
+        if mat_ids:
+            with db.connect("mkt") as conn:
+                for mid in mat_ids:
+                    row = conn.execute(
+                        "SELECT adjusted_price, sell_price, buy_price FROM market_prices "
+                        "WHERE type_id = ? ORDER BY (adjusted_price > 0) DESC, fetch_time DESC LIMIT 1",
+                        (mid,),
+                    ).fetchone()
+                    if row:
+                        prices[mid] = float(row[0] or 0) or float(row[1] or 0) or float(row[2] or 0)
+
+        sci = 0.0
+        try:
+            sci = float(get_system_cost_index(system_id, activity, _db=db, hub=sell_hub) or 0.0)
+        except Exception:
+            log.debug("取 SCI 失败 activity=%s system=%s", activity, system_id, exc_info=True)
+
+        structure_mult = max(0.0, float(structure_cost_mult or 1.0))
+        facility_tax = float(fac_tax) / 100.0  # plan_metrics 收小数口径
+
+        if activity == ACTIVITY_INVENTION:
+            base_runs = max(1, max_production_limit)
+            cost = invention_plan_cost(
+                base_probability=base_probability,
+                materials=bp_materials,
+                prices=prices,
+                sci=sci,
+                science_skill_1=s1,
+                science_skill_2=s2,
+                encryption_skill=enc,
+                decryptor=decryptor,
+                base_runs=base_runs,
+                output_runs_needed=max(1, runs * base_runs),
+                input_bpc_cost_per_run=float(plan_data.get("input_bpc_cost_per_run") or 0.0),
+                success_rate_override=plan_data.get("success_rate"),
+                actual_output_runs=plan_data.get("actual_output_runs"),
+                structure_mult=structure_mult,
+                facility_tax=facility_tax,
+            )
+            job_k = max(1, int(cost["attempts"]))
+            output_runs = int(cost["output_runs"])
+            extra = {
+                "success_rate": cost["success_rate"],
+                "attempts": cost["attempts"],
+                "runs_per_bpc": cost["runs_per_bpc"],
+                "bpc_unit_cost": cost["bpc_unit_cost"],
+                "output_runs": output_runs,
+                "expected_runs": cost["expected_runs"],
+                "is_actual": cost["is_actual"],
+                "base_probability": round(base_probability, 4),
+                "skills": skill_note,
+                "decryptor": decryptor.name if decryptor else "",
+            }
+        elif activity == ACTIVITY_COPYING:
+            copies = max(1, parallels)
+            total_runs = copy_job_runs(copies, runs, max_production_limit)
+            cost = copying_plan_cost(
+                materials=bp_materials,
+                prices=prices,
+                sci=sci,
+                total_copy_runs=total_runs,
+                copies=copies,
+                structure_mult=structure_mult,
+                facility_tax=facility_tax,
+            )
+            job_k = total_runs
+            output_runs = total_runs
+            extra = {
+                "copies": copies,
+                "runs_per_copy": cost["runs_per_copy"],
+                "per_copy_cost": cost["per_copy_cost"],
+                "max_production_limit": max_production_limit,
+            }
+        else:  # ME/TE 研究
+            target_level = max(1, runs)
+            cost = research_plan_cost(
+                materials=bp_materials,
+                prices=prices,
+                sci=sci,
+                target_level=target_level,
+                structure_mult=structure_mult,
+                facility_tax=facility_tax,
+            )
+            job_k = target_level
+            output_runs = 1
+            extra = {"target_level": target_level, "time_is_approximate": True}
+
+        time_per_job = science_job_time(
+            base_time,
+            activity=activity,
+            research_skill=int(skills.get(RESEARCH_TIME_SKILL, 0) or 0),
+            metallurgy_skill=int(skills.get(METALLURGY_TIME_SKILL, 0) or 0),
+            te_level=int(plan_data.get("te_level", 0) or 0),
+            structure_time_mod=structure_time_mod,
+        )
+        total_seconds = time_per_job * job_k
+
+        # 收入：产物（蓝图）市价 × 产出件数（拷贝一次产出 copies 份 BPC）
+        product_id = int(plan_data.get("product_type_id") or 0)
+        product_price = 0.0
+        if product_id:
+            with db.connect("mkt") as conn:
+                row = conn.execute(
+                    "SELECT sell_price, buy_price FROM market_prices WHERE type_id = ? LIMIT 1",
+                    (product_id,),
+                ).fetchone()
+                if row:
+                    product_price = float(row[0] or 0) or float(row[1] or 0)
+        revenue = product_price * output_runs
+
+        material_cost = float(cost.get("material_cost", cost.get("total_material_cost", 0.0)))
+        fee = float(cost.get("fee", cost.get("total_fee", 0.0)))
+        input_bpc_cost = float(cost.get("input_bpc_cost", 0.0))
+        total_cost = material_cost + fee + input_bpc_cost
+        profit = revenue - total_cost
+        margin = (profit / total_cost * 100) if total_cost > 0 else 0.0
+        hours_per_job = (time_per_job / 3600) if time_per_job else 0.0
+
+        return {
+            "material_cost": round(material_cost, 2),
+            "profit": round(profit, 2),
+            "margin": round(margin, 2),
+            "score": 0.0,
+            "iskph": round(profit / (total_seconds / 3600), 2) if total_seconds > 0 else 0.0,
+            "calculated_time": round(total_seconds),
+            "daily_output": round((24.0 / hours_per_job) if hours_per_job > 0 else 0.0, 1),
+            "revenue": round(revenue, 2),
+            "fees": round(fee, 2),
+            "materials": materials_with_names(db, cost.get("materials", []), prices),
+            "revenue_per_run": round(revenue, 2),
+            "fees_per_run": fee,
+            "structure_mat_saving": 1.0,  # 科研不吃材料减免
+            "structure_time_mod": round(structure_time_mod, 4),
+            "structure_cost_mult": round(structure_mult, 4),
+            "facility_tax_pct": round(fac_tax, 3),
+            "solar_system_id": effective_system_id,
+            "status": "",
+            "activity": activity,
+            "input_blueprint_type_id": input_bp_type_id,
+            "breakdown": {
+                "activity": activity,
+                "material_cost": round(material_cost, 2),
+                "installation_fee": round(fee, 2),
+                "input_bpc_cost": round(input_bpc_cost, 2),
+                "sci": round(sci, 6),
+                "structure_cost_mult": round(structure_mult, 4),
+                "structure_time_mod": round(structure_time_mod, 4),
+                "facility_tax_pct": round(fac_tax, 3),
+                "job_count": job_k,
+                "time_per_job": round(time_per_job),
+                "total_time": round(total_seconds),
+                "prod_price": round(product_price, 2),
+                **extra,
+            },
         }
 
     # ── 计划指标（纯算法已抽到 services.plan_metrics，此处保留 thin delegate 向后兼容）──

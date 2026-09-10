@@ -63,10 +63,11 @@ def plan_start_block_reason(
     shortfall_count: int = 0,
     bp_short: str | None = None,
     allow_short: bool = False,
+    blueprint_ready: bool | None = None,
 ) -> str | None:
     """返回阻止启动的原因文本；None = 可启动。
 
-    判定顺序：status 非待生产 → 材料机库未设置 → 缺料 → 无可用蓝图 →
+    判定顺序：status 非待生产 → 材料机库未设置 → 缺料 → 输入蓝图不可用 →
     蓝图流程不足 → 母项子项未完成。
 
     `bp_short`: 蓝图流程不足的原因文本（由调用方用
@@ -74,6 +75,9 @@ def plan_start_block_reason(
     本函数是纯逻辑、不碰 DB）。
     `allow_short`: 打开后跳过**可强制**的两个软阻塞（缺料、蓝图流程不足）；
     其余阻塞（机库未设置 / 无蓝图 / 等子项）不受影响。
+    blueprint_ready: 是否已绑定可用输入蓝图。None（默认）= 按旧口径
+        用 plan 的 has_image / assigned_blueprint_id 推断；
+        调用方拿到更准的信息（plan_execution.plan_blueprint_ready）时应显式传入。
     """
     status = (plan.get("status") or "").lower()
     if status != "pending":
@@ -82,8 +86,13 @@ def plan_start_block_reason(
         return "材料机库未设置"
     if shortfall_count > 0 and not allow_short:
         return f"材料不足 {shortfall_count} 种"
-    if not plan.get("has_image") and not plan.get("assigned_blueprint_id"):
-        return "无可用蓝图"
+    ready = blueprint_ready
+    if ready is None:
+        ready = bool(plan.get("has_image") or plan.get("assigned_blueprint_id"))
+    if not ready:
+        from services.plan_job_kinds import input_blueprint_hint
+
+        return input_blueprint_hint(plan.get("activity"))
     if bp_short and not allow_short:
         return bp_short
     if is_parent(plan):
@@ -102,6 +111,7 @@ def can_force_start(
     *,
     shortfall_count: int,
     bp_short: str | None = None,
+    blueprint_ready: bool | None = None,
 ) -> bool:
     """缺料 / 蓝图流程不足 是否为**唯一**阻塞 → 允许「仍要启动」（与计划表格同口径）。
 
@@ -118,6 +128,7 @@ def can_force_start(
             shortfall_count=shortfall_count,
             bp_short=bp_short,
             allow_short=True,
+            blueprint_ready=blueprint_ready,
         )
         is None
     )

@@ -27,7 +27,7 @@ BACKUP_KEEP = 5
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
-    "user": 13,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）
+    "user": 15,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 科研作业列（activity/decryptor_type_id/success_rate/research_target_level/actual_output_runs）;  v13→v14: 修复「版本已到 13 但科研列缺失」的历史库;  v14→v15: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）
     "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
 }
 
@@ -270,8 +270,11 @@ def _migrate_user_v9_to_v10(db_path: str) -> str:
     return f"production_plans 扣减快照列 (新增 {net} 列)"
 
 
-def _migrate_user_v12_to_v13(db_path: str) -> str:
-    """v12→v13: production_plans 新增 material_cost_snapshot 列（启动时成本快照）。
+def _migrate_user_v14_to_v15(db_path: str) -> str:
+    """v14→v15: production_plans 新增 material_cost_snapshot 列（启动时成本快照）。
+
+    版本号说明：本迁移原登记为 v12→v13，与「科研作业列」相撞；合并时顺延到 v14→v15，
+    使 v12 的老库依次跑完 12→13→14→15，已到 13/14 的库也能补上本列。
 
     入库/撤销改用**启动那一刻**的真实成本，不再被在产期间的价格重算改写：
     - 重算白名单含 in_progress（industry_view._auto_calculate_plans），会改写 material_cost
@@ -290,6 +293,69 @@ def _migrate_user_v12_to_v13(db_path: str) -> str:
         conn.close()
     net = _add_columns(db_path, "production_plans", [("material_cost_snapshot", "TEXT DEFAULT ''")])
     return f"production_plans 启动成本快照列 (新增 {net} 列)"
+
+
+def _migrate_user_v13_to_v14(db_path: str) -> str:
+    """v13→v14: 修复「user_version 已是 13、但科研作业列不存在」的历史库。
+
+    成因：科研列被登记为 v12→v13，而某些库的版本号已先行到 13（例如外部
+    以更高版本号运行过、或版本号与迁移函数错配）。此时 v12→v13 **不会执行**
+    （ensure_schema 只跑 version < target 的迁移），列永久缺失且版本已前进 ——
+    与 v8→v9 修「迁移先于建表」的缺口是同一类问题（见该函数注释）。
+
+    本迁移幂等重放加列，并把可能为 NULL 的 activity 回填成 manufacturing。
+    """
+    added = _add_columns(
+        db_path,
+        "production_plans",
+        [
+            ("activity", "TEXT DEFAULT 'manufacturing'"),
+            ("decryptor_type_id", "INTEGER DEFAULT NULL"),
+            ("success_rate", "REAL DEFAULT NULL"),
+            ("research_target_level", "INTEGER DEFAULT 0"),
+            ("actual_output_runs", "INTEGER DEFAULT NULL"),
+        ],
+    )
+    # ALTER ADD COLUMN 的 DEFAULT 只作用于**新行**；已存在的行 activity 是 NULL，
+    # 会让 plan_job_kinds.normalize 之外的读取方（直接读列的 SQL）拿到空值。
+    backfilled = 0
+    conn = sqlite3.connect(db_path)
+    try:
+        if _table_exists(conn, "production_plans"):
+            cur = conn.execute(
+                "UPDATE production_plans SET activity='manufacturing' WHERE activity IS NULL OR activity=''"
+            )
+            backfilled = cur.rowcount or 0
+            conn.commit()
+    finally:
+        conn.close()
+    return f"补齐科研作业列 {added} 个，回填 activity {backfilled} 行"
+
+
+def _migrate_user_v12_to_v13(db_path: str) -> str:
+    """v12→v13: production_plans 增科研作业列（拷贝/发明/ME-TE 研究并入计划）。
+
+    - activity: 作业类型；旧行默认 'manufacturing'（行为完全不变）。
+      取值见 domain.research：manufacturing / copying / invention /
+      researching_material_efficiency / researching_time_efficiency。
+    - decryptor_type_id: 发明用解码器（8 种，见 domain.research.DECRYPTORS）；NULL=不使用。
+    - success_rate: 发明的用户覆盖成功率；NULL=按技能算。
+    - research_target_level: ME/TE 研究的目标等级。
+    - actual_output_runs: 发明完成后手填的实际产出流程；
+      NULL=未回填（按期望值估算），0=发明失败，>0=实际拿到的流程数。
+    """
+    added = _add_columns(
+        db_path,
+        "production_plans",
+        [
+            ("activity", "TEXT DEFAULT 'manufacturing'"),
+            ("decryptor_type_id", "INTEGER DEFAULT NULL"),
+            ("success_rate", "REAL DEFAULT NULL"),
+            ("research_target_level", "INTEGER DEFAULT 0"),
+            ("actual_output_runs", "INTEGER DEFAULT NULL"),
+        ],
+    )
+    return f"新增科研作业列 {added} 个"
 
 
 def _migrate_user_v11_to_v12(db_path: str) -> str:
@@ -374,6 +440,8 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
         10: _migrate_user_v10_to_v11,
         11: _migrate_user_v11_to_v12,
         12: _migrate_user_v12_to_v13,
+        13: _migrate_user_v13_to_v14,
+        14: _migrate_user_v14_to_v15,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,

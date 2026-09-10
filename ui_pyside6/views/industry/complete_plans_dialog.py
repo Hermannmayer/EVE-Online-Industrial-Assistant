@@ -28,31 +28,81 @@ from services import plan_execution
 from services.industry_dialog_queries import set_plan_deposit_hangar
 
 
-def complete_plans(plans: list[dict], hangar_id: int, *, allow_bp_short: bool = False) -> dict:
+def complete_plans(
+    plans: list[dict],
+    hangar_id: int,
+    *,
+    parent=None,
+    ask_outcome: bool = True,
+    allow_bp_short: bool = False,
+) -> dict:
     """把一批 ready 计划下线到指定机库。
 
     hangar_id > 0 → 入库该机库；否则置 NULL（不自动入库，跳过入库仍完成）。
     每条计划先更新 deposit_hangar_id 再调用 complete_plan（幂等）。
     allow_bp_short: 蓝图流程不足时是否放行（与 `start_plan` 成对使用）。
-    Returns: {"completed": int, "deposited": int, "failed": [产品名...]}
 
-    注意：本函数**不弹任何对话框** —— 它是无 parent 的服务函数，validate 档测试会在
-    没有 QApplication 的情况下直调它。确认框一律留给调用方。
+    发明行先弹 InventionOutcomeDialog 回填实际产出（用户取消 → 该行不完成）。
+    ⚠️ validate 档测试在**没有 QApplication** 的情况下直调本函数时必须传
+    `ask_outcome=False`，否则弹窗会崩或挂死。
+    Returns: {"completed": int, "deposited": int, "failed": [...], "skipped": [...]}
     """
     completed = 0
     deposited = 0
     failed: list[str] = []
+    skipped: list[str] = []
     deposit = hangar_id if hangar_id and hangar_id > 0 else None
     for plan in plans:
         set_plan_deposit_hangar(get_container().db, plan["id"], deposit)
-        res = plan_execution.complete_plan(plan, allow_bp_short=allow_bp_short)
+        actual = None
+        if ask_outcome and _is_pending_invention(plan):
+            actual = _ask_invention_outcome(plan, parent)
+            if actual is None:  # 用户取消
+                skipped.append(plan.get("product_name") or str(plan.get("id")))
+                continue
+        res = plan_execution.complete_plan(plan, actual_output_runs=actual, allow_bp_short=allow_bp_short)
         if res.get("ok"):
             completed += 1
             if res.get("deposited"):
                 deposited += 1
         else:
             failed.append(plan.get("product_name") or str(plan.get("id")))
-    return {"completed": completed, "deposited": deposited, "failed": failed}
+    return {"completed": completed, "deposited": deposited, "failed": failed, "skipped": skipped}
+
+
+def _is_pending_invention(plan: dict) -> bool:
+    """发明行且尚未回填实际产出。"""
+    from services.plan_job_kinds import normalize
+
+    return normalize(plan.get("activity")) == "invention" and plan.get("actual_output_runs") is None
+
+
+def _ask_invention_outcome(plan: dict, parent) -> int | None:
+    """弹出发明结果回填对话框；取消 → None。"""
+    from domain.research import get_decryptor
+    from ui_pyside6.views.industry.invention_outcome_dialog import InventionOutcomeDialog
+
+    bd = plan.get("breakdown") or {}
+    expected = int(bd.get("expected_runs") or bd.get("output_runs") or 0)
+    if expected <= 0:
+        # 计划行没带 breakdown（批量行）→ 退化为「尝试次数 × 每次产出」
+        attempts = max(int(plan.get("runs") or 1), 1)
+        runs_per = int(bd.get("runs_per_bpc") or 0)
+        expected = attempts * runs_per if runs_per else attempts
+    d = get_decryptor(plan.get("decryptor_type_id"))
+    dlg = InventionOutcomeDialog(
+        plan_name=plan.get("product_name") or str(plan.get("id")),
+        expected_runs=expected,
+        attempts=int(plan.get("runs") or 0),
+        decryptor_name=d.name if d else "",
+        runs_per_bpc=int(bd.get("runs_per_bpc") or 0),
+        parent=parent,
+    )
+    from PySide6.QtWidgets import QDialog
+
+    if dlg.exec() != QDialog.DialogCode.Accepted:
+        return None
+    return dlg.outcome()
 
 
 class CompletePlansDialog(QDialog):
