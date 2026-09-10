@@ -224,24 +224,61 @@ def _create_user_v3(db_path):
     conn.close()
 
 
+def _create_user_v12(db_path):
+    """构造 v12 的 production_plans 表（缺 v13 的 material_cost_snapshot 列）。
+
+    直接用当前建表 DDL 剥掉 v13 新列 —— 不手抄一份 v12 全量列，避免将来加列时
+    这里成为第二个需要同步的地方。剥离失败会当场断言，不会假通过。
+    """
+    from services.repositories.plan_repository import PlanRepository
+
+    line = "        material_cost_snapshot TEXT DEFAULT '',\n"
+    assert line in PlanRepository.SCHEMA, "建表 DDL 结构变了，请同步本夹具的剥离逻辑"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(PlanRepository.SCHEMA.replace(line, ""))
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
+    assert "material_cost_snapshot" not in cols, "夹具应模拟缺该列的 v12 库"
+    conn.execute("PRAGMA user_version = 12")
+    conn.commit()
+    conn.close()
+
+
 def test_user_v3_to_v4_adds_execution_columns(tmp_user_db):
     """user v3→v4：新增生产执行列 + 占用索引"""
     _create_user_v3(tmp_user_db)
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 12  # v3 库会一路补跑到最新 v12
+    assert result["after"] == 13  # v3 库会一路补跑到最新 v13
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     idxs = {r[1] for r in conn.execute("PRAGMA index_list(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 12
+    assert v == 13
     for col in ("assigned_blueprint_id", "mat_hangar_id", "material_short"):
         assert col in cols, f"{col} 列应被 v3→v4 迁移添加"
     assert "idx_prod_plans_assigned_bp" in idxs
     for col in ("source_mother_ids", "component_parent_type_id", "demand"):
         assert col in cols, f"{col} 列应被 v11→v12 迁移添加"
+    assert "material_cost_snapshot" in cols, "material_cost_snapshot 列应被 v12→v13 迁移添加"
+
+
+def test_user_v12_to_v13_adds_material_cost_snapshot(tmp_user_db):
+    """user v12→v13：新增启动成本快照列，且不动其它列"""
+    _create_user_v12(tmp_user_db)
+
+    result = sm.ensure_schema("user")
+
+    assert result["after"] == 13
+    assert any("启动成本快照" in s for s in result["applied"]), "应执行 v12→v13 加列迁移"
+    conn = sqlite3.connect(str(tmp_user_db))
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
+    v = conn.execute("PRAGMA user_version").fetchone()[0]
+    conn.close()
+    assert v == 13
+    assert "material_cost_snapshot" in cols
+    assert "deducted_materials" in cols, "旧列不应被迁移删除"
 
 
 def test_user_v3_to_v4_idempotent(tmp_user_db):
@@ -266,7 +303,7 @@ def test_user_v3_to_v4_skips_missing_table(tmp_user_db):
     conn.close()
 
     result = sm.ensure_schema("user")
-    assert result["after"] == 12
+    assert result["after"] == 13
 
 
 # ────────────────────────────────────────────
@@ -282,13 +319,13 @@ def test_user_v4_to_v5_adds_solar_system_columns(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 12
+    assert result["after"] == 13
     conn = sqlite3.connect(str(tmp_user_db))
     h_cols = {r[1] for r in conn.execute("PRAGMA table_info(hangars)")}
     p_cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 12
+    assert v == 13
     assert "solar_system_id" in h_cols, "hangars.solar_system_id 列应被 v4→v5 迁移添加"
     assert "solar_system_id" in p_cols, "production_plans.solar_system_id 列应被 v4→v5 迁移添加"
     assert "facility_cost_mult" in p_cols, "v2→v3 遗漏的 facility_cost_mult 应在 v4→v5 补齐"
@@ -310,7 +347,7 @@ def test_user_v4_to_v5_idempotent(tmp_user_db):
     p_cols = [r[1] for r in conn.execute("PRAGMA table_info(production_plans)")]
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 12
+    assert v == 13
     assert h_cols.count("solar_system_id") == 1
     assert p_cols.count("solar_system_id") == 1
     assert p_cols.count("facility_cost_mult") == 1
@@ -324,7 +361,7 @@ def test_user_v4_to_v5_skips_missing_tables(tmp_user_db):
     conn.close()
 
     result = sm.ensure_schema("user")
-    assert result["after"] == 12
+    assert result["after"] == 13
     assert result["applied"], "应记录 v4→v5 迁移（即便无表可改）"
 
 
@@ -339,12 +376,12 @@ def test_user_v5_to_v6_adds_industry_columns(tmp_user_db):
 
     _create_user_v5(tmp_user_db)
     result = sm.ensure_schema("user")
-    assert result["after"] == 12
+    assert result["after"] == 13
     conn = sqlite3.connect(str(tmp_user_db))
     h_cols = {r[1] for r in conn.execute("PRAGMA table_info(hangars)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 12
+    assert v == 13
     for col in ("facility_type", "facility_tax", "rigs"):
         assert col in h_cols, f"{col} 列应被 v5→v6 迁移添加"
 
@@ -370,7 +407,7 @@ def test_user_v5_to_v6_skips_missing_table(tmp_user_db):
     conn.close()
 
     result = sm.ensure_schema("user")
-    assert result["after"] == 12
+    assert result["after"] == 13
     assert result["applied"], "应记录 v5→v6 迁移（即便无表可改）"
 
 
@@ -443,13 +480,13 @@ def test_user_v7_to_v8_backfills_null_system(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 12
+    assert result["after"] == 13
     assert any("回填" in s for s in result["applied"]), "应执行 v7→v8 回填迁移"
     conn = sqlite3.connect(str(tmp_user_db))
     rows = {r[0]: r[1] for r in conn.execute("SELECT id, solar_system_id FROM production_plans ORDER BY id")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 12
+    assert v == 13
     assert rows[1] == 30000145, "空星系计划应从材料机库(新加达里)带出星系"
     assert rows[2] is None, "材料机库无星系 → 保持 NULL"
     assert rows[3] == 30000142, "已手动设置的星系不应被覆盖"
@@ -520,13 +557,13 @@ def test_user_v8_to_v9_heals_missing_v2_columns(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 12
+    assert result["after"] == 13
     assert any("补齐" in s for s in result["applied"]), "应执行 v8→v9 补列迁移"
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 12
+    assert v == 13
     for col in (
         "calculated_time",
         "notes",
@@ -620,13 +657,13 @@ def test_user_v9_to_v10_adds_deducted_materials(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 12
+    assert result["after"] == 13
     assert any("扣减快照" in s for s in result["applied"]), "应执行 v9→v11 扣减快照迁移"
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 12
+    assert v == 13
     assert "deducted_materials" in cols, "deducted_materials 列应被 v9→v11 迁移添加"
 
 
@@ -652,7 +689,7 @@ def test_user_v9_to_v10_skips_missing_table(tmp_user_db):
     conn.close()
 
     result = sm.ensure_schema("user")
-    assert result["after"] == 12
+    assert result["after"] == 13
     assert result["applied"], "应记录 v9→v11 迁移（即便无表可改）"
 
 
@@ -685,7 +722,7 @@ def test_migration_creates_pre_migration_backup(tmp_user_db):
 def test_no_backup_when_already_current(tmp_user_db):
     """库已是最新版本 → 不触发备份"""
     conn = sqlite3.connect(str(tmp_user_db))
-    conn.execute("PRAGMA user_version = 12")
+    conn.execute("PRAGMA user_version = 13")
     conn.commit()
     conn.close()
 

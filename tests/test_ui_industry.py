@@ -78,3 +78,92 @@ def test_industry_page_plan_count_label(industry_page):
     """验证计划计数标签存在。"""
     assert hasattr(industry_page, "_plan_count")
     assert industry_page._plan_count.text() is not None
+
+
+def test_procurement_summary_reruns_on_price_change(industry_page, monkeypatch):
+    """改价格设置（Hub / 卖价买价 / 倍率）后必须重算汇总，不能命中指纹缓存回吐旧值。
+
+    回归用例：旧指纹只含计划字段，改价格后 `fp == self._proc_fp` 直接命中缓存返回，
+    红框「备料中采购」数字永远不动 —— 用户报的「写死的」。
+
+    刻意不碰真实控件：真改控件会经 `price_setting_changed → load_plans()` 触发真实刷新，
+    且 `top_toolbar._save_price_settings()` 会写 `data/settings.json`。
+    """
+    from core.constants import TRADE_HUB_IDS
+    from ui_pyside6.views import industry_view as iv
+
+    settings = {"mat_hub": "Jita", "mat_price_type": "sell", "mat_mult": 1.0}
+    started: list[dict] = []
+
+    class _Signal:
+        def connect(self, _fn):
+            return None
+
+    class _FakeWorker:
+        def __init__(self, plans, **kwargs):
+            started.append(kwargs)
+            self.finished_signal = _Signal()
+
+        def isRunning(self):  # 对齐 QThread 的 camelCase API
+            return False
+
+        def start(self):
+            return None
+
+    monkeypatch.setattr(iv, "ProcurementSummaryWorker", _FakeWorker)
+    monkeypatch.setattr(iv, "_default_mat_hangar_id", lambda: 7)
+    monkeypatch.setattr(industry_page._toolbar, "get_price_settings", lambda: dict(settings))
+
+    plan = {"id": 1, "materials_ready": 1, "status": "pending", "runs": 1, "parallels": 1, "me_level": 0}
+
+    industry_page._refresh_procurement_summary([plan])
+    assert len(started) == 1
+    assert started[0]["region_id"] == TRADE_HUB_IDS["Jita"]
+    assert started[0]["price_type"] == "sell"
+    assert started[0]["price_mult"] == 1.0
+    assert started[0]["default_mat_hangar_id"] == 7
+
+    # 模拟后台线程已算完（旧实现正是靠 _proc_result 有值才命中缓存）
+    industry_page._proc_result = (100.0, 1.0)
+
+    # 计划一字未改，只改价格设置 → 必须重算
+    settings.update({"mat_hub": "Amarr", "mat_price_type": "buy", "mat_mult": 1.1})
+    industry_page._refresh_procurement_summary([plan])
+    assert len(started) == 2, "改价格设置后必须重算，不能回吐缓存"
+    assert started[1]["region_id"] == TRADE_HUB_IDS["Amarr"]
+    assert started[1]["price_type"] == "buy"
+    assert started[1]["price_mult"] == 1.1
+
+
+def test_procurement_summary_cached_when_nothing_changed(industry_page, monkeypatch):
+    """计划与价格设置都没变时命中缓存，不重复起线程（指纹缓存的正向行为）。"""
+    from ui_pyside6.views import industry_view as iv
+
+    settings = {"mat_hub": "Jita", "mat_price_type": "sell", "mat_mult": 1.0}
+    started: list[dict] = []
+
+    class _Signal:
+        def connect(self, _fn):
+            return None
+
+    class _FakeWorker:
+        def __init__(self, plans, **kwargs):
+            started.append(kwargs)
+            self.finished_signal = _Signal()
+
+        def isRunning(self):  # 对齐 QThread 的 camelCase API
+            return False
+
+        def start(self):
+            return None
+
+    monkeypatch.setattr(iv, "ProcurementSummaryWorker", _FakeWorker)
+    monkeypatch.setattr(iv, "_default_mat_hangar_id", lambda: 7)
+    monkeypatch.setattr(industry_page._toolbar, "get_price_settings", lambda: dict(settings))
+
+    plan = {"id": 1, "materials_ready": 1, "status": "pending", "runs": 1, "parallels": 1, "me_level": 0}
+
+    industry_page._refresh_procurement_summary([plan])
+    industry_page._proc_result = (100.0, 1.0)
+    industry_page._refresh_procurement_summary([plan])
+    assert len(started) == 1, "计划与价格都未变时不应重复查询"

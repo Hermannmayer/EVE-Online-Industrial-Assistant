@@ -45,7 +45,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--no-tree", action="store_true", help="不生成控件树")
     parser.add_argument("--no-shot", action="store_true", help="不生成截图")
     parser.add_argument("--max-depth", type=int, default=0, help="控件树最大深度，0=不限")
-    parser.add_argument("--dialog", default="", help="渲染独立对话框而非主页面（支持 procurement）")
+    parser.add_argument("--dialog", default="", help="渲染独立对话框而非主页面（支持 procurement / launcher）")
     return parser.parse_args(argv)
 
 
@@ -144,7 +144,38 @@ def dump_tree(widget: Any, max_depth: int = 0) -> tuple[str, int]:
 
 # ── 主流程 ────────────────────────────────────────────────
 
-_DIALOGS = ("procurement",)
+
+def _noop_expire_overdue_plans(db=None) -> int:
+    """快照只读替身：跳过会写库的「过期计划补算」。"""
+    return 0
+
+
+def _launcher_factory() -> Any:
+    """产线启动小助手 —— 独立工具窗（单实例、自带 1s/5s 定时器）。
+
+    构造时会走一次 `_on_poll()`，其中 `expire_overdue_plans()` 会**写库**。
+    快照必须是只读的，故这里把它换成空实现（与 tests/test_production_launcher.py 同法）。
+    """
+    from services import plan_execution
+
+    plan_execution.expire_overdue_plans = _noop_expire_overdue_plans
+
+    from ui_pyside6.views.industry.production_launcher import ProductionLauncher
+
+    return ProductionLauncher()
+
+
+def _procurement_factory() -> Any:
+    from ui_pyside6.views.procurement_tab import ProcurementDialog
+
+    return ProcurementDialog()
+
+
+# key → (工厂函数, 默认尺寸)；工厂延迟导入，避免拖慢主页面快照
+_DIALOGS: dict[str, tuple[Any, tuple[int, int]]] = {
+    "procurement": (_procurement_factory, (760, 820)),
+    "launcher": (_launcher_factory, (820, 760)),
+}
 
 
 def _render_dialog(app: Any, args: argparse.Namespace) -> int:
@@ -153,10 +184,9 @@ def _render_dialog(app: Any, args: argparse.Namespace) -> int:
         print(f"未知对话框: {args.dialog}；可选: {', '.join(_DIALOGS)}", file=sys.stderr)
         return 2
 
-    from ui_pyside6.views.procurement_tab import ProcurementDialog
-
-    win = ProcurementDialog()
-    win.resize(760, 820)
+    factory, size = _DIALOGS[args.dialog]
+    win = factory()
+    win.resize(*size)
     win.show()
     _settle(app)
 

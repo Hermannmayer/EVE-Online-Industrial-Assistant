@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.container import get_container
 from services.inventory_manager import get_item_price
+from services.user_settings import get_material_price_mult, set_material_price_mult
 
 
 class EditQtyDialog(QDialog):
@@ -73,13 +74,14 @@ class BatchCostPriceDialog(QDialog):
         form.addRow("价格来源:", self._source)
 
         self._discount = QDoubleSpinBox()
-        self._discount.setRange(0.01, 1.0)
+        # 与生产规划页工具栏「材料倍率」共用同一个设置（settings.json price_settings.mat_mult）
+        self._discount.setRange(0.1, 10.0)
         self._discount.setDecimals(2)
         self._discount.setSingleStep(0.05)
-        self._discount.setValue(0.9)
-        self._discount.setSuffix(" 折")
-        self._discount.setToolTip("市场价 × 折扣率")
-        form.addRow("折扣率:", self._discount)
+        self._discount.setValue(get_material_price_mult())
+        self._discount.setPrefix("× ")
+        self._discount.setToolTip("市场价 × 该系数（1.0 = 不打折）；与生产规划页的材料倍率是同一个设置")
+        form.addRow("材料倍率:", self._discount)
 
         self._manual = QDoubleSpinBox()
         self._manual.setRange(0, 1e12)
@@ -116,6 +118,11 @@ class BatchCostPriceDialog(QDialog):
 
     def discount(self) -> float:
         return float(self._discount.value())
+
+    def accept(self) -> None:
+        """确认时把倍率写回共享设置 —— 下次打开仍是它，生产规划页也同步。"""
+        set_material_price_mult(self._discount.value())
+        super().accept()
 
     def manual_price(self) -> float:
         return float(self._manual.value())
@@ -331,12 +338,13 @@ class PasteImportDialog(QDialog):
         price_row.addWidget(self._price_use_disc)
 
         self._discount_spin = QDoubleSpinBox()
-        self._discount_spin.setRange(0.01, 1.0)
+        # 与生产规划页工具栏「材料倍率」共用同一个设置（settings.json price_settings.mat_mult）
+        self._discount_spin.setRange(0.1, 10.0)
         self._discount_spin.setDecimals(2)
         self._discount_spin.setSingleStep(0.05)
-        self._discount_spin.setValue(0.9)
+        self._discount_spin.setValue(get_material_price_mult())
         self._discount_spin.setPrefix("× ")
-        self._discount_spin.setToolTip("折扣率：0.9=9折, 0.85=85折")
+        self._discount_spin.setToolTip("市场价 × 该系数（1.0 = 不打折）；与生产规划页的材料倍率是同一个设置")
         price_row.addWidget(self._discount_spin)
 
         price_row.addStretch()
@@ -369,6 +377,11 @@ class PasteImportDialog(QDialog):
 
     def _get_discount(self) -> float:
         return self._discount_spin.value()
+
+    def accept(self) -> None:
+        """确认时把倍率写回共享设置（与生产规划页工具栏同一个值）。"""
+        set_material_price_mult(self._discount_spin.value())
+        super().accept()
 
     def _parse(self):
         raw = self._text.text().strip()

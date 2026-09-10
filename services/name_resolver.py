@@ -14,7 +14,7 @@ import sqlite3
 from services.terminology import term
 
 
-def search_item_type_id(conn: sqlite3.Connection, name: str) -> int | None:
+def search_item_type_id(conn: sqlite3.Connection | sqlite3.Cursor, name: str) -> int | None:
     """名称→type_id：精确 → terminology 反向 → LIKE 模糊 → 引号归一化 LIKE。
 
     未命中返回 None。供剪贴板解析（库存修正/移库）使用。

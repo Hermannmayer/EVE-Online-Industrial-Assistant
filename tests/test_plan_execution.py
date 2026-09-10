@@ -28,6 +28,7 @@ from services.plan_execution import (
     get_plan_binding_state,
     get_plan_blueprints,
     material_requirements,
+    parse_cost_snapshot,
     release_blueprint,
     remaining_seconds,
     reset_plan_for_reuse,
@@ -74,7 +75,8 @@ CREATE TABLE IF NOT EXISTS production_plans (
     mat_hangar_id INTEGER DEFAULT NULL,
     solar_system_id INTEGER DEFAULT NULL,
     material_short TEXT DEFAULT '',
-    deducted_materials TEXT DEFAULT ''
+    deducted_materials TEXT DEFAULT '',
+    material_cost_snapshot TEXT DEFAULT ''
 );
 """
 
@@ -1051,3 +1053,202 @@ class TestCompletePlansCoordinator:
         assert db_plan["status"] == "completed"
         assert db_plan["deposit_hangar_id"] is None
         assert 2001 not in inventory_manager.get_hangar_stock(1)
+
+
+class TestMaterialCostSnapshot:
+    """启动时成本快照：入库/撤销按**启动那一刻**的成本，不被在产期间的价格重算改写。"""
+
+    @staticmethod
+    def _two_materials(user_env):
+        inventory_manager.add_item(1, 1001, 500, 5.0)
+        inventory_manager.add_item(1, 1002, 500, 9.0)
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [
+                {"type_id": 1001, "name": "三钛合金", "qty": 100.0},
+                {"type_id": 1002, "name": "类银超金属", "qty": 100.0},
+            ]
+        }
+
+    def test_start_writes_snapshot(self, user_env):
+        self._two_materials(user_env)
+        plan = _get_plan(user_env.db, _insert_plan(user_env.db, runs=1))
+
+        assert start_plan(plan, mat_hangar_id=1)["ok"]
+
+        snap = parse_cost_snapshot(_get_plan(user_env.db, plan["id"])["material_cost_snapshot"])
+        assert snap["total"] == pytest.approx(100 * 5.0 + 100 * 9.0)
+        assert snap["unit"][1001] == pytest.approx(5.0)
+        assert snap["unit"][1002] == pytest.approx(9.0)
+
+    def test_start_samples_unit_price_before_deduction(self, user_env):
+        """机库余量恰好吃光（deduct_item 会删掉该行）→ 单价仍必须是扣减**前**采样的值。
+
+        回归防线：若在扣减后才取价，这里会得到 0，快照就失真了。
+        """
+        inventory_manager.add_item(1, 1001, 100, 7.5)
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 1001, "name": "三钛合金", "qty": 100.0}]
+        }
+        plan = _get_plan(user_env.db, _insert_plan(user_env.db, runs=1))
+
+        assert start_plan(plan, mat_hangar_id=1)["ok"]
+
+        assert inventory_manager.get_hangar_stock(1).get(1001, 0) == 0, "余量归零应删行"
+        snap = parse_cost_snapshot(_get_plan(user_env.db, plan["id"])["material_cost_snapshot"])
+        assert snap["unit"][1001] == pytest.approx(7.5)
+        assert snap["total"] == pytest.approx(750.0)
+
+    def test_complete_uses_snapshot_not_rewritten_material_cost(self, user_env):
+        """在产期间价格重算改大了 material_cost → 下线仍按启动快照入库。"""
+        self._two_materials(user_env)
+        plan = _get_plan(user_env.db, _insert_plan(user_env.db, runs=1))
+        assert start_plan(plan, mat_hangar_id=1)["ok"]
+        snapshot_total = parse_cost_snapshot(_get_plan(user_env.db, plan["id"])["material_cost_snapshot"])["total"]
+
+        with user_env.db.connect("user") as conn:
+            conn.execute(
+                "UPDATE production_plans SET material_cost=999999999, status='ready', deposit_hangar_id=1 WHERE id=?",
+                (plan["id"],),
+            )
+        res = complete_plan(_get_plan(user_env.db, plan["id"]))
+
+        assert res["ok"], res
+        assert inventory_manager.get_hangar_cost_map(1)[2001] == pytest.approx(snapshot_total)
+
+    def test_complete_without_snapshot_falls_back_to_material_cost(self, user_env):
+        """迁移前的旧计划没有快照 → 回退 material_cost（向后兼容）。"""
+        self._two_materials(user_env)
+        plan = _get_plan(user_env.db, _insert_plan(user_env.db, runs=1))
+        with user_env.db.connect("user") as conn:
+            conn.execute(
+                "UPDATE production_plans SET status='ready', deposit_hangar_id=1, material_cost=42000 WHERE id=?",
+                (plan["id"],),
+            )
+        res = complete_plan(_get_plan(user_env.db, plan["id"]))
+
+        assert res["ok"], res
+        assert inventory_manager.get_hangar_cost_map(1)[2001] == pytest.approx(42000.0)
+
+
+class TestCheckMaterialsStockInjection:
+    def test_uses_injected_stock_without_querying(self, user_env, monkeypatch):
+        """传入 stock 时不再查库（小助手轮询里每机库只取一次）。"""
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 1001, "name": "三钛合金", "qty": 100.0}]
+        }
+        plan = {"id": 1, "product_type_id": 2001, "runs": 1, "parallels": 1, "me_level": 0}
+
+        def _boom(*a, **k):
+            raise AssertionError("传了 stock 就不该再查库")
+
+        monkeypatch.setattr(inventory_manager, "get_hangar_stock", _boom)
+        rows = check_materials(plan, 1, stock={1001: 1000})
+        assert rows and rows[0]["missing"] == 0
+
+    def test_no_hangar_returns_empty_without_querying(self, user_env, monkeypatch):
+        def _boom(*a, **k):
+            raise AssertionError("无机库不该查库")
+
+        monkeypatch.setattr(inventory_manager, "get_hangar_stock", _boom)
+        assert check_materials({"id": 1}, None, stock={1001: 5}) == []
+
+
+class TestBlueprintForceStart:
+    """蓝图流程不足时可强制启动 —— 与材料 allow_short 对称。
+
+    关键回归：`complete_plan` 也有同一道校验，**只放开启动会造成死锁**
+    （强制启动的计划永远无法下线），所以 start→complete 全链必须走得通。
+    """
+
+    @staticmethod
+    def _plan_with_short_bp(user_env, *, runs: int = 100) -> tuple[dict, int]:
+        """绑定一张流程不足的蓝图（is_bpo=0, runs=-1 → 可用 0），返回 (plan, bp_id)。"""
+        user_env.scoring.calculate_plan_metrics.return_value = {"materials": []}
+        bp_id = inventory_manager.add_blueprint(1, 3001, is_bpo=False, me_level=10, te_level=20, runs=-1, quantity=1)
+        pid = _insert_plan(user_env.db, runs=runs, parallels=1)
+        bind_blueprints(pid, [bp_id])
+        return _get_plan(user_env.db, pid), bp_id
+
+    @staticmethod
+    def _to_ready(db, plan_id: int) -> None:
+        with db.connect("user") as conn:
+            conn.execute("UPDATE production_plans SET status='ready', deposit_hangar_id=1 WHERE id=?", (plan_id,))
+
+    def test_available_runs_clamps_negative_to_zero(self, user_env):
+        """runs=-1（未记录流程的拷贝）不该给出负的「可用流程」。"""
+        bp_id = inventory_manager.add_blueprint(1, 3001, is_bpo=False, runs=-1, quantity=1)
+        with user_env.db.connect("user") as conn:
+            assert plan_execution._bp_available_runs(conn, bp_id) == 0
+
+    def test_binding_shortfall_reports_shortfall(self, user_env):
+        plan, _bp = self._plan_with_short_bp(user_env)
+        assert plan_execution.binding_shortfall(plan["id"])
+
+    def test_binding_shortfall_none_when_enough(self, user_env):
+        bp_id = inventory_manager.add_blueprint(1, 3001, is_bpo=False, runs=500, quantity=1)
+        pid = _insert_plan(user_env.db, runs=100, parallels=1)
+        bind_blueprints(pid, [bp_id])
+        assert plan_execution.binding_shortfall(pid) is None
+
+    def test_binding_shortfall_none_when_unbound(self, user_env):
+        """一张没绑 → 不由本函数报（归 plan_start_block_reason 的 has_image 管）。"""
+        pid = _insert_plan(user_env.db, runs=1, parallels=1)
+        assert plan_execution.binding_shortfall(pid) is None
+
+    def test_start_rejects_without_flag(self, user_env):
+        plan, _bp = self._plan_with_short_bp(user_env)
+        res = start_plan(plan, mat_hangar_id=None)
+        assert res["ok"] is False
+        assert res["code"] == "blueprint_short"
+
+    def test_force_start_then_force_complete_no_deadlock(self, user_env):
+        """回归防线：强制启动的计划**必须能下线**。
+
+        只放开 start_plan 的话，这里会在 complete_plan 被拦死 —— 用户的计划收不了尾。
+        """
+        plan, _bp = self._plan_with_short_bp(user_env)
+        res = start_plan(plan, mat_hangar_id=None, allow_bp_short=True)
+        assert res["ok"], res
+        assert "蓝图流程不足" in res["message"]
+
+        self._to_ready(user_env.db, plan["id"])
+        done = complete_plan(_get_plan(user_env.db, plan["id"]), allow_bp_short=True)
+        assert done["ok"], done
+        assert "蓝图流程不足" in done["message"]
+
+    def test_complete_rejects_without_flag(self, user_env):
+        """强制启动后若完成时不放行，仍应被拦住（保持既有保护）。"""
+        plan, _bp = self._plan_with_short_bp(user_env)
+        assert start_plan(plan, mat_hangar_id=None, allow_bp_short=True)["ok"]
+        self._to_ready(user_env.db, plan["id"])
+
+        done = complete_plan(_get_plan(user_env.db, plan["id"]))
+        assert done["ok"] is False
+        assert "不满足完成条件" in done["message"]
+
+
+class TestMaterialRequirementsPerLine:
+    """逐线后 `material_requirements` 必须只乘 runs —— 否则启动会**多扣 parallels 倍**。"""
+
+    def test_uses_all_lines_materials_when_present(self, user_env):
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 1001, "name": "三钛", "qty": 5}],
+            "materials_all_lines": [{"type_id": 1001, "name": "三钛", "qty": 22}],
+        }
+        plan = {"id": 1, "product_type_id": 2001, "runs": 3, "parallels": 4, "me_level": 0}
+
+        reqs = material_requirements(plan)
+
+        # 22 已是「各并行线合计的单轮量」→ 只再乘 runs(3)
+        assert reqs == [{"type_id": 1001, "name": "三钛", "need": 66}]
+
+    def test_falls_back_to_single_line_times_parallels(self, user_env):
+        """没有 `materials_all_lines`（单次路径）→ 沿用旧口径，逐值不变。"""
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 1001, "name": "三钛", "qty": 5}],
+        }
+        plan = {"id": 1, "product_type_id": 2001, "runs": 3, "parallels": 4, "me_level": 0}
+
+        reqs = material_requirements(plan)
+
+        assert reqs == [{"type_id": 1001, "name": "三钛", "need": 60}]  # 5 × 3 × 4

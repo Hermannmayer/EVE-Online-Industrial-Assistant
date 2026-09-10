@@ -26,7 +26,7 @@ def _char_config_fingerprint(char_config: dict | None) -> str
 ### `calc_manufacturing_score`
 
 ```python
-def calc_manufacturing_score(db, cache, *, type_id: int, char_config: dict | None, mat_source_hub: str, sell_hub: str, facility_tax_pct: float, price_type_mat: str, price_type_prod: str, bp_me: int, bp_te: int, system_id: int | None, structure_bonus: float, structure_time_mod: float, structure_mat_saving: float, is_alpha: bool) -> dict[str, Any]
+def calc_manufacturing_score(db, cache, *, type_id: int, char_config: dict | None, mat_source_hub: str, sell_hub: str, facility_tax_pct: float, price_type_mat: str, price_type_prod: str, bp_me: int, bp_te: int, system_id: int | None, structure_bonus: float, structure_time_mod: float, structure_mat_saving: float, is_alpha: bool, mat_price_mult: float=1.0, prod_price_mult: float=1.0) -> dict[str, Any]
 ```
 
 制造评分用例：编排 DB 读取 + 领域纯函数 + 缓存。
@@ -41,7 +41,7 @@ def calc_trade_score(db, cache, *, type_id: int, buy_hub: str, sell_hub: str, bu
 
 贸易评分用例：编排 DB 读取 + 领域纯函数 + 缓存。
 
-定义行：`175`
+定义行：`187`
 
 ### `calc_reaction_score`
 
@@ -51,7 +51,7 @@ def calc_reaction_score(db, *, type_id: int, char_config: dict | None, mat_sourc
 
 反应评分用例：编排 DB 读取 + 领域纯函数（反应无缓存）。
 
-定义行：`241`
+定义行：`253`
 
 ## 类
 

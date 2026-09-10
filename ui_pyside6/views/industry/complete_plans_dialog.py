@@ -28,12 +28,16 @@ from services import plan_execution
 from services.industry_dialog_queries import set_plan_deposit_hangar
 
 
-def complete_plans(plans: list[dict], hangar_id: int) -> dict:
+def complete_plans(plans: list[dict], hangar_id: int, *, allow_bp_short: bool = False) -> dict:
     """把一批 ready 计划下线到指定机库。
 
     hangar_id > 0 → 入库该机库；否则置 NULL（不自动入库，跳过入库仍完成）。
     每条计划先更新 deposit_hangar_id 再调用 complete_plan（幂等）。
+    allow_bp_short: 蓝图流程不足时是否放行（与 `start_plan` 成对使用）。
     Returns: {"completed": int, "deposited": int, "failed": [产品名...]}
+
+    注意：本函数**不弹任何对话框** —— 它是无 parent 的服务函数，validate 档测试会在
+    没有 QApplication 的情况下直调它。确认框一律留给调用方。
     """
     completed = 0
     deposited = 0
@@ -41,7 +45,7 @@ def complete_plans(plans: list[dict], hangar_id: int) -> dict:
     deposit = hangar_id if hangar_id and hangar_id > 0 else None
     for plan in plans:
         set_plan_deposit_hangar(get_container().db, plan["id"], deposit)
-        res = plan_execution.complete_plan(plan)
+        res = plan_execution.complete_plan(plan, allow_bp_short=allow_bp_short)
         if res.get("ok"):
             completed += 1
             if res.get("deposited"):

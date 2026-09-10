@@ -7,8 +7,8 @@ from PySide6.QtCore import QThread, Signal
 from core.container import get_container
 
 
-def parse_blueprint_clipboard(raw: str, conn) -> list[dict]:
-    """解析 EVE 蓝图剪贴板 → [{blueprint_type_id, name, is_bpo, me, te, runs}]
+def parse_blueprint_clipboard(raw: str, conn) -> tuple[list[dict], int]:
+    """解析 EVE 蓝图剪贴板 → (蓝图行, 被过滤材料行数)
 
     纯函数（依赖传入的 ref/bp 连接做名称→蓝图 ID 解析）。
     行格式（Tab 分隔，与游戏全选复制一致）:
@@ -66,13 +66,14 @@ class _BlueprintImportWorker(QThread):
         super().__init__(parent)
         self._raw = raw
         self._hangar_id = hangar_id
+        self.filtered_count = 0  # 剪贴板里被过滤的材料行数（供预览提示）
 
     def run(self):
         from services import inventory_manager
         from services.ui_data_service import parse_blueprint_clipboard_text
 
-        # 1. 解析剪贴板
-        parsed = parse_blueprint_clipboard_text(self._raw, db=get_container().db)
+        # 1. 解析剪贴板（材料行按仓库类型过滤并计数）
+        parsed, self.filtered_count = parse_blueprint_clipboard_text(self._raw, db=get_container().db)
 
         # 2. 读取库中现有蓝图（保留 id 用于精确删除）
         existing: dict[tuple, list[int]] = {}  # (bpid, is_bpo, me, te, runs) → [row_ids]（同属性多张）

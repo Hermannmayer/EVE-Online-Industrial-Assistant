@@ -35,6 +35,27 @@ def _hub_to_system_id(hub: str) -> int | None:
     return TRADE_HUB_SYSTEM_IDS.get(hub)
 
 
+def _sum_materials(per_line: list[dict]) -> list[dict]:
+    """各并行线的单轮材料明细按 `type_id` 合并（qty 求和、subtotal 重算）。
+
+    供 `material_requirements` 这类**要求精确**的消费方：结果配套乘 `runs`
+    （**不再**乘 `parallels`，因为各线已经在这里加总过了）。
+    """
+    merged: dict[int, dict] = {}
+    for result in per_line:
+        for mat in result.get("materials", []) or []:
+            tid = mat.get("type_id")
+            if not tid:
+                continue
+            if tid in merged:
+                row = merged[tid]
+                row["qty"] = (row.get("qty") or 0) + (mat.get("qty") or 0)
+                row["subtotal"] = round((row.get("unit_price") or 0) * row["qty"], 2)
+            else:
+                merged[tid] = dict(mat)
+    return list(merged.values())
+
+
 def _default_db() -> DatabaseManager:
     """惰性获取 DatabaseManager（经容器，消除模块级单例双轨）。"""
     return get_container().db
@@ -303,6 +324,50 @@ class ScoringService:
         )
         return result
 
+    # ── 逐线汇总（并行产线各按自己绑定蓝图的 ME/TE 结算）──
+
+    @staticmethod
+    def combine_per_line(per_line: list[dict], runs: int = 1) -> tuple[dict, dict]:
+        """逐线结果 → 计划级 ``(per_run, total)``。
+
+        并行产线**同时开跑**，故：
+
+        - 材料 / 作业费 / 收入 / 利润 → **Σ 各线**
+        - 生产时长 → **max**（取最慢那条；单次路径的 `hours_per_run × runs` 是其均匀特例）
+        - 日产出 → Σ(24 / hours_i)
+        - 利润率 → Σ利润 / Σ总成本（与单线的 ``profit / total_cost`` 同式，均匀时等价）
+
+        ``per_run`` 刻意保持「**单线单轮**」语义（取**最差线**），并额外带一份
+        ``materials_all_lines``（Σ 各线单轮量）：`materials` / `revenue_per_run` /
+        `fees_per_run` 的既有消费方都会再乘 `runs × parallels`，这里若放汇总值会被**重复放大**。
+        """
+        runs = max(int(runs or 1), 1)
+        worst = min(per_line, key=lambda r: (r.get("profit_per_run", 0) or 0))
+        hours = [float(r.get("hours_per_run", 0) or 0) for r in per_line]
+        max_hours = max(hours) if hours else 0.0
+
+        total_profit = sum((r.get("profit_per_run", 0) or 0) for r in per_line) * runs
+        total_revenue = sum((r.get("revenue_per_run", 0) or 0) for r in per_line) * runs
+        total_fees = sum((r.get("fees_per_run", 0) or 0) for r in per_line) * runs
+        total_mat = sum(float((r.get("breakdown") or {}).get("material_cost", 0) or 0) for r in per_line) * runs
+        total_hours = max_hours * runs
+        # domain 里 profit = revenue - total_cost（total_cost 含材料 + 安装费 + 经纪/改单/销售税）
+        total_cost = total_revenue - total_profit
+
+        per_run = dict(worst)
+        per_run["materials_all_lines"] = _sum_materials(per_line)
+        total = {
+            "total_material_cost": round(total_mat, 2),
+            "total_profit": round(total_profit, 2),
+            "total_revenue": round(total_revenue, 2),
+            "total_fees": round(total_fees, 2),
+            "total_time_hours": round(total_hours, 2),
+            "total_isk_per_hour": round(total_profit / total_hours, 2) if total_hours > 0 else 0.0,
+            "total_daily_output": round(sum(24.0 / h for h in hours if h > 0), 1),
+            "total_margin_pct": round(total_profit / total_cost * 100, 2) if total_cost > 0 else 0.0,
+        }
+        return per_run, total
+
     # ── 统一计划计算方法 ──
 
     @staticmethod
@@ -315,6 +380,8 @@ class ScoringService:
         price_type_mat: str | None = None,
         price_type_prod: str | None = None,
         system_id: int | None = None,
+        mat_mult: float = 1.0,
+        prod_mult: float = 1.0,
     ) -> dict:
         """从一条生产计划数据计算所有派生指标。
 
@@ -329,6 +396,8 @@ class ScoringService:
             sell_hub: 覆盖销售枢纽（不传则用 plan_data 的 sell_hub，为空则用 Jita）
             price_type_mat: 覆盖材料价格类型（不传则用 plan_data 的或 "sell"）
             price_type_prod: 覆盖成品价格类型（不传则用 plan_data 的或 "sell"）
+            mat_mult: 材料价格调整系数（工具栏「材料倍率」）
+            prod_mult: 成品价格调整系数（工具栏「成品倍率」）
 
         Returns:
             dict 包含：material_cost, profit, margin, score, iskph, calculated_time(秒), daily_output，
@@ -402,22 +471,52 @@ class ScoringService:
         per_run: dict = {}
         total: dict = {}
         try:
-            per_run = svc.calc_manufacturing_score(
-                type_id=type_id,
-                char_config=char_config,
-                bp_me=me,
-                bp_te=te,
-                mat_source_hub=resolved_mat_hub,
-                sell_hub=resolved_sell_hub,
-                facility_tax_pct=fac_tax,
-                price_type_mat=resolved_price_type_mat,
-                price_type_prod=resolved_price_type_prod,
-                structure_bonus=structure_bonus,
-                structure_time_mod=structure_time_mod,
-                structure_mat_saving=structure_mat_saving,
-                system_id=resolved_system_id,
-            )
-            total = ScoringService.calculate_total_metrics(per_run, runs, parallels) or {}
+            # 逐线：各并行产线按**各自绑定蓝图**的 ME/TE 独立结算。
+            # 短路条件是「与**计划级**完全一致」——不是「各线彼此一致」：
+            # 绑的 5 张都是 ME8、而计划级写着 10 时也必须走逐线，否则改绑等级不生效。
+            line_levels = [(int(a), int(b)) for a, b in (plan_data.get("line_levels") or [])]
+            use_per_line = any(pair != (me, te) for pair in line_levels)
+            if use_per_line:
+                per_line = [
+                    svc.calc_manufacturing_score(
+                        type_id=type_id,
+                        char_config=char_config,
+                        bp_me=line_me,
+                        bp_te=line_te,
+                        mat_source_hub=resolved_mat_hub,
+                        sell_hub=resolved_sell_hub,
+                        facility_tax_pct=fac_tax,
+                        price_type_mat=resolved_price_type_mat,
+                        price_type_prod=resolved_price_type_prod,
+                        structure_bonus=structure_bonus,
+                        structure_time_mod=structure_time_mod,
+                        structure_mat_saving=structure_mat_saving,
+                        system_id=resolved_system_id,
+                        mat_price_mult=mat_mult,
+                        prod_price_mult=prod_mult,
+                    )
+                    for line_me, line_te in line_levels
+                ]
+                per_run, total = ScoringService.combine_per_line(per_line, runs)
+            else:
+                per_run = svc.calc_manufacturing_score(
+                    type_id=type_id,
+                    char_config=char_config,
+                    bp_me=me,
+                    bp_te=te,
+                    mat_source_hub=resolved_mat_hub,
+                    sell_hub=resolved_sell_hub,
+                    facility_tax_pct=fac_tax,
+                    price_type_mat=resolved_price_type_mat,
+                    price_type_prod=resolved_price_type_prod,
+                    structure_bonus=structure_bonus,
+                    structure_time_mod=structure_time_mod,
+                    structure_mat_saving=structure_mat_saving,
+                    system_id=resolved_system_id,
+                    mat_price_mult=mat_mult,
+                    prod_price_mult=prod_mult,
+                )
+                total = ScoringService.calculate_total_metrics(per_run, runs, parallels) or {}
         except Exception:
             from core.logger import log
 
@@ -431,6 +530,10 @@ class ScoringService:
         revenue_per_run = per_run.get("revenue_per_run", 0) or 0
         fees_per_run = per_run.get("fees_per_run", 0) or 0
         total_mult = runs * parallels
+        # 逐线时 `total` 已带**总**收入/费用（Σ 各线 × runs）；单次路径没有这两个键，
+        # 回退既有的 `单线单轮 × runs × parallels`（逐值不变）。
+        total_revenue = total.get("total_revenue")
+        total_fees = total.get("total_fees")
 
         return {
             "material_cost": round(total.get("total_material_cost", 0), 2),
@@ -441,9 +544,14 @@ class ScoringService:
             "calculated_time": round(total.get("total_time_hours", 0) * 3600),
             "daily_output": round(total.get("total_daily_output", 0), 1),
             # ── 个人利润率输入（新增）──
-            "revenue": round(revenue_per_run * total_mult, 2),
-            "fees": round(fees_per_run * total_mult, 2),
-            "materials": per_run.get("materials", []),  # 每轮量（含 ME 单件豁免）
+            "revenue": round(total_revenue if total_revenue is not None else revenue_per_run * total_mult, 2),
+            "fees": round(total_fees if total_fees is not None else fees_per_run * total_mult, 2),
+            # 每轮量（含 ME 单件豁免）。逐线不一致时这里是**最差线**的单线单轮量 ——
+            # 既有消费方（plan_metrics 两处）都会再乘 runs×parallels，这里放汇总值会被重复放大。
+            "materials": per_run.get("materials", []),
+            # 仅供 `material_requirements` 这类**要求精确**的消费方：
+            # 各并行线的单轮量之和，配套乘 `runs`（不再乘 parallels）。
+            "materials_all_lines": per_run.get("materials_all_lines"),
             "revenue_per_run": revenue_per_run,  # 未取整，供精确计算
             "fees_per_run": fees_per_run,
             "structure_mat_saving": round(structure_mat_saving, 4),
@@ -506,6 +614,8 @@ class ScoringService:
         structure_time_mod: float = 1.0,
         structure_mat_saving: float = 1.0,
         is_alpha: bool = False,
+        mat_price_mult: float = 1.0,
+        prod_price_mult: float = 1.0,
     ) -> dict:
         """计算制造评分。
 
@@ -531,6 +641,8 @@ class ScoringService:
             structure_time_mod=structure_time_mod,
             structure_mat_saving=structure_mat_saving,
             is_alpha=is_alpha,
+            mat_price_mult=mat_price_mult,
+            prod_price_mult=prod_price_mult,
         )
 
     # ── 贸易评分 ──

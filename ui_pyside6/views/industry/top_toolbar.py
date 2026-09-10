@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import os
-
 from PySide6.QtCore import QStringListModel, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -20,7 +17,8 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
-from core.paths import data_dir
+from core.logger import log
+from services.user_settings import get_price_settings, save_settings
 from ui_pyside6.sizing import fit_line_edit_width
 from ui_pyside6.views.compare.compare_chart import search_items
 from ui_pyside6.views.industry.flow_layout import FlowLayout
@@ -199,32 +197,25 @@ class TopToolbar(QWidget):
     # ── 设置加载 ─────────────────────────────────────────────
 
     def _load_price_settings(self) -> None:
-        """从 settings.json 恢复上次的价格设置。"""
+        """从 settings.json 恢复上次的价格设置。
+
+        走 `services.user_settings` 而不是手写文件读写：仓库页（导入预览 / 批量设置成本价）
+        与这里读写的是**同一个** `price_settings.mat_mult`，必须共用同一个访问层，
+        否则测试隔离（只 patch `user_settings.SETTINGS_PATH`）会漏掉这条路径。
+        """
         try:
-            settings_path = os.path.join(data_dir(), "settings.json")
-            if not os.path.exists(settings_path):
-                return
-            with open(settings_path, encoding="utf-8") as f:
-                s = json.load(f)
-            price_settings = s.get("price_settings")
+            price_settings = get_price_settings()
             if price_settings:
                 self._price_widget.set_settings(price_settings)
         except Exception:
-            pass
+            log.exception("恢复价格设置失败")
 
     def _save_price_settings(self) -> None:
-        """将当前价格设置持久化到 settings.json。"""
+        """将当前价格设置持久化到 settings.json（读-改-写，保留其它键）。"""
         try:
-            settings_path = os.path.join(data_dir(), "settings.json")
-            data = {}
-            if os.path.exists(settings_path):
-                with open(settings_path, encoding="utf-8") as f:
-                    data = json.load(f)
-            data["price_settings"] = self._price_widget.get_settings()
-            with open(settings_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            save_settings({"price_settings": self._price_widget.get_settings()})
         except Exception:
-            pass
+            log.exception("保存价格设置失败")
 
     def get_char_name(self) -> str:
         """返回默认角色名（人物选择已移除，固定返回 main）"""
@@ -233,6 +224,15 @@ class TopToolbar(QWidget):
     def get_price_settings(self) -> dict[str, str | float]:
         """返回当前材料/成品价格设置。"""
         return self._price_widget.get_settings()  # type: ignore[no-any-return]
+
+    def reload_price_settings(self) -> None:
+        """重新从 settings.json 读价格设置。
+
+        材料倍率与仓库页（导入预览 / 批量设置成本价）共用同一个字段，
+        页面重新可见时同步一次，避免旋钮停在旧值。
+        `set_settings` 只在值确实变化时才发信号，一轮收敛，不会自激。
+        """
+        self._load_price_settings()
 
     def _make_separator(self) -> QLabel:
         sep = QLabel("│")

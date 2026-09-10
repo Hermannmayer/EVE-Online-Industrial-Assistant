@@ -26,6 +26,16 @@ def _hub_to_system_id(hub: str) -> int | None
 
 定义行：`33`
 
+### `_sum_materials`
+
+```python
+def _sum_materials(per_line: list[dict]) -> list[dict]
+```
+
+各并行线的单轮材料明细按 `type_id` 合并（qty 求和、subtotal 重算）。
+
+定义行：`38`
+
 ### `_default_db`
 
 ```python
@@ -34,7 +44,7 @@ def _default_db() -> DatabaseManager
 
 惰性获取 DatabaseManager（经容器，消除模块级单例双轨）。
 
-定义行：`38`
+定义行：`59`
 
 ### `cache_key`
 
@@ -46,7 +56,7 @@ def cache_key(type_id: int, mode: str, hub: str, char_name: str) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`49`
+定义行：`70`
 
 ### `invalidate_cache`
 
@@ -56,7 +66,7 @@ def invalidate_cache()
 
 清空模块级研究成本缓存（价格刷新后调用）。
 
-定义行：`56`
+定义行：`77`
 
 ### `get_price`
 
@@ -69,7 +79,7 @@ price_type: 'buy' → buy_price, 'sell' → sell_price
 hub: 贸易中心名称, 如 'Jita', 'Amarr'；None 时返回任意区域
 _db: 可选注入的 DatabaseManager；None 时使用模块级单例。
 
-定义行：`70`
+定义行：`91`
 
 ### `get_volume`
 
@@ -79,7 +89,7 @@ def get_volume(type_id: int, vol_type: str='total', hub: str | None=None, _db: D
 
 获取指定区域的成交量。vol_type: 'buy' / 'sell' / 'total'
 
-定义行：`112`
+定义行：`133`
 
 ### `get_system_cost_index`
 
@@ -89,7 +99,7 @@ def get_system_cost_index(system_id: int | None, activity: str='manufacturing', 
 
 从数据库获取星系的制造成本指数(SCI)。system_id=None 时从 hub 推断。
 
-定义行：`153`
+定义行：`174`
 
 ### `get_adjusted_price`
 
@@ -99,7 +109,7 @@ def get_adjusted_price(type_id: int, _db: DatabaseManager | None=None) -> float 
 
 获取 ESI adjusted price（EIV 计算用）。兜底 None → 用 sell_price。
 
-定义行：`177`
+定义行：`198`
 
 ### `_research_cost_cached`
 
@@ -109,7 +119,7 @@ def _research_cost_cached(_db: DatabaseManager, type_id: int, *, solar_system_id
 
 按 type_id + 设施星系计算研究成本（拷贝/发明），带进程内缓存；失败返回 0。
 
-定义行：`204`
+定义行：`225`
 
 ### `_clear_research_cost_cache`
 
@@ -119,7 +129,7 @@ def _clear_research_cost_cache() -> None
 
 清空研究成本缓存（价格刷新时调用）。
 
-定义行：`228`
+定义行：`249`
 
 ## 类
 
@@ -129,7 +139,7 @@ def _clear_research_cost_cache() -> None
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`238`
+定义行：`259`
 
 #### 方法
 
@@ -143,7 +153,7 @@ def __init__(self, db: DatabaseManager, cache: TtlLRUCache, char_config: dict | 
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`239`
+定义行：`260`
 ##### `invalidate_cache`
 
 ```python
@@ -152,7 +162,7 @@ def invalidate_cache(self) -> None
 
 清空评分缓存（价格刷新后调用，避免旧价格评分被复用）
 
-定义行：`244`
+定义行：`265`
 ##### `_calc_broker_rate`
 
 ```python
@@ -163,7 +173,7 @@ def _calc_broker_rate(self, skills: dict, market_data: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`252`
+定义行：`273`
 ##### `_calc_relist_discount`
 
 ```python
@@ -174,7 +184,7 @@ def _calc_relist_discount(self, skills: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`255`
+定义行：`276`
 ##### `_calc_sales_tax_rate`
 
 ```python
@@ -185,7 +195,7 @@ def _calc_sales_tax_rate(self, skills: dict) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`258`
+定义行：`279`
 ##### `calculate_total_metrics`
 
 ```python
@@ -194,16 +204,25 @@ def calculate_total_metrics(per_run: dict, runs: int=1, parallels: int=1) -> dic
 
 将 per-run 评分结果按 runs/parallels 缩放到计划总数值。
 
-定义行：`264`
+定义行：`285`
+##### `combine_per_line`
+
+```python
+def combine_per_line(per_line: list[dict], runs: int=1) -> tuple[dict, dict]
+```
+
+逐线结果 → 计划级 ``(per_run, total)``。
+
+定义行：`330`
 ##### `calculate_plan_metrics`
 
 ```python
-def calculate_plan_metrics(plan_data: dict, char_config: dict, *, mat_hub: str | None=None, sell_hub: str | None=None, price_type_mat: str | None=None, price_type_prod: str | None=None, system_id: int | None=None) -> dict
+def calculate_plan_metrics(plan_data: dict, char_config: dict, *, mat_hub: str | None=None, sell_hub: str | None=None, price_type_mat: str | None=None, price_type_prod: str | None=None, system_id: int | None=None, mat_mult: float=1.0, prod_mult: float=1.0) -> dict
 ```
 
 从一条生产计划数据计算所有派生指标。
 
-定义行：`309`
+定义行：`374`
 ##### `calculate_personal_margin`
 
 ```python
@@ -212,7 +231,7 @@ def calculate_personal_margin(result: dict, inv_map: dict[int, tuple[int, float]
 
 计算考虑库存成本的个人利润率（%）。实现见 services.plan_metrics。
 
-定义行：`461`
+定义行：`569`
 ##### `child_manufacturing_cost`
 
 ```python
@@ -221,7 +240,7 @@ def child_manufacturing_cost(plan: dict, metrics: dict) -> float
 
 一条子项产线的总制造价 = 材料成本 + 制造作业费。实现见 services.plan_metrics。
 
-定义行：`474`
+定义行：`582`
 ##### `adjust_mother_metrics`
 
 ```python
@@ -230,16 +249,16 @@ def adjust_mother_metrics(metrics: dict, sub_cost_map: dict[int, float], total_m
 
 把拆解母项的自制子项按其制造价计入成本。实现见 services.plan_metrics。
 
-定义行：`481`
+定义行：`589`
 ##### `calc_manufacturing_score`
 
 ```python
-def calc_manufacturing_score(self, type_id: int, char_config: dict, mat_source_hub: str='Jita', sell_hub: str='Jita', facility_tax_pct: float=0.0, price_type_mat: str='sell', price_type_prod: str='sell', bp_me: int=0, bp_te: int=0, system_id: int | None=None, structure_bonus: float=0.0, structure_time_mod: float=1.0, structure_mat_saving: float=1.0, is_alpha: bool=False) -> dict
+def calc_manufacturing_score(self, type_id: int, char_config: dict, mat_source_hub: str='Jita', sell_hub: str='Jita', facility_tax_pct: float=0.0, price_type_mat: str='sell', price_type_prod: str='sell', bp_me: int=0, bp_te: int=0, system_id: int | None=None, structure_bonus: float=0.0, structure_time_mod: float=1.0, structure_mat_saving: float=1.0, is_alpha: bool=False, mat_price_mult: float=1.0, prod_price_mult: float=1.0) -> dict
 ```
 
 计算制造评分。
 
-定义行：`493`
+定义行：`601`
 ##### `calc_trade_score`
 
 ```python
@@ -248,7 +267,7 @@ def calc_trade_score(self, type_id: int, buy_hub: str='Jita', sell_hub: str='Jit
 
 计算贸易评分。纯算法在 domain.scoring，编排在 services.scoring_facade。
 
-定义行：`538`
+定义行：`650`
 ##### `calc_reaction_score`
 
 ```python
@@ -257,4 +276,4 @@ def calc_reaction_score(self, type_id: int, char_config: dict, mat_source_hub: s
 
 计算反应（Reaction）利润评分。纯算法在 domain.scoring，编排在 services.scoring_facade。
 
-定义行：`565`
+定义行：`677`

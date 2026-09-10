@@ -221,3 +221,58 @@ class TestPlanTableModel:
         model.sort(4, Qt.SortOrder.AscendingOrder)  # 备注列：int/str/None 混合
         order = [model.data(model.index(r, 3), Qt.ItemDataRole.DisplayRole) for r in range(3)]
         assert order == ["A", "C", "B"]  # 数值组排前，None 与文本按小写
+
+
+class TestMeTeColumnWithPerLineLevels:
+    """ME/TE 列在「各并行线等级不一致」时的展示（逐线计算上线后）。"""
+
+    _BASE = {
+        "id": 1,
+        "product_name": "渡鸦级",
+        "me_level": 0,
+        "te_level": 0,
+        "has_image": True,
+        "bound_blueprint_ids": [],
+        "need_blueprints": 1,
+        "status": "pending",
+    }
+
+    @staticmethod
+    def _text(plan: dict) -> str:
+        m = PlanTableModel([plan])
+        return str(m.data(m.index(0, 10), Qt.ItemDataRole.DisplayRole))
+
+    def test_uniform_shows_plan_level_without_marker(self):
+        """各线与计划级一致 → 显示计划级、无标记（逐值不变）。"""
+        text = self._text({**self._BASE, "me_level": 10, "te_level": 20, "line_levels": [(10, 20), (10, 20)]})
+        assert text.startswith("10-20[")
+        assert "≠" not in text
+
+    def test_no_line_levels_uses_plan_level(self):
+        assert self._text(self._BASE).startswith("0-0[")
+
+    def test_mixed_shows_lowest_with_marker(self):
+        """不一致 → 显示**最低那组** + `≠` 标记。"""
+        text = self._text({**self._BASE, "me_level": 10, "te_level": 20, "line_levels": [(10, 20), (8, 15), (12, 25)]})
+        assert text.startswith("8-15≠[")
+
+    def test_tooltip_lists_each_line(self):
+        plan = {**self._BASE, "me_level": 10, "te_level": 20, "line_levels": [(10, 20), (8, 15)]}
+        m = PlanTableModel([plan])
+        tip = m.data(m.index(0, 10), Qt.ItemDataRole.ToolTipRole)
+        assert "第 1 条线" in tip and "第 2 条线" in tip
+
+    def test_tooltip_empty_when_uniform(self):
+        plan = {**self._BASE, "me_level": 10, "te_level": 20, "line_levels": [(10, 20), (10, 20)]}
+        m = PlanTableModel([plan])
+        assert m.data(m.index(0, 10), Qt.ItemDataRole.ToolTipRole) == ""
+
+    def test_uniform_lines_differing_from_plan_level_no_marker(self):
+        """各线一致（都 10/20）但计划级写着 0/0 → 列里显示**实际生效**的 10-20，**不加** `≠`。
+
+        `≠` 的语义是「各线之间不一致」，不是「与计划级不同」—— 否则每个绑了蓝图的计划
+        都会带标记，噪声过大。
+        """
+        text = self._text({**self._BASE, "me_level": 0, "te_level": 0, "line_levels": [(10, 20), (10, 20)]})
+        assert text.startswith("10-20[")
+        assert "≠" not in text

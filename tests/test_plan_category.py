@@ -45,6 +45,19 @@ class TestLoadCategoryMap:
             conn.execute("INSERT INTO blueprint_activities VALUES (3005,'copying',4800)")
             assert load_category_map(conn, [3005]) == {3005: "copying"}
 
+    def test_manufacturable_blueprint_is_not_copying(self, db_manager):
+        """能制造 + 能复制 → manufacturing，不是 copying。
+
+        回归用例：EVE 里几乎所有可制造蓝图都能复制，旧实现只看 copying 活动就把普通制造
+        蓝图全判成 copying（实测全库 3283 个，而真正「只能复制、不能制造」的只有 70 个），
+        再经 capacity_line_for_category 映到科研线 → 制造计划漏进产线小助手的「科研」筛选。
+        """
+        _build_ref(db_manager)
+        with db_manager.connect("ref") as conn:
+            conn.execute("INSERT INTO blueprint_activities VALUES (3006,'manufacturing',3600)")
+            conn.execute("INSERT INTO blueprint_activities VALUES (3006,'copying',4800)")
+            assert load_category_map(conn, [3006]) == {3006: "manufacturing"}
+
     def test_manufacturing_default(self, db_manager):
         _build_ref(db_manager)
         with db_manager.connect("ref") as conn:

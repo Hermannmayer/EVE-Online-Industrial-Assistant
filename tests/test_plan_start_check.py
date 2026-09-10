@@ -1,6 +1,7 @@
 """产线启动条件判定测试 — services/plan_start_check.py"""
 
 from services.plan_start_check import (
+    can_force_start,
     children_running,
     is_parent,
     pending_children_count,
@@ -114,3 +115,62 @@ class TestPlanStartBlockReason:
     def test_child_ignores_group(self):
         child = _plan(id=2, group_id=10, child_level=1)
         assert plan_start_block_reason(child, 1, [child]) is None
+
+
+class TestCanForceStart:
+    """缺料是否为**唯一**阻塞 —— 决定行上给「启动」还是「?」（与计划表格同口径）。"""
+
+    def test_shortfall_only_is_forceable(self):
+        assert can_force_start(_plan(), 1, [], shortfall_count=2) is True
+
+    def test_no_shortfall_is_not(self):
+        assert can_force_start(_plan(), 1, [], shortfall_count=0) is False
+
+    def test_missing_hangar_blocks(self):
+        """材料机库未设置 → 不只是缺料，不可强制。"""
+        assert can_force_start(_plan(), None, [], shortfall_count=2) is False
+
+    def test_no_blueprint_blocks(self):
+        """无可用蓝图 → 不可强制。"""
+        assert can_force_start(_plan(has_image=False), 1, [], shortfall_count=2) is False
+
+    def test_pending_children_block(self):
+        """母项还有未完成子项 → 不可强制。"""
+        parent = _plan(id=1, group_id=10, child_level=0)
+        child = _plan(id=2, group_id=10, child_level=1)
+        assert can_force_start(parent, 1, [parent, child], shortfall_count=2) is False
+
+
+class TestBlueprintShortfallInjection:
+    """蓝图流程不足（`bp_short`）与缺料同属**可强制**的软阻塞。"""
+
+    def test_blocks_after_has_image(self):
+        assert plan_start_block_reason(_plan(), 1, [], bp_short="第 1 张绑定蓝图流程不足") == "第 1 张绑定蓝图流程不足"
+
+    def test_no_blueprint_reported_first(self):
+        """一张蓝图都没有时先报「无可用蓝图」，不该报流程不足。"""
+        plan = _plan(has_image=False, assigned_blueprint_id=None)
+        assert plan_start_block_reason(plan, 1, [], bp_short="流程不足") == "无可用蓝图"
+
+    def test_allow_short_skips_bp_short(self):
+        assert plan_start_block_reason(_plan(), 1, [], bp_short="流程不足", allow_short=True) is None
+
+    def test_缺料优先于缺流程(self):
+        assert plan_start_block_reason(_plan(), 1, [], shortfall_count=2, bp_short="流程不足") == "材料不足 2 种"
+
+
+class TestCanForceStartWithBlueprint:
+    def test_bp_short_only_is_forceable(self):
+        assert can_force_start(_plan(), 1, [], shortfall_count=0, bp_short="流程不足") is True
+
+    def test_both_soft_blocks_forceable(self):
+        assert can_force_start(_plan(), 1, [], shortfall_count=2, bp_short="流程不足") is True
+
+    def test_bp_short_with_pending_children_not_forceable(self):
+        parent = _plan(id=1, group_id=10, child_level=0)
+        child = _plan(id=2, group_id=10, child_level=1)
+        assert can_force_start(parent, 1, [parent, child], shortfall_count=0, bp_short="流程不足") is False
+
+    def test_bp_short_without_blueprint_not_forceable(self):
+        plan = _plan(has_image=False, assigned_blueprint_id=None)
+        assert can_force_start(plan, 1, [], shortfall_count=0, bp_short="流程不足") is False

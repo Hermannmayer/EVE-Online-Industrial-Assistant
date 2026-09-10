@@ -67,13 +67,23 @@ def calc_manufacturing_score(
     structure_time_mod: float,
     structure_mat_saving: float,
     is_alpha: bool,
+    mat_price_mult: float = 1.0,
+    prod_price_mult: float = 1.0,
 ) -> dict[str, Any]:
-    """制造评分用例：编排 DB 读取 + 领域纯函数 + 缓存。"""
+    """制造评分用例：编排 DB 读取 + 领域纯函数 + 缓存。
+
+    ``mat_price_mult`` / ``prod_price_mult``：工具栏「材料/成品倍率」。两者都是本函数的
+    入参，**必须进 cache_key** —— 否则改倍率后会命中上一档缓存，复现「数字不动」的陈旧值缺陷。
+    """
     char_name = (char_config.get("name") or char_config.get("char_name") or "default") if char_config else "default"
+    # 非正数回落到 1.0（settings.json 可手改，不能信）
+    mat_price_mult = mat_price_mult if mat_price_mult and mat_price_mult > 0 else 1.0
+    prod_price_mult = prod_price_mult if prod_price_mult and prod_price_mult > 0 else 1.0
     cache_k = _ss.cache_key(
         type_id,
         f"mfg|{mat_source_hub}|{sell_hub}|{bp_me}|{bp_te}|{price_type_mat}|{price_type_prod}|{system_id or ''}"
         f"|{structure_bonus}|{structure_time_mod}|{structure_mat_saving}|{facility_tax_pct}|{int(is_alpha)}"
+        f"|{round(mat_price_mult, 4)}|{round(prod_price_mult, 4)}"
         f"|{_char_config_fingerprint(char_config)}",
         "hub",
         char_name,
@@ -120,6 +130,7 @@ def calc_manufacturing_score(
         if not prod_price:
             result["status"] = "no_price"
             return result
+        prod_price *= prod_price_mult  # 成品倍率：与材料倍率对称，作用于成品单价
 
         # 用 blueprint_reader 获取材料（含 wastefactor）
         mat_rows = _ss.get_blueprint_materials(conn, bp_id)
@@ -163,6 +174,7 @@ def calc_manufacturing_score(
             structure_mat_saving=structure_mat_saving,
             facility_tax_pct=facility_tax_pct,
             is_alpha=is_alpha,
+            mat_price_mult=mat_price_mult,
         )
 
     # 写入缓存（仅缓存成功结果，失败状态不缓存）

@@ -151,6 +151,44 @@ class TestTradeScoreEdgeCases:
         assert result["gross_profit"] > 0
 
 
+class TestPriceMultiplier:
+    """工具栏「材料/成品倍率」接入评分链路（红框之外：表格成本/利润列同源）。"""
+
+    @staticmethod
+    def _metrics(temp_db, cache, **kw) -> dict:
+        plan = {"product_type_id": 2001, "me_level": 0, "te_level": 0, "runs": 1, "parallels": 1}
+        with patch("core.container.get_container") as m:
+            cont = m.return_value
+            cont.scoring_service.return_value = ScoringService(temp_db, cache)
+            return ScoringService.calculate_plan_metrics(plan, {}, mat_hub="Jita", sell_hub="Jita", **kw)
+
+    def test_material_mult_scales_material_cost(self, temp_db):
+        """材料倍率 1.1 → 材料成本 ×1.1，成品价值不变。"""
+        base = self._metrics(temp_db, TtlLRUCache(max_size=10))
+        up = self._metrics(temp_db, TtlLRUCache(max_size=10), mat_mult=1.1)
+        assert base["material_cost"] > 0
+        assert up["material_cost"] == pytest.approx(base["material_cost"] * 1.1, rel=1e-6)
+        assert up["revenue_per_run"] == pytest.approx(base["revenue_per_run"], rel=1e-6)
+
+    def test_product_mult_scales_revenue(self, temp_db):
+        """成品倍率 0.5 → 成品价值 ×0.5，材料成本不变。"""
+        base = self._metrics(temp_db, TtlLRUCache(max_size=10))
+        down = self._metrics(temp_db, TtlLRUCache(max_size=10), prod_mult=0.5)
+        assert base["revenue_per_run"] > 0
+        assert down["revenue_per_run"] == pytest.approx(base["revenue_per_run"] * 0.5, rel=1e-6)
+        assert down["material_cost"] == pytest.approx(base["material_cost"], rel=1e-6)
+
+    def test_mult_change_not_served_from_stale_cache(self, temp_db):
+        """共用同一 cache 时换倍率必须重算 —— facade 的 cache_key 必须含两个倍率。
+
+        回归防线：漏进 cache_key 就会复现「改设置后数字不动」的陈旧缓存缺陷（红框那次同源）。
+        """
+        cache = TtlLRUCache(max_size=10)
+        base = self._metrics(temp_db, cache)
+        up = self._metrics(temp_db, cache, mat_mult=1.1)
+        assert up["material_cost"] == pytest.approx(base["material_cost"] * 1.1, rel=1e-6)
+
+
 class TestPlanMetricsSystemCostIndex:
     """成本联动：solar_system_id 透传 → SCI（缓存 key 必须含 system_id）
 
@@ -1082,3 +1120,72 @@ def test_trade_score_caches_result():
     assert r2["score"] > 0
     assert len(cache) == 1, "成功结果应写入缓存"
     assert calls["n"] == calls_after_first, "二次调用应命中缓存（不重新取价）"
+
+
+class TestPerLineCalculation:
+    """并行产线逐线计算：各线按自己绑定蓝图的 ME/TE 独立结算。"""
+
+    @staticmethod
+    def _metrics(temp_db, cache, **plan_extra) -> dict:
+        plan = {"product_type_id": 2001, "me_level": 0, "te_level": 0, "runs": 1, "parallels": 2}
+        plan.update(plan_extra)
+        with patch("core.container.get_container") as m:
+            cont = m.return_value
+            cont.scoring_service.return_value = ScoringService(temp_db, cache)
+            return ScoringService.calculate_plan_metrics(plan, {}, mat_hub="Jita", sell_hub="Jita")
+
+    @staticmethod
+    def _fresh():
+        return TtlLRUCache(max_size=10)
+
+    def test_uniform_equal_to_plan_level_is_unchanged(self, temp_db):
+        """各线与**计划级**全等 → 走单次路径，结果与不带 line_levels 逐值一致。"""
+        base = self._metrics(temp_db, self._fresh())
+        same = self._metrics(temp_db, self._fresh(), line_levels=[(0, 0), (0, 0)])
+        assert same == base
+
+    def test_uniform_but_differs_from_plan_level_goes_per_line(self, temp_db):
+        """**短路条件回归防线**：各线彼此一致但与计划级不同 → 必须走逐线。
+
+        若短路写成「各线彼此一致就走单次」，绑的 5 张都是 ME5、计划级写 0 时会走单次用 0
+        —— 用户报的「绑了等级不生效」原样复现。
+        """
+        base = self._metrics(temp_db, self._fresh())
+        per_line = self._metrics(temp_db, self._fresh(), line_levels=[(5, 0), (5, 0)])
+
+        assert per_line["material_cost"] < base["material_cost"]  # ME5 比 ME0 省料
+        assert per_line.get("materials_all_lines"), "逐线路径必须带各线合计材料"
+
+    def test_material_is_sum_of_lines(self, temp_db):
+        """两条线 ME 不同 → 材料 = 各线之和（而不是某一条 × 2）。"""
+        m0 = self._metrics(temp_db, self._fresh(), line_levels=[(0, 0), (0, 0)])["material_cost"] / 2
+        m5 = self._metrics(temp_db, self._fresh(), line_levels=[(5, 0), (5, 0)])["material_cost"] / 2
+
+        mixed = self._metrics(temp_db, self._fresh(), line_levels=[(0, 0), (5, 0)])["material_cost"]
+
+        assert mixed == pytest.approx(m0 + m5)
+
+    def test_time_is_max_of_lines(self, temp_db):
+        """并行同时跑 → 总时长取**最慢那条**，不是求和。"""
+        t0 = self._metrics(temp_db, self._fresh(), line_levels=[(0, 0), (0, 0)])["calculated_time"]
+        t20 = self._metrics(temp_db, self._fresh(), line_levels=[(0, 20), (0, 20)])["calculated_time"]
+
+        mixed = self._metrics(temp_db, self._fresh(), line_levels=[(0, 0), (0, 20)])["calculated_time"]
+
+        assert mixed == pytest.approx(max(t0, t20))
+
+    def test_margin_uses_same_formula_as_single(self, temp_db):
+        """利润率必须与单线同式（Σ利润 / Σ总成本），否则两分支切换时数值跳变。"""
+        uniform = self._metrics(temp_db, self._fresh(), line_levels=[(5, 10), (5, 10)])
+        single = self._metrics(temp_db, self._fresh(), me_level=5, te_level=10, parallels=1)
+
+        assert uniform["margin"] == pytest.approx(single["margin"], abs=0.01)
+
+    def test_materials_all_lines_sums_by_type(self, temp_db):
+        """`materials_all_lines` = 各线单轮量按 type_id 求和。"""
+        one = self._metrics(temp_db, self._fresh(), line_levels=[(5, 0), (5, 0)])
+        two = self._metrics(temp_db, self._fresh(), line_levels=[(0, 0), (5, 0)])
+
+        by_one = {m["type_id"]: m["qty"] for m in one["materials_all_lines"]}
+        by_two = {m["type_id"]: m["qty"] for m in two["materials_all_lines"]}
+        assert by_two[1001] > by_one[1001]  # ME0 那条线更费料

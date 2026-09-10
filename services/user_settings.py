@@ -116,3 +116,35 @@ def set_default_hangar_id(key: str, hangar_id: int | None) -> None:
     else:
         data[key] = int(hangar_id)
     _write_all(data)
+
+
+# ════════════════════════════════════════════════════════════════
+#  价格来源设置（与生产规划页工具栏「双行价格设置」共用同一份 settings.json）
+# ════════════════════════════════════════════════════════════════
+
+
+def get_price_settings() -> dict:
+    """价格来源设置 {mat_hub, mat_price_type, mat_mult, prod_hub, prod_price_type, prod_mult}。"""
+    return load_settings().get("price_settings") or {}
+
+
+def get_material_price_mult() -> float:
+    """材料价格调整系数（默认 1.0）。
+
+    仓库页的成本定价控件与生产规划页工具栏共用**同一个**值：一处改，另一处跟着变。
+    非数值 / 缺失 / 非正数一律回落 1.0（settings.json 可手改，不能信）。
+    """
+    raw = get_price_settings().get("mat_mult")
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 1.0
+    return value if value > 0 else 1.0
+
+
+def set_material_price_mult(value: float) -> None:
+    """写回材料价格调整系数（读-改-写，只动 price_settings.mat_mult，保留其它键）。"""
+    settings = load_settings()
+    price_settings = dict(settings.get("price_settings") or {})
+    price_settings["mat_mult"] = float(value)
+    save_settings({"price_settings": price_settings})

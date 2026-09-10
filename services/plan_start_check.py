@@ -61,12 +61,19 @@ def plan_start_block_reason(
     all_plans: list[dict],
     *,
     shortfall_count: int = 0,
+    bp_short: str | None = None,
     allow_short: bool = False,
 ) -> str | None:
     """返回阻止启动的原因文本；None = 可启动。
 
-    判定顺序：status 非待生产 → 材料机库未设置 → 缺料(且未允许缺料) →
-    无可用蓝图 → 母项子项未完成。
+    判定顺序：status 非待生产 → 材料机库未设置 → 缺料 → 无可用蓝图 →
+    蓝图流程不足 → 母项子项未完成。
+
+    `bp_short`: 蓝图流程不足的原因文本（由调用方用
+    `services.plan_execution.binding_shortfall(plan_id)` 预检后注入 ——
+    本函数是纯逻辑、不碰 DB）。
+    `allow_short`: 打开后跳过**可强制**的两个软阻塞（缺料、蓝图流程不足）；
+    其余阻塞（机库未设置 / 无蓝图 / 等子项）不受影响。
     """
     status = (plan.get("status") or "").lower()
     if status != "pending":
@@ -77,6 +84,8 @@ def plan_start_block_reason(
         return f"材料不足 {shortfall_count} 种"
     if not plan.get("has_image") and not plan.get("assigned_blueprint_id"):
         return "无可用蓝图"
+    if bp_short and not allow_short:
+        return bp_short
     if is_parent(plan):
         if children_running(plan, all_plans):
             return "子项产线运行中"
@@ -84,3 +93,31 @@ def plan_start_block_reason(
         if pending:
             return f"等待 {pending} 条子项完成"
     return None
+
+
+def can_force_start(
+    plan: dict,
+    mat_hangar_id: int | None,
+    all_plans: list[dict],
+    *,
+    shortfall_count: int,
+    bp_short: str | None = None,
+) -> bool:
+    """缺料 / 蓝图流程不足 是否为**唯一**阻塞 → 允许「仍要启动」（与计划表格同口径）。
+
+    复用 `plan_start_block_reason`：把 allow_short 打开后再看还有没有别的阻塞
+    （材料机库未设置 / 无可用蓝图 / 母项子项未完成），有则不可强制。
+    """
+    if shortfall_count <= 0 and not bp_short:
+        return False
+    return (
+        plan_start_block_reason(
+            plan,
+            mat_hangar_id,
+            all_plans,
+            shortfall_count=shortfall_count,
+            bp_short=bp_short,
+            allow_short=True,
+        )
+        is None
+    )

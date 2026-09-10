@@ -427,6 +427,7 @@ def aggregate_procurement(
     default_hangar_id: int | None = None,
     region_id: int = 10000002,
     price_type: str = "sell",
+    price_mult: float = 1.0,
 ) -> tuple[list[dict], float, float]:
     """聚合「备料中」计划的待采购材料并扣库存 → (rows, total_cost, total_volume)。
 
@@ -439,11 +440,17 @@ def aggregate_procurement(
         default_hangar_id: 统计条模式下无 mat_hangar_id 计划的后备机库
         region_id: 市场价 region_id
         price_type: "sell" / "buy"
+        price_mult: 价格调整系数（工具栏「材料/成品倍率」，模拟跨区运费/溢价）。
+                    乘在单价上，`total == to_buy * price` 自洽；非正数回落到 1.0
 
     Returns:
         (rows, total_cost, total_volume)
         rows: [{type_id, name, zh_name, en_name, need, owned, to_buy, price, total, volume}]
     """
+    mult = float(price_mult or 1.0)
+    if mult <= 0:
+        mult = 1.0
+
     # 1. 每个计划取直接材料；由子项产线自制的组件排除（其原材料由子线计划计入）。
     #    未拆解的组件 / 子线被删后 → 回到待采购。
     sub_prod_ids = {
@@ -541,7 +548,7 @@ def aggregate_procurement(
     total_volume = 0.0
     for tid in sorted(to_buy_map):
         to_buy = to_buy_map[tid]
-        price = _pick_price(prices.get(tid, {}), price_type)
+        price = _pick_price(prices.get(tid, {}), price_type) * mult
         subtotal = to_buy * price
         vol = to_buy * volumes.get(tid, 0.0)
         rows_out.append(

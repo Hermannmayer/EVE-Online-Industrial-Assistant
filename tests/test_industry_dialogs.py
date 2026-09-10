@@ -4,7 +4,7 @@
 """
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -444,31 +444,6 @@ class TestChildParallelDialog:
 # ════════════════════════════════════════════════════════════════
 
 
-@pytest.fixture
-def production_wizard_mock_db():
-    """给 ProductionWizard 注入 mock 容器/DB，避免访问真实库。
-
-    ProductionWizard.__init__ 经 `_load_blueprint_names`（查 ref 库 item）与
-    `char_capacity.active_lines_per_character`（查 user 库 production_plans）
-    访问真实库；worktree / CI 无初始化 schema，必须 patch 这两条 get_container 路径。
-    """
-    mock_conn = MagicMock()
-    mock_conn.execute.return_value.fetchall.return_value = []
-    mock_conn.execute.return_value.fetchone.return_value = None
-    mock_cm = MagicMock()
-    mock_cm.__enter__.return_value = mock_conn
-    mock_cm.__exit__.return_value = False
-    mock_mgr = MagicMock()
-    mock_mgr.connect.return_value = mock_cm
-    mock_cont = MagicMock()
-    mock_cont.db = mock_mgr
-    with (
-        patch("ui_pyside6.dialogs.production_wizard.get_container", return_value=mock_cont),
-        patch("services.char_capacity.get_container", return_value=mock_cont),
-    ):
-        yield
-
-
 class TestStatusBarCompleteAll:
     """底部状态栏「全部下线」按钮显示/隐藏与信号"""
 
@@ -592,7 +567,7 @@ class TestReadyButtonDelegate:
 
 
 class TestLaunchWizard:
-    """产线启动小助手：一级菜单按钮 + 两列 + 复制蓝图名 + 启动按钮显隐"""
+    """产线启动入口：工业页功能按钮发出打开信号（窗口本体见 test_production_launcher.py）"""
 
     def test_launch_wizard_button_emits(self, qapp):
         from ui_pyside6.views.industry.action_buttons import ActionButtons
@@ -602,60 +577,3 @@ class TestLaunchWizard:
         ab.launch_wizard_requested.connect(lambda: got.append(True))
         ab._btn_launch_wizard.click()
         assert got == [True]
-
-    def test_orders_by_child_level_desc(self, qapp, production_wizard_mock_db):
-        from ui_pyside6.dialogs.production_wizard import ProductionWizard
-
-        plans = [
-            {"product_name": "子项2", "child_level": 2, "status": "pending"},
-            {"product_name": "母项", "child_level": 0, "status": "pending"},
-            {"product_name": "子项1", "child_level": 1, "status": "pending"},
-        ]
-        wizard = ProductionWizard(plans, mat_hangar_id=None)
-        names = [p["product_name"] for p in wizard._plans]
-        assert names == ["子项2", "子项1", "母项"]  # 子级高的先做
-
-    def test_copy_blueprint_name(self, qapp, production_wizard_mock_db):
-        from PySide6.QtWidgets import QApplication
-
-        from ui_pyside6.dialogs.production_wizard import ProductionWizard
-
-        plans = [
-            {
-                "id": 1,
-                "product_name": "渡鸦级",
-                "product_type_id": 2001,
-                "blueprint_type_id": 32877,
-                "status": "pending",
-                "runs": 1,
-                "parallels": 1,
-            }
-        ]
-        wizard = ProductionWizard(plans, mat_hangar_id=None)
-        wizard._copy_blueprint("渡鸦级蓝图")
-        assert QApplication.clipboard().text() == "渡鸦级蓝图"
-
-    def test_pending_shows_start_button(self, qapp, production_wizard_mock_db):
-        from ui_pyside6.dialogs.production_wizard import ProductionWizard
-
-        plans = [
-            {
-                "id": 1,
-                "product_name": "渡鸦级",
-                "product_type_id": 2001,
-                "blueprint_type_id": 32877,
-                "status": "pending",
-                "runs": 1,
-                "parallels": 1,
-            }
-        ]
-        wizard = ProductionWizard(plans, mat_hangar_id=None)  # 无材料机库 → 视为备料充足
-        assert wizard._table.rowCount() == 1
-        assert not wizard._start_btn.isHidden()  # 备料足 → 显示启动按钮
-
-    def test_flat_plans_unchanged(self, qapp, production_wizard_mock_db):
-        from ui_pyside6.dialogs.production_wizard import ProductionWizard
-
-        plans = [{"product_name": "A", "child_level": 0, "status": "pending"}]
-        wizard = ProductionWizard(plans, mat_hangar_id=None)
-        assert wizard._table.rowCount() == 1

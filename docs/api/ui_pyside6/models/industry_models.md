@@ -148,6 +148,24 @@ def data(self, index, role=Qt.ItemDataRole.DisplayRole)
 :::
 
 定义行：`175`
+##### `_line_levels`
+
+```python
+def _line_levels(p: dict) -> list[tuple[int, int]]
+```
+
+逐线 ME/TE（与计划级不一致时才有意义）；空列表表示按计划级单次计算。
+
+定义行：`190`
+##### `_levels_tooltip`
+
+```python
+def _levels_tooltip(self, p: dict) -> str
+```
+
+ME/TE 列 tooltip：各线不一致时逐条列出实际用的等级。
+
+定义行：`196`
 ##### `_display_text`
 
 ```python
@@ -156,7 +174,7 @@ def _display_text(self, p: dict, c: int) -> str
 
 列 0~18 的 DisplayRole 文本
 
-定义行：`187`
+定义行：`204`
 ##### `headerData`
 
 ```python
@@ -167,7 +185,7 @@ def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`281`
+定义行：`306`
 ##### `flags`
 
 ```python
@@ -178,7 +196,7 @@ def flags(self, index)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`292`
+定义行：`317`
 ##### `setData`
 
 ```python
@@ -189,7 +207,7 @@ def setData(self, index, value, role=Qt.ItemDataRole.EditRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`302`
+定义行：`327`
 ##### `sort`
 
 ```python
@@ -200,7 +218,7 @@ def sort(self, column: int, order=Qt.SortOrder.AscendingOrder)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`324`
+定义行：`349`
 ##### `set_plans`
 
 ```python
@@ -209,7 +227,7 @@ def set_plans(self, plans: list[dict]) -> None
 
 替换所有数据 — 保持同一个 model 实例，避免 setModel 清除选中
 
-定义行：`340`
+定义行：`365`
 ##### `get_plan`
 
 ```python
@@ -220,7 +238,7 @@ def get_plan(self, row: int) -> dict
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`347`
+定义行：`372`
 ##### `tick`
 
 ```python
@@ -229,4 +247,4 @@ def tick(self) -> list[int]
 
 倒计时 tick：遍历进行中行算剩余；≤0 内存置 ready；对变动行 emit dataChanged。
 
-定义行：`351`
+定义行：`376`

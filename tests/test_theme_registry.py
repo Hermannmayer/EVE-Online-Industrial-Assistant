@@ -149,3 +149,43 @@ def test_on_primary_contrast(theme_id):
     colors = _spec(theme_id)["colors"]
     ratio = _contrast(colors["TEXT_ON_PRIMARY"], colors["PRIMARY"])
     assert ratio >= 2.0, f"{theme_id} TEXT_ON_PRIMARY/PRIMARY 对比度 {ratio:.2f} < 2.0"
+
+
+# ── 产线启动小助手的对比度契约 ──
+# 契约声明在 ui_pyside6/views/industry/production_launcher.py::_CONTRAST_CONTRACT，
+# 这里遍历全部主题断言 —— 以后新增主题会被自动检查，配色不再靠肉眼。
+
+
+@pytest.mark.parametrize("theme_id", sorted(THEME_REGISTRY))
+def test_launcher_contrast_contract(theme_id):
+    """产线小助手用到的每个「文字/背景」对都要达 WCAG AA。"""
+    from ui_pyside6.views.industry.production_launcher import _CONTRAST_CONTRACT
+
+    colors = _spec(theme_id)["colors"]
+    for role, (fg, bg, need) in _CONTRAST_CONTRACT.items():
+        ratio = _contrast(colors[fg], colors[bg])
+        assert ratio >= need, f"{theme_id} 「{role}」{fg}/{bg} 对比度 {ratio:.2f} < {need}"
+
+
+@pytest.mark.parametrize("theme_id", sorted(THEME_REGISTRY))
+def test_launcher_ensure_contrast_guarantee(theme_id):
+    """自绘图形经 ensure_contrast 后必须达非文字 3:1。
+
+    强调色本身是给填充用的中间调，在部分主题下直接用会低于 3:1
+    （实测 one-light 的 ACCENT_GREEN 仅 2.87、eve-polar 的 ACCENT_CYAN 仅 2.85），
+    所以不变量是「函数保证」而不是「token 恰好合格」。
+    """
+    from ui_pyside6.views.industry.production_launcher import (
+        _MIN_NON_TEXT_RATIO,
+        ensure_contrast,
+    )
+
+    colors = _spec(theme_id)["colors"]
+    accents = sorted(k for k in colors if k.startswith("ACCENT_") or k == "PRIMARY")
+    for bg in ("BG_DARK", "BG_SURFACE", "BG_SURFACE_LIGHT", "BG_HOVER"):
+        for accent in accents:
+            got = ensure_contrast(colors[accent], colors[bg], _MIN_NON_TEXT_RATIO)
+            ratio = _contrast(got.name(), colors[bg])
+            assert (
+                ratio >= _MIN_NON_TEXT_RATIO
+            ), f"{theme_id} {accent} on {bg} 经调整后仅 {ratio:.2f} < {_MIN_NON_TEXT_RATIO}"

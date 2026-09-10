@@ -158,3 +158,36 @@ def test_set_default_hangar_id_backs_up_corrupt_file(settings_path):
 
     assert json.loads(settings_path.read_text(encoding="utf-8")) == {"default_mat_hangar_id": 4}
     assert len(list(settings_path.parent.glob("settings.json.corrupt-*"))) == 1
+
+
+class TestMaterialPriceMult:
+    """材料倍率 —— 与生产规划页工具栏共用同一个 settings.json 字段。
+
+    仓库页的导入预览与「批量设置成本价」都从这里读初值、确认时写回，
+    所以「改一处两处都变」；非数值/非正数一律回落 1.0。
+    """
+
+    def test_default_is_one(self):
+        assert us.get_material_price_mult() == 1.0
+
+    def test_roundtrip(self):
+        us.set_material_price_mult(1.25)
+        assert us.get_material_price_mult() == pytest.approx(1.25)
+
+    def test_invalid_falls_back_to_one(self):
+        us.save_settings({"price_settings": {"mat_mult": "abc"}})
+        assert us.get_material_price_mult() == 1.0
+        us.save_settings({"price_settings": {"mat_mult": 0}})
+        assert us.get_material_price_mult() == 1.0
+        us.save_settings({"price_settings": {"mat_mult": -2}})
+        assert us.get_material_price_mult() == 1.0
+
+    def test_set_preserves_sibling_and_top_level_keys(self):
+        us.save_settings({"price_settings": {"mat_hub": "Amarr", "prod_hub": "Rens"}, "theme": "one-dark"})
+        us.set_material_price_mult(0.8)
+
+        s = us.load_settings()
+        assert s["price_settings"]["mat_hub"] == "Amarr"
+        assert s["price_settings"]["prod_hub"] == "Rens"
+        assert s["price_settings"]["mat_mult"] == pytest.approx(0.8)
+        assert s["theme"] == "one-dark"

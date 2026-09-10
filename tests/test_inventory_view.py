@@ -531,14 +531,29 @@ class TestBatchCostPriceDialog:
     """批量设置成本价对话框 — 价格来源切换 / 折扣 / 手动输入"""
 
     def test_defaults(self, qapp):
-        """默认吉他卖价 + 9 折，折扣可见、手动隐藏"""
+        """默认吉他卖价 + 倍率 1.0（跟随生产规划页），倍率可见、手动隐藏"""
         from ui_pyside6.views.inventory.hangar_tab import BatchCostPriceDialog
 
         dlg = BatchCostPriceDialog()
         assert dlg.price_type() == "sell"
-        assert dlg.discount() == 0.9
+        assert dlg.discount() == 1.0  # 不再是硬编码 0.9
         assert not dlg._discount.isHidden()
         assert dlg._manual.isHidden()
+        # 范围与生产规划页工具栏的倍率一致（可溢价，不只是打折）
+        assert dlg._discount.maximum() == 10.0
+
+    def test_mult_follows_settings_and_persists(self, qapp):
+        """初值跟随生产规划页的材料倍率；确认后写回同一字段。"""
+        from services.user_settings import get_material_price_mult, set_material_price_mult
+        from ui_pyside6.views.inventory.hangar_tab import BatchCostPriceDialog
+
+        set_material_price_mult(1.25)
+        dlg = BatchCostPriceDialog()
+        assert dlg.discount() == pytest.approx(1.25)
+
+        dlg._discount.setValue(0.8)
+        dlg.accept()  # 确认才写回（拖动旋钮不写盘）
+        assert get_material_price_mult() == pytest.approx(0.8)
 
     def test_switch_to_manual(self, qapp):
         """切到手动输入：折扣隐藏、手动价格可见"""
@@ -564,3 +579,33 @@ class TestBatchCostPriceDialog:
         dlg._source.setCurrentIndex(3)
         dlg._manual.setValue(1234.56)
         assert dlg.manual_price() == 1234.56
+
+
+# ══════════════════════════════════════
+#  剪贴板导入 — 异类行过滤提示
+# ══════════════════════════════════════
+
+
+class TestImportFilteredNote:
+    """剪贴板里混入另一类物品时，预览框统计栏提示已过滤行数。"""
+
+    def test_material_review_note(self, qapp):
+        """材料导入预览：提示被过滤的蓝图行数"""
+        from ui_pyside6.views.inventory.review_dialog import ImportReviewDialog
+
+        dlg = ImportReviewDialog([], "测试机库", 1, filtered_note=3)
+        assert "[已过滤 3 行蓝图]" in dlg._summary_label.text()
+
+    def test_material_review_note_absent(self, qapp):
+        """无过滤时不加提示"""
+        from ui_pyside6.views.inventory.review_dialog import ImportReviewDialog
+
+        dlg = ImportReviewDialog([], "测试机库", 1)
+        assert "已过滤" not in dlg._summary_label.text()
+
+    def test_blueprint_review_note(self, qapp):
+        """蓝图导入预览：提示被过滤的材料行数"""
+        from ui_pyside6.views.inventory.blueprint_import_dialog import BlueprintImportReviewDialog
+
+        dlg = BlueprintImportReviewDialog([], "测试机库", filtered_note=2)
+        assert "[已过滤 2 行材料]" in dlg._summary_label.text()

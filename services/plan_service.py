@@ -17,6 +17,8 @@ def calculate_plan_metrics(
     char_name: str = "",
     mat_price_type: str = "buy",
     prod_price_type: str = "sell",
+    mat_mult: float = 1.0,
+    prod_mult: float = 1.0,
 ) -> dict:
     """用统一方法计算派生指标（profit/margin/score/iskph/material_cost/calculated_time/daily_output）。"""
     actual_char_name = (plan_input.get("char_name") or "").strip() or char_name
@@ -29,6 +31,8 @@ def calculate_plan_metrics(
             actual_config,
             price_type_mat=mat_price_type,
             price_type_prod=prod_price_type,
+            mat_mult=mat_mult,
+            prod_mult=prod_mult,
         )
     )
 
@@ -197,13 +201,38 @@ def _load_enrich_data(conn):
     need_map: dict[int, int] = {}
     for pid, par in conn.execute("SELECT id, COALESCE(parallels,1) FROM production_plans").fetchall():
         need_map[int(pid)] = max(int(par), 1)
+    # 各蓝图的 ME/TE —— 逐线计算的等级来源（逐线只按绑定蓝图的等级算）
+    bp_level: dict[int, tuple[int, int]] = {
+        int(bid): (int(me or 0), int(te or 0))
+        for bid, me, te in conn.execute("SELECT id, me_level, te_level FROM user_blueprints").fetchall()
+    }
     return {
         "owned_bp": owned_bp,
         "prod_to_bp": prod_to_bp,
         "hangar_names": hangar_names,
         "binding_map": binding_map,
         "need_map": need_map,
+        "bp_level": bp_level,
     }
+
+
+def _line_levels(bound: list[int], need: int, bp_level: dict[int, tuple[int, int]]) -> list[tuple[int, int]]:
+    """逐线 ME/TE 列表（长度 = need 条产线）。
+
+    - 第 i 条线 = 第 i 个绑定蓝图的 (me, te)（绑定顺序由 `binding_map` 的
+      `ORDER BY blueprint_id` 保证稳定）
+    - **未绑的线**取「已绑里最差那张」：ME 只影响材料、TE 只影响时长，
+      故 `min(me)` 与 `min(te)` **分别取**（各自取最差即各自的保守界）
+    - **一张都没绑** → 返回 ``[]``，由 `calculate_plan_metrics` 回退计划级 me/te
+    """
+    levels = [bp_level[b] for b in bound if b in bp_level]
+    if not levels:
+        return []
+    worst_me = min(me for me, _te in levels)
+    worst_te = min(te for _me, te in levels)
+    out = list(levels[:need])
+    out.extend([(worst_me, worst_te)] * max(0, need - len(out)))
+    return out
 
 
 def _enrich_rows(rows: list[dict], enrich: dict) -> list[dict]:
@@ -213,6 +242,7 @@ def _enrich_rows(rows: list[dict], enrich: dict) -> list[dict]:
     hangar_names = enrich["hangar_names"]
     binding_map = enrich["binding_map"]
     need_map = enrich["need_map"]
+    bp_level = enrich["bp_level"]
     for row in rows:
         ptid = row.get("product_type_id")
         has_bp = bool(row.get("assigned_blueprint_id")) or any(
@@ -229,9 +259,11 @@ def _enrich_rows(rows: list[dict], enrich: dict) -> list[dict]:
                 bound = [row["assigned_blueprint_id"]]
             row["bound_blueprint_ids"] = list(bound) if bound else []
             row["need_blueprints"] = int(need_map.get(int(pid), 1))
+            row["line_levels"] = _line_levels(row["bound_blueprint_ids"], row["need_blueprints"], bp_level)
         else:
             row["bound_blueprint_ids"] = []
             row["need_blueprints"] = 1
+            row["line_levels"] = []
 
     from services.plan_category import load_category_map
 

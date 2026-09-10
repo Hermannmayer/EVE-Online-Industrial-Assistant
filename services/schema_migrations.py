@@ -27,7 +27,7 @@ BACKUP_KEEP = 5
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
-    "user": 12,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）
+    "user": 13,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）
     "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
 }
 
@@ -270,6 +270,28 @@ def _migrate_user_v9_to_v10(db_path: str) -> str:
     return f"production_plans 扣减快照列 (新增 {net} 列)"
 
 
+def _migrate_user_v12_to_v13(db_path: str) -> str:
+    """v12→v13: production_plans 新增 material_cost_snapshot 列（启动时成本快照）。
+
+    入库/撤销改用**启动那一刻**的真实成本，不再被在产期间的价格重算改写：
+    - 重算白名单含 in_progress（industry_view._auto_calculate_plans），会改写 material_cost
+    - complete_plan 原先读 material_cost → 下线时按「最后一次重算」的口径入库
+    - cancel_plan 原先读「撤销那一刻」的机库加权成本 → 与扣减时不一致
+
+    快照 JSON：``{"total": <启动时材料总成本>, "unit": {"<type_id>": <扣减时加权平均单价>}}``。
+    旧计划该列为空 → 完成/撤销回退原有逻辑（向后兼容）。
+    幂等：已存在的列跳过，重复运行无变化。
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        if not _table_exists(conn, "production_plans"):
+            return "production_plans 表不存在，跳过"
+    finally:
+        conn.close()
+    net = _add_columns(db_path, "production_plans", [("material_cost_snapshot", "TEXT DEFAULT ''")])
+    return f"production_plans 启动成本快照列 (新增 {net} 列)"
+
+
 def _migrate_user_v11_to_v12(db_path: str) -> str:
     """v11→v12: production_plans 增引用式子项需求列（共享合并 / 母项联动重算）。
 
@@ -351,6 +373,7 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
         9: _migrate_user_v9_to_v10,
         10: _migrate_user_v10_to_v11,
         11: _migrate_user_v11_to_v12,
+        12: _migrate_user_v12_to_v13,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,
