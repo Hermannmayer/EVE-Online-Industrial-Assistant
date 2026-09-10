@@ -62,6 +62,8 @@ class _BulkPlanMetricsWorker(QThread):
         price_settings = settings.get("price_settings") or {}
         mat_hub = price_settings.get("mat_hub", "Jita")
         sell_hub = price_settings.get("prod_hub", "Jita")
+        mat_mult = float(price_settings.get("mat_mult") or 1.0)
+        prod_mult = float(price_settings.get("prod_mult") or 1.0)
         # 产出机库默认（机库设置里配置）→ 写入计划，下线时自动入库
         deposit_hangar_id = settings.get("default_deposit_hangar_id")
         # 从默认材料机库带出星系，写入计划（避免空星系 → 回退吉他 SCI）
@@ -95,6 +97,8 @@ class _BulkPlanMetricsWorker(QThread):
                     "solar_system_id": solar_system_id,
                 },
                 char_name=self._char_name,
+                mat_mult=mat_mult,
+                prod_mult=prod_mult,
             )
             rows.append(
                 {
@@ -600,22 +604,40 @@ class BlueprintTab(QWidget):
         self._worker = _BlueprintImportWorker(raw, hid, parent=self)
         self._worker.progress.connect(lambda cur, total, text: main_win.update_progress(cur, text) if total else None)
         self._worker.finished_signal.connect(
-            lambda diff: self._on_blueprint_diff_ready(diff, hid, hangar_name, before_map)
+            lambda diff, w=self._worker: self._on_blueprint_diff_ready(
+                diff, hid, hangar_name, before_map, w.filtered_count
+            )
         )
         self._worker.start()
 
-    def _on_blueprint_diff_ready(self, diff: list[dict], hid: int, hangar_name: str, before_map: dict[tuple, int]):
-        """diff 就绪 → 弹预览对话框 → 确认后应用 → 变动汇总。"""
+    def _on_blueprint_diff_ready(
+        self,
+        diff: list[dict],
+        hid: int,
+        hangar_name: str,
+        before_map: dict[tuple, int],
+        filtered: int = 0,
+    ):
+        """diff 就绪 → 弹预览对话框 → 确认后应用 → 变动汇总。
+
+        ``filtered``：剪贴板中被过滤掉的材料行数（蓝图仓库只导入蓝图）。
+        """
         from .blueprint_import_dialog import BlueprintImportChangeDialog, BlueprintImportReviewDialog
         from .blueprint_import_worker import build_blueprint_changes
 
         self._page._main.hide_progress(f"共 {len(diff)} 类蓝图")
         self._worker = None
         if not diff:
+            if filtered:
+                QMessageBox.information(
+                    self,
+                    "提示",
+                    f"剪贴板中的 {filtered} 行都是材料，蓝图仓库只导入蓝图，已全部过滤",
+                )
             self._bp_count_label.setText("剪贴板无有效蓝图数据")
             return
 
-        dlg = BlueprintImportReviewDialog(diff, hangar_name, self, default_mode="full")
+        dlg = BlueprintImportReviewDialog(diff, hangar_name, self, default_mode="full", filtered_note=filtered)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         mode = dlg.mode()

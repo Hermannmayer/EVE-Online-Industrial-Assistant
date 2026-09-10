@@ -12,6 +12,26 @@
 
 ## 函数
 
+### `parse_cost_snapshot`
+
+```python
+def parse_cost_snapshot(raw: str | None) -> dict
+```
+
+解析 `material_cost_snapshot` JSON → ``&#123;"total": float | None, "unit": &#123;type_id: 单价&#125;&#125;``。
+
+定义行：`23`
+
+### `_snapshot_total`
+
+```python
+def _snapshot_total(raw: str | None) -> float | None
+```
+
+快照里的材料总成本；无快照返回 None（调用方回退 material_cost）。
+
+定义行：`51`
+
 ### `_now_str`
 
 ```python
@@ -22,7 +42,7 @@ def _now_str() -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`23`
+定义行：`56`
 
 ### `remaining_seconds`
 
@@ -32,7 +52,7 @@ def remaining_seconds(plan: dict, *, now: datetime | None=None) -> int | None
 
 倒计时剩余秒数。非进行中 / 无 started_at / 无时长 → None；已超时返回负值。
 
-定义行：`27`
+定义行：`60`
 
 ### `expire_overdue_plans`
 
@@ -42,7 +62,7 @@ def expire_overdue_plans(db=None) -> int
 
 把已超时的进行中计划置为 ready（重启补算）。返回受影响行数。
 
-定义行：`48`
+定义行：`81`
 
 ### `material_requirements`
 
@@ -52,17 +72,17 @@ def material_requirements(plan: dict) -> list[dict]
 
 计算计划总材料需求 [&#123;type_id, name, need&#125;]。
 
-定义行：`86`
+定义行：`119`
 
 ### `check_materials`
 
 ```python
-def check_materials(plan: dict, mat_hangar_id: int | None) -> list[dict]
+def check_materials(plan: dict, mat_hangar_id: int | None, *, stock: dict[int, int] | None=None) -> list[dict]
 ```
 
 对照材料机库库存，返回 [&#123;type_id, name, need, owned, missing&#125;]。
 
-定义行：`119`
+定义行：`160`
 
 ### `get_plans_for_mat_hangar`
 
@@ -72,7 +92,7 @@ def get_plans_for_mat_hangar(mat_hangar_id: int) -> list[dict]
 
 列出以该机库为材料机库的活跃计划（status NOT IN ('completed','done')）。
 
-定义行：`137`
+定义行：`186`
 
 ### `aggregate_material_requirements`
 
@@ -82,7 +102,7 @@ def aggregate_material_requirements(plans: list[dict], mat_hangar_id: int) -> li
 
 跨计划聚合材料需求：按 type_id 累加 need，对照材料机库库存算缺口。
 
-定义行：`151`
+定义行：`200`
 
 ### `deduct_materials`
 
@@ -92,17 +112,17 @@ def deduct_materials(plan: dict, mat_hangar_id: int) -> list[dict]
 
 从材料机库逐个扣减，返回 [&#123;type_id, name, need, owned, deducted, missing&#125;]。
 
-定义行：`182`
+定义行：`231`
 
 ### `start_plan`
 
 ```python
-def start_plan(plan: dict, *, mat_hangar_id: int | None, allow_short: bool=False, auto_bind: bool=True, char_name: str | None=None, facility: str | None=None) -> dict
+def start_plan(plan: dict, *, mat_hangar_id: int | None, allow_short: bool=False, allow_bp_short: bool=False, auto_bind: bool=True, char_name: str | None=None, facility: str | None=None) -> dict
 ```
 
 启动一条计划：校验 → 扣减材料 → 绑定蓝图 → 写 started_at/in_progress。
 
-定义行：`200`
+定义行：`249`
 
 ### `start_plan_batch`
 
@@ -112,7 +132,7 @@ def start_plan_batch(plans: list[dict], *, mat_hangar_id: int | None, allow_shor
 
 批量启动（产线小助手/组）。逐条独立，单条失败不中断其余。
 
-定义行：`337`
+定义行：`410`
 
 ### `output_per_run`
 
@@ -122,17 +142,17 @@ def output_per_run(product_type_id: int) -> int
 
 蓝图单流程产出量（查 blueprint_products，缺省 1）。
 
-定义行：`365`
+定义行：`438`
 
 ### `complete_plan`
 
 ```python
-def complete_plan(plan: dict, *, conn=None) -> dict
+def complete_plan(plan: dict, *, conn=None, allow_bp_short: bool=False) -> dict
 ```
 
 ready/pending/in_progress → completed：入库成品 + 消耗绑定 BPC。
 
-定义行：`382`
+定义行：`455`
 
 ### `cancel_plan`
 
@@ -142,7 +162,7 @@ def cancel_plan(plan: dict) -> dict
 
 撤销启动：in_progress → pending，并返还已扣减材料到材料机库。
 
-定义行：`487`
+定义行：`574`
 
 ### `reset_plan_for_reuse`
 
@@ -152,7 +172,7 @@ def reset_plan_for_reuse(plan_id: int) -> dict
 
 设为待生产：仅 completed 计划复用（不返还材料——材料已变为成品）。
 
-定义行：`581`
+定义行：`671`
 
 ### `bind_blueprint`
 
@@ -162,7 +182,7 @@ def bind_blueprint(plan_id: int, blueprint_id: int) -> bool
 
 把一张库存蓝图绑定到计划（单条产线）。BPC 已被其他活跃计划占用时拒绝；BPO 可共享。
 
-定义行：`611`
+定义行：`703`
 
 ### `bind_blueprints`
 
@@ -172,7 +192,7 @@ def bind_blueprints(plan_id: int, blueprint_ids: list[int]) -> bool
 
 全量替换绑定：一条产线一张蓝图。
 
-定义行：`616`
+定义行：`708`
 
 ### `bind_blueprints_many`
 
@@ -182,7 +202,7 @@ def bind_blueprints_many(bindings: list[tuple[int, list[int]]]) -> bool
 
 批量全量替换绑定多计划（一次连接/事务）。
 
-定义行：`667`
+定义行：`759`
 
 ### `get_plan_binding_state`
 
@@ -192,7 +212,7 @@ def get_plan_binding_state(plan_id: int) -> dict
 
 返回计划蓝图绑定状态：bound(已绑张数清单)、need(需要的产线条数=parallels)、runs(每条产线流程)。
 
-定义行：`722`
+定义行：`814`
 
 ### `_bp_available_runs`
 
@@ -202,7 +222,7 @@ def _bp_available_runs(conn, bp_id: int) -> int | float
 
 连接内查 BPC 可用流程 = quantity×runs；BPO 返回大数（视为无限）。
 
-定义行：`748`
+定义行：`840`
 
 ### `_binding_shortfall`
 
@@ -212,7 +232,17 @@ def _binding_shortfall(conn, bound_ids: list[int], parallels: int, runs: int) ->
 
 校验绑定是否满足一条产线一张蓝图且每张流程≥runs；不足返回原因文本，满足返回 None。
 
-定义行：`758`
+定义行：`852`
+
+### `binding_shortfall`
+
+```python
+def binding_shortfall(plan_id: int) -> str | None
+```
+
+预检该计划的蓝图绑定是否满足「一条产线一张、每张流程 ≥ runs」。
+
+定义行：`862`
 
 ### `get_plan_blueprints`
 
@@ -222,7 +252,7 @@ def get_plan_blueprints(plan_id: int) -> list[int]
 
 返回计划绑定的库存蓝图 id 列表（关联表；无关联表时回退旧单值列）。
 
-定义行：`768`
+定义行：`879`
 
 ### `_clear_plan_bindings`
 
@@ -232,7 +262,7 @@ def _clear_plan_bindings(conn, plan_id: int) -> None
 
 清空计划的多蓝图绑定关联行（兼容旧库无关联表）。
 
-定义行：`783`
+定义行：`894`
 
 ### `release_blueprint`
 
@@ -242,7 +272,7 @@ def release_blueprint(plan_id: int) -> bool
 
 计划取消/删除/回退时释放占用（清空关联表与旧单值列）。
 
-定义行：`791`
+定义行：`902`
 
 ### `get_assigned_blueprint_id`
 
@@ -254,7 +284,7 @@ def get_assigned_blueprint_id(plan_id: int) -> int | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`805`
+定义行：`916`
 
 ### `get_occupied_blueprint_ids`
 
@@ -264,7 +294,7 @@ def get_occupied_blueprint_ids(db=None, *, exclude_plan_id: int | None=None) -> 
 
 返回被活跃计划（非 completed/done）占用的 user_blueprints.id 集合。
 
-定义行：`811`
+定义行：`922`
 
 ### `find_available_blueprints`
 
@@ -274,7 +304,7 @@ def find_available_blueprints(conn, blueprint_type_id: int) -> list[dict]
 
 按蓝图类型列出库存蓝图（含占用标注/可用流程）。
 
-定义行：`852`
+定义行：`963`
 
 ### `consume_bpc_runs`
 
@@ -284,7 +314,7 @@ def consume_bpc_runs(conn, bp_id: int, runs_used: int) -> dict
 
 完成时消耗 BPC 剩余流程；BPO 无操作。
 
-定义行：`890`
+定义行：`1001`
 
 ### `_split_bpc_consumption`
 
@@ -294,7 +324,7 @@ def _split_bpc_consumption(quantity: int, runs: int, used: int) -> tuple[int, in
 
 纯函数：消耗 used 流程后返回应保留的 (数量, 每张剩余流程)。
 
-定义行：`925`
+定义行：`1036`
 
 ### `_container`
 
@@ -306,7 +336,7 @@ def _container()
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`951`
+定义行：`1062`
 
 ### `_occupied_ids`
 
@@ -316,7 +346,7 @@ def _occupied_ids(conn, *, exclude_plan_id: int | None=None) -> set[int]
 
 连接内查询占用蓝图 id 集合（兼容关联表与旧单值列）。
 
-定义行：`957`
+定义行：`1068`
 
 ### `_auto_bind_blueprints`
 
@@ -326,7 +356,7 @@ def _auto_bind_blueprints(plan: dict) -> list[int]
 
 自动选最优库存蓝图：BPO 优先，其次 ME 最高的够用 BPC。返回并行产线所需张数清单。
 
-定义行：`992`
+定义行：`1103`
 
 ### `ensure_plan_auto_bind`
 
@@ -336,4 +366,4 @@ def ensure_plan_auto_bind(plan_id: int) -> bool
 
 计划尚无绑定且库存有可用蓝图时，自动绑定并行所需张数。返回是否新绑。
 
-定义行：`1032`
+定义行：`1143`

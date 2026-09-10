@@ -90,3 +90,33 @@ def set_default_hangar_id(key: str, hangar_id: int | None) -> None
 写默认机库设置；None 时删除该键（对齐 TopToolbar -1 pop 语义）。
 
 定义行：`104`
+
+### `get_price_settings`
+
+```python
+def get_price_settings() -> dict
+```
+
+价格来源设置 &#123;mat_hub, mat_price_type, mat_mult, prod_hub, prod_price_type, prod_mult&#125;。
+
+定义行：`126`
+
+### `get_material_price_mult`
+
+```python
+def get_material_price_mult() -> float
+```
+
+材料价格调整系数（默认 1.0）。
+
+定义行：`131`
+
+### `set_material_price_mult`
+
+```python
+def set_material_price_mult(value: float) -> None
+```
+
+写回材料价格调整系数（读-改-写，只动 price_settings.mat_mult，保留其它键）。
+
+定义行：`145`

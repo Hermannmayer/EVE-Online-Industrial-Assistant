@@ -84,12 +84,45 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
 - 展开：`plan_table._decompose_parent` → `plan_decompose.decompose_plan`（递归读 `user_blueprints` + bom 材料）→ `plan_rebuild.rebuild_children` → `PlanRepository` 增删改
 - 读取：`plan_service.load_plans`；价格快照 `save_price_snapshots`
 - 旁路：`plan_aggregator` 是**采购/需求聚合**，不是计划展开
+- 价格口径（工具栏双行价格设置）：`mat_hub/mat_price_type/mat_mult` 与 `prod_hub/prod_price_type/prod_mult` 由 `top_toolbar.get_price_settings()` 提供，消费方必须**整套一起透传**（漏一项就是「改设置数字不动」的缺陷）：
+  - 计划成本/利润：`BatchPlanCalcWorker`（表格批量重算）、`industry_view._on_plan_add`、`plan_table._view_cost_breakdown` → 成本明细弹窗、`parent_decompose_dialog`、`blueprint_tab` 的「加入制造规划」预览 → `ScoringService.calculate_plan_metrics(mat_mult=, prod_mult=)` → `scoring_facade.calc_manufacturing_score` → `domain.scoring`
+  - ⚠️ `scoring_facade` 有 TTL 缓存，`mat_price_mult/prod_price_mult` **必须进 cache_key**，否则同一类陈旧缓存缺陷会在评分层复现
+  - 倍率只作用于玩家买卖价：材料价乘 `mat_mult`、成品价乘 `prod_mult`；**EIV 用的 adjusted_price 不乘**（CCP 官方估价，与买卖价无关）
+  - 状态栏「备料中采购」：`industry_view._refresh_procurement_summary` → `ProcurementSummaryWorker(region_id, price_type, price_mult)` → `ui_data_service.aggregate_procurement_summary` → `plan_aggregator.aggregate_procurement`。该函数带指纹缓存，指纹 = **（价格口径, 计划字段集）**，价格项漏进指纹就会回吐旧值
+  - 口径分叉（有意）：采购小助手 `procurement_tab` 有自己独立的 Hub/价格类型控件、无倍率控件，不套用工具栏倍率
+- **启动成本快照**（`production_plans.material_cost_snapshot`，schema v12→v13）：`start_plan` 在**扣减之前、事务之外**采样机库加权单价，写入 `{"total": 总成本, "unit": {type_id: 单价}}`：
+  - 两个「之前」都是硬约束 —— `deduct_item` 把余量清到 0 会删行（扣完再取价得 0）；`db.connect()` 同线程复用连接、嵌套 with 退出会提前 commit（在事务内取价会毁掉「失败整体回滚」）
+  - `complete_plan` 按快照 `total` 算成品入库单价；`cancel_plan` 按快照 `unit` 返还成本 —— 都是**启动那一刻**的口径，不受在产期间价格重算影响
+  - 旧计划无快照 → 回退 `material_cost` / 机库当前加权成本（向后兼容）；`cancel_plan` 与 `reset_plan_for_reuse` 会清空快照
+- **重算失败不得清零成本**：`BatchPlanCalcWorker` 对「评分异常→空 dict」与 `no_price`/`no_blueprint`/`no_materials`（`calculate_plan_metrics` 对这三种 status 返回全零 dict）的行**跳过不发**，保留库中上次的正确值；父项若同组有更深的失败子项也一并跳过（否则 `mother_subitem_cost_map` 拿空 dict 会把母项成本算低）。跳过数量经 `failed_names` 由状态栏提示「N 条计划估值失败，成本沿用上次值」
+- **完成入口统一**：右键「下线」与状态列「待下线」都走 `CompletePlansDialog` 选产出机库（批量只弹一次框）；`deposit_hangar_id` 为空时不再静默跳过入库
+- **「取消生产」语义**（菜单原名「删除行」）：解除蓝图绑定 + 删除计划行，**不返还已扣材料** —— 与游戏「取消产线只退蓝图」一致（领域模型见 `AUDIT-20260801.md`）。误点启动请用「撤销启动（返还材料）」；删除前有确认框按状态说明后果
+- **蓝图流程不足可强制启动**：`_binding_shortfall` 有两道（张数 / 每张流程 ≥ runs），
+  `start_plan` 与 `complete_plan` **成对**提供 `allow_bp_short` —— **只放开启动会造成死锁**
+  （强制启动的计划永远无法下线）。强制时**不换绑**，完成时 `consume_bpc_runs` 按实际可用量消耗；
+  账面偏差由用户在蓝图管理做**全量剪贴板导入**矫正。UI 三处入口都要覆盖：
+  计划表格 `_start_plan`、小助手 `_start`、以及 `procurement_tab` 直调 `complete_plan` 的那条
+  （确认框留 UI 层：`complete_plans()` 是无 parent 的服务函数）
+- **并行产线逐线计算**：各线按**各自绑定蓝图**的 ME/TE 独立结算
+  - 等级来源：`plan_service._enrich_rows` 预填 `line_levels`（`user_blueprints.me_level/te_level`，
+    绑定来源与 `bound_blueprint_ids` 同一回退：关联表优先 → `assigned_blueprint_id`）；
+    未绑的线取**已绑里最差那张**（`min(me)` 与 `min(te)` 分别取）；一张没绑则留空
+  - 短路：`line_levels` 为空、或**与计划级 (me,te) 完全一致** → 走原单次路径（零行为变化）。
+    ⚠️ 短路条件不能写成「各线彼此一致」—— 五张都绑 ME8 而计划级写 10 时仍须走逐线
+  - 汇总（`ScoringService.combine_per_line`）：材料/作业费/收入/利润 **Σ**；
+    **时长取 max**（并行同时跑，单次路径的 `hours_per_run × runs` 是其均匀特例）；
+    日产出 Σ(24/hoursᵢ)；利润率 = Σ利润/Σ总成本（与单线同式）
+  - ⚠️ **`materials` 保持「单线单轮」语义**（逐线时取最差线）：`plan_metrics` 两处消费方
+    都会再乘 `runs × parallels`，放汇总值会被**重复放大**。
+    要求精确的 `material_requirements` 改读新增的 `materials_all_lines`（Σ 各线单轮量，只乘 `runs`）
+  - 展示：表格 ME/TE 列一致时不变；不一致时显示**最低那组** + `≠`，tooltip 逐条列出
 
 ## 库存管理
 
 - 表：user 库 `hangars` / `inventory_items` / `user_blueprints`
 - UI 同步调用（无独立 worker）：`inventory_manager.add_item`（加权平均成本）、`set_item_quantity`（经 `inventory_import.compute_import_diff` 全量覆盖/删除）、`move_quantity`/`move_items`（transfer 弹窗）
 - `deduct_item` 被计划启动/展开/重建调用
+- 剪贴板导入按仓库类型校验（同一机库分两张表、两页签）：材料侧 `inventory_clipboard_service.parse_clipboard`（机库管理「库存修正/增量粘贴」、采购页「增量添加到仓库」、「移库」）过滤蓝图行；蓝图侧 `ui_data_service.parse_blueprint_clipboard`（蓝图管理「粘贴导入蓝图」）过滤材料行。判定见 `services/item_kind.py`（`item` group 名后缀 = 蓝图，失败开放），过滤数在预览框统计栏提示
 
 ## 数据初始化（SDE/ESI）
 

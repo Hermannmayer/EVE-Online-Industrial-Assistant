@@ -47,12 +47,14 @@ class BlueprintImportReviewDialog(QDialog):
         parent=None,
         *,
         default_mode: str = "full",
+        filtered_note: int = 0,
     ):
         super().__init__(parent)
         self.setWindowTitle(f"蓝图导入预览 → {hangar_name}")
         self.setMinimumSize(720, 400)
         self.resize(820, 480)
         self._diff_rows = diff_rows  # [{blueprint_type_id, is_bpo, me, te, runs, qty, existing_qty, row_ids, name}]
+        self._filtered_note = max(int(filtered_note or 0), 0)  # 剪贴板里被过滤的材料行数
         self._mode = default_mode
         self._updating = False
 
@@ -259,9 +261,10 @@ class BlueprintImportReviewDialog(QDialog):
                     total_delta += int(delta_item.text().replace(",", "").replace("+", ""))
                 except ValueError:
                     pass
-        self._summary_label.setText(
-            f"已勾选 {checked} 项 / 总计 {self._table.rowCount()} 项 / 蓝图增减 {total_delta:+d}"
-        )
+        text = f"已勾选 {checked} 项 / 总计 {self._table.rowCount()} 项 / 蓝图增减 {total_delta:+d}"
+        if self._filtered_note:
+            text = f"[已过滤 {self._filtered_note} 行材料] {text}"
+        self._summary_label.setText(text)
 
     def _on_accept(self):
         has_checked = False

@@ -29,6 +29,27 @@ class TestProcurementSummaryWorker:
         assert captured[0][0] == pytest.approx(cost)
         assert captured[0][1] == pytest.approx(vol)
 
+    def test_forwards_price_mult(self, temp_db, monkeypatch):
+        """worker 把 price_mult 透传到聚合 —— 状态栏「备料中采购」须跟随工具栏材料倍率。"""
+        monkeypatch.setattr(iw, "get_container", lambda: SimpleNamespace(db=temp_db))
+        with temp_db.connect("user") as conn:
+            conn.execute(
+                "CREATE TABLE inventory_items (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "hangar_id INTEGER, type_id INTEGER, quantity INTEGER, cost_price REAL)"
+            )
+        plan = {"product_type_id": 2001, "runs": 1, "parallels": 1, "me_level": 0, "mat_hangar_id": 5}
+        captured = []
+        worker = iw.ProcurementSummaryWorker(
+            [plan], default_mat_hangar_id=5, region_id=10000002, price_type="sell", price_mult=1.1
+        )
+        worker.finished_signal.connect(lambda c, v: captured.append((c, v)))
+        worker.run()
+
+        with temp_db.connect("user", "ref", "bp", "mkt") as conn:
+            _rows, base_cost, _vol = aggregate_procurement(conn, [plan], default_hangar_id=5, price_type="sell")
+        assert len(captured) == 1
+        assert captured[0][0] == pytest.approx(base_cost * 1.1)
+
     def test_no_plans_emits_zero(self, temp_db, monkeypatch):
         monkeypatch.setattr(iw, "get_container", lambda: SimpleNamespace(db=temp_db))
         captured = []

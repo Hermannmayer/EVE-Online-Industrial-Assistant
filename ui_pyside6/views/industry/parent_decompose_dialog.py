@@ -178,6 +178,8 @@ class ParentDecomposeDialog(QDialog):
                 sell_hub=self._price_settings.get("prod_hub"),
                 price_type_mat=self._price_settings.get("mat_price_type"),
                 price_type_prod=self._price_settings.get("prod_price_type"),
+                mat_mult=float(self._price_settings.get("mat_mult") or 1.0),
+                prod_mult=float(self._price_settings.get("prod_mult") or 1.0),
                 system_id=mother.get("solar_system_id"),
             )
             profit = metrics.get("profit")

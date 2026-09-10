@@ -48,12 +48,21 @@ class HangarTransferDialog(QDialog):
     _COL_TARGET = 7  # 目标现有
     _HEADERS = ["", "图标", "名称", "剪贴板数量", "源库现有", "移动数量", "单位成本", "目标现有"]
 
-    def __init__(self, rows: list[dict], target_hangar_id: int, hangar_name: str, parent=None):
+    def __init__(
+        self,
+        rows: list[dict],
+        target_hangar_id: int,
+        hangar_name: str,
+        parent=None,
+        *,
+        filtered_note: int = 0,
+    ):
         super().__init__(parent)
         self.setWindowTitle(f"移库 → {hangar_name}")
         self.setMinimumSize(880, 480)
         self.resize(1000, 560)
         self._parsed = rows  # [{type_id|None, raw_name, zh_name, en_name, qty, status}]
+        self._filtered_note = max(int(filtered_note or 0), 0)  # 剪贴板里被过滤的蓝图行数
         self._target_hangar_id = target_hangar_id
         self._result = {"moved": 0, "capped": 0}
         self._source_items: dict[int, dict] = {}  # type_id → 源库 item（取 cost_price）
@@ -304,6 +313,8 @@ class HangarTransferDialog(QDialog):
             if "（源库不足）" in name_item.text():
                 capped += 1
         parts = [f"共 {self._table.rowCount()} 项"]
+        if self._filtered_note:
+            parts.append(f"已过滤 {self._filtered_note} 行蓝图")
         if checked:
             parts.append(f"勾选 {checked} 项")
             parts.append(f"将移动 {total_move:,} 件")

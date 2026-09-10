@@ -72,6 +72,31 @@ class TestAggregateProcurement:
             _rows, cost, _ = aggregate_procurement(conn, [plan], price_type="buy")
         assert cost == pytest.approx(1000 * 4 + 500 * 8)
 
+    def test_price_mult_scales_unit_price(self, temp_db):
+        """材料倍率乘在单价上：price 与 total 同步缩放，to_buy / volume 不变。"""
+        plan = {"product_type_id": 2001, "runs": 1, "parallels": 1, "me_level": 0}
+        with temp_db.connect("user", "ref", "bp", "mkt") as conn:
+            base_rows, base_cost, base_vol = aggregate_procurement(conn, [plan], price_type="sell")
+            rows, cost, vol = aggregate_procurement(conn, [plan], price_type="sell", price_mult=1.1)
+        base_by = {r["type_id"]: r for r in base_rows}
+        assert cost == pytest.approx(base_cost * 1.1)
+        assert vol == pytest.approx(base_vol)  # 体积是物理量，不受价格倍率影响
+        for row in rows:
+            base = base_by[row["type_id"]]
+            assert row["price"] == pytest.approx(base["price"] * 1.1)
+            assert row["total"] == pytest.approx(row["to_buy"] * row["price"])  # 单价×数量恒等式仍成立
+            assert row["to_buy"] == base["to_buy"]
+
+    def test_price_mult_default_and_invalid_fall_back_to_one(self, temp_db):
+        """不传 / 传 1.0 / 传非正数，三者结果一致（settings.json 可手改，不能信）。"""
+        plan = {"product_type_id": 2001, "runs": 1, "parallels": 1, "me_level": 0}
+        with temp_db.connect("user", "ref", "bp", "mkt") as conn:
+            _r, base_cost, _v = aggregate_procurement(conn, [plan], price_type="sell")
+            _r, one_cost, _v = aggregate_procurement(conn, [plan], price_type="sell", price_mult=1.0)
+            _r, zero_cost, _v = aggregate_procurement(conn, [plan], price_type="sell", price_mult=0)
+        assert one_cost == pytest.approx(base_cost)
+        assert zero_cost == pytest.approx(base_cost)
+
     def test_empty_plans(self, temp_db):
         with temp_db.connect("user", "ref", "bp", "mkt") as conn:
             rows, cost, vol = aggregate_procurement(conn, [], price_type="sell")

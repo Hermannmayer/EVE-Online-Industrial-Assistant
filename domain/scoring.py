@@ -57,10 +57,15 @@ def calc_manufacturing_score(
     structure_mat_saving: float,
     facility_tax_pct: float,
     is_alpha: bool,
+    mat_price_mult: float = 1.0,
 ) -> dict:
     """纯函数：给定蓝图 + 价格提供者 + 参数，计算制造评分结果 dict。
 
     输出与重构前 ScoringService.calc_manufacturing_score 完全一致（含逐字段 round）。
+
+    ``mat_price_mult``：材料价格调整系数（工具栏「材料倍率」）。只作用于材料买入价；
+    成品价由调用方在取价后自行乘系数（facade 负责），EIV 用的 adjusted_price 不受影响
+    —— 那是 CCP 官方估价，与玩家实际买卖价无关。
     """
     result = {
         "score": 0.0,
@@ -80,7 +85,7 @@ def calc_manufacturing_score(
     eiv_materials: list[tuple[int, float]] = []
     for mat in recipe.materials:
         wastefactor = mat.wastefactor or 10  # 兜底 T1
-        mat_price = prices.get_price(mat.type_id, price_type_mat, mat_source_hub)
+        mat_price = (prices.get_price(mat.type_id, price_type_mat, mat_source_hub) or 0.0) * mat_price_mult
         # EIV 使用 adjusted_price（更稳定），兜底用 mat_price
         adj_price = prices.get_adjusted_price(mat.type_id) or mat_price or 0.0
         # 单件材料(基础量=1)不受ME影响——如T1舰船、矿物、组件等

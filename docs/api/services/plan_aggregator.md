@@ -137,7 +137,7 @@ def _pick_price(price_map: dict[str, float], price_type: str) -> float
 ### `aggregate_procurement`
 
 ```python
-def aggregate_procurement(conn, plans: list[dict], *, hangar_id: int | None=None, default_hangar_id: int | None=None, region_id: int=10000002, price_type: str='sell') -> tuple[list[dict], float, float]
+def aggregate_procurement(conn, plans: list[dict], *, hangar_id: int | None=None, default_hangar_id: int | None=None, region_id: int=10000002, price_type: str='sell', price_mult: float=1.0) -> tuple[list[dict], float, float]
 ```
 
 聚合「备料中」计划的待采购材料并扣库存 → (rows, total_cost, total_volume)。
@@ -152,4 +152,4 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]
 
 聚合各计划的直接材料（recipe 一层，非递归），排除由子项产线自制的组件。
 
-定义行：`566`
+定义行：`573`

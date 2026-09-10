@@ -20,6 +20,39 @@ from core.logger import log
 _TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 
+def parse_cost_snapshot(raw: str | None) -> dict:
+    """解析 `material_cost_snapshot` JSON → ``{"total": float | None, "unit": {type_id: 单价}}``。
+
+    启动时写入的格式：
+    ``{"total": <启动时材料总成本>, "unit": {"<type_id>": <扣减时加权平均单价>}}``。
+
+    空串 / 非 JSON / 结构异常 → 返回 ``{}``，调用方据此回退旧口径 ——
+    快照损坏不应阻断完成或撤销。
+    """
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        log.warning("成本快照 JSON 解析失败，本次回退旧口径")
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    unit: dict[int, float] = {}
+    for k, v in (data.get("unit") or {}).items():
+        try:
+            unit[int(k)] = float(v)
+        except (TypeError, ValueError):
+            continue
+    total = data.get("total")
+    return {"total": float(total) if isinstance(total, int | float) else None, "unit": unit}
+
+
+def _snapshot_total(raw: str | None) -> float | None:
+    """快照里的材料总成本；无快照返回 None（调用方回退 material_cost）。"""
+    return parse_cost_snapshot(raw).get("total")
+
+
 def _now_str() -> str:
     return datetime.now(UTC).strftime(_TIME_FMT)
 
@@ -101,32 +134,48 @@ def material_requirements(plan: dict) -> list[dict]:
         return []
     runs = max(int(plan.get("runs", 1)), 1)
     parallels = max(int(plan.get("parallels", 1)), 1)
-    total_mult = runs * parallels
+    # 逐线时 metrics 带 `materials_all_lines`（Σ 各并行线的单轮量，按 type_id 合并）
+    # → 只需再乘 runs。否则沿用「单线单轮量 × runs × parallels」。
+    # 均匀绑定下两者逐值等价；逐线不同时必须走前者，否则会**多扣 parallels 倍**。
+    per_cycle = metrics.get("materials_all_lines")
+    if per_cycle is None:
+        per_cycle = metrics.get("materials", []) or []
+        per_cycle_mult = runs * parallels
+    else:
+        per_cycle_mult = runs
     reqs = []
-    for m in metrics.get("materials", []) or []:
+    for m in per_cycle:
         if not m.get("type_id"):
             continue
         reqs.append(
             {
                 "type_id": int(m["type_id"]),
                 "name": m.get("name", ""),
-                "need": round((m.get("qty") or 0) * total_mult),
+                "need": round((m.get("qty") or 0) * per_cycle_mult),
             }
         )
     return reqs
 
 
-def check_materials(plan: dict, mat_hangar_id: int | None) -> list[dict]:
+def check_materials(
+    plan: dict,
+    mat_hangar_id: int | None,
+    *,
+    stock: dict[int, int] | None = None,
+) -> list[dict]:
     """对照材料机库库存，返回 [{type_id, name, need, owned, missing}]。
 
     mat_hangar_id 为 None（未设置材料机库）时不校验，返回空列表。
+    stock: 已取好的机库库存快照 {type_id: qty}；不传则自行查询。
+      调用方（如产线小助手的 5s 轮询）可传同一份，避免每个计划重复查库。
     """
     if not mat_hangar_id:
         return []
     from services import inventory_manager
 
     reqs = material_requirements(plan)
-    stock = inventory_manager.get_hangar_stock(mat_hangar_id)
+    if stock is None:
+        stock = inventory_manager.get_hangar_stock(mat_hangar_id)
     result = []
     for r in reqs:
         owned = int(stock.get(r["type_id"], 0))
@@ -202,6 +251,7 @@ def start_plan(
     *,
     mat_hangar_id: int | None,
     allow_short: bool = False,
+    allow_bp_short: bool = False,
     auto_bind: bool = True,
     char_name: str | None = None,
     facility: str | None = None,
@@ -258,10 +308,11 @@ def start_plan(
             bound_ids = picks
             auto_bound = True
     assigned_bp = None
+    bp_short_warn = ""
     if bound_ids:
         with _container().db.connect("user") as conn:
             short = _binding_shortfall(conn, bound_ids, plan_parallels, plan_runs)
-        if short:
+        if short and not allow_bp_short:
             return {
                 "ok": False,
                 "code": "blueprint_short",
@@ -269,8 +320,13 @@ def start_plan(
                 "shortfalls": [],
                 "plan_id": plan_id,
             }
+        if short:
+            # 强制启动：沿用**原有绑定**不换绑，流程按实际可用量消耗（完成时尽力扣，耗尽删行）。
+            # 账面与游戏的偏差由用户在蓝图管理里做**全量剪贴板导入**矫正。
+            bp_short_warn = f"⚠ 蓝图流程不足（{short}），已强制启动；账面流程数请用全量剪贴板导入矫正"
+            log.warning("强制启动计划 %s：%s", plan_id, short)
         assigned_bp = bound_ids[0]
-    elif plan_parallels > 1:
+    elif plan_parallels > 1 and not allow_bp_short:
         return {
             "ok": False,
             "code": "blueprint_short",
@@ -283,6 +339,11 @@ def start_plan(
     #    任一步失败整体回滚，避免部分扣减残留和并发重复启动。
     now = _now_str()
     new_solar = inventory_manager.get_hangar_system_id(mat_hangar_id) if mat_hangar_id else None
+    # 启动单价快照必须在两个「之前」：
+    #   ① 在 `deduct_item` 之前 —— 扣减把余量清到 0 时会删掉该物品行，扣完再取只能得到 0；
+    #   ② 在事务**之外** —— `db.connect()` 在同一线程复用同一连接，嵌套 with 退出时会
+    #      提前 `commit()`，把下面的状态 UPDATE 也一并提交掉，外层「失败整体回滚」就失效了。
+    unit_costs = inventory_manager.get_hangar_cost_map(mat_hangar_id) if mat_hangar_id else {}
     deducted_json = ""
     with _container().db.connect("user") as conn:
         cur = conn.execute(
@@ -316,14 +377,24 @@ def start_plan(
 
         if mat_hangar_id:
             deducted_snapshot: dict[str, int] = {}
+            cost_total = 0.0
             for r in reqs:
                 deducted = inventory_manager.deduct_item(mat_hangar_id, r["type_id"], r["need"], conn=conn)
                 if deducted > 0:
                     deducted_snapshot[str(r["type_id"])] = deducted
+                    cost_total += float(unit_costs.get(int(r["type_id"]), 0.0)) * deducted
             deducted_json = json.dumps(deducted_snapshot, ensure_ascii=False)
+            # 启动成本快照：入库/撤销按这一刻的真实成本，不被在产期间的价格重算改写
+            cost_snapshot_json = json.dumps(
+                {
+                    "total": round(cost_total, 2),
+                    "unit": {k: round(float(unit_costs.get(int(k), 0.0)), 4) for k in deducted_snapshot},
+                },
+                ensure_ascii=False,
+            )
             conn.execute(
-                "UPDATE production_plans SET deducted_materials=? WHERE id=?",
-                (deducted_json, plan_id),
+                "UPDATE production_plans SET deducted_materials=?, material_cost_snapshot=? WHERE id=?",
+                (deducted_json, cost_snapshot_json, plan_id),
             )
 
     message = "计划已启动"
@@ -331,6 +402,8 @@ def start_plan(
         message += f"，材料缺口 {len(shortfalls)} 种已标记待补"
     if auto_bound:
         message += "，已自动绑定蓝图"
+    if bp_short_warn:
+        message += f"\n{bp_short_warn}"
     return {"ok": True, "code": "ok", "message": message, "shortfalls": shortfalls, "plan_id": plan_id}
 
 
@@ -379,12 +452,14 @@ def output_per_run(product_type_id: int) -> int:
         return 1
 
 
-def complete_plan(plan: dict, *, conn=None) -> dict:
+def complete_plan(plan: dict, *, conn=None, allow_bp_short: bool = False) -> dict:
     """ready/pending/in_progress → completed：入库成品 + 消耗绑定 BPC。
 
     conn: 可选注入的用户库连接（UI 已持有事务时传入）；None 时自开。
     成品入库 / BPC 消耗 / 状态更新在同一连接同一事务内完成，失败整体回滚；
     已 completed 的计划幂等返回（不重复入库）。
+    allow_bp_short: 蓝图流程不足时是否放行（与 `start_plan` 成对使用 ——
+    只放开启动的话，强制启动的计划将永远无法下线）。
     Returns: {"ok": bool, "message": str, "deposited": int}
     """
     plan_id = plan.get("id")
@@ -401,12 +476,12 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
         # 以 DB 权威值为准（调用方传入的 plan dict 可能是完成前的旧值）+ 幂等
         row = conn.execute(
             "SELECT status, product_type_id, deposit_hangar_id, runs, parallels, material_cost, "
-            "assigned_blueprint_id FROM production_plans WHERE id=?",
+            "assigned_blueprint_id, material_cost_snapshot FROM production_plans WHERE id=?",
             (plan_id,),
         ).fetchone()
         if row is None:
             return {"ok": False, "message": "计划不存在", "deposited": 0}
-        db_status, product_type_id, deposit_hangar_id, runs, parallels, mat_cost, assigned_bp = row
+        db_status, product_type_id, deposit_hangar_id, runs, parallels, mat_cost, assigned_bp, cost_snap = row
         if db_status in ("completed", "done"):
             return {"ok": True, "message": "计划已完成", "deposited": 0}
 
@@ -418,12 +493,17 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
             bound_ids = [assigned_bp]
         if bound_ids:
             short = _binding_shortfall(conn, bound_ids, plan_parallels, plan_runs)
-            if short:
+            if short and not allow_bp_short:
                 return {
                     "ok": False,
                     "message": f"蓝图绑定不满足完成条件：{short}。请先在蓝图列补绑蓝图后重试。",
                     "deposited": 0,
                 }
+            if short:
+                # 强制完成：货已经造出来了，不该因为账面流程不足而拒绝记录现实。
+                # 消耗仍走 consume_bpc_runs（按实际可用尽力扣、耗尽删行）。
+                messages.append(f"⚠ 蓝图流程不足（{short}），已强制下线；请用全量剪贴板导入矫正账面")
+                log.warning("强制完成计划 %s：%s", plan_id, short)
 
         # 1. 原子抢占完成状态；若并发完成，只有一个事务能成功。
         now = _now_str()
@@ -440,10 +520,17 @@ def complete_plan(plan: dict, *, conn=None) -> dict:
         if deposit_hangar_id and deposit_hangar_id > 0 and product_type_id:
             total_mult = max(int(runs or 1), 1) * max(int(parallels or 1), 1)
             total_qty = total_mult * output_per_run(product_type_id)
-            cost_price = (mat_cost or 0) / max(total_qty, 1)
+            # 成本口径：优先用**启动时**的快照（不受在产期间价格重算影响）；
+            # 旧计划无快照 → 回退 material_cost（最后一次重算的口径）
+            snap_total = _snapshot_total(cost_snap)
+            cost_basis = snap_total if snap_total is not None else (mat_cost or 0)
+            cost_price = cost_basis / max(total_qty, 1)
             inventory_manager.add_item(deposit_hangar_id, product_type_id, total_qty, round(cost_price, 2), conn=conn)
             deposited = 1
             messages.append(f"成品 {total_qty} 件已入库")
+            if not cost_basis:
+                source = "启动快照" if snap_total is not None else "material_cost"
+                messages.append(f"⚠ {source} 成本为 0（可能未成功估值），入库成本价为 0")
         else:
             messages.append("未设置产出机库，跳过入库")
 
@@ -491,7 +578,8 @@ def cancel_plan(plan: dict) -> dict:
     返还机库取 production_plans.mat_hangar_id（start_plan 已持久化生效机库）；
     返还数量 = start_plan 持久化的 deducted_materials 快照（精确还原），
     旧计划无快照时回退「需求 − 缺口」（material_short）推导。
-    返还按机库现有单位成本回补（避免加权平均成本被稀释）。
+    返还**成本**优先取 material_cost_snapshot 的启动单价（与扣减时一致）；
+    无快照时回退机库现有单位成本（避免加权平均成本被稀释）。
     返还 + 状态重置在同一事务内完成，失败整体回滚（避免重复撤销重复返还）。
 
     Returns: {"ok": bool, "message": str, "returned": int, "returned_list": list[dict]}
@@ -508,20 +596,22 @@ def cancel_plan(plan: dict) -> dict:
     cost_map: dict[int, float] = {}
     with _container().db.connect("user") as conn:
         row = conn.execute(
-            "SELECT status, mat_hangar_id, material_short, deducted_materials FROM production_plans WHERE id=?",
+            "SELECT status, mat_hangar_id, material_short, deducted_materials, material_cost_snapshot "
+            "FROM production_plans WHERE id=?",
             (plan_id,),
         ).fetchone()
         if row is None:
             return {"ok": False, "message": "计划不存在", "returned": 0, "returned_list": []}
-        db_status, mat_hangar_id, material_short, deducted_materials = row
+        db_status, mat_hangar_id, material_short, deducted_materials, cost_snap = row
         if db_status not in ("in_progress", "running"):
             return {"ok": False, "message": "仅生产中计划可撤销", "returned": 0, "returned_list": []}
 
         # 已扣减量优先取启动时持久化的快照（精确还原，不依赖评分重算——评分失败不再丢材料）；
         # 旧计划无快照 → 回退「需求 − 缺口」推导（material_short JSON {type_id: missing_qty}）
         if mat_hangar_id:
-            # 机库现有单位成本（加权平均；返还时按原成本回补避免稀释）
-            cost_map = inventory_manager.get_hangar_cost_map(mat_hangar_id)
+            # 返还单价优先取启动快照（与扣减时同一口径）；旧计划无快照 → 机库当前加权成本
+            snap_unit = parse_cost_snapshot(cost_snap).get("unit") or {}
+            cost_map = snap_unit if snap_unit else inventory_manager.get_hangar_cost_map(mat_hangar_id)
             snapshot: dict[int, int] = {}
             raw_snapshot = deducted_materials or ""
             if raw_snapshot:
@@ -558,7 +648,7 @@ def cancel_plan(plan: dict) -> dict:
 
         cur = conn.execute(
             "UPDATE production_plans SET status='pending', started_at=NULL, material_short='', "
-            "deducted_materials='', assigned_blueprint_id=NULL "
+            "deducted_materials='', material_cost_snapshot='', assigned_blueprint_id=NULL "
             "WHERE id=? AND status IN ('in_progress','running')",
             (plan_id,),
         )
@@ -581,8 +671,9 @@ def cancel_plan(plan: dict) -> dict:
 def reset_plan_for_reuse(plan_id: int) -> dict:
     """设为待生产：仅 completed 计划复用（不返还材料——材料已变为成品）。
 
-    清除 started_at / completed_at / deposited / material_short 与蓝图占用，
+    清除 started_at / completed_at / deposited / material_short / 启动成本快照与蓝图占用，
     置回 pending 供再次启动。不触碰库存（成品已入库、材料不退回）。
+    快照必须清掉：否则「复用后未重新启动就再次下线」会误用上一轮的启动成本。
 
     Returns: {"ok": bool, "message": str}
     """
@@ -596,7 +687,8 @@ def reset_plan_for_reuse(plan_id: int) -> dict:
             return {"ok": False, "message": "仅已完成计划可设为待生产"}
         conn.execute(
             "UPDATE production_plans SET status='pending', started_at=NULL, completed_at=NULL, "
-            "deposited=0, material_short='', deducted_materials='', assigned_blueprint_id=NULL WHERE id=?",
+            "deposited=0, material_short='', deducted_materials='', material_cost_snapshot='', "
+            "assigned_blueprint_id=NULL WHERE id=?",
             (plan_id,),
         )
         _clear_plan_bindings(conn, plan_id)
@@ -752,7 +844,9 @@ def _bp_available_runs(conn, bp_id: int) -> int | float:
         return 0
     if row[0]:
         return 10**15
-    return int(row[2] or 0) * int(row[1] or 0)
+    # 负数归零：runs=-1（未记录流程的拷贝）时 quantity×runs 会给出负的「可用流程」，
+    # 那没有意义，也会让「不足」的判定依赖负数的巧合。
+    return max(0, int(row[2] or 0) * int(row[1] or 0))
 
 
 def _binding_shortfall(conn, bound_ids: list[int], parallels: int, runs: int) -> str | None:
@@ -763,6 +857,23 @@ def _binding_shortfall(conn, bound_ids: list[int], parallels: int, runs: int) ->
         if _bp_available_runs(conn, bid) < runs:
             return f"第 {i} 张绑定蓝图流程不足（需 ≥ {runs} 流程，当前产线每条要跑 {runs} 轮）"
     return None
+
+
+def binding_shortfall(plan_id: int) -> str | None:
+    """预检该计划的蓝图绑定是否满足「一条产线一张、每张流程 ≥ runs」。
+
+    供 UI 在**调用 `start_plan` 之前**判断要不要弹「强制启动」确认 ——
+    与 `plan_start_block_reason` 的注入式判定同思路，DB 访问收敛在服务层。
+    不足返回原因文本；满足 / 一张未绑 / 计划不存在返回 None
+    （「没绑」由 `plan_start_block_reason` 的 has_image 分支负责）。
+    """
+    if not plan_id:
+        return None
+    state = get_plan_binding_state(plan_id)
+    if not state["bound"]:
+        return None
+    with _container().db.connect("user") as conn:
+        return _binding_shortfall(conn, state["bound"], int(state["need"]), int(state["runs"]))
 
 
 def get_plan_blueprints(plan_id: int) -> list[int]:

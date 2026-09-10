@@ -14,6 +14,7 @@ from typing import Any
 from core.container import get_container
 from services import inventory_manager
 from services.blueprint_reader import get_blueprint_products
+from services.item_kind import is_material_name
 from services.name_resolver import resolve_item_name, resolve_system_name
 from services.plan_aggregator import aggregate_procurement
 from services.terminology import term
@@ -266,16 +267,20 @@ def resolve_plan_blueprint_name(plan: dict, db=None) -> str:
 # ── 蓝图导入 Worker ────────────────────────────────────────────
 
 
-def parse_blueprint_clipboard(raw: str, conn) -> list[dict]:
-    """解析 EVE 蓝图剪贴板 → [{blueprint_type_id, name, is_bpo, me, te, runs}]。
+def parse_blueprint_clipboard(raw: str, conn) -> tuple[list[dict], int]:
+    """解析 EVE 蓝图剪贴板 → ([{blueprint_type_id, name, is_bpo, me, te, runs}], 被过滤材料行数)。
 
     纯函数（依赖传入的 ref/bp 连接做名称→蓝图 ID 解析）。
     行格式（Tab 分隔，与游戏全选复制一致）:
         <蓝图名或产物名>\t<ME>\t<TE>\t<流程数>\t<原图/拷贝>
+
+    蓝图仓库只导入蓝图：可解析出 ME/TE/流程且精确命中非蓝图物品的行（如「碳纤维」
+    「渡鸦级」）按材料过滤并计数，见 ``services.item_kind.is_material_name``。
     """
     lines = [ln for ln in raw.split("\n") if ln.strip()]
     seen: Counter = Counter()  # (bpid, is_bpo, me, te, runs) → 数量（同属性多张）
     names: dict[int, str] = {}
+    filtered = 0
     for line in lines:
         cols = line.split("\t")
         if len(cols) < 5:
@@ -289,6 +294,9 @@ def parse_blueprint_clipboard(raw: str, conn) -> list[dict]:
             runs = int(cols[3].strip())
         except ValueError:
             continue
+        if is_material_name(conn, name_part):
+            filtered += 1
+            continue
         is_bpo = "原图" in cols[4].strip() or "原本" in cols[4].strip()
         bpid = _lookup_bpid(conn, name_part)
         if not bpid:
@@ -297,7 +305,7 @@ def parse_blueprint_clipboard(raw: str, conn) -> list[dict]:
         seen[key] += 1
         if bpid not in names:
             names[bpid] = _lookup_name(conn, bpid, name_part)
-    return [
+    rows = [
         {
             "blueprint_type_id": k[0],
             "is_bpo": k[1],
@@ -309,16 +317,17 @@ def parse_blueprint_clipboard(raw: str, conn) -> list[dict]:
         }
         for k, q in seen.items()
     ]
+    return rows, filtered
 
 
-def parse_blueprint_clipboard_text(raw: str, db=None) -> list[dict]:
-    """打开 ref/bp 连接并解析剪贴板蓝图。"""
+def parse_blueprint_clipboard_text(raw: str, db=None) -> tuple[list[dict], int]:
+    """打开 ref/bp 连接并解析剪贴板蓝图 → (蓝图行, 被过滤材料行数)。"""
     with _resolve_db(db).connect("ref", "bp") as conn:
         return parse_blueprint_clipboard(raw, conn.cursor())
 
 
 def _lookup_bpid(c, name_part):
-    """蓝图名/产物名 → blueprint_type_id（先精确匹配蓝图，再产物反查）"""
+    """蓝图名 → blueprint_type_id（精确匹配蓝图；T2 名称去「蓝图」后缀后按产物反查）"""
     # 1. 精确匹配 item 表，且必须是制造蓝图
     c.execute("SELECT type_id FROM item WHERE zh_name = ? OR en_name = ? LIMIT 1", (name_part, name_part))
     r = c.fetchone()
@@ -330,15 +339,8 @@ def _lookup_bpid(c, name_part):
         )
         if c.fetchone():
             return tid
-        # 命中的是产品行 → 从产品反查制造蓝图
-        c.execute(
-            "SELECT blueprint_type_id FROM blueprint_products"
-            " WHERE product_type_id = ? AND activity = 'manufacturing' LIMIT 1",
-            (tid,),
-        )
-        r2 = c.fetchone()
-        if r2:
-            return r2[0]
+        # 命中的是材料/产品行：不做「产物→蓝图」反查，否则材料行会被当成蓝图导入
+        # （材料过滤见 parse_blueprint_clipboard 的 is_material_name）
     # 2. 产物反查：蓝图名替换 "蓝图 X" → " X" → 产物名 → 制造蓝图
     for suffix in ("蓝图 II", "蓝图 I", "蓝图 III"):
         if suffix in name_part:
@@ -452,6 +454,7 @@ def aggregate_procurement_summary(
     default_mat_hangar_id: int | None = None,
     region_id: int = 10000002,
     price_type: str = "sell",
+    price_mult: float = 1.0,
     db=None,
 ) -> tuple[float, float]:
     """按统计条模式聚合备料中计划的采购金额/体积。"""
@@ -463,5 +466,6 @@ def aggregate_procurement_summary(
             default_hangar_id=default_mat_hangar_id,
             region_id=region_id,
             price_type=price_type,
+            price_mult=price_mult,
         )
     return cost, vol

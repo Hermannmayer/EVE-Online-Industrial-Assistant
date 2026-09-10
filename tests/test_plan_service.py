@@ -266,3 +266,34 @@ class TestLoadPlansForWizard:
         assert all("category" in r for r in rows)
         assert all("has_image" in r for r in rows)
         assert all("group_id" in r for r in rows)
+
+
+class TestLineLevels:
+    """逐线 ME/TE 列表 —— 并行产线各按绑定蓝图结算。"""
+
+    def test_all_bound(self):
+        from services.plan_service import _line_levels
+
+        assert _line_levels([10, 11], 2, {10: (5, 10), 11: (8, 20)}) == [(5, 10), (8, 20)]
+
+    def test_unbound_lines_take_worst_bound(self):
+        """未绑的线取已绑里最差那张：ME 与 TE **分别**取最小值（各自保守界）。"""
+        from services.plan_service import _line_levels
+
+        assert _line_levels([10, 11], 3, {10: (5, 20), 11: (8, 10)}) == [(5, 20), (8, 10), (5, 10)]
+
+    def test_no_binding_returns_empty(self):
+        """一张没绑 → 空列表，由 calculate_plan_metrics 回退计划级。"""
+        from services.plan_service import _line_levels
+
+        assert _line_levels([], 2, {10: (5, 10)}) == []
+
+    def test_unknown_blueprint_ids_ignored(self):
+        from services.plan_service import _line_levels
+
+        assert _line_levels([999], 1, {10: (5, 10)}) == []
+
+    def test_more_bound_than_need_truncates(self):
+        from services.plan_service import _line_levels
+
+        assert _line_levels([10, 11, 12], 2, {10: (5, 10), 11: (6, 11), 12: (7, 12)}) == [(5, 10), (6, 11)]

@@ -157,8 +157,8 @@ class HangarTab(QWidget):
 
     # ── 剪贴板导入 ──
 
-    def _parse_clipboard(self, raw: str) -> list[dict]:
-        """解析 EVE 剪贴板 → list[{type_id|None, raw_name, zh_name, en_name, qty, status}]"""
+    def _parse_clipboard(self, raw: str) -> tuple[list[dict], int]:
+        """解析 EVE 剪贴板 → (材料行, 被过滤的蓝图行数)"""
         from services.inventory_clipboard_service import parse_clipboard
 
         return parse_clipboard(raw)
@@ -189,12 +189,24 @@ class HangarTab(QWidget):
         if not raw:
             QMessageBox.warning(self, "提示", "剪贴板为空，请先在游戏中复制物品（Ctrl+C）")
             return
-        parsed = self._parse_clipboard(raw)
+        parsed, filtered = self._parse_clipboard(raw)
         if not parsed:
+            if filtered:
+                QMessageBox.information(
+                    self,
+                    "提示",
+                    f"剪贴板中的 {filtered} 行都是蓝图，材料仓库只导入材料，已全部过滤",
+                )
             return
         from .transfer_dialog import HangarTransferDialog
 
-        dlg = HangarTransferDialog(parsed, self._page.hangar_id(), self._page._hangar_combo.currentText(), self)
+        dlg = HangarTransferDialog(
+            parsed,
+            self._page.hangar_id(),
+            self._page._hangar_combo.currentText(),
+            self,
+            filtered_note=filtered,
+        )
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._refresh()
 
@@ -249,7 +261,7 @@ class HangarTab(QWidget):
             edit_act.triggered.connect(lambda: self._on_edit_qty(items[0]))
             menu.addAction(edit_act)
 
-        # 批量编辑成本价：吉他卖价/买价/均价 × 折扣率，或手动输入数字
+        # 批量编辑成本价：吉他卖价/买价/均价 × 材料倍率，或手动输入数字
         cost_act = QAction("编辑成本价", self)
         cost_act.triggered.connect(lambda: self._on_edit_cost_batch(items))
         menu.addAction(cost_act)
@@ -309,7 +321,7 @@ class HangarTab(QWidget):
             self._refresh()
 
     def _on_edit_cost_batch(self, items: list[dict]):
-        """批量设置成本价：吉他卖价/买价/均价 × 折扣率，或手动输入数字。"""
+        """批量设置成本价：吉他卖价/买价/均价 × 材料倍率，或手动输入数字。"""
         dlg = BatchCostPriceDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return

@@ -33,6 +33,7 @@ from core.logger import log
 from services.inventory_clipboard_service import parse_clipboard
 from services.inventory_import import compute_import_diff, compute_row_delta
 from services.inventory_manager import apply_inventory_import, get_hangars, get_items
+from services.user_settings import get_material_price_mult, set_material_price_mult
 from ui_pyside6.icon_cache import load_item_icon
 
 from .item_search_dialog import ItemSearchDialog
@@ -59,12 +60,14 @@ class ImportReviewDialog(QDialog):
         parent=None,
         *,
         default_mode: str = "full",
+        filtered_note: int = 0,
     ):
         super().__init__(parent)
         self.setWindowTitle(f"导入预览 → {hangar_name}")
         self.setMinimumSize(780, 420)
         self.resize(900, 520)
         self._parsed_items = items  # list of {type_id, zh_name, en_name, qty, ...}
+        self._filtered_note = max(int(filtered_note or 0), 0)  # 剪贴板里被过滤的蓝图行数
         self._target_hangar_id = target_hangar_id
         self._region_id = TRADE_HUB_IDS["Jita"]
         self._sell_prices: dict[int, float] = {}  # type_id → sell_price
@@ -110,14 +113,16 @@ class ImportReviewDialog(QDialog):
 
         toolbar.addStretch()
 
-        toolbar.addWidget(QLabel("折扣率:"))
+        toolbar.addWidget(QLabel("材料倍率:"))
         self._discount_spin = QDoubleSpinBox()
-        self._discount_spin.setRange(0.01, 1.0)
+        # 与生产规划页工具栏「材料倍率」共用同一个设置（settings.json price_settings.mat_mult）：
+        # 初值取当前值、范围与工具栏一致，确认时写回 —— 不再是硬编码 0.9、也不再每次打开就重置。
+        self._discount_spin.setRange(0.1, 10.0)
         self._discount_spin.setDecimals(2)
         self._discount_spin.setSingleStep(0.05)
-        self._discount_spin.setValue(0.9)
-        self._discount_spin.setSuffix(" 折")
-        self._discount_spin.setToolTip("右键菜单中折后价使用的折扣率")
+        self._discount_spin.setValue(get_material_price_mult())
+        self._discount_spin.setPrefix("× ")
+        self._discount_spin.setToolTip("市场价 × 该系数（1.0 = 不打折）；与生产规划页的材料倍率是同一个设置")
         toolbar.addWidget(self._discount_spin)
 
         layout.addLayout(toolbar)
@@ -626,9 +631,10 @@ class ImportReviewDialog(QDialog):
                             delta = 0
                         total_value += spin.value() * delta
         total_items = self._table.rowCount()
-        self._summary_label.setText(
-            f"已勾选 {checked} 项 / 总计 {total_items} 项 / 总增减 {total_delta:,} / 预估成本 {total_value:,.0f} ISK"
-        )
+        text = f"已勾选 {checked} 项 / 总计 {total_items} 项 / 总增减 {total_delta:,} / 预估成本 {total_value:,.0f} ISK"
+        if self._filtered_note:
+            text = f"[已过滤 {self._filtered_note} 行蓝图] {text}"
+        self._summary_label.setText(text)
 
     def _on_accept(self):
         has_checked = False
@@ -651,6 +657,8 @@ class ImportReviewDialog(QDialog):
             QMessageBox.information(
                 self, "提示", f"{unmatched} 行未匹配物品未指定 type_id，导入时将跳过（可右键搜索匹配）"
             )
+        # 倍率写回共享设置（与生产规划页工具栏同一个值），下次打开仍是它，不再重置
+        set_material_price_mult(self._discount_spin.value())
         self.accept()
 
     def get_import_data(self) -> list[tuple[int, int, float, int | None]]:
@@ -815,14 +823,21 @@ def run_clipboard_import(
         mode: ``"incremental"`` 增量累加 | ``"full"`` 全量同步（库存修正沿用）
 
     行为与仓库「库存修正」原有实现逐行对齐（含跨机库移动、全量差异对比）。
-    剪贴板为空 / 无有效行 / 用户取消 → 静默返回，不弹错误。
+    剪贴板为空 / 无有效行 / 用户取消 → 静默返回，不弹错误；
+    剪贴板里的蓝图行被过滤（材料仓库只导入材料），全部被过滤时提示一次。
     """
     raw = QApplication.clipboard().text().strip()
     if not raw:
         QMessageBox.warning(parent, "提示", "剪贴板为空，请先在游戏中复制物品（Ctrl+C）")
         return
-    parsed = parse_clipboard(raw)
+    parsed, filtered = parse_clipboard(raw)
     if not parsed:
+        if filtered:
+            QMessageBox.information(
+                parent,
+                "提示",
+                f"剪贴板中的 {filtered} 行都是蓝图，材料仓库只导入材料，已全部过滤",
+            )
         return
 
     # 导入前快照（数量+成本），供差异对比
@@ -830,7 +845,7 @@ def run_clipboard_import(
     before = {it["type_id"]: (it["quantity"], it.get("cost_price") or 0) for it in before_items}
     names_before = {it["type_id"]: _item_display_name(it) for it in before_items}
 
-    dlg = ImportReviewDialog(parsed, hangar_name, target_hangar_id, parent, default_mode=mode)
+    dlg = ImportReviewDialog(parsed, hangar_name, target_hangar_id, parent, default_mode=mode, filtered_note=filtered)
     if dlg.exec() != QDialog.DialogCode.Accepted:
         return
     data = dlg.get_import_data()

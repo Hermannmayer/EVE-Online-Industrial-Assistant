@@ -3,7 +3,12 @@
 from PySide6.QtCore import QThread, Signal
 
 from core.container import get_container
+from core.logger import log
 from ui_pyside6.workers.base_worker import BaseBatchScoreWorker, BaseScoreWorker
+
+# 估值失败的状态：`calculate_plan_metrics` 对它们返回**全零** dict（含 material_cost=0）。
+# 这类行不得写回数据库 —— 否则一次失败就把库里正确的成本覆盖成 0，下线时按 0 成本入库。
+_ZERO_COST_STATUSES = frozenset({"no_price", "no_blueprint", "no_materials"})
 
 
 class SearchWorker(QThread):
@@ -85,6 +90,8 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         mat_price_type: str = "sell",
         prod_hub: str = "Jita",
         prod_price_type: str = "sell",
+        mat_mult: float = 1.0,
+        prod_mult: float = 1.0,
     ):
         super().__init__(plans, char_config=char_config, char_name=char_name, parent=parent)
         self._char_name_internal = char_name or ""
@@ -93,7 +100,10 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         self._mat_price_type = mat_price_type
         self._prod_hub = prod_hub
         self._prod_price_type = prod_price_type
+        self._mat_mult = mat_mult
+        self._prod_mult = prod_mult
         self._inv_map: dict[int, tuple[int, float]] | None = None  # 批量重算期间库存快照只取一次
+        self.failed_names: list[str] = []  # 本轮估值失败、已跳过不写库的计划（供 UI 提示）
 
     def _resolve_char_config(self, plan_char_name: str) -> dict:
         """按计划角色名解析配置，带缓存"""
@@ -121,10 +131,15 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
                     char_config,
                     price_type_mat=self._mat_price_type,
                     price_type_prod=self._prod_price_type,
+                    mat_mult=self._mat_mult,
+                    prod_mult=self._prod_mult,
                 )
             )
             return result
         except Exception:
+            # 不能静默 return {}：run() 会对空 dict 取 material_cost=0 并写成「有值」发出去，
+            # 把库里原本正确的成本覆盖成 0。这里记日志，调用方据空 dict 跳过该行。
+            log.exception("计划 %s 基准指标计算失败，本轮跳过不写库", plan_id)
             return {}
 
     def _apply_mother_subitem_cost(self, item, result, base_results) -> dict[int, float]:
@@ -183,6 +198,10 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
 
         深度优先（子级深者先算），保证嵌套拆解里子项先按孙项制造价调整，
         母项再读到正确的子项制造价；调整前留存市场利润率供「市场利润率」列使用。
+
+        **估值失败的行不发出去**（评分异常返回空 dict、或 status 属于
+        `_ZERO_COST_STATUSES`）——它们的 material_cost 是 0，写回会把库里的正确值清零。
+        失败的条目记在 `failed_names`，供 UI 提示「成本沿用上次值」。
         """
         base_results: dict[int, tuple[dict, dict]] = {}
         for item in self._items:
@@ -190,12 +209,40 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
             if pid:
                 base_results[pid] = (item, self._calc_base(item))
 
+        # ── 本轮要跳过的计划 ──
+        # ① 自身估值失败：评分异常 → 空 dict；或 status ∈ _ZERO_COST_STATUSES（全零 dict）
+        # ② 母项连带：同组存在更深的失败子项时，mother_subitem_cost_map 会拿空 dict 去算
+        #    子项制造价 → 母项成本被算**偏低**。宁可不写，也不写一个错的成本。
+        def _grp(p: dict):
+            return p.get("group_id") or p.get("group_number")
+
+        def _lvl(p: dict) -> int:
+            return int(p.get("child_level") or p.get("sub_level") or 0)
+
+        bad_own = {pid for pid, (_i, r) in base_results.items() if not r or r.get("status") in _ZERO_COST_STATUSES}
+        worst_bad_level: dict[int, int] = {}
+        for pid, (item, _r) in base_results.items():
+            if pid in bad_own and _grp(item):
+                g = int(_grp(item))
+                worst_bad_level[g] = max(worst_bad_level.get(g, -1), _lvl(item))
+
+        def _skip(pid: int, item: dict) -> bool:
+            """自身失败，或同组有更深的失败子项（母项连带）。"""
+            if pid in bad_own:
+                return True
+            g = _grp(item)
+            return bool(g) and worst_bad_level.get(int(g), -1) > _lvl(item)
+
         ordered = sorted(
             base_results.items(),
             key=lambda kv: -(int(kv[1][0].get("child_level") or kv[1][0].get("sub_level") or 0)),
         )
         results = []
+        self.failed_names = []
         for pid, (item, result) in ordered:
+            if _skip(pid, item):
+                self.failed_names.append(str(item.get("product_name") or pid))
+                continue
             try:
                 market_margin = result.get("margin", 0) or 0  # 调整前留存市场口径利润率
                 overrides = self._apply_mother_subitem_cost(item, result, base_results)
@@ -203,9 +250,8 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
             except Exception:
                 # 单条计划数据异常（如子项制造价调整收到非法值）不应让整个批量重算线程
                 # 崩溃并抛到 Qt 事件循环；跳过该条，保留库中原值。
-                from core.logger import log
-
                 log.exception("批量重算计划 %s 失败，已跳过", pid)
+                self.failed_names.append(str(item.get("product_name") or pid))
                 continue
             results.append(
                 (
@@ -318,6 +364,7 @@ class ProcurementSummaryWorker(QThread):
         default_mat_hangar_id: int | None = None,
         region_id: int = 10000002,
         price_type: str = "sell",
+        price_mult: float = 1.0,
         parent=None,
     ):
         super().__init__(parent)
@@ -325,6 +372,7 @@ class ProcurementSummaryWorker(QThread):
         self._default_mat_hangar_id = default_mat_hangar_id
         self._region_id = region_id
         self._price_type = price_type
+        self._price_mult = price_mult
 
     def run(self):
         try:
@@ -335,6 +383,7 @@ class ProcurementSummaryWorker(QThread):
                 default_mat_hangar_id=self._default_mat_hangar_id,
                 region_id=self._region_id,
                 price_type=self._price_type,
+                price_mult=self._price_mult,
                 db=get_container().db,
             )
             self.finished_signal.emit(cost, vol)

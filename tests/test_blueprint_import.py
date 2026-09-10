@@ -14,11 +14,17 @@ pytestmark = pytest.mark.ui
 
 
 def _ref_cursor(db_manager):
-    """构造含 item / blueprint_products 的 ref 库连接，返回 cursor"""
+    """构造含 item / blueprint_products 的 ref 库连接，返回 cursor
+
+    item 带 group 名（蓝图判定依据 `en_group_name`/`zh_group_name` 后缀）。
+    """
     conn = db_manager.connect("ref").__enter__()
-    conn.execute("CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT)")
-    conn.execute("INSERT INTO item VALUES (3001,'渡鸦级蓝图','Raven Blueprint')")
-    conn.execute("INSERT INTO item VALUES (2001,'渡鸦级','Raven')")
+    conn.execute(
+        "CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT, "
+        "zh_group_name TEXT, en_group_name TEXT)"
+    )
+    conn.execute("INSERT INTO item VALUES (3001,'渡鸦级蓝图','Raven Blueprint','战列舰蓝图','Battleship Blueprint')")
+    conn.execute("INSERT INTO item VALUES (2001,'渡鸦级','Raven','战列舰','Battleship')")
     conn.execute(
         "CREATE TABLE blueprint_products (blueprint_type_id INTEGER, activity TEXT, "
         "product_type_id INTEGER, quantity INTEGER)"
@@ -33,7 +39,8 @@ class TestParseBlueprintClipboard:
         """标准剪贴板行：蓝图名\tME\tTE\t流程\t类型 → 解析出属性"""
         conn = _ref_cursor(db_manager)
         raw = "渡鸦级蓝图\t0\t0\t1\t原图\n渡鸦级蓝图\t5\t2\t3\t拷贝\n"
-        result = parse_blueprint_clipboard(raw, conn)
+        result, filtered = parse_blueprint_clipboard(raw, conn)
+        assert filtered == 0
         assert len(result) == 2
         r0 = result[0]
         assert r0["blueprint_type_id"] == 3001
@@ -48,24 +55,34 @@ class TestParseBlueprintClipboard:
         """同属性多行 → qty 合并"""
         conn = _ref_cursor(db_manager)
         raw = "渡鸦级蓝图\t0\t0\t1\t拷贝\n渡鸦级蓝图\t0\t0\t1\t拷贝\n渡鸦级蓝图\t0\t0\t1\t拷贝\n"
-        result = parse_blueprint_clipboard(raw, conn)
+        result, filtered = parse_blueprint_clipboard(raw, conn)
+        assert filtered == 0
         assert len(result) == 1
         assert result[0]["qty"] == 3
 
-    def test_product_name_reverse_lookup(self, db_manager):
-        """产物名 → 反查制造蓝图（蓝图名缺失时）"""
+    def test_material_line_filtered(self, db_manager):
+        """材料/产物行（精确命中非蓝图物品）→ 按材料过滤并计数，不再反查成蓝图"""
         conn = _ref_cursor(db_manager)
         raw = "渡鸦级\t0\t0\t1\t原图\n"
-        result = parse_blueprint_clipboard(raw, conn)
-        assert len(result) == 1
-        assert result[0]["blueprint_type_id"] == 3001
+        result, filtered = parse_blueprint_clipboard(raw, conn)
+        assert result == []
+        assert filtered == 1
+
+    def test_mixed_lines_count_materials(self, db_manager):
+        """混合剪贴板：蓝图行保留，材料行过滤并计数"""
+        conn = _ref_cursor(db_manager)
+        raw = "渡鸦级蓝图\t0\t0\t1\t原图\n渡鸦级\t1000\t0\t3\t材料\n"
+        result, filtered = parse_blueprint_clipboard(raw, conn)
+        assert filtered == 1
+        assert [r["blueprint_type_id"] for r in result] == [3001]
 
     def test_invalid_lines_skipped(self, db_manager):
-        """不足 5 列 / 非数字 ME / 未知名称 → 跳过"""
+        """不足 5 列 / 非数字 ME / 未知名称 → 跳过且不计入过滤数"""
         conn = _ref_cursor(db_manager)
         raw = "渡鸦级蓝图\t0\t0\n未知物品\tx\t0\t1\t原图\n\n"
-        result = parse_blueprint_clipboard(raw, conn)
+        result, filtered = parse_blueprint_clipboard(raw, conn)
         assert result == []
+        assert filtered == 0
 
 
 class TestBuildBlueprintChanges:

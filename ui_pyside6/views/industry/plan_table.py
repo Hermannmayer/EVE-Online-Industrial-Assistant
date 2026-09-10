@@ -292,9 +292,10 @@ class PlanTable(QWidget):
             a = menu.addAction("撤销启动（返还材料）")
             a.triggered.connect(lambda: batch(lambda r: self._undo_start(r)))
         elif status == "ready":
-            # 待下线：游戏产线已跑完、材料已扣，点击下线（不可逆）产出成品
+            # 待下线：游戏产线已跑完、材料已扣，点击下线（不可逆）产出成品。
+            # 批量走**同一个**对话框选产出机库（逐行弹会连弹 N 次）
             a = menu.addAction("下线")
-            a.triggered.connect(lambda: batch(lambda r: self._set_status(r, "completed")))
+            a.triggered.connect(lambda: self._complete_rows_with_dialog(selected_rows))
         elif status in ("completed", "done"):
             a = menu.addAction("设为待生产（复用）")
             a.triggered.connect(lambda: batch(lambda r: self._reset_for_reuse(r)))
@@ -323,7 +324,10 @@ class PlanTable(QWidget):
         menu.addSeparator()
 
         # ── 危险操作（批量适用） ──────────────────────────
-        a = menu.addAction("删除行")
+        # 「取消生产」= 解除蓝图绑定 + 删除计划行；**已扣减的材料不返还**
+        # （领域模型见 AUDIT-20260801.md：与游戏「取消产线只退蓝图」一致）。
+        # 只是软件误点、游戏尚未开造 → 用上面的「撤销启动（返还材料）」。
+        a = menu.addAction("取消生产")
         a.triggered.connect(lambda: self._delete_rows(selected_rows))
 
         menu.exec(self._table.viewport().mapToGlobal(pos))
@@ -375,6 +379,36 @@ class PlanTable(QWidget):
             cursor = Qt.CursorShape.ArrowCursor
         self._table.viewport().setCursor(cursor)
 
+    def _confirm_bp_short(self, plans: list[dict]) -> bool | None:
+        """蓝图流程不足时确认一次（批量只问一次）。
+
+        Returns: ``True`` = 强制放行；``False`` = 没不足，正常走；``None`` = 用户取消。
+        确认框放 UI 层：`complete_plans` 是无 parent 的服务函数，validate 档测试会在
+        没有 QApplication 的情况下直调它。
+        """
+        from services import plan_execution
+
+        lines = []
+        for p in plans:
+            pid = p.get("id")
+            if not pid:
+                continue
+            short = plan_execution.binding_shortfall(pid)
+            if short:
+                lines.append(f"  {p.get('product_name') or pid}: {short}")
+        if not lines:
+            return False
+        ret = QMessageBox.question(
+            self,
+            "蓝图流程不足",
+            "\n".join(lines[:10]) + "\n\n仍要下线？\n"
+            "流程按实际可用量消耗；由此产生的账面偏差，"
+            "请稍后用「蓝图管理 → 粘贴导入蓝图 → 全量同步」矫正。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return True if ret == QMessageBox.StandardButton.Yes else None
+
     def _complete_plan_with_dialog(self, plan: dict) -> None:
         """状态列「待下线」→ 下线确认弹窗（选产出机库）→ 单独下线"""
         from services.inventory_manager import get_hangars
@@ -386,7 +420,10 @@ class PlanTable(QWidget):
         dlg = CompletePlansDialog([plan], hangars, default_hid, self)
         if not dlg.exec():
             return
-        result = complete_plans([plan], dlg.selected_hangar_id())
+        allow_bp_short = self._confirm_bp_short([plan])
+        if allow_bp_short is None:
+            return
+        result = complete_plans([plan], dlg.selected_hangar_id(), allow_bp_short=allow_bp_short)
         if not result["completed"]:
             QMessageBox.warning(self, "下线失败", "、".join(result["failed"]) or "未知错误")
             return
@@ -397,6 +434,34 @@ class PlanTable(QWidget):
         plan["completed_at"] = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
         plan["assigned_blueprint_id"] = None
         self._model.layoutChanged.emit()
+        self._rebuild_subitems()
+        self.plan_updated.emit()
+
+    def _complete_rows_with_dialog(self, rows: list[int]) -> None:
+        """批量下线：**一次**对话框选产出机库，再整批完成。
+
+        右键「下线」是批量入口，逐行调 `_complete_plan_with_dialog` 会连弹 N 次框；
+        这里复用 `complete_plans(plans, hangar_id)` 的单次对话流程。
+        `deposit_hangar_id` 为空的行也在对话框里选机库，不再静默跳过入库。
+        """
+        if self._model is None:
+            return
+        ready = [p for p in (self._model.get_plan(r) for r in rows) if p and (p.get("status") or "").lower() == "ready"]
+        if not ready:
+            return
+        from services.inventory_manager import get_hangars
+        from services.user_settings import get_default_hangar_id
+        from ui_pyside6.views.industry.complete_plans_dialog import CompletePlansDialog, complete_plans
+
+        dlg = CompletePlansDialog(ready, get_hangars(), get_default_hangar_id("default_deposit_hangar_id"), self)
+        if not dlg.exec():
+            return
+        allow_bp_short = self._confirm_bp_short(ready)
+        if allow_bp_short is None:
+            return
+        result = complete_plans(ready, dlg.selected_hangar_id(), allow_bp_short=allow_bp_short)
+        if result["failed"]:
+            QMessageBox.warning(self, "下线失败", "、".join(result["failed"]))
         self._rebuild_subitems()
         self.plan_updated.emit()
 
@@ -567,6 +632,14 @@ class PlanTable(QWidget):
         cur_me = int(first.get("me_level", 0)) if first else 0
         cur_te = int(first.get("te_level", 0)) if first else 0
 
+        # 已绑产线按各自绑定蓝图的等级结算，这里的计划级值只是**未绑线**的兜底 ——
+        # 不说清楚用户会以为改了没生效（逐线计算上线后的语义变化）
+        if first and first.get("bound_blueprint_ids"):
+            hint = QLabel("已绑定产线的等级以各自绑定的蓝图为准；此处只影响**未绑定**的产线。")
+            hint.setWordWrap(True)
+            hint.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
+            root.addWidget(hint)
+
         # ME
         root.addWidget(QLabel("材料效率(ME) 0-10:"))
         me_row = QHBoxLayout()
@@ -731,25 +804,43 @@ class PlanTable(QWidget):
             if ret != QMessageBox.StandardButton.Yes:
                 return
 
-        # 材料校验（仅材料机库已设置时）
+        # 软阻塞预检：材料缺口 / 蓝图流程不足 —— 两者都可强制启动
+        allow_short = False
+        allow_bp_short = False
         shortfalls: list[dict] = []
         if mat_hangar_id:
             shortfalls = [r for r in plan_execution.check_materials(plan, mat_hangar_id) if (r.get("missing") or 0) > 0]
+        bp_short = plan_execution.binding_shortfall(plan["id"])
+
+        reasons: list[str] = []
         if shortfalls:
             lines = "\n".join(f"  {r.get('name')}: 缺 {r.get('missing'):,.0f}" for r in shortfalls[:10])
             if len(shortfalls) > 10:
                 lines += f"\n  … 等 {len(shortfalls)} 种"
+            reasons.append(f"材料不足：\n{lines}")
+        if bp_short:
+            reasons.append(f"蓝图流程不足：{bp_short}")
+        if reasons:
             ret = QMessageBox.question(
                 self,
-                "材料不足",
-                f"以下材料不足：\n{lines}\n\n是否强制启动？（扣减现有库存，缺口标记待补）",
+                "启动前确认",
+                "\n\n".join(reasons) + "\n\n是否强制启动？\n"
+                "材料按现有库存扣减、缺口记待补；蓝图**不会**自动补流程或换绑，"
+                "完成时按实际可用流程消耗。\n"
+                "由此产生的账面偏差，请稍后用「蓝图管理 → 粘贴导入蓝图 → 全量同步」矫正。",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if ret != QMessageBox.StandardButton.Yes:
                 return
-            allow_short = True
+            allow_short = bool(shortfalls)
+            allow_bp_short = bool(bp_short)
 
-        res = plan_execution.start_plan(plan, mat_hangar_id=mat_hangar_id, allow_short=allow_short)
+        res = plan_execution.start_plan(
+            plan,
+            mat_hangar_id=mat_hangar_id,
+            allow_short=allow_short,
+            allow_bp_short=allow_bp_short,
+        )
         if not res.get("ok"):
             QMessageBox.warning(self, "启动失败", res.get("message", "未知错误"))
             return
@@ -831,47 +922,6 @@ class PlanTable(QWidget):
         QMessageBox.information(self, "已撤销", res.get("message", "已撤销启动"))
         self.plan_updated.emit()
 
-    def _set_status(self, row: int, status: str) -> None:
-        """状态流转：completed → 完成入库（complete_plan）；其余 → 直接改状态。"""
-        if self._model is None:
-            return
-        plan = self._model.get_plan(row)
-        if not plan or not plan.get("id"):
-            return
-        if status == "completed":
-            self._complete_plan(plan)
-            return
-        plan["status"] = status
-        self._model.layoutChanged.emit()
-        repo = get_container().plan_repo
-        # 状态从 completed 改回时重置入库标记
-        if status != "completed" and plan.get("deposited"):
-            plan["deposited"] = 0
-            repo.update(plan["id"], deposited=0)
-        repo.update(plan["id"], status=status)
-        self.plan_updated.emit()
-
-    def _complete_plan(self, plan: dict) -> None:
-        """完成计划：成品入库 + 消耗 BPC + 置 completed（经 plan_execution.complete_plan）"""
-        model = self._model
-        if model is None:
-            return
-        from services import plan_execution
-
-        res = plan_execution.complete_plan(plan)
-        if not res.get("ok"):
-            QMessageBox.warning(self, "完成失败", res.get("message", "未知错误"))
-            return
-        plan["status"] = "completed"
-        plan["deposited"] = res.get("deposited", 0)
-        plan["completed_at"] = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
-        plan["assigned_blueprint_id"] = None
-        model.layoutChanged.emit()
-        if not res.get("deposited"):
-            QMessageBox.information(self, "完成", res.get("message", "计划已完成"))
-        self._rebuild_subitems()
-        self.plan_updated.emit()
-
     def _show_blueprint_picker(self, row: int) -> None:
         """单击蓝图列/右键菜单 → 绑定库存蓝图弹窗"""
         model = self._model
@@ -930,11 +980,13 @@ class PlanTable(QWidget):
         self.plan_updated.emit()
 
     def _delete_rows(self, rows: list[int]) -> None:
-        """批量删除多行。
+        """批量取消生产（解除蓝图绑定 + 删除计划行）。
 
         - 删母项：其引用的子项若不再被任何母项引用则级联收缩；仍被其他母项引用则保留。
         - 删子项（单独删某条产线）：删除后不会因后续编辑母项/重放被自动加回，
           仅显式「母项拆解/重算子项」才会重新生成。
+        - **不返还已扣减材料**（领域模型见 AUDIT-20260801.md：与游戏「取消产线只退蓝图」一致）。
+          在产计划被删后材料不会退回，所以删前必须让用户知情 —— 这也是以前缺的那道确认。
         """
         if self._model is None:
             return
@@ -942,6 +994,30 @@ class PlanTable(QWidget):
         deleted_rows = [plans[r] for r in rows if 0 <= r < len(plans)]
         selected_ids = {p["id"] for p in deleted_rows if p.get("id")}
         if not selected_ids:
+            return
+
+        running = [p for p in deleted_rows if (p.get("status") or "").lower() in ("in_progress", "running")]
+        if running:
+            names = "、".join(str(p.get("product_name") or p.get("id")) for p in running[:3])
+            if len(running) > 3:
+                names += f" 等 {len(running)} 条"
+            text = (
+                f"选中的 {len(selected_ids)} 条计划里有 {len(running)} 条正在生产：{names}。\n\n"
+                "「取消生产」将解除蓝图绑定并删除计划行，\n"
+                "已扣减的材料不会返还（与游戏「取消产线只退蓝图」一致）。\n\n"
+                "若只是软件误点、游戏尚未开造，请改用「撤销启动（返还材料）」。\n\n"
+                "确定继续？"
+            )
+        else:
+            text = f"确定取消 {len(selected_ids)} 条计划？"
+        ret = QMessageBox.question(
+            self,
+            "取消生产",
+            text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
             return
 
         from services import plan_execution
@@ -991,10 +1067,18 @@ class PlanTable(QWidget):
         plan = self._model.get_plan(row) if self._model else {}
         if not plan:
             return
+        # 未显式传入时跟随工具栏价格设置（含倍率），与主表批量重算口径一致
+        ps: dict = self._get_price_settings() if self._get_price_settings else {}
+        if price_type_mat is None and ps:
+            price_type_mat = str(ps.get("mat_price_type") or "") or None
+        if price_type_prod is None and ps:
+            price_type_prod = str(ps.get("prod_price_type") or "") or None
         dlg = CostBreakdownDialog(
             plan,
             price_type_mat=price_type_mat,
             price_type_prod=price_type_prod,
+            mat_mult=float(ps.get("mat_mult") or 1.0) if ps else 1.0,
+            prod_mult=float(ps.get("prod_mult") or 1.0) if ps else 1.0,
         )
         from PySide6.QtCore import Qt
 

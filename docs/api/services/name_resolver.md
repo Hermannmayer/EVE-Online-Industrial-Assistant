@@ -15,7 +15,7 @@
 ### `search_item_type_id`
 
 ```python
-def search_item_type_id(conn: sqlite3.Connection, name: str) -> int | None
+def search_item_type_id(conn: sqlite3.Connection | sqlite3.Cursor, name: str) -> int | None
 ```
 
 名称→type_id：精确 → terminology 反向 → LIKE 模糊 → 引号归一化 LIKE。

@@ -182,7 +182,24 @@ class PlanTableModel(QAbstractTableModel):
             return p
         if role == Qt.ItemDataRole.DisplayRole:
             return self._display_text(p, c)
+        if role == Qt.ItemDataRole.ToolTipRole and c == 10:
+            return self._levels_tooltip(p)
         return None
+
+    @staticmethod
+    def _line_levels(p: dict) -> list[tuple[int, int]]:
+        """逐线 ME/TE（与计划级不一致时才有意义）；空列表表示按计划级单次计算。"""
+        me, te = int(p.get("me_level", 0) or 0), int(p.get("te_level", 0) or 0)
+        levels = [(int(a), int(b)) for a, b in (p.get("line_levels") or [])]
+        return levels if any(pair != (me, te) for pair in levels) else []
+
+    def _levels_tooltip(self, p: dict) -> str:
+        """ME/TE 列 tooltip：各线不一致时逐条列出实际用的等级。"""
+        levels = self._line_levels(p)
+        if not levels:
+            return ""
+        rows = "\n".join(f"  第 {i} 条线：ME {me} / TE {te}" for i, (me, te) in enumerate(levels, 1))
+        return f"各并行线按各自绑定蓝图的等级独立结算：\n{rows}\n（列中显示的是最低那组）"
 
     def _display_text(self, p: dict, c: int) -> str:
         """列 0~18 的 DisplayRole 文本"""
@@ -227,8 +244,16 @@ class PlanTableModel(QAbstractTableModel):
             parallels = p.get("parallels", 1)
             return f"{parallels}X{runs}"
         if c == 10:
-            me = p.get("me_level", 0)
-            te = p.get("te_level", 0)
+            me = int(p.get("me_level", 0) or 0)
+            te = int(p.get("te_level", 0) or 0)
+            # 逐线生效时列里显示**实际用的**等级（取各线最低那组）；
+            # `≠` 只在**各线之间不一致**时加 —— 表示「列里是最低值，线之间有高有低」，
+            # 与用户文档的口径一致（不是「与计划级不同」）。
+            levels = self._line_levels(p)
+            mixed = "≠" if len(set(levels)) > 1 else ""
+            if levels:
+                me = min(a for a, _b in levels)
+                te = min(b for _a, b in levels)
             has_img = "有图" if p.get("has_image", False) else "没图"
             bound = p.get("bound_blueprint_ids") or []
             if not bound and p.get("assigned_blueprint_id"):
@@ -240,7 +265,7 @@ class PlanTableModel(QAbstractTableModel):
                 bp_mark = f" ✔{len(bound)}/{need}"
             else:
                 bp_mark = f" 差{need - len(bound)}张"
-            return f"{me}-{te}[{has_img}]{bp_mark}"
+            return f"{me}-{te}{mixed}[{has_img}]{bp_mark}"
         if c == 11:
             status = p.get("status", "")
             if status in ("in_progress", "running"):

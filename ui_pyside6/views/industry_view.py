@@ -58,6 +58,7 @@ class IndustryPage(QWidget):
         self._proc_worker: QThread | None = None
         self._proc_fp: tuple | None = None
         self._proc_result: tuple[float, float] | None = None
+        self._proc_rows: list[dict] = []  # 本次汇总的计划集（供完成回调按新指纹补算）
         self._refresh_worker = None
         self._score_worker = None
 
@@ -154,6 +155,15 @@ class IndustryPage(QWidget):
 
     # ── 信号连接 ──────────────────────────────────────────────
 
+    def showEvent(self, event):
+        """页面重新可见时同步价格设置。
+
+        材料倍率与仓库页（导入预览 / 批量设置成本价）是**同一个** settings.json 字段，
+        在那边改完回到本页时，工具栏旋钮不能还停在旧值。
+        """
+        super().showEvent(event)
+        self._toolbar.reload_price_settings()
+
     def _connect_signals(self):
         # TopToolbar
         self._toolbar.refresh_requested.connect(self._on_industry_refresh)
@@ -220,27 +230,47 @@ class IndustryPage(QWidget):
             self._refresh_gantt()
         self._auto_calculate_plans(rows)
 
+    def _price_fp(self) -> tuple[int, str, float, int | None]:
+        """汇总用到的价格口径 —— 工具栏材料行（Hub / 卖价买价 / 倍率）+ 默认材料机库。
+
+        这四项都是 `ProcurementSummaryWorker` 的入参，必须进指纹：
+        漏掉就会在改设置后命中缓存、直接回吐旧值（历史缺陷）。
+        """
+        ps = self._toolbar.get_price_settings()
+        return (
+            TRADE_HUB_IDS.get(ps.get("mat_hub"), 10000002),
+            ps.get("mat_price_type") or "sell",
+            round(float(ps.get("mat_mult") or 1.0), 4),
+            _default_mat_hangar_id(),
+        )
+
     def _refresh_procurement_summary(self, rows: list[dict]):
         """刷新状态栏「备料中采购」汇总。
 
         DB 查询较重，放后台线程；带指纹缓存避免数据未变时重复查询。
         「备料中」= 未运行（pending）且已勾选备料（materials_ready==1）；
         ready 计划材料已扣库存，计入会虚高，排除。
+
+        指纹 = （价格口径, 计划字段集），两者任一变化都要重算。
         """
         procur = [p for p in rows if p.get("materials_ready", 0) and (p.get("status") or "pending") == "pending"]
-        fp = tuple(
-            sorted(
-                (
-                    p.get("id"),
-                    p.get("runs"),
-                    p.get("parallels"),
-                    p.get("me_level"),
-                    p.get("materials_ready"),
-                    p.get("status"),
-                    p.get("mat_hangar_id"),
+        price_fp = self._price_fp()
+        fp = (
+            price_fp,
+            tuple(
+                sorted(
+                    (
+                        p.get("id"),
+                        p.get("runs"),
+                        p.get("parallels"),
+                        p.get("me_level"),
+                        p.get("materials_ready"),
+                        p.get("status"),
+                        p.get("mat_hangar_id"),
+                    )
+                    for p in procur
                 )
-                for p in procur
-            )
+            ),
         )
         if fp == self._proc_fp and self._proc_result is not None:
             self._status_bar.update_material(*self._proc_result)
@@ -249,19 +279,22 @@ class IndustryPage(QWidget):
             self._status_bar.update_material(0.0, 0.0)
             self._proc_fp = None
             self._proc_result = None
+            self._proc_rows = []
             return
         if self._proc_worker and self._proc_worker.isRunning():
-            return  # 已有汇总线程运行中（严禁 terminate），等其完成
-        ps = self._toolbar.get_price_settings()
-        mat_hub = ps.get("mat_hub")
-        mat_price_type = ps.get("mat_price_type") or "sell"
+            # 运行中改设置：记下本次计划集，完成回调发现口径变了会补算一次
+            self._proc_rows = procur
+            return
+        region_id, price_type, price_mult, default_hangar_id = price_fp
         self._proc_fp = fp
         self._proc_result = None
+        self._proc_rows = procur
         self._proc_worker = ProcurementSummaryWorker(
             procur,
-            default_mat_hangar_id=_default_mat_hangar_id(),
-            region_id=TRADE_HUB_IDS.get(mat_hub, 10000002),
-            price_type=mat_price_type,
+            default_mat_hangar_id=default_hangar_id,
+            region_id=region_id,
+            price_type=price_type,
+            price_mult=price_mult,
             parent=self,
         )
         self._proc_worker.finished_signal.connect(self._on_procurement_summary_done)
@@ -273,6 +306,13 @@ class IndustryPage(QWidget):
             return
         self._proc_result = (cost, vol)
         self._status_bar.update_material(cost, vol)
+        # 算的这段时间里价格设置又变了 → 本次结果已过期，用同一批计划补算一次。
+        # 若此刻线程尚未收尾（守卫挡住），_proc_fp 已置 None，下次任何刷新都会重算。
+        if self._proc_rows and (self._proc_fp is None or self._price_fp() != self._proc_fp[0]):
+            pending_rows = self._proc_rows
+            self._proc_fp = None
+            self._proc_result = None
+            self._refresh_procurement_summary(pending_rows)
 
     def _auto_calculate_plans(self, rows):
         """自动重算计划利润/边际（后台线程触发）"""
@@ -308,6 +348,8 @@ class IndustryPage(QWidget):
             mat_price_type=ps["mat_price_type"],
             prod_hub=ps["prod_hub"],
             prod_price_type=ps["prod_price_type"],
+            mat_mult=float(ps.get("mat_mult") or 1.0),
+            prod_mult=float(ps.get("prod_mult") or 1.0),
             parent=self,
         )
         self._recalc_worker.finished_signal.connect(self._on_recalc_done)
@@ -391,6 +433,11 @@ class IndustryPage(QWidget):
                 )
             get_container().plan_repo.update_batch(rows)
             self.load_plans()
+            # 估值失败的行本轮没写库（保留上次的成本），必须让用户看见，否则就成了静默不更新
+            failed = list(getattr(self._recalc_worker, "failed_names", []))
+            if failed:
+                shown = "、".join(failed[:3]) + ("…" if len(failed) > 3 else "")
+                self._status_bar.show_message(f"⚠ {len(failed)} 条计划估值失败（{shown}），成本沿用上次值", 8000)
         finally:
             self._recalc_busy = False
 
@@ -565,6 +612,8 @@ class IndustryPage(QWidget):
                     actual_config,
                     price_type_mat=ps.get("mat_price_type"),
                     price_type_prod=ps.get("prod_price_type"),
+                    mat_mult=float(ps.get("mat_mult") or 1.0),
+                    prod_mult=float(ps.get("prod_mult") or 1.0),
                 )
             )
             # \u7edf\u4e00\u8d70 plan_service \u843d\u5e93\uff08\u907f\u514d UI \u5185\u8054 INSERT \u91cd\u590d\uff09

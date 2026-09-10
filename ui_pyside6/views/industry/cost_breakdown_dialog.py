@@ -32,11 +32,15 @@ class CostBreakdownDialog(QWidget):
         *,
         price_type_mat: str | None = None,
         price_type_prod: str | None = None,
+        mat_mult: float = 1.0,
+        prod_mult: float = 1.0,
     ):
         super().__init__(parent)
         self._plan = plan_data
         self._price_type_mat = price_type_mat
         self._price_type_prod = price_type_prod
+        self._mat_mult = mat_mult
+        self._prod_mult = prod_mult
         # 优先使用传入的角色配置；否则按计划角色的 char_name 解析
         if char_config is not None:
             self._char_config = char_config
@@ -205,6 +209,8 @@ class CostBreakdownDialog(QWidget):
                 self._char_config or {},
                 price_type_mat=self._price_type_mat,
                 price_type_prod=self._price_type_prod,
+                mat_mult=self._mat_mult,
+                prod_mult=self._prod_mult,
             )
         )
 
@@ -361,6 +367,8 @@ class CostBreakdownDialog(QWidget):
                 self._char_config or {},
                 price_type_mat=self._price_type_mat,
                 price_type_prod=self._price_type_prod,
+                mat_mult=self._mat_mult,
+                prod_mult=self._prod_mult,
             )
             lvl = int(p.get("sub_level") or 0)
             kids = [c for c in rows if int(c.get("sub_level") or 0) > lvl]
