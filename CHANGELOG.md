@@ -6,6 +6,22 @@
 
 <!-- version list -->
 
+## v0.21.0 (2026-09-10)
+
+### Bug Fixes
+
+- 待采购主题跟随 + 三处表格排序保持 + 复制提示/按列复制 + 删除行会话内生效
+  ([`690a790`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/690a790f113a5420bff184f750d0830a7209661a))
+
+### Features
+
+- 发明/拷贝/研究并入生产计划（解码器 + 完成回填）
+  ([`5f2e691`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5f2e691b3250ce8a57271dfa83fefde214b396b4))
+
+- 生产生命周期闭环 + 并行产线逐线计算 + 启动小助手筛选/强制启动
+  ([`65ac543`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/65ac543a89ce73e52e874ad7f8a85dc8dabdc98a))
+
+
 ## v0.20.0 (2026-09-08)
 
 ### Bug Fixes
