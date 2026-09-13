@@ -24,6 +24,7 @@ dev = [
     "mypy~=2.3.0",
     "python-semantic-release~=10.6.1",
     "pyinstaller~=6.20.0",   # build_release.py 打包（release.yml 用）
+    "pre-commit>=4.6.2",
 ]
 
 [tool.uv]
