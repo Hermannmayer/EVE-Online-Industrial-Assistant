@@ -169,6 +169,15 @@ def main():
     app.setApplicationName("EVE 商人助手")
     app.setOrganizationName("EVEAssistant")
 
+    # QML 控件样式：微软 Fluent WinUI3（由 Qt 官方维护，源自微软 Fluent Figma）。
+    # 必须在加载任何 QML 之前设置。失败不致命——ui_qml 的页面会回退到 Widgets 版。
+    try:
+        from PySide6.QtQuickControls2 import QQuickStyle
+
+        QQuickStyle.setStyle("FluentWinUI3")
+    except Exception:
+        log.warning("QQuickStyle 不可用，QML 页面将回退 Widgets 版", exc_info=True)
+
     # splash 配色与主窗一致（启动早期主题未初始化时先应用偏好）
     import ui_pyside6.theme as theme
 

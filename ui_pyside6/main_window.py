@@ -221,6 +221,10 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
             self._resize_filter = FramelessResizeFilter(self)
             self.installEventFilter(self._resize_filter)
 
+    def set_status(self, text: str):
+        """更新状态栏左侧文案（不改动进度条）。QML 页面经 ShellBridge 调用。"""
+        self._status_label.setText(text)
+
     def show_progress(self, text: str = "", maximum: int = 0):
         """显示进度条（0=不确定模式）"""
         self._status_label.setText(text or "处理中...")

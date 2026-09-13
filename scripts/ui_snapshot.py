@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--theme", default="", help="主题 id，默认用上次偏好")
     parser.add_argument("--font-scale", type=float, default=0.0, help="字号缩放，默认读设置（1.0=出厂）")
     parser.add_argument("--size", default="1600x1000", help="窗口尺寸 WxH")
-    parser.add_argument("--show", action="store_true", help="使用真实窗口平台而非 offscreen")
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help="使用真实窗口平台而非 offscreen（QML 阴影/动效**必须**用这档，offscreen 渲染不出 MultiEffect）",
+    )
     parser.add_argument("--no-tree", action="store_true", help="不生成控件树")
     parser.add_argument("--no-shot", action="store_true", help="不生成截图")
     parser.add_argument("--max-depth", type=int, default=0, help="控件树最大深度，0=不限")
@@ -133,13 +138,123 @@ def _walk(w: Any, depth: int, max_depth: int, lines: list[str], counter: list[in
         if isinstance(child, QWidget):
             _walk(child, depth + 1, max_depth, lines, counter)
 
+    # QQuickWidget 是 Widgets/QML 的边界：无论它是本节点还是子节点，都要穿过去。
+    # 自身是 QQuickWidget 时（遍历入口直接给 PageHost），children() 里没有 QML 树。
+    root = _qml_root_of(w)
+    if root is not None:
+        lines.append(f"{indent}  <QML 对象树>")
+        _walk_qml(root, depth + 1, max_depth, lines, counter)
+
+
+def _qml_root_of(w: Any) -> Any | None:
+    """若 w 是 QQuickWidget，返回其 QML 根对象（否则 None）。
+
+    迁移期 QML 页面以 QQuickWidget 嵌在 Widgets 树里，控件树要能穿过去。
+    """
+    try:
+        from PySide6.QtQuickWidgets import QQuickWidget
+    except ImportError:
+        return None
+    if isinstance(w, QQuickWidget):
+        try:
+            return w.rootObject()
+        except RuntimeError:
+            return None
+    return None
+
+
+def _qml_text_of(item: Any) -> str:
+    """QML 元素的可读文本：Text/Button 等的 text 属性。"""
+    try:
+        value = item.property("text")
+    except RuntimeError:
+        return ""
+    return str(value) if value else ""
+
+
+def _qml_class_name(item: Any) -> str:
+    """QML 类型名。
+
+    `type(item).__name__` 只会给 C++ 基类名（全是 QQuickItem，看不出层级），
+    真实的 QML 类型在 `metaObject().className()` 里，形如
+    `FCard_QMLTYPE_12` / `QQuickRectangle`，这里把它还原成人读的名字。
+    """
+    try:
+        raw = item.metaObject().className()
+    except RuntimeError:
+        return type(item).__name__
+    name = re.sub(r"_QMLTYPE_\d+$", "", raw)
+    name = re.sub(r"_QML_\d+$", "", name)
+    if name.startswith("QQuick"):
+        name = name[len("QQuick") :]
+    return name or type(item).__name__
+
+
+def _geom_int(value: Any) -> int:
+    """QML 里未初始化的几何可能是 NaN/Inf，转 int 会抛 ValueError，统一兜成 0。"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0
+    if number != number or number in (float("inf"), float("-inf")):  # NaN / Inf
+        return 0
+    return int(number)
+
+
+def _describe_qml(item: Any) -> str:
+    """QML 元素单行描述：类名 #objectName [几何] 文本 状态标记。"""
+    cls = _qml_class_name(item)
+    name = item.objectName()
+    head = f"{cls} #{name}" if name else cls
+    geo = f"[{_geom_int(item.x())},{_geom_int(item.y())} {_geom_int(item.width())}x{_geom_int(item.height())}]"
+    parts = [f"{head}  {geo}"]
+    text = _qml_text_of(item)
+    if text:
+        parts.append(f'"{text}"')
+    if not item.isVisible():
+        parts.append("(隐藏)")
+    return " ".join(parts)
+
+
+def _walk_qml(item: Any, depth: int, max_depth: int, lines: list[str], counter: list[int]) -> None:
+    """递归遍历 QML 对象树（QQuickItem.childItems）。"""
+    indent = "  " * depth
+    lines.append(f"{indent}- {_describe_qml(item)}")
+    counter[0] += 1
+    if max_depth and depth >= max_depth:
+        return
+    try:
+        children = item.childItems()
+    except RuntimeError:
+        return
+    for child in children:
+        _walk_qml(child, depth + 1, max_depth, lines, counter)
+
 
 def dump_tree(widget: Any, max_depth: int = 0) -> tuple[str, int]:
-    """返回 (控件树 markdown, 控件总数)。"""
+    """返回 (控件树 markdown, 控件总数)。Widgets 树内嵌的 QML 树一并展开。"""
     lines: list[str] = []
     counter = [0]
     _walk(widget, 0, max_depth, lines, counter)
     return "\n".join(lines), counter[0]
+
+
+def grab_page(win: Any, page: Any) -> Any:
+    """抓取当前页面的画面。
+
+    QML 页面（`PageHost`/`QQuickWidget`）的内容渲染在自己的 FBO 里，
+    `win.grab()`（即 `QWidget::render`）抓不到——必须走 `grabFramebuffer()`。
+    注意 QML 的着色器效果（阴影/模糊）**只有真实窗口平台才渲染**，
+    offscreen 下即使抓到了 FBO 也是空的（故 QML 视觉核对请配 `--show`）。
+    """
+    if hasattr(page, "grabFramebuffer"):
+        try:
+            image = page.grabFramebuffer()
+            if not image.isNull():
+                return image
+        except RuntimeError:
+            pass  # 底层对象已销毁，退回整窗抓取
+    return win.grab()
 
 
 # ── 主流程 ────────────────────────────────────────────────
@@ -234,6 +349,11 @@ def main(argv: list[str] | None = None) -> int:
     win = MainWindow()
     width, height = (int(v) for v in args.size.lower().split("x"))
     win.resize(width, height)
+    if args.show:
+        # 真实窗口模式下不抢焦点（否则会打断开发者正在做的事）
+        from PySide6.QtCore import Qt
+
+        win.setWindowFlag(Qt.WindowType.WindowDoesNotAcceptFocus, True)
     win.show()
     _settle(app)
 
@@ -263,10 +383,10 @@ def main(argv: list[str] | None = None) -> int:
 
         if not args.no_shot:
             path = out_dir / f"{key}.png"
-            if win.grab().save(str(path)):
+            if grab_page(win, page).save(str(path)):
                 entry["png"] = path.name
             else:
-                entry["png_error"] = "grab().save() 失败"
+                entry["png_error"] = "保存失败"
 
         if not args.no_tree:
             tree, count = dump_tree(page, args.max_depth)

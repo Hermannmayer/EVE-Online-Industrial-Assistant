@@ -168,10 +168,13 @@ class MainWindowNavMixin:
         from ui_pyside6.views.query import QueryPage
         from ui_pyside6.views.trade_view import TradePage
         from ui_pyside6.views.watchlist_view import WatchlistPage
+        from ui_qml.registry import build_page
 
         def _try_create(key, cls, *args, **kwargs):
             try:
-                page = cls(*args, **kwargs)
+                # build_page 在 QML_PAGES 里登记了该 key 且加载成功时返回 QML 宿主，
+                # 否则回退到 cls(...)（Widgets 版），回退对调用方完全透明。
+                page = build_page(key, lambda: cls(*args, **kwargs), shell=self)
                 self._pages[key] = page
                 return page
             except sqlite3.OperationalError:

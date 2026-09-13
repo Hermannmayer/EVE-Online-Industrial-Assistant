@@ -328,6 +328,32 @@ MATERIAL = "solid"
 RADIUS = 6
 RADIUS_SMALL = max(2, RADIUS - 2)
 
+# ── Fluent 设计 token ──
+# 唯一来源：QML 侧经 ui_qml.bridge.theme_bridge 读取，禁止在 QML 里写字面量。
+# Qt 的 QGraphicsDropShadowEffect / QML MultiEffect 都只支持单层阴影，
+# 微软规范里的双层阴影（大模糊 + 0.3px 细边）在这里近似为单层。
+# 值 = (blur_radius, y_offset, alpha)，层数 1=静止 4=悬停。
+ELEVATION: dict[int, tuple[float, float, float]] = {
+    1: (3.6, 1.6, 0.13),
+    2: (7.2, 3.2, 0.13),
+    3: (14.4, 6.4, 0.13),
+    4: (14.4, 6.4, 0.18),  # 悬停：阴影扩张
+}
+
+# 动效时长（毫秒）。Fluent 是流畅利落的，规范硬上限 200ms。
+DURATION_FAST = 150  # 按钮与控件
+DURATION_CARD = 200  # 卡片
+
+# 间距刻度（px），对齐规范里的 gap-2/3/4 与 p-4/p-5
+SPACING_XS = 4
+SPACING_SM = 8
+SPACING_MD = 12
+SPACING_LG = 16
+
+# 焦点环（规范 focus:ring-2 focus:ring-offset-2）
+FOCUS_RING_WIDTH = 2
+FOCUS_RING_OFFSET = 2
+
 # ── 字体 token（由「系统设置 → 全局字号」驱动） ──
 # 所有 QSS / 内联样式表的字号一律写 {fs(NN)}px，禁止写死像素值。
 FONT_FAMILY = "Microsoft YaHei UI"
