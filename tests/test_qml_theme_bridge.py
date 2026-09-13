@@ -1,7 +1,8 @@
 """ThemeBridge（QML 主题桥）契约测试。
 
-不依赖 QApplication：`ThemeBridge` 的 `_apply_accent` 在无应用实例时静默跳过，
-其余 token 读取纯走 `ui_pyside6.theme`，因此归入 validate 档。
+多数用例不依赖 QApplication：`_apply_palette` 在无应用实例时静默跳过，
+其余 token 读取纯走 `ui_pyside6.theme`，因此归入 validate 档；
+需要调色板的用例单独标 `ui`。
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
 from PySide6.QtGui import QColor
 
 import ui_pyside6.theme as theme
@@ -95,6 +97,34 @@ def test_design_tokens_exposed():
 
 def test_singleton_is_stable():
     assert theme_singleton() is theme_singleton()
+
+
+@pytest.mark.ui
+def test_theme_drives_app_palette(qapp):
+    """QML 控件不认 QSS，只认 QPalette —— 主题必须同步进调色板。
+
+    实测漏掉这步时，`styleHints.colorScheme` 为 Unknown，Qt 的 Fluent 样式会走
+    暗色分支，控件渲染成黑块；且 QML 控件的表面/文字色完全脱离主题。
+    """
+    from PySide6.QtGui import QPalette
+
+    theme.apply_theme("one-dark")
+    bridge = ThemeBridge()  # 构造时即同步调色板
+    palette = qapp.palette()
+
+    assert palette.color(QPalette.ColorRole.Accent).name() == QColor(theme.PRIMARY).name()
+    assert palette.color(QPalette.ColorRole.Window).name() == QColor(theme.BG_DARK).name()
+    assert palette.color(QPalette.ColorRole.Base).name() == QColor(theme.BG_SURFACE).name()
+    assert palette.color(QPalette.ColorRole.Text).name() == QColor(theme.TEXT_PRIMARY).name()
+
+    # 切主题必须跟着变
+    theme.apply_theme("one-light")
+    palette = qapp.palette()
+    assert palette.color(QPalette.ColorRole.Window).name() == QColor(theme.BG_DARK).name()
+    assert bridge.isDark is False
+
+    theme.apply_theme("one-dark")
+    bridge.detach()
 
 
 def _meta_name(value: object) -> str:

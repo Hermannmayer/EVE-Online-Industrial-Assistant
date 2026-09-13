@@ -168,7 +168,10 @@ class MainWindowNavMixin:
         from ui_pyside6.views.query import QueryPage
         from ui_pyside6.views.trade_view import TradePage
         from ui_pyside6.views.watchlist_view import WatchlistPage
-        from ui_qml.registry import build_page
+        from ui_qml.registry import build_page, register_migrated_pages
+
+        # 登记已迁移到 QML 的页面（未登记的 key 走原 Widgets 实现）
+        register_migrated_pages()
 
         def _try_create(key, cls, *args, **kwargs):
             try:

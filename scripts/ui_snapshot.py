@@ -335,6 +335,17 @@ def main(argv: list[str] | None = None) -> int:
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName("EVE 商人助手")
+
+    # 必须与 Main.py 保持一致：QML 控件样式是应用级设置，快照若漏掉，
+    # QML 页面会用默认样式渲染，得到的截图与真实运行不符
+    # （实测：漏掉时 ComboBox/CheckBox 等渲染成黑块，且样式插件的资源不注册）。
+    try:
+        from PySide6.QtQuickControls2 import QQuickStyle
+
+        QQuickStyle.setStyle("FluentWinUI3")
+    except Exception:
+        print("[快照] 警告: QQuickStyle 不可用，QML 控件样式将与应用不一致", file=sys.stderr)
+
     if not args.show:
         _load_cjk_fonts(app)
 

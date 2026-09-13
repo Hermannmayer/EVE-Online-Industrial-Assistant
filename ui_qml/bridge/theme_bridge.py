@@ -17,7 +17,7 @@ from __future__ import annotations
 import ctypes
 import sys
 
-from PySide6.QtCore import Property, QObject, Signal, Slot
+from PySide6.QtCore import Property, QObject, Qt, Signal, Slot
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
@@ -77,29 +77,63 @@ class ThemeBridge(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._remove_listener = theme.add_theme_listener(self._on_theme_changed)
-        self._apply_accent()
+        self._apply_palette()
 
     # ── 生命周期 ──
 
     def _on_theme_changed(self) -> None:
-        self._apply_accent()
+        self._apply_palette()
         self.changed.emit()
 
-    def _apply_accent(self) -> None:
-        """把主题主色写进 QPalette.Accent，Fluent 控件据此自动取强调色。
+    def _apply_palette(self) -> None:
+        """把整套主题色写进 QPalette，并同步深浅色方案。
 
-        Qt 的 FluentWinUI3 样式读 `control.palette.accent`
-        （见 FluentWinUI3/impl/ButtonBackground.qml），因此这一处赋值
-        就让全部官方控件跟随主题主色。
+        QML 控件**不认 QSS**，它们只认 `QPalette` 与 `styleHints.colorScheme`——
+        本项目十套主题原本只驱动 QSS，因此必须在切主题时同步这两处，
+        否则 QML 侧控件会脱离主题（实测：colorScheme 为 Unknown 时，
+        Qt 的 Fluent 样式会走暗色分支，控件渲染成黑块）。
+
+        - `Accent` 决定 Fluent 控件的强调色（读 `control.palette.accent`）。
+        - 其余角色决定控件表面/文字/边框，让 QML 跟随同一套主题。
         """
         app = QApplication.instance()
         if not isinstance(app, QApplication):
             return
+
         palette = app.palette()
-        accent = QColor(theme.PRIMARY)
-        palette.setColor(QPalette.ColorRole.Accent, accent)
-        palette.setColor(QPalette.ColorRole.Highlight, accent)
+        setter = palette.setColor
+        setter(QPalette.ColorRole.Accent, QColor(theme.PRIMARY))
+        setter(QPalette.ColorRole.Highlight, QColor(theme.PRIMARY))
+        setter(QPalette.ColorRole.HighlightedText, QColor(theme.TEXT_ON_PRIMARY))
+        setter(QPalette.ColorRole.Link, QColor(theme.PRIMARY))
+
+        setter(QPalette.ColorRole.Window, QColor(theme.BG_DARK))
+        setter(QPalette.ColorRole.WindowText, QColor(theme.TEXT_PRIMARY))
+        setter(QPalette.ColorRole.Base, QColor(theme.BG_SURFACE))
+        setter(QPalette.ColorRole.AlternateBase, QColor(theme.BG_SURFACE_LIGHT))
+        setter(QPalette.ColorRole.Text, QColor(theme.TEXT_PRIMARY))
+        setter(QPalette.ColorRole.Button, QColor(theme.BG_SURFACE))
+        setter(QPalette.ColorRole.ButtonText, QColor(theme.TEXT_PRIMARY))
+        setter(QPalette.ColorRole.BrightText, QColor(theme.TEXT_BRIGHT))
+        setter(QPalette.ColorRole.PlaceholderText, QColor(theme.TEXT_SECONDARY))
+
+        setter(QPalette.ColorRole.Mid, QColor(theme.BORDER))
+        setter(QPalette.ColorRole.Shadow, QColor(theme.BORDER))
+        setter(QPalette.ColorRole.Dark, QColor(theme.BG_SURFACE_LIGHT))
+        setter(QPalette.ColorRole.Light, QColor(theme.BG_SURFACE_LIGHT))
+
+        setter(QPalette.ColorRole.ToolTipBase, QColor(theme.BG_SURFACE))
+        setter(QPalette.ColorRole.ToolTipText, QColor(theme.TEXT_PRIMARY))
+
         app.setPalette(palette)
+
+        hints = app.styleHints()
+        scheme = Qt.ColorScheme.Dark if self._is_dark() else Qt.ColorScheme.Light
+        try:
+            hints.setColorScheme(scheme)
+        except (AttributeError, TypeError):
+            # Qt < 6.8 没有 setColorScheme，控件会退回默认分支（不致命）
+            pass
 
     def detach(self) -> None:
         """注销监听器（宿主销毁时调用）。"""
