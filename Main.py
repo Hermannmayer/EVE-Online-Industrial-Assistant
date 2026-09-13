@@ -229,28 +229,45 @@ def main():
     worker.stage.connect(splash.set_stage)
     worker.component_checked.connect(splash.set_component)
 
-    def _on_startup_done(ready: bool, missing_keys: list):
-        from ui_pyside6.main_window import MainWindow
+    from PySide6.QtCore import QObject, Slot
 
-        if ready:
-            win = MainWindow(hot_reload=HOT_RELOAD)  # splash 仍在屏，构建期无空白
+    class _StartupHandler(QObject):
+        """启动检查完成后的处理者。
 
-            def _show_main():
-                win.show()
-                splash.close()
+        **必须是 QObject 的绑定方法，不能把普通函数直接当槽连过去**：
+        `worker` 是 QThread，PySide 对普通 Python 可调用对象用 DirectConnection，
+        回调会在**工作线程**上执行，于是 MainWindow 在非 GUI 线程里被构造。
+        以前这里只创建 QWidget 侥幸能跑；加入 QML 页面后
+        `QQuickWidget.setSource()` 会同步等待 QML 线程，跨线程调用直接死锁
+        （现象：启动卡在 0%，无任何报错）。用绑定方法后 Qt 按接收者所在线程
+        （GUI 线程）排队投递，这才是安全的。
+        """
 
-            splash.complete(_show_main)
-        else:
-            # 有缺失 → 转交 InitWizard 自动下载（splash 已查过，免二次扫描）
-            from ui_pyside6.views.init_wizard import InitWizard
+        @Slot(bool, list)
+        def handle(self, ready: bool, missing_keys: list) -> None:
+            from ui_pyside6.main_window import MainWindow
 
-            def _show_wizard_then_main():
-                InitWizard(auto_mode=True, prechecked_missing=missing_keys).exec()
-                MainWindow(hot_reload=HOT_RELOAD).show()
+            if ready:
+                win = MainWindow(hot_reload=HOT_RELOAD)  # splash 仍在屏，构建期无空白
 
-            splash.complete(_show_wizard_then_main)
+                def _show_main():
+                    win.show()
+                    splash.close()
 
-    worker.finished_all.connect(_on_startup_done)
+                splash.complete(_show_main)
+            else:
+                # 有缺失 → 转交 InitWizard 自动下载（splash 已查过，免二次扫描）
+                from ui_pyside6.views.init_wizard import InitWizard
+
+                def _show_wizard_then_main():
+                    InitWizard(auto_mode=True, prechecked_missing=missing_keys).exec()
+                    MainWindow(hot_reload=HOT_RELOAD).show()
+
+                splash.complete(_show_wizard_then_main)
+
+    # 持有强引用：handler 若被回收，连接会失效
+    _startup_handler = _StartupHandler()
+    worker.finished_all.connect(_startup_handler.handle)
     worker.start()
 
     sys.exit(app.exec())

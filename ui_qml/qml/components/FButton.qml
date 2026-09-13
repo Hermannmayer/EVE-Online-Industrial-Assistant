@@ -73,12 +73,14 @@ Button {
 
             layer.enabled: true
             layer.effect: MultiEffect {
-                // active 时 shadow-none；hover 时阴影增强
+                // active 时 shadow-none；hover 时阴影增强。
+                // 必须用**控件级**高度：MultiEffect 的模糊按元素尺寸归一化，
+                // 卡片级的值放到 32px 高的按钮上会散成 8px，又大又脏（实测过）。
                 shadowEnabled: !root.down
-                shadowBlur: hover.hovered ? Theme.elevationBlur(4) : Theme.elevationBlur(1)
-                shadowVerticalOffset: hover.hovered ? Theme.elevationOffset(4) : Theme.elevationOffset(1)
+                shadowBlur: hover.hovered ? Theme.controlBlur(4) : Theme.controlBlur(1)
+                shadowVerticalOffset: hover.hovered ? Theme.controlOffset(4) : Theme.controlOffset(1)
                 shadowColor: Qt.rgba(0, 0, 0, hover.hovered
-                                              ? Theme.elevationAlpha(4) : Theme.elevationAlpha(1))
+                                             ? Theme.controlAlpha(4) : Theme.controlAlpha(1))
                 autoPaddingEnabled: true
 
                 Behavior on shadowBlur {

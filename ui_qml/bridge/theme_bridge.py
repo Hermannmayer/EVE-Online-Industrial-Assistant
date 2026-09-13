@@ -228,9 +228,28 @@ class ThemeBridge(QObject):
         黑色阴影在深色底上几乎不可见——用规范原值（0.13）实测完全看不出层次，
         所以暗色主题需要更强的阴影才能读出「浮起」。
         """
-        alpha = theme.ELEVATION.get(level, theme.ELEVATION[1])[2]
+        alpha = theme.ELEVATION_CARD.get(level, theme.ELEVATION_CARD[1])[2]
         if self._is_dark():
             alpha = min(theme.DARK_SHADOW_ALPHA_MAX, alpha * theme.DARK_SHADOW_BOOST)
+        return alpha
+
+    # ── 控件级高度（按钮/输入框等小元素）──
+    # 与卡片级分开是必须的：MultiEffect 的模糊按元素尺寸归一化，
+    # 同一个值在 32px 高的按钮上会散成 8px，显得又大又脏。
+
+    @Slot(int, result=float)
+    def controlBlur(self, level: int) -> float:
+        return theme.ELEVATION_CONTROL.get(level, theme.ELEVATION_CONTROL[1])[0]
+
+    @Slot(int, result=float)
+    def controlOffset(self, level: int) -> float:
+        return theme.ELEVATION_CONTROL.get(level, theme.ELEVATION_CONTROL[1])[1]
+
+    @Slot(int, result=float)
+    def controlAlpha(self, level: int) -> float:
+        alpha = theme.ELEVATION_CONTROL.get(level, theme.ELEVATION_CONTROL[1])[2]
+        if self._is_dark():
+            alpha = min(theme.DARK_SHADOW_ALPHA_MAX, alpha * theme.DARK_SHADOW_BOOST_CONTROL)
         return alpha
 
 

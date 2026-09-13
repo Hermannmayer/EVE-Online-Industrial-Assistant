@@ -10,7 +10,7 @@ from PySide6.QtCore import QAbstractItemModel, QCoreApplication, QModelIndex, QS
 from PySide6.QtGui import QShowEvent
 
 import ui_pyside6.theme as theme
-from ui_pyside6.theme import ONE_LIGHT, apply_theme
+from ui_pyside6.theme import FLUENT_LIGHT, apply_theme
 
 pytestmark = pytest.mark.ui
 
@@ -79,8 +79,8 @@ def test_industry_page_theme_listener(qapp, mock_db):
         assert hasattr(page, "_on_theme_changed")
         apply_theme("light")
         _wait()
-        assert ONE_LIGHT["TEXT_PRIMARY"] in page._title_label.styleSheet()
-        assert ONE_LIGHT["TEXT_SECONDARY"] in page._plan_count.styleSheet()
+        assert FLUENT_LIGHT["TEXT_PRIMARY"] in page._title_label.styleSheet()
+        assert FLUENT_LIGHT["TEXT_SECONDARY"] in page._plan_count.styleSheet()
 
 
 def test_trade_page_theme_listener(qapp):
@@ -90,7 +90,7 @@ def test_trade_page_theme_listener(qapp):
     assert hasattr(page, "_on_theme_changed")
     apply_theme("light")
     _wait()
-    assert ONE_LIGHT["TEXT_SECONDARY"] in page._monitor_placeholder.styleSheet()
+    assert FLUENT_LIGHT["TEXT_SECONDARY"] in page._monitor_placeholder.styleSheet()
 
 
 def test_estimate_page_theme_listener(qapp, mock_db):
@@ -100,7 +100,7 @@ def test_estimate_page_theme_listener(qapp, mock_db):
     assert hasattr(page, "_on_theme_changed")
     apply_theme("light")
     _wait()
-    assert ONE_LIGHT["TEXT_PRIMARY"] in page._total_vol.styleSheet()
+    assert FLUENT_LIGHT["TEXT_PRIMARY"] in page._total_vol.styleSheet()
 
 
 def test_inventory_page_theme_listener(qapp, mock_db):
@@ -133,7 +133,7 @@ def test_inventory_page_theme_listener(qapp, mock_db):
         assert hasattr(page, "_on_theme_changed")
         apply_theme("light")
         _wait()
-        assert ONE_LIGHT["TEXT_SECONDARY"] in page._hangar_tab._count_label.styleSheet()
+        assert FLUENT_LIGHT["TEXT_SECONDARY"] in page._hangar_tab._count_label.styleSheet()
 
 
 def test_paste_import_dialog_show_event(qapp, mock_db):
@@ -143,7 +143,7 @@ def test_paste_import_dialog_show_event(qapp, mock_db):
     assert hasattr(dlg, "showEvent")
     apply_theme("light")
     dlg.showEvent(QShowEvent())
-    assert ONE_LIGHT["TEXT_SECONDARY"] in dlg._hint.styleSheet()
+    assert FLUENT_LIGHT["TEXT_SECONDARY"] in dlg._hint.styleSheet()
 
 
 def test_import_review_dialog_show_event(qapp, mock_db):
@@ -153,7 +153,7 @@ def test_import_review_dialog_show_event(qapp, mock_db):
     assert hasattr(dlg, "showEvent")
     apply_theme("light")
     dlg.showEvent(QShowEvent())
-    assert ONE_LIGHT["TEXT_SECONDARY"] in dlg._summary_label.styleSheet()
+    assert FLUENT_LIGHT["TEXT_SECONDARY"] in dlg._summary_label.styleSheet()
 
 
 # ── showEvent 不更新对话框自身 stylesheet，仅更新子控件 — 待 dialog 自身也加入 showEvent 重绘 ──
@@ -174,7 +174,7 @@ def test_char_settings_dialog_show_event(qapp, mock_db):
         dlg = CharSettingsDialog()
         apply_theme("light")
         dlg.showEvent(QShowEvent())
-        assert ONE_LIGHT["BG_DARK"] in dlg.styleSheet()
+        assert FLUENT_LIGHT["BG_DARK"] in dlg.styleSheet()
 
 
 def test_init_wizard_show_event(qapp):
@@ -191,7 +191,7 @@ def test_init_wizard_show_event(qapp):
         wiz = InitWizard()
         apply_theme("light")
         wiz.showEvent(QShowEvent())
-        assert ONE_LIGHT["BG_DARK"] in wiz.styleSheet()
+        assert FLUENT_LIGHT["BG_DARK"] in wiz.styleSheet()
 
 
 def test_all_items_dialog_show_event(qapp, mock_db):
@@ -208,7 +208,7 @@ def test_all_items_dialog_show_event(qapp, mock_db):
         dlg = AllItemsDialog()
         apply_theme("light")
         dlg.showEvent(QShowEvent())
-        assert ONE_LIGHT["BG_SURFACE"] in dlg._toolbar.styleSheet()
+        assert FLUENT_LIGHT["BG_SURFACE"] in dlg._toolbar.styleSheet()
 
 
 # ── weakref 基础设施（审计发现：监听器无 remove → 页面销毁后仍被引用泄漏） ──
@@ -296,11 +296,11 @@ def test_set_current_highlights_card(qapp):
     from ui_pyside6.views.theme_selector import ThemeSelector
 
     sel = ThemeSelector()
-    theme.apply_theme("eve-deep")
-    sel.set_current("eve-deep")
-    assert sel.current_theme_id() == "eve-deep"
-    assert sel._cards["eve-deep"].isChecked()
-    assert not sel._cards["one-dark"].isChecked()
+    theme.apply_theme("fluent-light")
+    sel.set_current("fluent-light")
+    assert sel.current_theme_id() == "fluent-light"
+    assert sel._cards["fluent-light"].isChecked()
+    assert not sel._cards["fluent-dark"].isChecked()
     sel.deleteLater()
 
 
@@ -308,10 +308,10 @@ def test_card_click_switches_theme(qapp):
     from ui_pyside6.views.theme_selector import ThemeSelector
 
     sel = ThemeSelector()
-    theme.apply_theme("one-dark")
-    sel._cards["nord"].click()
-    assert theme.current_theme() == "nord"
-    assert sel.current_theme_id() == "nord"
+    theme.apply_theme("fluent-dark")
+    sel._cards["fluent-light"].click()
+    assert theme.current_theme() == "fluent-light"
+    assert sel.current_theme_id() == "fluent-light"
     # 恢复默认，避免污染 settings
-    theme.apply_theme("one-dark")
+    theme.apply_theme("fluent-dark")
     sel.deleteLater()

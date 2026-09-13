@@ -6,8 +6,8 @@ from unittest.mock import patch
 import pytest
 
 from ui_pyside6.theme import (
-    ONE_DARK_PRO,
-    ONE_LIGHT,
+    FLUENT_DARK,
+    FLUENT_LIGHT,
     THEME_REGISTRY,
     apply_theme,
     current_theme,
@@ -41,7 +41,7 @@ _HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 def _reset_theme():
     """每个测试后恢复默认主题，避免污染同进程的后续测试"""
     yield
-    apply_theme("one-dark")
+    apply_theme("fluent-dark")
 
 
 def _rel_lum(hex_color: str) -> float:
@@ -62,8 +62,14 @@ def _contrast(a: str, b: str) -> float:
 # ── 注册表完整性 ──
 
 
-def test_registry_has_at_least_10_themes():
-    assert len(THEME_REGISTRY) >= 10
+def test_registry_has_fluent_dark_and_light_pair():
+    """配色已收敛为 Fluent 深浅两套（旧的 8 套配色已删除）。
+
+    保留断言而非删掉：注册表被清空或漏登记时应当立刻发现。
+    """
+    assert set(THEME_REGISTRY) == {"fluent-dark", "fluent-light"}
+    assert THEME_REGISTRY["fluent-dark"]["mode"] == "dark"
+    assert THEME_REGISTRY["fluent-light"]["mode"] == "light"
 
 
 def test_every_theme_spec_is_valid():
@@ -79,8 +85,8 @@ def test_every_theme_spec_is_valid():
 
 
 def test_one_dark_and_one_light_reuse_existing_palettes():
-    assert THEME_REGISTRY["one-dark"]["colors"] == ONE_DARK_PRO
-    assert THEME_REGISTRY["one-light"]["colors"] == ONE_LIGHT
+    assert THEME_REGISTRY["fluent-dark"]["colors"] == FLUENT_DARK
+    assert THEME_REGISTRY["fluent-light"]["colors"] == FLUENT_LIGHT
 
 
 # ── legacy 迁移 ──
@@ -88,12 +94,12 @@ def test_one_dark_and_one_light_reuse_existing_palettes():
 
 def test_apply_theme_legacy_dark_resolves_to_one_dark():
     apply_theme("dark")
-    assert current_theme() == "one-dark"
+    assert current_theme() == "fluent-dark"
 
 
 def test_apply_theme_legacy_light_resolves_to_one_light():
     apply_theme("light")
-    assert current_theme() == "one-light"
+    assert current_theme() == "fluent-light"
 
 
 def test_load_theme_preference_migrates_legacy():
@@ -101,20 +107,20 @@ def test_load_theme_preference_migrates_legacy():
         patch("services.user_settings.load_settings", return_value={"theme": "light"}),
         patch("services.user_settings.save_settings") as mock_save,
     ):
-        assert load_theme_preference() == "one-light"
-        mock_save.assert_called_once_with({"theme": "one-light"})
+        assert load_theme_preference() == "fluent-light"
+        mock_save.assert_called_once_with({"theme": "fluent-light"})
 
 
 def test_load_theme_preference_default_one_dark():
     with patch("services.user_settings.load_settings", return_value={}):
-        assert load_theme_preference() == "one-dark"
+        assert load_theme_preference() == "fluent-dark"
 
 
 def test_toggle_theme_involution():
-    apply_theme("one-dark")
+    apply_theme("fluent-dark")
     first = toggle_theme()
-    assert first == "one-light"
-    assert toggle_theme() == "one-dark"
+    assert first == "fluent-light"
+    assert toggle_theme() == "fluent-dark"
 
 
 # ── WCAG 对比度 ──

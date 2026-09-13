@@ -62,18 +62,22 @@ def test_theme_switch_emits_changed_and_updates_values():
     fired: list[int] = []
     bridge.changed.connect(lambda: fired.append(1))
 
-    theme.apply_theme("one-dark")
-    dark_primary = bridge.primary.name()
+    theme.apply_theme("fluent-dark")
+    dark_bg = bridge.bgDark.name()
     dark_is_dark = bridge.isDark
 
-    theme.apply_theme("one-light")
+    theme.apply_theme("fluent-light")
     assert fired, "切换主题未触发 changed 信号"
-    assert bridge.themeId == "one-light"
+    assert bridge.themeId == "fluent-light"
     assert bridge.isDark is False
     assert dark_is_dark is True
-    assert bridge.primary.name() != dark_primary, "主色未随主题变化"
+    # 两套主题各有自己的主色（深色 Cyberpunk 青 / 浅色 Desert Night 靛蓝），
+    # 断言跟随实际的 theme.PRIMARY，不写死具体值
+    assert bridge.primary.name() == QColor(theme.PRIMARY).name(), "主色与 theme 不一致"
+    assert bridge.bgDark.name() == QColor(theme.BG_DARK).name(), "底色与 theme 不一致"
+    assert bridge.bgDark.name() != dark_bg, "底色未随主题变化"
 
-    theme.apply_theme("one-dark")  # 还原，避免污染其他测试
+    theme.apply_theme("fluent-dark")  # 还原，避免污染其他测试
     bridge.detach()
 
 
@@ -110,18 +114,18 @@ def test_elevation_blur_stays_in_normalized_range():
 
 def test_elevation_alpha_boosts_on_dark():
     """暗色主题必须抬高阴影不透明度，否则深底上看不出层次。"""
-    theme.apply_theme("one-dark")
+    theme.apply_theme("fluent-dark")
     dark = ThemeBridge()
     alpha_dark = dark.elevationAlpha(3)
 
-    theme.apply_theme("one-light")
+    theme.apply_theme("fluent-light")
     light = ThemeBridge()
     alpha_light = light.elevationAlpha(3)
 
     assert alpha_dark > alpha_light, "暗色主题的阴影不透明度未抬高"
     assert alpha_dark <= theme.DARK_SHADOW_ALPHA_MAX
 
-    theme.apply_theme("one-dark")
+    theme.apply_theme("fluent-dark")
     dark.detach()
     light.detach()
 
@@ -139,7 +143,7 @@ def test_theme_drives_app_palette(qapp):
     """
     from PySide6.QtGui import QPalette
 
-    theme.apply_theme("one-dark")
+    theme.apply_theme("fluent-dark")
     bridge = ThemeBridge()  # 构造时即同步调色板
     palette = qapp.palette()
 
@@ -149,12 +153,12 @@ def test_theme_drives_app_palette(qapp):
     assert palette.color(QPalette.ColorRole.Text).name() == QColor(theme.TEXT_PRIMARY).name()
 
     # 切主题必须跟着变
-    theme.apply_theme("one-light")
+    theme.apply_theme("fluent-light")
     palette = qapp.palette()
     assert palette.color(QPalette.ColorRole.Window).name() == QColor(theme.BG_DARK).name()
     assert bridge.isDark is False
 
-    theme.apply_theme("one-dark")
+    theme.apply_theme("fluent-dark")
     bridge.detach()
 
 

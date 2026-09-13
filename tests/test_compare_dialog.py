@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtCore import QCoreApplication
 
-from ui_pyside6.theme import ONE_LIGHT, apply_theme
+from ui_pyside6.theme import FLUENT_LIGHT, apply_theme
 from ui_pyside6.views.compare import (
     COMPARE_COLS_MFG,
     CompareDialog,
@@ -77,7 +77,7 @@ def test_dialog_has_theme_listener(qapp, mock_deps):
     apply_theme("light")
     QCoreApplication.processEvents()
     light_ss = dlg.styleSheet()
-    assert ONE_LIGHT["BG_DARK"] in light_ss or ONE_LIGHT["TEXT_PRIMARY"] in light_ss
+    assert FLUENT_LIGHT["BG_DARK"] in light_ss or FLUENT_LIGHT["TEXT_PRIMARY"] in light_ss
     dlg.close()
 
 

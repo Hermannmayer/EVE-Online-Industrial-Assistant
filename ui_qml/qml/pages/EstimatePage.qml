@@ -45,7 +45,7 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fs(12)
             }
-            ComboBox {
+            FComboBox {
                 id: priceSource
                 implicitWidth: 92
                 model: bridge ? bridge.priceTypes : []
@@ -77,7 +77,7 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fs(12)
             }
-            DoubleSpinBox {
+            FDoubleSpinBox {
                 id: discountBox
                 implicitWidth: 96
                 from: 0.01
@@ -111,7 +111,7 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fs(12)
             }
-            ComboBox {
+            FComboBox {
                 id: refineMode
                 implicitWidth: 80
                 model: bridge ? bridge.refineModes : []
@@ -124,7 +124,7 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fs(12)
             }
-            ComboBox {
+            FComboBox {
                 id: skillPreset
                 implicitWidth: 104
                 model: bridge ? bridge.skillPresets : []
@@ -137,7 +137,7 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fs(12)
             }
-            TextField {
+            FTextField {
                 id: gasRate
                 implicitWidth: 72
                 text: "0"
@@ -150,7 +150,7 @@ Item {
                 onClicked: bridge.refreshPrices()
             }
 
-            CheckBox {
+            FCheckBox {
                 id: residualCheck
                 text: qsTr("残余也精炼掉")
             }
@@ -300,7 +300,7 @@ Item {
                                     return
                                 page.selectedRow = row
                                 qtyEditor.targetRow = row
-                                qtyEditor.text = model.qtyText
+                                qtyEditor.initialQty = model.qtyText
                                 qtyEditor.open()
                             }
                         }
@@ -394,28 +394,44 @@ Item {
                 Item { Layout.fillWidth: true }
 
                 GridLayout {
+                    id: actionGrid
+
+                    // 两列等宽：FButton 的 implicitWidth 是按文字量的，
+                    // 各按钮文字长短不一就会宽度参差、列也對不齐（实测过）。
+                    // 这里给统一单元格宽度，每个子项都按它定宽。
+                    readonly property int cellWidth: 124
+
+                    Layout.alignment: Qt.AlignVCenter
                     columns: 2
                     columnSpacing: Theme.spacingSm
                     rowSpacing: Theme.spacingXs
 
                     FButton {
                         text: qsTr("卖价到剪贴板")
+                        Layout.preferredWidth: actionGrid.cellWidth
                         onClicked: bridge.copyTotals("sell")
                     }
                     FButton {
                         text: qsTr("买价到剪贴板")
+                        Layout.preferredWidth: actionGrid.cellWidth
                         onClicked: bridge.copyTotals("buy")
                     }
 
                     RowLayout {
+                        // 必须封顶：FComboBox 的 implicitWidth 是按内容（机库名）算的，
+                        // 实测能到 461px，会把这一列撑爆、把右列整体推走。
+                        Layout.preferredWidth: actionGrid.cellWidth
+                        Layout.maximumWidth: actionGrid.cellWidth
+                        Layout.alignment: Qt.AlignVCenter
                         spacing: Theme.spacingXs
                         Text {
                             text: qsTr("机库")
                             color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(11)
                         }
-                        ComboBox {
+                        FComboBox {
                             id: hangarCombo
-                            implicitWidth: 120
+                            Layout.fillWidth: true
+                            implicitWidth: 0
                             textRole: "name"
                             valueRole: "id"
                             model: hangarModel
@@ -423,12 +439,18 @@ Item {
                     }
                     FButton {
                         text: qsTr("添加到机库")
+                        Layout.preferredWidth: actionGrid.cellWidth
                         onClicked: bridge.addToHangar(hangarCombo.currentValue)
                     }
 
-                    Item { width: 1; height: 1 }
+                    // 占位，让「更新价格」落在右列（与上一行按钮左边缘对齐）
+                    Item {
+                        Layout.preferredWidth: actionGrid.cellWidth
+                        Layout.preferredHeight: 1
+                    }
                     FButton {
                         text: qsTr("更新价格")
+                        Layout.preferredWidth: actionGrid.cellWidth
                         onClicked: bridge.refreshPrices()
                     }
                 }
@@ -450,7 +472,9 @@ Item {
     Component.onCompleted: _reloadHangars()
 
     // ── 右键菜单 ──
-    Menu {
+    // 用 FMenu 而非原生 Menu：Qt 官方 Fluent 样式的菜单表面是中性灰图集、
+    // 不跟主题（实测恒为 #353535），不覆盖就会与彩色主题格格不入。
+    FMenu {
         id: rowMenu
         property var rowData: bridge ? bridge.rowAt(page.selectedRow) : ({})
 
@@ -470,7 +494,7 @@ Item {
             enabled: page.selectedRow >= 0
             onTriggered: {
                 qtyEditor.targetRow = page.selectedRow
-                qtyEditor.text = String(rowMenu.rowData.qty || 1)
+                qtyEditor.initialQty = String(rowMenu.rowData.qty || 1)
                 qtyEditor.open()
             }
         }
@@ -510,38 +534,37 @@ Item {
     }
 
     // ── 数量编辑 ──
-    Dialog {
+    FDialog {
         id: qtyEditor
         property int targetRow: -1
+        // FDialog（Dialog）没有 text 属性，原代码的 qtyEditor.text 是无效绑定，
+        // 会报 "Unable to assign [undefined] to QString"。这里用显式属性传初值。
+        property string initialQty: "1"
         title: qsTr("修改数量")
-        modal: true
-        anchors.centerIn: parent
         standardButtons: Dialog.Ok | Dialog.Cancel
         implicitWidth: 260
 
         onAccepted: bridge.setQty(targetRow, Number(qtyField.text))
 
-        TextField {
+        FTextField {
             id: qtyField
-            anchors.fill: parent
-            text: qtyEditor.text
+            Layout.fillWidth: true
+            text: qtyEditor.initialQty
             validator: IntValidator { bottom: 1; top: 999999999 }
         }
     }
 
     // ── 蓝图编辑 ──
-    Dialog {
+    FDialog {
         id: bpEditor
         property int targetRow: -1
-        modal: true
-        anchors.centerIn: parent
         standardButtons: Dialog.Ok | Dialog.Cancel
         implicitWidth: 300
 
         onAccepted: bridge.setBlueprint(targetRow, meBox.value, teBox.value)
 
         GridLayout {
-            anchors.fill: parent
+            Layout.fillWidth: true
             columns: 2
             columnSpacing: Theme.spacingSm
 
@@ -549,22 +572,20 @@ Item {
                 text: qsTr("材料效率 (ME):")
                 color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12)
             }
-            SpinBox { id: meBox; from: 0; to: 10 }
+            FSpinBox { id: meBox; from: 0; to: 10 }
 
             Text {
                 text: qsTr("时间效率 (TE):")
                 color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12)
             }
-            SpinBox { id: teBox; from: 0; to: 20 }
+            FSpinBox { id: teBox; from: 0; to: 20 }
         }
     }
 
     // ── 精炼结果 ──
-    Dialog {
+    FDialog {
         id: refineDialog
         title: qsTr("精炼产出估算")
-        modal: true
-        anchors.centerIn: parent
         standardButtons: Dialog.Close
         implicitWidth: 640
         implicitHeight: 460
@@ -573,7 +594,8 @@ Item {
         property var refineData: ({})
 
         ColumnLayout {
-            anchors.fill: parent
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             spacing: Theme.spacingSm
 
             Text {

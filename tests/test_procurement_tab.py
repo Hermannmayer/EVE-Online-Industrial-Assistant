@@ -455,9 +455,9 @@ def test_dialog_applies_global_stylesheet(qapp, make_dlg):
     assert "QTableView" in dlg.styleSheet()
     try:
         theme.apply_theme("light")
-        assert theme.ONE_LIGHT["BG_DARK"] in dlg.styleSheet()
+        assert theme.FLUENT_LIGHT["BG_DARK"] in dlg.styleSheet()
     finally:
-        theme.apply_theme("one-dark")
+        theme.apply_theme("fluent-dark")
 
 
 # ═══════════════════════════════════════════════════

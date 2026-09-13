@@ -14,199 +14,57 @@ from core.logger import log
 #  色板定义
 # ═══════════════════════════════════════════
 
-ONE_DARK_PRO = {
-    "BG_DARK": "#282c34",
-    "BG_SURFACE": "#21252b",
-    "BG_SURFACE_LIGHT": "#2c323c",  # 选中/悬浮
-    "BG_HOVER": "#3a3f4b",
-    "PRIMARY": "#61afef",  # 蓝色强调
-    "ACCENT_RED": "#e06c75",
-    "ACCENT_GREEN": "#98c379",
-    "ACCENT_YELLOW": "#e5c07b",
-    "ACCENT_ORANGE": "#d19a66",
-    "ACCENT_PURPLE": "#c678dd",
-    "ACCENT_CYAN": "#56b6c2",
-    "TEXT_PRIMARY": "#abb2bf",
-    "TEXT_BRIGHT": "#e5e7eb",
-    "TEXT_SECONDARY": "#7a8290",  # 调亮（原 #5c6370 对比度仅 2.55，不易读）
+# ═══════════════════════════════════════════
+#  色板定义 —— 微软 Fluent Design
+# ═══════════════════════════════════════════
+# 取值来源：Fluent Design 规范。主蓝 #0078d4 是规范里的标志性蓝；
+# 强调色也取规范给的高饱和值（#e81123 / #00cc6a / #ffb900），
+# 避免整屏只有灰蓝、显得死气沉沉。
+#
+# 每套色板必须提供完全相同的 16 个键（由 tests/test_theme_registry.py 强制）。
+
+FLUENT_LIGHT = {
+    # 浅色按用户指定的 Desert Night 配色（深靛蓝 + 琥珀）。
+    # 主色 #1A237E / 辅助 #303F9F / 浅靛 #3949AB / 琥珀 #FFB300 / 浅琥珀 #FFE082。
+    # 红绿仍保留语义（估价页的卖价/买价要靠它们区分），只取同族的深饱和值。
+    "BG_DARK": "#f2f4fb",  # 页面底（带靛蓝倾向的浅灰）
+    "BG_SURFACE": "#ffffff",  # 卡片
+    "BG_SURFACE_LIGHT": "#e6eaf8",  # 选中/悬浮
+    "BG_HOVER": "#d8dff5",
+    "PRIMARY": "#1a237e",  # 深靛蓝
+    "ACCENT_RED": "#c62828",
+    "ACCENT_GREEN": "#2e7d32",
+    "ACCENT_YELLOW": "#ffb300",  # 琥珀
+    "ACCENT_ORANGE": "#ff8f00",
+    "ACCENT_PURPLE": "#4527a0",
+    "ACCENT_CYAN": "#3949ab",  # 浅靛
+    "TEXT_PRIMARY": "#1a1c2e",
+    "TEXT_BRIGHT": "#0d0f1f",
+    "TEXT_SECONDARY": "#565c78",
     "TEXT_ON_PRIMARY": "#ffffff",
-    "BORDER": "#3e4452",
+    "BORDER": "#d6dbf0",
 }
 
-ONE_LIGHT = {
-    "BG_DARK": "#f5f2ed",
-    "BG_SURFACE": "#eae7e2",
-    "BG_SURFACE_LIGHT": "#ddd9d2",
-    "BG_HOVER": "#d2cec7",
-    "PRIMARY": "#4078f2",
-    "ACCENT_RED": "#e45649",
-    "ACCENT_GREEN": "#50a14f",
-    "ACCENT_YELLOW": "#986801",
-    "ACCENT_ORANGE": "#da854d",
-    "ACCENT_PURPLE": "#a626a4",
-    "ACCENT_CYAN": "#0184bc",
-    "TEXT_PRIMARY": "#4a4a4a",
-    "TEXT_BRIGHT": "#2a2a2a",
-    "TEXT_SECONDARY": "#666666",  # WCAG AA：亮底 ≥4.5:1（原 #8a8a8a 仅 ~2.8）
-    "TEXT_ON_PRIMARY": "#ffffff",
-    "BORDER": "#d4d0cb",
-}
-
-# 8 套新增配色（theme_design_guide.md 第三节）。
-# 指南中的玻璃材质用 rgba() 描述（如 BG_SURFACE 为 6% 白玻璃），这里统一合成
-# 为该颜色叠加在 BG_DARK 上的不透明 hex——保证 QSS/QColor/对比度测试全部可靠，
-# 玻璃质感由 DWM 毛玻璃 + get_stylesheet 的 _surface_color() 半透明处理实现。
-
-EVE_DEEP = {
-    "BG_DARK": "#0b0e14",
-    "BG_SURFACE": "#1a1c22",  # 白色 6% 玻璃合成
-    "BG_SURFACE_LIGHT": "#1b2130",
-    "BG_HOVER": "#242c3d",
-    "PRIMARY": "#4d9fff",
-    "ACCENT_RED": "#e05252",
-    "ACCENT_GREEN": "#58c08c",
-    "ACCENT_YELLOW": "#e8b13d",
-    "ACCENT_ORANGE": "#d19a66",
-    "ACCENT_PURPLE": "#9b6bff",
-    "ACCENT_CYAN": "#46b6c8",
-    "TEXT_PRIMARY": "#c8cdd6",
-    "TEXT_BRIGHT": "#ffffff",
-    "TEXT_SECONDARY": "#6b7380",
-    "TEXT_ON_PRIMARY": "#0b0e14",
-    "BORDER": "#23262b",  # 白色 10% 玻璃合成
-}
-
-EVE_POLAR = {
-    "BG_DARK": "#e8eaef",
-    "BG_SURFACE": "#f5f6f8",  # 白色 55% 玻璃合成
-    "BG_SURFACE_LIGHT": "#d5dae3",
-    "BG_HOVER": "#c8cfda",
-    "PRIMARY": "#005fb8",
-    "ACCENT_RED": "#d13438",
-    "ACCENT_GREEN": "#107c41",
-    "ACCENT_YELLOW": "#b8860b",
-    "ACCENT_ORANGE": "#c55a11",
-    "ACCENT_PURPLE": "#7b5cd6",
-    "ACCENT_CYAN": "#0099a8",
-    "TEXT_PRIMARY": "#2b2f36",
-    "TEXT_BRIGHT": "#111318",
-    "TEXT_SECONDARY": "#5f6876",  # WCAG AA：亮底 ≥4.5:1（原 #6b7280 仅 ~4.4）
-    "TEXT_ON_PRIMARY": "#ffffff",
-    "BORDER": "#ccced2",  # 黑色 12% 玻璃合成
-}
-
-FLUENT_BLUE = {
-    "BG_DARK": "#202020",
-    "BG_SURFACE": "#2b2b2b",  # 白色 5% 玻璃合成
-    "BG_SURFACE_LIGHT": "#333333",
-    "BG_HOVER": "#3d3d3d",
-    "PRIMARY": "#4cc2ff",
-    "ACCENT_RED": "#ff99a4",
-    "ACCENT_GREEN": "#6ccb5f",
-    "ACCENT_YELLOW": "#fce100",
-    "ACCENT_ORANGE": "#f7630c",
-    "ACCENT_PURPLE": "#c29bff",
-    "ACCENT_CYAN": "#4cc2ff",
-    "TEXT_PRIMARY": "#f3f3f3",
-    "TEXT_BRIGHT": "#ffffff",
-    "TEXT_SECONDARY": "#a0a0a0",
-    "TEXT_ON_PRIMARY": "#0f0f0f",
-    "BORDER": "#323232",  # 白色 8% 玻璃合成
-}
-
-FLUENT_BRIGHT = {
-    "BG_DARK": "#f3f3f3",
-    "BG_SURFACE": "#fafafa",  # 白色 60% 玻璃合成
-    "BG_SURFACE_LIGHT": "#e5e5e5",
-    "BG_HOVER": "#dadada",
-    "PRIMARY": "#005fb8",
-    "ACCENT_RED": "#c42b1c",
-    "ACCENT_GREEN": "#0f7b0f",
-    "ACCENT_YELLOW": "#9d5d00",
-    "ACCENT_ORANGE": "#c55a11",
-    "ACCENT_PURPLE": "#8764b8",
-    "ACCENT_CYAN": "#038387",
-    "TEXT_PRIMARY": "#1a1a1a",
-    "TEXT_BRIGHT": "#000000",
-    "TEXT_SECONDARY": "#616161",
-    "TEXT_ON_PRIMARY": "#ffffff",
-    "BORDER": "#e0e0e0",  # 黑色 8% 玻璃合成
-}
-
-CYBER_NEON = {
-    "BG_DARK": "#05060a",
-    "BG_SURFACE": "#0d0f1a",
-    "BG_SURFACE_LIGHT": "#141828",
-    "BG_HOVER": "#1c2240",
-    "PRIMARY": "#00f0ff",
-    "ACCENT_RED": "#ff2e63",
-    "ACCENT_GREEN": "#00ff9f",
-    "ACCENT_YELLOW": "#ffe600",
-    "ACCENT_ORANGE": "#ff9f1c",
-    "ACCENT_PURPLE": "#bc13fe",
-    "ACCENT_CYAN": "#00f0ff",
-    "TEXT_PRIMARY": "#d0f8ff",
-    "TEXT_BRIGHT": "#ffffff",
-    "TEXT_SECONDARY": "#5a6b8c",
-    "TEXT_ON_PRIMARY": "#05060a",
-    "BORDER": "#035860",  # 青色 35% 玻璃合成
-}
-
-NORD = {
-    "BG_DARK": "#2e3440",
-    "BG_SURFACE": "#3b4252",
-    "BG_SURFACE_LIGHT": "#434c5e",
-    "BG_HOVER": "#4c566a",
-    "PRIMARY": "#88c0d0",
-    "ACCENT_RED": "#bf616a",
-    "ACCENT_GREEN": "#a3be8c",
-    "ACCENT_YELLOW": "#ebcb8b",
-    "ACCENT_ORANGE": "#d08770",
-    "ACCENT_PURPLE": "#b48ead",
-    "ACCENT_CYAN": "#8fbcbb",
-    "TEXT_PRIMARY": "#d8dee9",
-    "TEXT_BRIGHT": "#eceff4",
-    "TEXT_SECONDARY": "#81a1c1",
-    "TEXT_ON_PRIMARY": "#2e3440",
-    "BORDER": "#4c566a",
-}
-
-TOKYO_NIGHT = {
-    "BG_DARK": "#1a1b26",
-    "BG_SURFACE": "#24283b",
-    "BG_SURFACE_LIGHT": "#2f3549",
-    "BG_HOVER": "#3b4261",
-    "PRIMARY": "#7aa2f7",
-    "ACCENT_RED": "#f7768e",
-    "ACCENT_GREEN": "#9ece6a",
-    "ACCENT_YELLOW": "#e0af68",
-    "ACCENT_ORANGE": "#ff9e64",
-    "ACCENT_PURPLE": "#bb9af7",
-    "ACCENT_CYAN": "#7dcfff",
-    "TEXT_PRIMARY": "#a9b1d6",
-    "TEXT_BRIGHT": "#c0caf5",
-    "TEXT_SECONDARY": "#727c98",  # 调亮（原 #565f89 对比度仅 2.35，不易读）
-    "TEXT_ON_PRIMARY": "#1a1b26",
-    "BORDER": "#3b4261",
-}
-
-WARM_SUN = {
-    "BG_DARK": "#f7f3ec",
-    "BG_SURFACE": "#ffffff",
-    "BG_SURFACE_LIGHT": "#efe9df",
-    "BG_HOVER": "#e4dccc",
-    "PRIMARY": "#c4704a",
-    "ACCENT_RED": "#c2453d",
-    "ACCENT_GREEN": "#5b8c51",
-    "ACCENT_YELLOW": "#a8862e",
-    "ACCENT_ORANGE": "#c4704a",
-    "ACCENT_PURPLE": "#8e6ba4",
-    "ACCENT_CYAN": "#3e8e8e",
-    "TEXT_PRIMARY": "#3d3830",
-    "TEXT_BRIGHT": "#26221c",
-    "TEXT_SECONDARY": "#6a6356",  # WCAG AA：亮底 ≥4.5:1（原 #8c8476 仅 ~3.7）
-    "TEXT_ON_PRIMARY": "#ffffff",
-    "BORDER": "#e3e0d9",  # 黑色 8% 玻璃合成
+FLUENT_DARK = {
+    # 深色按用户指定的 Cyberpunk Dark Mode 配色（Tailwind slate + sky/purple/pink）。
+    # 底色 #0F172A / 浮起面 #1E293B 是 slate-900/800，强调色取 sky-400 等高明度色，
+    # 这样在深底上既亮眼又不刺眼。
+    "BG_DARK": "#0f172a",  # slate-900
+    "BG_SURFACE": "#1e293b",  # slate-800
+    "BG_SURFACE_LIGHT": "#24334b",  # 选中/悬浮
+    "BG_HOVER": "#2e4460",
+    "PRIMARY": "#38bdf8",  # sky-400：主色
+    "ACCENT_RED": "#f472b6",  # pink-400
+    "ACCENT_GREEN": "#34d399",  # emerald-400
+    "ACCENT_YELLOW": "#fbbf24",  # amber-400
+    "ACCENT_ORANGE": "#fb923c",  # orange-400
+    "ACCENT_PURPLE": "#c084fc",  # purple-400
+    "ACCENT_CYAN": "#22d3ee",  # cyan-400
+    "TEXT_PRIMARY": "#e2e8f0",  # slate-200
+    "TEXT_BRIGHT": "#f8fafc",  # slate-50
+    "TEXT_SECONDARY": "#94a3b8",  # slate-400
+    "TEXT_ON_PRIMARY": "#0f172a",  # 亮青底上用深字（对比度远高于白字）
+    "BORDER": "#334155",  # slate-700
 }
 
 
@@ -220,108 +78,65 @@ class ThemeSpec(TypedDict):
 
 
 THEME_REGISTRY: dict[str, ThemeSpec] = {
-    "eve-deep": {
-        "id": "eve-deep",
-        "name_zh": "EVE 深空",
-        "mode": "dark",
-        "material": "acrylic",
-        "radius": 6,
-        "colors": EVE_DEEP,
-    },
-    "eve-polar": {
-        "id": "eve-polar",
-        "name_zh": "EVE 极昼",
-        "mode": "light",
-        "material": "acrylic",
-        "radius": 6,
-        "colors": EVE_POLAR,
-    },
-    "fluent-blue": {
-        "id": "fluent-blue",
-        "name_zh": "Fluent 蓝",
+    "fluent-dark": {
+        "id": "fluent-dark",
+        "name_zh": "Fluent 深色",
         "mode": "dark",
         "material": "mica",
         "radius": 4,
-        "colors": FLUENT_BLUE,
+        "colors": FLUENT_DARK,
     },
-    "fluent-bright": {
-        "id": "fluent-bright",
-        "name_zh": "Fluent 亮",
+    "fluent-light": {
+        "id": "fluent-light",
+        "name_zh": "Fluent 浅色",
         "mode": "light",
         "material": "mica",
         "radius": 4,
-        "colors": FLUENT_BRIGHT,
-    },
-    "cyber-neon": {
-        "id": "cyber-neon",
-        "name_zh": "赛博霓虹",
-        "mode": "dark",
-        "material": "solid",
-        "radius": 2,
-        "colors": CYBER_NEON,
-    },
-    "nord": {"id": "nord", "name_zh": "Nord", "mode": "dark", "material": "solid", "radius": 6, "colors": NORD},
-    "tokyo-night": {
-        "id": "tokyo-night",
-        "name_zh": "Tokyo Night",
-        "mode": "dark",
-        "material": "solid",
-        "radius": 8,
-        "colors": TOKYO_NIGHT,
-    },
-    "warm-sun": {
-        "id": "warm-sun",
-        "name_zh": "暖阳",
-        "mode": "light",
-        "material": "solid",
-        "radius": 10,
-        "colors": WARM_SUN,
-    },
-    "one-dark": {
-        "id": "one-dark",
-        "name_zh": "One Dark",
-        "mode": "dark",
-        "material": "solid",
-        "radius": 6,
-        "colors": ONE_DARK_PRO,
-    },
-    "one-light": {
-        "id": "one-light",
-        "name_zh": "One Light",
-        "mode": "light",
-        "material": "solid",
-        "radius": 6,
-        "colors": ONE_LIGHT,
+        "colors": FLUENT_LIGHT,
     },
 }
 
-# legacy settings.json 里的旧主题 id → canonical id 迁移
-_LEGACY_MAP = {"dark": "one-dark", "light": "one-light"}
+# 旧主题 id → 现存主题。历史上的 8 套配色已删除，用户 settings 里残留的旧 id
+# 在此兜底，避免升级后主题失效。
+_LEGACY_MAP = {
+    "dark": "fluent-dark",
+    "light": "fluent-light",
+    "one-dark": "fluent-dark",
+    "one-light": "fluent-light",
+    "eve-deep": "fluent-dark",
+    "eve-polar": "fluent-light",
+    "fluent-blue": "fluent-dark",
+    "fluent-bright": "fluent-light",
+    "cyber-neon": "fluent-dark",
+    "nord": "fluent-dark",
+    "tokyo-night": "fluent-dark",
+    "warm-sun": "fluent-light",
+}
 
 # 兼容层：旧调用方 / 测试仍可引用 THEMES["dark"/"light"]
 THEMES = {
-    "dark": ONE_DARK_PRO,
-    "light": ONE_LIGHT,
+    "dark": FLUENT_DARK,
+    "light": FLUENT_LIGHT,
 }
 
 # ── 模块级变量（运行时被 apply_theme 更新） ──
-# 默认使用 One Dark Pro
-BG_DARK = ONE_DARK_PRO["BG_DARK"]
-BG_SURFACE = ONE_DARK_PRO["BG_SURFACE"]
-BG_SURFACE_LIGHT = ONE_DARK_PRO["BG_SURFACE_LIGHT"]
-BG_HOVER = ONE_DARK_PRO["BG_HOVER"]
-PRIMARY = ONE_DARK_PRO["PRIMARY"]
-ACCENT_RED = ONE_DARK_PRO["ACCENT_RED"]
-ACCENT_GREEN = ONE_DARK_PRO["ACCENT_GREEN"]
-ACCENT_YELLOW = ONE_DARK_PRO["ACCENT_YELLOW"]
-ACCENT_ORANGE = ONE_DARK_PRO["ACCENT_ORANGE"]
-ACCENT_PURPLE = ONE_DARK_PRO["ACCENT_PURPLE"]
-ACCENT_CYAN = ONE_DARK_PRO["ACCENT_CYAN"]
-TEXT_PRIMARY = ONE_DARK_PRO["TEXT_PRIMARY"]
-TEXT_BRIGHT = ONE_DARK_PRO["TEXT_BRIGHT"]
-TEXT_SECONDARY = ONE_DARK_PRO["TEXT_SECONDARY"]
-TEXT_ON_PRIMARY = ONE_DARK_PRO["TEXT_ON_PRIMARY"]
-BORDER = ONE_DARK_PRO["BORDER"]
+# 默认使用 Fluent 深色
+BG_DARK = FLUENT_DARK["BG_DARK"]
+BG_SURFACE = FLUENT_DARK["BG_SURFACE"]
+BG_SURFACE_LIGHT = FLUENT_DARK["BG_SURFACE_LIGHT"]
+BG_HOVER = FLUENT_DARK["BG_HOVER"]
+PRIMARY = FLUENT_DARK["PRIMARY"]
+ACCENT_RED = FLUENT_DARK["ACCENT_RED"]
+ACCENT_GREEN = FLUENT_DARK["ACCENT_GREEN"]
+ACCENT_YELLOW = FLUENT_DARK["ACCENT_YELLOW"]
+ACCENT_ORANGE = FLUENT_DARK["ACCENT_ORANGE"]
+ACCENT_PURPLE = FLUENT_DARK["ACCENT_PURPLE"]
+ACCENT_CYAN = FLUENT_DARK["ACCENT_CYAN"]
+TEXT_PRIMARY = FLUENT_DARK["TEXT_PRIMARY"]
+TEXT_BRIGHT = FLUENT_DARK["TEXT_BRIGHT"]
+TEXT_SECONDARY = FLUENT_DARK["TEXT_SECONDARY"]
+TEXT_ON_PRIMARY = FLUENT_DARK["TEXT_ON_PRIMARY"]
+BORDER = FLUENT_DARK["BORDER"]
 
 # 材质与圆角（随主题切换）
 MATERIAL = "solid"
@@ -336,20 +151,33 @@ RADIUS_SMALL = max(2, RADIUS - 2)
 # ⚠️ **模糊值是 0..1 的归一化值，不是像素半径**。
 # QML 的 MultiEffect.shadowBlur 按元素尺寸归一化（Qt 文档：0=无模糊，1=最大模糊）；
 # 把规范的像素值直接传进去会得到「完全没有阴影」——实测 blur=0.8 正常、
-# blur=14.4 无阴影。下面的取值是对着 240x140 卡片实测标定的
-# （0.35≈5px 扩散、0.55≈7px、0.80≈13px），与规范像素值一一对应。
-# 垂直偏移则是**真像素**（MultiEffect.shadowVerticalOffset 单位是 px）。
-ELEVATION: dict[int, tuple[float, float, float]] = {
+# blur=14.4 无阴影。
+#
+# ⚠️ **正因为按尺寸归一化，大小元素必须用两套值**：同一个 0.35 在 240x140 的卡片上
+# 散开约 13px（合适），在 130x32 的按钮上却散开约 8px——相对按钮自身高度太大，
+# 看上去就是又大又脏的一块（用户反馈「这个阴影好丑」）。故拆成控件级与卡片级。
+# 数值都是对着实际尺寸实测标定的：
+#   控件 130x32：0.16 ≈ 3.3px（对齐规范 small 的 3.6px）
+#   卡片 240x140：0.35 ≈ 5px / 0.55 ≈ 7px / 0.80 ≈ 13px（对齐规范 3.6/7.2/14.4）
+ELEVATION_CARD: dict[int, tuple[float, float, float]] = {
     1: (0.35, 1.6, 0.13),  # 规范 3.6px
     2: (0.55, 3.2, 0.13),  # 规范 7.2px
     3: (0.80, 6.4, 0.13),  # 规范 14.4px
     4: (0.88, 6.4, 0.18),  # 悬停：阴影扩张（规范 hover 档）
 }
 
+ELEVATION_CONTROL: dict[int, tuple[float, float, float]] = {
+    1: (0.16, 1.0, 0.13),  # 静止（规范 small）
+    4: (0.24, 1.6, 0.18),  # 悬停：略微扩张
+}
+
+# 兼容旧名（卡片级）
+ELEVATION = ELEVATION_CARD
+
 # 暗色主题下黑色阴影在深底上几乎不可见，需按此系数抬高不透明度。
-# 实测（240x140 卡片、底色 #282c34）：alpha=0.13 完全看不出层次；
-# 要在卡边读出柔和衰减需要 ~0.5 以上，故暗色按 4 倍放大并封顶 0.85。
+# 控件级系数更小：小面积上叠一块 0.5 alpha 的深影同样会显得脏。
 DARK_SHADOW_BOOST = 4.0
+DARK_SHADOW_BOOST_CONTROL = 2.2
 DARK_SHADOW_ALPHA_MAX = 0.85
 
 
@@ -415,7 +243,7 @@ def font_point_size() -> int:
     return max(6, round(BASE_FONT_PX * 0.75 * FONT_SCALE))
 
 
-_current_theme = "one-dark"
+_current_theme = "fluent-dark"
 
 
 class _StrongCallback:
@@ -518,9 +346,9 @@ def theme_radius() -> int:
 
 
 def toggle_theme() -> str:
-    """在当前主题 mode 基础上在 one-dark / one-light 之间确定性互切，返回新主题 id"""
+    """在当前主题 mode 基础上在 fluent-dark / fluent-light 之间确定性互切，返回新主题 id"""
     spec = current_theme_spec()
-    target = "one-light" if (spec and spec["mode"] == "dark") else "one-dark"
+    target = "fluent-light" if (spec and spec["mode"] == "dark") else "fluent-dark"
     apply_theme(target)
     return target
 
@@ -562,13 +390,13 @@ def save_theme_preference(theme_name: str):
 
 
 def load_theme_preference() -> str:
-    """从 settings.json 读取主题偏好，默认 one-dark；legacy "dark"/"light" 自动迁移落盘"""
+    """从 settings.json 读取主题偏好，默认 fluent-dark；legacy "dark"/"light" 自动迁移落盘"""
     try:
         from services.user_settings import load_settings
 
-        raw = cast(str, load_settings().get("theme", "one-dark"))
+        raw = cast(str, load_settings().get("theme", "fluent-dark"))
     except Exception:
-        return "one-dark"
+        return "fluent-dark"
     canonical = _resolve_theme_id(raw)
     if canonical != raw:
         save_theme_preference(canonical)
