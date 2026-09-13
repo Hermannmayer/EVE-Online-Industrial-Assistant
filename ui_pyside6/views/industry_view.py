@@ -715,19 +715,29 @@ class IndustryPage(QWidget):
             return
         from services.inventory_manager import get_hangars
         from services.user_settings import get_default_hangar_id
+        from ui_pyside6.views.industry.complete_guard import confirm_bp_shortfall
 
         hangars = get_hangars()
         default_hid = get_default_hangar_id("default_deposit_hangar_id")
         dlg = CompletePlansDialog(ready, hangars, default_hid, self)
         if not dlg.exec():
             return
-        result = complete_plans(ready, dlg.selected_hangar_id(), parent=self)
+        # 与另外三条入口一致：蓝图流程不足先确认再强制放行。缺这一步时，
+        # 强制启动过的计划会被 complete_plan 硬拒，本入口永远下不了线。
+        allow_bp_short = confirm_bp_shortfall(self, ready)
+        if allow_bp_short is None:
+            return
+        result = complete_plans(ready, dlg.selected_hangar_id(), parent=self, allow_bp_short=allow_bp_short)
         self.load_plans()
         msg = f"已下线 {result['completed']} 项"
         if result["deposited"]:
             msg += f"，入库 {result['deposited']} 项"
         if result["failed"]:
             msg += f"，失败 {len(result['failed'])} 项"
+            # 只报产品名等于没说：把 complete_plan 的拒绝原因带出来
+            reasons = result.get("failed_reasons") or []
+            if reasons:
+                msg += "\n\n" + "\n".join(reasons[:10])
         QMessageBox.information(self, "完成", msg)
 
     def _on_launch_wizard(self):

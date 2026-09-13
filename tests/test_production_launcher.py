@@ -1,5 +1,7 @@
 """产线启动小助手 UI 冒烟测试（slow，--quick 时跳过）。"""
 
+from unittest.mock import MagicMock
+
 import pytest
 from PySide6.QtCore import Qt
 
@@ -91,17 +93,50 @@ SAMPLE_PLANS = [
 ]
 
 
-def _make_launcher(qapp, monkeypatch, chars=("甲", "乙")):
+def _plan(plan_id: int, *, status: str = "pending", name: str = "渡鸦级", **extra) -> dict:
+    """单条计划夹具 —— 与 SAMPLE_PLANS 同形状，便于按场景构造最小列表。"""
+    base = {
+        "id": plan_id,
+        "product_type_id": 2001,
+        "product_name": name,
+        "blueprint_type_id": 3001,
+        "status": status,
+        "char_name": "甲",
+        "category": "manufacturing",
+        "group_id": 0,
+        "child_level": 0,
+        "runs": 1,
+        "parallels": 1,
+        "calculated_time": 3600,
+        "mat_hangar_id": 1,
+        "facility": "仓库A",
+        "output_hangar": "仓库B",
+        "has_image": True,
+        "assigned_blueprint_id": None,
+        "material_cost": 100,
+    }
+    base.update(extra)
+    return base
+
+
+READY_PLAN = _plan(101, status="ready", name="待下线成品")
+RUNNING_PLAN = _plan(102, status="in_progress", name="生产中成品")
+# 跨 ≥2 个母项引用 → 被 group_and_sort_plans 提到合成「共享组件」根节点下
+SHARED_CHILD_PLAN = _plan(103, name="共享子件", child_level=1, source_mother_ids="1,2")
+
+
+def _make_launcher(qapp, monkeypatch, chars=("甲", "乙"), plans=None):
     from ui_pyside6.views.industry import production_launcher as pl
 
     chars = list(chars)
+    rows = SAMPLE_PLANS if plans is None else plans
     monkeypatch.setattr(plan_execution, "expire_overdue_plans", lambda: 0)
     # 必须接受 **kwargs：`_shortfall_count` 会传 stock=…；签名不匹配会抛 TypeError，
     # 又被那里的 except 静默吞掉 → 缺口恒为 0，新用例会「假通过」。
     monkeypatch.setattr(plan_execution, "check_materials", lambda plan, mat, **kw: [])
     monkeypatch.setattr(plan_execution, "output_per_run", lambda tid: 1)
     monkeypatch.setattr(plan_execution, "start_plan", lambda *a, **k: {"ok": True, "message": "ok"})
-    monkeypatch.setattr(pl, "load_plans_for_wizard", lambda: SAMPLE_PLANS)
+    monkeypatch.setattr(pl, "load_plans_for_wizard", lambda: rows)
     monkeypatch.setattr(pl, "load_item_icon", lambda tid, size=None: None)
     monkeypatch.setattr(pl, "get_character_list", lambda: list(chars))
     monkeypatch.setattr(
@@ -185,34 +220,41 @@ class TestProductionLauncher:
         finally:
             w.close()
 
-    def test_blocked_row_shows_reason_affordance(self, qapp, monkeypatch):
-        """被阻塞的行不再留空：给出可见的 ? 入口，tooltip 即阻塞原因。"""
+    def test_blocked_row_shows_short_label_and_full_reason(self, qapp, monkeypatch):
+        """被阻塞的行不留空、也不再显示「?」：动作槽是短标签，完整原因进 tooltip。"""
         w, _ = _make_launcher(qapp, monkeypatch)
         try:
-            monkeypatch.setattr(w, "_block_reason", lambda plan: "生产中" if plan.get("id") == 2 else None)
+            monkeypatch.setattr(
+                w,
+                "_block_state",
+                lambda plan: ("children_running", "子项产线运行中") if plan.get("id") == 2 else (None, None),
+            )
             w._sync_rows(w._visible_plans)
             row = w._widgets[2]
             assert row._btn_start.isHidden() is True
             assert row._btn_toggle.isHidden() is True
             assert row._btn_blocked.isHidden() is False
-            assert row._btn_blocked.toolTip() == "生产中"
+            assert row._btn_blocked.text() == "子项运行中"
+            assert row._btn_blocked.toolTip() == "子项产线运行中"
         finally:
             w.close()
 
     def test_action_slot_width_is_uniform(self, qapp, monkeypatch):
-        """三种按钮共用同一槽位宽度，避免行动作区左右跳动，且折叠文案不被截断。"""
+        """四个按钮共用同一槽位宽度，避免行动作区左右跳动，且最长文案不被截断。"""
         from PySide6.QtGui import QFontMetrics
 
         w, pl = _make_launcher(qapp, monkeypatch)
         try:
             row = w._widgets[1]
-            widths = {row._btn_start.minimumWidth(), row._btn_toggle.minimumWidth(), row._btn_blocked.minimumWidth()}
+            assert len(row._action_buttons) == 4, "动作槽按钮必须收敛在 _action_buttons 元组里"
+            widths = {btn.minimumWidth() for btn in row._action_buttons}
             assert len(widths) == 1, widths
             slot = widths.pop()
             fm = QFontMetrics(row._btn_toggle.font())
-            assert slot >= fm.horizontalAdvance("折叠(99)") + 2 * pl._GAP_MD
-            # 槽位宽度必须按最宽文案（折叠/展开）取值，不能只按「启动」取值
-            assert slot > fm.horizontalAdvance("启动") + 2 * pl._GAP_MD
+            # 槽宽必须容得下**所有可能文案**：折叠/展开、可下线、启动、全部阻塞短标签
+            samples = ("折叠(99)", "展开(99)", pl._COMPLETE_LABEL, pl._START_LABEL, *pl._BLOCK_SHORT_LABELS.values())
+            for sample in samples:
+                assert slot >= fm.horizontalAdvance(sample) + 2 * pl._GAP_MD, sample
             # 跨行一致
             assert w._widgets[2]._action_slot_w == row._action_slot_w
         finally:
@@ -418,6 +460,7 @@ class TestProductionLauncher:
 
     def test_start_calls_plan_execution(self, qapp, monkeypatch):
         import services.plan_execution as plan_execution
+        from ui_pyside6.views.industry import production_launcher as pl
 
         w, _ = _make_launcher(qapp, monkeypatch)
         calls = []
@@ -427,6 +470,8 @@ class TestProductionLauncher:
             return {"ok": True, "message": "ok"}
 
         monkeypatch.setattr(plan_execution, "start_plan", fake_start)
+        # 容量判定读真实人物配置（同套件别的用例会改它）→ 钉死，避免弹模态超员确认框
+        monkeypatch.setattr(pl, "max_lines_for_category", lambda *a, **k: 99)
         try:
             w._start(1)
             assert calls == [(1, "甲")]  # 默认执行人物 = 计划人物甲
@@ -534,7 +579,7 @@ class TestForceStartOnShortfall:
     def test_shortfall_row_shows_start_button(self, qapp, monkeypatch):
         from services import plan_execution
 
-        w, _ = _make_launcher(qapp, monkeypatch)
+        w, pl = _make_launcher(qapp, monkeypatch)
         try:
             monkeypatch.setattr(plan_execution, "check_materials", self._shortfall)
             w._shortfall_cache.clear()
@@ -544,11 +589,51 @@ class TestForceStartOnShortfall:
             row = w._widgets[1]  # SAMPLE_PLANS id=1：pending 制造计划
             assert not row._btn_start.isHidden(), "缺料可强制时应给启动按钮"
             assert row._btn_blocked.isHidden()
+            # 按钮文字直接说明堵点，而不是含糊的「启动」
+            assert row._btn_start.text() == "材料不够"
+            assert "材料不足" in row._btn_start.toolTip()
         finally:
             w.close()
 
-    def test_non_material_block_still_question(self, qapp, monkeypatch):
-        """缺料之外还有阻塞 → 仍然只是问号。
+    def test_start_button_text_and_tooltip_cleared_when_unblocked(self, qapp, monkeypatch):
+        """缺料补齐后同一行会被原地复用 —— 短标签文字与 tooltip 都必须复位。
+
+        旧实现在可启动分支只 `show()`，既不重设文本也不清 tooltip，于是行上会
+        残留上一轮的「材料不够」与强制启动提示。
+        """
+        from services import plan_execution
+
+        w, _ = _make_launcher(qapp, monkeypatch)
+        try:
+            short = True
+
+            def _check(plan, mat, **kw):
+                return self._shortfall(plan, mat) if short else []
+
+            monkeypatch.setattr(plan_execution, "check_materials", _check)
+            w._shortfall_cache.clear()
+            w._stock_cache.clear()
+            w._stock_fp.clear()
+            w._on_poll()
+            assert w._widgets[1]._btn_start.text() == "材料不够"
+
+            short = False
+            w._shortfall_cache.clear()
+            w._stock_cache.clear()
+            w._stock_fp.clear()
+            w._on_poll()
+            row = w._widgets[1]
+            assert row._btn_start.text() == "启动"
+            assert row._btn_start.toolTip() == ""
+        finally:
+            w.close()
+
+    @staticmethod
+    def _no_shortfall(plan, mat, **kw):
+        return []
+
+    def test_missing_blueprint_shows_short_label(self, qapp, monkeypatch):
+        """硬阻塞（拷贝未绑输入蓝图）→ 动作槽显示「缺蓝图」，完整原因进 tooltip。
 
         这里用**拷贝作业**：制造计划在未绑蓝图时按「不绑也能启动」的宽松语义算就绪，
         拷贝/研究则必须有输入蓝图（见 services.plan_job_kinds），所以换 activity 才拦得住。
@@ -564,7 +649,7 @@ class TestForceStartOnShortfall:
                     p["has_image"] = False
                     p["assigned_blueprint_id"] = None
             monkeypatch.setattr(pl, "load_plans_for_wizard", lambda: plans)
-            monkeypatch.setattr(plan_execution, "check_materials", self._shortfall)
+            monkeypatch.setattr(plan_execution, "check_materials", self._no_shortfall)
             w._shortfall_cache.clear()
             w._stock_cache.clear()
             w._stock_fp.clear()
@@ -572,6 +657,40 @@ class TestForceStartOnShortfall:
             row = w._widgets[1]
             assert row._btn_start.isHidden()
             assert not row._btn_blocked.isHidden()
+            assert row._btn_blocked.text() == "缺蓝图"
+            assert "蓝图原本" in row._btn_blocked.toolTip()
+        finally:
+            w.close()
+
+    def test_soft_shortfall_with_hard_block_keeps_material_label(self, qapp, monkeypatch):
+        """缺料 + 另有硬阻塞：动作槽仍显示「材料不够」。
+
+        这是**刻意接受**的口径：`plan_start_block` 按固定顺序先报缺料，短标签与
+        tooltip 同源（tooltip 也写「材料不足 N 种」），不会自相矛盾。只是把材料补齐
+        并不能解锁该行——真正的门要等下一轮轮询才会显形。改判定顺序会动到
+        `plan_start_block_reason` 被测试冻结的文案，代价更大。
+        """
+        from services import plan_execution
+
+        w, pl = _make_launcher(qapp, monkeypatch)
+        try:
+            plans = [dict(p) for p in SAMPLE_PLANS]
+            for p in plans:
+                if p["id"] == 1:
+                    p["activity"] = "copying"
+                    p["has_image"] = False
+                    p["assigned_blueprint_id"] = None
+            monkeypatch.setattr(pl, "load_plans_for_wizard", lambda: plans)
+            monkeypatch.setattr(plan_execution, "check_materials", self._shortfall)
+            w._shortfall_cache.clear()
+            w._stock_cache.clear()
+            w._stock_fp.clear()
+            w._on_poll()
+            row = w._widgets[1]
+            # 不可强制（蓝图是硬阻塞）→ 不是启动按钮
+            assert row._btn_start.isHidden()
+            assert row._btn_blocked.text() == "材料不够"
+            assert "材料不足" in row._btn_blocked.toolTip()
         finally:
             w.close()
 
@@ -600,5 +719,210 @@ class TestForceStartOnShortfall:
             w._stock_cache.clear()
             w._stock_fp.clear()
             assert w._shortfall_count({"id": 1, "status": "pending", "mat_hangar_id": 1}) == 0
+        finally:
+            w.close()
+
+
+class TestActionSlotStates:
+    """动作槽直接显示真实状态：可下线的行给按钮，其余给短标签，不再出现「?」。"""
+
+    def test_ready_row_shows_complete_button(self, qapp, monkeypatch):
+        w, pl = _make_launcher(qapp, monkeypatch, plans=[dict(READY_PLAN)])
+        try:
+            row = w._widgets[101]
+            assert row._btn_complete.isHidden() is False
+            assert row._btn_complete.text() == pl._COMPLETE_LABEL == "可下线"
+            # 复用主按钮样式：新开 objectName 就得往对比度契约表加条目
+            assert row._btn_complete.objectName() == "btn_row"
+            for btn in (row._btn_start, row._btn_toggle, row._btn_blocked):
+                assert btn.isHidden(), btn.objectName()
+        finally:
+            w.close()
+
+    def test_ready_row_complete_runs_flow_and_keeps_feedback(self, qapp, monkeypatch):
+        """点「可下线」→ 走共用的单行下线；成功后行会消失，提示不得被刷新擦掉。"""
+        from ui_pyside6.views.industry import complete_plans_dialog as cpd
+
+        rows = [dict(READY_PLAN)]
+        w, _ = _make_launcher(qapp, monkeypatch, plans=rows)
+        try:
+            seen: list = []
+
+            def _complete(parent, plan):
+                rows.clear()  # 模拟库里已 completed → 下一轮轮询不再出现该行
+                seen.append(plan)
+                return {"completed": 1}
+
+            monkeypatch.setattr(cpd, "complete_one_plan", _complete)
+            emitted: list = []
+            w.plans_changed.connect(lambda: emitted.append(True))
+
+            w._on_row_complete(101)
+
+            assert [p["id"] for p in seen] == [101]
+            assert emitted == [True]
+            assert w._hint_text == "已下线：待下线成品"
+            # 紧凑态文案真的被刷新了（只设 _hint_text 不重渲染等于没提示）
+            assert w._bottom_hint.text() == "已下线：待下线成品"
+        finally:
+            w.close()
+
+    def test_ready_row_complete_cancel_is_noop(self, qapp, monkeypatch):
+        from ui_pyside6.views.industry import complete_plans_dialog as cpd
+
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(READY_PLAN)])
+        try:
+            monkeypatch.setattr(cpd, "complete_one_plan", lambda parent, plan: None)
+            emitted: list = []
+            w.plans_changed.connect(lambda: emitted.append(True))
+            hint_before = w._hint_text
+
+            w._on_row_complete(101)
+
+            assert emitted == []
+            assert w._hint_text == hint_before
+        finally:
+            w.close()
+
+    def test_in_progress_row_shows_short_label(self, qapp, monkeypatch):
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(RUNNING_PLAN)])
+        try:
+            row = w._widgets[102]
+            assert row._btn_blocked.isHidden() is False
+            assert row._btn_blocked.text() == "生产中"
+            assert row._btn_blocked.toolTip() == "生产中"
+            assert row._btn_complete.isHidden() is True
+        finally:
+            w.close()
+
+    def test_synthetic_root_row_has_no_action_button(self, qapp, monkeypatch):
+        """共享组件的合成根行不属于任何可操作状态 → 动作槽留空。
+
+        旧实现会落到兜底分支，显示「?」并在 tooltip 写「状态「」不可启动」。
+        """
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(SHARED_CHILD_PLAN)])
+        try:
+            root = w._widgets[0]  # 合成根行 id=None → 行键为 0
+            assert root._plan_id is None
+            for btn in root._action_buttons:
+                assert btn.isHidden(), btn.objectName()
+        finally:
+            w.close()
+
+
+# 多并行产线的独立计划 —— 部分启动的可见条件需要 parallels > 1
+PARTIAL_PLAN = _plan(201, name="多线成品", parallels=3)
+
+
+class TestLauncherContextMenu:
+    """行右键菜单：添加备注 / 部分启动。"""
+
+    def test_partial_start_visible_for_standalone_plan(self, qapp, monkeypatch):
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(PARTIAL_PLAN)])
+        try:
+            assert w._can_partial_start(w._plan_map[201]) is True
+        finally:
+            w.close()
+
+    def test_partial_start_hidden_for_child_row(self, qapp, monkeypatch):
+        child = _plan(202, name="子项", child_level=1, parallels=3)
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[child])
+        try:
+            assert w._can_partial_start(w._plan_map[202]) is False
+        finally:
+            w.close()
+
+    def test_partial_start_hidden_for_single_line(self, qapp, monkeypatch):
+        single = _plan(203, name="单线", parallels=1)
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[single])
+        try:
+            assert w._can_partial_start(w._plan_map[203]) is False
+        finally:
+            w.close()
+
+    def test_partial_start_hidden_for_mother_with_pending_children(self, qapp, monkeypatch):
+        """母项还有未完成子项 → 不可启动，也不给部分启动。"""
+        mother = _plan(204, name="母项", group_number=9, child_level=0, parallels=3)
+        pending_child = _plan(205, name="子项", group_number=9, child_level=1)
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[mother, pending_child])
+        try:
+            assert w._can_partial_start(w._plan_map[204]) is False
+        finally:
+            w.close()
+
+    def test_partial_start_calls_service_with_n(self, qapp, monkeypatch):
+        from ui_pyside6.views.industry import partial_start_dialog as psd
+        from ui_pyside6.views.industry import production_launcher as pl
+
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(PARTIAL_PLAN)])
+        try:
+            seen: dict = {}
+
+            class _Dlg:
+                def __init__(self, *args, **kwargs):
+                    pass
+
+                def exec(self):
+                    return 1
+
+                def lines(self):
+                    return 2
+
+            monkeypatch.setattr(psd, "PartialStartDialog", _Dlg)
+            # 容量判定要读**真实**人物配置（同套件里别的用例会改它），必须钉死，
+            # 否则会弹出模态的「人物产线超员」确认框把测试挂住
+            monkeypatch.setattr(pl, "max_lines_for_category", lambda *a, **k: 99)
+            monkeypatch.setattr(
+                plan_execution,
+                "preview_partial_start",
+                lambda pid, lines, mat: {"ok": True, "shortfalls": [], "bp_short": None},
+            )
+            monkeypatch.setattr(
+                plan_execution,
+                "start_plan_partial",
+                lambda pid, lines, **kw: seen.update(pid=pid, lines=lines, kw=kw) or {"ok": True},
+            )
+            emitted: list = []
+            w.plans_changed.connect(lambda: emitted.append(True))
+
+            w._on_row_partial_start(201)
+
+            assert seen["pid"] == 201 and seen["lines"] == 2
+            assert emitted == [True]
+        finally:
+            w.close()
+
+    def test_notes_menu_writes_repo(self, qapp, monkeypatch):
+        from types import SimpleNamespace
+
+        from ui_pyside6.views.industry import production_launcher as pl
+
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(PARTIAL_PLAN)])
+        try:
+            repo = MagicMock()
+            monkeypatch.setattr(pl, "get_container", lambda: SimpleNamespace(plan_repo=repo))
+            monkeypatch.setattr(pl.QInputDialog, "getMultiLineText", lambda *a, **k: ("待补蓝图", True))
+
+            w._on_row_notes(201)
+
+            repo.update.assert_called_once_with(201, notes="待补蓝图")
+            assert w._plan_map[201]["notes"] == "待补蓝图"
+        finally:
+            w.close()
+
+    def test_notes_menu_cancel_writes_nothing(self, qapp, monkeypatch):
+        from types import SimpleNamespace
+
+        from ui_pyside6.views.industry import production_launcher as pl
+
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(PARTIAL_PLAN)])
+        try:
+            repo = MagicMock()
+            monkeypatch.setattr(pl, "get_container", lambda: SimpleNamespace(plan_repo=repo))
+            monkeypatch.setattr(pl.QInputDialog, "getMultiLineText", lambda *a, **k: ("x", False))
+
+            w._on_row_notes(201)
+
+            repo.update.assert_not_called()
         finally:
             w.close()

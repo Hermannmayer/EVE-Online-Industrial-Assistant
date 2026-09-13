@@ -298,13 +298,26 @@ def _fetch_rows(where_sql: str = "", params: tuple = ()) -> list[dict]:
         sql = "SELECT * FROM production_plans"
         if where_sql:
             sql += " WHERE " + where_sql
-        sql += " ORDER BY created_at DESC"
+        # `id ASC` 作稳定 tiebreak：同批插入的计划共享 created_at（如 insert_plans_batch），
+        # 只按时间排会得到未定义顺序，拆分出来的两行可能上下乱跳
+        sql += " ORDER BY created_at DESC, id ASC"
         c = conn.cursor()
         c.execute(sql, params)
         cols = [d[0] for d in c.description]
         rows = [dict(zip(cols, r, strict=False)) for r in c.fetchall()]
         enrich = _load_enrich_data(conn)
     return _enrich_rows(rows, enrich)
+
+
+def load_plan(plan_id: int) -> dict | None:
+    """按 id 取单条计划（与 `load_plans` 同一条 `_fetch_rows` + enrich 管线）。
+
+    部分启动必须用它重新取数：调用方改完 `parallels` 与蓝图绑定后，只有重走
+    enrich 才能让 `line_levels`/`materials_all_lines` 反映新的产线条数。
+    取的是全量 enrich（含绑定表与蓝图等级），`WHERE id=?` 只多一层过滤。
+    """
+    rows = _fetch_rows("id = ?", (plan_id,))
+    return rows[0] if rows else None
 
 
 def load_plans(filter_key: str) -> list[dict]:

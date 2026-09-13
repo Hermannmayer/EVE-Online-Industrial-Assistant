@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -45,11 +46,15 @@ def complete_plans(
     发明行先弹 InventionOutcomeDialog 回填实际产出（用户取消 → 该行不完成）。
     ⚠️ validate 档测试在**没有 QApplication** 的情况下直调本函数时必须传
     `ask_outcome=False`，否则弹窗会崩或挂死。
-    Returns: {"completed": int, "deposited": int, "failed": [...], "skipped": [...]}
+    Returns: {"completed": int, "deposited": int, "failed": [...], "skipped": [...],
+              "failed_reasons": [...]}
+    ``failed`` 只有产品名（调用方原样展示），``failed_reasons`` 带 `complete_plan`
+    的拒绝原因——只报名字等于没说，用户无从判断是流程不足还是未回填发明产出。
     """
     completed = 0
     deposited = 0
     failed: list[str] = []
+    failed_reasons: list[str] = []
     skipped: list[str] = []
     deposit = hangar_id if hangar_id and hangar_id > 0 else None
     for plan in plans:
@@ -66,8 +71,49 @@ def complete_plans(
             if res.get("deposited"):
                 deposited += 1
         else:
-            failed.append(plan.get("product_name") or str(plan.get("id")))
-    return {"completed": completed, "deposited": deposited, "failed": failed, "skipped": skipped}
+            name = plan.get("product_name") or str(plan.get("id"))
+            failed.append(name)
+            failed_reasons.append(f"{name}：{res.get('message') or '未知原因'}")
+    return {
+        "completed": completed,
+        "deposited": deposited,
+        "failed": failed,
+        "skipped": skipped,
+        "failed_reasons": failed_reasons,
+    }
+
+
+def complete_one_plan(parent, plan: dict) -> dict | None:
+    """单行下线端到端：选产出机库 → 蓝图流程预检 → complete_plans → 失败告警。
+
+    **非 None 即成功**；返回 None 表示「用户取消」或「已弹过失败告警」。
+    调用方拿到 None 直接返回即可 —— 千万不要把它当成失败结果去改本地状态
+    （会让失败的计划在界面上显示成已完成）。
+
+    计划表格的单行下线与小助手的行内「可下线」共用本函数，两条入口的机库选择、
+    流程预检与失败提示口径因此完全一致。
+    """
+    from services.inventory_manager import get_hangars
+    from services.user_settings import get_default_hangar_id
+    from ui_pyside6.views.industry.complete_guard import confirm_bp_shortfall
+
+    dlg = CompletePlansDialog(
+        [plan],
+        get_hangars(),
+        get_default_hangar_id("default_deposit_hangar_id"),
+        parent,
+    )
+    if not dlg.exec():
+        return None
+    allow_bp_short = confirm_bp_shortfall(parent, [plan])
+    if allow_bp_short is None:
+        return None
+    result = complete_plans([plan], dlg.selected_hangar_id(), parent=parent, allow_bp_short=allow_bp_short)
+    if not result["completed"]:
+        detail = "\n".join(result.get("failed_reasons") or []) or "、".join(result["failed"]) or "未知错误"
+        QMessageBox.warning(parent, "下线失败", detail)
+        return None
+    return result
 
 
 def _is_pending_invention(plan: dict) -> bool:

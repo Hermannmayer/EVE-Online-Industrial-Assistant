@@ -265,7 +265,7 @@ class TestBlueprintTableModel:
             "te_level": 5,
             "product_name": "渡鸦级",
             "base_time": 3600,
-            "runs": -1,
+            "runs": 0,  # 原图：v16 迁移后 runs 恒为 0，是否无限看 is_bpo
             "material_cost": 30000000.0,
             "revenue": 55000000.0,
             "margin": 83.33,
@@ -407,11 +407,18 @@ class TestBlueprintTableModel:
         idx = model.index(0, 6)
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "-"
 
-    def test_runs_infinite(self, qapp):
-        """流程数量 -1 显示 '无限'"""
+    def test_runs_infinite_for_bpo(self, qapp):
+        """原图显示「无限」——由 is_bpo 驱动（不再靠 runs=-1 哨兵）"""
         model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(0, 7)  # runs = -1
+        idx = model.index(0, 7)  # is_bpo=True, runs=0
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "无限"
+
+    def test_runs_zero_copy_not_infinite(self, qapp):
+        """拷贝的 runs=0 是「耗尽」而非「无限」——原图身份只认 is_bpo"""
+        rows = [{**self.SAMPLE_ROWS[1], "runs": 0}]
+        model = BlueprintTableModel(rows)  # 必须持有引用：临时模型被 GC 后 idx 会解引用悬空指针
+        idx = model.index(0, 7)
+        assert idx.data(Qt.ItemDataRole.DisplayRole) == "0"
 
     def test_runs_limited(self, qapp):
         """流程数量有限"""

@@ -176,10 +176,9 @@ class BlueprintTableModel(QAbstractTableModel):
                     return f"{d}d {h}h {m}m"
                 return f"{h}h {m}m"
             if c == 7:
-                runs = r.get("runs", 1)
-                if runs == -1:
+                if r.get("is_bpo"):
                     return "无限"
-                return str(runs)
+                return str(r.get("runs", 0))
             if c == 8:
                 cost = r.get("material_cost")
                 return f"{cost:,.0f} ISK" if cost is not None else "-"
@@ -230,7 +229,7 @@ class BlueprintTableModel(QAbstractTableModel):
             4: lambda r: r.get("te_level", 0),
             5: lambda r: str(r.get("product_name") or ""),
             6: lambda r: r.get("base_time", 0),
-            7: lambda r: r.get("runs", 1) if r.get("runs", 1) != -1 else float("inf"),
+            7: lambda r: float("inf") if r.get("is_bpo") else r.get("runs", 0),
             8: lambda r: r.get("material_cost") or 0,
             9: lambda r: r.get("revenue") or 0,
             10: lambda r: r.get("margin") or float("-inf"),

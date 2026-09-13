@@ -58,7 +58,7 @@ def get_output_summary(db) -> list[dict[str, Any]] | None:
         plan_rows = conn.execute(
             "SELECT id, product_type_id, product_name, runs, parallels, "
             "material_cost, profit, margin, market_margin, status, me_level "
-            "FROM production_plans ORDER BY created_at DESC"
+            "FROM production_plans ORDER BY created_at DESC, id ASC"
         ).fetchall()
 
         if not plan_rows:

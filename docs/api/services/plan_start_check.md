@@ -22,7 +22,7 @@ def _plan_group_id(plan: dict) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`22`
+定义行：`24`
 
 ### `_plan_level`
 
@@ -34,7 +34,7 @@ def _plan_level(plan: dict) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`26`
+定义行：`28`
 
 ### `is_parent`
 
@@ -44,7 +44,7 @@ def is_parent(plan: dict) -> bool
 
 母项：child_level==0 且有组（有子项才可能构成组）。
 
-定义行：`30`
+定义行：`32`
 
 ### `children_running`
 
@@ -54,7 +54,7 @@ def children_running(plan: dict, all_plans: list[dict]) -> bool
 
 母项同组内有 in_progress/running 子项 → True。子项自身永远 False。
 
-定义行：`35`
+定义行：`37`
 
 ### `pending_children_count`
 
@@ -64,7 +64,17 @@ def pending_children_count(plan: dict, all_plans: list[dict]) -> int
 
 母项未完成（pending/running/生产中）子项数，供「等待 N 条子项」展示。
 
-定义行：`46`
+定义行：`48`
+
+### `plan_start_block`
+
+```python
+def plan_start_block(plan: dict, mat_hangar_id: int | None, all_plans: list[dict], *, shortfall_count: int=0, bp_short: str | None=None, allow_short: bool=False, blueprint_ready: bool | None=None) -> tuple[str, str] | None
+```
+
+启动阻塞的**唯一真源**：返回 `(类别码, 原因文案)`；None = 可启动。
+
+定义行：`60`
 
 ### `plan_start_block_reason`
 
@@ -72,9 +82,9 @@ def pending_children_count(plan: dict, all_plans: list[dict]) -> int
 def plan_start_block_reason(plan: dict, mat_hangar_id: int | None, all_plans: list[dict], *, shortfall_count: int=0, bp_short: str | None=None, allow_short: bool=False, blueprint_ready: bool | None=None) -> str | None
 ```
 
-返回阻止启动的原因文本；None = 可启动。
+返回阻止启动的原因文本；None = 可启动（`plan_start_block` 的文案投影）。
 
-定义行：`58`
+定义行：`107`
 
 ### `can_force_start`
 
@@ -84,4 +94,4 @@ def can_force_start(plan: dict, mat_hangar_id: int | None, all_plans: list[dict]
 
 缺料 / 蓝图流程不足 是否为**唯一**阻塞 → 允许「仍要启动」（与计划表格同口径）。
 
-定义行：`107`
+定义行：`140`

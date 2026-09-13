@@ -418,6 +418,229 @@ def start_plan(
     return {"ok": True, "code": "ok", "message": message, "shortfalls": shortfalls, "plan_id": plan_id}
 
 
+# ── 部分启动：按产线条数拆分 ──────────────────────────────
+
+
+def move_bindings(conn, from_plan_id: int, to_plan_id: int, blueprint_ids: list[int]) -> int:
+    """把蓝图绑定关系从一条计划**挪到**另一条（不是复制）。
+
+    不走 `bind_blueprints`：那条路径对「被其它活跃计划占用的非 BPO」整批拒绝，
+    且只返回 False 不抛异常 —— 而余量行正是活跃计划，用它必然静默失败。
+    必须「移动」而非「复制」：复制会让同一张 BPC 同时挂在两条活跃计划上，
+    破坏「一张 BPC 只服务一条产线」的不变式，下线时会双倍消耗流程。
+    """
+    if not blueprint_ids:
+        return 0  # `IN ()` 是语法错误，空集必须早退
+    ph = ",".join("?" * len(blueprint_ids))
+    cur = conn.execute(
+        f"UPDATE plan_blueprint_bindings SET plan_id=? WHERE plan_id=? AND blueprint_id IN ({ph})",
+        [to_plan_id, from_plan_id, *blueprint_ids],
+    )
+    return int(cur.rowcount)
+
+
+def existing_blueprint_ids(conn, bp_ids: list[int]) -> set[int]:
+    """过滤出确实存在于 `user_blueprints` 的绑定 id。
+
+    逐线计算只认存在的蓝图（`plan_service._line_levels` 的 `b in bp_level`），
+    切分绑定前必须用同一口径，否则悬空绑定会让「前 N 条」与实际参与计算的线错位。
+    """
+    if not bp_ids:
+        return set()
+    ph = ",".join("?" * len(bp_ids))
+    return {int(r[0]) for r in conn.execute(f"SELECT id FROM user_blueprints WHERE id IN ({ph})", list(bp_ids))}
+
+
+def _has_pending_children(conn, plan: dict) -> bool:
+    """母项是否还有未完成子项（部分启动的守门条件）。"""
+    gid = int(plan.get("group_number") or 0)
+    if not gid:
+        return False
+    row = conn.execute(
+        "SELECT COUNT(*) FROM production_plans WHERE group_number=? AND sub_level>0 "
+        "AND status IN ('pending','in_progress','running')",
+        (gid,),
+    ).fetchone()
+    return bool(row and row[0])
+
+
+def preview_partial_start(plan_id: int, lines: int, mat_hangar_id: int | None) -> dict:
+    """拆行前预览「只启动 N 条」的材料缺口与蓝图短板。
+
+    **必须按 N 条口径算**：直接用计划字典会按整条线数报缺口，用户看到虚高的缺料，
+    或在确认框里被不存在的阻塞拦下。这里把 `parallels` 与 `line_levels` 一起截到 N 条。
+    """
+    from services import plan_service
+
+    fresh = plan_service.load_plan(plan_id)
+    if not fresh:
+        return {"ok": False, "code": "no_id", "message": "计划不存在", "shortfalls": [], "bp_short": None}
+    total = max(int(fresh.get("parallels") or 1), 1)
+    lines = max(min(int(lines), total - 1), 1) if total > 1 else 0
+    preview = {**fresh, "parallels": lines, "line_levels": list(fresh.get("line_levels") or [])[:lines]}
+    shortfalls = [r for r in check_materials(preview, mat_hangar_id) if (r.get("missing") or 0) > 0]
+
+    conn = _container().db.direct_connect("user")
+    try:
+        bound = list(fresh.get("bound_blueprint_ids") or [])
+        existing = existing_blueprint_ids(conn, bound)
+        keep = [b for b in bound if b in existing][:lines]
+        bp_short = _binding_shortfall(conn, keep, lines, max(int(fresh.get("runs") or 1), 1)) if lines else None
+    finally:
+        conn.close()
+    return {"ok": True, "shortfalls": shortfalls, "bp_short": bp_short}
+
+
+def _rollback_split(plan_id: int, rem_id: int, total: int, src: dict, moved: list[int]) -> None:
+    """部分启动失败 → 把拆出的两行并回一条（**单事务**）。
+
+    只在原行仍是 pending 时才动：`start_plan` 若已生效（正常路径不会），
+    抹掉状态会丢真实数据。回滚只涉及绑定表 plan_id / 余量行 / parallels 三处 ——
+    `started_at`、`deducted_materials` 等在失败路径上根本没被写过。
+    """
+    if not rem_id:
+        return
+    conn = _container().db.direct_connect("user")
+    try:
+        try:
+            move_bindings(conn, rem_id, plan_id, moved)
+            conn.execute("DELETE FROM production_plans WHERE id=? AND status='pending'", (rem_id,))
+            conn.execute(
+                "UPDATE production_plans SET parallels=?, assigned_blueprint_id=? WHERE id=? AND status='pending'",
+                (total, src.get("assigned_blueprint_id"), plan_id),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            log.exception("部分启动回滚失败 plan_id=%s remainder=%s", plan_id, rem_id)
+    finally:
+        conn.close()
+
+
+def start_plan_partial(
+    plan_id: int,
+    lines: int,
+    *,
+    mat_hangar_id: int | None,
+    char_name: str | None = None,
+    facility: str | None = None,
+    allow_short: bool = False,
+    allow_bp_short: bool = False,
+) -> dict:
+    """部分启动：把计划拆成「已启动 lines 条」+「未启动 P−lines 条」两行，并启动前者。
+
+    **时序必须是先拆行、后启动**：`complete_plan` 按每条绑定消耗该计划 `runs` 轮流程，
+    若先启动再切走多余绑定、中途异常，就会留下「parallels=N 却挂 P 张绑定」的行，
+    下线时超扣流程。先拆的最坏结果只是两条 pending 行，且有 `_rollback_split` 兜底。
+
+    仅供**独立计划**与**子项全部完成的母项**使用（子项行由母项需求驱动，拆了会被重放改写）。
+
+    Returns: {"ok", "code", "message", "started_lines", "remainder_plan_id", ...}
+    """
+    repo = _container().plan_repo
+    src = repo.get_by_id(plan_id)
+    if not src:
+        return {"ok": False, "code": "no_id", "message": "计划不存在", "started_lines": 0}
+    total = max(int(src.get("parallels") or 1), 1)
+    status = str(src.get("status") or "").lower()
+    if status != "pending":
+        return {"ok": False, "code": "not_pending", "message": "只有待生产计划可以部分启动", "started_lines": 0}
+    if int(src.get("sub_level") or 0) != 0:
+        return {
+            "ok": False,
+            "code": "child_row",
+            "message": "子项产线由母项需求驱动，不支持部分启动",
+            "started_lines": 0,
+        }
+    try:
+        lines = int(lines)
+    except (TypeError, ValueError):
+        lines = 0
+    if not 1 <= lines < total:
+        return {"ok": False, "code": "bad_lines", "message": f"启动条数需在 1..{total - 1} 之间", "started_lines": 0}
+
+    gate = _container().db.direct_connect("user")
+    try:
+        if _has_pending_children(gate, src):
+            return {
+                "ok": False,
+                "code": "children_pending",
+                "message": "母项还有未完成子项，暂不能启动",
+                "started_lines": 0,
+            }
+    finally:
+        gate.close()
+
+    bound = list(get_plan_binding_state(plan_id).get("bound") or [])
+    remainder_lines = total - lines
+
+    conn = _container().db.direct_connect("user")
+    try:
+        existing = existing_blueprint_ids(conn, bound)
+        keep = [b for b in bound if b in existing][:lines]
+        keep_set = set(keep)
+        moved = [b for b in bound if b not in keep_set]
+        first_kept = keep[0] if keep else src.get("assigned_blueprint_id")
+        try:
+            conn.execute(
+                "UPDATE production_plans SET parallels=?, assigned_blueprint_id=? WHERE id=?",
+                (lines, first_kept, plan_id),
+            )
+            rem_id = repo.insert_split_remainder(
+                plan_id,
+                parallels=remainder_lines,
+                assigned_blueprint_id=(moved[0] if moved else None),
+                conn=conn,
+            )
+            move_bindings(conn, plan_id, rem_id, moved)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            log.exception("部分启动拆分失败 plan_id=%s", plan_id)
+            return {"ok": False, "code": "split_failed", "message": "拆分计划失败，见日志", "started_lines": 0}
+    finally:
+        conn.close()
+
+    # ⚠️ 拆行事务必须已提交才取数：`_fetch_rows` 走 `connect("user","bp")`，
+    # 与上面那个连接不是同一个 cache key，未提交时只会读到旧的 P 条绑定 → 按 P 条扣料。
+    from services import plan_service
+
+    fresh = plan_service.load_plan(plan_id)
+    if not fresh:
+        _rollback_split(plan_id, rem_id, total, src, moved)
+        return {"ok": False, "code": "no_id", "message": "拆分后计划丢失", "started_lines": 0}
+
+    try:
+        res = start_plan(
+            fresh,
+            mat_hangar_id=mat_hangar_id,
+            char_name=char_name,
+            facility=facility,
+            allow_short=allow_short,
+            allow_bp_short=allow_bp_short,
+            # 见本函数 docstring：自动绑定走自己的连接**立即提交**，是拆行事务之外的
+            # 副作用，回滚看不见它 —— 关掉后无绑定的情形会干净失败。
+            auto_bind=False,
+        )
+    except Exception:
+        log.exception("部分启动失败 plan_id=%s", plan_id)
+        res = {"ok": False, "code": "error", "message": "启动失败，见日志"}
+
+    if not res.get("ok"):
+        _rollback_split(plan_id, rem_id, total, src, moved)
+        out = dict(res)
+        out["started_lines"] = 0
+        out.setdefault("message", "启动失败")
+        return out
+
+    out = dict(res)
+    out["started_lines"] = lines
+    out["remainder_plan_id"] = rem_id
+    detail = str(res.get("message") or "").strip("；")
+    out["message"] = f"已启动 {lines} 条，剩余 {remainder_lines} 条待生产" + (f"；{detail}" if detail else "")
+    return out
+
+
 def start_plan_batch(
     plans: list[dict],
     *,
@@ -1073,8 +1296,9 @@ def _bp_available_runs(conn, bp_id: int) -> int | float:
         return 0
     if row[0]:
         return 10**15
-    # 负数归零：runs=-1（未记录流程的拷贝）时 quantity×runs 会给出负的「可用流程」，
-    # 那没有意义，也会让「不足」的判定依赖负数的巧合。
+    # 负数归零：v16 迁移已把原图归一到 is_bpo=1/runs=0，正常不存在负 runs；
+    # 这里保留夹取，作为「迁移尚未跑到」的历史库防线——否则 quantity×runs
+    # 会给出负的「可用流程」，让「不足」的判定依赖负数的巧合。
     return max(0, int(row[2] or 0) * int(row[1] or 0))
 
 
@@ -1158,34 +1382,27 @@ def get_occupied_blueprint_ids(db=None, *, exclude_plan_id: int | None = None) -
     occupied: set[int] = set()
     with db_mgr.connect("user") as conn:
         try:
-            if exclude_plan_id is not None:
-                rows = conn.execute(
-                    "SELECT DISTINCT b.blueprint_id FROM plan_blueprint_bindings b "
-                    "JOIN production_plans pp ON pp.id=b.plan_id "
-                    "WHERE pp.status NOT IN ('completed','done') AND b.plan_id<>?",
-                    (exclude_plan_id,),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT DISTINCT b.blueprint_id FROM plan_blueprint_bindings b "
-                    "JOIN production_plans pp ON pp.id=b.plan_id "
-                    "WHERE pp.status NOT IN ('completed','done')"
-                ).fetchall()
+            rows = conn.execute(
+                "SELECT DISTINCT b.blueprint_id FROM plan_blueprint_bindings b "
+                "JOIN production_plans pp ON pp.id=b.plan_id "
+                "WHERE pp.status NOT IN ('completed','done')"
+                + (" AND b.plan_id<>?" if exclude_plan_id is not None else ""),
+                (exclude_plan_id,) if exclude_plan_id is not None else (),
+            ).fetchall()
             occupied = {r[0] for r in rows}
         except Exception:
             log.debug("旧库无 plan_blueprint_bindings 表，回退单值列", exc_info=True)
-        if exclude_plan_id is not None:
-            rows = conn.execute(
-                "SELECT DISTINCT assigned_blueprint_id FROM production_plans "
-                "WHERE assigned_blueprint_id IS NOT NULL AND status NOT IN ('completed','done') AND id<>?",
-                (exclude_plan_id,),
-            ).fetchall()
-        else:
+        try:
             rows = conn.execute(
                 "SELECT DISTINCT assigned_blueprint_id FROM production_plans "
                 "WHERE assigned_blueprint_id IS NOT NULL AND status NOT IN ('completed','done')"
+                + (" AND id<>?" if exclude_plan_id is not None else ""),
+                (exclude_plan_id,) if exclude_plan_id is not None else (),
             ).fetchall()
-        occupied.update(r[0] for r in rows)
+            occupied.update(r[0] for r in rows if r[0] is not None)
+        except Exception:
+            # 蓝图导入等路径也会调用本函数，缺表不得让调用方整体失败
+            log.debug("旧库无 production_plans 表，跳过单值列占用", exc_info=True)
     return occupied
 
 
@@ -1220,7 +1437,7 @@ def find_available_blueprints(conn, blueprint_type_id: int) -> list[dict]:
                 "quantity": r[6],
                 "notes": r[7],
                 "hangar_name": r[8] or "",
-                "available_runs": float("inf") if is_bpo else int(r[6] or 0) * int(r[5] or 0),
+                "available_runs": float("inf") if is_bpo else max(0, int(r[6] or 0) * int(r[5] or 0)),
                 "occupied": r[0] in occupied,
             }
         )

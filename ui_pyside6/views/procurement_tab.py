@@ -678,31 +678,13 @@ class ProcurementDialog(QDialog):
             return
 
         from services import plan_execution
+        from ui_pyside6.views.industry.complete_guard import confirm_bp_shortfall
 
         # 蓝图流程不足是软阻塞：确认一次后整批强制完成。
         # 不覆盖这条入口的话，强制启动过的计划在这里会永远卡住。
-        allow_bp_short = False
-        shorts = []
-        for plan in ready_plans:
-            pid = plan.get("id")
-            if not pid:
-                continue
-            short = plan_execution.binding_shortfall(pid)
-            if short:
-                shorts.append(f"  {plan.get('product_name') or pid}: {short}")
-        if shorts:
-            ret = QMessageBox.question(
-                self,
-                "蓝图流程不足",
-                "\n".join(shorts[:10]) + "\n\n仍要下线？\n"
-                "流程按实际可用量消耗；由此产生的账面偏差，"
-                "请稍后用「蓝图管理 → 粘贴导入蓝图 → 全量同步」矫正。",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if ret != QMessageBox.StandardButton.Yes:
-                return
-            allow_bp_short = True
+        allow_bp_short = confirm_bp_shortfall(self, ready_plans)
+        if allow_bp_short is None:
+            return
 
         completed = 0
         deposited = 0

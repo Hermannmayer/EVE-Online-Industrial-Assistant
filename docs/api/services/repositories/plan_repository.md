@@ -129,6 +129,15 @@ def insert_child_plan(self, *, product_type_id: int, product_name: str, blueprin
 插入一条拆解子计划（含分组/层级/机库/引用式需求字段）。
 
 定义行：`219`
+##### `insert_split_remainder`
+
+```python
+def insert_split_remainder(self, plan_id: int, *, parallels: int, assigned_blueprint_id: int | None=None, conn=None) -> int
+```
+
+复制 plan_id 的结构列，生成「部分启动」的未启动余量行（pending），返回新行 id。
+
+定义行：`325`
 ##### `delete_many`
 
 ```python
@@ -137,7 +146,7 @@ def delete_many(self, plan_ids: list[int]) -> int
 
 批量删除计划（蓝图表关联清理由调用方 release_blueprint 处理）。返回删除行数。
 
-定义行：`268`
+定义行：`356`
 ##### `delete`
 
 ```python
@@ -148,4 +157,4 @@ def delete(self, plan_id: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`277`
+定义行：`365`

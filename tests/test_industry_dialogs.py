@@ -4,7 +4,7 @@
 """
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -577,3 +577,283 @@ class TestLaunchWizard:
         ab.launch_wizard_requested.connect(lambda: got.append(True))
         ab._btn_launch_wizard.click()
         assert got == [True]
+
+
+# ════════════════════════════════════════════════════════════════
+#  下线入口的蓝图流程预检（complete_guard）
+# ════════════════════════════════════════════════════════════════
+
+
+class TestCompleteGuard:
+    """四条下线入口共用的「蓝图流程不足」确认。
+
+    回归背景：底部状态栏的「全部下线」曾是唯一不预检、也不传 `allow_bp_short`
+    的入口 —— 强制启动过的计划在那里永远下不了线，且只显示一句「失败 N 项」。
+    """
+
+    def test_no_shortfall_returns_false_without_asking(self, qapp, monkeypatch):
+        from ui_pyside6.views.industry import complete_guard
+
+        asked = []
+        monkeypatch.setattr("services.plan_execution.binding_shortfall", lambda pid: None)
+        monkeypatch.setattr(
+            complete_guard.QMessageBox,
+            "question",
+            lambda *a, **k: asked.append(True),  # type: ignore[func-returns-value]
+        )
+        result = complete_guard.confirm_bp_shortfall(None, [{"id": 1, "product_name": "电磁发生器"}])
+        assert result is False
+        assert asked == [], "无短板不该弹确认框"
+
+    def test_shortfall_yes_allows_force(self, qapp, monkeypatch):
+        from ui_pyside6.views.industry import complete_guard
+
+        monkeypatch.setattr("services.plan_execution.binding_shortfall", lambda pid: "第 1 张绑定蓝图流程不足")
+        monkeypatch.setattr(
+            complete_guard.QMessageBox,
+            "question",
+            lambda *a, **k: complete_guard.QMessageBox.StandardButton.Yes,
+        )
+        assert complete_guard.confirm_bp_shortfall(None, [{"id": 1, "product_name": "电磁发生器"}]) is True
+
+    def test_shortfall_no_cancels(self, qapp, monkeypatch):
+        from ui_pyside6.views.industry import complete_guard
+
+        monkeypatch.setattr("services.plan_execution.binding_shortfall", lambda pid: "第 1 张绑定蓝图流程不足")
+        monkeypatch.setattr(
+            complete_guard.QMessageBox,
+            "question",
+            lambda *a, **k: complete_guard.QMessageBox.StandardButton.No,
+        )
+        assert complete_guard.confirm_bp_shortfall(None, [{"id": 1, "product_name": "电磁发生器"}]) is None
+
+    def test_shortfall_lines_skips_plans_without_id(self, monkeypatch):
+        from ui_pyside6.views.industry import complete_guard
+
+        monkeypatch.setattr("services.plan_execution.binding_shortfall", lambda pid: f"缺流程 {pid}")
+        assert complete_guard.shortfall_lines([{"product_name": "无 id"}]) == []
+        assert complete_guard.shortfall_lines([{"id": 7, "product_name": "电磁发生器"}]) == ["  电磁发生器: 缺流程 7"]
+
+
+class TestStatusBarCompleteAllGuard:
+    """状态栏「全部下线」必须与另外三条入口行为一致：预检 + 透传 allow_bp_short。"""
+
+    @staticmethod
+    def _run(monkeypatch, short_text: str | None, user_choice: bool):
+        import ui_pyside6.views.industry_view as iv
+        from ui_pyside6.views.industry import complete_guard
+
+        model = MagicMock()
+        model.rowCount.return_value = 1
+        model.get_plan.return_value = {"id": 1, "status": "ready", "product_name": "电磁发生器"}
+
+        class _Dlg:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def exec(self):
+                return 1
+
+            def selected_hangar_id(self):
+                return 4
+
+        captured: dict = {}
+
+        def _complete_plans(plans, hid, **kwargs):
+            captured["hid"] = hid
+            captured.update(kwargs)
+            return {"completed": len(plans), "deposited": 0, "failed": [], "failed_reasons": []}
+
+        monkeypatch.setattr(iv, "CompletePlansDialog", _Dlg)
+        monkeypatch.setattr(iv, "complete_plans", _complete_plans)
+        monkeypatch.setattr("services.inventory_manager.get_hangars", lambda: [{"id": 4, "name": "产出仓"}])
+        monkeypatch.setattr("services.user_settings.get_default_hangar_id", lambda key: 4)
+        monkeypatch.setattr(iv.QMessageBox, "information", lambda *a, **k: None)
+        monkeypatch.setattr("services.plan_execution.binding_shortfall", lambda pid: short_text)
+        monkeypatch.setattr(
+            complete_guard.QMessageBox,
+            "question",
+            lambda *a, **k: (
+                complete_guard.QMessageBox.StandardButton.Yes
+                if user_choice
+                else complete_guard.QMessageBox.StandardButton.No
+            ),
+        )
+
+        page = SimpleNamespace(
+            _plan_table_widget=MagicMock(get_model=lambda: model),
+            load_plans=lambda: None,
+        )
+        # 只借 IndustryPage 的方法体，self 用最小替身（构造整页代价过高）
+        iv.IndustryPage._on_complete_all(page)  # type: ignore[arg-type]
+        return captured
+
+    def test_forwards_allow_bp_short_after_confirmation(self, qapp, monkeypatch):
+        captured = self._run(monkeypatch, "第 1 张绑定蓝图流程不足", user_choice=True)
+        assert captured.get("allow_bp_short") is True, "确认强制后必须透传给 complete_plans"
+        assert captured.get("hid") == 4
+
+    def test_cancel_stops_before_completing(self, qapp, monkeypatch):
+        captured = self._run(monkeypatch, "第 1 张绑定蓝图流程不足", user_choice=False)
+        assert captured == {}, "用户在「仍要下线？」选否 → 不该调用 complete_plans"
+
+    def test_no_shortfall_passes_false(self, qapp, monkeypatch):
+        captured = self._run(monkeypatch, None, user_choice=True)
+        assert captured.get("allow_bp_short") is False
+
+
+# ════════════════════════════════════════════════════════════════
+#  单行下线端到端（计划表格 / 小助手共用 complete_one_plan）
+# ════════════════════════════════════════════════════════════════
+
+
+class TestCompleteOnePlan:
+    """契约是**非 None 即成功** —— 调用方据此决定要不要把行标成已完成。
+
+    若失败也返回 dict，计划表格会把失败的计划置 status="completed" 并刷新表格，
+    用户看到的是「已完成」而库里根本没入库。
+    """
+
+    PLAN = {"id": 7, "product_name": "渡鸦级", "product_type_id": 2001, "runs": 1, "parallels": 1, "status": "ready"}
+
+    @staticmethod
+    def _setup(monkeypatch, *, dialog_result: int, completed: int, warned: list):
+        from ui_pyside6.views.industry import complete_plans_dialog as cpd
+
+        calls: dict = {}
+
+        class _Dlg:
+            def __init__(self, plans, hangars, default_hid, parent):
+                calls["plans"] = plans
+
+            def exec(self):
+                return dialog_result
+
+            def selected_hangar_id(self):
+                return 4
+
+        def _complete_plans(plans, hid, **kwargs):
+            calls["complete_hid"] = hid
+            calls["complete_kwargs"] = kwargs
+            return {
+                "completed": completed,
+                "deposited": completed,
+                "failed": [] if completed else ["渡鸦级"],
+                "skipped": [],
+                "failed_reasons": [] if completed else ["渡鸦级：蓝图绑定不满足完成条件"],
+            }
+
+        monkeypatch.setattr(cpd, "CompletePlansDialog", _Dlg)
+        monkeypatch.setattr(cpd, "complete_plans", _complete_plans)
+        monkeypatch.setattr("services.inventory_manager.get_hangars", lambda: [{"id": 4, "name": "产出仓"}])
+        monkeypatch.setattr("services.user_settings.get_default_hangar_id", lambda key: 4)
+        monkeypatch.setattr("services.plan_execution.binding_shortfall", lambda pid: None)
+        monkeypatch.setattr(cpd.QMessageBox, "warning", lambda *a, **k: warned.append(a[2:]))
+        return calls
+
+    def test_cancel_returns_none_without_completing(self, qapp, monkeypatch):
+        from ui_pyside6.views.industry.complete_plans_dialog import complete_one_plan
+
+        warned: list = []
+        calls = self._setup(monkeypatch, dialog_result=0, completed=0, warned=warned)
+        assert complete_one_plan(None, dict(self.PLAN)) is None
+        assert "complete_hid" not in calls
+        assert warned == []
+
+    def test_success_returns_result(self, qapp, monkeypatch):
+        from ui_pyside6.views.industry.complete_plans_dialog import complete_one_plan
+
+        warned: list = []
+        calls = self._setup(monkeypatch, dialog_result=1, completed=1, warned=warned)
+        result = complete_one_plan(None, dict(self.PLAN))
+        assert result is not None and result["completed"] == 1
+        assert calls["complete_hid"] == 4
+        assert warned == []
+
+    def test_failure_warns_and_returns_none(self, qapp, monkeypatch):
+        """失败必须返回 None，否则调用方会把失败的行标成已完成。"""
+        from ui_pyside6.views.industry.complete_plans_dialog import complete_one_plan
+
+        warned: list = []
+        self._setup(monkeypatch, dialog_result=1, completed=0, warned=warned)
+        assert complete_one_plan(None, dict(self.PLAN)) is None
+        assert len(warned) == 1
+        assert "蓝图绑定不满足完成条件" in warned[0][0]
+
+
+class TestPlanTableCompleteFailure:
+    """计划表格单行下线：`complete_one_plan` 返回 None 时不得改动行状态。"""
+
+    def test_failed_plan_not_marked_completed(self, qapp, monkeypatch):
+        from ui_pyside6.views.industry.plan_table import PlanTable
+
+        monkeypatch.setattr(
+            "ui_pyside6.views.industry.complete_plans_dialog.complete_one_plan",
+            lambda parent, plan: None,
+        )
+        plan = {"id": 7, "product_name": "渡鸦级", "status": "ready"}
+        holder = SimpleNamespace(_model=MagicMock(), _rebuild_subitems=lambda: None, plan_updated=MagicMock())
+        PlanTable._complete_plan_with_dialog(holder, plan)  # type: ignore[arg-type]
+        assert plan["status"] == "ready", "失败不得把计划标成已完成"
+        holder._model.layoutChanged.emit.assert_not_called()
+        holder.plan_updated.emit.assert_not_called()
+
+    def test_successful_plan_marked_completed(self, qapp, monkeypatch):
+        from ui_pyside6.views.industry.plan_table import PlanTable
+
+        monkeypatch.setattr(
+            "ui_pyside6.views.industry.complete_plans_dialog.complete_one_plan",
+            lambda parent, plan: {"completed": 1, "deposited": 1, "failed": [], "failed_reasons": []},
+        )
+        plan = {"id": 7, "product_name": "渡鸦级", "status": "ready"}
+        holder = SimpleNamespace(_model=MagicMock(), _rebuild_subitems=lambda: None, plan_updated=MagicMock())
+        PlanTable._complete_plan_with_dialog(holder, plan)  # type: ignore[arg-type]
+        assert plan["status"] == "completed"
+        assert plan["deposited"] == 1
+        assert plan["assigned_blueprint_id"] is None
+        holder.plan_updated.emit.assert_called_once()
+
+
+class TestPartialStartDialog:
+    """部分启动对话框 —— 取值范围 1..P-1，摘要随条数实时更新。"""
+
+    @staticmethod
+    def _dialog(total: int):
+        from ui_pyside6.views.industry.partial_start_dialog import PartialStartDialog
+
+        return PartialStartDialog("渡鸦级", total)
+
+    def test_range_and_default(self, qapp):
+        dlg = self._dialog(4)
+        try:
+            assert dlg._spin.minimum() == 1
+            assert dlg._spin.maximum() == 3  # 至少要留 1 条给「未启动」那行
+            assert dlg.lines() == 3
+        finally:
+            dlg.deleteLater()
+
+    def test_two_lines_only_allows_one(self, qapp):
+        dlg = self._dialog(2)
+        try:
+            assert (dlg._spin.minimum(), dlg._spin.maximum()) == (1, 1)
+            assert dlg.lines() == 1
+        finally:
+            dlg.deleteLater()
+
+    def test_summary_follows_value(self, qapp):
+        dlg = self._dialog(5)
+        try:
+            dlg._spin.setValue(2)
+            assert dlg.lines() == 2
+            assert "启动 2 条" in dlg._summary.text()
+            assert "剩余 3 条" in dlg._summary.text()
+        finally:
+            dlg.deleteLater()
+
+    def test_theme_changed_no_crash(self, qapp):
+        dlg = self._dialog(5)
+        try:
+            dlg._on_theme_changed()
+            assert dlg._summary.text() != ""
+        finally:
+            dlg.deleteLater()

@@ -40,7 +40,12 @@ from services.inventory_manager import (
 from services.research_plans import resolve_invention_source
 from ui_pyside6.table_sort import SortPreservingTableView
 
-from .blueprint_import_worker import _BlueprintImportWorker, apply_blueprint_diff
+from .blueprint_import_worker import (
+    _BlueprintImportWorker,
+    apply_blueprint_diff,
+    build_blueprint_changes,
+    snapshot_blueprints,
+)
 from .inventory_helpers import BlueprintTableModel
 
 
@@ -715,14 +720,18 @@ class BlueprintTab(QWidget):
         if not valid:
             QMessageBox.information(self, "提示", "所选蓝图无产物信息")
             return
-        # 完全相同（蓝图类型+ME+TE+每张流程）的蓝图合并成一行：parallels=张数, runs=每张流程
+        # 完全相同（蓝图类型+原图/拷贝+ME+TE+每张流程）的蓝图合并成一行：parallels=张数, runs=每张流程
+        # 原图必须在键里：原图无流程数概念（迁移后 runs 恒为 0），只按 runs 分组会与
+        # 「流程数为 0/1 的拷贝」撞键合并成同一行并行产线。
         groups: dict[tuple, list[dict]] = {}
         for bp in valid:
+            is_bpo = bool(bp.get("is_bpo"))
             key = (
                 bp.get("blueprint_type_id"),
+                is_bpo,
                 int(bp.get("me_level") or 0),
                 int(bp.get("te_level") or 0),
-                int(bp.get("runs") or 1),
+                0 if is_bpo else int(bp.get("runs") or 0),
             )
             groups.setdefault(key, []).append(bp)
 
@@ -815,13 +824,18 @@ class BlueprintTab(QWidget):
             self._load_blueprints()
 
     def _edit_runs(self, bp_ids: list[int]):
-        val, ok = QInputDialog.getInt(self, "修改流程数", "流程数:", 1, -1, 99999, 1)
+        # 下限 0：原图的行数不入流程数的账（v16 迁移后原图 runs 恒为 0），
+        # 旧下限 -1 是「原图」的哨兵，已退役。
+        val, ok = QInputDialog.getInt(self, "修改流程数", "流程数:", 1, 0, 99999, 1)
         if ok:
             update_blueprints_batch(bp_ids, runs=val)
             self._load_blueprints()
 
     def _on_paste_blueprint(self):
         """粘贴导入蓝图 — 材料式流程：解析 → 预览确认（增量/全量）→ 应用 → 变动汇总。"""
+        if getattr(self, "_worker", None) is not None:
+            QMessageBox.information(self, "提示", "上一次导入仍在解析中，请稍候")
+            return
         if not self._page.hangar_id():
             return
         raw = QApplication.clipboard().text().strip()
@@ -833,71 +847,90 @@ class BlueprintTab(QWidget):
         hangar_name = self._page._hangar_combo.currentText() if hasattr(self._page, "_hangar_combo") else ""
 
         # 导入前快照（供全量同步差异对比）
-        before_map: dict[tuple, int] = {}
-        for bp in get_blueprints(hid):
-            before_map[(bp["blueprint_type_id"], bp["is_bpo"], bp["me_level"], bp["te_level"], bp["runs"])] = (
-                before_map.get((bp["blueprint_type_id"], bp["is_bpo"], bp["me_level"], bp["te_level"], bp["runs"]), 0)
-                + 1
-            )
+        before_map = snapshot_blueprints(hid)
 
         main_win = self._page._main
         main_win.show_progress("正在解析蓝图...", 0)
+        # 解析期间锁住机库下拉：hid 在弹窗与落库两处复用，中途切机库会让落库
+        # 目标与界面不一致（预览/写入的是旧机库，刷新的是新机库）。
+        if hasattr(self._page, "_hangar_combo"):
+            self._page._hangar_combo.setEnabled(False)
         self._worker = _BlueprintImportWorker(raw, hid, parent=self)
         self._worker.progress.connect(lambda cur, total, text: main_win.update_progress(cur, text) if total else None)
+        self._worker.finished.connect(self._release_import_worker)
         self._worker.finished_signal.connect(
             lambda diff, w=self._worker: self._on_blueprint_diff_ready(
-                diff, hid, hangar_name, before_map, w.filtered_count
+                diff, hid, hangar_name, before_map, w.filtered_count, w.unresolved_count
             )
         )
         self._worker.start()
+
+    def _release_import_worker(self):
+        """线程结束（含异常路径）→ 释放强引用并解锁机库下拉，避免按钮永久失效。"""
+        self._worker = None
+        if hasattr(self._page, "_hangar_combo"):
+            self._page._hangar_combo.setEnabled(True)
 
     def _on_blueprint_diff_ready(
         self,
         diff: list[dict],
         hid: int,
         hangar_name: str,
-        before_map: dict[tuple, int],
+        before_map: dict[tuple, tuple[int, tuple[int, ...]]],
         filtered: int = 0,
+        unresolved: int = 0,
     ):
         """diff 就绪 → 弹预览对话框 → 确认后应用 → 变动汇总。
 
         ``filtered``：剪贴板中被过滤掉的材料行数（蓝图仓库只导入蓝图）。
+        ``unresolved``：结构完整、不是材料，但名字对不上任何蓝图的行数 —— 它们在
+        剪贴板里等于「消失」，全量同步会把库中对应蓝图当作冗余删除，必须让用户看见。
         """
         from .blueprint_import_dialog import BlueprintImportChangeDialog, BlueprintImportReviewDialog
-        from .blueprint_import_worker import build_blueprint_changes
 
         self._page._main.hide_progress(f"共 {len(diff)} 类蓝图")
         self._worker = None
+        if self._page.hangar_id() != hid:
+            QMessageBox.warning(self, "提示", "解析期间切换了机库，为避免写错目标，本次导入已取消")
+            return
         if not diff:
-            if filtered:
+            if filtered or unresolved:
                 QMessageBox.information(
                     self,
                     "提示",
-                    f"剪贴板中的 {filtered} 行都是材料，蓝图仓库只导入蓝图，已全部过滤",
+                    f"剪贴板中 {filtered} 行是材料、{unresolved} 行认不出对应蓝图；蓝图仓库只导入蓝图，已全部跳过",
                 )
             self._bp_count_label.setText("剪贴板无有效蓝图数据")
             return
 
-        dlg = BlueprintImportReviewDialog(diff, hangar_name, self, default_mode="full", filtered_note=filtered)
+        dlg = BlueprintImportReviewDialog(
+            diff,
+            hangar_name,
+            self,
+            default_mode="full",
+            filtered_note=filtered,
+            unresolved_note=unresolved,
+        )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         mode = dlg.mode()
         applied = dlg.get_applied_rows()
 
-        added, removed = apply_blueprint_diff(applied, hid, mode)
+        added, removed, blocked = apply_blueprint_diff(applied, hid, mode)
 
         # 导入后快照 → 变动汇总弹窗
-        after_map: dict[tuple, int] = {}
-        for bp in get_blueprints(hid):
-            after_map[(bp["blueprint_type_id"], bp["is_bpo"], bp["me_level"], bp["te_level"], bp["runs"])] = (
-                after_map.get((bp["blueprint_type_id"], bp["is_bpo"], bp["me_level"], bp["te_level"], bp["runs"]), 0)
-                + 1
-            )
+        after_map = snapshot_blueprints(hid)
         names_map = {
             bp["blueprint_type_id"]: bp["zh_name"] or bp.get("display_name") or f"ID:{bp['blueprint_type_id']}"
             for bp in get_blueprints(hid)
         }
         changes = build_blueprint_changes(before_map, after_map, names_map)
         BlueprintImportChangeDialog(changes, added, removed, hangar_name or "蓝图", self).exec()
+        if blocked:
+            QMessageBox.warning(
+                self,
+                "部分蓝图未删除",
+                f"{blocked} 张蓝图正被生产计划占用，已跳过删除。如需删除请先解除其计划绑定。",
+            )
 
         self._load_blueprints()

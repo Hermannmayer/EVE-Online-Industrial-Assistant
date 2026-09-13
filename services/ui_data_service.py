@@ -12,11 +12,13 @@ from collections import Counter
 from typing import Any
 
 from core.container import get_container
+from domain.blueprint_sync import normalize_clipboard_attr, plan_group_sync, target_units
 from services import inventory_manager
 from services.blueprint_reader import get_blueprint_products
 from services.item_kind import is_material_name
 from services.name_resolver import resolve_item_name, resolve_system_name
 from services.plan_aggregator import aggregate_procurement
+from services.plan_job_kinds import ACTIVITY_MANUFACTURING, ACTIVITY_REACTION
 from services.terminology import term
 
 
@@ -267,8 +269,8 @@ def resolve_plan_blueprint_name(plan: dict, db=None) -> str:
 # ── 蓝图导入 Worker ────────────────────────────────────────────
 
 
-def parse_blueprint_clipboard(raw: str, conn) -> tuple[list[dict], int]:
-    """解析 EVE 蓝图剪贴板 → ([{blueprint_type_id, name, is_bpo, me, te, runs}], 被过滤材料行数)。
+def parse_blueprint_clipboard(raw: str, conn) -> tuple[list[dict], int, int]:
+    """解析 EVE 蓝图剪贴板 → (蓝图行, 被过滤材料行数, 未识别蓝图行数)
 
     纯函数（依赖传入的 ref/bp 连接做名称→蓝图 ID 解析）。
     行格式（Tab 分隔，与游戏全选复制一致）:
@@ -276,11 +278,19 @@ def parse_blueprint_clipboard(raw: str, conn) -> tuple[list[dict], int]:
 
     蓝图仓库只导入蓝图：可解析出 ME/TE/流程且精确命中非蓝图物品的行（如「碳纤维」
     「渡鸦级」）按材料过滤并计数，见 ``services.item_kind.is_material_name``。
+    第三项 ``unresolved`` 是「结构完整、不是材料，但名字对不上任何蓝图」的行数
+    （如未收录的反应公式、异体译名）——它们既没进结果也没被过滤，全量同步下
+    对应的库中蓝图会被判成「不在剪贴板里」而默认待删，故必须让用户看得见。
+
+    属性归一：原图判词认「原图/原本/Original」，且 `流程数 < 0` 一律判为原图
+    （游戏里原图的流程数列就是 -1），归一后 runs 恒为非负——见
+    ``domain.blueprint_sync.normalize_clipboard_attr``。
     """
     lines = [ln for ln in raw.split("\n") if ln.strip()]
     seen: Counter = Counter()  # (bpid, is_bpo, me, te, runs) → 数量（同属性多张）
     names: dict[int, str] = {}
     filtered = 0
+    unresolved = 0
     for line in lines:
         cols = line.split("\t")
         if len(cols) < 5:
@@ -291,15 +301,16 @@ def parse_blueprint_clipboard(raw: str, conn) -> tuple[list[dict], int]:
         try:
             me = int(cols[1].strip())
             te = int(cols[2].strip())
-            runs = int(cols[3].strip())
+            runs_raw = int(cols[3].strip())
         except ValueError:
             continue
         if is_material_name(conn, name_part):
             filtered += 1
             continue
-        is_bpo = "原图" in cols[4].strip() or "原本" in cols[4].strip()
+        is_bpo, runs = normalize_clipboard_attr(cols[4], runs_raw)
         bpid = _lookup_bpid(conn, name_part)
         if not bpid:
+            unresolved += 1
             continue
         key = (bpid, is_bpo, me, te, runs)
         seen[key] += 1
@@ -317,25 +328,27 @@ def parse_blueprint_clipboard(raw: str, conn) -> tuple[list[dict], int]:
         }
         for k, q in seen.items()
     ]
-    return rows, filtered
+    return rows, filtered, unresolved
 
 
-def parse_blueprint_clipboard_text(raw: str, db=None) -> tuple[list[dict], int]:
-    """打开 ref/bp 连接并解析剪贴板蓝图 → (蓝图行, 被过滤材料行数)。"""
+def parse_blueprint_clipboard_text(raw: str, db=None) -> tuple[list[dict], int, int]:
+    """打开 ref/bp 连接并解析剪贴板蓝图 → (蓝图行, 被过滤材料行数, 未识别蓝图行数)。"""
     with _resolve_db(db).connect("ref", "bp") as conn:
         return parse_blueprint_clipboard(raw, conn.cursor())
 
 
 def _lookup_bpid(c, name_part):
     """蓝图名 → blueprint_type_id（精确匹配蓝图；T2 名称去「蓝图」后缀后按产物反查）"""
-    # 1. 精确匹配 item 表，且必须是制造蓝图
+    # 反应公式也是蓝图仓库里的正式成员（蓝图页有独立筛选），只认 manufacturing
+    # 会让剪贴板里的反应公式行解析不出 bpid → 被静默丢弃 → 全量同步判定「库中多余」而删除。
+    acts = (ACTIVITY_MANUFACTURING, ACTIVITY_REACTION)
     c.execute("SELECT type_id FROM item WHERE zh_name = ? OR en_name = ? LIMIT 1", (name_part, name_part))
     r = c.fetchone()
     if r:
         tid = r[0]
         c.execute(
-            "SELECT 1 FROM blueprint_products WHERE blueprint_type_id = ? AND activity = 'manufacturing' LIMIT 1",
-            (tid,),
+            "SELECT 1 FROM blueprint_products WHERE blueprint_type_id = ? AND activity IN (?, ?) LIMIT 1",
+            (tid, *acts),
         )
         if c.fetchone():
             return tid
@@ -351,8 +364,8 @@ def _lookup_bpid(c, name_part):
                 c.execute(
                     "SELECT blueprint_type_id FROM blueprint_products"
                     " WHERE product_type_id = ?"
-                    " AND activity = 'manufacturing' LIMIT 1",
-                    (r[0],),
+                    " AND activity IN (?, ?) LIMIT 1",
+                    (r[0], *acts),
                 )
                 r2 = c.fetchone()
                 if r2:
@@ -374,45 +387,72 @@ def apply_blueprint_diff(
     mode: str = "full",
     *,
     db=None,
-) -> tuple[int, int]:
-    """按勾选行应用增删，返回 (added, removed)。
+) -> tuple[int, int, int]:
+    """按勾选组应用增删，返回 (added, removed, blocked)。
+
+    匹配键是 `(类型, is_bpo, ME, TE)`，流程数只做**原地更新**——旧实现把 `runs`
+    也放进键里，任何流程数变化（BPC 被消耗、原图由 -1 归一）都退化成
+    「删旧行 + 插新行」，连带丢掉行 id、notes，并经 `delete_blueprint`
+    静默解除活跃计划的绑定。配对逻辑见 `domain.blueprint_sync.plan_group_sync`。
 
     Args:
-        diff_rows: [{blueprint_type_id, is_bpo, me, te, runs, target_qty, row_ids}]
+        diff_rows: [{
+            blueprint_type_id, is_bpo, me, te,
+            clip_runs: [int, ...],                  # 剪贴板该组每张的流程数
+            existing_rows: [{id, runs, quantity, notes}],
+            target_qty: int,                        # 全量：最终张数（用户可改）；增量忽略
+        }]
         mode: "full" 全量同步（target_qty 为最终目标，增删按差额）
-              "incremental" 增量累加（target_qty = 现有+剪贴板，只增不减）
+              "incremental" 增量累加（目标 = 现有张数 + 剪贴板张数，只增不减）
+        blocked: 因被活跃计划占用而**拒绝删除**的行数（删占用行会静默解除计划绑定）
     """
+    from services import plan_execution
+
     added = 0
     removed = 0
+    blocked = 0
+    # 占用集合必须在写事务之前取：DatabaseManager.connect 复用同线程连接，
+    # 事务内再开一个 user 连接会复用到同一连接、在退出时提前 commit。
+    occupied = plan_execution.get_occupied_blueprint_ids(db)
     with _resolve_db(db).connect("user") as uc:
         for row in diff_rows:
-            key = (row["blueprint_type_id"], int(row["is_bpo"]), int(row["me"]), int(row["te"]), int(row["runs"]))
-            target = int(row.get("target_qty", 0))
-            row_ids = list(row.get("row_ids", []))
+            bpid = int(row["blueprint_type_id"])
+            is_bpo = bool(row["is_bpo"])
+            me = int(row["me"])
+            te = int(row["te"])
+            existing = list(row.get("existing_rows") or [])
+            clip = [int(u) for u in row.get("clip_runs") or []]
             if mode == "incremental":
-                # 增量只加不减：目标 = 现有 + 剪贴板
-                target = len(row_ids) + int(row.get("qty", 0))
-            existing_cnt = len(row_ids)
-            if target > existing_cnt:
-                for _ in range(target - existing_cnt):
+                # 增量只加不减：目标 = 现有张数 + 剪贴板张数（每行至少留 1 张）
+                units = [
+                    int(r.get("runs") or 0) for r in existing for _ in range(max(int(r.get("quantity") or 1), 1))
+                ] + clip
+            else:
+                units = target_units(clip, int(row.get("target_qty", len(clip))))
+            for op in plan_group_sync(existing, units):
+                kind = op["op"]
+                if kind == "update":
+                    inventory_manager.update_blueprint(op["id"], runs=op["runs"], quantity=op["quantity"], conn=uc)
+                elif kind == "delete":
+                    if op["id"] in occupied:
+                        blocked += 1
+                        continue
+                    if inventory_manager.delete_blueprint(op["id"], conn=uc):
+                        removed += 1
+                else:
                     inventory_manager.add_blueprint(
                         hangar_id,
-                        key[0],
-                        is_bpo=bool(key[1]),
-                        me_level=key[2],
-                        te_level=key[3],
-                        runs=key[4],
+                        bpid,
+                        is_bpo=is_bpo,
+                        me_level=me,
+                        te_level=te,
+                        runs=op["runs"],
                         quantity=1,
                         conn=uc,
                     )
                     added += 1
-            elif target < existing_cnt:
-                # 删除多余（保留 row_ids 尾部，删前面多余的）
-                for rid in row_ids[target - existing_cnt :]:
-                    inventory_manager.delete_blueprint(rid, conn=uc)
-                    removed += 1
         uc.commit()
-    return added, removed
+    return added, removed, blocked
 
 
 # ── 工业制造 Worker 搜索/排名 ─────────────────────────────────

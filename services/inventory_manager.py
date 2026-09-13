@@ -796,20 +796,29 @@ def get_blueprints(hangar_id: int | None = None) -> list[dict]:
         ]
 
 
-def update_blueprint(bp_id: int, **kwargs) -> bool:
-    """更新蓝图属性，kwargs 可含 is_bpo, me_level, te_level, runs, quantity, notes"""
+def update_blueprint(bp_id: int, *, conn=None, **kwargs) -> bool:
+    """更新蓝图属性，kwargs 可含 is_bpo, me_level, te_level, runs, quantity, notes
+
+    conn 传入时在同一连接执行且不提交（由调用方统一事务）——蓝图剪贴板同步
+    需要在「更新既有行」与「增删」之间保持单一事务，不能各自开连接提交。
+    """
     allowed = {"is_bpo", "me_level", "te_level", "runs", "quantity", "notes", "hangar_id"}
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return False
     if "is_bpo" in updates:
         updates["is_bpo"] = int(updates["is_bpo"])
-    with _default_db().connect("user") as conn:
-        c = conn.cursor()
+
+    def _do(c) -> bool:
         sets = ", ".join(f"{k} = ?" for k in updates)
         vals = list(updates.values()) + [bp_id]
-        c.execute(f"UPDATE user_blueprints SET {sets} WHERE id = ?", vals)
-        return c.rowcount > 0
+        cur = c.execute(f"UPDATE user_blueprints SET {sets} WHERE id = ?", vals)
+        return bool(cur.rowcount > 0)
+
+    if conn is not None:
+        return _do(conn)
+    with _default_db().connect("user") as c:
+        return _do(c)
 
 
 def delete_blueprint(bp_id: int, *, conn=None) -> bool:

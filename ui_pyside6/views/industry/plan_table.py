@@ -27,6 +27,7 @@ from ui_pyside6.views.industry.plan_table_constants import (
     COL_CHECKBOX,
     COL_CHILD_LEVEL,
     COL_GROUP,
+    COL_NOTES,
     COL_PRODUCT,
     COL_STATUS,
     COL_SUCCESS_RATE,
@@ -72,6 +73,8 @@ class PlanTable(QWidget):
         layout.addWidget(self._table)
 
         self._model: PlanTableModel | None = None
+        # 已挂过备注落库钩子的 model（防止重复 set_model 造成重复连接）
+        self._notes_hooked_model: PlanTableModel | None = None
         # 工具栏当前材料机库 ID（由 IndustryPage 注入，启动时兜底）
         self._mat_hangar_id: int | None = None
         # 工具栏价格设置/人物访问器（由 IndustryPage 注入，母项拆解利润预览用）
@@ -133,6 +136,11 @@ class PlanTable(QWidget):
     def set_model(self, model: PlanTableModel) -> None:
         """设置 PlanTableModel 并自适应列宽"""
         self._model = model
+        # 备注列内联编辑要落库（模型层只改内存字典，刷新即丢）。
+        # 只连一次：industry_view.load_plans 复用同一个 model，仅首次走到这里。
+        if self._notes_hooked_model is not model:
+            model.dataChanged.connect(self._on_model_data_changed)
+            self._notes_hooked_model = model
         self._table.setModel(model)
         # 内容自适应后，窄列自动收缩
         self._table.resizeColumnsToContents()
@@ -380,53 +388,16 @@ class PlanTable(QWidget):
             cursor = Qt.CursorShape.ArrowCursor
         self._table.viewport().setCursor(cursor)
 
-    def _confirm_bp_short(self, plans: list[dict]) -> bool | None:
-        """蓝图流程不足时确认一次（批量只问一次）。
-
-        Returns: ``True`` = 强制放行；``False`` = 没不足，正常走；``None`` = 用户取消。
-        确认框放 UI 层：`complete_plans` 是无 parent 的服务函数，validate 档测试会在
-        没有 QApplication 的情况下直调它。
-        """
-        from services import plan_execution
-
-        lines = []
-        for p in plans:
-            pid = p.get("id")
-            if not pid:
-                continue
-            short = plan_execution.binding_shortfall(pid)
-            if short:
-                lines.append(f"  {p.get('product_name') or pid}: {short}")
-        if not lines:
-            return False
-        ret = QMessageBox.question(
-            self,
-            "蓝图流程不足",
-            "\n".join(lines[:10]) + "\n\n仍要下线？\n"
-            "流程按实际可用量消耗；由此产生的账面偏差，"
-            "请稍后用「蓝图管理 → 粘贴导入蓝图 → 全量同步」矫正。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return True if ret == QMessageBox.StandardButton.Yes else None
-
     def _complete_plan_with_dialog(self, plan: dict) -> None:
-        """状态列「待下线」→ 下线确认弹窗（选产出机库）→ 单独下线"""
-        from services.inventory_manager import get_hangars
-        from services.user_settings import get_default_hangar_id
-        from ui_pyside6.views.industry.complete_plans_dialog import CompletePlansDialog, complete_plans
+        """状态列「待下线」→ 下线确认弹窗（选产出机库）→ 单独下线。
 
-        hangars = get_hangars()
-        default_hid = get_default_hangar_id("default_deposit_hangar_id")
-        dlg = CompletePlansDialog([plan], hangars, default_hid, self)
-        if not dlg.exec():
-            return
-        allow_bp_short = self._confirm_bp_short([plan])
-        if allow_bp_short is None:
-            return
-        result = complete_plans([plan], dlg.selected_hangar_id(), parent=self, allow_bp_short=allow_bp_short)
-        if not result["completed"]:
-            QMessageBox.warning(self, "下线失败", "、".join(result["failed"]) or "未知错误")
+        对话框/预检/失败提示都收敛在小助手共用的 `complete_one_plan`，这里只负责
+        把成功结果回写到内存中的行。
+        """
+        from ui_pyside6.views.industry.complete_plans_dialog import complete_one_plan
+
+        result = complete_one_plan(self, plan)
+        if result is None:  # 用户取消或下线失败（已弹过告警）
             return
         if self._model is None:
             return
@@ -452,17 +423,19 @@ class PlanTable(QWidget):
             return
         from services.inventory_manager import get_hangars
         from services.user_settings import get_default_hangar_id
+        from ui_pyside6.views.industry.complete_guard import confirm_bp_shortfall
         from ui_pyside6.views.industry.complete_plans_dialog import CompletePlansDialog, complete_plans
 
         dlg = CompletePlansDialog(ready, get_hangars(), get_default_hangar_id("default_deposit_hangar_id"), self)
         if not dlg.exec():
             return
-        allow_bp_short = self._confirm_bp_short(ready)
+        allow_bp_short = confirm_bp_shortfall(self, ready)
         if allow_bp_short is None:
             return
         result = complete_plans(ready, dlg.selected_hangar_id(), allow_bp_short=allow_bp_short)
         if result["failed"]:
-            QMessageBox.warning(self, "下线失败", "、".join(result["failed"]))
+            detail = "\n".join(result.get("failed_reasons") or []) or "、".join(result["failed"])
+            QMessageBox.warning(self, "下线失败", detail)
         self._rebuild_subitems()
         self.plan_updated.emit()
 
@@ -710,6 +683,22 @@ class PlanTable(QWidget):
         self._rebuild_subitems()
         self._model.layoutChanged.emit()
         self.plan_updated.emit()
+
+    def _on_model_data_changed(self, top_left, bottom_right, roles=None) -> None:
+        """备注列内联编辑落库。
+
+        模型层的 `setData` 只改内存字典，旧行为下双击改完备注、下一次刷新就丢。
+        这里**只写库**：不 emit `plan_updated` —— 那会触发 `load_plans` →
+        `set_plans` → `beginResetModel`，既让每次改备注全表重载，又会打断
+        正在进行的编辑（回环）。
+        """
+        model = self.sender()
+        if not isinstance(model, PlanTableModel) or top_left.column() != COL_NOTES:
+            return
+        plan = model.get_plan(top_left.row())
+        if not plan or not plan.get("id"):
+            return
+        get_container().plan_repo.update(plan["id"], notes=str(plan.get("notes") or ""))
 
     def _add_notes(self, row: int) -> None:
         """添加备注 — 弹出文本输入框"""

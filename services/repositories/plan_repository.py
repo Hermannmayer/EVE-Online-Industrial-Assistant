@@ -127,10 +127,10 @@ class PlanRepository:
         with self._db.connect("user") as conn:
             if status:
                 rows = conn.execute(
-                    "SELECT * FROM production_plans WHERE status = ? ORDER BY created_at DESC", (status,)
+                    "SELECT * FROM production_plans WHERE status = ? ORDER BY created_at DESC, id ASC", (status,)
                 ).fetchall()
             else:
-                rows = conn.execute("SELECT * FROM production_plans ORDER BY created_at DESC").fetchall()
+                rows = conn.execute("SELECT * FROM production_plans ORDER BY created_at DESC, id ASC").fetchall()
             return [dict(r) for r in rows]
 
     def find_by_group_product(self, group_number: int, product_type_id: int) -> int | None:
@@ -264,6 +264,94 @@ class PlanRepository:
                 ),
             )
             return int(cur.lastrowid or 0)
+
+    # ── 部分启动拆分：余量行 ──────────────────────────────
+    # 从源行复制「结构/展示/派生」列，重置「执行」列。**逐列显式列出**，
+    # 不用 SELECT *：否则以后加列会静默漏写、让新列取 DEFAULT。
+    _SPLIT_COPY_COLUMNS = (
+        "product_type_id",
+        "product_name",
+        "blueprint_type_id",
+        "runs",
+        "me_level",
+        "te_level",
+        "mat_hub",
+        "sell_hub",
+        "facility",
+        "char_name",
+        "profit",
+        "margin",
+        "score",
+        "material_cost",
+        "created_at",
+        "facility_cost_mult",
+        "calculated_time",
+        "notes",
+        "group_number",
+        "sub_level",
+        "output_location",
+        "market_margin",
+        "personal_margin",
+        "daily_output",
+        "materials_ready",
+        "iskph",
+        "deposit_hangar_id",
+        "mat_hangar_id",
+        "solar_system_id",
+        "component_parent_type_id",
+        "demand",
+        "activity",
+        "decryptor_type_id",
+        "success_rate",
+        "research_target_level",
+    )
+    # 重置列（括号内为写死的初值）：执行态一律清空，与 cancel_plan 的口径一致
+    _SPLIT_RESET = (
+        ("status", "'pending'"),
+        ("parallels", "?"),
+        ("assigned_blueprint_id", "?"),
+        ("started_at", "NULL"),
+        ("completed_at", "NULL"),
+        ("deposited", "0"),
+        ("material_short", "''"),
+        ("deducted_materials", "''"),
+        ("material_cost_snapshot", "''"),
+        # ⚠️ 必须置空：source_mother_ids 决定 _is_shared_child，照抄会让余量行
+        # 被 group_and_sort_plans 提升进「共享组件」区
+        ("source_mother_ids", "''"),
+        ("actual_output_runs", "NULL"),
+    )
+
+    def insert_split_remainder(
+        self,
+        plan_id: int,
+        *,
+        parallels: int,
+        assigned_blueprint_id: int | None = None,
+        conn=None,
+    ) -> int:
+        """复制 plan_id 的结构列，生成「部分启动」的未启动余量行（pending），返回新行 id。
+
+        与 `insert_child_plan` 不同，这里**不重建任何业务字段**（分组/需求/机库全部照抄），
+        也**不调用 ensure_plan_auto_bind** —— 余量行的蓝图绑定由调用方精确迁移，
+        自动绑定会多绑/抢图。`conn` 传入时复用调用方事务且不提交。
+        """
+
+        def _do(c) -> int:
+            cols = [*self._SPLIT_COPY_COLUMNS, *(name for name, _ in self._SPLIT_RESET)]
+            select = ", ".join(self._SPLIT_COPY_COLUMNS)
+            literals = ", ".join(expr for _, expr in self._SPLIT_RESET)
+            cur = c.execute(
+                f"INSERT INTO production_plans ({', '.join(cols)}) "
+                f"SELECT {select}, {literals} FROM production_plans WHERE id = ?",
+                (parallels, assigned_blueprint_id, plan_id),
+            )
+            return int(cur.lastrowid or 0)
+
+        if conn is not None:
+            return _do(conn)
+        with self._db.connect("user") as conn:
+            return _do(conn)
 
     def delete_many(self, plan_ids: list[int]) -> int:
         """批量删除计划（蓝图表关联清理由调用方 release_blueprint 处理）。返回删除行数。"""

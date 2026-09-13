@@ -361,7 +361,7 @@ def get_blueprints(hangar_id: int | None=None) -> list[dict]
 ### `update_blueprint`
 
 ```python
-def update_blueprint(bp_id: int, **kwargs) -> bool
+def update_blueprint(bp_id: int, *, conn=None, **kwargs) -> bool
 ```
 
 更新蓝图属性，kwargs 可含 is_bpo, me_level, te_level, runs, quantity, notes
@@ -376,7 +376,7 @@ def delete_blueprint(bp_id: int, *, conn=None) -> bool
 
 删除蓝图。conn 传入时在同一连接执行且不提交（由调用方统一事务）。
 
-定义行：`815`
+定义行：`824`
 
 ### `delete_blueprints_batch`
 
@@ -386,7 +386,7 @@ def delete_blueprints_batch(ids: list[int]) -> int
 
 批量删除蓝图，返回删除行数
 
-定义行：`837`
+定义行：`846`
 
 ### `move_blueprints_to_hangar`
 
@@ -396,7 +396,7 @@ def move_blueprints_to_hangar(ids: list[int], hangar_id: int) -> int
 
 批量移动蓝图到目标机库
 
-定义行：`859`
+定义行：`868`
 
 ### `update_blueprints_batch`
 
@@ -406,7 +406,7 @@ def update_blueprints_batch(ids: list[int], **kwargs) -> int
 
 批量更新蓝图属性（me_level, te_level, runs, cost_per_run 等）
 
-定义行：`870`
+定义行：`879`
 
 ### `get_blueprint_product_info`
 
@@ -416,7 +416,7 @@ def get_blueprint_product_info(blueprint_type_id: int) -> dict | None
 
 获取蓝图的产物信息（名称、产量、制造时间）
 
-定义行：`887`
+定义行：`896`
 
 ### `get_blueprint_product_info_batch`
 
@@ -426,7 +426,7 @@ def get_blueprint_product_info_batch(bp_ids: list[int]) -> dict[int, dict]
 
 批量获取蓝图产物信息，返回 &#123;blueprint_type_id: &#123;product_type_id, product_name, product_quantity, base_time&#125;&#125;
 
-定义行：`917`
+定义行：`926`
 
 ### `get_blueprint_materials_batch`
 
@@ -436,7 +436,7 @@ def get_blueprint_materials_batch(bp_ids: list[int]) -> dict[int, list[tuple[int
 
 批量获取蓝图材料，返回 &#123;blueprint_type_id: [(material_type_id, quantity), ...]&#125;
 
-定义行：`948`
+定义行：`957`
 
 ### `check_blueprint_exists`
 
@@ -446,7 +446,7 @@ def check_blueprint_exists(blueprint_type_id: int) -> bool
 
 检查用户蓝图库中是否已存在指定类型的蓝图
 
-定义行：`969`
+定义行：`978`
 
 ### `get_blueprint_tech_levels`
 
@@ -456,7 +456,7 @@ def get_blueprint_tech_levels()
 
 从 reference.db 获取各蓝图的科技等级
 
-定义行：`977`
+定义行：`986`
 
 ### `get_blueprint_reaction_ids`
 
@@ -466,4 +466,4 @@ def get_blueprint_reaction_ids() -> set[int]
 
 获取所有反应公式的 blueprint_type_id
 
-定义行：`1014`
+定义行：`1023`

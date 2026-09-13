@@ -7,12 +7,14 @@
 
 from __future__ import annotations
 
+# 非待生产状态 → (类别码, 原因文案)。码供 UI 选短标签，文案供 tooltip，
+# 同一处定义保证两者永不漂移。
 _STATUS_BLOCK = {
-    "in_progress": "生产中",
-    "running": "生产中",
-    "ready": "待下线",
-    "completed": "已完成",
-    "done": "已完成",
+    "in_progress": ("status_running", "生产中"),
+    "running": ("status_running", "生产中"),
+    "ready": ("status_ready", "待下线"),
+    "completed": ("status_done", "已完成"),
+    "done": ("status_done", "已完成"),
 }
 
 _ACTIVE_STATUSES = ("in_progress", "running")
@@ -55,6 +57,53 @@ def pending_children_count(plan: dict, all_plans: list[dict]) -> int:
     )
 
 
+def plan_start_block(
+    plan: dict,
+    mat_hangar_id: int | None,
+    all_plans: list[dict],
+    *,
+    shortfall_count: int = 0,
+    bp_short: str | None = None,
+    allow_short: bool = False,
+    blueprint_ready: bool | None = None,
+) -> tuple[str, str] | None:
+    """启动阻塞的**唯一真源**：返回 `(类别码, 原因文案)`；None = 可启动。
+
+    判定顺序：status 非待生产 → 材料机库未设置 → 缺料 → 输入蓝图不可用 →
+    蓝图流程不足 → 母项子项未完成。`plan_start_block_reason` 是本函数的文案投影，
+    UI 用类别码选动作槽短标签、用文案做 tooltip —— 两者同源，不会漂移。
+
+    类别码：status_running / status_ready / status_done / status_other /
+    no_mat_hangar / material_short / blueprint_missing / blueprint_short /
+    children_running / waiting_children。
+
+    入参含义同 `plan_start_block_reason` 的 docstring。
+    """
+    status = (plan.get("status") or "").lower()
+    if status != "pending":
+        return _STATUS_BLOCK.get(status, ("status_other", f"状态「{status}」不可启动"))
+    if not mat_hangar_id:
+        return "no_mat_hangar", "材料机库未设置"
+    if shortfall_count > 0 and not allow_short:
+        return "material_short", f"材料不足 {shortfall_count} 种"
+    ready = blueprint_ready
+    if ready is None:
+        ready = bool(plan.get("has_image") or plan.get("assigned_blueprint_id"))
+    if not ready:
+        from services.plan_job_kinds import input_blueprint_hint
+
+        return "blueprint_missing", input_blueprint_hint(plan.get("activity"))
+    if bp_short and not allow_short:
+        return "blueprint_short", bp_short
+    if is_parent(plan):
+        if children_running(plan, all_plans):
+            return "children_running", "子项产线运行中"
+        pending = pending_children_count(plan, all_plans)
+        if pending:
+            return "waiting_children", f"等待 {pending} 条子项完成"
+    return None
+
+
 def plan_start_block_reason(
     plan: dict,
     mat_hangar_id: int | None,
@@ -65,10 +114,7 @@ def plan_start_block_reason(
     allow_short: bool = False,
     blueprint_ready: bool | None = None,
 ) -> str | None:
-    """返回阻止启动的原因文本；None = 可启动。
-
-    判定顺序：status 非待生产 → 材料机库未设置 → 缺料 → 输入蓝图不可用 →
-    蓝图流程不足 → 母项子项未完成。
+    """返回阻止启动的原因文本；None = 可启动（`plan_start_block` 的文案投影）。
 
     `bp_short`: 蓝图流程不足的原因文本（由调用方用
     `services.plan_execution.binding_shortfall(plan_id)` 预检后注入 ——
@@ -79,29 +125,16 @@ def plan_start_block_reason(
         用 plan 的 has_image / assigned_blueprint_id 推断；
         调用方拿到更准的信息（plan_execution.plan_blueprint_ready）时应显式传入。
     """
-    status = (plan.get("status") or "").lower()
-    if status != "pending":
-        return _STATUS_BLOCK.get(status, f"状态「{status}」不可启动")
-    if not mat_hangar_id:
-        return "材料机库未设置"
-    if shortfall_count > 0 and not allow_short:
-        return f"材料不足 {shortfall_count} 种"
-    ready = blueprint_ready
-    if ready is None:
-        ready = bool(plan.get("has_image") or plan.get("assigned_blueprint_id"))
-    if not ready:
-        from services.plan_job_kinds import input_blueprint_hint
-
-        return input_blueprint_hint(plan.get("activity"))
-    if bp_short and not allow_short:
-        return bp_short
-    if is_parent(plan):
-        if children_running(plan, all_plans):
-            return "子项产线运行中"
-        pending = pending_children_count(plan, all_plans)
-        if pending:
-            return f"等待 {pending} 条子项完成"
-    return None
+    block = plan_start_block(
+        plan,
+        mat_hangar_id,
+        all_plans,
+        shortfall_count=shortfall_count,
+        bp_short=bp_short,
+        allow_short=allow_short,
+        blueprint_ready=blueprint_ready,
+    )
+    return block[1] if block else None
 
 
 def can_force_start(

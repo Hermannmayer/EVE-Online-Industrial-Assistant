@@ -19,15 +19,18 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPen
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -57,7 +60,7 @@ from services.plan_category import (
     CATEGORY_REACTION,
 )
 from services.plan_service import group_and_sort_plans, load_plans_for_wizard
-from services.plan_start_check import can_force_start, plan_start_block_reason
+from services.plan_start_check import can_force_start, plan_start_block
 from services.terminology import term
 from ui_pyside6.icon_cache import load_item_icon
 from ui_pyside6.pin_utils import apply_window_pin
@@ -134,7 +137,37 @@ _STATUS_LABELS = {
 _PARENT_GLYPH = "◆ "
 _COLLAPSED_GLYPH = "+"  # 已折叠（可展开）
 _EXPANDED_GLYPH = "−"  # 已展开（可折叠）
-_BLOCKED_GLYPH = "?"  # 不用 ⓘ（YaHei 无此字形）
+
+# 动作槽按钮文案。阻塞行不再用「?」占位：直接显示短标签，完整原因放 tooltip
+# （`plan_start_block` 的类别码 → 短标签；code 由 services 层给出，不解析文案）。
+_COMPLETE_LABEL = "可下线"
+_START_LABEL = "启动"
+_BLOCK_SHORT_LABELS = {
+    "status_running": "生产中",
+    "status_done": "已完成",
+    "status_other": "不可启动",
+    "no_mat_hangar": "未设材料库",
+    "material_short": "材料不够",
+    "blueprint_missing": "缺蓝图",
+    "blueprint_short": "缺蓝图",
+    "children_running": "子项运行中",
+    "waiting_children": "等子项",
+}
+
+
+def _short_label(code: str | None, status: str) -> str:
+    """阻塞类别码 → 动作槽短标签；码缺失时退回状态标签。
+
+    短标签放 UI 层：它是本窗动作槽的展示文案（与 `_STATUS_LABELS` 同类），不是
+    EVE 游戏术语，不入 `services.terminology`。完整原因只进 tooltip —— 蓝图流程
+    不足的原文可达数十字，直接上按钮会把 68px 的行撑爆。
+    """
+    return _BLOCK_SHORT_LABELS.get(code or "") or _STATUS_LABELS.get(status, "") or "不可启动"
+
+
+# 动作槽宽度按这些文案的**最宽者**取值（新增短标签会自动纳入，不会截断）
+_SLOT_SAMPLES = (_START_LABEL, _COMPLETE_LABEL, "折叠(99)", "展开(99)", *_BLOCK_SHORT_LABELS.values())
+_SLOT_MIN_W = 88
 
 # ── 对比度契约 ───────────────────────────────────────────
 # 角色 → (前景 token, 背景 token, 阈值)。
@@ -429,14 +462,18 @@ class CapacitySlotBar(QWidget):
 class PlanRow(QWidget):
     """L3 行卡片：[图标][标题+徽章 / 副标题][时长 / 动作槽位]。
 
-    动作槽位宽度固定（`_action_slot_w`），三种按钮互斥显隐但**占位不变** ——
-    避免行动作区左右跳动；被阻塞时也给出可见的 ⓘ 入口而非留空。
+    动作槽位宽度固定（`_action_slot_w`），四个按钮互斥显隐但**占位不变** ——
+    避免行动作区左右跳动。槽内文案不出现占位符：可启动给「启动」，待下线给
+    「可下线」（点击即下线），缺料/缺蓝图等阻塞直接显示**短标签**、完整原因放
+    tooltip（见 `_BLOCK_SHORT_LABELS`）。
     """
 
     clicked = Signal(int)  # 点信息区 → 复制蓝图名
     start_requested = Signal(int)  # 点启动按钮
     toggle_requested = Signal(int)  # 点折叠/展开（传 group_id）
-    blocked_requested = Signal(int)  # 点 ⓘ → 查看不可启动原因
+    blocked_requested = Signal(int)  # 点阻塞短标签 → 查看完整不可启动原因
+    complete_requested = Signal(int)  # 点「可下线」→ 走单行下线流程
+    context_menu_requested = Signal(int)  # 行上右键 → 菜单在 ProductionLauncher 侧构造
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -498,8 +535,7 @@ class PlanRow(QWidget):
         action_row = QHBoxLayout()
         action_row.setSpacing(_GAP_SM)
         action_row.addStretch(1)
-        self._action_slot_w = self._compute_slot_width()
-        self._btn_start = QPushButton("启动")
+        self._btn_start = QPushButton(_START_LABEL)
         self._btn_start.setObjectName("btn_row")
         self._btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_start.clicked.connect(self._on_start_clicked)
@@ -507,12 +543,20 @@ class PlanRow(QWidget):
         self._btn_toggle.setObjectName("btn_row_ghost")
         self._btn_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_toggle.clicked.connect(self._on_toggle_clicked)
-        self._btn_blocked = QPushButton(_BLOCKED_GLYPH)
+        self._btn_blocked = QPushButton("")
         self._btn_blocked.setObjectName("btn_row_ghost")
         self._btn_blocked.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_blocked.clicked.connect(self._on_blocked_clicked)
-        for btn in (self._btn_start, self._btn_toggle, self._btn_blocked):
-            btn.setFixedWidth(self._action_slot_w)
+        # 「可下线」复用主按钮样式：橘色面在 6/10 主题下对比度不达标，新增
+        # objectName 就得往 _CONTRAST_CONTRACT 加条目并被全主题测试拒收
+        self._btn_complete = QPushButton(_COMPLETE_LABEL)
+        self._btn_complete.setObjectName("btn_row")
+        self._btn_complete.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_complete.clicked.connect(self._on_complete_clicked)
+        # 单一枚举来源：新增按钮只需改这里（槽宽、隐藏、主题重渲染都走它）
+        self._action_buttons = (self._btn_start, self._btn_toggle, self._btn_blocked, self._btn_complete)
+        self._sync_slot_width()  # 必须在按钮建好之后 —— 量的是按钮自己的字体
+        for btn in self._action_buttons:
             action_row.addWidget(btn)
         right.addLayout(action_row)
         root.addLayout(right)
@@ -521,16 +565,24 @@ class PlanRow(QWidget):
 
     # ── 尺寸 ────────────────────────────────────────────────
 
-    def _compute_slot_width(self) -> int:
-        """动作槽位宽度 = 三种按钮文本的最宽者 + 左右内边距。
+    def _sync_slot_width(self) -> None:
+        """按各按钮**自身**字体算动作槽宽并应用（宽度未变则不动按钮）。
 
-        实测 ``▾ 折叠(1)`` 约 87px、``▶ 启动`` 约 72px；必须按最宽者取值，
-        否则折叠文案会被截断。
+        QSS 给 `#btn_row`(Body) 与 `#btn_row_ghost`(Caption) 设了不同字号，且字号要等
+        控件挂进布局后才生效，用控件自身的字体量会偏小 —— 最长文案（如「子项运行中」）
+        会被截断。文案从常量派生，新增短标签时不需要再手工同步这里。
         """
-        fm = QFontMetrics(self.font())
-        samples = ("启动", "折叠(99)", "展开(99)", _BLOCKED_GLYPH)
-        text_w = max(fm.horizontalAdvance(s) for s in samples)
-        return max(88, text_w + 2 * _GAP_MD)
+        text_w = max(
+            QFontMetrics(btn.font()).horizontalAdvance(sample)
+            for btn in self._action_buttons
+            for sample in _SLOT_SAMPLES
+        )
+        width = max(_SLOT_MIN_W, text_w + 2 * _GAP_MD)
+        if width == getattr(self, "_action_slot_w", None):
+            return  # 每轮轮询都会走到这里，宽度没变就别碰布局
+        self._action_slot_w = width
+        for btn in self._action_buttons:
+            btn.setFixedWidth(width)
 
     # ── 交互 ────────────────────────────────────────────────
 
@@ -547,6 +599,10 @@ class PlanRow(QWidget):
         if self._plan_id is not None:
             self.blocked_requested.emit(self._plan_id)
 
+    def _on_complete_clicked(self):
+        if self._plan_id is not None:
+            self.complete_requested.emit(self._plan_id)
+
     # ── 数据 ────────────────────────────────────────────────
 
     def set_plan(
@@ -554,6 +610,7 @@ class PlanRow(QWidget):
         plan: dict,
         *,
         block_reason: str | None,
+        block_code: str | None = None,
         pending_children: int = 0,
         collapsed: bool = False,
         can_force_start: bool = False,
@@ -561,6 +618,7 @@ class PlanRow(QWidget):
         self._plan = plan
         self._plan_id = plan.get("id")
         self._last_reason = block_reason
+        self._last_block_code = block_code
         self._last_pending = pending_children
         self._last_collapsed = collapsed
         self._last_can_force = can_force_start
@@ -606,22 +664,33 @@ class PlanRow(QWidget):
             root.setContentsMargins(_GAP_MD + level * _GAP_LG, _GAP_SM, _GAP_MD, _GAP_SM)
         self._indent.setVisible(level > 0)
 
-        # 动作槽位：四态互斥，占位恒定
-        self._btn_start.hide()
-        self._btn_toggle.hide()
-        self._btn_blocked.hide()
+        # 动作槽位：五态互斥，占位恒定，**不出现占位符**
+        self._sync_slot_width()  # 字号要等挂进布局才生效，构造时量一次可能偏小
+        for btn in self._action_buttons:
+            btn.hide()
+        if self._plan_id is None:
+            # 共享组件的合成根行（无真实计划）：不属于任何可操作状态，留空
+            return
         if level == 0 and pending_children > 0:
             self._btn_toggle.setText(("展开" if collapsed else "折叠") + f"({pending_children})")
             self._btn_toggle.show()
+        elif status == "ready":
+            self._btn_complete.setToolTip("产出已跑完，点击下线（成品入库、消耗绑定流程）")
+            self._btn_complete.show()
         elif block_reason is None and status == "pending":
+            # 必须显式复位：本行会被原地复用，分支 5 留下的短标签文本会残留
+            self._btn_start.setText(_START_LABEL)
+            self._btn_start.setToolTip("")
             self._btn_start.show()
         elif can_force_start and status == "pending":
-            # 缺料是**唯一**阻塞：仍给「启动」，点击时二次确认（与计划表格同口径）
-            self._btn_start.setToolTip(f"材料不足，点击后需确认（{block_reason}）")
+            # 缺料/蓝图流程不足是**唯一**阻塞：按钮文字直接说明堵点，仍可点，
+            # 点击时二次确认（与计划表格同口径）
+            self._btn_start.setText(_short_label(block_code, status))
+            self._btn_start.setToolTip(f"{block_reason}，点击后需确认")
             self._btn_start.show()
         else:
-            reason = block_reason or _STATUS_LABELS.get(status, status) or "不可启动"
-            self._btn_blocked.setToolTip(reason)
+            self._btn_blocked.setText(_short_label(block_code, status))
+            self._btn_blocked.setToolTip(block_reason or _STATUS_LABELS.get(status, status) or "不可启动")
             self._btn_blocked.show()
 
     def _location_text(self, plan: dict) -> str:
@@ -661,14 +730,19 @@ class PlanRow(QWidget):
         if event.button() == Qt.MouseButton.LeftButton and self._plan_id is not None:
             self.clicked.emit(self._plan_id)
 
+    def contextMenuEvent(self, event) -> None:
+        """行上右键 → 交给 ProductionLauncher 弹菜单（事件先到行上，无需坐标换算）。"""
+        if self._plan_id is not None:
+            self.context_menu_requested.emit(self._plan_id)
+            event.accept()
+
     def _on_theme_changed(self):
-        self._action_slot_w = self._compute_slot_width()
-        for btn in (self._btn_start, self._btn_toggle, self._btn_blocked):
-            btn.setFixedWidth(self._action_slot_w)
+        self._sync_slot_width()
         if self._plan:
             self.set_plan(
                 self._plan,
                 block_reason=self._last_reason,
+                block_code=self._last_block_code,
                 pending_children=self._last_pending,
                 collapsed=self._last_collapsed,
                 can_force_start=self._last_can_force,
@@ -1000,7 +1074,10 @@ class ProductionLauncher(QWidget):
         bottom.setSpacing(_GAP_SM)
 
         # 紧凑态：未选中任何行
-        self._bottom_hint = QLabel("在上方列表选一条产线")
+        # 紧凑态提示文案。下线成功后该行会从列表消失、选中态随之落空，此时
+        # `#feedback` 会被紧凑分支清空 —— 成功提示改走这里才不会一闪即没。
+        self._hint_text = "在上方列表选一条产线"
+        self._bottom_hint = QLabel(self._hint_text)
         self._bottom_hint.setObjectName("bottom_hint")
         bottom.addWidget(self._bottom_hint)
 
@@ -1303,9 +1380,14 @@ class ProductionLauncher(QWidget):
         self._bp_ready_cache[pid] = (fp, ready)
         return ready
 
-    def _block_reason(self, plan: dict) -> str | None:
+    def _block_state(self, plan: dict) -> tuple[str | None, str | None]:
+        """启动阻塞 → (类别码, 原因文案)；None = 可启动。
+
+        每行只算一次并同时把两者交给 `PlanRow`，短标签与 tooltip 因此同源，
+        不会出现「按钮说材料不够、悬停说别的」。
+        """
         mat = plan.get("mat_hangar_id") or self._default_mat_hangar
-        return plan_start_block_reason(
+        block = plan_start_block(
             plan,
             mat,
             self._all_plans,
@@ -1313,6 +1395,10 @@ class ProductionLauncher(QWidget):
             bp_short=self._bp_short(plan),
             blueprint_ready=self._blueprint_ready(plan),
         )
+        return block if block else (None, None)
+
+    def _block_reason(self, plan: dict) -> str | None:
+        return self._block_state(plan)[1]
 
     def _can_force_start(self, plan: dict) -> bool:
         """缺料 / 蓝图流程不足是否为唯一阻塞（是 → 仍给「启动」，点击时二次确认）。"""
@@ -1337,9 +1423,11 @@ class ProductionLauncher(QWidget):
                 w = self._widgets.get(int(plan.get("id") or 0))
                 if w is not None:
                     self._plan_map[int(plan.get("id") or 0)] = plan
+                    code, reason = self._block_state(plan)
                     w.set_plan(
                         plan,
-                        block_reason=self._block_reason(plan),
+                        block_reason=reason,
+                        block_code=code,
                         pending_children=int(plan.get("_pending_children") or 0),
                         collapsed=self._row_collapsed(plan),
                         can_force_start=self._can_force_start(plan),
@@ -1374,9 +1462,13 @@ class ProductionLauncher(QWidget):
             row.start_requested.connect(self._on_row_start)
             row.toggle_requested.connect(self._on_row_toggle)
             row.blocked_requested.connect(self._on_blocked_info)
+            row.complete_requested.connect(self._on_row_complete)
+            row.context_menu_requested.connect(self._on_row_context_menu)
+            code, reason = self._block_state(plan)
             row.set_plan(
                 plan,
-                block_reason=self._block_reason(plan),
+                block_reason=reason,
+                block_code=code,
                 pending_children=int(plan.get("_pending_children") or 0),
                 collapsed=self._row_collapsed(plan),
                 can_force_start=self._can_force_start(plan),
@@ -1386,6 +1478,8 @@ class ProductionLauncher(QWidget):
             item.setSizeHint(row.sizeHint())
             self._list.addItem(item)
             self._list.setItemWidget(item, row)
+            # 挂进列表后控件才完成样式解析（按钮字号由 QSS 决定），此时再校一次槽宽
+            row._sync_slot_width()
             self._widgets[pid] = row
 
         if sel_id is not None and sel_id in self._widgets:
@@ -1416,8 +1510,127 @@ class ProductionLauncher(QWidget):
         self._start(plan_id)
 
     def _on_blocked_info(self, plan_id: int) -> None:
-        """点动作槽位的 ⓘ：选中该行 → 底部反馈区给出不可启动原因。"""
+        """点动作槽位的短标签：选中该行 → 底部反馈区给出完整不可启动原因。"""
         self._select_visible_row(plan_id)
+
+    def _on_row_complete(self, plan_id: int) -> None:
+        """行内「可下线」→ 单行下线（本窗是小助手侧的第五条入口）。
+
+        与计划表格单行下线共用 `complete_one_plan`，因此机库选择、蓝图流程预检、
+        失败原因提示的口径完全一致。
+        """
+        plan = self._plan_map.get(plan_id)
+        if plan is None:
+            return
+        if (plan.get("status") or "").lower() != "ready":
+            return
+        self._select_visible_row(plan_id)
+
+        from ui_pyside6.views.industry.complete_plans_dialog import complete_one_plan
+
+        if complete_one_plan(self, plan) is None:  # 取消或失败（已弹过告警）
+            return
+        # ⚠️ 顺序要紧：`_on_poll` 内部就会重算紧凑态文案，提示必须先落进
+        # `_hint_text`；放在它之后再赋值不会触发任何重渲染。
+        self._hint_text = f"已下线：{plan.get('product_name') or plan_id}"
+        self.plans_changed.emit()
+        self._on_poll()
+
+    # ── 右键菜单：备注 / 部分启动 ────────────────────────
+
+    def _on_row_context_menu(self, plan_id: int) -> None:
+        plan = self._plan_map.get(plan_id)
+        if plan is None:
+            return
+        menu = QMenu(self)
+        menu.addAction("添加备注…", lambda: self._on_row_notes(plan_id))
+        if self._can_partial_start(plan):
+            menu.addAction("部分启动…", lambda: self._on_row_partial_start(plan_id))
+        menu.exec(QCursor.pos())
+
+    def _can_partial_start(self, plan: dict) -> bool:
+        """部分启动的可见条件。
+
+        用户口径：只对**独立计划**与**子项全部完成的母项**开放 —— 即
+        `child_level == 0` 且该行当前可启动（或可强制启动：缺料/蓝图流程不足）。
+        子项行由母项需求驱动，拆了会被重放改写；母项还有未完成子项时
+        `_block_state` 会给出 `children_running`/`waiting_children` 且不可强制，自然被排除。
+        """
+        if not plan.get("id") or plan.get("_synthetic"):
+            return False
+        if int(plan.get("child_level") or plan.get("sub_level") or 0) != 0:
+            return False
+        if str(plan.get("status") or "").lower() != "pending":
+            return False
+        if max(int(plan.get("parallels") or 1), 1) <= 1:
+            return False
+        code, _reason = self._block_state(plan)
+        return code is None or self._can_force_start(plan)
+
+    def _on_row_notes(self, plan_id: int) -> None:
+        """添加备注 —— 与主表格右键「添加备注」同构，写 `production_plans.notes`。"""
+        plan = self._plan_map.get(plan_id)
+        if plan is None:
+            return
+        text, ok = QInputDialog.getMultiLineText(self, "添加备注", "输入备注内容:", str(plan.get("notes") or ""))
+        if not ok:
+            return
+        notes = text.strip()
+        get_container().plan_repo.update(plan_id, notes=notes)
+        plan["notes"] = notes
+        self._show_feedback(f"备注已保存：{notes}" if notes else "备注已清空")
+        self.plans_changed.emit()  # 主界面备注列随之刷新
+        self._on_poll()
+
+    def _on_row_partial_start(self, plan_id: int) -> None:
+        """部分启动：只启动 N 条，其余拆成一条「待生产」行留在主界面。"""
+        from ui_pyside6.views.industry.partial_start_dialog import PartialStartDialog
+
+        plan = self._plan_map.get(plan_id)
+        if plan is None or not self._can_partial_start(plan):
+            return
+        total = max(int(plan.get("parallels") or 1), 1)
+        dlg = PartialStartDialog(plan.get("product_name") or str(plan_id), total, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        lines = dlg.lines()
+
+        mat = plan.get("mat_hangar_id") or self._default_mat_hangar
+        executor = self._executor_combo.currentData()
+        if executor is None and self._executor_combo.count() == 0:
+            executor = (plan.get("char_name") or "").strip() or None
+
+        # 预检必须按 **N 条**口径：用整条计划算会报出虚高的缺料
+        preview = plan_execution.preview_partial_start(plan_id, lines, mat)
+        if not preview.get("ok"):
+            QMessageBox.warning(self, "部分启动失败", preview.get("message") or "无法预览材料需求")
+            return
+        confirm = self._confirm_start(
+            plan,
+            mat,
+            executor,
+            lines=lines,
+            shortfalls=preview.get("shortfalls") or [],
+            bp_short=preview.get("bp_short"),
+        )
+        if confirm is None:
+            return
+        allow_short, allow_bp_short = confirm
+
+        res = plan_execution.start_plan_partial(
+            plan_id,
+            lines,
+            mat_hangar_id=mat,
+            char_name=executor,
+            allow_short=allow_short,
+            allow_bp_short=allow_bp_short,
+        )
+        if not res.get("ok"):
+            QMessageBox.warning(self, "部分启动失败", res.get("message") or "未知错误")
+            return
+        self._show_feedback(f"已启动 {lines} 条，剩余 {total - lines} 条待生产")
+        self.plans_changed.emit()
+        self._on_poll()
 
     def _on_row_toggle(self, group_id: int) -> None:
         """折叠/展开一组子项。"""
@@ -1449,12 +1662,15 @@ class ProductionLauncher(QWidget):
             # 紧凑态：只留一行提示，不再露出全宽空下拉
             self._detail_panel.hide()
             self._executor_combo.setVisible(False)
+            self._bottom_hint.setText(self._hint_text)
             self._bottom_hint.show()
             self._show_feedback("")
             self._main_btn.hide()
             self._executor_combo.clear()
             return
 
+        # 选中了具体行 → 之前那条「已下线：X」的常驻提示作废
+        self._hint_text = "在上方列表选一条产线"
         self._bottom_hint.hide()
         self._detail_panel.show()
         self._executor_combo.setVisible(True)
@@ -1496,7 +1712,14 @@ class ProductionLauncher(QWidget):
         # 主按钮
         reason = self._block_reason(plan)
         force = reason is not None and self._can_force_start(plan)
-        if reason is None or force:
+        if status == "ready":
+            # 待下线行的唯一动作是下线（选产出机库 → 成品入库、消耗绑定流程）。
+            # 旧版这里走 else 分支弹「不可启动：待下线」——与行上「?」是同一类毛病。
+            self._main_btn.setText("下线")
+            self._main_btn.setToolTip(f"{name} 下线（产出成品入库，不可逆）")
+            self._main_btn.show()
+            self._show_feedback("")
+        elif reason is None or force:
             qty = 1
             try:
                 qty = plan_execution.output_per_run(int(plan.get("product_type_id") or 0))
@@ -1529,6 +1752,66 @@ class ProductionLauncher(QWidget):
 
     # ── 启动 ─────────────────────────────────────────────
 
+    def _confirm_start(
+        self,
+        plan: dict,
+        mat: int | None,
+        executor: str | None,
+        *,
+        lines: int,
+        shortfalls: list[dict],
+        bp_short: str | None,
+    ) -> tuple[bool, bool] | None:
+        """启动前的公共把关：超员软提示 + 软阻塞确认（整条启动与部分启动共用）。
+
+        ``lines`` 是**本次启动的产线条数**（整条启动 = parallels、部分启动 = N）：
+        超员判断必须用它，否则部分启动会按整条线数误报超员。
+        Returns: (allow_short, allow_bp_short)；用户取消返回 None。
+        """
+        # 软提示：执行人物超员（沿用旧向导，不硬拦）
+        if executor:
+            cat = capacity_line_for_category(str(plan.get("category") or ""))
+            active = int(self._usage.get(executor or "", {}).get(cat, 0))
+            mx = max_lines_for_category(executor, cat)
+            if active + max(int(lines), 1) > mx:
+                ret = QMessageBox.question(
+                    self,
+                    "人物产线超员",
+                    f"{executor} 当前占用 {active}/{mx} 条{line_label(cat)}线，启动后超员。仍要启动？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if ret != QMessageBox.StandardButton.Yes:
+                    return None
+
+        reasons: list[str] = []
+        if shortfalls:
+            listing = "\n".join(f"  {r.get('name')}: 缺 {r.get('missing'):,.0f}" for r in shortfalls[:10])
+            if len(shortfalls) > 10:
+                listing += f"\n  … 等 {len(shortfalls)} 种"
+            reasons.append(f"材料不足：\n{listing}")
+        if bp_short:
+            reasons.append(f"蓝图流程不足：{bp_short}")
+        if not reasons:
+            return (False, False)
+        if not can_force_start(plan, mat, self._all_plans, shortfall_count=len(shortfalls), bp_short=bp_short):
+            # 除软阻塞外还有别的硬阻塞（无蓝图 / 等子项）→ 不该走到这里，兜底拦住
+            QMessageBox.warning(self, "启动失败", self._block_reason(plan) or "当前不可启动")
+            return None
+        ret = QMessageBox.question(
+            self,
+            "启动前确认",
+            "\n\n".join(reasons) + "\n\n是否强制启动？\n"
+            "材料按现有库存扣减、缺口记待补；蓝图**不会**自动补流程或换绑，"
+            "完成时按实际可用流程消耗。\n"
+            "由此产生的账面偏差，请稍后用「蓝图管理 → 粘贴导入蓝图 → 全量同步」矫正。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return None
+        return (bool(shortfalls), bool(bp_short))
+
     def _start(self, plan_id: int) -> None:
         plan = self._plan_map.get(plan_id)
         if plan is None:
@@ -1539,25 +1822,7 @@ class ProductionLauncher(QWidget):
             executor = (plan.get("char_name") or "").strip() or None
         mat = plan.get("mat_hangar_id") or self._default_mat_hangar
 
-        # 软提示：执行人物超员（沿用旧向导，不硬拦）
-        if executor:
-            cat = capacity_line_for_category(str(plan.get("category") or ""))
-            active = int(self._usage.get(executor or "", {}).get(cat, 0))
-            mx = max_lines_for_category(executor, cat)
-            if active + max(int(plan.get("parallels") or 1), 1) > mx:
-                ret = QMessageBox.question(
-                    self,
-                    "人物产线超员",
-                    f"{executor} 当前占用 {active}/{mx} 条{line_label(cat)}线，启动后超员。仍要启动？",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
-                )
-                if ret != QMessageBox.StandardButton.Yes:
-                    return
-
         # 软阻塞预检：材料缺口 / 蓝图流程不足 —— 两者都可强制启动（与计划表格同口径）
-        allow_short = False
-        allow_bp_short = False
         shortfalls: list[dict] = []
         if mat:
             try:
@@ -1571,39 +1836,17 @@ class ProductionLauncher(QWidget):
                 shortfalls = []
         bp_short = self._bp_short(plan)
 
-        reasons: list[str] = []
-        if shortfalls:
-            lines = "\n".join(f"  {r.get('name')}: 缺 {r.get('missing'):,.0f}" for r in shortfalls[:10])
-            if len(shortfalls) > 10:
-                lines += f"\n  … 等 {len(shortfalls)} 种"
-            reasons.append(f"材料不足：\n{lines}")
-        if bp_short:
-            reasons.append(f"蓝图流程不足：{bp_short}")
-        if reasons:
-            if not can_force_start(
-                plan,
-                mat,
-                self._all_plans,
-                shortfall_count=len(shortfalls),
-                bp_short=bp_short,
-            ):
-                # 除软阻塞外还有别的硬阻塞（无蓝图 / 等子项）→ 不该走到这里，兜底拦住
-                QMessageBox.warning(self, "启动失败", self._block_reason(plan) or "当前不可启动")
-                return
-            ret = QMessageBox.question(
-                self,
-                "启动前确认",
-                "\n\n".join(reasons) + "\n\n是否强制启动？\n"
-                "材料按现有库存扣减、缺口记待补；蓝图**不会**自动补流程或换绑，"
-                "完成时按实际可用流程消耗。\n"
-                "由此产生的账面偏差，请稍后用「蓝图管理 → 粘贴导入蓝图 → 全量同步」矫正。",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if ret != QMessageBox.StandardButton.Yes:
-                return
-            allow_short = bool(shortfalls)
-            allow_bp_short = bool(bp_short)
+        confirm = self._confirm_start(
+            plan,
+            mat,
+            executor,
+            lines=max(int(plan.get("parallels") or 1), 1),
+            shortfalls=shortfalls,
+            bp_short=bp_short,
+        )
+        if confirm is None:
+            return
+        allow_short, allow_bp_short = confirm
 
         res = plan_execution.start_plan(
             plan,
@@ -1620,8 +1863,13 @@ class ProductionLauncher(QWidget):
             QMessageBox.warning(self, "启动失败", res.get("message", "未知错误"))
 
     def _on_main_start(self):
-        if self._selected_id is not None:
-            self._start(self._selected_id)
+        if self._selected_id is None:
+            return
+        plan = self._plan_map.get(self._selected_id)
+        if plan is not None and (plan.get("status") or "").lower() == "ready":
+            self._on_row_complete(self._selected_id)
+            return
+        self._start(self._selected_id)
 
     # ── 过滤器 ───────────────────────────────────────────
 

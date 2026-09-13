@@ -167,3 +167,64 @@ def test_procurement_summary_cached_when_nothing_changed(industry_page, monkeypa
     industry_page._proc_result = (100.0, 1.0)
     industry_page._refresh_procurement_summary([plan])
     assert len(started) == 1, "计划与价格都未变时不应重复查询"
+
+
+class TestNotesInlineEditPersists:
+    """备注列内联编辑必须落库。
+
+    模型层 `setData` 只改内存字典（`industry_models.py` 第 4 列分支），旧实现没有
+    任何落库钩子 —— 双击改完备注、下一次刷新就丢。这里是回归防线。
+    """
+
+    @staticmethod
+    def _table(monkeypatch):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from ui_pyside6.models.industry_models import PlanTableModel
+        from ui_pyside6.views.industry.plan_table import PlanTable
+        from ui_pyside6.views.industry.plan_table_constants import COL_NOTES
+
+        repo = MagicMock()
+        monkeypatch.setattr(
+            "ui_pyside6.views.industry.plan_table.get_container",
+            lambda: SimpleNamespace(plan_repo=repo),
+        )
+        table = PlanTable()
+        model = PlanTableModel(
+            [{"id": 7, "product_name": "渡鸦级", "status": "pending", "notes": "", "char_name": "甲"}]
+        )
+        table.set_model(model)
+        return table, model, repo, COL_NOTES
+
+    def test_notes_edit_writes_to_repo(self, qapp, monkeypatch):
+        from PySide6.QtCore import Qt
+
+        table, model, repo, col = self._table(monkeypatch)
+
+        assert model.setData(model.index(0, col), "改后备注", Qt.ItemDataRole.EditRole) is True
+
+        repo.update.assert_called_once_with(7, notes="改后备注")
+
+    def test_notes_edit_does_not_trigger_reload(self, qapp, monkeypatch):
+        """落库钩子不得 emit plan_updated —— 否则 load_plans → set_plans(重置模型)
+        会让每次改备注都全表重载，并打断正在进行的编辑。"""
+        from PySide6.QtCore import Qt
+
+        table, model, repo, col = self._table(monkeypatch)
+        reloads: list = []
+        table.plan_updated.connect(lambda: reloads.append(True))
+
+        model.setData(model.index(0, col), "x", Qt.ItemDataRole.EditRole)
+
+        assert reloads == []
+
+    def test_other_editable_column_not_persisted(self, qapp, monkeypatch):
+        """本轮只修备注列：人物/设施列内联编辑仍不落库（另开一轮处理）。"""
+        from PySide6.QtCore import Qt
+
+        table, model, repo, _col = self._table(monkeypatch)
+
+        model.setData(model.index(0, 8), "乙", Qt.ItemDataRole.EditRole)
+
+        repo.update.assert_not_called()

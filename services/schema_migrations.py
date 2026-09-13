@@ -27,7 +27,7 @@ BACKUP_KEEP = 5
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
-    "user": 15,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 科研作业列（activity/decryptor_type_id/success_rate/research_target_level/actual_output_runs）;  v13→v14: 修复「版本已到 13 但科研列缺失」的历史库;  v14→v15: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）
+    "user": 16,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 科研作业列（activity/decryptor_type_id/success_rate/research_target_level/actual_output_runs）;  v13→v14: 修复「版本已到 13 但科研列缺失」的历史库;  v14→v15: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）;  v15→v16: user_blueprints 原图权威化（runs<0 → is_bpo=1/runs=0，-1 退场）
     "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
 }
 
@@ -270,6 +270,37 @@ def _migrate_user_v9_to_v10(db_path: str) -> str:
     return f"production_plans 扣减快照列 (新增 {net} 列)"
 
 
+def _migrate_user_v15_to_v16(db_path: str) -> str:
+    """v15→v16: user_blueprints 原图权威化（runs<0 → is_bpo=1, runs=0）。
+
+    `runs = -1` 长期被子系统反着读：蓝图管理界面按它显示「无限」
+    （ui_pyside6/views/inventory/inventory_helpers），生产计划侧却归零判
+    「0 可用流程」（plan_execution._bp_available_runs）。后果是绑定了这类行的
+    计划永远「蓝图流程不足」，强制下线时被 consume_bpc_runs 当成 0 流程行
+    **删除**——用户库里 86 张真原图正处于这个状态。
+
+    游戏里原图的「流程数」列本就显示 -1，故 `runs < 0` 即原图。归一后
+    `is_bpo` 成为「原图」的唯一权威（该状态永不消耗、永不删除），`runs` 恒为
+    非负。解析侧同步把 `runs<0` 与英文 Original 判为原图，使「粘贴 → 落库」
+    成为不动点（见 domain/blueprint_sync.normalize_clipboard_attr），否则下次
+    剪贴板全量同步会按 is_bpo 不同把本迁移的结果删旧插新。
+
+    第二条 UPDATE 是未来守卫：把任何 `is_bpo=1` 却带非零 runs 的行一并归一
+    （现库命中 0 行），保证原图行的形态唯一。
+    幂等：重复运行两条 UPDATE 各命中 0 行。
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        if not _table_exists(conn, "user_blueprints"):
+            return "user_blueprints 表不存在，跳过"
+        neg = conn.execute("UPDATE user_blueprints SET is_bpo=1, runs=0 WHERE runs < 0").rowcount
+        norm = conn.execute("UPDATE user_blueprints SET runs=0 WHERE is_bpo=1 AND runs <> 0").rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    return f"原图归一：runs<0 → is_bpo=1/runs=0 共 {neg} 行；is_bpo=1 行 runs 归一 {norm} 行"
+
+
 def _migrate_user_v14_to_v15(db_path: str) -> str:
     """v14→v15: production_plans 新增 material_cost_snapshot 列（启动时成本快照）。
 
@@ -442,6 +473,7 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
         12: _migrate_user_v12_to_v13,
         13: _migrate_user_v13_to_v14,
         14: _migrate_user_v14_to_v15,
+        15: _migrate_user_v15_to_v16,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,

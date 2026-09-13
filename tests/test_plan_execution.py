@@ -90,8 +90,12 @@ def user_env(_module_user_db, monkeypatch):
         for t in ("production_plans", "plan_blueprint_bindings", "inventory_items", "user_blueprints"):
             conn.execute(f"DELETE FROM {t}")
     scoring = MagicMock()
-    container = SimpleNamespace(db=db, scoring_service=lambda: scoring)
+    container = SimpleNamespace(db=db, scoring_service=lambda: scoring, plan_repo=PlanRepository(db))
     monkeypatch.setattr(plan_execution, "_container", lambda: container)
+    # 部分启动会经 plan_service.load_plan 重新取数（enrich 管线），必须一并指向同一临时库
+    from services import plan_service
+
+    monkeypatch.setattr(plan_service, "get_container", lambda: container)
     return SimpleNamespace(db=db, scoring=scoring)
 
 
@@ -996,7 +1000,7 @@ class TestCompletePlansCoordinator:
         pid = _insert_plan(user_env.db, status="ready", runs=2, parallels=1, deposit_hangar_id=None)
         plan = _get_plan(user_env.db, pid)
         result = complete_plans([plan], 1)
-        assert result == {"completed": 1, "deposited": 1, "failed": [], "skipped": []}
+        assert result == {"completed": 1, "deposited": 1, "failed": [], "skipped": [], "failed_reasons": []}
         db_plan = _get_plan(user_env.db, pid)
         assert db_plan["status"] == "completed"
         assert db_plan["deposit_hangar_id"] == 1
@@ -1125,9 +1129,12 @@ class TestBlueprintForceStart:
 
     @staticmethod
     def _plan_with_short_bp(user_env, *, runs: int = 100) -> tuple[dict, int]:
-        """绑定一张流程不足的蓝图（is_bpo=0, runs=-1 → 可用 0），返回 (plan, bp_id)。"""
+        """绑定一张流程不足的蓝图（is_bpo=0, runs=0 → 可用 0），返回 (plan, bp_id)。
+
+        v16 迁移后 `is_bpo=0` 的行不再允许负 runs，流程耗尽就是 0。
+        """
         user_env.scoring.calculate_plan_metrics.return_value = {"materials": []}
-        bp_id = inventory_manager.add_blueprint(1, 3001, is_bpo=False, me_level=10, te_level=20, runs=-1, quantity=1)
+        bp_id = inventory_manager.add_blueprint(1, 3001, is_bpo=False, me_level=10, te_level=20, runs=0, quantity=1)
         pid = _insert_plan(user_env.db, runs=runs, parallels=1)
         bind_blueprints(pid, [bp_id])
         return _get_plan(user_env.db, pid), bp_id
@@ -1138,7 +1145,7 @@ class TestBlueprintForceStart:
             conn.execute("UPDATE production_plans SET status='ready', deposit_hangar_id=1 WHERE id=?", (plan_id,))
 
     def test_available_runs_clamps_negative_to_zero(self, user_env):
-        """runs=-1（未记录流程的拷贝）不该给出负的「可用流程」。"""
+        """负数归零是「迁移尚未跑到」的历史库防线，不该给出负的「可用流程」。"""
         bp_id = inventory_manager.add_blueprint(1, 3001, is_bpo=False, runs=-1, quantity=1)
         with user_env.db.connect("user") as conn:
             assert plan_execution._bp_available_runs(conn, bp_id) == 0
@@ -1190,6 +1197,58 @@ class TestBlueprintForceStart:
         assert "不满足完成条件" in done["message"]
 
 
+class TestBpoCompletionRegression:
+    """计划 127「电磁发生器」回归：5 条产线绑 3 张原图 + 2 张流程充足的拷贝。
+
+    原图（is_bpo=1, runs=0）不进流程账：既不该判「流程不足」逼用户走强制下线，
+    也不该在下线时被 `consume_bpc_runs` 当 0 流程行删除。
+    （回归背景：原图曾以 runs=-1 表示，被计划侧归零判 0 → 强制下线必然删掉它们。）
+    """
+
+    @staticmethod
+    def _plan_127(user_env) -> tuple[int, list[int], list[int]]:
+        user_env.scoring.calculate_plan_metrics.return_value = {"materials": []}
+        bpos = [
+            inventory_manager.add_blueprint(1, 3001, is_bpo=True, me_level=10, te_level=20, runs=0, quantity=1)
+            for _ in range(3)
+        ]
+        bpcs = [
+            inventory_manager.add_blueprint(1, 3001, is_bpo=False, me_level=10, te_level=20, runs=4000, quantity=1)
+            for _ in range(2)
+        ]
+        pid = _insert_plan(user_env.db, runs=1004, parallels=5)
+        bind_blueprints(pid, bpos + bpcs)
+        with user_env.db.connect("user") as conn:
+            conn.execute("UPDATE production_plans SET status='ready', deposit_hangar_id=1 WHERE id=?", (pid,))
+        return pid, bpos, bpcs
+
+    def test_binding_shortfall_none_with_bpo(self, user_env):
+        """原图视为无限流程 → 不再触发「流程不足」确认（四条入口都能直接下线）。"""
+        pid, _bpos, _bpcs = self._plan_127(user_env)
+        assert plan_execution.binding_shortfall(pid) is None
+
+    def test_complete_keeps_bpo_and_consumes_bpc(self, user_env):
+        pid, bpos, bpcs = self._plan_127(user_env)
+
+        done = complete_plan(_get_plan(user_env.db, pid))
+
+        assert done["ok"], done
+        assert "BPO 可无限次使用" in done["message"]
+        with user_env.db.connect("user") as conn:
+            rows = {r[0]: (r[1], r[2]) for r in conn.execute("SELECT id, is_bpo, runs FROM user_blueprints")}
+        for bp in bpos:
+            assert rows.get(bp) == (1, 0), "原图不得被消耗或删除"
+        for bp in bpcs:
+            assert rows.get(bp) == (0, 2996), "拷贝各扣 1004 流程"
+
+    def test_complete_without_force_flag(self, user_env):
+        """不需要 allow_bp_short 就能完成 —— 这正是状态栏「全部下线」的失败点。"""
+        pid, _bpos, _bpcs = self._plan_127(user_env)
+        done = complete_plan(_get_plan(user_env.db, pid), allow_bp_short=False)
+        assert done["ok"], done
+        assert "不满足完成条件" not in done["message"]
+
+
 class TestMaterialRequirementsPerLine:
     """逐线后 `material_requirements` 必须只乘 runs —— 否则启动会**多扣 parallels 倍**。"""
 
@@ -1215,3 +1274,157 @@ class TestMaterialRequirementsPerLine:
         reqs = material_requirements(plan)
 
         assert reqs == [{"type_id": 1001, "name": "三钛", "need": 60}]  # 5 × 3 × 4
+
+
+# ════════════════════════════════════════════════════════════════
+#  部分启动：按产线条数拆分
+# ════════════════════════════════════════════════════════════════
+
+
+class TestPartialStart:
+    """`start_plan_partial` —— 拆成「已启动 N 条」+「未启动 P−N 条」，只扣 N 条线的材料。"""
+
+    @staticmethod
+    def _per_line_metrics(plan, char_config=None):
+        """假评分：每条并行线要 11 个 1001（随 parallels 线性变化）。
+
+        这样「只扣 N 条线」与「按整条线数 P 扣」可以逐值区分开。
+        """
+        lines = max(int(plan.get("parallels") or 1), 1)
+        return {"materials": [], "materials_all_lines": [{"type_id": 1001, "name": "三钛", "qty": 11 * lines}]}
+
+    def _setup(self, user_env, *, parallels=3, runs=3, blueprints=3, is_bpo=False):
+        user_env.scoring.calculate_plan_metrics.side_effect = self._per_line_metrics
+        bp_ids = [_insert_blueprint(user_env.db, 3001, runs=100, is_bpo=is_bpo) for _ in range(blueprints)]
+        pid = _insert_plan(user_env.db, runs=runs, parallels=parallels, mat_hangar_id=1, char_name="甲")
+        if bp_ids:
+            bind_blueprints(pid, bp_ids)
+        return pid, bp_ids
+
+    def test_splits_into_two_rows(self, user_env):
+        pid, _bp = self._setup(user_env, parallels=3)
+        src = _get_plan(user_env.db, pid)
+
+        res = plan_execution.start_plan_partial(pid, 1, mat_hangar_id=None)
+
+        assert res["ok"], res
+        assert res["started_lines"] == 1
+        started = _get_plan(user_env.db, pid)
+        assert started["status"] == "in_progress"
+        assert started["parallels"] == 1
+
+        rem = _get_plan(user_env.db, res["remainder_plan_id"])
+        assert rem["status"] == "pending"
+        assert rem["parallels"] == 2
+        # 两半同源 → created_at 一致，主表按 created_at 排序时相邻
+        assert rem["created_at"] == src["created_at"]
+        assert rem["runs"] == src["runs"]
+        # 未启动半的执行列必须清空
+        assert rem["started_at"] is None
+        assert rem["deducted_materials"] == ""
+        assert rem["material_cost_snapshot"] == ""
+        # source_mother_ids 必须置空，否则会被 _is_shared_child 提升进「共享组件」区
+        assert rem["source_mother_ids"] == ""
+
+    def test_deducts_only_n_lines(self, user_env):
+        """P=3 只启动 2 条 → 扣 11×2×runs（不是 11×3×runs）。"""
+        import json as _json
+
+        pid, _bp = self._setup(user_env, parallels=3, runs=3)
+        _insert_item(user_env.db, 1, 1001, 1000)
+
+        res = plan_execution.start_plan_partial(pid, 2, mat_hangar_id=1)
+
+        assert res["ok"], res
+        assert inventory_manager.get_hangar_stock(1)[1001] == 1000 - 11 * 2 * 3
+        snap = _json.loads(_get_plan(user_env.db, pid)["deducted_materials"])
+        assert snap["1001"] == 11 * 2 * 3  # 撤销时就按这份快照返还
+
+    def test_bindings_split_by_blueprint_id(self, user_env):
+        """绑定按 blueprint_id 取前 N 张留在启动半边，其余挪给余量行。"""
+        pid, bp_ids = self._setup(user_env, parallels=3, blueprints=3)
+
+        res = plan_execution.start_plan_partial(pid, 1, mat_hangar_id=None)
+
+        assert res["ok"], res
+        assert get_plan_blueprints(pid) == [bp_ids[0]]
+        assert get_plan_blueprints(res["remainder_plan_id"]) == sorted(bp_ids[1:])
+        assert _get_plan(user_env.db, pid)["assigned_blueprint_id"] == bp_ids[0]
+
+    def test_bad_lines_rejected_without_change(self, user_env):
+        pid, _bp = self._setup(user_env, parallels=3)
+        before = _get_plan(user_env.db, pid)
+
+        for bad in (0, 3, 4, -1):
+            res = plan_execution.start_plan_partial(pid, bad, mat_hangar_id=None)
+            assert res["ok"] is False, (bad, res)
+            assert res["code"] == "bad_lines", (bad, res)
+
+        after = _get_plan(user_env.db, pid)
+        assert (after["parallels"], after["status"]) == (before["parallels"], before["status"])
+        with user_env.db.connect("user") as conn:
+            assert conn.execute("SELECT COUNT(*) FROM production_plans").fetchone()[0] == 1
+
+    def test_child_row_rejected(self, user_env):
+        """子项行由母项需求驱动，拆了会被重放改写 —— 直接拒绝。"""
+        user_env.scoring.calculate_plan_metrics.side_effect = self._per_line_metrics
+        pid = _insert_plan(user_env.db, parallels=3, group_number=7, sub_level=1)
+
+        res = plan_execution.start_plan_partial(pid, 1, mat_hangar_id=None)
+
+        assert res["ok"] is False
+        assert res["code"] == "child_row"
+
+    def test_mother_with_pending_children_rejected(self, user_env):
+        user_env.scoring.calculate_plan_metrics.side_effect = self._per_line_metrics
+        mother = _insert_plan(user_env.db, parallels=3, group_number=7, sub_level=0)
+        _insert_plan(user_env.db, product_type_id=2002, group_number=7, sub_level=1, status="pending")
+
+        res = plan_execution.start_plan_partial(mother, 1, mat_hangar_id=None)
+
+        assert res["ok"] is False
+        assert res["code"] == "children_pending"
+
+    def test_mother_with_all_children_done_allowed(self, user_env):
+        """子项全部完成的母项可以部分启动（用户拍板的口径）。"""
+        mother, _bp = self._setup(user_env, parallels=3)
+        with user_env.db.connect("user") as conn:
+            conn.execute("UPDATE production_plans SET group_number=7 WHERE id=?", (mother,))
+        _insert_plan(user_env.db, product_type_id=2002, group_number=7, sub_level=1, status="completed")
+
+        res = plan_execution.start_plan_partial(mother, 1, mat_hangar_id=None)
+
+        assert res["ok"], res
+
+    def test_rolls_back_when_start_fails(self, user_env):
+        """材料不足 → 启动失败 → 拆出的两行并回一条，绑定与 parallels 全部复原。"""
+        pid, bp_ids = self._setup(user_env, parallels=3)
+        # 机库无料且不允许强制 → start_plan 返回 material_short
+
+        res = plan_execution.start_plan_partial(pid, 2, mat_hangar_id=1)
+
+        assert res["ok"] is False, res
+        assert res["code"] == "material_short"
+        after = _get_plan(user_env.db, pid)
+        assert (after["status"], after["parallels"]) == ("pending", 3)
+        assert get_plan_blueprints(pid) == sorted(bp_ids)
+        with user_env.db.connect("user") as conn:
+            assert conn.execute("SELECT COUNT(*) FROM production_plans").fetchone()[0] == 1
+
+    def test_preview_uses_n_lines(self, user_env):
+        """预览必须按 N 条口径报缺口，否则确认框会显示虚高的缺料。"""
+        pid, _bp = self._setup(user_env, parallels=3, runs=3)
+        _insert_item(user_env.db, 1, 1001, 50)
+
+        prev = plan_execution.preview_partial_start(pid, 2, 1)
+
+        assert prev["ok"], prev
+        # 11×2×3 = 66 需求、库存 50 → 缺 16（按 3 条算会是 99−50=49）
+        assert prev["shortfalls"] == [{"type_id": 1001, "name": "三钛", "need": 66, "owned": 50, "missing": 16}]
+
+    def test_preview_reports_binding_shortfall_for_n_lines(self, user_env):
+        """只绑了 2 张、要启动 2 条 → 不报短板；要启动 3 条 → 报（预览按 N 条计）。"""
+        pid, _bp = self._setup(user_env, parallels=3, blueprints=2)
+
+        assert plan_execution.preview_partial_start(pid, 1, None)["bp_short"] is None
+        assert plan_execution.preview_partial_start(pid, 2, None)["bp_short"] is None

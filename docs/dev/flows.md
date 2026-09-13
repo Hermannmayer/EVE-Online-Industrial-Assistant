@@ -79,7 +79,8 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
 - 表：user 库 `production_plans` / `plan_blueprint_bindings` / `user_blueprints` / `price_snapshots`
 - 仓库：`services/repositories/plan_repository.py`（不存在 `services/plan_repository.py`）
 - 保存：`plan_service.insert_plan`；批量导入 `insert_plans_batch`（blueprint 导入走批量）
-- 启动：`plan_table._start_plan` → `plan_start_check.plan_start_block_reason`（**纯逻辑、零 DB**）→ `plan_execution.check_materials` → `start_plan`（原子 UPDATE status + `inventory_manager.deduct_item`）
+- 启动：`plan_table._start_plan` → `plan_start_check.plan_start_block`（**纯逻辑、零 DB**；返回 `(类别码, 文案)`，UI 用码选短标签、用文案做 tooltip；`plan_start_block_reason` 是同一次判定的文案投影）→ `plan_execution.check_materials` → `start_plan`（原子 UPDATE status + `inventory_manager.deduct_item`）
+- 部分启动：`plan_execution.start_plan_partial(plan_id, lines, ...)` —— 只启动 N 条产线。**时序必须是「先拆行、后启动」**：先 `UPDATE parallels=N` + `insert_split_remainder`（复制结构列、清空执行列、`source_mother_ids` 置 `''`）+ `move_bindings`（把前 N 张之外的绑定**移动**给余量行），**提交后**再 `plan_service.load_plan` 重新取数（漏了这步会按 P 条扣料），最后 `start_plan(auto_bind=False)`（自动绑定走自己的连接立即提交，是回滚看不见的副作用）。失败则 `_rollback_split` 把两行并回一条。仅限**独立计划与子项全部完成的母项**（子项行由需求重放驱动，拆了会被改写）。预览用 `preview_partial_start`（按 N 条口径报缺口）
 - 完成：`plan_execution.complete_plan`（成品入 `inventory_items` + `consume_bpc_runs` 消耗 `user_blueprints` + 清 bindings）；撤销 `cancel_plan` 返还材料
 - 展开：`plan_table._decompose_parent` → `plan_decompose.decompose_plan`（递归读 `user_blueprints` + bom 材料）→ `plan_rebuild.rebuild_children` → `PlanRepository` 增删改
 - 读取：`plan_service.load_plans`；价格快照 `save_price_snapshots`
@@ -100,9 +101,19 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
 - **蓝图流程不足可强制启动**：`_binding_shortfall` 有两道（张数 / 每张流程 ≥ runs），
   `start_plan` 与 `complete_plan` **成对**提供 `allow_bp_short` —— **只放开启动会造成死锁**
   （强制启动的计划永远无法下线）。强制时**不换绑**，完成时 `consume_bpc_runs` 按实际可用量消耗；
-  账面偏差由用户在蓝图管理做**全量剪贴板导入**矫正。UI 三处入口都要覆盖：
-  计划表格 `_start_plan`、小助手 `_start`、以及 `procurement_tab` 直调 `complete_plan` 的那条
-  （确认框留 UI 层：`complete_plans()` 是无 parent 的服务函数）
+  账面偏差由用户在蓝图管理做**全量剪贴板导入**矫正。
+  - **五条下线入口都要覆盖**：计划表格状态列（单行）、计划表格右键（批量）、采购页「一键完成」、
+    工业页底部状态栏「全部下线」、产线启动小助手行内「可下线」（单行）。
+    **单行**下线共用 `ui_pyside6/views/industry/complete_plans_dialog.py::complete_one_plan`
+    （返回 None = 用户取消或已弹过失败告警，**非 None 即成功**——调用方据此决定要不要把行标成已完成）；
+    预检与放行**必须共用** `ui_pyside6/views/industry/complete_guard.py::confirm_bp_shortfall`。
+    状态栏那条曾漏传 `allow_bp_short`，强制启动过的计划在该入口永远下不了线，且失败原因被
+    `complete_plans` 吞成一句「失败 N 项」（现已随 `failed_reasons` 带出）。确认框留 UI 层：
+    `complete_plans()` 是无 parent 的服务函数，validate 档会在无 QApplication 下直调它。
+  - **原图（`is_bpo=1`）不受该限制**：`_bp_available_runs` 视为无限流程，既不触发「不足」确认，
+    下线时也**永不消耗、永不删除**（`complete_plan` 与 `consume_bpc_runs` 各有独立防线）。
+    不变量是 **`is_bpo=1` ⇒ `runs=0`**，由 v15→v16 迁移与剪贴板解析两侧同口径维护
+    （见 `domain/blueprint_sync.py`）。
 - **并行产线逐线计算**：各线按**各自绑定蓝图**的 ME/TE 独立结算
   - 等级来源：`plan_service._enrich_rows` 预填 `line_levels`（`user_blueprints.me_level/te_level`，
     绑定来源与 `bound_blueprint_ids` 同一回退：关联表优先 → `assigned_blueprint_id`）；
@@ -139,7 +150,7 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
         → domain/research.py（成功率 / 解码器表 / BPC 产出 / 科学作业时长）
 
 执行
-  启动：plan_start_check.plan_start_block_reason(blueprint_ready=plan_execution.plan_blueprint_ready)
+  启动：plan_start_check.plan_start_block(blueprint_ready=plan_execution.plan_blueprint_ready)
         · 拷贝/研究要 BPO；发明要够流程的 BPC（不能用 BPO）
   完成：plan_execution.complete_plan 按 output_kind 分派
         · copying            → 产出 BPC 入 user_blueprints（不消耗原图流程）
@@ -169,6 +180,18 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
 - UI 同步调用（无独立 worker）：`inventory_manager.add_item`（加权平均成本）、`set_item_quantity`（经 `inventory_import.compute_import_diff` 全量覆盖/删除）、`move_quantity`/`move_items`（transfer 弹窗）
 - `deduct_item` 被计划启动/展开/重建调用
 - 剪贴板导入按仓库类型校验（同一机库分两张表、两页签）：材料侧 `inventory_clipboard_service.parse_clipboard`（机库管理「库存修正/增量粘贴」、采购页「增量添加到仓库」、「移库」）过滤蓝图行；蓝图侧 `ui_data_service.parse_blueprint_clipboard`（蓝图管理「粘贴导入蓝图」）过滤材料行。判定见 `services/item_kind.py`（`item` group 名后缀 = 蓝图，失败开放），过滤数在预览框统计栏提示
+  - 蓝图侧解析**同时接受 `manufacturing` 与 `reaction`**：反应公式是蓝图仓库的正式成员，
+    只认 manufacturing 会让它们在剪贴板里解析不出、进而被「全量同步」当成库中冗余删除。
+    结构完整却认不出蓝图的行计入「未识别」计数并在预览框提示（不再无声消失）。
+  - **匹配键是 `(蓝图类型, is_bpo, ME, TE)`，不含流程数**：流程数是行内属性，进了键就会让
+    「同一张图流程数变了」（BPC 被消耗、原图归一）退化成删旧行 + 插新行，连带丢掉行 `id`、
+    `notes`，并经 `delete_blueprint` 静默解除活跃计划的绑定。配对与增删规则见
+    `domain/blueprint_sync.py::plan_group_sync`（先取流程数相同的份额 → 幂等）。
+  - **张数按 `SUM(quantity)` 而非行数计**：下线产出会把同规格 BPC 合并成 `quantity>1` 的一行，
+    按行数计会让全量同步误判「库里少」而多插行。
+  - **全量同步的删除是危险动作，三重保护**：预览框纯删除行**默认不勾选**、确认前弹删除清单、
+    被活跃计划占用的行**硬阻断**（`get_occupied_blueprint_ids`，跳过数经 `blocked` 回报）。
+    「最终」列只接受非负整数，非法值标红并拦下确认。
 
 ## 数据初始化（SDE/ESI）
 
