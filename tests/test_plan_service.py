@@ -254,7 +254,7 @@ class TestLoadPlansForWizard:
             )
             for i, status in enumerate(["pending", "in_progress", "completed", "done"], start=1):
                 conn.execute(
-                    "INSERT INTO production_plans (id, product_type_id, product_name, status)" " VALUES (?,?,?,?)",
+                    "INSERT INTO production_plans (id, product_type_id, product_name, status) VALUES (?,?,?,?)",
                     (i, 2001, f"计划{i}", status),
                 )
         _patch_container(temp_db, monkeypatch)

@@ -197,8 +197,7 @@ def _materials(conn, blueprint_type_id: int, activity: str) -> list[tuple[int, i
     return [
         (int(r[0]), int(r[1] or 0))
         for r in conn.execute(
-            "SELECT material_type_id, quantity FROM blueprint_materials "
-            "WHERE blueprint_type_id = ? AND activity = ?",
+            "SELECT material_type_id, quantity FROM blueprint_materials WHERE blueprint_type_id = ? AND activity = ?",
             (blueprint_type_id, mat_act),
         ).fetchall()
     ]

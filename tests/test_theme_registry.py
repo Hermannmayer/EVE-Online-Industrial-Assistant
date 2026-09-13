@@ -186,6 +186,6 @@ def test_launcher_ensure_contrast_guarantee(theme_id):
         for accent in accents:
             got = ensure_contrast(colors[accent], colors[bg], _MIN_NON_TEXT_RATIO)
             ratio = _contrast(got.name(), colors[bg])
-            assert (
-                ratio >= _MIN_NON_TEXT_RATIO
-            ), f"{theme_id} {accent} on {bg} 经调整后仅 {ratio:.2f} < {_MIN_NON_TEXT_RATIO}"
+            assert ratio >= _MIN_NON_TEXT_RATIO, (
+                f"{theme_id} {accent} on {bg} 经调整后仅 {ratio:.2f} < {_MIN_NON_TEXT_RATIO}"
+            )

@@ -78,7 +78,7 @@ def _make_large_universe_zip(n_systems=210):
             sid = 30000000 + i
             zf.writestr(
                 f"universe/eve/10000001/1000000001/{sid}/solarsystem.yaml",
-                f"solarSystemID: {sid}\n" f"security: 0.5\n" f"constellationID: 1000000001\n" f"regionID: 10000001\n",
+                f"solarSystemID: {sid}\nsecurity: 0.5\nconstellationID: 1000000001\nregionID: 10000001\n",
             )
         zf.writestr("bsd/invNames.yaml", "- itemID: 30000142\n  itemName: Jita\n")
     buf.seek(0)

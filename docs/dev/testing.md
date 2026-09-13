@@ -38,6 +38,7 @@ def test_qt_dialog():
     """需要 Qt 显示环境的 UI 测试"""
     ...
 
+
 def test_scoring_logic():
     """纯逻辑单元测试（默认）"""
     ...

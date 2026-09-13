@@ -66,7 +66,7 @@ def _prices(conn, type_ids: list[int]) -> dict[int, float]
 
 adjusted_price 优先（0/缺失 → sell_price → buy_price）。
 
-定义行：`207`
+定义行：`206`
 
 ### `_skill_levels`
 
@@ -76,7 +76,7 @@ def _skill_levels(conn, blueprint_type_id: int, activity: str, skills: dict) -> 
 
 该活动要求的两个科学技能 + 加密技术原理的等级。
 
-定义行：`221`
+定义行：`220`
 
 ### `plan_type_name`
 
@@ -86,7 +86,7 @@ def plan_type_name(plan: dict) -> str
 
 给计划表「产品」列展示的研究产物名（拷贝/发明/研究各有说法）。
 
-定义行：`246`
+定义行：`245`
 
 ### `create_research_plan`
 
@@ -96,4 +96,4 @@ def create_research_plan(blueprint_type_id: int, *, activity: str, blueprint_nam
 
 建一条科研计划行（pending，含科研专属列），返回 plan_id；失败 → -1。
 
-定义行：`263`
+定义行：`262`

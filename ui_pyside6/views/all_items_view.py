@@ -741,7 +741,7 @@ class AllItemsDialog(QDialog):
                 )
                 if not is_bp_item:
                     row = conn.execute(
-                        "SELECT blueprint_type_id FROM blueprint_products " "WHERE product_type_id = ? LIMIT 1",
+                        "SELECT blueprint_type_id FROM blueprint_products WHERE product_type_id = ? LIMIT 1",
                         (bp_id,),
                     ).fetchone()
                     if not row:

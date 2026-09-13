@@ -170,6 +170,7 @@ class AppContainer:
     def pricing_service(self) -> PricingService: ...
     @property
     def manufacturing_calculator(self): ...
+
     # ... 15+ 服务
 ```
 
@@ -178,6 +179,7 @@ UI 层通过容器获取服务，而非模块级直接引用：
 ```python
 # ✅ 正确：通过容器
 from bootstrap.container import get_container
+
 pricing = get_container().pricing_service
 
 # ❌ 错误：模块级直接引用

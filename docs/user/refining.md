@@ -30,16 +30,16 @@ from services.refining_service import RefiningService
 
 service = RefiningService(db)
 result = service.calc_value(
-    type_id=1230,        # 矿石 type_id
-    quantity=1000,       # 数量
+    type_id=1230,  # 矿石 type_id
+    quantity=1000,  # 数量
     skills={"精炼": 5, "精炼效率": 5},
     price_hub="Jita",
 )
-print(result["yield_rate"])     # 产出率
-print(result["output"])         # 精炼产出矿物列表
-print(result["total_value"])    # 产出总价值
-print(result["profit"])         # 精炼利润
-print(result["margin_pct"])     # 利润率百分比
+print(result["yield_rate"])  # 产出率
+print(result["output"])  # 精炼产出矿物列表
+print(result["total_value"])  # 产出总价值
+print(result["profit"])  # 精炼利润
+print(result["margin_pct"])  # 利润率百分比
 ```
 
 ## 返回结构

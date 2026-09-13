@@ -17,8 +17,8 @@ BOM（Bill of Materials）递归展开是工业制造的基础功能，从目标
 from services.bom_expander import expand_bom
 
 result = expand_bom(type_id=30013, quantity=10, bp_me=10)
-print(result["full_cost"])         # 总材料成本
-print(result["raw_materials"])     # 叶子节点列表
+print(result["full_cost"])  # 总材料成本
+print(result["raw_materials"])  # 叶子节点列表
 ```
 
 ## BOM 树节点（BomNode）

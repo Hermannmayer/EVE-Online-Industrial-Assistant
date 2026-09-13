@@ -413,7 +413,7 @@ class ScoringService:
         `fees_per_run` 的既有消费方都会再乘 `runs × parallels`，这里若放汇总值会被**重复放大**。
         """
         runs = max(int(runs or 1), 1)
-        worst = min(per_line, key=lambda r: (r.get("profit_per_run", 0) or 0))
+        worst = min(per_line, key=lambda r: r.get("profit_per_run", 0) or 0)
         hours = [float(r.get("hours_per_run", 0) or 0) for r in per_line]
         max_hours = max(hours) if hours else 0.0
 
