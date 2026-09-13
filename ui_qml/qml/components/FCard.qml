@@ -42,15 +42,17 @@ Item {
             id: bg
             anchors.fill: parent
             radius: Theme.radius
-            // Reveal：悬停时表面提亮
+            // 浮起表面：比页面底色**亮**，这样阴影 + 明度差一起读出「浮起」。
+            // 用 Theme.bgSurface（比 bgDark 暗）会让卡片像凹坑 —— 实测过。
+            // Reveal：悬停时再提亮一档。
             color: (hover.hovered && root.interactive)
-                   ? (Theme.isDark ? Qt.lighter(Theme.bgSurface, 1.25) : "#ffffff")
-                   : Theme.bgSurface
+                   ? Qt.lighter(Theme.bgElevated, 1.14)
+                   : Theme.bgElevated
             border.width: 1
             // Reveal：悬停时边框提亮
             border.color: (hover.hovered && root.interactive)
-                          ? Qt.lighter(Theme.border, 1.6)
-                          : Theme.border
+                          ? Qt.lighter(Theme.border, 2.0)
+                          : Qt.lighter(Theme.border, 1.45)
 
             Behavior on color {
                 ColorAnimation {

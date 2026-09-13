@@ -164,6 +164,10 @@ class ThemeBridge(QObject):
     textOnPrimary = Property(QColor, lambda self: self._color("TEXT_ON_PRIMARY"), notify=changed)
     border = Property(QColor, lambda self: self._color("BORDER"), notify=changed)
 
+    # 浮起表面（卡片等）。不是注册表里的 16 键之一，而是从 BG_DARK 按材质模式派生：
+    # 本项目原有 BG_SURFACE < BG_DARK（卡片比页面暗），直接用会让卡片像凹坑而非浮起。
+    bgElevated = Property(QColor, lambda self: QColor(theme.bg_elevated()), notify=changed)
+
     # ── 形状 / 材质 / 主题元信息 ──
 
     radius = Property(int, lambda self: theme.RADIUS, notify=changed)
@@ -209,15 +213,25 @@ class ThemeBridge(QObject):
 
     @Slot(int, result=float)
     def elevationBlur(self, level: int) -> float:
+        """MultiEffect 的 shadowBlur：**0..1 归一化值**，不是像素（传像素会没有阴影）。"""
         return theme.ELEVATION.get(level, theme.ELEVATION[1])[0]
 
     @Slot(int, result=float)
     def elevationOffset(self, level: int) -> float:
+        """shadowVerticalOffset：单位是真像素。"""
         return theme.ELEVATION.get(level, theme.ELEVATION[1])[1]
 
     @Slot(int, result=float)
     def elevationAlpha(self, level: int) -> float:
-        return theme.ELEVATION.get(level, theme.ELEVATION[1])[2]
+        """阴影不透明度。暗色主题下按 `DARK_SHADOW_BOOST` 抬高。
+
+        黑色阴影在深色底上几乎不可见——用规范原值（0.13）实测完全看不出层次，
+        所以暗色主题需要更强的阴影才能读出「浮起」。
+        """
+        alpha = theme.ELEVATION.get(level, theme.ELEVATION[1])[2]
+        if self._is_dark():
+            alpha = min(theme.DARK_SHADOW_ALPHA_MAX, alpha * theme.DARK_SHADOW_BOOST)
+        return alpha
 
 
 def theme_singleton() -> ThemeBridge:

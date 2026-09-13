@@ -87,12 +87,43 @@ def test_design_tokens_exposed():
     assert bridge.radius == theme.RADIUS
     assert bridge.fs(13) == theme.fs(13)
 
+    is_dark = theme.current_theme_spec()["mode"] == "dark"
     for level in (1, 2, 3, 4):
         blur, offset, alpha = theme.ELEVATION[level]
         assert bridge.elevationBlur(level) == blur
         assert bridge.elevationOffset(level) == offset
-        assert bridge.elevationAlpha(level) == alpha
+        # 不透明度按明暗分支：暗色主题下黑色阴影在深底上几乎不可见，需抬高
+        expected = alpha * theme.DARK_SHADOW_BOOST if is_dark else alpha
+        assert bridge.elevationAlpha(level) == pytest.approx(min(theme.DARK_SHADOW_ALPHA_MAX, expected))
     bridge.detach()
+
+
+def test_elevation_blur_stays_in_normalized_range():
+    """回归护栏：MultiEffect 的 shadowBlur 是 **0..1 归一化值**，不是像素半径。
+
+    传像素值（规范的 3.6/7.2/14.4）不会报错，只是**完全不画阴影**——
+    现象就是「界面一点都不立体」，而且极难排查。这里锁死取值范围。
+    """
+    for level, (blur, _offset, _alpha) in theme.ELEVATION.items():
+        assert 0.0 < blur <= 1.0, f"level {level} 的 blur={blur} 超出 0..1，MultiEffect 不会画阴影"
+
+
+def test_elevation_alpha_boosts_on_dark():
+    """暗色主题必须抬高阴影不透明度，否则深底上看不出层次。"""
+    theme.apply_theme("one-dark")
+    dark = ThemeBridge()
+    alpha_dark = dark.elevationAlpha(3)
+
+    theme.apply_theme("one-light")
+    light = ThemeBridge()
+    alpha_light = light.elevationAlpha(3)
+
+    assert alpha_dark > alpha_light, "暗色主题的阴影不透明度未抬高"
+    assert alpha_dark <= theme.DARK_SHADOW_ALPHA_MAX
+
+    theme.apply_theme("one-dark")
+    dark.detach()
+    light.detach()
 
 
 def test_singleton_is_stable():

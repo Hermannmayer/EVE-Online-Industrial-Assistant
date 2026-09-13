@@ -329,7 +329,9 @@ Item {
             Layout.leftMargin: Theme.spacingSm
             Layout.rightMargin: Theme.spacingSm
             Layout.bottomMargin: Theme.spacingSm
-            implicitHeight: 96
+            // 高度按右侧按钮网格算：3 行 32px + 2 个间距 + 卡片内边距，
+            // 给少了会把「添加到机库 / 更新价格」裁掉（之前写死 96 就是这样）。
+            Layout.preferredHeight: 3 * 32 + 2 * Theme.spacingXs + 2 * Theme.spacingMd
             interactive: false
 
             RowLayout {

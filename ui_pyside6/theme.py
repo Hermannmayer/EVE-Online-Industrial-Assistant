@@ -330,15 +330,58 @@ RADIUS_SMALL = max(2, RADIUS - 2)
 
 # ── Fluent 设计 token ──
 # 唯一来源：QML 侧经 ui_qml.bridge.theme_bridge 读取，禁止在 QML 里写字面量。
-# Qt 的 QGraphicsDropShadowEffect / QML MultiEffect 都只支持单层阴影，
-# 微软规范里的双层阴影（大模糊 + 0.3px 细边）在这里近似为单层。
-# 值 = (blur_radius, y_offset, alpha)，层数 1=静止 4=悬停。
+#
+# ELEVATION = (阴影模糊, 垂直偏移, 不透明度)，层数 1=静止 4=悬停。
+#
+# ⚠️ **模糊值是 0..1 的归一化值，不是像素半径**。
+# QML 的 MultiEffect.shadowBlur 按元素尺寸归一化（Qt 文档：0=无模糊，1=最大模糊）；
+# 把规范的像素值直接传进去会得到「完全没有阴影」——实测 blur=0.8 正常、
+# blur=14.4 无阴影。下面的取值是对着 240x140 卡片实测标定的
+# （0.35≈5px 扩散、0.55≈7px、0.80≈13px），与规范像素值一一对应。
+# 垂直偏移则是**真像素**（MultiEffect.shadowVerticalOffset 单位是 px）。
 ELEVATION: dict[int, tuple[float, float, float]] = {
-    1: (3.6, 1.6, 0.13),
-    2: (7.2, 3.2, 0.13),
-    3: (14.4, 6.4, 0.13),
-    4: (14.4, 6.4, 0.18),  # 悬停：阴影扩张
+    1: (0.35, 1.6, 0.13),  # 规范 3.6px
+    2: (0.55, 3.2, 0.13),  # 规范 7.2px
+    3: (0.80, 6.4, 0.13),  # 规范 14.4px
+    4: (0.88, 6.4, 0.18),  # 悬停：阴影扩张（规范 hover 档）
 }
+
+# 暗色主题下黑色阴影在深底上几乎不可见，需按此系数抬高不透明度。
+# 实测（240x140 卡片、底色 #282c34）：alpha=0.13 完全看不出层次；
+# 要在卡边读出柔和衰减需要 ~0.5 以上，故暗色按 4 倍放大并封顶 0.85。
+DARK_SHADOW_BOOST = 4.0
+DARK_SHADOW_ALPHA_MAX = 0.85
+
+
+def _shift_lightness(color_hex: str, amount: float) -> str:
+    """把颜色朝白/黑方向线性移动 `amount`（0..1），返回 hex。"""
+    if not color_hex.startswith("#") or len(color_hex) != 7:
+        return color_hex
+    r = int(color_hex[1:3], 16)
+    g = int(color_hex[3:5], 16)
+    b = int(color_hex[5:7], 16)
+    if amount >= 0:
+        mix = lambda c: round(c + (255 - c) * amount)  # noqa: E731
+    else:
+        mix = lambda c: round(c * (1 + amount))  # noqa: E731
+    return f"#{mix(r):02x}{mix(g):02x}{mix(b):02x}"
+
+
+def bg_elevated() -> str:
+    """浮起表面（卡片等）的颜色。
+
+    Fluent 的层次是「底色最暗、越往上越亮」，而本项目原有的
+    `BG_SURFACE < BG_DARK`（卡片比页面**暗**）——直接用会让卡片看起来是凹坑
+    而不是浮起，这正是「界面不立体」的一大来源。
+    这里按材质模式给出真正的浮起表面：暗色在 BG_DARK 上提亮，浅色用白。
+    """
+    return _shift_lightness(BG_DARK, 0.08) if _is_dark_mode() else "#ffffff"
+
+
+def _is_dark_mode() -> bool:
+    spec = THEME_REGISTRY.get(_current_theme)
+    return spec is None or spec["mode"] == "dark"
+
 
 # 动效时长（毫秒）。Fluent 是流畅利落的，规范硬上限 200ms。
 DURATION_FAST = 150  # 按钮与控件
