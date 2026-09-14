@@ -47,6 +47,12 @@ def register_migrated_pages() -> None:
         QML_PAGES["query"] = "pages/QueryPage.qml"
         QML_BRIDGES["query"] = QueryBridge  # type: ignore[assignment]
 
+    if "trade" not in QML_PAGES:
+        from ui_qml.bridge.trade_bridge import TradeBridge
+
+        QML_PAGES["trade"] = "pages/TradePage.qml"
+        QML_BRIDGES["trade"] = TradeBridge  # type: ignore[assignment]
+
 
 def build_page(
     key: str,
