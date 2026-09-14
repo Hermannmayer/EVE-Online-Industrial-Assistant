@@ -831,7 +831,7 @@ class PlanTable(QWidget):
         price_type_prod: str | None = None,
     ):
         # 右键菜单 -> 查看核算：打开成本明细弹窗
-        from ui_pyside6.views.industry.cost_breakdown_dialog import CostBreakdownDialog
+        from ui_qml.bridge.cost_breakdown_bridge import CostBreakdownQmlDialog as CostBreakdownDialog
 
         plan = self._model.get_plan(row) if self._model else {}
         if not plan:

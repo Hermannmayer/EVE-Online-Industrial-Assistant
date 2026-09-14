@@ -523,7 +523,7 @@ class EstimatePage(QWidget):
 
     def _show_refine_result(self, result: dict):
         """显示精炼结果弹窗 — 复用 CostBreakdownDialog 风格"""
-        from ui_pyside6.views.industry.cost_breakdown_dialog import _fmt_isk
+        from core.formatting import fmt_isk_exact as _fmt_isk
 
         dlg = QDialog(self)
         dlg.setWindowTitle("精炼产出估算")

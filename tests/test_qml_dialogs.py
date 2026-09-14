@@ -17,6 +17,8 @@ from unittest.mock import MagicMock
 import pytest
 from PySide6.QtCore import QEventLoop, QTimer, QtMsgType, qInstallMessageHandler
 
+import ui_pyside6.theme as theme
+
 pytestmark = pytest.mark.ui
 
 
@@ -695,5 +697,120 @@ def test_picker_batch_actions_and_accept(blueprint_picker_factory):
         assert "仍要关闭请再点一次" in bridge.error
         bridge.accept()
         assert accepted == [True]
+    finally:
+        dialog.deleteLater()
+
+
+# ════════════════════════════════════════════════════════════════
+#  查看核算（成本明细，阶段 4）
+# ════════════════════════════════════════════════════════════════
+
+
+def _breakdown_metrics(activity: str = "manufacturing") -> dict:
+    """一条算得出来的指标结果（材料两种：单件不受 ME 影响 + 受 ME 影响）。"""
+    return {
+        "material_cost": 1_234.5,
+        "profit": 500.0,
+        "margin": 12.5,
+        "score": 42.0,
+        "iskph": 3_000_000.0,
+        "calculated_time": 7200.0,
+        "daily_output": 8.0,
+        "status": "",
+        "structure_mat_saving": 1.0,
+        "materials": [
+            {"name": "碳纤维", "base_qty": 1, "wastefactor": 10, "type_id": 1001, "unit_price": 500.0},
+            {"name": "三钛合金", "base_qty": 100, "wastefactor": 10, "type_id": 34, "unit_price": 5.0},
+        ],
+        "breakdown": {
+            "eiv": 1_000.0,
+            "system_cost": 10.0,
+            "installation_fee": 20.0,
+            "facility_tax": 1.5,
+            "scc_surcharge": 4.0,
+            "broker_init": 3.0,
+            "broker_relist": 0.5,
+            "sales_tax": 2.0,
+            "revenue": 2_000.0,
+            "sci": 0.01,
+            "activity": activity,
+            "research_cost": 7.0,
+            "copies": 3,
+            "runs_per_copy": 10,
+            "max_production_limit": 100,
+            "per_copy_cost": 1_200.0,
+        },
+    }
+
+
+@pytest.fixture
+def cost_breakdown_factory(qapp, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    svc = MagicMock()
+    svc.calculate_plan_metrics.side_effect = lambda plan, cfg, **kw: _breakdown_metrics(
+        plan.get("_activity", "manufacturing")
+    )
+    monkeypatch.setattr(
+        "ui_qml.bridge.cost_breakdown_bridge.get_container",
+        lambda: SimpleNamespace(db=MagicMock(), scoring_service=lambda: svc),
+    )
+    from ui_qml.bridge.cost_breakdown_bridge import CostBreakdownQmlDialog
+
+    def _make(activity: str = "manufacturing"):
+        plan = {"product_type_id": 2001, "product_name": "渡鸦级", "runs": 2, "parallels": 1, "_activity": activity}
+        return CostBreakdownQmlDialog(plan, char_config={})
+
+    return _make
+
+
+def test_cost_breakdown_dialog_loads_without_warnings(cost_breakdown_factory):
+    _assert_loads_and_quiet(cost_breakdown_factory, "查看核算")
+
+
+def test_cost_breakdown_renders_materials_and_summary(cost_breakdown_factory):
+    """材料两行 + 三块明细；作业费与市场费用合计加粗，利润按正负染色。"""
+    dialog = cost_breakdown_factory()
+    try:
+        bridge = dialog.bridge
+        assert "评分 42.0" in bridge.statusText
+        assert "利润率 12.5%" in bridge.statusText
+        assert len(bridge.materialRows) == 2
+        assert bridge.materialRows[0]["cells"][0]["text"] == "碳纤维"
+        assert bridge.materialRows[0]["cells"][1]["text"] == "1"
+        assert bridge.materialRows[1]["cells"][1]["text"] == "100"
+
+        job = {f["label"]: f for f in bridge.jobFields}
+        assert job["制造作业费:"]["strong"] is True
+        assert job["制造作业费:"]["value"] == "40"  # 20 × 2 总流程
+        assert "SCI=1.0000%" in job["系统成本 (SCI × EIV):"]["value"]
+        # 制造行只有一行「拷贝/发明研究成本」，没有科研专属那三行
+        assert "发明成功率:" not in job
+        assert job["拷贝/发明研究成本:"]["value"] == "14"  # 7 × 2
+
+        mkt = {f["label"]: f for f in bridge.marketFields}
+        assert mkt["市场费用合计:"]["strong"] is True
+        assert mkt["市场费用合计:"]["value"] == "11"  # (3 + 0.5 + 2) × 2
+
+        summ = {f["label"]: f for f in bridge.summaryFields}
+        assert summ["利润:"]["value"] == "500"
+        assert summ["利润:"]["color"] == str(theme.GREEN), "正利润该染主题绿"
+        assert summ["总成本:"]["value"] == "1,234.50"
+    finally:
+        dialog.deleteLater()
+
+
+def test_cost_breakdown_science_activity_fields(cost_breakdown_factory):
+    """科研行换成专属明细（成功率 / 作业量 / 蓝图单位成本），不再显示单一研究成本行。"""
+    dialog = cost_breakdown_factory("copying")
+    try:
+        labels = [f["label"] for f in dialog.bridge.jobFields]
+        assert "发明成功率:" in labels
+        assert "尝试次数 / 作业量:" in labels
+        assert "产出蓝图单位成本:" in labels
+        values = {f["label"]: f["value"] for f in dialog.bridge.jobFields}
+        assert "3 份 × 10 流程" in values["尝试次数 / 作业量:"]
+        assert values["产出蓝图单位成本:"] == "1,200 ISK / 份（单份成本）"
     finally:
         dialog.deleteLater()

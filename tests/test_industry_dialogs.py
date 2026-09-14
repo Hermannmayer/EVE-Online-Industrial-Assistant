@@ -4,7 +4,7 @@
 """
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -12,9 +12,9 @@ import services.plan_decompose as pd
 from services import inventory_manager
 from services.repositories.plan_repository import PlanRepository
 from ui_pyside6.views.industry import parent_decompose_dialog as dlg_mod
-from ui_pyside6.views.industry.cost_breakdown_dialog import CostBreakdownDialog
 from ui_pyside6.views.industry.parent_decompose_dialog import ParentDecomposeDialog
 from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog as CompletePlansDialog
+from ui_qml.bridge.cost_breakdown_bridge import CostBreakdownBridge
 from ui_qml.bridge.mass_parallel_bridge import (
     compute_parallel_by_duration,
     compute_parallel_by_lines,
@@ -47,7 +47,18 @@ def _insert_plans(db, rows: list[dict]) -> None:
             )
 
 
-def test_compute_subitem_costs_single_level(db_manager, qapp):
+def _bridge_with_metrics(db_manager, monkeypatch, metrics_fn):
+    """造一个成本明细桥，把 `calculate_plan_metrics` 换成 `metrics_fn`（阶段 4 后走桥）。"""
+    svc = MagicMock()
+    svc.calculate_plan_metrics.side_effect = metrics_fn
+    monkeypatch.setattr(
+        "ui_qml.bridge.cost_breakdown_bridge.get_container",
+        lambda: SimpleNamespace(db=db_manager, scoring_service=lambda: svc),
+    )
+    return CostBreakdownBridge({"product_type_id": 2001, "group_number": 7, "sub_level": 0}, char_config={})
+
+
+def test_compute_subitem_costs_single_level(db_manager, monkeypatch, qapp):
     """拆解母项：子项制造价 = 材料成本 + 作业费 × runs。"""
     _insert_plans(
         db_manager,
@@ -78,16 +89,13 @@ def test_compute_subitem_costs_single_level(db_manager, qapp):
             return {"material_cost": 4800.0, "breakdown": {"installation_fee": 100.0}}
         return {}
 
-    dlg = CostBreakdownDialog({"product_type_id": 2001, "group_number": 7, "sub_level": 0}, char_config={})
-    with patch("ui_pyside6.views.industry.cost_breakdown_dialog.get_container") as mock_cont:
-        mock_cont.return_value.db = db_manager
-        mock_cont.return_value.scoring_service.return_value.calculate_plan_metrics.side_effect = _metrics
-        costs = dlg._compute_subitem_costs(7, 0)
+    bridge = _bridge_with_metrics(db_manager, monkeypatch, _metrics)
+    costs = bridge._compute_subitem_costs(7, 0)
     # 子项制造价 = 4800 + 100×2 = 5000
     assert costs == {2002: pytest.approx(5000, abs=0.01)}
 
 
-def test_compute_subitem_costs_nested(db_manager, qapp):
+def test_compute_subitem_costs_nested(db_manager, monkeypatch, qapp):
     """嵌套拆解：孙项成本先算，子项含孙项制造价 + 自身作业费。"""
     _insert_plans(
         db_manager,
@@ -134,11 +142,8 @@ def test_compute_subitem_costs_nested(db_manager, qapp):
             }
         return {}
 
-    dlg = CostBreakdownDialog({"product_type_id": 2001, "group_number": 7, "sub_level": 0}, char_config={})
-    with patch("ui_pyside6.views.industry.cost_breakdown_dialog.get_container") as mock_cont:
-        mock_cont.return_value.db = db_manager
-        mock_cont.return_value.scoring_service.return_value.calculate_plan_metrics.side_effect = _metrics
-        costs = dlg._compute_subitem_costs(7, 0)
+    bridge = _bridge_with_metrics(db_manager, monkeypatch, _metrics)
+    costs = bridge._compute_subitem_costs(7, 0)
     # 孙项制造价 = 100 + 50 = 150；子项制造价 = 150(孙项) + 100(作业费) = 250
     assert costs[3003] == pytest.approx(150, abs=0.01)
     assert costs[2002] == pytest.approx(250, abs=0.01)

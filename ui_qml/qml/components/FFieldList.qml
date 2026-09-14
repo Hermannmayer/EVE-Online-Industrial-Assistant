@@ -14,6 +14,10 @@ ColumnLayout {
 
     property var fields: []
 
+    //: 标签列宽度。默认 88（贸易页两个 Tab 用），成本明细那类长标签需要放宽，
+    //: 否则「预估物品价值 (EIV):」会被截成「预估物品价…」。
+    property int labelWidth: Math.round(88 * Theme.fontScale)
+
     spacing: Theme.spacingXs
 
     Repeater {
@@ -26,7 +30,7 @@ ColumnLayout {
             spacing: Theme.spacingSm
 
             Text {
-                Layout.preferredWidth: Math.round(88 * Theme.fontScale)
+                Layout.preferredWidth: root.labelWidth
                 text: modelData.label
                 color: Theme.textSecondary
                 font.family: Theme.fontFamily
