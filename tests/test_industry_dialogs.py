@@ -12,13 +12,13 @@ import services.plan_decompose as pd
 from services import inventory_manager
 from services.repositories.plan_repository import PlanRepository
 from ui_pyside6.views.industry import parent_decompose_dialog as dlg_mod
-from ui_pyside6.views.industry.complete_plans_dialog import CompletePlansDialog
 from ui_pyside6.views.industry.cost_breakdown_dialog import CostBreakdownDialog
 from ui_pyside6.views.industry.mass_parallel_dialog import (
     compute_parallel_by_duration,
     compute_parallel_by_lines,
 )
 from ui_pyside6.views.industry.parent_decompose_dialog import ParentDecomposeDialog
+from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog as CompletePlansDialog
 
 pytestmark = pytest.mark.ui
 
@@ -456,10 +456,12 @@ class TestCompletePlansDialog:
         hangars = [{"id": 1, "name": "矿仓"}, {"id": 2, "name": "组件仓"}]
         dlg = CompletePlansDialog(plans, hangars, 2)  # 默认 = 设置的默认产出机库
         assert dlg.selected_hangar_id() == 2
-        assert dlg._table.rowCount() == 1
-        assert dlg._table.item(0, 0).text() == "渡鸦级"
-        assert dlg._table.item(0, 1).text() == "3X2"
-        assert dlg._table.item(0, 2).text() == "6"  # 产出量
+        rows = dlg.bridge.rows
+        assert len(rows) == 1
+        assert rows[0]["name"] == "渡鸦级"
+        assert rows[0]["runs"] == "3X2"
+        assert rows[0]["qty"] == "6"  # 产出量 = 3 并行 × 2 流程 × 每次 1
+        assert rows[0]["deposit"] == "不自动入库"  # 计划里存的机库 id=5 不在机库表里
 
     def test_default_fallback_first_hangar(self, qapp, monkeypatch):
         monkeypatch.setattr("services.plan_execution.output_per_run", lambda *a: 1)
@@ -634,7 +636,10 @@ class TestCompleteOnePlan:
                 "failed_reasons": [] if completed else ["渡鸦级：蓝图绑定不满足完成条件"],
             }
 
-        monkeypatch.setattr(cpd, "CompletePlansDialog", _Dlg)
+        # 对话框在 `complete_one_plan` 里**函数内导入**，故要打在桥模块的属性上
+        import ui_qml.bridge.complete_plans_bridge as cpb
+
+        monkeypatch.setattr(cpb, "CompletePlansQmlDialog", _Dlg)
         monkeypatch.setattr(cpd, "complete_plans", _complete_plans)
         monkeypatch.setattr("services.inventory_manager.get_hangars", lambda: [{"id": 4, "name": "产出仓"}])
         monkeypatch.setattr("services.user_settings.get_default_hangar_id", lambda key: 4)
@@ -706,19 +711,22 @@ class TestPlanTableCompleteFailure:
 
 
 class TestPartialStartDialog:
-    """部分启动对话框 —— 取值范围 1..P-1，摘要随条数实时更新。"""
+    """部分启动对话框 —— 取值范围 1..P-1，摘要随条数实时更新。
+
+    阶段 4：断言从 Widgets 内部控件（`_spin.minimum()`）换成**桥的字段**，
+    行为契约不变（调用方仍是 `exec()` + `lines()`）。
+    """
 
     @staticmethod
     def _dialog(total: int):
-        from ui_pyside6.views.industry.partial_start_dialog import PartialStartDialog
+        from ui_qml.bridge.partial_start_bridge import PartialStartQmlDialog
 
-        return PartialStartDialog("渡鸦级", total)
+        return PartialStartQmlDialog("渡鸦级", total)
 
     def test_range_and_default(self, qapp):
         dlg = self._dialog(4)
         try:
-            assert dlg._spin.minimum() == 1
-            assert dlg._spin.maximum() == 3  # 至少要留 1 条给「未启动」那行
+            assert dlg.bridge.maxLines == 3  # 至少要留 1 条给「未启动」那行
             assert dlg.lines() == 3
         finally:
             dlg.deleteLater()
@@ -726,7 +734,7 @@ class TestPartialStartDialog:
     def test_two_lines_only_allows_one(self, qapp):
         dlg = self._dialog(2)
         try:
-            assert (dlg._spin.minimum(), dlg._spin.maximum()) == (1, 1)
+            assert dlg.bridge.maxLines == 1
             assert dlg.lines() == 1
         finally:
             dlg.deleteLater()
@@ -734,17 +742,19 @@ class TestPartialStartDialog:
     def test_summary_follows_value(self, qapp):
         dlg = self._dialog(5)
         try:
-            dlg._spin.setValue(2)
+            dlg.bridge.setLines(2)
             assert dlg.lines() == 2
-            assert "启动 2 条" in dlg._summary.text()
-            assert "剩余 3 条" in dlg._summary.text()
+            assert "启动 2 条" in dlg.bridge.summaryText
+            assert "剩余 3 条" in dlg.bridge.summaryText
         finally:
             dlg.deleteLater()
 
-    def test_theme_changed_no_crash(self, qapp):
-        dlg = self._dialog(5)
+    def test_value_is_clamped_to_the_range(self, qapp):
+        dlg = self._dialog(4)
         try:
-            dlg._on_theme_changed()
-            assert dlg._summary.text() != ""
+            dlg.bridge.setLines(99)
+            assert dlg.lines() == 3
+            dlg.bridge.setLines(0)
+            assert dlg.lines() == 1
         finally:
             dlg.deleteLater()

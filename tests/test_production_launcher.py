@@ -773,8 +773,8 @@ class TestLauncherContextMenu:
             w.close()
 
     def test_partial_start_calls_service_with_n(self, qapp, monkeypatch):
-        from ui_pyside6.views.industry import partial_start_dialog as psd
         from ui_pyside6.views.industry import production_launcher as pl
+        from ui_qml.bridge import partial_start_bridge as psd
 
         w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(PARTIAL_PLAN)])
         try:
@@ -790,7 +790,7 @@ class TestLauncherContextMenu:
                 def lines(self):
                     return 2
 
-            monkeypatch.setattr(psd, "PartialStartDialog", _Dlg)
+            monkeypatch.setattr(psd, "PartialStartQmlDialog", _Dlg)
             # 容量判定要读**真实**人物配置（同套件里别的用例会改它），必须钉死，
             # 否则会弹出模态的「人物产线超员」确认框把测试挂住
             monkeypatch.setattr(pl, "max_lines_for_category", lambda *a, **k: 99)

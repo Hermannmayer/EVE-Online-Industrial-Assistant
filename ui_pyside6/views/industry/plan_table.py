@@ -218,7 +218,8 @@ class PlanTable(QWidget):
         from services.inventory_manager import get_hangars
         from services.user_settings import get_default_hangar_id
         from ui_pyside6.views.industry.complete_guard import confirm_bp_shortfall
-        from ui_pyside6.views.industry.complete_plans_dialog import CompletePlansDialog, complete_plans
+        from ui_pyside6.views.industry.complete_plans_dialog import complete_plans
+        from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog as CompletePlansDialog
 
         dlg = CompletePlansDialog(ready, get_hangars(), get_default_hangar_id("default_deposit_hangar_id"), self)
         if not dlg.exec():

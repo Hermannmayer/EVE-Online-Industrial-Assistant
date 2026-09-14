@@ -991,7 +991,7 @@ class ProductionLauncher(QWidget):
 
     def _on_row_partial_start(self, plan_id: int) -> None:
         """部分启动：只启动 N 条，其余拆成一条「待生产」行留在主界面。"""
-        from ui_pyside6.views.industry.partial_start_dialog import PartialStartDialog
+        from ui_qml.bridge.partial_start_bridge import PartialStartQmlDialog as PartialStartDialog
 
         plan = self._plan_map.get(plan_id)
         if plan is None or not self._can_partial_start(plan):

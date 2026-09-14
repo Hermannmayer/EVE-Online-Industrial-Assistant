@@ -100,3 +100,72 @@ def test_plan_edit_dialog_title_comes_from_the_bridge(plan_edit_factory):
         assert "渡鸦级" in dialog.windowTitle()
     finally:
         dialog.deleteLater()
+
+
+@pytest.fixture
+def partial_start_factory(qapp):
+    from ui_qml.bridge.partial_start_bridge import PartialStartQmlDialog
+
+    return lambda total=4: PartialStartQmlDialog("渡鸦级", total)
+
+
+@pytest.fixture
+def invention_factory(qapp):
+    from ui_qml.bridge.invention_outcome_bridge import InventionOutcomeQmlDialog
+
+    return lambda **kw: InventionOutcomeQmlDialog(
+        **{"plan_name": "渡鸦级", "expected_runs": 10, "attempts": 3, "runs_per_bpc": 2, **kw}
+    )
+
+
+@pytest.fixture
+def complete_plans_factory(qapp, monkeypatch):
+    monkeypatch.setattr("services.plan_execution.output_per_run", lambda *a: 1)
+    from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog
+
+    return lambda: CompletePlansQmlDialog(
+        [{"id": 1, "product_name": "渡鸦级", "runs": 2, "parallels": 3, "deposit_hangar_id": None}],
+        [{"id": 1, "name": "矿仓"}],
+        None,
+    )
+
+
+def test_partial_start_dialog_loads_without_warnings(partial_start_factory):
+    _assert_loads_and_quiet(partial_start_factory, "部分启动")
+
+
+def test_invention_outcome_dialog_loads_without_warnings(invention_factory):
+    _assert_loads_and_quiet(invention_factory, "发明结果回填")
+
+
+def test_complete_plans_dialog_loads_without_warnings(complete_plans_factory):
+    _assert_loads_and_quiet(complete_plans_factory, "下线确认")
+
+
+def test_invention_hint_follows_the_value(invention_factory):
+    """提示三种状态：失败 / 与期望差太多 / 正常 —— 与 Widgets 版同一判据。"""
+    dialog = invention_factory()
+    try:
+        bridge = dialog.bridge
+        assert bridge.actualRuns == 10
+        assert "成功后产出 10 流程" in bridge.hintText
+
+        bridge.markFailed()
+        assert bridge.actualRuns == 0
+        assert "发明失败" in bridge.hintText
+
+        bridge.setActualRuns(2)  # 与期望 10 差 8 > max(1, 10//5)
+        assert "相差较大" in bridge.hintText
+    finally:
+        dialog.deleteLater()
+
+
+def test_invention_outcome_is_none_until_accepted(invention_factory):
+    dialog = invention_factory()
+    try:
+        assert dialog.outcome() is None
+        dialog.bridge.setActualRuns(4)
+        dialog.bridge.accept()
+        assert dialog.outcome() == 4
+    finally:
+        dialog.deleteLater()
