@@ -3,7 +3,6 @@ from .char_usage_dialog import CharacterUsageDialog
 from .cost_breakdown_dialog import CostBreakdownDialog
 from .materials_dialog import MaterialsSummaryDialog
 from .output_dialog import OutputSummaryDialog
-from .plan_edit_dialog import PlanEditDialog
 from .plan_table import PlanTable
 
 __all__ = [
@@ -12,6 +11,5 @@ __all__ = [
     "CostBreakdownDialog",
     "MaterialsSummaryDialog",
     "OutputSummaryDialog",
-    "PlanEditDialog",
     "PlanTable",
 ]

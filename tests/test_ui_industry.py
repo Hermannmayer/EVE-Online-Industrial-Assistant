@@ -6,37 +6,43 @@ pytestmark = pytest.mark.ui
 
 
 def test_plan_edit_dialog_batch_sync_gating(industry_page, monkeypatch):
-    """批量编辑弹窗：默认不同步流程/并行（复选未勾 → None → 调用方不写库），勾选后返回 spin 值。"""
+    """批量编辑弹窗：默认不同步流程/并行（复选未勾 → None → 调用方不写库），勾选后才写。
+
+    阶段 4：对话框本体迁到 QML 后，这里同时验证「QML 加载成功」与「桥的取值契约」——
+    调用方拿到的仍是 `exec()` + `get_updated_data()` 那一套，所以断言点基本没动。
+    """
     from services import inventory_manager
-    from ui_pyside6.views.industry.plan_edit_dialog import PlanEditDialog
+    from ui_qml.bridge.plan_edit_bridge import PlanEditQmlDialog
 
     monkeypatch.setattr(inventory_manager, "get_hangars", lambda: [])
     monkeypatch.setattr("ui_pyside6.views.char_settings_view.services_get_character_list", lambda: ["甲"])
 
-    dlg = PlanEditDialog(
+    dlg = PlanEditQmlDialog(
         industry_page,
         {"_selected_rows": [1, 2], "runs": 5, "parallels": 3},
         batch_mode=True,
         row_count=2,
     )
     try:
+        assert dlg.ok(), "QML 对话框没加载起来：" + "; ".join(str(e) for e in dlg._host.errors())
+
         data = dlg.get_updated_data()
         assert data["runs"] is None
         assert data["parallels"] is None
 
-        dlg._sync_runs_cb.setChecked(True)
+        dlg.bridge.setSyncRuns(True)
         data2 = dlg.get_updated_data()
         assert data2["runs"] == 5
         assert data2["parallels"] == 3
     finally:
         dlg.deleteLater()
 
-    # 单行模式不受复选影响，始终返回 spin 值
-    single = PlanEditDialog(industry_page, {"runs": 2, "parallels": 1})
+    # 单行模式不受复选影响，始终返回字段值
+    single = PlanEditQmlDialog(industry_page, {"runs": 2, "parallels": 1})
     try:
-        s = single.get_updated_data()
-        assert s["runs"] == 2
-        assert s["parallels"] == 1
+        result = single.get_updated_data()
+        assert result["runs"] == 2
+        assert result["parallels"] == 1
     finally:
         single.deleteLater()
 

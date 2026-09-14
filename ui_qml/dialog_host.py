@@ -1,0 +1,111 @@
+"""QML 对话框宿主 —— 把 QML 页面当 `QDialog` 用。
+
+阶段 4 要把 44 个对话框逐步迁到 QML，但**调用方全是既有 Python**，形态是：
+
+    dlg = XxxDialog(self, data)
+    if dlg.exec():
+        result = dlg.get_xxx()
+
+所以不能只写一个 QML `Dialog`（那只在 QML 树里有效）。这里用
+`QDialog` 包一层 `PageHost`：窗口行为（模态、居中、焦点、Esc 关闭）交给 QDialog，
+内容交给 QML。调用方的 `exec()` / `result()` 一行都不用改。
+
+QML 侧通过桥发 `accepted` / `rejected` 信号（见 `DialogBridge`），宿主把它们接到
+`QDialog.accept/reject` 上 —— 迁移期的统一契约。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from PySide6.QtCore import Property, QObject, Signal, Slot
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QWidget
+
+from ui_qml.host import PageHost
+
+__all__ = ["DialogBridge", "QmlDialog"]
+
+
+class DialogBridge(QObject):
+    """对话框桥的公共部分：标题 + 接受/取消。
+
+    各对话框自己的桥继承它，再加自己的字段与校验。
+    """
+
+    accepted = Signal()
+    rejected = Signal()
+    # 带上标题本身，宿主才能直接接到 setWindowTitle 上
+    titleChanged = Signal(str)
+    errorChanged = Signal()
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._title = ""
+        self._error_text = ""
+
+    title = Property(str, lambda self: self._title, notify=titleChanged)
+    #: 给 QML 显示的校验提示（空串 = 不显示）
+    error = Property(str, lambda self: self._error_text, notify=errorChanged)
+
+    def title_text(self) -> str:
+        """给 Python 侧读标题的普通方法。
+
+        直接读 `self.title` 在 mypy 眼里是 `Property` 描述符而不是 str
+        （PySide6 的桩没把描述符协议建模出来），故另给一个直取字段的入口。
+        """
+        return self._title
+
+    def set_title(self, text: str) -> None:
+        self._title = str(text)
+        self.titleChanged.emit(self._title)
+
+    def set_error(self, text: str) -> None:
+        self._error_text = str(text)
+        self.errorChanged.emit()
+
+    @Slot()
+    def accept(self) -> None:
+        """QML 侧「确定」。需要校验时在子类里覆写 —— 校验不过就别 emit。"""
+        self.accepted.emit()
+
+    @Slot()
+    def reject(self) -> None:
+        self.rejected.emit()
+
+
+class QmlDialog(QDialog):
+    """承载单个 QML 对话框页面的 QDialog。"""
+
+    def __init__(
+        self,
+        qml_file: str,
+        bridge: DialogBridge,
+        *,
+        parent: QWidget | None = None,
+        size: tuple[int, int] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._bridge = bridge
+        self._bridge.accepted.connect(self.accept)
+        self._bridge.rejected.connect(self.reject)
+        self._bridge.titleChanged.connect(self.setWindowTitle)
+        if bridge.title_text():
+            self.setWindowTitle(bridge.title_text())
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self._host = PageHost(qml_file, context={"bridge": bridge}, parent=self)
+        layout.addWidget(self._host)
+
+        if size is not None:
+            self.setMinimumSize(*size)
+            self.resize(*size)
+
+    @property
+    def bridge(self) -> Any:
+        return self._bridge
+
+    def ok(self) -> bool:
+        """QML 是否加载成功（调用方据此决定要不要回退到 Widgets 版）。"""
+        return self._host.ok()

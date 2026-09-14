@@ -234,10 +234,10 @@ class PlanTable(QWidget):
         self.plan_updated.emit()
 
     def _edit_plan(self, row: int) -> None:
-        """编辑生产计划 — 打开 PlanEditDialog，保存后同步重算"""
+        """编辑生产计划 — 打开 PlanEditDialog（QML 版），保存后同步重算"""
         if self._model is None:
             return
-        from ui_pyside6.views.industry import PlanEditDialog
+        from ui_qml.bridge.plan_edit_bridge import PlanEditQmlDialog as PlanEditDialog
 
         plan = self._model.get_plan(row)
         if not plan:
@@ -317,7 +317,7 @@ class PlanTable(QWidget):
         """批量编辑生产计划 — 一次修改所有选中行（不含 ME/TE）"""
         if self._model is None or not rows:
             return
-        from ui_pyside6.views.industry.plan_edit_dialog import PlanEditDialog
+        from ui_qml.bridge.plan_edit_bridge import PlanEditQmlDialog as PlanEditDialog
 
         first = self._model.get_plan(rows[0]) if rows else None
         dlg = PlanEditDialog(
