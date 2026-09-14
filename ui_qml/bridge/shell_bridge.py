@@ -23,10 +23,11 @@ class ShellHost(Protocol):
     def show_progress(self, text: str = "", maximum: int = 0) -> None: ...
     def update_progress(self, value: int, text: str = "") -> None: ...
     def hide_progress(self, text: str = "就绪") -> None: ...
+    def navigate_to(self, key: str) -> bool: ...
 
 
 class ShellBridge(QObject):
-    """把外壳的状态栏/进度条暴露给 QML。"""
+    """把外壳的状态栏/进度条/导航暴露给 QML。"""
 
     def __init__(self, shell: ShellHost, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -35,6 +36,11 @@ class ShellBridge(QObject):
     @Slot(str)
     def setStatus(self, text: str) -> None:
         self._shell.set_status(text)
+
+    @Slot(str)
+    def navigate(self, key: str) -> bool:
+        """切到某个导航页（找不到返回 false）。"""
+        return bool(self._shell.navigate_to(key))
 
     @Slot(str, int)
     def showProgress(self, text: str = "", maximum: int = 0) -> None:

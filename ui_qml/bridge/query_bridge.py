@@ -1,0 +1,422 @@
+"""物品查询页 bridge —— QML 与既有服务/worker 之间的唯一通道。
+
+职责边界与 `EstimateBridge` 一致：**业务逻辑仍在 workers / services 里**，
+本类只做三件事：把请求转发给既有实现、把结果整理成 QML 好用的形状、
+把状态回传给外壳状态栏。不复制任何搜索/格式化逻辑。
+
+对照的 Widgets 版是 `ui_pyside6/views/query/query_page.py`，行为逐项对齐。
+
+**订单弹窗仍是 Widgets**（阶段 4 才迁移）：那套函数（`query_order_popup.py`）
+是按 `QueryPage` 的私有属性写的，这里用一个宿主壳 `OrderPopupHost` 把它们接上 ——
+比把订单加载逻辑抄一份到 QML 侧安全，抄一份就会出现两个副本。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
+from PySide6.QtWidgets import QApplication, QWidget
+
+import ui_pyside6.theme as theme
+from core.constants import TRADE_HUB_IDS, TRADE_HUBS
+from ui_qml.models.query_qml_model import QueryQmlModel
+
+__all__ = ["QueryBridge"]
+
+#: 搜索框防抖（对齐 Widgets 版的 200ms）
+_DEBOUNCE_MS = 200
+
+_DEFAULT_STATUS = "输入物品名称/ID后搜索，双击行查看实时订单"
+
+
+class _StatusSink:
+    """把 `page._status_label.setText(...)` 转发到 bridge 的 statusText。"""
+
+    def __init__(self, bridge: QueryBridge) -> None:
+        self._bridge = bridge
+
+    def setText(self, text: str) -> None:  # Qt 命名，对齐 status_label.setText
+        self._bridge.set_status(str(text))
+
+
+class OrderPopupHost(QWidget):
+    """`query_order_popup` 那套函数期望的「页面」接口适配器（见模块 docstring）。
+
+    订单弹窗本体还是 Widgets，它按 `QueryPage` 的私有属性取值；
+    这个宿主壳把同一组名字接到桥与外壳上。`mapToGlobal` / `rect()` 由 QWidget 自带。
+    """
+
+    def __init__(self, bridge: QueryBridge, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._bridge = bridge
+        self._order_popup: Any = None
+        self._current_order_type_id: int | None = None
+        self._status_label = _StatusSink(bridge)
+
+    # `do_load_orders` 读的两个属性直接转给桥
+    @property
+    def _model(self) -> QueryQmlModel:
+        return self._bridge._model
+
+    @property
+    def _region_id(self) -> int:
+        return self._bridge._region_id
+
+
+class QueryBridge(QObject):
+    """物品查询页的 QML 后端。"""
+
+    statusChanged = Signal()
+    resultsChanged = Signal()
+    suggestionsChanged = Signal()
+    regionChanged = Signal()
+    sortChanged = Signal()
+
+    def __init__(self, shell: object | None = None, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._shell = shell
+        self._model = QueryQmlModel()
+        self._all_groups: list = []
+        self._current_query = ""
+        self._region_id = 10000002  # Jita，与 DEFAULT_REGION_ID 一致
+        self._suggestions: list[dict] = []
+        self._history: list[str] = []
+        self._busy = False
+        self._count_text = ""
+        self._status_text = _DEFAULT_STATUS
+        self._search_worker: QObject | None = None
+        self._suggest_worker: QObject | None = None
+        self._group_worker: QObject | None = None
+
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.timeout.connect(self._fetch_suggestions)
+
+        self._orders = OrderPopupHost(self, shell if isinstance(shell, QWidget) else None)
+        # 表格里的前景/底色是 data() 算出来的**字符串**，QML 绑定不会随主题自己重算，
+        # 必须由这里补发 dataChanged（add_theme_listener 对绑定方法用弱引用，不会泄漏）
+        self._remove_theme_listener = theme.add_theme_listener(self.refreshColors)
+
+    # ── 模型 ──────────────────────────────────────────────────
+
+    def _get_model(self) -> QueryQmlModel:
+        return self._model
+
+    model = Property(QObject, _get_model, constant=True)
+
+    # ── 选项 ──────────────────────────────────────────────────
+
+    regions = Property(list, lambda self: list(TRADE_HUBS), constant=True)
+
+    @Property(list, constant=True)
+    def columns(self) -> list[dict]:
+        """列定义（标题 + 初始宽度）—— 单一来源在 `query_search._COLUMNS`。"""
+        from ui_pyside6.views.query.query_search import _COLUMNS
+
+        return [{"title": title, "width": width} for title, width in _COLUMNS]
+
+    def _get_region_index(self) -> int:
+        hubs = list(TRADE_HUBS)
+        for i, hub in enumerate(hubs):
+            if TRADE_HUB_IDS.get(hub) == self._region_id:
+                return i
+        return 0
+
+    regionIndex = Property(int, _get_region_index, notify=regionChanged)
+
+    @Slot(int)
+    def setRegionIndex(self, index: int) -> None:
+        hubs = list(TRADE_HUBS)
+        if not 0 <= index < len(hubs):
+            return
+        region_id = TRADE_HUB_IDS.get(hubs[index], 10000002)
+        if region_id == self._region_id:
+            return
+        self._region_id = region_id
+        self.regionChanged.emit()
+        if self._current_query:
+            self.search()
+
+    # ── 状态 ──────────────────────────────────────────────────
+
+    def _get_busy(self) -> bool:
+        return self._busy
+
+    busy = Property(bool, _get_busy, notify=statusChanged)
+    countText = Property(str, lambda self: self._count_text, notify=statusChanged)
+    statusText = Property(str, lambda self: self._status_text, notify=statusChanged)
+
+    def set_status(self, text: str) -> None:
+        self._status_text = str(text)
+        self.statusChanged.emit()
+        self._push_shell_status(text)
+
+    def _push_shell_status(self, text: str) -> None:
+        setter = getattr(self._shell, "set_status", None)
+        if callable(setter):
+            setter(text)
+
+    # ── 输入 / 候选 ────────────────────────────────────────────
+
+    searchText = Property(str, lambda self: self._current_query, notify=statusChanged)
+
+    @Slot(str)
+    def onTextChanged(self, text: str) -> None:
+        """输入框每次改动：够长就防抖查候选，清空则回落到搜索历史。"""
+        self._current_query = str(text)
+        if len(text) >= 1:
+            self._debounce.start(_DEBOUNCE_MS)
+        else:
+            self._suggestions = []
+            self.suggestionsChanged.emit()
+            self._show_history()
+
+    suggestions = Property(list, lambda self: self._suggestions, notify=suggestionsChanged)
+    history = Property(list, lambda self: self._history, notify=suggestionsChanged)
+
+    @Slot()
+    def _fetch_suggestions(self) -> None:
+        from ui_pyside6.views.query.query_search import SuggestionWorker
+
+        query = self._current_query.strip()
+        if not query:
+            return
+        worker = SuggestionWorker(query, self)
+        self._suggest_worker = worker
+        worker.finished_signal.connect(self._on_suggestions)
+        worker.start()
+
+    def _on_suggestions(self, items: list) -> None:
+        # Worker 给的是 (type_id, display, zh_name) 三元组
+        self._suggestions = [{"id": int(tid), "text": str(display)} for tid, display, _zh in items]
+        self.suggestionsChanged.emit()
+
+    def _show_history(self) -> None:
+        from ui_pyside6.views.query.query_search import load_search_history
+
+        self._history = [str(h) for h in load_search_history()]
+        self.suggestionsChanged.emit()
+
+    @Slot(str)
+    def pickSuggestion(self, text: str) -> None:
+        """候选/历史被点中：填回输入框并立即搜索。"""
+        self._current_query = str(text)
+        self._suggestions = []
+        self.suggestionsChanged.emit()
+        self.search()
+
+    @Slot()
+    def clearHistory(self) -> None:
+        from ui_pyside6.views.query.query_search import clear_search_history
+
+        clear_search_history()
+        self._suggestions = []
+        self._history = []
+        self.suggestionsChanged.emit()
+
+    # ── 类别 ──────────────────────────────────────────────────
+
+    def _ensure_groups(self) -> None:
+        """首次搜索时才去异步加载类别。
+
+        **不在 `__init__` 里起线程**：那样构造一个桥就会拉起 QThread，
+        而桥一旦生命周期短（测试里就是如此）线程还没结束进程就退不出去
+        （实测 pytest 卡在退出、单个用例本身是通过的）。顺带也省掉
+        「用户根本没搜过就白跑一次 DB」的开销。
+        """
+        if self._group_worker is not None:
+            return
+        from ui_pyside6.views.query.query_search import GroupLoadWorker
+
+        worker = GroupLoadWorker(self)
+        self._group_worker = worker
+        worker.finished_signal.connect(self._on_groups_loaded)
+        worker.start()
+
+    def _on_groups_loaded(self, groups: list) -> None:
+        self._all_groups = groups or []
+
+    # ── 搜索 ──────────────────────────────────────────────────
+
+    @Slot()
+    def search(self) -> None:
+        from ui_pyside6.views.query.query_search import SearchWorker, add_search_history
+
+        query = self._current_query.strip()
+        self._suggestions = []
+        self.suggestionsChanged.emit()
+        if not query:
+            self.set_status("请输入物品名称或 ID")
+            return
+
+        self._current_query = query
+        self._ensure_groups()
+        add_search_history(query)
+        self._busy = True
+        self.statusChanged.emit()
+
+        worker = SearchWorker(query, self._all_groups, self._region_id, self)
+        self._search_worker = worker
+        worker.finished_signal.connect(self._on_search_done)
+        worker.error_signal.connect(self._on_search_error)
+        worker.start()
+
+    def _on_search_done(self, rows: list, is_fallback: bool) -> None:
+        from ui_pyside6.views.query.query_search import format_search_rows
+
+        self._busy = False
+        if not rows:
+            self._count_text = ""
+            self._model.set_rows([])
+            self.set_status(f"未找到包含「{self._current_query}」的物品")
+            self.resultsChanged.emit()
+            return
+
+        self._model.set_rows(format_search_rows(rows, is_fallback))
+        self._count_text = f"共 {len(rows)} 条结果" + (" (仅基本信息)" if is_fallback else "")
+        self._status_text = "就绪 — 右键行可查看操作菜单，双击查看实时订单"
+        self.statusChanged.emit()
+        self.resultsChanged.emit()
+
+    def _on_search_error(self, error: str) -> None:
+        self._busy = False
+        self.set_status(f"查询出错: {error}")
+
+    @Slot()
+    def clear(self) -> None:
+        self._current_query = ""
+        self._suggestions = []
+        self._model.set_rows([])
+        self._count_text = ""
+        self.set_status("已清空")
+        self.resultsChanged.emit()
+        self.suggestionsChanged.emit()
+
+    # ── 排序 / 行交互 ──────────────────────────────────────────
+
+    @Slot(int, bool)
+    def sortBy(self, column: int, ascending: bool) -> None:
+        from PySide6.QtCore import Qt
+
+        order = Qt.SortOrder.AscendingOrder if ascending else Qt.SortOrder.DescendingOrder
+        self._model.sort(column, order)
+        self.sortChanged.emit()
+        self.resultsChanged.emit()
+
+    # 排序状态暴露成属性而不是 Slot 调用：QML 的绑定**不追踪 Slot 内部的属性读取**，
+    # 写成 `bridge.sortIndicator(col)` 表头箭头不会跟着刷新（与 Theme.fs 同一类坑）。
+    sortColumn = Property(int, lambda self: self._model.sort_column, notify=sortChanged)
+    sortAscending = Property(bool, lambda self: self._model.sort_ascending, notify=sortChanged)
+
+    def _row(self, row: int) -> dict | None:
+        return self._model.get_row(int(row))
+
+    @Slot(int)
+    def rowDoubleClicked(self, row: int) -> None:
+        data = self._row(row)
+        if not data:
+            return
+        from ui_pyside6.views.query.query_order_popup import do_load_orders
+
+        do_load_orders(self._orders, data["type_id"])
+
+    @Slot(int)
+    def viewOrders(self, row: int) -> None:
+        self.rowDoubleClicked(row)
+
+    @Slot(int)
+    def viewManufacturing(self, type_id: int) -> None:
+        """切到工业页看该物品的制造配方（外壳仍是 Widgets，走 ShellBridge 的导航）。"""
+        navigate = getattr(self._shell, "navigate_to", None)
+        if callable(navigate) and navigate("industry"):
+            self.set_status(f"已切换到工业页查看 Type ID: {type_id}")
+        else:
+            self.set_status(f"无法跳转，Type ID: {type_id}")
+
+    @Slot(int)
+    def copyName(self, row: int) -> None:
+        data = self._row(row)
+        if data:
+            self._copy(data.get("zh") or data.get("en") or str(data.get("type_id", "")))
+
+    @Slot(int)
+    def copyTypeId(self, row: int) -> None:
+        data = self._row(row)
+        if data:
+            self._copy(str(data.get("type_id", "")))
+
+    @Slot(int)
+    def copyBuy(self, row: int) -> None:
+        data = self._row(row)
+        if data:
+            self._copy(str(data.get("buy_str", "—")).split(" (")[0])
+
+    @Slot(int)
+    def copySell(self, row: int) -> None:
+        data = self._row(row)
+        if data:
+            self._copy(str(data.get("sell_str", "—")).split(" (")[0])
+
+    @Slot(int)
+    def copyRowTsv(self, row: int) -> None:
+        data = self._row(row)
+        if not data:
+            return
+        parts = [
+            str(data.get("type_id", "")),
+            str(data.get("zh", "")),
+            str(data.get("en", "")),
+            str(data.get("group", "")),
+            str(data.get("buy_str", "—")),
+            str(data.get("sell_str", "—")),
+            str(data.get("avg_price_str", "—")),
+            str(data.get("vol_str", "—")),
+        ]
+        self._copy("\t".join(parts), note="已复制整行数据 (TSV 格式)")
+
+    def _copy(self, text: str, note: str = "") -> None:
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(text)
+        self.set_status(note or f"已复制: {text}")
+
+    @Slot(int, result=dict)
+    def menuState(self, row: int) -> dict:
+        """右键菜单要的状态：决定哪几项可用（对齐 Widgets 版按值决定加不加那一项）。"""
+        data = self._row(row) or {}
+        return {
+            "valid": bool(data),
+            "hasBuy": data.get("buy_str") not in (None, "", "—"),
+            "hasSell": data.get("sell_str") not in (None, "", "—"),
+            "typeId": data.get("type_id"),
+        }
+
+    # ── 子窗口（仍是 Widgets，阶段 4 迁移）────────────────────
+
+    @Slot()
+    def openAllItems(self) -> None:
+        from ui_pyside6.views.all_items_view import AllItemsDialog
+
+        parent = self._shell if isinstance(self._shell, QWidget) else None
+        dialog = getattr(self, "_all_items_dialog", None)
+        if dialog is None:
+            dialog = AllItemsDialog(parent)
+            self._all_items_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+
+    @Slot()
+    def openBatchPrice(self) -> None:
+        from ui_pyside6.views.batch_price_dialog import BatchPriceDialog
+
+        parent = self._shell if isinstance(self._shell, QWidget) else None
+        BatchPriceDialog(parent).exec()
+
+    # ── 主题 ──────────────────────────────────────────────────
+
+    @Slot()
+    def refreshColors(self) -> None:
+        self._model.refresh_colors()
+        self.statusChanged.emit()
+        self.resultsChanged.emit()

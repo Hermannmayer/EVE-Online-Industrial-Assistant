@@ -158,6 +158,20 @@ class MainWindowNavMixin:
             if key == "watchlist" and hasattr(page, "trigger_price_check"):
                 page.trigger_price_check()
 
+    def navigate_to(self, key: str) -> bool:
+        """按导航 key 切页（找不到返回 False）。
+
+        QML 页面需要这个入口（例：物品查询的「查看制造配方」要跳到工业页）。
+        迁移期外壳仍是 Widgets，与其让桥去摸 `_nav_tree` / `_nav_items` 这些私有属性，
+        不如在外壳上开一个公开方法。切页本身走既有的 `_on_nav_changed`，
+        所以状态栏刷新、页面懒加载等行为与点导航树完全一致。
+        """
+        for item in self._nav_items:
+            if item.data(0, Qt.ItemDataRole.UserRole) == key:
+                self._nav_tree.setCurrentItem(item)
+                return True
+        return False
+
     def _register_pages(self):
         import sqlite3
 

@@ -34,12 +34,18 @@ def register_migrated_pages() -> None:
     懒导入是必要的：`estimate_bridge` 会拉进 workers 与 services，
     在模块级导入会拖慢启动，也会让不碰 UI 的测试被迫加载整条业务链。
     """
-    if "estimate" in QML_PAGES:
-        return
-    from ui_qml.bridge.estimate_bridge import EstimateBridge
+    # 每页各自判重：函数整体可重复调用（`main_window_nav` 与测试都会调它）
+    if "estimate" not in QML_PAGES:
+        from ui_qml.bridge.estimate_bridge import EstimateBridge
 
-    QML_PAGES["estimate"] = "pages/EstimatePage.qml"
-    QML_BRIDGES["estimate"] = EstimateBridge  # type: ignore[assignment]
+        QML_PAGES["estimate"] = "pages/EstimatePage.qml"
+        QML_BRIDGES["estimate"] = EstimateBridge  # type: ignore[assignment]
+
+    if "query" not in QML_PAGES:
+        from ui_qml.bridge.query_bridge import QueryBridge
+
+        QML_PAGES["query"] = "pages/QueryPage.qml"
+        QML_BRIDGES["query"] = QueryBridge  # type: ignore[assignment]
 
 
 def build_page(
