@@ -82,6 +82,20 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
 - 启动：`plan_table._start_plan` → `plan_start_check.plan_start_block`（**纯逻辑、零 DB**；返回 `(类别码, 文案)`，UI 用码选短标签、用文案做 tooltip；`plan_start_block_reason` 是同一次判定的文案投影）→ `plan_execution.check_materials` → `start_plan`（原子 UPDATE status + `inventory_manager.deduct_item`）
 - 部分启动：`plan_execution.start_plan_partial(plan_id, lines, ...)` —— 只启动 N 条产线。**时序必须是「先拆行、后启动」**：先 `UPDATE parallels=N` + `insert_split_remainder`（复制结构列、清空执行列、`source_mother_ids` 置 `''`）+ `move_bindings`（把前 N 张之外的绑定**移动**给余量行），**提交后**再 `plan_service.load_plan` 重新取数（漏了这步会按 P 条扣料），最后 `start_plan(auto_bind=False)`（自动绑定走自己的连接立即提交，是回滚看不见的副作用）。失败则 `_rollback_split` 把两行并回一条。仅限**独立计划与子项全部完成的母项**（子项行由需求重放驱动，拆了会被改写）。预览用 `preview_partial_start`（按 N 条口径报缺口）
 - 完成：`plan_execution.complete_plan`（成品入 `inventory_items` + `consume_bpc_runs` 消耗 `user_blueprints` + 清 bindings）；撤销 `cancel_plan` 返还材料
+- **母项结束时清理已完成的子项行**：`complete_plan` 在**同一事务**内（`deposited` 回写之后、`commit` 之前）调
+  `plan_execution.remove_completed_children(group_number, conn=conn)`，返回体带 `removed` 计数供 UI 出文案。
+  - **触发条件**：`sub_level==0` 且 `group_number>0`，**且组内没有别的活跃 level-0 行**（部分启动拆出的
+    「已启动 / 未启动」两半必须都结束，否则仍在跑的那半会失去子项制造价口径）。
+  - **子项自身完成不删自己**：母项的「市场」口径三列（材料成本/利润/市场利润率）靠同组子项行
+    （`plan_metrics.mother_subitem_cost_map` + `adjust_mother_metrics`）才能按子项制造价计；删早了会在
+    混合态下回退市场价。**入库成本不受影响**——子项下线时产出已按其自身成本入库，母项启动与下线都按库存成本核算。
+  - **清理判据是「已无归属」且全局扫**：有 `source_mother_ids` 的行要等引用它的母项**全部**结束才删
+    （跨组共享件靠这条兜住，只按组过滤会留永久孤儿）；没有来源记录的行只在触发组内清。
+  - ⚠️ **绑定清理由传入的 `conn` 完成，不得调 `release_blueprint`** —— 后者自开另一条缓存连接并独立提交，
+    在外层未提交写事务内会 WAL 写锁自锁（卡满 `busy_timeout` 后 `database is locked`），且破坏「清理与置
+    completed 同生共死」的原子性。
+  - 删母项（右键「取消生产」，`plan_table._delete_rows`）时也调同一函数，否则已完成的子项行会成为永远清不掉的
+    孤儿（`plan_rebuild` 的 prune 分支显式豁免 `_DONE_STATUSES`）。
 - 展开：`plan_table._decompose_parent` → `plan_decompose.decompose_plan`（递归读 `user_blueprints` + bom 材料）→ `plan_rebuild.rebuild_children` → `PlanRepository` 增删改
 - 读取：`plan_service.load_plans`；价格快照 `save_price_snapshots`
 - 旁路：`plan_aggregator` 是**采购/需求聚合**，不是计划展开

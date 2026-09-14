@@ -1000,7 +1000,14 @@ class TestCompletePlansCoordinator:
         pid = _insert_plan(user_env.db, status="ready", runs=2, parallels=1, deposit_hangar_id=None)
         plan = _get_plan(user_env.db, pid)
         result = complete_plans([plan], 1)
-        assert result == {"completed": 1, "deposited": 1, "failed": [], "skipped": [], "failed_reasons": []}
+        assert result == {
+            "completed": 1,
+            "deposited": 1,
+            "removed": 0,
+            "failed": [],
+            "skipped": [],
+            "failed_reasons": [],
+        }
         db_plan = _get_plan(user_env.db, pid)
         assert db_plan["status"] == "completed"
         assert db_plan["deposit_hangar_id"] == 1
@@ -1428,3 +1435,156 @@ class TestPartialStart:
 
         assert plan_execution.preview_partial_start(pid, 1, None)["bp_short"] is None
         assert plan_execution.preview_partial_start(pid, 2, None)["bp_short"] is None
+
+
+# ════════════════════════════════════════════════════════════════
+#  母项结束时清理已完成的子项行
+# ════════════════════════════════════════════════════════════════
+
+
+def _row_exists(db, plan_id: int) -> bool:
+    """行是否还在（删行后不能用 `_get_plan` —— 它在 row=None 时会抛 TypeError）。"""
+    with db.connect("user") as conn:
+        return conn.execute("SELECT 1 FROM production_plans WHERE id=?", (plan_id,)).fetchone() is not None
+
+
+class TestCompletedChildCleanup:
+    """母项结束时清理「已无归属」的已完成子项行；子项自身完成不删自己。"""
+
+    @staticmethod
+    def _child(user_env, mother_id: int, *, group: int, status: str = "completed", tid: int = 3001, **extra) -> int:
+        return _insert_plan(
+            user_env.db,
+            product_type_id=tid,
+            group_number=group,
+            sub_level=1,
+            status=status,
+            source_mother_ids=str(mother_id),
+            **extra,
+        )
+
+    def test_mother_complete_removes_completed_children(self, user_env):
+        """母项下线 → 已完成的子项行被清；未完成的子项行留下（守卫式删除）。"""
+        mother = _insert_plan(user_env.db, group_number=7, sub_level=0, status="ready")
+        done = self._child(user_env, mother, group=7)
+        pending = self._child(user_env, mother, group=7, status="pending", tid=3002)
+
+        res = complete_plan(_get_plan(user_env.db, mother))
+
+        assert res["ok"], res
+        assert res["removed"] == 1
+        assert _row_exists(user_env.db, done) is False
+        assert _row_exists(user_env.db, pending) is True
+        assert _get_plan(user_env.db, mother)["status"] == "completed"
+
+    def test_child_complete_keeps_its_own_row(self, user_env):
+        """子项自己完成**不**删自己 —— 母项的「市场」口径成本依赖同组子项行。"""
+        child = _insert_plan(user_env.db, group_number=7, sub_level=1, status="ready")
+
+        res = complete_plan(_get_plan(user_env.db, child))
+
+        assert res["ok"], res
+        assert res["removed"] == 0
+        assert _get_plan(user_env.db, child)["status"] == "completed"
+
+    def test_standalone_complete_removes_nothing(self, user_env):
+        pid = _insert_plan(user_env.db, group_number=0, sub_level=0, status="ready")
+
+        res = complete_plan(_get_plan(user_env.db, pid))
+
+        assert res["ok"] and res["removed"] == 0
+        assert _get_plan(user_env.db, pid)["status"] == "completed"
+
+    def test_shared_child_kept_while_other_mother_active(self, user_env):
+        """共享子项只在其**所有**引用母项都结束后才清。"""
+        mother_a = _insert_plan(user_env.db, group_number=7, sub_level=0, status="ready")
+        mother_b = _insert_plan(user_env.db, group_number=9, sub_level=0, status="in_progress")
+        shared = _insert_plan(
+            user_env.db,
+            product_type_id=3001,
+            group_number=7,  # 落位在 A 的组
+            sub_level=1,
+            status="completed",
+            source_mother_ids=f"{mother_a},{mother_b}",
+        )
+
+        res_a = complete_plan(_get_plan(user_env.db, mother_a))
+
+        assert res_a["ok"], res_a
+        assert res_a["removed"] == 0
+        assert _row_exists(user_env.db, shared) is True
+
+    def test_cross_group_shared_child_cleaned_by_last_mother(self, user_env):
+        """B 组母项最后结束时也必须清到 A 组的共享子项 —— 只按组过滤会留永久孤儿。"""
+        mother_a = _insert_plan(user_env.db, group_number=7, sub_level=0, status="ready")
+        mother_b = _insert_plan(user_env.db, group_number=9, sub_level=0, status="ready")
+        shared = _insert_plan(
+            user_env.db,
+            product_type_id=3001,
+            group_number=7,
+            sub_level=1,
+            status="completed",
+            source_mother_ids=f"{mother_a},{mother_b}",
+        )
+        assert complete_plan(_get_plan(user_env.db, mother_a))["removed"] == 0
+
+        res_b = complete_plan(_get_plan(user_env.db, mother_b))
+
+        assert res_b["ok"], res_b
+        assert res_b["removed"] == 1
+        assert _row_exists(user_env.db, shared) is False
+
+    def test_partial_start_split_does_not_clean_early(self, user_env):
+        """同组两条 level-0（部分启动拆出的两半）→ 要先都结束才清，否则另一半口径回退。"""
+        first = _insert_plan(user_env.db, group_number=7, sub_level=0, status="ready")
+        second = _insert_plan(user_env.db, group_number=7, sub_level=0, status="pending", parallels=2)
+        child = self._child(user_env, first, group=7)
+
+        res_first = complete_plan(_get_plan(user_env.db, first))
+
+        assert res_first["ok"], res_first
+        assert res_first["removed"] == 0, "同组还有活跃的 level-0 行 → 不得清理"
+        assert _row_exists(user_env.db, child) is True
+
+        res_second = complete_plan(_get_plan(user_env.db, second))
+
+        assert res_second["ok"], res_second
+        assert res_second["removed"] == 1
+        assert _row_exists(user_env.db, child) is False
+
+    def test_children_present_on_rollback(self, user_env, monkeypatch):
+        """完成失败整体回滚 → 子项行仍在（清理同事务）。"""
+        mother = _insert_plan(user_env.db, group_number=7, sub_level=0, status="ready")
+        child = self._child(user_env, mother, group=7)
+        bp = _insert_blueprint(user_env.db, 3001, runs=10)
+        bind_blueprints(mother, [bp])
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(plan_execution, "consume_bpc_runs", _boom)
+
+        res = complete_plan(_get_plan(user_env.db, mother))
+
+        assert res["ok"] is False
+        assert _row_exists(user_env.db, child) is True
+        assert _get_plan(user_env.db, mother)["status"] == "ready"
+
+    def test_cleanup_removes_binding_rows(self, user_env):
+        """清理用注入的 conn 清绑定（走 release_blueprint 会自锁 → 本用例会挂/报 locked）。"""
+        mother = _insert_plan(user_env.db, group_number=7, sub_level=0, status="ready")
+        child = self._child(user_env, mother, group=7)
+        bp = _insert_blueprint(user_env.db, 3001, runs=10)
+        with user_env.db.connect("user") as conn:
+            conn.execute(
+                "INSERT INTO plan_blueprint_bindings (plan_id, blueprint_id, runs_used) VALUES (?,?,?)",
+                (child, bp, 1),
+            )
+
+        res = complete_plan(_get_plan(user_env.db, mother))
+
+        assert res["ok"], res
+        assert res["removed"] == 1
+        with user_env.db.connect("user") as conn:
+            left = conn.execute("SELECT COUNT(*) FROM plan_blueprint_bindings WHERE plan_id=?", (child,)).fetchone()[0]
+        assert left == 0

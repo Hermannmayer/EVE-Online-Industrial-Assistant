@@ -46,13 +46,16 @@ def complete_plans(
     发明行先弹 InventionOutcomeDialog 回填实际产出（用户取消 → 该行不完成）。
     ⚠️ validate 档测试在**没有 QApplication** 的情况下直调本函数时必须传
     `ask_outcome=False`，否则弹窗会崩或挂死。
-    Returns: {"completed": int, "deposited": int, "failed": [...], "skipped": [...],
-              "failed_reasons": [...]}
+    Returns: {"completed": int, "deposited": int, "removed": int, "failed": [...],
+              "skipped": [...], "failed_reasons": [...]}
+    ``removed``：母项下线时被顺带清理掉的已完成子项行数（见
+    `plan_execution.remove_completed_children`）；非母项恒为 0。
     ``failed`` 只有产品名（调用方原样展示），``failed_reasons`` 带 `complete_plan`
     的拒绝原因——只报名字等于没说，用户无从判断是流程不足还是未回填发明产出。
     """
     completed = 0
     deposited = 0
+    removed = 0
     failed: list[str] = []
     failed_reasons: list[str] = []
     skipped: list[str] = []
@@ -70,6 +73,7 @@ def complete_plans(
             completed += 1
             if res.get("deposited"):
                 deposited += 1
+            removed += int(res.get("removed") or 0)
         else:
             name = plan.get("product_name") or str(plan.get("id"))
             failed.append(name)
@@ -77,6 +81,7 @@ def complete_plans(
     return {
         "completed": completed,
         "deposited": deposited,
+        "removed": removed,
         "failed": failed,
         "skipped": skipped,
         "failed_reasons": failed_reasons,

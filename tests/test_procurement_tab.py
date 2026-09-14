@@ -496,3 +496,42 @@ def test_manual_qty_survives_recalculate(qapp, make_dlg):
     row = next(r for r in dlg._buy_table.model()._rows if r["type_id"] == tid)
     assert row["to_buy"] == 7.0
     assert row["total"] == 7.0 * row["price"]
+
+
+class TestCompleteAllReload:
+    """一键完成后必须整表重载 `_active_plans`。
+
+    只调 `_calculate()` 的话，已完成（或被母项清理）的行会滞留在 `_active_plans` 里，
+    下次点「完成所有」会把它们再算一遍、汇总文案失真。
+    """
+
+    def test_reloads_active_plans_after_complete(self, qapp, make_dlg, monkeypatch):
+        import ui_pyside6.views.procurement_tab as pt
+        from ui_pyside6.views.industry import complete_guard
+
+        ready = [
+            {
+                "id": 1,
+                "status": "ready",
+                "product_name": "母项",
+                "product_type_id": 2001,
+                "runs": 1,
+                "parallels": 1,
+            }
+        ]
+        dlg = make_dlg(plans=ready)
+        dlg._active_plans = ready
+
+        calls: list[str] = []
+        monkeypatch.setattr(dlg, "_reload_plans", lambda: calls.append("reload"))
+        monkeypatch.setattr(dlg, "_calculate", lambda: calls.append("calculate"))
+        monkeypatch.setattr(complete_guard, "confirm_bp_shortfall", lambda *a, **k: False)
+        monkeypatch.setattr(
+            "services.plan_execution.complete_plan",
+            lambda plan, **kw: {"ok": True, "deposited": 0, "removed": 2},
+        )
+        monkeypatch.setattr(pt.QMessageBox, "information", lambda *a, **k: None)
+
+        dlg._on_complete_all()
+
+        assert calls == ["reload"], "完成后必须走 _reload_plans（其内部已含 _calculate）"

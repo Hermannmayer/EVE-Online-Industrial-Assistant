@@ -784,6 +784,27 @@ class TestActionSlotStates:
         finally:
             w.close()
 
+    def test_complete_hint_mentions_child_cleanup(self, qapp, monkeypatch):
+        """母项下线顺带清理了子项行时，紧凑态提示要说明，否则用户只看到行凭空少了几条。"""
+        from ui_pyside6.views.industry import complete_plans_dialog as cpd
+
+        rows = [dict(READY_PLAN)]
+        w, _ = _make_launcher(qapp, monkeypatch, plans=rows)
+        try:
+
+            def _complete(parent, plan):
+                rows.clear()
+                return {"completed": 1, "removed": 2}
+
+            monkeypatch.setattr(cpd, "complete_one_plan", _complete)
+
+            w._on_row_complete(101)
+
+            assert w._hint_text == "已下线：待下线成品（子项产线已清理）"
+            assert w._bottom_hint.text() == "已下线：待下线成品（子项产线已清理）"
+        finally:
+            w.close()
+
     def test_in_progress_row_shows_short_label(self, qapp, monkeypatch):
         w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(RUNNING_PLAN)])
         try:

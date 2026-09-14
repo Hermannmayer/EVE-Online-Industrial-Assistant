@@ -857,3 +857,43 @@ class TestPartialStartDialog:
             assert dlg._summary.text() != ""
         finally:
             dlg.deleteLater()
+
+
+class TestCompletePlansAggregate:
+    """批量下线汇总每条的 removed（母项清理掉的已完成子项行数）。"""
+
+    def test_aggregates_removed(self, qapp, monkeypatch):
+        from ui_pyside6.views.industry import complete_plans_dialog as cpd
+
+        monkeypatch.setattr(cpd, "set_plan_deposit_hangar", lambda db, pid, dep: None)
+        monkeypatch.setattr(cpd, "get_container", lambda: SimpleNamespace(db=MagicMock()))
+        monkeypatch.setattr(
+            cpd.plan_execution,
+            "complete_plan",
+            lambda plan, **kw: {"ok": True, "deposited": 0, "removed": 1},
+        )
+
+        result = cpd.complete_plans(
+            [{"id": 1, "product_name": "母项A"}, {"id": 2, "product_name": "母项B"}],
+            4,
+            ask_outcome=False,
+        )
+
+        assert result["completed"] == 2
+        assert result["removed"] == 2
+
+    def test_removed_zero_for_non_mother(self, qapp, monkeypatch):
+        from ui_pyside6.views.industry import complete_plans_dialog as cpd
+
+        monkeypatch.setattr(cpd, "set_plan_deposit_hangar", lambda db, pid, dep: None)
+        monkeypatch.setattr(cpd, "get_container", lambda: SimpleNamespace(db=MagicMock()))
+        monkeypatch.setattr(
+            cpd.plan_execution,
+            "complete_plan",
+            lambda plan, **kw: {"ok": True, "deposited": 1},
+        )
+
+        result = cpd.complete_plans([{"id": 3, "product_name": "独立计划"}], 4, ask_outcome=False)
+
+        assert result["completed"] == 1
+        assert result["removed"] == 0

@@ -1025,6 +1025,15 @@ class PlanTable(QWidget):
         # 含母项删除 → 收缩不再被引用的子项；仅删子项 → 不重建不收缩（保持已删产线消失）
         if any(int(p.get("child_level") or p.get("sub_level") or 0) == 0 for p in deleted_rows):
             rebuild_children(create=False, prune=True)
+            # 母项没了 → 它名下已完成的子项行不该继续挂在表里（`rebuild_children` 的 prune
+            # 显式豁免 `_DONE_STATUSES`，靠它清不掉）。组号取原始列 group_number ——
+            # `group_id` 只是 enrich 注入的别名。
+            for gid in {
+                int(p.get("group_number") or 0)
+                for p in deleted_rows
+                if int(p.get("child_level") or p.get("sub_level") or 0) == 0
+            } - {0}:
+                plan_execution.remove_completed_children(gid)
         else:
             rebuild_children()
         self.plan_updated.emit()

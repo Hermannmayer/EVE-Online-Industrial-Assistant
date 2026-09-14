@@ -688,6 +688,7 @@ class ProcurementDialog(QDialog):
 
         completed = 0
         deposited = 0
+        removed = 0
         need_outcome = 0
         for plan in ready_plans:
             plan_id = plan.get("id")
@@ -698,6 +699,7 @@ class ProcurementDialog(QDialog):
                 if res.get("ok"):
                     completed += 1
                     deposited += 1 if res.get("deposited") else 0
+                    removed += int(res.get("removed") or 0)
                 elif res.get("code") == "need_outcome":
                     # 发明是概率作业：产出必须由用户按游戏结果回填，这里不静默完成
                     need_outcome += 1
@@ -720,8 +722,12 @@ class ProcurementDialog(QDialog):
             msg = f"已完成 {completed}/{len(ready_plans)} 项计划"
             if deposited > 0:
                 msg += f"\n{deposited} 项成品已自动入库"
+            if removed:
+                msg += f"\n{removed} 条已完成的子项产线已清理"
             QMessageBox.information(self, "完成", msg)
-            self._calculate()
+            # 必须整表重载而不是只重算：完成（或被清理）的行会滞留在 _active_plans 里，
+            # 下次点「完成所有」会把它们再算一遍、计数失真。_reload_plans 内部已含 _calculate。
+            self._reload_plans()
             self.plans_changed.emit()  # 计划状态变化 → 通知主界面重载
         else:
             QMessageBox.information(self, "提示", "没有可完成的计划")
