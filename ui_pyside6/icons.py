@@ -14,6 +14,9 @@ from PySide6.QtWidgets import QApplication, QToolButton
 import ui_pyside6.theme as theme
 
 _ICONS_DIR = os.path.join(os.path.dirname(__file__), "assets", "icons")
+# 程序图标（窗口/任务栏）—— 与上面那套界面图标不同：它是静态资源、不随主题染色，
+# 由 scripts/make_app_icon.py 从设计稿生成（多尺寸 .ico）
+_APP_ICON = os.path.join(os.path.dirname(__file__), "assets", "app.ico")
 
 # 语义键 → Phosphor SVG 文件名
 ICON_MAP: dict[str, str] = {
@@ -173,6 +176,16 @@ def status_icon(ok: bool, size: int = 16) -> QIcon:
     """✓/✗ 状态图标（绿色 check / 红色 x）"""
     color = theme.ACCENT_GREEN if ok else theme.ACCENT_RED
     return themed_icon("check" if ok else "close", size, color)
+
+
+def app_icon() -> QIcon:
+    """程序图标（窗口/任务栏）—— 由 `scripts/make_app_icon.py` 从设计稿生成。
+
+    与 `themed_icon` 的界面图标不同：它是静态资源、不随主题染色。
+    资源缺失时返回空 QIcon —— 源码运行但尚未生成图标、或资源未随包分发，
+    都不该让启动失败（打包后 exe 自带图标，走的是 `.spec` 的 `icon=`）。
+    """
+    return QIcon(_APP_ICON) if os.path.exists(_APP_ICON) else QIcon()
 
 
 def clear_icon_cache():
