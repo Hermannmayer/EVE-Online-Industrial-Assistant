@@ -21,7 +21,7 @@ flowchart TD
 
 ## 添加生产计划
 
-1. 在工具栏点击 **蓝图导入**（`top_toolbar.py`）
+1. 在工具栏点击 **蓝图导入**（`ui_qml/qml/pages/IndustryPage.qml` 的工具栏）
 2. 输入蓝图名称（支持中/英文模糊搜索候选）
 3. 选择蓝图后设置：
    - **数量**：要生产的数量
@@ -30,7 +30,7 @@ flowchart TD
 
 ## 价格来源设置
 
-通过工具栏的 **双行价格设置**（`price_source_widget.py`）独立配置：
+通过工具栏的 **双行价格设置**（`ui_qml/qml/components/FPriceSourceRow.qml`）独立配置：
 
 | 设置项 | 说明 |
 |--------|------|
@@ -114,7 +114,7 @@ flowchart TD
 
 ## 甘特图
 
-切换到 **📊 甘特图**（`gantt_view.py`）查看：
+切换到 **📊 甘特图**（`ui_qml/qml/pages/FGanttChart.qml`）查看：
 
 - 各生产计划的时间线
 - 产线并行情况

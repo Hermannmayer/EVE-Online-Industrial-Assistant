@@ -39,13 +39,19 @@ def count_tests() -> int:
 
 
 def readme_test_files() -> list[str]:
-    """README 测试表格中列出的文件"""
+    """README 测试表格中列出的文件。
+
+    取「本节内所有反引号包起来的 test_*.py」，**不能**要求反引号紧跟行首的 `|`：
+    README 里一行常写多个文件（``| `a.py` / `b.py` | 说明 |``），按 `|` 开头去匹配
+    只能抓到每行第一个，后面那几个写错了也没人发现 —— 实测 `test_scoring_cache.py`
+    与 `test_contract_ui.py` 两个不存在的文件就是这么长期留在 README 里的。
+    """
     text = README.read_text(encoding="utf-8")
     # 测试文件表格在「### 测试文件」之后，到下一个 `## ` 之前
     m = re.search(r"### 测试文件\n(.*?)(?=\n## |\Z)", text, re.DOTALL)
     if not m:
         return []
-    return re.findall(r"\|\s*`(test_[^`]+\.py)`", m.group(1))
+    return re.findall(r"`(test_[^`]+\.py)`", m.group(1))
 
 
 def update_readme(total: int) -> bool:

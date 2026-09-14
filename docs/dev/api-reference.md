@@ -99,21 +99,17 @@
 
 ### views/industry/
 
+> 界面主体已迁到 QML（`ui_qml/qml/pages/IndustryPage.qml`、`PlanTablePane.qml`），
+> 这里只剩业务逻辑与尚未迁移的 Widgets 对话框。
+
 | 文件 | 功能 |
 |------|------|
-| `top_toolbar.py` | 工具栏（蓝图导入 + 双行价格设置） |
-| `plan_table.py` | 生产计划表格（21 列） |
-| `plan_edit_dialog.py` | 计划编辑对话框 |
-| `gantt_view.py` | 甘特图视图 |
-| `price_source_widget.py` | 材料/成品独立价格来源 |
-| `action_buttons.py` | 底部操作按钮 |
-| `status_bar.py` | 底部状态栏 |
-| `blueprint_dialog.py` | 蓝图表弹窗 |
-| `materials_dialog.py` | 材料总表 |
-| `output_dialog.py` | 产出总表 |
-| `cost_breakdown_dialog.py` | 成本明细 |
-| `char_usage_dialog.py` | 人物占用表 |
-| `flow_layout.py` | 自动换行布局 |
+| `plan_table.py` | 生产计划表格的业务逻辑（21 列；视图是 `ui_qml/qml/pages/PlanTablePane.qml`） |
+| `plan_table_constants.py` | 列号与列常量 |
+| `parent_decompose_dialog.py` | 母项拆解对话框（Widgets，未迁移） |
+| `complete_plans_dialog.py` | 下线落库与「发明结果回填」的编排（不再是 QDialog） |
+| `complete_guard.py` | 四条下线入口共用的「蓝图流程不足」确认 |
+| `production_launcher.py` | 生产启动器 |
 
 ### views/inventory/
 

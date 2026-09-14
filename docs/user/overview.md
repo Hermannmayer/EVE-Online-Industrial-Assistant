@@ -31,7 +31,7 @@
 
 ## 底部状态栏
 
-状态栏显示以下信息（`industry/status_bar.py`）：
+状态栏显示以下信息（`ui_qml/qml/pages/IndustryPage.qml` 的状态栏）：
 
 | 区域 | 功能 |
 |------|------|
