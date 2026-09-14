@@ -909,7 +909,7 @@ class PlanTable(QWidget):
         if not children:
             QMessageBox.information(self, "提示", "所选计划均不在组中或无子项可调整")
             return
-        from ui_pyside6.views.industry.child_parallel_dialog import ChildParallelDialog
+        from ui_qml.bridge.child_parallel_bridge import ChildParallelQmlDialog as ChildParallelDialog
 
         dlg = ChildParallelDialog(parents + children, self)
         if dlg.exec():
@@ -921,7 +921,7 @@ class PlanTable(QWidget):
         if not children:
             QMessageBox.information(self, "提示", "所选计划均不在组中或无子项可调整")
             return
-        from ui_pyside6.views.industry.mass_parallel_dialog import MassParallelDialog
+        from ui_qml.bridge.mass_parallel_bridge import MassParallelQmlDialog as MassParallelDialog
 
         dlg = MassParallelDialog(parents + children, self)
         if dlg.exec():

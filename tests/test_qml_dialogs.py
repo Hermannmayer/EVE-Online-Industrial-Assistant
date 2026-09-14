@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from PySide6.QtCore import QEventLoop, QTimer, QtMsgType, qInstallMessageHandler
@@ -416,3 +417,141 @@ def test_blueprint_requirements_empty_states(monkeypatch, qapp):
             assert dialog.bridge.statusText == hint
         finally:
             dialog.deleteLater()
+
+
+# ════════════════════════════════════════════════════════════════
+#  子项并行配置 / 子项大规模产线并行（阶段 4-4 的子项部分）
+# ════════════════════════════════════════════════════════════════
+
+
+class _DialogFactory:
+    """造对话框，并握住它的桥需要的桩（如落库用的 plan_repo）。
+
+    用类而不是 lambda：测试要断言写入内容，lambda 上挂属性过不了 mypy。
+    """
+
+    def __init__(self, qml_cls, plans, **stubs):
+        self.qml_cls = qml_cls
+        self.plans = plans
+        for name, value in stubs.items():
+            setattr(self, name, value)
+
+    def __call__(self):
+        return self.qml_cls(self.plans)
+
+
+def _build_parallel_ref(db_manager):
+    """并行类对话框要的最小 ref 库：件名 / 蓝图产出 / 蓝图工时。"""
+    with db_manager.connect("ref") as conn:
+        conn.execute("CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT)")
+        conn.execute("INSERT INTO item VALUES (1001,'碳纤维','Carbon Fiber')")
+        conn.execute("INSERT INTO item VALUES (2001,'渡鸦级','Raven')")
+        conn.execute(
+            "CREATE TABLE blueprint_products (blueprint_type_id INTEGER, activity TEXT, "
+            "product_type_id INTEGER, quantity INTEGER)"
+        )
+        conn.execute("INSERT INTO blueprint_products VALUES (3001,'manufacturing',2001,1)")
+        conn.execute("INSERT INTO blueprint_products VALUES (3002,'manufacturing',1001,1)")
+        conn.execute("CREATE TABLE blueprint_activities (blueprint_type_id INTEGER, activity TEXT, time REAL)")
+        conn.execute("INSERT INTO blueprint_activities VALUES (3001,'manufacturing',7200)")
+        conn.execute("INSERT INTO blueprint_activities VALUES (3002,'manufacturing',3600)")
+
+
+def _parallel_plans() -> list[dict]:
+    """一个母项 + 一个子项（子项带 v12 的 demand 列）。"""
+    return [
+        {"id": 10, "product_type_id": 2001, "sub_level": 0, "runs": 2, "parallels": 1, "me_level": 0},
+        {
+            "id": 11,
+            "product_type_id": 1001,
+            "sub_level": 1,
+            "runs": 1,
+            "parallels": 1,
+            "demand": 2,
+            "blueprint_type_id": 3002,
+        },
+    ]
+
+
+@pytest.fixture
+def child_parallel_factory(db_manager, monkeypatch, qapp):
+    from types import SimpleNamespace
+
+    from ui_qml.bridge.child_parallel_bridge import ChildParallelQmlDialog
+
+    _build_parallel_ref(db_manager)
+    monkeypatch.setattr(
+        "ui_qml.bridge.child_parallel_bridge.get_container",
+        lambda: SimpleNamespace(db=db_manager, plan_repo=MagicMock()),
+    )
+    return _DialogFactory(ChildParallelQmlDialog, _parallel_plans())
+
+
+@pytest.fixture
+def mass_parallel_factory(db_manager, monkeypatch, qapp):
+    from types import SimpleNamespace
+
+    from ui_qml.bridge.mass_parallel_bridge import MassParallelQmlDialog
+
+    _build_parallel_ref(db_manager)
+    repo = MagicMock()
+    monkeypatch.setattr(
+        "ui_qml.bridge.mass_parallel_bridge.get_container",
+        lambda: SimpleNamespace(db=db_manager, plan_repo=repo),
+    )
+    return _DialogFactory(MassParallelQmlDialog, _parallel_plans(), repo=repo)
+
+
+def test_child_parallel_dialog_loads_without_warnings(child_parallel_factory):
+    _assert_loads_and_quiet(child_parallel_factory, "子项并行配置")
+
+
+def test_mass_parallel_dialog_loads_without_warnings(mass_parallel_factory):
+    _assert_loads_and_quiet(mass_parallel_factory, "子项大规模产线并行")
+
+
+def test_mass_parallel_preview_then_apply(mass_parallel_factory):
+    """算预览 → 出六列表 → 应用只写 parallels（runs 不动）。"""
+    dialog = mass_parallel_factory()
+    try:
+        bridge = dialog.bridge
+        assert bridge.hasPreview is False
+        # 没算过预览就点「确认应用」→ 一句提示，不落库
+        bridge.accept()
+        assert bridge.error != ""
+        assert mass_parallel_factory.repo.update_batch.call_count == 0
+
+        bridge.setParamValue(10)
+        bridge.computePreview()
+
+        assert bridge.hasPreview is True
+        assert len(bridge.rows) == 1
+        cells = bridge.rows[0]["cells"]
+        assert cells[0]["text"] == "碳纤维"
+        assert cells[1]["text"] == "2"  # 母项需求
+        assert cells[3]["text"] == "10"  # 调整后并行 = 单子项吃掉全部 9 条余量 + 1
+        assert cells[5]["text"] == "✓"
+        assert bridge.anyShort is False
+
+        bridge.accept()
+        assert mass_parallel_factory.repo.update_batch.call_args[0][0] == [(11, {"parallels": 10})]
+    finally:
+        dialog.deleteLater()
+
+
+def test_mass_parallel_mode_switch_resets_param(mass_parallel_factory):
+    """换模式：上限与单位跟着变，参数回到 10（与 Widgets 版一致）。"""
+    dialog = mass_parallel_factory()
+    try:
+        bridge = dialog.bridge
+        assert bridge.paramSuffix == " 条产线"
+        assert bridge.paramMax == 1000
+
+        bridge.setParamValue(999)
+        bridge.setModeIndex(1)
+        assert bridge.paramValue == 10
+        assert bridge.paramSuffix == " 天"
+        assert bridge.paramMax == 3650
+        assert bridge.hasPreview is False  # 换模式清掉旧预览
+    finally:
+        dialog.deleteLater()

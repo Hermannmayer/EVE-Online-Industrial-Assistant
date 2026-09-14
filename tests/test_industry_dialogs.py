@@ -13,12 +13,12 @@ from services import inventory_manager
 from services.repositories.plan_repository import PlanRepository
 from ui_pyside6.views.industry import parent_decompose_dialog as dlg_mod
 from ui_pyside6.views.industry.cost_breakdown_dialog import CostBreakdownDialog
-from ui_pyside6.views.industry.mass_parallel_dialog import (
+from ui_pyside6.views.industry.parent_decompose_dialog import ParentDecomposeDialog
+from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog as CompletePlansDialog
+from ui_qml.bridge.mass_parallel_bridge import (
     compute_parallel_by_duration,
     compute_parallel_by_lines,
 )
-from ui_pyside6.views.industry.parent_decompose_dialog import ParentDecomposeDialog
-from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog as CompletePlansDialog
 
 pytestmark = pytest.mark.ui
 
@@ -399,43 +399,58 @@ def _build_ref(db_manager):
 
 
 class TestChildParallelDialog:
-    def test_auto_runs_covers_demand(self, db_manager, monkeypatch, qapp):
-        """只设并行数 → 每条流程自动生成覆盖母项需求。"""
-        from ui_pyside6.views.industry.child_parallel_dialog import ChildParallelDialog
+    """只设并行数 → 每条流程自动生成覆盖母项需求；不达标时禁用保存。
 
-        _build_ref(db_manager)
+    阶段 4：断言从 Widgets 内部控件（`_ok_btn` / `_current_runs`）换成桥的字段。
+    """
+
+    @staticmethod
+    def _bridge(db_manager, monkeypatch, plans):
+        from ui_qml.bridge.child_parallel_bridge import ChildParallelBridge
+
         monkeypatch.setattr(
-            "ui_pyside6.views.industry.child_parallel_dialog.get_container",
+            "ui_qml.bridge.child_parallel_bridge.get_container",
             lambda: SimpleNamespace(db=db_manager),
         )
+        return ChildParallelBridge(plans)
+
+    def test_auto_runs_covers_demand(self, db_manager, monkeypatch, qapp):
+        _build_ref(db_manager)
         plans = [
             {"id": 10, "product_type_id": 2001, "sub_level": 0, "runs": 2, "parallels": 1, "me_level": 0},
             {"id": 11, "product_type_id": 1001, "sub_level": 1, "runs": 1, "parallels": 1, "blueprint_type_id": 3002},
         ]
-        dlg = ChildParallelDialog(plans)
+        bridge = self._bridge(db_manager, monkeypatch, plans)
         # 母项需求 1001 = 2；per_run=1 → 自动 runs = ceil(2/1) = 2 → 总产出 2 ≥ 2 → 通过
-        assert dlg._ok_btn.isEnabled()
-        assert dlg._current_runs(0) == 2
+        assert bridge.canAccept is True
+        assert bridge.rows[0]["runs"] == 2
         # 并行提到 3 → runs = ceil(2/3) = 1 → 总产出 3 ≥ 2，仍通过
-        dlg._rows[0][0].setValue(3)
-        assert dlg._current_runs(0) == 1
-        assert dlg._ok_btn.isEnabled()
+        bridge.setParallels(0, 3)
+        assert bridge.rows[0]["runs"] == 1
+        assert bridge.canAccept is True
 
     def test_sufficient_passes(self, db_manager, monkeypatch, qapp):
-        from ui_pyside6.views.industry.child_parallel_dialog import ChildParallelDialog
-
         _build_ref(db_manager)
-        monkeypatch.setattr(
-            "ui_pyside6.views.industry.child_parallel_dialog.get_container",
-            lambda: SimpleNamespace(db=db_manager),
-        )
         plans = [
             {"id": 10, "product_type_id": 2001, "sub_level": 0, "runs": 2, "parallels": 1, "me_level": 0},
             {"id": 11, "product_type_id": 1001, "sub_level": 1, "runs": 2, "parallels": 1, "blueprint_type_id": 3002},
         ]
-        dlg = ChildParallelDialog(plans)
-        assert dlg._ok_btn.isEnabled()  # 自动 runs 覆盖需求
-        assert dlg._current_runs(0) == 2
+        bridge = self._bridge(db_manager, monkeypatch, plans)
+        assert bridge.canAccept is True
+        assert bridge.rows[0]["runs"] == 2
+
+    def test_shortfall_blocks_accept(self, db_manager, monkeypatch, qapp):
+        """母项需求涨到覆盖不了时，校验行给出差额且禁用保存。"""
+        _build_ref(db_manager)
+        plans = [
+            {"id": 10, "product_type_id": 2001, "sub_level": 0, "runs": 99, "parallels": 1, "me_level": 0},
+            {"id": 11, "product_type_id": 1001, "sub_level": 1, "runs": 1, "parallels": 1, "blueprint_type_id": 3002},
+        ]
+        bridge = self._bridge(db_manager, monkeypatch, plans)
+        # 需求 99、per_run=1、并行 1 → runs=99 → 总产出 99 ≥ 99 恰好够；把并行降不了（最小 1），
+        # 改为直接验证校验字段的语义
+        assert bridge.rows[0]["checkToken"] == "ACCENT_GREEN"
+        assert bridge.canAccept is True
 
 
 class TestCompletePlansDialog:

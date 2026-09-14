@@ -24,6 +24,7 @@ ColumnLayout {
     property string acceptText: qsTr("确定")
     property string cancelText: qsTr("取消")
     property bool acceptVisible: true
+    property bool acceptEnabled: true
     property bool cancelVisible: true
 
     anchors.fill: parent
@@ -67,6 +68,7 @@ ColumnLayout {
             text: root.acceptText
             primary: true
             visible: root.acceptVisible
+            enabled: root.acceptEnabled
             onClicked: if (root.dlg)
                 root.dlg.accept()
         }
