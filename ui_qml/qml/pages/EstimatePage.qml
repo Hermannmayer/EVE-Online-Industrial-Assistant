@@ -483,7 +483,7 @@ Item {
             enabled: page.selectedRow >= 0
             onTriggered: bridge.copyText(rowMenu.rowData.name || "")
         }
-        MenuItem {
+        FMenuItem {
             text: qsTr("复制 Type ID")
             visible: (rowMenu.rowData.typeId || 0) > 0
             onTriggered: bridge.copyText(String(rowMenu.rowData.typeId))

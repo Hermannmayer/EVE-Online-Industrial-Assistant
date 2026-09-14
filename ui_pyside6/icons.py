@@ -66,13 +66,28 @@ _svg_cache: dict[str, str] = {}
 _pixmap_cache: dict[tuple, QPixmap] = {}
 
 
-def _load_svg(filename: str) -> str:
+def svg_path(filename: str) -> str:
+    """Phosphor SVG 的绝对路径（不检查存在性，由调用方判断）。
+
+    给 QML 侧的 `Image.source` 用：那边要的是 `file://` URL，且拿不到
+    `QIconEngine` 的 paint 时染色，只能读原始 SVG 自己染。
+    """
+    if not filename.endswith(".svg"):
+        filename += ".svg"
+    return os.path.join(_ICONS_DIR, filename)
+
+
+def load_svg(filename: str) -> str:
+    """读 Phosphor SVG 文本（带缓存）；缺失返回空串。
+
+    QML 侧的 `icon_provider` 要拿原始文本自己注入 `fill` 染色。
+    """
     if not filename.endswith(".svg"):
         filename += ".svg"
     svg = _svg_cache.get(filename)
     if svg is None:
         try:
-            with open(os.path.join(_ICONS_DIR, filename), encoding="utf-8") as f:
+            with open(svg_path(filename), encoding="utf-8") as f:
                 svg = f.read()
         except OSError:
             svg = ""
@@ -93,7 +108,7 @@ def _render_pixmap(filename: str, color: str, size: int) -> QPixmap:
     pm = _pixmap_cache.get(key)
     if pm is not None:
         return pm
-    svg = _load_svg(filename)
+    svg = load_svg(filename)
     if not svg:
         pm = QPixmap(1, 1)
         pm.fill(Qt.GlobalColor.transparent)

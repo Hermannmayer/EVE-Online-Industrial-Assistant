@@ -203,10 +203,26 @@ class ThemeBridge(QObject):
 
     fontFamily = Property(str, lambda self: theme.FONT_FAMILY, notify=changed)
 
+    # 字号缩放比。`fs()` 是 Slot，而 **QML 的绑定不追踪 Slot 内部的属性读取**，
+    # 因此 `font.pixelSize: Theme.fs(13)` 在改全局字号后不会重算。
+    # 绑定要写成 `Math.round(13 * Theme.fontScale)`（直接读会通知的属性）才跟得上。
+    # 与 theme.fs 同为 `max(8, round(px * FONT_SCALE))`，QML 侧用 `Theme.px(13)` 取整。
+    fontScale = Property(float, lambda self: theme.FONT_SCALE, notify=changed)
+
     @Slot(int, result=int)
     def fs(self, px: int) -> int:
-        """基准像素字号 → 当前缩放下的像素字号。"""
+        """基准像素字号 → 当前缩放下的像素字号（**不参与依赖追踪**，见 fontScale）。"""
         return theme.fs(px)
+
+    @Slot(QColor, result=str)
+    def hex(self, color: QColor) -> str:
+        """`QColor` → `#rrggbb`。
+
+        给 Phosphor 图标供应器用：它在 URL 查询串里要的是 `#rrggbb`，
+        而 QML 的 `color` 值类型没有能直接给出这个形式的成员，
+        `String(color)` 得到的是 `#aarrggbb`（多一截 alpha），会被染色成错误结果。
+        """
+        return color.name(QColor.NameFormat.HexRgb) if color.isValid() else "#000000"
 
     # ── 高度（elevation）──
     # Qt 只支持单层阴影，规范的双层阴影已近似为单层（见 theme.ELEVATION 注释）。

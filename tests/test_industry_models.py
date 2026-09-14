@@ -146,24 +146,23 @@ class TestPlanTableModel:
         assert model.data(model.index(2, 7), Qt.ItemDataRole.DisplayRole) == "已完成"
 
     def test_checkbox_column_check_state(self, qapp):
-        """备料勾选列由 PlanTableDelegate 渲染为真实复选框（勾选/未勾选），DisplayRole 为空"""
-        from PySide6.QtWidgets import QStyleOptionViewItem
+        """备料勾选列的勾选态由 QML 模型的 `checked` 角色给出，DisplayRole 为空。
 
-        from ui_pyside6.views.industry.plan_table import PlanTableDelegate
+        阶段 2a 前这一列由 `PlanTableDelegate` 通过 `QStyleOptionViewItem.checkState`
+        渲染；迁移后改由 `PlanQmlModel` 的命名角色承载（QML 的 CheckBox 读它）。
+        """
+        from ui_qml.models.plan_qml_model import PlanQmlModel
 
         plans = [
             {"product_type_id": 1, "materials_ready": 1, "status": "pending"},
             {"product_type_id": 2, "materials_ready": 0, "status": "pending"},
         ]
-        model = PlanTableModel(plans)
-        delegate = PlanTableDelegate()
-        opt = QStyleOptionViewItem()
-        delegate.initStyleOption(opt, model.index(0, 0))
-        assert opt.features & QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
-        assert opt.checkState == Qt.CheckState.Checked
-        opt2 = QStyleOptionViewItem()
-        delegate.initStyleOption(opt2, model.index(1, 0))
-        assert opt2.checkState == Qt.CheckState.Unchecked
+        model = PlanQmlModel(plans)
+        checked_role = Qt.ItemDataRole.UserRole + 5
+        assert model.data(model.index(0, 0), checked_role) is True
+        assert model.data(model.index(1, 0), checked_role) is False
+        # 文本角色在勾选列必须为空（复选框由 QML 直接画，不再有文字）
+        assert model.data(model.index(0, 0), Qt.ItemDataRole.UserRole + 1) == ""
         assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == ""
 
     def test_get_plan(self):

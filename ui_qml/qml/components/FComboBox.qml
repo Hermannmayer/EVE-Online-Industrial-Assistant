@@ -21,14 +21,26 @@ ComboBox {
         font.pixelSize: Theme.fs(12)
     }
 
-    readonly property real maxItemWidth: {
+    /* 最长条目的宽度。
+     *
+     * **必须写成普通属性 + 主动测量，不能写成绑定**：绑定体里给 `itemMetrics.text`
+     * 赋值会改动 `itemMetrics.width`，而 `itemMetrics.width` 又是这个绑定读取的值，
+     * Qt 判定为绑定循环（实测告警 `Binding loop detected for property "maxItemWidth"`）。
+     */
+    property real maxItemWidth: 160
+
+    function measureMaxItemWidth() {
         let widest = 0;
         for (let i = 0; i < root.count; ++i) {
             itemMetrics.text = root.textAt(i);
             widest = Math.max(widest, itemMetrics.width);
         }
-        return widest;
+        maxItemWidth = widest;
     }
+
+    onCountChanged: measureMaxItemWidth()
+    onModelChanged: measureMaxItemWidth()
+    Component.onCompleted: measureMaxItemWidth()
 
     popup: Popup {
         // 与字段留 2px 缝：贴死会让下拉看起来像字段本身的一部分

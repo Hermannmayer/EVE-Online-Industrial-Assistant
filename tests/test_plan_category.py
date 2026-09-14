@@ -1,6 +1,7 @@
 """计划类别推导测试 — services/plan_category.py"""
 
 import pytest
+from PySide6.QtCore import Qt
 
 from services.plan_category import category_symbol, load_category_map
 
@@ -79,34 +80,37 @@ class TestSymbolsAndColors:
         assert category_symbol("reaction") == "⚗"
 
 
-class TestDelegateIcons:
-    """计划表格 delegate 的类别/层级自绘图标与列宽。"""
+class TestQmlCategoryIcons:
+    """QML 侧类别/层级图标的取图路径与列宽。
 
-    def test_category_column_fixed_width(self):
+    阶段 2a 后计划表由 QML 渲染：图标不再是 `QIcon`，而是走
+    `image://phosphor/...` 供应器（原始 SVG 的 fill 在根节点上，QML 的 Image
+    不会继承给 <path>，必须在取图时注入颜色）。详见 tests/test_qml_plan_model.py。
+    """
+
+    def test_category_column_width_fits_header(self):
+        """类别列要放得下「类别」两个字，写死 32 会把表头挤成「…」。"""
         from ui_pyside6.views.industry.plan_table_constants import COL_CATEGORY, FIXED_WIDTHS
 
-        assert FIXED_WIDTHS[COL_CATEGORY] == 32
+        assert FIXED_WIDTHS[COL_CATEGORY] >= 38
 
     def test_category_icons_available(self, qapp):
-        from PySide6.QtGui import QIcon
-
-        from ui_pyside6.views.industry.plan_table_delegate import _category_icon
+        from ui_qml.models.plan_qml_model import PlanQmlModel
 
         for cat in ("manufacturing", "copying", "invention", "reaction"):
-            icon = _category_icon(cat)
-            assert isinstance(icon, QIcon)
-            assert not icon.isNull(), f"{cat} 图标应为空"
+            model = PlanQmlModel([{"category": cat, "product_name": "x"}])
+            url = model.data(model.index(0, 1), Qt.ItemDataRole.UserRole + 4)
+            assert url.startswith("image://phosphor/"), f"{cat} 应有图标，实得 {url!r}"
 
-    def test_category_icon_unknown_returns_none(self, qapp):
-        from ui_pyside6.views.industry.plan_table_delegate import _category_icon
+    def test_category_icon_unknown_is_empty(self, qapp):
+        from ui_qml.models.plan_qml_model import PlanQmlModel
 
-        assert _category_icon("not_a_category") is None
+        model = PlanQmlModel([{"category": "not_a_category", "product_name": "x"}])
+        assert model.data(model.index(0, 1), Qt.ItemDataRole.UserRole + 4) == ""
 
     def test_level_icon_available(self, qapp):
-        from PySide6.QtGui import QIcon
+        from ui_qml.models.plan_qml_model import PlanQmlModel
 
-        from ui_pyside6.views.industry.plan_table_delegate import _level_icon
-
-        icon = _level_icon()
-        assert isinstance(icon, QIcon)
-        assert not icon.isNull()
+        model = PlanQmlModel([{"product_name": "x", "child_level": 1}])
+        url = model.data(model.index(0, 3), Qt.ItemDataRole.UserRole + 4)
+        assert "caret-right" in url

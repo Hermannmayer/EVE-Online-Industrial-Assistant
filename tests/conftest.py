@@ -316,6 +316,14 @@ def qapp():
     app = QApplication.instance()
     if app is None:
         app = QApplication([])
+    # QML 控件样式必须与生产一致（见 Main.py 同名调用）。
+    # 不设会用平台默认样式 —— Windows 上是**原生**样式，它禁止自定义
+    # background/indicator/contentItem，会为 FTextField/FSpinBox 等自定义组件
+    # 刷「The current style does not support customization of this control」告警，
+    # 且渲染结果与真实运行不同。必须在加载任何 QML 之前设置。
+    from PySide6.QtQuickControls2 import QQuickStyle
+
+    QQuickStyle.setStyle("FluentWinUI3")
     yield app
 
 

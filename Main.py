@@ -128,23 +128,34 @@ def _migrate_blueprint_db():
 
 def _global_exception_handler(exc_type, exc_value, exc_traceback):
     """全局未捕获异常处理器 — 记录日志、写崩溃转储并弹窗提示"""
+    # Ctrl+C 不是崩溃。照常写崩溃转储只会在 crashes/ 里堆垃圾，弹窗更会挡着退出。
+    # 必须主动退出：Qt 事件循环不处理 SIGINT，这个异常只会在某个槽函数里冒出来，
+    # 吞掉它就表现为「Ctrl+C 按了没反应」。
+    if issubclass(exc_type, KeyboardInterrupt):
+        log.info("收到 Ctrl+C，退出")
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+        else:
+            sys.exit(130)
+        return
+
     log.error("未捕获异常", exc_info=(exc_type, exc_value, exc_traceback))
     write_crash_dump((exc_type, exc_value, exc_traceback))
 
     # 弹窗只在主线程且 QApplication 已创建时进行：后台线程建窗是 Qt 跨线程违规，
     # QApplication 未就绪时 exec() 会挂死。后台线程崩溃只落盘不弹窗。
-    if not issubclass(exc_type, KeyboardInterrupt):
-        if threading.current_thread() is threading.main_thread() and QApplication.instance() is not None:
-            try:
-                msg = QMessageBox()
-                msg.setIcon(QMessageBox.Icon.Critical)
-                msg.setWindowTitle("EVE 商人助手 — 发生错误")
-                msg.setText("程序遇到了意外错误，请重启应用。")
-                msg.setDetailedText("".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
-                msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-                msg.exec()
-            except Exception:
-                pass
+    if threading.current_thread() is threading.main_thread() and QApplication.instance() is not None:
+        try:
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Icon.Critical)
+            msg.setWindowTitle("EVE 商人助手 — 发生错误")
+            msg.setText("程序遇到了意外错误，请重启应用。")
+            msg.setDetailedText("".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg.exec()
+        except Exception:
+            pass
 
 
 def main():

@@ -91,6 +91,16 @@ def set_default_hangar_id(key: str, hangar_id: int | None) -> None
 
 定义行：`104`
 
+### `_price_setting_defaults`
+
+```python
+def _price_setting_defaults() -> dict
+```
+
+价格设置的默认值（hub 取贸易中心列表首项）。
+
+定义行：`126`
+
 ### `get_price_settings`
 
 ```python
@@ -99,7 +109,7 @@ def get_price_settings() -> dict
 
 价格来源设置 &#123;mat_hub, mat_price_type, mat_mult, prod_hub, prod_price_type, prod_mult&#125;。
 
-定义行：`126`
+定义行：`141`
 
 ### `get_material_price_mult`
 
@@ -109,7 +119,7 @@ def get_material_price_mult() -> float
 
 材料价格调整系数（默认 1.0）。
 
-定义行：`131`
+定义行：`154`
 
 ### `set_material_price_mult`
 
@@ -119,4 +129,4 @@ def set_material_price_mult(value: float) -> None
 
 写回材料价格调整系数（读-改-写，只动 price_settings.mat_mult，保留其它键）。
 
-定义行：`145`
+定义行：`168`

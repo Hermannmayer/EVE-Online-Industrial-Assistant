@@ -18,23 +18,16 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QLinearGradient, QPainter, QPen
+import os
+
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
-    QComboBox,
     QDialog,
-    QFrame,
-    QHBoxLayout,
     QInputDialog,
-    QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMenu,
     QMessageBox,
-    QPushButton,
-    QScrollArea,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -62,11 +55,12 @@ from services.plan_category import (
 from services.plan_service import group_and_sort_plans, load_plans_for_wizard
 from services.plan_start_check import can_force_start, plan_start_block
 from services.terminology import term
-from ui_pyside6.icon_cache import load_item_icon
 from ui_pyside6.pin_utils import apply_window_pin
-from ui_pyside6.sizing import ElidedLabel
 
 MAX_SLOTS_PER_LINE = 11  # 单行每类产线最大格块数（技能满级 1+5+5）
+
+#: QML 页面路径（相对 ui_qml/qml/）
+LAUNCHER_QML = "pages/LauncherWindow.qml"
 
 # ── 线型筛选 ────────────────────────────────────────────
 # 对齐游戏工业窗口的作业类型；名称走术语中心（`term.activity`），不硬编码中文。
@@ -272,673 +266,21 @@ def _default_mat_hangar_id() -> int | None:
     return inventory_manager.get_default_mat_hangar_and_system()[0]
 
 
-class CapacitySlotBar(QWidget):
-    """占用区单行：角色名 + 制造/科研/反应 的容量格 + 状态徽章。
-
-    paintEvent 自绘；所有几何按控件实际宽度反算，字号/DPI/窗口宽度变化时不截断。
-
-    每类产线的格子区宽度**按该类容量占全部容量的比例**分配（`line_caps` 由
-    `ProductionLauncher` 按全部人物的最大容量统一算出后传入）：
-    这样「制造 13 格 / 科研 1 格」不会在一行里留下十几个空档，各行也仍能纵向对齐。
-
-    绘制字体一律用 ``self.font()`` —— 与 ``_chrome_width()`` 的量宽字体保持一致；
-    否则套用全局样式表后会出现「按 A 量宽、用 B 绘制」的省略号错位。
-    """
-
-    def __init__(
-        self,
-        parent=None,
-        *,
-        name_width: int = _NAME_W,
-        line_caps: dict[str, int] | None = None,
-    ):
-        super().__init__(parent)
-        self.setObjectName("occ_row")
-        self._name_width = name_width
-        self._line_caps = dict(line_caps) if line_caps else dict.fromkeys(_LINE_TYPES, MAX_SLOTS_PER_LINE)
-        self._slot_total = max(sum(self._line_caps.get(line, 0) for line in _LINE_TYPES), 1)
-        self._char_name = ""
-        self._usage: dict[str, tuple[int, int]] = {}
-        self._apply_metrics()
-        theme.add_theme_listener(self._on_theme_changed)
-
-    def _apply_metrics(self) -> None:
-        """随全局字号刷新行高（方块高度跟随字号，避免大字号下比例失调）。"""
-        self._block_h = max(14.0, theme.fs(_FS_BODY) + 1.0)
-        self.setMinimumHeight(self.row_height())
-
-    @staticmethod
-    def row_height() -> int:
-        """占用行标准高度（ProductionLauncher 据此算面板最大高度）。"""
-        block_h = max(14.0, theme.fs(_FS_BODY) + 1.0)
-        return max(_OCC_ROW_H, int(block_h) + 14)
-
-    def set_usage(self, char_name: str, usage: dict[str, tuple[int, int]]) -> None:
-        self._char_name = char_name or "(未分配)"
-        self._usage = usage
-        self.updateGeometry()
-        self.update()
-
-    def _on_theme_changed(self):
-        self._apply_metrics()
-        self.updateGeometry()
-        self.update()
-
-    # ── 状态 ────────────────────────────────────────────────
-
-    def _status_info(self) -> tuple[str, str]:
-        """(文本, 语义色 token 名) —— 超员 / 空闲 / 生产中。
-
-        文本以「空闲/生产中/超员」开头（``_status_text()`` 的契约，测试依赖）。
-        """
-        active_total = sum(self._usage.get(line, (0, 0))[0] for line in _LINE_TYPES)
-        max_total = sum(self._usage.get(line, (0, 0))[1] for line in _LINE_TYPES)
-        if active_total > max_total:
-            return f"超员 +{active_total - max_total}", "ACCENT_RED"
-        if active_total == 0:
-            return "空闲", "ACCENT_GREEN"
-        return "生产中", "PRIMARY"
-
-    def _status_text(self) -> tuple[str, str]:
-        """(状态文本, 语义色) —— 兼容既有调用方与测试。"""
-        return self._status_info()
-
-    # ── 尺寸 ────────────────────────────────────────────────
-
-    def _badge_width(self, fm: QFontMetrics) -> int:
-        text, _color = self._status_info()
-        return fm.horizontalAdvance(text) + 2 * _GAP_MD + 5  # +5 给左侧语义色条
-
-    def _label_w(self, fm: QFontMetrics) -> int:
-        return max(fm.horizontalAdvance(line_label(line)) for line in _LINE_TYPES) + _GAP_XS
-
-    def _chrome_width(self) -> int:
-        """角色名 + 线型标签 + 状态徽章占用的固定宽度（不含方块区）。"""
-        fm = QFontMetrics(self.font())
-        return (
-            _GAP_SM
-            + self._name_width
-            + _GAP_MD
-            + len(_LINE_TYPES) * (self._label_w(fm) + _GAP_SM)
-            + self._badge_width(fm)
-            + _GAP_SM
-        )
-
-    def sizeHint(self) -> QSize:
-        width = self._chrome_width() + self._slot_total * int(_NOMINAL_BLOCK_W + _BLOCK_GAP)
-        return QSize(width, self.minimumHeight())
-
-    def minimumSizeHint(self) -> QSize:
-        width = self._chrome_width() + self._slot_total * int(_MIN_BLOCK_W + _MIN_BLOCK_GAP)
-        return QSize(width, self.minimumHeight())
-
-    # ── 绘制 ────────────────────────────────────────────────
-
-    def paintEvent(self, event) -> None:
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
-        if w <= 0 or h <= 0:
-            p.end()
-            return
-
-        font = self.font()
-        fm = QFontMetrics(font)
-        label_w = self._label_w(fm)
-        status_text, status_color = self._status_info()
-        badge_w = self._badge_width(fm)
-        vcenter = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
-
-        # 状态徽章：中性底 + 主文字色 + 左侧 3px 语义色条。
-        # 语义由**文字**承担，颜色只是辅助（不靠颜色单独区分）。
-        badge = QRectF(w - badge_w - _GAP_SM, (h - _BADGE_H) / 2.0, badge_w, _BADGE_H)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(theme.BG_SURFACE_LIGHT))
-        p.drawRoundedRect(badge, 4.0, 4.0)
-        p.setBrush(ensure_contrast(getattr(theme, status_color), theme.BG_SURFACE_LIGHT))
-        p.drawRect(QRectF(badge.left() + 3.0, badge.top() + 5.0, 3.0, badge.height() - 10.0))
-        p.setFont(font)
-        p.setPen(QColor(theme.TEXT_PRIMARY))
-        p.drawText(badge, Qt.AlignmentFlag.AlignCenter, status_text)
-
-        # 角色名（固定列宽保证跨行对齐，宽度由 ProductionLauncher 统一传入）
-        x = float(_GAP_SM)
-        name_font = QFont(font)
-        name_font.setBold(True)
-        p.setFont(name_font)
-        p.setPen(QColor(theme.TEXT_PRIMARY))
-        name_elided = QFontMetrics(name_font).elidedText(self._char_name, Qt.TextElideMode.ElideRight, self._name_width)
-        p.drawText(
-            QRect(int(x), 0, self._name_width, h),
-            vcenter,
-            name_elided,
-        )
-        x += self._name_width + _GAP_MD
-
-        # 方块区预算：必须扣掉三条线型标签（label_w）与组间留白，
-        # 否则格子会画到右侧状态徽章底下（旧实现遗漏了 label_w，靠 _MAX_BLOCK_W 上限掩盖）。
-        avail = w - x - badge_w - 2 * _GAP_SM - len(_LINE_TYPES) * (label_w + _GAP_SM)
-        if avail <= 0:
-            p.end()
-            return
-        stride = avail / self._slot_total
-        block_w = max(_MIN_BLOCK_W, stride - _BLOCK_GAP)
-        stride = block_w + _BLOCK_GAP
-        top = (h - self._block_h) / 2.0
-        radius = min(3.0, block_w / 2.0)
-        p.setFont(font)
-
-        for line in _LINE_TYPES:
-            active, mx = self._usage.get(line, (0, 0))
-            # 线型靠「文字标签 + 固定位置」区分，不靠颜色单独区分
-            p.setPen(QColor(theme.TEXT_PRIMARY))
-            p.drawText(QRect(int(x), 0, label_w, h), vcenter, line_label(line))
-            x += label_w
-            raw_accent = getattr(theme, _LINE_COLORS[line])
-            base = ensure_contrast(raw_accent, theme.BG_DARK)
-            for i in range(self._line_caps.get(line, 0)):
-                # 超过该人物技能容量（mx）的格子不绘制：格子数即该人物的容量
-                if i >= mx:
-                    x += stride
-                    continue
-                rect = QRectF(x, top, block_w, self._block_h)
-                if i < active:
-                    # 占用：渐变填充 + 圆角
-                    grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
-                    grad.setColorAt(0.0, base.lighter(135))
-                    grad.setColorAt(1.0, base.darker(110))
-                    p.setBrush(grad)
-                    p.setPen(QPen(base.darker(135), 1))
-                else:
-                    # 空闲但可达：明显的浅格（BG_HOVER 比 BG_DARK/BG_SURFACE 都亮），不加描边
-                    p.setBrush(QColor(theme.BG_HOVER))
-                    p.setPen(Qt.PenStyle.NoPen)
-                p.drawRoundedRect(rect, radius, radius)
-                x += stride
-            x += _GAP_SM
-        p.end()
-
-
-class PlanRow(QWidget):
-    """L3 行卡片：[图标][标题+徽章 / 副标题][时长 / 动作槽位]。
-
-    动作槽位宽度固定（`_action_slot_w`），四个按钮互斥显隐但**占位不变** ——
-    避免行动作区左右跳动。槽内文案不出现占位符：可启动给「启动」，待下线给
-    「可下线」（点击即下线），缺料/缺蓝图等阻塞直接显示**短标签**、完整原因放
-    tooltip（见 `_BLOCK_SHORT_LABELS`）。
-    """
-
-    clicked = Signal(int)  # 点信息区 → 复制蓝图名
-    start_requested = Signal(int)  # 点启动按钮
-    toggle_requested = Signal(int)  # 点折叠/展开（传 group_id）
-    blocked_requested = Signal(int)  # 点阻塞短标签 → 查看完整不可启动原因
-    complete_requested = Signal(int)  # 点「可下线」→ 走单行下线流程
-    context_menu_requested = Signal(int)  # 行上右键 → 菜单在 ProductionLauncher 侧构造
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("plan_row")
-        # QWidget 子类默认不绘制 QSS 背景、也不产生 hover 事件，需显式开启
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
-        self.setFixedHeight(_ROW_H)
-
-        self._plan: dict = {}
-        self._plan_id: int | None = None
-        self._last_reason: str | None = None
-        self._last_pending: int = 0
-        self._last_collapsed: bool = False
-        self._last_can_force: bool = False
-
-        root = QHBoxLayout(self)
-        root.setContentsMargins(_GAP_MD, _GAP_SM, _GAP_MD, _GAP_SM)
-        root.setSpacing(_GAP_MD)
-
-        # 子级缩进引导线（替代原先的空格缩进）
-        self._indent = QFrame()
-        self._indent.setObjectName("row_indent")
-        self._indent.setFixedWidth(2)
-        self._indent.hide()
-        root.addWidget(self._indent)
-
-        self._icon = QLabel()
-        self._icon.setObjectName("row_icon")
-        self._icon.setFixedSize(_ICON_PX, _ICON_PX)
-        self._icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        root.addWidget(self._icon)
-
-        info = QVBoxLayout()
-        info.setSpacing(_GAP_XS)
-        title_row = QHBoxLayout()
-        title_row.setSpacing(_GAP_SM)
-        self._name = ElidedLabel("")
-        self._name.setObjectName("row_title")
-        title_row.addWidget(self._name)
-        self._status = QLabel("")
-        self._status.setObjectName("status_badge")
-        title_row.addWidget(self._status)
-        title_row.addStretch(1)
-        info.addLayout(title_row)
-
-        self._meta = ElidedLabel("")
-        self._meta.setObjectName("row_meta")
-        info.addWidget(self._meta)
-        root.addLayout(info, 1)
-
-        right = QVBoxLayout()
-        right.setSpacing(_GAP_XS)
-        self._duration = QLabel("")
-        self._duration.setObjectName("row_duration")
-        self._duration.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        right.addWidget(self._duration)
-
-        action_row = QHBoxLayout()
-        action_row.setSpacing(_GAP_SM)
-        action_row.addStretch(1)
-        self._btn_start = QPushButton(_START_LABEL)
-        self._btn_start.setObjectName("btn_row")
-        self._btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_start.clicked.connect(self._on_start_clicked)
-        self._btn_toggle = QPushButton("")
-        self._btn_toggle.setObjectName("btn_row_ghost")
-        self._btn_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_toggle.clicked.connect(self._on_toggle_clicked)
-        self._btn_blocked = QPushButton("")
-        self._btn_blocked.setObjectName("btn_row_ghost")
-        self._btn_blocked.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_blocked.clicked.connect(self._on_blocked_clicked)
-        # 「可下线」复用主按钮样式：橘色面在 6/10 主题下对比度不达标，新增
-        # objectName 就得往 _CONTRAST_CONTRACT 加条目并被全主题测试拒收
-        self._btn_complete = QPushButton(_COMPLETE_LABEL)
-        self._btn_complete.setObjectName("btn_row")
-        self._btn_complete.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_complete.clicked.connect(self._on_complete_clicked)
-        # 单一枚举来源：新增按钮只需改这里（槽宽、隐藏、主题重渲染都走它）
-        self._action_buttons = (self._btn_start, self._btn_toggle, self._btn_blocked, self._btn_complete)
-        self._sync_slot_width()  # 必须在按钮建好之后 —— 量的是按钮自己的字体
-        for btn in self._action_buttons:
-            action_row.addWidget(btn)
-        right.addLayout(action_row)
-        root.addLayout(right)
-
-        theme.add_theme_listener(self._on_theme_changed)
-
-    # ── 尺寸 ────────────────────────────────────────────────
-
-    def _sync_slot_width(self) -> None:
-        """按各按钮**自身**字体算动作槽宽并应用（宽度未变则不动按钮）。
-
-        QSS 给 `#btn_row`(Body) 与 `#btn_row_ghost`(Caption) 设了不同字号，且字号要等
-        控件挂进布局后才生效，用控件自身的字体量会偏小 —— 最长文案（如「子项运行中」）
-        会被截断。文案从常量派生，新增短标签时不需要再手工同步这里。
-        """
-        text_w = max(
-            QFontMetrics(btn.font()).horizontalAdvance(sample)
-            for btn in self._action_buttons
-            for sample in _SLOT_SAMPLES
-        )
-        width = max(_SLOT_MIN_W, text_w + 2 * _GAP_MD)
-        if width == getattr(self, "_action_slot_w", None):
-            return  # 每轮轮询都会走到这里，宽度没变就别碰布局
-        self._action_slot_w = width
-        for btn in self._action_buttons:
-            btn.setFixedWidth(width)
-
-    # ── 交互 ────────────────────────────────────────────────
-
-    def _on_start_clicked(self):
-        if self._plan_id is not None:
-            self.start_requested.emit(self._plan_id)
-
-    def _on_toggle_clicked(self):
-        gid = int(self._plan.get("group_id") or self._plan.get("group_number") or 0)
-        if gid:
-            self.toggle_requested.emit(gid)
-
-    def _on_blocked_clicked(self):
-        if self._plan_id is not None:
-            self.blocked_requested.emit(self._plan_id)
-
-    def _on_complete_clicked(self):
-        if self._plan_id is not None:
-            self.complete_requested.emit(self._plan_id)
-
-    # ── 数据 ────────────────────────────────────────────────
-
-    def set_plan(
-        self,
-        plan: dict,
-        *,
-        block_reason: str | None,
-        block_code: str | None = None,
-        pending_children: int = 0,
-        collapsed: bool = False,
-        can_force_start: bool = False,
-    ) -> None:
-        self._plan = plan
-        self._plan_id = plan.get("id")
-        self._last_reason = block_reason
-        self._last_block_code = block_code
-        self._last_pending = pending_children
-        self._last_collapsed = collapsed
-        self._last_can_force = can_force_start
-        status = (plan.get("status") or "").lower()
-        level = int(plan.get("child_level") or 0)
-        name = plan.get("product_name") or f"ID:{plan.get('product_type_id', '')}"
-        self._name.setText((_PARENT_GLYPH if level == 0 else "") + name)
-
-        label = _STATUS_LABELS.get(status, status)
-        self._status.setText(label)
-        self._status.setToolTip(label)
-
-        # 时长：运行中显示剩余，其余显示总时长；总量放 tooltip，不在正文重复
-        total = int(plan.get("calculated_time") or 0)
-        if status in ("in_progress", "running"):
-            rem = _fmt_remaining(plan)
-            self._duration.setText(f"剩 {rem}" if rem else _fmt_hms(total))
-            self._duration.setToolTip(f"总时长 {_fmt_hms(total)}")
-        elif status == "ready":
-            self._duration.setText("待下线")
-            self._duration.setToolTip("")
-        else:
-            self._duration.setText(_fmt_hms(total))
-            self._duration.setToolTip("预计总时长")
-
-        # 副标题：把原先散在 3 行的信息压成 1 行（信息集中）
-        cat = capacity_line_for_category(str(plan.get("category") or ""))
-        parts = [
-            line_label(cat),
-            f"{plan.get('runs', 1)}×{plan.get('parallels', 1)}",
-            f"人物 {plan.get('char_name') or '未分配'}",
-        ]
-        loc = self._location_text(plan)
-        if loc:
-            parts.append(loc)
-        self._meta.setText(" · ".join(parts))
-
-        self._load_icon(plan)
-
-        # 缩进引导线 + 左内边距随层级递增
-        root = self.layout()
-        if root is not None:
-            root.setContentsMargins(_GAP_MD + level * _GAP_LG, _GAP_SM, _GAP_MD, _GAP_SM)
-        self._indent.setVisible(level > 0)
-
-        # 动作槽位：五态互斥，占位恒定，**不出现占位符**
-        self._sync_slot_width()  # 字号要等挂进布局才生效，构造时量一次可能偏小
-        for btn in self._action_buttons:
-            btn.hide()
-        if self._plan_id is None:
-            # 共享组件的合成根行（无真实计划）：不属于任何可操作状态，留空
-            return
-        if level == 0 and pending_children > 0:
-            self._btn_toggle.setText(("展开" if collapsed else "折叠") + f"({pending_children})")
-            self._btn_toggle.show()
-        elif status == "ready":
-            self._btn_complete.setToolTip("产出已跑完，点击下线（成品入库、消耗绑定流程）")
-            self._btn_complete.show()
-        elif block_reason is None and status == "pending":
-            # 必须显式复位：本行会被原地复用，分支 5 留下的短标签文本会残留
-            self._btn_start.setText(_START_LABEL)
-            self._btn_start.setToolTip("")
-            self._btn_start.show()
-        elif can_force_start and status == "pending":
-            # 缺料/蓝图流程不足是**唯一**阻塞：按钮文字直接说明堵点，仍可点，
-            # 点击时二次确认（与计划表格同口径）
-            self._btn_start.setText(_short_label(block_code, status))
-            self._btn_start.setToolTip(f"{block_reason}，点击后需确认")
-            self._btn_start.show()
-        else:
-            self._btn_blocked.setText(_short_label(block_code, status))
-            self._btn_blocked.setToolTip(block_reason or _STATUS_LABELS.get(status, status) or "不可启动")
-            self._btn_blocked.show()
-
-    def _location_text(self, plan: dict) -> str:
-        src = plan.get("facility") or ""
-        dst = plan.get("output_hangar") or ""
-        if src and dst:
-            return f"{src}→{dst}"
-        return src
-
-    def _load_icon(self, plan: dict) -> None:
-        pix = load_item_icon(int(plan.get("product_type_id") or 0), _ICON_PX)
-        if pix is not None:
-            self._icon.setPixmap(pix)
-            self._icon.setToolTip("")
-            return
-        # 无图标：用类别首字占位。不用 category_symbol() 的 emoji（⚙ 📋 ⚗ 💡）——
-        # 它们来自符号/emoji 字体，在本窗的字体环境里会渲染成空白或豆腐块。
-        cat = capacity_line_for_category(str(plan.get("category") or ""))
-        label = line_label(cat) or "?"
-        self._icon.setText(label[:1])
-        self._icon.setToolTip(label)
-
-    def update_tick(self) -> None:
-        """仅运行中行：刷新剩余时长（不重建行）。"""
-        plan = self._plan
-        if not plan:
-            return
-        status = (plan.get("status") or "").lower()
-        if status not in ("in_progress", "running"):
-            return
-        rem = _fmt_remaining(plan)
-        if rem:
-            self._duration.setText(f"剩 {rem}")
-
-    def mouseReleaseEvent(self, event) -> None:
-        super().mouseReleaseEvent(event)
-        if event.button() == Qt.MouseButton.LeftButton and self._plan_id is not None:
-            self.clicked.emit(self._plan_id)
-
-    def contextMenuEvent(self, event) -> None:
-        """行上右键 → 交给 ProductionLauncher 弹菜单（事件先到行上，无需坐标换算）。"""
-        if self._plan_id is not None:
-            self.context_menu_requested.emit(self._plan_id)
-            event.accept()
-
-    def _on_theme_changed(self):
-        self._sync_slot_width()
-        if self._plan:
-            self.set_plan(
-                self._plan,
-                block_reason=self._last_reason,
-                block_code=self._last_block_code,
-                pending_children=self._last_pending,
-                collapsed=self._last_collapsed,
-                can_force_start=self._last_can_force,
-            )
-
-
-def _launcher_qss() -> str:
-    """本窗专属 QSS（按 objectName 作用域）。
-
-    颜色全部取自 `theme` token、字号全部 `theme.fs()`，主题/字号切换时重建即可。
-    注意：全局样式表里的 `QListWidget::item` 是**无作用域**的（theme.py），
-    这里用 id 选择器覆盖它。
-    """
-    r = theme.RADIUS
-    rs = theme.RADIUS_SMALL
-    return f"""
-    #launcher_toolbar {{
-        background: transparent;
-        border-bottom: 1px solid {theme.BORDER};
-    }}
-    #filter_summary {{
-        color: {theme.TEXT_PRIMARY};
-        font-size: {theme.fs(_FS_CAPTION)}px;
-    }}
-    #pin_btn:checked {{
-        background-color: {theme.BG_SURFACE_LIGHT};
-        color: {theme.PRIMARY};
-    }}
-    /* 输入控件用比背景更亮的面。全局 QComboBox 用 BG_SURFACE，而 BG_SURFACE 比
-       BG_DARK 更暗 —— 直接用会渲染成「黑洞 + 亮边」（黑框），必须在本窗覆盖。 */
-    #line_filter, #char_filter, #executor_combo {{
-        background-color: {theme.BG_HOVER};
-        color: {theme.TEXT_PRIMARY};
-        border: 1px solid {theme.BORDER};
-        border-radius: {rs}px;
-        padding: 5px {_GAP_SM}px;
-    }}
-    #line_filter:hover, #char_filter:hover, #executor_combo:hover {{
-        border-color: {theme.PRIMARY};
-    }}
-    #line_filter QAbstractItemView, #char_filter QAbstractItemView,
-    #executor_combo QAbstractItemView {{
-        background-color: {theme.BG_SURFACE_LIGHT};
-        color: {theme.TEXT_PRIMARY};
-        border: 1px solid {theme.BORDER};
-        selection-background-color: {theme.BG_HOVER};
-    }}
-    #occ_header {{
-        background: transparent;
-    }}
-    #occ_title, #occ_summary {{
-        color: {theme.TEXT_PRIMARY};
-        font-size: {theme.fs(_FS_CAPTION)}px;
-    }}
-    #occ_title {{
-        font-weight: 600;
-    }}
-    #occ_disc {{
-        background: transparent;
-        border: none;
-        color: {theme.TEXT_PRIMARY};
-        font-size: {theme.fs(_FS_CAPTION)}px;
-        padding: 0px;
-    }}
-    #occ_disc:hover {{
-        color: {theme.PRIMARY};
-    }}
-    #occ_scroll, #occ_scroll QWidget#qt_scrollarea_viewport {{
-        background: transparent;
-        border: none;
-    }}
-    #launcher_list {{
-        background-color: {theme.BG_DARK};
-        border: 1px solid {theme.BORDER};
-        border-radius: {rs}px;
-        outline: none;
-    }}
-    #launcher_list::item {{
-        padding: 0px;
-        border: none;
-    }}
-    #launcher_list::item:selected {{
-        background-color: {theme.BG_SURFACE_LIGHT};
-    }}
-    #plan_row {{
-        background-color: transparent;
-        border-radius: {rs}px;
-    }}
-    #plan_row:hover {{
-        background-color: {theme.BG_SURFACE_LIGHT};
-    }}
-    #row_indent {{
-        background-color: {theme.BORDER};
-        border-radius: 1px;
-    }}
-    #row_title {{
-        color: {theme.TEXT_BRIGHT};
-        font-size: {theme.fs(_FS_BODY)}px;
-        font-weight: 600;
-    }}
-    #row_meta, #row_duration {{
-        color: {theme.TEXT_PRIMARY};
-        font-size: {theme.fs(_FS_CAPTION)}px;
-    }}
-    /* 全局 QWidget 规则会给 QLabel 也画上不透明底色，盖住行的悬浮/选中面
-       （浅色主题下表现为「文字背后一个白框」）。逐个标签设透明；
-       不能写 `#plan_row QLabel` —— 那会连 #status_badge 的底色一起清掉。 */
-    #row_title, #row_meta, #row_duration, #row_icon, #list_empty,
-    #bottom_hint, #detail_summary, #feedback,
-    #filter_summary, #occ_title, #occ_summary {{
-        background: transparent;
-    }}
-    #row_icon {{
-        color: {theme.TEXT_PRIMARY};
-        font-size: {theme.fs(_FS_BODY)}px;
-        font-weight: 600;
-    }}
-    #status_badge {{
-        background-color: {theme.BG_SURFACE_LIGHT};
-        color: {theme.TEXT_PRIMARY};
-        border-radius: {rs}px;
-        padding: 1px {_GAP_SM}px;
-        font-size: {theme.fs(_FS_CAPTION)}px;
-    }}
-    #list_empty {{
-        color: {theme.TEXT_PRIMARY};
-        font-size: {theme.fs(_FS_CAPTION)}px;
-    }}
-    #btn_row {{
-        background-color: {theme.TEXT_BRIGHT};
-        color: {theme.BG_DARK};
-        border: none;
-        border-radius: {rs}px;
-        font-size: {theme.fs(_FS_BODY)}px;
-        font-weight: 600;
-        padding: 7px 0px;
-    }}
-    #btn_row:hover {{
-        background-color: {theme.TEXT_PRIMARY};
-    }}
-    #btn_row_ghost {{
-        background-color: {theme.BG_HOVER};
-        color: {theme.TEXT_PRIMARY};
-        border: 1px solid {theme.BORDER};
-        border-radius: {rs}px;
-        font-size: {theme.fs(_FS_CAPTION)}px;
-        padding: 6px 0px;
-    }}
-    #btn_row_ghost:hover {{
-        border-color: {theme.PRIMARY};
-    }}
-    #btn_launch {{
-        background-color: {theme.TEXT_BRIGHT};
-        color: {theme.BG_DARK};
-        border: none;
-        border-radius: {rs}px;
-        font-size: {theme.fs(_FS_BODY)}px;
-        font-weight: 600;
-        padding: 6px {_GAP_LG}px;
-    }}
-    #btn_launch:hover {{
-        background-color: {theme.TEXT_PRIMARY};
-    }}
-    #launcher_bottom {{
-        background-color: {theme.BG_SURFACE};
-        border-top: 1px solid {theme.BORDER};
-        border-radius: 0px 0px {r}px {r}px;
-    }}
-    #bottom_hint, #feedback {{
-        color: {theme.TEXT_PRIMARY};
-        font-size: {theme.fs(_FS_CAPTION)}px;
-    }}
-    #detail_summary {{
-        color: {theme.TEXT_PRIMARY};
-        font-size: {theme.fs(_FS_BODY)}px;
-    }}
-    """
-
-
 class ProductionLauncher(QWidget):
     """产线启动小助手 — 非模态紧凑工具窗。"""
 
     plans_changed = Signal()  # 启动成功后触发，供主窗口刷新
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("产线启动小助手")
         self.setWindowFlag(Qt.WindowType.Window, True)
-        self.resize(820, 760)
+        self.resize(880, 760)
         self.setMinimumSize(560, 480)
 
         self._all_plans: list[dict] = []
         self._visible_plans: list[dict] = []
         self._plan_map: dict[int, dict] = {}
-        self._widgets: dict[int, PlanRow] = {}
-        self._row_order: list[int] = []
         self._usage: dict[str, dict[str, int]] = {}
         self._shortfall_cache: dict[int, tuple] = {}
         # 本轮轮询的机库库存（内容 + 指纹），按 mat_hangar_id 记忆；_on_poll 开头清空。
@@ -954,9 +296,26 @@ class ProductionLauncher(QWidget):
         self._default_mat_hangar = _default_mat_hangar_id()
         self._char_list = get_character_list()
 
+        # ── QML 渲染状态（阶段 2c：四个区都交给 QML，这里只存数据） ──
+        self._line_filter_index = 0  # 0 = 全部
+        self._char_filter_index = 0  # 0 = 全部人物
+        self._pinned = False
+        self._filter_summary = ""
+        self._occ_summary = ""
+        self._occ_rows: list[dict] = []
+        self._rows_view: list[dict] = []
+        self._hint_text = "在上方列表选一条产线"
+        self._feedback_text = ""
+        self._params_text = ""
+        self._executor_options: list[dict] = []
+        self._executor_index = 0
+        self._main_btn_text = ""
+        self._main_btn_tip = ""
+        self._main_btn_visible = False
+        self._bottom_expanded = False
+        self._tick_revision = 0
+
         self._build_ui()
-        theme.add_theme_listener(self._on_theme_changed)
-        self._on_theme_changed()
 
         self._tick_timer = QTimer(self)
         self._tick_timer.setInterval(1000)
@@ -969,216 +328,169 @@ class ProductionLauncher(QWidget):
         self._poll_timer.start()
 
         self._on_poll()
-        self._fit_initial_size()
         self._restore_pin()
 
     # ── UI ──────────────────────────────────────────────
 
     def _build_ui(self) -> None:
+        """整窗交给 QML（`LauncherWindow.qml`）：本类只保留业务与渲染状态。"""
+        from ui_qml.bridge.launcher_bridge import LauncherBridge
+        from ui_qml.host import PageHost
+
         root = QVBoxLayout(self)
-        root.setContentsMargins(_GAP_XS, _GAP_XS, _GAP_XS, _GAP_XS)
-        root.setSpacing(_GAP_SM)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # ── L1 工具条（固定单行） ──
-        # 必须是 QFrame（而非裸布局），否则 QSS 的 `#launcher_toolbar` 命中不到
-        self._toolbar = QFrame()
-        self._toolbar.setObjectName("launcher_toolbar")
-        bar = QHBoxLayout(self._toolbar)
-        bar.setContentsMargins(0, _GAP_XS, 0, _GAP_SM)
-        bar.setSpacing(_GAP_SM)
+        self._bridge = LauncherBridge(self, self)
+        self._host = PageHost(LAUNCHER_QML, context={"bridge": self._bridge}, parent=self)
+        root.addWidget(self._host)
 
-        self._line_filter = QComboBox()
-        self._line_filter.setObjectName("line_filter")
-        self._line_filter.addItem("全部", None)
-        for key, cats in _ACTIVITY_FILTERS:
-            self._line_filter.addItem(term.activity(key), cats)
-        self._line_filter.setMinimumWidth(110)
-        self._line_filter.setMaximumWidth(160)
-        self._line_filter.currentIndexChanged.connect(self._on_filter_changed)
-        bar.addWidget(self._line_filter)
+    # ── 桥的取数接口（QML 只读这些，业务判断全在本类） ──────────
 
-        self._char_filter = QComboBox()
-        self._char_filter.setObjectName("char_filter")
-        self._char_filter.setMinimumWidth(140)
-        self._char_filter.setMaximumWidth(260)
-        self._rebuild_char_filter()
-        self._char_filter.currentIndexChanged.connect(self._on_filter_changed)
-        bar.addWidget(self._char_filter)
+    def line_filter_options(self) -> list[dict]:
+        out: list[dict] = [{"label": "全部", "value": None}]
+        for key, _cats in _ACTIVITY_FILTERS:
+            out.append({"label": term.activity(key), "value": key})
+        return out
 
-        self._filter_summary = QLabel("")
-        self._filter_summary.setObjectName("filter_summary")
-        bar.addWidget(self._filter_summary)
-        bar.addStretch(1)
-
-        self._pin_btn = QToolButton()
-        self._pin_btn.setObjectName("pin_btn")
-        self._pin_btn.setText("置顶")
-        self._pin_btn.setCheckable(True)
-        self._pin_btn.setToolTip("切换窗口置顶（悬浮于游戏之上）")
-        self._pin_btn.toggled.connect(self._on_pin_toggled)
-        bar.addWidget(self._pin_btn)
-        root.addWidget(self._toolbar, 0)
-
-        # ── L2 占用面板（可折叠，≤4 行不滚动） ──
-        self._occ_header = QFrame()
-        self._occ_header.setObjectName("occ_header")
-        head = QHBoxLayout(self._occ_header)
-        head.setContentsMargins(0, 0, 0, _GAP_XS)
-        head.setSpacing(_GAP_SM)
-        self._occ_disc = QToolButton()
-        self._occ_disc.setObjectName("occ_disc")
-        self._occ_disc.setText(_EXPANDED_GLYPH)
-        self._occ_disc.setFixedSize(20, 20)
-        self._occ_disc.setToolTip("折叠/展开产线占用")
-        self._occ_disc.clicked.connect(self._on_occ_toggle)
-        head.addWidget(self._occ_disc)
-        occ_title = QLabel("产线占用")
-        occ_title.setObjectName("occ_title")
-        head.addWidget(occ_title)
-        self._occ_summary = QLabel("")
-        self._occ_summary.setObjectName("occ_summary")
-        head.addWidget(self._occ_summary)
-        head.addStretch(1)
-        root.addWidget(self._occ_header, 0)
-
-        occ_scroll = QScrollArea()
-        occ_scroll.setObjectName("occ_scroll")
-        occ_scroll.setWidgetResizable(True)
-        occ_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        occ_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        occ_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        occ_container = QWidget()
-        self._occ_layout = QVBoxLayout(occ_container)
-        self._occ_layout.setContentsMargins(0, 0, 0, 0)
-        self._occ_layout.setSpacing(1)
-        self._occ_layout.addStretch(1)
-        occ_scroll.setWidget(occ_container)
-        root.addWidget(occ_scroll, 0)
-        self._occ_scroll = occ_scroll
-        self._occ_container = occ_container
-
-        # ── L3 产线列表（主工作区） ──
-        self._list = QListWidget()
-        self._list.setObjectName("launcher_list")
-        self._list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-        self._list.setSpacing(_GAP_XS)
-        self._list.setFrameShape(QFrame.Shape.NoFrame)
-        self._list.itemSelectionChanged.connect(self._on_selection_changed)
-        root.addWidget(self._list, 1)
-
-        # ── L4 详情/执行面板（固定） ──
-        self._bottom_panel = QFrame(self)
-        self._bottom_panel.setObjectName("launcher_bottom")
-        bottom = QVBoxLayout(self._bottom_panel)
-        bottom.setContentsMargins(_GAP_MD, _GAP_SM, _GAP_MD, _GAP_SM)
-        bottom.setSpacing(_GAP_SM)
-
-        # 紧凑态：未选中任何行
-        # 紧凑态提示文案。下线成功后该行会从列表消失、选中态随之落空，此时
-        # `#feedback` 会被紧凑分支清空 —— 成功提示改走这里才不会一闪即没。
-        self._hint_text = "在上方列表选一条产线"
-        self._bottom_hint = QLabel(self._hint_text)
-        self._bottom_hint.setObjectName("bottom_hint")
-        bottom.addWidget(self._bottom_hint)
-
-        # 展开态：选中后才有意义
-        self._detail_panel = QWidget()
-        self._detail_panel.setObjectName("detail_panel")
-        detail = QVBoxLayout(self._detail_panel)
-        detail.setContentsMargins(0, 0, 0, 0)
-        detail.setSpacing(_GAP_SM)
-        self._params_label = QLabel("")
-        self._params_label.setObjectName("detail_summary")
-        self._params_label.setWordWrap(True)
-        detail.addWidget(self._params_label)
-
-        exec_row = QHBoxLayout()
-        exec_row.setSpacing(_GAP_MD)
-        self._executor_combo = QComboBox()
-        self._executor_combo.setObjectName("executor_combo")
-        self._executor_combo.setMinimumWidth(180)
-        self._executor_combo.setMaximumWidth(300)
-        exec_row.addWidget(self._executor_combo)
-        exec_row.addStretch(1)
-        self._main_btn = QPushButton("")
-        self._main_btn.setObjectName("btn_launch")
-        self._main_btn.setMinimumHeight(32)
-        self._main_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._main_btn.clicked.connect(self._on_main_start)
-        exec_row.addWidget(self._main_btn)
-        detail.addLayout(exec_row)
-
-        self._feedback = QLabel("")
-        self._feedback.setObjectName("feedback")
-        self._feedback.setWordWrap(True)
-        self._feedback.hide()
-        detail.addWidget(self._feedback)
-
-        self._detail_panel.hide()
-        bottom.addWidget(self._detail_panel)
-        root.addWidget(self._bottom_panel, 0)
-
-    def _rebuild_char_filter(self) -> None:
-        self._char_filter.blockSignals(True)
-        self._char_filter.clear()
-        self._char_filter.addItem("全部人物", None)
-        self._char_filter.addItem("未分配", "")
+    def char_filter_options(self) -> list[dict]:
+        out: list[dict] = [{"label": "全部人物", "value": None}, {"label": "未分配", "value": ""}]
         for name in self._char_list:
-            self._char_filter.addItem(name, name)
-        self._char_filter.blockSignals(False)
+            out.append({"label": name, "value": name})
+        return out
 
-    def _on_theme_changed(self):
-        self.setStyleSheet(theme.get_stylesheet() + _launcher_qss())
-        if self._occ_container:
-            for child in self._occ_container.findChildren(CapacitySlotBar):
-                child._on_theme_changed()
-        self._apply_occ_height(self._occ_row_count())
+    def line_filter_index(self) -> int:
+        return self._line_filter_index
 
-    # ── L2 折叠 ──────────────────────────────────────────
+    def char_filter_index(self) -> int:
+        return self._char_filter_index
 
-    def _on_occ_toggle(self) -> None:
-        self._occ_collapsed = not self._occ_collapsed
-        self._occ_disc.setText(_COLLAPSED_GLYPH if self._occ_collapsed else _EXPANDED_GLYPH)
-        self._apply_occ_height(self._occ_row_count())
+    def set_line_filter_index(self, index: int) -> None:
+        self._line_filter_index = max(0, min(int(index), len(_ACTIVITY_FILTERS)))
+        self._apply_filters()
 
-    def _occ_row_count(self) -> int:
-        return len(self._occ_container.findChildren(CapacitySlotBar)) if self._occ_container else 0
+    def set_char_filter_index(self, index: int) -> None:
+        self._char_filter_index = max(0, min(int(index), len(self._char_list) + 1))
+        self._apply_filters()
 
-    def _apply_occ_height(self, rows: int) -> None:
-        """占用区高度：≤_MAX_OCC_ROWS 行按内容，超出则内部滚动 —— 不再撑高窗口或压扁列表。"""
-        if self._occ_collapsed:
-            self._occ_scroll.setFixedHeight(0)
+    def _line_filter_cats(self) -> frozenset[str] | None:
+        """当前线型筛选对应的类别集合；None = 全部。"""
+        if self._line_filter_index <= 0:
+            return None
+        return _ACTIVITY_FILTERS[self._line_filter_index - 1][1]
+
+    def _char_filter_value(self) -> str | None:
+        """当前人物筛选值；None = 全部人物，"" = 未分配。"""
+        if self._char_filter_index <= 0:
+            return None
+        if self._char_filter_index == 1:
+            return ""
+        return self._char_list[self._char_filter_index - 2]
+
+    def filter_summary_text(self) -> str:
+        return self._filter_summary
+
+    def is_pinned(self) -> bool:
+        return self._pinned
+
+    def set_pinned(self, value: bool) -> None:
+        if bool(value) == self._pinned:
             return
-        per_row = self._occ_layout.spacing() + CapacitySlotBar.row_height()
-        visible = max(min(rows, _MAX_OCC_ROWS), 0)
-        self._occ_scroll.setFixedHeight(visible * per_row + 2)
-
-    # ── 置顶 ─────────────────────────────────────────────
-
-    def _on_pin_toggled(self, checked: bool):
-        apply_window_pin(self, checked)
+        self._pinned = bool(value)
+        apply_window_pin(self, self._pinned)
         from services.user_settings import save_settings
 
         try:
-            save_settings({"production_launcher_pin": checked})
+            save_settings({"production_launcher_pin": self._pinned})
         except Exception:
             log.exception("保存产线小助手置顶偏好失败")
+        self._notify_toolbar()
 
     def _restore_pin(self) -> None:
         try:
             from services.user_settings import load_settings
 
             if load_settings().get("production_launcher_pin"):
-                self._pin_btn.setChecked(True)
+                self._pinned = True
                 apply_window_pin(self, True)
+                self._notify_toolbar()
         except Exception:
             log.exception("恢复产线小助手置顶偏好失败")
 
-    def _fit_initial_size(self) -> None:
-        """按占用区内容宽度定窗宽 —— 默认尺寸下占用条右侧徽章会被裁。"""
-        hint = self._occ_container.sizeHint().width()
-        if hint > 0:
-            self.resize(max(self.width(), min(hint + 40, 1100)), self.height())
+    # ── L2 折叠 ──────────────────────────────────────────
+
+    def occupancy_collapsed(self) -> bool:
+        return self._occ_collapsed
+
+    def toggle_occupancy(self) -> None:
+        self._occ_collapsed = not self._occ_collapsed
+        self._notify_occupancy()
+
+    def occupancy_summary(self) -> str:
+        return self._occ_summary
+
+    def occupancy_rows(self) -> list[dict]:
+        return self._occ_rows
+
+    # ── L3 列表接口 ──────────────────────────────────────
+
+    def row_view_models(self) -> list[dict]:
+        return self._rows_view
+
+    def is_empty(self) -> bool:
+        return not self._rows_view
+
+    def selected_plan_id(self) -> int:
+        return int(self._selected_id or 0)
+
+    @staticmethod
+    def row_height() -> int:
+        return _ROW_H
+
+    def action_slot_width(self) -> int:
+        """动作槽固定宽度：按全部候选短标签的最宽者算。
+
+        五个按钮互斥显隐但**占位不变**，槽宽按最长文案取值，切换时不左右跳动。
+        """
+        font = QFont(theme.FONT_FAMILY)
+        font.setPixelSize(theme.fs(_FS_BODY))
+        fm = QFontMetrics(font)
+        text_w = max(fm.horizontalAdvance(sample) for sample in _SLOT_SAMPLES)
+        return max(_SLOT_MIN_W, text_w + 2 * _GAP_MD)
+
+    def select_plan(self, plan_id: int) -> None:
+        """把某计划设为列表选中项（行内启动 / 阻塞提示共用）。"""
+        if plan_id not in self._plan_map:
+            return
+        self._selected_id = int(plan_id)
+        self._hint_text = "在上方列表选一条产线"
+        self._update_bottom()
+        if getattr(self, "_bridge", None) is not None:
+            self._bridge.request_selection(int(plan_id))
+
+    def _notify_toolbar(self) -> None:
+        if getattr(self, "_bridge", None) is not None:
+            self._bridge.notify_toolbar()
+
+    def _notify_occupancy(self) -> None:
+        if getattr(self, "_bridge", None) is not None:
+            self._bridge.notify_occupancy()
+
+    def _notify_rows(self) -> None:
+        if getattr(self, "_bridge", None) is not None:
+            self._bridge.notify_rows()
+
+    def _notify_bottom(self) -> None:
+        if getattr(self, "_bridge", None) is not None:
+            self._bridge.notify_bottom()
+
+    def _notify_tick(self) -> None:
+        if getattr(self, "_bridge", None) is not None:
+            self._bridge.notify_tick()
+
+    def tick_revision(self) -> int:
+        """1s 心跳计数 —— QML 的 duration 绑定依赖它才会重新求值（见 `_on_tick`）。"""
+        return self._tick_revision
 
     # ── 数据刷新 ─────────────────────────────────────────
 
@@ -1201,12 +513,31 @@ class ProductionLauncher(QWidget):
         self._apply_filters()
 
     def _on_tick(self) -> None:
-        for pid, w in self._widgets.items():
-            plan = self._plan_map.get(pid)
-            if plan and (plan.get("status") or "").lower() in ("in_progress", "running"):
-                w.update_tick()
+        """1s 心跳：只刷新运行中行的剩余时长，不重建列表。
+
+        QML 的 `model` 是普通 `var` 列表，改字典里的值不会触发重绘，
+        故额外给一个自增的 `tickRevision` 让 duration 的绑定重新求值
+        （比整表重置便宜，也不会把滚动位置与选中态冲掉）。
+        """
+        touched = False
+        for row in self._rows_view:
+            plan = self._plan_map.get(int(row.get("id") or 0))
+            if plan is None or (plan.get("status") or "").lower() not in ("in_progress", "running"):
+                continue
+            rem = _fmt_remaining(plan)
+            if rem:
+                row["durationText"] = f"剩 {rem}"
+                touched = True
+        if touched:
+            self._tick_revision += 1
+            self._notify_tick()
 
     def _refresh_occupancy(self) -> None:
+        """算出占用面板要画的内容：每角色一行（含每类产线的占用/容量/上限）。
+
+        行内方块区宽度按各类产线的**最大容量**比例分配（`slotTotal` = 各类上限之和），
+        这样「制造 13 格 / 科研 1 格」不会在一行里留下十几个空档，各行也仍能纵向对齐。
+        """
         self._usage = active_lines_by_category(self._all_plans)
         data = load_all_data()
         chars_data = data.get("characters", {}) or {}
@@ -1215,23 +546,20 @@ class ProductionLauncher(QWidget):
             if c and c not in chars:
                 chars.append(c)
 
-        while self._occ_layout.count():
-            item = self._occ_layout.takeAt(0)
-            w = item.widget() if item is not None else None
-            if w is not None:
-                w.deleteLater()
-
         if not chars:
-            self._occ_summary.setText("（无人物配置，请在人物设置中添加）")
-            self._apply_occ_height(0)
+            self._occ_summary = "（无人物配置，请在人物设置中添加）"
+            self._occ_rows = []
+            self._notify_occupancy()
             return
 
         # 统一角色名列宽 → 各行的产线方块保持纵向对齐（逐行自算会错位）
-        fm = QFontMetrics(self.font())
+        name_font = QFont(theme.FONT_FAMILY)
+        name_font.setPixelSize(theme.fs(_FS_BODY))
+        name_font.setBold(True)
+        fm = QFontMetrics(name_font)
         name_width = max((fm.horizontalAdvance(c or "(未分配)") for c in chars), default=_NAME_W) + _GAP_SM
         name_width = max(_MIN_NAME_W, min(name_width, _MAX_NAME_W))
 
-        # 先按全部人物算出每类产线的最大容量 → 各行格子区宽度按容量比例分配且纵向对齐
         per_char: list[tuple[str, dict[str, tuple[int, int]]]] = []
         line_caps: dict[str, int] = dict.fromkeys(_LINE_TYPES, 0)
         active_total = 0
@@ -1249,20 +577,59 @@ class ProductionLauncher(QWidget):
                 max_total += mx
             per_char.append((char, per_line))
 
+        slot_total = max(sum(line_caps.values()), 1)
+        rows: list[dict] = []
         for char, per_line in per_char:
-            bar = CapacitySlotBar(self._occ_container, name_width=name_width, line_caps=line_caps)
-            bar.set_usage(char, per_line)
-            self._occ_layout.addWidget(bar)
-        self._occ_layout.addStretch(1)
+            lines_data = []
+            for line in _LINE_TYPES:
+                active, mx = per_line[line]
+                # 颜色在 Python 侧解析并由 ensure_contrast 校正到 WCAG 非文字 3:1 ——
+                # 强调色是给填充用的中间调，部分浅色主题下直接用会不达标
+                accent = str(getattr(theme, _LINE_COLORS[line]))
+                lines_data.append(
+                    {
+                        "label": line_label(line),
+                        "color": ensure_contrast(accent, theme.BG_DARK).name(),
+                        "active": int(active),
+                        "max": int(mx),
+                        "cap": int(line_caps[line]),
+                    }
+                )
+            status_text, status_token = self._char_status(per_line)
+            rows.append(
+                {
+                    "name": char or "(未分配)",
+                    "nameWidth": name_width,
+                    "lines": lines_data,
+                    "statusText": status_text,
+                    "statusColor": str(getattr(theme, status_token)),
+                    "slotTotal": slot_total,
+                }
+            )
 
-        self._occ_summary.setText(f"{len(chars)} 人物 · 占用 {active_total}/{max_total}")
-        self._apply_occ_height(len(chars))
+        self._occ_rows = rows
+        self._occ_summary = f"{len(chars)} 人物 · 占用 {active_total}/{max_total}"
+        self._notify_occupancy()
+
+    @staticmethod
+    def _char_status(per_line: dict[str, tuple[int, int]]) -> tuple[str, str]:
+        """(状态文本, 语义色 token) —— 超员 / 空闲 / 生产中。
+
+        文本以「空闲/生产中/超员」开头（既有测试依赖这个契约）。
+        """
+        active_total = sum(per_line.get(line, (0, 0))[0] for line in _LINE_TYPES)
+        max_total = sum(per_line.get(line, (0, 0))[1] for line in _LINE_TYPES)
+        if active_total > max_total:
+            return f"超员 +{active_total - max_total}", "ACCENT_RED"
+        if active_total == 0:
+            return "空闲", "ACCENT_GREEN"
+        return "生产中", "PRIMARY"
 
     def _match_filters(self, plan: dict) -> bool:
-        cats = self._line_filter.currentData()
+        cats = self._line_filter_cats()
         if cats is not None and str(plan.get("category") or CATEGORY_MANUFACTURING) not in cats:
             return False
-        char = self._char_filter.currentData()
+        char = self._char_filter_value()
         if char is None:
             return True
         plan_char = (plan.get("char_name") or "").strip()
@@ -1283,8 +650,9 @@ class ProductionLauncher(QWidget):
 
     def _update_filter_summary(self, total: int, shown: int) -> None:
         """筛选激活指示 —— 用户应能一眼看出「数据已被过滤」（NN/g 表设计）。"""
-        filtered = self._line_filter.currentData() is not None or self._char_filter.currentData() is not None
-        self._filter_summary.setText(f"已筛选 {shown}/{total}" if filtered else f"共 {total} 条")
+        filtered = self._line_filter_cats() is not None or self._char_filter_value() is not None
+        self._filter_summary = f"已筛选 {shown}/{total}" if filtered else f"共 {total} 条"
+        self._notify_toolbar()
 
     def _is_collapsed_child(self, plan: dict) -> bool:
         gid = int(plan.get("group_id") or plan.get("group_number") or 0)
@@ -1417,91 +785,130 @@ class ProductionLauncher(QWidget):
         return bool(gid and gid in self._collapsed)
 
     def _sync_rows(self, visible: list[dict]) -> None:
-        new_ids = [int(p.get("id") or 0) for p in visible]
-        if new_ids == self._row_order:
-            for plan in visible:
-                w = self._widgets.get(int(plan.get("id") or 0))
-                if w is not None:
-                    self._plan_map[int(plan.get("id") or 0)] = plan
-                    code, reason = self._block_state(plan)
-                    w.set_plan(
-                        plan,
-                        block_reason=reason,
-                        block_code=code,
-                        pending_children=int(plan.get("_pending_children") or 0),
-                        collapsed=self._row_collapsed(plan),
-                        can_force_start=self._can_force_start(plan),
-                    )
-            return
-        self._rebuild_rows(visible)
+        """把可见计划算成 QML 直接可画的行视图模型。
 
-    def _rebuild_rows(self, visible: list[dict]) -> None:
-        sel_id = self._selected_id
-        scroll = self._list.verticalScrollBar().value() if self._list.verticalScrollBar() else 0
-        self._list.clear()
-        self._widgets.clear()
+        每次全量重建（行数不大）：`row_view_models()` 返回新列表，
+        QML 的 ListView 才会重绘；选中态由 `selectedId` 单独承载，不受重建影响。
+        """
+        rows: list[dict] = []
         self._plan_map.clear()
-        self._row_order = [int(p.get("id") or 0) for p in visible]
-
-        if not visible:
-            empty = QLabel("该角色无产线计划")
-            empty.setObjectName("list_empty")
-            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            item = QListWidgetItem()
-            item.setSizeHint(empty.sizeHint())
-            self._list.addItem(item)
-            self._list.setItemWidget(item, empty)
-            self._selected_id = None
-            return
-
         for plan in visible:
             pid = int(plan.get("id") or 0)
             self._plan_map[pid] = plan
-            row = PlanRow(self._list)
-            row.clicked.connect(self._on_row_clicked)
-            row.start_requested.connect(self._on_row_start)
-            row.toggle_requested.connect(self._on_row_toggle)
-            row.blocked_requested.connect(self._on_blocked_info)
-            row.complete_requested.connect(self._on_row_complete)
-            row.context_menu_requested.connect(self._on_row_context_menu)
-            code, reason = self._block_state(plan)
-            row.set_plan(
-                plan,
-                block_reason=reason,
-                block_code=code,
-                pending_children=int(plan.get("_pending_children") or 0),
-                collapsed=self._row_collapsed(plan),
-                can_force_start=self._can_force_start(plan),
-            )
-            item = QListWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole, pid)
-            item.setSizeHint(row.sizeHint())
-            self._list.addItem(item)
-            self._list.setItemWidget(item, row)
-            # 挂进列表后控件才完成样式解析（按钮字号由 QSS 决定），此时再校一次槽宽
-            row._sync_slot_width()
-            self._widgets[pid] = row
+            rows.append(self._row_view(plan))
+        self._rows_view = rows
+        self._notify_rows()
 
-        if sel_id is not None and sel_id in self._widgets:
-            for i in range(self._list.count()):
-                it = self._list.item(i)
-                if it.data(Qt.ItemDataRole.UserRole) == sel_id:
-                    self._list.setCurrentItem(it)
-                    break
+    def _row_view(self, plan: dict) -> dict:
+        """单行的展示数据；五态动作槽在这里判定，QML 只负责画。"""
+        pid = int(plan.get("id") or 0)
+        status = (plan.get("status") or "").lower()
+        level = int(plan.get("child_level") or 0)
+        name = plan.get("product_name") or f"ID:{plan.get('product_type_id', '')}"
+        cat = capacity_line_for_category(str(plan.get("category") or ""))
+        group_id = int(plan.get("group_id") or plan.get("group_number") or 0)
 
-        if self._list.verticalScrollBar():
-            self._list.verticalScrollBar().setValue(scroll)
+        # 时长：运行中显示剩余，其余显示总时长；总量放 tooltip，不在正文重复
+        total = int(plan.get("calculated_time") or 0)
+        if status in ("in_progress", "running"):
+            rem = _fmt_remaining(plan)
+            duration_text = f"剩 {rem}" if rem else _fmt_hms(total)
+            duration_tip = f"总时长 {_fmt_hms(total)}"
+        elif status == "ready":
+            duration_text, duration_tip = "待下线", ""
+        else:
+            duration_text, duration_tip = _fmt_hms(total), "预计总时长"
+
+        # 副标题：把原先散在 3 行的信息压成 1 行（信息集中）
+        parts = [line_label(cat), f"{plan.get('runs', 1)}×{plan.get('parallels', 1)}"]
+        parts.append(f"人物 {plan.get('char_name') or '未分配'}")
+        loc = self._location_text(plan)
+        if loc:
+            parts.append(loc)
+
+        icon_url, icon_fallback, icon_tip = self._icon_view(plan, cat)
+
+        block_code, block_reason = self._block_state(plan)
+        pending = int(plan.get("_pending_children") or 0)
+        collapsed = bool(group_id and group_id in self._collapsed)
+        can_force = self._can_force_start(plan)
+
+        # 五态互斥，槽位恒占宽；**不出现占位符**
+        kind, text, tip = "none", "", ""
+        if pid and level == 0 and pending > 0:
+            kind = "toggle"
+            text = ("展开" if collapsed else "折叠") + f"({pending})"
+        elif pid and status == "ready":
+            kind, text = "complete", _COMPLETE_LABEL
+            tip = "产出已跑完，点击下线（成品入库、消耗绑定流程）"
+        elif pid and block_reason is None and status == "pending":
+            kind, text, tip = "start", _START_LABEL, ""
+        elif pid and can_force and status == "pending":
+            # 缺料/蓝图流程不足是**唯一**阻塞：按钮文字直接说明堵点，仍可点，点击时二次确认
+            kind, text = "start", _short_label(block_code, status)
+            tip = f"{block_reason}，点击后需确认"
+        elif pid:
+            kind = "blocked"
+            text = _short_label(block_code, status)
+            tip = block_reason or _STATUS_LABELS.get(status, status) or "不可启动"
+
+        return {
+            "id": pid,
+            "name": (_PARENT_GLYPH if level == 0 else "") + name,
+            "indent": level * _GAP_LG,
+            "iconUrl": icon_url,
+            "iconFallback": icon_fallback,
+            "iconTip": icon_tip,
+            "statusText": _STATUS_LABELS.get(status, status),
+            "statusTip": _STATUS_LABELS.get(status, status),
+            "durationText": duration_text,
+            "durationTip": duration_tip,
+            "metaText": " · ".join(parts),
+            "groupId": group_id,
+            "actionKind": kind,
+            "actionText": text,
+            "actionTip": tip,
+        }
+
+    @staticmethod
+    def _location_text(plan: dict) -> str:
+        src = plan.get("facility") or ""
+        dst = plan.get("output_hangar") or ""
+        if src and dst:
+            return f"{src}→{dst}"
+        return src
+
+    @staticmethod
+    def _icon_view(plan: dict, cat: str) -> tuple[str, str, str]:
+        """(图标 URL, 无图时的占位字, tooltip)。
+
+        没有图标文件时用**类别首字**占位，不用 `category_symbol()` 的 emoji
+        （⚙ 📋 ⚗ 💡）—— 它们来自符号/emoji 字体，在本窗的字体环境里会渲染成空白或豆腐块。
+        """
+        from PySide6.QtCore import QUrl
+
+        from ui_pyside6.icon_cache import item_icon_path
+
+        type_id = int(plan.get("product_type_id") or 0)
+        if type_id:
+            path = item_icon_path(type_id)
+            if os.path.isfile(path):
+                return QUrl.fromLocalFile(path).toString(), "", ""
+        label = line_label(cat) or "?"
+        return "", label[:1], label
 
     def _select_visible_row(self, plan_id: int) -> bool:
-        """把某计划设为列表选中项（行内启动 / ⓘ 共用）。"""
-        for i in range(self._list.count()):
-            it = self._list.item(i)
-            if it.data(Qt.ItemDataRole.UserRole) == plan_id:
-                self._list.setCurrentItem(it)
-                return True
-        return False
+        """把某计划设为列表选中项（行内启动 / 阻塞提示共用）。"""
+        if plan_id not in self._plan_map:
+            return False
+        self.select_plan(plan_id)
+        return True
 
     def _on_row_clicked(self, plan_id: int):
+        self.copy_blueprint(plan_id)
+
+    def copy_blueprint(self, plan_id: int) -> None:
+        """点信息区 → 复制蓝图名（原 `_copy_blueprint`）。"""
         self._copy_blueprint(plan_id)
 
     def _on_row_start(self, plan_id: int):
@@ -1596,9 +1003,7 @@ class ProductionLauncher(QWidget):
         lines = dlg.lines()
 
         mat = plan.get("mat_hangar_id") or self._default_mat_hangar
-        executor = self._executor_combo.currentData()
-        if executor is None and self._executor_combo.count() == 0:
-            executor = (plan.get("char_name") or "").strip() or None
+        executor = self._executor_value(plan)
 
         # 预检必须按 **N 条**口径：用整条计划算会报出虚高的缺料
         preview = plan_execution.preview_partial_start(plan_id, lines, mat)
@@ -1642,38 +1047,30 @@ class ProductionLauncher(QWidget):
 
     # ── 选中 / 底部 ──────────────────────────────────────
 
-    def _on_selection_changed(self) -> None:
-        item = self._list.currentItem()
-        if item is None:
-            return
-        pid = item.data(Qt.ItemDataRole.UserRole)
-        if pid is not None:
-            self._selected_id = int(pid)
-            self._update_bottom()
-
     def _show_feedback(self, text: str) -> None:
         """反馈按需显示 —— 无内容时不占位。"""
-        self._feedback.setText(text)
-        self._feedback.setVisible(bool(text))
+        self._feedback_text = text or ""
+        self._notify_bottom()
 
     def _update_bottom(self) -> None:
+        """算出 L4 底部面板的内容：未选中 = 紧凑单行；选中 = 参数摘要 + 执行人物 + 主按钮。"""
         plan = self._plan_map.get(self._selected_id or -1)
         if plan is None:
             # 紧凑态：只留一行提示，不再露出全宽空下拉
-            self._detail_panel.hide()
-            self._executor_combo.setVisible(False)
-            self._bottom_hint.setText(self._hint_text)
-            self._bottom_hint.show()
-            self._show_feedback("")
-            self._main_btn.hide()
-            self._executor_combo.clear()
+            self._bottom_expanded = False
+            self._params_text = ""
+            self._executor_options = []
+            self._executor_index = 0
+            self._main_btn_text = ""
+            self._main_btn_tip = ""
+            self._main_btn_visible = False
+            self._feedback_text = ""
+            self._notify_bottom()
             return
 
         # 选中了具体行 → 之前那条「已下线：X」的常驻提示作废
         self._hint_text = "在上方列表选一条产线"
-        self._bottom_hint.hide()
-        self._detail_panel.show()
-        self._executor_combo.setVisible(True)
+        self._bottom_expanded = True
 
         cat = capacity_line_for_category(str(plan.get("category") or ""))
         runs = plan.get("runs", 1)
@@ -1691,23 +1088,23 @@ class ProductionLauncher(QWidget):
                 parts.append(f"剩余 {rem}")
         if cost:
             parts.append(f"预计成本 {cost:,.0f} ISK")
-        self._params_label.setText(" · ".join(parts))
+        self._params_text = " · ".join(parts)
 
         # 执行人物下拉（含剩余容量）—— 注意别复用 `name`（那是产品名）
-        self._executor_combo.blockSignals(True)
-        self._executor_combo.clear()
+        options: list[dict] = []
         chars = list(self._char_list)
         plan_char = (plan.get("char_name") or "").strip()
         if plan_char and plan_char not in chars:
             chars.insert(0, plan_char)
+        index = 0
         for char_name in chars:
             remaining = max_lines_for_category(char_name, cat) - int(self._usage.get(char_name or "", {}).get(cat, 0))
-            self._executor_combo.addItem(f"{char_name}（剩 {max(remaining, 0)} 条）", char_name)
-        if plan_char:
-            idx = self._executor_combo.findData(plan_char)
-            if idx >= 0:
-                self._executor_combo.setCurrentIndex(idx)
-        self._executor_combo.blockSignals(False)
+            options.append({"label": f"{char_name}（剩 {max(remaining, 0)} 条）", "value": char_name})
+            if plan_char and char_name == plan_char:
+                index = len(options) - 1
+        self._executor_options = options
+        self._executor_index = index
+        self._feedback_text = ""
 
         # 主按钮
         reason = self._block_reason(plan)
@@ -1715,10 +1112,9 @@ class ProductionLauncher(QWidget):
         if status == "ready":
             # 待下线行的唯一动作是下线（选产出机库 → 成品入库、消耗绑定流程）。
             # 旧版这里走 else 分支弹「不可启动：待下线」——与行上「?」是同一类毛病。
-            self._main_btn.setText("下线")
-            self._main_btn.setToolTip(f"{name} 下线（产出成品入库，不可逆）")
-            self._main_btn.show()
-            self._show_feedback("")
+            self._main_btn_text = "下线"
+            self._main_btn_tip = f"{name} 下线（产出成品入库，不可逆）"
+            self._main_btn_visible = True
         elif reason is None or force:
             qty = 1
             try:
@@ -1729,13 +1125,49 @@ class ProductionLauncher(QWidget):
             total = max(int(runs or 1), 1) * max(int(parallels or 1), 1) * qty
             # 缺料是唯一阻塞时仍给按钮（点击后二次确认），文案点明是强制启动 ——
             # 否则会出现「行上显示启动、选中反而报不可启动」的自相矛盾
-            self._main_btn.setText(f"强制启动 x {total}" if force else f"启动 x {total}")
-            self._main_btn.setToolTip(f"{name} × {total}")
-            self._main_btn.show()
-            self._show_feedback("")
+            self._main_btn_text = f"强制启动 x {total}" if force else f"启动 x {total}"
+            self._main_btn_tip = f"{name} × {total}"
+            self._main_btn_visible = True
         else:
-            self._main_btn.hide()
-            self._show_feedback(f"不可启动：{reason}")
+            self._main_btn_visible = False
+            self._main_btn_text = ""
+            self._main_btn_tip = ""
+            self._feedback_text = f"不可启动：{reason}"
+
+        self._notify_bottom()
+
+    # ── L4 取数接口 ──────────────────────────────────────
+
+    def bottom_expanded(self) -> bool:
+        return self._bottom_expanded
+
+    def bottom_hint_text(self) -> str:
+        return self._hint_text
+
+    def params_text(self) -> str:
+        return self._params_text
+
+    def executor_options(self) -> list[dict]:
+        return self._executor_options
+
+    def executor_index(self) -> int:
+        return self._executor_index
+
+    def set_executor_index(self, index: int) -> None:
+        if 0 <= int(index) < len(self._executor_options):
+            self._executor_index = int(index)
+
+    def main_button_text(self) -> str:
+        return self._main_btn_text
+
+    def main_button_tip(self) -> str:
+        return self._main_btn_tip
+
+    def main_button_visible(self) -> bool:
+        return self._main_btn_visible
+
+    def feedback_text(self) -> str:
+        return self._feedback_text
 
     def _copy_blueprint(self, plan_id: int) -> None:
         plan = self._plan_map.get(plan_id)
@@ -1816,10 +1248,7 @@ class ProductionLauncher(QWidget):
         plan = self._plan_map.get(plan_id)
         if plan is None:
             return
-        executor = self._executor_combo.currentData()
-        if executor is None and self._executor_combo.count() == 0:
-            # 组合框未初始化（尚未选中过行）→ 用计划自身人物
-            executor = (plan.get("char_name") or "").strip() or None
+        executor = self._executor_value(plan)
         mat = plan.get("mat_hangar_id") or self._default_mat_hangar
 
         # 软阻塞预检：材料缺口 / 蓝图流程不足 —— 两者都可强制启动（与计划表格同口径）
@@ -1862,7 +1291,20 @@ class ProductionLauncher(QWidget):
         else:
             QMessageBox.warning(self, "启动失败", res.get("message", "未知错误"))
 
-    def _on_main_start(self):
+    def _executor_value(self, plan: dict | None = None) -> str | None:
+        """底部执行人物下拉当前选中的人。
+
+        下拉未初始化（还没选中过任何行，例如行内直接点「启动」）时，
+        退回**本次要启动的那条计划**自身的人物 —— 这是旧实现的口径，
+        退回「当前选中行」会拿到 None（选中行与本次启动的行并不总是同一条）。
+        """
+        if self._executor_options and 0 <= self._executor_index < len(self._executor_options):
+            return str(self._executor_options[self._executor_index]["value"])
+        fallback = plan if plan is not None else (self._plan_map.get(self._selected_id or -1) or {})
+        return (fallback.get("char_name") or "").strip() or None
+
+    def main_action(self) -> None:
+        """底部主按钮：待下线走下线流程，其余走启动。"""
         if self._selected_id is None:
             return
         plan = self._plan_map.get(self._selected_id)
@@ -1874,15 +1316,23 @@ class ProductionLauncher(QWidget):
     # ── 过滤器 ───────────────────────────────────────────
 
     def _on_filter_changed(self):
+        """筛选变化 → 重算可见集（QML 侧改的是索引，经 set_*_filter_index 进来）。"""
         self._apply_filters()
 
     def focus_character(self, char_name: str | None) -> None:
         """把人物过滤定位到指定角色（右键入口初始定位）；None → 全部。"""
-        idx = self._char_filter.findData(char_name or "")
-        if idx >= 0:
-            self._char_filter.setCurrentIndex(idx)
+        if char_name is None:
+            index = 0
+        elif char_name == "":
+            index = 1
+        elif char_name in self._char_list:
+            index = self._char_list.index(char_name) + 2
         else:
-            self._char_filter.setCurrentIndex(0)
+            index = 0
+        if index != self._char_filter_index:
+            self._char_filter_index = index
+            self._notify_toolbar()
+            self._apply_filters()
 
     def showEvent(self, event) -> None:
         """单实例复用时必须重启定时器 —— closeEvent 停表后不会自动恢复。

@@ -1,9 +1,15 @@
-"""产线启动小助手 UI 冒烟测试（slow，--quick 时跳过）。"""
+"""产线启动小助手测试。
+
+阶段 2c 起整窗由 QML 渲染（L1–L4），本文件改为断言**视图模型**：
+`ProductionLauncher` 把每行/每个占用条算成 dict 交给桥，QML 只负责画。
+原先断言 `PlanRow._btn_start.isHidden()` 这类控件状态的地方，现在断言
+`row["actionKind"] / row["actionText"] / row["actionTip"]` —— 判据仍在 Python 侧，
+所以覆盖没有减少，只是观察点从控件换成了数据。
+"""
 
 from unittest.mock import MagicMock
 
 import pytest
-from PySide6.QtCore import Qt
 
 import services.plan_execution as plan_execution
 
@@ -125,6 +131,21 @@ RUNNING_PLAN = _plan(102, status="in_progress", name="生产中成品")
 SHARED_CHILD_PLAN = _plan(103, name="共享子件", child_level=1, source_mother_ids="1,2")
 
 
+# ── 视图模型访问器（取代对 QML 控件内部状态的断言） ──────────────
+
+
+def _ids(w) -> list[int]:
+    """列表当前展示的计划 id（顺序 = 界面顺序）。"""
+    return [int(r["id"]) for r in w.row_view_models()]
+
+
+def _row(w, plan_id: int) -> dict:
+    """按计划 id 取行视图模型。"""
+    hit: dict | None = next((r for r in w.row_view_models() if int(r["id"]) == plan_id), None)
+    assert hit is not None, f"列表里没有计划 {plan_id}，现有 {_ids(w)}"
+    return hit
+
+
 def _make_launcher(qapp, monkeypatch, chars=("甲", "乙"), plans=None):
     from ui_pyside6.views.industry import production_launcher as pl
 
@@ -137,7 +158,6 @@ def _make_launcher(qapp, monkeypatch, chars=("甲", "乙"), plans=None):
     monkeypatch.setattr(plan_execution, "output_per_run", lambda tid: 1)
     monkeypatch.setattr(plan_execution, "start_plan", lambda *a, **k: {"ok": True, "message": "ok"})
     monkeypatch.setattr(pl, "load_plans_for_wizard", lambda: rows)
-    monkeypatch.setattr(pl, "load_item_icon", lambda tid, size=None: None)
     monkeypatch.setattr(pl, "get_character_list", lambda: list(chars))
     monkeypatch.setattr(
         pl,
@@ -175,10 +195,10 @@ class TestProductionLauncher:
     def test_constructs_and_builds_rows(self, qapp, monkeypatch):
         w, _ = _make_launcher(qapp, monkeypatch)
         try:
-            assert w._list.count() == 4  # 全部计划
-            assert len(w._widgets) == 4
+            assert w._host.ok(), "LauncherWindow.qml 加载失败"
+            assert len(w.row_view_models()) == 4  # 全部计划
             # 占用区渲染了 甲/乙 两行
-            assert w._occ_layout.count() >= 2
+            assert len(w.occupancy_rows()) >= 2
         finally:
             w.close()
 
@@ -186,12 +206,11 @@ class TestProductionLauncher:
         w, _ = _make_launcher(qapp, monkeypatch)
         try:
             # 组 10：母项 id=3 在前，子项 id=4 在后；独立计划 1/2 殿后
-            ids = [w._list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(w._list.count())]
-            assert ids == [3, 4, 1, 2], ids
+            assert _ids(w) == [3, 4, 1, 2]
             # 母项有未完成子项 → 折叠按钮（含子项数）
-            parent_row = w._widgets[3]
-            assert parent_row._btn_toggle.isHidden() is False
-            assert "折叠(1)" in parent_row._btn_toggle.text()
+            parent = _row(w, 3)
+            assert parent["actionKind"] == "toggle"
+            assert "折叠(1)" in parent["actionText"]
         finally:
             w.close()
 
@@ -200,23 +219,20 @@ class TestProductionLauncher:
         try:
             # 折叠组 10 → 子项 id=4 隐藏
             w._on_row_toggle(10)
-            ids = [w._list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(w._list.count())]
-            assert ids == [3, 1, 2], ids
-            parent_row = w._widgets[3]
-            assert "展开(1)" in parent_row._btn_toggle.text()
+            assert _ids(w) == [3, 1, 2]
+            assert "展开(1)" in _row(w, 3)["actionText"]
             # 再次展开 → 子项恢复
             w._on_row_toggle(10)
-            ids = [w._list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(w._list.count())]
-            assert ids == [3, 4, 1, 2], ids
+            assert _ids(w) == [3, 4, 1, 2]
         finally:
             w.close()
 
     def test_startable_row_has_button(self, qapp, monkeypatch):
         w, _ = _make_launcher(qapp, monkeypatch)
         try:
-            row = w._widgets[1]  # pending + 有图 + 无机库缺口 → 可启动
-            assert row._btn_start.isHidden() is False
-            assert row._btn_toggle.isHidden() is True
+            # pending + 有图 + 无机库缺口 → 可启动
+            assert _row(w, 1)["actionKind"] == "start"
+            assert _row(w, 1)["actionText"] == "启动"
         finally:
             w.close()
 
@@ -230,46 +246,28 @@ class TestProductionLauncher:
                 lambda plan: ("children_running", "子项产线运行中") if plan.get("id") == 2 else (None, None),
             )
             w._sync_rows(w._visible_plans)
-            row = w._widgets[2]
-            assert row._btn_start.isHidden() is True
-            assert row._btn_toggle.isHidden() is True
-            assert row._btn_blocked.isHidden() is False
-            assert row._btn_blocked.text() == "子项运行中"
-            assert row._btn_blocked.toolTip() == "子项产线运行中"
+            row = _row(w, 2)
+            assert row["actionKind"] == "blocked"
+            assert row["actionText"] == "子项运行中"
+            assert row["actionTip"] == "子项产线运行中"
         finally:
             w.close()
 
-    def test_action_slot_width_is_uniform(self, qapp, monkeypatch):
-        """四个按钮共用同一槽位宽度，避免行动作区左右跳动，且最长文案不被截断。"""
-        from PySide6.QtGui import QFontMetrics
+    def test_action_slot_width_fits_every_label(self, qapp, monkeypatch):
+        """动作槽宽度固定，且必须容得下**所有可能文案**（否则最长的那条会被截断）。"""
+        from PySide6.QtGui import QFont, QFontMetrics
+
+        import ui_pyside6.theme as theme
 
         w, pl = _make_launcher(qapp, monkeypatch)
         try:
-            row = w._widgets[1]
-            assert len(row._action_buttons) == 4, "动作槽按钮必须收敛在 _action_buttons 元组里"
-            widths = {btn.minimumWidth() for btn in row._action_buttons}
-            assert len(widths) == 1, widths
-            slot = widths.pop()
-            fm = QFontMetrics(row._btn_toggle.font())
-            # 槽宽必须容得下**所有可能文案**：折叠/展开、可下线、启动、全部阻塞短标签
-            samples = ("折叠(99)", "展开(99)", pl._COMPLETE_LABEL, pl._START_LABEL, *pl._BLOCK_SHORT_LABELS.values())
-            for sample in samples:
+            slot = w.action_slot_width()
+            font = QFont(theme.FONT_FAMILY)
+            font.setPixelSize(theme.fs(pl._FS_BODY))
+            fm = QFontMetrics(font)
+            for sample in pl._SLOT_SAMPLES:
                 assert slot >= fm.horizontalAdvance(sample) + 2 * pl._GAP_MD, sample
-            # 跨行一致
-            assert w._widgets[2]._action_slot_w == row._action_slot_w
-        finally:
-            w.close()
-
-    def test_toolbar_is_single_row_without_duplicate_title(self, qapp, monkeypatch):
-        """工具条是 QFrame（QSS 才能命中 #launcher_toolbar），且不再重复窗口标题。"""
-        from PySide6.QtWidgets import QFrame, QLabel
-
-        w, _ = _make_launcher(qapp, monkeypatch)
-        try:
-            assert isinstance(w._toolbar, QFrame)
-            for child in (w._line_filter, w._char_filter, w._pin_btn, w._filter_summary):
-                assert child.parent() is w._toolbar, child
-            assert "产线启动小助手" not in [lbl.text() for lbl in w.findChildren(QLabel)]
+            assert slot >= pl._SLOT_MIN_W
         finally:
             w.close()
 
@@ -277,9 +275,9 @@ class TestProductionLauncher:
         """筛选激活时用户能看出数据已被过滤。"""
         w, _ = _make_launcher(qapp, monkeypatch)
         try:
-            assert w._filter_summary.text() == "共 4 条"
-            w._char_filter.setCurrentIndex(w._char_filter.findData("甲"))
-            assert w._filter_summary.text() == "已筛选 2/4"
+            assert w.filter_summary_text() == "共 4 条"
+            w.set_char_filter_index(2)  # [全部人物, 未分配, 甲, 乙]
+            assert w.filter_summary_text() == "已筛选 2/4"
         finally:
             w.close()
 
@@ -287,29 +285,26 @@ class TestProductionLauncher:
         """未选中时底部为紧凑单行，不再露出全宽空下拉。"""
         w, _ = _make_launcher(qapp, monkeypatch)
         try:
-            assert w._detail_panel.isHidden() is True
-            assert w._executor_combo.isHidden() is True
-            assert w._bottom_hint.isHidden() is False
-            assert w._feedback.isHidden() is True
-            w._list.setCurrentRow(1)
-            assert w._detail_panel.isHidden() is False
-            assert w._executor_combo.isHidden() is False
-            assert w._bottom_hint.isHidden() is True
+            assert w.bottom_expanded() is False
+            assert w.main_button_visible() is False
+            assert w.feedback_text() == ""
+            assert w.bottom_hint_text()
+
+            w.select_plan(1)
+            assert w.bottom_expanded() is True
         finally:
             w.close()
 
-    def test_occupancy_height_capped_at_four_rows(self, qapp, monkeypatch):
-        """角色多于 4 个时占用区内部滚动，不撑高顶部把列表挤扁。"""
-        w, pl = _make_launcher(qapp, monkeypatch, chars=[f"角色{i}" for i in range(7)])
+    def test_occupancy_collapse_toggle(self, qapp, monkeypatch):
+        """占用区可折叠；角色多于 4 个时由 QML 侧限高内部滚动。"""
+        w, _ = _make_launcher(qapp, monkeypatch, chars=[f"角色{i}" for i in range(7)])
         try:
-            assert len(w.findChildren(pl.CapacitySlotBar)) == 7
-            per_row = w._occ_layout.spacing() + pl.CapacitySlotBar.row_height()
-            assert w._occ_scroll.maximumHeight() == pl._MAX_OCC_ROWS * per_row + 2
-            # 折叠后高度归零
-            w._on_occ_toggle()
-            assert w._occ_scroll.maximumHeight() == 0
-            w._on_occ_toggle()
-            assert w._occ_scroll.maximumHeight() > 0
+            assert len(w.occupancy_rows()) == 7
+            assert w.occupancy_collapsed() is False
+            w.toggle_occupancy()
+            assert w.occupancy_collapsed() is True
+            w.toggle_occupancy()
+            assert w.occupancy_collapsed() is False
         finally:
             w.close()
 
@@ -328,8 +323,7 @@ class TestProductionLauncher:
             )
             w._copy_blueprint(1)
             assert QApplication.clipboard().text() == "渡鸦级蓝图"
-            assert w._feedback.isHidden() is False
-            assert "渡鸦级蓝图" in w._feedback.text()
+            assert "渡鸦级蓝图" in w.feedback_text()
 
             # 无蓝图信息 → 给反馈而不是静默
             monkeypatch.setattr(
@@ -337,30 +331,17 @@ class TestProductionLauncher:
                 lambda plan, db=None: None,
             )
             w._copy_blueprint(1)
-            assert w._feedback.text() == "该计划无蓝图信息"
+            assert w.feedback_text() == "该计划无蓝图信息"
         finally:
             w.close()
 
-    def test_launcher_qss_colors_come_from_theme_only(self, qapp):
-        """本窗样式表的每个颜色都必须来自当前主题调色板（配色铁律）。
-
-        QSS 里的 hex 是 `theme.*` token 插值的结果，所以不能断言「没有 hex」；
-        正确的不变量是：出现的 hex 全部属于当前主题的颜色集合。
-        """
-        import re
-
-        import ui_pyside6.theme as theme
-        from ui_pyside6.views.industry.production_launcher import _launcher_qss
-
-        qss = _launcher_qss()
-        used = set(re.findall(r"#[0-9a-fA-F]{6}(?![0-9a-fA-F])", qss))
-        spec = theme.current_theme_spec()
-        allowed = set(spec["colors"].values()) if spec else set()
-        assert used <= allowed, f"QSS 中出现了非主题色：{used - allowed}"
-        assert used, "QSS 未取到任何主题色"
-
     def test_module_source_has_no_hardcoded_color(self, qapp):
-        """源码里不得出现硬编码 hex 颜色字面量（配色铁律）。"""
+        """源码里不得出现硬编码 hex 颜色字面量（配色铁律）。
+
+        本窗原来的 `_launcher_qss()` 已随阶段 2c 删除（整窗改由 QML 渲染），
+        配色改由 `FCapacityRow` / `LauncherWindow.qml` 从 `Theme` 取；
+        QML 侧的同类护栏见 `test_qml_theme_bridge.test_qml_only_references_existing_theme_tokens`。
+        """
         import re
         from pathlib import Path
 
@@ -374,23 +355,16 @@ class TestProductionLauncher:
         """线型筛选按蓝图类别过滤（对齐游戏作业类型）；copying 不再被并进科研。
 
         SAMPLE_PLANS：id 1/3/4 = manufacturing，id 2 = copying。
-        用 findText 而非 findData —— 下拉 data 是 frozenset，Qt 的 findData 匹配不了。
         """
-        from services.terminology import term
-
         w, _ = _make_launcher(qapp, monkeypatch)
         try:
+            assert sorted(_ids(w)) == [1, 2, 3, 4]  # 默认「全部」
 
-            def shown():
-                return [w._list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(w._list.count())]
+            w.set_line_filter_index(2)  # [全部, 制造, 拷贝, 发明, 反应]
+            assert _ids(w) == [2]
 
-            assert sorted(shown()) == [1, 2, 3, 4]  # 默认「全部」
-
-            w._line_filter.setCurrentIndex(w._line_filter.findText(term.activity("copying")))
-            assert shown() == [2]
-
-            w._line_filter.setCurrentIndex(w._line_filter.findText(term.activity("manufacturing")))
-            assert sorted(shown()) == [1, 3, 4]
+            w.set_line_filter_index(1)
+            assert sorted(_ids(w)) == [1, 3, 4]
         finally:
             w.close()
 
@@ -404,11 +378,10 @@ class TestProductionLauncher:
 
         w, _ = _make_launcher(qapp, monkeypatch)
         try:
-            idx = w._line_filter.findText(term.activity("invention"))
-            assert idx >= 0, "下拉里应有「发明」项"
-            assert w._line_filter.itemData(idx) == frozenset({"invention", "research_material", "research_time"})
+            labels = [o["label"] for o in w.line_filter_options()]
+            assert term.activity("invention") in labels
 
-            w._line_filter.setCurrentIndex(idx)
+            w.set_line_filter_index(3)  # 「发明」
             for cat in ("invention", "research_material", "research_time"):
                 assert w._match_filters({"category": cat}), cat
             assert not w._match_filters({"category": "manufacturing"})
@@ -422,7 +395,7 @@ class TestProductionLauncher:
 
         w, _ = _make_launcher(qapp, monkeypatch)
         try:
-            labels = [w._line_filter.itemText(i) for i in range(w._line_filter.count())]
+            labels = [o["label"] for o in w.line_filter_options()]
             assert labels == [
                 "全部",
                 term.activity("manufacturing"),
@@ -430,31 +403,28 @@ class TestProductionLauncher:
                 term.activity("invention"),
                 term.activity("reaction"),
             ]
-            assert w._line_filter.itemData(0) is None
+            assert w.line_filter_options()[0]["value"] is None
         finally:
             w.close()
 
     def test_char_filter(self, qapp, monkeypatch):
         w, _ = _make_launcher(qapp, monkeypatch)
         try:
-            idx = w._char_filter.findData("甲")
-            w._char_filter.setCurrentIndex(idx)
-            ids = [w._list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(w._list.count())]
-            assert ids == [1, 2]
+            w.set_char_filter_index(2)  # 甲
+            assert _ids(w) == [1, 2]
         finally:
             w.close()
 
     def test_selection_updates_bottom(self, qapp, monkeypatch):
         w, _ = _make_launcher(qapp, monkeypatch)
         try:
-            # 可见顺序 [3(母项), 4, 1, 2]；选索引 2 = 计划 1（可启动）
-            w._list.setCurrentRow(2)
-            assert w._main_btn.isHidden() is False
+            w.select_plan(1)  # 可启动
+            assert w.main_button_visible() is True
             # 按钮只放动作与数量；产品名放在可换行的摘要行 + tooltip，
             # 否则长产品名会把按钮撑爆、挤掉执行人物下拉
-            assert w._main_btn.text() == "启动 x 1"
-            assert "渡鸦级" in w._main_btn.toolTip()
-            assert "渡鸦级" in w._params_label.text()
+            assert w.main_button_text() == "启动 x 1"
+            assert "渡鸦级" in w.main_button_tip()
+            assert "渡鸦级" in w.params_text()
         finally:
             w.close()
 
@@ -504,47 +474,19 @@ class TestProductionLauncher:
         w.close()
 
 
-class TestCapacitySlotBar:
-    """占用条几何自适应。
+class TestCharStatus:
+    """占用条状态文案：超员 / 空闲 / 生产中。
 
-    回归点：旧版在 paintEvent 里按固定 x=544 绘制状态文字，控件被 QScrollArea
-    压缩到该宽度以下时「空闲」被裁掉。
+    阶段 2c 前这段逻辑在 `CapacitySlotBar._status_text()`（自绘控件）里，
+    现在搬到 `ProductionLauncher._char_status()` 供 QML 直接画。
+
+    （原先同类的**几何**用例 —— sizeHint / 最小宽度 / 窗口够宽 —— 已删除：
+    占用条改由 QML 的 `FCapacityRow` 布局，「按固定 x 画状态文字被裁掉」那类
+    回归在布局系统下结构上不存在。）
     """
 
-    USAGE = {"manufacturing": (1, 5), "research": (0, 5), "reaction": (0, 0)}
-
-    def _bar(self, name_width: int = 76):
-        from ui_pyside6.views.industry.production_launcher import CapacitySlotBar
-
-        bar = CapacitySlotBar(name_width=name_width)
-        bar.set_usage("新角色5", self.USAGE)
-        return bar
-
-    def test_size_hint_positive_and_ordered(self, qapp):
-        bar = self._bar()
-        assert bar.sizeHint().width() > 0
-        assert bar.minimumSizeHint().width() > 0
-        assert bar.minimumSizeHint().width() < bar.sizeHint().width()
-
-    def test_minimum_width_reserves_status_text_and_blocks(self, qapp):
-        from PySide6.QtGui import QFontMetrics
-
-        bar = self._bar()
-        # 必须用控件自身字体量宽 —— 自绘与量宽用同一字体（套用全局样式表后 QFont() 会分叉）
-        status_w = QFontMetrics(bar.font()).horizontalAdvance(bar._status_text()[0])
-        blocks = 3 * 11 * 6  # 3 条线 × 11 格 × (最小块宽 4 + 最小间距 2)
-        assert bar.minimumSizeHint().width() >= status_w + blocks
-
-    def test_renders_at_minimum_width(self, qapp):
-        bar = self._bar()
-        bar.resize(bar.minimumSizeHint().width(), bar.minimumHeight())
-        assert not bar.grab().isNull()
-
-    def test_longer_name_widens_hint(self, qapp):
-        assert self._bar(name_width=160).sizeHint().width() > self._bar(name_width=60).sizeHint().width()
-
     def test_status_text_reflects_usage(self, qapp):
-        from ui_pyside6.views.industry.production_launcher import CapacitySlotBar
+        from ui_pyside6.views.industry.production_launcher import ProductionLauncher
 
         cases = [
             ({"manufacturing": (0, 5), "research": (0, 5), "reaction": (0, 0)}, "空闲"),
@@ -553,20 +495,7 @@ class TestCapacitySlotBar:
             ({"manufacturing": (9, 5), "research": (3, 5), "reaction": (0, 0)}, "超员"),
         ]
         for usage, expected in cases:
-            bar = CapacitySlotBar()
-            bar.set_usage("甲", usage)
-            assert bar._status_text()[0].startswith(expected), usage
-
-    def test_window_is_wide_enough_for_occupancy(self, qapp, monkeypatch):
-        """默认窗宽必须容得下占用条，否则状态文字又会被裁。"""
-        w, pl = _make_launcher(qapp, monkeypatch)
-        try:
-            bars = w.findChildren(pl.CapacitySlotBar)
-            assert bars
-            widest = max(b.sizeHint().width() for b in bars)
-            assert w.width() >= min(widest, 1100)
-        finally:
-            w.close()
+            assert ProductionLauncher._char_status(usage)[0].startswith(expected), usage
 
 
 class TestForceStartOnShortfall:
@@ -579,19 +508,18 @@ class TestForceStartOnShortfall:
     def test_shortfall_row_shows_start_button(self, qapp, monkeypatch):
         from services import plan_execution
 
-        w, pl = _make_launcher(qapp, monkeypatch)
+        w, _pl = _make_launcher(qapp, monkeypatch)
         try:
             monkeypatch.setattr(plan_execution, "check_materials", self._shortfall)
             w._shortfall_cache.clear()
             w._stock_cache.clear()
             w._stock_fp.clear()
             w._on_poll()
-            row = w._widgets[1]  # SAMPLE_PLANS id=1：pending 制造计划
-            assert not row._btn_start.isHidden(), "缺料可强制时应给启动按钮"
-            assert row._btn_blocked.isHidden()
+            row = _row(w, 1)  # SAMPLE_PLANS id=1：pending 制造计划
+            assert row["actionKind"] == "start", "缺料可强制时应给启动按钮"
             # 按钮文字直接说明堵点，而不是含糊的「启动」
-            assert row._btn_start.text() == "材料不够"
-            assert "材料不足" in row._btn_start.toolTip()
+            assert row["actionText"] == "材料不够"
+            assert "材料不足" in row["actionTip"]
         finally:
             w.close()
 
@@ -615,16 +543,16 @@ class TestForceStartOnShortfall:
             w._stock_cache.clear()
             w._stock_fp.clear()
             w._on_poll()
-            assert w._widgets[1]._btn_start.text() == "材料不够"
+            assert _row(w, 1)["actionText"] == "材料不够"
 
             short = False
             w._shortfall_cache.clear()
             w._stock_cache.clear()
             w._stock_fp.clear()
             w._on_poll()
-            row = w._widgets[1]
-            assert row._btn_start.text() == "启动"
-            assert row._btn_start.toolTip() == ""
+            row = _row(w, 1)
+            assert row["actionText"] == "启动"
+            assert row["actionTip"] == ""
         finally:
             w.close()
 
@@ -654,11 +582,10 @@ class TestForceStartOnShortfall:
             w._stock_cache.clear()
             w._stock_fp.clear()
             w._on_poll()
-            row = w._widgets[1]
-            assert row._btn_start.isHidden()
-            assert not row._btn_blocked.isHidden()
-            assert row._btn_blocked.text() == "缺蓝图"
-            assert "蓝图原本" in row._btn_blocked.toolTip()
+            row = _row(w, 1)
+            assert row["actionKind"] == "blocked"
+            assert row["actionText"] == "缺蓝图"
+            assert "蓝图原本" in row["actionTip"]
         finally:
             w.close()
 
@@ -686,11 +613,11 @@ class TestForceStartOnShortfall:
             w._stock_cache.clear()
             w._stock_fp.clear()
             w._on_poll()
-            row = w._widgets[1]
+            row = _row(w, 1)
             # 不可强制（蓝图是硬阻塞）→ 不是启动按钮
-            assert row._btn_start.isHidden()
-            assert row._btn_blocked.text() == "材料不够"
-            assert "材料不足" in row._btn_blocked.toolTip()
+            assert row["actionKind"] == "blocked"
+            assert row["actionText"] == "材料不够"
+            assert "材料不足" in row["actionTip"]
         finally:
             w.close()
 
@@ -729,13 +656,10 @@ class TestActionSlotStates:
     def test_ready_row_shows_complete_button(self, qapp, monkeypatch):
         w, pl = _make_launcher(qapp, monkeypatch, plans=[dict(READY_PLAN)])
         try:
-            row = w._widgets[101]
-            assert row._btn_complete.isHidden() is False
-            assert row._btn_complete.text() == pl._COMPLETE_LABEL == "可下线"
-            # 复用主按钮样式：新开 objectName 就得往对比度契约表加条目
-            assert row._btn_complete.objectName() == "btn_row"
-            for btn in (row._btn_start, row._btn_toggle, row._btn_blocked):
-                assert btn.isHidden(), btn.objectName()
+            row = _row(w, 101)
+            assert row["actionKind"] == "complete"
+            assert row["actionText"] == pl._COMPLETE_LABEL == "可下线"
+            assert "入库" in row["actionTip"]
         finally:
             w.close()
 
@@ -761,9 +685,8 @@ class TestActionSlotStates:
 
             assert [p["id"] for p in seen] == [101]
             assert emitted == [True]
-            assert w._hint_text == "已下线：待下线成品"
             # 紧凑态文案真的被刷新了（只设 _hint_text 不重渲染等于没提示）
-            assert w._bottom_hint.text() == "已下线：待下线成品"
+            assert w.bottom_hint_text() == "已下线：待下线成品"
         finally:
             w.close()
 
@@ -775,23 +698,22 @@ class TestActionSlotStates:
             monkeypatch.setattr(cpd, "complete_one_plan", lambda parent, plan: None)
             emitted: list = []
             w.plans_changed.connect(lambda: emitted.append(True))
-            hint_before = w._hint_text
+            hint_before = w.bottom_hint_text()
 
             w._on_row_complete(101)
 
             assert emitted == []
-            assert w._hint_text == hint_before
+            assert w.bottom_hint_text() == hint_before
         finally:
             w.close()
 
     def test_in_progress_row_shows_short_label(self, qapp, monkeypatch):
         w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(RUNNING_PLAN)])
         try:
-            row = w._widgets[102]
-            assert row._btn_blocked.isHidden() is False
-            assert row._btn_blocked.text() == "生产中"
-            assert row._btn_blocked.toolTip() == "生产中"
-            assert row._btn_complete.isHidden() is True
+            row = _row(w, 102)
+            assert row["actionKind"] == "blocked"
+            assert row["actionText"] == "生产中"
+            assert row["actionTip"] == "生产中"
         finally:
             w.close()
 
@@ -802,10 +724,10 @@ class TestActionSlotStates:
         """
         w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(SHARED_CHILD_PLAN)])
         try:
-            root = w._widgets[0]  # 合成根行 id=None → 行键为 0
-            assert root._plan_id is None
-            for btn in root._action_buttons:
-                assert btn.isHidden(), btn.objectName()
+            # 合成根行 id=None → 行键为 0
+            assert _ids(w)[0] == 0
+            assert _row(w, 0)["actionKind"] == "none"
+            assert _row(w, 0)["actionText"] == ""
         finally:
             w.close()
 

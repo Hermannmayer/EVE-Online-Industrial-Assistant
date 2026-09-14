@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QWidget
 
 from core.logger import log
 from ui_qml.bridge import CONTEXT_NAME, theme_singleton
+from ui_qml.icon_provider import PROVIDER_ID, PhosphorIconProvider
 
 # QML 文件根目录：ui_qml/qml/
 QML_ROOT = Path(__file__).resolve().parent / "qml"
@@ -41,6 +42,14 @@ class PageHost(QQuickWidget):
         self.setClearColor(Qt.GlobalColor.transparent)
         self.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        # Phosphor 图标供应器：QML 侧 `image://phosphor/<name>?c=<色>&s=<px>` 取染色 SVG。
+        # 每个宿主一个（QQuickWidget 各自持有 QQmlEngine；addImageProvider 会转移所有权，
+        # 同一个 provider 注册到两个引擎会在销毁时二次释放）。
+        self._icon_provider = PhosphorIconProvider()
+        engine = self.engine()
+        if engine is not None:
+            engine.addImageProvider(PROVIDER_ID, self._icon_provider)
 
         # Theme 单例对所有 QML 页面恒定可用
         self.rootContext().setContextProperty(CONTEXT_NAME, theme_singleton())

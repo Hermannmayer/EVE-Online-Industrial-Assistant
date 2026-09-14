@@ -11,6 +11,7 @@ from PySide6.QtGui import QShowEvent
 
 import ui_pyside6.theme as theme
 from ui_pyside6.theme import FLUENT_LIGHT, apply_theme
+from ui_qml.bridge import theme_singleton
 
 pytestmark = pytest.mark.ui
 
@@ -50,6 +51,12 @@ def _wait():
 
 
 def test_industry_page_theme_listener(qapp, mock_db):
+    """工业页已整页迁 QML（阶段 2b）：主题由 QML 绑定 `Theme` 单例跟随，
+    不再走 QSS + `_on_theme_changed` 那条路。
+
+    所以这里改成守两件事：页面确实挂上了 QML 宿主，且切主题不炸。
+    （QML 侧的 token 有效性由 test_qml_theme_bridge 的静态扫描覆盖。）
+    """
     # mock_db 只 patch core.container.get_container，而 industry_view 通过
     # `from core.container import get_container` 绑定旧引用，patch 不生效；
     # 构造 IndustryPage 会触发后台重算 worker 访问真实容器写库（full 集合下暴露）。
@@ -76,11 +83,13 @@ def test_industry_page_theme_listener(qapp, mock_db):
         from ui_pyside6.views.industry_view import IndustryPage
 
         page = IndustryPage(None)
-        assert hasattr(page, "_on_theme_changed")
+        assert page._host.ok(), "IndustryPage.qml 加载失败"
+        assert not hasattr(page, "_on_theme_changed"), "QSS 主题钩子应已随迁移移除"
+
         apply_theme("light")
         _wait()
-        assert FLUENT_LIGHT["TEXT_PRIMARY"] in page._title_label.styleSheet()
-        assert FLUENT_LIGHT["TEXT_SECONDARY"] in page._plan_count.styleSheet()
+        assert page._host.ok(), "切主题后页面不应失效"
+        assert theme_singleton().themeId == "fluent-light"
 
 
 def test_trade_page_theme_listener(qapp):

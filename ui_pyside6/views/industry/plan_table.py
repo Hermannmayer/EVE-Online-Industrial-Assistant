@@ -1,23 +1,21 @@
-"""生产计划表格 — PlanTable 视图组件"""
+"""生产计划表格 — PlanTable 视图组件
+
+**渲染已迁到 QML**（`ui_qml/qml/pages/PlanTablePane.qml`，阶段 2a）：本类不再持有
+`QTableView`，而是持有一个 `QQuickWidget` 宿主 + `PlanTableBridge`。
+对外 API（`get_model` / `set_model` / `set_price_context` / 四个信号）保持不变，
+`industry_view.py` 与既有测试无需改动调用方式。
+
+**业务逻辑全部留在这里**：启动/下线/删行/拆解/落库等仍是本类的方法，
+QML 只通过 bridge 转发调用。这样迁移期只有一份业务实现。
+"""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QApplication,
-    QCheckBox,
-    QHeaderView,
-    QInputDialog,
-    QMenu,
-    QMessageBox,
-    QTableView,
-    QVBoxLayout,
-    QWidget,
-    QWidgetAction,
-)
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox, QVBoxLayout, QWidget
 
 import ui_pyside6.theme as theme
 from core.container import get_container
@@ -25,141 +23,84 @@ from ui_pyside6.models.industry_models import PlanTableModel
 from ui_pyside6.views.industry.plan_table_constants import (
     COL_BLUEPRINT,
     COL_CHECKBOX,
-    COL_CHILD_LEVEL,
-    COL_GROUP,
     COL_NOTES,
     COL_PRODUCT,
     COL_STATUS,
-    COL_SUCCESS_RATE,
-    FIXED_WIDTHS,
-    MAX_CONTENT_WIDTHS,
-    NUM_COLUMNS,
 )
-from ui_pyside6.views.industry.plan_table_delegate import PlanTableDelegate, ReadyButtonDelegate
+
+if TYPE_CHECKING:
+    from ui_qml.bridge.plan_table_bridge import PlanTableBridge
+    from ui_qml.models.plan_qml_model import PlanQmlModel
+
+#: QML 页面路径（相对 ui_qml/qml/）
+QML_PANE = "pages/PlanTablePane.qml"
 
 
 class PlanTable(QWidget):
-    """生产计划表格 — 封装 QTableView + PlanTableModel + 右键菜单"""
+    """生产计划表格 — QML 渲染 + 本类承载全部业务动作"""
 
     plan_updated = Signal()
     refresh_requested = Signal()
     plan_detail_requested = Signal(int)
     launcher_requested = Signal(str)  # 产线启动小助手（传初始人物名，空串=未分配）
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None, *, headless: bool = False):
+        """`headless=True` 时**不创建 QML 宿主**，只保留业务控制器身份。
+
+        阶段 2b 起工业页整页是 QML，表格由 `IndustryPage.qml` 里的 `PlanTablePane`
+        渲染、桥从 context 注入；本类再建一个宿主就是白开一个 QML 引擎。
+        但业务方法与 `QMessageBox.question(self, ...)` 的窗口父仍需一个 QWidget，
+        故保留 QWidget 身份（不显示即可）。
+        """
         super().__init__(parent)
 
-        # ── 布局 ─────────────────────────────────────────────
+        # ui_qml 的导入放在这里而不是模块顶层：ui_qml 侧要读 industry 包的列常量，
+        # 而本模块又由 industry/__init__.py 在包初始化时导入 —— 顶层导入会形成
+        # 「包初始化 → plan_table → ui_qml → 包初始化」的循环。延迟到实例化时，
+        # 那时包早已初始化完毕。
+        from ui_qml.bridge.plan_table_bridge import PlanTableBridge
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._table = QTableView()
-        self._table.setAlternatingRowColors(True)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._table.setSortingEnabled(True)
-        # 行高随全局字号（13px 字号下为 26，与历史值一致）
-        self._table.verticalHeader().setDefaultSectionSize(max(26, theme.fs(13) + 13))
-        self._table.verticalHeader().setVisible(False)
-        # 21 列全显示，超出窗口时横向滚动（用户明确选择，不默认隐藏列）
-        self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._configure_adaptive_columns()
-        # 状态列「待下线」渲染成按钮（点击走 _on_cell_clicked）
-        self._table.setItemDelegateForColumn(COL_STATUS, ReadyButtonDelegate(self._table))
-        # 其余列展示职责（染色/图标/底色/复选框/对齐/尺寸）交给 PlanTableDelegate
-        self._table.setItemDelegate(PlanTableDelegate(self._table))
-
-        layout.addWidget(self._table)
-
-        self._model: PlanTableModel | None = None
-        # 已挂过备注落库钩子的 model（防止重复 set_model 造成重复连接）
-        self._notes_hooked_model: PlanTableModel | None = None
+        self._model: PlanQmlModel | None = None
         # 工具栏当前材料机库 ID（由 IndustryPage 注入，启动时兜底）
         self._mat_hangar_id: int | None = None
         # 工具栏价格设置/人物访问器（由 IndustryPage 注入，母项拆解利润预览用）
         self._get_price_settings = None
         self._get_char_name = None
 
-        # ── 连接信号 ─────────────────────────────────────────
-        self._table.doubleClicked.connect(self._on_double_clicked)
-        self._table.clicked.connect(self._on_cell_clicked)
-        self._table.entered.connect(self._on_cell_entered)
+        self._bridge: PlanTableBridge = PlanTableBridge(self, self)
+        self._host: PageHost | None = None
+        if not headless:
+            from ui_qml.host import PageHost
 
-        # ── 头部右键菜单（列可见性控制） ─────────────────────
-        self._table.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._table.horizontalHeader().customContextMenuRequested.connect(self._on_header_context_menu)
+            self._host = PageHost(QML_PANE, context={"planTableBridge": self._bridge}, parent=self)
+            layout.addWidget(self._host)
 
-        # ── 行右键菜单 ───────────────────────────────────────
-        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._table.customContextMenuRequested.connect(self._on_table_context_menu)
-
-        # ── 主题 ─────────────────────────────────────────────
         theme.add_theme_listener(self._on_theme_changed)
-        self._on_theme_changed()
+
+    @property
+    def bridge(self) -> PlanTableBridge:
+        """给 QML 页面用的桥（工业页把表格嵌进自己的 QML 树时用）。"""
+        return self._bridge
 
     # ── 公共方法 ──────────────────────────────────────────────
 
-    def _fixed_column_width(self, col: int) -> int:
-        """固定窄列宽度：图标/复选框的固有需求与表头文字宽度取大（随全局字号缩放）。
-
-        写死 32/36 在大字号下表头会互相挤压，因此以表头文字宽为下限。
-        """
-        header = self._table.horizontalHeader()
-        need = header.fontMetrics().horizontalAdvance(PlanTableModel._HEADERS[col]) + 16
-        return max(FIXED_WIDTHS[col], need)
-
-    def _configure_adaptive_columns(self) -> None:
-        """配置列宽自适应：窄列固定，产品列拉伸，其余自适应内容"""
-        header = self._table.horizontalHeader()
-        header.setStretchLastSection(False)
-        header.setMinimumSectionSize(24)
-
-        # 隐藏并行和批次列（数据仍保留用于计算）
-
-        NARROW = {COL_GROUP, COL_CHILD_LEVEL, COL_SUCCESS_RATE}  # 组号/子级/成功率
-        STRETCH = {COL_PRODUCT}  # 产品名
-        # 备料勾选 / 图标列固定窄宽（适配复选框与图标，避免被内容/表头撑宽）
-
-        for col in range(NUM_COLUMNS):
-            if col in FIXED_WIDTHS:
-                header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
-                header.resizeSection(col, self._fixed_column_width(col))
-            elif col in NARROW:
-                header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-            elif col in STRETCH:
-                header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
-            else:
-                header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
-                header.resizeSection(col, 75)
-
     def set_model(self, model: PlanTableModel) -> None:
-        """设置 PlanTableModel 并自适应列宽"""
-        self._model = model
-        # 备注列内联编辑要落库（模型层只改内存字典，刷新即丢）。
-        # 只连一次：industry_view.load_plans 复用同一个 model，仅首次走到这里。
-        if self._notes_hooked_model is not model:
-            model.dataChanged.connect(self._on_model_data_changed)
-            self._notes_hooked_model = model
-        self._table.setModel(model)
-        # 内容自适应后，窄列自动收缩
-        self._table.resizeColumnsToContents()
-        header = self._table.horizontalHeader()
-        # 收紧固定窄列（备料勾选/图标），避免被内容或表头撑宽
-        for col in FIXED_WIDTHS:
-            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
-            header.resizeSection(col, self._fixed_column_width(col))
-        # 文本易过长的列封顶：否则 resizeColumnsToContents 会按内容无限膨胀，
-        # 把整张表推到远超窗口宽度（产品列是 Stretch，由视口兜底，无需封顶）
-        for col, max_w in MAX_CONTENT_WIDTHS.items():
-            if header.sectionSize(col) > max_w:
-                header.resizeSection(col, max_w)
-        # 确保产品列至少有 120px，但不超过可用空间一半
-        product_w = header.sectionSize(COL_PRODUCT)
-        avail = header.width() if header.width() > 0 else 800
-        header.resizeSection(COL_PRODUCT, max(120, min(product_w, avail // 2)))
+        """设置模型。传进来的 `PlanTableModel` 会被换成 `PlanQmlModel` 实例。
 
-    def get_model(self) -> PlanTableModel | None:
+        QML 的 `TableView` 要**命名角色**，只有 `PlanQmlModel` 提供 `roleNames()`。
+        数据本身直接交给新实例，不做拷贝。
+        """
+        from ui_qml.models.plan_qml_model import PlanQmlModel
+
+        qml_model = model if isinstance(model, PlanQmlModel) else PlanQmlModel(model._plans)
+        self._model = qml_model
+        self._bridge.notify_model_changed()
+
+    def get_model(self) -> PlanQmlModel | None:
         return self._model
 
     def set_mat_hangar_id(self, mat_hangar_id: int | None) -> None:
@@ -177,216 +118,69 @@ class PlanTable(QWidget):
 
         return inventory_manager.get_hangar_system_id(mat_hangar_id)
 
-    def get_table(self) -> QTableView:
-        return self._table
+    def scroll_value(self) -> float:
+        """当前纵向滚动位置（页面状态保存用）。"""
+        return self._bridge.scroll_position()
+
+    def set_scroll_value(self, value: float) -> None:
+        """恢复纵向滚动位置。"""
+        self._bridge.request_scroll_restore(float(value))
 
     def load_plans(self, plans: list[dict]) -> None:
-        """创建新 PlanTableModel 并设置"""
-        model = PlanTableModel(plans)
-        self.set_model(model)
+        """创建新模型并设置"""
+        from ui_qml.models.plan_qml_model import PlanQmlModel
 
-    # ── 双击事件 ─────────────────────────────────────────────
+        self.set_model(PlanQmlModel(plans))
 
-    def _on_double_clicked(self, index) -> None:
-        """双击 → 直接打开编辑生产计划"""
-        row = index.row()
-        if self._model:
-            self._edit_plan(row)
+    # ── QML 回调：单元格交互 ──────────────────────────────────
 
-    # ── 头部右键菜单（列可见性控制） ─────────────────────────
+    def _on_cell_clicked_by_pos(self, row: int, column: int) -> None:
+        """单击单元格：勾选 / 绑蓝图 / 折叠 / 待下线（对应 QML 的 `bridge.activate`）。
 
-    def _on_header_context_menu(self, pos) -> None:
-        """右键表头 → 列可见性切换菜单"""
-        if not self._model:
+        与旧 `_on_cell_clicked(index)` 同一逻辑，只是入参从 `QModelIndex` 换成行列号。
+        """
+        if self._model is None:
             return
-
-        menu = QMenu(self)
-        headers = PlanTableModel._HEADERS
-        checks: list[QCheckBox] = []
-
-        for col_idx, name in enumerate(headers):
-            cb = QCheckBox(name)
-            is_hidden = self._table.isColumnHidden(col_idx)
-            cb.setChecked(not is_hidden)
-            checks.append(cb)
-
-            action = QWidgetAction(menu)
-            action.setDefaultWidget(cb)
-            menu.addAction(action)
-
-            cb.toggled.connect(lambda checked, c=col_idx, cs=checks: self._toggle_column(c, checked, cs))
-
-        menu.exec(self._table.horizontalHeader().mapToGlobal(pos))
-
-    def _toggle_column(self, col: int, visible: bool, checks: list[QCheckBox]) -> None:
-        """切换列可见性，但至少保留 1 列"""
-        if not visible:
-            visible_count = sum(1 for c in range(NUM_COLUMNS) if c != col and not self._table.isColumnHidden(c))
-            if visible_count == 0:
-                checks[col].blockSignals(True)
-                checks[col].setChecked(True)
-                checks[col].blockSignals(False)
-                return
-        self._table.setColumnHidden(col, not visible)
-
-    # ── 行右键菜单 ────────────────────────────────────────────
-
-    def _on_table_context_menu(self, pos) -> None:
-        """右键行 → 操作菜单（多选时批量操作对选中行全部生效）"""
-        index = self._table.indexAt(pos)
-        if not index.isValid() or not self._model:
-            return
-
-        # 收集选中行：右键点击的行不在选中集时只用当前行
-        selection_model = self._table.selectionModel()
-        selected_indexes = selection_model.selectedRows() if selection_model else []
-        if not any(idx.row() == index.row() for idx in selected_indexes):
-            selected_rows = [index.row()]
-        else:
-            selected_rows = [idx.row() for idx in selected_indexes]
-
-        row = index.row()
         plan = self._model.get_plan(row)
         if not plan:
             return
-
-        # 「共享组件」合成根节点：无计划 id，不支持行操作（仅作分组标题/折叠）
-        if plan.get("_synthetic"):
-            model = self._model
-            if model is not None:
-                menu = QMenu(self)
-                menu.addAction("展开/折叠共享组件", lambda: model.toggle_collapse(-1))
-                menu.exec(self._table.viewport().mapToGlobal(pos))
-            return
-
-        def batch(fn):
-            """批量操作：对每行执行 fn(row)"""
-            for r in selected_rows:
-                fn(r)
-
-        menu = QMenu(self)
-
-        # ── 编辑（批量适用：一次编辑对所有行生效，不含 ME/TE） ─
-        menu.addAction(
-            "编辑生产计划",
-            lambda: self._batch_edit_plans(selected_rows) if len(selected_rows) > 1 else self._edit_plan(row),
-        )
-        menu.addSeparator()
-
-        # ── 材料/时间效率（批量适用） — 不影响其他属性 ──
-        menu.addAction("设置蓝图等级...", lambda: self._batch_set_me_te(selected_rows))
-        menu.addAction("绑定库存蓝图...", lambda: self._show_blueprint_picker(row))
-        menu.addSeparator()
-
-        # ── 查看 ─────────────────────────────────────────
-        menu.addAction("查看核算", lambda: self._view_cost_breakdown(row))
-        menu.addSeparator()
-
-        # ── 状态（按当前行状态显隐；批量时对选中行逐条生效） ──────────
-        # 备料 toggle — 使用右键点击行的状态决定勾选/取消
-        mats_ready = bool(plan.get("materials_ready", 0))
-        if mats_ready:
-            a = menu.addAction("取消勾选备料")
-            a.triggered.connect(lambda: batch(lambda r: self._set_materials_ready(r, 0)))
-        else:
-            a = menu.addAction("勾选备料")
-            a.triggered.connect(lambda: batch(lambda r: self._set_materials_ready(r, 1)))
-
-        status = (plan.get("status") or "").lower()
-        if status == "pending":
-            a = menu.addAction("项目启动")
-            a.triggered.connect(lambda: batch(lambda r: self._start_plan(r)))
-        elif status in ("in_progress", "running"):
-            # 仅「软件误点、游戏未启动」时可撤销并返还材料
-            a = menu.addAction("撤销启动（返还材料）")
-            a.triggered.connect(lambda: batch(lambda r: self._undo_start(r)))
-        elif status == "ready":
-            # 待下线：游戏产线已跑完、材料已扣，点击下线（不可逆）产出成品。
-            # 批量走**同一个**对话框选产出机库（逐行弹会连弹 N 次）
-            a = menu.addAction("下线")
-            a.triggered.connect(lambda: self._complete_rows_with_dialog(selected_rows))
-        elif status in ("completed", "done"):
-            a = menu.addAction("设为待生产（复用）")
-            a.triggered.connect(lambda: batch(lambda r: self._reset_for_reuse(r)))
-        menu.addSeparator()
-
-        # ── 备注（批量适用） ──────────────────────────────
-        menu.addAction("添加备注", lambda: self._add_notes(row))
-        menu.addAction("复制蓝图名称", lambda: self._copy_blueprint_name(row))
-        menu.addSeparator()
-
-        # ── 高级（批量适用） ──────────────────────────────
-        menu.addAction("查看蓝图原图的NPC卖家", lambda: batch(lambda r: self._show_npc_seller(r)))
-        menu.addAction("产线启动小助手", lambda: self._show_production_wizard(row))
-
-        # ── 智能调整（拆解/并行，作用于选中行所属组） ──────────
-        smart_menu = menu.addMenu("智能调整")
-        a = smart_menu.addAction("母项调整（递归拆解）")
-        a.triggered.connect(lambda: self._decompose_parent(selected_rows))
-        a = smart_menu.addAction("子项调整（并行配置）")
-        a.triggered.connect(lambda: self._adjust_children(selected_rows))
-        a = smart_menu.addAction("子项大规模产线并行")
-        a.triggered.connect(lambda: self._mass_parallel(selected_rows))
-        a = smart_menu.addAction("重算子项（按母项当前需求）")
-        a.triggered.connect(lambda: self._recalc_children(selected_rows))
-
-        menu.addSeparator()
-
-        # ── 危险操作（批量适用） ──────────────────────────
-        # 「取消生产」= 解除蓝图绑定 + 删除计划行；**已扣减的材料不返还**
-        # （领域模型见 AUDIT-20260801.md：与游戏「取消产线只退蓝图」一致）。
-        # 只是软件误点、游戏尚未开造 → 用上面的「撤销启动（返还材料）」。
-        a = menu.addAction("取消生产")
-        a.triggered.connect(lambda: self._delete_rows(selected_rows))
-
-        menu.exec(self._table.viewport().mapToGlobal(pos))
-
-    # ── 单击事件 ─────────────────────────────────────────────
-
-    def _on_cell_clicked(self, index) -> None:
-        """单击勾选列 → 切换备料；蓝图列 → 绑定蓝图；产品列 → 折叠/展开；待下线状态 → 确认后单独下线"""
-        if not self._model:
-            return
-        row = index.row()
-        plan = self._model.get_plan(row)
-        if not plan:
-            return
-        if index.column() == COL_CHECKBOX:
-            new_val = 0 if plan.get("materials_ready", 0) else 1
-            self._set_materials_ready(row, new_val)
-        elif index.column() == COL_BLUEPRINT:
+        if column == COL_CHECKBOX:
+            self._set_materials_ready(row, 0 if plan.get("materials_ready", 0) else 1)
+        elif column == COL_BLUEPRINT:
             self._show_blueprint_picker(row)
-        elif index.column() == COL_PRODUCT:
-            # 「共享组件」合成根：点击切换共享区折叠
+        elif column == COL_PRODUCT:
             if plan.get("_synthetic"):
                 self._model.toggle_collapse(-1)
                 return
-            # 母项行（child_level==0）且有子项时，点击切换折叠
             gid = plan.get("group_id") or plan.get("group_number") or 0
             lvl = int(plan.get("child_level") or plan.get("sub_level") or 0)
             if lvl == 0 and gid and self._model._has_children(gid):
                 self._model.toggle_collapse(gid)
-        elif index.column() == COL_STATUS and (plan.get("status") or "").lower() == "ready":
+        elif column == COL_STATUS and (plan.get("status") or "").lower() == "ready":
             self._complete_plan_with_dialog(plan)
 
-    def _on_cell_entered(self, index) -> None:
-        """悬停待下线状态单元格 → 手型光标；悬停可折叠母项 → 手型光标"""
-        if not self._model:
-            return
-        plan = self._model.get_plan(index.row())
-        if index.column() == COL_STATUS and plan is not None and (plan.get("status") or "").lower() == "ready":
-            cursor = Qt.CursorShape.PointingHandCursor
-        elif index.column() == COL_PRODUCT and plan is not None:
-            gid = plan.get("group_id") or plan.get("group_number") or 0
-            lvl = int(plan.get("child_level") or plan.get("sub_level") or 0)
-            cursor = (
-                Qt.CursorShape.PointingHandCursor
-                if (lvl == 0 and gid and self._model._has_children(gid))
-                else Qt.CursorShape.ArrowCursor
-            )
-        else:
-            cursor = Qt.CursorShape.ArrowCursor
-        self._table.viewport().setCursor(cursor)
+    def commit_cell_edit(self, row: int, column: int, text: str) -> bool:
+        """QML 内联编辑落库入口（模型只改内存，这里负责写库）。
+
+        返回 False 表示该列不可编辑或值非法。
+
+        **只持久化备注列**，与迁移前一致：其余可编辑列（人物/设施/成功率/解码器）
+        的内联改动仍只留在内存字典里。它们改完需要重算派生指标（走 `_edit_plan`
+        那条会调 `calculate_plan_metrics` 的路径），单靠一次 `setData` 落库会留下
+        与指标不一致的行——那是另一件事，不在阶段 2a 范围内。
+        """
+        if self._model is None:
+            return False
+        index = self._model.index(row, column)
+        if not self._model.setData(index, text):
+            return False
+        # 不 emit plan_updated —— 那会触发 load_plans → set_plans（重置模型），
+        # 让每次改备注都全表重载，并打断正在进行的编辑。
+        if column == COL_NOTES:
+            plan = self._model.get_plan(row)
+            if plan and plan.get("id"):
+                get_container().plan_repo.update(plan["id"], notes=str(plan.get("notes") or ""))
+        return True
 
     def _complete_plan_with_dialog(self, plan: dict) -> None:
         """状态列「待下线」→ 下线确认弹窗（选产出机库）→ 单独下线。
@@ -683,22 +477,6 @@ class PlanTable(QWidget):
         self._rebuild_subitems()
         self._model.layoutChanged.emit()
         self.plan_updated.emit()
-
-    def _on_model_data_changed(self, top_left, bottom_right, roles=None) -> None:
-        """备注列内联编辑落库。
-
-        模型层的 `setData` 只改内存字典，旧行为下双击改完备注、下一次刷新就丢。
-        这里**只写库**：不 emit `plan_updated` —— 那会触发 `load_plans` →
-        `set_plans` → `beginResetModel`，既让每次改备注全表重载，又会打断
-        正在进行的编辑（回环）。
-        """
-        model = self.sender()
-        if not isinstance(model, PlanTableModel) or top_left.column() != COL_NOTES:
-            return
-        plan = model.get_plan(top_left.row())
-        if not plan or not plan.get("id"):
-            return
-        get_container().plan_repo.update(plan["id"], notes=str(plan.get("notes") or ""))
 
     def _add_notes(self, row: int) -> None:
         """添加备注 — 弹出文本输入框"""
@@ -1229,30 +1007,7 @@ class PlanTable(QWidget):
     # ── 主题 ─────────────────────────────────────────────────
 
     def _on_theme_changed(self) -> None:
-        # 表格体样式：直接设置完整 QTableView QSS（含选中行颜色），
-        # 绕过原生 windowsvista 风格对 ::item:selected 伪状态的限制
-        self._table.setStyleSheet(
-            f"QTableView {{"
-            f"  background-color: {theme.BG_DARK};"
-            f"  alternate-background-color: {theme.BG_SURFACE};"
-            f"  border: 1px solid {theme.BORDER};"
-            f"  border-radius: 6px;"
-            f"  gridline-color: {theme.BORDER};"
-            f"  selection-background-color: {theme.PRIMARY};"
-            f"  selection-color: {theme.TEXT_BRIGHT};"
-            f"  outline: none;"
-            f"}}"
-            f"QTableView::item {{"
-            f"  padding: 4px 8px;"
-            f"  border-bottom: 1px solid {theme.BORDER};"
-            f"}}"
-            f"QTableView::item:selected {{"
-            f"  background-color: {theme.PRIMARY};"
-            f"  color: {theme.TEXT_BRIGHT};"
-            f"}}"
-        )
-        # 紧凑表头覆盖全局（全局 padding 6x8, font-size 12px）
-        self._table.horizontalHeader().setStyleSheet(
-            f"QHeaderView::section {{ background: {theme.BG_SURFACE}; color: {theme.TEXT_PRIMARY};"
-            f" border: 1px solid {theme.BORDER}; padding: 2px 4px; font-size: {theme.fs(11)}px; }}"
-        )
+        """主题切换：模型里的颜色是**已解析的 hex**（见 `PlanQmlModel` 的说明），
+        必须补发一次 dataChanged 才会重绘。
+        """
+        self._bridge.refreshColors()

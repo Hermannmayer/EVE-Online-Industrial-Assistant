@@ -19,7 +19,6 @@ from ui_pyside6.views.industry.mass_parallel_dialog import (
     compute_parallel_by_lines,
 )
 from ui_pyside6.views.industry.parent_decompose_dialog import ParentDecomposeDialog
-from ui_pyside6.views.industry.status_bar import StatusBar
 
 pytestmark = pytest.mark.ui
 
@@ -439,41 +438,6 @@ class TestChildParallelDialog:
         assert dlg._current_runs(0) == 2
 
 
-# ════════════════════════════════════════════════════════════════
-#  StatusBar / CompletePlansDialog / 启动向导（原 test_industry_complete.py）
-# ════════════════════════════════════════════════════════════════
-
-
-class TestStatusBarCompleteAll:
-    """底部状态栏「全部下线」按钮显示/隐藏与信号"""
-
-    def test_hidden_without_ready(self, qapp):
-        bar = StatusBar()
-        bar.update_stats([{"status": "pending"}, {"status": "running"}])
-        assert bar._btn_complete_all.isHidden()
-
-    def test_shown_with_ready_count(self, qapp):
-        bar = StatusBar()
-        bar.update_stats(
-            [
-                {"status": "pending"},
-                {"status": "ready"},
-                {"status": "ready"},
-                {"status": "running"},
-            ]
-        )
-        assert not bar._btn_complete_all.isHidden()
-        assert bar._btn_complete_all.text() == "全部下线 (2)"
-
-    def test_emit_complete_all_requested(self, qapp):
-        bar = StatusBar()
-        bar.update_stats([{"status": "ready"}])
-        got = []
-        bar.complete_all_requested.connect(lambda: got.append(True))
-        bar._btn_complete_all.click()
-        assert got == [True]
-
-
 class TestCompletePlansDialog:
     """下线确认对话框 — 计划清单 / 机库默认值"""
 
@@ -509,79 +473,6 @@ class TestCompletePlansDialog:
         plans = [{"id": 1, "product_name": "渡鸦级", "runs": 1, "parallels": 1}]
         dlg = CompletePlansDialog(plans, [], -1)
         assert dlg.selected_hangar_id() == -1  # 无机库时保持「不自动入库」
-
-
-class TestReadyButtonDelegate:
-    """状态列「待下线」按钮渲染 delegate"""
-
-    def _ready_model(self):
-        from ui_pyside6.models.industry_models import PlanTableModel
-
-        return PlanTableModel([{"product_name": "渡鸦级", "status": "ready", "product_type_id": 2001}])
-
-    def test_ready_cell_button_size_hint(self, qapp):
-        from PySide6.QtWidgets import QStyleOptionViewItem
-
-        from ui_pyside6.views.industry.plan_table_constants import COL_STATUS
-        from ui_pyside6.views.industry.plan_table_delegate import ReadyButtonDelegate
-
-        delegate = ReadyButtonDelegate()
-        model = self._ready_model()  # 保持模型存活，避免 QModelIndex 悬空
-        index = model.index(0, COL_STATUS)
-        hint = delegate.sizeHint(QStyleOptionViewItem(), index)
-        assert hint.width() >= 60
-        assert hint.height() >= 20
-
-    def test_non_ready_default_size_hint(self, qapp):
-        from PySide6.QtWidgets import QStyleOptionViewItem
-
-        from ui_pyside6.models.industry_models import PlanTableModel
-        from ui_pyside6.views.industry.plan_table_constants import COL_STATUS
-        from ui_pyside6.views.industry.plan_table_delegate import ReadyButtonDelegate
-
-        delegate = ReadyButtonDelegate()
-        model = PlanTableModel([{"product_name": "渡鸦级", "status": "in_progress", "product_type_id": 2001}])
-        index = model.index(0, COL_STATUS)
-        hint = delegate.sizeHint(QStyleOptionViewItem(), index)
-        assert hint.width() < 60  # 非 ready 不渲染按钮，走默认
-
-    def test_paint_ready_does_not_crash(self, qapp):
-        from PySide6.QtCore import QRect
-        from PySide6.QtGui import QPainter, QPixmap
-        from PySide6.QtWidgets import QStyleOptionViewItem
-
-        from ui_pyside6.views.industry.plan_table_constants import COL_STATUS
-        from ui_pyside6.views.industry.plan_table_delegate import ReadyButtonDelegate
-
-        delegate = ReadyButtonDelegate()
-        model = self._ready_model()
-        index = model.index(0, COL_STATUS)
-        option = QStyleOptionViewItem()
-        option.rect = QRect(0, 0, 80, 26)
-        pix = QPixmap(100, 30)
-        pix.fill()
-        painter = QPainter(pix)
-        delegate.paint(painter, option, index)
-        painter.end()
-        assert not pix.isNull()
-
-
-class TestLaunchWizard:
-    """产线启动入口：工业页功能按钮发出打开信号（窗口本体见 test_production_launcher.py）"""
-
-    def test_launch_wizard_button_emits(self, qapp):
-        from ui_pyside6.views.industry.action_buttons import ActionButtons
-
-        ab = ActionButtons()
-        got = []
-        ab.launch_wizard_requested.connect(lambda: got.append(True))
-        ab._btn_launch_wizard.click()
-        assert got == [True]
-
-
-# ════════════════════════════════════════════════════════════════
-#  下线入口的蓝图流程预检（complete_guard）
-# ════════════════════════════════════════════════════════════════
 
 
 class TestCompleteGuard:
@@ -685,7 +576,7 @@ class TestStatusBarCompleteAllGuard:
             load_plans=lambda: None,
         )
         # 只借 IndustryPage 的方法体，self 用最小替身（构造整页代价过高）
-        iv.IndustryPage._on_complete_all(page)  # type: ignore[arg-type]
+        iv.IndustryPage.complete_all(page)  # type: ignore[arg-type]
         return captured
 
     def test_forwards_allow_bp_short_after_confirmation(self, qapp, monkeypatch):

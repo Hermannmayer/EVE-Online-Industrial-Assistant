@@ -123,9 +123,32 @@ def set_default_hangar_id(key: str, hangar_id: int | None) -> None:
 # ════════════════════════════════════════════════════════════════
 
 
+def _price_setting_defaults() -> dict:
+    """价格设置的默认值（hub 取贸易中心列表首项）。"""
+    from core.constants import TRADE_HUBS
+
+    hub = TRADE_HUBS[0] if TRADE_HUBS else "Jita"
+    return {
+        "mat_hub": hub,
+        "mat_price_type": "sell",
+        "mat_mult": 1.0,
+        "prod_hub": hub,
+        "prod_price_type": "sell",
+        "prod_mult": 1.0,
+    }
+
+
 def get_price_settings() -> dict:
-    """价格来源设置 {mat_hub, mat_price_type, mat_mult, prod_hub, prod_price_type, prod_mult}。"""
-    return load_settings().get("price_settings") or {}
+    """价格来源设置 {mat_hub, mat_price_type, mat_mult, prod_hub, prod_price_type, prod_mult}。
+
+    **必须补齐缺失键**，不能只回吐 settings.json 里存了什么：调用方普遍写成
+    `ps["mat_hub"]`（旧实现由工具栏控件保证全量键），没存过设置的用户会拿到空
+    dict，那些下标访问立刻 KeyError —— 实测会让工业页**整页加载失败**（报 'mat_hub'）。
+    """
+    stored = load_settings().get("price_settings") or {}
+    merged = _price_setting_defaults()
+    merged.update({k: v for k, v in stored.items() if k in merged})
+    return merged
 
 
 def get_material_price_mult() -> float:

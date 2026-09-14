@@ -191,3 +191,41 @@ class TestMaterialPriceMult:
         assert s["price_settings"]["prod_hub"] == "Rens"
         assert s["price_settings"]["mat_mult"] == pytest.approx(0.8)
         assert s["theme"] == "one-dark"
+
+
+class TestPriceSettingsDefaults:
+    """`get_price_settings()` 必须补齐缺失键。
+
+    回归背景：阶段 2b 把工业页的价格来源从工具栏控件改成读 settings.json，
+    而调用方普遍写成 `ps["mat_hub"]`（旧实现由控件保证全量键）。
+    没存过设置的用户拿到空 dict 后，那些下标访问立刻 KeyError ——
+    实测表现是工业页**整页加载失败**（报 'mat_hub'），且只在有计划数据时才炸
+    （没有计划时 `_auto_calculate_plans` 提前 return，掩盖了问题）。
+    """
+
+    KEYS = {"mat_hub", "mat_price_type", "mat_mult", "prod_hub", "prod_price_type", "prod_mult"}
+
+    def test_empty_settings_still_returns_all_keys(self):
+        us.save_settings({"price_settings": {}})
+
+        s = us.get_price_settings()
+
+        assert set(s) == self.KEYS
+        assert s["mat_mult"] == 1.0
+        assert s["mat_price_type"] == "sell"
+        assert s["mat_hub"] == s["prod_hub"], "两个 hub 的默认值应一致"
+
+    def test_partial_settings_keep_stored_values(self):
+        us.save_settings({"price_settings": {"mat_hub": "Amarr", "mat_mult": 1.4}})
+
+        s = us.get_price_settings()
+
+        assert s["mat_hub"] == "Amarr"
+        assert s["mat_mult"] == pytest.approx(1.4)
+        assert s["prod_hub"] != "Amarr", "未存的键应回落默认值"
+        assert set(s) == self.KEYS
+
+    def test_unknown_keys_are_dropped(self):
+        us.save_settings({"price_settings": {"mat_hub": "Jita", "bogus": 1}})
+
+        assert "bogus" not in us.get_price_settings()

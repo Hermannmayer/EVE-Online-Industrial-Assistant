@@ -144,34 +144,18 @@ class TestPlanTableIntegration:
         model = PlanTableModel(self.SAMPLE_PLANS)
         assert model.data(model.index(1, 7), Qt.ItemDataRole.DisplayRole) == "生产中"
 
-    def test_plan_profit_foreground_positive(self, qapp):
-        """利润列正值绿色（由 PlanTableDelegate 提供）"""
-        from ui_pyside6 import theme
-        from ui_pyside6.views.industry.plan_table_constants import COL_PROFIT
-        from ui_pyside6.views.industry.plan_table_delegate import PlanTableDelegate
+    def test_plan_profit_colors_moved_to_qml_model(self, qapp):
+        """利润列染色已随阶段 2a 迁到 QML 模型（详见 tests/test_qml_plan_model.py）。
 
-        delegate = PlanTableDelegate()
-        color = delegate._foreground(self.SAMPLE_PLANS[0], COL_PROFIT)
-        assert color.name() == theme.GREEN
+        这里只钉住「旧 delegate 已删除」这一点，防止有人误把它加回来。
+        """
+        import importlib.util
 
-    def test_plan_profit_foreground_negative(self, qapp):
-        """利润列负值红色（由 PlanTableDelegate 提供）"""
-        from ui_pyside6 import theme
-        from ui_pyside6.views.industry.plan_table_constants import COL_PROFIT
-        from ui_pyside6.views.industry.plan_table_delegate import PlanTableDelegate
+        assert importlib.util.find_spec("ui_pyside6.views.industry.plan_table_delegate") is None
+        from ui_qml.models.plan_qml_model import PlanQmlModel
 
-        delegate = PlanTableDelegate()
-        color = delegate._foreground(dict(self.SAMPLE_PLANS[0], profit=-5_000_000), COL_PROFIT)
-        assert color.name() == theme.RED
-
-    def test_plan_profit_foreground_zero(self, qapp):
-        """利润为零时无特殊颜色（由 PlanTableDelegate 提供）"""
-        from ui_pyside6.views.industry.plan_table_constants import COL_PROFIT
-        from ui_pyside6.views.industry.plan_table_delegate import PlanTableDelegate
-
-        delegate = PlanTableDelegate()
-        color = delegate._foreground(dict(self.SAMPLE_PLANS[0], profit=0), COL_PROFIT)
-        assert color is None
+        model = PlanQmlModel([dict(self.SAMPLE_PLANS[0], profit=100.0)])
+        assert model.data(model.index(0, 16), Qt.ItemDataRole.UserRole + 2) != ""
 
     def test_set_model_replace(self, qapp):
         """替换模型数据"""
