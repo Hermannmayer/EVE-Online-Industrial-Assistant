@@ -169,3 +169,148 @@ def test_invention_outcome_is_none_until_accepted(invention_factory):
         assert dialog.outcome() == 4
     finally:
         dialog.deleteLater()
+
+
+@pytest.fixture
+def output_factory(qapp, monkeypatch):
+    import services.industry_dialog_queries as q
+
+    monkeypatch.setattr(
+        q,
+        "get_output_summary",
+        lambda db: [
+            {
+                "plan_name": "渡鸦级",
+                "product_type_id": 2001,
+                "total_qty": 10,
+                "plan_value": 1_500_000.0,
+                "material_cost": 1_000_000.0,
+                "profit": 500_000.0,
+                "margin_pct": 50.0,
+                "overflow_text": "—",
+                "status": "ready",
+                "has_overflow": False,
+            }
+        ],
+    )
+    from ui_qml.bridge.output_dialog_bridge import OutputSummaryQmlDialog
+
+    return OutputSummaryQmlDialog
+
+
+@pytest.fixture
+def char_usage_factory(qapp, monkeypatch):
+    import services.industry_dialog_queries as q
+
+    monkeypatch.setattr(q, "get_character_usage", lambda db: [("甲", 5, "渡鸦级 x2"), ("乙", 1, "—")])
+    from ui_qml.bridge.char_usage_bridge import CharacterUsageQmlDialog
+
+    return CharacterUsageQmlDialog
+
+
+@pytest.fixture
+def materials_factory(qapp, monkeypatch):
+    import services.industry_dialog_queries as q
+
+    monkeypatch.setattr(
+        q,
+        "get_materials_summary",
+        lambda db: {
+            "materials": {34: {"name": "三钛合金", "total_qty": 1000, "_level": 0, "volume": 0.01}},
+            "inventory": {34: 200},
+            "prices": {34: {"sell": 5.0}},
+        },
+    )
+    from ui_qml.bridge.materials_dialog_bridge import MaterialsSummaryQmlDialog
+
+    return MaterialsSummaryQmlDialog
+
+
+def test_output_summary_dialog_loads_without_warnings(output_factory):
+    _assert_loads_and_quiet(output_factory, "产出总表")
+
+
+def test_char_usage_dialog_loads_without_warnings(char_usage_factory):
+    _assert_loads_and_quiet(char_usage_factory, "人物占用情况")
+
+
+def test_materials_dialog_loads_without_warnings(materials_factory):
+    _assert_loads_and_quiet(materials_factory, "填料总表")
+
+
+def test_output_summary_colours_profit_and_status(output_factory):
+    """利润按正负染色、状态按语义染色、溢出标橙 —— 与 Widgets 版同一组规则。"""
+    dialog = output_factory()
+    try:
+        cells = dialog.bridge.rows[0]["cells"]
+        assert cells[5]["color"] != ""  # 利润为正 → 绿
+        assert cells[8]["color"] != ""  # ready → 橙
+        assert "1.50M" in cells[3]["text"]  # ISK 缩写
+        assert "1 个计划" in dialog.bridge.statusText
+    finally:
+        dialog.deleteLater()
+
+
+def test_char_usage_colours_by_load(qapp, monkeypatch):
+    """活跃计划数越多越警示（≥5 红、≥3 黄、其余绿）。"""
+    import services.industry_dialog_queries as q
+
+    monkeypatch.setattr(q, "get_character_usage", lambda db: [("甲", 5, ""), ("乙", 3, ""), ("丙", 1, "")])
+    from ui_qml.bridge.char_usage_bridge import CharacterUsageQmlDialog, _load_token
+
+    # 阈值规则本身（与主题具体色值解耦）
+    assert _load_token(5) == "ACCENT_RED"
+    assert _load_token(3) == "ACCENT_YELLOW"
+    assert _load_token(1) == "ACCENT_GREEN"
+
+    dialog = CharacterUsageQmlDialog()
+    try:
+        colors = [row["cells"][1]["color"] for row in dialog.bridge.rows]
+        assert all(colors), "每行都应有颜色（token 解析不出来会得到空串）"
+        assert "3 个角色" in dialog.bridge.statusText
+        assert "9 个活跃计划" in dialog.bridge.statusText
+    finally:
+        dialog.deleteLater()
+
+
+def test_materials_copy_row_and_copy_all(materials_factory):
+    """行内复制「名称 + 需购量」，一键复制走 `名称* 数量`（与原版同一格式）。"""
+    from PySide6.QtWidgets import QApplication
+
+    dialog = materials_factory()
+    try:
+        bridge = dialog.bridge
+        assert bridge.hasActionColumn is True
+        assert bridge.topActionText == "一键复制全部"
+        bridge.copyRow(0)
+        assert QApplication.clipboard().text() == "三钛合金\t800"
+        assert "已复制" in bridge.error
+
+        bridge.topAction()
+        assert QApplication.clipboard().text() == "三钛合金* 800"
+        assert "1 种待采购材料" in bridge.error
+    finally:
+        dialog.deleteLater()
+
+
+def test_materials_reports_all_ready(materials_factory, monkeypatch):
+    """全部到位时一键复制只给提示，不改剪贴板。"""
+    import services.industry_dialog_queries as q
+
+    monkeypatch.setattr(
+        q,
+        "get_materials_summary",
+        lambda db: {
+            "materials": {34: {"name": "三钛合金", "total_qty": 100, "_level": 0, "volume": 0.01}},
+            "inventory": {34: 500},
+            "prices": {34: {"sell": 5.0}},
+        },
+    )
+    from ui_qml.bridge.materials_dialog_bridge import MaterialsSummaryQmlDialog
+
+    dialog = MaterialsSummaryQmlDialog()
+    try:
+        dialog.bridge.topAction()
+        assert "无需采购" in dialog.bridge.error
+    finally:
+        dialog.deleteLater()
