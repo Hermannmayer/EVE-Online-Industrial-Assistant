@@ -750,7 +750,7 @@ class InventoryBridge(QObject):
         if not blueprints:
             return
         from core.container import get_container
-        from ui_pyside6.views.industry.research_cost_dialog import ResearchCostDialog
+        from ui_qml.bridge.research_cost_bridge import ResearchCostQmlDialog as ResearchCostDialog
 
         bp = blueprints[0]
         name = bp.get("display_name") or bp.get("zh_name") or str(bp["blueprint_type_id"])

@@ -11,7 +11,6 @@ from core.logger import log
 from services.user_settings import get_price_settings
 from ui_pyside6.views.char_settings_view import load_all_data
 from ui_pyside6.views.industry import (
-    BlueprintRequirementsDialog,
     PlanTable,
 )
 from ui_pyside6.views.industry.complete_plans_dialog import complete_plans
@@ -22,6 +21,9 @@ from ui_pyside6.workers.industry_page_workers import (
     init_plan_db,
 )
 from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker, ProcurementSummaryWorker
+from ui_qml.bridge.blueprint_dialog_bridge import (
+    BlueprintRequirementsQmlDialog as BlueprintRequirementsDialog,
+)
 from ui_qml.bridge.char_usage_bridge import CharacterUsageQmlDialog as CharacterUsageDialog
 from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog as CompletePlansDialog
 from ui_qml.bridge.industry_bridge import IndustryBridge

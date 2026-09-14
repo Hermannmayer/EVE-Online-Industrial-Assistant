@@ -314,3 +314,105 @@ def test_materials_reports_all_ready(materials_factory, monkeypatch):
         assert "无需采购" in dialog.bridge.error
     finally:
         dialog.deleteLater()
+
+
+class _BrokenDb:
+    """连不上的库 —— 用来验证对话框在取数失败时仍能打开并给出说明行。"""
+
+    def connect(self, *args: object) -> object:
+        raise RuntimeError("no db in tests")
+
+
+def test_research_cost_dialog_loads_without_warnings(qapp):
+    from ui_qml.bridge.research_cost_bridge import ResearchCostQmlDialog
+
+    _assert_loads_and_quiet(
+        lambda: ResearchCostQmlDialog(_BrokenDb(), 691, "渡鸦级蓝图"),
+        "研究分析",
+    )
+
+
+def test_research_cost_reports_failure_instead_of_crashing():
+    """取数失败时给一行说明，而不是把异常抛给调用方（原 Widgets 版会直接崩）。"""
+    from ui_qml.bridge.research_cost_bridge import ResearchCostBridge
+
+    bridge = ResearchCostBridge(_BrokenDb(), 691, "渡鸦级蓝图")
+    bridge.reload()
+    assert len(bridge.fields) == 1
+    assert bridge.fields[0]["label"] == "说明"
+    assert "读取失败" in bridge.fields[0]["value"]
+
+
+def test_research_cost_formats_duration():
+    from ui_qml.bridge.research_cost_bridge import _fmt_duration
+
+    assert _fmt_duration(0) == "—"
+    assert _fmt_duration(90) == "1m"
+    assert _fmt_duration(3700) == "1h1m"
+    assert _fmt_duration(90000) == "1d1h0m"
+
+
+@pytest.fixture
+def blueprint_requirements_factory(qapp, monkeypatch):
+    import services.industry_dialog_queries as q
+
+    monkeypatch.setattr(
+        q,
+        "get_blueprint_requirements",
+        lambda db: {
+            "status": "ok",
+            "needed": {
+                1001: {"name": "渡鸦级蓝图", "needed_runs": 20},
+                1002: {"name": "三钛合金蓝图", "needed_runs": 5},
+                1003: {"name": "缺少的蓝图", "needed_runs": 1},
+            },
+            "bp_inv": {
+                1001: {"is_bpo": True, "best_me": 10, "best_te": 20},
+                1002: {"available_runs": 3, "best_me": 0, "best_te": 0},
+            },
+        },
+    )
+    from ui_qml.bridge.blueprint_dialog_bridge import BlueprintRequirementsQmlDialog
+
+    return BlueprintRequirementsQmlDialog
+
+
+def test_blueprint_requirements_dialog_loads_without_warnings(blueprint_requirements_factory):
+    _assert_loads_and_quiet(blueprint_requirements_factory, "所需蓝图清单")
+
+
+def test_blueprint_requirements_three_state_status(blueprint_requirements_factory):
+    """三色状态：BPO 无限=足够、可用不足=不足、无库存=缺少；状态行给出三种计数。"""
+    dialog = blueprint_requirements_factory()
+    try:
+        bridge = dialog.bridge
+        by_name = {row["cells"][0]["text"]: row["cells"] for row in bridge.rows}
+        assert by_name["渡鸦级蓝图"][1]["text"] == "BPO"
+        assert by_name["渡鸦级蓝图"][5]["text"] == "无限"
+        assert by_name["渡鸦级蓝图"][6]["text"] == "足够"
+        assert by_name["三钛合金蓝图"][6]["text"] == "不足"
+        assert by_name["缺少的蓝图"][6]["text"] == "缺少"
+        # 三种状态各自的颜色互不相同
+        colors = {by_name[n][6]["color"] for n in by_name}
+        assert len(colors) == 3
+        assert "共 3 类蓝图" in bridge.statusText
+        assert "足够 1 种" in bridge.statusText
+        assert "不足 1 种" in bridge.statusText
+        assert "缺少 1 种" in bridge.statusText
+    finally:
+        dialog.deleteLater()
+
+
+def test_blueprint_requirements_empty_states(monkeypatch, qapp):
+    """没有活跃计划 / 没有蓝图需求时只给状态文案，不建表。"""
+    import services.industry_dialog_queries as q
+    from ui_qml.bridge.blueprint_dialog_bridge import BlueprintRequirementsQmlDialog
+
+    for status, hint in (("no_active", "没有活跃计划"), ("no_needed", "没有蓝图需求")):
+        monkeypatch.setattr(q, "get_blueprint_requirements", lambda db, s=status: {"status": s})
+        dialog = BlueprintRequirementsQmlDialog()
+        try:
+            assert dialog.bridge.rowCount == 0
+            assert dialog.bridge.statusText == hint
+        finally:
+            dialog.deleteLater()
