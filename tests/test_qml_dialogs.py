@@ -555,3 +555,145 @@ def test_mass_parallel_mode_switch_resets_param(mass_parallel_factory):
         assert bridge.hasPreview is False  # 换模式清掉旧预览
     finally:
         dialog.deleteLater()
+
+
+# ════════════════════════════════════════════════════════════════
+#  绑定库存蓝图（阶段 4）
+# ════════════════════════════════════════════════════════════════
+
+
+class _PickerHarness:
+    """造「绑定库存蓝图」对话框，并握住写库与占用状态两处桩。
+
+    选项固定 4 条，覆盖四种行态：
+      0) 自己已绑定（默认勾选、可勾）
+      1) 原图（BPO，可用流程视为无限）
+      2) 被其他活跃计划占用（禁勾）
+      3) 流程不足（黄字提示但仍可勾）
+    """
+
+    OPTIONS = [
+        {"id": 1, "is_bpo": False, "available_runs": 10, "me_level": 10, "te_level": 20, "hangar_name": "组件仓"},
+        {"id": 2, "is_bpo": True, "me_level": 0, "te_level": 0, "hangar_name": "矿仓"},
+        {"id": 3, "is_bpo": False, "available_runs": 99, "me_level": 0, "te_level": 0, "hangar_name": "矿仓"},
+        {"id": 4, "is_bpo": False, "available_runs": 1, "me_level": 0, "te_level": 0, "hangar_name": ""},
+    ]
+
+    def __init__(self, qml_cls, state, writes, bind_ok=True):
+        self.qml_cls = qml_cls
+        self.state = state
+        self.writes = writes
+        self.bind_ok = bind_ok
+
+    def __call__(self):
+        return self.qml_cls({"id": 7, "product_type_id": 1001, "product_name": "碳纤维", "runs": 3, "parallels": 2})
+
+
+@pytest.fixture
+def blueprint_picker_factory(qapp, monkeypatch):
+    from types import SimpleNamespace
+
+    import services.industry_dialog_queries as q
+    import services.plan_execution as pe
+
+    state = {"bound": [1], "need": 2, "runs": 3}
+    writes: list[list[int]] = []
+
+    monkeypatch.setattr(pe, "get_plan_binding_state", lambda plan_id: dict(state))
+    monkeypatch.setattr(pe, "get_occupied_blueprint_ids", lambda db, exclude_plan_id=None: {3})
+    monkeypatch.setattr(
+        q, "get_blueprint_picker_data", lambda db, pid: (3002, [dict(o) for o in _PickerHarness.OPTIONS])
+    )
+    monkeypatch.setattr("ui_qml.bridge.blueprint_picker_bridge.get_container", lambda: SimpleNamespace(db=None))
+
+    def _bind(plan_id: int, ids: list[int]) -> bool:
+        writes.append(list(ids))
+        state["bound"] = list(ids)
+        return True
+
+    monkeypatch.setattr(pe, "bind_blueprints", _bind)
+
+    from ui_qml.bridge.blueprint_picker_bridge import BlueprintPickerQmlDialog
+
+    return _PickerHarness(BlueprintPickerQmlDialog, state, writes)
+
+
+def test_blueprint_picker_dialog_loads_without_warnings(blueprint_picker_factory):
+    _assert_loads_and_quiet(blueprint_picker_factory, "绑定库存蓝图")
+
+
+def test_picker_row_states(blueprint_picker_factory):
+    """四种行态：自己绑定可勾、原图无限、占用禁勾、流程不足可勾但标黄。"""
+    dialog = blueprint_picker_factory()
+    try:
+        rows = dialog.bridge.rows
+        assert len(rows) == 4
+
+        assert rows[0]["checked"] is True and rows[0]["checkable"] is True
+        assert rows[0]["cells"][0]["text"] == "拷贝"
+        assert rows[0]["cells"][1]["text"] == "10"  # ME
+        assert rows[0]["cells"][4]["text"] == "组件仓"
+
+        assert rows[1]["cells"][0]["text"] == "原图"
+        assert rows[1]["cells"][3]["text"] == "无限"
+
+        assert rows[2]["checkable"] is False
+        assert rows[2]["disabled"] is True
+        assert rows[2]["cells"][5]["text"] == "占用中"
+
+        assert rows[3]["checkable"] is True
+        assert rows[3]["cells"][5]["text"] == "流程不足"
+    finally:
+        dialog.deleteLater()
+
+
+def test_picker_writes_through_and_caps_at_need(blueprint_picker_factory):
+    """勾选即落库；满额后再勾回滚并给橙色提示，且不再写库。"""
+    dialog = blueprint_picker_factory()
+    try:
+        bridge = dialog.bridge
+        # 构建期已按 DB 现状落一次库（自己绑定 1 张，需 2 张）
+        assert blueprint_picker_factory.writes[-1] == [1]
+        assert bridge.selectedBlueprintIds == [1]
+        assert bridge.statusToken == "ACCENT_RED"
+        assert "还差 1 张" in bridge.statusText
+
+        bridge.toggle(1, True)
+        assert blueprint_picker_factory.writes[-1] == [1, 2]
+        assert bridge.statusToken == "GREEN"
+        assert "已选 2 / 需 2 张" in bridge.statusText
+
+        writes_before = len(blueprint_picker_factory.writes)
+        bridge.toggle(3, True)  # 第 3 张 → 超需，回滚
+        assert bridge.rows[3]["checked"] is False
+        assert bridge.statusToken == "ACCENT_ORANGE"
+        assert "按需取前 2 张" in bridge.statusText
+        assert len(blueprint_picker_factory.writes) == writes_before, "回滚不该再写库"
+    finally:
+        dialog.deleteLater()
+
+
+def test_picker_batch_actions_and_accept(blueprint_picker_factory):
+    """右键批量：仅保留所选；绑定不足时「完成」要先本地确认一次。"""
+    dialog = blueprint_picker_factory()
+    try:
+        bridge = dialog.bridge
+        bridge.checkRows([1, 3])  # 批量勾选（占用行 2 会被 _bulk 跳过）
+        assert bridge.rows[1]["checked"] is True
+        assert bridge.rows[3]["checked"] is True
+        assert bridge.rows[2]["checked"] is False
+
+        bridge.onlyKeep([0])  # 参数是**行号**（QML 的 selRows），返回值才是蓝图 id
+        assert bridge.selectedBlueprintIds == [1]
+        assert bridge.rows[1]["checked"] is False
+        assert bridge.rows[3]["checked"] is False
+
+        accepted: list[bool] = []
+        bridge.accepted.connect(lambda: accepted.append(True))
+        bridge.accept()  # 1 < 需 2 → 只提示，不关闭
+        assert accepted == []
+        assert "仍要关闭请再点一次" in bridge.error
+        bridge.accept()
+        assert accepted == [True]
+    finally:
+        dialog.deleteLater()

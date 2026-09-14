@@ -699,14 +699,14 @@ class PlanTable(QWidget):
         plan = model.get_plan(row)
         if not plan:
             return
-        from ui_pyside6.views.industry.blueprint_picker_dialog import BlueprintPickerDialog
+        from ui_qml.bridge.blueprint_picker_bridge import BlueprintPickerQmlDialog as BlueprintPickerDialog
 
         dlg = BlueprintPickerDialog(plan, self)
         if dlg.exec():
-            bound = dlg.selected_blueprint_ids
+            bound = dlg.bridge.selected_ids()
             plan["assigned_blueprint_id"] = bound[0] if bound else None
             plan["bound_blueprint_ids"] = list(bound)
-            plan["need_blueprints"] = int(dlg.need_count or 1)
+            plan["need_blueprints"] = dlg.bridge.need_count()
             model.layoutChanged.emit()
             self.plan_updated.emit()
 
