@@ -399,19 +399,33 @@ Item {
                     }
                 }
 
-                TapHandler {
-                    acceptedButtons: Qt.LeftButton
-                    gesturePolicy: TapHandler.ReleaseWithinBounds
-                    onSingleTapped: {
-                        win.launcher.selectRow(rowCard.modelData.id)
-                        win.launcher.rowClicked(rowCard.modelData.id)
-                    }
+            }
+
+            /* 行点击命中固定在按下那一刻（见 FTableClickArea 的说明）。
+             * 这是 ListView 行卡片：整行一格（`columnWidth: null`），行距 = 卡片高 + spacing。 */
+            FTableClickArea {
+                objectName: "launcherClickArea"
+                anchors.fill: parent
+                rowHeight: win.launcher ? win.launcher.rowHeight : 68
+                rowSpacing: planList.spacing
+                columnWidth: null
+
+                function _idAt(row) {
+                    const rows = win.launcher ? win.launcher.rows : []
+                    return row >= 0 && row < rows.length ? rows[row].id : null
                 }
 
-                TapHandler {
-                    acceptedButtons: Qt.RightButton
-                    gesturePolicy: TapHandler.ReleaseWithinBounds
-                    onSingleTapped: win.launcher.rowContextMenu(rowCard.modelData.id)
+                onRowClicked: function (row, _column) {
+                    const id = _idAt(row)
+                    if (id === null)
+                        return
+                    win.launcher.selectRow(id)
+                    win.launcher.rowClicked(id)
+                }
+                onRowRightClicked: function (row, _column, _x, _y) {
+                    const id = _idAt(row)
+                    if (id !== null)
+                        win.launcher.rowContextMenu(id)
                 }
             }
         }

@@ -31,6 +31,7 @@ INV_ROLE_NAMES: dict[int, bytes] = {
     _BASE + 4: b"tooltip",
     _BASE + 5: b"rowIndex",
     _BASE + 6: b"itemId",
+    _BASE + 7: b"selected",
 }
 _I_TEXT = _BASE + 1
 _I_ICON = _BASE + 2
@@ -38,6 +39,7 @@ _I_ALIGN = _BASE + 3
 _I_TIP = _BASE + 4
 _I_ROW = _BASE + 5
 _I_ID = _BASE + 6
+_I_SELECTED = _BASE + 7
 
 BP_ROLE_NAMES: dict[int, bytes] = {
     _BASE + 1: b"text",
@@ -47,6 +49,7 @@ BP_ROLE_NAMES: dict[int, bytes] = {
     _BASE + 5: b"rowIndex",
     _BASE + 6: b"bpId",
     _BASE + 7: b"itemName",
+    _BASE + 8: b"selected",
 }
 _B_TEXT = _BASE + 1
 _B_FG = _BASE + 2
@@ -55,6 +58,7 @@ _B_ALIGN = _BASE + 4
 _B_ROW = _BASE + 5
 _B_ID = _BASE + 6
 _B_NAME = _BASE + 7
+_B_SELECTED = _BASE + 8
 
 
 def _token(name: str) -> str:
@@ -73,13 +77,41 @@ def _png_url(type_id: Any) -> str:
 class InvQmlModel(InvTableModel):
     """机库物品表：命名角色 + 可整体换行。"""
 
+    #: 可排序列（与父类 `sort()` 的键一致）—— QML 用它决定表头是否可点，
+    #: 判据只此一份，别在 QML 里再写一遍
+    SORTABLE = frozenset({1, 2, 3, 4, 5, 6, 7})
+
     def __init__(self, items: list[dict] | None = None) -> None:
         super().__init__(list(items or []))
+        self._selection: set[int] = set()
 
     def set_rows(self, items: list[dict]) -> None:
         self.beginResetModel()
         self._items = list(items or [])
+        self._selection = set()
         self.endResetModel()
+
+    #: 选中行集合（由桥灌入）。**高亮走模型角色而不是 QML 侧派生集合**：
+    #: 绑定一个「Python 侧算出来的列表」实测不会随选中变化重算（QML 侧的依赖没建立
+    #: 起来），表现为点了行、画面上高亮不动 —— 看起来就像「选了另一行」。
+    #: 走 `dataChanged` 是 TableView 的原生机制，确定会刷新。
+    def rows(self) -> list[dict]:
+        """底层行数据（只读用途：桥排序后要按 id 找回选中行）。"""
+        return list(self._items)
+
+    def set_selection(self, rows: set[int]) -> None:
+        """把选中行灌进模型，只通知受影响的那段行。"""
+        new = set(rows)
+        changed = self._selection ^ new
+        if not changed:
+            return
+        self._selection = new
+        n = self.rowCount()
+        touched = sorted(r for r in changed if 0 <= r < n)
+        if not touched:
+            return
+        cols = self.columnCount()
+        self.dataChanged.emit(self.index(touched[0], 0), self.index(touched[-1], cols - 1), [])
 
     def roleNames(self) -> dict[int, bytes]:  # type: ignore[override]
         return INV_ROLE_NAMES
@@ -102,6 +134,8 @@ class InvQmlModel(InvTableModel):
             return index.row()
         if role == _I_ID:
             return row.get("id")
+        if role == _I_SELECTED:
+            return index.row() in self._selection
         return super().data(index, role)
 
     @staticmethod
@@ -129,13 +163,40 @@ class InvQmlModel(InvTableModel):
 class BlueprintQmlModel(BlueprintTableModel):
     """蓝图表：命名角色 + 可整体换行。"""
 
+    #: 可排序列（父类 `sort()` 覆盖 0..10 全部列）
+    SORTABLE = frozenset(range(11))
+
     def __init__(self, rows: list[dict] | None = None) -> None:
         super().__init__(list(rows or []))
+        self._selection: set[int] = set()
 
     def set_rows(self, rows: list[dict]) -> None:
         self.beginResetModel()
         self._rows = list(rows or [])
+        self._selection = set()
         self.endResetModel()
+
+    #: 选中行集合（由桥灌入）。**高亮走模型角色而不是 QML 侧派生集合**：
+    #: 绑定一个「Python 侧算出来的列表」实测不会随选中变化重算（QML 侧的依赖没建立
+    #: 起来），表现为点了行、画面上高亮不动 —— 看起来就像「选了另一行」。
+    #: 走 `dataChanged` 是 TableView 的原生机制，确定会刷新。
+    def rows(self) -> list[dict]:
+        """底层行数据（只读用途：桥排序后要按 id 找回选中行）。"""
+        return list(self._rows)
+
+    def set_selection(self, rows: set[int]) -> None:
+        """把选中行灌进模型，只通知受影响的那段行。"""
+        new = set(rows)
+        changed = self._selection ^ new
+        if not changed:
+            return
+        self._selection = new
+        n = self.rowCount()
+        touched = sorted(r for r in changed if 0 <= r < n)
+        if not touched:
+            return
+        cols = self.columnCount()
+        self.dataChanged.emit(self.index(touched[0], 0), self.index(touched[-1], cols - 1), [])
 
     def roleNames(self) -> dict[int, bytes]:  # type: ignore[override]
         return BP_ROLE_NAMES
@@ -166,6 +227,8 @@ class BlueprintQmlModel(BlueprintTableModel):
             return row.get("id")
         if role == _B_NAME:
             return self._name(row)
+        if role == _B_SELECTED:
+            return index.row() in self._selection
         return super().data(index, role)
 
     def _display(self, row: dict, col: int) -> str:

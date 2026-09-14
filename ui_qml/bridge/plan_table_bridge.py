@@ -389,13 +389,6 @@ class PlanTableBridge(QObject):
         """就地编辑器的初始文本。"""
         return str(self._cell_data(row, column, self._ROLE_TEXT) or "")
 
-    #: 行数（表格点击区用它把「最后一行以下」判成空白区）
-    rowCount = Property(int, lambda self: self._row_count(), notify=modelChanged)
-
-    def _row_count(self) -> int:
-        model = self._table.get_model()
-        return model.rowCount() if model is not None else 0
-
     @Slot(int, int, str, result=bool)
     def commitEdit(self, row: int, column: int, text: str) -> bool:
         """单元格内联编辑落库（备注/人物/设施/成功率/解码器）。"""

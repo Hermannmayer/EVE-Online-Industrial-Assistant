@@ -461,7 +461,6 @@ Item {
             anchors.fill: parent
             rowHeight: root.rowH
             columnWidth: root.widthOf
-            rowCount: root.planBridge ? root.planBridge.rowCount : 0
 
 
             onRowClicked: function (row, column) {
@@ -589,18 +588,21 @@ Item {
                 cursorShape: Qt.PointingHandCursor
             }
 
-            TapHandler {
-                acceptedButtons: Qt.LeftButton
-                gesturePolicy: TapHandler.ReleaseWithinBounds
-                onSingleTapped: root.planBridge.sortBy(hcell.index)
-            }
-
-            TapHandler {
-                acceptedButtons: Qt.RightButton
-                gesturePolicy: TapHandler.ReleaseWithinBounds
-                onSingleTapped: function (eventPoint) {
-                    const p = hcell.mapToItem(root, eventPoint.position.x, eventPoint.position.y)
-                    root.openHeaderMenu(p.x, p.y)
+            /* 表头点击：桌面端只用鼠标，不需要 TapHandler 的手势语义。
+             * **必须声明在下面那个调列宽的 `resizeHandle` 之前** —— 同层里后声明者在上，
+             * 拖拽调宽才不会被本区域吃掉（原先的两个 TapHandler 也在同一位置）。 */
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                onClicked: function (mouse) {
+                    if (!root.planBridge)
+                        return
+                    if (mouse.button === Qt.RightButton) {
+                        const p = mapToItem(root, mouse.x, mouse.y)
+                        root.openHeaderMenu(p.x, p.y)
+                    } else {
+                        root.planBridge.sortBy(hcell.index)
+                    }
                 }
             }
 

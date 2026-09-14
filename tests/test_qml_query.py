@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QEventLoop, Qt, QTimer, QtMsgType, qInstallMessageHandler
 
+from tests.qml_click import press_move_release
 from ui_pyside6.views.query.query_search import format_search_rows
 from ui_qml.models.query_qml_model import ROLE_NAMES, QueryQmlModel
 
@@ -312,3 +313,22 @@ def test_page_loads_without_qml_warnings(query_page):
         qInstallMessageHandler(previous)
 
     assert not caught, "QML 产生了告警：\n" + "\n".join(dict.fromkeys(caught))
+
+
+@pytest.mark.ui
+def test_row_click_survives_content_move(query_page):
+    """行点击命中固定在按下那一刻（见 `FTableClickArea` 的说明）。
+
+    回归背景：delegate 里的 `TapHandler` 配 `ReleaseWithinBounds` 在**释放**时判定
+    命中，内容一移动（甩动/惯性沉降）就整次丢掉点击 —— 界面表现是
+    「单击不到所对应的行上」。
+    """
+    host, bridge = query_page
+    from ui_pyside6.views.query.query_search import format_search_rows
+
+    bridge.model.set_rows(format_search_rows([_row(tid=34 + i, zh=f"物品{i}") for i in range(50)], False))
+    _spin(150)
+    root = host.rootObject()
+    press_move_release(
+        host, root, area_name="queryClickArea", row=3, read_current=lambda: root.property("currentRow"), delta=1
+    )

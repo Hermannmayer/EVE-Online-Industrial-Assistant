@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import services.plan_execution as plan_execution
+from tests.qml_click import press_move_release, spin
 
 pytestmark = pytest.mark.ui
 
@@ -846,5 +847,36 @@ class TestLauncherContextMenu:
             w._on_row_notes(201)
 
             repo.update.assert_not_called()
+        finally:
+            w.close()
+
+
+class TestLauncherRowClick:
+    """行点击命中固定在按下那一刻（见 `ui_qml/qml/components/FTableClickArea.qml`）。
+
+    回归背景：delegate 里的 `TapHandler` 配 `ReleaseWithinBounds` 在**释放**时判定
+    命中，而 `ListView` 也是 Flickable —— 内容一移动（甩动/惯性沉降），按下位置那行
+    已经被复用走，整次点击被丢掉。
+    """
+
+    def test_click_survives_content_move(self, qapp, monkeypatch):
+        w, _ = _make_launcher(qapp, monkeypatch)
+        try:
+            # 必须给窗口真实尺寸并显示：不显示时内部 ListView 高度是 0，点击区
+            # 根本不在可点范围内（与产品无关，是测试环境要满足的前提）
+            w.resize(1000, 700)
+            w.show()
+            spin(400)
+            rows = w._bridge.rows
+            assert len(rows) >= 4, "用例需要至少 4 行才能验证滚动中的点击"
+            press_move_release(
+                w._host,
+                w._host.rootObject(),
+                area_name="launcherClickArea",
+                row=3,
+                read_current=lambda: w._bridge.selectedId,
+                expect=rows[3]["id"],
+                delta=1,
+            )
         finally:
             w.close()

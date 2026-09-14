@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.qml_click import press_move_release
 from ui_qml.bridge.estimate_bridge import EstimateBridge
 
 pytestmark = pytest.mark.ui
@@ -157,3 +158,47 @@ def test_busy_property_toggles(qapp):
     b._set_busy(True)
     b._set_busy(False)
     assert seen == [True, False]
+
+
+# ════════════════════════════════════════════════════════════
+#  页面层：行点击命中固定在按下那一刻
+# ════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def estimate_page(qapp):
+    from ui_qml.bridge.estimate_bridge import EstimateBridge
+    from ui_qml.host import PageHost
+
+    bridge = EstimateBridge()
+    bridge._model.set_rows(
+        [
+            {
+                "type_id": 34 + i,
+                "name": f"物品{i}",
+                "qty": 100 + i,
+                "unit_price": 5.0,
+                "sell_total": 600.0,
+                "buy_total": 550.0,
+                "volume": 0.01,
+            }
+            for i in range(50)
+        ]
+    )
+    host = PageHost("pages/EstimatePage.qml", context={"bridge": bridge})
+    yield host, bridge
+    host.deleteLater()
+
+
+@pytest.mark.ui
+def test_row_click_survives_content_move(estimate_page):
+    """行点击命中固定在按下那一刻（见 `FTableClickArea` 的说明）。
+
+    回归背景：delegate 里的 `TapHandler` 在**释放**时判定命中，内容一移动
+    （甩动/惯性沉降）就整次丢掉点击 —— 界面表现是「单击不到所对应的行上」。
+    """
+    host, _bridge = estimate_page
+    root = host.rootObject()
+    press_move_release(
+        host, root, area_name="estimateClickArea", row=3, read_current=lambda: root.property("selectedRow"), delta=1
+    )

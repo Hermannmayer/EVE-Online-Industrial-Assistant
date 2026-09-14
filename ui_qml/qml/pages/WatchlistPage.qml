@@ -44,6 +44,21 @@ Item {
         color: Theme.bgDark
     }
 
+    /* 列宽：provider 与点击区必须同口径 —— 两处各算一次会错位。 */
+    function colWidth(col) {
+        const cols = page.watch ? page.watch.columns : []
+        if (col >= cols.length)
+            return 0
+        // 最后一列（备注）吃满剩余空间，对齐原版的 Stretch
+        if (col === cols.length - 1) {
+            let used = 0
+            for (let i = 0; i < cols.length - 1; ++i)
+                used += cols[i].width
+            return Math.max(80, tableView.width - used)
+        }
+        return cols[col].width
+    }
+
     function openThreshold(row, kind) {
         const info = page.watch ? page.watch.rowInfo(row) : ({})
         if (!info.valid)
@@ -241,19 +256,7 @@ Item {
                 selectionBehavior: TableView.SelectionDisabled
                 reuseItems: true
                 rowHeightProvider: function (row) { return page.rowH }
-                columnWidthProvider: function (col) {
-                    const cols = page.watch ? page.watch.columns : []
-                    if (col >= cols.length)
-                        return 0
-                    // 最后一列（备注）吃满剩余空间，对齐原版的 Stretch
-                    if (col === cols.length - 1) {
-                        let used = 0
-                        for (let i = 0; i < cols.length - 1; ++i)
-                            used += cols[i].width
-                        return Math.max(80, tableView.width - used)
-                    }
-                    return cols[col].width
-                }
+                columnWidthProvider: function (col) { return page.colWidth(col) }
 
                 ScrollBar.vertical: ScrollBar {
                     policy: ScrollBar.AsNeeded
@@ -321,30 +324,32 @@ Item {
                         cursorShape: Qt.PointingHandCursor
                     }
 
-                    TapHandler {
-                        acceptedButtons: Qt.LeftButton
-                        gesturePolicy: TapHandler.ReleaseWithinBounds
-                        onSingleTapped: page.currentRow = cell.row
-                        onDoubleTapped: {
-                            page.currentRow = cell.row
-                            if (cell.column === 7)
-                                page.openThreshold(cell.row, "buy")
-                            else if (cell.column === 8)
-                                page.openThreshold(cell.row, "sell")
-                        }
-                    }
+                }
 
-                    TapHandler {
-                        acceptedButtons: Qt.RightButton
-                        gesturePolicy: TapHandler.ReleaseWithinBounds
-                        onSingleTapped: function (eventPoint) {
-                            page.currentRow = cell.row
-                            const p = cell.mapToItem(page, eventPoint.position.x, eventPoint.position.y)
-                            rowMenu.row = cell.row
-                            rowMenu.x = p.x
-                            rowMenu.y = p.y
-                            rowMenu.open()
-                        }
+                // 行点击命中固定在按下那一刻（见 FTableClickArea 的说明）
+                FTableClickArea {
+                    objectName: "watchClickArea"
+                    anchors.fill: parent
+                    rowHeight: page.rowH
+                    columnWidth: page.colWidth
+
+                    onRowClicked: function (row, _column) {
+                        page.currentRow = row
+                    }
+                    onRowDoubleClicked: function (row, column) {
+                        page.currentRow = row
+                        if (column === 7)
+                            page.openThreshold(row, "buy")
+                        else if (column === 8)
+                            page.openThreshold(row, "sell")
+                    }
+                    onRowRightClicked: function (row, _column, x, y) {
+                        page.currentRow = row
+                        const p = mapToItem(page, x, y)
+                        rowMenu.row = row
+                        rowMenu.x = p.x
+                        rowMenu.y = p.y
+                        rowMenu.open()
                     }
                 }
             }

@@ -13,9 +13,13 @@ import "../components"
  * **业务动作一律不在这里实现**：每次交互都调 `inv.<方法>`，
  * 由 `ui_qml/bridge/inventory_bridge.py` 转给既有 service / worker。
  *
- * **多选由桥实现**（这是唯一真正需要多选的页面）：桥把选中集**整批**给出，
- * delegate 只做 `indexOf` 判断（逐格调 `itemRowSelected(row)` 会让一次选中变化
- * 产生 200 次跨 QML/Python 调用）；修饰键在 Python 侧读（QML 拿不到）。
+ * **多选由桥实现**（这是唯一真正需要多选的页面）：桥把选中集灌进**模型的
+ * `selected` 角色**，delegate 直接读 `model.selected` —— 走 `dataChanged` 是
+ * TableView 的原生刷新机制。修饰键在 Python 侧读（QML 拿不到）。
+ *
+ * 别改用「QML 派生的选中集合 + 逐格 indexOf」：那条路不只是慢（一次选中变化
+ * 200 次跨 QML/Python 调用），实测那个派生绑定**根本不随选中变化重算**，
+ * 表现为点了行、高亮不动（看着像选中了别的行）。
  *
  * **点击命中也由 `FTableClickArea` 统一负责**，不在 delegate 里挂 TapHandler：
  * 后者在内容甩动/沉降时会整次丢掉点击（详见该组件的说明）。
@@ -34,17 +38,6 @@ Item {
     readonly property int headerH: Math.max(26, fntSmall + 15)
     readonly property int gap: Theme.spacingSm
 
-    /* 选中集：**读一次列表**，delegate 只做 `indexOf` 判断。
-     * 别在 delegate 里逐格调 `inv.itemRowSelected(row)` —— 8 列 × 25 行表，
-     * 每次选中变化就是 200 次跨 QML/Python 调用（实测），点一下就能感到卡。 */
-    readonly property var itemSelRows: {
-        page.inv.selectionRevision
-        return page.inv ? page.inv.selectedItemRows : []
-    }
-    readonly property var bpSelRows: {
-        page.inv.selectionRevision
-        return page.inv ? page.inv.selectedBlueprintRows : []
-    }
 
     // 整页不透明底（宿主是透明清屏的 QQuickWidget，见 IndustryPage 的同款说明）
     Rectangle {
@@ -159,15 +152,24 @@ Item {
             }
         }
 
-        TabBar {
-            id: tabBar
+        /* 标签栏靠左收窄，别铺满整行：`Layout.fillWidth: true` 会让两个 TabButton
+         * 各撑到窗口一半宽，上半区看着一大片空荡（用户反馈「上面空的、不紧凑」）。*/
+        RowLayout {
             Layout.fillWidth: true
+            spacing: page.gap
 
-            TabButton {
-                text: qsTr("机库管理")
+            TabBar {
+                id: tabBar
+
+                TabButton {
+                    text: qsTr("机库管理")
+                }
+                TabButton {
+                    text: qsTr("蓝图管理")
+                }
             }
-            TabButton {
-                text: qsTr("蓝图管理")
+            Item {
+                Layout.fillWidth: true
             }
         }
 
@@ -302,11 +304,22 @@ Item {
                                 anchors.rightMargin: 6
                                 verticalAlignment: Text.AlignVCenter
                                 horizontalAlignment: ih.index >= 2 ? Text.AlignRight : Text.AlignLeft
-                                text: ih.meta ? ih.meta.title : ""
+                                text: (ih.meta ? ih.meta.title : "")
+                                      + (page.inv && page.inv.itemSortColumn === ih.index
+                                         ? (page.inv.itemSortAscending ? " ▲" : " ▼") : "")
                                 color: Theme.textPrimary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: page.fntSmall
                                 elide: Text.ElideRight
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                acceptedButtons: Qt.LeftButton
+                                // 只让可排序的列表头可点（可排序列由模型给出，只有一份判据）
+                                enabled: page.inv ? page.inv.itemSortableColumns.indexOf(ih.index) >= 0 : false
+                                onClicked: if (page.inv)
+                                    page.inv.sortItems(ih.index)
                             }
                         }
                     }
@@ -334,7 +347,7 @@ Item {
                         }
                         delegate: Cell {
                             wideIcon: true
-                            selectedRow: page.itemSelRows.indexOf(row) >= 0
+                            selectedRow: model.selected === true
                             implicitWidth: page.itemColWidth(column)
                         }
 
@@ -345,7 +358,6 @@ Item {
                             anchors.fill: parent
                             rowHeight: page.rowH
                             columnWidth: page.itemColWidth
-                            rowCount: page.inv ? page.inv.itemCount : 0
 
                             onRowClicked: function (row, _column) {
                                 if (page.inv)
@@ -515,11 +527,22 @@ Item {
                                 anchors.rightMargin: 6
                                 verticalAlignment: Text.AlignVCenter
                                 horizontalAlignment: bh.index >= 2 ? Text.AlignRight : Text.AlignLeft
-                                text: bh.meta ? bh.meta.title : ""
+                                text: (bh.meta ? bh.meta.title : "")
+                                      + (page.inv && page.inv.blueprintSortColumn === bh.index
+                                         ? (page.inv.blueprintSortAscending ? " ▲" : " ▼") : "")
                                 color: Theme.textPrimary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: page.fntSmall
                                 elide: Text.ElideRight
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                acceptedButtons: Qt.LeftButton
+                                // 只让可排序的列表头可点（可排序列由模型给出，只有一份判据）
+                                enabled: page.inv ? page.inv.blueprintSortableColumns.indexOf(bh.index) >= 0 : false
+                                onClicked: if (page.inv)
+                                    page.inv.sortBlueprints(bh.index)
                             }
                         }
                     }
@@ -548,7 +571,7 @@ Item {
 
                         delegate: Cell {
                             iconColumn: 0
-                            selectedRow: page.bpSelRows.indexOf(row) >= 0
+                            selectedRow: model.selected === true
                             implicitWidth: page.bpColWidth(column)
                         }
 
@@ -558,7 +581,6 @@ Item {
                             anchors.fill: parent
                             rowHeight: page.rowH
                             columnWidth: page.bpColWidth
-                            rowCount: page.inv ? page.inv.blueprintCount : 0
 
                             onRowClicked: function (row, column) {
                                 if (!page.inv)

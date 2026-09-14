@@ -68,6 +68,10 @@ class InventoryBridge(QObject):
         self._bp_tech_levels: dict[int, int] = {}
         self._bp_reaction_ids: set[int] = set()
         self._selection_revision = 0
+        self._item_sort_col = -1
+        self._item_sort_asc = True
+        self._bp_sort_col = -1
+        self._bp_sort_asc = True
 
         self._reload_hangars()
         self.refreshItems()  # 构造时就把当前机库的物品表填上（否则首次进页面是空的）
@@ -94,18 +98,85 @@ class InventoryBridge(QObject):
         self._item_selection = self._apply_selection(
             self._item_selection, row, self._items.rowCount(), anchor_attr="_item_anchor"
         )
+        self._notify_selection()
 
     @Slot(int)
     def selectBlueprintRow(self, row: int) -> None:
         self._bp_selection = self._apply_selection(
             self._bp_selection, row, self._blueprints.rowCount(), anchor_attr="_bp_anchor"
         )
+        self._notify_selection()
 
     def _modifiers(self) -> Qt.KeyboardModifier:
         """当前修饰键。**留成方法是为了可测**：PySide6 的 `QGuiApplication` 是 C++ 类型，
         测试里 `monkeypatch.setattr` 它不生效（静默失败），只能从这一层注入。
         """
         return QGuiApplication.keyboardModifiers()
+
+    # ═══════════════════════════════════════════════════════════
+    #  表头排序
+    # ═══════════════════════════════════════════════════════════
+
+    itemSortChanged = Signal()
+    blueprintSortChanged = Signal()
+
+    itemSortableColumns = Property(list, lambda self: sorted(self._items.SORTABLE), constant=True)
+    blueprintSortableColumns = Property(list, lambda self: sorted(self._blueprints.SORTABLE), constant=True)
+    itemSortColumn = Property(int, lambda self: self._item_sort_col, notify=itemSortChanged)
+    itemSortAscending = Property(bool, lambda self: self._item_sort_asc, notify=itemSortChanged)
+    blueprintSortColumn = Property(int, lambda self: self._bp_sort_col, notify=blueprintSortChanged)
+    blueprintSortAscending = Property(bool, lambda self: self._bp_sort_asc, notify=blueprintSortChanged)
+
+    @Slot(int)
+    def sortItems(self, column: int) -> None:
+        """表头点列排序（再点同列反向）。排序键在模型里，见 `InvTableModel.sort`。"""
+        asc = not (self._item_sort_col == column and self._item_sort_asc)
+        self._item_sort_col = column
+        self._item_sort_asc = asc
+        keep = self._selected_ids(self._items, self._item_selection)
+        self._items.sort(column, Qt.SortOrder.AscendingOrder if asc else Qt.SortOrder.DescendingOrder)
+        # 排序会重排行号 —— 选中集按 **id** 找回新行号，别让选中集指到别的物品上
+        self._item_selection = self._rows_of_ids(self._items, keep)
+        self._notify_selection()
+        self.itemSortChanged.emit()
+
+    @Slot(int)
+    def sortBlueprints(self, column: int) -> None:
+        asc = not (self._bp_sort_col == column and self._bp_sort_asc)
+        self._bp_sort_col = column
+        self._bp_sort_asc = asc
+        keep = self._selected_ids(self._blueprints, self._bp_selection)
+        self._blueprints.sort(column, Qt.SortOrder.AscendingOrder if asc else Qt.SortOrder.DescendingOrder)
+        self._bp_selection = self._rows_of_ids(self._blueprints, keep)
+        self._notify_selection()
+        self.blueprintSortChanged.emit()
+
+    @staticmethod
+    def _selected_ids(model: Any, selection: set[int]) -> set:
+        rows = model.rows()
+        return {rows[r].get("id") for r in selection if 0 <= r < len(rows)}
+
+    @staticmethod
+    def _rows_of_ids(model: Any, ids: set) -> set[int]:
+        return {i for i, r in enumerate(model.rows()) if r.get("id") in ids}
+
+    def _notify_selection(self) -> None:
+        """选中集变了：先灌进模型（delegate 靠 `model.selected` 画高亮），再通知 QML。
+
+        **必须在 `self._item_selection = ...` 赋值之后调用**：本方法读的是当前字段值，
+        而 `_apply_selection` 是「返回新集合、由调用方赋值」，在它内部调用时赋值还没发生
+        —— 灌给模型的是旧集合，`set_selection` 发现没变化直接返回，`dataChanged`
+        一次都不发（实测：桥里选中对了、画面高亮纹丝不动）。
+
+        **高亮必须走模型角色**：早先的做法是 QML 侧派生一个 `readonly property var`
+        集合再逐格 `indexOf`。注意它不只是慢 —— 实测那个派生绑定**根本不随选中变化
+        重算**（依赖没建立起来），表现为「点了这行、高亮不动」，看着就像选中了别的行。
+        走 `dataChanged` 是 TableView 的原生机制，一定会刷新。
+        """
+        self._items.set_selection(self._item_selection)
+        self._blueprints.set_selection(self._bp_selection)
+        self._selection_revision += 1
+        self.selectionChanged.emit()
 
     def _apply_selection(self, current: set[int], row: int, total: int, *, anchor_attr: str) -> set[int]:
         """普通=只选它，Ctrl=切换，Shift=从锚点连选到该行（对齐计划表的选中语义）。
@@ -125,8 +196,6 @@ class InventoryBridge(QObject):
         else:
             result = {row}
         setattr(self, anchor_attr, row)
-        self._selection_revision += 1
-        self.selectionChanged.emit()
         return result
 
     _item_anchor = -1
@@ -138,8 +207,7 @@ class InventoryBridge(QObject):
         if row in self._item_selection:
             return sorted(self._item_selection)
         self._item_selection = {row}
-        self._selection_revision += 1
-        self.selectionChanged.emit()
+        self._notify_selection()
         return [row]
 
     @Slot(int, result=list)
@@ -147,8 +215,7 @@ class InventoryBridge(QObject):
         if row in self._bp_selection:
             return sorted(self._bp_selection)
         self._bp_selection = {row}
-        self._selection_revision += 1
-        self.selectionChanged.emit()
+        self._notify_selection()
         return [row]
 
     @Slot(int, result=bool)
@@ -162,14 +229,12 @@ class InventoryBridge(QObject):
     @Slot()
     def clearItemSelection(self) -> None:
         self._item_selection = set()
-        self._selection_revision += 1
-        self.selectionChanged.emit()
+        self._notify_selection()
 
     @Slot()
     def clearBlueprintSelection(self) -> None:
         self._bp_selection = set()
-        self._selection_revision += 1
-        self.selectionChanged.emit()
+        self._notify_selection()
 
     # ═══════════════════════════════════════════════════════════
     #  Tab 1：机库管理
@@ -187,8 +252,6 @@ class InventoryBridge(QObject):
 
     itemCountText = Property(str, lambda self: self._items_count, notify=itemsChanged)
     itemTotalText = Property(str, lambda self: self._items_total, notify=itemsChanged)
-    #: 行数（表格点击区用它把「最后一行以下」判成空白）
-    itemCount = Property(int, lambda self: self._items.rowCount(), notify=itemsChanged)
 
     hangarNames = Property(list, lambda self: [h.get("label", "") for h in self._hangars], notify=hangarChanged)
     hangarIndex = Property(int, lambda self: self._hangar_index, notify=hangarChanged)
@@ -477,8 +540,6 @@ class InventoryBridge(QObject):
         ]
 
     blueprintCountText = Property(str, lambda self: self._bp_count, notify=blueprintsChanged)
-    #: 行数（同上，表格点击区用）
-    blueprintCount = Property(int, lambda self: self._blueprints.rowCount(), notify=blueprintsChanged)
     typeFilters = Property(list, lambda self: list(_TYPE_FILTERS), constant=True)
     techFilters = Property(list, lambda self: list(_TECH_FILTERS), constant=True)
     marketCategories = Property(list, lambda self: self._bp_categories, notify=blueprintsChanged)

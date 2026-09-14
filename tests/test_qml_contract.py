@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QEventLoop, Qt, QTimer, QtMsgType, qInstallMessageHandler
 
+from tests.qml_click import press_move_release
 from ui_qml.models.contract_qml_models import (
     CONTRACT_ROLE_NAMES,
     ContractItemQmlModel,
@@ -311,3 +312,20 @@ def test_page_loads_without_qml_warnings(contract_page):
         qInstallMessageHandler(previous)
 
     assert not caught, "QML 产生了告警：\n" + "\n".join(dict.fromkeys(caught))
+
+
+@pytest.mark.ui
+def test_row_click_survives_content_move(contract_page):
+    """行点击命中固定在按下那一刻（见 `FTableClickArea` 的说明）。
+
+    回归背景：delegate 里的 `TapHandler` 配 `ReleaseWithinBounds` 在**释放**时判定
+    命中，内容一移动（甩动/惯性沉降）就整次丢掉点击 —— 界面表现是
+    「单击不到所对应的行上」。
+    """
+    host, bridge = contract_page
+    bridge._on_contracts_loaded([_contract(cid=i + 1, title=f"合同{i}") for i in range(50)])
+    _spin(150)
+    root = host.rootObject()
+    press_move_release(
+        host, root, area_name="contractClickArea", row=3, read_current=lambda: root.property("currentRow"), delta=1
+    )

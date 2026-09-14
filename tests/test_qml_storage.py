@@ -465,11 +465,30 @@ def storage_table(qapp, monkeypatch):
     _spin(60)
 
 
+def _delegate_selected(table, row: int):
+    """该行 delegate 的 `selectedRow`（= 画面上的高亮），找不到返回 None。"""
+    for ch in table.property("contentItem").childItems():
+        try:
+            if ch.property("row") == row and ch.property("column") == 1:
+                return ch.property("selectedRow")
+        except Exception:
+            continue
+    return None
+
+
 def _press_point(root, table, row: int, content_y: float, row_h: int) -> QPoint:
-    """「内容位移 content_y 时，视觉第 row 行中心」对应的 host 坐标。"""
+    """「内容位移 content_y 时，视觉第 row 行中心」对应的 host 坐标。
+
+    **断言该行确实落在视口内**：点空时选中集为空，断言会以「应选中第 N 行」的
+    面目出现，把「用例数据挑得不对」伪装成产品故障（实测踩过：单跑通过、整模块
+    跑时窗口矮一点就点空）。
+    """
+    ty = row * row_h - content_y + row_h / 2
+    assert 0 < ty < table.height(), (
+        f"用例自身有误：第 {row} 行在 contentY={content_y} 下不可见（表高 {table.height()}）"
+    )
     origin = table.mapToItem(root, 0.0, 0.0)
     host_origin = root.mapToItem(None, origin.x(), origin.y())
-    ty = row * row_h - content_y + row_h / 2
     return QPoint(int(host_origin.x()) + 200, int(host_origin.y()) + int(ty))
 
 
@@ -548,3 +567,96 @@ def test_right_click_menu_targets_the_pressed_row(storage_table):
     assert menu.property("row") == 6, "菜单作用于右键按下的那一行"
     menu.setProperty("visible", False)
     _spin(60)
+
+
+@pytest.mark.ui
+def test_click_updates_the_row_highlight(storage_table):
+    """回归：点击后**画面上的高亮**必须跟着动。
+
+    只断言桥里的选中集是不够的 —— 曾经出现过「桥里选中对了、delegate 的高亮不动」：
+    当时高亮靠 QML 侧派生集合（`readonly property var` + 逐格 `indexOf`），实测那个
+    派生绑定**不随选中变化重算**，界面上就是点了这行、高亮停在别处（看着像选中了
+    另一行）。现在高亮走模型的 `selected` 角色（`dataChanged` 驱动），把它钉住。
+    """
+    host, root, bridge, table, _area = storage_table
+    row_h = root.property("rowH")
+    table.setProperty("contentY", 0.0)
+    _spin(200)
+    bridge.clearItemSelection()
+    _spin(150)
+    assert _delegate_selected(table, 3) is False
+
+    QTest.mouseClick(host, Qt.LeftButton, Qt.NoModifier, _press_point(root, table, 3, 0.0, row_h))
+    _spin(250)
+
+    assert sorted(bridge._item_selection) == [3]
+    assert _delegate_selected(table, 3) is True, "高亮没跟上：delegate 的 selectedRow 仍是 False"
+    assert _delegate_selected(table, 4) is False, "不该顺带高亮别的行"
+
+
+# ════════════════════════════════════════════════════════════
+#  表头排序
+#
+#  回归背景：仓库页从 Widgets 迁到 QML 时**整个排序功能丢了**（用户反馈
+#  「仓库界面的排序功能没了」）。模型侧一直有 `sort(column, order)`，是表头没接。
+# ════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def sortable_bridge(qapp, monkeypatch):
+    """四行名字有明确顺序的物品，便于断言排序结果。"""
+    names = ["Zeta", "Alpha", "Mike", "Bravo"]
+    items = [{**_item(iid=i + 1, qty=100 * (i + 1)), "display_name": n} for i, n in enumerate(names)]
+    _stub_inventory(monkeypatch, items)
+    from ui_qml.bridge.inventory_bridge import InventoryBridge
+
+    return InventoryBridge(None)
+
+
+@pytest.mark.ui
+def test_sort_items_toggles_direction(sortable_bridge):
+    bridge = sortable_bridge
+
+    def order() -> list[str]:
+        return [r["display_name"] for r in bridge.itemModel.rows()]
+
+    assert order() == ["Zeta", "Alpha", "Mike", "Bravo"]
+    bridge.sortItems(1)  # 名称列升序
+    assert order() == ["Alpha", "Bravo", "Mike", "Zeta"]
+    assert bridge.itemSortColumn == 1
+    assert bridge.itemSortAscending is True
+
+    bridge.sortItems(1)  # 再点同列 → 反向
+    assert order() == ["Zeta", "Mike", "Bravo", "Alpha"]
+    assert bridge.itemSortAscending is False
+
+    bridge.sortItems(2)  # 换列 → 从升序开始（对齐 QTableView）
+    assert order() == ["Zeta", "Alpha", "Mike", "Bravo"]  # 数量 100/200/300/400
+    assert bridge.itemSortAscending is True
+
+
+@pytest.mark.ui
+def test_sort_items_keeps_selection_by_id(sortable_bridge):
+    """排序会重排行号 —— 选中集必须按 **id** 找回，否则会指到别的物品上。"""
+    bridge = sortable_bridge
+    bridge.selectItemRow(1)  # Alpha
+    assert [bridge.itemModel.rows()[r]["display_name"] for r in bridge.selectedItemRows] == ["Alpha"]
+
+    bridge.sortItems(1)  # 名称升序 → Alpha 排到第 0 行
+
+    rows = bridge.itemModel.rows()
+    assert [rows[r]["display_name"] for r in bridge.selectedItemRows] == ["Alpha"]
+
+
+@pytest.mark.fast
+def test_storage_page_headers_are_wired_to_sorting():
+    """静态护栏：两张表的表头都要接到排序。
+
+    「排序功能没了」不会让任何测试失败 —— 当初就是这么整段丢的（表头没接线）。
+    """
+    text = (Path(__file__).resolve().parent.parent / "ui_qml" / "qml" / "pages" / "StoragePage.qml").read_text(
+        encoding="utf-8"
+    )
+    assert "page.inv.sortItems(" in text, "机库表的表头没接排序"
+    assert "page.inv.sortBlueprints(" in text, "蓝图表表头没接排序"
+    assert "itemSortableColumns" in text and "blueprintSortableColumns" in text, "可排序列判据没接上"

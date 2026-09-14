@@ -14,6 +14,11 @@ Item {
 
     // 与 Widgets 版 _COLUMNS 的宽度逐列对齐
     readonly property var columnWidths: [50, 160, 70, 110, 120, 120, 80]
+    /* 列宽：provider / delegate / 点击区必须同口径。 */
+    function colWidth(col) {
+        return page.columnWidths[col]
+    }
+
     readonly property var columnTitles: ["图标", "名字", "数量", "单价", "卖价合计", "买价合计", "体积 m³"]
     // 可排序列 → 模型字段（与 _SORT_KEYS 对齐；图标列不可排）
     readonly property var sortKeys: [null, "name", "qty", "unit_price", "sell_total", "buy_total", "volume"]
@@ -199,8 +204,10 @@ Item {
                                 font.weight: Font.DemiBold
                             }
                             HoverHandler { id: headerHover }
-                            TapHandler {
-                                onTapped: {
+                            MouseArea {
+                                anchors.fill: parent
+                                acceptedButtons: Qt.LeftButton
+                                onClicked: {
                                     if (page.sortKeys[index] === null)
                                         return
                                     if (page.sortColumn === index)
@@ -230,7 +237,7 @@ Item {
                     clip: true
 
                     model: bridge ? bridge.model : null
-                    columnWidthProvider: function (column) { return page.columnWidths[column] }
+                    columnWidthProvider: function (column) { return page.colWidth(column) }
                     rowHeightProvider: function () { return 36 }
                     boundsBehavior: Flickable.StopAtBounds
 
@@ -281,28 +288,33 @@ Item {
                             horizontalAlignment: column >= 2 ? Text.AlignRight : Text.AlignLeft
                         }
 
-                        TapHandler {
-                            acceptedButtons: Qt.LeftButton
-                            onTapped: page.selectedRow = row
+                    }
+
+                    // 行点击命中固定在按下那一刻（见 FTableClickArea 的说明）
+                    FTableClickArea {
+                        objectName: "estimateClickArea"
+                        anchors.fill: parent
+                        rowHeight: 36
+                        columnWidth: page.colWidth
+
+                        onRowClicked: function (row, _column) {
+                            page.selectedRow = row
                         }
-                        TapHandler {
-                            acceptedButtons: Qt.RightButton
-                            onTapped: {
-                                page.selectedRow = row
-                                rowMenu.popup()
-                            }
+                        onRowRightClicked: function (row, _column, _x, _y) {
+                            page.selectedRow = row
+                            rowMenu.popup()
                         }
                         // 数量列双击内联编辑（对齐 Widgets 版的 setData/EditRole）
-                        TapHandler {
-                            acceptedButtons: Qt.LeftButton
-                            onDoubleTapped: {
-                                if (column !== 2)
-                                    return
-                                page.selectedRow = row
-                                qtyEditor.targetRow = row
-                                qtyEditor.initialQty = model.qtyText
-                                qtyEditor.open()
-                            }
+                        onRowDoubleClicked: function (row, column) {
+                            if (column !== 2)
+                                return
+                            page.selectedRow = row
+                            qtyEditor.targetRow = row
+                            // 初值用**原始整数**：模型给的 `qtyText` 带千分位（"1,000"），
+                            // 而 IntValidator 不接受千分位、`Number("1,000")` 还是 NaN，
+                            // 数量 ≥1000 时按 OK 会写不进去（既有缺陷，顺手修掉）。
+                            qtyEditor.initialQty = String(bridge.rowAt(row).qty)
+                            qtyEditor.open()
                         }
                     }
                 }

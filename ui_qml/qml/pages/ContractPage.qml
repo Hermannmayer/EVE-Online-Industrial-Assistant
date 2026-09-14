@@ -32,6 +32,12 @@ Item {
     //: 当前合同行（代理行号；右键菜单与物品详情都作用于它）
     property int currentRow: -1
 
+    /* 列宽：provider / delegate / 点击区三处必须是同一份口径，两处各算一次会错位。 */
+    function contractColWidth(col) {
+        const cols = page.contract ? page.contract.contractColumns : []
+        return col < cols.length ? cols[col].width : 100
+    }
+
     // 整页不透明底（宿主是透明清屏的 QQuickWidget，见 IndustryPage 的同款说明）
     Rectangle {
         anchors.fill: parent
@@ -328,10 +334,7 @@ Item {
                     selectionBehavior: TableView.SelectionDisabled
                     reuseItems: true
                     rowHeightProvider: function (row) { return page.rowH }
-                    columnWidthProvider: function (col) {
-                        const cols = page.contract ? page.contract.contractColumns : []
-                        return col < cols.length ? cols[col].width : 100
-                    }
+                    columnWidthProvider: function (col) { return page.contractColWidth(col) }
 
                     ScrollBar.vertical: ScrollBar {
                         policy: ScrollBar.AsNeeded
@@ -342,37 +345,34 @@ Item {
 
                     delegate: TableCell {
                         isContractRow: true
-                        implicitWidth: {
-                            const cols = page.contract ? page.contract.contractColumns : []
-                            return column < cols.length ? cols[column].width : 100
-                        }
+                        implicitWidth: page.contractColWidth(column)
 
-                        TapHandler {
-                            acceptedButtons: Qt.LeftButton
-                            gesturePolicy: TapHandler.ReleaseWithinBounds
-                            onSingleTapped: {
-                                page.currentRow = row
-                                if (page.contract)
-                                    page.contract.selectContract(row)
-                            }
-                            onDoubleTapped: {
-                                page.currentRow = row
-                                if (page.contract)
-                                    page.contract.showDetail(row)
-                            }
-                        }
+                    }
 
-                        TapHandler {
-                            acceptedButtons: Qt.RightButton
-                            gesturePolicy: TapHandler.ReleaseWithinBounds
-                            onSingleTapped: function (eventPoint) {
-                                page.currentRow = row
-                                const p = parent.mapToItem(page, eventPoint.position.x, eventPoint.position.y)
-                                rowMenu.row = row
-                                rowMenu.x = p.x
-                                rowMenu.y = p.y
-                                rowMenu.open()
-                            }
+                    // 行点击命中固定在按下那一刻（见 FTableClickArea 的说明）
+                    FTableClickArea {
+                        objectName: "contractClickArea"
+                        anchors.fill: parent
+                        rowHeight: page.rowH
+                        columnWidth: page.contractColWidth
+
+                        onRowClicked: function (row, _column) {
+                            page.currentRow = row
+                            if (page.contract)
+                                page.contract.selectContract(row)
+                        }
+                        onRowDoubleClicked: function (row, _column) {
+                            page.currentRow = row
+                            if (page.contract)
+                                page.contract.showDetail(row)
+                        }
+                        onRowRightClicked: function (row, _column, x, y) {
+                            page.currentRow = row
+                            const p = mapToItem(page, x, y)
+                            rowMenu.row = row
+                            rowMenu.x = p.x
+                            rowMenu.y = p.y
+                            rowMenu.open()
                         }
                     }
                 }
