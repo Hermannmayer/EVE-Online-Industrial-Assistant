@@ -65,6 +65,12 @@ def register_migrated_pages() -> None:
         QML_PAGES["contract"] = "pages/ContractPage.qml"
         QML_BRIDGES["contract"] = ContractBridge  # type: ignore[assignment]
 
+    if "storage" not in QML_PAGES:
+        from ui_qml.bridge.inventory_bridge import InventoryBridge
+
+        QML_PAGES["storage"] = "pages/StoragePage.qml"
+        QML_BRIDGES["storage"] = InventoryBridge  # type: ignore[assignment]
+
 
 def build_page(
     key: str,
