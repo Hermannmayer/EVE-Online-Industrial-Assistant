@@ -13,9 +13,12 @@ import "../components"
  * **业务动作一律不在这里实现**：每次交互都调 `inv.<方法>`，
  * 由 `ui_qml/bridge/inventory_bridge.py` 转给既有 service / worker。
  *
- * **多选由桥实现**（这是唯一真正需要多选的页面）：delegate 把 `selectionRevision`
- * 读一下再调 `itemRowSelected(row)` —— `var` 集合的变化不会自己触发绑定重算，
- * 与计划表的 `tickRevision` 同一个道理。修饰键在 Python 侧读（QML 拿不到）。
+ * **多选由桥实现**（这是唯一真正需要多选的页面）：桥把选中集**整批**给出，
+ * delegate 只做 `indexOf` 判断（逐格调 `itemRowSelected(row)` 会让一次选中变化
+ * 产生 200 次跨 QML/Python 调用）；修饰键在 Python 侧读（QML 拿不到）。
+ *
+ * **点击命中也由 `FTableClickArea` 统一负责**，不在 delegate 里挂 TapHandler：
+ * 后者在内容甩动/沉降时会整次丢掉点击（详见该组件的说明）。
  *
  * 各类对话框（库存修正审阅、移库、材料覆盖、蓝图导入审查、科研计划…）仍是 Widgets，
  * 属阶段 4；本页只负责把参数凑齐后交给桥。
@@ -30,6 +33,18 @@ Item {
     readonly property int rowH: Math.max(28, Math.round(13 * Theme.fontScale) + 15)
     readonly property int headerH: Math.max(26, fntSmall + 15)
     readonly property int gap: Theme.spacingSm
+
+    /* 选中集：**读一次列表**，delegate 只做 `indexOf` 判断。
+     * 别在 delegate 里逐格调 `inv.itemRowSelected(row)` —— 8 列 × 25 行表，
+     * 每次选中变化就是 200 次跨 QML/Python 调用（实测），点一下就能感到卡。 */
+    readonly property var itemSelRows: {
+        page.inv.selectionRevision
+        return page.inv ? page.inv.selectedItemRows : []
+    }
+    readonly property var bpSelRows: {
+        page.inv.selectionRevision
+        return page.inv ? page.inv.selectedBlueprintRows : []
+    }
 
     // 整页不透明底（宿主是透明清屏的 QQuickWidget，见 IndustryPage 的同款说明）
     Rectangle {
@@ -319,30 +334,33 @@ Item {
                         }
                         delegate: Cell {
                             wideIcon: true
-                            selectedRow: {
-                                page.inv.selectionRevision
-                                return page.inv ? page.inv.itemRowSelected(row) : false
-                            }
+                            selectedRow: page.itemSelRows.indexOf(row) >= 0
                             implicitWidth: page.itemColWidth(column)
+                        }
 
-                            TapHandler {
-                                acceptedButtons: Qt.LeftButton
-                                gesturePolicy: TapHandler.ReleaseWithinBounds
-                                onSingleTapped: if (page.inv)
+                        /* 点击命中固定在按下那一刻（见 FTableClickArea 的说明）：
+                         * delegate 内的 TapHandler 会在内容甩动/沉降时整次丢失点击。 */
+                        FTableClickArea {
+                            objectName: "itemClickArea"
+                            anchors.fill: parent
+                            rowHeight: page.rowH
+                            columnWidth: page.itemColWidth
+                            rowCount: page.inv ? page.inv.itemCount : 0
+
+                            onRowClicked: function (row, _column) {
+                                if (page.inv)
                                     page.inv.selectItemRow(row)
                             }
-                            TapHandler {
-                                acceptedButtons: Qt.RightButton
-                                gesturePolicy: TapHandler.ReleaseWithinBounds
-                                onSingleTapped: function (eventPoint) {
-                                    const p = parent.mapToItem(page, eventPoint.position.x, eventPoint.position.y)
-                                    itemMenu.state = page.inv.itemMenuState(row)
-                                    itemMenu.targetRows = page.inv.itemsForMenu(row)
-                                    itemMenu.row = row
-                                    itemMenu.x = p.x
-                                    itemMenu.y = p.y
-                                    itemMenu.open()
-                                }
+                            onRowRightClicked: function (row, _column, x, y) {
+                                if (!page.inv)
+                                    return
+                                const p = mapToItem(page, x, y)
+                                itemMenu.state = page.inv.itemMenuState(row)
+                                itemMenu.targetRows = page.inv.itemsForMenu(row)
+                                itemMenu.row = row
+                                itemMenu.x = p.x
+                                itemMenu.y = p.y
+                                itemMenu.open()
                             }
                         }
                     }
@@ -530,35 +548,35 @@ Item {
 
                         delegate: Cell {
                             iconColumn: 0
-                            selectedRow: {
-                                page.inv.selectionRevision
-                                return page.inv ? page.inv.blueprintRowSelected(row) : false
-                            }
+                            selectedRow: page.bpSelRows.indexOf(row) >= 0
                             implicitWidth: page.bpColWidth(column)
+                        }
 
-                            TapHandler {
-                                acceptedButtons: Qt.LeftButton
-                                gesturePolicy: TapHandler.ReleaseWithinBounds
-                                onSingleTapped: {
-                                    if (!page.inv)
-                                        return
-                                    page.inv.selectBlueprintRow(row)
-                                    if (column !== 0)
-                                        page.inv.copyBlueprintCell(row)
-                                }
+                        // 同上：命中固定在按下那一刻
+                        FTableClickArea {
+                            objectName: "bpClickArea"
+                            anchors.fill: parent
+                            rowHeight: page.rowH
+                            columnWidth: page.bpColWidth
+                            rowCount: page.inv ? page.inv.blueprintCount : 0
+
+                            onRowClicked: function (row, column) {
+                                if (!page.inv)
+                                    return
+                                page.inv.selectBlueprintRow(row)
+                                if (column !== 0)
+                                    page.inv.copyBlueprintCell(row)
                             }
-                            TapHandler {
-                                acceptedButtons: Qt.RightButton
-                                gesturePolicy: TapHandler.ReleaseWithinBounds
-                                onSingleTapped: function (eventPoint) {
-                                    const p = parent.mapToItem(page, eventPoint.position.x, eventPoint.position.y)
-                                    bpMenu.state = page.inv.blueprintMenuState(row)
-                                    bpMenu.targetRows = page.inv.blueprintsForMenu(row)
-                                    bpMenu.row = row
-                                    bpMenu.x = p.x
-                                    bpMenu.y = p.y
-                                    bpMenu.open()
-                                }
+                            onRowRightClicked: function (row, _column, x, y) {
+                                if (!page.inv)
+                                    return
+                                const p = mapToItem(page, x, y)
+                                bpMenu.state = page.inv.blueprintMenuState(row)
+                                bpMenu.targetRows = page.inv.blueprintsForMenu(row)
+                                bpMenu.row = row
+                                bpMenu.x = p.x
+                                bpMenu.y = p.y
+                                bpMenu.open()
                             }
                         }
                     }

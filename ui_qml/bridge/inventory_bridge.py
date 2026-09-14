@@ -80,6 +80,14 @@ class InventoryBridge(QObject):
 
     selectionRevision = Property(int, lambda self: self._selection_revision, notify=selectionChanged)
 
+    #: 选中集整批给出。
+    #:
+    #: 别让 delegate 逐格调 `itemRowSelected(row)`：一张 8 列 × 25 行的表，每次选中
+    #: 变化就是 **200 次跨 QML/Python 调用**（实测），点一下就能感觉到卡。
+    #: QML 侧读一次列表再 `indexOf` 判断，一次选中变化只剩 1 次跨边界。
+    selectedItemRows = Property(list, lambda self: sorted(self._item_selection), notify=selectionChanged)
+    selectedBlueprintRows = Property(list, lambda self: sorted(self._bp_selection), notify=selectionChanged)
+
     @Slot(int)
     def selectItemRow(self, row: int) -> None:
         """机库表：普通=只选它，Ctrl=切换，Shift=区间。"""
@@ -179,6 +187,8 @@ class InventoryBridge(QObject):
 
     itemCountText = Property(str, lambda self: self._items_count, notify=itemsChanged)
     itemTotalText = Property(str, lambda self: self._items_total, notify=itemsChanged)
+    #: 行数（表格点击区用它把「最后一行以下」判成空白）
+    itemCount = Property(int, lambda self: self._items.rowCount(), notify=itemsChanged)
 
     hangarNames = Property(list, lambda self: [h.get("label", "") for h in self._hangars], notify=hangarChanged)
     hangarIndex = Property(int, lambda self: self._hangar_index, notify=hangarChanged)
@@ -467,6 +477,8 @@ class InventoryBridge(QObject):
         ]
 
     blueprintCountText = Property(str, lambda self: self._bp_count, notify=blueprintsChanged)
+    #: 行数（同上，表格点击区用）
+    blueprintCount = Property(int, lambda self: self._blueprints.rowCount(), notify=blueprintsChanged)
     typeFilters = Property(list, lambda self: list(_TYPE_FILTERS), constant=True)
     techFilters = Property(list, lambda self: list(_TECH_FILTERS), constant=True)
     marketCategories = Property(list, lambda self: self._bp_categories, notify=blueprintsChanged)

@@ -13,7 +13,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QEventLoop, Qt, QTimer, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import QEventLoop, QObject, QPoint, Qt, QTimer, QtMsgType, qInstallMessageHandler
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
 
 from ui_qml.models.inventory_qml_models import (
     BP_ROLE_NAMES,
@@ -347,15 +349,15 @@ def test_blueprint_menu_rows_fall_back(bridge):
 # ════════════════════════════════════════════════════════════
 
 
-@pytest.fixture
-def storage_page(qapp, monkeypatch):
+def _stub_inventory(monkeypatch, items: list[dict]) -> None:
+    """把仓库页要的后端全部打桩（机库 / 物品 / 蓝图 / 容器）。"""
     import services.inventory_manager as im
     import services.name_resolver as nr
     from core import container as container_mod
 
     monkeypatch.setattr(im, "init_db", lambda: None)
     monkeypatch.setattr(im, "get_hangars", lambda: [{"id": 1, "name": "A 库"}])
-    monkeypatch.setattr(im, "get_items", lambda hid=None: [])
+    monkeypatch.setattr(im, "get_items", lambda hid=None: list(items))
     monkeypatch.setattr(im, "get_blueprints", lambda hid=None: [])
     monkeypatch.setattr(im, "get_blueprint_tech_levels", lambda: {})
     monkeypatch.setattr(im, "get_blueprint_reaction_ids", lambda: set())
@@ -368,6 +370,11 @@ def storage_page(qapp, monkeypatch):
             market_repo=SimpleNamespace(get_sell_prices=lambda ids, region: {}),
         ),
     )
+
+
+@pytest.fixture
+def storage_page(qapp, monkeypatch):
+    _stub_inventory(monkeypatch, [])
 
     from ui_qml.bridge.inventory_bridge import InventoryBridge
     from ui_qml.host import PageHost
@@ -409,3 +416,135 @@ def test_page_loads_without_qml_warnings(storage_page):
         qInstallMessageHandler(previous)
 
     assert not caught, "QML 产生了告警：\n" + "\n".join(dict.fromkeys(caught))
+
+
+# ════════════════════════════════════════════════════════════
+#  表格点击命中（FTableClickArea）
+#
+#  回归背景：delegate 内的 TapHandler 配 `ReleaseWithinBounds` 是在**释放**时判定
+#  命中的，而 TableView 是 Flickable，甩动/沉降期间内容会移动——按下时那个 delegate
+#  已经移开，于是整次点击被丢掉。实测「按下 → 内容移动 1 行 → 释放」选中集为空，
+#  也就是用户说的「单击不到所对应的行上」。
+#  现在命中在**按下那一刻**算好并按它派发。
+# ════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def storage_table(qapp, monkeypatch):
+    """有 300 行数据的仓库页 + 物品表/点击区句柄。"""
+    _stub_inventory(monkeypatch, [_item(iid=i) for i in range(1, 301)])
+
+    from ui_qml.bridge.inventory_bridge import InventoryBridge
+    from ui_qml.host import PageHost
+
+    b = InventoryBridge(None)
+    host = PageHost("pages/StoragePage.qml", context={"bridge": b})
+    host.resize(1500, 850)
+    host.show()
+    _spin(500)
+
+    root = host.rootObject()
+    table = None
+
+    def _walk(item):
+        nonlocal table
+        for ch in item.childItems():
+            if "TableView" in ch.metaObject().className() and table is None:
+                table = ch
+            _walk(ch)
+
+    _walk(root)
+    area = root.findChild(QObject, "itemClickArea")
+    if table is None or area is None:
+        host.deleteLater()
+        _spin(60)
+        pytest.skip("表格/点击区没找到（QML 结构变了）")
+
+    yield host, root, b, table, area
+    host.deleteLater()
+    _spin(60)
+
+
+def _press_point(root, table, row: int, content_y: float, row_h: int) -> QPoint:
+    """「内容位移 content_y 时，视觉第 row 行中心」对应的 host 坐标。"""
+    origin = table.mapToItem(root, 0.0, 0.0)
+    host_origin = root.mapToItem(None, origin.x(), origin.y())
+    ty = row * row_h - content_y + row_h / 2
+    return QPoint(int(host_origin.x()) + 200, int(host_origin.y()) + int(ty))
+
+
+@pytest.mark.ui
+def test_click_selects_the_row_under_the_cursor(storage_table):
+    host, root, bridge, table, _area = storage_table
+    row_h = root.property("rowH")
+    for content_y, row in ((0.0, 2), (0.0, 7), (140.0, 9), (4000.0, 160)):
+        table.setProperty("contentY", content_y)
+        _spin(180)
+        bridge.clearItemSelection()
+        _spin(60)
+        QTest.mouseClick(host, Qt.LeftButton, Qt.NoModifier, _press_point(root, table, row, content_y, row_h))
+        _spin(120)
+        assert sorted(bridge._item_selection) == [row], f"contentY={content_y} 应选中第 {row} 行"
+
+
+@pytest.mark.ui
+def test_click_keeps_the_pressed_row_when_content_moves(storage_table):
+    """回归：按下与释放之间内容移动（甩动/惯性沉降），仍应选中**按下那一刻**的行。"""
+    host, root, bridge, table, _area = storage_table
+    row_h = root.property("rowH")
+
+    # 注意：行号必须落在该 contentY 下**可见**的范围内，否则点的是视口外（测试自身的坑）
+    for content_y, row, delta in ((0.0, 5, 1), (0.0, 5, 3), (200.0, 12, -2), (4000.0, 150, 2)):
+        table.setProperty("contentY", content_y)
+        _spin(180)
+        bridge.clearItemSelection()
+        _spin(60)
+        pt = _press_point(root, table, row, content_y, row_h)
+        QTest.mousePress(host, Qt.LeftButton, Qt.NoModifier, pt)
+        QApplication.processEvents()  # 让「按下」在内容移动之前落地
+        table.setProperty("contentY", content_y + delta * row_h)
+        _spin(60)
+        QTest.mouseRelease(host, Qt.LeftButton, Qt.NoModifier, pt)
+        _spin(120)
+        assert sorted(bridge._item_selection) == [row], (
+            f"contentY={content_y} 内容移动 {delta} 行后应仍选中按下的第 {row} 行"
+        )
+
+
+@pytest.mark.ui
+def test_drag_to_scroll_does_not_select(storage_table):
+    """拖动是滚动，不是选中 —— 修好「点击」不能把「拖动」搞成误选。"""
+    host, root, bridge, table, _area = storage_table
+    row_h = root.property("rowH")
+    table.setProperty("contentY", 0.0)
+    _spin(150)
+    bridge.clearItemSelection()
+    _spin(60)
+
+    start = _press_point(root, table, 6, 0.0, row_h)
+    QTest.mousePress(host, Qt.LeftButton, Qt.NoModifier, start)
+    for i in range(1, 9):
+        QTest.mouseMove(host, QPoint(start.x(), start.y() - i * 12))
+        QApplication.processEvents()
+    QTest.mouseRelease(host, Qt.LeftButton, Qt.NoModifier, QPoint(start.x(), start.y() - 96))
+    _spin(200)
+
+    assert table.property("contentY") > 0, "拖动应滚动内容"
+    assert sorted(bridge._item_selection) == [], "拖动不该产生选中"
+
+
+@pytest.mark.ui
+def test_right_click_menu_targets_the_pressed_row(storage_table):
+    host, root, bridge, table, _area = storage_table
+    row_h = root.property("rowH")
+    menu = root.findChild(QObject, "itemMenu")
+    assert menu is not None
+
+    table.setProperty("contentY", 0.0)
+    _spin(150)
+    QTest.mouseClick(host, Qt.RightButton, Qt.NoModifier, _press_point(root, table, 6, 0.0, row_h))
+    _spin(200)
+    assert menu.property("visible") is True, "右键应弹出菜单"
+    assert menu.property("row") == 6, "菜单作用于右键按下的那一行"
+    menu.setProperty("visible", False)
+    _spin(60)
