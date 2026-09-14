@@ -365,6 +365,37 @@ class PlanTableBridge(QObject):
     def doubleClick(self, row: int) -> None:
         self._table._edit_plan(row)
 
+    #: `PlanQmlModel.ROLE_NAMES` 里的角色号：text = UserRole+1、editable = UserRole+6。
+    #: delegate 里直接读 `model.editable` / `model.text`；点击改到 TableView 层面之后
+    #: （见 `FTableClickArea` 的说明），只剩行列号，得回来查这两个角色。
+    _ROLE_TEXT = Qt.ItemDataRole.UserRole + 1
+    _ROLE_EDITABLE = Qt.ItemDataRole.UserRole + 6
+
+    def _cell_data(self, row: int, column: int, role: int) -> Any:
+        model = self._table.get_model()
+        if model is None or row < 0 or column < 0:
+            return None
+        if row >= model.rowCount():
+            return None
+        return model.data(model.index(row, column), role)
+
+    @Slot(int, int, result=bool)
+    def isCellEditable(self, row: int, column: int) -> bool:
+        """双击该格是「就地编辑」还是「开编辑对话框」（原读 delegate 的 `editable`）。"""
+        return bool(self._cell_data(row, column, self._ROLE_EDITABLE))
+
+    @Slot(int, int, result=str)
+    def cellText(self, row: int, column: int) -> str:
+        """就地编辑器的初始文本。"""
+        return str(self._cell_data(row, column, self._ROLE_TEXT) or "")
+
+    #: 行数（表格点击区用它把「最后一行以下」判成空白区）
+    rowCount = Property(int, lambda self: self._row_count(), notify=modelChanged)
+
+    def _row_count(self) -> int:
+        model = self._table.get_model()
+        return model.rowCount() if model is not None else 0
+
     @Slot(int, int, str, result=bool)
     def commitEdit(self, row: int, column: int, text: str) -> bool:
         """单元格内联编辑落库（备注/人物/设施/成功率/解码器）。"""

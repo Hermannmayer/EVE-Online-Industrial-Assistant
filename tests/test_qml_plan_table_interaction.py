@@ -33,6 +33,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QEventLoop, QObject, QPoint, Qt, QTimer, QtMsgType, qInstallMessageHandler
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
 
 import ui_pyside6.theme as theme
 from ui_pyside6.models.industry_models import PlanTableModel
@@ -450,3 +451,159 @@ def test_header_menu_opens(table, clicks):
     )
 
     clicks.wait_open("headerMenu")
+
+
+# ════════════════════════════════════════════════════════════
+#  真鼠标：点击命中必须在**按下那一刻**定下来
+# ════════════════════════════════════════════════════════════
+
+
+def _owning_table(area):
+    """点击区所属的 TableView。
+
+    **不能**按「第一个 className 含 TableView 的子项」找：`HorizontalHeaderView`
+    内部也有一个 TableView，谁先被遍历到不确定（合并跑时踩到过，同一用例单跑通过）。
+    点击区是 TableView 的内联子项（挂在 contentItem 下），从它往父链走是确定的。
+    """
+    node = area.parentItem()
+    while node is not None:
+        if "TableView" in node.metaObject().className():
+            return node
+        node = node.parentItem()
+    return None
+
+
+def _cell_center(root, area, row: int, column: int):
+    """从**真实 delegate 几何**取该格中心（不自己按 contentY 推算，少一层假设）。"""
+    for ch in area.parentItem().childItems():
+        try:
+            if ch.property("row") == row and ch.property("column") == column:
+                p = ch.mapToItem(root, ch.width() / 2, ch.height() / 2)
+                return QPoint(int(p.x()), int(p.y()))
+        except Exception:
+            continue
+    return None
+
+
+@pytest.mark.ui
+def test_click_keeps_the_pressed_row_when_content_moves(qapp):
+    """回归：按下与释放之间内容移动（甩动/惯性沉降），仍应选中**按下那一刻**的行。
+
+    故障表现：`delegate` 里的 `TapHandler` 配 `ReleaseWithinBounds` 是在**释放**时
+    判定命中的，而 `TableView` 是 Flickable —— 内容一移动，按下位置的 delegate 就被
+    复用走了，于是整次点击被丢掉，界面表现就是「单击不到所对应的行上」。
+
+    这里用「按住不动 → 程序移动内容 → 原处释放」确定性复现：内容移动与鼠标无关，
+    正是甩动/沉降期间的真实情形。
+    """
+    widget = PlanTable()
+    widget.set_model(PlanTableModel(_plans(120)))
+    widget.resize(900, 400)
+    widget.move(60, 60)
+    widget.show()
+    _spin(500)
+    try:
+        host = widget._host
+        assert host is not None
+        root = host.rootObject()
+        area = root.findChild(QObject, "planClickArea")
+        assert area is not None, "PlanTablePane.qml 里找不到 planClickArea"
+        view = _owning_table(area)
+        assert view is not None, "点击区不在 TableView 里（坐标约定会变，见 FTableClickArea 说明）"
+        row_h = int(root.property("rowH"))
+
+        # (内容位移, 目标行, 释放前内容再移动几行)
+        for content_y, row, delta in ((0.0, 3, 1), (0.0, 5, -2), (300.0, 14, 2)):
+            view.setProperty("contentY", content_y)
+            _spin(250)
+            pt = _cell_center(root, area, row, 1)  # 列 1 是图标列，点击无业务副作用
+            assert pt is not None, f"第 {row} 行在 contentY={content_y} 下没被实例化"
+
+            QTest.mousePress(host, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, pt)
+            QApplication.processEvents()  # 让「按下」先落地，再动内容
+            view.setProperty("contentY", float(view.property("contentY")) + delta * row_h)
+            _spin(60)
+            QTest.mouseRelease(host, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, pt)
+            _spin(200)
+
+            assert widget.bridge.selectedRows() == [row], (
+                f"contentY={content_y} 内容移动 {delta} 行后，应仍选中按下的第 {row} 行"
+            )
+    finally:
+        widget.close()
+        widget.deleteLater()
+        _spin(60)
+
+
+@pytest.mark.ui
+def test_double_click_opens_inline_editor_for_editable_cell(qapp):
+    """双击可编辑列 → 就地编辑框出现（原实现里这条路径实测触发不到）。"""
+    widget = PlanTable()
+    widget.set_model(PlanTableModel(_plans(20)))
+    widget.resize(900, 500)
+    widget.move(60, 60)
+    widget.show()
+    _spin(500)
+    try:
+        host = widget._host
+        assert host is not None
+        root = host.rootObject()
+        area = root.findChild(QObject, "planClickArea")
+        assert area is not None
+        editor = root.findChild(QObject, "inlineEditor")
+        assert editor is not None
+
+        editable_col = next((c for c in range(21) if widget.bridge.isCellEditable(0, c)), None)
+        assert editable_col is not None, "模型里没有可编辑列了？"
+        pt = _cell_center(root, area, 0, editable_col)
+        assert pt is not None and pt.x() < widget.width(), f"列 {editable_col} 没在视口内"
+
+        QTest.mouseDClick(host, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, pt)
+        _spin(500)
+
+        assert editor.property("visible") is True, "双击可编辑列应打开就地编辑框"
+        assert int(root.property("editRow")) == 0
+        assert int(root.property("editCol")) == editable_col
+    finally:
+        widget.close()
+        widget.deleteLater()
+        _spin(60)
+
+
+@pytest.mark.ui
+def test_double_click_non_editable_cell_takes_the_dialog_path(qapp):
+    """双击不可编辑列 → 走「打开编辑生产计划对话框」；且不误改选中集。
+
+    Qt 对双击**不发**第一次的 `clicked`，所以双击只跑双击那一次动作，
+    不会先把单击的副作用（勾选/折叠/选中）做掉。
+    """
+    widget = PlanTable()
+    widget.set_model(PlanTableModel(_plans(20)))
+    widget.resize(900, 500)
+    widget.move(60, 60)
+    widget.show()
+    _spin(500)
+    try:
+        host = widget._host
+        assert host is not None
+        root = host.rootObject()
+        area = root.findChild(QObject, "planClickArea")
+        assert area is not None
+        non_editable = next(c for c in range(21) if not widget.bridge.isCellEditable(0, c))
+        pt = _cell_center(root, area, 0, non_editable)
+        assert pt is not None and pt.x() < widget.width()
+
+        opened: list[int] = []
+        widget.bridge.doubleClick = lambda row: opened.append(row)  # 拦掉真对话框
+        widget.bridge.selectRow(9)
+        _spin(200)
+
+        QTest.mouseDClick(host, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, pt)
+        _spin(600)
+
+        assert opened == [0], "双击不可编辑列应开编辑对话框"
+        assert widget.bridge.selectedRows() == [9], "双击不该顺手改掉选中集"
+    finally:
+        widget.close()
+        widget.deleteLater()
+        _spin(60)

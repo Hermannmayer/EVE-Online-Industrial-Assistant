@@ -1,4 +1,5 @@
 import QtQuick
+import "tablehit.js" as TableHit
 
 /* 表格点击区 —— 把「点到了哪一行」固定在**按下那一刻**。
  *
@@ -48,8 +49,16 @@ MouseArea {
     //: 行数上限（超出视为空白区不派发）；≤0 表示不限制
     property int rowCount: 0
 
+    /* 单击**立即派发**，不为了等双击而拖延。
+     *
+     * 实测过一个「按住等双击间隔再派发单击」的版本：主表单击→选中从 25ms 变成
+     * 431ms，肉眼就是卡。而且旧实现（`TapHandler` 同时挂单/双击）实测单击也是
+     * 25ms —— Qt 并不为双击延迟 `singleTapped`。所以双击的代价就是单击也会执行
+     * 一次，与旧实现「两个 handler 都声明了」的语义一致。
+     */
     signal rowClicked(int row, int column)
     signal rowRightClicked(int row, int column, real x, real y)
+    signal rowDoubleClicked(int row, int column)
 
     acceptedButtons: Qt.LeftButton | Qt.RightButton
 
@@ -58,26 +67,14 @@ MouseArea {
     property int pressColumn: -1
     //: 诊断用：按下时的原始位置（内容坐标）
     property real pressY: -1
-
-    readonly property int _maxColumns: 64
-
+    // 本组件声明在 TableView 的内联子项位置 → 事件已是**内容坐标**，故 contentY/X 传 0
+    // （详见文档串里的坐标约定，以及 tablehit.js 的说明）。
     function rowAt(y: real): int {
-        if (root.rowHeight <= 0)
-            return -1
-        return Math.floor(y / root.rowHeight)
+        return TableHit.rowAt(y, 0, root.rowHeight)
     }
 
     function columnAt(x: real): int {
-        let acc = 0
-        for (let col = 0; col < root._maxColumns; ++col) {
-            const w = root.columnWidth(col)
-            if (w <= 0)
-                continue
-            if (x < acc + w)
-                return col
-            acc += w
-        }
-        return -1
+        return TableHit.columnAt(x, 0, root.columnWidth)
     }
 
     onPressed: function (mouse) {
@@ -93,9 +90,22 @@ MouseArea {
             return
         if (root.rowCount > 0 && root.pressRow >= root.rowCount)
             return
-        if (mouse.button === Qt.RightButton)
+        if (mouse.button === Qt.RightButton) {
             root.rowRightClicked(root.pressRow, root.pressColumn, mouse.x, mouse.y)
-        else
-            root.rowClicked(root.pressRow, root.pressColumn)
+            return
+        }
+        root.rowClicked(root.pressRow, root.pressColumn)
+    }
+
+    onDoubleClicked: function (mouse) {
+        // 用**按下时**的行列（`mouse` 的位置在内容移动后可能已指向别的行）。
+        // 注意：Qt 会先给一次 `onClicked`，所以双击 = 单击一次 + 双击动作一次。
+        const r = root.pressRow
+        const c = root.pressColumn
+        if (r < 0 || c < 0)
+            return
+        if (root.rowCount > 0 && r >= root.rowCount)
+            return
+        root.rowDoubleClicked(r, c)
     }
 }

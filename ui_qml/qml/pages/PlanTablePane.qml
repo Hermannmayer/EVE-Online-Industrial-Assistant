@@ -447,41 +447,52 @@ Item {
             HoverHandler {
                 cursorShape: cell.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor
             }
+        }
 
-            // 单击 / 双击
-            TapHandler {
-                acceptedButtons: Qt.LeftButton
-                gesturePolicy: TapHandler.ReleaseWithinBounds
-                onSingleTapped: {
-                    // 先落选中（Ctrl/Shift 的语义在 bridge 里判，QML 拿不到修饰键），
-                    // 再执行该单元格自己的动作（勾选/折叠/待下线…）
-                    if (root.planBridge)
-                        root.planBridge.selectRow(cell.row)
-                    if (cell.clickable)
-                        root.planBridge.activate(cell.row, cell.column)
-                }
-                onDoubleTapped: {
-                    // 可编辑列就地编辑；其余列打开「编辑生产计划」对话框
-                    // （Widgets 版双击任何位置都开对话框，此处让内联编辑可达，
-                    //  与 _on_model_data_changed 那条「备注内联落库」的既有设计一致）
-                    if (cell.model.editable)
-                        root.beginEdit(cell.row, cell.column, cell.model.text)
-                    else
-                        root.planBridge.doubleClick(cell.row)
-                }
+        /* 点击命中由 `FTableClickArea` 统一负责，不在 delegate 里挂 TapHandler：
+         * 后者在内容甩动/沉降时会整次丢掉点击（详见该组件的说明）。
+         *
+         * 单击**立即**派发（不为了等双击而拖延，实测延时会从 25ms 变成 431ms）；
+         * 代价是双击会先跑一次单击，与旧实现「单/双击两个 TapHandler 都声明了」
+         * 的语义一致。
+         */
+        FTableClickArea {
+            objectName: "planClickArea"
+            anchors.fill: parent
+            rowHeight: root.rowH
+            columnWidth: root.widthOf
+            rowCount: root.planBridge ? root.planBridge.rowCount : 0
+
+
+            onRowClicked: function (row, column) {
+                if (!root.planBridge)
+                    return
+                // 先落选中（Ctrl/Shift 的语义在 bridge 里判，QML 拿不到修饰键），
+                // 再执行该单元格自己的动作（勾选/折叠/待下线…）。
+                // 不再用 delegate 的 `clickable` 当门槛：Python 的 `_on_cell_clicked_by_pos`
+                // 只在 0/10/3/7 有分支，且 col 3 自身还要满足「可折叠」才动 ——
+                // 被 QML 排除的那些情形在 Python 里本来就是 no-op，判据留一份就够。
+                root.planBridge.selectRow(row)
+                root.planBridge.activate(row, column)
             }
-
-            TapHandler {
-                acceptedButtons: Qt.RightButton
-                gesturePolicy: TapHandler.ReleaseWithinBounds
-                onSingleTapped: function (eventPoint) {
-                    const p = cell.mapToItem(root, eventPoint.position.x, eventPoint.position.y)
-                    // 点在选中集外 → 先把选中换成这一行（对齐 QAbstractItemView），
-                    // 菜单作用的就是高亮着的那几行，所见即所得
-                    if (root.planBridge)
-                        root.planBridge.ensureRowSelected(cell.row)
-                    root.openRowMenu(cell.row, p.x, p.y)
-                }
+            onRowDoubleClicked: function (row, column) {
+                if (!root.planBridge)
+                    return
+                // 可编辑列就地编辑；其余列打开「编辑生产计划」对话框
+                // （Widgets 版双击任何位置都开对话框，此处让内联编辑可达）
+                if (root.planBridge.isCellEditable(row, column))
+                    root.beginEdit(row, column, root.planBridge.cellText(row, column))
+                else
+                    root.planBridge.doubleClick(row)
+            }
+            onRowRightClicked: function (row, column, x, y) {
+                if (!root.planBridge)
+                    return
+                const p = mapToItem(root, x, y)
+                // 点在选中集外 → 先把选中换成这一行（对齐 QAbstractItemView），
+                // 菜单作用的就是高亮着的那几行，所见即所得
+                root.planBridge.ensureRowSelected(row)
+                root.openRowMenu(row, p.x, p.y)
             }
         }
     }
@@ -625,6 +636,7 @@ Item {
 
     FTextField {
         id: inlineEditor
+        objectName: "inlineEditor"
         visible: false
         z: 10
         x: {
