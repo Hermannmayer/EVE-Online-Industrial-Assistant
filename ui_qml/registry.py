@@ -53,6 +53,12 @@ def register_migrated_pages() -> None:
         QML_PAGES["trade"] = "pages/TradePage.qml"
         QML_BRIDGES["trade"] = TradeBridge  # type: ignore[assignment]
 
+    if "watchlist" not in QML_PAGES:
+        from ui_qml.bridge.watchlist_bridge import WatchlistBridge
+
+        QML_PAGES["watchlist"] = "pages/WatchlistPage.qml"
+        QML_BRIDGES["watchlist"] = WatchlistBridge  # type: ignore[assignment]
+
 
 def build_page(
     key: str,
