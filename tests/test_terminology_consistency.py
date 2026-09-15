@@ -71,7 +71,7 @@ def terminology_data() -> dict:
 
 def _get_skills_from_charsettings() -> list[str]:
     """从 char_settings_common.py 提取所有技能名"""
-    target = _PROJECT_ROOT / "ui_pyside6" / "views" / "char_settings_common.py"
+    target = _PROJECT_ROOT / "core" / "char_settings_common.py"
     spec = importlib.util.spec_from_file_location("char_settings_common", target)
     if spec is None or spec.loader is None:
         return []

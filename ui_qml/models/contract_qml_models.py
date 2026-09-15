@@ -13,8 +13,8 @@ from typing import Any
 
 from PySide6.QtCore import QModelIndex, Qt
 
-import ui_pyside6.theme as theme
-from ui_pyside6.models.contract_models import ContractItemTableModel, ContractTableModel
+from ui_qml.models.contract_models import ContractItemTableModel, ContractTableModel
+from ui_qml.theme import registry as theme
 
 __all__ = ["ContractQmlModel", "ContractItemQmlModel"]
 

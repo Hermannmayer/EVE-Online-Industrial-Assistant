@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ui_pyside6.views.inventory.blueprint_import_worker import (
+from ui_qml.workers.blueprint_import_worker import (
     apply_blueprint_diff,
     build_blueprint_changes,
     parse_blueprint_clipboard,
@@ -221,7 +221,7 @@ class TestApplyBlueprintDiff:
 
     def _patch(self, monkeypatch, db_manager):
         monkeypatch.setattr(
-            "ui_pyside6.views.inventory.blueprint_import_worker.get_container",
+            "ui_qml.workers.blueprint_import_worker.get_container",
             lambda: SimpleNamespace(db=db_manager),
         )
 

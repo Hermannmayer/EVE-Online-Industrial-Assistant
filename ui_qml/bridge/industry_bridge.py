@@ -153,7 +153,7 @@ class IndustryBridge(QObject):
         self._set_suggestions([])
 
     def _run_search(self) -> None:
-        from ui_pyside6.views.compare.compare_chart import search_items
+        from ui_qml.workers.compare_chart import search_items
 
         # 用**发起时的文本**搜，不回头去问输入框：用户可能在防抖窗口里又改了字，
         # 那时该等下一次触发，而不是拿新文本去配旧候选。

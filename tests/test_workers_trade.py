@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ui_pyside6.workers.trade_workers import (
+from ui_qml.workers.trade_workers import (
     CrossRegionPriceWorker,
     TradeScoreWorker,
     TransportWorker,
@@ -14,7 +14,7 @@ pytestmark = pytest.mark.ui
 
 
 class TestCrossRegionPriceWorker:
-    @patch("ui_pyside6.workers.trade_workers.get_container")
+    @patch("ui_qml.workers.trade_workers.get_container")
     def test_run_emits_finished(self, mock_get_container, qapp):
         """run() 为每个贸易中心获取价格并通过 finished 返回"""
         mock_pricing = MagicMock()
@@ -56,7 +56,7 @@ class TestCrossRegionPriceWorker:
         amarr = next(h for h in hubs if h["hub"] == "Amarr")
         assert amarr["region_id"] == 10000043
 
-    @patch("ui_pyside6.workers.trade_workers.get_container")
+    @patch("ui_qml.workers.trade_workers.get_container")
     def test_no_price_returns_zero(self, mock_get_container, qapp):
         """无价格数据时 spread 和 spread_pct 为 0"""
         mock_pricing = MagicMock()
@@ -83,7 +83,7 @@ class TestCrossRegionPriceWorker:
 
 
 class TestTradeScoreWorker:
-    @patch("ui_pyside6.workers.trade_workers.get_container")
+    @patch("ui_qml.workers.trade_workers.get_container")
     def test_run_emits_finished(self, mock_get_container, qapp):
         """run() 调用 scoring_service().calc_trade_score 并通过 finished 返回"""
         expected = {
@@ -118,7 +118,7 @@ class TestTradeScoreWorker:
 
 
 class TestTransportWorker:
-    @patch("ui_pyside6.workers.trade_workers.calc_transport_profit")
+    @patch("ui_qml.workers.trade_workers.calc_transport_profit")
     def test_run_emits_finished(self, mock_calc, qapp):
         """run() 调用 calc_transport_profit 并通过 finished 返回"""
         expected = {

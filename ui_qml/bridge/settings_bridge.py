@@ -23,8 +23,8 @@ from typing import Any
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 from PySide6.QtWidgets import QWidget
 
-import ui_pyside6.theme as theme
 from ui_qml.dialog_host import DialogBridge, QmlDialog
+from ui_qml.theme import registry as theme
 
 __all__ = ["SettingsBridge", "SettingsQmlDialog", "ThemeSelectorBridge"]
 

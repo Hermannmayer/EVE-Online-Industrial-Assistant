@@ -23,7 +23,7 @@ pytestmark = pytest.mark.ui
 def two_characters(monkeypatch):
     """人物列表打桩（`char_settings_view` 的同名入口最终读这里）。"""
     monkeypatch.setattr(
-        "ui_pyside6.views.char_settings_view.services_get_character_list",
+        "services.char_config_resolver.get_character_list",
         lambda: ["main", "alt"],
     )
 
@@ -177,7 +177,7 @@ def test_get_rechecks_the_character_list(qapp, monkeypatch):
         assert dlg.get()["char"] == "alt"
 
         monkeypatch.setattr(
-            "ui_pyside6.views.char_settings_view.services_get_character_list",
+            "services.char_config_resolver.get_character_list",
             lambda: ["main"],
         )
         assert dlg.get()["char"] == "main"

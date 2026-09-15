@@ -20,9 +20,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
-from services.implant_loader import load_implants
-from ui_pyside6.sizing import text_width
-from ui_pyside6.views.char_settings_common import (
+from core.char_settings_common import (
     SKILL_CATEGORIES,
     TRADE_HUBS,
     calc_broker_fee,
@@ -31,6 +29,8 @@ from ui_pyside6.views.char_settings_common import (
     calc_sales_tax,
     format_pct,
 )
+from services.implant_loader import load_implants
+from ui_pyside6.sizing import text_width
 
 
 class SkillSlider(QWidget):

@@ -4,7 +4,8 @@
 双击物品行 → 悬浮窗展示该物品买单/卖单各前 5 条 → 右上角「走势图」再弹价格历史
 （`PriceChartQmlDialog`，本批同迁 —— 只换中间那层会留下「QML 里弹出 Widgets 窗口」的残留）。
 
-**取数不在这里**：`OrderFetchWorker` / `order_cache` / `get_order_name` 全部沿用原模块那份，
+**取数不在这里**：`OrderFetchWorker` / `order_cache` / `get_order_name` / 回调全部来自
+`ui_qml.workers.order_workers`（6.0 从 `query_order_popup` 拆出的共享部分），
 这里只把弹窗换成 QML 宿主。集成时把 `query_bridge` 里那行
 `from ui_pyside6.views.query.query_order_popup import do_load_orders` 改成从本模块导入即可，
 `OrderPopupHost` 适配壳一行都不用动 —— 它提供的 `_model` / `_region_id` / `_status_label`
@@ -102,7 +103,7 @@ class OrderPopupBridge(DialogBridge):
         空列表不是错误（该物品可能没人挂单），由 QML 侧 `FSummaryTable.emptyText`
         给出「无买单数据 / 无卖单数据」，比原来额外塞一行占位项干净。
         """
-        from ui_pyside6.views.query.query_order_popup import _station_name_cache
+        from ui_qml.workers.order_workers import _station_name_cache
 
         self._type_id = int(type_id)
         self._name = str(name)
@@ -145,17 +146,6 @@ class OrderPopupQmlDialog(QmlDialog):
 # ── 与旧模块同名的编排函数（集成时整组替换即可）────────────────
 
 
-def _legacy() -> Any:
-    """懒导入旧模块。
-
-    模块级导入会把 QtWidgets / icons / theme 整条链拉进 `ui_qml.bridge` 的导入期，
-    而不碰订单弹窗的测试没必要付这个代价（与其余桥的懒导入同因）。
-    """
-    from ui_pyside6.views.query import query_order_popup
-
-    return query_order_popup
-
-
 def show_order_popup(page: Any, type_id: int, name: str) -> None:
     """显示订单弹窗（对齐原 `query_order_popup.show_order_popup`，只换弹窗类）。"""
     if page._order_popup:
@@ -183,13 +173,20 @@ def do_load_orders(page: Any, type_id: int) -> None:
     只有「弹窗是哪个类」不同：worker、缓存、名称解析等仍调旧模块那份实现，
     不在这里抄第二份取数逻辑（迁移期只留一份业务实现）。
     """
-    legacy = _legacy()
+    from ui_qml.workers.order_workers import (
+        OrderFetchWorker,
+        _on_order_error,
+        _on_orders_fetched,
+        get_order_name,
+        order_cache,
+    )
+
     page._current_order_type_id = type_id
-    name = legacy.get_order_name(page, type_id)
+    name = get_order_name(page, type_id)
 
     show_order_popup(page, type_id, name)
 
-    cached = legacy.order_cache.get(type_id)
+    cached = order_cache.get(type_id)
     if cached:
         buy_orders, sell_orders, fetch_time = cached
         if _time.time() - fetch_time < _CACHE_TTL:
@@ -198,7 +195,7 @@ def do_load_orders(page: Any, type_id: int) -> None:
             return
 
     page._status_label.setText("正在从 ESI 获取实时订单...")
-    worker = legacy.OrderFetchWorker(type_id, page._region_id, page)
-    worker.finished_signal.connect(lambda tid, buy, sell: legacy._on_orders_fetched(page, tid, buy, sell))
-    worker.error_signal.connect(lambda tid, err: legacy._on_order_error(page, tid, err))
+    worker = OrderFetchWorker(type_id, page._region_id, page)
+    worker.finished_signal.connect(lambda tid, buy, sell: _on_orders_fetched(page, tid, buy, sell))
+    worker.error_signal.connect(lambda tid, err: _on_order_error(page, tid, err))
     worker.start()

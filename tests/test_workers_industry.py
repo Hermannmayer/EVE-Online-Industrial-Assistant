@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtCore import QThread
 
-from ui_pyside6.workers.industry_workers import RankWorker, ScoreWorker, SearchWorker
+from ui_qml.workers.industry_workers import RankWorker, ScoreWorker, SearchWorker
 
 pytestmark = pytest.mark.ui
 
@@ -52,7 +52,7 @@ class TestSearchWorker:
 
 
 class TestScoreWorker:
-    @patch("ui_pyside6.workers.industry_workers.get_container")
+    @patch("ui_qml.workers.industry_workers.get_container")
     def test_run_emits_finished(self, mock_get_container, qapp):
         """run() 调用 scoring_service().calc_manufacturing_score 并通过 finished 返回结果"""
         expected = {
@@ -94,7 +94,7 @@ class TestScoreWorker:
 
 
 class TestRankWorker:
-    @patch("ui_pyside6.workers.industry_workers.get_container")
+    @patch("ui_qml.workers.industry_workers.get_container")
     def test_run_with_no_products(self, mock_get_container, qapp):
         """无可制造物品时 result 信号发出空列表"""
         mock_svc = MagicMock()

@@ -7,7 +7,7 @@ import tempfile
 import pytest
 from openpyxl import load_workbook
 
-from ui_pyside6.views.export_helper import export_to_csv, export_to_excel
+from core.export_helper import export_to_csv, export_to_excel
 
 pytestmark = pytest.mark.fast
 
@@ -116,7 +116,7 @@ class TestExportCsvEmpty:
         import os
         import tempfile
 
-        from ui_pyside6.views.export_helper import export_to_csv
+        from core.export_helper import export_to_csv
 
         headers = ["物品名称", "数量"]
         with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
@@ -137,7 +137,7 @@ class TestExportCsvEmpty:
         import os
         import tempfile
 
-        from ui_pyside6.views.export_helper import export_to_csv
+        from core.export_helper import export_to_csv
 
         headers = ["A", "B"]
         rows = [[None, "hello"], ["world", None]]
@@ -166,7 +166,7 @@ class TestExportToNonexistentDir:
         import os
         import tempfile
 
-        from ui_pyside6.views.export_helper import export_to_csv
+        from core.export_helper import export_to_csv
 
         headers = ["A"]
         rows = [["1"]]
@@ -183,7 +183,7 @@ class TestExportToNonexistentDir:
         import os
         import tempfile
 
-        from ui_pyside6.views.export_helper import export_to_excel
+        from core.export_helper import export_to_excel
 
         headers = ["A"]
         rows = [["1"]]
@@ -200,7 +200,7 @@ class TestExportToNonexistentDir:
         import os
         import tempfile
 
-        from ui_pyside6.views.export_helper import export_to_csv
+        from core.export_helper import export_to_csv
 
         headers = ["A"]
         rows = [["1"]]

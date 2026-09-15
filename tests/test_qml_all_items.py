@@ -13,9 +13,9 @@ import pytest
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QGuiApplication
 
-from ui_pyside6.models.all_items_models import BCOLS, MCOLS, TCOLS
-from ui_pyside6.workers.all_items_workers import JITA_RID
 from ui_qml.bridge import all_items_bridge as ai
+from ui_qml.models.all_items_models import BCOLS, MCOLS, TCOLS
+from ui_qml.workers.all_items_workers import JITA_RID
 
 pytestmark = pytest.mark.ui
 
@@ -560,7 +560,7 @@ def test_export_without_data_only_hints(qapp):
 
 def test_export_writes_csv(qapp, monkeypatch, tmp_path):
     target = tmp_path / "out.csv"
-    monkeypatch.setattr("ui_pyside6.views.export_helper.get_save_filename", lambda *a, **k: str(target))
+    monkeypatch.setattr("ui_qml.file_dialogs.get_save_filename", lambda *a, **k: str(target))
     dlg = _dialog()
     try:
         bridge = dlg.bridge

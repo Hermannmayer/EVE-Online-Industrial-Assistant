@@ -23,8 +23,8 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QImage
 from PySide6.QtQuick import QQuickImageProvider
 
-import ui_pyside6.theme as theme
-from ui_pyside6.icons import load_svg
+from ui_qml.icons import load_svg
+from ui_qml.theme import registry as theme
 
 __all__ = ["PhosphorIconProvider", "PROVIDER_ID"]
 

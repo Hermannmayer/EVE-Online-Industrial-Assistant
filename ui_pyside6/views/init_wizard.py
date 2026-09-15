@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.theme as theme
 from services.init_service import STEPS, InitStep, StepStatus, get_missing_steps
-from ui_pyside6.workers.init_workers import InitServiceWorker
+from ui_qml.workers.init_workers import InitServiceWorker
 
 # ── 样式 ──
 

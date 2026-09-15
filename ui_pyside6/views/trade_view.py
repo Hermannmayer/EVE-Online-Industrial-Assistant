@@ -25,8 +25,8 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
-from ui_pyside6.models.trade_models import TradeHubTableModel
-from ui_pyside6.workers.trade_workers import CrossRegionPriceWorker, TradeScoreWorker, TransportWorker
+from ui_qml.models.trade_models import TradeHubTableModel
+from ui_qml.workers.trade_workers import CrossRegionPriceWorker, TradeScoreWorker, TransportWorker
 
 
 class TradePage(QWidget):
@@ -407,7 +407,7 @@ class TradePage(QWidget):
         if not text.strip():
             self._t_search_list.setVisible(False)
             return
-        from ui_pyside6.workers.industry_workers import SearchWorker
+        from ui_qml.workers.industry_workers import SearchWorker
 
         w = SearchWorker(text.strip(), get_container().db, self)
         w.finished_signal.connect(self._on_t_search_result)
@@ -515,7 +515,7 @@ class TradePage(QWidget):
         if not text.strip():
             self._search_list.setVisible(False)
             return
-        from ui_pyside6.workers.industry_workers import SearchWorker
+        from ui_qml.workers.industry_workers import SearchWorker
 
         w = SearchWorker(text.strip(), get_container().db, self)
         w.finished_signal.connect(self._on_search_result)

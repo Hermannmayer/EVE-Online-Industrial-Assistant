@@ -16,8 +16,8 @@ import pytest
 from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QLabel, QWidget
 
-import ui_pyside6.theme as theme
 from ui_qml.bridge.settings_bridge import SettingsBridge, SettingsQmlDialog, ThemeSelectorBridge
+from ui_qml.theme import registry as theme
 
 pytestmark = pytest.mark.ui
 

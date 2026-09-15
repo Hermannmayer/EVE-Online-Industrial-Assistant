@@ -21,8 +21,8 @@ from typing import Any
 
 from PySide6.QtCore import QModelIndex, Qt, QUrl
 
-from ui_pyside6.icon_cache import item_icon_path
-from ui_pyside6.models.estimate_models import EstimateTableModel
+from ui_qml.icon_cache import item_icon_path
+from ui_qml.models.estimate_models import EstimateTableModel
 
 __all__ = ["EstimateQmlModel", "ROLE_NAMES"]
 

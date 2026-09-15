@@ -32,11 +32,11 @@ from PySide6.QtGui import QGuiApplication
 
 from core.constants import TRADE_HUBS
 from core.logger import log
-from ui_pyside6.views.char_settings_view import get_character_list
-from ui_pyside6.views.compare.compare_chart import CompareWorker, item_name, search_items
-from ui_pyside6.views.compare.compare_models import _format_isk
+from services import char_config_resolver
 from ui_qml.dialog_host import DialogBridge, QmlDialog
+from ui_qml.models.compare_models import _format_isk
 from ui_qml.models.compare_qml_model import CompareQmlModel
+from ui_qml.workers.compare_chart import CompareWorker, item_name, search_items
 
 __all__ = ["CompareBridge", "CompareQmlDialog", "open_compare_qml_dialog"]
 
@@ -79,7 +79,7 @@ class CompareBridge(DialogBridge):
         self._worker: Any = None
         self._mode_index = 0
         self._hub_index = 0
-        self._characters = list(get_character_list()) or ["main"]
+        self._characters = list(char_config_resolver.get_character_list()) or ["main"]
         self._char_index = 0
         self._me = 0
         self._te = 0

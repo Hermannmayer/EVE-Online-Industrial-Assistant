@@ -95,7 +95,7 @@ class _ResearchBridgeBase(DialogBridge):
     @staticmethod
     def _load_chars() -> list[str]:
         """角色下拉；没配角色时退回 "main"（原版 `addItem("main")`）。"""
-        from ui_pyside6.views.char_settings_view import get_character_list
+        from services.char_config_resolver import get_character_list
 
         chars = list(get_character_list() or [])
         return chars or ["main"]

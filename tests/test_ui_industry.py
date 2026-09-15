@@ -15,7 +15,7 @@ def test_plan_edit_dialog_batch_sync_gating(industry_page, monkeypatch):
     from ui_qml.bridge.plan_edit_bridge import PlanEditQmlDialog
 
     monkeypatch.setattr(inventory_manager, "get_hangars", lambda: [])
-    monkeypatch.setattr("ui_pyside6.views.char_settings_view.services_get_character_list", lambda: ["甲"])
+    monkeypatch.setattr("services.char_config_resolver.get_character_list", lambda: ["甲"])
 
     dlg = PlanEditQmlDialog(
         industry_page,
@@ -202,9 +202,9 @@ class TestNotesInlineEditPersists:
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
-        from ui_pyside6.models.industry_models import PlanTableModel
         from ui_pyside6.views.industry.plan_table import PlanTable
-        from ui_pyside6.views.industry.plan_table_constants import COL_NOTES
+        from ui_qml.models.industry_models import PlanTableModel
+        from ui_qml.models.plan_table_constants import COL_NOTES
 
         repo = MagicMock()
         monkeypatch.setattr(

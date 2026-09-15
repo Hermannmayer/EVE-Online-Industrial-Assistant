@@ -24,3 +24,13 @@ def fmt_isk_exact(value: float) -> str
 精确金额：整数不带小数点，否则保留两位。
 
 定义行：`16`
+
+### `fmt_tag`
+
+```python
+def fmt_tag(daily_profit: float, veto: str | bool='') -> str
+```
+
+把日均利润格式化为等级标签（S/A/B/C/D），`veto` 非空则为 ✗。
+
+定义行：`23`

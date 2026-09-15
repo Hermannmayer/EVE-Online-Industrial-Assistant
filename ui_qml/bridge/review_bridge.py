@@ -45,9 +45,9 @@ from services.inventory_clipboard_service import parse_clipboard
 from services.inventory_import import compute_import_diff, compute_row_delta
 from services.inventory_manager import apply_inventory_import, get_hangars, get_items
 from services.user_settings import get_material_price_mult, set_material_price_mult
-from ui_pyside6.icon_cache import item_icon_path
 from ui_qml.bridge.summary_dialog import SummaryTableBridge, SummaryTableQmlDialog, cell
 from ui_qml.dialog_host import DialogBridge, QmlDialog
+from ui_qml.icon_cache import item_icon_path
 
 __all__ = [
     "HangarPickBridge",

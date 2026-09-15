@@ -151,7 +151,7 @@ def test_price_type_options_carry_value_and_label(bridge):
 @pytest.mark.fast
 def test_short_query_clears_suggestions_without_searching(bridge, monkeypatch):
     calls: list[str] = []
-    monkeypatch.setattr("ui_pyside6.views.compare.compare_chart.search_items", lambda t: calls.append(t) or [])
+    monkeypatch.setattr("ui_qml.workers.compare_chart.search_items", lambda t: calls.append(t) or [])
 
     bridge.requestSuggestions("钢")
     assert bridge.suggestions == []

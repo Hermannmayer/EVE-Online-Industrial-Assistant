@@ -61,7 +61,7 @@ def plan_edit_factory(qapp, monkeypatch):
     from services import inventory_manager
 
     monkeypatch.setattr(inventory_manager, "get_hangars", lambda: [])
-    monkeypatch.setattr("ui_pyside6.views.char_settings_view.services_get_character_list", lambda: ["甲"])
+    monkeypatch.setattr("services.char_config_resolver.get_character_list", lambda: ["甲"])
 
     from ui_qml.bridge.plan_edit_bridge import PlanEditQmlDialog
 
@@ -872,7 +872,7 @@ class _FakeNpcWorker(QObject):
 @pytest.fixture
 def contract_detail_factory(qapp, monkeypatch):
     monkeypatch.setattr(
-        "ui_pyside6.workers.contract_workers.ContractItemsLoadWorker",
+        "ui_qml.workers.contract_workers.ContractItemsLoadWorker",
         _FakeItemsWorker,
     )
     from ui_qml.bridge.contract_detail_bridge import ContractDetailQmlDialog
@@ -1070,7 +1070,7 @@ def test_closing_a_dialog_finishes_its_worker(qapp, monkeypatch):
     Qt 直接 `abort()`，整个进程静默死掉（实测退出码 127、一行日志都没有，
     `ui_snapshot.py --dialog contract_detail` 就是这么挂的）。
     """
-    monkeypatch.setattr("ui_pyside6.workers.contract_workers.ContractItemsLoadWorker", _SlowItemsWorker)
+    monkeypatch.setattr("ui_qml.workers.contract_workers.ContractItemsLoadWorker", _SlowItemsWorker)
     from ui_qml.bridge.contract_detail_bridge import ContractDetailQmlDialog
 
     dialog = ContractDetailQmlDialog({"contract_id": 1})
@@ -1534,7 +1534,7 @@ def test_order_popup_dialog_loads_without_warnings(qapp):
 
 
 def test_price_chart_dialog_loads_without_warnings(qapp, monkeypatch):
-    monkeypatch.setattr("ui_pyside6.views.price_chart.PriceHistoryWorker", _StubHistoryWorker)
+    monkeypatch.setattr("ui_qml.workers.price_history_worker.PriceHistoryWorker", _StubHistoryWorker)
     from ui_qml.bridge.price_chart_bridge import PriceChartQmlDialog
 
     _assert_loads_and_quiet(lambda: PriceChartQmlDialog(34, "三钛合金"), "价格走势图")

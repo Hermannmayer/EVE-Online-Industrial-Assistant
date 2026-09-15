@@ -18,15 +18,15 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtCore import Property, QItemSelection, QItemSelectionModel, QObject, Qt, Signal, Slot
 from PySide6.QtGui import QGuiApplication
 
-import ui_pyside6.theme as theme
-from ui_pyside6.models.industry_models import PlanTableModel
-from ui_pyside6.views.industry.plan_table_constants import (
+from ui_qml.models.industry_models import PlanTableModel
+from ui_qml.models.plan_table_constants import (
     COL_PRODUCT,
     DEFAULT_WIDTHS,
     FIXED_WIDTHS,
     MAX_CONTENT_WIDTHS,
     NUM_COLUMNS,
 )
+from ui_qml.theme import registry as theme
 
 if TYPE_CHECKING:
     from ui_qml.models.plan_qml_model import PlanQmlModel

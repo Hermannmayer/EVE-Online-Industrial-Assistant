@@ -38,7 +38,7 @@ def mock_deps():
     db = _make_mock_db()
     cont = MagicMock()
     cont.db = db
-    with patch("ui_pyside6.views.batch_price_dialog.get_container", return_value=cont):
+    with patch("ui_qml.workers.batch_price_workers.get_container", return_value=cont):
         yield
 
 

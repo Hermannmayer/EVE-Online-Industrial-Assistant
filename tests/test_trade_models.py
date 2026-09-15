@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtCore import QModelIndex, Qt
 
-from ui_pyside6.models.trade_models import TradeHubTableModel
+from ui_qml.models.trade_models import TradeHubTableModel
 
 pytestmark = pytest.mark.ui
 
@@ -97,7 +97,7 @@ class TestTradeHubTableModel:
         rows = [{"hub": "Jita", "type_id": 2001}]
         model = TradeHubTableModel(rows)
 
-        with patch("ui_pyside6.models.trade_models.load_item_icon", return_value=MagicMock()):
+        with patch("ui_qml.models.trade_models.load_item_icon", return_value=MagicMock()):
             result = model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole)
             assert result is not None
 
@@ -111,7 +111,7 @@ class TestTradeHubTableModel:
         rows = [{"hub": "Jita", "type_id": 99999}]
         model = TradeHubTableModel(rows)
 
-        with patch("ui_pyside6.models.trade_models.load_item_icon", return_value=None):
+        with patch("ui_qml.models.trade_models.load_item_icon", return_value=None):
             result = model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole)
             assert result is None
 

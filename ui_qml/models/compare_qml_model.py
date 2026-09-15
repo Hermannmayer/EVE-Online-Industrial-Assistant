@@ -20,8 +20,8 @@ from typing import Any
 from PySide6.QtCore import QModelIndex, Qt, QUrl
 from PySide6.QtGui import QColor
 
-from ui_pyside6.icon_cache import item_icon_path
-from ui_pyside6.views.compare.compare_models import CompareTableModel
+from ui_qml.icon_cache import item_icon_path
+from ui_qml.models.compare_models import CompareTableModel
 
 __all__ = ["ROLE_NAMES", "CompareQmlModel"]
 
@@ -49,7 +49,7 @@ def _icon_url(type_id: Any) -> str:
     """物品图标 → QML `Image.source` 的 URL；没有图标文件返回空串。
 
     父类是在 `DecorationRole` 里返回 `QIcon`（QML 用不上），这里改给 URL：
-    图标文件路径的唯一来源仍是 `ui_pyside6.icon_cache.item_icon_path`。
+    图标文件路径的唯一来源仍是 `ui_qml.icon_cache.item_icon_path`。
     """
     if not type_id:
         return ""

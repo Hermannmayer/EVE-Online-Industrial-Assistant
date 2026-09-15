@@ -4,9 +4,10 @@
 放进 `inventory_bridge` 会让那个文件的导入面变得很宽（而且其中几个只有
 右键菜单用得到）。
 
-**对话框仍是 Widgets**（阶段 4 迁移），这里只负责「凑参数 → 开对话框 → 落库 → 刷新」。
-反馈走桥的提示文案而不是 `QMessageBox` —— 页面已经是 QML 了，
-再弹一个原生消息框会格格不入。
+本模块只负责「凑参数 → 开对话框 → 落库 → 刷新」。**对话框与取值框都已换成 QML 版**
+（研究计划三框见 `research_plan_bridge`，取值见 `input_dialog`）：原先调的是 Widgets 版，
+会把原生窗口弹进 QML 页面，和「页面已经全是 QML」的前提冲突。
+反馈走桥的提示文案而不是 `QMessageBox`，同理。
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ def add_blueprints_to_plan(bridge: Any, blueprints: list[dict]) -> None:
     整张直接加入，不弹配置对话框：流程/等级/设施均按蓝图自身属性。
     """
     from services import plan_execution, plan_service
-    from ui_pyside6.views.inventory.blueprint_tab import _BulkPlanMetricsWorker
+    from ui_qml.workers.blueprint_plan_worker import _BulkPlanMetricsWorker
 
     valid = [bp for bp in blueprints if bp.get("product_type_id")]
     if not valid:
@@ -154,7 +155,7 @@ def _add_copy_plan(bridge: Any, bp: dict) -> None:
     from PySide6.QtWidgets import QDialog
 
     from core.container import get_container
-    from ui_pyside6.dialogs.research_plan_dialogs import CopyPlanDialog
+    from ui_qml.bridge.research_plan_bridge import CopyPlanDialogQmlDialog
 
     if not bp.get("is_bpo"):
         bridge._set_bp_hint("拷贝只能基于蓝图原本(BPO)，蓝图拷贝(BPC)不可再拷贝")
@@ -175,7 +176,7 @@ def _add_copy_plan(bridge: Any, bp: dict) -> None:
         return
 
     name = bp.get("display_name") or bp.get("zh_name") or str(bid)
-    dialog = CopyPlanDialog(name, max_production_limit=int(row[0] or 1), parent=_parent(bridge))
+    dialog = CopyPlanDialogQmlDialog(name, max_production_limit=int(row[0] or 1), parent=_parent(bridge))
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return
     data = dialog.result_data() or {}
@@ -197,7 +198,7 @@ def _add_invention_plan(bridge: Any, bp: dict) -> None:
     from core.container import get_container
     from core.logger import log
     from services.research_plans import invention_base_runs, resolve_invention_source
-    from ui_pyside6.dialogs.research_plan_dialogs import InventionPlanDialog
+    from ui_qml.bridge.research_plan_bridge import InventionPlanDialogQmlDialog
 
     bid = int(bp["blueprint_type_id"])
     try:
@@ -217,7 +218,7 @@ def _add_invention_plan(bridge: Any, bp: dict) -> None:
         return
 
     # 发明作业跑在 **T1 蓝图** 上，产物是选中的 T2 蓝图
-    dialog = InventionPlanDialog(
+    dialog = InventionPlanDialogQmlDialog(
         src["t1_name"],
         outcomes=src["outcomes"],
         base_runs_by_outcome=base_runs,
@@ -253,7 +254,7 @@ def _add_research_plan(bridge: Any, bp: dict) -> None:
     """加入效率研究规划（ME/TE，只能基于 BPO）。"""
     from PySide6.QtWidgets import QDialog
 
-    from ui_pyside6.dialogs.research_plan_dialogs import ResearchPlanDialog
+    from ui_qml.bridge.research_plan_bridge import ResearchPlanDialogQmlDialog
 
     if not bp.get("is_bpo"):
         bridge._set_bp_hint("研究只能基于蓝图原本(BPO)，蓝图拷贝(BPC)不可研究")
@@ -261,7 +262,7 @@ def _add_research_plan(bridge: Any, bp: dict) -> None:
 
     bid = int(bp["blueprint_type_id"])
     name = bp.get("display_name") or bp.get("zh_name") or str(bid)
-    dialog = ResearchPlanDialog(name, parent=_parent(bridge))
+    dialog = ResearchPlanDialogQmlDialog(name, parent=_parent(bridge))
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return
     data = dialog.result_data() or {}
@@ -284,11 +285,10 @@ def _add_research_plan(bridge: Any, bp: dict) -> None:
 
 def auto_fill_cost_per_run(bridge: Any, blueprints: list[dict], _hangar_id: Any = None) -> None:
     """按发明期望成本自动填写 `cost_per_run`（多产物时让用户选）。"""
-    from PySide6.QtWidgets import QInputDialog
-
     from core.container import get_container
     from core.logger import log
     from services.research_plans import research_cost_per_run
+    from ui_qml.bridge.input_dialog import InputQmlDialog
 
     bp = _first_with_blueprint(bridge, blueprints)
     if not bp:
@@ -313,8 +313,8 @@ def auto_fill_cost_per_run(bridge: Any, blueprints: list[dict], _hangar_id: Any 
             f"{o['name']} — {o['cost_per_run']:,.0f} ISK/流程（成功率 {o['success_rate'] * 100:.1f}%）"
             for o in outcomes
         ]
-        pick, ok = QInputDialog.getItem(
-            _parent(bridge), "选择产物", "该 T1 蓝图有多个发明产物，按哪个算？", names, 0, False
+        pick, ok = InputQmlDialog.get_item(
+            _parent(bridge), "选择产物", "该 T1 蓝图有多个发明产物，按哪个算？", names, 0
         )
         if not ok:
             return
@@ -348,13 +348,13 @@ def paste_blueprints(bridge: Any, hangar_id: int | None, hangar_label: str) -> N
         snapshot_blueprints,
     )
     from services.inventory_manager import get_blueprints
-    from ui_pyside6.views.inventory.blueprint_import_worker import _BlueprintImportWorker
     from ui_qml.bridge.blueprint_import_bridge import (
         BlueprintImportChangeQmlDialog as BlueprintImportChangeDialog,
     )
     from ui_qml.bridge.blueprint_import_bridge import (
         BlueprintImportReviewQmlDialog as BlueprintImportReviewDialog,
     )
+    from ui_qml.workers.blueprint_import_worker import _BlueprintImportWorker
 
     if hangar_id is None:
         return

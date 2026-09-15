@@ -7,7 +7,7 @@
 import pytest
 from PySide6.QtCore import Qt
 
-from ui_pyside6.models.industry_models import PlanTableModel
+from ui_qml.models.industry_models import PlanTableModel
 
 pytestmark = pytest.mark.ui
 

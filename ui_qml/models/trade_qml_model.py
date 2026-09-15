@@ -12,9 +12,9 @@ from typing import Any
 
 from PySide6.QtCore import QModelIndex, Qt, QUrl
 
-import ui_pyside6.theme as theme
-from ui_pyside6.icon_cache import item_icon_path
-from ui_pyside6.models.trade_models import TradeHubTableModel
+from ui_qml.icon_cache import item_icon_path
+from ui_qml.models.trade_models import TradeHubTableModel
+from ui_qml.theme import registry as theme
 
 __all__ = ["TradeHubQmlModel", "ROLE_NAMES"]
 

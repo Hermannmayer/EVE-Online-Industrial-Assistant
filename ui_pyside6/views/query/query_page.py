@@ -18,22 +18,17 @@ from PySide6.QtWidgets import (
 
 import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
+from core.search_history import add_search_history, clear_search_history, load_search_history
 from ui_pyside6.sizing import ElidedLabel
-from ui_pyside6.views.query.query_search import (
-    _COLUMNS,
-    DEFAULT_REGION_ID,
-    GroupLoadWorker,
-    SearchWorker,
-    SuggestionPopup,
-    SuggestionWorker,
-    add_search_history,
-    clear_search_history,
-    format_search_rows,
-    load_search_history,
-    show_context_menu,
-)
-from ui_pyside6.views.query.query_search import QueryTableModel as _QueryTableModel
+from ui_pyside6.views.query.query_search import SuggestionPopup, show_context_menu
 from ui_qml.bridge.order_popup_bridge import do_load_orders, hide_order_popup
+from ui_qml.models.query_models import (
+    COLUMNS,
+    DEFAULT_REGION_ID,
+    format_search_rows,
+)
+from ui_qml.models.query_models import QueryTableModel as _QueryTableModel
+from ui_qml.workers.query_workers import GroupLoadWorker, SearchWorker, SuggestionWorker
 
 
 class QueryPage(QWidget):
@@ -167,7 +162,7 @@ class QueryPage(QWidget):
         self._model = _QueryTableModel()
         self._table.setModel(self._model)
 
-        for i, (_, w) in enumerate(_COLUMNS):
+        for i, (_, w) in enumerate(COLUMNS):
             self._table.setColumnWidth(i, w)
 
         layout.addWidget(self._table)
@@ -286,7 +281,7 @@ class QueryPage(QWidget):
         self._count_label.setText(f"共 {len(rows)} 条结果" + (" (仅基本信息)" if is_fallback else ""))
         self._status_label.setText("就绪 — 右键行可查看操作菜单，双击查看实时订单")
 
-        for i, (_, w) in enumerate(_COLUMNS):
+        for i, (_, w) in enumerate(COLUMNS):
             if self._table.columnWidth(i) < 20:
                 self._table.setColumnWidth(i, w)
 

@@ -5,7 +5,7 @@
 auto 模式（启动场景）全部就绪即自动关窗、有缺失即自动开跑。
 
 **检查 / 下载逻辑一行都不重写**：直接复用 `services.init_service`（步骤表 `STEPS`、
-就绪判定 `get_missing_steps`）与 `ui_pyside6.workers.init_workers.InitServiceWorker`
+就绪判定 `get_missing_steps`）与 `ui_qml.workers.init_workers.InitServiceWorker`
 （QThread）。迁移期只保留这一份业务实现，桥只做「状态映射 + 控件态 + 线程收尾」。
 
 三处与原版不同（都有原因，逐条见下）：
@@ -29,10 +29,10 @@ from typing import Any
 
 from PySide6.QtCore import Property, QTimer, Signal, Slot
 
-import ui_pyside6.theme as theme
 from services.init_service import STEPS, InitStep, StepStatus, get_missing_steps
-from ui_pyside6.workers.init_workers import InitServiceWorker
 from ui_qml.dialog_host import DialogBridge, QmlDialog
+from ui_qml.theme import registry as theme
+from ui_qml.workers.init_workers import InitServiceWorker
 
 __all__ = [
     "InitWizardBridge",

@@ -29,10 +29,7 @@ import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUBS
 from ui_pyside6.views.char_settings_view import get_character_list
-from ui_pyside6.views.compare.compare_chart import CompareWorker, item_name, search_items
-from ui_pyside6.views.compare.compare_models import CompareTableModel as _CompareTableModel
 from ui_pyside6.views.compare.compare_models import (
-    _format_isk,
     build_clear_btn_stylesheet,
     build_combo_stylesheet,
     build_compare_btn_stylesheet,
@@ -47,6 +44,9 @@ from ui_pyside6.views.compare.compare_models import (
     build_status_stylesheet,
     build_table_stylesheet,
 )
+from ui_qml.models.compare_models import CompareTableModel as _CompareTableModel
+from ui_qml.models.compare_models import _format_isk
+from ui_qml.workers.compare_chart import CompareWorker, item_name, search_items
 
 
 class CompareDialog(QDialog):

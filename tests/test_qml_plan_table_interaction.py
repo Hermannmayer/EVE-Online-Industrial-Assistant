@@ -36,8 +36,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 import ui_pyside6.theme as theme
-from ui_pyside6.models.industry_models import PlanTableModel
 from ui_pyside6.views.industry.plan_table import PlanTable
+from ui_qml.models.industry_models import PlanTableModel
 
 pytestmark = pytest.mark.ui
 

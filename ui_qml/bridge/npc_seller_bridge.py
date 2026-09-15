@@ -12,8 +12,8 @@ from typing import Any
 from PySide6.QtCore import Property, Signal, Slot
 
 from core.constants import TRADE_HUB_IDS
-from ui_pyside6.workers.npc_seller_workers import NpcOrderWorker
 from ui_qml.bridge.summary_dialog import SummaryTableBridge, SummaryTableQmlDialog, cell
+from ui_qml.workers.npc_seller_workers import NpcOrderWorker
 
 __all__ = ["NpcSellerBridge", "NpcSellerQmlDialog"]
 

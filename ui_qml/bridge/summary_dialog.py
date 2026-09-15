@@ -15,8 +15,8 @@ from typing import Any
 
 from PySide6.QtCore import Property, Signal, Slot
 
-import ui_pyside6.theme as theme
 from ui_qml.dialog_host import DialogBridge, QmlDialog
+from ui_qml.theme import registry as theme
 
 __all__ = ["SummaryTableBridge", "SummaryTableQmlDialog", "cell", "fmt_isk"]
 

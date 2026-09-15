@@ -67,22 +67,47 @@
 | [`services.importers.getindustry`](/api/services/importers/getindustry) | 工业系统成本指数拉取 |
 | [`services.importers.getcontracts`](/api/services/importers/getcontracts) | 合同数据拉取 |
 
-## UI 数据模型（ui_pyside6/models/）
+## UI 数据模型（ui_qml/models/）
+
+> 这些表模型**两套 UI 共用**：QML 页面读 `*_qml_model.py` 适配层，未迁移的
+> Widgets 视图直接读基类。原先在 `ui_pyside6/models/`，批次 6.0 迁来。
 
 | 模块 | 说明 |
 |------|------|
-| [`ui_pyside6.models.industry_models`](/api/ui_pyside6/models/industry_models) | 工业制造 Qt 数据模型 |
-| [`ui_pyside6.models.trade_models`](/api/ui_pyside6/models/trade_models) | 贸易评分 Qt 数据模型 |
+| [`ui_qml.models.industry_models`](/api/ui_qml/models/industry_models) | 工业制造 Qt 数据模型（生产计划表） |
+| [`ui_qml.models.contract_models`](/api/ui_qml/models/contract_models) | 合同数据模型 + 过滤代理 |
+| [`ui_qml.models.trade_models`](/api/ui_qml/models/trade_models) | 贸易评分 Qt 数据模型 |
+| [`ui_qml.models.estimate_models`](/api/ui_qml/models/estimate_models) | 估价 Qt 数据模型 |
+| [`ui_qml.models.all_items_models`](/api/ui_qml/models/all_items_models) | 全部物品 Qt 数据模型 |
+| [`ui_qml.models.compare_models`](/api/ui_qml/models/compare_models) | 批量对比数据模型 + ISK/等级格式化 |
+| [`ui_qml.models.inventory_helpers`](/api/ui_qml/models/inventory_helpers) | 仓库 / 蓝图表模型 |
+| [`ui_qml.models.query_models`](/api/ui_qml/models/query_models) | 物品查询表模型 + 行格式化 |
+| [`ui_qml.models.watchlist_models`](/api/ui_qml/models/watchlist_models) | 关注列表表模型 |
+| [`ui_qml.models.plan_table_constants`](/api/ui_qml/models/plan_table_constants) | 生产计划表列索引常量 |
 
-## UI 异步 Workers（ui_pyside6/workers/）
+## UI 异步 Workers（ui_qml/workers/）
 
 | 模块 | 说明 |
 |------|------|
-| [`ui_pyside6.workers.base_worker`](/api/ui_pyside6/workers/base_worker) | Worker 基类 |
-| [`ui_pyside6.workers.industry_workers`](/api/ui_pyside6/workers/industry_workers) | 工业制造 Worker |
-| [`ui_pyside6.workers.trade_workers`](/api/ui_pyside6/workers/trade_workers) | 贸易评分 Worker |
-| [`ui_pyside6.workers.init_workers`](/api/ui_pyside6/workers/init_workers) | 数据初始化 Worker |
-| [`ui_pyside6.workers.refine_worker`](/api/ui_pyside6/workers/refine_worker) | 精炼计算 Worker |
+| [`ui_qml.workers.base_worker`](/api/ui_qml/workers/base_worker) | Worker 基类（评分 / 批量评分） |
+| [`ui_qml.workers.industry_workers`](/api/ui_qml/workers/industry_workers) | 工业制造 Worker |
+| [`ui_qml.workers.trade_workers`](/api/ui_qml/workers/trade_workers) | 贸易评分 Worker |
+| [`ui_qml.workers.contract_workers`](/api/ui_qml/workers/contract_workers) | 合同取数 Worker |
+| [`ui_qml.workers.all_items_workers`](/api/ui_qml/workers/all_items_workers) | 全部物品分类树 / 物品 / 搜索 Worker |
+| [`ui_qml.workers.init_workers`](/api/ui_qml/workers/init_workers) | 数据初始化 Worker |
+| [`ui_qml.workers.refine_worker`](/api/ui_qml/workers/refine_worker) | 精炼计算 Worker |
+| [`ui_qml.workers.npc_seller_workers`](/api/ui_qml/workers/npc_seller_workers) | NPC 收购单 Worker |
+| [`ui_qml.workers.score_worker`](/api/ui_qml/workers/score_worker) | 评分线程 `ScoreW`（全物品 / 可制造页共用） |
+| [`ui_qml.workers.query_workers`](/api/ui_qml/workers/query_workers) | 查询页搜索 / 候选 / 类别树线程 |
+| [`ui_qml.workers.order_workers`](/api/ui_qml/workers/order_workers) | 订单缓存 + ESI 取数线程 |
+| [`ui_qml.workers.batch_price_workers`](/api/ui_qml/workers/batch_price_workers) | 批量查价线程与搜索助手 |
+| [`ui_qml.workers.mfg_tree_worker`](/api/ui_qml/workers/mfg_tree_worker) | 可制造物品分类树线程 |
+| [`ui_qml.workers.price_history_worker`](/api/ui_qml/workers/price_history_worker) | 价格历史取数线程 |
+| [`ui_qml.workers.blueprint_import_worker`](/api/ui_qml/workers/blueprint_import_worker) | 蓝图剪贴板导入线程 |
+| [`ui_qml.workers.blueprint_plan_worker`](/api/ui_qml/workers/blueprint_plan_worker) | 蓝图批量加入规划的指标计算线程 |
+| [`ui_qml.workers.estimate_workers`](/api/ui_qml/workers/estimate_workers) | 估价 / 剪贴板解析线程 |
+| [`ui_qml.workers.compare_chart`](/api/ui_qml/workers/compare_chart) | 批量对比计算线程 + 搜索辅助 |
+| [`ui_qml.workers.watchlist_workers`](/api/ui_qml/workers/watchlist_workers) | 关注列表候选搜索线程 |
 
 ## UI 页面概览
 

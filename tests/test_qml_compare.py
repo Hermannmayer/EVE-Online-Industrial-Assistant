@@ -310,7 +310,7 @@ def test_parameters_are_clamped(qapp):
 def test_hub_and_character_choose_the_config(qapp, monkeypatch):
     """区域/角色下拉统一喂给 worker 的 cfg（原版把买入卖出都指向同一个下拉）。"""
     monkeypatch.setattr(
-        "ui_pyside6.views.char_settings_view.services_get_character_list",
+        "services.char_config_resolver.get_character_list",
         lambda: ["main", "alt"],
     )
     dlg = _dialog(initial_items=[{"type_id": 2001, "name": "渡鸦级"}])
@@ -419,7 +419,7 @@ def test_cells_reuse_the_widgets_model(qapp):
 
     这样「改了 Widgets 版忘了改 QML 版」不可能发生。
     """
-    from ui_pyside6.views.compare.compare_models import CompareTableModel
+    from ui_qml.models.compare_models import CompareTableModel
 
     model = CompareQmlModel("mfg")
     assert isinstance(model, CompareTableModel)

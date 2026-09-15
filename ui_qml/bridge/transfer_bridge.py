@@ -21,11 +21,11 @@ from typing import Any
 
 from PySide6.QtCore import Property, QUrl, Signal, Slot
 
-import ui_pyside6.theme as theme
 from services.inventory_import import compute_transfer_rows
 from services.inventory_manager import get_hangar_stock, get_hangars, get_items, move_quantity
-from ui_pyside6.icon_cache import item_icon_path
 from ui_qml.dialog_host import DialogBridge, QmlDialog
+from ui_qml.icon_cache import item_icon_path
+from ui_qml.theme import registry as theme
 
 __all__ = [
     "HangarTransferBridge",

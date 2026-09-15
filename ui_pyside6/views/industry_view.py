@@ -21,7 +21,6 @@ from ui_pyside6.workers.industry_page_workers import (
     PlanPriceRefreshWorker,
     init_plan_db,
 )
-from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker, ProcurementSummaryWorker
 from ui_qml.bridge.blueprint_dialog_bridge import (
     BlueprintRequirementsQmlDialog as BlueprintRequirementsDialog,
 )
@@ -32,6 +31,7 @@ from ui_qml.bridge.manufacturable_items_bridge import ManufacturableItemsQmlDial
 from ui_qml.bridge.materials_dialog_bridge import MaterialsSummaryQmlDialog as MaterialsSummaryDialog
 from ui_qml.bridge.output_dialog_bridge import OutputSummaryQmlDialog as OutputSummaryDialog
 from ui_qml.industry_page import IndustryQmlHost, make_qml_host
+from ui_qml.workers.industry_workers import BatchPlanCalcWorker, ProcurementSummaryWorker
 
 if TYPE_CHECKING:
     from ui_qml.bridge.plan_table_bridge import PlanTableBridge
@@ -182,7 +182,7 @@ class IndustryPage(QWidget):
         from services.plan_service import load_plans
 
         rows = load_plans(self._bridge.current_filter())
-        from ui_pyside6.models.industry_models import PlanTableModel
+        from ui_qml.models.industry_models import PlanTableModel
 
         # 注入当前材料机库（启动旧计划时兜底）
         self._plan_table_widget.set_mat_hangar_id(_default_mat_hangar_id())
@@ -520,7 +520,7 @@ class IndustryPage(QWidget):
 
         # 3) \u521d\u6b65\u8bc4\u5206\uff08ME=0/TE=0 \u9884\u89c8\u7528\uff09
         from services.char_config_resolver import resolve_char_config
-        from ui_pyside6.workers.industry_workers import ScoreWorker
+        from ui_qml.workers.industry_workers import ScoreWorker
 
         char_name = MAIN_CHAR_NAME
         ps = get_price_settings()

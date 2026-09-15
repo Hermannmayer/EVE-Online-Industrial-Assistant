@@ -274,7 +274,7 @@ def _migrate_user_v15_to_v16(db_path: str) -> str:
     """v15→v16: user_blueprints 原图权威化（runs<0 → is_bpo=1, runs=0）。
 
     `runs = -1` 长期被子系统反着读：蓝图管理界面按它显示「无限」
-    （ui_pyside6/views/inventory/inventory_helpers），生产计划侧却归零判
+    （ui_qml/models/inventory_helpers），生产计划侧却归零判
     「0 可用流程」（plan_execution._bp_available_runs）。后果是绑定了这类行的
     计划永远「蓝图流程不足」，强制下线时被 consume_bpc_runs 当成 0 流程行
     **删除**——用户库里 86 张真原图正处于这个状态。

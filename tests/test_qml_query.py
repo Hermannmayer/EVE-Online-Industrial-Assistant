@@ -16,7 +16,7 @@ import pytest
 from PySide6.QtCore import QEventLoop, Qt, QTimer, QtMsgType, qInstallMessageHandler
 
 from tests.qml_click import press_move_release
-from ui_pyside6.views.query.query_search import format_search_rows
+from ui_qml.models.query_models import format_search_rows
 from ui_qml.models.query_qml_model import ROLE_NAMES, QueryQmlModel
 
 _BASE = Qt.ItemDataRole.UserRole
@@ -181,11 +181,11 @@ def _fill(bridge, *rows: tuple) -> None:
 def test_regions_and_columns_come_from_the_shared_sources(bridge):
     """区域与列定义都取自既有常量，不在桥里另抄一份。"""
     from core.constants import TRADE_HUBS
-    from ui_pyside6.views.query.query_search import _COLUMNS
+    from ui_qml.models.query_models import COLUMNS
 
     assert bridge.regions == list(TRADE_HUBS)
-    assert [c["title"] for c in bridge.columns] == [t for t, _ in _COLUMNS]
-    assert [c["width"] for c in bridge.columns] == [w for _, w in _COLUMNS]
+    assert [c["title"] for c in bridge.columns] == [t for t, _ in COLUMNS]
+    assert [c["width"] for c in bridge.columns] == [w for _, w in COLUMNS]
 
 
 @pytest.mark.ui
@@ -324,7 +324,7 @@ def test_row_click_survives_content_move(query_page):
     「单击不到所对应的行上」。
     """
     host, bridge = query_page
-    from ui_pyside6.views.query.query_search import format_search_rows
+    from ui_qml.models.query_models import format_search_rows
 
     bridge.model.set_rows(format_search_rows([_row(tid=34 + i, zh=f"物品{i}") for i in range(50)], False))
     _spin(150)

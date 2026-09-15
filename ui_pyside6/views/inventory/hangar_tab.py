@@ -32,8 +32,7 @@ from services.inventory_manager import (
     update_quantity,
 )
 from ui_pyside6.table_sort import SortPreservingTableView
-
-from .inventory_helpers import InvTableModel
+from ui_qml.models.inventory_helpers import InvTableModel
 
 
 class HangarTab(QWidget):

@@ -15,10 +15,10 @@ from __future__ import annotations
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
-import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from ui_qml.models.trade_qml_model import TradeHubQmlModel
+from ui_qml.theme import registry as theme
 
 __all__ = ["TradeBridge"]
 
@@ -116,7 +116,7 @@ class TradeBridge(QObject):
             self._results = []
             self.searchChanged.emit()
             return
-        from ui_pyside6.workers.industry_workers import SearchWorker
+        from ui_qml.workers.industry_workers import SearchWorker
 
         worker = SearchWorker(text.strip(), get_container().db, self)
         self._search_worker = worker
@@ -175,7 +175,7 @@ class TradeBridge(QObject):
             return
         self._set_preview(f"正在获取 {self._selected_name} 跨区域价格...", _TEXT)
 
-        from ui_pyside6.workers.trade_workers import CrossRegionPriceWorker
+        from ui_qml.workers.trade_workers import CrossRegionPriceWorker
 
         worker = CrossRegionPriceWorker(self._selected_tid, get_container().db, self)
         self._hub_worker = worker
@@ -281,7 +281,7 @@ class TradeBridge(QObject):
             return
         self._set_preview(f"正在计算 {self._selected_name} 贸易评分...", _TEXT)
 
-        from ui_pyside6.workers.trade_workers import TradeScoreWorker
+        from ui_qml.workers.trade_workers import TradeScoreWorker
 
         worker = TradeScoreWorker(
             self._selected_tid,
@@ -386,7 +386,7 @@ class TradeBridge(QObject):
             self._t_results = []
             self.transportChanged.emit()
             return
-        from ui_pyside6.workers.industry_workers import SearchWorker
+        from ui_qml.workers.industry_workers import SearchWorker
 
         worker = SearchWorker(text.strip(), get_container().db, self)
         self._t_search_worker = worker
@@ -470,7 +470,7 @@ class TradeBridge(QObject):
             return
 
         self._set_transport_preview(f"正在计算 {self._t_selected_name} 运输利润...", _TEXT)
-        from ui_pyside6.workers.trade_workers import TransportWorker
+        from ui_qml.workers.trade_workers import TransportWorker
 
         worker = TransportWorker(
             type_id=self._t_selected_tid,

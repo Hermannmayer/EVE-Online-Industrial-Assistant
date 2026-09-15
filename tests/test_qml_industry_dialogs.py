@@ -23,7 +23,7 @@ def stub_lookups(monkeypatch):
         "get_hangars",
         lambda: [{"id": 1, "name": "吉他 - 装配厂"}, {"id": 2, "name": "佩尼尔 - 工业中心"}],
     )
-    monkeypatch.setattr("ui_pyside6.views.char_settings_view.services_get_character_list", lambda: ["守夜人", "小号"])
+    monkeypatch.setattr("services.char_config_resolver.get_character_list", lambda: ["守夜人", "小号"])
 
 
 def test_add_plan_result_data_fields(qapp, stub_lookups):
@@ -100,7 +100,7 @@ def test_add_plan_spinboxes_clamp_to_original_ranges(qapp, stub_lookups):
 
 def test_add_plan_falls_back_to_main_char(qapp, stub_lookups, monkeypatch):
     """没配角色时退回 "main"（原版 `addItem("main")`）。"""
-    monkeypatch.setattr("ui_pyside6.views.char_settings_view.services_get_character_list", lambda: [])
+    monkeypatch.setattr("services.char_config_resolver.get_character_list", lambda: [])
     from ui_qml.bridge.industry_dialogs_bridge import AddPlanDialogQmlDialog
 
     dlg = AddPlanDialogQmlDialog("渡鸦级", _SCORE)

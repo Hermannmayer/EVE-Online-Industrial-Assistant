@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
-import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from ui_qml.models.watchlist_qml_model import WatchlistQmlModel
+from ui_qml.theme import registry as theme
 
 __all__ = ["WatchlistBridge"]
 
@@ -61,10 +61,10 @@ class WatchlistBridge(QObject):
 
     @Property(list, constant=True)
     def columns(self) -> list[dict]:
-        """列定义（标题 + 宽度）—— 单一来源在 `watchlist_view._COLUMNS`。"""
-        from ui_pyside6.views.watchlist_view import _COLUMNS
+        """列定义（标题 + 宽度）—— 单一来源在 `watchlist_view.COLUMNS`。"""
+        from ui_qml.models.watchlist_models import COLUMNS
 
-        return [{"title": title, "width": width} for title, width in _COLUMNS]
+        return [{"title": title, "width": width} for title, width in COLUMNS]
 
     countText = Property(str, lambda self: f"共 {self._model.rowCount()} 项", notify=rowsChanged)
 
@@ -115,7 +115,7 @@ class WatchlistBridge(QObject):
             self.suggestChanged.emit()
             return
 
-        from ui_pyside6.views.watchlist_view import SuggestionWorker
+        from ui_qml.workers.watchlist_workers import SuggestionWorker
 
         worker = SuggestionWorker(text, self)
         self._suggest_worker = worker

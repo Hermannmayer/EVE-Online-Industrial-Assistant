@@ -5,7 +5,7 @@
 3px 进度条 → 左「可制造分类树」右「表单（基础列 + 制造列）」。
 
 **取数、筛选、评分、导出格式一行都没搬过来**：分类树走原文件里的 `MfgTreeW`，
-物品/搜索走 `ui_pyside6/workers/all_items_workers` 的 `ItemsW` / `SearchItemsW`，
+物品/搜索走 `ui_qml/workers/all_items_workers` 的 `ItemsW` / `SearchItemsW`，
 评分走 `ui_pyside6/views/score_dialogs.ScoreW`，表格展示与排序仍是
 `ui_pyside6/models/all_items_models.py` 的 `AModel` / `Proxy`。桥只做状态搬运。
 
@@ -38,11 +38,6 @@ from core.cache import TtlLRUCache
 from core.container import get_container
 from core.logger import log
 from core.paths import data_dir
-from ui_pyside6.models.all_items_models import BCOLS, DASH, MCOLS, Proxy
-from ui_pyside6.views.all_items_view import MFG_CATEGORIES
-from ui_pyside6.views.manufacturable_items_dialog import MfgTreeW
-from ui_pyside6.views.score_dialogs import ScoreW
-from ui_pyside6.workers.all_items_workers import JITA_RID, ItemsW, SearchItemsW
 from ui_qml.bridge.all_items_bridge import (
     drop_worker,
     insert_plan_from_score,
@@ -50,8 +45,13 @@ from ui_qml.bridge.all_items_bridge import (
     subtree_ids,
     visible_tree_rows,
 )
+from ui_qml.constants import MFG_CATEGORIES
 from ui_qml.dialog_host import DialogBridge, QmlDialog
+from ui_qml.models.all_items_models import BCOLS, DASH, MCOLS, Proxy
 from ui_qml.models.all_items_qml_model import AllItemsQmlModel
+from ui_qml.workers.all_items_workers import JITA_RID, ItemsW, SearchItemsW
+from ui_qml.workers.mfg_tree_worker import MfgTreeW
+from ui_qml.workers.score_worker import ScoreW
 
 __all__ = ["ManufacturableItemsBridge", "ManufacturableItemsQmlDialog", "breakdown_text"]
 
@@ -269,7 +269,8 @@ class ManufacturableItemsBridge(DialogBridge):
 
     @Slot()
     def exportData(self) -> None:
-        from ui_pyside6.views.export_helper import export_to_csv, export_to_excel, get_save_filename
+        from core.export_helper import export_to_csv, export_to_excel
+        from ui_qml.file_dialogs import get_save_filename
 
         if self._proxy.rowCount() == 0:
             self._set_status("没有数据可导出")

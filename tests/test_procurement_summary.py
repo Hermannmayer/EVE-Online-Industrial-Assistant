@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import ui_pyside6.workers.industry_workers as iw
+import ui_qml.workers.industry_workers as iw
 from services.plan_aggregator import aggregate_procurement
 
 

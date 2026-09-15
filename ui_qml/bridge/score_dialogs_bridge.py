@@ -35,9 +35,9 @@ from PySide6.QtCore import Property, QUrl, Signal, Slot
 from core.constants import TRADE_HUBS
 from core.container import get_container
 from core.logger import log
-from ui_pyside6.icon_cache import item_icon_path
-from ui_pyside6.views.char_settings_view import get_character_list
+from services import char_config_resolver
 from ui_qml.dialog_host import DialogBridge, QmlDialog
+from ui_qml.icon_cache import item_icon_path
 
 __all__ = ["KIND_MFG", "KIND_TRADE", "MfgQmlDialog", "ScoreParamsBridge", "TradeQmlDialog"]
 
@@ -55,7 +55,7 @@ _SIDES: list[str] = ["卖单", "买单"]
 
 def _character_names() -> list[str]:
     """人物下拉的条目。取不到人物时退化成 `["main"]`（对齐原版 `addItems(cs if cs else ["main"])`）。"""
-    names = list(get_character_list())
+    names = list(char_config_resolver.get_character_list())
     return names if names else ["main"]
 
 
@@ -231,7 +231,7 @@ class ScoreParamsBridge(DialogBridge):
     def _char_value(self) -> str:
         """当前人物名；它若已不在人物列表里就返回 "main"（原版 `get()` 的现查现判）。"""
         name = self._characters[self._char_index]
-        return name if name in get_character_list() else "main"
+        return name if name in char_config_resolver.get_character_list() else "main"
 
     def get(self) -> dict:
         if self._kind == KIND_TRADE:

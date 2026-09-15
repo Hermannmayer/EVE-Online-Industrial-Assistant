@@ -20,10 +20,11 @@ from typing import Any
 
 from PySide6.QtCore import Property, Signal, Slot
 
-from ui_pyside6.views.batch_price_dialog import BatchPriceWorker, _search_items
-from ui_pyside6.views.export_helper import export_to_csv, get_save_filename
+from core.export_helper import export_to_csv
 from ui_qml.bridge.summary_dialog import cell
 from ui_qml.dialog_host import DialogBridge, QmlDialog
+from ui_qml.file_dialogs import get_save_filename
+from ui_qml.workers.batch_price_workers import BatchPriceWorker, _search_items
 
 __all__ = [
     "BatchPriceBridge",

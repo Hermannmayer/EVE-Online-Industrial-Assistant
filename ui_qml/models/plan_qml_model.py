@@ -31,11 +31,11 @@ from typing import Any
 from PySide6.QtCore import QModelIndex, Qt, QUrl, Signal
 from PySide6.QtGui import QColor
 
-import ui_pyside6.theme as theme
-from ui_pyside6.icon_cache import item_icon_path
-from ui_pyside6.icons import svg_path
-from ui_pyside6.models.industry_models import PlanTableModel
-from ui_pyside6.views.industry.plan_table_constants import (
+from ui_qml.icon_cache import item_icon_path
+from ui_qml.icon_provider import PROVIDER_ID
+from ui_qml.icons import svg_path
+from ui_qml.models.industry_models import PlanTableModel
+from ui_qml.models.plan_table_constants import (
     COL_BLUEPRINT,
     COL_CATEGORY,
     COL_ICON,
@@ -44,7 +44,7 @@ from ui_pyside6.views.industry.plan_table_constants import (
     COL_STATUS,
     COL_TIME,
 )
-from ui_qml.icon_provider import PROVIDER_ID
+from ui_qml.theme import registry as theme
 
 __all__ = ["PlanQmlModel", "ROLE_NAMES"]
 

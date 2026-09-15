@@ -285,7 +285,7 @@ def test_worker_output_feeds_the_review_bridge(qapp, monkeypatch):
     正是预览桥消费的形状 —— 两条链路对得上，迁移没有把契约改掉。"""
     import services.inventory_manager as inventory_manager
     import services.ui_data_service as ui_data_service
-    from ui_pyside6.views.inventory import blueprint_import_worker
+    from ui_qml.workers import blueprint_import_worker
 
     monkeypatch.setattr(blueprint_import_worker, "get_container", lambda: SimpleNamespace(db=object()))
     monkeypatch.setattr(

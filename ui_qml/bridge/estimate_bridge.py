@@ -15,9 +15,9 @@ from PySide6.QtCore import Property, QObject, Signal, Slot
 
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
-from ui_pyside6.workers.estimate_workers import ClipboardParseWorker, _search_item_by_name
-from ui_pyside6.workers.refine_worker import RefineWorker
 from ui_qml.models import EstimateQmlModel
+from ui_qml.workers.estimate_workers import ClipboardParseWorker, _search_item_by_name
+from ui_qml.workers.refine_worker import RefineWorker
 
 __all__ = ["EstimateBridge"]
 

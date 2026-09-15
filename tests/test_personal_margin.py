@@ -231,7 +231,7 @@ def test_blueprint_activities_has_no_quantity_column(temp_db):
 
 def test_worker_personal_margin(qapp, sample_char_config):
     """worker 的 _calc_personal_margin 走 result + 库存快照，不再直连蓝图库"""
-    from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker
+    from ui_qml.workers.industry_workers import BatchPlanCalcWorker
 
     w = BatchPlanCalcWorker(
         [],
@@ -259,7 +259,7 @@ def test_worker_personal_margin(qapp, sample_char_config):
 
 def test_mother_cost_uses_subitem_manufacturing_cost(qapp, sample_char_config):
     """拆解母项：子项自制件按其制造价（材料+作业费）计，未拆解材料按市场价。"""
-    from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker
+    from ui_qml.workers.industry_workers import BatchPlanCalcWorker
 
     w = BatchPlanCalcWorker(
         [],
@@ -306,7 +306,7 @@ def test_mother_cost_uses_subitem_manufacturing_cost(qapp, sample_char_config):
 
 def test_ungrouped_mother_not_adjusted(qapp, sample_char_config):
     """无子项的普通计划不受子项分摊影响。"""
-    from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker
+    from ui_qml.workers.industry_workers import BatchPlanCalcWorker
 
     w = BatchPlanCalcWorker(
         [],
@@ -381,7 +381,7 @@ def test_worker_run_preserves_market_margin(qapp, sample_char_config):
     """run() 留存调整前市场利润率：拆解母项个人利润率显著高于市场利润率。"""
     from unittest.mock import patch
 
-    from ui_pyside6.workers.industry_workers import BatchPlanCalcWorker
+    from ui_qml.workers.industry_workers import BatchPlanCalcWorker
 
     mother = {"id": 1, "group_id": 10, "child_level": 0, "runs": 1, "parallels": 1}
     child = {"id": 2, "group_id": 10, "child_level": 1, "product_type_id": 2002, "runs": 2, "parallels": 1}

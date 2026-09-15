@@ -6,7 +6,7 @@
 import pytest
 from PySide6.QtCore import QModelIndex, Qt
 
-from ui_pyside6.models.contract_models import (
+from ui_qml.models.contract_models import (
     CONTRACT_STATUS_CN,
     CONTRACT_TYPE_CN,
     ContractFilterProxy,

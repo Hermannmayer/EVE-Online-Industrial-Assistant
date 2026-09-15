@@ -24,12 +24,12 @@ from typing import Any
 
 from PySide6.QtCore import Property, Signal
 
-import ui_pyside6.theme as theme
 from core.container import get_container
 from core.formatting import fmt_isk_exact
 from services.industry_dialog_queries import get_subitem_plans, get_system_name
 from ui_qml.bridge.summary_dialog import cell
 from ui_qml.dialog_host import DialogBridge, QmlDialog
+from ui_qml.theme import registry as theme
 
 __all__ = ["CostBreakdownBridge", "CostBreakdownQmlDialog", "fmt_material_saving"]
 

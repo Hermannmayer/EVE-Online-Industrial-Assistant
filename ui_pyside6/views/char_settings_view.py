@@ -16,6 +16,12 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.theme as theme
+from core.char_settings_common import (
+    calc_broker_fee,
+    calc_max_orders,
+    calc_relist_discount,
+    calc_sales_tax,
+)
 from services.char_config_resolver import (
     char_config_path as services_char_config_path,
 )
@@ -30,12 +36,6 @@ from services.char_config_resolver import (
 )
 from services.char_config_resolver import (
     save_all_data as services_save_all_data,
-)
-from ui_pyside6.views.char_settings_common import (
-    calc_broker_fee,
-    calc_max_orders,
-    calc_relist_discount,
-    calc_sales_tax,
 )
 from ui_pyside6.views.char_settings_pages import ImplantsPage, MarketPage, SkillsPage
 

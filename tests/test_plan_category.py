@@ -90,7 +90,7 @@ class TestQmlCategoryIcons:
 
     def test_category_column_width_fits_header(self):
         """类别列要放得下「类别」两个字，写死 32 会把表头挤成「…」。"""
-        from ui_pyside6.views.industry.plan_table_constants import COL_CATEGORY, FIXED_WIDTHS
+        from ui_qml.models.plan_table_constants import COL_CATEGORY, FIXED_WIDTHS
 
         assert FIXED_WIDTHS[COL_CATEGORY] >= 38
 

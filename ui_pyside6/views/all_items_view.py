@@ -36,33 +36,16 @@ from core.cache import TtlLRUCache
 from core.container import get_container
 from core.logger import log
 from core.paths import ICON_DIR
-from services.terminology import term
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
-from ui_pyside6.models.all_items_models import BCOLS, DASH, MCOLS, TCOLS, AModel, Proxy
-from ui_pyside6.views.score_dialogs import ScoreW
-from ui_pyside6.workers.all_items_workers import JITA_RID, ItemsW, SearchItemsW, TreeW
 from ui_qml.bridge.compare_bridge import CompareQmlDialog as CompareDialog
 from ui_qml.bridge.score_dialogs_bridge import MfgQmlDialog as MfgDlg
 from ui_qml.bridge.score_dialogs_bridge import TradeQmlDialog as TradeDlg
+from ui_qml.constants import CATEGORIES, MFG_CATEGORIES
+from ui_qml.models.all_items_models import BCOLS, DASH, MCOLS, TCOLS, AModel, Proxy
+from ui_qml.workers.all_items_workers import JITA_RID, ItemsW, SearchItemsW, TreeW
+from ui_qml.workers.score_worker import ScoreW
 
 _cache = TtlLRUCache(max_size=500, ttl_seconds=1800)
-
-CATEGORIES = [
-    term.market_category("all"),
-    term.market_category("unmanufacturable"),
-    term.market_category("t1_mfg"),
-    term.market_category("t2_invention"),
-    term.market_category("faction"),
-    term.market_category("reaction"),
-    term.market_category("planetary"),
-]
-MFG_CATEGORIES = [
-    term.market_category("all_manufacturable"),
-    term.market_category("t1_mfg"),
-    term.market_category("t2_invention"),
-    term.market_category("faction"),
-    term.market_category("reaction"),
-]
 
 
 class MatDlg(QDialog):

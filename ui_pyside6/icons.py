@@ -1,98 +1,25 @@
-"""Phosphor 图标系统 — SVG 打包 + 主题染色（QIconEngine 动态取色）
+"""Phosphor 图标系统 — QIconEngine 按当前主题动态取色（Widgets 专有的那一半）
 
-图标以 Phosphor（MIT）regular 线框 SVG 打包在 assets/icons/，语义键 → 文件名
-统一由 ICON_MAP 中心映射（铁律：禁止散落硬编码文件名）。
-QIconEngine 在 paint 时按当前主题取色，主题切换后任一重绘自动重染。
+图标资源、语义键映射 `ICON_MAP` 与 SVG 文本读取已经搬到 `ui_qml/icons.py`
+—— 那一份零 Qt（QML 侧的 `icon_provider` 直接读原始 SVG 自己染），
+本模块从这里导入它们。
+
+这里只留渲染与染色：把 SVG 变成按当前主题取色的 `QPixmap` / `QIcon`，
+主题切换后任一重绘自动重染。`ICON_MAP` / `svg_path` / `load_svg` 仍可从本模块
+导入（转自 `ui_qml.icons`），旧调用方与 `tests/test_icons.py` 不必改。
 """
-
-import os
 
 from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QIcon, QIconEngine, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QToolButton
 
 import ui_pyside6.theme as theme
+from ui_qml.icons import ICON_MAP, ICONS_DIR, load_svg
 
-_ICONS_DIR = os.path.join(os.path.dirname(__file__), "assets", "icons")
+#: 兼容旧引用（`tests/test_icons.py` 用它拼 SVG 路径）；真值在 `ui_qml.icons`
+_ICONS_DIR = ICONS_DIR
 
-# 语义键 → Phosphor SVG 文件名
-ICON_MAP: dict[str, str] = {
-    "refresh": "arrows-clockwise",
-    "pin": "push-pin",
-    "clock": "clock",
-    "settings": "gear-six",
-    "user": "user",
-    "hangar": "warehouse",
-    "factory": "factory",
-    "chart": "chart-line",
-    "bell": "bell",
-    "contract": "file-text",
-    "package": "package",
-    "coins": "coins",
-    "lightning": "lightning",
-    "search": "magnifying-glass",
-    "star": "star",
-    "details": "clipboard-text",
-    "recycle": "recycle",
-    "check": "check",
-    "close": "x",
-    "warning": "warning",
-    "plus": "plus",
-    "minus": "minus",
-    "maximize": "square",
-    "restore": "copy",
-    "trash": "trash",
-    "play": "play",
-    "caret-down": "caret-down",
-    "trend-up": "trend-up",
-    "lightbulb": "lightbulb",
-    "flask": "flask",
-    "caret-right": "caret-right",
-    "dna": "dna",
-    "shield": "shield",
-    "microscope": "microscope",
-    "sailboat": "sailboat",
-    "globe": "globe",
-    "wrench": "wrench",
-    "buildings": "buildings",
-    "book": "book",
-    "spiral": "spiral",
-    "test-tube": "test-tube",
-    "info": "info",
-    "circle": "circle",
-}
-
-_svg_cache: dict[str, str] = {}
 _pixmap_cache: dict[tuple, QPixmap] = {}
-
-
-def svg_path(filename: str) -> str:
-    """Phosphor SVG 的绝对路径（不检查存在性，由调用方判断）。
-
-    给 QML 侧的 `Image.source` 用：那边要的是 `file://` URL，且拿不到
-    `QIconEngine` 的 paint 时染色，只能读原始 SVG 自己染。
-    """
-    if not filename.endswith(".svg"):
-        filename += ".svg"
-    return os.path.join(_ICONS_DIR, filename)
-
-
-def load_svg(filename: str) -> str:
-    """读 Phosphor SVG 文本（带缓存）；缺失返回空串。
-
-    QML 侧的 `icon_provider` 要拿原始文本自己注入 `fill` 染色。
-    """
-    if not filename.endswith(".svg"):
-        filename += ".svg"
-    svg = _svg_cache.get(filename)
-    if svg is None:
-        try:
-            with open(svg_path(filename), encoding="utf-8") as f:
-                svg = f.read()
-        except OSError:
-            svg = ""
-        _svg_cache[filename] = svg
-    return svg
 
 
 def _device_pixel_ratio() -> float:

@@ -33,7 +33,7 @@ PySide6 + SQLite 构建的 EVE Online 工业制造助手桌面应用。
 - 新 UI 组件必须 `add_theme_listener` + `_on_theme_changed`
 
 ### 铁律
-- 🎨 **配色**：所有颜色从 `ui_pyside6.theme` 导入，禁止 hex/rgb/颜色名
+- 🎨 **配色**：所有颜色从 `ui_qml.theme.registry` 导入（旧路径 `ui_pyside6.theme` 只是属性转发器，迁移期仍可用；**QML 侧也读这一份**），禁止 hex/rgb/颜色名
 - 📖 **术语**：EVE 术语（技能名/蓝图活动/UI 标签）通过 `services.terminology` 获取，技能 key 需在 `data/terminology.json` 注册
 - 🗄️ **Schema 变更**：所有数据库表结构变更必须在 `services/schema_migrations.py` 注册迁移函数：`DB_SCHEMA_VERSIONS[库名] += 1`，新增 `MIGRATIONS[库名][旧版本] = 迁移函数`。不得在业务代码中写 ALTER TABLE。`tests/conftest.py` 中对应表的 PRAGMA user_version 同步更新。迁移由 `ensure_schema` 自动备份到 `database/backups/`（保留最近 5 份）；大变动（改列类型/拆表/合并）用 `_rebuild_table`，规范见 `docs/dev/schema-migration.md`。
 
@@ -79,7 +79,9 @@ bootstrap/     组合根 / IOC 容器（container.py）
 core/          工具层（constants, paths, logger, cache, hot_reload；eve_formulas=贸易费/经纪人费常量）
 domain/        领域层（纯函数，无 DB/Qt/缓存 — formulas 制造公式, bom, scoring, ports）
 services/      业务层（database_manager, scoring_service, scoring_facade, inventory_manager, repositories/, etc.）
-ui_pyside6/    UI 层（main_window, theme, models/, workers/, views/, dialogs/）
+ui_pyside6/    UI 层（main_window, theme, models/, workers/, views/, dialogs/）——**迁移中，逐步被 ui_qml 取代**
+ui_qml/        QML UI 层（host.py=QQuickWidget 宿主, bridge/=Python↔QML 桥, qml/=QML,
+               models/ 与 workers/ = 两套 UI 共用的表格模型与取数线程, theme/registry.py = 主题 token 源）
 tools/         独立初始化工具
 scripts/       维护脚本（migrate_split_db, gen_api_docs）
 tests/         测试

@@ -9,7 +9,7 @@
 import pytest
 from PySide6.QtCore import Qt
 
-from ui_pyside6.views.inventory.inventory_helpers import BlueprintTableModel, InvTableModel
+from ui_qml.models.inventory_helpers import BlueprintTableModel, InvTableModel
 
 pytestmark = pytest.mark.ui
 

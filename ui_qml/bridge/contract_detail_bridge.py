@@ -11,8 +11,8 @@ from typing import Any
 
 from PySide6.QtCore import Property, Signal, Slot
 
-from ui_pyside6.models.contract_models import _ITEM_COLUMNS, CONTRACT_STATUS_CN, CONTRACT_TYPE_CN
 from ui_qml.bridge.summary_dialog import SummaryTableBridge, SummaryTableQmlDialog, cell
+from ui_qml.models.contract_models import _ITEM_COLUMNS, CONTRACT_STATUS_CN, CONTRACT_TYPE_CN
 
 __all__ = ["ContractDetailBridge", "ContractDetailQmlDialog", "contract_item_rows"]
 
@@ -122,7 +122,7 @@ class ContractDetailBridge(SummaryTableBridge):
         """
         if self._worker is not None and self._worker.isRunning():  # type: ignore[attr-defined]
             return
-        from ui_pyside6.workers.contract_workers import ContractItemsLoadWorker
+        from ui_qml.workers.contract_workers import ContractItemsLoadWorker
 
         worker = ContractItemsLoadWorker(int(self._contract.get("contract_id") or 0), self)
         self._worker = worker

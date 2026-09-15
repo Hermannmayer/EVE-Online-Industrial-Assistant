@@ -245,7 +245,7 @@ class InventoryBridge(QObject):
     @Property(list, constant=True)
     def itemColumns(self) -> list[dict]:
         """机库表列定义（标题 + 初始宽度）。"""
-        from ui_pyside6.views.inventory.inventory_helpers import InvTableModel
+        from ui_qml.models.inventory_helpers import InvTableModel
 
         widths = (36, 220, 90, 110, 80, 80, 120, 120)
         return [{"title": title, "width": width} for title, width in zip(InvTableModel._HEADERS, widths, strict=True)]
@@ -532,7 +532,7 @@ class InventoryBridge(QObject):
     @Property(list, constant=True)
     def blueprintColumns(self) -> list[dict]:
         """蓝图表列定义（固定宽度，避免按内容扫描全表卡顿 —— 与 Widgets 版同款）。"""
-        from ui_pyside6.views.inventory.inventory_helpers import BlueprintTableModel
+        from ui_qml.models.inventory_helpers import BlueprintTableModel
 
         widths = (28, 160, 90, 60, 60, 130, 90, 70, 100, 100, 80)
         return [

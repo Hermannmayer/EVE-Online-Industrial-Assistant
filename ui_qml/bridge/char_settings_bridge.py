@@ -8,7 +8,7 @@
 由 `CharSettingsBridge` 以 QML 属性暴露给三个组件（`FSkillsTab` / `FImplantsTab` /
 `FMarketTab`）。这样既保住了「一页一个内嵌控件」的结构，也不需要一个几百行的上帝桥。
 
-`ui_pyside6/views/char_settings_common.py` 原样复用（纯逻辑，无 QtWidgets）：
+`core/char_settings_common.py` 原样复用（纯逻辑，无 QtWidgets）：
 技能分类表、交易中心表与四条费率公式都从那里来，**不在桥里重算**。
 
 两处刻意的模型差异（都是为了避免「编辑到一半控件被重建」）：
@@ -26,10 +26,7 @@ from typing import Any
 from PySide6.QtCore import Property, QObject, Signal, Slot
 from PySide6.QtWidgets import QMessageBox
 
-from services.char_config_resolver import load_all_data, save_all_data
-from services.implant_loader import load_implants
-from ui_pyside6 import icons
-from ui_pyside6.views.char_settings_common import (
+from core.char_settings_common import (
     SKILL_CATEGORIES,
     TRADE_HUBS,
     calc_broker_fee,
@@ -38,6 +35,9 @@ from ui_pyside6.views.char_settings_common import (
     calc_sales_tax,
     format_pct,
 )
+from services.char_config_resolver import load_all_data, save_all_data
+from services.implant_loader import load_implants
+from ui_qml import icons
 from ui_qml.dialog_host import DialogBridge, QmlDialog
 
 __all__ = [

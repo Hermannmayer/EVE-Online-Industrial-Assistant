@@ -29,15 +29,15 @@ import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS, TRADE_HUBS
 from services.watchlist_manager import add_to_watchlist
-from ui_pyside6.models.contract_models import (
+from ui_pyside6.sizing import fit_line_edit_width
+from ui_qml.models.contract_models import (
     _CONTRACT_COLUMNS,
     _ITEM_COLUMNS,
     ContractFilterProxy,
     ContractItemTableModel,
     ContractTableModel,
 )
-from ui_pyside6.sizing import fit_line_edit_width
-from ui_pyside6.workers.contract_workers import (
+from ui_qml.workers.contract_workers import (
     ContractFetchWorker,
     ContractItemsLoadWorker,
     ContractLoadWorker,

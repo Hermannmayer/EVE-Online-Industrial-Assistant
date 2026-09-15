@@ -5,7 +5,7 @@
 import json
 import os
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -31,13 +31,14 @@ import ui_pyside6.theme as theme
 from core.cache import TtlLRUCache
 from core.container import get_container
 from core.paths import data_dir
-from services.terminology import term
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
-from ui_pyside6.models.all_items_models import AModel, Proxy
-from ui_pyside6.views.score_dialogs import ScoreW
-from ui_pyside6.workers.all_items_workers import JITA_RID, ItemsW, SearchItemsW
 from ui_qml.bridge.compare_bridge import CompareQmlDialog as CompareDialog
 from ui_qml.bridge.score_dialogs_bridge import MfgQmlDialog as MfgDlg
+from ui_qml.constants import MFG_CATEGORIES
+from ui_qml.models.all_items_models import AModel, Proxy
+from ui_qml.workers.all_items_workers import JITA_RID, ItemsW, SearchItemsW
+from ui_qml.workers.mfg_tree_worker import MfgTreeW
+from ui_qml.workers.score_worker import ScoreW
 
 _cache = TtlLRUCache(max_size=5000, ttl_seconds=1800)
 
@@ -63,22 +64,8 @@ MCOLS = [
     ("利润率%", 70, "mm"),
 ]
 
-MFG_CATEGORIES = [
-    term.market_category("all_manufacturable"),
-    term.market_category("t1_mfg"),
-    term.market_category("t2_invention"),
-    term.market_category("faction"),
-    term.market_category("reaction"),
-]
-
-
-class MfgTreeW(QThread):
-    """加载可制造物品市场分类树"""
-
-    done = Signal(list)
-
-    def run(self):
-        self.done.emit(get_container().blueprint_repo.get_manufacturable_market_tree())
+# MFG_CATEGORIES 原先在本文件里有一份**逐字重复**的定义，已并入共享常量
+# （`ui_qml.constants`）—— 两处都改才生效的日子结束了。
 
 
 class ManufacturableItemsDialog(QDialog):

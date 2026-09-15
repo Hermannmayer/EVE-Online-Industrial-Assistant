@@ -15,7 +15,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 
 import ui_pyside6.theme as theme
-from ui_pyside6.views.industry.plan_table_constants import (
+from ui_qml.models.plan_qml_model import ROLE_NAMES, PlanQmlModel
+from ui_qml.models.plan_table_constants import (
     COL_BLUEPRINT,
     COL_CATEGORY,
     COL_ICON,
@@ -23,7 +24,6 @@ from ui_pyside6.views.industry.plan_table_constants import (
     COL_PROFIT,
     COL_STATUS,
 )
-from ui_qml.models.plan_qml_model import ROLE_NAMES, PlanQmlModel
 
 _TEXT = Qt.ItemDataRole.UserRole + 1
 _FG = Qt.ItemDataRole.UserRole + 2
@@ -228,7 +228,7 @@ def test_product_text_drops_the_fold_glyph():
 
 @pytest.mark.fast
 def test_editable_role_matches_model_editable_columns():
-    from ui_pyside6.models.industry_models import PlanTableModel
+    from ui_qml.models.industry_models import PlanTableModel
 
     model = PlanQmlModel([_plan(status="pending")])
     for col in range(model.columnCount()):
@@ -317,8 +317,8 @@ def test_autofit_measures_cjk_content_not_char_count(qapp):
 @pytest.mark.ui
 def test_autofit_respects_max_content_width_caps(qapp):
     """超长内容要按 MAX_CONTENT_WIDTHS 封顶，否则一列把整张表推出视口。"""
-    from ui_pyside6.views.industry.plan_table_constants import COL_NOTES, MAX_CONTENT_WIDTHS
     from ui_qml.bridge.plan_table_bridge import PlanTableBridge
+    from ui_qml.models.plan_table_constants import COL_NOTES, MAX_CONTENT_WIDTHS
 
     model = PlanQmlModel([_plan(notes="很长" * 200)])
     widths = PlanTableBridge(_StubTable(model)).autofitWidths()

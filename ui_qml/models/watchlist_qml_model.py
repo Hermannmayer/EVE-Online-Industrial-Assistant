@@ -15,9 +15,9 @@ from typing import Any
 from PySide6.QtCore import QModelIndex, Qt, QUrl
 from PySide6.QtGui import QColor
 
-import ui_pyside6.theme as theme
-from ui_pyside6.icon_cache import item_icon_path
-from ui_pyside6.views.watchlist_view import WatchlistTableModel
+from ui_qml.icon_cache import item_icon_path
+from ui_qml.models.watchlist_models import WatchlistTableModel
+from ui_qml.theme import registry as theme
 
 __all__ = ["WatchlistQmlModel", "ROLE_NAMES"]
 

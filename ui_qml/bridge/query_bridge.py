@@ -19,9 +19,9 @@ from typing import Any
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 from PySide6.QtWidgets import QApplication, QWidget
 
-import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS, TRADE_HUBS
 from ui_qml.models.query_qml_model import QueryQmlModel
+from ui_qml.theme import registry as theme
 
 __all__ = ["QueryBridge"]
 
@@ -112,10 +112,10 @@ class QueryBridge(QObject):
 
     @Property(list, constant=True)
     def columns(self) -> list[dict]:
-        """列定义（标题 + 初始宽度）—— 单一来源在 `query_search._COLUMNS`。"""
-        from ui_pyside6.views.query.query_search import _COLUMNS
+        """列定义（标题 + 初始宽度）—— 单一来源在 `query_models.COLUMNS`。"""
+        from ui_qml.models.query_models import COLUMNS
 
-        return [{"title": title, "width": width} for title, width in _COLUMNS]
+        return [{"title": title, "width": width} for title, width in COLUMNS]
 
     def _get_region_index(self) -> int:
         hubs = list(TRADE_HUBS)
@@ -178,7 +178,7 @@ class QueryBridge(QObject):
 
     @Slot()
     def _fetch_suggestions(self) -> None:
-        from ui_pyside6.views.query.query_search import SuggestionWorker
+        from ui_qml.workers.query_workers import SuggestionWorker
 
         query = self._current_query.strip()
         if not query:
@@ -194,7 +194,7 @@ class QueryBridge(QObject):
         self.suggestionsChanged.emit()
 
     def _show_history(self) -> None:
-        from ui_pyside6.views.query.query_search import load_search_history
+        from core.search_history import load_search_history
 
         self._history = [str(h) for h in load_search_history()]
         self.suggestionsChanged.emit()
@@ -209,7 +209,7 @@ class QueryBridge(QObject):
 
     @Slot()
     def clearHistory(self) -> None:
-        from ui_pyside6.views.query.query_search import clear_search_history
+        from core.search_history import clear_search_history
 
         clear_search_history()
         self._suggestions = []
@@ -228,7 +228,7 @@ class QueryBridge(QObject):
         """
         if self._group_worker is not None:
             return
-        from ui_pyside6.views.query.query_search import GroupLoadWorker
+        from ui_qml.workers.query_workers import GroupLoadWorker
 
         worker = GroupLoadWorker(self)
         self._group_worker = worker
@@ -242,7 +242,8 @@ class QueryBridge(QObject):
 
     @Slot()
     def search(self) -> None:
-        from ui_pyside6.views.query.query_search import SearchWorker, add_search_history
+        from core.search_history import add_search_history
+        from ui_qml.workers.query_workers import SearchWorker
 
         query = self._current_query.strip()
         self._suggestions = []
@@ -264,7 +265,7 @@ class QueryBridge(QObject):
         worker.start()
 
     def _on_search_done(self, rows: list, is_fallback: bool) -> None:
-        from ui_pyside6.views.query.query_search import format_search_rows
+        from ui_qml.models.query_models import format_search_rows
 
         self._busy = False
         if not rows:

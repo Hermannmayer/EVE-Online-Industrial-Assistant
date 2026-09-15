@@ -1,47 +1,20 @@
+"""导出工具的**旧路径转发器** —— 实现已按依赖拆到两处：
+
+- `export_to_csv` / `export_to_excel` → `core/export_helper.py`（纯 Python，零 Qt）
+- `get_save_filename` → `ui_qml/file_dialogs.py`（要弹 QFileDialog）
+
+本模块只转发、不复制实现，未迁移完的 Widgets 对话框照旧 `from
+ui_pyside6.views.export_helper import ...` 即可。新代码请直接 import 新位置。
 """
-导出工具 — CSV / Excel 批量导出
-"""
 
-import csv
+from typing import Any
 
-from openpyxl import Workbook
-
-
-def export_to_csv(headers: list[str], rows: list[list], filepath: str) -> None:
-    """导出为 CSV（UTF-8 BOM，兼容 Excel 中文）"""
-    with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
-        writer.writerow(headers)
-        writer.writerows(rows)
+from core import export_helper as _core_export
+from ui_qml import file_dialogs as _file_dialogs
 
 
-def export_to_excel(headers: list[str], rows: list[list], filepath: str) -> None:
-    """导出为 Excel（.xlsx），自动调整列宽"""
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Sheet1"
-    ws.append(headers)
-    for row in rows:
-        ws.append(row)
-
-    # 自动列宽
-    for col_cells in ws.columns:
-        max_len = 0
-        col_letter = col_cells[0].column_letter
-        for cell in col_cells:
-            val = str(cell.value) if cell.value is not None else ""
-            # CJK 字符按 2 倍宽度估算
-            width = sum(2 if ord(c) > 127 else 1 for c in val)
-            if width > max_len:
-                max_len = width
-        ws.column_dimensions[col_letter].width = min(max_len + 3, 60)
-
-    wb.save(filepath)
-
-
-def get_save_filename(parent, default_name: str, file_filter: str) -> str:
-    """弹出保存文件对话框，返回路径（空字符串表示取消）"""
-    from PySide6.QtWidgets import QFileDialog
-
-    path, _ = QFileDialog.getSaveFileName(parent, "导出", default_name, file_filter)
-    return path
+def __getattr__(name: str) -> Any:
+    """未在本模块定义的名字转发到上面两个新家。"""
+    if hasattr(_file_dialogs, name):
+        return getattr(_file_dialogs, name)
+    return getattr(_core_export, name)

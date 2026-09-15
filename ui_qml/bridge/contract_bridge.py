@@ -38,7 +38,7 @@ class ContractBridge(QObject):
 
     def __init__(self, shell: object | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        from ui_pyside6.models.contract_models import ContractFilterProxy
+        from ui_qml.models.contract_models import ContractFilterProxy
 
         self._shell = shell
         self._region_index = 0
@@ -96,14 +96,14 @@ class ContractBridge(QObject):
     @Property(list, constant=True)
     def contractColumns(self) -> list[dict]:
         """合同表列定义（标题 + 宽度）—— 单一来源在 `contract_models._CONTRACT_COLUMNS`。"""
-        from ui_pyside6.models.contract_models import _CONTRACT_COLUMNS
+        from ui_qml.models.contract_models import _CONTRACT_COLUMNS
 
         return [{"title": title, "width": width} for title, width in _CONTRACT_COLUMNS]
 
     @Property(list, constant=True)
     def itemColumns(self) -> list[dict]:
         """物品表列定义 —— 单一来源在 `contract_models._ITEM_COLUMNS`。"""
-        from ui_pyside6.models.contract_models import _ITEM_COLUMNS
+        from ui_qml.models.contract_models import _ITEM_COLUMNS
 
         return [{"title": title, "width": width} for title, width in _ITEM_COLUMNS]
 
@@ -118,7 +118,7 @@ class ContractBridge(QObject):
             self.rowsChanged.emit()
             return
 
-        from ui_pyside6.workers.contract_workers import ContractFetchWorker
+        from ui_qml.workers.contract_workers import ContractFetchWorker
 
         self._busy = True
         self._count_text = "正在从 ESI 获取合同数据..."
@@ -142,7 +142,7 @@ class ContractBridge(QObject):
     @Slot()
     def loadContracts(self) -> None:
         """从数据库加载当前区域/类型下的合同。"""
-        from ui_pyside6.workers.contract_workers import ContractLoadWorker
+        from ui_qml.workers.contract_workers import ContractLoadWorker
 
         region_id = TRADE_HUB_IDS.get(TRADE_HUBS[self._region_index], 10000002)
         worker = ContractLoadWorker(region_id, _TYPE_KEYS[_TYPE_LABELS[self._type_index]], self)
@@ -219,7 +219,7 @@ class ContractBridge(QObject):
     def _loadItems(self, contract_id: int) -> None:
         if self._items_worker is not None and self._items_worker.isRunning():  # type: ignore[attr-defined]
             return
-        from ui_pyside6.workers.contract_workers import ContractItemsLoadWorker
+        from ui_qml.workers.contract_workers import ContractItemsLoadWorker
 
         worker = ContractItemsLoadWorker(contract_id, self)
         self._items_worker = worker

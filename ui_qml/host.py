@@ -88,7 +88,7 @@ class PageHost(QQuickWidget):
         """
         from PySide6.QtWidgets import QLabel
 
-        import ui_pyside6.theme as theme
+        from ui_qml.theme import registry as theme
 
         label = QLabel(f"QML 加载失败：{self._qml_file}\n\n{errors}\n\n（详见日志）", self)
         label.setObjectName("qml_load_error")

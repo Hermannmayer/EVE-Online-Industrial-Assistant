@@ -22,7 +22,7 @@ _REPO = Path(__file__).resolve().parent.parent
 
 def _skill_categories() -> list[tuple[str, list[str]]]:
     """从 char_settings_common 读出 SKILL_CATEGORIES（不 import，避免拉起 Qt）。"""
-    src = (_REPO / "ui_pyside6" / "views" / "char_settings_common.py").read_text(encoding="utf-8")
+    src = (_REPO / "core" / "char_settings_common.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     for node in tree.body:
         if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", None) == "SKILL_CATEGORIES":

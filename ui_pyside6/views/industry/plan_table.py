@@ -19,8 +19,8 @@ from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox, QVBoxLayo
 
 import ui_pyside6.theme as theme
 from core.container import get_container
-from ui_pyside6.models.industry_models import PlanTableModel
-from ui_pyside6.views.industry.plan_table_constants import (
+from ui_qml.models.industry_models import PlanTableModel
+from ui_qml.models.plan_table_constants import (
     COL_BLUEPRINT,
     COL_CHECKBOX,
     COL_NOTES,

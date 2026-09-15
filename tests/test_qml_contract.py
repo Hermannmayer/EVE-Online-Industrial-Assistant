@@ -163,7 +163,7 @@ def bridge(qapp):
 @pytest.mark.ui
 def test_defaults_and_option_sources(bridge):
     from core.constants import TRADE_HUBS
-    from ui_pyside6.models.contract_models import _CONTRACT_COLUMNS, _ITEM_COLUMNS
+    from ui_qml.models.contract_models import _CONTRACT_COLUMNS, _ITEM_COLUMNS
 
     assert bridge.regions == list(TRADE_HUBS)
     assert bridge.types == ["全部", "物品交换", "拍卖", "运输"]

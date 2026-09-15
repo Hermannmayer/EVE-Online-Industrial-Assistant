@@ -195,7 +195,7 @@ def _history_worker(type_id: int, parent: Any) -> Any:
     单独包一层是为了测试能替换掉它：否则每构造一次对话框就会真去读 market.db、
     打 ESI，测试既慢又不确定。
     """
-    from ui_pyside6.views.price_chart import PriceHistoryWorker
+    from ui_qml.workers.price_history_worker import PriceHistoryWorker
 
     return PriceHistoryWorker(type_id, parent=parent)
 

@@ -26,7 +26,7 @@ def stub_lookups(monkeypatch):
         ],
     )
     monkeypatch.setattr(inventory_manager, "get_hangar_system_id", lambda hangar_id: 30000142 if hangar_id else None)
-    monkeypatch.setattr("ui_pyside6.views.char_settings_view.services_get_character_list", lambda: ["守夜人", "小号"])
+    monkeypatch.setattr("services.char_config_resolver.get_character_list", lambda: ["守夜人", "小号"])
 
 
 def _outcomes() -> list[dict]:

@@ -21,7 +21,7 @@ from PySide6.QtCore import Property, QObject, Qt, Signal, Slot
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
-import ui_pyside6.theme as theme
+from ui_qml.theme import registry as theme
 
 __all__ = ["ThemeBridge", "COLOR_TOKENS", "theme_singleton", "CONTEXT_NAME"]
 

@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__all__ = ["fmt_isk_exact"]
+__all__ = ["fmt_isk_exact", "fmt_tag"]
 
 
 def fmt_isk_exact(value: float) -> str:
@@ -18,3 +18,22 @@ def fmt_isk_exact(value: float) -> str:
     if value == int(value):
         return f"{int(value):,}"
     return f"{value:,.2f}"
+
+
+def fmt_tag(daily_profit: float, veto: str | bool = "") -> str:
+    """把日均利润格式化为等级标签（S/A/B/C/D），`veto` 非空则为 ✗。
+
+    原先在 `score_dialogs.py` 与 `compare/compare_models.py` 各有一份**逐字重复**
+    的实现（只差类型注解），随批次 6.0 合并到这里。
+    """
+    if veto:
+        return "✗"
+    if daily_profit >= 50_000_000:
+        return f"{daily_profit / 100_000_000:.1f}亿 S"
+    if daily_profit >= 10_000_000:
+        return f"{daily_profit / 10_000:.0f}万 A"
+    if daily_profit >= 1_000_000:
+        return f"{daily_profit / 10_000:.0f}万 B"
+    if daily_profit >= 100_000:
+        return f"{daily_profit / 10_000:.0f}万 C"
+    return f"{daily_profit / 10_000:.0f}万 D"

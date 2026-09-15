@@ -5,8 +5,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import ui_pyside6.theme as theme
+from core.formatting import fmt_tag as _fmt_tag
 from ui_pyside6.theme import apply_theme
-from ui_pyside6.views.score_dialogs import MfgDlg, ScoreW, TradeDlg, _fmt_tag
+from ui_pyside6.views.score_dialogs import MfgDlg, TradeDlg
+from ui_qml.workers.score_worker import ScoreW
 
 pytestmark = pytest.mark.ui
 
@@ -25,7 +27,7 @@ def reset_theme():
 def mock_char_settings():
     with (
         patch("ui_pyside6.views.score_dialogs.get_character_list", return_value=["main", "alt"]),
-        patch("ui_pyside6.views.score_dialogs.get_character", return_value={"skills": {"工业理论": 5}}),
+        patch("services.char_config_resolver.get_character", return_value={"skills": {"工业理论": 5}}),
     ):
         yield
 
@@ -45,7 +47,10 @@ def mock_container():
     db.connect.return_value = cm
     cont = MagicMock()
     cont.db = db
-    with patch("ui_pyside6.views.score_dialogs.get_container", return_value=cont):
+    with (
+        patch("ui_pyside6.views.score_dialogs.get_container", return_value=cont),
+        patch("ui_qml.workers.score_worker.get_container", return_value=cont),
+    ):
         yield
 
 

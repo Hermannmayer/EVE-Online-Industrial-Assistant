@@ -18,7 +18,7 @@
 封顶后，阈值只与「典型挂单大小」有关，不受单笔巨量离群单影响。
 
 被两处聚合器共用（全量更新 services/importers/getprices.py、
-工业页定向刷新 ui_pyside6/workers/industry_page_workers.py）——
+工业页定向刷新 ui_qml/workers/industry_page_workers.py）——
 只改一处会被另一处打回最低价。
 """
 

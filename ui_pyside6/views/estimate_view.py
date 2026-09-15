@@ -37,10 +37,10 @@ import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
-from ui_pyside6.models.estimate_models import _COLUMNS, EstimateTableModel
 from ui_pyside6.sizing import fit_line_edit_width
-from ui_pyside6.workers.estimate_workers import ClipboardParseWorker, _search_item_by_name
-from ui_pyside6.workers.refine_worker import RefineWorker
+from ui_qml.models.estimate_models import _COLUMNS, EstimateTableModel
+from ui_qml.workers.estimate_workers import ClipboardParseWorker, _search_item_by_name
+from ui_qml.workers.refine_worker import RefineWorker
 
 
 class EstimatePage(QWidget):
