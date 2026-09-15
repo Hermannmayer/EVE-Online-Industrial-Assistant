@@ -302,7 +302,7 @@ Item {
                         }
                         onRowRightClicked: function (row, _column, _x, _y) {
                             page.selectedRow = row
-                            rowMenu.popup()
+                            rowMenu.popupSoon()
                         }
                         // 数量列双击内联编辑（对齐 Widgets 版的 setData/EditRole）
                         onRowDoubleClicked: function (row, column) {

@@ -372,7 +372,7 @@ Item {
                                 itemMenu.row = row
                                 itemMenu.x = p.x
                                 itemMenu.y = p.y
-                                itemMenu.open()
+                                itemMenu.openSoon()
                             }
                         }
                     }
@@ -598,7 +598,7 @@ Item {
                                 bpMenu.row = row
                                 bpMenu.x = p.x
                                 bpMenu.y = p.y
-                                bpMenu.open()
+                                bpMenu.openSoon()
                             }
                         }
                     }

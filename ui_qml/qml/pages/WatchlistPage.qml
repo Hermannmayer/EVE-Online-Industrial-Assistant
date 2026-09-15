@@ -349,7 +349,7 @@ Item {
                         rowMenu.row = row
                         rowMenu.x = p.x
                         rowMenu.y = p.y
-                        rowMenu.open()
+                        rowMenu.openSoon()
                     }
                 }
             }

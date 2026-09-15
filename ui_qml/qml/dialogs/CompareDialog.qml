@@ -528,7 +528,7 @@ Item {
                         const p = mapToItem(page, x, y)
                         rowMenu.x = p.x
                         rowMenu.y = p.y
-                        rowMenu.open()
+                        rowMenu.openSoon()
                     }
                 }
             }

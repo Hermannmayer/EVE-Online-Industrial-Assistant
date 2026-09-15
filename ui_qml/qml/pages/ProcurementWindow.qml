@@ -65,7 +65,7 @@ Item {
             onRowRightClicked: function (row) {
                 rowMenu.sectionKey = pane.sectionKey;
                 rowMenu.row = row;
-                rowMenu.popup();
+                rowMenu.popupSoon();
             }
         }
     }

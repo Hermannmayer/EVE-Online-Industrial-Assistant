@@ -154,13 +154,13 @@ Item {
         rowMenu.targetRows = rowMenu.state.synthetic ? [row] : rowsForMenu(row)
         rowMenu.x = sceneX
         rowMenu.y = sceneY
-        rowMenu.open()
+        rowMenu.openSoon()
     }
 
     function openHeaderMenu(sceneX, sceneY) {
         headerMenu.x = sceneX
         headerMenu.y = sceneY
-        headerMenu.open()
+        headerMenu.openSoon()
     }
 
     // ═══════════════════════════════════════════════════════════

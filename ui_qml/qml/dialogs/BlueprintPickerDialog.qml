@@ -154,7 +154,7 @@ FDialogFrame {
                             if (frame.selRows.indexOf(rowItem.index) < 0)
                                 frame.selRows = [rowItem.index];
                             frame.menuAnyChecked = frame.anySelectedChecked();
-                            rowMenu.popup();
+                            rowMenu.popupSoon();
                         } else if (mouse.modifiers & Qt.ControlModifier) {
                             const next = frame.selRows.slice();
                             const at = next.indexOf(rowItem.index);
