@@ -384,10 +384,10 @@ class InventoryBridge(QObject):
     def openMaterialCoverage(self) -> None:
         if self._current_hangar_id is None:
             return
-        from ui_pyside6.views.inventory.material_coverage_dialog import MaterialCoverageDialog
+        from ui_qml.bridge.material_coverage_bridge import MaterialCoverageQmlDialog
 
         parent = self._shell if isinstance(self._shell, QWidget) else None
-        MaterialCoverageDialog(self._current_hangar_id, self._current_hangar_label(), parent).exec()
+        MaterialCoverageQmlDialog(self._current_hangar_id, self._current_hangar_label(), parent).exec()
 
     @Slot()
     def addItemManually(self) -> None:
@@ -755,9 +755,8 @@ class InventoryBridge(QObject):
     @Slot("QVariantList")
     def moveBlueprints(self, rows: list) -> None:
         """修改蓝图所在机库（弹出机库选择框）。"""
-        from PySide6.QtWidgets import QInputDialog
-
         from services.inventory_manager import move_blueprints_to_hangar
+        from ui_qml.bridge.input_dialog import InputQmlDialog
 
         blueprints = self._blueprints_at(rows)
         if not blueprints:
@@ -767,7 +766,7 @@ class InventoryBridge(QObject):
             self._set_bp_hint("没有其他机库可移动")
             return
         parent = self._shell if isinstance(self._shell, QWidget) else None
-        name, ok = QInputDialog.getItem(parent, "移动到", "目标机库:", [h["label"] for h in targets], 0, False)
+        name, ok = InputQmlDialog.get_item(parent, "移动到", "目标机库:", [h["label"] for h in targets], 0)
         if ok and name:
             target_id = next(h["id"] for h in targets if h["label"] == name)
             move_blueprints_to_hangar([bp["id"] for bp in blueprints], target_id)
@@ -775,15 +774,16 @@ class InventoryBridge(QObject):
 
     @Slot("QVariantList")
     def setBlueprintCostPerRun(self, rows: list) -> None:
-        from PySide6.QtWidgets import QInputDialog
-
         from services.inventory_manager import update_blueprints_batch
+        from ui_qml.bridge.input_dialog import InputQmlDialog
 
         blueprints = self._blueprints_at(rows)
         if not blueprints:
             return
         parent = self._shell if isinstance(self._shell, QWidget) else None
-        value, ok = QInputDialog.getDouble(parent, "每流程成本", "ISK:", float(blueprints[0].get("cost_per_run") or 0))
+        value, ok = InputQmlDialog.get_double(
+            parent, "每流程成本", "ISK:", float(blueprints[0].get("cost_per_run") or 0)
+        )
         if ok:
             update_blueprints_batch([bp["id"] for bp in blueprints], cost_per_run=float(value))
             self.loadBlueprints()
@@ -804,15 +804,14 @@ class InventoryBridge(QObject):
         self._edit_numeric(rows, "runs", "修改流程数")
 
     def _edit_numeric(self, rows: list, field: str, title: str) -> None:
-        from PySide6.QtWidgets import QInputDialog
-
         from services.inventory_manager import update_blueprints_batch
+        from ui_qml.bridge.input_dialog import InputQmlDialog
 
         blueprints = self._blueprints_at(rows)
         if not blueprints:
             return
         parent = self._shell if isinstance(self._shell, QWidget) else None
-        value, ok = QInputDialog.getInt(parent, title, "数值:", int(blueprints[0].get(field) or 0), 0, 100)
+        value, ok = InputQmlDialog.get_int(parent, title, "数值:", int(blueprints[0].get(field) or 0), 0, 100)
         if ok:
             update_blueprints_batch([bp["id"] for bp in blueprints], **{field: value})
             self.loadBlueprints()

@@ -27,6 +27,17 @@ Item {
         anchors.margins: Theme.spacingSm
         spacing: Theme.spacingSm
 
+        // 表格上方的说明行（材料覆盖用它放「关联了哪些计划」）；空串时不占位置
+        Text {
+            Layout.fillWidth: true
+            visible: page.table ? page.table.headerText !== "" : false
+            text: page.table ? page.table.headerText : ""
+            color: Theme.textSecondary
+            font.family: Theme.fontFamily
+            font.pixelSize: Math.round(11 * Theme.fontScale)
+            wrapMode: Text.WordWrap
+        }
+
         FSummaryTable {
             objectName: "summaryTable"
             Layout.fillWidth: true
@@ -35,6 +46,7 @@ Item {
             rows: page._rows()
             hasActionColumn: page.table ? page.table.hasActionColumn : false
             actionText: qsTr("复制")
+            emptyText: page.table ? page.table.emptyText : ""
             onActionClicked: function (row) {
                 if (page.table)
                     page.table.copyRow(row)

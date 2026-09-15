@@ -357,6 +357,48 @@ def _system_search_factory() -> Any:
     return SystemSearchQmlDialog(None, "设置设施星系")
 
 
+def _input_dialog_factory() -> Any:
+    """取值对话框 —— 取下拉形态（三种输入控件里最复杂的一种）。"""
+    from ui_qml.bridge.input_dialog import MODE_CHOICE, InputBridge, InputQmlDialog
+
+    return InputQmlDialog(InputBridge("移动到", "目标机库:", MODE_CHOICE, choices=["矿仓 (吉他)", "成品库 (艾玛)"]))
+
+
+def _item_search_factory() -> Any:
+    """物品搜索 —— 搜索源换成固定样本（快照不该查库、更不该联网）。"""
+    import ui_qml.bridge.item_search_bridge as mod
+
+    mod.find_items = lambda text: [  # type: ignore[assignment]
+        {"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium"},
+        {"type_id": 35, "zh_name": "类晶体胶矿", "en_name": "Pyerite"},
+        {"type_id": 36, "zh_name": "同位聚合体", "en_name": "Mexallon"},
+    ]
+    from ui_qml.bridge.item_search_bridge import ItemSearchQmlDialog
+
+    dlg = ItemSearchQmlDialog(None, "搜索匹配物品")
+    dlg.bridge.setQuery("矿")  # type: ignore[attr-defined]
+    dlg.bridge.runSearch()  # type: ignore[attr-defined]
+    return dlg
+
+
+def _material_coverage_factory() -> Any:
+    """材料覆盖 —— 计划数据换成固定样本。"""
+    import services.plan_execution as pe
+
+    pe.get_plans_for_mat_hangar = lambda hangar_id: [  # type: ignore[assignment]
+        {"product_name": "渡鸦级", "status": "pending"},
+        {"product_name": "猛鲑级", "status": "in_progress"},
+    ]
+    pe.aggregate_material_requirements = lambda plans, hangar_id: [  # type: ignore[assignment]
+        {"name": "三钛合金", "need": 1_000_000, "owned": 400_000, "missing": 600_000},
+        {"name": "类晶体胶矿", "need": 50_000, "owned": 50_000, "missing": 0},
+        {"name": "同位聚合体", "need": 12_000, "owned": 3_000, "missing": 9_000},
+    ]
+    from ui_qml.bridge.material_coverage_bridge import MaterialCoverageQmlDialog
+
+    return MaterialCoverageQmlDialog(7, "矿仓")
+
+
 # key → (工厂函数, 默认尺寸)；工厂延迟导入，避免拖慢主页面快照
 _DIALOGS: dict[str, tuple[Any, tuple[int, int]]] = {
     "procurement": (_procurement_factory, (760, 820)),
@@ -364,6 +406,9 @@ _DIALOGS: dict[str, tuple[Any, tuple[int, int]]] = {
     "contract_detail": (_contract_detail_factory, (880, 540)),
     "npc_seller": (_npc_seller_factory, (760, 520)),
     "system_search": (_system_search_factory, (560, 480)),
+    "input_dialog": (_input_dialog_factory, (440, 220)),
+    "item_search": (_item_search_factory, (620, 460)),
+    "material_coverage": (_material_coverage_factory, (640, 500)),
 }
 
 

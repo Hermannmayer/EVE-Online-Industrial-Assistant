@@ -400,9 +400,9 @@ class HangarTab(QWidget):
         if not self._page.hangar_id():
             return
         hangar_name = self._page._hangar_combo.currentText()
-        from .material_coverage_dialog import MaterialCoverageDialog
+        from ui_qml.bridge.material_coverage_bridge import MaterialCoverageQmlDialog
 
-        MaterialCoverageDialog(self._page.hangar_id(), hangar_name, self).exec()
+        MaterialCoverageQmlDialog(self._page.hangar_id(), hangar_name, self).exec()
 
     # ── 刷新 ──
 

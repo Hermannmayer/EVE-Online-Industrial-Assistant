@@ -32,8 +32,6 @@ from services.inventory_import import compute_transfer_rows
 from services.inventory_manager import get_hangar_stock, get_hangars, get_items, move_quantity
 from ui_pyside6.icon_cache import load_item_icon
 
-from .item_search_dialog import ItemSearchDialog
-
 
 class HangarTransferDialog(QDialog):
     """移库 — 从源机库按剪贴板数量把材料移到当前机库。"""
@@ -265,7 +263,9 @@ class HangarTransferDialog(QDialog):
 
     def _search_match(self, row: int):
         """把未匹配行接到用户搜索选中的物品，然后重填（纳入移库计划）"""
-        dlg = ItemSearchDialog(self, title="搜索匹配物品")
+        from ui_qml.bridge.item_search_bridge import ItemSearchQmlDialog
+
+        dlg = ItemSearchQmlDialog(self, title="搜索匹配物品")
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         sel = dlg.selected_item()

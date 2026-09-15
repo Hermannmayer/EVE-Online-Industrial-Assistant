@@ -1080,3 +1080,213 @@ def test_closing_a_dialog_finishes_its_worker(qapp, monkeypatch):
         assert worker.interrupted and worker.waited > 0, "关窗该请求中断并等线程收尾"
     finally:
         dialog.deleteLater()
+
+
+# ══════════════════════════════════════════════════════════════
+# 批次 1（仓库链路）：取值对话框 / 物品搜索 / 材料覆盖
+# ══════════════════════════════════════════════════════════════
+
+
+def _input_dialog(mode: str = "text", **kw):
+    from ui_qml.bridge.input_dialog import InputBridge, InputQmlDialog
+
+    return InputQmlDialog(InputBridge("标题", "标签", mode, **kw))
+
+
+def test_input_dialog_loads_without_warnings():
+    """四种形态各加载一次 —— `mode` 决定显示哪个输入控件，只有实际加载才验得到。"""
+    _assert_loads_and_quiet(lambda: _input_dialog("text", text="甲"), "取值对话框(文本)")
+    _assert_loads_and_quiet(lambda: _input_dialog("int", value=5, minimum=0, maximum=100), "取值对话框(整数)")
+    _assert_loads_and_quiet(lambda: _input_dialog("double", value=1.5), "取值对话框(小数)")
+    _assert_loads_and_quiet(lambda: _input_dialog("choice", choices=["甲库", "乙库"]), "取值对话框(下拉)")
+
+
+def test_input_dialog_returns_the_typed_value(qapp):
+    """确定时按 mode 定格的类型要分开 —— 整数不能被当小数吐回来。"""
+    from ui_qml.bridge.input_dialog import MODE_CHOICE, MODE_DOUBLE, MODE_INT, MODE_TEXT
+
+    dlg = _input_dialog(MODE_TEXT, text="手输")
+    try:
+        dlg.bridge.setText("改过")
+        dlg.bridge.accept()
+        assert dlg.bridge.text_value() == "改过"
+    finally:
+        dlg.deleteLater()
+
+    dlg = _input_dialog(MODE_INT, value=3)
+    try:
+        dlg.bridge.setValue(7.6)  # 四舍五入成 8，且必须是 int
+        dlg.bridge.accept()
+        assert dlg.bridge.integer() == 8
+        assert isinstance(dlg.bridge.integer(), int)
+    finally:
+        dlg.deleteLater()
+
+    dlg = _input_dialog(MODE_DOUBLE, value=1.0)
+    try:
+        dlg.bridge.setValue(2.25)
+        dlg.bridge.accept()
+        assert dlg.bridge.number() == 2.25
+    finally:
+        dlg.deleteLater()
+
+    dlg = _input_dialog(MODE_CHOICE, choices=["甲库", "乙库"], choice_index=0)
+    try:
+        dlg.bridge.setChoiceIndex(1)
+        dlg.bridge.accept()
+        assert dlg.bridge.text_value() == "乙库"
+    finally:
+        dlg.deleteLater()
+
+
+def test_input_dialog_value_is_empty_until_accepted(qapp):
+    """没点确定就不该有返回值 —— 调用方全靠 `ok` 分支，这里错了会静默写坏数据。"""
+    dlg = _input_dialog("text", text="初始")
+    try:
+        dlg.bridge.setText("改了但没确定")
+        dlg.reject()
+        assert dlg.bridge.text_value() == "", "取消后不该把编辑中的内容当结果"
+    finally:
+        dlg.deleteLater()
+
+
+def test_input_bridge_rejects_out_of_range_choice(qapp):
+    dlg = _input_dialog("choice", choices=["甲", "乙"])
+    try:
+        dlg.bridge.setChoiceIndex(9)
+        assert dlg.bridge.choiceIndex == 0, "越界下标应被忽略，而不是把 currentIndex 弄成 -1"
+    finally:
+        dlg.deleteLater()
+
+
+# ── 物品搜索（FPickList 与星系搜索共用一份布局）──
+
+
+@pytest.fixture
+def item_search_factory(qapp, monkeypatch):
+    monkeypatch.setattr(
+        "ui_qml.bridge.item_search_bridge.find_items",
+        lambda text: [
+            {"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium"},
+            {"type_id": 35, "zh_name": "类晶体胶矿", "en_name": "Pyerite"},
+        ],
+    )
+    from ui_qml.bridge.item_search_bridge import ItemSearchQmlDialog
+
+    return lambda: ItemSearchQmlDialog(None, "搜索匹配物品")
+
+
+def test_item_search_dialog_loads_without_warnings(item_search_factory):
+    _assert_loads_and_quiet(item_search_factory, "物品搜索")
+
+
+def test_item_search_returns_the_picked_item(item_search_factory):
+    dialog = item_search_factory()
+    try:
+        bridge = dialog.bridge
+        assert bridge.selected_item() is None
+        bridge.setQuery("三钛")
+        bridge.runSearch()  # 防抖在测试里跳过
+        assert len(bridge.rows) == 2
+
+        bridge.selectRow(1)
+        assert bridge.hasSelection is True
+        assert dialog.selected_item() == {"type_id": 35, "zh_name": "类晶体胶矿", "en_name": "Pyerite"}
+
+        bridge.accept()
+        assert dialog.result() == 1
+    finally:
+        dialog.deleteLater()
+
+
+def test_item_search_only_result_is_adopted_without_clicking(qapp, monkeypatch):
+    """只搜到一条时「选定」直接采用它 —— 原 Widgets 版的便利行为，必须保住。"""
+    monkeypatch.setattr(
+        "ui_qml.bridge.item_search_bridge.find_items",
+        lambda text: [{"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium"}],
+    )
+    from ui_qml.bridge.item_search_bridge import ItemSearchBridge
+
+    bridge = ItemSearchBridge()
+    bridge.setQuery("三钛")
+    bridge.runSearch()
+    assert bridge.hasSelection is False
+    bridge.accept()
+    assert bridge.selected_item() == {"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium"}
+
+
+def test_item_search_rerun_clears_stale_selection(item_search_factory):
+    """换了搜索词就该丢掉上次的选择 —— 否则「选定」会把上一个物品落库。"""
+    dialog = item_search_factory()
+    try:
+        bridge = dialog.bridge
+        bridge.setQuery("三钛")
+        bridge.runSearch()
+        bridge.selectRow(0)
+        assert dialog.selected_item() is not None
+
+        bridge.setQuery("类晶体")
+        bridge.runSearch()
+        assert dialog.selected_item() is None
+        bridge.accept()
+        assert "请先在搜索结果中选择物品" in bridge.error
+    finally:
+        dialog.deleteLater()
+
+
+# ── 材料覆盖 ──
+
+
+@pytest.fixture
+def coverage_factory(qapp, monkeypatch):
+    import services.plan_execution as pe
+
+    monkeypatch.setattr(
+        pe,
+        "get_plans_for_mat_hangar",
+        lambda hangar_id: [{"product_name": "渡鸦级", "status": "pending"}],
+    )
+    monkeypatch.setattr(
+        pe,
+        "aggregate_material_requirements",
+        lambda plans, hangar_id: [
+            {"name": "三钛合金", "need": 1000, "owned": 400, "missing": 600},
+            {"name": "类晶体胶矿", "need": 50, "owned": 50, "missing": 0},
+        ],
+    )
+    from ui_qml.bridge.material_coverage_bridge import MaterialCoverageQmlDialog
+
+    return lambda: MaterialCoverageQmlDialog(7, "矿仓")
+
+
+def test_material_coverage_dialog_loads_without_warnings(coverage_factory):
+    _assert_loads_and_quiet(coverage_factory, "材料覆盖")
+
+
+def test_material_coverage_rows_and_summary(coverage_factory):
+    dialog = coverage_factory()
+    try:
+        bridge = dialog.bridge
+        assert bridge.headerText == "「渡鸦级」(待生产) · 共 1 条计划"
+        assert bridge.statusText == "缺 1 种 / 共 600 件"
+        assert bridge.rowCount == 2
+        first = bridge.rows[0]["cells"]
+        assert [c["text"] for c in first] == ["三钛合金", "1,000", "400", "600"]
+        assert first[3]["color"] != "", "缺口 > 0 该标红"
+        assert bridge.rows[1]["cells"][3]["color"] == "", "缺口为 0 不该标红"
+    finally:
+        dialog.deleteLater()
+
+
+def test_material_coverage_empty_state(qapp, monkeypatch):
+    """该机库没被任何计划用作材料机库时：空表提示要说明原因，不是「没有数据」。"""
+    import services.plan_execution as pe
+
+    monkeypatch.setattr(pe, "get_plans_for_mat_hangar", lambda hangar_id: [])
+    from ui_qml.bridge.material_coverage_bridge import MaterialCoverageBridge
+
+    bridge = MaterialCoverageBridge(7, "矿仓")
+    bridge.reload()
+    assert bridge.rowCount == 0
+    assert bridge.emptyText == "该机库未被任何计划用作材料机库"
+    assert bridge.statusText == "关联计划 0 条"

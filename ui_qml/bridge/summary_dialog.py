@@ -50,6 +50,8 @@ class SummaryTableBridge(DialogBridge):
         self._columns = columns
         self._rows: list[dict] = []
         self._status_text = ""
+        self._header_text = ""
+        self._empty_text = "没有数据"
         self.set_title(title)
 
     #: 列定义 [{title, width}]；width = 0 表示吃满剩余空间
@@ -58,11 +60,25 @@ class SummaryTableBridge(DialogBridge):
     rows = Property(list, lambda self: list(self._rows), notify=contentChanged)
     statusText = Property(str, lambda self: self._status_text, notify=contentChanged)
     rowCount = Property(int, lambda self: len(self._rows), notify=contentChanged)
+    #: 表格上方的说明行（空串 = 不占位置）。材料覆盖用它放「关联了哪些计划」
+    headerText = Property(str, lambda self: self._header_text, notify=contentChanged)
+    #: 空表提示。材料覆盖用它替代 Widgets 版另起一个居中 QLabel 的做法
+    emptyText = Property(str, lambda self: self._empty_text, notify=contentChanged)
 
-    def set_content(self, rows: list[dict], status_text: str) -> None:
-        """子类在加载完成后调它。"""
+    def set_content(self, rows: list[dict], status_text: str, header_text: str | None = None) -> None:
+        """子类在加载完成后调它。
+
+        `header_text` 传 None 表示「保持原样」—— 有些表会分几次填内容
+        （先出表头说明、再出数据），不想被后一次覆盖掉。
+        """
         self._rows = rows
         self._status_text = status_text
+        if header_text is not None:
+            self._header_text = header_text
+        self.contentChanged.emit()
+
+    def set_empty_text(self, text: str) -> None:
+        self._empty_text = str(text)
         self.contentChanged.emit()
 
     # ── 可选：顶栏动作 + 行内动作列（材料总表用）────────────────

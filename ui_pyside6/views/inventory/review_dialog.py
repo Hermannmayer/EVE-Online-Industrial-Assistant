@@ -36,8 +36,6 @@ from services.inventory_manager import apply_inventory_import, get_hangars, get_
 from services.user_settings import get_material_price_mult, set_material_price_mult
 from ui_pyside6.icon_cache import load_item_icon
 
-from .item_search_dialog import ItemSearchDialog
-
 
 class ImportReviewDialog(QDialog):
     """粘贴导入预览 — 右键菜单设价/删除/跨机库"""
@@ -315,7 +313,9 @@ class ImportReviewDialog(QDialog):
 
     def _search_match(self, row: int):
         """把未匹配行接到用户搜索选中的物品，然后重填"""
-        dlg = ItemSearchDialog(self, title="搜索匹配物品")
+        from ui_qml.bridge.item_search_bridge import ItemSearchQmlDialog
+
+        dlg = ItemSearchQmlDialog(self, title="搜索匹配物品")
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         sel = dlg.selected_item()
