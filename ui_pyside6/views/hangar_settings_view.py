@@ -220,9 +220,9 @@ class _HangarEditor(QWidget):
     # ── 星系 ───────────────────────────────────────────────
 
     def _on_select_system(self):
-        from ui_pyside6.dialogs.system_search_dialog import SystemSearchDialog
+        from ui_qml.bridge.system_search_bridge import SystemSearchQmlDialog
 
-        dlg = SystemSearchDialog(self, "设置机库星系")
+        dlg = SystemSearchQmlDialog(self, "设置机库星系")
         if dlg.exec():
             sel = dlg.get_selected()
             if sel:

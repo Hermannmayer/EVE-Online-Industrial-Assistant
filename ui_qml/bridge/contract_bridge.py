@@ -6,7 +6,7 @@
 转发下去，所以 QML 直接把**代理**当 model，搜索/价格区间/买卖类型全部照旧走它的
 `filterAcceptsRow` —— 过滤逻辑一份都不用重写。
 
-合同详情弹窗（`ContractDetailDialog`）仍是 Widgets，属于阶段 4。
+        contract detail dialog（`ContractDetailQmlDialog`）—— 阶段 4 已迁到 QML。
 """
 
 from __future__ import annotations
@@ -232,14 +232,14 @@ class ContractBridge(QObject):
 
     @Slot(int)
     def showDetail(self, proxy_row: int) -> None:
-        """双击合同行 → 详情弹窗（仍是 Widgets，阶段 4 迁移）。"""
+        """双击合同行 → 详情弹窗。"""
         data = self._row_data(proxy_row)
         if not data:
             return
-        from ui_pyside6.dialogs.contract_detail_dialog import ContractDetailDialog
+        from ui_qml.bridge.contract_detail_bridge import ContractDetailQmlDialog
 
         parent = self._shell if isinstance(self._shell, QWidget) else None
-        ContractDetailDialog(data, parent).exec()
+        ContractDetailQmlDialog(data, parent).exec()
 
     # ── 右键菜单动作 ──────────────────────────────────────────
 

@@ -869,9 +869,9 @@ class PlanTable(QWidget):
             QMessageBox.warning(self, "提示", "该计划无蓝图信息")
             return
         bp_name = plan.get("blueprint_name", "") or plan.get("product_name", str(bp_id))
-        from ui_pyside6.dialogs.npc_seller_dialog import NpcSellerDialog
+        from ui_qml.bridge.npc_seller_bridge import NpcSellerQmlDialog
 
-        dlg = NpcSellerDialog(bp_id, bp_name, self)
+        dlg = NpcSellerQmlDialog(bp_id, bp_name, self)
         dlg.exec()
 
     def _selected_groups_and_children(self, selected_rows: list[int]) -> tuple[list[dict], list[dict]]:
@@ -935,9 +935,9 @@ class PlanTable(QWidget):
         if not plan:
             return
 
-        from ui_pyside6.dialogs.system_search_dialog import SystemSearchDialog
+        from ui_qml.bridge.system_search_bridge import SystemSearchQmlDialog
 
-        dlg = SystemSearchDialog(self, "设置设施星系")
+        dlg = SystemSearchQmlDialog(self, "设置设施星系")
         if not dlg.exec():
             return
         sel = dlg.get_selected()

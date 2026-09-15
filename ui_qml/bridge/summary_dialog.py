@@ -86,10 +86,20 @@ class SummaryTableBridge(DialogBridge):
 
 
 class SummaryTableQmlDialog(QmlDialog):
-    """通用汇总表的 QML 版宿主。"""
+    """通用汇总表的 QML 版宿主。
 
-    def __init__(self, bridge: SummaryTableBridge, parent: Any = None, size: tuple[int, int] = (900, 560)) -> None:
-        super().__init__(_QML_FILE, bridge, parent=parent, size=size)
+    `qml_file` 默认为通用的汇总表页面；形状相同但需要额外控件的对话框
+    （合同详情 / NPC 卖家）传自己的 QML，表格渲染仍走同一个 `FSummaryTable`。
+    """
+
+    def __init__(
+        self,
+        bridge: SummaryTableBridge,
+        parent: Any = None,
+        size: tuple[int, int] = (900, 560),
+        qml_file: str = _QML_FILE,
+    ) -> None:
+        super().__init__(qml_file, bridge, parent=parent, size=size)
         bridge.reload()
 
     def reload(self) -> None:

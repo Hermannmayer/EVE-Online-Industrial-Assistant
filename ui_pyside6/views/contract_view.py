@@ -29,7 +29,6 @@ import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from core.constants import TRADE_HUB_IDS, TRADE_HUBS
 from services.watchlist_manager import add_to_watchlist
-from ui_pyside6.dialogs.contract_detail_dialog import ContractDetailDialog
 from ui_pyside6.models.contract_models import (
     _CONTRACT_COLUMNS,
     _ITEM_COLUMNS,
@@ -285,14 +284,19 @@ class ContractPage(QWidget):
         if row_data:
             self._load_items(row_data.get("contract_id", 0))
 
+    def _open_contract_detail(self, row_data: dict) -> None:
+        """打开合同详情（QML 版，阶段 4 迁入）。两处入口共用，省得各写一遍 import。"""
+        from ui_qml.bridge.contract_detail_bridge import ContractDetailQmlDialog
+
+        ContractDetailQmlDialog(row_data, self).exec()
+
     def _on_contract_double_click(self, proxy_index: QModelIndex):
         """双击合同行 → 弹出详情"""
         source_index = self._contract_proxy.mapToSource(proxy_index)
         row_data = self._contract_model.get_row(source_index.row())
         if not row_data:
             return
-        dlg = ContractDetailDialog(row_data, self)
-        dlg.exec()
+        self._open_contract_detail(row_data)
 
     def _load_items(self, contract_id: int):
         """加载合同物品"""
@@ -336,7 +340,7 @@ class ContractPage(QWidget):
 
         # 在新窗口查看
         view_detail = QAction("在新窗口查看", self)
-        view_detail.triggered.connect(lambda: ContractDetailDialog(row_data, self).exec())
+        view_detail.triggered.connect(lambda: self._open_contract_detail(row_data))
         menu.addAction(view_detail)
 
         menu.addSeparator()

@@ -268,16 +268,16 @@ class BlueprintPickerBridge(DialogBridge):
 
     @Slot()
     def npcSeller(self) -> None:
-        """查看NPC卖家（该对话框仍是 Widgets，原样开）。"""
+        """查看NPC卖家。"""
         if self._blueprint_type_id is None:
             return
         from PySide6.QtWidgets import QWidget
 
-        from ui_pyside6.dialogs.npc_seller_dialog import NpcSellerDialog
+        from ui_qml.bridge.npc_seller_bridge import NpcSellerQmlDialog
 
         name = self._plan.get("product_name", str(self._blueprint_type_id))
         parent = self.owner if isinstance(self.owner, QWidget) else None
-        NpcSellerDialog(self._blueprint_type_id, name, parent).exec()
+        NpcSellerQmlDialog(self._blueprint_type_id, name, parent).exec()
 
     @Slot()
     def accept(self) -> None:

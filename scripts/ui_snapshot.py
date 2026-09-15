@@ -286,10 +286,84 @@ def _procurement_factory() -> Any:
     return ProcurementDialog()
 
 
+def _contract_detail_factory() -> Any:
+    """合同详情 —— 合同字段固定，物品从库里读（只读）。
+
+    字段写死是为了能反复比对布局；物品列表走真实 DB，空库时正好能看到空态。
+    """
+    from ui_qml.bridge.contract_detail_bridge import ContractDetailQmlDialog
+
+    return ContractDetailQmlDialog(
+        {
+            "contract_id": 99001,
+            "title": "示例合同（快照用）",
+            "type": "item_exchange",
+            "status": "outstanding",
+            "price": 1234567.89,
+            "collateral": 5000000.0,
+            "volume": 2500.0,
+            "days_completed": 3,
+            "date_issued": "2026-09-01 12:00",
+            "date_expired": "2026-09-08 12:00",
+            "start_location_id": 60003760,
+            "end_location_id": 60008494,
+            "for_corporation": True,
+        }
+    )
+
+
+def _npc_seller_factory() -> Any:
+    """蓝图 NPC 卖家 —— ESI 拉单换成固定样本。
+
+    快照必须可复现且**不联网**（与 `_launcher_factory` 换掉写库调用同一纪律）。
+    """
+    from PySide6.QtCore import QObject, Signal
+
+    import ui_qml.bridge.npc_seller_bridge as npc_mod
+
+    class _StubWorker(QObject):
+        result = Signal(list, str)
+
+        def __init__(self, region_id: int, blueprint_type_id: int, parent: Any = None) -> None:
+            super().__init__(parent)
+
+        def start(self) -> None:
+            self.result.emit(
+                [
+                    {"corp": "核心统合部", "location": "吉他 IV - 卫星 4（吉他）", "price": 1_234_567.89, "volume": 12},
+                    {"corp": "维洛奇亚贸易公司", "location": "艾玛 VIII（艾玛）", "price": 1_399_000.0, "volume": 3},
+                ],
+                "",
+            )
+
+        def isRunning(self) -> bool:
+            return False
+
+    # 快照替身：mypy 对「给类名重新赋值」会同时报 assignment 与 misc 两种
+    npc_mod.NpcOrderWorker = _StubWorker  # type: ignore[assignment,misc]
+
+    from ui_qml.bridge.npc_seller_bridge import NpcSellerQmlDialog
+
+    return NpcSellerQmlDialog(1160, "渡鸦级蓝图")
+
+
+def _system_search_factory() -> Any:
+    """星系搜索 —— 查 reference.db（只读）。
+
+    库里没有跑过 SDE 扩展数据时会显示「请先重跑数据初始化」的禁用态，那也是一种要看的现状。
+    """
+    from ui_qml.bridge.system_search_bridge import SystemSearchQmlDialog
+
+    return SystemSearchQmlDialog(None, "设置设施星系")
+
+
 # key → (工厂函数, 默认尺寸)；工厂延迟导入，避免拖慢主页面快照
 _DIALOGS: dict[str, tuple[Any, tuple[int, int]]] = {
     "procurement": (_procurement_factory, (760, 820)),
     "launcher": (_launcher_factory, (820, 760)),
+    "contract_detail": (_contract_detail_factory, (880, 540)),
+    "npc_seller": (_npc_seller_factory, (760, 520)),
+    "system_search": (_system_search_factory, (560, 480)),
 }
 
 

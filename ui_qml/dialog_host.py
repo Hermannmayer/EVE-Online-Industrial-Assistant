@@ -109,3 +109,28 @@ class QmlDialog(QDialog):
     def ok(self) -> bool:
         """QML 是否加载成功（调用方据此决定要不要回退到 Widgets 版）。"""
         return self._host.ok()
+
+    # ── 关窗收尾 ─────────────────────────────────────────────
+
+    def _stop_bridge(self) -> None:
+        """关窗前给桥一个收尾机会（桥没实现 `stop()` 就什么也不做）。
+
+        桥里若有还在跑的后台线程，**必须**在这里停掉并等它结束：
+        `QThread` 在运行中被析构时 Qt 直接 `abort()` —— 实测进程静默死掉、
+        退出码 127、连一行日志都没有（`ui_snapshot.py --dialog contract_detail`
+        就是这么挂的，当时物品加载线程还没跑完）。
+
+        放在基类而不是各对话框各写一遍：`done()` 覆盖确定/取消/Esc，
+        `closeEvent` 覆盖点窗口 X，两个入口都得走。
+        """
+        stop = getattr(self._bridge, "stop", None)
+        if callable(stop):
+            stop()
+
+    def done(self, result: int) -> None:
+        self._stop_bridge()
+        super().done(result)
+
+    def closeEvent(self, event: Any) -> None:
+        self._stop_bridge()
+        super().closeEvent(event)
