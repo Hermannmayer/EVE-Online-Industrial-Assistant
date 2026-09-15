@@ -270,3 +270,27 @@ def test_dialog_keeps_the_original_constructor_shape(qapp):
         assert dialog.bridge.autoUpdate is False
     finally:
         dialog.deleteLater()
+
+
+def test_bridge_does_not_keep_the_host_alive(qapp):
+    """桥不许**强引用**宿主 —— 那会连成一个跨所有权的引用环，GC 收环时直接崩。
+
+    宿主同时是这个对话框的 Qt 父窗口（`SettingsQmlDialog` 的 `parent=parent or main_window`），
+    于是「宿主（C++ 父）→ 对话框（Python 包装）→ 桥 → 宿主」成环。Python 的 GC 会在**任意**
+    分配点收这个环，而析构顺序会跨过 Qt 的父子边界 → access violation；崩点还在别处
+    （`-m ui` 全量档偶发崩在 storage 页的 fixture 拆除里，追了很久才找到这里）。
+    这条钉住「弱引用」这个修法不被改回强引用。
+    """
+    import gc
+    import weakref
+
+    host = _WidgetHost()
+    bridge = SettingsBridge(host)
+    assert bridge._mw is host, "正常路径下应当能读到宿主"
+
+    ref = weakref.ref(host)
+    del host
+    gc.collect()
+
+    assert ref() is None, "桥把宿主强引用住了：会连成引用环，GC 收环时跨 Qt 父子边界析构 → 崩溃"
+    assert bridge._mw is None, "宿主没了之后桥应当读到 None（各处已有 None 兜底）"

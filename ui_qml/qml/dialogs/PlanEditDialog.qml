@@ -21,6 +21,14 @@ Item {
     readonly property int gap: Theme.spacingSm
     readonly property int labelWidth: Math.round(88 * Theme.fontScale)
 
+    /* 对话框底色。**必须自己铺**：宿主 `PageHost` 透明清屏 + `WA_TranslucentBackground`，
+     * 没画到的地方直接透出窗口背后，真窗口抓屏是纯黑（离屏快照反而看不出来，会被补成
+     * 调色板底色）。本对话框比 `FDialogFrame` 早，没走那个骨架，所以在这儿自己补一块。*/
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.bgDark
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.spacingMd

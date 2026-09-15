@@ -107,7 +107,9 @@ FDialogFrame {
         Layout.fillWidth: true
         spacing: Theme.spacingSm
 
-        TabBar {
+        /* 靠左收窄 + `FTabBar`：普通 `TabBar` 把宽度等分给每个按钮而不看各自的
+         * `implicitWidth`，收窄后「市场费率」每格只拿到 48px（需要 60）会被截成「市场…」。*/
+        FTabBar {
             id: tabBar
 
             TabButton {

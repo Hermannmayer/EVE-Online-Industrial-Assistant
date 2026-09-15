@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 from PySide6.QtCore import QEventLoop, QTimer, QtMsgType, QUrl, qInstallMessageHandler
 from PySide6.QtQml import QQmlComponent, QQmlEngine
+from PySide6.QtQuick import QQuickWindow
 from PySide6.QtQuickControls2 import QQuickStyle
 
 from ui_qml.bridge import theme_singleton
@@ -53,6 +54,10 @@ Window {
     FTextField { text: "文本" }
     FArrowButton { active: true; hovered: true }
     FMenu { MenuItem { text: "菜单项" } }
+    FTabBar {
+        TabButton { text: "短" }
+        TabButton { text: "更长的一个标签" }
+    }
 }
 """
 
@@ -133,6 +138,183 @@ def test_components_load_and_interact_without_warnings(qapp, qml_warnings, make_
     _spin()  # 让窗口完成 polish（原生样式的告警只在这一步之后才可能出现）
 
     assert not qml_warnings, "QML 组件产生了 Qt 告警：\n" + "\n".join(dict.fromkeys(qml_warnings))
+
+
+#: 标签栏宽度探针：同一个窄容器里放裸 `TabBar`（对照组）与 `FTabBar`（被测）
+_TABFIT_PROBE = """
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import "components"
+
+Window {
+    width: 400
+    height: 200
+    visible: true
+    flags: Qt.WindowDoesNotAcceptFocus
+
+    // 对照组：裸 TabBar 被按在 150px 的窄容器里，最长的标签放不下
+    Item {
+        width: 150
+        height: 40
+
+        TabBar {
+            objectName: "bareBar"
+            anchors.fill: parent
+            TabButton { text: "跨区域价差" }
+            TabButton { text: "运输利润" }
+        }
+    }
+
+    // 被测：同样 150px 的窄容器，FTabBar 自己撑开，标签不该被截
+    Item {
+        y: 60
+        width: 150
+        height: 40
+
+        RowLayout {
+            anchors.fill: parent
+
+            FTabBar {
+                objectName: "fitBar"
+                TabButton { text: "跨区域价差" }
+                TabButton { text: "运输利润" }
+            }
+        }
+    }
+}
+"""
+
+
+def _by_name(item: Any, name: str) -> Any:
+    if item.objectName() == name:
+        return item
+    if isinstance(item, QQuickWindow):  # 窗口的子树挂在 contentItem 上，没有 childItems()
+        item = item.contentItem()
+    for child in item.childItems():
+        found = _by_name(child, name)
+        if found is not None:
+            return found
+    return None
+
+
+def _tab_buttons(bar: Any) -> list[Any]:
+    out: list[Any] = []
+    for child in bar.childItems():
+        if "TabButton" in child.metaObject().className():
+            out.append(child)
+        out.extend(_tab_buttons(child))
+    return out
+
+
+def _elided(buttons: list[Any]) -> list[str]:
+    """哪些按钮窄于自己需要的宽度（= 文字被 elide 成省略号）。"""
+    return [
+        f"{b.property('text')}（{b.property('width'):.0f} < {b.property('implicitWidth'):.0f}）"
+        for b in buttons
+        if b.property("width") + 0.5 < b.property("implicitWidth")
+    ]
+
+
+@pytest.mark.ui
+def test_ftabbar_keeps_labels_intact_where_a_bare_tabbar_elides(qapp, make_qml):
+    """`FTabBar` 的契约：窄容器里不截标签 —— 并用**对照组**证明这条断言有牙。
+
+    裸 `TabBar` 把宽度等分给按钮而不看各自的 `implicitWidth`，它自己的 `implicitWidth`
+    又是从被挤窄的按钮反推的，两者互相锁死：收窄的容器里最长的标签必然被截
+    （实测「市场费率」48px / 需要 60，「ESI 与数据」55 / 需要 69）。
+
+    对照组必须**确实被截**：它要是也被放下，说明这个探针根本测不出问题，那条
+    「FTabBar 没截」就成了摆设 —— 没牙的断言比没有断言更糟。
+    """
+    root = make_qml(_TABFIT_PROBE, "_probe_tabfit.qml")
+    _spin()
+
+    fit = _by_name(root, "fitBar")
+    bare = _by_name(root, "bareBar")
+    assert fit is not None and bare is not None, "探针里的两个标签栏没找到"
+
+    fit_buttons = _tab_buttons(fit)
+    bare_buttons = _tab_buttons(bare)
+    assert fit_buttons and bare_buttons, "没取到 TabButton"
+
+    assert not _elided(fit_buttons), "FTabBar 也把标签截了：" + "、".join(_elided(fit_buttons))
+    assert _elided(bare_buttons), (
+        "对照组（裸 TabBar 按在 150px 里）居然没截断 —— 探针测不出问题、护栏失去意义，把容器改窄或换更长的标签"
+    )
+
+
+def _code_only(qml: str) -> str:
+    """去掉 QML 注释再扫 —— 本仓注释里大量举例 `Rectangle { … }`，注释掉的代码不算数。"""
+    return re.sub(r"(?<!:)//[^\n]*", "", re.sub(r"/\*.*?\*/", "", qml, flags=re.S))
+
+
+#: 全幅底色：与页面那条护栏同一个形状
+_FULL_BLEED = re.compile(r"Rectangle\s*\{\s*\n\s*anchors\.fill:\s*parent\s*\n\s*color:\s*Theme\.")
+
+#: 住在 `dialogs/` 下但**不是**窗口根的字段组件（被对话框复用的零件，不该有底色）
+_DIALOG_SUB_COMPONENTS = frozenset({"CharField.qml", "FacilityField.qml", "ResearchCommonFields.qml"})
+
+
+@pytest.mark.fast
+def test_qml_does_not_use_a_bare_tabbar():
+    """标签栏一律走 `FTabBar`，别直接用 Qt 的 `TabBar`。
+
+    裸 `TabBar` 把宽度**等分**给每个按钮而不看各自的 `implicitWidth`，而它自己的
+    `implicitWidth` 又是从被挤窄的按钮反推的 —— 两者互相锁死，收窄的容器里最长的标签
+    必然被截成省略号（实测「市场费率」每格 48px、需要 60；「ESI 与数据」55、需要 69）。
+    `FTabBar` 显式算好总宽；铺满整行（`Layout.fillWidth: true`）时两者**完全一致**，
+    所以没有理由再用裸的。
+    """
+    offenders = []
+    for p in sorted(QML_ROOT.rglob("*.qml")):
+        if p.name == "FTabBar.qml":  # 它自己就是 TabBar 的替身
+            continue
+        if re.search(r"^\s*TabBar\s*\{", _code_only(p.read_text(encoding="utf-8")), re.M):
+            offenders.append(p.relative_to(QML_ROOT).as_posix())
+
+    assert not offenders, "以下 QML 直接用了 `TabBar`，改用 `FTabBar`：" + "、".join(offenders)
+
+
+@pytest.mark.fast
+def test_every_dialog_paints_a_root_background():
+    """每个对话框都必须铺满一块不透明底色 —— 与页面那条同源，代价也一样。
+
+    对话框装在同一套 `PageHost` 上（透明清屏 + `WA_TranslucentBackground`），
+    没画到的地方直接透出窗口背后。**离屏快照看不出来**：`QWidget.grab()` 会把空区补成
+    调色板底色，`ui_snapshot.py --dialog settings` 一切正常；真窗口抓屏
+    （`QScreen.grabWindow`）测得 **77% 像素是纯黑** —— 用户报「设置界面是黑的」就是它。
+
+    以 `FDialogFrame` 为根节点的对话框不用再写（骨架自己铺，见下一条）；其余照
+    `ContractDetailDialog.qml` 的写法。
+    """
+    missing = []
+    for p in sorted((QML_ROOT / "dialogs").glob("*.qml")):
+        if p.name in _DIALOG_SUB_COMPONENTS:
+            continue
+        src = _code_only(p.read_text(encoding="utf-8"))
+        root = re.search(r"^\s*([A-Za-z_][\w.]*)\s*\{", src, re.M)
+        if root and root.group(1) == "FDialogFrame":
+            continue
+        if _FULL_BLEED.search(src):
+            continue
+        missing.append(f"{p.name}（根节点 {root.group(1) if root else '?'}）")
+
+    assert not missing, (
+        "以下对话框没有全幅底色，未绘制区域会透出窗口背后（真窗口下是纯黑）："
+        + "、".join(missing)
+        + "。改用 FDialogFrame 作根节点，或照 ContractDetailDialog.qml 加"
+        + " Rectangle { anchors.fill: parent; color: Theme.bgDark }。"
+    )
+
+
+@pytest.mark.fast
+def test_dialog_frame_paints_the_background():
+    """`FDialogFrame` 必须自己铺底色 —— 30 个对话框都指望它这一块。"""
+    src = _code_only((QML_ROOT / "components" / "FDialogFrame.qml").read_text(encoding="utf-8"))
+    assert _FULL_BLEED.search(src), (
+        "FDialogFrame 没铺底色：所有以它为根节点的对话框都会漏出透明洞（真窗口下是纯黑，离屏快照反而看不出来）"
+    )
 
 
 @pytest.mark.fast

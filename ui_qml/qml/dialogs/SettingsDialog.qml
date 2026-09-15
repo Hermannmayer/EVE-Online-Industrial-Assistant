@@ -25,13 +25,14 @@ FDialogFrame {
     onApplyRequested: if (frame.sb)
         frame.sb.apply()
 
-    /* 标签栏靠左收窄（与存储页同一处理）：`Layout.fillWidth: true` 会让三个 TabButton
-     * 平分整行宽度，上半区看着一大片空。*/
+    /* 标签栏靠左收窄（与存储页同一处理）：铺满整行会让三个 TabButton 平分宽度、
+     * 上半区看着一大片空。收窄之后必须用 `FTabBar`——普通 `TabBar` 把宽度等分给每个
+     * 按钮而不看各自的 `implicitWidth`，「ESI 与数据」会被截成「ESI 与…」（真窗口实测到）。*/
     RowLayout {
         Layout.fillWidth: true
         spacing: Theme.spacingSm
 
-        TabBar {
+        FTabBar {
             id: tabBar
 
             TabButton {

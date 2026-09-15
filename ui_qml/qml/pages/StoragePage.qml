@@ -158,7 +158,8 @@ Item {
             Layout.fillWidth: true
             spacing: page.gap
 
-            TabBar {
+            // 收窄的标签栏用 `FTabBar`（普通 `TabBar` 会等分宽度、截掉最长的标签）
+            FTabBar {
                 id: tabBar
 
                 TabButton {

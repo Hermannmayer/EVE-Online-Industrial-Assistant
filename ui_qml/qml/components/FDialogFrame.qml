@@ -7,6 +7,8 @@ import QtQuick.Layouts
  * 这里只统一**内容**的排版：主体区（默认属性）+ 校验提示 + 取消/确定按钮行。
  * 这样每个对话框的 QML 只写自己的字段，不必重复这 20 行。
  *
+ * 底色也在这里铺（见下）：对话框**不能**指望窗口给自己上底色。
+ *
  * 用法：
  *     FDialogFrame {
  *         dlg: bridge
@@ -14,7 +16,7 @@ import QtQuick.Layouts
  *         Text { text: "..." }      // 直接写主体，会进 body
  *     }
  */
-ColumnLayout {
+Item {
     id: root
 
     default property alias bodyData: body.data
@@ -37,55 +39,75 @@ ColumnLayout {
     signal applyRequested()
 
     anchors.fill: parent
-    anchors.margins: Theme.spacingMd
-    spacing: Theme.spacingSm
+
+    /* 对话框底色 —— **必须自己铺**，别指望窗口。
+     *
+     * 宿主 `PageHost` 是 `setClearColor(transparent)` + `WA_TranslucentBackground`，
+     * 没画到的地方就透出窗口背后：真窗口抓屏实测是**纯黑**（用户报「设置界面是黑的」）。
+     * 危险的是**离屏快照看不出来** —— `QWidget.grab()` 会把空区补成调色板底色，
+     * `ui_snapshot.py --dialog settings` 一切正常，只有 `QScreen.grabWindow()` 才现形。
+     *
+     * 页面侧早有同一条不变量（含静态护栏），对话框这一层原先漏了：30 个以
+     * `FDialogFrame` 为根节点的对话框全都有这个洞，内容铺不满就看得到。
+     * 补在这里而不是各对话框里，正是因为它们是共用这一个骨架。
+     */
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.bgDark
+    }
 
     ColumnLayout {
-        id: body
-        Layout.fillWidth: true
-        Layout.fillHeight: true
-        spacing: Theme.spacingSm
-    }
-
-    // 校验提示：桥里 `set_error()` 非空即显示（对齐 Widgets 版的 QMessageBox 拦截）
-    Text {
-        Layout.fillWidth: true
-        visible: root.dlg ? root.dlg.error !== "" : false
-        text: root.dlg ? root.dlg.error : ""
-        color: Theme.accentRed
-        font.family: Theme.fontFamily
-        font.pixelSize: Math.round(12 * Theme.fontScale)
-        wrapMode: Text.WordWrap
-    }
-
-    RowLayout {
-        Layout.fillWidth: true
+        anchors.fill: parent
+        anchors.margins: Theme.spacingMd
         spacing: Theme.spacingSm
 
-        Item {
+        ColumnLayout {
+            id: body
             Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: Theme.spacingSm
         }
 
-        FButton {
-            text: root.applyText
-            visible: root.applyVisible
-            onClicked: root.applyRequested()
+        // 校验提示：桥里 `set_error()` 非空即显示（对齐 Widgets 版的 QMessageBox 拦截）
+        Text {
+            Layout.fillWidth: true
+            visible: root.dlg ? root.dlg.error !== "" : false
+            text: root.dlg ? root.dlg.error : ""
+            color: Theme.accentRed
+            font.family: Theme.fontFamily
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+            wrapMode: Text.WordWrap
         }
 
-        FButton {
-            text: root.cancelText
-            visible: root.cancelVisible
-            onClicked: if (root.dlg)
-                root.dlg.reject()
-        }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spacingSm
 
-        FButton {
-            text: root.acceptText
-            primary: true
-            visible: root.acceptVisible
-            enabled: root.acceptEnabled
-            onClicked: if (root.dlg)
-                root.dlg.accept()
+            Item {
+                Layout.fillWidth: true
+            }
+
+            FButton {
+                text: root.applyText
+                visible: root.applyVisible
+                onClicked: root.applyRequested()
+            }
+
+            FButton {
+                text: root.cancelText
+                visible: root.cancelVisible
+                onClicked: if (root.dlg)
+                    root.dlg.reject()
+            }
+
+            FButton {
+                text: root.acceptText
+                primary: true
+                visible: root.acceptVisible
+                enabled: root.acceptEnabled
+                onClicked: if (root.dlg)
+                    root.dlg.accept()
+            }
         }
     }
 }

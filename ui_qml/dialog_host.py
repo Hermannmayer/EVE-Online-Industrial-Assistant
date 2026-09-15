@@ -114,6 +114,22 @@ class QmlDialog(QDialog):
         self._host = PageHost(qml_file, context={"bridge": bridge}, parent=self)
         layout.addWidget(self._host)
 
+        # 销毁也要收尾：调用方（测试里尤其常见）会直接 `dlg.deleteLater()`，那条路径
+        # 既不经过 `done()` 也不经过 `closeEvent`，桥的后台线程就没人停 —— 而 `QThread`
+        # 在运行中被析构时 Qt 直接中止进程，或者把队列信号投给已销毁的 QML 对象
+        # （access violation：表现成「另一个无关测试的 fixture 拆除处突然段错误」，
+        # `-m ui` 全量档偶发崩在 storage 页拆除，根子其实在这里）。
+        #
+        # 两个坑，都实测过：
+        # 1. 必须等 `destroyed` —— Qt 在 `~QObject` 里**先**发它、**后**删子对象，
+        #    所以这一刻桥还活着、停得掉；等桥被删就晚了。
+        # 2. 必须用 **lambda / 独立函数**连接：PySide6 里连到**自己** `destroyed` 上的
+        #    绑定方法**不会被调用**（同一个对象正在被销毁）。
+        # 只对真的实现了 `stop()` 的桥接（页面桥没有，也无需）。
+        _stop = getattr(bridge, "stop", None)
+        if callable(_stop):
+            self.destroyed.connect(lambda *_: _stop())
+
         if size is not None:
             self.setMinimumSize(*size)
             self.resize(*size)

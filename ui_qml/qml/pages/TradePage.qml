@@ -93,7 +93,8 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        TabBar {
+        // 用 `FTabBar` 而不是裸 `TabBar`：铺满整行时两者一致，收窄时只有它不截标签
+        FTabBar {
             id: tabBar
             Layout.fillWidth: true
 

@@ -40,7 +40,9 @@ FDialogFrame {
         Layout.fillWidth: true
         spacing: frame.gap
 
-        TabBar {
+        /* 收窄的标签栏要用 `FTabBar`：普通 `TabBar` 把宽度等分给按钮而不看各自的
+         * `implicitWidth`，两个标签不等宽时长的那个会被截成省略号。*/
+        FTabBar {
             id: tabBar
 
             TabButton {

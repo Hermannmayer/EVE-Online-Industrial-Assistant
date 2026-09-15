@@ -17,9 +17,11 @@
 
 from __future__ import annotations
 
+import weakref
 from typing import Any
 
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
+from PySide6.QtWidgets import QWidget
 
 import ui_pyside6.theme as theme
 from ui_qml.dialog_host import DialogBridge, QmlDialog
@@ -101,6 +103,25 @@ class ThemeSelectorBridge(QObject):
         self.set_current(theme.current_theme())
 
 
+def _hold_host(widget: Any) -> tuple[weakref.ref[Any] | None, Any]:
+    """决定怎么持有宿主：**QWidget 宿主必须弱引用**，其余原样强引用。
+
+    为什么 QWidget 特殊：`SettingsQmlDialog` 会把宿主当作对话框的 Qt 父窗口
+    （`parent=parent or main_window`，为了居中/模态），于是
+    「宿主（C++ 父）→ 对话框（Python 包装）→ 桥 → 宿主」连成一个**跨所有权的引用环**。
+    Python 的 GC 会在**任意分配点**收这个环，而析构顺序会跨过 Qt 的父子边界 ——
+    实测直接 access violation，且崩点还在**别处**（`-m ui` 全量档偶发崩在 storage 页的
+    fixture 拆除里，一路追到这里）。
+
+    普通 Python 对象（测试替身、控制器）没有 Qt 父子关系，连不成环，强引用无害；
+    对它弱引用反而有害：`SettingsBridge(_Host())` 这种「宿主是临时对象」的写法会立刻丢失宿主，
+    桥静默空转（原有用例当场变红）。
+    """
+    if isinstance(widget, QWidget):
+        return weakref.ref(widget), None
+    return None, widget
+
+
 class SettingsBridge(DialogBridge):
     """系统设置对话框的桥。宿主 main_window 可为 None（只读展示，不落设置）。"""
 
@@ -109,12 +130,17 @@ class SettingsBridge(DialogBridge):
     def __init__(self, main_window: Any = None) -> None:
         super().__init__()
         self.set_title("系统设置")
-        self._mw = main_window
+        self._mw_ref, self._mw_strong = _hold_host(main_window)
         self._themes = ThemeSelectorBridge(self)
         self._interval = 0
         self._auto_update = False
         self._font_size = theme.BASE_FONT_PX
         self.reload_state()
+
+    @property
+    def _mw(self) -> Any:
+        """当前宿主（QWidget 宿主可能已被回收 → None）。见 `_hold_host` 的说明。"""
+        return self._mw_ref() if self._mw_ref is not None else self._mw_strong
 
     # ── 主题选择器（内嵌组件）──────────────────────────────────
 

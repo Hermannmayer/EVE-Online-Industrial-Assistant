@@ -12,10 +12,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from PySide6.QtCore import QEventLoop, QObject, QTimer, QtMsgType, Signal, qInstallMessageHandler
+from PySide6.QtGui import qAlpha
 
 import ui_pyside6.theme as theme
 
@@ -1605,3 +1607,82 @@ def test_page_host_shows_a_visible_error_when_qml_fails(qapp):
     finally:
         host.deleteLater()
         _spin(60)
+
+
+# ── 真渲染才看得见的一条：底色不能漏 ────────────────────────────────
+#
+# 这类缺陷**离屏快照与静态扫描都看不见**（用户先发现的）：
+# `QWidget.grab()` 会把没画到的空区补成调色板底色，快照一切正常，真窗口却是纯黑。
+# 三条用例是当时出问题的那个家族（设置 / 人物设置 / 机库设置）。
+# （标签截断那条改由 `test_qml_components.test_ftabbar_keeps_labels_intact_...` 守：
+#  在对话框自己的尺寸下它测不出问题，属于没牙的断言。）
+
+_FRAME_CASES = [
+    ("系统设置", "ui_qml.bridge.settings_bridge", "SettingsQmlDialog"),
+    ("人物设置", "ui_qml.bridge.char_settings_bridge", "CharSettingsQmlDialog"),
+    ("机库设置", "ui_qml.bridge.hangar_settings_bridge", "HangarSettingsQmlDialog"),
+]
+
+
+def _build_dialog(module: str, cls: str) -> Any:
+    import importlib
+
+    return getattr(importlib.import_module(module), cls)(None)
+
+
+def _descendants(item: Any, out: list[Any]) -> None:
+    for child in item.childItems():
+        out.append(child)
+        _descendants(child, out)
+
+
+@pytest.mark.parametrize(("label", "module", "cls"), _FRAME_CASES)
+def test_dialog_leaves_no_transparent_hole(qapp, label, module, cls):
+    """对话框不能留透明洞：宿主透明清屏，没画到的地方直接透出窗口背后（真窗口下是纯黑）。
+
+    **必须读 `QQuickWidget` 自己的帧缓冲**（`grabFramebuffer()`）。`QWidget.grab()`
+    会把空区补成调色板底色，正好把洞盖住 —— 快照工具就是这么漏掉它的：
+    `ui_snapshot.py --dialog settings` 一切正常，真窗口抓屏却是 77% 像素纯黑
+    （用户报「设置界面是黑的」）。
+    """
+    dialog = _build_dialog(module, cls)
+    try:
+        # 必须 show：不显示的话布局不跑，控件全是 0 宽、帧缓冲也是空的（实测过）
+        dialog.resize(760, 600)
+        dialog.show()
+        _spin(400)
+        image = dialog._host.grabFramebuffer()
+        assert not image.isNull(), f"{label} 没渲染出画面"
+        holes = sum(
+            1 for y in range(0, image.height(), 2) for x in range(0, image.width(), 2) if qAlpha(image.pixel(x, y)) == 0
+        )
+        assert holes == 0, f"{label} 有 {holes} 个采样点是透明的（没画到），会透出窗口背后"
+    finally:
+        dialog.hide()
+        dialog.deleteLater()
+        _spin(80)
+
+
+def test_destroying_the_dialog_stops_the_bridge(qapp):
+    """`deleteLater()`（不经过 `done()` / `closeEvent`）也必须走到桥的 `stop()`。
+
+    桥里的后台线程是**桥的子对象**：桥随对话框一起销毁，而 `QThread` 在**运行中**被
+    析构时 Qt 直接中止进程；更阴的是它可能只是在后续某个事件循环里把队列信号投给
+    已销毁的 QML 对象 —— 表现成「另一个无关测试的 fixture 拆除处突然段错误」
+    （本仓实测：`-m ui` 全量档偶发 access violation，崩点固定在 storage 页的拆除里，
+    查了很久，根子在别处）。
+    """
+    from ui_qml.dialog_host import DialogBridge, QmlDialog
+
+    calls: list[str] = []
+
+    class _Bridge(DialogBridge):
+        def stop(self) -> None:
+            calls.append("stop")
+
+    dialog = QmlDialog("dialogs/InputDialog.qml", _Bridge())  # 该 QML 不依赖具体桥字段
+    dialog.resize(400, 200)
+    dialog.deleteLater()
+    _spin(150)
+
+    assert calls == ["stop"], "对话框被销毁时没停桥：桥里的 QThread 会在运行中被析构（硬崩）"
