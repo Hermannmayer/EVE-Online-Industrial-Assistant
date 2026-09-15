@@ -82,15 +82,32 @@ L1 的 `#launcher_toolbar` **必须是 `QFrame`**（不能是裸布局），否�
 | 披露层级 | 最多 2 层（列表 → 详情面板） | NN/g 渐进披露 |
 | 对比度 | 文字 4.5:1、图形 3:1 | WCAG 1.4.3 / 1.4.11 |
 
-### ⚠️ 层次陷阱：`BG_SURFACE` 比 `BG_DARK` **更暗**
+### ⚠️ 层次陷阱：控件面不能和它所在的底同层
 
-两个模式的 token 关系都是 `BG_SURFACE` < `BG_DARK` < `BG_SURFACE_LIGHT` < `BG_HOVER`（亮度递增）。
-`BG_SURFACE` 是**下沉面**，不是抬升面。全局 `QComboBox` 用 `BG_SURFACE` 做底，所以：
+**两套主题的层次次序不一样**（由暗到亮）：
 
-- **控件（下拉/按钮）必须用比背景更亮的面**（本窗用 `BG_HOVER`），否则在 `BG_DARK` 上渲染成
-  「黑洞 + 亮边」，看起来像黑色内框。本窗在 `_launcher_qss()` 里显式覆盖了 `#line_filter` /
-  `#char_filter` / `#executor_combo` / `#btn_row_ghost` 的背景。
-- 悬浮/选中态用 `BG_SURFACE_LIGHT`；`#launcher_bottom` 作为下沉页脚用 `BG_SURFACE` 是对的。
+| 主题 | 次序 |
+|---|---|
+| `fluent-dark` | `BG_DARK` < `BG_SURFACE` < `BG_SURFACE_LIGHT` < `BG_HOVER` |
+| `fluent-light` | `BG_HOVER` < `BG_SURFACE_LIGHT` < `BG_DARK` < `BG_SURFACE` |
+
+深色是「越抬升越亮」（Fluent 深色惯例）；浅色里只有卡片比窗口底亮，控件与悬浮靠**变暗**区分。
+
+> 本节原先写「两个模式都是 `BG_SURFACE` < `BG_DARK` < `BG_SURFACE_LIGHT` < `BG_HOVER`，
+> 且 `BG_SURFACE` 是下沉面」——主题收敛到 Fluent 双主题后已不成立：实测 `BG_SURFACE`
+> 在两套里都是**抬升的卡片面**（深色 `#1e293b` 比窗口底 `#0f172a` 亮，浅色 `#ffffff` 比
+> `#f2f4fb` 亮）。说明与实现脱节了一段时间，2026-09 修正。
+
+不变量由 `tests/test_theme_registry.py::test_surface_luminance_order_is_strictly_increasing`
+逐主题守着（按 `BG_DARK` 的亮度选上表对应的那一串，断言严格递增），另加一条
+「`BG_SURFACE` 与 `BG_DARK` 必须可区分」——两者几乎同色时卡片与窗口底会糊成一块。
+
+实践含义：
+
+- **控件（下拉/按钮）不要直接用 `BG_SURFACE` 做底**。深色下它紧贴窗口底，会渲染成
+  「黑洞 + 亮边」的黑色内框；浅色下它又最亮，控件看起来像浮出来的白块。控件底用
+  `BG_HOVER` 或 `BG_SURFACE_LIGHT`。
+- 悬浮/选中态用 `BG_SURFACE_LIGHT`；卡片与下沉页脚用 `BG_SURFACE`。
 
 ### 字形可用性（踩过的坑）
 
@@ -146,7 +163,7 @@ L1 的 `#launcher_toolbar` **必须是 `QFrame`**（不能是裸布局），否�
 
 ### 配色不变量（有测试兜底，勿绕过）
 
-- `production_launcher._CONTRAST_CONTRACT` 声明本窗所有「文字/背景」对，`tests/test_theme_registry.py` 遍历全部主题断言 —— 新增主题会被自动检查。
+- `domain/theme_contrast.py::CONTRAST_CONTRACT` 声明本窗所有「文字/背景」对，`tests/test_theme_registry.py` 遍历全部主题断言 —— 新增主题会被自动检查。（契约原在 `production_launcher.py`，随该模块失去渲染职责一并上移到 `domain/`，不再依赖 Qt。）
 - 自绘图形（占用方块、状态色条）一律经 `ensure_contrast()` 调到 ≥3:1 再使用：强调色是中间调，浅色主题下直接用不达标（实测 one-light 的绿仅 2.87）。
 - **禁止用 accent 作文字色**；小字（≤13px）禁用 `TEXT_SECONDARY`（在 `BG_HOVER` 上 0/10 主题达标）。
 

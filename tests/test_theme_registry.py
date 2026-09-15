@@ -157,18 +157,18 @@ def test_on_primary_contrast(theme_id):
     assert ratio >= 2.0, f"{theme_id} TEXT_ON_PRIMARY/PRIMARY 对比度 {ratio:.2f} < 2.0"
 
 
-# ── 产线启动小助手的对比度契约 ──
-# 契约声明在 ui_pyside6/views/industry/production_launcher.py::_CONTRAST_CONTRACT，
+# ── 配色可访问性契约 ──
+# 契约声明在 domain/theme_contrast.py::CONTRAST_CONTRACT（纯数据，无 Qt），
 # 这里遍历全部主题断言 —— 以后新增主题会被自动检查，配色不再靠肉眼。
 
 
 @pytest.mark.parametrize("theme_id", sorted(THEME_REGISTRY))
 def test_launcher_contrast_contract(theme_id):
     """产线小助手用到的每个「文字/背景」对都要达 WCAG AA。"""
-    from ui_pyside6.views.industry.production_launcher import _CONTRAST_CONTRACT
+    from domain.theme_contrast import CONTRAST_CONTRACT
 
     colors = _spec(theme_id)["colors"]
-    for role, (fg, bg, need) in _CONTRAST_CONTRACT.items():
+    for role, (fg, bg, need) in CONTRAST_CONTRACT.items():
         ratio = _contrast(colors[fg], colors[bg])
         assert ratio >= need, f"{theme_id} 「{role}」{fg}/{bg} 对比度 {ratio:.2f} < {need}"
 
@@ -181,17 +181,41 @@ def test_launcher_ensure_contrast_guarantee(theme_id):
     （实测 one-light 的 ACCENT_GREEN 仅 2.87、eve-polar 的 ACCENT_CYAN 仅 2.85），
     所以不变量是「函数保证」而不是「token 恰好合格」。
     """
-    from ui_pyside6.views.industry.production_launcher import (
-        _MIN_NON_TEXT_RATIO,
-        ensure_contrast,
-    )
+    from domain.theme_contrast import MIN_NON_TEXT_RATIO, ensure_contrast
 
     colors = _spec(theme_id)["colors"]
     accents = sorted(k for k in colors if k.startswith("ACCENT_") or k == "PRIMARY")
     for bg in ("BG_DARK", "BG_SURFACE", "BG_SURFACE_LIGHT", "BG_HOVER"):
         for accent in accents:
-            got = ensure_contrast(colors[accent], colors[bg], _MIN_NON_TEXT_RATIO)
-            ratio = _contrast(got.name(), colors[bg])
-            assert ratio >= _MIN_NON_TEXT_RATIO, (
-                f"{theme_id} {accent} on {bg} 经调整后仅 {ratio:.2f} < {_MIN_NON_TEXT_RATIO}"
+            got = ensure_contrast(colors[accent], colors[bg], MIN_NON_TEXT_RATIO)
+            ratio = _contrast(got, colors[bg])
+            assert ratio >= MIN_NON_TEXT_RATIO, (
+                f"{theme_id} {accent} on {bg} 经调整后仅 {ratio:.2f} < {MIN_NON_TEXT_RATIO}"
             )
+
+
+@pytest.mark.parametrize("theme_id", sorted(THEME_REGISTRY))
+def test_surface_luminance_order_is_strictly_increasing(theme_id):
+    """面的层次必须严格递增，且按主题模式走对应的那一串。
+
+    只测「前景/背景对各自达标」抓不到层次**翻转**：一对一对拆开都合格，
+    整体却可能出现「控件比它所在的底更暗」——那就是 `docs/dev/ui-blueprint.md`
+    说的黑洞。这条补上那个盲区。
+
+    深浅两套的次序**不一样**（深色越抬升越亮；浅色的控件/悬浮靠变暗区分），
+    所以按 `BG_DARK` 的亮度选串，顺带把「两套被接成同一串」也挡掉。
+    """
+    from domain.theme_contrast import SURFACE_ORDER_DARK, SURFACE_ORDER_LIGHT, relative_luminance
+
+    colors = _spec(theme_id)["colors"]
+    is_dark = relative_luminance(colors["BG_DARK"]) < 0.5
+    order = SURFACE_ORDER_DARK if is_dark else SURFACE_ORDER_LIGHT
+    mode = "深色" if is_dark else "浅色"
+
+    lumas = [(name, relative_luminance(colors[name])) for name in order]
+    for (prev_name, prev), (name, cur) in zip(lumas, lumas[1:], strict=False):
+        assert cur > prev, f"{theme_id}（{mode}）面层次断了：{prev_name}({prev:.4f}) ≥ {name}({cur:.4f})"
+
+    # 卡片面与窗口底必须可区分：这是「控件放上去变黑洞」的直接判据
+    gap = abs(relative_luminance(colors["BG_SURFACE"]) - relative_luminance(colors["BG_DARK"]))
+    assert gap > 0.001, f"{theme_id} BG_SURFACE 与 BG_DARK 几乎同色（差 {gap:.4f}）"

@@ -10,10 +10,12 @@
 实时刷新：1s 内存 tick（运行中行剩余时长）+ 5s DB 轮询（计划增删改自动同步）。
 
 设计依据（间距/字号/图标/配色/披露层级）见 `docs/dev/ui-blueprint.md`；
-配色可访问性由模块级 `_CONTRAST_CONTRACT` + `tests/test_theme_registry.py` 全主题断言。
+配色可访问性契约在 `domain/theme_contrast.py::CONTRAST_CONTRACT`，
+由 `tests/test_theme_registry.py` 对全部主题断言。
 
-样式策略：套用 `theme.get_stylesheet()`（与全项目其它独立窗口一致）再追加本窗
-`_launcher_qss()`；颜色一律取自 `theme` token，字号一律 `theme.fs()`。
+渲染已整体迁到 QML（`ui_qml/qml/pages/LauncherWindow.qml`，阶段 2c）：本类现在只作
+**headless 控制器**——算数据、给 `launcher_bridge` 供值，自己不再画任何东西。
+零星的 `QColor` 用法是给 QML 传色值（QML 要 `#rrggbb` 字符串），不是自绘。
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from PySide6.QtWidgets import (
 import ui_pyside6.theme as theme
 from core.container import get_container
 from core.logger import log
+from domain.theme_contrast import ensure_contrast
 from services import plan_execution
 from services.char_capacity import (
     CAPACITY_LINE_MANUFACTURING,
@@ -104,9 +107,6 @@ _NOMINAL_BLOCK_W = 12.0  # sizeHint 里假设的格宽（决定初始窗宽）
 _BLOCK_GAP = 3.0
 _MIN_BLOCK_GAP = 2.0
 
-_MIN_NON_TEXT_RATIO = 3.0  # WCAG 1.4.11 非文字对比度
-_MIN_TEXT_RATIO = 4.5  # WCAG 1.4.3 正文对比度
-
 _LINE_TYPES = (CAPACITY_LINE_MANUFACTURING, CAPACITY_LINE_RESEARCH, CAPACITY_LINE_REACTION)
 _LINE_COLORS = {
     CAPACITY_LINE_MANUFACTURING: "ACCENT_GREEN",
@@ -162,83 +162,6 @@ def _short_label(code: str | None, status: str) -> str:
 # 动作槽宽度按这些文案的**最宽者**取值（新增短标签会自动纳入，不会截断）
 _SLOT_SAMPLES = (_START_LABEL, _COMPLETE_LABEL, "折叠(99)", "展开(99)", *_BLOCK_SHORT_LABELS.values())
 _SLOT_MIN_W = 88
-
-# ── 对比度契约 ───────────────────────────────────────────
-# 角色 → (前景 token, 背景 token, 阈值)。
-# `tests/test_theme_registry.py` 遍历 THEME_REGISTRY 的全部主题断言达标，
-# 因此新增主题会被自动检查。**改样式必须同步改这张表**。
-#
-# 层次约定（Fluent：重要的面更亮）：BG_SURFACE 比 BG_DARK **更暗**（不是更亮），
-# 所以「控件」一律用 BG_HOVER / BG_SURFACE_LIGHT 这类更亮的面，否则控件会变成黑洞。
-_CONTRAST_CONTRACT: dict[str, tuple[str, str, float]] = {
-    "工具条说明文字": ("TEXT_PRIMARY", "BG_DARK", _MIN_TEXT_RATIO),
-    "占用区标签": ("TEXT_PRIMARY", "BG_DARK", _MIN_TEXT_RATIO),
-    "状态徽章文字": ("TEXT_PRIMARY", "BG_SURFACE_LIGHT", _MIN_TEXT_RATIO),
-    "行标题": ("TEXT_BRIGHT", "BG_DARK", _MIN_TEXT_RATIO),
-    "行副标题": ("TEXT_PRIMARY", "BG_DARK", _MIN_TEXT_RATIO),
-    "行标题(悬浮)": ("TEXT_BRIGHT", "BG_SURFACE_LIGHT", _MIN_TEXT_RATIO),
-    "行副标题(悬浮)": ("TEXT_PRIMARY", "BG_SURFACE_LIGHT", _MIN_TEXT_RATIO),
-    "行标题(选中)": ("TEXT_BRIGHT", "BG_SURFACE_LIGHT", _MIN_TEXT_RATIO),
-    "行副标题(选中)": ("TEXT_PRIMARY", "BG_SURFACE_LIGHT", _MIN_TEXT_RATIO),
-    "主启动按钮文字": ("BG_DARK", "TEXT_BRIGHT", _MIN_TEXT_RATIO),
-    "主启动按钮文字(悬浮)": ("BG_DARK", "TEXT_PRIMARY", _MIN_TEXT_RATIO),
-    "次要按钮文字": ("TEXT_PRIMARY", "BG_HOVER", _MIN_TEXT_RATIO),
-    "输入框文字": ("TEXT_PRIMARY", "BG_HOVER", _MIN_TEXT_RATIO),
-    "底部面板文字": ("TEXT_PRIMARY", "BG_SURFACE", _MIN_TEXT_RATIO),
-}
-
-
-# ── 对比度工具 ───────────────────────────────────────────
-
-
-def _as_qcolor(value: QColor | str) -> QColor:
-    """接受 QColor 或 '#rrggbb' 字符串。"""
-    return value if isinstance(value, QColor) else QColor(value)
-
-
-def relative_luminance(color: QColor | str) -> float:
-    """WCAG 2.x 相对亮度（sRGB）。"""
-
-    def lin(channel: int) -> float:
-        c = channel / 255.0
-        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
-
-    c = _as_qcolor(color)
-    return 0.2126 * lin(c.red()) + 0.7152 * lin(c.green()) + 0.0722 * lin(c.blue())
-
-
-def contrast_ratio(a: QColor | str, b: QColor | str) -> float:
-    """WCAG 对比度（1.0–21.0）。"""
-    l1, l2 = sorted((relative_luminance(a), relative_luminance(b)), reverse=True)
-    return (l1 + 0.05) / (l2 + 0.05)
-
-
-def ensure_contrast(
-    color: QColor | str,
-    background: QColor | str,
-    min_ratio: float = _MIN_NON_TEXT_RATIO,
-) -> QColor:
-    """把颜色朝黑/白方向线性混合，直到与背景达到 `min_ratio`。
-
-    用于**自绘图形**（占用方块、状态字形）：强调色是给填充用的中间调，
-    在部分浅色主题下直接用会低于 WCAG 非文字 3:1（实测 one-light 的绿仅 2.87、
-    eve-polar 的青仅 2.85）。亮底往黑调、暗底往白调，固定步数，必然终止且必然达标。
-    """
-    steps = 20
-    bg = _as_qcolor(background)
-    original = _as_qcolor(color)
-    target = QColor(0, 0, 0) if relative_luminance(bg) > 0.5 else QColor(255, 255, 255)
-    current = QColor(original)
-    for step in range(1, steps + 1):
-        if contrast_ratio(current, bg) >= min_ratio:
-            return current
-        t = step / steps
-        current = QColor(
-            round(original.red() + (target.red() - original.red()) * t),
-            round(original.green() + (target.green() - original.green()) * t),
-            round(original.blue() + (target.blue() - original.blue()) * t),
-        )
-    return target
 
 
 def _fmt_hms(seconds) -> str:
@@ -584,12 +507,13 @@ class ProductionLauncher(QWidget):
             for line in _LINE_TYPES:
                 active, mx = per_line[line]
                 # 颜色在 Python 侧解析并由 ensure_contrast 校正到 WCAG 非文字 3:1 ——
-                # 强调色是给填充用的中间调，部分浅色主题下直接用会不达标
+                # 强调色是给填充用的中间调，部分浅色主题下直接用会不达标。
+                # 计算在 `domain/theme_contrast`（纯 hex），这里只把结果包成 QColor 给 QML 用。
                 accent = str(getattr(theme, _LINE_COLORS[line]))
                 lines_data.append(
                     {
                         "label": line_label(line),
-                        "color": ensure_contrast(accent, theme.BG_DARK).name(),
+                        "color": QColor(ensure_contrast(accent, theme.BG_DARK)).name(),
                         "active": int(active),
                         "max": int(mx),
                         "cap": int(line_caps[line]),
