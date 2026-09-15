@@ -452,7 +452,9 @@ class ShellWindow(QQuickView):
 
     def closeEvent(self, event: Any) -> None:
         from core import hot_reload as _hr
+        from core.qt_noise import begin_shutdown
 
+        begin_shutdown()
         _hr.clear_trigger()
         self._closing = True
         theme.remove_theme_listener(self._on_theme_changed)
@@ -474,6 +476,10 @@ class ShellWindow(QQuickView):
         """
         from PySide6.QtCore import QThread
 
+        from core.qt_noise import begin_shutdown
+
+        # 托盘「退出」走 app.quit()，不经过 closeEvent —— 这里补上同一个标记
+        begin_shutdown()
         for worker in self.findChildren(QThread):
             if worker.isRunning():
                 worker.requestInterruption()

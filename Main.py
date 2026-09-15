@@ -228,9 +228,15 @@ def main():
     # 自定义 Qt 消息处理器，过滤字体大小警告
     from PySide6.QtCore import QtMsgType, qInstallMessageHandler
 
+    from core import qt_noise
+
     def _qt_message_handler(msg_type, context, message):
         if "QFont::setPointSize" in message and "Point size <= 0" in message:
             return  # 过滤字体大小警告
+        # 退出期 Qt 自带 QML 的拆除噪音（点关闭后成片刷屏，见 core.qt_noise）：
+        # 只丢「退出已开始 + 出自 qrc:/qt-project.org/」这一种，运行期照旧记录
+        if qt_noise.shutting_down() and qt_noise.is_qt_internal_qml(message):
+            return
         # 其他消息正常处理
         if msg_type == QtMsgType.QtDebugMsg:
             log.debug(message)

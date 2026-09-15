@@ -249,7 +249,9 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
 
     def closeEvent(self, event):
         from core import hot_reload as _hr
+        from core.qt_noise import begin_shutdown
 
+        begin_shutdown()
         _hr.clear_trigger()
         theme.remove_theme_listener(self._on_theme_changed)
         theme.save_window_geometry(self)
