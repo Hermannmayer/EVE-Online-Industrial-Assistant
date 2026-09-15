@@ -9,13 +9,11 @@ from .inventory.blueprint_tab import BlueprintTab
 from .inventory.hangar_tab import HangarTab
 from .inventory.inventory_helpers import BlueprintTableModel, InvTableModel
 from .inventory.inventory_page import InventoryPage
-from .inventory.review_dialog import ImportReviewDialog
 
 __all__ = [
     "BlueprintTab",
     "BlueprintTableModel",
     "HangarTab",
-    "ImportReviewDialog",
     "InventoryPage",
     "InvTableModel",
     "_BlueprintImportWorker",

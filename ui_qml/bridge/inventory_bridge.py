@@ -332,7 +332,7 @@ class InventoryBridge(QObject):
         """库存修正（full）/ 增量粘贴（incremental）—— 走既有的审阅对话框。"""
         if self._current_hangar_id is None:
             return
-        from ui_pyside6.views.inventory.review_dialog import run_clipboard_import
+        from ui_qml.bridge.review_bridge import run_clipboard_import
 
         run_clipboard_import(
             self._current_hangar_id,

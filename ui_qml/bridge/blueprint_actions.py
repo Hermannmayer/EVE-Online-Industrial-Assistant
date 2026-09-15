@@ -348,11 +348,13 @@ def paste_blueprints(bridge: Any, hangar_id: int | None, hangar_label: str) -> N
         snapshot_blueprints,
     )
     from services.inventory_manager import get_blueprints
-    from ui_pyside6.views.inventory.blueprint_import_dialog import (
-        BlueprintImportChangeDialog,
-        BlueprintImportReviewDialog,
-    )
     from ui_pyside6.views.inventory.blueprint_import_worker import _BlueprintImportWorker
+    from ui_qml.bridge.blueprint_import_bridge import (
+        BlueprintImportChangeQmlDialog as BlueprintImportChangeDialog,
+    )
+    from ui_qml.bridge.blueprint_import_bridge import (
+        BlueprintImportReviewQmlDialog as BlueprintImportReviewDialog,
+    )
 
     if hangar_id is None:
         return

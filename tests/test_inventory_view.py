@@ -614,22 +614,31 @@ class TestImportFilteredNote:
     """剪贴板里混入另一类物品时，预览框统计栏提示已过滤行数。"""
 
     def test_material_review_note(self, qapp):
-        """材料导入预览：提示被过滤的蓝图行数"""
-        from ui_pyside6.views.inventory.review_dialog import ImportReviewDialog
+        """材料导入预览：提示被过滤的蓝图行数（QML 版断言桥的汇总文案）"""
+        from ui_qml.bridge.review_bridge import ImportReviewQmlDialog
 
-        dlg = ImportReviewDialog([], "测试机库", 1, filtered_note=3)
-        assert "[已过滤 3 行蓝图]" in dlg._summary_label.text()
+        dlg = ImportReviewQmlDialog([], "测试机库", 1, filtered_note=3)
+        try:
+            assert "[已过滤 3 行蓝图]" in dlg.bridge.summaryText
+        finally:
+            dlg.deleteLater()
 
     def test_material_review_note_absent(self, qapp):
         """无过滤时不加提示"""
-        from ui_pyside6.views.inventory.review_dialog import ImportReviewDialog
+        from ui_qml.bridge.review_bridge import ImportReviewQmlDialog
 
-        dlg = ImportReviewDialog([], "测试机库", 1)
-        assert "已过滤" not in dlg._summary_label.text()
+        dlg = ImportReviewQmlDialog([], "测试机库", 1)
+        try:
+            assert "已过滤" not in dlg.bridge.summaryText
+        finally:
+            dlg.deleteLater()
 
     def test_blueprint_review_note(self, qapp):
-        """蓝图导入预览：提示被过滤的材料行数"""
-        from ui_pyside6.views.inventory.blueprint_import_dialog import BlueprintImportReviewDialog
+        """蓝图导入预览：提示被过滤的材料行数（QML 版断言桥的汇总文案）"""
+        from ui_qml.bridge.blueprint_import_bridge import BlueprintImportReviewQmlDialog
 
-        dlg = BlueprintImportReviewDialog([], "测试机库", filtered_note=2)
-        assert "[已过滤 2 行材料]" in dlg._summary_label.text()
+        dlg = BlueprintImportReviewQmlDialog([], "测试机库", filtered_note=2)
+        try:
+            assert "[已过滤 2 行材料]" in dlg.bridge.summaryText
+        finally:
+            dlg.deleteLater()

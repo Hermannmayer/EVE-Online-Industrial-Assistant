@@ -66,8 +66,6 @@ class BlueprintPickerBridge(DialogBridge):
         self._need = 1
         self._runs = 1
         self._selected_ids: list[int] = []
-        #: 承载它的 `QmlDialog`（开 Widgets 子对话框时当 parent），由 QmlDialog 侧回填
-        self.owner: Any = None
 
         self.set_title(f"绑定库存蓝图 - {plan.get('product_name', '')}")
         self._get_picker_data = get_blueprint_picker_data
@@ -271,12 +269,11 @@ class BlueprintPickerBridge(DialogBridge):
         """查看NPC卖家。"""
         if self._blueprint_type_id is None:
             return
-        from PySide6.QtWidgets import QWidget
 
         from ui_qml.bridge.npc_seller_bridge import NpcSellerQmlDialog
 
         name = self._plan.get("product_name", str(self._blueprint_type_id))
-        parent = self.owner if isinstance(self.owner, QWidget) else None
+        parent = self.host_widget()
         NpcSellerQmlDialog(self._blueprint_type_id, name, parent).exec()
 
     @Slot()
@@ -307,4 +304,3 @@ class BlueprintPickerQmlDialog(QmlDialog):
     def __init__(self, plan: dict, parent: Any = None) -> None:
         bridge = BlueprintPickerBridge(plan)
         super().__init__(_QML_FILE, bridge, parent=parent, size=(720, 520))
-        bridge.owner = self

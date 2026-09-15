@@ -162,7 +162,7 @@ class HangarTab(QWidget):
         """库存修正 — 游戏全选复制 → 比对剪贴板与库存 → 逐物品确认增减/成本/是否变更（默认全量同步）。"""
         if not self._page.hangar_id():
             return
-        from .review_dialog import run_clipboard_import
+        from ui_qml.bridge.review_bridge import run_clipboard_import
 
         run_clipboard_import(self._page.hangar_id(), self._page._hangar_combo.currentText(), self, mode="full")
         self._refresh()
@@ -171,7 +171,7 @@ class HangarTab(QWidget):
         """增量粘贴 — 读取剪贴板（游戏内复制 Ctrl+C），按增量累加加入当前机库（只增不减）。"""
         if not self._page.hangar_id():
             return
-        from .review_dialog import run_clipboard_import
+        from ui_qml.bridge.review_bridge import run_clipboard_import
 
         run_clipboard_import(self._page.hangar_id(), self._page._hangar_combo.currentText(), self, mode="incremental")
         self._refresh()

@@ -78,10 +78,6 @@ class ParentDecomposeBridge(DialogBridge):
 
     contentChanged = Signal()
 
-    #: 宿主对话框。构造时由 `ParentDecomposeQmlDialog` 塞进来，给 `QMessageBox` 当父窗口用。
-    #: 声明成类属性是为了 mypy（运行期由宿主赋值，见那边的注释：必须 `super().__init__()` 之后）。
-    dialog: Any = None
-
     def __init__(
         self,
         plans: list[dict],
@@ -282,7 +278,7 @@ class ParentDecomposeBridge(DialogBridge):
             msg += f"，未建 {removed} 条"
         #: 结果提示仍是 QMessageBox —— `QMessageBox` 的统一收敛是计划里的独立一项，未做。
         #: 父窗口取宿主对话框：不传的话提示框不会跟着本对话框居中。
-        QMessageBox.information(getattr(self, "dialog", None), "完成", msg)
+        QMessageBox.information(self.host_widget(), "完成", msg)
         self.accepted.emit()
 
     def _remove_planning_discarded(self, removed_types: set[int]) -> int:
@@ -334,4 +330,3 @@ class ParentDecomposeQmlDialog(QmlDialog):
         #: 给桥的 `accept` 当 QMessageBox 的父窗口，提示框才会跟着本对话框居中。
         #: **必须在 `super().__init__()` 之后**：那之前 QDialog 的 C++ 对象还没建出来，
         #: 把一个半成品 QObject 挂到别的 QObject 上会挂死（实测卡在构造里，无任何输出）。
-        bridge.dialog = self

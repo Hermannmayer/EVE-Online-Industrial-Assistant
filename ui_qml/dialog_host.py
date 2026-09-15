@@ -72,6 +72,19 @@ class DialogBridge(QObject):
     def reject(self) -> None:
         self.rejected.emit()
 
+    def host_widget(self) -> QWidget | None:
+        """宿主对话框 —— 给 `QMessageBox` / 二级弹窗当 parent 用。
+
+        靠 Qt 的父子关系拿（见 `QmlDialog.__init__` 里的 `setParent`），**不自己存引用**：
+        自己存会形成「对话框 → 桥 → 对话框」的环，GC 收环的时机不受控，
+        可能先没掉 C++ 窗口、留下一个悬空包装器 —— 拿去当 `QMessageBox` 的 parent
+        就是一次崩溃（实测整轮 UI 测试跑到中途偶发 `Fatal Python error: Aborted`）。
+
+        返回 `None` 是**合法且安全**的：两个调用点都接受 None（只是失去居中）。
+        """
+        parent = self.parent()
+        return parent if isinstance(parent, QWidget) else None
+
 
 class QmlDialog(QDialog):
     """承载单个 QML 对话框页面的 QDialog。"""
@@ -86,6 +99,9 @@ class QmlDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self._bridge = bridge
+        #: 桥挂到宿主对话框名下：桥的寿命不超过对话框，且桥里 `self.parent()` 就是那个窗口。
+        #: 见 `DialogBridge.host_widget` 里对「自己存引用会悬空」的说明。
+        bridge.setParent(self)
         self._bridge.accepted.connect(self.accept)
         self._bridge.rejected.connect(self.reject)
         self._bridge.titleChanged.connect(self.setWindowTitle)

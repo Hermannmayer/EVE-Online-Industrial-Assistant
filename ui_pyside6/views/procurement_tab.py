@@ -660,7 +660,7 @@ class ProcurementDialog(QDialog):
     def _on_add_to_hangar(self):
         """增量添加到仓库 — 读取剪贴板（游戏内复制已购材料），走仓库同款导入预览后增量入默认材料机库。"""
         from services.inventory_manager import get_default_mat_hangar_and_system, get_hangar_name
-        from ui_pyside6.views.inventory.review_dialog import run_clipboard_import
+        from ui_qml.bridge.review_bridge import run_clipboard_import
 
         hid, _sys = get_default_mat_hangar_and_system()
         if not hid:

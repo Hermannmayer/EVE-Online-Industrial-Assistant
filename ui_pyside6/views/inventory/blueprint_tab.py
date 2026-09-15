@@ -886,7 +886,12 @@ class BlueprintTab(QWidget):
         ``unresolved``：结构完整、不是材料，但名字对不上任何蓝图的行数 —— 它们在
         剪贴板里等于「消失」，全量同步会把库中对应蓝图当作冗余删除，必须让用户看见。
         """
-        from .blueprint_import_dialog import BlueprintImportChangeDialog, BlueprintImportReviewDialog
+        from ui_qml.bridge.blueprint_import_bridge import (
+            BlueprintImportChangeQmlDialog as BlueprintImportChangeDialog,
+        )
+        from ui_qml.bridge.blueprint_import_bridge import (
+            BlueprintImportReviewQmlDialog as BlueprintImportReviewDialog,
+        )
 
         self._page._main.hide_progress(f"共 {len(diff)} 类蓝图")
         self._worker = None

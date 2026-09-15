@@ -145,17 +145,12 @@ def test_inventory_page_theme_listener(qapp, mock_db):
         assert FLUENT_LIGHT["TEXT_SECONDARY"] in page._hangar_tab._count_label.styleSheet()
 
 
-def test_import_review_dialog_show_event(qapp, mock_db):
-    from ui_pyside6.views.inventory.review_dialog import ImportReviewDialog
-
-    dlg = ImportReviewDialog([], "测试机库", 1)
-    assert hasattr(dlg, "showEvent")
-    apply_theme("light")
-    dlg.showEvent(QShowEvent())
-    assert FLUENT_LIGHT["TEXT_SECONDARY"] in dlg._summary_label.styleSheet()
-
-
 # ── showEvent 不更新对话框自身 stylesheet，仅更新子控件 — 待 dialog 自身也加入 showEvent 重绘 ──
+#
+# 注：原先这里还有一条 `test_import_review_dialog_show_event`，随「导入审查」对话框迁到 QML
+# 一并删除 —— 它测的是 Widgets 版在 showEvent 里重刷 stylesheet，而 QML 版根本没有
+# stylesheet（颜色绑在 `Theme` 单例上，切换主题时绑定自己重算）。QML 侧的等价覆盖在
+# `tests/test_qml_theme_bridge.py` 与各页面的主题切换断言里。
 
 
 def test_char_settings_dialog_show_event(qapp, mock_db):

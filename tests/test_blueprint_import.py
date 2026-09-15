@@ -391,15 +391,18 @@ class TestApplyBlueprintDiff:
 class TestBlueprintImportChangeDialog:
     @pytest.mark.ui
     def test_build_summary_counts(self):
-        """汇总文案：增量/减量行数 + 新增/删除条数"""
+        """汇总文案：增量/减量行数 + 新增/删除条数。
 
-        from ui_pyside6.views.inventory.blueprint_import_dialog import BlueprintImportChangeDialog
+        判定函数已随对话框迁到 `ui_qml.bridge.blueprint_import_bridge`（阶段 4b）：
+        从 Widgets 类的静态方法变成模块级纯函数，**逻辑一字未改**，断言值保持原样。
+        """
+        from ui_qml.bridge.blueprint_import_bridge import build_summary
 
         changes = [
             {"name": "A", "attr": "原图  ME0  TE0", "qty_before": 1, "qty_after": 3, "qty_delta": 2},
             {"name": "B", "attr": "拷贝  ME5  TE0  流程1", "qty_before": 2, "qty_after": 0, "qty_delta": -2},
         ]
-        summary = BlueprintImportChangeDialog._build_summary(changes, added=3, removed=1)
+        summary = build_summary(changes, added=3, removed=1)
         assert "2 项变化" in summary
         assert "增加 1" in summary
         assert "减少 1" in summary
@@ -409,21 +412,22 @@ class TestBlueprintImportChangeDialog:
     @pytest.mark.ui
     def test_build_summary_empty_changes(self):
         """无属性变化 → 只报新增/删除条数"""
-        from ui_pyside6.views.inventory.blueprint_import_dialog import BlueprintImportChangeDialog
+        from ui_qml.bridge.blueprint_import_bridge import build_summary
 
-        summary = BlueprintImportChangeDialog._build_summary([], added=2, removed=0)
+        summary = build_summary([], added=2, removed=0)
         assert "新增 2 条" in summary
 
     @pytest.mark.ui
     def test_dialog_renders(self, qapp):
-        """对话框可构建：表头 3 列，行内容正确"""
-        from ui_pyside6.views.inventory.blueprint_import_dialog import BlueprintImportChangeDialog
+        """对话框可构建：3 列，行内容正确（QML 版断言桥的行数据）"""
+        from ui_qml.bridge.blueprint_import_bridge import BlueprintImportChangeQmlDialog
 
         changes = [
             {"name": "渡鸦级蓝图", "attr": "原图  ME0  TE0", "qty_before": 1, "qty_after": 2, "qty_delta": 1},
         ]
-        dlg = BlueprintImportChangeDialog(changes, added=1, removed=0, hangar_name="测试机库")
-        assert dlg._table.rowCount() == 1
-        assert dlg._table.item(0, 0).text() == "渡鸦级蓝图"
-        assert dlg._table.item(0, 1).text() == "原图  ME0  TE0"
-        assert dlg._table.item(0, 2).text() == "1 → 2"
+        dlg = BlueprintImportChangeQmlDialog(changes, added=1, removed=0, hangar_name="测试机库")
+        try:
+            assert dlg.bridge.rowCount == 1
+            assert [c["text"] for c in dlg.bridge.rows[0]["cells"]] == ["渡鸦级蓝图", "原图  ME0  TE0", "1 → 2"]
+        finally:
+            dlg.deleteLater()

@@ -1453,3 +1453,50 @@ def test_summary_table_row_hit_accounts_for_listview_scroll(qapp):
         assert area.rowAt(25.0) == base + 10, "同一视口位置，滚过 10 行后行号必须正好 +10"
     finally:
         dialog.deleteLater()
+
+
+# ── 批次 1 收尾：导入审查 / 蓝图导入 / 移库（含二级弹出）──
+
+
+def test_import_review_dialog_loads_without_warnings(qapp):
+    from ui_qml.bridge.review_bridge import ImportReviewQmlDialog
+
+    _assert_loads_and_quiet(lambda: ImportReviewQmlDialog([], "测试机库", 1), "导入审查")
+
+
+def test_import_change_dialog_loads_without_warnings(qapp):
+    from ui_qml.bridge.review_bridge import ImportChangeQmlDialog
+
+    _assert_loads_and_quiet(lambda: ImportChangeQmlDialog([], added=0, moved=0, hangar_name="测试机库"), "导入变动汇总")
+
+
+def test_hangar_pick_dialog_loads_without_warnings(qapp):
+    from ui_qml.bridge.review_bridge import HangarPickQmlDialog
+
+    _assert_loads_and_quiet(lambda: HangarPickQmlDialog([]), "选择来源机库物品")
+
+
+def test_blueprint_import_review_dialog_loads_without_warnings(qapp):
+    from ui_qml.bridge.blueprint_import_bridge import BlueprintImportReviewQmlDialog
+
+    _assert_loads_and_quiet(lambda: BlueprintImportReviewQmlDialog([], "测试机库"), "蓝图导入预览")
+
+
+def test_blueprint_import_change_dialog_loads_without_warnings(qapp):
+    from ui_qml.bridge.blueprint_import_bridge import BlueprintImportChangeQmlDialog
+
+    _assert_loads_and_quiet(
+        lambda: BlueprintImportChangeQmlDialog([], added=0, removed=0, hangar_name="测试机库"),
+        "蓝图导入变动汇总",
+    )
+
+
+def test_transfer_dialog_loads_without_warnings(qapp, monkeypatch):
+    import ui_qml.bridge.transfer_bridge as tb
+
+    monkeypatch.setattr(tb, "get_hangars", lambda: [{"id": 1, "name": "源仓"}, {"id": 2, "name": "目标仓"}])
+    monkeypatch.setattr(tb, "get_items", lambda hid: [])
+    monkeypatch.setattr(tb, "get_hangar_stock", lambda hid: {})
+    from ui_qml.bridge.transfer_bridge import HangarTransferQmlDialog
+
+    _assert_loads_and_quiet(lambda: HangarTransferQmlDialog([], 2, "目标仓"), "移库")

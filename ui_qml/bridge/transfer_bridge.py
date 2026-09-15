@@ -162,7 +162,6 @@ class HangarTransferBridge(DialogBridge):
         self._result: dict[str, int] = {"moved": 0, "capped": 0}
 
         #: 承载它的 `QmlDialog`（开物品搜索子对话框时当 parent），由 QmlDialog 侧回填
-        self.owner: Any = None
 
         self.set_title(f"移库 → {hangar_name}")
         self._load_hangars()
@@ -268,11 +267,11 @@ class HangarTransferBridge(DialogBridge):
     @Slot(int)
     def searchMatch(self, row: int) -> None:
         """右键「搜索匹配物品…」：弹物品搜索，选中后接上 type_id 并重填。"""
-        from PySide6.QtWidgets import QDialog, QWidget
+        from PySide6.QtWidgets import QDialog
 
         from ui_qml.bridge.item_search_bridge import ItemSearchQmlDialog
 
-        parent = self.owner if isinstance(self.owner, QWidget) else None
+        parent = self.host_widget()
         dlg = ItemSearchQmlDialog(parent, title="搜索匹配物品")
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
@@ -370,7 +369,6 @@ class HangarTransferQmlDialog(QmlDialog):
         super().__init__(_QML_FILE, bridge, parent=parent, size=(1000, 560))
         self._transfer_bridge = bridge
         # 物品搜索是二级弹出，要一个 QWidget 当 parent（与蓝图选择器同一手法）
-        bridge.owner = self
 
     def result_summary(self) -> dict:
         return self._transfer_bridge.result_summary()

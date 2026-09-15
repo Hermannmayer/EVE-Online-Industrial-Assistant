@@ -454,6 +454,65 @@ def _transfer_factory() -> Any:
     return HangarTransferQmlDialog(parsed, 2, "目标仓", None, filtered_note=1)
 
 
+def _import_review_factory() -> Any:
+    """导入审查（材料）—— 空行集，只看工具栏 + 表头 + 统计行。"""
+    from ui_qml.bridge.review_bridge import ImportReviewQmlDialog
+
+    return ImportReviewQmlDialog([], "测试机库", 1, filtered_note=3)
+
+
+def _import_change_factory() -> Any:
+    """导入变动汇总 —— 固定样本（新增/减少各一条）。"""
+    from ui_qml.bridge.review_bridge import ImportChangeQmlDialog
+
+    return ImportChangeQmlDialog(
+        [
+            {
+                "name": "三钛合金",
+                "qty_before": 1,
+                "qty_after": 3,
+                "qty_delta": 2,
+                "cost_before": 5.5,
+                "cost_after": 6.0,
+            }
+        ],
+        added=3,
+        moved=1,
+        hangar_name="测试机库",
+    )
+
+
+def _hangar_pick_factory() -> Any:
+    """选择来源机库物品（二级弹出）。"""
+    from ui_qml.bridge.review_bridge import HangarPickQmlDialog
+
+    return HangarPickQmlDialog(
+        [
+            {"type_id": 34, "zh_name": "三钛合金", "quantity": 100},
+            {"type_id": 35, "zh_name": "类晶体胶矿", "quantity": 50},
+        ]
+    )
+
+
+def _blueprint_import_review_factory() -> Any:
+    """蓝图导入预览 —— 空行集。"""
+    from ui_qml.bridge.blueprint_import_bridge import BlueprintImportReviewQmlDialog
+
+    return BlueprintImportReviewQmlDialog([], "测试机库", filtered_note=2)
+
+
+def _blueprint_import_change_factory() -> Any:
+    """蓝图导入变动汇总 —— 固定样本。"""
+    from ui_qml.bridge.blueprint_import_bridge import BlueprintImportChangeQmlDialog
+
+    return BlueprintImportChangeQmlDialog(
+        [{"name": "渡鸦级蓝图", "attr": "原图  ME0  TE0", "qty_before": 1, "qty_after": 2, "qty_delta": 1}],
+        added=1,
+        removed=0,
+        hangar_name="测试机库",
+    )
+
+
 # key → (工厂函数, 默认尺寸)；工厂延迟导入，避免拖慢主页面快照
 _DIALOGS: dict[str, tuple[Any, tuple[int, int]]] = {
     "procurement": (_procurement_factory, (760, 820)),
@@ -469,6 +528,11 @@ _DIALOGS: dict[str, tuple[Any, tuple[int, int]]] = {
     "add_item": (_add_item_factory, (620, 520)),
     "parent_decompose": (_parent_decompose_factory, (920, 560)),
     "transfer": (_transfer_factory, (1000, 560)),
+    "import_review": (_import_review_factory, (1000, 620)),
+    "import_change": (_import_change_factory, (900, 400)),
+    "hangar_pick": (_hangar_pick_factory, (620, 420)),
+    "blueprint_import_review": (_blueprint_import_review_factory, (900, 560)),
+    "blueprint_import_change": (_blueprint_import_change_factory, (760, 360)),
 }
 
 
