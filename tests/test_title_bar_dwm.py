@@ -4,8 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
-from ui_pyside6.dwm import apply_dwm_backdrop
 from ui_pyside6.title_bar import TitleBar
+from ui_qml.dwm import apply_dwm_backdrop
 
 pytestmark = pytest.mark.ui
 
@@ -15,7 +15,7 @@ def test_dwm_returns_false_without_hwnd():
 
 
 def test_dwm_returns_false_on_non_windows():
-    with patch("ui_pyside6.dwm.sys.platform", "linux"):
+    with patch("ui_qml.dwm.sys.platform", "linux"):
         assert apply_dwm_backdrop(1, "acrylic", True) is False
 
 

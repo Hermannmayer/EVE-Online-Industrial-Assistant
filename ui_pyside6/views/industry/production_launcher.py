@@ -58,7 +58,7 @@ from services.plan_category import (
 from services.plan_service import group_and_sort_plans, load_plans_for_wizard
 from services.plan_start_check import can_force_start, plan_start_block
 from services.terminology import term
-from ui_pyside6.pin_utils import apply_window_pin
+from ui_qml.pin_utils import apply_window_pin
 
 MAX_SLOTS_PER_LINE = 11  # 单行每类产线最大格块数（技能满级 1+5+5）
 

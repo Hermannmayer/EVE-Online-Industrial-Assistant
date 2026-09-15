@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt
 
 from ui_pyside6.main_window import MainWindow
 from ui_pyside6.main_window_nav import NAV_TREE
-from ui_pyside6.workers.main_window_workers import (
+from ui_qml.workers.main_window_workers import (
     PriceCheckWorker,
     PriceUpdateWorker,
     needs_price_update,

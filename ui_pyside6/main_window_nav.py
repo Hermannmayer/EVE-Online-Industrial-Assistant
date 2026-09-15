@@ -18,17 +18,7 @@ from PySide6.QtWidgets import (
 import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from core.logger import log
-
-NAV_TREE = [
-    ("__section__", "核心功能", "lightning"),
-    ("estimate", "估价", "coins"),
-    ("query", "物品查询", "search"),
-    ("industry", "工业制造", "factory"),
-    ("trade", "市场贸易", "chart"),
-    ("watchlist", "价格监控", "bell"),
-    ("contract", "合同市场", "contract"),
-    ("storage", "仓库管理", "package"),
-]
+from ui_qml.constants import NAV_TREE
 
 
 class MainWindowNavMixin:

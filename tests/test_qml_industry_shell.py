@@ -94,11 +94,16 @@ def test_main_window_nav_holds_the_qml_host(main_window):
 
 
 def test_factory_returns_controller_owned_host(main_window):
-    """工厂造的宿主持有控制器，且控制器自认为的宿主就是它（两条路径没有各建一个）。"""
+    """工厂造的宿主持有控制器，且**只有这一个宿主**（控制器以 headless 构造）。
+
+    批次 6.1 起控制器不再自建宿主：宿主由外壳类型决定
+    （Widgets → `IndustryQmlHost`，QML → `Item`），所以 `controller.host` 是 None。
+    """
     host = build_industry_page(main_window)
     assert host is not None
     try:
-        assert host._controller.host is host
+        assert host._controller.host is None, "控制器不该再自建宿主（否则又变成两个）"
+        assert host.parent() is host._controller, "宿主挂在控制器上，生命周期跟着它"
     finally:
         host.deleteLater()
 

@@ -25,7 +25,6 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QDialog, QVBoxLayout
 
 from core.logger import log
-from ui_pyside6.pin_utils import apply_window_pin
 from ui_qml.bridge.procurement_bridge import (
     _SORT_FIELDS,
     ProcurementBridge,
@@ -33,6 +32,7 @@ from ui_qml.bridge.procurement_bridge import (
     display_name,
     split_sections,
 )
+from ui_qml.pin_utils import apply_window_pin
 
 __all__ = [
     "ProcurementDialog",

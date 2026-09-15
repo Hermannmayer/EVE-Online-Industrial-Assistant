@@ -35,7 +35,7 @@ from core.paths import (
     window_geometry_file,
 )
 from ui_pyside6.main_window_nav import MainWindowNavMixin
-from ui_pyside6.workers.main_window_workers import PriceCheckWorker, PriceUpdateWorker
+from ui_qml.workers.main_window_workers import PriceCheckWorker, PriceUpdateWorker
 
 
 class MainWindow(MainWindowNavMixin, QMainWindow):
@@ -582,7 +582,7 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
 
     def _apply_pin(self, checked: bool):
         """置顶：Windows 用 SetWindowPos（不重建窗口不闪烁），其他平台 setWindowFlags。"""
-        from ui_pyside6.pin_utils import apply_window_pin
+        from ui_qml.pin_utils import apply_window_pin
 
         apply_window_pin(self, checked)
         # setWindowFlags 重建原生窗口（非 Windows 回退路径）→ 重放 DWM 毛玻璃/暗色属性
@@ -606,7 +606,7 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
         """恢复原生缩放/吸附样式 + 应用 DWM 毛玻璃/暗色（失败自动降级）"""
         try:
             hwnd = int(self.winId())
-            from ui_pyside6.dwm import apply_dwm_backdrop, enable_native_resize
+            from ui_qml.dwm import apply_dwm_backdrop, enable_native_resize
 
             enable_native_resize(hwnd)
             spec = theme.current_theme_spec()

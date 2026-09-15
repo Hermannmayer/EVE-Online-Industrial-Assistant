@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QThread, QTimer
 from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QWidget
@@ -64,7 +64,13 @@ class IndustryPage(QWidget):
     而注册表路径返回的是那个**裸宿主**（见 `build_industry_page`）。
     """
 
-    def __init__(self, main_window):
+    def __init__(self, main_window, *, headless_host: bool = False):
+        """``headless_host=True``：**不**自己造 Widgets 宿主，只当控制器。
+
+        QML 外壳（阶段 5）用这条：页面宿主是 `Item`，由 `ui_qml.registry.build_qml_page`
+        按 `PageSpec` 实例化，本类只提供两个桥与钩子实现（见 `ui_qml/industry_page.py`）。
+        Widgets 外壳与回退路径仍走默认（自己包一个 `PageHost`）。
+        """
         super().__init__()
         self._main = main_window
         init_plan_db()
@@ -75,7 +81,9 @@ class IndustryPage(QWidget):
         self._proc_result: tuple[float, float] | None = None
         self._proc_rows: list[dict] = []  # 本次汇总的计划集（供完成回调按新指纹补算）
         self._refresh_worker = None
-        self._score_worker = None
+        #: 评分线程；`None` = 当前没有在跑的。类型写 `Any` 是因为它有两个来源
+        #: （`ScoreWorker` / 断线重连后的新实例），用联合类型反而更难读。
+        self._score_worker: Any = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -93,8 +101,10 @@ class IndustryPage(QWidget):
         self._bridge: IndustryBridge = IndustryBridge(self, self)
         # 整页 QML 宿主：`bridge`（本页骨架桥）+ `planTableBridge`（计划表桥）两个
         # context property 由 `ui_qml/industry_page.py` 组装 —— 本文件不再拼 QML context。
-        self._host: IndustryQmlHost = make_qml_host(self)
-        root.addWidget(self._host)
+        self._host: IndustryQmlHost | None = None
+        if not headless_host:
+            self._host = make_qml_host(self)
+            root.addWidget(self._host)
 
         # ── 初始加载 ───────────────────────────────────────────
         self.load_plans()
@@ -111,8 +121,8 @@ class IndustryPage(QWidget):
     # ── 给 QML 层/注册表的访问器 ────────────────────────────────
 
     @property
-    def host(self) -> IndustryQmlHost:
-        """整页 QML 宿主（注册表页工厂把它作为页面控件返回）。"""
+    def host(self) -> IndustryQmlHost | None:
+        """整页 QML 宿主（注册表页工厂把它作为页面控件返回）；`headless_host=True` 时为 None。"""
         return self._host
 
     @property

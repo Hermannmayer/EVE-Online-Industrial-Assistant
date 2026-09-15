@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import QObject, Qt, QUrl, Signal
 from PySide6.QtQuickWidgets import QQuickWidget
@@ -19,6 +20,8 @@ from PySide6.QtWidgets import QWidget
 from core.logger import log
 from ui_qml.bridge import CONTEXT_NAME, theme_singleton
 from ui_qml.icon_provider import PROVIDER_ID, PhosphorIconProvider
+
+__all__ = ["QML_ROOT", "PageHost", "SpecPageHost"]
 
 # QML 文件根目录：ui_qml/qml/
 QML_ROOT = Path(__file__).resolve().parent / "qml"
@@ -116,3 +119,45 @@ class PageHost(QQuickWidget):
     def ok(self) -> bool:
         """QML 是否加载成功（调用方据此决定是否回退到 Widgets 版）。"""
         return self.status() == QQuickWidget.Status.Ready
+
+
+class SpecPageHost(PageHost):
+    """由 `PageSpec` 造出的页宿主：把外壳的鸭子类型钩子转发给实现者。
+
+    外壳（`main_window` / `main_window_nav`）只按方法名 `hasattr` 探测页面能力，
+    宿主不透传，这些行为就**静默失效**（切页不刷状态栏、退出不存滚动位置）。
+    原先只有工业页这么转发（`IndustryQmlHost`），批次 6.1 提成通用形态
+    —— 因为 QML 外壳那边页面是纯 Item、更没有 Python 实体，同样需要这层绑定。
+    """
+
+    #: 外壳会探测的钩子名（与 `IndustryQmlHost` 原先转发的那组一致）
+    _HOOKS = ("save_state", "restore_state", "refresh_display", "update_status_bar")
+
+    def __init__(self, spec: Any, *, parent: QWidget | None = None) -> None:
+        self._hooks = spec.hooks
+        super().__init__(spec.qml_file, context=dict(spec.context), parent=parent)
+        if spec.object_name:
+            self.setObjectName(spec.object_name)
+
+    def _delegate(self, name: str, *args: Any) -> Any:
+        target = getattr(self._hooks, name, None)
+        if target is None:
+            return None
+        return target(*args)
+
+    def save_state(self) -> dict:
+        return self._delegate("save_state") or {}
+
+    def restore_state(self, data: dict) -> None:
+        self._delegate("restore_state", data)
+
+    def refresh_display(self) -> None:
+        self._delegate("refresh_display")
+
+    def update_status_bar(self) -> None:
+        self._delegate("update_status_bar")
+
+    def showEvent(self, event: Any) -> None:
+        """页面被切到前台 → 让实现者做一次「重新可见」同步（如工业页的价格设置）。"""
+        super().showEvent(event)  # type: ignore[arg-type]
+        self._delegate("on_shown")

@@ -23,25 +23,33 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import QWidget
 
 from core.logger import log
-from ui_qml.host import PageHost
+from ui_qml.host import SpecPageHost
+from ui_qml.registry import PageSpec
 
 if TYPE_CHECKING:
     from ui_pyside6.views.industry_view import IndustryPage
 
-__all__ = ["INDUSTRY_QML", "IndustryQmlHost", "make_qml_host", "build_industry_page"]
+__all__ = [
+    "INDUSTRY_QML",
+    "IndustryQmlHost",
+    "build_industry_page",
+    "build_industry_spec",
+    "industry_spec",
+    "make_qml_host",
+]
 
 #: QML 页面路径（相对 ui_qml/qml/）
 INDUSTRY_QML = "pages/IndustryPage.qml"
 
 
-class IndustryQmlHost(PageHost):
-    """工业页整页 QML 宿主。
+class IndustryQmlHost(SpecPageHost):
+    """工业页整页 QML 宿主（Widgets 外壳路径）。
 
-    **必须**用 Python 强引用持有控制器：注册表路径返回的是这个宿主，控制器不再是
+    钩子转发已在 `SpecPageHost` 里统一做（控制器就是钩子实现者）；本类只负责
+    **用 Python 强引用持有控制器**：注册表路径返回的是这个宿主，控制器不再是
     `content_stack` 的子控件，没有这层引用就会被 GC 回收 —— 桥、模型、后台 worker
     一起没掉，页面变成一张点不动的死图（且不报错）。
     """
@@ -49,36 +57,29 @@ class IndustryQmlHost(PageHost):
     def __init__(self, controller: IndustryPage) -> None:
         # 先落控制器：super().__init__ 里就要拿它取两个桥
         self._controller = controller
-        super().__init__(
-            INDUSTRY_QML,
-            context={
-                "bridge": controller.bridge,
-                "planTableBridge": controller.plan_table_bridge,
-            },
-            parent=controller,
-        )
+        super().__init__(industry_spec(controller), parent=controller)
         self.setObjectName("industry_page_qml")
 
-    # ── 外壳鸭子类型钩子 → 控制器 ─────────────────────────────
-    # `main_window` / `main_window_nav` 只按方法名 `hasattr` 探测页面能力，
-    # 宿主不透传，这些行为就静默失效。
 
-    def save_state(self) -> dict:
-        return self._controller.save_state()
+def industry_spec(controller: IndustryPage) -> PageSpec:
+    """工业页的组装规格：两个 context property + 控制器作为钩子实现者。"""
+    return PageSpec(
+        INDUSTRY_QML,
+        {"bridge": controller.bridge, "planTableBridge": controller.plan_table_bridge},
+        object_name="industry_page_qml",
+        hooks=controller,
+    )
 
-    def restore_state(self, data: dict) -> None:
-        self._controller.restore_state(data)
 
-    def refresh_display(self) -> None:
-        self._controller.refresh_display()
+def build_industry_spec(shell: Any) -> PageSpec:
+    """注册表页工厂：造控制器，返回规格 —— **不碰宿主**。
 
-    def update_status_bar(self) -> None:
-        self._controller.update_status_bar()
+    QML 外壳把它实例化成 `Item`，Widgets 外壳把它包成 `IndustryQmlHost`；
+    两边同一个 QML、同一套桥，只有宿主类型不同。
+    """
+    from ui_pyside6.views.industry_view import IndustryPage
 
-    def showEvent(self, event: QShowEvent) -> None:
-        """宿主被切到前台 → 让控制器做一次「重新可见」同步（价格设置）。"""
-        super().showEvent(event)
-        self._controller.on_shown()
+    return industry_spec(IndustryPage(shell, headless_host=True))
 
 
 def make_qml_host(controller: IndustryPage) -> IndustryQmlHost:
@@ -86,16 +87,16 @@ def make_qml_host(controller: IndustryPage) -> IndustryQmlHost:
     return IndustryQmlHost(controller)
 
 
-def build_industry_page(shell: Any, parent: QWidget | None = None) -> QWidget | None:
-    """注册表页工厂：返回工业页的**裸 QML 宿主**；QML 加载失败返回 None。
+def build_industry_page(shell: Any, parent: QWidget | None = None) -> IndustryQmlHost | None:
+    """Widgets 外壳路径的页宿主；QML 加载失败返回 None。
 
     返回 None 是契约的一部分：`registry.build_page` 据此回退 Widgets 版
     （`IndustryPage(shell)` 那条路径）。
     """
     from ui_pyside6.views.industry_view import IndustryPage
 
-    controller = IndustryPage(shell)
-    host = controller.host
+    controller = IndustryPage(shell, headless_host=True)
+    host = IndustryQmlHost(controller)
     if not host.ok():
         log.warning("工业页 QML(%s) 加载失败，回退 Widgets 版", INDUSTRY_QML)
         controller.deleteLater()

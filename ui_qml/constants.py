@@ -6,7 +6,20 @@
 
 from services.terminology import term
 
-__all__ = ["CATEGORIES", "MFG_CATEGORIES"]
+__all__ = ["CATEGORIES", "MFG_CATEGORIES", "NAV_TREE"]
+
+#: 左侧导航条目：`(key, 标题, 图标)`；`key == "__section__"` 的是分组标题（不可点）。
+#: 原先在 `ui_pyside6/main_window_nav.py`，QML 外壳也要这份，故上移成单一来源。
+NAV_TREE = [
+    ("__section__", "核心功能", "lightning"),
+    ("estimate", "估价", "coins"),
+    ("query", "物品查询", "search"),
+    ("industry", "工业制造", "factory"),
+    ("trade", "市场贸易", "chart"),
+    ("watchlist", "价格监控", "bell"),
+    ("contract", "合同市场", "contract"),
+    ("storage", "仓库管理", "package"),
+]
 
 #: 「全部物品查询」的分类下拉项（含不可制造项）
 CATEGORIES = [
