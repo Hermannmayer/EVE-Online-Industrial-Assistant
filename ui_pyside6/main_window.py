@@ -484,13 +484,13 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
     # ── 事件处理 ──
 
     def _show_char_settings(self):
-        from ui_pyside6.views.char_settings_view import CharSettingsDialog
+        from ui_qml.bridge.char_settings_bridge import CharSettingsQmlDialog as CharSettingsDialog
 
         dialog = CharSettingsDialog(self)
         dialog.exec()
 
     def _show_sys_settings(self):
-        from ui_pyside6.views.settings_view import SettingsDialog
+        from ui_qml.bridge.settings_bridge import SettingsQmlDialog as SettingsDialog
 
         dlg = SettingsDialog(self, self)
         dlg.exec()
@@ -847,7 +847,7 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
         self.content_stack.setCurrentIndex(old_idx)
 
     def _show_init_wizard(self, auto_mode: bool = False):
-        from ui_pyside6.views.init_wizard import InitWizard
+        from ui_qml.bridge.init_wizard_bridge import InitWizardQmlDialog as InitWizard
 
         try:
             wizard = getattr(self, "_init_wizard", None)

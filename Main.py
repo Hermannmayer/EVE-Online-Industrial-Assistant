@@ -268,7 +268,7 @@ def main():
                 splash.complete(_show_main)
             else:
                 # 有缺失 → 转交 InitWizard 自动下载（splash 已查过，免二次扫描）
-                from ui_pyside6.views.init_wizard import InitWizard
+                from ui_qml.bridge.init_wizard_bridge import InitWizardQmlDialog as InitWizard
 
                 def _show_wizard_then_main():
                     InitWizard(auto_mode=True, prechecked_missing=missing_keys).exec()

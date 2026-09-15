@@ -1576,3 +1576,10 @@ def test_compare_dialog_loads_without_warnings(qapp):
     from ui_qml.bridge.compare_bridge import CompareQmlDialog
 
     _assert_loads_and_quiet(lambda: CompareQmlDialog(), "批量对比")
+
+
+def test_init_wizard_dialog_loads_without_warnings(qapp):
+    """数据初始化向导（阶段 4c）—— 构造期不起线程（worker 只在「开始」时才建），故可直接构造。"""
+    from ui_qml.bridge.init_wizard_bridge import InitWizardQmlDialog
+
+    _assert_loads_and_quiet(lambda: InitWizardQmlDialog(), "数据初始化向导")
