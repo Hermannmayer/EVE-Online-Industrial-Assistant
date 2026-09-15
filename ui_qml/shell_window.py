@@ -33,6 +33,7 @@ from ui_qml.bridge import CONTEXT_NAME, theme_singleton
 from ui_qml.constants import NAV_TREE
 from ui_qml.host import QML_ROOT
 from ui_qml.icon_provider import PROVIDER_ID, PhosphorIconProvider
+from ui_qml.icons import ICON_MAP
 from ui_qml.registry import QmlPage, build_qml_page, register_migrated_pages
 from ui_qml.theme import registry as theme
 
@@ -79,15 +80,27 @@ class ShellWindowBridge(QObject):
 
     @Property(list, notify=stateChanged)
     def navItems(self) -> list[dict]:
+        # `icon` 一律发**文件名**（不是 NAV_TREE 里的语义键），见 `iconFile`
         return [
             {
                 "key": key,
                 "label": label,
-                "icon": icon,
+                "icon": self.iconFile(icon),
                 "section": key == "__section__",
             }
             for key, label, icon in NAV_TREE
         ]
+
+    @Slot(str, result=str)
+    def iconFile(self, key: str) -> str:
+        """语义键 → Phosphor **文件名**（唯一来源是 `ui_qml.icons.ICON_MAP`）。
+
+        QML 拼的是 `image://phosphor/<文件名>`，而导航树与图标键给的是**语义键**
+        （`search` / `close` / `hangar`…），两者不是一回事：直接把语义键当文件名拼，
+        取不到图时 provider 返回空白图，**不报错，图标整片消失** ——
+        实测只有 `user` / `gear-six` / `coins` 这类「键恰好等于文件名」的能显示出来。
+        """
+        return ICON_MAP.get(key, key)
 
     @Property(str, notify=stateChanged)
     def currentKey(self) -> str:
@@ -301,6 +314,15 @@ class ShellWindow(QQuickView):
         QTimer.singleShot(500, self._check_first_run)
         QTimer.singleShot(100, self._init_tray_icon)
 
+        # 退出时必须**两条路都**等线程收尾：关窗走 closeEvent，而托盘菜单的「退出」
+        # 直接调 `QApplication.quit()` —— 它只退出事件循环，**不会关窗**，
+        # `closeEvent` 根本不被调用。少了这条，仍在跑的 QThread 会随 QApplication
+        # 析构被删，Qt 直接报 `QThread: Destroyed while thread is still running`
+        # （本仓反复踩过的硬崩形态）。实测：托盘退出正是走的这条路。
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._stop_running_threads)
+
         # 默认页（与 Widgets 版一致：第一个非分组项）
         first = next((k for k, _l, _i in NAV_TREE if k != "__section__"), "")
         if first:
@@ -438,16 +460,24 @@ class ShellWindow(QQuickView):
         for w in QApplication.topLevelWidgets():
             if w is not self and w.isVisible():
                 w.close()
-        # 等后台线程安全退出：页面内的 QThread 在销毁时仍运行会硬崩
+        self._stop_running_threads()
+        if self._tray_icon:
+            self._tray_icon.hide()
+        super().closeEvent(event)  # type: ignore[arg-type]
+
+    def _stop_running_threads(self) -> None:
+        """等所有后台线程退出（可重入：closeEvent 与 aboutToQuit 都会调）。
+
+        页面内的 QThread 在**仍运行时被销毁**，Qt 会直接报
+        `QThread: Destroyed while thread is still running` —— 那是硬崩前的最后一次警告，
+        所以两条退出路径都要走到这里。
+        """
         from PySide6.QtCore import QThread
 
         for worker in self.findChildren(QThread):
             if worker.isRunning():
                 worker.requestInterruption()
                 worker.wait(3000)
-        if self._tray_icon:
-            self._tray_icon.hide()
-        super().closeEvent(event)  # type: ignore[arg-type]
 
     # ══════════════════════════════════════════════════════════
     #  外壳公开 API（页面的桥按鸭子类型调，与 MainWindow 同形）

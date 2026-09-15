@@ -125,7 +125,7 @@ Item {
             implicitWidth: 36
             implicitHeight: 36
             iconSize: 20
-            icon: "gear-six"
+            icon: shell.iconFile("settings")
             tint: Theme.textSecondary
             tooltip: "系统设置"
             onClicked: shell.openSysSettings()
@@ -138,7 +138,7 @@ Item {
             implicitWidth: 36
             implicitHeight: 36
             iconSize: 20
-            icon: "user"
+            icon: shell.iconFile("user")
             tint: Theme.textSecondary
             tooltip: "人物设置"
             onClicked: shell.openCharSettings()
@@ -151,7 +151,7 @@ Item {
             implicitWidth: 36
             implicitHeight: 36
             iconSize: 20
-            icon: "hangar"
+            icon: shell.iconFile("hangar")
             tint: Theme.textSecondary
             tooltip: "机库设置：所在星系 / 设施类型 / 改装件 / 设施税 / 默认机库"
             onClicked: shell.openHangarSettings()

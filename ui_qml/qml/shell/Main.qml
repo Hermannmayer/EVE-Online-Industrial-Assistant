@@ -55,7 +55,7 @@ Item {
 
                     // 区域勾选下拉
                     ShellIconButton {
-                        icon: "caret-down"
+                        icon: shell.iconFile("caret-down")
                         label: shell.regionText
                         tooltip: "选择价格更新区域"
                         tint: Theme.textSecondary
@@ -63,7 +63,7 @@ Item {
                     }
 
                     ShellIconButton {
-                        icon: "refresh"
+                        icon: shell.iconFile("refresh")
                         label: "更新价格"
                         tooltip: "立即从 ESI 拉取价格"
                         tint: Theme.textPrimary
@@ -100,7 +100,7 @@ Item {
                     anchors.right: parent.right
                     anchors.rightMargin: 8
                     anchors.verticalCenter: parent.verticalCenter
-                    icon: "clock"
+                    icon: shell.iconFile("clock")
                     label: shell.autoUpdateText
                     tooltip: "自动更新价格（点击切换开/关）"
                     checkable: true

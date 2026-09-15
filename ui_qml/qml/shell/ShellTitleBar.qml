@@ -39,7 +39,7 @@ Item {
         spacing: 2
 
         ShellIconButton {
-            icon: "pin"
+            icon: shell.iconFile("pin")
             tooltip: "窗口置顶（点击切换开/关）"
             checkable: true
             checked: shell.pinned
@@ -47,17 +47,17 @@ Item {
             onClicked: shell.togglePin()
         }
         ShellIconButton {
-            icon: "minus"
+            icon: shell.iconFile("minus")
             tooltip: "最小化"
             onClicked: shell.minimize()
         }
         ShellIconButton {
-            icon: shell.maximized ? "restore" : "maximize"
+            icon: shell.iconFile(shell.maximized ? "restore" : "maximize")
             tooltip: shell.maximized ? "还原" : "最大化"
             onClicked: shell.maximizeOrRestore()
         }
         ShellIconButton {
-            icon: "close"
+            icon: shell.iconFile("close")
             tooltip: "关闭"
             dangerHover: true
             onClicked: shell.closeWindow()

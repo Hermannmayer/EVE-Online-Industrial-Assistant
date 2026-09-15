@@ -152,6 +152,59 @@ def test_region_and_auto_update_text_follow_the_state(shell):
     assert bridge.autoUpdateText == "自动更新: 关"
 
 
+# ── 图标：语义键必须经 ICON_MAP 换成文件名 ──────────────────
+
+
+def test_icon_file_maps_semantic_keys_to_phosphor_filenames(shell):
+    """`iconFile` 把语义键换成**文件名**（键与文件名不是一回事）。
+
+    回归背景：外壳最初把语义键直接拼进 `image://phosphor/<file>` ——
+    `close` 实际是 `x.svg`、`hangar` 是 `warehouse.svg`，取不到图时 provider
+    返回**空白图且不报错**，表现为「图标整片消失」。只有 `user` / `gear-six`
+    这类「键恰好等于文件名」的能显示出来，所以极易漏掉。
+    """
+    assert shell._bridge.iconFile("close") == "x"
+    assert shell._bridge.iconFile("hangar") == "warehouse"
+    assert shell._bridge.iconFile("settings") == "gear-six"
+    # 未知键原样返回（沿用 `ICON_MAP.get(k, k)` 的约定），不至于拼出空 URL
+    assert shell._bridge.iconFile("no-such-key") == "no-such-key"
+
+
+def test_nav_items_carry_filenames_not_keys(shell):
+    """导航条目发出去的 `icon` 必须是文件名 —— QML 直接拼进 `image://phosphor/`。"""
+    from ui_qml.icons import ICON_MAP
+
+    items = {item["key"]: item["icon"] for item in shell._bridge.navItems}
+    for key, label, icon in NAV_TREE:
+        if key == "__section__":
+            continue
+        assert items[key] == ICON_MAP.get(icon, icon), f"{label} 的图标没经过 ICON_MAP"
+
+
+def test_every_icon_key_used_by_the_shell_resolves_to_a_real_svg():
+    """外壳 QML 里出现的每个图标键都必须映射到**存在的** SVG 文件。
+
+    这条挡的是「拼了 URL 但取不到图」——它不报错，只是图标消失。
+    """
+    import os
+    import re
+
+    from ui_qml.host import QML_ROOT
+    from ui_qml.icons import ICON_MAP, svg_path
+
+    keys: set[str] = set()
+    for path in (QML_ROOT / "shell").glob("*.qml"):
+        text = path.read_text(encoding="utf-8")
+        # `iconFile("x")` 与三元 `iconFile(cond ? "a" : "b")` 都覆盖到
+        for expr in re.findall(r"iconFile\([^)]*\)", text):
+            keys |= set(re.findall(r'"([^"]+)"', expr))
+    keys |= {icon for key, _label, icon in NAV_TREE if key != "__section__"}
+
+    assert keys, "没扫到任何图标键，护栏自身失效了"
+    missing = sorted(k for k in keys if not os.path.isfile(svg_path(ICON_MAP.get(k, k))))
+    assert not missing, f"这些图标键映射不到 SVG：{missing}（会静默显示成空白）"
+
+
 # ── 4. 状态存取 ────────────────────────────────────────────
 
 
