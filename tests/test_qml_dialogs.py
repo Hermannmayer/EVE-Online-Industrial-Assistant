@@ -1356,3 +1356,100 @@ def test_add_item_returns_type_qty_cost(qapp, monkeypatch):
         assert dlg.result_data() == (34, 7, 5.5)
     finally:
         dlg.deleteLater()
+
+
+# ── 母项拆解（阶段 4a 收尾）──
+
+
+def test_parent_decompose_dialog_loads_without_warnings(qapp):
+    """空态那条分支：没有可拆母项时不该碰 DB，QML 也要能干净加载。
+
+    `qapp` 是**必须**的：别的护栏测试经由各自的工厂 fixture 间接拿到它，
+    这里直接构造对话框，漏了就会在没有 QApplication 的情况下建 QWidget ——
+    Qt 的致命消息经本测试装的消息处理器绕一圈，表现为**挂死**而不是报错
+    （实测：整条命令卡住、无输出）。
+    """
+    from ui_qml.bridge.parent_decompose_bridge import ParentDecomposeQmlDialog
+
+    _assert_loads_and_quiet(lambda: ParentDecomposeQmlDialog([]), "母项拆解(空态)")
+
+
+def test_parent_decompose_line_cells_marks_missing_blueprint_and_loss():
+    """行装配的配色规则：无蓝图标红、利润为负标红、其余默认。"""
+    from ui_qml.bridge.parent_decompose_bridge import line_cells
+
+    line = {
+        "product_type_id": 1001,
+        "sub_level": 1,
+        "demand": 10,
+        "runs": 2,
+        "parallels": 5,
+        "me_level": 0,
+        "te_level": 0,
+        "has_blueprint": False,
+    }
+    cells = line_cells(7, line, "碳纤维", -1200.0)
+    assert [c["text"] for c in cells[:9]] == ["7", "碳纤维", "1", "10", "2", "5", "0-0", "-1,200", "无蓝图"]
+    assert cells[7]["color"] != "", "负利润该标红"
+    assert cells[8]["color"] != "", "无蓝图该标红"
+
+    ok = line_cells(7, {**line, "has_blueprint": True}, "碳纤维", 500.0)
+    assert ok[7]["color"] == "" and ok[8]["color"] == ""
+
+    unknown = line_cells(7, line, "碳纤维", None)
+    assert unknown[7]["text"] == "—", "算不出利润时显示破折号而不是 0"
+
+
+# ── 表行命中：ListView 与 TableView 的坐标口径不同（回归）──
+
+
+def _qml_child(item, predicate):
+    """在 QML 对象树里找第一个满足 predicate 的子项（深度优先）。"""
+    for child in item.childItems():
+        if predicate(child):
+            return child
+        found = _qml_child(child, predicate)
+        if found is not None:
+            return found
+    return None
+
+
+def test_summary_table_row_hit_accounts_for_listview_scroll(qapp):
+    """`FSummaryTable` 的行命中必须补上 `ListView` 的 `contentY`。
+
+    内联子项在两种表里的坐标口径**不一样**：
+
+    - `TableView`：挂在 `contentItem` 上 → 事件已是内容坐标，补 0
+    - `ListView`：挂在表本体上 → 事件是**视口**坐标，必须加 `contentY`
+
+    少补这一次，滚过之后点第 N 行就会算成第 N−已滚行数 行 —— 实测修前
+    `contentY=200` 时点视口 `y=25` 报第 1 行、应为第 11 行。这正是用户最早报的
+    「点的这行、选的另外一行」，所以在同一个组件里把两种情况都锁住。
+    """
+    from ui_qml.bridge.summary_dialog import SummaryTableBridge, cell
+    from ui_qml.dialog_host import QmlDialog
+
+    bridge = SummaryTableBridge(title="滚动命中", columns=[{"title": "列", "width": 0}])
+    bridge.set_content([{"cells": [cell(f"r{i}")]} for i in range(50)], "")
+
+    dialog = QmlDialog("dialogs/SummaryTableDialog.qml", bridge, size=(240, 120))
+    try:
+        root = dialog._host.rootObject()
+        assert root is not None
+        view = _qml_child(root, lambda it: it.metaObject().className().startswith("QQuickListView"))
+        assert view is not None, "SummaryTableDialog 里的行区应当是个 ListView"
+        area = _qml_child(root, lambda it: it.objectName() == "summaryClickArea")
+        assert area is not None
+
+        assert area.rowAt(25.0) == 1, "没滚动时视口 y=25 落在第 1 行"
+
+        # 用**实际行高**滚整数行：行高随字号缩放（出厂值下是 24 不是 20），
+        # 写死像素数会把「滚了 8.3 行」当成「滚了 10 行」，断言就假失败了
+        row_h = float(area.property("rowHeight"))
+        base = area.rowAt(25.0)
+        view.setProperty("contentY", 10 * row_h)
+        _spin(60)
+        assert view.property("contentY") == 10 * row_h
+        assert area.rowAt(25.0) == base + 10, "同一视口位置，滚过 10 行后行号必须正好 +10"
+    finally:
+        dialog.deleteLater()

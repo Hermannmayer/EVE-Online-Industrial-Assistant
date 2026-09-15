@@ -192,10 +192,15 @@ Item {
         }
 
         /* 行点击命中固定在按下那一刻（见 FTableClickArea 的说明）。
-         * 必须是表的**内联子项**：Flickable 的内联子项进 contentData，事件位置才是内容坐标。 */
+         *
+         * 这里是**覆盖式**用法：点击区是 ListView 的兄弟节点（靠声明顺序压在内容之上），
+         * 不是它的内联子项 —— 挤进 contentData 会和 delegate 抢层叠顺序，还可能吞掉
+         * 行内「操作」按钮的点击。代价是父链里找不到表，所以必须显式把 `owner` 指过去，
+         * 否则滚过之后按 y 算出的行号会少算「已经滚过去的行数」。 */
         FTableClickArea {
             objectName: "summaryClickArea"
             anchors.fill: parent
+            owner: rowList
             rowHeight: root.rowHeight
             columnWidth: root.colWidth
 

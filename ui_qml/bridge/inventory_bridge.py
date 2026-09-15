@@ -359,7 +359,7 @@ class InventoryBridge(QObject):
                 self._set_items_hint(f"剪贴板中的 {filtered} 行都是蓝图，材料仓库只导入材料，已全部过滤")
             return
 
-        from ui_pyside6.views.inventory.transfer_dialog import HangarTransferDialog
+        from ui_qml.bridge.transfer_bridge import HangarTransferQmlDialog as HangarTransferDialog
 
         parent = self._shell if isinstance(self._shell, QWidget) else None
         dialog = HangarTransferDialog(

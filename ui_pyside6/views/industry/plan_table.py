@@ -892,7 +892,7 @@ class PlanTable(QWidget):
         if not parents:
             QMessageBox.information(self, "提示", "未选中母项")
             return
-        from ui_pyside6.views.industry.parent_decompose_dialog import ParentDecomposeDialog
+        from ui_qml.bridge.parent_decompose_bridge import ParentDecomposeQmlDialog as ParentDecomposeDialog
 
         dlg = ParentDecomposeDialog(
             parents,

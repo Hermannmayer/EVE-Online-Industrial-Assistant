@@ -429,6 +429,31 @@ def _add_item_factory() -> Any:
     return dlg
 
 
+def _parent_decompose_factory() -> Any:
+    """母项拆解 —— 空态分支（不碰 DB，快照因此不依赖任何测试库）。"""
+    from ui_qml.bridge.parent_decompose_bridge import ParentDecomposeQmlDialog
+
+    return ParentDecomposeQmlDialog([])
+
+
+def _transfer_factory() -> Any:
+    """移库 —— 机库/库存/物品表换成固定样本（快照不该查库、更不该写库）。"""
+    import ui_qml.bridge.transfer_bridge as tb
+
+    tb.get_hangars = lambda: [{"id": 1, "name": "源仓"}, {"id": 2, "name": "目标仓"}]  # type: ignore[assignment]
+    tb.get_items = lambda hid: [{"type_id": 34, "cost_price": 5.5}] if hid == 1 else []  # type: ignore[assignment]
+    tb.get_hangar_stock = lambda hid: {34: 100, 35: 0} if hid == 1 else {34: 5}  # type: ignore[assignment]
+    tb.move_quantity = lambda *a: 0  # type: ignore[assignment]
+
+    parsed: list[dict] = [
+        {"type_id": 34, "raw_name": "三钛合金", "zh_name": "三钛合金", "en_name": "", "qty": 150, "status": "matched"},
+        {"type_id": None, "raw_name": "???", "zh_name": "", "en_name": "", "qty": 5, "status": "unmatched"},
+    ]
+    from ui_qml.bridge.transfer_bridge import HangarTransferQmlDialog
+
+    return HangarTransferQmlDialog(parsed, 2, "目标仓", None, filtered_note=1)
+
+
 # key → (工厂函数, 默认尺寸)；工厂延迟导入，避免拖慢主页面快照
 _DIALOGS: dict[str, tuple[Any, tuple[int, int]]] = {
     "procurement": (_procurement_factory, (760, 820)),
@@ -442,6 +467,8 @@ _DIALOGS: dict[str, tuple[Any, tuple[int, int]]] = {
     "edit_qty": (_edit_qty_factory, (400, 190)),
     "batch_cost_price": (_batch_cost_price_factory, (420, 260)),
     "add_item": (_add_item_factory, (620, 520)),
+    "parent_decompose": (_parent_decompose_factory, (920, 560)),
+    "transfer": (_transfer_factory, (1000, 560)),
 }
 
 

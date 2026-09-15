@@ -11,14 +11,14 @@ import pytest
 import services.plan_decompose as pd
 from services import inventory_manager
 from services.repositories.plan_repository import PlanRepository
-from ui_pyside6.views.industry import parent_decompose_dialog as dlg_mod
-from ui_pyside6.views.industry.parent_decompose_dialog import ParentDecomposeDialog
+from ui_qml.bridge import parent_decompose_bridge as dlg_mod
 from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog as CompletePlansDialog
 from ui_qml.bridge.cost_breakdown_bridge import CostBreakdownBridge
 from ui_qml.bridge.mass_parallel_bridge import (
     compute_parallel_by_duration,
     compute_parallel_by_lines,
 )
+from ui_qml.bridge.parent_decompose_bridge import ParentDecomposeQmlDialog as ParentDecomposeDialog
 
 pytestmark = pytest.mark.ui
 
@@ -241,11 +241,11 @@ class TestParentDecomposeDialogMulti:
             conn.execute("INSERT INTO production_plans (id, product_type_id) VALUES (1, 2001)")
             conn.execute("INSERT INTO production_plans (id, product_type_id) VALUES (2, 2001)")
         dlg = ParentDecomposeDialog([_mother(1), _mother(2)])
-        assert len(dlg._assignments) == 2
-        gnums = {g for _, g, _ in dlg._assignments}
+        assert len(dlg.bridge._assignments) == 2
+        gnums = {g for _, g, _ in dlg.bridge._assignments}
         assert len(gnums) == 2  # 每个母项一个独立组号
 
-        dlg._on_accept()
+        dlg.bridge.accept()
         with db_manager.connect("user") as conn:
             mothers = conn.execute(
                 "SELECT id, group_number, sub_level FROM production_plans WHERE id IN (1,2) ORDER BY id"
@@ -272,15 +272,16 @@ class TestParentDecomposeDialogMulti:
                 "INSERT INTO production_plans (id, product_type_id, group_number, sub_level) VALUES (1, 2001, 7, 0)"
             )
         dlg = ParentDecomposeDialog([_mother(1, group_number=7)])
-        assert dlg._assignments[0][1] == 7  # 已有组号 7 复用
-        assert len({g for _, g, _ in dlg._assignments}) == 1
+        assert dlg.bridge._assignments[0][1] == 7  # 已有组号 7 复用
+        assert len({g for _, g, _ in dlg.bridge._assignments}) == 1
 
     def test_skip_mother_without_lines(self, db_manager, monkeypatch, qapp):
         _build_dbs(db_manager)
         _patch(db_manager, monkeypatch)
         # 99999 无蓝图 → decompose_plan 返回 [] → 不分配组号、不落库
         dlg = ParentDecomposeDialog([_mother(3, product_type_id=99999)])
-        assert dlg._assignments == []
+        assert dlg.bridge._assignments == []
+        assert dlg.bridge.isEmpty is True
 
     def test_new_group_number_above_max(self, db_manager, monkeypatch, qapp):
         """无组号母项从 MAX(group_number)+1 起分配，不与既有组号撞号。"""
@@ -292,7 +293,7 @@ class TestParentDecomposeDialogMulti:
             )
         # 两个无组号母项 → 从 MAX(3)+1=4 起，得 4、5
         dlg = ParentDecomposeDialog([_mother(5, group_number=0), _mother(6, group_number=0)])
-        gnums = sorted(g for _, g, _ in dlg._assignments)
+        gnums = sorted(g for _, g, _ in dlg.bridge._assignments)
         assert gnums == [4, 5]
 
     def test_redecompose_refreshes_existing_child(self, db_manager, monkeypatch, qapp):
@@ -310,7 +311,7 @@ class TestParentDecomposeDialogMulti:
                 "group_number, sub_level, runs, parallels) VALUES (2, 1001, '碳纤维', 3002, 7, 1, 3, 5)"
             )
         dlg = ParentDecomposeDialog([_mother(1, group_number=7)])
-        dlg._on_accept()
+        dlg.bridge.accept()
         with db_manager.connect("user") as conn:
             row = conn.execute("SELECT runs, parallels, me_level, te_level FROM production_plans WHERE id=2").fetchone()
         # 需求=5×2=10、并行保留 5 → runs=ceil(10/(5×1))=2；ME-TE 刷新
@@ -319,8 +320,10 @@ class TestParentDecomposeDialogMulti:
     def test_row_refs_map_each_row_to_its_own_line(self, db_manager, monkeypatch, qapp):
         """回归：同一母项的多行必须各自对应真实行下标。
 
-        早先 _append_row 用「子项列表长度 − 1」推断下标，导致该母项的所有预览行都指向
-        最后一行——删除时先删最后一行、再删就越界（IndexError）。
+        早先 `_append_row` 用「子项列表长度 − 1」推断下标，导致该母项的所有预览行都指向
+        最后一行——移除时先删最后一行、再删就越界（IndexError）。
+        QML 版把「移除一行」从「多选 + 按钮」改成行内按钮，这条不变量仍是关键：
+        `removeRow(row)` 必须按**该行**的下标删除。
         """
         _build_dbs(db_manager)
         _patch(db_manager, monkeypatch)
@@ -332,15 +335,16 @@ class TestParentDecomposeDialogMulti:
         with db_manager.connect("user") as conn:
             conn.execute("INSERT INTO production_plans (id, product_type_id) VALUES (1, 2001)")
         dlg = ParentDecomposeDialog([_mother(1)])
-        n_rows = dlg._table.rowCount()
+        n_rows = dlg.bridge.rowCount
         assert n_rows >= 2  # 渡鸦级拆出碳纤维 + 三钛合金
-        assert [l_idx for _a, l_idx, _line in dlg._row_refs] == list(range(n_rows))
+        assert [l_idx for _a, l_idx, _line in dlg.bridge._refs] == list(range(n_rows))
 
-        # 选中同一母项的全部行一起删除 → 不得越界，且子项列表清空
-        dlg._table.selectAll()
-        dlg._delete_selected_rows()
-        assert dlg._table.rowCount() == 0
-        assert dlg._assignments[0][2] == []
+        # 逐行移除（倒序，避免行号漂移）→ 不得越界，且子项列表清空
+        for row in reversed(range(n_rows)):
+            dlg.bridge.removeRow(row)
+        assert dlg.bridge.rowCount == 0
+        assert dlg.bridge._assignments[0][2] == []
+        assert dlg.bridge.statusText == f"已移除 {n_rows} 个组件（本轮不内造，改外购）"
 
 
 # ════════════════════════════════════════════════════════════════

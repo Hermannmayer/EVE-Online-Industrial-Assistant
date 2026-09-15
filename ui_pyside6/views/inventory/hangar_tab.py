@@ -193,7 +193,7 @@ class HangarTab(QWidget):
                     f"剪贴板中的 {filtered} 行都是蓝图，材料仓库只导入材料，已全部过滤",
                 )
             return
-        from .transfer_dialog import HangarTransferDialog
+        from ui_qml.bridge.transfer_bridge import HangarTransferQmlDialog as HangarTransferDialog
 
         dlg = HangarTransferDialog(
             parsed,
