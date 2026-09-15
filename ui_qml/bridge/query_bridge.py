@@ -6,9 +6,10 @@
 
 对照的 Widgets 版是 `ui_pyside6/views/query/query_page.py`，行为逐项对齐。
 
-**订单弹窗仍是 Widgets**（阶段 4 才迁移）：那套函数（`query_order_popup.py`）
-是按 `QueryPage` 的私有属性写的，这里用一个宿主壳 `OrderPopupHost` 把它们接上 ——
-比把订单加载逻辑抄一份到 QML 侧安全，抄一份就会出现两个副本。
+**订单弹窗已迁 QML**（阶段 4b）：弹窗与走势图都由 `order_popup_bridge` 提供，
+本模块只调它的 `do_load_orders`。那套函数是按页面的私有属性写的，所以这里用宿主壳
+`OrderPopupHost` 接上 —— 比把订单加载逻辑抄一份到 QML 侧安全，抄一份就会出现两个副本。
+取数（`OrderFetchWorker` / `OrderPopup` 的缓存与站点解析）仍复用原模块，未重写。
 """
 
 from __future__ import annotations
@@ -317,7 +318,7 @@ class QueryBridge(QObject):
         data = self._row(row)
         if not data:
             return
-        from ui_pyside6.views.query.query_order_popup import do_load_orders
+        from ui_qml.bridge.order_popup_bridge import do_load_orders
 
         do_load_orders(self._orders, data["type_id"])
 
@@ -396,7 +397,7 @@ class QueryBridge(QObject):
 
     @Slot()
     def openAllItems(self) -> None:
-        from ui_pyside6.views.all_items_view import AllItemsDialog
+        from ui_qml.bridge.all_items_bridge import AllItemsQmlDialog as AllItemsDialog
 
         parent = self._shell if isinstance(self._shell, QWidget) else None
         dialog = getattr(self, "_all_items_dialog", None)
@@ -408,7 +409,7 @@ class QueryBridge(QObject):
 
     @Slot()
     def openBatchPrice(self) -> None:
-        from ui_pyside6.views.batch_price_dialog import BatchPriceDialog
+        from ui_qml.bridge.batch_price_bridge import BatchPriceQmlDialog as BatchPriceDialog
 
         parent = self._shell if isinstance(self._shell, QWidget) else None
         BatchPriceDialog(parent).exec()

@@ -39,9 +39,11 @@ from core.paths import ICON_DIR
 from services.terminology import term
 from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
 from ui_pyside6.models.all_items_models import BCOLS, DASH, MCOLS, TCOLS, AModel, Proxy
-from ui_pyside6.views.compare import CompareDialog
-from ui_pyside6.views.score_dialogs import MfgDlg, ScoreW, TradeDlg
+from ui_pyside6.views.score_dialogs import ScoreW
 from ui_pyside6.workers.all_items_workers import JITA_RID, ItemsW, SearchItemsW, TreeW
+from ui_qml.bridge.compare_bridge import CompareQmlDialog as CompareDialog
+from ui_qml.bridge.score_dialogs_bridge import MfgQmlDialog as MfgDlg
+from ui_qml.bridge.score_dialogs_bridge import TradeQmlDialog as TradeDlg
 
 _cache = TtlLRUCache(max_size=500, ttl_seconds=1800)
 

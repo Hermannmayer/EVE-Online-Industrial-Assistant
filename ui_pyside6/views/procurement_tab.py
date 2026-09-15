@@ -1,191 +1,51 @@
-"""待采购对话框 - 根据生产计划和库存计算需要采购的材料"""
+"""采购小助手 —— **控制器**（渲染已整体交给 QML）。
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, Signal
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QApplication,
-    QComboBox,
-    QDialog,
-    QHBoxLayout,
-    QHeaderView,
-    QInputDialog,
-    QLabel,
-    QMenu,
-    QMessageBox,
-    QPushButton,
-    QSplitter,
-    QTableView,
-    QToolButton,
-    QVBoxLayout,
-    QWidget,
+对照改造前：本类原本是「QDialog + 满屏 Widgets 控件」。阶段 4b 把渲染交给
+`ui_qml/qml/pages/ProcurementWindow.qml`（经 `ProcurementBridge` 转发），
+本类退化为**控制器 + QQuickWidget 宿主** —— 与 `production_launcher` 同款，
+那是阶段 2c 就定下的非模态工具窗终态。
+
+因此**业务一行未改**，改的只是「谁来画」：聚合采购需求、删除/手改的回放、
+轮询同步、置顶、完成所有，全部留在本类。
+
+非模态独立工具窗：可置顶悬浮于游戏之上，不影响主界面操作。
+计划/库存变化由 10s 轮询同步（见 `showEvent`）；本窗入库/下线后发
+`plans_changed` 通知主界面刷新。
+
+纯函数（名称解析 / 分区 / 复制文本 / 行装配）在 `ui_qml.bridge.procurement_bridge` 里，
+桥与本类共用同一份；本模块把它们再导出，方便既有调用方与测试。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import QDialog, QVBoxLayout
+
+from core.logger import log
+from ui_pyside6.pin_utils import apply_window_pin
+from ui_qml.bridge.procurement_bridge import (
+    _SORT_FIELDS,
+    ProcurementBridge,
+    copy_cell_text,
+    display_name,
+    split_sections,
 )
 
-import ui_pyside6.theme as theme
-from core.constants import TRADE_HUB_IDS
-from core.logger import log
-from ui_pyside6.icon_cache import load_item_icon
-from ui_pyside6.pin_utils import apply_window_pin
-from ui_pyside6.sizing import ElidedLabel
-from ui_pyside6.table_sort import SortPreservingTableView
+__all__ = [
+    "ProcurementDialog",
+    "copy_cell_text",
+    "display_name",
+    "split_sections",
+]
 
-
-def _resolve_item_name(mid: int | None, zh_name: str | None, en_name: str | None) -> str:
-    """统一物品名解析：item 表 → terminology.json → str(id)"""
-    if zh_name:
-        return zh_name
-    if en_name:
-        return en_name
-    if mid is None:
-        return ""
-    from services.terminology import term
-
-    override = term.item_override(mid)
-    if override:
-        return override
-    return str(mid)
-
-
-def _display_name(r: dict) -> str:
-    """行的显示名：与表格第 0 列 data() 同口径（zh → en → 术语覆盖 → id）。
-
-    双击复制 / 整单复制 / 复制此行共用，避免覆盖物 id 行输出与界面不一致的裸 name。
-    """
-    mid: int | None = r.get("type_id")
-    return _resolve_item_name(mid, r.get("zh_name"), r.get("en_name"))
-
-
-def _split_sections(rows: list[dict]) -> tuple[list[dict], list[dict]]:
-    """按 to_buy 拆分为 (需采购, 库存已备足) 分区。纯函数，便于单测。"""
-    to_buy = [r for r in rows if r.get("to_buy", 0) > 0]
-    done = [r for r in rows if r.get("to_buy", 0) <= 0]
-    return to_buy, done
-
-
-# 双击复制的列 → 剪贴板文本：数量列取整、价格/体积保留两位，一律不带千分位
-# （游戏输入框不认逗号，复制出来必须能直接粘贴）
-_COPY_FIELDS = ["name", "need", "owned", "to_buy", "price", "total", "volume"]
-_INT_COPY_COLS = (1, 2, 3)  # 总需求 / 库存 / 需采购
-
-# 全局 QSS 的 QTableView::item padding(4px 8px) 会顶破本窗 28px 行高
-# （24px 图标 + 8px 内边距 = 32px），按 materials_dialog 先例收紧内边距
-_COMPACT_ITEM_QSS = "QTableView::item { padding: 2px 6px; }"
-
-
-def _copy_cell_text(r: dict, column: int) -> str:
-    """单元格的剪贴板文本（与显示同口径，去掉千分位）。纯函数，便于单测。"""
-    if column == 0:
-        return _display_name(r)
-    if not 0 <= column < len(_COPY_FIELDS):
-        return ""
-    val = r.get(_COPY_FIELDS[column], 0) or 0
-    return f"{val:.0f}" if column in _INT_COPY_COLS else f"{val:.2f}"
-
-
-class ProcureTableModel(QAbstractTableModel):
-    """待采购表格模型，含图标列"""
-
-    _HEADERS = ["物品名称", "总需求", "库存", "需采购", "单价", "总价", "体积(m³)"]
-    _SORT_FIELDS = ["name", "need", "owned", "to_buy", "price", "total", "volume"]
-
-    def __init__(self, rows: list[dict]):
-        super().__init__()
-        self._rows = rows
-
-    def rowCount(self, parent=None):
-        return len(self._rows)
-
-    def columnCount(self, parent=None):
-        return len(self._HEADERS)
-
-    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid():
-            return None
-        r = self._rows[index.row()]
-        c = index.column()
-        keys = ["name", "need", "owned", "to_buy", "price", "total", "volume"]
-
-        # 图标（DecorationRole）— 第 0 列
-        if role == Qt.ItemDataRole.DecorationRole and c == 0:
-            return load_item_icon(r.get("type_id"), size=24)
-
-        if role == Qt.ItemDataRole.DisplayRole:
-            if c < len(keys):
-                val = r.get(keys[c], "")
-                if c == 0:
-                    return _display_name(r)
-                if isinstance(val, float):
-                    if c in (1, 2, 3):
-                        return f"{val:,.0f}"  # 总需求/库存/需采购整数
-                    if c in (4, 5):
-                        return f"{val:,.2f}"  # 价格/总价
-                    if c == 6:
-                        return f"{val:,.2f}"  # 体积
-                    return f"{val:.2f}"
-                return str(val)
-            return ""
-        if role == Qt.ItemDataRole.ForegroundRole:
-            if c == 3:
-                v = r.get("to_buy", 0)
-                return QColor(theme.ACCENT_RED) if v > 0 else QColor(theme.GREEN)
-            if c == 5:
-                v = r.get("total", 0)
-                return QColor(theme.ACCENT_RED) if v > 0 else QColor(theme.TEXT_PRIMARY)
-        if role == Qt.ItemDataRole.UserRole:
-            return r
-        return None
-
-    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            return self._HEADERS[section] if section < len(self._HEADERS) else ""
-        return None
-
-    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
-        """按列排序并重映射持久索引，保证排序后 selection 仍指向同一行对象。
-
-        若省略 changePersistentIndexList，layoutChanged 后选区会粘在旧行号，
-        「删除此行/修改数量」将操作错行。
-        """
-        if not 0 <= column < len(self._SORT_FIELDS):
-            return
-        field = self._SORT_FIELDS[column]
-        reverse = order == Qt.SortOrder.DescendingOrder
-        old = list(self._rows)  # 排序前快照（对象引用），排序后旧行号即失效
-        old_ps = self.persistentIndexList()
-        self.layoutAboutToBeChanged.emit()
-        if field == "name":
-            self._rows.sort(key=lambda r: _display_name(r).casefold(), reverse=reverse)
-        else:
-            self._rows.sort(key=lambda r: r.get(field) or 0.0, reverse=reverse)
-        new_pos = {id(r): i for i, r in enumerate(self._rows)}
-        reloc = [new_pos[id(old[i])] for i in range(len(old))]
-        new_ps = [self.index(reloc[pi.row()], pi.column()) for pi in old_ps]
-        self.changePersistentIndexList(old_ps, new_ps)
-        self.layoutChanged.emit()
-
-    def get_row(self, row: int) -> dict:
-        return self._rows[row] if 0 <= row < len(self._rows) else {}
-
-    def remove_row(self, row: int):
-        if 0 <= row < len(self._rows):
-            self.beginRemoveRows(QModelIndex(), row, row)
-            self._rows.pop(row)
-            self.endRemoveRows()
-
-    def update_qty(self, row: int, to_buy: float):
-        if 0 <= row < len(self._rows):
-            self._rows[row]["to_buy"] = to_buy
-            self._rows[row]["total"] = to_buy * self._rows[row]["price"]
-            self.dataChanged.emit(self.index(row, 2), self.index(row, 5))  # type: ignore[call-arg]  # roles 可选，新版存根误判
+_QML_FILE = "pages/ProcurementWindow.qml"
 
 
 class ProcurementDialog(QDialog):
-    """待采购对话框 - 根据生产计划和库存计算需要采购的材料
-
-    非模态独立工具窗：可置顶悬浮于游戏之上，不影响主界面操作。
-    计划/库存变化由 10s 轮询同步（见 showEvent）；本窗入库/下线后发
-    `plans_changed` 通知主界面刷新。
-    """
+    """待采购窗口 —— 根据生产计划和库存计算需要采购的材料（渲染走 QML）。"""
 
     plans_changed = Signal()  # 入库/下线后通知主界面重载计划
 
@@ -203,17 +63,101 @@ class ProcurementDialog(QDialog):
         self._active_plans: list[dict] = []
         self._default_mat_hangar_id: int | None = None
         self._rows: list[dict] = []
+        #: 分区后的两份行（按 to_buy 切分）；桥按 `section` 名读它们
+        self._sections: dict[str, list[dict]] = {"buy": [], "stock": []}
+        #: 每个分区各自的排序状态 (列号, 是否升序)。与「两表各自排序」的原行为一致
+        self._sort_state: dict[str, tuple[int, bool]] = {"buy": (-1, True), "stock": (-1, True)}
         self._price_type = "sell"
+        self._hub_text = "Jita"
         self._manual_overrides: dict[int, float] = {}  # 用户手改的采购量，重算后回放
-        self._deleted_ids: set[int] = set()  # 本次打开期间删除的行，重算后仍排除；关闭窗口即清空
+        self._deleted_ids: set[int] = set()  # 本次打开期间删除的行；关闭窗口即清空
+        self._summary_text = ""
+        self._copy_hint_text = ""
+        self._complete_all_text = ""
+        self._pinned = False
         self._poll_timer: QTimer | None = None
         self._copy_hint_timer: QTimer | None = None
 
         self._build_ui()
         self._reload_plans()
         self._restore_pin()
-        theme.add_theme_listener(self._on_theme_changed)
-        self._on_theme_changed()
+
+    # ── UI ──────────────────────────────────────────────────
+
+    def _build_ui(self) -> None:
+        """整窗交给 QML：本类只保留业务与渲染状态。"""
+        from ui_qml.host import PageHost
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        self._bridge = ProcurementBridge(self, self)
+        self._bridge.plansChanged.connect(self.plans_changed)
+        self._host = PageHost(_QML_FILE, context={"bridge": self._bridge}, parent=self)
+        root.addWidget(self._host)
+
+    def _notify(self) -> None:
+        self._bridge.stateChanged.emit()
+
+    # ── 桥的取数接口（QML 只读这些，业务判断全在本类）─────────
+
+    def price_type(self) -> str:
+        return str(self._price_type)
+
+    def set_price_type(self, value: str) -> None:
+        if value == self._price_type:
+            return
+        self._price_type = value
+        self.recalculate()
+
+    def hub_text(self) -> str:
+        return str(self._hub_text)
+
+    def set_hub(self, value: str) -> None:
+        if value == self._hub_text:
+            return
+        self._hub_text = value
+        self.recalculate()
+
+    def pinned(self) -> bool:
+        return bool(self._pinned)
+
+    def set_pinned(self, checked: bool) -> None:
+        self._pinned = bool(checked)
+        apply_window_pin(self, self._pinned)
+        try:
+            from services.user_settings import save_settings
+
+            save_settings({"procurement_pin": self._pinned})
+        except Exception:
+            log.warning("保存采购窗置顶偏好失败", exc_info=True)
+        self._notify()
+
+    def complete_all_text(self) -> str:
+        return str(self._complete_all_text)
+
+    def section_rows(self, section: str) -> list[dict]:
+        return self._sections.get(section, [])
+
+    def section_label(self, section: str) -> str:
+        from services.terminology import term
+
+        if section == "buy":
+            return f"{term.label('procure_buy')}({len(self._sections['buy'])})"
+        return f"{term.label('procure_stocked')}({len(self._sections['stock'])})"
+
+    def sort_column(self, section: str) -> int:
+        return self._sort_state.get(section, (-1, True))[0]
+
+    def sort_ascending(self, section: str) -> bool:
+        return self._sort_state.get(section, (-1, True))[1]
+
+    def summary_text(self) -> str:
+        return str(self._summary_text)
+
+    def copy_hint_text(self) -> str:
+        return str(self._copy_hint_text)
 
     # ── 数据加载 ──────────────────────────────────────────
 
@@ -237,7 +181,7 @@ class ProcurementDialog(QDialog):
         else:
             label = f"{len(mat_hids)} 个材料机库"
         self.setWindowTitle(f"待采购 - 材料需求 ({label})")
-        self._calculate()
+        self.recalculate()
 
     # ── 生命周期（单实例复用：关闭后重开必须能继续刷新）──
 
@@ -266,7 +210,7 @@ class ProcurementDialog(QDialog):
         super().done(result)
 
     def _on_poll(self) -> None:
-        """定时同步主界面：计划/库存变化后重算（手动改量由 _manual_overrides 回放保留）。"""
+        """定时同步主界面：计划/库存变化后重算（手动改量由 `_manual_overrides` 回放保留）。"""
         if not self.isVisible():
             return
         try:
@@ -281,200 +225,22 @@ class ProcurementDialog(QDialog):
             from services.user_settings import load_settings
 
             if load_settings().get("procurement_pin"):
-                self._pin_btn.setChecked(True)
+                self._pinned = True
                 apply_window_pin(self, True)
+                self._notify()
         except Exception:
-            pass
+            log.warning("读取采购窗置顶偏好失败", exc_info=True)
 
-    def _on_pin_toggled(self, checked: bool) -> None:
-        apply_window_pin(self, checked)
-        try:
-            from services.user_settings import save_settings
+    # ── 计算 ──────────────────────────────────────────────
 
-            save_settings({"procurement_pin": checked})
-        except Exception:
-            pass
-
-    def _build_ui(self):
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(6)
-
-        # Toolbar
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(6)
-
-        toolbar.addWidget(QLabel("价格类型:"))
-        self._price_combo = QComboBox()
-        self._price_combo.addItems(["卖价", "买价"])
-        self._price_combo.currentTextChanged.connect(self._on_price_type_changed)
-        toolbar.addWidget(self._price_combo)
-
-        toolbar.addWidget(QLabel("来源:"))
-        self._hub_combo = QComboBox()
-        self._hub_combo.addItems(list(TRADE_HUB_IDS.keys()))
-        self._hub_combo.setCurrentText("Jita")
-        self._hub_combo.currentTextChanged.connect(self._on_price_type_changed)
-        toolbar.addWidget(self._hub_combo)
-
-        toolbar.addStretch()
-
-        self._refresh_btn = QPushButton("刷新计算")
-        self._refresh_btn.clicked.connect(self._calculate)
-        toolbar.addWidget(self._refresh_btn)
-
-        self._copy_btn = QPushButton("复制到剪贴板")
-        self._copy_btn.clicked.connect(self._on_copy_to_clipboard)
-        toolbar.addWidget(self._copy_btn)
-
-        self._add_to_hangar_btn = QPushButton("增量添加到仓库")
-        self._add_to_hangar_btn.setToolTip(
-            "读取剪贴板（游戏内复制已购材料 Ctrl+C），按增量累加的方式加入默认材料机库（只增不减）"
-        )
-        self._add_to_hangar_btn.clicked.connect(self._on_add_to_hangar)
-        toolbar.addWidget(self._add_to_hangar_btn)
-
-        self._complete_all_btn = QPushButton("完成所有")
-        self._complete_all_btn.clicked.connect(self._on_complete_all)
-        self._complete_all_btn.setVisible(False)
-        toolbar.addWidget(self._complete_all_btn)
-
-        self._pin_btn = QToolButton()
-        self._pin_btn.setText("📌 置顶")
-        self._pin_btn.setCheckable(True)
-        self._pin_btn.setToolTip("切换窗口置顶（悬浮于游戏之上）")
-        self._pin_btn.toggled.connect(self._on_pin_toggled)
-        toolbar.addWidget(self._pin_btn)
-
-        main_layout.addLayout(toolbar)
-
-        # 分区一：需采购（to_buy > 0），分区二：库存已备足（to_buy <= 0）
-        # 两栏放进可拖动的 QSplitter —— 固定比例会让「库存充足」栏被挤到看不见
-        self._buy_label = QLabel("")
-        self._stock_label = QLabel("")
-        self._buy_table = SortPreservingTableView()
-        self._stock_table = SortPreservingTableView()
-        for table in (self._buy_table, self._stock_table):
-            self._style_table(table)
-
-        self._buy_section = self._make_section(self._buy_label, self._buy_table)
-        self._stock_section = self._make_section(self._stock_label, self._stock_table)
-        self._splitter = QSplitter(Qt.Orientation.Vertical)
-        self._splitter.setChildrenCollapsible(False)
-        self._splitter.addWidget(self._buy_section)
-        self._splitter.addWidget(self._stock_section)
-        for i in range(self._splitter.count()):
-            self._splitter.setCollapsible(i, False)
-        self._splitter.setStretchFactor(0, 3)
-        self._splitter.setStretchFactor(1, 2)
-        main_layout.addWidget(self._splitter, 1)
-        self._splitter_sized = False
-
-        # 底部状态栏：左侧汇总 + 右侧复制提示（复制后 5s 内显示，见 _show_copy_hint）
-        summary_bar = QHBoxLayout()
-        self._summary_label = ElidedLabel("")
-        summary_bar.addWidget(self._summary_label)
-        summary_bar.addStretch()
-        self._copy_hint = ElidedLabel("")
-        summary_bar.addWidget(self._copy_hint)
-        main_layout.addLayout(summary_bar)
-
-    @staticmethod
-    def _make_section(label: QLabel, table: QTableView) -> QWidget:
-        """分区容器：标题 + 表格，作为 splitter 的一个可拖动块。"""
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(2)
-        lay.addWidget(label)
-        lay.addWidget(table, 1)
-        return w
-
-    def _size_splitter_once(self) -> None:
-        """按行数比例给两栏设初值，只做一次——之后由用户拖动决定。"""
-        if self._splitter_sized:
-            return
-        buy_model, stock_model = self._buy_table.model(), self._stock_table.model()
-        buy_rows = buy_model.rowCount() if buy_model else 0
-        stock_rows = stock_model.rowCount() if stock_model else 0
-        if not buy_rows and not stock_rows:
-            return
-        height = max(self._splitter.height(), 400)
-        total = max(buy_rows + stock_rows, 1)
-        self._splitter.setSizes(
-            [
-                max(int(height * buy_rows / total), 1),
-                max(int(height * stock_rows / total), 1),
-            ]
-        )
-        self._splitter_sized = True
-
-    def _style_table(self, table: QTableView):
-        """两表共用的表格样式 + 双击复制 + 右键菜单（表头排序由 SortPreservingTableView 负责）。"""
-        table.setAlternatingRowColors(True)
-        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        table.verticalHeader().setDefaultSectionSize(28)
-        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        table.customContextMenuRequested.connect(self._on_context_menu)
-        table.doubleClicked.connect(self._on_row_double_click)
-
-    def _size_columns(self, table: QTableView):
-        """Auto-size columns — 名称列 Stretch 占满，其余按内容，名称列最小 160px。"""
-        header = table.horizontalHeader()
-        header.setStretchLastSection(False)
-        for i in range(header.count()):
-            resize = QHeaderView.ResizeMode.Stretch if i == 0 else QHeaderView.ResizeMode.ResizeToContents
-            header.setSectionResizeMode(i, resize)
-        if header.sectionSize(0) < 160:
-            header.resizeSection(0, 160)
-
-    def _rebuild_sections(self):
-        """按当前 rows 重建两个分区：设模型、显示/隐藏空分区、更新汇总（排序由表格控件自动重放）。"""
-        buy_rows, stock_rows = _split_sections(self._rows)
-
-        from services.terminology import term
-
-        self._buy_label.setText(f"{term.label('procure_buy')}({len(buy_rows)})")
-        self._stock_label.setText(f"{term.label('procure_stocked')}({len(stock_rows)})")
-
-        self._buy_table.setModel(ProcureTableModel(buy_rows))
-        self._stock_table.setModel(ProcureTableModel(stock_rows))
-        self._size_columns(self._buy_table)
-        self._size_columns(self._stock_table)
-
-        self._buy_section.setVisible(bool(buy_rows))
-        self._stock_section.setVisible(bool(stock_rows))
-
-        # 注意：不在这里 setSizes —— 每次重算都设会把用户拖动的位置顶回去
-        self._size_splitter_once()
-
-        self._update_summary()
-
-    def _on_theme_changed(self):
-        self.setStyleSheet(theme.get_stylesheet() + _COMPACT_ITEM_QSS)
-        self._summary_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(12)}px;")
-        self._copy_hint.setStyleSheet(f"color: {theme.ACCENT_GREEN}; font-size: {theme.fs(12)}px;")
-        self._buy_label.setStyleSheet(f"color: {theme.ACCENT_RED}; font-weight: 600;")
-        self._stock_label.setStyleSheet(f"color: {theme.GREEN}; font-weight: 600;")
-        # 字号变了要按新字体重新省略，否则沿用旧 fontMetrics 的省略结果
-        self._summary_label.setText(self._summary_label.fullText())
-
-    def _on_price_type_changed(self):
-        """价格类型或来源变更时重新计算"""
-        self._calculate()
-
-    def _calculate(self):
-        """根据生产计划和库存计算需要采购的材料"""
+    def recalculate(self) -> None:
+        """根据生产计划和库存计算需要采购的材料。"""
+        from core.constants import TRADE_HUB_IDS
         from core.container import get_container
         from services.plan_aggregator import aggregate_procurement
 
         self._rows = []
-        price_type = "buy" if self._price_combo.currentText() == "买价" else "sell"
-        hub = self._hub_combo.currentText()
-        self._price_type = price_type
-        self._hub_text = hub
-
+        rows: list[dict] = []
         # 与状态栏「备料中采购」口径一致：仅统计未运行且已勾选备料的计划，
         # ready/running 计划材料已扣库存，计入会虚高。
         proc_plans = [
@@ -486,8 +252,8 @@ class ProcurementDialog(QDialog):
                 proc_plans,
                 hangar_id=None,
                 default_hangar_id=self._default_mat_hangar_id,
-                region_id=TRADE_HUB_IDS.get(hub, 10000002),
-                price_type=price_type,
+                region_id=TRADE_HUB_IDS.get(self._hub_text, 10000002),
+                price_type=self._price_type,
             )
         self._rows = rows
         self._apply_deleted_filter()
@@ -495,96 +261,49 @@ class ProcurementDialog(QDialog):
 
         # 检查是否有「待下线」的计划，显示「完成所有」按钮
         ready_plans = [p for p in self._active_plans if p.get("status") == "ready"]
-        if ready_plans:
-            self._complete_all_btn.setText(f"完成所有 ({len(ready_plans)} 项)")
-            self._complete_all_btn.setVisible(True)
-        else:
-            self._complete_all_btn.setVisible(False)
+        self._complete_all_text = f"完成所有 ({len(ready_plans)} 项)" if ready_plans else ""
 
         if not self._rows:
-            self._buy_table.setModel(None)
-            self._stock_table.setModel(None)
-            self._buy_section.setVisible(False)
-            self._stock_section.setVisible(False)
-            self._summary_label.setText("无活跃计划材料需求")
+            self._sections = {"buy": [], "stock": []}
+            self._summary_text = "无活跃计划材料需求"
+            self._notify()
             return
 
         self._rebuild_sections()
+        self._notify()
 
-    def _on_row_double_click(self, index: QModelIndex):
-        """双击单元格 → 复制该列内容（名称列给物品名，数字列给纯数字），便于游戏内下单。"""
-        model = index.model()
-        if not isinstance(model, ProcureTableModel):
-            return
-        r = model.get_row(index.row())
-        if not r:
-            return
-        text = _copy_cell_text(r, index.column())
-        if not text:
-            return
-        QApplication.clipboard().setText(text)
-        self._show_copy_hint(f"已复制: {text}")
-
-    def _show_copy_hint(self, text: str) -> None:
-        """底部状态栏右侧显示复制结果，COPY_HINT_MS 后自动清空（替代一闪而过的 QToolTip）。"""
-        self._copy_hint.setText(text)
-        if self._copy_hint_timer is None:
-            self._copy_hint_timer = QTimer(self)
-            self._copy_hint_timer.setSingleShot(True)
-            self._copy_hint_timer.timeout.connect(lambda: self._copy_hint.setText(""))
-        self._copy_hint_timer.start(self.COPY_HINT_MS)
-
-    def _on_context_menu(self, pos):
-        table = self.sender()
-        if not isinstance(table, QTableView):
-            return
-        sel = table.selectionModel().selectedRows()
-        if not sel:
-            return
-        model = table.model()
-        if not isinstance(model, ProcureTableModel):
-            return
-
-        item = model.get_row(sel[0].row())
-        if not item:
-            return
-
-        menu = QMenu(self)
-        menu.setObjectName("procure_context")
-
-        a_delete = menu.addAction("删除此行")
-        a_edit_qty = menu.addAction("修改数量")
-        a_copy_qty = menu.addAction("复制数量")
-        menu.addSeparator()
-        a_copy_line = menu.addAction("复制此行")
-
-        action = menu.exec(table.viewport().mapToGlobal(pos))
-        if action == a_delete:
-            self._on_delete_row(table, sel, model)
-        elif action == a_edit_qty:
-            self._on_edit_qty(table, sel, model)
-        elif action == a_copy_qty:
-            self._on_copy_qty(table, sel, model)
-        elif action == a_copy_line:
-            self._on_copy_line(table, sel, model)
-
-    def _on_delete_row(self, table: QTableView, sel, model: ProcureTableModel):
-        """删除所选行：本次打开期间不再出现（轮询/刷新重算也不放回来），关闭窗口后恢复。"""
-        removed = 0
-        for row in sorted({r.row() for r in sel}, reverse=True):
-            item = model.get_row(row)
-            if not item:
-                continue
-            tid = item.get("type_id")
-            if tid is not None:
-                self._deleted_ids.add(int(tid))
-            # 表格行与 self._rows 是同一批 dict 对象，按身份从主列表移除，避免 _rebuild_sections 复活
-            self._rows = [r for r in self._rows if r is not item]
-            model.remove_row(row)
-            removed += 1
+    def _rebuild_sections(self) -> None:
+        """按当前 rows 重切两个分区，并对每个分区重放它自己的排序。"""
+        buy_rows, stock_rows = split_sections(self._rows)
+        self._sections = {"buy": buy_rows, "stock": stock_rows}
+        # 排序状态是持久的（原版由表格控件重放），重建后按记录的列重排一次
+        for section in ("buy", "stock"):
+            col = self._sort_state[section][0]
+            if col >= 0:
+                self._sort_rows(section, col, self._sort_state[section][1])
         self._update_summary()
-        if removed:
-            self._show_copy_hint(f"已移除 {removed} 项（重新打开后恢复）")
+
+    def _sort_rows(self, section: str, column: int, ascending: bool) -> None:
+        """按列排序该分区。列 0 用显示名（`casefold`），其余按数值 —— 对齐原表模型。"""
+        if not 0 <= column < len(_SORT_FIELDS):
+            return
+        field = _SORT_FIELDS[column]
+        rows = self._sections.get(section)
+        if rows is None:
+            return
+        if field == "name":
+            rows.sort(key=lambda r: display_name(r).casefold(), reverse=not ascending)
+        else:
+            rows.sort(key=lambda r: r.get(field) or 0.0, reverse=not ascending)
+
+    def sort_section(self, section: str, column: int) -> None:
+        """点表头：同列反向、换列从升序开始（与 QTableView 一致）。"""
+        if not 0 <= column < len(_SORT_FIELDS):
+            return
+        prev_col, prev_asc = self._sort_state.get(section, (-1, True))
+        ascending = not (prev_col == column and prev_asc)
+        self._sort_state[section] = (column, ascending)
+        self._sort_rows(section, column, ascending)
 
     def _apply_deleted_filter(self) -> None:
         """滤掉本次打开期间删掉的行 —— 轮询/刷新重算不得把它们放回来（关闭窗口后清空）。"""
@@ -602,77 +321,138 @@ class ProcurementDialog(QDialog):
                 row["to_buy"] = qty
                 row["total"] = qty * row.get("price", 0)
 
-    def _on_edit_qty(self, table: QTableView, sel, model: ProcureTableModel):
-        item = model.get_row(sel[0].row())
+    def _update_summary(self) -> None:
+        """底部统计（两分区汇总）。"""
+        all_rows = self._sections["buy"] + self._sections["stock"]
+        total_cost = sum(r.get("total", 0) for r in all_rows)
+        total_volume = sum(r.get("volume", 0) for r in all_rows)
+        self._summary_text = (
+            f"共 {len(all_rows)} 种材料 | 需采购总金额: {total_cost:,.0f} ISK | 总体积: {total_volume:,.2f} m³"
+            f" | 来源: {self._hub_text} ({self._price_type})"
+        )
+
+    # ── 行交互 ────────────────────────────────────────────
+
+    def _row_at(self, section: str, row: int) -> dict | None:
+        rows = self._sections.get(section, [])
+        return rows[row] if 0 <= row < len(rows) else None
+
+    def copy_cell(self, section: str, row: int, column: int) -> None:
+        """双击单元格 → 复制该列内容（名称列给物品名，数字列给纯数字），便于游戏内下单。"""
+        item = self._row_at(section, row)
         if not item:
             return
-        qty, ok = QInputDialog.getDouble(
+        text = copy_cell_text(item, column)
+        if not text:
+            return
+        QGuiApplication.clipboard().setText(text)
+        self.show_copy_hint(f"已复制: {text}")
+
+    def delete_row(self, section: str, row: int) -> None:
+        """删除该行：本次打开期间不再出现（轮询/刷新重算也不放回来），关闭窗口后恢复。"""
+        rows = self._sections.get(section)
+        item = self._row_at(section, row)
+        if rows is None or not item:
+            return
+        tid = item.get("type_id")
+        if tid is not None:
+            self._deleted_ids.add(int(tid))
+        # 分区表与 self._rows 是同一批 dict 对象，按身份从主列表移除，避免重建时复活
+        self._rows = [r for r in self._rows if r is not item]
+        rows.remove(item)
+        self._update_summary()
+        self.show_copy_hint("已移除 1 项（重新打开后恢复）")
+        self._notify()
+
+    def edit_qty(self, section: str, row: int) -> None:
+        item = self._row_at(section, row)
+        if not item:
+            return
+        from ui_qml.bridge.input_dialog import InputQmlDialog
+
+        qty, ok = InputQmlDialog.get_double(
             self,
             "修改采购数量",
-            f"输入新采购数量 ({_display_name(item)}):",
-            value=item.get("to_buy", 0),
-            minValue=0,
-            maxValue=99999999,
+            f"输入新采购数量 ({display_name(item)}):",
+            value=float(item.get("to_buy", 0)),
+            minimum=0.0,
+            maximum=99999999.0,
             decimals=2,
         )
         if not ok:
             return
         old = item.get("to_buy", 0)
-        model.update_qty(sel[0].row(), qty)
+        item["to_buy"] = qty
+        item["total"] = qty * item.get("price", 0)
         tid = item.get("type_id")
         if tid is not None:
             self._manual_overrides[int(tid)] = qty  # 轮询重算后回放，不丢手改
-        # 跨分区边界（>0 ↔ <=0）时把行搬去另一分区；否则就地更新保持选区
+        # 跨分区边界（>0 ↔ <=0）时把行搬去另一分区；否则就地更新
         if (old > 0) != (qty > 0):
             self._rebuild_sections()
         else:
             self._update_summary()
+        self._notify()
 
-    def _on_copy_qty(self, table: QTableView, sel, model: ProcureTableModel):
-        item = model.get_row(sel[0].row())
-        if item:
-            qty = item.get("to_buy", 0)
-            text = str(int(qty) if qty == int(qty) else qty)
-            QApplication.clipboard().setText(text)
-            self._show_copy_hint(f"已复制: {text}")
-
-    def _on_copy_line(self, table: QTableView, sel, model: ProcureTableModel):
-        item = model.get_row(sel[0].row())
-        if item:
-            text = f"{_display_name(item)}\t{item['to_buy']:,.2f}\t{item['price']:,.2f}\t{item['total']:,.2f}"
-            QApplication.clipboard().setText(text)
-
-    def _on_copy_to_clipboard(self):
-        """将需采购清单复制到剪贴板（格式：凡晶石*4）——只复制 to_buy>0 的需采购分区。"""
-        model = self._buy_table.model()
-        if not model or not isinstance(model, ProcureTableModel):
+    def copy_qty(self, section: str, row: int) -> None:
+        item = self._row_at(section, row)
+        if not item:
             return
-        rows = model._rows
+        qty = item.get("to_buy", 0)
+        text = str(int(qty) if qty == int(qty) else qty)
+        QGuiApplication.clipboard().setText(text)
+        self.show_copy_hint(f"已复制: {text}")
+
+    def copy_line(self, section: str, row: int) -> None:
+        item = self._row_at(section, row)
+        if not item:
+            return
+        text = f"{display_name(item)}\t{item['to_buy']:,.2f}\t{item['price']:,.2f}\t{item['total']:,.2f}"
+        QGuiApplication.clipboard().setText(text)
+        self.show_copy_hint("已复制整行")
+
+    def copy_all_to_clipboard(self) -> None:
+        """将需采购清单复制到剪贴板（格式：凡晶石*4）——只复制 to_buy>0 的需采购分区。"""
+        rows = self._sections["buy"]
         if not rows:
             return
-
-        lines = [f"{_display_name(r)}* {r.get('to_buy', 0):.0f}" for r in rows]
-
-        QApplication.clipboard().setText("\n".join(lines))
+        lines = [f"{display_name(r)}* {r.get('to_buy', 0):.0f}" for r in rows]
+        QGuiApplication.clipboard().setText("\n".join(lines))
         total_qty = sum(r.get("to_buy", 0) for r in rows)
-        self._show_copy_hint(f"已复制 {len(rows)} 种材料（共 {total_qty:,.0f} 个）到剪贴板")
+        self.show_copy_hint(f"已复制 {len(rows)} 种材料（共 {total_qty:,.0f} 个）到剪贴板")
 
-    def _on_add_to_hangar(self):
-        """增量添加到仓库 — 读取剪贴板（游戏内复制已购材料），走仓库同款导入预览后增量入默认材料机库。"""
+    def show_copy_hint(self, text: str) -> None:
+        """底部状态栏右侧显示复制结果，`COPY_HINT_MS` 后自动清空。"""
+        self._copy_hint_text = text
+        if self._copy_hint_timer is None:
+            self._copy_hint_timer = QTimer(self)
+            self._copy_hint_timer.setSingleShot(True)
+            self._copy_hint_timer.timeout.connect(self._clear_copy_hint)
+        self._copy_hint_timer.start(self.COPY_HINT_MS)
+        self._notify()
+
+    def _clear_copy_hint(self) -> None:
+        self._copy_hint_text = ""
+        self._notify()
+
+    # ── 顶部动作 ──────────────────────────────────────────
+
+    def add_to_hangar(self) -> None:
+        """增量添加到仓库 — 读剪贴板（游戏内复制已购材料），走仓库同款导入预览后增量入默认材料机库。"""
         from services.inventory_manager import get_default_mat_hangar_and_system, get_hangar_name
         from ui_qml.bridge.review_bridge import run_clipboard_import
 
         hid, _sys = get_default_mat_hangar_and_system()
         if not hid:
-            QMessageBox.warning(self, "提示", "未设置默认材料机库，请先在设置中指定")
+            self.show_copy_hint("未设置默认材料机库，请先在设置中指定")
             return
         hangar_name = get_hangar_name(hid) or f"机库{hid}"
         run_clipboard_import(hid, hangar_name, self, mode="incremental")
-        self._calculate()
+        self.recalculate()
         self.plans_changed.emit()  # 库存变化 → 通知主界面重载计划
 
-    def _on_complete_all(self):
-        """一键完成所有待下线计划：标记为 completed + 自动入库（经 plan_execution.complete_plan）"""
+    def complete_all(self) -> None:
+        """一键完成所有待下线计划：标记为 completed + 自动入库（经 `plan_execution.complete_plan`）"""
         ready_plans = [p for p in self._active_plans if p.get("status") == "ready"]
         if not ready_plans:
             return
@@ -707,37 +487,27 @@ class ProcurementDialog(QDialog):
                 log.exception("完成计划 %s 失败", plan_id)
 
         if need_outcome:
-            QMessageBox.information(
-                self,
-                "需回填发明结果",
-                "有 "
-                + str(need_outcome)
-                + " 条发明计划未填写实际产出，已跳过。请在「工业制造」页选中该行点「完成」填写"
-                + "（发明失败也需填 0）。",
-            )
+            self.show_copy_hint(f"{need_outcome} 条发明计划未填产出已跳过（到工业页补填）")
 
         if completed > 0:
-            msg = f"已完成 {completed}/{len(ready_plans)} 项计划"
-            if deposited > 0:
-                msg += f"\n{deposited} 项成品已自动入库"
-            QMessageBox.information(self, "完成", msg)
-            self._calculate()
+            self.show_copy_hint(
+                f"已完成 {completed}/{len(ready_plans)} 项" + (f"，{deposited} 项入库" if deposited else "")
+            )
+            self.recalculate()
             self.plans_changed.emit()  # 计划状态变化 → 通知主界面重载
         else:
-            QMessageBox.information(self, "提示", "没有可完成的计划")
+            self.show_copy_hint("没有可完成的计划")
 
-    def _update_summary(self):
-        """更新底部统计（两分区汇总）"""
-        all_rows: list[dict] = []
-        for t in (self._buy_table, self._stock_table):
-            m = t.model()
-            if isinstance(m, ProcureTableModel):
-                all_rows.extend(m._rows)
-        total_cost = sum(r.get("total", 0) for r in all_rows)
-        total_volume = sum(r.get("volume", 0) for r in all_rows)
-        hub = getattr(self, "_hub_text", "Jita")
-        price_type = self._price_type
-        self._summary_label.setText(
-            f"共 {len(all_rows)} 种材料 | 需采购总金额: {total_cost:,.0f} ISK | 总体积: {total_volume:,.2f} m³"
-            f" | 来源: {hub} ({price_type})"
-        )
+    # ── 供测试/调试读取 ────────────────────────────────────
+
+    def all_rows(self) -> list[dict]:
+        return list(self._rows)
+
+    def debug_state(self) -> dict[str, Any]:
+        """给测试用的快照：两个分区的行 + 汇总 + 提示。"""
+        return {
+            "buy": [dict(r) for r in self._sections["buy"]],
+            "stock": [dict(r) for r in self._sections["stock"]],
+            "summary": self._summary_text,
+            "hint": self._copy_hint_text,
+        }

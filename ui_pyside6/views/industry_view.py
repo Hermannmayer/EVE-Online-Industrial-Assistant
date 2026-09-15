@@ -14,7 +14,6 @@ from ui_pyside6.views.industry import (
     PlanTable,
 )
 from ui_pyside6.views.industry.complete_plans_dialog import complete_plans
-from ui_pyside6.views.manufacturable_items_dialog import ManufacturableItemsDialog
 from ui_pyside6.workers.industry_page_workers import (
     IndustryDataWorker,
     PlanPriceRefreshWorker,
@@ -27,6 +26,7 @@ from ui_qml.bridge.blueprint_dialog_bridge import (
 from ui_qml.bridge.char_usage_bridge import CharacterUsageQmlDialog as CharacterUsageDialog
 from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog as CompletePlansDialog
 from ui_qml.bridge.industry_bridge import IndustryBridge
+from ui_qml.bridge.manufacturable_items_bridge import ManufacturableItemsQmlDialog as ManufacturableItemsDialog
 from ui_qml.bridge.materials_dialog_bridge import MaterialsSummaryQmlDialog as MaterialsSummaryDialog
 from ui_qml.bridge.output_dialog_bridge import OutputSummaryQmlDialog as OutputSummaryDialog
 from ui_qml.host import PageHost

@@ -1500,3 +1500,79 @@ def test_transfer_dialog_loads_without_warnings(qapp, monkeypatch):
     from ui_qml.bridge.transfer_bridge import HangarTransferQmlDialog
 
     _assert_loads_and_quiet(lambda: HangarTransferQmlDialog([], 2, "目标仓"), "移库")
+
+
+# ── 批次 2（查询链路）：订单弹窗 / 价格走势图 ──
+
+
+class _StubHistoryWorker(QObject):
+    """价格历史拉取线程的同步替身（不联网）。
+
+    签名与信号**照抄** `ui_pyside6.views.price_chart.PriceHistoryWorker` ——
+    少一个信号，桥在 connect 时就会 AttributeError。
+    """
+
+    finished_signal = Signal(int, list)
+    error_signal = Signal(int, str)
+
+    def __init__(self, type_id: int, region_id: int = 10000002, parent=None) -> None:
+        super().__init__(parent)
+
+    def start(self) -> None:
+        self.finished_signal.emit(0, [])
+
+    def isRunning(self) -> bool:
+        return False
+
+
+def test_order_popup_dialog_loads_without_warnings(qapp):
+    from ui_qml.bridge.order_popup_bridge import OrderPopupQmlDialog
+
+    _assert_loads_and_quiet(lambda: OrderPopupQmlDialog(), "订单弹窗")
+
+
+def test_price_chart_dialog_loads_without_warnings(qapp, monkeypatch):
+    monkeypatch.setattr("ui_pyside6.views.price_chart.PriceHistoryWorker", _StubHistoryWorker)
+    from ui_qml.bridge.price_chart_bridge import PriceChartQmlDialog
+
+    _assert_loads_and_quiet(lambda: PriceChartQmlDialog(34, "三钛合金"), "价格走势图")
+
+
+def test_batch_price_dialog_loads_without_warnings(qapp, monkeypatch):
+    import ui_qml.bridge.batch_price_bridge as bp
+
+    monkeypatch.setattr(bp, "BatchPriceWorker", _StubHistoryWorker)
+    from ui_qml.bridge.batch_price_bridge import BatchPriceQmlDialog
+
+    _assert_loads_and_quiet(lambda: BatchPriceQmlDialog(), "批量查价")
+
+
+def test_hangar_settings_dialog_loads_without_warnings(qapp, monkeypatch):
+    """机库设置（阶段 4c）—— 独立一级入口，不由页面弹出。"""
+    import services.inventory_manager as im
+
+    monkeypatch.setattr(im, "get_hangars", lambda: [{"id": 1, "name": "矿仓"}])
+    from ui_qml.bridge.hangar_settings_bridge import HangarSettingsQmlDialog
+
+    _assert_loads_and_quiet(lambda: HangarSettingsQmlDialog(None), "机库设置")
+
+
+# ── 批次 2：评分设置（制造/贸易）/ 批量对比 ──
+
+
+def test_mfg_params_dialog_loads_without_warnings(qapp):
+    from ui_qml.bridge.score_dialogs_bridge import MfgQmlDialog
+
+    _assert_loads_and_quiet(lambda: MfgQmlDialog(), "制造评分设置")
+
+
+def test_trade_params_dialog_loads_without_warnings(qapp):
+    from ui_qml.bridge.score_dialogs_bridge import TradeQmlDialog
+
+    _assert_loads_and_quiet(lambda: TradeQmlDialog(), "贸易评分设置")
+
+
+def test_compare_dialog_loads_without_warnings(qapp):
+    from ui_qml.bridge.compare_bridge import CompareQmlDialog
+
+    _assert_loads_and_quiet(lambda: CompareQmlDialog(), "批量对比")

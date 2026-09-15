@@ -177,13 +177,25 @@ def _meta_name(value: object) -> str:
         return str(value)
 
 
+def _strip_qml_comments(text: str) -> str:
+    """去掉 QML 注释，**只留代码**供扫描。
+
+    注释里提到 `Theme.xxx` 是正常的（本仓的注释大量解释「为什么取这个 token」），
+    把它当引用扫会天天假红 —— 实测就误报过一次（`FThemeCards.qml` 的说明注释）。
+
+    `//` 前一个字符是 `:` 时跳过，免得把字符串里的 `http://` 当成行注释截断。
+    """
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    return re.sub(r"(?<!:)//[^\n]*", "", text)
+
+
 def test_qml_only_references_existing_theme_tokens():
     """回归护栏：QML 里写错的 `Theme.xxx` 会**静默**变成 undefined。
 
     与 Python 侧那个 snake_case 陷阱同源——QML 引用不存在的 token 不报错，
     只在运行时表现为尺寸/颜色异常。实测踩过一次：`Theme.spacing_lg`（正确是
     `spacingLg`）让 `implicitWidth` 变成 NaN，Row 里的按钮宽度全为 0。
-    这里静态扫描全部 QML 文件，逐个核对 token 是否真的存在于桥上。
+    这里静态扫描全部 QML 文件，逐个核对 token 是否真的存在于桥上（**只看代码，不看注释**）。
     """
     bridge = ThemeBridge()
     meta = bridge.metaObject()
@@ -198,10 +210,26 @@ def test_qml_only_references_existing_theme_tokens():
 
     unknown: list[str] = []
     for path in files:
-        text = path.read_text(encoding="utf-8")
+        text = _strip_qml_comments(path.read_text(encoding="utf-8"))
         for name in sorted(set(re.findall(r"\bTheme\.([A-Za-z_]\w*)", text))):
             if name not in known:
                 unknown.append(f"{path.name}: Theme.{name}")
 
     bridge.detach()
     assert not unknown, "QML 引用了不存在的 Theme token（运行时静默为 undefined）: " + ", ".join(unknown)
+
+
+def test_theme_scanner_ignores_comments():
+    """扫描器必须忽略注释 —— 否则在注释里解释「这里取 Theme.accentRed」就会假红。"""
+    sample = """
+    // 行注释：颜色取 Theme.不存在的甲
+    /* 块注释：
+       Theme.不存在的乙
+    */
+    Rectangle { color: Theme.bgDark }   // 尾注释 Theme.不存在的丙
+    Text { text: "https://example.com/x" }
+    """
+    stripped = _strip_qml_comments(sample)
+    found = set(re.findall(r"\bTheme\.([A-Za-z_]\w*)", stripped))
+    assert found == {"bgDark"}, f"只应扫到代码里的 bgDark，实得 {found}"
+    assert "https://example.com" in stripped, "URL 里的 // 不能被当成行注释截掉"

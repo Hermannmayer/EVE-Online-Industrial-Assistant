@@ -188,21 +188,9 @@ def test_init_wizard_show_event(qapp):
         assert FLUENT_LIGHT["BG_DARK"] in wiz.styleSheet()
 
 
-def test_all_items_dialog_show_event(qapp, mock_db):
-    with (
-        patch("ui_pyside6.views.all_items_view.TreeW") as MockTree,
-        patch("ui_pyside6.views.all_items_view.ItemsW") as MockItems,
-        patch("ui_pyside6.views.all_items_view.AModel", new=_FakeModel),
-        patch("ui_pyside6.views.all_items_view.Proxy", new=_FakeProxy),
-    ):
-        MockTree.return_value.start = MagicMock()
-        MockItems.return_value.start = MagicMock()
-        from ui_pyside6.views.all_items_view import AllItemsDialog
-
-        dlg = AllItemsDialog()
-        apply_theme("light")
-        dlg.showEvent(QShowEvent())
-        assert FLUENT_LIGHT["BG_SURFACE"] in dlg._toolbar.styleSheet()
+# 注：原先这里还有一条 `test_all_items_dialog_show_event`，随「全部物品」窗口迁到 QML
+# 一并删除 —— 它测的是 Widgets 版在 showEvent 里重刷工具栏 stylesheet，而 QML 版没有
+# stylesheet（颜色绑在 `Theme` 单例上，切主题自动重算）。同 `test_import_review_dialog_show_event`。
 
 
 # ── weakref 基础设施（审计发现：监听器无 remove → 页面销毁后仍被引用泄漏） ──

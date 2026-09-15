@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
 import ui_pyside6.icons as icons
 import ui_pyside6.theme as theme
 from ui_pyside6.sizing import ElidedLabel
-from ui_pyside6.views.query.query_order_popup import do_load_orders, hide_order_popup
 from ui_pyside6.views.query.query_search import (
     _COLUMNS,
     DEFAULT_REGION_ID,
@@ -34,6 +33,7 @@ from ui_pyside6.views.query.query_search import (
     show_context_menu,
 )
 from ui_pyside6.views.query.query_search import QueryTableModel as _QueryTableModel
+from ui_qml.bridge.order_popup_bridge import do_load_orders, hide_order_popup
 
 
 class QueryPage(QWidget):
@@ -329,7 +329,7 @@ class QueryPage(QWidget):
     # ── 子窗口 ──
 
     def _open_all_items(self):
-        from ui_pyside6.views.all_items_view import AllItemsDialog
+        from ui_qml.bridge.all_items_bridge import AllItemsQmlDialog as AllItemsDialog
 
         if self._all_items_dialog is None:
             self._all_items_dialog = AllItemsDialog(self)
@@ -337,7 +337,7 @@ class QueryPage(QWidget):
         self._all_items_dialog.raise_()
 
     def _open_batch_price(self):
-        from ui_pyside6.views.batch_price_dialog import BatchPriceDialog
+        from ui_qml.bridge.batch_price_bridge import BatchPriceQmlDialog as BatchPriceDialog
 
         dlg = BatchPriceDialog(self)
         dlg.exec()

@@ -497,7 +497,7 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
 
     def _show_hangar_settings(self):
         """机库设置对话框（独立一级入口）"""
-        from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog
+        from ui_qml.bridge.hangar_settings_bridge import HangarSettingsQmlDialog as HangarSettingsDialog
 
         dlg = HangarSettingsDialog(self)
         dlg.exec()

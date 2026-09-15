@@ -513,6 +513,60 @@ def _blueprint_import_change_factory() -> Any:
     )
 
 
+def _order_popup_factory() -> Any:
+    """订单弹窗 —— 固定订单样本（快照不联网）。"""
+    from ui_qml.bridge.order_popup_bridge import OrderPopupQmlDialog
+
+    dlg = OrderPopupQmlDialog()
+    dlg.set_orders(  # type: ignore[attr-defined]
+        34,
+        "三钛合金",
+        [{"price": 5.1, "volume_remain": 1000, "location_id": 60003760}],
+        [{"price": 5.4, "volume_remain": 800, "location_id": 60003760}],
+    )
+    return dlg
+
+
+def _price_chart_factory() -> Any:
+    """价格走势图 —— 拉历史数据的线程换成同步替身并喂固定样本（不联网）。
+
+    这个对话框的数据是 `update -> PriceHistoryWorker -> _on_data_loaded` 进来的，
+    **没有**可以注入的取数函数，所以替身必须连信号一起照抄（少一个桥在 connect 时就会炸）。
+    """
+    from PySide6.QtCore import QObject as _QObject
+
+    import ui_pyside6.views.price_chart as legacy
+    from ui_qml.bridge.price_chart_bridge import PriceChartQmlDialog
+
+    days = [
+        {
+            "date": f"2026-08-{i:02d}",
+            "average": 100.0 + i,
+            "highest": 110.0 + i,
+            "lowest": 90.0 + i,
+            "volume": 1000.0 + i * 10,
+        }
+        for i in range(1, 29)
+    ]
+
+    class _Stub(_QObject):
+        finished_signal = legacy.PriceHistoryWorker.finished_signal
+        error_signal = legacy.PriceHistoryWorker.error_signal
+
+        def __init__(self, type_id: int, region_id: int = 10000002, parent: Any = None) -> None:
+            super().__init__(parent)
+            self._type_id = int(type_id)
+
+        def start(self) -> None:
+            self.finished_signal.emit(self._type_id, days)
+
+        def isRunning(self) -> bool:
+            return False
+
+    legacy.PriceHistoryWorker = _Stub  # type: ignore[assignment,misc]
+    return PriceChartQmlDialog(34, "三钛合金")
+
+
 # key → (工厂函数, 默认尺寸)；工厂延迟导入，避免拖慢主页面快照
 _DIALOGS: dict[str, tuple[Any, tuple[int, int]]] = {
     "procurement": (_procurement_factory, (760, 820)),
@@ -533,6 +587,8 @@ _DIALOGS: dict[str, tuple[Any, tuple[int, int]]] = {
     "hangar_pick": (_hangar_pick_factory, (620, 420)),
     "blueprint_import_review": (_blueprint_import_review_factory, (900, 560)),
     "blueprint_import_change": (_blueprint_import_change_factory, (760, 360)),
+    "order_popup": (_order_popup_factory, (620, 460)),
+    "price_chart": (_price_chart_factory, (900, 550)),
 }
 
 

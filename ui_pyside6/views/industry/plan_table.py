@@ -818,7 +818,7 @@ class PlanTable(QWidget):
         type_id = plan.get("product_type_id")
         if not type_id:
             return
-        from ui_pyside6.views.all_items_view import MatDlg
+        from ui_qml.bridge.all_items_bridge import MatQmlDialog as MatDlg
 
         dlg = MatDlg(type_id)
         dlg.exec()

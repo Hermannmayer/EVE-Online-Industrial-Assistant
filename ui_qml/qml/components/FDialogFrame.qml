@@ -27,6 +27,15 @@ ColumnLayout {
     property bool acceptEnabled: true
     property bool cancelVisible: true
 
+    /* 可选的第三个按钮（默认不显示）。
+     * 只有「系统设置」这类**改了不关窗**的对话框需要它（原版是 QDialogButtonBox 的 Apply）；
+     * 默认关着，所以其余对话框的按钮行与从前逐像素一致。
+     * 放在取消/确定左侧：右对齐的「取消 · 确定」是这里既有的形状，插到中间会把主次打乱。*/
+    property bool applyVisible: false
+    property string applyText: qsTr("应用")
+
+    signal applyRequested()
+
     anchors.fill: parent
     anchors.margins: Theme.spacingMd
     spacing: Theme.spacingSm
@@ -55,6 +64,12 @@ ColumnLayout {
 
         Item {
             Layout.fillWidth: true
+        }
+
+        FButton {
+            text: root.applyText
+            visible: root.applyVisible
+            onClicked: root.applyRequested()
         }
 
         FButton {

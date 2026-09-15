@@ -464,7 +464,7 @@ def show_context_menu(page, pos):
 
     # ── 操作组 ──
     view_orders = QAction("查看实时订单", page)
-    from ui_pyside6.views.query.query_order_popup import do_load_orders
+    from ui_qml.bridge.order_popup_bridge import do_load_orders
 
     view_orders.triggered.connect(lambda: do_load_orders(page, type_id))
     menu.addAction(view_orders)

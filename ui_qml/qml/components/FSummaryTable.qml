@@ -39,9 +39,19 @@ Item {
     //: 行是否可选中（选中态画高亮底）
     property bool selectable: false
 
+    /* 可排序的列号列表（空 = 表头不可点，行为与加这个特性之前完全一样）。
+     * 排序列在表头上带 ▲/▼；点击只**发信号**，排哪一份数据由调用方决定
+     * （各表的数据源不同：有的是模型的 sort()，有的是桥里排一遍列表）。 */
+    property var sortableColumns: []
+    property int sortColumn: -1
+    property bool sortAscending: true
+
     signal rowClicked(int row)
-    signal rowDoubleClicked(int row)
+    //: 带上列号：有的表「双击 = 复制该格」，需要知道点的是哪一列
+    signal rowDoubleClicked(int row, int column)
+    signal rowRightClicked(int row)
     signal actionClicked(int row)
+    signal sortRequested(int column)
 
     //: 单元格左右内边距合计（`colWidth` 与命中口径共用）
     readonly property int cellPadding: Math.round(12 * Theme.fontScale)
@@ -91,17 +101,36 @@ Item {
             Repeater {
                 model: root.columns
 
-                Text {
+                Item {
+                    id: headCell
                     required property var modelData
                     required property int index
-                    Layout.preferredWidth: root.colWidth(index)
-                    verticalAlignment: Text.AlignVCenter
-                    horizontalAlignment: Text.AlignHCenter
-                    text: modelData.title
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                    elide: Text.ElideRight
+
+                    readonly property bool sortable: root.sortableColumns.indexOf(headCell.index) >= 0
+                    readonly property bool isSorted: root.sortColumn === headCell.index
+
+                    Layout.preferredWidth: root.colWidth(headCell.index)
+                    Layout.fillHeight: true
+
+                    Text {
+                        anchors.fill: parent
+                        verticalAlignment: Text.AlignVCenter
+                        horizontalAlignment: Text.AlignHCenter
+                        text: headCell.modelData.title
+                              + (headCell.isSorted ? (root.sortAscending ? " ▲" : " ▼") : "")
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        elide: Text.ElideRight
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: headCell.sortable
+                        hoverEnabled: headCell.sortable
+                        cursorShape: headCell.sortable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: root.sortRequested(headCell.index)
+                    }
                 }
             }
         }
@@ -207,8 +236,11 @@ Item {
             onRowClicked: function (row, _column) {
                 root.rowClicked(row)
             }
-            onRowDoubleClicked: function (row, _column) {
-                root.rowDoubleClicked(row)
+            onRowDoubleClicked: function (row, column) {
+                root.rowDoubleClicked(row, column)
+            }
+            onRowRightClicked: function (row, _column, _x, _y) {
+                root.rowRightClicked(row)
             }
         }
 
