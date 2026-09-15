@@ -567,6 +567,55 @@ def _price_chart_factory() -> Any:
     return PriceChartQmlDialog(34, "三钛合金")
 
 
+def _score_mfg_factory() -> Any:
+    """制造评分设置（阶段 4b）。"""
+    from ui_qml.bridge.score_dialogs_bridge import MfgQmlDialog
+
+    return MfgQmlDialog()
+
+
+def _score_trade_factory() -> Any:
+    """贸易评分设置（阶段 4b）。"""
+    from ui_qml.bridge.score_dialogs_bridge import TradeQmlDialog
+
+    return TradeQmlDialog()
+
+
+def _compare_factory() -> Any:
+    """批量对比（阶段 4b）。"""
+    from ui_qml.bridge.compare_bridge import CompareQmlDialog
+
+    return CompareQmlDialog()
+
+
+def _batch_price_factory() -> Any:
+    """批量查价（阶段 4b）—— 空输入态。"""
+    from ui_qml.bridge.batch_price_bridge import BatchPriceQmlDialog
+
+    return BatchPriceQmlDialog()
+
+
+def _settings_factory() -> Any:
+    """系统设置（阶段 4c）—— 三个 Tab。"""
+    from ui_qml.bridge.settings_bridge import SettingsQmlDialog
+
+    return SettingsQmlDialog(None)
+
+
+def _char_settings_factory() -> Any:
+    """人物设置（阶段 4c）。"""
+    from ui_qml.bridge.char_settings_bridge import CharSettingsQmlDialog
+
+    return CharSettingsQmlDialog()
+
+
+def _all_items_factory() -> Any:
+    """全部物品（阶段 4b/4c 收尾）—— 只读查库，行数多，正好压一压虚拟滚动。"""
+    from ui_qml.bridge.all_items_bridge import AllItemsQmlDialog
+
+    return AllItemsQmlDialog()
+
+
 # key → (工厂函数, 默认尺寸)；工厂延迟导入，避免拖慢主页面快照
 _DIALOGS: dict[str, tuple[Any, tuple[int, int]]] = {
     "procurement": (_procurement_factory, (760, 820)),
@@ -589,6 +638,13 @@ _DIALOGS: dict[str, tuple[Any, tuple[int, int]]] = {
     "blueprint_import_change": (_blueprint_import_change_factory, (760, 360)),
     "order_popup": (_order_popup_factory, (620, 460)),
     "price_chart": (_price_chart_factory, (900, 550)),
+    "score_mfg": (_score_mfg_factory, (460, 380)),
+    "score_trade": (_score_trade_factory, (500, 460)),
+    "compare": (_compare_factory, (1000, 620)),
+    "batch_price": (_batch_price_factory, (780, 560)),
+    "settings": (_settings_factory, (560, 520)),
+    "char_settings": (_char_settings_factory, (750, 600)),
+    "all_items": (_all_items_factory, (1200, 760)),
 }
 
 
