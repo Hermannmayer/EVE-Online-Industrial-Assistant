@@ -154,13 +154,13 @@ Item {
         rowMenu.targetRows = rowMenu.state.synthetic ? [row] : rowsForMenu(row)
         rowMenu.x = sceneX
         rowMenu.y = sceneY
-        rowMenu.openSoon()
+        rowMenu.open()
     }
 
     function openHeaderMenu(sceneX, sceneY) {
         headerMenu.x = sceneX
         headerMenu.y = sceneY
-        headerMenu.openSoon()
+        headerMenu.open()
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -669,8 +669,6 @@ Item {
         property int targetRow: -1
         property var targetRows: []
         property var state: ({})
-        // 见下方 smartMenu 的说明：父菜单打开时 Qt 会顺手把子菜单也打开
-        onOpened: smartMenu.close()
 
         // 共享组件合成根：只有折叠一项
         FMenuItem {
@@ -757,16 +755,21 @@ Item {
 
         /* 「智能调整」子菜单。
          *
-         * **Qt 会在父菜单打开时把它一并打开**（实测：父菜单 open 之前子菜单
-         * `opened=False`，open 之后变成 True，而此时 `rowMenu.currentIndex` 仍是 -1、
-         * 条目 `highlighted` 也是 False —— 不是悬停或键盘导航触发的）。
-         * 用户要的是「鼠标放上去才展开」，所以在 `rowMenu.onOpened` 里立刻收一次；
-         * 之后 Qt 自己的悬停高亮照常展开它（`test_submenu_opens_only_on_hover` 钉住）。 */
+         * **不要给它写 `visible:`**。`Menu` 是 `Popup`，而 `Popup.visible = true` 就是
+         * 「打开它」：原先那行 `visible: !rowMenu.state.synthetic` 在每次右键（`state`
+         * 被赋值）时重算成 true，Qt 顺手把子菜单弹出来，随后的逻辑再把它收回去 ——
+         * 用户看到的正是「二级菜单闪一下然后关闭」。而且实测那行**根本没起到隐藏作用**
+         * （嵌套菜单的 visible 由 Qt 托管，恒为 false），纯是害处。
+         *
+         * 要隐藏条目只能用 `enabled`（置灰），`Popup.visible` 这条路走不通。
+         * 也**不要**再加 `onOpened: smartMenu.close()` 那种「开完立刻收」的兜底：
+         * 那只是把「不该开」变成「闪一下」，症状还在。
+         */
         FMenu {
             id: smartMenu
             objectName: "smartMenu"
             title: qsTr("智能调整")
-            visible: !rowMenu.state.synthetic
+            enabled: !rowMenu.state.synthetic
             FMenuItem {
                 text: qsTr("母项调整（递归拆解）")
                 onTriggered: root.planBridge.decomposeParent(rowMenu.targetRows)

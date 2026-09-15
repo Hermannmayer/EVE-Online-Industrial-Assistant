@@ -395,16 +395,18 @@ def test_menu_has_no_reserved_blank_rows(table, clicks):
 
 
 def test_submenu_does_not_open_with_the_parent_menu(qapp):
-    """「智能调整」二级菜单不能随父菜单一起弹出来。
+    """「智能调整」二级菜单**从头到尾**都不能随父菜单弹出来 —— 一帧都不行。
 
-    Qt 会在父菜单打开时把子菜单一并打开（实测 `opened` 由 False 变 True，而那时
-    `currentIndex` 仍是 -1、条目 `highlighted` 也是 False —— 不是悬停触发的）。
-    `rowMenu.onOpened` 里显式收一次把它压回去，用户要的是「鼠标放上去才展开」。
+    这条之前是「打开后断言一次 `opened is False`」，**拦不住真正的缺陷**：实测那条路径下
+    子菜单会被弹出来、再被 `onOpened` 里的兜底收回去，中间那 160ms 就是用户看到的
+    「二级菜单闪一下然后关闭」，而事后采样早已是 False。
 
-    **这里只断言「不许自动弹」这一半。** 「放上去会展开」那半依赖合成鼠标移动触发
-    QML 的悬停链路，而在这套嵌套弹层下它受同进程先前用例留下的指针状态影响 ——
-    单独跑必过、整文件连跑随机挂（实测）。那半在真实窗口里手工验证过：
-    指针移到「智能调整」上后 `smartMenu.opened` 由 False 变 True。
+    所以这里**逐帧采样**：打开后连续 8 帧检查 `visible` 与 `opened`，只要有一帧为真就失败。
+
+    根因与修法：子菜单原先写了 `visible: !rowMenu.state.synthetic` —— `Menu` 是 `Popup`，
+    给 `visible` 赋值就是打开它，每次右键（`state` 被赋值）都会重算成 true 把它弹出来。
+    那行**还根本没起到隐藏作用**（嵌套菜单的 visible 由 Qt 托管）。现在改成 `enabled`，
+    并去掉了 `onOpened: smartMenu.close()` 这个只治症状的兜底。
 
     **本用例自己建窗口**，不复用 `table` 夹具：这条路径要求主题在 QML 建好**之前**
     就已应用（与 `Main.py` 的启动顺序一致），复用夹具时主题只能建完再应用。
@@ -424,6 +426,9 @@ def test_submenu_does_not_open_with_the_parent_menu(qapp):
         header_h = int(root.property("headerH"))
         row_h = int(root.property("rowH"))
 
+        submenu = root.findChild(QObject, "smartMenu")
+        assert submenu is not None, "找不到智能调整子菜单（objectName 改了吗？）"
+
         QTest.mouseClick(
             host,
             Qt.MouseButton.RightButton,
@@ -432,9 +437,15 @@ def test_submenu_does_not_open_with_the_parent_menu(qapp):
         )
         _wait_open(root, "rowMenu")
 
-        submenu = root.findChild(QObject, "smartMenu")
-        assert submenu is not None, "找不到智能调整子菜单（objectName 改了吗？）"
-        assert submenu.property("opened") is False, "父菜单打开时子菜单跟着弹出来了"
+        # 逐帧采样：单次事后断言看不到「弹出又被收回」那一瞬
+        popped: list[str] = []
+        for i in range(8):
+            _spin(40)
+            visible = bool(submenu.property("visible"))
+            opened = bool(submenu.property("opened"))
+            if visible or opened:
+                popped.append(f"t={(i + 1) * 40}ms visible={visible} opened={opened}")
+        assert not popped, "二级菜单随父菜单弹出来了（用户看到的就是这一闪）：" + "; ".join(popped)
     finally:
         widget.close()
         widget.deleteLater()

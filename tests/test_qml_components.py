@@ -207,26 +207,3 @@ def test_max_item_width_is_measured_not_bound():
         "maxItemWidth 被写成了绑定：绑定体里写 itemMetrics.text 会与它读取的 "
         "itemMetrics.width 形成绑定循环，改成普通属性 + measureMaxItemWidth()"
     )
-
-
-def test_context_menus_open_deferred() -> None:
-    """右键菜单必须走 `FMenu.openSoon()` / `popupSoon()`，**不能**直接 `open()` / `popup()`。
-
-    直接弹的话，那一次右键的「按下+释放」可能被菜单当成对某个条目的点击；二级菜单项
-    都在末尾，菜单又是在鼠标点弹出（贴屏幕底边时 Qt 会把菜单向上翻转，指针正好落到
-    二级项上）—— 表现为用户报的「二级菜单闪一下然后关闭」。
-    延迟一拍（`Qt.callLater`）让原始点击先派发完，菜单才出现，就吃不到它了。
-
-    实测依据：二级菜单**只**在鼠标点击其条目时展开，`trigger()` / `currentIndex` /
-    高亮都不会 —— 所以「把点击挡在菜单之外」是唯一可控的修法。
-    """
-    menus = ("itemMenu", "bpMenu", "rowMenu", "headerMenu")
-    qml_root = Path(__file__).resolve().parent.parent / "ui_qml" / "qml"
-    offenders: list[str] = []
-    for path in sorted(qml_root.rglob("*.qml")):
-        text = path.read_text(encoding="utf-8")
-        for menu in menus:
-            for call in ("open", "popup"):
-                if f"{menu}.{call}()" in text:
-                    offenders.append(f"{path.name}: {menu}.{call}()")
-    assert not offenders, "右键菜单必须用延迟弹出（openSoon/popupSoon）: " + ", ".join(offenders)
