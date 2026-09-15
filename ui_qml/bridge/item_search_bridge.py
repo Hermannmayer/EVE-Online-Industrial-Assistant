@@ -126,11 +126,15 @@ class ItemSearchBridge(DialogBridge):
             except Exception:
                 self._results = []
         self._rows = search_rows(self._results)
-        # 结果换了，之前的选中行就指向了别的物品 —— 必须清掉，否则「选定」会返回上一个
+        # 结果换了，之前的选中行就指向了别的物品 —— 先清掉，再由下面重新选第一条
         self._current_row = -1
         self._selected = None
         self.set_error("")
         self.stateChanged.emit()
+        # 搜到结果就自动选中第一条（对齐 Widgets 版 `_set_results` 的 `selectRow(0)`）：
+        # 用户可以直接点「选定」，不必每次都先点一行
+        if self._results:
+            self.selectRow(0)
 
     @Slot(int)
     def selectRow(self, row: int) -> None:

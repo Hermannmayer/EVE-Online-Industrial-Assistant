@@ -145,16 +145,6 @@ def test_inventory_page_theme_listener(qapp, mock_db):
         assert FLUENT_LIGHT["TEXT_SECONDARY"] in page._hangar_tab._count_label.styleSheet()
 
 
-def test_paste_import_dialog_show_event(qapp, mock_db):
-    from ui_pyside6.dialogs.hangar_dialogs import PasteImportDialog
-
-    dlg = PasteImportDialog("测试机库")
-    assert hasattr(dlg, "showEvent")
-    apply_theme("light")
-    dlg.showEvent(QShowEvent())
-    assert FLUENT_LIGHT["TEXT_SECONDARY"] in dlg._hint.styleSheet()
-
-
 def test_import_review_dialog_show_event(qapp, mock_db):
     from ui_pyside6.views.inventory.review_dialog import ImportReviewDialog
 

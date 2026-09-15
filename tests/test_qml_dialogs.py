@@ -1164,13 +1164,17 @@ def test_input_bridge_rejects_out_of_range_choice(qapp):
 
 @pytest.fixture
 def item_search_factory(qapp, monkeypatch):
-    monkeypatch.setattr(
-        "ui_qml.bridge.item_search_bridge.find_items",
-        lambda text: [
-            {"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium"},
-            {"type_id": 35, "zh_name": "类晶体胶矿", "en_name": "Pyerite"},
-        ],
-    )
+    """搜索源按词返回不同结果 —— 这样才分得出「选择跟着新结果走」还是「留着旧行号」。"""
+
+    def _find(text: str) -> list[dict]:
+        if "三钛" in text:
+            return [
+                {"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium"},
+                {"type_id": 35, "zh_name": "类晶体胶矿", "en_name": "Pyerite"},
+            ]
+        return [{"type_id": 36, "zh_name": "同位聚合体", "en_name": "Mexallon"}]
+
+    monkeypatch.setattr("ui_qml.bridge.item_search_bridge.find_items", _find)
     from ui_qml.bridge.item_search_bridge import ItemSearchQmlDialog
 
     return lambda: ItemSearchQmlDialog(None, "搜索匹配物品")
@@ -1210,26 +1214,30 @@ def test_item_search_only_result_is_adopted_without_clicking(qapp, monkeypatch):
     bridge = ItemSearchBridge()
     bridge.setQuery("三钛")
     bridge.runSearch()
-    assert bridge.hasSelection is False
+    assert len(bridge.rows) == 1
     bridge.accept()
     assert bridge.selected_item() == {"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium"}
 
 
-def test_item_search_rerun_clears_stale_selection(item_search_factory):
-    """换了搜索词就该丢掉上次的选择 —— 否则「选定」会把上一个物品落库。"""
+def test_item_search_rerun_resets_to_the_first_result(item_search_factory):
+    """换搜索词后选择要跟着重置到新结果的第一条，不能留着上一次的行号。
+
+    留着行号就是**指向另一个物品**（结果集已经换了），「选定」会把错的东西落库。
+    对齐 Widgets 版：它每次重建模型顺带清掉，这里由 `runSearch` 显式重置。
+    """
     dialog = item_search_factory()
     try:
         bridge = dialog.bridge
         bridge.setQuery("三钛")
         bridge.runSearch()
-        bridge.selectRow(0)
-        assert dialog.selected_item() is not None
+        bridge.selectRow(1)
+        assert dialog.selected_item()["zh_name"] == "类晶体胶矿"
 
-        bridge.setQuery("类晶体")
+        bridge.setQuery("同位")
         bridge.runSearch()
-        assert dialog.selected_item() is None
-        bridge.accept()
-        assert "请先在搜索结果中选择物品" in bridge.error
+        selected = dialog.selected_item()
+        assert selected is not None, "搜到结果就该选中第一条"
+        assert selected["zh_name"] == "同位聚合体", "选择必须跟着新结果走，不能停在旧行号上"
     finally:
         dialog.deleteLater()
 
@@ -1290,3 +1298,61 @@ def test_material_coverage_empty_state(qapp, monkeypatch):
     assert bridge.rowCount == 0
     assert bridge.emptyText == "该机库未被任何计划用作材料机库"
     assert bridge.statusText == "关联计划 0 条"
+
+
+# ── 机库三个对话框（编辑数量 / 批量成本价 / 手动添加）──
+
+
+def test_edit_qty_dialog_loads_without_warnings():
+    from ui_qml.bridge.hangar_dialogs import EditQtyQmlDialog
+
+    _assert_loads_and_quiet(lambda: EditQtyQmlDialog("三钛合金", 100), "编辑数量")
+
+
+def test_batch_cost_price_dialog_loads_without_warnings():
+    from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
+
+    _assert_loads_and_quiet(BatchCostPriceQmlDialog, "批量设置成本价")
+
+
+def test_add_item_dialog_loads_without_warnings(qapp, monkeypatch):
+    monkeypatch.setattr("ui_qml.bridge.item_search_bridge.find_items", lambda text: [])
+    from ui_qml.bridge.hangar_dialogs import AddItemQmlDialog
+
+    _assert_loads_and_quiet(lambda: AddItemQmlDialog("矿仓"), "手动添加物品")
+
+
+def test_edit_qty_returns_the_spun_value(qapp):
+    """整数微调框：输入不出非法值，所以 quantity() 恒为有效值（原版是文本框，非数字返回 -1）。"""
+    from ui_qml.bridge.hangar_dialogs import EditQtyQmlDialog
+
+    dlg = EditQtyQmlDialog("三钛合金", 100)
+    try:
+        assert dlg.quantity() == 100, "初值该是当前数量"
+        dlg.bridge.setValue(250)
+        dlg.bridge.accept()
+        assert dlg.quantity() == 250
+    finally:
+        dlg.deleteLater()
+
+
+def test_add_item_returns_type_qty_cost(qapp, monkeypatch):
+    monkeypatch.setattr(
+        "ui_qml.bridge.item_search_bridge.find_items",
+        lambda text: [{"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium"}],
+    )
+    monkeypatch.setattr("ui_qml.bridge.hangar_dialogs.get_item_price", lambda type_id: 5.5)
+    from ui_qml.bridge.hangar_dialogs import AddItemQmlDialog
+
+    dlg = AddItemQmlDialog("矿仓")
+    try:
+        assert dlg.result_data() is None, "还没选物品时不该有结果"
+        dlg.bridge.setQuery("三钛")
+        dlg.bridge.runSearch()
+        # 选中时按市场价带出成本价（原 `_on_row_selected` 的行为）
+        assert dlg.bridge.cost == 5.5
+        dlg.bridge.setQuantity(7)
+        dlg.bridge.accept()
+        assert dlg.result_data() == (34, 7, 5.5)
+    finally:
+        dlg.deleteLater()

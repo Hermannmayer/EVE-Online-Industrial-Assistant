@@ -31,11 +31,6 @@ from services.inventory_manager import (
     update_cost_price,
     update_quantity,
 )
-from ui_pyside6.dialogs.hangar_dialogs import (
-    AddItemDialog,
-    BatchCostPriceDialog,
-    EditQtyDialog,
-)
 from ui_pyside6.table_sort import SortPreservingTableView
 
 from .inventory_helpers import InvTableModel
@@ -302,7 +297,9 @@ class HangarTab(QWidget):
         return item.get("display_name") or item.get("zh_name") or item.get("en_name") or str(item.get("type_id", ""))
 
     def _on_edit_qty(self, item: dict):
-        dlg = EditQtyDialog(self._item_name(item), item["quantity"], self)
+        from ui_qml.bridge.hangar_dialogs import EditQtyQmlDialog
+
+        dlg = EditQtyQmlDialog(self._item_name(item), item["quantity"], self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             qty = dlg.quantity()
             if qty >= 0:
@@ -322,7 +319,9 @@ class HangarTab(QWidget):
 
     def _on_edit_cost_batch(self, items: list[dict]):
         """批量设置成本价：吉他卖价/买价/均价 × 材料倍率，或手动输入数字。"""
-        dlg = BatchCostPriceDialog(self)
+        from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
+
+        dlg = BatchCostPriceQmlDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         source = dlg.price_type()
@@ -380,10 +379,12 @@ class HangarTab(QWidget):
         self._refresh()
 
     def _on_add_item(self):
+        from ui_qml.bridge.hangar_dialogs import AddItemQmlDialog
+
         if not self._page.hangar_id():
             return
         hangar_name = self._page._hangar_combo.currentText()
-        dlg = AddItemDialog(hangar_name, self)
+        dlg = AddItemQmlDialog(hangar_name, self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         data = dlg.result_data()

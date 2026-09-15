@@ -399,6 +399,36 @@ def _material_coverage_factory() -> Any:
     return MaterialCoverageQmlDialog(7, "矿仓")
 
 
+def _edit_qty_factory() -> Any:
+    """编辑数量 —— 整数形态的取值对话框。"""
+    from ui_qml.bridge.hangar_dialogs import EditQtyQmlDialog
+
+    return EditQtyQmlDialog("三钛合金", 1000)
+
+
+def _batch_cost_price_factory() -> Any:
+    """批量设置成本价 —— 市场价来源（倍率行可见的那一支）。"""
+    from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
+
+    return BatchCostPriceQmlDialog()
+
+
+def _add_item_factory() -> Any:
+    """手动添加物品 —— 搜索源换成固定样本（快照不查库）。"""
+    import ui_qml.bridge.item_search_bridge as mod
+
+    mod.find_items = lambda text: [  # type: ignore[assignment]
+        {"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium"},
+        {"type_id": 35, "zh_name": "类晶体胶矿", "en_name": "Pyerite"},
+    ]
+    from ui_qml.bridge.hangar_dialogs import AddItemQmlDialog
+
+    dlg = AddItemQmlDialog("矿仓")
+    dlg.bridge.setQuery("矿")  # type: ignore[attr-defined]
+    dlg.bridge.runSearch()  # type: ignore[attr-defined]
+    return dlg
+
+
 # key → (工厂函数, 默认尺寸)；工厂延迟导入，避免拖慢主页面快照
 _DIALOGS: dict[str, tuple[Any, tuple[int, int]]] = {
     "procurement": (_procurement_factory, (760, 820)),
@@ -409,6 +439,9 @@ _DIALOGS: dict[str, tuple[Any, tuple[int, int]]] = {
     "input_dialog": (_input_dialog_factory, (440, 220)),
     "item_search": (_item_search_factory, (620, 460)),
     "material_coverage": (_material_coverage_factory, (640, 500)),
+    "edit_qty": (_edit_qty_factory, (400, 190)),
+    "batch_cost_price": (_batch_cost_price_factory, (420, 260)),
+    "add_item": (_add_item_factory, (620, 520)),
 }
 
 

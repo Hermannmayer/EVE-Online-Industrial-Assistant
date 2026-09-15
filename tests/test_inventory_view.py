@@ -535,57 +535,74 @@ class TestBlueprintTableModel:
 
 
 class TestBatchCostPriceDialog:
-    """批量设置成本价对话框 — 价格来源切换 / 折扣 / 手动输入"""
+    """批量设置成本价对话框 — 价格来源切换 / 倍率 / 手动输入（阶段 4b 已迁 QML）。
+
+    断言从 Widgets 控件（`_discount` / `_manual` / `_source`）改成桥的属性 ——
+    行为契约不变，所以下面几条断言值都保持原样。
+    """
 
     def test_defaults(self, qapp):
         """默认吉他卖价 + 倍率 1.0（跟随生产规划页），倍率可见、手动隐藏"""
-        from ui_pyside6.views.inventory.hangar_tab import BatchCostPriceDialog
+        from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
 
-        dlg = BatchCostPriceDialog()
-        assert dlg.price_type() == "sell"
-        assert dlg.discount() == 1.0  # 不再是硬编码 0.9
-        assert not dlg._discount.isHidden()
-        assert dlg._manual.isHidden()
-        # 范围与生产规划页工具栏的倍率一致（可溢价，不只是打折）
-        assert dlg._discount.maximum() == 10.0
+        dlg = BatchCostPriceQmlDialog()
+        try:
+            assert dlg.price_type() == "sell"
+            assert dlg.discount() == 1.0  # 不再是硬编码 0.9
+            assert dlg.bridge.isManual is False
+            # 范围与生产规划页工具栏的倍率一致（可溢价，不只是打折）
+            assert dlg.bridge.multiplierMax == 10.0
+        finally:
+            dlg.deleteLater()
 
     def test_mult_follows_settings_and_persists(self, qapp):
         """初值跟随生产规划页的材料倍率；确认后写回同一字段。"""
         from services.user_settings import get_material_price_mult, set_material_price_mult
-        from ui_pyside6.views.inventory.hangar_tab import BatchCostPriceDialog
+        from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
 
         set_material_price_mult(1.25)
-        dlg = BatchCostPriceDialog()
-        assert dlg.discount() == pytest.approx(1.25)
+        dlg = BatchCostPriceQmlDialog()
+        try:
+            assert dlg.discount() == pytest.approx(1.25)
 
-        dlg._discount.setValue(0.8)
-        dlg.accept()  # 确认才写回（拖动旋钮不写盘）
-        assert get_material_price_mult() == pytest.approx(0.8)
+            dlg.bridge.setMultiplier(0.8)
+            dlg.bridge.accept()  # 确认才写回（改旋钮不写盘）
+            assert get_material_price_mult() == pytest.approx(0.8)
+        finally:
+            dlg.deleteLater()
 
     def test_switch_to_manual(self, qapp):
-        """切到手动输入：折扣隐藏、手动价格可见"""
-        from ui_pyside6.views.inventory.hangar_tab import BatchCostPriceDialog
+        """切到手动输入：倍率行隐藏、手动价格行显示"""
+        from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
 
-        dlg = BatchCostPriceDialog()
-        dlg._source.setCurrentIndex(3)
-        assert dlg.price_type() == "manual"
-        assert dlg._discount.isHidden()
-        assert not dlg._manual.isHidden()
+        dlg = BatchCostPriceQmlDialog()
+        try:
+            dlg.bridge.setSourceIndex(3)
+            assert dlg.price_type() == "manual"
+            assert dlg.bridge.isManual is True
+        finally:
+            dlg.deleteLater()
 
     def test_discount_roundtrip(self, qapp):
-        from ui_pyside6.views.inventory.hangar_tab import BatchCostPriceDialog
+        from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
 
-        dlg = BatchCostPriceDialog()
-        dlg._discount.setValue(0.8)
-        assert dlg.discount() == 0.8
+        dlg = BatchCostPriceQmlDialog()
+        try:
+            dlg.bridge.setMultiplier(0.8)
+            assert dlg.discount() == 0.8
+        finally:
+            dlg.deleteLater()
 
     def test_manual_price_roundtrip(self, qapp):
-        from ui_pyside6.views.inventory.hangar_tab import BatchCostPriceDialog
+        from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
 
-        dlg = BatchCostPriceDialog()
-        dlg._source.setCurrentIndex(3)
-        dlg._manual.setValue(1234.56)
-        assert dlg.manual_price() == 1234.56
+        dlg = BatchCostPriceQmlDialog()
+        try:
+            dlg.bridge.setSourceIndex(3)
+            dlg.bridge.setManualPrice(1234.56)
+            assert dlg.manual_price() == 1234.56
+        finally:
+            dlg.deleteLater()
 
 
 # ══════════════════════════════════════

@@ -396,10 +396,10 @@ class InventoryBridge(QObject):
         from PySide6.QtWidgets import QDialog
 
         from services.inventory_manager import add_item
-        from ui_pyside6.dialogs.hangar_dialogs import AddItemDialog
+        from ui_qml.bridge.hangar_dialogs import AddItemQmlDialog
 
         parent = self._shell if isinstance(self._shell, QWidget) else None
-        dialog = AddItemDialog(self._current_hangar_label(), parent)
+        dialog = AddItemQmlDialog(self._current_hangar_label(), parent)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         data = dialog.result_data()
@@ -416,13 +416,13 @@ class InventoryBridge(QObject):
         from PySide6.QtWidgets import QDialog
 
         from services.inventory_manager import update_quantity
-        from ui_pyside6.dialogs.hangar_dialogs import EditQtyDialog
+        from ui_qml.bridge.hangar_dialogs import EditQtyQmlDialog
 
         item = self._items.item_at(row)
         if not item:
             return
         parent = self._shell if isinstance(self._shell, QWidget) else None
-        dialog = EditQtyDialog(self._item_name(item), item["quantity"], parent)
+        dialog = EditQtyQmlDialog(self._item_name(item), item["quantity"], parent)
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.quantity() >= 0:
             update_quantity(item["id"], dialog.quantity())
             self.refreshItems()
@@ -456,7 +456,7 @@ class InventoryBridge(QObject):
         from PySide6.QtWidgets import QDialog
 
         from services.inventory_manager import update_cost_price
-        from ui_pyside6.dialogs.hangar_dialogs import BatchCostPriceDialog
+        from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
 
         items: list[dict] = []
         for row in rows:
@@ -467,7 +467,7 @@ class InventoryBridge(QObject):
             return
 
         parent = self._shell if isinstance(self._shell, QWidget) else None
-        dialog = BatchCostPriceDialog(parent)
+        dialog = BatchCostPriceQmlDialog(parent)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 

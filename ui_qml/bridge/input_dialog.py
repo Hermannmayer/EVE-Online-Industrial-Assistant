@@ -151,6 +151,15 @@ class InputBridge(DialogBridge):
     def integer(self) -> int:
         return int(self._result or 0)
 
+    def value_now(self) -> float:
+        """当前输入值（不等点确定）。
+
+        给 Python 侧读的普通方法：直接读 `self.value` 在 mypy 眼里是 `Property`
+        描述符而不是 float（PySide 的桩没把描述符协议建模出来），同
+        `PlanTableBridge.scroll_position` 的理由。
+        """
+        return self._value
+
 
 class InputQmlDialog(QmlDialog):
     """QML 版取值对话框。静态方法对齐 `QInputDialog` 的签名与 `(value, ok)` 返回值。"""
