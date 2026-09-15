@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import QThread, QTimer
 from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QWidget
 
@@ -29,10 +31,10 @@ from ui_qml.bridge.industry_bridge import IndustryBridge
 from ui_qml.bridge.manufacturable_items_bridge import ManufacturableItemsQmlDialog as ManufacturableItemsDialog
 from ui_qml.bridge.materials_dialog_bridge import MaterialsSummaryQmlDialog as MaterialsSummaryDialog
 from ui_qml.bridge.output_dialog_bridge import OutputSummaryQmlDialog as OutputSummaryDialog
-from ui_qml.host import PageHost
+from ui_qml.industry_page import IndustryQmlHost, make_qml_host
 
-#: QML 页面路径（相对 ui_qml/qml/）
-QML_PAGE = "pages/IndustryPage.qml"
+if TYPE_CHECKING:
+    from ui_qml.bridge.plan_table_bridge import PlanTableBridge
 
 #: 人物选择已移除，全应用固定用 main（与旧 TopToolbar.get_char_name 一致）
 MAIN_CHAR_NAME = "main"
@@ -55,6 +57,11 @@ class IndustryPage(QWidget):
 
     `_plan_table_widget` 仍然存在，但以 `headless=True` 构造 —— 它只作业务控制器
     与对话框的窗口父，表格本身由 `IndustryPage.qml` 里的 `PlanTablePane` 渲染。
+
+    阶段 5（批次 5）：类本身升格为**控制器** —— QML 宿主（两个 context property 的
+    组装）移到了 `ui_qml/industry_page.py`，本文件只是调用它。`IndustryPage(main_window)`
+    仍是**完整可用**的页面（注册表页工厂失败时的 Widgets 回退走这条），
+    而注册表路径返回的是那个**裸宿主**（见 `build_industry_page`）。
     """
 
     def __init__(self, main_window):
@@ -75,7 +82,7 @@ class IndustryPage(QWidget):
         root.setSpacing(0)
 
         # 计划表：只作业务控制器（headless 不再自建 QML 宿主），桥注入给 QML 树
-        self._plan_table_widget = PlanTable(headless=True)
+        self._plan_table_widget: PlanTable = PlanTable(headless=True)
         # 注入价格设置/人物访问器（母项拆解利润预览用）
         self._plan_table_widget.set_price_context(get_price_settings, lambda: MAIN_CHAR_NAME)
         self._plan_table_widget.plan_updated.connect(self.load_plans)
@@ -83,15 +90,10 @@ class IndustryPage(QWidget):
         self._plan_table_widget.plan_detail_requested.connect(self._on_plan_detail)
         self._plan_table_widget.launcher_requested.connect(self._on_launch_wizard_from_row)
 
-        self._bridge = IndustryBridge(self, self)
-        self._host = PageHost(
-            QML_PAGE,
-            context={
-                "bridge": self._bridge,
-                "planTableBridge": self._plan_table_widget.bridge,
-            },
-            parent=self,
-        )
+        self._bridge: IndustryBridge = IndustryBridge(self, self)
+        # 整页 QML 宿主：`bridge`（本页骨架桥）+ `planTableBridge`（计划表桥）两个
+        # context property 由 `ui_qml/industry_page.py` 组装 —— 本文件不再拼 QML context。
+        self._host: IndustryQmlHost = make_qml_host(self)
         root.addWidget(self._host)
 
         # ── 初始加载 ───────────────────────────────────────────
@@ -105,6 +107,27 @@ class IndustryPage(QWidget):
 
         # ── 后台补拉工业数据（成本指数/设施，首次访问时自动）───────
         QTimer.singleShot(200, self._check_industry_data)
+
+    # ── 给 QML 层/注册表的访问器 ────────────────────────────────
+
+    @property
+    def host(self) -> IndustryQmlHost:
+        """整页 QML 宿主（注册表页工厂把它作为页面控件返回）。"""
+        return self._host
+
+    @property
+    def bridge(self) -> IndustryBridge:
+        """页面骨架桥（宿主注入为 context property `bridge`）。"""
+        return self._bridge
+
+    @property
+    def plan_table_bridge(self) -> PlanTableBridge:
+        """计划表桥（宿主注入为 context property `planTableBridge`）。"""
+        return self._plan_table_widget.bridge
+
+    @property
+    def plan_table(self) -> PlanTable:
+        return self._plan_table_widget
 
     # ── 倒计时 ────────────────────────────────────────────────
 
@@ -128,14 +151,20 @@ class IndustryPage(QWidget):
         if expired_visible or expired_db:
             self.load_plans()
 
-    def showEvent(self, event):
-        """页面重新可见时同步价格设置。
+    def on_shown(self) -> None:
+        """页面重新可见时的同步（两条路径共用）。
 
         材料倍率与仓库页（导入预览 / 批量设置成本价）是**同一个** settings.json 字段，
         在那边改完回到本页时，工具栏旋钮不能还停在旧值。
+
+        注册表路径下 `content_stack` 持有的是**裸宿主**，控制器的 `showEvent` 不会被
+        Qt 调到；`IndustryQmlHost.showEvent` 因此显式转发到这里，两条路径行为一致。
         """
-        super().showEvent(event)
         self._bridge.reloadPriceSettings()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.on_shown()
 
     # ── load_plans ────────────────────────────────────────────
 
