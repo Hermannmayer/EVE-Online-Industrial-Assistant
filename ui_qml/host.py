@@ -74,7 +74,38 @@ class PageHost(QQuickWidget):
         if status == QQuickWidget.Status.Error:
             errors = "; ".join(str(err).strip() for err in self.errors())
             log.error("QML 页面加载失败 %s: %s", self._qml_file, errors)
+            self._show_load_error(errors)
             self.load_failed.emit(errors)
+
+    def _show_load_error(self, errors: str) -> None:
+        """加载失败时在宿主上盖一块**看得见**的错误面。
+
+        原先只写日志 + 发信号，而宿主本身没有回退能力：六个页面的 Widgets 回退是注册表在
+        `build_page` 里做的，对话框根本没有回退，工业页那条回退路径又会加载同一份 QML。
+        结果是「一块空白，什么都不说」，用户只会觉得软件坏了、也不知道去看日志。
+
+        这里直接把它显示出来，**任何宿主都受益**（页面与对话框走的是同一个类）。
+        """
+        from PySide6.QtWidgets import QLabel
+
+        import ui_pyside6.theme as theme
+
+        label = QLabel(f"QML 加载失败：{self._qml_file}\n\n{errors}\n\n（详见日志）", self)
+        label.setObjectName("qml_load_error")
+        label.setWordWrap(True)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet(f"background: {theme.BG_DARK}; color: {theme.ACCENT_RED}; padding: 16px;")
+        label.setGeometry(self.rect())
+        label.show()
+        label.raise_()
+        self._error_label = label
+
+    def resizeEvent(self, event: object) -> None:
+        """错误面跟着宿主一起缩放（它是自绘覆盖层，不参与布局）。"""
+        super().resizeEvent(event)  # type: ignore[arg-type]
+        label = getattr(self, "_error_label", None)
+        if label is not None:
+            label.setGeometry(self.rect())
 
     # ── 公开 API ──
 

@@ -1583,3 +1583,25 @@ def test_init_wizard_dialog_loads_without_warnings(qapp):
     from ui_qml.bridge.init_wizard_bridge import InitWizardQmlDialog
 
     _assert_loads_and_quiet(lambda: InitWizardQmlDialog(), "数据初始化向导")
+
+
+def test_page_host_shows_a_visible_error_when_qml_fails(qapp):
+    """QML 加载失败必须**看得见**，不能只写日志。
+
+    以前只 log + 发信号，而宿主自己不会回退（页面的回退在注册表里，对话框没有回退），
+    结果是一块空白 —— 用户只会觉得软件坏了。这条守住「失败要显示出来」。
+    """
+    from PySide6.QtWidgets import QLabel
+
+    from ui_qml.host import PageHost
+
+    host = PageHost("pages/绝对不存在的页面.qml")
+    try:
+        _spin(120)
+        assert not host.ok(), "这份 QML 本来就该加载失败"
+        label = host.findChild(QLabel, "qml_load_error")
+        assert label is not None, "加载失败时应当盖一块错误面"
+        assert "不存在" in label.text()
+    finally:
+        host.deleteLater()
+        _spin(60)
