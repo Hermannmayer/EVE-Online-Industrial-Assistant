@@ -846,13 +846,6 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
 
         self.content_stack.setCurrentIndex(old_idx)
 
-    def _show_settings(self):
-        """导航菜单 → 设置：打开完整设置对话框"""
-        from ui_pyside6.views.settings_view import SettingsDialog
-
-        dlg = SettingsDialog(self, self)
-        dlg.exec()
-
     def _show_init_wizard(self, auto_mode: bool = False):
         from ui_pyside6.views.init_wizard import InitWizard
 
@@ -884,14 +877,6 @@ class MainWindow(MainWindowNavMixin, QMainWindow):
         if current and hasattr(current, "refresh_display"):
             current.refresh_display()
             self._status_label.setText("页面已刷新")
-
-    def _open_all_items(self):
-        from ui_pyside6.views.all_items_view import AllItemsDialog
-
-        if not hasattr(self, "_all_items_dialog") or self._all_items_dialog is None:
-            self._all_items_dialog = AllItemsDialog(self)
-        self._all_items_dialog.show()
-        self._all_items_dialog.raise_()
 
     def refresh_price_time(self):
         self._refresh_price_age()
