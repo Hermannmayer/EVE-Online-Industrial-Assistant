@@ -201,7 +201,18 @@ class ShellWindowBridge(QObject):
 
     @Slot()
     def closeWindow(self) -> None:
-        self._window.close()
+        """关闭主窗口 —— **必须延迟一拍**。
+
+        本槽是从 QML 的 `onClicked` 里调进来的，而关闭会同步拆掉 QML 场景
+        （页面 Item + 根对象）。在信号处理器还没返回时就销毁它自己所属的对象，
+        Qt 会直接报 CRITICAL：
+
+            Object 0x… destroyed while one of its QML signal handlers is in progress.
+            … ShellTitleBar.qml:63: function() { [native code] }
+
+        排到下一个事件循环，处理器先返回，再关。（与「二级菜单弹出延迟一拍」同因。）
+        """
+        QTimer.singleShot(0, self._window.close)
 
     @Slot()
     def startMove(self) -> None:
@@ -214,7 +225,16 @@ class ShellWindowBridge(QObject):
         self._window.startSystemResize(Qt.Edge(edges))
 
     def notify(self) -> None:
-        """外壳状态变了 → 让 QML 重新取一遍（绑定靠这个信号）。"""
+        """外壳状态变了 → 让 QML 重新取一遍（绑定靠这个信号）。
+
+        **退出期直接不发**：那一刻 QML 上下文正在被拆，让场景重算只会在
+        `Theme` / `shell` 已经取不到的时候求值，成片抛
+        「Cannot read property 'xxx' of null」（实测退出时能刷出两百多行）。
+        """
+        from core.qt_noise import shutting_down
+
+        if shutting_down():
+            return
         self.stateChanged.emit()
 
 
@@ -457,6 +477,7 @@ class ShellWindow(QQuickView):
         begin_shutdown()
         _hr.clear_trigger()
         self._closing = True
+        self._teardown_qml()  # 先拆场景，再谈别的（见该方法说明）
         theme.remove_theme_listener(self._on_theme_changed)
         theme.save_window_geometry(self)
         for w in QApplication.topLevelWidgets():
@@ -466,6 +487,23 @@ class ShellWindow(QQuickView):
         if self._tray_icon:
             self._tray_icon.hide()
         super().closeEvent(event)  # type: ignore[arg-type]
+
+    def _teardown_qml(self) -> None:
+        """先把 QML 场景拆干净，再让引擎/窗口析构。
+
+        顺序很要紧：反过来（引擎先走、场景还在）时，任何一次绑定重算都会撞上
+        已经被拆掉的上下文，抛 `Cannot read property 'xxx' of null`。
+        页面 Item 与根对象都在引擎**还活着**的时候显式删掉，绑定就不会有机会
+        对着死上下文求值。
+
+        与 `closeEvent` 一样不做幂等保护：重复调用时 `setSource(QUrl())` 是空操作。
+        """
+        for page in self._pages.values():
+            if page.item is not None:
+                page.item.deleteLater()
+        self._pages.clear()
+        if self.rootObject() is not None:
+            self.setSource(QUrl())  # 丢掉根对象（QQuickView 的公开做法）
 
     def _stop_running_threads(self) -> None:
         """等所有后台线程退出（可重入：closeEvent 与 aboutToQuit 都会调）。
@@ -559,6 +597,10 @@ class ShellWindow(QQuickView):
     def _resize_pages(self) -> None:
         """页面尺寸跟随内容区（Item 之间的尺寸同步得显式做，QML 里写锚点也行，
         但页面是 Python 造的，拿不到那段 QML，所以在这里连信号）。"""
+        from core.qt_noise import shutting_down
+
+        if shutting_down() or not self._pages:
+            return
         w = self._content_area.width()
         h = self._content_area.height()
         for page in self._pages.values():

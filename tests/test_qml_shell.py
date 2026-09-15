@@ -205,6 +205,57 @@ def test_every_icon_key_used_by_the_shell_resolves_to_a_real_svg():
     assert not missing, f"这些图标键映射不到 SVG：{missing}（会静默显示成空白）"
 
 
+# ── 3b. 退出期的拆除顺序 ───────────────────────────────────
+
+
+def test_closing_dismantles_the_qml_scene_before_the_engine_goes_away(shell, app):
+    """关闭时必须**先**拆掉页面与根对象，再让引擎/窗口析构。
+
+    反序（引擎先走、场景还在）时，任何一次绑定重算都会撞上已经被拆掉的上下文，
+    抛成片 `Cannot read property 'xxx' of null`（`Theme` / `shell` 全变 null）。
+    """
+    assert shell._pages, "没有页面可拆，护栏自身失效"
+    shell.show()  # 没显示过的窗口 `close()` 不派发 closeEvent
+    shell._bridge.closeWindow()
+    app.processEvents()  # 关闭是延迟一拍的（见 closeWindow 的说明），这里放它跑
+
+    assert shell._pages == {}, "关闭后页面 Item 没被拆掉"
+    assert shell.rootObject() is None, "关闭后根对象还在（QML 场景没清）"
+
+
+def test_close_window_defers_so_the_qml_handler_can_return(shell, app):
+    """`closeWindow()` 必须**延迟一拍**再真的关。
+
+    它是从 QML 的 `onClicked` 调进来的，而关闭会同步拆掉 QML 场景 —— 在信号处理器
+    还没返回时销毁它自己所属的对象，Qt 直接报 CRITICAL：
+    「Object 0x… destroyed while one of its QML signal handlers is in progress」。
+    """
+    shell.show()
+    shell._bridge.closeWindow()
+    assert shell.rootObject() is not None, "closeWindow() 立刻就把场景拆了 —— 处理器还在栈上"
+    app.processEvents()
+    assert shell.rootObject() is None, "延迟一拍之后应当已经关掉"
+
+
+def test_bridge_stops_notifying_qml_after_shutdown_begins(shell, monkeypatch):
+    """退出期不许再发 `stateChanged` —— 那会让整个场景重算。
+
+    外壳里几乎所有 QML 属性都挂在它上面：一发就是几百次绑定求值，
+    而那时上下文正在被拆，必然成片报 null。
+    """
+    from core import qt_noise
+
+    seen: list[int] = []
+    shell._bridge.stateChanged.connect(lambda: seen.append(1))
+
+    shell._bridge.notify()
+    assert len(seen) == 1, "运行期 notify 应当照常发"
+
+    monkeypatch.setattr(qt_noise, "_shutting_down", True)
+    shell._bridge.notify()
+    assert len(seen) == 1, "退出期 notify 不该再发"
+
+
 # ── 4. 状态存取 ────────────────────────────────────────────
 
 

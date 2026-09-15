@@ -59,6 +59,20 @@ def no_auto_price_download(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_qt_noise_state():
+    """复位 `core.qt_noise` 的退出标记。
+
+    它是**进程级全局**：某个用例跑过 `begin_shutdown()`（构造外壳并关窗就会）之后，
+    同进程后续用例的 `ShellWindowBridge.notify()` 会静默变成空操作 —— 表现为
+    「后面的外壳用例莫名其妙拿不到 QML 更新」，且很难查。每个用例结束复位。
+    """
+    yield
+    from core import qt_noise
+
+    qt_noise._shutting_down = False
+
+
+@pytest.fixture(autouse=True)
 def isolate_user_settings(tmp_path, monkeypatch):
     """把 settings.json 指向临时文件 —— 测试绝不写用户真实数据。
 

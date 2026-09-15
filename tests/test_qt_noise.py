@@ -51,7 +51,8 @@ def test_the_shell_marks_shutdown_when_the_close_button_is_used(app, mock_db, mo
         win = ShellWindow()
         win.show()  # 没显示过的窗口 `close()` 不派发 closeEvent（Qt 的行为）
         assert qt_noise.shutting_down() is False, "刚起来就当成在退出了"
-        win._bridge.closeWindow()  # 右上角关闭按钮走的就是这条
+        win._bridge.closeWindow()  # 右上角关闭按钮走的就是这条（延迟一拍才真关）
+        app.processEvents()
         assert qt_noise.shutting_down() is True
         win.deleteLater()
     finally:
