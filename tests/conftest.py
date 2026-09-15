@@ -29,19 +29,33 @@ def reset_db_locks_each_test():
     reset_db_locks()
 
 
+def _refuse_network(*args, **kwargs):
+    """应用**自动**发起的下载路径：测试里一律空转。"""
+    return None
+
+
 @pytest.fixture(autouse=True)
-def no_auto_price_download():
-    """阻止测试中 MainWindow 构造触发真实价格检查/下载。
+def no_auto_price_download(monkeypatch):
+    """阻断应用**自动发起**的网络：价格检查/下载、SDE/ESI 初始化。
 
-    MainWindow.__init__ 会调用 _init_price_check → PriceCheckWorker → 本地
-    market_prices 过期时启动 PriceUpdateWorker 真实下载 ESI。测试不应发起
-    真实网络请求：后台下载线程会存活到后续测试，与 Qt 清理冲突导致
-    Segmentation fault（access violation）。全局静默该检查。
+    原先这里 patch 的是 `MainWindow._init_price_check` —— Widgets 外壳的一个私有方法。
+    外壳换成 QML（批次 6.1）之后那个 patch 点**直接消失**，而它在 autouse fixture 里，
+    等于每个测试的 setup 都炸。教训：**别把全局安全网挂在某一层外壳的私有方法上**。
+
+    现在挂在**会自己发请求的那几个入口**上（两条价格 worker + 价格更新服务），
+    与外壳无关、与页面无关：谁在什么时候起线程都拦得住。
+
+    **不**在 `aiohttp.ClientSession` 这一层封：那样会把 `test_client.py` /
+    `test_price_history.py` 这些「用 mock 会话测客户端本身」的用例一起打挂
+    —— 它们要的正是真实的 ClientSession 语义。
     """
-    from ui_pyside6.main_window import MainWindow
+    from services.importers import getprices
+    from ui_qml.workers import main_window_workers
 
-    with patch.object(MainWindow, "_init_price_check", lambda self: None):
-        yield
+    monkeypatch.setattr(main_window_workers.PriceCheckWorker, "run", _refuse_network)
+    monkeypatch.setattr(main_window_workers.PriceUpdateWorker, "run", _refuse_network)
+    monkeypatch.setattr(getprices, "run_price_update", _refuse_network)
+    yield
 
 
 @pytest.fixture(autouse=True)

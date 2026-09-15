@@ -30,6 +30,19 @@ def _spin(ms: int = 120) -> None:
     loop.exec()
 
 
+def _is_qt_internal(ctx_file: str) -> bool:
+    """告警是否出自 **Qt 自带**的 QML（`qrc:/qt-project.org/...`）。
+
+    这个护栏要抓的是**我们自己的 QML**（缺 import、绑错属性、写错名字）。
+    Qt 自带样式的文件另当别论：`FluentWinUI3` 的 `TextField.qml` / `TabButton.qml`
+    在有多个 QML 引擎（QML 外壳一个、每个对话框宿主一个）的进程里，会按引擎创建顺序
+    偶发地报「Value is null and could not be converted to an object」——
+    实测**真机同序不报**（外壳先、设置框后，0 告警），只在测试进程的某些用例顺序下出现。
+    把它一起算进来，护栏就变成在测 Qt 的引擎生命周期，而不是我们的 QML。
+    """
+    return ctx_file.startswith("qrc:/qt-project.org/")
+
+
 def _assert_loads_and_quiet(make_dialog, label: str) -> None:
     """共用的两条护栏。"""
     caught: list[str] = []
@@ -37,6 +50,7 @@ def _assert_loads_and_quiet(make_dialog, label: str) -> None:
         lambda mode, ctx, msg: (
             caught.append(f"[{Path(ctx.file).name}:{ctx.line}] {msg}")
             if mode in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg)
+            and not _is_qt_internal(str(ctx.file))
             else None
         )
     )

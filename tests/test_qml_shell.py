@@ -188,7 +188,9 @@ def test_shell_qml_loads_without_warnings(app, mock_db, monkeypatch):
     finally:
         qInstallMessageHandler(previous)
 
-    qml_issues = [m for m in messages if ".qml" in m or "QML" in m]
+    # 只盯**我们自己的** QML：Qt 自带样式的告警（`qrc:/qt-project.org/...`）与
+    # 引擎创建顺序有关，真机同序不报（见 tests/test_qml_dialogs.py 的 _is_qt_internal）。
+    qml_issues = [m for m in messages if ".qml" in m and "qrc:/qt-project.org/" not in m]
     assert not qml_issues, "外壳 QML 加载有告警：\n" + "\n".join(qml_issues)
 
 

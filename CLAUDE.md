@@ -25,12 +25,14 @@ PySide6 + SQLite 构建的 EVE Online 工业制造助手桌面应用。
 - ✅ 安全：`yaml.safe_load()`、不硬编码密钥
 
 ### 架构
-- 分层：`bootstrap/`（组合根/IOC 容器）→ `core/`（工具/常量）→ `domain/`（纯领域逻辑，无 DB/Qt/缓存 — formulas, bom, scoring, ports）→ `services/`（业务/DB 访问/repositories/门面编排）→ `ui_pyside6/`（UI）
+- 分层：`bootstrap/`（组合根/IOC 容器）→ `core/`（工具/常量）→ `domain/`（纯领域逻辑，无 DB/Qt/缓存 — formulas, bom, scoring, ports）→ `services/`（业务/DB 访问/repositories/门面编排）→ `ui_qml/`（QML UI，**新代码写这里**）
+- `ui_pyside6/` 是**待删除的旧 UI 层**：外壳与页面已迁完（批次 6.1），剩下的 Widgets 代码只作回退与共享件来源；`EVE_WIDGETS_SHELL=1` 可切回旧外壳
 - 依赖注入组合根在 `bootstrap/container.py`；`core/container.py` 仅为兼容转发，存量调用方随重构逐步迁移到 `bootstrap.container`
 - 4 库独立：`reference.db` / `market.db` / `user.db` / `blueprint.db`
 - DB 管理用 `services/database_manager.py`
 - UI 异步用 QThread + Signal 模式
-- 新 UI 组件必须 `add_theme_listener` + `_on_theme_changed`
+- 新 UI 组件：**QML 组件绑定 `Theme` 单例**（不要 `add_theme_listener` —— QML 侧靠属性绑定自动重绘）；
+  仍在 Widgets 里的组件才用 `add_theme_listener` + `_on_theme_changed`
 
 ### 铁律
 - 🎨 **配色**：所有颜色从 `ui_qml.theme.registry` 导入（旧路径 `ui_pyside6.theme` 只是属性转发器，迁移期仍可用；**QML 侧也读这一份**），禁止 hex/rgb/颜色名
@@ -80,8 +82,11 @@ core/          工具层（constants, paths, logger, cache, hot_reload；eve_for
 domain/        领域层（纯函数，无 DB/Qt/缓存 — formulas 制造公式, bom, scoring, ports）
 services/      业务层（database_manager, scoring_service, scoring_facade, inventory_manager, repositories/, etc.）
 ui_pyside6/    UI 层（main_window, theme, models/, workers/, views/, dialogs/）——**迁移中，逐步被 ui_qml 取代**
-ui_qml/        QML UI 层（host.py=QQuickWidget 宿主, bridge/=Python↔QML 桥, qml/=QML,
-               models/ 与 workers/ = 两套 UI 共用的表格模型与取数线程, theme/registry.py = 主题 token 源）
+ui_qml/        QML UI 层（**主 UI**）：
+               shell_window.py=主窗口（QQuickView）+ qml/shell/=外壳（标题栏/导航/状态栏）
+               qml/pages|dialogs|components/=页面与对话框；bridge/=Python↔QML 桥
+               host.py=对话框用的 QQuickWidget 宿主；registry.py=页面登记与 PageSpec
+               models/ 与 workers/ = 两套 UI 共用的表格模型与取数线程；theme/registry.py = 主题 token 源
 tools/         独立初始化工具
 scripts/       维护脚本（migrate_split_db, gen_api_docs）
 tests/         测试
@@ -102,10 +107,11 @@ data/          运行时数据（settings, score_settings, char_config, terminol
 | 改生产计划 | `services/plan_service.py` + `services/repositories/plan_repository.py` + `plan_*.py` | `docs/dev/flows.md`（计划节） |
 | 改数据库 Schema | `services/schema_migrations.py`（迁移函数注册） | `docs/dev/schema-migration.md`；`docs/dev/data.md` |
 | 改数据导入（SDE/ESI） | `services/importers/get*.py`、`services/init_service.py` | `docs/dev/flows.md`（初始化节） |
-| 改 UI 页面/异步任务 | `ui_pyside6/views/…`、`ui_pyside6/workers/…`、`ui_pyside6/models/…` | `docs/dev/architecture.md`；`docs/dev/api-reference.md` |
-| 看界面实际效果 | `scripts/ui_snapshot.py`（截图 + 控件树） | 见下「界面感知」 |
+| 改 UI 页面/异步任务 | QML 页面 `ui_qml/qml/pages/…` + 桥 `ui_qml/bridge/…`；共用模型/线程 `ui_qml/models/…`、`ui_qml/workers/…` | `docs/dev/architecture.md`；`docs/dev/api-reference.md` |
+| 改外壳（标题栏/导航/状态栏） | `ui_qml/shell_window.py` + `ui_qml/qml/shell/…` | `docs/dev/ui-blueprint.md`（区域命名） |
+| 看界面实际效果 | `scripts/shell_snapshot.py`（QML 外壳，`--real` 出真窗口图）、`scripts/ui_snapshot.py`（Widgets 回退路径） | 见下「界面感知」 |
 | 查/改 EVE 术语 | `data/terminology.json` + `services/terminology.py` | `docs/dev/glossary.md` |
-| 改 UI 配色 | `ui_pyside6/theme.py` | `docs/dev/architecture.md`（主题） |
+| 改 UI 配色 | `ui_qml/theme/registry.py` | `docs/dev/architecture.md`（主题） |
 
 ## 界面感知（改 UI 前必读）
 
@@ -115,10 +121,13 @@ data/          运行时数据（settings, score_settings, char_config, terminol
 只读代码理解不了界面。改 UI 前先跑一次快照，用截图确认现状，改完再跑一次对比：
 
 ```bash
-python scripts/ui_snapshot.py                    # 全部页面 → .claude/ui-snapshots/
-python scripts/ui_snapshot.py --pages industry   # 单页
-python scripts/ui_snapshot.py --theme eve-deep   # 换主题渲染
+python scripts/shell_snapshot.py                 # QML 外壳（离屏，验结构/配色）
+python scripts/shell_snapshot.py --real          # QML 外壳（真窗口，验字形/毛玻璃；数据目录自动隔离）
+python scripts/shell_snapshot.py --page industry # 切到某页再拍
+python scripts/ui_snapshot.py                    # Widgets 回退路径的全部页面
 ```
+
+`shell_snapshot.py` 会打印「装载了几个页面 / 当前页 / 内容区尺寸 / 可见页面数」并给退出码，可作为外壳的结构自检。**离屏下 `QFontDatabase` 是 0 个字体**（文字全成方框），字形必须用 `--real` 看。
 
 产出 `<page>.png`（整窗截图）与 `<page>.tree.md`（控件树：类名/objectName/文本/几何/可见性）。
 默认走 Qt offscreen 平台——不弹窗、不抢焦点、不受单实例锁影响，可反复执行。
