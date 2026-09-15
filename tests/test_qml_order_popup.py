@@ -92,9 +92,10 @@ def test_popup_title_matches_widgets_wording():
 
 class TestOrderPopupBridge:
     def test_set_orders_fills_both_tables(self, qapp, monkeypatch):
-        from ui_pyside6.views.query import query_order_popup as legacy
+        # 站点名缓存随批次 6.0 搬到 ui_qml.workers.order_workers（Widgets 版订单弹窗已删）
+        from ui_qml.workers import order_workers
 
-        monkeypatch.setitem(legacy._station_name_cache, _STATION, "Jita IV - Moon 4")
+        monkeypatch.setitem(order_workers._station_name_cache, _STATION, "Jita IV - Moon 4")
         bridge = OrderPopupBridge()
         bridge.set_orders(34, _NAME, [_order()], [_order(price=6.5, volume=99)])
 

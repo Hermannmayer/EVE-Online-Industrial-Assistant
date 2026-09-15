@@ -488,70 +488,29 @@ def sample_market_prices(temp_db):
 
 
 @pytest.fixture
-def main_window(app, mock_db):
-    """创建 MainWindow 实例用于 UI 测试。
+def main_window(app, mock_db, monkeypatch):
+    """主窗口（**QML 外壳**）—— 批次 6.1 起主窗口就是 `ui_qml.shell_window.ShellWindow`。
 
-    依赖 mock_db 避免真实数据库连接，测试完成后自动关闭窗口。
+    名字仍叫 `main_window`：几十个用例按这个名字取「主窗口」，改名的收益抵不上改动面。
+    `_init_price_check` 由全局的 `no_auto_price_download` 掐掉，这里不用再管。
     """
-    from ui_pyside6.main_window import MainWindow
+    from ui_qml.shell_window import ShellWindow
 
-    window = MainWindow()
+    window = ShellWindow()
     yield window
     window.close()
 
 
 @pytest.fixture
 def industry_page(main_window):
-    """创建 IndustryPage 实例用于 UI 测试。"""
+    """创建 IndustryPage 实例用于 UI 测试。
+
+    工业页是**还在 Widgets 里**的那一个（QML 只负责渲染，业务在控制器里），
+    所以它没随批次 6.2 的清理消失。
+    """
     from ui_pyside6.views.industry_view import IndustryPage
 
     page = IndustryPage(main_window)
-    yield page
-    page.deleteLater()
-
-
-@pytest.fixture
-def inventory_page(main_window):
-    """创建 InventoryPage 实例用于 UI 测试。
-
-    额外 patch services.inventory_manager._default_db 以确保 init_db() 使用 mock 数据库。
-    BlueprintTab 通过模块级 get_container 访问 ref/mkt 库（market_tree 等），
-    CI 无真实 database/ 目录，必须一并 patch。
-    """
-    from unittest.mock import MagicMock, patch
-
-    from ui_pyside6.views.inventory.inventory_page import InventoryPage
-
-    mock_mgr = MagicMock()
-    mock_conn = MagicMock()
-    mock_cursor = MagicMock()
-    mock_cursor.fetchone.return_value = (0,)
-    mock_cursor.fetchall.return_value = []
-    mock_conn.cursor.return_value = mock_cursor
-    mock_conn.executescript = MagicMock()
-    mock_conn.execute.return_value = mock_cursor
-
-    mock_cm = MagicMock()
-    mock_cm.__enter__ = MagicMock(return_value=mock_conn)
-    mock_cm.__exit__ = MagicMock(return_value=False)
-    mock_mgr.connect.return_value = mock_cm
-
-    with (
-        patch("services.inventory_manager._default_db", return_value=mock_mgr),
-        patch("ui_pyside6.views.inventory.blueprint_tab.get_container") as mock_cont,
-    ):
-        mock_cont.return_value.db = mock_mgr
-        page = InventoryPage(main_window)
-    yield page
-    page.deleteLater()
-
-
-@pytest.fixture
-def query_page(main_window):
-    """创建 QueryPage 实例用于 UI 测试。"""
-    from ui_pyside6.views.query import QueryPage
-
-    page = QueryPage(main_window)
     yield page
     page.deleteLater()
 

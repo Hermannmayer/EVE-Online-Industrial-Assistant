@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ui_pyside6.views.inventory.blueprint_tab import _BulkPlanMetricsWorker
+from ui_qml.workers.blueprint_plan_worker import _BulkPlanMetricsWorker
 
 pytestmark = pytest.mark.ui
 
@@ -49,10 +49,10 @@ def _patch_scoring(monkeypatch, db_manager):
     """mock plan_service.calculate_plan_metrics → 固定 metrics，避免依赖真实评分"""
     from services import plan_service
 
-    monkeypatch.setattr(
-        "ui_pyside6.views.inventory.blueprint_tab.get_container",
-        lambda: SimpleNamespace(db=db_manager),
-    )
+    # worker 不自己持有容器：它在 `run` 里 `from services import plan_service`
+    # 再调 `plan_service.get_container`，所以**只**补下面这一处就够了
+    # （原先还 patch 了 `blueprint_plan_worker.get_container`，那是它在 Widgets
+    #  版 `blueprint_tab` 里的旧名字，批次 6.0 迁移时已经没了）。
     monkeypatch.setattr(
         "services.plan_service.get_container",
         lambda: SimpleNamespace(db=db_manager),

@@ -675,10 +675,11 @@ def test_accept_clears_a_previous_error(qapp, monkeypatch):
 
 
 def test_qml_dialog_keeps_original_signature():
-    """构造签名与原 `HangarSettingsDialog(main_window, parent=None)` 逐个参数一致。"""
-    from ui_pyside6.views.hangar_settings_view import HangarSettingsDialog
+    """构造签名保持 `(main_window, parent=None)` —— 调用方原样可用。
 
-    new_params = inspect.signature(HangarSettingsQmlDialog.__init__).parameters
-    old_params = inspect.signature(HangarSettingsDialog.__init__).parameters
-    assert list(new_params) == list(old_params) == ["self", "main_window", "parent"]
-    assert new_params["parent"].default is None
+    原断言是拿 Widgets 版 `HangarSettingsDialog` 逐个参数对比；那个类随批次 6.2
+    删掉了，改成**直接钉住契约本身**（参数名与默认值），意图不变。
+    """
+    params = inspect.signature(HangarSettingsQmlDialog.__init__).parameters
+    assert list(params) == ["self", "main_window", "parent"]
+    assert params["parent"].default is None

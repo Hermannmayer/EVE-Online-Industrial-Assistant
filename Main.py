@@ -159,20 +159,12 @@ def _global_exception_handler(exc_type, exc_value, exc_traceback):
 
 
 def _make_shell(hot_reload: bool):
-    """造主窗口。
+    """造主窗口 —— **QML 外壳**（阶段 5 / 批次 6.1，`ui_qml.shell_window.ShellWindow`）。
 
-    默认是 **QML 外壳**（阶段 5 / 批次 6.1，`ui_qml.shell_window.ShellWindow`）；
-    设 `EVE_WIDGETS_SHELL=1` 回退到 Widgets 外壳（`ui_pyside6.main_window.MainWindow`）。
-
-    回退开关是**过渡期的安全带**：QML 外壳一旦在真机上出问题，不用改代码就能切回去
-    （改文件 + 重新打包的代价太高）。两套外壳共用同一份页面桥与业务，
-    切换只影响外框与页面宿主。
+    批次 6.2 删掉了 Widgets 外壳与它那条 `EVE_WIDGETS_SHELL=1` 回退开关：
+    回退页与 Widgets 页面在这批一起清掉，没有「另一套外壳」可回了。
+    真机验证（离屏 + 真窗口截图 + 交互）已在删除前做过。
     """
-    if os.environ.get("EVE_WIDGETS_SHELL") == "1":
-        from ui_pyside6.main_window import MainWindow
-
-        return MainWindow(hot_reload=hot_reload)
-
     from ui_qml.shell_window import ShellWindow
 
     return ShellWindow(hot_reload=hot_reload)

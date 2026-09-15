@@ -26,7 +26,8 @@ PySide6 + SQLite 构建的 EVE Online 工业制造助手桌面应用。
 
 ### 架构
 - 分层：`bootstrap/`（组合根/IOC 容器）→ `core/`（工具/常量）→ `domain/`（纯领域逻辑，无 DB/Qt/缓存 — formulas, bom, scoring, ports）→ `services/`（业务/DB 访问/repositories/门面编排）→ `ui_qml/`（QML UI，**新代码写这里**）
-- `ui_pyside6/` 是**待删除的旧 UI 层**：外壳与页面已迁完（批次 6.1），剩下的 Widgets 代码只作回退与共享件来源；`EVE_WIDGETS_SHELL=1` 可切回旧外壳
+- `ui_pyside6/` 只剩**还在 Widgets 里的业务控制器**（工业页那条链、人物设置页、采购、splash）。
+  外壳、七个页面、所有对话框与它们的回退实现都在批次 6.1/6.2 删掉了 —— 没有回退开关了
 - 依赖注入组合根在 `bootstrap/container.py`；`core/container.py` 仅为兼容转发，存量调用方随重构逐步迁移到 `bootstrap.container`
 - 4 库独立：`reference.db` / `market.db` / `user.db` / `blueprint.db`
 - DB 管理用 `services/database_manager.py`
@@ -81,7 +82,11 @@ bootstrap/     组合根 / IOC 容器（container.py）
 core/          工具层（constants, paths, logger, cache, hot_reload；eve_formulas=贸易费/经纪人费常量）
 domain/        领域层（纯函数，无 DB/Qt/缓存 — formulas 制造公式, bom, scoring, ports）
 services/      业务层（database_manager, scoring_service, scoring_facade, inventory_manager, repositories/, etc.）
-ui_pyside6/    UI 层（main_window, theme, models/, workers/, views/, dialogs/）——**迁移中，逐步被 ui_qml 取代**
+ui_pyside6/    **残存的 Widgets 代码**（批次 6.2 后只剩 17 个模块）：
+               views/industry*（工业页控制器 + 计划表 + 产线助手）、views/char_settings_*（
+               人物设置页的纯逻辑/控件）、views/procurement_tab、dialogs/industry_dialogs、
+               splash_screen、workers/{startup,industry_page}_worker、
+               以及 theme.py / icons.py / icon_cache.py 三个**转发器**（真身在 ui_qml/ 与 core/）
 ui_qml/        QML UI 层（**主 UI**）：
                shell_window.py=主窗口（QQuickView）+ qml/shell/=外壳（标题栏/导航/状态栏）
                qml/pages|dialogs|components/=页面与对话框；bridge/=Python↔QML 桥

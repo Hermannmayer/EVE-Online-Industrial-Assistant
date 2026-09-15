@@ -92,67 +92,6 @@ def test_industry_page_theme_listener(qapp, mock_db):
         assert theme_singleton().themeId == "fluent-light"
 
 
-def test_trade_page_theme_listener(qapp):
-    from ui_pyside6.views.trade_view import TradePage
-
-    page = TradePage(None)
-    assert hasattr(page, "_on_theme_changed")
-    apply_theme("light")
-    _wait()
-    assert FLUENT_LIGHT["TEXT_SECONDARY"] in page._monitor_placeholder.styleSheet()
-
-
-def test_estimate_page_theme_listener(qapp, mock_db):
-    from ui_pyside6.views.estimate_view import EstimatePage
-
-    page = EstimatePage(None)
-    assert hasattr(page, "_on_theme_changed")
-    apply_theme("light")
-    _wait()
-    assert FLUENT_LIGHT["TEXT_PRIMARY"] in page._total_vol.styleSheet()
-
-
-def test_inventory_page_theme_listener(qapp, mock_db):
-    mock_conn = MagicMock()
-    mock_conn.cursor.return_value.fetchall.return_value = []
-    mock_conn.cursor.return_value.fetchone.return_value = None
-    with (
-        patch("ui_pyside6.views.inventory.inventory_page.init_db"),
-        patch(
-            "ui_pyside6.views.inventory.inventory_page.get_hangars",
-            return_value=[{"id": 1, "name": "默认", "notes": ""}],
-        ),
-        patch("ui_pyside6.views.inventory.blueprint_tab.get_container") as mock_cont,
-        patch("ui_pyside6.views.inventory.hangar_tab.get_items", return_value=[]),
-        patch("ui_pyside6.views.inventory.hangar_tab.get_hangars", return_value=[]),
-        patch(
-            "ui_pyside6.views.inventory.blueprint_tab.get_blueprint_tech_levels",
-            return_value=[],
-        ),
-        patch(
-            "ui_pyside6.views.inventory.blueprint_tab.get_blueprint_reaction_ids",
-            return_value=[],
-        ),
-        patch("ui_pyside6.views.inventory.blueprint_tab.get_blueprints", return_value=[]),
-    ):
-        mock_cont.return_value.db.connect.return_value.__enter__.return_value = mock_conn
-        from ui_pyside6.views.inventory.inventory_page import InventoryPage
-
-        page = InventoryPage(None)
-        assert hasattr(page, "_on_theme_changed")
-        apply_theme("light")
-        _wait()
-        assert FLUENT_LIGHT["TEXT_SECONDARY"] in page._hangar_tab._count_label.styleSheet()
-
-
-# ── showEvent 不更新对话框自身 stylesheet，仅更新子控件 — 待 dialog 自身也加入 showEvent 重绘 ──
-#
-# 注：原先这里还有一条 `test_import_review_dialog_show_event`，随「导入审查」对话框迁到 QML
-# 一并删除 —— 它测的是 Widgets 版在 showEvent 里重刷 stylesheet，而 QML 版根本没有
-# stylesheet（颜色绑在 `Theme` 单例上，切换主题时绑定自己重算）。QML 侧的等价覆盖在
-# `tests/test_qml_theme_bridge.py` 与各页面的主题切换断言里。
-
-
 def test_char_settings_dialog_show_event(qapp, mock_db):
     with (
         patch("ui_pyside6.views.char_settings_view.load_all_data") as mock_load,
@@ -171,38 +110,11 @@ def test_char_settings_dialog_show_event(qapp, mock_db):
         assert FLUENT_LIGHT["BG_DARK"] in dlg.styleSheet()
 
 
-def test_init_wizard_show_event(qapp):
-    from services.init_service import STEPS
-
-    with (
-        patch(
-            "ui_pyside6.views.init_wizard.get_missing_steps",
-            return_value=[s for s in STEPS if s.key not in ("items", "blueprints")],
-        ),
-    ):
-        from ui_pyside6.views.init_wizard import InitWizard
-
-        wiz = InitWizard()
-        apply_theme("light")
-        wiz.showEvent(QShowEvent())
-        assert FLUENT_LIGHT["BG_DARK"] in wiz.styleSheet()
-
-
-# 注：原先这里还有一条 `test_all_items_dialog_show_event`，随「全部物品」窗口迁到 QML
-# 一并删除 —— 它测的是 Widgets 版在 showEvent 里重刷工具栏 stylesheet，而 QML 版没有
-# stylesheet（颜色绑在 `Theme` 单例上，切主题自动重算）。同 `test_import_review_dialog_show_event`。
-
-
-# ── weakref 基础设施（审计发现：监听器无 remove → 页面销毁后仍被引用泄漏） ──
-
-
 def test_listener_freed_after_object_gc():
     """对象销毁后监听器自动失效（弱引用）：
     1. 存活时收到通知；2. 销毁后 notify 不崩溃；3. 失效引用被清理
     """
     import gc
-
-    import ui_pyside6.theme as theme
 
     n0 = len(theme._theme_listeners)
 
@@ -231,7 +143,6 @@ def test_listener_freed_after_object_gc():
 
 def test_remove_theme_listener_still_works():
     """显式 remove 仍然有效（兼容旧调用方）"""
-    import ui_pyside6.theme as theme
 
     class _Listener:
         def on_theme(self):
@@ -246,7 +157,6 @@ def test_remove_theme_listener_still_works():
 
 def test_add_theme_listener_accepts_lambda():
     """add_theme_listener 支持普通函数/lambda（WeakMethod 只接受绑定方法，否则会崩）"""
-    import ui_pyside6.theme as theme
 
     calls = {"n": 0}
 
@@ -264,36 +174,3 @@ def test_add_theme_listener_accepts_lambda():
 
 
 # ── ThemeSelector 卡片选择器（原 test_theme_selector.py） ──
-
-
-def test_selector_builds_all_cards(qapp):
-    from ui_pyside6.views.theme_selector import ThemeSelector
-
-    sel = ThemeSelector()
-    assert len(sel._cards) == len(theme.THEME_REGISTRY)
-    sel.deleteLater()
-
-
-def test_set_current_highlights_card(qapp):
-    from ui_pyside6.views.theme_selector import ThemeSelector
-
-    sel = ThemeSelector()
-    theme.apply_theme("fluent-light")
-    sel.set_current("fluent-light")
-    assert sel.current_theme_id() == "fluent-light"
-    assert sel._cards["fluent-light"].isChecked()
-    assert not sel._cards["fluent-dark"].isChecked()
-    sel.deleteLater()
-
-
-def test_card_click_switches_theme(qapp):
-    from ui_pyside6.views.theme_selector import ThemeSelector
-
-    sel = ThemeSelector()
-    theme.apply_theme("fluent-dark")
-    sel._cards["fluent-light"].click()
-    assert theme.current_theme() == "fluent-light"
-    assert sel.current_theme_id() == "fluent-light"
-    # 恢复默认，避免污染 settings
-    theme.apply_theme("fluent-dark")
-    sel.deleteLater()

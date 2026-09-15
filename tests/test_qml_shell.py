@@ -7,6 +7,9 @@
 
 其余几条护栏对着外壳对页面承诺的接口：切页只显示一个、状态栏/进度条能到 QML、
 状态存取能把当前页带过去。
+
+批次 6.2 删掉了 Widgets 外壳与它的 `EVE_WIDGETS_SHELL` 回退开关（连同回退页一起），
+所以「回退开关可用」那条护栏也一并删了 —— 没有另一套外壳可回。
 """
 
 from __future__ import annotations
@@ -296,22 +299,3 @@ def test_shell_qml_loads_without_warnings(app, mock_db, monkeypatch):
     # 引擎创建顺序有关，真机同序不报（见 tests/test_qml_dialogs.py 的 _is_qt_internal）。
     qml_issues = [m for m in messages if ".qml" in m and "qrc:/qt-project.org/" not in m]
     assert not qml_issues, "外壳 QML 加载有告警：\n" + "\n".join(qml_issues)
-
-
-# ── 6. 回退开关 ────────────────────────────────────────────
-
-
-def test_widgets_shell_remains_available_as_a_rollback(monkeypatch):
-    """`EVE_WIDGETS_SHELL=1` 必须还能造出 Widgets 外壳 —— 这是过渡期的安全带。"""
-    import Main
-
-    sentinel_new = object()
-    sentinel_old = object()
-    monkeypatch.setattr("ui_qml.shell_window.ShellWindow", lambda **kw: sentinel_new)
-    monkeypatch.setattr("ui_pyside6.main_window.MainWindow", lambda **kw: sentinel_old)
-
-    monkeypatch.delenv("EVE_WIDGETS_SHELL", raising=False)
-    assert Main._make_shell(False) is sentinel_new
-
-    monkeypatch.setenv("EVE_WIDGETS_SHELL", "1")
-    assert Main._make_shell(False) is sentinel_old

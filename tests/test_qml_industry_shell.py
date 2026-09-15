@@ -83,11 +83,20 @@ def test_registry_factory_exception_falls_back(main_window, monkeypatch):
         page.deleteLater()
 
 
-def test_main_window_nav_holds_the_qml_host(main_window):
-    """真实启动路径（`main_window_nav._register_pages`）拿到的就是宿主。"""
+def test_shell_holds_the_industry_page_as_a_qml_item(main_window):
+    """真实启动路径拿到的工业页是**外壳里的一个 QML Item**（批次 6.1 起的外壳形态）。
+
+    外壳换成 `QQuickWindow` 之后页面不再可能是 `QQuickWidget`（装不进去），
+    所以这里断言的是 `QmlPage` + `QQuickItem`；`PageHost` 那条路只剩对话框在用。
+    """
+    from PySide6.QtQuick import QQuickItem
+
+    from ui_qml.registry import QmlPage
+
     page = main_window._pages["industry"]
-    assert isinstance(page, PageHost), f"导航页是 {type(page).__name__}，不是 QML 宿主"
-    assert page.ok(), "; ".join(str(e) for e in page.errors())
+    assert isinstance(page, QmlPage), f"导航页是 {type(page).__name__}，不是 QmlPage"
+    assert isinstance(page.item, QQuickItem), "工业页不是 QML Item"
+    assert callable(getattr(page.hooks, "load_plans", None)), "钩子没接到控制器上"
 
 
 # ── 2. 宿主 / 桥 ───────────────────────────────────────────

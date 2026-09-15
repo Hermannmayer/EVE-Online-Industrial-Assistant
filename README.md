@@ -204,7 +204,7 @@ python build_release.py
 
 | 指标 | 数值 |
 |------|------|
-| 📊 **测试总数** | 2276 个 |
+| 📊 **测试总数** | 2179 个 |
 | 🔧 **框架** | pytest |
 | 📁 **测试目录** | `tests/` |
 | 🏃 **运行命令** | `pytest` |
@@ -217,7 +217,6 @@ python build_release.py
 |------|------|
 | `test_core.py` / `test_paths.py` / `test_logger.py` | 核心工具层测试 |
 | `test_database_manager.py` | 数据库连接管理器测试 |
-| `test_scoring_service.py` / `test_score_dialogs.py` | 评分计算与评分弹窗测试 |
 | `test_personal_margin.py` | 个人利润率测试 |
 | `test_bom_expander.py` | BOM 展开测试 |
 | `test_refining_service.py` | 精炼价值测试 |
@@ -229,7 +228,6 @@ python build_release.py
 | `test_contract_models.py` / `test_qml_contract.py` | 合同视图测试 |
 | `test_logistics_cost.py` / `test_logistics_distance.py` | 物流计算测试 |
 | `test_theme_listeners.py` | 主题监听模式测试 |
-| `test_ui_industry.py` / `test_ui_inventory.py` / `test_ui_main_window.py` | UI 冒烟测试 |
 | `test_workers_*.py` | 后台 Worker 测试 |
 
 ---

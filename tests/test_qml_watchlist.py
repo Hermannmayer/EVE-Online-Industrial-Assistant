@@ -193,10 +193,10 @@ def bridge(qapp, monkeypatch):
 @pytest.mark.ui
 def test_columns_and_regions_come_from_shared_sources(bridge):
     from core.constants import TRADE_HUB_IDS
-    from ui_pyside6.views.watchlist_view import _COLUMNS
+    from ui_qml.models.watchlist_models import COLUMNS
 
     assert bridge.regions == list(TRADE_HUB_IDS.keys())
-    assert [c["title"] for c in bridge.columns] == [t for t, _ in _COLUMNS]
+    assert [c["title"] for c in bridge.columns] == [t for t, _ in COLUMNS]
 
 
 @pytest.mark.ui

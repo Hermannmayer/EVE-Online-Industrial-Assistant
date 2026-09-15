@@ -1,21 +1,5 @@
-"""PySide6 view modules
+"""`ui_pyside6` 的包初始化 —— 迁移期刻意保持为空。
 
-Re-export all public symbols from sub-packages for backward compatibility.
+原先这里 re-export 一堆子模块做向后兼容；批次 6.2 把死掉的那些删掉后，
+剩下的模块由调用方各自显式 import，包初始化不再搬运任何东西。
 """
-
-# 库存管理页面 — 子模块拆分
-from ui_qml.models.inventory_helpers import BlueprintTableModel, InvTableModel
-from ui_qml.workers.blueprint_import_worker import _BlueprintImportWorker
-
-from .inventory.blueprint_tab import BlueprintTab
-from .inventory.hangar_tab import HangarTab
-from .inventory.inventory_page import InventoryPage
-
-__all__ = [
-    "BlueprintTab",
-    "BlueprintTableModel",
-    "HangarTab",
-    "InventoryPage",
-    "InvTableModel",
-    "_BlueprintImportWorker",
-]
