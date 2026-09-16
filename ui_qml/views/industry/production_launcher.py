@@ -321,6 +321,35 @@ class ProductionLauncher(QObject):
         self.window_closing()
         self._window.close()
 
+    def dispose(self) -> None:
+        """退出时**拆掉** QML 场景（不是关窗）。由页面关机钩子调，见 `IndustryPage.shutdown`。
+
+        只 `close()` 是不够的：关窗只是隐藏，QML 树与 `QQmlEngine` 都还活着。等 Python
+        收尾把 `Theme` 单例（`theme_bridge._singleton`，模块级全局，解释器收尾时会被清掉）
+        回收之后，场景里那些 `Theme.xxx` 绑定就会重算并对着 null 求值 —— 实测一次退出刷
+        出 **528 条** `Cannot read property 'xxx' of null`，全出自我们自己这几个 qml。
+
+        顺序与外壳 `ShellWindow._teardown_qml` 同一条：**先删根对象（= 窗口）连同场景，
+        再让引擎/组件沿父子链走**。反过来（引擎先走、场景还在）撞的是同一堵墙。
+
+        所有权：`QQmlComponent.create()` 把根对象的归属转给调用方（= 本类），
+        而 `_build_window` 里挂了 `component → engine → window` 的父子链。
+        所以先摘掉 Python 侧对 engine / component 的引用，最后丢 window —— PySide 立刻
+        析构窗口（连同 QML 场景），父子链再把引擎与组件一并收走。
+        """
+        window = self._window
+        if window is None:
+            return
+        self._window = None
+        self._component = None
+        self._engine = None
+        window.close()
+        # ⚠️ **不能靠丢引用析构**：window 是 engine 的 QObject 父，而 engine 又持有根对象
+        # （就是 window）—— 跨 Python/C++ 的引用环，丢引用后两边都活着（实测 `isValid` 仍为真、
+        # 窗口还挂在 `QGuiApplication.allWindows()` 里）。走 `deleteLater()`，由事件循环
+        # 回头把它真正删掉。
+        window.deleteLater()
+
     def resize(self, width: int, height: int) -> None:
         if self._window is not None:
             self._window.resize(int(width), int(height))

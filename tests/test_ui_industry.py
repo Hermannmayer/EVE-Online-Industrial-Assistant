@@ -660,3 +660,45 @@ class TestDeleteLines:
         PlanTable._delete_rows(_delete_holder(plans), [_index_of(plans, 2001)])
 
         assert len(_plan_rows(delete_env.db)) == n
+
+
+# ── 退出时拆掉工具窗的 QML 场景 ──────────────────────────────────────
+#
+# 回归背景：外壳 `closeEvent` 只对产线小助手 / 采购窗调了 `close()` —— 那只是隐藏，
+# QML 树与 `QQmlEngine` 都还活着。等解释器收尾回收 `Theme` 单例
+# （`theme_bridge._singleton`，模块级全局），场景里那些 `Theme.xxx` 绑定重算就会对着
+# null 求值，一次退出刷出 528 条 `Cannot read property 'xxx' of null`。
+# 两个控制器因此各加 `dispose()`，由本页的关机钩子调（两条退出路径都会走到这里）。
+
+
+def test_shutdown_disposes_both_tool_windows(industry_page):
+    """关机钩子要把两个工具窗的 QML 场景都拆掉。"""
+    from types import SimpleNamespace
+
+    disposed: list[str] = []
+    industry_page._launcher = SimpleNamespace(dispose=lambda: disposed.append("launcher"))
+    industry_page._procurement = SimpleNamespace(dispose=lambda: disposed.append("procurement"))
+
+    industry_page.shutdown()
+
+    assert sorted(disposed) == ["launcher", "procurement"]
+
+
+def test_shutdown_survives_a_tool_window_that_cannot_dispose(industry_page):
+    """某个工具窗拆不掉不能把退出流程带崩 —— 后面的线程收尾还得照跑。"""
+    from types import SimpleNamespace
+
+    def _boom():
+        raise RuntimeError("拆不掉")
+
+    industry_page._launcher = SimpleNamespace(dispose=_boom)
+    industry_page._procurement = None  # 没开过
+
+    industry_page.shutdown()  # 不抛异常即通过
+
+
+def test_shutdown_without_any_tool_window_opened(industry_page):
+    """两个窗都没开过时关机钩子照常跑（属性可能压根不存在）。"""
+    for attr in ("_launcher", "_procurement"):
+        industry_page.__dict__.pop(attr, None)
+    industry_page.shutdown()  # 不抛异常即通过

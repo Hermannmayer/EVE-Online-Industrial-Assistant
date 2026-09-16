@@ -1099,3 +1099,29 @@ def test_capacity_group_x_accumulates_previous_groups():
 
     assert "for (" in body, f"groupX 必须按前面的组累加，实得：{body!r}"
     assert "lines[index].cap" not in body, f"不能拿本组的 cap 当累计量：{body!r}"
+
+
+def test_dispose_actually_destroys_the_qml_tree(qapp, monkeypatch):
+    """退出时要**拆掉** QML 场景，不能只关窗。
+
+    只 `close()` 的话 QML 树与 `QQmlEngine` 都还活着；等 Python 收尾回收 `Theme` 单例
+    （`theme_bridge._singleton`，模块级全局，解释器收尾时会被清掉），场景里那些
+    `Theme.xxx` 绑定重算就会对着 null 求值 —— 实测一次退出刷 **528 条**
+    `Cannot read property 'xxx' of null`。
+
+    这里断言的是**窗口真的没了**：光丢引用删不掉（window 是 engine 的 QObject 父，
+    而 engine 又持有根对象 = 跨 Python/C++ 的引用环，实测 `isValid` 仍为真），
+    必须走 `deleteLater()`。
+    """
+    from shiboken6 import isValid
+
+    w, _ = _make_launcher(qapp, monkeypatch)
+    window = w._window
+    assert window is not None
+    w.show()
+    assert _wait_true(lambda: window.isVisible())
+
+    w.dispose()
+
+    assert w._window is None and w._engine is None and w._component is None
+    assert _wait_true(lambda: not isValid(window)), "窗口没被真正删掉 —— 引用环还在，退出时会刷 null 绑定告警"

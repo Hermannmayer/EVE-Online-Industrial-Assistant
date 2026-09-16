@@ -165,6 +165,19 @@ class IndustryPage(QObject):
 
         可重入：外壳的 `closeEvent` 与 `aboutToQuit` 都会走到这里。
         """
+        # 先把两个工具窗（产线小助手 / 采购）的 QML 场景**拆掉**。外壳已经对它们调过
+        # `close()`，但那只是隐藏 —— QML 树与 `QQmlEngine` 都还活着。等解释器收尾把
+        # `Theme` 单例（`theme_bridge._singleton`）回收掉，场景里那些 `Theme.xxx` 绑定
+        # 重算就会对着 null 求值，一次退出刷出几百条 `Cannot read property 'xxx' of null`。
+        # 必须趁 QApplication 还活着时做，所以挂在关机钩子里（两条退出路径都会到这里）。
+        for attr in ("_launcher", "_procurement"):
+            window = getattr(self, attr, None)
+            dispose = getattr(window, "dispose", None)
+            if callable(dispose):
+                try:
+                    dispose()
+                except Exception:
+                    log.exception("工具窗 QML 场景拆除失败：%s", attr)
         for name in ("_industry_worker", "_refresh_worker", "_score_worker", "_proc_worker", "_recalc_worker"):
             worker = getattr(self, name, None)
             if worker is None:
