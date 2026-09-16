@@ -269,6 +269,53 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
     被活跃计划占用的行**硬阻断**（`get_occupied_blueprint_ids`，跳过数经 `blocked` 回报）。
     「最终」列只接受非负整数，非法值标红并拦下确认。
 
+## 物品查询页
+
+两态：**空闲态**（没搜索 / 没结果）= 仪表盘（产线详情 / 资产折线图 / 挂单列表）；**有结果态** = 结果表 + 详情面板（5 中心价格 / 订单 / 精炼 / 制造材料）。
+
+```
+搜索：QueryPage 输入框 → QueryBridge.search → ui_qml.workers.query_workers.SearchWorker
+  → QueryBridge._on_search_done → ui_qml.models.query_models.format_search_rows
+  → QueryQmlModel.set_rows → modelReset → QueryBridge.resultsChanged
+两态判据：QueryBridge.hasResults = QueryQmlModel.rowCount() > 0（notify=resultsChanged）
+  QML 的 workArea.idle = !hasResults && !busy —— 行数由桥给（不在 QML 里数），
+  busy 只用于「查询进行中不切回仪表盘」（首次查询时模型还空，只看 hasResults 会闪一下）
+```
+
+- 子桥**懒建**：`QueryBridge._get_detail` / `_get_dashboard` 首次被 QML 读到才 import 并构造（`query_detail_bridge` / `query_dashboard_bridge`）；导入失败返回 `None`，QML 按 `detail === null` 写占位，**不连累整页**（外壳只把该面板记为暂缺）
+- 选中行：`QueryBridge.selectRow`（点击/双击/右键调）→ `_push_selection` → `QueryDetailBridge.setItem`。高亮（QML 的 `currentRow`）与**取数**是分开的 —— 取数不能在拖动/滚动时反复触发
+- 详情面板四块（`QueryDetailBridge`）：① 价格 `market_repo.get_batch_market_snapshot`（每 hub 一次）；② 订单 `workers/order_workers.OrderFetchWorker` + `order_popup_bridge.order_rows`；③ 精炼 `workers/refine_worker.RefineWorker`；④ 制造材料 `bom_expander.get_flat_materials`（买/卖各展开一次）。几何/文案在 `ui_qml/models/query_detail_model.py` 纯函数里
+
+空闲态三条线（`QueryDashboardBridge`）：
+- **产线详情**：`occupancyByLine`（**按产线类型分行**，行内每角色一段容量条）← `_refresh_occupancy` ← `services.char_capacity.active_lines_by_category` + `max_lines_for_category`；`quickRows`（可启动 / 可下线）← `_build_quick_rows` ← `plan_start_check.plan_start_block`（软阻塞 `material_short`/`blueprint_short` 仍给「启动」）+ `plan_execution.check_materials`/`binding_shortfall`/`plan_blueprint_ready`；`quickAction` → `plan_execution.start_plan` / `ui_qml.views.industry.complete_plans_dialog.complete_one_plan`（**确认框在桥里弹**，走 `FMessageDialog.question`）
+- **资产折线图**：`assetPlot` / `assetSeries` / `assetSummaryRows` ← `_refresh_snapshots` → `services.asset_snapshot_service.load_series` → `query_dashboard_bridge.asset_plot`（几何复用 `ui_qml.bridge.price_chart_bridge` 的 `nice_range`/`axis_values`/`map_values`/`pick_indices`）；区间档位 `range_window` + `trim_from`。4 条线取数来源见 `services/asset_snapshot_service` 模块 docstring（inventory / orders / wallet / total）
+- **挂单列表**：`openOrderRows` ← `_ensure_orders` ← `user.db.open_orders`
+
+挂单导入（`QueryDashboardBridge.readOrders`）：
+
+```
+services.order_export.find_latest_export（默认 %USERPROFILE%\Documents\EVE\logs\Marketlogs；文件名含 order/订单）
+  → services.order_export.read_export_text（utf-8-sig → utf-16 → gbk 逐档）
+  → services.order_export.parse_order_export（表头驱动 CSV，退化启发式；不抛异常）
+  → QueryDashboardBridge._fill_location_names → services.npc_seller.resolve_stations_by_ids（补中文站名）
+  → QueryDashboardBridge._fill_type_names → ref.item（补中文物品名；真实导出**无物品名列**）
+  → QueryDashboardBridge._write_orders → INSERT OR REPLACE INTO open_orders（order_id 主键 → 幂等）
+  → _load_stale（本次文件没出现的旧订单，只统计）→ _review_stale（staleCount>0 才弹确认框）→ dropStaleOrders（DELETE）
+  → QueryDashboardBridge._record_snapshot → services.asset_snapshot_service.record_snapshot
+```
+
+- 钱包余额**手填**：`QueryDashboardBridge.setWalletText` → `asset_snapshot_service.set_wallet_balance`（settings.json `wallet_balance`）+ `record_snapshot`；导出目录 `setExportDir` → `user_settings.save_settings`（settings.json `order_export_dir`）
+- 表：user 库 `asset_snapshots` / `open_orders`，schema 迁移 v16→v17（`services.schema_migrations._USER_V17_TABLES_SQL` / `_migrate_user_v16_to_v17`）；服务入口另有 `CREATE TABLE IF NOT EXISTS` 兜底（测试 / 新库）
+- 日期口径：快照日期一律由 **SQLite 侧** `date('now','localtime')` 决定（`asset_snapshots.snap_date` 唯一，当天重复记录覆盖不累积），不混用 Python 的 `date.today()`
+- 刷新：`QueryDashboardBridge.refresh` **幂等且便宜** —— 先算「计划字段 + 机库库存 + 角色技能 + 快照/挂单行数 + 本桥本地状态」指纹，没变就直接返回（不重算、不发 `changed`）。由 QML 的空闲态可见性驱动（可见即刷一次 + 60s 定时器），桥**不自建定时器**
+
+**已知陷阱**（改这块前先看）：
+- **QML 没有 `int()`**：JS 全局只有 `Number` / `parseInt` / `Math.*`。写 `int(x)` 会让整条绑定抛 `ReferenceError`，而 QML 对绑定错误**静默**（属性停在默认值）—— 实测容量条一个槽位都画不出来，只剩一条空轨道。
+- **面板容器用 `FPanel` 不用 `FSection`**：`FSection` 把子项收进内层 `ColumnLayout`，在里面写 `anchors.fill: parent` 会被布局**静默忽略**、子项塌成 `implicitHeight`（实测整张表只剩表头）。要放「自己管布局的一整块」（表格 / 图表 / 占用条）用 `FPanel`，只放若干行依次排列的控件才用 `FSection`。
+- **两态判据不能写在 QML 里**：`model.rowCount()` 是 Slot 调用，QML 绑定**不追踪**它 —— 行数由桥的 `hasResults` 给出，QML 只额外并上 `busy` 防闪（`workArea.idle`）。
+- **订单导出文件的真实格式**（详见 `services/order_export.py` 模块 docstring）：UTF-8 **带 BOM**、文件名是**中文**的（`个人订单-…` / `军团订单-…`）、`volRemaining` 是**浮点串**、位置名包在 `<localized hint="英文">中文</localized>` 里、**没有物品名列**。
+- **在途取数线程必须在页面销毁时停**：`QueryBridge.shutdown`（+ QML `Component.onDestruction`）会停 `_detail_bridge` / `_dash_bridge`，`QueryDetailBridge.shutdown` 收 `_order_worker` / `_refine_worker`（订单走 ESI，超时 30 秒）。不停的话 Qt 会在退出时析构一个**还在跑**的 `QThread` → **进程退出崩，且输出里连一行 traceback 都没有**。⚠️ `QueryBridge.shutdown` **不能读 `self.detail` / `self.dashboard`** —— 那两个 getter 会把没用过的子桥无谓地建出来（连带 import 整条业务链）。
+
 ## 数据初始化（SDE/ESI）
 
 ```

@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -447,3 +448,41 @@ def test_row_click_survives_content_move(query_page):
     press_move_release(
         host, root, area_name="queryClickArea", row=3, read_current=lambda: root.property("currentRow"), delta=1
     )
+
+
+@pytest.mark.ui
+def test_idle_judgement_does_not_depend_on_busy():
+    """两态判据里**不能**带 `busy`。
+
+    带上之后的实测症状（用户报的「两个界面来回抢显示」）：
+    搜了个空 → 查询中 `busy=true` 切到结果区 → 查完 0 条 `hasResults=false` 又切回仪表盘，
+    一来一回翻两次。只认 `hasResults` 时，空手而归就原地不动。
+    """
+    text = (_ROOT / "ui_qml" / "qml" / "pages" / "QueryPage.qml").read_text(encoding="utf-8")
+    m = re.search(r"readonly property bool idle:(.*?)QueryDashboard", text, re.S)
+    assert m, "QueryPage.qml 里找不到 idle 判据（结构变了就同步改本条守卫）"
+    assert "busy" not in m.group(1), "idle 判据里出现了 busy —— 空搜索会来回翻两次"
+
+
+@pytest.mark.ui
+def test_picking_a_suggestion_searches_a_searchable_string(bridge):
+    """候选的**展示串**不能直接当查询串用。
+
+    回归背景（用户实测「点候选后永远未找到物品」）：候选那行长这样 ——
+    `[17715] 毒蜥级 (Gila)`（带 Type ID 与中英双名），而搜索是拿关键词去
+    `LIKE '%…%'` 匹配名字的，整串匹配必然 0 条。桥必须把它换回可搜的串（中文名）。
+    """
+    bridge.search = lambda: None  # 只验「搜什么串」，不验搜索本身（那要起 worker）
+    bridge._on_suggestions([(17715, "[17715] 毒蜥级 (Gila)", "毒蜥级")])
+    assert bridge.suggestions[0]["query"] == "毒蜥级", "候选要同时带上可搜的查询串"
+
+    bridge.pickSuggestion("[17715] 毒蜥级 (Gila)")
+    assert bridge.searchText == "毒蜥级"
+
+
+@pytest.mark.ui
+def test_picking_history_searches_it_verbatim(bridge):
+    """历史项本来就是用户搜过的串，原样使用（不能被候选那套改写）。"""
+    bridge.search = lambda: None
+    bridge.pickSuggestion("三钛合金")
+    assert bridge.searchText == "三钛合金"

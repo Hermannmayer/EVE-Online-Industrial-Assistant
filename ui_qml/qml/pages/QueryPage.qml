@@ -227,7 +227,12 @@ Item {
 
             /* 两态切换的唯一判据。`hasResults` 由桥按模型行数给出 ——
              * QML 侧读 `model.rowCount()` 是 Slot 调用，属性绑定不会跟着刷新
-             * （本仓既有教训，见 `query_bridge.py` 里 `sortColumn` 那段注释）。 */
+             * （本仓既有教训，见 `query_bridge.py` 里 `sortColumn` 那段注释）。
+             *
+             * ⚠️ **判据里不能带 `busy`**。带上之后，「搜索但没搜到东西」会变成：
+             * 查询中 `busy=true` → 切到结果区；查完 0 条 → `hasResults=false` → 又切回仪表盘。
+             * 两次翻转，用户看到的就是「两个界面来回抢」。
+             * 不带 `busy` 时：有结果才离开仪表盘，空手而归就原地不动（状态行照常报「未找到…」）。 */
             readonly property bool idle: !(page.query && page.query.hasResults)
 
             QueryDashboard {

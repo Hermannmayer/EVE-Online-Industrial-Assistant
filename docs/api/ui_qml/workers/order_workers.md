@@ -19,7 +19,7 @@ def get_order_name(page, type_id: int) -> str
 
 根据 type_id 从页面的模型中查找物品名称
 
-定义行：`84`
+定义行：`100`
 
 ### `_on_orders_fetched`
 
@@ -29,7 +29,7 @@ def _on_orders_fetched(page, type_id: int, buy_orders: list, sell_orders: list)
 
 订单获取完成后的处理
 
-定义行：`98`
+定义行：`114`
 
 ### `_on_order_error`
 
@@ -39,7 +39,7 @@ def _on_order_error(page, type_id: int, error: str)
 
 订单获取出错处理
 
-定义行：`107`
+定义行：`123`
 
 ## 类
 
@@ -83,7 +83,7 @@ async def _fetch(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`43`
+定义行：`49`
 ##### `_resolve_names`
 
 ```python
@@ -94,4 +94,4 @@ async def _resolve_names(self, location_ids: list[int])
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`61`
+定义行：`77`

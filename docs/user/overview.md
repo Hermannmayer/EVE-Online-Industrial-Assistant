@@ -29,6 +29,8 @@
 | ⭐ 贸易 | `trade_view` | 贸易评分、跨区域对比、关注列表、价格变化检测 |
 | 📦 仓库 | `inventory_view` → `inventory_page` | 机库管理、库存 CRUD、蓝图管理（BPO/BPC、ME/TE） |
 
+> 🔍 **查询页**（空闲态仪表盘 + 有结果态详情）的详细用法见 [query.md](query.md)。
+
 ## 底部状态栏
 
 状态栏显示以下信息（`ui_qml/qml/pages/IndustryPage.qml` 的状态栏）：

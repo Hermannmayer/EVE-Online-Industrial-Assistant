@@ -134,9 +134,11 @@ class QueryBridge(QObject):
     # ── 两态切换与子桥 ────────────────────────────────────────
 
     def _get_has_results(self) -> bool:
-        """有结果才显示「结果态」（结果表 + 详情面板），否则显示空闲态仪表盘。
+        """有没有查询结果。**只说实话**，不含「正在查」。
 
-        `busy` 期间也算结果态：查询中途把界面切回仪表盘会闪一下，观感很差。
+        页面那边也**刻意不把 `busy` 掺进判据**（`QueryPage.qml` 的 `workArea.idle`）：
+        掺进去会让「搜索但没搜到」来回翻两次 —— 查询中切到结果区、查出 0 条又切回仪表盘，
+        用户看到的是「两个界面来回抢显示」。只认有无结果，空手而归就原地不动。
         """
         return int(self._model.rowCount()) > 0
 
@@ -334,7 +336,13 @@ class QueryBridge(QObject):
 
     def _on_suggestions(self, items: list) -> None:
         # Worker 给的是 (type_id, display, zh_name) 三元组
-        self._suggestions = [{"id": int(tid), "text": str(display)} for tid, display, _zh in items]
+        #
+        # `query` 是**可搜的查询串**，与 `text`（展示串）分开存：
+        # 展示串形如 `[17715] 毒蜥级 (Gila)`，拿它去 LIKE 匹配名字必然 0 条
+        # —— 见 `pickSuggestion` 的说明。中文名优先，没有就退回展示串。
+        self._suggestions = [
+            {"id": int(tid), "text": str(display), "query": str(zh or display)} for tid, display, zh in items
+        ]
         self.suggestionsChanged.emit()
 
     def _show_history(self) -> None:
@@ -345,8 +353,18 @@ class QueryBridge(QObject):
 
     @Slot(str)
     def pickSuggestion(self, text: str) -> None:
-        """候选/历史被点中：填回输入框并立即搜索。"""
-        self._current_query = str(text)
+        """候选/历史被点中：立刻搜索它。
+
+        ⚠️ **候选的展示串不是可搜的查询串**。候选列表里那一行是
+        `[17715] 毒蜥级 (Gila)`（带 Type ID 与中英双名），而搜索是拿关键词去
+        `LIKE '%…%'` 匹配名字 —— 整串匹配必然 0 条。用户实测就是
+        「点候选之后永远显示未找到物品」。
+        所以这里把展示串**换回可搜的查询串**（中文名优先，见 `_on_suggestions`）。
+        历史项本来就是用户搜过的串，原样使用。
+        """
+        text = str(text)
+        picked = next((item for item in self._suggestions if str(item.get("text")) == text), None)
+        self._current_query = str(picked.get("query") or text) if picked else text
         self._suggestions = []
         self.suggestionsChanged.emit()
         self.search()

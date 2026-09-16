@@ -784,7 +784,9 @@ class QueryDashboardBridge(QObject):
         self._refresh_snapshots()
         skipped = f"，跳过 {int(unparsed)} 行" if unparsed else ""
         tail = "已记入资产快照" if snapshot_ok else "资产快照写入失败，详见日志"
-        self._status = f"已从「{name}」导入 {len(records)} 笔挂单{skipped}，{tail}"
+        prefix = f"已从「{name}」导入 {len(records)} 笔挂单{skipped}，{tail}"
+        # 导入成功后问一次「本次文件里没出现的旧挂单」怎么处理 —— 确认框在桥里弹，QML 只调 readOrders
+        self._review_stale(prefix)
         self.changed.emit()
 
     @Slot(result=dict)
@@ -829,6 +831,41 @@ class QueryDashboardBridge(QObject):
         tail = "并记入资产快照" if snapshot_ok else "，但资产快照写入失败，详见日志"
         self._status = f"已结束 {len(stale)} 笔陈旧挂单{tail}"
         self.changed.emit()
+
+    def _review_stale(self, prefix: str) -> None:
+        """导入成功后的收尾编排：`staleCount > 0` 才弹确认框（**确认框在桥里弹**，QML 不参与）。
+
+        问的是「本次导出的文件里没出现的旧挂单」怎么处理 —— 不出现在导出里说明在游戏里
+        已经成交（卖出）或撤单了。选「是」= 标记为已结束（调 `dropStaleOrders()`），
+        选「否」= 原样保留。两种结果都写进 `_status`，用户点完能看到发生了什么。
+
+        `staleCount == 0` 时**不弹框**（每次导入都弹一个空框很烦），只把导入结果写进状态。
+        """
+        review = self.pendingReview()
+        stale_count = int(review.get("staleCount") or 0)
+        if stale_count <= 0:
+            self._status = prefix
+            return
+        if self._confirm("确认订单变化", self._stale_confirm_text(review)):
+            self.dropStaleOrders()
+            if not self._stale_records:  # 成功时它会清空；失败时它已写明原因，别覆盖
+                self._status = f"{prefix} 已标记 {stale_count} 笔旧挂单为已结束"
+        else:
+            self._status = f"{prefix} 保留了 {stale_count} 笔未出现在本次文件里的旧挂单"
+
+    @staticmethod
+    def _stale_confirm_text(review: Mapping[str, Any]) -> str:
+        """确认框正文：说清「本次导出文件里没出现」，列最多 5 个名字，其余用「等 N 笔」收口。"""
+        names = [str(name) for name in (review.get("staleNames") or []) if str(name)]
+        stale_count = int(review.get("staleCount") or 0)
+        shown = "、".join(names[:5])
+        if len(names) > 5:
+            shown = f"{shown} 等 {stale_count} 笔"
+        return (
+            f"有 {stale_count} 笔挂单没有出现在本次导出的文件里"
+            f"（说明在游戏里已经成交卖出或撤单了）：{shown}。\n"
+            "要把它们标记为已结束（从列表移除）吗？选「否」就先留着。"
+        )
 
     # ── 状态 ──────────────────────────────────────────────────
 

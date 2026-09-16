@@ -43,6 +43,26 @@ def _norm_col(name: str) -> str
 
 定义行：`87`
 
+### `_clean_value`
+
+```python
+def _clean_value(raw: str) -> str
+```
+
+拆掉 ``<localized>`` 包装并去掉值尾部那个占位 ``*``。
+
+定义行：`103`
+
+### `read_export_text`
+
+```python
+def read_export_text(path: str | Path) -> str
+```
+
+读导出文件 → 文本。**按 BOM/编码逐档尝试**。
+
+定义行：`129`
+
 ### `_normalize_number`
 
 ```python
@@ -51,7 +71,7 @@ def _normalize_number(token: str) -> str | None
 
 把带千分位/货币后缀的数值串归一为可 ``float()`` 的纯数字串；失败返回 None。
 
-定义行：`97`
+定义行：`152`
 
 ### `_to_float`
 
@@ -63,7 +83,7 @@ def _to_float(token: str) -> float | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`125`
+定义行：`180`
 
 ### `_to_int`
 
@@ -75,7 +95,7 @@ def _to_int(token: str) -> int | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`135`
+定义行：`190`
 
 ### `_to_bool`
 
@@ -87,7 +107,7 @@ def _to_bool(token: str) -> int | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`145`
+定义行：`200`
 
 ### `_to_duration`
 
@@ -99,7 +119,7 @@ def _to_duration(token: str) -> int | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`154`
+定义行：`209`
 
 ### `_split_csv_line`
 
@@ -109,7 +129,7 @@ def _split_csv_line(line: str, delim: str) -> list[str]
 
 按分隔符拆一行 CSV（正确处理引号包裹的字段）。
 
-定义行：`166`
+定义行：`221`
 
 ### `_header_mapping`
 
@@ -119,7 +139,7 @@ def _header_mapping(cols: list[str]) -> dict[int, str]
 
 列序 → 字段。至少命中 2 个已知列名才认定为表头（否则返回空 dict）。
 
-定义行：`171`
+定义行：`226`
 
 ### `_assign`
 
@@ -131,7 +151,7 @@ def _assign(row: dict, field: str, val: str) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`183`
+定义行：`238`
 
 ### `_parse_with_header`
 
@@ -143,7 +163,7 @@ def _parse_with_header(lines: list[str], delim: str, mapping: dict[int, str]) ->
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`209`
+定义行：`271`
 
 ### `_split_heuristic`
 
@@ -155,7 +175,7 @@ def _split_heuristic(line: str) -> list[str]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`232`
+定义行：`294`
 
 ### `_is_header_row`
 
@@ -167,7 +187,7 @@ def _is_header_row(parts: list[str]) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`238`
+定义行：`300`
 
 ### `_parse_heuristic_row`
 
@@ -179,7 +199,7 @@ def _parse_heuristic_row(parts: list[str]) -> dict | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`244`
+定义行：`306`
 
 ### `_parse_heuristic`
 
@@ -191,7 +211,7 @@ def _parse_heuristic(lines: list[str]) -> tuple[list[dict], int]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`295`
+定义行：`357`
 
 ### `parse_order_export`
 
@@ -201,7 +221,7 @@ def parse_order_export(raw: str) -> tuple[list[dict], int]
 
 解析 EVE 挂单导出文本 → ``(订单列表, 未识别行数)``。
 
-定义行：`320`
+定义行：`382`
 
 ### `_default_export_dir`
 
@@ -211,7 +231,7 @@ def _default_export_dir() -> str
 
 EVE 订单导出默认目录。
 
-定义行：`342`
+定义行：`404`
 
 ### `_safe_mtime`
 
@@ -223,7 +243,7 @@ def _safe_mtime(path: Path) -> float
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`353`
+定义行：`415`
 
 ### `find_latest_export`
 
@@ -233,4 +253,4 @@ def find_latest_export(directory: str | None=None) -> str | None
 
 返回目录下最新的订单导出文件路径（按 mtime）；没有则 None。
 
-定义行：`360`
+定义行：`422`

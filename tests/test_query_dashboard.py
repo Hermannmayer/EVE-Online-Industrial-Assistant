@@ -655,6 +655,9 @@ def test_read_orders_is_idempotent(h, tmp_path):
 
 def test_stale_orders_counted_and_dropped_on_demand(h, tmp_path, monkeypatch):
     bridge = h.bridge()
+    # 导入成功后的确认框由桥弹（本用例只验「不自动删 + 手动删」）：一律回答「否」，
+    # 保持「陈旧行原样留着」，也别在无 GUI 的测试里弹真对话框。
+    monkeypatch.setattr(qdb, "FMessageDialog", _Confirm(False))
 
     class _Clock:
         """固定「当前时间」——两次导入必须落在不同秒，否则 imported_at 撞车、陈旧判定失效。"""
@@ -703,6 +706,114 @@ def test_pending_review_without_import(h):
     assert review["staleCount"] == 0
     assert review["staleNames"] == []
     assert "还没有导入" in review["message"]
+
+
+# ── 导入成功后的「旧挂单怎么处理」确认框（在桥里弹，QML 不参与）─────
+
+
+def _stale_setup(h, tmp_path, monkeypatch, bridge: QueryDashboardBridge, *, stale_name: str = "类银超金属") -> None:
+    """导入两次造出一笔陈旧订单：第二次的导出文件里没有 42。
+
+    「当前时间」必须固定且两次落在不同秒 —— `imported_at` 是全秒精度的，
+    撞车会让陈旧判定（`imported_at != 本次`）失效。
+    """
+    clock = {"now": datetime(2026, 9, 16, 10, 0, 0)}
+
+    class _Clock:
+        def now(self) -> datetime:
+            return clock["now"]
+
+    monkeypatch.setattr(qdb, "datetime", _Clock())
+    h.orders.path = _write_export(tmp_path, "a.txt")
+    h.orders.rows = [_order(41, type_name="三钛合金"), _order(42, type_name=stale_name)]
+    bridge.readOrders()
+
+    clock["now"] = datetime(2026, 9, 16, 10, 5, 0)
+    h.orders.rows = [_order(41, type_name="三钛合金")]
+    bridge.readOrders()
+
+
+def test_read_orders_asks_and_drops_stale_on_yes(h, tmp_path, monkeypatch):
+    confirm = _Confirm(True)
+    monkeypatch.setattr(qdb, "FMessageDialog", confirm)
+    bridge = h.bridge()
+    _stale_setup(h, tmp_path, monkeypatch, bridge)
+
+    assert len(confirm.calls) == 1  # 第一次导入没有陈旧行 → 只在第二次弹
+    _title, text = confirm.calls[0]
+    assert "没有出现在本次导出的文件里" in text  # 说清「本次文件里没出现」
+    assert "成交" in text and "撤单" in text  # 说清原因
+    assert "类银超金属" in text  # 列出名字
+    assert "标记为已结束" in text
+    assert "先留着" in text
+
+    assert [row["order_id"] for row in _orders_in(h.conn)] == [41]  # 陈旧行被删
+    assert "已标记 1 笔旧挂单为已结束" in bridge.statusText
+    assert "导入 1 笔挂单" in bridge.statusText  # 导入结果没被吞掉
+
+
+def test_read_orders_keeps_stale_on_no(h, tmp_path, monkeypatch):
+    confirm = _Confirm(False)
+    monkeypatch.setattr(qdb, "FMessageDialog", confirm)
+    bridge = h.bridge()
+    _stale_setup(h, tmp_path, monkeypatch, bridge)
+
+    assert len(confirm.calls) == 1
+    assert [row["order_id"] for row in _orders_in(h.conn)] == [41, 42]  # 陈旧行仍在
+    assert "保留了 1 笔未出现在本次文件里的旧挂单" in bridge.statusText
+    assert "已标记" not in bridge.statusText
+
+
+def test_stale_confirm_text_caps_names(h):
+    """超过 5 个名字：只列 5 个，其余用「等 N 笔」收口。"""
+    review = {
+        "count": 3,
+        "staleCount": 7,
+        "staleNames": [f"物品{i}" for i in range(7)],
+        "message": "",
+    }
+    text = QueryDashboardBridge._stale_confirm_text(review)
+    assert "物品4" in text and "物品5" not in text
+    assert "等 7 笔" in text
+    assert "7 笔挂单没有出现在本次导出的文件里" in text
+
+
+def test_read_orders_does_not_ask_when_no_stale(h, tmp_path, monkeypatch):
+    confirm = _Confirm(True)
+    monkeypatch.setattr(qdb, "FMessageDialog", confirm)
+    h.orders.path = _write_export(tmp_path)
+    h.orders.rows = [_order(51)]
+    bridge = h.bridge()
+    bridge.readOrders()
+
+    assert confirm.calls == []  # staleCount == 0 → 不弹空框
+    assert "导入 1 笔挂单" in bridge.statusText
+
+
+def test_read_orders_does_not_ask_on_failure(h, tmp_path, monkeypatch):
+    confirm = _Confirm(True)
+    monkeypatch.setattr(qdb, "FMessageDialog", confirm)
+    bridge = h.bridge()
+
+    h.orders.path = None  # 找不到导出文件
+    bridge.readOrders()
+    assert confirm.calls == []
+    assert "没找到订单导出文件" in bridge.statusText
+
+    def _boom(raw: str) -> tuple[list[dict], int]:
+        raise ValueError("坏文件")
+
+    h.orders.path = _write_export(tmp_path)
+    monkeypatch.setattr(h.orders, "parse_order_export", _boom)
+    bridge.readOrders()
+    assert confirm.calls == []
+    assert "订单解析失败" in bridge.statusText
+
+    # 解析出 0 笔（空文件）也不弹
+    monkeypatch.setattr(h.orders, "parse_order_export", lambda raw: ([], 3))
+    bridge.readOrders()
+    assert confirm.calls == []
+    assert "未从" in bridge.statusText
 
 
 def test_export_dir_roundtrip(h, tmp_path):
