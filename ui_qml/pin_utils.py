@@ -19,6 +19,24 @@ from PySide6.QtWidgets import QWidget
 _PINNING: dict[int, bool] = {}
 
 
+def reassert_pin(window: QWidget | QWindow | None, pinned: bool) -> None:
+    """窗口显示 / 前置时**重申**置顶（幂等；`pinned` 为假或窗口还没建时什么都不做）。
+
+    为什么不能只在构造与勾选时各设一次：
+
+    - `apply_window_pin` 在**构造时**就先跑过一次，那一刻窗口还没显示；SetWindowPos
+      作用在一个随后会被 Qt 重新定位、显示的平台窗口上。
+    - `QWindow.raise_()` 在 Windows 上是 `SetWindowPos(HWND_TOP)` —— 一个**不带**
+      `HWND_TOPMOST` 的插入位置，对已置顶的窗口属于「换了个插入位置去摆它」。
+
+    这两处都可能让置顶在用户真正看到窗口之前丢掉，表现就是「勾着置顶却没置顶，
+    再点一次才好」。重申一次只是一次 Win32 调用，代价可忽略，换来的是
+    「只要窗口可见，置顶状态一定与勾选一致」。
+    """
+    if pinned and window is not None:
+        apply_window_pin(window, True)
+
+
 def apply_window_pin(window: QWidget | QWindow, checked: bool) -> None:
     """把窗口置顶/取消置顶。
 

@@ -72,6 +72,27 @@ class TestAggregateProcurement:
             _rows, cost, _ = aggregate_procurement(conn, [plan], price_type="buy")
         assert cost == pytest.approx(1000 * 4 + 500 * 8)
 
+    def test_spread_is_sell_minus_buy_and_ignores_mult(self, temp_db):
+        """价差 = 卖价 − 买价，且**不吃 price_mult**（倍率是跨区运费/溢价的模拟，价差是市场事实本身）。"""
+        plan = {"product_type_id": 2001, "runs": 1, "parallels": 1, "me_level": 0}
+        with temp_db.connect("user", "ref", "bp", "mkt") as conn:
+            rows, _cost, _vol = aggregate_procurement(conn, [plan], price_type="sell", price_mult=2.0)
+        by_type = {r["type_id"]: r for r in rows}
+        assert by_type[1001]["spread"] == pytest.approx(5 - 4)
+        assert by_type[1002]["spread"] == pytest.approx(9 - 8)
+        assert by_type[1001]["price"] == pytest.approx(5 * 2.0), "单价照旧吃倍率，价差不吃"
+
+    def test_spread_is_none_when_one_side_has_no_order(self, temp_db):
+        """单边挂单 → `None` 而不是 0：「算不出」不能伪装成「卖买同价」。"""
+        with temp_db.connect("mkt") as conn:
+            conn.execute("UPDATE market_prices SET buy_price = 0 WHERE type_id = 1001")
+        plan = {"product_type_id": 2001, "runs": 1, "parallels": 1, "me_level": 0}
+        with temp_db.connect("user", "ref", "bp", "mkt") as conn:
+            rows, _cost, _vol = aggregate_procurement(conn, [plan], price_type="sell")
+        by_type = {r["type_id"]: r for r in rows}
+        assert by_type[1001]["spread"] is None, "只有卖单时价差算不出来"
+        assert by_type[1002]["spread"] == pytest.approx(1.0), "另一件不受影响"
+
     def test_price_mult_scales_unit_price(self, temp_db):
         """材料倍率乘在单价上：price 与 total 同步缩放，to_buy / volume 不变。"""
         plan = {"product_type_id": 2001, "runs": 1, "parallels": 1, "me_level": 0}
@@ -157,3 +178,57 @@ class TestAggregateProcurement:
         assert by_type[1001]["zh_name"] == "三钛合金"
         assert by_type[1001]["en_name"] == "Tritanium"
         assert by_type[1001]["name"] != str(1001)
+
+
+class TestSelfMadeComponents:
+    """自制件排除：`self_made` 必须按**全量计划**算，不能按筛过的「备料中」那一份。
+
+    回归背景：调用方为了口径统一会把计划筛成 `materials_ready && pending`，而子项产线
+    往往**正在生产中** —— 排除集原先从传进来的 `plans` 现算，于是子线「不存在」了，
+    它的产物被当成待采购再买一遍（用户报的「电磁发生器已在生产，采购仍报缺 2504」）。
+    """
+
+    @staticmethod
+    def _seed_intermediate(db_manager) -> None:
+        """给 3001 加一个自制中间件 2003（自己有蓝图 3003，每轮产 1）。"""
+        with db_manager.connect("bp") as conn:
+            conn.execute("DELETE FROM blueprint_materials WHERE blueprint_type_id=3001")
+            for table in ("blueprint_activities", "blueprint_products"):
+                conn.execute(f"DELETE FROM {table} WHERE blueprint_type_id=3003")
+            conn.execute("INSERT INTO blueprint_materials VALUES (3001,'manufacturing',2003,5,10)")
+            conn.execute("INSERT INTO blueprint_activities VALUES (3003,'manufacturing',3600)")
+            conn.execute("INSERT INTO blueprint_products VALUES (3003,'manufacturing',2003,1)")
+
+    def test_self_made_ids_cover_unfinished_sublines_only(self):
+        from services.plan_aggregator import self_made_type_ids
+
+        plans = [
+            {"product_type_id": 2001, "sub_level": 0, "status": "pending"},  # 母项不算
+            {"product_type_id": 2003, "sub_level": 1, "status": "in_progress"},  # 算
+            {"product_type_id": 2004, "sub_level": 1, "status": "pending"},  # 算
+            {"product_type_id": 2005, "sub_level": 1, "status": "ready"},  # 算（产出还没入库）
+            {"product_type_id": 2006, "sub_level": 1, "status": "completed"},  # 不算（产出已入库）
+            {"product_type_id": 2007, "sub_level": 1, "status": "done"},  # 不算
+        ]
+        assert self_made_type_ids(plans) == {2003, 2004, 2005}
+
+    def test_running_sublines_component_is_excluded(self, temp_db):
+        """子线在生产中 → 它的产物不该出现在待采购里（这正是用户报的那条）。"""
+        self._seed_intermediate(temp_db)
+        mother = {"product_type_id": 2001, "runs": 1, "parallels": 1, "me_level": 0}
+        running_sublines = [{"product_type_id": 2003, "sub_level": 1, "status": "in_progress"}]
+
+        from services.plan_aggregator import self_made_type_ids
+
+        with temp_db.connect("user", "ref", "bp", "mkt") as conn:
+            # 不传排除集 = 旧行为（从筛过的 plans 现算）→ 2003 被算成待采购
+            rows, _cost, _vol = aggregate_procurement(conn, [mother])
+            assert 2003 in {r["type_id"] for r in rows}, "前提：不传排除集时它就是会算进去"
+
+            # 传「全量计划算出」的排除集 → 2003 被剔除
+            rows2, _cost2, _vol2 = aggregate_procurement(
+                conn,
+                [mother],
+                self_made=self_made_type_ids([mother, *running_sublines]),
+            )
+            assert 2003 not in {r["type_id"] for r in rows2}, "自制件被重复计成待采购了"

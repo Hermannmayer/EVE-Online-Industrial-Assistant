@@ -365,6 +365,7 @@ class ProcurementSummaryWorker(QThread):
         region_id: int = 10000002,
         price_type: str = "sell",
         price_mult: float = 1.0,
+        self_made: set[int] | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -373,6 +374,10 @@ class ProcurementSummaryWorker(QThread):
         self._region_id = region_id
         self._price_type = price_type
         self._price_mult = price_mult
+        #: 由子项产线自制、不该买的产物 id（见 `plan_aggregator.self_made_type_ids`）。
+        #: **必须由调用方按全量计划算好传进来** —— 本 worker 收到的 `plans` 是筛过的
+        #: 「备料中」那份，拿它现算会把正在生产的子线漏掉。
+        self._self_made = self_made
 
     def run(self):
         try:
@@ -384,6 +389,7 @@ class ProcurementSummaryWorker(QThread):
                 region_id=self._region_id,
                 price_type=self._price_type,
                 price_mult=self._price_mult,
+                self_made=self._self_made,
                 db=get_container().db,
             )
             self.finished_signal.emit(cost, vol)

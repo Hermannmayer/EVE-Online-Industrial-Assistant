@@ -660,3 +660,69 @@ def test_storage_page_headers_are_wired_to_sorting():
     assert "page.inv.sortItems(" in text, "机库表的表头没接排序"
     assert "page.inv.sortBlueprints(" in text, "蓝图表表头没接排序"
     assert "itemSortableColumns" in text and "blueprintSortableColumns" in text, "可排序列判据没接上"
+
+
+# ════════════════════════════════════════════════════════════
+#  排序要活过刷新
+#
+#  回归背景：右键「加入制造规划」跑完会 `loadBlueprints()` → `set_rows()` 整份换行，
+#  而 `set_rows` 原先只换数据、不重排 —— 表格悄悄回到原始顺序，桥那边的排序指示却
+#  还亮着（它记的是自己那份 `_bp_sort_col`）。用户看到的就是
+#  「点了加入制造规划之后排序失效了」。同一根因也打机库物品表（移库/刷新后同样乱）。
+# ════════════════════════════════════════════════════════════
+
+
+def _sortable_bp(bpid: int, runs: int, margin: float) -> dict:
+    """够排序用的最小蓝图行（`is_bpo=False`：原图按流程数排序会被当成 inf）。"""
+    return {
+        "id": bpid,
+        "blueprint_type_id": 1000 + bpid,
+        "is_bpo": False,
+        "runs": runs,
+        "margin": margin,
+        "me_level": 0,
+        "te_level": 0,
+        "base_time": 0,
+    }
+
+
+@pytest.mark.ui
+def test_blueprint_sort_survives_set_rows(qapp):
+    """刷新（`set_rows` 整份换行）后必须照当前排序重排，升序降序都要守住。"""
+    source = [_sortable_bp(1, 50, -3.0), _sortable_bp(2, 10, 9.0), _sortable_bp(3, 30, 1.0)]
+    model = BlueprintQmlModel([dict(r) for r in source])
+
+    model.sort(7, Qt.SortOrder.AscendingOrder)  # 流程数量
+    assert [r["id"] for r in model.rows()] == [2, 3, 1]
+
+    model.set_rows([dict(r) for r in source])  # 模拟一次刷新：同一批数据、原始顺序
+    assert [r["id"] for r in model.rows()] == [2, 3, 1], "刷新后被打回原始顺序 = 用户报的「排序失效」"
+
+    model.sort(10, Qt.SortOrder.DescendingOrder)  # 利润率降序
+    assert [r["id"] for r in model.rows()] == [2, 3, 1]
+
+    model.set_rows([dict(r) for r in source])
+    assert [r["id"] for r in model.rows()] == [2, 3, 1], "降序同样要活过刷新"
+
+
+@pytest.mark.ui
+def test_item_sort_survives_set_rows(qapp):
+    """同一条回护栏，机库物品表也走一遍（移库 / 刷新同样会 `set_rows`）。"""
+    source = [_item(iid=1, qty=300), _item(iid=2, qty=100), _item(iid=3, qty=200)]
+    model = InvQmlModel([dict(r) for r in source])
+
+    model.sort(2, Qt.SortOrder.AscendingOrder)  # 库存数量
+    assert [r["id"] for r in model.rows()] == [2, 3, 1]
+
+    model.set_rows([dict(r) for r in source])
+    assert [r["id"] for r in model.rows()] == [2, 3, 1]
+
+
+@pytest.mark.ui
+def test_never_sorted_model_stays_put_on_refresh(qapp):
+    """没排过序的表刷新后保持后端给的顺序（别自作主张按第 0 列乱排）。"""
+    source = [_sortable_bp(1, 50, -3.0), _sortable_bp(2, 10, 9.0), _sortable_bp(3, 30, 1.0)]
+    model = BlueprintQmlModel([dict(r) for r in source])
+
+    model.set_rows([dict(r) for r in source])
+    assert [r["id"] for r in model.rows()] == [1, 2, 3]

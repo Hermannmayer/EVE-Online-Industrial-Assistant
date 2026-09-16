@@ -67,7 +67,16 @@ def toggle_collapse(self, group_id: int) -> None
 
 切换指定组的折叠状态
 
-定义行：`119`
+定义行：`123`
+##### `beginResetModel`
+
+```python
+def beginResetModel(self) -> None
+```
+
+整体重置前丢掉派生视图缓存。
+
+定义行：`133`
 ##### `_is_visible`
 
 ```python
@@ -76,7 +85,7 @@ def _is_visible(self, plan: dict) -> bool
 
 判断行是否可见（未被折叠隐藏）
 
-定义行：`128`
+定义行：`142`
 ##### `_is_shared_root_collapsed`
 
 ```python
@@ -87,7 +96,7 @@ def _is_shared_root_collapsed(self) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`141`
+定义行：`155`
 ##### `_visible_plans`
 
 ```python
@@ -96,16 +105,25 @@ def _visible_plans(self) -> list[dict]
 
 返回过滤后的可见行列表
 
-定义行：`144`
+定义行：`158`
 ##### `_has_children`
 
 ```python
 def _has_children(self, group_id: int) -> bool
 ```
 
-判断指定 group 是否有子项（含 -1 共享区）。
+判断指定 group 是否有子项（含 -1 共享区）。走缓存，O(1)。
 
-定义行：`148`
+定义行：`162`
+##### `_view_cache`
+
+```python
+def _view_cache(self) -> tuple[list[dict], list[int], frozenset[int], bool]
+```
+
+派生视图缓存 → (可见行, 过滤行号→原始行号, 有子项的组号集合, 是否有 -1 共享行)。
+
+定义行：`166`
 ##### `_row_map`
 
 ```python
@@ -114,7 +132,7 @@ def _row_map(self, filtered_row: int) -> int
 
 过滤行号 → 原始行号映射
 
-定义行：`158`
+定义行：`197`
 ##### `rowCount`
 
 ```python
@@ -125,7 +143,7 @@ def rowCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`169`
+定义行：`204`
 ##### `columnCount`
 
 ```python
@@ -136,7 +154,7 @@ def columnCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`174`
+定义行：`209`
 ##### `data`
 
 ```python
@@ -147,7 +165,7 @@ def data(self, index, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`179`
+定义行：`214`
 ##### `_line_levels`
 
 ```python
@@ -156,7 +174,7 @@ def _line_levels(p: dict) -> list[tuple[int, int]]
 
 逐线 ME/TE（与计划级不一致时才有意义）；空列表表示按计划级单次计算。
 
-定义行：`194`
+定义行：`229`
 ##### `_levels_tooltip`
 
 ```python
@@ -165,7 +183,7 @@ def _levels_tooltip(self, p: dict) -> str
 
 ME/TE 列 tooltip：各线不一致时逐条列出实际用的等级。
 
-定义行：`200`
+定义行：`235`
 ##### `_display_text`
 
 ```python
@@ -174,7 +192,7 @@ def _display_text(self, p: dict, c: int) -> str
 
 列 0~18 的 DisplayRole 文本
 
-定义行：`208`
+定义行：`243`
 ##### `_success_rate_text`
 
 ```python
@@ -183,7 +201,7 @@ def _success_rate_text(p: dict) -> str
 
 成功率列：用户手填优先（实填值），否则显示评分算出的值并标「预计」。
 
-定义行：`313`
+定义行：`352`
 ##### `_decryptor_text`
 
 ```python
@@ -192,7 +210,7 @@ def _decryptor_text(p: dict) -> str
 
 解码器列：发明行显示解码器名（无 → —）。
 
-定义行：`342`
+定义行：`381`
 ##### `headerData`
 
 ```python
@@ -203,7 +221,7 @@ def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`354`
+定义行：`393`
 ##### `flags`
 
 ```python
@@ -214,7 +232,7 @@ def flags(self, index)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`365`
+定义行：`404`
 ##### `setData`
 
 ```python
@@ -225,7 +243,7 @@ def setData(self, index, value, role=Qt.ItemDataRole.EditRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`375`
+定义行：`414`
 ##### `sort`
 
 ```python
@@ -236,7 +254,7 @@ def sort(self, column: int, order=Qt.SortOrder.AscendingOrder)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`419`
+定义行：`458`
 ##### `set_plans`
 
 ```python
@@ -245,7 +263,7 @@ def set_plans(self, plans: list[dict]) -> None
 
 替换所有数据 — 保持同一个 model 实例，避免 setModel 清除选中
 
-定义行：`435`
+定义行：`474`
 ##### `get_plan`
 
 ```python
@@ -256,7 +274,7 @@ def get_plan(self, row: int) -> dict
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`442`
+定义行：`481`
 ##### `tick`
 
 ```python
@@ -265,4 +283,4 @@ def tick(self) -> list[int]
 
 倒计时 tick：遍历进行中行算剩余；≤0 内存置 ready；对变动行 emit dataChanged。
 
-定义行：`446`
+定义行：`485`

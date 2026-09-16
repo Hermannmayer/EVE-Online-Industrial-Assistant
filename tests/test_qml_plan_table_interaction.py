@@ -657,3 +657,85 @@ def test_double_click_non_editable_cell_takes_the_dialog_path(qapp):
     finally:
         widget.dispose()
         _spin(60)
+
+
+# ════════════════════════════════════════════════════════════
+#  行右键菜单的条目与分组
+# ════════════════════════════════════════════════════════════
+
+
+def _visible_labels(menu: QObject) -> list[str]:
+    """菜单里当前可见的条目文本，按**声明顺序**（分隔线没有 `text`，自然被滤掉）。
+
+    走 `menu.children()`（声明子项，有序无重复），不走 `_menu_entries` —— 后者是给
+    「不可见项有没有占高度」用的快查，会把声明项与实例化出来的 delegate 一起收进来
+    （同一条目出现 3 次）且栈式遍历是倒序，拿来断言顺序会错得莫名其妙。
+    """
+    labels: list[str] = []
+    for item in menu.children():
+        if item.property("visible") is False:
+            continue
+        text = item.property("text")
+        if text:
+            labels.append(str(text))
+    return labels
+
+
+def test_row_menu_is_grouped_and_dropped_entries_stay_out(table, clicks):
+    """菜单按用途分组，且三项已下线功能**不得复活**。
+
+    - 「设置蓝图等级...」：蓝图等级统一由库存蓝图带出（计划上不再有手填入口，蓝图不会凭空出现）
+    - 「查看蓝图原图的NPC卖家」：入口仍在蓝图选择弹窗里
+    - 「产线启动小助手」：工业页底部状态栏已有同名按钮
+
+    这三条的**功能都还在**，只是计划表的入口该消失 —— 读 QML 源码看不出来，
+    所以在这里把「菜单里没有它们」钉死。
+    """
+    clicks.right_click(0)
+    menu = clicks.wait_open("rowMenu")
+    labels = _visible_labels(menu)
+
+    for gone in ("设置蓝图等级...", "查看蓝图原图的NPC卖家", "产线启动小助手"):
+        assert gone not in labels, f"「{gone}」不该再出现在行右键菜单里：{labels}"
+
+    assert labels[-1] == "删除产线", f"破坏性操作要单独压到最后：{labels}"
+    assert "删除产线" in labels
+
+    # 组序：计划编辑 → 备料与状态 → … → 删除产线（同一组的条目彼此相邻）
+    ordered = ["编辑生产计划", "绑定库存蓝图...", "添加备注", "勾选备料", "项目启动", "删除产线"]
+    positions = [labels.index(name) for name in ordered if name in labels]
+    assert positions == sorted(positions), f"菜单分组顺序被改乱了：{labels}"
+    assert "查看核算" in labels and labels.index("查看核算") < labels.index("删除产线")
+
+
+def test_synthetic_shared_row_menu_only_collapses(table, clicks):
+    """共享组件合成根只留「展开/折叠共享组件」，其余业务动作（含状态那些）全关。
+
+    合成根不是真计划行，业务动作对它无意义。⚠️ 它自己的 `status` 也会命中
+    「pending」这类分支，所以状态条目必须**同时**判 `state.synthetic` —— 只判状态
+    的话合成根菜单里会冒出「项目启动」。
+
+    「智能调整」这一项会以**置灰**形式留着：它是个嵌套 `Menu`，Qt 托管其 `visible`
+    （恒为 false），写 `visible:` 既藏不住还会让子菜单随父菜单闪一下（见 QML 里那段说明），
+    只能用 `enabled` 置灰。这是已知且有意保留的形态，不是漏改。
+    """
+    model = table.get_model()
+    assert model is not None
+    model._plans.insert(0, {"id": -1, "_synthetic": True, "product_name": "共享组件", "status": "pending"})
+    model.beginResetModel()
+    model.endResetModel()
+    _spin(200)
+
+    clicks.right_click(0)
+    menu = clicks.wait_open("rowMenu")
+    state = menu.property("state")
+    assert state.get("synthetic") is True, f"合成标志没传到菜单：{state}"
+
+    labels = _visible_labels(menu)
+    assert labels[0] == "展开/折叠共享组件"
+    for plain_only in ("编辑生产计划", "绑定库存蓝图...", "勾选备料", "项目启动", "查看核算", "删除产线"):
+        assert plain_only not in labels, f"合成根的菜单里不该有「{plain_only}」：{labels}"
+    assert labels == ["展开/折叠共享组件", "智能调整"], labels
+
+    submenu = clicks.menu("smartMenu")
+    assert submenu.property("enabled") is False, "合成根下「智能调整」要置灰"

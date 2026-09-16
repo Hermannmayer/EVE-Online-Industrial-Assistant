@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtGui import QGuiApplication
 
-from ui_qml.bridge.procurement_bridge import procure_rows
+from ui_qml.bridge.procurement_bridge import procure_rows, procure_table_headers
 from ui_qml.views.procurement_tab import (
     ProcurementDialog,
     copy_cell_text,
@@ -21,6 +21,7 @@ from ui_qml.views.procurement_tab import (
 pytestmark = pytest.mark.ui
 
 # to_buy>0：34/35 需采购；to_buy=0：2001 库存已备足
+# `spread`（卖价−买价）：34 有双边挂单、35 只有单边（None）、2001 双边同向
 ROWS = [
     {
         "type_id": 34,
@@ -33,6 +34,7 @@ ROWS = [
         "price": 5.0,
         "total": 5000.0,
         "volume": 10.0,
+        "spread": 1.25,
     },
     {
         "type_id": 35,
@@ -45,6 +47,7 @@ ROWS = [
         "price": 9.0,
         "total": 900.0,
         "volume": 1.0,
+        "spread": None,
     },
     {
         "type_id": 2001,
@@ -57,6 +60,7 @@ ROWS = [
         "price": 55000000.0,
         "total": 0.0,
         "volume": 0.0,
+        "spread": 0.1,
     },
 ]
 
@@ -131,11 +135,60 @@ def test_split_sections_empty_half():
 
 
 def test_copy_text_matches_display():
-    """复制文本 = 显示文本去掉千分位（两处口径不得漂移）。"""
+    """复制文本 = 显示文本去掉千分位（两处口径不得漂移）。
+
+    唯一例外是**算不出**的格子（价差单边挂单，显示 `-`）：复制给空串而不是 `-`，
+    否则粘进游戏输入框的是一串废字符。见 `test_copying_a_one_sided_spread_does_not_copy_a_fake_zero`。
+    """
     for r in ROWS:
         shown = procure_rows([r])[0]["cells"]
-        for col in range(7):
+        for col in range(len(shown)):
+            if shown[col]["text"] == "-":
+                assert copy_cell_text(r, col) == ""
+                continue
             assert copy_cell_text(r, col) == shown[col]["text"].replace(",", ""), f"物品 {r['type_id']} 列 {col}"
+
+
+# ═══════════════════════════════════════════════════
+#  列结构（表头 / 排序字段 / 复制字段 / 单元格四处按索引对齐）
+# ═══════════════════════════════════════════════════
+
+
+def test_column_lists_stay_index_aligned():
+    """四处列定义必须同长同序 —— 它们**按索引对齐**，插错位就是「排序按这列、复制按那列」。
+
+    串列不报错也不崩，只是数字悄悄对不上，所以用一条显式断言钉住。
+    """
+    from ui_qml.bridge import procurement_bridge as pb
+
+    assert len(pb._HEADERS) == len(pb._SORT_FIELDS) == len(pb._COPY_FIELDS) == len(pb._COLUMNS)
+    assert pb._HEADERS[3] == "买卖差价"
+    assert pb._SORT_FIELDS[3] == "spread", "价差列要能排序（表头点得动）"
+    assert pb._COPY_FIELDS[3] == "spread"
+    assert [c["title"] for c in pb._COLUMNS] == pb._HEADERS
+    assert procure_table_headers() == pb._HEADERS
+
+
+def test_table_stays_narrow_enough_to_fit_the_window():
+    """固定列宽之和必须留得下名称列 —— 否则右侧列会被裁掉（「打开时显示不全」）。
+
+    `FSummaryTable.colWidth` 给弹性列的下限是 80px，且**不会**为了塞下而挤固定列：
+    固定列一多，总宽就超出窗口，右边几列直接看不见。窗口默认 760、最小 620。
+    """
+    from ui_qml.bridge import procurement_bridge as pb
+
+    cell_padding = 12  # 与 FSummaryTable.cellPadding 同口径（Theme 缩放为 1 时）
+    fixed = sum(c["width"] + cell_padding for c in pb._COLUMNS if c["width"] > 0) + cell_padding
+    flexible_floor = 80
+    assert fixed + flexible_floor <= 620 - 32, (
+        f"固定列合计 {fixed}px + 名称列下限 {flexible_floor}px 已经装不进最小窗口宽（620）"
+    )
+    assert sum(1 for c in pb._COLUMNS if c["width"] <= 0) == 1, "只留名称列吃满剩余空间"
+
+
+def test_spread_cell_renders_value_or_dash():
+    """价差列：双边挂单给数值（千分位、两位小数），单边给 `-`（不是 0）。"""
+    assert [r["cells"][3]["text"] for r in procure_rows(ROWS)] == ["1.25", "-", "0.10"]
 
 
 def test_display_name_prefers_zh_then_en_then_id():
@@ -153,10 +206,10 @@ def test_sort_numeric_and_name(qapp, make_dlg):
     """按列排序：数值列按值、名称列按显示名（`casefold`）—— 对齐原表模型的判据。"""
     dlg = make_dlg()
 
-    dlg.sort_section("buy", 3)  # 需采购升序 [100, 1000]
+    dlg.sort_section("buy", 2)  # 需采购升序 [100, 1000]
     assert [r["to_buy"] for r in dlg.section_rows("buy")] == [100, 1000]
 
-    dlg.sort_section("buy", 3)  # 再点同列 → 反向
+    dlg.sort_section("buy", 2)  # 再点同列 → 反向
     assert [r["to_buy"] for r in dlg.section_rows("buy")] == [1000, 100]
 
     dlg.sort_section("buy", 0)  # 换列 → 从升序开始
@@ -164,14 +217,28 @@ def test_sort_numeric_and_name(qapp, make_dlg):
     assert names == sorted(names)
 
 
+def test_sort_by_spread_treats_unknown_as_zero(qapp, make_dlg):
+    """买卖差价列能排序；算不出的那一格（`None`）按 0 参与比较，不炸也不排到天上。
+
+    行 34 的 spread=1.25、行 35 是 `None`（单边挂单）→ 升序应为 35、34。
+    """
+    dlg = make_dlg()
+
+    dlg.sort_section("buy", 3)
+    assert [r["type_id"] for r in dlg.section_rows("buy")] == [35, 34]
+
+    dlg.sort_section("buy", 3)  # 反向
+    assert [r["type_id"] for r in dlg.section_rows("buy")] == [34, 35]
+
+
 def test_sort_survives_recalculate(qapp, make_dlg):
     """轮询重算不得丢排序。用升序：fixture 自然序 [1000, 100] 与排序序相反。"""
     dlg = make_dlg()
-    dlg.sort_section("buy", 3)
+    dlg.sort_section("buy", 2)  # 需采购
     assert [r["to_buy"] for r in dlg.section_rows("buy")] == [100, 1000]
 
     dlg.recalculate()  # 模拟轮询 / 刷新重建分区
-    assert dlg.sort_column("buy") == 3
+    assert dlg.sort_column("buy") == 2
     assert dlg.sort_ascending("buy") is True
     assert [r["to_buy"] for r in dlg.section_rows("buy")] == [100, 1000]
 
@@ -186,8 +253,8 @@ def test_no_fake_sort_on_start(qapp, make_dlg):
 def test_two_sections_are_independently_sorted(qapp, make_dlg):
     """两个分区各排各的（原版是两个独立表格控件，共用排序状态会让一边带偏另一边）。"""
     dlg = make_dlg()
-    dlg.sort_section("buy", 3)
-    assert dlg.sort_column("buy") == 3
+    dlg.sort_section("buy", 2)
+    assert dlg.sort_column("buy") == 2
     assert dlg.sort_column("stock") == -1
 
 
@@ -218,11 +285,11 @@ def test_empty_rows_hides_tables(qapp, make_dlg):
 
 
 def test_double_click_copies_clicked_column(qapp, make_dlg):
-    """双击哪列复制哪列：名称列→物品名，数量列→整数，价格/体积→两位小数（均无千分位）。
+    """双击哪列复制哪列：名称列→物品名，数量列→整数，价差/总价→两位小数（均无千分位）。
     用 setText spy 断言，规避全量跑时系统剪贴板读回被前置测试扰动的偶发。"""
     dlg = make_dlg()
     clip = QGuiApplication.clipboard()
-    expected = {0: "三钛合金", 1: "1000", 2: "0", 3: "1000", 4: "5.00", 5: "5000.00", 6: "10.00"}
+    expected = {0: "三钛合金", 1: "1000", 2: "1000", 3: "1.25", 4: "5000.00"}
     with patch.object(clip, "setText") as m_set:
         for col, text in expected.items():
             dlg.copy_cell("buy", 0, col)
@@ -233,6 +300,21 @@ def test_double_click_copies_clicked_column(qapp, make_dlg):
     with patch.object(clip, "setText") as m_set:
         dlg.copy_cell("stock", 0, 0)
         assert m_set.call_args.args[0] == "渡鸦级"
+
+
+def test_copying_a_one_sided_spread_does_not_copy_a_fake_zero(qapp, make_dlg):
+    """单边挂单时价差是「算不出」而不是 0：那一格不该复制出 `0.00`。
+
+    `copy_cell_text` 对 `None` 返回空串 → `copy_cell` 直接不复制（也不弹「已复制」提示）。
+    """
+    dlg = make_dlg()
+    clip = QGuiApplication.clipboard()
+    with patch.object(clip, "setText") as m_set:
+        dlg.copy_cell("buy", 1, 3)  # 第 1 行（类银超金属）的价差列为 None
+        m_set.assert_not_called()
+    assert dlg.copy_hint_text() == ""
+    assert copy_cell_text(ROWS[1], 3) == ""
+    assert "0.00" not in copy_cell_text(ROWS[1], 3)
 
 
 def test_copy_actions_use_status_hint_not_popup(qapp, make_dlg):
@@ -444,3 +526,80 @@ class TestCompleteAllReload:
         dlg.complete_all()
 
         assert calls == ["reload"], "完成后必须走 _reload_plans（其内部已含 recalculate）"
+
+
+# ═══════════════════════════════════════════════════
+#  置顶：显示 / 前置时重申
+#
+#  回归背景：`_restore_pin` 只在**构造时**设过一次置顶，而那一刻窗口还没显示
+#  （SetWindowPos 作用在一个随后会被 Qt 重新定位、显示的平台窗口上）；而
+#  `QWindow.raise_()` 在 Windows 上是 `SetWindowPos(HWND_TOP)` —— 不带 HWND_TOPMOST
+#  的插入位置。用户看到的是「勾着置顶却没置顶，再点一次才好」。
+#  现在这两条路径都重申一次，幂等、一次 Win32 调用。
+# ═══════════════════════════════════════════════════
+
+
+def test_reassert_pin_only_touches_the_window_when_pinned(monkeypatch):
+    """`reassert_pin` 是幂等的空操作：没勾置顶、或窗口还没建，都不该去动窗口。"""
+    from ui_qml import pin_utils
+
+    calls: list[bool] = []
+    monkeypatch.setattr(pin_utils, "apply_window_pin", lambda window, checked: calls.append(checked))
+
+    pin_utils.reassert_pin(object(), False)
+    assert calls == [], "没勾置顶时不该白跑一次 Win32 调用"
+    pin_utils.reassert_pin(None, True)
+    assert calls == [], "窗口还没建时不能炸"
+    pin_utils.reassert_pin(object(), True)
+    assert calls == [True]
+
+
+def test_show_and_raise_reassert_the_pin(qapp, make_dlg, monkeypatch):
+    """窗口显示、以及置顶态下的「前置」，都必须重申置顶。"""
+    dlg = make_dlg()
+    calls: list[bool] = []
+    monkeypatch.setattr(
+        "ui_qml.views.procurement_tab.reassert_pin",
+        lambda window, pinned: calls.append(bool(pinned)),
+    )
+
+    dlg._pinned = True
+    dlg.window_visibility_changed(True)
+    assert calls == [True], "显示时要重申置顶"
+
+    calls.clear()
+    dlg.raise_()
+    assert calls == [True], "置顶态下的「前置」要带 HWND_TOPMOST 一起做，不能走裸 raise_()"
+
+    calls.clear()
+    dlg._pinned = False
+    dlg.raise_()
+    assert calls == [], "没置顶时前置走原生路径"
+
+
+def test_recalculate_excludes_running_sublines(qapp, make_dlg, monkeypatch):
+    """重算必须把「正在生产的子项产线」的产物排除掉，且这个集合按**全量**计划算。
+
+    回归：排除集原先由 `aggregate_procurement` 从**传进来的** `plans` 现算，而本窗传的是
+    筛过的「备料中」计划 —— 子线一进生产中就不在那份列表里，产物被当成没有子线、
+    重复计成待采购（用户报的「电磁发生器已在生产，采购仍报缺 2504」）。
+    """
+    seen: dict = {}
+
+    def _fake(conn, plans, **kw):
+        seen.update({"plans": plans, **kw})
+        return ([], 0.0, 0.0)
+
+    dlg = make_dlg(
+        plans=[
+            {"id": 1, "product_type_id": 3955, "runs": 1, "parallels": 1, "status": "pending", "materials_ready": 1},
+            # 子项产线：生产中（不会进「备料中」那一份），但它的产物必须被排除
+            {"id": 2, "product_type_id": 11694, "sub_level": 1, "status": "in_progress", "materials_ready": 1},
+        ]
+    )
+    # 补丁必须在 `make_dlg` **之后**打：夹具自己也会 patch 这个函数，先打会被它盖掉
+    monkeypatch.setattr("services.plan_aggregator.aggregate_procurement", _fake)
+    dlg.recalculate()
+
+    assert seen["self_made"] == {11694}, "自制件集合没按全量计划算"
+    assert [p["id"] for p in seen["plans"]] == [1], "传给聚合的仍应只有「备料中」那一份"

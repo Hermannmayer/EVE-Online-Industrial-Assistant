@@ -27,10 +27,15 @@ Window {
      *   setMinimumSize(620, 400)                     → minimumWidth / minimumHeight
      *   resize(760, 820)                             → width / height（窄高，一眼看全）
      *   show() / raise_() / activateWindow() / done()/Esc → 控制器转发 + 下面的 Shortcut
+     *
+     * ⚠️ 宽度按**工具栏那一行**定，不是按表格：表格 5 列只要 ~530px，而工具栏
+     * （两个下拉 + 三个按钮 + 完成所有 + 置顶）实测要 ~753px。窗口比它窄就会把最
+     * 右边的「置顶」切掉 —— 用户报的「首次打开显示不全」也包含这一处。
+     * 动过工具栏（加按钮 / 加宽下拉 / 改文案）后请重新量那一行的 implicitWidth。
      */
-    width: 760
+    width: 800
     height: 820
-    minimumWidth: 620
+    minimumWidth: 640
     minimumHeight: 400
     title: page.pc ? page.pc.titleText : ""
     // 窗口清屏色 = 页面底色：首帧之前也不会闪一下白底
@@ -62,8 +67,10 @@ Window {
     }
 
     readonly property var pc: typeof bridge !== "undefined" ? bridge : null
-    //: 七列全部可排序（对齐原 `SortPreservingTableView` 的表头）
-    readonly property var allColumns: [0, 1, 2, 3, 4, 5, 6]
+    //: 全部列都可排序（对齐原 `SortPreservingTableView` 的表头）。
+    //: **从 `columns` 长度推，不要写死下标数组** —— 写死的话加列时新列的表头点不动，
+    //: 而且不会报错（只是点了没反应）。
+    readonly property var allColumns: page.pc ? page.pc.columns.map(function (c, i) { return i; }) : []
     //: 两分区的取数口径一致，只有数据源与排序列不同 —— 抽成内联组件，避免抄两遍
     readonly property bool anyVisible: page.pc ? (page.pc.buyVisible || page.pc.stockVisible) : false
 
@@ -141,7 +148,7 @@ Window {
 
             FComboBox {
                 objectName: "priceTypeBox"
-                Layout.preferredWidth: Math.round(110 * Theme.fontScale)
+                Layout.preferredWidth: Math.round(100 * Theme.fontScale)
                 textRole: "label"
                 model: page.pc ? page.pc.priceTypeOptions : []
                 currentIndex: page.pc ? page.pc.priceTypeIndex : 0
@@ -158,7 +165,7 @@ Window {
 
             FComboBox {
                 objectName: "hubBox"
-                Layout.preferredWidth: Math.round(140 * Theme.fontScale)
+                Layout.preferredWidth: Math.round(128 * Theme.fontScale)
                 textRole: "label"
                 model: page.pc ? page.pc.hubOptions : []
                 currentIndex: page.pc ? page.pc.hubIndex : 0

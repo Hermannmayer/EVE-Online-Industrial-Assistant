@@ -110,7 +110,7 @@ def _plan_at(self, row: int) -> dict
 
 过滤行号 → 行 dict（折叠时经 `_row_map` 映射）。
 
-定义行：`195`
+定义行：`200`
 ##### `_fg`
 
 ```python
@@ -121,7 +121,7 @@ def _fg(self, p: dict, c: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`202`
+定义行：`207`
 ##### `_icon_url`
 
 ```python
@@ -132,7 +132,7 @@ def _icon_url(self, p: dict, c: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`237`
+定义行：`245`
 ##### `_fold_state`
 
 ```python
@@ -141,7 +141,7 @@ def _fold_state(self, p: dict) -> str
 
 产品列的折叠态：`""` 无可折叠 | `expanded` | `collapsed`。
 
-定义行：`247`
+定义行：`255`
 ##### `_display_text`
 
 ```python
@@ -152,7 +152,7 @@ def _display_text(self, p: dict, c: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`262`
+定义行：`270`
 ##### `refresh_colors`
 
 ```python
@@ -161,7 +161,16 @@ def refresh_colors(self) -> None
 
 主题切换后重算所有单元格颜色（`fg`/`bg`/`iconColor` 是已解析的 hex）。
 
-定义行：`270`
+定义行：`278`
+##### `refresh_status_column`
+
+```python
+def refresh_status_column(self) -> None
+```
+
+只重发**状态列** —— 缺料标注变了时用，不为一行把全表刷一遍。
+
+定义行：`285`
 ##### `sort`
 
 ```python
@@ -172,7 +181,7 @@ def sort(self, column: int, order: Qt.SortOrder=Qt.SortOrder.AscendingOrder) -> 
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`279`
+定义行：`302`
 ##### `sort_column`
 
 ```python
@@ -183,7 +192,7 @@ def sort_column(self) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`284`
+定义行：`307`
 ##### `sort_ascending`
 
 ```python
@@ -194,4 +203,4 @@ def sort_ascending(self) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`288`
+定义行：`311`

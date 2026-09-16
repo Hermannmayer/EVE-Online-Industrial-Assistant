@@ -38,6 +38,18 @@ if TYPE_CHECKING:
     from ui_qml.bridge.plan_table_bridge import PlanTableBridge
     from ui_qml.models.plan_qml_model import PlanQmlModel
 
+#: 正在生产中的计划状态（口径同 `services.plan_rebuild._LOCKED_RUNS_STATUSES`）
+_RUNNING_STATUSES = ("in_progress", "running")
+
+
+def _plan_level(plan: dict) -> int:
+    """行层级：0=母项，>0=子项。
+
+    DB 列是 `sub_level`，`child_level` 只是 enrich 注入的别名 —— 两者都要看，
+    只读一个会让「刚下发还没重载的行」被判错层级（进而跳过级联/收缩）。
+    """
+    return int(plan.get("child_level") or plan.get("sub_level") or 0)
+
 
 class PlanTable(QObject):
     """生产计划表格 — QML 渲染 + 本类承载全部业务动作
@@ -51,7 +63,6 @@ class PlanTable(QObject):
     plan_updated = Signal()
     refresh_requested = Signal()
     plan_detail_requested = Signal(int)
-    launcher_requested = Signal(str)  # 产线启动小助手（传初始人物名，空串=未分配）
 
     def __init__(self, parent: QObject | None = None, *, headless: bool = False):
         """`headless` 是 7.4 前的历史开关：旧实现里 `headless=True` 才不自建 QML 宿主。
@@ -382,48 +393,6 @@ class PlanTable(QObject):
             self._model.layoutChanged.emit()
             self.plan_updated.emit()
 
-    def _batch_set_me_te(self, rows: list[int]) -> None:
-        """批量设置 ME/TE — 滑杆 + 数字框的 QML 对话框（批次 7.3）
-
-        原版是就地手搭的 `QDialog`（两个 `QSlider` ↔ `QSpinBox` 双向联动 + 手写 QSS
-        + 主题监听器），整块搬到 `ui_qml/qml/dialogs/MeTeDialog.qml`；这里只剩
-        取当前值 → 开对话框 → 落库三步。
-        """
-        if self._model is None or not rows:
-            return
-        from ui_qml.bridge.me_te_dialog import MeTeQmlDialog
-
-        # 从首行加载当前值
-        first = self._model.get_plan(rows[0]) if rows else None
-        cur_me = int(first.get("me_level", 0)) if first else 0
-        cur_te = int(first.get("te_level", 0)) if first else 0
-
-        # 已绑产线按各自绑定蓝图的等级结算，这里的计划级值只是**未绑线**的兜底 ——
-        # 不说清楚用户会以为改了没生效（逐线计算上线后的语义变化）
-        hint = ""
-        if first and first.get("bound_blueprint_ids"):
-            hint = "已绑定产线的等级以各自绑定的蓝图为准；此处只影响**未绑定**的产线。"
-
-        picked = MeTeQmlDialog.ask(self, cur_me, cur_te, hint=hint)
-        if picked is None:  # 取消 / Esc / 关闭按钮
-            return
-        me_val, te_val = picked
-
-        ids: list[int] = []
-        for r in rows:
-            plan = self._model.get_plan(r)
-            if not plan:
-                continue
-            plan["me_level"] = me_val
-            plan["te_level"] = te_val
-            if plan.get("id"):
-                ids.append(plan["id"])
-        if ids:
-            get_container().plan_repo.update_many(ids, me_level=me_val, te_level=te_val)
-        self._rebuild_subitems()
-        self._model.layoutChanged.emit()
-        self.plan_updated.emit()
-
     def _add_notes(self, row: int) -> None:
         """添加备注 — 弹出文本输入框"""
         if self._model is None:
@@ -694,13 +663,16 @@ class PlanTable(QObject):
         self.plan_updated.emit()
 
     def _delete_rows(self, rows: list[int]) -> None:
-        """批量取消生产（解除蓝图绑定 + 删除计划行）。
+        """删除产线：删本行 + 连带的子项，解除蓝图绑定，**不动库存材料**。
 
-        - 删母项：其引用的子项若不再被任何母项引用则级联收缩；仍被其他母项引用则保留。
-        - 删子项（单独删某条产线）：删除后不会因后续编辑母项/重放被自动加回，
-          仅显式「母项拆解/重算子项」才会重新生成。
-        - **不返还已扣减材料**（领域模型见 AUDIT-20260801.md：与游戏「取消产线只退蓝图」一致）。
-          在产计划被删后材料不会退回，所以删前必须让用户知情 —— 这也是以前缺的那道确认。
+        - 删母项：其引用的子项若不再被任何母项引用则级联收缩；仍被其他母项引用则保留
+          （需求式收缩，跨母项共享件不会被连坐）。
+        - 删子项：沿 `component_parent_type_id` 一并删除**同组子孙**（子项自己的下级产线
+          也是它的「连带子项」，不收就会留下一串没人引用的孤儿行挂在表里）。
+        - 删子项后不会因后续编辑母项/重放被自动加回，仅显式「母项拆解/重算子项」才会重新生成。
+        - **不动库存**：不返还已扣减材料、不改任何盘点行（领域模型见 AUDIT-20260801.md：
+          与游戏「取消产线只退蓝图」一致）。要退材料请走「撤销启动（返还材料）」；
+          在产计划被删后材料不会退回，所以删前必须让用户知情。
         """
         if self._model is None:
             return
@@ -710,52 +682,95 @@ class PlanTable(QObject):
         if not selected_ids:
             return
 
-        running = [p for p in deleted_rows if (p.get("status") or "").lower() in ("in_progress", "running")]
+        cascade_rows, kept_running = self._cascade_children(deleted_rows, exclude=selected_ids)
+        target_ids = selected_ids | {int(p["id"]) for p in cascade_rows}
+
+        running = [p for p in deleted_rows if (p.get("status") or "").lower() in _RUNNING_STATUSES]
         if running:
             names = "、".join(str(p.get("product_name") or p.get("id")) for p in running[:3])
             if len(running) > 3:
                 names += f" 等 {len(running)} 条"
             text = (
-                f"选中的 {len(selected_ids)} 条计划里有 {len(running)} 条正在生产：{names}。\n\n"
-                "「取消生产」将解除蓝图绑定并删除计划行，\n"
-                "已扣减的材料不会返还（与游戏「取消产线只退蓝图」一致）。\n\n"
+                f"要删除的 {len(target_ids)} 条产线里有 {len(running)} 条正在生产：{names}。\n\n"
+                "「删除产线」将解除蓝图绑定，并删除这些计划行及其连带的子项。\n"
+                "已扣减的材料不会返还，库存不动（与游戏「取消产线只退蓝图」一致）。\n\n"
                 "若只是软件误点、游戏尚未开造，请改用「撤销启动（返还材料）」。\n\n"
                 "确定继续？"
             )
         else:
-            text = f"确定取消 {len(selected_ids)} 条计划？"
+            extra = (
+                f"，其中连带子项 {len(target_ids) - len(selected_ids)} 条"
+                if len(target_ids) > len(selected_ids)
+                else ""
+            )
+            text = f"确定删除 {len(selected_ids)} 条产线{extra}？\n\n蓝图绑定会解除，库存材料不动。"
+        if kept_running:
+            text += f"\n\n另有 {len(kept_running)} 条在产子项不会删除（在产产线不砍）。"
         from ui_qml.bridge.message_dialog import FMessageDialog
 
-        if not FMessageDialog.question(self, "取消生产", text):
+        if not FMessageDialog.question(self, "删除产线", text):
             return
 
         from services import plan_execution
+        from services.plan_rebuild import rebuild_children
 
-        for pid in selected_ids:
+        # 先释放绑定再删行：`delete_many` 不清理 `plan_blueprint_bindings`，
+        # 残留的孤儿绑定行会继续占着蓝图。
+        for pid in target_ids:
             plan_execution.release_blueprint(pid)
 
-        get_container().plan_repo.delete_many(list(selected_ids))
-        self._model._plans = [p for p in plans if p.get("id") not in selected_ids]
+        get_container().plan_repo.delete_many(sorted(target_ids))
+        self._model._plans = [p for p in plans if p.get("id") not in target_ids]
         self._model.beginResetModel()
         self._model.endResetModel()
 
-        from services.plan_rebuild import rebuild_children
-
-        # 含母项删除 → 收缩不再被引用的子项；仅删子项 → 不重建不收缩（保持已删产线消失）
-        if any(int(p.get("child_level") or p.get("sub_level") or 0) == 0 for p in deleted_rows):
+        mothers = [p for p in deleted_rows if _plan_level(p) == 0]
+        if mothers:
             rebuild_children(create=False, prune=True)
             # 母项没了 → 它名下已完成的子项行不该继续挂在表里（`rebuild_children` 的 prune
             # 显式豁免 `_DONE_STATUSES`，靠它清不掉）。组号取原始列 group_number ——
             # `group_id` 只是 enrich 注入的别名。
-            for gid in {
-                int(p.get("group_number") or 0)
-                for p in deleted_rows
-                if int(p.get("child_level") or p.get("sub_level") or 0) == 0
-            } - {0}:
+            for gid in {int(p.get("group_number") or 0) for p in mothers} - {0}:
                 plan_execution.remove_completed_children(gid)
         else:
+            # 仅删子项 → 不重建不收缩（保持已删产线消失；重放会把它加回来）
             rebuild_children()
         self.plan_updated.emit()
+
+    def _cascade_children(self, deleted_rows: list[dict], *, exclude: set[int]) -> tuple[list[dict], list[dict]]:
+        """被删子项「连带的子项」= 同组、沿 `component_parent_type_id` 的下级产线。
+
+        返回 `(要删的行, 因在产而留下的行)`。
+
+        - **只从子项起步**：母项的收缩走 `rebuild_children(prune=True)` —— 那条按「是否仍被
+          活跃母项引用」判定，跨母项共享件不会被误删；血缘式连坐只用在子项这一支。
+        - 复用 `plan_decompose.collect_removed_child_ids`：与「母项拆解」预览里移除组件时
+          删同组子孙是同一条语义，两处不该各写一套（也省得对「同层兄弟」误伤）。
+        - 在产（in_progress/running）的行不删，与 `plan_rebuild._is_locked` 的既有口径一致：
+          已投产产线不砍，把它保下来比删掉让用户去游戏里找产线强。
+        """
+        removed_types = {
+            int(p["product_type_id"]) for p in deleted_rows if _plan_level(p) > 0 and p.get("product_type_id")
+        }
+        if not removed_types:
+            return [], []
+        from services.plan_decompose import collect_removed_child_ids
+
+        with get_container().db.connect("user") as conn:
+            all_children = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT id, product_type_id, group_number, sub_level, component_parent_type_id, status, product_name "
+                    "FROM production_plans WHERE sub_level > 0"
+                ).fetchall()
+            ]
+        doomed = collect_removed_child_ids(all_children, removed_types) - exclude
+        if not doomed:
+            return [], []
+        rows = [r for r in all_children if int(r["id"]) in doomed]
+        kept = [r for r in rows if (r.get("status") or "").lower() in _RUNNING_STATUSES]
+        kept_ids = {int(r["id"]) for r in kept}
+        return [r for r in rows if int(r["id"]) not in kept_ids], kept
 
     # ── Phase 3 占位 ────────────────────────────────────────
 
@@ -805,25 +820,6 @@ class PlanTable(QObject):
         # Python GC 可能在对话框仍显示时回收包装对象 → 原生段错误（闪退）
         self._cost_breakdown_dlg = dlg
         dlg.show()
-
-    def _show_npc_seller(self, row: int) -> None:
-        """查看原本图 NPC 卖家"""
-        if self._model is None:
-            return
-        plan = self._model.get_plan(row)
-        if not plan:
-            return
-        bp_id = plan.get("blueprint_type_id")
-        if not bp_id:
-            from ui_qml.bridge.message_dialog import FMessageDialog
-
-            FMessageDialog.warning(self, "提示", "该计划无蓝图信息")
-            return
-        bp_name = plan.get("blueprint_name", "") or plan.get("product_name", str(bp_id))
-        from ui_qml.bridge.npc_seller_bridge import NpcSellerQmlDialog
-
-        dlg = NpcSellerQmlDialog(bp_id, bp_name, self)
-        dlg.exec()
 
     def _selected_groups_and_children(self, selected_rows: list[int]) -> tuple[list[dict], list[dict]]:
         """从 model 全量 + 选中行索引聚合 (parents, children)。"""
@@ -956,15 +952,6 @@ class PlanTable(QObject):
             get_container().plan_repo.update(plan["id"], facility_cost_mult=val)
 
         FMessageDialog.information(self, "设置完成", f"设施成本系数已设为 {val:.2f}x")
-
-    def _show_production_wizard(self, row: int) -> None:
-        """产线启动小助手：交给工业页统一打开（单实例），初始定位到该行所属人物。"""
-        if self._model is None:
-            return
-        plan = self._model.get_plan(row)
-        if not plan:
-            return
-        self.launcher_requested.emit((plan.get("char_name") or "").strip())
 
     # ── 主题 ─────────────────────────────────────────────────
 

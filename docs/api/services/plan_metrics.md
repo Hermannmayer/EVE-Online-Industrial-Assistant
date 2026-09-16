@@ -33,7 +33,7 @@ def child_manufacturing_cost(plan: dict, metrics: dict) -> float
 
 一条子项产线的总制造价 = 材料成本 + 制造作业费（安装费）。
 
-定义行：`96`
+定义行：`99`
 
 ### `mother_subitem_cost_map`
 
@@ -43,7 +43,7 @@ def mother_subitem_cost_map(base_results: dict[int, tuple[dict, dict]], mother: 
 
 母项同组更深子项的自制成本映射 &#123;子项 product_type_id: 制造价合计&#125;。
 
-定义行：`114`
+定义行：`117`
 
 ### `adjust_mother_metrics`
 
@@ -53,7 +53,7 @@ def adjust_mother_metrics(metrics: dict, sub_cost_map: dict[int, float], total_m
 
 把拆解母项的自制子项按其制造价计入成本，其余材料仍按市场价。
 
-定义行：`139`
+定义行：`142`
 
 ### `job_batch_materials`
 
@@ -63,7 +63,7 @@ def job_batch_materials(materials: list[tuple[int, int]], job_count: int, *, me_
 
 一次科研作业批次的材料总量 [(type_id, qty)]。
 
-定义行：`186`
+定义行：`192`
 
 ### `material_cost_of`
 
@@ -73,7 +73,7 @@ def material_cost_of(mats: list[tuple[int, int]], prices: dict[int, float], extr
 
 材料总价 = Σ(基础量 × 单价) + extra([(type_id, qty), ...] 小数量的附加项)。
 
-定义行：`202`
+定义行：`208`
 
 ### `_installation_fee`
 
@@ -83,7 +83,7 @@ def _installation_fee(eiv_materials: list[tuple[int, int]], prices: dict[int, fl
 
 按 EIV（材料基础量 × adjusted_price）算安装费。
 
-定义行：`219`
+定义行：`225`
 
 ### `invention_plan_cost`
 
@@ -93,7 +93,7 @@ def invention_plan_cost(*, base_probability: float, materials: list[tuple[int, i
 
 发明作业成本（期望值口径）。
 
-定义行：`238`
+定义行：`244`
 
 ### `copying_plan_cost`
 
@@ -103,7 +103,7 @@ def copying_plan_cost(*, materials: list[tuple[int, int]], prices: dict[int, flo
 
 拷贝作业成本。材料与时长按**总授权流程数**计，无概率项。
 
-定义行：`335`
+定义行：`341`
 
 ### `research_plan_cost`
 
@@ -113,4 +113,4 @@ def research_plan_cost(*, materials: list[tuple[int, int]], prices: dict[int, fl
 
 ME/TE 研究作业成本。
 
-定义行：`370`
+定义行：`376`

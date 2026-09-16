@@ -186,7 +186,7 @@ def run(self)
 ##### `__init__`
 
 ```python
-def __init__(self, plans: list[dict], *, default_mat_hangar_id: int | None=None, region_id: int=10000002, price_type: str='sell', price_mult: float=1.0, parent=None)
+def __init__(self, plans: list[dict], *, default_mat_hangar_id: int | None=None, region_id: int=10000002, price_type: str='sell', price_mult: float=1.0, self_made: set[int] | None=None, parent=None)
 ```
 
 ::: warning ⚠️ 待补 docstring
@@ -204,4 +204,4 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`377`
+定义行：`382`

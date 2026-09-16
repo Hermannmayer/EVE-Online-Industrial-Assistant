@@ -260,8 +260,8 @@ class TestNotesInlineEditPersists:
 # ── 批次 7.3：plan_table 的原生弹窗全部换掉 ──────────────────────────
 #
 # 这一批把 `plan_table.py` 里 19 处 `QMessageBox` 换成 `FMessageDialog`（护栏在
-# `test_qml_message_dialog.py`）、4 处 `QInputDialog` 换成 `InputQmlDialog`、
-# 原 `_batch_set_me_te` 里手搭的那块 `QDialog` 换成 `MeTeDialog.qml`。
+# `test_qml_message_dialog.py`）、4 处 `QInputDialog` 换成 `InputQmlDialog`
+# （「设置蓝图等级」那块 `QDialog` 后来连着功能一起下线了 —— 蓝图等级统一由库存蓝图带出）。
 # 这里只锁本文件特有的两件：**新对话框能干净加载**、**落库链路一字未改**。
 
 
@@ -302,7 +302,7 @@ def _assert_quiet(make_dialog, label: str) -> None:
 
 
 class _StubPlanModel:
-    """`_batch_set_me_te` / `_add_notes` 只用到 `get_plan` 与 `layoutChanged`。"""
+    """`_add_notes` 只用到 `get_plan` 与 `layoutChanged`。"""
 
     def __init__(self, plans: list[dict]) -> None:
         from unittest.mock import MagicMock
@@ -329,200 +329,6 @@ def _fake_container(repo):
     from types import SimpleNamespace
 
     return lambda: SimpleNamespace(plan_repo=repo)
-
-
-class TestMeTeDialog:
-    """ME/TE 对话框：两根滑杆与两个数字框**双向**联动（原版是两条 valueChanged 互连）。
-
-    用户路径用「改属性 + 发信号」精确模拟：`Slider.moved` 与 `SpinBox.valueModified`
-    都只在用户操作时发，程序化赋值不发 —— 所以下面两条能分清方向，
-    不会把「回填」误当成「用户操作」而假绿。
-    """
-
-    @staticmethod
-    def _open(me: int = 0, te: int = 0, hint: str = ""):
-        from ui_qml.bridge.me_te_dialog import MeTeBridge, MeTeQmlDialog
-
-        dlg = MeTeQmlDialog(MeTeBridge(me, te, hint=hint))
-        assert dlg.ok(), "MeTeDialog.qml 没加载起来：" + "; ".join(str(e) for e in dlg._host.errors())
-        return dlg
-
-    @staticmethod
-    def _ctrl(dlg, name: str):
-        from PySide6.QtCore import QObject
-
-        item = dlg._host.rootObject().findChild(QObject, name)
-        assert item is not None, f"MeTeDialog.qml 里找不到 {name}"
-        return item
-
-    @staticmethod
-    def _drag(slider, value: int) -> None:
-        """模拟用户拖动滑杆：改值 + 发 `moved`（QML 侧 `onMoved` 才会往桥上推）。
-
-        这里发**信号对象**而不是 `QMetaObject.invokeMethod(slider, "moved")`：
-        后者在 pre-commit 的隔离环境里过不了 mypy —— 那边 `types-PySide6` 的桩只声明了
-        `member: bytes` 的重载，而**本地运行时只接受 `str`**（传 bytes 直接 `TypeError`）。
-        两边对不上，发信号对象则既无桩问题、运行时也确定可用。
-        """
-        slider.setProperty("value", value)
-        slider.moved.emit()
-
-    @staticmethod
-    def _edit(spin, value: int) -> None:
-        """模拟用户改数字框：改值 + 发 `valueModified`（理由同 `_drag`）。"""
-        spin.setProperty("value", value)
-        spin.valueModified.emit()
-
-    def test_loads_without_qml_warnings(self, qapp):
-        from ui_qml.bridge.me_te_dialog import MeTeBridge, MeTeQmlDialog
-
-        _assert_quiet(lambda: MeTeQmlDialog(MeTeBridge(3, 7, hint="已绑定产线的等级以蓝图为准")), "ME/TE 对话框")
-
-    def test_initial_values_come_from_the_caller(self, qapp):
-        dlg = self._open(4, 12)
-        try:
-            assert dlg.bridge.meValue == 4
-            assert dlg.bridge.teValue == 12
-            assert self._ctrl(dlg, "meSlider").property("value") == 4
-            assert self._ctrl(dlg, "teSpin").property("value") == 12
-        finally:
-            dlg.deleteLater()
-
-    def test_bridge_pushes_to_both_controls(self, qapp):
-        dlg = self._open(4, 12)
-        try:
-            dlg.bridge.setMe(9)
-            dlg.bridge.setTe(2)
-            assert self._ctrl(dlg, "meSlider").property("value") == 9
-            assert self._ctrl(dlg, "meSpin").property("value") == 9
-            assert self._ctrl(dlg, "teSlider").property("value") == 2
-            assert self._ctrl(dlg, "teSpin").property("value") == 2
-        finally:
-            dlg.deleteLater()
-
-    def test_dragging_the_slider_moves_the_spin_box(self, qapp):
-        """拖滑杆 → 桥 → 数字框跟着走。"""
-        dlg = self._open(0, 0)
-        try:
-            self._drag(self._ctrl(dlg, "meSlider"), 6)
-            assert dlg.bridge.meValue == 6
-            assert self._ctrl(dlg, "meSpin").property("value") == 6
-
-            self._drag(self._ctrl(dlg, "teSlider"), 15)
-            assert dlg.bridge.teValue == 15
-            assert self._ctrl(dlg, "teSpin").property("value") == 15
-        finally:
-            dlg.deleteLater()
-
-    def test_editing_the_spin_box_moves_the_slider(self, qapp):
-        """改数字框 → 桥 → 滑杆跟着走。
-
-        先拖一次滑杆再改数字框：这就是「绑定写法会静默失效」的那个形态
-        （第一次拖动会摘掉滑杆上的 value 绑定），故专门锁一遍。
-        """
-        dlg = self._open(0, 0)
-        try:
-            self._drag(self._ctrl(dlg, "meSlider"), 6)  # 先拖一次
-            self._edit(self._ctrl(dlg, "meSpin"), 2)
-            assert dlg.bridge.meValue == 2
-            assert self._ctrl(dlg, "meSlider").property("value") == 2
-
-            self._edit(self._ctrl(dlg, "teSpin"), 19)
-            assert dlg.bridge.teValue == 19
-            assert self._ctrl(dlg, "teSlider").property("value") == 19
-        finally:
-            dlg.deleteLater()
-
-    def test_values_are_clamped_to_the_original_ranges(self, qapp):
-        """ME 0..10 / TE 0..20 —— 与原版 `setRange` 一致（越界由桥钳住）。"""
-        dlg = self._open(0, 0)
-        try:
-            dlg.bridge.setMe(99)
-            dlg.bridge.setTe(99)
-            assert dlg.bridge.result() == (10, 20)
-            dlg.bridge.setMe(-5)
-            assert dlg.bridge.result() == (0, 20)
-        finally:
-            dlg.deleteLater()
-
-    def test_ask_returns_none_when_cancelled(self, qapp, monkeypatch):
-        """取消 / Esc / 关窗都必须是 None —— 给成 `(0, 0)` 就是「点关闭反而把 ME 清成 0」。"""
-        from ui_qml.bridge import me_te_dialog as mtd
-
-        class _Rejecting(mtd.MeTeQmlDialog):
-            def exec(self) -> int:
-                return 0  # QDialog.DialogCode.Rejected
-
-        monkeypatch.setattr(mtd, "MeTeQmlDialog", _Rejecting)
-        assert mtd.MeTeQmlDialog.ask(None, 3, 7) is None
-
-
-class TestBatchSetMeTe:
-    """`PlanTable._batch_set_me_te`：取值走新对话框，落库链路一字未改。"""
-
-    @staticmethod
-    def _patch_ask(monkeypatch, reply):
-        seen: dict = {}
-
-        def _fake(parent, me, te, *, hint=""):
-            seen.update(parent=parent, me=me, te=te, hint=hint)
-            return reply
-
-        monkeypatch.setattr("ui_qml.bridge.me_te_dialog.MeTeQmlDialog.ask", staticmethod(_fake))
-        return seen
-
-    def test_writes_the_picked_values(self, qapp, monkeypatch):
-        from unittest.mock import MagicMock
-
-        from ui_qml.views.industry.plan_table import PlanTable
-
-        repo = MagicMock()
-        monkeypatch.setattr("ui_qml.views.industry.plan_table.get_container", _fake_container(repo))
-        seen = self._patch_ask(monkeypatch, (5, 12))
-
-        plans = [
-            {"id": 7, "me_level": 1, "te_level": 2},
-            {"id": 8, "me_level": 3, "te_level": 4},
-        ]
-        holder = _holder(plans)
-        PlanTable._batch_set_me_te(holder, [0, 1])
-
-        assert (seen["me"], seen["te"]) == (1, 2), "首行的当前值要作为对话框初值"
-        assert seen["hint"] == "", "未绑产线时不显示那条说明"
-        assert [p["me_level"] for p in plans] == [5, 5]
-        assert [p["te_level"] for p in plans] == [12, 12]
-        repo.update_many.assert_called_once_with([7, 8], me_level=5, te_level=12)
-        holder.plan_updated.emit.assert_called_once()
-
-    def test_hint_when_the_first_row_has_bound_blueprints(self, qapp, monkeypatch):
-        from unittest.mock import MagicMock
-
-        from ui_qml.views.industry.plan_table import PlanTable
-
-        monkeypatch.setattr("ui_qml.views.industry.plan_table.get_container", _fake_container(MagicMock()))
-        seen = self._patch_ask(monkeypatch, (0, 0))
-        holder = _holder([{"id": 7, "bound_blueprint_ids": [11]}])
-
-        PlanTable._batch_set_me_te(holder, [0])
-
-        assert "未绑定" in seen["hint"], "已绑产线的计划要说清这里只影响未绑定的产线"
-
-    def test_cancel_changes_nothing(self, qapp, monkeypatch):
-        from unittest.mock import MagicMock
-
-        from ui_qml.views.industry.plan_table import PlanTable
-
-        repo = MagicMock()
-        monkeypatch.setattr("ui_qml.views.industry.plan_table.get_container", _fake_container(repo))
-        self._patch_ask(monkeypatch, None)
-
-        plans = [{"id": 7, "me_level": 1, "te_level": 2}]
-        holder = _holder(plans)
-        PlanTable._batch_set_me_te(holder, [0])
-
-        assert (plans[0]["me_level"], plans[0]["te_level"]) == (1, 2)
-        repo.update_many.assert_not_called()
-        holder.plan_updated.emit.assert_not_called()
 
 
 class TestMultilineInputDialog:
@@ -653,3 +459,204 @@ def test_plan_table_has_no_native_dialogs_left():
     source = Path(mod.__file__).read_text(encoding="utf-8")
     assert "QMessageBox" not in source
     assert "QInputDialog" not in source
+
+
+# ── 右键「删除产线」 ────────────────────────────────────────────────
+#
+# 语义（`PlanTable._delete_rows`）：删本行 + **连带的子项** + 解除蓝图绑定，
+# 且**不动库存**（不返还已扣材料、不改任何盘点行）。
+#
+# 这条链不是纯函数 —— 删母项走 `plan_rebuild` 的需求式 prune，删子项走
+# `plan_decompose.collect_removed_child_ids` 的同组子孙连坐，两条都要真 user 库。
+# 夹具直接复用 `tests/test_plan_rebuild.py` 那套（同一条 BOM 链，改一处两处都跟得上）。
+
+
+def _plan_rows(db) -> list[dict]:
+    with db.connect("user") as conn:
+        return [
+            dict(r)
+            for r in conn.execute(
+                "SELECT id, product_type_id, product_name, group_number, sub_level, status, "
+                "component_parent_type_id FROM production_plans ORDER BY id"
+            ).fetchall()
+        ]
+
+
+def _inventory_snapshot(db) -> list[tuple[int, int, int]]:
+    with db.connect("user") as conn:
+        return sorted(
+            (int(r[0]), int(r[1]), int(r[2]))
+            for r in conn.execute("SELECT hangar_id, type_id, quantity FROM inventory_items").fetchall()
+        )
+
+
+class _DeleteModel:
+    """`_delete_rows` 只用到 `_plans` / `get_plan` / 模型重置信号。"""
+
+    def __init__(self, plans: list[dict]) -> None:
+        self._plans = plans
+
+    def get_plan(self, row: int) -> dict | None:
+        return self._plans[row] if 0 <= row < len(self._plans) else None
+
+    def beginResetModel(self) -> None:
+        pass
+
+    def endResetModel(self) -> None:
+        pass
+
+
+def _delete_holder(plans: list[dict]):
+    """`PlanTable` 的只读替身：够 `_delete_rows` 跑完，且不碰真表。
+
+    `_cascade_children` 得手工绑回 `PlanTable`：替身没有这个方法，而它是真逻辑所在。
+    """
+    from types import SimpleNamespace
+    from typing import cast
+    from unittest.mock import MagicMock
+
+    from ui_qml.views.industry.plan_table import PlanTable
+
+    holder = SimpleNamespace(_model=_DeleteModel(plans), plan_updated=MagicMock())
+    holder._cascade_children = lambda rows, exclude: PlanTable._cascade_children(
+        cast("PlanTable", holder), rows, exclude=exclude
+    )
+    return holder
+
+
+def _as_model_rows(db) -> list[dict]:
+    """DB 行 → 模型行（`child_level` 是 enrich 注入的别名，模型里按它判层级）。"""
+    return [dict(r, child_level=r["sub_level"]) for r in _plan_rows(db)]
+
+
+@pytest.fixture
+def delete_env(temp_db, monkeypatch):
+    """临时 user/bp 库 + 指向它的容器，并种一行库存供「材料不动」断言。
+
+    BOM 是两层（母项 → 中间件 2003），够验删母项的收缩与跨母项共享件的保留。
+    """
+    from tests.test_plan_rebuild import _test_setup
+
+    c = _test_setup(temp_db, monkeypatch)
+    monkeypatch.setattr("ui_qml.views.industry.plan_table.get_container", lambda: c)
+    with temp_db.connect("user") as conn:
+        conn.execute(
+            "INSERT INTO inventory_items (hangar_id, type_id, quantity, cost_price) VALUES (1, 1001, 500, 5.0)"
+        )
+    return c
+
+
+@pytest.fixture
+def deep_env(delete_env):
+    """在 `delete_env` 上再接一层（2001/2002 → 2003 → 2004），供「删中间层带走它的下级」用。"""
+    from tests.test_plan_rebuild import _seed_third_level
+
+    _seed_third_level(delete_env.db)
+    return delete_env
+
+
+def _confirm(monkeypatch, answer: bool = True) -> dict:
+    """拦下确认框并记录文案（返回的 dict 供断言读取）。"""
+    from ui_qml.bridge import message_dialog
+
+    seen: dict = {}
+    monkeypatch.setattr(
+        message_dialog.FMessageDialog,
+        "question",
+        staticmethod(lambda parent, title, text, *a, **k: seen.update(title=title, text=text) or answer),
+    )
+    return seen
+
+
+def _decompose(c, *, mothers=(2001,)) -> None:
+    from services import plan_rebuild
+    from tests.test_plan_rebuild import _insert_mother
+
+    for i, tid in enumerate(mothers, start=1):
+        _insert_mother(c.plan_repo, tid, runs=2, group=i)
+    plan_rebuild.rebuild_children(create=True, prune=True)
+
+
+def _index_of(plans: list[dict], type_id: int) -> int:
+    return next(i for i, p in enumerate(plans) if p["product_type_id"] == type_id)
+
+
+class TestDeleteLines:
+    def test_deleting_a_child_takes_its_own_subitems(self, deep_env, monkeypatch):
+        """删中间层子项 → 它自己的下级产线（连带子项）一并删除，母项不动。
+
+        修复前只删被选中的那一行：孙项 2004 会以「没人引用的孤儿行」留在表里。
+        """
+        from ui_qml.views.industry.plan_table import PlanTable
+
+        _decompose(deep_env)
+        plans = _as_model_rows(deep_env.db)
+        by_tid = {p["product_type_id"]: p for p in plans}
+        assert set(by_tid) == {2001, 2003, 2004}, by_tid
+        assert by_tid[2004]["component_parent_type_id"] == 2003, "孙项要挂在子项下面，否则本用例没意义"
+
+        seen = _confirm(monkeypatch)
+        PlanTable._delete_rows(_delete_holder(plans), [_index_of(plans, 2003)])
+
+        left = {r["product_type_id"] for r in _plan_rows(deep_env.db)}
+        assert left == {2001}, "中间层与它的下级要一起走，母项留着"
+        assert "删除产线" in seen["title"]
+        assert "连带子项 1 条" in seen["text"], f"确认框要写明会连带删几条：{seen['text']}"
+
+    def test_deleting_a_mother_prunes_the_whole_chain(self, deep_env, monkeypatch):
+        """删母项 → 不再被任何母项引用的子项/孙项全部收缩掉。"""
+        from ui_qml.views.industry.plan_table import PlanTable
+
+        _decompose(deep_env)
+        plans = _as_model_rows(deep_env.db)
+        _confirm(monkeypatch)
+        PlanTable._delete_rows(_delete_holder(plans), [_index_of(plans, 2001)])
+        assert _plan_rows(deep_env.db) == []
+
+    def test_shared_child_survives_while_another_mother_needs_it(self, deep_env, monkeypatch):
+        """跨母项共享件不连坐：删掉母项 A 之后 B 还要 2003，它和它的下级都得留下。
+
+        这条盯的是「别把子项的血缘连坐套到母项上」—— 母项这一支必须走需求式 prune。
+        孙项 2004 是 2003 的下级，2003 留着它就得跟着留（这正是「删中间层带走下级」的镜像：
+        传播漏一层的话，这里 2004 会被当孤儿删掉）。
+        """
+        from ui_qml.views.industry.plan_table import PlanTable
+
+        _decompose(deep_env, mothers=(2001, 2002))
+        plans = _as_model_rows(deep_env.db)
+        _confirm(monkeypatch)
+        PlanTable._delete_rows(_delete_holder(plans), [_index_of(plans, 2001)])
+
+        left = {r["product_type_id"] for r in _plan_rows(deep_env.db)}
+        assert left == {2002, 2003, 2004}, "只剩 2002 引用 2003（→2004），整条链必须原样保留"
+
+    def test_delete_keeps_the_inventory_untouched(self, deep_env, monkeypatch):
+        """在产计划被删后**不返还材料**、库存行一字不变（要退材料请走「撤销启动」）。"""
+        from ui_qml.views.industry.plan_table import PlanTable
+
+        _decompose(deep_env)
+        plans = _as_model_rows(deep_env.db)
+        mother_row = _index_of(plans, 2001)
+        deep_env.plan_repo.update(plans[mother_row]["id"], status="in_progress")
+        plans[mother_row]["status"] = "in_progress"
+        before = _inventory_snapshot(deep_env.db)
+        assert before, "夹具要种一行库存，否则本用例恒真"
+
+        seen = _confirm(monkeypatch)
+        PlanTable._delete_rows(_delete_holder(plans), [mother_row])
+
+        assert _inventory_snapshot(deep_env.db) == before, "删产线不该动库存"
+        assert "不会返还" in seen["text"], "在产的删除必须在确认框里说清材料后果"
+
+    def test_cancel_changes_nothing(self, delete_env, monkeypatch):
+        """确认框点否 → 一行都不删。"""
+        from ui_qml.views.industry.plan_table import PlanTable
+
+        _decompose(delete_env)
+        plans = _as_model_rows(delete_env.db)
+        n = len(_plan_rows(delete_env.db))
+        _confirm(monkeypatch, answer=False)
+
+        PlanTable._delete_rows(_delete_holder(plans), [_index_of(plans, 2001)])
+
+        assert len(_plan_rows(delete_env.db)) == n

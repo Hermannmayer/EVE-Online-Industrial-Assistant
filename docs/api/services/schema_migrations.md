@@ -186,6 +186,16 @@ v10→v11: price_snapshots 表从 UI 层收口到集中迁移。
 
 定义行：`411`
 
+### `_migrate_user_v16_to_v17`
+
+```python
+def _migrate_user_v16_to_v17(db_path: str) -> str
+```
+
+v16→v17: 新增 asset_snapshots（每日资产快照）与 open_orders（挂单）两张表。
+
+定义行：`466`
+
 ### `_migrate_bp_v1_to_v2`
 
 ```python
@@ -194,7 +204,7 @@ def _migrate_bp_v1_to_v2(db_path: str) -> str
 
 v1→v2: blueprint_materials 新增 wastefactor 列
 
-定义行：`437`
+定义行：`486`
 
 ### `_table_exists`
 
@@ -204,7 +214,7 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool
 
 检查连接中是否存在指定表
 
-定义行：`489`
+定义行：`539`
 
 ### `_add_columns`
 
@@ -214,7 +224,7 @@ def _add_columns(db_path: str, table: str, columns: list[tuple[str, str]]) -> in
 
 批量 ADD COLUMN，忽略已存在的列。返回实际新增的列数。
 
-定义行：`498`
+定义行：`548`
 
 ### `_open`
 
@@ -224,7 +234,7 @@ def _open(db_path: str) -> sqlite3.Connection
 
 打开连接（带 busy_timeout，容忍启动期短暂写锁/被强杀后的句柄未释放）
 
-定义行：`519`
+定义行：`569`
 
 ### `_get_version`
 
@@ -234,7 +244,7 @@ def _get_version(db_path: str) -> int
 
 读取 PRAGMA user_version
 
-定义行：`526`
+定义行：`576`
 
 ### `_set_version`
 
@@ -244,7 +254,7 @@ def _set_version(db_path: str, version: int)
 
 写入 PRAGMA user_version
 
-定义行：`536`
+定义行：`586`
 
 ### `_backup_db`
 
@@ -254,7 +264,7 @@ def _backup_db(db_path: str) -> str | None
 
 迁移前对库做一致快照（VACUUM INTO），返回备份文件路径；失败返回 None。
 
-定义行：`546`
+定义行：`596`
 
 ### `_cleanup_old_backups`
 
@@ -264,7 +274,7 @@ def _cleanup_old_backups(backup_dir: str, pattern: str, keep: int=BACKUP_KEEP) -
 
 保留最近 keep 份备份，删除更早的。删除失败仅告警，不阻断。
 
-定义行：`574`
+定义行：`624`
 
 ### `_rebuild_table`
 
@@ -274,7 +284,7 @@ def _rebuild_table(db_path: str, table: str, create_sql: str, copy_columns: list
 
 大变动迁移：重建表结构并保留数据（改列类型/拆表/合并/重命名列）。
 
-定义行：`591`
+定义行：`641`
 
 ### `ensure_schema`
 
@@ -284,7 +294,7 @@ def ensure_schema(db_alias: str) -> dict
 
 检查并迁移单个库的 schema。
 
-定义行：`628`
+定义行：`678`
 
 ### `ensure_all_schemas`
 
@@ -294,7 +304,7 @@ def ensure_all_schemas() -> dict[str, dict]
 
 遍历所有 4 个库，执行必要的 schema 迁移。
 
-定义行：`686`
+定义行：`736`
 
 ### `get_db_version`
 
@@ -304,7 +314,7 @@ def get_db_version(db_alias: str) -> int | None
 
 读取当前库的磁盘版本号（诊断用）
 
-定义行：`699`
+定义行：`749`
 
 ### `get_expected_version`
 
@@ -314,4 +324,4 @@ def get_expected_version(db_alias: str) -> int | None
 
 返回代码中定义的预期版本号（诊断用）
 
-定义行：`710`
+定义行：`760`

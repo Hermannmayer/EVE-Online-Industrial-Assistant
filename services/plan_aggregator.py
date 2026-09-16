@@ -426,6 +426,46 @@ def _pick_price(price_map: dict[str, float], price_type: str) -> float:
     return val if val else price_map.get("buy", 0.0) or 0.0
 
 
+def _spread(price_map: dict[str, float]) -> float | None:
+    """卖价 − 买价（同一 hub 的挂单价差）。任一侧没有挂单 → `None`。
+
+    `None` 而不是 0：单边挂单时「差价」根本算不出来，给 0 会被读成「卖买同价」。
+    显示与复制两侧都把 `None` 处理成空/`-`，别让它落到数字分支上。
+
+    **不吃 `price_mult`**：倍率是「跨区运费/溢价」的模拟，而价差是市场事实本身。
+    采购小助手本来也不接受倍率参数（它有自己的 Hub/价格类型控件，见 `docs/dev/flows.md`
+    的口径分叉说明）。
+    """
+    sell = float(price_map.get("sell") or 0.0)
+    buy = float(price_map.get("buy") or 0.0)
+    if sell <= 0 or buy <= 0:
+        return None
+    return sell - buy
+
+
+def self_made_type_ids(plans: list[dict]) -> set[int]:
+    """会被「自制」覆盖的产物 id：**未完工的子项产线**的产物。
+
+    这些件不用买 —— 它们由自己的子项产线造，买的是子线自己的原材料（子线计划本身也在这份
+    统计里）。
+
+    ⚠️ **必须传全量计划，不能传「备料中」那一份**。调用方为了口径统一会把计划筛成
+    `materials_ready && pending`（ready/running 的材料已扣库存，计入会虚高），而子项产线
+    往往**正在生产中** —— 拿筛过的列表算，子线就「不存在」了，它的产物会被当成待采购再买一遍。
+    用户报的「电磁发生器已在生产、采购却仍报缺 2504」就是这么来的：母项待生产、子线生产中。
+
+    完工（completed/done）的不算：那时产出已入库，母项需求按库存扣即可（若产出落在别的
+    机库、扣不到，就会如实报缺 —— 比「一律不买」更安全）。
+    """
+    return {
+        int(p["product_type_id"])
+        for p in plans
+        if p.get("product_type_id")
+        and int(p.get("child_level") or p.get("sub_level") or 0) > 0
+        and (p.get("status") or "").lower() not in ("completed", "done")
+    }
+
+
 def aggregate_procurement(
     conn,
     plans: list[dict],
@@ -435,6 +475,7 @@ def aggregate_procurement(
     region_id: int = 10000002,
     price_type: str = "sell",
     price_mult: float = 1.0,
+    self_made: set[int] | None = None,
 ) -> tuple[list[dict], float, float]:
     """聚合「备料中」计划的待采购材料并扣库存 → (rows, total_cost, total_volume)。
 
@@ -449,10 +490,14 @@ def aggregate_procurement(
         price_type: "sell" / "buy"
         price_mult: 价格调整系数（工具栏「材料/成品倍率」，模拟跨区运费/溢价）。
                     乘在单价上，`total == to_buy * price` 自洽；非正数回落到 1.0
+        self_made: 由子项产线自制、**不该买**的产物 id 集合，见 `self_made_type_ids`。
+                   传 None 时退化成「从 `plans` 现算」—— 那只在调用方传了**全量计划**
+                   时才正确（两个真实调用方都传的是筛过的「备料中」计划，必须显式传这个参数）
 
     Returns:
         (rows, total_cost, total_volume)
-        rows: [{type_id, name, zh_name, en_name, need, owned, to_buy, price, total, volume}]
+        rows: [{type_id, name, zh_name, en_name, need, owned, to_buy, price, total, volume, spread}]
+              spread = 卖价 − 买价，单边无挂单时为 None（详见 `_spread`）
     """
     mult = float(price_mult or 1.0)
     if mult <= 0:
@@ -460,11 +505,7 @@ def aggregate_procurement(
 
     # 1. 每个计划取直接材料；由子项产线自制的组件排除（其原材料由子线计划计入）。
     #    未拆解的组件 / 子线被删后 → 回到待采购。
-    sub_prod_ids = {
-        p.get("product_type_id")
-        for p in plans
-        if p.get("product_type_id") and int(p.get("child_level") or p.get("sub_level") or 0) > 0
-    }
+    sub_prod_ids = self_made_type_ids(plans) if self_made is None else {int(t) for t in self_made}
     group_need: dict[int | None, dict[int, float]] = {}
     names: dict[int, str] = {}
     volumes: dict[int, float] = {}
@@ -559,7 +600,8 @@ def aggregate_procurement(
     total_volume = 0.0
     for tid in sorted(to_buy_map):
         to_buy = to_buy_map[tid]
-        price = _pick_price(prices.get(tid, {}), price_type) * mult
+        pm = prices.get(tid, {})
+        price = _pick_price(pm, price_type) * mult
         subtotal = to_buy * price
         vol = to_buy * volumes.get(tid, 0.0)
         rows_out.append(
@@ -574,6 +616,7 @@ def aggregate_procurement(
                 "price": price,
                 "total": subtotal,
                 "volume": vol,
+                "spread": _spread(pm),
             }
         )
         total_cost += subtotal

@@ -152,7 +152,7 @@ Window {
         anchors.top: toolbar.bottom
         anchors.leftMargin: win.padXs
         anchors.rightMargin: win.padXs
-        height: Math.max(24, win.fntCaption + 12)
+        height: Math.max(22, win.fntCaption + 8)
 
         RowLayout {
             anchors.fill: parent
@@ -196,7 +196,7 @@ Window {
         anchors.rightMargin: win.padXs
 
         readonly property bool collapsed: win.launcher ? win.launcher.occupancyCollapsed : false
-        readonly property int rowH: Math.max(32, Math.round(Math.max(14, win.fntBody + 1)) + 14)
+        readonly property int rowH: Math.max(26, Math.round(Math.max(14, win.fntBody + 1)) + 10)
         readonly property int maxRows: 4
         readonly property int rowCount: win.launcher ? win.launcher.occupancyRows.length : 0
         height: collapsed ? 0 : Math.min(rowCount, maxRows) * (rowH + 1) + 2
@@ -285,8 +285,10 @@ Window {
                     anchors.fill: parent
                     anchors.leftMargin: win.padMd + modelData.indent
                     anchors.rightMargin: win.padMd
-                    anchors.topMargin: win.padSm
-                    anchors.bottomMargin: win.padSm
+                    // 上下内边距取 XS：行高由 `launcher.rowHeight` 钉死，这里多留的每一像素
+                    // 都是在挤内容区（真正的高度下限是右侧「时长 + 26px 按钮」那一列）。
+                    anchors.topMargin: win.padXs
+                    anchors.bottomMargin: win.padXs
                     spacing: win.padMd
 
                     // 子级缩进引导线

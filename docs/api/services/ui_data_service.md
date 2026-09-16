@@ -185,7 +185,7 @@ def get_all_manufacturable_product_ids(db=None) -> list[int]
 ### `aggregate_procurement_summary`
 
 ```python
-def aggregate_procurement_summary(plans: list[dict], *, default_mat_hangar_id: int | None=None, region_id: int=10000002, price_type: str='sell', price_mult: float=1.0, db=None) -> tuple[float, float]
+def aggregate_procurement_summary(plans: list[dict], *, default_mat_hangar_id: int | None=None, region_id: int=10000002, price_type: str='sell', price_mult: float=1.0, self_made: set[int] | None=None, db=None) -> tuple[float, float]
 ```
 
 按统计条模式聚合备料中计划的采购金额/体积。

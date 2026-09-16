@@ -65,6 +65,14 @@
 | `ui_qml/models/inventory_helpers.py` | 公共表模型与常量（`InvTableModel` / `BlueprintTableModel`） |
 | `ui_qml/workers/blueprint_import_worker.py` | 蓝图剪贴板批量导入 Worker |
 
+### 排序
+
+两张表都支持点表头排序（再点同列反向，`▲`/`▼` 画在表头）。
+
+**排序状态归模型所有，刷新后照旧生效** —— 加入制造规划、改蓝图等级/流程数、移库、
+切机库、重新过滤等操作换掉整份行数据后，表格仍按当前列与方向排，不会悄悄跳回原始顺序
+（`set_rows` 里补 `reapply_sort()`）。换列时从升序开始，与 `QTableView` 的手感一致。
+
 ## API 参考
 
 详见 [`services/inventory_manager.py`](/api/services/inventory_manager)。

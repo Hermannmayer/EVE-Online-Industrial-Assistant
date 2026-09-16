@@ -1015,3 +1015,87 @@ class TestLauncherRowClick:
             )
         finally:
             w.close()
+
+
+# ═══════════════════════════════════════════════════
+#  置顶：显示时重申
+# ═══════════════════════════════════════════════════
+
+
+def test_show_reasserts_the_pin(qapp, monkeypatch):
+    """窗口显示时必须重申置顶 —— 与采购小助手同一条。
+
+    `_restore_pin` 只在构造时设过置顶，而那一刻窗口还没显示（SetWindowPos 作用在一个
+    随后会被 Qt 重新定位、显示的平台窗口上）；`QWindow.raise_()` 又是 `SetWindowPos(HWND_TOP)`。
+    两者都可能让置顶在用户真正看到窗口之前丢掉，表现是「勾着置顶却没置顶，再点一次才好」。
+    """
+    w, _ = _make_launcher(qapp, monkeypatch)
+    try:
+        calls: list[bool] = []
+        monkeypatch.setattr(
+            "ui_qml.views.industry.production_launcher.reassert_pin",
+            lambda window, pinned: calls.append(bool(pinned)),
+        )
+
+        w._pinned = True
+        w.window_visibility_changed(True)
+        assert calls == [True], "显示时要重申置顶"
+
+        calls.clear()
+        w.window_visibility_changed(False)
+        assert calls == [], "隐藏时不该去动窗口"
+    finally:
+        w.close()
+
+
+# ═══════════════════════════════════════════════════
+#  选中通知 / 占用条几何
+# ═══════════════════════════════════════════════════
+
+
+def test_select_plan_notifies_selection_change(qapp, monkeypatch):
+    """选中某行必须发 `selectionChanged`，且**不得**因此发 `rowsChanged`。
+
+    回归：`select_plan` 原先只更新底部面板（发 `bottomChanged`）并请求滚动，而
+    `selectedId` 挂的通知是 `rowsChanged` —— 行卡的 `selected` 绑定于是**永不重新求值**：
+    点了行底色不动，亮着的是 delegate 创建那一刻恰好选中的那条（用户报的「选中状态色差错乱」）。
+
+    为什么用 `selectionChanged` 而不是顺手复用 `rowsChanged`：后者会把 ListView 的
+    `model` 整个换掉 —— 每点一次行就重建一次 delegate，还冲掉滚动位置。
+    """
+    w, _ = _make_launcher(qapp, monkeypatch)
+    try:
+        selections: list[int] = []
+        row_rebuilds: list[int] = []
+        w._bridge.selectionChanged.connect(lambda: selections.append(w._bridge.selectedId))
+        w._bridge.rowsChanged.connect(lambda: row_rebuilds.append(1))
+
+        target = w._bridge.rows[-1]["id"]
+        w._bridge.selectRow(target)
+
+        assert selections == [target], "选中变化没有通知出去，行卡底色会不跟着动"
+        assert w._bridge.selectedId == target
+        assert row_rebuilds == [], "选中不该重建整张列表（rowsChanged 会换掉 ListView 的 model）"
+    finally:
+        w.close()
+
+
+def test_capacity_group_x_accumulates_previous_groups():
+    """静态护栏：`FCapacityRow.groupX` 必须**累加前面各组**的占位。
+
+    写成 `index * (labelW + gapSm) + index * lines[index].cap * effStride` 会拿**本组**的 cap
+    当累计量：三类产线容量不同（制造 / 科研 / 反应），每组都被摆到偏左的 x 上 ——
+    方块压到标签、整体与右侧徽章脱节。这条在运行期只有「看着错位」，没有任何报错。
+
+    （历史上同类**几何**用例被判为「布局系统下结构上不存在」而删除；但这里的位置是手算的
+    `x:`，布局系统管不到 —— 所以补回一条，形式改成静态检查。）
+    """
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parent.parent / "ui_qml" / "qml" / "components" / "FCapacityRow.qml").read_text(
+        encoding="utf-8"
+    )
+    body = src.split("function groupX(")[1].split("\n    }")[0]
+
+    assert "for (" in body, f"groupX 必须按前面的组累加，实得：{body!r}"
+    assert "lines[index].cap" not in body, f"不能拿本组的 cap 当累计量：{body!r}"

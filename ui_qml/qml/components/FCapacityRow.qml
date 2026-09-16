@@ -76,9 +76,17 @@ Item {
     readonly property real blockW: Math.max(4, stride - blockGap)
     readonly property real effStride: blockW + blockGap
 
-    // 第 i 个线型组的方块起点 x
+    // 第 i 个线型组的起点 x：**前面各组**的「标签 + 那一组的全部方块」都要累加进去。
+    //
+    // ⚠️ 别写成 `index * (labelW + gapSm) + index * lines[index].cap * effStride` ——
+    // 那用的是**本组**的 cap 去乘 index（`lines[index]`），组容量不同（制造 5 / 科研 2 / 反应 1）
+    // 时每行会错到各自不同的位置：各行的「科研」「反应」标签不在同一条竖线上，方块也跟着乱。
+    // 用户报的「占用模块错位」就是它。
     function groupX(index) {
-        return blocksX + index * (labelW + gapSm) + index * (root.lines[index].cap * effStride)
+        let x = blocksX
+        for (let i = 0; i < index; ++i)
+            x += labelW + gapSm + root.lines[i].cap * effStride
+        return x
     }
 
     // ── 状态徽章 ─────────────────────────────────────────────

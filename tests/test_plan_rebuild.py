@@ -39,6 +39,28 @@ def _seed_bom(db):
                 )
 
 
+def _seed_third_level(db) -> None:
+    """在中间件 2003 下面再接一层：bp3003 额外吃 2004，bp3004 产 2004。
+
+    于是链路是 母项 2001/2002 → 子项 2003 → 孙项 2004（bp3004 每轮产 1，
+    要 1 个 2004 只需 10 单位 1001，够把「材料」这条路也走通）。
+    """
+    with db.connect("bp") as conn:
+        conn.execute("DELETE FROM blueprint_activities WHERE blueprint_type_id IN (3003,3004)")
+        conn.execute("DELETE FROM blueprint_products WHERE blueprint_type_id IN (3003,3004)")
+        conn.execute("DELETE FROM blueprint_materials WHERE blueprint_type_id IN (3003,3004)")
+        conn.execute("INSERT INTO blueprint_activities VALUES (?,?,?)", (3003, "manufacturing", 3600))
+        conn.execute("INSERT INTO blueprint_activities VALUES (?,?,?)", (3004, "manufacturing", 600))
+        conn.execute("INSERT INTO blueprint_products VALUES (?,?,?,?)", (3003, "manufacturing", 2003, 1))
+        conn.execute("INSERT INTO blueprint_products VALUES (?,?,?,?)", (3004, "manufacturing", 2004, 1))
+        for mat in (
+            (3003, "manufacturing", 1001, 100, 10),
+            (3003, "manufacturing", 2004, 2, 10),
+            (3004, "manufacturing", 1001, 10, 10),
+        ):
+            conn.execute("INSERT INTO blueprint_materials VALUES (?,?,?,?,?)", mat)
+
+
 def _container(db):
     return SimpleNamespace(db=db, plan_repo=PlanRepository(db))
 
@@ -106,6 +128,60 @@ def test_shared_child_merged_across_mothers(temp_db, monkeypatch):
     assert k["runs"] == 30  # 每轮产 1
     assert sorted(int(x) for x in k["source_mother_ids"].split(",") if x) == sorted([m1, m2])
     assert k["sub_level"] == 1
+
+
+def test_shared_intermediate_expands_to_its_own_children(temp_db, monkeypatch):
+    """共享中间件的**下级**（level≥2）必须建出来，且需求不重复累加。
+
+    回归 `compute_child_forest` 的两个坑，两个都只在「多母项共享中间件」时才现形：
+
+    - 递归被 `changed or _propagate(...)` 短路 —— 中间件的 runs 每轮都在变（各母项轮流
+      覆写同一个节点），于是往下走的递归一次都没发生，孙项 2004 根本进不了 `nodes`；
+    - 每个母项各展开一遍中间件 —— 2004 的 demand 被算成 20 + 60 = 80（正确是 2×30 = 60）。
+
+    现在：每轮先把需求累齐、再定稿 runs、最后才拿 runs 展开一级，且每个节点每轮只展开一次。
+    """
+    c = _test_setup(temp_db, monkeypatch)
+    _seed_third_level(temp_db)
+    _insert_mother(c.plan_repo, 2001, runs=2, group=1)
+    _insert_mother(c.plan_repo, 2002, runs=2, group=2)
+
+    res = plan_rebuild.rebuild_children(create=True, prune=True)
+    assert res["created"] == 2, res
+
+    kids = {k["product_type_id"]: k for k in _child_rows(temp_db)}
+    assert set(kids) == {2003, 2004}, kids
+
+    # 2001 需 5×2=10、2002 需 10×2=20 → 2003 demand=30（每轮产 1 → runs=30）
+    assert kids[2003]["demand"] == 30
+    assert kids[2003]["runs"] == 30
+
+    # 2003 每轮吃 2 个 2004 → 2×30 = 60。**不是** 80（那是「每母项各展开一遍」的错值）
+    assert kids[2004]["demand"] == 60
+    assert kids[2004]["runs"] == 60
+    assert kids[2004]["sub_level"] == 2
+    assert kids[2004]["component_parent_type_id"] == 2003
+
+
+def test_prune_keeps_grandchildren_when_a_second_mother_shows_up(temp_db, monkeypatch):
+    """第二个母项加入后重算，不能把已存在的孙项当孤儿删掉。
+
+    `prune` 的判据是「type 不在 `nodes` 里」—— 只要传播漏掉一层，孙项就会被当成
+    没人引用而清掉（先单母项拆解出孙项、再加第二个母项、重算子项 → 孙项消失）。
+    """
+    c = _test_setup(temp_db, monkeypatch)
+    _seed_third_level(temp_db)
+    _insert_mother(c.plan_repo, 2001, runs=2, group=1)
+    plan_rebuild.rebuild_children(create=True, prune=True)
+    assert {k["product_type_id"] for k in _child_rows(temp_db)} == {2003, 2004}
+
+    _insert_mother(c.plan_repo, 2002, runs=2, group=2)
+    res = plan_rebuild.rebuild_children(create=True, prune=True)
+
+    assert res["deleted"] == 0, res
+    kids = {k["product_type_id"]: k for k in _child_rows(temp_db)}
+    assert set(kids) == {2003, 2004}
+    assert kids[2004]["demand"] == 60, "加了共享母项后孙项需求要收敛到 60，不是翻倍"
 
 
 def test_rebuild_idempotent(temp_db, monkeypatch):

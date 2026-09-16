@@ -416,10 +416,6 @@ class PlanTableBridge(QObject):
         elif rows:
             self._table._edit_plan(rows[0])
 
-    @Slot("QVariantList")
-    def setMeTe(self, rows: list) -> None:
-        self._table._batch_set_me_te([int(r) for r in rows])
-
     @Slot(int)
     def bindBlueprint(self, row: int) -> None:
         self._table._show_blueprint_picker(row)
@@ -459,15 +455,6 @@ class PlanTableBridge(QObject):
     @Slot(int)
     def copyBlueprintName(self, row: int) -> None:
         self._table._copy_blueprint_name(row)
-
-    @Slot("QVariantList")
-    def showNpcSeller(self, rows: list) -> None:
-        for r in rows:
-            self._table._show_npc_seller(int(r))
-
-    @Slot(int)
-    def openLauncher(self, row: int) -> None:
-        self._table._show_production_wizard(row)
 
     @Slot("QVariantList")
     def decomposeParent(self, rows: list) -> None:

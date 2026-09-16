@@ -39,7 +39,7 @@ def rowCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`31`
+定义行：`35`
 ##### `columnCount`
 
 ```python
@@ -50,7 +50,7 @@ def columnCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`34`
+定义行：`38`
 ##### `data`
 
 ```python
@@ -61,7 +61,7 @@ def data(self, index, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`37`
+定义行：`41`
 ##### `headerData`
 
 ```python
@@ -72,7 +72,7 @@ def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`82`
+定义行：`86`
 ##### `item_at`
 
 ```python
@@ -83,7 +83,7 @@ def item_at(self, row: int) -> dict | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`87`
+定义行：`91`
 ##### `sort`
 
 ```python
@@ -94,13 +94,31 @@ def sort(self, column: int, order=Qt.SortOrder.AscendingOrder)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`90`
+定义行：`94`
+##### `_sort_key`
+
+```python
+def _sort_key(self, column: int) -> Callable[[dict], Any] | None
+```
+
+列的排序键（纯函数、不碰状态）。`None` = 该列不可排。
+
+定义行：`104`
+##### `reapply_sort`
+
+```python
+def reapply_sort(self) -> None
+```
+
+按**当前**排序设置重排 `self._items`。
+
+定义行：`116`
 
 ### `class BlueprintTableModel`（继承 `QAbstractTableModel`）
 
 蓝图表格模型
 
-定义行：`115`
+定义行：`140`
 
 #### 方法
 
@@ -114,7 +132,7 @@ def __init__(self, rows: list[dict])
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`132`
+定义行：`157`
 ##### `rowCount`
 
 ```python
@@ -125,7 +143,7 @@ def rowCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`136`
+定义行：`164`
 ##### `columnCount`
 
 ```python
@@ -136,7 +154,7 @@ def columnCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`139`
+定义行：`167`
 ##### `data`
 
 ```python
@@ -147,7 +165,7 @@ def data(self, index, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`142`
+定义行：`170`
 ##### `headerData`
 
 ```python
@@ -158,7 +176,7 @@ def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`216`
+定义行：`244`
 ##### `row_at`
 
 ```python
@@ -169,7 +187,7 @@ def row_at(self, row: int) -> dict | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`221`
+定义行：`249`
 ##### `sort`
 
 ```python
@@ -180,4 +198,22 @@ def sort(self, column: int, order=Qt.SortOrder.AscendingOrder)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`224`
+定义行：`252`
+##### `_sort_key`
+
+```python
+def _sort_key(self, column: int) -> Callable[[dict], Any] | None
+```
+
+列的排序键（纯函数、不碰状态）。`None` = 该列不可排。
+
+定义行：`262`
+##### `reapply_sort`
+
+```python
+def reapply_sort(self) -> None
+```
+
+按**当前**排序设置重排 `self._rows`。
+
+定义行：`279`

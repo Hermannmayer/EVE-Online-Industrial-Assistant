@@ -495,6 +495,7 @@ def aggregate_procurement_summary(
     region_id: int = 10000002,
     price_type: str = "sell",
     price_mult: float = 1.0,
+    self_made: set[int] | None = None,
     db=None,
 ) -> tuple[float, float]:
     """按统计条模式聚合备料中计划的采购金额/体积。"""
@@ -507,5 +508,6 @@ def aggregate_procurement_summary(
             region_id=region_id,
             price_type=price_type,
             price_mult=price_mult,
+            self_made=self_made,
         )
     return cost, vol

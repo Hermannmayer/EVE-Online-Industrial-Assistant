@@ -98,15 +98,25 @@ def _collect_mothers(all_rows: list[dict]) -> list[dict]
 
 定义行：`58`
 
-### `_propagate`
+### `_accumulate`
 
 ```python
-def _propagate(conn, nodes: dict[int, dict], first_mother: dict, type_id: int, qty: int, level: int, parent_type_id: int, seen: set[int], stocks: dict[int, dict[int, int]], existing_parallels: dict[int, int]) -> bool
+def _accumulate(conn, nodes: dict[int, dict], first_mother: dict, type_id: int, qty: int, level: int, parent_type_id: int, existing_parallels: dict[int, int]) -> None
 ```
 
-沿 BOM 向下传播一次需求。返回本轮 runs 是否变化（用于收敛判断）。
+把 qty 记到 `type_id` 的需求上，并补全节点元数据。**这里不算 runs**。
 
 定义行：`73`
+
+### `_finalize_runs`
+
+```python
+def _finalize_runs(node: dict, stocks: dict[int, dict[int, int]]) -> None
+```
+
+把本轮收齐的 demand 折算成 runs（含「首个引用母项机库」的库存覆盖）。
+
+定义行：`126`
 
 ### `compute_child_forest`
 
@@ -116,7 +126,7 @@ def compute_child_forest(conn, active_mothers: list[dict], stocks: dict[int, dic
 
 全局需求传播 → &#123;type_id: node&#125;。
 
-定义行：`147`
+定义行：`136`
 
 ### `rebuild_children`
 
@@ -126,7 +136,7 @@ def rebuild_children(*, create: bool=False, prune: bool=False) -> dict
 
 按母项当前需求同步子项（增量，默认不创建/不删除——避免误删子项被自动加回）。
 
-定义行：`186`
+定义行：`216`
 
 ### `_resolve_name`
 
@@ -138,7 +148,7 @@ def _resolve_name(type_id: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`334`
+定义行：`364`
 
 ### `_field_diff`
 
@@ -148,7 +158,7 @@ def _field_diff(row: dict, fields: dict) -> dict
 
 返回 fields 中与本行当前值不同的子集（幂等：值未变则跳过，计 0）。
 
-定义行：`340`
+定义行：`370`
 
 ### `_inherited_solar_system`
 
@@ -160,4 +170,4 @@ def _inherited_solar_system(mother: dict) -> int | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`354`
+定义行：`384`

@@ -94,24 +94,76 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
   - ⚠️ **绑定清理由传入的 `conn` 完成，不得调 `release_blueprint`** —— 后者自开另一条缓存连接并独立提交，
     在外层未提交写事务内会 WAL 写锁自锁（卡满 `busy_timeout` 后 `database is locked`），且破坏「清理与置
     completed 同生共死」的原子性。
-  - 删母项（右键「取消生产」，`plan_table._delete_rows`）时也调同一函数，否则已完成的子项行会成为永远清不掉的
+  - 删母项（右键「删除产线」，`plan_table._delete_rows`）时也调同一函数，否则已完成的子项行会成为永远清不掉的
     孤儿（`plan_rebuild` 的 prune 分支显式豁免 `_DONE_STATUSES`）。
 - 展开：`plan_table._decompose_parent` → `plan_decompose.decompose_plan`（递归读 `user_blueprints` + bom 材料）→ `plan_rebuild.rebuild_children` → `PlanRepository` 增删改
+- **需求传播**（`plan_rebuild.compute_child_forest`）：每轮**先把需求累齐 → 再定稿 runs → 最后才拿 runs 展开下一级**，
+  且每个节点每轮只展开一次；迭代到所有节点 runs 不再变（`_MAX_ROUNDS=10`）为止，跨层共享 2-3 轮收敛。
+  两条铁律，违反哪条都会静默算错（都不报错，只是数字不对）：
+  - **别在累需求过程中折算 runs**：共享中间件会被每个母项各展开一遍，下级 demand 翻倍（实测 60 算成 80）。
+  - **别用短路写递归**（`changed = changed or _propagate(...)`）：本节点 runs 有变化时就不往下走了，
+    而「正在变」恰是最该往下走的时候。多母项共享中间件时每轮都在变，level≥2 永远进不了 `nodes`；
+    `prune` 又按「type 不在 nodes 里」判孤儿，会把已存在的孙项行删掉（先单母项拆解出孙项、再加第二个母项、重算子项 → 孙项消失）。
+    回归防线：`tests/test_plan_rebuild.py::test_shared_intermediate_expands_to_its_own_children`
+    与 `::test_prune_keeps_grandchildren_when_a_second_mother_shows_up`。
 - 读取：`plan_service.load_plans`；价格快照 `save_price_snapshots`
+- **计划表的派生视图要缓存**（`industry_models.PlanTableModel._view_cache`）：可见行、行号映射、
+  「有子项的组」都是 O(行数)，却被 `data()` 按「列 × 角色」**逐格**调用 —— 实测 50 行、折叠两个组时
+  全表刷一遍 485ms（不折叠 58ms），QML 滚动每帧都要取角色，于是「几十行就开始卡」。
+  缓存按签名 `(id(列表), 行数, 折叠快照)` 失效，`beginResetModel` 另有兜底清空。
+  ⚠️ 改这几个方法时别退回「每格重扫全表」，回归防线：
+  `tests/test_qml_plan_model.py::test_cell_reads_do_not_rescan_the_whole_table`
+  （断言的是**调用次数**而不是耗时 —— 耗时断言在 CI 上会飘）。
 - 旁路：`plan_aggregator` 是**采购/需求聚合**，不是计划展开
 - 价格口径（工具栏双行价格设置）：`mat_hub/mat_price_type/mat_mult` 与 `prod_hub/prod_price_type/prod_mult` 由 `top_toolbar.get_price_settings()` 提供，消费方必须**整套一起透传**（漏一项就是「改设置数字不动」的缺陷）：
   - 计划成本/利润：`BatchPlanCalcWorker`（表格批量重算）、`industry_view._on_plan_add`、`plan_table._view_cost_breakdown` → 成本明细弹窗、`parent_decompose_dialog`、`blueprint_tab` 的「加入制造规划」预览 → `ScoringService.calculate_plan_metrics(mat_mult=, prod_mult=)` → `scoring_facade.calc_manufacturing_score` → `domain.scoring`
   - ⚠️ `scoring_facade` 有 TTL 缓存，`mat_price_mult/prod_price_mult` **必须进 cache_key**，否则同一类陈旧缓存缺陷会在评分层复现
   - 倍率只作用于玩家买卖价：材料价乘 `mat_mult`、成品价乘 `prod_mult`；**EIV 用的 adjusted_price 不乘**（CCP 官方估价，与买卖价无关）
-  - 状态栏「备料中采购」：`industry_view._refresh_procurement_summary` → `ProcurementSummaryWorker(region_id, price_type, price_mult)` → `ui_data_service.aggregate_procurement_summary` → `plan_aggregator.aggregate_procurement`。该函数带指纹缓存，指纹 = **（价格口径, 计划字段集）**，价格项漏进指纹就会回吐旧值
+  - 状态栏「备料中采购」：`industry_view._refresh_procurement_summary` → `ProcurementSummaryWorker(region_id, price_type, price_mult, self_made)` → `ui_data_service.aggregate_procurement_summary` → `plan_aggregator.aggregate_procurement`。该函数带指纹缓存，指纹 = **（价格口径, 自制件集合, 计划字段集）**，任一漏进指纹就会回吐旧值
+  - ⚠️ **自制件集合必须按「全量计划」算**（`plan_aggregator.self_made_type_ids`，由调用方传成 `self_made=`）：
+    两个调用方都会把计划筛成 `materials_ready && pending`（ready/running 的材料已扣库存，计入会虚高），
+    而子项产线**往往正在生产中** —— 拿筛过的那份现算，子线就「不存在」了，它的产物被当成没有子线、
+    重复计成待采购。用户报的「电磁发生器已在生产，采购却仍报缺 2504」就是这么来的
+    （母项待生产、子线生产中）。实测同一份数据：按筛过的算 19 行 / 55,739,040 ISK，按全量算 18 行 / 0。
+    回归防线：`tests/test_plan_aggregator.py::TestSelfMadeComponents` 与
+    `tests/test_procurement_tab.py::test_recalculate_excludes_running_sublines`。
+    同一模块的 `collect_direct_materials` 用的是「全部活跃计划」查询，天然没这个问题。
   - 口径分叉（有意）：采购小助手 `procurement_tab` 有自己独立的 Hub/价格类型控件、无倍率控件，不套用工具栏倍率
+  - 「买卖差价」列：`plan_aggregator._spread` = 同一 hub 的 `sell_price - buy_price`，**不吃 `price_mult`**
+    （倍率是跨区运费/溢价的模拟，价差是市场事实本身）。**单边无挂单 → `None`**，显示 `-`、复制给空串 ——
+    给 0 会被读成「卖买同价」。`get_market_prices` 本来就同时返回 sell/buy，这一列不额外查库。
+  - 采购表当前 5 列：物品名称 / 总需求 / 需采购 / 买卖差价 / 总价。「库存」「单价」「体积」已从**显示**下线
+    （列表太宽装不下），数据仍在行里（`owned`/`price`/`volume`）—— 汇总行、复制整单、增量添加都还在用。
+  - ⚠️ 列**四处按索引对齐**：`procurement_bridge._HEADERS` / `_SORT_FIELDS` / `_COPY_FIELDS` /
+    `procure_rows` 的 cells。加列必须四处一起插，插错位是「排序按这列、复制按那列」的静默串列
+    （回归防线：`tests/test_procurement_tab.py::test_column_lists_stay_index_aligned`）。
+    QML 侧的 `allColumns` 从 `columns` 长度推，不要写死下标数组。
+  - ⚠️ 窗口宽度按**工具栏那一行**定，不是按表格：`FSummaryTable.colWidth` 给弹性列的下限是 80px，
+    且**不会**为了塞下而挤固定列 —— 固定列一多总宽就超出窗口、右侧列被裁（「首次打开显示不全」）。
+    按 `Σ(列宽+cellPadding 12) + 12 + 80` 估表格，再量工具栏那行的 `implicitWidth`（实测 ~753px），
+    两者取大。护栏：`test_procurement_tab.py::test_table_stays_narrow_enough_to_fit_the_window`。
+- **工具窗的置顶要在显示/前置时重申**（`pin_utils.reassert_pin`，采购小助手与产线启动小助手共用）：
+  `apply_window_pin` 在**构造时**就跑过一次，那一刻窗口还没显示；而 `QWindow.raise_()` 在 Windows 上是
+  `SetWindowPos(HWND_TOP)` —— 不带 `HWND_TOPMOST` 的插入位置。两者都可能让置顶在用户真正看到窗口之前丢掉，
+  表现是「勾着置顶却没置顶，再点一次才好」。所以 `window_visibility_changed(True)` 与置顶态下的 `raise_()`
+  都重申一次（幂等、一次 Win32 调用）。
 - **启动成本快照**（`production_plans.material_cost_snapshot`，schema v12→v13）：`start_plan` 在**扣减之前、事务之外**采样机库加权单价，写入 `{"total": 总成本, "unit": {type_id: 单价}}`：
   - 两个「之前」都是硬约束 —— `deduct_item` 把余量清到 0 会删行（扣完再取价得 0）；`db.connect()` 同线程复用连接、嵌套 with 退出会提前 commit（在事务内取价会毁掉「失败整体回滚」）
   - `complete_plan` 按快照 `total` 算成品入库单价；`cancel_plan` 按快照 `unit` 返还成本 —— 都是**启动那一刻**的口径，不受在产期间价格重算影响
   - 旧计划无快照 → 回退 `material_cost` / 机库当前加权成本（向后兼容）；`cancel_plan` 与 `reset_plan_for_reuse` 会清空快照
 - **重算失败不得清零成本**：`BatchPlanCalcWorker` 对「评分异常→空 dict」与 `no_price`/`no_blueprint`/`no_materials`（`calculate_plan_metrics` 对这三种 status 返回全零 dict）的行**跳过不发**，保留库中上次的正确值；父项若同组有更深的失败子项也一并跳过（否则 `mother_subitem_cost_map` 拿空 dict 会把母项成本算低）。跳过数量经 `failed_names` 由状态栏提示「N 条计划估值失败，成本沿用上次值」
 - **完成入口统一**：右键「下线」与状态列「待下线」都走 `CompletePlansDialog` 选产出机库（批量只弹一次框）；`deposit_hangar_id` 为空时不再静默跳过入库
-- **「取消生产」语义**（菜单原名「删除行」）：解除蓝图绑定 + 删除计划行，**不返还已扣材料** —— 与游戏「取消产线只退蓝图」一致（领域模型见 `AUDIT-20260801.md`）。误点启动请用「撤销启动（返还材料）」；删除前有确认框按状态说明后果
+- **「删除产线」语义**（菜单曾名「取消生产」「删除行」）：解除蓝图绑定 + 删除本行**及其连带的子项**，
+  **不返还已扣材料、不动库存行** —— 与游戏「取消产线只退蓝图」一致（领域模型见 `AUDIT-20260801.md`）。
+  - 删母项 → 子项走 `rebuild_children(prune=True)` 的**需求式**收缩（仍被别的活跃母项引用的共享件保留）；
+    删子项 → 走 `plan_decompose.collect_removed_child_ids` 的血缘式**同组子孙**连坐
+    （与「母项拆解」预览里移除组件是同一条语义，两处共用一个函数）。
+  - 连坐在产（`in_progress`/`running`）的子项**不删**（`plan_rebuild._is_locked` 的既有口径：已投产产线不砍），
+    确认框里会带出「N 条在产子项不会删除」。
+  - 误点启动请用「撤销启动（返还材料）」；删除前有确认框按状态说明后果。
+  - 菜单里**没有**「设置蓝图等级」「查看蓝图原图的 NPC 卖家」「产线启动小助手」：
+    蓝图等级统一由库存蓝图带出（不再有计划级的手填等级），NPC 卖家仍在蓝图选择弹窗里，
+    小助手在工业页底部状态栏已有按钮。
 - **蓝图流程不足可强制启动**：`_binding_shortfall` 有两道（张数 / 每张流程 ≥ runs），
   `start_plan` 与 `complete_plan` **成对**提供 `allow_bp_short` —— **只放开启动会造成死锁**
   （强制启动的计划永远无法下线）。强制时**不换绑**，完成时 `consume_bpc_runs` 按实际可用量消耗；

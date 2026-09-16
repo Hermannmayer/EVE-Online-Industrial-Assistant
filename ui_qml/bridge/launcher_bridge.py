@@ -31,6 +31,8 @@ class LauncherBridge(QObject):
     occupancyChanged = Signal()
     #: 产线列表变化
     rowsChanged = Signal()
+    #: 选中项变化（只影响行卡底色，不重建列表）
+    selectionChanged = Signal()
     #: 底部面板变化
     bottomChanged = Signal()
     #: 请求 QML 把列表滚到某行 / 选中某行
@@ -119,8 +121,16 @@ class LauncherBridge(QObject):
     def isEmpty(self) -> bool:
         return self._page.is_empty()
 
-    @Property(int, notify=rowsChanged)
+    @Property(int, notify=selectionChanged)
     def selectedId(self) -> int:
+        """当前选中的计划 id。
+
+        ⚠️ 必须挂 `selectionChanged` 而**不是** `rowsChanged`：行卡的选中底色靠
+        `selectedId === modelData.id` 这条绑定，而 `select_plan` 只改选中项、不重建行
+        （发 `rowsChanged` 会把 ListView 的 model 整个换掉 → 每次点行都重建 delegate、
+        还冲掉滚动位置）。挂错通知 = 绑定永不重新求值，表现就是用户报的
+        「选中状态色差错乱」：点了行，底色不动，亮着的是 delegate 创建那一刻恰好选中的那条。
+        """
         return self._page.selected_plan_id()
 
     @Property(int, notify=rowsChanged)
@@ -235,6 +245,9 @@ class LauncherBridge(QObject):
 
     def notify_rows(self) -> None:
         self.rowsChanged.emit()
+
+    def notify_selection(self) -> None:
+        self.selectionChanged.emit()
 
     def notify_bottom(self) -> None:
         self.bottomChanged.emit()

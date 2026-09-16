@@ -38,7 +38,7 @@ from ui_qml.bridge.procurement_bridge import (
     display_name,
     split_sections,
 )
-from ui_qml.pin_utils import apply_window_pin
+from ui_qml.pin_utils import apply_window_pin, reassert_pin
 
 __all__ = [
     "ProcurementDialog",
@@ -157,9 +157,13 @@ class ProcurementDialog(QObject):
             self._window.resize(int(width), int(height))
 
     def raise_(self) -> None:
-        """对应 `QWidget.raise_()`。QWindow 上同名方法在 PySide 里也是 `raise_`。"""
-        if self._window is not None:
-            self._window.raise_()
+        """对应 `QWidget.raise_()`。置顶态下改走带 `HWND_TOPMOST` 的前置（见 `reassert_pin`）。"""
+        if self._window is None:
+            return
+        if self._pinned:
+            reassert_pin(self._window, True)
+            return
+        self._window.raise_()
 
     def activateWindow(self) -> None:
         """对应 `QWidget.activateWindow()`；QWindow 上是 `requestActivate()`。"""
@@ -280,6 +284,8 @@ class ProcurementDialog(QObject):
             if self._poll_timer is not None:
                 self._poll_timer.stop()
             return
+        # 每次显示都重申置顶：构造时那一次是设在「还没显示」的窗口上的，未必留得住
+        reassert_pin(self._window, self._pinned)
         self._reload_plans()
         if self._poll_timer is None:
             self._poll_timer = QTimer(self)
@@ -333,7 +339,7 @@ class ProcurementDialog(QObject):
         """根据生产计划和库存计算需要采购的材料。"""
         from core.constants import TRADE_HUB_IDS
         from core.container import get_container
-        from services.plan_aggregator import aggregate_procurement
+        from services.plan_aggregator import aggregate_procurement, self_made_type_ids
 
         self._rows = []
         rows: list[dict] = []
@@ -350,6 +356,9 @@ class ProcurementDialog(QObject):
                 default_hangar_id=self._default_mat_hangar_id,
                 region_id=TRADE_HUB_IDS.get(self._hub_text, 10000002),
                 price_type=self._price_type,
+                # 自制件集合按**全量**活跃计划算：`proc_plans` 只留了备料中的，而子项产线
+                # 往往正在生产中 —— 拿它现算会把子线漏掉、产物被重复计成待采购。
+                self_made=self_made_type_ids(self._active_plans),
             )
         self._rows = rows
         self._apply_deleted_filter()

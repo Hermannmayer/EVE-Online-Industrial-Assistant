@@ -10,6 +10,7 @@ from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.logger import log
 from services.char_config_resolver import load_all_data
+from services.plan_aggregator import self_made_type_ids
 from services.user_settings import get_price_settings
 from ui_qml.bridge.blueprint_dialog_bridge import (
     BlueprintRequirementsQmlDialog as BlueprintRequirementsDialog,
@@ -78,7 +79,9 @@ class IndustryPage(QObject):
         self._proc_worker: QThread | None = None
         self._proc_fp: tuple | None = None
         self._proc_result: tuple[float, float] | None = None
-        self._proc_rows: list[dict] = []  # 本次汇总的计划集（供完成回调按新指纹补算）
+        # 本次汇总用的**全量**计划（供完成回调按新指纹补算）。
+        # 存全量而不是筛过的 procur：自制件集合要按全量算，否则补算那一次又会用回错的口径。
+        self._proc_rows: list[dict] = []
         self._refresh_worker = None
         #: 评分线程；`None` = 当前没有在跑的。类型写 `Any` 是因为它有两个来源
         #: （`ScoreWorker` / 断线重连后的新实例），用联合类型反而更难读。
@@ -91,7 +94,6 @@ class IndustryPage(QObject):
         self._plan_table_widget.plan_updated.connect(self.load_plans)
         self._plan_table_widget.refresh_requested.connect(self.load_plans)
         self._plan_table_widget.plan_detail_requested.connect(self._on_plan_detail)
-        self._plan_table_widget.launcher_requested.connect(self._on_launch_wizard_from_row)
 
         self._bridge: IndustryBridge = IndustryBridge(self, self)
         # 两个 context property（`bridge` / `planTableBridge`）由
@@ -224,8 +226,7 @@ class IndustryPage(QObject):
             except Exception:
                 stock_fp.append(None)
         plans_fp = tuple(
-            (r.get("id"), r.get("runs"), r.get("parallels"), r.get("me_level"), r.get("mat_hangar_id"))
-            for r in pending
+            (r.get("id"), r.get("runs"), r.get("parallels"), r.get("me_level"), r.get("mat_hangar_id")) for r in pending
         )
         return (tuple(hids), tuple(stock_fp), plans_fp)
 
@@ -344,9 +345,14 @@ class IndustryPage(QObject):
         指纹 = （价格口径, 计划字段集），两者任一变化都要重算。
         """
         procur = [p for p in rows if p.get("materials_ready", 0) and (p.get("status") or "pending") == "pending"]
+        # 自制件集合按**全量** rows 算：procur 是筛过的（只留备料中的），而子项产线往往
+        # 正在生产中，拿筛过的列表算会把它们漏掉、产物被重复计成待采购。
+        self_made = self_made_type_ids(rows)
         price_fp = self._price_fp()
         fp = (
             price_fp,
+            # 自制件集合进指纹：子线状态一变（待生产 → 生产中 → 完工）口径就不同了
+            tuple(sorted(self_made)),
             tuple(
                 sorted(
                     (
@@ -373,18 +379,19 @@ class IndustryPage(QObject):
             return
         if self._proc_worker and self._proc_worker.isRunning():
             # 运行中改设置：记下本次计划集，完成回调发现口径变了会补算一次
-            self._proc_rows = procur
+            self._proc_rows = rows
             return
         region_id, price_type, price_mult, default_hangar_id = price_fp
         self._proc_fp = fp
         self._proc_result = None
-        self._proc_rows = procur
+        self._proc_rows = rows
         self._proc_worker = ProcurementSummaryWorker(
             procur,
             default_mat_hangar_id=default_hangar_id,
             region_id=region_id,
             price_type=price_type,
             price_mult=price_mult,
+            self_made=self_made,
             parent=self,
         )
         self._proc_worker.finished_signal.connect(self._on_procurement_summary_done)
@@ -399,10 +406,9 @@ class IndustryPage(QObject):
         # 算的这段时间里价格设置又变了 → 本次结果已过期，用同一批计划补算一次。
         # 若此刻线程尚未收尾（守卫挡住），_proc_fp 已置 None，下次任何刷新都会重算。
         if self._proc_rows and (self._proc_fp is None or self._price_fp() != self._proc_fp[0]):
-            pending_rows = self._proc_rows
             self._proc_fp = None
             self._proc_result = None
-            self._refresh_procurement_summary(pending_rows)
+            self._refresh_procurement_summary(self._proc_rows)
 
     def _auto_calculate_plans(self, rows):
         """自动重算计划利润/边际（后台线程触发）"""
@@ -828,14 +834,10 @@ class IndustryPage(QObject):
                 msg += "\n\n" + "\n".join(reasons[:10])
         FMessageDialog.information(self, "完成", msg)
 
-    def _on_launch_wizard_from_row(self, char_name: str):
-        """行右键入口：初始定位到该行所属人物（空串=未分配）。"""
-        self.open_launcher(char_name)
-
     def open_launcher(self, char_name: str | None) -> None:
         """打开共享的产线启动小助手窗口（单实例，重复打开复用）。
 
-        功能按钮（`char_name=None`）与计划表行右键（带人物名）共用这一条路径。
+        入口是工业页底部状态栏那颗按钮（`char_name=None`，不预定位人物）。
         """
         from ui_qml.views.industry.production_launcher import ProductionLauncher
 

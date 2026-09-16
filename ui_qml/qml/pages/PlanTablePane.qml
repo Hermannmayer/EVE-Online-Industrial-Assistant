@@ -663,6 +663,22 @@ Item {
     //  行右键菜单
     // ═══════════════════════════════════════════════════════════
 
+    /* 行右键菜单 —— 按用途分五组，分隔线即组边界：
+     *   计划编辑 → 备料与状态 → 智能调整 → 查看 → 删除产线
+     *
+     * 分组原则：改这条产线本身的（字段/蓝图/备注）在前，改生产状态的（备料/启动/下线）
+     * 其次，批量重排子项的（智能调整）单独成组，只读的（核算/复制）再次，
+     * 破坏性的「删除产线」单独压到最后。
+     *
+     * 这里**没有**「设置蓝图等级」「查看蓝图原图的 NPC 卖家」「产线启动小助手」三项：
+     * 蓝图等级统一由库存蓝图带出来（等级不再是计划上的可编辑字段），NPC 卖家仍在
+     * 蓝图选择弹窗里，小助手在工业页底部状态栏已有按钮。
+     *
+     * 分隔线一律 `visible: rowMenu.plain`：`FMenuSeparator` 只把**自己**不可见时压成
+     * 0 高，不会因为邻近条目隐藏就跟着收 —— 但每一组里至少有一条对普通行恒可见的
+     * 条目（编辑/备料/核算/删除），所以组的开关恒等于 `plain`，不需要额外条件。
+     * 只有「共享组件合成根」那一支要连分隔线一起关掉（即 `plain` 为假时整条菜单只剩
+     * 折叠一项，末尾不能吊着一条分隔线）。 */
     FMenu {
         id: rowMenu
         objectName: "rowMenu"
@@ -670,90 +686,69 @@ Item {
         property var targetRows: []
         property var state: ({})
 
+        //: 普通计划行（非共享组件合成根）。下面所有 `visible` 都以它为准。
+        readonly property bool plain: !state.synthetic
+
         // 共享组件合成根：只有折叠一项
         FMenuItem {
             text: qsTr("展开/折叠共享组件")
             visible: rowMenu.state.synthetic === true
             onTriggered: root.planBridge.toggleSharedCollapse()
         }
+        FMenuSeparator { visible: rowMenu.plain }
 
+        // ── 计划编辑 ────────────────────────────────────────────
         FMenuItem {
             text: qsTr("编辑生产计划")
-            visible: !rowMenu.state.synthetic
+            visible: rowMenu.plain
             onTriggered: root.planBridge.editPlans(rowMenu.targetRows)
-        }
-        FMenuSeparator { visible: !rowMenu.state.synthetic }
-
-        FMenuItem {
-            text: qsTr("设置蓝图等级...")
-            visible: !rowMenu.state.synthetic
-            onTriggered: root.planBridge.setMeTe(rowMenu.targetRows)
         }
         FMenuItem {
             text: qsTr("绑定库存蓝图...")
-            visible: !rowMenu.state.synthetic
+            visible: rowMenu.plain
             onTriggered: root.planBridge.bindBlueprint(rowMenu.targetRow)
         }
-        FMenuSeparator { visible: !rowMenu.state.synthetic }
-
         FMenuItem {
-            text: qsTr("查看核算")
-            visible: !rowMenu.state.synthetic
-            onTriggered: root.planBridge.viewCostBreakdown(rowMenu.targetRow)
+            text: qsTr("添加备注")
+            visible: rowMenu.plain
+            onTriggered: root.planBridge.addNotes(rowMenu.targetRow)
         }
-        FMenuSeparator { visible: !rowMenu.state.synthetic }
+        FMenuSeparator { visible: rowMenu.plain }
 
+        // ── 备料与状态 ──────────────────────────────────────────
+        // 备料勾选对本行恒可见；下面四项按状态**互斥**显示（同组只亮一个）。
+        // 四项都要带 `plain`：共享组件合成根不是真计划行，它的 `status` 也会命中
+        // 「pending」这些分支，只判状态就会在合成根的菜单里冒出「项目启动」。
         FMenuItem {
             text: rowMenu.state.materialsReady ? qsTr("取消勾选备料") : qsTr("勾选备料")
-            visible: !rowMenu.state.synthetic
+            visible: rowMenu.plain
             onTriggered: root.planBridge.setMaterialsReady(rowMenu.targetRows, rowMenu.state.materialsReady ? 0 : 1)
         }
         FMenuItem {
             text: qsTr("项目启动")
-            visible: rowMenu.state.status === "pending"
+            visible: rowMenu.plain && rowMenu.state.status === "pending"
             onTriggered: root.planBridge.startPlans(rowMenu.targetRows)
         }
         FMenuItem {
             text: qsTr("撤销启动（返还材料）")
-            visible: rowMenu.state.status === "in_progress" || rowMenu.state.status === "running"
+            visible: rowMenu.plain && (rowMenu.state.status === "in_progress" || rowMenu.state.status === "running")
             onTriggered: root.planBridge.undoStartPlans(rowMenu.targetRows)
         }
         FMenuItem {
             text: qsTr("下线")
-            visible: rowMenu.state.status === "ready"
+            visible: rowMenu.plain && rowMenu.state.status === "ready"
             onTriggered: root.planBridge.completePlans(rowMenu.targetRows)
         }
         FMenuItem {
             text: qsTr("设为待生产（复用）")
-            visible: rowMenu.state.status === "completed" || rowMenu.state.status === "done"
+            visible: rowMenu.plain && (rowMenu.state.status === "completed" || rowMenu.state.status === "done")
             onTriggered: root.planBridge.resetForReusePlans(rowMenu.targetRows)
         }
-        FMenuSeparator { visible: !rowMenu.state.synthetic }
+        FMenuSeparator { visible: rowMenu.plain }
 
-        FMenuItem {
-            text: qsTr("添加备注")
-            visible: !rowMenu.state.synthetic
-            onTriggered: root.planBridge.addNotes(rowMenu.targetRow)
-        }
-        FMenuItem {
-            text: qsTr("复制蓝图名称")
-            visible: !rowMenu.state.synthetic
-            onTriggered: root.planBridge.copyBlueprintName(rowMenu.targetRow)
-        }
-        FMenuSeparator { visible: !rowMenu.state.synthetic }
-
-        FMenuItem {
-            text: qsTr("查看蓝图原图的NPC卖家")
-            visible: !rowMenu.state.synthetic
-            onTriggered: root.planBridge.showNpcSeller(rowMenu.targetRows)
-        }
-        FMenuItem {
-            text: qsTr("产线启动小助手")
-            visible: !rowMenu.state.synthetic
-            onTriggered: root.planBridge.openLauncher(rowMenu.targetRow)
-        }
-
-        /* 「智能调整」子菜单。
+        /* ── 智能调整 ──────────────────────────────────────────
+         *
+         * 「智能调整」子菜单。
          *
          * **不要给它写 `visible:`**。`Menu` 是 `Popup`，而 `Popup.visible = true` 就是
          * 「打开它」：原先那行 `visible: !rowMenu.state.synthetic` 在每次右键（`state`
@@ -769,7 +764,7 @@ Item {
             id: smartMenu
             objectName: "smartMenu"
             title: qsTr("智能调整")
-            enabled: !rowMenu.state.synthetic
+            enabled: rowMenu.plain
             FMenuItem {
                 text: qsTr("母项调整（递归拆解）")
                 onTriggered: root.planBridge.decomposeParent(rowMenu.targetRows)
@@ -788,11 +783,27 @@ Item {
             }
         }
 
-        FMenuSeparator { visible: !rowMenu.state.synthetic }
+        FMenuSeparator { visible: rowMenu.plain }
 
+        // ── 查看 ────────────────────────────────────────────────
         FMenuItem {
-            text: qsTr("取消生产")
-            visible: !rowMenu.state.synthetic
+            text: qsTr("查看核算")
+            visible: rowMenu.plain
+            onTriggered: root.planBridge.viewCostBreakdown(rowMenu.targetRow)
+        }
+        FMenuItem {
+            text: qsTr("复制蓝图名称")
+            visible: rowMenu.plain
+            onTriggered: root.planBridge.copyBlueprintName(rowMenu.targetRow)
+        }
+        FMenuSeparator { visible: rowMenu.plain }
+
+        // ── 删除 ────────────────────────────────────────────────
+        // 破坏性操作单独压到最后。语义见 `plan_table._delete_rows`：
+        // 删本行 + 连带子项 + 解除蓝图绑定，**不动库存材料**（不返还已扣材料）。
+        FMenuItem {
+            text: qsTr("删除产线")
+            visible: rowMenu.plain
             onTriggered: root.planBridge.deletePlans(rowMenu.targetRows)
         }
     }

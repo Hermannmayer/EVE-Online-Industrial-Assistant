@@ -7,6 +7,8 @@
 
 两个模型都补了 `set_rows`：原版每次刷新都**新建**模型实例
 （`self._model = InvTableModel(items)`），QML 侧需要一个稳定实例 + 整体换数据。
+换完必须 `reapply_sort()` —— 排序状态归模型所有（桥只读它画表头箭头），
+刷新后不重排就会「表头还亮着 ▲、内容已经变回原始顺序」。
 """
 
 from __future__ import annotations
@@ -89,6 +91,7 @@ class InvQmlModel(InvTableModel):
         self.beginResetModel()
         self._items = list(items or [])
         self._selection = set()
+        self.reapply_sort()  # 整份换数据后照当前排序重排（见模块 docstring）
         self.endResetModel()
 
     #: 选中行集合（由桥灌入）。**高亮走模型角色而不是 QML 侧派生集合**：
@@ -174,6 +177,7 @@ class BlueprintQmlModel(BlueprintTableModel):
         self.beginResetModel()
         self._rows = list(rows or [])
         self._selection = set()
+        self.reapply_sort()  # 整份换数据后照当前排序重排（见模块 docstring）
         self.endResetModel()
 
     #: 选中行集合（由桥灌入）。**高亮走模型角色而不是 QML 侧派生集合**：

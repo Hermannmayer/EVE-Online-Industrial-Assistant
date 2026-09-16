@@ -28,20 +28,34 @@ __all__ = [
     "procure_rows",
     "procure_table_headers",
     "resolve_item_name",
+    "spread_text",
     "split_sections",
 ]
 
 #: 表头（与 Widgets 版 `ProcureTableModel._HEADERS` 同源）
-_HEADERS = ["物品名称", "总需求", "库存", "需采购", "单价", "总价", "体积(m³)"]
-_SORT_FIELDS = ["name", "need", "owned", "to_buy", "price", "total", "volume"]
+#: ⚠️ 这张表的四处**按索引对齐**：`_HEADERS` / `_SORT_FIELDS` / `_COPY_FIELDS` /
+#: `procure_rows` 的 cells。加列必须四处一起插，插错位会让「排序按这列、复制按那列」静默错位。
+#: 「库存」「单价」「体积」三列已下线（列表太宽、装不下）：数据仍在行里（`owned`/`price`/`volume`），
+#: 只是不上表 —— 汇总行、复制整单、增量添加都还在用它们。
+_HEADERS = ["物品名称", "总需求", "需采购", "买卖差价", "总价"]
+_SORT_FIELDS = ["name", "need", "to_buy", "spread", "total"]
 
-#: 双击复制的列 → 剪贴板文本：数量列取整、价格/体积保留两位，一律不带千分位
+#: 双击复制的列 → 剪贴板文本：数量列取整、价格/价差保留两位，一律不带千分位
 #: （游戏输入框不认逗号，复制出来必须能直接粘贴）
-_COPY_FIELDS = ["name", "need", "owned", "to_buy", "price", "total", "volume"]
-_INT_COPY_COLS = (1, 2, 3)
+_COPY_FIELDS = ["name", "need", "to_buy", "spread", "total"]
+_INT_COPY_COLS = (1, 2)
 
-#: 列宽（名称列吃满剩余空间）
-_COLUMNS = [{"title": _HEADERS[0], "width": 0}] + [{"title": h, "width": 104} for h in _HEADERS[1:]]
+#: 列宽（名称列吃满剩余空间）。
+#: ⚠️ 固定列宽之和必须**留得下名称列**：`FSummaryTable.colWidth` 给弹性列的下限是 80px
+#: 且不会挤掉固定列 —— 固定列一多（曾经 6 列 ×104）总宽就超出窗口，右侧列被裁掉，
+#: 表现为「首次打开所有列显示不全」。加列时按 `Σ(w+cellPadding(12)) + 12` 估一遍。
+_COLUMNS = [
+    {"title": _HEADERS[0], "width": 0},
+    {"title": _HEADERS[1], "width": 84},
+    {"title": _HEADERS[2], "width": 84},
+    {"title": _HEADERS[3], "width": 92},
+    {"title": _HEADERS[4], "width": 132},
+]
 
 
 def resolve_item_name(mid: int | None, zh_name: str | None, en_name: str | None) -> str:
@@ -76,13 +90,24 @@ def split_sections(rows: list[dict]) -> tuple[list[dict], list[dict]]:
     return to_buy, done
 
 
+def spread_text(row: dict) -> str:
+    """「卖价-买价」列的显示文本。单边无挂单 → `-`（`None` 是「算不出」，不是 0）。"""
+    spread = row.get("spread")
+    return "-" if spread is None else f"{spread:,.2f}"
+
+
 def copy_cell_text(row: dict, column: int) -> str:
     """单元格的剪贴板文本（与显示同口径，去掉千分位）。纯函数，便于单测。"""
     if column == 0:
         return display_name(row)
     if not 0 <= column < len(_COPY_FIELDS):
         return ""
-    val = row.get(_COPY_FIELDS[column], 0) or 0
+    val = row.get(_COPY_FIELDS[column])
+    if val is None:
+        # 无数据（如单边挂单时的价差）→ 空串 = 不复制。落进数字分支会复制出 "0.00"，
+        # 那是「算不出」伪装成「就是 0」，比复制不出来更坏。
+        return ""
+    val = val or 0
     return f"{val:.0f}" if column in _INT_COPY_COLS else f"{val:.2f}"
 
 
@@ -90,30 +115,26 @@ def procure_table_headers() -> list[str]:
     return list(_HEADERS)
 
 
+def _display_cells(r: dict) -> list[dict]:
+    """一行 → 单元格列表（列顺序与 `_HEADERS` 严格一致）。"""
+    to_buy = r.get("to_buy", 0)
+    total = r.get("total", 0)
+    return [
+        cell(display_name(r)),
+        cell(f"{r.get('need', 0):,.0f}"),
+        cell(f"{to_buy:,.0f}", "ACCENT_RED" if to_buy > 0 else "GREEN"),
+        cell(spread_text(r)),
+        cell(f"{total:,.2f}", "ACCENT_RED" if total > 0 else ""),
+    ]
+
+
 def procure_rows(rows: list[dict]) -> list[dict]:
     """分区行 → 单元格行。纯函数，便于单测。
 
     取值与配色对齐原 `ProcureTableModel.data`：需采购 >0 染红、=0 染绿；
-    总价 >0 染红、否则用默认前景色；数量列千分位取整，价格/体积两位小数。
+    总价 >0 染红、否则用默认前景色；数量列千分位取整，金额两位小数。
     """
-    out: list[dict] = []
-    for r in rows:
-        to_buy = r.get("to_buy", 0)
-        total = r.get("total", 0)
-        out.append(
-            {
-                "cells": [
-                    cell(display_name(r)),
-                    cell(f"{r.get('need', 0):,.0f}"),
-                    cell(f"{r.get('owned', 0):,.0f}"),
-                    cell(f"{to_buy:,.0f}", "ACCENT_RED" if to_buy > 0 else "GREEN"),
-                    cell(f"{r.get('price', 0):,.2f}"),
-                    cell(f"{total:,.2f}", "ACCENT_RED" if total > 0 else ""),
-                    cell(f"{r.get('volume', 0):,.2f}"),
-                ]
-            }
-        )
-    return out
+    return [{"cells": _display_cells(r)} for r in rows]
 
 
 class ProcurementBridge(QObject):

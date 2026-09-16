@@ -27,6 +27,10 @@ class InvTableModel(QAbstractTableModel):
     def __init__(self, items: list[dict]):
         super().__init__()
         self._items = items
+        # 当前排序设置（-1 = 未排序）。**模型自己记住**，刷新换行后要照着重排，
+        # 否则表头还亮着 ▲ 而内容已被打回原始顺序，见 `reapply_sort`。
+        self._sort_col = -1
+        self._sort_order = Qt.SortOrder.AscendingOrder
 
     def rowCount(self, parent=None):
         return len(self._items)
@@ -88,7 +92,18 @@ class InvTableModel(QAbstractTableModel):
         return self._items[row] if 0 <= row < len(self._items) else None
 
     def sort(self, column: int, order=Qt.SortOrder.AscendingOrder):
-        keys: dict[int, Callable[[dict], Any]] = {
+        key = self._sort_key(column)
+        if key is None:
+            return
+        self._sort_col = column
+        self._sort_order = order
+        self.beginResetModel()
+        self.reapply_sort()
+        self.endResetModel()
+
+    def _sort_key(self, column: int) -> Callable[[dict], Any] | None:
+        """列的排序键（纯函数、不碰状态）。`None` = 该列不可排。"""
+        return {
             1: lambda r: (r.get("display_name") or r.get("zh_name") or r.get("en_name") or str(r["type_id"])).lower(),
             2: lambda r: r.get("quantity", 0),
             3: lambda r: r.get("cost_price") or 0,
@@ -96,15 +111,25 @@ class InvTableModel(QAbstractTableModel):
             5: lambda r: r.get("plan_remain") if r.get("plan_remain") is not None else r.get("quantity", 0),
             6: lambda r: (r.get("quantity", 0) or 0) * (r.get("sell_price") or 0),
             7: lambda r: r.get("research_cost") or 0,
-        }
-        key = keys.get(column)
+        }.get(column)
+
+    def reapply_sort(self) -> None:
+        """按**当前**排序设置重排 `self._items`。
+
+        **不自己 `begin/endResetModel`** —— 调用方负责，这样 `InventoryQmlModel.set_rows`
+        能在同一次模型重置里把「换数据」和「重排」一步做完。
+
+        为什么必须重排：刷新（载入机库库存、移库、加入制造规划…）走的是 `set_rows`，
+        它整份换掉行数据 —— 不重排就悄悄回到原始顺序，而桥那边的排序指示还亮着，
+        用户看到的就是「操作完排序失效了」。
+        """
+        if self._sort_col < 0:
+            return
+        key = self._sort_key(self._sort_col)
         if key is None:
             return
-        rev = order == Qt.SortOrder.DescendingOrder
-        self.beginResetModel()
         # 排序副本，避免原地修改调用方传入的列表
-        self._items = sorted(self._items, key=key, reverse=rev)
-        self.endResetModel()
+        self._items = sorted(self._items, key=key, reverse=self._sort_order == Qt.SortOrder.DescendingOrder)
 
 
 # ════════════════════════════════════════════════════
@@ -132,6 +157,9 @@ class BlueprintTableModel(QAbstractTableModel):
     def __init__(self, rows: list[dict]):
         super().__init__()
         self._rows = rows
+        # 当前排序设置（-1 = 未排序）。刷新换行后要照着重排，见 `reapply_sort`。
+        self._sort_col = -1
+        self._sort_order = Qt.SortOrder.AscendingOrder
 
     def rowCount(self, parent=None):
         return len(self._rows)
@@ -222,7 +250,20 @@ class BlueprintTableModel(QAbstractTableModel):
         return self._rows[row] if 0 <= row < len(self._rows) else None
 
     def sort(self, column: int, order=Qt.SortOrder.AscendingOrder):
-        _SORT_KEYS: dict[int, Callable[[dict], Any]] = {
+        key = self._sort_key(column)
+        if key is None:
+            return
+        self._sort_col = column
+        self._sort_order = order
+        self.beginResetModel()
+        self.reapply_sort()
+        self.endResetModel()
+
+    def _sort_key(self, column: int) -> Callable[[dict], Any] | None:
+        """列的排序键（纯函数、不碰状态）。`None` = 该列不可排。"""
+        if column == 0:  # 图标列按产物 type_id 排（等价于按图标分组）
+            return lambda r: r.get("product_type_id") or 0
+        return {
             1: lambda r: r.get("zh_name") or r.get("display_name") or "",
             2: lambda r: "蓝图原图" if r.get("is_bpo") else "蓝图拷贝",
             3: lambda r: r.get("me_level", 0),
@@ -233,24 +274,22 @@ class BlueprintTableModel(QAbstractTableModel):
             8: lambda r: r.get("material_cost") or 0,
             9: lambda r: r.get("revenue") or 0,
             10: lambda r: r.get("margin") or float("-inf"),
-        }
-        key_fn = _SORT_KEYS.get(column)
-        if not key_fn and column != 0:
+        }.get(column)
+
+    def reapply_sort(self) -> None:
+        """按**当前**排序设置重排 `self._rows`。
+
+        **不自己 `begin/endResetModel`** —— 调用方负责，这样 `BlueprintQmlModel.set_rows`
+        能在同一次模型重置里把「换数据」和「重排」一步做完。
+
+        为什么必须重排：「加入制造规划」「修改蓝图等级」「粘贴导入」等操作跑完都会
+        `loadBlueprints()` → `set_rows` 整份换掉行数据；不重排就悄悄回到原始顺序，
+        而桥那边的排序指示（`blueprintSortColumn`）还亮着 —— 用户看到的就是
+        「点了加入制造规划之后排序失效了」。
+        """
+        if self._sort_col < 0:
             return
-        key: Callable[[dict], Any]
-        if column == 0:
-
-            def _sort_key(r: dict) -> Any:
-                return r.get("product_type_id") or 0
-
-            key = _sort_key
-        else:
-            key_fn = _SORT_KEYS.get(column)
-            if key_fn is None:
-                return
-            key = key_fn
-
-        rev = order == Qt.SortOrder.DescendingOrder
-        self.beginResetModel()
-        self._rows.sort(key=key, reverse=rev)
-        self.endResetModel()
+        key = self._sort_key(self._sort_col)
+        if key is None:
+            return
+        self._rows = sorted(self._rows, key=key, reverse=self._sort_order == Qt.SortOrder.DescendingOrder)

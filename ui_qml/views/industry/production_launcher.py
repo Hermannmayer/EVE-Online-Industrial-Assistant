@@ -59,7 +59,7 @@ from services.plan_start_check import can_force_start, plan_start_block
 from services.terminology import term
 from ui_qml.bridge.input_dialog import InputQmlDialog
 from ui_qml.bridge.message_dialog import FMessageDialog
-from ui_qml.pin_utils import apply_window_pin
+from ui_qml.pin_utils import apply_window_pin, reassert_pin
 
 MAX_SLOTS_PER_LINE = 11  # 单行每类产线最大格块数（技能满级 1+5+5）
 
@@ -94,16 +94,18 @@ _FS_CAPTION = 13
 _FS_BODY = 14
 
 # ── 几何 ────────────────────────────────────────────────
+# ⚠️ 只有**列表行高**是从这里发给 QML 的（`row_height()` → 桥的 `rowHeight`）。
+# 占用面板的行高 / 徽章高 / 方块宽这些在 QML 里（`LauncherWindow.qml` 的 `occPanel.rowH`
+# 与 `FCapacityRow` 的 `blockH`/`badgeH`）—— 别在这里再放一份同名常量：
+# 之前 `_OCC_ROW_H`/`_BADGE_H`/`_MIN_BLOCK_W`/`_MAX_OCC_ROWS` 就是 Widgets 版
+# `CapacitySlotBar.paintEvent` 留下的死常量，看着像权威值、实际没人读，改 QML 时会漏改。
 _NAME_W = 76  # 占用区角色名默认宽（由 ProductionLauncher 按最长角色名统一算出后传入）
 _MIN_NAME_W = 60
 _MAX_NAME_W = 140
-_OCC_ROW_H = 32
-_MAX_OCC_ROWS = 4  # 超出则内部滚动，避免占用区把列表挤扁
 _ICON_PX = 32  # 多行列表图标尺寸（Windows 文档：32epx）
-_ROW_H = 68  # 容得下「标题+副标题」两行文字与 32px 图标，并留 8px 上下内边距
-_BADGE_H = 22.0
-
-_MIN_BLOCK_W = 4.0
+# 容得下「标题+副标题」两行文字、32px 图标，以及右侧「时长 + 动作按钮」那一列。
+# 那一列是高度的真正下限：副标题字号 13 + 间距 4 + 按钮 26 = 43，加上下内边距 4×2 → 51。
+_ROW_H = 58
 _NOMINAL_BLOCK_W = 12.0  # sizeHint 里假设的格宽（决定初始窗宽）
 _BLOCK_GAP = 3.0
 _MIN_BLOCK_GAP = 2.0
@@ -324,9 +326,13 @@ class ProductionLauncher(QObject):
             self._window.resize(int(width), int(height))
 
     def raise_(self) -> None:
-        """对应 `QWidget.raise_()`。QWindow 上同名方法在 PySide 里也是 `raise_`。"""
-        if self._window is not None:
-            self._window.raise_()
+        """对应 `QWidget.raise_()`。置顶态下改走带 `HWND_TOPMOST` 的前置（见 `reassert_pin`）。"""
+        if self._window is None:
+            return
+        if self._pinned:
+            reassert_pin(self._window, True)
+            return
+        self._window.raise_()
 
     def activateWindow(self) -> None:
         """对应 `QWidget.activateWindow()`；QWindow 上是 `requestActivate()`。"""
@@ -460,6 +466,9 @@ class ProductionLauncher(QObject):
         self._hint_text = "在上方列表选一条产线"
         self._update_bottom()
         if getattr(self, "_bridge", None) is not None:
+            # 行卡底色靠 `selectedId` 的绑定，必须**显式通知选中变化**（`_update_bottom`
+            # 只发 bottomChanged）。漏了这一步，点行时底色不跟着动。
+            self._bridge.notify_selection()
             self._bridge.request_selection(int(plan_id))
 
     def _notify_toolbar(self) -> None:
@@ -1360,7 +1369,11 @@ class ProductionLauncher(QObject):
         单实例复用时必须重启定时器：关闭时停表后不会自动恢复，否则「关闭再打开」
         得到的是不刷新倒计时/计划列表的死窗口。
         """
-        if not visible or getattr(self, "_tick_timer", None) is None:
+        if not visible:
+            return
+        # 每次显示都重申置顶：构造时那一次是设在「还没显示」的窗口上的，未必留得住
+        reassert_pin(self._window, self._pinned)
+        if getattr(self, "_tick_timer", None) is None:
             return
         self._tick_timer.start()
         self._poll_timer.start()
