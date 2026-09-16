@@ -6,6 +6,190 @@
 
 <!-- version list -->
 
+## v0.22.0 (2026-09-16)
+
+### Bug Fixes
+
+- 卡片阴影完全没画出来（MultiEffect.shadowBlur 是归一化值，不是像素）
+  ([`95272d2`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/95272d2870944359712d9a45d81e4b00a30b73d1))
+
+- **docs**: README 测试清单守卫只校验每行第一个文件 + 清理指向已删文件的文档
+  ([`b4e65be`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b4e65be844390ea67b124e6fec5e13b1b64f7e15))
+
+- **QML**: 对话框没铺底色（真窗口整块纯黑）+ 标签截断 + ui 全量档段错误根因
+  ([`92ad6fd`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/92ad6fd8dc05167dceb8c46647f41fcffc703f74))
+
+- **QML 外壳**: 图标整片消失 —— 语义键被当成文件名拼进了 image:// URL
+  ([`f26a446`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/f26a446c6fdf7ca3dc47da16841eadac8b417515))
+
+- **QML 宿主**: 加载失败要看得见，不能只写日志
+  ([`91f7b66`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/91f7b66a654a3ded9016ae5701b71e37e60507e8))
+
+- **QML 对话框**: 父窗口不是 QWidget 时收敛成 None（为批次 7.4 铺路）
+  ([`7085135`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/7085135c2737088049a1313ca2cd48f5a778b71c))
+
+- **仓库管理**: 点击命中固定在按下那一刻 + 去掉每格一次跨边界调用
+  ([`33930d4`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/33930d4e4b40cbd3780aa007bf5411b9d8aede51))
+
+- **仓库管理**: 选中高亮根本没送到画面上 + 补回排序 + 收紧上半区；全项目统一点击机制
+  ([`0359ee0`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/0359ee033460bc4a3331d7d508bf32557c89a86a))
+
+- **右键菜单**: 二级菜单闪一下又收 —— 弹出改为延迟一拍
+  ([`da4b24a`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/da4b24a950aaca7feb190f8e3b5ccc9814fcc9ab))
+
+- **收尾**: 已销毁窗口的主题监听器自收敛 + 测试的剪贴板竞态 + 重写测试文档
+  ([`dd44c83`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/dd44c837760732a4828a596f7d886d63baeb90f6))
+
+- **测试脚本**: 调虚拟环境解释器，别退回裸 python（会误报绿灯）
+  ([`38a77eb`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/38a77eb35aea395c36954776bb70f7d52712decc))
+
+- **生产规划右键**: 二级菜单闪一下又收 —— 根因是 `visible` 绑定在 Popup 上
+  ([`ac42d78`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/ac42d7877465c1d15f91087c371a50b84236c528))
+
+- **界面**: 物品查询 / 工业制造 / 合同市场 补上内容区外框
+  ([`45eb45e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/45eb45ec47a0a577248fa8ae12cf86c09db95224))
+
+- **表行点击**: ListView 里的命中少了 contentY，滚过就点错行 + 母项拆解/移库迁 QML
+  ([`faf2a04`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/faf2a04e4dad0e2afc0f73351689187c40d863cd))
+
+- **计划表**: 点击命中固定在按下那一刻，双击语义改为可靠可达
+  ([`5b3068f`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5b3068f26fb9158551550c0eea93bbb0e22ec296))
+
+- **退出**: 先拆 QML 场景再让引擎析构 + 关闭延迟一拍
+  ([`1fb5378`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/1fb53782653635671b40c12b0ca5f66fa257184c))
+
+- **退出**: 点关闭后 FluentWinUI3 成片刷屏 —— 只丢退出期的 Qt 内建 QML 告警
+  ([`6783682`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/67836825b5924b24b6c1462d09c06b071da9e2b5))
+
+### Chores
+
+- Pre-commit 正装进 .venv 并重装 git 钩子
+  ([`92de6f5`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/92de6f55a86e2a984dd7bdf29ca35f4e95b0fa47))
+
+- 清掉四处已确认零调用者的死代码
+  ([`1cd2e6f`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/1cd2e6f961b9733d97050d9bf0ca21e8c799ce7f))
+
+- **QML 迁移**: 拆掉 conftest 的第一道墙 + 文档改指 QML（批次 6.2 前半）
+  ([`0dd20ff`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/0dd20ff0519fca1048d096bce7757edc7997d59a))
+
+- **快照**: 给本批 7 个新对话框登记快照工厂
+  ([`77722e1`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/77722e17e94efb03195236f88c5167f57716a110))
+
+### Code Style
+
+- Pre-commit 钩子升到最新版并全量格式化
+  ([`5f81a47`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5f81a47a78676ba990fecc1a8ac07aee2281f36d))
+
+### Features
+
+- 三个工业对话框迁移到 QML（Fluent Design 阶段 4-2）
+  ([`9d4ca26`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/9d4ca26eaffd5f694279d406b85fd95809e66e36))
+
+- 三个汇总类对话框迁移到 QML（Fluent Design 阶段 4-3）
+  ([`1f162a4`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/1f162a4ce04ae03b7801d68550e93a00993d5bda))
+
+- 主题收敛为 Fluent 双主题 + QML 控件主题化 + 修复启动死锁
+  ([`2b191f2`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/2b191f21fb5ab237677238f375ae3e87329b6c1c))
+
+- 仓库管理页迁移到 QML（Fluent Design 阶段 3-5，阶段 3 完成）
+  ([`97d34d0`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/97d34d0170ccd9eff30a0f3378cd999554b8820e))
+
+- 价格监控页迁移到 QML（Fluent Design 阶段 3-3）
+  ([`cb971b5`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/cb971b5043d0da8fc863f634a632d53d8b894260))
+
+- 估价页迁移到 QML（Fluent Design 阶段 1 试点）
+  ([`1e94885`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/1e94885200ffa116aad46b1ed828e0afd501a335))
+
+- 原图权威化 + 剪贴板导入加固 + 部分启动 + 甘特图排期
+  ([`06d0e15`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/06d0e15adf24baf32a71ca60e57b482555cdbf0c))
+
+- 取值对话框 / 物品搜索 / 材料覆盖迁移到 QML（Fluent Design 阶段 4b-1）
+  ([`ca0c91d`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/ca0c91d6897eba90d38a8abc4697df39a2cb60e9))
+
+- 合同市场页迁移到 QML（Fluent Design 阶段 3-4）
+  ([`d7f9c45`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d7f9c45d0d212a8aed66c4bc80d5fae292f26651))
+
+- 合同详情 / NPC 卖家 / 星系搜索迁移到 QML（Fluent Design 阶段 4c 部分）
+  ([`bf1dde0`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/bf1dde021dad330296a24466a168c2181f76ff8d))
+
+- 子项并行配置 / 子项大规模产线并行迁移到 QML（Fluent Design 阶段 4-5）
+  ([`3728104`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/372810421d782d37b22b9fd5f99faaf0258b8ed3))
+
+- 导入审查 / 蓝图导入迁 QML（阶段 4b 完成）+ 拆掉桥对宿主窗口的悬空引用
+  ([`7866b0d`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/7866b0dba4e06b9585709d5373621e1ed1b989ff))
+
+- 工业链路迁移到 QML（Fluent Design 阶段 2）
+  ([`7ad9fa4`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/7ad9fa468de3c0bd678ee4307947a789d00be8ab))
+
+- 工业页外壳迁 QML —— industry 成为整页 QML（Fluent Design 批次 5 完成）
+  ([`1bb75e0`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/1bb75e0fae6c42aad86ef5332dc3c56ff9a55120))
+
+- 引入 QML UI 层基座（Fluent Design，QQuickWidget 渐进嵌入）
+  ([`b90b74b`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b90b74be8a04d1b10757096af8e161e7ec1a0549))
+
+- 数据初始化向导迁 QML（阶段 4c）+ 接上设置/人物设置/向导三处调用点
+  ([`2243520`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/224352019e044d66851dfe960b52a85552cffe90))
+
+- 机库三对话框（改数量/批量成本价/加物品）迁移到 QML（Fluent Design 阶段 4b-2）
+  ([`84e3137`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/84e313794abec667d96a418fb5036a073b88b93b))
+
+- 查看核算（成本明细）迁移到 QML（Fluent Design 阶段 4-7）
+  ([`88a6a1f`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/88a6a1f718c008b41ca00490eeba6ad19e839b78))
+
+- 查询链路/工业收尾/设置家族等 20 个对话框迁 QML（阶段 4b+4c+4a 收尾）
+  ([`227b1d3`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/227b1d316a4db1e69a402b15c24811d48be090f4))
+
+- 母项下线时清理已完成的子项产线行
+  ([`e86f5d0`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/e86f5d033e0c481521ef52d3f5db09f21360e8ee))
+
+- 物品查询页迁移到 QML（Fluent Design 阶段 3-1）
+  ([`bb4754e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/bb4754ed0247a9999884ddb66d4bc08e1a733696))
+
+- 研究分析 / 所需蓝图清单迁移到 QML（Fluent Design 阶段 4-4）
+  ([`3baa4b1`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/3baa4b1b9cf0a96ae694da0ef8292b3057521b1e))
+
+- 程序图标（多尺寸 .ico）+ Windows 任务栏身份
+  ([`35840d1`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/35840d1391c9302f5918b1a3225873d33ddb5329))
+
+- 绑定库存蓝图迁移到 QML（Fluent Design 阶段 4-6）
+  ([`ea00d08`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/ea00d081705aaf8699b7916e9de6fac55791ce06))
+
+- 编辑生产计划对话框迁移到 QML（Fluent Design 阶段 4-1，含对话框宿主）
+  ([`edf1d1a`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/edf1d1a0025ba62e588875939d4471e9f910792f))
+
+- 贸易页迁移到 QML（Fluent Design 阶段 3-2）
+  ([`4bd358b`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/4bd358b24fb3c79b12ac0eed7fa42904bd2f9f86))
+
+- **QML 外壳**: 主窗口换成 QQuickWindow —— 页面宿主改为 Item（Fluent Design 批次 6.1）
+  ([`1fea4ed`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/1fea4edf24d1173ec4fbcf40939ff2f441e73248))
+
+- **QML 迁移**: 原生弹窗收敛 + 启动画面迁 QML（批次 7.1 / 7.2 / 7.3）
+  ([`207b425`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/207b4257b7551a5226f28151e728fa4eda9d9dd0))
+
+### Refactoring
+
+- 对比度工具上移 domain/（纯 hex，去 Qt 依赖）+ 补层次不变量
+  ([`1f7437c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/1f7437c8af44b33431a062bde6645d742dd0f449))
+
+- **QML**: 共享层搬出 ui_pyside6 —— ui_qml 不再反向依赖（批次 6.0）
+  ([`dc87813`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/dc87813de6558b5c4c0a0980901a5b17662d7ab6))
+
+- **QML 迁移**: 删掉人物设置页的 Widgets 实现（批次 7.4b）
+  ([`312f38c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/312f38c066c66fbdd95a4ac3ed8bfaf35a89629c))
+
+- **QML 迁移**: 删掉整个 ui_pyside6/ + registry 里的 QSS（批次 7.5，迁移收尾）
+  ([`eed8b00`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/eed8b00fd5e1f2a492b902f6a99cc28f758add70))
+
+- **QML 迁移**: 删掉死掉的 Widgets 代码 —— 51 个模块收到 17 个（批次 6.2）
+  ([`1a8240c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/1a8240c4ef46c55958d24786e8dd8f70ce32afa9))
+
+- **QML 迁移**: 控制器去 Widgets 化 + 工业工具窗窗口化 + 退役回退脚手架（批次 7.4）
+  ([`758ac1e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/758ac1eb333c6c810e9610d00fd657fd22b32ba8))
+
+- **QML 迁移**: 转发器下线 + worker 搬迁 + 陈旧条目清理（批次 7.0）
+  ([`6403ce5`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/6403ce5229248d3be6d0533f3021ae2fa8198a59))
+
+
 ## v0.21.0 (2026-09-10)
 
 ### Bug Fixes
