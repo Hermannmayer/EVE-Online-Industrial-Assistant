@@ -6,6 +6,39 @@
 
 <!-- version list -->
 
+## v0.23.0 (2026-09-16)
+
+### Bug Fixes
+
+- **工业/采购**: 自制件按全量计划排除；启动小助手选中与占用条几何；采购表列重排
+  ([`79acec0`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/79acec0b8c6b31724687b28b03b2ece43dd4b134))
+
+- **材料**: 需求改按整批取整，修「材料够了却报不足」；计划表新增「材料不足」状态
+  ([`56dbb6d`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/56dbb6d2df338596dab5fe150dc85c508a658175))
+
+- **查询页**: 修「选中一行后进程退出崩」；挂单导入对齐真实导出格式
+  ([`2089c50`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/2089c508c8dbefd3d996c1faeaa3c89b8560107f))
+
+- **查询页**: 修两处用户实测缺陷；补挂单导入确认框与文档
+  ([`d8d1fd6`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d8d1fd6ab8c7080fb0e2ae61917c1e98694c5fb1))
+
+- **退出**: 关机时拆掉工具窗的 QML 场景，修 528 条 null 绑定告警
+  ([`0d428ef`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/0d428ef7b4d47158a4f25a06dbd6764d49b7f340))
+
+### Build System
+
+- 裁剪未使用的 Qt 模块，发行包 190MB → 80MB
+  ([`3bd12a6`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/3bd12a681221692f36bd62e83a4e96265fc8464d))
+
+### Features
+
+- **查询页**: 仪表盘按反馈重排；修下拉框白底白字；产线占用改按类型分行
+  ([`b17fb52`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b17fb525025252968608fa66e4fd88ed48b23d94))
+
+- **查询页**: 空闲态仪表盘 + 有结果态详情面板
+  ([`3b1f3d4`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/3b1f3d43c0d9b7b41914b1fc08af87062391bef5))
+
+
 ## v0.22.0 (2026-09-16)
 
 ### Bug Fixes
