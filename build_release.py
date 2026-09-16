@@ -61,6 +61,55 @@ THIRD_PARTY_HIDDEN_IMPORTS = [
     "openpyxl",
 ]
 
+# ── Qt 模块裁剪 ──────────────────────────────────────────────
+# 本应用只用 QtWidgets + QtQuick（Fluent WinUI3 样式），下面这些模块一个都没用到。
+# 不过滤的话它们会混进产物，最大的一笔是 `Qt6WebEngineCore.dll`（**195 MB**，占
+# 整个产物 45%）：PyInstaller 的 `hook-PySide6.QtQml.py` 用 `rglob('**/qmldir')`
+# **无条件**收集 `PySide6/qml/` 下全部模块，其中 `qml/QtWebEngine` 的插件二进制
+# 依赖那个库 —— 应用一旦开始用 QtQml（QML 迁移），它就第一次被拖了进来。
+#
+# 实测：不过滤 440 MB（onedir）/ onefile exe 约 190 MB；
+#       过滤后 198 MB / 80 MB。环境见 scripts/build_hooks/。
+EXCLUDED_QT_MODULES = [
+    # WebEngine —— 单这一项就是全部差距的大头
+    "PySide6.QtWebEngineCore",
+    "PySide6.QtWebEngineQuick",
+    "PySide6.QtWebEngineWidgets",
+    # 3D / 图表
+    "PySide6.QtQuick3D",
+    "PySide6.Qt3DCore",
+    "PySide6.Qt3DRender",
+    "PySide6.QtCharts",
+    "PySide6.QtGraphs",
+    "PySide6.QtDataVisualization",
+    # 文档 / 设计器 / 测试
+    "PySide6.QtPdf",
+    "PySide6.QtDesigner",
+    "PySide6.QtTest",
+    # 多媒体与网络附属
+    "PySide6.QtMultimedia",
+    "PySide6.QtMultimediaWidgets",
+    "PySide6.QtWebSockets",
+    "PySide6.QtLocation",
+    "PySide6.QtPositioning",
+    "PySide6.QtTextToSpeech",
+    "PySide6.QtSensors",
+    "PySide6.QtWebView",
+    "PySide6.QtBluetooth",
+    "PySide6.QtNfc",
+    "PySide6.QtSerialPort",
+    # 其它用不到的基础模块
+    "PySide6.QtSql",
+    "PySide6.QtRemoteObjects",
+    "PySide6.QtScxml",
+    "PySide6.QtStateMachine",
+    "PySide6.QtHelp",
+]
+
+# 裁剪版 QML 钩子所在目录（覆盖上游那个「全收」的 QtQml 钩子，
+# 见 scripts/build_hooks/hook-PySide6.QtQml.py）
+BUILD_HOOKS_DIR = os.path.join(PROJECT_ROOT, "scripts", "build_hooks")
+
 
 def run_pyinstaller():
     """步骤 1：运行 PyInstaller 打包 exe"""
@@ -85,6 +134,11 @@ def run_pyinstaller():
     # 第三方 hidden imports
     for hi in THIRD_PARTY_HIDDEN_IMPORTS:
         args.extend(["--hidden-import", hi])
+
+    # Qt 模块裁剪 —— 不带这两项的话产物会大出一倍多，见 EXCLUDED_QT_MODULES 注释
+    for mod in EXCLUDED_QT_MODULES:
+        args.extend(["--exclude-module", mod])
+    args.extend(["--additional-hooks-dir", BUILD_HOOKS_DIR])
 
     args.extend(
         [
