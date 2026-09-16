@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import inspect
 
-import ui_pyside6.theme as theme
+import ui_qml.theme.registry as theme
 from ui_qml.bridge import transfer_bridge as tb
 from ui_qml.bridge.transfer_bridge import HangarTransferBridge, HangarTransferQmlDialog
 

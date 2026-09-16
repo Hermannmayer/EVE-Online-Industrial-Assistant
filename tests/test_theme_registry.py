@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from ui_pyside6.theme import (
+from ui_qml.theme.registry import (
     FLUENT_DARK,
     FLUENT_LIGHT,
     THEME_REGISTRY,
@@ -219,26 +219,3 @@ def test_surface_luminance_order_is_strictly_increasing(theme_id):
     # 卡片面与窗口底必须可区分：这是「控件放上去变黑洞」的直接判据
     gap = abs(relative_luminance(colors["BG_SURFACE"]) - relative_luminance(colors["BG_DARK"]))
     assert gap > 0.001, f"{theme_id} BG_SURFACE 与 BG_DARK 几乎同色（差 {gap:.4f}）"
-
-
-def test_old_path_forwards_live_values_not_an_import_time_snapshot():
-    """旧路径 `ui_pyside6.theme` 必须转发**当前值**，不能是导入期快照。
-
-    主题搬到 `ui_qml/theme/registry.py` 之后，旧路径只剩一层 `__getattr__` 转发。
-    这里逐个比对**全部**模块级大写名字（而不是挑几个颜色）：一旦它退化成
-    `from ... import *` 那种写法，`FONT_SCALE` / `MATERIAL` / `RADIUS` 这类
-    非颜色 token 会最先静默失真 —— 那种失真不会报错，只会让 QSS 用着上一次的值。
-    """
-    import ui_pyside6.theme as old
-    from ui_qml.theme import registry
-
-    names = [n for n in dir(registry) if n.isupper() and not n.startswith("_")]
-    assert len(names) > 20, f"没扫到 token，护栏自身失效了：{names}"
-
-    for theme_id in ("fluent-light", "fluent-dark"):
-        apply_theme(theme_id)
-        for name in names:
-            assert getattr(old, name) == getattr(registry, name), (
-                f"{theme_id} 下旧路径的 {name} 与 registry 不一致："
-                f"{getattr(old, name)!r} != {getattr(registry, name)!r}"
-            )

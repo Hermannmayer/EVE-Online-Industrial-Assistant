@@ -10,7 +10,7 @@
 
 ## 窗口级区域
 
-所有页面共有的窗口骨架，定义在 `ui_pyside6/main_window.py` + `main_window_nav.py`。
+所有页面共有的窗口骨架。原 Widgets 外壳（`ui_pyside6/main_window.py` + `main_window_nav.py`）已随 QML 迁移删除，现由 `ui_qml/shell_window.py`（QQuickView 主窗口）+ `ui_qml/qml/shell/` 实现；下表的区域名沿用，`代码定位` 列记录的是 Widgets 时代的标识。
 
 | # | 中文名 | 代码定位 | 说明 |
 |---|---|---|---|
@@ -175,12 +175,16 @@ L1 的 `#launcher_toolbar` **必须是 `QFrame`**（不能是裸布局），否�
 
 ## 重新生成
 
+> 生成器 `scripts/ui_blueprint.py` 与 Widgets 截图脚本 `scripts/ui_snapshot.py` 已随 QML 迁移删除
+> （两者都写在已移除的 Widgets 外壳上）。本页的标注图 `/assets/ui-blueprint.png` 现为**静态参考图**，
+> 不再由脚本生成。
+
+当前界面截图请用 QML 外壳快照脚本：
+
 ```bash
-python scripts/ui_blueprint.py                  # 默认工业制造页 → docs/public/assets/
-python scripts/ui_blueprint.py --page query     # 换页面
-python scripts/ui_blueprint.py --theme eve-deep # 换主题
-python scripts/ui_snapshot.py --dialog launcher # 产线启动小助手（PNG + 控件树）
+python scripts/shell_snapshot.py                 # QML 外壳（离屏，验结构/配色）
+python scripts/shell_snapshot.py --real          # QML 外壳（真窗口，验字形/毛玻璃）
+python scripts/shell_snapshot.py --page industry # 切到某页再拍
 ```
 
-新增或调整页面分区后，重跑本脚本并更新本文档的「各页面区域现状」表。
-改动产线启动小助手时，用 `ui_snapshot.py --dialog launcher` 出前后对比截图（明暗主题各跑一次）。
+新增或调整页面分区后，更新本文档的「各页面区域现状」表。

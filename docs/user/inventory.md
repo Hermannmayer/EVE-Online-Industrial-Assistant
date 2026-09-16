@@ -55,16 +55,15 @@
 
 ## 库存界面
 
-`ui_pyside6/views/inventory/` 包含：
+仓库页已迁到 QML（原 `ui_pyside6/views/inventory/` 目录随迁移整体移除），现在 `ui_qml/` 下：
 
 | 文件 | 功能 |
 |------|------|
-| `inventory_page.py` | 主页面 Tab 容器 |
-| `hangar_tab.py` | 单个机库的物品表格 Tab |
-| `blueprint_tab.py` | 蓝图管理 Tab（BPO/BPC、ME/TE） |
-| `blueprint_import_worker.py` | 蓝图批量导入 Worker |
-| `inventory_helpers.py` | 辅助函数 |
-| `review_dialog.py` | 入库审核对话框 |
+| `ui_qml/qml/pages/StoragePage.qml` | 仓库管理页（机库管理 / 蓝图管理 两个 Tab） |
+| `ui_qml/bridge/inventory_bridge.py` | QML ↔ 既有服务 / worker 的通道（含多选与对话框编排） |
+| `ui_qml/models/inventory_qml_models.py` | QML 表适配（机库物品 8 列 / 蓝图 11 列） |
+| `ui_qml/models/inventory_helpers.py` | 公共表模型与常量（`InvTableModel` / `BlueprintTableModel`） |
+| `ui_qml/workers/blueprint_import_worker.py` | 蓝图剪贴板批量导入 Worker |
 
 ## API 参考
 

@@ -23,7 +23,7 @@ except Exception:
 ROOT = Path(__file__).resolve().parent.parent
 
 # 代码目录 → 应同步的文档目录
-CODE_DIRS = ("core/", "services/", "ui_pyside6/")
+CODE_DIRS = ("core/", "services/", "ui_qml/")
 DOC_PATTERNS = ("docs/user/", "docs/dev/", "README.md")
 
 # 纯内部改动（测试/构建/文档本身）不提醒

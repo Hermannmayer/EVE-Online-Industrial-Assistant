@@ -19,7 +19,7 @@ import pytest
 from PySide6.QtCore import QEventLoop, QObject, QTimer, QtMsgType, Signal, qInstallMessageHandler
 from PySide6.QtGui import qAlpha
 
-import ui_pyside6.theme as theme
+import ui_qml.theme.registry as theme
 
 pytestmark = pytest.mark.ui
 

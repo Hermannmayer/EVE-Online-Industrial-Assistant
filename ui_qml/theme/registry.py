@@ -4,11 +4,13 @@
 **单一 token 源**：QML 的 `Theme` 单例（经 `ui_qml.bridge.theme_bridge`）、
 Widgets 的 QSS、以及所有 `theme.XXX` 取值都读这里，禁止在别处写颜色字面量。
 
-本模块原先在 `ui_pyside6/theme.py`，因为 QML 侧要读同一份 token 才搬到 `ui_qml/`；
-旧路径留了一层属性转发器（`ui_pyside6/theme.py`），未迁移完的 Widgets 代码照旧可用。
+本模块原先在 `ui_pyside6/theme.py`，因为 QML 侧要读同一份 token 才搬到 `ui_qml/`。
+搬迁期间 `ui_pyside6/` 下留过一层同名转发器，批次 7.0 已随引用方全部改指而删除 ——
+那个旧路径现在不存在，新代码一律 import 本模块。
 
 ⚠️ 本模块里**暂时**还留着 QSS 生成（14 个 `_*_styles()` + `get_stylesheet()`）
-与 `themed_menu()` —— 它们只服务 Widgets 外壳，等阶段 5 外壳换成 QML 后整段删除。
+与 `themed_menu()` —— 它们只服务 Widgets 外壳，而外壳在批次 6.1 就已换成 QML，
+所以这段现在**已经是死代码**，只等批次 7.5 与 `ui_pyside6/` 一并删除。
 QML 侧不要用它们（QML 不套 QSS）。
 """
 

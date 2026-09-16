@@ -70,7 +70,7 @@ class TestTradeHubTableModel:
 
     def test_data_foreground_spread_positive(self, qapp):
         """价差为正时绿色"""
-        from ui_pyside6 import theme
+        from ui_qml.theme import registry as theme
 
         rows = [{"hub": "Jita", "spread_pct": 15.0}]
         model = TradeHubTableModel(rows)
@@ -79,7 +79,7 @@ class TestTradeHubTableModel:
 
     def test_data_foreground_spread_negative(self, qapp):
         """价差为负时红色"""
-        from ui_pyside6 import theme
+        from ui_qml.theme import registry as theme
 
         rows = [{"hub": "Jita", "spread_pct": -5.0}]
         model = TradeHubTableModel(rows)

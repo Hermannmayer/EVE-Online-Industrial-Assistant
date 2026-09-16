@@ -15,7 +15,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPen, QRadialGradient
 from PySide6.QtWidgets import QGridLayout, QLabel, QVBoxLayout, QWidget
 
 import ui_pyside6.icons as icons
-import ui_pyside6.theme as theme
+import ui_qml.theme.registry as theme
 
 _ICON_READY = "check"
 _ICON_MISSING = "close"

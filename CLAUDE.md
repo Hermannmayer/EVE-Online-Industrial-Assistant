@@ -36,7 +36,7 @@ PySide6 + SQLite 构建的 EVE Online 工业制造助手桌面应用。
   仍在 Widgets 里的组件才用 `add_theme_listener` + `_on_theme_changed`
 
 ### 铁律
-- 🎨 **配色**：所有颜色从 `ui_qml.theme.registry` 导入（旧路径 `ui_pyside6.theme` 只是属性转发器，迁移期仍可用；**QML 侧也读这一份**），禁止 hex/rgb/颜色名
+- 🎨 **配色**：所有颜色从 `ui_qml.theme.registry` 导入（**QML 侧也读这一份**），禁止 hex/rgb/颜色名
 - 📖 **术语**：EVE 术语（技能名/蓝图活动/UI 标签）通过 `services.terminology` 获取，技能 key 需在 `data/terminology.json` 注册
 - 🗄️ **Schema 变更**：所有数据库表结构变更必须在 `services/schema_migrations.py` 注册迁移函数：`DB_SCHEMA_VERSIONS[库名] += 1`，新增 `MIGRATIONS[库名][旧版本] = 迁移函数`。不得在业务代码中写 ALTER TABLE。`tests/conftest.py` 中对应表的 PRAGMA user_version 同步更新。迁移由 `ensure_schema` 自动备份到 `database/backups/`（保留最近 5 份）；大变动（改列类型/拆表/合并）用 `_rebuild_table`，规范见 `docs/dev/schema-migration.md`。
 
@@ -82,11 +82,11 @@ bootstrap/     组合根 / IOC 容器（container.py）
 core/          工具层（constants, paths, logger, cache, hot_reload；eve_formulas=贸易费/经纪人费常量）
 domain/        领域层（纯函数，无 DB/Qt/缓存 — formulas 制造公式, bom, scoring, ports）
 services/      业务层（database_manager, scoring_service, scoring_facade, inventory_manager, repositories/, etc.）
-ui_pyside6/    **残存的 Widgets 代码**（批次 6.2 后只剩 17 个模块）：
-               views/industry*（工业页控制器 + 计划表 + 产线助手）、views/char_settings_*（
-               人物设置页的纯逻辑/控件）、views/procurement_tab、dialogs/industry_dialogs、
-               splash_screen、workers/{startup,industry_page}_worker、
-               以及 theme.py / icons.py / icon_cache.py 三个**转发器**（真身在 ui_qml/ 与 core/）
+ui_pyside6/    **残存的 Widgets 代码**（迁移收尾后只剩 12 个模块）：
+               views/industry*（工业页控制器 + 计划表 + 产线助手 + 下线守卫）、
+               views/char_settings_*（人物设置页的纯逻辑/控件）、views/procurement_tab、
+               dialogs/industry_dialogs、splash_screen、sizing.py，
+               以及 icons.py 这个**转发器**（真身在 ui_qml/）
 ui_qml/        QML UI 层（**主 UI**）：
                shell_window.py=主窗口（QQuickView）+ qml/shell/=外壳（标题栏/导航/状态栏）
                qml/pages|dialogs|components/=页面与对话框；bridge/=Python↔QML 桥
@@ -114,7 +114,7 @@ data/          运行时数据（settings, score_settings, char_config, terminol
 | 改数据导入（SDE/ESI） | `services/importers/get*.py`、`services/init_service.py` | `docs/dev/flows.md`（初始化节） |
 | 改 UI 页面/异步任务 | QML 页面 `ui_qml/qml/pages/…` + 桥 `ui_qml/bridge/…`；共用模型/线程 `ui_qml/models/…`、`ui_qml/workers/…` | `docs/dev/architecture.md`；`docs/dev/api-reference.md` |
 | 改外壳（标题栏/导航/状态栏） | `ui_qml/shell_window.py` + `ui_qml/qml/shell/…` | `docs/dev/ui-blueprint.md`（区域命名） |
-| 看界面实际效果 | `scripts/shell_snapshot.py`（QML 外壳，`--real` 出真窗口图）、`scripts/ui_snapshot.py`（Widgets 回退路径） | 见下「界面感知」 |
+| 看界面实际效果 | `scripts/shell_snapshot.py`（QML 外壳，`--real` 出真窗口图） | 见下「界面感知」 |
 | 查/改 EVE 术语 | `data/terminology.json` + `services/terminology.py` | `docs/dev/glossary.md` |
 | 改 UI 配色 | `ui_qml/theme/registry.py` | `docs/dev/architecture.md`（主题） |
 
@@ -129,7 +129,6 @@ data/          运行时数据（settings, score_settings, char_config, terminol
 python scripts/shell_snapshot.py                 # QML 外壳（离屏，验结构/配色）
 python scripts/shell_snapshot.py --real          # QML 外壳（真窗口，验字形/毛玻璃；数据目录自动隔离）
 python scripts/shell_snapshot.py --page industry # 切到某页再拍
-python scripts/ui_snapshot.py                    # Widgets 回退路径的全部页面
 ```
 
 `shell_snapshot.py` 会打印「装载了几个页面 / 当前页 / 内容区尺寸 / 可见页面数」并给退出码，可作为外壳的结构自检。**离屏下 `QFontDatabase` 是 0 个字体**（文字全成方框），字形必须用 `--real` 看。

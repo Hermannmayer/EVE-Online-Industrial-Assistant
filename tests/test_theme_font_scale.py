@@ -2,7 +2,7 @@
 
 import pytest
 
-import ui_pyside6.theme as theme
+import ui_qml.theme.registry as theme
 
 
 @pytest.fixture(autouse=True)

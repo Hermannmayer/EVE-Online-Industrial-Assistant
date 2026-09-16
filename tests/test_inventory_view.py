@@ -467,7 +467,7 @@ class TestBlueprintTableModel:
 
     def test_margin_foreground_positive_green(self, qapp):
         """正利润率绿色"""
-        from ui_pyside6 import theme
+        from ui_qml.theme import registry as theme
 
         model = BlueprintTableModel(self.SAMPLE_ROWS)
         color = model.data(model.index(0, 10), Qt.ItemDataRole.ForegroundRole)
@@ -478,7 +478,7 @@ class TestBlueprintTableModel:
         rows = [{"blueprint_type_id": 9999, "margin": -10.0}]
         model = BlueprintTableModel(rows)
         color = model.data(model.index(0, 10), Qt.ItemDataRole.ForegroundRole)
-        from ui_pyside6 import theme
+        from ui_qml.theme import registry as theme
 
         assert color.name() == theme.ACCENT_RED
 

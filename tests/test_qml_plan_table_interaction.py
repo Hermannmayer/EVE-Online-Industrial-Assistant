@@ -35,7 +35,7 @@ from PySide6.QtCore import QEventLoop, QObject, QPoint, Qt, QTimer, QtMsgType, q
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-import ui_pyside6.theme as theme
+import ui_qml.theme.registry as theme
 from ui_pyside6.views.industry.plan_table import PlanTable
 from ui_qml.models.industry_models import PlanTableModel
 

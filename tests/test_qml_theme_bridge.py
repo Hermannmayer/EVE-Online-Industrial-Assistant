@@ -1,7 +1,7 @@
 """ThemeBridge（QML 主题桥）契约测试。
 
 多数用例不依赖 QApplication：`_apply_palette` 在无应用实例时静默跳过，
-其余 token 读取纯走 `ui_pyside6.theme`，因此归入 validate 档；
+其余 token 读取纯走 `ui_qml.theme.registry`，因此归入 validate 档；
 需要调色板的用例单独标 `ui`。
 """
 
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtGui import QColor
 
-import ui_pyside6.theme as theme
+import ui_qml.theme.registry as theme
 from tests.test_theme_registry import _COLOR_KEYS
 from ui_qml.bridge import CONTEXT_NAME, ThemeBridge, theme_singleton
 from ui_qml.bridge.theme_bridge import COLOR_TOKENS

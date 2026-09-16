@@ -100,6 +100,6 @@ git commit -m "feat: 新功能描述"
 详见 [CLAUDE.md](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/blob/main/CLAUDE.md) 中的完整代码规则，关键要点：
 
 - 所有 SQL 参数化查询
-- 颜色从 `ui_pyside6.theme` 导入
+- 颜色从 `ui_qml.theme.registry` 导入
 - 数据库 Schema 变更通过 `services/schema_migrations.py` 注册
 - 新 UI 组件必须 `add_theme_listener` + `_on_theme_changed`

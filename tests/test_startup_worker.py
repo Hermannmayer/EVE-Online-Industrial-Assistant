@@ -16,7 +16,7 @@ def _ready_status() -> dict:
 
 
 def _run_worker():
-    from ui_pyside6.workers.startup_worker import StartupCheckWorker
+    from ui_qml.workers.startup_worker import StartupCheckWorker
 
     worker = StartupCheckWorker()
     events: dict = {"stages": [], "components": [], "finished": []}

@@ -12,8 +12,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
 )
 
-from services import inventory_manager
-from ui_pyside6.views.char_settings_view import get_character_list
+from services import char_config_resolver, inventory_manager
 
 
 class AddPlanDialog(QDialog):
@@ -56,7 +55,7 @@ class AddPlanDialog(QDialog):
 
         # 角色下拉
         self._char = QComboBox()
-        chars = get_character_list()
+        chars = char_config_resolver.get_character_list()
         if chars:
             self._char.addItems(chars)
             self._char.setCurrentText(chars[0])

@@ -19,8 +19,8 @@ import pytest
 from PySide6.QtCore import QEventLoop, QObject, QTimer, Signal
 from PySide6.QtGui import QCloseEvent
 
-import ui_pyside6.theme as theme
 import ui_qml.bridge.init_wizard_bridge as iwb
+import ui_qml.theme.registry as theme
 from services.init_service import STEPS, InitStep, StepStatus
 from ui_qml.bridge.init_wizard_bridge import InitWizardQmlDialog, format_elapsed, step_row
 

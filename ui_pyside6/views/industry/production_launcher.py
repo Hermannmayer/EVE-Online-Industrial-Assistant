@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-import ui_pyside6.theme as theme
+import ui_qml.theme.registry as theme
 from core.container import get_container
 from core.logger import log
 from domain.theme_contrast import ensure_contrast
@@ -811,7 +811,7 @@ class ProductionLauncher(QWidget):
         """
         from PySide6.QtCore import QUrl
 
-        from ui_pyside6.icon_cache import item_icon_path
+        from ui_qml.icon_cache import item_icon_path
 
         type_id = int(plan.get("product_type_id") or 0)
         if type_id:

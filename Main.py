@@ -202,7 +202,7 @@ def main():
         log.warning("QQuickStyle 不可用，QML 页面将回退 Widgets 版", exc_info=True)
 
     # splash 配色与主窗一致（启动早期主题未初始化时先应用偏好）
-    import ui_pyside6.theme as theme
+    import ui_qml.theme.registry as theme
 
     # 默认字体随「全局字号」设置；apply_theme 内部会同步 QApplication 字体，
     # 早于此处设置可避免系统字体配置中的无效值导致警告
@@ -252,7 +252,7 @@ def main():
     app.aboutToQuit.connect(unlock)
     app.aboutToQuit.connect(get_db().close_all)
 
-    from ui_pyside6.workers.startup_worker import StartupCheckWorker
+    from ui_qml.workers.startup_worker import StartupCheckWorker
 
     worker = StartupCheckWorker(parent=splash)
     worker.stage.connect(splash.set_stage)

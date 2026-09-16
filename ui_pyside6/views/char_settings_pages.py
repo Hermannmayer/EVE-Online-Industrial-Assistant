@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 import ui_pyside6.icons as icons
-import ui_pyside6.theme as theme
+import ui_qml.theme.registry as theme
 from core.char_settings_common import (
     SKILL_CATEGORIES,
     TRADE_HUBS,

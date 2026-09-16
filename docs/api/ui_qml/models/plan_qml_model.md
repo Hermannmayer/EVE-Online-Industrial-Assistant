@@ -26,7 +26,7 @@ Widgets 版 delegate 的展示职责折成几个「按索引取值」的角色�
 颜色以**已解析的 hex 字符串**返回而非 token 名：QML 侧拿 token 名字符串做属性查表
 （`Theme[name]`）无法参与依赖追踪，主题切换时不会重绘；改为表在主题变更时调
 `refresh_colors()` 统一补发 `dataChanged`（见 `PlanTable._on_theme_changed`）。
-hex 本身仍全部来自 `ui_pyside6.theme`，不违反「配色只在 theme」的铁律。
+hex 本身仍全部来自 `ui_qml.theme.registry`，不违反「配色只在 theme」的铁律。
 
 ## 函数
 

@@ -13,7 +13,7 @@ from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QIcon, QIconEngine, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QToolButton
 
-import ui_pyside6.theme as theme
+import ui_qml.theme.registry as theme
 from ui_qml.icons import ICON_MAP, ICONS_DIR, load_svg
 
 #: 兼容旧引用（`tests/test_icons.py` 用它拼 SVG 路径）；真值在 `ui_qml.icons`

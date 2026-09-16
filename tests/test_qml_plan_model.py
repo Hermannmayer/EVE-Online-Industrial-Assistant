@@ -14,7 +14,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 
-import ui_pyside6.theme as theme
+import ui_qml.theme.registry as theme
 from ui_qml.models.plan_qml_model import ROLE_NAMES, PlanQmlModel
 from ui_qml.models.plan_table_constants import (
     COL_BLUEPRINT,
@@ -306,7 +306,7 @@ def test_autofit_measures_cjk_content_not_char_count(qapp):
     # 状态列：至少要装得下「生产中」三个中文
     from PySide6.QtGui import QFont, QFontMetrics
 
-    import ui_pyside6.theme as theme
+    import ui_qml.theme.registry as theme
 
     font = QFont(theme.FONT_FAMILY)
     font.setPixelSize(theme.fs(12))

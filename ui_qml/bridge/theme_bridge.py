@@ -1,6 +1,6 @@
-"""主题 token 桥 —— 把 `ui_pyside6.theme` 的设计 token 暴露给 QML。
+"""主题 token 桥 —— 把 `ui_qml.theme.registry` 的设计 token 暴露给 QML。
 
-**单一 token 源**：所有颜色/圆角/间距/动效值都取自 `ui_pyside6.theme`，
+**单一 token 源**：所有颜色/圆角/间距/动效值都取自 `ui_qml.theme.registry`，
 QML 侧禁止写颜色或尺寸字面量（等价于 CLAUDE.md 里「配色一律从 theme 导入」的铁律）。
 
 由 `ui_qml.host.PageHost` 以 context property 名 `Theme` 注入，QML 侧直接写：

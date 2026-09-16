@@ -258,7 +258,7 @@ class TestProductionLauncher:
         """动作槽宽度固定，且必须容得下**所有可能文案**（否则最长的那条会被截断）。"""
         from PySide6.QtGui import QFont, QFontMetrics
 
-        import ui_pyside6.theme as theme
+        import ui_qml.theme.registry as theme
 
         w, pl = _make_launcher(qapp, monkeypatch)
         try:

@@ -14,8 +14,8 @@ from typing import Any
 import pytest
 from PySide6.QtCore import QObject, Signal
 
-import ui_pyside6.theme as theme
 import ui_qml.bridge.batch_price_bridge as bp
+import ui_qml.theme.registry as theme
 from ui_qml.bridge.batch_price_bridge import (
     BatchPriceQmlDialog,
     export_rows,

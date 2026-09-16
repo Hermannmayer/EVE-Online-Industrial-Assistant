@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox, QVBoxLayout, QWidget
 
-import ui_pyside6.theme as theme
+import ui_qml.theme.registry as theme
 from core.container import get_container
 from ui_qml.models.industry_models import PlanTableModel
 from ui_qml.models.plan_table_constants import (
@@ -383,7 +383,7 @@ class PlanTable(QWidget):
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QSlider, QSpinBox, QVBoxLayout
 
-        import ui_pyside6.theme as theme
+        import ui_qml.theme.registry as theme
 
         dlg = QDialog(self)
         dlg.setWindowTitle("设置蓝图等级")

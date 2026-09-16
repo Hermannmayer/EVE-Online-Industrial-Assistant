@@ -7,7 +7,7 @@
 - 主题卡片点击要**立刻切主题**（`theme.apply_theme`），再回填到宿主的“应用/确定”流程 ——
   这条链只有放在一起才看得清。
 
-**业务逻辑一行没重写**：全部委托 `ui_pyside6.theme` 与宿主 main_window 上既有方法
+**业务逻辑一行没重写**：全部委托 `ui_qml.theme.registry` 与宿主 main_window 上既有方法
 （`_save_settings` / `_start_price_timer` / `_show_init_wizard` …），与原版逐条对齐。
 
 `ThemeSelectorBridge` 不是对话框，只是个 QObject 驱动的组件源（见 `FThemeCards.qml`），

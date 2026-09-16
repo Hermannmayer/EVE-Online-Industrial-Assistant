@@ -17,7 +17,7 @@ __all__ = ["ShellBridge", "ShellHost"]
 
 
 class ShellHost(Protocol):
-    """外壳需要提供的最小接口（由 `ui_pyside6.main_window.MainWindow` 满足）。"""
+    """外壳需要提供的最小接口（由 `ui_qml.shell_window.ShellWindow` 满足）。"""
 
     def set_status(self, text: str) -> None: ...
     def show_progress(self, text: str = "", maximum: int = 0) -> None: ...

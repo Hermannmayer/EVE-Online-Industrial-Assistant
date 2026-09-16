@@ -16,12 +16,13 @@ EVE-Online-Industrial-Assistant/
 ├── build_release.py         # PyInstaller 打包脚本
 ├── dev.py                   # 热重载开发工具
 │
+├── bootstrap/               # 组合根 / IOC 容器
 ├── core/                    # 工具层（常量、路径、公式、容器、日志）
 ├── domain/                  # 领域层（纯函数：评分、BOM 展开）
-├── application/             # 应用编排层（评分门面）
 ├── services/                # 业务层（数据库、评分、库存、数据导入）
 │   └── importers/           # SDE/ESI 数据导入器（getitems/getprices/sde_loader 等）
-├── ui_pyside6/              # UI 层（主窗口、主题、模型、worker、视图、对话框）
+├── ui_qml/                  # UI 层主实现（QML 外壳/页面/对话框 + Python 桥/模型/worker）
+├── ui_pyside6/              # 残存的 Widgets 业务控制器（工业页那条链、人物设置、采购、splash）
 ├── tools/                   # 独立初始化工具
 ├── scripts/                 # 维护脚本（数据库拆分迁移等）
 ├── docs/                    # 文档站（VitePress，在线版见顶部链接）
@@ -204,7 +205,7 @@ python build_release.py
 
 | 指标 | 数值 |
 |------|------|
-| 📊 **测试总数** | 2179 个 |
+| 📊 **测试总数** | 2178 个 |
 | 🔧 **框架** | pytest |
 | 📁 **测试目录** | `tests/` |
 | 🏃 **运行命令** | `pytest` |

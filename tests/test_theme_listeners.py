@@ -9,9 +9,9 @@ import pytest
 from PySide6.QtCore import QAbstractItemModel, QCoreApplication, QModelIndex, QSortFilterProxyModel, Qt
 from PySide6.QtGui import QShowEvent
 
-import ui_pyside6.theme as theme
-from ui_pyside6.theme import FLUENT_LIGHT, apply_theme
+import ui_qml.theme.registry as theme
 from ui_qml.bridge import theme_singleton
+from ui_qml.theme.registry import FLUENT_LIGHT, apply_theme
 
 pytestmark = pytest.mark.ui
 
@@ -94,9 +94,9 @@ def test_industry_page_theme_listener(qapp, mock_db):
 
 def test_char_settings_dialog_show_event(qapp, mock_db):
     with (
-        patch("ui_pyside6.views.char_settings_view.load_all_data") as mock_load,
+        patch("ui_pyside6.views.char_settings_view.services_load_all_data") as mock_load,
         patch("ui_pyside6.views.char_settings_pages.load_implants", return_value=[]),
-        patch("ui_pyside6.views.char_settings_view.save_all_data"),
+        patch("ui_pyside6.views.char_settings_view.services_save_all_data"),
     ):
         mock_load.return_value = {
             "current": "main",

@@ -10,17 +10,12 @@ from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QWidget
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.logger import log
+from services.char_config_resolver import load_all_data
 from services.user_settings import get_price_settings
-from ui_pyside6.views.char_settings_view import load_all_data
 from ui_pyside6.views.industry import (
     PlanTable,
 )
 from ui_pyside6.views.industry.complete_plans_dialog import complete_plans
-from ui_pyside6.workers.industry_page_workers import (
-    IndustryDataWorker,
-    PlanPriceRefreshWorker,
-    init_plan_db,
-)
 from ui_qml.bridge.blueprint_dialog_bridge import (
     BlueprintRequirementsQmlDialog as BlueprintRequirementsDialog,
 )
@@ -31,6 +26,11 @@ from ui_qml.bridge.manufacturable_items_bridge import ManufacturableItemsQmlDial
 from ui_qml.bridge.materials_dialog_bridge import MaterialsSummaryQmlDialog as MaterialsSummaryDialog
 from ui_qml.bridge.output_dialog_bridge import OutputSummaryQmlDialog as OutputSummaryDialog
 from ui_qml.industry_page import IndustryQmlHost, make_qml_host
+from ui_qml.workers.industry_page_workers import (
+    IndustryDataWorker,
+    PlanPriceRefreshWorker,
+    init_plan_db,
+)
 from ui_qml.workers.industry_workers import BatchPlanCalcWorker, ProcurementSummaryWorker
 
 if TYPE_CHECKING:

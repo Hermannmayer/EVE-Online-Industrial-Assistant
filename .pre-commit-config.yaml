@@ -40,7 +40,7 @@ repos:
         entry: python scripts/gen_api_docs.py
         language: system
         pass_filenames: false
-        files: ^(core/|services/|ui_pyside6/(models|workers)/)
+        files: ^(core/|services/|ui_qml/(models|workers)/)
 
       # 2) README 动态数据校验（测试总数 / 测试文件清单与实际一致）
       - id: check-readme

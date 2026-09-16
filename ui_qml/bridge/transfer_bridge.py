@@ -8,7 +8,7 @@
 `SummaryTableBridge` / `FSummaryTable`；行渲染照 `BlueprintPickerDialog.qml` 那份
 （同为「勾选框 + 每行可交互」的表），只是在每行末尾多挂一个 `FSpinBox`。
 **业务判定（clamp / 统计 / 未匹配）留在桥里**，与 Widgets 版逐条对齐；颜色也从
-`ui_pyside6.theme` 取 hex（QML 只负责画，不自己算规则）。
+`ui_qml.theme.registry` 取 hex（QML 只负责画，不自己算规则）。
 
 「选中哪些行」是纯 UI 状态（右键菜单的作用对象），留在 QML 的 `selRows`；桥只管
 「哪几行被勾上 / 每行搬多少」这个业务事实。这与 `BlueprintPickerBridge` 同一分工。

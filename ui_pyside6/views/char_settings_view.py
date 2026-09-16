@@ -15,22 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-import ui_pyside6.theme as theme
-from core.char_settings_common import (
-    calc_broker_fee,
-    calc_max_orders,
-    calc_relist_discount,
-    calc_sales_tax,
-)
-from services.char_config_resolver import (
-    char_config_path as services_char_config_path,
-)
-from services.char_config_resolver import (
-    get_character as services_get_character,
-)
-from services.char_config_resolver import (
-    get_character_list as services_get_character_list,
-)
+import ui_qml.theme.registry as theme
 from services.char_config_resolver import (
     load_all_data as services_load_all_data,
 )
@@ -38,62 +23,6 @@ from services.char_config_resolver import (
     save_all_data as services_save_all_data,
 )
 from ui_pyside6.views.char_settings_pages import ImplantsPage, MarketPage, SkillsPage
-
-# ═══════════════════════════════════════════
-#  兼容转发
-# ═══════════════════════════════════════════
-
-
-def char_config_path() -> str:
-    return services_char_config_path()
-
-
-def get_character(name: str):
-    return services_get_character(name)
-
-
-def get_character_list() -> list[str]:
-    return services_get_character_list()
-
-
-def load_all_data() -> dict:
-    return services_load_all_data()
-
-
-def save_all_data(data: dict):
-    services_save_all_data(data)
-
-
-# ═══════════════════════════════════════════
-#  游戏公式
-# ═══════════════════════════════════════════
-
-
-def get_market_rate(char_name: str, hub: str, skills: dict | None = None) -> dict:
-    """
-    获取角色在指定交易中心的完整费率信息
-    返回: {broker_fee, sales_tax, relist_discount, max_orders, faction_standing, corp_standing}
-    """
-    char = get_character(char_name)
-    if not char:
-        return {}
-
-    if skills is None:
-        skills = char.get("skills", {})
-
-    hub_data = char.get("market", {}).get(hub, {})
-    faction = hub_data.get("faction_standing", 5.0)
-    corp = hub_data.get("corp_standing", 5.0)
-
-    return {
-        "broker_fee": calc_broker_fee(skills, faction, corp),
-        "sales_tax": calc_sales_tax(skills),
-        "relist_discount": calc_relist_discount(skills),
-        "max_orders": calc_max_orders(skills),
-        "faction_standing": faction,
-        "corp_standing": corp,
-    }
-
 
 # ═══════════════════════════════════════════
 #  主对话框
@@ -113,7 +42,7 @@ class CharSettingsDialog(QDialog):
         self.setStyleSheet(f"background-color: {theme.BG_DARK};")
 
         # 加载所有数据
-        self._all_data = load_all_data()
+        self._all_data = services_load_all_data()
         self._current_char_name = self._all_data.get("current", "main")
         if self._current_char_name not in self._all_data.get("characters", {}):
             self._current_char_name = list(self._all_data["characters"].keys())[0]
@@ -320,6 +249,6 @@ class CharSettingsDialog(QDialog):
         char_data["market"] = self._market_page.get_data()
 
         self._all_data["current"] = self._current_char_name
-        save_all_data(self._all_data)
+        services_save_all_data(self._all_data)
         QMessageBox.information(self, "保存成功", "角色配置已保存")
         self.accept()

@@ -11,7 +11,7 @@ import os
 
 from PySide6.QtCore import Qt
 
-from ui_pyside6.icon_cache import item_icon_path
+from ui_qml.icon_cache import item_icon_path
 from ui_qml.models import EstimateQmlModel
 from ui_qml.models.estimate_qml_model import ROLE_NAMES, _icon_url
 
