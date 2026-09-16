@@ -718,6 +718,8 @@ class IndustryPage(QObject):
         msg = f"已下线 {result['completed']} 项"
         if result["deposited"]:
             msg += f"，入库 {result['deposited']} 项"
+        if result.get("removed"):
+            msg += f"，清理了 {result['removed']} 条已完成的子项产线"
         if result["failed"]:
             msg += f"，失败 {len(result['failed'])} 项"
             # 只报产品名等于没说：把 complete_plan 的拒绝原因带出来

@@ -406,3 +406,41 @@ def test_two_sections_are_in_a_draggable_split():
     assert "SplitView" in src, "两栏必须放在可拖动的 SplitView 里，不能是固定布局"
     assert "SplitView.fillHeight" in src, "两个分区都要参与分隔高度分配"
     assert src.count("SectionPane {") >= 2, "两个分区各一个 SectionPane"
+
+
+class TestCompleteAllReload:
+    """一键完成后必须整表重载 `_active_plans`。
+
+    只调 `recalculate()` 的话，已完成（或被母项清理）的行会滞留在 `_active_plans` 里，
+    下次点「完成所有」会把它们再算一遍、汇总文案失真。
+    """
+
+    def test_reloads_active_plans_after_complete(self, qapp, make_dlg, monkeypatch):
+        from ui_qml.bridge import complete_guard
+
+        ready = [
+            {
+                "id": 1,
+                "status": "ready",
+                "product_name": "母项",
+                "product_type_id": 2001,
+                "runs": 1,
+                "parallels": 1,
+            }
+        ]
+        dlg = make_dlg(plans=ready)
+        dlg._active_plans = ready
+
+        calls: list[str] = []
+        monkeypatch.setattr(dlg, "_reload_plans", lambda: calls.append("reload"))
+        monkeypatch.setattr(dlg, "recalculate", lambda: calls.append("calculate"))
+        monkeypatch.setattr(complete_guard, "confirm_bp_shortfall", lambda *a, **k: False)
+        monkeypatch.setattr(
+            "services.plan_execution.complete_plan",
+            lambda plan, **kw: {"ok": True, "deposited": 0, "removed": 2},
+        )
+        monkeypatch.setattr(dlg, "show_copy_hint", lambda *a, **k: None)
+
+        dlg.complete_all()
+
+        assert calls == ["reload"], "完成后必须走 _reload_plans（其内部已含 recalculate）"

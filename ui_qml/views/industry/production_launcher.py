@@ -928,11 +928,14 @@ class ProductionLauncher(QObject):
 
         from ui_qml.views.industry.complete_plans_dialog import complete_one_plan
 
-        if complete_one_plan(self, plan) is None:  # 取消或失败（已弹过告警）
+        result = complete_one_plan(self, plan)
+        if result is None:  # 取消或失败（已弹过告警）
             return
         # ⚠️ 顺序要紧：`_on_poll` 内部就会重算紧凑态文案，提示必须先落进
         # `_hint_text`；放在它之后再赋值不会触发任何重渲染。
         self._hint_text = f"已下线：{plan.get('product_name') or plan_id}"
+        if result.get("removed"):
+            self._hint_text += "（子项产线已清理）"
         self.plans_changed.emit()
         self._on_poll()
 

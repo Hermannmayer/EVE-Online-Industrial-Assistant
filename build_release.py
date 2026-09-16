@@ -57,7 +57,6 @@ THIRD_PARTY_HIDDEN_IMPORTS = [
     "aiohttp",
     "tenacity",
     "tqdm",
-    "PIL",
     "yaml",
     "openpyxl",
 ]
@@ -89,6 +88,12 @@ def run_pyinstaller():
 
     args.extend(
         [
+            # 程序图标（多尺寸 .ico，由 scripts/make_app_icon.py 从设计稿生成）。
+            # ⚠️ 必须在这里传：`.spec` 是 PyInstaller 每次构建自动生成的副产物（且被
+            # .gitignore 忽略），往 spec 里写 icon= 下次构建就被覆盖。
+            # 资源本身随 --add-data ui_qml 打进包，供运行时 setWindowIcon 读取。
+            "--icon",
+            os.path.join(PROJECT_ROOT, "ui_qml", "assets", "app.ico"),
             "--name",
             "EVE商人助手",
             entry_path,

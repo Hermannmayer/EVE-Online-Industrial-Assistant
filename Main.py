@@ -181,6 +181,13 @@ def main():
 
     HOT_RELOAD = "--hot-reload" in sys.argv
 
+    # 任务栏身份：必须在**任何窗口之前**设置 —— 单实例提示框、splash 都算。
+    # 不设的话，源码运行时任务栏按钮取的是 python.exe 的图标、还会和其它 Python
+    # 程序并成一组；打包后的 exe 本来就正确。
+    from core.taskbar import set_app_user_model_id
+
+    set_app_user_model_id()
+
     # -- Single instance lock（前置：失败不闪 splash） --
     from core.single_instance import show_message, try_lock, unlock
 
@@ -191,6 +198,11 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("EVE 商人助手")
     app.setOrganizationName("EVEAssistant")
+    # 程序图标：打包后 exe 自带（PyInstaller 的 `--icon`），但源码运行时任务栏/标题栏
+    # 要从资源取。设在 QApplication 上 → 之后创建的所有窗口（含 splash）都继承。
+    from ui_qml.app_icon import app_icon
+
+    app.setWindowIcon(app_icon())
 
     # QML 控件样式：微软 Fluent WinUI3（由 Qt 官方维护，源自微软 Fluent Figma）。
     # 必须在加载任何 QML 之前设置。失败不致命——ui_qml 的页面会回退到 Widgets 版。

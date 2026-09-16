@@ -517,6 +517,74 @@ def _rollback_split(plan_id: int, rem_id: int, total: int, src: dict, moved: lis
         conn.close()
 
 
+def _no_other_active_mother(conn, plan_id: int, group_number: int) -> bool:
+    """同组是否已没有别的活跃 level-0 行（本行刚置为 completed，自然不计入）。
+
+    部分启动会把一条母项拆成「已启动 / 未启动」两半（同组两条 `sub_level=0`）。
+    只清一次会让仍在跑的那半失去「子项制造价」的成本口径（见
+    `services.plan_metrics.mother_subitem_cost_map`），故必须等两半都结束。
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) FROM production_plans WHERE group_number=? AND sub_level=0 "
+        "AND id<>? AND status NOT IN ('completed','done')",
+        (group_number, plan_id),
+    ).fetchone()
+    return not (row and row[0])
+
+
+def remove_completed_children(group_number: int, *, conn=None) -> int:
+    """清理「已无归属」的已完成子项行，返回删除数（母项结束时调用）。
+
+    「已无归属」的判据（**全局扫，不只按组**）：
+    - 行有 `source_mother_ids` → 引用它的母项**全部**结束才删。跨组共享件靠这条兜住：
+      它在 A 组、被 B 组的母项引用，B 最后结束时也能清到；只按组过滤会让它永远清不掉。
+    - 行没有来源记录 → 只在 `group_number` 命中触发组时删（来源不明的行不跨组误伤）。
+
+    conn: 传入时复用调用方事务且**不提交**（`complete_plan` 在它的写事务里调用）；
+    None 时自开连接并提交（UI 的删母项路径用）。
+
+    ⚠️ 绑定清理必须用**同一条 conn**：不得调 `release_blueprint` —— 后者自开一条缓存
+    连接并独立提交，在 `complete_plan` 的未提交写事务内会卡满 `busy_timeout` 后抛
+    `database is locked`（母项下线直接失败），且独立提交会破坏「清理与置 completed
+    同生共死」的原子性。
+    （`plan_rebuild.py` 那段「先 release 再 delete」的范式安全，是因为那里没有外层事务。）
+    """
+
+    def _do(c) -> int:
+        rows = c.execute(
+            "SELECT id, group_number, source_mother_ids FROM production_plans "
+            "WHERE sub_level>0 AND status IN ('completed','done')"
+        ).fetchall()
+        if not rows:
+            return 0
+        active_mothers = {
+            int(r[0])
+            for r in c.execute(
+                "SELECT id FROM production_plans WHERE sub_level=0 AND status NOT IN ('completed','done')"
+            ).fetchall()
+        }
+        to_delete: list[int] = []
+        for pid, gnum, raw in rows:
+            sources = {int(x) for x in str(raw or "").split(",") if x.strip().isdigit()}
+            if sources:
+                if sources & active_mothers:
+                    continue  # 还有母项在用它 → 留着
+            elif int(gnum or 0) != int(group_number):
+                continue  # 无来源记录：只在触发组内清
+            to_delete.append(int(pid))
+        if not to_delete:
+            return 0
+        for pid in to_delete:
+            _clear_plan_bindings(c, pid)
+        ph = ",".join("?" * len(to_delete))
+        return int(c.execute(f"DELETE FROM production_plans WHERE id IN ({ph})", to_delete).rowcount)
+
+    if conn is not None:
+        return _do(conn)
+    with _container().db.connect("user") as c:
+        return _do(c)
+
+
 def start_plan_partial(
     plan_id: int,
     lines: int,
@@ -840,7 +908,11 @@ def complete_plan(
     已 completed 的计划幂等返回（不重复入库）。
     allow_bp_short: 蓝图流程不足时是否放行（与 `start_plan` 成对使用 ——
     只放开启动的话，强制启动的计划将永远无法下线）。
-    Returns: {"ok": bool, "message": str, "deposited": int, "code"?: str}
+    **母项结束时顺带清理其名下已无归属的已完成子项行**（同事务，见
+    `remove_completed_children`）—— 子项自身完成不删自己，因为母项的「市场」口径成本
+    依赖同组子项行存在（见 `services.plan_metrics.mother_subitem_cost_map`）。
+    Returns: {"ok": bool, "message": str, "deposited": int, "removed": int, "code"?: str}
+    removed = 本次清理掉的子项行数（非母项恒为 0）
     code 取值: need_outcome（发明未回填产出）
     """
     plan_id = plan.get("id")
@@ -859,11 +931,12 @@ def complete_plan(
         row = conn.execute(
             "SELECT status, product_type_id, deposit_hangar_id, runs, parallels, material_cost, "
             "assigned_blueprint_id, material_cost_snapshot, activity, actual_output_runs, "
-            "decryptor_type_id FROM production_plans WHERE id=?",
+            "decryptor_type_id, group_number, sub_level FROM production_plans WHERE id=?",
             (plan_id,),
         ).fetchone()
         if row is None:
-            return {"ok": False, "message": "计划不存在", "deposited": 0}
+            # 母项结束时子项行会被清理；从调用方视角「从未存在」与「刚被清掉」不可区分
+            return {"ok": False, "message": "计划不存在或已完成", "deposited": 0}
         (
             db_status,
             product_type_id,
@@ -876,6 +949,8 @@ def complete_plan(
             activity,
             actual_output_runs_db,
             decryptor_type_id,
+            group_number,
+            sub_level,
         ) = row
         if db_status in ("completed", "done"):
             return {"ok": True, "message": "计划已完成", "deposited": 0}
@@ -1009,6 +1084,17 @@ def complete_plan(
         if deposited:
             conn.execute("UPDATE production_plans SET deposited=? WHERE id=?", (deposited, plan_id))
 
+        # 5. 母项结束时清理「已无归属」的已完成子项行（**同一事务**，与置 completed 同生共死）
+        removed = 0
+        if (
+            int(sub_level or 0) == 0
+            and int(group_number or 0) > 0
+            and _no_other_active_mother(conn, plan_id, int(group_number))
+        ):
+            removed = remove_completed_children(int(group_number), conn=conn)
+            if removed:
+                messages.append(f"已清理 {removed} 条已完成的子项产线")
+
         if own_conn:
             conn.commit()
     except Exception:
@@ -1020,7 +1106,7 @@ def complete_plan(
         if own_conn:
             conn.close()
 
-    return {"ok": True, "message": "；".join(messages), "deposited": deposited}
+    return {"ok": True, "message": "；".join(messages), "deposited": deposited, "removed": removed}
 
 
 def cancel_plan(plan: dict) -> dict:

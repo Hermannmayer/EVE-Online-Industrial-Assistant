@@ -564,6 +564,7 @@ class ProcurementDialog(QObject):
 
         completed = 0
         deposited = 0
+        removed = 0
         need_outcome = 0
         for plan in ready_plans:
             plan_id = plan.get("id")
@@ -574,6 +575,7 @@ class ProcurementDialog(QObject):
                 if res.get("ok"):
                     completed += 1
                     deposited += 1 if res.get("deposited") else 0
+                    removed += int(res.get("removed") or 0)
                 elif res.get("code") == "need_outcome":
                     # 发明是概率作业：产出必须由用户按游戏结果回填，这里不静默完成
                     need_outcome += 1
@@ -586,10 +588,13 @@ class ProcurementDialog(QObject):
             self.show_copy_hint(f"{need_outcome} 条发明计划未填产出已跳过（到工业页补填）")
 
         if completed > 0:
-            self.show_copy_hint(
-                f"已完成 {completed}/{len(ready_plans)} 项" + (f"，{deposited} 项入库" if deposited else "")
-            )
-            self.recalculate()
+            msg = f"已完成 {completed}/{len(ready_plans)} 项" + (f"，{deposited} 项入库" if deposited else "")
+            if removed:
+                msg += f"，{removed} 条已完成的子项产线已清理"
+            self.show_copy_hint(msg)
+            # 必须整表重载而不是只重算：完成（或被清理）的行会滞留在 `_active_plans` 里，
+            # 下次点「完成所有」会把它们再算一遍、计数失真。`_reload_plans` 内部已含 `recalculate`。
+            self._reload_plans()
             self.plans_changed.emit()  # 计划状态变化 → 通知主界面重载
         else:
             self.show_copy_hint("没有可完成的计划")
