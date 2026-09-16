@@ -205,10 +205,32 @@ Item {
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            /* 外框内缩：与「价格监控」页同款观感（表格区被一块带描边的面裹住，
+             * 而不是通铺到页边）。内缩量取本页工具栏用的同一个 spacingSm。 */
+            Layout.leftMargin: Theme.spacingSm
+            Layout.rightMargin: Theme.spacingSm
+            Layout.bottomMargin: Theme.spacingSm
 
             Rectangle {
                 anchors.fill: parent
                 color: Theme.bgSurface
+                radius: Theme.radius
+            }
+
+            /* 边框单独画一层、且 `z` 高于表头与表体。
+             *
+             * 不能像别处那样把 border 加在底色矩形上：表头 `HorizontalHeaderView` 与
+             * `TableView` 都是 `anchors.fill/top: parent`，声明在底色之后，会把 1px 的
+             * 边框线**整个盖掉** —— 实测「价格监控」页的上边框就是这么消失的
+             * （左右边框幸运地没被盖住，所以看上去像有框）。
+             * 纯 `Rectangle` 不带 MouseArea，不吞鼠标事件，覆盖在上层不影响点表。 */
+            Rectangle {
+                anchors.fill: parent
+                z: 1
+                color: "transparent"
+                radius: Theme.radius
+                border.width: 1
+                border.color: Theme.border
             }
 
             HorizontalHeaderView {

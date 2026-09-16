@@ -135,8 +135,17 @@ def main() -> int:
             _spin(600)
             from PySide6.QtGui import QGuiApplication
 
+            # 与上面「抓两份」同一套口径：`image` 要窗口**自己的帧缓冲**
+            # （`grabWindow()` 把内容渲染到离屏缓冲，**不受遮挡影响**），
+            # 屏幕那份留作 extra 供核对毛玻璃。
+            #
+            # ⚠️ 这里原先写的是 `image = screen.grabWindow(winId)` —— 那在 Windows 上是
+            # 抓**屏幕区域**而不是抓窗口自身像素，窗口被别的窗口挡住时会把遮挡物一起拍进来
+            # （实测拍到过整个桌面、把无关窗口当成页面图），而 `image` 的契约恰恰是
+            # 「外壳本身画得对不对」。用它核对特定页面时会得到彻底错误的结果。
+            image = win.grabWindow()
             screen = QGuiApplication.primaryScreen()
-            image = screen.grabWindow(int(win.winId())) if screen is not None else None
+            extra = screen.grabWindow(int(win.winId())) if screen is not None else None
         else:
             _spin(800)
             image = win.grabWindow()

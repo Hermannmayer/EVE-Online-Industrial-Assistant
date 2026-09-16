@@ -251,6 +251,10 @@ Item {
         SplitView {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            /* 与「价格监控」页同款：上下两块表格各自被外框裹住，整块内容区从页边内缩一档 */
+            Layout.leftMargin: 2 * page.gap
+            Layout.rightMargin: 2 * page.gap
+            Layout.bottomMargin: page.gap
             orientation: Qt.Vertical
 
             handle: Rectangle {
@@ -266,6 +270,18 @@ Item {
                 Rectangle {
                     anchors.fill: parent
                     color: Theme.bgSurface
+                }
+
+                /* 外框。单独一层、`z` 高于表头与表体 —— 它们都是 `anchors.fill/top: parent`
+                 * 且声明在后，把边框加在底色矩形上会被整个盖掉（见 `QueryPage` 同款说明）。
+                 * 纯 `Rectangle` 不吞鼠标事件。 */
+                Rectangle {
+                    anchors.fill: parent
+                    z: 1
+                    color: "transparent"
+                    radius: Theme.radius
+                    border.width: 1
+                    border.color: Theme.border
                 }
 
                 HorizontalHeaderView {
@@ -381,6 +397,22 @@ Item {
             // ── 下：合同物品 ──
             Item {
                 SplitView.minimumHeight: 100
+
+                /* 外框（下半区）。这一区的地面是 `ColumnLayout` 里那条标题条 + 表体，
+                 * 所以铺底色与描边都在本 Item 这一层做，`z` 高于内容。理由同上。 */
+                Rectangle {
+                    anchors.fill: parent
+                    color: Theme.bgSurface
+                    radius: Theme.radius
+                }
+                Rectangle {
+                    anchors.fill: parent
+                    z: 1
+                    color: "transparent"
+                    radius: Theme.radius
+                    border.width: 1
+                    border.color: Theme.border
+                }
 
                 ColumnLayout {
                     anchors.fill: parent

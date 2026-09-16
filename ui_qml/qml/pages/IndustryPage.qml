@@ -213,6 +213,22 @@ Item {
         anchors.right: parent.right
         anchors.top: toolbar.bottom
         anchors.bottom: statusBar.top
+        /* 与「价格监控」页同款：主工作区被外框裹住，从页边内缩一档 */
+        anchors.leftMargin: Theme.spacingSm
+        anchors.rightMargin: Theme.spacingSm
+        anchors.bottomMargin: Theme.spacingSm
+
+        /* 外框。单独一层、`z` 高于两个视图 —— 它们的底色是 `anchors.fill: parent`
+         * 且声明在后，把边框加在底色矩形上会被整个盖掉（见 `QueryPage` 同款说明）。
+         * 纯 `Rectangle` 不含 MouseArea，不吞鼠标事件，压在上层不影响点表。 */
+        Rectangle {
+            anchors.fill: parent
+            z: 1
+            color: "transparent"
+            radius: Theme.radius
+            border.width: 1
+            border.color: Theme.border
+        }
 
         PlanTablePane {
             id: dataView
