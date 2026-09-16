@@ -124,6 +124,8 @@ class _RecordingDialog:
 
 
 class _MsgBox:
+    """`FMessageDialog` 替身：只记下调用（用例不该弹模态窗）。"""
+
     texts: list[str] = []
 
     @staticmethod
@@ -143,7 +145,7 @@ def stub_env(monkeypatch, tmp_path):
     monkeypatch.setattr(mi, "ScoreW", _FakeWorker)
     monkeypatch.setattr(mi, "get_container", lambda: _Container())
     monkeypatch.setattr(mi, "data_dir", lambda: str(tmp_path))
-    monkeypatch.setattr(mi, "QMessageBox", _MsgBox)
+    monkeypatch.setattr(mi, "FMessageDialog", _MsgBox)
     _RecordingDialog.calls = []
     _RecordingDialog.accept = False
     _MsgBox.texts = []

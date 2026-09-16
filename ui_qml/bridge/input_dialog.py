@@ -8,7 +8,11 @@
 所以调用方只需要把 `QInputDialog.getItem(...)` 换成 `InputQmlDialog.get_item(...)`，
 其余一行不改。
 
-三种形态共用一个桥：`mode` 决定 QML 里显示哪个输入控件。
+五种形态共用一个桥：`mode` 决定 QML 里显示哪个输入控件。
+
+`MODE_MULTILINE`（批次 7.3 补）对应 `QInputDialog.getMultiLineText` —— 备注那类
+要能换行的输入。原来只有单行的 `MODE_TEXT`，`plan_table` / `production_launcher`
+的「添加备注」都还在用原生框。
 """
 
 from __future__ import annotations
@@ -20,11 +24,22 @@ from PySide6.QtWidgets import QDialog
 
 from ui_qml.dialog_host import DialogBridge, QmlDialog
 
-__all__ = ["InputBridge", "InputQmlDialog", "MODE_CHOICE", "MODE_DOUBLE", "MODE_INT", "MODE_TEXT"]
+__all__ = [
+    "InputBridge",
+    "InputQmlDialog",
+    "MODE_CHOICE",
+    "MODE_DOUBLE",
+    "MODE_INT",
+    "MODE_MULTILINE",
+    "MODE_TEXT",
+]
 
 _QML_FILE = "dialogs/InputDialog.qml"
 
 MODE_TEXT = "text"
+#: 多行文本（`QInputDialog.getMultiLineText`）—— 与 `MODE_TEXT` 取值路径完全相同，
+#: 只是 QML 里换成 `TextArea`，让 Enter 换行而不是当「确定」。
+MODE_MULTILINE = "multiline"
 MODE_INT = "int"
 MODE_DOUBLE = "double"
 MODE_CHOICE = "choice"
@@ -136,7 +151,7 @@ class InputBridge(DialogBridge):
             self._result = int(round(self._value))
         elif self._mode == MODE_DOUBLE:
             self._result = float(self._value)
-        else:
+        else:  # MODE_TEXT / MODE_MULTILINE —— 取值路径相同，原样取文本
             self._result = self._text
         self.accepted.emit()
 
@@ -177,6 +192,16 @@ class InputQmlDialog(QmlDialog):
     @staticmethod
     def get_text(parent: Any, title: str, label: str, text: str = "") -> tuple[str, bool]:
         bridge, ok = InputQmlDialog._ask(InputBridge(title, label, MODE_TEXT, text=text), parent, (440, 200))
+        return (bridge.text_value(), ok)
+
+    @staticmethod
+    def get_multiline_text(parent: Any, title: str, label: str, text: str = "") -> tuple[str, bool]:
+        """对齐 `QInputDialog.getMultiLineText` —— 多行文本框，Enter 换行、不提交。
+
+        窗口按行数给得比单行大一号：原版 `getMultiLineText` 弹的是 Qt 自带的多行
+        输入框，用单行那个尺寸会把正文挤成两三行可见。
+        """
+        bridge, ok = InputQmlDialog._ask(InputBridge(title, label, MODE_MULTILINE, text=text), parent, (460, 320))
         return (bridge.text_value(), ok)
 
     @staticmethod

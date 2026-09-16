@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QThread, QTimer
-from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
@@ -24,6 +24,7 @@ from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog as Comple
 from ui_qml.bridge.industry_bridge import IndustryBridge
 from ui_qml.bridge.manufacturable_items_bridge import ManufacturableItemsQmlDialog as ManufacturableItemsDialog
 from ui_qml.bridge.materials_dialog_bridge import MaterialsSummaryQmlDialog as MaterialsSummaryDialog
+from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.bridge.output_dialog_bridge import OutputSummaryQmlDialog as OutputSummaryDialog
 from ui_qml.industry_page import IndustryQmlHost, make_qml_host
 from ui_qml.workers.industry_page_workers import (
@@ -500,20 +501,20 @@ class IndustryPage(QWidget):
     # ── 对话框打开方法 ────────────────────────────────────────
 
     def add_plan(self, text: str):
-        """\u641c\u7d22\u7269\u54c1 -> \u8bc4\u5206 -> AddPlanDialog -> INSERT\uff08\u7528\u7528\u6237\u8bbe\u5b9a\u7684 ME/TE \u91cd\u7b97\uff09"""
+        """\u641c\u7d22\u7269\u54c1 -> \u8bc4\u5206 -> AddPlanDialogQmlDialog -> INSERT\uff08\u7528\u7528\u6237\u8bbe\u5b9a\u7684 ME/TE \u91cd\u7b97\uff09"""
         text = text.strip()
         if not text:
             return
 
         from PySide6.QtWidgets import QDialog
 
-        from ui_pyside6.dialogs.industry_dialogs import AddPlanDialog
+        from ui_qml.bridge.industry_dialogs_bridge import AddPlanDialogQmlDialog
 
         # 1) \u641c\u7d22\u7269\u54c1\uff08\u8d70 repository\uff0c\u4e0d\u5728 UI \u76f4\u8fde SQLite\uff09
         items = get_container().item_repo.search_by_name(text, limit=10)
 
         if not items:
-            QMessageBox.information(self, "\u63d0\u793a", f"\u672a\u627e\u5230\u7269\u54c1: {text}")
+            FMessageDialog.information(self, "\u63d0\u793a", f"\u672a\u627e\u5230\u7269\u54c1: {text}")
             return
 
         type_id = items[0]["type_id"]
@@ -523,7 +524,7 @@ class IndustryPage(QWidget):
         has_bp = get_container().blueprint_repo.get_blueprint_for_product(type_id) is not None
 
         if not has_bp:
-            QMessageBox.information(
+            FMessageDialog.information(
                 self, "\u63d0\u793a", f"\u300c{product_name}\u300d\u6ca1\u6709\u5236\u9020\u84dd\u56fe"
             )
             return
@@ -553,7 +554,7 @@ class IndustryPage(QWidget):
         def _on_score(result: dict):
             if self._score_worker is not self.sender():
                 return
-            dlg = AddPlanDialog(product_name, result, self)
+            dlg = AddPlanDialogQmlDialog(product_name, result, self)
             if dlg.exec() != QDialog.DialogCode.Accepted:
                 return
             data = dlg.result_data()
@@ -618,7 +619,7 @@ class IndustryPage(QWidget):
                 metrics=metrics,
             )
             self.load_plans()
-            QMessageBox.information(self, "\u5b8c\u6210", f"\u5df2\u6dfb\u52a0\u8ba1\u5212: {product_name}")
+            FMessageDialog.information(self, "\u5b8c\u6210", f"\u5df2\u6dfb\u52a0\u8ba1\u5212: {product_name}")
 
         self._score_worker.finished_signal.connect(_on_score)
         self._score_worker.start()
@@ -675,9 +676,9 @@ class IndustryPage(QWidget):
 
         count = save_price_snapshots()
         if count == 0:
-            QMessageBox.information(self, "提示", "没有活跃计划")
+            FMessageDialog.information(self, "提示", "没有活跃计划")
             return
-        QMessageBox.information(self, "完成", f"已保存 {count} 个价格快照")
+        FMessageDialog.information(self, "完成", f"已保存 {count} 个价格快照")
 
     def complete_all(self):
         """全部下线：确认待下线计划清单 → 选择产出机库 → 完成入库。"""
@@ -690,7 +691,7 @@ class IndustryPage(QWidget):
             if plan and (plan.get("status") or "").lower() == "ready":
                 ready.append(plan)
         if not ready:
-            QMessageBox.information(self, "提示", "没有待下线的计划")
+            FMessageDialog.information(self, "提示", "没有待下线的计划")
             return
         from services.inventory_manager import get_hangars
         from services.user_settings import get_default_hangar_id
@@ -717,7 +718,7 @@ class IndustryPage(QWidget):
             reasons = result.get("failed_reasons") or []
             if reasons:
                 msg += "\n\n" + "\n".join(reasons[:10])
-        QMessageBox.information(self, "完成", msg)
+        FMessageDialog.information(self, "完成", msg)
 
     def _on_launch_wizard_from_row(self, char_name: str):
         """行右键入口：初始定位到该行所属人物（空串=未分配）。"""

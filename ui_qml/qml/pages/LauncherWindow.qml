@@ -554,6 +554,40 @@ Item {
             if (executorCombo.currentIndex !== win.launcher.executorIndex)
                 executorCombo.currentIndex = win.launcher.executorIndex
         }
+        // 行右键：条目与可见性由 Python 判定（`_can_partial_start` 要读计划状态）
+        function onContextMenuRequested(planId, canPartial) {
+            rowMenu.planId = planId
+            rowMenu.canPartial = canPartial
+            rowMenu.popupSoon()
+        }
+    }
+
+    /* 行右键菜单 —— 取代原先 Python 侧自建的 `QMenu` + `menu.exec(QCursor.pos())`。
+     *
+     * 条目用 `FMenuItem` 而不是裸 `MenuItem`：后者在 `visible: false` 时**照样占满
+     * 一整行高度**（Menu 用 ListView 渲染全部声明项），会留出一行空行；`FMenuItem`
+     * 不可见时把高度一并压成 0。
+     * 用 `popupSoon()` 而非 `popup()`：见 `FMenu.qml` 里「延迟一拍」那段 —— 直接弹会被
+     * 那次右键的按下/释放当成对条目的点击。
+     */
+    FMenu {
+        id: rowMenu
+        objectName: "rowMenu"
+        property int planId: -1
+        property bool canPartial: false
+
+        FMenuItem {
+            text: qsTr("添加备注…")
+            onTriggered: if (win.launcher)
+                win.launcher.rowNotes(rowMenu.planId)
+        }
+
+        FMenuItem {
+            text: qsTr("部分启动…")
+            visible: rowMenu.canPartial
+            onTriggered: if (win.launcher)
+                win.launcher.rowPartialStart(rowMenu.planId)
+        }
     }
 
     Component.onCompleted: {

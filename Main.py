@@ -210,7 +210,9 @@ def main():
     theme.apply_theme(theme.load_theme_preference())
 
     # -- 启动界面：立即显示 splash，后台完成迁移 + 数据检查 --
-    from ui_pyside6.splash_screen import SplashScreen
+    # QML 版（批次 7.2）。窗口语义在 qml/shell/Splash.qml 里声明；这一句本身
+    # 自带兜底（QML 加载失败会退回最小 QWidget 并往 stderr 打一行），所以这里不 try。
+    from ui_qml.splash_window import SplashScreen
 
     splash = SplashScreen()
     splash.show()
@@ -254,7 +256,11 @@ def main():
 
     from ui_qml.workers.startup_worker import StartupCheckWorker
 
-    worker = StartupCheckWorker(parent=splash)
+    # 不再 `parent=splash`（批次 7.2）：splash 现在是 QWindow，靠父子链隐式收尾的语义
+    # 已经不成立（窗口一收，worker 跟着被删这种事不该再依赖）。改成显式持有 +
+    # 线程 run() 返回后 deleteLater 收掉 —— 与 `_teardown_qml` 一样，不能让
+    # 还在运行的 QThread 被析构（Qt 会直接 abort）。
+    worker = StartupCheckWorker()
     worker.stage.connect(splash.set_stage)
     worker.component_checked.connect(splash.set_component)
 
@@ -295,6 +301,10 @@ def main():
     # 持有强引用：handler 若被回收，连接会失效
     _startup_handler = _StartupHandler()
     worker.finished_all.connect(_startup_handler.handle)
+    # worker 的收尾（批次 7.2）：它已不是 splash 的子对象，靠这条显式回收。
+    # `finished` 是 QThread 自己的信号（run() 返回后发），此时线程已停，deleteLater 安全；
+    # 它排在 finished_all 之后投递，所以收尾回调一定先跑完。
+    worker.finished.connect(worker.deleteLater)
     worker.start()
 
     sys.exit(app.exec())

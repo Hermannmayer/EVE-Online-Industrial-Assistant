@@ -209,7 +209,9 @@ def _patch(db_manager, monkeypatch):
     monkeypatch.setattr(
         dlg_mod, "get_container", lambda: SimpleNamespace(db=db_manager, plan_repo=PlanRepository(db_manager))
     )
-    monkeypatch.setattr(dlg_mod.QMessageBox, "information", lambda *a, **k: None)
+    # 消息框在批次 7.1 收敛成 `FMessageDialog`，`QMessageBox` 已不是模块属性。
+    # 替换**模块属性**而不是类上的方法：那个类是所有桥共用的，改它会外溢到别的用例。
+    monkeypatch.setattr(dlg_mod, "FMessageDialog", SimpleNamespace(information=lambda *a, **k: None))
     # 拆解落库走 plan_rebuild，注入同一 container
     from services import plan_rebuild
 
@@ -585,7 +587,7 @@ class TestStatusBarCompleteAllGuard:
         monkeypatch.setattr(iv, "complete_plans", _complete_plans)
         monkeypatch.setattr("services.inventory_manager.get_hangars", lambda: [{"id": 4, "name": "产出仓"}])
         monkeypatch.setattr("services.user_settings.get_default_hangar_id", lambda key: 4)
-        monkeypatch.setattr(iv.QMessageBox, "information", lambda *a, **k: None)
+        monkeypatch.setattr(iv, "FMessageDialog", SimpleNamespace(information=lambda *a, **k: None))
         monkeypatch.setattr("services.plan_execution.binding_shortfall", lambda pid: short_text)
         monkeypatch.setattr(
             complete_guard.QMessageBox,

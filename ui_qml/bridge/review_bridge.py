@@ -24,8 +24,8 @@
 - 「来自其他机库」子菜单与它前面的分隔线**恒显示**：`FMenu` 没有「不可见即压高度」
   的兄弟组件（`FMenuItem` / `FMenuSeparator` 才有），空列表时是一个空子菜单。
   原版是无其他机库时整块不出现（`get_hangars()` 只排除目标机库，实际基本非空）。
-- 4 处 `QMessageBox` **原样保留**（批量 QMessageBox→QML 是另一个批次的事）：
-  「没有勾选」「N 行未匹配」「无物品」「无价格数据」。前两条尤其不能改成桥的
+- 4 处消息框改走 `FMessageDialog`（自绘 QML，批次 7.1）：
+  「没有勾选」「N 行未匹配」「无物品」「无价格数据」。前两条**尤其不能**改成桥的
   `error` 通道 —— 原版是弹完继续 `accept()`／`return`，走 error 通道会在
   「确定导入」关窗后无人看见。
 """
@@ -36,7 +36,7 @@ import os
 from typing import Any
 
 from PySide6.QtCore import Property, Qt, QUrl, Signal, Slot
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog
 
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
@@ -45,6 +45,7 @@ from services.inventory_clipboard_service import parse_clipboard
 from services.inventory_import import compute_import_diff, compute_row_delta
 from services.inventory_manager import apply_inventory_import, get_hangars, get_items
 from services.user_settings import get_material_price_mult, set_material_price_mult
+from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.bridge.summary_dialog import SummaryTableBridge, SummaryTableQmlDialog, cell
 from ui_qml.dialog_host import DialogBridge, QmlDialog
 from ui_qml.icon_cache import item_icon_path
@@ -272,7 +273,7 @@ class ImportReviewBridge(DialogBridge):
 
     stateChanged = Signal()
 
-    #: 宿主窗口 —— 二级弹出（搜索匹配 / 选物品）与 QMessageBox 都拿它当父窗口。
+    #: 宿主窗口 —— 二级弹出（搜索匹配 / 选物品）与消息框都拿它当父窗口。
     #: 由宿主在 `super().__init__()` **之后**写入（同 `parent_decompose_bridge` 的做法）：
     #: 那之前 QDialog 的 C++ 对象还没建出来，把半成品 QObject 挂到别的 QObject 上会挂死。
 
@@ -448,7 +449,7 @@ class ImportReviewBridge(DialogBridge):
                 continue
             price = repo.get_price_by_region(target["typeId"], price_type, self._region_id)
             if price is None:
-                QMessageBox.information(self.host_widget(), "提示", "未找到该物品在所选区域的价格数据")
+                FMessageDialog.information(self.host_widget(), "提示", "未找到该物品在所选区域的价格数据")
             else:
                 target["price"] = float(price)
         self._update_summary()
@@ -531,7 +532,7 @@ class ImportReviewBridge(DialogBridge):
         """从其他机库移入：勾选后按增量语义加入列表（原 `_add_from_hangar`）。"""
         source_items = get_items(source_hangar_id)
         if not source_items:
-            QMessageBox.information(self.host_widget(), "提示", "该机库中无物品")
+            FMessageDialog.information(self.host_widget(), "提示", "该机库中无物品")
             return
 
         dlg = HangarPickQmlDialog(source_items, self.host_widget())
@@ -554,14 +555,14 @@ class ImportReviewBridge(DialogBridge):
 
     @Slot()
     def accept(self) -> None:
-        """确定导入：先校验（两个 QMessageBox，原样保留），再把倍率写回共享设置。"""
+        """确定导入：先校验（两个消息框），再把倍率写回共享设置。"""
         checked = [row for row in self._rows if row["checked"]]
         if not checked:
-            QMessageBox.warning(self.host_widget(), "提示", "没有勾选的物品，无法导入")
+            FMessageDialog.warning(self.host_widget(), "提示", "没有勾选的物品，无法导入")
             return
         unmatched = sum(1 for row in checked if not row["typeId"])
         if unmatched:
-            QMessageBox.information(
+            FMessageDialog.information(
                 self.host_widget(),
                 "提示",
                 f"{unmatched} 行未匹配物品未指定 type_id，导入时将跳过（可右键搜索匹配）",
@@ -768,12 +769,12 @@ def run_clipboard_import(
     """
     raw = QApplication.clipboard().text().strip()
     if not raw:
-        QMessageBox.warning(parent, "提示", "剪贴板为空，请先在游戏中复制物品（Ctrl+C）")
+        FMessageDialog.warning(parent, "提示", "剪贴板为空，请先在游戏中复制物品（Ctrl+C）")
         return
     parsed, filtered = parse_clipboard(raw)
     if not parsed:
         if filtered:
-            QMessageBox.information(
+            FMessageDialog.information(
                 parent,
                 "提示",
                 f"剪贴板中的 {filtered} 行都是蓝图，材料仓库只导入材料，已全部过滤",

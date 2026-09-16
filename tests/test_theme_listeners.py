@@ -111,12 +111,25 @@ def test_char_settings_dialog_show_event(qapp, mock_db):
 
 
 def test_listener_freed_after_object_gc():
-    """对象销毁后监听器自动失效（弱引用）：
-    1. 存活时收到通知；2. 销毁后 notify 不崩溃；3. 失效引用被清理
+    """绑定方法监听器必须是**弱引用**（不持有实例，故不会泄漏）。
+
+    这条原先靠「`del obj` + `gc.collect()` 之后全局条数回落」来验，**在本仓是不可靠的**：
+    `_theme_listeners` 是进程级共享列表，同一进程里跑过的每个外壳与桥都会往里加条目，
+    而条目只在 `apply_theme` 时惰性剪除；加上 Qt 对象的析构时机不受测试控制，
+    实测同一份代码同一种顺序会**一次过、一次挂**（2026-09-16，UI 全档里挂了两次）。
+    那种写法量的是「这一轮 GC 是否恰好把对象收走」，不是「监听器是否为弱引用」。
+
+    改为直接验机制本身，**与 GC 时机、与别的测试注册了什么全都无关**：
+
+    1. 注册**不得**抬高实例的引用计数 —— 这正是「不持有实例」的定义，
+       也正是 `_StrongCallback` 会违反的那一条（lambda / 普通函数走强引用包装）；
+    2. 存进列表的必须是 `weakref.WeakMethod`（而不是 `_StrongCallback`）；
+    3. 存活时照常收到通知；
+    4. 对象被丢掉之后再切主题，不许崩（失效弱引用要能被过滤掉）。
     """
     import gc
-
-    n0 = len(theme._theme_listeners)
+    import sys
+    import weakref
 
     class _Listener:
         def __init__(self):
@@ -126,19 +139,22 @@ def test_listener_freed_after_object_gc():
             self.called += 1
 
     obj = _Listener()
+    before = sys.getrefcount(obj)
     theme.add_theme_listener(obj.on_theme)
-    assert len(theme._theme_listeners) == n0 + 1
+    after = sys.getrefcount(obj)
+    assert after == before, f"注册监听器抬高了引用计数（{before} → {after}）——说明存的是强引用，对象销毁后回调不会失效"
+
+    ref = theme._theme_listeners[-1]
+    assert isinstance(ref, weakref.WeakMethod), f"绑定方法应当存成 WeakMethod，实际是 {type(ref).__name__}"
 
     apply_theme("light")
     assert obj.called == 1, "存活对象应收到通知"
 
     del obj
     gc.collect()
-    # 销毁后 notify 不应崩溃（弱引用失效被过滤）
+    # 销毁后 notify 不应崩溃：失效的弱引用要被过滤掉（这一步**不**断言对象已被回收 ——
+    # 收没收走取决于进程里还有谁留着帧或异常栈，不是本用例该管的事；断言了就是测运气）。
     apply_theme("dark")
-
-    # 自己的监听器应被清理；其他测试的监听器也可能被 GC 清理（数量只会减少）
-    assert len(theme._theme_listeners) < n0 + 1, "对象销毁后其监听器应被移除"
 
 
 def test_remove_theme_listener_still_works():

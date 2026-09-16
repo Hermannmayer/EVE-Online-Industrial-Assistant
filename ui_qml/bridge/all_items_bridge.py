@@ -35,12 +35,13 @@ from typing import Any
 
 from PySide6.QtCore import Property, QObject, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QDialog, QMessageBox
+from PySide6.QtWidgets import QDialog
 
 from core.cache import TtlLRUCache
 from core.container import get_container
 from core.logger import log
 from core.paths import data_dir
+from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.constants import CATEGORIES, MFG_CATEGORIES
 from ui_qml.dialog_host import DialogBridge, QmlDialog
 from ui_qml.models.all_items_models import BCOLS, DASH, MCOLS, TCOLS, Proxy
@@ -757,12 +758,12 @@ class AllItemsBridge(DialogBridge):
         if self._show_m:
             cached = self._cache.get(self._mfg_key(type_id))
             if cached:
-                QMessageBox.information(self.host_widget(), "制造核算明细", breakdown_text(cached, True))
+                FMessageDialog.information(self.host_widget(), "制造核算明细", breakdown_text(cached, True))
                 return
         if self._show_t:
             cached = self._cache.get(self._trade_key(type_id))
             if cached:
-                QMessageBox.information(self.host_widget(), "贸易核算明细", breakdown_text(cached, False))
+                FMessageDialog.information(self.host_widget(), "贸易核算明细", breakdown_text(cached, False))
 
     @Slot(int)
     def addToPlan(self, row: int) -> None:
@@ -785,7 +786,7 @@ class AllItemsBridge(DialogBridge):
         if not data:
             return
         insert_plan_from_score(type_id, name, score, data, self._mfg)
-        QMessageBox.information(self.host_widget(), "提示", f"已加入制造列表: {name}")
+        FMessageDialog.information(self.host_widget(), "提示", f"已加入制造列表: {name}")
 
     @Slot(int, str)
     def addResearch(self, row: int, kind: str) -> None:
@@ -919,7 +920,7 @@ def _add_research_plan(parent: Any, type_id: int, name: str, kind: str) -> None:
                     (bp_id,),
                 ).fetchone()
                 if not row:
-                    QMessageBox.information(parent, "提示", f"「{name}」没有蓝图，无法加入科研规划")
+                    FMessageDialog.information(parent, "提示", f"「{name}」没有蓝图，无法加入科研规划")
                     return
                 bp_id = int(row[0])
             src = resolve_invention_source(conn, bp_id) if kind == "invention" else None
@@ -940,12 +941,12 @@ def _add_research_plan(parent: Any, type_id: int, name: str, kind: str) -> None:
             )
     except Exception:
         log.exception("读取蓝图信息失败 type_id=%s", type_id)
-        QMessageBox.warning(parent, "提示", "读取蓝图信息失败，见日志")
+        FMessageDialog.warning(parent, "提示", "读取蓝图信息失败，见日志")
         return
 
     if kind == "invention":
         if src is None:
-            QMessageBox.information(parent, "提示", f"「{name}」不是 T2/T3 蓝图，无法发明")
+            FMessageDialog.information(parent, "提示", f"「{name}」不是 T2/T3 蓝图，无法发明")
             return
         dlg = InventionPlanDialogQmlDialog(
             src["t1_name"],
@@ -959,7 +960,7 @@ def _add_research_plan(parent: Any, type_id: int, name: str, kind: str) -> None:
         data = dlg.result_data() or {}
         product = int(data.get("product_blueprint_type_id") or 0)
         if not product:
-            QMessageBox.information(parent, "提示", "未选择发明产物")
+            FMessageDialog.information(parent, "提示", "未选择发明产物")
             return
         create_research_plan(
             product,
@@ -974,12 +975,12 @@ def _add_research_plan(parent: Any, type_id: int, name: str, kind: str) -> None:
             decryptor_type_id=data.get("decryptor_type_id"),
             success_rate=data.get("success_rate"),
         )
-        QMessageBox.information(parent, "完成", "已加入发明规划")
+        FMessageDialog.information(parent, "完成", "已加入发明规划")
         return
 
     if kind == "copying":
         if not copy_row:
-            QMessageBox.information(parent, "提示", f"「{name}」没有拷贝活动")
+            FMessageDialog.information(parent, "提示", f"「{name}」没有拷贝活动")
             return
         copy_dlg = CopyPlanDialogQmlDialog(name, max_production_limit=int(copy_row[0] or 1), parent=parent)
         if copy_dlg.exec() != QDialog.DialogCode.Accepted:
@@ -997,7 +998,7 @@ def _add_research_plan(parent: Any, type_id: int, name: str, kind: str) -> None:
             char_name=data.get("char_name") or "",
             facility=data.get("facility") or "",
         )
-        QMessageBox.information(parent, "完成", "已加入拷贝规划")
+        FMessageDialog.information(parent, "完成", "已加入拷贝规划")
         return
 
     research_dlg = ResearchPlanDialogQmlDialog(name, parent=parent)
@@ -1016,7 +1017,7 @@ def _add_research_plan(parent: Any, type_id: int, name: str, kind: str) -> None:
         facility=data.get("facility") or "",
         research_target_level=int(data.get("target_level") or 1),
     )
-    QMessageBox.information(parent, "完成", "已加入效率研究规划")
+    FMessageDialog.information(parent, "完成", "已加入效率研究规划")
 
 
 # ══════════════════════════════════════════════════════════════

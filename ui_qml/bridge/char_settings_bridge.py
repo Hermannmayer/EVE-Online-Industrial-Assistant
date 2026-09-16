@@ -24,7 +24,6 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
-from PySide6.QtWidgets import QMessageBox
 
 from core.char_settings_common import (
     SKILL_CATEGORIES,
@@ -38,6 +37,7 @@ from core.char_settings_common import (
 from services.char_config_resolver import load_all_data, save_all_data
 from services.implant_loader import load_implants
 from ui_qml import icons
+from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.dialog_host import DialogBridge, QmlDialog
 
 __all__ = [
@@ -405,16 +405,14 @@ class CharSettingsBridge(DialogBridge):
 
     @Slot()
     def deleteCharacter(self) -> None:
-        """删除当前角色 —— 确认框按原版走 `QMessageBox.question`。"""
+        """删除当前角色 —— 确认框走 `FMessageDialog.question`（返回 `bool`）。"""
         if not self.canDelete:
             return
-        reply = QMessageBox.question(
+        if not FMessageDialog.question(
             self.host_widget(),
             "确认删除",
             f"确定要删除角色「{self._current}」吗？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        ):
             return
         characters = self._all_data["characters"]
         characters.pop(self._current, None)
@@ -432,7 +430,7 @@ class CharSettingsBridge(DialogBridge):
         char_data["market"] = self._market.data()
         self._all_data["current"] = self._current
         save_all_data(self._all_data)
-        QMessageBox.information(self.host_widget(), "保存成功", "角色配置已保存")
+        FMessageDialog.information(self.host_widget(), "保存成功", "角色配置已保存")
         self.accepted.emit()
 
     # ── 内部 ──────────────────────────────────────────────────

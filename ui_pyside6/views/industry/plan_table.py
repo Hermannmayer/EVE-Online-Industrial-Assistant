@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
 import ui_qml.theme.registry as theme
 from core.container import get_container
@@ -49,8 +49,8 @@ class PlanTable(QWidget):
 
         阶段 2b 起工业页整页是 QML，表格由 `IndustryPage.qml` 里的 `PlanTablePane`
         渲染、桥从 context 注入；本类再建一个宿主就是白开一个 QML 引擎。
-        但业务方法与 `QMessageBox.question(self, ...)` 的窗口父仍需一个 QWidget，
-        故保留 QWidget 身份（不显示即可）。
+        但业务方法与 `FMessageDialog.question(self, ...)` / `QmlDialog(parent=self)`
+        的窗口父仍需一个 QWidget，故保留 QWidget 身份（不显示即可）。
         """
         super().__init__(parent)
 
@@ -220,6 +220,7 @@ class PlanTable(QWidget):
         from ui_pyside6.views.industry.complete_guard import confirm_bp_shortfall
         from ui_pyside6.views.industry.complete_plans_dialog import complete_plans
         from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog as CompletePlansDialog
+        from ui_qml.bridge.message_dialog import FMessageDialog
 
         dlg = CompletePlansDialog(ready, get_hangars(), get_default_hangar_id("default_deposit_hangar_id"), self)
         if not dlg.exec():
@@ -230,7 +231,7 @@ class PlanTable(QWidget):
         result = complete_plans(ready, dlg.selected_hangar_id(), allow_bp_short=allow_bp_short)
         if result["failed"]:
             detail = "\n".join(result.get("failed_reasons") or []) or "、".join(result["failed"])
-            QMessageBox.warning(self, "下线失败", detail)
+            FMessageDialog.warning(self, "下线失败", detail)
         self._rebuild_subitems()
         self.plan_updated.emit()
 
@@ -377,24 +378,15 @@ class PlanTable(QWidget):
             self.plan_updated.emit()
 
     def _batch_set_me_te(self, rows: list[int]) -> None:
-        """批量设置 ME/TE — 带滑块的合并对话框"""
+        """批量设置 ME/TE — 滑杆 + 数字框的 QML 对话框（批次 7.3）
+
+        原版是就地手搭的 `QDialog`（两个 `QSlider` ↔ `QSpinBox` 双向联动 + 手写 QSS
+        + 主题监听器），整块搬到 `ui_qml/qml/dialogs/MeTeDialog.qml`；这里只剩
+        取当前值 → 开对话框 → 落库三步。
+        """
         if self._model is None or not rows:
             return
-        from PySide6.QtCore import Qt
-        from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QSlider, QSpinBox, QVBoxLayout
-
-        import ui_qml.theme.registry as theme
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("设置蓝图等级")
-        dlg.setMinimumWidth(360)
-        dlg.setStyleSheet(
-            f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px;"
-        )
-
-        root = QVBoxLayout(dlg)
-        root.setContentsMargins(16, 12, 16, 12)
-        root.setSpacing(8)
+        from ui_qml.bridge.me_te_dialog import MeTeQmlDialog
 
         # 从首行加载当前值
         first = self._model.get_plan(rows[0]) if rows else None
@@ -403,67 +395,15 @@ class PlanTable(QWidget):
 
         # 已绑产线按各自绑定蓝图的等级结算，这里的计划级值只是**未绑线**的兜底 ——
         # 不说清楚用户会以为改了没生效（逐线计算上线后的语义变化）
+        hint = ""
         if first and first.get("bound_blueprint_ids"):
-            hint = QLabel("已绑定产线的等级以各自绑定的蓝图为准；此处只影响**未绑定**的产线。")
-            hint.setWordWrap(True)
-            hint.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: {theme.fs(11)}px;")
-            root.addWidget(hint)
+            hint = "已绑定产线的等级以各自绑定的蓝图为准；此处只影响**未绑定**的产线。"
 
-        # ME
-        root.addWidget(QLabel("材料效率(ME) 0-10:"))
-        me_row = QHBoxLayout()
-        me_slider = QSlider(Qt.Orientation.Horizontal)
-        me_slider.setRange(0, 10)
-        me_slider.setValue(cur_me)
-        me_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        me_slider.setTickInterval(1)
-        me_spin = QSpinBox()
-        me_spin.setRange(0, 10)
-        me_spin.setValue(cur_me)
-        me_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-        me_slider.valueChanged.connect(me_spin.setValue)
-        me_spin.valueChanged.connect(me_slider.setValue)
-        me_row.addWidget(me_slider, 1)
-        me_row.addWidget(me_spin)
-        root.addLayout(me_row)
-
-        # TE
-        root.addWidget(QLabel("时间效率(TE) 0-20:"))
-        te_row = QHBoxLayout()
-        te_slider = QSlider(Qt.Orientation.Horizontal)
-        te_slider.setRange(0, 20)
-        te_slider.setValue(cur_te)
-        te_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        te_slider.setTickInterval(5)
-        te_spin = QSpinBox()
-        te_spin.setRange(0, 20)
-        te_spin.setValue(cur_te)
-        te_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-        te_slider.valueChanged.connect(te_spin.setValue)
-        te_spin.valueChanged.connect(te_slider.setValue)
-        te_row.addWidget(te_slider, 1)
-        te_row.addWidget(te_spin)
-        root.addLayout(te_row)
-
-        root.addStretch()
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(dlg.accept)
-        buttons.rejected.connect(dlg.reject)
-        root.addWidget(buttons)
-
-        remove_theme = theme.add_theme_listener(
-            lambda: dlg.setStyleSheet(
-                f"background-color: {theme.BG_DARK}; color: {theme.TEXT_PRIMARY}; font-size: {theme.fs(12)}px;"
-            )
-        )
-
-        if not dlg.exec():
-            remove_theme()
+        picked = MeTeQmlDialog.ask(self, cur_me, cur_te, hint=hint)
+        if picked is None:  # 取消 / Esc / 关闭按钮
             return
-        remove_theme()
+        me_val, te_val = picked
 
-        me_val = me_slider.value()
-        te_val = te_slider.value()
         ids: list[int] = []
         for r in rows:
             plan = self._model.get_plan(r)
@@ -483,13 +423,13 @@ class PlanTable(QWidget):
         """添加备注 — 弹出文本输入框"""
         if self._model is None:
             return
-        from PySide6.QtWidgets import QInputDialog
+        from ui_qml.bridge.input_dialog import InputQmlDialog
 
         plan = self._model.get_plan(row)
         if not plan:
             return
         current = plan.get("notes", "") or ""
-        text, ok = QInputDialog.getMultiLineText(self, "添加备注", "输入备注内容:", current)
+        text, ok = InputQmlDialog.get_multiline_text(self, "添加备注", "输入备注内容:", current)
         if ok:
             plan["notes"] = text.strip()
             self._model.layoutChanged.emit()
@@ -500,9 +440,11 @@ class PlanTable(QWidget):
     def _modify_runs(self, row: int) -> None:
         if self._model is None:
             return
+        from ui_qml.bridge.input_dialog import InputQmlDialog
+
         plan = self._model.get_plan(row)
         current = int(plan.get("runs", 0))
-        val, ok = QInputDialog.getInt(self, "修改流程数", "流程数:", current, 1, 99999)
+        val, ok = InputQmlDialog.get_int(self, "修改流程数", "流程数:", current, 1, 99999)
         if ok:
             # 按比值即时更新时长和产能
             if current > 0:
@@ -518,9 +460,11 @@ class PlanTable(QWidget):
     def _modify_parallels(self, row: int) -> None:
         if self._model is None:
             return
+        from ui_qml.bridge.input_dialog import InputQmlDialog
+
         plan = self._model.get_plan(row)
         current = int(plan.get("parallels", 1))
-        val, ok = QInputDialog.getInt(self, "修改并行数", "并行数:", current, 1, 99999)
+        val, ok = InputQmlDialog.get_int(self, "修改并行数", "并行数:", current, 1, 99999)
         if ok:
             val = max(1, val)
             # 按比值即时更新时长（并行只影响时长公式中的总流程，不增加实际耗时）
@@ -559,18 +503,17 @@ class PlanTable(QWidget):
         if not plan or not plan.get("id"):
             return
         from services import plan_execution
+        from ui_qml.bridge.message_dialog import FMessageDialog
 
         mat_hangar_id = plan.get("mat_hangar_id") or getattr(self, "_mat_hangar_id", None)
         allow_short = False
 
         if not mat_hangar_id:
-            ret = QMessageBox.question(
+            if not FMessageDialog.question(
                 self,
                 "启动计划",
                 "材料机库未设置，跳过材料扣减？\n（可在顶部工具栏「材料机库」下拉选择）",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if ret != QMessageBox.StandardButton.Yes:
+            ):
                 return
 
         # 软阻塞预检：材料缺口 / 蓝图流程不足 —— 两者都可强制启动
@@ -590,16 +533,14 @@ class PlanTable(QWidget):
         if bp_short:
             reasons.append(f"蓝图流程不足：{bp_short}")
         if reasons:
-            ret = QMessageBox.question(
+            if not FMessageDialog.question(
                 self,
                 "启动前确认",
                 "\n\n".join(reasons) + "\n\n是否强制启动？\n"
                 "材料按现有库存扣减、缺口记待补；蓝图**不会**自动补流程或换绑，"
                 "完成时按实际可用流程消耗。\n"
                 "由此产生的账面偏差，请稍后用「蓝图管理 → 粘贴导入蓝图 → 全量同步」矫正。",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if ret != QMessageBox.StandardButton.Yes:
+            ):
                 return
             allow_short = bool(shortfalls)
             allow_bp_short = bool(bp_short)
@@ -611,7 +552,7 @@ class PlanTable(QWidget):
             allow_bp_short=allow_bp_short,
         )
         if not res.get("ok"):
-            QMessageBox.warning(self, "启动失败", res.get("message", "未知错误"))
+            FMessageDialog.warning(self, "启动失败", res.get("message", "未知错误"))
             return
         # 同步内存模型（DB 已由 start_plan 写入；其余派生字段经 plan_updated → load_plans 重载）
         plan["status"] = "in_progress"
@@ -633,19 +574,18 @@ class PlanTable(QWidget):
         if not plan or not plan.get("id"):
             return
         from services import plan_execution
+        from ui_qml.bridge.message_dialog import FMessageDialog
 
-        ret = QMessageBox.question(
+        if not FMessageDialog.question(
             self,
             "设为待生产",
             "将已完成计划重置为待生产以便复用？\n材料不返还（已完成计划的材料已变为成品入库），并清除完成记录。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if ret != QMessageBox.StandardButton.Yes:
+        ):
             return
 
         res = plan_execution.reset_plan_for_reuse(plan["id"])
         if not res.get("ok"):
-            QMessageBox.warning(self, "操作失败", res.get("message", "未知错误"))
+            FMessageDialog.warning(self, "操作失败", res.get("message", "未知错误"))
             return
         plan["status"] = "pending"
         plan["started_at"] = None
@@ -664,31 +604,31 @@ class PlanTable(QWidget):
         plan = model.get_plan(row)
         if not plan or not plan.get("id"):
             return
-        if plan.get("status") not in ("in_progress", "running"):
-            QMessageBox.warning(self, "提示", "仅生产中计划可撤销启动")
-            return
         from services import plan_execution
+        from ui_qml.bridge.message_dialog import FMessageDialog
 
-        ret = QMessageBox.question(
+        if plan.get("status") not in ("in_progress", "running"):
+            FMessageDialog.warning(self, "提示", "仅生产中计划可撤销启动")
+            return
+
+        if not FMessageDialog.question(
             self,
             "撤销启动",
             "确定撤销该产线启动？\n将取消生产，并返还已扣减材料到材料机库。\n"
             "（仅当尚未在游戏中启动该产线时使用——游戏产线一经启动不退还材料）",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if ret != QMessageBox.StandardButton.Yes:
+        ):
             return
 
         res = plan_execution.cancel_plan(plan)
         if not res.get("ok"):
-            QMessageBox.warning(self, "撤销失败", res.get("message", "未知错误"))
+            FMessageDialog.warning(self, "撤销失败", res.get("message", "未知错误"))
             return
         plan["status"] = "pending"
         plan["started_at"] = None
         plan["material_short"] = ""
         plan["assigned_blueprint_id"] = None
         model.layoutChanged.emit()
-        QMessageBox.information(self, "已撤销", res.get("message", "已撤销启动"))
+        FMessageDialog.information(self, "已撤销", res.get("message", "已撤销启动"))
         self.plan_updated.emit()
 
     def _show_blueprint_picker(self, row: int) -> None:
@@ -728,20 +668,17 @@ class PlanTable(QWidget):
         """手动兜底：按母项当前需求全量重放子项（数量/并行/ME 联动）。"""
         if self._model is None or not rows:
             return
-        from PySide6.QtWidgets import QMessageBox
-
         from services.plan_rebuild import rebuild_children
+        from ui_qml.bridge.message_dialog import FMessageDialog
 
-        ret = QMessageBox.question(
+        if not FMessageDialog.question(
             self,
             "重算子项",
             "按所有母项当前的需求（数量/并行/ME）重新生成子项产线？\n已投产中的子项流程不会被改动。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if ret != QMessageBox.StandardButton.Yes:
+        ):
             return
         res = rebuild_children(create=True, prune=True)
-        QMessageBox.information(
+        FMessageDialog.information(
             self,
             "完成",
             f"重算完成：新增 {res['created']}、更新 {res['updated']}、清理 {res['deleted']} 条子项",
@@ -779,14 +716,9 @@ class PlanTable(QWidget):
             )
         else:
             text = f"确定取消 {len(selected_ids)} 条计划？"
-        ret = QMessageBox.question(
-            self,
-            "取消生产",
-            text,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if ret != QMessageBox.StandardButton.Yes:
+        from ui_qml.bridge.message_dialog import FMessageDialog
+
+        if not FMessageDialog.question(self, "取消生产", text):
             return
 
         from services import plan_execution
@@ -866,7 +798,9 @@ class PlanTable(QWidget):
             return
         bp_id = plan.get("blueprint_type_id")
         if not bp_id:
-            QMessageBox.warning(self, "提示", "该计划无蓝图信息")
+            from ui_qml.bridge.message_dialog import FMessageDialog
+
+            FMessageDialog.warning(self, "提示", "该计划无蓝图信息")
             return
         bp_name = plan.get("blueprint_name", "") or plan.get("product_name", str(bp_id))
         from ui_qml.bridge.npc_seller_bridge import NpcSellerQmlDialog
@@ -890,7 +824,9 @@ class PlanTable(QWidget):
         selected = [self._model.get_plan(r) for r in rows if 0 <= r < self._model.rowCount()]
         parents = [p for p in selected if p and int(p.get("child_level") or 0) == 0]
         if not parents:
-            QMessageBox.information(self, "提示", "未选中母项")
+            from ui_qml.bridge.message_dialog import FMessageDialog
+
+            FMessageDialog.information(self, "提示", "未选中母项")
             return
         from ui_qml.bridge.parent_decompose_bridge import ParentDecomposeQmlDialog as ParentDecomposeDialog
 
@@ -907,7 +843,9 @@ class PlanTable(QWidget):
         """子项调整：跨选中行组内子项并行配置（runs/parallels + 需求校验）"""
         parents, children = self._selected_groups_and_children(rows)
         if not children:
-            QMessageBox.information(self, "提示", "所选计划均不在组中或无子项可调整")
+            from ui_qml.bridge.message_dialog import FMessageDialog
+
+            FMessageDialog.information(self, "提示", "所选计划均不在组中或无子项可调整")
             return
         from ui_qml.bridge.child_parallel_bridge import ChildParallelQmlDialog as ChildParallelDialog
 
@@ -919,7 +857,9 @@ class PlanTable(QWidget):
         """子项大规模产线并行：按产线数 / 按目标工期 两种模式"""
         parents, children = self._selected_groups_and_children(rows)
         if not children:
-            QMessageBox.information(self, "提示", "所选计划均不在组中或无子项可调整")
+            from ui_qml.bridge.message_dialog import FMessageDialog
+
+            FMessageDialog.information(self, "提示", "所选计划均不在组中或无子项可调整")
             return
         from ui_qml.bridge.mass_parallel_bridge import MassParallelQmlDialog as MassParallelDialog
 
@@ -935,6 +875,7 @@ class PlanTable(QWidget):
         if not plan:
             return
 
+        from ui_qml.bridge.message_dialog import FMessageDialog
         from ui_qml.bridge.system_search_bridge import SystemSearchQmlDialog
 
         dlg = SystemSearchQmlDialog(self, "设置设施星系")
@@ -958,7 +899,7 @@ class PlanTable(QWidget):
 
         self._model.layoutChanged.emit()
         self.plan_updated.emit()
-        QMessageBox.information(
+        FMessageDialog.information(
             self,
             "设置完成",
             f"设施星系: {ss_name}\n制造成本指数(SCI): {sci:.4f}\n\n可在「成本系数」中调整附加费率。",
@@ -972,13 +913,16 @@ class PlanTable(QWidget):
         if not plan:
             return
 
+        from ui_qml.bridge.input_dialog import InputQmlDialog
+        from ui_qml.bridge.message_dialog import FMessageDialog
+
         facility = plan.get("facility", "") or "未设置"
 
         # 从 DB 读取当前系数（如果有 system_id 可以从 plan 推断，但当前没有这个字段）
         # 这里只设一个简单的附加费率 multiplier
         current_mult = float(plan.get("facility_cost_mult", 1.0) or 1.0)
 
-        val, ok = QInputDialog.getDouble(
+        val, ok = InputQmlDialog.get_double(
             self,
             "设施成本系数",
             f"设施: {facility}\n当前系数: {current_mult:.2f}x\n\n新系数 (1.0 = 标准 SCI, >1 = 附加费用):",
@@ -994,7 +938,7 @@ class PlanTable(QWidget):
         if plan.get("id"):
             get_container().plan_repo.update(plan["id"], facility_cost_mult=val)
 
-        QMessageBox.information(self, "设置完成", f"设施成本系数已设为 {val:.2f}x")
+        FMessageDialog.information(self, "设置完成", f"设施成本系数已设为 {val:.2f}x")
 
     def _show_production_wizard(self, row: int) -> None:
         """产线启动小助手：交给工业页统一打开（单实例），初始定位到该行所属人物。"""

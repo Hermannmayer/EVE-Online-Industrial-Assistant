@@ -32,7 +32,7 @@ from typing import Any
 
 from PySide6.QtCore import Property, QObject, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QDialog, QMessageBox
+from PySide6.QtWidgets import QDialog
 
 from core.cache import TtlLRUCache
 from core.container import get_container
@@ -45,6 +45,7 @@ from ui_qml.bridge.all_items_bridge import (
     subtree_ids,
     visible_tree_rows,
 )
+from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.constants import MFG_CATEGORIES
 from ui_qml.dialog_host import DialogBridge, QmlDialog
 from ui_qml.models.all_items_models import BCOLS, DASH, MCOLS, Proxy
@@ -551,7 +552,7 @@ class ManufacturableItemsBridge(DialogBridge):
             return
         cached = self._cache.get(self._mfg_key(int(data["id"])))
         if cached:
-            QMessageBox.information(self.host_widget(), "制造核算明细", breakdown_text(cached))
+            FMessageDialog.information(self.host_widget(), "制造核算明细", breakdown_text(cached))
 
     @Slot(int)
     def addToPlan(self, row: int) -> None:
@@ -572,7 +573,7 @@ class ManufacturableItemsBridge(DialogBridge):
         if not data:
             return
         insert_plan_from_score(type_id, name, score, data, self._mfg)
-        QMessageBox.information(self.host_widget(), "提示", f"已加入制造列表: {name}")
+        FMessageDialog.information(self.host_widget(), "提示", f"已加入制造列表: {name}")
 
     # ── 置顶 ─────────────────────────────────────────────────
 

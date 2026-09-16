@@ -22,22 +22,19 @@ pytestmark = pytest.mark.ui
 
 
 class _QMessageBox:
-    """`QMessageBox` 替身：记下答复与提示，不碰真 Qt 类（静态方法在 PySide 上不好打桩）。
+    """`FMessageDialog` 替身：记下答复与提示，不碰真 Qt 类（静态方法在 PySide 上不好打桩）。
 
-    `StandardButton` 用**整数**：桥里会写 `Yes | No`（真 Qt 是 flag 枚举），
-    用字符串在这里就会以 `str | str` 炸掉。
+    `question` 现在返回 **`bool`**（对齐 `FMessageDialog` 的形状）。旧版返回
+    `StandardButton.Yes` 那个对象，桥里 `if not stub.question(...)` 会因对象恒真
+    永远走「是」分支 —— 那是「点否也照删」的静默失效，故 stub 必须给裸 bool。
     """
-
-    class StandardButton:
-        Yes = 1
-        No = 2
 
     def __init__(self, reply: str = "no") -> None:
         self.reply = reply
         self.informed: list[tuple[str, str]] = []
 
-    def question(self, parent, title, text, *args, **kwargs):
-        return self.StandardButton.Yes if self.reply == "yes" else self.StandardButton.No
+    def question(self, parent, title, text, *args, **kwargs) -> bool:
+        return self.reply == "yes"
 
     def information(self, parent, title, text, *args, **kwargs):
         self.informed.append((title, text))
@@ -67,7 +64,7 @@ def harness(qapp, monkeypatch):
         "load_implants",
         lambda: [{"type_id": 1001, "zh_name": "工业增效体", "bonus_desc": "制造时间 -4%"}],
     )
-    monkeypatch.setattr(csb, "QMessageBox", box)
+    monkeypatch.setattr(csb, "FMessageDialog", box)
     return SimpleNamespace(bridge=csb.CharSettingsBridge(), written=written, box=box)
 
 

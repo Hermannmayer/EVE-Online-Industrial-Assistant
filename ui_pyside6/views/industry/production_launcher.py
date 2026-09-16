@@ -23,13 +23,10 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics
+from PySide6.QtGui import QColor, QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
-    QInputDialog,
-    QMenu,
-    QMessageBox,
     QVBoxLayout,
     QWidget,
 )
@@ -58,6 +55,8 @@ from services.plan_category import (
 from services.plan_service import group_and_sort_plans, load_plans_for_wizard
 from services.plan_start_check import can_force_start, plan_start_block
 from services.terminology import term
+from ui_qml.bridge.input_dialog import InputQmlDialog
+from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.pin_utils import apply_window_pin
 
 MAX_SLOTS_PER_LINE = 11  # 单行每类产线最大格块数（技能满级 1+5+5）
@@ -870,14 +869,19 @@ class ProductionLauncher(QWidget):
     # ── 右键菜单：备注 / 部分启动 ────────────────────────
 
     def _on_row_context_menu(self, plan_id: int) -> None:
+        """行右键 → 交给 QML 侧的 `FMenu`（`LauncherWindow.qml#rowMenu`）。
+
+        菜单条目的可见性要读计划状态（`_can_partial_start`），故在 Python 侧判定后把
+        结果传给 QML；QML 只负责画与把点击回传。原先这里自建 `QMenu` 并
+        `menu.exec(QCursor.pos())`：那是从 QML 里冒出来的**原生 Widgets 菜单**，
+        样式不跟主题，且 `QMenu` 要求 `self` 是 QWidget（批次 7.4 之后不再是）。
+        """
         plan = self._plan_map.get(plan_id)
         if plan is None:
             return
-        menu = QMenu(self)
-        menu.addAction("添加备注…", lambda: self._on_row_notes(plan_id))
-        if self._can_partial_start(plan):
-            menu.addAction("部分启动…", lambda: self._on_row_partial_start(plan_id))
-        menu.exec(QCursor.pos())
+        if getattr(self, "_bridge", None) is None:  # 构造中途桥还没建好
+            return
+        self._bridge.request_context_menu(int(plan_id), bool(self._can_partial_start(plan)))
 
     def _can_partial_start(self, plan: dict) -> bool:
         """部分启动的可见条件。
@@ -903,7 +907,9 @@ class ProductionLauncher(QWidget):
         plan = self._plan_map.get(plan_id)
         if plan is None:
             return
-        text, ok = QInputDialog.getMultiLineText(self, "添加备注", "输入备注内容:", str(plan.get("notes") or ""))
+        # 多行输入（备注可换行）：`QInputDialog.getMultiLineText` 的 QML 替身。
+        # 与计划表右键「添加备注」同源同参，两边不会写出不同的行为。
+        text, ok = InputQmlDialog.get_multiline_text(self, "添加备注", "输入备注内容:", str(plan.get("notes") or ""))
         if not ok:
             return
         notes = text.strip()
@@ -932,7 +938,7 @@ class ProductionLauncher(QWidget):
         # 预检必须按 **N 条**口径：用整条计划算会报出虚高的缺料
         preview = plan_execution.preview_partial_start(plan_id, lines, mat)
         if not preview.get("ok"):
-            QMessageBox.warning(self, "部分启动失败", preview.get("message") or "无法预览材料需求")
+            FMessageDialog.warning(self, "部分启动失败", preview.get("message") or "无法预览材料需求")
             return
         confirm = self._confirm_start(
             plan,
@@ -955,7 +961,7 @@ class ProductionLauncher(QWidget):
             allow_bp_short=allow_bp_short,
         )
         if not res.get("ok"):
-            QMessageBox.warning(self, "部分启动失败", res.get("message") or "未知错误")
+            FMessageDialog.warning(self, "部分启动失败", res.get("message") or "未知错误")
             return
         self._show_feedback(f"已启动 {lines} 条，剩余 {total - lines} 条待生产")
         self.plans_changed.emit()
@@ -968,6 +974,29 @@ class ProductionLauncher(QWidget):
         else:
             self._collapsed.add(group_id)
         self._apply_filters()
+
+    # ── 桥的入口 ─────────────────────────────────────────
+    # `LauncherBridge` 按这几个**公开名**调进来（见 `ui_qml/bridge/launcher_bridge.py`）。
+    # 缺了它们不是「静默失效」而是每次行内互动都抛 `AttributeError` —— QML 里点启动/
+    # 折叠/可下线、右键行，全部会断在这里。薄转发，业务仍在上面那些 `_on_*` 里。
+
+    def row_start(self, plan_id: int) -> None:
+        self._on_row_start(int(plan_id))
+
+    def row_toggle(self, group_id: int) -> None:
+        self._on_row_toggle(int(group_id))
+
+    def row_complete(self, plan_id: int) -> None:
+        self._on_row_complete(int(plan_id))
+
+    def row_context_menu(self, plan_id: int) -> None:
+        self._on_row_context_menu(int(plan_id))
+
+    def row_notes(self, plan_id: int) -> None:
+        self._on_row_notes(int(plan_id))
+
+    def row_partial_start(self, plan_id: int) -> None:
+        self._on_row_partial_start(int(plan_id))
 
     # ── 选中 / 底部 ──────────────────────────────────────
 
@@ -1130,14 +1159,11 @@ class ProductionLauncher(QWidget):
             active = int(self._usage.get(executor or "", {}).get(cat, 0))
             mx = max_lines_for_category(executor, cat)
             if active + max(int(lines), 1) > mx:
-                ret = QMessageBox.question(
+                if not FMessageDialog.question(
                     self,
                     "人物产线超员",
                     f"{executor} 当前占用 {active}/{mx} 条{line_label(cat)}线，启动后超员。仍要启动？",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
-                )
-                if ret != QMessageBox.StandardButton.Yes:
+                ):
                     return None
 
         reasons: list[str] = []
@@ -1152,19 +1178,16 @@ class ProductionLauncher(QWidget):
             return (False, False)
         if not can_force_start(plan, mat, self._all_plans, shortfall_count=len(shortfalls), bp_short=bp_short):
             # 除软阻塞外还有别的硬阻塞（无蓝图 / 等子项）→ 不该走到这里，兜底拦住
-            QMessageBox.warning(self, "启动失败", self._block_reason(plan) or "当前不可启动")
+            FMessageDialog.warning(self, "启动失败", self._block_reason(plan) or "当前不可启动")
             return None
-        ret = QMessageBox.question(
+        if not FMessageDialog.question(
             self,
             "启动前确认",
             "\n\n".join(reasons) + "\n\n是否强制启动？\n"
             "材料按现有库存扣减、缺口记待补；蓝图**不会**自动补流程或换绑，"
             "完成时按实际可用流程消耗。\n"
             "由此产生的账面偏差，请稍后用「蓝图管理 → 粘贴导入蓝图 → 全量同步」矫正。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if ret != QMessageBox.StandardButton.Yes:
+        ):
             return None
         return (bool(shortfalls), bool(bp_short))
 
@@ -1213,7 +1236,7 @@ class ProductionLauncher(QWidget):
             self.plans_changed.emit()
             self._on_poll()
         else:
-            QMessageBox.warning(self, "启动失败", res.get("message", "未知错误"))
+            FMessageDialog.warning(self, "启动失败", res.get("message", "未知错误"))
 
     def _executor_value(self, plan: dict | None = None) -> str | None:
         """底部执行人物下拉当前选中的人。

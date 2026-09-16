@@ -47,7 +47,7 @@ class _MarketRepo:
 
 
 class _BoxRecorder:
-    """`QMessageBox` 替身：这几处刻意保留 QMessageBox（批量迁移是另一个批次），只记录调用。"""
+    """`FMessageDialog` 替身：只记录调用（用例不该弹模态窗）。"""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
@@ -85,7 +85,7 @@ def harness(qapp, monkeypatch) -> _Harness:
     monkeypatch.setattr(mod, "get_container", lambda: SimpleNamespace(market_repo=repo))
     monkeypatch.setattr(mod, "get_hangars", lambda: [{"id": 7, "name": "矿仓"}, {"id": 8, "name": "组件仓"}])
     monkeypatch.setattr(mod, "set_material_price_mult", mult_writes.append)
-    monkeypatch.setattr(mod, "QMessageBox", box)
+    monkeypatch.setattr(mod, "FMessageDialog", box)
     monkeypatch.setattr(mod, "get_material_price_mult", lambda: 0.9)
 
     bridge = mod.ImportReviewBridge(_PARSED, "矿仓", 7, default_mode="full", filtered_note=2)
@@ -290,7 +290,7 @@ def test_review_set_price_from_market_and_discount(harness: _Harness):
 
 
 def test_review_set_price_from_market_without_data_warns(harness: _Harness):
-    """取不到价就逐行提示（原版走 QMessageBox.information，这里保留 QMessageBox）。"""
+    """取不到价就逐行提示（原版走 QMessageBox.information，这里走 FMessageDialog）。"""
     b = harness.bridge
     b.openMenu([0])
     b.setPriceFromMarket("sell")

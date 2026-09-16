@@ -17,11 +17,11 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import Property, Signal, Slot
-from PySide6.QtWidgets import QMessageBox
 
 from core.container import get_container
 from services.industry_dialog_queries import get_item_name, get_max_group_number
 from services.plan_decompose import collect_removed_child_ids, decompose_plan
+from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.bridge.summary_dialog import cell
 from ui_qml.dialog_host import DialogBridge, QmlDialog
 
@@ -276,9 +276,9 @@ class ParentDecomposeBridge(DialogBridge):
         msg = f"已重算子项产线：新增 {res['created']}、更新 {res['updated']}、清理 {res['deleted']} 条"
         if removed:
             msg += f"，未建 {removed} 条"
-        #: 结果提示仍是 QMessageBox —— `QMessageBox` 的统一收敛是计划里的独立一项，未做。
+        #: 结果提示走 `FMessageDialog`（消息框统一收敛，批次 7.1）。
         #: 父窗口取宿主对话框：不传的话提示框不会跟着本对话框居中。
-        QMessageBox.information(self.host_widget(), "完成", msg)
+        FMessageDialog.information(self.host_widget(), "完成", msg)
         self.accepted.emit()
 
     def _remove_planning_discarded(self, removed_types: set[int]) -> int:
@@ -327,6 +327,6 @@ class ParentDecomposeQmlDialog(QmlDialog):
         )
         super().__init__(_QML_FILE, bridge, parent=parent, size=(920, 560))
         self._decompose_bridge = bridge
-        #: 给桥的 `accept` 当 QMessageBox 的父窗口，提示框才会跟着本对话框居中。
+        #: 给桥的 `accept` 当消息框（`FMessageDialog`）的父窗口，提示框才会跟着本对话框居中。
         #: **必须在 `super().__init__()` 之后**：那之前 QDialog 的 C++ 对象还没建出来，
         #: 把一个半成品 QObject 挂到别的 QObject 上会挂死（实测卡在构造里，无任何输出）。

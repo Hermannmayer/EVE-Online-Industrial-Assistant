@@ -903,13 +903,12 @@ class ShellWindow(QQuickView):
         InitWizardQmlDialog(auto_mode=auto_mode).exec()
 
     def _show_about(self) -> None:
-        """「关于」—— 沿用原版的 `QMessageBox.about`（系统关于框，不是页面里的自绘窗）。"""
-        from PySide6.QtWidgets import QMessageBox
-
+        """「关于」—— 走 `FMessageDialog.about`（自绘 QML，批次 7.1）。"""
         from core.version import __version__
+        from ui_qml.bridge.message_dialog import FMessageDialog
 
-        # 父窗口传 None：`QMessageBox` 要 QWidget 父，传 QQuickView 会在运行时炸
-        QMessageBox.about(
+        # 父窗口传 None：`QmlDialog`（QDialog）要 QWidget 父，传 QQuickView 会在运行时炸
+        FMessageDialog.about(
             None,
             "关于 EVE 商人助手",
             f"EVE 商人助手 v{__version__}\n\n"

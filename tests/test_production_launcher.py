@@ -10,6 +10,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from PySide6.QtCore import QObject
 
 import services.plan_execution as plan_execution
 from tests.qml_click import press_move_release, spin
@@ -824,7 +825,7 @@ class TestLauncherContextMenu:
         try:
             repo = MagicMock()
             monkeypatch.setattr(pl, "get_container", lambda: SimpleNamespace(plan_repo=repo))
-            monkeypatch.setattr(pl.QInputDialog, "getMultiLineText", lambda *a, **k: ("待补蓝图", True))
+            monkeypatch.setattr(pl.InputQmlDialog, "get_multiline_text", lambda *a, **k: ("待补蓝图", True))
 
             w._on_row_notes(201)
 
@@ -842,11 +843,109 @@ class TestLauncherContextMenu:
         try:
             repo = MagicMock()
             monkeypatch.setattr(pl, "get_container", lambda: SimpleNamespace(plan_repo=repo))
-            monkeypatch.setattr(pl.QInputDialog, "getMultiLineText", lambda *a, **k: ("x", False))
+            monkeypatch.setattr(pl.InputQmlDialog, "get_multiline_text", lambda *a, **k: ("x", False))
 
             w._on_row_notes(201)
 
             repo.update.assert_not_called()
+        finally:
+            w.close()
+
+
+def _wait_true(predicate, timeout_ms: int = 800) -> bool:
+    """轮询等待条件成立。
+
+    `Menu` 的弹出是异步的（`popupSoon()` 还额外经 `Qt.callLater` 延迟一拍），
+    点击/发信号返回时 `opened` 仍是 false —— 固定 sleep 会在慢机器上偶发失败。
+    """
+    waited = 0
+    while waited < timeout_ms:
+        if predicate():
+            return True
+        spin(50)
+        waited += 50
+    return bool(predicate())
+
+
+class TestLauncherRowMenuWiring:
+    """行右键菜单迁到 QML 后的接线：Python 判定条目 → QML 弹 `FMenu`。"""
+
+    def test_context_menu_request_carries_partial_flag(self, qapp, monkeypatch):
+        """右键不再自建原生 `QMenu`，而是把 (计划, 是否给「部分启动」) 交给 QML。"""
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(PARTIAL_PLAN), dict(READY_PLAN)])
+        try:
+            seen: list = []
+            w._bridge.contextMenuRequested.connect(lambda pid, can: seen.append((pid, can)))
+
+            w._on_row_context_menu(201)  # parallels=3 的独立计划 → 给「部分启动」
+            w._on_row_context_menu(101)  # 待下线（非 pending）→ 不给
+            w._on_row_context_menu(9999)  # 不在列表里 → 什么都不发
+
+            assert seen == [(201, True), (101, False)]
+        finally:
+            w.close()
+
+    def test_bridge_row_slots_reach_the_controller(self, qapp, monkeypatch):
+        """桥按**公开名** `row_start` / `row_toggle` / `row_complete` / `row_context_menu` /
+        `row_notes` / `row_partial_start` 转发进来。
+
+        回归背景：这几个名字一度只在页面里以 `_on_*` 形式存在，桥一调就是
+        `AttributeError` —— QML 里点启动/折叠/可下线、右键行，全部断掉。
+        """
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(PARTIAL_PLAN)])
+        try:
+            calls: list = []
+
+            def _record(name):
+                return lambda plan_id: calls.append((name, int(plan_id)))
+
+            for name in ("row_start", "row_toggle", "row_complete", "row_notes", "row_partial_start"):
+                monkeypatch.setattr(w, name, _record(name))
+            # 右键走真实现（它要读 `_can_partial_start`），只把出口换成记录
+            monkeypatch.setattr(
+                w._bridge,
+                "request_context_menu",
+                lambda pid, can: calls.append(("row_context_menu", int(pid))),
+            )
+
+            w._bridge.rowStart(201)
+            w._bridge.rowToggle(7)
+            w._bridge.rowComplete(201)
+            w._bridge.rowNotes(201)
+            w._bridge.rowPartialStart(201)
+            w._bridge.rowContextMenu(201)
+
+            assert calls == [
+                ("row_start", 201),
+                ("row_toggle", 7),
+                ("row_complete", 201),
+                ("row_notes", 201),
+                ("row_partial_start", 201),
+                ("row_context_menu", 201),
+            ]
+        finally:
+            w.close()
+
+    def test_qml_menu_opens_and_gates_partial_item(self, qapp, monkeypatch):
+        """整条链：桥发信号 → QML 的 `rowMenu` 真的打开，条目标志随之更新。"""
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(PARTIAL_PLAN), dict(READY_PLAN)])
+        try:
+            menu = w._host.rootObject().findChild(QObject, "rowMenu")
+            assert menu is not None, "LauncherWindow.qml 里没有 objectName=rowMenu 的菜单"
+
+            w._bridge.request_context_menu(201, True)
+            assert _wait_true(lambda: menu.property("opened") is True), "右键菜单没打开"
+            assert menu.property("planId") == 201
+            assert menu.property("canPartial") is True
+            menu.close()
+            spin()
+
+            w._bridge.request_context_menu(101, False)
+            assert _wait_true(lambda: menu.property("opened") is True), "右键菜单没打开"
+            assert menu.property("planId") == 101
+            assert menu.property("canPartial") is False
+            menu.close()
+            spin()
         finally:
             w.close()
 

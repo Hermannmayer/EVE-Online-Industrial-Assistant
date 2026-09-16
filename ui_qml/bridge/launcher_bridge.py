@@ -35,6 +35,8 @@ class LauncherBridge(QObject):
     bottomChanged = Signal()
     #: 请求 QML 把列表滚到某行 / 选中某行
     selectionRequested = Signal(int)
+    #: 请求 QML 弹出行右键菜单：`(plan_id, 是否给「部分启动」项)`
+    contextMenuRequested = Signal(int, bool)
     #: 1s 心跳（只改运行中行的剩余时长，不重建列表）
     tickChanged = Signal()
 
@@ -169,6 +171,14 @@ class LauncherBridge(QObject):
     def rowContextMenu(self, plan_id: int) -> None:
         self._page.row_context_menu(int(plan_id))
 
+    @Slot(int)
+    def rowNotes(self, plan_id: int) -> None:
+        self._page.row_notes(int(plan_id))
+
+    @Slot(int)
+    def rowPartialStart(self, plan_id: int) -> None:
+        self._page.row_partial_start(int(plan_id))
+
     # ── L4 详情 / 执行面板 ────────────────────────────────────
 
     @Property(bool, notify=bottomChanged)
@@ -234,3 +244,7 @@ class LauncherBridge(QObject):
 
     def request_selection(self, plan_id: int) -> None:
         self.selectionRequested.emit(int(plan_id))
+
+    def request_context_menu(self, plan_id: int, can_partial: bool) -> None:
+        """让 QML 在该行位置弹出右键菜单（菜单项由页面判定后传过来）。"""
+        self.contextMenuRequested.emit(int(plan_id), bool(can_partial))

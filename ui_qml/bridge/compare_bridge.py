@@ -16,10 +16,10 @@
 2. **「查看物品」弹的是本次一并迁走的 `MfgQmlDialog` / `TradeQmlDialog`**，
    parent 用 `DialogBridge.host_widget()` —— 不能自己存宿主引用（环引用会先
    没掉 C++ 窗口，详见 `dialog_host` 里的说明）。
-3. **导出文件走 `QFileDialog`（原生系统弹窗）**：本仓 QML 层还没有 `FileDialog`
-   的先例，而这个弹窗是操作系统的文件选择器、不参与本应用的主题，
-   用 `host_widget()` 当 parent 与 `review_bridge` / `transfer_bridge` 里
-   `QMessageBox` 的做法一致。
+3. **导出文件走 `ui_qml.file_dialogs.get_save_filename`**：它内部仍是原生
+   `QFileDialog`（操作系统文件选择器，不参与本应用主题，且保持同步语义），
+   与 `all_items_bridge` / `manufacturable_items_bridge` 的导出收敛到同一入口；
+   parent 取 `host_widget()`。
 """
 
 from __future__ import annotations
@@ -443,11 +443,10 @@ class CompareBridge(DialogBridge):
             self._set_status("无数据可导出")
             return
         try:
-            from PySide6.QtWidgets import QFileDialog
+            from ui_qml.file_dialogs import get_save_filename
 
-            path, _selected = QFileDialog.getSaveFileName(
+            path = get_save_filename(
                 self.host_widget(),
-                "导出对比结果",
                 "compare_result.csv",
                 "CSV Files (*.csv);;All Files (*)",
             )
