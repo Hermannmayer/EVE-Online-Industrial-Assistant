@@ -174,7 +174,7 @@ def test_is_watched_path_filters_background_vs_source(tmp_path):
     root = tmp_path
     assert wat(root / "core" / "logger.py") is True
     assert wat(root / "services" / "plan_decompose.py") is True
-    assert wat(root / "ui_pyside6" / "theme.py") is True
+    assert wat(root / "ui_qml" / "views" / "industry_view.py") is True
     assert wat(root / "Main.py") is True  # 根入口
     # agent 改后台文件 → 不触发
     assert wat(root / ".claude" / "worktrees" / "z" / "dev.py") is False

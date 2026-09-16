@@ -8,10 +8,11 @@ gen_api_docs.py — 函数级 API 文档自动生成。
 覆盖范围（分级）：
   - 一级（全函数）：`core/`、`services/`
   - 二级（模块级概览 + 全函数）：`ui_qml/models/`、`ui_qml/workers/`
-  - `ui_pyside6/views/` 不逐文件生成，在 dev/api-reference.md 手动列模块概览
+  - `ui_qml/views/` 不逐文件生成，在 dev/api-reference.md 手动列模块概览
 
 注：表格模型与取数线程原先在 `ui_pyside6/models`、`ui_pyside6/workers`，
-批次 6.0 随「共享层搬出 ui_pyside6」迁到 `ui_qml/` 下（两套 UI 共用），扫描目录随之更新。
+批次 6.0 随「共享层搬出 ui_pyside6」迁到 `ui_qml/` 下（两套 UI 共用），扫描目录随之更新；
+残留的 Widgets 视图控制器也已在批次 7.5 迁到 `ui_qml/views/`，`ui_pyside6/` 整个删除。
 
 用法：
     python scripts/gen_api_docs.py            # 生成/更新

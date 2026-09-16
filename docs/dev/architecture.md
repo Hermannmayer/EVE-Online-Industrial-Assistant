@@ -6,13 +6,14 @@
 
 ```mermaid
 graph TB
-    subgraph UI["UI 层 — ui_pyside6/"]
-        MW[main_window.py]
-        VIEWS[views/ — 页面组件]
+    subgraph UI["UI 层 — ui_qml/"]
+        SHELL[shell_window.py + qml/shell/ — 外壳]
+        PAGES[qml/ — 页面/对话框/组件]
+        BRIDGE[bridge/ — Python↔QML 桥]
+        VIEWS[views/ — 残留 Widgets 控制器]
         MODELS[models/ — 数据模型]
         WORKERS[workers/ — QThread 异步 Worker]
-        DIALOGS[dialogs/ — 弹窗]
-        THEME[theme.py — 双主题]
+        THEME[theme/registry.py — 双主题 token]
     end
 
     subgraph SVC["业务层 — services/"]
@@ -55,11 +56,16 @@ graph TB
         BACKUPS[(backups/ — 迁移前快照)]
     end
 
-    MW --> VIEWS
+    SHELL --> PAGES
+    PAGES --> BRIDGE
+    BRIDGE --> VIEWS
+    BRIDGE --> WORKERS
+    BRIDGE --> MODELS
     VIEWS --> WORKERS
     VIEWS --> MODELS
     WORKERS --> SCORING
     WORKERS --> PRICING
+    BRIDGE --> CONTAINER
     VIEWS --> CONTAINER
     CONTAINER --> SCORING
     CONTAINER --> PRICING
@@ -136,23 +142,27 @@ graph TB
 | `user_settings.py` | settings.json 集中读写 + 结构版本迁移 |
 | `terminology.py` | EVE 术语查询（terminology.json） |
 
-### UI 层（ui_pyside6/）
+### UI 层（ui_qml/）
 
-PySide6 界面，**禁止直接访问数据库**，通过容器获取服务：
+QML 界面（**主 UI**），**禁止直接访问数据库**，通过容器获取服务：
 
 | 模块 | 职责 |
 |------|------|
-| `main_window.py` | 主窗口 + 侧边导航 + 页面切换 |
-| `theme.py` | 主题色板 + 字体 token（`fs()` 字号缩放、`set_font_scale`） |
-| `sizing.py` | 控件尺寸自适应（`fit_line_edit_width` / `elide_label`，仅补 `sizeHint` 算不准的场景） |
-| `table_sort.py` | 表头排序保持（`SortPreservingTableView` 在 `setModel` 后重放排序；`init_sorting` 清掉 Qt 默认假箭头） |
-| `views/` | 页面组件（query/industry/trade/inventory 等） |
-| `views/industry/` | 工业制造子组件（甘特图/计划表/弹窗等） |
-| `views/query/` | 查询页面子组件（搜索/订单弹窗/走势图） |
-| `views/inventory/` | 仓库页面子组件（机库Tab/蓝图Tab） |
-| `views/compare/` | 物品对比功能 |
-| `workers/` | QThread 异步 Worker（UI 线程安全） |
-| `models/` | Qt 数据模型（表格/树形数据） |
+| `shell_window.py` | 主窗口（`QQuickView`）+ 页面装载 |
+| `qml/shell/` | 窗口外壳（标题栏 / 导航栏 / 状态栏） |
+| `qml/pages/` | 七个页面（估价/查询/工业/贸易/仓库/合同/关注列表） |
+| `qml/dialogs/`、`qml/components/` | 对话框与通用控件 |
+| `bridge/` | Python ↔ QML 桥（页面/对话框的数据与动作） |
+| `host.py` / `dialog_host.py` | 对话框用的 `QQuickWidget` 宿主 |
+| `registry.py` | 页面登记与 `PageSpec` |
+| `models/` | Qt 数据模型（表格/树形数据，QML 页面与残留 Widgets 控制器共用） |
+| `workers/` | QThread 异步取数线程（UI 线程安全） |
+| `views/` | **残留的 Widgets 业务控制器**（工业页控制器 `industry_view.py`、采购页 `procurement_tab.py`、`views/industry/` 的计划表/产线启动器/下线编排） |
+| `theme/registry.py` | 主题 token 源（颜色/字号，QML 绑定 `Theme` 单例） |
+
+> `ui_pyside6/` 曾在迁移期与 `ui_qml/` 并存，其 Widgets 外壳、七个页面、对话框与
+> `theme`/`models`/`workers` 已分批迁入 `ui_qml/`；批次 7.5 把该包整个删除，只剩
+> 上表 `views/` 那条工业页业务控制器链。
 
 ## 依赖注入（IOC 容器）
 

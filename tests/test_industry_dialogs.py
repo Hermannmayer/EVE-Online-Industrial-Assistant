@@ -566,7 +566,7 @@ class TestStatusBarCompleteAllGuard:
 
     @staticmethod
     def _run(monkeypatch, short_text: str | None, user_choice: bool):
-        import ui_pyside6.views.industry_view as iv
+        import ui_qml.views.industry_view as iv
         from ui_qml.bridge import complete_guard
 
         model = MagicMock()
@@ -636,7 +636,7 @@ class TestCompleteOnePlan:
 
     @staticmethod
     def _setup(monkeypatch, *, dialog_result: int, completed: int, warned: list):
-        from ui_pyside6.views.industry import complete_plans_dialog as cpd
+        from ui_qml.views.industry import complete_plans_dialog as cpd
 
         calls: dict = {}
 
@@ -673,7 +673,7 @@ class TestCompleteOnePlan:
         return calls
 
     def test_cancel_returns_none_without_completing(self, qapp, monkeypatch):
-        from ui_pyside6.views.industry.complete_plans_dialog import complete_one_plan
+        from ui_qml.views.industry.complete_plans_dialog import complete_one_plan
 
         warned: list = []
         calls = self._setup(monkeypatch, dialog_result=0, completed=0, warned=warned)
@@ -682,7 +682,7 @@ class TestCompleteOnePlan:
         assert warned == []
 
     def test_success_returns_result(self, qapp, monkeypatch):
-        from ui_pyside6.views.industry.complete_plans_dialog import complete_one_plan
+        from ui_qml.views.industry.complete_plans_dialog import complete_one_plan
 
         warned: list = []
         calls = self._setup(monkeypatch, dialog_result=1, completed=1, warned=warned)
@@ -693,7 +693,7 @@ class TestCompleteOnePlan:
 
     def test_failure_warns_and_returns_none(self, qapp, monkeypatch):
         """失败必须返回 None，否则调用方会把失败的行标成已完成。"""
-        from ui_pyside6.views.industry.complete_plans_dialog import complete_one_plan
+        from ui_qml.views.industry.complete_plans_dialog import complete_one_plan
 
         warned: list = []
         self._setup(monkeypatch, dialog_result=1, completed=0, warned=warned)
@@ -706,10 +706,10 @@ class TestPlanTableCompleteFailure:
     """计划表格单行下线：`complete_one_plan` 返回 None 时不得改动行状态。"""
 
     def test_failed_plan_not_marked_completed(self, qapp, monkeypatch):
-        from ui_pyside6.views.industry.plan_table import PlanTable
+        from ui_qml.views.industry.plan_table import PlanTable
 
         monkeypatch.setattr(
-            "ui_pyside6.views.industry.complete_plans_dialog.complete_one_plan",
+            "ui_qml.views.industry.complete_plans_dialog.complete_one_plan",
             lambda parent, plan: None,
         )
         plan = {"id": 7, "product_name": "渡鸦级", "status": "ready"}
@@ -720,10 +720,10 @@ class TestPlanTableCompleteFailure:
         holder.plan_updated.emit.assert_not_called()
 
     def test_successful_plan_marked_completed(self, qapp, monkeypatch):
-        from ui_pyside6.views.industry.plan_table import PlanTable
+        from ui_qml.views.industry.plan_table import PlanTable
 
         monkeypatch.setattr(
-            "ui_pyside6.views.industry.complete_plans_dialog.complete_one_plan",
+            "ui_qml.views.industry.complete_plans_dialog.complete_one_plan",
             lambda parent, plan: {"completed": 1, "deposited": 1, "failed": [], "failed_reasons": []},
         )
         plan = {"id": 7, "product_name": "渡鸦级", "status": "ready"}

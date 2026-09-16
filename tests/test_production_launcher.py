@@ -165,7 +165,7 @@ def _row(w, plan_id: int) -> dict:
 
 
 def _make_launcher(qapp, monkeypatch, chars=("甲", "乙"), plans=None):
-    from ui_pyside6.views.industry import production_launcher as pl
+    from ui_qml.views.industry import production_launcher as pl
 
     chars = list(chars)
     rows = SAMPLE_PLANS if plans is None else plans
@@ -363,7 +363,7 @@ class TestProductionLauncher:
         import re
         from pathlib import Path
 
-        from ui_pyside6.views.industry import production_launcher as pl
+        from ui_qml.views.industry import production_launcher as pl
 
         src = Path(pl.__file__).read_text(encoding="utf-8")
         found = re.findall(r"#[0-9a-fA-F]{6}(?![0-9a-fA-F])", src)
@@ -448,7 +448,7 @@ class TestProductionLauncher:
 
     def test_start_calls_plan_execution(self, qapp, monkeypatch):
         import services.plan_execution as plan_execution
-        from ui_pyside6.views.industry import production_launcher as pl
+        from ui_qml.views.industry import production_launcher as pl
 
         w, _ = _make_launcher(qapp, monkeypatch)
         calls = []
@@ -504,7 +504,7 @@ class TestCharStatus:
     """
 
     def test_status_text_reflects_usage(self, qapp):
-        from ui_pyside6.views.industry.production_launcher import ProductionLauncher
+        from ui_qml.views.industry.production_launcher import ProductionLauncher
 
         cases = [
             ({"manufacturing": (0, 5), "research": (0, 5), "reaction": (0, 0)}, "空闲"),
@@ -683,7 +683,7 @@ class TestActionSlotStates:
 
     def test_ready_row_complete_runs_flow_and_keeps_feedback(self, qapp, monkeypatch):
         """点「可下线」→ 走共用的单行下线；成功后行会消失，提示不得被刷新擦掉。"""
-        from ui_pyside6.views.industry import complete_plans_dialog as cpd
+        from ui_qml.views.industry import complete_plans_dialog as cpd
 
         rows = [dict(READY_PLAN)]
         w, _ = _make_launcher(qapp, monkeypatch, plans=rows)
@@ -709,7 +709,7 @@ class TestActionSlotStates:
             w.close()
 
     def test_ready_row_complete_cancel_is_noop(self, qapp, monkeypatch):
-        from ui_pyside6.views.industry import complete_plans_dialog as cpd
+        from ui_qml.views.industry import complete_plans_dialog as cpd
 
         w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(READY_PLAN)])
         try:
@@ -791,8 +791,8 @@ class TestLauncherContextMenu:
             w.close()
 
     def test_partial_start_calls_service_with_n(self, qapp, monkeypatch):
-        from ui_pyside6.views.industry import production_launcher as pl
         from ui_qml.bridge import partial_start_bridge as psd
+        from ui_qml.views.industry import production_launcher as pl
 
         w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(PARTIAL_PLAN)])
         try:
@@ -835,7 +835,7 @@ class TestLauncherContextMenu:
     def test_notes_menu_writes_repo(self, qapp, monkeypatch):
         from types import SimpleNamespace
 
-        from ui_pyside6.views.industry import production_launcher as pl
+        from ui_qml.views.industry import production_launcher as pl
 
         w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(PARTIAL_PLAN)])
         try:
@@ -853,7 +853,7 @@ class TestLauncherContextMenu:
     def test_notes_menu_cancel_writes_nothing(self, qapp, monkeypatch):
         from types import SimpleNamespace
 
-        from ui_pyside6.views.industry import production_launcher as pl
+        from ui_qml.views.industry import production_launcher as pl
 
         w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(PARTIAL_PLAN)])
         try:

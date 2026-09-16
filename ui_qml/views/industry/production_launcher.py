@@ -926,7 +926,7 @@ class ProductionLauncher(QObject):
             return
         self._select_visible_row(plan_id)
 
-        from ui_pyside6.views.industry.complete_plans_dialog import complete_one_plan
+        from ui_qml.views.industry.complete_plans_dialog import complete_one_plan
 
         if complete_one_plan(self, plan) is None:  # 取消或失败（已弹过告警）
             return

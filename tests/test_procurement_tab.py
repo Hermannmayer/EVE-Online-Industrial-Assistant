@@ -10,13 +10,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtGui import QGuiApplication
 
-from ui_pyside6.views.procurement_tab import (
+from ui_qml.bridge.procurement_bridge import procure_rows
+from ui_qml.views.procurement_tab import (
     ProcurementDialog,
     copy_cell_text,
     display_name,
     split_sections,
 )
-from ui_qml.bridge.procurement_bridge import procure_rows
 
 pytestmark = pytest.mark.ui
 

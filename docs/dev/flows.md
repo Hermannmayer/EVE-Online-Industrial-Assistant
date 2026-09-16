@@ -104,9 +104,9 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
   账面偏差由用户在蓝图管理做**全量剪贴板导入**矫正。
   - **五条下线入口都要覆盖**：计划表格状态列（单行）、计划表格右键（批量）、采购页「一键完成」、
     工业页底部状态栏「全部下线」、产线启动小助手行内「可下线」（单行）。
-    **单行**下线共用 `ui_pyside6/views/industry/complete_plans_dialog.py::complete_one_plan`
+    **单行**下线共用 `ui_qml/views/industry/complete_plans_dialog.py::complete_one_plan`
     （返回 None = 用户取消或已弹过失败告警，**非 None 即成功**——调用方据此决定要不要把行标成已完成）；
-    预检与放行**必须共用** `ui_pyside6/views/industry/complete_guard.py::confirm_bp_shortfall`。
+    预检与放行**必须共用** `ui_qml/bridge/complete_guard.py::confirm_bp_shortfall`。
     状态栏那条曾漏传 `allow_bp_short`，强制启动过的计划在该入口永远下不了线，且失败原因被
     `complete_plans` 吞成一句「失败 N 项」（现已随 `failed_reasons` 带出）。确认框留 UI 层：
     `complete_plans()` 是无 parent 的服务函数，validate 档会在无 QApplication 下直调它。

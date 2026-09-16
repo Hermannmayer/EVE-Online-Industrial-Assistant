@@ -37,7 +37,7 @@ def discover_local_packages() -> list[str]:
     """自动扫描项目根目录下所有含 __init__.py 的 Python 包。
 
     排除非包目录（tests/dist/build 等）和隐藏目录。
-    返回包名列表（如 ['core', 'domain', 'services', 'bootstrap', 'ui_pyside6']）。
+    返回包名列表（如 ['core', 'domain', 'services', 'bootstrap', 'ui_qml']）。
     """
     skip = {".", "..", "tests", "dist", "build", "__pycache__", "docs", "scripts", "tools", "data", "database"}
     packages = []

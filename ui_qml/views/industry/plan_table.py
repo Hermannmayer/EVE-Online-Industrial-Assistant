@@ -193,7 +193,7 @@ class PlanTable(QObject):
         对话框/预检/失败提示都收敛在小助手共用的 `complete_one_plan`，这里只负责
         把成功结果回写到内存中的行。
         """
-        from ui_pyside6.views.industry.complete_plans_dialog import complete_one_plan
+        from ui_qml.views.industry.complete_plans_dialog import complete_one_plan
 
         result = complete_one_plan(self, plan)
         if result is None:  # 用户取消或下线失败（已弹过告警）
@@ -222,10 +222,10 @@ class PlanTable(QObject):
             return
         from services.inventory_manager import get_hangars
         from services.user_settings import get_default_hangar_id
-        from ui_pyside6.views.industry.complete_plans_dialog import complete_plans
         from ui_qml.bridge.complete_guard import confirm_bp_shortfall
         from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog as CompletePlansDialog
         from ui_qml.bridge.message_dialog import FMessageDialog
+        from ui_qml.views.industry.complete_plans_dialog import complete_plans
 
         dlg = CompletePlansDialog(ready, get_hangars(), get_default_hangar_id("default_deposit_hangar_id"), self)
         if not dlg.exec():

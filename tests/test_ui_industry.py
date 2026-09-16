@@ -111,7 +111,7 @@ def test_procurement_summary_reruns_on_price_change(industry_page, monkeypatch):
     故这里直接 patch 它（阶段 2b 前是 patch `_toolbar.get_price_settings`）。
     """
     from core.constants import TRADE_HUB_IDS
-    from ui_pyside6.views import industry_view as iv
+    from ui_qml.views import industry_view as iv
 
     settings = {"mat_hub": "Jita", "mat_price_type": "sell", "mat_mult": 1.0}
     started: list[dict] = []
@@ -158,7 +158,7 @@ def test_procurement_summary_reruns_on_price_change(industry_page, monkeypatch):
 
 def test_procurement_summary_cached_when_nothing_changed(industry_page, monkeypatch):
     """计划与价格设置都没变时命中缓存，不重复起线程（指纹缓存的正向行为）。"""
-    from ui_pyside6.views import industry_view as iv
+    from ui_qml.views import industry_view as iv
 
     settings = {"mat_hub": "Jita", "mat_price_type": "sell", "mat_mult": 1.0}
     started: list[dict] = []
@@ -202,13 +202,13 @@ class TestNotesInlineEditPersists:
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
-        from ui_pyside6.views.industry.plan_table import PlanTable
         from ui_qml.models.industry_models import PlanTableModel
         from ui_qml.models.plan_table_constants import COL_NOTES
+        from ui_qml.views.industry.plan_table import PlanTable
 
         repo = MagicMock()
         monkeypatch.setattr(
-            "ui_pyside6.views.industry.plan_table.get_container",
+            "ui_qml.views.industry.plan_table.get_container",
             lambda: SimpleNamespace(plan_repo=repo),
         )
         table = PlanTable()
@@ -474,10 +474,10 @@ class TestBatchSetMeTe:
     def test_writes_the_picked_values(self, qapp, monkeypatch):
         from unittest.mock import MagicMock
 
-        from ui_pyside6.views.industry.plan_table import PlanTable
+        from ui_qml.views.industry.plan_table import PlanTable
 
         repo = MagicMock()
-        monkeypatch.setattr("ui_pyside6.views.industry.plan_table.get_container", _fake_container(repo))
+        monkeypatch.setattr("ui_qml.views.industry.plan_table.get_container", _fake_container(repo))
         seen = self._patch_ask(monkeypatch, (5, 12))
 
         plans = [
@@ -497,9 +497,9 @@ class TestBatchSetMeTe:
     def test_hint_when_the_first_row_has_bound_blueprints(self, qapp, monkeypatch):
         from unittest.mock import MagicMock
 
-        from ui_pyside6.views.industry.plan_table import PlanTable
+        from ui_qml.views.industry.plan_table import PlanTable
 
-        monkeypatch.setattr("ui_pyside6.views.industry.plan_table.get_container", _fake_container(MagicMock()))
+        monkeypatch.setattr("ui_qml.views.industry.plan_table.get_container", _fake_container(MagicMock()))
         seen = self._patch_ask(monkeypatch, (0, 0))
         holder = _holder([{"id": 7, "bound_blueprint_ids": [11]}])
 
@@ -510,10 +510,10 @@ class TestBatchSetMeTe:
     def test_cancel_changes_nothing(self, qapp, monkeypatch):
         from unittest.mock import MagicMock
 
-        from ui_pyside6.views.industry.plan_table import PlanTable
+        from ui_qml.views.industry.plan_table import PlanTable
 
         repo = MagicMock()
-        monkeypatch.setattr("ui_pyside6.views.industry.plan_table.get_container", _fake_container(repo))
+        monkeypatch.setattr("ui_qml.views.industry.plan_table.get_container", _fake_container(repo))
         self._patch_ask(monkeypatch, None)
 
         plans = [{"id": 7, "me_level": 1, "te_level": 2}]
@@ -578,10 +578,10 @@ class TestPlanTableInputDialogs:
     def test_add_notes_uses_the_multiline_dialog(self, qapp, monkeypatch):
         from unittest.mock import MagicMock
 
-        from ui_pyside6.views.industry.plan_table import PlanTable
+        from ui_qml.views.industry.plan_table import PlanTable
 
         repo = MagicMock()
-        monkeypatch.setattr("ui_pyside6.views.industry.plan_table.get_container", _fake_container(repo))
+        monkeypatch.setattr("ui_qml.views.industry.plan_table.get_container", _fake_container(repo))
         seen: dict = {}
 
         def _fake(parent, title, label, text=""):
@@ -602,10 +602,10 @@ class TestPlanTableInputDialogs:
     def test_add_notes_cancel_keeps_the_old_text(self, qapp, monkeypatch):
         from unittest.mock import MagicMock
 
-        from ui_pyside6.views.industry.plan_table import PlanTable
+        from ui_qml.views.industry.plan_table import PlanTable
 
         repo = MagicMock()
-        monkeypatch.setattr("ui_pyside6.views.industry.plan_table.get_container", _fake_container(repo))
+        monkeypatch.setattr("ui_qml.views.industry.plan_table.get_container", _fake_container(repo))
         monkeypatch.setattr(
             "ui_qml.bridge.input_dialog.InputQmlDialog.get_multiline_text",
             staticmethod(lambda *a, **k: ("", False)),
@@ -622,10 +622,10 @@ class TestPlanTableInputDialogs:
         """流程数：范围与调用参数（1..99999）一字未改，只换了弹窗实现。"""
         from unittest.mock import MagicMock
 
-        from ui_pyside6.views.industry.plan_table import PlanTable
+        from ui_qml.views.industry.plan_table import PlanTable
 
         repo = MagicMock()
-        monkeypatch.setattr("ui_pyside6.views.industry.plan_table.get_container", _fake_container(repo))
+        monkeypatch.setattr("ui_qml.views.industry.plan_table.get_container", _fake_container(repo))
         seen: dict = {}
 
         def _fake(parent, title, label, value=0, minimum=0, maximum=0, step=1):
@@ -648,7 +648,7 @@ def test_plan_table_has_no_native_dialogs_left():
     """批次 7.3 的判据：`plan_table.py` 里 `QMessageBox` / `QInputDialog` 计数为 0。"""
     from pathlib import Path
 
-    import ui_pyside6.views.industry.plan_table as mod
+    import ui_qml.views.industry.plan_table as mod
 
     source = Path(mod.__file__).read_text(encoding="utf-8")
     assert "QMessageBox" not in source

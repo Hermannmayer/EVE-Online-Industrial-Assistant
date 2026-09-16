@@ -1,7 +1,7 @@
 # 界面结构规范图
 
 沟通界面时统一使用本页的区域名，避免「上面那个栏」「右边那块」这类歧义。
-命名沿用代码既有约定（见 `ui_pyside6/views/industry_view.py` 的「5 区布局」），不另造一套。
+命名沿用代码既有约定（见 `ui_qml/views/industry_view.py` 的「5 区布局」），不另造一套。
 
 ![界面结构规范图](/assets/ui-blueprint.png)
 
@@ -51,7 +51,7 @@
 
 ## 产线启动小助手（独立工具窗）
 
-`ui_pyside6/views/industry/production_launcher.py`。区域编号用 **L1–L4**，与上面的窗口级 1–7、页面级 8–12 区分开，避免歧义。
+`ui_qml/views/industry/production_launcher.py`。区域编号用 **L1–L4**，与上面的窗口级 1–7、页面级 8–12 区分开，避免歧义。
 
 | # | 中文名 | 代码定位 | 说明 |
 |---|---|---|---|

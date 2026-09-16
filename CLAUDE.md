@@ -26,8 +26,7 @@ PySide6 + SQLite 构建的 EVE Online 工业制造助手桌面应用。
 
 ### 架构
 - 分层：`bootstrap/`（组合根/IOC 容器）→ `core/`（工具/常量）→ `domain/`（纯领域逻辑，无 DB/Qt/缓存 — formulas, bom, scoring, ports）→ `services/`（业务/DB 访问/repositories/门面编排）→ `ui_qml/`（QML UI，**新代码写这里**）
-- `ui_pyside6/` 只剩**还在 Widgets 里的业务控制器**（工业页那条链、人物设置页、采购、splash）。
-  外壳、七个页面、所有对话框与它们的回退实现都在批次 6.1/6.2 删掉了 —— 没有回退开关了
+- `ui_pyside6/` 已在批次 7.5 整个删除；仅剩的 Widgets 业务控制器（工业页那条链、采购页）搬进了 `ui_qml/views/`
 - 依赖注入组合根在 `bootstrap/container.py`；`core/container.py` 仅为兼容转发，存量调用方随重构逐步迁移到 `bootstrap.container`
 - 4 库独立：`reference.db` / `market.db` / `user.db` / `blueprint.db`
 - DB 管理用 `services/database_manager.py`
@@ -82,16 +81,12 @@ bootstrap/     组合根 / IOC 容器（container.py）
 core/          工具层（constants, paths, logger, cache, hot_reload；eve_formulas=贸易费/经纪人费常量）
 domain/        领域层（纯函数，无 DB/Qt/缓存 — formulas 制造公式, bom, scoring, ports）
 services/      业务层（database_manager, scoring_service, scoring_facade, inventory_manager, repositories/, etc.）
-ui_pyside6/    **残存的 Widgets 代码**（迁移收尾后只剩 12 个模块）：
-               views/industry*（工业页控制器 + 计划表 + 产线助手 + 下线守卫）、
-               views/char_settings_*（人物设置页的纯逻辑/控件）、views/procurement_tab、
-               dialogs/industry_dialogs、splash_screen、sizing.py，
-               以及 icons.py 这个**转发器**（真身在 ui_qml/）
 ui_qml/        QML UI 层（**主 UI**）：
                shell_window.py=主窗口（QQuickView）+ qml/shell/=外壳（标题栏/导航/状态栏）
                qml/pages|dialogs|components/=页面与对话框；bridge/=Python↔QML 桥
                host.py=对话框用的 QQuickWidget 宿主；registry.py=页面登记与 PageSpec
-               models/ 与 workers/ = 两套 UI 共用的表格模型与取数线程；theme/registry.py = 主题 token 源
+               models/ 与 workers/ = 表格模型与取数线程；theme/registry.py = 主题 token 源
+               views/=残留的 Widgets 业务控制器（industry_view、procurement_tab、industry/…）
 tools/         独立初始化工具
 scripts/       维护脚本（migrate_split_db, gen_api_docs）
 tests/         测试
@@ -112,7 +107,7 @@ data/          运行时数据（settings, score_settings, char_config, terminol
 | 改生产计划 | `services/plan_service.py` + `services/repositories/plan_repository.py` + `plan_*.py` | `docs/dev/flows.md`（计划节） |
 | 改数据库 Schema | `services/schema_migrations.py`（迁移函数注册） | `docs/dev/schema-migration.md`；`docs/dev/data.md` |
 | 改数据导入（SDE/ESI） | `services/importers/get*.py`、`services/init_service.py` | `docs/dev/flows.md`（初始化节） |
-| 改 UI 页面/异步任务 | QML 页面 `ui_qml/qml/pages/…` + 桥 `ui_qml/bridge/…`；共用模型/线程 `ui_qml/models/…`、`ui_qml/workers/…` | `docs/dev/architecture.md`；`docs/dev/api-reference.md` |
+| 改 UI 页面/异步任务 | QML 页面 `ui_qml/qml/pages/…` + 桥 `ui_qml/bridge/…`；模型/线程 `ui_qml/models/…`、`ui_qml/workers/…`；残留 Widgets 控制器 `ui_qml/views/…` | `docs/dev/architecture.md`；`docs/dev/api-reference.md` |
 | 改外壳（标题栏/导航/状态栏） | `ui_qml/shell_window.py` + `ui_qml/qml/shell/…` | `docs/dev/ui-blueprint.md`（区域命名） |
 | 看界面实际效果 | `scripts/shell_snapshot.py`（QML 外壳，`--real` 出真窗口图） | 见下「界面感知」 |
 | 查/改 EVE 术语 | `data/terminology.json` + `services/terminology.py` | `docs/dev/glossary.md` |
@@ -142,7 +137,7 @@ python scripts/shell_snapshot.py --page industry # 切到某页再拍
 每次进入计划模式写实现计划，`ExitPlanMode` 前必须自检，并把结论写进计划文件：
 
 1. **架构符合性** — 改动静点是否符合「架构」分层与「铁律」？是否绕过组合根/迁移机制/主题取色/术语中心？
-2. **可复用性** — 是否已搜过 `core/` `domain/` `services/` `ui_pyside6/` 确认无现成实现？有没有复制粘贴已有逻辑？
+2. **可复用性** — 是否已搜过 `core/` `domain/` `services/` `ui_qml/` 确认无现成实现？有没有复制粘贴已有逻辑？
 3. **隐患** — 会留下哪些技术债（无测试覆盖的关键路径/隐藏分支/破坏既有行为/并发与性能/迁移遗漏）？如何消除或显式声明接受？
 4. **更优解** — 有无更简替代？为什么不用这个替代？本方案的取舍是什么？
 

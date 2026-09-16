@@ -4,7 +4,7 @@
 
 > 模块说明：
 
-把 `ui_pyside6` 的表格模型适配成 QML 可消费的形式。
+把 Widgets 版（原 `ui_pyside6`，已在批次 7.5 删除）的表格模型适配成 QML 可消费的形式。
 
 **这是所有表格迁移的样板。** QML 的 `TableView` 与 QWidgets 的 `QTableView`
 对模型的要求差两点，本模块就是补这两点：

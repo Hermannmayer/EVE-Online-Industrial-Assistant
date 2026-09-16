@@ -11,10 +11,6 @@ from core.container import get_container
 from core.logger import log
 from services.char_config_resolver import load_all_data
 from services.user_settings import get_price_settings
-from ui_pyside6.views.industry import (
-    PlanTable,
-)
-from ui_pyside6.views.industry.complete_plans_dialog import complete_plans
 from ui_qml.bridge.blueprint_dialog_bridge import (
     BlueprintRequirementsQmlDialog as BlueprintRequirementsDialog,
 )
@@ -25,6 +21,10 @@ from ui_qml.bridge.manufacturable_items_bridge import ManufacturableItemsQmlDial
 from ui_qml.bridge.materials_dialog_bridge import MaterialsSummaryQmlDialog as MaterialsSummaryDialog
 from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.bridge.output_dialog_bridge import OutputSummaryQmlDialog as OutputSummaryDialog
+from ui_qml.views.industry import (
+    PlanTable,
+)
+from ui_qml.views.industry.complete_plans_dialog import complete_plans
 from ui_qml.workers.industry_page_workers import (
     IndustryDataWorker,
     PlanPriceRefreshWorker,
@@ -664,7 +664,7 @@ class IndustryPage(QObject):
 
     def open_procurement(self):
         """采购小助手：非模态独立窗口（单实例复用，可置顶，不阻塞主界面）。"""
-        from ui_pyside6.views.procurement_tab import ProcurementDialog
+        from ui_qml.views.procurement_tab import ProcurementDialog
 
         w = getattr(self, "_procurement", None)
         if w is None:
@@ -735,7 +735,7 @@ class IndustryPage(QObject):
 
         功能按钮（`char_name=None`）与计划表行右键（带人物名）共用这一条路径。
         """
-        from ui_pyside6.views.industry.production_launcher import ProductionLauncher
+        from ui_qml.views.industry.production_launcher import ProductionLauncher
 
         w = getattr(self, "_launcher", None)
         if w is None:

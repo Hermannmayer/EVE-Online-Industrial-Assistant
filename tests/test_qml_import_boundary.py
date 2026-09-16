@@ -18,12 +18,13 @@ _QML_DIR = _REPO / "ui_qml"
 
 #: 允许清单：相对 `ui_qml/` 的路径 → 允许它 import 的 `ui_pyside6` 子模块。
 #:
-#: 现在只剩一条：工业页的 **Widgets 控制器**（`IndustryPage`）—— 注册表页工厂要它
-#: 提供 QML 宿主，而它自己也还兼着「QML 加载失败时的回退页」。删它必须等批次 6.2
-#: 外壳替换，所以是**已知的、有期限的**例外，不是漏网之鱼。
-_ALLOWED: dict[str, set[str]] = {
-    "industry_page.py": {"ui_pyside6.views.industry_view"},
-}
+#: **批次 7.5 起已清空** —— 原唯一例外是工业页的 Widgets 控制器
+#: （`ui_qml/industry_page.py` → `ui_pyside6.views.industry_view`），7.5 把控制器搬进
+#: `ui_qml/views/`、整个 `ui_pyside6/` 删除之后它自然消失。清单陈旧时
+#: `test_the_allowlist_is_not_stale` 会先红，逼着把它划掉 —— 这条机制本批真的生效了。
+#:
+#: 文件本身**保留**：它继续挡「未来又长出 ui_qml → 已删包」的依赖。
+_ALLOWED: dict[str, set[str]] = {}
 
 
 def _imports_of(path: Path) -> set[str]:

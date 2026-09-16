@@ -43,15 +43,19 @@ class TestSetFontScale:
         theme.set_font_scale(0)
         assert theme.FONT_SCALE == 0.5
 
-    def test_stylesheet_font_sizes_follow_scale(self):
+    def test_font_scale_reaches_the_token_function(self):
+        """字号缩放的**可观察结果**是 `fs()` 的返回值。
+
+        原先这条断言的是 `get_stylesheet()` 拼出来的 QSS 字符串（「base 里有 13px、
+        scaled 里有 20px」）。批次 7.5 删掉 QSS 之后 `fs()` 才是唯一真源 ——
+        QML 侧每个字号都写成 `Theme.fs(n)`，断言它比断言一段已被删除的字符串更贴实际。
+        """
         theme.set_font_scale(1.0)
-        base = theme.get_stylesheet()
+        assert theme.fs(13) == 13, "scale=1.0 时 `fs` 应当恒等"
+
         theme.set_font_scale(1.5)
-        scaled = theme.get_stylesheet()
-        assert base != scaled
-        assert "font-size: 13px" in base
-        assert "font-size: 20px" in scaled
-        assert "font-size: 13px" not in scaled
+        assert theme.fs(13) == 20
+        assert theme.fs(13) != 13, "缩放没传导到 token 函数"
 
 
 class TestApplyThemeSafety:

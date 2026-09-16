@@ -989,12 +989,12 @@ class TestCompletePlansCoordinator:
         from types import SimpleNamespace
 
         container = SimpleNamespace(db=user_env.db, scoring_service=lambda: user_env.scoring)
-        monkeypatch.setattr("ui_pyside6.views.industry.complete_plans_dialog.get_container", lambda: container)
+        monkeypatch.setattr("ui_qml.views.industry.complete_plans_dialog.get_container", lambda: container)
         return container
 
     def test_complete_to_hangar(self, user_env, monkeypatch):
         """下线到指定机库：更新 deposit_hangar_id 并入库"""
-        from ui_pyside6.views.industry.complete_plans_dialog import complete_plans
+        from ui_qml.views.industry.complete_plans_dialog import complete_plans
 
         self._patch_container(user_env, monkeypatch)
         pid = _insert_plan(user_env.db, status="ready", runs=2, parallels=1, deposit_hangar_id=None)
@@ -1008,7 +1008,7 @@ class TestCompletePlansCoordinator:
 
     def test_no_auto_deposit(self, user_env, monkeypatch):
         """hangar_id=-1（不自动入库）→ deposit 置 NULL，仍完成但不入库"""
-        from ui_pyside6.views.industry.complete_plans_dialog import complete_plans
+        from ui_qml.views.industry.complete_plans_dialog import complete_plans
 
         self._patch_container(user_env, monkeypatch)
         pid = _insert_plan(user_env.db, status="ready", runs=2, parallels=1, deposit_hangar_id=1)

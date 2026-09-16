@@ -24,7 +24,7 @@ from core.hot_reload import clear_trigger, write_trigger
 from core.single_instance import try_lock, unlock
 
 ROOT = Path(__file__).parent.resolve()
-WATCH_DIRS = ["core", "services", "ui_pyside6", "ui_qml", "."]
+WATCH_DIRS = ["core", "services", "ui_qml", "."]
 WATCH_EXTS = (".py", ".qss", ".ui", ".qml")
 # 只监听应用运行相关代码。"." 递归覆盖整个仓库，必须排除：
 #   .claude/  — agent 的工作树/会话数据（改它们无需重启应用）

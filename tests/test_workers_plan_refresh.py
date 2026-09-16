@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 from PySide6.QtCore import QThread
 
-from ui_pyside6.views.industry_view import PlanPriceRefreshWorker
+from ui_qml.views.industry_view import PlanPriceRefreshWorker
 
 pytestmark = pytest.mark.ui
 
@@ -16,7 +16,7 @@ class TestPlanPriceRefreshWorker:
         w = PlanPriceRefreshWorker(type_ids={1, 2, 3})
         assert isinstance(w, QThread)
 
-    @patch("ui_pyside6.views.industry_view.PlanPriceRefreshWorker._fetch_and_save")
+    @patch("ui_qml.views.industry_view.PlanPriceRefreshWorker._fetch_and_save")
     def test_run_emits_finished_on_success(self, mock_fetch, qapp):
         """run() 成功拉取后通过 finished 信号返回成功消息"""
         mock_fetch.return_value = 5
@@ -34,7 +34,7 @@ class TestPlanPriceRefreshWorker:
         assert received[0][0] is True  # success
         assert "5" in received[0][1]
 
-    @patch("ui_pyside6.views.industry_view.PlanPriceRefreshWorker._fetch_and_save")
+    @patch("ui_qml.views.industry_view.PlanPriceRefreshWorker._fetch_and_save")
     def test_run_emits_finished_on_failure(self, mock_fetch, qapp):
         """run() 遇到异常时通过 finished 信号返回失败消息"""
         mock_fetch.side_effect = RuntimeError("ESI 连接超时")

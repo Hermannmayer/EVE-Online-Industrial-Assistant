@@ -151,7 +151,7 @@ class TestPlanTableIntegration:
         """
         import importlib.util
 
-        assert importlib.util.find_spec("ui_pyside6.views.industry.plan_table_delegate") is None
+        assert importlib.util.find_spec("ui_qml.views.industry.plan_table_delegate") is None
         from ui_qml.models.plan_qml_model import PlanQmlModel
 
         model = PlanQmlModel([dict(self.SAMPLE_PLANS[0], profit=100.0)])

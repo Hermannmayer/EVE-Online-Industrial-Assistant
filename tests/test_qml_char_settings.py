@@ -16,7 +16,7 @@ import pytest
 
 import ui_qml.bridge.char_settings_bridge as csb
 from core.char_settings_common import SKILL_CATEGORIES, TRADE_HUBS
-from ui_pyside6 import icons
+from ui_qml import icons
 
 pytestmark = pytest.mark.ui
 

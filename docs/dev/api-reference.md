@@ -69,8 +69,9 @@
 
 ## UI 数据模型（ui_qml/models/）
 
-> 这些表模型**两套 UI 共用**：QML 页面读 `*_qml_model.py` 适配层，未迁移的
-> Widgets 视图直接读基类。原先在 `ui_pyside6/models/`，批次 6.0 迁来。
+> 这些表模型是 QML 页面与残留 Widgets 控制器共用的基础模型：QML 侧读
+> `*_qml_model.py` 适配层。原先在 `ui_pyside6/models/`，批次 6.0 迁来
+> （`ui_pyside6/` 包已在批次 7.5 整个删除）。
 
 | 模块 | 说明 |
 |------|------|
@@ -111,46 +112,20 @@
 
 ## UI 页面概览
 
-> 以下为 UI 层页面模块概览，详细签名请直接查看源码。
+> UI 主体是 QML（页面在 `ui_qml/qml/pages/`，Python 桥在 `ui_qml/bridge/`），
+> 以下只列**仍在 Python 侧**的视图模块概览，详细签名请直接查看源码。
 
-### views/query/
+### views/（残留的 Widgets 业务控制器）
 
 | 文件 | 功能 |
 |------|------|
-| `query_page.py` | 物品查询主页面 |
-| `query_search.py` | 搜索组件 |
-| `query_order_popup.py` | 深层次订单弹窗 |
-| `query_chart.py` | 价格走势图 |
+| `ui_qml/views/industry_view.py` | 工业制造页控制器（页面「5 区布局」的样板） |
+| `ui_qml/views/procurement_tab.py` | 采购页控制器 |
 
 ### views/industry/
 
-> 界面主体已迁到 QML（`ui_qml/qml/pages/IndustryPage.qml`、`PlanTablePane.qml`），
-> 这里只剩业务逻辑与尚未迁移的 Widgets 对话框。
-
 | 文件 | 功能 |
 |------|------|
-| `plan_table.py` | 生产计划表格的业务逻辑（21 列；视图是 `ui_qml/qml/pages/PlanTablePane.qml`） |
-| `plan_table_constants.py` | 列号与列常量 |
-| `parent_decompose_dialog.py` | 母项拆解对话框（Widgets，未迁移） |
-| `complete_plans_dialog.py` | 下线落库与「发明结果回填」的编排（不再是 QDialog） |
-| `complete_guard.py` | 四条下线入口共用的「蓝图流程不足」确认 |
-| `production_launcher.py` | 生产启动器 |
-
-### views/inventory/
-
-| 文件 | 功能 |
-|------|------|
-| `inventory_page.py` | 仓库主页面 |
-| `hangar_tab.py` | 机库 Tab |
-| `blueprint_tab.py` | 蓝图管理 Tab |
-| `blueprint_import_worker.py` | 蓝图批量导入 |
-| `inventory_helpers.py` | 辅助函数 |
-| `review_dialog.py` | 入库审核对话框 |
-
-### views/compare/
-
-| 文件 | 功能 |
-|------|------|
-| `compare_dialog.py` | 物品对比对话框 |
-| `compare_chart.py` | 对比图表 |
-| `compare_models.py` | 对比数据模型 |
+| `ui_qml/views/industry/plan_table.py` | 生产计划表格的业务逻辑（21 列；视图是 `ui_qml/qml/pages/PlanTablePane.qml`） |
+| `ui_qml/views/industry/production_launcher.py` | 产线启动小助手（独立工具窗） |
+| `ui_qml/views/industry/complete_plans_dialog.py` | 下线落库与「发明结果回填」的编排（不再是 `QDialog`） |

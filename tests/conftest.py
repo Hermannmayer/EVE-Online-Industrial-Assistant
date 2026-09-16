@@ -509,7 +509,7 @@ def industry_page(main_window):
     已删），渲染面由外壳决定。需要渲染 `IndustryPage.qml` 的用例得自己造宿主
     （`ui_qml.host.PageHost`，或外壳的 `ui_qml.registry.build_qml_page`）。
     """
-    from ui_pyside6.views.industry_view import IndustryPage
+    from ui_qml.views.industry_view import IndustryPage
 
     page = IndustryPage(main_window)
     yield page

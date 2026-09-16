@@ -50,7 +50,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["core", "services", "tools", "ui_pyside6", "ui_qml"]
+known-first-party = ["core", "services", "tools", "ui_qml"]
 
 [tool.ruff.format]
 quote-style = "double"

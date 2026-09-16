@@ -36,7 +36,7 @@ adj_price = pricing.get_adjusted_price(type_id=34)
 
 ### 价格走势图
 
-查询页面（`views/query/`）支持价格走势图功能：
+查询页面（QML `ui_qml/qml/pages/QueryPage.qml` + `ui_qml/bridge/price_chart_bridge.py`）支持价格走势图功能：
 
 - 从订单弹窗 → 点击「走势图」按钮
 - 基于 `services/price_history.py` 的历史价格缓存
