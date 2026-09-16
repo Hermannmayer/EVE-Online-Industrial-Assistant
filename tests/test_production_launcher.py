@@ -13,6 +13,7 @@ import pytest
 from PySide6.QtCore import QObject
 
 import services.plan_execution as plan_execution
+from tests.clipboard_wait import wait_for_clipboard
 from tests.qml_click import press_move_release, spin
 
 pytestmark = pytest.mark.ui
@@ -330,8 +331,6 @@ class TestProductionLauncher:
         """复制蓝图名进剪贴板（原向导测试删除后由本例接管该覆盖）。"""
         from types import SimpleNamespace
 
-        from PySide6.QtWidgets import QApplication
-
         w, pl = _make_launcher(qapp, monkeypatch)
         try:
             monkeypatch.setattr(pl, "get_container", lambda: SimpleNamespace(db=None))
@@ -340,7 +339,7 @@ class TestProductionLauncher:
                 lambda plan, db=None: "渡鸦级蓝图",
             )
             w._copy_blueprint(1)
-            assert QApplication.clipboard().text() == "渡鸦级蓝图"
+            assert wait_for_clipboard("渡鸦级蓝图") == "渡鸦级蓝图"
             assert "渡鸦级蓝图" in w.feedback_text()
 
             # 无蓝图信息 → 给反馈而不是静默

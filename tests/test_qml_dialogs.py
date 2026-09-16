@@ -20,6 +20,7 @@ from PySide6.QtCore import QEventLoop, QObject, QTimer, QtMsgType, Signal, qInst
 from PySide6.QtGui import qAlpha
 
 import ui_qml.theme.registry as theme
+from tests.clipboard_wait import wait_for_clipboard
 
 pytestmark = pytest.mark.ui
 
@@ -294,7 +295,6 @@ def test_char_usage_colours_by_load(qapp, monkeypatch):
 
 def test_materials_copy_row_and_copy_all(materials_factory):
     """行内复制「名称 + 需购量」，一键复制走 `名称* 数量`（与原版同一格式）。"""
-    from PySide6.QtWidgets import QApplication
 
     dialog = materials_factory()
     try:
@@ -302,11 +302,11 @@ def test_materials_copy_row_and_copy_all(materials_factory):
         assert bridge.hasActionColumn is True
         assert bridge.topActionText == "一键复制全部"
         bridge.copyRow(0)
-        assert QApplication.clipboard().text() == "三钛合金\t800"
+        assert wait_for_clipboard("三钛合金\t800") == "三钛合金\t800"
         assert "已复制" in bridge.error
 
         bridge.topAction()
-        assert QApplication.clipboard().text() == "三钛合金* 800"
+        assert wait_for_clipboard("三钛合金* 800") == "三钛合金* 800"
         assert "1 种待采购材料" in bridge.error
     finally:
         dialog.deleteLater()

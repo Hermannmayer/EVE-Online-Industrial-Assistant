@@ -339,3 +339,37 @@ def test_shutdown_hook_reaches_page_controllers(shell, monkeypatch):
     shell._stop_running_threads()
     expected = {k for k, p in shell._pages.items() if p.hooks is not None}
     assert set(called) == expected, f"关机钩子没覆盖到全部页面：{sorted(expected - set(called))}"
+
+
+# ── 7. 主题监听器在「窗口已销毁」时自己收敛 ────────────────────
+
+
+def test_theme_change_after_the_window_is_destroyed_is_harmless(app, mock_db, monkeypatch):
+    """窗口**没走 `closeEvent` 就被销毁**时，切主题不许把栈刷进日志。
+
+    回归背景：`closeEvent` 会注销主题监听器，但那条路只覆盖正常关闭。测试与截图工具里
+    大量「建窗后直接 `deleteLater()`、从不 `close()`」，于是监听器还活着、窗口的 C++ 对象
+    已经没了 —— 下一次 `apply_theme` 就在 `_sync_window_color` 的 `setColor` 上撞
+    `RuntimeError: Internal C++ object already deleted`，日志成片刷「主题监听器回调失败」
+    （真机连跑几次快照能刷出十几条）。
+
+    这里验的是**行为**而不是日志文本：切一次主题之后，那条已经没救的监听器应当被注销掉。
+    """
+    from PySide6.QtCore import QEvent
+
+    from ui_qml.theme import registry as theme
+    from ui_qml.theme.registry import apply_theme
+
+    monkeypatch.setattr(ShellWindow, "_init_price_check", lambda self: None)
+    win = ShellWindow()
+    before = len(theme._theme_listeners)
+
+    win.deleteLater()
+    # ⚠️ 必须 sendPostedEvents 才真删：`processEvents()` 在嵌套层级不匹配时不处理
+    # DeferredDelete（本仓在 `PageHost` 那边踩过同一条）
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    apply_theme("light")  # 不许抛
+
+    assert len(theme._theme_listeners) < before, "已销毁窗口的监听器没有被注销，下次切主题还会再撞一次"
+    del win

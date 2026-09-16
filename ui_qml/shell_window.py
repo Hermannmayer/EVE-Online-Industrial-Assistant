@@ -368,9 +368,26 @@ class ShellWindow(QQuickView):
             self.setColor(Qt.GlobalColor.transparent)
 
     def _on_theme_changed(self) -> None:
-        self._sync_window_color()
-        self._apply_window_backdrop()
-        self._bridge.notify()
+        """主题切换时同步窗口。**必须容忍「自己已经被销毁」**。
+
+        `closeEvent` 会注销这条监听器，但那条路只覆盖「正常关闭」。**没走 `closeEvent`
+        就被销毁**的情况拦不住 —— 测试与截图工具里大量存在（建窗后直接 `deleteLater()`，
+        从不 `close()`）。那种情况下监听器还活着、窗口的 C++ 对象已经没了，而下一次
+        `apply_theme` 就会在 `setColor` 上撞 `RuntimeError: Internal C++ object already
+        deleted`，日志成片刷「主题监听器回调失败」。
+
+        所以这里接住它并**顺手注销**：一条已经没救的监听器，不该每次切主题都重撞一遍。
+        用 debug 而不是 warning 记一笔 —— 这是已知且无害的收尾路径，不是需要用户注意的故障。
+        """
+        try:
+            self._sync_window_color()
+            self._apply_window_backdrop()
+            self._bridge.notify()
+        except RuntimeError:
+            # 这三个调用里唯一会抛 RuntimeError 的情形就是「底层 C++ 对象已被销毁」，
+            # 而 PySide 的包装器还活着（弱引用因此尚未失效，剪除逻辑够不到它）。
+            log.debug("窗口已销毁，注销主题监听器")
+            theme.remove_theme_listener(self._on_theme_changed)
 
     def showEvent(self, event: Any) -> None:
         super().showEvent(event)  # type: ignore[arg-type]

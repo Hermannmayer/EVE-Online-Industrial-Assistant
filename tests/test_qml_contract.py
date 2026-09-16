@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QEventLoop, Qt, QTimer, QtMsgType, qInstallMessageHandler
 
+from tests.clipboard_wait import wait_for_clipboard
 from tests.qml_click import press_move_release
 from ui_qml.models.contract_qml_models import (
     CONTRACT_ROLE_NAMES,
@@ -231,11 +232,10 @@ def test_menu_state_reports_validity(bridge):
 
 @pytest.mark.ui
 def test_copy_contract_id(bridge, qapp):
-    from PySide6.QtWidgets import QApplication
 
     bridge._on_contracts_loaded([_contract(cid=42)])
     bridge.copyContractId(0)
-    assert QApplication.clipboard().text() == "42"
+    assert wait_for_clipboard("42") == "42"
 
 
 @pytest.mark.ui

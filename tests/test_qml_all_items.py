@@ -13,6 +13,7 @@ import pytest
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QGuiApplication
 
+from tests.clipboard_wait import wait_for_clipboard
 from ui_qml.bridge import all_items_bridge as ai
 from ui_qml.models.all_items_models import BCOLS, MCOLS, TCOLS
 from ui_qml.workers.all_items_workers import JITA_RID
@@ -505,9 +506,9 @@ def test_row_info_and_clipboard(qapp):
         assert bridge.rowInfo(9)["valid"] is False, "越界行要报无效"
 
         bridge.copyName(0)
-        assert QGuiApplication.clipboard().text() == "渡鸦级"
+        assert wait_for_clipboard("渡鸦级") == "渡鸦级"
         bridge.copyId(0)
-        assert QGuiApplication.clipboard().text() == "2001"
+        assert wait_for_clipboard("2001") == "2001"
     finally:
         dlg.deleteLater()
 
@@ -520,11 +521,13 @@ def test_click_cell_selects_and_copies(qapp):
 
         bridge.clickCell(0, 3)  # 买价列
         assert bridge.selectedRow == 0
-        assert QGuiApplication.clipboard().text() == "100.0", "复制的是原始值，不是千分位显示串"
+        assert wait_for_clipboard("100.0") == "100.0", "复制的是原始值，不是千分位显示串"
 
         QGuiApplication.clipboard().setText("未改动")
+        assert wait_for_clipboard("未改动") == "未改动", "前置：哨兵值没写进剪贴板"
         bridge.clickCell(0, 0)  # 图标列没有值
-        assert QGuiApplication.clipboard().text() == "未改动", "空值不覆盖剪贴板"
+        # 给「万一被空值覆盖」留出落地窗口再断言 —— 剪贴板是异步的，立刻读等于没测
+        assert wait_for_clipboard("未改动", timeout_ms=300) == "未改动", "空值不覆盖剪贴板"
     finally:
         dlg.deleteLater()
 

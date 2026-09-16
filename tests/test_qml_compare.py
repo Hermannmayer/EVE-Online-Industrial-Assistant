@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtGui import QGuiApplication
 
+from tests.clipboard_wait import wait_for_clipboard_prefix
 from ui_qml.bridge.compare_bridge import CompareQmlDialog
 from ui_qml.models.compare_qml_model import CompareQmlModel
 
@@ -448,12 +448,12 @@ def test_row_info_and_copy(qapp):
         assert bridge.rowInfo(9)["valid"] is False
 
         bridge.copyRow(0)
-        clipboard = QGuiApplication.clipboard().text()
+        clipboard = wait_for_clipboard_prefix("渡鸦级\t")
         assert clipboard.startswith("渡鸦级\t"), "行复制该是制表符分隔、首列是物品名"
         assert "已复制行数据到剪贴板" in bridge.statusText
 
         bridge.copyAllCsv()
-        clipboard = QGuiApplication.clipboard().text()
+        clipboard = wait_for_clipboard_prefix("物品,")
         assert clipboard.startswith("物品,"), "整表复制该带表头且是 CSV"
         assert "已复制 2 行数据到剪贴板" in bridge.statusText
     finally:
