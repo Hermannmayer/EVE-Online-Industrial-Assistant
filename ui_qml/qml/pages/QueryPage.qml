@@ -34,6 +34,14 @@ Item {
     //: 当前行（右键菜单与高亮用）
     property int currentRow: -1
 
+    /* 页面被销毁（切页 / 关窗 / 退出）时停掉在途取数线程。
+     *
+     * 详情面板选中一行就会起 ESI 订单线程（超时 30 秒）。不停的话，Qt 会在进程退出时
+     * 去析构一个**还在跑**的 QThread —— 那是直接崩、且输出里连 traceback 都没有
+     * （见 `QueryDetailBridge.shutdown` 的说明）。同一条也对仪表盘的定时器生效。 */
+    Component.onDestruction: if (page.query)
+        page.query.shutdown()
+
     // 整页不透明底（宿主是透明清屏的 QQuickWidget，见 IndustryPage 的同款说明）
     Rectangle {
         anchors.fill: parent

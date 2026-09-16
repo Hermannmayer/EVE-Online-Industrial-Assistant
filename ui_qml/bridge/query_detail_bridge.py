@@ -45,6 +45,11 @@ _ORDER_CACHE_TTL = 300
 
 _DEFAULT_HUB_INDEX = 0
 _DEFAULT_MATERIAL_QTY = 1
+#: `shutdown()` 等线程收尾的上限（毫秒）。订单是两次 HTTP，取不到就等到这里为止。
+_SHUTDOWN_WAIT_MS = 1500
+#: 收尾不掉的在途线程**保活**在这里：绝不能让 Qt 在进程退出时析构一个还在跑的 QThread
+#: （那会直接崩）。它们已经没有任何引用方，进程退出时由操作系统回收。
+_ORPHANED_WORKERS: list = []
 
 
 def _resolve_color(token: str) -> str:
@@ -224,6 +229,31 @@ class QueryDetailBridge(QObject):
         self._load_materials()
         self._load_refine()
         self._load_orders(force=False)
+
+    @Slot()
+    def shutdown(self) -> None:
+        """停掉在途取数线程。**页面销毁（切页 / 关窗 / 退出）时必须调**。
+
+        为什么必须：订单走 ESI，`OrderFetchWorker` 正常几百毫秒、**超时 30 秒**，
+        而它是 `parent=self` 的 QThread。页面一销毁，Qt 就会去析构一个**还在跑**的线程
+        —— 那是直接崩，不是异常：实测「选中一行后进程退出」会以退出码 127 结束，
+        且**输出里连一行 traceback 都没有**（所以极难从现象反推）。
+
+        join 不掉时**解除父子关系并保活到进程退出**，而不是硬销毁：`terminate()` 会在
+        线程持有 GIL 时把主线程一起锁死（Windows 的 `TerminateThread` 语义），比泄漏更糟。
+        进程退出时操作系统会回收，泄漏一个已无引用的线程对象是可以接受的代价。
+        """
+        for attr in ("_order_worker", "_refine_worker"):
+            worker = getattr(self, attr, None)
+            setattr(self, attr, None)
+            if worker is None or not worker.isRunning():
+                continue
+            worker.requestInterruption()
+            if worker.wait(_SHUTDOWN_WAIT_MS):
+                continue
+            log.warning("取数线程 %s 未能在 %dms 内收尾，解除父子关系并保活到进程退出", attr, _SHUTDOWN_WAIT_MS)
+            worker.setParent(None)
+            _ORPHANED_WORKERS.append(worker)
 
     @Slot()
     def reloadOrders(self) -> None:

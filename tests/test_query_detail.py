@@ -481,3 +481,83 @@ def test_bridge_copy_price(qapp):
     assert bridge.copyPrice(0) == "1234.50"
     assert QApplication.clipboard().text() == "1234.50"
     assert bridge.copyPrice(1) == ""  # 无卖单
+
+
+# ════════════════════════════════════════════════════════════════
+#  shutdown（页面销毁时停线程 —— 这条曾经以「进程退出码 127」的形式炸过）
+# ════════════════════════════════════════════════════════════════
+
+
+class _FakeWorker:
+    """只记录被怎么对待的假线程。真线程要起 ESI，测试不该为「有没有停它」付这个代价。"""
+
+    def __init__(self, *, running: bool, stops: bool = True) -> None:
+        self.running = running
+        self.stops = stops
+        self.interrupted = False
+        self.waited = 0
+        self.parent_cleared = False
+
+    def isRunning(self) -> bool:
+        return self.running
+
+    def requestInterruption(self) -> None:
+        self.interrupted = True
+
+    def wait(self, ms: int) -> bool:
+        self.waited = ms
+        if self.stops:
+            self.running = False
+        return self.stops
+
+    def setParent(self, parent) -> None:
+        self.parent_cleared = parent is None
+
+
+def _bare_bridge():
+    """建一个**不替换任何取数**的详情桥（QObject 需要 QApplication，故走 ui 档）。
+
+    与上面的 `_make_bridge(monkeypatch)` 区分开：那个把四路取数都换成了记录桩，
+    这里要的是真桥，好验证 `shutdown()` 对真实线程属性的处理。
+    """
+    from ui_qml.bridge.query_detail_bridge import QueryDetailBridge
+
+    return QueryDetailBridge(None)
+
+
+@pytest.mark.ui
+def test_shutdown_stops_a_running_worker():
+    b = _bare_bridge()
+    w = _FakeWorker(running=True, stops=True)
+    b._order_worker = w
+
+    b.shutdown()
+
+    assert w.interrupted is True
+    assert w.waited > 0
+    assert b._order_worker is None
+
+
+@pytest.mark.ui
+def test_shutdown_orphans_a_worker_that_will_not_stop():
+    """join 不掉的线程**解除父子关系并保活**，绝不让 Qt 去析构一个还在跑的 QThread。"""
+    from ui_qml.bridge import query_detail_bridge as mod
+
+    b = _bare_bridge()
+    w = _FakeWorker(running=True, stops=False)
+    b._order_worker = w
+
+    b.shutdown()
+
+    assert w.parent_cleared is True
+    assert w in mod._ORPHANED_WORKERS, "必须保活，否则进程退出时崩"
+    b._order_worker = None
+    mod._ORPHANED_WORKERS.clear()
+
+
+@pytest.mark.ui
+def test_shutdown_ignores_idle_and_absent_workers():
+    b = _bare_bridge()
+    b._order_worker = _FakeWorker(running=False)
+    b._refine_worker = None
+    b.shutdown()  # 不起线程、不抛异常

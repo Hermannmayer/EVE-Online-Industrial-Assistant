@@ -33,8 +33,14 @@ class OrderFetchWorker(QThread):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             buy, sell = loop.run_until_complete(self._fetch())
+            # 被请求中断（页面销毁/退出）时**不要**再发信号：那时接收方的 C++ 对象
+            # 可能已经析构，`emit` 会踩空。结果本身就是不要了。
+            if self.isInterruptionRequested():
+                return
             self.finished_signal.emit(self._type_id, buy, sell)
         except Exception as e:
+            if self.isInterruptionRequested():
+                return
             self.error_signal.emit(self._type_id, str(e))
         finally:
             if loop is not None:
@@ -43,11 +49,21 @@ class OrderFetchWorker(QThread):
     async def _fetch(self):
         from services.client import APIClient
 
+        # 两次请求之间留检查点：`requestInterruption()` 之后本线程会尽快收尾，
+        # 让 `QueryDetailBridge.shutdown()` 的 `wait()` 能在毫秒级成功 ——
+        # 没有检查点就只能等整个 HTTP 超时（30s），而那期间进程退出会崩。
+        if self.isInterruptionRequested():
+            return [], []
+
         async with APIClient(timeout=30) as client:
             url = f"{ESI_BASE_URL}/markets/{self._region_id}/orders/"
             buy_data = await client.fetch_raw(f"{url}?type_id={self._type_id}&order_type=buy") or []
+            if self.isInterruptionRequested():
+                return [], []
             sell_data = await client.fetch_raw(f"{url}?type_id={self._type_id}&order_type=sell") or []
 
+        if self.isInterruptionRequested():
+            return [], []
         buy_orders = sorted(buy_data, key=lambda o: o["price"], reverse=True)[:5]
         sell_orders = sorted(sell_data, key=lambda o: o["price"])[:5]
 

@@ -65,7 +65,7 @@ _FIELD_ALIASES: dict[str, set[str]] = {
     "location_name": {"stationname", "location", "locationname", "位置", "地点"},
     "type_id": {"typeid", "itemid", "物品id"},
     "type_name": {"typename", "item", "itemname", "物品名称", "名称", "物品"},
-    "issued": {"issued", "issueddate", "时间", "发布日期"},
+    "issued": {"issued", "issueddate", "issuedate", "issuetime", "时间", "发布日期"},
     "duration": {"duration", "有效期"},
 }
 _ALIAS_TO_FIELD: dict[str, str] = {
@@ -85,8 +85,63 @@ _CURRENCY_RE = re.compile(r"(?i)(isk|星币)$")
 
 
 def _norm_col(name: str) -> str:
-    """归一化列名：小写 + 去空格/下划线（大小写与下划线不敏感）。"""
-    return re.sub(r"[\s_]+", "", name.strip().lower())
+    """归一化列名：小写 + 去空格/下划线（大小写与下划线不敏感）。
+
+    **必须一起去掉 BOM**：真实导出文件是 **UTF-8 带 BOM** 的，用 ``utf-8`` 读时
+    首列名会变成 ``\\ufefforderID``，认不出 → 整份文件退化成启发式解析（不报错，只是错）。
+    """
+    return re.sub(r"[\s_]+", "", name.strip().lstrip("﻿").lower())
+
+
+#: 游戏把本地化的名字（星域/星系/空间站）包成
+#: ``<localized hint="Jita IV - Moon 4 - …">中文名*</localized>``。
+#: 直接把这段 markup 存进库会让「位置」列显示成一串标签，所以取值时统一拆掉。
+_LOCALIZED_RE = re.compile(r"<localized[^>]*>(.*?)</localized>", re.IGNORECASE | re.DOTALL)
+_HINT_RE = re.compile(r'hint="([^"]*)"', re.IGNORECASE)
+
+
+def _clean_value(raw: str) -> str:
+    """拆掉 ``<localized>`` 包装并去掉值尾部那个占位 ``*``。
+
+    优先取标签**内**的文本（那是游戏界面里显示的名字）；没有内文本时退回 ``hint``
+    （英文名）。两者都没有就原样返回。
+    """
+    text = (raw or "").strip()
+    if "<localized" not in text.lower():
+        return text
+    inner = _LOCALIZED_RE.search(text)
+    if inner:
+        body = inner.group(1).strip()
+        if body:
+            return body.rstrip("*").strip()
+    hint = _HINT_RE.search(text)
+    if hint:
+        return hint.group(1).strip()
+    return text
+
+
+#: 导出文件名里认得出的标记（小写比较）。**中文标记不能少**：国服客户端导出的文件名
+#: 就是中文的（``个人订单-2026.09.16 1232.txt`` / ``军团订单-…``），只认 ``order``
+#: 会让国服用户永远找不到自己刚导出的文件，而且不报任何错。
+_NAME_MARKERS = ("order", "订单")
+
+
+def read_export_text(path: str | Path) -> str:
+    """读导出文件 → 文本。**按 BOM/编码逐档尝试**。
+
+    真实文件是 **UTF-8 (BOM)**；但不同客户端/版本出现过 UTF-16 与本地代码页，
+    所以按 ``utf-8-sig`` → ``utf-16`` → ``gbk`` → ``utf-8(errors=replace)`` 依次试，
+    以「能解码出含逗号的多行文本」为成功判据，全失败时返回最后一档的尽力结果。
+    """
+    raw = Path(path).read_bytes()
+    for enc in ("utf-8-sig", "utf-16", "gbk"):
+        try:
+            text = raw.decode(enc)
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+        if "," in text or "\t" in text:
+            return text
+    return raw.decode("utf-8", errors="replace")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -181,6 +236,7 @@ def _header_mapping(cols: list[str]) -> dict[int, str]:
 
 
 def _assign(row: dict, field: str, val: str) -> None:
+    val = _clean_value(val)
     if val == "":
         return
     if field in ("location_name", "type_name", "issued"):
@@ -202,6 +258,12 @@ def _assign(row: dict, field: str, val: str) -> None:
             row["duration"] = d
         return
     i = _to_int(val)
+    if i is None:
+        # 真实导出里「剩余量」是**浮点串**（实测 `volRemaining` 为 `340.0`），而 `_to_int`
+        # 见到小数点就返回 None —— 该列会**静默变成 0**（挂单列表显示「剩余 0」）。
+        # 这里按字段语义允许取整；启发式路径仍要求纯整数，所以不动 `_to_int` 本身。
+        f = _to_float(val)
+        i = int(f) if f is not None else None
     if i is not None:
         row[field] = i
 
@@ -360,7 +422,13 @@ def _safe_mtime(path: Path) -> float:
 def find_latest_export(directory: str | None = None) -> str | None:
     """返回目录下最新的订单导出文件路径（按 mtime）；没有则 None。
 
-    仅匹配名字含 ``order``（不分大小写）且后缀为 ``.txt``/``.csv`` 的文件。
+    匹配名字含下列任一标记（不分大小写）且后缀为 ``.txt``/``.csv`` 的文件：
+    ``order`` / ``订单``。
+
+    ⚠️ **中文标记不能少**：国服客户端的导出文件名就是中文的，实测为
+    ``个人订单-2026.09.16 1232.txt``（英文客户端是 ``My Orders - …``）。只认 ``order``
+    会让国服用户永远找不到自己刚导出的文件，而且**不报任何错**（只是「没找到」）。
+
     目录不存在 → None，不抛异常。``directory`` 为 None 时用默认导出目录。
     """
     if directory is None:
@@ -371,7 +439,7 @@ def find_latest_export(directory: str | None = None) -> str | None:
     candidates = [
         p
         for p in base.iterdir()
-        if p.is_file() and p.suffix.lower() in {".txt", ".csv"} and "order" in p.name.lower()
+        if p.is_file() and p.suffix.lower() in {".txt", ".csv"} and any(m in p.name.lower() for m in _NAME_MARKERS)
     ]
     if not candidates:
         return None

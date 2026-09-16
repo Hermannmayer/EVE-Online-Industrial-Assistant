@@ -235,6 +235,20 @@ class QueryBridge(QObject):
         self.selectionChanged.emit()
         self._clear_detail()
 
+    @Slot()
+    def shutdown(self) -> None:
+        """停掉两个子桥的在途取数线程。**页面被销毁时必须调**（见 `QueryDetailBridge.shutdown`）。
+
+        只处理**已经建出来**的子桥 —— 这里绝不能读 `self.detail` / `self.dashboard`
+        （那两个 getter 会把没用到过的子桥无谓地创建出来，连带 import 整条业务链）。
+        """
+        for sub in (self._detail_bridge, self._dash_bridge):
+            if sub is None:
+                continue
+            stop = getattr(sub, "shutdown", None)
+            if callable(stop):
+                stop()
+
     # ── 选项 ──────────────────────────────────────────────────
 
     regions = Property(list, lambda self: list(TRADE_HUBS), constant=True)

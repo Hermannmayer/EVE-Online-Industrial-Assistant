@@ -196,3 +196,93 @@ def test_find_latest_export_ignores_non_order_files(tmp_path):
     (tmp_path / "orders.txt").write_text("y", encoding="utf-8")
 
     assert find_latest_export(str(tmp_path)) == str(tmp_path / "orders.txt")
+
+
+# ════════════════════════════════════════════════════════════════
+#  国服客户端的**真实**导出格式（2026-09 实测样本）
+#
+#  样本来源：`Documents\EVE\logs\Marketlogs\个人订单-2026.09.16 1232.txt`
+#  四个与直觉不同的点，全是实测踩出来的：
+#    ① 文件是 **UTF-8 带 BOM**；② 位置名包在 `<localized hint="英文">中文</localized>` 里；
+#    ③ `volRemaining` 是**浮点串**（`340.0`）；④ 时间列叫 `issueDate` 而不是 `issued`。
+# ════════════════════════════════════════════════════════════════
+
+_REAL_HEADER = (
+    "orderID,typeID,charID,charName,regionID,regionName,solarSystemID,solarSystemName,"
+    "stationID,stationName,range,bid,price,volEntered,volRemaining,minVolume,issueDate,"
+    "orderState,duration,escrow,isCorp,accountID,accountOwnerID,accountKey,"
+)
+_REAL_ROW = (
+    '7422573405,3989,2115252966,Meyer Hermann,10000002,'
+    '<localized hint="The Forge">多美星域*</localized>,30000142,'
+    '<localized hint="Jita">吉他*</localized>,60003760,'
+    '<localized hint="Jita IV - Moon 4 - Caldari Navy Assembly Plant">吉他 IV - 卫星 4 - 加达里海军组装车间*</localized>,'
+    "32767,False,2183000.0,394,340.0,1,2026-09-16 12:00:43.000,0,90,0.0,True,102228901,98795184,1000,"
+)
+
+
+def test_real_client_export_is_parsed_field_by_field():
+    """国服真实导出：BOM + localized 包装 + 浮点剩余量 + issueDate 一次全中"""
+    orders, unparsed = parse_order_export("\ufeff" + _REAL_HEADER + "\n" + _REAL_ROW + "\n")
+
+    assert unparsed == 0, "真实格式不该有识别不出的行"
+    assert len(orders) == 1
+    o = orders[0]
+    assert o["order_id"] == 7422573405
+    assert o["type_id"] == 3989
+    assert o["is_buy"] == 0, "bid=False 是卖单"
+    assert o["price"] == 2183000.0
+    assert o["volume_total"] == 394
+    assert o["volume_remain"] == 340, "`volRemaining` 是浮点串（340.0），不能静默变 0"
+    assert o["location_id"] == 60003760
+    assert o["duration"] == 90
+    assert o["issued"] == "2026-09-16 12:00:43.000", "真实列名是 issueDate"
+
+
+def test_localized_wrapper_is_unwrapped_to_the_games_own_text():
+    """`<localized>` 拆成游戏里显示的中文名，而不是把整段标签存进库"""
+    orders, _ = parse_order_export(_REAL_HEADER + "\n" + _REAL_ROW)
+    assert orders[0]["location_name"] == "吉他 IV - 卫星 4 - 加达里海军组装车间"
+    assert "<localized" not in orders[0]["location_name"]
+
+
+def test_localized_without_inner_text_falls_back_to_hint():
+    raw = f"{_REAL_HEADER}\n7422573405,3989,1,x,10000002,,30000142,,60003760,<localized hint=\"Jita IV-4\"></localized>,1,False,5.0,1,1.0,1,2026-09-16 12:00:00,0,90,0,True,1,1,1000,"
+    orders, _ = parse_order_export(raw)
+    assert orders[0]["location_name"] == "Jita IV-4"
+
+
+def test_bom_prefixed_header_is_still_recognised():
+    """BOM 不能把首列名污染成 `\ufefforderID`，否则整份文件退化成启发式解析"""
+    without_bom = _REAL_HEADER + "\n" + _REAL_ROW
+    with_bom = "\ufeff" + without_bom
+    assert parse_order_export(with_bom) == parse_order_export(without_bom)
+
+
+def test_heuristic_path_still_requires_plain_integers(tmp_path):
+    """字段级的「浮点串当整数」放宽**不得**渗进启发式路径。
+
+    否则无表头时 `14730000.0`（价格）会被认成整数、挤掉真正的挂单量/剩余，
+    是「价格填到数量列」这类静默串列。
+    """
+    orders, _ = parse_order_export("三钛合金  14730000.0  340  2026-09-16 12:00:00")
+    assert orders[0]["price"] == 14730000.0
+    assert orders[0]["volume_remain"] != 14730000
+
+
+def test_find_latest_export_matches_chinese_filenames(tmp_path):
+    """国服导出文件名是中文的（个人订单 / 军团订单），只认 `order` 会永远找不到"""
+    (tmp_path / "个人订单-2026.09.16 1232.txt").write_text("x", encoding="utf-8")
+    assert find_latest_export(str(tmp_path)) == str(tmp_path / "个人订单-2026.09.16 1232.txt")
+
+
+def test_read_export_text_handles_bom_and_utf16(tmp_path):
+    from services.order_export import read_export_text
+
+    utf8_bom = tmp_path / "a.txt"
+    utf8_bom.write_bytes(b"\xef\xbb\xbf" + "订单ID,价格\n1,2".encode())
+    assert read_export_text(utf8_bom).lstrip("\ufeff").startswith("订单ID")
+
+    utf16 = tmp_path / "b.txt"
+    utf16.write_bytes("orderID,price\n1,2".encode("utf-16"))
+    assert "orderID" in read_export_text(utf16)

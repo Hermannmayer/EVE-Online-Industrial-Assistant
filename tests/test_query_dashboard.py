@@ -75,6 +75,13 @@ class _FakeOrderSvc:
         self.raws.append(raw)
         return [dict(r) for r in self.rows], self.unparsed
 
+    def read_export_text(self, path: str) -> str:
+        """读文件的编码分档（BOM/UTF-16）走**真实现**：假实现不该在这层分叉，
+        否则「测试里读得动、真环境读不动」这种差异就测不出来。"""
+        from services.order_export import read_export_text as real_read_export_text
+
+        return real_read_export_text(path)
+
 
 class _FakePlanExec:
     """替 `services.plan_execution`（桥只用到这四个入口）。"""
@@ -396,7 +403,7 @@ def test_axis_range_follows_visible_series(h):
     bridge = h.bridge()
     bridge.refresh()
 
-    def _spread() -> float:
+    def _spread():
         points = next(e for e in bridge.assetPlot["series"] if e["key"] == "total")["points"]
         ys = [point["y"] for point in points]
         return max(ys) - min(ys)
@@ -862,6 +869,17 @@ def test_init_does_not_touch_services(h):
     assert h.assets.snapshots == []
     assert bridge.occupancyRows == [] and bridge.quickRows == []
     assert bridge.statusText == "就绪"
+
+
+def test_construction_follows_query_bridge_wiring(h):
+    """`query_bridge` 的接法是 `QueryDashboardBridge(self)` —— 第一个位置参数是 shell，不是 parent。"""
+
+    class _FakeBridge:
+        _shell = None
+
+    bridge = QueryDashboardBridge(_FakeBridge())
+    assert bridge.statusText == "就绪"
+    assert bridge._host_widget() is None  # 拿不到真窗口时退化为无 parent，不抛
 
 
 def test_refresh_is_idempotent(h):

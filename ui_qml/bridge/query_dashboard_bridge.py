@@ -742,8 +742,10 @@ class QueryDashboardBridge(QObject):
 
         name = Path(str(path)).name
         try:
-            raw = Path(str(path)).read_text(encoding="utf-8", errors="replace")
-        except OSError:
+            # 走 `order_export.read_export_text`：真实导出是 **UTF-8 带 BOM**，
+            # 直接 `encoding="utf-8"` 读会让首列表头变成 `﻿orderID`、整份退化成启发式解析
+            raw = svc.read_export_text(path)
+        except (OSError, AttributeError):
             log.exception("订单导出文件读取失败 path=%s", path)
             self._status = f"订单导出文件读取失败：{name}"
             self.changed.emit()
@@ -764,6 +766,7 @@ class QueryDashboardBridge(QObject):
             return
 
         self._fill_location_names(records)
+        self._fill_type_names(records)
         imported_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
             self._write_orders(records, imported_at)
@@ -1026,7 +1029,7 @@ class QueryDashboardBridge(QObject):
         """
         by_line: list[dict] = []
         for line in _LINE_TYPES:
-            chars_detail = [
+            chars_detail: list[dict[str, Any]] = [
                 {
                     "name": char or "(未分配)",
                     "active": int(per_line.get(line, (0, 0))[0]),
@@ -1395,6 +1398,33 @@ class QueryDashboardBridge(QObject):
             found = names.get(int(record["location_id"]))
             if found and found[0]:
                 record["location_name"] = str(found[0])
+
+    def _fill_type_names(self, records: list[dict]) -> None:
+        """`type_name` 为空的，用 `type_id` 去 SDE（reference.db `item`）补中文名。
+
+        **必须补**：真实导出文件里只有 ``typeID``、**没有物品名列**（实测表头
+        ``orderID,typeID,charID,…``），不补的话「物品」整列是空的。
+        """
+        missing = {int(r["type_id"]) for r in records if not r["type_name"] and r["type_id"]}
+        if not missing:
+            return
+        names: dict[int, str] = {}
+        try:
+            with get_container().db.connect("ref") as conn:
+                marks = ",".join("?" * len(missing))
+                rows = conn.execute(
+                    f"SELECT type_id, zh_name FROM item WHERE type_id IN ({marks})", tuple(missing)
+                ).fetchall()
+            names = {int(r[0]): str(r[1] or "") for r in rows}
+        except sqlite3.Error:
+            log.exception("物品名补全失败 count=%s", len(missing))
+            return
+        for record in records:
+            if record["type_name"] or not record["type_id"]:
+                continue
+            found = names.get(int(record["type_id"]))
+            if found:
+                record["type_name"] = found
 
     @staticmethod
     def _order_cell_rows(records: Sequence[Mapping[str, Any]]) -> list[dict]:
