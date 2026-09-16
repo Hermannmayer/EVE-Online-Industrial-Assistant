@@ -97,6 +97,13 @@ class QmlDialog(QDialog):
         parent: QWidget | None = None,
         size: tuple[int, int] | None = None,
     ) -> None:
+        #: 只认 QWidget 父：`QDialog` 的 parent 参数收不下裸 `QObject`/`QWindow`
+        #: （本仓 6.1 踩过一次 —— `QMenu(self)` / `QMessageBox.about(self, ...)` 把
+        #: `QQuickView` 当 QWidget 父，运行时直接抛类型错）。批次 7.4 起工业页那串
+        #: 控制器的基类变成 `QObject`，`self` 传进来不再是 QWidget，所以在这里统一
+        #: 收敛成 `None`：**只是失去居中**，比每次调用点各判一次可靠。
+        if parent is not None and not isinstance(parent, QWidget):
+            parent = None
         super().__init__(parent)
         self._bridge = bridge
         #: 桥挂到宿主对话框名下：桥的寿命不超过对话框，且桥里 `self.parent()` 就是那个窗口。
