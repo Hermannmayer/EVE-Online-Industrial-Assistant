@@ -141,6 +141,22 @@ def _ids(w) -> list[int]:
     return [int(r["id"]) for r in w.row_view_models()]
 
 
+def _root(w):
+    """`press_move_release` 要的那个「既能 `findChild` 又能 `mapToItem` 的根」。
+
+    批次 7.4 起根元素是 `Window`（不再是 `Item`），它没有 `rootObject()`；而窗口的
+    `contentItem()` 也当不了这个根 —— 根是 `Window` 时，**声明出来的顶层 Item 的
+    QObject 父是窗口本身**，`parentItem` 才是 `contentItem`，于是从 `contentItem()`
+    往下 `findChild` 一个都找不到。所以落到列表区这个真正的 Item 祖先上
+    （它的场景坐标会被 `mapToItem` 往返抵消，取哪一层都一样准）。
+    """
+    from PySide6.QtQuick import QQuickItem
+
+    root = w._window.findChild(QQuickItem, "listArea")
+    assert root is not None, "LauncherWindow.qml 里找不到 objectName=listArea 的列表区"
+    return root
+
+
 def _row(w, plan_id: int) -> dict:
     """按计划 id 取行视图模型。"""
     hit: dict | None = next((r for r in w.row_view_models() if int(r["id"]) == plan_id), None)
@@ -197,7 +213,7 @@ class TestProductionLauncher:
     def test_constructs_and_builds_rows(self, qapp, monkeypatch):
         w, _ = _make_launcher(qapp, monkeypatch)
         try:
-            assert w._host.ok(), "LauncherWindow.qml 加载失败"
+            assert w._window is not None and _root(w) is not None, "LauncherWindow.qml 加载失败"
             assert len(w.row_view_models()) == 4  # 全部计划
             # 占用区渲染了 甲/乙 两行
             assert len(w.occupancy_rows()) >= 2
@@ -930,7 +946,7 @@ class TestLauncherRowMenuWiring:
         """整条链：桥发信号 → QML 的 `rowMenu` 真的打开，条目标志随之更新。"""
         w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(PARTIAL_PLAN), dict(READY_PLAN)])
         try:
-            menu = w._host.rootObject().findChild(QObject, "rowMenu")
+            menu = w._window.findChild(QObject, "rowMenu")
             assert menu is not None, "LauncherWindow.qml 里没有 objectName=rowMenu 的菜单"
 
             w._bridge.request_context_menu(201, True)
@@ -969,8 +985,8 @@ class TestLauncherRowClick:
             rows = w._bridge.rows
             assert len(rows) >= 4, "用例需要至少 4 行才能验证滚动中的点击"
             press_move_release(
-                w._host,
-                w._host.rootObject(),
+                w._window,
+                _root(w),
                 area_name="launcherClickArea",
                 row=3,
                 read_current=lambda: w._bridge.selectedId,

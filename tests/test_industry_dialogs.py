@@ -511,43 +511,50 @@ class TestCompleteGuard:
     """
 
     def test_no_shortfall_returns_false_without_asking(self, qapp, monkeypatch):
-        from ui_pyside6.views.industry import complete_guard
+        from ui_qml.bridge import complete_guard
 
         asked = []
         monkeypatch.setattr("services.plan_execution.binding_shortfall", lambda pid: None)
         monkeypatch.setattr(
-            complete_guard.QMessageBox,
-            "question",
-            lambda *a, **k: asked.append(True),  # type: ignore[func-returns-value]
+            complete_guard, "FMessageDialog", SimpleNamespace(question=lambda *a, **k: asked.append(True) or True)
         )
         result = complete_guard.confirm_bp_shortfall(None, [{"id": 1, "product_name": "电磁发生器"}])
         assert result is False
         assert asked == [], "无短板不该弹确认框"
 
     def test_shortfall_yes_allows_force(self, qapp, monkeypatch):
-        from ui_pyside6.views.industry import complete_guard
+        from ui_qml.bridge import complete_guard
 
         monkeypatch.setattr("services.plan_execution.binding_shortfall", lambda pid: "第 1 张绑定蓝图流程不足")
-        monkeypatch.setattr(
-            complete_guard.QMessageBox,
-            "question",
-            lambda *a, **k: complete_guard.QMessageBox.StandardButton.Yes,
-        )
+        monkeypatch.setattr(complete_guard, "FMessageDialog", SimpleNamespace(question=lambda *a, **k: True))
         assert complete_guard.confirm_bp_shortfall(None, [{"id": 1, "product_name": "电磁发生器"}]) is True
 
     def test_shortfall_no_cancels(self, qapp, monkeypatch):
-        from ui_pyside6.views.industry import complete_guard
+        from ui_qml.bridge import complete_guard
 
         monkeypatch.setattr("services.plan_execution.binding_shortfall", lambda pid: "第 1 张绑定蓝图流程不足")
-        monkeypatch.setattr(
-            complete_guard.QMessageBox,
-            "question",
-            lambda *a, **k: complete_guard.QMessageBox.StandardButton.No,
-        )
+        monkeypatch.setattr(complete_guard, "FMessageDialog", SimpleNamespace(question=lambda *a, **k: False))
         assert complete_guard.confirm_bp_shortfall(None, [{"id": 1, "product_name": "电磁发生器"}]) is None
 
+    def test_danger_confirm_defaults_to_no(self, qapp, monkeypatch):
+        """破坏性确认的默认项必须落在「否」。
+
+        原版是 `QMessageBox.question(..., Yes | No, defaultButton=No)` —— 那个 `No`
+        是刻意的：手快回车不该把流程不足的计划放下去。换成 QML 版之后，默认项不再是
+        构造参数的一部分，而是「焦点给谁」，很容易在搬迁时静默丢掉，所以单列一条钉住。
+        """
+        from ui_qml.bridge import complete_guard
+
+        seen: dict = {}
+        monkeypatch.setattr("services.plan_execution.binding_shortfall", lambda pid: "不足")
+        monkeypatch.setattr(
+            complete_guard, "FMessageDialog", SimpleNamespace(question=lambda *a, **k: seen.update(k) or False)
+        )
+        complete_guard.confirm_bp_shortfall(None, [{"id": 1, "product_name": "电磁发生器"}])
+        assert seen.get("default_yes") is False, "回车必须落在「否」上，不能默认放行"
+
     def test_shortfall_lines_skips_plans_without_id(self, monkeypatch):
-        from ui_pyside6.views.industry import complete_guard
+        from ui_qml.bridge import complete_guard
 
         monkeypatch.setattr("services.plan_execution.binding_shortfall", lambda pid: f"缺流程 {pid}")
         assert complete_guard.shortfall_lines([{"product_name": "无 id"}]) == []
@@ -560,7 +567,7 @@ class TestStatusBarCompleteAllGuard:
     @staticmethod
     def _run(monkeypatch, short_text: str | None, user_choice: bool):
         import ui_pyside6.views.industry_view as iv
-        from ui_pyside6.views.industry import complete_guard
+        from ui_qml.bridge import complete_guard
 
         model = MagicMock()
         model.rowCount.return_value = 1
@@ -589,15 +596,7 @@ class TestStatusBarCompleteAllGuard:
         monkeypatch.setattr("services.user_settings.get_default_hangar_id", lambda key: 4)
         monkeypatch.setattr(iv, "FMessageDialog", SimpleNamespace(information=lambda *a, **k: None))
         monkeypatch.setattr("services.plan_execution.binding_shortfall", lambda pid: short_text)
-        monkeypatch.setattr(
-            complete_guard.QMessageBox,
-            "question",
-            lambda *a, **k: (
-                complete_guard.QMessageBox.StandardButton.Yes
-                if user_choice
-                else complete_guard.QMessageBox.StandardButton.No
-            ),
-        )
+        monkeypatch.setattr(complete_guard, "FMessageDialog", SimpleNamespace(question=lambda *a, **k: user_choice))
 
         page = SimpleNamespace(
             _plan_table_widget=MagicMock(get_model=lambda: model),

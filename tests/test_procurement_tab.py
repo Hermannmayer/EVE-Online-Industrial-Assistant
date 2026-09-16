@@ -381,9 +381,15 @@ def test_manual_qty_survives_recalculate(qapp, make_dlg):
 
 
 def test_qml_window_loads(qapp, make_dlg):
-    """整窗交给 QML 后，必须确认它真的加载起来了 —— 构造成功不等于 QML 没报错。"""
+    """整窗交给 QML 后，必须确认它真的加载起来了 —— 构造成功不等于 QML 没报错。
+
+    批次 7.4 起根元素是 `Window`（不再是 `Item`），`_build_window` 会在
+    `component.errors()` 非空或根不是 `Window` 时直接抛；所以这里只要窗口与它的
+    contentItem 都在，就说明 QML 真的建出来了。
+    """
     dlg = make_dlg()
-    assert dlg._host.ok(), "ProcurementWindow.qml 没加载起来：" + "; ".join(str(e) for e in dlg._host.errors())
+    assert dlg._window is not None, "ProcurementWindow.qml 没建出窗口"
+    assert dlg._window.contentItem() is not None, "ProcurementWindow.qml 加载失败（没有 contentItem）"
 
 
 def test_two_sections_are_in_a_draggable_split():

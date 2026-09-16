@@ -248,3 +248,18 @@ class LauncherBridge(QObject):
     def request_context_menu(self, plan_id: int, can_partial: bool) -> None:
         """让 QML 在该行位置弹出右键菜单（菜单项由页面判定后传过来）。"""
         self.contextMenuRequested.emit(int(plan_id), bool(can_partial))
+
+    # ── 窗口生命周期（批次 7.4）───────────────────────────────
+    #
+    # QML 根从 `Item` 换成 `Window` 之后，控制器的基类变成 `QObject` —— 原来由
+    # `showEvent` / `closeEvent` 承接的两件事（重启/停掉轮询定时器）改由 QML 侧
+    # 的 `onVisibleChanged` / `onClosing` 调这两个槽转进来。**时机逐项对齐**：
+    # `showEvent` ↔ 可见变真，`closeEvent` ↔ 窗口即将关闭。
+
+    @Slot(bool)
+    def windowVisibilityChanged(self, visible: bool) -> None:
+        self._page.window_visibility_changed(bool(visible))
+
+    @Slot()
+    def windowClosing(self) -> None:
+        self._page.window_closing()

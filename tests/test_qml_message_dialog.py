@@ -177,6 +177,29 @@ def test_parent_probe_would_actually_fire(qapp):
         _ = bridge.parent()
 
 
+def test_question_can_default_to_no(qapp, monkeypatch):
+    """`default_yes=False` 必须落到桥的 `defaultReject` 上。
+
+    原版危险确认写 `QMessageBox.question(..., defaultButton=No)` —— 换成 QML 版后，
+    「默认项」不再是构造参数，而是**焦点给谁**，最容易在搬迁时静默丢掉。
+    桥上是 `defaultReject`，QML 用 `focus:` 消费它。
+    """
+    seen: list[bool] = []
+
+    class _Capture(_AutoAnswer):
+        def __init__(self, bridge, parent=None, size=(440, 210)):
+            seen.append(bridge.defaultReject)
+            super().__init__(bridge, parent=parent, size=size)
+
+    monkeypatch.setattr(md, "FMessageDialog", _Capture)
+    md.FMessageDialog.question(None, "确认", "继续吗？", default_yes=False)
+    assert seen == [True], "危险确认必须把默认项放在「否」上"
+
+    seen.clear()
+    md.FMessageDialog.question(None, "确认", "继续吗？")
+    assert seen == [False], "不带参数时维持原样（默认项在「是」）"
+
+
 # ── 4. 签名与 `QMessageBox` 同形（调用点才能一行替换）──────────
 
 

@@ -1,32 +1,29 @@
-"""工业页整页 QML 宿主（阶段 5 / 批次 5）。
+"""工业页的 QML 组装规格（阶段 5 / 批次 5；批次 7.4 退役了 Widgets 回退宿主）。
 
-工业页此前是「Widgets 外壳 + 内嵌 PageHost」：`IndustryPage`（Widgets 页）在自己的
-布局里放一个 `PageHost` 载 `IndustryPage.qml`。本模块把这段 **QML 组装** 从 Widgets 层
-挪到 QML 层，并对外给出注册表要的页工厂：
-
-- `make_qml_host(controller)` —— 造一个挂了**两个** context property 的宿主
-  （`bridge` = 页面骨架桥，`planTableBridge` = 计划表桥）。控制器构造时调用它，
-  因此 `IndustryPage(main_window)` 仍是**完整可用**的 Widgets 回退页。
-- `build_industry_page(shell)` —— `ui_qml.registry` 的页工厂：造控制器，返回**裸宿主**。
-  于是 `content_stack` 的子控件就是 QML 表面本身，不再是 Widgets 包装层。
-
-**为什么 industry 需要页工厂而不是 `QML_BRIDGES`**：`build_page` 的单 bridge 形态
-只能注入一个 `bridge`，而工业页是「控制器 + 两个桥」——业务在控制器里，桥只是转发
+工业页是唯一「整页 QML，但业务留在控制器 `IndustryPage` 里」的页面，所以它需要一个
+页工厂而不是 `QML_BRIDGES` 的单 bridge 形态：控制器 + **两个** context property
+（`bridge` = 页面骨架桥，`planTableBridge` = 计划表桥），业务在控制器里，桥只做转发
 （与 `PlanTable` / `ProductionLauncher` 阶段 2/2c 定下的终态一致）。
 
-外壳按鸭子类型调用的页面钩子（`save_state` / `restore_state` / `refresh_display` /
-`update_status_bar` / `showEvent`）由宿主**转发**给控制器 —— 业务实现始终只有控制器一份，
-缺一个钩子，「切页刷新状态栏」「退出保存滚动位置」就会在注册表路径上静默失效。
+- `industry_spec(controller)` —— 组装规格：两个 context property + 控制器作为钩子实现者。
+- `build_industry_spec(shell)` —— `ui_qml.registry.QML_PAGE_FACTORIES` 的页工厂：
+  造控制器，返回规格 —— **不碰宿主**。
+
+批次 7.4 删掉了「把控制器包成 QWidget 的 `SpecPageHost`」那条路
+（`IndustryQmlHost` / `make_qml_host` / `build_industry_page`）：控制器基类已改成
+`QObject`（见 `ui_pyside6/views/industry_view.py`），不再有任何自建 QML 宿主的路径 ——
+宿主形态完全由外壳决定（`ui_qml.registry.build_qml_page` 把规格实例化成 `Item`）。
+
+外壳按鸭子类型调用的钩子（`save_state` / `restore_state` / `refresh_display` /
+`update_status_bar` / `on_shown`）由控制器**自己实现**，外壳按名 `getattr` 探测
+（见 `ui_qml/shell_window.py`）。少一个，「切页刷新状态栏」「退出保存滚动位置」
+「切回工业页同步价格设置」就会静默失效。
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtWidgets import QWidget
-
-from core.logger import log
-from ui_qml.host import SpecPageHost
 from ui_qml.registry import PageSpec
 
 if TYPE_CHECKING:
@@ -34,31 +31,12 @@ if TYPE_CHECKING:
 
 __all__ = [
     "INDUSTRY_QML",
-    "IndustryQmlHost",
-    "build_industry_page",
     "build_industry_spec",
     "industry_spec",
-    "make_qml_host",
 ]
 
 #: QML 页面路径（相对 ui_qml/qml/）
 INDUSTRY_QML = "pages/IndustryPage.qml"
-
-
-class IndustryQmlHost(SpecPageHost):
-    """工业页整页 QML 宿主（Widgets 外壳路径）。
-
-    钩子转发已在 `SpecPageHost` 里统一做（控制器就是钩子实现者）；本类只负责
-    **用 Python 强引用持有控制器**：注册表路径返回的是这个宿主，控制器不再是
-    `content_stack` 的子控件，没有这层引用就会被 GC 回收 —— 桥、模型、后台 worker
-    一起没掉，页面变成一张点不动的死图（且不报错）。
-    """
-
-    def __init__(self, controller: IndustryPage) -> None:
-        # 先落控制器：super().__init__ 里就要拿它取两个桥
-        self._controller = controller
-        super().__init__(industry_spec(controller), parent=controller)
-        self.setObjectName("industry_page_qml")
 
 
 def industry_spec(controller: IndustryPage) -> PageSpec:
@@ -72,36 +50,11 @@ def industry_spec(controller: IndustryPage) -> PageSpec:
 
 
 def build_industry_spec(shell: Any) -> PageSpec:
-    """注册表页工厂：造控制器，返回规格 —— **不碰宿主**。
+    """注册表页工厂：造控制器，返回组装规格 —— **不碰宿主**。
 
-    QML 外壳把它实例化成 `Item`，Widgets 外壳把它包成 `IndustryQmlHost`；
-    两边同一个 QML、同一套桥，只有宿主类型不同。
+    QML 外壳把规格实例化成 `Item`（`build_qml_page`），控制器只提供两个桥与钩子实现。
+    `headless_host=True` 是历史开关（控制器已无自建宿主路径），保留只为与控制器签名对齐。
     """
     from ui_pyside6.views.industry_view import IndustryPage
 
     return industry_spec(IndustryPage(shell, headless_host=True))
-
-
-def make_qml_host(controller: IndustryPage) -> IndustryQmlHost:
-    """给工业页控制器造整页 QML 宿主（工业页唯一的渲染入口）。"""
-    return IndustryQmlHost(controller)
-
-
-def build_industry_page(shell: Any, parent: QWidget | None = None) -> IndustryQmlHost | None:
-    """Widgets 外壳路径的页宿主；QML 加载失败返回 None。
-
-    返回 None 是契约的一部分：`registry.build_page` 据此回退 Widgets 版
-    （`IndustryPage(shell)` 那条路径）。
-    """
-    from ui_pyside6.views.industry_view import IndustryPage
-
-    controller = IndustryPage(shell, headless_host=True)
-    host = IndustryQmlHost(controller)
-    if not host.ok():
-        log.warning("工业页 QML(%s) 加载失败，回退 Widgets 版", INDUSTRY_QML)
-        controller.deleteLater()
-        return None
-    if parent is not None:
-        # 交给调用方的父子关系（`content_stack.addWidget` 还会再接管一次）
-        host.setParent(parent)
-    return host

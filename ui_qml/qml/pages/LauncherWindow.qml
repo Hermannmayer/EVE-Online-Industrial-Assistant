@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import "../components"
 
 /* 产线启动小助手 —— 阶段 2c：整窗由 QML 渲染（L1–L4 四区）。
@@ -15,9 +16,50 @@ import "../components"
  * 由 `ui_qml/bridge/launcher_bridge.py` 转给 `ProductionLauncher`。
  * 行卡片的五态动作槽（折叠/可下线/启动/强制启动/阻塞）也由 Python 判好后
  * 以 `actionKind` 传达，QML 只负责画。
+ *
+ * 批次 7.4：根元素从 `Item` 换成 **`Window`** —— 控制器退成 `QObject`，不再有
+ * `QWidget` 外壳，窗口语义（标题 / 尺寸 / 顶层 / 关闭 / 显示事件）由这里自持。
+ * 命令式的那几项（show / raise / activate / resize）仍由控制器转发，见该文件
+ * `# ── 窗口命令` 一节。
  */
-Item {
+Window {
     id: win
+
+    /* ── 窗口语义（逐项对齐原 QWidget 版 `ProductionLauncher`）──
+     *
+     *   setWindowTitle("产线启动小助手")  → title 绑定到桥的 titleText
+     *   setWindowFlag(Qt.Window, True)   → 顶层 Window 默认就带 Qt.Window；构造时
+     *                                      也不给 transientParent，所以仍然「不随主窗
+     *                                      最小化」，与原来 parent=None 的语义一致
+     *   resize(880, 760)                 → width / height
+     *   setMinimumSize(560, 480)         → minimumWidth / minimumHeight
+     *   show() / raise_() / activateWindow() → 由控制器转发（QML 里没有对等写法：
+     *                                        `Window.raise()` / `requestActivate()`）
+     */
+    width: 880
+    height: 760
+    minimumWidth: 560
+    minimumHeight: 480
+    title: win.launcher ? win.launcher.titleText : ""
+    // 窗口清屏色 = 页面底色：首帧之前也不会闪一下白底
+    color: Theme.bgDark
+    visible: false // 由 Python 侧的 `show()` 打开（构造完不该自己冒出来）
+
+    /* 显示 / 关闭 —— 等价于原 `showEvent` / `closeEvent`。
+     *
+     * 关闭时停表、再次显示时重启（单实例复用后不会变成不刷新的死窗口）；
+     * 控制器侧的方法名与时序见 `ProductionLauncher.window_visibility_changed` /
+     * `window_closing`。 */
+    onVisibleChanged: if (win.launcher)
+        win.launcher.windowVisibilityChanged(win.visible)
+
+    /* ⚠️ QML 的 `Window.onClosing` 是**可取消**的：一旦挂上处理函数，
+     * 就必须显式 `close.accepted = true`，否则关闭事件被静默吃掉、窗口关不掉。 */
+    onClosing: function (close) {
+        if (win.launcher)
+            win.launcher.windowClosing()
+        close.accepted = true
+    }
 
     /* 别名不与 context property 同名 —— 同名声明会**遮蔽** context property，
      * 恒为 null 且无任何报错（QML 查找顺序是「自身属性 → context」）。 */
@@ -29,11 +71,12 @@ Item {
     readonly property int padSm: Theme.spacingSm
     readonly property int padMd: Theme.spacingMd
 
-    /* 整窗不透明底 —— 与 `EstimatePage` / `DemoPage` 同款，**必须有**。
+    /* 整窗不透明底。
      *
-     * 宿主是 `PageHost(QQuickWidget)`，为了让窗口级 Mica 透出来设了
-     * `setClearColor(transparent)`：本页没画到的每一处都会透出窗口背后的东西
-     * （暗色下近似纯黑）。行卡片之间、列表末尾的空白都在页面这一层。 */
+     * 原来这里是给 `PageHost(QQuickWidget)` 的透明清屏色兜底（宿主设了
+     * `setClearColor(transparent)`，页面没画到的地方会透出窗口背后的东西）。
+     * 现在宿主就是本 `Window`，`color` 已经负责首帧清屏，这个矩形继续兜住
+     * 「内容区之下的整块表面」，与 `EstimatePage` / `DemoPage` 同款。 */
     Rectangle {
         anchors.fill: parent
         color: Theme.bgDark
@@ -197,6 +240,11 @@ Item {
 
     Item {
         id: listArea
+        // 供测试当「可 `findChild` 又可可 `mapToItem` 的根」用（见 `tests/qml_click.py`）：
+        // 根元素是 `Window` 时，声明出来的顶层 Item 的 QObject 父是**窗口本身**，
+        // `parentItem` 才是窗口的 `contentItem` —— 于是从 `contentItem()` 往下
+        // `findChild` 什么都找不到，必须落到某个真正的 Item 上。
+        objectName: "listArea"
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: occPanel.bottom

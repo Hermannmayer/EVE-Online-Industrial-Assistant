@@ -299,3 +299,43 @@ def test_shell_qml_loads_without_warnings(app, mock_db, monkeypatch):
     # 引擎创建顺序有关，真机同序不报（见 tests/test_qml_dialogs.py 的 _is_qt_internal）。
     qml_issues = [m for m in messages if ".qml" in m and "qrc:/qt-project.org/" not in m]
     assert not qml_issues, "外壳 QML 加载有告警：\n" + "\n".join(qml_issues)
+
+
+# ── 6. 两条页面钩子分发（批次 7.4 新加，都是静默失效型）────────
+
+
+def test_switching_to_a_page_calls_its_on_shown_hook(shell, monkeypatch):
+    """切到某页必须调它的 `on_shown`。
+
+    批次 7.4 起工业页控制器是 `QObject`，**没有 `showEvent` 可依赖** ——
+    这条分发是唯一的「页面重新可见」唤醒路径。丢了它不会报错，只是从仓库页
+    改完材料倍率切回工业页时，工具栏旋钮停在旧值。
+    """
+    seen: list[str] = []
+    for key, page in shell._pages.items():
+        if page.hooks is None:
+            continue
+        monkeypatch.setattr(page.hooks, "on_shown", lambda k=key: seen.append(k), raising=False)
+
+    target = next(k for k in _KEYS if k != shell.current_page_key())
+    assert shell.navigate_to(target) is True
+    assert seen == [target], f"切到 {target} 应当只调它的 on_shown，实际 {seen}"
+
+
+def test_shutdown_hook_reaches_page_controllers(shell, monkeypatch):
+    """关窗必须把页面控制器的关机钩子也走一遍。
+
+    外壳自己的线程靠 `findChildren(QThread)` 收得到，但**页面控制器不是外壳的子对象**：
+    `IndustryPage(main_window)` 的第一个参数是位置参数、不是 `parent`，所以
+    `findChildren` 找不到它名下的 worker。漏掉的后果是 `QThread` 在运行中被析构 ——
+    Qt 直接 `abort()`，静默死进程且不留一行日志。
+    """
+    called: list[str] = []
+    for key, page in shell._pages.items():
+        if page.hooks is None:
+            continue
+        monkeypatch.setattr(page.hooks, "shutdown", lambda k=key: called.append(k), raising=False)
+
+    shell._stop_running_threads()
+    expected = {k for k, p in shell._pages.items() if p.hooks is not None}
+    assert set(called) == expected, f"关机钩子没覆盖到全部页面：{sorted(expected - set(called))}"

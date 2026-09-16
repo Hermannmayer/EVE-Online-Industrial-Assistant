@@ -16,20 +16,22 @@
 渲染已整体迁到 QML（`ui_qml/qml/pages/LauncherWindow.qml`，阶段 2c）：本类现在只作
 **headless 控制器**——算数据、给 `launcher_bridge` 供值，自己不再画任何东西。
 零星的 `QColor` 用法是给 QML 传色值（QML 要 `#rrggbb` 字符串），不是自绘。
+
+批次 7.4 起**连窗口外壳也交出去了**：QML 根从 `Item` 换成 `Window`，本类从 `QWidget`
+退成 `QObject` —— 不再有 `QVBoxLayout(self)` + `root.addWidget(host)`，窗口语义
+（标题 / 尺寸 / 驻留 / 关闭 / 显示事件）由 QML 的 `Window` 自持，Python 侧只在
+`show()` / `raise_()` / `activateWindow()` 上做转发（调用方 `industry_view.py` 一行未改）。
 """
 
 from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics
-from PySide6.QtWidgets import (
-    QApplication,
-    QDialog,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication
+from PySide6.QtQml import QQmlComponent, QQmlEngine
+from PySide6.QtQuick import QQuickWindow
+from PySide6.QtWidgets import QDialog
 
 import ui_qml.theme.registry as theme
 from core.container import get_container
@@ -188,17 +190,18 @@ def _default_mat_hangar_id() -> int | None:
     return inventory_manager.get_default_mat_hangar_and_system()[0]
 
 
-class ProductionLauncher(QWidget):
-    """产线启动小助手 — 非模态紧凑工具窗。"""
+class ProductionLauncher(QObject):
+    """产线启动小助手 — 非模态紧凑工具窗（控制器；窗口是 `LauncherWindow.qml` 的 `Window`）。"""
 
     plans_changed = Signal()  # 启动成功后触发，供主窗口刷新
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("产线启动小助手")
-        self.setWindowFlag(Qt.WindowType.Window, True)
-        self.resize(880, 760)
-        self.setMinimumSize(560, 480)
+        #: QML 根是 `Window`，实例化出来的就是本窗（`_build_window` 里赋值）。
+        #: 类型由 `_build_window` 保证，这里先占位以便生命周期槽能安全早退。
+        self._window: QQuickWindow | None = None
+        self._engine: QQmlEngine | None = None
+        self._component: QQmlComponent | None = None
 
         self._all_plans: list[dict] = []
         self._visible_plans: list[dict] = []
@@ -237,7 +240,7 @@ class ProductionLauncher(QWidget):
         self._bottom_expanded = False
         self._tick_revision = 0
 
-        self._build_ui()
+        self._build_window()
 
         self._tick_timer = QTimer(self)
         self._tick_timer.setInterval(1000)
@@ -252,20 +255,86 @@ class ProductionLauncher(QWidget):
         self._on_poll()
         self._restore_pin()
 
-    # ── UI ──────────────────────────────────────────────
+    # ── 窗口 ────────────────────────────────────────────
+    #
+    # 批次 7.4：QML 根从 `Item` 换成 `Window`，本类不再是 QWidget，于是**窗口语义一分为二**：
+    #   * 声明性的（标题 / 初始尺寸 / 最小尺寸 / 顶层属性 / 关闭即隐藏）在 QML 里；
+    #   * 命令式的（显示 / 前置 / 激活 / 尺寸）在这里转发给 `self._window`。
+    # `industry_view.py` 调用的 `show()` / `raise_()` / `activateWindow()` 因此一行未改。
 
-    def _build_ui(self) -> None:
-        """整窗交给 QML（`LauncherWindow.qml`）：本类只保留业务与渲染状态。"""
+    def _build_window(self) -> None:
+        """把 `LauncherWindow.qml`（根元素是 `Window`）实例化成本窗。
+
+        ⚠️ 根是 `Window` 时 `QQuickView` / `QQuickWidget` 都用不了（两者的根必须是 `Item`），
+        只能走 `QQmlEngine` + `QQmlComponent` —— 与 `ui_qml/splash_window.py` 同法，
+        也从 `component.errors()` 里拿结构化错误（加载失败**直接抛**，不静默成空白窗口）。
+        """
+        from ui_qml.bridge import CONTEXT_NAME, theme_singleton
         from ui_qml.bridge.launcher_bridge import LauncherBridge
-        from ui_qml.host import PageHost
-
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        from ui_qml.host import QML_ROOT
 
         self._bridge = LauncherBridge(self, self)
-        self._host = PageHost(LAUNCHER_QML, context={"bridge": self._bridge}, parent=self)
-        root.addWidget(self._host)
+        engine = QQmlEngine()
+        self._engine = engine
+        ctx = engine.rootContext()
+        ctx.setContextProperty(CONTEXT_NAME, theme_singleton())
+        ctx.setContextProperty("bridge", self._bridge)
+        path = QML_ROOT / LAUNCHER_QML
+        component = QQmlComponent(engine)
+        component.setData(path.read_bytes(), QUrl.fromLocalFile(str(path)))
+        if component.isError():
+            raise RuntimeError("; ".join(e.toString() for e in component.errors()))
+        self._component = component
+        window = component.create(ctx)
+        if not isinstance(window, QQuickWindow):
+            raise RuntimeError(f"{LAUNCHER_QML} 的根元素不是 Window：{window!r}")
+        # 所有权：**引擎挂到窗口名下**（`QQuickView` 自己就是 `new QQmlEngine(view)` 这么干的）。
+        # 于是「窗口先销毁、引擎随后跟着走」由 Qt 的父子关系保证，不依赖 Python 的析构顺序 ——
+        # 反过来（引擎先走、场景还在）时，任何一次绑定重算都会撞上被拆掉的上下文。
+        # ⚠️ 不能反过来把窗口挂到控制器名下：PySide 的 `QWindow.setParent` 只收 `QWindow`。
+        component.setParent(engine)
+        engine.setParent(window)
+        self._window = window
+
+    # ── 窗口命令（转发给 QML 的 `Window`）──────────────────
+
+    def show(self) -> None:
+        if self._window is not None:
+            self._window.show()
+
+    def hide(self) -> None:
+        if self._window is not None:
+            self._window.hide()
+
+    def close(self) -> None:
+        """关窗。
+
+        ⚠️ `QWindow.close()` **只在窗口当前可见时才发 `closing`**（Qt 的语义：已经关着的
+        窗口再关一次没有意义）。而「关过」在本窗是一件**状态**（关闭即停表，重开再启）——
+        调用方（复用路径与测试）也照旧把 `close()` 当那次状态切换用。所以先把收尾走完
+        （幂等），再让窗口真的关：可见时它等价于用户点 X，走的仍是 QML 的 `onClosing`。
+        """
+        if self._window is None:
+            return
+        self.window_closing()
+        self._window.close()
+
+    def resize(self, width: int, height: int) -> None:
+        if self._window is not None:
+            self._window.resize(int(width), int(height))
+
+    def raise_(self) -> None:
+        """对应 `QWidget.raise_()`。QWindow 上同名方法在 PySide 里也是 `raise_`。"""
+        if self._window is not None:
+            self._window.raise_()
+
+    def activateWindow(self) -> None:
+        """对应 `QWidget.activateWindow()`；QWindow 上是 `requestActivate()`。"""
+        if self._window is not None:
+            self._window.requestActivate()
+
+    def isVisible(self) -> bool:
+        return self._window is not None and bool(self._window.isVisible())
 
     # ── 桥的取数接口（QML 只读这些，业务判断全在本类） ──────────
 
@@ -319,7 +388,9 @@ class ProductionLauncher(QWidget):
         if bool(value) == self._pinned:
             return
         self._pinned = bool(value)
-        apply_window_pin(self, self._pinned)
+        # 置顶作用在**窗口**上，不是控制器上（`apply_window_pin` 两种窗口都吃）。
+        if self._window is not None:
+            apply_window_pin(self._window, self._pinned)
         from services.user_settings import save_settings
 
         try:
@@ -334,7 +405,8 @@ class ProductionLauncher(QWidget):
 
             if load_settings().get("production_launcher_pin"):
                 self._pinned = True
-                apply_window_pin(self, True)
+                if self._window is not None:
+                    apply_window_pin(self._window, True)
                 self._notify_toolbar()
         except Exception:
             log.exception("恢复产线小助手置顶偏好失败")
@@ -808,8 +880,6 @@ class ProductionLauncher(QWidget):
         没有图标文件时用**类别首字**占位，不用 `category_symbol()` 的 emoji
         （⚙ 📋 ⚗ 💡）—— 它们来自符号/emoji 字体，在本窗的字体环境里会渲染成空白或豆腐块。
         """
-        from PySide6.QtCore import QUrl
-
         from ui_qml.icon_cache import item_icon_path
 
         type_id = int(plan.get("product_type_id") or 0)
@@ -874,7 +944,7 @@ class ProductionLauncher(QWidget):
         菜单条目的可见性要读计划状态（`_can_partial_start`），故在 Python 侧判定后把
         结果传给 QML；QML 只负责画与把点击回传。原先这里自建 `QMenu` 并
         `menu.exec(QCursor.pos())`：那是从 QML 里冒出来的**原生 Widgets 菜单**，
-        样式不跟主题，且 `QMenu` 要求 `self` 是 QWidget（批次 7.4 之后不再是）。
+        样式不跟主题，且 `QMenu` 要求 `self` 是 QWidget（批次 7.4 起本类已不是）。
         """
         plan = self._plan_map.get(plan_id)
         if plan is None:
@@ -1132,7 +1202,7 @@ class ProductionLauncher(QWidget):
         if not bp_name:
             self._show_feedback("该计划无蓝图信息")
             return
-        QApplication.clipboard().setText(bp_name)
+        QGuiApplication.clipboard().setText(bp_name)
         self._show_feedback(f"「{bp_name}」已复制进剪切板")
 
     # ── 启动 ─────────────────────────────────────────────
@@ -1281,17 +1351,24 @@ class ProductionLauncher(QWidget):
             self._notify_toolbar()
             self._apply_filters()
 
-    def showEvent(self, event) -> None:
-        """单实例复用时必须重启定时器 —— closeEvent 停表后不会自动恢复。
+    def window_visibility_changed(self, visible: bool) -> None:
+        """窗口变为可见 —— 等价于原 `showEvent`（QML 的 `onVisibleChanged` 调进来）。
 
-        否则「关闭再打开」得到的是不刷新倒计时/计划列表的死窗口。
+        单实例复用时必须重启定时器：关闭时停表后不会自动恢复，否则「关闭再打开」
+        得到的是不刷新倒计时/计划列表的死窗口。
         """
-        super().showEvent(event)
+        if not visible or getattr(self, "_tick_timer", None) is None:
+            return
         self._tick_timer.start()
         self._poll_timer.start()
         self._on_poll()
 
-    def closeEvent(self, event) -> None:
-        self._tick_timer.stop()
-        self._poll_timer.stop()
-        super().closeEvent(event)
+    def window_closing(self) -> None:
+        """窗口即将关闭 —— 等价于原 `closeEvent`（QML 的 `onClosing` 调进来）。
+
+        与旧行为的唯一差别：原来还跟着一次 `hideEvent`，而本类从来没有覆写它 ——
+        所以**单纯 `hide()` 不停表**这一条也照旧。
+        """
+        if getattr(self, "_tick_timer", None) is not None:
+            self._tick_timer.stop()
+            self._poll_timer.stop()

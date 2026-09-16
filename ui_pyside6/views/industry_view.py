@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QThread, QTimer
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtCore import QObject, QThread, QTimer
 
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
@@ -26,7 +25,6 @@ from ui_qml.bridge.manufacturable_items_bridge import ManufacturableItemsQmlDial
 from ui_qml.bridge.materials_dialog_bridge import MaterialsSummaryQmlDialog as MaterialsSummaryDialog
 from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.bridge.output_dialog_bridge import OutputSummaryQmlDialog as OutputSummaryDialog
-from ui_qml.industry_page import IndustryQmlHost, make_qml_host
 from ui_qml.workers.industry_page_workers import (
     IndustryDataWorker,
     PlanPriceRefreshWorker,
@@ -48,7 +46,7 @@ def _default_mat_hangar_id() -> int | None:
     return inventory_manager.get_default_mat_hangar_and_system()[0]
 
 
-class IndustryPage(QWidget):
+class IndustryPage(QObject):
     """生产计划管理统一页面 — 5 区布局（阶段 2b：整页由 QML 渲染）
 
     与阶段 2a 的 `PlanTable` 同一套路：**业务方法与信号一律不动**，
@@ -56,21 +54,21 @@ class IndustryPage(QWidget):
     换成**一个** QML 宿主；QML 的每次交互都经 `IndustryBridge` 转回本类的方法，
     所以迁移期只有一份业务实现。
 
-    `_plan_table_widget` 仍然存在，但以 `headless=True` 构造 —— 它只作业务控制器
-    与对话框的窗口父，表格本身由 `IndustryPage.qml` 里的 `PlanTablePane` 渲染。
+    `_plan_table_widget` 以 `headless=True` 构造 —— 它只作业务控制器，
+    表格本身由 `IndustryPage.qml` 里的 `PlanTablePane` 渲染。
 
-    阶段 5（批次 5）：类本身升格为**控制器** —— QML 宿主（两个 context property 的
-    组装）移到了 `ui_qml/industry_page.py`，本文件只是调用它。`IndustryPage(main_window)`
-    仍是**完整可用**的页面（注册表页工厂失败时的 Widgets 回退走这条），
-    而注册表路径返回的是那个**裸宿主**（见 `build_industry_page`）。
+    批次 7.4：本类**不再是页面控件**，只是**控制器**（基类 `QWidget` → `QObject`）。
+    渲染面由外壳决定（QML 外壳经 `ui_qml.registry.build_qml_page` 把 `IndustryPage.qml`
+    实例化成 `Item`），桥与钩子实现由 `ui_qml/industry_page.py::industry_spec` 组装。
+    所以 `super().__init__()` 收的 `parent` 只用于**对象树寿命**，不再当窗口父 ——
+    任何「拿 self 当 QWidget 父」的调用（`QMessageBox(self, …)` 之类）都不再成立。
     """
 
-    def __init__(self, main_window, *, headless_host: bool = False):
-        """``headless_host=True``：**不**自己造 Widgets 宿主，只当控制器。
+    def __init__(self, main_window, *, headless_host: bool = True):
+        """``headless_host`` 是**历史开关，批次 7.4 起恒为真、取值已无影响**。
 
-        QML 外壳（阶段 5）用这条：页面宿主是 `Item`，由 `ui_qml.registry.build_qml_page`
-        按 `PageSpec` 实例化，本类只提供两个桥与钩子实现（见 `ui_qml/industry_page.py`）。
-        Widgets 外壳与回退路径仍走默认（自己包一个 `PageHost`）。
+        保留形参只为让调用方（`ui_qml/industry_page.py::build_industry_spec`）不必同步改；
+        本类不再有任何自建 QML 宿主的路径 —— 宿主形态由外壳决定。
         """
         super().__init__()
         self._main = main_window
@@ -86,11 +84,7 @@ class IndustryPage(QWidget):
         #: （`ScoreWorker` / 断线重连后的新实例），用联合类型反而更难读。
         self._score_worker: Any = None
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-
-        # 计划表：只作业务控制器（headless 不再自建 QML 宿主），桥注入给 QML 树
+        # 计划表：只作业务控制器，桥注入给 QML 树
         self._plan_table_widget: PlanTable = PlanTable(headless=True)
         # 注入价格设置/人物访问器（母项拆解利润预览用）
         self._plan_table_widget.set_price_context(get_price_settings, lambda: MAIN_CHAR_NAME)
@@ -100,12 +94,9 @@ class IndustryPage(QWidget):
         self._plan_table_widget.launcher_requested.connect(self._on_launch_wizard_from_row)
 
         self._bridge: IndustryBridge = IndustryBridge(self, self)
-        # 整页 QML 宿主：`bridge`（本页骨架桥）+ `planTableBridge`（计划表桥）两个
-        # context property 由 `ui_qml/industry_page.py` 组装 —— 本文件不再拼 QML context。
-        self._host: IndustryQmlHost | None = None
-        if not headless_host:
-            self._host = make_qml_host(self)
-            root.addWidget(self._host)
+        # 两个 context property（`bridge` / `planTableBridge`）由
+        # `ui_qml/industry_page.py::industry_spec` 组装 —— 本文件不拼 QML context，
+        # 也不再自建宿主（批次 7.4 起宿主形态由外壳决定）。
 
         # ── 初始加载 ───────────────────────────────────────────
         self.load_plans()
@@ -120,11 +111,6 @@ class IndustryPage(QWidget):
         QTimer.singleShot(200, self._check_industry_data)
 
     # ── 给 QML 层/注册表的访问器 ────────────────────────────────
-
-    @property
-    def host(self) -> IndustryQmlHost | None:
-        """整页 QML 宿主（注册表页工厂把它作为页面控件返回）；`headless_host=True` 时为 None。"""
-        return self._host
 
     @property
     def bridge(self) -> IndustryBridge:
@@ -162,20 +148,40 @@ class IndustryPage(QWidget):
         if expired_visible or expired_db:
             self.load_plans()
 
+    def shutdown(self) -> None:
+        """停掉本页在跑的后台线程并等它们结束（外壳关窗时按钩子名调进来）。
+
+        为什么必须由外壳显式调，而不是靠 Qt 的父子链自动收：`QThread` 在**仍运行**时被析构，
+        Qt 直接 `abort()` —— 静默死进程、退出码 127、连一行日志都没有
+        （`ui_qml/dialog_host.py` 记过同一条）。而这些 worker 是 `IndustryPage` 的子对象，
+        本类**自己没有 QObject 父**（`main_window` 是第一个**位置参数**、不是 `parent`），
+        所以外壳那句 `self.findChildren(QThread)` **找不到它们**。
+
+        可重入：外壳的 `closeEvent` 与 `aboutToQuit` 都会走到这里。
+        """
+        for name in ("_industry_worker", "_refresh_worker", "_score_worker", "_proc_worker", "_recalc_worker"):
+            worker = getattr(self, name, None)
+            if worker is None:
+                continue
+            try:
+                if worker.isRunning():
+                    worker.requestInterruption()
+                    worker.wait(3000)
+            except RuntimeError:
+                # 底层 C++ 对象已被销毁（PySide 包装器还在）—— 没什么可等的
+                continue
+
     def on_shown(self) -> None:
-        """页面重新可见时的同步（两条路径共用）。
+        """页面重新可见时的同步（由外壳在切页时按名调用）。
 
         材料倍率与仓库页（导入预览 / 批量设置成本价）是**同一个** settings.json 字段，
         在那边改完回到本页时，工具栏旋钮不能还停在旧值。
 
-        注册表路径下 `content_stack` 持有的是**裸宿主**，控制器的 `showEvent` 不会被
-        Qt 调到；`IndustryQmlHost.showEvent` 因此显式转发到这里，两条路径行为一致。
+        批次 7.4 起本类是 `QObject`，**没有 `showEvent` 可依赖** —— 唯一唤醒路径是
+        `ui_qml/shell_window.py::navigate_to` 里的 `on_shown` 钩子分发（外壳按名 `getattr` 探测）。
+        名字改了或删了都是**静默失效**：切回工业页时旋钮停在旧值，且没有任何报错。
         """
         self._bridge.reloadPriceSettings()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.on_shown()
 
     # ── load_plans ────────────────────────────────────────────
 
@@ -695,7 +701,7 @@ class IndustryPage(QWidget):
             return
         from services.inventory_manager import get_hangars
         from services.user_settings import get_default_hangar_id
-        from ui_pyside6.views.industry.complete_guard import confirm_bp_shortfall
+        from ui_qml.bridge.complete_guard import confirm_bp_shortfall
 
         hangars = get_hangars()
         default_hid = get_default_hangar_id("default_deposit_hangar_id")

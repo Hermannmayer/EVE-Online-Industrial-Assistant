@@ -1,9 +1,15 @@
-"""生产计划表格 — PlanTable 视图组件
+"""生产计划表格 — PlanTable **业务控制器**
 
 **渲染已迁到 QML**（`ui_qml/qml/pages/PlanTablePane.qml`，阶段 2a）：本类不再持有
-`QTableView`，而是持有一个 `QQuickWidget` 宿主 + `PlanTableBridge`。
-对外 API（`get_model` / `set_model` / `set_price_context` / 四个信号）保持不变，
-`industry_view.py` 与既有测试无需改动调用方式。
+`QTableView`；批次 7.4 起也不再自建 QML 宿主 —— 基类是 **`QObject`**，渲染面由
+**外壳**决定：QML 外壳把 `PlanTablePane.qml` 实例化成 `Item` 挂进场景
+（`ui_qml/registry.build_qml_page`），本类的 `bridge` 以 context property
+`planTableBridge` 注入到那棵树。对外 API（`get_model` / `set_model` /
+`set_price_context` / 四个信号）保持不变，`industry_view.py` 按原样调用。
+
+旧形态（`PageHost` 自建宿主 + `QVBoxLayout(self)`）只剩测试在走，7.4 一并删掉：
+`self` 不再是 `QWidget`，`PageHost(... parent=self)` 那句运行时会炸。
+需要真实鼠标事件的用例**自己造一个 `PageHost`** 把 pane 装起来。
 
 **业务逻辑全部留在这里**：启动/下线/删行/拆解/落库等仍是本类的方法，
 QML 只通过 bridge 转发调用。这样迁移期只有一份业务实现。
@@ -14,8 +20,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
+from PySide6.QtCore import QObject, Signal
+from PySide6.QtGui import QGuiApplication
 
 import ui_qml.theme.registry as theme
 from core.container import get_container
@@ -32,25 +38,27 @@ if TYPE_CHECKING:
     from ui_qml.bridge.plan_table_bridge import PlanTableBridge
     from ui_qml.models.plan_qml_model import PlanQmlModel
 
-#: QML 页面路径（相对 ui_qml/qml/）
-QML_PANE = "pages/PlanTablePane.qml"
 
+class PlanTable(QObject):
+    """生产计划表格 — QML 渲染 + 本类承载全部业务动作
 
-class PlanTable(QWidget):
-    """生产计划表格 — QML 渲染 + 本类承载全部业务动作"""
+    基类是 `QObject`（批次 7.4 前是 `QWidget`）：本类只作**业务控制器**，
+    渲染面由外壳决定。传进来的 `parent` 仅用于 Qt 对象树的寿命管理，
+    **不再当窗口父**（原生对话框控件的 parent 参数收不下裸 `QObject`；
+    各 QML 对话框已在 `ui_qml/dialog_host.DialogHost` 里统一把它收敛成 `None`）。
+    """
 
     plan_updated = Signal()
     refresh_requested = Signal()
     plan_detail_requested = Signal(int)
     launcher_requested = Signal(str)  # 产线启动小助手（传初始人物名，空串=未分配）
 
-    def __init__(self, parent: QWidget | None = None, *, headless: bool = False):
-        """`headless=True` 时**不创建 QML 宿主**，只保留业务控制器身份。
+    def __init__(self, parent: QObject | None = None, *, headless: bool = False):
+        """`headless` 是 7.4 前的历史开关：旧实现里 `headless=True` 才不自建 QML 宿主。
 
-        阶段 2b 起工业页整页是 QML，表格由 `IndustryPage.qml` 里的 `PlanTablePane`
-        渲染、桥从 context 注入；本类再建一个宿主就是白开一个 QML 引擎。
-        但业务方法与 `FMessageDialog.question(self, ...)` / `QmlDialog(parent=self)`
-        的窗口父仍需一个 QWidget，故保留 QWidget 身份（不显示即可）。
+        7.4 起本类**一律不自建宿主**（宿主的形态由外壳决定），两种取值行为一致。
+        形参保留是因为 `industry_view.py` 仍按 `PlanTable(headless=True)` 构造；
+        等 7.5 删包时连同这个形参一起收掉。
         """
         super().__init__(parent)
 
@@ -60,10 +68,6 @@ class PlanTable(QWidget):
         # 那时包早已初始化完毕。
         from ui_qml.bridge.plan_table_bridge import PlanTableBridge
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
         self._model: PlanQmlModel | None = None
         # 工具栏当前材料机库 ID（由 IndustryPage 注入，启动时兜底）
         self._mat_hangar_id: int | None = None
@@ -72,13 +76,14 @@ class PlanTable(QWidget):
         self._get_char_name = None
 
         self._bridge: PlanTableBridge = PlanTableBridge(self, self)
-        self._host: PageHost | None = None
-        if not headless:
-            from ui_qml.host import PageHost
 
-            self._host = PageHost(QML_PANE, context={"planTableBridge": self._bridge}, parent=self)
-            layout.addWidget(self._host)
-
+        # 主题监听器：**不能删**。它是 `refreshColors()` 的唤醒路径 —— 模型里的颜色
+        # 是**已解析的 hex**（见 `PlanQmlModel` 的说明），只有被唤醒补发一次 `dataChanged`
+        # 才会重绘；删了它切主题后计划表不变色。
+        #
+        # 且它是**无泄漏**的：`add_theme_listener` 对绑定方法用 `weakref.WeakMethod`
+        # 弱引用（见 `ui_qml/theme/registry.py::add_theme_listener`），不持有本实例，
+        # 本对象被回收后回调自动失效。原计划把它误判成泄漏，已完成核对并保留。
         theme.add_theme_listener(self._on_theme_changed)
 
     @property
@@ -217,8 +222,8 @@ class PlanTable(QWidget):
             return
         from services.inventory_manager import get_hangars
         from services.user_settings import get_default_hangar_id
-        from ui_pyside6.views.industry.complete_guard import confirm_bp_shortfall
         from ui_pyside6.views.industry.complete_plans_dialog import complete_plans
+        from ui_qml.bridge.complete_guard import confirm_bp_shortfall
         from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog as CompletePlansDialog
         from ui_qml.bridge.message_dialog import FMessageDialog
 
@@ -483,7 +488,10 @@ class PlanTable(QWidget):
         plan = self._model.get_plan(row)
         bp_name = plan.get("blueprint_name") or plan.get("product_name", "")
         if bp_name:
-            QApplication.clipboard().setText(bp_name)
+            # 借用的 QtGui（不是真 Widgets 依赖）：`clipboard()` 定义在 `QGuiApplication`
+            # 上，`QApplication` 只是它的子类，所以 `self` 不再是 QWidget 也照样能用，
+            # 换 import 即可（不需要任何窗口）。
+            QGuiApplication.clipboard().setText(bp_name)
 
     def _set_materials_ready(self, row: int, value: int) -> None:
         if self._model is None:

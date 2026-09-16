@@ -503,10 +503,11 @@ def main_window(app, mock_db, monkeypatch):
 
 @pytest.fixture
 def industry_page(main_window):
-    """创建 IndustryPage 实例用于 UI 测试。
+    """创建工业页**控制器**（`IndustryPage`）用于 UI 测试。
 
-    工业页是**还在 Widgets 里**的那一个（QML 只负责渲染，业务在控制器里），
-    所以它没随批次 6.2 的清理消失。
+    批次 7.4 起它是纯 `QObject` 控制器：**不再自建 QML 宿主**（`_host` / `make_qml_host`
+    已删），渲染面由外壳决定。需要渲染 `IndustryPage.qml` 的用例得自己造宿主
+    （`ui_qml.host.PageHost`，或外壳的 `ui_qml.registry.build_qml_page`）。
     """
     from ui_pyside6.views.industry_view import IndustryPage
 

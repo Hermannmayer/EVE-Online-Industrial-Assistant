@@ -77,7 +77,7 @@ def complete_one_plan(parent, plan: dict) -> dict | None:
     """
     from services.inventory_manager import get_hangars
     from services.user_settings import get_default_hangar_id
-    from ui_pyside6.views.industry.complete_guard import confirm_bp_shortfall
+    from ui_qml.bridge.complete_guard import confirm_bp_shortfall
     from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog as CompletePlansDialog
 
     dlg = CompletePlansDialog(

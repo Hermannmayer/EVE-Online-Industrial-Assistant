@@ -3,7 +3,7 @@
 验证各页面/对话框在主题切换后能正确重新应用内联样式表。
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from PySide6.QtCore import QAbstractItemModel, QCoreApplication, QModelIndex, QSortFilterProxyModel, Qt
@@ -50,46 +50,25 @@ def _wait():
 # ── 已验证通过：import theme as module 后主题切换正确传播 ──
 
 
-def test_industry_page_theme_listener(qapp, mock_db):
-    """工业页已整页迁 QML（阶段 2b）：主题由 QML 绑定 `Theme` 单例跟随，
+def test_industry_page_theme_listener(qapp, main_window):
+    """工业页已整页迁 QML：主题由 QML 绑定 `Theme` 单例跟随，
     不再走 QSS + `_on_theme_changed` 那条路。
 
-    所以这里改成守两件事：页面确实挂上了 QML 宿主，且切主题不炸。
+    ⚠️ 批次 7.4 起控制器是纯 `QObject`、**不再自建宿主**（`page._host` 已删），
+    页面 Item 只存在于外壳的场景里 —— 所以这里从**外壳**取页面。
+    守的性质没变：页面确实挂进了场景，且切主题不炸。
     （QML 侧的 token 有效性由 test_qml_theme_bridge 的静态扫描覆盖。）
     """
-    # mock_db 只 patch core.container.get_container，而 industry_view 通过
-    # `from core.container import get_container` 绑定旧引用，patch 不生效；
-    # 构造 IndustryPage 会触发后台重算 worker 访问真实容器写库（full 集合下暴露）。
-    # 这里显式 patch industry_view.get_container，隔离真实 DB/容器。
-    mock_cont = MagicMock()
-    mock_mgr = MagicMock()
-    mock_conn = MagicMock()
-    mock_cursor = MagicMock()
-    mock_cursor.fetchall.return_value = []
-    mock_cursor.fetchone.return_value = None
-    mock_conn.cursor.return_value = mock_cursor
-    mock_conn.execute.return_value = mock_cursor
-    mock_cm = MagicMock()
-    mock_cm.__enter__ = MagicMock(return_value=mock_conn)
-    mock_cm.__exit__ = MagicMock(return_value=False)
-    mock_mgr.connect.return_value = mock_cm
-    mock_cont.db = mock_mgr
-    mock_cont.plan_repo = MagicMock()
+    main_window.navigate_to("industry")
+    page = main_window._pages["industry"]
+    assert page.item is not None, "工业页不是挂进场景的 QML Item"
+    assert callable(getattr(page.hooks, "on_shown", None)), "外壳的 on_shown 钩子没接到控制器上"
+    assert not hasattr(page.hooks, "_on_theme_changed"), "QSS 主题钩子应已随迁移移除"
 
-    with (
-        patch("ui_pyside6.views.industry_view.init_plan_db"),
-        patch("ui_pyside6.views.industry_view.get_container", return_value=mock_cont),
-    ):
-        from ui_pyside6.views.industry_view import IndustryPage
-
-        page = IndustryPage(None)
-        assert page._host.ok(), "IndustryPage.qml 加载失败"
-        assert not hasattr(page, "_on_theme_changed"), "QSS 主题钩子应已随迁移移除"
-
-        apply_theme("light")
-        _wait()
-        assert page._host.ok(), "切主题后页面不应失效"
-        assert theme_singleton().themeId == "fluent-light"
+    apply_theme("light")
+    _wait()
+    assert page.item is not None, "切主题后页面不应失效"
+    assert theme_singleton().themeId == "fluent-light"
 
 
 def test_char_settings_dialog_show_event(qapp, mock_db):

@@ -38,6 +38,16 @@ Item {
 
     signal applyRequested()
 
+    /* 危险确认的「默认项」——对应 `QMessageBox` 构造里的 `defaultButton`。
+     *
+     * 默认（false）不改任何焦点：`FButton` 根是 Qt Quick 的 `Button`，可聚焦，
+     * 于是「确定」自然拿到初始焦点、回车即确定 —— 与既有 40 个对话框今天的行为一致。
+     * 置真则把焦点挪到「取消」，让回车**不会**误触发破坏性动作。
+     * 只在置真时设 `focus`，是为了不动其余对话框的焦点行为（包括那些首帧要把焦点
+     * 交给输入框的，如 InputDialog）。
+     */
+    property bool defaultReject: false
+
     anchors.fill: parent
 
     /* 对话框底色 —— **必须自己铺**，别指望窗口。
@@ -96,6 +106,7 @@ Item {
             FButton {
                 text: root.cancelText
                 visible: root.cancelVisible
+                focus: root.defaultReject
                 onClicked: if (root.dlg)
                     root.dlg.reject()
             }

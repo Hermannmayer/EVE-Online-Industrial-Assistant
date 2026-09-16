@@ -48,16 +48,16 @@ def test_plan_edit_dialog_batch_sync_gating(industry_page, monkeypatch):
 
 
 def test_industry_page_init(industry_page):
-    """验证 IndustryPage 初始化后关键部件存在。
+    """验证 IndustryPage 控制器初始化后的关键部件存在。
 
-    阶段 2b 起整页由 QML 渲染：五个 Widgets 子控件换成一个 `PageHost` +
-    `IndustryBridge`，业务控制器 `_plan_table_widget`（headless）照旧保留。
+    ⚠️ 批次 7.4 起它是纯 `QObject` 控制器、**不再自建 QML 宿主**（`_host` 已删）：
+    渲染面由外壳按 `ui_qml/industry_page.industry_spec` 装载，本类只留两个桥与计划表控制器。
+    页面 Item 确实挂进场景那条断言在 `tests/test_theme_listeners.py` 与 `tests/test_qml_shell.py`。
     """
     assert industry_page is not None
-    assert hasattr(industry_page, "_host")
-    assert hasattr(industry_page, "_bridge")
-    assert hasattr(industry_page, "_plan_table_widget")
-    assert industry_page._host.ok(), "IndustryPage.qml 加载失败"
+    assert industry_page.bridge is not None
+    assert industry_page.plan_table_bridge is not None
+    assert industry_page._plan_table_widget is not None
 
 
 def test_industry_page_default_view(industry_page):

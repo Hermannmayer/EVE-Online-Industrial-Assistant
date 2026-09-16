@@ -1,12 +1,13 @@
-"""QML 页面注册表 —— 迁移期的逐页开关。
+"""QML 页面注册表 —— 页面组装规格的登记处。
 
 `QML_PAGES` 把导航 key 映射到 `ui_qml/qml/` 下的 QML 文件，
 `QML_BRIDGES` 可选地给该页配一个 bridge 工厂（注入为 QML 的 context property `bridge`）。
 `QML_PAGE_FACTORIES` 是给「整页 QML，但业务在 Widgets 控制器里」的页面用的：
-工厂自己造控制器与**任意多个** context property，返回成品控件（见 `build_page`）。
+工厂自己造控制器与**任意多个** context property，返回 `PageSpec`（见 `build_page_spec`）。
 
-**未注册的 key 一律走原有 Widgets 页面**，因此迁移可以一页一页来，
-任何一页出问题都能通过把这里的登记删掉立即回退。
+外壳只走 `build_qml_page`：**未登记或加载失败的页就是本页暂缺**（外壳记一条告警），
+不再有第二套 Widgets 实现可回 —— 批次 7.4 退役了那条「QML 失败就回退 Widgets 页」
+的脚手架（`build_page` + `fallback_factory`）。
 """
 
 from __future__ import annotations
@@ -18,11 +19,10 @@ from typing import Any
 from PySide6.QtCore import QObject, QUrl
 from PySide6.QtQml import QQmlComponent, QQmlEngine
 from PySide6.QtQuick import QQuickItem
-from PySide6.QtWidgets import QWidget
 
 from core.logger import log
 from ui_qml.bridge import ShellBridge
-from ui_qml.host import QML_ROOT, SpecPageHost
+from ui_qml.host import QML_ROOT
 
 __all__ = [
     "QML_PAGES",
@@ -30,7 +30,6 @@ __all__ = [
     "QML_PAGE_FACTORIES",
     "PageSpec",
     "QmlPage",
-    "build_page",
     "build_page_spec",
     "build_qml_page",
     "register_migrated_pages",
@@ -41,14 +40,15 @@ __all__ = [
 class PageSpec:
     """一个整页 QML 的**组装规格**：QML 文件 + 注入的 context + 钩子实现者。
 
-    两套外壳各取所需：Widgets 外壳把它包成 `PageHost`（QWidget），QML 外壳把它实例化成
-    `Item` —— 同一个 QML、同一个桥，**只有宿主不同**。原先这两件事混在 `build_page`
-    里，QML 外壳就没法复用（`QQuickWidget` 装不进 `QQuickWindow`，这是硬约束）。
+    外壳 `build_qml_page` 把它实例化成 `Item`（挂进 QML 外壳的场景）。原先
+    Widgets 外壳还会把它包成 `PageHost`（QWidget），那条路随 7.4 一起退役了
+    —— `QQuickWidget` 装不进 `QQuickWindow`，本来就是硬约束。
     """
 
     qml_file: str
     context: dict[str, QObject] = field(default_factory=dict)
-    #: 宿主控件的 objectName（截图工具与测试按它找页面；空则沿用 PageHost 默认）
+    #: 页面根 Item 的 objectName（测试/工具按它找页面；空则不设）。原先由
+    #: `SpecPageHost` 设在 QWidget 宿主上，7.4 起由 `build_qml_page` 设在 Item 上。
     object_name: str = ""
     #: 鸭子类型钩子（`save_state` / `restore_state` / `refresh_display` / `update_status_bar`）
     #: 的实现者：常规页是桥本身，工业页是它的 Widgets 控制器。
@@ -79,7 +79,7 @@ QML_BRIDGES: dict[str, Callable[[object], QObject]] = {}
 # 给「整页 QML 但业务留在 Widgets 控制器里」的页面用（当前只有工业页）。单 bridge
 # 的 `QML_BRIDGES` 覆盖不了这种页：工业页需要一个控制器 + 两个 context property
 # （`bridge` / `planTableBridge`）。工厂只产出**组装规格**，不碰宿主 ——
-# 包成 QWidget（`SpecPageHost`）还是实例化成 Item（`build_qml_page`）由外壳决定。
+# 实例化成 Item 由 `build_qml_page` 做。
 QML_PAGE_FACTORIES: dict[str, Callable[[object], PageSpec | None]] = {}
 
 
@@ -134,51 +134,6 @@ def register_migrated_pages() -> None:
         QML_PAGE_FACTORIES["industry"] = build_industry_spec
 
 
-def build_page(
-    key: str,
-    fallback_factory: Callable[[], QWidget],
-    shell: object | None = None,
-    parent: QWidget | None = None,
-) -> QWidget:
-    """构建指定导航页：已注册且加载成功则返回 QML 宿主，否则回退 Widgets 版。
-
-    回退是**静默且安全**的——QML 文件写错、缺组件、语法错误、bridge 构造抛异常、
-    页工厂返回空，都只会退回原页面，不会让整个应用起不来。
-
-    优先级：`QML_PAGE_FACTORIES`（页工厂，自己组装控制器与多 context）→
-    `QML_PAGES` + `QML_BRIDGES`（单 context 的常规 QML 页）→ 回退。
-    """
-    # 页工厂：整页 QML 但业务在 Widgets 控制器里（当前只有工业页）
-    factory = QML_PAGE_FACTORIES.get(key)
-    if factory is not None:
-        try:
-            spec = factory(shell)
-        except Exception:
-            log.exception("页面 %s 的 QML 页工厂失败，回退 Widgets 版", key)
-            return fallback_factory()
-        if spec is None:
-            log.warning("页面 %s 的 QML 页工厂返回空，回退 Widgets 版", key)
-            return fallback_factory()
-    else:
-        qml_file = QML_PAGES.get(key)
-        if qml_file is None:
-            return fallback_factory()
-        try:
-            spec = _spec_for(qml_file, key, shell)
-        except Exception:
-            log.exception("页面 %s 的 bridge 构造失败，回退 Widgets 版", key)
-            return fallback_factory()
-
-    host = SpecPageHost(spec, parent=parent)
-    if host.ok():
-        log.debug("页面 %s 使用 QML：%s", key, spec.qml_file)
-        return host
-
-    log.warning("页面 %s 的 QML(%s) 加载失败，回退 Widgets 版", key, spec.qml_file)
-    host.deleteLater()
-    return fallback_factory()
-
-
 def _spec_for(qml_file: str, key: str, shell: object | None) -> PageSpec:
     """常规 QML 页（单 context）的规格：`bridge` + 可选的 `shell`。"""
     context: dict[str, QObject] = {}
@@ -201,9 +156,8 @@ def build_qml_page(
 ) -> QmlPage | None:
     """造 QML 外壳里的页面（`Item`）。找不到登记或加载失败返回 None。
 
-    与 `build_page` 的区别**只在宿主**：这里不经过 `QQuickWidget`
-    （它是 QWidget，装不进 `QQuickWindow`），直接把同一个 QML 实例化成一个 `Item`
-    挂进外壳的场景。QML 文件与桥都是同一份。
+    直接把 `PageSpec` 里的 QML 实例化成一个 `Item` 挂进外壳的场景 ——
+    不经 `QQuickWidget`（它是 QWidget，装不进 `QQuickWindow`，这是硬约束）。
 
     context 走**每页独立的 `QQmlContext`**（挂在外壳的 rootContext 下），
     这样各页的 `bridge` 互不覆盖 —— `PageHost` 靠「一个宿主一个引擎」达到同样效果，
@@ -220,7 +174,13 @@ def build_qml_page(
         ctx.setContextProperty(name, obj)
 
     component = QQmlComponent(engine)
-    component.setData(_read_qml(spec.qml_file), QUrl.fromLocalFile(str(QML_ROOT / spec.qml_file)))
+    try:
+        component.setData(_read_qml(spec.qml_file), QUrl.fromLocalFile(str(QML_ROOT / spec.qml_file)))
+    except OSError:
+        # 文件缺失/读不出来也要收敛成 None：外壳据此把本页记为暂缺，而不是启动即崩
+        # （批次 7.4 删了 Widgets 回退时，旧的 `build_page` 靠 `PageHost` 兜过这条）。
+        log.exception("页面 %s 的 QML(%s) 读不出来", key, spec.qml_file)
+        return None
     if component.isError():
         log.error(
             "页面 %s 的 QML(%s) 加载失败：%s",
@@ -233,6 +193,8 @@ def build_qml_page(
     if item is None or not isinstance(item, QQuickItem):
         log.error("页面 %s 的 QML(%s) 根元素不是 Item（%r）", key, spec.qml_file, item)
         return None
+    if spec.object_name:
+        item.setObjectName(spec.object_name)
     item.setParentItem(parent_item)
     return QmlPage(key=key, item=item, hooks=spec.hooks, component=component)
 

@@ -37,12 +37,57 @@ from PySide6.QtWidgets import QApplication
 
 import ui_qml.theme.registry as theme
 from ui_pyside6.views.industry.plan_table import PlanTable
+from ui_qml.host import PageHost
 from ui_qml.models.industry_models import PlanTableModel
 
 pytestmark = pytest.mark.ui
 
 QML_ROOT = Path(__file__).resolve().parent.parent / "ui_qml" / "qml"
 PANE = QML_ROOT / "pages" / "PlanTablePane.qml"
+
+
+class _Pane:
+    """`PlanTable`（纯 QObject 控制器）+ 装 `PlanTablePane.qml` 的 QML 宿主。
+
+    批次 7.4 起 `PlanTable` **不再自建宿主**（宿主形态由外壳决定：QML 外壳把它
+    实例化成 `Item`，见 `ui_qml/registry.build_qml_page`）。本文件要发**真实鼠标
+    事件**，所以由测试自己造一个 `PageHost`（QQuickWidget）把 pane 装起来 ——
+    与当年 Widgets 回退外壳的形态一致。
+
+    属性转发：`resize`/`move`/`show`/`width`/`close` 等 QWidget 方法走宿主，
+    其余（`bridge` / `set_model` / 业务方法）走控制器；`_host` 就是那个 QWidget。
+    """
+
+    def __init__(self, table: PlanTable, host: PageHost) -> None:
+        self._table = table
+        self._host = host
+
+    @property
+    def bridge(self):
+        return self._table.bridge
+
+    def set_model(self, model) -> None:
+        self._table.set_model(model)
+
+    def get_model(self):
+        return self._table.get_model()
+
+    def __getattr__(self, name: str):
+        if hasattr(self._host, name):
+            return getattr(self._host, name)
+        return getattr(self._table, name)
+
+    def dispose(self) -> None:
+        self._host.close()
+        self._host.deleteLater()
+        self._table.deleteLater()
+
+
+def _new_pane() -> _Pane:
+    table = PlanTable()
+    host = PageHost(str(PANE), context={"planTableBridge": table.bridge})
+    return _Pane(table, host)
+
 
 #: 点在这一列上只会改变选中，不会触发任何业务动作。
 #: 列 0 是备料勾选、列 1/2 是图标列、列 3 是产品列 —— 产品列只有带折叠箭头
@@ -99,17 +144,16 @@ def _wait_open(root: QObject, name: str) -> QObject:
 
 @pytest.fixture
 def table(qapp):
-    widget = PlanTable()
-    widget.set_model(PlanTableModel(_plans()))
+    pane = _new_pane()
+    pane.set_model(PlanTableModel(_plans()))
     # 高度要放得下整个右键菜单（约 470px）：悬停子菜单的用例要把鼠标移到菜单下部的
     # 「智能调整」上，落点必须还在控件内，否则事件根本递不进去（实测踩过）
-    widget.resize(900, 640)
-    widget.move(60, 60)  # 固定窗口位置：悬停用例要把鼠标移到控件内某点，位置不确定时
-    widget.show()  # 换算出的全局坐标可能落到屏幕外，事件就递不进去
+    pane.resize(900, 640)
+    pane.move(60, 60)  # 固定窗口位置：悬停用例要把鼠标移到控件内某点，位置不确定时
+    pane.show()  # 换算出的全局坐标可能落到屏幕外，事件就递不进去
     _spin(400)  # 等 QML 完成布局：后面要按 rowH / headerH 算点击坐标
-    yield widget
-    widget.close()
-    widget.deleteLater()
+    yield pane
+    pane.dispose()
     _spin(60)
 
 
@@ -183,7 +227,7 @@ def test_load_and_interact_without_qml_warnings(qt_warnings, qapp):
       - `selectionMode: TableView.NoSelection`（该值不存在 → undefined 赋值）。
     前两个用静态护栏也能拦，但这条是唯一能覆盖「加载期整体是否干净」的兜底。
     """
-    widget = PlanTable()
+    widget = _new_pane()
     widget.set_model(PlanTableModel(_plans()))
     widget.resize(900, 400)
     widget.show()
@@ -207,8 +251,7 @@ def test_load_and_interact_without_qml_warnings(qt_warnings, qapp):
         # 右键落在选中集内 → 选中集原样保留（菜单作用于 [0, 1] 两行）
         assert widget.bridge.selectedRows() == [0, 1]
     finally:
-        widget.close()
-        widget.deleteLater()
+        widget.dispose()
         _spin(60)
 
     assert not qt_warnings, "QML 产生了告警：\n" + "\n".join(dict.fromkeys(qt_warnings))
@@ -250,9 +293,9 @@ def test_select_row_ignores_out_of_range_rows(table):
 class _Clicks:
     """按 QML 里的 rowH / headerH 换算点击坐标。"""
 
-    def __init__(self, table: PlanTable):
+    def __init__(self, table: _Pane):
         host = table._host
-        assert host is not None, "PlanTable 没有 QML 宿主，量不了点击坐标"
+        assert host is not None, "pane 没有 QML 宿主，量不了点击坐标"
         self.host = host
         self.root = host.rootObject()
         self.header_h = int(self.root.property("headerH"))
@@ -269,7 +312,7 @@ class _Clicks:
         QTest.mouseClick(self.host, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, self.row_point(row))
 
     def menu(self, name: str) -> QObject:
-        found = self.root.findChild(QObject, name)
+        found: QObject | None = self.root.findChild(QObject, name)
         assert found is not None, f"QML 里找不到 {name}（objectName 改了吗？）"
         return found
 
@@ -413,7 +456,7 @@ def test_submenu_does_not_open_with_the_parent_menu(qapp):
     """
     theme.apply_theme("fluent-dark")
 
-    widget = PlanTable()
+    widget = _new_pane()
     widget.set_model(PlanTableModel(_plans()))
     widget.resize(900, 640)
     widget.show()
@@ -447,8 +490,7 @@ def test_submenu_does_not_open_with_the_parent_menu(qapp):
                 popped.append(f"t={(i + 1) * 40}ms visible={visible} opened={opened}")
         assert not popped, "二级菜单随父菜单弹出来了（用户看到的就是这一闪）：" + "; ".join(popped)
     finally:
-        widget.close()
-        widget.deleteLater()
+        widget.dispose()
         _spin(60)
 
 
@@ -507,7 +549,7 @@ def test_click_keeps_the_pressed_row_when_content_moves(qapp):
     这里用「按住不动 → 程序移动内容 → 原处释放」确定性复现：内容移动与鼠标无关，
     正是甩动/沉降期间的真实情形。
     """
-    widget = PlanTable()
+    widget = _new_pane()
     widget.set_model(PlanTableModel(_plans(120)))
     widget.resize(900, 400)
     widget.move(60, 60)
@@ -541,15 +583,14 @@ def test_click_keeps_the_pressed_row_when_content_moves(qapp):
                 f"contentY={content_y} 内容移动 {delta} 行后，应仍选中按下的第 {row} 行"
             )
     finally:
-        widget.close()
-        widget.deleteLater()
+        widget.dispose()
         _spin(60)
 
 
 @pytest.mark.ui
 def test_double_click_opens_inline_editor_for_editable_cell(qapp):
     """双击可编辑列 → 就地编辑框出现（原实现里这条路径实测触发不到）。"""
-    widget = PlanTable()
+    widget = _new_pane()
     widget.set_model(PlanTableModel(_plans(20)))
     widget.resize(900, 500)
     widget.move(60, 60)
@@ -576,8 +617,7 @@ def test_double_click_opens_inline_editor_for_editable_cell(qapp):
         assert int(root.property("editRow")) == 0
         assert int(root.property("editCol")) == editable_col
     finally:
-        widget.close()
-        widget.deleteLater()
+        widget.dispose()
         _spin(60)
 
 
@@ -588,7 +628,7 @@ def test_double_click_non_editable_cell_takes_the_dialog_path(qapp):
     Qt 对双击**不发**第一次的 `clicked`，所以双击只跑双击那一次动作，
     不会先把单击的副作用（勾选/折叠/选中）做掉。
     """
-    widget = PlanTable()
+    widget = _new_pane()
     widget.set_model(PlanTableModel(_plans(20)))
     widget.resize(900, 500)
     widget.move(60, 60)
@@ -615,6 +655,5 @@ def test_double_click_non_editable_cell_takes_the_dialog_path(qapp):
         assert opened == [0], "双击不可编辑列应开编辑对话框"
         assert widget.bridge.selectedRows() == [9], "双击不该顺手改掉选中集"
     finally:
-        widget.close()
-        widget.deleteLater()
+        widget.dispose()
         _spin(60)

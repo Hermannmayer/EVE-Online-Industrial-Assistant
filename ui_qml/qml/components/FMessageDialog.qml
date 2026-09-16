@@ -21,6 +21,8 @@ FDialogFrame {
     dlg: frame.msg
     acceptText: frame.isQuestion ? qsTr("是") : qsTr("确定")
     cancelText: qsTr("否")
+    // 危险确认（原版 `defaultButton=No`）焦点落在「否」，回车不误放行
+    defaultReject: frame.msg ? frame.msg.defaultReject : false
 
     RowLayout {
         Layout.fillWidth: true

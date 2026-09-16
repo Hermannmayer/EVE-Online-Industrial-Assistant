@@ -2,8 +2,8 @@
 
 对照 Widgets 版 `ui_pyside6/views/procurement_tab.py`，**只做转发与整形**：
 业务（聚合采购需求、删除/手改的回放、轮询同步、置顶、完成所有）留在
-`ProcurementDialog` 里 —— 它退化为「控制器 + QQuickWidget 宿主」，
-与 `production_launcher` 同款（阶段 2c 已定的非模态工具窗终态）。
+`ProcurementDialog` 里 —— 它是纯控制器（批次 7.4 起基类是 `QObject`，窗口在
+`qml/pages/ProcurementWindow.qml` 里），与 `production_launcher` 同款。
 
 模块顶部那几个纯函数原本挂在旧文件的模块级/表模型上，**逻辑一字未改**地搬过来，
 桥与旧类共用同一份，不出现两套口径。
@@ -128,6 +128,11 @@ class ProcurementBridge(QObject):
         self._page = page
 
     # ── 工具栏 ────────────────────────────────────────────────
+
+    @Property(str, notify=stateChanged)
+    def titleText(self) -> str:
+        """窗口标题 —— 由 `_reload_plans` 按材料机库改写（批次 7.4 前是 `setWindowTitle`）。"""
+        return str(self._page.window_title())
 
     @Property(list, constant=True)
     def priceTypeOptions(self) -> list[dict]:
@@ -284,3 +289,24 @@ class ProcurementBridge(QObject):
     @Slot(str, int)
     def copyLine(self, section: str, row: int) -> None:
         self._page.copy_line(section, row)
+
+    # ── 窗口生命周期（批次 7.4）───────────────────────────────
+    #
+    # QML 根从 `Item` 换成 `Window` 之后，控制器的基类变成 `QObject` —— 原来由
+    # `showEvent` / `hideEvent` / `closeEvent` / `done()` 承接的四件事改由 QML 侧的
+    # `onVisibleChanged` / `onClosing` / `Esc` 快捷键调这几个槽转进来。**时机逐项对齐**：
+    # `showEvent`（含一次 `_reload_plans`）↔ 可见变真；`hideEvent` ↔ 可见变假；
+    # `closeEvent` ↔ 窗口即将关闭；`done()`/Esc ↔ `escapePressed`。
+
+    @Slot(bool)
+    def windowVisibilityChanged(self, visible: bool) -> None:
+        self._page.window_visibility_changed(bool(visible))
+
+    @Slot()
+    def windowClosing(self) -> None:
+        self._page.window_closing()
+
+    @Slot()
+    def escapePressed(self) -> None:
+        """Esc：与原 `QDialog` 一样走 `reject()`（不经 `closeEvent`），同样清掉删除记录。"""
+        self._page.reject()

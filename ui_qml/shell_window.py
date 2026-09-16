@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from PySide6.QtCore import Property, QObject, QSize, Qt, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtQuick import QQuickItem, QQuickView
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
@@ -41,9 +41,14 @@ __all__ = ["ShellWindow", "ShellWindowBridge"]
 
 _SHELL_QML = "shell/Main.qml"
 
-#: 页面钩子里「切页时外壳会顺手调」的那几个（与 `SpecPageHost` 转发的是同一组）
+#: 页面钩子里「切页时外壳会顺手调」的那几个。
+#: 批次 7.4 之前这组由 `SpecPageHost` 转发（那条路已随 Widgets 回退脚手架删除），现在这里是唯一定义处。
 _HOOK_REFRESH = "refresh_display"
 _HOOK_STATUS = "update_status_bar"
+#: 页面**被切到前台**时同步一次（工业页用它重读价格设置）。
+#: 批次 7.4 起工业页控制器是 `QObject`、没有 `showEvent` 可依赖，这条分发是**唯一**唤醒路径 ——
+#: 钩子名改了或这里删了都是静默失效：从仓库页改完材料倍率切回工业页，工具栏旋钮停在旧值且不报错。
+_HOOK_SHOWN = "on_shown"
 
 
 class _StatusLabelShim:
@@ -483,6 +488,12 @@ class ShellWindow(QQuickView):
         for w in QApplication.topLevelWidgets():
             if w is not self and w.isVisible():
                 w.close()
+        # 工业那两个工具窗（产线小助手 / 采购）在批次 7.4 之后是 **QWindow**，
+        # 而 `topLevelWidgets()` **不含 QWindow**（实测）—— 少了这一段，关主窗后
+        # 它们仍然可见，`quitOnLastWindowClosed` 永不触发，表现为「点了关闭但进程不退」。
+        for win in QGuiApplication.topLevelWindows():
+            if win is not self and win.isVisible():
+                win.close()
         self._stop_running_threads()
         if self._tray_icon:
             self._tray_icon.hide()
@@ -518,6 +529,17 @@ class ShellWindow(QQuickView):
 
         # 托盘「退出」走 app.quit()，不经过 closeEvent —— 这里补上同一个标记
         begin_shutdown()
+        # 页面控制器里那些**不是外壳子对象**的线程要单独关：工业页的 worker 挂在
+        # `IndustryPage` 之下，而它没有 QObject 父（`main_window` 是位置参数、不是 parent），
+        # 所以下面那句 `findChildren(QThread)` 根本找不到它们 —— 漏掉的后果是
+        # 「QThread 运行中被析构 → Qt 直接 abort()」，静默死进程且不留日志。
+        for page in getattr(self, "_pages", {}).values():
+            shutdown = getattr(page.hooks, "shutdown", None)
+            if callable(shutdown):
+                try:
+                    shutdown()
+                except Exception:
+                    log.exception("页面关机钩子失败")
         for worker in self.findChildren(QThread):
             if worker.isRunning():
                 worker.requestInterruption()
@@ -561,6 +583,11 @@ class ShellWindow(QQuickView):
         target = getattr(hooks, _HOOK_STATUS, None)
         if callable(target):
             target()
+        # 「页面被切到前台」的同步。放在状态栏之后：钩子实现里可能改状态文案，
+        # 让状态栏先落地再让页面同步。
+        shown = getattr(hooks, _HOOK_SHOWN, None)
+        if callable(shown):
+            shown()
         if key == "watchlist":
             trigger = getattr(hooks, "trigger_price_check", None)
             if callable(trigger):

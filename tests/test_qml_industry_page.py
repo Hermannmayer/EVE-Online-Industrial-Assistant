@@ -32,20 +32,24 @@ def _find_by_placeholder(root: QQuickItem, text: str) -> QQuickItem | None:
     return None
 
 
-def test_suggestion_popup_anchors_below_the_input(industry_page, qapp):
+def test_suggestion_popup_anchors_below_the_input(main_window, qapp):
     """蓝图候选框必须贴在输入框正下方，不能落在页面左上角。
 
     原写法 `x: input.mapToItem(page, 0, 0).x` **建立不起绑定依赖**：`mapToItem` 在 C++
     里读的几何属性不被 QML 的依赖追踪记录，整条绑定只在创建时求值一次，而那一刻输入框
     还没布局完（坐标 0,0）—— 候选框于是永远贴在左上角（用户反馈实测踩过）。
     改成「以输入框为父项 + 相对偏移」后，位置由 Qt 的弹出物定位在 open 时换算。
+
+    ⚠️ 批次 7.4 起工业页控制器是纯 `QObject`、**不再自建宿主**（`page._host` 已删），
+    渲染面只存在于外壳的场景里 —— 所以这里改从**外壳**取根项。原先的 `page.resize/show`
+    也一并换成外壳的（要量的本来就是它在真实布局下的位置）。
     """
-    page = industry_page
-    page.resize(1200, 720)
-    page.show()
+    main_window.resize(1200, 720)
+    main_window.show()
+    main_window.navigate_to("industry")
     _spin(400)
 
-    root = page._host.rootObject()
+    root = main_window._pages["industry"].item
     popup = root.findChild(QObject, "suggestionPopup")
     assert popup is not None, "找不到候选框（objectName 改了吗？）"
     field = _find_by_placeholder(root, "粘贴蓝图名或剪贴板内容")

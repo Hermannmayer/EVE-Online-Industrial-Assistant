@@ -48,12 +48,13 @@ class MessageBridge(DialogBridge):
 
     textChanged = Signal()
 
-    def __init__(self, title: str, text: str, kind: str, *, show_cancel: bool) -> None:
+    def __init__(self, title: str, text: str, kind: str, *, show_cancel: bool, default_reject: bool = False) -> None:
         super().__init__()
         self.set_title(title)
         self._text = str(text)
         self._kind = kind
         self._show_cancel = bool(show_cancel)
+        self._default_reject = bool(default_reject)
         #: 只有点肯定按钮才置 True；取消 / Esc / 关闭一律保持 False
         self._answer = False
 
@@ -70,6 +71,11 @@ class MessageBridge(DialogBridge):
     @Property(bool, constant=True)
     def showCancel(self) -> bool:
         return self._show_cancel
+
+    @Property(bool, constant=True)
+    def defaultReject(self) -> bool:
+        """危险确认的默认项：置真时焦点落在「取消」，回车不会误触发破坏性动作。"""
+        return self._default_reject
 
     @Slot()
     def accept(self) -> None:
@@ -119,10 +125,20 @@ class FMessageDialog(QmlDialog):
         FMessageDialog._open(MessageBridge(title, text, KIND_INFO, show_cancel=False), parent, (460, 320))
 
     @staticmethod
-    def question(parent: Any, title: str, text: str) -> bool:
+    def question(parent: Any, title: str, text: str, *, default_yes: bool = True) -> bool:
         """对齐 `QMessageBox.question(parent, title, text, Yes | No)`，但返回 `bool`。
 
         `True` = 点了「是」；「否」/ Esc / 关闭按钮一律 `False`。
+
+        `default_yes=False` 对应原版构造里的 `defaultButton=No`：**危险确认必须传它**。
+        不传时「是」会拿到初始焦点，回车即放行 —— 而原版那种「默认落在否」的写法
+        正是为了挡住「手快回车把不该放行的放行了」。调用方原来写
+        `QMessageBox.question(..., Yes | No, QMessageBox.StandardButton.No)` 的，一律
+        改成 `default_yes=False`。
         """
-        dlg = FMessageDialog._open(MessageBridge(title, text, KIND_QUESTION, show_cancel=True), parent, (440, 210))
+        dlg = FMessageDialog._open(
+            MessageBridge(title, text, KIND_QUESTION, show_cancel=True, default_reject=not default_yes),
+            parent,
+            (440, 210),
+        )
         return cast(MessageBridge, dlg.bridge).answer()

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import "../components"
 
 /* 采购小助手窗口（阶段 4b）—— 非模态工具窗，渲染整体在 QML。
@@ -9,10 +10,56 @@ import "../components"
  * —— 与 Widgets 版的 `QSplitter` + 两个 `SortPreservingTableView` 对齐。
  *
  * 业务全在 `ProcurementDialog`（控制器）里，这里只画与转发。
+ *
+ * 批次 7.4：根元素从 `Item` 换成 **`Window`** —— 控制器退成 `QObject`，不再有
+ * `QDialog` 外壳，窗口语义（标题 / 尺寸 / 顶层 / 关闭 / Esc / 显示隐藏事件）由这里自持；
+ * 命令式的那几项（show / raise / activate / resize）仍由控制器转发。
  */
-
-Item {
+Window {
     id: page
+
+    /* ── 窗口语义（逐项对齐原 QDialog 版 `ProcurementDialog`）──
+     *
+     *   setWindowTitle(f"待采购 - 材料需求 ({机库})") → title 绑定桥的 titleText
+     *   setWindowFlag(Qt.Window, True)               → 顶层 Window 默认即带 Qt.Window；
+     *                                                  构造时不给 transientParent，所以仍
+     *                                                  然「不随主窗最小化」（原 parent=None）
+     *   setMinimumSize(620, 400)                     → minimumWidth / minimumHeight
+     *   resize(760, 820)                             → width / height（窄高，一眼看全）
+     *   show() / raise_() / activateWindow() / done()/Esc → 控制器转发 + 下面的 Shortcut
+     */
+    width: 760
+    height: 820
+    minimumWidth: 620
+    minimumHeight: 400
+    title: page.pc ? page.pc.titleText : ""
+    // 窗口清屏色 = 页面底色：首帧之前也不会闪一下白底
+    color: Theme.bgDark
+    visible: false // 由 Python 侧的 `show()` 打开（构造完不该自己冒出来）
+
+    /* 显示 / 隐藏 —— 等价于原 `showEvent` / `hideEvent`。
+     * ⚠️ 原 `showEvent` 里除了起轮询表，还有一次 `_reload_plans()`（不复用就会看到
+     * 过期数据）—— 两条都搬到了控制器同名方法里，这里只负责把可见性转过去。 */
+    onVisibleChanged: if (page.pc)
+        page.pc.windowVisibilityChanged(page.visible)
+
+    /* ⚠️ QML 的 `Window.onClosing` 是**可取消**的：一旦挂上处理函数，
+     * 就必须显式 `close.accepted = true`，否则关闭事件被静默吃掉、窗口关不掉。 */
+    onClosing: function (close) {
+        if (page.pc)
+            page.pc.windowClosing()
+        close.accepted = true
+    }
+
+    /* Esc —— 原 `QDialog` 的内置行为（`reject()`，不经 `closeEvent`）。
+     * QML 的 `Window` 没有内置 Esc 语义，这里补一条。
+     * ⚠️ 用字面量 `"Escape"` 而不是 `StandardKey.Cancel`：后者是**多绑定**的标准键，
+     * `sequence:` 只绑其中一条，Qt 会在每次加载时刷一行告警（测试的「零告警」护栏会红）。 */
+    Shortcut {
+        sequence: "Escape"
+        onActivated: if (page.pc)
+            page.pc.escapePressed()
+    }
 
     readonly property var pc: typeof bridge !== "undefined" ? bridge : null
     //: 七列全部可排序（对齐原 `SortPreservingTableView` 的表头）

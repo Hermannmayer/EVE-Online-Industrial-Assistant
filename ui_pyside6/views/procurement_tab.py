@@ -2,15 +2,20 @@
 
 对照改造前：本类原本是「QDialog + 满屏 Widgets 控件」。阶段 4b 把渲染交给
 `ui_qml/qml/pages/ProcurementWindow.qml`（经 `ProcurementBridge` 转发），
-本类退化为**控制器 + QQuickWidget 宿主** —— 与 `production_launcher` 同款，
-那是阶段 2c 就定下的非模态工具窗终态。
+本类退化为**控制器 + QQuickWidget 宿主**；批次 7.4 再把宿主也交出去 —— QML 根
+从 `Item` 换成 `Window`，本类从 `QDialog` 退成 **`QObject`**，与
+`production_launcher` 同款（那是阶段 2c 就定下的非模态工具窗终态）。
 
 因此**业务一行未改**，改的只是「谁来画」：聚合采购需求、删除/手改的回放、
 轮询同步、置顶、完成所有，全部留在本类。
 
 非模态独立工具窗：可置顶悬浮于游戏之上，不影响主界面操作。
-计划/库存变化由 10s 轮询同步（见 `showEvent`）；本窗入库/下线后发
+计划/库存变化由 10s 轮询同步（见 `window_visibility_changed`）；本窗入库/下线后发
 `plans_changed` 通知主界面刷新。
+
+批次 7.4：QML 根从 `Item` 换成 `Window`，本类从 `QDialog` 退成 **`QObject`** ——
+窗口语义（标题 / 尺寸 / 顶层 / 关闭 / Esc / 显示隐藏事件）由 QML 的 `Window` 自持，
+Python 侧只在 `show()` / `raise_()` / `activateWindow()` 上转发（调用方一行未改）。
 
 纯函数（名称解析 / 分区 / 复制文本 / 行装配）在 `ui_qml.bridge.procurement_bridge` 里，
 桥与本类共用同一份；本模块把它们再导出，方便既有调用方与测试。
@@ -20,9 +25,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QDialog, QVBoxLayout
+from PySide6.QtQml import QQmlComponent, QQmlEngine
+from PySide6.QtQuick import QQuickWindow
 
 from core.logger import log
 from ui_qml.bridge.procurement_bridge import (
@@ -44,21 +50,22 @@ __all__ = [
 _QML_FILE = "pages/ProcurementWindow.qml"
 
 
-class ProcurementDialog(QDialog):
-    """待采购窗口 —— 根据生产计划和库存计算需要采购的材料（渲染走 QML）。"""
+class ProcurementDialog(QObject):
+    """待采购窗口 —— 根据生产计划和库存计算需要采购的材料（控制器；窗口在 QML 侧）。"""
 
     plans_changed = Signal()  # 入库/下线后通知主界面重载计划
 
     POLL_INTERVAL_MS = 10_000
     COPY_HINT_MS = 5_000  # 底部复制提示的停留时长
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
-        self.setWindowFlag(Qt.WindowType.Window, True)  # 独立窗口，不随主窗最小化
-        self.setWindowTitle("待采购 - 材料需求")
-        # 窄高窗口：方便一眼浏览全部待采购物品
-        self.setMinimumSize(620, 400)
-        self.resize(760, 820)
+        #: QML 根是 `Window`，实例化出来的就是本窗（`_build_window` 里赋值）。
+        self._window: QQuickWindow | None = None
+        self._engine: QQmlEngine | None = None
+        self._component: QQmlComponent | None = None
+        #: 窗口标题（`_reload_plans` 按材料机库改写，桥的 `titleText` 读它）
+        self._window_title = "待采购 - 材料需求"
 
         self._active_plans: list[dict] = []
         self._default_mat_hangar_id: int | None = None
@@ -78,24 +85,93 @@ class ProcurementDialog(QDialog):
         self._poll_timer: QTimer | None = None
         self._copy_hint_timer: QTimer | None = None
 
-        self._build_ui()
+        self._build_window()
         self._reload_plans()
         self._restore_pin()
 
-    # ── UI ──────────────────────────────────────────────────
+    # ── 窗口 ──────────────────────────────────────────────────
+    #
+    # 批次 7.4：QML 根从 `Item` 换成 `Window`，本类不再是 QDialog，于是窗口语义一分为二：
+    #   * 声明性的（标题 / 初始尺寸 / 最小尺寸 / 顶层属性）在 QML 里；
+    #   * 命令式的（显示 / 前置 / 激活 / 关闭 / Esc）在这里转发给 `self._window`。
+    # `industry_view.py` 调用的 `show()` / `raise_()` / `activateWindow()` 因此一行未改。
 
-    def _build_ui(self) -> None:
-        """整窗交给 QML：本类只保留业务与渲染状态。"""
-        from ui_qml.host import PageHost
+    def _build_window(self) -> None:
+        """把 `ProcurementWindow.qml`（根元素是 `Window`）实例化成本窗。
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        ⚠️ 根是 `Window` 时 `QQuickView` / `QQuickWidget` 都用不了（两者的根必须是 `Item`），
+        只能走 `QQmlEngine` + `QQmlComponent` —— 与 `ui_qml/splash_window.py` 同法，
+        也从 `component.errors()` 里拿结构化错误（加载失败**直接抛**，不静默成空白窗口）。
+        """
+        from ui_qml.bridge import CONTEXT_NAME, theme_singleton
+        from ui_qml.host import QML_ROOT
 
         self._bridge = ProcurementBridge(self, self)
         self._bridge.plansChanged.connect(self.plans_changed)
-        self._host = PageHost(_QML_FILE, context={"bridge": self._bridge}, parent=self)
-        root.addWidget(self._host)
+        engine = QQmlEngine()
+        self._engine = engine
+        ctx = engine.rootContext()
+        ctx.setContextProperty(CONTEXT_NAME, theme_singleton())
+        ctx.setContextProperty("bridge", self._bridge)
+        path = QML_ROOT / _QML_FILE
+        component = QQmlComponent(engine)
+        component.setData(path.read_bytes(), QUrl.fromLocalFile(str(path)))
+        if component.isError():
+            raise RuntimeError("; ".join(e.toString() for e in component.errors()))
+        self._component = component
+        window = component.create(ctx)
+        if not isinstance(window, QQuickWindow):
+            raise RuntimeError(f"{_QML_FILE} 的根元素不是 Window：{window!r}")
+        # 所有权：**引擎挂到窗口名下**（`QQuickView` 自己就是 `new QQmlEngine(view)` 这么干的）。
+        # 于是「窗口先销毁、引擎随后跟着走」由 Qt 的父子关系保证，不依赖 Python 的析构顺序 ——
+        # 反过来（引擎先走、场景还在）时，任何一次绑定重算都会撞上被拆掉的上下文。
+        # ⚠️ 不能反过来把窗口挂到控制器名下：PySide 的 `QWindow.setParent` 只收 `QWindow`。
+        component.setParent(engine)
+        engine.setParent(window)
+        self._window = window
+
+    # ── 窗口命令（转发给 QML 的 `Window`）──────────────────────
+
+    def show(self) -> None:
+        if self._window is not None:
+            self._window.show()
+
+    def hide(self) -> None:
+        if self._window is not None:
+            self._window.hide()
+
+    def close(self) -> None:
+        """关窗（X 按钮走 QML 的 `onClosing`，这里走程序化路径）。
+
+        ⚠️ `QWindow.close()` **只在窗口当前可见时才发 `closing`**（Qt 的语义：已经关着的
+        窗口再关一次没有意义）。而「关过」在本窗是一件**状态** —— 它是「本次会话结束」的
+        分界（`_deleted_ids` 在这条线上清空）。所以先把收尾走完（幂等），再让窗口真的关。
+        """
+        if self._window is None:
+            return
+        self.window_closing()
+        self._window.close()
+
+    def resize(self, width: int, height: int) -> None:
+        if self._window is not None:
+            self._window.resize(int(width), int(height))
+
+    def raise_(self) -> None:
+        """对应 `QWidget.raise_()`。QWindow 上同名方法在 PySide 里也是 `raise_`。"""
+        if self._window is not None:
+            self._window.raise_()
+
+    def activateWindow(self) -> None:
+        """对应 `QWidget.activateWindow()`；QWindow 上是 `requestActivate()`。"""
+        if self._window is not None:
+            self._window.requestActivate()
+
+    def isVisible(self) -> bool:
+        return self._window is not None and bool(self._window.isVisible())
+
+    def window_title(self) -> str:
+        """当前窗口标题（桥的 `titleText` 读它，QML 的 `Window.title` 再绑上去）。"""
+        return str(self._window_title)
 
     def _notify(self) -> None:
         self._bridge.stateChanged.emit()
@@ -125,7 +201,9 @@ class ProcurementDialog(QDialog):
 
     def set_pinned(self, checked: bool) -> None:
         self._pinned = bool(checked)
-        apply_window_pin(self, self._pinned)
+        # 置顶作用在**窗口**上，不是控制器上（`apply_window_pin` 两种窗口都吃）。
+        if self._window is not None:
+            apply_window_pin(self._window, self._pinned)
         try:
             from services.user_settings import save_settings
 
@@ -180,13 +258,28 @@ class ProcurementDialog(QDialog):
             label = inventory_manager.get_hangar_name(hid) or f"机库 #{hid}"
         else:
             label = f"{len(mat_hids)} 个材料机库"
-        self.setWindowTitle(f"待采购 - 材料需求 ({label})")
+        # 标题写进字段、由 QML 的 `Window.title` 绑定（原来是 `setWindowTitle`）——
+        # 跟着下面 `recalculate()` 里的 `_notify()` 一起刷新。
+        self._window_title = f"待采购 - 材料需求 ({label})"
         self.recalculate()
 
     # ── 生命周期（单实例复用：关闭后重开必须能继续刷新）──
+    #
+    # 基类换成 `QObject` 后 `showEvent` / `hideEvent` / `closeEvent` / `done()` 都不再存在，
+    # 等价语义由 QML 的 `Window` 转发进来（见 `ProcurementWindow.qml`）：
+    #   showEvent  → window_visibility_changed(True)   （**顺带 `_reload_plans()`**）
+    #   hideEvent  → window_visibility_changed(False)
+    #   closeEvent → window_closing()
+    #   done()/Esc → reject() → done()
+    # ⚠️ `showEvent` 里原来是「重载计划 + 起表」两件事，换宿主时只搬定时器会让
+    # 「复用后重开」看到过期数据 —— 两条都在 `window_visibility_changed` 里。
 
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
+    def window_visibility_changed(self, visible: bool) -> None:
+        """窗口显示/隐藏 —— 等价于原 `showEvent` / `hideEvent`。"""
+        if not visible:
+            if self._poll_timer is not None:
+                self._poll_timer.stop()
+            return
         self._reload_plans()
         if self._poll_timer is None:
             self._poll_timer = QTimer(self)
@@ -194,20 +287,22 @@ class ProcurementDialog(QDialog):
             self._poll_timer.timeout.connect(self._on_poll)
         self._poll_timer.start()
 
-    def hideEvent(self, event) -> None:
-        if self._poll_timer is not None:
-            self._poll_timer.stop()
-        super().hideEvent(event)
-
-    def closeEvent(self, event) -> None:
+    def window_closing(self) -> None:
         """关闭窗口（X 按钮）= 本次会话结束：被删的行下次打开重新算回来（见 `_deleted_ids`）。"""
         self._deleted_ids.clear()
-        super().closeEvent(event)
 
-    def done(self, result: int) -> None:
-        """Esc / 程序调用关闭走 `done()`，不经 closeEvent —— 同样按结束本次会话处理。"""
+    def done(self, result: int = 0) -> None:
+        """Esc / 程序调用关闭 —— 等价于原 `QDialog.done()` 的覆盖，同样按结束本次会话处理。
+
+        `result` 只为对齐 `QDialog.done(result)` 的形状，本窗不读它。
+        """
         self._deleted_ids.clear()
-        super().done(result)
+        if self._window is not None:
+            self._window.hide()
+
+    def reject(self) -> None:
+        """Esc 的等价入口（对齐 `QDialog.reject()`）—— QML 侧 `Shortcut` 转到 `done()`。"""
+        self.done(0)
 
     def _on_poll(self) -> None:
         """定时同步主界面：计划/库存变化后重算（手动改量由 `_manual_overrides` 回放保留）。"""
@@ -226,7 +321,8 @@ class ProcurementDialog(QDialog):
 
             if load_settings().get("procurement_pin"):
                 self._pinned = True
-                apply_window_pin(self, True)
+                if self._window is not None:
+                    apply_window_pin(self._window, True)
                 self._notify()
         except Exception:
             log.warning("读取采购窗置顶偏好失败", exc_info=True)
@@ -458,7 +554,7 @@ class ProcurementDialog(QDialog):
             return
 
         from services import plan_execution
-        from ui_pyside6.views.industry.complete_guard import confirm_bp_shortfall
+        from ui_qml.bridge.complete_guard import confirm_bp_shortfall
 
         # 蓝图流程不足是软阻塞：确认一次后整批强制完成。
         # 不覆盖这条入口的话，强制启动过的计划在这里会永远卡住。
