@@ -19,6 +19,8 @@ from tests.qml_click import press_move_release
 from ui_qml.models.query_models import format_search_rows
 from ui_qml.models.query_qml_model import ROLE_NAMES, QueryQmlModel
 
+_ROOT = Path(__file__).resolve().parents[1]
+
 _BASE = Qt.ItemDataRole.UserRole
 _TEXT = _BASE + 1
 _FG = _BASE + 2
@@ -256,6 +258,119 @@ def test_search_without_query_only_sets_status(bridge):
     bridge.onTextChanged("   ")
     bridge.search()
     assert bridge.statusText == "请输入物品名称或 ID"
+
+
+# ── 两态切换与子桥（界面改版第 2/3 步）──────────────────────────
+
+
+class _Recorder:
+    """假详情桥：只记录被推了什么，用来验证 `QueryBridge → detail` 的驱动时序。
+
+    真桥会跑 5 次取价 + 精炼 + BOM 展开，测试不该为「有没有被调」付这个代价。
+    """
+
+    def __init__(self) -> None:
+        self.items: list[tuple[int, str]] = []
+        self.cleared = 0
+        self.hubs: list[int] = []
+
+    def setItem(self, type_id: int, name: str) -> None:
+        self.items.append((type_id, name))
+
+    def clear(self) -> None:
+        self.cleared += 1
+
+    def setPriceHubIndex(self, index: int) -> None:
+        self.hubs.append(index)
+
+
+@pytest.mark.ui
+def test_has_results_tracks_the_model(bridge):
+    """两态切换的唯一判据在桥里 —— QML 读 `model.rowCount()` 是 Slot 调用，绑定不会刷新。"""
+    assert bridge.hasResults is False
+    _fill(bridge, _row())
+    assert bridge.hasResults is True
+
+
+@pytest.mark.ui
+def test_sub_bridges_are_built_lazily(bridge):
+    """构造桥**不得**拉起子桥：它们会 import workers/services，短命桥会让 pytest 卡退出。"""
+    assert bridge._detail_bridge is None
+    assert bridge._dash_bridge is None
+
+
+@pytest.mark.ui
+def test_select_row_pushes_the_item_once(bridge):
+    """同一行重复选中只推一次 —— 取数是重活，不能跟着「每帧都可能变的高亮」走。"""
+    _fill(bridge, _row(tid=34, zh="三钛合金"))
+    rec = _Recorder()
+    bridge._detail_bridge = rec
+
+    bridge.selectRow(0)
+    bridge.selectRow(0)
+    assert rec.items == [(34, "三钛合金")]
+    assert bridge.currentTypeId == 34
+    assert bridge.currentName == "三钛合金"
+
+
+@pytest.mark.ui
+def test_select_row_switches_item_and_clear_resets(bridge):
+    _fill(bridge, _row(tid=34, zh="三钛合金"), _row(tid=35, zh="类银超金属"))
+    rec = _Recorder()
+    bridge._detail_bridge = rec
+
+    bridge.selectRow(0)
+    bridge.selectRow(1)
+    assert rec.items == [(34, "三钛合金"), (35, "类银超金属")]
+
+    bridge.clear()
+    assert rec.cleared == 1
+    assert bridge.currentTypeId == 0
+    assert bridge.currentName == ""
+
+
+@pytest.mark.ui
+def test_region_change_resyncs_the_detail_price_hub(bridge):
+    """精炼/材料的价格中心跟着查询页的区域走（下标取自 `TRADE_HUBS`）。"""
+    rec = _Recorder()
+    bridge._detail_bridge = rec
+
+    bridge.setRegionIndex(2)
+    assert rec.hubs == [2]
+
+
+@pytest.mark.ui
+def test_page_switches_between_dashboard_and_result_area(qapp):
+    """静态守卫：QML 两侧都在，且空闲态判据取自 `query.hasResults`。
+
+    这条**读源码**而不是跑界面，是因为两态的真实渲染要靠搜索结果驱动；
+    这里要守住的是「别再退回成只有一张表」。
+    """
+    text = (_ROOT / "ui_qml" / "qml" / "pages" / "QueryPage.qml").read_text(encoding="utf-8")
+    assert 'objectName: "queryDashboard"' in text
+    assert 'objectName: "queryDetailPane"' in text
+    assert "query.hasResults" in text
+    # 页面必须 import 面板所在目录，否则 QML 只按同目录解析本地类型、整页加载失败
+    assert 'import "query"' in text
+
+
+@pytest.mark.ui
+def test_query_panels_all_exist():
+    """面板文件一个都不能少 —— 缺一个就是「整页加载失败、本页暂缺」。"""
+    panel_dir = _ROOT / "ui_qml" / "qml" / "pages" / "query"
+    expected = {
+        "QueryDashboard.qml",
+        "QueryDetailPane.qml",
+        "OccupancyPanel.qml",
+        "AssetChartPanel.qml",
+        "OpenOrdersPanel.qml",
+        "HubPricePanel.qml",
+        "OrderPanel.qml",
+        "RefinePanel.qml",
+        "MaterialPanel.qml",
+    }
+    missing = sorted(name for name in expected if not (panel_dir / name).exists())
+    assert not missing, f"缺少面板文件：{missing}"
 
 
 # ════════════════════════════════════════════════════════════

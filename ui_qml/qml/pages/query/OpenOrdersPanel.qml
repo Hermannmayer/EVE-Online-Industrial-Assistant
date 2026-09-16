@@ -27,6 +27,24 @@ Item {
     readonly property int barH: Math.max(22, Math.round(14 * Theme.fontScale) + 8)
     readonly property int rowH: Math.max(20, fntSmall + 9)
 
+    /* 面板只有约 290px 宽，**订单 ID 那一列不显示**：它是 10 位数字，挤在这么窄的列里
+     * 一定是省略号，占着宽度又读不出任何东西。物品 / 方向 / 价格 / 剩余 / 位置才是要看的。
+     * 数据仍在行里（`cells[0]`），要恢复显示只需去掉这里的两处 slice。 */
+    readonly property var tableHeads: {
+        const h = root.dashboard ? root.dashboard.openOrderHeads : []
+        return h.length > 1 ? h.slice(1) : h
+    }
+
+    readonly property var tableRows: {
+        const src = root.dashboard ? root.dashboard.openOrderRows : []
+        const out = []
+        for (let i = 0; i < src.length; ++i) {
+            const cells = src[i].cells || []
+            out.push({ "cells": cells.length > 1 ? cells.slice(1) : cells })
+        }
+        return out
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: Theme.spacingXs
@@ -129,9 +147,9 @@ Item {
         PanelTable {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            headers: root.dashboard ? root.dashboard.openOrderHeads : []
-            ratios: [1.2, 2.4, 0.9, 1.4, 1.3, 2.6]
-            rows: root.dashboard ? root.dashboard.openOrderRows : []
+            headers: root.tableHeads
+            ratios: [2.6, 0.9, 1.5, 1.6, 2.4]
+            rows: root.tableRows
             emptyText: qsTr("暂无挂单记录 —— 在游戏「钱包 → 订单」点导出，再点上面的「读取订单」")
         }
 

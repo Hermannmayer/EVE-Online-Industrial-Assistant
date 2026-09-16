@@ -42,6 +42,28 @@ ComboBox {
     onModelChanged: measureMaxItemWidth()
     Component.onCompleted: measureMaxItemWidth()
 
+    /* 字段（没展开时那一块）的底与文字色**必须跟着主题走**。
+     *
+     * Qt 官方 Fluent 样式的 ComboBox 字段底是**写死的白**（不读 palette），而文字色读
+     * palette —— 深色主题下 palette 里的文字是亮的，于是「白底 + 近白字」，
+     * 实测几乎读不出来（工具栏的「区域」、查询页材料面板的「价格中心」都是这样）。
+     *
+     * 这里只覆盖 `background` 与 palette 的 `buttonText` / `placeholderText`
+     * （`palette.text` 文件末尾已经设过，重复设会报 "Property value set multiple times"），
+     * **仍然不碰 `contentItem`**：覆盖它会把文字挤成「…」或整段消失（见文件头），
+     * 那是另一回事。
+     * 控件底用 `BG_SURFACE_LIGHT` 而不是 `BG_SURFACE`（后者在深色下紧贴窗口底，
+     * 会渲染成「黑洞 + 亮边」，见 `docs/dev/ui-blueprint.md` 的层次陷阱一节）。 */
+    palette.buttonText: Theme.textPrimary
+    palette.placeholderText: Theme.textSecondary
+
+    background: Rectangle {
+        color: Theme.bgSurfaceLight
+        border.width: 1
+        border.color: root.activeFocus ? Theme.primary : Theme.border
+        radius: Theme.radiusSmall
+    }
+
     popup: Popup {
         // 与字段留 2px 缝：贴死会让下拉看起来像字段本身的一部分
         y: root.height + 2

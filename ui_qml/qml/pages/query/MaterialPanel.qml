@@ -80,9 +80,31 @@ Item {
                 Layout.preferredWidth: Math.round(88 * Theme.fontScale)
                 Layout.preferredHeight: Math.round(26 * Theme.fontScale)
                 model: root.detail ? root.detail.hubNames : []
-                currentIndex: root.detail ? root.detail.materialHubIndex : 0
+
+                /* **不要用绑定写 currentIndex**：模型是先空后有的
+                 * （`detail.hubNames` 在桥建好之前是 `[]`），而在空模型上把 currentIndex
+                 * 置 0 会被 Qt 夹成 **-1**，之后模型填上了也**不会自动纠正** ——
+                 * 实测表现是下拉框里显示灰色的占位文字，而不是当前的价格中心。
+                 * 工具栏那个「区域」下拉没这个问题，纯粹因为它的 model 一开始就是满的。
+                 * 所以这里改成显式同步（模型变化 / 桥的内容变化 / 首次加载各同步一次）。 */
+                function syncHubIndex() {
+                    if (!root.detail || count <= 0)
+                        return
+                    currentIndex = Math.max(0, Math.min(root.detail.materialHubIndex, count - 1))
+                }
+
+                onCountChanged: syncHubIndex()
+                Component.onCompleted: syncHubIndex()
                 onActivated: if (root.detail)
                     root.detail.setMaterialHubIndex(currentIndex)
+
+                // 桥的内容变了（换物品、价格中心回落后端）也同步一次，避免下拉与后端脱节
+                Connections {
+                    target: root.detail
+                    function onChanged() {
+                        hubBox.syncHubIndex()
+                    }
+                }
             }
 
             Item {

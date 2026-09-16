@@ -201,6 +201,15 @@ def _user_conn() -> Any:
     return get_container().db.connect("user")
 
 
+def _configured_export_dir() -> str:
+    """`settings.json` 里的自定义订单导出目录（空串 = 用游戏默认目录）。"""
+    try:
+        return str(load_settings().get(_SETTING_EXPORT_DIR, "") or "").strip()
+    except Exception:
+        log.exception("读取订单导出目录失败")
+        return ""
+
+
 # ════════════════════════════════════════════════════════════
 #  纯函数（可脱离 Qt 单测）
 # ════════════════════════════════════════════════════════════
@@ -394,6 +403,7 @@ class QueryDashboardBridge(QObject):
         #    （见 `_ensure_orders` / `_ensure_wallet`），刷新由 QML 的空闲态驱动。
         self._plans: list[dict] = []
         self._occupancy_rows: list[dict] = []
+        self._occupancy_by_line: list[dict] = []
         self._occupancy_summary = ""
         self._quick_rows: list[dict] = []
         self._series_rows: list[dict] = []  # 当前区间内的快照行
@@ -440,6 +450,15 @@ class QueryDashboardBridge(QObject):
         return self._occupancy_summary
 
     @Property(list, notify=changed)
+    def occupancyByLine(self) -> list[dict]:
+        """**按产线类型**分行的占用数据（仪表盘左栏用，见 `_build_occupancy_by_line`）。
+
+        `[{"key", "label", "color", "active", "cap",
+           "chars": [{"name", "active", "max"}], "detailText"}]`
+        """
+        return [dict(row) for row in self._occupancy_by_line]
+
+    @Property(list, notify=changed)
     def quickRows(self) -> list[dict]:
         """快捷产线行：`{planId, name, action("start"|"complete"), actionText, statusText}`。"""
         return [dict(row) for row in self._quick_rows]
@@ -480,12 +499,21 @@ class QueryDashboardBridge(QObject):
 
     def _confirm(self, title: str, text: str) -> bool:
         """确认框（`parent` 口径同 `query_bridge.openAllItems`）。弹不出来时按「否」处理。"""
-        parent = self._shell if isinstance(self._shell, QWidget) else None
         try:
-            return bool(FMessageDialog.question(parent, title, text, default_yes=True))
+            return bool(FMessageDialog.question(self._host_widget(), title, text, default_yes=True))
         except Exception:
             log.exception("确认框弹出失败，按「否」处理")
             return False
+
+    def _host_widget(self) -> QWidget | None:
+        """弹框的 parent：本桥的 `shell`；若接到的其实是另一个桥（`QueryBridge(self)` 的既有接法），
+        就再往下取它自己的 `_shell` —— 两种接法都能拿到真窗口，拿不到就给 None。"""
+        candidate: Any = self._shell
+        for _ in range(2):
+            if isinstance(candidate, QWidget):
+                return candidate
+            candidate = getattr(candidate, "_shell", None)
+        return None
 
     @Slot()
     def refreshQuick(self) -> None:
@@ -622,7 +650,7 @@ class QueryDashboardBridge(QObject):
             return
         try:
             svc.set_wallet_balance(value)
-            self._record_snapshot(wallet=value)
+            snapshot_ok = self._record_snapshot(wallet=value)
         except Exception:
             log.exception("钱包余额保存失败 value=%s", value)
             self._status = "钱包余额保存失败，详见日志"
@@ -631,7 +659,8 @@ class QueryDashboardBridge(QObject):
         self._wallet_text = text_value
         self._wallet_loaded = True
         self._refresh_snapshots()
-        self._status = f"已记录钱包余额 {text_value} ISK 并写入资产快照"
+        tail = "并写入资产快照" if snapshot_ok else "（资产快照写入失败，详见日志）"
+        self._status = f"已记录钱包余额 {text_value} ISK {tail}"
         self.changed.emit()
 
     # ── 挂单 ──────────────────────────────────────────────────
@@ -669,14 +698,10 @@ class QueryDashboardBridge(QObject):
     def exportDir(self) -> str:
         """用户自定义的订单导出目录（空串 = 用游戏默认目录）。
 
-        Property 而不是 Slot：QML 的「当前目录」文本要随 `changed` 跟着走
+        Property 而不是 Slot：QML 的「导出目录」输入框直接绑它，Slot 调用不进绑定追踪
         （同 `occupancyRows` 的理由）。
         """
-        try:
-            return str(load_settings().get(_SETTING_EXPORT_DIR, "") or "").strip()
-        except Exception:
-            log.exception("读取订单导出目录失败")
-            return ""
+        return _configured_export_dir()
 
     @Slot(str)
     def setExportDir(self, path: str) -> None:
@@ -702,7 +727,7 @@ class QueryDashboardBridge(QObject):
             self._status = "订单解析模块不可用（services/order_export.py 缺失）"
             self.changed.emit()
             return
-        directory = self.exportDir
+        directory = _configured_export_dir()
         try:
             path = svc.find_latest_export(directory or None)
         except Exception:
@@ -752,10 +777,11 @@ class QueryDashboardBridge(QObject):
         self._last_import_count = len(records)
         self._ensure_orders(force=True)
         self._stale_records = self._load_stale(imported_at)
-        self._record_snapshot()
+        snapshot_ok = self._record_snapshot()
         self._refresh_snapshots()
         skipped = f"，跳过 {int(unparsed)} 行" if unparsed else ""
-        self._status = f"已从「{name}」导入 {len(records)} 笔挂单{skipped}，已记入资产快照"
+        tail = "已记入资产快照" if snapshot_ok else "资产快照写入失败，详见日志"
+        self._status = f"已从「{name}」导入 {len(records)} 笔挂单{skipped}，{tail}"
         self.changed.emit()
 
     @Slot(result=dict)
@@ -795,9 +821,10 @@ class QueryDashboardBridge(QObject):
             return
         self._stale_records = []
         self._ensure_orders(force=True)
-        self._record_snapshot()
+        snapshot_ok = self._record_snapshot()
         self._refresh_snapshots()
-        self._status = f"已结束 {len(stale)} 笔陈旧挂单并记入资产快照"
+        tail = "并记入资产快照" if snapshot_ok else "，但资产快照写入失败，详见日志"
+        self._status = f"已结束 {len(stale)} 笔陈旧挂单{tail}"
         self.changed.emit()
 
     # ── 状态 ──────────────────────────────────────────────────
@@ -935,6 +962,7 @@ class QueryDashboardBridge(QObject):
         if not chars:
             self._occupancy_summary = "（无人物配置，请在人物设置中添加）"
             self._occupancy_rows = []
+            self._occupancy_by_line = []
             return
 
         per_char: list[tuple[str, dict[str, tuple[int, int]]]] = []
@@ -980,6 +1008,46 @@ class QueryDashboardBridge(QObject):
             )
         self._occupancy_rows = rows
         self._occupancy_summary = f"{len(chars)} 人物 · 占用 {active_total}/{max_total}"
+        self._occupancy_by_line = self._build_occupancy_by_line(per_char)
+
+    def _build_occupancy_by_line(
+        self, per_char: list[tuple[str, dict[str, tuple[int, int]]]]
+    ) -> list[dict]:
+        """**转置**成「每种产线类型一行」—— 空闲态仪表盘的产线详情用这个形状。
+
+        为什么不用 `occupancy_rows` 的按人物分行：那个形状是给**产线启动小助手**的宽面板用的
+        （60px 名字列 + 三类产线各自的标签与格子 + 状态徽章，实测要 450px 才不重叠）。
+        仪表盘左栏只有 260px 左右，按人物分行必然把格子压到标签上。
+        人物本来就没几个，转置过来每类产线只占一行，占地小得多。
+
+        每行的 `chars` 保留**逐人物**的占用与上限，QML 据此画「一个角色一段」的容量条；
+        `cap` 是各人物上限之和（=该类型总槽位数），`active` 是各人物已用之和。
+        `detailText` 给 tooltip，宽度不够时界面也不会丢信息。
+        """
+        by_line: list[dict] = []
+        for line in _LINE_TYPES:
+            chars_detail = [
+                {
+                    "name": char or "(未分配)",
+                    "active": int(per_line.get(line, (0, 0))[0]),
+                    "max": int(per_line.get(line, (0, 0))[1]),
+                }
+                for char, per_line in per_char
+            ]
+            active = sum(int(c["active"]) for c in chars_detail)
+            cap = sum(int(c["max"]) for c in chars_detail)
+            by_line.append(
+                {
+                    "key": str(line),
+                    "label": line_label(line),
+                    "color": self._series_color(_LINE_COLORS[line]),
+                    "active": active,
+                    "cap": cap,
+                    "chars": chars_detail,
+                    "detailText": " · ".join(f"{c['name']} {c['active']}/{c['max']}" for c in chars_detail),
+                }
+            )
+        return by_line
 
     @staticmethod
     def _char_status(per_line: dict[str, tuple[int, int]]) -> tuple[str, str]:
@@ -1226,11 +1294,14 @@ class QueryDashboardBridge(QObject):
             return
         self._wallet_text = f"{float(value):,.2f}"
 
-    def _record_snapshot(self, wallet: float | None = None) -> None:
-        """回写一条资产快照（「通过记录联动资产记录」）。服务缺失时静默跳过。"""
+    def _record_snapshot(self, wallet: float | None = None) -> bool:
+        """回写一条资产快照（「通过记录联动资产记录」）。服务缺失/失败时返回 False。
+
+        返回值给调用方决定 `statusText` 怎么写 —— 快照没写成就别声称「已记入资产快照」。
+        """
         svc = _asset_svc()
         if svc is None:
-            return
+            return False
         try:
             if wallet is None:
                 svc.record_snapshot()
@@ -1242,8 +1313,11 @@ class QueryDashboardBridge(QObject):
                 svc.record_snapshot()
             except Exception:
                 log.exception("资产快照记录失败")
+                return False
         except Exception:
             log.exception("资产快照记录失败")
+            return False
+        return True
 
     # ── 挂单 ──────────────────────────────────────────────────
 

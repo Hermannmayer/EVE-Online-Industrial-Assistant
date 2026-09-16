@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import weakref
 from typing import Any
 
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
@@ -103,6 +104,22 @@ class QueryBridge(QObject):
         self._debounce.timeout.connect(self._fetch_suggestions)
 
         self._orders = OrderPopupHost(self, shell if isinstance(shell, QWidget) else None)
+        # 模型被重置就让 `hasResults` 重新求值 —— 它是两态切换（仪表盘 ↔ 结果区）的**唯一**
+        # 判据，漏发一次的后果是「已经搜出结果，界面还停在空闲态仪表盘」，不报任何错。
+        # 接在模型上而不是只在 `_on_search_done` 里发，是为了让「谁写的模型」都不影响切态。
+        #
+        # ⚠️ **必须用弱引用闭包，不能直接接 `self.resultsChanged.emit`**：那样模型会持有
+        # 一个绑定到本桥的可调用对象，而本桥又持有模型 → 跨 Qt 所有权的引用环，
+        # 进程**退出时**崩（实测：单跑 `tests/test_qml_query.py` 27 条全过、退出码却是 127）。
+        # 本仓 `theme.add_theme_listener` 对绑定方法用弱引用是同一个理由。
+        bridge_ref = weakref.ref(self)
+
+        def _notify_results_changed() -> None:
+            bridge = bridge_ref()
+            if bridge is not None:
+                bridge.resultsChanged.emit()
+
+        self._model.modelReset.connect(_notify_results_changed)
         # 表格里的前景/底色是 data() 算出来的**字符串**，QML 绑定不会随主题自己重算，
         # 必须由这里补发 dataChanged（add_theme_listener 对绑定方法用弱引用，不会泄漏）
         self._remove_theme_listener = theme.add_theme_listener(self.refreshColors)
@@ -121,7 +138,7 @@ class QueryBridge(QObject):
 
         `busy` 期间也算结果态：查询中途把界面切回仪表盘会闪一下，观感很差。
         """
-        return self._model.rowCount() > 0
+        return int(self._model.rowCount()) > 0
 
     hasResults = Property(bool, _get_has_results, notify=resultsChanged)
 

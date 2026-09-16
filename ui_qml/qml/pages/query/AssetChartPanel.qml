@@ -19,6 +19,9 @@ import "../../components"
  * （见 `PriceChartDialog.qml:6-23` 与 `ui_qml/icon_provider.py` 头部）。折线用
  * `Shape` + `ShapePath` + `PathPolyline`，网格与轴用 `Rectangle` + `Text` —— 都是场景图
  * 几何节点，截图里看得到。
+ *
+ * 高度用 `id` 互相推导（不用「总高减去一串常数」）：底部有**两行**控件
+ * （数据示例一行、时间跨度一行），串成一行在 416px 的列宽里会溢出、右边的档位被切掉。
  */
 Item {
     id: root
@@ -37,9 +40,10 @@ Item {
     readonly property int padR: Math.round(14 * Theme.fontScale)
     readonly property int padT: Math.round(8 * Theme.fontScale)
     readonly property int padB: Math.round(22 * Theme.fontScale)
-    readonly property int plotW: Math.max(0, width - padL - padR)
+    readonly property int plotW: Math.max(0, chartBox.width - padL - padR)
     readonly property int plotH: Math.max(0, chartBox.height - padT - padB)
-    readonly property int rowH: Math.max(18, fntSmall + 7)
+    readonly property int rowH: Math.max(20, fntSmall + 9)
+    readonly property int gap: Theme.spacingXs
 
     /* 归一化坐标 → 绘图区像素点。
      * `x*w` 与 `(1-y)*h` 是全部转换，本文件里不出现任何取整/求最值。 */
@@ -55,12 +59,15 @@ Item {
 
     Column {
         anchors.fill: parent
-        spacing: Theme.spacingXs
+        spacing: root.gap
 
         // ── 资产（表格显示）────────────────────────────────────
         Column {
+            id: summaryBox
             width: parent.width
-            height: Math.min(root.rowH * 4 + 2, Math.max(root.rowH, parent.height * 0.34))
+            // 4 行封顶，但别超过面板的三分之一（面板很矮时把图留给折线）
+            height: Math.min(root.rowH * Math.min(4, Math.max(1, root.summaryRows.length)),
+                             Math.max(root.rowH, parent.height * 0.34))
             spacing: 0
             clip: true
 
@@ -83,7 +90,7 @@ Item {
 
                     Text {
                         x: Math.round(14 * Theme.fontScale)
-                        width: Math.max(40, parent.width * 0.36)
+                        width: Math.max(40, parent.width * 0.34)
                         height: parent.height
                         verticalAlignment: Text.AlignVCenter
                         text: modelData.label
@@ -94,7 +101,7 @@ Item {
                     }
 
                     Text {
-                        x: Math.round(14 * Theme.fontScale) + Math.max(40, parent.width * 0.36)
+                        x: Math.round(14 * Theme.fontScale) + Math.max(40, parent.width * 0.34)
                         width: Math.max(40, parent.width * 0.30)
                         height: parent.height
                         verticalAlignment: Text.AlignVCenter
@@ -108,7 +115,7 @@ Item {
 
                     Text {
                         anchors.right: parent.right
-                        width: Math.max(40, parent.width * 0.30)
+                        width: Math.max(40, parent.width * 0.32)
                         height: parent.height
                         verticalAlignment: Text.AlignVCenter
                         horizontalAlignment: Text.AlignRight
@@ -123,6 +130,7 @@ Item {
         }
 
         Rectangle {
+            x: 0
             width: parent.width
             height: 1
             color: Theme.border
@@ -132,7 +140,9 @@ Item {
         Item {
             id: chartBox
             width: parent.width
-            height: Math.max(60, parent.height - root.rowH * 4 - 2 * (root.rowH + Theme.spacingXs) - 2)
+            height: Math.max(60, parent.height
+                                - summaryBox.height - legendBox.height - rangeBox.height
+                                - 3 * root.gap - 1)
 
             // 无数据 / 加载中
             Text {
@@ -214,7 +224,8 @@ Item {
                 }
             }
 
-            // 折线：**倒序声明** —— 先声明的画在下面，让「总资产」压在最上层（值最大最好看）
+            /* 折线：**倒序声明** —— 先声明的画在下面，让列表里靠前的线压在上层
+             * （「总资产」在最上面，值最大，压住其它三条最好看）。 */
             Repeater {
                 model: root.plot ? root.plot.series.slice().reverse() : []
 
@@ -242,11 +253,12 @@ Item {
             }
         }
 
-        // ── 底部：数据示例（点击筛选）+ 时间跨度 ───────────────
+        // ── 数据示例（点击切换显隐）────────────────────────────
         Row {
+            id: legendBox
             width: parent.width
             height: root.rowH
-            spacing: Theme.spacingSm
+            spacing: Theme.spacingXs
 
             Repeater {
                 model: root.seriesRows
@@ -255,8 +267,9 @@ Item {
                     required property int index
                     required property var modelData
                     height: parent.height
-                    text: modelData.label + "  " + modelData.latestText
-                    // 选中态用按钮自身的 primary 观感；没选中的压暗，一眼看出哪几条在图上
+                    width: Math.max(40, (legendBox.width - 3 * legendBox.spacing) / 4)
+                    text: modelData.label
+                    // 没选中的压暗，一眼看出哪几条在图上
                     opacity: modelData.visible ? 1.0 : 0.45
                     onClicked: if (root.dashboard)
                         root.dashboard.toggleSeries(index)
@@ -265,14 +278,28 @@ Item {
                         id: chipHover
                     }
                     ToolTip.visible: chipHover.hovered
-                    ToolTip.text: modelData.visible ? qsTr("点击隐藏「%1」").arg(modelData.label)
-                                                    : qsTr("点击显示「%1」").arg(modelData.label)
+                    ToolTip.text: (modelData.visible ? qsTr("点击隐藏「%1」")
+                                                     : qsTr("点击显示「%1」")).arg(modelData.label)
+                                 + (modelData.latestText !== "" ? "\n" + qsTr("最新：") + modelData.latestText : "")
                 }
             }
+        }
 
-            Item {
-                width: Math.max(0, parent.width * 0.12)
-                height: 1
+        // ── 时间跨度 ──────────────────────────────────────────
+        Row {
+            id: rangeBox
+            width: parent.width
+            height: root.rowH
+            spacing: Theme.spacingXs
+
+            Text {
+                height: parent.height
+                width: Math.round(56 * Theme.fontScale)
+                verticalAlignment: Text.AlignVCenter
+                text: qsTr("时间跨度")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: root.fntSmall
             }
 
             Repeater {
@@ -282,6 +309,8 @@ Item {
                     required property int index
                     required property var modelData
                     height: parent.height
+                    width: Math.max(36, (rangeBox.width - Math.round(56 * Theme.fontScale)
+                                         - 4 * rangeBox.spacing) / 4)
                     text: String(modelData)
                     primary: root.dashboard !== null && root.dashboard.rangeIndex === index
                     onClicked: if (root.dashboard)

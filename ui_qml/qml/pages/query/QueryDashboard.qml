@@ -45,12 +45,17 @@ Item {
         /* 两侧**必须显式 fillWidth: false**：`FSection` 自己声明了 `Layout.fillWidth: true`，
          * 三个都 fill 的话「多出来的宽度」会被**均分**，`preferredWidth` 只决定基准宽 ——
          * 实测比例会从 24 : 52 : 34 漂成 37 : 11 : 52（中间那张图被挤成一条）。
-         * 只留中间 fill，多余宽度才全给折线图。 */
+         * 只留中间 fill，多余宽度才全给折线图。
+         *
+         * 两侧收到 22% / 24%：折线图是这一屏的主体（用户明确要求「占绝大部分」），
+         * 另外两块是列表，窄一点不影响读。产线详情收到 22% 也**必须**配
+         * `occupancyByLine` 的「按产线类型分行」—— 按人物分行（`FCapacityRow` 那套）
+         * 在那个宽度下格子会压到标签上、徽章叠在标签上（实测）。 */
         FPanel {
             title: qsTr("产线详情")
             Layout.fillWidth: false
             Layout.fillHeight: true
-            Layout.preferredWidth: Math.round(root.width * 0.24)
+            Layout.preferredWidth: Math.round(root.width * 0.22)
 
             OccupancyPanel {
                 anchors.fill: parent
@@ -73,7 +78,7 @@ Item {
             title: qsTr("挂单列表")
             Layout.fillWidth: false
             Layout.fillHeight: true
-            Layout.preferredWidth: Math.round(root.width * 0.34)
+            Layout.preferredWidth: Math.round(root.width * 0.24)
 
             OpenOrdersPanel {
                 anchors.fill: parent

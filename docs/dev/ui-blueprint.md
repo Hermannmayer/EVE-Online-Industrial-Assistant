@@ -59,7 +59,7 @@
 |---|:---:|:---:|:---:|:---:|:---:|
 | 工业制造 `industry` | ✅ | ✅ `TopToolbar` | ✅ `_view_stack` | ✅ `StatusBar` | ✅ `ActionButtons` |
 | 估价 `estimate` | — | 顶部输入区 | ✅ `QTableView` | 底部汇总栏 | — |
-| 物品查询 `query` | — | ✅ `#query_toolbar` | ✅ `QTableView` | ✅ `#query_status` | — |
+| 物品查询 `query` | — | ✅ `#query_toolbar` | ✅ 两态：仪表盘 / 结果表 + 详情面板 | ✅ `#query_status` | — |
 | 市场贸易 `trade` | — | — | ✅ `QTabWidget` | — | — |
 | 价格监控 `watchlist` | — | — | ✅ `QTableView` | — | — |
 | 合同市场 `contract` | — | — | ✅ `QTableView` | — | — |
@@ -67,6 +67,34 @@
 
 > 启动时的默认着陆页 = **导航首项**（界面改版第 1 步后是「物品查询」，此前是「估价」）。
 > 取法见 `ui_qml/shell_window.py` 装配尾部，**不硬编码任何页面 key** —— 换序即换默认页。
+
+### 物品查询页的两态（界面改版第 2/3 步）
+
+主工作区有**两个互斥的态**，判据是桥的 `hasResults`（模型行数 > 0）：
+
+| 态 | 区域名 | 代码定位 | 内容 |
+|---|---|---|---|
+| 空闲态 | 仪表盘 | `#queryDashboard` | 三栏：产线详情 / 资产折线图 / 挂单列表 |
+| 有结果态 | 结果区 | `#queryResultArea` | 上：结果表（点击区 `#queryClickArea`）；下：详情面板 `#queryDetailPane` |
+
+详情面板是 2×2：左上「5 个默认贸易中心的价格」、右上「订单列表」、
+左下「精炼产物、价格」、右下「制造所需的材料」。
+
+> **「有结果」的判据不能写在 QML 里**。`model.rowCount()` 是 Slot 调用，属性绑定不追踪它，
+> 结果出来后界面会一直停在仪表盘 —— 不报错，只是不动。判据必须是桥上的 Property，
+> 且由 `QueryQmlModel.modelReset` 驱动（不是只在搜索回调里发一次），
+> 这样「谁写的模型」都不影响切态。
+
+> **面板容器用 `FPanel` 而不是 `FSection`。** `FSection` 把子项收进内层 `ColumnLayout`，
+> 在里面写 `anchors.fill: parent` 会被布局**静默忽略**，整块内容塌成自己的
+> `implicitHeight`（实测：整张表只剩表头一条线，看着像「没数据」）。
+> `FPanel` 与 `FSection` 外观相同，但子项收进普通 `Item`，可以锚点。
+> 判断标准：面板里放**一整块自己管布局的内容**（表格 / 图表 / 占用条）用 `FPanel`；
+> 放若干行依次排列的控件用 `FSection`。
+
+> **资产折线图的颜色由 Python 侧算好、随 `assetPlot.series[].color` 下发**，
+> 且过 `ensure_contrast`。QML 不直接读 `Theme` 取折线色 —— `PriceChartDialog.qml`
+> 那样直接读 `Theme.primary/accentOrange` 是**没做对比度保障**的，不要照抄那个缺陷。
 
 ## 产线启动小助手（独立工具窗）
 

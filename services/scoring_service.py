@@ -57,9 +57,7 @@ def _sum_materials(
             tid = mat.get("type_id")
             if not tid:
                 continue
-            batch = material_total_for_runs(
-                mat, runs, me_level=line_me, structure_mat_saving=structure_mat_saving
-            )
+            batch = material_total_for_runs(mat, runs, me_level=line_me, structure_mat_saving=structure_mat_saving)
             if tid in merged:
                 row = merged[tid]
                 row["qty"] = (row.get("qty") or 0) + (mat.get("qty") or 0)
@@ -468,17 +466,13 @@ class ScoringService:
         structure_saving = float((worst.get("breakdown") or {}).get("structure_mat_saving") or 1.0)
         # 各线**各自整批取整**后求和（每条并行线是独立作业、各带自己的 ME）
         materials_all_lines = _sum_materials(per_line, runs, structure_saving)
-        old_mat = (
-            sum(float((r.get("breakdown") or {}).get("material_cost", 0) or 0) for r in per_line) * runs
-        )
+        old_mat = sum(float((r.get("breakdown") or {}).get("material_cost", 0) or 0) for r in per_line) * runs
         total_mat = sum((m.get("total_qty") or 0) * (m.get("unit_price") or 0) for m in materials_all_lines)
 
         total_revenue = sum((r.get("revenue_per_run", 0) or 0) for r in per_line) * runs
         total_fees = sum((r.get("fees_per_run", 0) or 0) for r in per_line) * runs
         # 同样走**增量式**：只把材料省下的部分加回去，其余项（含 research_cost）自动保留
-        total_profit = (
-            sum((r.get("profit_per_run", 0) or 0) for r in per_line) * runs + (old_mat - total_mat)
-        )
+        total_profit = sum((r.get("profit_per_run", 0) or 0) for r in per_line) * runs + (old_mat - total_mat)
         total_hours = max_hours * runs
         # domain 里 profit = revenue - total_cost（total_cost 含材料 + 安装费 + 经纪/改单/销售税）
         total_cost = total_revenue - total_profit
