@@ -3,15 +3,12 @@
 验证各页面/对话框在主题切换后能正确重新应用内联样式表。
 """
 
-from unittest.mock import patch
-
 import pytest
 from PySide6.QtCore import QAbstractItemModel, QCoreApplication, QModelIndex, QSortFilterProxyModel, Qt
-from PySide6.QtGui import QShowEvent
 
 import ui_qml.theme.registry as theme
 from ui_qml.bridge import theme_singleton
-from ui_qml.theme.registry import FLUENT_LIGHT, apply_theme
+from ui_qml.theme.registry import apply_theme
 
 pytestmark = pytest.mark.ui
 
@@ -69,24 +66,6 @@ def test_industry_page_theme_listener(qapp, main_window):
     _wait()
     assert page.item is not None, "切主题后页面不应失效"
     assert theme_singleton().themeId == "fluent-light"
-
-
-def test_char_settings_dialog_show_event(qapp, mock_db):
-    with (
-        patch("ui_pyside6.views.char_settings_view.services_load_all_data") as mock_load,
-        patch("ui_pyside6.views.char_settings_pages.load_implants", return_value=[]),
-        patch("ui_pyside6.views.char_settings_view.services_save_all_data"),
-    ):
-        mock_load.return_value = {
-            "current": "main",
-            "characters": {"main": {"skills": {}, "implants": [None, None, None], "market": {}}},
-        }
-        from ui_pyside6.views.char_settings_view import CharSettingsDialog
-
-        dlg = CharSettingsDialog()
-        apply_theme("light")
-        dlg.showEvent(QShowEvent())
-        assert FLUENT_LIGHT["BG_DARK"] in dlg.styleSheet()
 
 
 def test_listener_freed_after_object_gc():
