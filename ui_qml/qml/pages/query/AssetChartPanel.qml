@@ -1,0 +1,293 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Shapes
+import "../../components"
+
+/* 空闲态仪表盘 · 资产折线图。
+ *
+ * 对应界面标注图：
+ *   上「资产（表格显示）」、中折线、左「金额（根据筛选的金额自适应单位和刻度）」、
+ *   右「筛选项：按时间跨度 近7天 本月 本年 总」、
+ *   下「数据示例和筛选项（通过点击筛选）／1 总计资产（按照卖单计算）2 挂单金额（买单、卖单）
+ *      3 库存材料金额 4 钱包余额／以上显示的线条颜色都不一样」。
+ *
+ * **几何全在桥里**（复用 `ui_qml/bridge/price_chart_bridge.py` 的
+ * `nice_range` / `axis_values` / `map_values` / `pick_indices`）：轴范围、刻度、每个点的
+ * 归一化坐标都是 Python 算好的 0..1，这里只做「归一化 × 绘图区尺寸」的落点。
+ *
+ * **不用 Canvas**：Qt 的 Canvas 画进离屏纹理，在本仓的 offscreen 截图路径下整块是空的
+ * （见 `PriceChartDialog.qml:6-23` 与 `ui_qml/icon_provider.py` 头部）。折线用
+ * `Shape` + `ShapePath` + `PathPolyline`，网格与轴用 `Rectangle` + `Text` —— 都是场景图
+ * 几何节点，截图里看得到。
+ */
+Item {
+    id: root
+
+    //: `bridge.dashboard`
+    property var dashboard: null
+
+    readonly property var plot: (dashboard && !dashboard.assetPlot.isEmpty) ? dashboard.assetPlot : null
+    readonly property var seriesRows: dashboard ? dashboard.assetSeries : []
+    readonly property var summaryRows: dashboard ? dashboard.assetSummaryRows : []
+    readonly property var rangeLabels: dashboard ? dashboard.rangeLabels : []
+
+    readonly property int fntSmall: Math.round(11 * Theme.fontScale)
+    readonly property int fntBase: Math.round(12 * Theme.fontScale)
+    readonly property int padL: Math.round(72 * Theme.fontScale)
+    readonly property int padR: Math.round(14 * Theme.fontScale)
+    readonly property int padT: Math.round(8 * Theme.fontScale)
+    readonly property int padB: Math.round(22 * Theme.fontScale)
+    readonly property int plotW: Math.max(0, width - padL - padR)
+    readonly property int plotH: Math.max(0, chartBox.height - padT - padB)
+    readonly property int rowH: Math.max(18, fntSmall + 7)
+
+    /* 归一化坐标 → 绘图区像素点。
+     * `x*w` 与 `(1-y)*h` 是全部转换，本文件里不出现任何取整/求最值。 */
+    function polyline(series, w, h) {
+        const points = []
+        if (!series || !series.points)
+            return points
+        const src = series.points
+        for (let i = 0; i < src.length; ++i)
+            points.push(Qt.point(src[i].x * w, (1 - src[i].y) * h))
+        return points
+    }
+
+    Column {
+        anchors.fill: parent
+        spacing: Theme.spacingXs
+
+        // ── 资产（表格显示）────────────────────────────────────
+        Column {
+            width: parent.width
+            height: Math.min(root.rowH * 4 + 2, Math.max(root.rowH, parent.height * 0.34))
+            spacing: 0
+            clip: true
+
+            Repeater {
+                model: root.summaryRows
+
+                Item {
+                    required property var modelData
+                    width: parent.width
+                    height: root.rowH
+
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.round(8 * Theme.fontScale)
+                        height: width
+                        radius: width / 2
+                        color: modelData.color
+                    }
+
+                    Text {
+                        x: Math.round(14 * Theme.fontScale)
+                        width: Math.max(40, parent.width * 0.36)
+                        height: parent.height
+                        verticalAlignment: Text.AlignVCenter
+                        text: modelData.label
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: root.fntSmall
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        x: Math.round(14 * Theme.fontScale) + Math.max(40, parent.width * 0.36)
+                        width: Math.max(40, parent.width * 0.30)
+                        height: parent.height
+                        verticalAlignment: Text.AlignVCenter
+                        horizontalAlignment: Text.AlignRight
+                        text: modelData.valueText
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: root.fntSmall
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        anchors.right: parent.right
+                        width: Math.max(40, parent.width * 0.30)
+                        height: parent.height
+                        verticalAlignment: Text.AlignVCenter
+                        horizontalAlignment: Text.AlignRight
+                        text: modelData.deltaText
+                        color: modelData.deltaPos ? Theme.accentGreen : Theme.accentRed
+                        font.family: Theme.fontFamily
+                        font.pixelSize: root.fntSmall
+                        elide: Text.ElideRight
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            width: parent.width
+            height: 1
+            color: Theme.border
+        }
+
+        // ── 折线绘图区 ────────────────────────────────────────
+        Item {
+            id: chartBox
+            width: parent.width
+            height: Math.max(60, parent.height - root.rowH * 4 - 2 * (root.rowH + Theme.spacingXs) - 2)
+
+            // 无数据 / 加载中
+            Text {
+                anchors.centerIn: parent
+                width: parent.width - 2 * Theme.spacingSm
+                visible: root.plot === null
+                text: root.dashboard ? root.dashboard.assetEmptyText : ""
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: root.fntSmall
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+            }
+
+            // 横网格 + 左轴刻度（金额，单位由桥按量级自适应成 K/M/B）
+            Repeater {
+                model: root.plot ? root.plot.yTicks : []
+
+                Item {
+                    required property var modelData
+                    x: 0
+                    y: root.padT + (1 - modelData.pos) * root.plotH
+                    width: chartBox.width
+                    height: 1
+
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.leftMargin: root.padL
+                        anchors.right: parent.right
+                        anchors.rightMargin: root.padR
+                        height: 1
+                        color: Theme.border
+                        opacity: 0.5
+                    }
+
+                    Text {
+                        x: 0
+                        width: root.padL - Theme.spacingXs
+                        height: Math.round(14 * Theme.fontScale)
+                        y: -height / 2
+                        verticalAlignment: Text.AlignVCenter
+                        horizontalAlignment: Text.AlignRight
+                        text: modelData.label
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: root.fntSmall
+                        elide: Text.ElideRight
+                    }
+                }
+            }
+
+            // 纵向网格 + 日期
+            Repeater {
+                model: root.plot ? root.plot.xTicks : []
+
+                Item {
+                    required property var modelData
+                    x: root.padL + modelData.pos * root.plotW
+                    y: root.padT
+                    width: 1
+                    height: root.plotH
+
+                    Rectangle {
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        width: 1
+                        color: Theme.border
+                        opacity: 0.35
+                    }
+
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        y: root.plotH + Theme.spacingXs
+                        text: modelData.label
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: root.fntSmall
+                    }
+                }
+            }
+
+            // 折线：**倒序声明** —— 先声明的画在下面，让「总资产」压在最上层（值最大最好看）
+            Repeater {
+                model: root.plot ? root.plot.series.slice().reverse() : []
+
+                Shape {
+                    required property var modelData
+
+                    x: root.padL
+                    y: root.padT
+                    width: root.plotW
+                    height: root.plotH
+                    antialiasing: true
+                    visible: root.plot !== null
+
+                    ShapePath {
+                        strokeColor: modelData.color
+                        strokeWidth: 2
+                        fillColor: "transparent"
+                        capStyle: ShapePath.RoundCap
+                        joinStyle: ShapePath.RoundJoin
+                        PathPolyline {
+                            path: root.plot ? root.polyline(modelData, root.plotW, root.plotH) : []
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── 底部：数据示例（点击筛选）+ 时间跨度 ───────────────
+        Row {
+            width: parent.width
+            height: root.rowH
+            spacing: Theme.spacingSm
+
+            Repeater {
+                model: root.seriesRows
+
+                FButton {
+                    required property int index
+                    required property var modelData
+                    height: parent.height
+                    text: modelData.label + "  " + modelData.latestText
+                    // 选中态用按钮自身的 primary 观感；没选中的压暗，一眼看出哪几条在图上
+                    opacity: modelData.visible ? 1.0 : 0.45
+                    onClicked: if (root.dashboard)
+                        root.dashboard.toggleSeries(index)
+
+                    HoverHandler {
+                        id: chipHover
+                    }
+                    ToolTip.visible: chipHover.hovered
+                    ToolTip.text: modelData.visible ? qsTr("点击隐藏「%1」").arg(modelData.label)
+                                                    : qsTr("点击显示「%1」").arg(modelData.label)
+                }
+            }
+
+            Item {
+                width: Math.max(0, parent.width * 0.12)
+                height: 1
+            }
+
+            Repeater {
+                model: root.rangeLabels
+
+                FButton {
+                    required property int index
+                    required property var modelData
+                    height: parent.height
+                    text: String(modelData)
+                    primary: root.dashboard !== null && root.dashboard.rangeIndex === index
+                    onClicked: if (root.dashboard)
+                        root.dashboard.setRangeIndex(index)
+                }
+            }
+        }
+    }
+}

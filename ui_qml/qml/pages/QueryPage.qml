@@ -2,6 +2,9 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
+// 两态面板都在 pages/query/ 下 —— QML 只按**同目录**解析本地类型，
+// 不写这一行会报「QueryDetailPane is not a type」而整页加载失败。
+import "query"
 
 /* 物品查询页 —— 阶段 3。
  *
@@ -199,10 +202,13 @@ Item {
         }
 
         // ═══════════════════════════════════════════════════════
-        //  4. 结果表
+        //  4. 主工作区：**两态**
+        //     空闲态（没搜索 / 没结果）= 仪表盘（产线详情 / 资产折线 / 挂单列表）
+        //     有结果态                = 结果表 + 详情面板（5 中心价格 / 订单 / 精炼 / 材料）
         // ═══════════════════════════════════════════════════════
 
         Item {
+            id: workArea
             Layout.fillWidth: true
             Layout.fillHeight: true
             /* 外框内缩：与「价格监控」页同款观感（表格区被一块带描边的面裹住，
@@ -210,6 +216,37 @@ Item {
             Layout.leftMargin: Theme.spacingSm
             Layout.rightMargin: Theme.spacingSm
             Layout.bottomMargin: Theme.spacingSm
+
+            /* 两态切换的唯一判据。`hasResults` 由桥按模型行数给出 ——
+             * QML 侧读 `model.rowCount()` 是 Slot 调用，属性绑定不会跟着刷新
+             * （本仓既有教训，见 `query_bridge.py` 里 `sortColumn` 那段注释）。 */
+            readonly property bool idle: !(page.query && page.query.hasResults)
+
+            QueryDashboard {
+                objectName: "queryDashboard"
+                anchors.fill: parent
+                visible: workArea.idle
+                dashboard: page.query ? page.query.dashboard : null
+            }
+
+            ColumnLayout {
+                objectName: "queryResultArea"
+                anchors.fill: parent
+                visible: !workArea.idle
+                spacing: Theme.spacingSm
+
+                /* 结果表：不再是整屏，只占上面一段 —— 下面留给详情面板
+                 * （界面标注图里表格只剩表头那一条，四块面板占满余下）。
+                 *
+                 * 用**固定高度 + fillHeight: false** 而不是「两边都 fill」：两个都 fill 时
+                 * Qt 会把富余高度按 fill 项均分，而详情面板的 implicitHeight 是 0
+                 * （根 Item 的子项全是 anchors 定位），实测被挤成 2px 一条。
+                 * 让表格定高、面板吃满余下，比例才是确定的。 */
+                Item {
+                    id: tableBox
+                    Layout.fillWidth: true
+                    Layout.fillHeight: false
+                    Layout.preferredHeight: Math.max(120, Math.round(workArea.height * 0.34))
 
             Rectangle {
                 anchors.fill: parent
@@ -403,16 +440,25 @@ Item {
                     rowHeight: page.rowH
                     columnWidth: page.colWidth
 
+                    /* `page.currentRow` 只管高亮，**取数**由 `selectRow()` 驱动 ——
+                     * 详情面板要跑 5 次取价 + 精炼 + BOM 展开，绝不能挂在
+                     * 「每帧都可能变的高亮」上（拖动/滚动会把它打成连发）。 */
                     onRowClicked: function (row, _column) {
                         page.currentRow = row
+                        if (page.query)
+                            page.query.selectRow(row)
                     }
                     onRowDoubleClicked: function (row, _column) {
                         page.currentRow = row
-                        if (page.query)
+                        if (page.query) {
+                            page.query.selectRow(row)
                             page.query.rowDoubleClicked(row)
+                        }
                     }
                     onRowRightClicked: function (row, _column, x, y) {
                         page.currentRow = row
+                        if (page.query)
+                            page.query.selectRow(row)
                         const p = mapToItem(page, x, y)
                         rowMenu.state = page.query ? page.query.menuState(row) : ({})
                         rowMenu.targetRow = row
@@ -420,6 +466,20 @@ Item {
                         rowMenu.y = p.y
                         rowMenu.openSoon()
                     }
+                }
+            }
+                }
+
+                /* 详情面板：四块（5 个贸易中心价格 / 订单列表 / 精炼产物 / 制造材料）。
+                 * 占结果态的下半部分，**与结果表同宽** —— 四块是 2×2 网格，
+                 * 挤进窄列会让「空间站」这种长列被截断。 */
+                QueryDetailPane {
+                    objectName: "queryDetailPane"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    // 根 Item 的 implicitHeight 是 0，不设下限时布局可以把它压成一条线
+                    Layout.minimumHeight: Math.round(200 * Theme.fontScale)
+                    detail: page.query ? page.query.detail : null
                 }
             }
         }

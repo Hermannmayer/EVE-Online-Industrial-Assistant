@@ -37,6 +37,14 @@ if not _REAL:
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
+# 控制台默认是 GBK：状态栏文案里只要出现一个 GBK 没有的字符（实测 `⚠ U+26A0`，
+# 来自外壳启动时的告警徽记），print 就抛 UnicodeEncodeError ——
+# 那时截图**已经写完了**，却是「成功干活 + 非零退出」还带一段吓人的 traceback 的假故障。
+# 与 `scripts/make_app_icon.py` 同一处理。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 from typing import Any  # noqa: E402
 
 from PySide6.QtCore import QEventLoop, QTimer  # noqa: E402
@@ -70,6 +78,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--size", default="1400x900", help="窗口尺寸 WxH")
     parser.add_argument("--page", default="", help="切到某个导航 key 再拍")
+    parser.add_argument(
+        "--search",
+        default="",
+        help="切到物品查询页后先搜一个词再拍（用来核对「有结果态」的详情面板）",
+    )
     parser.add_argument("--out", default="", help="输出 PNG 路径")
     parser.add_argument("--real", action="store_true", help="真窗口截图（隔离数据目录）")
     parser.add_argument(
@@ -149,6 +162,34 @@ def main() -> int:
         else:
             _spin(800)
             image = win.grabWindow()
+
+    if args.search:
+        # 走桥自己的入口（`onTextChanged` + `search`），不要直接塞模型 ——
+        # 那样只验到渲染，验不到「桥 → worker → 模型」这一整条，而详情面板恰恰吃的是桥的状态。
+        page = win._pages.get("query")
+        bridge = getattr(page, "hooks", None)
+        if bridge is None:
+            print("[错误] --search 需要已装载的物品查询页")
+            return 4
+        bridge.onTextChanged(args.search)
+        bridge.search()
+        # 搜索跑在 QThread 上：空转事件循环等它收尾，别用 sleep（会连布局一起冻住）
+        for _ in range(150):
+            if not getattr(bridge, "_busy", False):
+                break
+            _spin(100)
+        # 选中第一行：详情面板的取数挂在 `selectRow` 上（高亮只是高亮），
+        # 不选中的话四块面板全是占位文案，等于没验到。
+        if bridge.hasResults:
+            bridge.selectRow(0)
+        _spin(1500)  # 详情面板的取价 / 精炼 / BOM 是同步的，留给它们把首帧画完
+        image = win.grabWindow()
+        if args.real:
+            from PySide6.QtGui import QGuiApplication
+
+            screen = QGuiApplication.primaryScreen()
+            extra = screen.grabWindow(int(win.winId())) if screen is not None else None
+        print(f"[外壳] 已搜索「{args.search}」，结果 {getattr(bridge, '_count_text', '')!r}")
 
     if image is None or image.isNull():
         print("[错误] 抓到的图是空的 —— 外壳没有渲染出内容")

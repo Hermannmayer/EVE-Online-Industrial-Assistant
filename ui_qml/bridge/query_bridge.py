@@ -20,6 +20,7 @@ from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 from PySide6.QtWidgets import QApplication, QWidget
 
 from core.constants import TRADE_HUB_IDS, TRADE_HUBS
+from core.logger import log
 from ui_qml.models.query_qml_model import QueryQmlModel
 from ui_qml.theme import registry as theme
 
@@ -73,6 +74,8 @@ class QueryBridge(QObject):
     suggestionsChanged = Signal()
     regionChanged = Signal()
     sortChanged = Signal()
+    #: 当前行变化（结果表选中 → 详情面板换物品）
+    selectionChanged = Signal()
 
     def __init__(self, shell: object | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -86,9 +89,14 @@ class QueryBridge(QObject):
         self._busy = False
         self._count_text = ""
         self._status_text = _DEFAULT_STATUS
+        self._current_row = -1
         self._search_worker: QObject | None = None
         self._suggest_worker: QObject | None = None
         self._group_worker: QObject | None = None
+        # 两个子桥**懒建**：`query_detail_bridge` 会拉进 workers/services，
+        # 模块级/构造期建它等于每次造桥都加载整条业务链（与 `_ensure_groups` 同一条理由）。
+        self._detail_bridge: QObject | None = None
+        self._dash_bridge: QObject | None = None
 
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
@@ -105,6 +113,110 @@ class QueryBridge(QObject):
         return self._model
 
     model = Property(QObject, _get_model, constant=True)
+
+    # ── 两态切换与子桥 ────────────────────────────────────────
+
+    def _get_has_results(self) -> bool:
+        """有结果才显示「结果态」（结果表 + 详情面板），否则显示空闲态仪表盘。
+
+        `busy` 期间也算结果态：查询中途把界面切回仪表盘会闪一下，观感很差。
+        """
+        return self._model.rowCount() > 0
+
+    hasResults = Property(bool, _get_has_results, notify=resultsChanged)
+
+    def _get_detail(self) -> QObject | None:
+        """结果态的详情子桥（5 个贸易中心价格 / 订单 / 精炼产物 / 制造材料）。
+
+        导入失败返回 None 而不是抛出去：这个属性是 QML 绑定在求值的，抛异常会让
+        **整页**加载失败（外壳只把本页记为暂缺），而少一个面板不该毁掉整页 ——
+        QML 侧已按 `detail === null` 写了占位文案。
+        """
+        if self._detail_bridge is None:
+            try:
+                from ui_qml.bridge.query_detail_bridge import QueryDetailBridge
+            except ImportError:
+                log.exception("详情面板桥加载失败，该面板将不可用")
+                return None
+            self._detail_bridge = QueryDetailBridge(self)
+            self._sync_detail_hub()
+        return self._detail_bridge
+
+    detail = Property(QObject, _get_detail, constant=True)
+
+    def _get_dashboard(self) -> QObject | None:
+        """空闲态的仪表盘子桥（产线详情 / 资产折线图 / 挂单列表）。同 `_get_detail`。"""
+        if self._dash_bridge is None:
+            try:
+                from ui_qml.bridge.query_dashboard_bridge import QueryDashboardBridge
+            except ImportError:
+                log.exception("空闲态仪表盘桥加载失败，该面板将不可用")
+                return None
+            self._dash_bridge = QueryDashboardBridge(self)
+        return self._dash_bridge
+
+    dashboard = Property(QObject, _get_dashboard, constant=True)
+
+    def _get_current_type_id(self) -> int:
+        data = self._row(self._current_row)
+        return int(data["type_id"]) if data else 0
+
+    currentTypeId = Property(int, _get_current_type_id, notify=selectionChanged)
+
+    def _get_current_name(self) -> str:
+        data = self._row(self._current_row)
+        if not data:
+            return ""
+        return str(data.get("zh") or data.get("en") or "")
+
+    currentName = Property(str, _get_current_name, notify=selectionChanged)
+
+    def _sync_detail_hub(self) -> None:
+        """把查询页的区域同步给详情桥，作为精炼/材料的价格中心。"""
+        if self._detail_bridge is None:
+            return
+        setter = getattr(self._detail_bridge, "setPriceHubIndex", None)
+        if not callable(setter):
+            return
+        for i, hub in enumerate(TRADE_HUBS):
+            if TRADE_HUB_IDS.get(hub) == self._region_id:
+                setter(i)
+                return
+
+    def _push_selection(self) -> None:
+        """把当前行推给详情桥（桥不可用时静默跳过）。"""
+        if self._detail_bridge is None:
+            return
+        data = self._row(self._current_row)
+        if data:
+            setter = getattr(self._detail_bridge, "setItem", None)
+            if callable(setter):
+                setter(int(data["type_id"]), self._get_current_name())
+        else:
+            self._clear_detail()
+
+    def _clear_detail(self) -> None:
+        clearer = getattr(self._detail_bridge, "clear", None)
+        if callable(clearer):
+            clearer()
+
+    @Slot(int)
+    def selectRow(self, row: int) -> None:
+        """当前行变化 —— QML 的 `currentRow` 只是高亮，这里是**取数**的驱动。
+
+        分成两件事是刻意的：高亮每帧都可能变，取数（5 次取价 + 精炼 + BOM）不能在
+        拖动/滚动时反复触发。QML 只在点击/双击/右键时调本槽。
+        """
+        if row == self._current_row:
+            return
+        self._current_row = int(row)
+        self.selectionChanged.emit()
+        self._push_selection()
+
+    def _clear_selection(self) -> None:
+        self._current_row = -1
+        self.selectionChanged.emit()
+        self._clear_detail()
 
     # ── 选项 ──────────────────────────────────────────────────
 
@@ -136,6 +248,7 @@ class QueryBridge(QObject):
             return
         self._region_id = region_id
         self.regionChanged.emit()
+        self._sync_detail_hub()
         if self._current_query:
             self.search()
 
@@ -248,6 +361,9 @@ class QueryBridge(QObject):
         query = self._current_query.strip()
         self._suggestions = []
         self.suggestionsChanged.emit()
+        # 停掉输入防抖：不停的话，敲完字 200ms 后候选弹窗还会浮起来，
+        # 正好盖在刚出来的结果上（点「搜索」后立刻回车同理会闪一下候选）
+        self._debounce.stop()
         if not query:
             self.set_status("请输入物品名称或 ID")
             return
@@ -271,11 +387,13 @@ class QueryBridge(QObject):
         if not rows:
             self._count_text = ""
             self._model.set_rows([])
+            self._clear_selection()
             self.set_status(f"未找到包含「{self._current_query}」的物品")
             self.resultsChanged.emit()
             return
 
         self._model.set_rows(format_search_rows(rows, is_fallback))
+        self._clear_selection()
         self._count_text = f"共 {len(rows)} 条结果" + (" (仅基本信息)" if is_fallback else "")
         self._status_text = "就绪 — 右键行可查看操作菜单，双击查看实时订单"
         self.statusChanged.emit()
@@ -291,6 +409,7 @@ class QueryBridge(QObject):
         self._suggestions = []
         self._model.set_rows([])
         self._count_text = ""
+        self._clear_selection()
         self.set_status("已清空")
         self.resultsChanged.emit()
         self.suggestionsChanged.emit()
@@ -420,5 +539,12 @@ class QueryBridge(QObject):
     @Slot()
     def refreshColors(self) -> None:
         self._model.refresh_colors()
+        # 两个子桥的颜色也是 data() 算出来的字符串，主题切换要一起补发，
+        # 否则它们在浅色主题下留着深色底的前景色（与模型同一类坑）
+        for sub in (self._detail_bridge, self._dash_bridge):
+            if sub is not None:
+                notify = getattr(sub, "changed", None)
+                if notify is not None:
+                    notify.emit()
         self.statusChanged.emit()
         self.resultsChanged.emit()

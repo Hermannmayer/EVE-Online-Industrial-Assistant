@@ -27,7 +27,7 @@ BACKUP_KEEP = 5
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
-    "user": 16,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 科研作业列（activity/decryptor_type_id/success_rate/research_target_level/actual_output_runs）;  v13→v14: 修复「版本已到 13 但科研列缺失」的历史库;  v14→v15: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）;  v15→v16: user_blueprints 原图权威化（runs<0 → is_bpo=1/runs=0，-1 退场）
+    "user": 17,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 科研作业列（activity/decryptor_type_id/success_rate/research_target_level/actual_output_runs）;  v13→v14: 修复「版本已到 13 但科研列缺失」的历史库;  v14→v15: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）;  v15→v16: user_blueprints 原图权威化（runs<0 → is_bpo=1/runs=0，-1 退场）;  v16→v17: asset_snapshots / open_orders 表
     "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
 }
 
@@ -434,6 +434,55 @@ def _migrate_user_v10_to_v11(db_path: str) -> str:
         conn.close()
 
 
+# v16→v17：资产快照 + 挂单两张表（物品查询页空闲态仪表盘）。
+# 单一事实来源：迁移函数与测试共用同一段 DDL，避免测试手抄副本与迁移漂移。
+_USER_V17_TABLES_SQL = """
+CREATE TABLE IF NOT EXISTS asset_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snap_date TEXT NOT NULL UNIQUE,          -- YYYY-MM-DD（本地日期），每天一行
+    total REAL DEFAULT 0,                    -- 总资产（库存 + 挂单 + 钱包）
+    orders REAL DEFAULT 0,                   -- 挂单金额（卖单按 sell 价、买单按 buy 价）
+    inventory REAL DEFAULT 0,                -- 库存材料金额
+    wallet REAL DEFAULT 0,                   -- 钱包余额（用户手填）
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS open_orders (
+    order_id INTEGER PRIMARY KEY,
+    is_buy INTEGER DEFAULT 0,
+    price REAL DEFAULT 0,
+    volume_total INTEGER DEFAULT 0,
+    volume_remain INTEGER DEFAULT 0,
+    location_id INTEGER DEFAULT 0,
+    location_name TEXT DEFAULT '',
+    type_id INTEGER DEFAULT 0,
+    type_name TEXT DEFAULT '',
+    issued TEXT DEFAULT '',
+    duration INTEGER DEFAULT 0,
+    imported_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+"""
+
+
+def _migrate_user_v16_to_v17(db_path: str) -> str:
+    """v16→v17: 新增 asset_snapshots（每日资产快照）与 open_orders（挂单）两张表。
+
+    供「物品查询页空闲态仪表盘」使用：资产折线图按天记录总资产/挂单/库存/钱包，
+    挂单列表从游戏导出的本地订单文件导入。仅加表，不改既有列。
+    幂等：CREATE TABLE IF NOT EXISTS，重复运行无变化。
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(_USER_V17_TABLES_SQL)
+        conn.commit()
+        return "新增 asset_snapshots / open_orders 表"
+    except sqlite3.OperationalError as e:
+        if "duplicate" in str(e).lower():
+            return "asset_snapshots / open_orders 表已存在（跳过）"
+        raise
+    finally:
+        conn.close()
+
+
 def _migrate_bp_v1_to_v2(db_path: str) -> str:
     """v1→v2: blueprint_materials 新增 wastefactor 列"""
     conn = sqlite3.connect(db_path)
@@ -474,6 +523,7 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
         13: _migrate_user_v13_to_v14,
         14: _migrate_user_v14_to_v15,
         15: _migrate_user_v15_to_v16,
+        16: _migrate_user_v16_to_v17,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,
