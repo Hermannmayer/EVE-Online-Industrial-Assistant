@@ -147,6 +147,10 @@ class IndustryPage(QObject):
             expired_db = 0
         if expired_visible or expired_db:
             self.load_plans()
+            return
+        # 顺带刷新「材料不足」标注：材料补齐后没有别的路径会重算，
+        # 不挂在这里的话标注会一直陈旧到用户手动刷新（产线小助手 5s 轮询修的就是同一个缺陷）
+        self._refresh_material_status()
 
     def shutdown(self) -> None:
         """停掉本页在跑的后台线程并等它们结束（外壳关窗时按钩子名调进来）。
@@ -183,6 +187,97 @@ class IndustryPage(QObject):
         """
         self._bridge.reloadPriceSettings()
 
+    # ── 材料不足标注（派生字段，不落库）─────────────────────────
+
+    def _material_stock(self, hangar_ids: set[int]) -> dict[int, dict[int, int]]:
+        """按机库各取一次库存快照。
+
+        `plan_execution.check_materials` 不传 `stock=` 时会**每个计划各查一次库**，
+        行数一多就是 N 次查询 —— 所以先取好再逐行传进去。
+        """
+        from services import inventory_manager
+
+        out: dict[int, dict[int, int]] = {}
+        for hid in hangar_ids:
+            try:
+                out[hid] = inventory_manager.get_hangar_stock(hid)
+            except Exception:
+                log.exception("读取机库库存失败: %s", hid)
+                out[hid] = {}
+        return out
+
+    def _material_fingerprint(self, rows: list[dict]) -> tuple:
+        """库存内容 + 待生产行特征的指纹。
+
+        本函数自己要查一次库存（每机库一次）——省下的是**每条计划一次评分**那步。
+        库存或计划参数一变指纹就变，所以材料补齐后能自己发现并重算，
+        不会像只靠 `load_plans` 那样把「材料不足」一直挂到用户手动刷新。
+        """
+        from services import inventory_manager
+
+        pending = [r for r in rows if (r.get("status") or "") == "pending"]
+        hids = sorted({int(r["mat_hangar_id"]) for r in pending if r.get("mat_hangar_id")})
+        stock_fp: list[frozenset | None] = []
+        for hid in hids:
+            try:
+                stock_fp.append(frozenset(inventory_manager.get_hangar_stock(hid).items()))
+            except Exception:
+                stock_fp.append(None)
+        plans_fp = tuple(
+            (r.get("id"), r.get("runs"), r.get("parallels"), r.get("me_level"), r.get("mat_hangar_id"))
+            for r in pending
+        )
+        return (tuple(hids), tuple(stock_fp), plans_fp)
+
+    def _annotate_material_status(self, rows: list[dict]) -> None:
+        """给**待生产**行标注缺料情况（`material_status` / `material_short_tip`）。
+
+        只算 pending 行：其余状态与「能不能启动」无关，算了也没人看。
+
+        写的是**派生字段**，**绝不覆写 `plan["status"]`** —— 覆写会同时污染第 7 列的
+        排序键、右键菜单的互斥分支（判 `status === "pending"`）与落库路径。
+        """
+        from services.plan_execution import check_materials
+
+        pending = [r for r in rows if (r.get("status") or "") == "pending"]
+        if not pending:
+            return
+        hids = {int(r["mat_hangar_id"]) for r in pending if r.get("mat_hangar_id")}
+        stock = self._material_stock(hids)
+        for r in pending:
+            r["material_status"] = None
+            r["material_short_tip"] = ""
+            hid = r.get("mat_hangar_id")
+            if not hid:
+                continue
+            try:
+                res = check_materials(r, int(hid), stock=stock.get(int(hid)))
+            except Exception:
+                log.exception("材料判定失败: %s", r.get("id"))
+                continue
+            short = [x for x in res if (x.get("missing") or 0) > 0]
+            if not short:
+                continue
+            r["material_status"] = "short"
+            tip = "\n".join(f"{x.get('name') or x['type_id']}: 缺 {x['missing']:,.0f}" for x in short[:8])
+            if len(short) > 8:
+                tip += f"\n… 等 {len(short)} 种"
+            r["material_short_tip"] = tip
+
+    def _refresh_material_status(self) -> None:
+        """心跳里顺手刷新缺料标注；指纹没变则连评分都不做，只花每机库一次库存查询。"""
+        rows = getattr(self, "_loaded_rows", None)
+        if not rows:
+            return
+        fp = self._material_fingerprint(rows)
+        if fp == getattr(self, "_mat_fp", None):
+            return
+        self._mat_fp = fp
+        self._annotate_material_status(rows)
+        model = self._plan_table_widget.get_model()
+        if model is not None:
+            model.refresh_status_column()
+
     # ── load_plans ────────────────────────────────────────────
 
     def load_plans(self):
@@ -200,6 +295,11 @@ class IndustryPage(QObject):
 
         rows = load_plans(self._bridge.current_filter())
         from ui_qml.models.industry_models import PlanTableModel
+
+        # 缺料标注（派生字段）：先记指纹再算，免得 30s 心跳立刻重复算一遍
+        self._loaded_rows = rows
+        self._mat_fp = self._material_fingerprint(rows)
+        self._annotate_material_status(rows)
 
         # 注入当前材料机库（启动旧计划时兜底）
         self._plan_table_widget.set_mat_hangar_id(_default_mat_hangar_id())

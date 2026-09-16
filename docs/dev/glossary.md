@@ -6,7 +6,7 @@ EVE Online 游戏术语与本项目内部术语的中英文对照。
 
 | 中文 | 英文 | 说明 |
 |------|------|------|
-| 材料效率 | Material Efficiency (ME) | 蓝图 ME 等级，减少材料用量 |
+| 材料效率 | Material Efficiency (ME) | 蓝图 ME 等级，减少材料用量；减少量按**整批**取整（每级 -1%，上限 10） |
 | 技术效率 | Technical Efficiency (TE) | 蓝图 TE 等级，缩短生产时间 |
 | 安装费 | Installation Fee | 制造任务的安装费用 |
 | 系统成本指数 | System Cost Index (SCI) | 物流系统工业制造的成本倍率 |

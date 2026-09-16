@@ -24,23 +24,38 @@ Item {
     readonly property color chromeColor: Qt.rgba(
         Theme.bgSurface.r, Theme.bgSurface.g, Theme.bgSurface.b, 0.9)
 
+    /* 标题行 / 工具行 / 状态栏的高度，以及各行的左内边距。
+       以前这三行的高度是散在布局里和 body 的算式里各写一遍的字面量，
+       改一处忘一处就会让内容区少算一截。 */
+    readonly property int titleRowH: 32
+    readonly property int toolRowH: 36
+    readonly property int statusRowH: 24
+    /* 标题文字、工具行左侧控件组、导航行图标列共用这一条竖线 ——
+       批注「此处没有上下对齐（和旁边的字）」要的就是它。
+       （侧栏 logo 不在这条线上：它按用户要求水平居中。） */
+    readonly property int chromeInset: Theme.spacingMd
+
     Column {
         anchors.fill: parent
         spacing: 0
 
         Rectangle {
             width: parent.width
-            height: 32
+            height: root.titleRowH
             color: root.chromeColor
             ShellTitleBar {
                 anchors.fill: parent
+                leftInset: root.chromeInset
             }
         }
 
-        // ── 工具行（区域 / 更新价格 / 价格年龄 / 自动更新）──
+        /* ── 工具行 ──
+           左侧一律是「状态与上下文」（区域 / 价格年龄 / 自动更新），连成一组；
+           右侧只留一个动作（更新价格）。改版前自动更新被甩在最右边，
+           和它讲的是同一件事的价格年龄隔了半个屏幕。 */
         Rectangle {
             width: parent.width
-            height: 36
+            height: root.toolRowH
             color: root.chromeColor
 
             Item {
@@ -49,9 +64,9 @@ Item {
 
                 Row {
                     anchors.left: parent.left
-                    anchors.leftMargin: 8
+                    anchors.leftMargin: root.chromeInset
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: 6
+                    spacing: Theme.spacingSm
 
                     // 区域勾选下拉
                     ShellIconButton {
@@ -62,51 +77,62 @@ Item {
                         onClicked: regionMenu.popup()
                     }
 
-                    ShellIconButton {
-                        icon: shell.iconFile("refresh")
-                        label: "更新价格"
-                        tooltip: "立即从 ESI 拉取价格"
-                        tint: Theme.textPrimary
-                        onClicked: shell.refreshPrice()
-                    }
-                }
-
-                // 价格年龄（小圆点 + 文案）
-                Item {
-                    id: priceAge
-                    anchors.left: parent.left
-                    anchors.leftMargin: 190
-                    anchors.verticalCenter: parent.verticalCenter
-
+                    // 分隔：区域是「查询范围」，后面三项是「价格是否新鲜」
                     Rectangle {
-                        id: ageDot
-                        width: 12
-                        height: 12
-                        radius: 6
-                        color: shell.priceAgeColor
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 1
+                        height: 16
+                        color: Theme.border
                     }
-                    Text {
-                        anchors.left: ageDot.right
-                        anchors.leftMargin: 4
-                        anchors.verticalCenter: ageDot.verticalCenter
-                        text: shell.priceAgeText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fs(11)
-                        color: Theme.textSecondary
+
+                    // 价格年龄（小圆点 + 文案）
+                    Item {
+                        id: priceAge
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: ageDot.width + 4 + ageText.width
+                        height: ageText.height
+
+                        Rectangle {
+                            id: ageDot
+                            width: 12
+                            height: 12
+                            radius: 6
+                            color: shell.priceAgeColor
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Text {
+                            id: ageText
+                            anchors.left: ageDot.right
+                            anchors.leftMargin: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: shell.priceAgeText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fs(11)
+                            color: Theme.textSecondary
+                        }
+                    }
+
+                    // 自动更新（紧跟价格年龄 —— 两者说的是同一件事）
+                    ShellIconButton {
+                        icon: shell.iconFile("clock")
+                        label: shell.autoUpdateText
+                        tooltip: "自动更新价格（点击切换开/关）"
+                        checkable: true
+                        checked: shell.autoUpdate
+                        tint: shell.autoUpdate ? Theme.accentGreen : Theme.textSecondary
+                        onClicked: shell.setAutoUpdate(!shell.autoUpdate)
                     }
                 }
 
                 ShellIconButton {
                     anchors.right: parent.right
-                    anchors.rightMargin: 8
+                    anchors.rightMargin: root.chromeInset
                     anchors.verticalCenter: parent.verticalCenter
-                    icon: shell.iconFile("clock")
-                    label: shell.autoUpdateText
-                    tooltip: "自动更新价格（点击切换开/关）"
-                    checkable: true
-                    checked: shell.autoUpdate
-                    tint: shell.autoUpdate ? Theme.accentGreen : Theme.textSecondary
-                    onClicked: shell.setAutoUpdate(!shell.autoUpdate)
+                    icon: shell.iconFile("refresh")
+                    label: "更新价格"
+                    tooltip: "立即从 ESI 拉取价格"
+                    tint: Theme.textPrimary
+                    onClicked: shell.refreshPrice()
                 }
 
                 Menu {
@@ -129,7 +155,7 @@ Item {
         Item {
             id: body
             width: parent.width
-            height: parent.height - 32 - 36 - 24
+            height: parent.height - root.titleRowH - root.toolRowH - root.statusRowH
 
             Rectangle {
                 id: navBackground
@@ -159,7 +185,7 @@ Item {
 
         Rectangle {
             width: parent.width
-            height: 24
+            height: root.statusRowH
             color: Theme.bgSurface
             ShellStatusBar {
                 anchors.fill: parent

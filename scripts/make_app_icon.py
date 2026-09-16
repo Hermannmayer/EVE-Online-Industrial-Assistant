@@ -26,13 +26,15 @@
    得到的容器 `image count == 1`），所以这里自己拼多尺寸容器（PNG 载荷，
    Windows Vista+ 支持）。
 
-产物：``ui_qml/assets/app.ico``（打包用）+ ``app.png``（256px 预览/运行时用）。
+产物：``ui_qml/assets/app.ico``（打包用）+ ``app.png``（256px 预览/运行时用）
+      + ``logo_dark.png`` / ``logo_light.png``（外壳侧栏 logo，透明底，深/浅各一张）。
 """
 
 from __future__ import annotations
 
 import argparse
 import struct
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QBuffer, QByteArray, QPointF, QRectF, Qt
@@ -58,6 +60,16 @@ ART_RATIO = 0.86
 MIN_ACCENT_RATIO = 0.055
 # 开运算的工作分辨率：在此尺寸上简化后再缩放，比在 16px 上做精细得多
 WORK_SIZE = 256
+
+# ── 侧栏 logo（`ui_qml/assets/logo_*.png`）────────────────────────────
+# 生成高度取显示高度的 2×：侧栏按约 32px 显示，留一倍余量供 `sourceSize` 下采样。
+LOGO_HEIGHT = 96
+# 墨色 **冻结在生成期**，不随主题 token 走：logo 是品牌资产（与 app.ico、物品图标同类），
+# 不是界面配色，所以不参与「配色一律取自 registry」那条铁律。取值对齐两套调色板的
+# 亮色文字（深色 #f8fafc = TEXT_BRIGHT，浅色 #1a1c2e = TEXT_PRIMARY），
+# 这样贴到侧栏上与周边文字同色系。**改了要重跑本脚本**，旧图不会自己更新。
+LOGO_INK_DARK = "#f8fafc"
+LOGO_INK_LIGHT = "#1a1c2e"
 
 
 def _luma(c: QColor) -> int:
@@ -202,6 +214,46 @@ def render_icon(
     return out
 
 
+def render_logo(
+    art: QImage,
+    height: int,
+    *,
+    ink: QColor,
+    accent: tuple[float, float, float, QColor] | None = None,
+) -> QImage:
+    """把二值图（白底黑墨）画成**透明底 + 指定墨色**的侧栏 logo。
+
+    与 `render_icon` 的三点不同，都是刻意的：
+      1. **不铺白底、不切圆角** —— 它是贴在界面 chrome 上的图形，不是任务栏图标块；
+         深色主题下那块白底在侧栏里就是一块突兀的白砖。
+      2. **按高度缩放，不塞进方形盒** —— 设计稿是宽扁构图，塞进方盒会白白缩小一圈。
+      3. **墨色由调用方给** —— 深色主题要亮墨、浅色主题要暗墨，同一份设计稿出两张。
+
+    墨色的 alpha 由**亮度反推**（越黑越不透明），缩放产生的灰边因此自带抗锯齿，
+    不必自己写插值。
+    """
+    scaled = art.scaledToHeight(height, Qt.TransformationMode.SmoothTransformation)
+    out = QImage(scaled.size(), QImage.Format.Format_ARGB32)
+    out.fill(Qt.GlobalColor.transparent)
+    for y in range(scaled.height()):
+        for x in range(scaled.width()):
+            alpha = 255 - _luma(scaled.pixelColor(x, y))
+            if alpha <= 0:
+                continue
+            out.setPixelColor(x, y, QColor(ink.red(), ink.green(), ink.blue(), alpha))
+
+    if accent is not None:
+        nx, ny, nr, color = accent
+        r = max(nr * scaled.width(), height * MIN_ACCENT_RATIO)
+        p = QPainter(out)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(color)
+        p.drawEllipse(QPointF(nx * scaled.width(), ny * scaled.height()), r, r)
+        p.end()
+    return out
+
+
 def _png_bytes(img: QImage) -> bytes:
     buf = QByteArray()
     b = QBuffer(buf)
@@ -231,6 +283,12 @@ def write_ico(path: Path, images: list[QImage]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # 控制台默认是 GBK，收尾那几行里的 ✅ 会抛 UnicodeEncodeError ——
+    # 那时产物**已经写完**，却是「成功干活 + 非零退出」的假故障。这里把输出钉成 UTF-8。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
     ap = argparse.ArgumentParser(description="从设计稿生成程序图标（多尺寸 .ico）")
     ap.add_argument("--source", type=Path, default=DEFAULT_SOURCE, help="设计稿 PNG（白底 + 纯黑线条）")
     ap.add_argument("--out", type=Path, default=OUT_DIR / "app.ico", help="输出的 .ico 路径")
@@ -274,12 +332,18 @@ def main(argv: list[str] | None = None) -> int:
     preview = OUT_DIR / "app.png"
     images[-1].save(str(preview))
 
+    # 侧栏 logo：同一份设计稿出深/浅两张（透明底，墨色不同，红点沿用设计稿自己的红）
+    for name, ink in (("logo_dark.png", LOGO_INK_DARK), ("logo_light.png", LOGO_INK_LIGHT)):
+        logo = render_logo(base, LOGO_HEIGHT, ink=QColor(ink), accent=norm_accent)
+        logo.save(str(OUT_DIR / name))
+
     print(f"✅ 已生成 {args.out.name}（{len(SIZES)} 个尺寸：{', '.join(str(s) for s in SIZES)}）")
     print(f"   裁到落墨范围：源 {src.width()}x{src.height()} → {base.width()}x{base.height()}（含留白）")
     if norm_accent:
         print(f"   红点已保留：{norm_accent[3].name()}，最小半径 {MIN_ACCENT_RATIO:.3f}×边长")
     print(f"   <{SIMPLIFY_BELOW}px 用简化版（开运算半径 {max(1, round(WORK_SIZE * args.open_ratio))}px @ {WORK_SIZE}）")
     print(f"✅ 预览图 {preview.name}")
+    print(f"✅ 侧栏 logo：logo_dark.png（墨 {LOGO_INK_DARK}）/ logo_light.png（墨 {LOGO_INK_LIGHT}），高 {LOGO_HEIGHT}px")
     return 0
 
 

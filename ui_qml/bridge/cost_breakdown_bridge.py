@@ -257,19 +257,21 @@ class CostBreakdownBridge(DialogBridge):
         ]
 
     def _build_material_rows(self, metrics: dict, total_mult: int, sub_cost_map: dict[int, float]) -> None:
-        from services.manufacturing_calculator import calc_material_for_runs
+        from domain.formulas import material_total_for_runs
 
         structure_mat_saving = metrics.get("structure_mat_saving", 1.0)
+        me = self._plan.get("me_level", 0) or 0
         rows: list[dict] = []
         for mat in metrics.get("materials", []):
             base = mat.get("base_qty", 0)
-            # 单件材料(基础量≤1)不受ME影响
-            if base <= 1:
-                total_qty = base * total_mult
-            else:
-                wf = mat.get("wastefactor", 10) or 10
-                me = self._plan.get("me_level", 0) or 0
-                total_qty = calc_material_for_runs(base, wf, me, total_mult, structure_mat_saving=structure_mat_saving)
+            # 整批取整：优先用评分链路算好的 `total_qty`。口径的**单一定义处**是
+            # `domain.formulas.material_total_for_runs` —— 这段以前把同一套规则内联在这里，
+            # 于是「查看核算」的合计与启动时的实际扣减漂移过（用户能直接看出数字不一样）。
+            total_qty = mat.get("total_qty")
+            if total_qty is None:
+                total_qty = material_total_for_runs(
+                    mat, total_mult, me_level=me, structure_mat_saving=structure_mat_saving
+                )
             mid = mat.get("type_id")
             if mid in sub_cost_map:
                 # 自制子项：单价 = 子项制造价 / 本计划总需求，小计 = 子项制造价

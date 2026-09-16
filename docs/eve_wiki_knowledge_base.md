@@ -17,8 +17,23 @@
 | `blueprints.yaml` activities.time / products.probability / maxProductionLimit | 语义稳定 | 实际解析 | ✅ 已确认 |
 | ~~blueprints.yaml materials.wasteFactor~~ | **已移除**（旧格式字段；代码 `getblueprints.py:122` 用 `mat.get("wasteFactor", 10)` 兜底 → 数据库永远存 10，不参与计算） | 实际解析最新 SDE | ⚠️ 假数据，仅历史兼容 |
 
-**材料效率公式契约**（2026-07-31 核实，与游戏实测一致）：
-`每轮材料 = ceil(SDE_quantity × (100 - ME) / 100 × 结构减免)`，ME 每级 -1%，上限 10。
+**材料效率公式契约**（2026-07-31 核实；2026-09-16 补「整批取整」口径）：
+
+```
+整批材料 = ceil(SDE_quantity × 作业次数 × (100 - ME) / 100 × 结构减免)
+```
+
+ME 每级 -1%，上限 10。**取整只做一次、作用于整个作业** —— 本文档下方「材料减少公式」节引的
+官方支持页原文就是「材料效率计算结果适用于整个项目，而不是单个流程」。
+单轮量只是 `作业次数 = 1` 的特例：`ceil(SDE_quantity × (100 - ME) / 100 × 结构减免)`。
+
+「先逐轮取整、再乘作业次数」是错的，且对基础量 ≥2 的材料**系统性多要货**：
+基础量 22、ME10、2510 次作业 → 整批 49,698 / 逐轮 50,200（多要 502）。
+真实后果是「材料刚好够」被判成「材料不足」，并在库里记下一笔并不存在的待补缺口。
+
+**例外**：每轮基础量 ≤ 1 的材料不吃 ME，按 `基础量 × 作业次数` 计。
+`domain/formulas.material_total_for_runs` 是这条规则的**单一定义处**，成本、扣料、判定都走它。
+
 旧公式 `1 + wf/(100×(1+ME))` 是 wasteFactor 时代（Crius 前）的过时实现，勿恢复。
 详见 `tests/test_manufacturing_calculator_golden.py`（金标准测试，数值来自游戏实测）。
 

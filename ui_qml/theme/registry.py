@@ -211,10 +211,15 @@ def bg_elevated() -> str:
     而不是浮起，这正是「界面不立体」的一大来源。
     这里按材质模式给出真正的浮起表面：暗色在 BG_DARK 上提亮，浅色用白。
     """
-    return _shift_lightness(BG_DARK, 0.08) if _is_dark_mode() else "#ffffff"
+    return _shift_lightness(BG_DARK, 0.08) if is_dark_mode() else "#ffffff"
 
 
-def _is_dark_mode() -> bool:
+def is_dark_mode() -> bool:
+    """当前主题是否深色。
+
+    需要按主题选**不同资源**的调用方用它（如外壳侧栏 logo 的深浅两张图）；
+    只按主题取色的一律直接用 token，不要读这个。
+    """
     spec = THEME_REGISTRY.get(_current_theme)
     return spec is None or spec["mode"] == "dark"
 

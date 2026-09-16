@@ -13,9 +13,13 @@ Item {
 
     implicitHeight: 32
 
+    /* 左内边距由 `Main.qml` 传进来（和工具行左侧控件组、导航栏 logo 同一条竖线）。
+       写死 12 的话，哪天主工具栏换了内缩，标题就会和下面的字错开一格。 */
+    property int leftInset: 12
+
     Text {
         anchors.left: parent.left
-        anchors.leftMargin: 12
+        anchors.leftMargin: root.leftInset
         anchors.verticalCenter: parent.verticalCenter
         text: shell.appTitle
         font.family: Theme.fontFamily

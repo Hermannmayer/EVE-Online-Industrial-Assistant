@@ -137,9 +137,19 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
   - 汇总（`ScoringService.combine_per_line`）：材料/作业费/收入/利润 **Σ**；
     **时长取 max**（并行同时跑，单次路径的 `hours_per_run × runs` 是其均匀特例）；
     日产出 Σ(24/hoursᵢ)；利润率 = Σ利润/Σ总成本（与单线同式）
-  - ⚠️ **`materials` 保持「单线单轮」语义**（逐线时取最差线）：`plan_metrics` 两处消费方
+  - ⚠️ **`materials[].qty` 保持「单线单轮」语义**（逐线时取最差线）：`plan_metrics` 两处消费方
     都会再乘 `runs × parallels`，放汇总值会被**重复放大**。
-    要求精确的 `material_requirements` 改读新增的 `materials_all_lines`（Σ 各线单轮量，只乘 `runs`）
+    要求精确的消费方改读同条目的 **`total_qty`**（整批取整量，见下）或 `materials_all_lines`
+  - **取整口径（2026-09-16 统一）**：材料需求按**整批**取一次整，不是逐轮取整后乘轮数 ——
+    后者对基础量 ≥2 的材料系统性多要货（基础量 22、ME10、2510 次作业：49,698 对 50,200）。
+    单一定义处是 `domain/formulas.material_total_for_runs`，成本 / 扣料 / 判定三处都走它。
+    每条材料另带 `total_qty`（由 `calculate_total_metrics` / `combine_per_line` 算好；
+    逐线时**各线各自整批再求和**，因为每条并行线在 EVE 里是独立作业、各带自己的 ME）。
+    `material_requirements` 与 `plan_metrics` 优先读 `total_qty`，缺失时才回退旧乘法
+  - ⚠️ 材料成本口径变了，**利润/利润率/ISK-h 必须一起重算**：`profit_per_run` 里含的是
+    单轮材料成本，所以用**增量式**（`total_profit = profit_per_run × 倍数 + 材料省下的部分`）
+    而不是自己拼 `total_cost = 材料 + 费用` —— `fees_per_run` 里**没有** `research_cost`
+    （它在 `domain/scoring.py` 才加进 total_cost），拼出来会让 T2/T3 计划的利润虚高
   - 展示：表格 ME/TE 列一致时不变；不一致时显示**最低那组** + `≠`，tooltip 逐条列出
 
 ## 科研计划（拷贝 / 发明 / ME-TE 研究）

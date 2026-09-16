@@ -219,6 +219,35 @@ class TestMaterialRequirements:
         user_env.scoring.calculate_plan_metrics.side_effect = RuntimeError("boom")
         assert material_requirements({"runs": 1, "parallels": 1}) == []
 
+    def test_prefers_total_qty_over_multiplying_per_run(self, user_env):
+        """带 `total_qty`（整批取整量）时直接用它，**不再**乘 runs×parallels。"""
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 1001, "name": "三钛合金", "qty": 100.0, "total_qty": 550}]
+        }
+        reqs = material_requirements({"runs": 3, "parallels": 2, "char_name": ""})
+        assert reqs == [{"type_id": 1001, "name": "三钛合金", "need": 550}]
+
+    def test_regression_whole_batch_rounding_not_per_run(self, user_env):
+        """回归：实机那一单 —— 材料刚好够，却被逐轮取整误判成缺 502。
+
+        基础量 22、ME10、502 轮 × 5 线 = 2510 次作业：
+        逐轮口径 `ceil(22×0.9)×2510 = 20×2510 = 50,200`（错，多要 502）；
+        整批口径 `ceil(22×2510×0.9) = 49,698`（对，实机 `material_short` 记的正是多要 502）。
+        """
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 16672, "name": "碳纤维", "qty": 20, "total_qty": 49698}]
+        }
+        reqs = material_requirements({"runs": 502, "parallels": 5, "char_name": ""})
+        assert reqs[0]["need"] == 49698
+
+    def test_falls_back_to_per_run_when_total_qty_absent(self, user_env):
+        """没有 `total_qty`（如科研分支或旧缓存）时回退旧口径，不炸。"""
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 1001, "name": "三钛合金", "qty": 7.0}]
+        }
+        reqs = material_requirements({"runs": 2, "parallels": 3, "char_name": ""})
+        assert reqs[0]["need"] == 42
+
 
 class TestCheckMaterials:
     def test_sufficient(self, user_env):

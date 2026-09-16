@@ -331,3 +331,125 @@ def test_autofit_without_model_is_empty():
     from ui_qml.bridge.plan_table_bridge import PlanTableBridge
 
     assert PlanTableBridge(_StubTable(None)).autofitWidths() == []  # type: ignore[arg-type]
+
+
+# ── 派生视图缓存（可见行 / 行号映射 / 子项组）─────────────────────
+#
+# 回归背景：`_row_map` 与 `_has_children` 都是 O(行数)，却被 `data()` 按
+# 「列 × 角色」**逐格**调用。实测 50 行、折叠两个组时全表刷一遍要 485ms
+# （不折叠 58ms）—— QML 滚动时每帧都要为可见行取角色，于是「几十行就开始卡」。
+
+
+def _grouped_plans() -> list[dict]:
+    """3 组 × (1 母项 + 2 子项)，够走折叠分支。"""
+    out: list[dict] = []
+    for g in range(1, 4):
+        out.append(_plan(id=g, group_id=g, group_number=g, child_level=0))
+        for c in range(2):
+            out.append(_plan(id=g * 10 + c, group_id=g, group_number=g, child_level=1))
+    return out
+
+
+@pytest.mark.fast
+def test_view_cache_invalidates_on_collapse_and_set_plans():
+    """缓存必须跟着「折叠 / 换数据 / 增删行」失效，否则行号会指到别的计划上。"""
+    model = PlanQmlModel(_grouped_plans())
+    assert model.rowCount() == 9
+
+    model.toggle_collapse(1)  # 折叠第 1 组 → 少两行
+    assert model.rowCount() == 7
+    assert model.data(model.index(0, 0), _TEXT) is not None
+
+    other = PlanQmlModel(_grouped_plans())
+    other.set_plans([_plan(id=99, group_id=9, group_number=9, child_level=0)])
+    assert other.rowCount() == 1, "set_plans 之后还看得见旧行 = 缓存没失效"
+
+    # 行数在变（正是 in-place 增删的形态）
+    model._plans.append(_plan(id=77, group_id=7, group_number=7, child_level=0))
+    assert model.rowCount() == 8
+
+
+@pytest.mark.fast
+def test_cell_reads_do_not_rescan_the_whole_table():
+    """逐格取数不得每格重扫全表。
+
+    断言的是**调用次数**而不是耗时 —— 耗时断言在 CI 上会飘。缓存生效时，一整轮
+    「行 × 列 × 角色」最多只该触发一次 `_visible_plans()`。
+    """
+    model = PlanQmlModel(_grouped_plans())
+    model.toggle_collapse(1)  # 走折叠分支（不折叠时 `_row_map` 根本不在路径上）
+
+    scans: list[int] = []
+    real = model._visible_plans
+
+    def _counting() -> list[dict]:
+        scans.append(1)
+        return list(real())
+
+    model._visible_plans = _counting  # type: ignore[method-assign]
+    model._view_cache_key = None  # 模拟一次重绘的第一格（缓存冷）
+
+    for r in range(model.rowCount()):
+        for c in range(model.columnCount()):
+            for role in ROLE_NAMES:
+                model.data(model.index(r, c), role)
+
+    assert len(scans) <= 1, (
+        f"取了 {model.rowCount() * model.columnCount() * len(ROLE_NAMES)} 格，"
+        f"却重扫了 {len(scans)} 次全表 —— 派生视图缓存没生效"
+    )
+
+
+# ════════════════════════════════════════════════════════════
+#  缺料标注（界面改版追加）——「材料不足」状态
+# ════════════════════════════════════════════════════════════
+
+
+def test_status_column_shows_material_short_for_pending_rows():
+    """待生产 + 缺料 → 状态列显示「材料不足」，替掉「待生产」。"""
+    model = PlanQmlModel([_plan(status="pending", material_status="short")])
+    assert _cell(model, 0, COL_STATUS, Qt.ItemDataRole.DisplayRole) == "材料不足"
+
+
+def test_status_column_keeps_pending_when_materials_are_enough():
+    model = PlanQmlModel([_plan(status="pending")])
+    assert _cell(model, 0, COL_STATUS, Qt.ItemDataRole.DisplayRole) == "待生产"
+
+
+def test_status_column_ignores_stale_short_flag_on_non_pending_rows():
+    """标注是派生字段、不落库 —— 行走到 ready 之后残留的标注不该继续显示。
+
+    控制器只在 pending 行上写这个字段，但行状态会变（倒计时到期转 ready），
+    所以显示分支必须自己带一道 `status == "pending"` 的门。
+    """
+    model = PlanQmlModel([_plan(status="ready", material_status="short")])
+    assert _cell(model, 0, COL_STATUS, Qt.ItemDataRole.DisplayRole) == "待下线"
+
+
+def test_status_column_colors_short_pending_rows_differently():
+    """缺料的待生产行要跟普通待生产行区分开（同为 pending，靠颜色表达严重性）。"""
+    short = PlanQmlModel([_plan(status="pending", material_status="short")])
+    plain = PlanQmlModel([_plan(status="pending")])
+    assert _cell(short, 0, COL_STATUS, Qt.UserRole + 2) != _cell(plain, 0, COL_STATUS, Qt.UserRole + 2)
+
+
+def test_status_tooltip_lists_what_is_missing():
+    model = PlanQmlModel(
+        [_plan(status="pending", material_status="short", material_short_tip="碳纤维: 缺 502")]
+    )
+    assert _cell(model, 0, COL_STATUS, Qt.UserRole + 11) == "碳纤维: 缺 502"
+
+
+def test_status_tooltip_is_empty_when_nothing_is_missing():
+    model = PlanQmlModel([_plan(status="pending")])
+    assert _cell(model, 0, COL_STATUS, Qt.UserRole + 11) == ""
+
+
+def test_refresh_status_column_targets_only_the_status_column():
+    """`refresh_status_column` 只发第 7 列 —— 别为一行变化把 21 列全刷一遍。"""
+    model = PlanQmlModel([_plan(), _plan(status="pending", material_status="short")])
+    seen: list[tuple] = []
+    model.dataChanged.connect(lambda tl, br, roles: seen.append((tl.column(), br.column(), tuple(roles))))
+    model.refresh_status_column()
+    assert seen, "没发出 dataChanged，护栏失效"
+    assert {(tl, br) for tl, br, _ in seen} == {(COL_STATUS, COL_STATUS)}

@@ -158,11 +158,17 @@ def material_requirements(plan: dict) -> list[dict]:
     for m in per_cycle:
         if not m.get("type_id"):
             continue
+        # `total_qty` = **整批取整**后的量（`domain.formulas.material_total_for_runs`），
+        # 由评分链路按各自批次大小算好塞进来。缺失时才回退「单轮量 × 倍数」的旧口径 ——
+        # 旧口径把 ME 减免逐轮取整后再乘轮数，对有基础量 ≥2 的材料会系统性多要货
+        # （实测 22×2510 ME10：旧 50,200 / 新 49,698），正是「材料够了却报不足」的根因。
+        total_qty = m.get("total_qty")
+        need = total_qty if total_qty is not None else (m.get("qty") or 0) * per_cycle_mult
         reqs.append(
             {
                 "type_id": int(m["type_id"]),
                 "name": m.get("name", ""),
-                "need": round((m.get("qty") or 0) * per_cycle_mult),
+                "need": round(need),
             }
         )
     return reqs

@@ -683,3 +683,27 @@ def test_qml_dialog_keeps_original_signature():
     params = inspect.signature(HangarSettingsQmlDialog.__init__).parameters
     assert list(params) == ["self", "main_window", "parent"]
     assert params["parent"].default is None
+
+
+# ════════════════════════════════════════════════════════════════
+#  布局护栏（静态读数）
+# ════════════════════════════════════════════════════════════════
+
+
+def test_config_tab_left_column_pins_all_three_widths():
+    """「机库配置」页左栏宽度必须 preferred / minimum / maximum **三个都钉死**。
+
+    只写 `Layout.preferredWidth` 时，右侧编辑区会被挤成几个像素宽 ——
+    看起来就像「右边栏整个没了」，而业务断言全绿、也不报任何 QML 警告，
+    只有量布局才看得出来。同一坑 `LauncherWindow.qml` 的动作槽已经踩过并写了注释，
+    这里是回归护栏：读源码即可，因为失败形态是布局塌缩，没有可断言的业务量。
+    """
+    from ui_qml.host import QML_ROOT
+
+    text = (QML_ROOT / "dialogs" / "HangarSettingsDialog.qml").read_text(encoding="utf-8")
+    for line in (
+        "Layout.preferredWidth: paneWidth",
+        "Layout.minimumWidth: paneWidth",
+        "Layout.maximumWidth: paneWidth",
+    ):
+        assert line in text, f"左栏没钉死宽度（缺 `{line}`）——右侧编辑区会被挤没"

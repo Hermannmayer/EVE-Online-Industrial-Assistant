@@ -23,8 +23,8 @@ from ui_qml.shell_window import ShellWindow
 
 pytestmark = pytest.mark.ui
 
-#: 导航树里的真页面 key（分组标题不算）
-_KEYS = [k for k, _label, _icon in NAV_TREE if k != "__section__"]
+#: 导航树里的页面 key（顺序即 `NAV_TREE` 的显示顺序）
+_KEYS = [key for key, _label, _icon, _color in NAV_TREE]
 
 
 @pytest.fixture(autouse=True)
@@ -178,9 +178,7 @@ def test_nav_items_carry_filenames_not_keys(shell):
     from ui_qml.icons import ICON_MAP
 
     items = {item["key"]: item["icon"] for item in shell._bridge.navItems}
-    for key, label, icon in NAV_TREE:
-        if key == "__section__":
-            continue
+    for key, label, icon, _color in NAV_TREE:
         assert items[key] == ICON_MAP.get(icon, icon), f"{label} 的图标没经过 ICON_MAP"
 
 
@@ -201,11 +199,128 @@ def test_every_icon_key_used_by_the_shell_resolves_to_a_real_svg():
         # `iconFile("x")` 与三元 `iconFile(cond ? "a" : "b")` 都覆盖到
         for expr in re.findall(r"iconFile\([^)]*\)", text):
             keys |= set(re.findall(r'"([^"]+)"', expr))
-    keys |= {icon for key, _label, icon in NAV_TREE if key != "__section__"}
+    keys |= {icon for key, _label, icon, _color in NAV_TREE}
 
     assert keys, "没扫到任何图标键，护栏自身失效了"
     missing = sorted(k for k in keys if not os.path.isfile(svg_path(ICON_MAP.get(k, k))))
     assert not missing, f"这些图标键映射不到 SVG：{missing}（会静默显示成空白）"
+
+
+# ── 3b. 界面改版第 1 步：导航顺序 / 去分组标题 / 侧栏 logo ────────
+
+
+def test_nav_tree_has_no_section_rows_and_starts_with_query_estimate():
+    """导航条目全是可点的页面，且顺序是「物品查询 → 估价 → …」。
+
+    改版前首项是 `("__section__", "核心功能", "lightning")` 分组标题、估价排第一。
+    这条钉的是**两条一起**：分组标题没了、顺序换了。只钉一条的话，
+    把分组标题加回来（但只要顺序对）不会被发现。
+    """
+    assert [key for key, _l, _i, _c in NAV_TREE][:2] == ["query", "estimate"]
+    assert all(key != "__section__" for key, _l, _i, _c in NAV_TREE), "分组标题已按改版去掉"
+    assert len(set(_KEYS)) == len(_KEYS), "导航 key 有重复"
+
+
+def test_nav_items_no_longer_carry_a_section_flag(shell):
+    """`navItems` 不再发 `section` 字段 —— QML 侧也没有分组分支可读它了。"""
+    assert all("section" not in item for item in shell._bridge.navItems)
+
+
+def test_default_page_is_the_first_nav_entry(shell):
+    """默认着陆页 = 导航首项（改版后是「物品查询」）。
+
+    改版前首项是估价，所以这条同时守住「不再硬编码某个页面 key」。
+    """
+    assert shell.current_page_key() == NAV_TREE[0][0] == "query"
+
+
+def test_nav_panel_has_no_leftover_section_branches():
+    """`ShellNavPanel.qml` 里不能再有 `modelData.section` 的分支。
+
+    这是**静态护栏**：删掉 `NAV_TREE` 的分组标题后，QML 里那些
+    `visible: modelData.section` / `height: modelData.section ? 24 : 28` 会读到
+    `undefined` —— 不报错、不崩，只是行高与可见性悄悄走另一条分支。
+    只有读源码才能挡住这种「静默走错分支」。
+    """
+    from ui_qml.host import QML_ROOT
+
+    text = (QML_ROOT / "shell" / "ShellNavPanel.qml").read_text(encoding="utf-8")
+    assert "modelData.section" not in text
+
+
+def test_nav_panel_shows_the_logo_instead_of_a_duplicate_title():
+    """侧栏顶部是 logo，不是「EVE 商人助手」文字（标题栏已经写着，重复了）。
+
+    只认**渲染用的 `text:` 绑定**，不认注释 —— 文件顶部那段说明里本来就会提到
+    这个名字（「标题栏已经写着…」），一刀切地搜字符串会把它误判成违规。
+    """
+    import re
+
+    from ui_qml.host import QML_ROOT
+
+    text = (QML_ROOT / "shell" / "ShellNavPanel.qml").read_text(encoding="utf-8")
+    assert "source: shell.logoSource" in text, "侧栏 logo 没接到桥发出来的路径"
+    assert not re.search(r'text:\s*[^"\n]*"EVE 商人助手"', text), "侧栏不该再渲染一遍标题（与标题栏重复）"
+
+
+def test_logo_source_resolves_to_a_real_file_in_both_themes(shell, monkeypatch):
+    """`logoSource` 必须指向**真实存在**的文件，深/浅主题各一张。
+
+    这是本仓第一处从 `assets/` 加载位图的地方。资产缺失时 `Image` 只是不画、
+    **不报错**，表现为侧栏顶部空一块 —— 只能靠这条断言兜住。
+    """
+    from pathlib import Path
+
+    from PySide6.QtCore import QUrl
+
+    from ui_qml.shell_window import theme
+
+    seen: dict[bool, str] = {}
+    for dark in (True, False):
+        monkeypatch.setattr(theme, "is_dark_mode", lambda dark=dark: dark)
+        url = shell._bridge.logoSource
+        assert url.startswith("file://"), f"logoSource 不是 file:// URL：{url!r}"
+        # 用 QUrl 解路径，不手写剥壳：Windows 上 `file:///C:/…` 的 path 是 `/C:/…`，
+        # 自己剥前导斜杠在别的盘符 / UNC 路径下会解错。
+        path = Path(QUrl(url).toLocalFile())
+        assert path.is_file(), f"logoSource 指向的文件不存在：{path}"
+        seen[dark] = path.name
+
+    assert seen[True] != seen[False], "深/浅主题必须各用一张 logo"
+    assert seen[True] == "logo_dark.png" and seen[False] == "logo_light.png"
+
+
+def test_every_nav_icon_color_is_a_token_and_meets_graphic_contrast(shell):
+    """导航图标配色：`NAV_TREE` 写 token 名，桥解析后**两个主题下都要 ≥3:1**。
+
+    这条是 `ensure_contrast` 那道兜底的护栏。浅色主题的琥珀 `#ffb300` 对白底只有
+    1.79:1（WCAG 1.4.11 要求图形 3:1），直接画会糊成一片 —— 桥那边压暗到达标，
+    这里守住「每条都有可解析的 token」+「解析结果真的达标」。
+    """
+    from domain.theme_contrast import MIN_NON_TEXT_RATIO, contrast_ratio
+    from ui_qml.shell_window import theme
+
+    tokens = [color for _k, _l, _i, color in NAV_TREE]
+    assert all(isinstance(t, str) and t for t in tokens), "每个导航条目都要写配色 token"
+
+    original = theme.current_theme()
+    try:
+        for name in ("fluent-dark", "fluent-light"):
+            theme.apply_theme(name)
+            items = shell._bridge.navItems
+            for key, label, _icon, _token in NAV_TREE:
+                color = next(i["color"] for i in items if i["key"] == key)
+                ratio = contrast_ratio(color, theme.BG_SURFACE)
+                assert ratio >= MIN_NON_TEXT_RATIO, f"{label} 的图标色 {color} 在 {name} 下对侧栏底色只有 {ratio:.2f}:1"
+            colors = [i["color"] for i in items]
+            assert len(set(colors)) == len(NAV_TREE), f"{name} 下图例颜色有重复，看不出区分"
+    finally:
+        theme.apply_theme(original)
+
+
+def test_unknown_nav_color_token_falls_back_instead_of_blanking(shell):
+    """token 名写错时退回次要文字色，不返回空串 —— 空串会让图标整片消失。"""
+    assert shell._bridge.navIconColor("NO_SUCH_TOKEN") == shell._bridge.navIconColor("TEXT_SECONDARY")
 
 
 # ── 3b. 退出期的拆除顺序 ───────────────────────────────────

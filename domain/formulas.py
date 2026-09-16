@@ -10,6 +10,8 @@
 """
 
 import math
+from collections.abc import Mapping
+from typing import Any
 
 # 浮点精度补偿：避免 1.1 * 100 = 110.00000000000001 → ceil 到 111
 _FP_EPSILON = 1e-10
@@ -104,6 +106,55 @@ def calc_material_for_runs(
     me_level = min(me_level, 10)
     total = db_qty * max(1, runs) * (100.0 - me_level) / 100.0 * structure_mat_saving
     return math.ceil(total - _FP_EPSILON)
+
+
+#: 单件材料（每轮基础量 ≤ 1）豁免材料效率的既有规则。
+#: 现行口径：这类材料按 `基础量 × 作业数` 计，不减 ME
+#: （`domain/scoring.py:93-95` 的 `is_whole_item` 分支）。**本函数是这条规则的单一定义处。**
+_SINGLE_UNIT_EXEMPT = True
+
+
+def material_total_for_runs(
+    material: Mapping[str, Any] | Any,
+    total_runs: int,
+    *,
+    me_level: int = 0,
+    structure_mat_saving: float = 1.0,
+) -> int:
+    """单条材料明细 → 整批（`total_runs` 次作业）需求量。
+
+    **这是「一批要多少料」的单一定义处**：`services/scoring_service.py` 的两处缩放、
+    `services/plan_execution.material_requirements` 与
+    `ui_qml/bridge/cost_breakdown_bridge._build_material_rows` 都走它，
+    免得四处各写一遍取整口径再互相漂移。
+
+    口径（EVE）：对**整批**取一次整 —— `ceil(基础量 × 作业数 × (100-ME)/100 × 结构减免)`。
+    逐轮取整后再乘作业数（`ceil(基础量 × …) × 作业数`）会**系统性地多要货**：
+    基础量 22、ME10、2510 次作业时，逐轮口径要 50,200，整批口径只要 49,698。
+
+    单件材料（基础量 ≤ 1）按 `_SINGLE_UNIT_EXEMPT` 豁免 ME，与 `domain/scoring.py` 一致。
+
+    `material` 可以是 dict（取 `base_qty` / `wastefactor`）或带同名属性的对象。
+    """
+    base = int(_field(material, "base_qty") or 0)
+    if base <= 0:
+        return 0
+    if base <= 1 and _SINGLE_UNIT_EXEMPT:
+        return base * max(1, int(total_runs))
+    return calc_material_for_runs(
+        base,
+        int(_field(material, "wastefactor") or DEFAULT_WASTEFACTOR),
+        me_level,
+        runs=max(1, int(total_runs)),
+        structure_mat_saving=structure_mat_saving,
+    )
+
+
+def _field(material: Mapping[str, Any] | Any, key: str) -> Any:
+    """dict / 对象两吃 —— 材料明细在评分链路里两种形态都有。"""
+    if isinstance(material, Mapping):
+        return material.get(key)
+    return getattr(material, key, None)
 
 
 # ═══════════════════════════════════════════════════════════

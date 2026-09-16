@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Property, QObject, QSize, Qt, QTimer, QUrl, Signal, Slot
@@ -29,6 +30,8 @@ from core.constants import TRADE_HUBS
 from core.container import get_container
 from core.logger import log
 from core.paths import ensure_dirs_exist, window_geometry_file
+from domain.theme_contrast import ensure_contrast
+from ui_qml.app_icon import ASSETS_DIR
 from ui_qml.bridge import CONTEXT_NAME, theme_singleton
 from ui_qml.constants import NAV_TREE
 from ui_qml.host import QML_ROOT
@@ -91,10 +94,44 @@ class ShellWindowBridge(QObject):
                 "key": key,
                 "label": label,
                 "icon": self.iconFile(icon),
-                "section": key == "__section__",
+                "color": self.navIconColor(color_token),
             }
-            for key, label, icon in NAV_TREE
+            for key, label, icon, color_token in NAV_TREE
         ]
+
+    @Slot(str, result=str)
+    def navIconColor(self, token: str) -> str:
+        """导航条目配色的 token 名 → 当前主题的实际色值（已做对比度兜底）。
+
+        `NAV_TREE` 里存的是 `"ACCENT_YELLOW"` 这类**名字**，不是色值 —— 那样这份
+        常量表就不必依赖 Qt/主题。到这里才解析成颜色，并且**必须过一遍
+        `ensure_contrast`**：浅色主题的琥珀 `#ffb300` 对白底只有 1.79:1，
+        远低于 WCAG 1.4.11 对图形要求的 3:1，直接画会糊成一片。
+
+        对照底色取 `BG_SURFACE`（侧栏自身底色）。实际渲染用的是它 90% 不透明叠在
+        `BG_DARK` 上（`Main.qml` 的 `chromeColor`），与本值只差几个色阶，
+        对比度影响 <2%，不值得为它把那个 0.9 再复制一份过来。
+        """
+        color = getattr(theme, token, None)
+        if not isinstance(color, str):
+            log.warning("导航配色 token 不存在：%s", token)
+            return theme.TEXT_SECONDARY
+        return ensure_contrast(color, theme.BG_SURFACE)
+
+    @Property(str, notify=stateChanged)
+    def logoSource(self) -> str:
+        """侧栏 logo 的 `file://` URL —— 按深/浅主题二选一。
+
+        和 `iconFile` 是同一条约定：**文件系统的事归桥管，QML 不拼路径**。
+        侧栏 QML 在 `ui_qml/qml/shell/` 下，`Qt.resolvedUrl("../assets/…")` 会解析到
+        `ui_qml/qml/assets/`（不存在），资产实际在 `ui_qml/assets/` —— 拼相对路径会静默空白。
+
+        两张图由 `scripts/make_app_icon.py` 生成（透明底，笔画色分深/浅，品牌红点保留）。
+        文件缺失时返回 `""`：`Image` 空 source 只是不画，不报错。
+        """
+        name = "logo_dark.png" if theme.is_dark_mode() else "logo_light.png"
+        path = Path(ASSETS_DIR) / name
+        return QUrl.fromLocalFile(str(path)).toString() if path.exists() else ""
 
     @Slot(str, result=str)
     def iconFile(self, key: str) -> str:
@@ -348,8 +385,8 @@ class ShellWindow(QQuickView):
         if app is not None:
             app.aboutToQuit.connect(self._stop_running_threads)
 
-        # 默认页（与 Widgets 版一致：第一个非分组项）
-        first = next((k for k, _l, _i in NAV_TREE if k != "__section__"), "")
+        # 默认页 = 导航首项（`NAV_TREE` 的顺序即显示顺序）
+        first = NAV_TREE[0][0]
         if first:
             self.navigate_to(first)
 
@@ -624,9 +661,7 @@ class ShellWindow(QQuickView):
         engine = self.engine()
         if engine is None:
             raise RuntimeError("外壳没有 QQmlEngine，无法建页面")
-        for key, _label, _icon in NAV_TREE:
-            if key == "__section__":
-                continue
+        for key, _label, _icon, _color in NAV_TREE:
             page = build_qml_page(key, self, engine, self._content_area)
             if page is None:
                 log.warning("页面 %s 未迁移到 QML 或加载失败，本页暂缺", key)
@@ -635,7 +670,7 @@ class ShellWindow(QQuickView):
             self._pages[key] = page
         self._resize_pages()
         log.info(
-            "QML 外壳已装载 %d/%d 个页面", len(self._pages), sum(1 for k, _l, _i in NAV_TREE if k != "__section__")
+            "QML 外壳已装载 %d/%d 个页面", len(self._pages), len(NAV_TREE)
         )
 
     def _resize_pages(self) -> None:

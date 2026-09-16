@@ -113,6 +113,10 @@ class PlanTableModel(QAbstractTableModel):
         self._sort_col: int = -1
         self._sort_order = Qt.SortOrder.AscendingOrder
         self._collapsed_groups: set[int] = set()  # 被折叠的 group_id 集合
+        #: 派生视图缓存，见 `_view_cache`
+        self._view_cache_key: tuple | None = None
+        self._view_cache_value: tuple = ([], [], frozenset(), False)
+        self._collapse_key: tuple[int, ...] = ()  # `_collapsed_groups` 的有序快照（缓存签名用）
 
     # ── 折叠/展开 ──────────────────────────────────────────────
 
@@ -122,8 +126,18 @@ class PlanTableModel(QAbstractTableModel):
             self._collapsed_groups.discard(group_id)
         else:
             self._collapsed_groups.add(group_id)
+        self._collapse_key = tuple(sorted(self._collapsed_groups))
         self.beginResetModel()
         self.endResetModel()
+
+    def beginResetModel(self) -> None:  # type: ignore[override]
+        """整体重置前丢掉派生视图缓存。
+
+        所有会改变行集合/折叠形态的路径（`set_plans`、`toggle_collapse`、控制器的删行）
+        都经过这里，所以缓存不会带着上一份数据活到下一次 `data()`。
+        """
+        self._view_cache_key = None
+        super().beginResetModel()
 
     def _is_visible(self, plan: dict) -> bool:
         """判断行是否可见（未被折叠隐藏）"""
@@ -146,29 +160,50 @@ class PlanTableModel(QAbstractTableModel):
         return [p for p in self._plans if self._is_visible(p)]
 
     def _has_children(self, group_id: int) -> bool:
-        """判断指定 group 是否有子项（含 -1 共享区）。"""
-        if group_id == -1:
-            return any(p.get("group_id") == -1 or p.get("group_number") == -1 for p in self._plans)
-        return any(
-            (p.get("group_id") or p.get("group_number") or 0) == group_id
-            and int(p.get("child_level") or p.get("sub_level") or 0) > 0
-            for p in self._plans
-        )
+        """判断指定 group 是否有子项（含 -1 共享区）。走缓存，O(1)。"""
+        return self._view_cache()[3] if group_id == -1 else group_id in self._view_cache()[2]
+
+    def _view_cache(self) -> tuple[list[dict], list[int], frozenset[int], bool]:
+        """派生视图缓存 → (可见行, 过滤行号→原始行号, 有子项的组号集合, 是否有 -1 共享行)。
+
+        **为什么必须缓存**：`_row_map` / `_has_children` 都是 O(行数)，却由 `data()`
+        **逐格**调用（列 × 角色 × 行）。实测 50 行、折叠两个组时，全表刷一遍要 485ms
+        （不折叠也要 58ms）——QML 滚动时每帧都要为可见行取角色，几十行就开始卡。
+
+        签名 = `(id(列表), 行数, 折叠快照)`：换列表（`set_plans`/控制器删行）与增删行都
+        会变；`beginResetModel` 另有兜底清空。行 dict 是**原地改字段**（如排序、改备注），
+        那些不改可见性与层级，不会让缓存失真。
+        """
+        key = (id(self._plans), len(self._plans), self._collapse_key)
+        if key != self._view_cache_key:
+            visible = self._visible_plans()
+            index_of = {id(p): i for i, p in enumerate(self._plans)}
+            child_groups = frozenset(
+                int(g)
+                for p in self._plans
+                if (g := p.get("group_id") or p.get("group_number") or 0)
+                and int(p.get("child_level") or p.get("sub_level") or 0) > 0
+            )
+            has_shared = any(p.get("group_id") == -1 or p.get("group_number") == -1 for p in self._plans)
+            self._view_cache_value = (
+                visible,
+                [index_of.get(id(p), i) for i, p in enumerate(visible)],
+                child_groups,
+                has_shared,
+            )
+            self._view_cache_key = key
+        return self._view_cache_value
 
     def _row_map(self, filtered_row: int) -> int:
         """过滤行号 → 原始行号映射"""
-        visible = self._visible_plans()
-        if filtered_row >= len(visible):
+        rows = self._view_cache()[1]
+        if not 0 <= filtered_row < len(rows):
             return filtered_row
-        target = visible[filtered_row]
-        for i, p in enumerate(self._plans):
-            if p is target:
-                return i
-        return filtered_row
+        return rows[filtered_row]
 
     def rowCount(self, parent=None):
         if self._collapsed_groups:
-            return len(self._visible_plans())
+            return len(self._view_cache()[0])
         return len(self._plans)
 
     def columnCount(self, parent=None):
@@ -240,6 +275,10 @@ class PlanTableModel(QAbstractTableModel):
         if c == 6:
             return str(p.get("child_level", 0))
         if c == 7:
+            # 派生状态「材料不足」优先。**只在待生产行上有意义** —— 行走到 ready/completed
+            # 后残留的标注不该继续显示（标注是控制器按当前库存算的，不落库）。
+            if p.get("material_status") == "short" and (p.get("status") or "") == "pending":
+                return "材料不足"
             return cast(str, self._STATUS_LABELS.get(p.get("status", ""), p.get("status", "")))
         if c == 8:
             return p.get("char_name", "") or "-"

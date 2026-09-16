@@ -1189,3 +1189,64 @@ class TestPerLineCalculation:
         by_one = {m["type_id"]: m["qty"] for m in one["materials_all_lines"]}
         by_two = {m["type_id"]: m["qty"] for m in two["materials_all_lines"]}
         assert by_two[1001] > by_one[1001]  # ME0 那条线更费料
+
+
+class TestTotalMetricsWholeBatchMaterialCost:
+    """`calculate_total_metrics` 的材料口径 —— 整批取整 + 增量式利润。
+
+    背景：旧口径是 `单轮材料成本 × 总倍数`，而单轮材料成本是**逐轮取整**的
+    （`ceil(基础量 × 0.9)`），乘上轮数后对基础量 ≥2 的材料系统性多要货。
+    真实一单：基础量 22、ME10、502 轮 × 5 线 → 旧 50,200 / 新 49,698，用户仓库正是 49,698，
+    于是「材料刚好够」被误判成「缺 502」（实机 `material_short` 记的就是这个 502）。
+    """
+
+    _PRICE = 87.0
+
+    @classmethod
+    def _per_run(cls, profit_per_run: float = 1000.0, revenue_per_run: float = 20000.0) -> dict:
+        return {
+            "profit_per_run": profit_per_run,
+            "revenue_per_run": revenue_per_run,
+            "hours_per_run": 1.0,
+            "breakdown": {"material_cost": 20 * cls._PRICE, "bp_me": 10, "structure_mat_saving": 1.0},
+            "materials": [
+                {"type_id": 16672, "base_qty": 22, "wastefactor": 10, "qty": 20, "unit_price": cls._PRICE}
+            ],
+        }
+
+    def test_material_cost_is_the_whole_batch_number(self):
+        total = ScoringService.calculate_total_metrics(self._per_run(), runs=502, parallels=5)
+        assert total["total_material_cost"] == 49_698 * self._PRICE
+
+    def test_profit_moves_only_by_the_material_saving(self):
+        """增量式重算：只把材料省下的部分加回利润，其余成本项（含 research_cost）原样保留。
+
+        防的是「自己拼 `total_cost = 材料 + 费用`」那种写法 —— `fees_per_run` 里**没有**
+        research_cost（它在 `domain/scoring.py:165` 才加进 total_cost），拼出来会让
+        T2/T3（拷贝/发明）计划的利润虚高 `research_cost × 倍数`。
+        """
+        total = ScoringService.calculate_total_metrics(self._per_run(), runs=502, parallels=5)
+        saving = 20 * self._PRICE * 2510 - 49_698 * self._PRICE
+        assert saving > 0, "这条用例得有判别力：整批口径必须比逐轮口径少要"
+        assert total["total_profit"] == pytest.approx(1000.0 * 2510 + saving, abs=0.01)
+
+    def test_runs_one_is_unchanged(self):
+        """只有一次作业时口径不变 —— 小批量计划不该被这次改动影响。"""
+        total = ScoringService.calculate_total_metrics(self._per_run(), runs=1, parallels=1)
+        assert total["total_material_cost"] == 20 * self._PRICE
+
+    def test_single_unit_materials_keep_the_exemption(self):
+        """单件材料（基础量 ≤1）保持豁免 ME：100 次作业就是 100 个，不是 90。"""
+        per_run = self._per_run()
+        per_run["breakdown"]["material_cost"] = 1 * 50.0
+        per_run["materials"] = [
+            {"type_id": 34, "base_qty": 1, "wastefactor": 10, "qty": 1, "unit_price": 50.0}
+        ]
+        total = ScoringService.calculate_total_metrics(per_run, runs=100, parallels=1)
+        assert total["total_material_cost"] == 100 * 50.0
+
+    def test_margin_is_rescaled_with_the_new_cost(self):
+        """利润率必须跟着新口径重算 —— 材料不再线性，沿用单轮 margin 会与利润对不上。"""
+        total = ScoringService.calculate_total_metrics(self._per_run(), runs=502, parallels=5)
+        cost = 20000.0 * 2510 - total["total_profit"]
+        assert total["total_margin_pct"] == pytest.approx(total["total_profit"] / cost * 100, abs=0.01)

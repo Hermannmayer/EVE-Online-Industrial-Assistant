@@ -67,7 +67,10 @@ def calculate_personal_margin(
             if qty_per_run <= 0:
                 continue
             mid = mat.get("type_id")
-            need = qty_per_run * total_mult
+            # `total_qty` = 整批取整量（缺失时回退旧口径，见 plan_execution.material_requirements）
+            need = mat.get("total_qty")
+            if need is None:
+                need = qty_per_run * total_mult
             if cost_overrides and mid in cost_overrides:
                 # 子项自制件：成本 = 子项制造价（合计，非库存/市场价）
                 mat_cost = cost_overrides[mid]
@@ -167,7 +170,10 @@ def adjust_mother_metrics(
             new_material_cost += sub_cost_map[mid]
             cost_overrides[mid] = sub_cost_map[mid]
         else:
-            new_material_cost += qty_per_run * total_mult * (mat.get("unit_price", 0) or 0)
+            need = mat.get("total_qty")
+            if need is None:
+                need = qty_per_run * total_mult
+            new_material_cost += need * (mat.get("unit_price", 0) or 0)
     new_material_cost = round(new_material_cost, 2)
     profit = round(revenue - new_material_cost - fees, 2)
     denom = new_material_cost + fees

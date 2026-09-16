@@ -183,7 +183,12 @@ class PlanQmlModel(PlanTableModel):
         if role == _INDENT:
             return int(p.get("child_level") or 0) if c == COL_PRODUCT else 0
         if role == _TOOLTIP:
-            return self._levels_tooltip(p) if c == COL_BLUEPRINT else ""
+            if c == COL_BLUEPRINT:
+                return self._levels_tooltip(p)
+            if c == COL_STATUS and p.get("material_status") == "short":
+                # 缺哪几种、各缺多少（控制器算好塞进来的派生字段）
+                return p.get("material_short_tip") or ""
+            return ""
         if role == _ROW_INDEX:
             return index.row()
         if role == _PLAN_ID:
@@ -226,6 +231,9 @@ class PlanQmlModel(PlanTableModel):
             if status == "ready":
                 return _token("ACCENT_ORANGE")
             if status == "pending":
+                # 缺料的待生产行标红 —— 与「待生产」同为 pending，靠颜色区分严重性
+                if p.get("material_status") == "short":
+                    return _token("ACCENT_RED")
                 return _token("TEXT_SECONDARY")
         if c == COL_BLUEPRINT and (p.get("status") or "") not in ("completed", "done"):
             # 蓝图绑定不足：标红提示「差 N 张」
@@ -273,6 +281,21 @@ class PlanQmlModel(PlanTableModel):
             return
         rows = self.rowCount()
         self.dataChanged.emit(self.index(0, 0), self.index(rows - 1, self.columnCount() - 1), list(ROLE_NAMES))
+
+    def refresh_status_column(self) -> None:
+        """只重发**状态列** —— 缺料标注变了时用，不为一行把全表刷一遍。
+
+        与 `refresh_colors` 的分工：那个是主题切换、所有列所有角色都要重算；
+        这个只动第 7 列的 text / fg / tooltip 三个角色。
+        """
+        if not self._plans:
+            return
+        rows = self.rowCount()
+        self.dataChanged.emit(
+            self.index(0, COL_STATUS),
+            self.index(rows - 1, COL_STATUS),
+            [_TEXT, _FG, _TOOLTIP],
+        )
 
     # ── 排序 ─────────────────────────────────────────────────
 

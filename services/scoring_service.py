@@ -21,6 +21,7 @@ from core.eve_formulas import (
     calc_relist_discount,
     calc_sales_tax_rate,
 )
+from domain.formulas import material_total_for_runs
 from domain.scoring import REACTION_INSTALL_FEE_RATE  # noqa: F401  # 向后兼容 re-export
 from services.blueprint_reader import (
     get_blueprint_materials,  # noqa: F401  # 由 application 门面经模块属性访问 + 测试 patch
@@ -35,25 +36,51 @@ def _hub_to_system_id(hub: str) -> int | None:
     return TRADE_HUB_SYSTEM_IDS.get(hub)
 
 
-def _sum_materials(per_line: list[dict]) -> list[dict]:
+def _sum_materials(
+    per_line: list[dict],
+    runs: int = 1,
+    structure_mat_saving: float = 1.0,
+) -> list[dict]:
     """各并行线的单轮材料明细按 `type_id` 合并（qty 求和、subtotal 重算）。
 
     供 `material_requirements` 这类**要求精确**的消费方：结果配套乘 `runs`
     （**不再**乘 `parallels`，因为各线已经在这里加总过了）。
+
+    每条另带 `total_qty`（各线**整批取整**后的合计）。EVE 里每条并行线是**独立作业**、
+    各带自己的 ME，所以必须**逐线** `ceil(基础量 × runs × (100-ME_i)/100 × 减免)` 再求和；
+    先把各线基础量加总、再取一次整会**少要货**。
     """
     merged: dict[int, dict] = {}
     for result in per_line:
+        line_me = int((result.get("breakdown") or {}).get("bp_me") or 0)
         for mat in result.get("materials", []) or []:
             tid = mat.get("type_id")
             if not tid:
                 continue
+            batch = material_total_for_runs(
+                mat, runs, me_level=line_me, structure_mat_saving=structure_mat_saving
+            )
             if tid in merged:
                 row = merged[tid]
                 row["qty"] = (row.get("qty") or 0) + (mat.get("qty") or 0)
+                row["total_qty"] = (row.get("total_qty") or 0) + batch
                 row["subtotal"] = round((row.get("unit_price") or 0) * row["qty"], 2)
             else:
-                merged[tid] = dict(mat)
+                merged[tid] = {**mat, "total_qty": batch}
     return list(merged.values())
+
+
+def _batch_materials(materials: list[dict], total_runs: int, me_level: int, saving: float) -> list[dict]:
+    """给材料明细列表加一份 `total_qty`（整批取整），**返回新列表**。
+
+    必须是新列表、新条目：`per_run["materials"]` 与评分缓存是**同一个对象**
+    （`scoring_facade` 的 cache key 不含 runs），就地写会把 `total_qty` 灌进缓存，
+    让不同 runs 的计划互相串值。
+    """
+    return [
+        {**mat, "total_qty": material_total_for_runs(mat, total_runs, me_level=me_level, structure_mat_saving=saving)}
+        for mat in materials or []
+    ]
 
 
 def _default_db() -> DatabaseManager:
@@ -372,17 +399,38 @@ class ScoringService:
         runs_only = max(runs, 1)
         hours_per_run = per_run.get("hours_per_run", 0) or 1
         profit_per_run = per_run.get("profit_per_run", 0) or 0
-        mat_cost = per_run.get("breakdown", {}).get("material_cost", 0) or 0
-        margin = per_run.get("margin_pct", 0) or 0
+        breakdown = per_run.get("breakdown") or {}
+        mat_cost = breakdown.get("material_cost", 0) or 0
+        revenue_per_run = per_run.get("revenue_per_run", 0) or 0
 
-        total_mat_cost = mat_cost * total_mult
-        total_profit = profit_per_run * total_mult
+        # 材料按**整批**取整（见 domain.formulas.material_total_for_runs）。
+        # 旧口径是「单轮取整 × 总倍数」，对基础量 ≥2 的材料系统性多要货。
+        materials = _batch_materials(
+            per_run.get("materials") or [],
+            total_mult,
+            int(breakdown.get("bp_me") or 0),
+            float(breakdown.get("structure_mat_saving") or 1.0),
+        )
+        total_mat_cost = sum((m.get("total_qty") or 0) * (m.get("unit_price") or 0) for m in materials)
+
+        # 利润用**增量式**重算：只把材料省下的那部分加回去。
+        # 不能自己拼 `total_cost = 材料 + 费用` —— `fees_per_run` 里**没有** research_cost，
+        # 那是在 `domain/scoring.py:165` 才加进 total_cost 的，自己拼会让 T2/T3
+        # （拷贝/发明）计划的利润虚高 `research_cost × 倍数`。
+        total_profit = profit_per_run * total_mult + (mat_cost * total_mult - total_mat_cost)
         total_time_hours = hours_per_run * runs_only
         total_iskph = total_profit / total_time_hours if total_time_hours > 0 else 0
         daily_output = (24.0 / hours_per_run) * parallels if hours_per_run > 0 else 0
 
+        # 利润率随材料口径一起重算。以前「比值不变」是因为各项都线性；
+        # 材料不再线性，再沿用单轮 margin 就会与新的利润对不上。
+        total_revenue = revenue_per_run * total_mult
+        total_cost = total_revenue - total_profit
+        total_margin = total_profit / total_cost * 100 if total_cost > 0 else 0.0
+
         # 保留原始 per_run 字段 + 新增 total_ 字段
         result = dict(per_run)
+        result["materials"] = materials
         result.update(
             {
                 "total_material_cost": round(total_mat_cost, 2),
@@ -390,7 +438,7 @@ class ScoringService:
                 "total_time_hours": round(total_time_hours, 2),
                 "total_isk_per_hour": round(total_iskph, 2),
                 "total_daily_output": round(daily_output, 1),
-                "total_margin_pct": margin,  # 比值不变
+                "total_margin_pct": round(total_margin, 2),
             }
         )
         return result
@@ -417,16 +465,33 @@ class ScoringService:
         hours = [float(r.get("hours_per_run", 0) or 0) for r in per_line]
         max_hours = max(hours) if hours else 0.0
 
-        total_profit = sum((r.get("profit_per_run", 0) or 0) for r in per_line) * runs
+        structure_saving = float((worst.get("breakdown") or {}).get("structure_mat_saving") or 1.0)
+        # 各线**各自整批取整**后求和（每条并行线是独立作业、各带自己的 ME）
+        materials_all_lines = _sum_materials(per_line, runs, structure_saving)
+        old_mat = (
+            sum(float((r.get("breakdown") or {}).get("material_cost", 0) or 0) for r in per_line) * runs
+        )
+        total_mat = sum((m.get("total_qty") or 0) * (m.get("unit_price") or 0) for m in materials_all_lines)
+
         total_revenue = sum((r.get("revenue_per_run", 0) or 0) for r in per_line) * runs
         total_fees = sum((r.get("fees_per_run", 0) or 0) for r in per_line) * runs
-        total_mat = sum(float((r.get("breakdown") or {}).get("material_cost", 0) or 0) for r in per_line) * runs
+        # 同样走**增量式**：只把材料省下的部分加回去，其余项（含 research_cost）自动保留
+        total_profit = (
+            sum((r.get("profit_per_run", 0) or 0) for r in per_line) * runs + (old_mat - total_mat)
+        )
         total_hours = max_hours * runs
         # domain 里 profit = revenue - total_cost（total_cost 含材料 + 安装费 + 经纪/改单/销售税）
         total_cost = total_revenue - total_profit
 
         per_run = dict(worst)
-        per_run["materials_all_lines"] = _sum_materials(per_line)
+        per_run["materials_all_lines"] = materials_all_lines
+        # `materials`（最差线单轮）也补 `total_qty`，与既有消费方 `runs × parallels` 的倍数保持同口径
+        per_run["materials"] = _batch_materials(
+            per_run.get("materials") or [],
+            runs * max(len(per_line), 1),
+            int((worst.get("breakdown") or {}).get("bp_me") or 0),
+            structure_saving,
+        )
         total = {
             "total_material_cost": round(total_mat, 2),
             "total_profit": round(total_profit, 2),
@@ -657,11 +722,12 @@ class ScoringService:
             # ── 个人利润率输入（新增）──
             "revenue": round(total_revenue if total_revenue is not None else revenue_per_run * total_mult, 2),
             "fees": round(total_fees if total_fees is not None else fees_per_run * total_mult, 2),
-            # 每轮量（含 ME 单件豁免）。逐线不一致时这里是**最差线**的单线单轮量 ——
-            # 既有消费方（plan_metrics 两处）都会再乘 runs×parallels，这里放汇总值会被重复放大。
-            "materials": per_run.get("materials", []),
+            # 每轮量（含 ME 单件豁免）**外加** `total_qty`（整批取整后的量）。
+            # `qty` 语义与取值一律不变 —— 既有消费方仍乘 runs×parallels；
+            # 要求精确的消费方改读 `total_qty`（缺失时才回退旧乘法）。
+            "materials": total.get("materials") or per_run.get("materials", []),
             # 仅供 `material_requirements` 这类**要求精确**的消费方：
-            # 各并行线的单轮量之和，配套乘 `runs`（不再乘 parallels）。
+            # 各并行线的单轮量之和，以及逐线各自整批取整后再求和的 `total_qty`。
             "materials_all_lines": per_run.get("materials_all_lines"),
             "revenue_per_run": revenue_per_run,  # 未取整，供精确计算
             "fees_per_run": fees_per_run,

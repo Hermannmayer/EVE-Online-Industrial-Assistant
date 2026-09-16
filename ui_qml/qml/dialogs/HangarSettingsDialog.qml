@@ -73,7 +73,14 @@ FDialogFrame {
 
             // ── 左：增删改 + 机库列表 ──
             ColumnLayout {
-                Layout.preferredWidth: Math.round(240 * Theme.fontScale)
+                /* 宽度**三个都要钉死**（只给 preferredWidth 会被 RowLayout 撑开，
+                 * 右侧编辑区就被挤成 3px 宽、看起来像整块没了）。
+                 * 同一条教训 `LauncherWindow.qml` 的动作槽已经写过一次。 */
+                readonly property int paneWidth: Math.round(240 * Theme.fontScale)
+                Layout.preferredWidth: paneWidth
+                Layout.minimumWidth: paneWidth
+                Layout.maximumWidth: paneWidth
+                Layout.fillWidth: false
                 Layout.fillHeight: true
                 spacing: frame.gap
 
