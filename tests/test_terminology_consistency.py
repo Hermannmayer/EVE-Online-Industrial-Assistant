@@ -34,9 +34,9 @@ _TERM_FILE = _DATA_DIR / "terminology.json"
 def sde_skills() -> dict[str, str]:
     """返回 SDE 中所有技能的 {zh_name: en_name} 映射。
 
-    项目的数据加载器（tools/downloaders/getitems.py）不填充 item.category_id，
-    因此 category_id=16 无数据时跳过依赖 SDE 技能分类的检查；
-    使用完整 SDE 数据（含 category_id）时该检查正常执行。
+    数据由 `sde_loader.write_categories` 填充（属 `sde_data` 步骤）。
+    若某份 reference.db 还没跑过那一步（该列全为 NULL），依赖它的检查会 skip 而不是
+    误报 —— 这正是 2026-09-17 之前本机的状态（那两条检查因此长期空转）。
     """
     import sqlite3
 
@@ -233,3 +233,53 @@ def test_refining_skill_name_consistency(sde_skills, terminology_data):
     formula_keys = _extract_skill_keys_from_eve_formulas()
     assert "提炼学概论" in formula_keys, 'eve_formulas.py 中没有使用 "提炼学概论" 作为技能 key'
     assert "提炼效率理论" in formula_keys, 'eve_formulas.py 中没有使用 "提炼效率理论" 作为技能 key'
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Test 5: 蓝图判定与 CCP 分类交叉验证
+# ═══════════════════════════════════════════════════════════════════
+
+
+def test_blueprint_group_suffix_matches_ccp_category():
+    """`item_kind` 的蓝图判定（group 名后缀谓词）必须与 CCP 分类一致。
+
+    `services/item_kind.py` 的 docstring 声称「CCP 分类 9 共 5044 件蓝图：
+    后缀谓词命中 5044，0 误 0 漏」—— 但那个数字写进注释时 **category_id 列还是
+    空的**（`sde_loader.write_categories` 的后半段长期没跑完），所以它**从未被
+    权威来源验证过**。2026-09-17 回填了 category_id，这条测试把那次交叉验证固化下来。
+
+    对老库（用户没重跑 `sde_data`、category_id 仍为 NULL）跳过：那种库上
+    没有权威来源可比，而 `item_kind` 的谓词本身就是为兼容它才这么写的。
+    """
+    import sqlite3
+
+    from core.paths import REF_DB_PATH
+
+    conn = sqlite3.connect(str(REF_DB_PATH))
+    try:
+        cat9 = {r[0] for r in conn.execute("SELECT type_id FROM item WHERE category_id = 9")}
+        if not cat9:
+            pytest.skip("reference.db 的 item.category_id 为空（老库），无可比对的权威来源")
+
+        suffix = {
+            r[0]
+            for r in conn.execute(
+                """SELECT type_id FROM item WHERE
+                   en_group_name LIKE '%Blueprint' OR en_group_name LIKE '%Blueprints'
+                   OR en_group_name LIKE '%Formula' OR en_group_name LIKE '%Formulas'
+                   OR zh_group_name LIKE '%蓝图' OR zh_group_name LIKE '%公式'
+                   OR zh_group_name LIKE '%配方'"""
+            )
+        }
+    finally:
+        conn.close()
+
+    false_positive = suffix - cat9  # 谓词说是蓝图、CCP 说不是
+    false_negative = cat9 - suffix  # CCP 说是蓝图、谓词漏了
+
+    assert not false_positive, (
+        f"{len(false_positive)} 件被 group 名后缀误判为蓝图（CCP 分类不是 9）：{sorted(false_positive)[:10]}"
+    )
+    assert not false_negative, (
+        f"{len(false_negative)} 件蓝图被 group 名后缀漏判（CCP 分类 9）：{sorted(false_negative)[:10]}"
+    )

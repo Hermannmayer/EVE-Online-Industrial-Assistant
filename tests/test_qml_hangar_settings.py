@@ -1,7 +1,7 @@
 """机库设置对话框（QML）的业务契约测试。
 
 只锁业务：列表标签、编辑区装载 / 改件互斥、两步删除、默认机库（含「已删除的机库」保留原值
-这条回归）、保存时的校验与落库，外加「宿主签名与原类一致」这条契约。
+这条回归）、保存时的校验与落库。
 **不放**「加载无告警」那条 —— 由主流程在 `tests/test_qml_dialogs.py` 统一加。
 
 与 Widgets 版 `ui_pyside6/views/hangar_settings_view.py` 逐条对齐。
@@ -9,11 +9,10 @@
 
 from __future__ import annotations
 
-import inspect
 from typing import cast
 
 from ui_qml.bridge import hangar_settings_bridge as hsb
-from ui_qml.bridge.hangar_settings_bridge import HangarSettingsBridge, HangarSettingsQmlDialog
+from ui_qml.bridge.hangar_settings_bridge import HangarSettingsBridge
 
 #: 与 Widgets 版同名测试文件里的 DEFAULT_CFG 同形（未配置任何设施）
 DEFAULT_CFG: dict = {
@@ -670,21 +669,6 @@ def test_accept_clears_a_previous_error(qapp, monkeypatch):
 
 
 # ════════════════════════════════════════════════════════════════
-#  宿主契约
-# ════════════════════════════════════════════════════════════════
-
-
-def test_qml_dialog_keeps_original_signature():
-    """构造签名保持 `(main_window, parent=None)` —— 调用方原样可用。
-
-    原断言是拿 Widgets 版 `HangarSettingsDialog` 逐个参数对比；那个类随批次 6.2
-    删掉了，改成**直接钉住契约本身**（参数名与默认值），意图不变。
-    """
-    params = inspect.signature(HangarSettingsQmlDialog.__init__).parameters
-    assert list(params) == ["self", "main_window", "parent"]
-    assert params["parent"].default is None
-
-
 # ════════════════════════════════════════════════════════════════
 #  布局护栏（静态读数）
 # ════════════════════════════════════════════════════════════════

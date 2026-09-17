@@ -14,6 +14,7 @@ import pytest
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QGuiApplication
 
+from tests.clipboard_wait import wait_for_clipboard, wait_for_clipboard_prefix
 from ui_qml.bridge import manufacturable_items_bridge as mi
 from ui_qml.models.all_items_models import BCOLS, MCOLS
 from ui_qml.workers.all_items_workers import JITA_RID
@@ -426,11 +427,11 @@ def test_click_cell_selects_and_copies(qapp):
 
         bridge.clickCell(0, 1)  # 中文名列
         assert bridge.selectedRow == 0
-        assert QGuiApplication.clipboard().text() == "渡鸦级"
+        assert wait_for_clipboard("渡鸦级") == "渡鸦级"
 
         QGuiApplication.clipboard().setText("未改动")
         bridge.clickCell(0, 0)  # 图标列没有值
-        assert QGuiApplication.clipboard().text() == "未改动"
+        assert wait_for_clipboard("未改动") == "未改动"
     finally:
         dlg.deleteLater()
 
@@ -446,12 +447,14 @@ def test_copy_selection_and_copy_all(qapp):
 
         bridge.clickCell(0, 1)
         bridge.copySelection()
-        line = QGuiApplication.clipboard().text()
+        line = wait_for_clipboard_prefix("2001\t渡鸦级\tRaven\t")
         assert line.startswith("2001\t渡鸦级\tRaven\t"), "图标列换成 type_id（原版 `_copy_selection`）"
         assert bridge.statusText == "已复制 1 行"
 
         bridge.copyAll()
-        lines = QGuiApplication.clipboard().text().splitlines()
+        # 等**末行**出现，才说明两行都写全了（只等首行可能在第二行落地前就读走）
+        text = wait_for_clipboard_prefix("2001\t渡鸦级\tRaven\t\n34\t三钛合金\t")
+        lines = text.splitlines()
         assert len(lines) == 2
         assert lines[1].startswith("34\t三钛合金\t")
         assert bridge.statusText == "已复制 2 行"

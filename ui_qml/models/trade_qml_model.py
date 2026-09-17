@@ -7,12 +7,11 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
-from PySide6.QtCore import QModelIndex, Qt, QUrl
+from PySide6.QtCore import QModelIndex, Qt
 
-from ui_qml.icon_cache import item_icon_path
+from ui_qml.icon_cache import icon_url as _icon_url
 from ui_qml.models.trade_models import TradeHubTableModel
 from ui_qml.theme import registry as theme
 
@@ -101,12 +100,3 @@ class TradeHubQmlModel(TradeHubTableModel):
             self.index(len(self._rows) - 1, self.columnCount() - 1),
             list(ROLE_NAMES),
         )
-
-
-def _icon_url(type_id: Any) -> str:
-    if not type_id:
-        return ""
-    path = item_icon_path(int(type_id))
-    if not os.path.isfile(path):
-        return ""
-    return QUrl.fromLocalFile(path).toString()

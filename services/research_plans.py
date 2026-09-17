@@ -242,23 +242,6 @@ def _skill_levels(conn, blueprint_type_id: int, activity: str, skills: dict) -> 
     )
 
 
-def plan_type_name(plan: dict) -> str:
-    """给计划表「产品」列展示的研究产物名（拷贝/发明/研究各有说法）。"""
-    from services.plan_job_kinds import normalize
-
-    name = plan.get("product_name") or ""
-    act = normalize(plan.get("activity"))
-    if act == "copying":
-        return f"{name}（拷贝）"
-    if act == "invention":
-        return f"{name}（发明）"
-    if act == "researching_material_efficiency":
-        return f"{name}（ME 研究）"
-    if act == "researching_time_efficiency":
-        return f"{name}（TE 研究）"
-    return name
-
-
 def create_research_plan(
     blueprint_type_id: int,
     *,

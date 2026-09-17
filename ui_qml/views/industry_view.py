@@ -65,12 +65,7 @@ class IndustryPage(QObject):
     任何「拿 self 当 QWidget 父」的调用（`QMessageBox(self, …)` 之类）都不再成立。
     """
 
-    def __init__(self, main_window, *, headless_host: bool = True):
-        """``headless_host`` 是**历史开关，批次 7.4 起恒为真、取值已无影响**。
-
-        保留形参只为让调用方（`ui_qml/industry_page.py::build_industry_spec`）不必同步改；
-        本类不再有任何自建 QML 宿主的路径 —— 宿主形态由外壳决定。
-        """
+    def __init__(self, main_window):
         super().__init__()
         self._main = main_window
         init_plan_db()

@@ -31,8 +31,9 @@ from PySide6.QtCore import Property, QTimer, Signal, Slot
 
 from services.init_service import STEPS, InitStep, StepStatus, get_missing_steps
 from ui_qml.dialog_host import DialogBridge, QmlDialog
-from ui_qml.theme import registry as theme
+from ui_qml.theme.registry import token as _token_color
 from ui_qml.workers.init_workers import InitServiceWorker
+from ui_qml.workers.lifecycle import drop_worker
 
 __all__ = [
     "InitWizardBridge",
@@ -64,18 +65,10 @@ _TOKENS: dict[StepStatus, str] = {
     StepStatus.CANCELLED: "TEXT_SECONDARY",
 }
 
-#: 关窗时还没跑完、被摘出对话树的线程（同 `batch_price_bridge` 的强引用保活做法）
-_DETACHED: set[Any] = set()
-
 
 # ══════════════════════════════════════════════════════════════
 #  纯函数：行装配与计时文案（便于单测，不碰 Qt）
 # ══════════════════════════════════════════════════════════════
-
-
-def _token_color(token: str) -> str:
-    """主题 token 名 → 颜色字符串（QML 的 `color:` 直接吃字符串，见 `summary_dialog.cell`）。"""
-    return str(getattr(theme, token, "") or "")
 
 
 def step_row(step: InitStep, status: StepStatus, message: str = "", percent: int = 0) -> dict:
@@ -553,20 +546,9 @@ class InitWizardBridge(DialogBridge):
     def stop(self) -> None:
         """关窗收尾：`QThread` 在运行中被析构时 Qt 直接 `abort()`（本仓真实崩过）。
 
-        先 `cancel()` 再等 2 秒；真没等到就把它从桥的子对象里摘出来、挂到模块级集合上
-        等它自己结束（同 `batch_price_bridge.stop` 的强引用保活做法）—— 父对象已随对话框
-        销毁，留着反而是崩溃源。
+        先 `cancel()` 再等超时；收尾逻辑见 `ui_qml.workers.lifecycle.drop_worker`。
         """
-        worker = self._worker
-        if worker is None or not worker.isRunning():
-            return
-        worker.cancel()
-        worker.requestInterruption()
-        if worker.wait(2000):
-            return
-        _DETACHED.add(worker)
-        worker.setParent(None)
-        worker.finished.connect(lambda: _DETACHED.discard(worker))
+        drop_worker(self._worker, cancel=True)
 
 
 class InitWizardQmlDialog(QmlDialog):

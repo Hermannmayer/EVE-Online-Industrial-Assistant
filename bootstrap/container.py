@@ -26,9 +26,7 @@ class AppContainer:
         self._market_repo = None
         self._blueprint_repo = None
         self._plan_repo = None
-        self._price_history_service = None
         self._char_config_resolver = None
-        self._manufacturing_calculator = None
         self._refining_service = None
 
     @property
@@ -99,16 +97,6 @@ class AppContainer:
                     self._pricing_service = PricingService(self.db)
         return self._pricing_service
 
-    @property
-    def price_history_service(self):
-        if self._price_history_service is None:
-            with self._lock:
-                if self._price_history_service is None:
-                    from services.price_history import PriceHistoryService
-
-                    self._price_history_service = PriceHistoryService(self.db)
-        return self._price_history_service
-
     def scoring_service(self):
         if self._scoring_service is None:
             with self._lock:
@@ -117,17 +105,6 @@ class AppContainer:
 
                     self._scoring_service = ScoringService(self.db, self.scoring_cache)
         return self._scoring_service
-
-    @property
-    def manufacturing_calculator(self):
-        """制造计算器（纯函数模块，无状态）"""
-        if self._manufacturing_calculator is None:
-            with self._lock:
-                if self._manufacturing_calculator is None:
-                    from services import manufacturing_calculator
-
-                    self._manufacturing_calculator = manufacturing_calculator
-        return self._manufacturing_calculator
 
     @property
     def char_config_resolver(self):
@@ -182,11 +159,4 @@ def get_container() -> AppContainer:
         with _lock:
             if _container is None:
                 _container = AppContainer()
-    return _container
-
-
-def init_container() -> AppContainer:
-    global _container
-    with _lock:
-        _container = AppContainer()
     return _container

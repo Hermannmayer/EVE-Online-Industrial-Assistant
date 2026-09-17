@@ -12,10 +12,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QEventLoop, Qt, QTimer, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler
 
 from tests.clipboard_wait import wait_for_clipboard
 from tests.qml_click import press_move_release
+from tests.qml_click import spin as _spin
 from ui_qml.models.contract_qml_models import (
     CONTRACT_ROLE_NAMES,
     ContractItemQmlModel,
@@ -58,12 +59,6 @@ def _contract(
 
 def _c_cell(model: ContractQmlModel, row: int, col: int, role: int):
     return model.data(model.index(row, col), role)
-
-
-def _spin(ms: int = 120) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 # ════════════════════════════════════════════════════════════

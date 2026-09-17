@@ -19,7 +19,7 @@ from domain.research import (
     invention_probability,
 )
 
-# 安装费税费兜底（与 services.manufacturing_calculator 的 NPC 口径一致）
+# 安装费税费兜底（与 domain/formulas.py 的 NPC 口径一致）
 DEFAULT_FACILITY_TAX = 0.0025
 DEFAULT_SCC_SURCHARGE = 0.04
 

@@ -163,15 +163,15 @@ class TestIsLeafPlan:
     """is_leaf_plan — 采购只统计叶子产线，跳过已拆解母项"""
 
     def test_ungrouped_is_leaf(self):
-        assert pd.is_leaf_plan({"group_id": 0, "child_level": 0}, [])
+        assert pd.is_leaf_plan({"group_id": 0, "child_level": 0}, []) is True
 
     def test_mother_with_children_not_leaf(self):
         plans = [
             {"id": 1, "group_id": 10, "child_level": 0},
             {"id": 2, "group_id": 10, "child_level": 1},
         ]
-        assert not pd.is_leaf_plan(plans[0], plans)  # 母项有子项 → 非叶子
-        assert pd.is_leaf_plan(plans[1], plans)  # 子项 → 叶子
+        assert pd.is_leaf_plan(plans[0], plans) is False  # 母项有子项 → 非叶子
+        assert pd.is_leaf_plan(plans[1], plans) is True  # 子项 → 叶子
 
     def test_deepest_subitem_is_leaf(self):
         plans = [
@@ -179,15 +179,15 @@ class TestIsLeafPlan:
             {"id": 2, "group_id": 10, "child_level": 1},
             {"id": 3, "group_id": 10, "child_level": 2},
         ]
-        assert not pd.is_leaf_plan(plans[1], plans)  # 1 级子项还有 2 级 → 非叶子
-        assert pd.is_leaf_plan(plans[2], plans)
+        assert pd.is_leaf_plan(plans[1], plans) is False  # 1 级子项还有 2 级 → 非叶子
+        assert pd.is_leaf_plan(plans[2], plans) is True
 
     def test_different_group_ignored(self):
         plans = [
             {"id": 1, "group_id": 10, "child_level": 0},
             {"id": 2, "group_id": 20, "child_level": 1},  # 不同组
         ]
-        assert pd.is_leaf_plan(plans[0], plans)  # 组内无子项 → 叶子
+        assert pd.is_leaf_plan(plans[0], plans) is True  # 组内无子项 → 叶子
 
 
 class TestCollectCascadeDeleteIds:

@@ -6,16 +6,12 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QEventLoop, QObject, QTimer
+from PySide6.QtCore import QObject
 from PySide6.QtQuick import QQuickItem
 
+from tests.qml_click import spin as _spin
+
 pytestmark = pytest.mark.ui
-
-
-def _spin(ms: int = 150) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 def _find_by_placeholder(root: QQuickItem, text: str) -> QQuickItem | None:

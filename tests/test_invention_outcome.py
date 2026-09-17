@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
 
 from services import plan_execution
@@ -244,8 +242,3 @@ class TestBreakdownActualFlag:
         assert actual["is_actual"] is True
         assert actual["output_runs"] == 3
         assert actual["bpc_unit_cost"] > expected["bpc_unit_cost"]
-
-
-def test_sqlite_available():
-    """占位：确保 sqlite3 导入被使用（本模块仅类型引用）。"""
-    assert sqlite3 is not None

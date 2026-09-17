@@ -16,12 +16,9 @@
 
 from __future__ import annotations
 
-import os
-from typing import Any
+from PySide6.QtCore import QModelIndex, Qt
 
-from PySide6.QtCore import QModelIndex, Qt, QUrl
-
-from ui_qml.icon_cache import item_icon_path
+from ui_qml.icon_cache import icon_url as _icon_url
 from ui_qml.models.estimate_models import EstimateTableModel
 
 __all__ = ["EstimateQmlModel", "ROLE_NAMES"]
@@ -50,20 +47,6 @@ _SELL_TEXT = Qt.ItemDataRole.UserRole + 7
 _BUY_TEXT = Qt.ItemDataRole.UserRole + 8
 _VOLUME_TEXT = Qt.ItemDataRole.UserRole + 9
 _ROW_INDEX = Qt.ItemDataRole.UserRole + 10
-
-
-def _icon_url(type_id: Any) -> str:
-    """图标文件 URL；文件不存在返回空串。
-
-    必须给 `file:///...` 形式的 URL——直接把 Windows 路径（`C:\\...`）塞给
-    QML 的 `Image.source` 解析不了。文件不存在时返回空串，免得 QML 刷警告。
-    """
-    if not type_id:
-        return ""
-    path = item_icon_path(int(type_id))
-    if not os.path.isfile(path):
-        return ""
-    return QUrl.fromLocalFile(path).toString()
 
 
 class EstimateQmlModel(EstimateTableModel):

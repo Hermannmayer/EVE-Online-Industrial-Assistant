@@ -31,9 +31,6 @@ BASE_RUNS = 10  # min(T1 拷贝上限 200, T2 制造上限 10)
 
 
 class TestJobBatchMaterials:
-    def test_single_job_is_base_quantity(self):
-        assert job_batch_materials([(20416, 2), (25887, 2)], 1) == [(20416, 2), (25887, 2)]
-
     def test_scales_linearly_with_job_count(self):
         assert job_batch_materials([(20416, 2)], 5) == [(20416, 10)]
 

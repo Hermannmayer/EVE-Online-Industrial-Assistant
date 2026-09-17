@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.container import get_container
-from services.manufacturing_calculator import calc_material_for_runs
+from domain.formulas import calc_material_for_runs
 
 
 def _default_db():

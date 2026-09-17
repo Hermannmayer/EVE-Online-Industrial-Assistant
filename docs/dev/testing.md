@@ -15,12 +15,16 @@
 不依赖你先把虚拟环境激活：
 
 ```bash
-scripts/run_tests.sh            # validate：全部业务/DB/计算，跳过 Qt（~45s）
+scripts/run_tests.sh            # validate：全部业务/DB/计算，跳过 Qt
 scripts/run_tests.sh fast       # 纯计算/轻服务白名单（~4s）
-scripts/run_tests.sh ui-retest  # 只有 Qt 界面 + 真 QThread（~40s），改动涉及 UI 时优先
+scripts/run_tests.sh ui-retest  # 只有 Qt 界面 + 真 QThread，改动涉及 UI 时优先
 scripts/run_tests.sh target     # 只跑 git 变更文件相关（~5s）
-scripts/run_tests.sh full       # validate + ui-retest 两阶段（~1.5min），仅提交前
+scripts/run_tests.sh full       # validate + ui-retest 两阶段，仅提交前
 ```
+
+> 耗时（2026-09-17 实测，空载）：`validate` 58s、`ui-retest` 221s、`full` ≈ 4.7min。
+> 机器负载高时 `ui-retest` 曾达 445s（`full` ≈ 8.4min）—— 差别很大，别按某一个数去卡。
+> 变化趋势见 `CLAUDE.md` 的「测试边界」。
 
 开发循环用 `fast` / `target`，日常回归用 `validate`，`full` 只在提交前。
 
@@ -65,17 +69,20 @@ pytestmark = pytest.mark.ui  # 整个文件是 Qt 用例时的常见写法
 | `test_*_models` | 表格模型 |
 | 其余 | 各自的 service / 领域模块 |
 
-**不要在此处维护完整清单** —— 它必然过时。权威来源是 `tests/` 目录本身；
-README 里的测试总数由 `scripts/check_readme.py` 与提交钩子强制同步（对不上会红）。
+**不要在此处维护完整清单** —— 它必然过时。权威来源是 `tests/` 目录本身。
+（README 里原先有硬编码的测试总数、由 `scripts/check_readme.py` + 提交钩子强制同步，该机制已移除：
+那个数字每增删一个用例就要改一次，只会制造无意义的提交摩擦。）
 
-⚠️ 与 QML 相关的三条本仓特有约定（写在各自的 `test_qml_*.py` 里）：
+⚠️ 与 QML 相关的本仓特有约定（写在各自的 `test_qml_*.py` 里）。
+**新增用例前先读 CLAUDE.md 的「测试边界」与克制条款第 4 条 —— 测试有硬预算，不按覆盖率补用例。**
 
-- **每个新对话框都要过一遍「加载无 QML 告警」护栏**（`tests/test_qml_dialogs.py` 的
-  `_assert_loads_and_quiet`）—— 缺 import / 绑错属性这类问题只在运行时吐一条，静态扫描看不见；
-- **「只有真窗口才看得见」的东西必须真机核对**：字形（离屏下 `QFontDatabase` 是 0 个字体，
-  文字全成方框）、DWM 毛玻璃、窗口拖动/缩放；
-- **表格点击类用例要给点击点算绝对坐标**，且必须断言该行确实落在视口内 ——
-  否则「点空了」会以「该选中第 N 行」的面目出现，把用例自身的问题伪装成产品故障。
+- **新对话框并入统一的「加载无 QML 告警」冒烟用例**（`tests/test_qml_dialogs.py` 的
+  `_assert_loads_and_quiet`）—— 缺 import / 绑错属性这类问题只在运行时吐一条，静态扫描看不见。
+  **不要再为每个新对话框新建一个独立用例**：那只是同一个断言重复 N 遍，往现有参数化列表里加一行即可；
+- **「只有真窗口才看得见」的东西不写测试，用截图核对**：字形（离屏下 `QFontDatabase` 是 0 个字体，
+  文字全成方框）、DWM 毛玻璃、窗口拖动/缩放 —— 跑 `scripts/shell_snapshot.py --real` 看；
+- **布局/几何/尺寸/像素一律不写断言**（布局一改就红，与业务无关）。确需交互用例时，
+  点击坐标由 `tests/qml_click.py` 统一算，不要在用例里手写像素值。
 
 ## 测试 Fixtures
 
@@ -133,9 +140,8 @@ ruff check . && mypy . && scripts/run_tests.sh full
    （**不跑** `ruff format --check .`：仓库存在历史未格式化文件，跑则 CI 恒红，整改应单独立项）
 2. **mypy** — `mypy . --ignore-missing-imports`
 3. **pytest** — 全量 + 覆盖率，`QT_QPA_PLATFORM=offscreen`（无头 Qt；runner 需装 `libegl1`/`libgl1`）
-4. **README 动态数据校验** — `scripts/check_readme.py`
-5. **文档站内部链接校验** — `scripts/check_docs_links.py`
-6. **Codecov** — 上传 `coverage.xml`
+4. **文档站内部链接校验** — `scripts/check_docs_links.py`
+5. **Codecov** — 上传 `coverage.xml`
 
 **`version-check`**（独立 job）：`scripts/check_version.py` 校验
 `core/version.py` == CHANGELOG 最新版本段 == git tag（发版态），需 `fetch-depth: 0`。

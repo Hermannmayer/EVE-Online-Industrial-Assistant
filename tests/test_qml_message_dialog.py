@@ -21,9 +21,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QEventLoop, QTimer, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import QtMsgType, qInstallMessageHandler
 from PySide6.QtWidgets import QDialog
 
+from tests.qml_click import spin as _spin
 from ui_qml.bridge import message_dialog as md
 from ui_qml.bridge.message_dialog import KIND_INFO, KIND_QUESTION, KIND_WARN, FMessageDialog, MessageBridge
 
@@ -33,12 +34,6 @@ pytestmark = pytest.mark.ui
 def _is_qt_internal(ctx_file: str) -> bool:
     """Qt 自带样式的告警不算（理由见 `tests/test_qml_dialogs.py` 同名函数）。"""
     return ctx_file.startswith("qrc:/qt-project.org/")
-
-
-def _spin(ms: int = 120) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 def _loads_and_quiet(make_dialog, label: str) -> None:

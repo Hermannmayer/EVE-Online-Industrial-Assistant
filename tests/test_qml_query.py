@@ -14,9 +14,11 @@ import re
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QEventLoop, Qt, QTimer, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import QObject, Qt, QtMsgType, qInstallMessageHandler
 
+from tests.clipboard_wait import wait_for_clipboard, wait_for_clipboard_prefix
 from tests.qml_click import press_move_release
+from tests.qml_click import spin as _spin
 from ui_qml.models.query_models import format_search_rows
 from ui_qml.models.query_qml_model import ROLE_NAMES, QueryQmlModel
 
@@ -56,12 +58,6 @@ def _model(*rows: tuple) -> QueryQmlModel:
 
 def _cell(model: QueryQmlModel, row: int, col: int, role: int):
     return model.data(model.index(row, col), role)
-
-
-def _spin(ms: int = 150) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 # ════════════════════════════════════════════════════════════
@@ -214,18 +210,17 @@ def test_menu_state_reflects_available_prices(bridge):
 
 @pytest.mark.ui
 def test_copy_actions_write_clipboard_and_status(bridge, qapp):
-    from PySide6.QtWidgets import QApplication
 
     _fill(bridge, _row())
 
     bridge.copyName(0)
-    assert QApplication.clipboard().text() == "三钛合金"
+    assert wait_for_clipboard("三钛合金") == "三钛合金"
 
     bridge.copyTypeId(0)
-    assert QApplication.clipboard().text() == "34"
+    assert wait_for_clipboard("34") == "34"
 
     bridge.copyRowTsv(0)
-    assert "\t" in QApplication.clipboard().text()
+    assert "\t" in wait_for_clipboard_prefix("三钛合金\t")
     assert "已复制整行数据 (TSV 格式)" in bridge.statusText
 
 
@@ -341,18 +336,15 @@ def test_region_change_resyncs_the_detail_price_hub(bridge):
 
 
 @pytest.mark.ui
-def test_page_switches_between_dashboard_and_result_area(qapp):
-    """静态守卫：QML 两侧都在，且空闲态判据取自 `query.hasResults`。
+def test_page_declares_the_query_panel_import(qapp):
+    """静态守卫：页面必须 import 面板所在目录。
 
-    这条**读源码**而不是跑界面，是因为两态的真实渲染要靠搜索结果驱动；
-    这里要守住的是「别再退回成只有一张表」。
+    QML 只按同目录解析本地类型 —— 少了这行 `import "query"`，整页加载失败、
+    外壳把本页记为「暂缺」（实测踩过）。这是**加载期契约**，与面板内部怎么起名无关，
+    所以只守这一条；两态的渲染与切换由 `test_query_dashboard` 的交互用例覆盖。
     """
     text = (_ROOT / "ui_qml" / "qml" / "pages" / "QueryPage.qml").read_text(encoding="utf-8")
-    assert 'objectName: "queryDashboard"' in text
-    assert 'objectName: "queryDetailPane"' in text
-    assert "query.hasResults" in text
-    # 页面必须 import 面板所在目录，否则 QML 只按同目录解析本地类型、整页加载失败
-    assert 'import "query"' in text
+    assert 'import "query"' in text, 'QueryPage.qml 少了 `import "query"`，整页会加载失败'
 
 
 @pytest.mark.ui
@@ -399,7 +391,7 @@ def test_page_loads_and_exposes_the_bridge(query_page):
     root = host.rootObject()
     assert root is not None
     assert root.property("query") is bridge
-    assert root.findChild(type(root), "suggestPopup") is not None or True  # objectName 在 Popup 上
+    assert root.findChild(QObject, "suggestPopup") is not None, "候选弹窗的 objectName 丢了"
     assert host.rootObject().property("currentRow") == -1
 
 

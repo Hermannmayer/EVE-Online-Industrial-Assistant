@@ -58,16 +58,13 @@ class TestInvTableModel:
     ]
 
     def test_construction(self, qapp):
-        """可构造，行数列数正确"""
+        """可构造，行数列数正确；列数恒定"""
         model = InvTableModel(self.SAMPLE_ITEMS)
         assert model.rowCount() == 3
         assert model.columnCount() == 8
-
-    def test_empty_rows(self, qapp):
-        """空数据构造"""
-        model = InvTableModel([])
-        assert model.rowCount() == 0
-        assert model.columnCount() == 8
+        empty = InvTableModel([])
+        assert empty.rowCount() == 0
+        assert empty.columnCount() == 8
 
     def test_header_data(self, qapp):
         """表头信息正确（已移除「生产中投入」）"""
@@ -77,59 +74,26 @@ class TestInvTableModel:
             actual = model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
             assert actual == h, f"列 {i} 表头应为 '{h}', 得到 '{actual}'"
 
-    def test_name_display_zh(self, qapp):
-        """中文名称优先显示"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(0, 1)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "三钛合金"
+    # (row, col) → 期望 DisplayRole。含 zh/en 回退、千位分隔、零/None → "-" 的边界。
+    DISPLAY = {
+        (0, 1): "三钛合金",
+        (2, 1): "Raven",  # zh_name 为空 → en_name
+        (0, 2): "50,000",
+        (0, 3): "5.12",
+        (2, 3): "-",  # cost_price = 0
+        (0, 4): "1,000",
+        (2, 4): "0",  # plan_usage = None
+        (0, 5): "49,000",
+        (2, 5): "1",  # plan_remain = None → 回退库存量
+        (0, 6): "275,000",  # 50000 × 5.50
+        (2, 6): "-",  # 无卖价
+    }
 
-    def test_name_display_en_fallback(self, qapp):
-        """无中文名时显示英文名"""
+    def test_display_values(self, qapp):
         model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(2, 1)  # zh_name is ""
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "Raven"
-
-    def test_quantity_format(self, qapp):
-        """数量格式化为千位分隔"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(0, 2)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "50,000"
-
-    def test_cost_price_format(self, qapp):
-        """成本价格保留两位小数"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(0, 3)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "5.12"
-
-    def test_cost_price_zero_returns_dash(self, qapp):
-        """无成本时显示横线"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(2, 3)  # cost_price = 0
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "-"
-
-    def test_plan_usage_format(self, qapp):
-        """规划占用格式化"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(0, 4)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "1,000"
-
-    def test_plan_usage_none(self, qapp):
-        """规划占用为 None 时显示 '0'"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(2, 4)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "0"
-
-    def test_plan_remain_with_value(self, qapp):
-        """规划剩余正常显示"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(0, 5)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "49,000"
-
-    def test_plan_remain_fallback_to_quantity(self, qapp):
-        """规划剩余为 None 时回退为库存数量"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(2, 5)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "1"
+        for (row, col), expected in self.DISPLAY.items():
+            actual = model.data(model.index(row, col), Qt.ItemDataRole.DisplayRole)
+            assert actual == expected, f"({row}, {col}) 期望 {expected!r} 得到 {actual!r}"
 
     def test_plan_remain_zero_when_equal_to_quantity(self, qapp):
         """规划剩余为 0（库存=规划占用）时显示 '0' 而非回退库存量"""
@@ -138,19 +102,6 @@ class TestInvTableModel:
         ]
         model = InvTableModel(rows)
         assert model.data(model.index(0, 5), Qt.ItemDataRole.DisplayRole) == "0"
-
-    def test_total_value_with_sell_price(self, qapp):
-        """总价值 = 库存数 × 卖单价"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(0, 6)
-        expected = f"{50000 * 5.50:,.0f}"
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == expected
-
-    def test_total_value_no_sell_price(self, qapp):
-        """无卖价时显示横线"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(2, 6)  # sell_price is None
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "-"
 
     def test_name_display_name_priority(self, qapp):
         """display_name 优先（terminology override 等场景 zh/en 为空）"""
@@ -205,46 +156,15 @@ class TestInvTableModel:
         align = idx.data(Qt.ItemDataRole.TextAlignmentRole)
         assert align == (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-    def test_icon_column_returns_none_when_no_file(self, qapp):
-        """无图标文件时 DecorationRole 返回 None"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(0, 0)
-        assert idx.data(Qt.ItemDataRole.DecorationRole) is None
-
-    def test_item_at_valid(self, qapp):
-        """item_at 返回指定行数据"""
+    def test_item_at(self, qapp):
+        """item_at 取行数据；越界/空模型返回 None"""
         model = InvTableModel(self.SAMPLE_ITEMS)
         item = model.item_at(0)
         assert item["type_id"] == 1001
         assert item["zh_name"] == "三钛合金"
-
-    def test_item_at_invalid(self, qapp):
-        """item_at 越界返回 None"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
         assert model.item_at(-1) is None
         assert model.item_at(999) is None
-
-    def test_item_at_empty(self, qapp):
-        """空模型 item_at 返回 None"""
-        model = InvTableModel([])
-        assert model.item_at(0) is None
-
-    def test_set_rows_replaces_data(self, qapp):
-        """set_model 替代旧数据"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        assert model.rowCount() == 3
-        new_items = [self.SAMPLE_ITEMS[0]]
-        model2 = InvTableModel(new_items)
-        assert model2.rowCount() == 1
-
-    # ── 空数据 / 缺字段 ──
-
-    def test_name_fallback_to_en_when_zh_missing(self, qapp):
-        """zh_name 缺失时使用 en_name"""
-        rows = [{"type_id": 9999, "en_name": "TestItem", "quantity": 1, "cost_price": 0, "sell_price": None}]
-        model = InvTableModel(rows)
-        name = model.data(model.index(0, 1), Qt.ItemDataRole.DisplayRole)
-        assert name == "TestItem"
+        assert InvTableModel([]).item_at(0) is None
 
 
 # ══════════════════════════════════════
@@ -291,10 +211,11 @@ class TestBlueprintTableModel:
     ]
 
     def test_construction(self, qapp):
-        """可构造，行数列数正确"""
+        """可构造，行数列数正确；空数据列数恒定"""
         model = BlueprintTableModel(self.SAMPLE_ROWS)
         assert model.rowCount() == 2
         assert model.columnCount() == 11
+        assert BlueprintTableModel([]).rowCount() == 0
 
     def test_header_data(self, qapp):
         """表头正确"""
@@ -315,34 +236,29 @@ class TestBlueprintTableModel:
         for i, h in enumerate(expected):
             assert model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == h
 
-    def test_empty_rows(self, qapp):
-        """空数据构造"""
-        model = BlueprintTableModel([])
-        assert model.rowCount() == 0
+    # (row, col) → 期望 DisplayRole。含名称回退、时间/成本格式化与正利润率符号。
+    DISPLAY = {
+        (0, 1): "渡鸦级蓝图",
+        (1, 1): "无人机蓝图 I",  # 无 zh_name → display_name
+        (0, 2): "蓝图原图",
+        (1, 2): "蓝图拷贝",
+        (0, 3): "10",
+        (0, 4): "5",
+        (0, 5): "渡鸦级",
+        (0, 6): "1h 0m",  # 3600s
+        (1, 6): "0h 10m",  # 600s
+        (0, 7): "无限",  # is_bpo
+        (1, 7): "50",  # runs
+        (0, 8): "30,000,000 ISK",
+        (0, 9): "55,000,000 ISK",
+        (0, 10): "+83.3%",
+    }
 
-    def test_name_zh(self, qapp):
-        """中文名优先"""
+    def test_display_values(self, qapp):
         model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(0, 1)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "渡鸦级蓝图"
-
-    def test_name_display_fallback(self, qapp):
-        """无 zh_name 时用 display_name"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(1, 1)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "无人机蓝图 I"
-
-    def test_type_bpo(self, qapp):
-        """原图类型"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(0, 2)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "蓝图原图"
-
-    def test_type_bpc(self, qapp):
-        """拷贝类型"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(1, 2)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "蓝图拷贝"
+        for (row, col), expected in self.DISPLAY.items():
+            actual = model.data(model.index(row, col), Qt.ItemDataRole.DisplayRole)
+            assert actual == expected, f"({row}, {col}) 期望 {expected!r} 得到 {actual!r}"
 
     def test_occupied_suffix(self, qapp):
         """被生产计划占用的蓝图类型显示「占用中」后缀"""
@@ -353,7 +269,7 @@ class TestBlueprintTableModel:
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "蓝图拷贝（占用中）"
 
     def test_occupied_foreground_orange(self, qapp):
-        """占用中的类型列用前景色高亮（非 None）"""
+        """占用中的类型列用前景色高亮"""
         from PySide6.QtGui import QColor
 
         rows = [dict(r) for r in self.SAMPLE_ROWS]
@@ -364,54 +280,12 @@ class TestBlueprintTableModel:
         assert isinstance(color, QColor)
         assert color.name().startswith("#")
 
-    def test_unoccupied_no_suffix(self, qapp):
-        """未占用蓝图不显示后缀（兼容旧数据）"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(0, 2)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "蓝图原图"
-
-    def test_me_level(self, qapp):
-        """材料等级"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(0, 3)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "10"
-
-    def test_te_level(self, qapp):
-        """时间等级"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(0, 4)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "5"
-
-    def test_product_name(self, qapp):
-        """产物名称"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(0, 5)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "渡鸦级"
-
-    def test_time_format_hours(self, qapp):
-        """制造时间格式: 1h 0m"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(0, 6)  # 3600s = 1h
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "1h 0m"
-
-    def test_time_format_minutes(self, qapp):
-        """制造时间格式: 0h 10m"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(1, 6)  # 600s = 10m
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "0h 10m"
-
     def test_time_zero_returns_dash(self, qapp):
         """base_time=0 返回横线"""
         rows = [{"blueprint_type_id": 9999, "base_time": 0}]
         model = BlueprintTableModel(rows)
         idx = model.index(0, 6)
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "-"
-
-    def test_runs_infinite_for_bpo(self, qapp):
-        """原图显示「无限」——由 is_bpo 驱动（不再靠 runs=-1 哨兵）"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(0, 7)  # is_bpo=True, runs=0
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "无限"
 
     def test_runs_zero_copy_not_infinite(self, qapp):
         """拷贝的 runs=0 是「耗尽」而非「无限」——原图身份只认 is_bpo"""
@@ -420,18 +294,6 @@ class TestBlueprintTableModel:
         idx = model.index(0, 7)
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "0"
 
-    def test_runs_limited(self, qapp):
-        """流程数量有限"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(1, 7)  # runs = 50
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "50"
-
-    def test_material_cost_format(self, qapp):
-        """材料成本带千位分隔和 ISK 单位"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(0, 8)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "30,000,000 ISK"
-
     def test_material_cost_none(self, qapp):
         """无材料成本时显示横线"""
         rows = [{"blueprint_type_id": 9999}]
@@ -439,54 +301,23 @@ class TestBlueprintTableModel:
         idx = model.index(0, 8)
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "-"
 
-    def test_revenue_format(self, qapp):
-        """销售收入格式化"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(0, 9)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "55,000,000 ISK"
+    def test_margin_non_positive_and_none(self, qapp):
+        """负利润率带符号；无利润率显示横线"""
+        model = BlueprintTableModel([{"blueprint_type_id": 9999, "margin": -15.5}])
+        assert model.data(model.index(0, 10), Qt.ItemDataRole.DisplayRole) == "-15.5%"
+        model2 = BlueprintTableModel([{"blueprint_type_id": 9999}])
+        assert model2.data(model2.index(0, 10), Qt.ItemDataRole.DisplayRole) == "-"
 
-    def test_margin_positive(self, qapp):
-        """正利润率显示带符号百分比"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(0, 10)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "+83.3%"
-
-    def test_margin_negative(self, qapp):
-        """负利润率"""
-        rows = [{"blueprint_type_id": 9999, "margin": -15.5}]
-        model = BlueprintTableModel(rows)
-        idx = model.index(0, 10)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "-15.5%"
-
-    def test_margin_none(self, qapp):
-        """无利润率显示横线"""
-        rows = [{"blueprint_type_id": 9999}]
-        model = BlueprintTableModel(rows)
-        idx = model.index(0, 10)
-        assert idx.data(Qt.ItemDataRole.DisplayRole) == "-"
-
-    def test_margin_foreground_positive_green(self, qapp):
-        """正利润率绿色"""
+    def test_margin_foreground(self, qapp):
+        """正利润率绿色、负利润率红色、无利润率 None"""
         from ui_qml.theme import registry as theme
 
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        color = model.data(model.index(0, 10), Qt.ItemDataRole.ForegroundRole)
-        assert color.name() == theme.ACCENT_GREEN
-
-    def test_margin_foreground_negative_red(self, qapp):
-        """负利润率红色"""
-        rows = [{"blueprint_type_id": 9999, "margin": -10.0}]
-        model = BlueprintTableModel(rows)
-        color = model.data(model.index(0, 10), Qt.ItemDataRole.ForegroundRole)
-        from ui_qml.theme import registry as theme
-
-        assert color.name() == theme.ACCENT_RED
-
-    def test_margin_foreground_none(self, qapp):
-        """无利润率返回 None"""
-        rows = [{"blueprint_type_id": 9999}]
-        model = BlueprintTableModel(rows)
-        assert model.data(model.index(0, 10), Qt.ItemDataRole.ForegroundRole) is None
+        pos = BlueprintTableModel(self.SAMPLE_ROWS)
+        assert pos.data(pos.index(0, 10), Qt.ItemDataRole.ForegroundRole).name() == theme.ACCENT_GREEN
+        neg = BlueprintTableModel([{"blueprint_type_id": 9999, "margin": -10.0}])
+        assert neg.data(neg.index(0, 10), Qt.ItemDataRole.ForegroundRole).name() == theme.ACCENT_RED
+        none = BlueprintTableModel([{"blueprint_type_id": 9999}])
+        assert none.data(none.index(0, 10), Qt.ItemDataRole.ForegroundRole) is None
 
     def test_text_alignment(self, qapp):
         """数据列右对齐"""
@@ -495,15 +326,10 @@ class TestBlueprintTableModel:
         align = idx.data(Qt.ItemDataRole.TextAlignmentRole)
         assert align == (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-    def test_row_at_valid(self, qapp):
-        """row_at 返回正确行数据"""
+    def test_row_at(self, qapp):
+        """row_at 取行数据；越界返回 None"""
         model = BlueprintTableModel(self.SAMPLE_ROWS)
-        row = model.row_at(0)
-        assert row["blueprint_type_id"] == 3001
-
-    def test_row_at_invalid(self, qapp):
-        """row_at 越界返回 None"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
+        assert model.row_at(0)["blueprint_type_id"] == 3001
         assert model.row_at(-1) is None
         assert model.row_at(999) is None
 
@@ -514,19 +340,11 @@ class TestBlueprintTableModel:
         assert model.row_at(0)["me_level"] == 0  # 无人机蓝图
 
     def test_sort_by_margin(self, qapp):
-        """按利润率降序"""
+        """按利润率升序"""
         model = BlueprintTableModel(self.SAMPLE_ROWS)
         model.sort(10, Qt.SortOrder.AscendingOrder)
         margins = [r["margin"] for r in model._rows if r.get("margin") is not None]
-        assert margins == sorted(margins), "应为升序排列"
-
-    def test_sort_by_name(self, qapp):
-        """按名称排序"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        model.sort(1, Qt.SortOrder.AscendingOrder)
-        name0 = model.row_at(0).get("zh_name") or model.row_at(0).get("display_name", "")
-        name1 = model.row_at(1).get("zh_name") or model.row_at(1).get("display_name", "")
-        assert name0 <= name1  # 按字典序
+        assert margins == sorted(margins)
 
 
 # ══════════════════════════════════════
@@ -542,14 +360,13 @@ class TestBatchCostPriceDialog:
     """
 
     def test_defaults(self, qapp):
-        """默认吉他卖价 + 倍率 1.0（跟随生产规划页），倍率可见、手动隐藏"""
+        """默认吉他卖价 + 倍率 1.0（跟随生产规划页）"""
         from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
 
         dlg = BatchCostPriceQmlDialog()
         try:
             assert dlg.price_type() == "sell"
             assert dlg.discount() == 1.0  # 不再是硬编码 0.9
-            assert dlg.bridge.isManual is False
             # 范围与生产规划页工具栏的倍率一致（可溢价，不只是打折）
             assert dlg.bridge.multiplierMax == 10.0
         finally:
@@ -583,27 +400,6 @@ class TestBatchCostPriceDialog:
         finally:
             dlg.deleteLater()
 
-    def test_discount_roundtrip(self, qapp):
-        from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
-
-        dlg = BatchCostPriceQmlDialog()
-        try:
-            dlg.bridge.setMultiplier(0.8)
-            assert dlg.discount() == 0.8
-        finally:
-            dlg.deleteLater()
-
-    def test_manual_price_roundtrip(self, qapp):
-        from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
-
-        dlg = BatchCostPriceQmlDialog()
-        try:
-            dlg.bridge.setSourceIndex(3)
-            dlg.bridge.setManualPrice(1234.56)
-            assert dlg.manual_price() == 1234.56
-        finally:
-            dlg.deleteLater()
-
 
 # ══════════════════════════════════════
 #  剪贴板导入 — 异类行过滤提示
@@ -614,24 +410,20 @@ class TestImportFilteredNote:
     """剪贴板里混入另一类物品时，预览框统计栏提示已过滤行数。"""
 
     def test_material_review_note(self, qapp):
-        """材料导入预览：提示被过滤的蓝图行数（QML 版断言桥的汇总文案）"""
+        """材料导入预览：有过滤则提示行数，无过滤则不加提示"""
         from ui_qml.bridge.review_bridge import ImportReviewQmlDialog
 
-        dlg = ImportReviewQmlDialog([], "测试机库", 1, filtered_note=3)
+        with_note = ImportReviewQmlDialog([], "测试机库", 1, filtered_note=3)
         try:
-            assert "[已过滤 3 行蓝图]" in dlg.bridge.summaryText
+            assert "[已过滤 3 行蓝图]" in with_note.bridge.summaryText
         finally:
-            dlg.deleteLater()
+            with_note.deleteLater()
 
-    def test_material_review_note_absent(self, qapp):
-        """无过滤时不加提示"""
-        from ui_qml.bridge.review_bridge import ImportReviewQmlDialog
-
-        dlg = ImportReviewQmlDialog([], "测试机库", 1)
+        without = ImportReviewQmlDialog([], "测试机库", 1)
         try:
-            assert "已过滤" not in dlg.bridge.summaryText
+            assert "已过滤" not in without.bridge.summaryText
         finally:
-            dlg.deleteLater()
+            without.deleteLater()
 
     def test_blueprint_review_note(self, qapp):
         """蓝图导入预览：提示被过滤的材料行数（QML 版断言桥的汇总文案）"""

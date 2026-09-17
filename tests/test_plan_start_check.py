@@ -33,23 +33,21 @@ class TestChildrenRunning:
         child = _plan(id=2, group_id=10, child_level=1, status="in_progress")
         assert children_running(parent, [parent, child]) is True
 
-    def test_parent_with_pending_child_only(self):
+    @pytest.mark.parametrize("status", ["pending", "completed"])
+    def test_parent_with_inactive_child(self, status):
+        """挂起/已完成子项都不算「产线运行中」。"""
         parent = _plan(id=1, group_id=10, child_level=0)
-        child = _plan(id=2, group_id=10, child_level=1, status="pending")
+        child = _plan(id=2, group_id=10, child_level=1, status=status)
         assert children_running(parent, [parent, child]) is False
 
-    def test_parent_with_completed_child(self):
-        parent = _plan(id=1, group_id=10, child_level=0)
-        child = _plan(id=2, group_id=10, child_level=1, status="completed")
-        assert children_running(parent, [parent, child]) is False
-
-    def test_child_itself_never_running_gate(self):
-        child = _plan(id=2, group_id=10, child_level=1, status="pending")
-        assert children_running(child, [child]) is False
-
-    def test_no_group(self):
-        standalone = _plan(id=9, group_id=0, child_level=0)
-        assert children_running(standalone, [standalone]) is False
+    @pytest.mark.parametrize(
+        "plan",
+        [_plan(id=2, group_id=10, child_level=1), _plan(id=9, group_id=0, child_level=0)],
+        ids=["子项", "无组"],
+    )
+    def test_non_parent_never_gated(self, plan):
+        """子项自身 / 无组计划都不是母项 → 永远不会被「子项运行中」拦下。"""
+        assert children_running(plan, [plan]) is False
 
     def test_other_group_children_ignored(self):
         parent = _plan(id=1, group_id=10, child_level=0)
@@ -65,12 +63,7 @@ class TestPendingChildrenCount:
         c3 = _plan(id=4, group_id=10, child_level=1, status="completed")
         assert pending_children_count(parent, [parent, c1, c2, c3]) == 2
 
-    def test_zero_when_all_completed(self):
-        parent = _plan(id=1, group_id=10, child_level=0)
-        c1 = _plan(id=2, group_id=10, child_level=1, status="completed")
-        assert pending_children_count(parent, [parent, c1]) == 0
-
-    def test_child_returns_zero(self):
+    def test_non_parent_returns_zero(self):
         child = _plan(id=2, group_id=10, child_level=1)
         assert pending_children_count(child, [child]) == 0
 
@@ -82,44 +75,86 @@ class TestIsParent:
         assert is_parent(_plan(id=9, group_id=0, child_level=0)) is False
 
 
-class TestPlanStartBlockReason:
+class TestPlanStartBlock:
+    """`plan_start_block` 是启动阻塞的**唯一真源**：返回 (类别码, 原因文案)；None = 可启动。
+
+    判定顺序：status → 机库 → 缺料 → 蓝图缺失 → 流程不足 → 子项。
+    `plan_start_block_reason` 只是它的文案投影（1 行委托），不另立重复用例。
+    """
+
     def test_startable(self):
         plan = _plan(id=1, group_id=0, child_level=0)
-        assert plan_start_block_reason(plan, 1, []) is None
+        assert plan_start_block(plan, 1, []) is None
 
-    def test_non_pending_status(self):
-        assert plan_start_block_reason(_plan(status="ready"), 1, []) == "待下线"
-        assert plan_start_block_reason(_plan(status="in_progress"), 1, []) == "生产中"
-        assert plan_start_block_reason(_plan(status="completed"), 1, []) == "已完成"
+    @pytest.mark.parametrize(
+        ("status", "code", "text"),
+        [
+            ("ready", "status_ready", "待下线"),
+            ("in_progress", "status_running", "生产中"),
+            ("running", "status_running", "生产中"),
+            ("completed", "status_done", "已完成"),
+            ("done", "status_done", "已完成"),
+            ("weird", "status_other", "状态「weird」不可启动"),
+        ],
+    )
+    def test_status_codes(self, status, code, text):
+        assert plan_start_block(_plan(status=status), 1, []) == (code, text)
 
     def test_no_mat_hangar(self):
-        assert plan_start_block_reason(_plan(), None, []) == "材料机库未设置"
+        assert plan_start_block(_plan(), None, []) == ("no_mat_hangar", "材料机库未设置")
 
-    def test_material_shortfall(self):
-        plan = _plan()
-        assert plan_start_block_reason(plan, 1, [], shortfall_count=3) == "材料不足 3 种"
+    def test_material_short(self):
+        assert plan_start_block(_plan(), 1, [], shortfall_count=3) == ("material_short", "材料不足 3 种")
 
-    def test_allow_short_bypasses(self):
-        plan = _plan()
-        assert plan_start_block_reason(plan, 1, [], shortfall_count=3, allow_short=True) is None
+    def test_allow_short_bypasses_shortfall(self):
+        """「仍要启动」跳过缺料这个软阻塞。"""
+        assert plan_start_block(_plan(), 1, [], shortfall_count=3, allow_short=True) is None
 
-    def test_no_blueprint(self):
+    def test_shortfall_precedes_bp_short(self):
+        """缺料优先于缺流程 —— 行上只报一个原因，顺序错了文案就错。"""
+        block = plan_start_block(_plan(), 1, [], shortfall_count=2, bp_short="流程不足")
+        assert block == ("material_short", "材料不足 2 种")
+
+    def test_blueprint_missing_beats_bp_short(self):
+        """一张蓝图都没有时先报「无可用蓝图」，不该报流程不足。"""
         plan = _plan(has_image=False, assigned_blueprint_id=None)
-        assert plan_start_block_reason(plan, 1, []) == "无可用蓝图"
+        assert plan_start_block(plan, 1, [], bp_short="流程不足") == ("blueprint_missing", "无可用蓝图")
 
-    def test_parent_waiting_children(self):
+    def test_blueprint_short(self):
+        assert plan_start_block(_plan(), 1, [], bp_short="流程不足") == ("blueprint_short", "流程不足")
+
+    def test_allow_short_skips_bp_short(self):
+        assert plan_start_block(_plan(), 1, [], bp_short="流程不足", allow_short=True) is None
+
+    def test_children_running_beats_waiting(self):
+        """同组既有运行中又有待办子项 → 报「运行中」。"""
+        parent = _plan(id=1, group_id=10, child_level=0)
+        c1 = _plan(id=2, group_id=10, child_level=1, status="in_progress")
+        c2 = _plan(id=3, group_id=10, child_level=1, status="pending")
+        assert plan_start_block(parent, 1, [parent, c1, c2]) == ("children_running", "子项产线运行中")
+
+    def test_waiting_children(self):
         parent = _plan(id=1, group_id=10, child_level=0)
         child = _plan(id=2, group_id=10, child_level=1, status="pending")
-        assert plan_start_block_reason(parent, 1, [parent, child]) == "等待 1 条子项完成"
-
-    def test_parent_children_running(self):
-        parent = _plan(id=1, group_id=10, child_level=0)
-        child = _plan(id=2, group_id=10, child_level=1, status="in_progress")
-        assert plan_start_block_reason(parent, 1, [parent, child]) == "子项产线运行中"
+        assert plan_start_block(parent, 1, [parent, child]) == ("waiting_children", "等待 1 条子项完成")
 
     def test_child_ignores_group(self):
+        """子项自身不因「组里有人」被拦 —— 它自己就是干活的那条。"""
         child = _plan(id=2, group_id=10, child_level=1)
-        assert plan_start_block_reason(child, 1, [child]) is None
+        assert plan_start_block(child, 1, [child]) is None
+
+    def test_reason_projection_agrees_with_block(self):
+        """`plan_start_block_reason` 是同一判定的文案投影（同源），抽查代表性分支。"""
+        plan = _plan()
+        for kw in (
+            {},
+            {"shortfall_count": 3},
+            {"bp_short": "流程不足"},
+            {"shortfall_count": 2, "bp_short": "流程不足"},
+            {"shortfall_count": 3, "allow_short": True},
+        ):
+            block = plan_start_block(plan, 1, [], **kw)
+            assert plan_start_block_reason(plan, 1, [], **kw) == (block[1] if block else None)
 
 
 class TestCanForceStart:
@@ -146,25 +181,9 @@ class TestCanForceStart:
         assert can_force_start(parent, 1, [parent, child], shortfall_count=2) is False
 
 
-class TestBlueprintShortfallInjection:
+class TestCanForceStartWithBlueprint:
     """蓝图流程不足（`bp_short`）与缺料同属**可强制**的软阻塞。"""
 
-    def test_blocks_after_has_image(self):
-        assert plan_start_block_reason(_plan(), 1, [], bp_short="第 1 张绑定蓝图流程不足") == "第 1 张绑定蓝图流程不足"
-
-    def test_no_blueprint_reported_first(self):
-        """一张蓝图都没有时先报「无可用蓝图」，不该报流程不足。"""
-        plan = _plan(has_image=False, assigned_blueprint_id=None)
-        assert plan_start_block_reason(plan, 1, [], bp_short="流程不足") == "无可用蓝图"
-
-    def test_allow_short_skips_bp_short(self):
-        assert plan_start_block_reason(_plan(), 1, [], bp_short="流程不足", allow_short=True) is None
-
-    def test_缺料优先于缺流程(self):
-        assert plan_start_block_reason(_plan(), 1, [], shortfall_count=2, bp_short="流程不足") == "材料不足 2 种"
-
-
-class TestCanForceStartWithBlueprint:
     def test_bp_short_only_is_forceable(self):
         assert can_force_start(_plan(), 1, [], shortfall_count=0, bp_short="流程不足") is True
 
@@ -179,91 +198,3 @@ class TestCanForceStartWithBlueprint:
     def test_bp_short_without_blueprint_not_forceable(self):
         plan = _plan(has_image=False, assigned_blueprint_id=None)
         assert can_force_start(plan, 1, [], shortfall_count=0, bp_short="流程不足") is False
-
-
-class TestPlanStartBlockCode:
-    """`plan_start_block` 的类别码 —— UI 靠它选动作槽短标签（不再解析中文文案）。"""
-
-    def test_startable_returns_none(self):
-        assert plan_start_block(_plan(), 1, []) is None
-
-    @pytest.mark.parametrize(
-        ("status", "code", "text"),
-        [
-            ("ready", "status_ready", "待下线"),
-            ("in_progress", "status_running", "生产中"),
-            ("running", "status_running", "生产中"),
-            ("completed", "status_done", "已完成"),
-            ("done", "status_done", "已完成"),
-            ("weird", "status_other", "状态「weird」不可启动"),
-        ],
-    )
-    def test_status_codes(self, status, code, text):
-        assert plan_start_block(_plan(status=status), 1, []) == (code, text)
-
-    def test_no_mat_hangar(self):
-        assert plan_start_block(_plan(), None, []) == ("no_mat_hangar", "材料机库未设置")
-
-    def test_material_short(self):
-        assert plan_start_block(_plan(), 1, [], shortfall_count=3) == ("material_short", "材料不足 3 种")
-
-    def test_blueprint_missing(self):
-        plan = _plan(has_image=False, assigned_blueprint_id=None)
-        assert plan_start_block(plan, 1, []) == ("blueprint_missing", "无可用蓝图")
-
-    def test_blueprint_short(self):
-        assert plan_start_block(_plan(), 1, [], bp_short="流程不足") == ("blueprint_short", "流程不足")
-
-    def test_children_running(self):
-        parent = _plan(id=1, group_id=10, child_level=0)
-        child = _plan(id=2, group_id=10, child_level=1, status="in_progress")
-        assert plan_start_block(parent, 1, [parent, child]) == ("children_running", "子项产线运行中")
-
-    def test_waiting_children(self):
-        parent = _plan(id=1, group_id=10, child_level=0)
-        child = _plan(id=2, group_id=10, child_level=1, status="pending")
-        assert plan_start_block(parent, 1, [parent, child]) == ("waiting_children", "等待 1 条子项完成")
-
-
-class TestBlockCodeNeverDriftsFromReason:
-    """`plan_start_block` 与 `plan_start_block_reason` 必须同源。
-
-    两者是同一次判定的两个投影（码给短标签、文案给 tooltip）。若有人只改其中
-    一条分支的顺序或文案，这里会立刻发现——否则会出现「按钮说材料不够、
-    悬停说缺蓝图」这类自相矛盾。
-    """
-
-    CASES = [
-        {"plan": {}, "mat": 1, "kw": {}},  # 可启动
-        {"plan": {}, "mat": None, "kw": {}},
-        {"plan": {}, "mat": 1, "kw": {"shortfall_count": 3}},
-        {"plan": {}, "mat": 1, "kw": {"shortfall_count": 3, "allow_short": True}},
-        {"plan": {"has_image": False, "assigned_blueprint_id": None}, "mat": 1, "kw": {}},
-        {"plan": {}, "mat": 1, "kw": {"bp_short": "流程不足"}},
-        {"plan": {}, "mat": 1, "kw": {"bp_short": "流程不足", "allow_short": True}},
-        {"plan": {}, "mat": 1, "kw": {"shortfall_count": 2, "bp_short": "流程不足"}},
-        {"plan": {"status": "ready"}, "mat": 1, "kw": {}},
-        {"plan": {"status": "in_progress"}, "mat": 1, "kw": {}},
-        {"plan": {"status": "completed"}, "mat": 1, "kw": {}},
-        {"plan": {"status": ""}, "mat": 1, "kw": {}},
-    ]
-
-    @pytest.mark.parametrize("case", CASES)
-    def test_same_verdict(self, case):
-        plan = _plan(**case["plan"])
-        block = plan_start_block(plan, case["mat"], [], **case["kw"])
-        reason = plan_start_block_reason(plan, case["mat"], [], **case["kw"])
-        assert (block is None) == (reason is None)
-        assert (block[1] if block else None) == reason
-        if block is not None:
-            assert block[0], "阻塞必须带类别码，UI 才能选短标签"
-
-    @pytest.mark.parametrize("child_statuses", [(), ("in_progress",), ("pending",), ("pending", "in_progress")])
-    def test_parent_same_verdict(self, child_statuses):
-        parent = _plan(id=1, group_id=10, child_level=0)
-        children = [_plan(id=10 + i, group_id=10, child_level=1, status=s) for i, s in enumerate(child_statuses)]
-        plans = [parent, *children]
-        block = plan_start_block(parent, 1, plans)
-        reason = plan_start_block_reason(parent, 1, plans)
-        assert (block is None) == (reason is None)
-        assert (block[1] if block else None) == reason

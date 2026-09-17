@@ -17,16 +17,16 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
 import pytest
-from PySide6.QtCore import QEventLoop, QTimer, QtMsgType, QUrl, qInstallMessageHandler
+from PySide6.QtCore import QtMsgType, QUrl, qInstallMessageHandler
 from PySide6.QtQml import QQmlComponent, QQmlEngine
 from PySide6.QtQuick import QQuickWindow
 from PySide6.QtQuickControls2 import QQuickStyle
 
+from tests.qml_click import spin as _spin
 from ui_qml.bridge import theme_singleton
 from ui_qml.icon_provider import PROVIDER_ID, PhosphorIconProvider
 
@@ -114,12 +114,6 @@ def make_qml():
             item.deleteLater()
         _spin()
         alive.clear()
-
-
-def _spin() -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(120, loop.quit)
-    loop.exec()
 
 
 @pytest.mark.ui
@@ -241,151 +235,4 @@ def test_ftabbar_keeps_labels_intact_where_a_bare_tabbar_elides(qapp, make_qml):
     assert not _elided(fit_buttons), "FTabBar 也把标签截了：" + "、".join(_elided(fit_buttons))
     assert _elided(bare_buttons), (
         "对照组（裸 TabBar 按在 150px 里）居然没截断 —— 探针测不出问题、护栏失去意义，把容器改窄或换更长的标签"
-    )
-
-
-def _code_only(qml: str) -> str:
-    """去掉 QML 注释再扫 —— 本仓注释里大量举例 `Rectangle { … }`，注释掉的代码不算数。"""
-    return re.sub(r"(?<!:)//[^\n]*", "", re.sub(r"/\*.*?\*/", "", qml, flags=re.S))
-
-
-#: 全幅底色：与页面那条护栏同一个形状
-_FULL_BLEED = re.compile(r"Rectangle\s*\{\s*\n\s*anchors\.fill:\s*parent\s*\n\s*color:\s*Theme\.")
-
-#: 住在 `dialogs/` 下但**不是**窗口根的字段组件（被对话框复用的零件，不该有底色）
-_DIALOG_SUB_COMPONENTS = frozenset({"CharField.qml", "FacilityField.qml", "ResearchCommonFields.qml"})
-
-
-@pytest.mark.fast
-def test_qml_does_not_use_a_bare_tabbar():
-    """标签栏一律走 `FTabBar`，别直接用 Qt 的 `TabBar`。
-
-    裸 `TabBar` 把宽度**等分**给每个按钮而不看各自的 `implicitWidth`，而它自己的
-    `implicitWidth` 又是从被挤窄的按钮反推的 —— 两者互相锁死，收窄的容器里最长的标签
-    必然被截成省略号（实测「市场费率」每格 48px、需要 60；「ESI 与数据」55、需要 69）。
-    `FTabBar` 显式算好总宽；铺满整行（`Layout.fillWidth: true`）时两者**完全一致**，
-    所以没有理由再用裸的。
-    """
-    offenders = []
-    for p in sorted(QML_ROOT.rglob("*.qml")):
-        if p.name == "FTabBar.qml":  # 它自己就是 TabBar 的替身
-            continue
-        if re.search(r"^\s*TabBar\s*\{", _code_only(p.read_text(encoding="utf-8")), re.M):
-            offenders.append(p.relative_to(QML_ROOT).as_posix())
-
-    assert not offenders, "以下 QML 直接用了 `TabBar`，改用 `FTabBar`：" + "、".join(offenders)
-
-
-@pytest.mark.fast
-def test_every_dialog_paints_a_root_background():
-    """每个对话框都必须铺满一块不透明底色 —— 与页面那条同源，代价也一样。
-
-    对话框装在同一套 `PageHost` 上（透明清屏 + `WA_TranslucentBackground`），
-    没画到的地方直接透出窗口背后。**离屏快照看不出来**：`QWidget.grab()` 会把空区补成
-    调色板底色，`ui_snapshot.py --dialog settings` 一切正常；真窗口抓屏
-    （`QScreen.grabWindow`）测得 **77% 像素是纯黑** —— 用户报「设置界面是黑的」就是它。
-
-    以 `FDialogFrame` 为根节点的对话框不用再写（骨架自己铺，见下一条）；其余照
-    `ContractDetailDialog.qml` 的写法。
-    """
-    missing = []
-    for p in sorted((QML_ROOT / "dialogs").glob("*.qml")):
-        if p.name in _DIALOG_SUB_COMPONENTS:
-            continue
-        src = _code_only(p.read_text(encoding="utf-8"))
-        root = re.search(r"^\s*([A-Za-z_][\w.]*)\s*\{", src, re.M)
-        if root and root.group(1) == "FDialogFrame":
-            continue
-        if _FULL_BLEED.search(src):
-            continue
-        missing.append(f"{p.name}（根节点 {root.group(1) if root else '?'}）")
-
-    assert not missing, (
-        "以下对话框没有全幅底色，未绘制区域会透出窗口背后（真窗口下是纯黑）："
-        + "、".join(missing)
-        + "。改用 FDialogFrame 作根节点，或照 ContractDetailDialog.qml 加"
-        + " Rectangle { anchors.fill: parent; color: Theme.bgDark }。"
-    )
-
-
-@pytest.mark.fast
-def test_dialog_frame_paints_the_background():
-    """`FDialogFrame` 必须自己铺底色 —— 30 个对话框都指望它这一块。"""
-    src = _code_only((QML_ROOT / "components" / "FDialogFrame.qml").read_text(encoding="utf-8"))
-    assert _FULL_BLEED.search(src), (
-        "FDialogFrame 没铺底色：所有以它为根节点的对话框都会漏出透明洞（真窗口下是纯黑，离屏快照反而看不出来）"
-    )
-
-
-@pytest.mark.fast
-def test_every_page_paints_a_root_background():
-    """每个页面根节点都必须铺满一块不透明底色。
-
-    `PageHost` 是 `QQuickWidget`，为了让窗口级 Mica 透出来设了
-    `setClearColor(transparent)`——于是**页面没画到的地方会直接透出窗口背后的东西**
-    （Widgets 窗口的 palette 底色，暗色下近似纯黑）。
-
-    实测踩过：`IndustryPage.qml` 少这一块时，表格行区以外全是黑洞，
-    用户报「表格背景是黑的 / 还有黑色背景留着」。表格、甘特图这些子组件即便各自
-    铺了底色，页级留白仍在页面这一层，补不到。
-
-    静态扫描而不是渲染断言：这是「有没有写」的问题，源码里看得一清二楚。
-    """
-    pages = sorted((QML_ROOT / "pages").glob("*.qml"))
-    assert pages, "没找到任何页面 QML"
-
-    missing = [
-        p.name
-        for p in pages
-        if not re.search(
-            r"Rectangle\s*\{\s*\n\s*anchors\.fill:\s*parent\s*\n\s*color:\s*Theme\.", p.read_text(encoding="utf-8")
-        )
-    ]
-    assert not missing, (
-        "以下页面没有全幅根底色，未绘制区域会透出窗口背后（暗色下是黑洞）："
-        + "、".join(missing)
-        + "。照 EstimatePage.qml 的写法加 Rectangle { anchors.fill: parent; color: Theme.bgDark }。"
-    )
-
-
-@pytest.mark.fast
-def test_positions_do_not_map_in_the_binding():
-    """`x:` / `y:` 绑定里不许调 `mapToItem` / `mapFromItem`。
-
-    这类函数调用**建立不起绑定依赖**：QML 只追踪绑定表达式里读到的属性，
-    而 `mapToItem` 内部读的 x/y/width/height 是在 C++ 里读的，引擎看不见。
-    于是整条绑定只在创建时求值一次 —— 那一刻布局往往还没跑完（坐标 0,0），
-    此后无论怎么变都不重算，控件永远停在左上角（估价页的候选框就是这么错的）。
-
-    正确做法是让位置相对**父项**表达（`parent: 某控件` + `y: 某控件.height`），
-    由 Qt 的定位器在显示时换算。与 `Theme.fs()` 不被追踪是同一类坑。
-    """
-    offenders = []
-    for path in sorted(QML_ROOT.rglob("*.qml")):
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if re.match(r"\s*[xy]\s*:", line) and re.search(r"\bmap(To|From)Item\s*\(", line):
-                offenders.append(f"{path.relative_to(QML_ROOT)}:{lineno}: {line.strip()}")
-
-    assert not offenders, "这些位置绑定用了 mapToItem/mapFromItem，会因为不被依赖追踪而永远停在初值：\n" + "\n".join(
-        offenders
-    )
-
-
-@pytest.mark.fast
-def test_max_item_width_is_measured_not_bound():
-    """`FComboBox.maxItemWidth` 必须用**普通属性 + 主动测量**，不能写成绑定。
-
-    绑定体里要给 `itemMetrics.text` 赋值，而该绑定又读 `itemMetrics.width`，
-    Qt 判定为绑定循环（实测告警 `Binding loop detected for property "maxItemWidth"`）。
-
-    这里做**静态检查**而不是运行时断言，因为运行时测不出来：
-    - 给一个有绑定的属性赋值会**打断绑定**（QML 语义），赋值照样保留；
-    - 循环告警不是每次求值都出现（实测同一份代码两次运行一次报一次不报）。
-    """
-    text = (QML_ROOT / "components" / "FComboBox.qml").read_text(encoding="utf-8")
-    match = re.search(r"^\s*property\s+real\s+maxItemWidth\s*:(.*)$", text, re.MULTILINE)
-    assert match, "未找到 maxItemWidth 声明（改名了？请同步更新本护栏）"
-    assert not match.group(1).strip().startswith("{"), (
-        "maxItemWidth 被写成了绑定：绑定体里写 itemMetrics.text 会与它读取的 "
-        "itemMetrics.width 形成绑定循环，改成普通属性 + measureMaxItemWidth()"
     )

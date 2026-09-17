@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 import aiosqlite
 import pytest
 
-from tools.downloaders.sde_loader import (
+from services.importers.sde_loader import (
     initialize_database,
     write_meta_groups,
     write_universe,
@@ -66,7 +66,7 @@ class TestInitializeDatabase:
     @pytest.mark.asyncio
     async def test_creates_meta_group_table(self, temp_db_path):
         """调用后 meta_group 表存在"""
-        with patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path):
+        with patch("services.importers.sde_loader.DATABASE_PATH", temp_db_path):
             await initialize_database()
 
         conn = sqlite3.connect(temp_db_path)
@@ -77,7 +77,7 @@ class TestInitializeDatabase:
     @pytest.mark.asyncio
     async def test_idempotent(self, temp_db_path):
         """重复调用不报错"""
-        with patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path):
+        with patch("services.importers.sde_loader.DATABASE_PATH", temp_db_path):
             await initialize_database()
             await initialize_database()
 
@@ -99,8 +99,8 @@ class TestWriteMetaGroups:
         }
 
         with (
-            patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.sde_loader.load_yaml_async", AsyncMock(return_value=mock_data)),
+            patch("services.importers.sde_loader.DATABASE_PATH", temp_db_path),
+            patch("services.importers.sde_loader.load_yaml_async", AsyncMock(return_value=mock_data)),
         ):
             await initialize_database()
             await write_meta_groups()
@@ -121,8 +121,8 @@ class TestWriteMetaGroups:
         mock_data = {"1": {"nameID": {"en": "Tech I"}}}
 
         with (
-            patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.sde_loader.load_yaml_async", AsyncMock(return_value=mock_data)),
+            patch("services.importers.sde_loader.DATABASE_PATH", temp_db_path),
+            patch("services.importers.sde_loader.load_yaml_async", AsyncMock(return_value=mock_data)),
         ):
             await initialize_database()
             await write_meta_groups()  # 首次调用写入
@@ -168,8 +168,8 @@ class TestWriteMetaGroups:
             return {"metaGroups.yaml": mock_meta, "typeIDs.yaml": mock_type_ids}[name]
 
         with (
-            patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.sde_loader.load_yaml_async") as mock_load,
+            patch("services.importers.sde_loader.DATABASE_PATH", temp_db_path),
+            patch("services.importers.sde_loader.load_yaml_async") as mock_load,
         ):
             mock_load.side_effect = _load_yaml_side_effect
             await initialize_database()
@@ -210,8 +210,8 @@ class TestWriteUniverse:
             [],
         )
         with (
-            patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.sde_loader.ensure_universe_cache", new=AsyncMock(return_value=fake)),
+            patch("services.importers.sde_loader.DATABASE_PATH", temp_db_path),
+            patch("services.importers.sde_loader.ensure_universe_cache", new=AsyncMock(return_value=fake)),
         ):
             await write_universe()
 
@@ -231,8 +231,8 @@ class TestWriteUniverse:
             await db.commit()
 
         with (
-            patch("tools.downloaders.sde_loader.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.sde_loader.ensure_universe_cache", new=AsyncMock()) as m,
+            patch("services.importers.sde_loader.DATABASE_PATH", temp_db_path),
+            patch("services.importers.sde_loader.ensure_universe_cache", new=AsyncMock()) as m,
         ):
             await write_universe()
 

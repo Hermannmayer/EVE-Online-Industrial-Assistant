@@ -4,7 +4,11 @@
 数据来源：market.db（market_prices 单张表含价格/成交量/adjusted price）、
 reference.db（industry_system_costs 系统成本指数）。
 被 UI 财务/运费/精炼/BOM 展开消费（经 bootstrap 容器 get_container().pricing_service）。
-注意：评分链路不经过本服务（走 scoring_service 模块级 get_price），改价需两边同步。
+
+**取价的单一定义处**在 `services/repositories/market_repository.py`，本类只做转发。
+评分链路（`scoring_service` 的模块级同名函数）也已合流到同一份实现 ——
+原先两处各有一份等价 SQL，那条注释「改价需两边同步」记的就是这个分裂，
+它已实际导致过缓存串值缺陷（见 `scoring_service._batch_materials` 的注释）。
 """
 
 from core.constants import TRADE_HUB_SYSTEM_IDS
@@ -32,18 +36,7 @@ class PricingService:
 
     def get_system_cost_index(self, system_id: int | None, activity: str = "manufacturing", hub: str = "Jita") -> float:
         """获取系统成本指数。system_id=None 时从 hub 名称推断，查无/未知统一用默认 SCI。"""
-        from core.constants import DEFAULT_SYSTEM_COST_INDEX
-
-        if system_id is None:
-            system_id = trade_hub_to_system_id(hub)
-        if system_id is None:
-            return DEFAULT_SYSTEM_COST_INDEX
-        with self._db.connect("ref") as conn:
-            r = conn.execute(
-                "SELECT cost_index FROM industry_system_costs WHERE solar_system_id = ? AND activity = ? LIMIT 1",
-                (system_id, activity),
-            ).fetchone()
-            return float(r[0]) if r else DEFAULT_SYSTEM_COST_INDEX
+        return self._market_repo.get_system_cost_index(system_id, activity, hub)
 
     def get_adjusted_price(self, type_id: int) -> float | None:
         """获取 ESI adjusted price（EIV 计算用）"""

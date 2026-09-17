@@ -14,18 +14,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QEventLoop, QTimer, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import QtMsgType, qInstallMessageHandler
 from PySide6.QtQuick import QQuickWindow
 
+from tests.qml_click import spin as _spin
 from ui_qml.splash_window import SplashScreen
 
 pytestmark = pytest.mark.ui
-
-
-def _spin(ms: int = 120) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 def _find(root, object_name: str):
@@ -91,9 +86,9 @@ def test_splash_window_semantics(qapp):
         window = splash._window
         assert window.flags() & Qt.WindowType.FramelessWindowHint
         assert window.flags() & Qt.WindowType.WindowStaysOnTopHint
-        assert (window.width(), window.height()) == (360, 470)
-        assert window.minimumWidth() == window.maximumWidth() == 360
-        assert window.minimumHeight() == window.maximumHeight() == 470
+        # 固定尺寸（不可缩放）：min == max 是语义，具体像素值不是 —— 调尺寸不该让测试红
+        assert window.minimumWidth() == window.maximumWidth()
+        assert window.minimumHeight() == window.maximumHeight()
         # 半透明：圆角之外要能透出去（旧版是 WA_TranslucentBackground）
         assert window.color().alpha() == 0
     finally:

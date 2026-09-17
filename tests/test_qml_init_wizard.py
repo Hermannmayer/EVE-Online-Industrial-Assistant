@@ -16,12 +16,13 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 import pytest
-from PySide6.QtCore import QEventLoop, QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QCloseEvent
 
 import ui_qml.bridge.init_wizard_bridge as iwb
 import ui_qml.theme.registry as theme
 from services.init_service import STEPS, InitStep, StepStatus
+from tests.qml_click import spin as _spin
 from ui_qml.bridge.init_wizard_bridge import InitWizardQmlDialog, format_elapsed, step_row
 
 # ════════════════════════════════════════════════════════════════
@@ -147,13 +148,6 @@ def wizard(qapp, monkeypatch) -> _WizardFactory:
     return _WizardFactory(monkeypatch)
 
 
-def _spin(ms: int = 60) -> None:
-    """转一会儿事件循环（auto 模式的 `QTimer.singleShot` 要靠它才跑得到）。"""
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
-
-
 def _rows(dialog: InitWizardQmlDialog) -> dict[str, dict]:
     return {row["key"]: row for row in dialog.bridge.steps}
 
@@ -219,12 +213,10 @@ def test_step_row_flags_follow_status_and_criticality():
 
 @pytest.mark.ui
 def test_dialog_keeps_the_widgets_geometry(wizard):
-    """构造签名与几何对齐原 `InitWizard(parent)`（`setMinimumSize(620, 520)` + 不 resize）。"""
+    """对话框标题固定（几何不在此断言 —— 尺寸由 QML 决定，改了不该红）。"""
     dialog = wizard(missing=[])
     try:
         assert dialog.windowTitle() == "数据初始化"
-        assert (dialog.width(), dialog.height()) == (620, 520)
-        assert (dialog.minimumWidth(), dialog.minimumHeight()) == (620, 520)
     finally:
         dialog.deleteLater()
 

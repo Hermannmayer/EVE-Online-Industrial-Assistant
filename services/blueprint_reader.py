@@ -9,42 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from services.manufacturing_calculator import DEFAULT_WASTEFACTOR
-
-
-def get_blueprint_wastefactor(
-    conn: sqlite3.Connection,
-    blueprint_type_id: int,
-    activity: str = "manufacturing",
-) -> int:
-    """查询蓝图的材料 wastefactor。
-
-    ⚠️ 历史兼容：SDE 已移除 wasteFactor 字段（机制改革后 materials.quantity
-    直接包含浪费），本函数/数据库列的值恒为兜底 DEFAULT_WASTEFACTOR（10），
-    不参与任何计算。保留仅为不破坏既有数据与调用方。
-
-    Args:
-        conn: blueprint.db 的数据库连接
-        blueprint_type_id: 蓝图 type_id
-        activity: 活动类型（默认 'manufacturing'）
-
-    Returns:
-        wastefactor 值（T1=10）。SDE 无值时返回 DEFAULT_WASTEFACTOR（10）。
-    """
-    cur = conn.execute(
-        """
-        SELECT wastefactor FROM blueprint_materials
-        WHERE blueprint_type_id = ? AND activity = ?
-        LIMIT 1
-        """,
-        (blueprint_type_id, activity),
-    )
-    row = cur.fetchone()
-    if row is None:
-        return DEFAULT_WASTEFACTOR
-    # wastefactor 可能是 None（旧数据无此列）
-    val: int | None = row[0]
-    return val if val is not None else DEFAULT_WASTEFACTOR
+from domain.formulas import DEFAULT_WASTEFACTOR
 
 
 def get_blueprint_materials(

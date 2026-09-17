@@ -1,0 +1,29 @@
+#!/bin/sh
+# commit-msg 守卫：删除提交信息里的 AI 署名尾注（Claude / Anthropic 等）。
+#
+# 为什么需要它：Claude Code 的 `attribution` 设置（用户级 / 项目级 / 托管级）已全部
+# 置空，尾注仍会周期性回来 —— 上游是「模型自己把尾注写进正文」这条路径，设置管不到。
+# commit-msg 钩子在对象入库之前改写信息，是唯一确定性的拦截点。
+#
+# 主检出的 .git/hooks/ 是所有 worktree 共用的（worktree 的 hooks 走 $GIT_COMMON_DIR），
+# 所以装一份即覆盖 Claude Code 桌面版开的所有 worktree。
+#
+# 安装：cp .githooks/commit-msg .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
+msgfile="$1"
+[ -f "$msgfile" ] || exit 0
+
+LC_ALL=C awk '
+{
+  low = tolower($0)
+  if (low ~ /^[ \t]*co-authored-by:.*(claude|anthropic)/) next
+  if (low ~ /^[ \t]*claude-session:/)                      next
+  if (low ~ /^[ \t]*generated with.*claude/)               next
+  if (low ~ /generated with \[claude code\]/)              next
+  n++; out[n] = $0
+}
+END {
+  while (n > 0 && out[n] ~ /^[ \t\r]*$/) n--   # 去掉尾注留下的空行
+  for (i = 1; i <= n; i++) print out[i]
+}
+' "$msgfile" > "$msgfile.hermes-strip.tmp" && mv "$msgfile.hermes-strip.tmp" "$msgfile"
+exit 0

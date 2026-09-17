@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.clipboard_wait import wait_for_clipboard
 from ui_qml.models.query_detail_model import (
     hub_bar_rows,
     material_rows,
@@ -470,7 +471,6 @@ def test_bridge_resolves_empire_color(qapp):
 
 @pytest.mark.ui
 def test_bridge_copy_price(qapp):
-    from PySide6.QtWidgets import QApplication
 
     from ui_qml.bridge.query_detail_bridge import QueryDetailBridge
 
@@ -479,7 +479,7 @@ def test_bridge_copy_price(qapp):
 
     bridge._render_orders([{"price": 1234.5, "volume_remain": 1, "location_id": 1}], [])
     assert bridge.copyPrice(0) == "1234.50"
-    assert QApplication.clipboard().text() == "1234.50"
+    assert wait_for_clipboard("1234.50") == "1234.50"
     assert bridge.copyPrice(1) == ""  # 无卖单
 
 

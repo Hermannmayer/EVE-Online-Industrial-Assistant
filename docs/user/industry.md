@@ -194,4 +194,4 @@ flowchart TD
 - **SCC Surcharge**：SCC 附加费
 - **Broker Fee**：经纪人费率（受角色技能影响）
 
-详见 [`services/manufacturing_calculator.py`](/api/services/manufacturing_calculator) 和 [`services/scoring_service.py`](/api/services/scoring_service) 的 API 文档。
+详见 `domain/formulas.py`（纯公式，未生成 API 页）和 [`services/scoring_service.py`](/api/services/scoring_service) 的 API 文档。

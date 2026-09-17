@@ -114,11 +114,6 @@ def get_missing_steps() -> list[InitStep]:
     return [s for s in STEPS if not status.get(s.key, False)]
 
 
-def get_missing_count() -> int:
-    """返回未就绪的步骤数"""
-    return len(get_missing_steps())
-
-
 # ══════════════════════════════════════════════════════
 #  InitService
 # ══════════════════════════════════════════════════════
@@ -450,7 +445,6 @@ class InitService(QObject):
         """
         # 映射 key → (module_path, entry_func_name, param_name)
         # param_name: 入口函数的 progress_cb 参数名（None=不支持）
-        # 下载器统一在 services.importers（tools.downloaders / services.workers 为兼容 shim）
         entry_map = {
             "schema": ("services.schema_migrations", "ensure_all_schemas", False),
             "items": ("services.importers.getitems", "main", True),

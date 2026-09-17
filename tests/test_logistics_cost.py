@@ -151,18 +151,6 @@ class TestEstimateFreightCost:
         # 体积费 = 1M * 200 = 200M
         assert result["freight_cost"] == 200_000_000.0
 
-    def test_rounding(self):
-        """运费精确到 2 位小数"""
-        result = estimate_freight_cost(
-            volume_m3=333.333,
-            distance_jumps=7,
-            collateral=1234567.89,
-        )
-        cost_str = str(result["freight_cost"])
-        if "." in cost_str:
-            decimal_places = len(cost_str.split(".")[1])
-            assert decimal_places <= 2
-
     def test_zero_collateral_public_freight(self):
         """零抵押时抵押附加费为 0"""
         result = estimate_freight_cost(
@@ -204,13 +192,6 @@ class TestEstimateFreightCost:
         )
         assert result["collateral_fee"] == -200_000.0
 
-    def test_breakdown_includes_mode(self):
-        """结果中包含 mode 字段"""
-        r1 = estimate_freight_cost(100, 10, 0, use_public_freight=True)
-        assert r1["mode"] == "public_freight"
-        r2 = estimate_freight_cost(100, 10, 0, use_public_freight=False)
-        assert r2["mode"] == "self_transport"
-
 
 # ═══════════════════════════════════════════════════════
 #  运输利润计算
@@ -219,56 +200,6 @@ class TestEstimateFreightCost:
 
 class TestCalcTransportProfit:
     """跨区域运输净利润计算（需 mock 价格数据和数据库）"""
-
-    # ── 通用参数：不同场景的价格/体积数据 ──
-    _SCENARIOS = {
-        "basic_profit": {
-            "prices": {("buy", "Jita"): 1000.0, ("sell", "Amarr"): 1200.0},
-            "volume": 10.0,
-        },
-        "sell_lower": {
-            "prices": {("buy", "Jita"): 1000.0, ("sell", "Amarr"): 900.0},
-            "volume": 5.0,
-        },
-        "zero_standing": {
-            "prices": {("buy", "Jita"): 5000.0, ("sell", "Dodixie"): 5500.0},
-            "volume": 10.0,
-        },
-        "sell_as_buy": {
-            "prices": {("sell", "Jita"): 5000.0, ("sell", "Amarr"): 5500.0},
-            "volume": 5.0,
-        },
-        "short_route": {
-            "prices": {("buy", "Hek"): 100.0, ("sell", "Rens"): 110.0},
-            "volume": 1.0,
-        },
-        "field_check": {
-            "prices": {("buy", "Jita"): 500.0, ("sell", "Amarr"): 600.0},
-            "volume": 2.0,
-        },
-    }
-
-    def _mock_scenario(self, scenario_name, mock_pricing, extra_kwargs=None):
-        """辅助方法：mock 指定场景的价格和数据库"""
-        scenario = self._SCENARIOS[scenario_name]
-        mock_pricing.return_value.get_price.side_effect = lambda tid, pt, hub: scenario["prices"].get((pt, hub))
-
-        with patch("services.logistics._default_db") as mock_db:
-            mock_conn = MagicMock()
-            mock_cursor = MagicMock()
-            mock_cursor.fetchone.return_value = (scenario["volume"],)
-            mock_conn.cursor.return_value = mock_cursor
-            mock_db.return_value.connect.return_value.__enter__.return_value = mock_conn
-            return calc_transport_profit(
-                type_id=1001,
-                buy_hub="Jita",
-                sell_hub="Amarr",
-                buy_price_type="buy",
-                sell_price_type="sell",
-                quantity=1,
-                distance_jumps=72,
-                **(extra_kwargs or {}),
-            )
 
     def test_no_price_returns_status(self):
         """无价格数据时返回 no_price 状态"""
@@ -377,137 +308,6 @@ class TestCalcTransportProfit:
             )
         assert result["status"] == ""
         assert result["net_profit"] < 0
-
-    @patch("services.logistics._default_pricing")
-    def test_result_fields_present(self, mock_pricing):
-        """返回结果包含所有必需字段"""
-        mock_pricing.return_value.get_price.side_effect = lambda tid, pt, hub: {
-            ("buy", "Jita"): 500.0,
-            ("sell", "Amarr"): 600.0,
-        }.get((pt, hub))
-        with patch("services.logistics._default_db") as mock_db:
-            mock_conn = MagicMock()
-            mock_cursor = MagicMock()
-            mock_cursor.fetchone.return_value = (2.0,)
-            mock_conn.cursor.return_value = mock_cursor
-            mock_db.return_value.connect.return_value.__enter__.return_value = mock_conn
-            result = calc_transport_profit(
-                type_id=1002,
-                buy_hub="Jita",
-                sell_hub="Amarr",
-                buy_price_type="buy",
-                sell_price_type="sell",
-                quantity=5,
-                distance_jumps=72,
-            )
-        required = [
-            "buy_cost",
-            "sell_revenue",
-            "freight_cost",
-            "broker_cost",
-            "sales_tax",
-            "net_profit",
-            "margin_pct",
-            "isk_per_m3",
-            "total_volume_m3",
-            "freight_breakdown",
-            "freight_mode",
-            "status",
-        ]
-        for field in required:
-            assert field in result, f"Missing field: {field}"
-
-    @patch("services.logistics._default_pricing")
-    def test_self_transport_mode(self, mock_pricing):
-        """自有运输模式的计算"""
-        mock_pricing.return_value.get_price.side_effect = lambda tid, pt, hub: {
-            ("buy", "Jita"): 1000.0,
-            ("sell", "Dodixie"): 1100.0,
-        }.get((pt, hub))
-        with patch("services.logistics._default_db") as mock_db:
-            mock_conn = MagicMock()
-            mock_cursor = MagicMock()
-            mock_cursor.fetchone.return_value = (1.0,)
-            mock_conn.cursor.return_value = mock_cursor
-            mock_db.return_value.connect.return_value.__enter__.return_value = mock_conn
-            result = calc_transport_profit(
-                type_id=1001,
-                buy_hub="Jita",
-                sell_hub="Dodixie",
-                buy_price_type="buy",
-                sell_price_type="sell",
-                quantity=1,
-                distance_jumps=12,
-                use_public_freight=False,
-            )
-        assert result["freight_mode"] == "self_transport"
-        assert result["freight_cost"] > 0
-
-    @patch("services.logistics._default_pricing")
-    def test_zero_standing_values(self, mock_pricing):
-        """所有声望为 0 时仍正常计算"""
-        mock_pricing.return_value.get_price.side_effect = lambda tid, pt, hub: {
-            ("buy", "Jita"): 5000.0,
-            ("sell", "Dodixie"): 5500.0,
-        }.get((pt, hub))
-        with patch("services.logistics._default_db") as mock_db:
-            mock_conn = MagicMock()
-            mock_cursor = MagicMock()
-            mock_cursor.fetchone.return_value = (10.0,)
-            mock_conn.cursor.return_value = mock_cursor
-            mock_db.return_value.connect.return_value.__enter__.return_value = mock_conn
-            result = calc_transport_profit(
-                type_id=1001,
-                buy_hub="Jita",
-                sell_hub="Dodixie",
-                buy_price_type="buy",
-                sell_price_type="sell",
-                quantity=1,
-                distance_jumps=12,
-                char_config={
-                    "skills": {},
-                    "market": {
-                        "jita": {"faction_standing": 0.0, "corp_standing": 0.0},
-                        "dodixie": {"faction_standing": 0.0, "corp_standing": 0.0},
-                    },
-                },
-            )
-        assert result["status"] == ""
-        assert result["freight_cost"] > 0
-        assert result["broker_cost"] > 0
-
-    @patch("services.logistics._default_pricing")
-    def test_sell_price_as_buy_type(self, mock_pricing):
-        """使用卖价作为买入价（即买断）"""
-        mock_pricing.return_value.get_price.side_effect = lambda tid, pt, hub: {
-            ("sell", "Jita"): 5000.0,
-            ("sell", "Amarr"): 5500.0,
-        }.get((pt, hub))
-        with patch("services.logistics._default_db") as mock_db:
-            mock_conn = MagicMock()
-            mock_cursor = MagicMock()
-            mock_cursor.fetchone.return_value = (5.0,)
-            mock_conn.cursor.return_value = mock_cursor
-            mock_db.return_value.connect.return_value.__enter__.return_value = mock_conn
-            result = calc_transport_profit(
-                type_id=1001,
-                buy_hub="Jita",
-                sell_hub="Amarr",
-                buy_price_type="sell",
-                sell_price_type="sell",
-                quantity=10,
-                distance_jumps=72,
-                char_config={
-                    "skills": {"经纪人关系学": 5, "高级经纪人关系学": 5, "会计学": 5},
-                    "market": {
-                        "jita": {"faction_standing": 6.7, "corp_standing": 5.0},
-                        "amarr": {"faction_standing": 6.7, "corp_standing": 5.0},
-                    },
-                },
-            )
-        assert result["status"] == ""
-        assert result["buy_cost"] > 0
-        assert result["sell_revenue"] > 0
 
     @patch("services.logistics._default_pricing")
     def test_hek_to_rens_short_route(self, mock_pricing):

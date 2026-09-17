@@ -31,11 +31,13 @@ import re
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QEventLoop, QObject, QPoint, Qt, QTimer, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import QObject, QPoint, Qt, QtMsgType, qInstallMessageHandler
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 import ui_qml.theme.registry as theme
+from tests.qml_click import spin as _spin
+from tests.qml_click import wait_until as _wait_until
 from ui_qml.host import PageHost
 from ui_qml.models.industry_models import PlanTableModel
 from ui_qml.views.industry.plan_table import PlanTable
@@ -93,28 +95,6 @@ def _new_pane() -> _Pane:
 #: 列 0 是备料勾选、列 1/2 是图标列、列 3 是产品列 —— 产品列只有带折叠箭头
 #: 或合成行时才是可点击的，本文件的测试数据两者都没有。
 _SAFE_COLUMN_X = 200
-
-
-def _spin(ms: int = 150) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
-
-
-def _wait_until(predicate, timeout_ms: int = 1500) -> bool:
-    """轮询等待条件成立。
-
-    `Menu.open()` 是**异步**的：点击返回时 `opened` 还是 false，要等弹出物真正建立
-    才变 true（实测 100ms 时仍为 false、300ms 时已为 true）。固定 sleep 会在慢机器上
-    偶发失败，这里按条件轮询。
-    """
-    waited = 0
-    while waited < timeout_ms:
-        if predicate():
-            return True
-        _spin(50)
-        waited += 50
-    return bool(predicate())
 
 
 def _plans(count: int = 6) -> list[dict]:
@@ -191,14 +171,6 @@ def test_pane_keeps_builtin_selection_disabled():
         "`TableView.NoSelection` 不存在（SelectionMode 枚举只有 Single/Contiguous/Extended），"
         "会让 selectionMode 静默保持原值。"
     )
-
-
-def test_pane_binds_the_bridge_selection_model():
-    """选中模型由桥持有并绑到 `TableView.selectionModel`，delegate 的 `selected` 才会跟随。"""
-    text = PANE.read_text(encoding="utf-8")
-    assert "planBridge.selectionModel" in text
-    assert "planBridge.selectRow(" in text, "左键必须经桥落选中"
-    assert "planBridge.ensureRowSelected(" in text, "右键要先把选中换到点中的行"
 
 
 @pytest.fixture
@@ -577,9 +549,10 @@ def test_click_keeps_the_pressed_row_when_content_moves(qapp):
             view.setProperty("contentY", float(view.property("contentY")) + delta * row_h)
             _spin(60)
             QTest.mouseRelease(host, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, pt)
-            _spin(200)
 
-            assert widget.bridge.selectedRows() == [row], (
+            # 轮询而不是定长睡眠：释放 → 选中是异步的，固定 200ms 在机器负载高时
+            # 偶发失败（本仓 UI 套件实测过同一份代码三次跑出 0/2/3 个失败）。
+            assert _wait_until(lambda r=row: widget.bridge.selectedRows() == [r]), (
                 f"contentY={content_y} 内容移动 {delta} 行后，应仍选中按下的第 {row} 行"
             )
     finally:

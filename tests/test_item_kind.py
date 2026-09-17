@@ -60,16 +60,16 @@ def ref_conn():
 class TestLooksLikeBlueprintName:
     def test_markers(self):
         """带蓝图/公式标记的名字（中英、忽略大小写）"""
-        assert looks_like_blueprint_name("渡鸦级蓝图")
-        assert looks_like_blueprint_name("Raven Blueprint")
-        assert looks_like_blueprint_name("BLUEPRINT II")
-        assert looks_like_blueprint_name("神经链接增强器反应配方")
+        assert looks_like_blueprint_name("渡鸦级蓝图") is True
+        assert looks_like_blueprint_name("Raven Blueprint") is True
+        assert looks_like_blueprint_name("BLUEPRINT II") is True
+        assert looks_like_blueprint_name("神经链接增强器反应配方") is True
 
     def test_non_blueprint(self):
         """材料名 / 空值不带标记"""
-        assert not looks_like_blueprint_name("碳纤维")
-        assert not looks_like_blueprint_name("")
-        assert not looks_like_blueprint_name(None)
+        assert looks_like_blueprint_name("碳纤维") is False
+        assert looks_like_blueprint_name("") is False
+        assert looks_like_blueprint_name(None) is False
 
 
 class TestBlueprintTypeIds:
@@ -119,13 +119,6 @@ class TestParseClipboardRowsFiltersBlueprints:
         assert filtered == 1
         assert [r["type_id"] for r in rows] == [1001]
         assert rows[0]["qty"] == 1000
-
-    def test_pure_material_clipboard(self, ref_conn):
-        """纯材料剪贴板不受影响"""
-        rows, filtered = parse_clipboard_rows(ref_conn, "三钛合金\t100\n")
-        assert filtered == 0
-        assert len(rows) == 1
-        assert rows[0]["status"] == "matched"
 
     def test_unmatched_blueprint_name_filtered(self, ref_conn):
         """未匹配但名字带蓝图标记的行也被过滤并计数"""

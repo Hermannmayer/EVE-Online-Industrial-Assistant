@@ -15,9 +15,10 @@ import math
 from typing import Any
 
 import pytest
-from PySide6.QtCore import QEventLoop, QThread, QTimer, Signal
+from PySide6.QtCore import QThread, Signal
 
 import ui_qml.bridge.price_chart_bridge as pcb
+from tests.qml_click import spin as _spin
 from ui_qml.bridge.price_chart_bridge import (
     PriceChartBridge,
     axis_values,
@@ -30,12 +31,6 @@ from ui_qml.bridge.price_chart_bridge import (
 pytestmark = pytest.mark.ui
 
 _NAME = "三钛合金"
-
-
-def _spin(ms: int = 200) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 def _data(days: int = 5, base: float = 100.0, volume: int = 1000) -> list[dict]:

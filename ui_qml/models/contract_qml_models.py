@@ -14,7 +14,7 @@ from typing import Any
 from PySide6.QtCore import QModelIndex, Qt
 
 from ui_qml.models.contract_models import ContractItemTableModel, ContractTableModel
-from ui_qml.theme import registry as theme
+from ui_qml.theme.registry import token as _token
 
 __all__ = ["ContractQmlModel", "ContractItemQmlModel"]
 
@@ -45,10 +45,6 @@ ITEM_ROLE_NAMES: dict[int, bytes] = {
 _I_TEXT = _BASE + 1
 _I_ALIGN = _BASE + 2
 _I_ROW = _BASE + 3
-
-
-def _token(name: str) -> str:
-    return str(getattr(theme, name, "") or "")
 
 
 class ContractQmlModel(ContractTableModel):

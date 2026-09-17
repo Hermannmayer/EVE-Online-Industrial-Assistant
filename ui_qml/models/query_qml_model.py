@@ -10,14 +10,13 @@ QML 的 `TableView` 只认**命名角色**（没有 DisplayRole/ForegroundRole �
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
-from PySide6.QtCore import QModelIndex, Qt, QUrl
+from PySide6.QtCore import QModelIndex, Qt
 
-from ui_qml.icon_cache import item_icon_path
+from ui_qml.icon_cache import icon_url
 from ui_qml.models.query_models import QueryTableModel
-from ui_qml.theme import registry as theme
+from ui_qml.theme.registry import token as _token
 
 __all__ = ["QueryQmlModel", "ROLE_NAMES"]
 
@@ -52,21 +51,6 @@ _PRICE_TOKENS: dict[int, tuple[str, str]] = {
     5: ("sell_str", "ACCENT_RED"),
     6: ("avg_price_str", "ACCENT_GREEN"),
 }
-
-
-def _token(name: str) -> str:
-    """按 token 名取当前主题色值。"""
-    return str(getattr(theme, name, "") or "")
-
-
-def icon_url(type_id: Any) -> str:
-    """物品图标（磁盘上的 PNG）URL；没有缓存文件时返回空串。"""
-    if not type_id:
-        return ""
-    path = item_icon_path(int(type_id))
-    if not os.path.isfile(path):
-        return ""
-    return QUrl.fromLocalFile(path).toString()
 
 
 class QueryQmlModel(QueryTableModel):

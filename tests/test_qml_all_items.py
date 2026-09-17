@@ -17,6 +17,7 @@ from tests.clipboard_wait import wait_for_clipboard
 from ui_qml.bridge import all_items_bridge as ai
 from ui_qml.models.all_items_models import BCOLS, MCOLS, TCOLS
 from ui_qml.workers.all_items_workers import JITA_RID
+from ui_qml.workers.lifecycle import DEFAULT_WAIT_MS
 
 pytestmark = pytest.mark.ui
 
@@ -429,7 +430,7 @@ def test_calc_stops_the_previous_scorer(qapp, monkeypatch):
         first = bridge._wp  # type: ignore[attr-defined]
         bridge.showMfgMode()
         assert first.interrupted is True
-        assert first.waited, "旧线程要被 wait 收尾"
+        assert first.waited == [DEFAULT_WAIT_MS], "旧线程要按默认超时 wait 收尾"
         assert bridge._wp is not first  # type: ignore[attr-defined]
     finally:
         dlg.deleteLater()
@@ -711,7 +712,7 @@ def test_stop_finishes_every_running_worker(qapp, monkeypatch):
         dlg.done(0)  # 确定 / 取消 / Esc 都走这里
         for worker in workers:
             assert worker.interrupted is True
-            assert worker.waited, "每个在跑的线程都要被 wait 收尾"
+            assert worker.waited == [DEFAULT_WAIT_MS], "每个在跑的线程都要按默认超时 wait 收尾"
     finally:
         dlg.deleteLater()
 

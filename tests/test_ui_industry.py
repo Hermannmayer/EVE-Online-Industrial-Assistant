@@ -1,5 +1,7 @@
 import pytest
 
+from tests.qml_click import spin as _spin
+
 pytestmark = pytest.mark.ui
 
 """IndustryPage UI 测试。"""
@@ -263,14 +265,6 @@ class TestNotesInlineEditPersists:
 # `test_qml_message_dialog.py`）、4 处 `QInputDialog` 换成 `InputQmlDialog`
 # （「设置蓝图等级」那块 `QDialog` 后来连着功能一起下线了 —— 蓝图等级统一由库存蓝图带出）。
 # 这里只锁本文件特有的两件：**新对话框能干净加载**、**落库链路一字未改**。
-
-
-def _spin(ms: int) -> None:
-    from PySide6.QtCore import QEventLoop, QTimer
-
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 def _assert_quiet(make_dialog, label: str) -> None:

@@ -13,7 +13,7 @@
 
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QPixmap, QPixmapCache
 
 from core.paths import ICON_DIR
@@ -22,6 +22,22 @@ from core.paths import ICON_DIR
 def item_icon_path(type_id: int) -> str:
     """图标文件路径（文件可能不存在）"""
     return os.path.join(ICON_DIR, f"{type_id}.png")
+
+
+def icon_url(type_id: int | None) -> str:
+    """图标文件 → QML `Image.source` 用的 `file://` URL；没有图标文件返回空串。
+
+    返回空串而不是 None，是让 QML 侧用 `hasIcon` 决定显不显示 —— `Image` 拿到
+    空串不刷警告，拿到 Windows 裸路径（`C:\\...`）则解析不了，故必须走 `QUrl`。
+
+    QML 侧原先有 11 份逐字相同的本地副本（3 个桥 + 8 个表格模型），汇总到这一处。
+    """
+    if not type_id:
+        return ""
+    path = item_icon_path(int(type_id))
+    if not os.path.isfile(path):
+        return ""
+    return QUrl.fromLocalFile(path).toString()
 
 
 def load_item_icon(type_id: int, size: int = 32) -> QPixmap | None:

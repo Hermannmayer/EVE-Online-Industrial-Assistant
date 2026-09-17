@@ -84,7 +84,7 @@ def test_filter_defaults_to_all_and_reloads_on_change(bridge):
     assert bridge.current_filter() == FILTERS[0] == "全部"
     bridge.setFilterIndex(2)
     assert bridge.current_filter() == FILTERS[2]
-    bridge._page.load_plans.assert_called()
+    bridge._page.load_plans.assert_called_once_with()
 
 
 @pytest.mark.fast
@@ -103,7 +103,7 @@ def test_gantt_mode_hides_status_and_actions(bridge):
     bridge.setViewMode("gantt")
     assert bridge.viewMode == "gantt"
     assert bridge.statusVisible is False
-    bridge._page.refresh_gantt.assert_called_once()
+    bridge._page.refresh_gantt.assert_called_once_with()
 
 
 @pytest.mark.fast
@@ -125,7 +125,7 @@ def test_set_price_setting_persists_and_reloads(bridge, monkeypatch):
 
     bridge.setPriceSetting("mat_hub", "Amarr")
     assert saved and saved[0]["price_settings"]["mat_hub"] == "Amarr"
-    bridge._page.load_plans.assert_called()
+    bridge._page.load_plans.assert_called_once_with()
 
 
 @pytest.mark.fast
@@ -189,14 +189,14 @@ def test_action_buttons_forward_to_page(bridge):
 
     page = bridge._page
     page.open_launcher.assert_called_once_with(None)
-    page.open_procurement.assert_called_once()
-    page.open_blueprint_list.assert_called_once()
-    page.open_materials_summary.assert_called_once()
-    page.open_output_summary.assert_called_once()
-    page.open_char_usage.assert_called_once()
-    page.refresh_prices.assert_called_once()
-    page.save_prices.assert_called_once()
-    page.complete_all.assert_called_once()
+    page.open_procurement.assert_called_once_with()
+    page.open_blueprint_list.assert_called_once_with()
+    page.open_materials_summary.assert_called_once_with()
+    page.open_output_summary.assert_called_once_with()
+    page.open_char_usage.assert_called_once_with()
+    page.refresh_prices.assert_called_once_with()
+    page.save_prices.assert_called_once_with()
+    page.complete_all.assert_called_once_with()
 
 
 @pytest.mark.fast

@@ -16,7 +16,6 @@ from core.cache import TtlLRUCache
 from core.constants import TRADE_HUB_SYSTEM_IDS
 from core.container import get_container
 from core.eve_formulas import (
-    _hub_region_id,
     calc_broker_rate,
     calc_relist_discount,
     calc_sales_tax_rate,
@@ -29,6 +28,7 @@ from services.blueprint_reader import (
 from services.char_config_resolver import DEFAULT_SKILLS, resolve_char_config  # noqa: F401  # 向后兼容 re-export
 from services.database_manager import DatabaseManager
 from services.name_resolver import resolve_item_name  # noqa: F401  # 由 application 门面经模块属性访问
+from services.repositories.market_repository import MarketRepository
 
 
 def _hub_to_system_id(hub: str) -> int | None:
@@ -113,46 +113,19 @@ def invalidate_cache():
 # ════════════════════════════════════════════════════════════════════
 
 
+# 取价的**单一定义处**在 `services/repositories/market_repository.py`；
+# 这里保留同名模块级函数是为了维持既有调用方与测试的 patch 语义
+# （`@patch("services.scoring_service.get_price")`，见 tests/test_scoring_service.py）。
+# 合并前两处各有一份等价 SQL（原 `pricing_service.py` 的 docstring 记着
+# 「改价需两边同步」—— 这个分裂已实际致过缓存串值缺陷）。
 def get_price(
     type_id: int,
     price_type: str,
     hub: str | None = None,
     _db: DatabaseManager | None = None,
 ) -> float | None:
-    """
-    从 market_prices 获取指定区域的价格。
-    price_type: 'buy' → buy_price, 'sell' → sell_price
-    hub: 贸易中心名称, 如 'Jita', 'Amarr'；None 时返回任意区域
-    _db: 可选注入的 DatabaseManager；None 时使用模块级单例。
-    """
-    conn_mgr = _db or _default_db()
-    _VALID_PRICE_COLS = {"buy": "buy_price", "sell": "sell_price"}
-    col = _VALID_PRICE_COLS.get(price_type)
-    if col is None:
-        return None
-    with conn_mgr.connect("mkt") as conn:
-        c = conn.cursor()
-        if hub:
-            rid = _hub_region_id(hub)
-            c.execute(
-                f"SELECT {col} FROM market_prices WHERE type_id = ? AND region_id = ? LIMIT 1",
-                (type_id, rid),
-            )
-            row = c.fetchone()
-            if row and row[0] is not None:
-                return float(row[0])
-            # 降级：该区域无数据，尝试其他区域
-            c.execute(
-                f"SELECT {col} FROM market_prices WHERE type_id = ? AND {col} IS NOT NULL LIMIT 1",
-                (type_id,),
-            )
-        else:
-            c.execute(
-                f"SELECT {col} FROM market_prices WHERE type_id = ? AND {col} IS NOT NULL LIMIT 1",
-                (type_id,),
-            )
-        row = c.fetchone()
-        return row[0] if row else None
+    """从 market_prices 获取指定区域的价格。price_type: 'buy' / 'sell'。"""
+    return MarketRepository(_db or _default_db()).get_price(type_id, price_type, hub)
 
 
 def get_volume(
@@ -162,38 +135,7 @@ def get_volume(
     _db: DatabaseManager | None = None,
 ) -> int:
     """获取指定区域的成交量。vol_type: 'buy' / 'sell' / 'total'"""
-    conn_mgr = _db or _default_db()
-    with conn_mgr.connect("mkt") as conn:
-        c = conn.cursor()
-        if hub:
-            rid = _hub_region_id(hub)
-            c.execute(
-                "SELECT buy_volume, sell_volume FROM market_prices WHERE type_id = ? AND region_id = ? LIMIT 1",
-                (type_id, rid),
-            )
-            row = c.fetchone()
-            if row and (row[0] or row[1]):
-                if vol_type == "total":
-                    return int(row[0] + row[1])
-                return int(row[0] if vol_type == "buy" else row[1])
-            # 降级：该区域无数据，尝试其他区域
-            c.execute(
-                "SELECT buy_volume, sell_volume FROM market_prices WHERE type_id = ? LIMIT 1",
-                (type_id,),
-            )
-        else:
-            c.execute(
-                "SELECT buy_volume, sell_volume FROM market_prices WHERE type_id = ? LIMIT 1",
-                (type_id,),
-            )
-        row = c.fetchone()
-        if not row:
-            return 0
-        if vol_type == "buy":
-            return row[0] or 0
-        elif vol_type == "sell":
-            return row[1] or 0
-        return (row[0] or 0) + (row[1] or 0)
+    return MarketRepository(_db or _default_db()).get_volume(type_id, vol_type, hub)
 
 
 def get_system_cost_index(
@@ -202,22 +144,10 @@ def get_system_cost_index(
     _db: DatabaseManager | None = None,
     hub: str = "Jita",
 ) -> float:
-    """从数据库获取星系的制造成本指数(SCI)。system_id=None 时从 hub 推断。"""
-    from core.constants import DEFAULT_SYSTEM_COST_INDEX
-
-    if system_id is None:
-        system_id = _hub_to_system_id(hub)
-    if system_id is None:
-        return DEFAULT_SYSTEM_COST_INDEX
-    conn_mgr = _db or _default_db()
-    with conn_mgr.connect("ref") as conn:
-        c = conn.cursor()
-        c.execute(
-            "SELECT cost_index FROM industry_system_costs WHERE solar_system_id = ? AND activity = ? LIMIT 1",
-            (system_id, activity),
-        )
-        row = c.fetchone()
-        return float(row[0]) if row else DEFAULT_SYSTEM_COST_INDEX
+    """星系的制造成本指数。system_id=None 时从 hub 推断。"""
+    # 注意参数顺序：本函数的 `_db` 在第三个（历史签名，调用方按位置传），
+    # 而 MarketRepository 的签名是 (system_id, activity, hub) —— 必须走关键字。
+    return MarketRepository(_db or _default_db()).get_system_cost_index(system_id, activity, hub=hub)
 
 
 def get_adjusted_price(
@@ -225,21 +155,7 @@ def get_adjusted_price(
     _db: DatabaseManager | None = None,
 ) -> float | None:
     """获取 ESI adjusted price（EIV 计算用）。兜底 None → 用 sell_price。"""
-    conn_mgr = _db or _default_db()
-    with conn_mgr.connect("mkt") as conn:
-        try:
-            r = conn.execute(
-                "SELECT adjusted_price FROM market_prices WHERE type_id = ? AND adjusted_price > 0 LIMIT 1",
-                (type_id,),
-            ).fetchone()
-            return float(r[0]) if r else None
-        except Exception:
-            # 列不存在（旧数据库）→ 回退 sell_price
-            r = conn.execute(
-                "SELECT sell_price FROM market_prices WHERE type_id = ? AND sell_price > 0 LIMIT 1",
-                (type_id,),
-            ).fetchone()
-            return float(r[0]) if r else None
+    return MarketRepository(_db or _default_db()).get_adjusted_price(type_id)
 
 
 # 研究成本进程内缓存（type_id|solar_system_id → cost|None）— 价格刷新时由 invalidate_cache 一并清空
@@ -576,8 +492,8 @@ class ScoringService:
             resolved_system_id if resolved_system_id is not None else _hub_to_system_id(resolved_sell_hub)
         )
         # 机库工业配置解析（材料机库决定设施类型/改件/税；用 svc._db 保证测试隔离）
+        from domain.formulas import FACILITY_TAX_NPC
         from services.hangar_industry_config import resolve_hangar_industry_config
-        from services.manufacturing_calculator import FACILITY_TAX_NPC
 
         hangar_cfg = resolve_hangar_industry_config(plan_data.get("mat_hangar_id"), _db=getattr(svc, "_db", None))
         # 成本倍率：计划 facility_cost_mult 显式(≠1.0) > 机库 > 1.0

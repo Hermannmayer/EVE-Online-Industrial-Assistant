@@ -25,7 +25,7 @@
 | 模块 | 说明 |
 |------|------|
 | [`services.scoring_service`](/api/services/scoring_service) | 评分核心 — ScoringCache + 定价查询 + 制造/贸易/精炼评分 |
-| [`services.manufacturing_calculator`](/api/services/manufacturing_calculator) | 制造计算核心（材料用量/安装费/生产时长） |
+| [`domain/formulas.py`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/blob/main/domain/formulas.py) | 制造计算核心（材料用量/安装费/生产时长） |
 | [`services.pricing_service`](/api/services/pricing_service) | 统一定价 + 成交量 + 系统成本指数 |
 | [`services.bom_expander`](/api/services/bom_expander) | BOM 递归展开（T2/T3 产业链完整材料树） |
 | [`services.logistics`](/api/services/logistics) | 物流运费估算与利润计算 |

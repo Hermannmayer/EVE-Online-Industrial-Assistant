@@ -13,6 +13,7 @@ from PySide6.QtCore import Property, Signal, Slot
 
 from core.constants import TRADE_HUB_IDS
 from ui_qml.bridge.summary_dialog import SummaryTableBridge, SummaryTableQmlDialog, cell
+from ui_qml.workers.lifecycle import detach_worker
 from ui_qml.workers.npc_seller_workers import NpcOrderWorker
 
 __all__ = ["NpcSellerBridge", "NpcSellerQmlDialog"]
@@ -31,9 +32,6 @@ _COLUMNS = [
 ]
 
 _EMPTY_HINT = "该蓝图在当前贸易中心没有 NPC 直售单（可能为 T2/高级蓝图，请到市场找玩家订单）"
-
-#: 已从对话框摘出、还在收尾的拉单线程（见 `NpcSellerBridge.stop`）
-_DETACHED: set[Any] = set()
 
 
 def order_rows(rows: list[dict]) -> list[dict]:
@@ -138,19 +136,9 @@ class NpcSellerBridge(SummaryTableBridge):
 
         ESI 拉单是网络请求，`requestInterruption()` 对它无效（原 Widgets 版的
         `closeEvent` 也是只请求中断）。而 `QThread` 在运行中被析构时 Qt 直接 abort ——
-        整个进程静默死掉、无日志。所以：先请求中断并等一小会儿；还没完就把它从桥的
-        子对象里摘出来、挂到模块级集合上等它自己结束（同 `blueprint_actions` 的
-        「强引用保活」做法），结束后再放掉。
+        整个进程静默死掉、无日志。收尾逻辑见 `ui_qml.workers.lifecycle.detach_worker`。
         """
-        worker = self._worker
-        if worker is None or not worker.isRunning():
-            return
-        worker.requestInterruption()
-        if worker.wait(500):
-            return
-        _DETACHED.add(worker)
-        worker.setParent(None)
-        worker.finished.connect(lambda: _DETACHED.discard(worker))
+        detach_worker(self._worker)
 
 
 class NpcSellerQmlDialog(SummaryTableQmlDialog):

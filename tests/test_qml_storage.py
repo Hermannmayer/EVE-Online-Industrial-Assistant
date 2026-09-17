@@ -13,10 +13,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QEventLoop, QObject, QPoint, Qt, QTimer, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import QObject, QPoint, Qt, QtMsgType, qInstallMessageHandler
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from tests.qml_click import spin as _spin
 from ui_qml.models.inventory_qml_models import (
     BP_ROLE_NAMES,
     INV_ROLE_NAMES,
@@ -68,12 +69,6 @@ def _bp(bpid: int = 1, bp_type_id: int = 1000, occupied: bool = False, margin: f
         "revenue": 1200.0,
         "margin": margin,
     }
-
-
-def _spin(ms: int = 100) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 # ════════════════════════════════════════════════════════════

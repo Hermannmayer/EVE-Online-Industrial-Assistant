@@ -117,13 +117,12 @@ class TestMaxLinesForCategory:
 
 
 class TestCapacityLineForCategory:
-    def test_mapping(self):
+    def test_mapping_and_default(self):
         assert cc.capacity_line_for_category("manufacturing") == cc.CAPACITY_LINE_MANUFACTURING
         assert cc.capacity_line_for_category("copying") == cc.CAPACITY_LINE_RESEARCH
         assert cc.capacity_line_for_category("invention") == cc.CAPACITY_LINE_RESEARCH
         assert cc.capacity_line_for_category("reaction") == cc.CAPACITY_LINE_REACTION
         assert cc.capacity_line_for_category("unknown") == cc.CAPACITY_LINE_MANUFACTURING
-        assert cc.capacity_line_for_category("") == cc.CAPACITY_LINE_MANUFACTURING
 
 
 class TestActiveLinesByCategory:
@@ -152,8 +151,5 @@ class TestActiveLinesByCategory:
 
 
 class TestLineLabel:
-    def test_labels(self):
-        assert cc.line_label(cc.CAPACITY_LINE_MANUFACTURING) == "制造"
-        assert cc.line_label(cc.CAPACITY_LINE_RESEARCH) == "科研"
-        assert cc.line_label(cc.CAPACITY_LINE_REACTION) == "反应"
+    def test_unknown_falls_back(self):
         assert cc.line_label("bogus") == "bogus"

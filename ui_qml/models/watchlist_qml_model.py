@@ -9,15 +9,14 @@ QML 的 `color` 能解析它，而 `#rrggbb` 会丢掉透明度、把整行糊�
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
-from PySide6.QtCore import QModelIndex, Qt, QUrl
+from PySide6.QtCore import QModelIndex, Qt
 from PySide6.QtGui import QColor
 
-from ui_qml.icon_cache import item_icon_path
+from ui_qml.icon_cache import icon_url as _icon_url
 from ui_qml.models.watchlist_models import WatchlistTableModel
-from ui_qml.theme import registry as theme
+from ui_qml.theme.registry import token as _token
 
 __all__ = ["WatchlistQmlModel", "ROLE_NAMES"]
 
@@ -50,10 +49,6 @@ _ALIGNED_COLS = frozenset({4, 5, 6, 7, 8})
 _CHANGE_ALPHA = 50
 
 
-def _token(name: str) -> str:
-    return str(getattr(theme, name, "") or "")
-
-
 def _tint(name: str) -> str:
     """带透明度的主题色的 `#aarrggbb` 形式。"""
     color = QColor(_token(name))
@@ -61,15 +56,6 @@ def _tint(name: str) -> str:
         return ""
     color.setAlpha(_CHANGE_ALPHA)
     return color.name(QColor.NameFormat.HexArgb)
-
-
-def _icon_url(type_id: Any) -> str:
-    if not type_id:
-        return ""
-    path = item_icon_path(int(type_id))
-    if not os.path.isfile(path):
-        return ""
-    return QUrl.fromLocalFile(path).toString()
 
 
 class WatchlistQmlModel(WatchlistTableModel):

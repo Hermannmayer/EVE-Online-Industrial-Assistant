@@ -180,7 +180,7 @@ def test_is_watched_path_filters_background_vs_source(tmp_path):
     assert wat(root / ".claude" / "worktrees" / "z" / "dev.py") is False
     assert wat(root / "tests" / "test_dev.py") is False
     assert wat(root / "scripts" / "migrate_split_db.py") is False
-    assert wat(root / "tools" / "downloaders" / "getitems.py") is False
+    assert wat(root / "tools" / "some_script.py") is False
     # 运行时/非源码 → 不触发
     assert wat(root / "data" / "settings.json") is False
     assert wat(root / "database" / "user.db") is False
