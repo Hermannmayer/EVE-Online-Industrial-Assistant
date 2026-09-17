@@ -8,8 +8,10 @@
 
 不用其它来源的原因：
 
-- ``item.category_id``：随包 reference.db 该列全为 NULL（sde_loader 的 category
-  步骤未跑），不能作为唯一依据。
+- ``item.category_id``：**曾经**不可靠 —— 随包 reference.db 该列一度全为 NULL
+  （`sde_loader.write_categories` 的后半段没跑完）。2026-09-17 已回填，
+  但判定逻辑不依赖它：未重跑 `sde_data` 的老库该列仍是 NULL，
+  而 group 名后缀谓词在两种库上都成立。
 - ``bp.blueprint_activities/products``：含发明源遗物（如「完整的推进器」）、漏部分
   真实蓝图；且 6 个「屹立…改装件 - 蓝图拷贝优化」名字含「蓝图」却并非蓝图，
   后缀谓词正好把这类名字排除。
