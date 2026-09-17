@@ -202,3 +202,26 @@ class MarketRepository:
                     (type_id,),
                 ).fetchone()
                 return float(r[0]) if r else None
+
+    def get_system_cost_index(
+        self,
+        system_id: int | None,
+        activity: str = "manufacturing",
+        hub: str = "Jita",
+    ) -> float:
+        """星系的制造成本指数（SCI）。`system_id=None` 时从 hub 名称推断，查无统一用默认值。
+
+        数据在 `reference.db` 而非 `market.db`（唯一一个跨库的方法）。
+        """
+        from core.constants import DEFAULT_SYSTEM_COST_INDEX, TRADE_HUB_SYSTEM_IDS
+
+        if system_id is None:
+            system_id = TRADE_HUB_SYSTEM_IDS.get(hub)
+        if system_id is None:
+            return DEFAULT_SYSTEM_COST_INDEX
+        with self._db.connect("ref") as conn:
+            r = conn.execute(
+                "SELECT cost_index FROM industry_system_costs WHERE solar_system_id = ? AND activity = ? LIMIT 1",
+                (system_id, activity),
+            ).fetchone()
+            return float(r[0]) if r else DEFAULT_SYSTEM_COST_INDEX
