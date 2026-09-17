@@ -1,5 +1,7 @@
 """Tests for core.single_instance module."""
 
+import os
+
 import pytest
 
 import core.single_instance as si
@@ -27,9 +29,12 @@ def lock_path(tmp_path, monkeypatch):
 class TestTryLock:
     def test_first_acquire_succeeds(self, lock_path):
         assert try_lock(force=False) is True
+        assert lock_path.read_text() == f"{os.getpid()}:{os.name}"
 
     def test_force_skips_check(self, lock_path):
+        # force 只跳过检查：既不写锁文件、也不拥有它
         assert try_lock(force=True) is True
+        assert not lock_path.exists()
 
     def test_same_process_reacquires(self, lock_path):
         try_lock(force=False)
@@ -44,18 +49,21 @@ class TestTryLock:
         lock_path.write_text("999999:nt")
         monkeypatch.setattr(si, "_is_pid_alive", lambda pid: True)
         assert try_lock(force=False) is False
+        assert lock_path.read_text() == "999999:nt", "不应覆盖存活实例的锁文件"
 
     def test_dead_process_stale_lock_reacquires(self, lock_path):
         lock_path.write_text("999999:nt")
         assert try_lock(force=False) is True
+        assert lock_path.read_text() == f"{os.getpid()}:{os.name}", "残留锁应被本进程 PID 覆盖"
 
     def test_write_failure_degrades_to_run(self, lock_path, monkeypatch):
-        """Windows 瞬时锁冲突：写锁失败时应降级运行而非崩溃。"""
+        """Windows 瞬时锁冲突：原子建锁失败时应降级运行而非崩溃。"""
 
         def _boom(*a, **kw):
             raise PermissionError(13, "Permission denied")
 
-        monkeypatch.setattr(type(lock_path), "write_text", _boom)
+        # 生产用 os.open(O_CREAT|O_EXCL) 原子建锁，不是 Path.write_text
+        monkeypatch.setattr(si.os, "open", _boom)
         assert try_lock(force=False) is True
 
     def test_read_failure_degrades_to_run(self, lock_path, monkeypatch):
@@ -119,8 +127,6 @@ class TestTryLock:
 
 class TestIsPidAlive:
     def test_current_process_is_alive(self):
-        import os
-
         assert _is_pid_alive(os.getpid()) is True
 
     def test_invalid_pid_is_dead(self):

@@ -2,6 +2,7 @@
 
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -37,26 +38,30 @@ class TestDatabaseDir:
     """database_dir() — 数据库目录"""
 
     def test_database_dir_is_under_app_root(self):
-        """数据库目录应在 app_root 下"""
-        db_dir = database_dir()
-        assert db_dir.startswith(app_root())
+        """数据库目录恰为 app_root/database"""
+        assert database_dir() == os.path.join(app_root(), "database")
 
 
 class TestDatabasePaths:
     """各数据库路径函数"""
 
     def test_all_db_paths_under_database_dir(self):
-        """所有数据库路径都应在 database_dir 下"""
-        db_dir = database_dir()
-        for fn in (reference_db_path, market_db_path, user_db_path, blueprint_db_path):
-            assert fn().startswith(db_dir), f"{fn.__name__} not under database_dir"
+        """每个分库路径恰为 database_dir/<文件名>"""
+        expected = {
+            reference_db_path: "reference.db",
+            market_db_path: "market.db",
+            user_db_path: "user.db",
+            blueprint_db_path: "blueprint.db",
+        }
+        for fn, filename in expected.items():
+            assert fn() == os.path.join(database_dir(), filename), fn.__name__
 
 
 class TestDataPaths:
     """data_dir / icon_cache_dir"""
 
     def test_icon_cache_under_data_dir(self):
-        assert icon_cache_dir().startswith(data_dir())
+        assert icon_cache_dir() == os.path.join(data_dir(), "caches", "icons")
 
 
 class TestFrozenBoundary:
@@ -81,15 +86,14 @@ class TestFrozenBoundary:
         monkeypatch.setattr("sys.frozen", True, raising=False)
         assert app_root() == "C:/fake/release/env"
         # 派生路径（database/data）跟随隔离根目录
-        assert database_dir().startswith("C:/fake/release/env")
-        assert data_dir().startswith("C:/fake/release/env")
+        assert database_dir() == os.path.join("C:/fake/release/env", "database")
+        assert data_dir() == os.path.join("C:/fake/release/env", "data")
 
     def test_app_root_env_unset_uses_dev(self, monkeypatch):
-        """未设置环境变量时退回开发/打包逻辑"""
+        """未设置环境变量时退回开发/打包逻辑 → 项目根目录"""
         monkeypatch.delenv("EVE_ASSISTANT_APP_ROOT", raising=False)
         monkeypatch.delattr("sys.frozen", raising=False)
-        root = app_root()
-        assert os.path.isdir(os.path.join(root, "core"))
+        assert app_root() == str(Path(__file__).resolve().parents[1])
 
 
 class TestCompatBoundary:
@@ -106,5 +110,5 @@ class TestCompatBoundary:
         assert database_path() not in split_dbs
 
     def test_database_path_is_under_database_dir(self):
-        """database_path() 应在 database_dir 下"""
-        assert database_path().startswith(database_dir())
+        """旧兼容路径恰为 database_dir/items.db"""
+        assert database_path() == os.path.join(database_dir(), "items.db")

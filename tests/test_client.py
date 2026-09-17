@@ -40,9 +40,7 @@ class TestAPIClient:
         async def run():
             client = APIClient(concurrency=10, timeout=15, user_agent="TestApp/1.0")
             async with client:
-                assert client.session is not None
                 assert isinstance(client.session, aiohttp.ClientSession)
-                assert client.semaphore is not None
                 assert client.semaphore._value == 10
                 assert client.session._default_headers["User-Agent"] == "TestApp/1.0"
             assert client.session.closed
@@ -63,13 +61,14 @@ class TestAPIClient:
                 result = await client.fetch("https://esi.example.com/api")
                 assert result == {"key": "value"}
                 client.session.get.assert_called_once()
+                assert client.session.get.call_args[0][0] == "https://esi.example.com/api"
 
         asyncio.run(run())
 
     # ── test_fetch_retry ─────────────────────────────────────
 
     def test_fetch_retry(self):
-        """失败后应重试，最终返回 None"""
+        """失败后应重试：第一次网络错误、第二次成功 → 返回解析结果"""
 
         async def run():
             client = APIClient(retries=2)
@@ -111,6 +110,7 @@ class TestAPIClient:
                 result = await client.fetch("https://esi.example.com/api")
                 assert result is None
                 client.session.get.assert_called_once()
+                assert client.session.get.call_args[0][0] == "https://esi.example.com/api"
 
         asyncio.run(run())
 

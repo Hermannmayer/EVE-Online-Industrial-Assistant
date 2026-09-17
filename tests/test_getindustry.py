@@ -1,6 +1,6 @@
 """工业系统成本指数拉取单元测试 — services/workers/getindustry.py"""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 
@@ -101,7 +101,12 @@ class TestRunIndustryUpdate:
         insert_calls = [
             c for c in mock_db.executemany.call_args_list if "INSERT OR REPLACE INTO industry_system_costs" in c[0][0]
         ]
-        assert len(insert_calls) >= 1, "系统成本指数应通过 executemany 批量写入"
+        assert len(insert_calls) == 1, "系统成本指数应通过 executemany 批量写入一次"
+        assert insert_calls[0][0][1] == [
+            (30000142, "manufacturing", 0.053, ANY),
+            (30000142, "researching_time_efficiency", 0.021, ANY),
+            (30000144, "manufacturing", 0.047, ANY),
+        ], "每条 cost_index 都要展开成 (星系, 活动, 指数, 抓取时间) 行"
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
@@ -151,7 +156,11 @@ class TestRunIndustryUpdate:
         fac_calls = [
             c for c in mock_db.executemany.call_args_list if "INSERT OR REPLACE INTO industry_facilities" in c[0][0]
         ]
-        assert len(fac_calls) >= 1, "工业设施应通过 executemany 批量写入"
+        assert len(fac_calls) == 1, "工业设施应通过 executemany 批量写入一次"
+        assert fac_calls[0][0][1] == [
+            (60015000, 30000142, 2500, 1000001, 10000002, 0.05, ANY),
+            (60016000, 30000144, 2501, None, None, 0.0, ANY),
+        ], "缺省字段（owner/region）写 None，tax 缺省写 0.0"
 
     @pytest.mark.asyncio
     async def test_key_skills_constant(self):

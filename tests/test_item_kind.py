@@ -60,16 +60,16 @@ def ref_conn():
 class TestLooksLikeBlueprintName:
     def test_markers(self):
         """带蓝图/公式标记的名字（中英、忽略大小写）"""
-        assert looks_like_blueprint_name("渡鸦级蓝图")
-        assert looks_like_blueprint_name("Raven Blueprint")
-        assert looks_like_blueprint_name("BLUEPRINT II")
-        assert looks_like_blueprint_name("神经链接增强器反应配方")
+        assert looks_like_blueprint_name("渡鸦级蓝图") is True
+        assert looks_like_blueprint_name("Raven Blueprint") is True
+        assert looks_like_blueprint_name("BLUEPRINT II") is True
+        assert looks_like_blueprint_name("神经链接增强器反应配方") is True
 
     def test_non_blueprint(self):
         """材料名 / 空值不带标记"""
-        assert not looks_like_blueprint_name("碳纤维")
-        assert not looks_like_blueprint_name("")
-        assert not looks_like_blueprint_name(None)
+        assert looks_like_blueprint_name("碳纤维") is False
+        assert looks_like_blueprint_name("") is False
+        assert looks_like_blueprint_name(None) is False
 
 
 class TestBlueprintTypeIds:

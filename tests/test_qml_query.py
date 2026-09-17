@@ -14,8 +14,9 @@ import re
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import QObject, Qt, QtMsgType, qInstallMessageHandler
 
+from tests.clipboard_wait import wait_for_clipboard, wait_for_clipboard_prefix
 from tests.qml_click import press_move_release
 from tests.qml_click import spin as _spin
 from ui_qml.models.query_models import format_search_rows
@@ -209,18 +210,17 @@ def test_menu_state_reflects_available_prices(bridge):
 
 @pytest.mark.ui
 def test_copy_actions_write_clipboard_and_status(bridge, qapp):
-    from PySide6.QtWidgets import QApplication
 
     _fill(bridge, _row())
 
     bridge.copyName(0)
-    assert QApplication.clipboard().text() == "三钛合金"
+    assert wait_for_clipboard("三钛合金") == "三钛合金"
 
     bridge.copyTypeId(0)
-    assert QApplication.clipboard().text() == "34"
+    assert wait_for_clipboard("34") == "34"
 
     bridge.copyRowTsv(0)
-    assert "\t" in QApplication.clipboard().text()
+    assert "\t" in wait_for_clipboard_prefix("三钛合金\t")
     assert "已复制整行数据 (TSV 格式)" in bridge.statusText
 
 
@@ -391,7 +391,7 @@ def test_page_loads_and_exposes_the_bridge(query_page):
     root = host.rootObject()
     assert root is not None
     assert root.property("query") is bridge
-    assert root.findChild(type(root), "suggestPopup") is not None or True  # objectName 在 Popup 上
+    assert root.findChild(QObject, "suggestPopup") is not None, "候选弹窗的 objectName 丢了"
     assert host.rootObject().property("currentRow") == -1
 
 

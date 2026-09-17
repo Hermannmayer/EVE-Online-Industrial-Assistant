@@ -3,8 +3,10 @@
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
+import yaml
 
 from services.importers.getblueprints import (
+    CACHE_DIR,
     CACHE_FILE,
     CREATE_TABLES_SQL,
     SDE_ZIP_PATH,
@@ -53,14 +55,15 @@ class TestEnsureCache:
             result = await ensure_cache()
 
         assert result == CACHE_FILE
-        mock_ensure_zip.assert_awaited_once()
+        mock_ensure_zip.assert_awaited_once_with(None)
         mock_zf.assert_called_once_with(SDE_ZIP_PATH, "r")
 
     @pytest.mark.asyncio
     @patch("services.importers.getblueprints.os.path.exists")
     @patch("services.importers.getblueprints.os.makedirs")
     @patch("services.importers.getblueprints.open", new_callable=mock_open)
-    async def test_reuses_shared_sde_zip_when_present(self, mock_file, mock_makedirs, mock_exists):
+    @patch("services.importers.sde_cache.ensure_sde_zip", new_callable=AsyncMock)
+    async def test_reuses_shared_sde_zip_when_present(self, mock_ensure_zip, mock_file, mock_makedirs, mock_exists):
         # CACHE_FILE 缺失但共享 data/sde.zip 已存在 → 复用，不重复下载
         mock_exists.side_effect = [False, True]  # CACHE_FILE 不存在, SDE_ZIP_PATH 存在
 
@@ -73,9 +76,9 @@ class TestEnsureCache:
             result = await ensure_cache()
 
         assert result == CACHE_FILE
-        # 未触发任何下载请求
-        mock_zf.return_value.__enter__.assert_called_once()
-        mock_zf.assert_called_once_with(SDE_ZIP_PATH, "r")
+        # 未触发任何下载请求 —— 直接读取本地 zip 里那个成员
+        mock_ensure_zip.assert_not_awaited()
+        mock_zf_instance.read.assert_called_once_with("sde/fsd/blueprints.yaml")
 
     @pytest.mark.asyncio
     @patch("services.importers.getblueprints.os.path.exists")
@@ -90,7 +93,7 @@ class TestEnsureCache:
             mock_zf.return_value.__enter__.return_value = mock_zf_instance
             with pytest.raises(FileNotFoundError, match="blueprints.yaml"):
                 await ensure_cache()
-        mock_ensure_zip.assert_awaited_once()
+        mock_ensure_zip.assert_awaited_once_with(None)
 
 
 class TestParseActivities:
@@ -147,7 +150,7 @@ class TestRunBlueprintUpdate:
         mock_connect.return_value.__aenter__ = AsyncMock(return_value=mock_db)
         mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
         await run_blueprint_update()
-        mock_makedirs.assert_called_once()
+        mock_makedirs.assert_called_once_with(CACHE_DIR, exist_ok=True)
 
     @pytest.mark.asyncio
     @patch("services.importers.getblueprints.aiosqlite.connect")
@@ -217,8 +220,16 @@ class TestRunBlueprintUpdate:
         with patch("services.importers.getitems.fill_missing_blueprint_names", AsyncMock()) as mock_fill:
             await run_blueprint_update()
 
-        assert mock_db_check.execute.called
-        assert mock_db_write.executemany.call_count >= 1
+        assert mock_db_check.execute.call_args[0][0] == "SELECT COUNT(*) FROM blueprint_activities"
+        # 逐表核对写入的行内容 —— 只断「被调过」会漏掉解析/列错位
+        inserted = {
+            call[0][0].split("INSERT OR REPLACE INTO ")[1].split(" ")[0]: call[0][1]
+            for call in mock_db_write.executemany.call_args_list
+        }
+        assert inserted["blueprint_activities"] == [(3001, "manufacturing", 3600, 10)]
+        assert inserted["blueprint_materials"] == [(3001, "manufacturing", 34, 100, 10)]
+        assert inserted["blueprint_products"] == [(3001, "manufacturing", 587, 1, 1.0)]
+        assert "blueprint_skills" not in inserted, "该 YAML 无技能，不应写 blueprint_skills"
         # 蓝图名称补拉已移到 sde_data 步骤（需 item 表就绪），blueprints 主体不再触发
         mock_fill.assert_not_awaited()
 
@@ -349,7 +360,7 @@ class TestEnsureCacheHttpError:
         with pytest.raises(Exception, match="HTTP 403 Forbidden"):
             await ensure_cache()
 
-        mock_ensure_zip.assert_awaited_once()
+        mock_ensure_zip.assert_awaited_once_with(None)
 
 
 class TestRunBlueprintUpdateYamlError:
@@ -411,7 +422,9 @@ class TestRunBlueprintUpdateYamlError:
             await run_blueprint_update()
 
         assert "list" in str(exc_info.value)
-        # 验证 yaml.load 确实被调用（而非提前跳过）
+        # 验证 yaml.load 确实被调用（而非提前跳过），且用的是安全 loader
         mock_yaml.assert_called_once()
+        _args, kwargs = mock_yaml.call_args
+        assert kwargs["Loader"] in (yaml.CSafeLoader, yaml.SafeLoader), "必须用安全 loader 解析 SDE"
         # 验证读取的是缓存文件
         mock_file.assert_called_once_with("/tmp/blueprints.yaml", encoding="utf-8")
