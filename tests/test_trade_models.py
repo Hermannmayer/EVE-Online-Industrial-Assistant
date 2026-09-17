@@ -1,4 +1,4 @@
-"""贸易 Table Model 单元测试 — ui_pyside6/models/trade_models.py
+"""贸易 Table Model 单元测试 — ui_qml/models/trade_models.py
 
 测试覆盖:
   - TradeHubTableModel: 跨区域价格对比表模型
@@ -93,13 +93,15 @@ class TestTradeHubTableModel:
         assert model.data(model.index(0, 4), Qt.ItemDataRole.ForegroundRole) is None
 
     def test_data_decoration_icon_exists(self, qapp):
-        """有图标文件时 DecorationRole 返回 QPixmap"""
+        """有图标文件时 DecorationRole 返回 load_item_icon 给的 QPixmap"""
         rows = [{"hub": "Jita", "type_id": 2001}]
         model = TradeHubTableModel(rows)
 
-        with patch("ui_qml.models.trade_models.load_item_icon", return_value=MagicMock()):
+        pixmap = MagicMock()
+        with patch("ui_qml.models.trade_models.load_item_icon", return_value=pixmap) as mock_load:
             result = model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole)
-            assert result is not None
+            assert result is pixmap
+            mock_load.assert_called_once_with(2001, size=32)
 
         # 非首列 DecorationRole → None
         assert model.data(model.index(0, 1), Qt.ItemDataRole.DecorationRole) is None

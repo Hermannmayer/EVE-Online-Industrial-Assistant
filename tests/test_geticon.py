@@ -1,4 +1,4 @@
-"""图标下载服务单元测试 — services/workers/geticon.py
+"""图标下载服务单元测试 — services/importers/geticon.py
 
 覆盖: 图标路径生成、缓存逻辑、下载触发。
 使用 tmp_path + mock aiohttp 避免真实网络请求和磁盘污染。
