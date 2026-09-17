@@ -53,8 +53,7 @@ def build_industry_spec(shell: Any) -> PageSpec:
     """注册表页工厂：造控制器，返回组装规格 —— **不碰宿主**。
 
     QML 外壳把规格实例化成 `Item`（`build_qml_page`），控制器只提供两个桥与钩子实现。
-    `headless_host=True` 是历史开关（控制器已无自建宿主路径），保留只为与控制器签名对齐。
     """
     from ui_qml.views.industry_view import IndustryPage
 
-    return industry_spec(IndustryPage(shell, headless_host=True))
+    return industry_spec(IndustryPage(shell))
