@@ -57,8 +57,10 @@ EVE Online 游戏术语与本项目内部术语的中英文对照。
 | 仪表盘 | Dashboard | 空闲态的三块面板：产线详情 / 资产折线图 / 挂单列表 |
 | 挂单导出 | Order Export | 游戏内「钱包 → 订单 → 导出」写出的**本地文件**（默认 `Documents\EVE\logs\Marketlogs`，国服文件名为 `个人订单-…`）；挂单列表的数据源 |
 | 挂单金额 | Open Order Value | 全部挂单按各自价格 × 剩余量求和；资产折线图的一条线 |
-| 资产快照 | Asset Snapshot | `user.db.asset_snapshots` 每天一行（当天重复覆盖），记录总资产 / 挂单金额 / 库存材料 / 钱包余额 |
-| 钱包余额 | Wallet Balance | 手填项（游戏导出文件里没有），存 settings.json，参与资产快照 |
+| 资产快照 | Asset Snapshot | `user.db.asset_snapshots` 每天一行（当天重复覆盖），记录总资产 / 挂单金额 / 库存材料 / **运行中产线价值** / 钱包余额 |
+| 运行中产线价值 | Active Line Value | **制造中**产线（`category=='manufacturing'` 且 `status IN ('in_progress','running')`）的材料需求 × 卖单价；资产折线图的一条线。与「仓库管理」的 `plan_usage`（只算库存里有的物料）**口径不同** |
+| 钱包余额 | Wallet Balance | 存 settings.json（`wallet_balance`）；可手填，订单变动确认后也会按成交金额自动加减 |
+| 订单变动 | Order Change | 两次挂单导出之间的差异：消失（`gone`，成交或撤单）与数量变少（`partial`，部分成交）。由 `query_dashboard_bridge.classify_order_changes` 纯函数算出，用户在 `OrderChangeDialog` 里逐条判「成交 / 手动撤销」 |
 | 库存材料金额 | Inventory Value | 各机库材料按卖单价估值的合计；资产折线图的一条线 |
 
 ## 数据源

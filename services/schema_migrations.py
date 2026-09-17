@@ -27,7 +27,7 @@ BACKUP_KEEP = 5
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
-    "user": 17,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 科研作业列（activity/decryptor_type_id/success_rate/research_target_level/actual_output_runs）;  v13→v14: 修复「版本已到 13 但科研列缺失」的历史库;  v14→v15: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）;  v15→v16: user_blueprints 原图权威化（runs<0 → is_bpo=1/runs=0，-1 退场）;  v16→v17: asset_snapshots / open_orders 表
+    "user": 18,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 科研作业列（activity/decryptor_type_id/success_rate/research_target_level/actual_output_runs）;  v13→v14: 修复「版本已到 13 但科研列缺失」的历史库;  v14→v15: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）;  v15→v16: user_blueprints 原图权威化（runs<0 → is_bpo=1/runs=0，-1 退场）;  v16→v17: asset_snapshots / open_orders 表;  v17→v18: asset_snapshots.line_value 列（运行中产线价值）+ order_events 台账表
     "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
 }
 
@@ -463,6 +463,22 @@ CREATE TABLE IF NOT EXISTS open_orders (
 """
 
 
+# 订单变动台账（v17→v18）。与 `services/asset_snapshot_service.SCHEMA` 的同名表保持一致
+# （那边用 IF NOT EXISTS 兜底新库/测试，两边重复执行幂等）。
+_ORDER_EVENTS_SQL = """
+CREATE TABLE IF NOT EXISTS order_events (
+    order_id INTEGER NOT NULL,
+    applied_at TEXT NOT NULL,
+    outcome TEXT DEFAULT '',        -- filled / cancelled
+    is_buy INTEGER DEFAULT 0,
+    price REAL DEFAULT 0,
+    volume INTEGER DEFAULT 0,
+    delta REAL DEFAULT 0,           -- 本次对钱包余额的增减（ISK，正=加）
+    PRIMARY KEY (order_id, applied_at)
+);
+"""
+
+
 def _migrate_user_v16_to_v17(db_path: str) -> str:
     """v16→v17: 新增 asset_snapshots（每日资产快照）与 open_orders（挂单）两张表。
 
@@ -481,6 +497,25 @@ def _migrate_user_v16_to_v17(db_path: str) -> str:
         raise
     finally:
         conn.close()
+
+
+def _migrate_user_v17_to_v18(db_path: str) -> str:
+    """v17→v18: asset_snapshots 新增 line_value 列 + 新增 order_events 台账表。
+
+    - ``line_value``：资产折线图第 5 条线「运行中产线价值」（只取制造中产线的
+      材料占用 × 卖单价）。存量行的历史值补 0 —— 那一天没记过这条线，不该编造。
+    - ``order_events``：用户确认「订单变动」（成交 / 手动撤销）后落一条台账。
+      **只做记录**，不参与任何计算 —— 钱包余额的增减是当次动作做的，台账是事后可查的凭据。
+      ``order_id`` 不设外键：挂单随时会被清掉，台账要留得住。
+    """
+    net = _add_columns(db_path, "asset_snapshots", [("line_value", "REAL DEFAULT 0")])
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(_ORDER_EVENTS_SQL)
+        conn.commit()
+    finally:
+        conn.close()
+    return f"asset_snapshots.line_value (新增 {net} 列) + order_events 表"
 
 
 def _migrate_bp_v1_to_v2(db_path: str) -> str:
@@ -524,6 +559,7 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
         14: _migrate_user_v14_to_v15,
         15: _migrate_user_v15_to_v16,
         16: _migrate_user_v16_to_v17,
+        17: _migrate_user_v17_to_v18,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,

@@ -1,7 +1,7 @@
 """资产快照服务测试 —— services/asset_snapshot_service.py
 
-覆盖：同日 upsert 覆盖（不累积）、total = inventory + orders + wallet、
-load_series 升序与按窗口裁剪、空库返回 []、钱包余额读写往返、基线表自举。
+覆盖：同日 upsert 覆盖（不累积）、total = inventory + orders + line_value + wallet、
+load_series 升序与按窗口裁剪、空库返回 []、钱包余额读写往返、订单变动增减余额、基线表自举。
 """
 
 import shutil
@@ -35,7 +35,9 @@ def snapshot_env(monkeypatch):
     db = DatabaseManager()
     with db.connect("user") as conn:
         conn.executescript(INV_SCHEMA)  # hangars / inventory_items / user_blueprints
-        conn.executescript(svc.SCHEMA)  # asset_snapshots / open_orders
+        conn.executescript(svc.SCHEMA)  # asset_snapshots / open_orders / order_events
+    # `_line_value()` 会读制造计划与蓝图/价格库；这些用例只关心「没有制造中产线时为 0」
+    monkeypatch.setattr("services.plan_service.load_plans_for_wizard", lambda: [])
 
     monkeypatch.setattr(svc, "_default_db", lambda: db)
     monkeypatch.setattr(im, "_default_db", lambda: db)
@@ -47,16 +49,17 @@ def snapshot_env(monkeypatch):
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def _insert_snapshot(db, snap_date, total=0.0, orders=0.0, inventory=0.0, wallet=0.0):
+def _insert_snapshot(db, snap_date, total=0.0, orders=0.0, inventory=0.0, line_value=0.0, wallet=0.0):
     with db.connect("user") as conn:
         conn.execute(
-            "INSERT INTO asset_snapshots (snap_date, total, orders, inventory, wallet) VALUES (?,?,?,?,?)",
-            (snap_date, total, orders, inventory, wallet),
+            "INSERT INTO asset_snapshots (snap_date, total, orders, inventory, line_value, wallet) "
+            "VALUES (?,?,?,?,?,?)",
+            (snap_date, total, orders, inventory, line_value, wallet),
         )
 
 
 def test_record_snapshot_composition(snapshot_env):
-    """total = inventory + orders + wallet，且各行来源正确。"""
+    """total = inventory + orders + line_value + wallet，且各行来源正确。"""
     im.init_db()  # seed 默认机库
     im.add_item(1, 1001, 10, 0)  # 10 × 卖价 5.0 = 50.0
     with snapshot_env.db.connect("user") as conn:
@@ -66,9 +69,10 @@ def test_record_snapshot_composition(snapshot_env):
 
     assert snap["inventory"] == 50.0
     assert snap["orders"] == 300.0
+    assert snap["line_value"] == 0.0, "没有制造中产线 → 0"
     assert snap["wallet"] == 0.0
     assert snap["total"] == 350.0
-    assert snap["total"] == snap["inventory"] + snap["orders"] + snap["wallet"]
+    assert snap["total"] == snap["inventory"] + snap["orders"] + snap["line_value"] + snap["wallet"]
     assert snap["date"], "应从 SQLite 回读 snap_date"
 
 
@@ -81,11 +85,64 @@ def test_record_snapshot_upserts_same_day(snapshot_env):
     svc.record_snapshot(wallet=1000.0)
 
     with snapshot_env.db.connect("user") as conn:
-        rows = conn.execute("SELECT snap_date, total, orders, inventory, wallet FROM asset_snapshots").fetchall()
+        rows = conn.execute(
+            "SELECT snap_date, total, orders, inventory, line_value, wallet FROM asset_snapshots"
+        ).fetchall()
 
     assert len(rows) == 1, "同一天只应保留一行"
     assert rows[0]["wallet"] == 1000.0
     assert rows[0]["total"] == 1050.0, "值为第二次调用的结果（覆盖非累积）"
+
+
+def test_line_value_uses_manufacturing_plans_and_sell_price(monkeypatch, snapshot_env):
+    """line_value = 制造中产线材料需求 × 卖单价；科研/反应/待排计划不计入。
+
+    纯口径用例：把计划加载与材料需求都换成替身，只验「筛什么、乘什么、怎么求和」。
+    """
+    plans = [
+        {"id": 1, "category": "manufacturing", "status": "running"},
+        {"id": 2, "category": "manufacturing", "status": "in_progress"},
+        {"id": 3, "category": "research", "status": "running"},  # 科研 → 不计
+        {"id": 4, "category": "manufacturing", "status": "pending"},  # 未启动 → 不计
+        {"id": 5, "category": "reaction", "status": "running"},  # 反应 → 不计
+    ]
+    needs = {
+        1: [{"type_id": 1001, "need": 10}],
+        2: [{"type_id": 1001, "need": 5}, {"type_id": 1002, "need": 2}],
+        3: [{"type_id": 1001, "need": 1000}],  # 被筛掉，不该出现
+    }
+    called: list[int] = []
+
+    def _fake_needs(plan: dict) -> list[dict]:
+        called.append(int(plan["id"]))
+        return list(needs.get(int(plan["id"]), []))
+
+    monkeypatch.setattr("services.plan_service.load_plans_for_wizard", lambda: [dict(p) for p in plans])
+    monkeypatch.setattr("services.plan_execution.material_requirements", _fake_needs)
+    # 1001 卖价 5.0、1002 无价（按 0 计）
+    monkeypatch.setattr(svc, "_sell_prices", lambda ids: {1001: 5.0} if 1001 in ids else {})
+
+    assert svc._line_value() == 75.0  # (10 + 5) × 5.0
+    assert sorted(called) == [1, 2], "只有制造中产线参与取数"
+
+
+def test_line_value_survives_one_broken_plan(monkeypatch, snapshot_env):
+    """单条计划算材料需求抛异常 → 跳过该条，其余照算（整张折线不该断）。"""
+    plans = [
+        {"id": 1, "category": "manufacturing", "status": "running"},
+        {"id": 2, "category": "manufacturing", "status": "running"},
+    ]
+
+    def _fake_needs(plan: dict) -> list[dict]:
+        if int(plan["id"]) == 1:
+            raise RuntimeError("boom")
+        return [{"type_id": 1001, "need": 4}]
+
+    monkeypatch.setattr("services.plan_service.load_plans_for_wizard", lambda: [dict(p) for p in plans])
+    monkeypatch.setattr("services.plan_execution.material_requirements", _fake_needs)
+    monkeypatch.setattr(svc, "_sell_prices", lambda ids: {1001: 5.0})
+
+    assert svc._line_value() == 20.0
 
 
 def test_load_series_ascending_and_window(snapshot_env):
@@ -117,6 +174,14 @@ def test_wallet_roundtrip():
     assert svc.get_wallet_balance() == 123.45
 
 
+@pytest.mark.parametrize("delta,expected", [(500.0, 600.0), (-250.5, -150.5)])
+def test_adjust_wallet_balance_delta(delta, expected):
+    """订单变动按增量调整余额（正负都走同一条路径）。"""
+    svc.set_wallet_balance(100.0)
+    assert svc.adjust_wallet_balance(delta) == expected
+    assert svc.get_wallet_balance() == expected
+
+
 def test_service_bootstraps_missing_tables(monkeypatch, tmp_path):
     """未经迁移的裸 user.db：入口函数自动补建基线表，load_series 返回 []。"""
     from services.database_manager import DB_PATH_MAP, DatabaseManager, get_db
@@ -128,11 +193,12 @@ def test_service_bootstraps_missing_tables(monkeypatch, tmp_path):
     DB_PATH_MAP["user"] = str(user_path)
     db = DatabaseManager()
     monkeypatch.setattr(svc, "_default_db", lambda: db)
+    monkeypatch.setattr("services.plan_service.load_plans_for_wizard", lambda: [])
     try:
         assert svc.load_series() == []
         with db.connect("user") as conn:
             tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"asset_snapshots", "open_orders"} <= tables
+        assert {"asset_snapshots", "open_orders", "order_events"} <= tables
     finally:
         DB_PATH_MAP.clear()
         DB_PATH_MAP.update(saved)

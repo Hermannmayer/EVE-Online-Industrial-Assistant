@@ -287,27 +287,35 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
 - 详情面板四块（`QueryDetailBridge`）：① 价格 `market_repo.get_batch_market_snapshot`（每 hub 一次）；② 订单 `workers/order_workers.OrderFetchWorker` + `order_popup_bridge.order_rows`；③ 精炼 `workers/refine_worker.RefineWorker`；④ 制造材料 `bom_expander.get_flat_materials`（买/卖各展开一次）。几何/文案在 `ui_qml/models/query_detail_model.py` 纯函数里
 
 空闲态三条线（`QueryDashboardBridge`）：
-- **产线详情**：`occupancyByLine`（**按产线类型分行**，行内每角色一段容量条）← `_refresh_occupancy` ← `services.char_capacity.active_lines_by_category` + `max_lines_for_category`；`quickRows`（可启动 / 可下线）← `_build_quick_rows` ← `plan_start_check.plan_start_block`（软阻塞 `material_short`/`blueprint_short` 仍给「启动」）+ `plan_execution.check_materials`/`binding_shortfall`/`plan_blueprint_ready`；`quickAction` → `plan_execution.start_plan` / `ui_qml.views.industry.complete_plans_dialog.complete_one_plan`（**确认框在桥里弹**，走 `FMessageDialog.question`）
-- **资产折线图**：`assetPlot` / `assetSeries` / `assetSummaryRows` ← `_refresh_snapshots` → `services.asset_snapshot_service.load_series` → `query_dashboard_bridge.asset_plot`（几何复用 `ui_qml.bridge.price_chart_bridge` 的 `nice_range`/`axis_values`/`map_values`/`pick_indices`）；区间档位 `range_window` + `trim_from`。4 条线取数来源见 `services/asset_snapshot_service` 模块 docstring（inventory / orders / wallet / total）
-- **挂单列表**：`openOrderRows` ← `_ensure_orders` ← `user.db.open_orders`
+- **产线详情**：`occupancyByChar`（**每人物一块，块内制造/科研/反应各一行**；行尾给「待下线 N」= 该人物该线型 `status=='ready'` 的计划数，与「空 N」= 剩余产线）← `_refresh_occupancy` + `_build_occupancy_by_char` + `_ready_count_by_char_line` ← `services.char_capacity.active_lines_by_category` + `max_lines_for_category` + `capacity_line_for_category`。同一算法另出 `occupancyRows`（按人物，与 `LauncherBridge.occupancyRows` 逐字同形状）。（仪表盘原有的「快捷操作（可启动 / 可下线）」列表已按用户要求删除 —— 启动/下线在**生产计划表**与**产线启动小助手**里都有）
+- **资产折线图**：`assetPlot` / `assetSeries` / `assetSummaryRows` ← `_refresh_snapshots` → `services.asset_snapshot_service.load_series` → `query_dashboard_bridge.asset_plot`（几何复用 `ui_qml.bridge.price_chart_bridge` 的 `nice_range`/`axis_values`/`map_values`/`pick_indices`）；区间档位 `range_window` + `trim_from`。**5 条线**取数来源见 `services/asset_snapshot_service` 模块 docstring（inventory / orders / line_value / wallet / total）。面板右上角「刷新」→ `reloadAssets`（**强制**重读，绕开指纹）
+- **挂单列表**：`buyOrderRows` / `sellOrderRows`（**买单、卖单各一张表**，各带笔数）← `_ensure_orders` ← `user.db.open_orders`
 
 挂单导入（`QueryDashboardBridge.readOrders`）：
 
 ```
-services.order_export.find_latest_export（默认 %USERPROFILE%\Documents\EVE\logs\Marketlogs；文件名含 order/订单）
+services.order_export.find_latest_export(None)   ← 目录固定游戏默认（%USERPROFILE%\Documents\EVE\logs\Marketlogs；文件名含 order/订单）
   → services.order_export.read_export_text（utf-8-sig → utf-16 → gbk 逐档）
   → services.order_export.parse_order_export（表头驱动 CSV，退化启发式；不抛异常）
   → QueryDashboardBridge._fill_location_names → services.npc_seller.resolve_stations_by_ids（补中文站名）
   → QueryDashboardBridge._fill_type_names → ref.item（补中文物品名；真实导出**无物品名列**）
+  → _snapshot_orders（写库**之前**的挂单快照 = before）
   → QueryDashboardBridge._write_orders → INSERT OR REPLACE INTO open_orders（order_id 主键 → 幂等）
-  → _load_stale（本次文件没出现的旧订单，只统计）→ _review_stale（staleCount>0 才弹确认框）→ dropStaleOrders（DELETE）
+  → classify_order_changes(before, records)（**纯函数**：消失 → gone、剩余量变少 → partial；新增不算变动）
+  → _review_changes（有变动才弹「订单变动」确认框）→ _apply_outcomes（钱包增减 / 台账 / 删行或回写剩余量）
   → QueryDashboardBridge._record_snapshot → services.asset_snapshot_service.record_snapshot
 ```
 
-- 钱包余额**手填**：`QueryDashboardBridge.setWalletText` → `asset_snapshot_service.set_wallet_balance`（settings.json `wallet_balance`）+ `record_snapshot`；导出目录 `setExportDir` → `user_settings.save_settings`（settings.json `order_export_dir`）
-- 表：user 库 `asset_snapshots` / `open_orders`，schema 迁移 v16→v17（`services.schema_migrations._USER_V17_TABLES_SQL` / `_migrate_user_v16_to_v17`）；服务入口另有 `CREATE TABLE IF NOT EXISTS` 兜底（测试 / 新库）
+订单变动确认（`ui_qml/bridge/order_change_bridge.py` + `ui_qml/qml/dialogs/OrderChangeDialog.qml`）：
+每条变动逐条选「买到了 / 卖完了」（默认，计入钱包）或「手动撤销」（不动钱包）。`_apply_outcomes` 四步：
+① `DELETE`（整笔消失）或 `UPDATE volume_remain`（部分成交）；② 落 `order_events` 台账（只记录，不参与计算）；
+③ `asset_snapshot_service.adjust_wallet_balance` 增减余额（卖 **+** 价格×减少量、买 **−**，**不扣税费**，用户确认口径）；
+④ 清 `_pending_changes` + 重记快照。用户点「取消」→ 什么都不做，变动留在 `_pending_changes` 里下次导入重新提示。
+
+- 钱包余额**手填**：`QueryDashboardBridge.setWalletText` → `asset_snapshot_service.set_wallet_balance`（settings.json `wallet_balance`）+ `record_snapshot`；订单变动也走同一个键（`adjust_wallet_balance`）。**导出目录固定为游戏默认目录** —— 面板上的自定义目录输入框与 `settings.json` 的 `order_export_dir` 键已按用户要求退场
+- 表：user 库 `asset_snapshots`（含 `line_value`）/ `open_orders` / `order_events`，schema 迁移 v16→v17 建前两张表、**v17→v18** 加 `line_value` 列并建 `order_events`（`services.schema_migrations._USER_V17_TABLES_SQL` / `_ORDER_EVENTS_SQL` / `_migrate_user_v16_to_v17` / `_migrate_user_v17_to_v18`）；服务入口另有 `CREATE TABLE IF NOT EXISTS` 兜底（测试 / 新库）
 - 日期口径：快照日期一律由 **SQLite 侧** `date('now','localtime')` 决定（`asset_snapshots.snap_date` 唯一，当天重复记录覆盖不累积），不混用 Python 的 `date.today()`
-- 刷新：`QueryDashboardBridge.refresh` **幂等且便宜** —— 先算「计划字段 + 机库库存 + 角色技能 + 快照/挂单行数 + 本桥本地状态」指纹，没变就直接返回（不重算、不发 `changed`）。由 QML 的空闲态可见性驱动（可见即刷一次 + 60s 定时器），桥**不自建定时器**
+- 刷新：`QueryDashboardBridge.refresh` **幂等且便宜** —— 先算「计划字段 + 机库库存 + 角色技能 + 快照/挂单行数 + 本桥本地状态」指纹，没变就直接返回（不重算、不发 `changed`）。由 QML 的空闲态可见性驱动（可见即刷一次 + 60s 定时器），桥**不自建定时器**；折线图右上角的「刷新」按钮走 `reloadAssets`（强制）
 
 **已知陷阱**（改这块前先看）：
 - **QML 没有 `int()`**：JS 全局只有 `Number` / `parseInt` / `Math.*`。写 `int(x)` 会让整条绑定抛 `ReferenceError`，而 QML 对绑定错误**静默**（属性停在默认值）—— 实测容量条一个槽位都画不出来，只剩一条空轨道。

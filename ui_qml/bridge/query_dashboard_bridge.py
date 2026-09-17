@@ -3,41 +3,40 @@
 四块内容，全部同步取数（**构造期不起任何线程**，硬约束见
 `ui_qml/bridge/query_bridge.py:221-237`：桥一旦生命周期短，线程还没结束进程就退不出去）：
 
-1. **产线详情** `occupancyRows()` —— 与 `LauncherBridge.occupancyRows` **同形状**
-   （键名 `name`，不是 `charName`），QML 直接喂给 `components/FCapacityRow.qml`。
-   算法复刻 `ui_qml/views/industry/production_launcher.py::_refresh_occupancy`
-   （该文件被另一会话占用，**只读不改**），底层同样是
-   `services.char_capacity.active_lines_by_category` + `max_lines_for_category`。
-   `nameWidth` 是个例外：原实现用 `QFontMetrics` 量文字宽度，本面板固定 `76`
-   （`FCapacityRow.qml` 的 `nameWidth` 默认值）—— 桥里量字体需要 `QGuiApplication`，
-   而本桥在无 GUI 的测试里也要能跑。
-   另有 `quickRows` 给出「可启动 / 可下线」快捷行，`quickAction(index)` 执行
-   （**确认框在桥里弹**，走 `FMessageDialog.question`，与 `char_settings_bridge` 同口径）。
+1. **产线详情** `occupancyByChar` —— **每人物一块，块内制造/科研/反应各一行**。
+   块尾给「待下线 N」（该人物该线型的 `status=='ready'` 计划数）与「空 N」（剩余产线）。
+   算法底层仍是 `services.char_capacity.active_lines_by_category` + `max_lines_for_category`
+   （与产线启动小助手同源），只是**转置方向按人物**（仪表盘左栏要的是「谁在用」）。
+   另有 `occupancyRows` 保留 `launcher_bridge.occupancyRows` 的同形状输出（共用契约）。
 
-2. **资产折线图** `assetPlot` / `assetSeries` —— 数据源 `services.asset_snapshot_service`。
+2. **资产折线图** `assetPlot` / `assetSeries` / `reloadAssets()` —— 数据源
+   `services.asset_snapshot_service`（5 条线，含「运行中产线价值」）。
    几何全部复用 `ui_qml/bridge/price_chart_bridge.py` 的纯函数
    （`nice_range` / `axis_values` / `map_values` / `pick_indices`），与 `plot_model` 同口径：
    x 按**下标均分**，y 用**筛选后可见线**的合并最值，下界**不贴 0**
    （资产不从 0 起，贴 0 会把波动压平）。颜色在 **Python 侧**算好（过
    `ensure_contrast`）随 `series[].color` 一起下发 —— QML 不准自己读 `Theme` 取折线色。
 
-3. **资产表** `assetSummaryRows` —— 4 行「最新值 + 相对区间首点的变化量/百分比」。
+3. **资产表** `assetSummaryRows` —— 5 行「最新值 + 相对区间首点的变化量/百分比」。
 
-4. **挂单列表** `openOrderRows` / `readOrders` / `pendingReview` / `dropStaleOrders` ——
-   读游戏内「钱包 → 订单 → 导出」写出的本地文件（`Documents\\EVE\\logs\\Marketlogs\\`），
-   解析走 `services.order_export`，落 `user.db.open_orders`（`INSERT OR REPLACE`，order_id
-   主键 → 重复导入幂等），并回写一条资产快照。**过期行不自动删**：`pendingReview()` 交给
-   QML 弹确认框，用户点头才 `dropStaleOrders()`。
+4. **挂单列表** `buyOrderRows` / `sellOrderRows`（**买单、卖单各一张表**，各带笔数）/
+   `readOrders` —— 读游戏内「钱包 → 订单 → 导出」写出的本地文件
+   （`Documents\\EVE\\logs\\Marketlogs\\`，**目录固定不设自定义**），解析走
+   `services.order_export`，落 `user.db.open_orders`（`INSERT OR REPLACE`，order_id
+   主键 → 重复导入幂等）。
+
+   **导入后弹「订单变动」确认框**（`ui_qml.bridge.order_change_bridge`）：列出本次
+   消失 / 数量变少的订单，逐条选「买到了 / 卖完了」（默认）或「手动撤销」；
+   点应用后由 `applyOrderChanges` 增减钱包余额（卖出 +、买入 −，**不扣税费**）、
+   落 `order_events` 台账、清掉已结束的挂单、回写资产快照。
 
 刷新生命周期：**本桥不自建定时器**。QML 空闲态可见时调一次 `refresh()`，另有一个只在
 可见时运行的 60s `Timer` 也调它 —— 因此 `refresh()` 必须幂等且便宜：先算一份
 「计划字段集 + 机库库存 + 角色技能 + 快照/挂单行数 + 本桥本地状态」的指纹，
 **指纹没变就直接返回，不重算、不发 `changed`**（照抄 `industry_view.py` 的材料状态刷新思路）。
-指纹本身要读一次计划与库存（那已经是最便宜的一档），变与不变都只走这一档；
-只有变了才做逐条 pending 计划的评分（材料缺口）与几何重算。
 
 **数据一律 `Property`，动作才是 `Slot`**：QML 的绑定不追踪 Slot 内部的属性读取，
-把 `occupancyRows` / `assetPlot` 这类数据写成 Slot 调用，面板就不会随 `changed` 刷新
+把 `occupancyByChar` / `assetPlot` 这类数据写成 Slot 调用，面板就不会随 `changed` 刷新
 （本仓既有教训，见 `query_bridge.py` 的 `sortColumn` 注释）。
 """
 
@@ -57,7 +56,6 @@ import ui_qml.theme.registry as theme
 from core.container import get_container
 from core.logger import log
 from domain.theme_contrast import ensure_contrast
-from services import plan_execution
 from services.char_capacity import (
     CAPACITY_LINE_MANUFACTURING,
     CAPACITY_LINE_REACTION,
@@ -68,8 +66,6 @@ from services.char_capacity import (
 )
 from services.char_config_resolver import get_character_list, load_all_data
 from services.plan_service import load_plans_for_wizard
-from services.plan_start_check import plan_start_block
-from services.user_settings import load_settings, save_settings
 from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.bridge.price_chart_bridge import axis_values, map_values, nice_range, pick_indices
 from ui_qml.bridge.summary_dialog import cell
@@ -77,6 +73,7 @@ from ui_qml.bridge.summary_dialog import cell
 __all__ = [
     "QueryDashboardBridge",
     "asset_plot",
+    "classify_order_changes",
     "format_axis_value",
     "parse_amount",
     "range_window",
@@ -97,11 +94,12 @@ _LINE_COLORS = {
 _NAME_W = 76
 
 # ── 资产折线 ────────────────────────────────────────────────
-#: (key, 中文标签, 主题色 token)。四条线的颜色**不新增 token**，只复用现有强调色。
+#: (key, 中文标签, 主题色 token)。五条线的颜色**不新增 token**，只复用现有强调色。
 _SERIES: tuple[tuple[str, str, str], ...] = (
     ("total", "总资产", "PRIMARY"),
     ("orders", "挂单金额", "ACCENT_GREEN"),
     ("inventory", "库存材料", "ACCENT_ORANGE"),
+    ("line_value", "运行中产线价值", "ACCENT_CYAN"),
     ("wallet", "钱包余额", "ACCENT_YELLOW"),
 )
 _MAX_X_TICKS = 6
@@ -116,20 +114,9 @@ _EMPTY_PLOT: dict = {"isEmpty": True, "count": 0, "series": [], "xTicks": [], "y
 #: 不写用户会以为坏了。
 _EMPTY_ASSET_TEXT = "还没有资产快照 —— 数据从首次记录开始按天累积，导入一次挂单或填写钱包余额即可记下今天这一天。"
 
-# ── 快捷产线 ────────────────────────────────────────────────
-_QUICK_LIMIT = 8
-#: 最多评估多少条 pending 候选（每条候选要跑一次材料缺口评分，扫描无上限会把
-#: 主线程拖住；超过这一档的候选只能等用户在计划表里处理）。
-_QUICK_SCAN_LIMIT = 32
-#: 「软阻塞」= 缺料 / 蓝图流程不足：仍给可点的「启动」（与产线小助手同口径，
-#: 见 `docs/dev/ui-blueprint.md` 的「缺料是软阻塞」），其余阻塞直接不给。
-_SOFT_BLOCKS = frozenset({"material_short", "blueprint_short"})
-#: 软阻塞的短标签（与 `production_launcher._BLOCK_SHORT_LABELS` 同文案）。
-#: 不直接 import 那张表：那个模块属于另一个工作流、而且拉起来就是一整扇窗口。
-_SOFT_BLOCK_TEXT = {"material_short": "材料不够", "blueprint_short": "缺蓝图"}
-
 # ── 挂单 ────────────────────────────────────────────────────
-_ORDER_HEADS_LIST: tuple[str, ...] = ("订单ID", "物品", "方向", "价格", "剩余/总量", "位置")
+#: 两张表各自维护表头（**没有「方向」列** —— 表本身就是方向）
+_ORDER_HEADS_LIST: tuple[str, ...] = ("物品", "价格", "剩余/总量", "位置")
 _ORDER_DB_COLUMNS: tuple[str, ...] = (
     "order_id",
     "is_buy",
@@ -145,9 +132,10 @@ _ORDER_DB_COLUMNS: tuple[str, ...] = (
     "imported_at",
 )
 _TOKEN_PLAIN = "TEXT_PRIMARY"
-_TOKEN_BUY = "ACCENT_GREEN"
-_TOKEN_SELL = "ACCENT_RED"
-_SETTING_EXPORT_DIR = "order_export_dir"
+_EMPTY_BUY_TEXT = "暂无买单记录"
+_EMPTY_SELL_TEXT = "暂无卖单记录"
+#: 挂单导出目录**固定用游戏默认目录**（用户要求：不再提供自定义目录输入框）。
+#: `settings.json` 里若还留着旧键 `order_export_dir`，本模块已不再读取。
 _DEFAULT_EXPORT_DIR_TEXT = "默认目录（我的文档\\EVE\\logs\\Marketlogs）"
 _EMPTY_ORDER_SUMMARY = "暂无挂单记录，点「读取订单」从游戏「钱包 → 订单」的导出文件导入"
 
@@ -156,7 +144,7 @@ _MISSING_LOGGED: set[str] = set()
 
 
 # ════════════════════════════════════════════════════════════
-#  惰性服务入口（并行工作流交付，缺失时不崩）
+#  惰性服务入口（缺失时不崩）
 # ════════════════════════════════════════════════════════════
 
 
@@ -184,30 +172,16 @@ def _order_svc() -> Any | None:
     return order_export
 
 
-def _complete_one_plan(parent: Any, plan: dict) -> dict | None:
-    """单行下线入口（惰性导入；`ui_qml.views.industry` 会拉起 QtWidgets 与若干桥）。
+def _open_change_dialog(rows: list[dict], parent: Any, wallet: float) -> tuple[list[dict], bool]:
+    """弹「订单变动」确认框（模块级薄封装 → 测试可 monkeypatch，不开真窗口）。"""
+    from ui_qml.bridge.order_change_bridge import OrderChangeQmlDialog
 
-    直接复用 `ui_qml/views/industry/complete_plans_dialog.py::complete_one_plan`：
-    它自带产出机库选择与失败告警，返回 None = 用户取消或已弹过失败提示
-    （**不能当成失败结果**去改本地状态）。
-    """
-    from ui_qml.views.industry.complete_plans_dialog import complete_one_plan
-
-    return complete_one_plan(parent, plan)
+    return OrderChangeQmlDialog.confirm(parent, rows, wallet=wallet)
 
 
 def _user_conn() -> Any:
     """user.db 连接上下文（测试替换点）。"""
     return get_container().db.connect("user")
-
-
-def _configured_export_dir() -> str:
-    """`settings.json` 里的自定义订单导出目录（空串 = 用游戏默认目录）。"""
-    try:
-        return str(load_settings().get(_SETTING_EXPORT_DIR, "") or "").strip()
-    except Exception:
-        log.exception("读取订单导出目录失败")
-        return ""
 
 
 # ════════════════════════════════════════════════════════════
@@ -385,6 +359,71 @@ def asset_plot(
 
 
 # ════════════════════════════════════════════════════════════
+#  订单变动分类（纯函数，可脱离 Qt 单测）
+# ════════════════════════════════════════════════════════════
+
+
+def classify_order_changes(
+    before: Mapping[int, Mapping[str, Any]], after: Mapping[int, Mapping[str, Any]]
+) -> list[dict]:
+    """两次导入的挂单快照 → 变动条目（纯函数）。
+
+    Args:
+        before: 本次导入**之前**库里的挂单 `{order_id: 记录}`。
+        after: 本次导入**之后**库里的挂单 `{order_id: 记录}`。
+
+    Returns:
+        `[{order_id, name, is_buy, price, volume, delta, kind}]`，``kind`` ∈
+        ``gone``（老单在本次文件里没了 → 多半成交或撤单，数量 = 原剩余量）、
+        ``partial``（还在但剩余量变少 → 部分成交，数量 = 两次之差）。
+        **新增的订单不算变动**：那是新挂出去的，钱包在挂单时就已经变过了。
+
+    ``delta`` 是「若判为成交」对钱包的影响：卖出 +金额、买入 −金额，**不扣税费**
+    （中介费/销售税在游戏里已经各自结掉了；用户确认口径）。
+    """
+    changes: list[dict] = []
+    for order_id, old in before.items():
+        new = after.get(order_id)
+        old_remain = int(old.get("volume_remain") or 0)
+        price = float(old.get("price") or 0.0)
+        is_buy = bool(old.get("is_buy"))
+        if new is None:
+            if old_remain <= 0:
+                continue
+            changes.append(_change_row(order_id, old, "gone", old_remain, price, is_buy))
+            continue
+        new_remain = int(new.get("volume_remain") or 0)
+        sold = old_remain - new_remain
+        if sold > 0:
+            changes.append(_change_row(order_id, old, "partial", sold, price, is_buy, new_remain))
+    return changes
+
+
+def _change_row(
+    order_id: int,
+    record: Mapping[str, Any],
+    kind: str,
+    volume: int,
+    price: float,
+    is_buy: bool,
+    new_remain: int | None = None,
+) -> dict:
+    name = str(record.get("type_name") or "") or (f"#{int(record.get('type_id') or 0)}")
+    return {
+        "order_id": int(order_id),
+        "name": name,
+        "is_buy": 1 if is_buy else 0,
+        "price": price,
+        "volume": int(volume),
+        # 成交对钱包的影响：卖出 +、买入 −（不扣税费）
+        "delta": round(int(volume) * price * (-1.0 if is_buy else 1.0), 2),
+        "kind": kind,
+        #: 部分成交后挂单还剩多少（`gone` 为 None → 成交即删行）
+        "new_remain": new_remain,
+    }
+
+
+# ════════════════════════════════════════════════════════════
 #  桥
 # ════════════════════════════════════════════════════════════
 
@@ -403,9 +442,8 @@ class QueryDashboardBridge(QObject):
         #    （见 `_ensure_orders` / `_ensure_wallet`），刷新由 QML 的空闲态驱动。
         self._plans: list[dict] = []
         self._occupancy_rows: list[dict] = []
-        self._occupancy_by_line: list[dict] = []
+        self._occupancy_by_char: list[dict] = []
         self._occupancy_summary = ""
-        self._quick_rows: list[dict] = []
         self._series_rows: list[dict] = []  # 当前区间内的快照行
         self._all_series_rows: list[dict] = []  # 全量快照行（切区间时不重查）
         self._plot: dict = dict(_EMPTY_PLOT)
@@ -414,20 +452,14 @@ class QueryDashboardBridge(QObject):
         self._wallet_text = ""
         self._wallet_loaded = False
         self._order_records: list[dict] = []
-        self._order_rows: list[dict] = []
+        self._buy_rows: list[dict] = []
+        self._sell_rows: list[dict] = []
         self._orders_loaded = False
-        self._last_import_at = ""
-        self._last_import_count = 0
-        self._stale_records: list[dict] = []
+        self._pending_changes: list[dict] = []  # 最近一次导入产生的变动（待用户确认）
         self._busy = False
         self._status = "就绪"
         # 指纹缓存（refresh 幂等：没变就不重算、不发 changed）
         self._fingerprint: tuple | None = None
-        self._stock_cache: dict[int, dict[int, int]] = {}
-        # 昂贵计算的每轮缓存
-        self._shortfall_cache: dict[int, int] = {}
-        self._bp_short_cache: dict[int, str | None] = {}
-        self._bp_ready_cache: dict[int, bool] = {}
 
     # ── 产线详情 ──────────────────────────────────────────────
 
@@ -436,8 +468,8 @@ class QueryDashboardBridge(QObject):
         """每角色一行的占用数据（形状与 `launcher_bridge.occupancyRows` **逐字一致**）。
 
         `[{"name", "nameWidth", "lines": [{"label", "color", "active", "max", "cap"}],
-        "statusText", "statusColor", "slotTotal"}]` —— QML 里
-        `FCapacityRow { charName: modelData.name; ... }`。
+        "statusText", "statusColor", "slotTotal"}]` —— 产线启动小助手那套的共用契约，
+        仪表盘不吃它，但保留它成本极低、且是「同一份算法两种形状」的凭证。
 
         **必须是 Property 而不是 Slot**：QML 的绑定不追踪 Slot 内部的属性读取，
         写成 `occupancyRows()` 调用的话面板不会随 `changed` 自动刷新
@@ -450,52 +482,18 @@ class QueryDashboardBridge(QObject):
         return self._occupancy_summary
 
     @Property(list, notify=changed)
-    def occupancyByLine(self) -> list[dict]:
-        """**按产线类型**分行的占用数据（仪表盘左栏用，见 `_build_occupancy_by_line`）。
+    def occupancyByChar(self) -> list[dict]:
+        """**每人物一块**的占用数据（仪表盘左栏用，见 `_build_occupancy_by_char`）。
 
-        `[{"key", "label", "color", "active", "cap",
-           "chars": [{"name", "active", "max"}], "detailText"}]`
+        `[{"name", "statusText", "statusColor",
+           "lines": [{"key", "label", "color", "active", "max", "cap",
+                      "readyN", "readyText", "freeN", "detailText"}]}]`
+
+        `cap` 是**各人物该线型上限之和**（进度条分母，让所有人的条子同长可比），
+        `max` 是该人物自己的上限；`readyText` 是该人物该线型**待下线**的计划数
+        （用户明确要求「提示带下线多少」），`freeN` 是「还能再上几条」（空槽位数）。
         """
-        return [dict(row) for row in self._occupancy_by_line]
-
-    @Property(list, notify=changed)
-    def quickRows(self) -> list[dict]:
-        """快捷产线行：`{planId, name, action("start"|"complete"), actionText, statusText}`。"""
-        return [dict(row) for row in self._quick_rows]
-
-    @Slot(int)
-    def quickAction(self, index: int) -> None:
-        """执行 `quickRows[index]` 的动作（**确认框在桥里弹**）。
-
-        确认走 `ui_qml/bridge/message_dialog.py::FMessageDialog.question`（本仓弹确认框的
-        既有做法，先例见 `char_settings_bridge.py::deleteCharacter`）；QML 只负责调本槽。
-        """
-        rows = self._quick_rows
-        if not 0 <= int(index) < len(rows):
-            self._status = "快捷操作已失效，请刷新后再试"
-            self.changed.emit()
-            return
-        item = rows[int(index)]
-        plan = next((p for p in self._plans if int(p.get("id") or 0) == int(item["planId"])), None)
-        if plan is None:
-            self._status = f"「{item['name']}」已不在计划表中，请刷新"
-            self.changed.emit()
-            return
-
-        verb = "启动" if item["action"] == "start" else "下线"
-        if not self._confirm(f"确认{verb}", f"{verb}「{item['name']}」？\n{item['statusText']}"):
-            self._status = f"已取消{verb}「{item['name']}」"
-            self.changed.emit()
-            return
-
-        if item["action"] == "complete":
-            self._quick_complete(plan)
-        else:
-            self._quick_start(plan)
-        # 动作改了库 → 指纹作废并整体重算（状态列/占用条都要跟着动）
-        self._fingerprint = None
-        self.refresh()
-        self.changed.emit()
+        return [dict(row) for row in self._occupancy_by_char]
 
     def _confirm(self, title: str, text: str) -> bool:
         """确认框（`parent` 口径同 `query_bridge.openAllItems`）。弹不出来时按「否」处理。"""
@@ -514,22 +512,6 @@ class QueryDashboardBridge(QObject):
                 return candidate
             candidate = getattr(candidate, "_shell", None)
         return None
-
-    @Slot()
-    def refreshQuick(self) -> None:
-        """只重算 `quickRows`（QML 在列表滚动/定时器里按需调）。"""
-        try:
-            plans = list(load_plans_for_wizard() or [])
-        except Exception:
-            log.exception("快捷产线刷新失败：计划加载异常")
-            self._status = "快捷产线刷新失败：计划加载异常，详见日志"
-            self.changed.emit()
-            return
-        self._plans = plans
-        rows = self._build_quick_rows(plans)
-        if rows != self._quick_rows:
-            self._quick_rows = rows
-            self.changed.emit()
 
     # ── 资产折线图 ────────────────────────────────────────────
 
@@ -567,7 +549,7 @@ class QueryDashboardBridge(QObject):
 
     @Property(list, notify=changed)
     def assetSummaryRows(self) -> list[dict]:
-        """「资产（表格显示）」4 行：最新值 + 相对**区间首点**的变化量与百分比。"""
+        """「资产（表格显示）」5 行：最新值 + 相对**区间首点**的变化量与百分比。"""
         _dates, values = split_series(self._series_rows)
         rows: list[dict] = []
         for key, label, token in _SERIES:
@@ -627,6 +609,19 @@ class QueryDashboardBridge(QObject):
         self._plot = asset_plot(self._series_rows, self._visible, self._series_colors())
         self.changed.emit()
 
+    @Slot()
+    def reloadAssets(self) -> None:
+        """「刷新」按钮：**强制**重读全部快照并重画（不吃指纹缓存）。
+
+        与定时器的 `refresh()` 分开：`refresh()` 幂等且便宜（指纹没变就什么都不做），
+        而这个按钮就是「我现在就要看到最新的」—— 用户手动点了，重算一次是预期行为。
+        """
+        self._refresh_snapshots(force=True)
+        self._ensure_wallet(force=True)
+        self._fingerprint = None  # 让下一次 refresh() 重新评估
+        self._status = f"资产已刷新（{len(self._series_rows)} 天记录）"
+        self.changed.emit()
+
     # ── 钱包（手填）───────────────────────────────────────────
 
     @Property(str, notify=changed)
@@ -667,20 +662,44 @@ class QueryDashboardBridge(QObject):
 
     @Property(list, constant=True)
     def openOrderHeads(self) -> list[str]:
+        """两张表共用的表头（**没有「方向」列** —— 表本身就是方向）。"""
         return list(_ORDER_HEADS_LIST)
 
     @Property(list, notify=changed)
-    def openOrderRows(self) -> list[dict]:
+    def buyOrderRows(self) -> list[dict]:
         self._ensure_orders()
-        return [dict(row) for row in self._order_rows]
+        return [dict(row) for row in self._buy_rows]
+
+    @Property(list, notify=changed)
+    def sellOrderRows(self) -> list[dict]:
+        self._ensure_orders()
+        return [dict(row) for row in self._sell_rows]
+
+    @Property(int, notify=changed)
+    def buyOrderCount(self) -> int:
+        self._ensure_orders()
+        return sum(1 for r in self._order_records if r["is_buy"])
+
+    @Property(int, notify=changed)
+    def sellOrderCount(self) -> int:
+        self._ensure_orders()
+        return sum(1 for r in self._order_records if not r["is_buy"])
+
+    @Property(str, constant=True)
+    def buyEmptyText(self) -> str:
+        return _EMPTY_BUY_TEXT
+
+    @Property(str, constant=True)
+    def sellEmptyText(self) -> str:
+        return _EMPTY_SELL_TEXT
 
     @Property(str, notify=changed)
     def openOrderSummary(self) -> str:
         self._ensure_orders()
         if not self._order_records:
             return _EMPTY_ORDER_SUMMARY
-        buy = sum(1 for r in self._order_records if r["is_buy"])
-        sell = len(self._order_records) - buy
+        sell = self.sellOrderCount
+        buy = self.buyOrderCount
         total = sum(float(r["price"]) * int(r["volume_remain"]) for r in self._order_records)
         parts = [
             f"{len(self._order_records)} 笔挂单",
@@ -690,53 +709,32 @@ class QueryDashboardBridge(QObject):
         ]
         if self._last_import_at:
             parts.append(f"本次导入 {self._last_import_at}")
-        if self._stale_records:
-            parts.append(f"本次文件里没出现的旧订单 {len(self._stale_records)} 笔（可能已成交/撤单）")
+        if self._pending_changes:
+            parts.append(f"本次变动 {len(self._pending_changes)} 笔待确认")
         return " · ".join(parts)
-
-    @Property(str, notify=changed)
-    def exportDir(self) -> str:
-        """用户自定义的订单导出目录（空串 = 用游戏默认目录）。
-
-        Property 而不是 Slot：QML 的「导出目录」输入框直接绑它，Slot 调用不进绑定追踪
-        （同 `occupancyRows` 的理由）。
-        """
-        return _configured_export_dir()
-
-    @Slot(str)
-    def setExportDir(self, path: str) -> None:
-        """改自定义导出目录（落 `settings.json`），并立刻按新目录重读一次。"""
-        cleaned = str(path or "").strip()
-        try:
-            save_settings({_SETTING_EXPORT_DIR: cleaned})
-        except Exception:
-            log.exception("订单导出目录保存失败 path=%s", cleaned)
-            self._status = "导出目录保存失败，详见日志"
-            self.changed.emit()
-            return
-        self.readOrders()
 
     @Slot()
     def readOrders(self) -> None:
-        """读游戏导出的订单文件 → 写 `open_orders` → 回写一条资产快照。
+        """读游戏导出的订单文件 → 写 `open_orders` → 弹「订单变动」确认框 → 回写快照。
 
         找不到文件只给中文提示，**不抛异常、不清空已有列表**（用户可能只是还没导出）。
+        目录**固定用游戏默认目录**（`order_export.find_latest_export(None)`）——
+        用户要求去掉自定义目录输入框。
         """
         svc = _order_svc()
         if svc is None:
             self._status = "订单解析模块不可用（services/order_export.py 缺失）"
             self.changed.emit()
             return
-        directory = _configured_export_dir()
         try:
-            path = svc.find_latest_export(directory or None)
+            path = svc.find_latest_export(None)
         except Exception:
-            log.exception("订单导出文件查找失败 dir=%s", directory)
-            self._status = f"订单导出文件查找失败，详见日志；当前目录 {self._dir_display()}"
+            log.exception("订单导出文件查找失败")
+            self._status = f"订单导出文件查找失败，详见日志；当前目录 {_DEFAULT_EXPORT_DIR_TEXT}"
             self.changed.emit()
             return
         if not path:
-            self._status = f"没找到订单导出文件：请先在游戏「钱包 → 订单」里点导出；当前目录 {self._dir_display()}"
+            self._status = f"没找到订单导出文件：请先在游戏「钱包 → 订单」里点导出；当前目录 {_DEFAULT_EXPORT_DIR_TEXT}"
             self.changed.emit()
             return
 
@@ -767,6 +765,8 @@ class QueryDashboardBridge(QObject):
 
         self._fill_location_names(records)
         self._fill_type_names(records)
+        # 写库前先取一份「旧快照」—— 变动分类要的正是「写前 / 写后」的差集
+        before = {int(r["order_id"]): r for r in self._snapshot_orders()}
         imported_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
             self._write_orders(records, imported_at)
@@ -776,96 +776,170 @@ class QueryDashboardBridge(QObject):
             self.changed.emit()
             return
 
-        self._last_import_at = imported_at
-        self._last_import_count = len(records)
+        after = {int(r["order_id"]): r for r in records}
+        # 部分成交那行要留着（回写剩余量），所以 new_remain 随变动一起下发
+        self._pending_changes = classify_order_changes(before, after)
         self._ensure_orders(force=True)
-        self._stale_records = self._load_stale(imported_at)
         snapshot_ok = self._record_snapshot()
         self._refresh_snapshots()
         skipped = f"，跳过 {int(unparsed)} 行" if unparsed else ""
         tail = "已记入资产快照" if snapshot_ok else "资产快照写入失败，详见日志"
         prefix = f"已从「{name}」导入 {len(records)} 笔挂单{skipped}，{tail}"
-        # 导入成功后问一次「本次文件里没出现的旧挂单」怎么处理 —— 确认框在桥里弹，QML 只调 readOrders
-        self._review_stale(prefix)
+        # 有变动才弹「订单变动」确认框（确认框在桥里弹，QML 只调 readOrders）
+        self._review_changes(prefix)
         self.changed.emit()
 
-    @Slot(result=dict)
-    def pendingReview(self) -> dict:
-        """导入后的审阅信息：本次导入笔数 + 「可能已成交/撤单」的陈旧订单。
-
-        交给 QML 弹确认框；**删除只在用户点头后由 `dropStaleOrders()` 执行**——
-        用户可能只是导出了另一个角色的订单，不能自动清。
-        """
-        count = int(self._last_import_count)
-        stale = list(self._stale_records)
-        return {
-            "count": count,
-            "staleCount": len(stale),
-            "staleNames": [str(r.get("type_name") or r.get("type_id") or "") for r in stale],
-            "message": self._review_message(count, stale),
-        }
+    @Slot(result=list)
+    def previewOrderChanges(self) -> list[dict]:
+        """最近一次导入产生的变动（只读，供「重新打开确认框」之类的调用方用）。"""
+        return [dict(row) for row in self._pending_changes]
 
     @Slot()
-    def dropStaleOrders(self) -> None:
-        """把「本次导出文件里没出现」的订单标记为已结束（从 `open_orders` 删掉）。"""
-        stale = list(self._stale_records)
-        if not stale:
-            self._status = "没有需要结束的陈旧挂单"
+    def applyOrderChanges(self) -> None:
+        """按变动条目的**默认处置**落账：增减钱包 + 落台账 + 清理/回写挂单 + 重记快照。
+
+        与弹窗的配合：弹窗由 `readOrders` 走 `_review_changes` 打开、用户在里面逐条选，
+        选定结果经 `_apply_outcomes` 处理；本槽是**没有弹窗时**（测试 / 无 GUI）的等价入口，
+        一律按默认（成交）。
+        """
+        outcomes = [
+            {
+                "order_id": int(row["order_id"]),
+                "outcome": "filled",
+                "is_buy": int(row["is_buy"]),
+                "price": float(row["price"]),
+                "volume": int(row["volume"]),
+                "delta": float(row["delta"]),
+                "new_remain": row.get("new_remain"),
+            }
+            for row in self._pending_changes
+        ]
+        self._apply_outcomes(outcomes)
+
+    def _apply_outcomes(self, outcomes: Sequence[Mapping[str, Any]]) -> None:
+        """落账主体：钱包增减 → 台账 → 挂单清理/回写 → 快照。
+
+        只有 ``outcome == "filled"`` 的条目动钱包；``cancelled``（手动撤销）只是把
+        这笔从挂单列表里去掉。挂单清理按 ``new_remain`` 分流：
+
+        - ``new_remain`` 有值（**部分成交**）→ 回写剩余量，行留在列表里；
+        - ``new_remain`` 为 None（整笔消失）→ 删行。
+        """
+        if not outcomes:
+            self._status = "没有需要应用的订单变动"
             self.changed.emit()
             return
+        wallet_delta = round(sum(float(o.get("delta") or 0.0) for o in outcomes), 2)
+        filled = [o for o in outcomes if str(o.get("outcome")) == "filled"]
         try:
             with _user_conn() as conn:
-                conn.executemany(
-                    "DELETE FROM open_orders WHERE order_id = ?",
-                    [(int(r["order_id"]),) for r in stale],
-                )
+                for outcome in outcomes:
+                    order_id = int(outcome["order_id"])
+                    remain = outcome.get("new_remain")
+                    if remain is None:
+                        conn.execute("DELETE FROM open_orders WHERE order_id = ?", (order_id,))
+                    else:
+                        conn.execute(
+                            "UPDATE open_orders SET volume_remain = ? WHERE order_id = ?",
+                            (int(remain), order_id),
+                        )
         except sqlite3.Error:
-            log.exception("陈旧挂单删除失败 count=%s", len(stale))
-            self._status = "陈旧挂单删除失败，详见日志"
+            log.exception("订单变动落库失败 count=%s", len(outcomes))
+            self._status = "订单变动应用失败（本地库写入异常，详见日志）"
             self.changed.emit()
             return
-        self._stale_records = []
+        self._write_order_events(outcomes)
+        if filled and wallet_delta:
+            svc = _asset_svc()
+            if svc is not None:
+                try:
+                    svc.adjust_wallet_balance(wallet_delta)
+                    self._wallet_loaded = False  # 让 `walletText` 重读
+                except Exception:
+                    log.exception("钱包余额按订单变动调整失败 delta=%s", wallet_delta)
+                    self._status = "订单变动已应用，但钱包余额调整失败（详见日志）"
+                    self._ensure_orders(force=True)
+                    self.changed.emit()
+                    return
+        self._pending_changes = []
         self._ensure_orders(force=True)
         snapshot_ok = self._record_snapshot()
-        self._refresh_snapshots()
-        tail = "并记入资产快照" if snapshot_ok else "，但资产快照写入失败，详见日志"
-        self._status = f"已结束 {len(stale)} 笔陈旧挂单{tail}"
+        self._refresh_snapshots(force=True)
+        tail = "并重记资产快照" if snapshot_ok else "，但资产快照写入失败，详见日志"
+        self._status = (
+            f"已处理 {len(outcomes)} 笔订单变动（成交 {len(filled)} 笔，钱包 {wallet_delta:+,.2f} ISK）{tail}"
+        )
         self.changed.emit()
 
-    def _review_stale(self, prefix: str) -> None:
-        """导入成功后的收尾编排：`staleCount > 0` 才弹确认框（**确认框在桥里弹**，QML 不参与）。
+    def _write_order_events(self, outcomes: Sequence[Mapping[str, Any]]) -> None:
+        """落 `order_events` 台账。**失败只记日志**：台账丢一条不该拦住钱包落账。"""
+        applied_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            with _user_conn() as conn:
+                if not _table_exists(conn, "order_events"):
+                    return
+                conn.executemany(
+                    "INSERT OR REPLACE INTO order_events "
+                    "(order_id, applied_at, outcome, is_buy, price, volume, delta) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    [
+                        (
+                            int(o["order_id"]),
+                            applied_at,
+                            str(o.get("outcome") or ""),
+                            int(o.get("is_buy") or 0),
+                            float(o.get("price") or 0.0),
+                            int(o.get("volume") or 0),
+                            float(o.get("delta") or 0.0),
+                        )
+                        for o in outcomes
+                    ],
+                )
+        except sqlite3.Error:
+            log.exception("订单变动台账写入失败 count=%s", len(outcomes))
 
-        问的是「本次导出的文件里没出现的旧挂单」怎么处理 —— 不出现在导出里说明在游戏里
-        已经成交（卖出）或撤单了。选「是」= 标记为已结束（调 `dropStaleOrders()`），
-        选「否」= 原样保留。两种结果都写进 `_status`，用户点完能看到发生了什么。
+    def _review_changes(self, prefix: str) -> None:
+        """导入成功后的收尾编排：有变动才弹「订单变动」确认框（**确认框在桥里弹**）。
 
-        `staleCount == 0` 时**不弹框**（每次导入都弹一个空框很烦），只把导入结果写进状态。
+        没变动（或弹不出来）时只把导入结果写进 `_status`。用户点「取消」= 什么都不做，
+        变动条目留在 `_pending_changes` 里，下次导入会重新算。
         """
-        review = self.pendingReview()
-        stale_count = int(review.get("staleCount") or 0)
-        if stale_count <= 0:
+        rows = list(self._pending_changes)
+        if not rows:
             self._status = prefix
             return
-        if self._confirm("确认订单变化", self._stale_confirm_text(review)):
-            self.dropStaleOrders()
-            if not self._stale_records:  # 成功时它会清空；失败时它已写明原因，别覆盖
-                self._status = f"{prefix} 已标记 {stale_count} 笔旧挂单为已结束"
-        else:
-            self._status = f"{prefix} 保留了 {stale_count} 笔未出现在本次文件里的旧挂单"
+        wallet = _asset_svc()
+        wallet_value = 0.0
+        if wallet is not None:
+            try:
+                wallet_value = float(wallet.get_wallet_balance() or 0.0)
+            except Exception:
+                log.exception("钱包余额读取失败（订单变动预计值将按 0 起算）")
+        try:
+            outcomes, accepted = _open_change_dialog(rows, self._host_widget(), wallet_value)
+        except Exception:
+            log.exception("订单变动确认框弹出失败，变动已保留待下次确认")
+            self._status = f"{prefix} 有 {len(rows)} 笔变动待确认（弹窗失败，详见日志）"
+            return
+        if not accepted:
+            self._status = f"{prefix} 有 {len(rows)} 笔变动未处理（已保留，下次导入会重新提示）"
+            return
+        self._apply_outcomes(outcomes)
+        if self._pending_changes:  # 落账失败时它已写明原因，别覆盖
+            return
+        self._status = f"{prefix} {self._status}"
 
-    @staticmethod
-    def _stale_confirm_text(review: Mapping[str, Any]) -> str:
-        """确认框正文：说清「本次导出文件里没出现」，列最多 5 个名字，其余用「等 N 笔」收口。"""
-        names = [str(name) for name in (review.get("staleNames") or []) if str(name)]
-        stale_count = int(review.get("staleCount") or 0)
-        shown = "、".join(names[:5])
-        if len(names) > 5:
-            shown = f"{shown} 等 {stale_count} 笔"
-        return (
-            f"有 {stale_count} 笔挂单没有出现在本次导出的文件里"
-            f"（说明在游戏里已经成交卖出或撤单了）：{shown}。\n"
-            "要把它们标记为已结束（从列表移除）吗？选「否」就先留着。"
-        )
+    def _snapshot_orders(self) -> list[dict]:
+        """当前 `open_orders` 全量行（变动分类的「前 / 后」两份快照都取自它）。"""
+        try:
+            with _user_conn() as conn:
+                if not _table_exists(conn, "open_orders"):
+                    return []
+                raw = conn.execute(f"SELECT {', '.join(_ORDER_DB_COLUMNS)} FROM open_orders").fetchall()
+        except sqlite3.Error:
+            log.exception("挂单快照读取失败")
+            return []
+        return [_normalize_order(_row_to_dict(row)) for row in raw]
 
     # ── 状态 ──────────────────────────────────────────────────
 
@@ -899,7 +973,6 @@ class QueryDashboardBridge(QObject):
         try:
             self._plans = plans
             self._refresh_occupancy(plans)
-            self._quick_rows = self._build_quick_rows(plans)
             self._refresh_snapshots(force=True)
             self._ensure_orders(force=True)
             self._ensure_wallet(force=True)
@@ -912,15 +985,11 @@ class QueryDashboardBridge(QObject):
             self.changed.emit()
 
     def _probe(self, plans: list[dict]) -> tuple:
-        """便宜档指纹：计划字段集 + 机库库存 + 角色技能 + 快照/挂单行数 + 本地状态。
+        """便宜档指纹：计划字段集 + 角色技能 + 快照/挂单行数 + 本桥本地状态。
 
-        库存顺带存进 `_stock_cache`，`_build_quick_rows` 直接复用、不重复查库。
+        **不再读机库库存**：库存只为原来的「快捷操作」列表服务（判 `material_short`），
+        那一块删掉之后没有任何属性依赖它 —— 留着等于每 60s 白跑一遍全机库查询。
         """
-        self._stock_cache.clear()
-        stock_sig: list[tuple[int, frozenset]] = []
-        for hangar_id in sorted({int(p.get("mat_hangar_id") or 0) for p in plans if p.get("mat_hangar_id")}):
-            stock = self._hangar_stock(hangar_id)
-            stock_sig.append((hangar_id, frozenset(stock.items())))
         return (
             tuple(
                 sorted(
@@ -932,11 +1001,11 @@ class QueryDashboardBridge(QObject):
                         int(p.get("me_level") or 0),
                         int(p.get("mat_hangar_id") or 0),
                         str(p.get("char_name") or ""),
+                        str(p.get("category") or ""),
                     )
                     for p in plans
                 )
             ),
-            tuple(stock_sig),
             self._char_signature(),
             self._snapshot_signature(),
             self._orders_signature(),
@@ -991,7 +1060,8 @@ class QueryDashboardBridge(QObject):
     # ── 产线详情 ──────────────────────────────────────────────
 
     def _refresh_occupancy(self, plans: list[dict]) -> None:
-        """复刻 `production_launcher._refresh_occupancy` 的行几何（新文件里重写，不改原文件）。"""
+        """算两份占用数据：`occupancyRows`（按人物，与小助手同形状）与
+        `occupancyByChar`（按人物分块 + 每型一行，仪表盘左栏用）。"""
         usage = active_lines_by_category(plans)
         chars_data = (load_all_data() or {}).get("characters", {}) or {}
         chars = list(get_character_list())
@@ -1002,7 +1072,7 @@ class QueryDashboardBridge(QObject):
         if not chars:
             self._occupancy_summary = "（无人物配置，请在人物设置中添加）"
             self._occupancy_rows = []
-            self._occupancy_by_line = []
+            self._occupancy_by_char = []
             return
 
         per_char: list[tuple[str, dict[str, tuple[int, int]]]] = []
@@ -1048,46 +1118,72 @@ class QueryDashboardBridge(QObject):
             )
         self._occupancy_rows = rows
         self._occupancy_summary = f"{len(chars)} 人物 · 占用 {active_total}/{max_total}"
-        self._occupancy_by_line = self._build_occupancy_by_line(per_char)
+        self._occupancy_by_char = self._build_occupancy_by_char(per_char, plans)
 
-    def _build_occupancy_by_line(
-        self, per_char: list[tuple[str, dict[str, tuple[int, int]]]]
+    def _build_occupancy_by_char(
+        self, per_char: list[tuple[str, dict[str, tuple[int, int]]]], plans: list[dict]
     ) -> list[dict]:
-        """**转置**成「每种产线类型一行」—— 空闲态仪表盘的产线详情用这个形状。
+        """**每人物一块，块内制造/科研/反应各一行** —— 仪表盘左栏用这个形状。
 
-        为什么不用 `occupancy_rows` 的按人物分行：那个形状是给**产线启动小助手**的宽面板用的
-        （60px 名字列 + 三类产线各自的标签与格子 + 状态徽章，实测要 450px 才不重叠）。
-        仪表盘左栏只有 260px 左右，按人物分行必然把格子压到标签上。
-        人物本来就没几个，转置过来每类产线只占一行，占地小得多。
+        用户要求「每个人物都有制造、科研、反应三行，然后提示带下线多少」。
+        竖排列出来以后左栏下半的空白就被填满了，人物多了靠外层 ListView 滚动。
 
-        每行的 `chars` 保留**逐人物**的占用与上限，QML 据此画「一个角色一段」的容量条；
-        `cap` 是各人物上限之和（=该类型总槽位数），`active` 是各人物已用之和。
-        `detailText` 给 tooltip，宽度不够时界面也不会丢信息。
+        - ``cap``：各人物该线型上限**之和** —— 所有人共用同一个分母，条子等长可比。
+        - ``max``：该人物自己的上限（画几格）。
+        - ``readyN``：该人物该线型下 **待下线**（``status=='ready'``）的计划数，
+          取自已加载的计划表（`load_plans_for_wizard` 已 enrich ``category``），不额外查库。
+        - ``freeN``：还能再上几条线（上限 − 已占，负数按 0）。
         """
-        by_line: list[dict] = []
-        for line in _LINE_TYPES:
-            chars_detail: list[dict[str, Any]] = [
+        ready = self._ready_count_by_char_line(plans)
+        cap_by_line: dict[str, int] = {
+            line: sum(int(per_line.get(line, (0, 0))[1]) for _char, per_line in per_char) for line in _LINE_TYPES
+        }
+        blocks: list[dict] = []
+        for char, per_line in per_char:
+            status_text, status_token = self._char_status(per_line)
+            lines_data: list[dict] = []
+            for line in _LINE_TYPES:
+                active, maximum = per_line.get(line, (0, 0))
+                ready_n = int(ready.get((char or "", line), 0))
+                lines_data.append(
+                    {
+                        "key": str(line),
+                        "label": line_label(line),
+                        "color": self._series_color(_LINE_COLORS[line]),
+                        "active": int(active),
+                        "max": int(maximum),
+                        "cap": int(cap_by_line.get(line, maximum)),
+                        "readyN": ready_n,
+                        "readyText": f"待下线 {ready_n}" if ready_n else "",
+                        "freeN": max(int(maximum) - int(active), 0),
+                        "detailText": f"{line_label(line)} 已占 {int(active)} / 上限 {int(maximum)}"
+                        + (f" · 待下线 {ready_n}" if ready_n else "")
+                        + f" · 空闲 {max(int(maximum) - int(active), 0)}",
+                    }
+                )
+            blocks.append(
                 {
                     "name": char or "(未分配)",
-                    "active": int(per_line.get(line, (0, 0))[0]),
-                    "max": int(per_line.get(line, (0, 0))[1]),
-                }
-                for char, per_line in per_char
-            ]
-            active = sum(int(c["active"]) for c in chars_detail)
-            cap = sum(int(c["max"]) for c in chars_detail)
-            by_line.append(
-                {
-                    "key": str(line),
-                    "label": line_label(line),
-                    "color": self._series_color(_LINE_COLORS[line]),
-                    "active": active,
-                    "cap": cap,
-                    "chars": chars_detail,
-                    "detailText": " · ".join(f"{c['name']} {c['active']}/{c['max']}" for c in chars_detail),
+                    "statusText": status_text,
+                    "statusColor": self._series_color(status_token),
+                    "lines": lines_data,
                 }
             )
-        return by_line
+        return blocks
+
+    @staticmethod
+    def _ready_count_by_char_line(plans: list[dict]) -> dict[tuple[str, str], int]:
+        """`{(人物, 线型): 待下线计划数}` —— 用计划表自己的 `category` → 线型映射。"""
+        from services.char_capacity import capacity_line_for_category
+
+        counts: dict[tuple[str, str], int] = {}
+        for plan in plans:
+            if str(plan.get("status") or "").lower() != "ready":
+                continue
+            char = str(plan.get("char_name") or "").strip()
+            line = capacity_line_for_category(str(plan.get("category") or ""))
+            counts[(char, line)] = counts.get((char, line), 0) + 1
+        return counts
 
     @staticmethod
     def _char_status(per_line: dict[str, tuple[int, int]]) -> tuple[str, str]:
@@ -1099,182 +1195,6 @@ class QueryDashboardBridge(QObject):
         if active_total == 0:
             return "空闲", "ACCENT_GREEN"
         return "生产中", "PRIMARY"
-
-    def _build_quick_rows(self, plans: list[dict]) -> list[dict]:
-        """可启动（含软阻塞）/ 可下线各最多 8 条。
-
-        先跑**便宜**的阻塞判定（状态 / 材料机库 / 蓝图 / 子项），只有过了这一关的候选才
-        做材料缺口评分 —— 否则大计划表会为了填 8 行把主线程拖住。候选扫描上限
-        `_QUICK_SCAN_LIMIT`。
-        """
-        self._shortfall_cache.clear()
-        self._bp_short_cache.clear()
-        self._bp_ready_cache.clear()
-        starts: list[dict] = []
-        completes: list[dict] = []
-        scanned = 0
-        for plan in plans:
-            status = str(plan.get("status") or "").lower()
-            if status == "ready":
-                if len(completes) < _QUICK_LIMIT:
-                    completes.append(self._quick_item(plan, "complete", "下线", "待下线"))
-            elif status == "pending":
-                if len(starts) >= _QUICK_LIMIT:
-                    continue
-                code, reason = self._cheap_block(plan, plans)
-                if code is not None and code not in _SOFT_BLOCKS:
-                    continue
-                if scanned >= _QUICK_SCAN_LIMIT:
-                    continue
-                scanned += 1
-                code, reason = self._block_state(plan, plans)
-                if code is None:
-                    starts.append(self._quick_item(plan, "start", "启动", "可启动"))
-                elif code in _SOFT_BLOCKS:
-                    starts.append(
-                        self._quick_item(plan, "start", "启动", _SOFT_BLOCK_TEXT.get(code, reason or "材料不够"))
-                    )
-            if len(starts) >= _QUICK_LIMIT and len(completes) >= _QUICK_LIMIT:
-                break
-        return starts + completes
-
-    @staticmethod
-    def _quick_item(plan: dict, action: str, action_text: str, status_text: str) -> dict:
-        return {
-            "planId": int(plan.get("id") or 0),
-            "name": str(plan.get("product_name") or f"ID:{plan.get('product_type_id', '')}"),
-            "action": action,
-            "actionText": action_text,
-            "statusText": status_text,
-        }
-
-    def _default_mat_hangar(self) -> int | None:
-        try:
-            from services import inventory_manager
-
-            return inventory_manager.get_default_mat_hangar_and_system()[0]
-        except Exception:
-            log.exception("默认材料机库读取失败")
-            return None
-
-    def _cheap_block(self, plan: dict, all_plans: list[dict]) -> tuple[str | None, str | None]:
-        """不做材料评分、不查库存的阻塞判定（缺口按 0 计）—— 用来快速筛掉硬阻塞的候选。
-
-        蓝图就绪仍走真实判定（一次 DB 查询 + 指纹缓存）：按 `has_image` 的粗推断会
-        把「已绑定蓝图但计划里没有该字段」的正常计划误判成缺蓝图。
-        """
-        block = plan_start_block(
-            plan,
-            plan.get("mat_hangar_id") or self._default_mat_hangar(),
-            all_plans,
-            blueprint_ready=self._blueprint_ready(plan),
-        )
-        return block if block else (None, None)
-
-    def _block_state(self, plan: dict, all_plans: list[dict]) -> tuple[str | None, str | None]:
-        """完整阻塞判定（含材料缺口与蓝图流程），返回 (类别码, 原因文案)。"""
-        mat = plan.get("mat_hangar_id") or self._default_mat_hangar()
-        block = plan_start_block(
-            plan,
-            mat,
-            all_plans,
-            shortfall_count=self._shortfall_count(plan, mat),
-            bp_short=self._bp_short(plan),
-            blueprint_ready=self._blueprint_ready(plan),
-        )
-        return block if block else (None, None)
-
-    def _hangar_stock(self, hangar_id: int) -> dict[int, int]:
-        stock = self._stock_cache.get(hangar_id)
-        if stock is None:
-            try:
-                from services import inventory_manager
-
-                stock = inventory_manager.get_hangar_stock(hangar_id)
-            except Exception:
-                log.exception("机库库存读取失败 hangar_id=%s", hangar_id)
-                stock = {}
-            self._stock_cache[hangar_id] = stock
-        return stock
-
-    def _shortfall_count(self, plan: dict, mat: int | None) -> int:
-        """材料缺口种数（每轮每计划只算一次：缺口判定要跑一次评分）。"""
-        if not mat or str(plan.get("status") or "").lower() != "pending":
-            return 0
-        plan_id = int(plan.get("id") or 0)
-        if plan_id in self._shortfall_cache:
-            return self._shortfall_cache[plan_id]
-        count = 0
-        try:
-            stock = self._hangar_stock(int(mat))
-            count = sum(
-                1
-                for row in plan_execution.check_materials(plan, int(mat), stock=stock)
-                if int(row.get("missing") or 0) > 0
-            )
-        except Exception:
-            log.exception("材料缺口计算失败 plan_id=%s", plan_id)
-            count = 0
-        self._shortfall_cache[plan_id] = count
-        return count
-
-    def _bp_short(self, plan: dict) -> str | None:
-        plan_id = int(plan.get("id") or 0)
-        if plan_id not in self._bp_short_cache:
-            try:
-                self._bp_short_cache[plan_id] = plan_execution.binding_shortfall(plan_id)
-            except Exception:
-                log.exception("蓝图流程预检失败 plan_id=%s", plan_id)
-                self._bp_short_cache[plan_id] = None
-        return self._bp_short_cache[plan_id]
-
-    def _blueprint_ready(self, plan: dict) -> bool:
-        plan_id = int(plan.get("id") or 0)
-        if plan_id not in self._bp_ready_cache:
-            try:
-                self._bp_ready_cache[plan_id] = bool(plan_execution.plan_blueprint_ready(plan))
-            except Exception:
-                log.exception("输入蓝图就绪检查失败 plan_id=%s", plan_id)
-                self._bp_ready_cache[plan_id] = True
-        return self._bp_ready_cache[plan_id]
-
-    def _quick_start(self, plan: dict) -> None:
-        """启动一条计划。**先过 `plan_start_block`**：阻塞时只写状态、不执行。"""
-        name = str(plan.get("product_name") or plan.get("id"))
-        mat = plan.get("mat_hangar_id") or self._default_mat_hangar()
-        code, reason = self._block_state(plan, self._plans)
-        if code is not None and code not in _SOFT_BLOCKS:
-            self._status = f"「{name}」无法启动：{reason}"
-            return
-        allow_short = code in _SOFT_BLOCKS
-        try:
-            result = plan_execution.start_plan(
-                plan,
-                mat_hangar_id=mat,
-                allow_short=allow_short,
-                allow_bp_short=allow_short,
-                char_name=plan.get("char_name") or None,
-                facility=plan.get("facility") or None,
-            )
-        except Exception:
-            log.exception("快捷启动失败 plan_id=%s", plan.get("id"))
-            self._status = f"启动失败：「{name}」执行异常，详见日志"
-            return
-        if result.get("ok"):
-            self._status = f"已启动「{name}」"
-        else:
-            self._status = f"启动失败：「{name}」{result.get('message') or result.get('code') or '未知原因'}"
-
-    def _quick_complete(self, plan: dict) -> None:
-        """下线一条计划（单行下线入口自带产出机库选择与失败告警）。"""
-        name = str(plan.get("product_name") or plan.get("id"))
-        try:
-            result = _complete_one_plan(None, plan)
-        except Exception:
-            log.exception("快捷下线失败 plan_id=%s", plan.get("id"))
-            self._status = f"下线失败：「{name}」执行异常，详见日志"
-            return
-        self._status = f"已下线「{name}」" if result else f"已取消下线「{name}」"
 
     # ── 资产折线 ──────────────────────────────────────────────
 
@@ -1361,10 +1281,8 @@ class QueryDashboardBridge(QObject):
 
     # ── 挂单 ──────────────────────────────────────────────────
 
-    def _dir_display(self) -> str:
-        return _configured_export_dir() or _DEFAULT_EXPORT_DIR_TEXT
-
     def _ensure_orders(self, force: bool = False) -> None:
+        """读 `open_orders` → 拆成买单 / 卖单两组单元格行（两张表各吃一份）。"""
         if self._orders_loaded and not force:
             return
         self._orders_loaded = True
@@ -1372,7 +1290,8 @@ class QueryDashboardBridge(QObject):
             with _user_conn() as conn:
                 if not _table_exists(conn, "open_orders"):
                     self._order_records = []
-                    self._order_rows = []
+                    self._buy_rows = []
+                    self._sell_rows = []
                     return
                 raw = conn.execute(
                     f"SELECT {', '.join(_ORDER_DB_COLUMNS)} FROM open_orders ORDER BY order_id DESC"
@@ -1382,7 +1301,8 @@ class QueryDashboardBridge(QObject):
             return
         self._order_records = [_normalize_order(_row_to_dict(row)) for row in raw]
         self._order_records = [r for r in self._order_records if r["order_id"]]
-        self._order_rows = self._order_cell_rows(self._order_records)
+        self._buy_rows = self._order_cell_rows(r for r in self._order_records if r["is_buy"])
+        self._sell_rows = self._order_cell_rows(r for r in self._order_records if not r["is_buy"])
         imported = [str(r["imported_at"]) for r in self._order_records if r["imported_at"]]
         self._last_import_at = max(imported) if imported else ""
 
@@ -1396,25 +1316,6 @@ class QueryDashboardBridge(QObject):
         ]
         with _user_conn() as conn:
             conn.executemany(sql, rows)
-
-    def _load_stale(self, imported_at: str) -> list[dict]:
-        """库里 `imported_at` 不等于本次导入时间的行 = 本次导出文件里没出现的订单。
-
-        **只统计、不删除**：用户可能只是导出了另一个角色的订单。
-        """
-        try:
-            with _user_conn() as conn:
-                if not _table_exists(conn, "open_orders"):
-                    return []
-                raw = conn.execute(
-                    f"SELECT {', '.join(_ORDER_DB_COLUMNS)} FROM open_orders WHERE imported_at IS NOT ? OR imported_at = ''",
-                    (imported_at,),
-                ).fetchall()
-        except sqlite3.Error:
-            log.exception("陈旧挂单统计失败")
-            return []
-        records = [_normalize_order(_row_to_dict(row)) for row in raw]
-        return [r for r in records if r["order_id"]]
 
     def _fill_location_names(self, records: list[dict]) -> None:
         """`location_name` 为空的，用 `location_id` 去本地空间站表补（解析器不碰这件事）。"""
@@ -1464,11 +1365,14 @@ class QueryDashboardBridge(QObject):
                 record["type_name"] = found
 
     @staticmethod
-    def _order_cell_rows(records: Sequence[Mapping[str, Any]]) -> list[dict]:
-        """挂单 → 单元格行（形状同 `order_popup_bridge.order_rows`，QML 侧表组件直接吃）。"""
+    def _order_cell_rows(records: Any) -> list[dict]:
+        """挂单 → 单元格行（形状同 `order_popup_bridge.order_rows`，QML 侧表组件直接吃）。
+
+        **不含「方向」列**：买单 / 卖单各有一张表，方向由表本身承载。
+        `records` 可以是任意可迭代（调用方传的是生成器，一次遍历完）。
+        """
         rows: list[dict] = []
         for record in records:
-            is_buy = bool(record["is_buy"])
             location = str(record["location_name"] or "")
             if not location:
                 location = f"#{int(record['location_id'])}" if record["location_id"] else "—"
@@ -1476,9 +1380,7 @@ class QueryDashboardBridge(QObject):
             rows.append(
                 {
                     "cells": [
-                        cell(str(int(record["order_id"])), _TOKEN_PLAIN),
                         cell(name, _TOKEN_PLAIN),
-                        cell("买" if is_buy else "卖", _TOKEN_BUY if is_buy else _TOKEN_SELL),
                         cell(f"{float(record['price']):,.2f}", _TOKEN_PLAIN),
                         cell(f"{int(record['volume_remain']):,}/{int(record['volume_total']):,}", _TOKEN_PLAIN),
                         cell(location, _TOKEN_PLAIN),
@@ -1486,25 +1388,6 @@ class QueryDashboardBridge(QObject):
                 }
             )
         return rows
-
-    @staticmethod
-    def _review_message(count: int, stale: Sequence[Mapping[str, Any]]) -> str:
-        if not count:
-            return "还没有导入订单导出文件 —— 先在游戏「钱包 → 订单」里点导出，再点「读取订单」。"
-        if not stale:
-            return f"本次导入 {count} 笔挂单，没有发现可能已成交/撤单的旧订单。"
-        names = "、".join(str(r.get("type_name") or r.get("type_id") or "") for r in stale[:5])
-        more = "…" if len(stale) > 5 else ""
-        return (
-            f"本次导入 {count} 笔挂单；库中有 {len(stale)} 笔订单没出现在本次文件里"
-            f"（可能已卖出成交或已取消挂单）：{names}{more}。"
-            "要把它们标记为已结束（从列表移除）吗？选「否」则原样保留。"
-        )
-
-
-# ════════════════════════════════════════════════════════════
-#  小工具
-# ════════════════════════════════════════════════════════════
 
 
 def _normalize_order(row: Mapping[str, Any]) -> dict:

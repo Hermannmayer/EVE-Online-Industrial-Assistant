@@ -6,7 +6,7 @@
 
 并行交付的两个服务模块（`services.asset_snapshot_service` / `services.order_export`）
 与 user.db 在这里全部用替身顶掉：本文件的观察点是**桥自己的行为**
-（指纹幂等、区间裁剪、几何、挂单导入与陈旧统计），不是那两个模块。
+（指纹幂等、区间裁剪、几何、挂单导入与订单变动分类 / 钱包增减），不是那两个模块。
 """
 
 from __future__ import annotations
@@ -56,6 +56,10 @@ class _FakeAsset:
     def set_wallet_balance(self, value: float) -> None:
         self.wallet = float(value)
 
+    def adjust_wallet_balance(self, delta: float) -> float:
+        self.wallet = float(self.wallet or 0.0) + float(delta)
+        return self.wallet
+
 
 class _FakeOrderSvc:
     """替 `services.order_export`。"""
@@ -83,28 +87,38 @@ class _FakeOrderSvc:
         return real_read_export_text(path)
 
 
-class _FakePlanExec:
-    """替 `services.plan_execution`（桥只用到这四个入口）。"""
+class _ChangeDialog:
+    """替 `_open_change_dialog`：记录被问了什么，按 `answer` 决定是否应用。
 
-    def __init__(self) -> None:
-        self.materials: dict[int, list[dict]] = {}
-        self.bp_short: dict[int, str | None] = {}
-        self.bp_ready: dict[int, bool] = {}
-        self.started: list[int] = []
-        self.start_result: dict = {"ok": True, "code": "ok", "message": ""}
+    默认 `answer=False`（用户点了取消）—— 绝大多数用例只想验导入本身，
+    不想让钱包被悄悄改掉。
+    """
 
-    def check_materials(self, plan: dict, mat_hangar_id: int, *, stock: dict | None = None) -> list[dict]:
-        return [dict(r) for r in self.materials.get(int(plan.get("id") or 0), [])]
+    def __init__(self, answer: bool = False, choices: dict[int, int] | None = None) -> None:
+        self.answer = answer
+        self.choices = dict(choices or {})
+        self.calls: list[tuple[list[dict], float]] = []
 
-    def binding_shortfall(self, plan_id: int) -> str | None:
-        return self.bp_short.get(int(plan_id))
+    def __call__(self, rows: list[dict], parent: object, wallet: float) -> tuple[list[dict], bool]:
+        """与真弹窗同口径：**选择只决定记账，不决定挂单还在不在**。
 
-    def plan_blueprint_ready(self, plan: dict) -> bool:
-        return self.bp_ready.get(int(plan.get("id") or 0), True)
-
-    def start_plan(self, plan: dict, **kwargs: object) -> dict:
-        self.started.append(int(plan.get("id") or 0))
-        return dict(self.start_result)
+        `new_remain` 一律原样带出（部分成交 → 回写剩余量、整笔消失 → None → 删行），
+        所以「手动撤销」不会把仍在导出文件里的挂单删掉。
+        """
+        self.calls.append(([dict(r) for r in rows], float(wallet)))
+        outcomes = [
+            {
+                "order_id": int(row["order_id"]),
+                "outcome": "filled" if self.choices.get(index, 0) == 0 else "cancelled",
+                "is_buy": int(row["is_buy"]),
+                "price": float(row["price"]),
+                "volume": int(row["volume"]),
+                "delta": float(row["delta"]) if self.choices.get(index, 0) == 0 else 0.0,
+                "new_remain": row.get("new_remain"),
+            }
+            for index, row in enumerate(rows)
+        ]
+        return outcomes, self.answer
 
 
 def _make_db() -> sqlite3.Connection:
@@ -115,13 +129,18 @@ def _make_db() -> sqlite3.Connection:
         CREATE TABLE asset_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             snap_date TEXT UNIQUE, total REAL, orders REAL, inventory REAL,
-            wallet REAL, created_at TEXT
+            line_value REAL, wallet REAL, created_at TEXT
         );
         CREATE TABLE open_orders (
             order_id INTEGER PRIMARY KEY, is_buy INTEGER, price REAL,
             volume_total INTEGER, volume_remain INTEGER, location_id INTEGER,
             location_name TEXT, type_id INTEGER, type_name TEXT, issued TEXT,
             duration INTEGER, imported_at TEXT
+        );
+        CREATE TABLE order_events (
+            order_id INTEGER NOT NULL, applied_at TEXT NOT NULL, outcome TEXT DEFAULT '',
+            is_buy INTEGER DEFAULT 0, price REAL DEFAULT 0, volume INTEGER DEFAULT 0,
+            delta REAL DEFAULT 0, PRIMARY KEY (order_id, applied_at)
         );
         """
     )
@@ -130,6 +149,10 @@ def _make_db() -> sqlite3.Connection:
 
 def _orders_in(conn: sqlite3.Connection) -> list[dict]:
     return [dict(r) for r in conn.execute("SELECT * FROM open_orders ORDER BY order_id").fetchall()]
+
+
+def _events_in(conn: sqlite3.Connection) -> list[dict]:
+    return [dict(r) for r in conn.execute("SELECT * FROM order_events ORDER BY order_id").fetchall()]
 
 
 def _order(
@@ -184,9 +207,8 @@ class _Harness:
         self.conn = _make_db()
         self.assets = _FakeAsset()
         self.orders = _FakeOrderSvc()
-        self.exec = _FakePlanExec()
+        self.change_dialog = _ChangeDialog()
         self.plans: list[dict] = []
-        self.stock: dict[int, dict[int, int]] = {_HANGAR: {1001: 500}}
 
     @contextlib.contextmanager
     def user_conn(self) -> Iterator[sqlite3.Connection]:
@@ -207,15 +229,13 @@ def h(monkeypatch) -> _Harness:
     monkeypatch.setattr(qdb, "_user_conn", harness.user_conn)
     monkeypatch.setattr(qdb, "_asset_svc", lambda: harness.assets)
     monkeypatch.setattr(qdb, "_order_svc", lambda: harness.orders)
+    monkeypatch.setattr(qdb, "_open_change_dialog", harness.change_dialog)
     monkeypatch.setattr(qdb, "load_plans_for_wizard", lambda: [dict(p) for p in harness.plans])
     monkeypatch.setattr(qdb, "get_character_list", lambda: [_CHAR])
     monkeypatch.setattr(qdb, "load_all_data", lambda: {"characters": {_CHAR: {"skills": dict(_SKILLS)}}})
-    monkeypatch.setattr(qdb, "plan_execution", harness.exec)
-    # 库存/默认机库走真实 inventory_manager 会打到真实库，这里一并顶掉
-    monkeypatch.setattr(
-        "services.inventory_manager.get_hangar_stock", lambda hangar_id: dict(harness.stock.get(int(hangar_id), {}))
-    )
-    monkeypatch.setattr("services.inventory_manager.get_default_mat_hangar_and_system", lambda: (_HANGAR, 30000142))
+    # `_line_value()`（服务侧）会经评分链路读材料需求 / 机库库存；本文件只验桥的整形，
+    # 把它顶成「没有制造中产线」即可（`_FakeAsset` 的快照数据已给定 line_value）。
+    monkeypatch.setattr("services.plan_service.load_plans_for_wizard", lambda: [])
     return harness
 
 
@@ -237,18 +257,6 @@ def _warnings() -> Iterator[list[logging.LogRecord]]:
         logger.removeHandler(handler)
 
 
-class _Confirm:
-    """替掉桥里的确认框，记录被问了什么。"""
-
-    def __init__(self, answer: bool = True) -> None:
-        self.answer = answer
-        self.calls: list[tuple[str, str]] = []
-
-    def question(self, parent: object, title: str, text: str, *, default_yes: bool = True) -> bool:
-        self.calls.append((title, text))
-        return self.answer
-
-
 def _snapshots(days: int = 3, *, total: float = 1000.0, wallet: float = 1_000_000_000.0) -> list[dict]:
     """最近 `days` 天的快照（升序，最后一条是今天）。"""
     today = date.today()
@@ -258,6 +266,7 @@ def _snapshots(days: int = 3, *, total: float = 1000.0, wallet: float = 1_000_00
             "total": total + i,
             "orders": 100.0 + i,
             "inventory": 200.0 + i,
+            "line_value": 50.0 + i,
             "wallet": wallet + i,
         }
         for i in range(days)
@@ -321,6 +330,80 @@ def test_occupancy_lists_characters_seen_only_in_plans(h):
     assert [row["name"] for row in bridge.occupancyRows] == [_CHAR, "临时人物"]
 
 
+def test_occupancy_by_char_shape_and_hints(h):
+    """仪表盘左栏的形状：**每人物一块、块内制造/科研/反应三行**，并给出「待下线 N」。
+
+    - `readyText` = 该人物该线型下 `status=='ready'` 的计划数（用户明确要的提示）
+    - `freeN` = 还能再上几条线（上限 − 已占）
+    - `cap` = 该线型各人物上限之和（所有人共用同一个分母 → 条子等长可比）
+    """
+    h.plans = [
+        _plan(1, status="in_progress", parallels=2),
+        _plan(2, status="ready", category="manufacturing"),
+        _plan(3, status="ready", category="copying"),  # copying → 科研线
+    ]
+    bridge = h.bridge()
+    bridge.refresh()
+
+    blocks = bridge.occupancyByChar
+    assert [block["name"] for block in blocks] == [_CHAR]
+    block = blocks[0]
+    assert set(block) == {"name", "statusText", "statusColor", "lines"}
+
+    lines = block["lines"]
+    assert [line["label"] for line in lines] == ["制造", "科研", "反应"]
+    assert [line["key"] for line in lines] == ["manufacturing", "research", "reaction"]
+    for line in lines:
+        assert set(line) == {
+            "key",
+            "label",
+            "color",
+            "active",
+            "max",
+            "cap",
+            "readyN",
+            "readyText",
+            "freeN",
+            "detailText",
+        }
+    assert [line["active"] for line in lines] == [2, 0, 0]
+    assert [line["max"] for line in lines] == [11, 1, 1]
+    assert [line["readyN"] for line in lines] == [1, 1, 0], "one manufacturing ready + one copying(→科研) ready"
+    assert lines[0]["readyText"] == "待下线 1"
+    assert lines[2]["readyText"] == "", "没有待下线就不给提示（QML 据此不占位）"
+    assert [line["freeN"] for line in lines] == [9, 1, 1]
+    assert "制造 已占 2 / 上限 11" in lines[0]["detailText"]
+
+
+def test_occupancy_by_char_cap_is_shared_denominator(h, monkeypatch):
+    """`cap` 取该线型**各人物上限之和** —— 第二个人物（无技能，制造上限 1）出现后，
+    制造那一行的 cap 变成 11 + 1，两个人的条子于是等长可比。"""
+    monkeypatch.setattr(qdb, "get_character_list", lambda: [_CHAR, "人物B"])
+    monkeypatch.setattr(
+        qdb,
+        "load_all_data",
+        lambda: {"characters": {_CHAR: {"skills": dict(_SKILLS)}, "人物B": {"skills": {}}}},
+    )
+    h.plans = [_plan(1, status="in_progress", parallels=11)]
+    bridge = h.bridge()
+    bridge.refresh()
+
+    blocks = bridge.occupancyByChar
+    assert [block["name"] for block in blocks] == [_CHAR, "人物B"]
+    manufacturing = [block["lines"][0] for block in blocks]
+    assert [line["max"] for line in manufacturing] == [11, 1]
+    assert [line["cap"] for line in manufacturing] == [12, 12]
+    assert [line["freeN"] for line in manufacturing] == [0, 1]
+
+
+def test_occupancy_by_char_empty_without_characters(h, monkeypatch):
+    monkeypatch.setattr(qdb, "get_character_list", lambda: [])
+    monkeypatch.setattr(qdb, "load_all_data", lambda: {"characters": {}})
+    bridge = h.bridge()
+    bridge.refresh()
+    assert bridge.occupancyByChar == []
+
+
 # ════════════════════════════════════════════════════════════
 #  折线几何
 # ════════════════════════════════════════════════════════════
@@ -331,8 +414,35 @@ def test_asset_plot_empty_state(h):
     bridge.refresh()
     assert bridge.assetPlot == {"isEmpty": True, "count": 0, "series": [], "xTicks": [], "yTicks": []}
     assert all(row["latestText"] == "" for row in bridge.assetSeries)
-    assert [row["valueText"] for row in bridge.assetSummaryRows] == ["", "", "", ""]
-    assert [row["deltaText"] for row in bridge.assetSummaryRows] == ["—", "—", "—", "—"]
+    assert [row["valueText"] for row in bridge.assetSummaryRows] == ["", "", "", "", ""]
+    assert [row["deltaText"] for row in bridge.assetSummaryRows] == ["—", "—", "—", "—", "—"]
+
+
+def test_asset_series_includes_line_value(h):
+    """第 5 条线「运行中产线价值」在线表里、且颜色与其它线不同。"""
+    h.assets.series = _snapshots(3)
+    bridge = h.bridge()
+    bridge.refresh()
+
+    series = bridge.assetSeries
+    assert [row["key"] for row in series] == ["total", "orders", "inventory", "line_value", "wallet"]
+    assert series[3]["label"] == "运行中产线价值"
+    assert series[3]["latestText"] == "52.00"  # _snapshots 的 line_value = 50 + i
+    colors = {row["color"] for row in series}
+    assert len(colors) == len(series), "五条线的颜色必须互不相同"
+
+
+def test_reload_assets_forces_reread(h):
+    """「刷新」按钮：即便快照行数没变也要重读一次服务，并写一条状态。"""
+    h.assets.series = _snapshots(2)
+    bridge = h.bridge()
+    bridge.refresh()
+    assert h.assets.days_requested == [qdb._RANGE_ALL_DAYS]
+
+    h.assets.series = _snapshots(2)  # 数据没变
+    bridge.reloadAssets()
+    assert h.assets.days_requested == [qdb._RANGE_ALL_DAYS, qdb._RANGE_ALL_DAYS], "强制重读"
+    assert "资产已刷新" in bridge.statusText
 
 
 def test_asset_series_names_colors_and_order(h):
@@ -341,7 +451,7 @@ def test_asset_series_names_colors_and_order(h):
     bridge.refresh()
 
     series = bridge.assetSeries
-    assert [row["key"] for row in series] == ["total", "orders", "inventory", "wallet"]
+    assert [row["key"] for row in series] == ["total", "orders", "inventory", "line_value", "wallet"]
     assert all(row["visible"] for row in series)
     assert series[0]["latestText"] == "1,002.00"
 
@@ -358,7 +468,7 @@ def test_asset_plot_geometry(h):
     plot = bridge.assetPlot
     assert plot["isEmpty"] is False
     assert plot["count"] == 3
-    assert len(plot["series"]) == 4
+    assert len(plot["series"]) == 5
     for entry in plot["series"]:
         points = entry["points"]
         assert len(points) == 3
@@ -380,7 +490,7 @@ def test_format_axis_value_units():
 
 
 def test_axis_range_follows_visible_series(h):
-    """钱包量级远大于其它三条：点掉它之后总资产的起伏才看得出来（刻意行为）。"""
+    """钱包量级远大于其它线：点掉它之后总资产的起伏才看得出来（刻意行为）。"""
     h.assets.series = _snapshots(3, total=1000.0, wallet=1_000_000_000.0)
     bridge = h.bridge()
     bridge.refresh()
@@ -393,7 +503,7 @@ def test_axis_range_follows_visible_series(h):
     squashed = _spread()
     ticks_before = [tick["label"] for tick in bridge.assetPlot["yTicks"]]
 
-    bridge.toggleSeries(3)  # 关掉「钱包余额」
+    bridge.toggleSeries(4)  # 关掉「钱包余额」
     assert _spread() > squashed
     assert [tick["label"] for tick in bridge.assetPlot["yTicks"]] != ticks_before
 
@@ -405,19 +515,18 @@ def test_toggle_series_flips_and_keeps_one_visible(h):
 
     bridge.toggleSeries(0)
     assert bridge.assetSeries[0]["visible"] is False
-    assert [e["key"] for e in bridge.assetPlot["series"]] == ["orders", "inventory", "wallet"]
+    assert [e["key"] for e in bridge.assetPlot["series"]] == ["orders", "inventory", "line_value", "wallet"]
 
     bridge.toggleSeries(0)
     assert bridge.assetSeries[0]["visible"] is True
 
     # 全关：最后一次关闭被忽略（并记一条 warning）
-    bridge.toggleSeries(0)
-    bridge.toggleSeries(1)
-    bridge.toggleSeries(2)
+    for index in range(4):
+        bridge.toggleSeries(index)
     with _warnings() as records:
-        bridge.toggleSeries(3)
+        bridge.toggleSeries(4)
     assert any("至少保留一条可见线" in record.getMessage() for record in records)
-    assert bridge.assetSeries[3]["visible"] is True
+    assert bridge.assetSeries[4]["visible"] is True
     assert len(bridge.assetPlot["series"]) == 1
 
 
@@ -557,8 +666,8 @@ def test_read_orders_reports_missing_file(h):
     bridge.readOrders()
     assert "没找到订单导出文件" in bridge.statusText
     assert "当前目录" in bridge.statusText
-    assert bridge.openOrderRows == []  # 不清空、不抛异常
-    assert h.orders.dirs == [None]  # 没设自定义目录 → 交给服务用默认目录
+    assert bridge.buyOrderRows == [] and bridge.sellOrderRows == []  # 不清空、不抛异常
+    assert h.orders.dirs == [None]  # 目录固定默认 → 把 None 交给服务
 
 
 def _write_export(tmp_path, name: str = "My Orders - 2026.09.16 213000.txt") -> str:
@@ -580,9 +689,11 @@ def test_read_orders_imports_and_records_snapshot(h, tmp_path):
     assert h.assets.snapshots == [None]  # record_snapshot() 回写一条资产快照
     assert "跳过 2 行" in bridge.statusText  # 解析器报的跳过行数要透出来
 
-    # 单元格格式化：方向 / 价格 / 剩余÷总量
-    rows = bridge.openOrderRows
-    assert [cell["text"] for cell in rows[0]["cells"]] == ["12", "三钛合金", "卖", "2.50", "4/4", "Jita IV-4"]
+    # 单元格格式化：物品 / 价格 / 剩余÷总量 / 位置（**没有方向列** —— 表本身就是方向）
+    assert [cell["text"] for cell in bridge.sellOrderRows[0]["cells"]] == ["三钛合金", "2.50", "4/4", "Jita IV-4"]
+    assert [cell["text"] for cell in bridge.buyOrderRows[0]["cells"]] == ["三钛合金", "100.00", "10/10", "Jita IV-4"]
+    assert bridge.buyOrderCount == 1
+    assert bridge.sellOrderCount == 1
 
     # 汇总：买卖单计数与挂单总额都是算出来的
     assert bridge.openOrderSummary.startswith("2 笔挂单 · 卖单 1 · 买单 1 · 挂单总额 1,010.00 ISK")
@@ -602,87 +713,59 @@ def test_read_orders_falls_back_to_location_id_and_name_backfill(h, tmp_path, mo
     monkeypatch.setattr("services.npc_seller.resolve_stations_by_ids", _no_station)
     bridge = h.bridge()
     bridge.readOrders()
-    cells = [cell["text"] for cell in bridge.openOrderRows[0]["cells"]]
-    assert cells[1] == "#1001"  # 物品名缺失 → #type_id
-    assert cells[5] == "#60003760"  # 补不到空间站名 → #location_id
+    cells = [cell["text"] for cell in bridge.buyOrderRows[0]["cells"]]
+    assert cells[0] == "#1001"  # 物品名缺失 → #type_id
+    assert cells[3] == "#60003760"  # 补不到空间站名 → #location_id
 
     # 补得到时用真名（补名发生在解析器之外）
     monkeypatch.setattr("services.npc_seller.resolve_stations_by_ids", _one_station)
     h.orders.rows = [_order(22, location_name="", location_id=60003760)]
     bridge.readOrders()
-    assert [cell["text"] for cell in bridge.openOrderRows[0]["cells"]][5] == "Jita IV-4"
+    assert [cell["text"] for cell in bridge.buyOrderRows[0]["cells"]][3] == "Jita IV-4"
+
+
+def test_read_orders_uses_default_dir_always(h, tmp_path):
+    """导出目录**固定**用游戏默认目录（自定义目录那一行已按用户要求删掉）。"""
+    h.orders.path = None
+    bridge = h.bridge()
+    bridge.readOrders()
+    assert h.orders.dirs == [None], "应把 None 交给 order_export.find_latest_export（它自己用默认目录）"
+
+
+def test_read_orders_reports_empty_after_list_stays(h):
+    """找不到文件时**不清空**已有列表，也不抛。"""
+    with h.user_conn() as conn:
+        conn.execute(
+            "INSERT INTO open_orders (order_id, is_buy, price, volume_total, volume_remain, imported_at) "
+            "VALUES (7, 0, 1.0, 1, 1, '2026-09-16 10:00:00')"
+        )
+    h.orders.path = None
+    bridge = h.bridge()
+    bridge.readOrders()
+    assert bridge.sellOrderRows and len(bridge.sellOrderRows) == 1
 
 
 def test_read_orders_is_idempotent(h, tmp_path):
+    """同一份文件重导：order_id 主键 → 不翻倍，也**不产生变动**（钱包不动、不弹框）。"""
     h.orders.path = _write_export(tmp_path)
     h.orders.rows = [_order(31), _order(32)]
     bridge = h.bridge()
     bridge.readOrders()
     bridge.readOrders()
-    assert len(_orders_in(h.conn)) == 2  # order_id 主键 → 重复导入不翻倍
-    assert "本次文件里没出现的旧订单" not in bridge.openOrderSummary  # 同一份文件重导不该产生陈旧行
-
-
-def test_stale_orders_counted_and_dropped_on_demand(h, tmp_path, monkeypatch):
-    bridge = h.bridge()
-    # 导入成功后的确认框由桥弹（本用例只验「不自动删 + 手动删」）：一律回答「否」，
-    # 保持「陈旧行原样留着」，也别在无 GUI 的测试里弹真对话框。
-    monkeypatch.setattr(qdb, "FMessageDialog", _Confirm(False))
-
-    class _Clock:
-        """固定「当前时间」——两次导入必须落在不同秒，否则 imported_at 撞车、陈旧判定失效。"""
-
-        def __init__(self, text: str) -> None:
-            self._value = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
-
-        def now(self) -> datetime:
-            return self._value
-
-    monkeypatch.setattr(qdb, "datetime", _Clock("2026-09-16 10:00:00"))
-
-    # 第一次导出：两笔
-    h.orders.path = _write_export(tmp_path, "a.txt")
-    h.orders.rows = [_order(41, type_name="三钛合金"), _order(42, type_name="类银超金属")]
-    bridge.readOrders()
     assert len(_orders_in(h.conn)) == 2
-
-    # 第二次导出：只剩 41（42 可能已成交/撤单）
-    monkeypatch.setattr(qdb, "datetime", _Clock("2026-09-16 10:05:00"))
-    h.orders.rows = [_order(41, type_name="三钛合金")]
-    bridge.readOrders()
-    assert len(_orders_in(h.conn)) == 2  # 不自动删
-    assert "本次文件里没出现的旧订单 1 笔" in bridge.openOrderSummary
-
-    review = bridge.pendingReview()
-    assert review["count"] == 1
-    assert review["staleCount"] == 1
-    assert review["staleNames"] == ["类银超金属"]
-
-    bridge.dropStaleOrders()
-    assert [row["order_id"] for row in _orders_in(h.conn)] == [41]
-    assert "已结束 1 笔陈旧挂单" in bridge.statusText
-    # 删完再问一次：没有陈修行了
-    bridge.dropStaleOrders()
-    assert "没有需要结束的陈旧挂单" in bridge.statusText
+    assert h.change_dialog.calls == [], "同一份文件重导没有变动 → 不弹确认框"
+    assert bridge.previewOrderChanges() == []
+    assert h.assets.wallet in (None, 0.0)
 
 
-def test_pending_review_without_import(h):
-    bridge = h.bridge()
-    review = bridge.pendingReview()
-    assert review["count"] == 0
-    assert review["staleCount"] == 0
-    assert review["staleNames"] == []
-    assert "还没有导入" in review["message"]
+# ── 订单变动弹窗（在桥里弹，QML 不参与）──────────────────────
 
 
-# ── 导入成功后的「旧挂单怎么处理」确认框（在桥里弹，QML 不参与）─────
+def _import_twice(h, tmp_path, monkeypatch, bridge: QueryDashboardBridge, *, second_remain: int | None = None) -> None:
+    """导入两次造出变动：第一次 41 + 42；第二次 41（42 消失；`second_remain` 给定时 41 数量变少）。
 
-
-def _stale_setup(h, tmp_path, monkeypatch, bridge: QueryDashboardBridge, *, stale_name: str = "类银超金属") -> None:
-    """导入两次造出一笔陈旧订单：第二次的导出文件里没有 42。
-
-    「当前时间」必须固定且两次落在不同秒 —— `imported_at` 是全秒精度的，
-    撞车会让陈旧判定（`imported_at != 本次`）失效。
+    「当前时间」固定且两次落在不同秒 —— `imported_at` 是全秒精度的，撞车会让
+    变动分类（按 order_id 比对前后快照）之外的日志时间戳不好读（本用例不依赖它，但保持一致）。
     """
     clock = {"now": datetime(2026, 9, 16, 10, 0, 0)}
 
@@ -692,71 +775,154 @@ def _stale_setup(h, tmp_path, monkeypatch, bridge: QueryDashboardBridge, *, stal
 
     monkeypatch.setattr(qdb, "datetime", _Clock())
     h.orders.path = _write_export(tmp_path, "a.txt")
-    h.orders.rows = [_order(41, type_name="三钛合金"), _order(42, type_name=stale_name)]
+    h.orders.rows = [_order(41, is_buy=False, price=10.0, remain=5), _order(42, is_buy=False, price=2.0, remain=3)]
     bridge.readOrders()
 
     clock["now"] = datetime(2026, 9, 16, 10, 5, 0)
-    h.orders.rows = [_order(41, type_name="三钛合金")]
+    if second_remain is None:
+        h.orders.rows = [_order(41, is_buy=False, price=10.0, remain=5)]
+    else:
+        h.orders.rows = [_order(41, is_buy=False, price=10.0, remain=second_remain)]
     bridge.readOrders()
 
 
-def test_read_orders_asks_and_drops_stale_on_yes(h, tmp_path, monkeypatch):
-    confirm = _Confirm(True)
-    monkeypatch.setattr(qdb, "FMessageDialog", confirm)
+def test_order_change_dialog_asks_only_when_changes(h, tmp_path, monkeypatch):
+    """有变动才弹；用户点「取消」→ 什么都不做（挂单原样留着、钱包不动）。"""
     bridge = h.bridge()
-    _stale_setup(h, tmp_path, monkeypatch, bridge)
+    _import_twice(h, tmp_path, monkeypatch, bridge)
 
-    assert len(confirm.calls) == 1  # 第一次导入没有陈旧行 → 只在第二次弹
-    _title, text = confirm.calls[0]
-    assert "类银超金属" in text  # 列出名字（其余措辞是文案，不锁）
+    assert len(h.change_dialog.calls) == 1, "第一次导入没有变动 → 只在第二次弹"
+    rows, wallet = h.change_dialog.calls[0]
+    assert [row["order_id"] for row in rows] == [42], "只有消失的那笔算变动"
+    assert rows[0]["kind"] == "gone"
+    assert rows[0]["volume"] == 3  # 原剩余量
+    assert wallet == 0.0
 
-    assert [row["order_id"] for row in _orders_in(h.conn)] == [41]  # 陈旧行被删
-    assert "已标记 1 笔旧挂单为已结束" in bridge.statusText
+    assert [row["order_id"] for row in _orders_in(h.conn)] == [41, 42], "取消 → 不自动删"
+    assert "未处理" in bridge.statusText
+    assert bridge.previewOrderChanges()[0]["order_id"] == 42  # 变动留着，下次导入重新提示
 
 
-def test_read_orders_keeps_stale_on_no(h, tmp_path, monkeypatch):
-    confirm = _Confirm(False)
-    monkeypatch.setattr(qdb, "FMessageDialog", confirm)
+def test_order_change_filled_credits_wallet(h, tmp_path, monkeypatch):
+    """卖单判定「卖完了」→ 钱包 +价格×剩余量；挂单行从列表移除；落一条台账。"""
+    h.change_dialog.answer = True
+    h.assets.wallet = 1000.0
     bridge = h.bridge()
-    _stale_setup(h, tmp_path, monkeypatch, bridge)
+    _import_twice(h, tmp_path, monkeypatch, bridge)
 
-    assert len(confirm.calls) == 1
-    assert [row["order_id"] for row in _orders_in(h.conn)] == [41, 42]  # 陈旧行仍在
-    assert "保留了 1 笔未出现在本次文件里的旧挂单" in bridge.statusText
-
-
-def test_stale_confirm_text_caps_names(h):
-    """超过 5 个名字：只列 5 个，其余用「等 N 笔」收口。"""
-    review = {
-        "count": 3,
-        "staleCount": 7,
-        "staleNames": [f"物品{i}" for i in range(7)],
-        "message": "",
-    }
-    text = QueryDashboardBridge._stale_confirm_text(review)
-    assert "物品4" in text and "物品5" not in text
-    assert "等 7 笔" in text
+    assert h.assets.wallet == pytest.approx(1000.0 + 3 * 2.0), "卖出 3 件 × 2.0"
+    assert [row["order_id"] for row in _orders_in(h.conn)] == [41]
+    events = _events_in(h.conn)
+    assert len(events) == 1
+    assert events[0]["outcome"] == "filled"
+    assert events[0]["delta"] == pytest.approx(6.0)
+    assert "钱包 +6.00 ISK" in bridge.statusText
+    assert h.assets.snapshots, "处理完要重记一条资产快照"
 
 
-def test_read_orders_does_not_ask_when_no_stale(h, tmp_path, monkeypatch):
-    confirm = _Confirm(True)
-    monkeypatch.setattr(qdb, "FMessageDialog", confirm)
+def test_order_change_cancelled_leaves_wallet_alone(h, tmp_path, monkeypatch):
+    """判成「手动撤销」→ 不动钱包；但那一单本来就在导出文件里消失了（`new_remain` 为 None），
+    所以照旧从挂单列表移除 —— 撤单在游戏里同样不再挂单。"""
+    h.change_dialog.answer = True
+    h.change_dialog.choices = {0: 1}  # 第 0 行选「手动撤销」
+    h.assets.wallet = 1000.0
+    bridge = h.bridge()
+    _import_twice(h, tmp_path, monkeypatch, bridge)
+
+    assert h.assets.wallet == pytest.approx(1000.0)
+    assert [row["order_id"] for row in _orders_in(h.conn)] == [41]
+    events = _events_in(h.conn)
+    assert events[0]["outcome"] == "cancelled" and events[0]["delta"] == 0.0
+    assert "钱包 +0.00 ISK" in bridge.statusText
+
+
+def test_order_change_cancelled_on_partial_keeps_order(h, tmp_path, monkeypatch):
+    """部分成交那笔选「手动撤销」：**这笔不入账、但挂单也留着**（它还在本次导出里）。
+
+    这里锁住「选择只决定记账」这条契约 —— 早先的实现把「撤销」当成删除，
+    会把仍在挂单里的行抹掉。
+
+    导入阶段先让弹窗回答「取消」（变动原样留着），再按设定重放一次。
+    """
+    bridge = h.bridge()
+    _import_twice(h, tmp_path, monkeypatch, bridge, second_remain=2)
+
+    # 变动顺序按库里的 order_id：0 = 41（partial，卖了 3 件 ×10）、1 = 42（gone，卖了 3 件 ×2）
+    rows, _wallet = h.change_dialog.calls[0]
+    partial_index = next(i for i, row in enumerate(rows) if row["order_id"] == 41)
+    h.change_dialog.answer = True
+    h.change_dialog.choices = {partial_index: 1}
+    h.assets.wallet = 500.0
+    bridge._review_changes("重放")
+
+    assert h.assets.wallet == pytest.approx(506.0), "只有 42 那笔 +6 入账，41 撤销不入账"
+    remaining = {row["order_id"]: row["volume_remain"] for row in _orders_in(h.conn)}
+    assert remaining == {41: 2}, "41 仍在挂单里且数量回写成成交后剩下的 2"
+
+
+def test_order_change_partial_keeps_order_and_credits_sold_volume(h, tmp_path, monkeypatch):
+    """数量变少（部分成交）：条目 `kind=='partial'`、数量是**减少量**，成交后挂单行仍在。"""
+    h.change_dialog.answer = True
+    h.assets.wallet = 0.0
+    bridge = h.bridge()
+    _import_twice(h, tmp_path, monkeypatch, bridge, second_remain=2)
+
+    rows, _wallet = h.change_dialog.calls[0]
+    kinds = {row["order_id"]: (row["kind"], row["volume"]) for row in rows}
+    assert kinds == {42: ("gone", 3), 41: ("partial", 3)}, "41 从 5 变 2 → 卖了 3"
+    assert h.assets.wallet == pytest.approx(3 * 2.0 + 3 * 10.0), "两笔都成交：6 + 30"
+    assert [row["order_id"] for row in _orders_in(h.conn)] == [41]
+
+
+def test_apply_order_changes_without_dialog(h):
+    """无弹窗路径（测试 / 无 GUI）：一律按默认（成交）落账。"""
+    h.assets.wallet = 0.0
+    bridge = h.bridge()
+    bridge._pending_changes = [
+        {
+            "order_id": 5,
+            "name": "三钛合金",
+            "is_buy": 0,
+            "price": 4.0,
+            "volume": 10,
+            "delta": 40.0,
+            "kind": "gone",
+        }
+    ]
+    with h.user_conn() as conn:
+        conn.execute(
+            "INSERT INTO open_orders (order_id, is_buy, price, volume_total, volume_remain, imported_at) "
+            "VALUES (5, 0, 4.0, 10, 10, '2026-09-16 10:00:00')"
+        )
+    bridge.applyOrderChanges()
+
+    assert h.assets.wallet == pytest.approx(40.0)
+    assert _orders_in(h.conn) == []
+    assert bridge.previewOrderChanges() == []
+    assert "已处理 1 笔订单变动" in bridge.statusText
+
+
+def test_apply_order_changes_empty_is_noop(h):
+    bridge = h.bridge()
+    bridge.applyOrderChanges()
+    assert "没有需要应用的订单变动" in bridge.statusText
+
+
+def test_read_orders_does_not_ask_when_no_changes(h, tmp_path, monkeypatch):
+    """首次导入（库里原本没有挂单）→ 没有「消失的旧单」→ 不弹框。"""
     h.orders.path = _write_export(tmp_path)
     h.orders.rows = [_order(51)]
     bridge = h.bridge()
     bridge.readOrders()
-
-    assert confirm.calls == []  # staleCount == 0 → 不弹空框
+    assert h.change_dialog.calls == []
 
 
 def test_read_orders_does_not_ask_on_failure(h, tmp_path, monkeypatch):
-    confirm = _Confirm(True)
-    monkeypatch.setattr(qdb, "FMessageDialog", confirm)
     bridge = h.bridge()
 
     h.orders.path = None  # 找不到导出文件
     bridge.readOrders()
-    assert confirm.calls == []
+    assert h.change_dialog.calls == []
     assert "没找到订单导出文件" in bridge.statusText
 
     def _boom(raw: str) -> tuple[list[dict], int]:
@@ -765,155 +931,53 @@ def test_read_orders_does_not_ask_on_failure(h, tmp_path, monkeypatch):
     h.orders.path = _write_export(tmp_path)
     monkeypatch.setattr(h.orders, "parse_order_export", _boom)
     bridge.readOrders()
-    assert confirm.calls == []
+    assert h.change_dialog.calls == []
     assert "订单解析失败" in bridge.statusText
 
     # 解析出 0 笔（空文件）也不弹
     monkeypatch.setattr(h.orders, "parse_order_export", lambda raw: ([], 3))
     bridge.readOrders()
-    assert confirm.calls == []
+    assert h.change_dialog.calls == []
     assert "未从" in bridge.statusText
 
 
-def test_export_dir_roundtrip(h, tmp_path):
-    h.orders.path = None
-    bridge = h.bridge()
-    assert bridge.exportDir == ""
-
-    target = str(tmp_path / "logs")
-    bridge.setExportDir(target)
-    assert bridge.exportDir == target
-    assert h.orders.dirs[-1] == target  # 改完立刻按新目录重读一次
-
-    bridge.setExportDir("")
-    assert bridge.exportDir == ""
-    assert h.orders.dirs[-1] is None
-
-
 # ════════════════════════════════════════════════════════════
-#  快捷产线
+#  订单变动的纯函数分类
 # ════════════════════════════════════════════════════════════
 
 
-def test_quick_rows_include_soft_blocked_and_ready(h):
-    h.plans = [
-        _plan(1, status="pending", product="可启动的"),
-        _plan(2, status="pending", product="缺料的"),
-        _plan(3, status="pending", product="缺蓝图的"),
-        _plan(4, status="ready", product="待下线的"),
-        _plan(5, status="completed", product="已完成的"),
-    ]
-    h.exec.materials = {2: [{"type_id": 1001, "missing": 5}]}  # 2 缺料（软阻塞）
-    h.exec.bp_ready = {3: False}  # 3 缺输入蓝图（硬阻塞）
-    bridge = h.bridge()
-    bridge.refresh()
+def test_classify_order_changes_kinds_and_signs(h):
+    """消失 → gone（数量=原剩余）；变少 → partial（数量=减少量）；变多/新增不算变动。"""
+    before = {
+        1: {"volume_remain": 5, "price": 10.0, "is_buy": 0, "type_name": "卖单"},
+        2: {"volume_remain": 8, "price": 3.0, "is_buy": 1, "type_name": "买单"},
+        3: {"volume_remain": 4, "price": 1.0, "is_buy": 0, "type_name": "没动"},
+        4: {"volume_remain": 2, "price": 1.0, "is_buy": 0, "type_name": "变多了"},
+        5: {"volume_remain": 0, "price": 1.0, "is_buy": 0, "type_name": "本来就空了"},
+    }
+    after = {
+        2: {"volume_remain": 5, "price": 3.0, "is_buy": 1},
+        3: {"volume_remain": 4, "price": 1.0, "is_buy": 0},
+        4: {"volume_remain": 9, "price": 1.0, "is_buy": 0},
+        5: {"volume_remain": 0, "price": 1.0, "is_buy": 0},
+    }
 
-    rows = bridge.quickRows
-    assert [(r["planId"], r["action"], r["actionText"], r["statusText"]) for r in rows] == [
-        (1, "start", "启动", "可启动"),
-        (2, "start", "启动", "材料不够"),  # 软阻塞仍可点，与产线小助手同口径
-        (4, "complete", "下线", "待下线"),
-    ]
-    assert all(set(r) == {"planId", "name", "action", "actionText", "statusText"} for r in rows)
+    changes = {row["order_id"]: row for row in qdb.classify_order_changes(before, after)}
 
-
-def test_quick_rows_caps_at_eight_each(h):
-    h.plans = [_plan(i, status="pending") for i in range(1, 13)] + [
-        _plan(100 + i, status="ready") for i in range(1, 13)
-    ]
-    bridge = h.bridge()
-    bridge.refresh()
-    rows = bridge.quickRows
-    assert len(rows) == 16
-    assert sum(1 for r in rows if r["action"] == "start") == 8
-    assert sum(1 for r in rows if r["action"] == "complete") == 8
+    assert set(changes) == {1, 2}
+    assert changes[1]["kind"] == "gone"
+    assert changes[1]["volume"] == 5
+    assert changes[1]["delta"] == 50.0  # 卖出 → 钱包 +
+    assert changes[2]["kind"] == "partial"
+    assert changes[2]["volume"] == 3
+    assert changes[2]["delta"] == -9.0  # 买入 → 钱包 −
+    assert changes[1]["name"] == "卖单"
 
 
-def test_quick_action_start_asks_and_executes(h, monkeypatch):
-    h.plans = [_plan(1, status="pending", product="可启动的")]
-    confirm = _Confirm(True)
-    monkeypatch.setattr(qdb, "FMessageDialog", confirm)
-    bridge = h.bridge()
-    bridge.refresh()
-
-    bridge.quickAction(0)
-    assert confirm.calls and confirm.calls[0][0] == "确认启动"
-    assert h.exec.started == [1]  # 确认后才真启动
-
-
-def test_quick_action_start_cancelled_by_confirm(h, monkeypatch):
-    h.plans = [_plan(1, status="pending")]
-    confirm = _Confirm(False)
-    monkeypatch.setattr(qdb, "FMessageDialog", confirm)
-    bridge = h.bridge()
-    bridge.refresh()
-
-    bridge.quickAction(0)
-    assert h.exec.started == []  # 取消 → 一行都不许执行
-
-
-def test_quick_action_start_blocked_does_not_execute(h, monkeypatch):
-    """行建好之后计划变成硬阻塞（例如蓝图被解绑）：槽内必须重新判定并拒绝执行。"""
-    h.plans = [_plan(1, status="pending")]
-    confirm = _Confirm(True)
-    monkeypatch.setattr(qdb, "FMessageDialog", confirm)
-    bridge = h.bridge()
-    bridge.refresh()
-    assert bridge.quickRows[0]["statusText"] == "可启动"
-
-    bridge._plans[0]["status"] = "completed"  # 行建好之后计划被改了状态（硬阻塞）
-    bridge.quickAction(0)
-    assert h.exec.started == []  # 槽内重新判定 → 拒绝执行
-
-
-def test_quick_action_start_failure_writes_reason(h, monkeypatch):
-    h.plans = [_plan(1, status="pending")]
-    monkeypatch.setattr(qdb, "FMessageDialog", _Confirm(True))
-    h.exec.start_result = {"ok": False, "code": "material_short", "message": "材料不足 2 种"}
-    bridge = h.bridge()
-    bridge.refresh()
-
-    bridge.quickAction(0)
-    assert h.exec.started == [1]
-    assert "启动失败" in bridge.statusText and "材料不足 2 种" in bridge.statusText  # 失败原因原样回显
-
-
-def test_quick_action_complete_uses_single_row_entry(h, monkeypatch):
-    h.plans = [_plan(1, status="ready", product="待下线的")]
-    monkeypatch.setattr(qdb, "FMessageDialog", _Confirm(True))
-    calls: list[tuple[object, int]] = []
-
-    def _fake_complete(parent: object, plan: dict) -> dict:
-        calls.append((parent, int(plan["id"])))
-        return {"completed": [1]}
-
-    monkeypatch.setattr(qdb, "_complete_one_plan", _fake_complete)
-    bridge = h.bridge()
-    bridge.refresh()
-
-    bridge.quickAction(0)
-    assert calls == [(None, 1)]  # 单行下线入口收到 (parent=None, 计划)
-
-    # 返回 None（用户取消 / 已弹过失败告警）→ 不写成成功文案
-    monkeypatch.setattr(qdb, "_complete_one_plan", lambda parent, plan: None)
-    bridge.quickAction(0)
-    assert "已取消下线" in bridge.statusText
-
-
-def test_quick_action_out_of_range(h):
-    bridge = h.bridge()
-    bridge.quickAction(0)
-    assert "已失效" in bridge.statusText  # 无行可动 → 不改 _plans、不抛
-
-
-def test_refresh_quick_only_recomputes_rows(h):
-    h.plans = [_plan(1, status="pending")]
-    bridge = h.bridge()
-    bridge.refreshQuick()
-    assert [r["planId"] for r in bridge.quickRows] == [1]
-    h.plans = [_plan(2, status="ready")]
-    bridge.refreshQuick()
-    assert [(r["planId"], r["action"]) for r in bridge.quickRows] == [(2, "complete")]
+def test_classify_order_changes_ignores_new_orders(h):
+    """本次新挂出去的单不算变动（挂单时钱包就已经变过了）。"""
+    after = {9: {"volume_remain": 1, "price": 1.0, "is_buy": 1, "type_name": "新单"}}
+    assert qdb.classify_order_changes({}, after) == []
 
 
 # ════════════════════════════════════════════════════════════
@@ -942,16 +1006,18 @@ def test_refresh_is_idempotent(h):
     assert len(counter) == first
 
 
-def test_refresh_recomputes_when_stock_changes(h):
-    h.plans = [_plan(1, status="pending")]
+def test_refresh_recomputes_when_plans_change(h):
+    """计划状态变了 → 指纹变 → 必须重算（占用块与「待下线 N」都要跟着动）。"""
+    h.plans = [_plan(1, status="in_progress")]
     bridge = h.bridge()
     counter = _counting(bridge)
     bridge.refresh()
     first = len(counter)
 
-    h.stock[_HANGAR] = {1001: 1}  # 库存变了 → 指纹变 → 必须重算
+    h.plans = [_plan(1, status="ready")]  # 待下线了 → 占用少一条、提示多一条
     bridge.refresh()
     assert len(counter) > first
+    assert bridge.occupancyByChar[0]["lines"][0]["readyText"] == "待下线 1"
 
 
 def test_refresh_recomputes_when_orders_change(h):

@@ -336,6 +336,24 @@ def test_region_change_resyncs_the_detail_price_hub(bridge):
 
 
 @pytest.mark.ui
+def test_occupancy_delegate_guards_model_data(qapp):
+    """静态护栏：`OccupancyPanel` 的 delegate 必须**防着 `modelData` 为 null**。
+
+    真窗口实测踩过：`height: ... modelData.lines.length ...` 在 `modelData` 尚未注入的
+    那一刻抛 `TypeError`，而 QML 对绑定错误是**静默**的 —— `height` 停在 0，
+    整块「每人物一块」一个都不画（面板空着、汇总却说「2 人物」，且控制台无任何报错）。
+    离屏快照看不出来（离屏下 `QFontDatabase` 为 0，本来就不看字形），必须真窗口才会现形。
+
+    这条守的是「形状」而不是像素：只要 delegate 里出现 `modelData.lines`，
+    就必须写成带 `modelData &&` 的守卫形式。
+    """
+    src = (_ROOT / "ui_qml" / "qml" / "pages" / "query" / "OccupancyPanel.qml").read_text(encoding="utf-8")
+    assert "modelData && charBlock.modelData.lines" in src, (
+        "delegate 的 lines 绑定缺少 modelData 空值守卫 —— 真窗口下会静默画不出任何人"
+    )
+
+
+@pytest.mark.ui
 def test_page_declares_the_query_panel_import(qapp):
     """静态守卫：页面必须 import 面板所在目录。
 

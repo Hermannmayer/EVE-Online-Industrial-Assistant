@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import QtQuick.Shapes
 import "../../components"
 
@@ -10,6 +11,7 @@ import "../../components"
  *   右「筛选项：按时间跨度 近7天 本月 本年 总」、
  *   下「数据示例和筛选项（通过点击筛选）／1 总计资产（按照卖单计算）2 挂单金额（买单、卖单）
  *      3 库存材料金额 4 钱包余额／以上显示的线条颜色都不一样」。
+ *   第五项「运行中产线价值」是按用户后续要求补的（只取制造中产线的材料占用 × 卖单价）。
  *
  * **几何全在桥里**（复用 `ui_qml/bridge/price_chart_bridge.py` 的
  * `nice_range` / `axis_values` / `map_values` / `pick_indices`）：轴范围、刻度、每个点的
@@ -20,8 +22,9 @@ import "../../components"
  * `Shape` + `ShapePath` + `PathPolyline`，网格与轴用 `Rectangle` + `Text` —— 都是场景图
  * 几何节点，截图里看得到。
  *
- * 高度用 `id` 互相推导（不用「总高减去一串常数」）：底部有**两行**控件
- * （数据示例一行、时间跨度一行），串成一行在 416px 的列宽里会溢出、右边的档位被切掉。
+ * 高度用 `id` 互相推导（不用「总高减去一串常数」）：顶部有「资产（表格显示）」标题行
+ * （右边挂着「刷新」按钮），底部有**两行**控件（数据示例一行、时间跨度一行），
+ * 串成一行在 416px 的列宽里会溢出、右边的档位被切掉。
  */
 Item {
     id: root
@@ -62,11 +65,37 @@ Item {
         spacing: root.gap
 
         // ── 资产（表格显示）────────────────────────────────────
+        RowLayout {
+            id: summaryHead
+            width: parent.width
+            height: root.rowH
+            spacing: Theme.spacingXs
+
+            Text {
+                Layout.fillWidth: true
+                verticalAlignment: Text.AlignVCenter
+                text: qsTr("资产（表格显示）")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: root.fntSmall
+                elide: Text.ElideRight
+            }
+
+            //: 手动刷新：强制重读资产快照（定时器那 60s 的轮询等不及时用）
+            FButton {
+                objectName: "assetRefreshButton"
+                Layout.preferredHeight: Math.max(20, root.fntSmall + 8)
+                text: qsTr("刷新")
+                onClicked: if (root.dashboard)
+                    root.dashboard.reloadAssets()
+            }
+        }
+
         Column {
             id: summaryBox
             width: parent.width
-            // 4 行封顶，但别超过面板的三分之一（面板很矮时把图留给折线）
-            height: Math.min(root.rowH * Math.min(4, Math.max(1, root.summaryRows.length)),
+            // 5 行封顶，但别超过面板的三分之一（面板很矮时把图留给折线）
+            height: Math.min(root.rowH * Math.min(root.summaryRows.length, 5),
                              Math.max(root.rowH, parent.height * 0.34))
             spacing: 0
             clip: true
@@ -141,8 +170,9 @@ Item {
             id: chartBox
             width: parent.width
             height: Math.max(60, parent.height
-                                - summaryBox.height - legendBox.height - rangeBox.height
-                                - 3 * root.gap - 1)
+                                - summaryHead.height - summaryBox.height
+                                - legendBox.height - rangeBox.height
+                                - 4 * root.gap - 2)
 
             // 无数据 / 加载中
             Text {
@@ -267,7 +297,10 @@ Item {
                     required property int index
                     required property var modelData
                     height: parent.height
-                    width: Math.max(40, (legendBox.width - 3 * legendBox.spacing) / 4)
+                    /* 宽度按**线的条数**均分（早先写死 /4，加到第 5 条「运行中产线价值」
+                     * 之后会溢出、最右边那个 chip 被切掉）。 */
+                    width: Math.max(40, (legendBox.width - (root.seriesRows.length - 1) * legendBox.spacing)
+                                         / Math.max(1, root.seriesRows.length))
                     text: modelData.label
                     // 没选中的压暗，一眼看出哪几条在图上
                     opacity: modelData.visible ? 1.0 : 0.45

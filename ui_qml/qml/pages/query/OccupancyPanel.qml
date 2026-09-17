@@ -3,19 +3,24 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../../components"
 
-/* 空闲态仪表盘 · 产线详情（人物、产线占用情况）+ 底部的快捷启动/下线。
+/* 空闲态仪表盘 · 产线详情（**每人物一块，块内制造 / 科研 / 反应三行**）。
  *
- * 对应界面标注图「产线详情 / 人物、产线占用情况」与「提供快捷的下线和开始产线按钮」。
+ * 对应界面标注图「产线详情 / 人物、产线占用情况」。早先的版本是「每种产线类型一行」，
+ * 那样在竖排的左栏里下半截全是空白（实测左栏约 260px、只有 3 行数据），
+ * 而每个人的占用只能塞进 tooltip。现在**每人一块**：
  *
- * **每种产线类型一行**，不是每人物一行。原因：`FCapacityRow`（产线启动小助手里那块）
- * 要放「角色名 + 三类产线各自的标签与格子 + 状态徽章」，实测在 260px 的左栏里格子会压到
- * 「科研 / 反应」标签、徽章叠在标签上。人物本来就没几个，转置过来每类产线只占一行，
- * 占地小得多，也不会互相挤。
+ *     ┌ 人物A                                生产中 ┐
+ *     │ ● 制造 ████████░░░░  6/8   待下线 1   空 2 │
+ *     │ ● 科研 ██░░░░░░░░░░  1/5              空 4 │
+ *     │ ● 反应 ░░░░░░░░░░░░  0/1              空 1 │
+ *     └ ───────────────────────────────────────── ┘
  *
- * 行内是「一个角色一段」的容量条：段内 `max` 个槽位、前 `active` 个点亮，段间留缝，
- * 一眼能看出**是谁在用、用了几个**。宽度不够时（槽位窄到画不出来）**降级**成
- * 一条按占用比例填充的整条 —— 宁可少画分段，也不要画出一坨叠在一起的方块。
- * 逐人物的数字始终在 tooltip 里，降级不会丢信息。
+ * - 条子按**统一的槽位宽**画（分母取该线型里最大的那个人），所以不同人物的条**等长可比**；
+ *   条子里点亮的格数 = 该人物该线型已占用的产线数（`active`），总格数 = 该人物上限（`max`）。
+ * - 行尾两个提示：「待下线 N」（该人物该线型下 `status=='ready'` 的计划数，橙色）与
+ *   「空 N」（还能再上几条线，灰字）。两者都为 0 时不占位置。
+ * - 人物多的时候整块列表滚动（`ListView` + 按需滚动条）。
+ * - 面板太窄、格子画不清时降级为一条按占用比例填充的整条（信息不丢，逐人物数字在 tooltip 里）。
  */
 Item {
     id: root
@@ -23,18 +28,17 @@ Item {
     //: `bridge.dashboard`
     property var dashboard: null
 
-    readonly property var lineRows: dashboard ? dashboard.occupancyByLine : []
-    readonly property var quickRows: dashboard ? dashboard.quickRows : []
+    readonly property var charBlocks: dashboard ? dashboard.occupancyByChar : []
 
     readonly property int fntSmall: Math.round(11 * Theme.fontScale)
     readonly property int fntBase: Math.round(12 * Theme.fontScale)
-    readonly property int rowH: Math.max(22, Math.round(13 * Theme.fontScale) + 10)
-    readonly property int quickH: Math.max(22, fntBase + 10)
-    readonly property int headH: Math.max(18, fntSmall + 7)
-    readonly property int dotSize: Math.max(7, Math.round(8 * Theme.fontScale))
-    readonly property int labelW: Math.round(34 * Theme.fontScale)
-    readonly property int countW: Math.round(46 * Theme.fontScale)
-    readonly property int segGap: Theme.spacingXs
+    readonly property int headH: Math.max(20, fntBase + 8)
+    readonly property int lineH: Math.max(18, fntSmall + 7)
+    readonly property int blockGap: Math.max(4, Theme.spacingXs + 2)
+    readonly property int dotSize: Math.max(6, Math.round(7 * Theme.fontScale))
+    readonly property int labelW: Math.round(30 * Theme.fontScale)
+    readonly property int countW: Math.round(42 * Theme.fontScale)
+    readonly property int hintW: Math.round(56 * Theme.fontScale)
     //: 槽位窄于此值就降级成整条比例条（画出来也看不清）
     readonly property real minSlotW: 3
 
@@ -54,117 +58,176 @@ Item {
             elide: Text.ElideRight
         }
 
-        // ── 每种产线一行 ──────────────────────────────────────
+        // ── 每人物一块 ────────────────────────────────────────
         ListView {
-            id: lineList
+            id: charList
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
             boundsBehavior: Flickable.StopAtBounds
-            model: root.lineRows
-            spacing: 2
+            model: root.charBlocks
+            spacing: 0
             ScrollBar.vertical: ScrollBar {
                 policy: ScrollBar.AsNeeded
             }
 
             delegate: Item {
-                id: lineRow
+                id: charBlock
                 required property int index
                 required property var modelData
 
-                width: lineList.width
-                height: root.rowH
+                /* ⚠️ 必须**防着 modelData 还是 null 的那一刻**：第一次求值时 `modelData`
+                 * 可能尚未注入，裸写 `modelData.lines.length` 会抛 TypeError ——
+                 * 而 QML 对绑定错误是**静默**的，`height` 会停在 0，
+                 * 表现就是「每个人物一块」一个都画不出来（空面板，无任何报错）。
+                 * 实测：真窗口下 delegate height = 0、contentHeight = 0，汇总却说「2 人物」。 */
+                readonly property var lines: (charBlock.modelData && charBlock.modelData.lines)
+                                             ? charBlock.modelData.lines : []
+                /* 块高 = 头行 + 每线一行 + 块间距 + 一条分隔线 */
+                width: charList.width
+                height: root.headH + charBlock.lines.length * root.lineH + root.blockGap + 1
 
-                //: 容量条可用宽度 = 整行减去 色点 / 标签 / 计数 / 间距
-                readonly property real barW: Math.max(0, width - root.dotSize - root.labelW
-                                                     - root.countW - 3 * Theme.spacingXs)
-
-                /* 槽位宽：段内槽位**紧贴**（不留缝，否则 26 个槽位的缝比槽还宽），
-                 * 只在角色之间留 `segGap`。 */
-                readonly property int segCount: Math.max(1, (lineRow.modelData.chars || []).length)
-                /* ⚠️ 用 `Number()` 而**不是** `int()`：QML 的 JS 全局里没有 `int()` 这个函数
-                 * （只有 `Number` / `parseInt` / `Math.*`）。写 `int(x)` 会让整条绑定抛
-                 * ReferenceError，而 QML 对绑定错误是**静默**的（属性停在默认值 0）——
-                 * 表现就是容量条一个槽位都画不出来、只剩一条空轨道，不报任何错。 */
-                readonly property int slotCount: Math.max(0, Math.floor(Number(lineRow.modelData.cap) || 0))
-                readonly property real slotGaps: (lineRow.segCount - 1) * root.segGap
-                readonly property real slotW: lineRow.slotCount > 0
-                                              ? (lineRow.barW - lineRow.slotGaps) / lineRow.slotCount
-                                              : 0
-                //: 画不出清晰的槽位 → 退化成一条按比例填充的整条
-                readonly property bool degraded: lineRow.slotW < root.minSlotW
-                readonly property real ratio: lineRow.slotCount > 0
-                                              ? Math.min(1, lineRow.modelData.active / lineRow.slotCount)
-                                              : 0
-
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: root.dotSize
-                    height: width
-                    radius: width / 2
-                    color: lineRow.modelData.color
-                }
-
+                // ── 头行：人物名 + 状态徽章 ────────────────────
                 Text {
-                    id: lineLabel
+                    id: nameText
                     anchors.left: parent.left
-                    anchors.leftMargin: root.dotSize + Theme.spacingXs
-                    width: root.labelW
-                    height: parent.height
+                    anchors.top: parent.top
+                    height: root.headH
+                    width: Math.max(40, parent.width - badge.width - 2 * Theme.spacingXs)
                     verticalAlignment: Text.AlignVCenter
-                    text: lineRow.modelData.label
+                    text: charBlock.modelData.name
                     color: Theme.textPrimary
                     font.family: Theme.fontFamily
-                    font.pixelSize: root.fntSmall
+                    font.pixelSize: root.fntBase
+                    font.bold: true
                     elide: Text.ElideRight
                 }
 
-                // ── 容量条 ────────────────────────────────────
                 Item {
-                    id: barBox
-                    anchors.left: lineLabel.right
-                    anchors.leftMargin: Theme.spacingXs
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: lineRow.barW
-                    height: Math.max(4, Math.round(parent.height * 0.5))
+                    id: badge
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    height: root.headH
+                    width: badgeText.width + 2 * Theme.spacingSm + 5
 
-                    // 轨道（也让「一个都没用」时这条行有个形状，不至于看起来缺数据）
                     Rectangle {
                         anchors.fill: parent
                         radius: Theme.radiusSmall
-                        color: Theme.bgHover
-                        opacity: 0.55
+                        color: Theme.bgSurfaceLight
                     }
 
-                    // 降级态：一条按比例填充的整条
                     Rectangle {
-                        visible: lineRow.degraded
-                        anchors.left: parent.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: Math.round(parent.width * lineRow.ratio)
-                        height: parent.height
-                        radius: Theme.radiusSmall
-                        color: lineRow.modelData.color
+                        x: 2
+                        y: 4
+                        width: 3
+                        height: badge.height - 8
+                        color: charBlock.modelData.statusColor
                     }
 
-                    // 正常态：逐角色分段的槽位条
-                    Row {
-                        visible: !lineRow.degraded
-                        anchors.left: parent.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: root.segGap
+                    Text {
+                        id: badgeText
+                        anchors.centerIn: parent
+                        text: charBlock.modelData.statusText
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: root.fntSmall
+                    }
+                }
 
-                        Repeater {
-                            model: lineRow.modelData.chars
+                // ── 三行：制造 / 科研 / 反应 ───────────────────
+                Repeater {
+                    model: charBlock.lines
 
+                    Item {
+                        id: lineRow
+                        required property int index
+                        required property var modelData
+
+                        x: 0
+                        y: root.headH + index * root.lineH
+                        width: charBlock.width
+                        height: root.lineH
+
+                        //: 提示区宽度：只有真的要显示提示时才占位，否则把宽度让给条子
+                        readonly property bool hasReady: !!lineRow.modelData.readyText
+                        readonly property int hintWUsed: lineRow.hasReady ? root.hintW : 0
+
+                        //: 容量条可用宽度 = 整行减去 色点 / 标签 / 计数 / 提示 / 间距
+                        readonly property real barW: Math.max(0, width - root.dotSize - root.labelW
+                                                             - root.countW - lineRow.hintWUsed
+                                                             - 4 * Theme.spacingXs)
+                        readonly property int slots: Math.max(0, Math.floor(Number(lineRow.modelData.max) || 0))
+                        readonly property int span: Math.max(slots, Math.floor(Number(lineRow.modelData.cap) || 0))
+                        //: 槽位宽按**统一分母**（该线型最大上限）算 → 各人的条等长可比
+                        readonly property real slotW: lineRow.span > 0 ? lineRow.barW / lineRow.span : 0
+                        readonly property bool degraded: lineRow.slotW < root.minSlotW
+                        readonly property real ratio: lineRow.slots > 0
+                                                      ? Math.min(1, Number(lineRow.modelData.active) / lineRow.slots)
+                                                      : 0
+                        readonly property real barWidthUsed: lineRow.degraded
+                                                              ? lineRow.barW
+                                                              : lineRow.span * lineRow.slotW
+
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: root.dotSize
+                            height: width
+                            radius: width / 2
+                            color: lineRow.modelData.color
+                        }
+
+                        Text {
+                            id: lineLabel
+                            anchors.left: parent.left
+                            anchors.leftMargin: root.dotSize + Theme.spacingXs
+                            width: root.labelW
+                            height: parent.height
+                            verticalAlignment: Text.AlignVCenter
+                            text: lineRow.modelData.label
+                            color: Theme.textPrimary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: root.fntSmall
+                            elide: Text.ElideRight
+                        }
+
+                        // ── 容量条 ────────────────────────────────
+                        Item {
+                            id: barBox
+                            anchors.left: lineLabel.right
+                            anchors.leftMargin: Theme.spacingXs
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: lineRow.barWidthUsed
+                            height: Math.max(4, Math.round(parent.height * 0.5))
+
+                            // 轨道（也让「一个都没用」时这条行有个形状，不至于看起来缺数据）
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: Theme.radiusSmall
+                                color: Theme.bgHover
+                                opacity: 0.55
+                            }
+
+                            // 降级态：一条按比例填充的整条
+                            Rectangle {
+                                visible: lineRow.degraded
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: Math.round(parent.width * lineRow.ratio)
+                                height: parent.height
+                                radius: Theme.radiusSmall
+                                color: lineRow.modelData.color
+                            }
+
+                            // 正常态：槽位（点亮 = 已占用）
                             Row {
-                                id: seg
-                                required property var modelData
+                                visible: !lineRow.degraded
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
                                 spacing: 0
 
                                 Repeater {
-                                    model: Math.max(0, Math.floor(Number(seg.modelData.max) || 0))
+                                    model: lineRow.degraded ? 0 : lineRow.slots
 
                                     Rectangle {
                                         required property int index
@@ -173,139 +236,74 @@ Item {
                                         // 空槽位画成透明：让下面的轨道透出来。
                                         // 用 `bgHover` 实心会把空槽画得**比轨道还亮**，
                                         // 「0/2」那两行看着像用了 1 格（实测）。
-                                        color: index < Number(seg.modelData.active || 0)
+                                        color: index < Number(lineRow.modelData.active || 0)
                                                ? lineRow.modelData.color
                                                : "transparent"
                                     }
                                 }
                             }
                         }
+
+                        Text {
+                            anchors.left: barBox.right
+                            anchors.leftMargin: Theme.spacingXs
+                            width: root.countW
+                            height: parent.height
+                            verticalAlignment: Text.AlignVCenter
+                            horizontalAlignment: Text.AlignRight
+                            text: lineRow.modelData.active + "/" + lineRow.modelData.max
+                            color: Number(lineRow.modelData.active) > Number(lineRow.modelData.max)
+                                   ? Theme.accentRed : Theme.textSecondary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: root.fntSmall
+                            elide: Text.ElideRight
+                        }
+
+                        //: 「待下线 N」—— 该人物该线型下可下线的计划数（用户明确要的提示）
+                        Text {
+                            anchors.right: parent.right
+                            width: root.hintW
+                            height: parent.height
+                            visible: lineRow.hasReady
+                            verticalAlignment: Text.AlignVCenter
+                            horizontalAlignment: Text.AlignRight
+                            text: lineRow.modelData.readyText
+                            color: Theme.accentOrange
+                            font.family: Theme.fontFamily
+                            font.pixelSize: root.fntSmall
+                            elide: Text.ElideRight
+                        }
+
+                        HoverHandler {
+                            id: lineHover
+                        }
+
+                        ToolTip.visible: lineHover.hovered
+                        ToolTip.text: lineRow.modelData.detailText
                     }
                 }
 
-                Text {
+                // ── 块分隔线 ──────────────────────────────────
+                Rectangle {
+                    anchors.left: parent.left
                     anchors.right: parent.right
-                    width: root.countW
-                    height: parent.height
-                    verticalAlignment: Text.AlignVCenter
-                    horizontalAlignment: Text.AlignRight
-                    text: lineRow.modelData.active + "/" + lineRow.modelData.cap
-                    color: lineRow.modelData.active > lineRow.modelData.cap
-                           ? Theme.accentRed : Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: root.fntSmall
-                    elide: Text.ElideRight
+                    anchors.bottom: parent.bottom
+                    height: 1
+                    color: Theme.border
+                    opacity: 0.6
                 }
-
-                HoverHandler {
-                    id: lineHover
-                }
-
-                ToolTip.visible: lineHover.hovered
-                ToolTip.text: lineRow.modelData.label + "\n" + lineRow.modelData.detailText
             }
 
             Text {
                 anchors.centerIn: parent
                 width: parent.width - 2 * Theme.spacingSm
-                visible: root.lineRows.length === 0
+                visible: root.charBlocks.length === 0
                 text: qsTr("没有可用的产线容量数据")
                 color: Theme.textSecondary
                 font.family: Theme.fontFamily
                 font.pixelSize: root.fntSmall
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
-            }
-        }
-
-        // ── 快捷启动 / 下线 ───────────────────────────────────
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: Theme.border
-        }
-
-        Text {
-            Layout.fillWidth: true
-            Layout.preferredHeight: root.headH
-            verticalAlignment: Text.AlignVCenter
-            text: qsTr("快捷操作（可启动 / 可下线）")
-            color: Theme.textSecondary
-            font.family: Theme.fontFamily
-            font.pixelSize: root.fntSmall
-        }
-
-        ListView {
-            id: quickList
-            Layout.fillWidth: true
-            Layout.preferredHeight: Math.max(root.quickH,
-                                             Math.min(3, Math.max(1, root.quickRows.length)) * root.quickH)
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            model: root.quickRows
-            ScrollBar.vertical: ScrollBar {
-                policy: ScrollBar.AsNeeded
-            }
-
-            Text {
-                anchors.centerIn: parent
-                width: parent.width - 2 * Theme.spacingSm
-                visible: root.quickRows.length === 0
-                text: qsTr("当前没有可启动或可下线的产线")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: root.fntSmall
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.WordWrap
-            }
-
-            delegate: RowLayout {
-                id: quickRow
-                required property int index
-                required property var modelData
-                width: quickList.width
-                height: root.quickH
-                spacing: Theme.spacingXs
-
-                Text {
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 40
-                    verticalAlignment: Text.AlignVCenter
-                    text: quickRow.modelData.name
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: root.fntBase
-                    elide: Text.ElideRight
-
-                    HoverHandler {
-                        id: nameHover
-                    }
-                    ToolTip.visible: nameHover.hovered
-                    ToolTip.text: quickRow.modelData.name + "\n" + quickRow.modelData.statusText
-                }
-
-                Text {
-                    Layout.preferredWidth: Math.round(52 * Theme.fontScale)
-                    verticalAlignment: Text.AlignVCenter
-                    horizontalAlignment: Text.AlignRight
-                    text: quickRow.modelData.statusText
-                    color: Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: root.fntSmall
-                    elide: Text.ElideRight
-                }
-
-                FButton {
-                    Layout.preferredHeight: Math.round(20 * Theme.fontScale)
-                    text: quickRow.modelData.actionText
-                    primary: quickRow.modelData.action === "start"
-                    /* 确认框在**桥**里弹（`FMessageDialog.question`），不在这边：
-                     * 服务函数是无 parent 的、validate 档会在无 QApplication 下直调它们
-                     * （见 `docs/dev/flows.md`），所以「确认」得由持有 shell 的桥来做；
-                     * 桥已经知道这一行是什么、要做什么，QML 只要交出下标。 */
-                    onClicked: if (root.dashboard)
-                        root.dashboard.quickAction(quickRow.index)
-                }
             }
         }
     }

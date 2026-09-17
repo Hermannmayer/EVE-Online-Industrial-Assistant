@@ -74,8 +74,12 @@
 
 | 态 | 区域名 | 代码定位 | 内容 |
 |---|---|---|---|
-| 空闲态 | 仪表盘 | `#queryDashboard` | 三栏：产线详情 / 资产折线图 / 挂单列表 |
+| 空闲态 | 仪表盘 | `#queryDashboard` | 三栏：产线详情（`OccupancyPanel`，**每人物一块、块内制造/科研/反应三行**，行尾给「待下线 N」）/ 资产折线图（`AssetChartPanel`，5 条线 + 右上角「刷新」`#assetRefreshButton`）/ 挂单列表（`OpenOrdersPanel`，**买单 `#buyOrdersTable` / 卖单 `#sellOrdersTable` 上下两张表** + `#readOrdersButton`；钱包余额 `#walletField`） |
 | 有结果态 | 结果区 | `#queryResultArea` | 上：结果表（点击区 `#queryClickArea`）；下：详情面板 `#queryDetailPane` |
+
+> 仪表盘上原先那块「快捷操作（可启动 / 可下线）」列表**已删除**（用户要求：既占地方又没用）——
+> 启动 / 下线在**生产计划表**与**产线启动小助手**里都有。
+> 挂单面板原有的「导出目录」输入框也一并删除：目录**固定**为游戏默认目录。
 
 详情面板是 2×2：左上「5 个默认贸易中心的价格」、右上「订单列表」、
 左下「精炼产物、价格」、右下「制造所需的材料」。

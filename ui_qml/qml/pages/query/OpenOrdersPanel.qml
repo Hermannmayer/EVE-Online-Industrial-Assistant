@@ -3,19 +3,21 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../../components"
 
-/* 空闲态仪表盘 · 挂单列表。
+/* 空闲态仪表盘 · 挂单列表（**买单 / 卖单各一张表**）。
  *
  * 对应界面标注图「挂单列表 / 读取订单（按钮）／游戏的订单通过游戏内导出按钮在…
  * 要考虑多份导出的信息去重问题，区分买单和卖单／通过记录联动资产记录和钱包记录／
  * 读取后弹出窗口确认订单情况（是卖出还是取消挂单）」。
  *
- * 数据来自游戏内「钱包 → 订单 → 导出」写出的本地文件（默认
- * `Documents\EVE\logs\Marketlogs`，可在下方改成自己的目录）。**去重靠订单 ID 做主键**
- * —— 反复导入同一份导出是幂等的；「这次导出里没出现的旧订单」由桥统计后弹窗问用户
- * 是否标记为已结束，**不自动删**。
+ * 数据来自游戏内「钱包 → 订单 → 导出」写出的本地文件，**目录固定**
+ * `Documents\EVE\logs\Marketlogs`（用户要求：不再提供自定义目录输入框，
+ * 免得那一行长期占着面板、还要为一个几乎不变的值留输入框）。
+ * **去重靠订单 ID 做主键** —— 反复导入同一份导出是幂等的。
  *
- * 弹窗在桥里弹（`FMessageDialog.question`）：服务函数是无 parent 的、validate 档会在
- * 无 QApplication 下直调它们（见 `docs/dev/flows.md`），所以确认只能由持有 shell 的桥做。
+ * 导入后由桥弹「订单变动」确认框（`dialogs/OrderChangeDialog.qml`）：逐条选
+ * 「买到了 / 卖完了」或「手动撤销」，确认后桥按成交增减钱包余额。
+ * 弹窗在桥里弹（`OrderChangeQmlDialog`）：服务函数是无 parent 的、validate 档会在
+ * 无 QApplication 下直调它们（见 `docs/dev/flows.md`），所以交互只能由持有 shell 的桥做。
  */
 Item {
     id: root
@@ -26,24 +28,12 @@ Item {
     readonly property int fntSmall: Math.round(11 * Theme.fontScale)
     readonly property int barH: Math.max(22, Math.round(14 * Theme.fontScale) + 8)
     readonly property int rowH: Math.max(20, fntSmall + 9)
+    readonly property int headRowH: Math.max(18, fntSmall + 6)
 
-    /* 面板只有约 290px 宽，**订单 ID 那一列不显示**：它是 10 位数字，挤在这么窄的列里
-     * 一定是省略号，占着宽度又读不出任何东西。物品 / 方向 / 价格 / 剩余 / 位置才是要看的。
-     * 数据仍在行里（`cells[0]`），要恢复显示只需去掉这里的两处 slice。 */
-    readonly property var tableHeads: {
-        const h = root.dashboard ? root.dashboard.openOrderHeads : []
-        return h.length > 1 ? h.slice(1) : h
-    }
-
-    readonly property var tableRows: {
-        const src = root.dashboard ? root.dashboard.openOrderRows : []
-        const out = []
-        for (let i = 0; i < src.length; ++i) {
-            const cells = src[i].cells || []
-            out.push({ "cells": cells.length > 1 ? cells.slice(1) : cells })
-        }
-        return out
-    }
+    //: 两张表各自一行标题（「买单 · N 笔」/「卖单 · N 笔」）。与详情页 OrderPanel 同做法。
+    readonly property var heads: dashboard ? dashboard.openOrderHeads : []
+    //: 列宽比：物品 / 价格 / 剩余·总量 / 位置（**没有方向列** —— 表本身就是方向）
+    readonly property var ratios: [2.6, 1.5, 1.6, 2.4]
 
     ColumnLayout {
         anchors.fill: parent
@@ -56,6 +46,7 @@ Item {
             spacing: Theme.spacingXs
 
             FButton {
+                objectName: "readOrdersButton"
                 text: qsTr("读取订单")
                 primary: true
                 Layout.preferredHeight: root.barH
@@ -81,38 +72,7 @@ Item {
             }
         }
 
-        // ── 导出目录（可改）──────────────────────────────────
-        RowLayout {
-            Layout.fillWidth: true
-            height: root.barH
-            spacing: Theme.spacingXs
-
-            Text {
-                text: qsTr("导出目录")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: root.fntSmall
-            }
-
-            FTextField {
-                id: dirField
-                Layout.fillWidth: true
-                Layout.preferredHeight: root.barH
-                placeholderText: qsTr("留空则用默认目录 Documents\\EVE\\logs\\Marketlogs")
-                text: root.dashboard ? root.dashboard.exportDir : ""
-                onAccepted: if (root.dashboard)
-                    root.dashboard.setExportDir(text)
-            }
-
-            FButton {
-                text: qsTr("应用")
-                Layout.preferredHeight: root.barH
-                onClicked: if (root.dashboard)
-                    root.dashboard.setExportDir(dirField.text)
-            }
-        }
-
-        // ── 钱包余额（手填，参与资产快照）────────────────────
+        // ── 钱包余额（手填，参与资产快照；订单变动也会自动加减）──
         RowLayout {
             Layout.fillWidth: true
             height: root.barH
@@ -127,6 +87,7 @@ Item {
 
             FTextField {
                 id: walletField
+                objectName: "walletField"
                 Layout.fillWidth: true
                 Layout.preferredHeight: root.barH
                 placeholderText: qsTr("填写当前钱包 ISK，用于资产折线图")
@@ -143,14 +104,46 @@ Item {
             }
         }
 
-        // ── 挂单表 ────────────────────────────────────────────
+        // ── 买单（上）────────────────────────────────────────
+        Text {
+            Layout.fillWidth: true
+            Layout.preferredHeight: root.headRowH
+            verticalAlignment: Text.AlignVCenter
+            text: qsTr("买单 · %1 笔").arg(root.dashboard ? root.dashboard.buyOrderCount : 0)
+            color: Theme.accentGreen
+            font.family: Theme.fontFamily
+            font.pixelSize: root.fntSmall
+        }
+
         PanelTable {
+            objectName: "buyOrdersTable"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            headers: root.tableHeads
-            ratios: [2.6, 0.9, 1.5, 1.6, 2.4]
-            rows: root.tableRows
-            emptyText: qsTr("暂无挂单记录 —— 在游戏「钱包 → 订单」点导出，再点上面的「读取订单」")
+            headers: root.heads
+            ratios: root.ratios
+            rows: root.dashboard ? root.dashboard.buyOrderRows : []
+            emptyText: root.dashboard ? root.dashboard.buyEmptyText : ""
+        }
+
+        // ── 卖单（下）────────────────────────────────────────
+        Text {
+            Layout.fillWidth: true
+            Layout.preferredHeight: root.headRowH
+            verticalAlignment: Text.AlignVCenter
+            text: qsTr("卖单 · %1 笔").arg(root.dashboard ? root.dashboard.sellOrderCount : 0)
+            color: Theme.accentRed
+            font.family: Theme.fontFamily
+            font.pixelSize: root.fntSmall
+        }
+
+        PanelTable {
+            objectName: "sellOrdersTable"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            headers: root.heads
+            ratios: root.ratios
+            rows: root.dashboard ? root.dashboard.sellOrderRows : []
+            emptyText: root.dashboard ? root.dashboard.sellEmptyText : ""
         }
 
         // ── 汇总 ──────────────────────────────────────────────
