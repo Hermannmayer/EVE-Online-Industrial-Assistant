@@ -6,6 +6,44 @@
 
 <!-- version list -->
 
+## v0.23.1 (2026-09-17)
+
+### Bug Fixes
+
+- **数据**: 回填 item.category_id，恢复失效的术语一致性校验
+  ([`6de157c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/6de157c163197a5504a9dbd8219c8fe0c5f90328))
+
+### Chores
+
+- **流程**: 修 7 处失效护栏、收紧 plan-auditor、两份 CLAUDE.md 重组
+  ([`d96651e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d96651e2760cd5b94b1579ce8fc36409d8169e00))
+
+### Refactoring
+
+- 消除四组逐字复制、删死代码与兼容 shim、测试 2526 → 2281
+  ([`d9e278e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d9e278e7f7065d80c492b2dd7aca41c568944d9c))
+
+- **取价**: 合并两处等价 SQL，消除「改价需两边同步」的分裂点
+  ([`11860e9`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/11860e921b65db8c80a1fe00a6dfb63af6fcbd0e))
+
+- **工业页**: 删掉恒为真的历史开关 headless_host
+  ([`4866092`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/4866092b755b311d1a9e39bcd5eeb1308eed19db))
+
+### Testing
+
+- 修 UI 套件 flaky 根因、恢复分层护栏、同步文档实测耗时
+  ([`b1d2cb0`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b1d2cb0c99b1d9e9544a762e2abe46eace632360))
+
+- 删掉脆弱的源码字符串/几何/signature 断言（判据：改实现就该允许过）
+  ([`5468ce2`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5468ce2ef3454fa040ce55f7629de6973c29cbc2))
+
+- 推广剪贴板有界等待，消除 4 个文件的竞态 flaky
+  ([`b200def`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b200deff1a83f1ea2dbda6f82e0fa0535c66f6a6))
+
+- 改强 52 条弱断言、修 1 处空转 mock（D 批次）
+  ([`02841e2`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/02841e20711568782e927a780247fb78e0b81e76))
+
+
 ## v0.23.0 (2026-09-16)
 
 ### Bug Fixes
