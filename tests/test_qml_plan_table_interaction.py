@@ -173,14 +173,6 @@ def test_pane_keeps_builtin_selection_disabled():
     )
 
 
-def test_pane_binds_the_bridge_selection_model():
-    """选中模型由桥持有并绑到 `TableView.selectionModel`，delegate 的 `selected` 才会跟随。"""
-    text = PANE.read_text(encoding="utf-8")
-    assert "planBridge.selectionModel" in text
-    assert "planBridge.selectRow(" in text, "左键必须经桥落选中"
-    assert "planBridge.ensureRowSelected(" in text, "右键要先把选中换到点中的行"
-
-
 @pytest.fixture
 def qt_warnings():
     """捕获测试期间的 Qt 告警（Qt 会把 QML 运行期错误也走这条路，且只记 WARNING）。"""

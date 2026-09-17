@@ -336,18 +336,15 @@ def test_region_change_resyncs_the_detail_price_hub(bridge):
 
 
 @pytest.mark.ui
-def test_page_switches_between_dashboard_and_result_area(qapp):
-    """静态守卫：QML 两侧都在，且空闲态判据取自 `query.hasResults`。
+def test_page_declares_the_query_panel_import(qapp):
+    """静态守卫：页面必须 import 面板所在目录。
 
-    这条**读源码**而不是跑界面，是因为两态的真实渲染要靠搜索结果驱动；
-    这里要守住的是「别再退回成只有一张表」。
+    QML 只按同目录解析本地类型 —— 少了这行 `import "query"`，整页加载失败、
+    外壳把本页记为「暂缺」（实测踩过）。这是**加载期契约**，与面板内部怎么起名无关，
+    所以只守这一条；两态的渲染与切换由 `test_query_dashboard` 的交互用例覆盖。
     """
     text = (_ROOT / "ui_qml" / "qml" / "pages" / "QueryPage.qml").read_text(encoding="utf-8")
-    assert 'objectName: "queryDashboard"' in text
-    assert 'objectName: "queryDetailPane"' in text
-    assert "query.hasResults" in text
-    # 页面必须 import 面板所在目录，否则 QML 只按同目录解析本地类型、整页加载失败
-    assert 'import "query"' in text
+    assert 'import "query"' in text, 'QueryPage.qml 少了 `import "query"`，整页会加载失败'
 
 
 @pytest.mark.ui

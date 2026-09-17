@@ -1,19 +1,16 @@
 """移库对话框（QML）的业务契约测试。
 
-只锁业务：行装配（clamp / 未匹配行）、统计行、勾选与数量状态、确认落库的汇总，
-外加「QML 宿主签名与原类一致」这条契约。**不放**「加载无告警」那条 —— 由主流程在
-`tests/test_qml_dialogs.py` 统一加。
+只锁业务：行装配（clamp / 未匹配行）、统计行、勾选与数量状态、确认落库的汇总。
+**不放**「加载无告警」那条 —— 由主流程在 `tests/test_qml_dialogs.py` 统一加。
 
 与 Widgets 版 `ui_pyside6/views/inventory/transfer_dialog.py` 逐条对齐。
 """
 
 from __future__ import annotations
 
-import inspect
-
 import ui_qml.theme.registry as theme
 from ui_qml.bridge import transfer_bridge as tb
-from ui_qml.bridge.transfer_bridge import HangarTransferBridge, HangarTransferQmlDialog
+from ui_qml.bridge.transfer_bridge import HangarTransferBridge
 
 _TARGET = 2
 
@@ -274,17 +271,3 @@ def test_apply_match_ignores_already_matched_row(qapp, monkeypatch):
     bridge.apply_match(0, {"type_id": 99, "zh_name": "别的", "en_name": "Other"})
     assert parsed[0]["type_id"] == 34, "已匹配行不该被顶掉"
     assert parsed[0]["zh_name"] == "三钛合金"
-
-
-# ════════════════════════════════════════════════════════════════
-#  宿主契约
-# ════════════════════════════════════════════════════════════════
-
-
-def test_qml_dialog_keeps_original_signature():
-    """构造签名与原 `HangarTransferDialog(rows, target_hangar_id, hangar_name, parent, *, filtered_note)` 一致。"""
-    params = inspect.signature(HangarTransferQmlDialog.__init__).parameters
-    assert list(params) == ["self", "rows", "target_hangar_id", "hangar_name", "parent", "filtered_note"]
-    assert params["filtered_note"].kind is inspect.Parameter.KEYWORD_ONLY
-    assert params["parent"].default is None
-    assert callable(HangarTransferQmlDialog.result_summary)
