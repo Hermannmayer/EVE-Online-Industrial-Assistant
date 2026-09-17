@@ -15,12 +15,16 @@
 不依赖你先把虚拟环境激活：
 
 ```bash
-scripts/run_tests.sh            # validate：全部业务/DB/计算，跳过 Qt（~45s）
+scripts/run_tests.sh            # validate：全部业务/DB/计算，跳过 Qt
 scripts/run_tests.sh fast       # 纯计算/轻服务白名单（~4s）
-scripts/run_tests.sh ui-retest  # 只有 Qt 界面 + 真 QThread（~40s），改动涉及 UI 时优先
+scripts/run_tests.sh ui-retest  # 只有 Qt 界面 + 真 QThread，改动涉及 UI 时优先
 scripts/run_tests.sh target     # 只跑 git 变更文件相关（~5s）
-scripts/run_tests.sh full       # validate + ui-retest 两阶段（~1.5min），仅提交前
+scripts/run_tests.sh full       # validate + ui-retest 两阶段，仅提交前
 ```
+
+> 耗时（2026-09-17 实测，空载）：`validate` 58s、`ui-retest` 221s、`full` ≈ 4.7min。
+> 机器负载高时 `ui-retest` 曾达 445s（`full` ≈ 8.4min）—— 差别很大，别按某一个数去卡。
+> 变化趋势见 `CLAUDE.md` 的「测试边界」。
 
 开发循环用 `fast` / `target`，日常回归用 `validate`，`full` 只在提交前。
 

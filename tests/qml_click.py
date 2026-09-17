@@ -14,13 +14,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtCore import QEventLoop, QObject, QPoint, Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-__all__ = ["spin", "area_of", "scrolling_table_of", "press_move_release"]
+__all__ = ["spin", "wait_until", "area_of", "scrolling_table_of", "press_move_release"]
 
 
 def spin(ms: int = 200) -> None:
@@ -33,6 +34,25 @@ def spin(ms: int = 200) -> None:
     loop = QEventLoop()
     QTimer.singleShot(ms, loop.quit)
     loop.exec()
+
+
+def wait_until(predicate: Callable[[], bool], timeout_ms: int = 1500, step_ms: int = 50) -> bool:
+    """轮询等待条件成立，超时返回最后一次求值结果。
+
+    **能用条件判断时就别用 `spin` 定长睡眠**：QML 的弹出物/布局是异步的，
+    固定 sleep 在慢机器或机器负载高时偶发失败（本仓 UI 套件实测过：同一份代码
+    连跑三次、失败数 0/2/3 不等）。轮询把「等多久」交给实际状态，而不是赌一个常数。
+
+    与 `spin` 的分工：等一个**可观测的状态**用本函数；纯粹让事件循环转一会儿
+    （比如等布局完成、无状态可查）才用 `spin`。
+    """
+    waited = 0
+    while waited < timeout_ms:
+        if predicate():
+            return True
+        spin(step_ms)
+        waited += step_ms
+    return bool(predicate())
 
 
 def area_of(root: Any, area_name: str) -> Any:

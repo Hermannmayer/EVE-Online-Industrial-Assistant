@@ -66,9 +66,12 @@ Python 3.14+ / PySide6 6.11+ / ruff 格式化 + linting；依赖用 `~=` 固定�
 ```bash
 scripts/run_tests.sh target     # git 变更相关，开发循环默认
 scripts/run_tests.sh fast       # 纯计算/轻服务白名单
-scripts/run_tests.sh ui-retest  # 只跑 Qt 界面 + 真 QThread（实测 ~150s），改 UI 时优先
-scripts/run_tests.sh full       # 全量（实测 ~4min），**时机由用户定**
+scripts/run_tests.sh ui-retest  # 只跑 Qt 界面 + 真 QThread（实测 220s+），改 UI 时优先
+scripts/run_tests.sh full       # 全量（实测 5~8 分钟，看机器负载），**时机由用户定**
 ```
+
+> 档位耗时都是**实测值**，且负载敏感（ui 段实测 221s ~ 445s）。别按旧文档里
+> 「~40s / ~1.5min」那类数字做计划 —— 那组数字长期未核对，已删。
 
 `validate`（`-m "not ui"`，即 `scripts/run_tests.sh` 无参数）与 `ui-retest`（`-m ui`）互斥，
 二者并集覆盖全部用例、恒等于 `full`。
