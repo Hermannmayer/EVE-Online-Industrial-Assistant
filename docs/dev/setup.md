@@ -81,14 +81,15 @@ git checkout -b feat/my-feature
 python dev.py
 
 # 3. 运行测试
-pytest tests/ -q --quick --maxfail=1  # 快速模式（~20s，跳过 Qt 测试）
+scripts/run_tests.sh            # validate：业务/DB/计算，跳过 Qt（~45s）
+scripts/run_tests.sh ui-retest  # ui-retest：只跑 Qt 界面（~40s，改 UI 时）
 
 # 4. 代码质量检查
 ruff check . --fix
 mypy .
 
 # 5. 提交前全量验证
-ruff check . && ruff format --check . && mypy . && pytest tests/ -q --quick
+ruff check . && ruff format --check . && mypy . && scripts/run_tests.sh full
 
 # 6. 提交（中文信息）
 git add .

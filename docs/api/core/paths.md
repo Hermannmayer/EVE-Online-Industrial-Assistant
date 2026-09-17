@@ -15,7 +15,7 @@
             market.db      ← 市场价格数据（market_prices, market_volume_snapshots）
             user.db        ← 用户自有数据（hangars, inventory_items, production_plans, user_skills）
         data/caches/icons/
-        services/workers/getprices.py
+        services/importers/getprices.py
 
 PyInstaller 打包后：
     dist/EVE商人助手/

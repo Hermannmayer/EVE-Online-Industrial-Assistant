@@ -5,7 +5,7 @@
 > 模块说明：
 
 从 ESI 拉取工业系统成本指数和设施数据写入 reference.db 和 user.db
-用法: python -m services.workers.getindustry
+用法: python -m services.importers.getindustry
 
 ## 函数
 

@@ -204,10 +204,9 @@ python build_release.py
 
 | 指标 | 数值 |
 |------|------|
-| 📊 **测试总数** | 2382 个 |
 | 🔧 **框架** | pytest |
 | 📁 **测试目录** | `tests/` |
-| 🏃 **运行命令** | `pytest` |
+| 🏃 **运行命令** | `scripts/run_tests.sh target`（开发循环）/ `scripts/run_tests.sh full`（提交前） |
 
 ### 测试文件
 

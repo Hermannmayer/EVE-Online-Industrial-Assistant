@@ -1,98 +1,93 @@
 # EVE-Online-Industrial-Assistant
 
-PySide6 + SQLite 构建的 EVE Online 工业制造助手桌面应用。
+PySide6(QML) + SQLite 构建的 EVE Online 工业制造助手桌面应用。
+Python 3.14+ / PySide6 6.11+ / ruff 格式化 + linting；依赖用 `~=` 固定版本，uv 管理（`uv sync --dev`）。
+一个人维护，仓库公开（Apache 2.0）。
 
-## 语言和工具
+> **克制条款优先** —— 与下文任一条冲突时，以本节为准。优先级：**能跑 > 好改 > 优雅**。
 
-- Python 3.14+ / PySide6 6.11+ / ruff 格式化 + linting
-- 所有依赖使用 `~=` 固定版本，声明于 `pyproject.toml`，用 uv 管理：`uv sync --dev`（生成 `uv.lock`）
+## 克制条款
+
+1. **抽象层闸门**：新建 `services/*.py` 模块 / repository / facade / Protocol / 事件总线 / 缓存层 / 重试框架前，
+   必须给出**至少 2 个现存调用方的 `文件:行号`**；拿不出就内联在使用处。「以后可能会用」「为了解耦」
+   「更符合分层」都不是理由。缺陷修复不受此限（就地改，不要顺手重构）。
+2. **组合根冻结**：`bootstrap/container.py` 不再新增服务属性；`core/container.py` 的转发保留、不推进迁移。
+   新依赖写构造函数默认值，不走容器。
+3. **迁移节制**：只有 `user.db` 需要版本化迁移；`reference/market/blueprint` 是可重建缓存，表结构变了直接重导。
+   加列只改 `DB_SCHEMA_VERSIONS` + `_MIGRATIONS` 两处，用 `_add_columns`，不从零手写 `sqlite3.connect` 三段式。
+4. **测试预算**：单次任务新增测试 ≤ 被测代码行数 × 0.5；能 `parametrize` 的不写独立用例；
+   **纯布局/几何/像素/样式断言不写测试**（用 `scripts/shell_snapshot.py` 截图核对）；
+   修 bug 至少补 1 条最小回归，**不为没发生过的场景写预防性用例**。
+5. **流程冻结**：不新增 pre-commit 钩子 / CI job / `scripts/check_*.py`；要加必须先删一个同等成本的。
+6. **防御上限**：不对同进程同仓库的模块做 ImportError 防御；不捕获不可能失败的操作；
+   热路径不重复校验已在加载点校验过的配置。新增 `except Exception` 时说明它吞的是哪类异常。
 
 ## 代码规则
 
-### 禁止
-- ❌ Python 2 语法（`except ExcType, var:`）
-- ❌ 裸 `except: pass`（必须 `logger.exception(...)` 或重新抛出）
-- ❌ 超过 30 行的重复代码（提取公共函数）
-- ❌ 硬编码常量（用 `core/constants.py`）
-- ❌ SQL F-string 拼接（用参数化查询）
-- ❌ 模块级全局 DB 单例（用依赖注入）
+- ❌ 裸 `except: pass`（必须 `log.exception(...)` 或重抛）｜SQL F-string 拼接｜硬编码颜色/常量/密钥
+- ✅ 所有 SQL 参数化｜异步用 `async with`｜新代码加类型注解｜`yaml.safe_load()`、不硬编码密钥
 
-### 必须
-- ✅ 异步代码用 `async with`
-- ✅ 所有 SQL 用参数化查询
-- ✅ 新代码加类型注解
-- ✅ 新功能加测试（覆盖率 > 70%）
-- ✅ 安全：`yaml.safe_load()`、不硬编码密钥
+## 架构
 
-### 架构
-- 分层：`bootstrap/`（组合根/IOC 容器）→ `core/`（工具/常量）→ `domain/`（纯领域逻辑，无 DB/Qt/缓存 — formulas, bom, scoring, ports）→ `services/`（业务/DB 访问/repositories/门面编排）→ `ui_qml/`（QML UI，**新代码写这里**）
-- `ui_pyside6/` 已在批次 7.5 整个删除；仅剩的 Widgets 业务控制器（工业页那条链、采购页）搬进了 `ui_qml/views/`
-- 依赖注入组合根在 `bootstrap/container.py`；`core/container.py` 仅为兼容转发，存量调用方随重构逐步迁移到 `bootstrap.container`
-- 4 库独立：`reference.db` / `market.db` / `user.db` / `blueprint.db`
-- DB 管理用 `services/database_manager.py`
-- UI 异步用 QThread + Signal 模式
+`bootstrap/`（组合根）→ `core/`（工具/常量）→ `domain/`（纯函数，无 DB/Qt/缓存）→
+`services/`（业务/DB/repositories）→ `ui_qml/`（QML UI，**新代码写这里**）
+
+- 4 库独立：`reference.db` / `market.db` / `user.db` / `blueprint.db`，管理走 `services/database_manager.py`
+- UI 异步用 QThread + Signal
 - 新 UI 组件：**QML 组件绑定 `Theme` 单例**（不要 `add_theme_listener` —— QML 侧靠属性绑定自动重绘）；
   仍在 Widgets 里的组件才用 `add_theme_listener` + `_on_theme_changed`
+- ⚠️ `ui_pyside6/` 已在批次 7.5 整个删除；仅剩的 Widgets 业务控制器搬进了 `ui_qml/views/`。
+  **不要在代码或文档里再引用 `ui_pyside6`**（历史审计文档已标注为快照）
 
-### 铁律
+## 铁律
+
 - 🎨 **配色**：所有颜色从 `ui_qml.theme.registry` 导入（**QML 侧也读这一份**），禁止 hex/rgb/颜色名
-- 📖 **术语**：EVE 术语（技能名/蓝图活动/UI 标签）通过 `services.terminology` 获取，技能 key 需在 `data/terminology.json` 注册
-- 🗄️ **Schema 变更**：所有数据库表结构变更必须在 `services/schema_migrations.py` 注册迁移函数：`DB_SCHEMA_VERSIONS[库名] += 1`，新增 `MIGRATIONS[库名][旧版本] = 迁移函数`。不得在业务代码中写 ALTER TABLE。`tests/conftest.py` 中对应表的 PRAGMA user_version 同步更新。迁移由 `ensure_schema` 自动备份到 `database/backups/`（保留最近 5 份）；大变动（改列类型/拆表/合并）用 `_rebuild_table`，规范见 `docs/dev/schema-migration.md`。
+- 📖 **术语**：EVE 术语（技能名/蓝图活动/UI 标签）通过 `services.terminology` 获取，
+  技能 key 需在 `data/terminology.json` 注册
+- 🗄️ **Schema**：表结构变更必须在 `services/schema_migrations.py` 注册（范围见克制条款第 3 条），
+  不得在业务代码中写 ALTER TABLE
 
-## 测试
+## 测试边界（硬性）
 
-按档位跑，避免每次都全量。由 marker 驱动（`fast`=纯计算/轻服务白名单；`ui`=Qt 界面 + 真 QThread），其余默认 validate：
+**一次任务跑一次测试。** 测试是验证手段，不是进度展示 —— 进度用文字汇报，不要靠反复跑测试来体现"在工作"。
+
+### 选档：事前决定，不许逐级升级
+
+| 改了什么 | 跑什么 | 明确不跑 |
+|---|---|---|
+| 删死代码 / 改注释 / 改文档 / 格式化 | `target`（git 无命中则直接跳过） | 其余全部 |
+| 单文件纯计算（`domain/`、`core/`） | `fast` | 其余全部 |
+| services 业务 / DB 查询 / 导入器 | `target` | validate / full |
+| QML / UI | `shell_snapshot.py` 出图 + `ui-retest` 一次 | validate / full |
+| schema 迁移 | `validate` 一次 | full |
+
+**选定的那一档跑绿即为通过。不要为了"更保险"往上加档。**
 
 ```bash
-scripts/run_tests.sh            # validate：全部业务/DB/计算（跳过 Qt，~45s）
-scripts/run_tests.sh fast       # 纯计算/轻服务白名单（~4s）
-scripts/run_tests.sh ui-retest  # 只跑 Qt 界面 + 真 QThread（~40s），改动涉及 UI 时优先
-scripts/run_tests.sh target     # 只跑 git 变更文件相关（~5s）
-scripts/run_tests.sh full       # validate + ui-retest 两阶段全量（~1.5min），仅提交前
+scripts/run_tests.sh target     # git 变更相关，开发循环默认
+scripts/run_tests.sh fast       # 纯计算/轻服务白名单
+scripts/run_tests.sh ui-retest  # 只跑 Qt 界面 + 真 QThread（实测 ~150s），改 UI 时优先
+scripts/run_tests.sh full       # 全量（实测 ~4min），**时机由用户定**
 ```
 
-- `validate`（`-m "not ui"`）与 `ui-retest`（`-m ui`）互斥，二者并集覆盖全部用例、恒等于 `full`。
-- 开发循环只跑 `target` / `fast`；`full` 仅在提交前。
-- `pytest --lf` 可只重跑上次失败的测试，快速确认无回归。
-- 提交前检查：`ruff check .` + `mypy .` + `scripts/run_tests.sh full` 全通过，无新增 `except: pass`。
+`validate`（`-m "not ui"`，即 `scripts/run_tests.sh` 无参数）与 `ui-retest`（`-m ui`）互斥，
+二者并集覆盖全部用例、恒等于 `full`。
 
-## 常用命令
+### 三条硬规则
 
-```bash
-uv sync --dev              # 安装依赖（首次 / 依赖变更后）
-python dev.py              # 热重载开发
-python Main.py             # 生产启动
-ruff check . --fix         # 自动修复风格
-mypy .                     # 类型检查
-pre-commit run --all-files # 预提交检查
-```
+1. **改完再跑，不是每改一个文件就跑。** 一次任务里测试最多跑一次（红了重跑失败项不算）。
+2. **红了只重跑失败项**：`pytest --lf`，或直接给 node id（`tests/test_x.py::test_y`）。**不重跑整档。**
+3. **`full` 的时机由用户定**，不主动提议、不主动执行。
 
-## EVE 术语来源（按优先级）
+### 允许的例外
 
-1. **SDE 数据库** `database/reference.db` → `item` 表（CCP 官方翻译）
-   - `SELECT zh_name FROM item WHERE category_id=16 AND en_name='Reprocessing'`
-2. **`data/terminology.json`** — 项目术语中心，`services/terminology.py` 统一查询
-3. 公式中的技能 key → 先在 `terminology.json` 的 `skill_names` 注册
+正在写的那一个测试文件可以反复跑（`pytest tests/test_xxx.py -q`，通常 <1s）——那是 TDD 迭代，
+不算"跑测试"。但它必须是**本任务的产物**，不是既有测试。
 
-## 项目结构
+### 不要做的
 
-```
-bootstrap/     组合根 / IOC 容器（container.py）
-core/          工具层（constants, paths, logger, cache, hot_reload；eve_formulas=贸易费/经纪人费常量）
-domain/        领域层（纯函数，无 DB/Qt/缓存 — formulas 制造公式, bom, scoring, ports）
-services/      业务层（database_manager, scoring_service, scoring_facade, inventory_manager, repositories/, etc.）
-ui_qml/        QML UI 层（**主 UI**）：
-               shell_window.py=主窗口（QQuickView）+ qml/shell/=外壳（标题栏/导航/状态栏）
-               qml/pages|dialogs|components/=页面与对话框；bridge/=Python↔QML 桥
-               host.py=对话框用的 QQuickWidget 宿主；registry.py=页面登记与 PageSpec
-               models/ 与 workers/ = 表格模型与取数线程；theme/registry.py = 主题 token 源
-               views/=残留的 Widgets 业务控制器（industry_view、procurement_tab、industry/…）
-tools/         独立初始化工具
-scripts/       维护脚本（migrate_split_db, gen_api_docs）
-tests/         测试
-database/      SQLite 库 + backups/ 迁移前快照（自动生成）
-data/          运行时数据（settings, score_settings, char_config, terminology）
-```
+❌ target → fast → validate → full 逐级爬｜❌ 改完立刻跑、跑完又改、再跑一遍全量｜
+❌ 为"确认一下没坏"重复跑已经绿过的档｜❌ 为了让进度播报"有东西可写"而去跑测试
 
 ## 任务导航（改代码前先读）
 
@@ -126,33 +121,32 @@ python scripts/shell_snapshot.py --real          # QML 外壳（真窗口，验�
 python scripts/shell_snapshot.py --page industry # 切到某页再拍
 ```
 
-`shell_snapshot.py` 会打印「装载了几个页面 / 当前页 / 内容区尺寸 / 可见页面数」并给退出码，可作为外壳的结构自检。**离屏下 `QFontDatabase` 是 0 个字体**（文字全成方框），字形必须用 `--real` 看。
+**离屏下 `QFontDatabase` 是 0 个字体**（文字全成方框），字形必须用 `--real` 看。
+产出 `<page>.png`（整窗截图）与 `<page>.tree.md`（控件树：类名/objectName/文本/几何/可见性），
+可直接用 Read 工具查看。默认走 offscreen 平台——不弹窗、不抢焦点、可反复执行。
 
-产出 `<page>.png`（整窗截图）与 `<page>.tree.md`（控件树：类名/objectName/文本/几何/可见性）。
-默认走 Qt offscreen 平台——不弹窗、不抢焦点、不受单实例锁影响，可反复执行。
-截图是可用 Read 工具直接查看的图片，控件树用于精确核对层级与尺寸。
+## 计划自检（ExitPlanMode 前）
 
-## 计划自检（写计划前必读）
+四问：① 架构符合性（是否符合分层与铁律）② 可复用性（是否已搜过 `core/ domain/ services/ ui_qml/`
+确认无现成实现）③ 隐患 ④ 有无更简替代。**第 ③④ 问允许直接写「无」**，不必为凑答案发明风险或备选方案。
+小改动（≤2 文件、不碰架构）一句话带过。
 
-每次进入计划模式写实现计划，`ExitPlanMode` 前必须自检，并把结论写进计划文件：
+`plan-auditor` 子代理**仅在涉及 schema 迁移 / 删改用户数据 / 依赖与构建配置变更时**调用，
+传入计划文件路径与相关文档路径，并要求它同时回答「**计划是否可以更小**」。
 
-1. **架构符合性** — 改动静点是否符合「架构」分层与「铁律」？是否绕过组合根/迁移机制/主题取色/术语中心？
-2. **可复用性** — 是否已搜过 `core/` `domain/` `services/` `ui_qml/` 确认无现成实现？有没有复制粘贴已有逻辑？
-3. **隐患** — 会留下哪些技术债（无测试覆盖的关键路径/隐藏分支/破坏既有行为/并发与性能/迁移遗漏）？如何消除或显式声明接受？
-4. **更优解** — 有无更简替代？为什么不用这个替代？本方案的取舍是什么？
+## 常用命令
 
-小改动（≤2 文件、不碰架构）可用「自检通过」一句话带过。
+```bash
+uv sync --dev              # 安装依赖（首次 / 依赖变更后）
+python dev.py              # 热重载开发
+python Main.py             # 生产启动
+ruff check . --fix         # 自动修复风格
+mypy .                     # 类型检查
+```
 
-### 第二意见（plan-auditor）
+## EVE 术语来源（按优先级）
 
-满足以下任一条件的改动，`ExitPlanMode` 前必须调用 `plan-auditor` 子代理（`.claude/agents/plan-auditor.md`），传入计划文件路径与涉及文档路径，拿到报告后把合理发现并入计划：
-
-- 涉及 3+ 个文件
-- 触碰架构分层 / 铁律 / schema 迁移 / 依赖变更
-- 新增服务、重构或删除既有行为
-
-## Claude 技能
-
-- `/code-review` — 代码审查
-- `/security-review` — 安全扫描
-- `/audit` — 全面审计
+1. **SDE 数据库** `database/reference.db` → `item` 表（CCP 官方翻译）
+   - `SELECT zh_name FROM item WHERE category_id=16 AND en_name='Reprocessing'`
+2. **`data/terminology.json`** — 项目术语中心，`services/terminology.py` 统一查询
+3. 公式中的技能 key → 先在 `terminology.json` 的 `skill_names` 注册

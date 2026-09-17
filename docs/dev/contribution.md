@@ -53,7 +53,7 @@ docs: 更新 API 参考文档
    ruff check . --fix
    ruff format .
    mypy . --ignore-missing-imports
-   pytest tests/ -q --quick
+   scripts/run_tests.sh            # validate：业务/DB/计算，跳过 Qt
    ```
 3. 提交 PR，使用中文描述变更内容
 4. CI 自动运行全部检查（ruff + mypy + pytest + 版本校验）
@@ -65,7 +65,7 @@ docs: 更新 API 参考文档
 - **Mypy**：类型检查通过
 - **测试**：新功能必须有对应测试
 - **覆盖**：整体覆盖率 > 70%
-- **提交前**：`ruff check . && ruff format --check . && mypy . && pytest tests/ -q --quick`
+- **提交前**：`ruff check . && ruff format --check . && mypy . && scripts/run_tests.sh full`
 
 ## 开发环境搭建
 

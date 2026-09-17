@@ -343,7 +343,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"   红点已保留：{norm_accent[3].name()}，最小半径 {MIN_ACCENT_RATIO:.3f}×边长")
     print(f"   <{SIMPLIFY_BELOW}px 用简化版（开运算半径 {max(1, round(WORK_SIZE * args.open_ratio))}px @ {WORK_SIZE}）")
     print(f"✅ 预览图 {preview.name}")
-    print(f"✅ 侧栏 logo：logo_dark.png（墨 {LOGO_INK_DARK}）/ logo_light.png（墨 {LOGO_INK_LIGHT}），高 {LOGO_HEIGHT}px")
+    print(
+        f"✅ 侧栏 logo：logo_dark.png（墨 {LOGO_INK_DARK}）/ logo_light.png（墨 {LOGO_INK_LIGHT}），高 {LOGO_HEIGHT}px"
+    )
     return 0
 
 
