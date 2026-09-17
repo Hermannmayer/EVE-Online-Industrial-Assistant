@@ -333,6 +333,33 @@ def test_autofit_without_model_is_empty():
     assert PlanTableBridge(_StubTable(None)).autofitWidths() == []  # type: ignore[arg-type]
 
 
+@pytest.mark.ui
+def test_autofit_empty_column_stays_at_header_width(qapp):
+    """没有内容的列只占「表头宽 + 留白」，不再被经验常量撑到 130/160px。
+
+    回归背景：`autofitWidths` 原以 `DEFAULT_WIDTHS`（备注 130 / 蓝图 160 / 解码器 110…）
+    为下限 —— **空的备注列也占 130px**，非产品列加起来 1826px，1400px 宽的窗口里
+    后几列直接被挤出视口（用户反馈「列显示不全，备注列没信息还占很长宽度」）。
+    现下限 = 表头文字宽 + 留白。
+    """
+    from PySide6.QtGui import QFont, QFontMetrics
+
+    from ui_qml.bridge.plan_table_bridge import PlanTableBridge
+    from ui_qml.models.plan_table_constants import COL_NOTES
+
+    # 有行、但备注列为空：该列宽度只应反映表头所需
+    model = PlanQmlModel([_plan(status="in_progress")])
+    widths = PlanTableBridge(_StubTable(model)).autofitWidths()
+
+    head_font = QFont(theme.FONT_FAMILY)
+    head_font.setPixelSize(theme.fs(11))
+    header = QFontMetrics(head_font).horizontalAdvance(PlanQmlModel._HEADERS[COL_NOTES])
+
+    assert widths[COL_NOTES] < 130, "备注列又被内容形态的经验值撑大了"
+    # 表头 delegate 左右各留 6px，可用宽 ≤ 文字宽就会省略成「备…」
+    assert widths[COL_NOTES] >= header + 12, f"备注列表头会被省略：{widths[COL_NOTES]} < {header}+12"
+
+
 # ── 派生视图缓存（可见行 / 行号映射 / 子项组）─────────────────────
 #
 # 回归背景：`_row_map` 与 `_has_children` 都是 O(行数)，却被 `data()` 按

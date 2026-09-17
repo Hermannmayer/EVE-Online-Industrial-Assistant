@@ -25,6 +25,15 @@ Item {
     readonly property int fntBase: Math.round(12 * Theme.fontScale)
     readonly property int fntTitle: Math.round(16 * Theme.fontScale)
 
+    /* 工具栏所有控件的统一高度（可追踪写法，随全局字号缩放）。
+     *
+     * 之前是 FButton 32 / FComboBox 26 / FDoubleSpinBox 32 三种高度混排，
+     * 一行里高矮不齐。**不要写成 `Theme.fs(26)`** —— 那是 Slot 调用，
+     * QML 不追踪其内部属性读取，改全局字号后不会重算（见 `Theme.fontScale` 注释）。 */
+    readonly property int ctrlH: Math.max(24, Math.round(28 * Theme.fontScale))
+    //: 组内分隔竖线的高度
+    readonly property int dividerH: Math.round(16 * Theme.fontScale)
+
     /* 整页不透明底 —— 与 `EstimatePage` 同款，**必须有**。
      *
      * 宿主 `PageHost` 是 `QQuickWidget`，且为了让窗口级 Mica 透出来而设了
@@ -80,23 +89,39 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: titleBar.bottom
-        anchors.margins: 6
-        spacing: Theme.spacingSm
-        // 组内不换行、只在组边界换行，与旧 FlowLayout 的分组策略一致
+        /* 左 12 与页面标题栏的文字左内边距对齐成一条竖线（见 docs/dev/ui-blueprint.md
+         * 的「左对齐竖线」）。
+         *
+         * **这里没有 `bottomMargin`**：Flow 的高度是内容撑出来的，而它只锚了
+         * top/left/right —— 对顶端锚定的 Flow 设 `bottomMargin` 完全不起作用
+         * （实测：设成 12 后主工作区顶边仍紧贴工具栏下缘，间距 0px）。
+         * 工具栏与主工作区之间的空隙改由 `workspace` 的 `topMargin` 给，见下。 */
+        anchors.leftMargin: 12
+        anchors.rightMargin: 12
+        anchors.topMargin: 8
+        // 组内不换行、只在组边界换行，与旧 FlowLayout 的分组策略一致；
+        // 组间距（12）比组内间距（8）大，组边界一眼可辨
+        spacing: Theme.spacingMd
+
+        /* 组间分隔竖线。**不用 `Text { text: "│" }`**：那是字符，宽度占一整个字符格
+         * （约 12px 的空隙），颜色也不跟主题走（两侧主题下都偏暗或偏亮），
+         * 看起来像随手敲进去的笔画而不是分隔。 */
+        component Divider: Rectangle {
+            width: 1
+            height: page.dividerH
+            color: Theme.border
+        }
 
         RowLayout {
             spacing: Theme.spacingSm
 
             FButton {
                 text: qsTr("从全物品添加")
+                compact: true
                 onClicked: page.industry.openManufacturableBrowser()
             }
 
-            Text {
-                text: "│"
-                color: Theme.textSecondary
-                font.pixelSize: page.fntBase
-            }
+            Divider {}
 
             Text {
                 text: qsTr("蓝图")
@@ -108,7 +133,7 @@ Item {
             // 蓝图输入 + 搜索候选
             Item {
                 Layout.preferredWidth: 240
-                Layout.preferredHeight: 32
+                Layout.preferredHeight: page.ctrlH
 
                 FTextField {
                     id: blueprintInput
@@ -121,6 +146,10 @@ Item {
 
             FButton {
                 text: qsTr("添加")
+                compact: true
+                // 本区唯一的主操作：蓝图导入的落点。实心主色与右侧「刷新」等次要动作分开，
+                // 一眼能看出点哪个是「确定要做这件事」
+                primary: true
                 onClicked: page.submitBlueprint()
             }
         }
@@ -128,15 +157,12 @@ Item {
         RowLayout {
             spacing: Theme.spacingSm
 
-            Text {
-                text: "│"
-                color: Theme.textSecondary
-                font.pixelSize: page.fntBase
-            }
+            Divider {}
 
             FPriceSourceRow {
                 id: matRow
                 label: qsTr("材料")
+                controlHeight: page.ctrlH
                 hubs: page.industry ? page.industry.hubs : []
                 priceTypes: page.industry ? page.industry.priceTypes : []
                 onHubEdited: value => page.industry.setPriceSetting("mat_hub", value)
@@ -144,15 +170,12 @@ Item {
                 onMultEdited: value => page.industry.setPriceSetting("mat_mult", value)
             }
 
-            Text {
-                text: "|"
-                color: Theme.textSecondary
-                font.pixelSize: page.fntBase
-            }
+            Divider {}
 
             FPriceSourceRow {
                 id: prodRow
                 label: qsTr("成品")
+                controlHeight: page.ctrlH
                 hubs: page.industry ? page.industry.hubs : []
                 priceTypes: page.industry ? page.industry.priceTypes : []
                 onHubEdited: value => page.industry.setPriceSetting("prod_hub", value)
@@ -164,11 +187,7 @@ Item {
         RowLayout {
             spacing: Theme.spacingSm
 
-            Text {
-                text: "│"
-                color: Theme.textSecondary
-                font.pixelSize: page.fntBase
-            }
+            Divider {}
 
             Text {
                 text: qsTr("视图:")
@@ -180,11 +199,13 @@ Item {
             // 分段切换：当前视图用主色实心，另一个描边
             FButton {
                 text: qsTr("数据视图")
+                compact: true
                 primary: page.industry ? page.industry.viewMode === "data" : true
                 onClicked: page.industry.setViewMode("data")
             }
             FButton {
                 text: qsTr("甘特图")
+                compact: true
                 primary: page.industry ? page.industry.viewMode === "gantt" : false
                 onClicked: page.industry.setViewMode("gantt")
             }
@@ -193,11 +214,13 @@ Item {
                 id: filterCombo
                 model: page.industry ? page.industry.filterOptions : []
                 implicitWidth: 96
+                implicitHeight: page.ctrlH
                 onActivated: page.industry.setFilterIndex(currentIndex)
             }
 
             FButton {
                 text: qsTr("刷新")
+                compact: true
                 onClicked: page.industry.refreshPrices()
             }
         }
@@ -216,6 +239,10 @@ Item {
         /* 与「价格监控」页同款：主工作区被外框裹住，从页边内缩一档 */
         anchors.leftMargin: Theme.spacingSm
         anchors.rightMargin: Theme.spacingSm
+        /* 上边距 12（不是 8）：工具栏最后一行按钮与表格外框之间要留得出空隙 ——
+         * Flow 只锚 top，它的 `bottomMargin` 不起作用（见工具栏处的说明），
+         * 这段间距只能由本区的 `topMargin` 给。 */
+        anchors.topMargin: 12
         anchors.bottomMargin: Theme.spacingSm
 
         /* 外框。单独一层、`z` 高于两个视图 —— 它们的底色是 `anchors.fill: parent`

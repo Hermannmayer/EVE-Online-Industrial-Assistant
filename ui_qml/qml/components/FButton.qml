@@ -9,11 +9,17 @@ import QtQuick.Effects
 
    `scale` 不参与布局，因此按压缩放不会引发布局抖动。
    主/次通过 `primary` 区分（规范：bg-[#0078d4] text-white vs bg-white + border）。
+
+   `compact` 是给**页面工具栏**用的紧一档尺寸（28px 高、内边距 12、无 88px 最小宽）：
+   工具栏里按钮与下拉框要同高，而默认档的 32px 最小宽 88px 会让「添加」这种两字按钮
+   比文字宽出三倍。默认 `false` 时几何与历史完全一致，其余调用方不受影响。
 */
 Button {
     id: root
 
     property bool primary: false
+    //: 紧一档尺寸（页面工具栏用）。默认 false = 历史几何，改动面为零。
+    property bool compact: false
 
     // 用 TextMetrics 独立量文字，不依赖 contentItem 的 implicitWidth。
     // 依赖 contentItem 会引入「控件尺寸 ← 内容尺寸 ← 控件尺寸」的惰性依赖，
@@ -26,8 +32,13 @@ Button {
         text: root.text
     }
 
-    implicitHeight: 32
-    implicitWidth: Math.max(88, Math.ceil(labelMetrics.width) + Theme.spacingLg * 2)
+    //: 文字两侧的内边距：紧凑档 12（spacingMd），默认档 16（spacingLg，规范值）
+    readonly property int sidePad: root.compact ? Theme.spacingMd : Theme.spacingLg
+    //: 最小宽：紧凑档不设下限（宽度贴合文字），默认档保留历史的 88px
+    readonly property int minWidth: root.compact ? 0 : 88
+
+    implicitHeight: root.compact ? Math.max(24, Math.round(28 * Theme.fontScale)) : 32
+    implicitWidth: Math.max(root.minWidth, Math.ceil(labelMetrics.width) + root.sidePad * 2)
 
     // active:scale-[0.97]
     scale: down ? 0.97 : 1.0

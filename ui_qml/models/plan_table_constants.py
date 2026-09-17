@@ -32,34 +32,16 @@ NUM_COLUMNS = 21
 # 写死 32 会让表头被省略成「…」
 FIXED_WIDTHS = {COL_CHECKBOX: 34, COL_ICON: 40, COL_CATEGORY: 40}
 
-# 其余列的默认宽度（px）。QML 的 TableView **没有** resizeColumnsToContents，
-# 宽度只能由 provider 逐列给死，故按各列实际内容形态标定：
-#   - 表头文字宽（11px 下 "市场利润率%" ≈ 66px + 内边距 + 排序箭头）
-#   - 内容形态（金额 10 位数 / "10-20没图 差2张" / "剩余 1d10h0m" / 状态 4 个汉字）
-# 这些是**下限**：`PlanTableBridge.autofitWidths()` 量到更宽的内容时只会加宽。
-# 产品列不在此表内 —— 它是 Stretch，宽度吃满视口剩余空间。
-DEFAULT_WIDTHS = {
-    COL_NOTES: 130,
-    COL_GROUP: 56,
-    COL_CHILD_LEVEL: 56,
-    COL_STATUS: 96,
-    COL_CHAR_NAME: 96,
-    COL_RUNS: 80,
-    COL_BLUEPRINT: 160,
-    COL_TIME: 110,
-    COL_OUTPUT_RATE: 90,
-    COL_FACILITY: 100,
-    COL_OUTPUT: 100,
-    COL_COST: 110,
-    COL_PROFIT: 110,
-    COL_MARKET_MARGIN: 106,
-    COL_PERSONAL_MARGIN: 106,
-    COL_SUCCESS_RATE: 96,
-    COL_DECRYPTOR: 110,
-}
+# 其余列的宽度**不在这里写死**：由 `PlanTableBridge.autofitWidths()` 用 `QFontMetrics`
+# 按「表头宽」为下限、按实际内容实测（封顶见 `MAX_CONTENT_WIDTHS`）。
+#
+# 历史上这里有一张 `DEFAULT_WIDTHS`（备注 130 / 蓝图 160 / 解码器 110…，按内容形态拍的
+# 经验值），并把它当自适应的**下限** —— 结果**空的备注列也占 130px**，非产品列加起来
+# 1826px，1400px 宽的窗口里后几列直接被挤出视口（用户反馈「列显示不全」）。
+# 已删除。产品列本来就不在此表内 —— 它是 Stretch，宽度吃满视口剩余空间。
 
 
-# 文本易过长的列：resizeColumnsToContents() 后按此封顶，
+# 文本易过长的列：实测宽度按此封顶，
 # 否则长备注/蓝图名会把整张表推到远超窗口宽度（产品列为 Stretch，由视口兜底，无需封顶）
 MAX_CONTENT_WIDTHS = {
     COL_NOTES: 160,

@@ -16,12 +16,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import Property, QItemSelection, QItemSelectionModel, QObject, Qt, Signal, Slot
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QFont, QFontMetrics, QGuiApplication
 
 from ui_qml.models.industry_models import PlanTableModel
 from ui_qml.models.plan_table_constants import (
     COL_PRODUCT,
-    DEFAULT_WIDTHS,
     FIXED_WIDTHS,
     MAX_CONTENT_WIDTHS,
     NUM_COLUMNS,
@@ -36,12 +35,50 @@ __all__ = ["PlanTableBridge"]
 # 产品列最小宽度（「不超过可用空间一半」的上限策略在 QML 侧按视口算）
 _PRODUCT_MIN_WIDTH = 120
 
-#: 数据单元格文字两侧的留白，用于列宽实测（见 `autofitWidths`）。
+#: 表头文字两侧的留白（列宽**下限**用）。
 #:
-#: `PlanTablePane.qml` 的 Text 实际用左 8 + 右 6 = 14px；这里给 22px 是**留余量**：
-#: 列宽卡到与文字同宽时，`elide` 会把最后一个字换成省略号（Qt 在「文字宽 ≥ 可用宽」
-#: 时就省略），差一点点就白测了。
-_CELL_TEXT_MARGIN = 22
+#: 表头 delegate 的 Text 左右各留 `6 * fontScale`；当该列正是排序列时，排序箭头
+#: （10px）与它左侧的 2px 间隙也占在同一格里 —— 即 6 + 2 + 10 + 6 = 24。
+#: 下限按 24 取，「被排序的窄列」表头才不会省略成「…」。
+_HEADER_TEXT_MARGIN = 24
+
+#: 数据格文字两侧的留白（列宽按内容撑开时用）。
+#:
+#: 数据格的 Text 左 8 + 右 6 = 14，且 `elide` 在「文字宽 ≥ 可用宽」时就省略 ——
+#: 卡到与文字同宽会出现「最后一个字变省略号」，所以给到 16 留一点余量。
+_BODY_TEXT_MARGIN = 16
+
+
+def _header_metrics() -> QFontMetrics:
+    """表头字体（11px）的度量。表头字号与数据格不同，必须分开量。"""
+    font = QFont(theme.FONT_FAMILY)
+    font.setPixelSize(theme.fs(11))
+    return QFontMetrics(font)
+
+
+def _header_min_width(col: int) -> int:
+    """该列的**下限**宽度 = 表头文字宽 + 留白。
+
+    **下限不能再取 `DEFAULT_WIDTHS` 那种「按内容形态拍出来的经验值」**：
+    备注列空着也占 130px、蓝图列占 160px，非产品列加起来 1826px ——
+    1400px 宽的窗口里根本铺不下，用户看到的就是「后面几列被挤出视口」。
+    按表头量出来就够：没内容的列只占表头宽，有内容的列会被实测撑开（见 `autofitWidths`）。
+    """
+    return _header_metrics().horizontalAdvance(PlanTableModel._HEADERS[col]) + _HEADER_TEXT_MARGIN
+
+
+def _measured_width(col: int, widest_text: int) -> int:
+    """按实测内容算该列宽度（未封顶）。`widest_text` = 该列最宽单元格文字宽。
+
+    宽度 = max(表头所需, 最宽内容 + 文字留白)。**不再取 `DEFAULT_WIDTHS` 当兜底值** ——
+    那是「按内容形态拍的经验值」，会把空列撑到 130/160px。
+
+    但下限也不能只按内容给：`elide` 是拿**实际列宽**与文字比，而这里只是 `QFontMetrics`
+    的前进宽度估算，两者在「装饰字符 + 居中列」上能差出十几个像素（实测：组号列的
+    「0」量出 7px，按它给宽会把数字挤掉）。所以按**最宽内容 + `_BODY_TEXT_MARGIN`**
+    留出余量，与表头所需取大者。
+    """
+    return max(_header_min_width(col), widest_text + _BODY_TEXT_MARGIN)
 
 
 class PlanTableBridge(QObject):
@@ -228,6 +265,8 @@ class PlanTableBridge(QObject):
         `width` 与 `visible` 是**初始值**：QML 侧自己维护可变副本（拖拽/勾选时改它），
         同时回调 `setColumnWidth` / `setColumnVisible` 让本桥记住，
         这样页面重建（切主题、重挂宿主）后仍能恢复用户调过的列宽/列可见性。
+
+        `width` 初值取「表头宽 + 留白」而不是按内容形态拍的经验值 —— 见 `_header_min_width`。
         """
         out: list[dict] = []
         for i, title in enumerate(PlanTableModel._HEADERS):
@@ -235,7 +274,7 @@ class PlanTableBridge(QObject):
                 {
                     "index": i,
                     "title": title,
-                    "width": self._widths.get(i, FIXED_WIDTHS.get(i, DEFAULT_WIDTHS.get(i, 80))),
+                    "width": self._widths.get(i, FIXED_WIDTHS.get(i, _header_min_width(i))),
                     "fixed": i in FIXED_WIDTHS,
                     "product": i == COL_PRODUCT,
                     "minWidth": _PRODUCT_MIN_WIDTH if i == COL_PRODUCT else 24,
@@ -313,12 +352,16 @@ class PlanTableBridge(QObject):
 
         用 `QFontMetrics` 而不是「字数 × 字号」估算，因为字号能被用户调到 2 倍，
         而且量到多少就是多少（实测 QML `Text.implicitWidth` 与 `QFontMetrics` 一致）。
-        每列以 `DEFAULT_WIDTHS` 为**下限**起步：模型为空时量不到内容，
-        只有表头宽会得到一排装不下内容的窄列。
-        """
-        from PySide6.QtCore import Qt
-        from PySide6.QtGui import QFont, QFontMetrics
 
+        **下限 = 表头文字宽 + 留白**（`_header_min_width`），不是 `DEFAULT_WIDTHS`。
+        旧下限是「按内容形态拍的经验值」（备注 130 / 蓝图 160 / 解码器 110…），
+        于是**空列也占一大片**，非产品列加起来 1826px —— 1400px 的窗口里铺不下，
+        用户看到的正是「后面几列被挤出视口」。按表头量下限后没内容的列只占表头宽。
+
+        每列宽度 = `max(表头所需, 最宽内容 + 文字留白)`，再按 `MAX_CONTENT_WIDTHS` 封顶
+        （见 `_measured_width`）。**模型为空时只剩表头所需** —— 首帧模型还没装数据也不会
+        量出一排装不下表头的窄列。
+        """
         model = self._table.get_model()
         if model is None:
             return []
@@ -326,11 +369,7 @@ class PlanTableBridge(QObject):
         body_font = QFont(theme.FONT_FAMILY)
         body_font.setPixelSize(theme.fs(12))
         body_metrics = QFontMetrics(body_font)
-        head_font = QFont(theme.FONT_FAMILY)
-        head_font.setPixelSize(theme.fs(11))
-        head_metrics = QFontMetrics(head_font)
 
-        pad = _CELL_TEXT_MARGIN
         rows = model.rowCount()
         text_role = Qt.ItemDataRole.UserRole + 1  # PlanQmlModel 的 `text` 角色
 
@@ -339,19 +378,14 @@ class PlanTableBridge(QObject):
             if col == COL_PRODUCT or col in FIXED_WIDTHS:
                 out.append(0)  # 0 = 保持原值（固定窄列 / 产品列 Stretch）
                 continue
-            # 以 DEFAULT_WIDTHS 为**下限**：模型为空时（首次加载尚无形，或用户没建计划）
-            # 量不到任何内容，若只用表头宽度就会得到一排装不下内容的窄列 ——
-            # 「生产中」被省略成「生产…」正是这么来的（实测踩过）。
-            widest = max(
-                DEFAULT_WIDTHS.get(col, 80),
-                head_metrics.horizontalAdvance(PlanTableModel._HEADERS[col]) + 2 * theme.SPACING_SM,
-            )
+            widest = 0
             for row in range(rows):
                 text = model.data(model.index(row, col), text_role)
                 if text:
-                    widest = max(widest, body_metrics.horizontalAdvance(str(text)) + pad)
+                    widest = max(widest, body_metrics.horizontalAdvance(str(text)))
+            width = _measured_width(col, widest)
             cap = MAX_CONTENT_WIDTHS.get(col)
-            out.append(min(widest, cap) if cap else widest)
+            out.append(min(width, cap) if cap else width)
         return out
 
     # ── 单元格交互 ────────────────────────────────────────────

@@ -21,6 +21,12 @@ RowLayout {
     property string hub: ""
     property string priceType: "sell"
     property real mult: 1.0
+    /* 本行三个控件的统一高度。
+     *
+     * 工具栏里按钮走 `FButton.compact`（28px）时，下拉框还是 26、微调框还是 32，
+     * 一行里三种高度看着就是「大小不一」。由调用方传同一个值即可对齐；
+     * 默认 32 = 各控件的历史高度，不影响其它调用方。 */
+    property int controlHeight: 32
 
     signal hubEdited(string value)
     signal priceTypeEdited(string value)
@@ -51,11 +57,15 @@ RowLayout {
         font.family: Theme.fontFamily
         font.pixelSize: Math.round(12 * Theme.fontScale)
         font.bold: true
+        // 行高由三个控件决定（被拉满），文字必须自己居中 —— 否则标签贴在行顶，
+        // 与右侧控件的中线错开半行
+        verticalAlignment: Text.AlignVCenter
     }
 
     FComboBox {
         id: hubCombo
         model: root.hubs
+        implicitHeight: root.controlHeight
         implicitWidth: Math.max(80, maxItemWidth + 2 * Theme.spacingLg)
         onActivated: root.hubEdited(currentText)
     }
@@ -64,6 +74,7 @@ RowLayout {
         id: typeCombo
         model: root.priceTypes
         textRole: "label"
+        implicitHeight: root.controlHeight
         implicitWidth: Math.max(72, maxItemWidth + 2 * Theme.spacingLg)
         onActivated: root.priceTypeEdited(root.priceTypes[currentIndex].value)
     }
@@ -74,6 +85,7 @@ RowLayout {
         to: 10.0
         stepSize: 0.05
         decimals: 2
+        implicitHeight: root.controlHeight
         implicitWidth: 84
         onValueModified: root.multEdited(value)
     }
