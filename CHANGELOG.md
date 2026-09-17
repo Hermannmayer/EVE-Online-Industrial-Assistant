@@ -6,6 +6,21 @@
 
 <!-- version list -->
 
+## v0.23.2 (2026-09-18)
+
+### Bug Fixes
+
+- **生产规划页**: 工具栏控件统一尺寸；列宽贴合内容
+  ([`ad56e2c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/ad56e2c98e6f9400dd304b92f58d44f5bb9ebbd6))
+
+- **仓库导入 / 窗口**: 剪贴板导入提速；最大化拖动先还原再跟手、对话框补属主窗口
+  ([`38a074a`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/38a074aba537dd810d9881a6d279f785d6c0086b))
+
+### Features
+
+- **查询页**: 仪表盘六项按反馈重排；订单变动弹窗联动钱包
+  ([`2834346`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/2834346431f9e50765aae4aa65aa88d02f94cf2e))
+
 ## v0.23.1 (2026-09-17)
 
 ### Bug Fixes
