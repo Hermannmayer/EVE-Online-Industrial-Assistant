@@ -3,6 +3,7 @@
 """
 
 import json
+import sqlite3
 from datetime import UTC, datetime
 
 from core.container import get_container
@@ -285,11 +286,22 @@ def delete_hangar(hangar_id: int, *, repoint_to: int | None = None) -> bool:
         return c.rowcount > 0
 
 
-def get_items(hangar_id: int) -> list[dict]:
+def get_items(
+    hangar_id: int,
+    *,
+    include_derived: bool = True,
+    need_ids: set[int] | None = None,
+) -> list[dict]:
+    """机库物品列表。
+
+    include_derived=False 只取基础字段（数量/成本/名称/卖单价），跳过计划占用聚合与
+    研究成本计算 —— 供「粘贴导入预览」这类只用数量/名称的调用方（那些派生列要额外的
+    跨库查询，且对同机库会重复算）。
+    need_ids 非空时只返回这些 type_id 的行（预览只关心剪贴板里出现过的物品）。
+    """
     with _default_db().connect("user", "ref", "mkt", "bp") as conn:
         c = conn.cursor()
-        c.execute(
-            """
+        sql = """
             SELECT ii.id, ii.type_id, ii.quantity, ii.cost_price,
                    i.zh_name, i.en_name,
                    mp.sell_price, mp.buy_price
@@ -298,14 +310,18 @@ def get_items(hangar_id: int) -> list[dict]:
             LEFT JOIN mkt.market_prices mp ON mp.type_id = i.type_id
                 AND mp.region_id = 10000002
             WHERE ii.hangar_id = ?
-        """,
-            (hangar_id,),
-        )
+            """
+        params: list[object] = [hangar_id]
+        if need_ids:
+            placeholders = ",".join("?" * len(need_ids))
+            sql += f" AND ii.type_id IN ({placeholders})"
+            params.extend(sorted(need_ids))
+        c.execute(sql, params)
         rows = c.fetchall()
         type_ids = [r[1] for r in rows]
         # 生产计划占用批量聚合：pending 为待启动预留；in_progress/ready 已物理扣减，作核对参考
         usage_map: dict[int, tuple[int, int]] = {}
-        if type_ids:
+        if include_derived and type_ids:
             placeholders = ",".join("?" * len(type_ids))
             c.execute(
                 f"""
@@ -357,16 +373,17 @@ def get_items(hangar_id: int) -> list[dict]:
         # 名称排序（terminology 覆盖项 SQL 无法排序，Python 端统一排）
         items.sort(key=lambda it: it["display_name"])
         # 研究成本（拷贝/发明）批量填充 — 蓝图表在 blueprint.db；SCI 跟随该机库所在星系
-        try:
-            from services.research_calculator import research_costs_batch
+        if include_derived:
+            try:
+                from services.research_calculator import research_costs_batch
 
-            sys_id = get_hangar_system_id(hangar_id)
-            with _default_db().connect("bp") as bp_conn:
-                costs = research_costs_batch(bp_conn, [it["type_id"] for it in items], solar_system_id=sys_id)
-            for it in items:
-                it["research_cost"] = costs.get(it["type_id"])
-        except Exception:
-            log.exception("计算研究成本失败")
+                sys_id = get_hangar_system_id(hangar_id)
+                with _default_db().connect("bp") as bp_conn:
+                    costs = research_costs_batch(bp_conn, [it["type_id"] for it in items], solar_system_id=sys_id)
+                for it in items:
+                    it["research_cost"] = costs.get(it["type_id"])
+            except Exception:
+                log.exception("计算研究成本失败")
         return items
 
 
@@ -625,12 +642,65 @@ def move_items(item_ids: list[int], to_hangar_id: int):
                 )
 
 
-def _move_item_between_hangars(src_hangar: int, type_id: int, target_hangar: int) -> bool:
-    """把 src 机库中 type_id 的物品整体移到 target 机库，返回是否移动。"""
-    src = next((it for it in get_items(src_hangar) if it["type_id"] == type_id), None)
-    if src is None:
+def _move_item_between_hangars(
+    src_hangar: int,
+    type_id: int,
+    target_hangar: int,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> bool:
+    """把源机库中 type_id 的物品**按数量整体**移到目标机库，返回是否移动。
+
+    语义与 `move_items([item_id], ...)` 一致（整行合并进目标库、目标库加权平均成本），
+    但直接按 (hangar_id, type_id) 定位，省掉一次 `get_items`（它会多跑研究成本 /
+    计划占用等本处不需要的重活）。`conn` 非空时在同一事务内执行且不提交。
+    """
+    if conn is not None:
+        return _move_item_row(conn, src_hangar, type_id, target_hangar)
+    with _default_db().connect("user") as own_conn:
+        return _move_item_row(own_conn, src_hangar, type_id, target_hangar)
+
+
+def _move_item_row(
+    conn: sqlite3.Connection,
+    src_hangar: int,
+    type_id: int,
+    target_hangar: int,
+) -> bool:
+    """`_move_item_between_hangars` 的实际搬运（在同一连接/事务内，由调用方提交）。"""
+    row = conn.execute(
+        "SELECT quantity, cost_price FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
+        (src_hangar, type_id),
+    ).fetchone()
+    if not row:
         return False
-    move_items([src["id"]], target_hangar)
+    qty = int(row[0] or 0)
+    cost = float(row[1] or 0)
+    if qty <= 0:
+        return False
+    conn.execute(
+        "DELETE FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
+        (src_hangar, type_id),
+    )
+    existing = conn.execute(
+        "SELECT quantity, cost_price FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
+        (target_hangar, type_id),
+    ).fetchone()
+    if existing:
+        old_q = int(existing[0] or 0)
+        old_c = float(existing[1] or 0)
+        total_q = old_q + qty
+        avg_cost = (old_q * old_c + qty * cost) / total_q if total_q > 0 else 0
+        conn.execute(
+            "UPDATE inventory_items SET quantity = ?, cost_price = ? WHERE hangar_id = ? AND type_id = ?",
+            (total_q, round(avg_cost, 2), target_hangar, type_id),
+        )
+    else:
+        conn.execute(
+            """INSERT INTO inventory_items (hangar_id, type_id, quantity, cost_price, created_at)
+                     VALUES (?, ?, ?, ?, datetime('now'))""",
+            (target_hangar, type_id, qty, cost),
+        )
     return True
 
 
@@ -649,26 +719,31 @@ def apply_inventory_import(
         ``"full"`` 全量同步——按 ``targets`` 的最终数量覆盖（对话框算出的列）。
     targets: full 模式下 ``{type_id: 最终数量}``；跨机库移动行（``src_hangar`` 非空）
         不参与全量 set，保持移动语义。
+
+    **整批共用一个事务**：逐行各自开事务时每行一次 commit（= 一次 fsync），几百行就是
+    秒级卡顿。单事务下任一行失败整体回滚 —— 与「库存修正」语义一致（要么全改，要么
+    不改），不会留下改了一半的库存。
     """
     added = 0
     moved = 0
-    for type_id, delta, price, src_hangar in data:
-        if src_hangar is not None:
-            if _move_item_between_hangars(src_hangar, type_id, hangar_id):
-                moved += 1
-            continue
-        if mode == "full":
-            final_qty = (targets or {}).get(type_id)
-            if final_qty is None:
+    with _default_db().connect("user") as conn:
+        for type_id, delta, price, src_hangar in data:
+            if src_hangar is not None:
+                if _move_item_between_hangars(src_hangar, type_id, hangar_id, conn=conn):
+                    moved += 1
                 continue
-            if set_item_quantity(hangar_id, type_id, final_qty, price):
-                added += 1
-        else:
-            if delta <= 0:
-                continue
-            rid = add_item(hangar_id, type_id, delta, price)
-            if rid != -1:
-                added += 1
+            if mode == "full":
+                final_qty = (targets or {}).get(type_id)
+                if final_qty is None:
+                    continue
+                if set_item_quantity(hangar_id, type_id, final_qty, price, conn=conn):
+                    added += 1
+            else:
+                if delta <= 0:
+                    continue
+                rid = add_item(hangar_id, type_id, delta, price, conn=conn)
+                if rid != -1:
+                    added += 1
     return added, moved
 
 

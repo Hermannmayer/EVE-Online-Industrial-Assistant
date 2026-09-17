@@ -13,7 +13,7 @@ from core.container import get_container
 from core.logger import log
 from services.inventory_import import split_clipboard_lines
 from services.item_kind import blueprint_type_ids, looks_like_blueprint_name
-from services.name_resolver import resolve_item_name, search_item_type_id
+from services.name_resolver import resolve_item_name, search_item_type_ids_batch
 
 
 def parse_clipboard(raw: str) -> tuple[list[dict], int]:
@@ -28,14 +28,19 @@ def parse_clipboard_rows(
 ) -> tuple[list[dict], int]:
     """按 ref 连接解析剪贴板并过滤蓝图行（可单测，不依赖容器）。
 
+    批量匹配：整仓复制动辄几百行，逐行匹配会对 item 表逐行 LIKE 全表扫描（秒级）。
+    一次性取出全部名字批量解析，只有精确匹配未命中的少数行才走模糊回退。
+
     Returns:
         ``(rows, filtered)``：rows 为保留行 ``[{type_id|None, raw_name, zh_name,
         en_name, qty, status}]``（字段与旧实现一致）；filtered 为被过滤掉的蓝图行数。
     """
+    entries = split_clipboard_lines(raw)
+    matched = search_item_type_ids_batch(conn, [e["name"] for e in entries])
     rows: list[dict] = []
-    for entry in split_clipboard_lines(raw):
+    for entry in entries:
         name = entry["name"]
-        type_id = search_item_type_id(conn, name)
+        type_id = matched.get(name)
         if type_id:
             nm = resolve_item_name(conn, type_id)
             rows.append(

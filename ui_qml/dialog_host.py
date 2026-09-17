@@ -12,13 +12,20 @@
 
 QML 侧通过桥发 `accepted` / `rejected` 信号（见 `DialogBridge`），宿主把它们接到
 `QDialog.accept/reject` 上 —— 迁移期的统一契约。
+
+**属主窗口（transient parent）**：外壳与工具窗是 `QWindow`（`QQuickWindow`），
+`QDialog` 的 parent 参数只收 `QWidget`，于是这里过去一律降级成 `None` —— 对话框就成了
+**无主**窗口。后果是「父窗置顶时，无主对话框排在普通层被它盖住，而对话框是应用级
+模态、父窗又点不了」——互相锁死。现在统一把属主挂到 `windowHandle().setTransientParent()`：
+有 QWidget 父就用它，没有就退到「当前活动窗口」这个 `QWindow`（外壳/工具窗都在其中）。
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Property, QObject, Signal, Slot
+from PySide6.QtCore import Property, QObject, Qt, Signal, Slot
+from PySide6.QtGui import QGuiApplication, QWindow
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QWidget
 
 from ui_qml.host import PageHost
@@ -101,10 +108,13 @@ class QmlDialog(QDialog):
         #: （本仓 6.1 踩过一次 —— `QMenu(self)` / `QMessageBox.about(self, ...)` 把
         #: `QQuickView` 当 QWidget 父，运行时直接抛类型错）。批次 7.4 起工业页那串
         #: 控制器的基类变成 `QObject`，`self` 传进来不再是 QWidget，所以在这里统一
-        #: 收敛成 `None`：**只是失去居中**，比每次调用点各判一次可靠。
-        if parent is not None and not isinstance(parent, QWidget):
-            parent = None
-        super().__init__(parent)
+        #: 收敛成 `None`。
+        #
+        #: 但**收敛成 None 会丢掉属主**：外壳/工具窗是 QWindow，对话框于是成了无主窗口
+        #: （父窗置顶时被盖住 + 应用级模态锁死父窗 = 互相锁死）。所以下面再补一次
+        #: `setTransientParent`，把属主挂到 QWidget 父窗或「当前活动 QWindow」上。
+        widget_parent = parent if isinstance(parent, QWidget) else None
+        super().__init__(widget_parent)
         self._bridge = bridge
         #: 桥挂到宿主对话框名下：桥的寿命不超过对话框，且桥里 `self.parent()` 就是那个窗口。
         #: 见 `DialogBridge.host_widget` 里对「自己存引用会悬空」的说明。
@@ -120,6 +130,8 @@ class QmlDialog(QDialog):
         layout.setSpacing(0)
         self._host = PageHost(qml_file, context={"bridge": bridge}, parent=self)
         layout.addWidget(self._host)
+
+        self._bind_transient_parent(widget_parent)
 
         # 销毁也要收尾：调用方（测试里尤其常见）会直接 `dlg.deleteLater()`，那条路径
         # 既不经过 `done()` 也不经过 `closeEvent`，桥的后台线程就没人停 —— 而 `QThread`
@@ -144,6 +156,50 @@ class QmlDialog(QDialog):
     @property
     def bridge(self) -> Any:
         return self._bridge
+
+    # ── 属主窗口（层级） ─────────────────────────────────────
+
+    def _bind_transient_parent(self, widget_parent: QWidget | None) -> None:
+        """把本对话框挂到属主窗口下，让它在父窗之上、并阻止父窗抢前置。
+
+        没有这一步时对话框是**无主**窗口：父窗（外壳 / 两个工具窗）一旦置顶，
+        无主对话框排在普通层会被它盖住，而对话框是应用级模态 —— 父窗也点不了，
+        两个窗口互相锁死。
+
+        取属主的顺序：QWidget 父窗的 `QWindow` → 当前聚焦窗口（外壳与两个工具窗
+        都是 `QWindow`，且在 `QGuiApplication.focusWindow()` 里）。都没有就不挂，
+        退回原行为（如无父窗的测试场景）。
+
+        注意不能改用 `QApplication.activeWindow()` —— 它返回 `QWidget`，而本仓的
+        外壳/工具窗都是 `QWindow`，拿不到。
+        """
+        own_handle = self.windowHandle()
+        if own_handle is None:
+            return
+        owner: QWindow | None = widget_parent.windowHandle() if widget_parent is not None else None
+        if owner is None:
+            owner = QGuiApplication.focusWindow()
+        if owner is None or owner is own_handle:
+            return
+        #: 留引用防 Python 包装器先析构：`setTransientParent` 只记 HWND，Qt 不接管所有权，
+        #: 父窗是 Python 侧临时对象时（工具窗的 QWindow 由控制器持有，但别赌）丢了引用
+        #: 就是悬空指针。
+        self._transient_parent_window = owner
+        own_handle.setTransientParent(owner)
+        #: 父窗置顶（TOPMOST）时，属主关系**不会**自动把子窗抬到同层 —— 子窗仍会排在
+        #: 普通层、被置顶父窗盖住。显式跟随一次，子窗才与父窗同层。
+        self._match_owner_always_on_top(owner)
+
+    def _match_owner_always_on_top(self, owner: QWindow) -> None:
+        """父窗是 TOPMOST 时给对话框也加 `WindowStaysOnTopHint`，保证子窗排在父窗之上。
+
+        只在「父窗用 flags 置顶」时走到（外壳/工具窗在 Windows 上走 `SetWindowPos
+        HWND_TOPMOST`，flags 里没有这个 hint），故不覆盖 Win32 主路径 —— 那条路由
+        `setTransientParent` 的属主关系 + 对话框自身 `exec()` 的置前负责。
+        """
+        if not (owner.flags() & Qt.WindowType.WindowStaysOnTopHint):
+            return
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
     def ok(self) -> bool:
         """QML 是否加载成功（调用方据此决定要不要回退到 Widgets 版）。"""

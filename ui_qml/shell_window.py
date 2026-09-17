@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Property, QObject, QSize, Qt, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import Property, QObject, QRect, QSize, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtQuick import QQuickItem, QQuickView
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
@@ -43,6 +43,28 @@ from ui_qml.theme import registry as theme
 __all__ = ["ShellWindow", "ShellWindowBridge"]
 
 _SHELL_QML = "shell/Main.qml"
+
+#: 「按下 vs 拖动」的判定阈值（px）。优先用系统 SM_CXDRAG/SM_CYDRAG，取不到才用这个兜底。
+_DRAG_THRESHOLD = 4
+
+
+def _drag_threshold() -> int:
+    """系统拖动阈值（SM_CXDRAG/SM_CYDRAG 取较大者）。非 Win32 或取不到 → 兜底 4px。
+
+    取系统值是必要的：Windows 上鼠标的「手抖」幅度是可调的，写死会出现
+    「我明明只是点了一下，窗口却还原了」。
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            SM_CXDRAG, SM_CYDRAG = 68, 69
+            return max(int(user32.GetSystemMetrics(SM_CXDRAG)), int(user32.GetSystemMetrics(SM_CYDRAG)))
+        except Exception:
+            log.debug("读系统拖动阈值失败，回落 %dpx", _DRAG_THRESHOLD)
+    return _DRAG_THRESHOLD
+
 
 #: 页面钩子里「切页时外壳会顺手调」的那几个。
 #: 批次 7.4 之前这组由 `SpecPageHost` 转发（那条路已随 Widgets 回退脚手架删除），现在这里是唯一定义处。
@@ -256,11 +278,10 @@ class ShellWindowBridge(QObject):
         """
         QTimer.singleShot(0, self._window.close)
 
-    @Slot()
-    def startMove(self) -> None:
-        # ShellWindow 自己就是 QWindow（QQuickView 是 QWindow 子类），拖动/缩放直接调；
-        # 不是 QWidget 那种「去问 windowHandle() 要句柄」的形态。
-        self._window.startSystemMove()
+    @Slot(float, float, float, float, result=bool)
+    def beginMove(self, press_x: float, press_y: float, x: float, y: float) -> bool:
+        """标题栏拖动：超过系统拖动阈值再起拖；最大化时先还原再跟手。见 `ShellWindow.begin_move`。"""
+        return self._window.begin_move(press_x, press_y, x, y)
 
     @Slot(int)
     def startResize(self, edges: int) -> None:
@@ -351,6 +372,9 @@ class ShellWindow(QQuickView):
         # ── 窗口状态 ──
         self.windowStateChanged.connect(lambda _state: self._bridge.notify())
         theme.restore_window_geometry(self)
+        #: 「最大化前的尺寸」——`showMaximized()` 不改 geometry()，所以这里读到的就是
+        #: 还原后该回的尺寸；`QWindow` 没有 `normalGeometry()`（实测），只能自己记。
+        self._normal_rect = QRect(self.geometry())
 
         # ── 价格 ──
         self._price_age_timer = QTimer(self)
@@ -915,6 +939,76 @@ class ShellWindow(QQuickView):
         from services.user_settings import load_settings
 
         return bool(load_settings().get("window_pin", False))
+
+    # ── 标题栏拖动（最大化即还原并跟手）───────────────────────
+
+    def moveEvent(self, event: Any) -> None:
+        """记录「最大化前的尺寸」—— 只有常规态才记（详见 `_normal_rect`）。"""
+        super().moveEvent(event)  # type: ignore[arg-type]
+        self._remember_normal_rect()
+
+    def resizeEvent(self, event: Any) -> None:
+        """同上。`QWindow` 没有 `normalGeometry()`，这个字段就是我们的「normal」。"""
+        super().resizeEvent(event)  # type: ignore[arg-type]
+        self._remember_normal_rect()
+
+    def _remember_normal_rect(self) -> None:
+        """常规态下把当前几何存成「最大化前的尺寸」。
+
+        必须**持续**记录而不是构造时记一次：用户先调整窗口大小、再最大化、再拖标题栏时，
+        要还原到「最大化前那一刻的尺寸」，不是启动时的尺寸。
+        最大化/最小化/全屏期间不记 —— 那些状态下的 `geometry()` 是屏幕尺寸，记进去
+        会让下次还原直接铺满屏幕。
+        """
+        if self.windowState() != Qt.WindowState.WindowNoState:
+            return
+        if self.geometry().isValid():
+            self._normal_rect = QRect(self.geometry())
+
+    def begin_move(self, press_x: float, press_y: float, x: float, y: float) -> bool:
+        """标题栏拖动：越过阈值才起拖；最大化时先还原再跟手。
+
+        为什么不在按下时直接 `startSystemMove()`：那样最大化窗口会被整体拖走。原生标题
+        栏的「拖动即还原成最大化前的尺寸、并把窗口压到光标下」是**系统拖动循环**
+        （`WM_NCLBUTTONDOWN` + `HTCAPTION`）的附带行为；`startSystemMove` 内部只走
+        `SC_MOVE`，**不带还原**，所以这一步得自己补。
+
+        坐标是窗口内坐标；阈值取系统 `SM_CXDRAG/SM_CYDRAG` —— 单纯单击（未越阈值）
+        不会还原，与 Windows 判定「点击 vs 拖动」的标准一致。
+
+        Returns:
+            是否已交棒给系统拖动循环（True 时 QML 侧不必再处理后续移动事件）。
+        """
+        threshold = _drag_threshold()
+        if abs(x - press_x) < threshold and abs(y - press_y) < threshold:
+            return False
+        if self.windowState() == Qt.WindowState.WindowMaximized:
+            ratio = (x / self.width()) if self.width() else 0.5
+            self._restore_before_move(ratio)
+        self.startSystemMove()
+        return True
+
+    def _restore_before_move(self, ratio: float) -> None:
+        """还原为最大化前的尺寸，并把窗口摆到光标下（照 Windows 标题栏拖动的做法）。
+
+        `QWindow` 没有 `normalGeometry()`（实测，那是 `QWidget` 的），所以「最大化前的
+        尺寸」只能自己记：构造时读一次持久化几何 —— `showMaximized()` 不改 `geometry()`，
+        因此那里记下的就是该还原到的尺寸。
+
+        ratio: 光标在最大化窗口内的横向比例（0~1），用来决定还原后光标停在窗口的哪一处，
+        这样拖动跟手时窗口不会「跳」到光标右边。
+        """
+        from PySide6.QtGui import QCursor
+
+        rect = self._normal_rect
+        width = max(int(rect.width()), self.minimumWidth())
+        height = max(int(rect.height()), self.minimumHeight())
+        self.showNormal()
+        self.resize(width, height)
+        cur = QCursor.pos()
+        left = cur.x() - int(width * min(max(ratio, 0.0), 1.0))
+        # 纵向让光标落在标题行上（标题行高 32，取其中点附近），与原生观感一致
+        self.setPosition(left, cur.y() - 16)
 
     def _save_settings(self) -> None:
         from services.user_settings import save_settings

@@ -64,6 +64,12 @@ async def initialize_database():
                 en_name TEXT, zh_name TEXT, icon_id INTEGER
             )
         """)
+        # 名称索引：item 表此前只有主键，剪贴板导入的名称解析只能全表扫 5 万行。
+        # 老库由下次初始化补齐（这里先到先建，sde_loader 侧同样会建，IF NOT EXISTS 幂等）。
+        from services.item_kind import item_name_index_sql
+
+        for idx_sql in item_name_index_sql():
+            await db.execute(idx_sql)
         await db.commit()
 
 

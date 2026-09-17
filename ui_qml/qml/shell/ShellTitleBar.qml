@@ -2,8 +2,10 @@ import QtQuick
 
 /* 标题行（阶段 5 批次 6.1）—— Widgets 版是 `ui_pyside6/title_bar.py`。
 
-   空区可拖动、双击最大化：拖动交给 Python 的 `startSystemMove()`
-   （一次性 SC_MOVE，比逐帧改窗口位置稳），与 Widgets 版的取舍一致。
+   空区可拖动、双击最大化。拖动**不直接** `startSystemMove()`，而是把屏幕坐标交给
+   Python 判一次（`shell.beginMove(globalX, globalY)`）：最大化时系统拖动循环不会自动
+   「还原成最大化前的尺寸再跟手」（那是原生标题栏的行为，`startSystemMove` 绕开了它），
+   由 Python 判超阈值后先还原再起拖，见 `ShellWindowBridge.beginMove`。
 
    最大化/还原图标由 `shell.maximized` 驱动；置顶的 checked 由 `shell.pinned` 驱动
    —— 都是**外壳的真实状态**，不是按钮自己的局部状态。
@@ -30,9 +32,22 @@ Item {
 
     // 拖动区铺满整行；右上角的按钮浮在它之上、自己吃掉点击
     MouseArea {
+        id: dragArea
         anchors.fill: parent
         acceptedButtons: Qt.LeftButton
-        onPressed: shell.startMove()
+        property real pressX: 0
+        property real pressY: 0
+        onPressed: (mouse) => {
+            dragArea.pressX = mouse.scenePosition.x;  // 场景坐标 = 窗口内坐标（本窗无缩放）
+            dragArea.pressY = mouse.scenePosition.y;
+        }
+        onPositionChanged: (mouse) => {
+            if (!pressed)
+                return;
+            // 阈值判定在 Python（沿用系统 SM_CXDRAG/SM_CYDRAG）；返回 true 表示已交棒给
+            // 系统拖动循环，随后的移动事件不再需要处理
+            shell.beginMove(dragArea.pressX, dragArea.pressY, mouse.scenePosition.x, mouse.scenePosition.y);
+        }
         onDoubleClicked: shell.maximizeOrRestore()
     }
 

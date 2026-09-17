@@ -596,9 +596,14 @@ class ImportReviewBridge(DialogBridge):
         return bool(row and row["unmatched"])
 
     def _fetch_existing_inventory(self) -> None:
-        """查询目标机库中已有物品的库存量。"""
+        """查询剪贴板涉及物品在目标机库里的现存量（只取基础字段）。
+
+        `get_items` 默认还会算研究成本 / 计划占用 / 价格列，预览一个都不用 —— 走
+        `include_derived=False` + `need_ids` 避免打开对话框时白算一整库。
+        """
         try:
-            for it in get_items(self._target_hangar_id):
+            need = {int(it["type_id"]) for it in self._items if it.get("type_id")}
+            for it in get_items(self._target_hangar_id, include_derived=False, need_ids=need):
                 self._existing_qty[it["type_id"]] = it["quantity"]
         except Exception:
             log.exception("获取现有库存失败")
@@ -770,8 +775,8 @@ def run_clipboard_import(
             )
         return
 
-    # 导入前快照（数量+成本），供差异对比
-    before_items = get_items(target_hangar_id)
+    # 导入前后快照（数量+成本），供差异对比 —— 只取基础字段，见 `_fetch_existing_inventory`
+    before_items = get_items(target_hangar_id, include_derived=False)
     before = {it["type_id"]: (it["quantity"], it.get("cost_price") or 0) for it in before_items}
     names_before = {it["type_id"]: _item_display_name(it) for it in before_items}
 
@@ -787,7 +792,7 @@ def run_clipboard_import(
     targets = dlg.get_sync_targets() if actual_mode == "full" else None
     added, moved = apply_inventory_import(target_hangar_id, data, actual_mode, targets)
 
-    after_items = get_items(target_hangar_id)
+    after_items = get_items(target_hangar_id, include_derived=False)
     after = {it["type_id"]: (it["quantity"], it.get("cost_price") or 0) for it in after_items}
     names_after = {it["type_id"]: _item_display_name(it) for it in after_items}
     type_ids = list(dict.fromkeys(list(before) + list(after)))

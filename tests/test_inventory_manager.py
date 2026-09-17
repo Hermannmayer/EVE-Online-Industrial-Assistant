@@ -469,6 +469,35 @@ class TestApplyInventoryImport:
         added, moved = apply_inventory_import(dst, [(9999, 1, 5.0, src)], "incremental")
         assert (added, moved) == (0, 0)
 
+    def test_failure_rolls_back_whole_batch(self, import_db):
+        """整批单事务：中途失败 → 前面已写行一并回滚（不留改了一半的库存）
+
+        回归背景：逐行各自开事务时每行一次 commit（几百行 = 秒级卡顿），改为整批一个
+        事务后必须保证失败不落盘 —— 「库存修正」要么全改要么不改。
+        """
+        import services.inventory_manager as im
+
+        hid = create_hangar("主仓")
+        add_item(hid, 1001, 10, 5.0)
+        boom = RuntimeError("模拟中途写库失败")
+        calls = {"n": 0}
+        orig = im.add_item
+
+        def _flaky(hangar_id, type_id, quantity, cost_price=0, *, conn=None):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise boom
+            return orig(hangar_id, type_id, quantity, cost_price, conn=conn)
+
+        im.add_item = _flaky
+        try:
+            with pytest.raises(RuntimeError, match="模拟中途写库失败"):
+                apply_inventory_import(hid, [(1002, 3, 1.0, None), (1003, 4, 1.0, None)], "incremental")
+        finally:
+            im.add_item = orig
+
+        assert self._stock(import_db, hid) == {1001: 10}, "失败前写入的行必须回滚"
+
 
 class TestHangarReferences:
     """删除机库前的引用检查与重指向（回归：悬空引用会导致默认机库设置被静默清空）"""

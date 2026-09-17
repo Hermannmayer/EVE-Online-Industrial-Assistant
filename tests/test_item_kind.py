@@ -10,7 +10,12 @@ import sqlite3
 import pytest
 
 from services.inventory_clipboard_service import parse_clipboard_rows
-from services.item_kind import blueprint_type_ids, is_material_name, looks_like_blueprint_name
+from services.item_kind import (
+    blueprint_type_ids,
+    ensure_item_name_indexes,
+    is_material_name,
+    looks_like_blueprint_name,
+)
 
 _ITEM_DDL = """
 CREATE TABLE item (
@@ -138,3 +143,20 @@ class TestParseClipboardRowsFiltersBlueprints:
         rows, filtered = parse_clipboard_rows(ref_conn, "屹立大型蓝图拷贝优化 I\t2\n")
         assert filtered == 0
         assert [r["type_id"] for r in rows] == [43729]
+
+
+class TestEnsureItemNameIndexes:
+    """item 表名称索引 —— LIKE 回退不再全表扫描（整仓导入的秒级卡顿来源）"""
+
+    def test_creates_both_indexes_once(self, ref_conn):
+        assert ensure_item_name_indexes(ref_conn) == 2
+        names = {r[0] for r in ref_conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()}
+        assert {"idx_item_zh_name", "idx_item_en_name"} <= names
+        assert ensure_item_name_indexes(ref_conn) == 0, "已存在 → 不重复建"
+
+    def test_missing_columns_skipped(self):
+        """老库缺 en_name 列 → 跳过而不是抛异常（索引只是加速手段）"""
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT)")
+        assert ensure_item_name_indexes(conn) == 1
+        conn.close()

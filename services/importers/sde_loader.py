@@ -91,6 +91,14 @@ async def initialize_database():
                 await db.execute(f"ALTER TABLE item ADD COLUMN {col} {col_type}")
             except aiosqlite.OperationalError:
                 pass  # 列已存在
+        # 名称索引（剪贴板导入的名称解析此前只能全表扫 5 万行）——item 表由 items 步骤创建，
+        # 尚未建表时跳过（本步骤与 items 可并行，谁先跑都可能）
+        from services.item_kind import item_name_index_sql
+
+        cur = await db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='item'")
+        if await cur.fetchone():
+            for idx_sql in item_name_index_sql():
+                await db.execute(idx_sql)
         await db.commit()
     log.info("SDE 扩展数据库表结构已初始化")
 

@@ -24,11 +24,46 @@ from collections.abc import Iterable
 
 from core.logger import log
 
+#: item 表按名称查找所需的索引（名称解析的精确匹配 / item_kind 的材料行判定 / LIKE 回退）
+_ITEM_NAME_INDEXES = ("idx_item_zh_name", "idx_item_en_name")
+_ITEM_NAME_INDEX_COLUMNS = ("zh_name", "en_name")
+
+
+def item_name_index_sql() -> list[str]:
+    """item 表名称索引的 CREATE 语句（异步写库路径用；同步路径见 `ensure_item_name_indexes`）。"""
+    return [
+        f"CREATE INDEX IF NOT EXISTS {name} ON item({column})"
+        for name, column in zip(_ITEM_NAME_INDEXES, _ITEM_NAME_INDEX_COLUMNS, strict=True)
+    ]
+
+
 # group 名后缀谓词（SQLite LIKE 对 ASCII 大小写不敏感）
 _EN_GROUP_SUFFIXES = ("%Blueprint", "%Blueprints", "%Formula", "%Formulas")
 _ZH_GROUP_SUFFIXES = ("%蓝图", "%公式", "%配方")
 # 名字标记：带这些词的剪贴板行按「蓝图行」对待（反应配方 = 反应类蓝图）
 _BLUEPRINT_NAME_MARKERS = ("蓝图", "blueprint", "公式", "配方", "formula")
+
+
+def ensure_item_name_indexes(conn: sqlite3.Connection) -> int:
+    """在 item 表上建 zh_name / en_name 索引（已存在则跳过）。返回本次新建的索引数。
+
+    item 表此前只有主键，按名称查找（剪贴板导入的名称解析、材料行判定）只能全表扫
+    5 万行。索引在 SDE item 表建表之后创建（两个 importer 的 ``initialize_database``
+    各调一次，先到先建、后到跳过），老库由下次初始化补齐。
+
+    缺列（老库无 ``en_name``）或只读库 → 静默跳过：索引是加速手段，不是正确性依赖。
+    """
+    created = 0
+    for name, sql in zip(_ITEM_NAME_INDEXES, item_name_index_sql(), strict=True):
+        try:
+            exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?", (name,)).fetchone()
+            if exists:
+                continue
+            conn.execute(sql)
+            created += 1
+        except sqlite3.Error:
+            log.debug("item 名称索引 %s 未创建（列缺失或库只读），按名称查找将全表扫描", name)
+    return created
 
 
 def looks_like_blueprint_name(name: str | None) -> bool:

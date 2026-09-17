@@ -104,3 +104,48 @@ class TestShellState:
 
         shell.set_pinned(False)
         assert shell.is_pinned() is False
+
+
+class TestMaximizeDrag:
+    """最大化后拖标题栏：未越阈值不起拖；越阈值先还原再跟手（Windows 标题栏行为）。
+
+    回归背景：原来 `onPressed` 直接 `startSystemMove()`，而系统拖动循环（`SC_MOVE`）
+    **不带**「先还原成最大化前的尺寸」——那是原生标题栏 `HTCAPTION` 的附带行为。
+    于是最大化窗口被整体拖走，与用户预期不符。
+    """
+
+    #: 外壳最小尺寸是 1200x700 —— 测试尺寸必须明显大于它，否则 resize 会被夹到最小值，
+    #: 「还原到最大化前的尺寸」就测不出差别
+    _NORMAL = (1320, 820)
+
+    def test_press_below_threshold_does_not_start(self, shell):
+        """单击（未越过系统拖动阈值）不该还原、也不该起拖。"""
+        assert shell.begin_move(100.0, 10.0, 101.0, 11.0) is False
+
+    def test_drag_restores_previous_size_then_moves(self, shell):
+        """越阈值后：窗口回到最大化前的尺寸，且不再处于最大化态。"""
+        from PySide6.QtCore import Qt
+
+        from tests.qml_click import spin
+
+        shell.show()  # 需要真窗口：showMaximized 要平台窗口支撑
+        shell.resize(*self._NORMAL)
+        spin(150)  # 离屏平台下 resize 要事件循环才落地
+        normal = shell.geometry()
+        assert (normal.width(), normal.height()) == self._NORMAL, "前置条件没成立，后面的断言没意义"
+
+        shell.showMaximized()
+        spin(150)
+        assert shell.windowState() == Qt.WindowState.WindowMaximized
+
+        started = shell.begin_move(normal.width() / 2, 5.0, normal.width() / 2 + 200.0, 5.0)
+        assert started is True, "越过阈值应当起拖"
+
+        assert shell.windowState() != Qt.WindowState.WindowMaximized, "拖动后不该还是最大化"
+        assert shell.width() == normal.width(), "该还原到最大化前的宽度"
+        assert shell.height() == normal.height(), "该还原到最大化前的高度"
+
+    # 「还原后窗口压在光标处」那条横向跟手断言**不写在这里**：它要么读 `QCursor.pos()`
+    # （离屏平台下窗口操作期间会漂，实测偏差百余像素），要么断 `setPosition` 的绝对值
+    # （离屏虚拟屏只有 800x800，位置被钳制）。属项目规矩里的「几何/像素断言不写测试」，
+    # 走 `shell_snapshot.py --real` 真窗口核对。

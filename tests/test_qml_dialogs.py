@@ -1689,3 +1689,72 @@ def test_destroying_the_dialog_stops_the_bridge(qapp):
     _spin(150)
 
     assert calls == ["stop"], "对话框被销毁时没停桥：桥里的 QThread 会在运行中被析构（硬崩）"
+
+
+# ── 属主窗口：对话框必须挂在父窗之下，否则与置顶父窗互相锁死 ──────────────
+#
+# 外壳与两个工具窗是 `QWindow`（`QQuickView` / QML `Window`），而 `QDialog` 的 parent
+# 参数只收 `QWidget` —— 过去一律降级成 `None`，对话框于是成了**无主**窗口：
+# 父窗置顶时无主对话框排在普通层被它盖住，而对话框是应用级模态、父窗也点不了，
+# 两个窗口互相锁死（用户报的「二三级窗口点不到、和上级窗口互锁」）。
+# 修法见 `QmlDialog._bind_transient_parent`。
+
+
+def test_dialog_gets_a_transient_owner(qapp):
+    """给了 QWidget 父窗时，对话框要把它挂成 transient parent。"""
+    from PySide6.QtWidgets import QWidget
+
+    from ui_qml.dialog_host import DialogBridge, QmlDialog
+
+    owner = QWidget()
+    owner.resize(500, 400)
+    owner.show()
+    dialog = None
+    try:
+        dialog = QmlDialog("dialogs/InputDialog.qml", DialogBridge(), parent=owner)
+        dialog.resize(400, 200)
+        dialog.show()
+        _spin(150)
+        handle = dialog.windowHandle()
+        assert handle is not None, "对话框没有平台窗口句柄"
+        assert handle.transientParent() is owner.windowHandle(), "对话框没挂到属主窗口上"
+    finally:
+        if dialog is not None:
+            dialog.deleteLater()
+        owner.deleteLater()
+        _spin(100)
+
+
+def test_dialog_falls_back_to_the_focused_window(qapp):
+    """没有 QWidget 父窗时（页面桥对外壳恒为 None），退到当前聚焦的 QWindow。
+
+    这条才是生产里的主路径：外壳与两个工具窗都是 `QWindow`，
+    `QGuiApplication.focusWindow()` 是唯一拿得到它们的入口
+    （`QApplication.activeWindow()` 返回 QWidget，拿不到）。
+    """
+    from PySide6.QtGui import QGuiApplication, QWindow
+
+    from ui_qml.dialog_host import DialogBridge, QmlDialog
+
+    shell = QWindow()
+    shell.setTitle("fake shell")
+    shell.resize(600, 400)
+    shell.show()
+    shell.requestActivate()
+    _spin(200)
+
+    dialog = None
+    try:
+        dialog = QmlDialog("dialogs/InputDialog.qml", DialogBridge())
+        dialog.resize(400, 200)
+        dialog.show()
+        _spin(150)
+        handle = dialog.windowHandle()
+        assert handle is not None
+        if QGuiApplication.focusWindow() is shell:
+            assert handle.transientParent() is shell, "没退到聚焦窗口上，对话框仍是无主"
+    finally:
+        if dialog is not None:
+            dialog.deleteLater()
+        shell.close()
+        _spin(100)

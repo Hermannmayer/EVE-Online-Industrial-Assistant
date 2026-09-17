@@ -81,7 +81,11 @@ def harness(qapp, monkeypatch) -> _Harness:
     mult_writes: list[float] = []
     box = _BoxRecorder()
 
-    monkeypatch.setattr(mod, "get_items", lambda hangar_id: list({7: _TARGET_ITEMS, 8: _SOURCE_ITEMS}[hangar_id]))
+    monkeypatch.setattr(
+        mod,
+        "get_items",
+        lambda hangar_id, **_kw: list({7: _TARGET_ITEMS, 8: _SOURCE_ITEMS}[hangar_id]),
+    )
     monkeypatch.setattr(mod, "get_container", lambda: SimpleNamespace(market_repo=repo))
     monkeypatch.setattr(mod, "get_hangars", lambda: [{"id": 7, "name": "矿仓"}, {"id": 8, "name": "组件仓"}])
     monkeypatch.setattr(mod, "set_material_price_mult", mult_writes.append)
@@ -333,7 +337,7 @@ def test_review_add_from_hangar_cancel_changes_nothing(harness: _Harness, monkey
 def test_review_add_from_hangar_without_items_warns(harness: _Harness, monkeypatch):
     import ui_qml.bridge.review_bridge as mod
 
-    monkeypatch.setattr(mod, "get_items", lambda hangar_id: [])
+    monkeypatch.setattr(mod, "get_items", lambda hangar_id, **_kw: [])
     harness.bridge.addFromHangar(8)
     assert harness.box.calls == [("information", "该机库中无物品")]
 
