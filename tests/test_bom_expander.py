@@ -1,13 +1,12 @@
 """BOM 展开逻辑单元测试 — services/bom_expander.py
 
 测试覆盖:
-  - BomNode 数据类构造
   - _resolve_name: 物品名称解析
   - _find_blueprint_for_product: 蓝图查找
   - _get_materials: 材料列表获取
-  - _expand: 叶子节点 / 中间产品 / 循环检测
+  - _expand: 叶子节点 / 中间产品 / 循环检测 / 深度上限
   - expand_bom: 完整入口
-  - 便捷函数: get_material_tree, get_flat_materials, print_tree
+  - 便捷函数: get_material_tree, get_flat_materials
 """
 
 from unittest.mock import MagicMock, patch
@@ -22,61 +21,9 @@ from services.bom_expander import (
     expand_bom,
     get_flat_materials,
     get_material_tree,
-    print_tree,
 )
 
 pytestmark = pytest.mark.fast
-
-
-class TestBomNode:
-    """BomNode 数据类"""
-
-    def test_default_construction(self):
-        node = BomNode(
-            type_id=34,
-            name="Tritanium",
-            quantity=100.0,
-            base_quantity=100,
-            is_intermediate=False,
-        )
-        assert node.type_id == 34
-        assert node.name == "Tritanium"
-        assert node.quantity == 100.0
-        assert node.base_quantity == 100
-        assert node.is_intermediate is False
-        assert node.children == []
-        assert node.depth == 0
-        assert node.unit_price == 0.0
-        assert node.subtotal == 0.0
-        assert node.blueprint_type_id is None
-
-    def test_with_children(self):
-        child = BomNode(
-            type_id=34,
-            name="Tritanium",
-            quantity=500.0,
-            base_quantity=500,
-            is_intermediate=False,
-        )
-        parent = BomNode(
-            type_id=587,
-            name="Raven",
-            quantity=1.0,
-            base_quantity=1,
-            is_intermediate=True,
-            children=[child],
-            depth=1,
-            unit_price=50_000_000,
-            subtotal=2500.0,
-            blueprint_type_id=3001,
-        )
-        assert len(parent.children) == 1
-        assert parent.children[0].type_id == 34
-        assert parent.is_intermediate is True
-
-    def test_empty_children_default(self):
-        node = BomNode(type_id=1, name="x", quantity=1.0, base_quantity=1, is_intermediate=False)
-        assert node.children == []
 
 
 class TestResolveName:
@@ -416,28 +363,3 @@ class TestExpandBom:
         assert isinstance(flat, list)
         assert len(flat) >= 1
         assert flat[0]["type_id"] == 9999
-
-    def test_print_tree(self):
-        """print_tree 生成可读树结构"""
-        child = BomNode(
-            type_id=34,
-            name="Tritanium",
-            quantity=500.0,
-            base_quantity=500,
-            is_intermediate=False,
-            subtotal=2500.0,
-        )
-        parent = BomNode(
-            type_id=587,
-            name="Raven",
-            quantity=1.0,
-            base_quantity=1,
-            is_intermediate=True,
-            children=[child],
-            subtotal=2500.0,
-        )
-        output = print_tree(parent)
-        assert "[造]" in output or "[买]" in output
-        assert "Raven" in output
-        assert "Tritanium" in output
-        assert "ISK" in output

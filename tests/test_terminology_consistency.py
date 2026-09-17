@@ -34,7 +34,7 @@ _TERM_FILE = _DATA_DIR / "terminology.json"
 def sde_skills() -> dict[str, str]:
     """返回 SDE 中所有技能的 {zh_name: en_name} 映射。
 
-    项目的数据加载器（tools/downloaders/getitems.py）不填充 item.category_id，
+    项目的数据加载器（services/importers/getitems.py）不填充 item.category_id，
     因此 category_id=16 无数据时跳过依赖 SDE 技能分类的检查；
     使用完整 SDE 数据（含 category_id）时该检查正常执行。
     """

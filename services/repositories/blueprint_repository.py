@@ -23,7 +23,7 @@ class BlueprintRepository:
 
     def get_materials(self, blueprint_type_id: int, activity: str = "manufacturing") -> list[tuple]:
         """获取蓝图材料 → [(material_type_id, quantity, wastefactor), ...]"""
-        from services.manufacturing_calculator import DEFAULT_WASTEFACTOR
+        from domain.formulas import DEFAULT_WASTEFACTOR
 
         with self._db.connect("bp") as conn:
             rows = conn.execute(

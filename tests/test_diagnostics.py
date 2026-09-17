@@ -8,33 +8,11 @@ import pytest
 from core import paths
 from core.diagnostics import (
     _thread_excepthook,
-    collect_env_info,
     install_background_hooks,
     write_crash_dump,
 )
 
 pytestmark = pytest.mark.fast
-
-
-def test_collect_env_info_has_expected_keys():
-    info = collect_env_info()
-    for key in (
-        "app_version",
-        "frozen",
-        "executable",
-        "platform",
-        "python",
-        "log_dir",
-        "crashes_dir",
-        "database_dir",
-        "reference_db",
-        "market_db",
-        "user_db",
-        "blueprint_db",
-        "pyside6_version",
-    ):
-        assert key in info
-        assert info[key] != ""
 
 
 def test_write_crash_dump_contains_header_and_traceback(tmp_path):

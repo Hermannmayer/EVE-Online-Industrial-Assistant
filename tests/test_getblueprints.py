@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
 
-from tools.downloaders.getblueprints import (
+from services.importers.getblueprints import (
     CACHE_FILE,
     CREATE_TABLES_SQL,
     SDE_ZIP_PATH,
@@ -27,9 +27,9 @@ class TestCreateTables:
 
 class TestEnsureCache:
     @pytest.mark.asyncio
-    @patch("tools.downloaders.getblueprints.os.path.exists")
-    @patch("tools.downloaders.getblueprints.os.path.getsize")
-    @patch("tools.downloaders.getblueprints.os.makedirs")
+    @patch("services.importers.getblueprints.os.path.exists")
+    @patch("services.importers.getblueprints.os.path.getsize")
+    @patch("services.importers.getblueprints.os.makedirs")
     async def test_returns_cached_path_when_exists(self, mock_makedirs, mock_getsize, mock_exists):
         mock_exists.return_value = True
         mock_getsize.return_value = 1 * 1024 * 1024
@@ -37,10 +37,10 @@ class TestEnsureCache:
         assert result == CACHE_FILE
 
     @pytest.mark.asyncio
-    @patch("tools.downloaders.getblueprints.os.path.exists")
-    @patch("tools.downloaders.getblueprints.os.makedirs")
-    @patch("tools.downloaders.getblueprints.open", new_callable=mock_open)
-    @patch("tools.downloaders.sde_cache.ensure_sde_zip", new_callable=AsyncMock)
+    @patch("services.importers.getblueprints.os.path.exists")
+    @patch("services.importers.getblueprints.os.makedirs")
+    @patch("services.importers.getblueprints.open", new_callable=mock_open)
+    @patch("services.importers.sde_cache.ensure_sde_zip", new_callable=AsyncMock)
     async def test_downloads_and_extracts_when_missing(self, mock_ensure_zip, mock_file, mock_makedirs, mock_exists):
         # CACHE_FILE 与共享 SDE zip 都不存在 → 复用 ensure_sde_zip 下载
         mock_exists.side_effect = [False, False]
@@ -57,9 +57,9 @@ class TestEnsureCache:
         mock_zf.assert_called_once_with(SDE_ZIP_PATH, "r")
 
     @pytest.mark.asyncio
-    @patch("tools.downloaders.getblueprints.os.path.exists")
-    @patch("tools.downloaders.getblueprints.os.makedirs")
-    @patch("tools.downloaders.getblueprints.open", new_callable=mock_open)
+    @patch("services.importers.getblueprints.os.path.exists")
+    @patch("services.importers.getblueprints.os.makedirs")
+    @patch("services.importers.getblueprints.open", new_callable=mock_open)
     async def test_reuses_shared_sde_zip_when_present(self, mock_file, mock_makedirs, mock_exists):
         # CACHE_FILE 缺失但共享 data/sde.zip 已存在 → 复用，不重复下载
         mock_exists.side_effect = [False, True]  # CACHE_FILE 不存在, SDE_ZIP_PATH 存在
@@ -78,9 +78,9 @@ class TestEnsureCache:
         mock_zf.assert_called_once_with(SDE_ZIP_PATH, "r")
 
     @pytest.mark.asyncio
-    @patch("tools.downloaders.getblueprints.os.path.exists")
-    @patch("tools.downloaders.getblueprints.os.makedirs")
-    @patch("tools.downloaders.sde_cache.ensure_sde_zip", new_callable=AsyncMock)
+    @patch("services.importers.getblueprints.os.path.exists")
+    @patch("services.importers.getblueprints.os.makedirs")
+    @patch("services.importers.sde_cache.ensure_sde_zip", new_callable=AsyncMock)
     async def test_raises_when_no_yaml_in_zip(self, mock_ensure_zip, mock_makedirs, mock_exists):
         mock_exists.return_value = False
 
@@ -135,8 +135,8 @@ class TestParseActivities:
 
 class TestRunBlueprintUpdate:
     @pytest.mark.asyncio
-    @patch("tools.downloaders.getblueprints.aiosqlite.connect")
-    @patch("tools.downloaders.getblueprints.os.makedirs")
+    @patch("services.importers.getblueprints.aiosqlite.connect")
+    @patch("services.importers.getblueprints.os.makedirs")
     async def test_skips_when_data_exists(self, mock_makedirs, mock_connect):
         mock_cursor = MagicMock()
         mock_cursor.fetchone = AsyncMock(return_value=(2000,))
@@ -150,11 +150,11 @@ class TestRunBlueprintUpdate:
         mock_makedirs.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("tools.downloaders.getblueprints.aiosqlite.connect")
-    @patch("tools.downloaders.getblueprints.os.makedirs")
-    @patch("tools.downloaders.getblueprints.ensure_cache")
-    @patch("tools.downloaders.getblueprints.yaml.load")
-    @patch("tools.downloaders.getblueprints.open", new_callable=mock_open)
+    @patch("services.importers.getblueprints.aiosqlite.connect")
+    @patch("services.importers.getblueprints.os.makedirs")
+    @patch("services.importers.getblueprints.ensure_cache")
+    @patch("services.importers.getblueprints.yaml.load")
+    @patch("services.importers.getblueprints.open", new_callable=mock_open)
     async def test_full_update_flow(self, mock_file, mock_yaml, mock_ensure_cache, mock_makedirs, mock_connect):
         # Connection 1: Check count
         mock_cursor_check = MagicMock()
@@ -214,7 +214,7 @@ class TestRunBlueprintUpdate:
         }
         mock_file.return_value.__enter__.return_value.read.return_value = "fake_yaml"
 
-        with patch("tools.downloaders.getitems.fill_missing_blueprint_names", AsyncMock()) as mock_fill:
+        with patch("services.importers.getitems.fill_missing_blueprint_names", AsyncMock()) as mock_fill:
             await run_blueprint_update()
 
         assert mock_db_check.execute.called
@@ -335,10 +335,10 @@ class TestEnsureCacheHttpError:
     """ensure_cache — 下载阶段 HTTP 异常"""
 
     @pytest.mark.asyncio
-    @patch("tools.downloaders.getblueprints.os.path.exists")
-    @patch("tools.downloaders.getblueprints.os.makedirs")
+    @patch("services.importers.getblueprints.os.path.exists")
+    @patch("services.importers.getblueprints.os.makedirs")
     @patch(
-        "tools.downloaders.sde_cache.ensure_sde_zip",
+        "services.importers.sde_cache.ensure_sde_zip",
         new_callable=AsyncMock,
         side_effect=Exception("HTTP 403 Forbidden"),
     )
@@ -392,11 +392,11 @@ class TestRunBlueprintUpdateYamlError:
         return mocks
 
     @pytest.mark.asyncio
-    @patch("tools.downloaders.getblueprints.aiosqlite.connect")
-    @patch("tools.downloaders.getblueprints.os.makedirs")
-    @patch("tools.downloaders.getblueprints.ensure_cache")
-    @patch("tools.downloaders.getblueprints.yaml.load")
-    @patch("tools.downloaders.getblueprints.open", new_callable=mock_open)
+    @patch("services.importers.getblueprints.aiosqlite.connect")
+    @patch("services.importers.getblueprints.os.makedirs")
+    @patch("services.importers.getblueprints.ensure_cache")
+    @patch("services.importers.getblueprints.yaml.load")
+    @patch("services.importers.getblueprints.open", new_callable=mock_open)
     async def test_raises_value_error_when_yaml_is_not_dict(
         self, mock_file, mock_yaml, mock_ensure_cache, mock_makedirs, mock_connect
     ):

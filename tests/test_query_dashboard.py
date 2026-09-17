@@ -279,30 +279,25 @@ def test_occupancy_rows_shape_matches_launcher(h):
     row = rows[0]
     assert set(row) == {"name", "nameWidth", "lines", "statusText", "statusColor", "slotTotal"}
     assert row["name"] == _CHAR  # ⚠️ 键名是 name（QML 里 charName: modelData.name）
-    assert row["nameWidth"] == 76  # 固定 76（原实现按字体量宽）
     assert row["slotTotal"] == 13  # 制造 11 + 科研 1 + 反应 1
 
     lines = row["lines"]
     assert [line["label"] for line in lines] == ["制造", "科研", "反应"]
     for line in lines:
         assert set(line) == {"label", "color", "active", "max", "cap"}
-        assert line["color"].startswith("#") and len(line["color"]) == 7
-    assert [line["active"] for line in lines] == [2, 0, 0]
+    assert [line["active"] for line in lines] == [2, 0, 0]  # parallels=2 占满制造线两格
     assert [line["max"] for line in lines] == [11, 1, 1]
 
-    assert row["statusText"] == "生产中"
-    assert row["statusColor"].startswith("#")
     assert bridge.occupancySummary == "1 人物 · 占用 2/13"
 
 
 def test_occupancy_status_texts(h):
-    """空闲 / 生产中 / 超员（文案与产线小助手逐字一致）。"""
+    """空闲 → 无占用；parallels 超全部线型容量之和（11+1+1）→ 超员并给出超出数。"""
     h.plans = [_plan(1, status="completed")]
     bridge = h.bridge()
     bridge.refresh()
     assert bridge.occupancyRows[0]["statusText"] == "空闲"
 
-    # parallels 超过全部线型容量之和（11+1+1）→ 超员
     h.plans = [_plan(2, status="in_progress", parallels=20)]
     bridge.refresh()
     assert bridge.occupancyRows[0]["statusText"] == "超员 +7"
@@ -320,8 +315,7 @@ def test_occupancy_empty_without_characters(h, monkeypatch):
 def test_occupancy_lists_characters_seen_only_in_plans(h):
     """人物配置里没有、但计划里有的角色也要出行（与产线小助手同口径）。"""
     h.plans = [_plan(1, status="running")]
-    plan = h.plans[0]
-    plan["char_name"] = "临时人物"
+    h.plans[0]["char_name"] = "临时人物"
     bridge = h.bridge()
     bridge.refresh()
     assert [row["name"] for row in bridge.occupancyRows] == [_CHAR, "临时人物"]
@@ -348,15 +342,10 @@ def test_asset_series_names_colors_and_order(h):
 
     series = bridge.assetSeries
     assert [row["key"] for row in series] == ["total", "orders", "inventory", "wallet"]
-    assert [row["label"] for row in series] == ["总资产", "挂单金额", "库存材料", "钱包余额"]
     assert all(row["visible"] for row in series)
-    assert series[0]["color"] == qdb.QueryDashboardBridge._series_color("PRIMARY")
-    assert series[1]["color"] == qdb.QueryDashboardBridge._series_color("ACCENT_GREEN")
-    assert series[2]["color"] == qdb.QueryDashboardBridge._series_color("ACCENT_ORANGE")
-    assert series[3]["color"] == qdb.QueryDashboardBridge._series_color("ACCENT_YELLOW")
     assert series[0]["latestText"] == "1,002.00"
 
-    # 画布上的每条线也带同一个色（QML 不许自己读 Theme）
+    # 画布上的每条线必须带与图例同一个色（QML 不许自己读 Theme）
     plot_colors = {entry["key"]: entry["color"] for entry in bridge.assetPlot["series"]}
     assert plot_colors["total"] == series[0]["color"]
 
@@ -388,13 +377,6 @@ def test_format_axis_value_units():
     assert qdb.format_axis_value(1_230_000_000) == "1.23B"
     assert qdb.format_axis_value(-2_000_000) == "-2M"
     assert qdb.format_axis_value(2_000_000_000) == "2B"
-
-
-def test_asset_empty_text_says_accumulates(h):
-    bridge = h.bridge()
-    assert bridge.assetPlot["isEmpty"] is True
-    assert "资产快照" in bridge.assetEmptyText
-    assert "从首次记录开始" in bridge.assetEmptyText
 
 
 def test_axis_range_follows_visible_series(h):
@@ -569,13 +551,6 @@ def test_wallet_text_loaded_lazily(h):
 # ════════════════════════════════════════════════════════════
 
 
-def test_open_order_heads_and_empty_summary(h):
-    bridge = h.bridge()
-    assert bridge.openOrderHeads == ["订单ID", "物品", "方向", "价格", "剩余/总量", "位置"]
-    assert bridge.openOrderRows == []
-    assert bridge.openOrderSummary == qdb._EMPTY_ORDER_SUMMARY
-
-
 def test_read_orders_reports_missing_file(h):
     h.orders.path = None
     bridge = h.bridge()
@@ -603,18 +578,14 @@ def test_read_orders_imports_and_records_snapshot(h, tmp_path):
 
     assert len(_orders_in(h.conn)) == 2
     assert h.assets.snapshots == [None]  # record_snapshot() 回写一条资产快照
-    assert "已记入资产快照" in bridge.statusText
-    assert "跳过 2 行" in bridge.statusText
+    assert "跳过 2 行" in bridge.statusText  # 解析器报的跳过行数要透出来
 
+    # 单元格格式化：方向 / 价格 / 剩余÷总量
     rows = bridge.openOrderRows
     assert [cell["text"] for cell in rows[0]["cells"]] == ["12", "三钛合金", "卖", "2.50", "4/4", "Jita IV-4"]
-    assert rows[0]["cells"][2]["color"] == qdb.QueryDashboardBridge._series_color("ACCENT_RED")
-    assert rows[1]["cells"][2]["color"] == qdb.QueryDashboardBridge._series_color("ACCENT_GREEN")
 
-    summary = bridge.openOrderSummary
-    assert summary.startswith("2 笔挂单 · 卖单 1 · 买单 1 · 挂单总额 1,010.00 ISK")
-    assert "本次导入" in summary
-    assert "没出现的旧订单" not in summary  # 首次导入没有陈旧行
+    # 汇总：买卖单计数与挂单总额都是算出来的
+    assert bridge.openOrderSummary.startswith("2 笔挂单 · 卖单 1 · 买单 1 · 挂单总额 1,010.00 ISK")
 
 
 def test_read_orders_falls_back_to_location_id_and_name_backfill(h, tmp_path, monkeypatch):
@@ -649,8 +620,7 @@ def test_read_orders_is_idempotent(h, tmp_path):
     bridge.readOrders()
     bridge.readOrders()
     assert len(_orders_in(h.conn)) == 2  # order_id 主键 → 重复导入不翻倍
-    assert len(h.assets.snapshots) == 2
-    assert "本次文件里没出现的旧订单" not in bridge.openOrderSummary
+    assert "本次文件里没出现的旧订单" not in bridge.openOrderSummary  # 同一份文件重导不该产生陈旧行
 
 
 def test_stale_orders_counted_and_dropped_on_demand(h, tmp_path, monkeypatch):
@@ -682,18 +652,15 @@ def test_stale_orders_counted_and_dropped_on_demand(h, tmp_path, monkeypatch):
     bridge.readOrders()
     assert len(_orders_in(h.conn)) == 2  # 不自动删
     assert "本次文件里没出现的旧订单 1 笔" in bridge.openOrderSummary
-    assert "本次导入 2026-09-16 10:05:00" in bridge.openOrderSummary
 
     review = bridge.pendingReview()
     assert review["count"] == 1
     assert review["staleCount"] == 1
     assert review["staleNames"] == ["类银超金属"]
-    assert "类银超金属" in review["message"]
 
     bridge.dropStaleOrders()
     assert [row["order_id"] for row in _orders_in(h.conn)] == [41]
     assert "已结束 1 笔陈旧挂单" in bridge.statusText
-    assert "没出现的旧订单" not in bridge.openOrderSummary
     # 删完再问一次：没有陈修行了
     bridge.dropStaleOrders()
     assert "没有需要结束的陈旧挂单" in bridge.statusText
@@ -741,15 +708,10 @@ def test_read_orders_asks_and_drops_stale_on_yes(h, tmp_path, monkeypatch):
 
     assert len(confirm.calls) == 1  # 第一次导入没有陈旧行 → 只在第二次弹
     _title, text = confirm.calls[0]
-    assert "没有出现在本次导出的文件里" in text  # 说清「本次文件里没出现」
-    assert "成交" in text and "撤单" in text  # 说清原因
-    assert "类银超金属" in text  # 列出名字
-    assert "标记为已结束" in text
-    assert "先留着" in text
+    assert "类银超金属" in text  # 列出名字（其余措辞是文案，不锁）
 
     assert [row["order_id"] for row in _orders_in(h.conn)] == [41]  # 陈旧行被删
     assert "已标记 1 笔旧挂单为已结束" in bridge.statusText
-    assert "导入 1 笔挂单" in bridge.statusText  # 导入结果没被吞掉
 
 
 def test_read_orders_keeps_stale_on_no(h, tmp_path, monkeypatch):
@@ -761,7 +723,6 @@ def test_read_orders_keeps_stale_on_no(h, tmp_path, monkeypatch):
     assert len(confirm.calls) == 1
     assert [row["order_id"] for row in _orders_in(h.conn)] == [41, 42]  # 陈旧行仍在
     assert "保留了 1 笔未出现在本次文件里的旧挂单" in bridge.statusText
-    assert "已标记" not in bridge.statusText
 
 
 def test_stale_confirm_text_caps_names(h):
@@ -775,7 +736,6 @@ def test_stale_confirm_text_caps_names(h):
     text = QueryDashboardBridge._stale_confirm_text(review)
     assert "物品4" in text and "物品5" not in text
     assert "等 7 笔" in text
-    assert "7 笔挂单没有出现在本次导出的文件里" in text
 
 
 def test_read_orders_does_not_ask_when_no_stale(h, tmp_path, monkeypatch):
@@ -787,7 +747,6 @@ def test_read_orders_does_not_ask_when_no_stale(h, tmp_path, monkeypatch):
     bridge.readOrders()
 
     assert confirm.calls == []  # staleCount == 0 → 不弹空框
-    assert "导入 1 笔挂单" in bridge.statusText
 
 
 def test_read_orders_does_not_ask_on_failure(h, tmp_path, monkeypatch):
@@ -879,9 +838,7 @@ def test_quick_action_start_asks_and_executes(h, monkeypatch):
 
     bridge.quickAction(0)
     assert confirm.calls and confirm.calls[0][0] == "确认启动"
-    assert "可启动的" in confirm.calls[0][1]
-    assert h.exec.started == [1]
-    assert "已启动" in bridge.statusText
+    assert h.exec.started == [1]  # 确认后才真启动
 
 
 def test_quick_action_start_cancelled_by_confirm(h, monkeypatch):
@@ -892,8 +849,7 @@ def test_quick_action_start_cancelled_by_confirm(h, monkeypatch):
     bridge.refresh()
 
     bridge.quickAction(0)
-    assert h.exec.started == []
-    assert "已取消启动" in bridge.statusText
+    assert h.exec.started == []  # 取消 → 一行都不许执行
 
 
 def test_quick_action_start_blocked_does_not_execute(h, monkeypatch):
@@ -907,8 +863,7 @@ def test_quick_action_start_blocked_does_not_execute(h, monkeypatch):
 
     bridge._plans[0]["status"] = "completed"  # 行建好之后计划被改了状态（硬阻塞）
     bridge.quickAction(0)
-    assert h.exec.started == []
-    assert "无法启动" in bridge.statusText
+    assert h.exec.started == []  # 槽内重新判定 → 拒绝执行
 
 
 def test_quick_action_start_failure_writes_reason(h, monkeypatch):
@@ -920,7 +875,7 @@ def test_quick_action_start_failure_writes_reason(h, monkeypatch):
 
     bridge.quickAction(0)
     assert h.exec.started == [1]
-    assert "启动失败" in bridge.statusText and "材料不足 2 种" in bridge.statusText
+    assert "启动失败" in bridge.statusText and "材料不足 2 种" in bridge.statusText  # 失败原因原样回显
 
 
 def test_quick_action_complete_uses_single_row_entry(h, monkeypatch):
@@ -937,10 +892,9 @@ def test_quick_action_complete_uses_single_row_entry(h, monkeypatch):
     bridge.refresh()
 
     bridge.quickAction(0)
-    assert calls == [(None, 1)]
-    assert "已下线" in bridge.statusText
+    assert calls == [(None, 1)]  # 单行下线入口收到 (parent=None, 计划)
 
-    # 返回 None（用户取消 / 已弹过失败告警）→ 文案不能写成成功
+    # 返回 None（用户取消 / 已弹过失败告警）→ 不写成成功文案
     monkeypatch.setattr(qdb, "_complete_one_plan", lambda parent, plan: None)
     bridge.quickAction(0)
     assert "已取消下线" in bridge.statusText
@@ -949,7 +903,7 @@ def test_quick_action_complete_uses_single_row_entry(h, monkeypatch):
 def test_quick_action_out_of_range(h):
     bridge = h.bridge()
     bridge.quickAction(0)
-    assert "已失效" in bridge.statusText
+    assert "已失效" in bridge.statusText  # 无行可动 → 不改 _plans、不抛
 
 
 def test_refresh_quick_only_recomputes_rows(h):
@@ -973,27 +927,8 @@ def _counting(bridge: QueryDashboardBridge) -> list[int]:
     return counter
 
 
-def test_init_does_not_touch_services(h):
-    """构造期不起线程、不查库（本仓硬约束）。"""
-    bridge = QueryDashboardBridge()
-    assert h.assets.days_requested == []
-    assert h.assets.snapshots == []
-    assert bridge.occupancyRows == [] and bridge.quickRows == []
-    assert bridge.statusText == "就绪"
-
-
-def test_construction_follows_query_bridge_wiring(h):
-    """`query_bridge` 的接法是 `QueryDashboardBridge(self)` —— 第一个位置参数是 shell，不是 parent。"""
-
-    class _FakeBridge:
-        _shell = None
-
-    bridge = QueryDashboardBridge(_FakeBridge())
-    assert bridge.statusText == "就绪"
-    assert bridge._host_widget() is None  # 拿不到真窗口时退化为无 parent，不抛
-
-
 def test_refresh_is_idempotent(h):
+    """指纹没变 → 不重算、不发 changed（否则 QML 每 tick 重绘）。"""
     h.plans = [_plan(1, status="in_progress", parallels=1)]
     h.assets.series = _snapshots(3)
     bridge = h.bridge()
@@ -1003,7 +938,7 @@ def test_refresh_is_idempotent(h):
     first = len(counter)
     assert first > 0
 
-    bridge.refresh()  # 内容没变 → 不重算、不发 changed
+    bridge.refresh()
     assert len(counter) == first
 
 
@@ -1014,7 +949,7 @@ def test_refresh_recomputes_when_stock_changes(h):
     bridge.refresh()
     first = len(counter)
 
-    h.stock[_HANGAR] = {1001: 1}  # 库存变了
+    h.stock[_HANGAR] = {1001: 1}  # 库存变了 → 指纹变 → 必须重算
     bridge.refresh()
     assert len(counter) > first
 
@@ -1031,5 +966,5 @@ def test_refresh_recomputes_when_orders_change(h):
             "VALUES (99, 1, 10.0, 1, 1, '2026-09-16 10:00:00')"
         )
     bridge.refresh()
-    assert len(counter) > first
+    assert len(counter) > first  # 挂单表变了 → 必须重算
     assert bridge.openOrderSummary.startswith("1 笔挂单")

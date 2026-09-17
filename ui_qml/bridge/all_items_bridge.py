@@ -47,6 +47,7 @@ from ui_qml.dialog_host import DialogBridge, QmlDialog
 from ui_qml.models.all_items_models import BCOLS, DASH, MCOLS, TCOLS, Proxy
 from ui_qml.models.all_items_qml_model import AllItemsQmlModel, icon_url
 from ui_qml.workers.all_items_workers import JITA_RID, ItemsW, SearchItemsW, TreeW
+from ui_qml.workers.lifecycle import drop_worker
 from ui_qml.workers.score_worker import ScoreW
 
 __all__ = [
@@ -55,7 +56,6 @@ __all__ = [
     "MatBridge",
     "MatQmlDialog",
     "breakdown_text",
-    "drop_worker",
     "insert_plan_from_score",
     "market_tree_rows",
     "subtree_ids",
@@ -68,27 +68,8 @@ _MAT_QML = "dialogs/MaterialsDialog.qml"
 #: 搜索防抖（原版 `QTimer` 的 200ms）
 _SEARCH_DEBOUNCE_MS = 200
 
-#: 评分线程超时；`ScoreW.run()` 会查中断标志，正常情况远小于它
-_THREAD_WAIT_MS = 2000
-
 _EXPORT_DEFAULT = "物品数据.csv"
 _EXPORT_FILTER = "CSV 文件 (*.csv);;Excel 文件 (*.xlsx)"
-
-#: 关窗时没等到结束、被摘出对话树的线程。**必须**保活：父对象已随对话框销毁，
-#: 而 `QThread` 在运行中被析构时 Qt 直接中止进程（同 `BatchPriceBridge` 的做法）。
-_DETACHED: set[Any] = set()
-
-
-def drop_worker(worker: Any) -> None:
-    """停掉后台线程；超时就把它摘出对话树保活（见模块 docstring 第 1 条）。"""
-    if worker is None or not worker.isRunning():
-        return
-    worker.requestInterruption()
-    if worker.wait(_THREAD_WAIT_MS):
-        return
-    _DETACHED.add(worker)
-    worker.setParent(None)
-    worker.finished.connect(lambda: _DETACHED.discard(worker))
 
 
 # ══════════════════════════════════════════════════════════════

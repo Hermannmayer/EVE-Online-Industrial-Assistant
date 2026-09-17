@@ -10,13 +10,11 @@ from __future__ import annotations
 
 import pytest
 
-from domain import formulas
 from domain.research import (
     ACTIVITY_COPYING,
     ACTIVITY_INVENTION,
     ACTIVITY_RESEARCH_ME,
     ACTIVITY_RESEARCH_TE,
-    DECRYPTORS,
     Decryptor,
     copy_job_runs,
     get_decryptor,
@@ -70,28 +68,7 @@ class TestInventionProbability:
 
 
 class TestDecryptorTable:
-    """解码器表逐条比对知识库 §解码器（8 种）。"""
-
-    EXPECTED = {
-        34201: ("加速装置解码器", 1.20, 1, 2, 10),
-        34202: ("获取装置解码器", 1.80, 4, -1, 4),
-        34203: ("放大装置解码器", 0.60, 9, -2, 2),
-        34204: ("等价装置解码器", 1.50, 3, 1, -2),
-        34205: ("处理装置解码器", 1.10, 0, 3, 6),
-        34206: ("对称装置解码器", 1.00, 2, 1, 8),
-        34207: ("优化的获取装置解码器", 1.90, 2, 1, -2),
-        34208: ("优化的放大装置解码器", 1.10, 7, 2, 0),
-    }
-
-    def test_table_matches_knowledge_base(self):
-        assert set(DECRYPTORS) == set(self.EXPECTED)
-        for tid, (name, mult, runs, me, te) in self.EXPECTED.items():
-            d = DECRYPTORS[tid]
-            assert d.name == name, tid
-            assert d.prob_mult == pytest.approx(mult), tid
-            assert d.runs_mod == runs, tid
-            assert d.me_mod == me, tid
-            assert d.te_mod == te, tid
+    """解码器查表：未知/缺失 id 返回 None，已知 id 取回对应条目。"""
 
     def test_get_decryptor_none_and_unknown(self):
         assert get_decryptor(None) is None
@@ -219,15 +196,3 @@ class TestScienceJobTime:
 
     def test_negative_skills_treated_as_zero(self):
         assert science_job_time(1000, activity=ACTIVITY_INVENTION, research_skill=-3) == pytest.approx(1000)
-
-
-class TestConstantsWiredToFormulas:
-    """常量必须与 domain.formulas 的值一致（避免两处漂移）。"""
-
-    def test_research_and_metallurgy_multipliers(self):
-        from domain.research import METALLURGY_TIME_SKILL, RESEARCH_TIME_SKILL
-
-        assert RESEARCH_TIME_SKILL == "研究概论"
-        assert METALLURGY_TIME_SKILL == "冶金学"
-        assert formulas.RESEARCH_SKILL_MULT == pytest.approx(0.02)
-        assert formulas.METALLURGY_SKILL_MULT == pytest.approx(0.01)

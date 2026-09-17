@@ -13,8 +13,7 @@
 
 import pytest
 
-from domain.formulas import material_total_for_runs
-from services.manufacturing_calculator import calc_material_for_runs, calc_material_per_run
+from domain.formulas import calc_material_for_runs, calc_material_per_run, material_total_for_runs
 
 pytestmark = pytest.mark.fast
 

@@ -19,6 +19,7 @@ from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from ui_qml.models.trade_qml_model import TradeHubQmlModel
 from ui_qml.theme import registry as theme
+from ui_qml.theme.registry import token as _token
 
 __all__ = ["TradeBridge"]
 
@@ -30,10 +31,6 @@ _GREEN = "ACCENT_GREEN"
 _RED = "ACCENT_RED"
 _PRIMARY = "PRIMARY"
 _TEXT = "TEXT_PRIMARY"
-
-
-def _token(name: str) -> str:
-    return str(getattr(theme, name, "") or "")
 
 
 def _field(label: str, value: str, token: str = _TEXT, strong: bool = False) -> dict:

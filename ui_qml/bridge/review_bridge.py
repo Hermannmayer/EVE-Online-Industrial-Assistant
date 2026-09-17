@@ -32,10 +32,9 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
-from PySide6.QtCore import Property, Qt, QUrl, Signal, Slot
+from PySide6.QtCore import Property, Qt, Signal, Slot
 from PySide6.QtWidgets import QApplication, QDialog
 
 from core.constants import TRADE_HUB_IDS
@@ -48,7 +47,7 @@ from services.user_settings import get_material_price_mult, set_material_price_m
 from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.bridge.summary_dialog import SummaryTableBridge, SummaryTableQmlDialog, cell
 from ui_qml.dialog_host import DialogBridge, QmlDialog
-from ui_qml.icon_cache import item_icon_path
+from ui_qml.icon_cache import icon_url as _png_url
 
 __all__ = [
     "HangarPickBridge",
@@ -94,16 +93,6 @@ _CHANGE_COLUMNS = [
 #: 数量/价格控件上限（原 `QDoubleSpinBox.setRange(0, 1e12)`）
 _MAX_PRICE = 1e12
 _MAX_QTY = 2_000_000_000
-
-
-def _png_url(type_id: Any) -> str:
-    """物品图标 → `file://` URL（与仓库页两张表同一套：`item_icon_path` + 存在性检查）。"""
-    if not type_id:
-        return ""
-    path = item_icon_path(int(type_id))
-    if not os.path.isfile(path):
-        return ""
-    return QUrl.fromLocalFile(path).toString()
 
 
 def _delta_token(delta: int) -> str:

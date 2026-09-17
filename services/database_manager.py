@@ -119,12 +119,6 @@ class DatabaseManager:
 
     # ---- 公开 API ----
 
-    def _ensure_init(self, db_alias: str):
-        """确保目标数据库存在并已初始化"""
-        db_path = DB_PATH_MAP.get(db_alias)
-        if not db_path:
-            raise ValueError(f"Unknown database alias: {db_alias}")
-
     @contextmanager
     def connect(self, primary: DB_ALIAS, *attach: DB_ALIAS) -> Generator[sqlite3.Connection]:
         """获取连接（自动复用），ATTACH 需要的辅助库。
@@ -149,24 +143,6 @@ class DatabaseManager:
             conn.rollback()
             raise
         # 注意：不再 conn.close()，连接留待复用
-
-    @contextmanager
-    def connect_ref(self) -> Generator[sqlite3.Connection]:
-        """便捷方法：连接参考数据库"""
-        with self.connect("ref") as conn:
-            yield conn
-
-    @contextmanager
-    def connect_mkt(self) -> Generator[sqlite3.Connection]:
-        """便捷方法：连接市场数据库"""
-        with self.connect("mkt") as conn:
-            yield conn
-
-    @contextmanager
-    def connect_user(self) -> Generator[sqlite3.Connection]:
-        """便捷方法：连接用户数据库"""
-        with self.connect("user") as conn:
-            yield conn
 
     def direct_connect(self, db_alias: DB_ALIAS) -> sqlite3.Connection:
         """直接连接（不经过 context manager，不走缓存），用于 Worker/后台线程等简单场景。

@@ -14,9 +14,9 @@ import math
 from sqlite3 import Connection
 
 from core.container import get_container
+from domain.formulas import calc_material_for_runs
 from services import inventory_manager
 from services.bom_expander import _find_blueprint_for_product, _get_materials
-from services.manufacturing_calculator import calc_material_for_runs
 
 
 def best_inventory_blueprint(conn: Connection, blueprint_type_id: int) -> dict | None:

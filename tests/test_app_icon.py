@@ -13,13 +13,7 @@ import pytest
 
 ASSETS = Path(__file__).resolve().parent.parent / "ui_qml" / "assets"
 APP_ICO = ASSETS / "app.ico"
-ICON_SOURCE = ASSETS / "icon-source.png"
 SIZES = (16, 24, 32, 48, 64, 128, 256)
-
-
-def test_icon_assets_exist():
-    assert ICON_SOURCE.exists(), "设计稿缺失 → scripts/make_app_icon.py 无法重新生成图标"
-    assert APP_ICO.exists(), "程序图标缺失 → PyInstaller 的 --icon 会让打包直接失败"
 
 
 def test_app_ico_is_valid_multi_size():

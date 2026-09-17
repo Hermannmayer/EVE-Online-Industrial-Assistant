@@ -669,9 +669,7 @@ class ShellWindow(QQuickView):
             page.item.setVisible(False)
             self._pages[key] = page
         self._resize_pages()
-        log.info(
-            "QML 外壳已装载 %d/%d 个页面", len(self._pages), len(NAV_TREE)
-        )
+        log.info("QML 外壳已装载 %d/%d 个页面", len(self._pages), len(NAV_TREE))
 
     def _resize_pages(self) -> None:
         """页面尺寸跟随内容区（Item 之间的尺寸同步得显式做，QML 里写锚点也行，

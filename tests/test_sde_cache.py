@@ -1,4 +1,4 @@
-"""SDE 缓存工具测试 — tools/downloaders/sde_cache.py
+"""SDE 缓存工具测试 — services/importers/sde_cache.py
 
 覆盖:
   - load_yaml 进程内缓存（避免初始化反复解析 typeIDs.yaml 大文件）
@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 import pytest
 import yaml
 
-from tools.downloaders.sde_cache import (
+from services.importers.sde_cache import (
     _universe_cache_has_names,
     clear_yaml_cache,
     ensure_sde_zip,
@@ -88,7 +88,7 @@ def _make_large_universe_zip(n_systems=210):
 def _make_loader(tmp_path, monkeypatch, filename="test.yaml", content="key: value"):
     """写临时 YAML 文件并把 cache_path 指向临时目录"""
     (tmp_path / filename).write_text(content, encoding="utf-8")
-    monkeypatch.setattr("tools.downloaders.sde_cache.cache_path", lambda name: str(tmp_path / name))
+    monkeypatch.setattr("services.importers.sde_cache.cache_path", lambda name: str(tmp_path / name))
 
 
 class TestLoadYamlCache:
@@ -104,7 +104,7 @@ class TestLoadYamlCache:
             calls["n"] += 1
             return real_load(stream, Loader=Loader)
 
-        with patch("tools.downloaders.sde_cache.yaml.load", side_effect=counting_load):
+        with patch("services.importers.sde_cache.yaml.load", side_effect=counting_load):
             first = load_yaml("test.yaml")
             second = load_yaml("test.yaml")
 
@@ -124,7 +124,7 @@ class TestLoadYamlCache:
             calls["n"] += 1
             return real_load(stream, Loader=Loader)
 
-        with patch("tools.downloaders.sde_cache.yaml.load", side_effect=counting_load):
+        with patch("services.importers.sde_cache.yaml.load", side_effect=counting_load):
             load_yaml("test.yaml")
             load_yaml("test.yaml")
             assert calls["n"] == 1
@@ -138,7 +138,7 @@ class TestLoadYamlCache:
     def test_missing_file_returns_empty(self, tmp_path, monkeypatch):
         """文件不存在返回空 dict"""
         clear_yaml_cache()
-        monkeypatch.setattr("tools.downloaders.sde_cache.cache_path", lambda name: str(tmp_path / name))
+        monkeypatch.setattr("services.importers.sde_cache.cache_path", lambda name: str(tmp_path / name))
         assert load_yaml("nonexistent.yaml") == {}
         clear_yaml_cache()
 
@@ -149,7 +149,7 @@ class TestLoadYamlPickleCache:
     def test_big_yaml_writes_and_reuses_pkl(self, tmp_path, monkeypatch):
         """首次解析写 pkl；清进程缓存后从 pkl 读（不再 yaml.load）"""
         _make_loader(tmp_path, monkeypatch)
-        monkeypatch.setattr("tools.downloaders.sde_cache._PICKLE_SIZE_THRESHOLD", 0)
+        monkeypatch.setattr("services.importers.sde_cache._PICKLE_SIZE_THRESHOLD", 0)
         clear_yaml_cache()
 
         calls = {"n": 0}
@@ -159,7 +159,7 @@ class TestLoadYamlPickleCache:
             calls["n"] += 1
             return real_load(stream, Loader=Loader)
 
-        with patch("tools.downloaders.sde_cache.yaml.load", side_effect=counting_load):
+        with patch("services.importers.sde_cache.yaml.load", side_effect=counting_load):
             first = load_yaml("test.yaml")
             assert (tmp_path / "test.pkl").exists(), "首次解析应生成 pkl 缓存"
 
@@ -173,7 +173,7 @@ class TestLoadYamlPickleCache:
     def test_modified_yaml_forces_reparse(self, tmp_path, monkeypatch):
         """yaml mtime 更新 → pkl 失效，重新解析"""
         _make_loader(tmp_path, monkeypatch)
-        monkeypatch.setattr("tools.downloaders.sde_cache._PICKLE_SIZE_THRESHOLD", 0)
+        monkeypatch.setattr("services.importers.sde_cache._PICKLE_SIZE_THRESHOLD", 0)
         clear_yaml_cache()
 
         load_yaml("test.yaml")  # 生成 pkl
@@ -190,7 +190,7 @@ class TestLoadYamlPickleCache:
             calls["n"] += 1
             return real_load(stream, Loader=Loader)
 
-        with patch("tools.downloaders.sde_cache.yaml.load", side_effect=counting_load):
+        with patch("services.importers.sde_cache.yaml.load", side_effect=counting_load):
             load_yaml("test.yaml")
         assert calls["n"] == 1, "yaml mtime 更新后应重新解析"
         clear_yaml_cache()
@@ -201,7 +201,7 @@ class TestUniverseParsing:
 
     def test_parse_universe_chunk_new_format(self, tmp_path):
         """新格式：region/constellation/system 名称从 name_map 解析，stargates 键为 destination"""
-        from tools.downloaders.sde_cache import _parse_universe_chunk
+        from services.importers.sde_cache import _parse_universe_chunk
 
         zip_path = tmp_path / "mini_sde.zip"
         zip_path.write_bytes(_make_mini_universe_zip().getvalue())
@@ -237,7 +237,7 @@ class TestUniverseParsing:
 
     def test_parse_universe_chunk_legacy_format(self, tmp_path):
         """旧格式兼容：system.yaml（名称内联）+ 独立 stargates/ 目录（destinationID）"""
-        from tools.downloaders.sde_cache import _parse_universe_chunk
+        from services.importers.sde_cache import _parse_universe_chunk
 
         zip_path = tmp_path / "legacy.zip"
         with zipfile.ZipFile(zip_path, "w") as zf:
@@ -266,7 +266,7 @@ class TestUniverseParsing:
 
     def test_build_name_map_from_inv_names(self, tmp_path):
         """从 bsd/invNames.yaml 构建 {itemID: itemName} 映射"""
-        from tools.downloaders.sde_cache import _build_name_map
+        from services.importers.sde_cache import _build_name_map
 
         zip_path = tmp_path / "mini_sde.zip"
         zip_path.write_bytes(_make_mini_universe_zip().getvalue())
@@ -278,7 +278,7 @@ class TestUniverseParsing:
 
     def test_parse_region_name_fallback_when_no_name_map(self, tmp_path):
         """无 name_map 时 region_name 兜底为空串而非报错"""
-        from tools.downloaders.sde_cache import _parse_universe_chunk
+        from services.importers.sde_cache import _parse_universe_chunk
 
         zip_path = tmp_path / "mini_sde.zip"
         zip_path.write_bytes(_make_mini_universe_zip().getvalue())
@@ -315,12 +315,12 @@ class TestUniverseCacheSelfHeal:
             ),
             encoding="utf-8",
         )
-        monkeypatch.setattr("tools.downloaders.sde_cache.UNIVERSE_CACHE_PATH", str(cache_file))
+        monkeypatch.setattr("services.importers.sde_cache.UNIVERSE_CACHE_PATH", str(cache_file))
 
         zip_path = tmp_path / "sde.zip"
         zip_path.write_bytes(_make_mini_universe_zip().getvalue())
-        monkeypatch.setattr("tools.downloaders.sde_cache.SDE_ZIP_PATH", str(zip_path))
-        monkeypatch.setattr("tools.downloaders.sde_cache.ensure_sde_cache", self._async_noop)
+        monkeypatch.setattr("services.importers.sde_cache.SDE_ZIP_PATH", str(zip_path))
+        monkeypatch.setattr("services.importers.sde_cache.ensure_sde_cache", self._async_noop)
 
         _regions, _const, systems, _sg = asyncio.run(ensure_universe_cache())
 
@@ -345,17 +345,17 @@ class TestUniverseCacheSelfHeal:
             ),
             encoding="utf-8",
         )
-        monkeypatch.setattr("tools.downloaders.sde_cache.UNIVERSE_CACHE_PATH", str(cache_file))
+        monkeypatch.setattr("services.importers.sde_cache.UNIVERSE_CACHE_PATH", str(cache_file))
         # ensure_sde_cache 总是被调用（快速路径也确保 zip 就绪），但不应触发 ZIP 重解析
-        monkeypatch.setattr("tools.downloaders.sde_cache.ensure_sde_cache", self._async_noop)
+        monkeypatch.setattr("services.importers.sde_cache.ensure_sde_cache", self._async_noop)
         zip_path = tmp_path / "sde.zip"
         zip_path.write_bytes(b"placeholder")  # 快速路径不读取 zip 内容
-        monkeypatch.setattr("tools.downloaders.sde_cache.SDE_ZIP_PATH", str(zip_path))
+        monkeypatch.setattr("services.importers.sde_cache.SDE_ZIP_PATH", str(zip_path))
 
         def _fail(*args, **kwargs):
             raise AssertionError("星系名非空缓存不应触发重新解析")
 
-        monkeypatch.setattr("tools.downloaders.sde_cache._build_name_map", _fail)
+        monkeypatch.setattr("services.importers.sde_cache._build_name_map", _fail)
 
         _regions, _const, systems, _sg = asyncio.run(ensure_universe_cache())
         assert systems[0]["solar_system_name"] == "Jita"
@@ -367,11 +367,11 @@ class TestUniverseCacheSelfHeal:
         但 ensure_universe_cache 只应解析并返回 solarsystem。
         """
         cache_file = tmp_path / "universe_data.json"  # 不存在 → 触发解析
-        monkeypatch.setattr("tools.downloaders.sde_cache.UNIVERSE_CACHE_PATH", str(cache_file))
+        monkeypatch.setattr("services.importers.sde_cache.UNIVERSE_CACHE_PATH", str(cache_file))
         zip_path = tmp_path / "sde.zip"
         zip_path.write_bytes(_make_mini_universe_zip().getvalue())
-        monkeypatch.setattr("tools.downloaders.sde_cache.SDE_ZIP_PATH", str(zip_path))
-        monkeypatch.setattr("tools.downloaders.sde_cache.ensure_sde_cache", self._async_noop)
+        monkeypatch.setattr("services.importers.sde_cache.SDE_ZIP_PATH", str(zip_path))
+        monkeypatch.setattr("services.importers.sde_cache.ensure_sde_cache", self._async_noop)
 
         regions, constellations, systems, stargates = asyncio.run(ensure_universe_cache())
 
@@ -393,12 +393,12 @@ class TestUniverseCacheSelfHeal:
         from unittest.mock import patch as _patch
 
         cache_file = tmp_path / "universe_data.json"  # 不存在 → 触发解析
-        monkeypatch.setattr("tools.downloaders.sde_cache.UNIVERSE_CACHE_PATH", str(cache_file))
+        monkeypatch.setattr("services.importers.sde_cache.UNIVERSE_CACHE_PATH", str(cache_file))
         zip_path = tmp_path / "sde.zip"
         zip_path.write_bytes(_make_large_universe_zip().getvalue())
-        monkeypatch.setattr("tools.downloaders.sde_cache.SDE_ZIP_PATH", str(zip_path))
-        monkeypatch.setattr("tools.downloaders.sde_cache.ensure_sde_cache", self._async_noop)
-        monkeypatch.setattr("tools.downloaders.sde_cache.is_frozen", lambda: True)
+        monkeypatch.setattr("services.importers.sde_cache.SDE_ZIP_PATH", str(zip_path))
+        monkeypatch.setattr("services.importers.sde_cache.ensure_sde_cache", self._async_noop)
+        monkeypatch.setattr("services.importers.sde_cache.is_frozen", lambda: True)
 
         with _patch(
             "concurrent.futures.ProcessPoolExecutor",
@@ -438,17 +438,17 @@ class TestEnsureSdeZip:
         return mock_session
 
     @pytest.mark.asyncio
-    @patch("tools.downloaders.sde_cache.os.path.exists")
-    @patch("tools.downloaders.sde_cache.os.path.getsize")
-    @patch("tools.downloaders.sde_cache.os.replace")
+    @patch("services.importers.sde_cache.os.path.exists")
+    @patch("services.importers.sde_cache.os.path.getsize")
+    @patch("services.importers.sde_cache.os.replace")
     @patch("zipfile.ZipFile")
-    @patch("tools.downloaders.sde_cache.open", new_callable=mock_open)
-    @patch("tools.downloaders.sde_cache.aiohttp.ClientSession")
+    @patch("services.importers.sde_cache.open", new_callable=mock_open)
+    @patch("services.importers.sde_cache.aiohttp.ClientSession")
     async def test_resume_with_range(
         self, mock_session_cls, mock_file, mock_zf, mock_replace, mock_getsize, mock_exists
     ):
         """SDE_ZIP_PATH 不存在但 .part 残留 → Range 续传 + 追加模式 + 原子 rename"""
-        from tools.downloaders.sde_cache import SDE_ZIP_PATH, ZIP_PART_PATH
+        from services.importers.sde_cache import SDE_ZIP_PATH, ZIP_PART_PATH
 
         # 首次 exists 判断 SDE_ZIP_PATH → False；ZIP_PART_PATH → True（断点）
         mock_exists.side_effect = [False, True]
@@ -475,16 +475,16 @@ class TestEnsureSdeZip:
         mock_replace.assert_called_once_with(ZIP_PART_PATH, SDE_ZIP_PATH)
 
     @pytest.mark.asyncio
-    @patch("tools.downloaders.sde_cache.os.path.exists")
-    @patch("tools.downloaders.sde_cache.os.remove")
+    @patch("services.importers.sde_cache.os.path.exists")
+    @patch("services.importers.sde_cache.os.remove")
     @patch("zipfile.ZipFile")
-    @patch("tools.downloaders.sde_cache.open", new_callable=mock_open)
-    @patch("tools.downloaders.sde_cache.aiohttp.ClientSession")
+    @patch("services.importers.sde_cache.open", new_callable=mock_open)
+    @patch("services.importers.sde_cache.aiohttp.ClientSession")
     async def test_zip_integrity_failure_deletes_part(
         self, mock_session_cls, mock_file, mock_zf, mock_remove, mock_exists
     ):
         """下载完成后 testzip 校验损坏 → 删 .part 并抛错（下次从头下载）"""
-        from tools.downloaders.sde_cache import ZIP_PART_PATH
+        from services.importers.sde_cache import ZIP_PART_PATH
 
         # SDE_ZIP_PATH 与 ZIP_PART_PATH 都不存在 → 全量下载
         mock_exists.side_effect = [False, False]
@@ -517,7 +517,7 @@ class TestLoadYamlAsync:
             calls["n"] += 1
             return real_load(stream, Loader=Loader)
 
-        with patch("tools.downloaders.sde_cache.yaml.load", side_effect=counting_load):
+        with patch("services.importers.sde_cache.yaml.load", side_effect=counting_load):
             first = await load_yaml_async("test.yaml")
             second = await load_yaml_async("test.yaml")
 

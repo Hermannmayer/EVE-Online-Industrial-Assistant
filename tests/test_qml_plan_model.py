@@ -434,9 +434,7 @@ def test_status_column_colors_short_pending_rows_differently():
 
 
 def test_status_tooltip_lists_what_is_missing():
-    model = PlanQmlModel(
-        [_plan(status="pending", material_status="short", material_short_tip="碳纤维: 缺 502")]
-    )
+    model = PlanQmlModel([_plan(status="pending", material_status="short", material_short_tip="碳纤维: 缺 502")])
     assert _cell(model, 0, COL_STATUS, Qt.UserRole + 11) == "碳纤维: 缺 502"
 
 

@@ -15,9 +15,9 @@ import math
 
 from core.container import get_container
 from core.logger import log
+from domain.formulas import calc_material_for_runs
 from services import inventory_manager
 from services.bom_expander import _find_blueprint_for_product, _get_materials
-from services.manufacturing_calculator import calc_material_for_runs
 from services.plan_decompose import best_inventory_blueprint
 
 # 迭代收敛上限：跨层共享的组件需求在 2-3 轮内稳定，留足余量。

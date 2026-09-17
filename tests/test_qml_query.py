@@ -14,9 +14,10 @@ import re
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QEventLoop, Qt, QTimer, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler
 
 from tests.qml_click import press_move_release
+from tests.qml_click import spin as _spin
 from ui_qml.models.query_models import format_search_rows
 from ui_qml.models.query_qml_model import ROLE_NAMES, QueryQmlModel
 
@@ -56,12 +57,6 @@ def _model(*rows: tuple) -> QueryQmlModel:
 
 def _cell(model: QueryQmlModel, row: int, col: int, role: int):
     return model.data(model.index(row, col), role)
-
-
-def _spin(ms: int = 150) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 # ════════════════════════════════════════════════════════════

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.workers.getcontracts import (
+from services.importers.getcontracts import (
     CONTRACT_STATUS_MAP,
     CONTRACT_TYPE_MAP,
     fetch_contract_items,
@@ -52,7 +52,7 @@ MOCK_CONTRACT_ITEM = {
 class TestWriteProgress:
     def test_write_progress_creates_file(self, tmp_path):
         """write_progress 写入 JSON 进度文件"""
-        with patch("services.workers.getcontracts.progress_file", return_value=str(tmp_path / "progress.json")):
+        with patch("services.importers.getcontracts.progress_file", return_value=str(tmp_path / "progress.json")):
             write_progress(1, 5, "测试阶段")
             content = (tmp_path / "progress.json").read_text()
             # JSON 会转义中文，检测结构即可
@@ -124,7 +124,7 @@ class TestSaveContracts:
     async def test_save_empty_contracts(self, tmp_path):
         """空合同数据写入应返回 (0, 0)"""
         db_path = str(tmp_path / "test_market.db")
-        with patch("services.workers.getcontracts.DATABASE_PATH", db_path):
+        with patch("services.importers.getcontracts.DATABASE_PATH", db_path):
             await init_db()  # 创建表
             c_cnt, i_cnt = await save_contracts({}, {}, [10000002])
             assert c_cnt == 0
@@ -140,7 +140,7 @@ class TestSaveContracts:
 
 
 class TestRunContractUpdate:
-    @patch("services.workers.getcontracts.asyncio.run")
+    @patch("services.importers.getcontracts.asyncio.run")
     def test_run_contract_update_calls_main(self, mock_asyncio_run):
         """run_contract_update 应调用 asyncio.run(main(...))"""
         run_contract_update()
@@ -148,7 +148,7 @@ class TestRunContractUpdate:
         call_args = mock_asyncio_run.call_args
         assert call_args[0][0].__name__ == "main"
 
-    @patch("services.workers.getcontracts.asyncio.run")
+    @patch("services.importers.getcontracts.asyncio.run")
     def test_run_contract_update_with_regions(self, mock_asyncio_run):
         """指定区域时只更新目标区域"""
         run_contract_update(regions=["Jita"])

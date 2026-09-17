@@ -16,15 +16,14 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
-from PySide6.QtCore import Property, QUrl, Signal, Slot
+from PySide6.QtCore import Property, Signal, Slot
 
 from services.inventory_import import compute_transfer_rows
 from services.inventory_manager import get_hangar_stock, get_hangars, get_items, move_quantity
 from ui_qml.dialog_host import DialogBridge, QmlDialog
-from ui_qml.icon_cache import item_icon_path
+from ui_qml.icon_cache import icon_url as _icon_url
 from ui_qml.theme import registry as theme
 
 __all__ = [
@@ -45,16 +44,6 @@ _CAPPED_SUFFIX = "（源库不足）"
 
 #: 未匹配行的名称后缀
 _UNMATCHED_SUFFIX = "（未匹配）"
-
-
-def _icon_url(type_id: Any) -> str:
-    """物品图标 URL（文件不存在返回空串，QML 的 Image 拿到空串不刷警告）。"""
-    if not type_id:
-        return ""
-    path = item_icon_path(int(type_id))
-    if not os.path.isfile(path):
-        return ""
-    return QUrl.fromLocalFile(path).toString()
 
 
 def matched_row(index: int, parsed: dict, transfer: dict, cost_price: float) -> dict:

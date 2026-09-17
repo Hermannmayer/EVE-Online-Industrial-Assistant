@@ -813,10 +813,6 @@ class ProductionLauncher(QObject):
             blueprint_ready=self._blueprint_ready(plan),
         )
 
-    def _row_collapsed(self, plan: dict) -> bool:
-        gid = int(plan.get("group_id") or plan.get("group_number") or 0)
-        return bool(gid and gid in self._collapsed)
-
     def _sync_rows(self, visible: list[dict]) -> None:
         """把可见计划算成 QML 直接可画的行视图模型。
 
@@ -935,9 +931,6 @@ class ProductionLauncher(QObject):
         self.select_plan(plan_id)
         return True
 
-    def _on_row_clicked(self, plan_id: int):
-        self.copy_blueprint(plan_id)
-
     def copy_blueprint(self, plan_id: int) -> None:
         """点信息区 → 复制蓝图名（原 `_copy_blueprint`）。"""
         self._copy_blueprint(plan_id)
@@ -946,10 +939,6 @@ class ProductionLauncher(QObject):
         # 行内启动：先让该行成为选中 → 执行人物组合框跟随该计划
         self._select_visible_row(plan_id)
         self._start(plan_id)
-
-    def _on_blocked_info(self, plan_id: int) -> None:
-        """点动作槽位的短标签：选中该行 → 底部反馈区给出完整不可启动原因。"""
-        self._select_visible_row(plan_id)
 
     def _on_row_complete(self, plan_id: int) -> None:
         """行内「可下线」→ 单行下线（本窗是小助手侧的第五条入口）。

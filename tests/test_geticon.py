@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from tools.downloaders.geticon import ICON_SIZE, download_all, download_icon
+from services.importers.geticon import ICON_SIZE, download_all, download_icon
 
 
 class TestDownloadIconCacheHit:
@@ -26,7 +26,7 @@ class TestDownloadIconCacheHit:
         semaphore = asyncio.Semaphore(1)
         progress = [0, 0]
 
-        with patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path):
+        with patch("services.importers.geticon.ICON_CACHE_DIR", tmp_path):
             result = await download_icon(session, 12345, semaphore, progress)
 
         assert result is True
@@ -53,7 +53,7 @@ class TestDownloadIconSuccess:
         semaphore = asyncio.Semaphore(1)
         progress = [0, 0]
 
-        with patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path):
+        with patch("services.importers.geticon.ICON_CACHE_DIR", tmp_path):
             result = await download_icon(session, 12345, semaphore, progress)
 
         assert result is True
@@ -83,7 +83,7 @@ class TestDownloadIconNoIcon:
         semaphore = asyncio.Semaphore(1)
         progress = [0, 0]
 
-        with patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path):
+        with patch("services.importers.geticon.ICON_CACHE_DIR", tmp_path):
             result = await download_icon(session, 12345, semaphore, progress)
 
         assert result is False
@@ -106,9 +106,9 @@ class TestDownloadIconClientError:
         progress = [0, 0]
 
         with (
-            patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path),
-            patch("tools.downloaders.geticon.log"),  # 抑制错误日志
-            patch("tools.downloaders.geticon.asyncio.sleep", AsyncMock()),  # 跳过重试等待
+            patch("services.importers.geticon.ICON_CACHE_DIR", tmp_path),
+            patch("services.importers.geticon.log"),  # 抑制错误日志
+            patch("services.importers.geticon.asyncio.sleep", AsyncMock()),  # 跳过重试等待
         ):
             result = await download_icon(session, 12345, semaphore, progress)
 
@@ -137,8 +137,8 @@ class TestDownloadIconTransientRetry:
         progress = [0, 0]
 
         with (
-            patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path),
-            patch("tools.downloaders.geticon.asyncio.sleep", AsyncMock()),
+            patch("services.importers.geticon.ICON_CACHE_DIR", tmp_path),
+            patch("services.importers.geticon.asyncio.sleep", AsyncMock()),
         ):
             result = await download_icon(session, 12345, semaphore, progress)
 
@@ -163,8 +163,8 @@ class TestDownloadIconTransientRetry:
         progress = [0, 0]
 
         with (
-            patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path),
-            patch("tools.downloaders.geticon.asyncio.sleep", AsyncMock()),
+            patch("services.importers.geticon.ICON_CACHE_DIR", tmp_path),
+            patch("services.importers.geticon.asyncio.sleep", AsyncMock()),
         ):
             result = await download_icon(session, 12345, semaphore, progress)
 
@@ -192,7 +192,7 @@ class TestDownloadIconTransientRetry:
         semaphore = asyncio.Semaphore(1)
         progress = [0, 0]
 
-        with patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path):
+        with patch("services.importers.geticon.ICON_CACHE_DIR", tmp_path):
             result = await download_icon(session, 12345, semaphore, progress)
 
         assert result is False
@@ -223,8 +223,8 @@ class TestDownloadIconTransientRetry:
         progress = [0, 0]
 
         with (
-            patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path),
-            patch("tools.downloaders.geticon.asyncio.sleep", AsyncMock()),
+            patch("services.importers.geticon.ICON_CACHE_DIR", tmp_path),
+            patch("services.importers.geticon.asyncio.sleep", AsyncMock()),
         ):
             result = await download_icon(session, 12345, semaphore, progress)
 
@@ -258,9 +258,9 @@ class TestDownloadAllFilter:
         session.get = MagicMock(return_value=mock_cm)
 
         with (
-            patch("tools.downloaders.geticon.ICON_CACHE_DIR", tmp_path),
-            patch("tools.downloaders.geticon.log"),
-            patch("tools.downloaders.geticon._load_type_icon_map", return_value={}),
+            patch("services.importers.geticon.ICON_CACHE_DIR", tmp_path),
+            patch("services.importers.geticon.log"),
+            patch("services.importers.geticon._load_type_icon_map", return_value={}),
         ):
             await download_all(session, type_ids)
 

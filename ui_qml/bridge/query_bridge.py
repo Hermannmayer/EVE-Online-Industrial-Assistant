@@ -568,7 +568,7 @@ class QueryBridge(QObject):
     def openAllItems(self) -> None:
         from ui_qml.bridge.all_items_bridge import AllItemsQmlDialog as AllItemsDialog
 
-        parent = self._shell if isinstance(self._shell, QWidget) else None
+        parent = None
         dialog = getattr(self, "_all_items_dialog", None)
         if dialog is None:
             dialog = AllItemsDialog(parent)
@@ -580,7 +580,7 @@ class QueryBridge(QObject):
     def openBatchPrice(self) -> None:
         from ui_qml.bridge.batch_price_bridge import BatchPriceQmlDialog as BatchPriceDialog
 
-        parent = self._shell if isinstance(self._shell, QWidget) else None
+        parent = None
         BatchPriceDialog(parent).exec()
 
     # ── 主题 ──────────────────────────────────────────────────

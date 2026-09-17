@@ -64,13 +64,14 @@ class TestBrokerCalculations:
 class TestManufacturingEdgeCases:
     """制造评分 — 缺省/空角色配置时的默认行为"""
 
-    def test_manufacturing_empty_char_config(self, temp_db):
-        """char_config={} 时全部技能缺省，但内部有 fallback → 仍能算出正利润"""
+    @pytest.mark.parametrize("char_config", [{}, None])
+    def test_manufacturing_default_char_config(self, temp_db, char_config):
+        """char_config 为 {} 或 None 时全部技能缺省，但内部有 fallback → 仍能算出正利润"""
         cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         result = svc.calc_manufacturing_score(
             type_id=2001,
-            char_config={},
+            char_config=char_config,
             mat_source_hub="Jita",
             sell_hub="Jita",
         )
@@ -82,23 +83,6 @@ class TestManufacturingEdgeCases:
         # 会计学=0 → sales_tax_rate=2.0
         assert result["breakdown"]["sales_tax_rate"] == 2.0
         # 高级经纪人关系学=0 → relist_discount=50
-        assert result["breakdown"]["relist_discount"] == 50.0
-
-    def test_manufacturing_no_char_config(self, temp_db):
-        """char_config=None 应等效于 {}，沿用全部默认值"""
-        cache = TtlLRUCache(max_size=10)
-        svc = ScoringService(temp_db, cache)
-        result = svc.calc_manufacturing_score(
-            type_id=2001,
-            char_config=None,
-            mat_source_hub="Jita",
-            sell_hub="Jita",
-        )
-        assert result["status"] == ""
-        assert result["score"] > 0
-        assert result["profit_per_run"] > 0
-        assert result["breakdown"]["broker_rate"] == 0.5
-        assert result["breakdown"]["sales_tax_rate"] == 2.0
         assert result["breakdown"]["relist_discount"] == 50.0
 
 
@@ -126,25 +110,14 @@ class TestTradeScoreEdgeCases:
         assert result["margin_pct"] > 0
         assert result["profit_per_m3"] > 0
 
-    def test_trade_empty_char_config(self, temp_db):
-        """char_config={} 时沿用默认值（技能全 0, 声望 5/5），利润仍为正"""
+    @pytest.mark.parametrize("char_config", [{}, None])
+    def test_trade_default_char_config(self, temp_db, char_config):
+        """char_config 为 {} 或 None 时沿用默认值（技能全 0, 声望 5/5），利润仍为正"""
         cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         result = svc.calc_trade_score(
             type_id=2002,
-            char_config={},
-        )
-        assert result["status"] == ""
-        assert result["score"] > 0
-        assert result["gross_profit"] > 0
-
-    def test_trade_no_char_config(self, temp_db):
-        """char_config=None 时应与 {} 行为一致"""
-        cache = TtlLRUCache(max_size=10)
-        svc = ScoringService(temp_db, cache)
-        result = svc.calc_trade_score(
-            type_id=2002,
-            char_config=None,
+            char_config=char_config,
         )
         assert result["status"] == ""
         assert result["score"] > 0
@@ -642,94 +615,25 @@ class TestManufacturingScore:
         assert result["profit_per_run"] <= 0
 
 
-class TestMEWasteFactor:
-    """验证 ME 对材料浪费的影响 — 使用 manufacturing_calculator 正确公式"""
+def test_me_and_te_reduce_waste_and_time(temp_db):
+    """ME/TE 越高：材料越省、耗时越短、ISK/h 越高。
 
-    def test_me0_gives_minimal_waste(self, temp_db):
-        """ME 0 → wastefactor=10 → waste_factor=1.0（SDE quantity=ME0 含损耗量）"""
-        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
-        result = svc.calc_manufacturing_score(
-            type_id=2002,
-            char_config=DEFAULT_CHAR,
-            bp_me=0,
-        )
-        mat = result["materials"][0]
-        assert mat["wastefactor"] == 10
-        assert mat["waste_factor"] == 1.0
+    公式本身的数值锚点在 test_manufacturing_calculator_golden.py；这里只验评分链路的
+    单调方向，确保 ME/TE 参数真的接进了 calc_manufacturing_score。
+    """
+    svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+    r_low = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=0, bp_te=0)
+    r_high = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=10, bp_te=20)
 
-    def test_me10_still_has_some_waste(self, temp_db):
-        """ME 10 → waste_factor < 1.0（相对 ME0 减量）"""
-        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
-        result = svc.calc_manufacturing_score(
-            type_id=2002,
-            char_config=DEFAULT_CHAR,
-            bp_me=10,
-        )
-        mat = result["materials"][0]
-        assert mat["wastefactor"] == 10
-        assert mat["waste_factor"] < 1.0
-        assert mat["waste_factor"] >= 0.9
+    low_qty = r_low["materials"][0]["qty"]
+    high_qty = r_high["materials"][0]["qty"]
+    assert low_qty > high_qty, "ME10 材料用量应少于 ME0"
 
-    def test_me5_waste_between_me0_and_me10(self, temp_db):
-        """ME 5 的浪费应在 ME0 和 ME10 之间"""
-        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
-        r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=0)
-        r5 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=5)
-        r10 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=10)
-        qty0 = r0["materials"][0]["qty"]
-        qty5 = r5["materials"][0]["qty"]
-        qty10 = r10["materials"][0]["qty"]
-        assert qty0 >= qty5 >= qty10
+    assert r_low["materials"][0]["wastefactor"] == 10
+    assert r_high["materials"][0]["waste_factor"] < 1.0
 
-    def test_higher_me_reduces_material_cost(self, temp_db):
-        """ME 10 的材料成本应低于 ME 0"""
-        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
-        r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=0)
-        r10 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=10)
-        mat_cost_0 = sum(m["subtotal"] for m in r0["materials"])
-        mat_cost_10 = sum(m["subtotal"] for m in r10["materials"])
-        assert mat_cost_10 < mat_cost_0
-
-
-class TestTEFactor:
-    """验证 TE 对制造时间的影响"""
-
-    def test_te0_no_time_reduction(self, temp_db):
-        """TE 0 → hours_per_run 应为最长"""
-        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
-        result = svc.calc_manufacturing_score(
-            type_id=2002,
-            char_config=DEFAULT_CHAR,
-            bp_te=0,
-        )
-        # TE0 耗时最多，应有合理的正值
-        assert result["hours_per_run"] > 0
-
-    def test_te20_gives_20_percent_reduction(self, temp_db):
-        """TE 20 的 ISK/h 应明显高于 TE 0（因为时间更短）"""
-        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
-        r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=0)
-        r20 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=20)
-        # hours_per_run 被 round(2) 截断，不能直接做精确比例
-        # 但 TE20 的 ISK/h 应高于 TE0（时间更短则效率更高）
-        assert r20["isk_per_hour"] > r0["isk_per_hour"]
-        # hours 比例应在合理范围内
-        hours_ratio = r0["hours_per_run"] / r20["hours_per_run"]
-        assert hours_ratio > 1.0  # TE0 耗时更多
-
-    def test_te10_gives_10_percent_reduction(self, temp_db):
-        """TE 10 的 ISK/h 应高于 TE 0（因为时间更短）"""
-        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
-        r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=0)
-        r10 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=10)
-        assert r10["isk_per_hour"] > r0["isk_per_hour"]
-
-    def test_higher_te_reduces_hours(self, temp_db):
-        """TE 20 的小时数应少于 TE 0"""
-        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
-        r0 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=0)
-        r20 = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_te=20)
-        assert r20["hours_per_run"] < r0["hours_per_run"]
+    assert r_high["hours_per_run"] < r_low["hours_per_run"], "TE20 应比 TE0 耗时更短"
+    assert r_high["isk_per_hour"] > r_low["isk_per_hour"]
 
 
 # ════════════════════════════════════════════════════════════════
@@ -802,33 +706,25 @@ def test_trade_score_relist_fee_is_delta_based():
 
 
 class TestCache:
-    def test_get_set_and_ttl(self):
-        """缓存写入和读取"""
-        cache = TtlLRUCache(max_size=10, ttl_seconds=3600)
-        cache.set("key1", {"a": 1})
-        assert cache.get("key1") == {"a": 1}
-
     def test_expired_returns_none(self):
-        """过期缓存返回 None"""
+        """过期缓存返回 None（全仓唯一的 TTL 过期用例）"""
         cache = TtlLRUCache(max_size=10, ttl_seconds=-1)  # 立即过期
         cache.set("key1", {"a": 1})
         assert cache.get("key1") is None
 
-    def test_max_size_eviction(self):
-        """超 max_size 淘汰最旧条目"""
+    def test_get_set_evict_and_invalidate(self):
+        """基本读写、超 max_size 淘汰最旧、invalidate 清空"""
         cache = TtlLRUCache(max_size=3, ttl_seconds=3600)
-        for i in range(5):
+        cache.set("a", {"i": 0})
+        assert cache.get("a") == {"i": 0}
+        assert cache.get("missing") is None
+        for i in range(1, 5):
             cache.set(f"key{i}", {"i": i})
-        assert cache.get("key0") is None  # 最旧被淘汰
+        assert cache.get("a") is None  # 最旧被淘汰
         assert cache.get("key4") == {"i": 4}
         assert len(cache) <= 3
-
-    def test_invalidate(self):
-        """清空缓存"""
-        cache = TtlLRUCache(max_size=10)
-        cache.set("k", {"v": 1})
         cache.invalidate()
-        assert cache.get("k") is None
+        assert cache.get("key4") is None
 
 
 @pytest.mark.parametrize("me,te,expected_min_score", [(0, 0, 50), (5, 5, 60), (10, 20, 70)])
@@ -936,44 +832,6 @@ def _patch_module_stubs(stubs: dict):
     """用桩替换模块级函数（由 autouse fixture 负责恢复）"""
     for name, stub in stubs.items():
         setattr(ss, name, stub)
-
-
-def test_cache_set_get():
-    cache = TtlLRUCache(max_size=500, ttl_seconds=3600)
-    cache.set("12345|mfg|Jita|test", {"score": 50})
-    assert cache.get("12345|mfg|Jita|test") == {"score": 50}
-
-
-def test_cache_miss():
-    cache = TtlLRUCache(max_size=500, ttl_seconds=3600)
-    assert cache.get("nonexistent") is None
-
-
-def test_cache_invalidate():
-    cache = TtlLRUCache(max_size=500, ttl_seconds=3600)
-    cache.set("k1", 1)
-    cache.set("k2", 2)
-    cache.invalidate()
-    assert cache.get("k1") is None
-    assert cache.get("k2") is None
-
-
-def test_cache_lru_eviction():
-    cache = TtlLRUCache(max_size=3, ttl_seconds=3600)
-    cache.set("a", 1)
-    cache.set("b", 2)
-    cache.set("c", 3)
-    cache.set("d", 4)  # 应逐出 "a"
-    assert cache.get("a") is None
-    assert cache.get("b") == 2
-    assert cache.get("d") == 4
-
-
-def test_cache_len():
-    cache = TtlLRUCache(max_size=100, ttl_seconds=3600)
-    assert len(cache) == 0
-    cache.set("a", 1)
-    assert len(cache) == 1
 
 
 def _make_mfg_svc(cache):
@@ -1209,9 +1067,7 @@ class TestTotalMetricsWholeBatchMaterialCost:
             "revenue_per_run": revenue_per_run,
             "hours_per_run": 1.0,
             "breakdown": {"material_cost": 20 * cls._PRICE, "bp_me": 10, "structure_mat_saving": 1.0},
-            "materials": [
-                {"type_id": 16672, "base_qty": 22, "wastefactor": 10, "qty": 20, "unit_price": cls._PRICE}
-            ],
+            "materials": [{"type_id": 16672, "base_qty": 22, "wastefactor": 10, "qty": 20, "unit_price": cls._PRICE}],
         }
 
     def test_material_cost_is_the_whole_batch_number(self):
@@ -1239,9 +1095,7 @@ class TestTotalMetricsWholeBatchMaterialCost:
         """单件材料（基础量 ≤1）保持豁免 ME：100 次作业就是 100 个，不是 90。"""
         per_run = self._per_run()
         per_run["breakdown"]["material_cost"] = 1 * 50.0
-        per_run["materials"] = [
-            {"type_id": 34, "base_qty": 1, "wastefactor": 10, "qty": 1, "unit_price": 50.0}
-        ]
+        per_run["materials"] = [{"type_id": 34, "base_qty": 1, "wastefactor": 10, "qty": 1, "unit_price": 50.0}]
         total = ScoringService.calculate_total_metrics(per_run, runs=100, parallels=1)
         assert total["total_material_cost"] == 100 * 50.0
 

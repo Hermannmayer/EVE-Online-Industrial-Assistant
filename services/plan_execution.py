@@ -1458,12 +1458,6 @@ def release_blueprint(plan_id: int) -> bool:
     return True
 
 
-def get_assigned_blueprint_id(plan_id: int) -> int | None:
-    with _container().db.connect("user") as conn:
-        row = conn.execute("SELECT assigned_blueprint_id FROM production_plans WHERE id=?", (plan_id,)).fetchone()
-        return row[0] if row else None
-
-
 def get_occupied_blueprint_ids(db=None, *, exclude_plan_id: int | None = None) -> set[int]:
     """返回被活跃计划（非 completed/done）占用的 user_blueprints.id 集合。
 

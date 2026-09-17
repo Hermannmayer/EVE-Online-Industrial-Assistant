@@ -1,4 +1,4 @@
-"""物品数据拉取流程测试 — tools/downloaders/getitems.py
+"""物品数据拉取流程测试 — services/importers/getitems.py
 
 覆盖 5 个场景:
   - initialize_database 建表 & 幂等性
@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tools.downloaders.getitems import (
+from services.importers.getitems import (
     initialize_database,
     write_items,
     write_market_tree,
@@ -39,7 +39,7 @@ def temp_db_path():
 
 def _update_imported_database_path(temp_db_path):
     """Patch getitems.DATABASE_PATH to point at temp_db_path"""
-    return patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path)
+    return patch("services.importers.getitems.DATABASE_PATH", temp_db_path)
 
 
 # ─── Test: initialize_database ───────────────────────────
@@ -51,7 +51,7 @@ class TestInitializeDatabase:
     @pytest.mark.asyncio
     async def test_creates_tables(self, temp_db_path):
         """调用后 item 和 market_tree 两张表存在"""
-        with patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path):
+        with patch("services.importers.getitems.DATABASE_PATH", temp_db_path):
             await initialize_database()
 
         conn = sqlite3.connect(temp_db_path)
@@ -63,14 +63,14 @@ class TestInitializeDatabase:
     @pytest.mark.asyncio
     async def test_idempotent(self, temp_db_path):
         """重复调用不报错"""
-        with patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path):
+        with patch("services.importers.getitems.DATABASE_PATH", temp_db_path):
             await initialize_database()
             await initialize_database()  # 第二次不应抛异常
 
     @pytest.mark.asyncio
     async def test_item_table_columns(self, temp_db_path):
         """item 表包含预期的全部 11 列"""
-        with patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path):
+        with patch("services.importers.getitems.DATABASE_PATH", temp_db_path):
             await initialize_database()
 
         conn = sqlite3.connect(temp_db_path)
@@ -118,8 +118,8 @@ class TestWriteItems:
         }
 
         with (
-            patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.getitems.load_yaml_async") as mock_load_yaml,
+            patch("services.importers.getitems.DATABASE_PATH", temp_db_path),
+            patch("services.importers.getitems.load_yaml_async") as mock_load_yaml,
         ):
 
             async def fake_load(name):
@@ -172,8 +172,8 @@ class TestWriteItems:
         mock_market_groups = {}
 
         with (
-            patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.getitems.load_yaml_async") as mock_load_yaml,
+            patch("services.importers.getitems.DATABASE_PATH", temp_db_path),
+            patch("services.importers.getitems.load_yaml_async") as mock_load_yaml,
         ):
 
             async def fake_load(name):
@@ -219,8 +219,8 @@ class TestWriteMarketTree:
         }
 
         with (
-            patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.getitems.load_yaml_async", AsyncMock(return_value=mock_data)),
+            patch("services.importers.getitems.DATABASE_PATH", temp_db_path),
+            patch("services.importers.getitems.load_yaml_async", AsyncMock(return_value=mock_data)),
         ):
             await initialize_database()
             await write_market_tree()
@@ -237,8 +237,8 @@ class TestWriteMarketTree:
     async def test_handles_empty_yaml(self, temp_db_path):
         """YAML 数据为空时跳过，不报错"""
         with (
-            patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.getitems.load_yaml_async", AsyncMock(return_value=None)),
+            patch("services.importers.getitems.DATABASE_PATH", temp_db_path),
+            patch("services.importers.getitems.load_yaml_async", AsyncMock(return_value=None)),
         ):
             await initialize_database()
             await write_market_tree()
@@ -258,7 +258,7 @@ class TestMainSdeDownloadProgress:
     @pytest.mark.asyncio
     async def test_forwards_sde_download_progress(self, temp_db_path):
         """空库走下载路径，ensure_sde_cache 收到包装回调且映射正确"""
-        from tools.downloaders.getitems import main
+        from services.importers.getitems import main
 
         calls: list[tuple[int, str]] = []
         captured: dict = {}
@@ -281,11 +281,11 @@ class TestMainSdeDownloadProgress:
                 cb(100, "完成")
 
         with (
-            patch("tools.downloaders.getitems.DATABASE_PATH", temp_db_path),
-            patch("tools.downloaders.getitems.ensure_sde_cache", fake_ensure_sde_cache),
-            patch("tools.downloaders.getitems.write_items", fake_write_items),
-            patch("tools.downloaders.getitems.write_market_tree", fake_market_tree),
-            patch("tools.downloaders.getitems.fill_missing_item_names_from_esi", fake_fill),
+            patch("services.importers.getitems.DATABASE_PATH", temp_db_path),
+            patch("services.importers.getitems.ensure_sde_cache", fake_ensure_sde_cache),
+            patch("services.importers.getitems.write_items", fake_write_items),
+            patch("services.importers.getitems.write_market_tree", fake_market_tree),
+            patch("services.importers.getitems.fill_missing_item_names_from_esi", fake_fill),
         ):
             await initialize_database()
             await main(progress_cb=lambda p, m: calls.append((p, m)))

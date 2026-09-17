@@ -23,6 +23,7 @@ from typing import Any
 from PySide6.QtCore import Property, Signal, Slot
 
 from ui_qml.dialog_host import DialogBridge, QmlDialog
+from ui_qml.workers.lifecycle import detach_worker
 
 __all__ = [
     "PriceChartBridge",
@@ -48,9 +49,6 @@ _EMPTY_PLOT: dict = {
     "priceTicks": [],
     "volumeTicks": [],
 }
-
-#: 已从对话框摘出、还在收尾的取价线程（见 `_detach_worker`）
-_DETACHED: set[Any] = set()
 
 
 # ════════════════════════════════════════════════════════════
@@ -200,25 +198,6 @@ def _history_worker(type_id: int, parent: Any) -> Any:
     return PriceHistoryWorker(type_id, parent=parent)
 
 
-def _detach_worker(worker: Any) -> None:
-    """关窗收尾：拉不了断，那就别让它随对话框一起被销毁。
-
-    ESI 请求是阻塞的，`requestInterruption()` 对它无效（原版 `closeEvent` 也只请求中断）。
-    而 `QThread` 在运行中被析构时 Qt 直接 `abort()` —— 进程静默死掉、无日志。
-    所以：先请求中断并等一小会儿；还没完就把它从桥的子对象里摘出来、挂到模块级集合上
-    等它自己结束（同 `npc_seller_bridge` / `blueprint_actions` 的强引用保活做法）。
-    """
-    is_running = getattr(worker, "isRunning", None)
-    if worker is None or not callable(is_running) or not is_running():
-        return
-    worker.requestInterruption()
-    if worker.wait(500):
-        return
-    _DETACHED.add(worker)
-    worker.setParent(None)
-    worker.finished.connect(lambda: _DETACHED.discard(worker))
-
-
 class PriceChartBridge(DialogBridge):
     """价格走势图的 QML 后端。"""
 
@@ -273,7 +252,7 @@ class PriceChartBridge(DialogBridge):
 
     def stop(self) -> None:
         """关窗收尾 —— `QmlDialog.done/closeEvent` 都会调它（名字是基类约定）。"""
-        _detach_worker(self._worker)
+        detach_worker(self._worker)
         self._worker = None
 
 

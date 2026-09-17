@@ -120,13 +120,6 @@ class TestParseClipboardRowsFiltersBlueprints:
         assert [r["type_id"] for r in rows] == [1001]
         assert rows[0]["qty"] == 1000
 
-    def test_pure_material_clipboard(self, ref_conn):
-        """纯材料剪贴板不受影响"""
-        rows, filtered = parse_clipboard_rows(ref_conn, "三钛合金\t100\n")
-        assert filtered == 0
-        assert len(rows) == 1
-        assert rows[0]["status"] == "matched"
-
     def test_unmatched_blueprint_name_filtered(self, ref_conn):
         """未匹配但名字带蓝图标记的行也被过滤并计数"""
         rows, filtered = parse_clipboard_rows(ref_conn, "未知蓝图甲\t5\n")

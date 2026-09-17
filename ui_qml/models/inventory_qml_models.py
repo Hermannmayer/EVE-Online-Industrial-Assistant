@@ -13,14 +13,13 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
-from PySide6.QtCore import QModelIndex, Qt, QUrl
+from PySide6.QtCore import QModelIndex, Qt
 
-from ui_qml.icon_cache import item_icon_path
+from ui_qml.icon_cache import icon_url as _png_url
 from ui_qml.models.inventory_helpers import BlueprintTableModel, InvTableModel
-from ui_qml.theme import registry as theme
+from ui_qml.theme.registry import token as _token
 
 __all__ = ["InvQmlModel", "BlueprintQmlModel"]
 
@@ -61,19 +60,6 @@ _B_ROW = _BASE + 5
 _B_ID = _BASE + 6
 _B_NAME = _BASE + 7
 _B_SELECTED = _BASE + 8
-
-
-def _token(name: str) -> str:
-    return str(getattr(theme, name, "") or "")
-
-
-def _png_url(type_id: Any) -> str:
-    if not type_id:
-        return ""
-    path = item_icon_path(int(type_id))
-    if not os.path.isfile(path):
-        return ""
-    return QUrl.fromLocalFile(path).toString()
 
 
 class InvQmlModel(InvTableModel):

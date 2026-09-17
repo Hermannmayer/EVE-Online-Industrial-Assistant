@@ -13,8 +13,8 @@ from sqlite3 import Connection
 
 from core.constants import DEFAULT_SYSTEM_COST_INDEX
 from core.container import get_container
+from domain.formulas import calc_job_cost_fees
 from services import user_settings
-from services.manufacturing_calculator import calc_job_cost_fees
 
 # 默认参数：Jita 标准结构（Upwell 默认 1.0）、NPC 设施税率、Omega（无 Alpha 税）
 _STRUCTURE_MULT = 1.0

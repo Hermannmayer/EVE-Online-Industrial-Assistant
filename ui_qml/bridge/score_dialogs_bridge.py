@@ -27,17 +27,16 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
-from PySide6.QtCore import Property, QUrl, Signal, Slot
+from PySide6.QtCore import Property, Signal, Slot
 
 from core.constants import TRADE_HUBS
 from core.container import get_container
 from core.logger import log
 from services import char_config_resolver
 from ui_qml.dialog_host import DialogBridge, QmlDialog
-from ui_qml.icon_cache import item_icon_path
+from ui_qml.icon_cache import icon_url as _icon_url
 
 __all__ = ["KIND_MFG", "KIND_TRADE", "MfgQmlDialog", "ScoreParamsBridge", "TradeQmlDialog"]
 
@@ -69,20 +68,6 @@ def _combo_index(values: list[str], wanted: str) -> int:
         return values.index(wanted)
     except ValueError:
         return 0
-
-
-def _icon_url(type_id: int | None) -> str:
-    """物品图标文件 → QML `Image.source` 用的 URL；没有图标文件返回空串。
-
-    原版是 `load_item_icon()` 拿不到 pixmap 就整行不显示，这里返回空串让 QML
-    用 `hasIcon` 决定显不显示 —— 语义一致，且不必先把图缩到 32px 再交给 QML 缩放。
-    """
-    if not type_id:
-        return ""
-    path = item_icon_path(int(type_id))
-    if not os.path.isfile(path):
-        return ""
-    return QUrl.fromLocalFile(path).toString()
 
 
 def _item_title(default_title: str, prefix: str, type_id: int | None) -> str:

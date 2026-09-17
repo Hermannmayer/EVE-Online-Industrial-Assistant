@@ -203,6 +203,17 @@ def _shift_lightness(color_hex: str, amount: float) -> str:
     return f"#{mix(r):02x}{mix(g):02x}{mix(b):02x}"
 
 
+def token(name: str) -> str:
+    """按 token 名取当前主题色值；名字不存在返回空串。
+
+    给需要「动态 token 名」的场景用（如表格模型按状态返回 `ACCENT_RED` /
+    `TEXT_SECONDARY`）；固定取色的调用方直接引模块级常量即可。
+
+    QML 侧原先有 6 份逐字相同的本地副本（2 个桥 + 5 个模型），汇总到这一处。
+    """
+    return str(globals().get(name) or "")
+
+
 def bg_elevated() -> str:
     """浮起表面（卡片等）的颜色。
 

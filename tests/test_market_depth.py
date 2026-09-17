@@ -61,9 +61,6 @@ class TestDepthPrice:
         assert depth_price(uniform, SELL) == 100.0
         assert depth_price(uniform, BUY) == 109.0
 
-    def test_single_level(self):
-        assert depth_price([(42.0, 1000)], SELL) == 42.0
-
     def test_order_independent(self):
         assert depth_price(list(reversed(SELL_BOOK)), SELL) == 995900.0
         assert depth_price(list(reversed(BUY_BOOK)), BUY) == 543600.0

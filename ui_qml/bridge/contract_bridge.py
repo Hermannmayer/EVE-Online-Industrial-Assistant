@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication
 
 from core.constants import TRADE_HUB_IDS, TRADE_HUBS
 from ui_qml.models.contract_qml_models import ContractItemQmlModel, ContractQmlModel
@@ -238,7 +238,7 @@ class ContractBridge(QObject):
             return
         from ui_qml.bridge.contract_detail_bridge import ContractDetailQmlDialog
 
-        parent = self._shell if isinstance(self._shell, QWidget) else None
+        parent = None
         ContractDetailQmlDialog(data, parent).exec()
 
     # ── 右键菜单动作 ──────────────────────────────────────────

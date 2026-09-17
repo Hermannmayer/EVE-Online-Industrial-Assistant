@@ -25,8 +25,8 @@ import math
 from typing import Any
 
 from domain.bom import walk_bom
+from domain.formulas import calc_material_for_runs
 from services.blueprint_reader import SqliteBlueprintReader
-from services.manufacturing_calculator import calc_material_for_runs
 from services.name_resolver import resolve_item_name
 from services.plan_job_kinds import is_science
 
@@ -289,30 +289,6 @@ def get_market_prices(
 # ════════════════════════════════════════════════════════════════
 #  6. 产出 + 溢出计算
 # ════════════════════════════════════════════════════════════════
-
-
-def get_batch_adjustment(
-    per_run_output: int,
-    needed_qty: int,
-) -> tuple[int, int, int]:
-    """计算批次调整 — 当蓝图产出为批量时，可能需要向上取整。
-
-    Args:
-        per_run_output: 每次 run 的产出数
-        needed_qty: 实际需要的数量
-
-    Returns:
-        (actual_runs, actual_output, overflow)
-        - actual_runs: 实际需要的制造次数
-        - actual_output: 实际制造出的总数量
-        - overflow: actual_output - needed_qty
-    """
-    if per_run_output <= 0:
-        per_run_output = 1
-    runs = math.ceil(needed_qty / per_run_output)
-    output = runs * per_run_output
-    overflow = output - needed_qty
-    return runs, output, overflow
 
 
 def calculate_output_with_overflow(

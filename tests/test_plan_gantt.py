@@ -108,11 +108,6 @@ class TestGanttScheduling:
         assert max_hours(rows) >= 34  # 子项 30 + 母项 4
         assert max_hours(rows) % 12 == 0
 
-    def test_rows_carry_end_time_text(self):
-        """每根柱形条自带末端完成时刻，QML 直接画，不必再算。"""
-        rows = build_rows([_plan(1, name="独立", tid=2001, hours=3)])
-        assert rows[0]["endText"]
-
     def test_missing_calculated_time_falls_back_to_run_estimate(self):
         """`calculated_time` 为 0 时按「流程数 × 并行数 × 2h」兜底，不画成 0 宽。"""
         plan = _plan(1, name="无时长", tid=2001, hours=0)

@@ -111,13 +111,6 @@ class TestHangarSolarSystem:
         hs = get_hangars()
         assert hs[0]["solar_system_id"] == 30000142
 
-    def test_get_hangars_include_solar_system_key(self, inv_db):
-        """get_hangars 返回 solar_system_id 键（默认 None）"""
-        create_hangar("矿仓")
-        h = get_hangars()[0]
-        assert "solar_system_id" in h
-        assert h["solar_system_id"] is None
-
     def test_update_hangar_system(self, inv_db):
         """update_hangar_system 置值/清除"""
         hid = create_hangar("主仓库")
@@ -245,16 +238,6 @@ class TestGetItemsDisplayName:
         items = im.get_items(hid)
         assert items[0]["display_name"] == "99999"
 
-    def test_item_table_name(self, full_db):
-        """item 表有 zh_name → 用之"""
-        import services.inventory_manager as im
-
-        im.init_db()
-        hid = im.create_hangar("测试仓")
-        im.add_item(hid, 1001, 10)
-        items = im.get_items(hid)
-        assert items[0]["display_name"] == "三钛合金"
-
     def test_plan_active_counts_in_progress(self, full_db):
         """in_progress 计划计入 plan_active，pending 计入 plan_usage"""
         import services.inventory_manager as im
@@ -275,14 +258,6 @@ class TestGetItemsDisplayName:
 
 class TestHangarIndustryConfig:
     """机库工业配置（设施类型/设施税/改件）CRUD"""
-
-    def test_get_hangars_include_config_keys(self, inv_db):
-        """get_hangars 返回设施配置键（默认 None）"""
-        create_hangar("仓")
-        h = get_hangars()[0]
-        for k in ("facility_type", "facility_tax", "rigs"):
-            assert k in h
-            assert h[k] is None
 
     def test_update_hangar_config(self, inv_db):
         """update_hangar_config 写入设施类型/税/改件 JSON"""

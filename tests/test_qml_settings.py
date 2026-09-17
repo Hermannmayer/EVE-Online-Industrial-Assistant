@@ -13,19 +13,13 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QLabel, QWidget
 
+from tests.qml_click import spin as _spin
 from ui_qml.bridge.settings_bridge import SettingsBridge, SettingsQmlDialog, ThemeSelectorBridge
 from ui_qml.theme import registry as theme
 
 pytestmark = pytest.mark.ui
-
-
-def _spin(ms: int = 60) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 class _Host:

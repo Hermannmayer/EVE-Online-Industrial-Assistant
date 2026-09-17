@@ -12,13 +12,12 @@ S>A>B>C>D>✗ 的等级排，其余按去掉千分位后的数值排）。`QSort
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
-from PySide6.QtCore import QModelIndex, Qt, QUrl
+from PySide6.QtCore import QModelIndex, Qt
 from PySide6.QtGui import QColor
 
-from ui_qml.icon_cache import item_icon_path
+from ui_qml.icon_cache import icon_url
 from ui_qml.models.all_items_models import AModel
 
 __all__ = ["ROLE_NAMES", "AllItemsQmlModel"]
@@ -39,20 +38,6 @@ _ALIGN_RIGHT = _BASE + 4
 _ICON_KEY = "i"
 #: 左对齐的列 —— 逐字对齐父类 `TextAlignmentRole` 里的白名单
 _LEFT_KEYS = ("i", "z", "e", "ms")
-
-
-def icon_url(type_id: Any) -> str:
-    """物品图标文件 → QML `Image.source` 用的 URL；没有图标文件返回空串。
-
-    父类是在 `DecorationRole` 里返回 `QPixmap`（QML 用不上），这里改给 URL：
-    图标路径的唯一来源仍是 `ui_qml.icon_cache.item_icon_path`。
-    """
-    if not type_id:
-        return ""
-    path = item_icon_path(int(type_id))
-    if not os.path.isfile(path):
-        return ""
-    return QUrl.fromLocalFile(path).toString()
 
 
 class AllItemsQmlModel(AModel):

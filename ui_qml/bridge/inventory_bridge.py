@@ -337,7 +337,7 @@ class InventoryBridge(QObject):
         run_clipboard_import(
             self._current_hangar_id,
             self._current_hangar_label(),
-            self._shell if isinstance(self._shell, QWidget) else None,
+            None,
             mode=mode,
         )
         self.refreshItems()
@@ -361,7 +361,7 @@ class InventoryBridge(QObject):
 
         from ui_qml.bridge.transfer_bridge import HangarTransferQmlDialog as HangarTransferDialog
 
-        parent = self._shell if isinstance(self._shell, QWidget) else None
+        parent = None
         dialog = HangarTransferDialog(
             parsed,
             self._current_hangar_id,
@@ -386,7 +386,7 @@ class InventoryBridge(QObject):
             return
         from ui_qml.bridge.material_coverage_bridge import MaterialCoverageQmlDialog
 
-        parent = self._shell if isinstance(self._shell, QWidget) else None
+        parent = None
         MaterialCoverageQmlDialog(self._current_hangar_id, self._current_hangar_label(), parent).exec()
 
     @Slot()
@@ -398,7 +398,7 @@ class InventoryBridge(QObject):
         from services.inventory_manager import add_item
         from ui_qml.bridge.hangar_dialogs import AddItemQmlDialog
 
-        parent = self._shell if isinstance(self._shell, QWidget) else None
+        parent = None
         dialog = AddItemQmlDialog(self._current_hangar_label(), parent)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -421,7 +421,7 @@ class InventoryBridge(QObject):
         item = self._items.item_at(row)
         if not item:
             return
-        parent = self._shell if isinstance(self._shell, QWidget) else None
+        parent = None
         dialog = EditQtyQmlDialog(self._item_name(item), item["quantity"], parent)
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.quantity() >= 0:
             update_quantity(item["id"], dialog.quantity())
@@ -466,7 +466,7 @@ class InventoryBridge(QObject):
         if not items:
             return
 
-        parent = self._shell if isinstance(self._shell, QWidget) else None
+        parent = None
         dialog = BatchCostPriceQmlDialog(parent)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -765,7 +765,7 @@ class InventoryBridge(QObject):
         if not targets:
             self._set_bp_hint("没有其他机库可移动")
             return
-        parent = self._shell if isinstance(self._shell, QWidget) else None
+        parent = None
         name, ok = InputQmlDialog.get_item(parent, "移动到", "目标机库:", [h["label"] for h in targets], 0)
         if ok and name:
             target_id = next(h["id"] for h in targets if h["label"] == name)
@@ -780,7 +780,7 @@ class InventoryBridge(QObject):
         blueprints = self._blueprints_at(rows)
         if not blueprints:
             return
-        parent = self._shell if isinstance(self._shell, QWidget) else None
+        parent = None
         value, ok = InputQmlDialog.get_double(
             parent, "每流程成本", "ISK:", float(blueprints[0].get("cost_per_run") or 0)
         )
@@ -810,7 +810,7 @@ class InventoryBridge(QObject):
         blueprints = self._blueprints_at(rows)
         if not blueprints:
             return
-        parent = self._shell if isinstance(self._shell, QWidget) else None
+        parent = None
         value, ok = InputQmlDialog.get_int(parent, title, "数值:", int(blueprints[0].get(field) or 0), 0, 100)
         if ok:
             update_blueprints_batch([bp["id"] for bp in blueprints], **{field: value})
@@ -861,8 +861,12 @@ class InventoryBridge(QObject):
         paste_blueprints(self, self._current_hangar_id, self._current_hangar_label())
 
     def _dialog_parent(self) -> QWidget | None:
-        """Widgets 对话框的父窗口（阶段 4 迁移完就不需要了）。"""
-        return self._shell if isinstance(self._shell, QWidget) else None
+        """Widgets 对话框的父窗口。
+
+        外壳是 `QQuickView`（`QWindow`，不是 `QWidget`），没有可用的 QWidget 父窗口，
+        因此恒为 None —— 对话框不挂父窗口（与迁移前行为一致）。
+        """
+        return None
 
     def _set_bp_hint(self, text: str) -> None:
         self._bp_count = text

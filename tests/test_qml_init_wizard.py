@@ -16,12 +16,13 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 import pytest
-from PySide6.QtCore import QEventLoop, QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QCloseEvent
 
 import ui_qml.bridge.init_wizard_bridge as iwb
 import ui_qml.theme.registry as theme
 from services.init_service import STEPS, InitStep, StepStatus
+from tests.qml_click import spin as _spin
 from ui_qml.bridge.init_wizard_bridge import InitWizardQmlDialog, format_elapsed, step_row
 
 # ════════════════════════════════════════════════════════════════
@@ -145,13 +146,6 @@ class _WizardFactory:
 @pytest.fixture
 def wizard(qapp, monkeypatch) -> _WizardFactory:
     return _WizardFactory(monkeypatch)
-
-
-def _spin(ms: int = 60) -> None:
-    """转一会儿事件循环（auto 模式的 `QTimer.singleShot` 要靠它才跑得到）。"""
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 def _rows(dialog: InitWizardQmlDialog) -> dict[str, dict]:

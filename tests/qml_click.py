@@ -23,8 +23,13 @@ from PySide6.QtWidgets import QApplication
 __all__ = ["spin", "area_of", "scrolling_table_of", "press_move_release"]
 
 
-def spin(ms: int = 150) -> None:
-    """跑一小段事件循环（QML 的布局/信号是异步的，断言前要给它机会）。"""
+def spin(ms: int = 200) -> None:
+    """跑一小段事件循环（QML 的布局/信号是异步的，断言前要给它机会）。
+
+    默认值取 200ms：原先各测试文件各自内联过一份 `_spin`，默认值在 60~200 之间不等；
+    统一到这里时取最大值，保证任何调用点的等待都不比原来短（等待变长是安全的，
+    变短可能让断言跑在信号到达之前）。
+    """
     loop = QEventLoop()
     QTimer.singleShot(ms, loop.quit)
     loop.exec()

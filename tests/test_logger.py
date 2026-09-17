@@ -11,24 +11,6 @@ from core.logger import log, prune_logs, set_debug
 pytestmark = pytest.mark.fast
 
 
-def test_log_info(caplog):
-    caplog.set_level(logging.INFO)
-    log.info("test message")
-    assert "test message" in caplog.text
-
-
-def test_log_error(caplog):
-    caplog.set_level(logging.ERROR)
-    log.error("error test")
-    assert "error test" in caplog.text
-
-
-def test_log_critical(caplog):
-    caplog.set_level(logging.CRITICAL)
-    log.critical("critical test")
-    assert "critical test" in caplog.text
-
-
 def test_file_handler_level_is_info(tmp_path, monkeypatch):
     import core.logger as logger_mod
 

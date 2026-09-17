@@ -11,9 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QEventLoop, Qt, QTimer, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler
 
 from tests.qml_click import press_move_release
+from tests.qml_click import spin as _spin
 from ui_qml.models.watchlist_qml_model import ROLE_NAMES, WatchlistQmlModel
 
 _BASE = Qt.ItemDataRole.UserRole
@@ -52,12 +53,6 @@ def _row(
 
 def _cell(model: WatchlistQmlModel, row: int, col: int, role: int):
     return model.data(model.index(row, col), role)
-
-
-def _spin(ms: int = 120) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 # ════════════════════════════════════════════════════════════

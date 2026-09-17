@@ -576,8 +576,8 @@ class ScoringService:
             resolved_system_id if resolved_system_id is not None else _hub_to_system_id(resolved_sell_hub)
         )
         # 机库工业配置解析（材料机库决定设施类型/改件/税；用 svc._db 保证测试隔离）
+        from domain.formulas import FACILITY_TAX_NPC
         from services.hangar_industry_config import resolve_hangar_industry_config
-        from services.manufacturing_calculator import FACILITY_TAX_NPC
 
         hangar_cfg = resolve_hangar_industry_config(plan_data.get("mat_hangar_id"), _db=getattr(svc, "_db", None))
         # 成本倍率：计划 facility_cost_mult 显式(≠1.0) > 机库 > 1.0

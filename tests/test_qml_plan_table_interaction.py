@@ -31,11 +31,12 @@ import re
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QEventLoop, QObject, QPoint, Qt, QTimer, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import QObject, QPoint, Qt, QtMsgType, qInstallMessageHandler
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 import ui_qml.theme.registry as theme
+from tests.qml_click import spin as _spin
 from ui_qml.host import PageHost
 from ui_qml.models.industry_models import PlanTableModel
 from ui_qml.views.industry.plan_table import PlanTable
@@ -93,12 +94,6 @@ def _new_pane() -> _Pane:
 #: 列 0 是备料勾选、列 1/2 是图标列、列 3 是产品列 —— 产品列只有带折叠箭头
 #: 或合成行时才是可点击的，本文件的测试数据两者都没有。
 _SAFE_COLUMN_X = 200
-
-
-def _spin(ms: int = 150) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 def _wait_until(predicate, timeout_ms: int = 1500) -> bool:

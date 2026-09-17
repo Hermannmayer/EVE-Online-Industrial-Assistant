@@ -16,19 +16,14 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from PySide6.QtCore import QEventLoop, QObject, QTimer, QtMsgType, Signal, qInstallMessageHandler
+from PySide6.QtCore import QObject, QtMsgType, Signal, qInstallMessageHandler
 from PySide6.QtGui import qAlpha
 
 import ui_qml.theme.registry as theme
 from tests.clipboard_wait import wait_for_clipboard
+from tests.qml_click import spin as _spin
 
 pytestmark = pytest.mark.ui
-
-
-def _spin(ms: int = 120) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 def _is_qt_internal(ctx_file: str) -> bool:
@@ -70,6 +65,227 @@ def _assert_loads_and_quiet(make_dialog, label: str) -> None:
     assert not caught, f"{label} 产生了 QML 告警：\n" + "\n".join(dict.fromkeys(caught))
 
 
+# ── 「每个对话框都要干净加载」合并成**一条参数化** ──────────────────────
+#
+# 每个条目 = (标签, 来源)：
+#   - 字符串 → 上面/下面已有的工厂 fixture 名（`request.getfixturevalue` 取）；
+#   - 可调用 → `(monkeypatch) -> make_dialog`，给没有 fixture 的那几个用。
+# 参数 id 就是标签：坏了照样能一眼看出是哪个对话框，但框架只搭一次。
+
+
+def _case_plan_edit_batch(monkeypatch):
+    from services import inventory_manager
+
+    monkeypatch.setattr(inventory_manager, "get_hangars", lambda: [])
+    monkeypatch.setattr("services.char_config_resolver.get_character_list", lambda: ["甲"])
+
+    from ui_qml.bridge.plan_edit_bridge import PlanEditQmlDialog
+
+    return lambda: PlanEditQmlDialog(
+        None, {"_selected_rows": [0, 1], "runs": 5, "parallels": 1}, batch_mode=True, row_count=2
+    )
+
+
+def _case_research_cost(monkeypatch):
+    from ui_qml.bridge.research_cost_bridge import ResearchCostQmlDialog
+
+    return lambda: ResearchCostQmlDialog(_BrokenDb(), 691, "渡鸦级蓝图")
+
+
+def _case_input_text(monkeypatch):
+    return lambda: _input_dialog("text", text="甲")
+
+
+def _case_input_int(monkeypatch):
+    return lambda: _input_dialog("int", value=5, minimum=0, maximum=100)
+
+
+def _case_input_double(monkeypatch):
+    return lambda: _input_dialog("double", value=1.5)
+
+
+def _case_input_choice(monkeypatch):
+    return lambda: _input_dialog("choice", choices=["甲库", "乙库"])
+
+
+def _case_edit_qty(monkeypatch):
+    from ui_qml.bridge.hangar_dialogs import EditQtyQmlDialog
+
+    return lambda: EditQtyQmlDialog("三钛合金", 100)
+
+
+def _case_batch_cost_price(monkeypatch):
+    from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
+
+    return BatchCostPriceQmlDialog
+
+
+def _case_add_item(monkeypatch):
+    monkeypatch.setattr("ui_qml.bridge.item_search_bridge.find_items", lambda text: [])
+
+    from ui_qml.bridge.hangar_dialogs import AddItemQmlDialog
+
+    return lambda: AddItemQmlDialog("矿仓")
+
+
+def _case_parent_decompose(monkeypatch):
+    from ui_qml.bridge.parent_decompose_bridge import ParentDecomposeQmlDialog
+
+    return lambda: ParentDecomposeQmlDialog([])
+
+
+def _case_import_review(monkeypatch):
+    from ui_qml.bridge.review_bridge import ImportReviewQmlDialog
+
+    return lambda: ImportReviewQmlDialog([], "测试机库", 1)
+
+
+def _case_import_change(monkeypatch):
+    from ui_qml.bridge.review_bridge import ImportChangeQmlDialog
+
+    return lambda: ImportChangeQmlDialog([], added=0, moved=0, hangar_name="测试机库")
+
+
+def _case_hangar_pick(monkeypatch):
+    from ui_qml.bridge.review_bridge import HangarPickQmlDialog
+
+    return lambda: HangarPickQmlDialog([])
+
+
+def _case_blueprint_import_review(monkeypatch):
+    from ui_qml.bridge.blueprint_import_bridge import BlueprintImportReviewQmlDialog
+
+    return lambda: BlueprintImportReviewQmlDialog([], "测试机库")
+
+
+def _case_blueprint_import_change(monkeypatch):
+    from ui_qml.bridge.blueprint_import_bridge import BlueprintImportChangeQmlDialog
+
+    return lambda: BlueprintImportChangeQmlDialog([], added=0, removed=0, hangar_name="测试机库")
+
+
+def _case_transfer(monkeypatch):
+    import ui_qml.bridge.transfer_bridge as tb
+
+    monkeypatch.setattr(tb, "get_hangars", lambda: [{"id": 1, "name": "源仓"}, {"id": 2, "name": "目标仓"}])
+    monkeypatch.setattr(tb, "get_items", lambda hid: [])
+    monkeypatch.setattr(tb, "get_hangar_stock", lambda hid: {})
+
+    from ui_qml.bridge.transfer_bridge import HangarTransferQmlDialog
+
+    return lambda: HangarTransferQmlDialog([], 2, "目标仓")
+
+
+def _case_order_popup(monkeypatch):
+    from ui_qml.bridge.order_popup_bridge import OrderPopupQmlDialog
+
+    return OrderPopupQmlDialog
+
+
+def _case_price_chart(monkeypatch):
+    monkeypatch.setattr("ui_qml.workers.price_history_worker.PriceHistoryWorker", _StubHistoryWorker)
+
+    from ui_qml.bridge.price_chart_bridge import PriceChartQmlDialog
+
+    return lambda: PriceChartQmlDialog(34, "三钛合金")
+
+
+def _case_batch_price(monkeypatch):
+    import ui_qml.bridge.batch_price_bridge as bp
+
+    monkeypatch.setattr(bp, "BatchPriceWorker", _StubHistoryWorker)
+
+    from ui_qml.bridge.batch_price_bridge import BatchPriceQmlDialog
+
+    return BatchPriceQmlDialog
+
+
+def _case_hangar_settings(monkeypatch):
+    import services.inventory_manager as im
+
+    monkeypatch.setattr(im, "get_hangars", lambda: [{"id": 1, "name": "矿仓"}])
+
+    from ui_qml.bridge.hangar_settings_bridge import HangarSettingsQmlDialog
+
+    return lambda: HangarSettingsQmlDialog(None)
+
+
+def _case_mfg_params(monkeypatch):
+    from ui_qml.bridge.score_dialogs_bridge import MfgQmlDialog
+
+    return MfgQmlDialog
+
+
+def _case_trade_params(monkeypatch):
+    from ui_qml.bridge.score_dialogs_bridge import TradeQmlDialog
+
+    return TradeQmlDialog
+
+
+def _case_compare(monkeypatch):
+    from ui_qml.bridge.compare_bridge import CompareQmlDialog
+
+    return CompareQmlDialog
+
+
+def _case_init_wizard(monkeypatch):
+    from ui_qml.bridge.init_wizard_bridge import InitWizardQmlDialog
+
+    return InitWizardQmlDialog
+
+
+_LOADS_CASES: list[tuple[str, Any]] = [
+    ("编辑生产计划", "plan_edit_factory"),
+    ("批量编辑生产计划", _case_plan_edit_batch),
+    ("部分启动", "partial_start_factory"),
+    ("发明结果回填", "invention_factory"),
+    ("下线确认", "complete_plans_factory"),
+    ("产出总表", "output_factory"),
+    ("人物占用情况", "char_usage_factory"),
+    ("填料总表", "materials_factory"),
+    ("研究分析", _case_research_cost),
+    ("所需蓝图清单", "blueprint_requirements_factory"),
+    ("子项并行配置", "child_parallel_factory"),
+    ("子项大规模产线并行", "mass_parallel_factory"),
+    ("绑定库存蓝图", "blueprint_picker_factory"),
+    ("查看核算", "cost_breakdown_factory"),
+    ("合同详情", "contract_detail_factory"),
+    ("蓝图 NPC 卖家", "npc_seller_factory"),
+    ("星系搜索", "system_search_factory"),
+    ("取值对话框(文本)", _case_input_text),
+    ("取值对话框(整数)", _case_input_int),
+    ("取值对话框(小数)", _case_input_double),
+    ("取值对话框(下拉)", _case_input_choice),
+    ("物品搜索", "item_search_factory"),
+    ("材料覆盖", "coverage_factory"),
+    ("编辑数量", _case_edit_qty),
+    ("批量设置成本价", _case_batch_cost_price),
+    ("手动添加物品", _case_add_item),
+    ("母项拆解(空态)", _case_parent_decompose),
+    ("导入审查", _case_import_review),
+    ("导入变动汇总", _case_import_change),
+    ("选择来源机库物品", _case_hangar_pick),
+    ("蓝图导入预览", _case_blueprint_import_review),
+    ("蓝图导入变动汇总", _case_blueprint_import_change),
+    ("移库", _case_transfer),
+    ("订单弹窗", _case_order_popup),
+    ("价格走势图", _case_price_chart),
+    ("批量查价", _case_batch_price),
+    ("机库设置", _case_hangar_settings),
+    ("制造评分设置", _case_mfg_params),
+    ("贸易评分设置", _case_trade_params),
+    ("批量对比", _case_compare),
+    ("数据初始化向导", _case_init_wizard),
+]
+
+
+@pytest.mark.parametrize(("label", "case"), _LOADS_CASES, ids=[c[0] for c in _LOADS_CASES])
+def test_dialog_loads_without_warnings(request, qapp, monkeypatch, label, case):
+    """44 个对话框共用的一条：QML 能加载、布局不给 Qt 刷告警。"""
+    factory = case(monkeypatch) if callable(case) else request.getfixturevalue(case)
+    _assert_loads_and_quiet(factory, label)
+
+
 @pytest.fixture
 def plan_edit_factory(qapp, monkeypatch):
     """「编辑生产计划」对话框的工厂（机库与角色列表都打桩）。"""
@@ -84,17 +300,6 @@ def plan_edit_factory(qapp, monkeypatch):
         return PlanEditQmlDialog(None, plan or {"product_name": "渡鸦级", "runs": 3, "parallels": 2}, **kwargs)
 
     return _make
-
-
-def test_plan_edit_dialog_loads_without_warnings(plan_edit_factory):
-    _assert_loads_and_quiet(plan_edit_factory, "编辑生产计划")
-
-
-def test_plan_edit_dialog_batch_mode_loads(plan_edit_factory):
-    _assert_loads_and_quiet(
-        lambda: plan_edit_factory({"_selected_rows": [0, 1], "runs": 5, "parallels": 1}, batch_mode=True, row_count=2),
-        "批量编辑生产计划",
-    )
 
 
 def test_plan_edit_labels_follow_the_activity_kind(plan_edit_factory):
@@ -148,18 +353,6 @@ def complete_plans_factory(qapp, monkeypatch):
         [{"id": 1, "name": "矿仓"}],
         None,
     )
-
-
-def test_partial_start_dialog_loads_without_warnings(partial_start_factory):
-    _assert_loads_and_quiet(partial_start_factory, "部分启动")
-
-
-def test_invention_outcome_dialog_loads_without_warnings(invention_factory):
-    _assert_loads_and_quiet(invention_factory, "发明结果回填")
-
-
-def test_complete_plans_dialog_loads_without_warnings(complete_plans_factory):
-    _assert_loads_and_quiet(complete_plans_factory, "下线确认")
 
 
 def test_invention_hint_follows_the_value(invention_factory):
@@ -246,18 +439,6 @@ def materials_factory(qapp, monkeypatch):
     return MaterialsSummaryQmlDialog
 
 
-def test_output_summary_dialog_loads_without_warnings(output_factory):
-    _assert_loads_and_quiet(output_factory, "产出总表")
-
-
-def test_char_usage_dialog_loads_without_warnings(char_usage_factory):
-    _assert_loads_and_quiet(char_usage_factory, "人物占用情况")
-
-
-def test_materials_dialog_loads_without_warnings(materials_factory):
-    _assert_loads_and_quiet(materials_factory, "填料总表")
-
-
 def test_output_summary_colours_profit_and_status(output_factory):
     """利润按正负染色、状态按语义染色、溢出标橙 —— 与 Widgets 版同一组规则。"""
     dialog = output_factory()
@@ -342,15 +523,6 @@ class _BrokenDb:
         raise RuntimeError("no db in tests")
 
 
-def test_research_cost_dialog_loads_without_warnings(qapp):
-    from ui_qml.bridge.research_cost_bridge import ResearchCostQmlDialog
-
-    _assert_loads_and_quiet(
-        lambda: ResearchCostQmlDialog(_BrokenDb(), 691, "渡鸦级蓝图"),
-        "研究分析",
-    )
-
-
 def test_research_cost_reports_failure_instead_of_crashing():
     """取数失败时给一行说明，而不是把异常抛给调用方（原 Widgets 版会直接崩）。"""
     from ui_qml.bridge.research_cost_bridge import ResearchCostBridge
@@ -394,10 +566,6 @@ def blueprint_requirements_factory(qapp, monkeypatch):
     from ui_qml.bridge.blueprint_dialog_bridge import BlueprintRequirementsQmlDialog
 
     return BlueprintRequirementsQmlDialog
-
-
-def test_blueprint_requirements_dialog_loads_without_warnings(blueprint_requirements_factory):
-    _assert_loads_and_quiet(blueprint_requirements_factory, "所需蓝图清单")
 
 
 def test_blueprint_requirements_three_state_status(blueprint_requirements_factory):
@@ -520,14 +688,6 @@ def mass_parallel_factory(db_manager, monkeypatch, qapp):
     return _DialogFactory(MassParallelQmlDialog, _parallel_plans(), repo=repo)
 
 
-def test_child_parallel_dialog_loads_without_warnings(child_parallel_factory):
-    _assert_loads_and_quiet(child_parallel_factory, "子项并行配置")
-
-
-def test_mass_parallel_dialog_loads_without_warnings(mass_parallel_factory):
-    _assert_loads_and_quiet(mass_parallel_factory, "子项大规模产线并行")
-
-
 def test_mass_parallel_preview_then_apply(mass_parallel_factory):
     """算预览 → 出六列表 → 应用只写 parallels（runs 不动）。"""
     dialog = mass_parallel_factory()
@@ -634,10 +794,6 @@ def blueprint_picker_factory(qapp, monkeypatch):
     from ui_qml.bridge.blueprint_picker_bridge import BlueprintPickerQmlDialog
 
     return _PickerHarness(BlueprintPickerQmlDialog, state, writes)
-
-
-def test_blueprint_picker_dialog_loads_without_warnings(blueprint_picker_factory):
-    _assert_loads_and_quiet(blueprint_picker_factory, "绑定库存蓝图")
 
 
 def test_picker_row_states(blueprint_picker_factory):
@@ -781,10 +937,6 @@ def cost_breakdown_factory(qapp, monkeypatch):
     return _make
 
 
-def test_cost_breakdown_dialog_loads_without_warnings(cost_breakdown_factory):
-    _assert_loads_and_quiet(cost_breakdown_factory, "查看核算")
-
-
 def test_cost_breakdown_renders_materials_and_summary(cost_breakdown_factory):
     """材料两行 + 三块明细；作业费与市场费用合计加粗，利润按正负染色。"""
     dialog = cost_breakdown_factory()
@@ -924,18 +1076,6 @@ def system_search_factory(qapp, monkeypatch):
     from ui_qml.bridge.system_search_bridge import SystemSearchQmlDialog
 
     return lambda: SystemSearchQmlDialog(None, "设置设施星系")
-
-
-def test_contract_detail_dialog_loads_without_warnings(contract_detail_factory):
-    _assert_loads_and_quiet(contract_detail_factory, "合同详情")
-
-
-def test_npc_seller_dialog_loads_without_warnings(npc_seller_factory):
-    _assert_loads_and_quiet(npc_seller_factory, "蓝图 NPC 卖家")
-
-
-def test_system_search_dialog_loads_without_warnings(system_search_factory):
-    _assert_loads_and_quiet(system_search_factory, "星系搜索")
 
 
 def test_contract_detail_renders_fields_and_items(contract_detail_factory):
@@ -1109,14 +1249,6 @@ def _input_dialog(mode: str = "text", **kw):
     return InputQmlDialog(InputBridge("标题", "标签", mode, **kw))
 
 
-def test_input_dialog_loads_without_warnings():
-    """四种形态各加载一次 —— `mode` 决定显示哪个输入控件，只有实际加载才验得到。"""
-    _assert_loads_and_quiet(lambda: _input_dialog("text", text="甲"), "取值对话框(文本)")
-    _assert_loads_and_quiet(lambda: _input_dialog("int", value=5, minimum=0, maximum=100), "取值对话框(整数)")
-    _assert_loads_and_quiet(lambda: _input_dialog("double", value=1.5), "取值对话框(小数)")
-    _assert_loads_and_quiet(lambda: _input_dialog("choice", choices=["甲库", "乙库"]), "取值对话框(下拉)")
-
-
 def test_input_dialog_returns_the_typed_value(qapp):
     """确定时按 mode 定格的类型要分开 —— 整数不能被当小数吐回来。"""
     from ui_qml.bridge.input_dialog import MODE_CHOICE, MODE_DOUBLE, MODE_INT, MODE_TEXT
@@ -1194,10 +1326,6 @@ def item_search_factory(qapp, monkeypatch):
     from ui_qml.bridge.item_search_bridge import ItemSearchQmlDialog
 
     return lambda: ItemSearchQmlDialog(None, "搜索匹配物品")
-
-
-def test_item_search_dialog_loads_without_warnings(item_search_factory):
-    _assert_loads_and_quiet(item_search_factory, "物品搜索")
 
 
 def test_item_search_returns_the_picked_item(item_search_factory):
@@ -1283,10 +1411,6 @@ def coverage_factory(qapp, monkeypatch):
     return lambda: MaterialCoverageQmlDialog(7, "矿仓")
 
 
-def test_material_coverage_dialog_loads_without_warnings(coverage_factory):
-    _assert_loads_and_quiet(coverage_factory, "材料覆盖")
-
-
 def test_material_coverage_rows_and_summary(coverage_factory):
     dialog = coverage_factory()
     try:
@@ -1317,25 +1441,6 @@ def test_material_coverage_empty_state(qapp, monkeypatch):
 
 
 # ── 机库三个对话框（编辑数量 / 批量成本价 / 手动添加）──
-
-
-def test_edit_qty_dialog_loads_without_warnings():
-    from ui_qml.bridge.hangar_dialogs import EditQtyQmlDialog
-
-    _assert_loads_and_quiet(lambda: EditQtyQmlDialog("三钛合金", 100), "编辑数量")
-
-
-def test_batch_cost_price_dialog_loads_without_warnings():
-    from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
-
-    _assert_loads_and_quiet(BatchCostPriceQmlDialog, "批量设置成本价")
-
-
-def test_add_item_dialog_loads_without_warnings(qapp, monkeypatch):
-    monkeypatch.setattr("ui_qml.bridge.item_search_bridge.find_items", lambda text: [])
-    from ui_qml.bridge.hangar_dialogs import AddItemQmlDialog
-
-    _assert_loads_and_quiet(lambda: AddItemQmlDialog("矿仓"), "手动添加物品")
 
 
 def test_edit_qty_returns_the_spun_value(qapp):
@@ -1375,19 +1480,6 @@ def test_add_item_returns_type_qty_cost(qapp, monkeypatch):
 
 
 # ── 母项拆解（阶段 4a 收尾）──
-
-
-def test_parent_decompose_dialog_loads_without_warnings(qapp):
-    """空态那条分支：没有可拆母项时不该碰 DB，QML 也要能干净加载。
-
-    `qapp` 是**必须**的：别的护栏测试经由各自的工厂 fixture 间接拿到它，
-    这里直接构造对话框，漏了就会在没有 QApplication 的情况下建 QWidget ——
-    Qt 的致命消息经本测试装的消息处理器绕一圈，表现为**挂死**而不是报错
-    （实测：整条命令卡住、无输出）。
-    """
-    from ui_qml.bridge.parent_decompose_bridge import ParentDecomposeQmlDialog
-
-    _assert_loads_and_quiet(lambda: ParentDecomposeQmlDialog([]), "母项拆解(空态)")
 
 
 def test_parent_decompose_line_cells_marks_missing_blueprint_and_loss():
@@ -1472,50 +1564,7 @@ def test_summary_table_row_hit_accounts_for_listview_scroll(qapp):
 
 
 # ── 批次 1 收尾：导入审查 / 蓝图导入 / 移库（含二级弹出）──
-
-
-def test_import_review_dialog_loads_without_warnings(qapp):
-    from ui_qml.bridge.review_bridge import ImportReviewQmlDialog
-
-    _assert_loads_and_quiet(lambda: ImportReviewQmlDialog([], "测试机库", 1), "导入审查")
-
-
-def test_import_change_dialog_loads_without_warnings(qapp):
-    from ui_qml.bridge.review_bridge import ImportChangeQmlDialog
-
-    _assert_loads_and_quiet(lambda: ImportChangeQmlDialog([], added=0, moved=0, hangar_name="测试机库"), "导入变动汇总")
-
-
-def test_hangar_pick_dialog_loads_without_warnings(qapp):
-    from ui_qml.bridge.review_bridge import HangarPickQmlDialog
-
-    _assert_loads_and_quiet(lambda: HangarPickQmlDialog([]), "选择来源机库物品")
-
-
-def test_blueprint_import_review_dialog_loads_without_warnings(qapp):
-    from ui_qml.bridge.blueprint_import_bridge import BlueprintImportReviewQmlDialog
-
-    _assert_loads_and_quiet(lambda: BlueprintImportReviewQmlDialog([], "测试机库"), "蓝图导入预览")
-
-
-def test_blueprint_import_change_dialog_loads_without_warnings(qapp):
-    from ui_qml.bridge.blueprint_import_bridge import BlueprintImportChangeQmlDialog
-
-    _assert_loads_and_quiet(
-        lambda: BlueprintImportChangeQmlDialog([], added=0, removed=0, hangar_name="测试机库"),
-        "蓝图导入变动汇总",
-    )
-
-
-def test_transfer_dialog_loads_without_warnings(qapp, monkeypatch):
-    import ui_qml.bridge.transfer_bridge as tb
-
-    monkeypatch.setattr(tb, "get_hangars", lambda: [{"id": 1, "name": "源仓"}, {"id": 2, "name": "目标仓"}])
-    monkeypatch.setattr(tb, "get_items", lambda hid: [])
-    monkeypatch.setattr(tb, "get_hangar_stock", lambda hid: {})
-    from ui_qml.bridge.transfer_bridge import HangarTransferQmlDialog
-
-    _assert_loads_and_quiet(lambda: HangarTransferQmlDialog([], 2, "目标仓"), "移库")
+# （「加载无告警」那几条已并入文件顶部的 `test_dialog_loads_without_warnings` 参数化）
 
 
 # ── 批次 2（查询链路）：订单弹窗 / 价格走势图 ──
@@ -1539,66 +1588,6 @@ class _StubHistoryWorker(QObject):
 
     def isRunning(self) -> bool:
         return False
-
-
-def test_order_popup_dialog_loads_without_warnings(qapp):
-    from ui_qml.bridge.order_popup_bridge import OrderPopupQmlDialog
-
-    _assert_loads_and_quiet(lambda: OrderPopupQmlDialog(), "订单弹窗")
-
-
-def test_price_chart_dialog_loads_without_warnings(qapp, monkeypatch):
-    monkeypatch.setattr("ui_qml.workers.price_history_worker.PriceHistoryWorker", _StubHistoryWorker)
-    from ui_qml.bridge.price_chart_bridge import PriceChartQmlDialog
-
-    _assert_loads_and_quiet(lambda: PriceChartQmlDialog(34, "三钛合金"), "价格走势图")
-
-
-def test_batch_price_dialog_loads_without_warnings(qapp, monkeypatch):
-    import ui_qml.bridge.batch_price_bridge as bp
-
-    monkeypatch.setattr(bp, "BatchPriceWorker", _StubHistoryWorker)
-    from ui_qml.bridge.batch_price_bridge import BatchPriceQmlDialog
-
-    _assert_loads_and_quiet(lambda: BatchPriceQmlDialog(), "批量查价")
-
-
-def test_hangar_settings_dialog_loads_without_warnings(qapp, monkeypatch):
-    """机库设置（阶段 4c）—— 独立一级入口，不由页面弹出。"""
-    import services.inventory_manager as im
-
-    monkeypatch.setattr(im, "get_hangars", lambda: [{"id": 1, "name": "矿仓"}])
-    from ui_qml.bridge.hangar_settings_bridge import HangarSettingsQmlDialog
-
-    _assert_loads_and_quiet(lambda: HangarSettingsQmlDialog(None), "机库设置")
-
-
-# ── 批次 2：评分设置（制造/贸易）/ 批量对比 ──
-
-
-def test_mfg_params_dialog_loads_without_warnings(qapp):
-    from ui_qml.bridge.score_dialogs_bridge import MfgQmlDialog
-
-    _assert_loads_and_quiet(lambda: MfgQmlDialog(), "制造评分设置")
-
-
-def test_trade_params_dialog_loads_without_warnings(qapp):
-    from ui_qml.bridge.score_dialogs_bridge import TradeQmlDialog
-
-    _assert_loads_and_quiet(lambda: TradeQmlDialog(), "贸易评分设置")
-
-
-def test_compare_dialog_loads_without_warnings(qapp):
-    from ui_qml.bridge.compare_bridge import CompareQmlDialog
-
-    _assert_loads_and_quiet(lambda: CompareQmlDialog(), "批量对比")
-
-
-def test_init_wizard_dialog_loads_without_warnings(qapp):
-    """数据初始化向导（阶段 4c）—— 构造期不起线程（worker 只在「开始」时才建），故可直接构造。"""
-    from ui_qml.bridge.init_wizard_bridge import InitWizardQmlDialog
-
-    _assert_loads_and_quiet(lambda: InitWizardQmlDialog(), "数据初始化向导")
 
 
 def test_page_host_shows_a_visible_error_when_qml_fails(qapp):

@@ -26,12 +26,11 @@ hex 本身仍全部来自 `ui_qml.theme.registry`，不违反「配色只在 the
 from __future__ import annotations
 
 import os
-from typing import Any
 
-from PySide6.QtCore import QModelIndex, Qt, QUrl, Signal
+from PySide6.QtCore import QModelIndex, Qt, Signal
 from PySide6.QtGui import QColor
 
-from ui_qml.icon_cache import item_icon_path
+from ui_qml.icon_cache import icon_url as _png_url
 from ui_qml.icon_provider import PROVIDER_ID
 from ui_qml.icons import svg_path
 from ui_qml.models.industry_models import PlanTableModel
@@ -44,7 +43,7 @@ from ui_qml.models.plan_table_constants import (
     COL_STATUS,
     COL_TIME,
 )
-from ui_qml.theme import registry as theme
+from ui_qml.theme.registry import token as _token
 
 __all__ = ["PlanQmlModel", "ROLE_NAMES"]
 
@@ -108,21 +107,6 @@ def phosphor_url(filename: str, color: str, size: int = 16) -> str:
         return ""
     encoded = str(color).replace("#", "%23")
     return f"image://{PROVIDER_ID}/{filename}?c={encoded}&s={int(size)}"
-
-
-def _png_url(type_id: Any) -> str:
-    """物品图标（磁盘上的 PNG）URL。"""
-    if not type_id:
-        return ""
-    path = item_icon_path(int(type_id))
-    if not os.path.isfile(path):
-        return ""
-    return QUrl.fromLocalFile(path).toString()
-
-
-def _token(name: str) -> str:
-    """按 token 名取当前主题色值。"""
-    return str(getattr(theme, name, "") or "")
 
 
 #: 类别底色的不透明度。**必须带透明度**：旧 Widgets 版直接把类别色当整行底色

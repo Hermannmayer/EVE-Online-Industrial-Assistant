@@ -431,26 +431,6 @@ class PlanTable(QObject):
                 get_container().plan_repo.update(plan["id"], runs=val)
             self.plan_updated.emit()
 
-    def _modify_parallels(self, row: int) -> None:
-        if self._model is None:
-            return
-        from ui_qml.bridge.input_dialog import InputQmlDialog
-
-        plan = self._model.get_plan(row)
-        current = int(plan.get("parallels", 1))
-        val, ok = InputQmlDialog.get_int(self, "修改并行数", "并行数:", current, 1, 99999)
-        if ok:
-            val = max(1, val)
-            # 按比值即时更新时长（并行只影响时长公式中的总流程，不增加实际耗时）
-            if current > 0 and val > 0:
-                ratio = val / current
-                plan["daily_output"] = plan.get("daily_output", 0) * ratio if plan.get("daily_output", 0) else 0
-            plan["parallels"] = val
-            self._model.layoutChanged.emit()
-            if plan.get("id"):
-                get_container().plan_repo.update(plan["id"], parallels=val)
-            self.plan_updated.emit()
-
     def _copy_blueprint_name(self, row: int) -> None:
         if self._model is None:
             return
@@ -774,19 +754,6 @@ class PlanTable(QObject):
 
     # ── Phase 3 占位 ────────────────────────────────────────
 
-    def _view_item_details(self, row: int):
-        # 查看物品详情: 打开 MatDlg 显示制造材料
-        plan = self._model.get_plan(row) if self._model else {}
-        if not plan:
-            return
-        type_id = plan.get("product_type_id")
-        if not type_id:
-            return
-        from ui_qml.bridge.all_items_bridge import MatQmlDialog as MatDlg
-
-        dlg = MatDlg(type_id)
-        dlg.exec()
-
     def _view_cost_breakdown(
         self,
         row: int,
@@ -879,79 +846,6 @@ class PlanTable(QObject):
         dlg = MassParallelDialog(parents + children, self)
         if dlg.exec():
             self.plan_updated.emit()
-
-    def _set_facility_system(self, row: int) -> None:
-        """为设施设置所在星系 — 星系搜索对话框 + 自动带出成本系数"""
-        if self._model is None:
-            return
-        plan = self._model.get_plan(row)
-        if not plan:
-            return
-
-        from ui_qml.bridge.message_dialog import FMessageDialog
-        from ui_qml.bridge.system_search_bridge import SystemSearchQmlDialog
-
-        dlg = SystemSearchQmlDialog(self, "设置设施星系")
-        if not dlg.exec():
-            return
-        sel = dlg.get_selected()
-        if not sel:
-            return
-        ss_id, ss_name = sel
-
-        # 更新内存 plan
-        plan["facility"] = ss_name
-        plan["solar_system_id"] = ss_id
-
-        # 自动带出成本系数
-        sci = get_container().pricing_service.get_system_cost_index(ss_id, "manufacturing")
-
-        # 持久化（设施名 + 星系列）
-        if plan.get("id"):
-            get_container().plan_repo.update(plan["id"], facility=ss_name, solar_system_id=ss_id)
-
-        self._model.layoutChanged.emit()
-        self.plan_updated.emit()
-        FMessageDialog.information(
-            self,
-            "设置完成",
-            f"设施星系: {ss_name}\n制造成本指数(SCI): {sci:.4f}\n\n可在「成本系数」中调整附加费率。",
-        )
-
-    def _set_facility_cost_index(self, row: int) -> None:
-        """为设施所在星系设置成本系数 — 覆盖 SCI 或添加附加费率"""
-        if self._model is None:
-            return
-        plan = self._model.get_plan(row)
-        if not plan:
-            return
-
-        from ui_qml.bridge.input_dialog import InputQmlDialog
-        from ui_qml.bridge.message_dialog import FMessageDialog
-
-        facility = plan.get("facility", "") or "未设置"
-
-        # 从 DB 读取当前系数（如果有 system_id 可以从 plan 推断，但当前没有这个字段）
-        # 这里只设一个简单的附加费率 multiplier
-        current_mult = float(plan.get("facility_cost_mult", 1.0) or 1.0)
-
-        val, ok = InputQmlDialog.get_double(
-            self,
-            "设施成本系数",
-            f"设施: {facility}\n当前系数: {current_mult:.2f}x\n\n新系数 (1.0 = 标准 SCI, >1 = 附加费用):",
-            current_mult,
-            0.1,
-            10.0,
-            2,
-        )
-        if not ok:
-            return
-
-        # 持久化到 plan（扩展字段：facility_cost_mult）
-        if plan.get("id"):
-            get_container().plan_repo.update(plan["id"], facility_cost_mult=val)
-
-        FMessageDialog.information(self, "设置完成", f"设施成本系数已设为 {val:.2f}x")
 
     # ── 主题 ─────────────────────────────────────────────────
 

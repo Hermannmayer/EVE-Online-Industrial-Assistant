@@ -25,6 +25,7 @@ from ui_qml.bridge.summary_dialog import cell
 from ui_qml.dialog_host import DialogBridge, QmlDialog
 from ui_qml.file_dialogs import get_save_filename
 from ui_qml.workers.batch_price_workers import BatchPriceWorker, _search_items
+from ui_qml.workers.lifecycle import drop_worker
 
 __all__ = [
     "BatchPriceBridge",
@@ -54,9 +55,6 @@ _HINT_IDLE = "输入物品名称或 ID 后点击查询"
 
 #: 无价格 / 未找到的单元格用次要色（原 `ForegroundRole` 用的就是 `theme.TEXT_SECONDARY`）
 _DIM = "TEXT_SECONDARY"
-
-#: 关窗时还没跑完、被摘出对话树的线程（见 `BatchPriceBridge.stop`）
-_DETACHED: set[Any] = set()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -296,20 +294,10 @@ class BatchPriceBridge(DialogBridge):
     def stop(self) -> None:
         """关窗收尾：`QThread` 在运行中被析构时 Qt 直接 `abort()`。
 
-        先 `cancel()`（worker 会在下一条物品前退出循环）再等 2 秒；真没等到就把它从
-        桥的子对象里摘出来，挂到模块级集合上等它自己结束（同 `npc_seller_bridge` 的
-        「强引用保活」做法）—— 父对象已随对话框销毁，留着反而是崩溃源。
+        先 `cancel()`（worker 会在下一条物品前退出循环）再等超时；收尾逻辑见
+        `ui_qml.workers.lifecycle.drop_worker`。
         """
-        worker = self._worker
-        if worker is None or not worker.isRunning():
-            return
-        worker.cancel()
-        worker.requestInterruption()
-        if worker.wait(2000):
-            return
-        _DETACHED.add(worker)
-        worker.setParent(None)
-        worker.finished.connect(lambda: _DETACHED.discard(worker))
+        drop_worker(self._worker, cancel=True)
 
 
 class BatchPriceQmlDialog(QmlDialog):

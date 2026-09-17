@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.workers.getprices import (
+from services.importers.getprices import (
     _PAGE_CACHE,
     TRADE_REGIONS,
     discover_pages,
@@ -88,7 +88,7 @@ class TestInitDb:
         cm.__aenter__ = AsyncMock(return_value=db)
         cm.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("services.workers.getprices.aiosqlite.connect", return_value=cm):
+        with patch("services.importers.getprices.aiosqlite.connect", return_value=cm):
             await init_db()
 
         # CREATE market_prices + ALTER 补列 + CREATE volume_snapshots = 3 次
@@ -128,7 +128,7 @@ class TestFetchBaselinePrices:
         client = _mock_client()
         client.fetch_raw = AsyncMock(return_value=fake_json)
 
-        with patch("services.workers.getprices.APIClient") as mock_api:
+        with patch("services.importers.getprices.APIClient") as mock_api:
             mock_api.return_value.__aenter__ = AsyncMock(return_value=client)
             mock_api.return_value.__aexit__ = AsyncMock(return_value=False)
             result = await fetch_baseline_prices()
@@ -160,7 +160,7 @@ class TestFetchBaselinePrices:
         client = _mock_client()
         client.fetch_raw = AsyncMock(return_value=None)
 
-        with patch("services.workers.getprices.APIClient") as mock_api:
+        with patch("services.importers.getprices.APIClient") as mock_api:
             mock_api.return_value.__aenter__ = AsyncMock(return_value=client)
             mock_api.return_value.__aexit__ = AsyncMock(return_value=False)
             result = await fetch_baseline_prices()
@@ -309,9 +309,9 @@ class TestFetchOrders:
 
         # ── patch 内层函数，避免真实 HTTP ──
         with (
-            patch("services.workers.getprices.discover_pages") as mock_discover,
-            patch("services.workers.getprices._fetch_order_pages_detailed") as mock_fetch_pages,
-            patch("services.workers.getprices.APIClient") as mock_api,
+            patch("services.importers.getprices.discover_pages") as mock_discover,
+            patch("services.importers.getprices._fetch_order_pages_detailed") as mock_fetch_pages,
+            patch("services.importers.getprices.APIClient") as mock_api,
         ):
             client = _mock_client()
             mock_api.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -379,9 +379,9 @@ class TestSavePrices:
                 1: {"buy_price": 1.1, "sell_price": 2.1, "adjusted_price": 1.6, "buy_volume": 11, "sell_volume": 21}
             },
         }
-        from services.workers import getprices
+        from services.importers import getprices
 
-        with patch("services.workers.getprices.aiosqlite.connect", return_value=cm):
+        with patch("services.importers.getprices.aiosqlite.connect", return_value=cm):
             cnt = await getprices.save_prices(baseline, order_prices, region_ids=[10000002, 10000043])
 
         # 只对成功区域执行 DELETE（1 次），失败区域无 DELETE
@@ -406,9 +406,9 @@ class TestSavePrices:
         }
         order_prices = {10000002: {}}  # 区域存在但拉取结果为空
 
-        from services.workers import getprices
+        from services.importers import getprices
 
-        with patch("services.workers.getprices.aiosqlite.connect", return_value=cm):
+        with patch("services.importers.getprices.aiosqlite.connect", return_value=cm):
             cnt = await getprices.save_prices(baseline, order_prices, region_ids=[10000002])
 
         deletes = [c[0][0] for c in db.execute.await_args_list if c[0] and "DELETE" in c[0][0]]
@@ -433,9 +433,9 @@ class TestFetchBaselineOnly:
         mock_save = AsyncMock(return_value=len(baseline))
 
         with (
-            patch("services.workers.getprices.init_db", AsyncMock()),
-            patch("services.workers.getprices.fetch_baseline_prices", AsyncMock(return_value=baseline)),
-            patch("services.workers.getprices.save_prices", mock_save),
+            patch("services.importers.getprices.init_db", AsyncMock()),
+            patch("services.importers.getprices.fetch_baseline_prices", AsyncMock(return_value=baseline)),
+            patch("services.importers.getprices.save_prices", mock_save),
         ):
             await fetch_baseline_only(progress_cb=lambda pct, msg: None)
 
@@ -451,9 +451,9 @@ class TestFetchBaselineOnly:
     async def test_empty_baseline_skips_save(self):
         """baseline 为空（网络失败）→ 不写库，仅告警返回"""
         with (
-            patch("services.workers.getprices.init_db", AsyncMock()),
-            patch("services.workers.getprices.fetch_baseline_prices", AsyncMock(return_value={})),
-            patch("services.workers.getprices.save_prices", AsyncMock()) as mock_save,
+            patch("services.importers.getprices.init_db", AsyncMock()),
+            patch("services.importers.getprices.fetch_baseline_prices", AsyncMock(return_value={})),
+            patch("services.importers.getprices.save_prices", AsyncMock()) as mock_save,
         ):
             await fetch_baseline_only()
 

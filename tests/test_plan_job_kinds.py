@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from services import plan_job_kinds as pk
 from services.char_capacity import (
     CAPACITY_LINE_MANUFACTURING,
@@ -20,88 +18,79 @@ from services.plan_category import (
     CATEGORY_MANUFACTURING,
     CATEGORY_RESEARCH,
     category_for_activity,
-    category_symbol,
+)
+
+# 全部已知活动（normalize 必须原样放行的那一组）
+_KNOWN = (
+    "manufacturing",
+    "copying",
+    "invention",
+    "researching_material_efficiency",
+    "researching_time_efficiency",
+    "reaction",
 )
 
 
 class TestNormalize:
-    @pytest.mark.parametrize(
-        ("raw", "expected"),
-        [
-            ("manufacturing", "manufacturing"),
-            ("copying", "copying"),
-            ("invention", "invention"),
-            ("researching_material_efficiency", "researching_material_efficiency"),
-            ("researching_time_efficiency", "researching_time_efficiency"),
-            ("reaction", "reaction"),
-        ],
-    )
-    def test_known_activities_pass_through(self, raw, expected):
-        assert pk.normalize(raw) == expected
+    def test_known_activities_pass_through(self):
+        """已知活动原样返回 —— 漏登记 = 静默降级成制造。"""
+        for act in _KNOWN:
+            assert pk.normalize(act) == act, act
 
-    @pytest.mark.parametrize("raw", [None, "", "   ", "unknown_activity", "COPYING"])
-    def test_unknown_falls_back_to_manufacturing(self, raw):
-        assert pk.normalize(raw) == "manufacturing"
+    def test_unknown_falls_back_to_manufacturing(self):
+        for raw in (None, "", "   ", "unknown_activity", "COPYING"):
+            assert pk.normalize(raw) == "manufacturing", raw
 
 
 class TestInputBlueprintRule:
-    def test_manufacturing_accepts_both(self):
-        assert pk.input_blueprint_rule("manufacturing") == pk.RULE_BPO_OR_BPC
-        assert pk.accepts_bpo("manufacturing")
-        assert pk.accepts_bpc("manufacturing")
+    def test_rule_table(self):
+        """activity → 规则；accepts_bpo/accepts_bpc 必须与规则同源。
 
-    @pytest.mark.parametrize("activity", ["copying", "researching_material_efficiency", "researching_time_efficiency"])
-    def test_copying_and_research_require_bpo(self, activity):
-        assert pk.input_blueprint_rule(activity) == pk.RULE_BPO_ONLY
-        assert pk.accepts_bpo(activity)
-        assert not pk.accepts_bpc(activity), "BPC 不可再拷贝或研究"
-
-    def test_invention_requires_bpc(self):
-        assert pk.input_blueprint_rule("invention") == pk.RULE_BPC_RUNS
-        assert pk.accepts_bpc("invention")
-        assert not pk.accepts_bpo("invention"), "BPO 不能用于发明"
-
-    def test_reaction_accepts_both(self):
-        assert pk.accepts_bpo("reaction") and pk.accepts_bpc("reaction")
+        未知活动走 `.get(default)` → 沿用制造的宽松规则，不得返回 None。
+        """
+        expected = {
+            "manufacturing": pk.RULE_BPO_OR_BPC,
+            "reaction": pk.RULE_BPO_OR_BPC,
+            "copying": pk.RULE_BPO_ONLY,
+            "researching_material_efficiency": pk.RULE_BPO_ONLY,
+            "researching_time_efficiency": pk.RULE_BPO_ONLY,
+            "invention": pk.RULE_BPC_RUNS,
+        }
+        for act, rule in expected.items():
+            assert pk.input_blueprint_rule(act) == rule, act
+            assert pk.accepts_bpo(act) == (rule != pk.RULE_BPC_RUNS), act
+            assert pk.accepts_bpc(act) == (rule != pk.RULE_BPO_ONLY), act
+        assert pk.input_blueprint_rule("bogus") == pk.RULE_BPO_OR_BPC
 
 
 class TestOutputKind:
-    def test_manufacturing_outputs_item(self):
-        assert pk.output_kind("manufacturing") == pk.OUTPUT_ITEM
-        assert pk.output_kind("reaction") == pk.OUTPUT_ITEM
-        assert not pk.product_is_blueprint("manufacturing")
-
-    @pytest.mark.parametrize("activity", ["copying", "invention"])
-    def test_science_outputs_blueprint(self, activity):
-        assert pk.output_kind(activity) == pk.OUTPUT_BPC
-        assert pk.product_is_blueprint(activity), "产物是蓝图 → 禁止按制造产物反查"
-
-    @pytest.mark.parametrize("activity", ["researching_material_efficiency", "researching_time_efficiency"])
-    def test_research_outputs_improved_bpo(self, activity):
-        assert pk.output_kind(activity) == pk.OUTPUT_IMPROVED_BPO
-        assert pk.product_is_blueprint(activity)
+    def test_output_kind_table(self):
+        """产物口径：科研产物是蓝图 → 消费方禁止按制造产物反查。"""
+        expected = {
+            "manufacturing": pk.OUTPUT_ITEM,
+            "reaction": pk.OUTPUT_ITEM,
+            "copying": pk.OUTPUT_BPC,
+            "invention": pk.OUTPUT_BPC,
+            "researching_material_efficiency": pk.OUTPUT_IMPROVED_BPO,
+            "researching_time_efficiency": pk.OUTPUT_IMPROVED_BPO,
+        }
+        for act, kind in expected.items():
+            assert pk.output_kind(act) == kind, act
+            assert pk.product_is_blueprint(act) == (kind != pk.OUTPUT_ITEM), act
 
 
 class TestIsScience:
-    @pytest.mark.parametrize("activity", ["copying", "invention", "researching_material_efficiency"])
-    def test_science_activities(self, activity):
-        assert pk.is_science(activity)
-
-    @pytest.mark.parametrize("activity", ["manufacturing", "reaction", None, "", "bogus"])
-    def test_non_science_activities(self, activity):
-        assert not pk.is_science(activity)
+    def test_science_classification(self):
+        for act in ("copying", "invention", "researching_material_efficiency"):
+            assert pk.is_science(act), act
+        for act in ("manufacturing", "reaction", None, "", "bogus"):
+            assert not pk.is_science(act), act
 
 
 class TestHints:
     def test_manufacturing_hint_keeps_legacy_wording(self):
-        """历史文案不能变（既有测试与用户习惯都依赖「无可用蓝图」）。"""
+        """历史文案不能变（用户习惯与启动校验的提示依赖「无可用蓝图」）。"""
         assert pk.input_blueprint_hint("manufacturing") == "无可用蓝图"
-
-    def test_copying_hint_mentions_bpo(self):
-        assert "BPO" in pk.input_blueprint_hint("copying")
-
-    def test_invention_hint_mentions_bpc(self):
-        assert "BPC" in pk.input_blueprint_hint("invention")
 
 
 class TestMaterialActivity:
@@ -109,47 +98,27 @@ class TestMaterialActivity:
         """blueprint_materials 里研究活动名无 -ing 后缀，查表必须换算。"""
         assert pk.material_activity("researching_material_efficiency") == "research_material"
         assert pk.material_activity("researching_time_efficiency") == "research_time"
-
-    def test_others_pass_through(self):
-        assert pk.material_activity("manufacturing") == "manufacturing"
-        assert pk.material_activity("copying") == "copying"
-        assert pk.material_activity("invention") == "invention"
+        assert pk.material_activity("manufacturing") == "manufacturing"  # 其余原样透传
 
 
 class TestCategoryMapping:
-    @pytest.mark.parametrize(
-        ("activity", "expected"),
-        [
-            ("manufacturing", CATEGORY_MANUFACTURING),
-            ("copying", CATEGORY_COPYING),
-            ("invention", CATEGORY_INVENTION),
-            ("researching_material_efficiency", CATEGORY_RESEARCH),
-            ("researching_time_efficiency", CATEGORY_RESEARCH),
-        ],
-    )
-    def test_activity_maps_to_category(self, activity, expected):
-        assert category_for_activity(activity) == expected
-
-    def test_unknown_falls_back(self):
+    def test_activity_maps_to_category(self):
+        expected = {
+            "manufacturing": CATEGORY_MANUFACTURING,
+            "copying": CATEGORY_COPYING,
+            "invention": CATEGORY_INVENTION,
+            "researching_material_efficiency": CATEGORY_RESEARCH,
+            "researching_time_efficiency": CATEGORY_RESEARCH,
+        }
+        for act, cat in expected.items():
+            assert category_for_activity(act) == cat, act
         assert category_for_activity(None) == CATEGORY_MANUFACTURING
         assert category_for_activity("bogus") == CATEGORY_MANUFACTURING
 
-    def test_every_category_has_symbol(self):
-        """每类都要有展示符号（生产计划表「类别」列）。"""
-        for act in ("manufacturing", "copying", "invention", "reaction"):
-            assert category_symbol(category_for_activity(act))
-        assert category_symbol(CATEGORY_RESEARCH)
-
 
 class TestCapacityLine:
-    @pytest.mark.parametrize("activity", ["copying", "invention"])
-    def test_copy_and_invention_occupy_research_line(self, activity):
-        assert capacity_line_for_category(category_for_activity(activity)) == CAPACITY_LINE_RESEARCH
-
-    @pytest.mark.parametrize("activity", ["researching_material_efficiency", "researching_time_efficiency"])
-    def test_me_te_research_occupies_research_line(self, activity):
-        """ME/TE 研究必须是科研线——漏配会占满制造线，角色超员误报。"""
-        assert capacity_line_for_category(category_for_activity(activity)) == CAPACITY_LINE_RESEARCH
-
-    def test_manufacturing_occupies_manufacturing_line(self):
+    def test_research_activities_occupy_research_line(self):
+        """拷贝/发明/ME/TE 必须是科研线——漏配会占满制造线，角色超员误报。"""
+        for act in ("copying", "invention", "researching_material_efficiency", "researching_time_efficiency"):
+            assert capacity_line_for_category(category_for_activity(act)) == CAPACITY_LINE_RESEARCH, act
         assert capacity_line_for_category(category_for_activity("manufacturing")) == CAPACITY_LINE_MANUFACTURING

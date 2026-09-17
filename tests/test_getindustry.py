@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from services.workers.getindustry import (
+from services.importers.getindustry import (
     KEY_MANUFACTURING_SKILLS,
     create_tables,
     industry_data_is_fresh,
@@ -30,7 +30,7 @@ class TestCreateTables:
             cm.__aexit__ = AsyncMock(return_value=False)
             return cm
 
-        with patch("services.workers.getindustry.aiosqlite.connect", side_effect=connect_side_effect):
+        with patch("services.importers.getindustry.aiosqlite.connect", side_effect=connect_side_effect):
             await create_tables()
 
         ref_sql = mock_ref_db.executescript.call_args[0][0]
@@ -51,7 +51,7 @@ class TestCreateTables:
             cm.__aexit__ = AsyncMock(return_value=False)
             return cm
 
-        with patch("services.workers.getindustry.aiosqlite.connect", side_effect=connect_side_effect):
+        with patch("services.importers.getindustry.aiosqlite.connect", side_effect=connect_side_effect):
             await create_tables()
 
         for call_args in mock_usr_db.execute.call_args_list:
@@ -60,8 +60,8 @@ class TestCreateTables:
 
 class TestRunIndustryUpdate:
     @pytest.mark.asyncio
-    @patch("services.workers.getindustry.create_tables")
-    @patch("services.workers.getindustry.APIClient")
+    @patch("services.importers.getindustry.create_tables")
+    @patch("services.importers.getindustry.APIClient")
     async def test_fetches_system_cost_indices(self, mock_api_client, mock_create_tables):
         mock_client = AsyncMock()
         mock_client.__aenter__.return_value = mock_client
@@ -95,7 +95,7 @@ class TestRunIndustryUpdate:
             return cm
 
         with patch("os.makedirs"):
-            with patch("services.workers.getindustry.aiosqlite.connect", side_effect=connect_side_effect):
+            with patch("services.importers.getindustry.aiosqlite.connect", side_effect=connect_side_effect):
                 await run_industry_update()
 
         insert_calls = [
@@ -105,8 +105,8 @@ class TestRunIndustryUpdate:
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
-    @patch("services.workers.getindustry.create_tables")
-    @patch("services.workers.getindustry.APIClient")
+    @patch("services.importers.getindustry.create_tables")
+    @patch("services.importers.getindustry.APIClient")
     async def test_fetches_facilities(self, mock_api_client, mock_create_tables):
         mock_client = AsyncMock()
         mock_client.__aenter__.return_value = mock_client
@@ -145,7 +145,7 @@ class TestRunIndustryUpdate:
             return cm
 
         with patch("os.makedirs"):
-            with patch("services.workers.getindustry.aiosqlite.connect", side_effect=connect_side_effect):
+            with patch("services.importers.getindustry.aiosqlite.connect", side_effect=connect_side_effect):
                 await run_industry_update()
 
         fac_calls = [

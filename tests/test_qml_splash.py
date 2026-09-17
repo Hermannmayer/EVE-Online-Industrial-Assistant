@@ -14,18 +14,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QEventLoop, QTimer, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import QtMsgType, qInstallMessageHandler
 from PySide6.QtQuick import QQuickWindow
 
+from tests.qml_click import spin as _spin
 from ui_qml.splash_window import SplashScreen
 
 pytestmark = pytest.mark.ui
-
-
-def _spin(ms: int = 120) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
 
 
 def _find(root, object_name: str):

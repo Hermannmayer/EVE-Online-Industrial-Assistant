@@ -7,7 +7,6 @@
 from bootstrap.container import (
     AppContainer,
     get_container,
-    init_container,
 )
 
-__all__ = ["AppContainer", "get_container", "init_container"]
+__all__ = ["AppContainer", "get_container"]
