@@ -6,6 +6,53 @@
 
 <!-- version list -->
 
+## v0.23.3 (2026-09-18)
+
+### Bug Fixes
+
+- **SDE缓存**: 复用本地已存在的 sde.zip，不再重下 112MB
+  ([`e72c5b2`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/e72c5b29b9aa62b2ed4644cbd8081d739637b09c))
+
+- **SDE缓存**: 提取改原子写+完成标记；下载补 429/503 退避重试
+  ([`481e997`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/481e997bd2674df648e92464248a4bd01c380500))
+
+- **发行包**: 打包前对模板库做 WAL checkpoint
+  ([`caab9bd`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/caab9bdce2412ae25c9b952713eae8938907ad02))
+
+- **发行包**: 打包前无头生成模板库；产物改白名单，缺文件即失败
+  ([`80977c2`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/80977c2ba4d446d2538bbdd95739678e6cada637))
+
+- **数据库**: User 库备份失败阻断迁移；迁移缺失不再静默推版本号
+  ([`bf40064`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/bf40064f7828499f9ac41a3726b05215634bcb44))
+
+- **材料计算**: 单件材料豁免下沉到底层函数，修 BOM/计划路径少要一个料
+  ([`b588775`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b5887754b0100519863e83731ec9f41b94e25f18))
+
+- **计算**: 技能系数按客户端 SDE 文案校正；制造补蓝图所需技能 1%/级
+  ([`dca925a`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/dca925a8dee1456010c7f5062afa3115f44c3cfc))
+
+### Chores
+
+- **工具**: 新增 scripts/new_worktree.py，建 worktree 时自动带上本地运行数据
+  ([`a11b8d1`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a11b8d103b6f44ef057d8f647bc7236e50cd5a5e))
+
+### Performance Improvements
+
+- **图标**: 分批提交下载任务，首启堆峰值 87.1MB → 20.1MB
+  ([`a92d233`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a92d2333e8776930c6d63fc1c8948d4bff421a77))
+
+- **蓝图**: 补蓝图表查找索引，逐件研究成本 784ms → 56ms（200 件不同物品）
+  ([`7bcc37e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/7bcc37eec178d60f2f400c495c2c8e661da19ea0))
+
+- **评分**: 批量重算 30.0s → 1.81s（材料价/EIV 批量预取 + 研究成本整批一次算）
+  ([`44d6187`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/44d6187f2841f809c12f3a8bc8c228b2fcfa667b))
+
+### Testing
+
+- 消除未 await 协程警告；把恒真断言换成真行为断言
+  ([`4326ac0`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/4326ac068d5d1836c7408e7ca1efcaaa8b2c2c7c))
+
+
 ## v0.23.2 (2026-09-18)
 
 ### Bug Fixes
