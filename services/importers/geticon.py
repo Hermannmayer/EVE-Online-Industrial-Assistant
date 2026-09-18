@@ -197,21 +197,38 @@ async def download_all(session: aiohttp.ClientSession, type_ids: list, progress_
     total = len(type_ids)
     log.info(f"总计={total}, 按 iconID 分组后共 {len(icon_groups)} 个唯一图标")
 
-    tasks = [
-        download_icon_for_group(session, icon_id, tids, semaphore, progress) for icon_id, tids in icon_groups.items()
-    ]
-    if tasks:
-        # 后台轮询共享进度并上报（不侵入单个下载函数）
-        async def _monitor():
-            last = -1
-            while progress[0] < total:
-                processed = min(progress[0], total)
-                if processed != last and progress_cb:
-                    progress_cb(int(processed / max(total, 1) * 100), f"图标 {processed}/{total}")
-                    last = processed
-                await asyncio.sleep(0.2)
+    items = list(icon_groups.items())
 
-        await asyncio.gather(_monitor(), *tasks)
+    # 后台轮询共享进度并上报（不侵入单个下载函数）
+    async def _monitor():
+        last = -1
+        while progress[0] < total:
+            processed = min(progress[0], total)
+            if processed != last and progress_cb:
+                progress_cb(int(processed / max(total, 1) * 100), f"图标 {processed}/{total}")
+                last = processed
+            await asyncio.sleep(0.2)
+
+    monitor = asyncio.create_task(_monitor()) if items else None
+    try:
+        # 分批提交：一次性为「唯一图标数」建协程，内存按图标数涨
+        # （实测 5000 个 → 堆峰值 32.3MB；全量 1.8 万 → 100MB+）。
+        # 批内并发仍由 Semaphore(CONCURRENCY) 约束，批间顺序推进，并发上限不变。
+        batch_size = CONCURRENCY * 4
+        for i in range(0, len(items), batch_size):
+            await asyncio.gather(
+                *[
+                    download_icon_for_group(session, icon_id, tids, semaphore, progress)
+                    for icon_id, tids in items[i : i + batch_size]
+                ]
+            )
+    finally:
+        if monitor is not None:
+            monitor.cancel()
+            try:
+                await monitor
+            except asyncio.CancelledError:
+                pass
 
     if progress_cb:
         progress_cb(100, f"图标 {total}/{total}")
