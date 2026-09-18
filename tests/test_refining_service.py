@@ -88,9 +88,9 @@ def test_no_materials_returns_empty():
 
 
 def test_yield_rate_and_ore_skill():
-    """产率 = 基础（无技能 0.5）+ 矿石专精 2%/级（≤0.85）"""
+    """产率 = 基础 0.5 × (1 + 2%×矿石专精等级)——乘性，且受公式上限约束"""
     db = FakeDB()
     svc = RefiningService(db, pricing_service=FakePricing({34: 1.0, 1230: 1.0}))
     result = svc.calc_value(1230, ore_skill=5)
-    assert result["yield_rate"] == pytest.approx(min(0.5 + 0.10, 0.85), abs=1e-4)
+    assert result["yield_rate"] == pytest.approx(0.5 * 1.10, abs=1e-4)
     assert result["yield_rate"] <= 0.85

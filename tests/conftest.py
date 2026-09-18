@@ -165,6 +165,14 @@ def _create_temp_databases(tmpdir: str):
             quantity INTEGER,
             wastefactor INTEGER DEFAULT 10
         );
+        -- 制造所需技能（评分链路会读它算「每级 -1% 生产时间」；本夹具留空 = 无减免）
+        CREATE TABLE blueprint_skills (
+            blueprint_type_id INTEGER,
+            activity TEXT,
+            skill_type_id INTEGER,
+            level INTEGER,
+            PRIMARY KEY (blueprint_type_id, activity, skill_type_id)
+        );
         -- 渡鸦级蓝图: 需要 1000 Trit + 500 Pyer, 产出 1 个, 时间 3600s
         INSERT INTO blueprint_activities VALUES (3001, 'manufacturing', 3600);
         INSERT INTO blueprint_activities VALUES (3002, 'manufacturing', 600);
@@ -537,6 +545,11 @@ def seed_bp_blueprints():
         conn.execute(
             "CREATE TABLE blueprint_materials (blueprint_type_id INTEGER, activity TEXT, "
             "material_type_id INTEGER, quantity INTEGER)"
+        )
+        # 评分链路会读 blueprint_skills 算所需技能的 1%/级时间减免；留空 = 无减免
+        conn.execute(
+            "CREATE TABLE blueprint_skills (blueprint_type_id INTEGER, activity TEXT, "
+            "skill_type_id INTEGER, level INTEGER)"
         )
         conn.execute("CREATE TABLE blueprint_activities (blueprint_type_id INTEGER, activity TEXT, time REAL)")
         conn.execute("INSERT INTO blueprint_products VALUES (3001,'manufacturing',2001,1)")

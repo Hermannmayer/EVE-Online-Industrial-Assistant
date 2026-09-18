@@ -46,9 +46,9 @@ class RefiningService:
         yield_rate = (
             yield_override
             if yield_override is not None
-            else calc_refining_yield(skills, is_player_facility=is_player_facility)
+            else calc_refining_yield(skills, is_player_facility=is_player_facility, ore_skill_level=ore_skill)
         )
-        yield_rate += ore_skill * 0.02
+        # 矿石专精已进公式（乘性）；上限由公式按 NPC 站/玩家结构分别施加
         yield_rate = min(yield_rate, 0.85)
 
         with self._db.connect("ref") as conn:

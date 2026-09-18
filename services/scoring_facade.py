@@ -213,6 +213,17 @@ def calc_manufacturing_score(
             materials=materials,
         )
         prices = _DbPriceProvider(db, preloaded)
+        # 该蓝图制造活动所需技能名 → 供 domain 按角色等级算「每级 -1% 生产时间」
+        # （客户端技能文案：机械工程学「每升一级，所有需要机械工程学技能的物品的生产时间减少 1%」）
+        bp_required_skills = tuple(
+            row[0]
+            for row in conn.execute(
+                "SELECT COALESCE(i.zh_name, i.en_name, CAST(bs.skill_type_id AS TEXT)) "
+                "FROM blueprint_skills bs LEFT JOIN item i ON i.type_id = bs.skill_type_id "
+                "WHERE bs.blueprint_type_id = ? AND bs.activity = 'manufacturing'",
+                (bp_id,),
+            ).fetchall()
+        )
         research_cost = (
             (research_costs.get(type_id) or 0.0)
             if research_costs is not None
@@ -237,6 +248,7 @@ def calc_manufacturing_score(
             facility_tax_pct=facility_tax_pct,
             is_alpha=is_alpha,
             mat_price_mult=mat_price_mult,
+            bp_required_skills=bp_required_skills,
         )
 
     # 写入缓存（仅缓存成功结果，失败状态不缓存）

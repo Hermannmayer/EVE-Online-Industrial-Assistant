@@ -732,6 +732,7 @@ class ScoringService:
             MATERIAL_ACTIVITY,
             METALLURGY_TIME_SKILL,
             RESEARCH_TIME_SKILL,
+            SCIENCE_TIME_SKILL,
             copy_job_runs,
             get_decryptor,
             science_job_time,
@@ -930,6 +931,7 @@ class ScoringService:
             activity=activity,
             research_skill=int(skills.get(RESEARCH_TIME_SKILL, 0) or 0),
             metallurgy_skill=int(skills.get(METALLURGY_TIME_SKILL, 0) or 0),
+            science_skill=int(skills.get(SCIENCE_TIME_SKILL, 0) or 0),
             te_level=int(plan_data.get("te_level", 0) or 0),
             structure_time_mod=structure_time_mod,
         )

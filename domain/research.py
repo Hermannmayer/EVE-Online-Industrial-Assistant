@@ -171,11 +171,15 @@ def copy_job_runs(copies: int, runs_per_copy: int, max_production_limit: int) ->
 #  科学作业时长
 # ═══════════════════════════════════════════════════════════
 
-# 科学作业（拷贝/发明/研究）的时间减免技能。
-# 制造走 industry/formulas.calc_production_time（工业理论 4% + 高级工业理论 3%）；
-# 科学作业走 research_skill_mult / metallurgy_skill_mult，两者互不叠加。
-RESEARCH_TIME_SKILL = "研究概论"  # Research: 每级 -2%
-METALLURGY_TIME_SKILL = "冶金学"  # Metallurgy: 每级 -1%（仅研究活动）
+# 科学作业（拷贝/发明/研究）的时间减免技能。系数与归属均取自**客户端 SDE 技能描述**：
+#   3402 科学原理「每升一级，蓝图复制的速度提升 5%」→ 仅拷贝
+#   3403 研究概论「每升一级，蓝图时间效率研究的速度提升 5%」→ 仅 TE 研究
+#   3409 冶金学「每升一级，材料效率研究的速度提升 5%」→ 仅 ME 研究
+#   发明：没有任何技能文案提到发明时长（Wiki 也只说结构/钻机减免）→ 不套技能
+# 制造走 domain/formulas.calc_production_time（工业理论 4% + 高级工业理论 3% + 蓝图所需技能 1%）
+RESEARCH_TIME_SKILL = "研究概论"
+METALLURGY_TIME_SKILL = "冶金学"
+SCIENCE_TIME_SKILL = "科学原理"
 
 
 def science_job_time(
@@ -184,23 +188,32 @@ def science_job_time(
     activity: str,
     research_skill: int = 0,
     metallurgy_skill: int = 0,
+    science_skill: int = 0,
     te_level: int = 0,
     structure_time_mod: float = 1.0,
 ) -> float:
     """科学作业实际时长（秒）。
 
-    公式（与 calc_production_time 同形，仅换减免技能）:
-        time = base_time × (1 − 0.02×研究概论) × (1 − 0.01×冶金学) × (1 − 0.01×TE) × 结构系数
+    公式（与 calc_production_time 同形，技能按活动归属）:
+        time = base_time × 技能系数 × (1 − 0.01×TE) × 结构系数
 
-    冶金学只对材料/时间效率研究生效（拷贝/发明不适用），其余活动该项忽略。
+    技能系数按活动取（依据客户端 SDE 技能描述，见文件头常量注释）：
+        拷贝        → 1 − 0.05×科学原理
+        TE 研究     → 1 − 0.05×研究概论
+        ME 研究     → 1 − 0.05×冶金学
+        发明        → 无不套技能
 
     注意: base_time 对 research_material/research_time 是**首级**时长；等级越高越长
     （收益递减）。本函数不做逐级累加，调用方需知这是首级近似。
     """
-    from domain.formulas import METALLURGY_SKILL_MULT, RESEARCH_SKILL_MULT, TE_MULT_PER_LEVEL
+    from domain.formulas import METALLURGY_SKILL_MULT, RESEARCH_SKILL_MULT, SCIENCE_SKILL_MULT, TE_MULT_PER_LEVEL
 
-    mult = 1.0 - RESEARCH_SKILL_MULT * max(0, int(research_skill))
-    if activity in (ACTIVITY_RESEARCH_ME, ACTIVITY_RESEARCH_TE):
+    mult = 1.0
+    if activity == ACTIVITY_COPYING:
+        mult *= 1.0 - SCIENCE_SKILL_MULT * max(0, int(science_skill))
+    elif activity == ACTIVITY_RESEARCH_TE:
+        mult *= 1.0 - RESEARCH_SKILL_MULT * max(0, int(research_skill))
+    elif activity == ACTIVITY_RESEARCH_ME:
         mult *= 1.0 - METALLURGY_SKILL_MULT * max(0, int(metallurgy_skill))
     mult *= 1.0 - TE_MULT_PER_LEVEL * max(0, int(te_level))
     return max(0.0, float(base_time)) * max(0.0, mult) * max(0.0, structure_time_mod)

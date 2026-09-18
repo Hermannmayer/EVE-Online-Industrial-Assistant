@@ -885,6 +885,8 @@ def _make_mfg_svc(cache):
         CREATE TABLE blueprint_products (blueprint_type_id INTEGER, activity TEXT, product_type_id INTEGER, quantity INTEGER);
         CREATE TABLE blueprint_activities (blueprint_type_id INTEGER, activity TEXT, time INTEGER);
         CREATE TABLE blueprint_materials (blueprint_type_id INTEGER, activity TEXT, material_type_id INTEGER, quantity INTEGER, wastefactor INTEGER DEFAULT 10);
+        CREATE TABLE blueprint_skills (blueprint_type_id INTEGER, activity TEXT, skill_type_id INTEGER, level INTEGER);
+        CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT);
         CREATE TABLE market_prices (type_id INTEGER, region_id INTEGER, buy_price REAL, sell_price REAL,
                                     adjusted_price REAL DEFAULT 0.0, buy_volume INTEGER DEFAULT 0,
                                     sell_volume INTEGER DEFAULT 0, fetch_time TEXT);

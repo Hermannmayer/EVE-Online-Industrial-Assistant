@@ -7,10 +7,12 @@ application/scoring_facade.py 在调用前完成并注入。
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from core.eve_formulas import ADV_INDUSTRY_SKILL_MULT, calc_broker_rate, calc_relist_discount, calc_sales_tax_rate
+from core.eve_formulas import calc_broker_rate, calc_relist_discount, calc_sales_tax_rate
 from domain.formulas import (
+    REACTIONS_SKILL_MULT,
     calc_job_cost_fees,
     calc_material_per_run,
     calc_production_time,
@@ -58,6 +60,7 @@ def calc_manufacturing_score(
     facility_tax_pct: float,
     is_alpha: bool,
     mat_price_mult: float = 1.0,
+    bp_required_skills: Sequence[str] = (),
 ) -> dict:
     """纯函数：给定蓝图 + 价格提供者 + 参数，计算制造评分结果 dict。
 
@@ -175,6 +178,7 @@ def calc_manufacturing_score(
         adv_industry_skill=adv_lvl,
         te_level=bp_te,
         structure_time_mod=structure_time_mod,
+        required_skill_levels=[int(skills.get(n, 0) or 0) for n in bp_required_skills],
     )
     hours_per_run = actual_time / 3600
     margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
@@ -433,9 +437,10 @@ def calc_reaction_score(
     profit = revenue - total_cost
     margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
 
-    # 反应时间
-    adv_lvl = skills.get("高级工业理论", 5)
-    skill_mod = 1 - ADV_INDUSTRY_SKILL_MULT * adv_lvl
+    # 反应时间：客户端技能文案「45746 反应理论：每升一级，反应时间减少 4%」
+    # （高级工业理论的文案只管「制造和研究时间」，不含反应）
+    reactions_lvl = skills.get("反应理论", 0)
+    skill_mod = 1 - REACTIONS_SKILL_MULT * max(0, int(reactions_lvl or 0))
     actual_time = base_time * skill_mod
     hours_per_run = actual_time / 3600
 

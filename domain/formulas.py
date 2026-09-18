@@ -4,13 +4,14 @@
 纯函数，无状态，无 DB 依赖，可直接用 pytest 测试。
 
 公式来源:
+    - 客户端 SDE 技能描述（第一方文案，`data/typeIDs.yaml`）：技能系数以它为准
     - EVE University Wiki: https://wiki.eveuniversity.org/Manufacturing
     - fuzzwork industry.py（生产环境参考实现）
     - Viridian 税改后公式
 """
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 # 浮点精度补偿：避免 1.1 * 100 = 110.00000000000001 → ceil 到 111
@@ -42,9 +43,18 @@ STRUCTURE_MAT_SAVING = 1.0  # 工程站材料减免乘数（默认无，Upwell �
 
 INDUSTRY_SKILL_MULT = 0.04  # 工业理论 (3380) 每级 -4% 时间
 ADV_INDUSTRY_SKILL_MULT = 0.03  # 高级工业理论 (3388) 每级 -3% 时间
-TE_MULT_PER_LEVEL = 0.01  # TE 每级 -1% 时间
-RESEARCH_SKILL_MULT = 0.02  # 研究概论 (3403) 每级 -2% 时间（拷贝/发明/研究）
-METALLURGY_SKILL_MULT = 0.01  # 冶金学 (3409) 每级 -1% 时间（仅 ME/TE 研究）
+TE_MULT_PER_LEVEL = 0.01  # TE 每级 -1% 时间（TE 存 0-20 的百分比，故等价于游戏里每级 2%×10 级）
+# 科研/反应系数取自客户端 SDE 技能描述（第一方文案）：
+#   3403 研究概论「每升一级，蓝图时间效率研究的速度提升 5%」
+#   3409 冶金学「每升一级，材料效率研究的速度提升 5%」
+#   3402 科学原理「每升一级，蓝图复制的速度提升 5%」
+#   45746 反应理论「每升一级，反应时间减少 4%」
+RESEARCH_SKILL_MULT = 0.05
+METALLURGY_SKILL_MULT = 0.05
+SCIENCE_SKILL_MULT = 0.05  # 科学原理（仅复制）
+REACTIONS_SKILL_MULT = 0.04  # 反应理论（仅反应）
+# 蓝图所需技能：11452 机械工程学「每升一级，所有需要机械工程学技能的物品的生产时间减少 1%」
+BP_SKILL_TIME_MULT = 0.01
 
 
 # ═══════════════════════════════════════════════════════════
@@ -241,12 +251,14 @@ def calc_production_time(
     adv_industry_skill: int = 5,
     te_level: int = 0,
     structure_time_mod: float = 1.0,
+    required_skill_levels: Sequence[int] | None = None,
 ) -> float:
     """计算实际制造时间（秒）。
 
     公式:
+        bp_mod = Π(1 - 0.01 × 蓝图所需技能等级)      ← 客户端文案：机械工程学等每级 -1%
         skill_mod = (1 - 0.04 × industry) × (1 - 0.03 × adv_industry)
-        actual_time = base_time × skill_mod × (1 - 0.01 × TE) × structure_time_mod
+        actual_time = base_time × skill_mod × bp_mod × (1 - 0.01 × TE) × structure_time_mod
 
     参数:
         base_time: 蓝图基础制造时间（秒）
@@ -254,6 +266,9 @@ def calc_production_time(
         adv_industry_skill: 高级工业理论等级（0-5）
         te_level: TE 研究等级（0-20）
         structure_time_mod: 工程站时间减免（NPC=1.0, Raitaru=0.85 等）
+        required_skill_levels: 该蓝图**制造活动所需技能**的角色等级列表（如机械工程学 L5）。
+            SDE 技能描述原文：「每升一级，所有需要机械工程学技能的物品的生产时间减少 1%」。
+            None/空 → 不计该项（保持旧调用方行为）。
 
     返回:
         实际时间（秒）
@@ -261,5 +276,8 @@ def calc_production_time(
     skill_mod = (1.0 - INDUSTRY_SKILL_MULT * max(0, industry_skill)) * (
         1.0 - ADV_INDUSTRY_SKILL_MULT * max(0, adv_industry_skill)
     )
+    bp_mod = 1.0
+    for lvl in required_skill_levels or ():
+        bp_mod *= 1.0 - BP_SKILL_TIME_MULT * min(max(0, int(lvl)), 5)
     te_mod = 1.0 - TE_MULT_PER_LEVEL * max(0, te_level)
-    return base_time * skill_mod * te_mod * structure_time_mod
+    return base_time * skill_mod * bp_mod * te_mod * structure_time_mod

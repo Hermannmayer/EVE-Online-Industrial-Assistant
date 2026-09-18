@@ -172,23 +172,38 @@ class TestScienceJobTime:
     def test_no_skills_no_structure(self):
         assert science_job_time(13800, activity=ACTIVITY_INVENTION) == pytest.approx(13800)
 
-    def test_research_skill_two_percent(self):
-        """研究概论 5 级 → -10%。"""
-        got = science_job_time(13800, activity=ACTIVITY_INVENTION, research_skill=5)
-        assert got == pytest.approx(13800 * 0.9)
+    def test_copying_uses_science_skill(self):
+        """科学原理 5 级 → -25%（客户端文案：3402 每级 +5% 蓝图复制速度）"""
+        got = science_job_time(3600, activity=ACTIVITY_COPYING, science_skill=5)
+        assert got == pytest.approx(3600 * 0.75)
 
-    def test_metallurgy_only_for_research_activities(self):
-        """冶金学只对 ME/TE 研究生效，拷贝/发明忽略。"""
-        for act in (ACTIVITY_RESEARCH_ME, ACTIVITY_RESEARCH_TE):
-            got = science_job_time(2100, activity=act, metallurgy_skill=5)
-            assert got == pytest.approx(2100 * 0.95), act
-        for act in (ACTIVITY_COPYING, ACTIVITY_INVENTION):
-            got = science_job_time(2100, activity=act, metallurgy_skill=5)
-            assert got == pytest.approx(2100), act
+    def test_research_te_uses_research_skill(self):
+        """研究概论 5 级 → -25%（3403 每级 +5% 时间效率研究速度）"""
+        got = science_job_time(13800, activity=ACTIVITY_RESEARCH_TE, research_skill=5)
+        assert got == pytest.approx(13800 * 0.75)
 
-    def test_both_skills_multiply(self):
-        got = science_job_time(1000, activity=ACTIVITY_RESEARCH_ME, research_skill=5, metallurgy_skill=5)
-        assert got == pytest.approx(1000 * 0.9 * 0.95)
+    def test_research_me_uses_metallurgy(self):
+        """冶金学 5 级 → -25%（3409 每级 +5% 材料效率研究速度）"""
+        got = science_job_time(13800, activity=ACTIVITY_RESEARCH_ME, metallurgy_skill=5)
+        assert got == pytest.approx(13800 * 0.75)
+
+    def test_skills_do_not_leak_across_activities(self):
+        """技能只作用于自己那项活动：拷贝不看研究概论、TE 研究不看冶金学"""
+        assert science_job_time(1000, activity=ACTIVITY_COPYING, research_skill=5, metallurgy_skill=5) == pytest.approx(
+            1000
+        )
+        assert science_job_time(1000, activity=ACTIVITY_RESEARCH_TE, metallurgy_skill=5) == pytest.approx(1000)
+
+    def test_invention_has_no_time_skill(self):
+        """发明时长无对应技能：客户端无此文案、Wiki 也只提结构与钻机减免"""
+        got = science_job_time(
+            13800,
+            activity=ACTIVITY_INVENTION,
+            research_skill=5,
+            metallurgy_skill=5,
+            science_skill=5,
+        )
+        assert got == pytest.approx(13800)
 
     def test_te_level_and_structure(self):
         got = science_job_time(1000, activity=ACTIVITY_INVENTION, research_skill=0, te_level=10, structure_time_mod=0.8)
