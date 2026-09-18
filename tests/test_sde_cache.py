@@ -524,3 +524,196 @@ class TestLoadYamlAsync:
         assert calls["n"] == 1, "二次调用应命中进程内缓存，不重复解析"
         assert first is second
         clear_yaml_cache()
+
+
+class TestSdeCacheManifest:
+    """完成标记：只有全部 YAML 原子落盘后才算缓存完整（P1-1 回归）"""
+
+    def _stage(self, tmp_path, monkeypatch, manifest: bool):
+        """把 cache_path / MANIFEST_PATH / SDE_ZIP_PATH 指到临时目录，并造出全部 YAML"""
+        from services.importers.sde_cache import YAML_FILES
+
+        monkeypatch.setattr("services.importers.sde_cache.cache_path", lambda name: str(tmp_path / name))
+        monkeypatch.setattr("services.importers.sde_cache.MANIFEST_PATH", str(tmp_path / "manifest.json"))
+        monkeypatch.setattr("services.importers.sde_cache.SDE_ZIP_PATH", str(tmp_path / "sde.zip"))
+        for fname in YAML_FILES:
+            (tmp_path / fname).write_text("key: value", encoding="utf-8")
+        if manifest:
+            from services.importers.sde_cache import _write_manifest
+
+            _write_manifest()
+        return YAML_FILES
+
+    def test_all_cached_requires_manifest(self, tmp_path, monkeypatch):
+        """文件全在但没有完成标记 → 不算完整（旧实现会误判为完整缓存）"""
+        from services.importers.sde_cache import _all_cached
+
+        self._stage(tmp_path, monkeypatch, manifest=False)
+        assert _all_cached() is False
+
+    def test_all_cached_true_after_manifest(self, tmp_path, monkeypatch):
+        from services.importers.sde_cache import _all_cached
+
+        self._stage(tmp_path, monkeypatch, manifest=True)
+        assert _all_cached() is True
+
+    @pytest.mark.parametrize("damage", ["empty", "removed", "file_set_changed"])
+    def test_all_cached_rejects_incomplete_cache(self, tmp_path, monkeypatch, damage):
+        """空文件 / 缺文件 / 标记里的集合与当前 YAML_FILES 不一致 → 一律判为不完整"""
+        from services.importers.sde_cache import _all_cached
+
+        fnames = self._stage(tmp_path, monkeypatch, manifest=True)
+        if damage == "empty":
+            (tmp_path / sorted(fnames)[0]).write_text("", encoding="utf-8")
+        elif damage == "removed":
+            (tmp_path / sorted(fnames)[0]).unlink()
+        else:
+            (tmp_path / "manifest.json").write_text(
+                json.dumps({"version": 1, "files": ["only-this.yaml"]}), encoding="utf-8"
+            )
+        assert _all_cached() is False
+
+    def test_write_yaml_atomic_replaces_via_part(self, tmp_path, monkeypatch):
+        """写 .part 后原子替换：替换前目标文件内容不变"""
+        from services.importers import sde_cache
+
+        monkeypatch.setattr(sde_cache, "cache_path", lambda name: str(tmp_path / name))
+        dest = tmp_path / "x.yaml"
+        dest.write_text("old", encoding="utf-8")
+        with patch.object(sde_cache.os, "replace") as mock_replace:
+            sde_cache._write_yaml_atomic("x.yaml", "new")
+        mock_replace.assert_called_once_with(str(tmp_path / "x.yaml.part"), str(dest))
+        assert (tmp_path / "x.yaml.part").read_text(encoding="utf-8") == "new"
+        assert dest.read_text(encoding="utf-8") == "old"
+
+    def test_write_yaml_atomic_cleans_part_on_failure(self, tmp_path, monkeypatch):
+        """替换失败 → 清掉 .part 并上抛，目标文件保持旧内容"""
+        from services.importers import sde_cache
+
+        monkeypatch.setattr(sde_cache, "cache_path", lambda name: str(tmp_path / name))
+        dest = tmp_path / "x.yaml"
+        dest.write_text("old", encoding="utf-8")
+        with patch.object(sde_cache.os, "replace", side_effect=OSError("locked")):
+            with pytest.raises(OSError):
+                sde_cache._write_yaml_atomic("x.yaml", "new")
+        assert not (tmp_path / "x.yaml.part").exists()
+        assert dest.read_text(encoding="utf-8") == "old"
+
+    def _mini_zip(self, tmp_path, skip: str | None = None):
+        """构造含全部 YAML_FILES 成员的 mini zip（成员名走 ZIP_LOOKUP 映射）"""
+        from services.importers.sde_cache import YAML_FILES, ZIP_LOOKUP
+
+        zip_path = tmp_path / "sde.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            for fname in YAML_FILES:
+                if fname == skip:
+                    continue
+                zf.writestr(f"fsd/{ZIP_LOOKUP.get(fname, fname)}", "key: value")
+        return zip_path
+
+    def test_backfill_manifest_when_sizes_match(self, tmp_path, monkeypatch):
+        """升级兼容：老缓存无标记但大小与 zip 中央目录一致 → 补写标记，不重新提取"""
+        from services.importers.sde_cache import _all_cached, _backfill_manifest_from_zip
+
+        self._stage(tmp_path, monkeypatch, manifest=False)
+        monkeypatch.setattr("services.importers.sde_cache.SDE_ZIP_PATH", str(self._mini_zip(tmp_path)))
+        assert _backfill_manifest_from_zip() is True
+        assert _all_cached() is True
+
+    def test_backfill_manifest_rejects_size_mismatch(self, tmp_path, monkeypatch):
+        """任一文件大小对不上 zip → 不补写标记（交回正常提取路径）"""
+        from services.importers.sde_cache import _all_cached, _backfill_manifest_from_zip
+
+        fnames = self._stage(tmp_path, monkeypatch, manifest=False)
+        monkeypatch.setattr("services.importers.sde_cache.SDE_ZIP_PATH", str(self._mini_zip(tmp_path)))
+        (tmp_path / sorted(fnames)[0]).write_text("key: value-too-long", encoding="utf-8")
+        assert _backfill_manifest_from_zip() is False
+        assert _all_cached() is False
+
+    def test_extract_missing_member_writes_no_manifest(self, tmp_path, monkeypatch):
+        """zip 缺成员 → 不写完成标记，下次启动重新提取"""
+        from services.importers import sde_cache
+        from services.importers.sde_cache import YAML_FILES
+
+        monkeypatch.setattr(sde_cache, "cache_path", lambda name: str(tmp_path / name))
+        monkeypatch.setattr(sde_cache, "MANIFEST_PATH", str(tmp_path / "manifest.json"))
+        monkeypatch.setattr(sde_cache, "SDE_ZIP_PATH", str(self._mini_zip(tmp_path, skip="agents.yaml")))
+        monkeypatch.setattr(sde_cache, "_download_zip", AsyncMock())
+
+        asyncio.run(sde_cache._download_and_extract())
+
+        assert not (tmp_path / "manifest.json").exists()
+        assert sde_cache._all_cached() is False
+        assert not (tmp_path / "agents.yaml").exists()
+        assert len([f for f in YAML_FILES if (tmp_path / f).exists()]) == len(YAML_FILES) - 1
+
+
+class TestDownloadZipRetry:
+    """SDE 裸下载的限流重试（P1-2 回归）"""
+
+    @staticmethod
+    def _response(status, headers, chunks):
+        resp = MagicMock()
+        resp.status = status
+        resp.headers = headers
+
+        async def _it():
+            for c in chunks:
+                yield c
+
+        resp.content.iter_chunked.return_value = _it()
+        resp.raise_for_status = MagicMock()
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        return cm
+
+    def _patch_env(self, tmp_path, monkeypatch, session_cls, responses):
+        from services.importers import sde_cache
+
+        part = tmp_path / "sde.zip.part"
+        part.write_bytes(b"x" * 5000)  # 已下载 5000 字节的断点
+        monkeypatch.setattr(sde_cache, "ZIP_PART_PATH", str(part))
+        monkeypatch.setattr(sde_cache, "SDE_ZIP_PATH", str(tmp_path / "sde.zip"))
+        monkeypatch.setattr(sde_cache.asyncio, "sleep", AsyncMock())
+        session = MagicMock()
+        session.get = MagicMock(side_effect=[self._response(*r) for r in responses])
+        session_cls.return_value.__aenter__ = AsyncMock(return_value=session)
+        session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        return sde_cache, part, session
+
+    @pytest.mark.asyncio
+    @patch("zipfile.ZipFile")
+    @patch("services.importers.sde_cache.aiohttp.ClientSession")
+    async def test_429_waits_then_resumes(self, session_cls, mock_zf, tmp_path, monkeypatch):
+        """首次 429（带 Retry-After）→ 等待后按原 Range 续传成功"""
+        mock_zf.return_value.__enter__.return_value.testzip.return_value = None
+        sde_cache, _part, session = self._patch_env(
+            tmp_path,
+            monkeypatch,
+            session_cls,
+            [
+                (429, {"Retry-After": "1"}, []),
+                (206, {"Content-Range": "bytes=5000-117964799/117964800"}, [b"x"]),
+            ],
+        )
+        with patch.object(sde_cache.os, "replace"):
+            result = await sde_cache._download_zip()
+
+        assert result == str(tmp_path / "sde.zip")
+        sde_cache.asyncio.sleep.assert_awaited_once_with(1.0)
+        assert session.get.call_count == 2
+        for call in session.get.call_args_list:
+            assert call.kwargs["headers"] == {"Range": "bytes=5000-"}, "续传位置不应回退"
+
+    @pytest.mark.asyncio
+    @patch("services.importers.sde_cache.aiohttp.ClientSession")
+    async def test_429_exhausted_raises_and_keeps_part(self, session_cls, tmp_path, monkeypatch):
+        """连续 429 到上限 → 抛错且保留 .part（下次可续传）"""
+        sde_cache, part, _session = self._patch_env(
+            tmp_path, monkeypatch, session_cls, [(429, {"Retry-After": "0"}, [])] * 99
+        )
+        with pytest.raises(RuntimeError, match="限流"):
+            await sde_cache._download_zip()
+        assert sde_cache.asyncio.sleep.await_count == sde_cache._DL_MAX_RETRIES
+        assert part.exists(), "限流不应删除断点文件"

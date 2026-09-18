@@ -105,6 +105,8 @@ data/*.yaml
 data/*.pkl
 data/sde.zip
 data/universe_data.json
+# YAML 提取完成标记（运行时生成，随缓存一起重建）
+data/sde_cache_manifest.json
 
 # Claude Code local config
 .claude/

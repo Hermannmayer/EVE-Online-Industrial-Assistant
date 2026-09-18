@@ -25,6 +25,16 @@ SDE_ZIP_URL = "https://eve-static-data-export.s3-eu-west-1.amazonaws.com/tranqui
 SDE_ZIP_PATH = os.path.join(CACHE_DIR, "sde.zip")
 ZIP_PART_PATH = SDE_ZIP_PATH + ".part"  # 下载中断残留 = 断点，下次 Range 续传
 
+# YAML 提取完成标记：15 个文件全部原子落盘后才写。
+# 只按「文件存在」判定会让「提取到一半被杀」的残留被当成完整缓存 ——
+# 后续导入缺物品/蓝图数据，表现为数据不完整而不是明确失败，极难排查。
+MANIFEST_PATH = os.path.join(CACHE_DIR, "sde_cache_manifest.json")
+MANIFEST_VERSION = 1
+
+# 下载限流重试：429/503 时按服务端 Retry-After 等待，否则用默认退避
+_DL_MAX_RETRIES = 5
+_DL_DEFAULT_BACKOFF = 30.0
+
 # 已知的 SDE YAML 文件名（来自 sde.zip/fsd/ 或 bsd/）
 YAML_FILES = {
     "typeIDs.yaml",  # ← 缓存名，zip 内实际名为 types.yaml（见 ZIP_LOOKUP）
@@ -72,7 +82,83 @@ def cache_path(name: str) -> str:
 
 
 def _all_cached() -> bool:
-    return all(os.path.exists(cache_path(fname)) for fname in YAML_FILES)
+    """YAML 缓存是否完整：完成标记存在 + 标记内文件集合与当前 YAML_FILES 一致 + 每个文件非空。
+
+    标记缺失一律按未完成处理（升级兼容见 _backfill_manifest_from_zip）。
+    """
+    try:
+        with open(MANIFEST_PATH, encoding="utf-8") as f:
+            manifest = json.load(f)
+    except (OSError, ValueError):
+        return False
+    if manifest.get("version") != MANIFEST_VERSION:
+        return False
+    if set(manifest.get("files") or ()) != YAML_FILES:
+        return False  # 本版要求的 YAML 集合变了（新增/删除）→ 重新提取
+    for fname in YAML_FILES:
+        path = cache_path(fname)
+        if not os.path.exists(path) or os.path.getsize(path) == 0:
+            return False
+    return True
+
+
+def _write_yaml_atomic(fname: str, raw: str) -> None:
+    """写 <目标>.part 后原子替换 —— 中断只留 .part，目标文件不会是半写状态。"""
+    dest = cache_path(fname)
+    part = dest + ".part"
+    try:
+        with open(part, "w", encoding="utf-8") as f:
+            f.write(raw)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(part, dest)
+    except OSError:  # 写盘/替换失败：清掉本轮 .part 再上抛
+        try:
+            os.unlink(part)
+        except OSError:
+            pass  # 清理时的 OSError（文件不存在等）不值得掩盖原始错误
+        raise
+
+
+def _write_manifest() -> None:
+    """原子写完成标记（临时文件名唯一，多进程互踩不影响正确性）"""
+    fd, tmp = tempfile.mkstemp(dir=CACHE_DIR, prefix=".manifest_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"version": MANIFEST_VERSION, "files": sorted(YAML_FILES)}, f)
+        os.replace(tmp, MANIFEST_PATH)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _backfill_manifest_from_zip() -> bool:
+    """升级兼容：老缓存没有标记 → 用 zip 中央目录里的成员大小逐个比对，全对才补写标记。
+
+    比对大小是精确校验（不是「文件存在」的弱化版）：旧版提取是
+    `open(dest,"w")` 一次性写整个字符串，中途被杀必然留下尺寸不符的截断文件。
+    已知残留漏洞：zip 已被清理时无法校验 → 返回 False，交回正常下载/提取路径。
+    """
+    if not os.path.exists(SDE_ZIP_PATH):
+        return False
+    try:
+        with zipfile.ZipFile(SDE_ZIP_PATH) as zf:
+            sizes = {info.filename: info.file_size for info in zf.infolist()}
+    except (zipfile.BadZipFile, OSError):
+        return False
+    for fname in YAML_FILES:
+        dest = cache_path(fname)
+        if not os.path.exists(dest):
+            return False
+        zip_name = ZIP_LOOKUP.get(fname, fname)
+        matches = [name for name in sizes if name.endswith(zip_name)]
+        if not matches or sizes[matches[0]] != os.path.getsize(dest):
+            return False
+    _write_manifest()
+    return True
 
 
 def _universe_cache_has_names(systems: list) -> bool:
@@ -98,48 +184,78 @@ def _validate_and_finalize() -> None:
     os.replace(ZIP_PART_PATH, SDE_ZIP_PATH)
 
 
+def _retry_after_seconds(resp: aiohttp.ClientResponse) -> float:
+    """429/503 的等待时长：优先服务端 Retry-After（秒），缺失/非法则用默认退避。"""
+    try:
+        return max(0.0, float(resp.headers.get("Retry-After", "")))
+    except ValueError:
+        return _DL_DEFAULT_BACKOFF
+
+
 async def _download_zip(progress_cb: Callable[[int, str], None] | None = None) -> str:
-    """下载 SDE zip 到 .part（断点续传 + 流式写盘）。由 _zip_dl_lock 保证串行。"""
-    offset = os.path.getsize(ZIP_PART_PATH) if os.path.exists(ZIP_PART_PATH) else 0
-    headers = {"Range": f"bytes={offset}-"} if offset else {}
+    """下载 SDE zip 到 .part（断点续传 + 流式写盘）。由 _zip_dl_lock 保证串行。
+
+    限流（429/503）不立即失败：按 Retry-After 等待后重试，最多 _DL_MAX_RETRIES 次。
+    重试时重新计算 .part 大小与 Range 头，续传位置只前进不回退。
+    """
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=120)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(SDE_ZIP_URL, headers=headers) as resp:
-            if resp.status == 206:  # 断点续传
-                mode = "ab"
-                total = int(resp.headers.get("Content-Range", "/0").rsplit("/", 1)[1])
-            elif resp.status == 200:  # 服务器不支持 Range → 全量重下
-                offset = 0
-                mode = "wb"
-                total = int(resp.headers.get("Content-Length", 0))
-            elif resp.status == 416 and offset > 0:
-                # Range 不满足：.part 已完整（并发下载残留）→ 直接校验完成
-                log.info("SDE 包 Range 不满足（.part 已完整），直接校验...")
-                _validate_and_finalize()
-                return SDE_ZIP_PATH
-            else:
-                resp.raise_for_status()
-                return SDE_ZIP_PATH
-
-            log.info(
-                f"下载 SDE 数据包: {total / 1024 / 1024:.1f} MB"
-                + (f"（从 {offset / 1024 / 1024:.1f} MB 续传）" if offset else "")
-            )
-            t_start = time.time()
-            with open(ZIP_PART_PATH, mode) as f:
-                async for chunk in resp.content.iter_chunked(256 * 1024):
-                    f.write(chunk)
-                    if progress_cb:
-                        done = os.path.getsize(ZIP_PART_PATH)
-                        elapsed = max(0.001, time.time() - t_start)
-                        speed = done / elapsed / 1024 / 1024
-                        progress_cb(
-                            min(99, int(done / max(total, 1) * 100)),
-                            f"SDE 包下载 {done // 1048576}/{total // 1048576} MB ({speed:.1f} MB/s)",
+    for attempt in range(_DL_MAX_RETRIES + 1):
+        offset = os.path.getsize(ZIP_PART_PATH) if os.path.exists(ZIP_PART_PATH) else 0
+        headers = {"Range": f"bytes={offset}-"} if offset else {}
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(SDE_ZIP_URL, headers=headers) as resp:
+                if resp.status in (429, 503):
+                    if attempt >= _DL_MAX_RETRIES:
+                        raise RuntimeError(
+                            f"SDE 下载持续被限流（HTTP {resp.status}，已重试 {attempt} 次）；"
+                            f"已保留断点文件，稍后重试即可续传: {ZIP_PART_PATH}"
                         )
+                    wait = _retry_after_seconds(resp)
+                    log.warning(
+                        "SDE 下载被限流（HTTP %s），%.0fs 后重试（第 %d/%d 次）",
+                        resp.status,
+                        wait,
+                        attempt + 1,
+                        _DL_MAX_RETRIES,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                if resp.status == 206:  # 断点续传
+                    mode = "ab"
+                    total = int(resp.headers.get("Content-Range", "/0").rsplit("/", 1)[1])
+                elif resp.status == 200:  # 服务器不支持 Range → 全量重下
+                    offset = 0
+                    mode = "wb"
+                    total = int(resp.headers.get("Content-Length", 0))
+                elif resp.status == 416 and offset > 0:
+                    # Range 不满足：.part 已完整（并发下载残留）→ 直接校验完成
+                    log.info("SDE 包 Range 不满足（.part 已完整），直接校验...")
+                    _validate_and_finalize()
+                    return SDE_ZIP_PATH
+                else:
+                    resp.raise_for_status()
+                    return SDE_ZIP_PATH
 
-    _validate_and_finalize()
-    return SDE_ZIP_PATH
+                log.info(
+                    f"下载 SDE 数据包: {total / 1024 / 1024:.1f} MB"
+                    + (f"（从 {offset / 1024 / 1024:.1f} MB 续传）" if offset else "")
+                )
+                t_start = time.time()
+                with open(ZIP_PART_PATH, mode) as f:
+                    async for chunk in resp.content.iter_chunked(256 * 1024):
+                        f.write(chunk)
+                        if progress_cb:
+                            done = os.path.getsize(ZIP_PART_PATH)
+                            elapsed = max(0.001, time.time() - t_start)
+                            speed = done / elapsed / 1024 / 1024
+                            progress_cb(
+                                min(99, int(done / max(total, 1) * 100)),
+                                f"SDE 包下载 {done // 1048576}/{total // 1048576} MB ({speed:.1f} MB/s)",
+                            )
+
+        _validate_and_finalize()
+        return SDE_ZIP_PATH
+    raise RuntimeError("SDE 下载重试耗尽")  # 循环内必 return 或 raise，此行只为类型收窄
 
 
 def _sync_ensure_zip(progress_cb: Callable[[int, str], None] | None = None) -> str:
@@ -170,27 +286,49 @@ def _sync_ensure_sde_cache(progress_cb: Callable[[int, str], None] | None = None
     with _zip_dl_lock:
         if _all_cached():
             return
+        if _backfill_manifest_from_zip():
+            log.info("SDE YAML 缓存校验通过（无完成标记），已补写标记，无需重新提取")
+            return
         asyncio.run(_download_and_extract(progress_cb))
 
 
 async def _download_and_extract(progress_cb: Callable[[int, str], None] | None = None) -> None:
-    """下载 SDE zip + 提取所需 YAML（由 _zip_dl_lock 保证串行）。"""
+    """下载 SDE zip + 提取所需 YAML（由 _zip_dl_lock 保证串行）。
+
+    每个 YAML 先写 .part 再原子替换；全部到位后才写完成标记。
+    缺任一文件则不写标记（下次启动重新提取），且不会删除 .part 之外的任何缓存。
+    """
     log.info("本地无 SDE 缓存，从 S3 下载 SDE 数据包 (~112 MB)...")
     log.info(f"  URL: {SDE_ZIP_URL}")
     await _download_zip(progress_cb)
     log.info("下载完成，提取 YAML 文件...")
+    # 清掉上一轮提取残留的 .part（不碰 ZIP_PART_PATH：那是下载断点）
+    for fname in YAML_FILES:
+        stale = cache_path(fname) + ".part"
+        if os.path.exists(stale):
+            try:
+                os.unlink(stale)
+            except OSError as e:
+                log.warning("清理提取残留失败 %s: %s", stale, e)
+
+    missing: list[str] = []
     with zipfile.ZipFile(SDE_ZIP_PATH) as zf:
         for fname in sorted(YAML_FILES):
             zip_name = ZIP_LOOKUP.get(fname, fname)
             candidates = [p for p in zf.namelist() if p.endswith(zip_name)]
             if not candidates:
                 log.warning(f"SDE 包中未找到 {zip_name} (→ {fname})")
+                missing.append(fname)
                 continue
             raw = zf.read(candidates[0]).decode("utf-8")
-            dest = cache_path(fname)
-            with open(dest, "w", encoding="utf-8") as f:
-                f.write(raw)
+            _write_yaml_atomic(fname, raw)
             log.info(f"  已缓存: {fname} ({len(raw) / 1024 / 1024:.1f} MB)")
+
+    if missing:
+        # 不写标记 → 下次启动重试；此时 _all_cached() 为假，不会把缺文件的缓存当成完整缓存
+        log.error("SDE YAML 提取不完整，缺少: %s（未写完成标记，下次启动会重新提取）", ", ".join(missing))
+        return
+    _write_manifest()
     log.info("SDE YAML 缓存完成")
 
 
