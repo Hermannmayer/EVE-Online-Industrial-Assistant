@@ -45,25 +45,46 @@ def _default_research_system_id() -> int:
     return _JITA_SYSTEM_ID
 
 
-def _installation_fee(activity: str, eiv: float, solar_system_id: int | None) -> float:
+def _installation_fee(activity: str, eiv: float, solar_system_id: int | None, sci: float | None = None) -> float:
     """研究活动安装费（EIV × SCI(活动, 设施星系) × 结构 + 税 + SCC）。
 
     SCI 从 reference.db 按设施星系查询；未提供星系时回退默认科研机库星系。
+    ``sci`` 已给出时跳过查询 —— 批量调用方一次解析好整批复用，避免每件重查。
     """
-    sci = DEFAULT_SYSTEM_COST_INDEX
-    sid = int(solar_system_id) if solar_system_id else _default_research_system_id()
-    try:
-        with get_container().db.connect("ref") as conn:
-            row = conn.execute(
-                "SELECT cost_index FROM industry_system_costs WHERE solar_system_id=? AND activity=? LIMIT 1",
-                (sid, activity),
-            ).fetchone()
-        if row and row[0]:
-            sci = float(row[0])
-    except Exception:
-        pass
+    if sci is None:
+        default_sci = DEFAULT_SYSTEM_COST_INDEX
+        sid = int(solar_system_id) if solar_system_id else _default_research_system_id()
+        try:
+            with get_container().db.connect("ref") as conn:
+                row = conn.execute(
+                    "SELECT cost_index FROM industry_system_costs WHERE solar_system_id=? AND activity=? LIMIT 1",
+                    (sid, activity),
+                ).fetchone()
+            if row and row[0]:
+                default_sci = float(row[0])
+        except Exception:
+            pass
+        sci = default_sci
     fees = calc_job_cost_fees(eiv, sci, _STRUCTURE_MULT, _FACILITY_TAX)
     return float(fees["total_fee"])
+
+
+def _batch_installation_sci(solar_system_id: int | None) -> dict[str, float]:
+    """整批共用的 SCI：星系解析 + 两个活动各查一次（原来每个物品都要重查这两条）。"""
+    sid = int(solar_system_id) if solar_system_id else _default_research_system_id()
+    sci: dict[str, float] = {}
+    try:
+        with get_container().db.connect("ref") as conn:
+            for activity in ("copying", "invention"):
+                row = conn.execute(
+                    "SELECT cost_index FROM industry_system_costs WHERE solar_system_id=? AND activity=? LIMIT 1",
+                    (sid, activity),
+                ).fetchone()
+                if row and row[0]:
+                    sci[activity] = float(row[0])
+    except Exception:
+        pass  # SCI 查不到 → 用默认值（与单件路径一致）
+    return sci
 
 
 def _prices(type_ids: list[int]) -> dict[int, float]:
@@ -164,6 +185,7 @@ def research_costs_batch(
         mat_ids = set()
     prices = _prices(list(set(ids) | mat_ids))
     result: dict[int, float | None] = {}
+    sci = _batch_installation_sci(solar_system_id)  # 整批一次，不随循环重查
     for tid in ids:
         if tid in bp_self:
             result[tid] = None  # 蓝图原图不写成本
@@ -181,11 +203,11 @@ def research_costs_batch(
             ).fetchone()
             probability = float(t1_row[1]) if t1_row and t1_row[1] else 1.0
             mat = _material_cost(bp_conn, prices, t1_row[0], "invention") if t1_row else 0.0
-            fee = _installation_fee("invention", mat, solar_system_id)
+            fee = _installation_fee("invention", mat, solar_system_id, sci.get("invention"))
             result[tid] = round((mat + fee) / max(probability, 0.01), 2)
         else:
             # T1 → 拷贝成本 = 拷贝材料 + 安装费
             mat = _material_cost(bp_conn, prices, bp_id, "copying")
-            fee = _installation_fee("copying", mat, solar_system_id)
+            fee = _installation_fee("copying", mat, solar_system_id, sci.get("copying"))
             result[tid] = round(mat + fee, 2)
     return result

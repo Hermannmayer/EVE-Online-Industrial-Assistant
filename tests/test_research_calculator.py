@@ -69,6 +69,21 @@ def _patch_prices(monkeypatch):
 
 
 class TestResearchCostsBatch:
+    def test_batch_matches_single_item_calls(self, db_manager, monkeypatch):
+        """整批一次算 == 逐件算
+
+        SCI 与设施星系解析已提到循环外（原来每个物品重查一遍，实测占批量评分耗时 93%），
+        这条钉住「提升不得改变数值」。
+        """
+        _build_bp(db_manager)
+        _build_ref_sci(db_manager)
+        _patch_prices(monkeypatch)
+        ids = [2001, 2002, 3004, 2005]  # T1 / T2 / 蓝图原图 / 无制造蓝图
+        with db_manager.connect("bp") as conn:
+            batch = rc.research_costs_batch(conn, ids, solar_system_id=30002510)
+            singles = {tid: rc.research_cost_for_item(conn, tid, solar_system_id=30002510) for tid in ids}
+        assert batch == singles
+
     def test_t1_copy_cost(self, db_manager, monkeypatch):
         _build_bp(db_manager)
         _patch_prices(monkeypatch)

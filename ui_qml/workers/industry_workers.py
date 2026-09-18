@@ -318,6 +318,13 @@ class RankWorker(QThread):
 
         tids = get_all_manufacturable_product_ids(db=self._db)
 
+        # 研究成本整批一次算好：逐件算会让每件重跑一遍拷贝/发明查询
+        # （实测这条占批量耗时 93%）。system_id 必须与下面逐件传入的一致。
+        from services.research_calculator import research_costs_batch
+
+        with self._db.connect("bp") as bp_conn:
+            research_costs = research_costs_batch(bp_conn, tids, solar_system_id=self._system_id)
+
         total = len(tids)
         for i, tid in enumerate(tids):
             r = (
@@ -334,6 +341,7 @@ class RankWorker(QThread):
                     price_type_mat=self._mat_price_type,
                     price_type_prod="sell",
                     system_id=self._system_id,
+                    research_costs=research_costs,
                 )
             )
             if not r.get("status"):

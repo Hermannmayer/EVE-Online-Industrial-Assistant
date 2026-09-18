@@ -1047,11 +1047,15 @@ class ScoringService:
         is_alpha: bool = False,
         mat_price_mult: float = 1.0,
         prod_price_mult: float = 1.0,
+        research_costs: dict[int, float | None] | None = None,
     ) -> dict:
         """计算制造评分。
 
         纯算法在 domain.scoring，编排（读 DB/缓存）在 services.scoring_facade，
         本方法仅做薄委托，保持签名与默认值不变。
+
+        ``research_costs``：批量场景由调用方整批算好传入（见 research_calculator），
+        传 None 即按件现算。
         """
         from services.scoring_facade import calc_manufacturing_score as _facade
 
@@ -1074,6 +1078,7 @@ class ScoringService:
             is_alpha=is_alpha,
             mat_price_mult=mat_price_mult,
             prod_price_mult=prod_price_mult,
+            research_costs=research_costs,
         )
 
     # ── 贸易评分 ──

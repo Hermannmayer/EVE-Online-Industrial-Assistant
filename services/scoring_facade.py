@@ -13,19 +13,30 @@ import json
 from typing import Any
 
 import services.scoring_service as _ss
+from core.constants import TRADE_HUB_IDS
 from domain.scoring import BlueprintRecipe, Material
 from domain.scoring import calc_manufacturing_score as _pure_calc
 from domain.scoring import calc_reaction_score as _pure_reaction
 from domain.scoring import calc_trade_score as _pure_trade
+from services.repositories.market_repository import MarketRepository
 
 
 class _DbPriceProvider:
-    """PriceProvider 适配 — 委托给 scoring_service 模块级定价函数（可被测试 patch）。"""
+    """PriceProvider 适配 — 委托给 scoring_service 模块级定价函数（可被测试 patch）。
 
-    def __init__(self, db):
+    ``preloaded``：本物品材料的一次性批量预取结果，键为 ``(type_id, "buy"/"sell"/"adjusted")``。
+    只装「一次查询就能确定」的键，查不到的一律回落模块级单条函数 —— 跨区域降级、
+    无价格、旧库缺列等语义全部保持原样。
+    """
+
+    def __init__(self, db, preloaded: dict[tuple[int, str], float | None] | None = None):
         self._db = db
+        self._preloaded = preloaded or {}
 
     def get_price(self, type_id: int, price_type: str, hub: str | None = None) -> float | None:
+        hit = self._preloaded.get((type_id, price_type))
+        if hit is not None:
+            return hit
         return _ss.get_price(type_id, price_type, hub, _db=self._db)
 
     def get_volume(self, type_id: int, vol_type: str = "total", hub: str | None = None) -> int:
@@ -35,7 +46,42 @@ class _DbPriceProvider:
         return _ss.get_system_cost_index(system_id, activity, _db=self._db, hub=hub)
 
     def get_adjusted_price(self, type_id: int) -> float | None:
+        if (type_id, "adjusted") in self._preloaded:
+            # 可能是 None：批量查询已确认该 type 没有可用值，不必再查一次
+            value = self._preloaded[(type_id, "adjusted")]
+            return float(value) if value is not None else None
         return _ss.get_adjusted_price(type_id, _db=self._db)
+
+
+def _preload_material_prices(
+    db, mat_ids: list[int], price_type: str, hub: str | None
+) -> dict[tuple[int, str], float | None]:
+    """一次 IN 查询预取材料价格与 adjusted price（EIV）。
+
+    逐材料取价会让批量重算变成每件约 10 次 SQL（实测 4797 件 / 118,149 次 / 30 秒）。
+    两条路径的「权威性」不同，必须分别对待：
+
+    - **价格**：只装命中 hub 区域的。查不到的不装 —— 单条查询还有「跨区域降级」，
+      这里装 None 会把降级路径掐掉。
+    - **EIV（adjusted price）**：只要列存在，**每个 type 都装**（缺失装 None）。
+      否则材料普遍 adjusted_price=0 时会「批量查不到 → 回落单条 → 单条也说没有」，
+      等于白查一遍（实测这条占了 4.0 次/件）。旧库没有该列时批量返回 None，
+      整体回落单条路径，保留旧库的 sell_price 回退。
+    """
+    ids = [t for t in dict.fromkeys(mat_ids) if t]
+    if not ids:
+        return {}
+    repo = MarketRepository(db)
+    out: dict[tuple[int, str], float | None] = {}
+    if hub and price_type in ("buy", "sell"):
+        rid = TRADE_HUB_IDS.get(hub, TRADE_HUB_IDS["Jita"])
+        for tid, price in repo.get_prices_by_region(ids, rid, price_type).items():
+            out[(tid, price_type)] = price
+    adjusted = repo.get_adjusted_prices(ids)
+    if adjusted is not None:
+        for tid in ids:
+            out[(tid, "adjusted")] = adjusted.get(tid)
+    return out
 
 
 def _char_config_fingerprint(char_config: dict | None) -> str:
@@ -69,11 +115,17 @@ def calc_manufacturing_score(
     is_alpha: bool,
     mat_price_mult: float = 1.0,
     prod_price_mult: float = 1.0,
+    research_costs: dict[int, float | None] | None = None,
 ) -> dict[str, Any]:
     """制造评分用例：编排 DB 读取 + 领域纯函数 + 缓存。
 
     ``mat_price_mult`` / ``prod_price_mult``：工具栏「材料/成品倍率」。两者都是本函数的
     入参，**必须进 cache_key** —— 否则改倍率后会命中上一档缓存，复现「数字不动」的陈旧值缺陷。
+
+    ``research_costs``：整批一次算好的 ``{type_id: 研究成本}``（见
+    ``research_calculator.research_costs_batch``）。批量调用方传入可省掉每件重跑
+    拷贝/发明查询 —— 实测这条占批量耗时 93%。None → 按件现算（单件路径不变）。
+    传入值必须用**同一个 solar_system_id** 算出来，否则与逐件口径不一致。
     """
     char_name = (char_config.get("name") or char_config.get("char_name") or "default") if char_config else "default"
     # 非正数回落到 1.0（settings.json 可手改，不能信）
@@ -147,6 +199,12 @@ def calc_manufacturing_score(
             )
             for mat_id, mat_qty, wastefactor in mat_rows
         )
+
+        # 材料价格一次批量预取：逐材料取价/取 EIV 是批量重算的主要开销（实测每件约 9.6 次 SQL）
+        preloaded = _preload_material_prices(
+            db, [mat_id for mat_id, _qty, _wf in mat_rows], price_type_mat, mat_source_hub
+        )
+
         recipe = BlueprintRecipe(
             product_type_id=type_id,
             blueprint_type_id=bp_id,
@@ -154,8 +212,12 @@ def calc_manufacturing_score(
             base_time=base_time,
             materials=materials,
         )
-        prices = _DbPriceProvider(db)
-        research_cost = _ss._research_cost_cached(db, type_id, solar_system_id=system_id)
+        prices = _DbPriceProvider(db, preloaded)
+        research_cost = (
+            (research_costs.get(type_id) or 0.0)
+            if research_costs is not None
+            else _ss._research_cost_cached(db, type_id, solar_system_id=system_id)
+        )
 
         result = _pure_calc(
             recipe=recipe,

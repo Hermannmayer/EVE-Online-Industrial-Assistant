@@ -537,6 +537,42 @@ class TestCalcManufacturingScore:
 class TestManufacturingScore:
     """制造评分 — 利润/蓝图/ME/亏本场景"""
 
+    def _score(self, db, **kw):
+        return ScoringService(db, TtlLRUCache(max_size=10)).calc_manufacturing_score(
+            type_id=2001,
+            char_config={"skills": DEFAULT_SKILLS},
+            mat_source_hub="Jita",
+            sell_hub="Jita",
+            price_type_mat="sell",
+            price_type_prod="sell",
+            **kw,
+        )
+
+    def test_preload_matches_per_material_lookup(self, temp_db):
+        """材料价格批量预取 == 逐材料查询（结果逐字段一致）
+
+        批量预取把逐材料的取价/EIV 合成一次 IN 查询（实测每件省掉约 9.6 次 SQL）。
+        把预取关掉（返回空 dict → provider 回落单条查询）应得到完全相同的结果。
+        """
+        with temp_db.connect("mkt") as conn:  # 让 EIV 路径真的参与计算
+            conn.execute("UPDATE market_prices SET adjusted_price = 6.0 WHERE type_id = 1001")
+
+        preloaded = self._score(temp_db)
+        with patch("services.scoring_facade._preload_material_prices", return_value={}):
+            per_material = self._score(temp_db)
+
+        assert per_material == preloaded
+
+    def test_precomputed_research_costs_match_inline(self, temp_db):
+        """整批预取的研究成本 == 逐件现算（批量路径不得改变评分）"""
+        from services.research_calculator import research_costs_batch
+
+        ref = self._score(temp_db)
+        with temp_db.connect("bp") as conn:
+            costs = research_costs_batch(conn, [2001], solar_system_id=None)
+
+        assert self._score(temp_db, research_costs=costs) == ref
+
     def test_profitable_item(self, temp_db):
         """渡鸦级应产出正利润"""
         cache = TtlLRUCache(max_size=10)
@@ -835,7 +871,12 @@ def _patch_module_stubs(stubs: dict):
 
 
 def _make_mfg_svc(cache):
-    """构造 ScoringService 子类：桩掉数据访问，跑真实缓存逻辑"""
+    """构造 ScoringService 子类：桩掉数据访问，跑真实缓存逻辑
+
+    注意：材料价格走**批量预取**（scoring_facade._preload_material_prices 直接查
+    market_prices），不会被下面 `_patch_module_stubs` 的桩拦住 —— 所以假库里必须
+    放一行与桩同值的材料价格，否则这里会去查一张不存在的表。
+    """
     import sqlite3
 
     db = sqlite3.connect(":memory:")
@@ -844,11 +885,16 @@ def _make_mfg_svc(cache):
         CREATE TABLE blueprint_products (blueprint_type_id INTEGER, activity TEXT, product_type_id INTEGER, quantity INTEGER);
         CREATE TABLE blueprint_activities (blueprint_type_id INTEGER, activity TEXT, time INTEGER);
         CREATE TABLE blueprint_materials (blueprint_type_id INTEGER, activity TEXT, material_type_id INTEGER, quantity INTEGER, wastefactor INTEGER DEFAULT 10);
+        CREATE TABLE market_prices (type_id INTEGER, region_id INTEGER, buy_price REAL, sell_price REAL,
+                                    adjusted_price REAL DEFAULT 0.0, buy_volume INTEGER DEFAULT 0,
+                                    sell_volume INTEGER DEFAULT 0, fetch_time TEXT);
         """
     )
     db.execute("INSERT INTO blueprint_products VALUES (1, 'manufacturing', 12345, 1)")
     db.execute("INSERT INTO blueprint_activities VALUES (1, 'manufacturing', 1000)")
     db.execute("INSERT INTO blueprint_materials VALUES (1, 'manufacturing', 34, 10, 10)")
+    # 材料 34 在 Jita 的价格 —— 与 _stub_get_price / _stub_get_adjusted_price 同值
+    db.execute("INSERT INTO market_prices VALUES (34, 10000002, 100.0, 100.0, 100.0, 0, 0, '2026-01-01 00:00:00')")
     db.commit()
 
     class FakeConnMgr:

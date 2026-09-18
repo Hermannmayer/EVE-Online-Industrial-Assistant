@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 from core.constants import TRADE_HUB_IDS
 
 
@@ -202,6 +204,28 @@ class MarketRepository:
                     (type_id,),
                 ).fetchone()
                 return float(r[0]) if r else None
+
+    def get_adjusted_prices(self, type_ids: list[int]) -> dict[int, float] | None:
+        """批量获取 adjusted price（EIV 用），只返回 > 0 的行 —— 与 get_adjusted_price 同口径。
+
+        返回 ``None`` 表示**该库没有 adjusted_price 列**（旧库）：调用方必须回落单条查询，
+        由后者按「列不存在 → 回退 sell_price」的既有语义处理。
+        返回空 dict 表示「列在，但这些 type 都没有可用值」—— 那是有结论的答案，
+        调用方不必再逐条查一遍。
+        """
+        if not type_ids:
+            return {}
+        tids = list(dict.fromkeys(type_ids))
+        ph = ",".join("?" * len(tids))
+        with self._db.connect("mkt") as conn:
+            try:
+                rows = conn.execute(
+                    f"SELECT type_id, adjusted_price FROM market_prices WHERE type_id IN ({ph}) AND adjusted_price > 0",
+                    tuple(tids),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return None
+        return {int(tid): float(price) for tid, price in rows if price}
 
     def get_system_cost_index(
         self,
