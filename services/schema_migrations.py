@@ -28,7 +28,7 @@ DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
     "user": 18,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 科研作业列（activity/decryptor_type_id/success_rate/research_target_level/actual_output_runs）;  v13→v14: 修复「版本已到 13 但科研列缺失」的历史库;  v14→v15: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）;  v15→v16: user_blueprints 原图权威化（runs<0 → is_bpo=1/runs=0，-1 退场）;  v16→v17: asset_snapshots / open_orders 表;  v17→v18: asset_snapshots.line_value 列（运行中产线价值）+ order_events 台账表
-    "bp": 2,  # v1→v2: blueprint_materials.wastefactor 列
+    "bp": 3,  # v1→v2: blueprint_materials.wastefactor 列;  v2→v3: 蓝图表查找索引（逐件研究成本 37×）
 }
 
 # 数据库路径映射（与 database_manager.py 保持同步）
@@ -518,6 +518,22 @@ def _migrate_user_v17_to_v18(db_path: str) -> str:
     return f"asset_snapshots.line_value (新增 {net} 列) + order_events 表"
 
 
+def _migrate_bp_v2_to_v3(db_path: str) -> str:
+    """v2→v3: 蓝图表查找索引（实测逐件研究成本 3.92ms → 0.10ms）"""
+    from services.blueprint_reader import blueprint_index_sql
+
+    conn = sqlite3.connect(db_path)
+    try:
+        if not _table_exists(conn, "blueprint_materials"):
+            return "蓝图表不存在，跳过"
+        for sql in blueprint_index_sql():
+            conn.execute(sql)
+        conn.commit()
+        return "蓝图查找索引已就绪"
+    finally:
+        conn.close()
+
+
 def _migrate_bp_v1_to_v2(db_path: str) -> str:
     """v1→v2: blueprint_materials 新增 wastefactor 列"""
     conn = sqlite3.connect(db_path)
@@ -563,6 +579,7 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,
+        2: _migrate_bp_v2_to_v3,
     },
 }
 

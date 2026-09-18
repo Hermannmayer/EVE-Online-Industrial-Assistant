@@ -64,6 +64,11 @@ CREATE_TABLES_SQL = """
 
 async def create_tables(db: aiosqlite.Connection):
     await db.executescript(CREATE_TABLES_SQL)
+    # 新库直接带上查找索引（老库由 bp v2→v3 迁移补，两处共用同一份定义）
+    from services.blueprint_reader import blueprint_index_sql
+
+    for sql in blueprint_index_sql():
+        await db.execute(sql)
     await db.commit()
 
 

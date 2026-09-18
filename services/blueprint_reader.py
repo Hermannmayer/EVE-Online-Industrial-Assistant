@@ -11,6 +11,22 @@ import sqlite3
 
 from domain.formulas import DEFAULT_WASTEFACTOR
 
+#: 蓝图表查找索引。三张表虽有复合主键（自带 sqlite_autoindex），但 `blueprint_products`
+#: 的查询按 product_type_id（非主键前缀）过滤，另外两张按 (blueprint_type_id, activity)
+#: 过滤时计划器仍选全表扫 —— 实测 `research_cost_for_item`（仍在用的逐件路径）：
+#: 无索引 3.92 ms/件 → 建索引后 0.10 ms/件（**37×**，200 件 784ms → 21ms）。
+#: 归因已排除 ANALYZE：只跑统计信息、不建索引仍是 ~760 ms。
+_BLUEPRINT_INDEXES = (
+    ("idx_bp_materials_bp_act", "blueprint_materials", "blueprint_type_id, activity"),
+    ("idx_bp_products_prod_act", "blueprint_products", "product_type_id, activity"),
+    ("idx_bp_activities_bp", "blueprint_activities", "blueprint_type_id"),
+)
+
+
+def blueprint_index_sql() -> list[str]:
+    """蓝图表索引的 CREATE 语句（导入器与 schema 迁移共用这一处定义）。"""
+    return [f"CREATE INDEX IF NOT EXISTS {name} ON {table}({cols})" for name, table, cols in _BLUEPRINT_INDEXES]
+
 
 def get_blueprint_materials(
     conn: sqlite3.Connection,

@@ -1061,3 +1061,34 @@ def test_missing_migration_function_does_not_advance_version(tmp_user_db, monkey
     assert result["failed"] is True
     assert result["applied"] == []
     assert _user_version(tmp_user_db) == 17
+
+
+def test_bp_v2_to_v3_adds_lookup_indexes(tmp_path, monkeypatch):
+    """bp v2→v3：补蓝图表查找索引（逐件研究成本实测 3.92ms → 0.10ms），重复运行幂等"""
+    db_path = tmp_path / "blueprint.db"
+    monkeypatch.setitem(sm._DB_PATH_MAP, "bp", str(db_path))
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        """
+        CREATE TABLE blueprint_materials (blueprint_type_id INTEGER, activity TEXT,
+            material_type_id INTEGER, quantity INTEGER, wastefactor INTEGER,
+            PRIMARY KEY (blueprint_type_id, activity, material_type_id));
+        CREATE TABLE blueprint_products (blueprint_type_id INTEGER, activity TEXT,
+            product_type_id INTEGER, quantity INTEGER, probability REAL,
+            PRIMARY KEY (blueprint_type_id, activity, product_type_id));
+        CREATE TABLE blueprint_activities (blueprint_type_id INTEGER, activity TEXT, time INTEGER,
+            PRIMARY KEY (blueprint_type_id, activity));
+        """
+    )
+    conn.execute("PRAGMA user_version = 2")
+    conn.commit()
+    conn.close()
+
+    result = sm.ensure_schema("bp")
+
+    conn = sqlite3.connect(str(db_path))
+    names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    conn.close()
+    assert {"idx_bp_materials_bp_act", "idx_bp_products_prod_act", "idx_bp_activities_bp"} <= names
+    assert result["after"] == 3
+    assert sm.ensure_schema("bp")["applied"] == []  # 幂等
