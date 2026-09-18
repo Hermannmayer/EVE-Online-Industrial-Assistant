@@ -45,8 +45,10 @@ def write_progress(cur: int, total: int, phase: str = ""):
 async def init_db():
     """确保 market_prices 和 market_volume_snapshots 表存在（幂等）
 
-    不再 DROP TABLE — 改用 CREATE TABLE IF NOT EXISTS + ALTER ADD COLUMN
-    保留已有价格数据。列缺失由 schema_migrations 或此处 ALTER TABLE 兜底。
+    不再 DROP TABLE — 改用 CREATE TABLE IF NOT EXISTS 保留已有价格数据。
+    建表语句已含全部列；老库缺列由 schema_migrations 的 mkt 迁移补（v1→v2 即
+    adjusted_price）。此处不做 ALTER 兜底 —— 业务代码里的 DDL 会让 schema
+    版本记录与真实表结构分叉，且失败时会被宽泛异常吞掉。
     """
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("""
@@ -62,11 +64,6 @@ async def init_db():
                 PRIMARY KEY (type_id, region_id)
             )
         """)
-        # 兼容旧库：补加 adjusted_price 列（schema_migrations v1→v2 已注册，此处兜底旧版流程）
-        try:
-            await db.execute("ALTER TABLE market_prices ADD COLUMN adjusted_price REAL DEFAULT 0.0")
-        except Exception:
-            pass
         await db.execute("""
             CREATE TABLE IF NOT EXISTS market_volume_snapshots (
                 type_id INTEGER NOT NULL,

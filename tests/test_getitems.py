@@ -69,7 +69,12 @@ class TestInitializeDatabase:
 
     @pytest.mark.asyncio
     async def test_item_table_columns(self, temp_db_path):
-        """item 表包含预期的全部 11 列"""
+        """item 表包含预期的全部 13 列
+
+        meta_group_id / category_id 必须在 CREATE 里就有：sde_core 与 items 两步并行，
+        靠 sde_loader 的 ALTER 补列时若 items 还没建表，补列会被跳过 —— 建表即带列
+        才能保证全新库的列集合与执行顺序无关。
+        """
         with patch("services.importers.getitems.DATABASE_PATH", temp_db_path):
             await initialize_database()
 
@@ -89,6 +94,8 @@ class TestInitializeDatabase:
             "zh_market_group_name",
             "volume",
             "iconID",
+            "meta_group_id",
+            "category_id",
         ]
 
 
@@ -135,7 +142,12 @@ class TestWriteItems:
             await write_items()
 
         conn = sqlite3.connect(temp_db_path)
-        row = conn.execute("SELECT * FROM item WHERE type_id=?", (12345,)).fetchone()
+        row = conn.execute(
+            "SELECT type_id, en_name, zh_name, group_id, en_group_name, zh_group_name,"
+            " market_group_id, en_market_group_name, zh_market_group_name, volume, iconID"
+            " FROM item WHERE type_id=?",
+            (12345,),
+        ).fetchone()
         conn.close()
 
         assert row is not None

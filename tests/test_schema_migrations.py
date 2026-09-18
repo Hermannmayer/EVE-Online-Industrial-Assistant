@@ -1010,3 +1010,54 @@ def test_user_v15_to_v16_skips_missing_table(tmp_user_db):
 
     assert result["after"] == 18
     assert any("跳过" in s for s in result["applied"])
+
+
+def _set_user_version(db_path, version: int) -> None:
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(f"PRAGMA user_version = {version}")
+    conn.commit()
+    conn.close()
+
+
+def _user_version(db_path) -> int:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        return int(conn.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        conn.close()
+
+
+def test_user_migration_blocked_when_backup_fails(tmp_user_db, monkeypatch):
+    """备份失败 → user.db 不迁移（不可重建的用户库没有快照就不许动）"""
+    _set_user_version(tmp_user_db, 17)
+    monkeypatch.setattr(sm, "_backup_db", lambda _p: None)
+
+    result = sm.ensure_schema("user")
+
+    assert result["failed"] is True
+    assert result["applied"] == []
+    assert _user_version(tmp_user_db) == 17, "阻断时版本号不得前进"
+
+
+def test_mkt_migration_continues_when_backup_fails(tmp_mkt_db, monkeypatch):
+    """缓存库是重建得来的 → 备份失败不阻断（与 user 的刻意区别）"""
+    _create_mkt_v1(tmp_mkt_db)
+    monkeypatch.setattr(sm, "_backup_db", lambda _p: None)
+
+    result = sm.ensure_schema("mkt")
+
+    assert result["after"] == 3
+    assert not result.get("failed")
+
+
+def test_missing_migration_function_does_not_advance_version(tmp_user_db, monkeypatch):
+    """迁移函数缺失 → 停在原版本并报错，绝不静默把旧库标成最新版"""
+    _set_user_version(tmp_user_db, 17)
+    monkeypatch.setattr(sm, "_backup_db", lambda p: f"{p}.bak")
+    monkeypatch.setitem(sm._MIGRATIONS["user"], 17, None)
+
+    result = sm.ensure_schema("user")
+
+    assert result["failed"] is True
+    assert result["applied"] == []
+    assert _user_version(tmp_user_db) == 17

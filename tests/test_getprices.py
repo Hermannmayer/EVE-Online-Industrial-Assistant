@@ -91,12 +91,12 @@ class TestInitDb:
         with patch("services.importers.getprices.aiosqlite.connect", return_value=cm):
             await init_db()
 
-        # CREATE market_prices + ALTER 补列 + CREATE volume_snapshots = 3 次
-        assert db.execute.await_count == 3
+        # CREATE market_prices + CREATE volume_snapshots = 2 次（不再有 ALTER 兜底）
+        assert db.execute.await_count == 2
         sqls = [c[0][0] for c in db.execute.await_args_list]
 
         assert any("CREATE TABLE IF NOT EXISTS market_prices" in s for s in sqls)
-        assert any("ALTER TABLE market_prices ADD COLUMN adjusted_price" in s for s in sqls)
+        assert not any("ALTER TABLE" in s for s in sqls), "列缺失应交由 schema_migrations，不在导入器里 DDL"
         assert any("CREATE TABLE IF NOT EXISTS market_volume_snapshots" in s for s in sqls)
         # 验证 volume_snapshots 表有复合主键
         assert any("PRIMARY KEY (type_id, region_id, date)" in s for s in sqls)

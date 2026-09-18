@@ -85,12 +85,15 @@ async def initialize_database():
     async with _ref_db() as db:
         for sql in sql_statements:
             await db.execute(sql)
-        # item 表新增列
+        # item 表补列：新库由 getitems 的 CREATE 直接建出这两列，这里只为**老缓存库**补。
+        # 本步骤与 items 步并行，若本步先跑则 item 表尚不存在 —— 那不是错误（items 建表已带列）；
+        # 其余 OperationalError（权限/损坏）必须留痕，不能静默吞掉。
         for col, col_type in [("meta_group_id", "INTEGER"), ("category_id", "INTEGER")]:
             try:
                 await db.execute(f"ALTER TABLE item ADD COLUMN {col} {col_type}")
-            except aiosqlite.OperationalError:
-                pass  # 列已存在
+            except aiosqlite.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    log.info("item.%s 补列跳过：%s", col, e)
         # 名称索引（剪贴板导入的名称解析此前只能全表扫 5 万行）——item 表由 items 步骤创建，
         # 尚未建表时跳过（本步骤与 items 可并行，谁先跑都可能）
         from services.item_kind import item_name_index_sql

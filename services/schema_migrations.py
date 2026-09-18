@@ -744,14 +744,22 @@ def ensure_schema(db_alias: str) -> dict:
             return {"before": on_disk, "after": on_disk, "applied": [], "backup": None}
 
         if on_disk < current:
-            # 需要迁移：先做一致快照，出问题可回滚
+            # 需要迁移：先做一致快照，出问题可回滚。
+            # user.db 是唯一不可重建的用户数据 —— 没有快照就不许动；缓存库（ref/mkt/bp）
+            # 缺列可直接重建，不因备份失败阻断。
             backup = _backup_db(db_path)
+            if backup is None and db_alias == "user":
+                log.error("  ❌ user: 迁移前备份失败，已阻断迁移（用户库没有可回滚快照时不继续）")
+                return {"before": on_disk, "after": on_disk, "applied": [], "failed": True, "backup": None}
 
         for v in range(on_disk, current):
             mig = _MIGRATIONS.get(db_alias, {}).get(v)
-            if mig:
-                label = mig(db_path)
-                applied.append(f"v{v}→v{v + 1}: {label}")
+            if not mig:
+                # 迁移函数缺失时**不得**推进版本号：旧库会被静默标成最新版，
+                # 之后运行时才因缺列崩溃。宁可停在原版本并报错。
+                log.error("  ❌ %s: 缺少 v%s→v%s 的迁移函数，已停止迁移（版本号保持 v%s）", db_alias, v, v + 1, v)
+                return {"before": on_disk, "after": on_disk, "applied": applied, "failed": True, "backup": backup}
+            applied.append(f"v{v}→v{v + 1}: {mig(db_path)}")
             _set_version(db_path, v + 1)
 
         # 从版本 0 起始的库（有表但未打版本号）：迁移循环可能为空
