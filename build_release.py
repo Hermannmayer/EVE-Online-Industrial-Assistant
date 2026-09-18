@@ -12,6 +12,7 @@ build_release.py — EVE 商人助手 发行版打包脚本
 
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import zipfile
@@ -171,6 +172,20 @@ def run_pyinstaller():
 RELEASE_DATA_FILES = ("terminology.json", "mfg_browser_settings.json")
 
 
+def _checkpoint_wal(db_path: str) -> None:
+    """复制前把 WAL 合并进主库。
+
+    模板库由无头初始化刚写完，可能还留着 reference.db-wal（实测 4.1MB）。
+    只 shutil.copy2 主文件会把这些尚未合并的写入丢掉 —— 静默少数据。
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def organize_release():
     """
     步骤 2：整理发行版目录
@@ -223,7 +238,9 @@ def organize_release():
         log.error("   先在干净环境跑一次无头初始化：python Main.py --init-only")
         sys.exit(1)
     for template_name in ("reference.db", "blueprint.db"):
-        shutil.copy2(os.path.join(db_src, template_name), os.path.join(db_dst, template_name))
+        src_file = os.path.join(db_src, template_name)
+        _checkpoint_wal(src_file)  # 未合并的 WAL 会随「只复制主文件」一起丢
+        shutil.copy2(src_file, os.path.join(db_dst, template_name))
     step("   ✓ 复制 database/（reference.db + blueprint.db 只读模板）")
 
     # 3. 复制 data/ 白名单（不再整目录复制：缓存与用户配置不入包）

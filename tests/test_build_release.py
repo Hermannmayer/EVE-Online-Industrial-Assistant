@@ -5,6 +5,7 @@
 而 README 向用户承诺「发行包已内置静态数据」。
 """
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -17,9 +18,8 @@ pytestmark = pytest.mark.fast
 def _make_src(tmp_path: Path) -> Path:
     """造一个「仓库根」：含模板库、白名单文件，以及不该入包的东西"""
     (tmp_path / "database").mkdir()
-    (tmp_path / "database" / "reference.db").write_bytes(b"ref")
-    (tmp_path / "database" / "blueprint.db").write_bytes(b"bp")
-    (tmp_path / "database" / "user.db").write_bytes(b"user")  # 运行数据 → 不入包
+    for name in ("reference.db", "blueprint.db", "user.db"):  # user.db 属运行数据 → 不入包
+        sqlite3.connect(str(tmp_path / "database" / name)).close()
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "terminology.json").write_text("{}", encoding="utf-8")
     (tmp_path / "data" / "mfg_browser_settings.json").write_text("{}", encoding="utf-8")
@@ -75,3 +75,30 @@ def test_organize_release_fails_without_whitelisted_data_file(tmp_path, monkeypa
 
     with pytest.raises(SystemExit):
         br.organize_release()
+
+
+def test_organize_release_checkpoints_wal_before_copy(tmp_path, monkeypatch):
+    """源库还有未 checkpoint 的 WAL 时，产物里的库必须含这些写入
+
+    实测：打包时源库存在 4.1MB 的 reference.db-wal。只复制主文件时，
+    未合并进主库的写入会静默丢失 —— 用户拿到的是少了数据的模板库。
+    """
+    src = _make_src(tmp_path)
+    db = src / "database" / "reference.db"
+    db.unlink()
+    conn = sqlite3.connect(str(db))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("CREATE TABLE t (v INTEGER)")
+    conn.execute("INSERT INTO t VALUES (1)")
+    conn.commit()
+    try:  # 连接保持打开：写入此刻还在 -wal 里，未 checkpoint 进主库
+        release = _patch_paths(monkeypatch, src, tmp_path)
+        br.organize_release()
+
+        copied = sqlite3.connect(str(release / "database" / "reference.db"))
+        try:
+            assert copied.execute("SELECT count(*) FROM t").fetchone()[0] == 1
+        finally:
+            copied.close()
+    finally:
+        conn.close()
