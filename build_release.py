@@ -165,6 +165,12 @@ def run_pyinstaller():
     return packages
 
 
+# 发行包内置的 data/ 白名单：只带「缺失会影响功能」的静态文件，
+# 运行期缓存/用户数据（sde.zip、*.yaml、caches/、search_history.json 等）一律不入包。
+# 实测：全量复制会把构建机上恰好存在的 380MB SDE 原料一起打进去。
+RELEASE_DATA_FILES = ("terminology.json", "mfg_browser_settings.json")
+
+
 def organize_release():
     """
     步骤 2：整理发行版目录
@@ -173,13 +179,15 @@ def organize_release():
         dist/EVE商人助手_v{version}/
             EVE商人助手.exe
             database/
-                items.db
+                reference.db    ← 无头初始化预生成：python Main.py --init-only
+                blueprint.db
             data/
-                caches/icons/   (由用户运行时自动创建)
-                search_history.json
-                window_geometry.json
-                update_progress.json
+                terminology.json
+                mfg_browser_settings.json
             README.md
+
+    模板库缺失直接失败：README 向用户承诺「发行包已内置静态数据、首启走本地快路径」，
+    静默跳过会让每个用户首启重跑一遍 SDE 下载与解析。
     """
     step("🔄 整理发行版目录...")
 
@@ -205,31 +213,30 @@ def organize_release():
     shutil.copy2(exe_src, exe_dst)
     step(f"   ✓ 复制 {exe_src} → {exe_dst}")
 
-    # 2. 复制 database/ 目录（只带只读模板库，不打包用户/市场运行数据）
+    # 2. 复制 database/ 模板库（只读；user/market 运行数据不入包）
     db_src = os.path.join(PROJECT_ROOT, "database")
     db_dst = os.path.join(RELEASE_DIR, "database")
     os.makedirs(db_dst, exist_ok=True)
-    if os.path.exists(db_src):
-        for template_name in ("reference.db", "blueprint.db"):
-            src_file = os.path.join(db_src, template_name)
-            if os.path.exists(src_file):
-                shutil.copy2(src_file, os.path.join(db_dst, template_name))
-        step("   ✓ 复制 database/（仅只读模板，不含 user/market 运行数据）")
+    missing_db = [n for n in ("reference.db", "blueprint.db") if not os.path.exists(os.path.join(db_src, n))]
+    if missing_db:
+        log.error(f"❌ 缺少模板库: {', '.join(missing_db)}（{db_src}）")
+        log.error("   先在干净环境跑一次无头初始化：python Main.py --init-only")
+        sys.exit(1)
+    for template_name in ("reference.db", "blueprint.db"):
+        shutil.copy2(os.path.join(db_src, template_name), os.path.join(db_dst, template_name))
+    step("   ✓ 复制 database/（reference.db + blueprint.db 只读模板）")
 
-    # 3. 复制 data/ 目录（运行期缓存和配置）
+    # 3. 复制 data/ 白名单（不再整目录复制：缓存与用户配置不入包）
     data_src = os.path.join(PROJECT_ROOT, "data")
     data_dst = os.path.join(RELEASE_DIR, "data")
-    if os.path.exists(data_src):
-        # 只保留 json 文件，图标缓存由用户运行时自动生成
-        shutil.copytree(
-            data_src,
-            data_dst,
-            ignore=shutil.ignore_patterns("__pycache__", "caches"),
-        )
-        step("   ✓ 复制 data/（不含图标缓存）")
-    else:
-        os.makedirs(data_dst, exist_ok=True)
-        step("   ✓ 创建空的 data/")
+    os.makedirs(data_dst, exist_ok=True)
+    for name in RELEASE_DATA_FILES:
+        src_file = os.path.join(data_src, name)
+        if not os.path.exists(src_file):
+            log.error(f"❌ 缺少 data/{name}（{data_src}）")
+            sys.exit(1)
+        shutil.copy2(src_file, os.path.join(data_dst, name))
+    step(f"   ✓ 复制 data/（{', '.join(RELEASE_DATA_FILES)}）")
 
     # 4. 复制 README.md
     readme_src = os.path.join(PROJECT_ROOT, "README.md")

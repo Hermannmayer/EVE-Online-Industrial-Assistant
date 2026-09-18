@@ -170,8 +170,45 @@ def _make_shell(hot_reload: bool):
     return ShellWindow(hot_reload=hot_reload)
 
 
+def _run_init_only() -> int:
+    """`--init-only`：无头跑 SDE 派生步骤，生成发行包要带的模板库。
+
+    只跑不依赖 ESI 的步骤：schema → items / blueprints / sde_core → sde_data。
+    价格、图标、植入体、工业指数等运行时步骤仍由用户首次启动补齐 —— 目的是把
+    「下载 112MB SDE + 解析 typeIDs.yaml（约 29s）」这段从每个用户的首启里拿掉。
+    CI 在 PyInstaller 打包前调用，产物落到 database/reference.db 与 blueprint.db。
+    """
+    from PySide6.QtCore import QCoreApplication
+
+    from services.init_service import InitService
+
+    if QCoreApplication.instance() is None:  # InitService 是 QObject，先备一个 app 实例
+        QCoreApplication([])
+
+    failed: list[str] = []
+
+    def _on_step_done(key: str, ok: bool, message: str) -> None:
+        log.info("[init-only] %s: %s %s", key, "OK" if ok else "FAILED", message)
+        if not ok:
+            failed.append(key)
+
+    service = InitService()
+    service.on_step_completed = _on_step_done
+    service.start(["schema", "items", "blueprints", "sde_core", "sde_data"])
+
+    if failed:
+        log.error("[init-only] 步骤失败: %s", ", ".join(failed))
+        return 1
+    log.info("[init-only] 完成 → %s / %s", REF_DB_PATH, BP_DB_PATH)
+    return 0
+
+
 def main():
     ensure_dirs_exist()
+
+    # --init-only：无头生成模板库（CI 打包用），必须在创建 QApplication / 取单实例锁之前
+    if "--init-only" in sys.argv:
+        sys.exit(_run_init_only())
 
     # 尽早安装崩溃钩子：threading.excepthook 兜底后台线程、faulthandler 捕获原生段错误、
     # sys.excepthook 在主线程未捕获异常时写崩溃转储（弹窗守卫保证 QApplication 未创建时跳过）

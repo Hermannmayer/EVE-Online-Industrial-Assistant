@@ -44,6 +44,14 @@ jobs:
         PYTHONUTF8: "1"
 
     # 无发版提交（NO_RELEASE）时 released 为空 → 跳过打包与上传
+    # 模板库（reference.db/blueprint.db）不入版本控制，打包前无头生成；否则发行包缺静态数据，
+    # 每个用户首启都要重跑 SDE 下载与解析 —— README 向用户承诺的是「内置、走本地快路径」。
+    - name: Pre-generate template databases
+      if: steps.semver.outputs.released == 'true'
+      run: uv run python Main.py --init-only
+      env:
+        PYTHONUTF8: "1"
+
     - name: Build release package
       if: steps.semver.outputs.released == 'true'
       run: uv run python build_release.py

@@ -83,7 +83,7 @@ python build_release.py
 
 输出目录：`dist/EVE商人助手_v{version}/`（同时生成同名 `.zip` 发行包）。
 
-> ⚠️ **整个目录必须一起解压**：exe 旁的 `data/`（含 `sde.zip`、`typeIDs.yaml`、`universe_data.json`）与 `database/`（`reference.db`、`blueprint.db`）不可删除。发行包已内置静态数据，首启初始化会走本地快路径，避免重新全量下载。若只复制 exe 单独运行，初始化会重新下载数据并解析，速度慢且可能触发发行版的多进程解析问题。
+> ⚠️ **整个目录必须一起解压**：exe 旁的 `database/`（`reference.db`、`blueprint.db` 模板库）与 `data/`（`terminology.json`、`mfg_browser_settings.json`）不可删除。发行包已内置这两个只读库，首启即刻可用物品与蓝图数据，无需重新下载并解析 112 MB 的 SDE；价格、图标、工业指数等运行期数据仍由首启后台补齐。若只复制 exe 单独运行，初始化会重新下载 SDE 并解析，速度慢得多。
 
 ---
 
