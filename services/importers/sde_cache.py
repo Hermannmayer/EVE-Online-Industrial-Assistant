@@ -292,16 +292,41 @@ def _sync_ensure_sde_cache(progress_cb: Callable[[int, str], None] | None = None
         asyncio.run(_download_and_extract(progress_cb))
 
 
+def _zip_is_usable() -> bool:
+    """本地 sde.zip 能否直接复用：存在且成员校验通过。
+
+    损坏的包直接删掉（留着会让每次提取都失败）。没这个检查时，只要走到
+    「需要重新提取」，`_download_zip` 就会因为只看 .part 而重下一遍 112MB。
+    """
+    if not os.path.exists(SDE_ZIP_PATH):
+        return False
+    try:
+        with zipfile.ZipFile(SDE_ZIP_PATH) as zf:
+            if zf.testzip() is not None:
+                raise zipfile.BadZipFile("corrupted member")
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError) as e:
+        log.warning("本地 sde.zip 不可用（%s），删除后重新下载", e)
+        try:
+            os.remove(SDE_ZIP_PATH)
+        except OSError:
+            pass  # 删不掉（被占用等）不值得中断下载
+        return False
+    return True
+
+
 async def _download_and_extract(progress_cb: Callable[[int, str], None] | None = None) -> None:
     """下载 SDE zip + 提取所需 YAML（由 _zip_dl_lock 保证串行）。
 
     每个 YAML 先写 .part 再原子替换；全部到位后才写完成标记。
     缺任一文件则不写标记（下次启动重新提取），且不会删除 .part 之外的任何缓存。
     """
-    log.info("本地无 SDE 缓存，从 S3 下载 SDE 数据包 (~112 MB)...")
-    log.info(f"  URL: {SDE_ZIP_URL}")
-    await _download_zip(progress_cb)
-    log.info("下载完成，提取 YAML 文件...")
+    if _zip_is_usable():
+        log.info("本地已有可用的 sde.zip，跳过下载，直接提取 YAML")
+    else:
+        log.info("本地无 SDE 缓存，从 S3 下载 SDE 数据包 (~112 MB)...")
+        log.info(f"  URL: {SDE_ZIP_URL}")
+        await _download_zip(progress_cb)
+    log.info("提取 YAML 文件...")
     # 清掉上一轮提取残留的 .part（不碰 ZIP_PART_PATH：那是下载断点）
     for fname in YAML_FILES:
         stale = cache_path(fname) + ".part"

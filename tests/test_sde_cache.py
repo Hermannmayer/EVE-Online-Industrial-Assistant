@@ -630,6 +630,34 @@ class TestSdeCacheManifest:
         assert _backfill_manifest_from_zip() is False
         assert _all_cached() is False
 
+    def test_extract_reuses_existing_zip(self, tmp_path, monkeypatch):
+        """本地已有可用 sde.zip → 不重新下载（112MB），直接重新提取
+
+        实测场景：升级后老缓存无完成标记、走到重新提取时，若 zip 已在本地，
+        再下载一遍 112MB 纯属浪费（`_download_zip` 只看 .part，从不看已存在的 zip）。
+        """
+        from services.importers import sde_cache
+
+        monkeypatch.setattr(sde_cache, "cache_path", lambda name: str(tmp_path / name))
+        monkeypatch.setattr(sde_cache, "MANIFEST_PATH", str(tmp_path / "manifest.json"))
+        monkeypatch.setattr(sde_cache, "SDE_ZIP_PATH", str(self._mini_zip(tmp_path)))
+        monkeypatch.setattr(sde_cache, "_download_zip", AsyncMock(side_effect=AssertionError("不应重新下载")))
+
+        asyncio.run(sde_cache._download_and_extract())
+
+        assert sde_cache._all_cached() is True
+
+    def test_corrupt_zip_is_discarded(self, tmp_path, monkeypatch):
+        """本地 sde.zip 损坏 → 删除它，让下载路径从头来（不能拿坏包去解）"""
+        from services.importers import sde_cache
+
+        zip_path = tmp_path / "sde.zip"
+        zip_path.write_bytes(b"not a zip at all")
+        monkeypatch.setattr(sde_cache, "SDE_ZIP_PATH", str(zip_path))
+
+        assert sde_cache._zip_is_usable() is False
+        assert not zip_path.exists()
+
     def test_extract_missing_member_writes_no_manifest(self, tmp_path, monkeypatch):
         """zip 缺成员 → 不写完成标记，下次启动重新提取"""
         from services.importers import sde_cache
