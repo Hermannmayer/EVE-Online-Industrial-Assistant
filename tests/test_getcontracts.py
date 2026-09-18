@@ -140,16 +140,20 @@ class TestSaveContracts:
 
 
 class TestRunContractUpdate:
+    # 同时 patch main：coroutine 一旦创建却无人 await（asyncio.run 被 mock 后没人驱动它），
+    # GC 时会冒 RuntimeWarning，并挂到**别的测试文件**头上；patch 成 Mock 则根本不创建协程。
+    @patch("services.importers.getcontracts.main", new_callable=MagicMock)
     @patch("services.importers.getcontracts.asyncio.run")
-    def test_run_contract_update_calls_main(self, mock_asyncio_run):
-        """run_contract_update 应调用 asyncio.run(main(...))"""
+    def test_run_contract_update_calls_main(self, mock_asyncio_run, mock_main):
+        """run_contract_update 应把 main(区域列表) 交给 asyncio.run"""
         run_contract_update()
         mock_asyncio_run.assert_called_once()
-        call_args = mock_asyncio_run.call_args
-        assert call_args[0][0].__name__ == "main"
+        assert [name for name, _ in mock_main.call_args[0][0]], "未指定区域时应带全部贸易中心"
 
+    @patch("services.importers.getcontracts.main", new_callable=MagicMock)
     @patch("services.importers.getcontracts.asyncio.run")
-    def test_run_contract_update_with_regions(self, mock_asyncio_run):
+    def test_run_contract_update_with_regions(self, mock_asyncio_run, mock_main):
         """指定区域时只更新目标区域"""
         run_contract_update(regions=["Jita"])
         mock_asyncio_run.assert_called_once()
+        assert [name for name, _ in mock_main.call_args[0][0]] == ["Jita"]

@@ -76,12 +76,6 @@ class TestStructureBase:
             assert cat
             assert effect in ("mat", "time", "both", "cost")
 
-    def test_effect_both_has_implied_mat_time(self):
-        # both 效果改件应同时贡献材料和时间（L/XL Efficiency）
-        for _gid, (_, _, effect) in hic.RIG_GROUP_MAP.items():
-            if effect == "both":
-                assert True
-
 
 class TestResolveRigMultipliers:
     def test_empty_returns_one(self, rig_db):
@@ -94,6 +88,20 @@ class TestResolveRigMultipliers:
     def test_unknown_rig_ignored(self, rig_db):
         """structure_rigs 缺行 → 加成按 0，倍率不变"""
         assert hic.resolve_rig_multipliers([99999], _db=rig_db) == (1.0, 1.0)
+
+    def test_both_effect_rig_contributes_mat_and_time(self, rig_db):
+        """both 效果改件（L/XL Efficiency）同时贡献材料与时间"""
+        assert [g for g, (_, _, effect) in hic.RIG_GROUP_MAP.items() if effect == "both"], (
+            "改件映射里应存在 both 效果组"
+        )
+        with rig_db.connect("ref") as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO structure_rigs (type_id, mat_bonus, time_bonus) VALUES (?, ?, ?)",
+                (43924, -4.0, -20.0),
+            )
+        mat, tm = hic.resolve_rig_multipliers([43924], _db=rig_db)
+        assert mat == pytest.approx(0.96)
+        assert tm == pytest.approx(0.80)
 
     def test_single_mat_rig(self, rig_db):
         """材料效率 I (-2%) → 材料倍率 0.98"""
