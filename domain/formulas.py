@@ -89,6 +89,14 @@ def calc_material_per_run(
     return math.ceil(result - _FP_EPSILON)
 
 
+#: 单件材料（每轮基础量 ≤ 1）豁免材料效率。
+#: 官方口径（CCP《Material Efficiency Research》）：「Whole and single items, as in
+#: "1 unit needed per production run", will not be affected by this calculation.
+#: … building 10 Paladins will always require 10 Apocalypse, independent of any
+#: Material Efficiency bonus.」——即按 `基础量 × 作业数` 计，不减 ME。
+_SINGLE_UNIT_EXEMPT = True
+
+
 def calc_material_for_runs(
     db_qty: int,
     wastefactor: int = 10,
@@ -100,18 +108,22 @@ def calc_material_for_runs(
 
     材料效率适用于整个项目总量（不逐轮次取整）:
     ceil(db_qty × runs × (100 - ME) / 100 × 结构减免)
+
+    单件材料（基础量 ≤ 1）按 `基础量 × 作业数` 计，不减 ME（见 `_SINGLE_UNIT_EXEMPT`）。
+
+    **本函数是「一批要多少料」的单一定义处**：豁免以前只写在 `material_total_for_runs` 里，
+    而 BOM 展开、计划分解、采购聚合、`domain/bom.py` 都直接调本函数 —— 同一个蓝图会因为
+    走不同代码路径而要出不同的料（`calc_material_for_runs(1, 10, 10, 10)` 曾算出 9，
+    官方口径是 10，差的就是 T2 组件那类单件料）。
     """
-    if me_level < 0:
-        me_level = 0
-    me_level = min(me_level, 10)
-    total = db_qty * max(1, runs) * (100.0 - me_level) / 100.0 * structure_mat_saving
+    if db_qty <= 0:
+        return 0
+    n = max(1, runs)
+    if db_qty <= 1 and _SINGLE_UNIT_EXEMPT:
+        return db_qty * n
+    me_level = min(max(me_level, 0), 10)
+    total = db_qty * n * (100.0 - me_level) / 100.0 * structure_mat_saving
     return math.ceil(total - _FP_EPSILON)
-
-
-#: 单件材料（每轮基础量 ≤ 1）豁免材料效率的既有规则。
-#: 现行口径：这类材料按 `基础量 × 作业数` 计，不减 ME
-#: （`domain/scoring.py:93-95` 的 `is_whole_item` 分支）。**本函数是这条规则的单一定义处。**
-_SINGLE_UNIT_EXEMPT = True
 
 
 def material_total_for_runs(
@@ -121,26 +133,21 @@ def material_total_for_runs(
     me_level: int = 0,
     structure_mat_saving: float = 1.0,
 ) -> int:
-    """单条材料明细 → 整批（`total_runs` 次作业）需求量。
+    """单条材料明细 → 整批（`total_runs` 次作业）需求量（明细形态的薄封装）。
 
-    **这是「一批要多少料」的单一定义处**：`services/scoring_service.py` 的两处缩放、
-    `services/plan_execution.material_requirements` 与
-    `ui_qml/bridge/cost_breakdown_bridge._build_material_rows` 都走它，
-    免得四处各写一遍取整口径再互相漂移。
+    `services/scoring_service.py` 的两处缩放、`services/plan_execution.material_requirements`
+    与 `ui_qml/bridge/cost_breakdown_bridge._build_material_rows` 走它；
+    取整与豁免口径的单一定义处在 `calc_material_for_runs`（本函数只做字段提取）。
 
     口径（EVE）：对**整批**取一次整 —— `ceil(基础量 × 作业数 × (100-ME)/100 × 结构减免)`。
     逐轮取整后再乘作业数（`ceil(基础量 × …) × 作业数`）会**系统性地多要货**：
     基础量 22、ME10、2510 次作业时，逐轮口径要 50,200，整批口径只要 49,698。
-
-    单件材料（基础量 ≤ 1）按 `_SINGLE_UNIT_EXEMPT` 豁免 ME，与 `domain/scoring.py` 一致。
 
     `material` 可以是 dict（取 `base_qty` / `wastefactor`）或带同名属性的对象。
     """
     base = int(_field(material, "base_qty") or 0)
     if base <= 0:
         return 0
-    if base <= 1 and _SINGLE_UNIT_EXEMPT:
-        return base * max(1, int(total_runs))
     return calc_material_for_runs(
         base,
         int(_field(material, "wastefactor") or DEFAULT_WASTEFACTOR),

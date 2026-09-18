@@ -142,6 +142,24 @@ def test_material_total_for_runs_keeps_the_single_unit_exemption():
     assert material_total_for_runs(mat, 2510, me_level=10) == 2510
 
 
+def test_calc_material_for_runs_keeps_the_single_unit_exemption():
+    """底层函数同样豁免单件料 —— BOM/计划分解/采购聚合都直接调它
+
+    官方口径（CCP《Material Efficiency Research》）：「Whole and single items, as in
+    "1 unit needed per production run", will not be affected by this calculation …
+    building 10 Paladins will always require 10 Apocalypse」。
+
+    修复前这条规则只写在 material_total_for_runs 里，底层算出 9（少 1 个料），
+    于是同一个蓝图走 BOM/计划路径比走评分路径少要一个 T2 组件。
+    """
+    assert calc_material_for_runs(1, wastefactor=10, me_level=10, runs=10) == 10
+    assert calc_material_for_runs(1, wastefactor=10, me_level=10, runs=2510) == 2510
+    assert calc_material_for_runs(1, wastefactor=10, me_level=0, runs=3) == 3
+    # 非单件料的口径不受影响
+    assert calc_material_for_runs(2, wastefactor=10, me_level=10, runs=10) == 18
+    assert calc_material_for_runs(100, wastefactor=10, me_level=10, runs=10) == 900
+
+
 def test_material_total_for_runs_applies_structure_saving_on_the_batch():
     """结构减免与 ME 一样作用在整批上（同一个 ceil），不能被位置参数吞掉。"""
     mat = {"base_qty": 100, "wastefactor": 10}
