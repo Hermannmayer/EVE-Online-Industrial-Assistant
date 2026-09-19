@@ -90,17 +90,23 @@ Python 3.14+ / PySide6 6.11+ / ruff 格式化 + linting；依赖用 `~=` 固定�
 
 ## 测试边界（硬性）
 
+**先回答「要不要写」，再回答「跑哪一档」。** 要不要写看上文「测试判定表」；本节只管怎么跑。
+
 **一次任务跑一次测试。** 测试是验证手段，不是进度展示 —— 进度用文字汇报，不要靠反复跑测试来体现"在工作"。
 
 ### 选档：事前决定，不许逐级升级
 
 | 改了什么 | 跑什么 | 明确不跑 |
 |---|---|---|
-| 删死代码 / 改注释 / 改文档 / 格式化 | `target`（git 无命中则直接跳过） | 其余全部 |
+| 删死代码 / 改注释 / 改文档 / 格式化 | `target`（纯文档/配置变更会自动跳过，秒退） | 其余全部 |
 | 单文件纯计算（`domain/`、`core/`） | `fast` | 其余全部 |
 | services 业务 / DB 查询 / 导入器 | `target` | validate / full |
-| QML / UI | `shell_snapshot.py` 出图 + `ui-retest` 一次 | validate / full |
+| QML / UI，**或任何带 `ui` 标记的测试文件** | `shell_snapshot.py` 出图 + `ui-retest` 一次 | validate / full |
 | schema 迁移 | `validate` 一次 | full |
+
+> ⚠️ **`ui` 标记的文件被 `validate` 跳过** —— `validate` 是 `-m "not ui"`。改了这类测试文件（`test_qml_*`、
+> 表格模型等，文件头有 `pytestmark = pytest.mark.ui`）之后跑 `validate` 会得到**假绿**：文件根本没被收集。
+> 要么走 `ui-retest`，要么按下面的例外直接跑那个文件。这一条是踩过的坑。
 
 **选定的那一档跑绿即为通过。不要为了"更保险"往上加档。**
 
@@ -131,7 +137,8 @@ scripts/run_tests.sh full       # 全量（实测 5~8 分钟，看机器负载�
 ### 不要做的
 
 ❌ target → fast → validate → full 逐级爬｜❌ 改完立刻跑、跑完又改、再跑一遍全量｜
-❌ 为"确认一下没坏"重复跑已经绿过的档｜❌ 为了让进度播报"有东西可写"而去跑测试
+❌ 为"确认一下没坏"重复跑已经绿过的档｜❌ 为了让进度播报"有东西可写"而去跑测试｜
+❌ 为纯样式/布局改动补测试（判定表列在禁止档，写了也是负债）
 
 ## 任务导航（改代码前先读）
 
@@ -181,12 +188,18 @@ python scripts/shell_snapshot.py --page industry # 切到某页再拍
 ## 常用命令
 
 ```bash
-uv sync --dev              # 安装依赖（首次 / 依赖变更后）
-python dev.py              # 热重载开发
-python Main.py             # 生产启动
-ruff check . --fix         # 自动修复风格
-mypy .                     # 类型检查
+uv sync --dev                     # 安装依赖（首次 / 依赖变更后）
+.venv/Scripts/python.exe dev.py   # 热重载开发
+.venv/Scripts/python.exe Main.py  # 生产启动
+uv run ruff check . --fix         # 自动修复风格
+uv run mypy .                     # 类型检查
+
+.venv/Scripts/python.exe scripts/test_audit.py      # 测试判定表体检（只报告，不改动）
+.venv/Scripts/python.exe scripts/shell_snapshot.py  # 界面快照，详见「界面感知」
 ```
+
+**别用裸 `python`** —— 本机 PATH 上的可能是不带依赖的系统解释器，失败还会被管道吞掉
+（`scripts/run_tests.sh` 开头那十行就是在讲这件事）。
 
 ## EVE 术语来源（按优先级）
 

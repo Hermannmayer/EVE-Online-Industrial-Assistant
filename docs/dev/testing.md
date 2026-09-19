@@ -16,17 +16,19 @@
 
 ```bash
 scripts/run_tests.sh            # validate：全部业务/DB/计算，跳过 Qt
-scripts/run_tests.sh fast       # 纯计算/轻服务白名单（~4s）
+scripts/run_tests.sh fast       # 纯计算/轻服务白名单
 scripts/run_tests.sh ui-retest  # 只有 Qt 界面 + 真 QThread，改动涉及 UI 时优先
-scripts/run_tests.sh target     # 只跑 git 变更文件相关（~5s）
-scripts/run_tests.sh full       # validate + ui-retest 两阶段，仅提交前
+scripts/run_tests.sh target     # 只跑 git 变更相关；纯文档/配置变更会自动跳过
+scripts/run_tests.sh full       # validate + ui-retest 两阶段
 ```
 
 > 耗时（2026-09-17 实测，空载）：`validate` 58s、`ui-retest` 221s、`full` ≈ 4.7min。
 > 机器负载高时 `ui-retest` 曾达 445s（`full` ≈ 8.4min）—— 差别很大，别按某一个数去卡。
 > 变化趋势见 `CLAUDE.md` 的「测试边界」。
+> `target` 的耗时**取决于变更范围**（改一个服务可能只选中几个文件，改跨层模块会选中上百个）——
+> 没有固定值，纯文档/配置变更则秒退。
 
-开发循环用 `fast` / `target`，日常回归用 `validate`，`full` 只在提交前。
+开发循环用 `fast` / `target`，日常回归用 `validate`；**`full` 的时机由用户定**，不主动跑。
 
 想直接调 pytest 也可以（**必须用虚拟环境里的解释器**，裸 `python` 可能是没装 pytest 的
 系统解释器，失败会被管道吞掉）：
@@ -126,11 +128,15 @@ mypy .
 ## 提交前检查清单
 
 ```bash
-ruff check . && mypy . && scripts/run_tests.sh full
+ruff check . && mypy . && scripts/run_tests.sh target
 ```
 
-外加 pre-commit 的文档联动钩子（README 动态数据、文档站内部链接、API 文档重生成）——
-它们由 `.pre-commit-config.yaml` 在 `git commit` 时自动跑。
+**`full` 的时机由用户定** —— 它是 5~8 分钟的全量档，不是每次提交的例行公事。
+
+pre-commit 钩子（`.pre-commit-config.yaml`，`git commit` 时自动跑）：ruff / ruff-format / mypy、
+行尾空白、文件末尾换行、YAML 校验、大文件检查、文档站内部链接（`scripts/check_docs_links.py`）。
+（原先还有 gen-api-docs / check-readme / docs-stale-reminder 三个文档联动钩子，因制造提交摩擦已移除；
+需要时手动跑 `python scripts/gen_api_docs.py`。）
 
 ## CI 检查
 

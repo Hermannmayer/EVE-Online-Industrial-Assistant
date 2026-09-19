@@ -78,18 +78,19 @@ pre-commit run --all-files
 git checkout -b feat/my-feature
 
 # 2. 开发（热重载模式）
-python dev.py
+.venv/Scripts/python.exe dev.py
 
-# 3. 运行测试
-scripts/run_tests.sh            # validate：业务/DB/计算，跳过 Qt（~45s）
-scripts/run_tests.sh ui-retest  # ui-retest：只跑 Qt 界面（~40s，改 UI 时）
+# 3. 运行测试（耗时随负载波动大，别按固定秒数做计划）
+scripts/run_tests.sh            # validate：业务/DB/计算，跳过 Qt
+scripts/run_tests.sh ui-retest  # 只跑 Qt 界面 + 真 QThread（改 UI 或带 ui 标记的测试文件时）
 
 # 4. 代码质量检查
-ruff check . --fix
-mypy .
+uv run ruff check . --fix
+uv run mypy .
 
-# 5. 提交前全量验证
-ruff check . && ruff format --check . && mypy . && scripts/run_tests.sh full
+# 5. 提交前
+uv run ruff check . && uv run ruff format --check . && uv run mypy . && scripts/run_tests.sh target
+# `full`（5~8 分钟）时机由用户定，不是每次提交都要跑
 
 # 6. 提交（中文信息）
 git add .

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # 测试分档脚本 — 开发循环用 fast/target，日常回归用 validate，提交前才用 full
 # 用法: scripts/run_tests.sh [fast|validate|ui-retest|target|full]（默认 validate）
-# fast      纯计算/轻服务（-m fast）         <10s   改动 core/domain/轻服务时
-# validate  全部业务/DB/计算（非 UI）        ~45s   日常默认回归
-# ui-retest 全部 Qt 界面 + 真 QThread        ~40s   改动 UI 后补跑
-# target    只跑 git 变更相关测试文件        秒级   开发循环默认；纯文档/配置变更直接跳过
-# full      validate + ui-retest 两阶段     ~80s   仅提交前
+# fast      纯计算/轻服务（-m fast）        较快  改动 core/domain/轻服务时
+# validate  全部业务/DB/计算（非 UI）       中等  日常默认回归
+# ui-retest 全部 Qt 界面 + 真 QThread       较慢  改动 UI 或带 ui 标记的测试文件后
+# target    只跑 git 变更相关测试文件       视变更量  开发循环默认；纯文档/配置变更直接跳过
+# full      validate + ui-retest 两阶段     最慢  仅提交前，**时机由用户定**
+#
+# 不给固定秒数：耗时随机器负载波动极大（ui 段实测 221s ~ 445s）。权威说明见 CLAUDE.md「测试边界」。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

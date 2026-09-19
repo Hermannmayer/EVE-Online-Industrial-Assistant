@@ -202,7 +202,7 @@ python build_release.py
 |------|------|
 | 🔧 **框架** | pytest |
 | 📁 **测试目录** | `tests/` |
-| 🏃 **运行命令** | `scripts/run_tests.sh target`（开发循环）/ `scripts/run_tests.sh full`（提交前） |
+| 🏃 **运行命令** | `scripts/run_tests.sh target`（开发循环）/ `scripts/run_tests.sh full`（全量，时机由用户定） |
 
 ### 测试文件
 
