@@ -122,7 +122,7 @@ def input_blueprint_hint(activity: str | None) -> str:
     if rule == RULE_BPO_ONLY:
         return "拷贝/研究只能基于蓝图原本(BPO)，蓝图拷贝(BPC)不可再拷贝或研究"
     if rule == RULE_BPC_RUNS:
-        return "发明需要绑定 T1 蓝图拷贝(BPC)，且流程数不少于本计划要跑的流程"
+        return "发明需要绑定 T1 蓝图拷贝(BPC)，张数不少于并行作业数、每张流程数不少于每线尝试次数"
     return "无可用蓝图"
 
 

@@ -82,6 +82,25 @@ def get_decryptor(type_id: int | None) -> Decryptor | None:
     return DECRYPTORS.get(int(type_id))
 
 
+#: 下拉里「不使用解码器」那一项
+DECRYPTOR_NONE_LABEL = "不使用"
+
+
+def decryptor_ids() -> list[int | None]:
+    """解码器下拉的取值序列（索引 0 = 不使用）。"""
+    return [None, *DECRYPTORS.keys()]
+
+
+def decryptor_labels() -> list[str]:
+    """解码器下拉的标签（索引与 `decryptor_ids()` 对齐）。
+
+    发明对话框与编辑生产计划对话框共用，免得两处各拼一遍格式。
+    """
+    return [DECRYPTOR_NONE_LABEL] + [
+        f"{d.name}（成功率 ×{d.prob_mult:g}，流程 {d.runs_mod:+d}）" for d in DECRYPTORS.values()
+    ]
+
+
 # ═══════════════════════════════════════════════════════════
 #  发明成功率
 # ═══════════════════════════════════════════════════════════

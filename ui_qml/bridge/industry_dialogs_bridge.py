@@ -11,7 +11,6 @@ from typing import Any
 
 from PySide6.QtCore import Property, Signal, Slot
 
-from services import inventory_manager
 from ui_qml.dialog_host import DialogBridge, QmlDialog
 
 __all__ = ["AddPlanBridge", "AddPlanDialogQmlDialog"]
@@ -46,9 +45,6 @@ class AddPlanBridge(DialogBridge):
 
         self._chars = self._load_chars()
         self._char_index = 0
-        # 设施：原版是空的可编辑下拉（currentIndex(-1)），初值空串
-        self._facility = ""
-        self._facility_options = self._load_facilities()
 
     @staticmethod
     def _load_chars() -> list[str]:
@@ -58,20 +54,11 @@ class AddPlanBridge(DialogBridge):
         chars = list(get_character_list() or [])
         return chars or ["main"]
 
-    @staticmethod
-    def _load_facilities() -> list[str]:
-        """设施候选 = 机库名；查不到就空表（原版 `try/except pass` 的等价物）。"""
-        try:
-            return [h.get("name", "") for h in inventory_manager.get_hangars()]
-        except Exception:
-            return []
-
     # ── 只读展示 ─────────────────────────────────────────────
 
     productName = Property(str, lambda self: self._product_name, constant=True)
     scoreLabel = Property(str, lambda self: self._score_label, constant=True)
     charOptions = Property(list, lambda self: list(self._chars), constant=True)
-    facilityOptions = Property(list, lambda self: list(self._facility_options), constant=True)
 
     # ── 可编辑字段 ───────────────────────────────────────────
 
@@ -80,7 +67,6 @@ class AddPlanBridge(DialogBridge):
     me = Property(int, lambda self: self._me, notify=fieldsChanged)
     te = Property(int, lambda self: self._te, notify=fieldsChanged)
     charIndex = Property(int, lambda self: self._char_index, notify=fieldsChanged)
-    facility = Property(str, lambda self: self._facility, notify=fieldsChanged)
 
     @Slot(int)
     def setRuns(self, value: int) -> None:
@@ -108,10 +94,6 @@ class AddPlanBridge(DialogBridge):
             self._char_index = index
             self.fieldsChanged.emit()
 
-    @Slot(str)
-    def setFacility(self, text: str) -> None:
-        self._facility = str(text)
-
     # ── 取值 ─────────────────────────────────────────────────
 
     def currentChar(self) -> str:
@@ -128,7 +110,6 @@ class AddPlanBridge(DialogBridge):
             "me": self._me,
             "te": self._te,
             "char": self.currentChar().strip(),
-            "fac": self._facility.strip(),
         }
         self.accepted.emit()
 

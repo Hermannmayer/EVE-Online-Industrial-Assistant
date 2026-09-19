@@ -5,7 +5,7 @@ import "../components"
 
 /* 「加入发明规划」对话框（阶段 4b 收尾）。
  *
- * 产物选择 + 解码器 + 预期成功率 + 尝试次数，加上 `ResearchCommonFields.qml` 那套公共字段。
+ * 产物选择 + 解码器 + 预期成功率 + 流程数×并行数 + 预期结果，加上 `ResearchCommonFields.qml` 那套公共字段。
  * 业务与取值在桥（`research_plan_bridge.InventionPlanBridge`）里。
  *
  * 预期成功率随产物/解码器变化由**桥**重算（对齐原 `_refresh_probability`），
@@ -170,7 +170,7 @@ FDialogFrame {
         wrapMode: Text.WordWrap
     }
 
-    // ── 尝试次数 ──
+    // ── 流程数 × 并行数（与制造同一口径：总尝试 = 每线尝试次数 × 并行作业数）──
     RowLayout {
         Layout.fillWidth: true
         spacing: Theme.spacingSm
@@ -178,14 +178,14 @@ FDialogFrame {
         Text {
             Layout.preferredWidth: frame.labelWidth
             horizontalAlignment: Text.AlignRight
-            text: qsTr("尝试次数:")
+            text: qsTr("流程数:")
             color: Theme.textPrimary
             font.family: Theme.fontFamily
             font.pixelSize: Math.round(12 * Theme.fontScale)
         }
         FSpinBox {
-            objectName: "attemptsBox"
-            Layout.preferredWidth: Math.round(140 * Theme.fontScale)
+            objectName: "runsBox"
+            Layout.preferredWidth: Math.round(88 * Theme.fontScale)
             from: 1
             to: 10000
             value: frame.bp ? frame.bp.attempts : 1
@@ -193,13 +193,66 @@ FDialogFrame {
                 frame.bp.setAttempts(value)
 
             HoverHandler {
-                id: attemptsHover
+                id: runsHover
             }
-            ToolTip.visible: attemptsHover.hovered
-            ToolTip.text: qsTr("计划要跑几次发明尝试（每次消耗 1 份输入 BPC 流程 + 一份数据核心）")
+            ToolTip.visible: runsHover.hovered
+            ToolTip.text: qsTr("每条并行产线要跑几次发明尝试（每次消耗 1 个输入 BPC 流程 + 一份数据核心）")
+        }
+        Text {
+            text: qsTr("×")
+            color: Theme.textSecondary
+            font.family: Theme.fontFamily
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+        FSpinBox {
+            objectName: "parBox"
+            Layout.preferredWidth: Math.round(88 * Theme.fontScale)
+            from: 1
+            to: 100
+            value: frame.bp ? frame.bp.parallels : 1
+            onValueModified: if (frame.bp)
+                frame.bp.setParallels(value)
+
+            HoverHandler {
+                id: parHover
+            }
+            ToolTip.visible: parHover.hovered
+            ToolTip.text: qsTr("并行作业数（需要同样多的输入 BPC，每张流程数不少于每线尝试次数）")
+        }
+        Text {
+            text: qsTr("并行")
+            color: Theme.textSecondary
+            font.family: Theme.fontFamily
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
         Item {
             Layout.fillWidth: true
+        }
+    }
+
+    // ── 预期结果 ──
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: Theme.spacingSm
+
+        Text {
+            Layout.preferredWidth: frame.labelWidth
+            Layout.alignment: Qt.AlignTop
+            horizontalAlignment: Text.AlignRight
+            text: qsTr("预期结果:")
+            color: Theme.textPrimary
+            font.family: Theme.fontFamily
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+        Text {
+            objectName: "expectedSummary"
+            Layout.fillWidth: true
+            text: frame.bp ? frame.bp.expectedSummary : ""
+            color: Theme.textSecondary
+            font.family: Theme.fontFamily
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+            wrapMode: Text.WordWrap
+            lineHeight: 1.35
         }
     }
 

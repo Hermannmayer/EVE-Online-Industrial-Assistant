@@ -13,8 +13,8 @@ SQL 不散落到各处。
     product_type_id    本计划的产物。科研行恒为**蓝图 type_id**
                        （发明 = 产出的 T2 蓝图；拷贝/研究 = 被操作的蓝图）。
     blueprint_type_id  同 product_type_id（科研行的输入蓝图与产物是同一张）。
-    runs               拷贝 = 每份拷贝的授权流程；发明 = 尝试次数；研究 = 目标等级。
-    parallels          拷贝 = 产出份数；其余按 1 计。
+    runs               拷贝 = 每份拷贝的授权流程；发明 = 每线尝试次数；研究 = 目标等级。
+    parallels          拷贝 = 产出份数；发明 = 并行作业数（总尝试 = runs × parallels）；其余按 1 计。
 
 ## 函数
 
@@ -34,7 +34,7 @@ def resolve_invention_source(conn, blueprint_type_id: int) -> dict[str, Any] | N
 def invention_base_runs(conn, t2_blueprint_type_id: int, t1_blueprint_type_id: int) -> int
 ```
 
-发明产出的 T2 BPC 基础流程数 = min(T1 拷贝上限, T2 制造上限)。
+发明产出的 T2 BPC 基础流程数 = SDE `blueprint_products.quantity`（invention 行），缺失时回退 10。
 
 定义行：`72`
 

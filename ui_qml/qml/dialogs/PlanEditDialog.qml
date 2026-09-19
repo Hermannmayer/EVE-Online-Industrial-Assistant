@@ -10,6 +10,15 @@ import "../components"
  * 与 Widgets 版 `PlanEditDialog.get_updated_data()` 同形。
  *
  * 用的是自己的 `bridge` 而不是页面那套（对话框由 Python 侧 `exec()` 调用）。
+ *
+ * 布局按「一行一组、相关的两组合并」压到 4~5 行：产品名已在标题栏，不重复占一行；
+ * 批量同步勾选内联到流程那行。
+ *
+ * **机库两行的 `currentIndex` 一律写成对桥属性的声明式绑定**（`dlg.matIndex` /
+ * `dlg.depositIndex`，两者都带 `notify=fieldsChanged`）。改材料机库时桥会把
+ * `_deposit_index` 一起改掉再发信号，输出机库的下拉就自动跟上了 —— 不需要
+ * `Connections` 里手写「读差值再赋值」，那种写法会打断绑定，而且会在下拉展开时
+ * 反复重设 `currentIndex`。
  */
 
 Item {
@@ -19,7 +28,8 @@ Item {
 
     readonly property int fntBase: Math.round(12 * Theme.fontScale)
     readonly property int gap: Theme.spacingSm
-    readonly property int labelWidth: Math.round(88 * Theme.fontScale)
+    readonly property int labelWidth: Math.round(68 * Theme.fontScale)
+    readonly property int fieldW: Math.round(140 * Theme.fontScale)
 
     /* 对话框底色。**必须自己铺**：宿主 `PageHost` 透明清屏 + `WA_TranslucentBackground`，
      * 没画到的地方直接透出窗口背后，真窗口抓屏是纯黑（离屏快照反而看不出来，会被补成
@@ -34,31 +44,7 @@ Item {
         anchors.margins: Theme.spacingMd
         spacing: root.gap
 
-        // ── 产品名称（只读）──
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: root.gap
-
-            Text {
-                Layout.preferredWidth: root.labelWidth
-                horizontalAlignment: Text.AlignRight
-                text: qsTr("产品名称")
-                color: Theme.textPrimary
-                font.family: Theme.fontFamily
-                font.pixelSize: root.fntBase
-            }
-            Text {
-                Layout.fillWidth: true
-                text: root.dlg ? root.dlg.productLabel : ""
-                color: Theme.textPrimary
-                font.family: Theme.fontFamily
-                font.pixelSize: root.fntBase
-                elide: Text.ElideRight
-                textFormat: Text.PlainText
-            }
-        }
-
-        // ── 流程数 ──
+        // ── 行1：流程数 × 并行数（+ 批量同步 + 发明的总尝试）──
         RowLayout {
             Layout.fillWidth: true
             spacing: root.gap
@@ -72,7 +58,8 @@ Item {
                 font.pixelSize: root.fntBase
             }
             FSpinBox {
-                Layout.preferredWidth: 140
+                objectName: "runsBox"
+                Layout.preferredWidth: Math.round(88 * Theme.fontScale)
                 from: 1
                 to: 99999
                 value: root.dlg ? root.dlg.runs : 1
@@ -85,26 +72,17 @@ Item {
                 ToolTip.visible: runsHover.hovered && text !== ""
                 ToolTip.text: root.dlg ? root.dlg.runsTip : ""
             }
-            Item {
-                Layout.fillWidth: true
-            }
-        }
-
-        // ── 并行数 / 产出份数 ──
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: root.gap
-
             Text {
-                Layout.preferredWidth: root.labelWidth
-                horizontalAlignment: Text.AlignRight
-                text: root.dlg ? root.dlg.parallelLabel : qsTr("并行数")
-                color: Theme.textPrimary
+                visible: root.dlg ? root.dlg.showParallel : true
+                text: qsTr("×")
+                color: Theme.textSecondary
                 font.family: Theme.fontFamily
                 font.pixelSize: root.fntBase
             }
             FSpinBox {
-                Layout.preferredWidth: 140
+                objectName: "parBox"
+                Layout.preferredWidth: Math.round(88 * Theme.fontScale)
+                visible: root.dlg ? root.dlg.showParallel : true
                 from: 1
                 to: 100
                 value: root.dlg ? root.dlg.parallels : 1
@@ -117,29 +95,94 @@ Item {
                 ToolTip.visible: parHover.hovered && (root.dlg ? root.dlg.parallelTip !== "" : false)
                 ToolTip.text: root.dlg ? root.dlg.parallelTip : ""
             }
+            Text {
+                visible: root.dlg ? root.dlg.showParallel : true
+                text: root.dlg ? root.dlg.parallelLabel : qsTr("并行数")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: root.fntBase
+            }
+            Text {
+                visible: (root.dlg ? root.dlg.totalAttempts : "") !== ""
+                text: root.dlg ? root.dlg.totalAttempts : ""
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: root.fntBase
+            }
             Item {
                 Layout.fillWidth: true
             }
-        }
-
-        // ── 批量模式：显式勾选才同步流程/并行 ──
-        RowLayout {
-            Layout.fillWidth: true
-            visible: root.dlg ? root.dlg.batchMode : false
-            spacing: root.gap
-
-            Item {
-                Layout.preferredWidth: root.labelWidth
-            }
             FCheckBox {
-                text: qsTr("同步流程数与并行数到所有选中行")
+                visible: root.dlg ? root.dlg.batchMode : false
+                text: qsTr("同步到所有选中行")
                 checked: root.dlg ? root.dlg.syncRuns : false
                 onToggled: if (root.dlg)
                     root.dlg.setSyncRuns(checked)
             }
         }
 
-        // ── 人物 ──
+        // ── 行2：ME / TE（只有制造行有意义）──
+        RowLayout {
+            Layout.fillWidth: true
+            visible: root.dlg ? root.dlg.showMeTe : false
+            spacing: root.gap
+
+            Text {
+                Layout.preferredWidth: root.labelWidth
+                horizontalAlignment: Text.AlignRight
+                text: qsTr("ME / TE")
+                color: Theme.textPrimary
+                font.family: Theme.fontFamily
+                font.pixelSize: root.fntBase
+            }
+            FSpinBox {
+                objectName: "meBox"
+                Layout.preferredWidth: Math.round(88 * Theme.fontScale)
+                from: 0
+                to: 10
+                value: root.dlg ? root.dlg.me : 0
+                onValueModified: if (root.dlg)
+                    root.dlg.setMe(value)
+            }
+            FSpinBox {
+                objectName: "teBox"
+                Layout.preferredWidth: Math.round(88 * Theme.fontScale)
+                from: 0
+                to: 20
+                value: root.dlg ? root.dlg.te : 0
+                onValueModified: if (root.dlg)
+                    root.dlg.setTe(value)
+            }
+            Item {
+                Layout.fillWidth: true
+            }
+        }
+
+        // ── 行3：解码器（只有发明行有意义，它同时改产出流程数与成功率）──
+        RowLayout {
+            Layout.fillWidth: true
+            visible: root.dlg ? root.dlg.showDecryptor : false
+            spacing: root.gap
+
+            Text {
+                Layout.preferredWidth: root.labelWidth
+                horizontalAlignment: Text.AlignRight
+                text: qsTr("解码器")
+                color: Theme.textPrimary
+                font.family: Theme.fontFamily
+                font.pixelSize: root.fntBase
+            }
+            FComboBox {
+                objectName: "decryptorBox"
+                Layout.fillWidth: true
+                model: root.dlg ? root.dlg.decryptorLabels : []
+                currentIndex: root.dlg ? root.dlg.decryptorIndex : 0
+                onActivated: if (root.dlg)
+                    root.dlg.setDecryptorIndex(currentIndex)
+            }
+        }
+
+        // ── 行4：人物 + 备注 ──
         RowLayout {
             Layout.fillWidth: true
             spacing: root.gap
@@ -153,79 +196,65 @@ Item {
                 font.pixelSize: root.fntBase
             }
             FComboBox {
-                Layout.preferredWidth: 200
+                objectName: "charBox"
+                Layout.preferredWidth: root.fieldW
                 model: root.dlg ? root.dlg.chars : []
                 currentIndex: root.dlg ? root.dlg.charIndex : 0
                 onActivated: if (root.dlg)
                     root.dlg.setCharIndex(currentIndex)
             }
-            Item {
-                Layout.fillWidth: true
-            }
-        }
-
-        // ── 产出机库 / 材料机库 ──
-        Repeater {
-            model: [
-                {
-                    "label": qsTr("产出机库"),
-                    "index": root.dlg ? root.dlg.depositIndex : 0,
-                    "setter": "setDepositIndex"
-                },
-                {
-                    "label": qsTr("材料机库"),
-                    "index": root.dlg ? root.dlg.matIndex : 0,
-                    "setter": "setMatIndex"
-                }
-            ]
-
-            RowLayout {
-                required property var modelData
-                Layout.fillWidth: true
-                spacing: root.gap
-
-                Text {
-                    Layout.preferredWidth: root.labelWidth
-                    horizontalAlignment: Text.AlignRight
-                    text: modelData.label
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: root.fntBase
-                }
-                FComboBox {
-                    Layout.preferredWidth: 260
-                    model: root.dlg ? root.dlg.hangars : []
-                    currentIndex: modelData.index
-                    onActivated: if (root.dlg)
-                        root.dlg[modelData.setter](currentIndex)
-                }
-                Item {
-                    Layout.fillWidth: true
-                }
-            }
-        }
-
-        // ── 备注 ──
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: root.gap
-
             Text {
-                Layout.preferredWidth: root.labelWidth
-                Layout.alignment: Qt.AlignTop
-                horizontalAlignment: Text.AlignRight
+                Layout.leftMargin: root.gap
                 text: qsTr("备注")
                 color: Theme.textPrimary
                 font.family: Theme.fontFamily
                 font.pixelSize: root.fntBase
             }
             FTextField {
-                id: notesField
+                objectName: "notesField"
                 Layout.fillWidth: true
                 placeholderText: qsTr("备注信息…")
                 text: root.dlg ? root.dlg.notes : ""
                 onTextChanged: if (root.dlg)
                     root.dlg.setNotes(text)
+            }
+        }
+
+        // ── 行5：材料机库 / 产出机库（产出默认跟随材料）──
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: root.gap
+
+            Text {
+                Layout.preferredWidth: root.labelWidth
+                horizontalAlignment: Text.AlignRight
+                text: qsTr("材料机库")
+                color: Theme.textPrimary
+                font.family: Theme.fontFamily
+                font.pixelSize: root.fntBase
+            }
+            FComboBox {
+                objectName: "matHangarBox"
+                Layout.preferredWidth: root.fieldW
+                model: root.dlg ? root.dlg.hangars : []
+                currentIndex: root.dlg ? root.dlg.matIndex : 0
+                onActivated: if (root.dlg)
+                    root.dlg.setMatIndex(currentIndex)
+            }
+            Text {
+                Layout.leftMargin: root.gap
+                text: qsTr("产出机库")
+                color: Theme.textPrimary
+                font.family: Theme.fontFamily
+                font.pixelSize: root.fntBase
+            }
+            FComboBox {
+                objectName: "depositHangarBox"
+                Layout.fillWidth: true
+                model: root.dlg ? root.dlg.hangars : []
+                currentIndex: root.dlg ? root.dlg.depositIndex : 0
+                onActivated: if (root.dlg)
+                    root.dlg.setDepositIndex(currentIndex)
             }
         }
 
@@ -253,11 +282,13 @@ Item {
                 Layout.fillWidth: true
             }
             FButton {
+                objectName: "cancelButton"
                 text: qsTr("取消")
                 onClicked: if (root.dlg)
                     root.dlg.reject()
             }
             FButton {
+                objectName: "okButton"
                 text: qsTr("确定")
                 primary: true
                 onClicked: if (root.dlg)

@@ -468,6 +468,8 @@ Item {
                             if (!info.valid)
                                 return
                             rowMenu.row = row
+                            rowMenu.typeId = info.typeId
+                            rowMenu.itemName = info.name
                             rowMenu.hasMfgDetail = info.hasMfgDetail
                             const p = mapToItem(page, x, y)
                             rowMenu.x = p.x
@@ -499,7 +501,9 @@ Item {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  行右键菜单（原 `_ctx`：这个窗口专为制造评分设计，明细始终可见）
+    //  行右键菜单（对齐「全物品查询」窗口那一套）
+    //
+    //  少一项「贸易核算明细」：本窗口只建了制造缓存，没有贸易模式。
     // ═══════════════════════════════════════════════════════════
 
     FMenu {
@@ -507,7 +511,23 @@ Item {
         objectName: "rowMenu"
 
         property int row: -1
+        property int typeId: 0
+        property string itemName: ""
         property bool hasMfgDetail: false
+
+        FMenuItem {
+            text: qsTr("复制: ") + rowMenu.itemName
+            onTriggered: if (page.mi)
+                page.mi.copyName(rowMenu.row)
+        }
+
+        FMenuItem {
+            text: qsTr("复制ID: ") + rowMenu.typeId
+            onTriggered: if (page.mi)
+                page.mi.copyId(rowMenu.row)
+        }
+
+        FMenuSeparator {}
 
         FMenuItem {
             text: qsTr("制造核算明细")
@@ -522,6 +542,26 @@ Item {
             text: qsTr("加入制造列表")
             onTriggered: if (page.mi)
                 page.mi.addToPlan(rowMenu.row)
+        }
+
+        FMenuSeparator {}
+
+        FMenuItem {
+            text: qsTr("加入拷贝规划")
+            onTriggered: if (page.mi)
+                page.mi.addResearch(rowMenu.row, "copying")
+        }
+
+        FMenuItem {
+            text: qsTr("加入发明规划")
+            onTriggered: if (page.mi)
+                page.mi.addResearch(rowMenu.row, "invention")
+        }
+
+        FMenuItem {
+            text: qsTr("加入效率研究规划")
+            onTriggered: if (page.mi)
+                page.mi.addResearch(rowMenu.row, "research")
         }
     }
 }

@@ -271,6 +271,17 @@ class PlanTable(QObject):
                 from services.inventory_manager import get_hangar_name
 
                 facility = get_hangar_name(final_mat)
+            # 对话框只给「它管得着的」字段：ME/TE 仅制造行、解码器仅发明行。
+            # 给不出的保持计划里的原值（旧口径下科研行的 ME/TE 恒 0）。
+            extra: dict = {}
+            if "me_level" in updated:
+                extra["me_level"] = updated["me_level"]
+                extra["te_level"] = updated["te_level"]
+            if "decryptor_type_id" in updated:
+                extra["decryptor_type_id"] = updated["decryptor_type_id"]
+            if "success_rate" in updated:
+                # 换解码器时桥会带一个 None，清掉旧的手填成功率，让评分重算
+                extra["success_rate"] = updated["success_rate"]
             get_container().plan_repo.update(
                 plan["id"],
                 runs=updated["runs"],
@@ -281,9 +292,10 @@ class PlanTable(QObject):
                 mat_hangar_id=final_mat,
                 solar_system_id=solar_system_id,
                 facility=facility,
+                **extra,
             )
-            # 更新内存模型的基础字段（保留现有 ME/TE 值，编辑对话框不含 ME/TE；
-            # facility/mat_hub/sell_hub 由工具栏价格设置与「设置设施星系」管理，编辑不改）
+            # 更新内存模型的基础字段（facility/mat_hub/sell_hub 由工具栏价格设置与
+            # 「设置设施星系」管理，编辑不改）
             plan["runs"] = updated["runs"]
             plan["parallels"] = updated["parallels"]
             plan["char_name"] = updated["char_name"]
@@ -292,6 +304,7 @@ class PlanTable(QObject):
             plan["mat_hangar_id"] = final_mat
             plan["solar_system_id"] = solar_system_id
             plan["facility"] = facility
+            plan.update(extra)
 
             # 同步重算该条计划，立即更新派生字段
             from services.char_config_resolver import resolve_char_config

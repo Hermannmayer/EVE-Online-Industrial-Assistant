@@ -215,7 +215,7 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
   蓝图库右键 / 全物品页右键
     → services/research_plans.create_research_plan（单次 INSERT，含科研专属列）
       · 拷贝 CopyPlanDialog      份数 + 每份流程（≤ 蓝图 copying 的 max_production_limit）
-      · 发明 InventionPlanDialog 产物（多产物下拉）+ 解码器 + 预期成功率 + 尝试次数
+      · 发明 InventionPlanDialog 产物（多产物下拉）+ 解码器 + 预期成功率 + 每线尝试次数 × 并行数
       · 研究 ResearchPlanDialog  ME/TE + 目标等级
 
 评分（按行 activity 分派）
@@ -247,8 +247,9 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
 - 研发活动的表名不一致：`blueprint_activities` 用 `researching_material_efficiency`，
   而 `blueprint_materials` 用 `research_material`（映射见 `plan_job_kinds.material_activity`）。
 - 发明时长/产出上限在**输入 T1 蓝图**上，不在产物那张蓝图。
-- 发明产出的 BPC 基础流程数 = `min(T1 拷贝上限, T2 制造上限)`（SDE 实测 1125 条路径可校验），
-  不要按「舰船 1 / 其余 10」硬编码。
+- 发明产出的 BPC 基础流程数 = `blueprint_products.quantity`（invention 行）= SDE 的
+  授权流程数，取值 1/3/5/10/20。旧口径 `min(T1 拷贝上限, T2 制造上限)` 已废弃
+  （228/1349 条路径不符，216 条 T3 古文物路径错给 300）。
 
 ## 库存管理
 

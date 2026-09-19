@@ -223,6 +223,7 @@ def _add_invention_plan(bridge: Any, bp: dict) -> None:
         outcomes=src["outcomes"],
         base_runs_by_outcome=base_runs,
         default_probability={int(o["blueprint_type_id"]): float(o["base_probability"]) for o in src["outcomes"]},
+        t1_blueprint_type_id=t1_id,
         parent=_parent(bridge),
     )
     for i in range(dialog.outcome_combo().count()):
@@ -243,7 +244,7 @@ def _add_invention_plan(bridge: Any, bp: dict) -> None:
         data.get("product_name") or str(product_bp),
         activity="invention",
         runs=int(data.get("attempts") or 1),
-        parallels=1,
+        parallels=int(data.get("parallels") or 1),
         data=data,
         decryptor_type_id=data.get("decryptor_type_id"),
         success_rate=data.get("success_rate"),

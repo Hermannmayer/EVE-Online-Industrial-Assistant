@@ -52,7 +52,8 @@ def research_db(db_manager, monkeypatch):
         conn.execute("INSERT INTO blueprint_activities VALUES (?,?,?,?)", (T2_BP, "manufacturing", 2340, 10))
         # T1 蓝图（821）的发明活动：本计划要跑的作业（产出 T2 蓝图）
         # T1 蓝图（821）发明出 T2 蓝图；基础成功率 0.34、拷份上限 200
-        conn.execute("INSERT INTO blueprint_products VALUES (?,?,?,?,?)", (T1_BP, "invention", T2_BP, 1, 0.34))
+        # T1 蓝图（821）发明出 T2 蓝图；基础成功率 0.34，quantity = 产出 BPC 的授权流程数
+        conn.execute("INSERT INTO blueprint_products VALUES (?,?,?,?,?)", (T1_BP, "invention", T2_BP, 10, 0.34))
         conn.execute("INSERT INTO blueprint_activities VALUES (?,?,?,?)", (T1_BP, "invention", 13800, 10))
         conn.execute("INSERT INTO blueprint_activities VALUES (?,?,?,?)", (T1_BP, "copying", 720, 200))
         for mid in (MECH_DATACORE, NUCLEAR_DATACORE):
@@ -155,11 +156,11 @@ class TestInventionDispatch:
         bd = r["breakdown"]
         assert bd["base_probability"] == pytest.approx(0.34)
         assert bd["success_rate"] == pytest.approx(0.34)  # 无技能 → 基础值
-        # 产出 BPC 流程数 = min(T1 拷份上限 200, T2 制造上限 10) = 10
+        # 产出 BPC 流程数 = SDE invention 行的 quantity（这里是 10，真实 SDE 821→2890 也是 10）
         assert bd["runs_per_bpc"] == 10
-        # 需 1×10 流程；0.34×10=3.4 → ceil(10/3.4) = 3 次
-        assert bd["attempts"] == 3
-        assert r["material_cost"] == pytest.approx((27890.0 + 96830.0) * 3)
+        # 尝试次数由计划行给定：流程 1 × 并行 1 = 1 次（不再按「目标流程数」反推）
+        assert bd["attempts"] == 1
+        assert r["material_cost"] == pytest.approx((27890.0 + 96830.0) * 1)
         assert r["calculated_time"] > 0
 
     def test_skills_read_from_char_config(self, research_db):
@@ -181,14 +182,22 @@ class TestInventionDispatch:
         assert bd["decryptor"] == "放大装置解码器"
         assert bd["success_rate"] == pytest.approx(0.204)
         assert bd["runs_per_bpc"] == 19
-        # 需 2×10=20 流程；0.204×19=3.876 → ceil(20/3.876) = 6 次
+        # 流程 2 × 并行 1 = 2 次尝试；解码器每次尝试消耗 1 个
+        assert bd["attempts"] == 2
+        assert r["material_cost"] == pytest.approx((27890.0 + 96830.0 + 708900.0) * 2)
+
+    def test_runs_times_parallels_are_the_total_attempts(self, research_db):
+        """总尝试 = 每线尝试次数 × 并行作业数（与执行侧扣料口径一致）。"""
+        r = _calc(_plan("invention", runs=3, parallels=2))
+        bd = r["breakdown"]
         assert bd["attempts"] == 6
-        assert r["material_cost"] == pytest.approx((27890.0 + 96830.0 + 708900.0) * 6)
+        # 墙钟按每线 runs 次串行算，并行线同时跑 —— 不乘 parallels
+        assert r["calculated_time"] == pytest.approx(13800 * 3)
 
     def test_success_rate_override_used(self, research_db):
         r = _calc(_plan("invention", success_rate=0.5, runs=1))
         assert r["breakdown"]["success_rate"] == pytest.approx(0.5)
-        assert r["breakdown"]["attempts"] == 2  # ceil(10/5)
+        assert r["breakdown"]["attempts"] == 1  # 流程 1 × 并行 1
 
     def test_actual_output_runs_recorded(self, research_db):
         r = _calc(_plan("invention", actual_output_runs=7))

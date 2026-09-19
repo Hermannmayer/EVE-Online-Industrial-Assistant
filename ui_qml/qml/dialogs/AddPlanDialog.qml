@@ -6,9 +6,11 @@ import "../components"
 /* 「加入制造计划」对话框（阶段 4b 收尾）。
  *
  * 对照 Widgets 版 `ui_pyside6/dialogs/industry_dialogs.py` 的 `AddPlanDialog`。
- * 取值为 `{runs, parallels, me, te, char, fac}`，落在桥
- * （`industry_dialogs_bridge.AddPlanBridge`）里。角色行/设施行与科研三框共用
- * `CharField` / `FacilityField`，不各写一份。
+ * 取值为 `{runs, parallels, me, te, char}`，落在桥
+ * （`industry_dialogs_bridge.AddPlanBridge`）里。角色行与科研三框共用 `CharField`。
+ *
+ * 「设施」输入框已移除：它是纯展示标签，不参与任何数值计算，且落库时为空会自动
+ * 回填材料机库名（见 `services/plan_service.py` 的 facility 回填）。
  */
 
 FDialogFrame {
@@ -182,12 +184,6 @@ FDialogFrame {
     }
 
     CharField {
-        dlg: frame.bp
-        labelWidth: frame.labelWidth
-        boxWidth: Math.round(220 * Theme.fontScale)
-    }
-
-    FacilityField {
         dlg: frame.bp
         labelWidth: frame.labelWidth
         boxWidth: Math.round(220 * Theme.fontScale)

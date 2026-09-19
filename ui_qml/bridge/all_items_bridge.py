@@ -928,6 +928,7 @@ def _add_research_plan(parent: Any, type_id: int, name: str, kind: str) -> None:
             outcomes=src["outcomes"],
             base_runs_by_outcome=base_runs,
             default_probability={int(o["blueprint_type_id"]): float(o["base_probability"]) for o in src["outcomes"]},
+            t1_blueprint_type_id=int(src["t1_blueprint_type_id"]),
             parent=parent,
         )
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -942,6 +943,7 @@ def _add_research_plan(parent: Any, type_id: int, name: str, kind: str) -> None:
             activity="invention",
             blueprint_name=data.get("product_name") or str(product),
             runs=int(data.get("attempts") or 1),
+            parallels=int(data.get("parallels") or 1),
             mat_hangar_id=data.get("mat_hangar_id"),
             deposit_hangar_id=data.get("deposit_hangar_id"),
             solar_system_id=data.get("solar_system_id"),

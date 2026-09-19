@@ -7,8 +7,9 @@ SQL 不散落到各处。
     product_type_id    本计划的产物。科研行恒为**蓝图 type_id**
                        （发明 = 产出的 T2 蓝图；拷贝/研究 = 被操作的蓝图）。
     blueprint_type_id  同 product_type_id（科研行的输入蓝图与产物是同一张）。
-    runs               拷贝 = 每份拷贝的授权流程；发明 = 尝试次数；研究 = 目标等级。
-    parallels          拷贝 = 产出份数；其余按 1 计。
+    runs               拷贝 = 每份拷贝的授权流程；发明 = 每线尝试次数；研究 = 目标等级。
+    parallels          拷贝 = 产出份数；发明 = 并行作业数（总尝试 = runs × parallels）；
+                       其余按 1 计。
 """
 
 from __future__ import annotations
@@ -70,31 +71,22 @@ def resolve_invention_source(conn, blueprint_type_id: int) -> dict[str, Any] | N
 
 
 def invention_base_runs(conn, t2_blueprint_type_id: int, t1_blueprint_type_id: int) -> int:
-    """发明产出的 T2 BPC 基础流程数 = min(T1 拷贝上限, T2 制造上限)。
+    """发明产出的 T2 BPC 基础流程数 = SDE `blueprint_products.quantity`。
 
-    SDE 实测（1125 条发明路径可校验）：这是唯一稳定的来源——
-    按「舰船 1 / 其余 10」硬编码会错（部分组件是 1、改装件是 5/20/300）。
-    任一上限缺失时回退 10。
+    发明行的 quantity 就是产出 BPC 的授权流程数：1349 条路径上只取
+    1/3/5/10/20，其中 T3 古文物的 20/10/3（完好/失灵/毁坏）与官方分档一致
+    （见 docs/eve_wiki_knowledge_base.md「古文物」节）。缺失时回退 10。
+
+    历史口径是 `min(T1 拷贝上限, T2 制造上限)`，在 228/1349 条路径上与 SDE 不符
+    ——216 条 T3 古文物路径给 300（实为 20/10/3）、11 条普通物品给 3/5（实为 10）。
     """
     row = conn.execute(
-        "SELECT max_production_limit FROM blueprint_activities "
-        "WHERE blueprint_type_id = ? AND activity = 'manufacturing' LIMIT 1",
-        (t2_blueprint_type_id,),
+        "SELECT quantity FROM blueprint_products "
+        "WHERE activity = 'invention' AND blueprint_type_id = ? AND product_type_id = ? LIMIT 1",
+        (t1_blueprint_type_id, t2_blueprint_type_id),
     ).fetchone()
-    t2_limit = int(row[0] or 0) if row else 0
-    t1_limit = int(
-        (
-            conn.execute(
-                "SELECT max_production_limit FROM blueprint_activities "
-                "WHERE blueprint_type_id = ? AND activity = 'copying' LIMIT 1",
-                (t1_blueprint_type_id,),
-            ).fetchone()
-            or [0]
-        )[0]
-        or 0
-    )
-    caps = [c for c in (t1_limit, t2_limit) if c > 0]
-    return min(caps) if caps else 10
+    value = int(row[0] or 0) if row else 0
+    return value if value > 0 else 10
 
 
 def research_cost_per_run(

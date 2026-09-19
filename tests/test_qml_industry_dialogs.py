@@ -39,7 +39,6 @@ def test_add_plan_result_data_fields(qapp, stub_lookups):
         bridge.setParallels(2)
         bridge.setMe(3)
         bridge.setTe(7)
-        bridge.setFacility("  自制站  ")
         bridge.accept()
 
         assert dlg.result_data() == {
@@ -48,7 +47,6 @@ def test_add_plan_result_data_fields(qapp, stub_lookups):
             "me": 3,
             "te": 7,
             "char": "守夜人",
-            "fac": "自制站",  # 设施名两端空白被 strip 掉
         }
     finally:
         dlg.deleteLater()

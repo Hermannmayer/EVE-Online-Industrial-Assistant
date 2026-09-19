@@ -14,13 +14,19 @@ from typing import Any
 
 from PySide6.QtCore import Property, Signal, Slot
 
+from core.logger import log
 from domain.research import (
     ACTIVITY_COPYING,
     ACTIVITY_INVENTION,
     ACTIVITY_RESEARCH_ME,
     ACTIVITY_RESEARCH_TE,
-    DECRYPTORS,
     Decryptor,
+    decryptor_ids,
+    decryptor_labels,
+    get_decryptor,
+    invention_output_me_te,
+    invention_output_runs,
+    invention_probability,
 )
 from services import inventory_manager
 from ui_qml.dialog_host import DialogBridge, QmlDialog
@@ -61,7 +67,11 @@ def _default_hangar_id(key: str) -> int | None:
 
 
 class _ResearchBridgeBase(DialogBridge):
-    """三张科研对话框的公共字段：角色 / 材料机库 / 输出机库 / 设施。"""
+    """三张科研对话框的公共字段：角色 / 材料机库 / 输出机库。
+
+    输出机库默认**跟随材料机库**（游戏里科研的输入与产出在同一处机库）：用户没单独
+    改过输出机库时，改材料机库会把它一起带过去；一旦手工选过输出机库就不再跟随。
+    """
 
     #: 公共字段任一变化（QML 靠它把下拉的当前值刷回来）
     fieldsChanged = Signal()
@@ -86,9 +96,8 @@ class _ResearchBridgeBase(DialogBridge):
             "default_deposit_hangar_id"
         )
         self._out_index = self._index_of(out_default)
-
-        # 设施：原版是空的可编辑下拉（currentIndex(-1)），所以初值是空串
-        self._facility = ""
+        #: 用户是否手工选过输出机库 —— 没选过才跟随材料机库
+        self._out_user_edited = False
 
     # ── 初始化数据 ───────────────────────────────────────────
 
@@ -114,8 +123,6 @@ class _ResearchBridgeBase(DialogBridge):
     blueprintName = Property(str, lambda self: self._blueprint_name, constant=True)
     charOptions = Property(list, lambda self: list(self._chars), constant=True)
     hangarOptions = Property(list, lambda self: [h["name"] for h in self._hangars], constant=True)
-    #: 设施下拉的候选（原版只填了机库名，不含「未设置」）
-    facilityOptions = Property(list, lambda self: [h["name"] for h in self._hangars[1:]], constant=True)
     tip = Property(str, lambda self: _TIP, constant=True)
 
     # ── 可编辑字段 ───────────────────────────────────────────
@@ -123,7 +130,6 @@ class _ResearchBridgeBase(DialogBridge):
     charIndex = Property(int, lambda self: self._char_index, notify=fieldsChanged)
     matIndex = Property(int, lambda self: self._mat_index, notify=fieldsChanged)
     outIndex = Property(int, lambda self: self._out_index, notify=fieldsChanged)
-    facility = Property(str, lambda self: self._facility, notify=fieldsChanged)
 
     @Slot(int)
     def setCharIndex(self, index: int) -> None:
@@ -133,19 +139,21 @@ class _ResearchBridgeBase(DialogBridge):
 
     @Slot(int)
     def setMatIndex(self, index: int) -> None:
-        if 0 <= index < len(self._hangars):
-            self._mat_index = index
-            self.fieldsChanged.emit()
+        if not 0 <= index < len(self._hangars):
+            return
+        self._mat_index = index
+        # 输出机库没被单独改过 → 跟着材料机库走（科研的输入与产出在同一处机库）
+        if not self._out_user_edited:
+            self._out_index = index
+        self.fieldsChanged.emit()
 
     @Slot(int)
     def setOutIndex(self, index: int) -> None:
-        if 0 <= index < len(self._hangars):
-            self._out_index = index
-            self.fieldsChanged.emit()
-
-    @Slot(str)
-    def setFacility(self, text: str) -> None:
-        self._facility = str(text)
+        if not 0 <= index < len(self._hangars):
+            return
+        self._out_index = index
+        self._out_user_edited = True
+        self.fieldsChanged.emit()
 
     # ── 取值 ─────────────────────────────────────────────────
 
@@ -154,9 +162,6 @@ class _ResearchBridgeBase(DialogBridge):
         if 0 <= self._char_index < len(self._chars):
             return self._chars[self._char_index]
         return ""
-
-    def currentFacility(self) -> str:
-        return self._facility.strip()
 
     def _hangar_id(self, index: int) -> int | None:
         """下拉索引 → 机库 id；「未设置」(-1)/越界 → None（对齐原 `> 0` 判定）。"""
@@ -177,7 +182,6 @@ class _ResearchBridgeBase(DialogBridge):
             "mat_hangar_id": mat_id,
             "deposit_hangar_id": out_id,
             "solar_system_id": inventory_manager.get_hangar_system_id(mat_id) if mat_id else None,
-            "facility": self.currentFacility(),
         }
 
     def result_data(self) -> dict[str, Any] | None:
@@ -277,9 +281,12 @@ class InventionPlanBridge(_ResearchBridgeBase):
         outcomes: list[dict[str, Any]],
         base_runs_by_outcome: dict[int, int],
         default_probability: dict[int, float],
+        t1_blueprint_type_id: int | None = None,
     ) -> None:
         super().__init__(t1_blueprint_name, title="加入发明规划")
         self._t1_name = str(t1_blueprint_name)
+        #: 成功率的技能加成要从这张 T1 蓝图的 blueprint_skills 取；缺了就只能按 SDE 基础率算
+        self._t1_bp = int(t1_blueprint_type_id) if t1_blueprint_type_id else None
         self._outcomes = list(outcomes)
         self._base_runs = dict(base_runs_by_outcome)
         # 原版把它存下却没读过（真实基础成功率走产物自带的 base_probability），
@@ -288,11 +295,14 @@ class InventionPlanBridge(_ResearchBridgeBase):
 
         self._outcome_index = 0
         # 索引 0 = 「不使用」，其余按 DECRYPTORS 的顺序映射到各自 type_id
-        self._decryptor_ids: list[int | None] = [None, *DECRYPTORS.keys()]
+        self._decryptor_ids: list[int | None] = decryptor_ids()
         self._decryptor_index = 0
         self._rate = 0.0
         self._hint = ""
         self._attempts = 1
+        self._parallels = 1
+        #: 用户手改过成功率 → 落库时作为 override；没改过就存 NULL，让评分按技能现算
+        self._rate_user_edited = False
         self._refresh_probability()
 
     # ── 选项（标签在 Python 侧拼好，格式化逻辑可单测）──────
@@ -302,13 +312,7 @@ class InventionPlanBridge(_ResearchBridgeBase):
         lambda self: [f"{oc['name']}（基础成功率 {oc['base_probability'] * 100:.0f}%）" for oc in self._outcomes],
         constant=True,
     )
-    decryptorLabels = Property(
-        list,
-        lambda self: (
-            ["不使用"] + [f"{d.name}（成功率 ×{d.prob_mult:g}，流程 {d.runs_mod:+d}）" for d in DECRYPTORS.values()]
-        ),
-        constant=True,
-    )
+    decryptorLabels = Property(list, lambda self: decryptor_labels(), constant=True)
     outcomeSummary = Property(
         str,
         lambda self: f"由「{self._t1_name}」发明，共 {len(self._outcomes)} 种可能",
@@ -322,6 +326,9 @@ class InventionPlanBridge(_ResearchBridgeBase):
     rate = Property(float, lambda self: self._rate, notify=inventionChanged)
     rateHint = Property(str, lambda self: self._hint, notify=inventionChanged)
     attempts = Property(int, lambda self: self._attempts, notify=inventionChanged)
+    parallels = Property(int, lambda self: self._parallels, notify=inventionChanged)
+    #: runs = 每线尝试次数、parallels = 并行作业数；计划行按两者相乘的**总尝试**扣料
+    expectedSummary = Property(str, lambda self: self._build_summary(), notify=inventionChanged)
 
     @Slot(int)
     def setOutcomeIndex(self, index: int) -> None:
@@ -339,14 +346,30 @@ class InventionPlanBridge(_ResearchBridgeBase):
 
     @Slot(float)
     def setRate(self, value: float) -> None:
-        """用户在微调框里手改成功率 —— 只存值，不触发重算（原版 blockSignals 的等价物）。"""
+        """用户在微调框里手改成功率 —— 只存值，不触发重算（原版 blockSignals 的等价物）。
+
+        手改过就记下来：落库时作为 `success_rate` override；没改过存 NULL，
+        让评分按**当前角色的技能**现算（换角色/改技能后能跟着变）。
+        """
         self._rate = float(value)
+        self._rate_user_edited = True
         self.inventionChanged.emit()
 
     @Slot(int)
     def setAttempts(self, value: int) -> None:
         self._attempts = max(1, min(10000, int(value)))
         self.inventionChanged.emit()
+
+    @Slot(int)
+    def setParallels(self, value: int) -> None:
+        self._parallels = max(1, min(100, int(value)))
+        self.inventionChanged.emit()
+
+    @Slot(int)
+    def setCharIndex(self, index: int) -> None:
+        """换角色要重算成功率 —— 科学技能等级跟着人走。"""
+        super().setCharIndex(index)
+        self._refresh_probability()
 
     # ── 计算 ─────────────────────────────────────────────────
 
@@ -358,27 +381,71 @@ class InventionPlanBridge(_ResearchBridgeBase):
     def _current_decryptor(self) -> Decryptor | None:
         if not 0 <= self._decryptor_index < len(self._decryptor_ids):
             return None
-        tid = self._decryptor_ids[self._decryptor_index]
-        return DECRYPTORS.get(int(tid)) if tid else None
+        return get_decryptor(self._decryptor_ids[self._decryptor_index])
+
+    def _skill_levels(self) -> tuple[int, int, int, str]:
+        """当前角色在该 T1 蓝图发明活动上的 (科学1, 科学2, 加密, 说明)；取不到 → 全 0。
+
+        复用 `ScoringService._research_skill_levels` —— 对话框显示的加成必须和
+        计划行重算时用的**完全同一套**解析规则，否则两边对不上。
+        """
+        if not self._t1_bp:
+            return 0, 0, 0, ""
+        try:
+            from core.container import get_container
+            from services.char_config_resolver import resolve_char_config
+            from services.scoring_service import ScoringService
+
+            skills = (resolve_char_config(char_name=self.currentChar()) or {}).get("skills", {}) or {}
+            with get_container().db.connect("bp", "ref") as conn:
+                return ScoringService._research_skill_levels(conn, self._t1_bp, ACTIVITY_INVENTION, skills)
+        except Exception:
+            log.exception("发明成功率取技能失败 t1_bp=%s", self._t1_bp)
+            return 0, 0, 0, ""
 
     def _refresh_probability(self) -> None:
-        """换产物/换解码器时重算预期成功率与提示（逐条对齐原 `_refresh_probability`）。"""
+        """换产物 / 换解码器 / 换角色时重算预期成功率与提示。
+
+        成功率走 `domain.research.invention_probability`（含技能加成），不再只算
+        `基础率 × 解码器倍率` —— 旧实现让技能加成在整条链路上从未生效。
+        """
         oc = self._current_outcome()
         decryptor = self._current_decryptor()
         base = float(oc.get("base_probability") or 0.0)
         mult = decryptor.prob_mult if decryptor else 1.0
-        computed = min(1.0, base * mult)
+        s1, s2, enc, skill_note = self._skill_levels()
+        computed = invention_probability(base, s1, s2, enc, prob_mult=mult)
         # 原版是 QDoubleSpinBox(decimals=1)：setValue 会按 1 位小数取整，
         # 而取值时读的也是取整后的值 —— 这里同步取整，success_rate 才逐位一致。
-        self._rate = round(max(0.01, computed * 100), 1)
-        runs = self._base_runs.get(int(oc.get("blueprint_type_id") or 0), 10)
-        out_runs = max(1, runs + (decryptor.runs_mod if decryptor else 0))
-        hint = f"按技能算的基础成功率 {base * 100:.0f}%"
+        # 用户手改过就保留他的手改值，不覆盖。
+        if not self._rate_user_edited:
+            self._rate = round(max(0.01, computed * 100), 1)
+        out_runs = invention_output_runs(self._base_runs.get(int(oc.get("blueprint_type_id") or 0), 10), decryptor)
+        bonus = (max(0, s1) + max(0, s2)) / 30.0 + max(0, enc) / 40.0
+        head = f"SDE 基础成功率 {base * 100:.0f}%"
+        head += f" × 技能加成 (1+{bonus:.3f})：{skill_note}" if skill_note else "（未取到角色技能）"
         if decryptor:
-            hint += f" × 解码器 {mult:g}"
-        hint += f" → {computed * 100:.1f}%；成功一次产出 {out_runs} 流程的 BPC"
-        self._hint = hint
+            head += f" × 解码器 {mult:g}"
+        self._hint = f"{head} → {computed * 100:.1f}%；成功一次产出 {out_runs} 流程的 T2 蓝图拷贝"
         self.inventionChanged.emit()
+
+    def _build_summary(self) -> str:
+        """对话框底部的「预期结果」块（随产物 / 解码器 / 流程 / 并行 / 成功率实时变）。"""
+        oc = self._current_outcome()
+        decryptor = self._current_decryptor()
+        base_runs = int(self._base_runs.get(int(oc.get("blueprint_type_id") or 0), 10))
+        out_runs = invention_output_runs(base_runs, decryptor)
+        me, te = invention_output_me_te(decryptor)
+        total = self._attempts * self._parallels
+        successes = total * (self._rate / 100.0)
+        return "\n".join(
+            [
+                f"总尝试次数：{self._attempts} × {self._parallels} = {total} 次",
+                f"需要输入：{self._parallels} 张 T1 蓝图拷贝，每张至少 {self._attempts} 流程",
+                f"单次成功产出：{out_runs} 流程的 T2 蓝图拷贝（ME{me}/TE{te}）",
+                f"期望产出：约 {successes:.1f} 次成功 ≈ {successes * out_runs:.1f} 流程",
+            ]
+        )
 
     # ── 与调用点对齐的访问器 ─────────────────────────────────
 
@@ -403,8 +470,10 @@ class InventionPlanBridge(_ResearchBridgeBase):
                 "product_blueprint_type_id": int(oc.get("blueprint_type_id") or 0),
                 "product_name": oc.get("name") or "",
                 "decryptor_type_id": int(decryptor.type_id) if decryptor else None,
-                "success_rate": round(self._rate / 100.0, 4),
+                # 只在用户手改过时落库；否则存 NULL，评分链按当前角色技能现算
+                "success_rate": round(self._rate / 100.0, 4) if self._rate_user_edited else None,
                 "attempts": self._attempts,
+                "parallels": self._parallels,
             }
         )
         self._result = data
@@ -421,6 +490,7 @@ class InventionPlanDialogQmlDialog(QmlDialog):
         outcomes: list[dict[str, Any]],
         base_runs_by_outcome: dict[int, int],
         default_probability: dict[int, float],
+        t1_blueprint_type_id: int | None = None,
         parent: Any = None,
     ) -> None:
         bridge = InventionPlanBridge(
@@ -428,8 +498,9 @@ class InventionPlanDialogQmlDialog(QmlDialog):
             outcomes=outcomes,
             base_runs_by_outcome=base_runs_by_outcome,
             default_probability=default_probability,
+            t1_blueprint_type_id=t1_blueprint_type_id,
         )
-        super().__init__(_INVENTION_QML, bridge, parent=parent, size=(560, 480))
+        super().__init__(_INVENTION_QML, bridge, parent=parent, size=(560, 560))
         self._inv_bridge = bridge
 
     def result_data(self) -> dict[str, Any] | None:

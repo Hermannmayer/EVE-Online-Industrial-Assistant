@@ -300,8 +300,10 @@ def test_plan_edit_labels_follow_the_activity_kind(plan_edit_factory):
     dialog = plan_edit_factory({"product_name": "x", "activity": "invention"})
     try:
         bridge = dialog.bridge
-        assert bridge.runsLabel == "尝试次数"
+        assert bridge.runsLabel == "每线尝试次数"
         assert bridge.parallelLabel == "并行数"
+        assert bridge.showParallel, "发明行的并行数有意义（总尝试 = 每线 × 并行）"
+        assert not bridge.showMeTe, "科研行不开放 ME/TE"
     finally:
         dialog.deleteLater()
 
@@ -316,6 +318,47 @@ def test_plan_edit_dialog_title_comes_from_the_bridge(plan_edit_factory):
     dialog = plan_edit_factory({"product_name": "渡鸦级"})
     try:
         assert "渡鸦级" in dialog.windowTitle()
+    finally:
+        dialog.deleteLater()
+
+
+def test_plan_edit_manufacturing_exposes_me_te(plan_edit_factory):
+    """制造行能直接改 ME/TE（以前只能去计划表里双击就地编辑）。"""
+    dialog = plan_edit_factory({"product_name": "渡鸦级", "runs": 2, "me_level": 3, "te_level": 7})
+    try:
+        bridge = dialog.bridge
+        assert bridge.showMeTe, "制造行要开放 ME/TE"
+        assert (bridge.me, bridge.te) == (3, 7)
+
+        bridge.setMe(9)
+        bridge.setTe(11)
+        data = dialog.get_updated_data()
+        assert (data["me_level"], data["te_level"]) == (9, 11)
+    finally:
+        dialog.deleteLater()
+
+
+def test_plan_edit_invention_decryptor(plan_edit_factory):
+    """发明行能改解码器；换了解码器要把旧的手填成功率清成 None。"""
+    dialog = plan_edit_factory(
+        {"product_name": "渡鸦级", "activity": "invention", "runs": 3, "parallels": 2, "success_rate": 0.34}
+    )
+    try:
+        bridge = dialog.bridge
+        assert bridge.showDecryptor, "发明行要能改解码器"
+        assert not bridge.showMeTe
+        assert bridge.decryptorLabels[0] == "不使用"
+        assert bridge.totalAttempts == "总尝试 6 次"
+
+        # 没碰解码器时不该动存量的手填成功率
+        bridge.setRuns(5)
+        assert "success_rate" not in dialog.get_updated_data()
+
+        # 索引 2 = 34202「获取装置解码器」；换解码器 → 清掉旧成功率
+        bridge.setDecryptorIndex(2)
+        data = dialog.get_updated_data()
+        assert data["decryptor_type_id"] == 34202
+        assert data["success_rate"] is None
     finally:
         dialog.deleteLater()
 

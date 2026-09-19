@@ -720,8 +720,9 @@ class ScoringService:
         plan_data 字段约定:
             product_type_id    本计划产物（科研恒为蓝图 type_id）
             blueprint_type_id  输入蓝图（发明 = T1 蓝图；拷贝/研究 = 同一张蓝图）
-            runs               发明 = 尝试次数 / 拷贝 = 每份拷贝流程 / 研究 = 目标等级
-            parallels          拷贝 = 产出份数（其余按 1 计）
+            runs               发明 = 每线尝试次数 / 拷贝 = 每份拷贝流程 / 研究 = 目标等级
+            parallels          发明 = 并行作业数（总尝试 = runs × parallels）/
+                               拷贝 = 产出份数（其余按 1 计）
             decryptor_type_id / success_rate / actual_output_runs  仅发明使用
         """
         from core.container import get_container
@@ -821,15 +822,11 @@ class ScoringService:
                         (input_bp_type_id,),
                     ).fetchall()
                 ]
-                # 产出 BPC 基础流程数 = min(T1 拷贝上限, T2 制造上限)（SDE 实测，1125 条路径可校验）
-                t1_copy = conn.execute(
-                    "SELECT max_production_limit FROM blueprint_activities "
-                    "WHERE blueprint_type_id = ? AND activity = 'copying' LIMIT 1",
-                    (input_bp_type_id,),
-                ).fetchone()
-                t1_limit = int(t1_copy[0] or 0) if t1_copy else 0
-                caps = [c for c in (t1_limit, max_production_limit) if c > 0]
-                max_production_limit = min(caps) if caps else 10
+                # 产出 BPC 基础流程数 = SDE invention 行的 quantity（唯一口径，
+                # 与 services.research_plans.invention_base_runs 同源）
+                from services.research_plans import invention_base_runs
+
+                max_production_limit = invention_base_runs(conn, blueprint_type_id, input_bp_type_id)
                 s1, s2, enc, skill_note = ScoringService._research_skill_levels(
                     conn, input_bp_type_id, "invention", skills
                 )
@@ -861,6 +858,9 @@ class ScoringService:
 
         if activity == ACTIVITY_INVENTION:
             base_runs = max(1, max_production_limit)
+            # 总尝试 = 每线尝试次数 × 并行作业数。与执行侧扣料口径一致：
+            # plan_execution 为每条绑定产线消耗 runs 个 T1 流程，共 parallels 条线。
+            total_attempts = max(1, runs) * max(1, parallels)
             cost = invention_plan_cost(
                 base_probability=base_probability,
                 materials=bp_materials,
@@ -871,14 +871,15 @@ class ScoringService:
                 encryption_skill=enc,
                 decryptor=decryptor,
                 base_runs=base_runs,
-                output_runs_needed=max(1, runs * base_runs),
+                attempts_override=total_attempts,
                 input_bpc_cost_per_run=float(plan_data.get("input_bpc_cost_per_run") or 0.0),
                 success_rate_override=plan_data.get("success_rate"),
                 actual_output_runs=plan_data.get("actual_output_runs"),
                 structure_mult=structure_mult,
                 facility_tax=facility_tax,
             )
-            job_k = max(1, int(cost["attempts"]))
+            # 墙钟 = 每线 runs 次串行 × 单次时长；并行线同时跑，不乘 parallels
+            job_k = max(1, runs)
             output_runs = int(cost["output_runs"])
             extra = {
                 "success_rate": cost["success_rate"],

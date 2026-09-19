@@ -575,6 +575,32 @@ class ManufacturableItemsBridge(DialogBridge):
         insert_plan_from_score(type_id, name, score, data, self._mfg)
         FMessageDialog.information(self.host_widget(), "提示", f"已加入制造列表: {name}")
 
+    @Slot(int)
+    def copyName(self, row: int) -> None:
+        """复制物品名（与全物品窗口同源）。"""
+        data = self._row_at(row)
+        if data:
+            QGuiApplication.clipboard().setText(str(data.get("z", "")))
+
+    @Slot(int)
+    def copyId(self, row: int) -> None:
+        data = self._row_at(row)
+        if data and data.get("id"):
+            QGuiApplication.clipboard().setText(str(data["id"]))
+
+    @Slot(int, str)
+    def addResearch(self, row: int, kind: str) -> None:
+        """「加入拷贝 / 发明 / 效率研究规划」—— 直接复用全物品窗口那份实现。
+
+        该窗口只建了制造缓存、没有贸易模式，所以菜单里不放「贸易核算明细」。
+        """
+        info = self.rowInfo(row)
+        if not info["valid"]:
+            return
+        from ui_qml.bridge.all_items_bridge import _add_research_plan
+
+        _add_research_plan(self.host_widget(), int(info["typeId"]), str(info["name"]), kind)
+
     # ── 置顶 ─────────────────────────────────────────────────
 
     @Slot(bool)

@@ -65,7 +65,6 @@ def test_copy_plan_merges_common_and_specific_fields(qapp, stub_lookups):
         bridge.setRunsPerCopy(7)
         bridge.setMatIndex(1)
         bridge.setOutIndex(2)
-        bridge.setFacility("  吉他 - 装配厂  ")
         bridge.accept()
 
         assert dlg.result_data() == {
@@ -74,7 +73,6 @@ def test_copy_plan_merges_common_and_specific_fields(qapp, stub_lookups):
             "mat_hangar_id": 1,
             "deposit_hangar_id": 2,
             "solar_system_id": 30000142,
-            "facility": "吉他 - 装配厂",  # 设施名两端空白被 strip 掉
             "copies": 3,
             "runs_per_copy": 7,
         }
@@ -153,23 +151,44 @@ def test_outcome_combo_adapter_preselects_by_blueprint(qapp, stub_lookups):
 
 
 def test_invention_probability_follows_decryptor(qapp, stub_lookups):
-    """换解码器重算成功率与产出流程数（对齐原 `_refresh_probability`）。"""
+    """换解码器重算成功率与产出流程数。"""
     dlg = _invention_dialog()
     try:
         bridge = dlg.bridge
         assert bridge.rate == 34.0, "基础成功率 0.34 → 34.0%"
-        assert bridge.rateHint == "按技能算的基础成功率 34% → 34.0%；成功一次产出 10 流程的 BPC"
+        assert bridge.rateHint == ("SDE 基础成功率 34%（未取到角色技能） → 34.0%；成功一次产出 10 流程的 T2 蓝图拷贝")
 
         # 解码器索引 2 = 34202「获取装置解码器」（×1.8，流程 +4）
         bridge.setDecryptorIndex(2)
         assert bridge.rate == 61.2
         assert "解码器 1.8" in bridge.rateHint
-        assert "成功一次产出 14 流程的 BPC" in bridge.rateHint
+        assert "成功一次产出 14 流程的 T2 蓝图拷贝" in bridge.rateHint
 
         bridge.accept()
         data = dlg.result_data() or {}
         assert data["decryptor_type_id"] == 34202
-        assert data["success_rate"] == 0.612, "取整规则：rate(61.2)/100 → round 4 位"
+        # 没手改过 → 落 NULL，评分链按当前角色的技能现算（而不是写死对话框算的值）
+        assert data["success_rate"] is None
+    finally:
+        dlg.deleteLater()
+
+
+def test_invention_runs_times_parallels_drive_summary(qapp, stub_lookups):
+    """流程 × 并行 = 总尝试：落库两个值，预期结果块按乘积算。"""
+    dlg = _invention_dialog()
+    try:
+        bridge = dlg.bridge
+        bridge.setAttempts(3)
+        bridge.setParallels(2)
+        bridge.accept()
+        data = dlg.result_data() or {}
+        assert data["attempts"] == 3
+        assert data["parallels"] == 2
+
+        summary = bridge.expectedSummary
+        assert "总尝试次数：3 × 2 = 6 次" in summary
+        assert "需要输入：2 张 T1 蓝图拷贝，每张至少 3 流程" in summary
+        assert "单次成功产出：10 流程的 T2 蓝图拷贝（ME2/TE4）" in summary
     finally:
         dlg.deleteLater()
 

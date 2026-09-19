@@ -4,7 +4,7 @@
 对外契约保持一致：`exec()` → `get_updated_data()` 返回同一个字段字典
 （含批量模式下「未勾选同步则流程/并行为 None」那条规则）。
 
-科研行的 `runs` 语义不同（发明=尝试次数 / 拷贝=每份流程 / 研究=目标等级），
+科研行的 `runs` 语义不同（发明=每线尝试次数 / 拷贝=每份流程 / 研究=目标等级），
 标签与提示随活动类型走 —— 与 Widgets 版逐条对齐。
 """
 
@@ -14,18 +14,31 @@ from typing import Any
 
 from PySide6.QtCore import Property, Signal, Slot
 
+from domain.research import (
+    ACTIVITY_INVENTION,
+    ACTIVITY_RESEARCH_ME,
+    ACTIVITY_RESEARCH_TE,
+    decryptor_ids,
+    decryptor_labels,
+)
 from services import inventory_manager
-from services.plan_job_kinds import normalize
+from services.plan_job_kinds import ACTIVITY_MANUFACTURING, normalize
 from ui_qml.dialog_host import DialogBridge, QmlDialog
 
 __all__ = ["PlanEditBridge", "PlanEditQmlDialog"]
 
 _QML_FILE = "dialogs/PlanEditDialog.qml"
 
+#: 效率研究的两种活动（并行数对它们没有意义）
+_RESEARCH_ACTIVITIES = frozenset({ACTIVITY_RESEARCH_ME, ACTIVITY_RESEARCH_TE})
+
 #: 活动类型 → (流程数的标签, 提示)
 _RUNS_LABELS: dict[str, tuple[str, str]] = {
     "copying": ("每份流程", "每份 BPC 的授权生产流程数（上限=蓝图拷贝上限）"),
-    "invention": ("尝试次数", "要跑几次发明尝试；每次消耗 1 个输入 BPC 流程与一份数据核心"),
+    "invention": (
+        "每线尝试次数",
+        "每条并行产线要跑几次发明尝试；总尝试 = 每线尝试次数 × 并行数\n每次尝试消耗 1 个输入 BPC 流程与一份数据核心",
+    ),
     "researching_material_efficiency": ("目标 ME 等级", "材料效率研究的目标等级"),
     "researching_time_efficiency": ("目标 TE 等级", "时间效率研究的目标等级"),
 }
@@ -43,6 +56,7 @@ class PlanEditBridge(DialogBridge):
         self._row_count = int(row_count)
 
         activity = normalize(self._plan.get("activity"))
+        self._activity = activity
         self._runs_label, runs_tip = _RUNS_LABELS.get(activity, ("流程数", ""))
         self._runs_tip = runs_tip
         # 拷贝行的「份数」存在 parallels 上；科研行并行恒为 1
@@ -53,6 +67,16 @@ class PlanEditBridge(DialogBridge):
         self._parallels = int(self._plan.get("parallels", 1) or 1)
         self._sync_runs = not self._batch_mode
         self._notes = str(self._plan.get("notes", "") or "")
+        self._me = max(0, min(10, int(self._plan.get("me_level", 0) or 0)))
+        self._te = max(0, min(20, int(self._plan.get("te_level", 0) or 0)))
+
+        # 解码器（仅发明行）：把计划里存的 type_id 映射到下拉索引
+        raw_dec = self._plan.get("decryptor_type_id")
+        self._orig_decryptor_id = int(raw_dec) if raw_dec else None
+        self._decryptor_ids = decryptor_ids()
+        self._decryptor_index = (
+            self._decryptor_ids.index(self._orig_decryptor_id) if self._orig_decryptor_id in self._decryptor_ids else 0
+        )
 
         self._chars = self._load_chars()
         char = str(self._plan.get("char_name") or self._plan.get("character") or "")
@@ -63,6 +87,8 @@ class PlanEditBridge(DialogBridge):
         self._hangars = self._load_hangars()
         self._deposit_index = self._index_of_hangar(self._plan.get("deposit_hangar_id"))
         self._mat_index = self._index_of_hangar(self._plan.get("mat_hangar_id"))
+        #: 用户是否手工选过产出机库 —— 没选过才跟随材料机库
+        self._deposit_user_edited = False
 
         self.set_title(
             f"批量编辑生产计划 ({self._row_count} 行)"
@@ -114,6 +140,17 @@ class PlanEditBridge(DialogBridge):
     runsTip = Property(str, lambda self: self._runs_tip, constant=True)
     parallelLabel = Property(str, lambda self: self._parallel_label, constant=True)
     parallelTip = Property(str, lambda self: self._parallel_tip, constant=True)
+    #: ME/TE 只对制造行开放（科研行恒 0；批量模式沿用「不含 ME/TE」的既有约定）
+    showMeTe = Property(
+        bool,
+        lambda self: self._activity == ACTIVITY_MANUFACTURING and not self._batch_mode,
+        constant=True,
+    )
+    #: 研究行的并行数没有意义（runs 本身就是目标等级），藏起来
+    showParallel = Property(bool, lambda self: self._activity not in _RESEARCH_ACTIVITIES, constant=True)
+    #: 解码器只对发明行有意义（它改产出流程数与成功率）
+    showDecryptor = Property(bool, lambda self: self._activity == ACTIVITY_INVENTION, constant=True)
+    decryptorLabels = Property(list, lambda self: decryptor_labels(), constant=True)
 
     chars = Property(list, lambda self: list(self._chars), constant=True)
     hangars = Property(list, lambda self: [h["name"] for h in self._hangars], constant=True)
@@ -127,6 +164,15 @@ class PlanEditBridge(DialogBridge):
     depositIndex = Property(int, lambda self: self._deposit_index, notify=fieldsChanged)
     matIndex = Property(int, lambda self: self._mat_index, notify=fieldsChanged)
     notes = Property(str, lambda self: self._notes, notify=fieldsChanged)
+    me = Property(int, lambda self: self._me, notify=fieldsChanged)
+    te = Property(int, lambda self: self._te, notify=fieldsChanged)
+    decryptorIndex = Property(int, lambda self: self._decryptor_index, notify=fieldsChanged)
+    #: 发明行的只读补充：总尝试 = 每线尝试次数 × 并行作业数
+    totalAttempts = Property(
+        str,
+        lambda self: f"总尝试 {self._runs * self._parallels} 次" if self._activity == ACTIVITY_INVENTION else "",
+        notify=fieldsChanged,
+    )
 
     @Slot(int)
     def setRuns(self, value: int) -> None:
@@ -152,14 +198,36 @@ class PlanEditBridge(DialogBridge):
 
     @Slot(int)
     def setDepositIndex(self, index: int) -> None:
-        if 0 <= index < len(self._hangars):
-            self._deposit_index = index
-            self.fieldsChanged.emit()
+        if not 0 <= index < len(self._hangars):
+            return
+        self._deposit_index = index
+        self._deposit_user_edited = True
+        self.fieldsChanged.emit()
 
     @Slot(int)
     def setMatIndex(self, index: int) -> None:
-        if 0 <= index < len(self._hangars):
-            self._mat_index = index
+        if not 0 <= index < len(self._hangars):
+            return
+        self._mat_index = index
+        # 产出机库没被单独改过 → 跟着材料机库走（与科研三框同一规则）
+        if not self._deposit_user_edited:
+            self._deposit_index = index
+        self.fieldsChanged.emit()
+
+    @Slot(int)
+    def setMe(self, value: int) -> None:
+        self._me = max(0, min(10, int(value)))
+        self.fieldsChanged.emit()
+
+    @Slot(int)
+    def setTe(self, value: int) -> None:
+        self._te = max(0, min(20, int(value)))
+        self.fieldsChanged.emit()
+
+    @Slot(int)
+    def setDecryptorIndex(self, index: int) -> None:
+        if 0 <= index < len(self._decryptor_ids):
+            self._decryptor_index = index
             self.fieldsChanged.emit()
 
     @Slot(str)
@@ -196,6 +264,16 @@ class PlanEditBridge(DialogBridge):
         }
         if not self._batch_mode:
             result["product_name"] = self.productLabel
+        if self.showMeTe:
+            result["me_level"] = self._me
+            result["te_level"] = self._te
+        if self.showDecryptor:
+            dec = int(self._decryptor_ids[self._decryptor_index] or 0) or None
+            result["decryptor_type_id"] = dec
+            if dec != self._orig_decryptor_id:
+                # 换了解码器 → 原来手填的成功率是按旧解码器算的，清掉让评分链
+                # 按「当前角色技能 × 新解码器」重新算
+                result["success_rate"] = None
         return result
 
 
@@ -211,7 +289,7 @@ class PlanEditQmlDialog(QmlDialog):
         row_count: int = 0,
     ) -> None:
         bridge = PlanEditBridge(plan_data, batch_mode=batch_mode, row_count=row_count)
-        super().__init__(_QML_FILE, bridge, parent=parent, size=(480, 430))
+        super().__init__(_QML_FILE, bridge, parent=parent, size=(480, 340))
 
     def get_updated_data(self) -> dict:
         return self.bridge.data()  # type: ignore[no-any-return]

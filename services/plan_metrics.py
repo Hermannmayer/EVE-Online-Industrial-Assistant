@@ -198,7 +198,7 @@ def job_batch_materials(
     """一次科研作业批次的材料总量 [(type_id, qty)]。
 
     materials: [(material_type_id, 蓝图基础量)]（来自 blueprint_materials）
-    job_count: 作业次数（发明=尝试次数，拷贝=总授权流程数，研究=目标级数）
+    job_count: 作业次数（发明=总尝试次数，拷贝=总授权流程数，研究=目标级数）
     me_level: 科研活动恒为 0（不吃材料效率），参数保留供扩展
     """
     n = max(1, int(job_count))
@@ -253,6 +253,7 @@ def invention_plan_cost(
     decryptor: Decryptor | None = None,
     base_runs: int = 10,
     output_runs_needed: int = 1,
+    attempts_override: int | None = None,
     input_bpc_cost_per_run: float = 0.0,
     success_rate_override: float | None = None,
     actual_output_runs: int | None = None,
@@ -271,8 +272,11 @@ def invention_plan_cost(
         prices: {type_id: 单价}（adjusted_price 优先，缺失用 sell_price）
         sci: 设施星系该活动的成本指数
         decryptor: 解码器（None = 不使用）
-        base_runs: 产出 BPC 的基础流程数（SDE 实测 = min(T1 拷贝上限, T2 制造上限)）
-        output_runs_needed: 需要的 T2 BPC 总流程数
+        base_runs: 产出 BPC 的基础流程数（SDE = invention 行的 blueprint_products.quantity）
+        output_runs_needed: 需要的 T2 BPC 总流程数（由 base_runs 反推尝试次数时用）
+        attempts_override: 直接给定的尝试次数（计划行的「每线尝试次数 × 并行作业数」）。
+            为 None 时才按 `output_runs_needed` 反推 —— 「每流程研究成本」这类
+            估算场景没有并行概念，保持反推；计划评分走 override。
         input_bpc_cost_per_run: 输入 T1 BPC 的每流程成本（0 = 未配置，不计入）
         success_rate_override: 用户手填的预期成功率（None = 按技能算）
         actual_output_runs: 完成后手填的**实际**产出流程（None = 未回填，用期望值）
@@ -295,7 +299,11 @@ def invention_plan_cost(
     rate = min(1.0, max(0.0, rate))
     runs_per_bpc = invention_output_runs(base_runs, decryptor)
 
-    attempts = invention_attempts(output_runs_needed, rate, runs_per_bpc)
+    attempts = (
+        max(1, int(attempts_override))
+        if attempts_override is not None
+        else invention_attempts(output_runs_needed, rate, runs_per_bpc)
+    )
     # 每次尝试的数据核心；解码器每次消耗 1 个（成败都扣）
     per_attempt_mats = job_batch_materials(materials, 1)
     # 尝试次数为 0（成功率为 0 或产出为 0）→ 无作业、无消耗
