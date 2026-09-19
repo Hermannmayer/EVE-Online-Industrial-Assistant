@@ -27,6 +27,24 @@ def _resolve_db(db):
     return db if db is not None else get_container().db
 
 
+#: 查询页要排除的**无用类别**。判据是实测出来的，不是猜的：
+#: `reference.db` 里 `category_id=11` 共 6857 条（全库 50219 条的 13.7%），其中
+#: **0 条有市场价、0 条有蓝图产物** —— 既买不到也造不出，对工业/贸易助手纯属噪声。
+#: 它还是「候选里冒出两条一模一样的 `♦ 毒蜥级`」的来源：同一艘船在 SDE 里以这个遗留
+#: 类别重复发布（43624 与 46056 连 group、volume 都相同）。名字带 `♦` 的 166 条里
+#: 165 条属于它。
+#:
+#: 只排这一类的理由：用户要求「只排造成重复的那一类」。其余无价无蓝图的类别
+#: （如 350001 的 2528 条）这次不动。
+_JUNK_CATEGORY_IDS: tuple[int, ...] = (11,)
+#: 上面的类别id 展开成 `IN` 占位符（值来自模块常量，不拼用户输入）
+_JUNK_MARKS = ",".join("?" * len(_JUNK_CATEGORY_IDS))
+#: 追加在各查询 WHERE 后面的过滤片段（配合 `_JUNK_CATEGORY_IDS` 一起传参）。
+#: 列名**不带表别名** —— 三条查询里有的用 `item i`、有的直接用 `item`，
+#: 不带别名两边都能解析（`market_prices` 没有同名列）。
+_NOT_JUNK = f" AND category_id NOT IN ({_JUNK_MARKS})"
+
+
 # ── 物品搜索（估价 Worker）──────────────────────────────────────
 
 
@@ -91,29 +109,29 @@ def query_search_items(query: str, region_id: int = 10000002, db=None) -> list[A
         prefix = f"{query}%"
         if query.isdigit():
             c.execute(
-                """
+                f"""
                 SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume,
                        mp.buy_price, mp.sell_price, mp.buy_volume, mp.sell_volume
                 FROM item i
                 LEFT JOIN mkt.market_prices mp ON i.type_id = mp.type_id AND mp.region_id = ?
                     AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = i.type_id AND region_id = ?)
-                WHERE i.type_id = ? OR i.en_name LIKE ? OR i.zh_name LIKE ?
+                WHERE (i.type_id = ? OR i.en_name LIKE ? OR i.zh_name LIKE ?){_NOT_JUNK}
                 ORDER BY i.type_id LIMIT 300
             """,
-                (region_id, region_id, int(query), prefix, prefix),
+                (region_id, region_id, int(query), prefix, prefix, *_JUNK_CATEGORY_IDS),
             )
         else:
             c.execute(
-                """
+                f"""
                 SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume,
                        mp.buy_price, mp.sell_price, mp.buy_volume, mp.sell_volume
                 FROM item i
                 LEFT JOIN mkt.market_prices mp ON i.type_id = mp.type_id AND mp.region_id = ?
                     AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = i.type_id AND region_id = ?)
-                WHERE i.en_name LIKE ? OR i.zh_name LIKE ?
+                WHERE (i.en_name LIKE ? OR i.zh_name LIKE ?){_NOT_JUNK}
                 ORDER BY i.type_id LIMIT 300
             """,
-                (region_id, region_id, prefix, prefix),
+                (region_id, region_id, prefix, prefix, *_JUNK_CATEGORY_IDS),
             )
         return list(c.fetchall())
 
@@ -124,38 +142,46 @@ def query_search_items_basic(query: str, db=None) -> list[Any]:
         c = conn.cursor()
         if query.isdigit():
             c.execute(
-                "SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume FROM item WHERE type_id = ?",
-                (int(query),),
+                f"SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume FROM item"
+                f" WHERE type_id = ?{_NOT_JUNK}",
+                (int(query), *_JUNK_CATEGORY_IDS),
             )
         else:
             c.execute(
-                "SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume"
-                " FROM item WHERE en_name LIKE ? OR zh_name LIKE ? LIMIT 100",
-                (f"{query}%", f"{query}%"),
+                f"SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume"
+                f" FROM item WHERE (en_name LIKE ? OR zh_name LIKE ?){_NOT_JUNK} LIMIT 100",
+                (f"{query}%", f"{query}%", *_JUNK_CATEGORY_IDS),
             )
         return list(c.fetchall())
 
 
 def query_suggest_items(query: str, db=None) -> list[Any]:
-    """候选搜索：返回 item 表原始行 (type_id, en_name, zh_name)。"""
+    """候选搜索：返回 item 表原始行 (type_id, en_name, zh_name)。
+
+    **不设条数上限**（原先 `LIMIT 10`）：候选列表就是用户唯一的匹配清单，
+    截断会让「明明有这个东西却选不到」。弹窗侧有滚动条兜底。
+
+    口径与 `query_search_items` 一致：名字**前缀**匹配 + 排除无用类别，
+    否则候选里会出现点进去却没有的东西。
+    """
     with _resolve_db(db).connect("ref") as conn:
         c = conn.cursor()
         q = query
         if q.isdigit():
             c.execute(
-                "SELECT type_id, en_name, zh_name FROM item "
-                "WHERE type_id = ? OR en_name LIKE ? OR zh_name LIKE ? "
-                "ORDER BY CASE WHEN type_id = ? THEN 0 ELSE 1 END, LENGTH(en_name), type_id LIMIT 10",
-                (int(q), f"%{q}%", f"%{q}%", int(q)),
+                f"SELECT type_id, en_name, zh_name FROM item "
+                f"WHERE (type_id = ? OR en_name LIKE ? OR zh_name LIKE ?){_NOT_JUNK} "
+                f"ORDER BY CASE WHEN type_id = ? THEN 0 ELSE 1 END, LENGTH(en_name), type_id",
+                (int(q), f"{q}%", f"{q}%", *_JUNK_CATEGORY_IDS, int(q)),
             )
         else:
             c.execute(
-                "SELECT type_id, en_name, zh_name FROM item "
-                "WHERE en_name LIKE ? OR zh_name LIKE ? "
-                "ORDER BY CASE WHEN en_name LIKE ? THEN 0"
-                " WHEN zh_name LIKE ? THEN 1 ELSE 2 END,"
-                " LENGTH(en_name), type_id LIMIT 10",
-                (f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%"),
+                f"SELECT type_id, en_name, zh_name FROM item "
+                f"WHERE (en_name LIKE ? OR zh_name LIKE ?){_NOT_JUNK} "
+                f"ORDER BY CASE WHEN en_name LIKE ? THEN 0"
+                f" WHEN zh_name LIKE ? THEN 1 ELSE 2 END,"
+                f" LENGTH(en_name), type_id",
+                (f"{q}%", f"{q}%", *_JUNK_CATEGORY_IDS, f"{q}%", f"{q}%"),
             )
         return list(c.fetchall())
 
