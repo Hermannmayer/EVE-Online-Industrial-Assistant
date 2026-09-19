@@ -89,16 +89,26 @@ Item {
 
             FTextField {
                 id: searchInput
+                objectName: "searchInput"
                 Layout.fillWidth: true
                 placeholderText: qsTr("输入物品名称或 ID 搜索...")
                 onTextChanged: if (page.query)
                     page.query.onTextChanged(text)
                 onAccepted: if (page.query)
                     page.query.search()
-                /* 空输入框被点中就要弹历史。`_history` 原先只在**文本变成空**时读，
-                 * 而刚进页面输入框本来就是空的、没有任何文本变化 —— 点它什么也不显示，
-                 * 反倒点「清空」（把 text 置空、触发一次 onTextChanged）历史才出来。 */
-                onActiveFocusChanged: if (activeFocus && text.length === 0 && page.query)
+
+                /* 空输入框被**按下**时让桥把历史读出来。弹窗的开/关由 `suggestPopup`
+                 * 里的 `onSuggestionsChanged` 统一处理，这里只管「要数据」。
+                 *
+                 * 触发点必须挂在 `onPressed` 而不是 `onActiveFocusChanged`：
+                 * 用户实测「点输入框之后再去点界面其他地方，输入框**并不丢焦点**」，
+                 * 所以第二次点击根本没有 activeFocusChanged 事件 —— 这正是
+                 * 「只有第一次点击会出现历史」的原因。
+                 *
+                 * 顺带解决「刚进页面输入框本来就是空的、没有文本变化」：`_history` 原先
+                 * 只在文本**变成空**时才读，点「清空」反而会触发（把 text 置空）。
+                 */
+                onPressed: if (page.query && text.length === 0)
                     page.query.showHistory()
                 Keys.onEscapePressed: suggestPopup.close()
             }
@@ -517,7 +527,31 @@ Item {
                                      : (page.query && searchInput.text.length === 0 ? page.query.history : [])
         readonly property bool showingHistory: !(page.query && page.query.suggestions.length > 0)
 
-        visible: items.length > 0
+        /* 开/关只由**桥的显式信号**驱动，不写 `visible: items.length > 0`，也不监听 `items`。
+         *
+         * 两种写法都错在同一个地方 —— `items` 是每次重算都会产生**新数组**的派生值：
+         *  - `visible: items.length > 0`：关掉（点外面 / Esc）之后历史内容没变 → 长度也不变
+         *    → 绑定不重算 → 再也打不开。用户实测就是「只有第一次点击会出现历史」。
+         *  - `onItemsChanged: open()`：反过来又太灵 —— 任何依赖变化都会让 `items` 换个新数组
+         *    从而触发它，实测连 `close()` 都会被立刻顶回来（Esc 关不掉）。
+         *
+         * 于是：桥在「候选/历史有内容了」时发 `suggestionsChanged`（用户动作才会发），
+         * QML 收到后**显式**开关。`close()` 之后没有信号进来，就稳定关着。
+         * `Qt.callLater` 是必须的：`items` 是派生绑定，同一轮里读到的还是旧值。
+         */
+        Connections {
+            target: page.query
+            function onSuggestionsChanged() {
+                // 里面的 `items` 必须限定成 `suggestPopup.items`：嵌套 `function()` 有独立
+                // 作用域，不带限定符时解析不到 Popup 的属性（实测报 ReferenceError）。
+                Qt.callLater(function () {
+                    if (suggestPopup.items.length > 0)
+                        suggestPopup.open()
+                    else
+                        suggestPopup.close()
+                })
+            }
+        }
 
         background: Rectangle {
             color: Theme.bgElevated

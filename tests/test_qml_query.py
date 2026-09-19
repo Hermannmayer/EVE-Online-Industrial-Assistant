@@ -553,3 +553,51 @@ def test_show_history_clears_stale_suggestions(bridge, monkeypatch, tmp_path):
     bridge.showHistory()
     assert bridge.suggestions == []
     assert bridge.history == ["毒蜥级"]
+
+
+@pytest.mark.ui
+def test_reclicking_the_empty_search_box_reshows_history(query_page, monkeypatch, tmp_path):
+    """空搜索框**反复点击**每次都要重新弹历史。
+
+    回归背景（用户实测两轮才定位）：判定「该弹历史了」的那条路原先挂在
+    `onActiveFocusChanged` 上，而用户实测「点输入框之后再去点界面其他地方，输入框
+    **并不丢焦点**」—— 于是第二次点击根本没有焦点变化事件，历史再也不出来。
+
+    本用例用**真实鼠标点击**连点两次（中间不给焦点变化的机会），断言第二次仍然重新
+    问了一次历史；挂在焦点事件上的旧实现只会问一次，这条就会红。
+    """
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+
+    host, bridge = query_page
+    _write_history(monkeypatch, tmp_path, [{"query": "毒蜥级", "time": 1.0}])
+    host.resize(1200, 800)
+    host.show()
+    _spin(250)
+
+    root = host.rootObject()
+    field = root.findChild(QObject, "searchInput")
+    popup = root.findChild(QObject, "suggestPopup")
+    assert field is not None, "搜索框的 objectName 丢了"
+    assert popup is not None, "候选弹窗的 objectName 丢了"
+    assert field.property("text") == ""
+
+    asked: list[int] = []
+    bridge.suggestionsChanged.connect(lambda: asked.append(1))
+
+    origin = field.mapToItem(root, 0.0, 0.0)
+    host_pt = root.mapToItem(None, origin.x(), origin.y())
+    pt = QPoint(int(host_pt.x()) + int(field.width() / 2), int(host_pt.y()) + int(field.height() / 2))
+
+    def click_field() -> None:
+        QTest.mouseClick(host, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, pt)
+        _spin(150)
+
+    click_field()
+    assert len(asked) == 1, "第一次点击要问一次历史"
+    assert popup.property("visible") is True, "第一次点击要弹出历史"
+
+    click_field()
+    assert field.property("activeFocus") is True, "这里正是用户报的关键：第二次点击时输入框仍持有焦点"
+    assert len(asked) == 2, "第二次点击必须**重新问一次**历史 —— 挂在 onActiveFocusChanged 上只会问一次"
+    assert popup.property("visible") is True, "第二次点击也要弹出历史"
