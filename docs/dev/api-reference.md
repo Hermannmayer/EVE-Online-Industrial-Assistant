@@ -82,7 +82,6 @@
 | [`ui_qml.models.all_items_models`](/api/ui_qml/models/all_items_models) | 全部物品 Qt 数据模型 |
 | [`ui_qml.models.compare_models`](/api/ui_qml/models/compare_models) | 批量对比数据模型 + ISK/等级格式化 |
 | [`ui_qml.models.inventory_helpers`](/api/ui_qml/models/inventory_helpers) | 仓库 / 蓝图表模型 |
-| [`ui_qml.models.query_models`](/api/ui_qml/models/query_models) | 物品查询表模型 + 行格式化 |
 | [`ui_qml.models.watchlist_models`](/api/ui_qml/models/watchlist_models) | 关注列表表模型 |
 | [`ui_qml.models.plan_table_constants`](/api/ui_qml/models/plan_table_constants) | 生产计划表列索引常量 |
 

@@ -1,28 +1,28 @@
-"""`services/ui_data_service.py` 查询页搜索的口径测试。
+"""`services/ui_data_service.query_suggest_items` 的口径测试。
 
-只覆盖**查询页搜索的两条入口**（`query_search_items` / `query_search_items_basic`）。
-这里的重点是**匹配口径**：只做 Type ID 全等或名字前缀，不做子串、不做整类别展开。
+候选是**通往详情的唯一入口**（结果表已按用户要求删除：候选弹窗就是匹配清单），
+所以这里守三件事：
+
+  - 只做 Type ID 全等或名字**前缀**匹配 —— 不做子串、不做「命中类别名就返回整类」；
+  - 排除无用类别（`category_id=11` 那类既无市场价也无蓝图产物的遗留条目）；
+  - **不设条数上限** —— 截断等于「明明有这个东西却选不到」。
 """
 
 from __future__ import annotations
 
 import pytest
 
-from services.ui_data_service import query_search_items, query_search_items_basic, query_suggest_items
+from services.ui_data_service import query_suggest_items
 
 pytestmark = pytest.mark.fast
 
 
 def _build(db_manager) -> None:
-    """在临时库里造最小的 item / market_prices，只够跑通两条 SQL。"""
-    with db_manager.connect("ref", "mkt") as conn:
+    """在临时库里造最小的 item 表，只够跑通候选那条 SQL。"""
+    with db_manager.connect("ref") as conn:
         conn.execute(
             "CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT,"
             " en_group_name TEXT, zh_group_name TEXT, volume REAL, group_id INTEGER, category_id INTEGER)"
-        )
-        conn.execute(
-            "CREATE TABLE mkt.market_prices (type_id INTEGER, region_id INTEGER, buy_price REAL,"
-            " sell_price REAL, buy_volume INTEGER, sell_volume INTEGER, fetch_time TEXT)"
         )
         # ① 名字以 gila 开头 → 应当命中
         # ② 蓝图，同样以 Gila 开头（大小写不同）→ 应当命中
@@ -46,64 +46,58 @@ def _build(db_manager) -> None:
 
 
 def _names(rows: list) -> set[str]:
-    """行 → 英文名集合（第 3 列；中文名留空时也认英文）。"""
+    """候选行是 `(type_id, en_name, zh_name)` —— 取展示时会用到的那两列。"""
+    return {str(r[1] or r[2]) for r in rows}
+
+
+def _zhs(rows: list) -> set[str]:
     return {str(r[2] or r[1]) for r in rows}
 
 
-def test_search_matches_name_prefix_only(db_manager):
-    """`gila` 只出名字以它开头的物品：不出同类别里的 Vigilant，也不出名字中段含它的。"""
+def test_matches_name_prefix_only(db_manager):
+    """`gila` 只出以它开头的物品：不出同类别里的 Vigilant，也不出名字中段含它的。"""
     _build(db_manager)
-    assert _names(query_search_items("gila", db=db_manager)) == {"Gila", "Gila Blueprint"}
+    assert _names(query_suggest_items("gila", db=db_manager)) == {"Gila", "Gila Blueprint"}
 
 
-def test_search_does_not_expand_to_the_whole_group(db_manager):
-    """守住「命中类别名 → 返回整个类别」的删除。
+def test_does_not_expand_to_the_whole_group(db_manager):
+    """守住「命中类别名 → 返回整个类别」这条口的删除。
 
-    上面的样例里 `Vigilant` 与 `Gila` 同组、组的名字（`Gila 级舰船`）含查询串；
-    旧实现会因此把这艘无名的船一起返回。
+    样例里 `Vigilant` 与 `Gila` 同组、组的名字（`Gila 级舰船`）含查询串；
+    旧实现会因此把这艘名字里没有 gila 的船一起返回。
     """
     _build(db_manager)
-    assert "Vigilant" not in _names(query_search_items("gila", db=db_manager))
+    assert "Vigilant" not in _names(query_suggest_items("gila", db=db_manager))
 
 
-def test_search_by_type_id_is_exact(db_manager):
+def test_type_id_is_exact(db_manager):
     """纯数字按 Type ID 精确匹配（前缀分支不该把别的 ID 带出来）。"""
     _build(db_manager)
-    assert _names(query_search_items("17715", db=db_manager)) == {"Gila"}
+    assert _names(query_suggest_items("17715", db=db_manager)) == {"Gila"}
 
 
 def test_chinese_query_matches_chinese_name_prefix(db_manager):
     """中文同样按前缀：`毒蜥级` 命中「毒蜥级」「毒蜥级蓝图」，不命中「某某的毒蜥级」。"""
     _build(db_manager)
-    rows = query_search_items("毒蜥级", db=db_manager)
-    assert _names(rows) == {"Gila", "Gila Blueprint"}
+    assert _zhs(query_suggest_items("毒蜥级", db=db_manager)) == {"毒蜥级", "毒蜥级蓝图"}
 
 
-def test_basic_fallback_uses_the_same_prefix_rule(db_manager):
-    """降级路径（只查 reference.item）口径必须与主路径一致，否则主路径一失败就换了行为。"""
-    _build(db_manager)
-    assert _names(query_search_items_basic("gila", db=db_manager)) == {"Gila", "Gila Blueprint"}
-    assert "Vigilant" not in _names(query_search_items_basic("gila", db=db_manager))
-
-
-def test_junk_category_is_excluded_from_search_and_suggest(db_manager):
-    """无用类别（`category_id=11`）不出现在搜索结果与候选里。
+def test_junk_category_is_excluded(db_manager):
+    """无用类别（`category_id=11`）不进候选。
 
     回归背景：用户看到候选里冒出**两条一模一样的「♦ 毒蜥级」** —— 同一艘船在 SDE 里以
     这个遗留类别重复发布（真实库里 6857 条、0 条有市场价、0 条有蓝图）。
     """
     _build(db_manager)
 
-    assert _names(query_search_items("♦", db=db_manager)) == set()
     assert [r for r in query_suggest_items("毒蜥级", db=db_manager) if "♦" in str(r[1] or "")] == []
-    # 降级路径同样要排
-    assert [r for r in query_search_items_basic("♦", db=db_manager) if "♦" in str(r[1] or "")] == []
+    assert query_suggest_items("♦", db=db_manager) == []
     # 正常条目不受影响
-    assert "Gila" in _names(query_search_items("毒蜥级", db=db_manager))
+    assert "Gila" in _names(query_suggest_items("毒蜥级", db=db_manager))
 
 
-def test_suggest_is_not_truncated(db_manager):
-    """候选不再被 `LIMIT 10` 截断 —— 候选列表是用户唯一的匹配清单，截断就是「有却选不到」。"""
+def test_is_not_truncated(db_manager):
+    """候选不设条数上限（原先 `LIMIT 10`）—— 候选是唯一的匹配清单，截断就是「有却选不到」。"""
     _build(db_manager)
     with db_manager.connect("ref") as conn:
         conn.executemany(

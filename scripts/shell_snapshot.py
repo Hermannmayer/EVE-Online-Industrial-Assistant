@@ -164,24 +164,27 @@ def main() -> int:
             image = win.grabWindow()
 
     if args.search:
-        # 走桥自己的入口（`onTextChanged` + `search`），不要直接塞模型 ——
-        # 那样只验到渲染，验不到「桥 → worker → 模型」这一整条，而详情面板恰恰吃的是桥的状态。
+        # 走桥自己的入口（`onTextChanged` → 候选 worker → `pickSuggestion`），不要直接塞数据 ——
+        # 那样只验到渲染，验不到「桥 → worker → 详情桥」这一整条。
         page = win._pages.get("query")
         bridge = getattr(page, "hooks", None)
         if bridge is None:
             print("[错误] --search 需要已装载的物品查询页")
             return 4
         bridge.onTextChanged(args.search)
-        bridge.search()
-        # 搜索跑在 QThread 上：空转事件循环等它收尾，别用 sleep（会连布局一起冻住）
-        for _ in range(150):
-            if not getattr(bridge, "_busy", False):
+        # 候选跑在 QThread 上：空转事件循环等它回来，别用 sleep（会连布局一起冻住）。
+        # `onTextChanged` 有 200ms 防抖，所以这里转得比搜索那条路久一点。
+        for _ in range(80):
+            if bridge.suggestions:
                 break
             _spin(100)
-        # 选中第一行：详情面板的取数挂在 `selectRow` 上（高亮只是高亮），
+        if not bridge.suggestions:
+            print(f"[错误] 「{args.search}」没有候选，进不了详情态")
+            return 4
+        hit = len(bridge.suggestions)
+        # 点第一条候选进详情：详情面板的取数就挂在这条路上（页面已无结果表、也无「搜索」按钮），
         # 不选中的话四块面板全是占位文案，等于没验到。
-        if bridge.hasResults:
-            bridge.selectRow(0)
+        bridge.pickSuggestion(bridge.suggestions[0]["text"])
         _spin(1500)  # 详情面板的取价 / 精炼 / BOM 是同步的，留给它们把首帧画完
         image = win.grabWindow()
         if args.real:
@@ -189,7 +192,7 @@ def main() -> int:
 
             screen = QGuiApplication.primaryScreen()
             extra = screen.grabWindow(int(win.winId())) if screen is not None else None
-        print(f"[外壳] 已搜索「{args.search}」，结果 {getattr(bridge, '_count_text', '')!r}")
+        print(f"[外壳] 已搜索「{args.search}」，候选 {hit} 条，已选中第一条进详情态")
 
     if image is None or image.isNull():
         print("[错误] 抓到的图是空的 —— 外壳没有渲染出内容")

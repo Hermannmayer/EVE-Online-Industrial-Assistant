@@ -9,15 +9,16 @@ import "query"
 /* 物品查询页 —— 阶段 3。
  *
  * 对照 Widgets 版 `ui_pyside6/views/query/query_page.py`：
- *   工具栏（全物品 / 搜索框+候选 / 搜索 / 清空 / 批量查价 / 区域）
- *   + 进度条 + 状态行 + 结果表（8 列，可排序、右键菜单、点选一行看下方详情面板）。
+ *   工具栏（全物品 / 搜索框+候选 / 清空 / 批量查价 / 区域）
+ *   + 进度条 + 状态行 + 下方面板。
+ *
+ * **候选弹窗就是匹配清单**（用户明确要求）：输入即列全部前缀匹配，点一条直接出详情，
+ * 不再有结果表格 —— 所以这里没有列定义、排序、右键菜单与当前行。
  *
  * **业务动作一律不在这里实现**：每次交互都调 `query.<方法>`，
  * 由 `ui_qml/bridge/query_bridge.py` 转给既有的 worker / service。
  *
- * 行的「选中」只有**当前行**（原版虽然设了 ExtendedSelection，但右键菜单取的是
- * `indexAt(pos)` 那一行，批量操作并不存在），所以这里用一个 QML 侧属性即可，
- * 不需要搬计划表那套 QItemSelectionModel。
+ * 两态的判据是 `detail.typeId > 0`（详情桥有没有拿到物品），不是「有没有查询结果」。
  */
 Item {
     id: page
@@ -28,11 +29,6 @@ Item {
 
     readonly property int fntBase: Math.round(12 * Theme.fontScale)
     readonly property int fntSmall: Math.round(11 * Theme.fontScale)
-    readonly property int rowH: Math.max(28, Math.round(13 * Theme.fontScale) + 15)
-    readonly property int headerH: Math.max(26, fntSmall + 15)
-
-    //: 当前行（右键菜单与高亮用）
-    property int currentRow: -1
 
     /* 页面被销毁（切页 / 关窗 / 退出）时停掉在途取数线程。
      *
@@ -46,16 +42,6 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: Theme.bgDark
-    }
-
-    /* 列宽：provider 与点击区必须同口径 —— 两处各算一次会错位。 */
-    function colWidth(col) {
-        const cols = page.query ? page.query.columns : []
-        return col < cols.length ? cols[col].width : 80
-    }
-
-    function rowsForMenu(row) {
-        return [row]
     }
 
     ColumnLayout {
@@ -91,11 +77,15 @@ Item {
                 id: searchInput
                 objectName: "searchInput"
                 Layout.fillWidth: true
-                placeholderText: qsTr("输入物品名称或 ID 搜索...")
+                placeholderText: qsTr("输入物品名称或 ID...")
                 onTextChanged: if (page.query)
                     page.query.onTextChanged(text)
-                onAccepted: if (page.query)
-                    page.query.search()
+
+                /* 回车 = 选第一条候选。页面已经没有「搜索」这一步 —— 候选就是匹配清单，
+                 * 选中即出详情。取的是**桥**里那份候选（与弹窗显示的是同一份），
+                 * 不被弹窗的 items 分支（候选/历史）影响。 */
+                onAccepted: if (page.query && page.query.suggestions.length > 0)
+                    page.query.pickSuggestion(page.query.suggestions[0].text)
 
                 /* 空输入框被**按下**时让桥把历史读出来。弹窗的开/关由 `suggestPopup`
                  * 里的 `onSuggestionsChanged` 统一处理，这里只管「要数据」。
@@ -111,13 +101,6 @@ Item {
                 onPressed: if (page.query && text.length === 0)
                     page.query.showHistory()
                 Keys.onEscapePressed: suggestPopup.close()
-            }
-
-            FButton {
-                text: qsTr("搜索")
-                primary: true
-                onClicked: if (page.query)
-                    page.query.search()
             }
 
             FButton {
@@ -140,6 +123,22 @@ Item {
                 }
                 ToolTip.visible: batchHover.hovered
                 ToolTip.text: qsTr("一次性查询多个物品的价格")
+            }
+
+            /* 「查看制造配方」原在结果表的右键菜单里；表删掉后改挂这里。
+             * 没选中物品时不可点 —— 判据与工作区的两态判据同源（详情桥有没有拿到物品）。 */
+            FButton {
+                id: recipeButton
+                text: qsTr("制造配方")
+                enabled: page.query !== null && page.query.detail !== null && page.query.detail.typeId > 0
+                onClicked: if (page.query && page.query.detail)
+                    page.query.viewManufacturing(page.query.detail.typeId)
+
+                HoverHandler {
+                    id: recipeHover
+                }
+                ToolTip.visible: recipeHover.hovered
+                ToolTip.text: qsTr("切换到工业页查看该物品的制造配方")
             }
 
             Item {
@@ -203,18 +202,6 @@ Item {
             spacing: Theme.spacingSm
 
             Text {
-                text: page.query ? page.query.countText : ""
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntSmall
-            }
-
-            Item {
-                Layout.fillWidth: true
-            }
-
-            Text {
-                Layout.maximumWidth: Math.max(120, page.width * 0.6)
                 text: page.query ? page.query.statusText : ""
                 color: Theme.textSecondary
                 font.family: Theme.fontFamily
@@ -226,8 +213,8 @@ Item {
 
         // ═══════════════════════════════════════════════════════
         //  4. 主工作区：**两态**
-        //     空闲态（没搜索 / 没结果）= 仪表盘（产线详情 / 资产折线 / 挂单列表）
-        //     有结果态                = 结果表 + 详情面板（5 中心价格 / 订单 / 精炼 / 材料）
+        //     未选物品 = 仪表盘（产线详情 / 资产折线 / 挂单列表）
+        //     已选物品 = 详情面板（5 中心价格 / 订单 / 精炼 / 材料）
         // ═══════════════════════════════════════════════════════
 
         Item {
@@ -240,15 +227,16 @@ Item {
             Layout.rightMargin: Theme.spacingSm
             Layout.bottomMargin: Theme.spacingSm
 
-            /* 两态切换的唯一判据。`hasResults` 由桥按模型行数给出 ——
-             * QML 侧读 `model.rowCount()` 是 Slot 调用，属性绑定不会跟着刷新
-             * （本仓既有教训，见 `query_bridge.py` 里 `sortColumn` 那段注释）。
+            /* 两态切换的唯一判据：详情桥**有没有拿到物品**（`detail.typeId > 0`）。
              *
-             * ⚠️ **判据里不能带 `busy`**。带上之后，「搜索但没搜到东西」会变成：
-             * 查询中 `busy=true` → 切到结果区；查完 0 条 → `hasResults=false` → 又切回仪表盘。
-             * 两次翻转，用户看到的就是「两个界面来回抢」。
-             * 不带 `busy` 时：有结果才离开仪表盘，空手而归就原地不动（状态行照常报「未找到…」）。 */
-            readonly property bool idle: !(page.query && page.query.hasResults)
+             * 原先判据是「有没有查询结果」，那是因为页面上有张结果表；表已按用户要求删掉，
+             * 于是「显示仪表盘还是详情面板」只能看有没有选中物品。
+             * `typeId` 是详情桥自己的 Property（`notify=changed`），换物品与清空都会发通知，
+             * 绑定会跟着刷新 —— 不像 Slot 调用那样追不到。
+             *
+             * 判据里**不能带 `busy`**：它只是「按候选查明细」的中间态，掺进来会让界面
+             * 在仪表盘与详情之间来回翻两次（本仓既有教训）。 */
+            readonly property bool idle: !(page.query && page.query.detail && page.query.detail.typeId > 0)
 
             QueryDashboard {
                 objectName: "queryDashboard"
@@ -257,251 +245,14 @@ Item {
                 dashboard: page.query ? page.query.dashboard : null
             }
 
-            ColumnLayout {
-                objectName: "queryResultArea"
+            /* 详情面板：四块（5 个贸易中心价格 / 订单列表 / 精炼产物 / 制造材料）。
+             * 没有结果表之后它**铺满整个工作区** —— 四块是 2×2 网格，
+             * 挤进窄列会让「空间站」这种长列被截断。 */
+            QueryDetailPane {
+                objectName: "queryDetailPane"
                 anchors.fill: parent
                 visible: !workArea.idle
-                spacing: Theme.spacingSm
-
-                /* 结果表：不再是整屏，只占上面一段 —— 下面留给详情面板
-                 * （界面标注图里表格只剩表头那一条，四块面板占满余下）。
-                 *
-                 * 用**固定高度 + fillHeight: false** 而不是「两边都 fill」：两个都 fill 时
-                 * Qt 会把富余高度按 fill 项均分，而详情面板的 implicitHeight 是 0
-                 * （根 Item 的子项全是 anchors 定位），实测被挤成 2px 一条。
-                 * 让表格定高、面板吃满余下，比例才是确定的。 */
-                Item {
-                    id: tableBox
-                    Layout.fillWidth: true
-                    Layout.fillHeight: false
-                    Layout.preferredHeight: Math.max(120, Math.round(workArea.height * 0.34))
-
-            Rectangle {
-                anchors.fill: parent
-                color: Theme.bgSurface
-                radius: Theme.radius
-            }
-
-            /* 边框单独画一层、且 `z` 高于表头与表体。
-             *
-             * 不能像别处那样把 border 加在底色矩形上：表头 `HorizontalHeaderView` 与
-             * `TableView` 都是 `anchors.fill/top: parent`，声明在底色之后，会把 1px 的
-             * 边框线**整个盖掉** —— 实测「价格监控」页的上边框就是这么消失的
-             * （左右边框幸运地没被盖住，所以看上去像有框）。
-             * 纯 `Rectangle` 不带 MouseArea，不吞鼠标事件，覆盖在上层不影响点表。 */
-            Rectangle {
-                anchors.fill: parent
-                z: 1
-                color: "transparent"
-                radius: Theme.radius
-                border.width: 1
-                border.color: Theme.border
-            }
-
-            HorizontalHeaderView {
-                id: headerView
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                height: page.headerH
-                syncView: tableView
-                clip: true
-                // 标题由 delegate 自己从 `columns` 取；这个角色**没人读**，
-                // 但必须指向模型里真实存在的角色（Qt 的默认值是 "display"，
-                // 模型里没有，会为每个表头项刷一条 assign 告警）
-                textRole: "text"
-
-                delegate: Item {
-                    id: hcell
-                    required property int index
-                    implicitHeight: page.headerH
-
-                    readonly property var meta: page.query && page.query.columns.length > hcell.index
-                                                 ? page.query.columns[hcell.index] : null
-                    readonly property bool sorted: page.query && page.query.sortColumn === hcell.index
-
-                    Rectangle {
-                        anchors.fill: parent
-                        color: Theme.bgSurface
-
-                        Rectangle {
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.bottom: parent.bottom
-                            height: 1
-                            color: Theme.border
-                        }
-                        Rectangle {
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            anchors.bottom: parent.bottom
-                            width: 1
-                            color: Theme.border
-                        }
-                        Rectangle {
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.bottom: parent.bottom
-                            height: 2
-                            visible: hcell.sorted
-                            color: Theme.primary
-                        }
-                    }
-
-                    Text {
-                        anchors.fill: parent
-                        anchors.leftMargin: Math.round(6 * Theme.fontScale)
-                        anchors.rightMargin: Math.round(6 * Theme.fontScale)
-                        verticalAlignment: Text.AlignVCenter
-                        horizontalAlignment: Text.AlignLeft
-                        text: (hcell.meta ? hcell.meta.title : "")
-                              + (hcell.sorted ? (page.query.sortAscending ? " ▲" : " ▼") : "")
-                        color: Theme.textPrimary
-                        font.family: Theme.fontFamily
-                        font.pixelSize: page.fntSmall
-                        elide: Text.ElideRight
-                    }
-
-                    HoverHandler {
-                        cursorShape: Qt.PointingHandCursor
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        acceptedButtons: Qt.LeftButton
-                        onClicked: if (page.query) {
-                            // 首次点该列从升序开始；再点同一列反向（与 QTableView 一致）
-                            const asc = page.query.sortColumn === hcell.index ? !page.query.sortAscending : true
-                            page.query.sortBy(hcell.index, asc)
-                        }
-                    }
-                }
-            }
-
-            TableView {
-                id: tableView
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: headerView.bottom
-                anchors.bottom: parent.bottom
-
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-                model: page.query ? page.query.model : null
-                // Qt 的内建点击选中在 6.11 上不工作（详见 PlanTableBridge 的说明），
-                // 这张表只需要「当前行」，高亮由 delegate 读 page.currentRow 自己画
-                selectionBehavior: TableView.SelectionDisabled
-                reuseItems: true
-                rowHeightProvider: function (row) { return page.rowH }
-                columnWidthProvider: function (col) { return page.colWidth(col) }
-
-                ScrollBar.vertical: ScrollBar {
-                    policy: ScrollBar.AsNeeded
-                }
-
-                delegate: Item {
-                    id: cell
-
-                    required property int row
-                    required property int column
-                    required property bool selected
-                    required property var model
-
-                    implicitWidth: cell.colMeta ? cell.colMeta.width : 80
-                    implicitHeight: page.rowH
-
-                    readonly property bool isCurrent: page.currentRow === row
-                    readonly property var colMeta: page.query && page.query.columns.length > cell.column
-                                                  ? page.query.columns[cell.column] : null
-
-                    Rectangle {
-                        anchors.fill: parent
-                        color: cell.isCurrent ? Theme.primary : (cell.model.bg || Theme.bgSurface)
-                    }
-
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        height: 1
-                        color: Theme.border
-                    }
-
-                    Image {
-                        visible: cell.column === 0
-                        anchors.centerIn: parent
-                        width: Math.round(24 * Theme.fontScale)
-                        height: width
-                        source: cell.model.iconUrl
-                        sourceSize.width: width
-                        sourceSize.height: height
-                        smooth: true
-                        fillMode: Image.PreserveAspectFit
-                    }
-
-                    Text {
-                        visible: cell.column !== 0
-                        anchors.fill: parent
-                        anchors.leftMargin: Math.round(8 * Theme.fontScale)
-                        anchors.rightMargin: Math.round(6 * Theme.fontScale)
-                        verticalAlignment: Text.AlignVCenter
-                        horizontalAlignment: cell.model.alignRight ? Text.AlignRight : Text.AlignLeft
-                        text: cell.model.text
-                        color: cell.isCurrent ? Theme.textOnPrimary : (cell.model.fg || Theme.textPrimary)
-                        font.family: cell.model.mono ? "Consolas" : Theme.fontFamily
-                        font.pixelSize: page.fntBase
-                        elide: Text.ElideRight
-                    }
-
-                    HoverHandler {
-                        cursorShape: Qt.PointingHandCursor
-                    }
-
-                }
-
-                /* 行点击命中固定在按下那一刻（见 FTableClickArea 的说明）。
-                 * 原先在 delegate 里挂 TapHandler，配 ReleaseWithinBounds 时
-                 * 内容一移动整次点击就被丢掉。 */
-                FTableClickArea {
-                    objectName: "queryClickArea"
-                    anchors.fill: parent
-                    rowHeight: page.rowH
-                    columnWidth: page.colWidth
-
-                    /* `page.currentRow` 只管高亮，**取数**由 `selectRow()` 驱动 ——
-                     * 详情面板要跑 5 次取价 + 精炼 + BOM 展开，绝不能挂在
-                     * 「每帧都可能变的高亮」上（拖动/滚动会把它打成连发）。 */
-                    onRowClicked: function (row, _column) {
-                        page.currentRow = row
-                        if (page.query)
-                            page.query.selectRow(row)
-                    }
-                    onRowRightClicked: function (row, _column, x, y) {
-                        page.currentRow = row
-                        if (page.query)
-                            page.query.selectRow(row)
-                        const p = mapToItem(page, x, y)
-                        rowMenu.state = page.query ? page.query.menuState(row) : ({})
-                        rowMenu.targetRow = row
-                        rowMenu.x = p.x
-                        rowMenu.y = p.y
-                        rowMenu.openSoon()
-                    }
-                }
-            }
-                }
-
-                /* 详情面板：四块（5 个贸易中心价格 / 订单列表 / 精炼产物 / 制造材料）。
-                 * 占结果态的下半部分，**与结果表同宽** —— 四块是 2×2 网格，
-                 * 挤进窄列会让「空间站」这种长列被截断。 */
-                QueryDetailPane {
-                    objectName: "queryDetailPane"
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    // 根 Item 的 implicitHeight 是 0，不设下限时布局可以把它压成一条线
-                    Layout.minimumHeight: Math.round(200 * Theme.fontScale)
-                    detail: page.query ? page.query.detail : null
-                }
+                detail: page.query ? page.query.detail : null
             }
         }
     }
@@ -605,44 +356,7 @@ Item {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  右键菜单（用 FMenuItem：不可见时不占高度）
+    //  右键菜单已随结果表一起删除（复制类快捷方式用户明确不要了）。
+    //  「查看制造配方」是那里唯一非复制类的功能，改挂工具栏按钮（见上面的 recipeButton）。
     // ═══════════════════════════════════════════════════════════
-
-    FMenu {
-        id: rowMenu
-        objectName: "rowMenu"
-        property int targetRow: -1
-        property var state: ({})
-
-        FMenuItem {
-            text: qsTr("复制名称")
-            onTriggered: page.query.copyName(rowMenu.targetRow)
-        }
-        FMenuItem {
-            text: qsTr("复制 Type ID")
-            onTriggered: page.query.copyTypeId(rowMenu.targetRow)
-        }
-        FMenuItem {
-            text: qsTr("复制买单价格")
-            visible: rowMenu.state.hasBuy === true
-            onTriggered: page.query.copyBuy(rowMenu.targetRow)
-        }
-        FMenuItem {
-            text: qsTr("复制卖单价格")
-            visible: rowMenu.state.hasSell === true
-            onTriggered: page.query.copySell(rowMenu.targetRow)
-        }
-        FMenuSeparator {}
-
-        FMenuItem {
-            text: qsTr("查看制造配方")
-            onTriggered: page.query.viewManufacturing(rowMenu.state.typeId)
-        }
-        FMenuSeparator {}
-
-        FMenuItem {
-            text: qsTr("复制整行 (TSV)")
-            onTriggered: page.query.copyRowTsv(rowMenu.targetRow)
-        }
-    }
 }

@@ -1,45 +1,16 @@
-"""查询页的取数线程（搜索 / 候选）。
+"""查询页的取数线程（候选）。
 
 原先在 `ui_pyside6/views/query/query_search.py`，QML 侧要用同一份，故拆出来。
+
+**只剩候选一条**：结果表已按用户要求删除，页面形态变成「输入即出全部匹配，点一条出详情」，
+所以按名字跑整表搜索的 `SearchWorker` 也随之删除（它连带让
+`ui_data_service.query_search_items` / `_basic` 变成死代码，一并清掉）。
 """
 
 from PySide6.QtCore import QThread, Signal
 
 from core.container import get_container
-from services.ui_data_service import (
-    query_search_items,
-    query_search_items_basic,
-    query_suggest_items,
-)
-
-
-class SearchWorker(QThread):
-    """后台数据库搜索"""
-
-    finished_signal = Signal(list, bool)  # rows, is_fallback
-    error_signal = Signal(str)
-
-    def __init__(self, query: str, region_id: int = 10000002, parent=None):
-        super().__init__(parent)
-        self._query = query
-        self._region_id = region_id
-
-    def run(self):
-        try:
-            rows = self._db_search(self._query)
-            self.finished_signal.emit(rows, False)
-        except Exception as e:
-            try:
-                rows = self._db_search_basic(self._query)
-                self.finished_signal.emit(rows, True)
-            except Exception:
-                self.error_signal.emit(str(e))
-
-    def _db_search(self, query: str):
-        return query_search_items(query, self._region_id, db=get_container().db)
-
-    def _db_search_basic(self, query: str):
-        return query_search_items_basic(query, db=get_container().db)
+from services.ui_data_service import query_suggest_items
 
 
 class SuggestionWorker(QThread):

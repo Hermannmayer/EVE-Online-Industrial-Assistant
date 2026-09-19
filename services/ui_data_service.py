@@ -88,71 +88,11 @@ def search_item_by_name(name: str, db=None) -> dict | None:
     return None
 
 
-# ── 查询页搜索 Worker ──────────────────────────────────────────
-
-
-def query_search_items(query: str, region_id: int = 10000002, db=None) -> list[Any]:
-    """查询页完整搜索：item + market_prices，返回原始行。
-
-    **只做精确/前缀匹配**：`type_id` 全等，或名字以查询串**开头**（`LIKE 'x%'`；
-    SQLite 的 `LIKE` 对 ASCII 默认不区分大小写，所以 `gila%` 能匹配 `Gila Blueprint`）。
-
-    原先有两条更宽的口径，都已去掉：
-
-    - 「查询串命中某个**类别**名 → 返回整个类别」。搜 `gila` 会连带塞尔佩提斯的
-      `Vigilant` 一起出来（实测 108 条），正是「列出一堆名字里含这个词的物品」的来源。
-      代价是类别搜索能力没有了 —— 想按类别找物品请用左边的可制造分类树。
-    - 名字的**子串**匹配（`LIKE '%x%'`）。收紧成前缀后，查询串不再从词中间命中。
-    """
-    with _resolve_db(db).connect("ref", "mkt") as conn:
-        c = conn.cursor()
-        prefix = f"{query}%"
-        if query.isdigit():
-            c.execute(
-                f"""
-                SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume,
-                       mp.buy_price, mp.sell_price, mp.buy_volume, mp.sell_volume
-                FROM item i
-                LEFT JOIN mkt.market_prices mp ON i.type_id = mp.type_id AND mp.region_id = ?
-                    AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = i.type_id AND region_id = ?)
-                WHERE (i.type_id = ? OR i.en_name LIKE ? OR i.zh_name LIKE ?){_NOT_JUNK}
-                ORDER BY i.type_id LIMIT 300
-            """,
-                (region_id, region_id, int(query), prefix, prefix, *_JUNK_CATEGORY_IDS),
-            )
-        else:
-            c.execute(
-                f"""
-                SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume,
-                       mp.buy_price, mp.sell_price, mp.buy_volume, mp.sell_volume
-                FROM item i
-                LEFT JOIN mkt.market_prices mp ON i.type_id = mp.type_id AND mp.region_id = ?
-                    AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = i.type_id AND region_id = ?)
-                WHERE (i.en_name LIKE ? OR i.zh_name LIKE ?){_NOT_JUNK}
-                ORDER BY i.type_id LIMIT 300
-            """,
-                (region_id, region_id, prefix, prefix, *_JUNK_CATEGORY_IDS),
-            )
-        return list(c.fetchall())
-
-
-def query_search_items_basic(query: str, db=None) -> list[Any]:
-    """查询页降级搜索：只查 reference.item，返回原始行。口径同 `query_search_items`（前缀匹配）。"""
-    with _resolve_db(db).connect("ref") as conn:
-        c = conn.cursor()
-        if query.isdigit():
-            c.execute(
-                f"SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume FROM item"
-                f" WHERE type_id = ?{_NOT_JUNK}",
-                (int(query), *_JUNK_CATEGORY_IDS),
-            )
-        else:
-            c.execute(
-                f"SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume"
-                f" FROM item WHERE (en_name LIKE ? OR zh_name LIKE ?){_NOT_JUNK} LIMIT 100",
-                (f"{query}%", f"{query}%", *_JUNK_CATEGORY_IDS),
-            )
-        return list(c.fetchall())
+# ── 查询页候选 ────────────────────────────────────────────────
+#
+# 只有**候选**这一条口径（结果表已按用户要求删除：候选弹窗就是匹配清单，
+# 点一条直接出详情，不再有按名字跑整表搜索的入口 —— 原先的
+# `query_search_items` / `query_search_items_basic` 随之删除）。
 
 
 def query_suggest_items(query: str, db=None) -> list[Any]:
@@ -161,8 +101,9 @@ def query_suggest_items(query: str, db=None) -> list[Any]:
     **不设条数上限**（原先 `LIMIT 10`）：候选列表就是用户唯一的匹配清单，
     截断会让「明明有这个东西却选不到」。弹窗侧有滚动条兜底。
 
-    口径与 `query_search_items` 一致：名字**前缀**匹配 + 排除无用类别，
-    否则候选里会出现点进去却没有的东西。
+    口径就是**唯一**口径：名字前缀匹配 + 排除无用类别（`_JUNK_CATEGORY_IDS`）。
+    候选是通往详情的唯一入口，所以这里的过滤必须够干净 —— 候选里出现的东西
+    点进去一定要有内容。
     """
     with _resolve_db(db).connect("ref") as conn:
         c = conn.cursor()

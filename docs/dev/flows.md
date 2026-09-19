@@ -271,21 +271,21 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
 
 ## 物品查询页
 
-两态：**空闲态**（没搜索 / 没结果）= 仪表盘（产线详情 / 资产折线图 / 挂单列表）；**有结果态** = 结果表 + 详情面板（5 中心价格 / 订单 / 精炼 / 制造材料）。
+两态：**未选物品** = 仪表盘（产线详情 / 资产折线图 / 挂单列表）；**已选物品** = 详情面板（5 中心价格 / 订单 / 精炼 / 制造材料）。
+**没有结果表格** —— 候选弹窗就是匹配清单，点一条直接出详情（用户明确要求；`ui_qml/models/query_model(s).py` 已随之删除）。
 
 ```
-搜索：QueryPage 输入框 → QueryBridge.search → ui_qml.workers.query_workers.SearchWorker
-  → QueryBridge._on_search_done → ui_qml.models.query_models.format_search_rows
-  → QueryQmlModel.set_rows → modelReset → QueryBridge.resultsChanged
-两态判据：QueryBridge.hasResults = QueryQmlModel.rowCount() > 0（notify=resultsChanged）
-  QML 的 workArea.idle = !hasResults && !busy —— 行数由桥给（不在 QML 里数），
-  busy 只用于「查询进行中不切回仪表盘」（首次查询时模型还空，只看 hasResults 会闪一下）
+候选：QueryPage 输入框 → QueryBridge.onTextChanged（200ms 防抖）
+  → ui_qml.workers.query_workers.SuggestionWorker → query_suggest_items
+  → QueryBridge._on_suggestions → suggestionsChanged → 弹窗显式 open()
+选中：QueryBridge.pickSuggestion（候选项带 type_id）→ QueryDetailBridge.setItem
+  历史项是**裸查询词**、没有 type_id → 填回输入框 + 重新拉候选，由用户挑
+两态判据：QML 的 workArea.idle = !(detail.typeId > 0)，且**不带 busy**
 ```
 
 - 子桥**懒建**：`QueryBridge._get_detail` / `_get_dashboard` 首次被 QML 读到才 import 并构造（`query_detail_bridge` / `query_dashboard_bridge`）；导入失败返回 `None`，QML 按 `detail === null` 写占位，**不连累整页**（外壳只把该面板记为暂缺）
-- 选中行：`QueryBridge.selectRow`（点击/右键调）→ `_push_selection` → `QueryDetailBridge.setItem`。高亮（QML 的 `currentRow`）与**取数**是分开的 —— 取数不能在拖动/滚动时反复触发
-- 详情面板四块（`QueryDetailBridge`）：① 价格 `market_repo.get_batch_market_snapshot`（每 hub 一次）；② 订单 `workers/order_workers.OrderFetchWorker` + `order_popup_bridge.order_rows`（订单弹窗已删，这个纯函数只剩详情面板一个调用方），缓存 `order_workers.order_cache` 由 `QueryDetailBridge._on_orders_fetched` 写入；③ 精炼 `workers/refine_worker.RefineWorker`；④ 制造材料 `bom_expander.get_flat_materials`（买/卖各展开一次）。几何/文案在 `ui_qml/models/query_detail_model.py` 纯函数里
-- 搜索口径：`services/ui_data_service.query_search_items` 只做**精确/前缀**匹配（Type ID 全等，或名字 `LIKE 'x%'`）。原先「查询串命中类别名 → 返回整个类别」的兜底与名字子串匹配都已删除
+- 详情面板四块（`QueryDetailBridge`）：① 价格 `market_repo.get_batch_market_snapshot`（每 hub 一次）；② 订单 `workers/order_workers.OrderFetchWorker` + `order_popup_bridge.order_rows`（订单弹窗已删，这个纯函数只剩详情面板一个调用方），缓存 `order_workers.order_cache` 由 `QueryDetailBridge._on_orders_fetched` 写入；③ 精炼 `workers/refine_worker.RefineWorker`（产率按**所选人物**的提炼技能算，人物与数量/站点都是面板上的输入）；④ 制造材料 `bom_expander.get_flat_materials`（买/卖各展开一次）。几何/文案在 `ui_qml/models/query_detail_model.py` 纯函数里
+- 候选口径：`services/ui_data_service.query_suggest_items` 只做**前缀**匹配（Type ID 全等，或名字 `LIKE 'x%'`），并排除无用类别 `_JUNK_CATEGORY_IDS`（`category_id=11` 那类 0 价 0 蓝图的遗留条目，也是候选里「两条一模一样的 `♦ 毒蜥级`」的来源）；**不设条数上限**。原先「查询串命中类别名 → 返回整个类别」的兜底、名字子串匹配、以及按名字跑整表搜索的 `query_search_items*` 都已删除
 - 站名解析：`order_workers.OrderFetchWorker._resolve_names` **先查本地 SDE `reference.db.station`**（复用 `services.npc_seller.resolve_stations_by_ids`），只有本地没有的玩家建筑才打 ESI `/universe/names/`；解析失败**不写缓存**（写进去会让该 location 永久显示编号）
 
 空闲态三条线（`QueryDashboardBridge`）：
@@ -322,7 +322,7 @@ services.order_export.find_latest_export(None)   ← 目录固定游戏默认（
 **已知陷阱**（改这块前先看）：
 - **QML 没有 `int()`**：JS 全局只有 `Number` / `parseInt` / `Math.*`。写 `int(x)` 会让整条绑定抛 `ReferenceError`，而 QML 对绑定错误**静默**（属性停在默认值）—— 实测容量条一个槽位都画不出来，只剩一条空轨道。
 - **面板容器用 `FPanel` 不用 `FSection`**：`FSection` 把子项收进内层 `ColumnLayout`，在里面写 `anchors.fill: parent` 会被布局**静默忽略**、子项塌成 `implicitHeight`（实测整张表只剩表头）。要放「自己管布局的一整块」（表格 / 图表 / 占用条）用 `FPanel`，只放若干行依次排列的控件才用 `FSection`。
-- **两态判据不能写在 QML 里**：`model.rowCount()` 是 Slot 调用，QML 绑定**不追踪**它 —— 行数由桥的 `hasResults` 给出，QML 只额外并上 `busy` 防闪（`workArea.idle`）。
+- **两态判据**取桥上的 Property：`workArea.idle = !(detail.typeId > 0)`（`QueryDetailBridge.typeId`，`notify=changed`）—— 绑定追得到，不像 Slot 调用那样要自己补发通知。判据里**不能带 `busy`**：那是「按候选查明细」的中间态，掺进来会让界面在仪表盘与详情之间来回翻两次。
 - **订单导出文件的真实格式**（详见 `services/order_export.py` 模块 docstring）：UTF-8 **带 BOM**、文件名是**中文**的（`个人订单-…` / `军团订单-…`）、`volRemaining` 是**浮点串**、位置名包在 `<localized hint="英文">中文</localized>` 里、**没有物品名列**。
 - **在途取数线程必须在页面销毁时停**：`QueryBridge.shutdown`（+ QML `Component.onDestruction`）会停 `_detail_bridge` / `_dash_bridge`，`QueryDetailBridge.shutdown` 收 `_order_worker` / `_refine_worker`（订单走 ESI，超时 30 秒）。不停的话 Qt 会在退出时析构一个**还在跑**的 `QThread` → **进程退出崩，且输出里连一行 traceback 都没有**。⚠️ `QueryBridge.shutdown` **不能读 `self.detail` / `self.dashboard`** —— 那两个 getter 会把没用过的子桥无谓地建出来（连带 import 整条业务链）。
 
