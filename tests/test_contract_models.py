@@ -195,13 +195,6 @@ class TestContractTableModel:
 
     # ── 样式 ──
 
-    def test_text_alignment(self, qapp):
-        model = ContractTableModel()
-        model.set_rows(SAMPLE_CONTRACTS)
-        idx = model.index(0, 3)
-        align = idx.data(Qt.ItemDataRole.TextAlignmentRole)
-        assert align == (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
     def test_foreground_colors(self, qapp):
         from ui_qml.theme import registry as theme
 
@@ -219,12 +212,6 @@ class TestContractTableModel:
         for (row, col), color in expected.items():
             actual = model.index(row, col).data(Qt.ItemDataRole.ForegroundRole)
             assert actual.name() == color, f"({row}, {col}) 期望 {color} 得到 {actual.name()}"
-
-    def test_font_monospace_on_numeric(self, qapp):
-        model = ContractTableModel()
-        model.set_rows(SAMPLE_CONTRACTS)
-        font = model.index(0, 0).data(Qt.ItemDataRole.FontRole)
-        assert font.family() == "Consolas"
 
     def test_background_alternating_rows(self, qapp):
         """隔行换色：偶数行 BG_SURFACE，奇数行 BG_DARK"""

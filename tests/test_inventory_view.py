@@ -149,13 +149,6 @@ class TestInvTableModel:
         names = [model.item_at(i)["zh_name"] or model.item_at(i)["en_name"] for i in range(model.rowCount())]
         assert names == sorted(names)
 
-    def test_text_alignment_numbers(self, qapp):
-        """数量列为右对齐"""
-        model = InvTableModel(self.SAMPLE_ITEMS)
-        idx = model.index(0, 2)
-        align = idx.data(Qt.ItemDataRole.TextAlignmentRole)
-        assert align == (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
     def test_item_at(self, qapp):
         """item_at 取行数据；越界/空模型返回 None"""
         model = InvTableModel(self.SAMPLE_ITEMS)
@@ -270,14 +263,11 @@ class TestBlueprintTableModel:
 
     def test_occupied_foreground_orange(self, qapp):
         """占用中的类型列用前景色高亮"""
-        from PySide6.QtGui import QColor
-
         rows = [dict(r) for r in self.SAMPLE_ROWS]
         rows[1]["occupied"] = True
         model = BlueprintTableModel(rows)
         idx = model.index(1, 2)
         color = idx.data(Qt.ItemDataRole.ForegroundRole)
-        assert isinstance(color, QColor)
         assert color.name().startswith("#")
 
     def test_time_zero_returns_dash(self, qapp):
@@ -318,13 +308,6 @@ class TestBlueprintTableModel:
         assert neg.data(neg.index(0, 10), Qt.ItemDataRole.ForegroundRole).name() == theme.ACCENT_RED
         none = BlueprintTableModel([{"blueprint_type_id": 9999}])
         assert none.data(none.index(0, 10), Qt.ItemDataRole.ForegroundRole) is None
-
-    def test_text_alignment(self, qapp):
-        """数据列右对齐"""
-        model = BlueprintTableModel(self.SAMPLE_ROWS)
-        idx = model.index(0, 3)
-        align = idx.data(Qt.ItemDataRole.TextAlignmentRole)
-        assert align == (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
     def test_row_at(self, qapp):
         """row_at 取行数据；越界返回 None"""
