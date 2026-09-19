@@ -3,6 +3,7 @@
 from PySide6.QtCore import QThread, Signal
 
 from core.container import get_container
+from core.logger import log
 
 
 class RefineWorker(QThread):
@@ -48,13 +49,26 @@ class RefineWorker(QThread):
                 errors.append(f"第 {i + 1} 项缺少 type_id")
                 continue
 
+            #: 矿石专精：先问服务「这件物品吃哪个处理技术技能」（按 SDE 组名推，见
+            #: `RefiningService.ore_skill_info`），再从人物技能表里取等级。
+            #: 非矿石（模块/船体等也有回收配方）与没映射上的新矿种都拿到空技能名 → 0 级，
+            #: 两者由 `ore_is_ore` 区分，好在界面上说不同的话。
+            svc = get_container().refining_service
             try:
-                result = get_container().refining_service.calc_value(
+                ore_is_ore, ore_skill_name = svc.ore_skill_info(type_id)
+            except Exception:
+                log.exception("解析矿石专精技能失败 type_id=%s", type_id)
+                ore_is_ore, ore_skill_name = False, ""
+            ore_skill_level = int((self._skills or {}).get(ore_skill_name, 0) or 0) if ore_skill_name else 0
+
+            try:
+                result = svc.calc_value(
                     type_id,
                     quantity=qty,
                     skills=self._skills,
                     is_player_facility=self._is_player_facility,
                     price_hub=self._price_hub,
+                    ore_skill=ore_skill_level,
                 )
             except Exception as e:
                 errors.append(f"{name}: {e}")
@@ -76,6 +90,10 @@ class RefineWorker(QThread):
                     "output_value": result["total_value"],
                     "profit": result["profit"],
                     "margin_pct": result["margin_pct"],
+                    # 供界面说明「产率里算进了哪个专精技能」，不参与金额计算
+                    "ore_is_ore": ore_is_ore,
+                    "ore_skill_name": ore_skill_name,
+                    "ore_skill_level": ore_skill_level,
                 }
             )
 

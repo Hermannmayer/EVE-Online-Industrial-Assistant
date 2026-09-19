@@ -220,13 +220,19 @@ class QueryBridge(QObject):
         worker.start()
 
     def _on_suggestions(self, items: list) -> None:
+        from ui_qml.icon_cache import icon_url
+
         # Worker 给的是 (type_id, display, zh_name) 三元组
         #
         # `query` 是**可搜的查询串**，与 `text`（展示串）分开存 —— 即使两者现在同值
         # （展示串就是物品名）也不合并：展示串以后怎么改都不该影响拿去 `LIKE` 匹配的那串。
         # 中文名优先，没有就退回展示串。
+        #
+        # `icon` 是物品图标的 `file://` URL；图标 PNG 还没下载到本地时是空串，
+        # QML 侧按空串就不显示（`Image` 拿到空串不刷警告，见 `icon_cache.icon_url`）。
         self._suggestions = [
-            {"id": int(tid), "text": str(display), "query": str(zh or display)} for tid, display, zh in items
+            {"id": int(tid), "text": str(display), "query": str(zh or display), "icon": icon_url(int(tid))}
+            for tid, display, zh in items
         ]
         self.suggestionsChanged.emit()
 
@@ -306,15 +312,6 @@ class QueryBridge(QObject):
         self._clear_detail()
         self.set_status("已清空")
         self.suggestionsChanged.emit()
-
-    @Slot(int)
-    def viewManufacturing(self, type_id: int) -> None:
-        """切到工业页看该物品的制造配方（外壳仍是 Widgets，走 ShellBridge 的导航）。"""
-        navigate = getattr(self._shell, "navigate_to", None)
-        if callable(navigate) and navigate("industry"):
-            self.set_status(f"已切换到工业页查看 Type ID: {type_id}")
-        else:
-            self.set_status(f"无法跳转，Type ID: {type_id}")
 
     # ── 子窗口 ────────────────────────────────────────────────
 

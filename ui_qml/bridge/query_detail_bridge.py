@@ -89,6 +89,7 @@ class QueryDetailBridge(QObject):
         self._refine_rows: list[dict] = []
         self._refine_summary = ""
         self._refine_total_rows: list[dict] = []
+        self._refine_ore_note = ""
         self._material_rows: list[dict] = []
         self._material_summary = ""
 
@@ -143,6 +144,8 @@ class QueryDetailBridge(QObject):
     refineRows = Property(list, lambda self: list(self._refine_rows), notify=changed)
     refineSummary = Property(str, lambda self: self._refine_summary, notify=changed)
     refineTotalRows = Property(list, lambda self: list(self._refine_total_rows), notify=changed)
+    #: 产率里算没算「矿石专精」—— 那句说明。文案见 `_ore_note`。
+    refineOreNote = Property(str, lambda self: self._refine_ore_note, notify=changed)
 
     #: 精炼的三个输入：人物 / 数量 / 站点。
     #: 产率由**该人物的技能**决定（`core/eve_formulas.calc_refining_yield`：
@@ -211,6 +214,7 @@ class QueryDetailBridge(QObject):
         self._refine_rows = []
         self._refine_summary = ""
         self._refine_total_rows = []
+        self._refine_ore_note = ""
         self._material_rows = []
         self._material_summary = ""
         self.changed.emit()
@@ -236,6 +240,7 @@ class QueryDetailBridge(QObject):
         self._refine_rows = []
         self._refine_summary = ""
         self._refine_total_rows = []
+        self._refine_ore_note = ""
         self._material_rows = []
         self._material_summary = ""
         self.changed.emit()
@@ -496,6 +501,7 @@ class QueryDetailBridge(QObject):
         self._ensure_chars()
         self._refine_rows = []
         self._refine_total_rows = []
+        self._refine_ore_note = ""
         self._refine_summary = "正在计算精炼产物…"
         self.changed.emit()
 
@@ -557,12 +563,37 @@ class QueryDetailBridge(QObject):
         ]
         if not rows:
             self._refine_summary = "该物品不可精炼"
+            self._refine_ore_note = ""
         else:
             out = float((result or {}).get("total_output_value") or 0)
             inp = float((result or {}).get("total_input_value") or 0)
             profit = float((result or {}).get("total_profit") or 0)
             self._refine_summary = f"总计：产出 {out:,.2f} ISK / 投入 {inp:,.2f} ISK / 利润 {profit:,.2f} ISK"
+            self._refine_ore_note = self._ore_note(result or {})
         self.changed.emit()
+
+    @staticmethod
+    def _ore_note(result: dict) -> str:
+        """面板上那句「矿石专精算没算进去」。
+
+        产率 = 基础 ×(1+3%×提炼学概论) ×(1+2%×提炼效率理论) ×**(1+2%×矿石专精)**，
+        而矿石专精是**按矿种**的技能（凡晶石处理技术…），用户填没填、这一件的矿种有没有
+        映射上都不一样 —— 不说清楚的话，用户没法判断 50% 与 63% 的差别从哪来。
+        文案由 `RefineWorker` 带上来的三个字段决定（见 `ore_skill_info`）。
+        """
+        items = result.get("items") or []
+        if not items:
+            return ""
+        first = items[0]
+        if not first.get("ore_is_ore"):
+            return "矿石专精：非矿石物品，不适用"
+        skill = str(first.get("ore_skill_name") or "")
+        if not skill:
+            return "矿石专精：该矿种未映射到处理技术（按 0 级计）"
+        level = int(first.get("ore_skill_level") or 0)
+        if not level:
+            return f"矿石专精：{skill} 未填（按 0 级计）"
+        return f"矿石专精：{skill} {level} 级"
 
     # ── ④ 制造材料 ────────────────────────────────────────────
 

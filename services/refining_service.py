@@ -9,6 +9,33 @@ market.db 价格（经 PricingService）。产率公式 calc_refining_yield 在 
 from core.eve_formulas import calc_refining_yield
 from services.pricing_service import PricingService
 
+#: 矿石类目（SDE `category_id`）。**只有矿石吃「矿石专精」** —— 模块/弹药/船体虽然也有回收
+#: 配方，但技能表里没有对应的处理技术，拿组名去拼必然拼出个不存在的技能。
+_ORE_CATEGORY_ID = 25
+
+#: 按名字推不出来的矿石组 → 技能英文名（核对过 SDE 里确实存在该技能）
+_ORE_SKILL_EXCEPTIONS = {
+    "Mercoxit": "Mercoxit Ore Processing",  # 技能名里多了个 Ore
+}
+#: 卫星小行星按稀有度共用技能：`<Rarity> Moon Asteroids` → `<Rarity> Moon Ore Processing`
+_MOON_ASTEROIDS_SUFFIX = " Moon Asteroids"
+_MOON_PROCESSING_SUFFIX = " Moon Ore Processing"
+
+
+def _ore_skill_candidates(group_en: str) -> list[str]:
+    """矿石组英文名 → 可能的专精技能英文名（按优先级，取第一个在 SDE 里存在的）。"""
+    if group_en in _ORE_SKILL_EXCEPTIONS:
+        return [_ORE_SKILL_EXCEPTIONS[group_en]]
+    out: list[str] = []
+    if group_en.endswith(_MOON_ASTEROIDS_SUFFIX):
+        rarity = group_en[: -len(_MOON_ASTEROIDS_SUFFIX)]
+        out.append(f"{rarity}{_MOON_PROCESSING_SUFFIX}")
+    out.append(f"{group_en} Processing")
+    if "Ice" in group_en:
+        # 冰矿只有一个技能；压缩冰（`Ancient Compressed Ice`）也吃它
+        out.append("Ice Processing")
+    return out
+
 
 class RefiningService:
     def __init__(self, db, pricing_service=None):
@@ -28,6 +55,39 @@ class RefiningService:
                 if cur.fetchone()[0] > 0:
                     model_items.append(item)
         return model_items
+
+    def ore_skill_info(self, type_id: int) -> tuple[bool, str]:
+        """→ `(是不是矿石, 矿石专精技能名/中文或空串)`。
+
+        依据是 SDE 自身的命名：矿石类目里专精技能恒为「<矿石组英文名> Processing」——
+        逐条核对过 39 个有回收配方的矿石组，经典矿石（凡晶石/灰岩/斜长岩/双多特…）全部命中。
+        三类按名字推不出来的另作处理（都核对过 SDE 里确实存在那个技能）：
+
+        - 卫星小行星按稀有度共用：`Common Moon Asteroids` → `Common Moon Ore Processing`；
+        - 冰矿只有一个技能 `Ice Processing`，压缩冰（`Ancient Compressed Ice`）也用它；
+        - 基腹断岩是 `Mercoxit Ore Processing`（技能名里多一个 `Ore`）。
+
+        ⚠️ **2024 年后的新矿种（杜希石/艾弗石/萤石…）第二个值返回空串**：SDE 里既没有同名
+        技能，本地也查不到官方关联 —— EVE 用 dogma 属性 `reprocessingSkillType` 把矿种连到
+        技能，而本仓的 `item_dogma` 只导入了 456 条**空壳**、0 条带该属性。这类矿种按 0 级算，
+        由调用方在界面上写明「未映射」；**绝不猜一个技能上去**（猜错就是静默算错 ISK）。
+
+        第一个值用来区分「不是矿石」与「是矿石但没映射上」—— 两者在界面上该说不同的话。
+        """
+        with self._db.connect("ref") as conn:
+            row = conn.execute(
+                "SELECT category_id, en_group_name FROM item WHERE type_id = ?", (int(type_id),)
+            ).fetchone()
+            if not row or int(row[0] or 0) != _ORE_CATEGORY_ID:
+                return False, ""
+            group = str(row[1] or "")
+            if not group:
+                return True, ""
+            for en_name in _ore_skill_candidates(group):
+                found = conn.execute("SELECT zh_name FROM item WHERE en_name = ?", (en_name,)).fetchone()
+                if found and found[0]:
+                    return True, str(found[0])
+        return True, ""
 
     def calc_value(
         self,

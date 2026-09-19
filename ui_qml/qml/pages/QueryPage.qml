@@ -112,35 +112,6 @@ Item {
                 }
             }
 
-            FButton {
-                id: batchPriceButton
-                text: qsTr("批量查价")
-                onClicked: if (page.query)
-                    page.query.openBatchPrice()
-
-                HoverHandler {
-                    id: batchHover
-                }
-                ToolTip.visible: batchHover.hovered
-                ToolTip.text: qsTr("一次性查询多个物品的价格")
-            }
-
-            /* 「查看制造配方」原在结果表的右键菜单里；表删掉后改挂这里。
-             * 没选中物品时不可点 —— 判据与工作区的两态判据同源（详情桥有没有拿到物品）。 */
-            FButton {
-                id: recipeButton
-                text: qsTr("制造配方")
-                enabled: page.query !== null && page.query.detail !== null && page.query.detail.typeId > 0
-                onClicked: if (page.query && page.query.detail)
-                    page.query.viewManufacturing(page.query.detail.typeId)
-
-                HoverHandler {
-                    id: recipeHover
-                }
-                ToolTip.visible: recipeHover.hovered
-                ToolTip.text: qsTr("切换到工业页查看该物品的制造配方")
-            }
-
             Item {
                 Layout.fillWidth: true
             }
@@ -323,12 +294,37 @@ Item {
                 width: ListView.view.width
                 implicitHeight: 28
 
+                /* 候选带物品图标（历史项是**裸查询词**，没有物品、也就没有图标）。
+                 * 图标 PNG 没下载到本地时桥给的是空串，`visible` 跟着 false ——
+                 * 空串喂给 `Image.source` 不会刷警告（见 `icon_cache.icon_url`）。 */
+                readonly property string iconSource: !suggestPopup.showingHistory
+                                                     && suggestItem.modelData
+                                                     && suggestItem.modelData.icon
+                                                     ? String(suggestItem.modelData.icon) : ""
+
+                Image {
+                    visible: suggestItem.iconSource !== ""
+                    anchors.left: parent.left
+                    anchors.leftMargin: Theme.spacingSm
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.round(16 * Theme.fontScale)
+                    height: width
+                    source: suggestItem.iconSource
+                    sourceSize.width: width
+                    sourceSize.height: height
+                    smooth: true
+                    fillMode: Image.PreserveAspectFit
+                }
+
                 contentItem: Text {
-                    leftPadding: Theme.spacingSm
+                    // 有图标时把文字右移，免得压在图标上
+                    leftPadding: suggestItem.iconSource !== ""
+                                 ? Theme.spacingSm + Math.round(22 * Theme.fontScale)
+                                 : Theme.spacingSm
                     rightPadding: Theme.spacingSm
                     verticalAlignment: Text.AlignVCenter
                     /* 候选与历史都**只显示物品名**，历史项不再加「历史:」前缀。
-                     * 分支保留是因为两者形状不同：候选项是 `{id, text, query}` 字典，
+                     * 分支保留是因为两者形状不同：候选项是 `{id, text, query, icon}` 字典，
                      * 历史项是字符串（桥里已从历史文件取出 `query` 字段）。 */
                     text: suggestPopup.showingHistory
                           ? String(suggestItem.modelData)

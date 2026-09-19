@@ -640,3 +640,32 @@ def test_refine_inputs_recompute_but_only_on_change(monkeypatch):
     bridge.setRefineCharIndex(99)  # 越界忽略
     assert bridge.refineCharIndex == 1
     assert calls == ["refine"] * 3
+
+
+@pytest.mark.fast
+@pytest.mark.parametrize(
+    ("items", "expected"),
+    [
+        ([], ""),
+        ([{"ore_is_ore": False}], "矿石专精：非矿石物品，不适用"),
+        ([{"ore_is_ore": True, "ore_skill_name": ""}], "矿石专精：该矿种未映射到处理技术（按 0 级计）"),
+        (
+            [{"ore_is_ore": True, "ore_skill_name": "凡晶石处理技术", "ore_skill_level": 0}],
+            "矿石专精：凡晶石处理技术 未填（按 0 级计）",
+        ),
+        (
+            [{"ore_is_ore": True, "ore_skill_name": "凡晶石处理技术", "ore_skill_level": 5}],
+            "矿石专精：凡晶石处理技术 5 级",
+        ),
+    ],
+)
+def test_ore_note_wording(items, expected):
+    """精炼面板那句「矿石专精算没算进去」。
+
+    产率 = 基础 ×(1+3%×提炼学概论) ×(1+2%×提炼效率理论) ×(1+2%×**矿石专精**)，而矿石专精
+    是**按矿种**的技能 —— 四种情形（非矿石 / 矿种没映射上 / 人物没填 / 填了）在界面上必须说
+    不同的话，否则用户没法判断看到的百分比是怎么来的。
+    """
+    from ui_qml.bridge.query_detail_bridge import QueryDetailBridge
+
+    assert QueryDetailBridge._ore_note({"items": items}) == expected

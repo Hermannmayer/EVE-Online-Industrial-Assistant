@@ -17,10 +17,19 @@ class FakeDB:
         self._conn.execute(
             "CREATE TABLE reprocessing_materials (type_id INTEGER, material_type_id INTEGER, quantity REAL)"
         )
-        self._conn.execute("CREATE TABLE item (type_id INTEGER, zh_name TEXT, en_name TEXT, volume REAL)")
+        self._conn.execute(
+            "CREATE TABLE item (type_id INTEGER, zh_name TEXT, en_name TEXT, volume REAL,"
+            " category_id INTEGER, en_group_name TEXT)"
+        )
         self._conn.executemany(
-            "INSERT INTO item (type_id, zh_name, en_name, volume) VALUES (?, ?, ?, ?)",
-            [(34, "三钛合金", "Tritanium", 0.01), (1230, "凡晶石", "Veldspar", 0.1)],
+            "INSERT INTO item (type_id, zh_name, en_name, volume, category_id, en_group_name)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (34, "三钛合金", "Tritanium", 0.01, 4, "Material"),  # 非矿石
+                (1230, "凡晶石", "Veldspar", 0.1, 25, "Veldspar"),  # 矿石（category 25）
+                (12195, "凡晶石处理技术", "Veldspar Processing", 0.0, 16, "Resource Processing"),  # 技能
+                (74533, "杜希石", "Ducinium", 0.1, 25, "Ducinium"),  # 2024 新矿种：无同名技能
+            ],
         )
         self._conn.commit()
 
@@ -94,3 +103,25 @@ def test_yield_rate_and_ore_skill():
     result = svc.calc_value(1230, ore_skill=5)
     assert result["yield_rate"] == pytest.approx(0.5 * 1.10, abs=1e-4)
     assert result["yield_rate"] <= 0.85
+
+
+class TestOreSkillInfo:
+    """矿石专精技能解析 —— 规则全部来自 SDE 自身的命名（见 `ore_skill_info`）。"""
+
+    def test_ore_maps_to_its_group_processing_skill(self):
+        svc = RefiningService(FakeDB(), pricing_service=FakePricing({}))
+        assert svc.ore_skill_info(1230) == (True, "凡晶石处理技术")
+
+    def test_non_ore_has_no_specialization(self):
+        """模块/船体也有回收配方，但没有对应的处理技术技能 —— 两个返回值要区分开。"""
+        svc = RefiningService(FakeDB(), pricing_service=FakePricing({}))
+        assert svc.ore_skill_info(34) == (False, "")
+
+    def test_unmapped_ore_is_still_an_ore(self):
+        """2024 新矿种：SDE 里没有同名技能 → 技能名为空，但仍要认出「这是矿石」。
+
+        界面据此说「该矿种未映射到处理技术」而不是「非矿石」，两者含义完全不同。
+        绝不猜一个技能上去 —— 猜错就是静默算错 ISK。
+        """
+        svc = RefiningService(FakeDB(), pricing_service=FakePricing({}))
+        assert svc.ore_skill_info(74533) == (True, "")

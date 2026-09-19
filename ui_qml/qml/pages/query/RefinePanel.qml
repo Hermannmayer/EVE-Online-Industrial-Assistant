@@ -26,6 +26,10 @@ Item {
     readonly property int totalH: Math.max(20, fntBase + 10)
     //: 输入区占两行（人物+数量 / 站点）—— 左列只有约 0.28 屏宽，三件控件挤一行会互相压
     readonly property int inputH: root.barH * 2 + Theme.spacingXs
+    //: 「矿石专精」那行说明的高度（产率里算没算它，见 `detail.refineOreNote`）。
+    //: 恒留这一行、不随内容显隐收放：Column 的排版按 height 走，做条件高度会让
+    //: 表格高度跟着跳，得不偿失。
+    readonly property int noteH: Math.max(16, fntSmall + 6)
     readonly property int labelW: Math.round(34 * Theme.fontScale)
 
     /* 精炼行 → 表格单元格（字段映射，不做任何格式化 —— 文本已由桥算好）。
@@ -164,12 +168,27 @@ Item {
         // ══ 产出表 ════════════════════════════════════════════
         PanelTable {
             width: parent.width
-            height: parent.height - root.inputH - root.totalH - 2 * Theme.spacingXs
+            height: parent.height - root.inputH - root.noteH - root.totalH - 3 * Theme.spacingXs
             headers: [qsTr("产出材料"), qsTr("数量"), qsTr("产率"), qsTr("价值 (ISK)")]
             ratios: [2.2, 1.0, 0.9, 1.6]
             rows: root.refineCells
             emptyText: root.detail && root.detail.typeId > 0
                        ? qsTr("该物品不可精炼") : qsTr("选择物品查看精炼产物")
+        }
+
+        // ── 矿石专精说明 ──────────────────────────────────────
+        /* 产率 = 基础 ×(1+3%×提炼学概论) ×(1+2%×提炼效率理论) ×(1+2%×矿石专精)，
+         * 而矿石专精是**按矿种**的技能 —— 没填、或这一件的矿种本地映射不上，产率就差一截。
+         * 不说明的话用户没法判断看到的百分比是怎么来的。文案由桥给（`refineOreNote`）。 */
+        Text {
+            width: parent.width
+            height: root.noteH
+            verticalAlignment: Text.AlignVCenter
+            text: root.detail ? String(root.detail.refineOreNote) : ""
+            color: Theme.textSecondary
+            font.family: Theme.fontFamily
+            font.pixelSize: root.fntSmall
+            elide: Text.ElideRight
         }
 
         // ── 总计、价格 ────────────────────────────────────────
