@@ -6,6 +6,58 @@
 
 <!-- version list -->
 
+## v0.24.0 (2026-09-19)
+
+### Bug Fixes
+
+- **查询页**: 候选不再截断，并排除无用类别（清掉候选里重复的 ♦ 条目）
+  ([`56d5580`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/56d558093f27eb2b84acbff2d0cb7658d53503e6))
+
+- **查询页**: 空搜索框反复点击都要弹历史，候选弹窗开关改由桥的显式信号驱动
+  ([`fcc2f31`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/fcc2f31f77fc58cde3c359a90c5859c5a1dfd079))
+
+- **查询页/工业页**: 修闪退与两块空面板；查看类窗口独立化；搜索收紧为前缀
+  ([`910349a`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/910349afae7190e5ced9c9497d778cbd1883acae))
+
+- **窗口**: 标题栏拖动失效 —— scenePosition 在本机 Qt 取不到；同一次按下只起拖一次
+  ([`e8b9be5`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/e8b9be51917aa94d58d0616e0b467162ce54a160))
+
+### Chores
+
+- **deps**: Uv.lock 中本项目版本对齐 pyproject（0.15.4 → 0.23.2）
+  ([`6bc3dcf`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/6bc3dcf992b8b1c878a087c539b9eeabd7a4687e))
+
+- **测试规范**: 加测试判定表与体检工具，修 target 档误匹配
+  ([`3eacaa0`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/3eacaa03b6939492c061832df2676da71cd94cf2))
+
+### Documentation
+
+- **测试规范**: 修掉与判定表矛盾的旧耗时数字与「提交前跑 full」
+  ([`a4635f3`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a4635f3d86d8d5397980a5abd91164160bca9bd6))
+
+- **测试规范**: 判定表 mock 行细分「替身契约」与「实现细节代理」
+  ([`f5ec120`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/f5ec12006cbc7ef27a3e82050cd6f3e5dce34d64))
+
+### Features
+
+- **查询页**: 候选带图标并按名字去重；精炼接上矿石专精；工具栏去掉两个按钮
+  ([`5dfad47`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5dfad47f7c775c9d48ba7b48cc53bddff3e258a4))
+
+- **查询页**: 去掉结果表格，候选弹窗即匹配清单；候选不截断且排除无用类别
+  ([`a05d127`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a05d127a0f3f9ce623b9d4e58c137e9e6139143e))
+
+- **查询页**: 精炼面板按所选人物的技能算产率，并支持数量与站点
+  ([`5718da7`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5718da77b6fc3d5ea063809b0409d999a418377d))
+
+- **科研/工业页**: 修发明三处口径（SDE quantity / 技能成功率 / 流程×并行）并改造科研对话框
+  ([`ac6e2ed`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/ac6e2ed387545695431177a829d1a72d74e574f1))
+
+### Testing
+
+- **清理**: 按测试判定表删纯样式用例与零信息断言
+  ([`7e00ab1`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/7e00ab18c90982cadb18c23a242aad7e04afdfcc))
+
+
 ## v0.23.3 (2026-09-18)
 
 ### Bug Fixes
