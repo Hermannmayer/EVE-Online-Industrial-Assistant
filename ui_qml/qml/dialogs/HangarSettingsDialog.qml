@@ -167,355 +167,363 @@ FDialogFrame {
                 }
             }
 
-            // ── 右：当前机库编辑区 ──
-            Repeater {
-                model: frame.bp ? [frame.bp.editorKey] : []
+            /* ── 右：当前机库编辑区 ──
+               `Repeater` 用来在 `editorKey` 变化时**重建**编辑区（切换机库要清掉内部状态），
+               但 **Repeater 的代理项不被 Layout 布局** —— 直接把 Repeater 当 RowLayout 的子项，
+               面板会以 0×0 落在布局原点、从左侧列表底下铺开（实测：右侧面板压住列表右缘）。
+               所以外面套一层被布局的 Item，面板改锚定它。 */
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
 
-                Flickable {
-                    id: editorPane
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    visible: frame.bp ? frame.bp.hasHangars : false
-                    clip: true
-                    contentWidth: width
-                    contentHeight: editorCol.implicitHeight
-                    boundsBehavior: Flickable.StopAtBounds
+                Repeater {
+                    model: frame.bp ? [frame.bp.editorKey] : []
 
-                    ScrollBar.vertical: ScrollBar {
-                        policy: ScrollBar.AsNeeded
-                    }
+                    Flickable {
+                        id: editorPane
+                        anchors.fill: parent
+                        visible: frame.bp ? frame.bp.hasHangars : false
+                        clip: true
+                        contentWidth: width
+                        contentHeight: editorCol.implicitHeight
+                        boundsBehavior: Flickable.StopAtBounds
 
-                    ColumnLayout {
-                        id: editorCol
-                        width: editorPane.width
-                        spacing: frame.gap
-
-                        // ── 所在星系 ──
-                        FSection {
-                            title: qsTr("所在星系（成本指数）")
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: frame.gap
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: frame.bp ? frame.bp.systemText : qsTr("未设置")
-                                    color: Theme.textPrimary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: frame.fntBase
-                                    elide: Text.ElideRight
-                                }
-                                FButton {
-                                    text: qsTr("选择星系…")
-                                    onClicked: if (frame.bp)
-                                        frame.bp.pickSystem()
-                                }
-                                FButton {
-                                    text: qsTr("清除")
-                                    onClicked: if (frame.bp)
-                                        frame.bp.clearSystem()
-                                }
-                            }
+                        ScrollBar.vertical: ScrollBar {
+                            policy: ScrollBar.AsNeeded
                         }
 
-                        // ── 设施类型 ──
-                        FSection {
-                            title: qsTr("设施类型（结构本体加成）")
+                        ColumnLayout {
+                            id: editorCol
+                            width: editorPane.width
+                            spacing: frame.gap
 
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: frame.gap
+                            // ── 所在星系 ──
+                            FSection {
+                                title: qsTr("所在星系（成本指数）")
 
-                                Text {
-                                    Layout.preferredWidth: frame.labelWidth
-                                    horizontalAlignment: Text.AlignRight
-                                    text: qsTr("设施类型:")
-                                    color: Theme.textPrimary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: frame.fntBase
-                                }
-                                FComboBox {
-                                    objectName: "facilityBox"
-                                    Layout.preferredWidth: Math.round(220 * Theme.fontScale)
-                                    textRole: "label"
-                                    model: frame.bp ? frame.bp.facilityOptions : []
-                                    currentIndex: frame.bp ? frame.bp.facilityIndex : 0
-                                    onActivated: if (frame.bp)
-                                        frame.bp.setFacilityIndex(currentIndex)
-                                }
-                                Item {
+                                RowLayout {
                                     Layout.fillWidth: true
+                                    spacing: frame.gap
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: frame.bp ? frame.bp.systemText : qsTr("未设置")
+                                        color: Theme.textPrimary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: frame.fntBase
+                                        elide: Text.ElideRight
+                                    }
+                                    FButton {
+                                        text: qsTr("选择星系…")
+                                        onClicked: if (frame.bp)
+                                            frame.bp.pickSystem()
+                                    }
+                                    FButton {
+                                        text: qsTr("清除")
+                                        onClicked: if (frame.bp)
+                                            frame.bp.clearSystem()
+                                    }
                                 }
                             }
 
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: frame.gap
+                            // ── 设施类型 ──
+                            FSection {
+                                title: qsTr("设施类型（结构本体加成）")
 
-                                Text {
-                                    Layout.preferredWidth: frame.labelWidth
-                                    horizontalAlignment: Text.AlignRight
-                                    text: qsTr("本体加成:")
-                                    color: Theme.textPrimary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: frame.fntBase
-                                }
-                                Text {
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    text: frame.bp ? frame.bp.baseBonusText : ""
-                                    color: Theme.textSecondary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: frame.fntBase
-                                    wrapMode: Text.WordWrap
+                                    spacing: frame.gap
+
+                                    Text {
+                                        Layout.preferredWidth: frame.labelWidth
+                                        horizontalAlignment: Text.AlignRight
+                                        text: qsTr("设施类型:")
+                                        color: Theme.textPrimary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: frame.fntBase
+                                    }
+                                    FComboBox {
+                                        objectName: "facilityBox"
+                                        Layout.preferredWidth: Math.round(220 * Theme.fontScale)
+                                        textRole: "label"
+                                        model: frame.bp ? frame.bp.facilityOptions : []
+                                        currentIndex: frame.bp ? frame.bp.facilityIndex : 0
+                                        onActivated: if (frame.bp)
+                                            frame.bp.setFacilityIndex(currentIndex)
+                                    }
+                                    Item {
+                                        Layout.fillWidth: true
+                                    }
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: frame.gap
+
+                                    Text {
+                                        Layout.preferredWidth: frame.labelWidth
+                                        horizontalAlignment: Text.AlignRight
+                                        text: qsTr("本体加成:")
+                                        color: Theme.textPrimary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: frame.fntBase
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: frame.bp ? frame.bp.baseBonusText : ""
+                                        color: Theme.textSecondary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: frame.fntBase
+                                        wrapMode: Text.WordWrap
+                                    }
                                 }
                             }
-                        }
 
-                        // ── 设施税 ──
-                        FSection {
-                            title: qsTr("设施税")
+                            // ── 设施税 ──
+                            FSection {
+                                title: qsTr("设施税")
 
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: frame.gap
-
-                                FDoubleSpinBox {
-                                    objectName: "taxBox"
-                                    Layout.preferredWidth: Math.round(140 * Theme.fontScale)
-                                    from: 0
-                                    to: 100
-                                    decimals: 3
-                                    value: frame.bp ? frame.bp.taxValue : 0.25
-                                    enabled: frame.bp ? !frame.bp.taxFollowDefault : true
-                                    onValueModified: if (frame.bp)
-                                        frame.bp.setTaxValue(value)
-                                }
-                                // QML 的微调框没有 `suffix`（写了会连输入解析一起坏掉），
-                                // 单位单独一个 Text，避免动 `valueFromText` 那套。
-                                Text {
-                                    text: qsTr("%")
-                                    color: Theme.textSecondary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: frame.fntBase
-                                }
-                                FCheckBox {
-                                    objectName: "taxDefaultBox"
-                                    text: qsTr("跟随默认（不单独设置）")
-                                    checked: frame.bp ? frame.bp.taxFollowDefault : true
-                                    onToggled: if (frame.bp)
-                                        frame.bp.setTaxFollowDefault(checked)
-                                }
-                                Item {
+                                RowLayout {
                                     Layout.fillWidth: true
+                                    spacing: frame.gap
+
+                                    FDoubleSpinBox {
+                                        objectName: "taxBox"
+                                        Layout.preferredWidth: Math.round(140 * Theme.fontScale)
+                                        from: 0
+                                        to: 100
+                                        decimals: 3
+                                        value: frame.bp ? frame.bp.taxValue : 0.25
+                                        enabled: frame.bp ? !frame.bp.taxFollowDefault : true
+                                        onValueModified: if (frame.bp)
+                                            frame.bp.setTaxValue(value)
+                                    }
+                                    // QML 的微调框没有 `suffix`（写了会连输入解析一起坏掉），
+                                    // 单位单独一个 Text，避免动 `valueFromText` 那套。
+                                    Text {
+                                        text: qsTr("%")
+                                        color: Theme.textSecondary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: frame.fntBase
+                                    }
+                                    FCheckBox {
+                                        objectName: "taxDefaultBox"
+                                        text: qsTr("跟随默认（不单独设置）")
+                                        checked: frame.bp ? frame.bp.taxFollowDefault : true
+                                        onToggled: if (frame.bp)
+                                            frame.bp.setTaxFollowDefault(checked)
+                                    }
+                                    Item {
+                                        Layout.fillWidth: true
+                                    }
                                 }
                             }
-                        }
 
-                        // ── 结构改装件 ──
-                        FSection {
-                            title: qsTr("结构改装件（每制造类别最多 1 个）")
+                            // ── 结构改装件 ──
+                            FSection {
+                                title: qsTr("结构改装件（每制造类别最多 1 个）")
 
-                            Repeater {
-                                model: frame.bp ? frame.bp.rigGroups : []
+                                Repeater {
+                                    model: frame.bp ? frame.bp.rigGroups : []
 
-                                FSection {
-                                    id: rigGroup
-                                    required property var modelData
-                                    required property int index
+                                    FSection {
+                                        id: rigGroup
+                                        required property var modelData
+                                        required property int index
 
-                                    title: rigGroup.modelData.label
+                                        title: rigGroup.modelData.label
 
-                                    Repeater {
-                                        model: rigGroup.modelData.items
+                                        Repeater {
+                                            model: rigGroup.modelData.items
 
-                                        FCheckBox {
-                                            required property var modelData
-                                            Layout.fillWidth: true
-                                            text: modelData.text
-                                            checked: modelData.checked
-                                            onToggled: if (frame.bp)
-                                                frame.bp.setRigChecked(modelData.typeId, checked)
+                                            FCheckBox {
+                                                required property var modelData
+                                                Layout.fillWidth: true
+                                                text: modelData.text
+                                                checked: modelData.checked
+                                                onToggled: if (frame.bp)
+                                                    frame.bp.setRigChecked(modelData.typeId, checked)
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
 
-                        // ── 加成汇总 ──
-                        Text {
-                            Layout.fillWidth: true
-                            text: frame.bp ? frame.bp.summaryText : ""
-                            color: Theme.textSecondary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: frame.fntSmall
-                            wrapMode: Text.WordWrap
+                            // ── 加成汇总 ──
+                            Text {
+                                Layout.fillWidth: true
+                                text: frame.bp ? frame.bp.summaryText : ""
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: frame.fntSmall
+                                wrapMode: Text.WordWrap
+                            }
                         }
                     }
                 }
+
+                // 没有机库时的空态（编辑区整块隐藏，这里给一句可执行的提示）
+                Text {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    visible: frame.bp ? !frame.bp.hasHangars : true
+                    text: qsTr("还没有机库，点左上角「新建机库」开始")
+                    color: Theme.textSecondary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: frame.fntBase
+                    wrapMode: Text.WordWrap
+                }
             }
 
-            // 没有机库时的空态（编辑区整块隐藏，这里给一句可执行的提示）
-            Text {
+            // ══════════════════════════════════════════════════════
+            //  Tab 2：默认机库
+            // ══════════════════════════════════════════════════════
+
+            ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                visible: frame.bp ? !frame.bp.hasHangars : true
-                text: qsTr("还没有机库，点左上角「新建机库」开始")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: frame.fntBase
-                wrapMode: Text.WordWrap
+                spacing: frame.gap
+
+                FSection {
+                    title: qsTr("默认机库（决定材料来源 / 产品去向）")
+
+                    Repeater {
+                        model: frame.bp ? frame.bp.defaultRows : []
+
+                        RowLayout {
+                            required property var modelData
+
+                            Layout.fillWidth: true
+                            spacing: frame.gap
+
+                            Text {
+                                Layout.preferredWidth: Math.round(150 * Theme.fontScale)
+                                horizontalAlignment: Text.AlignRight
+                                text: modelData.label + ":"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: frame.fntBase
+                            }
+                            FComboBox {
+                                Layout.preferredWidth: Math.round(240 * Theme.fontScale)
+                                textRole: "label"
+                                model: modelData.options
+                                currentIndex: modelData.index
+                                onActivated: if (frame.bp)
+                                    frame.bp.setDefaultIndex(modelData.key, currentIndex)
+                            }
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                        }
+                    }
+                }
+
+                Item {
+                    Layout.fillHeight: true
+                }
             }
         }
 
-        // ══════════════════════════════════════════════════════
-        //  Tab 2：默认机库
-        // ══════════════════════════════════════════════════════
+        // ══════════════════════════════════════════════════════════
+        //  删除确认条（两步确认的第二步）
+        // ══════════════════════════════════════════════════════════
 
-        ColumnLayout {
+        Rectangle {
+            objectName: "deleteConfirmBar"
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: frame.gap
+            visible: frame.bp ? frame.bp.confirmVisible : false
+            implicitHeight: confirmCol.implicitHeight + 2 * Theme.spacingSm
+            color: Theme.bgSurface
+            radius: Theme.radius
+            border.width: 1
+            border.color: Theme.accentOrange
 
-            FSection {
-                title: qsTr("默认机库（决定材料来源 / 产品去向）")
+            ColumnLayout {
+                id: confirmCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: Theme.spacingSm
+                spacing: Theme.spacingXs
+
+                Text {
+                    Layout.fillWidth: true
+                    text: frame.bp ? frame.bp.confirmTitle : ""
+                    color: Theme.accentOrange
+                    font.family: Theme.fontFamily
+                    font.pixelSize: frame.fntBase
+                    font.bold: true
+                    wrapMode: Text.WordWrap
+                }
 
                 Repeater {
-                    model: frame.bp ? frame.bp.defaultRows : []
+                    model: frame.bp ? frame.bp.confirmReferences : []
 
-                    RowLayout {
+                    Text {
                         required property var modelData
 
                         Layout.fillWidth: true
-                        spacing: frame.gap
-
-                        Text {
-                            Layout.preferredWidth: Math.round(150 * Theme.fontScale)
-                            horizontalAlignment: Text.AlignRight
-                            text: modelData.label + ":"
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: frame.fntBase
-                        }
-                        FComboBox {
-                            Layout.preferredWidth: Math.round(240 * Theme.fontScale)
-                            textRole: "label"
-                            model: modelData.options
-                            currentIndex: modelData.index
-                            onActivated: if (frame.bp)
-                                frame.bp.setDefaultIndex(modelData.key, currentIndex)
-                        }
-                        Item {
-                            Layout.fillWidth: true
-                        }
+                        text: "    • " + modelData
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: frame.fntBase
+                        elide: Text.ElideRight
                     }
                 }
-            }
-
-            Item {
-                Layout.fillHeight: true
-            }
-        }
-    }
-
-    // ══════════════════════════════════════════════════════════
-    //  删除确认条（两步确认的第二步）
-    // ══════════════════════════════════════════════════════════
-
-    Rectangle {
-        objectName: "deleteConfirmBar"
-        Layout.fillWidth: true
-        visible: frame.bp ? frame.bp.confirmVisible : false
-        implicitHeight: confirmCol.implicitHeight + 2 * Theme.spacingSm
-        color: Theme.bgSurface
-        radius: Theme.radius
-        border.width: 1
-        border.color: Theme.accentOrange
-
-        ColumnLayout {
-            id: confirmCol
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.margins: Theme.spacingSm
-            spacing: Theme.spacingXs
-
-            Text {
-                Layout.fillWidth: true
-                text: frame.bp ? frame.bp.confirmTitle : ""
-                color: Theme.accentOrange
-                font.family: Theme.fontFamily
-                font.pixelSize: frame.fntBase
-                font.bold: true
-                wrapMode: Text.WordWrap
-            }
-
-            Repeater {
-                model: frame.bp ? frame.bp.confirmReferences : []
 
                 Text {
-                    required property var modelData
-
                     Layout.fillWidth: true
-                    text: "    • " + modelData
-                    color: Theme.textPrimary
+                    visible: text !== ""
+                    text: frame.bp ? frame.bp.confirmNote : ""
+                    color: Theme.textSecondary
                     font.family: Theme.fontFamily
-                    font.pixelSize: frame.fntBase
-                    elide: Text.ElideRight
+                    font.pixelSize: frame.fntSmall
+                    wrapMode: Text.WordWrap
                 }
-            }
 
-            Text {
-                Layout.fillWidth: true
-                visible: text !== ""
-                text: frame.bp ? frame.bp.confirmNote : ""
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: frame.fntSmall
-                wrapMode: Text.WordWrap
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                visible: frame.bp ? frame.bp.showRepoint : false
-                spacing: frame.gap
-
-                Text {
-                    text: qsTr("将上述引用改为：")
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: frame.fntBase
-                }
-                FComboBox {
-                    objectName: "repointBox"
+                RowLayout {
                     Layout.fillWidth: true
-                    textRole: "label"
-                    model: frame.bp ? frame.bp.repointOptions : []
-                    currentIndex: frame.bp ? frame.bp.repointIndex : 0
-                    onActivated: if (frame.bp)
-                        frame.bp.setRepointIndex(currentIndex)
+                    visible: frame.bp ? frame.bp.showRepoint : false
+                    spacing: frame.gap
+
+                    Text {
+                        text: qsTr("将上述引用改为：")
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: frame.fntBase
+                    }
+                    FComboBox {
+                        objectName: "repointBox"
+                        Layout.fillWidth: true
+                        textRole: "label"
+                        model: frame.bp ? frame.bp.repointOptions : []
+                        currentIndex: frame.bp ? frame.bp.repointIndex : 0
+                        onActivated: if (frame.bp)
+                            frame.bp.setRepointIndex(currentIndex)
+                    }
                 }
-            }
 
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: frame.gap
-
-                Item {
+                RowLayout {
                     Layout.fillWidth: true
-                }
-                FButton {
-                    objectName: "confirmDeleteBtn"
-                    text: qsTr("删除")
-                    onClicked: if (frame.bp)
-                        frame.bp.confirmDelete()
-                }
-                FButton {
-                    text: qsTr("取消删除")
-                    onClicked: if (frame.bp)
-                        frame.bp.cancelDelete()
+                    spacing: frame.gap
+
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                    FButton {
+                        objectName: "confirmDeleteBtn"
+                        text: qsTr("删除")
+                        onClicked: if (frame.bp)
+                            frame.bp.confirmDelete()
+                    }
+                    FButton {
+                        text: qsTr("取消删除")
+                        onClicked: if (frame.bp)
+                            frame.bp.cancelDelete()
+                    }
                 }
             }
         }
