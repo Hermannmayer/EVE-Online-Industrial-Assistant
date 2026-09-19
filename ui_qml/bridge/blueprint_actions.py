@@ -343,11 +343,6 @@ def paste_blueprints(bridge: Any, hangar_id: int | None, hangar_label: str) -> N
     """
     from PySide6.QtWidgets import QApplication, QDialog
 
-    from services.inventory_blueprint_service import (
-        apply_blueprint_diff,
-        build_blueprint_changes,
-        snapshot_blueprints,
-    )
     from services.inventory_manager import get_blueprints
     from ui_qml.bridge.blueprint_import_bridge import (
         BlueprintImportChangeQmlDialog as BlueprintImportChangeDialog,
@@ -355,7 +350,12 @@ def paste_blueprints(bridge: Any, hangar_id: int | None, hangar_label: str) -> N
     from ui_qml.bridge.blueprint_import_bridge import (
         BlueprintImportReviewQmlDialog as BlueprintImportReviewDialog,
     )
-    from ui_qml.workers.blueprint_import_worker import _BlueprintImportWorker
+    from ui_qml.workers.blueprint_import_worker import (
+        _BlueprintImportWorker,
+        apply_blueprint_diff,
+        build_blueprint_changes,
+        snapshot_blueprints,
+    )
 
     if hangar_id is None:
         return

@@ -823,3 +823,30 @@ class TestCompletePlansAggregate:
 
         assert result["completed"] == 1
         assert result["removed"] == 0
+
+
+def test_get_character_usage_survives_null_product_name(db_manager):
+    """回归：SQL 里 `CAST(product_type_id TEXT)` 少了 `AS`。
+
+    真跑才会报 `sqlite3.OperationalError: near "TEXT": syntax error`。两处掩护让它长期没暴露：
+
+    - `tests/test_qml_dialogs.py` 里 `get_character_usage` 一直被 monkeypatch 成 lambda，
+      真实 SQL 从未执行过 —— 本用例走真查询；
+    - `COALESCE` 的第二个分支只在 `product_name` 为 NULL 时求值，所以必须造一行 NULL。
+    """
+    from services.industry_dialog_queries import get_character_usage
+
+    # 自建最小表：本用例只碰 production_plans（_build_dbs 那份精简表没有 char_name）
+    with db_manager.connect("user") as conn:
+        conn.execute(
+            "CREATE TABLE production_plans (id INTEGER PRIMARY KEY, char_name TEXT, "
+            "product_type_id INTEGER, product_name TEXT, status TEXT)"
+        )
+        for row in (
+            (1, "甲", 638, None, "pending"),  # product_name 为 NULL → 走 CAST 分支
+            (2, "甲", 640, "渡鸦级", "in_progress"),
+            (3, "乙", 99, None, "done"),  # 非活跃状态，不该被统计
+        ):
+            conn.execute("INSERT INTO production_plans VALUES (?, ?, ?, ?, ?)", row)
+
+    assert get_character_usage(db_manager) == [("甲", 2, "638, 渡鸦级")]

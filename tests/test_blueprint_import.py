@@ -431,3 +431,20 @@ class TestBlueprintImportChangeDialog:
             assert [c["text"] for c in dlg.bridge.rows[0]["cells"]] == ["渡鸦级蓝图", "原图  ME0  TE0", "1 → 2"]
         finally:
             dlg.deleteLater()
+
+
+def test_paste_blueprints_dependencies_resolve():
+    """回归：`paste_blueprints` 曾从一个**根本不存在的模块** import。
+
+    原文是 `from services.inventory_blueprint_service import (...)` —— 该模块全库无引用、
+    git 也无任何历史，属于幽灵 import。因为写在函数体内，静态检查看不见，
+    只有真在仓库页点「粘贴导入蓝图」时才炸：
+
+        ModuleNotFoundError: No module named 'services.inventory_blueprint_service'
+
+    `hangar_id=None` 是导入语句之后的第一件事（提前返回），正好把整段 import 跑一遍，
+    不需要剪贴板、对话框或 QApplication。
+    """
+    from ui_qml.bridge.blueprint_actions import paste_blueprints
+
+    paste_blueprints(None, None, "")  # 不该抛 ModuleNotFoundError

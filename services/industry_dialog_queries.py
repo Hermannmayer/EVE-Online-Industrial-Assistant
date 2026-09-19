@@ -43,7 +43,7 @@ def get_character_usage(db) -> list[tuple[Any, Any, Any]]:
     with db.connect("user") as conn:
         rows = conn.execute(
             "SELECT char_name, COUNT(*) as cnt, "
-            "GROUP_CONCAT(COALESCE(product_name, CAST(product_type_id TEXT)), ', ') as details "
+            "GROUP_CONCAT(COALESCE(product_name, CAST(product_type_id AS TEXT)), ', ') as details "
             "FROM production_plans "
             "WHERE status IN ('pending', 'in_progress', 'running') "
             "GROUP BY char_name "
