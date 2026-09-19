@@ -176,12 +176,6 @@ def _case_transfer(monkeypatch):
     return lambda: HangarTransferQmlDialog([], 2, "目标仓")
 
 
-def _case_order_popup(monkeypatch):
-    from ui_qml.bridge.order_popup_bridge import OrderPopupQmlDialog
-
-    return OrderPopupQmlDialog
-
-
 def _case_price_chart(monkeypatch):
     monkeypatch.setattr("ui_qml.workers.price_history_worker.PriceHistoryWorker", _StubHistoryWorker)
 
@@ -268,7 +262,6 @@ _LOADS_CASES: list[tuple[str, Any]] = [
     ("蓝图导入预览", _case_blueprint_import_review),
     ("蓝图导入变动汇总", _case_blueprint_import_change),
     ("移库", _case_transfer),
-    ("订单弹窗", _case_order_popup),
     ("价格走势图", _case_price_chart),
     ("批量查价", _case_batch_price),
     ("机库设置", _case_hangar_settings),
@@ -1758,3 +1751,51 @@ def test_dialog_falls_back_to_the_focused_window(qapp):
             dialog.deleteLater()
         shell.close()
         _spin(100)
+
+
+# ── 非模态独立窗（`QmlDialog(modeless=True)`）────────────────────────────
+
+
+def test_modeless_dialog_is_top_level_and_kept_alive(qapp, output_factory):
+    """查看类窗口是**非模态独立窗**：真顶层（不挂属主）、由保活表顶着、关掉即摘除。
+
+    回归背景：这类窗口没有 C++ 父对象，调用方若只把对话框存局部变量，Python GC 会在
+    窗口仍显示时回收包装对象 —— 连带销毁桥里还在跑的 `QThread`，Qt 直接 `abort()`，
+    进程静默死掉（实测就是「工业页点『从全物品添加』闪退」）。保活表让
+    「调用方不存引用」不再致命。
+    """
+    from PySide6.QtCore import Qt
+
+    from ui_qml import dialog_host
+    from ui_qml.bridge.output_dialog_bridge import OutputSummaryQmlDialog
+
+    dialog = output_factory()
+    try:
+        dialog.show()
+        _spin(150)
+        assert dialog_host._MODELESS_WINDOWS.get(id(dialog)) is dialog, "modeless 窗口必须进保活表"
+        assert dialog_host.find_modeless(OutputSummaryQmlDialog) is dialog
+        # 独立窗有自己的最小化 / 最大化按钮（owned 窗口没有）
+        assert dialog.windowFlags() & Qt.WindowType.WindowMinMaxButtonsHint
+        handle = dialog.windowHandle()
+        assert handle is not None
+        assert handle.transientParent() is None, "独立窗不挂属主，否则会退回 owned 窗口"
+    finally:
+        dialog.close()
+        _spin(120)
+
+    assert id(dialog) not in dialog_host._MODELESS_WINDOWS, "关窗后要摘除，否则保活表只涨不减"
+
+
+def test_modal_dialog_stays_out_of_the_keepalive_table(qapp, plan_edit_factory):
+    """确认类（要拿返回值）仍是模态窗：不占保活表，走属主层级那条路。"""
+    from ui_qml import dialog_host
+    from ui_qml.bridge.plan_edit_bridge import PlanEditQmlDialog
+
+    dialog = plan_edit_factory()
+    try:
+        assert id(dialog) not in dialog_host._MODELESS_WINDOWS
+        assert dialog_host.find_modeless(PlanEditQmlDialog) is None
+    finally:
+        dialog.deleteLater()
+        _spin(60)

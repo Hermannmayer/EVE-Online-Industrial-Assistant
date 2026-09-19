@@ -1,15 +1,21 @@
-"""订单取数的共享部分：缓存 + ESI 线程。
+"""订单取数的共享部分：名称缓存 + ESI 线程。
 
-原先在 `ui_pyside6/views/query/query_order_popup.py`，与 OrderPopup（Widgets 悬浮窗）同处一文件；
-QML 版订单弹窗复用同一份缓存与线程，故拆出来。
+原先是 `ui_pyside6/views/query/query_order_popup.py` 里订单弹窗的配套部分（6.0 拆到这里）。
+订单弹窗已删除，本模块仍服务物品查询页的「订单列表」详情面板
+（`QueryDetailBridge`）。`order_cache` 的**唯一写入方**是
+`QueryDetailBridge._on_orders_fetched`。
 """
 
 import asyncio
-import time as _time
 
 from PySide6.QtCore import QThread, Signal
 
+from core.logger import log
+
 ESI_BASE_URL = "https://esi.evetech.net/latest"
+
+#: location_id → 显示名。**只放解析成功的条目**：查不到就不写，下次开窗还能重试。
+#: 见 `OrderFetchWorker._resolve_names` 里对「失败也写缓存」为什么是错的说明。
 _station_name_cache: dict[int, str] = {}
 
 # 全局订单缓存 (key: type_id -> (buy_orders, sell_orders, fetch_time))
@@ -74,53 +80,85 @@ class OrderFetchWorker(QThread):
         await self._resolve_names(list(all_loc_ids))
         return buy_orders, sell_orders
 
-    async def _resolve_names(self, location_ids: list[int]):
-        need = [lid for lid in location_ids if lid not in _station_name_cache]
+    # ── 站名解析 ─────────────────────────────────────────────
+
+    async def _resolve_names(self, location_ids: list[int]) -> None:
+        """location_id → 站名：**先查本地 SDE，只有本地没有的才打 ESI**。
+
+        本地 `reference.db.station` 表存着全部 5154 个 NPC 空间站（由 SDE
+        `staStations.yaml` 导入），而市场订单的 location 绝大多数就是这些。
+        本地查完通常不剩需要联网的，于是「离线也能显示站名」，
+        也不再有「网络抖一次就永远显示编号」的问题。
+
+        剩下的只有玩家建筑（structure）：`station` 表里没有，只能问
+        `/universe/names/`。
+        """
+        from services.npc_seller import resolve_stations_by_ids
+
+        need = [lid for lid in location_ids if lid and lid not in _station_name_cache]
         if not need:
             return
-        url = f"{ESI_BASE_URL}/universe/names/"
+
+        local = resolve_stations_by_ids(set(need))
+        for lid in need:
+            name = (local.get(lid) or ("", ""))[0]
+            if name:
+                _station_name_cache[lid] = name
+
+        missing = [lid for lid in need if lid not in _station_name_cache]
+        if missing and not self.isInterruptionRequested():
+            await self._resolve_names_remote(missing)
+
+    async def _resolve_names_remote(self, ids: list[int]) -> None:
+        """ESI `/universe/names/` 兜底（实际只会走到玩家建筑）。
+
+        两条要点，都是踩过的坑：
+
+        1. **整批会因一个坏 ID 全塌**：ESI 对无权访问的建筑返回 400，
+           而这一批是一个 POST —— `raise_for_status()` 抛错 → `post()` 返回 `None`
+           → 同批里那些**本来查得到的** station id 一起没了。所以整批没解出来时
+           退化成逐个重试。
+        2. **失败绝不写缓存**：写 `str(lid)` 进去等于把「解析失败」记成解析结果，
+           而 `_resolve_names` 开头的 `lid not in _station_name_cache` 过滤之后
+           永远跳过它 —— 实测表现就是站名列**永远**是编号，重启前好不了。
+        """
         from services.client import APIClient
 
+        url = f"{ESI_BASE_URL}/universe/names/"
         async with APIClient(timeout=30) as client:
-            for i in range(0, len(need), 1000):
-                chunk = need[i : i + 1000]
+            for start in range(0, len(ids), 1000):
+                if self.isInterruptionRequested():
+                    return
+                chunk = ids[start : start + 1000]
                 try:
                     data = await client.post(url, json=chunk)
-                    if data:
-                        for item in data:
-                            _station_name_cache[item["id"]] = item.get("name", str(item["id"]))
-                    else:
-                        for lid in chunk:
-                            _station_name_cache.setdefault(lid, str(lid))
-                except Exception:
-                    for lid in chunk:
-                        _station_name_cache.setdefault(lid, str(lid))
+                except Exception:  # 外部 HTTP：任何异常都不该让整次订单取数失败
+                    log.exception("ESI /universe/names/ 批量取名失败，转逐个重试")
+                    data = None
+                if isinstance(data, list):
+                    self._absorb(data)
+                if any(lid not in _station_name_cache for lid in chunk):
+                    await self._resolve_names_one_by_one(client, chunk, url)
 
+    async def _resolve_names_one_by_one(self, client, ids: list[int], url: str) -> None:
+        for lid in ids:
+            if lid in _station_name_cache:
+                continue
+            if self.isInterruptionRequested():
+                return
+            try:
+                data = await client.post(url, json=[lid])
+            except Exception:  # 同上：外部 HTTP
+                log.exception("ESI /universe/names/ 单个取名失败 location_id=%s", lid)
+                data = None
+            if isinstance(data, list) and data:
+                self._absorb(data)
+            if lid not in _station_name_cache:
+                log.warning("空间站名解析失败，下次开窗会重试 location_id=%s", lid)
 
-def get_order_name(page, type_id: int) -> str:
-    """根据 type_id 从页面的模型中查找物品名称"""
-    name = str(type_id)
-    for i in range(page._model.rowCount()):
-        row = page._model.get_row(i)
-        if row and row["type_id"] == type_id:
-            if row["zh"] and row["en"]:
-                name = f"{row['zh']} ({row['en']})"
-            else:
-                name = row["zh"] or row["en"] or str(type_id)
-            break
-    return name
-
-
-def _on_orders_fetched(page, type_id: int, buy_orders: list, sell_orders: list):
-    """订单获取完成后的处理"""
-    order_cache[type_id] = (buy_orders, sell_orders, _time.time())
-    if type_id == page._current_order_type_id and page._order_popup and page._order_popup.isVisible():
-        name = get_order_name(page, type_id)
-        page._order_popup.set_orders(type_id, name, buy_orders, sell_orders)
-        page._status_label.setText("实时订单数据已加载")
-
-
-def _on_order_error(page, type_id: int, error: str):
-    """订单获取出错处理"""
-    if type_id == page._current_order_type_id:
-        page._status_label.setText(f"获取订单失败: {error}")
+    @staticmethod
+    def _absorb(payload: list) -> None:
+        for item in payload:
+            name = str(item.get("name") or "")
+            if name:
+                _station_name_cache[int(item["id"])] = name

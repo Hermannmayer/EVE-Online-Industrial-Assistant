@@ -542,7 +542,7 @@ class ManufacturableItemsBridge(DialogBridge):
         data = self._row_at(row)
         if not data or not data.get("id"):
             return
-        MatQmlDialog(int(data["id"]), self.host_widget()).exec()
+        MatQmlDialog(int(data["id"]), self.host_widget()).show()
 
     @Slot(int)
     def showBreakdown(self, row: int) -> None:
@@ -634,12 +634,15 @@ class ManufacturableItemsQmlDialog(QmlDialog):
     """QML 版「可制造物品」。
 
     `ManufacturableItemsDialog(parent)` 的调用方把类名换掉即可 —— 构造签名逐字一致
-    （含照常吃 parent：原版就是 `super().__init__(parent)` 的子窗口）。
+    （parent 照吃但会被忽略：查看类 → **非模态独立窗**，调用方用 `show()`）。
+
+    调用方要保活请用 `dialog_host.find_modeless(...)`，**不要自己缓存实例** ——
+    独立窗关掉即销毁（`WA_DeleteOnClose`），缓存的 Python 包装器会失效。
     """
 
     def __init__(self, parent: Any = None) -> None:
         bridge = ManufacturableItemsBridge()
-        super().__init__(_QML_FILE, bridge, parent=parent, size=(1100, 680))
+        super().__init__(_QML_FILE, bridge, parent=parent, size=(1100, 680), modeless=True)
         self._mfg_bridge = bridge
         self.setMinimumSize(800, 400)
         bridge.start()

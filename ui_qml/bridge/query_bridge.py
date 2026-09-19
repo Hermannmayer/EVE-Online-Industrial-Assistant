@@ -6,19 +6,18 @@
 
 对照的 Widgets 版是 `ui_pyside6/views/query/query_page.py`，行为逐项对齐。
 
-**订单弹窗已迁 QML**（阶段 4b）：弹窗与走势图都由 `order_popup_bridge` 提供，
-本模块只调它的 `do_load_orders`。那套函数是按页面的私有属性写的，所以这里用宿主壳
-`OrderPopupHost` 接上 —— 比把订单加载逻辑抄一份到 QML 侧安全，抄一份就会出现两个副本。
-取数（`OrderFetchWorker` / `OrderPopup` 的缓存与站点解析）仍复用原模块，未重写。
+**订单详情弹窗已移除**：双击结果行原本弹一个订单窗口，但它展示的正是下方详情面板
+已经在实时显示的那份买单/卖单（同缓存、同格式化函数），属于重复。右键菜单里的
+「查看实时订单」与它同源，一并去掉。订单行格式的纯函数 `order_popup_bridge.order_rows`
+仍被 `QueryDetailBridge` 使用，故那个模块保留。
 """
 
 from __future__ import annotations
 
 import weakref
-from typing import Any
 
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication
 
 from core.constants import TRADE_HUB_IDS, TRADE_HUBS
 from core.logger import log
@@ -30,41 +29,7 @@ __all__ = ["QueryBridge"]
 #: 搜索框防抖（对齐 Widgets 版的 200ms）
 _DEBOUNCE_MS = 200
 
-_DEFAULT_STATUS = "输入物品名称/ID后搜索，双击行查看实时订单"
-
-
-class _StatusSink:
-    """把 `page._status_label.setText(...)` 转发到 bridge 的 statusText。"""
-
-    def __init__(self, bridge: QueryBridge) -> None:
-        self._bridge = bridge
-
-    def setText(self, text: str) -> None:  # Qt 命名，对齐 status_label.setText
-        self._bridge.set_status(str(text))
-
-
-class OrderPopupHost(QWidget):
-    """`query_order_popup` 那套函数期望的「页面」接口适配器（见模块 docstring）。
-
-    订单弹窗本体还是 Widgets，它按 `QueryPage` 的私有属性取值；
-    这个宿主壳把同一组名字接到桥与外壳上。`mapToGlobal` / `rect()` 由 QWidget 自带。
-    """
-
-    def __init__(self, bridge: QueryBridge, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._bridge = bridge
-        self._order_popup: Any = None
-        self._current_order_type_id: int | None = None
-        self._status_label = _StatusSink(bridge)
-
-    # `do_load_orders` 读的两个属性直接转给桥
-    @property
-    def _model(self) -> QueryQmlModel:
-        return self._bridge._model
-
-    @property
-    def _region_id(self) -> int:
-        return self._bridge._region_id
+_DEFAULT_STATUS = "输入物品名称或 ID 后搜索，点选一行查看下方详情"
 
 
 class QueryBridge(QObject):
@@ -82,7 +47,6 @@ class QueryBridge(QObject):
         super().__init__(parent)
         self._shell = shell
         self._model = QueryQmlModel()
-        self._all_groups: list = []
         self._current_query = ""
         self._region_id = 10000002  # Jita，与 DEFAULT_REGION_ID 一致
         self._suggestions: list[dict] = []
@@ -93,9 +57,8 @@ class QueryBridge(QObject):
         self._current_row = -1
         self._search_worker: QObject | None = None
         self._suggest_worker: QObject | None = None
-        self._group_worker: QObject | None = None
         # 两个子桥**懒建**：`query_detail_bridge` 会拉进 workers/services，
-        # 模块级/构造期建它等于每次造桥都加载整条业务链（与 `_ensure_groups` 同一条理由）。
+        # 模块级/构造期建它等于每次造桥都加载整条业务链。
         self._detail_bridge: QObject | None = None
         self._dash_bridge: QObject | None = None
 
@@ -103,7 +66,6 @@ class QueryBridge(QObject):
         self._debounce.setSingleShot(True)
         self._debounce.timeout.connect(self._fetch_suggestions)
 
-        self._orders = OrderPopupHost(self, shell if isinstance(shell, QWidget) else None)
         # 模型被重置就让 `hasResults` 重新求值 —— 它是两态切换（仪表盘 ↔ 结果区）的**唯一**
         # 判据，漏发一次的后果是「已经搜出结果，界面还停在空闲态仪表盘」，不报任何错。
         # 接在模型上而不是只在 `_on_search_done` 里发，是为了让「谁写的模型」都不影响切态。
@@ -224,7 +186,7 @@ class QueryBridge(QObject):
         """当前行变化 —— QML 的 `currentRow` 只是高亮，这里是**取数**的驱动。
 
         分成两件事是刻意的：高亮每帧都可能变，取数（5 次取价 + 精炼 + BOM）不能在
-        拖动/滚动时反复触发。QML 只在点击/双击/右键时调本槽。
+        拖动/滚动时反复触发。QML 只在点击/右键时调本槽。
         """
         if row == self._current_row:
             return
@@ -337,9 +299,9 @@ class QueryBridge(QObject):
     def _on_suggestions(self, items: list) -> None:
         # Worker 给的是 (type_id, display, zh_name) 三元组
         #
-        # `query` 是**可搜的查询串**，与 `text`（展示串）分开存：
-        # 展示串形如 `[17715] 毒蜥级 (Gila)`，拿它去 LIKE 匹配名字必然 0 条
-        # —— 见 `pickSuggestion` 的说明。中文名优先，没有就退回展示串。
+        # `query` 是**可搜的查询串**，与 `text`（展示串）分开存 —— 即使两者现在同值
+        # （展示串就是物品名）也不合并：展示串以后怎么改都不该影响拿去 `LIKE` 匹配的那串，
+        # 见 `pickSuggestion`。中文名优先，没有就退回展示串。
         self._suggestions = [
             {"id": int(tid), "text": str(display), "query": str(zh or display)} for tid, display, zh in items
         ]
@@ -348,19 +310,24 @@ class QueryBridge(QObject):
     def _show_history(self) -> None:
         from core.search_history import load_search_history
 
-        self._history = [str(h) for h in load_search_history()]
+        #: 历史文件里存的是 `{"query": ..., "time": ...}` **字典**，要取 `query` 字段。
+        #: 原先是 `[str(h) for h in ...]` —— 等于把整条 dict 连时间戳一起渲染成历史项，
+        #: 用户看到的就是 `{'query': '毒蜥级', 'time': 1758...}`。字典还要过一道类型检查：
+        #: 历史文件是用户可改的纯文本，读到脏数据不该让整个候选弹窗炸掉。
+        self._history = [
+            str(h.get("query") or "") for h in load_search_history() if isinstance(h, dict) and h.get("query")
+        ]
         self.suggestionsChanged.emit()
 
     @Slot(str)
     def pickSuggestion(self, text: str) -> None:
         """候选/历史被点中：立刻搜索它。
 
-        ⚠️ **候选的展示串不是可搜的查询串**。候选列表里那一行是
-        `[17715] 毒蜥级 (Gila)`（带 Type ID 与中英双名），而搜索是拿关键词去
-        `LIKE '%…%'` 匹配名字 —— 整串匹配必然 0 条。用户实测就是
-        「点候选之后永远显示未找到物品」。
-        所以这里把展示串**换回可搜的查询串**（中文名优先，见 `_on_suggestions`）。
-        历史项本来就是用户搜过的串，原样使用。
+        展示串与可搜的查询串**分开取**（`text` vs `query`），不是同义反复：两者现在
+        恰好同值（展示串就是物品名），但历史上展示串曾形如 `[17715] 毒蜥级 (Gila)`
+        ——拿整串去 `LIKE` 匹配名字必然 0 条，用户实测「点候选之后永远显示未找到物品」。
+        保留这条分离，展示串以后怎么改都不会再犯同一个错。
+        历史项本来就是用户搜过的串，原样使用（`picked` 为 None 时走 `text`）。
         """
         text = str(text)
         picked = next((item for item in self._suggestions if str(item.get("text")) == text), None)
@@ -370,6 +337,18 @@ class QueryBridge(QObject):
         self.search()
 
     @Slot()
+    def showHistory(self) -> None:
+        """空输入框被聚焦时由 QML 调：把历史读出来填进候选弹窗。
+
+        为什么需要这个入口：`_show_history` 原先**只**在「文本变成空」时被 `onTextChanged`
+        调到。可刚进页面时输入框本来就是空的，压根没有文本变化 —— `_history` 一直是 `[]`，
+        点输入框什么也不显示；反倒点「清空」会把 `text` 置空、触发一次 `onTextChanged`，
+        历史才冒出来。这里补上「空着但没变过」的那条路。
+        """
+        self._suggestions = []
+        self._show_history()
+
+    @Slot()
     def clearHistory(self) -> None:
         from core.search_history import clear_search_history
 
@@ -377,28 +356,6 @@ class QueryBridge(QObject):
         self._suggestions = []
         self._history = []
         self.suggestionsChanged.emit()
-
-    # ── 类别 ──────────────────────────────────────────────────
-
-    def _ensure_groups(self) -> None:
-        """首次搜索时才去异步加载类别。
-
-        **不在 `__init__` 里起线程**：那样构造一个桥就会拉起 QThread，
-        而桥一旦生命周期短（测试里就是如此）线程还没结束进程就退不出去
-        （实测 pytest 卡在退出、单个用例本身是通过的）。顺带也省掉
-        「用户根本没搜过就白跑一次 DB」的开销。
-        """
-        if self._group_worker is not None:
-            return
-        from ui_qml.workers.query_workers import GroupLoadWorker
-
-        worker = GroupLoadWorker(self)
-        self._group_worker = worker
-        worker.finished_signal.connect(self._on_groups_loaded)
-        worker.start()
-
-    def _on_groups_loaded(self, groups: list) -> None:
-        self._all_groups = groups or []
 
     # ── 搜索 ──────────────────────────────────────────────────
 
@@ -418,12 +375,11 @@ class QueryBridge(QObject):
             return
 
         self._current_query = query
-        self._ensure_groups()
         add_search_history(query)
         self._busy = True
         self.statusChanged.emit()
 
-        worker = SearchWorker(query, self._all_groups, self._region_id, self)
+        worker = SearchWorker(query, self._region_id, self)
         self._search_worker = worker
         worker.finished_signal.connect(self._on_search_done)
         worker.error_signal.connect(self._on_search_error)
@@ -444,7 +400,7 @@ class QueryBridge(QObject):
         self._model.set_rows(format_search_rows(rows, is_fallback))
         self._clear_selection()
         self._count_text = f"共 {len(rows)} 条结果" + (" (仅基本信息)" if is_fallback else "")
-        self._status_text = "就绪 — 右键行可查看操作菜单，双击查看实时订单"
+        self._status_text = "就绪 — 右键行可查看操作菜单，点选一行看下方详情"
         self.statusChanged.emit()
         self.resultsChanged.emit()
 
@@ -481,19 +437,6 @@ class QueryBridge(QObject):
 
     def _row(self, row: int) -> dict | None:
         return self._model.get_row(int(row))
-
-    @Slot(int)
-    def rowDoubleClicked(self, row: int) -> None:
-        data = self._row(row)
-        if not data:
-            return
-        from ui_qml.bridge.order_popup_bridge import do_load_orders
-
-        do_load_orders(self._orders, data["type_id"])
-
-    @Slot(int)
-    def viewOrders(self, row: int) -> None:
-        self.rowDoubleClicked(row)
 
     @Slot(int)
     def viewManufacturing(self, type_id: int) -> None:
@@ -566,15 +509,21 @@ class QueryBridge(QObject):
 
     @Slot()
     def openAllItems(self) -> None:
-        from ui_qml.bridge.all_items_bridge import AllItemsQmlDialog as AllItemsDialog
+        """打开全物品浏览器（非模态独立窗，单实例复用）。
 
-        parent = None
-        dialog = getattr(self, "_all_items_dialog", None)
+        复用靠 `dialog_host.find_modeless` 查保活表，**不用实例属性缓存** ——
+        独立窗关掉即销毁（`WA_DeleteOnClose`），缓存下来的 Python 包装器会变成
+        悬空对象，下次 `show()` 直接抛「Internal C++ object already deleted」。
+        """
+        from ui_qml.bridge.all_items_bridge import AllItemsQmlDialog as AllItemsDialog
+        from ui_qml.dialog_host import find_modeless
+
+        dialog = find_modeless(AllItemsDialog)
         if dialog is None:
-            dialog = AllItemsDialog(parent)
-            self._all_items_dialog = dialog
+            dialog = AllItemsDialog()
         dialog.show()
         dialog.raise_()
+        dialog.activateWindow()
 
     @Slot()
     def openBatchPrice(self) -> None:

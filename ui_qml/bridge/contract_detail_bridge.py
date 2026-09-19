@@ -148,7 +148,10 @@ class ContractDetailBridge(SummaryTableBridge):
 
 
 class ContractDetailQmlDialog(SummaryTableQmlDialog):
-    """QML 版「合同详情」。`ContractDetailDialog(contract, parent)` 的调用方原样可用。"""
+    """QML 版「合同详情」。`ContractDetailDialog(contract, parent)` 的调用方原样可用。
+
+    只读查看器 → **非模态独立窗**（`modeless=True`），调用方用 `show()` 而非 `exec()`。
+    """
 
     def __init__(self, contract: dict, parent: Any = None) -> None:
         super().__init__(
@@ -156,4 +159,5 @@ class ContractDetailQmlDialog(SummaryTableQmlDialog):
             parent=parent,
             size=(880, 540),
             qml_file=_QML_FILE,
+            modeless=True,
         )

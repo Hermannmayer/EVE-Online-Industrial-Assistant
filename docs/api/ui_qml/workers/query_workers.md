@@ -4,7 +4,7 @@
 
 > 模块说明：
 
-查询页的取数线程（搜索 / 候选 / 类别树）。
+查询页的取数线程（搜索 / 候选）。
 
 原先在 `ui_pyside6/views/query/query_search.py`，QML 侧要用同一份，故拆出来。
 
@@ -14,21 +14,21 @@
 
 后台数据库搜索
 
-定义行：`17`
+定义行：`16`
 
 #### 方法
 
 ##### `__init__`
 
 ```python
-def __init__(self, query: str, all_groups: list, region_id: int=10000002, parent=None)
+def __init__(self, query: str, region_id: int=10000002, parent=None)
 ```
 
 ::: warning ⚠️ 待补 docstring
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`23`
+定义行：`22`
 ##### `run`
 
 ```python
@@ -39,7 +39,7 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`29`
+定义行：`27`
 ##### `_db_search`
 
 ```python
@@ -50,7 +50,7 @@ def _db_search(self, query: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`40`
+定义行：`38`
 ##### `_db_search_basic`
 
 ```python
@@ -61,13 +61,13 @@ def _db_search_basic(self, query: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`43`
+定义行：`41`
 
 ### `class SuggestionWorker`（继承 `QThread`）
 
 后台候选搜索
 
-定义行：`47`
+定义行：`45`
 
 #### 方法
 
@@ -81,7 +81,7 @@ def __init__(self, query: str, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`52`
+定义行：`50`
 ##### `run`
 
 ```python
@@ -92,35 +92,4 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`56`
-
-### `class GroupLoadWorker`（继承 `QThread`）
-
-加载类别列表
-
-定义行：`66`
-
-#### 方法
-
-##### `__init__`
-
-```python
-def __init__(self, parent=None)
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`71`
-##### `run`
-
-```python
-def run(self)
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`74`
+定义行：`54`

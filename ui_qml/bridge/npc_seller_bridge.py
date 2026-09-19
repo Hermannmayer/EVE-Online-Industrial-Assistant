@@ -142,7 +142,10 @@ class NpcSellerBridge(SummaryTableBridge):
 
 
 class NpcSellerQmlDialog(SummaryTableQmlDialog):
-    """QML 版「蓝图 NPC 卖家」。`NpcSellerDialog(type_id, name, parent)` 的调用方原样可用。"""
+    """QML 版「蓝图 NPC 卖家」。`NpcSellerDialog(type_id, name, parent)` 的调用方原样可用。
+
+    只读查看器 → **非模态独立窗**（`modeless=True`），调用方用 `show()` 而非 `exec()`。
+    """
 
     def __init__(self, blueprint_type_id: int, blueprint_name: str = "", parent: Any = None) -> None:
         super().__init__(
@@ -150,4 +153,5 @@ class NpcSellerQmlDialog(SummaryTableQmlDialog):
             parent=parent,
             size=(760, 520),
             qml_file=_QML_FILE,
+            modeless=True,
         )

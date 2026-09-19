@@ -112,7 +112,10 @@ class MaterialCoverageBridge(SummaryTableBridge):
 
 
 class MaterialCoverageQmlDialog(SummaryTableQmlDialog):
-    """QML 版「材料覆盖」。`MaterialCoverageDialog(hangar_id, name, parent)` 的调用方原样可用。"""
+    """QML 版「材料覆盖」。`MaterialCoverageDialog(hangar_id, name, parent)` 的调用方原样可用。
+
+    只读查看器 → **非模态独立窗**（`modeless=True`），调用方用 `show()` 而非 `exec()`。
+    """
 
     def __init__(self, hangar_id: int, hangar_name: str, parent: Any = None) -> None:
-        super().__init__(MaterialCoverageBridge(hangar_id, hangar_name), parent=parent, size=(640, 500))
+        super().__init__(MaterialCoverageBridge(hangar_id, hangar_name), parent=parent, size=(640, 500), modeless=True)

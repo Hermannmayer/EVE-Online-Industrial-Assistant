@@ -10,7 +10,7 @@ import "query"
  *
  * 对照 Widgets 版 `ui_pyside6/views/query/query_page.py`：
  *   工具栏（全物品 / 搜索框+候选 / 搜索 / 清空 / 批量查价 / 区域）
- *   + 进度条 + 状态行 + 结果表（8 列，可排序、右键菜单、双击看实时订单）。
+ *   + 进度条 + 状态行 + 结果表（8 列，可排序、右键菜单、点选一行看下方详情面板）。
  *
  * **业务动作一律不在这里实现**：每次交互都调 `query.<方法>`，
  * 由 `ui_qml/bridge/query_bridge.py` 转给既有的 worker / service。
@@ -90,11 +90,16 @@ Item {
             FTextField {
                 id: searchInput
                 Layout.fillWidth: true
-                placeholderText: qsTr("输入物品名称/ID/类别搜索...")
+                placeholderText: qsTr("输入物品名称或 ID 搜索...")
                 onTextChanged: if (page.query)
                     page.query.onTextChanged(text)
                 onAccepted: if (page.query)
                     page.query.search()
+                /* 空输入框被点中就要弹历史。`_history` 原先只在**文本变成空**时读，
+                 * 而刚进页面输入框本来就是空的、没有任何文本变化 —— 点它什么也不显示，
+                 * 反倒点「清空」（把 text 置空、触发一次 onTextChanged）历史才出来。 */
+                onActiveFocusChanged: if (activeFocus && text.length === 0 && page.query)
+                    page.query.showHistory()
                 Keys.onEscapePressed: suggestPopup.close()
             }
 
@@ -461,13 +466,6 @@ Item {
                         if (page.query)
                             page.query.selectRow(row)
                     }
-                    onRowDoubleClicked: function (row, _column) {
-                        page.currentRow = row
-                        if (page.query) {
-                            page.query.selectRow(row)
-                            page.query.rowDoubleClicked(row)
-                        }
-                    }
                     onRowRightClicked: function (row, _column, x, y) {
                         page.currentRow = row
                         if (page.query)
@@ -544,8 +542,11 @@ Item {
                     leftPadding: Theme.spacingSm
                     rightPadding: Theme.spacingSm
                     verticalAlignment: Text.AlignVCenter
+                    /* 候选与历史都**只显示物品名**，历史项不再加「历史:」前缀。
+                     * 分支保留是因为两者形状不同：候选项是 `{id, text, query}` 字典，
+                     * 历史项是字符串（桥里已从历史文件取出 `query` 字段）。 */
                     text: suggestPopup.showingHistory
-                          ? qsTr("历史: %1").arg(String(suggestItem.modelData))
+                          ? String(suggestItem.modelData)
                           : String(suggestItem.modelData.text)
                     color: Theme.textPrimary
                     font.family: Theme.fontFamily
@@ -599,10 +600,6 @@ Item {
         }
         FMenuSeparator {}
 
-        FMenuItem {
-            text: qsTr("查看实时订单")
-            onTriggered: page.query.viewOrders(rowMenu.targetRow)
-        }
         FMenuItem {
             text: qsTr("查看制造配方")
             onTriggered: page.query.viewManufacturing(rowMenu.state.typeId)

@@ -401,8 +401,8 @@ class CostBreakdownBridge(DialogBridge):
 class CostBreakdownQmlDialog(QmlDialog):
     """QML 版「查看核算」。`CostBreakdownDialog(plan, parent, ...)` 的调用方原样可用。
 
-    注意：它是**只读查看器且非模态**（调用方 `show()` 而非 `exec()`），所以没有
-    「确定」，只有「关闭」。
+    注意：它是**只读查看器**，走的是 `modeless=True` 的独立窗口（调用方 `show()`
+    而非 `exec()`），所以没有「确定」，只有「关闭」。
     """
 
     def __init__(
@@ -424,4 +424,4 @@ class CostBreakdownQmlDialog(QmlDialog):
             mat_mult=mat_mult,
             prod_mult=prod_mult,
         )
-        super().__init__(_QML_FILE, bridge, parent=parent, size=(960, 720))
+        super().__init__(_QML_FILE, bridge, parent=parent, size=(960, 720), modeless=True)

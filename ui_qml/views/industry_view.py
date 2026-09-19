@@ -745,9 +745,15 @@ class IndustryPage(QObject):
         self._score_worker.start()
 
     def open_manufacturable_browser(self):
-        """打开可制造物品浏览器"""
-        dlg = ManufacturableItemsDialog(parent=self)
+        """打开可制造物品浏览器（非模态独立窗，单实例复用）。"""
+        from ui_qml.dialog_host import find_modeless
+
+        dlg = find_modeless(ManufacturableItemsDialog)
+        if dlg is None:
+            dlg = ManufacturableItemsDialog(parent=self)
         dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     def _on_plan_detail(self, plan_id: int):
         """双击计划行 → 打开 PlanEditDialog（通过 plan_table 的统一路径）"""
@@ -761,20 +767,16 @@ class IndustryPage(QObject):
                 return
 
     def open_blueprint_list(self):
-        dlg = BlueprintRequirementsDialog(self)
-        dlg.exec()
+        BlueprintRequirementsDialog(self).show()
 
     def open_materials_summary(self):
-        dlg = MaterialsSummaryDialog(self)
-        dlg.exec()
+        MaterialsSummaryDialog(self).show()
 
     def open_output_summary(self):
-        dlg = OutputSummaryDialog(self)
-        dlg.exec()
+        OutputSummaryDialog(self).show()
 
     def open_char_usage(self):
-        dlg = CharacterUsageDialog(self)
-        dlg.exec()
+        CharacterUsageDialog(self).show()
 
     def open_procurement(self):
         """采购小助手：非模态独立窗口（单实例复用，可置顶，不阻塞主界面）。"""

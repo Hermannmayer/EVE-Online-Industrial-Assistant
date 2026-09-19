@@ -387,7 +387,7 @@ class InventoryBridge(QObject):
         from ui_qml.bridge.material_coverage_bridge import MaterialCoverageQmlDialog
 
         parent = None
-        MaterialCoverageQmlDialog(self._current_hangar_id, self._current_hangar_label(), parent).exec()
+        MaterialCoverageQmlDialog(self._current_hangar_id, self._current_hangar_label(), parent).show()
 
     @Slot()
     def addItemManually(self) -> None:
@@ -826,7 +826,7 @@ class InventoryBridge(QObject):
 
         bp = blueprints[0]
         name = bp.get("display_name") or bp.get("zh_name") or str(bp["blueprint_type_id"])
-        ResearchCostDialog(get_container().db, int(bp["blueprint_type_id"]), name, parent=self._dialog_parent()).exec()
+        ResearchCostDialog(get_container().db, int(bp["blueprint_type_id"]), name, parent=self._dialog_parent()).show()
 
     @Slot("QVariantList")
     def addToManufacturingPlan(self, rows: list) -> None:

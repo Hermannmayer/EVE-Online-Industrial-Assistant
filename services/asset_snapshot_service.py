@@ -164,6 +164,10 @@ def _line_value() -> float:
         log.exception("运行中产线价值：计划加载失败")
         return 0.0
     if not plans:
+        # 别静默归零：这一条与下面的 `not needs` 都是「算出 0」的合法路径，但两者含义
+        # 完全不同（一个是没有在跑的产线，一个是跑了却拿不到材料）。原先两条都不记日志，
+        # 结果快照里出现 0 时**无从判断是哪种** —— 实测排查一次历史快照时卡在这里。
+        log.info("运行中产线价值：没有制造中（%s）的活跃计划（状态 %s），记为 0", _LINE_CATEGORY, _ACTIVE_STATUSES)
         return 0.0
 
     needs: dict[int, float] = {}
@@ -176,6 +180,13 @@ def _line_value() -> float:
         except Exception:
             log.exception("运行中产线价值：计划 %s 的材料需求计算失败", plan.get("id"))
     if not needs:
+        # 同上：计划在跑、却没解出任何材料需求，多半是蓝图/评分链某一环没就绪。
+        # 这是**异常情形**，用 warning（不是 info）——它意味着这条线的价值少算了。
+        log.warning(
+            "运行中产线价值：%d 条制造中计划没解出任何材料需求，记为 0（计划 %s）",
+            len(plans),
+            [p.get("id") for p in plans],
+        )
         return 0.0
 
     try:

@@ -114,8 +114,9 @@ class SummaryTableQmlDialog(QmlDialog):
         parent: Any = None,
         size: tuple[int, int] = (900, 560),
         qml_file: str = _QML_FILE,
+        modeless: bool = False,
     ) -> None:
-        super().__init__(qml_file, bridge, parent=parent, size=size)
+        super().__init__(qml_file, bridge, parent=parent, size=size, modeless=modeless)
         bridge.reload()
 
     def reload(self) -> None:

@@ -227,9 +227,12 @@ class ResearchCostBridge(DialogBridge):
 
 
 class ResearchCostQmlDialog(QmlDialog):
-    """QML 版「研究分析」。构造签名与 Widgets 版一致（db / bp_id / name / parent）。"""
+    """QML 版「研究分析」。构造签名与 Widgets 版一致（db / bp_id / name / parent）。
+
+    只读查看器 → **非模态独立窗**（`modeless=True`），调用方用 `show()` 而非 `exec()`。
+    """
 
     def __init__(self, db: Any, blueprint_type_id: int, blueprint_name: str, *, parent: Any = None) -> None:
         bridge = ResearchCostBridge(db, blueprint_type_id, blueprint_name)
-        super().__init__(_QML_FILE, bridge, parent=parent, size=(680, 560))
+        super().__init__(_QML_FILE, bridge, parent=parent, size=(680, 560), modeless=True)
         bridge.reload()

@@ -715,7 +715,7 @@ class AllItemsBridge(DialogBridge):
         data = self._row_at(row)
         if not data or not data.get("id"):
             return
-        MatQmlDialog(int(data["id"]), self.host_widget()).exec()
+        MatQmlDialog(int(data["id"]), self.host_widget()).show()
 
     @Slot(int)
     def copyName(self, row: int) -> None:
@@ -854,17 +854,11 @@ class AllItemsQmlDialog(QmlDialog):
     def __init__(self, parent: Any = None, manufacturable_only: bool = False) -> None:
         bridge = AllItemsBridge(manufacturable_only)
         # 原版 `super().__init__()` 就没有 parent（注释：无 parent，完全独立窗口），
-        # 这里同样不挂父窗口，只把 parent 收下以保持签名一致
-        super().__init__(_ALL_QML, bridge, parent=None, size=(1100, 680))
+        # 这里改走 `modeless=True` —— 顶层窗标志（含最小化/最大化按钮）与保活都由
+        # `QmlDialog` 统一给，不再手工 `setWindowFlags`。parent 照收以保持签名一致，但会被忽略。
+        super().__init__(_ALL_QML, bridge, parent=None, size=(1100, 680), modeless=True)
         self._all_bridge = bridge
         self.setMinimumSize(800, 400)
-        self.setWindowFlags(
-            Qt.WindowType.Window
-            | Qt.WindowType.CustomizeWindowHint
-            | Qt.WindowType.WindowTitleHint
-            | Qt.WindowType.WindowMinMaxButtonsHint
-            | Qt.WindowType.WindowCloseButtonHint
-        )
         bridge.start()
 
 
@@ -1052,9 +1046,12 @@ class MatBridge(DialogBridge):
 
 
 class MatQmlDialog(QmlDialog):
-    """QML 版「制造材料」。`MatDlg(tid, parent)` 的调用方原样可用。"""
+    """QML 版「制造材料」。`MatDlg(tid, parent)` 的调用方原样可用。
+
+    只读查看器 → **非模态独立窗**（`modeless=True`），调用方用 `show()` 而非 `exec()`。
+    """
 
     def __init__(self, tid: int, parent: Any = None) -> None:
         bridge = MatBridge(tid)
-        super().__init__(_MAT_QML, bridge, parent=parent, size=(460, 280))
+        super().__init__(_MAT_QML, bridge, parent=parent, size=(460, 280), modeless=True)
         self._mat_bridge = bridge

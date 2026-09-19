@@ -73,17 +73,22 @@ def search_item_by_name(name: str, db=None) -> dict | None:
 # ── 查询页搜索 Worker ──────────────────────────────────────────
 
 
-def query_search_items(query: str, all_groups: list, region_id: int = 10000002, db=None) -> list[Any]:
-    """查询页完整搜索：item + market_prices，返回原始行。"""
+def query_search_items(query: str, region_id: int = 10000002, db=None) -> list[Any]:
+    """查询页完整搜索：item + market_prices，返回原始行。
+
+    **只做精确/前缀匹配**：`type_id` 全等，或名字以查询串**开头**（`LIKE 'x%'`；
+    SQLite 的 `LIKE` 对 ASCII 默认不区分大小写，所以 `gila%` 能匹配 `Gila Blueprint`）。
+
+    原先有两条更宽的口径，都已去掉：
+
+    - 「查询串命中某个**类别**名 → 返回整个类别」。搜 `gila` 会连带塞尔佩提斯的
+      `Vigilant` 一起出来（实测 108 条），正是「列出一堆名字里含这个词的物品」的来源。
+      代价是类别搜索能力没有了 —— 想按类别找物品请用左边的可制造分类树。
+    - 名字的**子串**匹配（`LIKE '%x%'`）。收紧成前缀后，查询串不再从词中间命中。
+    """
     with _resolve_db(db).connect("ref", "mkt") as conn:
         c = conn.cursor()
-        like = f"%{query}%"
-        group_match = None
-        for gid, en, zh in all_groups:
-            if (zh and query in zh) or (en and query in en):
-                group_match = gid
-                break
-
+        prefix = f"{query}%"
         if query.isdigit():
             c.execute(
                 """
@@ -95,25 +100,7 @@ def query_search_items(query: str, all_groups: list, region_id: int = 10000002, 
                 WHERE i.type_id = ? OR i.en_name LIKE ? OR i.zh_name LIKE ?
                 ORDER BY i.type_id LIMIT 300
             """,
-                (region_id, region_id, int(query), like, like),
-            )
-        elif group_match is not None:
-            c.execute(
-                """
-                SELECT sub.type_id, sub.zh_name, sub.en_name, sub.en_group_name, sub.zh_group_name, sub.volume,
-                       mp.buy_price, mp.sell_price, mp.buy_volume, mp.sell_volume
-                FROM (
-                    SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume
-                    FROM item i WHERE i.group_id = ?
-                    UNION
-                    SELECT i.type_id, i.zh_name, i.en_name, i.en_group_name, i.zh_group_name, i.volume
-                    FROM item i WHERE (i.en_name LIKE ? OR i.zh_name LIKE ?)
-                ) sub
-                LEFT JOIN mkt.market_prices mp ON sub.type_id = mp.type_id AND mp.region_id = ?
-                    AND mp.fetch_time = (SELECT MAX(fetch_time) FROM mkt.market_prices WHERE type_id = sub.type_id AND region_id = ?)
-                ORDER BY sub.type_id LIMIT 300
-            """,
-                (region_id, region_id, group_match, like, like),
+                (region_id, region_id, int(query), prefix, prefix),
             )
         else:
             c.execute(
@@ -126,13 +113,13 @@ def query_search_items(query: str, all_groups: list, region_id: int = 10000002, 
                 WHERE i.en_name LIKE ? OR i.zh_name LIKE ?
                 ORDER BY i.type_id LIMIT 300
             """,
-                (region_id, region_id, like, like),
+                (region_id, region_id, prefix, prefix),
             )
         return list(c.fetchall())
 
 
 def query_search_items_basic(query: str, db=None) -> list[Any]:
-    """查询页降级搜索：只查 reference.item，返回原始行。"""
+    """查询页降级搜索：只查 reference.item，返回原始行。口径同 `query_search_items`（前缀匹配）。"""
     with _resolve_db(db).connect("ref") as conn:
         c = conn.cursor()
         if query.isdigit():
@@ -144,7 +131,7 @@ def query_search_items_basic(query: str, db=None) -> list[Any]:
             c.execute(
                 "SELECT type_id, zh_name, en_name, zh_group_name, en_group_name, volume"
                 " FROM item WHERE en_name LIKE ? OR zh_name LIKE ? LIMIT 100",
-                (f"%{query}%", f"%{query}%"),
+                (f"{query}%", f"{query}%"),
             )
         return list(c.fetchall())
 
@@ -170,18 +157,6 @@ def query_suggest_items(query: str, db=None) -> list[Any]:
                 " LENGTH(en_name), type_id LIMIT 10",
                 (f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%"),
             )
-        return list(c.fetchall())
-
-
-def load_item_groups(db=None) -> list[Any]:
-    """加载查询页类别列表。"""
-    with _resolve_db(db).connect("ref") as conn:
-        c = conn.cursor()
-        c.execute(
-            "SELECT DISTINCT e.group_id, e.en_group_name, e.zh_group_name"
-            " FROM item e WHERE e.group_id IS NOT NULL"
-            " ORDER BY e.zh_group_name, e.en_group_name"
-        )
         return list(c.fetchall())
 
 

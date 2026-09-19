@@ -274,7 +274,7 @@ class BlueprintPickerBridge(DialogBridge):
 
         name = self._plan.get("product_name", str(self._blueprint_type_id))
         parent = self.host_widget()
-        NpcSellerQmlDialog(self._blueprint_type_id, name, parent).exec()
+        NpcSellerQmlDialog(self._blueprint_type_id, name, parent).show()
 
     @Slot()
     def accept(self) -> None:

@@ -75,7 +75,10 @@ class CharacterUsageBridge(SummaryTableBridge):
 
 
 class CharacterUsageQmlDialog(SummaryTableQmlDialog):
-    """QML 版「人物占用情况」。`CharacterUsageDialog(parent)` 的调用方原样可用。"""
+    """QML 版「人物占用情况」。`CharacterUsageDialog(parent)` 的调用方原样可用。
+
+    只读查看器 → **非模态独立窗**（`modeless=True`），调用方用 `show()` 而非 `exec()`。
+    """
 
     def __init__(self, parent: Any = None) -> None:
-        super().__init__(CharacterUsageBridge(), parent=parent, size=(820, 480))
+        super().__init__(CharacterUsageBridge(), parent=parent, size=(820, 480), modeless=True)

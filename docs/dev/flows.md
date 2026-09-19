@@ -283,8 +283,10 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
 ```
 
 - 子桥**懒建**：`QueryBridge._get_detail` / `_get_dashboard` 首次被 QML 读到才 import 并构造（`query_detail_bridge` / `query_dashboard_bridge`）；导入失败返回 `None`，QML 按 `detail === null` 写占位，**不连累整页**（外壳只把该面板记为暂缺）
-- 选中行：`QueryBridge.selectRow`（点击/双击/右键调）→ `_push_selection` → `QueryDetailBridge.setItem`。高亮（QML 的 `currentRow`）与**取数**是分开的 —— 取数不能在拖动/滚动时反复触发
-- 详情面板四块（`QueryDetailBridge`）：① 价格 `market_repo.get_batch_market_snapshot`（每 hub 一次）；② 订单 `workers/order_workers.OrderFetchWorker` + `order_popup_bridge.order_rows`；③ 精炼 `workers/refine_worker.RefineWorker`；④ 制造材料 `bom_expander.get_flat_materials`（买/卖各展开一次）。几何/文案在 `ui_qml/models/query_detail_model.py` 纯函数里
+- 选中行：`QueryBridge.selectRow`（点击/右键调）→ `_push_selection` → `QueryDetailBridge.setItem`。高亮（QML 的 `currentRow`）与**取数**是分开的 —— 取数不能在拖动/滚动时反复触发
+- 详情面板四块（`QueryDetailBridge`）：① 价格 `market_repo.get_batch_market_snapshot`（每 hub 一次）；② 订单 `workers/order_workers.OrderFetchWorker` + `order_popup_bridge.order_rows`（订单弹窗已删，这个纯函数只剩详情面板一个调用方），缓存 `order_workers.order_cache` 由 `QueryDetailBridge._on_orders_fetched` 写入；③ 精炼 `workers/refine_worker.RefineWorker`；④ 制造材料 `bom_expander.get_flat_materials`（买/卖各展开一次）。几何/文案在 `ui_qml/models/query_detail_model.py` 纯函数里
+- 搜索口径：`services/ui_data_service.query_search_items` 只做**精确/前缀**匹配（Type ID 全等，或名字 `LIKE 'x%'`）。原先「查询串命中类别名 → 返回整个类别」的兜底与名字子串匹配都已删除
+- 站名解析：`order_workers.OrderFetchWorker._resolve_names` **先查本地 SDE `reference.db.station`**（复用 `services.npc_seller.resolve_stations_by_ids`），只有本地没有的玩家建筑才打 ESI `/universe/names/`；解析失败**不写缓存**（写进去会让该 location 永久显示编号）
 
 空闲态三条线（`QueryDashboardBridge`）：
 - **产线详情**：`occupancyByChar`（**每人物一块，块内制造/科研/反应各一行**；行尾给「待下线 N」= 该人物该线型 `status=='ready'` 的计划数，与「空 N」= 剩余产线）← `_refresh_occupancy` + `_build_occupancy_by_char` + `_ready_count_by_char_line` ← `services.char_capacity.active_lines_by_category` + `max_lines_for_category` + `capacity_line_for_category`。同一算法另出 `occupancyRows`（按人物，与 `LauncherBridge.occupancyRows` 逐字同形状）。（仪表盘原有的「快捷操作（可启动 / 可下线）」列表已按用户要求删除 —— 启动/下线在**生产计划表**与**产线启动小助手**里都有）

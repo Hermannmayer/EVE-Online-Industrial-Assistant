@@ -141,7 +141,10 @@ class MaterialsSummaryBridge(SummaryTableBridge):
 
 
 class MaterialsSummaryQmlDialog(SummaryTableQmlDialog):
-    """QML 版「填料总表」。`MaterialsSummaryDialog(parent)` 的调用方原样可用。"""
+    """QML 版「填料总表」。`MaterialsSummaryDialog(parent)` 的调用方原样可用。
+
+    只读查看器 → **非模态独立窗**（`modeless=True`），调用方用 `show()` 而非 `exec()`。
+    """
 
     def __init__(self, parent: Any = None) -> None:
-        super().__init__(MaterialsSummaryBridge(), parent=parent, size=(1100, 600))
+        super().__init__(MaterialsSummaryBridge(), parent=parent, size=(1100, 600), modeless=True)

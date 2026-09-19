@@ -30,7 +30,38 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QWidget
 
 from ui_qml.host import PageHost
 
-__all__ = ["DialogBridge", "QmlDialog"]
+__all__ = ["DialogBridge", "QmlDialog", "find_modeless"]
+
+#: 非模态独立窗口的保活表（`modeless=True` 的对话框）。
+#:
+#: **为什么需要**：非模态窗必须是 top-level（Windows 上 owned 窗口没有任务栏按钮），
+#: 于是 `QDialog` 拿不到 C++ 父对象；调用方若只把对话框存局部变量，函数一返回引用就归零、
+#: PySide6 立刻销毁底层窗口，连带桥和桥里的 `QThread` —— 运行中的 QThread 被析构会让
+#: Qt 直接 `abort()`，进程静默死掉（实测「点添加 → 闪退」就是这么来的）。
+#:
+#: **为什么不成环**：表 → 对话框 → 桥，单向无回边；桥虽然 `parent()` 指向对话框，但它没有
+#: 指回本表的引用。按 `id` 摘除、不触碰 Python wrapper，也避开销毁期重入。
+#:
+#: 必须配 `WA_DeleteOnClose`：不设它窗口关闭时不会真正析构、`destroyed` 永不发，表会一直涨。
+_MODELESS_WINDOWS: dict[int, QmlDialog] = {}
+
+
+def find_modeless(cls: type) -> Any | None:
+    """已经**开着**的某个非模态独立窗（按具体类匹配），没有则返回 `None`。
+
+    给「同一个窗口只开一个」的调用方用（全物品浏览器、可制造物品浏览器）：
+    保活表本身就是「当前活着的独立窗」的权威清单，直接查它就不会碰到
+    `WA_DeleteOnClose` 带来的悬空包装器问题 —— 调用方自己缓存实例的话，
+    用户关窗后那个 Python 包装器已经失效，再 `show()` 会抛
+    「Internal C++ object already deleted」。
+
+    只认 `isVisible()` 的：刚被关掉、`deleteLater` 还没跑到的窗口仍在表里，
+    把它返回去 `show()` 等于复活一个待删除的窗口。
+    """
+    for dlg in _MODELESS_WINDOWS.values():
+        if type(dlg) is cls and dlg.isVisible():
+            return dlg
+    return None
 
 
 class DialogBridge(QObject):
@@ -103,7 +134,17 @@ class QmlDialog(QDialog):
         *,
         parent: QWidget | None = None,
         size: tuple[int, int] | None = None,
+        modeless: bool = False,
     ) -> None:
+        """`modeless=True` = 非模态独立窗口（自己的任务栏项 / 可最小化 / 不阻塞主窗）。
+
+        用于「查看类」对话框（物品浏览、材料明细、汇总表、对比、图表……）：看一眼就走、
+        不需要返回值就能继续。**需要拿返回值或用户确认才能继续的（设置、向导、选择器、
+        输入框、确认框）保持默认的模态 `exec()`**。
+
+        两种形态的差别只有三处（其余生命周期完全一致，`stop()` 的三条收尾路径都保留）：
+        父窗收敛成 `None`、不挂 `setTransientParent`、进保活表。
+        """
         #: 只认 QWidget 父：`QDialog` 的 parent 参数收不下裸 `QObject`/`QWindow`
         #: （本仓 6.1 踩过一次 —— `QMenu(self)` / `QMessageBox.about(self, ...)` 把
         #: `QQuickView` 当 QWidget 父，运行时直接抛类型错）。批次 7.4 起工业页那串
@@ -113,7 +154,12 @@ class QmlDialog(QDialog):
         #: 但**收敛成 None 会丢掉属主**：外壳/工具窗是 QWindow，对话框于是成了无主窗口
         #: （父窗置顶时被盖住 + 应用级模态锁死父窗 = 互相锁死）。所以下面再补一次
         #: `setTransientParent`，把属主挂到 QWidget 父窗或「当前活动 QWindow」上。
-        widget_parent = parent if isinstance(parent, QWidget) else None
+        #:
+        #: 非模态独立窗（`modeless=True`）反过来要的是真 top-level：父窗**强制**收敛成
+        #: `None`、且**不**补 `setTransientParent`。owned 窗口在 Windows 上没有任务栏按钮，
+        #: 且关主窗时 `topLevelWidgets()` 捞得到而 `topLevelWindows()` 捞不到，会漏一次收尾。
+        #: 调用方即便传了真 QWidget 也不给 —— 既然要「独立」，就统一不给父。
+        widget_parent = None if modeless else (parent if isinstance(parent, QWidget) else None)
         super().__init__(widget_parent)
         self._bridge = bridge
         #: 桥挂到宿主对话框名下：桥的寿命不超过对话框，且桥里 `self.parent()` 就是那个窗口。
@@ -131,7 +177,35 @@ class QmlDialog(QDialog):
         self._host = PageHost(qml_file, context={"bridge": bridge}, parent=self)
         layout.addWidget(self._host)
 
-        self._bind_transient_parent(widget_parent)
+        if modeless:
+            # 真顶层窗 + 最小化/最大化按钮。`QDialog` 默认只有关闭按钮，且无父窗口时
+            # 仍是对话框外观 —— 不叫「独立窗口」。这套 flag 与手工那版
+            # `AllItemsQmlDialog` 逐字一致（它是本机制出现之前的先例）。
+            # 注意 `setWindowFlags` 会替换全部标志：`Qt.Window` 隐含**非模态**，
+            # 所以要放在 `_match_owner_always_on_top` 之前，让后者只做叠加。
+            self.setWindowFlags(
+                Qt.WindowType.Window
+                | Qt.WindowType.CustomizeWindowHint
+                | Qt.WindowType.WindowTitleHint
+                | Qt.WindowType.WindowMinMaxButtonsHint
+                | Qt.WindowType.WindowCloseButtonHint
+            )
+            # 不挂 `transientParent` —— 挂上就退回 owned 窗口，没有任务栏按钮、不能最小化，
+            # 这正是「独立窗口」要拿掉的东西。但父窗若是置顶的仍要把本窗抬到同层，
+            # 否则会被盖住（外壳在 Windows 上走 `SetWindowPos`，见 `_match_owner_always_on_top`）。
+            owner = QGuiApplication.focusWindow()
+            if owner is not None and owner is not self.windowHandle():
+                self._match_owner_always_on_top(owner)
+            # 关闭即析构（走 `deleteLater`，所以在自己的信号里删自己也安全），
+            # `destroyed` 才会发、保活表才摘得掉。不设它表会一直涨。
+            self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            # 先算 key 再进闭包：默认参数里直接写 `id(self)` 会被 ruff 判 B008，
+            # 而且默认参数只在定义时求值一次，本来就该在这里取值。
+            _key = id(self)
+            _MODELESS_WINDOWS[_key] = self
+            self.destroyed.connect(lambda *_, _k=_key: _MODELESS_WINDOWS.pop(_k, None))
+        else:
+            self._bind_transient_parent(widget_parent)
 
         # 销毁也要收尾：调用方（测试里尤其常见）会直接 `dlg.deleteLater()`，那条路径
         # 既不经过 `done()` 也不经过 `closeEvent`，桥的后台线程就没人停 —— 而 `QThread`
@@ -179,6 +253,11 @@ class QmlDialog(QDialog):
         owner: QWindow | None = widget_parent.windowHandle() if widget_parent is not None else None
         if owner is None:
             owner = QGuiApplication.focusWindow()
+            #: 焦点落在非模态独立窗上时**不认它当属主**：那个窗口用户随时会关掉，
+            #: 模态窗挂在它下面会跟着变孤儿；而且它在层级上也不该压住模态窗。
+            #: 宁可不挂属主（退回改造前的无主行为），也不要挂到一个随时消失的窗上。
+            if any(dlg.windowHandle() is owner for dlg in _MODELESS_WINDOWS.values()):
+                return
         if owner is None or owner is own_handle:
             return
         #: 留引用防 Python 包装器先析构：`setTransientParent` 只记 HWND，Qt 不接管所有权，

@@ -780,12 +780,10 @@ class PlanTable(QObject):
             mat_mult=float(ps.get("mat_mult") or 1.0) if ps else 1.0,
             prod_mult=float(ps.get("prod_mult") or 1.0) if ps else 1.0,
         )
-        from PySide6.QtCore import Qt
-
-        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        # 保持引用：无 parent 的非模态对话框若仅靠局部变量持有，
-        # Python GC 可能在对话框仍显示时回收包装对象 → 原生段错误（闪退）
-        self._cost_breakdown_dlg = dlg
+        # 保活与 `WA_DeleteOnClose` 已由 `QmlDialog(modeless=True)` 统一负责
+        # （`dialog_host._MODELESS_WINDOWS`）—— 原先这里手工设过一次，正是那个
+        # 「无 parent 的非模态对话框仅靠局部变量持有，GC 回收包装对象 → 原生段错误」
+        # 的坑，现在不必每个调用点各写一遍。
         dlg.show()
 
     def _selected_groups_and_children(self, selected_rows: list[int]) -> tuple[list[dict], list[dict]]:

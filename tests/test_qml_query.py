@@ -3,8 +3,8 @@
 分三层：
   - **纯函数层**（`fast`）：`QueryQmlModel` 的命名角色与展示规则 ——
     这一层接替 Widgets 版 `QueryTableModel.data()` 的展示断言。
-  - **桥层**（`ui`）：`QueryBridge` 的转发与整形（桥构造会起 GroupLoadWorker，
-    故放在 ui 档，不污染 fast 白名单）。
+  - **桥层**（`ui`）：`QueryBridge` 的转发与整形（桥构造要建 QTimer 与主题监听，
+    需要 Qt 事件循环，故放在 ui 档，不污染 fast 白名单）。
   - **页面层**（`ui`）：`QueryPage.qml` 能加载、无 QML 告警。
 """
 
@@ -476,11 +476,14 @@ def test_idle_judgement_does_not_depend_on_busy():
 
 @pytest.mark.ui
 def test_picking_a_suggestion_searches_a_searchable_string(bridge):
-    """候选的**展示串**不能直接当查询串用。
+    """候选的**展示串**与**查询串**是分开的两个字段，不能合并成一个。
 
-    回归背景（用户实测「点候选后永远未找到物品」）：候选那行长这样 ——
+    回归背景（用户实测「点候选后永远未找到物品」）：展示串曾形如
     `[17715] 毒蜥级 (Gila)`（带 Type ID 与中英双名），而搜索是拿关键词去
-    `LIKE '%…%'` 匹配名字的，整串匹配必然 0 条。桥必须把它换回可搜的串（中文名）。
+    `LIKE` 匹配名字的，整串匹配必然 0 条 —— 桥必须把它换回可搜的串（中文名）。
+
+    现在展示串已简化成纯物品名（两者恰好同值），但这条分离仍是**契约**：
+    展示串以后怎么改都不该影响搜索用哪一串。
     """
     bridge.search = lambda: None  # 只验「搜什么串」，不验搜索本身（那要起 worker）
     bridge._on_suggestions([(17715, "[17715] 毒蜥级 (Gila)", "毒蜥级")])
@@ -496,3 +499,57 @@ def test_picking_history_searches_it_verbatim(bridge):
     bridge.search = lambda: None
     bridge.pickSuggestion("三钛合金")
     assert bridge.searchText == "三钛合金"
+
+
+def _write_history(monkeypatch, tmp_path, payload) -> None:
+    """把历史文件换成一个临时文件（`load_search_history` 读的是模块级路径）。"""
+    import json
+
+    import core.search_history as sh
+
+    hist = tmp_path / "history.json"
+    hist.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(sh, "HISTORY_FILE", hist)
+
+
+@pytest.mark.ui
+def test_history_shows_item_names_not_raw_records(bridge, monkeypatch, tmp_path):
+    """历史项只显示**物品名**。
+
+    回归背景：历史文件里存的是 `{"query": ..., "time": ...}` **字典**，而桥原先写的是
+    `[str(h) for h in ...]` —— 整条 dict 连时间戳一起被渲染成历史项，
+    用户看到的是 `{'query': '毒蜥级', 'time': 1758...}`。
+    """
+    _write_history(
+        monkeypatch,
+        tmp_path,
+        [{"query": "毒蜥级", "time": 1758111111.0}, {"query": "三钛合金", "time": 1758222222.0}],
+    )
+
+    bridge.showHistory()
+    assert bridge.history == ["毒蜥级", "三钛合金"]
+
+
+@pytest.mark.ui
+def test_history_skips_dirty_records(bridge, monkeypatch, tmp_path):
+    """历史文件是用户可改的纯文本：非 dict / 缺 query / 空 query 一律跳过，不能连累整个弹窗。"""
+    _write_history(
+        monkeypatch,
+        tmp_path,
+        ["裸字符串", {"time": 1.0}, {"query": ""}, {"query": "渡鸦级"}],
+    )
+
+    bridge.showHistory()
+    assert bridge.history == ["渡鸦级"]
+
+
+@pytest.mark.ui
+def test_show_history_clears_stale_suggestions(bridge, monkeypatch, tmp_path):
+    """空框聚焦时若候选还留着上一次的内容，弹窗会显示旧候选而不是历史。"""
+    _write_history(monkeypatch, tmp_path, [{"query": "毒蜥级", "time": 1.0}])
+    bridge._on_suggestions([(17715, "毒蜥级", "毒蜥级")])
+    assert bridge.suggestions != []
+
+    bridge.showHistory()
+    assert bridge.suggestions == []
+    assert bridge.history == ["毒蜥级"]

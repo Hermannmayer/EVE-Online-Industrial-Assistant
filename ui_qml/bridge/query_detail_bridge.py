@@ -37,10 +37,10 @@ from ui_qml.theme import registry as theme
 
 __all__ = ["QueryDetailBridge"]
 
-#: 订单表头 —— 与 `order_popup_bridge._COLUMNS` 逐字一致（同一条契约）。
+#: 订单表头（订单弹窗删除后，这里是唯一一份）。
 _ORDER_HEADS = ["#", "价格 (ISK)", "数量", "空间站"]
 
-#: 与 `order_popup_bridge._CACHE_TTL` 同口径（5 分钟内不重新打 ESI）。
+#: 订单缓存有效期：5 分钟内重选同一行不重新打 ESI。
 _ORDER_CACHE_TTL = 300
 
 _DEFAULT_HUB_INDEX = 0
@@ -409,6 +409,12 @@ class QueryDetailBridge(QObject):
         self._finish_task()
         if type_id != self._type_id:
             return
+        #: 写回共享缓存。原先这一笔是订单弹窗那条路径写的，弹窗删除后必须由这里接手 ——
+        #: 否则 `_load_orders` 里的缓存分支永远落空（每选一次行就打一次 ESI），
+        #: `_ORDER_CACHE_TTL` 也成了死常量。
+        from ui_qml.workers.order_workers import order_cache
+
+        order_cache[self._type_id] = (buy_orders, sell_orders, _time.time())
         self._render_orders(buy_orders, sell_orders)
         has_orders = bool(self._buy_order_rows or self._sell_order_rows)
         self._order_status = "实时订单数据已加载" if has_orders else "该物品当前无挂单"

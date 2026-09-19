@@ -471,12 +471,12 @@ class CompareQmlDialog(QmlDialog):
     """QML 版「批量对比」。
 
     `CompareDialog(initial_items, parent)` 的调用方把类名换成 `CompareQmlDialog`
-    即可 —— 构造签名逐字一致。
+    即可 —— 构造签名逐字一致。只读查看器 → **非模态独立窗**，调用方用 `show()`。
     """
 
     def __init__(self, initial_items: list[dict] | None = None, parent: Any = None) -> None:
         bridge = CompareBridge(initial_items)
-        super().__init__(_QML_FILE, bridge, parent=parent, size=(1000, 620))
+        super().__init__(_QML_FILE, bridge, parent=parent, size=(1000, 620), modeless=True)
         self._compare_bridge = bridge
 
 

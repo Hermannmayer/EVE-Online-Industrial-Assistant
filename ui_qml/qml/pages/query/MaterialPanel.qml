@@ -20,6 +20,11 @@ Item {
     readonly property int fntSmall: Math.round(11 * Theme.fontScale)
     readonly property int fntBase: Math.round(12 * Theme.fontScale)
     readonly property int barH: Math.max(24, Math.round(14 * Theme.fontScale) + 10)
+    //: 「合计」那一行的高度。**必须声明**：下面 `PanelTable` 的高度是从它算出来的，
+    //: 少了它就是一次失败的绑定求值 —— `height` 拿不到数值、表格高度按 0 处理，
+    //: 于是**表头和表体一起消失**，而合计行上浮到筛选栏正下方（看着像「面板没数据」，
+    //: 其实数据全在，只是整张表被压成了 0 高）。
+    readonly property int totalH: Math.max(20, fntBase + 10)
 
     //: 材料行 → 表格单元格（字段映射，不做任何格式化 —— 文本已由桥算好）
     readonly property var materialCells: {
@@ -127,7 +132,7 @@ Item {
         Item {
             id: totalBox
             width: parent.width
-            height: root.fntBase + 10
+            height: root.totalH
 
             Rectangle {
                 anchors.left: parent.left

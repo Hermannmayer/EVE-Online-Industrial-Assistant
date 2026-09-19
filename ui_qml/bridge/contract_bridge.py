@@ -239,7 +239,7 @@ class ContractBridge(QObject):
         from ui_qml.bridge.contract_detail_bridge import ContractDetailQmlDialog
 
         parent = None
-        ContractDetailQmlDialog(data, parent).exec()
+        ContractDetailQmlDialog(data, parent).show()
 
     # ── 右键菜单动作 ──────────────────────────────────────────
 
