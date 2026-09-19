@@ -283,6 +283,11 @@ class ShellWindowBridge(QObject):
         """标题栏拖动：超过系统拖动阈值再起拖；最大化时先还原再跟手。见 `ShellWindow.begin_move`。"""
         return self._window.begin_move(press_x, press_y, x, y)
 
+    @Slot()
+    def endMove(self) -> None:
+        """标题栏拖动结束（抬起 / 取消 / 新的一次按下）。见 `ShellWindow.end_move`。"""
+        self._window.end_move()
+
     @Slot(int)
     def startResize(self, edges: int) -> None:
         self._window.startSystemResize(Qt.Edge(edges))
@@ -375,6 +380,8 @@ class ShellWindow(QQuickView):
         #: 「最大化前的尺寸」——`showMaximized()` 不改 geometry()，所以这里读到的就是
         #: 还原后该回的尺寸；`QWindow` 没有 `normalGeometry()`（实测），只能自己记。
         self._normal_rect = QRect(self.geometry())
+        #: 本次按下是否已交棒给系统拖动循环 —— 详见 `begin_move`
+        self._drag_handed_off = False
 
         # ── 价格 ──
         self._price_age_timer = QTimer(self)
@@ -982,11 +989,25 @@ class ShellWindow(QQuickView):
         threshold = _drag_threshold()
         if abs(x - press_x) < threshold and abs(y - press_y) < threshold:
             return False
+        # 同一次按下只起拖一次。`startSystemMove()` 内部先 `ReleaseCapture()` 再投递
+        # `WM_SYSCOMMAND/SC_DRAGMOVE`：系统拖动循环已经跑起来之后再调一次，那次
+        # `ReleaseCapture()` 会把正在进行的循环掐断（窗口刚跟手就停，看起来像拖不动）。
+        # QML 侧每次移动都会调进来，所以守卫必须落在这里。
+        if self._drag_handed_off:
+            return True
+        self._drag_handed_off = True
         if self.windowState() == Qt.WindowState.WindowMaximized:
             ratio = (x / self.width()) if self.width() else 0.5
             self._restore_before_move(ratio)
         self.startSystemMove()
         return True
+
+    def end_move(self) -> None:
+        """本次按下结束（抬起 / 取消 / 新的一次按下）—— 复位交棒标记。
+
+        不复位的话，同一次拖动结束后再按标题栏就永远起不了拖了。
+        """
+        self._drag_handed_off = False
 
     def _restore_before_move(self, ratio: float) -> None:
         """还原为最大化前的尺寸，并把窗口摆到光标下（照 Windows 标题栏拖动的做法）。

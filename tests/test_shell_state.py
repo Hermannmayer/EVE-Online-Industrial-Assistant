@@ -122,6 +122,26 @@ class TestMaximizeDrag:
         """单击（未越过系统拖动阈值）不该还原、也不该起拖。"""
         assert shell.begin_move(100.0, 10.0, 101.0, 11.0) is False
 
+    def test_repeat_calls_within_one_press_start_the_move_once(self, shell, monkeypatch):
+        """同一次按下里重复调用只该起拖一次。
+
+        回归背景：QML 侧每次 `onPositionChanged` 都会调进来，而 `startSystemMove()`
+        内部先 `ReleaseCapture()` 再投递 `SC_DRAGMOVE` —— 系统拖动循环已经跑起来之后
+        再调一次，那次 `ReleaseCapture()` 会把循环掐断，表现成「按住标题栏拖不动」。
+        """
+        started: list[int] = []
+        monkeypatch.setattr(type(shell), "startSystemMove", lambda _self: (started.append(1), True)[1])
+
+        assert shell.begin_move(100.0, 10.0, 300.0, 10.0) is True
+        assert shell.begin_move(100.0, 10.0, 320.0, 12.0) is True
+        assert shell.begin_move(100.0, 10.0, 340.0, 14.0) is True
+        assert len(started) == 1, f"同一次按下只该起拖一次，实得 {len(started)} 次"
+
+        # 下一次按下（哪怕落在同一像素）必须能重新起拖 —— 靠 QML 的 onPressed → end_move 复位
+        shell.end_move()
+        assert shell.begin_move(100.0, 10.0, 300.0, 10.0) is True
+        assert len(started) == 2, "复位后应当能重新起拖"
+
     def test_drag_restores_previous_size_then_moves(self, shell):
         """越阈值后：窗口回到最大化前的尺寸，且不再处于最大化态。"""
         from PySide6.QtCore import Qt

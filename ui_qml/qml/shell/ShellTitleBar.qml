@@ -38,16 +38,26 @@ Item {
         property real pressX: 0
         property real pressY: 0
         onPressed: (mouse) => {
-            dragArea.pressX = mouse.scenePosition.x;  // 场景坐标 = 窗口内坐标（本窗无缩放）
-            dragArea.pressY = mouse.scenePosition.y;
+            // 新的一次按下：先复位 Python 侧的交棒标记（上一次拖动结束后它还是置位的）
+            shell.endMove();
+            /* `mouse.x/y` 是相对本 MouseArea 的坐标；拖动区从窗口原点铺满整行，
+               所以它就等于窗口内坐标 —— Python 那边用它算「光标在窗口的哪个横向比例」。
+               **不要用 `mouse.scenePosition`**：本机 Qt 6.11 上它是 undefined，
+               取 `.x` 会抛 TypeError，`shell.beginMove` 那一行整个不执行，
+               表现成「按住标题栏完全拖不动」。 */
+            dragArea.pressX = mouse.x;
+            dragArea.pressY = mouse.y;
         }
         onPositionChanged: (mouse) => {
             if (!pressed)
                 return;
-            // 阈值判定在 Python（沿用系统 SM_CXDRAG/SM_CYDRAG）；返回 true 表示已交棒给
-            // 系统拖动循环，随后的移动事件不再需要处理
-            shell.beginMove(dragArea.pressX, dragArea.pressY, mouse.scenePosition.x, mouse.scenePosition.y);
+            // 阈值判定、以及「同一次按下只起拖一次」的守卫都在 Python（`ShellWindow.begin_move`）：
+            // 系统拖动循环已经跑起来之后再调一次 `startSystemMove()`，其中的 `ReleaseCapture()`
+            // 会把循环掐断。返回 true 表示已交棒。
+            shell.beginMove(dragArea.pressX, dragArea.pressY, mouse.x, mouse.y);
         }
+        onReleased: shell.endMove()
+        onCanceled: shell.endMove()
         onDoubleClicked: shell.maximizeOrRestore()
     }
 
