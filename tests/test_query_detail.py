@@ -561,3 +561,82 @@ def test_shutdown_ignores_idle_and_absent_workers():
     b._order_worker = _FakeWorker(running=False)
     b._refine_worker = None
     b.shutdown()  # 不起线程、不抛异常
+
+
+# ════════════════════════════════════════════════════════════════
+#  精炼面板的输入：人物 / 数量 / 站点
+# ════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.ui
+def test_refine_characters_default_to_the_current_one(monkeypatch):
+    """人物列表读 `char_config.json`，默认选中其中的 `current`；找不到就用第 0 个。
+
+    产率完全由**所选人物**的提炼技能决定，选错人等于算错产率，所以默认值要跟主程序一致。
+    """
+    import services.char_config_resolver as ccr
+
+    monkeypatch.setattr(ccr, "get_character_list", lambda: ["甲", "乙"])
+    monkeypatch.setattr(ccr, "load_all_data", lambda: {"current": "乙", "characters": {}})
+    bridge = _bare_bridge()
+    bridge._ensure_chars()
+    assert bridge.charNames == ["甲", "乙"]
+    assert bridge.refineCharIndex == 1, "应落在配置里的 current 上"
+
+    # current 指向一个不存在的人物 → 退回第 0 个，不能是 -1（QML 侧会拿到空模型）
+    monkeypatch.setattr(ccr, "load_all_data", lambda: {"current": "查无此人", "characters": {}})
+    other = _bare_bridge()
+    other._ensure_chars()
+    assert other.refineCharIndex == 0
+
+
+@pytest.mark.ui
+def test_refine_skills_follow_the_selected_character(monkeypatch):
+    """`_refine_skills()` 取的是**当前选中人物**的技能（换人物要跟着换）。"""
+    import services.char_config_resolver as ccr
+
+    monkeypatch.setattr(ccr, "get_character_list", lambda: ["甲", "乙"])
+    monkeypatch.setattr(ccr, "load_all_data", lambda: {"current": "甲", "characters": {}})
+    monkeypatch.setattr(
+        ccr,
+        "resolve_char_config",
+        lambda char_name=None, **_kw: {"skills": {"提炼学概论": 5 if char_name == "甲" else 0}},
+    )
+
+    bridge = _bare_bridge()
+    bridge._ensure_chars()
+    assert bridge._refine_skills()["提炼学概论"] == 5
+
+    bridge._refine_char_index = 1
+    assert bridge._refine_skills()["提炼学概论"] == 0, "换人物要换技能"
+
+    bridge._char_names = []
+    bridge._refine_char_index = -1
+    assert bridge._refine_skills() == {}, "没选人物时给空字典（公式按 0 级算）"
+
+
+@pytest.mark.ui
+def test_refine_inputs_recompute_but_only_on_change(monkeypatch):
+    """人物 / 数量 / 站点任一改变都要重算精炼；值没变则不重算。
+
+    与材料面板的「制造数量 / 价格中心」同一条约定：改桥 → 由桥重算，
+    本组件（及 QML）只负责把值交上去。
+    """
+    bridge, calls = _make_bridge(monkeypatch)
+    bridge._type_id = 34  # 有选中物品才会触发重算
+    bridge._char_names = ["甲", "乙"]
+    bridge._refine_char_index = 0
+
+    bridge.setRefineCharIndex(1)
+    bridge.setRefineQty(10)
+    bridge.setRefineFacility(True)
+    assert calls == ["refine", "refine", "refine"]
+
+    bridge.setRefineCharIndex(1)  # 同一个人
+    bridge.setRefineQty(10)  # 同一个数量
+    bridge.setRefineFacility(True)  # 同一个站点
+    assert calls == ["refine"] * 3, "值没变不该重算"
+
+    bridge.setRefineCharIndex(99)  # 越界忽略
+    assert bridge.refineCharIndex == 1
+    assert calls == ["refine"] * 3

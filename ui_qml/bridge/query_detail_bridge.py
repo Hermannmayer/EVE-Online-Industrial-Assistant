@@ -97,6 +97,13 @@ class QueryDetailBridge(QObject):
         self._material_hub_touched = False
         self._material_qty = _DEFAULT_MATERIAL_QTY
 
+        # 精炼面板的三个输入（人物 / 数量 / 站点）——与材料面板的「制造数量 / 价格中心」同理，
+        # 都由桥持有、改动后重算。人物列表懒读（见 `_ensure_chars`）。
+        self._char_names: list[str] = []
+        self._refine_char_index = -1  # -1 = 尚未落到 `char_config.json` 的 current 上
+        self._refine_qty = _DEFAULT_MATERIAL_QTY
+        self._refine_facility = False
+
         self._order_worker: Any = None
         self._refine_worker: Any = None
 
@@ -136,6 +143,19 @@ class QueryDetailBridge(QObject):
     refineRows = Property(list, lambda self: list(self._refine_rows), notify=changed)
     refineSummary = Property(str, lambda self: self._refine_summary, notify=changed)
     refineTotalRows = Property(list, lambda self: list(self._refine_total_rows), notify=changed)
+
+    #: 精炼的三个输入：人物 / 数量 / 站点。
+    #: 产率由**该人物的技能**决定（`core/eve_formulas.calc_refining_yield`：
+    #: 基础 ×(1+3%×提炼学概论) ×(1+2%×提炼效率理论)，再按 NPC 站 / 玩家结构取上限），
+    #: 所以这三个都是「改了要重算」的输入，与材料面板的「制造数量 / 价格中心」同理。
+    charNames = Property(list, lambda self: list(self._char_names), notify=changed)
+    refineQty = Property(int, lambda self: self._refine_qty, notify=changed)
+    refineFacility = Property(bool, lambda self: self._refine_facility, notify=changed)
+
+    def _get_refine_char_index(self) -> int:
+        return self._refine_char_index
+
+    refineCharIndex = Property(int, _get_refine_char_index, notify=changed)
 
     # ── ④ 制造材料 ────────────────────────────────────────────
 
@@ -302,6 +322,40 @@ class QueryDetailBridge(QObject):
         if self._type_id:
             self._load_materials()
 
+    # ── 精炼的输入（人物 / 数量 / 站点）────────────────────────
+
+    @Slot(int)
+    def setRefineCharIndex(self, index: int) -> None:
+        """精炼用哪个人物 —— 决定读谁的提炼学概论 / 提炼效率理论等级。"""
+        if not 0 <= index < len(self._char_names) or index == self._refine_char_index:
+            return
+        self._refine_char_index = index
+        self.changed.emit()
+        if self._type_id:
+            self._load_refine()
+
+    @Slot(int)
+    def setRefineQty(self, qty: int) -> None:
+        """精炼的数量（默认 1，与查询页「选中行 = 1 件」一致）。"""
+        qty = max(1, int(qty or 1))
+        if qty == self._refine_qty:
+            return
+        self._refine_qty = qty
+        self.changed.emit()
+        if self._type_id:
+            self._load_refine()
+
+    @Slot(bool)
+    def setRefineFacility(self, facility: bool) -> None:
+        """在玩家设施（Upwell 结构）精炼 —— 基础率与上限都高于 NPC 空间站。"""
+        facility = bool(facility)
+        if facility == self._refine_facility:
+            return
+        self._refine_facility = facility
+        self.changed.emit()
+        if self._type_id:
+            self._load_refine()
+
     @Slot(int, result=str)
     def copyPrice(self, kind: int) -> str:
         """复制订单列表里最优的买价（kind=0）/ 卖价（kind=1），返回复制到的文本。
@@ -439,6 +493,7 @@ class QueryDetailBridge(QObject):
     def _load_refine(self) -> None:
         from ui_qml.workers.refine_worker import RefineWorker
 
+        self._ensure_chars()
         self._refine_rows = []
         self._refine_total_rows = []
         self._refine_summary = "正在计算精炼产物…"
@@ -446,13 +501,51 @@ class QueryDetailBridge(QObject):
 
         self._start_task()
         worker = RefineWorker(
-            items=[{"type_id": self._type_id, "qty": 1, "name": self._name}],
+            items=[{"type_id": self._type_id, "qty": self._refine_qty, "name": self._name}],
+            skills=self._refine_skills(),
+            is_player_facility=self._refine_facility,
             price_hub=self._price_hub(),
             parent=self,
         )
         self._refine_worker = worker
         worker.result_signal.connect(self._on_refine_done)
         worker.start()
+
+    def _ensure_chars(self) -> None:
+        """首次需要时读一次人物列表，并落到 `char_config.json` 里记录的当前人物。
+
+        **必须缓存到字段**：`charNames` 是 `Property`，QML 每次读它都会走 getter，
+        把 `load_all_data()`（一次 JSON 读盘）写在 getter 里等于每次重绘都读盘。
+        """
+        if self._char_names:
+            return
+        from services.char_config_resolver import get_character_list, load_all_data
+
+        self._char_names = list(get_character_list() or [])
+        if not self._char_names:
+            self._refine_char_index = -1
+            return
+        current = str((load_all_data() or {}).get("current") or "")
+        self._refine_char_index = self._char_names.index(current) if current in self._char_names else 0
+
+    def _refine_char(self) -> str:
+        if 0 <= self._refine_char_index < len(self._char_names):
+            return self._char_names[self._refine_char_index]
+        return ""
+
+    def _refine_skills(self) -> dict:
+        """当前人物的技能表。
+
+        `calc_refining_yield` 只认里面的「提炼学概论」「提炼效率理论」两个键（见
+        `core/char_settings_common.SKILL_CATEGORIES` 的「精炼」分类）。
+        没选人物、或人物没填过这两项时返回空字典 —— 公式按 0 级算，与「没写就是没有」一致。
+        """
+        from services.char_config_resolver import resolve_char_config
+
+        name = self._refine_char()
+        if not name:
+            return {}
+        return dict((resolve_char_config(char_name=name) or {}).get("skills") or {})
 
     def _on_refine_done(self, result: dict) -> None:
         self._finish_task()
