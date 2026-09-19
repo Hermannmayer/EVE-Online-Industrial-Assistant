@@ -63,9 +63,10 @@ docs: 更新 API 参考文档
 
 - **Ruff**：零 lint 错误 + 格式化通过
 - **Mypy**：类型检查通过
-- **测试**：新功能必须有对应测试
-- **覆盖**：整体覆盖率 > 70%
-- **提交前**：`ruff check . && ruff format --check . && mypy . && scripts/run_tests.sh full`
+- **测试**：按 CLAUDE.md 的「测试判定表」决定写不写 —— **不是每次改动都要补测试**。
+  本项目**不设覆盖率门槛**（原先此处的「> 70%」无任何工具执行，已删）。
+- **提交前**：`ruff check . && ruff format --check . && mypy . && scripts/run_tests.sh target`
+  （`full` 的时机由用户定，不主动跑）
 
 ## 开发环境搭建
 

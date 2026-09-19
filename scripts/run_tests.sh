@@ -4,7 +4,7 @@
 # fast      纯计算/轻服务（-m fast）         <10s   改动 core/domain/轻服务时
 # validate  全部业务/DB/计算（非 UI）        ~45s   日常默认回归
 # ui-retest 全部 Qt 界面 + 真 QThread        ~40s   改动 UI 后补跑
-# target    只跑 git 变更相关测试文件        <5s    改动涉及 UI 时优先
+# target    只跑 git 变更相关测试文件        秒级   开发循环默认；纯文档/配置变更直接跳过
 # full      validate + ui-retest 两阶段     ~80s   仅提交前
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -40,23 +40,41 @@ case "$MODE" in
       && "$PY" -m pytest tests/ -q -m ui --maxfail=1
     ;;
   target)
-    # 收集本次变更涉及的文件；非 tests 路径按模块 basename 反查对应 test_*.py
+    # 本次变更涉及的测试文件。
+    # 非 .py 路径（文档/配置/锁文件/资源）不参与匹配：它们既会被 basename 子串误命中
+    # （改 uv.lock → grep "uv"），又会在无命中时把整档拖回全量 validate。
+    # .py 路径按「模块路径」反查，不用 basename 子串。
     changed="$(git diff --name-only HEAD) $(git ls-files --others --exclude-standard)"
     files=()
+    lib_changed=0
     for f in $changed; do
       if [[ -z "$f" ]]; then continue; fi
-      if [[ "$f" == tests/* ]]; then
-        files+=("$f")
-      else
-        mod="$(basename "$f" .py)"
-        # shellcheck disable=SC2207
-        files+=($(grep -l "$mod" tests/test_*.py 2>/dev/null || true))
+      if [[ "$f" == tests/*.py ]]; then
+        files+=("$f"); continue
       fi
+      [[ "$f" == *.py ]] || continue
+      # 只有这 5 个包是共享库代码；scripts/ 与入口脚本没匹配到测试也不必拖全量
+      case "$f" in
+        core/*|domain/*|services/*|ui_qml/*|bootstrap/*) lib_changed=1 ;;
+      esac
+      mod="${f%.py}"; mod="${mod//\//.}"   # services/importers/getprices.py → services.importers.getprices
+      name="${mod##*.}"; parent="${mod%.*}"
+      pats=(-e "from $mod import" -e "import $mod")
+      # 也覆盖 `from services import pricing_service` 这种写法
+      [[ "$parent" == "$mod" ]] || pats+=(-e "from $parent import $name")
+      # shellcheck disable=SC2207
+      files+=($(grep -rl "${pats[@]}" --include='*.py' tests/ 2>/dev/null || true))
     done
     if [[ ${#files[@]} -eq 0 ]]; then
-      echo "未检测到变更的测试文件，跑 validate 全量" >&2
-      "$PY" -m pytest tests/ -q -m "not ui" --maxfail=5
+      if [[ "$lib_changed" -eq 1 ]]; then
+        echo "库代码有变更但未匹配到测试文件，跑 validate 全量" >&2
+        "$PY" -m pytest tests/ -q -m "not ui" --maxfail=5
+      else
+        echo "仅文档/配置/工具变更，无需跑测试" >&2
+        exit 0
+      fi
     else
+      mapfile -t files < <(printf '%s\n' "${files[@]}" | sort -u)
       "$PY" -m pytest "${files[@]}" -q --maxfail=1
     fi
     ;;
