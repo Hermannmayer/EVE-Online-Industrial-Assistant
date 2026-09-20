@@ -6,6 +6,17 @@
 
 <!-- version list -->
 
+## v0.24.1 (2026-09-19)
+
+### Bug Fixes
+
+- 修发行版两处崩溃 —— 幽灵 import 与 SQL 缺 AS
+  ([`c73222e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/c73222ecfb02ef8037ba2e83c3bb80585a5bf1f0))
+
+- **机库设置**: 右侧编辑面板被 Repeater 包住 → 不被 Layout 布局，压住左侧机库列表
+  ([`34c2d52`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/34c2d52d00efd1bc81580e7ecaddff7b79baf075))
+
+
 ## v0.24.0 (2026-09-19)
 
 ### Bug Fixes
