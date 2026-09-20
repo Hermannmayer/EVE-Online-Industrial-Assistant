@@ -31,11 +31,22 @@ def load_all_data() -> dict:
 
 
 def save_all_data(data: dict) -> None:
-    """保存完整角色配置"""
+    """保存完整角色配置（原子写：同目录临时文件 + 替换）
+
+    新增的 ESI 导入是第二个写入方，裸 `open(w)` 一旦写一半崩掉会留下半个
+    JSON、把用户所有角色配置读废。先写 `.tmp` 再 `os.replace` 保证要么全
+    新要么全旧。
+    """
     path = char_config_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
 
 def get_character(name: str) -> dict | None:

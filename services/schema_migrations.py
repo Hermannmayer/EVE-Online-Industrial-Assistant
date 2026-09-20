@@ -27,7 +27,7 @@ BACKUP_KEEP = 5
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 3,  # v1→v2: adjusted_price 列;  v2→v3: market_prices(fetch_time) 索引
-    "user": 18,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 科研作业列（activity/decryptor_type_id/success_rate/research_target_level/actual_output_runs）;  v13→v14: 修复「版本已到 13 但科研列缺失」的历史库;  v14→v15: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）;  v15→v16: user_blueprints 原图权威化（runs<0 → is_bpo=1/runs=0，-1 退场）;  v16→v17: asset_snapshots / open_orders 表;  v17→v18: asset_snapshots.line_value 列（运行中产线价值）+ order_events 台账表
+    "user": 19,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 科研作业列（activity/decryptor_type_id/success_rate/research_target_level/actual_output_runs）;  v13→v14: 修复「版本已到 13 但科研列缺失」的历史库;  v14→v15: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）;  v15→v16: user_blueprints 原图权威化（runs<0 → is_bpo=1/runs=0，-1 退场）;  v16→v17: asset_snapshots / open_orders 表;  v17→v18: asset_snapshots.line_value 列（运行中产线价值）+ order_events 台账表;  v18→v19: esi_tokens 表（按角色绑定的 ESI 刷新令牌）
     "bp": 3,  # v1→v2: blueprint_materials.wastefactor 列;  v2→v3: 蓝图表查找索引（逐件研究成本 37×）
 }
 
@@ -479,6 +479,24 @@ CREATE TABLE IF NOT EXISTS order_events (
 """
 
 
+# ESI OAuth 刷新令牌（v18→v19）。**不可重建的用户数据** —— 丢了就得让用户
+# 重新走一遍浏览器授权，所以放 user.db 而不是 settings.json。
+# 每次刷新后必须把响应里的 refresh_token 原样写回：CCP 文档明说返回的令牌
+# 可能和提交的不同（会启用轮换），只存第一次那个迟早失效。
+# 使用方 `ui_qml/workers/esi_skill_worker.py` 也执行同一段 DDL 兜底：
+# `sqlite3.connect` 会创建空库文件，全新安装时它可能晚于 schema 迁移才出现。
+ESI_TOKENS_SQL = """
+CREATE TABLE IF NOT EXISTS esi_tokens (
+    character_id INTEGER PRIMARY KEY,
+    character_name TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    access_token TEXT,
+    access_expires_at TEXT,                -- %Y-%m-%dT%H:%M:%SZ，读时比较，剩 <60s 即刷新
+    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+"""
+
+
 def _migrate_user_v16_to_v17(db_path: str) -> str:
     """v16→v17: 新增 asset_snapshots（每日资产快照）与 open_orders（挂单）两张表。
 
@@ -516,6 +534,21 @@ def _migrate_user_v17_to_v18(db_path: str) -> str:
     finally:
         conn.close()
     return f"asset_snapshots.line_value (新增 {net} 列) + order_events 表"
+
+
+def _migrate_user_v18_to_v19(db_path: str) -> str:
+    """v18→v19: 新增 esi_tokens 表（按角色绑定 ESI 刷新令牌）。
+
+    每个角色一行，主键是 ESI 的 character_id。只加表，不改既有列。
+    幂等：CREATE TABLE IF NOT EXISTS，重复运行无变化。
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(ESI_TOKENS_SQL)
+        conn.commit()
+        return "新增 esi_tokens 表"
+    finally:
+        conn.close()
 
 
 def _migrate_bp_v2_to_v3(db_path: str) -> str:
@@ -576,6 +609,7 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
         15: _migrate_user_v15_to_v16,
         16: _migrate_user_v16_to_v17,
         17: _migrate_user_v17_to_v18,
+        18: _migrate_user_v18_to_v19,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,

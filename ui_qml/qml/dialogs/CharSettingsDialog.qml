@@ -85,6 +85,16 @@ FDialogFrame {
                     frame.cb.addCharacter()
             }
 
+            /* 总是开浏览器选角色 —— 一账号多角色靠这个入口逐个加。
+             * 与右边的「刷新技能」是两件事：那个走静默刷新，不会给你换角色的机会。*/
+            FButton {
+                objectName: "addFromEsiButton"
+                text: qsTr("+ 从 ESI")
+                enabled: frame.cb ? !frame.cb.esiBusy : false
+                onClicked: if (frame.cb)
+                    frame.cb.addCharacterFromEsi()
+            }
+
             FButton {
                 objectName: "deleteCharacterButton"
                 text: qsTr("删除")
@@ -133,9 +143,48 @@ FDialogFrame {
         Layout.fillHeight: true
         currentIndex: tabBar.currentIndex
 
-        FSkillsTab {
-            objectName: "skillsTab"
-            source: frame.cb ? frame.cb.skills : null
+        /* ESI 的刷新入口放在技能页上方，不放角色栏：角色栏已经挤了 5 个控件，
+         * 750px 宽下再加一个按钮会被挤到边界外裁掉（实测截图确认过）。
+         * 刷新本来就是技能操作，放这里也更贴。*/
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: Theme.spacingSm
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacingSm
+
+                /* 有绑定就静默刷新（不弹浏览器），没有才开浏览器。
+                 * 手工填写照旧可用 —— 它只把**面板技能**的等级刷成 ESI 上的真实值。*/
+                FButton {
+                    objectName: "importFromEsiButton"
+                    text: qsTr("从 ESI 刷新技能")
+                    enabled: frame.cb ? !frame.cb.esiBusy : false
+                    onClicked: if (frame.cb)
+                        frame.cb.importFromEsi()
+                }
+
+                /* 最近一次导入的结果摘要（空串 = 还没导过，整块不占位）*/
+                Text {
+                    objectName: "esiStatusText"
+                    Layout.fillWidth: true
+                    visible: frame.cb !== null && frame.cb.esiStatus !== ""
+                    text: frame.cb ? frame.cb.esiStatus : ""
+                    color: Theme.textSecondary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    elide: Text.ElideRight
+                    verticalAlignment: Text.AlignVCenter
+                }
+            }
+
+            FSkillsTab {
+                objectName: "skillsTab"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                source: frame.cb ? frame.cb.skills : null
+            }
         }
 
         FImplantsTab {

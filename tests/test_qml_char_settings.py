@@ -9,14 +9,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
 
 import ui_qml.bridge.char_settings_bridge as csb
-from core.char_settings_common import SKILL_CATEGORIES, TRADE_HUBS
+from core.char_settings_common import ALL_SKILLS, SKILL_CATEGORIES, TRADE_HUBS
 from ui_qml import icons
+from ui_qml.workers import esi_skill_worker as esw
 
 pytestmark = pytest.mark.ui
 
@@ -62,7 +64,7 @@ def harness(qapp, monkeypatch):
     monkeypatch.setattr(
         csb,
         "load_implants",
-        lambda: [{"type_id": 1001, "zh_name": "工业增效体", "bonus_desc": "制造时间 -4%"}],
+        lambda: [{"type_id": 1001, "zh_name": "工业增效体", "bonus_desc": "制造时间 -4%", "slot": "A"}],
     )
     monkeypatch.setattr(csb, "FMessageDialog", box)
     return SimpleNamespace(bridge=csb.CharSettingsBridge(), written=written, box=box)
@@ -297,3 +299,107 @@ def test_dialog_keeps_the_original_constructor_signature(harness):
         assert len(dialog.bridge.skills.categories) == len(SKILL_CATEGORIES)
     finally:
         dialog.deleteLater()
+
+
+# ── 从 ESI 导入（QThread + Signal 端到端）─────────────────────
+
+#: 打桩的 ESI 结果。`会计学` / `工业理论` 是 `_CONFIG["甲"]` 里**已有**的名字，
+#: `贸易学` 是 ESI 独有的 —— 它不该被写进配置（合并策略只管已有名字）。
+_ESI_PAYLOAD = {
+    "character_id": 2112625428,
+    "character_name": "甲",
+    "skills": {"会计学": 3, "工业理论": 5, "贸易学": 5},
+    "implants": [1001, 999999],
+}
+
+
+def test_esi_import_merges_only_existing_names_and_saves(harness, monkeypatch, qtbot):
+    """点「从 ESI 导入」→ 线程回数据 → 桥合并落盘。
+
+    覆盖整条接线：worker 起线程、发信号、主线程槽合并、写回 `save_all_data`。
+    授权与网络换成固定载荷 —— 真 SSO / 真 ESI 不该进单测。
+    """
+
+    async def _fake_import(self: object) -> dict:
+        return dict(_ESI_PAYLOAD)
+
+    monkeypatch.setattr(csb.EsiSkillImportWorker, "_import", _fake_import)
+    bridge = harness.bridge
+
+    bridge.importFromEsi()
+    assert bridge.esiBusy is True, "点下去就该进忙碌态（按钮据此禁用）"
+    qtbot.waitUntil(lambda: not bridge.esiBusy, timeout=5000)
+
+    saved = harness.written["characters"]["甲"]
+    # ⭐ 回归：面板能显示的技能必须**全部**落盘。先前只写「char_config 里手填过
+    # 的名字」，于是造船/冶金/研究那一大片永远是 0，看起来像没导入。
+    assert set(ALL_SKILLS) <= set(saved["skills"])
+    # 已有名字被 ESI 的真实等级刷新（手工填的 5 → ESI 上的 3）
+    assert saved["skills"]["会计学"] == 3
+    assert saved["skills"]["工业理论"] == 5
+    # ESI 独有的、不属于面板的技能不进配置
+    assert "贸易学" not in saved["skills"]
+    # 增效体：1001 在可选清单里（stub 归 A 槽）；999999 不在清单里 → 忽略
+    assert saved["implants"] == [1001, None, None]
+    assert harness.box.informed and harness.box.informed[0][0] == "从 ESI 导入完成"
+    assert bridge.esiStatus != ""
+
+
+def test_esi_import_keeps_manual_implants_when_esi_returns_none(harness, monkeypatch, qtbot):
+    """ESI 没带回任何可用增效体时，**不覆盖**用户手填的那几个。
+
+    这是「两种方式并存」的边界：ESI 的空结果不等于「角色没装植入体」，
+    更不该把用户手工挑的抹掉。
+    """
+
+    async def _fake_import(self: object) -> dict:
+        return {"character_id": 1, "character_name": "甲", "skills": {"会计学": 2}, "implants": [999999]}
+
+    monkeypatch.setattr(csb.EsiSkillImportWorker, "_import", _fake_import)
+    bridge = harness.bridge
+
+    bridge.importFromEsi()
+    qtbot.waitUntil(lambda: not bridge.esiBusy, timeout=5000)
+
+    assert harness.written["characters"]["甲"]["implants"] == _CONFIG["characters"]["甲"]["implants"]
+
+
+@pytest.mark.parametrize(("force_browser", "expected"), [(True, "browser"), (False, "silent")])
+def test_add_from_esi_always_opens_browser(qapp, monkeypatch, force_browser, expected):
+    """⭐ 回归：一账号多角色必须能**连续**导入。
+
+    复现的缺陷：导完角色 A 之后 `current` 就是 A，再点导入会命中 A 的绑定走静默
+    刷新，浏览器根本不打开 —— 用户没机会在 CCP 页面上选角色 B，表现成
+    「导入成功一次之后就不让继续导入了」。
+
+    所以「+ 从 ESI」必须强制走浏览器；只有「刷新技能」才允许静默刷新已有绑定。
+    """
+    calls: list[str] = []
+    # 过期时间戳 → 绑定存在但需要刷新，这样两条分支才都走得到
+    monkeypatch.setattr(
+        esw,
+        "load_token_row",
+        lambda name: {
+            "character_id": 1,
+            "character_name": name,
+            "refresh_token": "r",
+            "access_token": "old",
+            "access_expires_at": "2000-01-01T00:00:00Z",
+        },
+    )
+
+    async def fake_browser(self: object, client: object) -> tuple[str, int, str]:
+        calls.append("browser")
+        return "a", 1, "甲"
+
+    async def fake_refresh(self: object, client: object, row: dict) -> tuple[str, int, str]:
+        calls.append("silent")
+        return "a", 1, "甲"
+
+    monkeypatch.setattr(esw.EsiSkillImportWorker, "_browser_authorize", fake_browser)
+    monkeypatch.setattr(esw.EsiSkillImportWorker, "_refresh", fake_refresh)
+
+    worker = esw.EsiSkillImportWorker("甲", force_browser=force_browser)
+
+    assert asyncio.run(worker._obtain_token(None)) == ("a", 1, "甲")
+    assert calls == [expected]
