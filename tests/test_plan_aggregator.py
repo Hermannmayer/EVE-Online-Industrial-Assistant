@@ -72,14 +72,18 @@ class TestAggregateProcurement:
             _rows, cost, _ = aggregate_procurement(conn, [plan], price_type="buy")
         assert cost == pytest.approx(1000 * 4 + 500 * 8)
 
-    def test_spread_is_sell_minus_buy_and_ignores_mult(self, temp_db):
-        """价差 = 卖价 − 买价，且**不吃 price_mult**（倍率是跨区运费/溢价的模拟，价差是市场事实本身）。"""
+    def test_spread_is_the_gap_over_qty_and_ignores_mult(self, temp_db):
+        """价差 = (卖价 − 买价) × 需采购量（金额，不是单价差），且**不吃 price_mult**。
+
+        两件的单价差都是 1，数量 1000 / 500 不同 —— 结果必须跟着数量走，
+        否则又退回「和总价对不上的那一列单价差」（用户报过）。
+        """
         plan = {"product_type_id": 2001, "runs": 1, "parallels": 1, "me_level": 0}
         with temp_db.connect("user", "ref", "bp", "mkt") as conn:
             rows, _cost, _vol = aggregate_procurement(conn, [plan], price_type="sell", price_mult=2.0)
         by_type = {r["type_id"]: r for r in rows}
-        assert by_type[1001]["spread"] == pytest.approx(5 - 4)
-        assert by_type[1002]["spread"] == pytest.approx(9 - 8)
+        assert by_type[1001]["spread"] == pytest.approx((5 - 4) * 1000)
+        assert by_type[1002]["spread"] == pytest.approx((9 - 8) * 500)
         assert by_type[1001]["price"] == pytest.approx(5 * 2.0), "单价照旧吃倍率，价差不吃"
 
     def test_spread_is_none_when_one_side_has_no_order(self, temp_db):
@@ -91,7 +95,7 @@ class TestAggregateProcurement:
             rows, _cost, _vol = aggregate_procurement(conn, [plan], price_type="sell")
         by_type = {r["type_id"]: r for r in rows}
         assert by_type[1001]["spread"] is None, "只有卖单时价差算不出来"
-        assert by_type[1002]["spread"] == pytest.approx(1.0), "另一件不受影响"
+        assert by_type[1002]["spread"] == pytest.approx(500.0), "另一件不受影响"
 
     def test_price_mult_scales_unit_price(self, temp_db):
         """材料倍率乘在单价上：price 与 total 同步缩放，to_buy / volume 不变。"""

@@ -36,7 +36,7 @@ Window {
      * 宽度预算（改动下面任何一行都要重量）：
      *   - 工具栏第一行（两个下拉 + 置顶）≈ 367px，**比表格窄**，所以它不再是下限
      *   - 工具栏第二行是 `Flow`，**会自动折行** —— 加按钮只多占一行高度，不会顶宽
-     *   - **下限由表格定**：4 个固定列的像素宽之和（368，与 `procurement_bridge._COLUMNS`
+     *   - **下限由表格定**：4 个固定列的像素宽之和（416，与 `procurement_bridge._COLUMNS`
      *     同源）+ 每列 `FSummaryTable.cellPadding`（随字体缩放）+ 名称列下限 80 + 左右边距 16
      *
      * 所以最小值写成**算式**而不是一个数：固定列宽是绝对像素，cellPadding 却随
@@ -44,7 +44,7 @@ Window {
      * `tests/test_procurement_tab.py::test_narrowest_window_clips_nothing` 按渲染结果
      * 兜这条（改了列宽/边距忘了改这里就会红）。
      */
-    readonly property int contentMinWidth: 368 + Math.round(12 * Theme.fontScale) * 5 + 80 + 16
+    readonly property int contentMinWidth: 416 + Math.round(12 * Theme.fontScale) * 5 + 80 + 16
     width: page.contentMinWidth
     height: 820
     minimumWidth: page.contentMinWidth

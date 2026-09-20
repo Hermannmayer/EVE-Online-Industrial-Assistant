@@ -129,7 +129,8 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
     `tests/test_procurement_tab.py::test_recalculate_excludes_running_sublines`。
     同一模块的 `collect_direct_materials` 用的是「全部活跃计划」查询，天然没这个问题。
   - 口径分叉（有意）：采购小助手 `procurement_tab` 有自己独立的 Hub/价格类型控件、无倍率控件，不套用工具栏倍率
-  - 「买卖差价」列：`plan_aggregator._spread` = 同一 hub 的 `sell_price - buy_price`，**不吃 `price_mult`**
+  - 「买卖差价」列：`plan_aggregator._spread` = `(sell_price - buy_price) × 需采购量` —— **金额**，与「总价」同阶
+    （原来给的是单价差，读着像单价、和旁边 `数量 × 单价` 的总价对不上，用户报过）。**不吃 `price_mult`**
     （倍率是跨区运费/溢价的模拟，价差是市场事实本身）。**单边无挂单 → `None`**，显示 `-`、复制给空串 ——
     给 0 会被读成「卖买同价」。`get_market_prices` 本来就同时返回 sell/buy，这一列不额外查库。
   - 采购表当前 5 列：物品名称 / 总需求 / 需采购 / 买卖差价 / 总价。「库存」「单价」「体积」已从**显示**下线
