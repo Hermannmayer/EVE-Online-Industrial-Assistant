@@ -34,7 +34,8 @@ Item {
     readonly property var heads: dashboard ? dashboard.openOrderHeads : []
     //: 列宽比：物品 / 价格 / 剩余·总量 / 位置 / 角色（**没有方向列** —— 表本身就是方向）
     //: 「角色」加在**末尾**：ESI 会汇总全部已绑定角色，不标归属就分不清是谁的挂单。
-    readonly property var ratios: [2.4, 1.4, 1.5, 2.2, 1.3]
+    //: 它比位置列还宽 —— 名字截成「Me...」等于没标（实测过）。
+    readonly property var ratios: [2.1, 1.3, 1.4, 1.8, 2.2]
 
     ColumnLayout {
         anchors.fill: parent
@@ -136,6 +137,25 @@ Item {
                 onClicked: if (root.dashboard)
                     root.dashboard.setWalletText(walletField.text)
             }
+        }
+
+        // ── 军团钱包开关 ──────────────────────────────────────
+        // **独占一行**：与余额挤同一行会把整行的最小宽顶出面板（实测「记录」按钮 +
+        // 开关 + 输入框放不下，结果是开关被切、连挂单表的末列也跟着被切）。
+        // 默认关：军团钱包是共享账户、不是个人净资产，读它还要军团会计角色 + 独立 scope。
+        FCheckBox {
+            objectName: "includeCorpWalletBox"
+            Layout.preferredHeight: root.rowH
+            text: qsTr("钱包余额含军团钱包")
+            checked: root.dashboard ? root.dashboard.includeCorpWallet : false
+            onToggled: if (root.dashboard)
+                root.dashboard.setIncludeCorpWallet(checked)
+
+            HoverHandler {
+                id: corpWalletHover
+            }
+            ToolTip.visible: corpWalletHover.hovered
+            ToolTip.text: qsTr("把军团钱包各分部余额也算进总资产 —— 钱放在军团账户上时打开它。需要角色有军团会计权限，首次开启要重新授权一次。")
         }
 
         // ── 卖单（上）────────────────────────────────────────

@@ -6,7 +6,9 @@
    比「这轮不更新」更糟；
 2. 单角色失败**不拖垮其余角色**：成功的照常落库，失败的只进 `errors` 让 UI 报出来；
 3. `groups` 含每个成功角色的**两个归属组**（个人单 / 军团单），**空组也要** ——
-   桥按组整体替换，少了空组就删不掉已成交的幽灵行。
+   桥按组整体替换，少了空组就删不掉已成交的幽灵行；
+4. **军团钱包是可选项**：默认不拉；开了之后同一军团只计一次（多角色同军团重复计
+   会把总资产算大一倍），且它拉失败时钱包整块跳过、挂单照常落库。
 
 `ui` 标记：被测对象是 QThread 子类（本仓「构造 worker 的用例一律标 ui」的惯例，
 见 `tests/test_order_workers.py`）。
@@ -19,7 +21,7 @@ import asyncio
 import pytest
 
 from ui_qml.workers import esi_wallet_worker as eww
-from ui_qml.workers.esi_skill_worker import EsiAuthRevoked
+from ui_qml.workers.esi_skill_worker import EsiAuthRevoked, EsiScopeMissing
 
 pytestmark = pytest.mark.ui
 
@@ -49,10 +51,15 @@ _ORDERS = {
 }
 
 
-def _run_import(monkeypatch, obtain):
-    """跑一次 `_import()`（不碰网络、不起线程）。"""
+def _run_import(monkeypatch, obtain, *, include_corp=False, corp_of=None, corp_balances=None, corp_error=None):
+    """跑一次 `_import()`（不碰网络、不起线程）。
+
+    `include_corp=False` 时 `_character_corp` 会**断言自己没被调用** ——
+    开关关着还去打军团接口是白费一次请求，且多要一个 scope。
+    """
     worker = eww.EsiWalletOrdersWorker()
     monkeypatch.setattr(eww, "list_token_rows", lambda: [dict(r) for r in _CHARS])
+    monkeypatch.setattr(eww, "get_include_corp_wallet", lambda: include_corp)
     monkeypatch.setattr(eww.EsiWalletOrdersWorker, "isInterruptionRequested", lambda self: False)
     monkeypatch.setattr(eww.EsiWalletOrdersWorker, "_obtain_token", obtain)
 
@@ -60,6 +67,18 @@ def _run_import(monkeypatch, obtain):
         return _WALLET[int(char_id)], [dict(o) for o in _ORDERS[int(char_id)]]
 
     monkeypatch.setattr(eww.EsiWalletOrdersWorker, "_pull_one", fake_pull)
+
+    async def fake_corp(self, client, access, char_id):
+        assert include_corp, "开关关着时不该去查军团归属"
+        return int((corp_of or {})[int(char_id)])
+
+    async def fake_corp_wallet(self, client, access, corp_id):
+        if corp_error is not None:
+            raise corp_error
+        return float((corp_balances or {}).get(int(corp_id), 0.0))
+
+    monkeypatch.setattr(eww.EsiWalletOrdersWorker, "_character_corp", fake_corp)
+    monkeypatch.setattr(eww.EsiWalletOrdersWorker, "_pull_corp_wallet", fake_corp_wallet)
 
     class _FakeClient:
         async def __aenter__(self):
@@ -109,3 +128,42 @@ def test_one_character_failing_skips_wallet_but_keeps_orders(qapp, monkeypatch):
     assert [o["order_id"] for o in payload["orders"]] == [1], "成功角色的挂单仍要落库"
     assert payload["groups"] == [[111, 0], [111, 1]], "失败角色的组不能声明已覆盖"
     assert len(payload["errors"]) == 1 and "乙" in payload["errors"][0]
+
+
+def test_corp_wallet_counted_once_per_corporation(qapp, monkeypatch):
+    """开了「含军团钱包」：同军团的多个角色**只计一次** —— 重复计会把总资产算大一倍。"""
+
+    async def obtain(self, client, character_name=None, *, allow_browser=True):
+        return "tok", _CHAR_IDS[character_name], character_name
+
+    payload = _run_import(
+        monkeypatch,
+        obtain,
+        include_corp=True,
+        corp_of={111: 900, 222: 900},  # 两个角色同属军团 900
+        corp_balances={900: 5_000_000_000.0},
+    )
+
+    assert payload["corp_total"] == 5_000_000_000.0, "同一军团被重复计入"
+    assert payload["wallet_total"] == 1250.0 + 5_000_000_000.0
+    assert payload["include_corp"] is True
+
+
+def test_corp_wallet_failure_keeps_orders_but_skips_wallet(qapp, monkeypatch):
+    """读不到军团钱包（没会计权限 / 缺 scope）：挂单照常落库，**钱包合计整块跳过**。"""
+
+    async def obtain(self, client, character_name=None, *, allow_browser=True):
+        return "tok", _CHAR_IDS[character_name], character_name
+
+    payload = _run_import(
+        monkeypatch,
+        obtain,
+        include_corp=True,
+        corp_of={111: 900, 222: 900},
+        corp_error=EsiScopeMissing("授权缺少军团钱包权限，请在开发者应用勾选对应 scope 后重新授权"),
+    )
+
+    assert payload["wallet_total"] is None, "军团钱包没读到，合计不能当完整值写下去"
+    assert payload["corp_total"] is None
+    assert [o["order_id"] for o in payload["orders"]] == [1], "挂单不该因为读不到钱而丢失"
+    assert any("军团钱包" in e for e in payload["errors"])

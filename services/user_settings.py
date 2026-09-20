@@ -171,3 +171,18 @@ def set_material_price_mult(value: float) -> None:
     price_settings = dict(settings.get("price_settings") or {})
     price_settings["mat_mult"] = float(value)
     save_settings({"price_settings": price_settings})
+
+
+#: ESI 同步是否把军团钱包计入总资产。**默认关**：军团钱包是共享账户，不是个人净资产；
+#: 而且读它需要 `esi-wallet.read_corporation_wallets.v1`，角色还得有军团会计类角色。
+_INCLUDE_CORP_WALLET_KEY = "esi_include_corp_wallet"
+
+
+def get_include_corp_wallet() -> bool:
+    """ESI 同步是否合计军团钱包（默认 False）。settings.json 可手改，只认真值。"""
+    return load_settings().get(_INCLUDE_CORP_WALLET_KEY) is True
+
+
+def set_include_corp_wallet(value: bool) -> None:
+    """写回「含军团钱包」开关（读-改-写，保留其它键）。"""
+    save_settings({_INCLUDE_CORP_WALLET_KEY: bool(value)})

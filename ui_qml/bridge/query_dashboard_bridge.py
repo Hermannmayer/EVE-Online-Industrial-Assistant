@@ -66,6 +66,7 @@ from services.char_capacity import (
 )
 from services.char_config_resolver import get_character_list, load_all_data
 from services.plan_service import load_plans_for_wizard
+from services.user_settings import get_include_corp_wallet, set_include_corp_wallet
 from services.wallet_import import latest_balance, parse_wallet_journal
 from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.bridge.price_chart_bridge import axis_values, map_values, nice_range, pick_indices
@@ -190,6 +191,21 @@ def _char_names() -> dict[int, str]:
     except Exception:
         log.exception("角色名读取失败（挂单归属列退化为编号）")
         return {}
+
+
+def _wallet_breakdown(payload: dict) -> str:
+    """ESI 同步后的钱包构成文案。
+
+    **必须说清「角色 / 军团」的拆分**：余额看着少的时候（钱在军团账户上），
+    用户第一反应就是「是不是没把钱加起来」—— 这句话直接回答它，而不是让他去猜。
+    """
+    total = payload.get("wallet_total")
+    if total is None:
+        return "；钱包未更新"
+    if payload.get("include_corp"):
+        corp = float(payload.get("corp_total") or 0.0)
+        return f"；钱包 {float(total):,.2f}（军团 {corp:,.2f} + 角色 {float(total) - corp:,.2f}）"
+    return f"；钱包 {float(total):,.2f}（仅角色，未含军团钱包）"
 
 
 def _open_change_dialog(rows: list[dict], parent: Any, wallet: float) -> tuple[list[dict], bool]:
@@ -886,6 +902,12 @@ class QueryDashboardBridge(QObject):
             self._fill_location_names(records)
             self._fill_type_names(records)
         groups = {(int(g[0]), int(g[1])) for g in payload.get("groups") or []}
+        if groups:
+            # 归属未知的历史行（char_id=0：v19→v20 加列时补的 0，或启发式解析的旧日志）
+            # 一并纳入替换范围。**不清就会变成幽灵卖单** —— 它们不属于本次任何角色组，
+            # 永远不会被删；而仍然开着的那些会被主键 INSERT OR REPLACE 改写成真归属，
+            # 不在 ESI 返回集里的就是真的结束了，留着只会让列表和现实对不上。
+            groups.add((0, 0))
         try:
             self._replace_order_groups(groups, records)
         except sqlite3.Error:
@@ -910,9 +932,10 @@ class QueryDashboardBridge(QObject):
         tail = "已记入资产快照" if snapshot_ok else "资产快照写入失败，详见日志"
         chars = int(payload.get("chars") or 0)
         self._status = f"已从 ESI 同步 {chars} 个角色、{len(records)} 笔挂单，{tail}"
+        self._status += _wallet_breakdown(payload)
         errors = [str(e) for e in payload.get("errors") or []]
         if errors:
-            # 部分角色失败：成功的照常写，这里明说哪几个没拉到
+            # 部分角色/军团失败：成功的照常写，这里明说哪几块没拉到
             self._status += f"；未同步：{'；'.join(errors)}"
         self.changed.emit()
 
@@ -1119,6 +1142,26 @@ class QueryDashboardBridge(QObject):
     @Property(str, notify=changed)
     def statusText(self) -> str:
         return self._status
+
+    @Property(bool, notify=changed)
+    def includeCorpWallet(self) -> bool:
+        """ESI 同步是否合计军团钱包（默认关）。
+
+        默认关的两个理由：军团钱包是**共享账户**、不是个人净资产；读它还要角色有
+        军团会计类角色（没有就 403），并额外要一个 scope。
+        """
+        return bool(get_include_corp_wallet())
+
+    @Slot(bool)
+    def setIncludeCorpWallet(self, value: bool) -> None:
+        """开关「含军团钱包」。**开启后需重新授权一次**（军团钱包是独立 scope）。"""
+        set_include_corp_wallet(bool(value))
+        self._status = (
+            "已开启「含军团钱包」—— 下次同步会要求重新授权（军团钱包是独立权限）"
+            if value
+            else "已关闭「含军团钱包」，钱包余额只统计角色身上"
+        )
+        self.changed.emit()
 
     # ════════════════════════════════════════════════════════
     #  刷新（QML 空闲态可见时调一次 + 60s 定时器调）

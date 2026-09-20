@@ -1031,6 +1031,38 @@ def test_read_orders_only_compares_orders_of_the_same_owner(h, tmp_path):
     assert h.assets.wallet == 500.0, "钱包被错误增减"
 
 
+def test_esi_sync_clears_legacy_unknown_owner_rows(h):
+    """回归：ESI 同步要清掉 `char_id=0` 的历史行，否则它们永远是幽灵卖单。
+
+    加列迁移给存量行补的 0，不属于任何角色组 —— 桥按组替换**永远碰不到它们**，
+    表现是「老的卖单一直留在列表上」。仍然开着的那些会被主键 `INSERT OR REPLACE`
+    改写成真归属；不在 ESI 返回集里的就是真的结束了，该删。
+    """
+    with h.conn:
+        h.conn.executemany(
+            "INSERT INTO open_orders"
+            " (order_id, is_buy, price, volume_total, volume_remain, char_id, is_corp, imported_at)"
+            " VALUES (?, 0, 100.0, 1, 1, ?, ?, '2026-09-20 14:26:46')",
+            [(901, 0, 0), (902, 111, 0)],
+        )
+    h.assets.wallet = 500.0
+
+    h.bridge()._on_esi_pulled(
+        {
+            "orders": [_order(902, is_buy=False, char_id=111)],
+            "wallet_total": 111.0,
+            "corp_total": None,
+            "include_corp": False,
+            "groups": [[111, 0], [111, 1]],
+            "chars": 1,
+            "errors": [],
+        }
+    )
+
+    assert {r["order_id"] for r in _orders_in(h.conn)} == {902}, "无归属的历史行没被清掉"
+    assert h.assets.wallet == 111.0, "ESI 的钱包是绝对覆盖，不是增减"
+
+
 # ════════════════════════════════════════════════════════════
 #  订单变动的纯函数分类
 # ════════════════════════════════════════════════════════════

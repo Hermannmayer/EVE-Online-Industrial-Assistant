@@ -13,17 +13,23 @@
 载荷（`result_signal`）：
 
 - `orders`：字段与 `query_dashboard_bridge._normalize_order` 同口径，桥直接收。
-- `wallet_total`：**全部角色都成功才有值**，否则 `None` —— 合计少算了某个角色会把
-  余额写小，比不写更糟，所以由桥据此决定要不要覆盖。
+- `wallet_total`：**全部角色（含军团钱包，若开启）都成功才有值**，否则 `None` ——
+  合计少算了某一块会把余额写小，比不写更糟，所以由桥据此决定要不要覆盖。
+- `corp_total` / `include_corp`：军团钱包合计与开关状态（未开启或失败时为 `None`）。
+  桥据此把「角色钱包 + 军团钱包」的构成写进状态栏 —— 看不出钱在哪正是要解决的问题。
 - `groups`：本次成功同步到的归属组 `[[char_id, is_corp], ...]`，**含当前无挂单的空组**
   （桥按组整体替换，少了空组就删不掉已成交的幽灵行）。
-- `errors`：单角色失败的说明。有它也不影响其余角色落库。
+- `errors`：单角色 / 军团钱包失败的说明。有它也不影响其余角色落库。
 - `chars`：成功同步的角色数。
+
+**军团钱包是可选口径**（开关在 `settings.json` 的 `esi_include_corp_wallet`）：
+它是共享账户、不是个人净资产，读它还要角色有军团会计类角色，所以默认不拉。
 """
 
 from __future__ import annotations
 
 from core.logger import log
+from services.user_settings import get_include_corp_wallet
 from ui_qml.workers.esi_skill_worker import (
     ESI_BASE,
     EsiAuthRevoked,
@@ -37,6 +43,12 @@ from ui_qml.workers.esi_skill_worker import (
 #: 两条接口要的 scope 不同，403 文案得分开说 —— 写死一处会把用户引去勾错的权限
 _WALLET_SCOPE_HINT = "钱包"
 _ORDERS_SCOPE_HINT = "挂单"
+_CORP_SCOPE_HINT = "军团钱包"
+
+#: 军团钱包 scope。**不放进 `SCOPES` 常量**，只在用户开了「含军团钱包」开关时才随
+#: 授权一起请求（见基类 `_extra_scopes`）—— 否则没开的人也得多授权一次，且 CCP
+#: 门户没勾这个 scope 时授权会直接 `invalid_scope`，把整条 ESI 链路弄挂。
+CORP_WALLET_SCOPE = "esi-wallet.read_corporation_wallets.v1"
 
 
 def _map_order(raw: dict, char_id: int) -> dict:
@@ -75,6 +87,11 @@ class EsiWalletOrdersWorker(EsiSkillImportWorker):
         if not rows:
             raise RuntimeError("还没有绑定任何角色 —— 请先在人物设置里「从 ESI 添加角色」")
 
+        #: 军团钱包是可选口径（共享账户 + 需要军团会计角色），默认不拉
+        include_corp = get_include_corp_wallet()
+        corp_seen: set[int] = set()  # 多角色同军团只算一次，否则重复计入
+        corp_total = 0.0
+
         orders: list[dict] = []
         groups: list[list[int]] = []
         errors: list[str] = []
@@ -110,16 +127,59 @@ class EsiWalletOrdersWorker(EsiSkillImportWorker):
                 # 空组也要，否则桥按组替换时删不掉已经成交掉的旧行。
                 groups.extend(([int(char_id), 0], [int(char_id), 1]))
 
+                if not include_corp:
+                    continue
+                # 军团钱包单独兜异常：拉不到只影响钱包合计（整块跳过），
+                # **已经拿到的挂单照常落库** —— 不该因为读不到钱就把挂单也丢了。
+                try:
+                    corp_id = await self._character_corp(client, access, int(char_id))
+                    if corp_id not in corp_seen:
+                        corp_total += await self._pull_corp_wallet(client, access, corp_id)
+                        corp_seen.add(corp_id)
+                except (EsiAuthRevoked, EsiScopeMissing) as e:
+                    errors.append(f"{name} 的军团钱包：{e}")
+                except Exception as e:
+                    log.exception("ESI 军团钱包拉取失败 name=%s", name)
+                    errors.append(f"{name} 的军团钱包：{e}")
+
         if not ok_chars:
             raise RuntimeError("；".join(errors) or "没有可同步的角色")
 
         return {
             "orders": orders,
-            "wallet_total": wallet_total if not errors else None,
+            # 任一角色/军团失败 → 整块 None：合计缺人要写小，比不写更糟
+            "wallet_total": wallet_total + corp_total if not errors else None,
+            "corp_total": corp_total if (include_corp and not errors) else None,
+            "include_corp": include_corp,
             "groups": groups,
             "chars": ok_chars,
             "errors": errors,
         }
+
+    def _extra_scopes(self) -> tuple[str, ...]:
+        """开了「含军团钱包」才请求军团钱包 scope（见基类说明）。"""
+        return (CORP_WALLET_SCOPE,) if get_include_corp_wallet() else ()
+
+    async def _character_corp(self, client, access: str, char_id: int) -> int:
+        """角色所属军团 id。`/characters/{id}/` 是**公开**接口，不需要任何 scope。"""
+        detail = await _get_json(client, f"{ESI_BASE}/characters/{char_id}/", access)
+        return int((detail or {}).get("corporation_id") or 0)
+
+    async def _pull_corp_wallet(self, client, access: str, corp_id: int) -> float:
+        """军团钱包合计（各分部余额相加）。
+
+        只有军团会计类角色读得到，没有该角色会 403 —— 由调用方转成「军团钱包未纳入」，
+        不当作整体失败之外的额外惩罚。
+        """
+        if not corp_id:
+            return 0.0
+        rows = await _get_json(
+            client,
+            f"{ESI_BASE}/corporations/{corp_id}/wallets/",
+            access,
+            scope_hint=_CORP_SCOPE_HINT,
+        )
+        return float(sum(float(d.get("balance") or 0.0) for d in rows or []))
 
     async def _pull_one(self, client, access: str, char_id: int) -> tuple[float, list]:
         """一个角色的 (钱包余额, 未结挂单)。"""

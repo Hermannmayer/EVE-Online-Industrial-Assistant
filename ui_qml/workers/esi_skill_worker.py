@@ -268,12 +268,17 @@ def _start_callback_server() -> _CallbackServer:
     return _CallbackServer(("127.0.0.1", CALLBACK_PORT), _CallbackHandler)
 
 
-def _authorize_url(code_challenge: str, state: str) -> str:
+def _authorize_url(code_challenge: str, state: str, extra_scopes: tuple[str, ...] = ()) -> str:
+    """授权页 URL。`extra_scopes` 给「按开关才要的权限」用。
+
+    默认只要 `SCOPES` —— 用不到的可选能力不该逼用户多授权一次，
+    更不该让 CCP 门户没勾的 scope 把**整个**授权流程弄成 `invalid_scope`。
+    """
     params = {
         "response_type": "code",
         "client_id": CLIENT_ID,
         "redirect_uri": CALLBACK_URL,
-        "scope": " ".join(SCOPES),
+        "scope": " ".join((*SCOPES, *extra_scopes)),
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
         "state": state,
@@ -404,6 +409,16 @@ class EsiSkillImportWorker(QThread):
 
     # ── 令牌 ──
 
+    def _extra_scopes(self) -> tuple[str, ...]:
+        """子类可追加「按开关才要」的 scope（默认不加）。
+
+        单独开钩子而不是往 `SCOPES` 里塞：常量是所有用户都要的，而军团钱包这类
+        可选能力一旦写进常量，没开开关的人也得重新授权一次；更糟的是仓库若没在
+        CCP 门户勾过那个 scope，授权会直接 `invalid_scope`，把**整个** ESI 链路
+        （含技能）一起弄挂。
+        """
+        return ()
+
     async def _obtain_token(
         self, client, character_name: str | None = None, *, allow_browser: bool = True
     ) -> tuple[str, int, str]:
@@ -466,7 +481,7 @@ class EsiSkillImportWorker(QThread):
         except OSError as e:
             raise RuntimeError(f"回调端口 {CALLBACK_PORT} 被占用，请关掉占用它的程序后重试") from e
         try:
-            webbrowser.open(_authorize_url(challenge, state))
+            webbrowser.open(_authorize_url(challenge, state, self._extra_scopes()))
             code = self._await_code(server, state)
         finally:
             # 无条件关掉：否则端口 8721 会一直泄漏到进程结束
