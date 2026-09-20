@@ -94,16 +94,6 @@ def get_market_prices(conn, type_ids: set[int], region_id: int=10000002) -> dict
 
 定义行：`261`
 
-### `get_batch_adjustment`
-
-```python
-def get_batch_adjustment(per_run_output: int, needed_qty: int) -> tuple[int, int, int]
-```
-
-计算批次调整 — 当蓝图产出为批量时，可能需要向上取整。
-
-定义行：`294`
-
 ### `calculate_output_with_overflow`
 
 ```python
@@ -112,7 +102,7 @@ def calculate_output_with_overflow(conn, plans: list[dict], *, me_level: int=0, 
 
 计算所有计划的产出数据，含中间产品的 batch 溢出信息。
 
-定义行：`318`
+定义行：`294`
 
 ### `_format_overflow`
 
@@ -122,7 +112,7 @@ def _format_overflow(details: list[dict]) -> str
 
 格式化溢出信息为短文本
 
-定义行：`403`
+定义行：`379`
 
 ### `_pick_price`
 
@@ -132,7 +122,7 @@ def _pick_price(price_map: dict[str, float], price_type: str) -> float
 
 按价格类型取价；缺省回退另一个来源，均无数据返回 0.0
 
-定义行：`420`
+定义行：`396`
 
 ### `_spread`
 
@@ -142,7 +132,7 @@ def _spread(price_map: dict[str, float]) -> float | None
 
 卖价 − 买价（同一 hub 的挂单价差）。任一侧没有挂单 → `None`。
 
-定义行：`429`
+定义行：`405`
 
 ### `self_made_type_ids`
 
@@ -152,7 +142,7 @@ def self_made_type_ids(plans: list[dict]) -> set[int]
 
 会被「自制」覆盖的产物 id：**未完工的子项产线**的产物。
 
-定义行：`446`
+定义行：`422`
 
 ### `aggregate_procurement`
 
@@ -162,7 +152,7 @@ def aggregate_procurement(conn, plans: list[dict], *, hangar_id: int | None=None
 
 聚合「备料中」计划的待采购材料并扣库存 → (rows, total_cost, total_volume)。
 
-定义行：`469`
+定义行：`445`
 
 ### `collect_direct_materials`
 
@@ -172,4 +162,4 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]
 
 聚合各计划的直接材料（recipe 一层，非递归），排除由子项产线自制的组件。
 
-定义行：`627`
+定义行：`603`

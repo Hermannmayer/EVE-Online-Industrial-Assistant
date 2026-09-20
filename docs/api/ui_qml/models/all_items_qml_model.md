@@ -15,25 +15,13 @@ Qt 那几个无名角色）。
 S>A>B>C>D>✗ 的等级排，其余按去掉千分位后的数值排）。`QSortFilterProxyModel` 会把源模型的
 `roleNames()` 转发下去，所以 QML 直接把**代理**当 model 用即可 —— 排序口径一份都不用重写。
 
-## 函数
-
-### `icon_url`
-
-```python
-def icon_url(type_id: Any) -> str
-```
-
-物品图标文件 → QML `Image.source` 用的 URL；没有图标文件返回空串。
-
-定义行：`44`
-
 ## 类
 
 ### `class AllItemsQmlModel`（继承 `AModel`）
 
 全物品表：命名角色（文本与配色仍由父类算）。
 
-定义行：`58`
+定义行：`43`
 
 #### 方法
 
@@ -47,7 +35,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`61`
+定义行：`46`
 ##### `data`
 
 ```python
@@ -58,4 +46,4 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole) -> Any
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`64`
+定义行：`49`

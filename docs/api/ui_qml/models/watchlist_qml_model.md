@@ -14,18 +14,6 @@ QML 的 `color` 能解析它，而 `#rrggbb` 会丢掉透明度、把整行糊�
 
 ## 函数
 
-### `_token`
-
-```python
-def _token(name: str) -> str
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`53`
-
 ### `_tint`
 
 ```python
@@ -34,19 +22,7 @@ def _tint(name: str) -> str
 
 带透明度的主题色的 `#aarrggbb` 形式。
 
-定义行：`57`
-
-### `_icon_url`
-
-```python
-def _icon_url(type_id: Any) -> str
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`66`
+定义行：`52`
 
 ## 类
 
@@ -54,7 +30,7 @@ def _icon_url(type_id: Any) -> str
 
 关注列表：命名角色（行数据与刷新仍走父类）。
 
-定义行：`75`
+定义行：`61`
 
 #### 方法
 
@@ -68,7 +44,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`78`
+定义行：`64`
 ##### `data`
 
 ```python
@@ -79,7 +55,7 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole) -> Any
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`81`
+定义行：`67`
 ##### `_fg`
 
 ```python
@@ -90,7 +66,7 @@ def _fg(row: dict, col: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`110`
+定义行：`96`
 ##### `_bg`
 
 ```python
@@ -101,7 +77,7 @@ def _bg(self, row: dict, row_index: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`122`
+定义行：`108`
 ##### `refresh_colors`
 
 ```python
@@ -110,4 +86,4 @@ def refresh_colors(self) -> None
 
 主题切换 / 价格变化后补发 dataChanged（颜色都是算出来的字符串）。
 
-定义行：`149`
+定义行：`135`

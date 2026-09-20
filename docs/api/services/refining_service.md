@@ -10,6 +10,18 @@
 market.db 价格（经 PricingService）。产率公式 calc_refining_yield 在 core.eve_formulas。
 被估算页 refine_worker 消费。
 
+## 函数
+
+### `_ore_skill_candidates`
+
+```python
+def _ore_skill_candidates(group_en: str) -> list[str]
+```
+
+矿石组英文名 → 可能的专精技能英文名（按优先级，取第一个在 SDE 里存在的）。
+
+定义行：`25`
+
 ## 类
 
 ### `class RefiningService`
@@ -18,7 +30,7 @@ market.db 价格（经 PricingService）。产率公式 calc_refining_yield 在 
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`13`
+定义行：`40`
 
 #### 方法
 
@@ -32,7 +44,7 @@ def __init__(self, db, pricing_service=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`14`
+定义行：`41`
 ##### `filter_refinable`
 
 ```python
@@ -41,7 +53,16 @@ def filter_refinable(self, items: list[dict]) -> list[dict]
 
 过滤出有精炼材料数据的物品。
 
-定义行：`18`
+定义行：`45`
+##### `ore_skill_info`
+
+```python
+def ore_skill_info(self, type_id: int) -> tuple[bool, str]
+```
+
+→ `(是不是矿石, 矿石专精技能名/中文或空串)`。
+
+定义行：`59`
 ##### `calc_value`
 
 ```python
@@ -50,4 +71,4 @@ def calc_value(self, type_id, quantity=1, *, skills=None, is_player_facility=Fal
 
 完整实现（从 scoring_service.py 迁移）
 
-定义行：`32`
+定义行：`92`

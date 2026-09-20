@@ -12,27 +12,13 @@
   `roleNames()` 转发下去，所以 QML 直接把**代理**当 model 用即可，
   过滤逻辑一份都不用重写。
 
-## 函数
-
-### `_token`
-
-```python
-def _token(name: str) -> str
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`50`
-
 ## 类
 
 ### `class ContractQmlModel`（继承 `ContractTableModel`）
 
 合同列表：命名角色。
 
-定义行：`54`
+定义行：`50`
 
 #### 方法
 
@@ -46,7 +32,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`57`
+定义行：`53`
 ##### `data`
 
 ```python
@@ -57,7 +43,7 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole) -> Any
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`60`
+定义行：`56`
 ##### `_fg`
 
 ```python
@@ -68,13 +54,13 @@ def _fg(row: dict, col: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`83`
+定义行：`79`
 
 ### `class ContractItemQmlModel`（继承 `ContractItemTableModel`）
 
 合同内物品：命名角色（数量列右对齐）。
 
-定义行：`98`
+定义行：`94`
 
 #### 方法
 
@@ -88,7 +74,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`101`
+定义行：`97`
 ##### `data`
 
 ```python
@@ -99,4 +85,4 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole) -> Any
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`104`
+定义行：`100`

@@ -4,42 +4,12 @@
 
 > 模块说明：
 
-订单取数的共享部分：缓存 + ESI 线程。
+订单取数的共享部分：名称缓存 + ESI 线程。
 
-原先在 `ui_pyside6/views/query/query_order_popup.py`，与 OrderPopup（Widgets 悬浮窗）同处一文件；
-QML 版订单弹窗复用同一份缓存与线程，故拆出来。
-
-## 函数
-
-### `get_order_name`
-
-```python
-def get_order_name(page, type_id: int) -> str
-```
-
-根据 type_id 从页面的模型中查找物品名称
-
-定义行：`100`
-
-### `_on_orders_fetched`
-
-```python
-def _on_orders_fetched(page, type_id: int, buy_orders: list, sell_orders: list)
-```
-
-订单获取完成后的处理
-
-定义行：`114`
-
-### `_on_order_error`
-
-```python
-def _on_order_error(page, type_id: int, error: str)
-```
-
-订单获取出错处理
-
-定义行：`123`
+原先是 `ui_pyside6/views/query/query_order_popup.py` 里订单弹窗的配套部分（6.0 拆到这里）。
+订单弹窗已删除，本模块仍服务物品查询页的「订单列表」详情面板
+（`QueryDetailBridge`）。`order_cache` 的**唯一写入方**是
+`QueryDetailBridge._on_orders_fetched`。
 
 ## 类
 
@@ -47,7 +17,7 @@ def _on_order_error(page, type_id: int, error: str)
 
 后台获取 ESI 订单数据
 
-定义行：`19`
+定义行：`25`
 
 #### 方法
 
@@ -61,7 +31,7 @@ def __init__(self, type_id: int, region_id: int=10000002, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`25`
+定义行：`31`
 ##### `run`
 
 ```python
@@ -72,7 +42,7 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`30`
+定义行：`36`
 ##### `_fetch`
 
 ```python
@@ -83,15 +53,44 @@ async def _fetch(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`49`
+定义行：`55`
 ##### `_resolve_names`
 
 ```python
-async def _resolve_names(self, location_ids: list[int])
+async def _resolve_names(self, location_ids: list[int]) -> None
+```
+
+location_id → 站名：**先查本地 SDE，只有本地没有的才打 ESI**。
+
+定义行：`85`
+##### `_resolve_names_remote`
+
+```python
+async def _resolve_names_remote(self, ids: list[int]) -> None
+```
+
+ESI `/universe/names/` 兜底（实际只会走到玩家建筑）。
+
+定义行：`112`
+##### `_resolve_names_one_by_one`
+
+```python
+async def _resolve_names_one_by_one(self, client, ids: list[int], url: str) -> None
 ```
 
 ::: warning ⚠️ 待补 docstring
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`77`
+定义行：`143`
+##### `_absorb`
+
+```python
+def _absorb(payload: list) -> None
+```
+
+::: warning ⚠️ 待补 docstring
+此函数暂无 docstring，欢迎补充。
+:::
+
+定义行：`160`

@@ -27,12 +27,22 @@ def _default_research_system_id() -> int
 ### `_installation_fee`
 
 ```python
-def _installation_fee(activity: str, eiv: float, solar_system_id: int | None) -> float
+def _installation_fee(activity: str, eiv: float, solar_system_id: int | None, sci: float | None=None) -> float
 ```
 
 研究活动安装费（EIV × SCI(活动, 设施星系) × 结构 + 税 + SCC）。
 
 定义行：`48`
+
+### `_batch_installation_sci`
+
+```python
+def _batch_installation_sci(solar_system_id: int | None) -> dict[str, float]
+```
+
+整批共用的 SCI：星系解析 + 两个活动各查一次（原来每个物品都要重查这两条）。
+
+定义行：`72`
 
 ### `_prices`
 
@@ -42,7 +52,7 @@ def _prices(type_ids: list[int]) -> dict[int, float]
 
 批量取 adjusted_price（mkt 库）；缺失按 0。
 
-定义行：`69`
+定义行：`90`
 
 ### `_material_cost`
 
@@ -52,7 +62,7 @@ def _material_cost(conn: Connection, prices: dict[int, float], blueprint_type_id
 
 蓝图某活动的材料总价（调整价 × 数量）。
 
-定义行：`83`
+定义行：`104`
 
 ### `research_cost_for_item`
 
@@ -62,7 +72,7 @@ def research_cost_for_item(bp_conn: Connection, type_id: int, *, solar_system_id
 
 单个物品的研究成本（拷贝或发明）；原图/无蓝图 → None。
 
-定义行：`95`
+定义行：`116`
 
 ### `research_costs_batch`
 
@@ -72,4 +82,4 @@ def research_costs_batch(bp_conn: Connection, type_ids: list[int], *, solar_syst
 
 批量计算物品研究成本 &#123;type_id: cost|None&#125;（避免 N+1）。
 
-定义行：`100`
+定义行：`121`

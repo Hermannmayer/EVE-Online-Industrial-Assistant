@@ -38,27 +38,7 @@ def phosphor_url(filename: str, color: str, size: int=16) -> str
 
 Phosphor SVG 的 `image://phosphor/...` URL（颜色与尺寸编进查询串）。
 
-定义行：`100`
-
-### `_png_url`
-
-```python
-def _png_url(type_id: Any) -> str
-```
-
-物品图标（磁盘上的 PNG）URL。
-
-定义行：`113`
-
-### `_token`
-
-```python
-def _token(name: str) -> str
-```
-
-按 token 名取当前主题色值。
-
-定义行：`123`
+定义行：`99`
 
 ### `_tint`
 
@@ -68,7 +48,7 @@ def _tint(name: str) -> str
 
 类别色 → 带透明度的 `#AARRGGBB`（QML 的 color 认这个格式）。
 
-定义行：`134`
+定义行：`118`
 
 ## 类
 
@@ -76,7 +56,7 @@ def _tint(name: str) -> str
 
 生产计划模型 + QML 命名角色。数据/排序/折叠逻辑全在父类。
 
-定义行：`143`
+定义行：`127`
 
 #### 方法
 
@@ -90,7 +70,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`149`
+定义行：`133`
 ##### `data`
 
 ```python
@@ -101,7 +81,7 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`154`
+定义行：`138`
 ##### `_plan_at`
 
 ```python
@@ -110,7 +90,7 @@ def _plan_at(self, row: int) -> dict
 
 过滤行号 → 行 dict（折叠时经 `_row_map` 映射）。
 
-定义行：`200`
+定义行：`184`
 ##### `_fg`
 
 ```python
@@ -121,7 +101,7 @@ def _fg(self, p: dict, c: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`207`
+定义行：`191`
 ##### `_icon_url`
 
 ```python
@@ -132,7 +112,7 @@ def _icon_url(self, p: dict, c: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`245`
+定义行：`228`
 ##### `_fold_state`
 
 ```python
@@ -141,7 +121,7 @@ def _fold_state(self, p: dict) -> str
 
 产品列的折叠态：`""` 无可折叠 | `expanded` | `collapsed`。
 
-定义行：`255`
+定义行：`238`
 ##### `_display_text`
 
 ```python
@@ -152,7 +132,7 @@ def _display_text(self, p: dict, c: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`270`
+定义行：`253`
 ##### `refresh_colors`
 
 ```python
@@ -161,7 +141,7 @@ def refresh_colors(self) -> None
 
 主题切换后重算所有单元格颜色（`fg`/`bg`/`iconColor` 是已解析的 hex）。
 
-定义行：`278`
+定义行：`261`
 ##### `refresh_status_column`
 
 ```python
@@ -170,7 +150,7 @@ def refresh_status_column(self) -> None
 
 只重发**状态列** —— 缺料标注变了时用，不为一行把全表刷一遍。
 
-定义行：`285`
+定义行：`268`
 ##### `sort`
 
 ```python
@@ -181,7 +161,7 @@ def sort(self, column: int, order: Qt.SortOrder=Qt.SortOrder.AscendingOrder) -> 
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`302`
+定义行：`285`
 ##### `sort_column`
 
 ```python
@@ -192,7 +172,7 @@ def sort_column(self) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`307`
+定义行：`290`
 ##### `sort_ascending`
 
 ```python
@@ -203,4 +183,4 @@ def sort_ascending(self) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`311`
+定义行：`294`

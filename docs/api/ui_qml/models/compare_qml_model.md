@@ -17,25 +17,13 @@
 `roleNames()` 里的 `text` 角色同时供 `HorizontalHeaderView` 的 `textRole` 使用
 （表头与单元格共用一个角色名，Qt 的 header 只读它拿不到的列标题，无妨）。
 
-## 函数
-
-### `_icon_url`
-
-```python
-def _icon_url(type_id: Any) -> str
-```
-
-物品图标 → QML `Image.source` 的 URL；没有图标文件返回空串。
-
-定义行：`48`
-
 ## 类
 
 ### `class CompareQmlModel`（继承 `CompareTableModel`）
 
 对比结果表：命名角色（行数据与展示规则仍走父类）。
 
-定义行：`62`
+定义行：`47`
 
 #### 方法
 
@@ -49,7 +37,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`65`
+定义行：`50`
 ##### `data`
 
 ```python
@@ -60,4 +48,4 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole) -> Any
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`68`
+定义行：`53`

@@ -40,4 +40,4 @@ def _filter_blueprint_rows(conn: sqlite3.Connection | sqlite3.Cursor, rows: list
 
 丢弃蓝图行：已匹配行按物品种类，未匹配行按名字标记。
 
-定义行：`65`
+定义行：`70`

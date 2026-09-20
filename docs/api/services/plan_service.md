@@ -81,7 +81,7 @@ def _line_levels(bound: list[int], need: int, bp_level: dict[int, tuple[int, int
 
 逐线 ME/TE 列表（长度 = need 条产线）。
 
-定义行：`219`
+定义行：`228`
 
 ### `_enrich_rows`
 
@@ -91,7 +91,7 @@ def _enrich_rows(rows: list[dict], enrich: dict) -> list[dict]
 
 补 has_image/group_id/child_level/category + 机库显示名 + 蓝图绑定张数（内存派生，不落库）。
 
-定义行：`238`
+定义行：`247`
 
 ### `_fetch_rows`
 
@@ -101,7 +101,7 @@ def _fetch_rows(where_sql: str='', params: tuple=()) -> list[dict]
 
 SELECT * FROM production_plans（可选 WHERE），统一排序与 enrich。
 
-定义行：`295`
+定义行：`309`
 
 ### `load_plan`
 
@@ -111,7 +111,7 @@ def load_plan(plan_id: int) -> dict | None
 
 按 id 取单条计划（与 `load_plans` 同一条 `_fetch_rows` + enrich 管线）。
 
-定义行：`312`
+定义行：`326`
 
 ### `load_plans`
 
@@ -121,7 +121,7 @@ def load_plans(filter_key: str) -> list[dict]
 
 加载生产计划列表，并补全蓝图可用标记/类别/机库名称。
 
-定义行：`323`
+定义行：`337`
 
 ### `load_plans_for_wizard`
 
@@ -131,7 +131,7 @@ def load_plans_for_wizard() -> list[dict]
 
 产线启动小助手数据源：全部非完成计划（completed/done 排除），走同一 enrich。
 
-定义行：`337`
+定义行：`351`
 
 ### `_sub_level`
 
@@ -143,7 +143,7 @@ def _sub_level(p: dict) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`345`
+定义行：`359`
 
 ### `_is_shared_child`
 
@@ -153,7 +153,7 @@ def _is_shared_child(p: dict) -> bool
 
 跨 ≥2 个母项引用的子行归入「共享组件」区（引用式需求合并）。
 
-定义行：`349`
+定义行：`363`
 
 ### `group_and_sort_plans`
 
@@ -163,7 +163,7 @@ def group_and_sort_plans(plans: list[dict]) -> list[dict]
 
 母项在前树状排序 + 独立计划 + 独立「共享组件」区殿后。
 
-定义行：`357`
+定义行：`371`
 
 ### `collect_refresh_type_ids`
 
@@ -173,7 +173,7 @@ def collect_refresh_type_ids() -> tuple[set[int], int]
 
 收集工业页定向刷新所需的 type_id 集合，并返回其中 5 分钟内已缓存的条数。
 
-定义行：`407`
+定义行：`421`
 
 ### `save_price_snapshots`
 
@@ -183,7 +183,7 @@ def save_price_snapshots() -> int
 
 为活跃计划及其物料保存当前 Jita 价格快照，返回保存条数。
 
-定义行：`445`
+定义行：`459`
 
 ### `load_active_plans_for_procurement`
 
@@ -193,4 +193,4 @@ def load_active_plans_for_procurement() -> list[dict]
 
 加载采购对话框所需的活跃计划列表。
 
-定义行：`482`
+定义行：`496`

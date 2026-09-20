@@ -45,7 +45,7 @@ def _build_group_lookup(data: dict) -> dict[int, tuple[str, str]]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`73`
+定义行：`80`
 
 ### `write_items`
 
@@ -55,7 +55,7 @@ async def write_items(progress_cb: Callable[[int, str], None] | None=None)
 
 从缓存的 typeIDs.yaml + groupIDs.yaml + marketGroups.yaml 批量写入 item 表
 
-定义行：`84`
+定义行：`91`
 
 ### `write_market_tree`
 
@@ -65,7 +65,7 @@ async def write_market_tree()
 
 从 marketGroups.yaml 写入 market_tree 表
 
-定义行：`173`
+定义行：`180`
 
 ### `main`
 
@@ -75,7 +75,7 @@ async def main(progress_cb: Callable[[int, str], None] | None=None)
 
 主流程：检查数据状态 → 如需更新则下载 SDE zip → 解析 YAML → 批量写入
 
-定义行：`206`
+定义行：`213`
 
 ### `fill_missing_blueprint_names`
 
@@ -85,7 +85,7 @@ async def fill_missing_blueprint_names()
 
 补充 item 表中缺失的蓝图名称
 
-定义行：`262`
+定义行：`269`
 
 ### `fill_missing_item_names_from_esi`
 
@@ -95,4 +95,4 @@ async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], Non
 
 从 ESI 补拉 item 表中缺失名称的物品（并发 + 全局限流）。
 
-定义行：`347`
+定义行：`354`

@@ -11,15 +11,15 @@
 
 ## 函数
 
-### `get_blueprint_wastefactor`
+### `blueprint_index_sql`
 
 ```python
-def get_blueprint_wastefactor(conn: sqlite3.Connection, blueprint_type_id: int, activity: str='manufacturing') -> int
+def blueprint_index_sql() -> list[str]
 ```
 
-查询蓝图的材料 wastefactor。
+蓝图表索引的 CREATE 语句（导入器与 schema 迁移共用这一处定义）。
 
-定义行：`15`
+定义行：`26`
 
 ### `get_blueprint_materials`
 
@@ -29,7 +29,7 @@ def get_blueprint_materials(conn: sqlite3.Connection, blueprint_type_id: int, ac
 
 获取蓝图所需材料列表。
 
-定义行：`50`
+定义行：`31`
 
 ### `get_blueprint_products`
 
@@ -39,7 +39,7 @@ def get_blueprint_products(conn: sqlite3.Connection, product_type_id: int, activ
 
 根据产品 type_id 查找对应的蓝图信息。
 
-定义行：`77`
+定义行：`58`
 
 ## 类
 
@@ -47,7 +47,7 @@ def get_blueprint_products(conn: sqlite3.Connection, product_type_id: int, activ
 
 BlueprintReader 适配 — 基于 sqlite 连接的蓝图查询（实现 domain.bom.BlueprintReader）。
 
-定义行：`110`
+定义行：`91`
 
 #### 方法
 
@@ -61,7 +61,7 @@ def __init__(self, conn)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`113`
+定义行：`94`
 ##### `product`
 
 ```python
@@ -72,7 +72,7 @@ def product(self, product_type_id: int, activity: str='manufacturing') -> tuple[
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`116`
+定义行：`97`
 ##### `materials`
 
 ```python
@@ -83,4 +83,4 @@ def materials(self, blueprint_type_id: int, activity: str='manufacturing') -> li
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`122`
+定义行：`103`

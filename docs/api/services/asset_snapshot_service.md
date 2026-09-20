@@ -99,7 +99,7 @@ def _line_value() -> float
 
 line_value 线：**制造中**产线的材料占用 × 卖单价。
 
-定义行：`144`
+定义行：`143`
 
 ### `record_snapshot`
 
@@ -109,7 +109,7 @@ def record_snapshot(wallet: float | None=None) -> dict
 
 采集当日资产快照并 upsert（同日重复覆盖，不累积）。
 
-定义行：`194`
+定义行：`203`
 
 ### `load_series`
 
@@ -119,7 +119,7 @@ def load_series(days: int=90) -> list[dict]
 
 按日期升序返回最近 ``days`` 天内的快照序列。
 
-定义行：`230`
+定义行：`237`
 
 ### `adjust_wallet_balance`
 
@@ -129,7 +129,7 @@ def adjust_wallet_balance(delta: float) -> float
 
 按订单变动增减钱包余额（返回调整后的值）。
 
-定义行：`250`
+定义行：`257`
 
 ### `get_wallet_balance`
 
@@ -139,7 +139,7 @@ def get_wallet_balance() -> float
 
 wallet 线：读 settings.json 里的钱包余额；缺失/非数值一律 0.0。
 
-定义行：`261`
+定义行：`268`
 
 ### `set_wallet_balance`
 
@@ -149,4 +149,4 @@ def set_wallet_balance(value: float) -> None
 
 写回钱包余额（read-modify-write，保留 settings.json 其余键）。
 
-定义行：`270`
+定义行：`277`

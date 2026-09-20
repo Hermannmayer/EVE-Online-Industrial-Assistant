@@ -14,7 +14,8 @@ SQL 不散落到各处。
                        （发明 = 产出的 T2 蓝图；拷贝/研究 = 被操作的蓝图）。
     blueprint_type_id  同 product_type_id（科研行的输入蓝图与产物是同一张）。
     runs               拷贝 = 每份拷贝的授权流程；发明 = 每线尝试次数；研究 = 目标等级。
-    parallels          拷贝 = 产出份数；发明 = 并行作业数（总尝试 = runs × parallels）；其余按 1 计。
+    parallels          拷贝 = 产出份数；发明 = 并行作业数（总尝试 = runs × parallels）；
+                       其余按 1 计。
 
 ## 函数
 
@@ -26,7 +27,7 @@ def resolve_invention_source(conn, blueprint_type_id: int) -> dict[str, Any] | N
 
 给定 T2/T3 蓝图，反查它的发明来源与全部可能的产物。
 
-定义行：`25`
+定义行：`26`
 
 ### `invention_base_runs`
 
@@ -34,9 +35,9 @@ def resolve_invention_source(conn, blueprint_type_id: int) -> dict[str, Any] | N
 def invention_base_runs(conn, t2_blueprint_type_id: int, t1_blueprint_type_id: int) -> int
 ```
 
-发明产出的 T2 BPC 基础流程数 = SDE `blueprint_products.quantity`（invention 行），缺失时回退 10。
+发明产出的 T2 BPC 基础流程数 = SDE `blueprint_products.quantity`。
 
-定义行：`72`
+定义行：`73`
 
 ### `research_cost_per_run`
 
@@ -46,7 +47,7 @@ def research_cost_per_run(db, blueprint_type_id: int, *, solar_system_id: int | 
 
 「该蓝图每流程的研究成本」——供蓝图库「自动填写每流程成本」与「研究分析」使用。
 
-定义行：`100`
+定义行：`92`
 
 ### `_materials`
 
@@ -56,7 +57,7 @@ def _materials(conn, blueprint_type_id: int, activity: str) -> list[tuple[int, i
 
 蓝图某活动的材料清单 [(type_id, qty)]。
 
-定义行：`192`
+定义行：`184`
 
 ### `_prices`
 
@@ -66,7 +67,7 @@ def _prices(conn, type_ids: list[int]) -> dict[int, float]
 
 adjusted_price 优先（0/缺失 → sell_price → buy_price）。
 
-定义行：`206`
+定义行：`198`
 
 ### `_skill_levels`
 
@@ -76,17 +77,7 @@ def _skill_levels(conn, blueprint_type_id: int, activity: str, skills: dict) -> 
 
 该活动要求的两个科学技能 + 加密技术原理的等级。
 
-定义行：`220`
-
-### `plan_type_name`
-
-```python
-def plan_type_name(plan: dict) -> str
-```
-
-给计划表「产品」列展示的研究产物名（拷贝/发明/研究各有说法）。
-
-定义行：`245`
+定义行：`212`
 
 ### `create_research_plan`
 
@@ -96,4 +87,4 @@ def create_research_plan(blueprint_type_id: int, *, activity: str, blueprint_nam
 
 建一条科研计划行（pending，含科研专属列），返回 plan_id；失败 → -1。
 
-定义行：`262`
+定义行：`237`

@@ -88,7 +88,7 @@ def _installation_fee(eiv_materials: list[tuple[int, int]], prices: dict[int, fl
 ### `invention_plan_cost`
 
 ```python
-def invention_plan_cost(*, base_probability: float, materials: list[tuple[int, int]], prices: dict[int, float], sci: float, science_skill_1: int=0, science_skill_2: int=0, encryption_skill: int=0, decryptor: Decryptor | None=None, base_runs: int=10, output_runs_needed: int=1, input_bpc_cost_per_run: float=0.0, success_rate_override: float | None=None, actual_output_runs: int | None=None, structure_mult: float=1.0, facility_tax: float=DEFAULT_FACILITY_TAX, alpha_tax: float=0.0) -> dict
+def invention_plan_cost(*, base_probability: float, materials: list[tuple[int, int]], prices: dict[int, float], sci: float, science_skill_1: int=0, science_skill_2: int=0, encryption_skill: int=0, decryptor: Decryptor | None=None, base_runs: int=10, output_runs_needed: int=1, attempts_override: int | None=None, input_bpc_cost_per_run: float=0.0, success_rate_override: float | None=None, actual_output_runs: int | None=None, structure_mult: float=1.0, facility_tax: float=DEFAULT_FACILITY_TAX, alpha_tax: float=0.0) -> dict
 ```
 
 发明作业成本（期望值口径）。
@@ -103,7 +103,7 @@ def copying_plan_cost(*, materials: list[tuple[int, int]], prices: dict[int, flo
 
 拷贝作业成本。材料与时长按**总授权流程数**计，无概率项。
 
-定义行：`341`
+定义行：`353`
 
 ### `research_plan_cost`
 
@@ -113,4 +113,4 @@ def research_plan_cost(*, materials: list[tuple[int, int]], prices: dict[int, fl
 
 ME/TE 研究作业成本。
 
-定义行：`376`
+定义行：`388`

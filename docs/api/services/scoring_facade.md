@@ -13,6 +13,16 @@
 
 ## 函数
 
+### `_preload_material_prices`
+
+```python
+def _preload_material_prices(db, mat_ids: list[int], price_type: str, hub: str | None) -> dict[tuple[int, str], float | None]
+```
+
+一次 IN 查询预取材料价格与 adjusted price（EIV）。
+
+定义行：`56`
+
 ### `_char_config_fingerprint`
 
 ```python
@@ -21,17 +31,17 @@ def _char_config_fingerprint(char_config: dict | None) -> str
 
 生成角色配置的稳定摘要，用于缓存 key，避免角色配置变更后命中旧评分。
 
-定义行：`41`
+定义行：`87`
 
 ### `calc_manufacturing_score`
 
 ```python
-def calc_manufacturing_score(db, cache, *, type_id: int, char_config: dict | None, mat_source_hub: str, sell_hub: str, facility_tax_pct: float, price_type_mat: str, price_type_prod: str, bp_me: int, bp_te: int, system_id: int | None, structure_bonus: float, structure_time_mod: float, structure_mat_saving: float, is_alpha: bool, mat_price_mult: float=1.0, prod_price_mult: float=1.0) -> dict[str, Any]
+def calc_manufacturing_score(db, cache, *, type_id: int, char_config: dict | None, mat_source_hub: str, sell_hub: str, facility_tax_pct: float, price_type_mat: str, price_type_prod: str, bp_me: int, bp_te: int, system_id: int | None, structure_bonus: float, structure_time_mod: float, structure_mat_saving: float, is_alpha: bool, mat_price_mult: float=1.0, prod_price_mult: float=1.0, research_costs: dict[int, float | None] | None=None) -> dict[str, Any]
 ```
 
 制造评分用例：编排 DB 读取 + 领域纯函数 + 缓存。
 
-定义行：`52`
+定义行：`98`
 
 ### `calc_trade_score`
 
@@ -41,7 +51,7 @@ def calc_trade_score(db, cache, *, type_id: int, buy_hub: str, sell_hub: str, bu
 
 贸易评分用例：编排 DB 读取 + 领域纯函数 + 缓存。
 
-定义行：`187`
+定义行：`261`
 
 ### `calc_reaction_score`
 
@@ -51,7 +61,7 @@ def calc_reaction_score(db, *, type_id: int, char_config: dict | None, mat_sourc
 
 反应评分用例：编排 DB 读取 + 领域纯函数（反应无缓存）。
 
-定义行：`253`
+定义行：`327`
 
 ## 类
 
@@ -59,21 +69,25 @@ def calc_reaction_score(db, *, type_id: int, char_config: dict | None, mat_sourc
 
 PriceProvider 适配 — 委托给 scoring_service 模块级定价函数（可被测试 patch）。
 
-定义行：`22`
+``preloaded``：本物品材料的一次性批量预取结果，键为 ``(type_id, "buy"/"sell"/"adjusted")``。
+只装「一次查询就能确定」的键，查不到的一律回落模块级单条函数 —— 跨区域降级、
+无价格、旧库缺列等语义全部保持原样。
+
+定义行：`24`
 
 #### 方法
 
 ##### `__init__`
 
 ```python
-def __init__(self, db)
+def __init__(self, db, preloaded: dict[tuple[int, str], float | None] | None=None)
 ```
 
 ::: warning ⚠️ 待补 docstring
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`25`
+定义行：`32`
 ##### `get_price`
 
 ```python
@@ -84,7 +98,7 @@ def get_price(self, type_id: int, price_type: str, hub: str | None=None) -> floa
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`28`
+定义行：`36`
 ##### `get_volume`
 
 ```python
@@ -95,7 +109,7 @@ def get_volume(self, type_id: int, vol_type: str='total', hub: str | None=None) 
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`31`
+定义行：`42`
 ##### `get_system_cost_index`
 
 ```python
@@ -106,7 +120,7 @@ def get_system_cost_index(self, system_id: int | None, activity: str='manufactur
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`34`
+定义行：`45`
 ##### `get_adjusted_price`
 
 ```python
@@ -117,4 +131,4 @@ def get_adjusted_price(self, type_id: int) -> float | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`37`
+定义行：`48`

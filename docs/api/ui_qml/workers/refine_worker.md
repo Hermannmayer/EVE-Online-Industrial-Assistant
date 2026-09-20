@@ -12,7 +12,7 @@
 
 后台精炼计算 Worker — 继承 QThread 模式，参考 ClipboardParseWorker
 
-定义行：`8`
+定义行：`9`
 
 #### 方法
 
@@ -26,7 +26,7 @@ def __init__(self, items: list[dict], *, skills: dict | None=None, is_player_fac
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`14`
+定义行：`15`
 ##### `run`
 
 ```python
@@ -37,4 +37,4 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`33`
+定义行：`34`

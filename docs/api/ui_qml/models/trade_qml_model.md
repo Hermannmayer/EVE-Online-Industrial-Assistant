@@ -10,27 +10,13 @@
 （价差% 染色、图标列、右对齐）保持不变，这里只补**命名角色**并让行数据可整体替换
 （原版模型是构造时传 `rows` 的不可变形态，QML 侧需要一个稳定实例）。
 
-## 函数
-
-### `_icon_url`
-
-```python
-def _icon_url(type_id: Any) -> str
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`106`
-
 ## 类
 
 ### `class TradeHubQmlModel`（继承 `TradeHubTableModel`）
 
 跨区域价格表：命名角色 + 可整体替换行。
 
-定义行：`41`
+定义行：`40`
 
 #### 方法
 
@@ -44,7 +30,7 @@ def __init__(self, rows: list[dict] | None=None) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`44`
+定义行：`43`
 ##### `set_rows`
 
 ```python
@@ -53,7 +39,7 @@ def set_rows(self, rows: list[dict]) -> None
 
 整体替换行（原版每次分析都新建模型，QML 侧复用同一实例）。
 
-定义行：`47`
+定义行：`46`
 ##### `roleNames`
 
 ```python
@@ -64,7 +50,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`53`
+定义行：`52`
 ##### `data`
 
 ```python
@@ -75,7 +61,7 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole) -> Any
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`56`
+定义行：`55`
 ##### `_display`
 
 ```python
@@ -86,7 +72,7 @@ def _display(row: dict, col: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`83`
+定义行：`82`
 ##### `refresh_colors`
 
 ```python
@@ -95,4 +81,4 @@ def refresh_colors(self) -> None
 
 主题切换后补发 dataChanged（价差% 的颜色是算出来的字符串）。
 
-定义行：`95`
+定义行：`94`

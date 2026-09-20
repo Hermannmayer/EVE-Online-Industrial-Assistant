@@ -19,25 +19,13 @@
 全部复用，QWidgets 视图（`data(DisplayRole)` 等）也照常工作——迁移期两个视图
 可以共用同一个模型实例。
 
-## 函数
-
-### `_icon_url`
-
-```python
-def _icon_url(type_id: Any) -> str
-```
-
-图标文件 URL；文件不存在返回空串。
-
-定义行：`55`
-
 ## 类
 
 ### `class EstimateQmlModel`（继承 `EstimateTableModel`）
 
 估价表格模型 + QML 命名角色。逻辑全在父类，这里只补角色。
 
-定义行：`69`
+定义行：`52`
 
 #### 方法
 
@@ -51,7 +39,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`74`
+定义行：`57`
 ##### `data`
 
 ```python
@@ -62,7 +50,7 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`77`
+定义行：`60`
 ##### `sort`
 
 ```python
@@ -71,4 +59,4 @@ def sort(self, column: int, order: Qt.SortOrder=Qt.SortOrder.AscendingOrder) -> 
 
 排序后行号全变，必须让 QML 重新拉取 rowIndex。
 
-定义行：`111`
+定义行：`94`

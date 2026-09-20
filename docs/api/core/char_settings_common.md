@@ -16,7 +16,7 @@ def calc_broker_fee(skills: dict, faction_standing: float, corp_standing: float,
 
 计算经纪人费率 (%)。委托 core.eve_formulas.calc_broker_rate。
 
-定义行：`111`
+定义行：`155`
 
 ### `calc_relist_discount`
 
@@ -26,7 +26,7 @@ def calc_relist_discount(skills: dict) -> float
 
 计算改单折扣 (%)。委托 core.eve_formulas。
 
-定义行：`122`
+定义行：`166`
 
 ### `calc_sales_tax`
 
@@ -36,7 +36,7 @@ def calc_sales_tax(skills: dict, base_tax: float=2.0) -> float
 
 计算销售税率 (%)。委托 core.eve_formulas。
 
-定义行：`129`
+定义行：`173`
 
 ### `calc_max_orders`
 
@@ -46,7 +46,7 @@ def calc_max_orders(skills: dict, base_orders: int=15) -> int
 
 计算最大订单数。
 
-定义行：`139`
+定义行：`183`
 
 ### `format_pct`
 
@@ -58,4 +58,4 @@ def format_pct(value: float) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`148`
+定义行：`192`

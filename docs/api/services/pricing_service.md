@@ -9,7 +9,11 @@
 数据来源：market.db（market_prices 单张表含价格/成交量/adjusted price）、
 reference.db（industry_system_costs 系统成本指数）。
 被 UI 财务/运费/精炼/BOM 展开消费（经 bootstrap 容器 get_container().pricing_service）。
-注意：评分链路不经过本服务（走 scoring_service 模块级 get_price），改价需两边同步。
+
+**取价的单一定义处**在 `services/repositories/market_repository.py`，本类只做转发。
+评分链路（`scoring_service` 的模块级同名函数）也已合流到同一份实现 ——
+原先两处各有一份等价 SQL，那条注释「改价需两边同步」记的就是这个分裂，
+它已实际导致过缓存串值缺陷（见 `scoring_service._batch_materials` 的注释）。
 
 ## 函数
 
@@ -21,7 +25,7 @@ def trade_hub_to_system_id(hub: str) -> int | None
 
 将贸易中心名称映射为太阳系 ID。
 
-定义行：`15`
+定义行：`19`
 
 ## 类
 
@@ -29,7 +33,7 @@ def trade_hub_to_system_id(hub: str) -> int | None
 
 统一定价查询
 
-定义行：`20`
+定义行：`24`
 
 #### 方法
 
@@ -43,7 +47,7 @@ def __init__(self, db: DatabaseManager) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`23`
+定义行：`27`
 ##### `get_price`
 
 ```python
@@ -54,7 +58,7 @@ def get_price(self, type_id: int, price_type: str, hub: str | None=None) -> floa
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`27`
+定义行：`31`
 ##### `get_volume`
 
 ```python
@@ -65,7 +69,7 @@ def get_volume(self, type_id: int, vol_type: str='total', hub: str | None=None) 
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`30`
+定义行：`34`
 ##### `get_system_cost_index`
 
 ```python
@@ -74,7 +78,7 @@ def get_system_cost_index(self, system_id: int | None, activity: str='manufactur
 
 获取系统成本指数。system_id=None 时从 hub 名称推断，查无/未知统一用默认 SCI。
 
-定义行：`33`
+定义行：`37`
 ##### `get_adjusted_price`
 
 ```python
@@ -83,4 +87,4 @@ def get_adjusted_price(self, type_id: int) -> float | None
 
 获取 ESI adjusted price（EIV 计算用）
 
-定义行：`48`
+定义行：`41`

@@ -179,7 +179,7 @@ def run(self)
 
 后台聚合「备料中」计划的待采购金额/体积（统计条模式，按计划机库扣库存）
 
-定义行：`355`
+定义行：`363`
 
 #### 方法
 
@@ -193,7 +193,7 @@ def __init__(self, plans: list[dict], *, default_mat_hangar_id: int | None=None,
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`360`
+定义行：`368`
 ##### `run`
 
 ```python
@@ -204,4 +204,4 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`382`
+定义行：`390`
