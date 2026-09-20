@@ -1,319 +1,188 @@
-"""合同数据模型测试 — ContractTableModel
+"""合同表模型 —— 渲染文本与排序。
 
-使用 qapp fixture 提供 QApplication 实例。
+**没有外观断言**（不测颜色/字号/对齐，按测试判定表属禁止档）；测的是**文本内容**，
+它是用户做判断的依据：剩余时间算错、跳数状态混为一谈、缺价显示成 0，都会让人做错决定。
 """
+
+from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import Qt
 
 from ui_qml.models.contract_models import (
-    CONTRACT_STATUS_CN,
-    CONTRACT_TYPE_CN,
-    ContractFilterProxy,
+    AUCTION_VIEW,
+    COURIER_VIEW,
+    EXCHANGE_VIEW,
+    ContractItemTableModel,
     ContractTableModel,
+    _isk,
+    _m3,
+    _pct_signed,
+    _place,
+    _remaining,
 )
 
 pytestmark = pytest.mark.ui
 
-# ── 测试数据 ──
 
-SAMPLE_CONTRACTS = [
-    {
-        "contract_id": 1001,
-        "type": "item_exchange",
-        "title": "Tritanium Bulk",
-        "price": 5000000.00,
-        "collateral": 1000000.00,
-        "volume": 50000.0,
-        "days_completed": 7,
-        "status": "outstanding",
-        "date_issued": "2026-06-01 12:00:00",
-        "date_expired": "2026-07-01 12:00:00",
-    },
-    {
-        "contract_id": 1002,
-        "type": "auction",
-        "title": "Raven Blueprint",
-        "price": 100000000.00,
-        "collateral": 0.0,
-        "volume": 1.0,
-        "days_completed": 0,
-        "status": "finished_issuer",
-        "date_issued": "2026-05-15 08:00:00",
-        "date_expired": "2026-06-15 08:00:00",
-    },
-    {
-        "contract_id": 1003,
-        "type": "courier",
-        "title": "Jita → Amarr",
-        "price": 0.0,
-        "collateral": 50000000.00,
-        "volume": 150000.0,
-        "days_completed": 3,
-        "status": "in_progress",
-        "date_issued": "2026-06-20 10:00:00",
-        "date_expired": "2026-06-30 10:00:00",
-    },
-    {
-        "contract_id": 1004,
-        "type": "item_exchange",
-        "title": "Rented Refinery",
-        "price": 750000000.00,
-        "collateral": 0.0,
-        "volume": 0.0,
-        "days_completed": None,
-        "status": "cancelled",
-        "date_issued": "2026-04-01 00:00:00",
-        "date_expired": "2026-05-01 00:00:00",
-    },
-    {
-        "contract_id": 1005,
-        "type": "item_exchange",
-        "title": "",
-        "price": 1200.50,
-        "collateral": 500.00,
-        "volume": 10.0,
-        "days_completed": 1,
-        "status": "expired",
-        "date_issued": "2026-03-01 00:00:00",
-        "date_expired": "2026-04-01 00:00:00",
-    },
-]
+def _row(view, row: dict, col: int) -> str:
+    return str(view.render(row, col))
 
 
-# ═══════════════════════════════════════════════════════
-#  ContractTableModel 测试
-# ═══════════════════════════════════════════════════════
-
-
-class TestContractTableModel:
-    """合同表格数据模型基础操作"""
-
-    def test_row_count(self, qapp):
-        model = ContractTableModel()
-        assert model.rowCount() == 0
-        model.set_rows(SAMPLE_CONTRACTS)
-        assert model.rowCount() == 5
-
-    # ── 字段显示 ──
-
-    # (row, col) → 期望 DisplayRole。数值/日期/空值边界都在这一张表里 —— 任一列格式化改坏必红。
-    DISPLAY = {
-        (0, 0): "1001",
-        (0, 1): CONTRACT_TYPE_CN["item_exchange"],
-        (1, 1): CONTRACT_TYPE_CN["auction"],
-        (2, 1): CONTRACT_TYPE_CN["courier"],
-        (0, 2): "Tritanium Bulk",
-        (4, 2): "—",  # 空标题
-        (0, 3): "5,000,000.00",
-        (2, 3): "—",  # 零价
-        (0, 4): "1,000,000.00",
-        (1, 4): "—",  # 零抵押
-        (0, 5): "50,000.0",
-        (0, 6): "7",
-        (1, 6): "—",  # days_completed=0
-        (2, 6): "3",
-        (3, 6): "—",  # days_completed=None
-        (4, 6): "1",
-        (0, 7): CONTRACT_STATUS_CN["outstanding"],
-        (0, 8): "2026-06-01 12:00:00",
-        (0, 9): "2026-07-01 12:00:00",
-    }
-
-    def test_display_values(self, qapp):
-        model = ContractTableModel()
-        model.set_rows(SAMPLE_CONTRACTS)
-        for (row, col), expected in self.DISPLAY.items():
-            actual = model.index(row, col).data(Qt.ItemDataRole.DisplayRole)
-            assert actual == expected, f"({row}, {col}) 期望 {expected!r} 得到 {actual!r}"
-
-    # ── UserRole ──
-
-    def test_user_role_returns_full_row(self, qapp):
-        model = ContractTableModel()
-        model.set_rows(SAMPLE_CONTRACTS)
-        row = model.index(0, 0).data(Qt.ItemDataRole.UserRole)
-        assert row["contract_id"] == 1001
-        assert row["type"] == "item_exchange"
-        assert row["price"] == 5000000.00
-
-    # ── get_row ──
-
-    def test_get_row(self, qapp):
-        model = ContractTableModel()
-        model.set_rows(SAMPLE_CONTRACTS)
-        assert model.get_row(0)["contract_id"] == 1001
-        # 越界与未填充一律 None
-        assert model.get_row(-1) is None
-        assert model.get_row(5) is None
-        assert model.get_row(999) is None
-        assert ContractTableModel().get_row(0) is None
-
-    # ── 表头 ──
-
-    HEADERS = {
-        0: "合同ID",
-        1: "类型",
-        2: "标题",
-        3: "价格 (ISK)",
-        4: "抵押 (ISK)",
-        5: "体积 (m³)",
-        6: "运输天数",
-        7: "状态",
-        8: "签发日期",
-        9: "过期日期",
-    }
-
-    def test_header_data(self, qapp):
-        model = ContractTableModel()
-        for section, label in self.HEADERS.items():
-            assert model.headerData(section, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == label
-
-    # ── 排序 ──
-
-    def test_sort_by_price(self, qapp):
-        model = ContractTableModel()
-        # set_rows 存引用、sort 原地重排 —— 传副本，避免污染模块级 SAMPLE_CONTRACTS
-        model.set_rows(list(SAMPLE_CONTRACTS))
-        model.sort(3, Qt.SortOrder.DescendingOrder)
-        assert model._rows[0]["contract_id"] == 1004  # 750M 最高
-        model.sort(3, Qt.SortOrder.AscendingOrder)
-        assert model._rows[0]["contract_id"] == 1003  # 0（零价排最后）
-
-    def test_sort_by_title(self, qapp):
-        model = ContractTableModel()
-        model.set_rows(list(SAMPLE_CONTRACTS))
-        model.sort(2, Qt.SortOrder.AscendingOrder)
-        sorted_titles = [r["title"] for r in model._rows if r["title"]]
-        assert sorted_titles == sorted(sorted_titles)
-
-    def test_invalid_column_does_nothing(self, qapp):
-        model = ContractTableModel()
-        model.set_rows(list(SAMPLE_CONTRACTS))
-        model.sort(99, Qt.SortOrder.AscendingOrder)
-        assert model.rowCount() == 5
-
-    # ── 空数据状态 ──
-
-    def test_set_rows_replaces_data(self, qapp):
-        model = ContractTableModel()
-        model.set_rows(SAMPLE_CONTRACTS)
-        assert model.rowCount() == 5
-        model.set_rows([])
-        assert model.rowCount() == 0
-        model.set_rows(SAMPLE_CONTRACTS[:2])
-        assert model.rowCount() == 2
-
-    def test_column_count(self, qapp):
-        """列数不随数据变化"""
-        model = ContractTableModel()
-        assert model.columnCount() == 10
-        model.set_rows(SAMPLE_CONTRACTS)
-        assert model.columnCount() == 10
-        model.set_rows([])
-        assert model.columnCount() == 10
-
-
-# ════════════════════════════════════════════════════════════════
-#  ContractFilterProxy 过滤测试（自 test_contract_ui 并入，复用上方 SAMPLE_CONTRACTS）
-# ════════════════════════════════════════════════════════════════
-
-
-def _setup(qapp):
-    """创建带数据的模型和代理"""
-    model = ContractTableModel()
-    model.set_rows(SAMPLE_CONTRACTS)
-    proxy = ContractFilterProxy()
-    proxy.setSourceModel(model)
-    return model, proxy
-
-
-@pytest.fixture
-def setup_proxy(qapp):
-    return _setup(qapp)
-
-
-class TestContractFilterProxy:
-    """合同列表实时过滤"""
-
-    def test_no_filter_shows_all(self, setup_proxy):
-        _, proxy = setup_proxy
-        assert proxy.rowCount() == 5
-
+class TestFormatters:
     @pytest.mark.parametrize(
-        "search_text, expected_count",
+        "seconds, expected",
         [
-            ("Tritanium", 1),  # 命中标题
-            ("Bulk", 1),  # 子串命中
-            ("tritanium", 1),  # 大小写不敏感
-            ("NonExistentXYZ", 0),
-            ("Ji", 1),  # 命中 "Jita → Amarr"
-            ("→", 1),  # 特殊字符
-            ("", 5),  # 清空恢复全部
+            (None, "—"),
+            (-5, "已过期"),
+            (0, "已过期"),
+            (90, "0小时1分"),
+            (3_600, "1小时0分"),
+            (86_400, "1天0小时"),
+            (86_400 * 2 + 7_200, "2天2小时"),
         ],
     )
-    def test_filter_by_title(self, setup_proxy, search_text, expected_count):
-        _, proxy = setup_proxy
-        proxy.set_search_text(search_text)
-        assert proxy.rowCount() == expected_count
+    def test_remaining(self, seconds, expected):
+        """剩余时间是合同最要紧的一列 —— 跨天/一天内两种档位都要对"""
+        assert _remaining(seconds) == expected
 
     @pytest.mark.parametrize(
-        "price_min, price_max, expected_count",
-        [
-            (100_000_000, 0, 2),  # max=0 表示不限
-            (0, 1_000_000, 2),  # min=0 表示不限
-            (4_000_000, 6_000_000, 1),  # 闭区间只留 5M
-            (0, 0, 5),  # 不限
-        ],
+        "value, expected",
+        [(0, "—"), (None, "—"), (1234.5, "1,234"), (1_500_000_000.0, "1,500,000,000")],
     )
-    def test_filter_price_range(self, setup_proxy, price_min, price_max, expected_count):
-        _, proxy = setup_proxy
-        proxy.set_price_range(price_min, price_max)
-        assert proxy.rowCount() == expected_count
+    def test_isk(self, value, expected):
+        """0 显示「—」而不是「0」——「没有」和「是零」不是一回事"""
+        assert _isk(value) == expected
+
+    @pytest.mark.parametrize("value, expected", [(None, "—"), (0, "—"), (12.34, "12.3")])
+    def test_m3(self, value, expected):
+        assert _m3(value) == expected
+
+    @pytest.mark.parametrize("value, expected", [(None, "—"), (25.0, "+25.0%"), (-12.5, "-12.5%"), (0, "+0.0%")])
+    def test_pct_signed(self, value, expected):
+        assert _pct_signed(value) == expected
+
+    def test_place_includes_system_and_security(self):
+        """同名站点遍布新伊甸，只给站名会认错地方 —— 星系与安全等级必须一起给"""
+        text = _place("Jita IV - Moon 4", "Jita", 0.95)
+        assert "Jita IV - Moon 4" in text and "Jita" in text and "0.9" in text
+
+    def test_place_unknown(self):
+        assert _place("", "", None) == "未知地点"
+
+
+class TestCourierJumpColumn:
+    def test_jumps_are_shown_when_computed(self):
+        assert _row(COURIER_VIEW, {"jumps": 12, "jumps_status": "ok"}, 3) == "12"
 
     @pytest.mark.parametrize(
-        "buy_sell, expected_count",
+        "status, expected",
         [
-            ("全部", 5),
-            ("我要买", 4),  # item_exchange + auction，排除 courier
-            ("我要卖", 3),  # 仅 item_exchange
+            ("not_computed", "未计算"),
+            ("unknown_endpoint", "未知地点"),
+            ("unroutable", "需穿低安"),
         ],
     )
-    def test_filter_buy_sell(self, setup_proxy, buy_sell, expected_count):
-        _, proxy = setup_proxy
-        proxy.set_buy_sell(buy_sell)
-        assert proxy.rowCount() == expected_count
+    def test_empty_jumps_are_distinguished_by_reason(self, status, expected):
+        """三种空值必须给出不同文字。
 
-    def test_filter_combined_search_and_price(self, setup_proxy):
-        _, proxy = setup_proxy
-        proxy.set_search_text("a")
-        proxy.set_price_range(1_000_000, 10_000_000)
-        assert proxy.rowCount() == 1
+        「高安口径下无路线」意味着这活要穿低安（决策信息）；「起止点解析不出」是我们
+        不知道这是哪（风险信息）。都显示成「—」等于把两种相反的结论抹平。
+        """
+        assert _row(COURIER_VIEW, {"jumps": None, "jumps_status": status}, 3) == expected
 
-    def test_filter_combined_search_and_buy_sell(self, setup_proxy):
-        _, proxy = setup_proxy
-        proxy.set_search_text("Rented")
-        proxy.set_buy_sell("我要卖")
-        assert proxy.rowCount() == 1
 
-    def test_filter_with_empty_model(self, qapp):
-        model = ContractTableModel()
-        proxy = ContractFilterProxy()
-        proxy.setSourceModel(model)
-        assert proxy.rowCount() == 0
-        proxy.set_search_text("test")
-        assert proxy.rowCount() == 0
+class TestAuctionView:
+    def test_entry_cost_columns(self):
+        row = {"buyout": 500.0, "current_bid": 100.0, "market_value": 1_000.0, "price_diff": 500.0}
+        assert _row(AUCTION_VIEW, row, 2) == "500"  # 一口价
+        assert _row(AUCTION_VIEW, row, 3) == "100"  # 当前出价
+        assert _row(AUCTION_VIEW, row, 5) == "+500"
 
-    def test_source_model_changed(self, qapp):
-        model = ContractTableModel()
-        model.set_rows(SAMPLE_CONTRACTS)
-        proxy = ContractFilterProxy()
-        proxy.setSourceModel(model)
-        proxy.set_search_text("Tritanium")
-        assert proxy.rowCount() == 1
+    def test_missing_diff_shows_dash_not_zero(self):
+        """价差算不出来时必须是「—」—— 显示 0 会被读成「不赚不亏」"""
+        row = {"price_diff": None, "diff_pct": None}
+        assert _row(AUCTION_VIEW, row, 5) == "—"
+        assert _row(AUCTION_VIEW, row, 6) == "—"
 
-        model2 = ContractTableModel()
-        model2.set_rows(SAMPLE_CONTRACTS[:3])
-        proxy.setSourceModel(model2)
-        proxy.set_search_text("")
-        assert proxy.rowCount() == 3
+    @pytest.mark.parametrize("status", ["no_items", "no_price"])
+    def test_unanalyzed_contract_shows_dash_not_huge_loss(self, status):
+        """物品还没拉时，价差等于「−合同价」—— 整屏巨额负数看着像「全都不值得买」。
+
+        那是「还没算」，不是「算了，是亏的」。市价与价差三列都必须显示「—」。
+        """
+        row = {
+            "status": status,
+            "entry_cost": 35_000_000_000.0,
+            "market_value": 0.0,
+            "price_diff": -35_000_000_000.0,
+            "diff_pct": -100.0,
+        }
+        for col in (4, 5, 6):
+            assert _row(AUCTION_VIEW, row, col) == "—"
+
+    def test_analyzed_contract_still_shows_real_numbers(self):
+        row = {
+            "status": "ok",
+            "entry_cost": 500.0,
+            "market_value": 1_000.0,
+            "price_diff": 500.0,
+            "diff_pct": 100.0,
+        }
+        assert _row(AUCTION_VIEW, row, 4) == "1,000"
+        assert _row(AUCTION_VIEW, row, 5) == "+500"
+
+
+class TestExchangeView:
+    def test_blueprint_columns_blank_for_plain_contracts(self):
+        """非蓝图合同的「蓝图市价/制造利润」留空，不显示 0（0 会被读成「蓝图不值钱」）"""
+        row = {"has_blueprint": False, "blueprint_value": 0.0, "manufacturing_profit": 0.0}
+        assert _row(EXCHANGE_VIEW, row, 6) == ""
+        assert _row(EXCHANGE_VIEW, row, 7) == "—"
+        assert _row(EXCHANGE_VIEW, row, 8) == "—"
+
+    def test_blueprint_row_shows_breakdown(self):
+        row = {"has_blueprint": True, "blueprint_value": 2e7, "manufacturing_profit": 3e6}
+        assert _row(EXCHANGE_VIEW, row, 6) == "是"
+        assert _row(EXCHANGE_VIEW, row, 7) == "20,000,000"
+        assert _row(EXCHANGE_VIEW, row, 8) == "3,000,000"
+
+
+class TestSorting:
+    def test_sort_numeric_desc_with_none_last(self):
+        model = ContractTableModel(COURIER_VIEW)
+        model.set_rows([{"isk_per_jump": 5.0}, {"isk_per_jump": 50.0}, {"isk_per_jump": None}])
+        model.sort(7, Qt.SortOrder.DescendingOrder)
+        assert [r["isk_per_jump"] for r in model._rows] == [50.0, 5.0, None]
+
+    def test_sort_on_column_without_key_is_noop(self):
+        model = ContractTableModel(COURIER_VIEW)
+        model.set_rows([{"contract_id": 1}])
+        model.sort(9, Qt.SortOrder.AscendingOrder)  # 「剩余」列没有排序键
+        assert model.rowCount() == 1
+
+
+class TestItemModel:
+    def test_runs_only_for_copies(self):
+        """可运行数只有复制品才有意义；BPO 显示「—」而不是 1（会被读成「只能造一次」）"""
+        model = ContractItemTableModel()
+        model.set_rows(
+            [
+                {"type_id": 1, "quantity": 1, "is_blueprint_copy": False, "runs": 1},
+                {"type_id": 2, "quantity": 1, "is_blueprint_copy": True, "runs": 42},
+            ]
+        )
+        assert model._display(model._rows[0], 8) == "—"
+        assert model._display(model._rows[1], 8) == "42"
+
+    def test_unit_price_and_subtotal(self):
+        model = ContractItemTableModel()
+        model.set_rows([{"type_id": 1, "quantity": 10, "unit_price": 5.0}])
+        assert model._display(model._rows[0], 9) == "5"
+        assert model._display(model._rows[0], 10) == "50"
+
+    def test_no_price_shows_dash(self):
+        model = ContractItemTableModel()
+        model.set_rows([{"type_id": 1, "quantity": 10}])
+        assert model._display(model._rows[0], 9) == "—"
+        assert model._display(model._rows[0], 10) == "—"

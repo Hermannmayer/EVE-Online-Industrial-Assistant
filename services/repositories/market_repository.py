@@ -3,8 +3,20 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 
 from core.constants import TRADE_HUB_IDS
+
+#: SQLite 的绑定变量上限（`MAX_VARIABLE_NUMBER`，本机 32766）。`get_*_prices` 的
+#: `IN (?)` 是按 type_id 个数拼的问号，合同页一次要几百上千个 —— 不分块会直接抛
+#: `too many SQL variables`（实测 3.4 万个 type_id 必炸）。
+_SQL_VAR_CHUNK = 500
+
+
+def _chunked(ids: list[int]) -> Iterator[list[int]]:
+    """按绑定变量上限切批，供批量查询的 `IN (?)` 使用。"""
+    for i in range(0, len(ids), _SQL_VAR_CHUNK):
+        yield ids[i : i + _SQL_VAR_CHUNK]
 
 
 class MarketRepository:
@@ -113,42 +125,48 @@ class MarketRepository:
         if not type_ids:
             return {}
         tids = list(dict.fromkeys(type_ids))
-        ph = ",".join("?" * len(tids))
         result: dict[int, float] = {}
+        avg = price_type == "avg"
+        col = "sell_price" if price_type == "sell" else "buy_price"
         with self._db.connect("mkt") as conn:
-            if price_type == "avg":
-                rows = conn.execute(
-                    f"SELECT type_id, sell_price, buy_price FROM market_prices"
-                    f" WHERE type_id IN ({ph}) AND region_id = ?",
-                    (*tids, region_id),
-                ).fetchall()
-                for tid, sell, buy in rows:
-                    if sell and buy:
-                        result[int(tid)] = (sell + buy) / 2
-                    elif sell or buy:
-                        result[int(tid)] = sell or buy
-            else:
-                col = "sell_price" if price_type == "sell" else "buy_price"
-                rows = conn.execute(
-                    f"SELECT type_id, {col} FROM market_prices WHERE type_id IN ({ph}) AND region_id = ?",
-                    (*tids, region_id),
-                ).fetchall()
-                for tid, price in rows:
-                    if price is not None:
-                        result[int(tid)] = float(price)
+            for chunk in _chunked(tids):
+                ph = ",".join("?" * len(chunk))
+                if avg:
+                    rows = conn.execute(
+                        f"SELECT type_id, sell_price, buy_price FROM market_prices"
+                        f" WHERE type_id IN ({ph}) AND region_id = ?",
+                        (*chunk, region_id),
+                    ).fetchall()
+                    for tid, sell, buy in rows:
+                        if sell and buy:
+                            result[int(tid)] = (sell + buy) / 2
+                        elif sell or buy:
+                            result[int(tid)] = sell or buy
+                else:
+                    rows = conn.execute(
+                        f"SELECT type_id, {col} FROM market_prices WHERE type_id IN ({ph}) AND region_id = ?",
+                        (*chunk, region_id),
+                    ).fetchall()
+                    for tid, price in rows:
+                        if price is not None:
+                            result[int(tid)] = float(price)
         return result
 
     def get_sell_prices(self, type_ids: list[int], region_id: int) -> dict[int, float]:
         """批量获取指定区域卖单价。"""
         if not type_ids:
             return {}
+        tids = list(dict.fromkeys(type_ids))
+        result: dict[int, float] = {}
         with self._db.connect("mkt") as conn:
-            ph = ",".join("?" * len(type_ids))
-            rows = conn.execute(
-                f"SELECT type_id, sell_price FROM market_prices WHERE type_id IN ({ph}) AND region_id = ?",
-                (*type_ids, region_id),
-            ).fetchall()
-            return {int(r[0]): float(r[1]) for r in rows if r[1]}
+            for chunk in _chunked(tids):
+                ph = ",".join("?" * len(chunk))
+                rows = conn.execute(
+                    f"SELECT type_id, sell_price FROM market_prices WHERE type_id IN ({ph}) AND region_id = ?",
+                    (*chunk, region_id),
+                ).fetchall()
+                result.update({int(r[0]): float(r[1]) for r in rows if r[1]})
+        return result
 
     def get_price_by_region(self, type_id: int, price_type: str, region_id: int) -> float | None:
         """获取指定区域的价格；price_type: 'buy' / 'sell' / 'avg'。"""

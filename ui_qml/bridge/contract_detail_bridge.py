@@ -12,7 +12,7 @@ from typing import Any
 from PySide6.QtCore import Property, Signal, Slot
 
 from ui_qml.bridge.summary_dialog import SummaryTableBridge, SummaryTableQmlDialog, cell
-from ui_qml.models.contract_models import _ITEM_COLUMNS, CONTRACT_STATUS_CN, CONTRACT_TYPE_CN
+from ui_qml.models.contract_models import CONTRACT_TYPE_CN, ITEM_COLUMNS
 
 __all__ = ["ContractDetailBridge", "ContractDetailQmlDialog", "contract_item_rows"]
 
@@ -25,38 +25,56 @@ _LOADING_TEXT = "正在加载物品列表…"
 
 
 def _columns() -> list[dict]:
-    """列定义 —— 与 Widgets 版同源于 `_ITEM_COLUMNS`，只把弹性列从最后一列换到「英文名」。
+    """列定义 —— 与物品表同源于 `ITEM_COLUMNS`，只把弹性列从最后一列换到「英文名」。
 
-    Widgets 版是 `setStretchLastSection(True)`，于是被拉伸的是最后一列「PE」：
-    一个两位数宽的窄列吃掉了右侧整片空白，而真正长的英文名被截断。
-    QML 版把弹性给最长的「英文名」。列名、顺序、其余宽度一字未改。
+    Widgets 版是 `setStretchLastSection(True)`，于是被拉伸的是最后一列：一个窄列
+    吃掉了右侧整片空白，而真正长的英文名被截断。QML 版把弹性给最长的「英文名」。
     """
     return [
-        {"title": title, "width": 0 if i == _FLEX_COLUMN else width} for i, (title, width) in enumerate(_ITEM_COLUMNS)
+        {"title": title, "width": 0 if i == _FLEX_COLUMN else width} for i, (title, width) in enumerate(ITEM_COLUMNS)
     ]
+
+
+def _place(info: dict, prefix: str) -> str:
+    """起止点 —— 站名 + 星系 + 安全等级。给不出站名时**如实说是玩家建筑的可能**，
+    不显示裸 id 让用户自己猜。"""
+    station = info.get(f"{prefix}_station")
+    if not station:
+        return "未知地点（可能是玩家建筑）"
+    system = info.get(f"{prefix}_system") or ""
+    security = info.get(f"{prefix}_security")
+    sec = f" {security:.1f}" if isinstance(security, (int, float)) else ""
+    return f"{station}（{system}{sec}）" if system else str(station)
 
 
 def contract_item_rows(items: list[dict]) -> list[dict]:
     """合同物品 → 单元格行。纯函数，便于单测。
 
-    取值与配色对齐 `ContractItemTableModel._get_display` / `ForegroundRole`：
-    数量列为主题色，其余默认；空缺的中英文名与效率值显示为「—」。
+    取值与配色对齐 `ContractItemTableModel._display`：数量列为主题色，其余默认；
+    空缺的中英文名与效率值显示为「—」。
     """
     rows: list[dict] = []
     for item in items:
         me = item.get("material_efficiency", 0)
         te = item.get("time_efficiency", 0)
+        unit = item.get("unit_price")
+        quantity = int(item.get("quantity") or 0)
+        is_bpc = item.get("is_blueprint_copy")
         rows.append(
             {
                 "cells": [
                     cell(item.get("type_id", "")),
                     cell(item.get("zh_name", "") or "—"),
                     cell(item.get("en_name", "") or "—"),
-                    cell(str(item.get("quantity", 0)), "PRIMARY"),
-                    cell("是" if item.get("is_blueprint_copy") else "否"),
+                    cell(str(quantity), "PRIMARY"),
+                    cell("是" if is_bpc else "否"),
                     cell("是" if item.get("is_included", True) else "否"),
                     cell(str(me) if me else "—"),
                     cell(str(te) if te else "—"),
+                    # 可运行数只有复制品才有意义；BPO 没有作业数上限
+                    cell(str(item.get("runs") or 1) if is_bpc else "—"),
+                    cell(f"{unit:,.0f}" if unit else "—"),
+                    cell(f"{unit * quantity:,.0f}" if unit else "—"),
                 ]
             }
         )
@@ -88,23 +106,28 @@ class ContractDetailBridge(SummaryTableBridge):
     def detailText(self) -> str:
         info = self._contract
         type_cn = CONTRACT_TYPE_CN.get(info.get("type", ""), info.get("type", ""))
-        status_cn = CONTRACT_STATUS_CN.get(info.get("status", ""), info.get("status", ""))
-        return (
-            f"类型: {type_cn}  |  状态: {status_cn}  |  "
-            f"价格: {info.get('price', 0):,.2f} ISK  |  "
-            f"抵押: {info.get('collateral', 0):,.2f} ISK  |  "
-            f"体积: {info.get('volume', 0):,.1f} m³  |  "
-            f"运输天数: {info.get('days_completed', 0)}"
-        )
+        parts = [
+            f"类型: {type_cn}",
+            f"价格: {info.get('price', 0):,.0f} ISK",
+            f"抵押: {info.get('collateral', 0):,.0f} ISK",
+            f"体积: {info.get('volume', 0):,.1f} m³",
+            f"完成期限: {info.get('days_to_complete', 0)} 天",
+        ]
+        # 拍卖才有的一口价 / 运输才有的报酬 —— 没有就不显示，不显示成 0
+        if info.get("buyout"):
+            parts.insert(2, f"一口价: {info['buyout']:,.0f} ISK")
+        if info.get("reward"):
+            parts.append(f"报酬: {info['reward']:,.0f} ISK")
+        return "  |  ".join(parts)
 
     @Property(str, constant=True)
     def datesText(self) -> str:
         info = self._contract
         return (
-            f"签发: {info.get('date_issued', '—')}  |  "
-            f"过期: {info.get('date_expired', '—')}  |  "
-            f"起始站: {info.get('start_location_id', '—')}  |  "
-            f"终点站: {info.get('end_location_id', '—')}  |  "
+            f"签发: {info.get('date_issued') or '—'}  |  "
+            f"过期: {info.get('date_expired') or '—'}  |  "
+            f"起点: {_place(info, 'start')}  |  "
+            f"终点: {_place(info, 'end')}  |  "
             f"企业合同: {'是' if info.get('for_corporation') else '否'}"
         )
 
@@ -124,7 +147,12 @@ class ContractDetailBridge(SummaryTableBridge):
             return
         from ui_qml.workers.contract_workers import ContractItemsLoadWorker
 
-        worker = ContractItemsLoadWorker(int(self._contract.get("contract_id") or 0), self)
+        # 价格按合同所在星域取（缺价会回落到 Jita），与列表页口径一致
+        worker = ContractItemsLoadWorker(
+            int(self._contract.get("contract_id") or 0),
+            int(self._contract.get("region_id") or 10000002),
+            parent=self,
+        )
         self._worker = worker
         worker.finished_signal.connect(self._on_items_loaded)
         worker.start()

@@ -1046,7 +1046,7 @@ class _FakeItemsWorker(QObject):
 
     finished_signal = Signal(list)
 
-    def __init__(self, contract_id: int, parent=None) -> None:
+    def __init__(self, contract_id: int, region_id: int = 0, price_type: str = "sell", parent=None) -> None:
         super().__init__(parent)
         self._contract_id = contract_id
 
@@ -1134,14 +1134,20 @@ def test_contract_detail_renders_fields_and_items(contract_detail_factory):
     try:
         bridge = dialog.bridge
         assert bridge.headerText == "#99001  渡鸦级整机一批"
-        assert "物品交换" in bridge.detailText and "进行中" in bridge.detailText
-        assert "1,234,567.89 ISK" in bridge.detailText
+        # 状态行已删 —— ESI 公开合同端点根本不返回 status（实测字段并集里没有），
+        # 那一列从前恒为空串。现在只显示真有的字段。
+        assert "物品交换" in bridge.detailText
+        assert "1,234,568 ISK" in bridge.detailText
         assert "企业合同: 是" in bridge.datesText
+        # 起止点给的是站名/星系，不是裸 id
+        assert "未知地点" in bridge.datesText
 
         assert bridge.rowCount == 2
         assert bridge.statusText == "共 2 件物品"
         first = bridge.rows[0]["cells"]
-        assert [c["text"] for c in first] == ["2001", "渡鸦级", "Raven", "3", "是", "是", "10", "—"]
+        # 末尾两列是「单价 / 小计」（物品表新增，价差要靠它们）
+        assert [c["text"] for c in first][:8] == ["2001", "渡鸦级", "Raven", "3", "是", "是", "10", "—"]
+        assert len(first) == 11
         assert first[3]["color"] != "", "数量列该用主题色（对齐 Widgets 版的 ForegroundRole）"
         second = bridge.rows[1]["cells"]
         assert second[1]["text"] == "三钛合金"
@@ -1250,7 +1256,7 @@ class _SlowItemsWorker(QObject):
 
     finished_signal = Signal(list)
 
-    def __init__(self, contract_id: int, parent=None) -> None:
+    def __init__(self, contract_id: int, region_id: int = 0, price_type: str = "sell", parent=None) -> None:
         super().__init__(parent)
         self.interrupted = False
         self.waited = 0

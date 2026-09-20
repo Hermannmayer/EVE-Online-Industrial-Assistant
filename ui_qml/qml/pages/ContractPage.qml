@@ -3,17 +3,17 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
 
-/* 合同市场页 —— 阶段 3。
+/* 合同市场页 —— 三个子页签（拍卖 / 物品交换 / 运输）。
  *
- * 对照 Widgets 版 `ui_pyside6/views/contract_view.py`：
- *   工具栏（区域 / 类型 / 刷新 / 计数）+ 过滤栏（物品名 / 价格区间 / 买卖）
- *   + 上下分栏（上：合同列表 10 列；下：选中合同的物品 8 列）。
+ * 对照旧版单页（工具栏 + 过滤栏 + 上下两表的 SplitView）：类型从「下拉筛选」升级成
+ * **页签**，因为三类合同的判定口径完全不同 —— 拍卖比一口价、物品交换比内容物市价
+ * （含蓝图时还要算制造利润）、运输比每方每跳 ISK。混在一张表里列不出各自要的列。
  *
- * **业务动作一律不在这里实现**：每次交互都调 `contract.<方法>`，
- * 由 `ui_qml/bridge/contract_bridge.py` 转给既有的 worker / 模型。
+ * **进页面只查库、不联网**：拉取只在点「拉取合同」之后发生（用户明确要求）。
+ * 物品详情是「价差」的前提，但一个星域三万多份合同、一份一个请求，所以它走
+ * 「后台补齐 + 可停 + 进度可见」，而不是拉合同时一起拉。
  *
- * 过滤走 `ContractFilterProxy`（`QSortFilterProxyModel` 会转发源模型的 `roleNames()`，
- * 所以这里直接把**代理**当 model 用），过滤规则一份都没重写。
+ * 业务动作一律不在这里实现：每次交互都调 `contract.<方法>`。
  */
 
 Item {
@@ -24,67 +24,26 @@ Item {
     readonly property var contract: typeof bridge !== "undefined" ? bridge : null
 
     readonly property int fntBase: Math.round(12 * Theme.fontScale)
-    readonly property int fntSmall: Math.round(11 * Theme.fontScale)
-    readonly property int rowH: Math.max(24, Math.round(13 * Theme.fontScale) + 11)
-    readonly property int headerH: Math.max(24, fntSmall + 13)
     readonly property int gap: Theme.spacingSm
 
-    //: 当前合同行（代理行号；右键菜单与物品详情都作用于它）
-    property int currentRow: -1
-
-    /* 列宽：provider / delegate / 点击区三处必须是同一份口径，两处各算一次会错位。 */
-    function contractColWidth(col) {
-        const cols = page.contract ? page.contract.contractColumns : []
-        return col < cols.length ? cols[col].width : 100
+    /* 进页面就查库（不联网）—— 旧版没有任何「初次加载」入口，只有切区域/切类型/点刷新
+     * 才会加载，于是第一次打开合同页永远是空表、也不报错。 */
+    Component.onCompleted: {
+        if (page.contract) {
+            page.contract.refreshRegionLabel()
+            page.contract.loadTab()
+        }
     }
 
-    // 整页不透明底（宿主是透明清屏的 QQuickWidget，见 IndustryPage 的同款说明）
+    /* 销毁前先让在跑的 worker 收尾。
+     * 本页是唯一「进门就起 QThread」的页面；线程生命周期本已由 `contract_workers._LIVE_WORKERS`
+     * 兜住（不随宿主析构），这里再等一次是让关窗时不留悬空线程。取数是本地查询，等几百毫秒无感。 */
+    Component.onDestruction: if (page.contract) page.contract.shutdown()
+
+    // 整页不透明底（宿主是透明清屏的 QQuickWidget）
     Rectangle {
         anchors.fill: parent
         color: Theme.bgDark
-    }
-
-    /* 两张表共用同一个 delegate 形状：文本 + 可选取色 + 斑马纹 + 单击/右键。
-     * `model` 由 TableView 按行给下来。 */
-    component TableCell: Item {
-        id: tcell
-        required property int row
-        required property int column
-        required property var model
-
-        implicitHeight: page.rowH
-
-        readonly property bool isCurrent: page.currentRow === row && tcell.isContractRow
-        //: 只有上表参与「当前行」高亮与右键菜单
-        property bool isContractRow: false
-
-        Rectangle {
-            anchors.fill: parent
-            color: tcell.isCurrent
-                   ? Theme.primary
-                   : (tcell.model.bg !== undefined && tcell.model.bg ? tcell.model.bg : Theme.bgSurface)
-        }
-
-        Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            height: 1
-            color: Theme.border
-        }
-
-        Text {
-            anchors.fill: parent
-            anchors.leftMargin: Math.round(6 * Theme.fontScale)
-            anchors.rightMargin: Math.round(6 * Theme.fontScale)
-            verticalAlignment: Text.AlignVCenter
-            horizontalAlignment: tcell.model.alignRight ? Text.AlignRight : Text.AlignLeft
-            text: tcell.model.text !== undefined ? tcell.model.text : ""
-            color: tcell.isCurrent ? Theme.textOnPrimary : (tcell.model.fg ? tcell.model.fg : Theme.textPrimary)
-            font.family: (tcell.model.mono === true) ? "Consolas" : Theme.fontFamily
-            font.pixelSize: page.fntBase
-            elide: Text.ElideRight
-        }
     }
 
     ColumnLayout {
@@ -92,7 +51,7 @@ Item {
         spacing: 0
 
         // ═══════════════════════════════════════════════════════
-        //  1. 工具栏
+        //  页面工具栏：星域 / 拉取 / 补齐 / 状态
         // ═══════════════════════════════════════════════════════
 
         RowLayout {
@@ -100,35 +59,37 @@ Item {
             Layout.leftMargin: 2 * page.gap
             Layout.rightMargin: 2 * page.gap
             Layout.topMargin: page.gap
-            Layout.bottomMargin: page.gap
             spacing: page.gap
 
             Text {
-                text: qsTr("区域:")
+                text: qsTr("星域:")
                 color: Theme.textPrimary
                 font.family: Theme.fontFamily
                 font.pixelSize: page.fntBase
             }
             FComboBox {
-                implicitWidth: 110
-                model: page.contract ? page.contract.regions : []
-                currentIndex: page.contract ? page.contract.regionIndex : 0
-                onActivated: if (page.contract)
-                    page.contract.setRegionIndex(currentIndex)
+                objectName: "hubCombo"
+                implicitWidth: 140
+                model: page.contract ? page.contract.regionOptions : []
+                onActivated: if (page.contract) page.contract.setHubIndex(currentIndex)
+            }
+
+            /* 按**名字**挑星域 —— 用户不该被要求背星域 id，而官方中文名又和口语名
+             * 对不上（口语「寂静谷」，官方「静谧谷」），所以打几个字就出候选。 */
+            FTextField {
+                id: regionInput
+                objectName: "regionInput"
+                implicitWidth: 200
+                placeholderText: qsTr("或输入星域名（如 静谧谷 / Domain）")
+                onTextChanged: if (page.contract) page.contract.setRegionQuery(text)
+                Keys.onEscapePressed: regionSuggest.close()
             }
 
             Text {
-                text: qsTr("类型:")
-                color: Theme.textPrimary
+                text: page.contract ? ("当前: " + page.contract.regionLabel) : ""
+                color: Theme.textSecondary
                 font.family: Theme.fontFamily
                 font.pixelSize: page.fntBase
-            }
-            FComboBox {
-                implicitWidth: 110
-                model: page.contract ? page.contract.types : []
-                currentIndex: page.contract ? page.contract.typeIndex : 0
-                onActivated: if (page.contract)
-                    page.contract.setTypeIndex(currentIndex)
             }
 
             Item {
@@ -136,23 +97,27 @@ Item {
             }
 
             FButton {
-                text: qsTr("刷新合同数据")
-                onClicked: if (page.contract)
-                    page.contract.refresh()
+                objectName: "fetchButton"
+                text: qsTr("拉取合同")
+                primary: true
+                enabled: page.contract ? !page.contract.busy : false
+                onClicked: if (page.contract) page.contract.refresh()
             }
-
-            Text {
-                text: page.contract ? page.contract.countText : ""
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntBase
+            FButton {
+                objectName: "fillButton"
+                text: qsTr("补齐物品")
+                enabled: page.contract ? !page.contract.busy : false
+                onClicked: if (page.contract) page.contract.startFill()
+            }
+            FButton {
+                objectName: "stopButton"
+                text: qsTr("停止")
+                visible: page.contract ? page.contract.busy : false
+                onClicked: if (page.contract) page.contract.stopFill()
             }
         }
 
-        // ═══════════════════════════════════════════════════════
-        //  2. 过滤栏
-        // ═══════════════════════════════════════════════════════
-
+        // ── 状态条（拉取/补齐的进度与结果都走这里，不再有静默失败）──
         RowLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 2 * page.gap
@@ -160,67 +125,16 @@ Item {
             Layout.bottomMargin: page.gap
             spacing: page.gap
 
-            FTextField {
-                id: searchInput
-                Layout.preferredWidth: 220
-                placeholderText: qsTr("物品名搜索…")
-                onTextChanged: if (page.contract)
-                    page.contract.setSearchText(text)
-            }
-
             Text {
-                text: qsTr("价格:")
-                color: Theme.textPrimary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntBase
-            }
-            FDoubleSpinBox {
-                implicitWidth: 140
-                from: 0
-                to: 1e12
-                decimals: 0
-                value: page.contract ? page.contract.priceMin : 0
-                onValueModified: if (page.contract)
-                    page.contract.setPriceMin(value)
-            }
-            Text {
-                text: "~"
+                objectName: "statusText"
+                Layout.fillWidth: true
+                text: page.contract ? page.contract.statusText : ""
                 color: Theme.textSecondary
                 font.family: Theme.fontFamily
                 font.pixelSize: page.fntBase
-            }
-            FDoubleSpinBox {
-                implicitWidth: 140
-                from: 0
-                to: 1e12
-                decimals: 0
-                value: page.contract ? page.contract.priceMax : 0
-                onValueModified: if (page.contract)
-                    page.contract.setPriceMax(value)
-            }
-
-            Text {
-                text: qsTr("买卖:")
-                color: Theme.textPrimary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntBase
-            }
-            FComboBox {
-                implicitWidth: 100
-                model: page.contract ? page.contract.buySellOptions : []
-                currentIndex: page.contract ? page.contract.buySellIndex : 0
-                onActivated: if (page.contract)
-                    page.contract.setBuySellIndex(currentIndex)
-            }
-
-            Item {
-                Layout.fillWidth: true
+                elide: Text.ElideRight
             }
         }
-
-        // ═══════════════════════════════════════════════════════
-        //  3. 进度条
-        // ═══════════════════════════════════════════════════════
 
         Rectangle {
             Layout.fillWidth: true
@@ -245,332 +159,75 @@ Item {
         }
 
         // ═══════════════════════════════════════════════════════
-        //  4. 上下分栏
+        //  三个子页签
         // ═══════════════════════════════════════════════════════
 
-        SplitView {
+        FTabBar {
+            id: tabBar
+            objectName: "contractTabBar"
+            Layout.fillWidth: true
+            currentIndex: page.contract ? page.contract.tabIndex : 0
+            onCurrentIndexChanged: if (page.contract) page.contract.setTabIndex(currentIndex)
+
+            TabButton { text: qsTr("拍卖") }
+            TabButton { text: qsTr("物品交换") }
+            TabButton { text: qsTr("运输") }
+        }
+
+        StackLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            /* 与「价格监控」页同款：上下两块表格各自被外框裹住，整块内容区从页边内缩一档 */
-            Layout.leftMargin: 2 * page.gap
-            Layout.rightMargin: 2 * page.gap
-            Layout.bottomMargin: page.gap
-            orientation: Qt.Vertical
+            currentIndex: tabBar.currentIndex
 
-            handle: Rectangle {
-                implicitHeight: 4
-                color: SplitHandle.pressed || SplitHandle.hovered ? Theme.primary : Theme.border
+            ContractTabPane {
+                tabKey: "auction"
+                c: page.contract
+                columns: page.contract ? page.contract.auctionColumns : []
+                model: page.contract ? page.contract.auctionModel : null
             }
-
-            // ── 上：合同列表 ──
-            Item {
-                SplitView.preferredHeight: Math.round(page.height * 0.6)
-                SplitView.minimumHeight: 120
-
-                Rectangle {
-                    anchors.fill: parent
-                    color: Theme.bgSurface
-                }
-
-                /* 外框。单独一层、`z` 高于表头与表体 —— 它们都是 `anchors.fill/top: parent`
-                 * 且声明在后，把边框加在底色矩形上会被整个盖掉（见 `QueryPage` 同款说明）。
-                 * 纯 `Rectangle` 不吞鼠标事件。 */
-                Rectangle {
-                    anchors.fill: parent
-                    z: 1
-                    color: "transparent"
-                    radius: Theme.radius
-                    border.width: 1
-                    border.color: Theme.border
-                }
-
-                HorizontalHeaderView {
-                    id: contractHeader
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    height: page.headerH
-                    syncView: contractTable
-                    clip: true
-                    textRole: "text"
-
-                    delegate: Item {
-                        id: chead
-                        required property int index
-                        implicitHeight: page.headerH
-
-                        readonly property var meta: (page.contract && page.contract.contractColumns.length > chead.index)
-                                                     ? page.contract.contractColumns[chead.index] : null
-
-                        Rectangle {
-                            anchors.fill: parent
-                            color: Theme.bgSurface
-
-                            Rectangle {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.bottom: parent.bottom
-                                height: 1
-                                color: Theme.border
-                            }
-                            Rectangle {
-                                anchors.right: parent.right
-                                anchors.top: parent.top
-                                anchors.bottom: parent.bottom
-                                width: 1
-                                color: Theme.border
-                            }
-                        }
-
-                        Text {
-                            anchors.fill: parent
-                            anchors.leftMargin: 6
-                            anchors.rightMargin: 6
-                            verticalAlignment: Text.AlignVCenter
-                            horizontalAlignment: [0, 3, 4, 5, 6].indexOf(chead.index) >= 0 ? Text.AlignRight : Text.AlignLeft
-                            text: chead.meta ? chead.meta.title : ""
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: page.fntSmall
-                            elide: Text.ElideRight
-                        }
-                    }
-                }
-
-                TableView {
-                    id: contractTable
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: contractHeader.bottom
-                    anchors.bottom: parent.bottom
-
-                    clip: true
-                    boundsBehavior: Flickable.StopAtBounds
-                    model: page.contract ? page.contract.model : null
-                    selectionBehavior: TableView.SelectionDisabled
-                    reuseItems: true
-                    rowHeightProvider: function (row) { return page.rowH }
-                    columnWidthProvider: function (col) { return page.contractColWidth(col) }
-
-                    ScrollBar.vertical: ScrollBar {
-                        policy: ScrollBar.AsNeeded
-                    }
-                    ScrollBar.horizontal: ScrollBar {
-                        policy: ScrollBar.AsNeeded
-                    }
-
-                    delegate: TableCell {
-                        isContractRow: true
-                        implicitWidth: page.contractColWidth(column)
-
-                    }
-
-                    // 行点击命中固定在按下那一刻（见 FTableClickArea 的说明）
-                    FTableClickArea {
-                        objectName: "contractClickArea"
-                        anchors.fill: parent
-                        rowHeight: page.rowH
-                        columnWidth: page.contractColWidth
-
-                        onRowClicked: function (row, _column) {
-                            page.currentRow = row
-                            if (page.contract)
-                                page.contract.selectContract(row)
-                        }
-                        onRowDoubleClicked: function (row, _column) {
-                            page.currentRow = row
-                            if (page.contract)
-                                page.contract.showDetail(row)
-                        }
-                        onRowRightClicked: function (row, _column, x, y) {
-                            page.currentRow = row
-                            const p = mapToItem(page, x, y)
-                            rowMenu.row = row
-                            rowMenu.x = p.x
-                            rowMenu.y = p.y
-                            rowMenu.openSoon()
-                        }
-                    }
-                }
+            ContractTabPane {
+                tabKey: "exchange"
+                c: page.contract
+                columns: page.contract ? page.contract.exchangeColumns : []
+                model: page.contract ? page.contract.exchangeModel : null
             }
-
-            // ── 下：合同物品 ──
-            Item {
-                SplitView.minimumHeight: 100
-
-                /* 外框（下半区）。这一区的地面是 `ColumnLayout` 里那条标题条 + 表体，
-                 * 所以铺底色与描边都在本 Item 这一层做，`z` 高于内容。理由同上。 */
-                Rectangle {
-                    anchors.fill: parent
-                    color: Theme.bgSurface
-                    radius: Theme.radius
-                }
-                Rectangle {
-                    anchors.fill: parent
-                    z: 1
-                    color: "transparent"
-                    radius: Theme.radius
-                    border.width: 1
-                    border.color: Theme.border
-                }
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    spacing: 0
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        implicitHeight: page.headerH
-                        color: Theme.bgSurface
-
-                        Text {
-                            anchors.left: parent.left
-                            anchors.leftMargin: page.gap
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: qsTr("合同物品（点击上方合同查看）")
-                            color: Theme.textSecondary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: page.fntBase
-                            font.bold: true
-                        }
-                    }
-
-                    Item {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-
-                        HorizontalHeaderView {
-                            id: itemHeader
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            height: page.headerH
-                            syncView: itemTable
-                            clip: true
-                            textRole: "text"
-
-                            delegate: Item {
-                                id: ihead
-                                required property int index
-                                implicitHeight: page.headerH
-
-                                readonly property var meta: (page.contract && page.contract.itemColumns.length > ihead.index)
-                                                             ? page.contract.itemColumns[ihead.index] : null
-
-                                Rectangle {
-                                    anchors.fill: parent
-                                    color: Theme.bgSurface
-
-                                    Rectangle {
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.bottom: parent.bottom
-                                        height: 1
-                                        color: Theme.border
-                                    }
-                                }
-
-                                Text {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 6
-                                    anchors.rightMargin: 6
-                                    verticalAlignment: Text.AlignVCenter
-                                    horizontalAlignment: ([0, 3, 6, 7].indexOf(ihead.index) >= 0)
-                                                         ? Text.AlignRight : Text.AlignLeft
-                                    text: ihead.meta ? ihead.meta.title : ""
-                                    color: Theme.textPrimary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: page.fntSmall
-                                    elide: Text.ElideRight
-                                }
-                            }
-                        }
-
-                        TableView {
-                            id: itemTable
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.top: itemHeader.bottom
-                            anchors.bottom: parent.bottom
-
-                            clip: true
-                            boundsBehavior: Flickable.StopAtBounds
-                            model: page.contract ? page.contract.itemModel : null
-                            selectionBehavior: TableView.SelectionDisabled
-                            reuseItems: true
-                            rowHeightProvider: function (row) { return page.rowH }
-                            columnWidthProvider: function (col) {
-                                const cols = page.contract ? page.contract.itemColumns : []
-                                return col < cols.length ? cols[col].width : 100
-                            }
-
-                            ScrollBar.vertical: ScrollBar {
-                                policy: ScrollBar.AsNeeded
-                            }
-
-                            delegate: TableCell {
-                                implicitWidth: {
-                                    const cols = page.contract ? page.contract.itemColumns : []
-                                    return column < cols.length ? cols[column].width : 100
-                                }
-                            }
-                        }
-                    }
-                }
+            ContractTabPane {
+                tabKey: "courier"
+                c: page.contract
+                columns: page.contract ? page.contract.courierColumns : []
+                model: page.contract ? page.contract.courierModel : null
             }
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  行右键菜单
-    // ═══════════════════════════════════════════════════════════
-
-    FMenu {
-        id: rowMenu
-        objectName: "rowMenu"
-        property int row: -1
-
-        FMenuItem {
-            text: qsTr("复制合同 ID")
-            onTriggered: page.contract.copyContractId(rowMenu.row)
-        }
-        FMenuItem {
-            text: qsTr("复制物品列表")
-            onTriggered: page.contract.copyItems()
-        }
-        FMenuSeparator {}
-        FMenuItem {
-            text: qsTr("在新窗口查看")
-            onTriggered: page.contract.showDetail(rowMenu.row)
-        }
-        FMenuSeparator {}
-        FMenuItem {
-            text: qsTr("加入关注列表")
-            onTriggered: page.contract.addItemsToWatchlist()
-        }
-        FMenuItem {
-            text: qsTr("查看物品详情")
-            onTriggered: {
-                const summary = page.contract.itemSummary()
-                if (summary === "")
-                    page.contract.copyItems()  // 没物品时走同一提示路径（「请先点击合同加载物品列表」）
-                itemDetailPopup.text = summary
-                itemDetailPopup.open()
-            }
-        }
-    }
-
-    //: 「查看物品详情」的展示（替代 Widgets 版的 QMessageBox.information）
+    // ── 星域候选：打几个字就出，点一条即选中 ──
     Popup {
-        id: itemDetailPopup
-        objectName: "itemDetailPopup"
-        anchors.centerIn: Overlay.overlay
-        width: 420
-        height: Math.min(420, contentItem.implicitHeight + 2 * 12)
-        padding: 12
-        modal: true
+        id: regionSuggest
+        objectName: "regionSuggest"
+        // 以输入框为父项：位置由 Qt 在 open 时换算；**不要**用 mapToItem 手算坐标
+        // （函数调用不被绑定依赖追踪，只在创建时求值一次，会永远贴在左上角）
+        parent: regionInput
+        x: 0
+        y: regionInput.height + 2
+        width: Math.max(280, regionInput.width)
+        padding: 4
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        property string text: ""
+
+        /* 开/关只由**桥的显式信号**驱动，不写 `visible: suggestions.length > 0`。
+         * `suggestions` 每次都是新数组：绑 visible 的话，关掉（点外面/Esc）之后
+         * 内容没变 → 长度没变 → 绑定不重算 → 再也打不开（`#suggestPopup` 踩过这个坑）。
+         * `Qt.callLater` 是必须的：同一轮里读到的还是旧值。 */
+        Connections {
+            target: page.contract
+            function onSuggestChanged() {
+                Qt.callLater(function () {
+                    if (page.contract && page.contract.suggestions.length > 0)
+                        regionSuggest.open()
+                    else
+                        regionSuggest.close()
+                })
+            }
+        }
 
         background: Rectangle {
             color: Theme.bgElevated
@@ -579,40 +236,43 @@ Item {
             radius: Theme.radius
         }
 
-        contentItem: ColumnLayout {
-            spacing: 8
+        contentItem: ListView {
+            implicitHeight: Math.min(300, contentHeight)
+            clip: true
+            model: page.contract ? page.contract.suggestions : []
+            ScrollIndicator.vertical: ScrollIndicator {}
 
-            Text {
-                Layout.fillWidth: true
-                text: qsTr("合同物品详情")
-                color: Theme.textPrimary
-                font.family: Theme.fontFamily
-                font.pixelSize: Math.round(14 * Theme.fontScale)
-                font.bold: true
-            }
+            delegate: Item {
+                id: srow
+                required property int index
+                required property var modelData
+                width: ListView.view.width
+                implicitHeight: Math.max(24, page.fntBase + 12)
 
-            Flickable {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                contentHeight: detailText.implicitHeight
-                clip: true
-
+                Rectangle {
+                    anchors.fill: parent
+                    color: sMouse.containsMouse ? Theme.bgSurfaceLight : "transparent"
+                }
                 Text {
-                    id: detailText
-                    width: parent.width
-                    text: itemDetailPopup.text
+                    anchors.fill: parent
+                    anchors.leftMargin: 6
+                    verticalAlignment: Text.AlignVCenter
+                    text: srow.modelData.name + "  (" + srow.modelData.en_name + ")"
                     color: Theme.textPrimary
                     font.family: Theme.fontFamily
                     font.pixelSize: page.fntBase
-                    wrapMode: Text.WordWrap
+                    elide: Text.ElideRight
                 }
-            }
-
-            FButton {
-                Layout.alignment: Qt.AlignRight
-                text: qsTr("关闭")
-                primary: true
-                onClicked: itemDetailPopup.close()
+                MouseArea {
+                    id: sMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: {
+                        // 选中后桥会清空候选并发信号 —— 弹窗由上面的 Connections 关掉
+                        if (page.contract) page.contract.pickRegion(srow.index)
+                        regionInput.text = ""
+                    }
+                }
             }
         }
     }

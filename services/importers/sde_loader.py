@@ -19,6 +19,7 @@ SDE 扩展数据加载器 — 将 16 个新表写入 reference.db
 """
 
 import asyncio
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 
 import aiosqlite
@@ -437,6 +438,50 @@ async def write_stations():
             log.info(f"station 写入完成 ({len(sta_rows)} 条)")
 
 
+async def write_region_names(progress_cb: Callable[[int, str], None] | None = None) -> int:
+    """补齐 `region.zh_name`（CCP 官方中文星域名），返回写入条数。
+
+    `region` 表原先只有英文名（The Forge / Domain / Sinq Laison）。合同页要让用户**按名字**
+    挑星域，而玩家记的是中文名 —— 且官方译名和口语名常常对不上（口语「寂静谷」，
+    官方「静谧谷」），所以必须有中文名可搜。
+
+    113 个星域各一次请求，只在缺名字时才发；补齐后重跑是空操作。
+    ESI 的 `GET /universe/regions/{id}/?language=zh` 是 CCP 官方译名的来源。
+    """
+    async with _ref_db() as db:
+        await db.execute("CREATE TABLE IF NOT EXISTS region (region_id INTEGER PRIMARY KEY, region_name TEXT)")
+        cur = await db.execute("PRAGMA table_info(region)")
+        if "zh_name" not in {r[1] for r in await cur.fetchall()}:
+            # reference.db 是可重建缓存，按克制条款第 3 条不进 schema_migrations。
+            # 这里就地补列 —— 重导 SDE 代价大，而补一列是幂等的。
+            await db.execute("ALTER TABLE region ADD COLUMN zh_name TEXT")
+            await db.commit()
+        cur = await db.execute("SELECT region_id FROM region WHERE zh_name IS NULL OR zh_name = ''")
+        missing = [int(r[0]) for r in await cur.fetchall()]
+
+    if not missing:
+        return 0
+
+    from services.client import APIClient
+
+    written = 0
+    async with APIClient(timeout=60) as session:
+        for idx, region_id in enumerate(missing):
+            if progress_cb is not None:
+                progress_cb(idx, f"星域中文名 {idx}/{len(missing)}")
+            data = await session.fetch(f"https://esi.evetech.net/latest/universe/regions/{region_id}/?language=zh")
+            name = (data or {}).get("name")
+            if not name:
+                continue
+            async with _ref_db() as db:
+                await db.execute("UPDATE region SET zh_name = ? WHERE region_id = ?", (name, region_id))
+                await db.commit()
+            written += 1
+
+    log.info("星域中文名补齐完成 (%d 条)", written)
+    return written
+
+
 async def write_universe(progress_cb=None):
     """写入 solar_system 表（星系名/安全等级）
 
@@ -618,6 +663,9 @@ CORE_WRITERS = [
     ("write_stations", write_stations),
     ("write_research", write_research),
     ("write_universe", write_universe),
+    # 唯一走 ESI 的一个（其余都只读 SDE zip）—— 星域中文名不在 SDE 里。
+    # 幂等：已补齐时是空操作，所以放在每次初始化里跑不心疼。
+    ("write_region_names", write_region_names),
 ]
 
 # 依赖 item 表的部分（必须等 items 写完 item 表后执行）
