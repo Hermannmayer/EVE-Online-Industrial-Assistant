@@ -445,6 +445,7 @@ class QueryDashboardBridge(QObject):
         self._occupancy_by_char: list[dict] = []
         self._occupancy_summary = ""
         self._series_rows: list[dict] = []  # 当前区间内的快照行
+        self._baseline_row: dict | None = None  # 涨跌基准行（窗口之外紧邻的那条）
         self._all_series_rows: list[dict] = []  # 全量快照行（切区间时不重查）
         self._plot: dict = dict(_EMPTY_PLOT)
         self._visible: dict[str, bool] = {key: True for key, _label, _token in _SERIES}
@@ -549,19 +550,26 @@ class QueryDashboardBridge(QObject):
 
     @Property(list, notify=changed)
     def assetSummaryRows(self) -> list[dict]:
-        """「资产（表格显示）」5 行：最新值 + 相对**区间首点**的变化量与百分比。"""
+        """「资产（表格显示）」5 行：最新值 + 相对**档位起点之前**最近一条快照的变化量与百分比。
+
+        基准由 `_pick_baseline` 挑（近 7 天 → 7 天前那条、本月 → 上月最后一条、
+        本年 → 去年最后一条、总 → 首条）。窗口之前没有快照时退回区间内最早的一条
+        （「不满 7 天就有几天算几天」），只有一个点可看时才给「—」。
+        """
         _dates, values = split_series(self._series_rows)
+        base_row = self._baseline_row
+        # 基准就是最新那个点（全部历史只有一个点）→ 没有可比的历史，整列给「—」
+        if base_row is not None and base_row.get("date") == (_dates[-1] if _dates else None):
+            base_row = None
         rows: list[dict] = []
         for key, label, token in _SERIES:
             series_values = values.get(key, [])
             latest = series_values[-1] if series_values else None
-            if latest is None:
-                delta_text, delta_pos = "—", True
-            elif len(series_values) < 2:
+            if latest is None or base_row is None:
                 delta_text, delta_pos = "—", True
             else:
-                delta = latest - series_values[0]
-                base = series_values[0]
+                base = _as_float(base_row.get(key))
+                delta = latest - base
                 delta_text = f"{delta:+,.2f} ({delta / base * 100:+.1f}%)" if base else f"{delta:+,.2f}"
                 delta_pos = delta >= 0
             rows.append(
@@ -1128,15 +1136,18 @@ class QueryDashboardBridge(QObject):
         用户要求「每个人物都有制造、科研、反应三行，然后提示带下线多少」。
         竖排列出来以后左栏下半的空白就被填满了，人物多了靠外层 ListView 滚动。
 
-        - ``cap``：各人物该线型上限**之和** —— 所有人共用同一个分母，条子等长可比。
-        - ``max``：该人物自己的上限（画几格）。
+        - ``cap``：各人物该线型上限中的**最大值** —— 所有人共用同一个分母（槽位同宽、
+          条子等长可比）。早先取的是**之和**，于是单个人物跑满自己那 11 条线时
+          只点亮了整条的一半（分母是所有人加起来的 22）。
+        - ``max``：该人物自己的上限（上限内的格数）。
         - ``readyN``：该人物该线型下 **待下线**（``status=='ready'``）的计划数，
           取自已加载的计划表（`load_plans_for_wizard` 已 enrich ``category``），不额外查库。
         - ``freeN``：还能再上几条线（上限 − 已占，负数按 0）。
         """
         ready = self._ready_count_by_char_line(plans)
         cap_by_line: dict[str, int] = {
-            line: sum(int(per_line.get(line, (0, 0))[1]) for _char, per_line in per_char) for line in _LINE_TYPES
+            line: max((int(per_line.get(line, (0, 0))[1]) for _char, per_line in per_char), default=0)
+            for line in _LINE_TYPES
         }
         blocks: list[dict] = []
         for char, per_line in per_char:
@@ -1235,7 +1246,32 @@ class QueryDashboardBridge(QObject):
         if len(trimmed) > days:
             trimmed = trimmed[-days:]
         self._series_rows = [dict(row) for row in trimmed]
+        self._baseline_row = self._pick_baseline(start)
         self._plot = asset_plot(self._series_rows, self._visible, self._series_colors())
+
+    def _pick_baseline(self, start: date | None) -> dict | None:
+        """涨跌基准行 —— **区间起点之前**最近的一条快照。
+
+        「近 7 天」的窗口是「今天往前 7 天」，但窗口**首点**那天只算 6 天前；
+        拿它当基准，用户选 7 天看到的却是 6 天的涨跌。所以基准取窗口之外紧邻的那一条：
+        近 7 天 → 7 天前那条、本月 → 上月最后一条、本年 → 去年最后一条（「总」没有起点，
+        仍取首条）。
+
+        窗口之前一条都没有（新库 / 数据还没攒够）时退回区间内最早的一条 ——
+        「不满 7 天就有几天算几天」，由 `assetSummaryRows` 按「基准与最新是不是同一个点」
+        决定要不要给「—」。
+        """
+        if not self._series_rows:
+            return None
+        if start is not None:
+            earlier: list[tuple[date, Mapping[str, Any]]] = []
+            for row in self._all_series_rows:
+                parsed = _parse_date(row.get("date"))
+                if parsed is not None and parsed < start:
+                    earlier.append((parsed, row))
+            if earlier:
+                return dict(max(earlier, key=lambda pair: pair[0])[1])
+        return dict(self._series_rows[0])
 
     def _ensure_wallet(self, force: bool = False) -> None:
         if self._wallet_loaded and not force:

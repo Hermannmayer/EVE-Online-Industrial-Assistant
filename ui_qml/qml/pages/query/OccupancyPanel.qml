@@ -16,7 +16,8 @@ import "../../components"
  *     └ ───────────────────────────────────────── ┘
  *
  * - 条子按**统一的槽位宽**画（分母取该线型里最大的那个人），所以不同人物的条**等长可比**；
- *   条子里点亮的格数 = 该人物该线型已占用的产线数（`active`），总格数 = 该人物上限（`max`）。
+ *   条子画满分母那么多格，点亮的格数 = 该人物该线型已占用的产线数（`active`）。
+ *   行尾的「待下线 N」列**恒定预留宽度**，有没有提示都不影响条子长度。
  * - 行尾两个提示：「待下线 N」（该人物该线型下 `status=='ready'` 的计划数，橙色）与
  *   「空 N」（还能再上几条线，灰字）。两者都为 0 时不占位置。
  * - 人物多的时候整块列表滚动（`ListView` + 按需滚动条）。
@@ -148,25 +149,23 @@ Item {
                         width: charBlock.width
                         height: root.lineH
 
-                        //: 提示区宽度：只有真的要显示提示时才占位，否则把宽度让给条子
                         readonly property bool hasReady: !!lineRow.modelData.readyText
-                        readonly property int hintWUsed: lineRow.hasReady ? root.hintW : 0
 
-                        //: 容量条可用宽度 = 整行减去 色点 / 标签 / 计数 / 提示 / 间距
+                        /* 容量条可用宽度 = 整行减去 色点 / 标签 / 计数 / **提示列** / 间距。
+                         * 提示列**恒定预留**（哪怕这一行没有「待下线 N」）—— 早先是
+                         * 「有提示才占位」，于是同一块里带提示的行条子短一截、不带的长一截，
+                         * 长短参差。 */
                         readonly property real barW: Math.max(0, width - root.dotSize - root.labelW
-                                                             - root.countW - lineRow.hintWUsed
+                                                             - root.countW - root.hintW
                                                              - 4 * Theme.spacingXs)
                         readonly property int slots: Math.max(0, Math.floor(Number(lineRow.modelData.max) || 0))
                         readonly property int span: Math.max(slots, Math.floor(Number(lineRow.modelData.cap) || 0))
-                        //: 槽位宽按**统一分母**（该线型最大上限）算 → 各人的条等长可比
+                        //: 槽位宽按**统一分母**（该线型各人物上限里的最大值）算 → 各人的条等长可比
                         readonly property real slotW: lineRow.span > 0 ? lineRow.barW / lineRow.span : 0
                         readonly property bool degraded: lineRow.slotW < root.minSlotW
                         readonly property real ratio: lineRow.slots > 0
                                                       ? Math.min(1, Number(lineRow.modelData.active) / lineRow.slots)
                                                       : 0
-                        readonly property real barWidthUsed: lineRow.degraded
-                                                              ? lineRow.barW
-                                                              : lineRow.span * lineRow.slotW
 
                         Rectangle {
                             anchors.left: parent.left
@@ -197,7 +196,7 @@ Item {
                             anchors.left: lineLabel.right
                             anchors.leftMargin: Theme.spacingXs
                             anchors.verticalCenter: parent.verticalCenter
-                            width: lineRow.barWidthUsed
+                            width: lineRow.barW
                             height: Math.max(4, Math.round(parent.height * 0.5))
 
                             // 轨道（也让「一个都没用」时这条行有个形状，不至于看起来缺数据）
@@ -219,7 +218,9 @@ Item {
                                 color: lineRow.modelData.color
                             }
 
-                            // 正常态：槽位（点亮 = 已占用）
+                            /* 正常态：槽位（点亮 = 已占用）。
+                             * 画满 `span` 格（统一分母），不是 `slots` —— 只画自己那几格的话，
+                             * 上限比别人小的人条子就短一截，同块内的条子长短不齐。 */
                             Row {
                                 visible: !lineRow.degraded
                                 anchors.left: parent.left
@@ -227,7 +228,7 @@ Item {
                                 spacing: 0
 
                                 Repeater {
-                                    model: lineRow.degraded ? 0 : lineRow.slots
+                                    model: lineRow.degraded ? 0 : lineRow.span
 
                                     Rectangle {
                                         required property int index

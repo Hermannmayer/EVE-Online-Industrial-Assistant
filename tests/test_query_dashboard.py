@@ -335,7 +335,8 @@ def test_occupancy_by_char_shape_and_hints(h):
 
     - `readyText` = 该人物该线型下 `status=='ready'` 的计划数（用户明确要的提示）
     - `freeN` = 还能再上几条线（上限 − 已占）
-    - `cap` = 该线型各人物上限之和（所有人共用同一个分母 → 条子等长可比）
+    - `cap` = 该线型各人物上限中的**最大值**（所有人共用同一个分母 → 条子等长可比，
+      且某人物跑满自己的上限就占满整条）
     """
     h.plans = [
         _plan(1, status="in_progress", parallels=2),
@@ -370,14 +371,14 @@ def test_occupancy_by_char_shape_and_hints(h):
     assert [line["max"] for line in lines] == [11, 1, 1]
     assert [line["readyN"] for line in lines] == [1, 1, 0], "one manufacturing ready + one copying(→科研) ready"
     assert lines[0]["readyText"] == "待下线 1"
-    assert lines[2]["readyText"] == "", "没有待下线就不给提示（QML 据此不占位）"
+    assert lines[2]["readyText"] == "", "没有待下线就不给提示（QML 那一列恒定预留宽度）"
     assert [line["freeN"] for line in lines] == [9, 1, 1]
     assert "制造 已占 2 / 上限 11" in lines[0]["detailText"]
 
 
 def test_occupancy_by_char_cap_is_shared_denominator(h, monkeypatch):
-    """`cap` 取该线型**各人物上限之和** —— 第二个人物（无技能，制造上限 1）出现后，
-    制造那一行的 cap 变成 11 + 1，两个人的条子于是等长可比。"""
+    """`cap` 取该线型**各人物上限中的最大值**（不是之和 —— 回归：取之和时，
+    单人跑满自己那 11 条线，条子只点亮整条的一半，因为分母是 11 + 1 = 12）。"""
     monkeypatch.setattr(qdb, "get_character_list", lambda: [_CHAR, "人物B"])
     monkeypatch.setattr(
         qdb,
@@ -392,7 +393,7 @@ def test_occupancy_by_char_cap_is_shared_denominator(h, monkeypatch):
     assert [block["name"] for block in blocks] == [_CHAR, "人物B"]
     manufacturing = [block["lines"][0] for block in blocks]
     assert [line["max"] for line in manufacturing] == [11, 1]
-    assert [line["cap"] for line in manufacturing] == [12, 12]
+    assert [line["cap"] for line in manufacturing] == [11, 11]
     assert [line["freeN"] for line in manufacturing] == [0, 1]
 
 
@@ -568,6 +569,55 @@ def test_asset_summary_rows_delta(h):
     bridge._apply_range()
     assert bridge.assetSummaryRows[0]["deltaText"] == "—"
     assert bridge.assetSummaryRows[0]["valueText"] == "1,000.00"
+
+
+def test_asset_summary_baseline_sits_before_the_window(h):
+    """涨跌基准取**档位起点之前**最近的一条快照 —— 「近 7 天」要跟 7 天前那条比。
+
+    回归：早先拿的是**区间内首个点**（今天 − 6 天），于是用户选「近 7 天」看到的
+    其实是 6 天的涨跌；窗口里缺天时更短。构造 9 天数据（今天 − 8 … 今天，每天 +100），
+    区间起点 = 今天 − 6，基准必须落在 今天 − 7 而不是今天 − 6。
+    """
+    today = date.today()
+    h.assets.series = [
+        {
+            "date": (today - timedelta(days=offset)).isoformat(),
+            "total": 1000.0 + 100.0 * (8 - offset),
+            "orders": 0.0,
+            "inventory": 0.0,
+            "wallet": 0.0,
+        }
+        for offset in range(8, -1, -1)  # 今天−8 … 今天
+    ]
+    bridge = h.bridge()
+    bridge._all_series_rows = [dict(r) for r in h.assets.series]
+    bridge._apply_range()
+
+    assert bridge._baseline_row["date"] == (today - timedelta(days=7)).isoformat()
+    row = bridge.assetSummaryRows[0]
+    assert row["valueText"] == "1,800.00"
+    assert row["deltaText"] == "+700.00 (+63.6%)"
+
+
+def test_asset_summary_baseline_falls_back_to_earliest(h):
+    """窗口之前一条快照都没有（数据还没攒够）→ 退回区间内最早那条，照常给数字。"""
+    today = date.today()
+    h.assets.series = [
+        {
+            "date": (today - timedelta(days=1)).isoformat(),
+            "total": 100.0,
+            "orders": 0.0,
+            "inventory": 0.0,
+            "wallet": 0.0,
+        },
+        {"date": today.isoformat(), "total": 150.0, "orders": 0.0, "inventory": 0.0, "wallet": 0.0},
+    ]
+    bridge = h.bridge()
+    bridge._all_series_rows = [dict(r) for r in h.assets.series]
+    bridge._apply_range()
+
+    assert bridge._baseline_row["date"] == (today - timedelta(days=1)).isoformat()
+    assert bridge.assetSummaryRows[0]["deltaText"] == "+50.00 (+50.0%)"
 
 
 # ════════════════════════════════════════════════════════════
