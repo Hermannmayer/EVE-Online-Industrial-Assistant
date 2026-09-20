@@ -8,13 +8,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import Qt
 
 from tests.qml_click import press_move_release
 from tests.qml_click import spin as _spin
+from tests.qml_page_load import assert_page_loads_quietly, page_host
 from ui_qml.models.watchlist_qml_model import ROLE_NAMES, WatchlistQmlModel
 
 _BASE = Qt.ItemDataRole.UserRole
@@ -278,53 +277,20 @@ def test_price_check_pushes_status_to_shell(bridge, monkeypatch):
 def watch_page(qapp, monkeypatch):
     import services.watchlist_manager as wm
     from ui_qml.bridge.watchlist_bridge import WatchlistBridge
-    from ui_qml.host import PageHost
 
     monkeypatch.setattr(wm, "init_db", lambda: None)
     monkeypatch.setattr(wm, "get_watchlist", lambda: [])
 
-    b = WatchlistBridge(None)
-    host = PageHost("pages/WatchlistPage.qml", context={"bridge": b})
-    yield host, b
-    host.deleteLater()
-    _spin(60)
+    with page_host("pages/WatchlistPage.qml", WatchlistBridge(None)) as pair:
+        yield pair
 
 
 @pytest.mark.ui
-def test_page_loads_and_exposes_the_bridge(watch_page):
+def test_page_loads_and_is_quiet(watch_page):
+    """能加载 + 桥到位 + 不给 Qt 刷告警（共用实现见 `tests/qml_page_load.py`）。"""
     host, bridge = watch_page
-    assert host.ok(), "; ".join(str(e) for e in host.errors())
-    root = host.rootObject()
-    assert root is not None
-    assert root.property("watch") is bridge
+    root = assert_page_loads_quietly(host, bridge, key="watch", size=(1200, 700))
     assert root.property("currentRow") == -1
-
-
-@pytest.mark.ui
-def test_page_loads_without_qml_warnings(watch_page):
-    """加载 + 布局不给 Qt 刷告警。
-
-    这页真实踩过：`MultiEffect` 忘了 `import QtQuick.Effects` → QML 加载失败 →
-    静默回退 Widgets 版（外观与主题全不对，但应用照常起得来）。
-    """
-    caught: list[str] = []
-    previous = qInstallMessageHandler(
-        lambda mode, ctx, msg: (
-            caught.append(f"[{Path(ctx.file).name}:{ctx.line}] {msg}")
-            if mode in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg)
-            else None
-        )
-    )
-    try:
-        host, _bridge = watch_page
-        root = host.rootObject()
-        root.setProperty("width", 1280)
-        root.setProperty("height", 720)
-        _spin(300)
-    finally:
-        qInstallMessageHandler(previous)
-
-    assert not caught, "QML 产生了告警：\n" + "\n".join(dict.fromkeys(caught))
 
 
 @pytest.mark.ui

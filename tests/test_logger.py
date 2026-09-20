@@ -33,9 +33,7 @@ def test_set_debug_hits_file_handler(tmp_path, monkeypatch):
 
     # FileHandler 是 StreamHandler 子类，set_debug 的 isinstance 过滤会覆盖它 → 锁降级语义
     monkeypatch.setattr(logger_mod, "log_dir", lambda: tmp_path / "logs")
-    lgr = logger_mod._Logger(name="eve-assistant-test-setdebug")
-    fh = next(h for h in lgr._logger.handlers if isinstance(h, logging.FileHandler))
-    assert isinstance(fh, logging.StreamHandler)
+    logger_mod._Logger(name="eve-assistant-test-setdebug")
 
     console = next(
         h

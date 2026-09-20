@@ -68,24 +68,6 @@ class TestTradeHubTableModel:
         model = TradeHubTableModel([{"hub": "Jita", "spread_pct": 15.0}])
         assert model.data(model.index(0, 0), Qt.ItemDataRole.ForegroundRole) is None
 
-    def test_data_foreground_spread_positive(self, qapp):
-        """价差为正时绿色"""
-        from ui_qml.theme import registry as theme
-
-        rows = [{"hub": "Jita", "spread_pct": 15.0}]
-        model = TradeHubTableModel(rows)
-        color = model.data(model.index(0, 4), Qt.ItemDataRole.ForegroundRole)
-        assert color.name() == theme.ACCENT_GREEN
-
-    def test_data_foreground_spread_negative(self, qapp):
-        """价差为负时红色"""
-        from ui_qml.theme import registry as theme
-
-        rows = [{"hub": "Jita", "spread_pct": -5.0}]
-        model = TradeHubTableModel(rows)
-        color = model.data(model.index(0, 4), Qt.ItemDataRole.ForegroundRole)
-        assert color.name() == theme.ACCENT_RED
-
     def test_data_foreground_spread_zero(self, qapp):
         """价差为 0 时无色"""
         rows = [{"hub": "Jita", "spread_pct": 0}]

@@ -16,9 +16,10 @@ import re
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QObject, Qt, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import QObject, Qt
 
 from tests.qml_click import spin as _spin
+from tests.qml_page_load import assert_page_loads_quietly, page_host
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -219,55 +220,18 @@ def test_query_panels_all_exist():
 @pytest.fixture
 def query_page(qapp):
     from ui_qml.bridge.query_bridge import QueryBridge
-    from ui_qml.host import PageHost
 
-    b = QueryBridge(None)
-    host = PageHost("pages/QueryPage.qml", context={"bridge": b})
-    yield host, b
-    host.deleteLater()
-    _spin(60)
+    with page_host("pages/QueryPage.qml", QueryBridge(None)) as pair:
+        yield pair
 
 
 @pytest.mark.ui
-def test_page_loads_and_exposes_the_bridge(query_page):
+def test_page_loads_and_is_quiet(query_page):
+    """能加载 + 桥到位 + 不给 Qt 刷告警（共用实现见 `tests/qml_page_load.py`）。"""
     host, bridge = query_page
-    assert host.ok(), "; ".join(str(e) for e in host.errors())
-
-    root = host.rootObject()
-    assert root is not None
-    assert root.property("query") is bridge
+    root = assert_page_loads_quietly(host, bridge, key="query", size=(1200, 700))
     assert root.findChild(QObject, "suggestPopup") is not None, "候选弹窗的 objectName 丢了"
     assert root.findChild(QObject, "searchInput") is not None, "搜索框的 objectName 丢了"
-
-
-@pytest.mark.ui
-def test_page_loads_without_qml_warnings(query_page):
-    """加载 + 布局不给 Qt 刷告警。
-
-    这几类都真实出现过且运行期只表现为「界面不对」：
-      - `HorizontalHeaderView` 的 textRole 指向模型里没有的角色（每帧一条）；
-      - 位置绑定里写 `mapToItem`（不被依赖追踪，控件停在左上角）；
-      - 引用**已删除**的桥属性（如删掉结果表后仍写 `query.countText`）——
-        绑定求值失败是静默的，只会让那一格空着。
-    """
-    caught: list[str] = []
-    previous = qInstallMessageHandler(
-        lambda mode, ctx, msg: (
-            caught.append(f"[{Path(ctx.file).name}:{ctx.line}] {msg}")
-            if mode in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg)
-            else None
-        )
-    )
-    try:
-        host, _bridge = query_page
-        root = host.rootObject()
-        root.setProperty("width", 1200)
-        root.setProperty("height", 700)
-        _spin(300)
-    finally:
-        qInstallMessageHandler(previous)
-
-    assert not caught, "QML 产生了告警：\n" + "\n".join(dict.fromkeys(caught))
 
 
 @pytest.mark.ui

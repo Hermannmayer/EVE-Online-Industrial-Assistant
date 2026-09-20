@@ -9,14 +9,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import Qt
 
 from tests.clipboard_wait import wait_for_clipboard
 from tests.qml_click import press_move_release
 from tests.qml_click import spin as _spin
+from tests.qml_page_load import assert_page_loads_quietly, page_host
 from ui_qml.models.contract_qml_models import (
     CONTRACT_ROLE_NAMES,
     ContractItemQmlModel,
@@ -267,46 +266,17 @@ def test_item_summary_lists_loaded_items(bridge):
 @pytest.fixture
 def contract_page(qapp):
     from ui_qml.bridge.contract_bridge import ContractBridge
-    from ui_qml.host import PageHost
 
-    b = ContractBridge(None)
-    host = PageHost("pages/ContractPage.qml", context={"bridge": b})
-    yield host, b
-    host.deleteLater()
-    _spin(60)
+    with page_host("pages/ContractPage.qml", ContractBridge(None)) as pair:
+        yield pair
 
 
 @pytest.mark.ui
-def test_page_loads_and_exposes_the_bridge(contract_page):
+def test_page_loads_and_is_quiet(contract_page):
+    """能加载 + 桥到位 + 不给 Qt 刷告警（共用实现见 `tests/qml_page_load.py`）。"""
     host, bridge = contract_page
-    assert host.ok(), "; ".join(str(e) for e in host.errors())
-    root = host.rootObject()
-    assert root is not None
-    assert root.property("contract") is bridge
+    root = assert_page_loads_quietly(host, bridge, key="contract", size=(1280, 720))
     assert root.property("currentRow") == -1
-
-
-@pytest.mark.ui
-def test_page_loads_without_qml_warnings(contract_page):
-    """加载 + 布局不给 Qt 刷告警（textRole / 位置绑定两类坑都真实出现过）。"""
-    caught: list[str] = []
-    previous = qInstallMessageHandler(
-        lambda mode, ctx, msg: (
-            caught.append(f"[{Path(ctx.file).name}:{ctx.line}] {msg}")
-            if mode in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg)
-            else None
-        )
-    )
-    try:
-        host, _bridge = contract_page
-        root = host.rootObject()
-        root.setProperty("width", 1280)
-        root.setProperty("height", 720)
-        _spin(300)
-    finally:
-        qInstallMessageHandler(previous)
-
-    assert not caught, "QML 产生了告警：\n" + "\n".join(dict.fromkeys(caught))
 
 
 @pytest.mark.ui

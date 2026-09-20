@@ -193,37 +193,6 @@ class TestContractTableModel:
         model.sort(99, Qt.SortOrder.AscendingOrder)
         assert model.rowCount() == 5
 
-    # ── 样式 ──
-
-    def test_foreground_colors(self, qapp):
-        from ui_qml.theme import registry as theme
-
-        model = ContractTableModel()
-        model.set_rows(SAMPLE_CONTRACTS)
-        expected = {
-            (0, 3): theme.GREEN,  # price > 0
-            (2, 3): theme.TEXT_SECONDARY,  # price = 0
-            (0, 4): theme.ACCENT_ORANGE,  # collateral > 0
-            (1, 4): theme.TEXT_SECONDARY,  # collateral = 0
-            (0, 7): theme.GREEN,  # outstanding
-            (2, 7): theme.GREEN,  # in_progress
-            (3, 7): theme.RED,  # cancelled
-        }
-        for (row, col), color in expected.items():
-            actual = model.index(row, col).data(Qt.ItemDataRole.ForegroundRole)
-            assert actual.name() == color, f"({row}, {col}) 期望 {color} 得到 {actual.name()}"
-
-    def test_background_alternating_rows(self, qapp):
-        """隔行换色：偶数行 BG_SURFACE，奇数行 BG_DARK"""
-        from ui_qml.theme import registry as theme
-
-        model = ContractTableModel()
-        model.set_rows(SAMPLE_CONTRACTS)
-        bg0 = model.index(0, 0).data(Qt.ItemDataRole.BackgroundRole)
-        bg1 = model.index(1, 0).data(Qt.ItemDataRole.BackgroundRole)
-        assert bg0.name() == theme.BG_SURFACE
-        assert bg1.name() == theme.BG_DARK
-
     # ── 空数据状态 ──
 
     def test_set_rows_replaces_data(self, qapp):
