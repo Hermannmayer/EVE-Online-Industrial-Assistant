@@ -6,6 +6,65 @@
 
 <!-- version list -->
 
+## v0.25.0 (2026-09-20)
+
+### Bug Fixes
+
+- **ESI**: 军团钱包 scope 拿不到 —— 重新授权不带上它，功能不可达
+  ([`f3eb341`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/f3eb341c1c7aef3d456d0582baa89274b605ba38))
+
+- **价格**: 消除价格更新 worker 的 import 死锁
+  ([`4195308`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/419530892f9c153b965d16a4c48eb6223d367bf3))
+
+- **工具**: Worktree 删不净 —— 补回被冲掉的 purge_tree
+  ([`10b1427`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/10b142763c1a42fc790286399e1462e88ca46124))
+
+- **挂单): ESI 同步清掉无归属的历史行；feat(ESI**: 可选把军团钱包计入余额
+  ([`6b57b8e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/6b57b8e2e8131513f0fd9e64958442bb70c0801e))
+
+- **挂单): 旧导出不许覆盖 ESI 数据；feat(ESI**: 两次同步之间也算卖出/买到
+  ([`41e4fef`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/41e4fef02c5ba6da64954f161f0436ce00313a7c))
+
+- **采购小助手**: 买卖差价按数量算成金额 —— 原来给的是单价差
+  ([`b90b25e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b90b25eba34cf7ec0a8568abc637e14fcc4611da))
+
+### Chores
+
+- **deps**: Uv.lock 对齐 pyproject 版本 0.24.2
+  ([`d78e645`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d78e645d1ea385fefc8fa7f1d0c78539f1f8a4de))
+
+- **文档**: 对齐 gen_api_docs 漏生成/漏更新的 6 页
+  ([`4a192b2`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/4a192b242cb1c95c53ce3af76d6c8aa8ad51332f))
+
+- **格式**: Ruff format 收尾 —— order_export 与对应用例
+  ([`00391c6`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/00391c6883a19ca77f17bbe5a900135d64a79a23))
+
+### Features
+
+- **ESI**: 从 EVE SSO 拉取角色技能/队列/植入体，与手工填写并存
+  ([`50202a5`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/50202a5df68b0713da2907c3ec0949de378deaed))
+
+- **ESI**: 拉取角色钱包余额与未结挂单 —— 挂单变动按角色分组比较
+  ([`34c7b51`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/34c7b516b534258a37752acb7c7d2c845aad2690))
+
+- **合同**: 拆成拍卖/物品交换/运输三个子页，修好拉取链路
+  ([`d2bc9e8`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d2bc9e82df522f5abaa13c5df03647409ff1285a))
+
+- **合同**: 页签改分段控件、按发布者反查、图标与价差自动补齐，两张表可排序
+  ([`abc2132`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/abc21320a8081434fc2af651578dab87aa87dda3))
+
+- **导入**: 交易记录剪贴板导入；三个窗口的宽度与重叠修复
+  ([`a9b1a6b`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a9b1a6b1efe3541f3439534fc91b5ba009b3dce7))
+
+- **贸易**: 市场贸易页改成 A→B 全品类价差排行，新增购物车窗口
+  ([`9b8b863`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/9b8b863fe6d1743060439dc4b4abf7c74f00982f))
+
+### Testing
+
+- **取价**: 缺真实 database/ 时整模块跳过 —— 不再让 CI 的测试 job 因缺库变红
+  ([`07cc4a8`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/07cc4a8395e7d63807c801f79a04dd77ff7fb614))
+
+
 ## v0.24.2 (2026-09-20)
 
 ### Features
