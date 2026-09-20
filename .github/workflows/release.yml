@@ -2,6 +2,8 @@ name: Release
 
 # push main 时自动发版：semantic-release version → build_release → 上传安装包
 # 关键：semantic-release 用 GITHUB_TOKEN push 不会再次触发本 workflow（防止死循环）
+# 另外：PSR 判定「无需发版」（只有 docs/chore/test 之类提交、或**手改了版本号**的小版本）时，
+# 也要照常打包并挂到 core/version.py 那个版本的 Release 上 —— 否则小版本永远没有安装包。
 
 on:
   push:
@@ -43,26 +45,50 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         PYTHONUTF8: "1"
 
-    # 无发版提交（NO_RELEASE）时 released 为空 → 跳过打包与上传
+    # ── 版本与 tag ──
+    # PSR 判定「有发版提交」→ 用它刚发布的 tag；否则退回 core/version.py 的 __version__
+    # （手改版本号的小版本走这条）。原先下面三步都写成 `released == 'true'`，
+    # 于是「没被 PSR 升版」的版本永远打不出安装包 —— 小版本用户拿不到包。
+    - name: Resolve release tag
+      id: rel
+      shell: bash
+      run: |
+        TAG="${{ steps.semver.outputs.tag }}"
+        if [ -n "$TAG" ]; then
+          NEEDED=true                      # PSR 刚发版 → 必然要打包
+        else
+          VER=$(uv run python -c "import core.version as v; print(v.__version__)")
+          TAG="v$VER"
+          # 该版本的 Release 已存在 → 不重复打包（省 CI，也避免同名资产冲突）
+          if gh release view "$TAG" >/dev/null 2>&1; then NEEDED=false; else NEEDED=true; fi
+        fi
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+        echo "needed=$NEEDED" >> "$GITHUB_OUTPUT"
+        echo "安装包按 $TAG 处理（需要打包：$NEEDED）"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     # 模板库（reference.db/blueprint.db）不入版本控制，打包前无头生成；否则发行包缺静态数据，
     # 每个用户首启都要重跑 SDE 下载与解析 —— README 向用户承诺的是「内置、走本地快路径」。
     - name: Pre-generate template databases
-      if: steps.semver.outputs.released == 'true'
+      if: steps.rel.outputs.needed == 'true'
       run: uv run python Main.py --init-only
       env:
         PYTHONUTF8: "1"
 
     - name: Build release package
-      if: steps.semver.outputs.released == 'true'
+      if: steps.rel.outputs.needed == 'true'
       run: uv run python build_release.py
       env:
         PYTHONUTF8: "1"
 
+    # tag 不存在时 action-gh-release 会按当前分支创建它 —— 这正是「手改版本号的小版本也能
+    # 出安装包 + Release」的关键；PSR 已发版时则往它建好的 Release 上补资产。
     - name: Upload zip to GitHub Release
-      if: steps.semver.outputs.released == 'true'
+      if: steps.rel.outputs.needed == 'true'
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: ${{ steps.semver.outputs.tag }}
+        tag_name: ${{ steps.rel.outputs.tag }}
         files: dist/EVE商人助手_v*.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
