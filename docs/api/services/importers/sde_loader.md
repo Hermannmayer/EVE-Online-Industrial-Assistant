@@ -32,7 +32,7 @@ async def _ref_db()
 
 reference.db 写库上下文：per-DB 写锁 + 连接。
 
-定义行：`36`
+定义行：`37`
 
 ### `_ensure_dict`
 
@@ -42,7 +42,7 @@ def _ensure_dict(data)
 
 Normalize BSD YAML data (list or dict) to dict keyed by ID
 
-定义行：`48`
+定义行：`49`
 
 ### `initialize_database`
 
@@ -52,7 +52,7 @@ async def initialize_database()
 
 创建 16 个新表 + item 表新增列
 
-定义行：`64`
+定义行：`65`
 
 ### `write_meta_groups`
 
@@ -62,7 +62,7 @@ async def write_meta_groups()
 
 写入 meta_group 表 + 更新 item.meta_group_id
 
-定义行：`109`
+定义行：`110`
 
 ### `write_type_materials`
 
@@ -72,7 +72,7 @@ async def write_type_materials()
 
 写入 reprocessing_materials 表
 
-定义行：`174`
+定义行：`175`
 
 ### `write_dogma_attributes`
 
@@ -82,7 +82,7 @@ async def write_dogma_attributes()
 
 写入 dogma_attribute 表
 
-定义行：`207`
+定义行：`208`
 
 ### `write_icon_ids`
 
@@ -92,7 +92,7 @@ async def write_icon_ids()
 
 写入 icon_ids 表
 
-定义行：`240`
+定义行：`241`
 
 ### `write_categories`
 
@@ -102,7 +102,7 @@ async def write_categories()
 
 写入 category 表 + 更新 item.category_id
 
-定义行：`271`
+定义行：`272`
 
 ### `write_stations`
 
@@ -112,7 +112,17 @@ async def write_stations()
 
 写入 station + station_operation + station_operation_service + station_service 表
 
-定义行：`341`
+定义行：`342`
+
+### `write_region_names`
+
+```python
+async def write_region_names(progress_cb: Callable[[int, str], None] | None=None) -> int
+```
+
+补齐 `region.zh_name`（CCP 官方中文星域名），返回写入条数。
+
+定义行：`441`
 
 ### `write_universe`
 
@@ -122,7 +132,7 @@ async def write_universe(progress_cb=None)
 
 写入 solar_system 表（星系名/安全等级）
 
-定义行：`440`
+定义行：`485`
 
 ### `write_research`
 
@@ -132,7 +142,7 @@ async def write_research()
 
 写入 research_agent + npc_corporation + agent 表
 
-定义行：`488`
+定义行：`533`
 
 ### `write_dogma_effects`
 
@@ -142,7 +152,7 @@ async def write_dogma_effects()
 
 写入 dogma_effect 表
 
-定义行：`580`
+定义行：`625`
 
 ### `_run_writers`
 
@@ -152,7 +162,7 @@ async def _run_writers(writers, progress_cb)
 
 逐表写入（单表失败不影响其他）
 
-定义行：`630`
+定义行：`678`
 
 ### `run_core`
 
@@ -162,7 +172,7 @@ async def run_core(progress_cb=None)
 
 SDE 扩展数据（不依赖 item 表）— universe/stations/research/dogma/materials。
 
-定义行：`647`
+定义行：`695`
 
 ### `run_item_data`
 
@@ -172,7 +182,7 @@ async def run_item_data(progress_cb=None)
 
 SDE 扩展数据（依赖 item 表）— meta_groups/categories + 蓝图名称补拉。
 
-定义行：`662`
+定义行：`710`
 
 ### `main`
 
@@ -182,4 +192,4 @@ async def main(progress_cb=None)
 
 主流程：确保 SDE 缓存就绪 → 初始化数据库 → 逐表写入（单表失败不影响其他）
 
-定义行：`677`
+定义行：`725`

@@ -21,7 +21,7 @@ def _default_db()
 
 惰性获取 DatabaseManager（经容器）。
 
-定义行：`24`
+定义行：`28`
 
 ### `_default_pricing`
 
@@ -31,7 +31,27 @@ def _default_pricing()
 
 惰性获取 PricingService（经容器）。
 
-定义行：`29`
+定义行：`33`
+
+### `_load_gate_graph`
+
+```python
+def _load_gate_graph() -> tuple[dict[int, set[int]], dict[int, float]]
+```
+
+从 reference.db 建星系邻接表 + 安全等级表。
+
+定义行：`74`
+
+### `compute_jumps`
+
+```python
+def compute_jumps(origin_system_id: int, destination_system_id: int, mode: str='shortest', min_security: float | None=None) -> int | None
+```
+
+两个星系之间的跳跃数；不可达返回 None。
+
+定义行：`113`
 
 ### `get_distance_jumps`
 
@@ -39,9 +59,9 @@ def _default_pricing()
 def get_distance_jumps(source: str, destination: str) -> int | None
 ```
 
-获取两个贸易中心之间的跳跃数，未知路线返回 None
+两个**贸易中心**之间的跳跃数（按高安路线 —— 跑货实际会飞的那条）。
 
-定义行：`55`
+定义行：`167`
 
 ### `estimate_freight_cost`
 
@@ -51,7 +71,7 @@ def estimate_freight_cost(volume_m3: float, distance_jumps: int, collateral: flo
 
 估算跨区域货物运输的运费。
 
-定义行：`60`
+定义行：`181`
 
 ### `calc_transport_profit`
 
@@ -61,7 +81,7 @@ def calc_transport_profit(type_id: int, buy_hub: str, sell_hub: str, buy_price_t
 
 计算跨区域运输的净利润（包含运费和贸易费用）。
 
-定义行：`142`
+定义行：`263`
 
 ### `list_trade_hub_distances`
 
@@ -69,6 +89,6 @@ def calc_transport_profit(type_id: int, buy_hub: str, sell_hub: str, buy_price_t
 def list_trade_hub_distances() -> list[dict]
 ```
 
-返回所有贸易中心对的跳跃距离，供 UI 使用
+返回所有贸易中心对的跳跃距离（走高安路线），供 UI 使用。
 
-定义行：`290`
+定义行：`411`

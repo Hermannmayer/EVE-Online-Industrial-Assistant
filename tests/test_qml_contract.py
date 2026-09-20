@@ -1,261 +1,38 @@
-"""合同市场页（阶段 3）的契约测试。
+"""合同页（三个页签）的桥与页面契约测试。
 
-分三层（与其余阶段 3 的页面测试同构）：
-  - **纯函数层**（`fast`）：两张表的命名角色与展示规则；
-  - **桥层**（`ui`）：客户端过滤（经 `ContractFilterProxy`）、代理行号→源行号映射、
-    右键菜单动作（worker / 对话框都不触发）；
-  - **页面层**（`ui`）：`ContractPage.qml` 能加载、无 QML 告警。
+分两层：
+  - **桥层**（`ui`）：页签切换绑到正确的模型、忙碌互斥守卫、跳数口径只在选中后才算
+  - **页面层**（`ui`）：`ContractPage.qml` 能加载、无 QML 告警
+
+`ContractPage` 的 `Component.onCompleted` 会真的发起一次查库（刻意如此 —— 旧版没有
+初次加载入口，第一次打开永远是空表且不报错）。测试里把三个加载入口换成返回空的桩，
+让 worker 毫秒级结束，避免后台线程拖过用例结束。
 """
 
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject
 
-from tests.clipboard_wait import wait_for_clipboard
 from tests.qml_click import press_move_release
 from tests.qml_click import spin as _spin
 from tests.qml_page_load import assert_page_loads_quietly, page_host
-from ui_qml.models.contract_qml_models import (
-    CONTRACT_ROLE_NAMES,
-    ContractItemQmlModel,
-    ContractQmlModel,
-)
+from ui_qml.bridge.contract_bridge import ContractBridge
 
-_BASE = Qt.ItemDataRole.UserRole
-_C_TEXT = _BASE + 1
-_C_FG = _BASE + 2
-_C_BG = _BASE + 3
-_C_ALIGN = _BASE + 4
-_C_MONO = _BASE + 5
-_C_ID = _BASE + 7
-_I_TEXT = _BASE + 1
-_I_ALIGN = _BASE + 2
-
-
-def _contract(
-    cid: int = 1,
-    ctype: str = "item_exchange",
-    title: str = "三钛合金 100万",
-    price: float = 1_000_000.0,
-    collateral: float = 0.0,
-    status: str = "outstanding",
-) -> dict:
-    return {
-        "contract_id": cid,
-        "type": ctype,
-        "title": title,
-        "price": price,
-        "collateral": collateral,
-        "volume": 100.0,
-        "days_completed": 3,
-        "status": status,
-        "date_issued": "2026-01-01",
-        "date_expired": "2026-02-01",
-        "region_id": 10000002,
-    }
-
-
-def _c_cell(model: ContractQmlModel, row: int, col: int, role: int):
-    return model.data(model.index(row, col), role)
-
-
-# ════════════════════════════════════════════════════════════
-#  模型
-# ════════════════════════════════════════════════════════════
-
-
-@pytest.mark.fast
-def test_contract_role_names_are_unique_and_contiguous():
-    keys = sorted(CONTRACT_ROLE_NAMES)
-    assert keys[0] == Qt.ItemDataRole.UserRole + 1
-    assert keys == list(range(keys[0], keys[0] + len(CONTRACT_ROLE_NAMES)))
-    assert len(set(CONTRACT_ROLE_NAMES.values())) == len(CONTRACT_ROLE_NAMES)
-
-
-@pytest.mark.fast
-def test_contract_text_matches_the_widgets_columns():
-    model = ContractQmlModel()
-    model.set_rows([_contract()])
-    assert _c_cell(model, 0, 0, _C_TEXT) == "1"
-    assert _c_cell(model, 0, 1, _C_TEXT) == "物品交换"  # 类型走中文映射
-    assert _c_cell(model, 0, 2, _C_TEXT) == "三钛合金 100万"
-    assert _c_cell(model, 0, 3, _C_TEXT) == "1,000,000.00"
-    assert _c_cell(model, 0, 5, _C_TEXT) == "100.0"
-    assert _c_cell(model, 0, 6, _C_TEXT) == "3"
-    assert _c_cell(model, 0, 7, _C_TEXT) == "进行中"  # 状态走中文映射
-
-
-@pytest.mark.fast
-def test_contract_price_and_status_colours():
-    model = ContractQmlModel()
-    model.set_rows([_contract(collateral=5.0)])
-    assert _c_cell(model, 0, 3, _C_FG)  # 价格 → 绿
-    assert _c_cell(model, 0, 4, _C_FG)  # 抵押 → 橙
-    assert _c_cell(model, 0, 7, _C_FG)  # outstanding → 绿
-
-    dead = ContractQmlModel()
-    dead.set_rows([_contract(status="expired")])
-    assert _c_cell(dead, 0, 7, _C_FG) != _c_cell(model, 0, 7, _C_FG)
-
-
-@pytest.mark.fast
-def test_contract_alignment_mono_and_background():
-    model = ContractQmlModel()
-    model.set_rows([_contract(), _contract(cid=2)])
-    for col in range(model.columnCount()):
-        expected = col in (0, 3, 4, 5, 6)
-        assert _c_cell(model, 0, col, _C_ALIGN) is expected
-        assert _c_cell(model, 0, col, _C_MONO) is expected
-    assert _c_cell(model, 0, 1, _C_BG) != _c_cell(model, 1, 1, _C_BG)
-    assert _c_cell(model, 0, 0, _C_ID) == 1
-
-
-@pytest.mark.fast
-def test_item_model_roles():
-    model = ContractItemQmlModel()
-    model.set_rows(
-        [
-            {
-                "type_id": 34,
-                "zh_name": "三钛合金",
-                "en_name": "Tritanium",
-                "quantity": 100,
-                "is_blueprint_copy": False,
-                "is_included": True,
-                "material_efficiency": 10,
-                "time_efficiency": 20,
-            }
-        ]
-    )
-    assert model.columnCount() == 8
-    assert model.data(model.index(0, 0), _I_TEXT) == "34"
-    assert model.data(model.index(0, 1), _I_TEXT) == "三钛合金"
-    assert model.data(model.index(0, 3), _I_TEXT) == "100"
-    assert model.data(model.index(0, 4), _I_TEXT) == "否"
-    assert model.data(model.index(0, 6), _I_TEXT) == "10"
-    # 物品 ID / 数量 / ME / PE 右对齐
-    for col in range(model.columnCount()):
-        assert model.data(model.index(0, col), _I_ALIGN) is (col in (0, 3, 6, 7))
-
-    empty = ContractItemQmlModel()
-    empty.set_rows([])
-    assert empty.columnCount() == 8
-
-
-# ════════════════════════════════════════════════════════════
-#  桥
-# ════════════════════════════════════════════════════════════
+pytestmark = pytest.mark.ui
 
 
 @pytest.fixture
-def bridge(qapp):
-    from ui_qml.bridge.contract_bridge import ContractBridge
-
-    return ContractBridge(None)
-
-
-@pytest.mark.ui
-def test_defaults_and_option_sources(bridge):
-    from core.constants import TRADE_HUBS
-    from ui_qml.models.contract_models import _CONTRACT_COLUMNS, _ITEM_COLUMNS
-
-    assert bridge.regions == list(TRADE_HUBS)
-    assert bridge.types == ["全部", "物品交换", "拍卖", "运输"]
-    assert bridge.buySellOptions == ["全部", "我要买", "我要卖"]
-    assert [c["title"] for c in bridge.contractColumns] == [t for t, _ in _CONTRACT_COLUMNS]
-    assert [c["title"] for c in bridge.itemColumns] == [t for t, _ in _ITEM_COLUMNS]
+def no_db(monkeypatch):
+    """三个页签的加载入口都返回空 —— 本文件测接线，SQL 有专门的文件覆盖。"""
+    for name in ("load_auction_contracts", "load_exchange_contracts", "load_courier_contracts"):
+        monkeypatch.setattr(f"services.contract_service.{name}", lambda *a, **kw: [])
 
 
-@pytest.mark.ui
-def test_client_filters_go_through_the_proxy(bridge):
-    """搜索/价格/买卖三个过滤条件都交给 `ContractFilterProxy`，桥只转发。"""
-    bridge._on_contracts_loaded(
-        [
-            _contract(cid=1, title="三钛合金", price=1_000.0),
-            _contract(cid=2, title="渡鸦级", price=5_000_000.0, ctype="auction"),
-            _contract(cid=3, title="三钛合金 大包", price=9_000_000.0),
-        ]
-    )
-    assert bridge.model.rowCount() == 3
-
-    # 标题搜索
-    bridge.setSearchText("三钛")
-    assert bridge.model.rowCount() == 2
-    assert bridge.countText == "合同: 2/3 条"
-
-    # 价格下限
-    bridge.setSearchText("")
-    bridge.setPriceMin(5_000_000.0)
-    assert bridge.model.rowCount() == 2
-
-    # 买卖类型：我要买 = item_exchange + auction
-    bridge.setPriceMin(0.0)
-    bridge.setBuySellIndex(2)  # 我要卖
-    assert bridge.model.rowCount() == 2  # 两条 item_exchange
-
-    bridge.setBuySellIndex(0)
-    assert bridge.model.rowCount() == 3
-
-
-@pytest.mark.ui
-def test_proxy_row_maps_to_source_row(bridge):
-    """过滤后代理行号 ≠ 源行号，取值必须经 mapToSource。"""
-    bridge._on_contracts_loaded(
-        [
-            _contract(cid=1, title="A", price=1_000.0),
-            _contract(cid=2, title="B", price=5_000_000.0),
-            _contract(cid=3, title="C", price=9_000_000.0),
-        ]
-    )
-    bridge.setPriceMin(5_000_000.0)  # 只剩 cid=2、cid=3
-    assert bridge.model.rowCount() == 2
-    assert bridge.menuState(0)["contractId"] == 2
-    assert bridge.menuState(1)["contractId"] == 3
-
-
-@pytest.mark.ui
-def test_menu_state_reports_validity(bridge):
-    bridge._on_contracts_loaded([_contract(cid=7)])
-    state = bridge.menuState(0)
-    assert state["valid"] is True
-    assert state["contractId"] == 7
-    assert state["hasItems"] is False
-    assert bridge.menuState(9)["valid"] is False
-
-
-@pytest.mark.ui
-def test_copy_contract_id(bridge, qapp):
-
-    bridge._on_contracts_loaded([_contract(cid=42)])
-    bridge.copyContractId(0)
-    assert wait_for_clipboard("42") == "42"
-
-
-@pytest.mark.ui
-def test_item_actions_need_loaded_items(bridge):
-    """没点过合同（物品表为空）时只给提示，不做任何复制。"""
-    bridge._on_contracts_loaded([_contract()])
-    assert bridge.hasItems() is False
-    assert bridge.itemSummary() == ""
-    bridge.copyItems()
-    assert "请先点击合同加载物品列表" in bridge.countText
-    bridge.addItemsToWatchlist()
-    assert "请先点击合同加载物品列表" in bridge.countText
-
-
-@pytest.mark.ui
-def test_item_summary_lists_loaded_items(bridge):
-    bridge._item_model.set_rows(
-        [
-            {"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium", "quantity": 100},
-            {"type_id": 35, "zh_name": "", "en_name": "Pyerite", "quantity": 5},
-        ]
-    )
-    assert bridge.hasItems() is True
-    summary = bridge.itemSummary()
-    assert "三钛合金  x100" in summary
-    assert "Pyerite  x5" in summary
+@pytest.fixture
+def contract_page(qapp, no_db):
+    with page_host("pages/ContractPage.qml", ContractBridge(None)) as pair:
+        yield pair
 
 
 # ════════════════════════════════════════════════════════════
@@ -263,23 +40,23 @@ def test_item_summary_lists_loaded_items(bridge):
 # ════════════════════════════════════════════════════════════
 
 
-@pytest.fixture
-def contract_page(qapp):
-    from ui_qml.bridge.contract_bridge import ContractBridge
-
-    with page_host("pages/ContractPage.qml", ContractBridge(None)) as pair:
-        yield pair
-
-
-@pytest.mark.ui
 def test_page_loads_and_is_quiet(contract_page):
-    """能加载 + 桥到位 + 不给 Qt 刷告警（共用实现见 `tests/qml_page_load.py`）。"""
+    """能加载 + 桥到位 + 不给 Qt 刷告警（共用实现见 `tests/qml_page_load.py`）。
+
+    三个页签是 `ContractPage` 的从属组件，页面能静默加载即覆盖它们的加载路径。
+    """
     host, bridge = contract_page
-    root = assert_page_loads_quietly(host, bridge, key="contract", size=(1280, 720))
-    assert root.property("currentRow") == -1
+    assert_page_loads_quietly(host, bridge, key="contract", size=(1280, 720))
 
 
-@pytest.mark.ui
+def test_three_tab_models_are_wired(contract_page):
+    """三个页签各绑一个模型 —— 这是「拆成三个子页」的最小可观察事实。"""
+    _host, bridge = contract_page
+    models = {bridge.auctionModel, bridge.exchangeModel, bridge.courierModel}
+    assert len(models) == 3
+    assert bridge.auctionColumns and bridge.exchangeColumns and bridge.courierColumns
+
+
 def test_row_click_survives_content_move(contract_page):
     """行点击命中固定在按下那一刻（见 `FTableClickArea` 的说明）。
 
@@ -288,9 +65,92 @@ def test_row_click_survives_content_move(contract_page):
     「单击不到所对应的行上」。
     """
     host, bridge = contract_page
-    bridge._on_contracts_loaded([_contract(cid=i + 1, title=f"合同{i}") for i in range(50)])
+    bridge.auctionModel.set_rows([{"contract_id": i + 1, "title": f"合同{i}"} for i in range(50)])
     _spin(150)
+
     root = host.rootObject()
+    pane = root.findChild(QObject, "contractTabPane_auction")
+    assert pane is not None, "找不到拍卖页签主体"
+
     press_move_release(
-        host, root, area_name="contractClickArea", row=3, read_current=lambda: root.property("currentRow"), delta=1
+        host,
+        root,
+        area_name="contractClickArea_auction",
+        row=3,
+        read_current=lambda: pane.property("currentRow"),
+        delta=1,
     )
+
+
+# ════════════════════════════════════════════════════════════
+#  桥层
+# ════════════════════════════════════════════════════════════
+
+
+def test_tab_switch_reloads_that_tab(no_db, monkeypatch):
+    """切页签要按**该页签**的口径重新查库，不是复用上一张表的数据。"""
+    bridge = ContractBridge(None)
+    seen: list[dict] = []
+    monkeypatch.setattr(bridge, "loadTab", lambda: seen.append({"tab": bridge._tab_key}))
+
+    bridge.setTabIndex(2)
+    assert seen == [{"tab": "courier"}]
+    assert bridge.tabIndex == 2
+
+
+def test_busy_guard_blocks_second_job(no_db):
+    """拉取与补齐都写 market.db（SQLite 单写者）—— 同一时刻只能跑一个。"""
+    bridge = ContractBridge(None)
+    sentinel = object()
+    bridge._busy_worker = sentinel  # type: ignore[assignment]
+
+    import ui_qml.workers.contract_workers as cw
+
+    started: list[str] = []
+    monkeypatch_cls = cw.ContractFetchWorker
+
+    class _Spy(monkeypatch_cls):  # type: ignore[misc,valid-type]
+        def start(self):  # 不真起线程
+            started.append("started")
+
+    cw.ContractFetchWorker = _Spy  # type: ignore[misc]
+    try:
+        bridge.refresh()
+    finally:
+        cw.ContractFetchWorker = monkeypatch_cls  # type: ignore[misc]
+
+    assert started == []
+    assert "已有拉取任务在跑" in bridge.statusText
+
+
+def test_jump_mode_only_computes_after_choice(monkeypatch):
+    """跳数「选了口径才算」—— 默认那一档传下去的是 `none`，选了才换成对应口径。
+
+    查库是同步的，所以直接盯 service 入口收到的实参。
+    """
+    captured: list[dict] = []
+
+    def _spy(region_id, jump_mode="none", min_security=None, filters=None, limit=None):
+        captured.append({"jump_mode": jump_mode, "min_security": min_security})
+        return []
+
+    monkeypatch.setattr("services.contract_service.load_courier_contracts", _spy)
+    bridge = ContractBridge(None)
+
+    bridge.setTabIndex(2)  # → 运输，触发一次 loadTab
+    assert bridge.tabIndex == 2
+    assert captured[-1]["jump_mode"] == "none"
+
+    bridge.setJumpModeIndex(2)  # 避开低安
+    assert captured[-1]["jump_mode"] == "highsec"
+
+    bridge.setJumpModeIndex(1)  # 最短路线
+    assert captured[-1]["jump_mode"] == "shortest"
+
+
+def test_courier_tab_has_no_fill(no_db):
+    """运输合同没有物品详情（items 端点实测 HTTP 400）—— 补齐按钮对它应当无效。"""
+    bridge = ContractBridge(None)
+    bridge._tab_index = 2
+    bridge.startFill()
+    assert "没有物品详情" in bridge.statusText

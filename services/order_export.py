@@ -68,9 +68,7 @@ _FIELD_ALIASES: dict[str, set[str]] = {
     "issued": {"issued", "issueddate", "issuedate", "issuetime", "时间", "发布日期"},
     "duration": {"duration", "有效期"},
 }
-_ALIAS_TO_FIELD: dict[str, str] = {
-    alias: field for field, aliases in _FIELD_ALIASES.items() for alias in aliases
-}
+_ALIAS_TO_FIELD: dict[str, str] = {alias: field for field, aliases in _FIELD_ALIASES.items() for alias in aliases}
 
 # 启发式路径：表头行白名单（归一化后）
 _HEADER_TOKENS = set(_ALIAS_TO_FIELD) | {"订单编号"}

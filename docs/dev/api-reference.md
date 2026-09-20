@@ -76,7 +76,7 @@
 | 模块 | 说明 |
 |------|------|
 | [`ui_qml.models.industry_models`](/api/ui_qml/models/industry_models) | 工业制造 Qt 数据模型（生产计划表） |
-| [`ui_qml.models.contract_models`](/api/ui_qml/models/contract_models) | 合同数据模型 + 过滤代理 |
+| [`ui_qml.models.contract_models`](/api/ui_qml/models/contract_models) | 合同三张表的模型 + 列定义（筛选已下推到 SQL，无客户端代理） |
 | [`ui_qml.models.trade_models`](/api/ui_qml/models/trade_models) | 贸易评分 Qt 数据模型 |
 | [`ui_qml.models.estimate_models`](/api/ui_qml/models/estimate_models) | 估价 Qt 数据模型 |
 | [`ui_qml.models.all_items_models`](/api/ui_qml/models/all_items_models) | 全部物品 Qt 数据模型 |
@@ -92,7 +92,7 @@
 | [`ui_qml.workers.base_worker`](/api/ui_qml/workers/base_worker) | Worker 基类（评分 / 批量评分） |
 | [`ui_qml.workers.industry_workers`](/api/ui_qml/workers/industry_workers) | 工业制造 Worker |
 | [`ui_qml.workers.trade_workers`](/api/ui_qml/workers/trade_workers) | 贸易评分 Worker |
-| [`ui_qml.workers.contract_workers`](/api/ui_qml/workers/contract_workers) | 合同取数 Worker |
+| [`ui_qml.workers.contract_workers`](/api/ui_qml/workers/contract_workers) | 合同 ESI Worker（拉列表 / 补物品；查库是同步的，不开线程） |
 | [`ui_qml.workers.all_items_workers`](/api/ui_qml/workers/all_items_workers) | 全部物品分类树 / 物品 / 搜索 Worker |
 | [`ui_qml.workers.init_workers`](/api/ui_qml/workers/init_workers) | 数据初始化 Worker |
 | [`ui_qml.workers.refine_worker`](/api/ui_qml/workers/refine_worker) | 精炼计算 Worker |

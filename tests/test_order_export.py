@@ -141,10 +141,7 @@ def test_thousands_separator_euro():
 
 def test_heuristic_chinese_header_and_row():
     """纯中文表头 + 一行数据（启发式路径，表头行被跳过）"""
-    raw = (
-        "订单ID  类型  价格  挂单量  剩余  位置  有效期\n"
-        "123456789  卖  1000.50  1000  800  吉他  30 天"
-    )
+    raw = "订单ID  类型  价格  挂单量  剩余  位置  有效期\n123456789  卖  1000.50  1000  800  吉他  30 天"
     orders, unparsed = parse_order_export(raw)
     assert unparsed == 0
     assert len(orders) == 1
@@ -213,7 +210,7 @@ _REAL_HEADER = (
     "orderState,duration,escrow,isCorp,accountID,accountOwnerID,accountKey,"
 )
 _REAL_ROW = (
-    '7422573405,3989,2115252966,Meyer Hermann,10000002,'
+    "7422573405,3989,2115252966,Meyer Hermann,10000002,"
     '<localized hint="The Forge">多美星域*</localized>,30000142,'
     '<localized hint="Jita">吉他*</localized>,60003760,'
     '<localized hint="Jita IV - Moon 4 - Caldari Navy Assembly Plant">吉他 IV - 卫星 4 - 加达里海军组装车间*</localized>,'
@@ -247,7 +244,7 @@ def test_localized_wrapper_is_unwrapped_to_the_games_own_text():
 
 
 def test_localized_without_inner_text_falls_back_to_hint():
-    raw = f"{_REAL_HEADER}\n7422573405,3989,1,x,10000002,,30000142,,60003760,<localized hint=\"Jita IV-4\"></localized>,1,False,5.0,1,1.0,1,2026-09-16 12:00:00,0,90,0,True,1,1,1000,"
+    raw = f'{_REAL_HEADER}\n7422573405,3989,1,x,10000002,,30000142,,60003760,<localized hint="Jita IV-4"></localized>,1,False,5.0,1,1.0,1,2026-09-16 12:00:00,0,90,0,True,1,1,1000,'
     orders, _ = parse_order_export(raw)
     assert orders[0]["location_name"] == "Jita IV-4"
 
