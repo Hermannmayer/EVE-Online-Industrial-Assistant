@@ -48,8 +48,14 @@ _ORDERS_SCOPE_HINT = "挂单"
 def _map_order(raw: dict, char_id: int) -> dict:
     """ESI 订单 → `open_orders` 记录口径。
 
-    ⚠️ ESI 给的是 ``is_buy_order``（不是 ``is_buy``），值是**真 bool** ——
-    直接透传的话 `_as_buy` 认不出来，**所有挂单都会变成卖单**。
+    ⚠️ 字段名是 ``is_buy_order``（不是 ``is_buy``）。**实测口径**：这个前端只在
+    **是买单**时才带它，卖单会连同 ``escrow`` / ``min_volume`` 一起省掉 ——
+    拉 76 条历史订单，``is_buy_order`` 只出现 ``True`` 与「整个键不存在」，
+    **没有一条是 ``false``**。所以 ``raw.get("is_buy_order")`` 取不到就等于「不是买单」，
+    默认 0 是正确的；**别改成「取不到就跳过/报错」—— 那会让所有卖单都进不来**。
+
+    交叉验证手段：拿订单价与公开市场比（``/markets/{region}/orders/?type_id=``），
+    卖单贴着卖一、买单贴着买一。
     """
     return {
         "order_id": int(raw.get("order_id") or 0),

@@ -186,3 +186,22 @@ def get_include_corp_wallet() -> bool:
 def set_include_corp_wallet(value: bool) -> None:
     """写回「含军团钱包」开关（读-改-写，保留其它键）。"""
     save_settings({_INCLUDE_CORP_WALLET_KEY: bool(value)})
+
+
+#: 上次 ESI 同步挂单的时刻（`YYYY-MM-DD HH:MM:SS` 本地时间）。
+#: 日志导入拿它挡「比 ESI 还旧」的导出文件 —— 用旧的盖新的会把挂单和成交判断一起弄错。
+_ESI_ORDERS_SYNCED_AT_KEY = "esi_orders_synced_at"
+
+
+def get_esi_orders_synced_at() -> str:
+    """上次 ESI 同步挂单的时刻；从没同步过返回空串（空串不挡任何导入）。
+
+    固定宽度格式 → **字典序即时间序**，调用方直接字符串比较即可。
+    """
+    raw = load_settings().get(_ESI_ORDERS_SYNCED_AT_KEY)
+    return str(raw) if isinstance(raw, str) else ""
+
+
+def set_esi_orders_synced_at(value: str) -> None:
+    """记下 ESI 同步挂单的时刻（读-改-写，保留其它键）。"""
+    save_settings({_ESI_ORDERS_SYNCED_AT_KEY: str(value)})

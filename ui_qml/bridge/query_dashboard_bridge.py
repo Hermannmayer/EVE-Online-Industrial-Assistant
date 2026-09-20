@@ -66,7 +66,12 @@ from services.char_capacity import (
 )
 from services.char_config_resolver import get_character_list, load_all_data
 from services.plan_service import load_plans_for_wizard
-from services.user_settings import get_include_corp_wallet, set_include_corp_wallet
+from services.user_settings import (
+    get_esi_orders_synced_at,
+    get_include_corp_wallet,
+    set_esi_orders_synced_at,
+    set_include_corp_wallet,
+)
 from services.wallet_import import latest_balance, parse_wallet_journal
 from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.bridge.price_chart_bridge import axis_values, map_values, nice_range, pick_indices
@@ -208,11 +213,13 @@ def _wallet_breakdown(payload: dict) -> str:
     return f"；钱包 {float(total):,.2f}（仅角色，未含军团钱包）"
 
 
-def _open_change_dialog(rows: list[dict], parent: Any, wallet: float) -> tuple[list[dict], bool]:
+def _open_change_dialog(
+    rows: list[dict], parent: Any, wallet: float, ledger_only: bool = False
+) -> tuple[list[dict], bool]:
     """弹「订单变动」确认框（模块级薄封装 → 测试可 monkeypatch，不开真窗口）。"""
     from ui_qml.bridge.order_change_bridge import OrderChangeQmlDialog
 
-    return OrderChangeQmlDialog.confirm(parent, rows, wallet=wallet)
+    return OrderChangeQmlDialog.confirm(parent, rows, wallet=wallet, ledger_only=ledger_only)
 
 
 def _user_conn() -> Any:
@@ -811,6 +818,21 @@ class QueryDashboardBridge(QObject):
             return
 
         name = Path(str(path)).name
+        # 比上次 ESI 同步还旧的导出文件**不许覆盖**：ESI 是权威源，用旧的盖新的会让
+        # 变动识别拿旧文件和新数据做差 —— 挂单被判成「已成交」，**会误动钱包**。
+        synced_at = get_esi_orders_synced_at()
+        if synced_at:
+            try:
+                file_ts = datetime.fromtimestamp(Path(str(path)).stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            except OSError:
+                file_ts = ""
+            if file_ts and file_ts < synced_at:
+                self._status = (
+                    f"已跳过「{name}」——导出时间 {file_ts} 比上次 ESI 同步 {synced_at} 还旧，"
+                    f"用旧的覆盖会把 ESI 拉到的挂单和成交判断弄错；请在游戏里重新导出"
+                )
+                self.changed.emit()
+                return
         try:
             # 走 `order_export.read_export_text`：真实导出是 **UTF-8 带 BOM**，
             # 直接 `encoding="utf-8"` 读会让首列表头变成 `﻿orderID`、整份退化成启发式解析
@@ -901,20 +923,31 @@ class QueryDashboardBridge(QObject):
         if records:
             self._fill_location_names(records)
             self._fill_type_names(records)
-        groups = {(int(g[0]), int(g[1])) for g in payload.get("groups") or []}
-        if groups:
-            # 归属未知的历史行（char_id=0：v19→v20 加列时补的 0，或启发式解析的旧日志）
-            # 一并纳入替换范围。**不清就会变成幽灵卖单** —— 它们不属于本次任何角色组，
-            # 永远不会被删；而仍然开着的那些会被主键 INSERT OR REPLACE 改写成真归属，
-            # 不在 ESI 返回集里的就是真的结束了，留着只会让列表和现实对不上。
-            groups.add((0, 0))
+        covered = {(int(g[0]), int(g[1])) for g in payload.get("groups") or []}
+        if not covered:
+            self._status = "ESI 没返回任何可同步的角色组，已跳过"
+            self.changed.emit()
+            return
+        # 变动识别：与上一次的结果（ESI 或日志）做差 —— 让「卖出 / 买到」在 ESI 路径
+        # 上也不丢。**只认真实角色组**：无归属的历史行（char_id=0）是清理对象、
+        # 不是「成交」，算进来会平白报一堆变动。快照必须取在替换**之前**。
+        before = {
+            int(r["order_id"]): r for r in self._snapshot_orders() if (int(r["char_id"]), int(r["is_corp"])) in covered
+        }
+        # 替换范围要连无归属的历史行一起清（char_id=0：v19→v20 加列时补的 0，或启发式
+        # 解析的旧日志）。**不清就会变成幽灵卖单** —— 它们不属于本次任何角色组，永远
+        # 不会被删；仍开着的会被主键 INSERT OR REPLACE 改写成真归属。
         try:
-            self._replace_order_groups(groups, records)
+            self._replace_order_groups(covered | {(0, 0)}, records)
         except sqlite3.Error:
             log.exception("ESI 挂单写入 user.db 失败 count=%s", len(records))
             self._status = "ESI 挂单写入本地库失败，详见日志"
             self.changed.emit()
             return
+
+        after = {int(r["order_id"]): r for r in records}
+        # 行与钱包都已是 ESI 给的权威值 → 变动只落台账，**不调钱包**（见 ledger_only）
+        self._pending_changes = classify_order_changes(before, after)
 
         wallet_total = payload.get("wallet_total")
         if wallet_total is not None:
@@ -929,14 +962,18 @@ class QueryDashboardBridge(QObject):
         self._ensure_wallet(force=True)
         snapshot_ok = self._record_snapshot()
         self._refresh_snapshots()
+        # 记下本次同步时刻：日志导入拿它挡住「比 ESI 还旧」的导出文件（见 readOrders）
+        set_esi_orders_synced_at(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         tail = "已记入资产快照" if snapshot_ok else "资产快照写入失败，详见日志"
         chars = int(payload.get("chars") or 0)
-        self._status = f"已从 ESI 同步 {chars} 个角色、{len(records)} 笔挂单，{tail}"
-        self._status += _wallet_breakdown(payload)
+        prefix = f"已从 ESI 同步 {chars} 个角色、{len(records)} 笔挂单，{tail}"
+        prefix += _wallet_breakdown(payload)
         errors = [str(e) for e in payload.get("errors") or []]
         if errors:
             # 部分角色/军团失败：成功的照常写，这里明说哪几块没拉到
-            self._status += f"；未同步：{'；'.join(errors)}"
+            prefix += f"；未同步：{'；'.join(errors)}"
+        # 有变动才弹确认框（**只记台账，不动钱包** —— 余额已是 ESI 的绝对值）
+        self._review_changes(prefix, ledger_only=True)
         self.changed.emit()
 
     @Slot(bool, str)
@@ -1008,7 +1045,7 @@ class QueryDashboardBridge(QObject):
         ]
         self._apply_outcomes(outcomes)
 
-    def _apply_outcomes(self, outcomes: Sequence[Mapping[str, Any]]) -> None:
+    def _apply_outcomes(self, outcomes: Sequence[Mapping[str, Any]], *, ledger_only: bool = False) -> None:
         """落账主体：钱包增减 → 台账 → 挂单清理/回写 → 快照。
 
         只有 ``outcome == "filled"`` 的条目动钱包；``cancelled``（手动撤销）只是把
@@ -1016,6 +1053,10 @@ class QueryDashboardBridge(QObject):
 
         - ``new_remain`` 有值（**部分成交**）→ 回写剩余量，行留在列表里；
         - ``new_remain`` 为 None（整笔消失）→ 删行。
+
+        ``ledger_only=True``（ESI 同步路径）：**只落台账、不动钱包**。那一路的行与余额
+        都已经是 ESI 给的权威值，再按成交加减一次会把钱算两遍。行的清理/回写会跑成
+        空操作（组替换时已经写成 ESI 的值），留着不碍事。
         """
         if not outcomes:
             self._status = "没有需要应用的订单变动"
@@ -1041,7 +1082,7 @@ class QueryDashboardBridge(QObject):
             self.changed.emit()
             return
         self._write_order_events(outcomes)
-        if filled and wallet_delta:
+        if filled and wallet_delta and not ledger_only:
             svc = _asset_svc()
             if svc is not None:
                 try:
@@ -1058,9 +1099,14 @@ class QueryDashboardBridge(QObject):
         snapshot_ok = self._record_snapshot()
         self._refresh_snapshots(force=True)
         tail = "并重记资产快照" if snapshot_ok else "，但资产快照写入失败，详见日志"
-        self._status = (
-            f"已处理 {len(outcomes)} 笔订单变动（成交 {len(filled)} 笔，钱包 {wallet_delta:+,.2f} ISK）{tail}"
-        )
+        if ledger_only:
+            self._status = (
+                f"已把 {len(outcomes)} 笔变动记入台账（成交 {len(filled)} 笔；余额由 ESI 直接给，未加减）{tail}"
+            )
+        else:
+            self._status = (
+                f"已处理 {len(outcomes)} 笔订单变动（成交 {len(filled)} 笔，钱包 {wallet_delta:+,.2f} ISK）{tail}"
+            )
         self.changed.emit()
 
     def _write_order_events(self, outcomes: Sequence[Mapping[str, Any]]) -> None:
@@ -1090,11 +1136,13 @@ class QueryDashboardBridge(QObject):
         except sqlite3.Error:
             log.exception("订单变动台账写入失败 count=%s", len(outcomes))
 
-    def _review_changes(self, prefix: str) -> None:
+    def _review_changes(self, prefix: str, *, ledger_only: bool = False) -> None:
         """导入成功后的收尾编排：有变动才弹「订单变动」确认框（**确认框在桥里弹**）。
 
         没变动（或弹不出来）时只把导入结果写进 `_status`。用户点「取消」= 什么都不做，
         变动条目留在 `_pending_changes` 里，下次导入会重新算。
+
+        `ledger_only=True`（ESI 同步路径）时确认框只把选择记进台账、**不动钱包**。
         """
         rows = list(self._pending_changes)
         if not rows:
@@ -1108,7 +1156,7 @@ class QueryDashboardBridge(QObject):
             except Exception:
                 log.exception("钱包余额读取失败（订单变动预计值将按 0 起算）")
         try:
-            outcomes, accepted = _open_change_dialog(rows, self._host_widget(), wallet_value)
+            outcomes, accepted = _open_change_dialog(rows, self._host_widget(), wallet_value, ledger_only)
         except Exception:
             log.exception("订单变动确认框弹出失败，变动已保留待下次确认")
             self._status = f"{prefix} 有 {len(rows)} 笔变动待确认（弹窗失败，详见日志）"
@@ -1116,7 +1164,7 @@ class QueryDashboardBridge(QObject):
         if not accepted:
             self._status = f"{prefix} 有 {len(rows)} 笔变动未处理（已保留，下次导入会重新提示）"
             return
-        self._apply_outcomes(outcomes)
+        self._apply_outcomes(outcomes, ledger_only=ledger_only)
         if self._pending_changes:  # 落账失败时它已写明原因，别覆盖
             return
         self._status = f"{prefix} {self._status}"

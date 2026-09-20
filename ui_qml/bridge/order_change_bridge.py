@@ -49,16 +49,19 @@ class OrderChangeBridge(DialogBridge):
 
     rowsChanged = Signal()
 
-    def __init__(self, rows: list[dict], *, wallet: float = 0.0) -> None:
+    def __init__(self, rows: list[dict], *, wallet: float = 0.0, ledger_only: bool = False) -> None:
         """Args:
         rows: 变动条目，每条 ``{order_id, name, is_buy, price, volume, delta, kind}``。
             ``kind`` = ``"gone"``（本次导出里没有了）/ ``"partial"``（数量变少）/ ``"added"``。
             ``volume`` 对 ``gone`` 是原剩余量、对 ``partial`` 是本次减少的数量。
         wallet: 当前钱包余额 —— 只用于显示「预计余额」，**不回写**。
+        ledger_only: 只记台账、**不动钱包**。ESI 同步路径用：余额是 ESI 给的绝对值，
+            再按成交加减一次会算两遍，所以那一路只把变动记进 `order_events`。
         """
         super().__init__()
         self.set_title("确认订单变动")
         self._wallet = float(wallet)
+        self._ledger_only = bool(ledger_only)
         self._rows: list[dict] = [self._normalize(r) for r in rows]
         self._choices = [label for _value, label in _CHOICES]
 
@@ -93,17 +96,27 @@ class OrderChangeBridge(DialogBridge):
             parts.append(f"消失的 {gone} 条")
         if partial:
             parts.append(f"数量变少的 {partial} 条")
-        parts.append("按「买到了 / 卖完了」计入钱包，按「手动撤销」跳过")
+        if self._ledger_only:
+            parts.append("按「买到了 / 卖完了」记入台账，按「手动撤销」跳过（余额由 ESI 直接给，不再加减）")
+        else:
+            parts.append("按「买到了 / 卖完了」计入钱包，按「手动撤销」跳过")
         return " · ".join(parts)
 
     @Property(str, notify=rowsChanged)
     def walletText(self) -> str:
-        """`当前余额 → 应用后余额`（按当前选择实时算）。"""
+        """`当前余额 → 应用后余额`（按当前选择实时算）。
+
+        `ledger_only` 时不预测余额 —— 那条路径根本不动它，写个数字只会误导。
+        """
+        if self._ledger_only:
+            return "余额由 ESI 直接给出，本次不加减"
         return f"钱包余额 {self._wallet:,.2f} → {self._wallet + self._delta():,.2f} ISK"
 
     @Property(str, notify=rowsChanged)
     def deltaText(self) -> str:
-        """预计变动额（带正负号；为 0 时写「不变」）。"""
+        """预计变动额（带正负号；为 0 时写「不变」）。`ledger_only` 时不预测。"""
+        if self._ledger_only:
+            return "仅记台账"
         delta = self._delta()
         if abs(delta) < 0.005:
             return "钱包不变"
@@ -193,12 +206,14 @@ class OrderChangeQmlDialog(QmlDialog):
         self._change_bridge = bridge
 
     @staticmethod
-    def confirm(parent: Any, rows: list[dict], *, wallet: float = 0.0) -> tuple[list[dict], bool]:
+    def confirm(
+        parent: Any, rows: list[dict], *, wallet: float = 0.0, ledger_only: bool = False
+    ) -> tuple[list[dict], bool]:
         """开一次对话框；返回 `(每条的选择结果, 是否点了「应用变动」)`。
 
         取消 / Esc → `(结果仍照默认算, False)`，调用方据此**什么都不做**。
         """
-        bridge = OrderChangeBridge(rows, wallet=wallet)
+        bridge = OrderChangeBridge(rows, wallet=wallet, ledger_only=ledger_only)
         dlg = OrderChangeQmlDialog(bridge, parent=parent)
         ok = dlg.exec() == int(dlg.DialogCode.Accepted)  # type: ignore[attr-defined]
         return bridge.outcomes(), ok

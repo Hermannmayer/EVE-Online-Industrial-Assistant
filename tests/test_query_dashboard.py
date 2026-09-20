@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import sqlite3
 from collections.abc import Iterator
 from datetime import date, datetime, timedelta
@@ -98,14 +99,18 @@ class _ChangeDialog:
         self.answer = answer
         self.choices = dict(choices or {})
         self.calls: list[tuple[list[dict], float]] = []
+        self.ledger_only: list[bool] = []
 
-    def __call__(self, rows: list[dict], parent: object, wallet: float) -> tuple[list[dict], bool]:
+    def __call__(
+        self, rows: list[dict], parent: object, wallet: float, ledger_only: bool = False
+    ) -> tuple[list[dict], bool]:
         """与真弹窗同口径：**选择只决定记账，不决定挂单还在不在**。
 
         `new_remain` 一律原样带出（部分成交 → 回写剩余量、整笔消失 → None → 删行），
         所以「手动撤销」不会把仍在导出文件里的挂单删掉。
         """
         self.calls.append(([dict(r) for r in rows], float(wallet)))
+        self.ledger_only.append(bool(ledger_only))
         outcomes = [
             {
                 "order_id": int(row["order_id"]),
@@ -214,6 +219,8 @@ class _Harness:
         self.orders = _FakeOrderSvc()
         self.change_dialog = _ChangeDialog()
         self.plans: list[dict] = []
+        #: 上次 ESI 同步挂单的时刻（默认空 = 从没同步过 → 不挡任何日志导入）
+        self.esi_synced_at = ""
 
     @contextlib.contextmanager
     def user_conn(self) -> Iterator[sqlite3.Connection]:
@@ -235,6 +242,9 @@ def h(monkeypatch) -> _Harness:
     monkeypatch.setattr(qdb, "_asset_svc", lambda: harness.assets)
     monkeypatch.setattr(qdb, "_order_svc", lambda: harness.orders)
     monkeypatch.setattr(qdb, "_open_change_dialog", harness.change_dialog)
+    # ESI 同步时刻（真实现写 settings.json；测试里换成内存值，别碰用户的配置）
+    monkeypatch.setattr(qdb, "get_esi_orders_synced_at", lambda: harness.esi_synced_at)
+    monkeypatch.setattr(qdb, "set_esi_orders_synced_at", lambda value: setattr(harness, "esi_synced_at", str(value)))
     monkeypatch.setattr(qdb, "load_plans_for_wizard", lambda: [dict(p) for p in harness.plans])
     monkeypatch.setattr(qdb, "get_character_list", lambda: [_CHAR])
     monkeypatch.setattr(qdb, "load_all_data", lambda: {"characters": {_CHAR: {"skills": dict(_SKILLS)}}})
@@ -1061,6 +1071,74 @@ def test_esi_sync_clears_legacy_unknown_owner_rows(h):
 
     assert {r["order_id"] for r in _orders_in(h.conn)} == {902}, "无归属的历史行没被清掉"
     assert h.assets.wallet == 111.0, "ESI 的钱包是绝对覆盖，不是增减"
+
+
+def test_read_orders_skips_export_older_than_last_esi_sync(h, tmp_path):
+    """回归：比上次 ESI 同步还旧的导出文件**不许覆盖**。
+
+    用旧的盖新的不只是显示问题：变动识别会拿旧文件和新数据做差，把 ESI 拉到的挂单
+    判成「已成交」→ **误动钱包**。
+    """
+    path = _write_export(tmp_path)
+    stale = (datetime.now() - timedelta(days=3)).timestamp()
+    os.utime(path, (stale, stale))
+    h.esi_synced_at = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    h.orders.path = path
+    h.orders.rows = [_order(1)]
+
+    with h.conn:
+        h.conn.execute(
+            "INSERT INTO open_orders (order_id, is_buy, price, volume_total, volume_remain,"
+            " char_id, is_corp, imported_at) VALUES (7, 0, 1.0, 1, 1, 111, 1, '2026-09-20 22:27:47')"
+        )
+
+    bridge = h.bridge()
+    bridge.readOrders()
+
+    assert "已跳过" in bridge.statusText
+    assert {r["order_id"] for r in _orders_in(h.conn)} == {7}, "ESI 的行被旧文件盖掉了"
+    assert h.change_dialog.calls == [], "旧文件不该产生任何变动"
+
+    # 反过来：比同步时刻新的文件照常导入（否则守卫就成了永久禁用日志导入）
+    fresh = (datetime.now() + timedelta(minutes=1)).timestamp()
+    os.utime(path, (fresh, fresh))
+    bridge.readOrders()
+    assert {r["order_id"] for r in _orders_in(h.conn)} == {1, 7}
+
+
+def test_esi_sync_detects_fills_but_leaves_wallet_alone(h):
+    """两次 ESI 同步之间要算得出「卖出 / 买到」，但**不能动钱包**。
+
+    ESI 给的是绝对余额，再按成交加减一次会算两遍 —— 所以那一路只落台账。
+    """
+    with h.conn:
+        h.conn.executemany(
+            "INSERT INTO open_orders (order_id, is_buy, price, volume_total, volume_remain,"
+            " char_id, is_corp, imported_at)"
+            " VALUES (?, 0, 100.0, 10, ?, 111, 0, '2026-09-20 22:00:00')",
+            [(1, 10), (2, 4)],
+        )
+    h.assets.wallet = 500.0
+    h.change_dialog.answer = True  # 用户点了「应用变动」
+
+    h.bridge()._on_esi_pulled(
+        {
+            # 1 号整笔消失、2 号 4 → 2（部分成交）
+            "orders": [_order(2, is_buy=False, remain=2, char_id=111)],
+            "wallet_total": 777.0,
+            "corp_total": None,
+            "include_corp": False,
+            "groups": [[111, 0], [111, 1]],
+            "chars": 1,
+            "errors": [],
+        }
+    )
+
+    assert len(h.change_dialog.calls) == 1, "两次 ESI 之间没算出变动"
+    # 钱包断言放前面：它是这条用例真正的钱账守卫（放后面会被 ledger_only 那条挡住）
+    assert h.assets.wallet == 777.0, "钱包应保持 ESI 给的绝对值，不能再按成交加减"
+    assert h.change_dialog.ledger_only == [True], "ESI 路径必须只记台账"
+    assert _events_in(h.conn), "变动没落台账"
 
 
 # ════════════════════════════════════════════════════════════
