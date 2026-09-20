@@ -127,10 +127,10 @@ def _pick_price(price_map: dict[str, float], price_type: str) -> float
 ### `_spread`
 
 ```python
-def _spread(price_map: dict[str, float]) -> float | None
+def _spread(price_map: dict[str, float], qty: float) -> float | None
 ```
 
-卖价 − 买价（同一 hub 的挂单价差）。任一侧没有挂单 → `None`。
+(卖价 − 买价) × 数量 —— 同一 hub 的挂单价差，按采购量换算成金额。任一侧没有挂单 → `None`。
 
 定义行：`405`
 
@@ -142,7 +142,7 @@ def self_made_type_ids(plans: list[dict]) -> set[int]
 
 会被「自制」覆盖的产物 id：**未完工的子项产线**的产物。
 
-定义行：`422`
+定义行：`425`
 
 ### `aggregate_procurement`
 
@@ -152,7 +152,7 @@ def aggregate_procurement(conn, plans: list[dict], *, hangar_id: int | None=None
 
 聚合「备料中」计划的待采购材料并扣库存 → (rows, total_cost, total_volume)。
 
-定义行：`445`
+定义行：`448`
 
 ### `collect_direct_materials`
 
@@ -162,4 +162,4 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]
 
 聚合各计划的直接材料（recipe 一层，非递归），排除由子项产线自制的组件。
 
-定义行：`603`
+定义行：`606`

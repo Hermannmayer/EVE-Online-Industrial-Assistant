@@ -402,8 +402,11 @@ def _pick_price(price_map: dict[str, float], price_type: str) -> float:
     return val if val else price_map.get("buy", 0.0) or 0.0
 
 
-def _spread(price_map: dict[str, float]) -> float | None:
-    """卖价 − 买价（同一 hub 的挂单价差）。任一侧没有挂单 → `None`。
+def _spread(price_map: dict[str, float], qty: float) -> float | None:
+    """(卖价 − 买价) × 数量 —— 同一 hub 的挂单价差，按采购量换算成金额。任一侧没有挂单 → `None`。
+
+    乘 `qty` 而不是给单价差：这一列在表里与「总价」并排，读的是「这单料在卖买两边差多少钱」。
+    给单价差（如 15,888.00）会被读成单价，和旁边 2,394 × 17,490 的总价对不上。
 
     `None` 而不是 0：单边挂单时「差价」根本算不出来，给 0 会被读成「卖买同价」。
     显示与复制两侧都把 `None` 处理成空/`-`，别让它落到数字分支上。
@@ -416,7 +419,7 @@ def _spread(price_map: dict[str, float]) -> float | None:
     buy = float(price_map.get("buy") or 0.0)
     if sell <= 0 or buy <= 0:
         return None
-    return sell - buy
+    return (sell - buy) * qty
 
 
 def self_made_type_ids(plans: list[dict]) -> set[int]:
@@ -473,7 +476,7 @@ def aggregate_procurement(
     Returns:
         (rows, total_cost, total_volume)
         rows: [{type_id, name, zh_name, en_name, need, owned, to_buy, price, total, volume, spread}]
-              spread = 卖价 − 买价，单边无挂单时为 None（详见 `_spread`）
+              spread = (卖价 − 买价) × to_buy（按需采购量换算的金额差），单边无挂单时为 None（详见 `_spread`）
     """
     mult = float(price_mult or 1.0)
     if mult <= 0:
@@ -592,7 +595,7 @@ def aggregate_procurement(
                 "price": price,
                 "total": subtotal,
                 "volume": vol,
-                "spread": _spread(pm),
+                "spread": _spread(pm, to_buy),
             }
         )
         total_cost += subtotal

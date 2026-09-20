@@ -51,13 +51,14 @@ _INT_COPY_COLS = (1, 2)
 #: 表现为「首次打开所有列显示不全」。加列时按 `Σ(w+cellPadding(12)) + 12` 估一遍，
 #: 并保证 `+ 名称列下限 80 + 窗口左右边距 16` 不超 `ProcurementWindow.qml` 的 `minimumWidth`
 #: （那条闸在 `tests/test_procurement_tab.py::test_table_fits_the_narrowest_window` 里）。
-#: **这个窗口是置顶用的**，宽度按内容最小值定，所以列宽只留够内容：三列数量/价差按
-#: 「千分位整数 / 两位小数」的常见长度给，总价留足十位以上（五十亿那种也要能整段显示）。
+#: **这个窗口是置顶用的**，宽度按内容最小值定，所以列宽只留够内容：两列数量按「千分位整数」
+#: 的常见长度给，**价差与总价都留足十位以上**（五十亿那种也要能整段显示）—— 价差是
+#: 「需采购 × (卖价 − 买价)」的金额，量级与总价同阶，按单价差的长度给会被截断。
 _COLUMNS = [
     {"title": _HEADERS[0], "width": 0},
     {"title": _HEADERS[1], "width": 76},
     {"title": _HEADERS[2], "width": 76},
-    {"title": _HEADERS[3], "width": 84},
+    {"title": _HEADERS[3], "width": 132},
     {"title": _HEADERS[4], "width": 132},
 ]
 
@@ -95,7 +96,8 @@ def split_sections(rows: list[dict]) -> tuple[list[dict], list[dict]]:
 
 
 def spread_text(row: dict) -> str:
-    """「卖价-买价」列的显示文本。单边无挂单 → `-`（`None` 是「算不出」，不是 0）。"""
+    """「买卖差价」列的显示文本 —— 已是**金额**（`plan_aggregator` 按需采购量乘过），不是单价差。
+    单边无挂单 → `-`（`None` 是「算不出」，不是 0）。"""
     spread = row.get("spread")
     return "-" if spread is None else f"{spread:,.2f}"
 

@@ -22,7 +22,7 @@ from ui_qml.views.procurement_tab import (
 pytestmark = pytest.mark.ui
 
 # to_buy>0：34/35 需采购；to_buy=0：2001 库存已备足
-# `spread`（卖价−买价）：34 有双边挂单、35 只有单边（None）、2001 双边同向
+# `spread`（(卖价−买价) × 需采购量，金额）：34 有双边挂单、35 只有单边（None）、2001 双边同向
 ROWS = [
     {
         "type_id": 34,
