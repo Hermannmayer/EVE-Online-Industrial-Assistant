@@ -258,6 +258,182 @@ Item {
             }
         }
 
+        /* ── 发明预期结果（只有发明行有）──
+         *
+         * 数字全部来自桥（`domain.research` 的纯函数），改流程/并行/解码器会实时变。
+         * 口径是**期望值**：预期张数 = 总尝试 × 成功率（每次成功产 1 张 BPC）；
+         * 与表格「输出」列的「全成功上限」不是一回事，所以文案一律带「预期」二字。
+         *
+         * 画法抄 `FSlider` 的轨道（Theme.border 轨 + Theme.primary 填充），不引入新组件。
+         * 高度刻意压到 ~60px：只留一根 6px 细条 + 一行三格，不加分组标题行。
+         */
+        Rectangle {
+            objectName: "expectPanel"
+            Layout.fillWidth: true
+            visible: root.dlg ? root.dlg.expectVisible : false
+            implicitHeight: expectCol.implicitHeight + 2 * Theme.spacingSm
+            radius: Theme.radius
+            color: Theme.bgSurface
+            border.width: 1
+            border.color: Theme.border
+
+            ColumnLayout {
+                id: expectCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: Theme.spacingSm
+                spacing: Math.round(4 * Theme.fontScale)
+
+                // ── 行1：标签 + 成功率条 + 百分比 + 合计流程 ──
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: root.gap
+
+                    Text {
+                        text: qsTr("发明预期")
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: root.fntBase
+                    }
+                    Text {
+                        Layout.leftMargin: root.gap
+                        text: qsTr("成功率")
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: root.fntBase - 1
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 6
+                        Layout.minimumWidth: Math.round(60 * Theme.fontScale)
+                        radius: height / 2
+                        color: Theme.border
+
+                        Rectangle {
+                            width: Math.max(0, Math.min(1, root.dlg ? root.dlg.expectRate : 0)) * parent.width
+                            height: parent.height
+                            radius: height / 2
+                            color: Theme.primary
+                        }
+                    }
+                    Text {
+                        text: root.dlg ? root.dlg.expectRateText : ""
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: root.fntBase
+                        font.bold: true
+                    }
+                    Text {
+                        Layout.leftMargin: root.gap
+                        text: root.dlg ? root.dlg.expectTotalRunsText : ""
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: root.fntBase - 1
+                    }
+                }
+
+                // ── 行2：三格（每张流程 / 蓝图等级 / 预期张数）──
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: root.gap
+
+                    Rectangle {
+                        objectName: "expectRunsCell"
+                        Layout.fillWidth: true
+                        implicitHeight: runsCellCol.implicitHeight + 4
+                        radius: Theme.radiusSmall
+                        color: Theme.bgSurfaceLight
+
+                        ColumnLayout {
+                            id: runsCellCol
+                            anchors.fill: parent
+                            anchors.margins: 2
+                            spacing: 0
+
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: qsTr("每张")
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: root.fntBase - 1
+                            }
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: root.dlg ? root.dlg.expectRunsPerBpcText : ""
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: root.fntBase
+                                font.bold: true
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        objectName: "expectLevelCell"
+                        Layout.fillWidth: true
+                        implicitHeight: lvlCellCol.implicitHeight + 4
+                        radius: Theme.radiusSmall
+                        color: Theme.bgSurfaceLight
+
+                        ColumnLayout {
+                            id: lvlCellCol
+                            anchors.fill: parent
+                            anchors.margins: 2
+                            spacing: 0
+
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: qsTr("蓝图等级")
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: root.fntBase - 1
+                            }
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: root.dlg ? root.dlg.expectMeTeText : ""
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: root.fntBase
+                                font.bold: true
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        objectName: "expectBpcCell"
+                        Layout.fillWidth: true
+                        implicitHeight: bpcCellCol.implicitHeight + 4
+                        radius: Theme.radiusSmall
+                        color: Theme.bgSurfaceLight
+
+                        ColumnLayout {
+                            id: bpcCellCol
+                            anchors.fill: parent
+                            anchors.margins: 2
+                            spacing: 0
+
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: qsTr("预期产出")
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: root.fntBase - 1
+                            }
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: root.dlg ? root.dlg.expectBpcText : ""
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: root.fntBase
+                                font.bold: true
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // ── 校验提示 ──
         Text {
             Layout.fillWidth: true

@@ -471,7 +471,7 @@ def test_status_tooltip_is_empty_when_nothing_is_missing():
 
 
 def test_refresh_status_column_targets_only_the_status_column():
-    """`refresh_status_column` 只发第 7 列 —— 别为一行变化把 21 列全刷一遍。"""
+    """`refresh_status_column` 只发第 7 列 —— 别为一行变化把 19 列全刷一遍。"""
     model = PlanQmlModel([_plan(), _plan(status="pending", material_status="short")])
     seen: list[tuple] = []
     model.dataChanged.connect(lambda tl, br, roles: seen.append((tl.column(), br.column(), tuple(roles))))

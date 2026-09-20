@@ -42,7 +42,7 @@ def _sort_key(value)
 
 ### `class PlanTableModel`（继承 `QAbstractTableModel`）
 
-21 列生产计划模型 — 支持 checkbox、类别、图标、行内编辑、排序；末两列为科研（成功率/解码器）
+19 列生产计划模型 — 支持 checkbox、类别、图标、行内编辑、排序
 
 定义行：`42`
 
@@ -193,24 +193,6 @@ def _display_text(self, p: dict, c: int) -> str
 列 0~18 的 DisplayRole 文本
 
 定义行：`243`
-##### `_success_rate_text`
-
-```python
-def _success_rate_text(p: dict) -> str
-```
-
-成功率列：用户手填优先（实填值），否则显示评分算出的值并标「预计」。
-
-定义行：`352`
-##### `_decryptor_text`
-
-```python
-def _decryptor_text(p: dict) -> str
-```
-
-解码器列：发明行显示解码器名（无 → —）。
-
-定义行：`381`
 ##### `headerData`
 
 ```python

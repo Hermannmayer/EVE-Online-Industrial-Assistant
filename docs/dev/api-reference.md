@@ -125,6 +125,6 @@
 
 | 文件 | 功能 |
 |------|------|
-| `ui_qml/views/industry/plan_table.py` | 生产计划表格的业务逻辑（21 列；视图是 `ui_qml/qml/pages/PlanTablePane.qml`） |
+| `ui_qml/views/industry/plan_table.py` | 生产计划表格的业务逻辑（19 列；视图是 `ui_qml/qml/pages/PlanTablePane.qml`） |
 | `ui_qml/views/industry/production_launcher.py` | 产线启动小助手（独立工具窗） |
 | `ui_qml/views/industry/complete_plans_dialog.py` | 下线落库与「发明结果回填」的编排（不再是 `QDialog`） |

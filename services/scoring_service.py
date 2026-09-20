@@ -892,6 +892,13 @@ class ScoringService:
                 "base_probability": round(base_probability, 4),
                 "skills": skill_note,
                 "decryptor": decryptor.name if decryptor else "",
+                # 下面 4 项是给「编辑生产计划」对话框实时重算预期结果用的：换解码器会改
+                # prob_mult / runs_mod / me_mod / te_mod，而 skills 只是显示串，光靠
+                # success_rate 反推技能系数会被 [0,1] 截断弄错（高技能 × ×1.9 真会顶到 1.0）。
+                "base_runs": base_runs,
+                "science_skill_1": s1,
+                "science_skill_2": s2,
+                "encryption_skill": enc,
             }
         elif activity == ACTIVITY_COPYING:
             copies = max(1, parallels)

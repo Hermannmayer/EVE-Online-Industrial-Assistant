@@ -18,12 +18,18 @@ from domain.research import (
     ACTIVITY_INVENTION,
     ACTIVITY_RESEARCH_ME,
     ACTIVITY_RESEARCH_TE,
+    Decryptor,
     decryptor_ids,
     decryptor_labels,
+    get_decryptor,
+    invention_output_me_te,
+    invention_output_runs,
+    invention_probability,
 )
 from services import inventory_manager
 from services.plan_job_kinds import ACTIVITY_MANUFACTURING, normalize
 from ui_qml.dialog_host import DialogBridge, QmlDialog
+from ui_qml.theme.registry import SPACING_MD, SPACING_SM
 
 __all__ = ["PlanEditBridge", "PlanEditQmlDialog"]
 
@@ -42,6 +48,21 @@ _RUNS_LABELS: dict[str, tuple[str, str]] = {
     "researching_material_efficiency": ("目标 ME 等级", "材料效率研究的目标等级"),
     "researching_time_efficiency": ("目标 TE 等级", "时间效率研究的目标等级"),
 }
+
+# ── 「编辑生产计划」对话框的尺寸常量（px）────────────────────────────
+#
+# 宿主 `QmlDialog` 用 `setMinimumSize` 定死下限（见 `dialog_host.py`），所以尺寸写死一大块
+# 会让隐藏行的地方留一大片空白：拷贝行没有 ME/TE、没有解码器、没有预期面板，实测空出 170px。
+# 于是改成按**可见行数**算。
+#
+# `_ROW_H` 是 Fluent 样式下 FSpinBox/FComboBox/FTextField 的实测高，**不随 fontScale 变**
+# （控件高由样式决定，只有文字与标签宽度跟缩放走）；`_PANEL_H` 是 PlanEditDialog.qml 里
+# `expectPanel` 的实测高。改对话框的行数或面板高，这三个常量要一起对 —— 核对方式是出图
+# 看有没有裁切（`tests/test_qml_dialogs.py` 那套 `grabFramebuffer()`）。
+_DLG_WIDTH = 480
+_ROW_H = 30
+_BUTTON_H = 32
+_PANEL_H = 62
 
 
 class PlanEditBridge(DialogBridge):
@@ -77,6 +98,9 @@ class PlanEditBridge(DialogBridge):
         self._decryptor_index = (
             self._decryptor_ids.index(self._orig_decryptor_id) if self._orig_decryptor_id in self._decryptor_ids else 0
         )
+
+        #: 评分链算出的发明口径（base_runs / base_probability / 三个技能等级），预期面板重算用
+        self._bd = dict(self._plan.get("breakdown") or {})
 
         self._chars = self._load_chars()
         char = str(self._plan.get("char_name") or self._plan.get("character") or "")
@@ -171,6 +195,74 @@ class PlanEditBridge(DialogBridge):
     totalAttempts = Property(
         str,
         lambda self: f"总尝试 {self._runs * self._parallels} 次" if self._activity == ACTIVITY_INVENTION else "",
+        notify=fieldsChanged,
+    )
+
+    # ── 发明预期结果（只读展示，随 runs / parallels / 解码器实时重算）──────
+    #
+    # 全部走 domain.research 的纯函数；**不调用** services.plan_metrics.invention_plan_cost
+    # （那个要价格与 DB）。所需口径由评分链写进 breakdown，见 scoring_service 的 extra。
+
+    def _current_decryptor(self) -> Decryptor | None:
+        if 0 <= self._decryptor_index < len(self._decryptor_ids):
+            return get_decryptor(self._decryptor_ids[self._decryptor_index])
+        return None
+
+    def _expect_runs_per_bpc(self) -> int:
+        """一次成功产出的 T2 BPC 流程数（随解码器流程修正变）。"""
+        return invention_output_runs(int(self._bd.get("base_runs") or 1), self._current_decryptor())
+
+    def _expect_rate(self) -> float:
+        """预期成功率 0~1。
+
+        手填过成功率时**不乘解码器倍率** —— 与 plan_metrics 的 `success_rate_override`
+        同口径：覆盖优先，解码器只改产出流程与 ME/TE。
+        """
+        override = self._plan.get("success_rate")
+        if override is not None:
+            try:
+                return min(1.0, max(0.0, float(override)))
+            except (TypeError, ValueError):
+                return 0.0
+        dec = self._current_decryptor()
+        return invention_probability(
+            float(self._bd.get("base_probability") or 0.0),
+            int(self._bd.get("science_skill_1") or 0),
+            int(self._bd.get("science_skill_2") or 0),
+            int(self._bd.get("encryption_skill") or 0),
+            prob_mult=dec.prob_mult if dec else 1.0,
+        )
+
+    def _expect_bpc_count(self) -> int:
+        """预期成功次数 = 总尝试 × 成功率（每次成功产 1 张 BPC）—— 期望值口径。"""
+        return round(self._runs * self._parallels * self._expect_rate())
+
+    def expect_visible(self) -> bool:
+        """只有发明行、且拿得到评分口径（base_runs）时才显示预期面板。"""
+        return self._activity == ACTIVITY_INVENTION and bool(self._bd.get("base_runs"))
+
+    def dialog_row_count(self) -> int:
+        """对话框实际会画出几行：ME/TE 行只有制造有、解码器行只有发明有。"""
+        return 3 + int(self._activity == ACTIVITY_MANUFACTURING) + int(self._activity == ACTIVITY_INVENTION)
+
+    # 计算全在普通方法里，`Property` 只做转发 —— PySide6 的 `Property` 在 mypy 眼里是
+    # 描述符对象而不是返回值，属性体里写 `self.expectXxx` 会被判成「int * Property」。
+    expectVisible = Property(bool, lambda self: self.expect_visible(), notify=fieldsChanged)
+    expectRate = Property(float, lambda self: self._expect_rate(), notify=fieldsChanged)
+    expectBpcCount = Property(int, lambda self: self._expect_bpc_count(), notify=fieldsChanged)
+    expectRateText = Property(str, lambda self: f"{self._expect_rate() * 100:.1f}%", notify=fieldsChanged)
+    expectRunsPerBpcText = Property(str, lambda self: f"{self._expect_runs_per_bpc()} 流程", notify=fieldsChanged)
+    #: 产出 T2 BPC 的等级（基准 ME2 / TE4 + 解码器修正）
+    expectMeTeText = Property(
+        str,
+        lambda self: "ME{} / TE{}".format(*invention_output_me_te(self._current_decryptor())),
+        notify=fieldsChanged,
+    )
+    expectBpcText = Property(str, lambda self: f"约 {self._expect_bpc_count()} 张", notify=fieldsChanged)
+    #: 合计流程（放分组标题行右侧，不额外占高度）
+    expectTotalRunsText = Property(
+        str,
+        lambda self: f"合计约 {self._expect_bpc_count() * self._expect_runs_per_bpc()} 流程",
         notify=fieldsChanged,
     )
 
@@ -289,7 +381,20 @@ class PlanEditQmlDialog(QmlDialog):
         row_count: int = 0,
     ) -> None:
         bridge = PlanEditBridge(plan_data, batch_mode=batch_mode, row_count=row_count)
-        super().__init__(_QML_FILE, bridge, parent=parent, size=(480, 340))
+        super().__init__(_QML_FILE, bridge, parent=parent, size=(_DLG_WIDTH, self._height_for(bridge)))
+
+    @staticmethod
+    def _height_for(bridge: PlanEditBridge) -> int:
+        """按可见行数算高度 —— 隐藏的行不占位，别让它们变成空白。
+
+        恒定 3 行：流程×并行 / 人物+备注 / 材料+产出机库；ME/TE 行只有制造有、
+        解码器行与预期面板只有发明有。校验提示平时 `visible: false`（不参与布局），
+        所以不预留；中间那个 `Layout.fillHeight` 弹簧的 implicitHeight 是 0。
+        """
+        rows = bridge.dialog_row_count()
+        panel = bridge.expect_visible()
+        children = rows + 1 + int(panel)  # 「+1」= 按钮行
+        return 2 * SPACING_MD + rows * _ROW_H + _BUTTON_H + (children - 1) * SPACING_SM + (_PANEL_H if panel else 0)
 
     def get_updated_data(self) -> dict:
         return self.bridge.data()  # type: ignore[no-any-return]

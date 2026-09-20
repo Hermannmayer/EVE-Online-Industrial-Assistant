@@ -40,6 +40,7 @@ from tests.qml_click import spin as _spin
 from tests.qml_click import wait_until as _wait_until
 from ui_qml.host import PageHost
 from ui_qml.models.industry_models import PlanTableModel
+from ui_qml.models.plan_table_constants import NUM_COLUMNS
 from ui_qml.views.industry.plan_table import PlanTable
 
 pytestmark = pytest.mark.ui
@@ -578,7 +579,7 @@ def test_double_click_opens_inline_editor_for_editable_cell(qapp):
         editor = root.findChild(QObject, "inlineEditor")
         assert editor is not None
 
-        editable_col = next((c for c in range(21) if widget.bridge.isCellEditable(0, c)), None)
+        editable_col = next((c for c in range(NUM_COLUMNS) if widget.bridge.isCellEditable(0, c)), None)
         assert editable_col is not None, "模型里没有可编辑列了？"
         pt = _cell_center(root, area, 0, editable_col)
         assert pt is not None and pt.x() < widget.width(), f"列 {editable_col} 没在视口内"
@@ -613,7 +614,7 @@ def test_double_click_non_editable_cell_takes_the_dialog_path(qapp):
         root = host.rootObject()
         area = root.findChild(QObject, "planClickArea")
         assert area is not None
-        non_editable = next(c for c in range(21) if not widget.bridge.isCellEditable(0, c))
+        non_editable = next(c for c in range(NUM_COLUMNS) if not widget.bridge.isCellEditable(0, c))
         pt = _cell_center(root, area, 0, non_editable)
         assert pt is not None and pt.x() < widget.width()
 

@@ -65,12 +65,17 @@ ComboBox {
     }
 
     popup: Popup {
+        /* 必须显式设：Qt 的 Popup 默认只关 Escape，**不关「点外面」**。
+           FComboBox 是 ui_qml 里唯一漏设的弹层，其余五处都写了这一条。 */
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         // 与字段留 2px 缝：贴死会让下拉看起来像字段本身的一部分
         y: root.height + 2
-        // 宽度给足余量：Qt 的 ItemDelegate 除了我设的左右内边距，还有样式自带的其他
+        /* 宽度只按**最长条目**给余量，**不跟字段宽度走**：字段常是 fillWidth（对话框里就是
+           整行宽），弹层跟着撑满既浪费横向空间，又盖住下方空白 —— 用户点「空白处」想关掉，
+           其实点在弹层里面，看起来就是「点空白关不掉」。 */
+        // 余量给得宽松：Qt 的 ItemDelegate 除了我设的左右内边距，还有样式自带的其他
         // 占位，逐项算净宽不可靠（实测按「文字宽 + padding」算出的 98px 仍然会截断）。
-        // 这里直接用宽松的经验余量 + 一个下限，保证任何机库名都能完整显示。
-        width: Math.max(root.width, root.maxItemWidth + 2 * Theme.spacingLg + 2 * padding, 160)
+        width: Math.max(root.maxItemWidth + 2 * Theme.spacingLg + 2 * padding, 160)
         implicitHeight: Math.min(280, contentItem.implicitHeight + topPadding + bottomPadding)
         // 内边距要小：官方默认带较大 padding，加上条目自身的内边距，
         // 整体看起来就是一圈很宽的边框（用户反馈「边框太大」）。

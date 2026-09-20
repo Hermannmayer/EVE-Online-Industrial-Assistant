@@ -5,7 +5,7 @@ import "../components"
 /* 生产计划表（Fluent） —— 阶段 2a。
  *
  * 对照 Widgets 版 ui_pyside6/views/industry/plan_table.py + plan_table_delegate.py：
- * 21 列、类别染色、图标、备料勾选、折叠、表头排序/列宽拖拽/列可见性、行右键菜单、
+ * 19 列、类别染色、图标、备料勾选、折叠、表头排序/列宽拖拽/列可见性、行右键菜单、
  * 单元格内联编辑、待下线按钮，逐项对齐。
  *
  * **业务动作一律不在这里实现**：菜单项和单元格交互都调 `planBridge.<方法>`，
