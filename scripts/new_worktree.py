@@ -73,10 +73,16 @@ def path_exists(p: Path) -> bool:
     return p.exists() or is_reparse(p)
 
 
-def is_reparse(p: Path) -> bool:
+def _long(p: str | Path) -> str:
+    """带 \\\\?\\ 前缀的绝对路径 —— .venv 里 PySide6 的路径会超 MAX_PATH，裸路径访问报 WinError 145/206。"""
+    s = os.path.abspath(str(p))
+    return s if s.startswith("\\\\?\\") else "\\\\?\\" + s
+
+
+def is_reparse(p: str | Path) -> bool:
     """junction / 符号链接。Windows 上 os.path.islink() 对 junction 返回 False，只能看 reparse tag。"""
     try:
-        return bool(getattr(os.lstat(p), "st_reparse_tag", 0))
+        return bool(getattr(os.lstat(_long(p)), "st_reparse_tag", 0))
     except OSError:
         return False
 
@@ -98,6 +104,67 @@ def unlink_entry(p: Path) -> None:
         os.rmdir(p)
     else:
         os.unlink(p)
+
+
+def _unlink_long(s: str) -> None:
+    """s 必须已带 \\\\?\\ 前缀。junction 目录用 rmdir，其余用 unlink —— 同样只断链接本身。"""
+    if os.path.isdir(s):
+        os.rmdir(s)
+    else:
+        os.unlink(s)
+
+
+def purge_tree(p: Path) -> int:
+    """删掉 p 整棵子树（含 p 自身），返回没删掉的条目数。
+
+    `git worktree remove` 删不动 .venv —— PySide6 的 qml 路径超 MAX_PATH，报 WinError 145
+    「目录不是空的」，结果是注册项注销了、800MB 文件留在原地。这里兜底。
+
+    必须自己走而不能直接 rmtree：**junction 会被 `os.path.islink()` 当成普通目录**
+    （它看的是 reparse tag 不是 symlink tag），而 `DirEntry.is_dir(follow_symlinks=False)`
+    对 junction 也返回 True —— rmtree 顺着它就删穿目标（worktree 的 `.venv` 正是指向主
+    工作区 `.venv` 的 junction）。所以每个条目先判 reparse，是链接就只摘链接、绝不递归。
+    """
+    failed = 0
+
+    def walk(cur: str) -> None:
+        nonlocal failed
+        if is_reparse(cur):
+            try:
+                _unlink_long(cur)
+            except OSError as e:
+                log(f"⚠️ 摘链接失败 {cur}：{e}")
+                failed += 1
+            return
+        try:
+            entries = list(os.scandir(cur))
+        except OSError as e:
+            log(f"⚠️ 读目录失败 {cur}：{e}")
+            failed += 1
+            return
+        for entry in entries:
+            if is_reparse(entry.path):
+                try:
+                    _unlink_long(entry.path)
+                except OSError as e:
+                    log(f"⚠️ 摘链接失败 {entry.path}：{e}")
+                    failed += 1
+            elif entry.is_dir(follow_symlinks=False):
+                walk(entry.path)
+            else:
+                try:
+                    os.unlink(entry.path)
+                except OSError as e:
+                    log(f"⚠️ 删文件失败 {entry.path}：{e}")
+                    failed += 1
+        try:
+            os.rmdir(cur)
+        except OSError as e:
+            log(f"⚠️ 删目录失败 {cur}：{e}")
+            failed += 1
+
+    walk(_long(p))
+    return failed
 
 
 def main_worktree(repo: Path) -> Path:
@@ -344,6 +411,8 @@ def hook_remove() -> int:
     root = main_worktree(REPO_ROOT)
     detach(wt)
     run(["git", "-C", str(root), "worktree", "remove", "--force", str(wt)], check=False)
+    if path_exists(wt):
+        purge_tree(wt)
     if path_exists(wt):
         try:
             os.rmdir(wt)
