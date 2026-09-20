@@ -6,6 +6,37 @@
 
 <!-- version list -->
 
+## v0.24.2 (2026-09-20)
+
+### Features
+
+- **工业制造**: 编辑计划加发明预期面板、对话框按可见行数自适应；生产计划表删掉「成功率%」「解码器」两列
+  ([`8020026`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/802002633cfc934fe5e1ad59c9c645fd597c93e2))
+
+- **估价页**: 价格取自可改贸易中心 + 精炼价值入表 + 人物读真实技能 + 按钮重排
+  ([`e540d2f`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/e540d2f1afcc01a9fb0363f9b874837ed56dbafb))
+
+### Bug Fixes
+
+- **科研链路**: 研究完成提升绑定蓝图原本的 ME/TE（不再写成物品的幻影库存）、发明材料按尝试次数计并含解码器、复用计划清实际产出回填；蓝图类型门（拷贝/研究只收 BPO、发明只收 BPC）与未绑定拒绝启动
+  ([`d4be179`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d4be179bdb0385829629286ffdbd2a21937dfa12))
+
+- **绑定**: 改流程 / 并行后按新参数重新对齐蓝图绑定；覆盖条数按份数（容量）算，并行发明不再只绑一张
+  ([`68b32a1`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/68b32a1d45898d30efcdd7b0f0bc9adc1304d157))
+
+- **常量**: Hek 的星系 id 写成了 Uriok → 系统成本指数一直在取别的星系
+  ([`e602c33`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/e602c334a8da5b228d68cd2275139e54933fb5fd))
+
+- **机库设置**: 大括号错位 —— 「默认机库」页被塞进 Tab1、删除确认条顶替成第二页
+  ([`6dd0d08`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/6dd0d08e95795c770b6dd6f0d452efa52caa5155))
+
+- **仪表盘**: 产线条分母取最大值 + 涨跌基准按档位 + 卖单置顶
+  ([`6946360`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/69463602f60c192dfe2ad74e89bae9c763d609c9))
+
+- **工具**: 新开 worktree 报错 —— 恢复被并发会话冲掉的 WorktreeCreate/Remove 钩子实现
+  ([`527c4e1`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/527c4e101d4c351746bc61299700d74ee8e93227))
+
+
 ## v0.24.1 (2026-09-19)
 
 ### Bug Fixes
