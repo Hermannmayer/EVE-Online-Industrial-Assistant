@@ -21,6 +21,7 @@ from typing import Any
 
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
+from core.logger import log
 from domain import contract_analysis as ca
 from services import item_kind
 from services.logistics import compute_jumps
@@ -80,6 +81,12 @@ def _build_where(region_id: int, contract_type: str, filters: dict[str, Any] | N
     if f.get("blueprint_only"):
         where.append("volume <= ?")
         params.append(BLUEPRINT_VOLUME_MAX)
+    # 按发布者名字反查 —— 名字在 `contract_issuers` 里（ESI 的合同端点只给 id），
+    # 所以走子查询。`LIKE` 而不是 `=`：用户往往只记得名字的一部分，而且双击复制到的
+    # 是完整名字，粘进来也能匹配。
+    if (f.get("issuer") or "").strip():
+        where.append("issuer_id IN (SELECT issuer_id FROM contract_issuers WHERE name LIKE ?)")
+        params.append(f"%{str(f['issuer']).strip()}%")
     if f.get("hide_expired", True):
         where.append("date_expired > ?")
         params.append(datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
@@ -95,10 +102,19 @@ def _build_where(region_id: int, contract_type: str, filters: dict[str, Any] | N
 def _contract_rows(region_id: int, contract_type: str, filters: dict[str, Any] | None, limit: int) -> list[dict]:
     clause, params = _build_where(region_id, contract_type, filters)
     with get_container().db.connect("mkt") as conn:
-        rows = conn.execute(
-            f"SELECT * FROM public_contracts WHERE {clause} ORDER BY COALESCE(NULLIF(buyout, 0), price) DESC LIMIT ?",
-            (*params, limit),
-        ).fetchall()
+        try:
+            rows = conn.execute(
+                f"SELECT * FROM public_contracts WHERE {clause} ORDER BY COALESCE(NULLIF(buyout, 0), price) DESC LIMIT ?",
+                (*params, limit),
+            ).fetchall()
+        except sqlite3.OperationalError as ex:
+            # 只吞「发布者表还不存在」这一种：`contract_issuers` 由「拉取合同」建，
+            # 老库 + 用户没点过拉取，就是没有这张表。此时按发布者查无从匹配 ——
+            # 给空结果，不把整页变成「数据库查询失败」。别的一律重抛。
+            if "contract_issuers" not in str(ex):
+                raise
+            log.warning("发布者表尚不存在（还没拉过合同），按发布者查返回空")
+            return []
     return [dict(r) for r in rows]
 
 
@@ -216,6 +232,62 @@ def _attach_places(rows: list[dict]) -> None:
             row[f"{prefix}_security"] = info["security"] if info else None
 
 
+def _attach_icons(rows: list[dict], items: dict[int, list[dict]], price_map: dict[int, float]) -> None:
+    """给合同行补「里面是什么」：主物品名 + 图标 + 件数。
+
+    **不能只靠图标**：实测拍卖里值钱的物品多是涂装（SKIN），而 EVE 图床对涂装返
+    404、本地图标缓存也没有 —— 只画图标这一列大半是空的。所以「物品」列是
+    「图标（有就画）+ 主物品名 + N 件」，名字才是保底信息。
+    """
+    for row in rows:
+        contract_items = items.get(int(row["contract_id"]), [])
+        ranked = ca.icon_type_ids(contract_items, price_map)
+        names = {
+            int(it.get("type_id") or 0): (it.get("zh_name") or it.get("en_name") or f"ID:{it.get('type_id')}")
+            for it in contract_items
+        }
+        row["icon_type_ids"] = ranked
+        row["top_item_name"] = names.get(ranked[0], "") if ranked else ""
+        row["item_count"] = len(contract_items)
+
+
+def _attach_issuers(rows: list[dict]) -> None:
+    """给合同行补 `issuer_name`（查不到给空串）。
+
+    名字不在合同表里 —— ESI 的合同端点只给 `issuer_id`，名字由补齐任务另存到
+    `contract_issuers`（见 `services.importers.getcontracts.run_issuer_name_fill`）。
+    那张表由「拉取合同」建，还没拉过时缺表 —— 与 `list_regions` 缺列同款回退：
+    名字列先空着，不是错误。
+    """
+    ids = sorted({int(r["issuer_id"]) for r in rows if r.get("issuer_id")})
+    names: dict[int, str] = {}
+    if ids:
+        with get_container().db.connect("mkt") as conn:
+            for chunk in _chunks(ids):
+                ph = ",".join("?" * len(chunk))
+                try:
+                    found = conn.execute(
+                        f"SELECT issuer_id, name FROM contract_issuers WHERE issuer_id IN ({ph})", tuple(chunk)
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    break  # 缺表 —— 整批都不可能有名字，不必逐块重试
+                names.update({int(r[0]): str(r[1]) for r in found})
+    for row in rows:
+        row["issuer_name"] = names.get(int(row.get("issuer_id") or 0), "")
+
+
+def count_tab(region_id: int, contract_type: str, filters: dict[str, Any] | None = None) -> int:
+    """当前筛选下这个页签有多少条 —— 页签上的条数徽标用。
+
+    与列表走同一套 `_build_where`，所以徽标数字和状态行的「N 条」是同一个口径，
+    不会出现「页签写 3.4 万、点进去只有 2000」（那是 LIMIT 截断，不是筛选）。
+    """
+    clause, params = _build_where(region_id, contract_type, filters)
+    with get_container().db.connect("mkt") as conn:
+        row = conn.execute(f"SELECT COUNT(*) FROM public_contracts WHERE {clause}", params).fetchone()
+    return int(row[0]) if row else 0
+
+
 # ════════════════════════════════════════════════════
 #  三个子页的入口
 # ════════════════════════════════════════════════════
@@ -233,7 +305,9 @@ def load_auction_contracts(
     price_map = price_map_for((it["type_id"] for its in items.values() for it in its), region_id, price_type)
     for row in rows:
         row.update(ca.auction_metrics(row, items.get(int(row["contract_id"]), []), price_map))
+    _attach_icons(rows, items, price_map)
     _attach_places(rows)
+    _attach_issuers(rows)
     return rows
 
 
@@ -268,7 +342,9 @@ def load_exchange_contracts(
         )
         row.update(metrics)
         row["has_blueprint"] = has_blueprint
+    _attach_icons(rows, items, price_map)
     _attach_places(rows)
+    _attach_issuers(rows)
     return rows
 
 
@@ -286,6 +362,7 @@ def load_courier_contracts(
     """
     rows = _contract_rows(region_id, "courier", filters, limit)
     _attach_places(rows)
+    _attach_issuers(rows)
 
     compute = jump_mode in ("shortest", "highsec", "custom")
     system_ids: dict[int, int] = {}

@@ -30,16 +30,6 @@ hex 本身仍全部来自 `ui_qml.theme.registry`，不违反「配色只在 the
 
 ## 函数
 
-### `phosphor_url`
-
-```python
-def phosphor_url(filename: str, color: str, size: int=16) -> str
-```
-
-Phosphor SVG 的 `image://phosphor/...` URL（颜色与尺寸编进查询串）。
-
-定义行：`99`
-
 ### `_tint`
 
 ```python
@@ -48,7 +38,7 @@ def _tint(name: str) -> str
 
 类别色 → 带透明度的 `#AARRGGBB`（QML 的 color 认这个格式）。
 
-定义行：`118`
+定义行：`102`
 
 ## 类
 
@@ -56,7 +46,7 @@ def _tint(name: str) -> str
 
 生产计划模型 + QML 命名角色。数据/排序/折叠逻辑全在父类。
 
-定义行：`127`
+定义行：`111`
 
 #### 方法
 
@@ -70,7 +60,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`133`
+定义行：`117`
 ##### `data`
 
 ```python
@@ -81,7 +71,7 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`138`
+定义行：`122`
 ##### `_plan_at`
 
 ```python
@@ -90,7 +80,7 @@ def _plan_at(self, row: int) -> dict
 
 过滤行号 → 行 dict（折叠时经 `_row_map` 映射）。
 
-定义行：`184`
+定义行：`168`
 ##### `_fg`
 
 ```python
@@ -101,7 +91,7 @@ def _fg(self, p: dict, c: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`191`
+定义行：`175`
 ##### `_icon_url`
 
 ```python
@@ -112,7 +102,7 @@ def _icon_url(self, p: dict, c: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`228`
+定义行：`212`
 ##### `_fold_state`
 
 ```python
@@ -121,7 +111,7 @@ def _fold_state(self, p: dict) -> str
 
 产品列的折叠态：`""` 无可折叠 | `expanded` | `collapsed`。
 
-定义行：`238`
+定义行：`222`
 ##### `_display_text`
 
 ```python
@@ -132,7 +122,7 @@ def _display_text(self, p: dict, c: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`253`
+定义行：`237`
 ##### `refresh_colors`
 
 ```python
@@ -141,7 +131,7 @@ def refresh_colors(self) -> None
 
 主题切换后重算所有单元格颜色（`fg`/`bg`/`iconColor` 是已解析的 hex）。
 
-定义行：`261`
+定义行：`245`
 ##### `refresh_status_column`
 
 ```python
@@ -150,7 +140,7 @@ def refresh_status_column(self) -> None
 
 只重发**状态列** —— 缺料标注变了时用，不为一行把全表刷一遍。
 
-定义行：`268`
+定义行：`252`
 ##### `sort`
 
 ```python
@@ -161,7 +151,7 @@ def sort(self, column: int, order: Qt.SortOrder=Qt.SortOrder.AscendingOrder) -> 
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`285`
+定义行：`269`
 ##### `sort_column`
 
 ```python
@@ -172,7 +162,7 @@ def sort_column(self) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`290`
+定义行：`274`
 ##### `sort_ascending`
 
 ```python
@@ -183,4 +173,4 @@ def sort_ascending(self) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`294`
+定义行：`278`

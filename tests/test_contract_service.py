@@ -53,8 +53,8 @@ _CONTRACTS = [
     (1, "courier", _ST_JITA, _ST_ISLAND, {"reward": 1_000_000.0, "volume": 100.0}),
     # 2: 运输，终点是玩家建筑 → 解析不出星系
     (2, "courier", _ST_JITA, _ST_STRUCTURE, {"reward": 2_000_000.0, "volume": 50.0}),
-    # 3: 物品交换，含蓝图
-    (3, "item_exchange", None, None, {"price": 10_000.0}),
+    # 3: 物品交换，含蓝图（有发布者 id —— 名字另存在 `contract_issuers`）
+    (3, "item_exchange", None, None, {"price": 10_000.0, "issuer_id": 90000001}),
     # 4: 拍卖，含一口价（无物品 —— 还没拉过）
     (4, "auction", None, None, {"price": 100.0, "buyout": 500.0}),
 ]
@@ -187,13 +187,15 @@ def _seed(paths: dict[str, Path]) -> None:
             type_id INTEGER, region_id INTEGER, buy_price REAL, sell_price REAL,
             adjusted_price REAL DEFAULT 0.0, buy_volume INTEGER DEFAULT 0,
             sell_volume INTEGER DEFAULT 0, fetch_time TEXT);
+        CREATE TABLE contract_issuers (
+            issuer_id INTEGER PRIMARY KEY, name TEXT NOT NULL, fetched_at TEXT NOT NULL);
         """
     )
     for cid, ctype, start, end, extra in _CONTRACTS:
         mkt.execute(
             "INSERT INTO public_contracts (contract_id, region_id, type, price, buyout, reward, volume, "
-            "date_expired, start_location_id, end_location_id, fetch_time, items_fetched_at) "
-            "VALUES (?, 10000002, ?, ?, ?, ?, ?, '2099-01-01T00:00:00Z', ?, ?, 'T1', ?)",
+            "issuer_id, date_expired, start_location_id, end_location_id, fetch_time, items_fetched_at) "
+            "VALUES (?, 10000002, ?, ?, ?, ?, ?, ?, '2099-01-01T00:00:00Z', ?, ?, 'T1', ?)",
             (
                 cid,
                 ctype,
@@ -201,11 +203,13 @@ def _seed(paths: dict[str, Path]) -> None:
                 extra.get("buyout", 0),
                 extra.get("reward", 0),
                 extra.get("volume", 0),
+                extra.get("issuer_id"),
                 start,
                 end,
                 "T1" if cid in _ITEMS else None,
             ),
         )
+    mkt.execute("INSERT INTO contract_issuers (issuer_id, name, fetched_at) VALUES (90000001, '张三', 'T1')")
     for cid, items in _ITEMS.items():
         for it in items:
             mkt.execute(
@@ -316,6 +320,37 @@ class TestExchangeBlueprints:
         assert row["status"] == cs.ca.STATUS_OK
         fetched = {r["contract_id"]: r for r in service.load_auction_contracts(10000002)}
         assert fetched[4]["status"] == cs.ca.STATUS_NO_ITEMS
+
+    def test_content_column_fields(self, service):
+        """「物品」列的三个字段：主物品名 / 图标候选 / 件数 —— 图标覆盖不全，名字是保底。"""
+        row = next(r for r in service.load_exchange_contracts(10000002) if r["contract_id"] == 3)
+        assert row["top_item_name"] == "渡鸦级蓝图"
+        assert row["icon_type_ids"] == [1000]
+        assert row["item_count"] == 1
+
+    def test_issuer_name_attached_and_blank_when_unknown(self, service):
+        """发布者名字来自 `contract_issuers`；查不到给空串（不是 id，也不是异常）。"""
+        exchange = {r["contract_id"]: r for r in service.load_exchange_contracts(10000002)}
+        assert exchange[3]["issuer_name"] == "张三"
+        auction = {r["contract_id"]: r for r in service.load_auction_contracts(10000002)}
+        assert auction[4]["issuer_name"] == ""
+
+
+class TestIssuerLookup:
+    """按发布者名字反查他的合同（三个页签共用同一套筛选）。"""
+
+    def test_filters_by_issuer_name(self, service):
+        rows = service.load_exchange_contracts(10000002, filters={"issuer": "张三"})
+        assert [r["contract_id"] for r in rows] == [3]
+
+    def test_partial_and_case_insensitive_match(self, service):
+        """用户往往只记得名字的一部分 —— 子串匹配，不要求打全名。"""
+        assert len(service.load_exchange_contracts(10000002, filters={"issuer": "张"})) == 1
+        assert service.load_exchange_contracts(10000002, filters={"issuer": "李四"}) == []
+
+    def test_counts_follow_the_same_filter(self, service):
+        assert service.count_tab(10000002, "item_exchange", {"issuer": "张三"}) == 1
+        assert service.count_tab(10000002, "auction", {"issuer": "张三"}) == 0
 
 
 # ═══════════════════════════════════════════════════════

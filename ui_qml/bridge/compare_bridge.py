@@ -188,8 +188,8 @@ class CompareBridge(DialogBridge):
 
         宽度是**最小宽**：QML 那边让「物品」列吃掉剩余空间。Widgets 版是
         `setStretchLastSection(True)`，被拉伸的是最窄的「状态」列（90px 的列
-        占满右侧空白、真正长的物品名反而被截断）—— 与 `ContractDetailBridge`
-        同一处修正，列名/顺序/宽度一字未改。
+        占满右侧空白、真正长的物品名反而被截断）—— QML 侧统一按「弹性列给最长的
+        那一列」重排过，列名/顺序/宽度一字未改。
         """
         return [{"title": title, "width": width} for title, width, _key in self._model._cols]
 

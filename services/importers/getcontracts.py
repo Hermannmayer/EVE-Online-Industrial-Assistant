@@ -92,6 +92,16 @@ async def init_db():
                 PRIMARY KEY (contract_id, record_id)
             )
         """)
+        # 发布者名字 —— ESI 的合同端点只给 `issuer_id`，名字得另问 `/universe/names/`。
+        # 独立小表而不是给 `public_contracts` 加列：不碰 3.5 万行表的 upsert，且同一发布者
+        # 跨星域、跨合同复用（一份合同一行会重复存几万次同一个名字）。
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS contract_issuers (
+                issuer_id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                fetched_at TEXT NOT NULL
+            )
+        """)
         # 索引
         await db.execute("CREATE INDEX IF NOT EXISTS idx_contracts_region ON public_contracts(region_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_contracts_type ON public_contracts(type)")
@@ -374,28 +384,143 @@ async def save_items_batch(items: dict[int, list[dict]], fetched_at: str) -> int
     return len(item_records)
 
 
+# ═══════════════════════════════════════════════════════════
+#  发布者名字（合同端点不返回，得问 `/universe/names/`）
+# ═══════════════════════════════════════════════════════════
+
+#: `/universe/names/` 单次请求的 id 上限 —— ESI 文档给的就是 1000。
+_NAMES_CHUNK = 1000
+
+#: SQLite 变量上限防护（与 `contract_service._SQL_VAR_CHUNK` 同因）。
+_SQL_VAR_CHUNK = 500
+
+
+async def _save_issuer_names(items: list[dict]) -> int:
+    """`[{id, name, category}]` → `contract_issuers`，返回写入条数。"""
+    stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    rows = [(int(it["id"]), str(it["name"]), stamp) for it in items if it.get("id") and it.get("name")]
+    if not rows:
+        return 0
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.executemany(
+            """
+            INSERT INTO contract_issuers (issuer_id, name, fetched_at) VALUES (?, ?, ?)
+            ON CONFLICT(issuer_id) DO UPDATE SET name = excluded.name, fetched_at = excluded.fetched_at
+            """,
+            rows,
+        )
+        await db.commit()
+    return len(rows)
+
+
+async def _fetch_issuer_names_async(
+    ids: list[int],
+    should_stop: Callable[[], bool] | None = None,
+) -> int:
+    """批量取名并落库。
+
+    **整批会因一个坏 id 全塌**：ESI 的 `/universe/names/` 只要有一个 id 解析不出就整个
+    POST 返 404（`APIClient.post` 于是返回 None），同批里本来查得到的名字也一起没了。
+    所以整批没解出来时退化成逐个重试 —— 与 `order_workers._resolve_names_remote` 同因同解。
+
+    解析失败的名字**不写缓存**：写了等于把「查不到」记成结果，界面从此永远显示空名字。
+    """
+    if not ids:
+        return 0
+
+    await init_db()
+    written = 0
+    async with APIClient(timeout=60) as session:
+        for start in range(0, len(ids), _NAMES_CHUNK):
+            if should_stop is not None and should_stop():
+                break
+            chunk = ids[start : start + _NAMES_CHUNK]
+            try:
+                data = await session.post(f"{ESI_BASE_URL}/universe/names/", json=chunk)
+            except Exception:  # 外部 HTTP：取名失败不该让整次补齐任务失败
+                log.exception("发布者批量取名失败，跳过本批 %d 个", len(chunk))
+                continue
+            if isinstance(data, list):
+                written += await _save_issuer_names(data)
+                continue
+            for one in chunk:
+                if should_stop is not None and should_stop():
+                    break
+                try:
+                    single = await session.post(f"{ESI_BASE_URL}/universe/names/", json=[one])
+                except Exception:  # 同上
+                    log.exception("发布者单个取名失败 issuer_id=%s", one)
+                    continue
+                if isinstance(single, list):
+                    written += await _save_issuer_names(single)
+    return written
+
+
+def run_issuer_name_fill(
+    ids: list[int],
+    should_stop: Callable[[], bool] | None = None,
+) -> int:
+    """同步入口（供 QThread worker 调用）。返回写入的名字条数。"""
+    try:
+        return asyncio.run(_fetch_issuer_names_async(ids, should_stop))
+    except KeyboardInterrupt:
+        log.warning("发布者取名被中断")
+        return 0
+
+
 #: courier 合同的 items 端点实测返回 HTTP 400，永远不要为它拉物品。
 _TYPES_WITH_ITEMS = ("item_exchange", "auction")
 
 
-def list_contracts_needing_items(region_id: int, contract_type: str, limit: int = 500) -> list[int]:
+def list_contracts_needing_items(
+    region_id: int,
+    contract_type: str,
+    limit: int = 500,
+    contract_ids: list[int] | None = None,
+) -> list[int]:
     """待取物品的合同，按合同价降序（贵的先补，先看到有价值的行）。
+
+    `contract_ids` 给定时只在这些合同里挑 —— **自动补齐走这条**，范围就是界面当前列表；
+    不给则在整个星域里挑 —— 手动「补齐全部」走这条。两种都按合同价降序。
 
     只认 `item_exchange` / `auction` —— courier 的 items 端点实测返回 HTTP 400。
     """
     if contract_type not in _TYPES_WITH_ITEMS:
         return []
+
     with sqlite3.connect(DATABASE_PATH) as conn:
-        rows = conn.execute(
-            """
-            SELECT contract_id FROM public_contracts
-            WHERE region_id = ? AND type = ? AND items_fetched_at IS NULL
-            ORDER BY COALESCE(NULLIF(buyout, 0), price) DESC
-            LIMIT ?
-            """,
-            (region_id, contract_type, limit),
-        ).fetchall()
-    return [int(r[0]) for r in rows]
+        if contract_ids is None:
+            rows = conn.execute(
+                """
+                SELECT contract_id FROM public_contracts
+                WHERE region_id = ? AND type = ? AND items_fetched_at IS NULL
+                ORDER BY COALESCE(NULLIF(buyout, 0), price) DESC
+                LIMIT ?
+                """,
+                (region_id, contract_type, limit),
+            ).fetchall()
+            return [int(r[0]) for r in rows]
+
+        wanted = list(dict.fromkeys(int(c) for c in contract_ids))
+        prices: dict[int, float] = {}
+        for start in range(0, len(wanted), _SQL_VAR_CHUNK):
+            chunk = wanted[start : start + _SQL_VAR_CHUNK]
+            ph = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"SELECT contract_id, COALESCE(NULLIF(buyout, 0), price) FROM public_contracts "
+                f"WHERE contract_id IN ({ph}) AND items_fetched_at IS NULL",
+                tuple(chunk),
+            ).fetchall()
+            prices.update({int(cid): float(price or 0) for cid, price in rows})
+        # 排序在**收齐之后**统一做：分块查时 LIMIT 会按块生效，落在后面的贵合同会被块内截掉
+        return [cid for cid, _ in sorted(prices.items(), key=lambda kv: kv[1], reverse=True)[:limit]]
+
+
+#: 回写批大小 —— **它同时是停止延迟**：`should_stop` 只在每批之间检查一次，
+#: 一批要跑完才会看下一眼。批 50 时一批约 5 秒，而关窗收尾只等 3 秒
+#: （`ui_qml/bridge/contract_bridge.shutdown`），等不到就把线程留在了页面销毁之后。
+#: 降到 10：一批约 1 秒，停得下来；请求总数不变（内层本来就是 10 并发）。
+_ITEMS_WRITE_BATCH = 10
 
 
 async def _fill_items_async(
@@ -413,11 +538,11 @@ async def _fill_items_async(
     done = 0
 
     async with APIClient(timeout=60) as session:
-        for i in range(0, total, 50):
+        for i in range(0, total, _ITEMS_WRITE_BATCH):
             if should_stop is not None and should_stop():
                 log.info("  物品补齐被用户中断，已完成 %d/%d", done, total)
                 break
-            batch = contract_ids[i : i + 50]
+            batch = contract_ids[i : i + _ITEMS_WRITE_BATCH]
             items, failed = await _fetch_contract_items_detailed(session, batch)
             # 拉取失败的合同不写标记，留待下轮重试
             ok_items = {cid: its for cid, its in items.items() if cid not in failed}

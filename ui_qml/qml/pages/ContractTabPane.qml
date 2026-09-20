@@ -50,9 +50,17 @@ Item {
         required property int column
         required property var model
 
+        //: 该表格的列定义来源 —— 总表是 `pane.columns`，物品表是 `itemColumns`
+        //: （两张表列数不同，混用会把「图标列」标到别的列上）
+        property var columnsMeta: pane.columns
+
         implicitHeight: pane.rowH
 
         readonly property bool isCurrent: pane.currentRow === tcell.row
+        //: 该列前面画物品图标（列定义由桥下发，单一来源在 contract_models）
+        readonly property bool asIcons: tcell.columnsMeta.length > tcell.column
+                                        && tcell.columnsMeta[tcell.column].icons === true
+        readonly property var iconList: tcell.asIcons ? (tcell.model.iconUrls || []) : []
 
         Rectangle {
             anchors.fill: parent
@@ -67,9 +75,38 @@ Item {
             height: 1
             color: Theme.border
         }
+
+        /* 「物品」列：主物品的图标（有就画，涂装之类本来就没有图）—— 文字照常显示，
+         * 由下面的 Text 负责，这里只把文字往右让开。 */
+        Row {
+            id: iconRow
+            visible: tcell.iconList.length > 0
+            anchors.left: parent.left
+            anchors.leftMargin: Math.round(5 * Theme.fontScale)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Math.round(2 * Theme.fontScale)
+
+            Repeater {
+                model: tcell.iconList
+
+                delegate: Image {
+                    required property string modelData
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.round(18 * Theme.fontScale)
+                    height: width
+                    source: modelData
+                    sourceSize.width: width
+                    sourceSize.height: height
+                    fillMode: Image.PreserveAspectFit
+                    smooth: true
+                }
+            }
+        }
+
         Text {
             anchors.fill: parent
-            anchors.leftMargin: Math.round(6 * Theme.fontScale)
+            anchors.leftMargin: iconRow.visible ? iconRow.width + Math.round(11 * Theme.fontScale)
+                                                : Math.round(6 * Theme.fontScale)
             anchors.rightMargin: Math.round(6 * Theme.fontScale)
             verticalAlignment: Text.AlignVCenter
             horizontalAlignment: tcell.model.alignRight ? Text.AlignRight : Text.AlignLeft
@@ -256,6 +293,7 @@ Item {
                         implicitHeight: pane.headerH
 
                         readonly property var meta: index < pane.columns.length ? pane.columns[index] : null
+                        readonly property bool sorted: pane.c !== null && pane.c.sortColumn === chead.index
 
                         Rectangle {
                             anchors.fill: parent
@@ -280,11 +318,18 @@ Item {
                             anchors.leftMargin: 6
                             anchors.rightMargin: 6
                             verticalAlignment: Text.AlignVCenter
-                            text: chead.meta ? chead.meta.title : ""
-                            color: Theme.textPrimary
+                            // 排序箭头画在表头里：光能点、看不出按哪列排过，等于没排
+                            text: (chead.meta ? chead.meta.title : "")
+                                  + (chead.sorted ? (pane.c.sortAscending ? " ▲" : " ▼") : "")
+                            color: chead.sorted ? Theme.primary : Theme.textPrimary
                             font.family: Theme.fontFamily
                             font.pixelSize: pane.fntSmall
                             elide: Text.ElideRight
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: if (pane.c) pane.c.sortBy(chead.index)
                         }
                     }
                 }
@@ -344,9 +389,12 @@ Item {
                             pane.currentRow = row
                             if (pane.c) pane.c.selectContract(row)
                         }
+                        /* 双击 = 复制发布者。游戏内搜合同只能按发布者搜（ID 搜不到），
+                         * 而这一页唯一的动作就是「看中了 → 去游戏里找它」。
+                         * 物品明细在下方面板里，不再另开二级窗口。 */
                         onRowDoubleClicked: function (row, _column) {
                             pane.currentRow = row
-                            if (pane.c) pane.c.showDetail(row)
+                            if (pane.c) pane.c.copyIssuer(row)
                         }
                         onRowRightClicked: function (row, _column, x, y) {
                             const p = mapToItem(pane, x, y)
@@ -421,6 +469,7 @@ Item {
 
                                 readonly property var meta: (pane.c && pane.c.itemColumns.length > index)
                                                              ? pane.c.itemColumns[index] : null
+                                readonly property bool sorted: pane.c !== null && pane.c.itemSortColumn === ihead.index
 
                                 Rectangle {
                                     anchors.fill: parent
@@ -438,11 +487,17 @@ Item {
                                     anchors.leftMargin: 6
                                     anchors.rightMargin: 6
                                     verticalAlignment: Text.AlignVCenter
-                                    text: ihead.meta ? ihead.meta.title : ""
-                                    color: Theme.textPrimary
+                                    text: (ihead.meta ? ihead.meta.title : "")
+                                          + (ihead.sorted ? (pane.c.itemSortAscending ? " ▲" : " ▼") : "")
+                                    color: ihead.sorted ? Theme.primary : Theme.textPrimary
                                     font.family: Theme.fontFamily
                                     font.pixelSize: pane.fntSmall
                                     elide: Text.ElideRight
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: if (pane.c) pane.c.itemSortBy(ihead.index)
                                 }
                             }
                         }
@@ -469,6 +524,7 @@ Item {
                             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
                             delegate: TableCell {
+                                columnsMeta: pane.c ? pane.c.itemColumns : []
                                 implicitWidth: {
                                     const cols = pane.c ? pane.c.itemColumns : []
                                     return column < cols.length ? cols[column].width : 100
@@ -491,17 +547,12 @@ Item {
         property int row: -1
 
         FMenuItem {
-            text: qsTr("复制合同 ID")
-            onTriggered: if (pane.c) pane.c.copyContractId(rowMenu.row)
+            text: qsTr("复制发布者")
+            onTriggered: if (pane.c) pane.c.copyIssuer(rowMenu.row)
         }
         FMenuItem {
             text: qsTr("复制物品列表")
             onTriggered: if (pane.c) pane.c.copyItems()
-        }
-        FMenuSeparator {}
-        FMenuItem {
-            text: qsTr("在新窗口查看")
-            onTriggered: if (pane.c) pane.c.showDetail(rowMenu.row)
         }
         FMenuSeparator {}
         FMenuItem {

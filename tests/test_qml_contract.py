@@ -12,7 +12,8 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QPoint, Qt
+from PySide6.QtTest import QTest
 
 from tests.qml_click import press_move_release
 from tests.qml_click import spin as _spin
@@ -80,6 +81,49 @@ def test_row_click_survives_content_move(contract_page):
         read_current=lambda: pane.property("currentRow"),
         delta=1,
     )
+
+
+def test_header_click_sorts_the_table(contract_page):
+    """点表头按该列排序，再点一次反向。
+
+    模型早就有 `sort()` 与 `_SORT_KEYS`，缺的一直是**表头没接上** —— 用户看到的是
+    「表格不能排序」。这条用例盯的就是那根接线（含「首次点金额列给降序」的约定）。
+    """
+    host, bridge = contract_page
+    bridge.auctionModel.set_rows(
+        [
+            {"contract_id": 1, "price_diff": 100.0},
+            {"contract_id": 2, "price_diff": 900.0},
+            {"contract_id": 3, "price_diff": 500.0},
+        ]
+    )
+    _spin(150)
+
+    host.resize(1200, 800)
+    host.show()
+    _spin(250)
+
+    root = host.rootObject()
+    header = root.findChild(QObject, "contractHeader_auction")
+    assert header is not None, "找不到拍卖表头"
+
+    # 「价差」是第 6 列（列宽取桥下发的那份，表头与表体同源）
+    columns = bridge.auctionColumns
+    offset = header.mapToItem(root, sum(c["width"] for c in columns[:6]) + columns[6]["width"] / 2, header.height() / 2)
+    point = QPoint(int(offset.x()), int(offset.y()))
+
+    def click_header() -> None:
+        QTest.mouseClick(host, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
+        _spin(150)
+
+    click_header()
+    assert bridge.sortColumn == 6, "点了表头却没排到那一列"
+    assert bridge.sortAscending is False, "金额列首次点击该给降序（先看赚得多的）"
+    assert [r["price_diff"] for r in bridge.auctionModel._rows] == [900.0, 500.0, 100.0]
+
+    click_header()
+    assert bridge.sortAscending is True, "同一列再点一次该反向"
+    assert [r["price_diff"] for r in bridge.auctionModel._rows] == [100.0, 500.0, 900.0]
 
 
 # ════════════════════════════════════════════════════════════

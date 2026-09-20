@@ -16,6 +16,7 @@ URL 形式：`image://phosphor/<svg 文件名>?c=<#rrggbb>&s=<像素>`
 
 from __future__ import annotations
 
+import os
 from collections import OrderedDict
 from urllib.parse import parse_qs
 
@@ -23,16 +24,29 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QImage
 from PySide6.QtQuick import QQuickImageProvider
 
-from ui_qml.icons import load_svg
+from ui_qml.icons import load_svg, svg_path
 from ui_qml.theme import registry as theme
 
-__all__ = ["PhosphorIconProvider", "PROVIDER_ID"]
+__all__ = ["PhosphorIconProvider", "PROVIDER_ID", "phosphor_url"]
 
 PROVIDER_ID = "phosphor"
 
 _CACHE_LIMIT = 512
 #: QML 里 Icon 的默认尺寸（`Image.sourceSize` 会覆盖它）
 _DEFAULT_SIZE = 16
+
+
+def phosphor_url(filename: str, color: str, size: int = _DEFAULT_SIZE) -> str:
+    """Phosphor SVG 的 `image://phosphor/...` URL（颜色与尺寸编进查询串）。
+
+    走本模块而不是 `file://`：QML 的 `Image` 拿到原始 SVG 是**未染色**的
+    （Phosphor 的 fill 在根节点上），必须在取图时注入。
+    文件不存在时返回空串，QML 的 Image 不加载也不报警告。
+    """
+    if not os.path.isfile(svg_path(filename)):
+        return ""
+    encoded = str(color).replace("#", "%23")
+    return f"image://{PROVIDER_ID}/{filename}?c={encoded}&s={int(size)}"
 
 
 class PhosphorIconProvider(QQuickImageProvider):

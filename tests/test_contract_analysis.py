@@ -22,6 +22,7 @@ from domain.contract_analysis import (
     blueprint_exchange_metrics,
     courier_metrics,
     exchange_metrics,
+    icon_type_ids,
     manufacturing_profit,
     market_value,
     parse_expiry,
@@ -113,6 +114,27 @@ class TestPriceDiff:
     @pytest.mark.parametrize("value, cost", [(None, 100.0), (100.0, None), (None, None)])
     def test_none_propagates(self, value, cost):
         assert price_diff(value, cost) == (None, None)
+
+
+class TestIconTypeIds:
+    """合同行「里面是什么」取哪几件 —— 取错只会让列表看着眼熟但没信息。"""
+
+    def test_ranks_by_total_value_not_by_input_order(self):
+        items = [_item(34, 1000), _item(35, 2)]
+        assert icon_type_ids(items, {34: 1.0, 35: 1_000.0}) == [35, 34]
+
+    def test_limited_and_deduped(self):
+        items = [_item(34, 10), _item(35, 5), _item(36, 1), _item(34, 7)]
+        assert icon_type_ids(items, {34: 5.0, 35: 5.0, 36: 5.0}, limit=2) == [34, 35]
+
+    def test_unpriced_items_rank_after_priced_ones(self):
+        """缺价的不能按 0 参与价值排序 —— 那样大家都是 0，顺序随数据库给，图标每次刷新都在变。"""
+        items = [_item(34, 1), _item(35, 100)]
+        assert icon_type_ids(items, {34: 5.0}) == [34, 35]
+
+    def test_empty_and_unknown(self):
+        assert icon_type_ids([], {34: 5.0}) == []
+        assert icon_type_ids([{"quantity": 3}], {}) == []
 
 
 # ═══════════════════════════════════════════════════════

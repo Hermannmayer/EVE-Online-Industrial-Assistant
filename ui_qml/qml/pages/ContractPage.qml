@@ -92,6 +92,24 @@ Item {
                 font.pixelSize: page.fntBase
             }
 
+            /* 按发布者反查 —— 游戏内搜合同只能按发布者搜，所以「双击复制发布者」之后
+             * 得能拿这个名字回来查他的全部合同。筛选状态在桥上，**三个页签共用**。 */
+            Text {
+                text: qsTr("发布者:")
+                color: Theme.textPrimary
+                font.family: Theme.fontFamily
+                font.pixelSize: page.fntBase
+                Layout.leftMargin: page.gap
+            }
+            FTextField {
+                objectName: "issuerInput"
+                implicitWidth: 170
+                placeholderText: qsTr("发布者名字，回车查询")
+                // 只记下输入，不每敲一个字就查库（最重一档 49 ms）—— 回车/应用筛选才查
+                onTextChanged: if (page.contract) page.contract.setIssuerQuery(text)
+                onAccepted: if (page.contract) page.contract.applyFilters()
+            }
+
             Item {
                 Layout.fillWidth: true
             }
@@ -105,7 +123,7 @@ Item {
             }
             FButton {
                 objectName: "fillButton"
-                text: qsTr("补齐物品")
+                text: qsTr("补齐全部物品")
                 enabled: page.contract ? !page.contract.busy : false
                 onClicked: if (page.contract) page.contract.startFill()
             }
@@ -136,11 +154,15 @@ Item {
             }
         }
 
+        /* 不确定进度条：光带从左侧滑出、滑到右侧消失。
+         * **必须 clip**：外框不裁的话，光带滑到 `parent.width` 时整个露在页面外面
+         * （用户看到的就是「进度条超出了页面」）。 */
         Rectangle {
             Layout.fillWidth: true
             height: 3
             visible: page.contract ? page.contract.busy : false
             color: Theme.bgSurfaceLight
+            clip: true
 
             Rectangle {
                 id: progressBlob
@@ -159,25 +181,117 @@ Item {
         }
 
         // ═══════════════════════════════════════════════════════
-        //  三个子页签
+        //  三个子页签 —— 分段控件
         // ═══════════════════════════════════════════════════════
 
-        FTabBar {
-            id: tabBar
-            objectName: "contractTabBar"
+        /* 为什么不是 `FTabBar`：它在 `Layout.fillWidth: true` 下把三个标签**等分撑到整行**
+         * （实测 1920 宽的窗口里「拍卖」在 x≈320、「运输」在 x≈1650），选中态只有一条
+         * 1px 细线 —— 用户反馈「一眼看不到分页在哪里调」。改成左对齐的紧凑分段控件：
+         * 选中段整块填主色 + 反白，未选中是次级文字、悬停变亮，段内带条数徽标。
+         *
+         * 用 `Repeater` 而不是手写三个：分隔线要判断「右边那段是不是选中的」，
+         * 按下标取邻段只有 Repeater 能给。 */
+        RowLayout {
             Layout.fillWidth: true
-            currentIndex: page.contract ? page.contract.tabIndex : 0
-            onCurrentIndexChanged: if (page.contract) page.contract.setTabIndex(currentIndex)
+            Layout.leftMargin: 2 * page.gap
+            Layout.rightMargin: 2 * page.gap
+            Layout.topMargin: page.gap
+            spacing: page.gap
 
-            TabButton { text: qsTr("拍卖") }
-            TabButton { text: qsTr("物品交换") }
-            TabButton { text: qsTr("运输") }
+            Rectangle {
+                objectName: "contractTabStrip"
+                implicitWidth: tabRow.implicitWidth + 4
+                implicitHeight: tabRow.implicitHeight + 4
+                radius: Theme.radius
+                color: Theme.bgSurface
+                border.width: 1
+                border.color: Theme.border
+
+                component SegTab: Rectangle {
+                    id: seg
+                    required property int index
+                    required property string label
+
+                    readonly property int activeIndex: page.contract ? page.contract.tabIndex : 0
+                    readonly property bool active: seg.activeIndex === seg.index
+                    readonly property var counts: page.contract ? page.contract.tabCounts : []
+                    readonly property int count: seg.index < seg.counts.length ? seg.counts[seg.index] : 0
+
+                    implicitWidth: segContent.implicitWidth + 2 * Math.round(16 * Theme.fontScale)
+                    implicitHeight: Math.round(32 * Theme.fontScale)
+                    radius: Theme.radiusSmall
+                    color: seg.active ? Theme.primary : (segMouse.containsMouse ? Theme.bgHover : "transparent")
+
+                    Row {
+                        id: segContent
+                        anchors.centerIn: parent
+                        spacing: Math.round(8 * Theme.fontScale)
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: seg.label
+                            color: seg.active ? Theme.textOnPrimary : Theme.textSecondary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: page.fntBase
+                            font.bold: seg.active
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: seg.count > 0
+                            text: seg.count.toLocaleString(Qt.locale(), "f", 0)
+                            color: seg.active ? Theme.textOnPrimary : Theme.textSecondary
+                            opacity: seg.active ? 0.75 : 0.7
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Math.round(page.fntBase * 0.9)
+                        }
+                    }
+
+                    /* 段间分隔线：两段都没选中时才画（选中的那段整块是主色，画线只会脏） */
+                    Rectangle {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 1
+                        height: Math.round(seg.height * 0.45)
+                        color: Theme.border
+                        visible: seg.index < 2 && !seg.active && seg.activeIndex !== seg.index + 1
+                    }
+
+                    MouseArea {
+                        id: segMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: if (page.contract) page.contract.setTabIndex(seg.index)
+                    }
+                }
+
+                Row {
+                    id: tabRow
+                    anchors.centerIn: parent
+                    spacing: 0
+
+                    /* 用下标取标签，**不走 `modelData`**：delegate 声明了 required 属性时
+                     * Qt 不再把模型数据放进上下文，`label: modelData` 会静默绑成空串
+                     * （实测页签只剩条数、中文标签全不见）。 */
+                    Repeater {
+                        model: 3
+
+                        delegate: SegTab {
+                            label: page.contract && page.contract.tabs.length > index
+                                   ? page.contract.tabs[index] : ""
+                        }
+                    }
+                }
+            }
+
+            Item {
+                Layout.fillWidth: true
+            }
         }
 
         StackLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            currentIndex: tabBar.currentIndex
+            currentIndex: page.contract ? page.contract.tabIndex : 0
 
             ContractTabPane {
                 tabKey: "auction"
