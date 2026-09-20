@@ -25,14 +25,11 @@ hex 本身仍全部来自 `ui_qml.theme.registry`，不违反「配色只在 the
 
 from __future__ import annotations
 
-import os
-
 from PySide6.QtCore import QModelIndex, Qt, Signal
 from PySide6.QtGui import QColor
 
 from ui_qml.icon_cache import icon_url as _png_url
-from ui_qml.icon_provider import PROVIDER_ID
-from ui_qml.icons import svg_path
+from ui_qml.icon_provider import phosphor_url
 from ui_qml.models.industry_models import PlanTableModel, bound_line_capacity
 from ui_qml.models.plan_table_constants import (
     COL_BLUEPRINT,
@@ -94,19 +91,6 @@ _CATEGORY_TINTS: dict[str, str] = {
     "invention": "ACCENT_PURPLE",
     "reaction": "ACCENT_GREEN",
 }
-
-
-def phosphor_url(filename: str, color: str, size: int = 16) -> str:
-    """Phosphor SVG 的 `image://phosphor/...` URL（颜色与尺寸编进查询串）。
-
-    走 `ui_qml.icon_provider` 而不是 `file://`：QML 的 `Image` 拿到原始 SVG
-    是**未染色**的（Phosphor 的 fill 在根节点上），必须在取图时注入。
-    文件不存在时返回空串，QML 的 Image 不加载也不报警告。
-    """
-    if not os.path.isfile(svg_path(filename)):
-        return ""
-    encoded = str(color).replace("#", "%23")
-    return f"image://{PROVIDER_ID}/{filename}?c={encoded}&s={int(size)}"
 
 
 #: 类别底色的不透明度。**必须带透明度**：旧 Widgets 版直接把类别色当整行底色

@@ -65,10 +65,13 @@ def run(self) -> None
 
 ### `class ContractFillWorker`（继承 `QThread`）
 
-后台补齐物品详情 —— 分批拉、**分批回写**，可随时中断。
+后台补齐 —— **先补发布者名字，再补物品详情**，分批拉、分批回写、可随时中断。
 
-物品是「价差」列的前提，而一个星域有 3.4 万份合同、一份一个请求，
-所以它必须能停、且进度可见。
+物品是「价差」列与图标列的前提，发布者名字是「去游戏里按发布者搜合同」的前提
+（ESI 的合同端点只给 `issuer_id`，名字得另问 `/universe/names/`）。
+
+两件事都可以由调用方**收窄范围**：自动补齐传当前列表的 id（一个星域 3.4 万份合同，
+逐个打 ESI 没人等得起）；两个都不传则补整个星域 —— 手动「补齐全部」走这条。
 
 定义行：`56`
 
@@ -77,14 +80,14 @@ def run(self) -> None
 ##### `__init__`
 
 ```python
-def __init__(self, region_id: int, contract_type: str, parent=None)
+def __init__(self, region_id: int, contract_type: str, issuer_ids: list[int] | None=None, contract_ids: list[int] | None=None, parent=None)
 ```
 
 ::: warning ⚠️ 待补 docstring
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`66`
+定义行：`69`
 ##### `stop`
 
 ```python
@@ -95,7 +98,7 @@ def stop(self) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`72`
+定义行：`84`
 ##### `run`
 
 ```python
@@ -106,13 +109,13 @@ def run(self) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`75`
+定义行：`87`
 
 ### `class ContractItemsLoadWorker`（继承 `QThread`）
 
 加载某份合同的物品明细（含市价，供详情面板显示）。
 
-定义行：`92`
+定义行：`116`
 
 #### 方法
 
@@ -126,7 +129,7 @@ def __init__(self, contract_id: int, region_id: int=0, price_type: str='sell', p
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`97`
+定义行：`121`
 ##### `run`
 
 ```python
@@ -137,4 +140,4 @@ def run(self) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`103`
+定义行：`127`

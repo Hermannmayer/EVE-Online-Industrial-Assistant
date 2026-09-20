@@ -7,12 +7,16 @@
 **两类写库任务互斥**：拉列表与补物品都写 market.db（SQLite 单写者），
 `_busy_worker` 保证同一时刻只跑一个。
 
-**进页面只读库，绝不自动拉 ESI** —— 用户明确要求「只有点了拉取才拉」。
+**联网有三处，都是显式动作**：拉列表（点「拉取合同」）、补齐整个星域（点「补齐全部」）、
+补齐**当前列表**（打开合同页后自动跑一次，范围就是眼前这几千行 —— 价差列和图标列没有
+物品数据就永远是空的，而一个星域 3.4 万份合同逐个拉没人等得起）。落在页面的
+`on_shown` 钩子上而不是创建时：外壳启动会把 7 个页面全部建好，挂在创建上等于用户还没
+点开合同页就开始拉。结果落库，所以下次打开不会重复拉；随时可点「停止」。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Property, QObject, Signal, Slot
+from PySide6.QtCore import Property, QObject, Qt, Signal, Slot
 
 from core.constants import TRADE_HUB_IDS, TRADE_HUBS
 from core.logger import log
@@ -21,6 +25,7 @@ from ui_qml.models.contract_models import (
     COURIER_VIEW,
     EXCHANGE_VIEW,
     ITEM_COLUMNS,
+    ITEM_ICON_COLUMN,
     ContractItemTableModel,
     ContractTableModel,
 )
@@ -31,12 +36,22 @@ __all__ = ["ContractBridge"]
 _TABS = ["拍卖", "物品交换", "运输"]
 _TAB_KEYS = ("auction", "exchange", "courier")
 
+#: 页签 key → 库里的合同类型（页签条数徽标按它统计）。
+_TAB_TYPES = {"auction": "auction", "exchange": "item_exchange", "courier": "courier"}
+
 #: 跳数口径。第一项是「先不算」—— 用户要求选了才算（本地 BFS 虽快，但没必要替他做主）。
 _JUMP_MODES = ["不计算", "最短路线", "避开低安", "自定义安全下限"]
 _JUMP_KEYS = ("none", "shortest", "highsec", "custom")
 
 _PRICE_TYPES = ["卖单最低价", "买单最高价"]
 _PRICE_KEYS = ("sell", "buy")
+
+
+def _next_sort_order(model: object, column: int, numeric: frozenset[int]) -> Qt.SortOrder:
+    """点同一列就反向；换一列时金额/数量列给**降序**（先看大的），文本列给升序。"""
+    if model.sort_column == column:  # type: ignore[attr-defined]
+        return Qt.SortOrder.AscendingOrder if model.sort_descending else Qt.SortOrder.DescendingOrder  # type: ignore[attr-defined]
+    return Qt.SortOrder.DescendingOrder if column in numeric else Qt.SortOrder.AscendingOrder
 
 
 class ContractBridge(QObject):
@@ -55,6 +70,10 @@ class ContractBridge(QObject):
         self._fill_worker: QObject | None = None
         self._items_worker: QObject | None = None
         self._selected_contract: dict | None = None
+        #: 当前页签已查出来的行（`on_shown` 时据此决定补什么）
+        self._loaded_rows: list[dict] = []
+        #: 页面是否被打开过 —— 自动补齐的门槛，见 `on_shown`
+        self._page_shown = False
 
         #: 星域：默认 Jita（The Forge），也可以由用户按名字挑
         self._region_id = TRADE_HUB_IDS["Jita"]
@@ -70,6 +89,8 @@ class ContractBridge(QObject):
         self._price_max = 0.0
         self._blueprint_only = False
         self._min_hours_left = 0
+        self._issuer_query = ""
+        self._tab_counts: list[int] = [0, 0, 0]
 
         self._models = {
             "auction": ContractTableModel(AUCTION_VIEW),
@@ -104,7 +125,11 @@ class ContractBridge(QObject):
 
     @staticmethod
     def _cols(view) -> list[dict]:
-        return [{"title": t, "width": w} for t, w in view.columns]
+        """列定义给 QML —— `icons` 标记该列画图标而不是文字（见 `ContractView.icon_column`）。"""
+        return [
+            {"title": title, "width": width, "icons": index == view.icon_column}
+            for index, (title, width) in enumerate(view.columns)
+        ]
 
     @Property(list, constant=True)
     def auctionColumns(self) -> list[dict]:
@@ -120,14 +145,33 @@ class ContractBridge(QObject):
 
     @Property(list, constant=True)
     def itemColumns(self) -> list[dict]:
-        return [{"title": t, "width": w} for t, w in ITEM_COLUMNS]
+        return [
+            {"title": title, "width": width, "icons": index == ITEM_ICON_COLUMN}
+            for index, (title, width) in enumerate(ITEM_COLUMNS)
+        ]
 
     itemModel = Property(QObject, lambda self: self._item_model, constant=True)
+
+    # ── 表头排序（总表与物品表各一套；点同一列反向）──
+
+    @Property(int, notify=itemsChanged)
+    def itemSortColumn(self) -> int:
+        return self._item_model.sort_column
+
+    @Property(bool, notify=itemsChanged)
+    def itemSortAscending(self) -> bool:
+        return not self._item_model.sort_descending
+
+    @Slot(int)
+    def itemSortBy(self, column: int) -> None:
+        """物品表表头点击 → 排序（可排的列见 `contract_models._ITEM_SORT_KEYS`）。"""
+        model = self._item_model
+        model.sort(column, _next_sort_order(model, column, model.numeric_columns))
+        self.itemsChanged.emit()
 
     # ═══════════════════════════════════════════════════════════
     #  星域（按名字挑，不让用户记 id）
     # ═══════════════════════════════════════════════════════════
-
     regionOptions = Property(list, lambda self: list(TRADE_HUBS), constant=True)
     regionLabel = Property(str, lambda self: self._region_label, notify=regionChanged)
     regionQuery = Property(str, lambda self: self._region_query, notify=suggestChanged)
@@ -228,6 +272,16 @@ class ContractBridge(QObject):
         self._min_hours_left = int(value)
         self.filtersChanged.emit()
 
+    @Slot(str)
+    def setIssuerQuery(self, text: str) -> None:
+        """按发布者名字反查他的合同（三个页签共用）。
+
+        只记下输入，不立刻查库 —— 每敲一个字就重查一次会把输入框拖住
+        （最重的一档查询 49 ms）。生效时机与价格/剩余时间一致：点「应用筛选」或回车。
+        """
+        self._issuer_query = str(text)
+        self.filtersChanged.emit()
+
     @Slot()
     def applyFilters(self) -> None:
         """筛选下推到 SQL —— 改完筛选要重新查库，不是本地过滤。"""
@@ -239,6 +293,7 @@ class ContractBridge(QObject):
             "price_max": self._price_max or None,
             "blueprint_only": self._blueprint_only,
             "min_hours_left": self._min_hours_left or None,
+            "issuer": self._issuer_query.strip() or None,
         }
 
     # ═══════════════════════════════════════════════════════════
@@ -247,16 +302,57 @@ class ContractBridge(QObject):
 
     statusText = Property(str, lambda self: self._status, notify=rowsChanged)
     busy = Property(bool, lambda self: self._busy_worker is not None, notify=rowsChanged)
+    tabCounts = Property(list, lambda self: list(self._tab_counts), notify=rowsChanged)
+
+    # ── 表头排序（点一次排，再点一次反向）──
+
+    @Property(int, notify=rowsChanged)
+    def sortColumn(self) -> int:
+        return self._models[self._tab_key].sort_column
+
+    @Property(bool, notify=rowsChanged)
+    def sortAscending(self) -> bool:
+        return not self._models[self._tab_key].sort_descending
+
+    @Slot(int)
+    def sortBy(self, column: int) -> None:
+        """总表表头点击 → 排序。
+
+        首次点某列：金额/数量列给**降序**（看合同先看贵的、赚得多的），文本列给升序；
+        再点同一列就反向。**排的是已经查出来的那批行**（SQL 那边按价格降序 LIMIT 3000），
+        所以「按价差排」是在这 3000 条里排 —— 列表原本的取值范围不变。
+        """
+        model = self._models[self._tab_key]
+        model.sort(column, _next_sort_order(model, column, model.view.numeric))
+        self.rowsChanged.emit()
 
     @Slot()
     def loadTab(self) -> None:
-        """按当前页签查库。进页面时也走这条 —— 修掉「首次进入不显示任何合同」。
+        """切页签 / 改筛选 / 进页面都走这条：查库 + 刷新页签条数 + 起后台补齐。"""
+        self._refresh_tab_counts()
+        self._reload_rows(auto_backfill=True)
+
+    def on_shown(self) -> None:
+        """页面被切到前台（`shell_window.navigate_to` 的 `on_shown` 钩子）。
+
+        自动补齐**挂在这里而不是 `Component.onCompleted`**：外壳启动时会把 7 个页面
+        一次性全部建好，挂在创建上等于用户还没点开合同页，就已经在拉几万份合同的物品。
+        """
+        self._page_shown = True
+        self._start_backfill(self._loaded_rows)
+
+    def _reload_rows(self, auto_backfill: bool = False) -> None:
+        """按当前页签查库。
 
         **同步，刻意不开线程**：实测最重的一档（物品交换 3000 行）本机 **49 ms**，
         其余 1~4 ms。而本页是唯一「进门就加载」的页面 —— 异步结果回来时视图可能正在销毁，
         实测会让 ui 档后续用例 `access violation`（原始代码跑同一档干净）。
         本地查询这么快，线程只换来一类崩溃风险，不值。
-        ESI 那两件事（拉列表 / 补物品）才真需要线程，见 `refresh` / `startFill`。
+        ESI 那两件事（拉列表 / 补物品）才真需要线程，见 `refresh` / `_start_backfill`。
+
+        `auto_backfill` 只由**用户动作**那条路径开（切页签/改筛选/切星域），且要在页面
+        已经被打开过之后：补齐过程每 500 条会回灌一次列表，若那条路径也允许自动补齐，
+        就会出现「补完 → 立刻又起一轮」——已过期、ESI 已 404 的合同永远补不上，环会一直转。
         """
         from services.contract_service import (
             load_auction_contracts,
@@ -284,16 +380,55 @@ class ContractBridge(QObject):
             return
 
         self._on_loaded(tab, rows, "")
+        if auto_backfill and self._page_shown:
+            self._start_backfill(rows)
+
+    def _refresh_tab_counts(self) -> None:
+        """三个页签各有多少条（段控件上的徽标）。
+
+        口径与列表一致（同一套 `_build_where`）。蓝图筛选只对物品交换生效 —— 它的判据是
+        「体积 ≤ 0.05」，套到拍卖/运输上会把正常合同误筛掉。
+        """
+        from services.contract_service import count_tab
+
+        base = self._filter_params()
+        counts: list[int] = []
+        for key in _TAB_KEYS:
+            filters = {**base, "blueprint_only": self._blueprint_only if key == "exchange" else False}
+            try:
+                counts.append(count_tab(self._region_id, _TAB_TYPES[key], filters))
+            except Exception:  # 库缺表/被占用 —— 徽标是装饰，不该让整页查询失败
+                log.exception("页签条数统计失败, tab=%s", key)
+                counts.append(0)
+        self._tab_counts = counts
 
     def _on_loaded(self, tab_key: str, rows: list, error: str) -> None:
         if tab_key != self._tab_key:
             return  # 期间用户换了页签，丢弃过期结果
         self._models[tab_key].set_rows(rows)
-        self._item_model.set_rows([])
-        self._selected_contract = None
+        self._loaded_rows = rows
         self._status = error or f"{_TABS[self._tab_index]}: {len(rows):,} 条"
-        self.itemsChanged.emit()
+        self._restore_selection(rows)
         self.rowsChanged.emit()
+
+    def _restore_selection(self, rows: list[dict]) -> None:
+        """列表刷新后把下方物品面板接回来。
+
+        补齐过程每 500 条就重播一次列表 —— 每次都清空面板的话，用户正在看的那份合同的
+        物品会反复消失（旧实现无条件清空，那是只有手动补齐、重启一次的年代）。
+        """
+        selected = self._selected_contract
+        kept = None
+        if selected is not None:
+            wanted = int(selected.get("contract_id") or 0)
+            kept = next((r for r in rows if int(r.get("contract_id") or 0) == wanted), None)
+        self._selected_contract = kept
+        self._item_model.set_contract(kept)
+        if kept is None:
+            self._item_model.set_rows([])
+            self.itemsChanged.emit()
+        else:
+            self._load_items(int(kept["contract_id"]), kept.get("region_id"))
 
     # ── 拉取（唯一的 ESI 入口）──
 
@@ -322,11 +457,51 @@ class ContractBridge(QObject):
         if ok:
             self.loadTab()
 
-    # ── 补齐物品（价差的前提，可停）──
+    # ── 补齐物品 / 发布者名字（价差与图标的前提）──
+
+    @staticmethod
+    def _preload_importers() -> None:
+        """起补齐线程**之前**，在主线程里把 `services.importers` 整包导完。
+
+        QThread 里现导它会与启动期的其他导入抢同一把模块锁 —— 实测直接
+        `_DeadlockError: deadlock detected by _ModuleLock('services.importers.getindustry')`
+        （合同页进场即自动补齐时必现：那一刻外壳正在装载其余页面）。手动补齐是启动之后
+        才点的，所以从前没暴露。导入只在第一次真正发生，之后是 `sys.modules` 命中。
+        """
+        import services.importers  # noqa: F401
+
+    def _start_backfill(self, rows: list[dict]) -> None:
+        """进页签后自动补齐**当前列表**缺的东西：发布者名字 + 合同物品。
+
+        范围就是当前列表，不是整个星域 —— 一个星域 3.4 万份合同、一份一个请求，
+        逐个拉没人等得起；而列表按价格降序，先补上的正好是最该看的那几行。
+        结果落库（`items_fetched_at` / `contract_issuers`），所以下次进同一个页签
+        无事可做，不会重复拉。已有任务在跑（拉取 / 手动补齐）时不排队，直接跳过。
+        """
+        if self._busy_worker is not None:
+            return
+        # 运输合同没有物品（items 端点实测 HTTP 400），但发布者名字照样要补
+        wants_items = self._tab_key != "courier"
+        issuer_ids = sorted({int(r["issuer_id"]) for r in rows if r.get("issuer_id") and not r.get("issuer_name")})
+        contract_ids = [int(r["contract_id"]) for r in rows if r.get("items_fetched_at") is None] if wants_items else []
+        if not issuer_ids and not contract_ids:
+            return
+
+        from ui_qml.workers.contract_workers import ContractFillWorker
+
+        self._preload_importers()
+        worker = ContractFillWorker(self._region_id, self._tab_key, issuer_ids=issuer_ids, contract_ids=contract_ids)
+        self._busy_worker = worker
+        self._fill_worker = worker
+        worker.progress.connect(self._on_fill_progress)
+        worker.finished_signal.connect(self._on_fill_done)
+        self._status = f"后台补齐中… {len(contract_ids):,} 份合同（可点「停止」）"
+        self.rowsChanged.emit()
+        spawn(worker)
 
     @Slot()
     def startFill(self) -> None:
-        """后台补齐物品详情。**只在用户点过之后才跑** —— 不会自动发起。"""
+        """补齐**整个星域**的物品与发布者名字。手动按钮走这条，不自动发起。"""
         if self._busy_worker is not None:
             self._status = "已有任务在跑，请先等待或停止"
             self.rowsChanged.emit()
@@ -338,7 +513,8 @@ class ContractBridge(QObject):
 
         from ui_qml.workers.contract_workers import ContractFillWorker
 
-        self._status = "正在补齐物品详情…"
+        self._preload_importers()
+        self._status = "正在补齐本星域全部物品…"
         self.rowsChanged.emit()
 
         worker = ContractFillWorker(self._region_id, self._tab_key)
@@ -352,14 +528,14 @@ class ContractBridge(QObject):
         self._status = f"物品补齐中… {done:,} / {total:,}"
         self.rowsChanged.emit()
         if done and done % 500 == 0:
-            self.loadTab()  # 边补边刷新，价差列逐行填上
+            self._reload_rows()  # 边补边刷新，价差/图标逐行填上（**不再触发自动补齐**）
 
     def _on_fill_done(self, written: int, message: str) -> None:
         self._busy_worker = None
         self._fill_worker = None
-        self._status = f"{message}（写入 {written:,} 条物品）"
+        self._status = message
         self.rowsChanged.emit()
-        self.loadTab()
+        self._reload_rows()
 
     @Slot()
     def stopFill(self) -> None:
@@ -382,11 +558,17 @@ class ContractBridge(QObject):
         if not data:
             return
         self._selected_contract = data
+        # 物品表末尾三列（合同价/内容物市价/价差）取自这份合同
+        self._item_model.set_contract(data)
+        self._load_items(int(data.get("contract_id") or 0), data.get("region_id"))
 
+    def _load_items(self, contract_id: int, region_id: int | None = None) -> None:
         from ui_qml.workers.contract_workers import ContractItemsLoadWorker
 
         worker = ContractItemsLoadWorker(
-            int(data.get("contract_id") or 0), self._region_id, _PRICE_KEYS[self._price_type_index]
+            contract_id,
+            int(region_id or self._region_id),
+            _PRICE_KEYS[self._price_type_index],
         )
         self._items_worker = worker
         worker.finished_signal.connect(self._on_items_loaded)
@@ -395,15 +577,6 @@ class ContractBridge(QObject):
     def _on_items_loaded(self, items: list) -> None:
         self._item_model.set_rows(items)
         self.itemsChanged.emit()
-
-    @Slot(int)
-    def showDetail(self, row: int) -> None:
-        data = self._row_data(row)
-        if not data:
-            return
-        from ui_qml.bridge.contract_detail_bridge import ContractDetailQmlDialog
-
-        ContractDetailQmlDialog(data, None).show()
 
     @Slot(result=str)
     def itemSummary(self) -> str:
@@ -445,10 +618,20 @@ class ContractBridge(QObject):
     # ── 右键菜单动作 ──────────────────────────────────────────
 
     @Slot(int)
-    def copyContractId(self, row: int) -> None:
+    def copyIssuer(self, row: int) -> None:
+        """复制发布者名字 —— 游戏内搜合同只能按发布者搜，合同 ID 搜不到。
+
+        名字是异步补上的：还没解析出来时给出原因，不静默复制空串。
+        """
         data = self._row_data(row)
-        if data:
-            self._copy(str(data.get("contract_id", "")))
+        if not data:
+            return
+        name = str(data.get("issuer_name") or "")
+        if not name:
+            self._status = "发布者名字还没解析出来，稍后再试（正在后台补齐）"
+            self.rowsChanged.emit()
+            return
+        self._copy(name, note=f"已复制发布者: {name}")
 
     @Slot()
     def copyItems(self) -> None:

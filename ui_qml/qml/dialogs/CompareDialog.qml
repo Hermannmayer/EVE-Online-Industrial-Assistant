@@ -22,7 +22,7 @@ import "../components"
  * 与原版的差异（有意，逐条给理由）：
  *   1. 表格拉伸的是「物品」列。原版是 `setStretchLastSection(True)`，被拉伸的是
  *      最窄的「状态」列（90px 占满右侧空白，真正长的物品名反被截断）——
- *      与 `ContractDetailBridge` 同一处修正，列名/顺序/宽度一字未改。
+ *      QML 侧统一按「弹性列给最长的那一列」重排过，列名/顺序/宽度一字未改。
  *   2. 表头点了不排序。原版 `setSortingEnabled(True)` 其实**也是**空转：
  *      `CompareTableModel` 没实现 `sort()`，`QAbstractItemModel::sort` 是空操作，
  *      点表头只换了个排序箭头。QML 表头干脆不画那个箭头。

@@ -54,19 +54,31 @@ class ContractFetchWorker(QThread):
 
 
 class ContractFillWorker(QThread):
-    """后台补齐物品详情 —— 分批拉、**分批回写**，可随时中断。
+    """后台补齐 —— **先补发布者名字，再补物品详情**，分批拉、分批回写、可随时中断。
 
-    物品是「价差」列的前提，而一个星域有 3.4 万份合同、一份一个请求，
-    所以它必须能停、且进度可见。
+    物品是「价差」列与图标列的前提，发布者名字是「去游戏里按发布者搜合同」的前提
+    （ESI 的合同端点只给 `issuer_id`，名字得另问 `/universe/names/`）。
+
+    两件事都可以由调用方**收窄范围**：自动补齐传当前列表的 id（一个星域 3.4 万份合同，
+    逐个打 ESI 没人等得起）；两个都不传则补整个星域 —— 手动「补齐全部」走这条。
     """
 
     progress = Signal(int, int)  # 已完成, 总数
     finished_signal = Signal(int, str)  # 写入的物品行数, 文案
 
-    def __init__(self, region_id: int, contract_type: str, parent=None):
+    def __init__(
+        self,
+        region_id: int,
+        contract_type: str,
+        issuer_ids: list[int] | None = None,
+        contract_ids: list[int] | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self._region_id = region_id
         self._contract_type = contract_type
+        self._issuer_ids = issuer_ids or []
+        self._contract_ids = contract_ids
         self._stop = False
 
     def stop(self) -> None:
@@ -74,16 +86,28 @@ class ContractFillWorker(QThread):
 
     def run(self) -> None:
         try:
-            from services.importers.getcontracts import list_contracts_needing_items, run_items_fill
+            from services.importers.getcontracts import (
+                list_contracts_needing_items,
+                run_issuer_name_fill,
+                run_items_fill,
+            )
 
-            ids = list_contracts_needing_items(self._region_id, self._contract_type, limit=50_000)
+            stopped = lambda: self._stop  # noqa: E731
+            names = run_issuer_name_fill(self._issuer_ids, should_stop=stopped) if self._issuer_ids else 0
+
+            ids = self._contract_ids
+            if ids is None:
+                ids = list_contracts_needing_items(self._region_id, self._contract_type, limit=50_000)
             if not ids:
-                self.finished_signal.emit(0, "没有待补齐的合同")
+                self.finished_signal.emit(0, f"已解析 {names} 个发布者名字" if names else "没有待补齐的合同")
                 return
+
             self.progress.emit(0, len(ids))
-            written = run_items_fill(ids, progress_cb=self.progress.emit, should_stop=lambda: self._stop)
-            msg = "已停止" if self._stop else "补齐完成"
-            self.finished_signal.emit(written, msg)
+            written = run_items_fill(ids, progress_cb=self.progress.emit, should_stop=stopped)
+            parts = ["已停止" if self._stop else "补齐完成", f"写入 {written:,} 条物品"]
+            if names:
+                parts.append(f"解析 {names} 个发布者名字")
+            self.finished_signal.emit(written, "，".join(parts))
         except Exception as ex:
             log.exception("物品补齐失败")
             self.finished_signal.emit(0, f"补齐失败: {ex}")

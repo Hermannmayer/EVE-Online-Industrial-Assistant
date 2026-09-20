@@ -8,6 +8,7 @@ import pytest
 from services.importers.getcontracts import (
     CONTRACT_TYPE_MAP,
     TRADE_REGIONS,
+    _fetch_issuer_names_async,
     fetch_contract_items,
     fetch_contract_pages,
     init_db,
@@ -226,6 +227,70 @@ class TestListContractsNeedingItems:
             assert todo == [1], "已取过物品的 4 不该再排队"
             assert list_contracts_needing_items(10000002, "auction", limit=10) == [2]
             assert list_contracts_needing_items(10000002, "courier", limit=10) == []
+
+    @pytest.mark.asyncio
+    async def test_scoped_to_given_contract_ids(self, tmp_path):
+        """给了 id 就只在这几份里挑，且**贵的先补** —— 自动补齐的范围是界面当前列表。
+
+        一个星域 3.4 万份合同、一份一个请求，不收窄没人等得起；而列表按价格降序，
+        先补上的正好是最该看的那几行。
+        """
+        db_path = str(tmp_path / "test_market.db")
+        with patch("services.importers.getcontracts.DATABASE_PATH", db_path):
+            await init_db()
+            await save_contract_list(
+                10000002,
+                [
+                    {**MOCK_CONTRACT, "contract_id": 1, "type": "item_exchange", "price": 100.0},
+                    {**MOCK_CONTRACT, "contract_id": 2, "type": "item_exchange", "price": 9e9},
+                    {**MOCK_CONTRACT, "contract_id": 4, "type": "item_exchange"},
+                ],
+                complete=True,
+                fetch_time="T1",
+            )
+            await save_items_batch({4: [MOCK_CONTRACT_ITEM]}, "T1-items")
+
+            assert list_contracts_needing_items(10000002, "item_exchange", contract_ids=[1, 2, 4]) == [2, 1]
+            assert list_contracts_needing_items(10000002, "item_exchange", contract_ids=[4]) == []
+            assert list_contracts_needing_items(10000002, "item_exchange", contract_ids=[]) == []
+
+
+class TestIssuerNames:
+    """发布者名字 —— ESI 的合同端点只给 `issuer_id`，名字得另问 `/universe/names/`。"""
+
+    @pytest.mark.asyncio
+    async def test_batch_with_single_fallback(self, tmp_path):
+        """整批没解出来就逐个重试，且**查不到的绝不写缓存**。
+
+        ESI 的 `/universe/names/` 只要有一个 id 解析不出就整个 POST 返 404，
+        同批里本来查得到的名字会一起丢（`order_workers` 踩过同一个坑）。
+        把「查不到」写进缓存等于永久显示空名字 —— 那比不写更糟。
+        """
+        db_path = str(tmp_path / "test_market.db")
+        client = MagicMock()
+        client.post = AsyncMock(
+            side_effect=[
+                None,  # 整批：有一个坏 id → 404 → None
+                [{"id": 11, "name": "张三", "category": "character"}],
+                None,  # 逐个重试里第二个也查不到
+            ]
+        )
+        session = MagicMock()
+        session.__aenter__ = AsyncMock(return_value=client)
+        session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("services.importers.getcontracts.DATABASE_PATH", db_path),
+            patch("services.importers.getcontracts.APIClient", MagicMock(return_value=session)),
+        ):
+            await init_db()
+            written = await _fetch_issuer_names_async([11, 12])
+
+        assert written == 1
+        conn = sqlite3.connect(db_path)
+        assert conn.execute("SELECT name FROM contract_issuers WHERE issuer_id = 11").fetchone() == ("张三",)
+        assert conn.execute("SELECT COUNT(*) FROM contract_issuers").fetchone() == (1,)
+        conn.close()
 
 
 class TestRunContractUpdate:

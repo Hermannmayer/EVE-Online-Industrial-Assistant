@@ -231,7 +231,6 @@ _LOADS_CASES: list[tuple[str, Any]] = [
     ("子项大规模产线并行", "mass_parallel_factory"),
     ("绑定库存蓝图", "blueprint_picker_factory"),
     ("查看核算", "cost_breakdown_factory"),
-    ("合同详情", "contract_detail_factory"),
     ("蓝图 NPC 卖家", "npc_seller_factory"),
     ("星系搜索", "system_search_factory"),
     ("取值对话框(文本)", _case_input_text),
@@ -1023,37 +1022,9 @@ def test_cost_breakdown_science_activity_fields(cost_breakdown_factory):
 
 
 # ══════════════════════════════════════════════════════════════
-# 阶段 4 收尾：从已 QML 化页面里弹出来的三个残留对话框
-# （合同详情 / 蓝图 NPC 卖家 / 星系搜索）
+# 阶段 4 收尾：从已 QML 化页面里弹出来的残留对话框
+# （蓝图 NPC 卖家 / 星系搜索）
 # ══════════════════════════════════════════════════════════════
-
-
-class _FakeItemsWorker(QObject):
-    """合同物品加载线程的同步替身（不碰 DB）。"""
-
-    finished_signal = Signal(list)
-
-    def __init__(self, contract_id: int, region_id: int = 0, price_type: str = "sell", parent=None) -> None:
-        super().__init__(parent)
-        self._contract_id = contract_id
-
-    def start(self) -> None:
-        self.finished_signal.emit(
-            [
-                {
-                    "type_id": 2001,
-                    "zh_name": "渡鸦级",
-                    "en_name": "Raven",
-                    "quantity": 3,
-                    "is_blueprint_copy": True,
-                    "material_efficiency": 10,
-                },
-                {"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium", "quantity": 100, "is_included": False},
-            ]
-        )
-
-    def isRunning(self) -> bool:
-        return False
 
 
 class _FakeNpcWorker(QObject):
@@ -1074,29 +1045,6 @@ class _FakeNpcWorker(QObject):
 
 
 @pytest.fixture
-def contract_detail_factory(qapp, monkeypatch):
-    monkeypatch.setattr(
-        "ui_qml.workers.contract_workers.ContractItemsLoadWorker",
-        _FakeItemsWorker,
-    )
-    from ui_qml.bridge.contract_detail_bridge import ContractDetailQmlDialog
-
-    contract = {
-        "contract_id": 99001,
-        "title": "渡鸦级整机一批",
-        "type": "item_exchange",
-        "status": "outstanding",
-        "price": 1234567.89,
-        "collateral": 0.0,
-        "volume": 2500.0,
-        "days_completed": 3,
-        "date_issued": "2026-09-01",
-        "for_corporation": True,
-    }
-    return lambda **kw: ContractDetailQmlDialog({**contract, **kw})
-
-
-@pytest.fixture
 def npc_seller_factory(qapp, monkeypatch):
     monkeypatch.setattr("ui_qml.bridge.npc_seller_bridge.NpcOrderWorker", _FakeNpcWorker)
     from ui_qml.bridge.npc_seller_bridge import NpcSellerQmlDialog
@@ -1114,44 +1062,6 @@ def system_search_factory(qapp, monkeypatch):
     from ui_qml.bridge.system_search_bridge import SystemSearchQmlDialog
 
     return lambda: SystemSearchQmlDialog(None, "设置设施星系")
-
-
-def test_contract_detail_renders_fields_and_items(contract_detail_factory):
-    dialog = contract_detail_factory()
-    try:
-        bridge = dialog.bridge
-        assert bridge.headerText == "#99001  渡鸦级整机一批"
-        # 状态行已删 —— ESI 公开合同端点根本不返回 status（实测字段并集里没有），
-        # 那一列从前恒为空串。现在只显示真有的字段。
-        assert "物品交换" in bridge.detailText
-        assert "1,234,568 ISK" in bridge.detailText
-        assert "企业合同: 是" in bridge.datesText
-        # 起止点给的是站名/星系，不是裸 id
-        assert "未知地点" in bridge.datesText
-
-        assert bridge.rowCount == 2
-        assert bridge.statusText == "共 2 件物品"
-        first = bridge.rows[0]["cells"]
-        # 末尾两列是「单价 / 小计」（物品表新增，价差要靠它们）
-        assert [c["text"] for c in first][:8] == ["2001", "渡鸦级", "Raven", "3", "是", "是", "10", "—"]
-        assert len(first) == 11
-        assert first[3]["color"] != "", "数量列该用主题色（对齐 Widgets 版的 ForegroundRole）"
-        second = bridge.rows[1]["cells"]
-        assert second[1]["text"] == "三钛合金"
-        assert second[5]["text"] == "否", "is_included=False 该显示「否」"
-    finally:
-        dialog.deleteLater()
-
-
-def test_contract_detail_empty_state_after_load(contract_detail_factory):
-    """加载完成但一件物品都没有时，空表提示要换掉「正在加载」。"""
-    dialog = contract_detail_factory()
-    try:
-        dialog.bridge._on_items_loaded([])
-        assert dialog.bridge.emptyText == "合同内没有物品"
-        assert dialog.bridge.statusText == "共 0 件物品"
-    finally:
-        dialog.deleteLater()
 
 
 def test_npc_seller_result_states(npc_seller_factory):
@@ -1238,13 +1148,13 @@ def test_system_search_without_data_disables_search(qapp, monkeypatch):
     assert bridge.rowCount == 0
 
 
-class _SlowItemsWorker(QObject):
-    """一直「在跑」的加载线程替身 —— 用来验证关窗时确实做了收尾。"""
+class _SlowWorker(QObject):
+    """一直「在跑」的拉单线程替身 —— 用来验证关窗时确实做了收尾。"""
 
-    finished_signal = Signal(list)
+    result = Signal(list, str)
 
-    def __init__(self, contract_id: int, region_id: int = 0, price_type: str = "sell", parent=None) -> None:
-        super().__init__(parent)
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(kwargs.get("parent"))
         self.interrupted = False
         self.waited = 0
 
@@ -1265,13 +1175,15 @@ def test_closing_a_dialog_finishes_its_worker(qapp, monkeypatch):
     """关窗必须让在跑的后台线程收尾。
 
     不收尾的话，线程是桥的子对象、桥随对话框一起销毁 —— `QThread` 在运行时被析构
-    Qt 直接 `abort()`，整个进程静默死掉（实测退出码 127、一行日志都没有，
-    `ui_snapshot.py --dialog contract_detail` 就是这么挂的）。
-    """
-    monkeypatch.setattr("ui_qml.workers.contract_workers.ContractItemsLoadWorker", _SlowItemsWorker)
-    from ui_qml.bridge.contract_detail_bridge import ContractDetailQmlDialog
+    Qt 直接 `abort()`，整个进程静默死掉（实测退出码 127、一行日志都没有）。
 
-    dialog = ContractDetailQmlDialog({"contract_id": 1})
+    挂在本例上而不是某个具体对话框上：守的是 `ui_qml.dialog_host._stop_bridge`
+    → 桥的 `stop()` 这条接线（原先是拿「合同详情」当靶子，那个二级窗口已按用户要求删除）。
+    """
+    monkeypatch.setattr("ui_qml.bridge.npc_seller_bridge.NpcOrderWorker", _SlowWorker)
+    from ui_qml.bridge.npc_seller_bridge import NpcSellerQmlDialog
+
+    dialog = NpcSellerQmlDialog(1160, "渡鸦级蓝图")
     try:
         worker = dialog.bridge._worker
         assert worker.isRunning(), "替身应当一直说自己在跑"

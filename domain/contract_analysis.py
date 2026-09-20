@@ -71,6 +71,36 @@ def market_value(items: Sequence[Item], price_map: PriceMap) -> tuple[float, int
     return total, priced, missing
 
 
+#: 合同行前面画几件物品的图标。3 件足以看出「里面是什么」，再多会挤掉标题。
+ICON_ITEM_LIMIT = 3
+
+
+def icon_type_ids(items: Sequence[Item], price_map: PriceMap, limit: int = ICON_ITEM_LIMIT) -> list[int]:
+    """合同行前面该画哪几件物品的图标 —— 按 `单价 × 数量` 降序取前 `limit` 件。
+
+    取「值钱的」而不是「列在前面的」：一份合同动辄几十件，排第一的往往是顺手塞的杂物，
+    看图标的人想知道的是这份合同的核心是什么。
+
+    缺价的物品**排在有价的之后**（内部再按数量降序），不拿 0 参与价值排序 ——
+    否则缺价时大家并列，排序退化成「数据库给什么序就什么序」，同一份合同每次刷新
+    图标都在变。同 type_id 只画一次。
+    """
+
+    def _rank(item: Item) -> tuple[int, float, int, int]:
+        unit = float(price_map.get(int(item.get("type_id") or 0)) or 0)
+        quantity = int(item.get("quantity") or 0)
+        return (0 if unit > 0 else 1, -(unit * quantity), -quantity, int(item.get("type_id") or 0))
+
+    out: list[int] = []
+    for item in sorted(items, key=_rank):
+        type_id = int(item.get("type_id") or 0)
+        if type_id and type_id not in out:
+            out.append(type_id)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def price_diff(value: float | None, cost: float | None) -> tuple[float | None, float | None]:
     """`(价差, 价差%)`。任一为 None 或成本 ≤ 0 时百分比无法定义 → 返回 None。"""
     if value is None or cost is None:
