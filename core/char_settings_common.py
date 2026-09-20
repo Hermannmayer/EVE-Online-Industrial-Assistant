@@ -191,3 +191,50 @@ def calc_max_orders(skills: dict, base_orders: int = 15) -> int:
 
 def format_pct(value: float) -> str:
     return f"{value:.2f}%"
+
+
+def apply_skill_queue_finished(levels: dict[int, int], queue: list[dict], now: str) -> dict[int, int]:
+    """把技能队列里已练完的条目叠加到 `/skills` 的结果上。
+
+    CCP 文档原文：`/skills` 对角色**离线期间**练完的技能是过期的，必须用
+    `/skillqueue` 里 `finish_date` 已过的条目修正，否则拿到的是旧等级。
+
+    `now` 与 `finish_date` 都必须是 ESI 那种 `%Y-%m-%dT%H:%M:%SZ` 的 UTC 串
+    —— 同格式 ISO8601 按字典序比较即等价于按时间比较。
+    """
+    merged = dict(levels)
+    for entry in queue:
+        finish = entry.get("finish_date")
+        skill_id = entry.get("skill_id")
+        if not finish or skill_id is None or finish > now:
+            continue
+        sid = int(skill_id)
+        merged[sid] = max(merged.get(sid, 0), int(entry.get("finished_level") or 0))
+    return merged
+
+
+def merge_esi_skill_levels(existing: dict[str, int], esi: dict[str, int], panel_names: list[str]) -> dict[str, int]:
+    """把 ESI 等级落到「面板能显示的名字 ∪ 配置里已有的名字」上。
+
+    **面板全集都要写**（ESI 没给出的记 0）—— 否则用户只在自己手填过的那十几个
+    技能上看到真实等级，造船/冶金/研究那一大片仍是 0，看起来像「没导入」。
+    配置里用户自建的、不在面板里的技能名保留原值。
+
+    ESI 返回的其它几百个技能**仍然不写**：配置只保留这个应用真正会用的集合。
+    """
+    merged: dict[str, int] = {}
+    for name in dict.fromkeys([*panel_names, *existing]):
+        merged[name] = int(esi[name]) if name in esi else int(existing.get(name, 0))
+    return merged
+
+
+def union_skill_levels(characters: dict, esi: dict[str, int], panel_names: list[str]) -> dict[str, int]:
+    """新导入角色的初始技能集 = 面板全集 ∪ 其它角色用过的技能名，等级取自 ESI。
+
+    新角色没有自己的技能集可「刷新」，所以铺面板全集做骨架（缺的记 0），
+    等级用 ESI 的真实值填；同样不写 ESI 的几百个无关技能。
+    """
+    custom: list[str] = []
+    for data in characters.values():
+        custom.extend(data.get("skills") or {})
+    return {name: int(esi.get(name, 0)) for name in dict.fromkeys([*panel_names, *custom])}

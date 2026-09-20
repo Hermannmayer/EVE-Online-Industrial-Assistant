@@ -26,6 +26,7 @@ from typing import Any
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
 from core.char_settings_common import (
+    ALL_SKILLS,
     SKILL_CATEGORIES,
     TRADE_HUBS,
     calc_broker_fee,
@@ -33,12 +34,16 @@ from core.char_settings_common import (
     calc_relist_discount,
     calc_sales_tax,
     format_pct,
+    merge_esi_skill_levels,
+    union_skill_levels,
 )
 from services.char_config_resolver import load_all_data, save_all_data
 from services.implant_loader import load_implants
 from ui_qml import icons
 from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.dialog_host import DialogBridge, QmlDialog
+from ui_qml.workers.esi_skill_worker import EsiSkillImportWorker
+from ui_qml.workers.lifecycle import detach_worker
 
 __all__ = [
     "CharSettingsBridge",
@@ -66,6 +71,16 @@ _DEFAULT_MARKET = {hub_key: {"faction_standing": 5.0, "corp_standing": 5.0} for 
 
 def _new_character() -> dict:
     return {"skills": {}, "implants": [None, None, None], "market": {k: dict(v) for k, v in _DEFAULT_MARKET.items()}}
+
+
+def _matched_count(skills: dict, esi: dict[str, int]) -> int:
+    """有多少个技能真的拿到了 ESI 等级（结果摘要用）。
+
+    不等于技能总数：面板里那几个「玩家习惯名」在 SDE 里没有对应技能
+    （见 `tests/test_terminology_consistency.py` 的 KNOWN_NON_SDE），
+    ESI 永远匹配不上，会一直是 0。
+    """
+    return sum(1 for name in skills if name in esi)
 
 
 class SkillsBridge(QObject):
@@ -348,6 +363,12 @@ class CharSettingsBridge(DialogBridge):
 
         current = str(self._all_data.get("current", "main"))
         self._current = current if current in characters else next(iter(characters))
+
+        #: 正在跑的 ESI 导入线程（`stop()` 里要停它）
+        self._esi_worker: Any = None
+        self._esi_busy = False
+        self._esi_status = ""
+
         self._load_current()
 
     # ── 三个 Tab 的从属桥 ─────────────────────────────────────
@@ -419,21 +440,152 @@ class CharSettingsBridge(DialogBridge):
         self._current = next(iter(characters))
         self._load_current()
 
+    # ── 从 ESI 导入 ──────────────────────────────────────────
+    #
+    # 手工填写与 ESI 拉取并存：这个按钮只做「用 ESI 的真实数据覆盖已有技能名的
+    # 等级」，不改变手工挑选的技能集，也不覆盖用户自建的配置档。
+
+    @Property(bool, notify=stateChanged)
+    def esiBusy(self) -> bool:
+        return self._esi_busy
+
+    @Property(str, notify=stateChanged)
+    def esiStatus(self) -> str:
+        """最近一次导入的结果摘要（空串 = 还没导过）。"""
+        return self._esi_status
+
+    @Slot()
+    def importFromEsi(self) -> None:
+        """「刷新当前角色」：已有绑定就静默刷新（不弹浏览器），否则开浏览器授权。"""
+        self._start_esi_worker(force_browser=False)
+
+    @Slot()
+    def addCharacterFromEsi(self) -> None:
+        """「从 ESI 添加角色」：**总是**开浏览器让用户选角色。
+
+        一账号多角色必须走这个入口。少了它，导完角色 A 之后 `current` 就是 A，
+        再点「刷新当前角色」只会静默刷 A —— 用户永远没机会选 B，表现成
+        「导入一次之后就不让继续导入了」。
+        """
+        self._start_esi_worker(force_browser=True)
+
+    def _start_esi_worker(self, *, force_browser: bool) -> None:
+        if self._esi_busy:
+            return
+        self._esi_busy = True
+        self._esi_status = "正在等待浏览器授权…" if force_browser else "正在从 ESI 获取…"
+        self.stateChanged.emit()
+
+        worker = EsiSkillImportWorker(self._current, force_browser=force_browser)
+        worker.result_signal.connect(self._on_esi_result)
+        worker.finished_signal.connect(self._on_esi_finished)
+        self._esi_worker = worker
+        worker.start()
+
+    def _on_esi_result(self, payload: dict) -> None:
+        """合并 ESI 数据并落盘。
+
+        合并策略见 `core.char_settings_common.merge_esi_skill_levels`：只刷新
+        **已有技能名**的等级 —— ESI 返回几百个技能，全写进来会把配置撑爆。
+        """
+        char_name = str(payload.get("character_name") or "")
+        if not char_name:
+            return
+        esi_skills = dict(payload.get("skills") or {})
+
+        # 下面要切到被导入的角色，先把三个 Tab 里正在编辑的内容收回内存 ——
+        # 不收就等于把用户刚拖的技能滑杆丢掉。
+        self._flush_current()
+
+        characters = self._all_data["characters"]
+        if char_name in characters:
+            old_skills = dict(characters[char_name].get("skills") or {})
+            merged = merge_esi_skill_levels(old_skills, esi_skills, ALL_SKILLS)
+            characters[char_name]["skills"] = merged
+            note = f"已更新「{char_name}」：{_matched_count(merged, esi_skills)}/{len(merged)} 个技能拿到等级"
+        else:
+            data = _new_character()
+            # 新角色没有自己的技能集可刷新 → 面板全集做骨架，等级用 ESI 填
+            data["skills"] = union_skill_levels(characters, esi_skills, ALL_SKILLS)
+            characters[char_name] = data
+            note = f"已添加角色「{char_name}」：{_matched_count(data['skills'], esi_skills)}/{len(data['skills'])} 个技能拿到等级"
+
+        slots, unknown = self._implants_to_slots([int(t) for t in (payload.get("implants") or [])])
+        if any(slot is not None for slot in slots):
+            characters[char_name]["implants"] = slots
+        note += f"；{sum(1 for slot in slots if slot is not None)} 个增效体"
+        if unknown:
+            note += f"（{len(unknown)} 个不属于本应用可选的工业增效体，已忽略）"
+
+        self._current = char_name
+        self._all_data["current"] = char_name
+        save_all_data(self._all_data)
+        self._load_current()
+        self._esi_status = note
+        self.stateChanged.emit()
+        FMessageDialog.information(self.host_widget(), "从 ESI 导入完成", note)
+
+    def _implants_to_slots(self, type_ids: list[int]) -> tuple[list, list[int]]:
+        """ESI 的植入体 type_id → 本应用那三个**自造**插槽。
+
+        三个插槽不是 EVE 的真实槽位（见 `_SLOT_TITLES`），归类规则在
+        `services.implant_loader._implant_slot`。同槽多个只留第一个。
+        返回 (三槽, 不在可选清单里的 type_id) —— 后者不算错（纯属性植入体本应用用不上）。
+        """
+        catalog = {int(imp["type_id"]): str(imp["slot"]) for imp in load_implants()}
+        by_slot: dict[str, int] = {}
+        unknown: list[int] = []
+        for tid in type_ids:
+            slot = catalog.get(tid)
+            if slot is None:
+                unknown.append(tid)
+            else:
+                by_slot.setdefault(slot, tid)
+        return [by_slot.get(key) for key in ("A", "B", "C")], unknown
+
+    def _on_esi_finished(self, ok: bool, message: str) -> None:
+        self._esi_busy = False
+        # ⚠️ 这里**不要**把 `self._esi_worker` 置 None。`finished_signal` 是在
+        # `run()` 内部发出的，槽可能在 `run()` 尚未返回时就跑到 —— 那一刻丢掉
+        # QThread 的最后一个 Python 引用会让 Qt 直接 abort()（本仓记录过的崩溃）。
+        # 引用留到下次导入覆盖，或 `stop()` 里由 `detach_worker` 安全收尾。
+        if not ok:
+            self._esi_status = ""
+            self.set_error(message)
+            FMessageDialog.warning(self.host_widget(), "从 ESI 导入失败", message)
+        self.stateChanged.emit()
+
+    def stop(self) -> None:
+        """关窗收尾：中断回环等待并等它收尾。
+
+        `detach_worker` 只等 500ms，而 worker 里回环 `handle_request()` 的超时是
+        0.5s —— 检查点刚好够密，不用额外的中断机制。
+        """
+        detach_worker(self._esi_worker)
+        self._esi_worker = None
+
     # ── 保存 ──────────────────────────────────────────────────
 
     @Slot()
     def accept(self) -> None:
         """「保存」：把三页数据写回当前角色并落盘（原 `_on_save`）。"""
-        char_data = self._all_data["characters"].setdefault(self._current, {})
-        char_data["skills"] = self._skills.skills_data()
-        char_data["implants"] = self._implants.data()
-        char_data["market"] = self._market.data()
-        self._all_data["current"] = self._current
+        self._flush_current()
         save_all_data(self._all_data)
         FMessageDialog.information(self.host_widget(), "保存成功", "角色配置已保存")
         self.accepted.emit()
 
     # ── 内部 ──────────────────────────────────────────────────
+
+    def _flush_current(self) -> None:
+        """把三个 Tab 的当前编辑写回内存（不落盘）。
+
+        换角色前必须做：子桥里的编辑不收回 `_all_data` 就会被 `_load_current`
+        覆盖掉。`accept()` 与 ESI 导入都要走这一步。
+        """
+        char_data = self._all_data["characters"].setdefault(self._current, {})
+        char_data["skills"] = self._skills.skills_data()
+        char_data["implants"] = self._implants.data()
+        char_data["market"] = self._market.data()
 
     def _load_current(self) -> None:
         """把当前角色的数据灌进三个从属桥（原 `_rebuild_pages`）。"""
