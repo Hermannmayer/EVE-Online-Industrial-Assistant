@@ -43,12 +43,6 @@ from ui_qml.workers.esi_skill_worker import (
 #: 两条接口要的 scope 不同，403 文案得分开说 —— 写死一处会把用户引去勾错的权限
 _WALLET_SCOPE_HINT = "钱包"
 _ORDERS_SCOPE_HINT = "挂单"
-_CORP_SCOPE_HINT = "军团钱包"
-
-#: 军团钱包 scope。**不放进 `SCOPES` 常量**，只在用户开了「含军团钱包」开关时才随
-#: 授权一起请求（见基类 `_extra_scopes`）—— 否则没开的人也得多授权一次，且 CCP
-#: 门户没勾这个 scope 时授权会直接 `invalid_scope`，把整条 ESI 链路弄挂。
-CORP_WALLET_SCOPE = "esi-wallet.read_corporation_wallets.v1"
 
 
 def _map_order(raw: dict, char_id: int) -> dict:
@@ -136,7 +130,15 @@ class EsiWalletOrdersWorker(EsiSkillImportWorker):
                     if corp_id not in corp_seen:
                         corp_total += await self._pull_corp_wallet(client, access, corp_id)
                         corp_seen.add(corp_id)
-                except (EsiAuthRevoked, EsiScopeMissing) as e:
+                except EsiScopeMissing:
+                    # 403 有两种可能：token 里没这个 scope（要重新授权一次），或角色没有
+                    # 军团会计权限。ESI 不区分这两种，所以提示里都得说 —— 只报「缺权限」
+                    # 会让没会计角色的人反复重新授权却永远失败。
+                    errors.append(
+                        f"{name} 的军团钱包：读不到（缺授权，或该角色没有军团会计权限）——"
+                        f"先在人物设置里点「+ 从 ESI」重新授权一次；仍失败就是角色权限不够"
+                    )
+                except EsiAuthRevoked as e:
                     errors.append(f"{name} 的军团钱包：{e}")
                 except Exception as e:
                     log.exception("ESI 军团钱包拉取失败 name=%s", name)
@@ -156,10 +158,6 @@ class EsiWalletOrdersWorker(EsiSkillImportWorker):
             "errors": errors,
         }
 
-    def _extra_scopes(self) -> tuple[str, ...]:
-        """开了「含军团钱包」才请求军团钱包 scope（见基类说明）。"""
-        return (CORP_WALLET_SCOPE,) if get_include_corp_wallet() else ()
-
     async def _character_corp(self, client, access: str, char_id: int) -> int:
         """角色所属军团 id。`/characters/{id}/` 是**公开**接口，不需要任何 scope。"""
         detail = await _get_json(client, f"{ESI_BASE}/characters/{char_id}/", access)
@@ -168,8 +166,8 @@ class EsiWalletOrdersWorker(EsiSkillImportWorker):
     async def _pull_corp_wallet(self, client, access: str, corp_id: int) -> float:
         """军团钱包合计（各分部余额相加）。
 
-        只有军团会计类角色读得到，没有该角色会 403 —— 由调用方转成「军团钱包未纳入」，
-        不当作整体失败之外的额外惩罚。
+        只有军团会计类角色读得到；没有该角色、或 token 里没这个 scope，都会 403。
+        由调用方转成「军团钱包未纳入」，不当作整体失败之外的额外惩罚。
         """
         if not corp_id:
             return 0.0
@@ -177,7 +175,7 @@ class EsiWalletOrdersWorker(EsiSkillImportWorker):
             client,
             f"{ESI_BASE}/corporations/{corp_id}/wallets/",
             access,
-            scope_hint=_CORP_SCOPE_HINT,
+            scope_hint="军团钱包",
         )
         return float(sum(float(d.get("balance") or 0.0) for d in rows or []))
 

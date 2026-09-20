@@ -403,3 +403,20 @@ def test_add_from_esi_always_opens_browser(qapp, monkeypatch, force_browser, exp
 
     assert asyncio.run(worker._obtain_token(None)) == ("a", 1, "甲")
     assert calls == [expected]
+
+
+def test_reauthorize_requests_corp_wallet_scope_only_when_enabled(qapp, monkeypatch):
+    """开了「含军团钱包」时，**重新授权必须带上**军团钱包 scope。
+
+    守的是一个实测过的死路：重新授权的入口是人物设置对话框（走 `EsiSkillImportWorker`），
+    而钱包 worker 走 `allow_browser=False`、压根不开浏览器。两边都只做子类钩子时，
+    这个 scope 任何路径都拿不到 —— 表现是「门户勾了权限，重新授权却不带上它」。
+    """
+    worker = esw.EsiSkillImportWorker("甲")
+    assert esw.CORP_WALLET_SCOPE not in esw.SCOPES, "可选权限不该塞进常量：没开的人也得被迫授权"
+
+    monkeypatch.setattr("services.user_settings.get_include_corp_wallet", lambda: True)
+    assert worker._extra_scopes() == (esw.CORP_WALLET_SCOPE,)
+
+    monkeypatch.setattr("services.user_settings.get_include_corp_wallet", lambda: False)
+    assert worker._extra_scopes() == ()

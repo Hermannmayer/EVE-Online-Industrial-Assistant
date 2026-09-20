@@ -57,6 +57,9 @@ SCOPES = (
     "esi-markets.read_character_orders.v1",
 )
 
+#: 可选能力「含军团钱包」要的 scope，**不进 `SCOPES`**（见 `_extra_scopes`）。
+CORP_WALLET_SCOPE = "esi-wallet.read_corporation_wallets.v1"
+
 #: access token 官方寿命 1200s（20 分钟）。剩不足这个裕量就提前刷新。
 _EXPIRY_MARGIN_S = 60
 _DEFAULT_EXPIRES_IN = 1200
@@ -410,14 +413,19 @@ class EsiSkillImportWorker(QThread):
     # ── 令牌 ──
 
     def _extra_scopes(self) -> tuple[str, ...]:
-        """子类可追加「按开关才要」的 scope（默认不加）。
+        """「带开关的可选能力」按需追加的 scope。目前只有军团钱包一项。
 
-        单独开钩子而不是往 `SCOPES` 里塞：常量是所有用户都要的，而军团钱包这类
-        可选能力一旦写进常量，没开开关的人也得重新授权一次；更糟的是仓库若没在
-        CCP 门户勾过那个 scope，授权会直接 `invalid_scope`，把**整个** ESI 链路
-        （含技能）一起弄挂。
+        为什么钩子开在**基类**而不是钱包 worker 上：重新授权的入口是人物设置对话框
+        （走的就是本类），而钱包 worker 走 `allow_browser=False`、压根不开浏览器。
+        两边都只做子类钩子的话，这个 scope **任何路径都拿不到**，功能直接不可达
+        —— 实测踩过：门户勾了权限，重新授权却不带上它。
+
+        也正因为是「按开关追加」而不是塞进 `SCOPES`：没开开关的人不必为此多授权一次，
+        且门户没勾该 scope 时授权会 `invalid_scope`，把整条 ESI 链路一起弄挂。
         """
-        return ()
+        from services.user_settings import get_include_corp_wallet
+
+        return (CORP_WALLET_SCOPE,) if get_include_corp_wallet() else ()
 
     async def _obtain_token(
         self, client, character_name: str | None = None, *, allow_browser: bool = True
