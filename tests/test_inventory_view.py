@@ -261,15 +261,6 @@ class TestBlueprintTableModel:
         idx = model.index(1, 2)
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "蓝图拷贝（占用中）"
 
-    def test_occupied_foreground_orange(self, qapp):
-        """占用中的类型列用前景色高亮"""
-        rows = [dict(r) for r in self.SAMPLE_ROWS]
-        rows[1]["occupied"] = True
-        model = BlueprintTableModel(rows)
-        idx = model.index(1, 2)
-        color = idx.data(Qt.ItemDataRole.ForegroundRole)
-        assert color.name().startswith("#")
-
     def test_time_zero_returns_dash(self, qapp):
         """base_time=0 返回横线"""
         rows = [{"blueprint_type_id": 9999, "base_time": 0}]

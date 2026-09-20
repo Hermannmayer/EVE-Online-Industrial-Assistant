@@ -8,11 +8,6 @@ import pytest
 class TestConnectPrimary:
     """connect(primary) 主库连接"""
 
-    def test_connect_ref_returns_connection(self, temp_db):
-        """连接 ref 主库应返回有效 sqlite3 连接"""
-        with temp_db.connect("ref") as conn:
-            assert isinstance(conn, sqlite3.Connection)
-
     def test_connect_ref_can_query(self, temp_db):
         """连接 ref 库后应能查询 item 表"""
         with temp_db.connect("ref") as conn:
@@ -22,7 +17,6 @@ class TestConnectPrimary:
     def test_connect_mkt_returns_connection(self, temp_db):
         """连接 mkt 主库应返回有效连接"""
         with temp_db.connect("mkt") as conn:
-            assert isinstance(conn, sqlite3.Connection)
             row = conn.execute("SELECT COUNT(*) FROM market_prices").fetchone()
             assert row[0] >= 4
 
@@ -76,7 +70,6 @@ class TestDirectConnect:
         """direct_connect 应返回有效的连接"""
         conn = temp_db.direct_connect("ref")
         try:
-            assert isinstance(conn, sqlite3.Connection)
             row = conn.execute("SELECT COUNT(*) FROM item").fetchone()
             assert row[0] >= 4
         finally:

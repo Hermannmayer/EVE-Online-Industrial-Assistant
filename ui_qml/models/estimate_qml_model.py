@@ -35,6 +35,7 @@ ROLE_NAMES: dict[int, bytes] = {
     Qt.ItemDataRole.UserRole + 8: b"buyTotalText",
     Qt.ItemDataRole.UserRole + 9: b"volumeText",
     Qt.ItemDataRole.UserRole + 10: b"rowIndex",
+    Qt.ItemDataRole.UserRole + 11: b"refineValueText",
 }
 
 _TYPE_ID = Qt.ItemDataRole.UserRole + 1
@@ -47,6 +48,7 @@ _SELL_TEXT = Qt.ItemDataRole.UserRole + 7
 _BUY_TEXT = Qt.ItemDataRole.UserRole + 8
 _VOLUME_TEXT = Qt.ItemDataRole.UserRole + 9
 _ROW_INDEX = Qt.ItemDataRole.UserRole + 10
+_REFINE_TEXT = Qt.ItemDataRole.UserRole + 11
 
 
 class EstimateQmlModel(EstimateTableModel):
@@ -86,6 +88,10 @@ class EstimateQmlModel(EstimateTableModel):
         if role == _VOLUME_TEXT:
             value = row.get("volume", 0) or 0
             return f"{value:,.2f}" if value else "---"
+        if role == _REFINE_TEXT:
+            #: 由桥逐行算好写进行字典；`None` = 不可精炼（说清「没有」而不是「0」）
+            refined = row.get("refine_value")
+            return "—" if refined is None else f"{refined:,.2f}"
 
         # 其余角色（Display/Decoration/Foreground/UserRole…）交回父类，
         # 这样 QWidgets 版的 EstimatePage 仍能用同一个模型实例。

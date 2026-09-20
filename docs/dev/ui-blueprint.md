@@ -74,7 +74,7 @@
 
 | 态 | 区域名 | 代码定位 | 内容 |
 |---|---|---|---|
-| 空闲态 | 仪表盘 | `#queryDashboard` | 三栏：产线详情（`OccupancyPanel`，**每人物一块、块内制造/科研/反应三行**，行尾给「待下线 N」）/ 资产折线图（`AssetChartPanel`，5 条线 + 右上角「刷新」`#assetRefreshButton`）/ 挂单列表（`OpenOrdersPanel`，**买单 `#buyOrdersTable` / 卖单 `#sellOrdersTable` 上下两张表** + `#readOrdersButton`；钱包余额 `#walletField`） |
+| 空闲态 | 仪表盘 | `#queryDashboard` | 三栏：产线详情（`OccupancyPanel`，**每人物一块、块内制造/科研/反应三行**，行尾给「待下线 N」，**该列恒定预留宽度**，条子分母取该线型各人物上限的最大值）/ 资产折线图（`AssetChartPanel`，5 条线 + 右上角「刷新」`#assetRefreshButton`；涨跌基准取档位起点**之前**最近一条快照）/ 挂单列表（`OpenOrdersPanel`，**卖单 `#sellOrdersTable` 在上、买单 `#buyOrdersTable` 在下两张表** + `#readOrdersButton`；钱包余额 `#walletField`） |
 | 详情态 | 详情面板 | `#queryDetailPane` | 四块 2×2，**铺满整个工作区**（原先上半屏是结果表，已删） |
 
 > **这一页没有结果表格**（用户明确要求）：候选弹窗 `#suggestPopup` **就是**匹配清单 ——

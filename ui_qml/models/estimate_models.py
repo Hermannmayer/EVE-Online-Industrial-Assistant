@@ -17,9 +17,13 @@ _COLUMNS = [
     ("卖价合计", 120),
     ("买价合计", 120),
     ("体积 m³", 80),
+    ("精炼价值", 120),
 ]
 
-_SORT_KEYS = [None, "name", "qty", "unit_price", "sell_total", "buy_total", "volume"]
+_SORT_KEYS = [None, "name", "qty", "unit_price", "sell_total", "buy_total", "volume", "refine_value"]
+
+#: 需要重绘的末列（数量列改了数量 → 合计/体积/精炼价值都跟着变）
+_LAST_COL = len(_COLUMNS) - 1
 
 
 class EstimateTableModel(QAbstractTableModel):
@@ -37,7 +41,7 @@ class EstimateTableModel(QAbstractTableModel):
         if self._rows:
             self._recalc_totals()
             top_left = self.index(0, 3)
-            bottom_right = self.index(len(self._rows) - 1, 6)
+            bottom_right = self.index(len(self._rows) - 1, _LAST_COL)
             self.dataChanged.emit(top_left, bottom_right, [])
 
     def set_rows(self, rows: list[dict]):
@@ -65,7 +69,7 @@ class EstimateTableModel(QAbstractTableModel):
         self.endInsertRows()
         self._recalc_totals()
         top_left = self.index(idx, 0)
-        bottom_right = self.index(idx, 6)
+        bottom_right = self.index(idx, _LAST_COL)
         self.dataChanged.emit(top_left, bottom_right, [])
 
     def remove_row(self, row_idx: int):
@@ -106,7 +110,7 @@ class EstimateTableModel(QAbstractTableModel):
                     return False
                 self._rows[index.row()]["qty"] = qty
                 self._recalc_totals()
-                self.dataChanged.emit(index, self.index(index.row(), 6))
+                self.dataChanged.emit(index, self.index(index.row(), _LAST_COL))
                 return True
             except (ValueError, TypeError):
                 return False
@@ -129,7 +133,7 @@ class EstimateTableModel(QAbstractTableModel):
             return None
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
-            if col in (2, 3, 4, 5, 6):
+            if col in (2, 3, 4, 5, 6, 7):
                 return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
 
@@ -164,6 +168,10 @@ class EstimateTableModel(QAbstractTableModel):
         elif col == 6:
             vol = row.get("volume", 0) or 0
             return f"{vol:,.2f}" if vol else "---"
+        elif col == 7:
+            #: 精炼价值由桥逐行算好写进行字典；`None` = 不可精炼（说清「没有」而不是「0」）
+            rv = row.get("refine_value")
+            return "—" if rv is None else f"{rv:,.2f}"
         return ""
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):

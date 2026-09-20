@@ -13,22 +13,20 @@ from typing import Any
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
-from core.constants import TRADE_HUB_IDS
+from core.constants import TRADE_HUB_IDS, TRADE_HUB_SYSTEM_IDS
 from core.container import get_container
+from core.logger import log
+from services.char_config_resolver import load_all_data, resolve_char_config
+from services.name_resolver import resolve_system_display_names_batch
 from ui_qml.models import EstimateQmlModel
 from ui_qml.workers.estimate_workers import ClipboardParseWorker, _search_item_by_name
-from ui_qml.workers.refine_worker import RefineWorker
 
 __all__ = ["EstimateBridge"]
 
-# QComboBox 的选项在 Widgets 版里是硬编码的中文，这里保持一致
-_PRICE_TYPES = ("卖价", "买价", "均价")
-_PRICE_TYPE_KEYS = ("sell", "buy", "avg")
-_REFINE_MODES = ("人物", "设施")
-_SKILL_PRESETS = ("技能全5", "当前人物", "技能全0")
-
-_SKILL_ALL5 = {"提炼学概论": 5, "提炼效率理论": 5}
-_SKILL_ALL0 = {"提炼学概论": 0, "提炼效率理论": 0}
+#: 精炼场地（值语义仍是「是不是玩家设施」，标签按玩家说法给）
+_REFINE_MODES = ("空间站", "玩家设施")
+#: 取价固定用卖价：买/卖的选择已由底部两个「…到剪贴板」按钮承担，不再做价格类型下拉
+_PRICE_TYPE = "sell"
 
 
 class EstimateBridge(QObject):
@@ -38,24 +36,24 @@ class EstimateBridge(QObject):
     summaryChanged = Signal()
     hangarsChanged = Signal()
     busyChanged = Signal()
-    priceTypeChanged = Signal()
     hubChanged = Signal()
     discountChanged = Signal()
-    refineResult = Signal(dict)
+    characterChanged = Signal()
+    refineModeChanged = Signal()
 
     def __init__(self, shell: object | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._shell = shell
         self._hub = "Jita"
-        self._price_type = "sell"
         self._discount = 1.0
         self._busy = False
+        self._character = ""  # 惰性取默认（char_config.json 的 current）
+        self._refine_mode = _REFINE_MODES[0]
         self._model = EstimateQmlModel()
         self._model.dataChanged.connect(lambda *_: self.summaryChanged.emit())
         self._model.rowsRemoved.connect(lambda *_: self.summaryChanged.emit())
         self._model.modelReset.connect(lambda: self.summaryChanged.emit())
         self._worker: QObject | None = None
-        self._refine_worker: QObject | None = None
 
     # ── 模型 ──
 
@@ -66,10 +64,34 @@ class EstimateBridge(QObject):
 
     # ── 选项列表（静态）──
 
-    priceTypes = Property(list, lambda self: list(_PRICE_TYPES), constant=True)
     refineModes = Property(list, lambda self: list(_REFINE_MODES), constant=True)
-    skillPresets = Property(list, lambda self: list(_SKILL_PRESETS), constant=True)
-    hubs = Property(list, lambda self: list(TRADE_HUB_IDS.keys()), constant=True)
+
+    @Slot(result=list)
+    def hubOptions(self) -> list[dict]:
+        """贸易中心下拉 → `[{label, value}]`。
+
+        `value` 是取价要的英文中心名（`core.constants.TRADE_HUB_IDS` 的键）；
+        `label` 走术语表的中英对照（`resolve_system_display_names_batch` → 「吉他 (Jita)」），
+        不在 QML 里硬编码中文。
+        """
+        system_ids = [sid for hub in TRADE_HUB_IDS if (sid := TRADE_HUB_SYSTEM_IDS.get(hub))]
+        names = resolve_system_display_names_batch(system_ids)
+        return [{"label": names.get(TRADE_HUB_SYSTEM_IDS.get(hub, 0)) or hub, "value": hub} for hub in TRADE_HUB_IDS]
+
+    def _characters_and_current(self) -> tuple[list[str], str]:
+        """角色名列表 + 默认选中项（`char_config.json` 的 `current`，失效则取首项）。"""
+        try:
+            data = load_all_data()
+        except Exception:
+            log.exception("读取角色配置失败")
+            return [], ""
+        names = list((data.get("characters") or {}).keys())
+        current = str(data.get("current") or "")
+        return names, (current if current in names else (names[0] if names else ""))
+
+    @Property(list, notify=characterChanged)
+    def characters(self) -> list[str]:
+        return self._characters_and_current()[0]
 
     @Slot(result=list)
     def hangars(self) -> list[dict]:
@@ -84,18 +106,6 @@ class EstimateBridge(QObject):
 
     # ── 设置项 ──
 
-    def _get_price_type(self) -> str:
-        return self._price_type
-
-    def _set_price_type(self, value: str) -> None:
-        if value not in _PRICE_TYPE_KEYS or value == self._price_type:
-            return
-        self._price_type = value
-        self._rebuild_unit_prices()
-        self.priceTypeChanged.emit()
-
-    priceType = Property(str, _get_price_type, _set_price_type, notify=priceTypeChanged)
-
     def _get_hub(self) -> str:
         return self._hub
 
@@ -108,6 +118,33 @@ class EstimateBridge(QObject):
 
     hub = Property(str, _get_hub, _set_hub, notify=hubChanged)
 
+    def _get_character(self) -> str:
+        if not self._character:
+            self._character = self._characters_and_current()[1]
+        return self._character
+
+    def _set_character(self, value: str) -> None:
+        value = str(value or "")
+        if not value or value == self._get_character():
+            return
+        self._character = value
+        self.characterChanged.emit()
+        self._rebuild_refine_values()
+
+    character = Property(str, _get_character, _set_character, notify=characterChanged)
+
+    def _get_refine_mode(self) -> str:
+        return self._refine_mode
+
+    def _set_refine_mode(self, value: str) -> None:
+        if value not in _REFINE_MODES or value == self._refine_mode:
+            return
+        self._refine_mode = value
+        self.refineModeChanged.emit()
+        self._rebuild_refine_values()
+
+    refineMode = Property(str, _get_refine_mode, _set_refine_mode, notify=refineModeChanged)
+
     def _get_discount(self) -> float:
         return self._discount
 
@@ -118,6 +155,7 @@ class EstimateBridge(QObject):
         self._discount = value
         self._model.set_discount(value)
         self._rebuild_unit_prices()
+        self._rebuild_refine_values()
         self.summaryChanged.emit()
         self.discountChanged.emit()
 
@@ -167,7 +205,7 @@ class EstimateBridge(QObject):
 
         self._set_busy(True)
         self._status("正在解析剪贴板...")
-        worker = ClipboardParseWorker(text, self._price_type, self._hub, self)
+        worker = ClipboardParseWorker(text, _PRICE_TYPE, self._hub, self)
         self._worker = worker
         worker.result_signal.connect(self._on_parse_done)
         worker.status_signal.connect(self._status)
@@ -178,6 +216,7 @@ class EstimateBridge(QObject):
         self._model.set_rows(rows)
         self._model.set_discount(self._discount)
         self._rebuild_unit_prices()
+        self._rebuild_refine_values()
         self.summaryChanged.emit()
 
     @Slot(str)
@@ -209,25 +248,58 @@ class EstimateBridge(QObject):
             }
         )
         self._model.set_discount(self._discount)
+        self._rebuild_unit_prices()
+        self._rebuild_refine_values()
         self.summaryChanged.emit()
         self._status(f"已添加: {display_name}")
 
     # ── 价格 ──
 
     def _rebuild_unit_prices(self) -> None:
-        """切换价格类型/折扣后重算单价列（与 Widgets 版同逻辑）。"""
+        """重算单价列 —— 取价固定用卖价（买/卖的选择归底部两个复制按钮管）。"""
         rows = self._model._rows
         for row in rows:
-            sell = row.get("sell_price", 0) or 0
-            buy = row.get("buy_price", 0) or 0
-            if self._price_type == "sell":
-                row["unit_price"] = sell * self._discount
-            elif self._price_type == "buy":
-                row["unit_price"] = buy * self._discount
-            else:
-                row["unit_price"] = ((sell + buy) / 2) * self._discount if (sell or buy) else 0
+            row["unit_price"] = (row.get("sell_price", 0) or 0) * self._discount
         if rows:
             self._model.dataChanged.emit(self._model.index(0, 3), self._model.index(len(rows) - 1, 3), [])
+
+    def _rebuild_refine_values(self) -> None:
+        """逐行算「精炼价值」列；不可精炼 / 算不出的行留 `None`（QML 显示「—」）。
+
+        口径与原 `RefineWorker.run` 一致：矿石专精技能名由 `ore_skill_info` 按 SDE 组名推，
+        等级从当前人物的真实技能表里取。**公式与取价全在 `services/refining_service`**，
+        这里只做「遍历行 + 挑字段 + 乘折扣」（折扣与「卖价合计」同口径）。
+        """
+        rows = self._model._rows
+        if not rows:
+            return
+        svc = get_container().refining_service
+        skills = self._current_skills()
+        facility = self._refine_mode == _REFINE_MODES[1]
+        for row in rows:
+            type_id = row.get("type_id")
+            if not type_id:
+                row["refine_value"] = None
+                continue
+            try:
+                _is_ore, skill_name = svc.ore_skill_info(type_id)
+                ore_skill = int(skills.get(skill_name, 0) or 0) if skill_name else 0
+                result = svc.calc_value(
+                    type_id,
+                    quantity=row.get("qty", 1) or 1,
+                    skills=skills,
+                    is_player_facility=facility,
+                    price_hub=self._hub,
+                    ore_skill=ore_skill,
+                )
+            except Exception:
+                log.exception("精炼价值计算失败 type_id=%s", type_id)
+                row["refine_value"] = None
+                continue
+            row["refine_value"] = result["total_value"] * self._discount if result["output"] else None
+        self._model.dataChanged.emit(
+            self._model.index(0, 2), self._model.index(len(rows) - 1, self._model.columnCount() - 1), []
+        )
 
     @Slot()
     def refreshPrices(self) -> None:
@@ -244,8 +316,9 @@ class EstimateBridge(QObject):
             row["buy_price"] = pricing.get_price(tid, "buy", self._hub) or 0
         self._model.set_discount(self._discount)
         self._rebuild_unit_prices()
+        self._rebuild_refine_values()
         self.summaryChanged.emit()
-        self._status("价格已刷新")
+        self._status("价格已更新")
 
     @Slot(str)
     def copyTotals(self, mode: str) -> None:
@@ -283,7 +356,10 @@ class EstimateBridge(QObject):
         rows[row_index]["qty"] = int(qty)
         self._model._recalc_totals()
         self._rebuild_unit_prices()
-        self._model.dataChanged.emit(self._model.index(row_index, 2), self._model.index(row_index, 6), [])
+        self._rebuild_refine_values()
+        self._model.dataChanged.emit(
+            self._model.index(row_index, 2), self._model.index(row_index, self._model.columnCount() - 1), []
+        )
         self.summaryChanged.emit()
 
     @Slot(int, float)
@@ -294,7 +370,10 @@ class EstimateBridge(QObject):
         rows[row_index]["qty"] = max(1, round(rows[row_index].get("qty", 1) * float(factor)))
         self._model._recalc_totals()
         self._rebuild_unit_prices()
-        self._model.dataChanged.emit(self._model.index(row_index, 2), self._model.index(row_index, 6), [])
+        self._rebuild_refine_values()
+        self._model.dataChanged.emit(
+            self._model.index(row_index, 2), self._model.index(row_index, self._model.columnCount() - 1), []
+        )
         self.summaryChanged.emit()
 
     @Slot(int, int, int)
@@ -348,49 +427,19 @@ class EstimateBridge(QObject):
     # ── 精炼 ──
 
     def _current_skills(self) -> dict[str, int]:
-        """「当前人物」预设：从主窗口的 char_config 取，取不到按技能全5。"""
-        char_config = getattr(self._shell, "_current_char", None)
-        if isinstance(char_config, dict) and "skills" in char_config:
-            return dict(char_config["skills"])  # type: ignore[return-value]
-        return dict(_SKILL_ALL5)
+        """当前人物的**真实技能表** —— 读 `data/char_config.json`（见 `char_config_resolver`）。
 
-    @Slot(str, str, float, bool)
-    def refine(self, mode: str, skill_preset: str, gas_rate: float, residual: bool) -> None:
-        rows = self._model.get_rows()
-        if not rows:
-            self._status("表格中没有数据")
-            return
-
-        if skill_preset == "技能全5":
-            skills = dict(_SKILL_ALL5)
-        elif skill_preset == "技能全0":
-            skills = dict(_SKILL_ALL0)
-        else:
-            skills = self._current_skills()
-
-        items = [{"type_id": r["type_id"], "qty": r.get("qty", 1), "name": r.get("name", "")} for r in rows]
-        model_items = get_container().refining_service.filter_refinable(items)
-        if not model_items:
-            self._status("表格中没有可精炼的物品（矿石/冰矿/残骸）")
-            return
-
-        self._set_busy(True)
-        self._status(f"正在精炼 {len(model_items)} 项物品...")
-        worker = RefineWorker(
-            model_items,
-            skills=skills,
-            is_player_facility=(mode == "设施"),
-            price_hub=self._hub,
-            gas_rate=float(gas_rate or 0),
-            residual=residual,
-            parent=self,
-        )
-        self._refine_worker = worker
-        worker.status_signal.connect(self._status)
-        worker.result_signal.connect(self._on_refine_done)
-        worker.finished.connect(lambda: self._set_busy(False))
-        worker.start()
-
-    def _on_refine_done(self, result: dict) -> None:
-        self._status(f"精炼完成: {result['item_count']} 项")
-        self.refineResult.emit(result)
+        早先这里是「按技能全5 兜底」的死分支（读 `shell._current_char`，而全库无人给它赋值），
+        所以人物下拉形同虚设、精炼产率恒按满技能算。现在只认真实配置：人物没配技能就给空表，
+        产率按 0 级算 —— 宁可偏低，也不假装人物满技能。
+        """
+        name = self._get_character()
+        if not name:
+            return {}
+        try:
+            config = resolve_char_config(char_name=name)
+        except Exception:
+            log.exception("读取人物技能失败 char=%s", name)
+            return {}
+        skills = config.get("skills") if isinstance(config, dict) else None
+        return dict(skills) if isinstance(skills, dict) else {}

@@ -171,7 +171,7 @@ FDialogFrame {
                `Repeater` 用来在 `editorKey` 变化时**重建**编辑区（切换机库要清掉内部状态），
                但 **Repeater 的代理项不被 Layout 布局** —— 直接把 Repeater 当 RowLayout 的子项，
                面板会以 0×0 落在布局原点、从左侧列表底下铺开（实测：右侧面板压住列表右缘）。
-               所以外面套一层被布局的 Item，面板改锚定它。 */
+               所以外面套一层被布局的 Item，面板改锚定它。重建语义不变。 */
             Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -376,154 +376,154 @@ FDialogFrame {
                     wrapMode: Text.WordWrap
                 }
             }
-
-            // ══════════════════════════════════════════════════════
-            //  Tab 2：默认机库
-            // ══════════════════════════════════════════════════════
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                spacing: frame.gap
-
-                FSection {
-                    title: qsTr("默认机库（决定材料来源 / 产品去向）")
-
-                    Repeater {
-                        model: frame.bp ? frame.bp.defaultRows : []
-
-                        RowLayout {
-                            required property var modelData
-
-                            Layout.fillWidth: true
-                            spacing: frame.gap
-
-                            Text {
-                                Layout.preferredWidth: Math.round(150 * Theme.fontScale)
-                                horizontalAlignment: Text.AlignRight
-                                text: modelData.label + ":"
-                                color: Theme.textPrimary
-                                font.family: Theme.fontFamily
-                                font.pixelSize: frame.fntBase
-                            }
-                            FComboBox {
-                                Layout.preferredWidth: Math.round(240 * Theme.fontScale)
-                                textRole: "label"
-                                model: modelData.options
-                                currentIndex: modelData.index
-                                onActivated: if (frame.bp)
-                                    frame.bp.setDefaultIndex(modelData.key, currentIndex)
-                            }
-                            Item {
-                                Layout.fillWidth: true
-                            }
-                        }
-                    }
-                }
-
-                Item {
-                    Layout.fillHeight: true
-                }
-            }
         }
 
-        // ══════════════════════════════════════════════════════════
-        //  删除确认条（两步确认的第二步）
-        // ══════════════════════════════════════════════════════════
+        // ══════════════════════════════════════════════════════
+        //  Tab 2：默认机库
+        // ══════════════════════════════════════════════════════
 
-        Rectangle {
-            objectName: "deleteConfirmBar"
+        ColumnLayout {
             Layout.fillWidth: true
-            visible: frame.bp ? frame.bp.confirmVisible : false
-            implicitHeight: confirmCol.implicitHeight + 2 * Theme.spacingSm
-            color: Theme.bgSurface
-            radius: Theme.radius
-            border.width: 1
-            border.color: Theme.accentOrange
+            Layout.fillHeight: true
+            spacing: frame.gap
 
-            ColumnLayout {
-                id: confirmCol
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: Theme.spacingSm
-                spacing: Theme.spacingXs
-
-                Text {
-                    Layout.fillWidth: true
-                    text: frame.bp ? frame.bp.confirmTitle : ""
-                    color: Theme.accentOrange
-                    font.family: Theme.fontFamily
-                    font.pixelSize: frame.fntBase
-                    font.bold: true
-                    wrapMode: Text.WordWrap
-                }
+            FSection {
+                title: qsTr("默认机库（决定材料来源 / 产品去向）")
 
                 Repeater {
-                    model: frame.bp ? frame.bp.confirmReferences : []
+                    model: frame.bp ? frame.bp.defaultRows : []
 
-                    Text {
+                    RowLayout {
                         required property var modelData
 
                         Layout.fillWidth: true
-                        text: "    • " + modelData
-                        color: Theme.textPrimary
-                        font.family: Theme.fontFamily
-                        font.pixelSize: frame.fntBase
-                        elide: Text.ElideRight
+                        spacing: frame.gap
+
+                        Text {
+                            Layout.preferredWidth: Math.round(150 * Theme.fontScale)
+                            horizontalAlignment: Text.AlignRight
+                            text: modelData.label + ":"
+                            color: Theme.textPrimary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: frame.fntBase
+                        }
+                        FComboBox {
+                            Layout.preferredWidth: Math.round(240 * Theme.fontScale)
+                            textRole: "label"
+                            model: modelData.options
+                            currentIndex: modelData.index
+                            onActivated: if (frame.bp)
+                                frame.bp.setDefaultIndex(modelData.key, currentIndex)
+                        }
+                        Item {
+                            Layout.fillWidth: true
+                        }
                     }
                 }
+            }
+
+            Item {
+                Layout.fillHeight: true
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  删除确认条（两步确认的第二步）
+    // ══════════════════════════════════════════════════════════
+
+    Rectangle {
+        objectName: "deleteConfirmBar"
+        Layout.fillWidth: true
+        visible: frame.bp ? frame.bp.confirmVisible : false
+        implicitHeight: confirmCol.implicitHeight + 2 * Theme.spacingSm
+        color: Theme.bgSurface
+        radius: Theme.radius
+        border.width: 1
+        border.color: Theme.accentOrange
+
+        ColumnLayout {
+            id: confirmCol
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: Theme.spacingSm
+            spacing: Theme.spacingXs
+
+            Text {
+                Layout.fillWidth: true
+                text: frame.bp ? frame.bp.confirmTitle : ""
+                color: Theme.accentOrange
+                font.family: Theme.fontFamily
+                font.pixelSize: frame.fntBase
+                font.bold: true
+                wrapMode: Text.WordWrap
+            }
+
+            Repeater {
+                model: frame.bp ? frame.bp.confirmReferences : []
 
                 Text {
+                    required property var modelData
+
                     Layout.fillWidth: true
-                    visible: text !== ""
-                    text: frame.bp ? frame.bp.confirmNote : ""
-                    color: Theme.textSecondary
+                    text: "    • " + modelData
+                    color: Theme.textPrimary
                     font.family: Theme.fontFamily
-                    font.pixelSize: frame.fntSmall
-                    wrapMode: Text.WordWrap
+                    font.pixelSize: frame.fntBase
+                    elide: Text.ElideRight
                 }
+            }
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    visible: frame.bp ? frame.bp.showRepoint : false
-                    spacing: frame.gap
+            Text {
+                Layout.fillWidth: true
+                visible: text !== ""
+                text: frame.bp ? frame.bp.confirmNote : ""
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: frame.fntSmall
+                wrapMode: Text.WordWrap
+            }
 
-                    Text {
-                        text: qsTr("将上述引用改为：")
-                        color: Theme.textPrimary
-                        font.family: Theme.fontFamily
-                        font.pixelSize: frame.fntBase
-                    }
-                    FComboBox {
-                        objectName: "repointBox"
-                        Layout.fillWidth: true
-                        textRole: "label"
-                        model: frame.bp ? frame.bp.repointOptions : []
-                        currentIndex: frame.bp ? frame.bp.repointIndex : 0
-                        onActivated: if (frame.bp)
-                            frame.bp.setRepointIndex(currentIndex)
-                    }
+            RowLayout {
+                Layout.fillWidth: true
+                visible: frame.bp ? frame.bp.showRepoint : false
+                spacing: frame.gap
+
+                Text {
+                    text: qsTr("将上述引用改为：")
+                    color: Theme.textPrimary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: frame.fntBase
                 }
-
-                RowLayout {
+                FComboBox {
+                    objectName: "repointBox"
                     Layout.fillWidth: true
-                    spacing: frame.gap
+                    textRole: "label"
+                    model: frame.bp ? frame.bp.repointOptions : []
+                    currentIndex: frame.bp ? frame.bp.repointIndex : 0
+                    onActivated: if (frame.bp)
+                        frame.bp.setRepointIndex(currentIndex)
+                }
+            }
 
-                    Item {
-                        Layout.fillWidth: true
-                    }
-                    FButton {
-                        objectName: "confirmDeleteBtn"
-                        text: qsTr("删除")
-                        onClicked: if (frame.bp)
-                            frame.bp.confirmDelete()
-                    }
-                    FButton {
-                        text: qsTr("取消删除")
-                        onClicked: if (frame.bp)
-                            frame.bp.cancelDelete()
-                    }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: frame.gap
+
+                Item {
+                    Layout.fillWidth: true
+                }
+                FButton {
+                    objectName: "confirmDeleteBtn"
+                    text: qsTr("删除")
+                    onClicked: if (frame.bp)
+                        frame.bp.confirmDelete()
+                }
+                FButton {
+                    text: qsTr("取消删除")
+                    onClicked: if (frame.bp)
+                        frame.bp.cancelDelete()
                 }
             }
         }

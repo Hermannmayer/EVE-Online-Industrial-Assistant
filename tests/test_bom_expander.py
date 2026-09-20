@@ -360,6 +360,5 @@ class TestExpandBom:
         mock_conn.execute.return_value.fetchone.side_effect = [("Mineral", None), None]
 
         flat = get_flat_materials(type_id=9999, quantity=10)
-        assert isinstance(flat, list)
         assert len(flat) >= 1
         assert flat[0]["type_id"] == 9999

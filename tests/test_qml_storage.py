@@ -13,11 +13,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QObject, QPoint, Qt, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import QObject, QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from tests.qml_click import spin as _spin
+from tests.qml_page_load import assert_page_loads_quietly, page_host
 from ui_qml.models.inventory_qml_models import (
     BP_ROLE_NAMES,
     INV_ROLE_NAMES,
@@ -104,7 +105,6 @@ def test_inv_model_text_and_roles():
     assert model.data(model.index(0, 1), _I_ALIGN) is False
     assert model.data(model.index(0, 2), _I_ALIGN) is True
     # 图标列给的是 URL 或空串（缓存缺失时为空）
-    assert isinstance(model.data(model.index(0, 0), _I_ICON), str)
     assert model.data(model.index(0, 1), _I_ICON) == ""
 
 
@@ -372,45 +372,16 @@ def storage_page(qapp, monkeypatch):
     _stub_inventory(monkeypatch, [])
 
     from ui_qml.bridge.inventory_bridge import InventoryBridge
-    from ui_qml.host import PageHost
 
-    b = InventoryBridge(None)
-    host = PageHost("pages/StoragePage.qml", context={"bridge": b})
-    yield host, b
-    host.deleteLater()
-    _spin(60)
+    with page_host("pages/StoragePage.qml", InventoryBridge(None)) as pair:
+        yield pair
 
 
 @pytest.mark.ui
-def test_page_loads_and_exposes_the_bridge(storage_page):
+def test_page_loads_and_is_quiet(storage_page):
+    """能加载 + 桥到位 + 不给 Qt 刷告警（共用实现见 `tests/qml_page_load.py`）。"""
     host, bridge = storage_page
-    assert host.ok(), "; ".join(str(e) for e in host.errors())
-    root = host.rootObject()
-    assert root is not None
-    assert root.property("inv") is bridge
-
-
-@pytest.mark.ui
-def test_page_loads_without_qml_warnings(storage_page):
-    """加载 + 布局不给 Qt 刷告警（这一页有 11 列的宽表，最容易出 textRole/绑定类告警）。"""
-    caught: list[str] = []
-    previous = qInstallMessageHandler(
-        lambda mode, ctx, msg: (
-            caught.append(f"[{Path(ctx.file).name}:{ctx.line}] {msg}")
-            if mode in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg)
-            else None
-        )
-    )
-    try:
-        host, _bridge = storage_page
-        root = host.rootObject()
-        root.setProperty("width", 1400)
-        root.setProperty("height", 800)
-        _spin(300)
-    finally:
-        qInstallMessageHandler(previous)
-
-    assert not caught, "QML 产生了告警：\n" + "\n".join(dict.fromkeys(caught))
+    assert_page_loads_quietly(host, bridge, key="inv", size=(1400, 800))
 
 
 # ════════════════════════════════════════════════════════════

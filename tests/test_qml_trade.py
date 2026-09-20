@@ -9,12 +9,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import Qt
 
-from tests.qml_click import spin as _spin
+from tests.qml_page_load import assert_page_loads_quietly, page_host
 from ui_qml.models.trade_qml_model import ROLE_NAMES, TradeHubQmlModel
 
 _BASE = Qt.ItemDataRole.UserRole
@@ -313,43 +311,13 @@ def test_transport_analyze_without_selection_only_updates_preview(bridge):
 @pytest.fixture
 def trade_page(qapp):
     from ui_qml.bridge.trade_bridge import TradeBridge
-    from ui_qml.host import PageHost
 
-    b = TradeBridge(None)
-    host = PageHost("pages/TradePage.qml", context={"bridge": b})
-    yield host, b
-    host.deleteLater()
-    _spin(60)
+    with page_host("pages/TradePage.qml", TradeBridge(None)) as pair:
+        yield pair
 
 
 @pytest.mark.ui
-def test_page_loads_and_exposes_the_bridge(trade_page):
+def test_page_loads_and_is_quiet(trade_page):
+    """能加载 + 桥到位 + 不给 Qt 刷告警（共用实现见 `tests/qml_page_load.py`）。"""
     host, bridge = trade_page
-    assert host.ok(), "; ".join(str(e) for e in host.errors())
-    root = host.rootObject()
-    assert root is not None
-    assert root.property("trade") is bridge
-
-
-@pytest.mark.ui
-def test_page_loads_without_qml_warnings(trade_page):
-    """加载 + 布局不给 Qt 刷告警（textRole 指向不存在的角色 / 位置绑定用 mapToItem
-    这两类都真实出现过，且运行期只表现为「界面不对」）。"""
-    caught: list[str] = []
-    previous = qInstallMessageHandler(
-        lambda mode, ctx, msg: (
-            caught.append(f"[{Path(ctx.file).name}:{ctx.line}] {msg}")
-            if mode in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg)
-            else None
-        )
-    )
-    try:
-        host, _bridge = trade_page
-        root = host.rootObject()
-        root.setProperty("width", 1280)
-        root.setProperty("height", 720)
-        _spin(300)
-    finally:
-        qInstallMessageHandler(previous)
-
-    assert not caught, "QML 产生了告警：\n" + "\n".join(dict.fromkeys(caught))
+    assert_page_loads_quietly(host, bridge, key="trade", size=(1280, 720))

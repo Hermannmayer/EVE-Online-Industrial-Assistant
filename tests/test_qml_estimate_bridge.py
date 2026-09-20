@@ -14,6 +14,26 @@ from ui_qml.bridge.estimate_bridge import EstimateBridge
 pytestmark = pytest.mark.ui
 
 
+@pytest.fixture(autouse=True)
+def _no_real_refining(monkeypatch):
+    """精炼服务默认换成「什么都精炼不出来」的替身。
+
+    折扣 / 数量一改桥就会重算「精炼价值」列，本文件测的是**桥的整形**，
+    不该顺带去读真 SDE 与真行情（那会把用例变成集成测试）。要验真算的用例
+    自己在用例里再 patch 一次 `get_container`。
+    """
+    import ui_qml.bridge.estimate_bridge as eb
+
+    class _Nothing:
+        def ore_skill_info(self, type_id):
+            return False, ""
+
+        def calc_value(self, type_id, quantity=1, **kwargs):
+            return {"output": [], "total_value": 0.0}
+
+    monkeypatch.setattr(eb, "get_container", lambda: type("C", (), {"refining_service": _Nothing()})())
+
+
 def _bridge_with_rows() -> EstimateBridge:
     b = EstimateBridge()
     b._model.set_rows(
@@ -53,12 +73,73 @@ def _bridge_with_rows() -> EstimateBridge:
 
 
 def test_constants_match_widgets_version(qapp):
-    """下拉选项与 Widgets 版硬编码的中文必须一致，否则用户会看到两套词。"""
+    """精炼场地的选项必须与用户看到的词一致（值语义仍是「是不是玩家设施」）。"""
     b = EstimateBridge()
-    assert b.priceTypes == ["卖价", "买价", "均价"]
-    assert b.refineModes == ["人物", "设施"]
-    assert b.skillPresets == ["技能全5", "当前人物", "技能全0"]
-    assert "Jita" in b.hubs
+    assert b.refineModes == ["空间站", "玩家设施"]
+    assert b.refineMode == "空间站"
+
+
+def test_hub_options_cover_all_trade_hubs(qapp, monkeypatch):
+    """贸易中心下拉：五个中心全覆盖，且 `value` 是取价用的英文键、`label` 走术语表中英对照。
+
+    回归：这里早先是「卖价 / 买价 / 均价」的价格类型下拉，与底部两个「…到剪贴板」
+    按钮重复；改成中心下拉后买/卖由底部按钮承担。
+    """
+    import ui_qml.bridge.estimate_bridge as eb
+    from core.constants import TRADE_HUB_IDS
+
+    monkeypatch.setattr(eb, "resolve_system_display_names_batch", lambda ids: {30000142: "吉他 (Jita)"})
+    options = EstimateBridge().hubOptions()
+
+    assert [o["value"] for o in options] == list(TRADE_HUB_IDS)
+    assert options[0] == {"label": "吉他 (Jita)", "value": "Jita"}
+    # 术语表里没有的中心退回英文键，不能给空串（空串会让下拉显示成空白项）
+    assert all(o["label"] for o in options)
+
+
+def test_character_defaults_to_config_current(qapp, monkeypatch):
+    """人物下拉读真实 `char_config.json`；技能也按真人取，**没有全5兜底**。
+
+    回归：早先「当前人物」读的是 `shell._current_char`（全库无人赋值），永远退化成
+    硬编码的技能全5 —— 人物下拉形同虚设。
+    """
+    import ui_qml.bridge.estimate_bridge as eb
+
+    monkeypatch.setattr(
+        eb, "load_all_data", lambda: {"current": "乙", "characters": {"甲": {"skills": {}}, "乙": {"skills": {}}}}
+    )
+    monkeypatch.setattr(eb, "resolve_char_config", lambda **kw: {"skills": {"提炼效率理论": 3}})
+
+    b = EstimateBridge()
+    assert b.characters == ["甲", "乙"]
+    assert b.character == "乙"
+    assert b._current_skills() == {"提炼效率理论": 3}
+
+
+def test_refine_value_column_marks_unrefinable(qapp, monkeypatch):
+    """「精炼价值」列：可精炼行 = 服务给的产物总值 × 折扣；不可精炼行留 `None`（渲染「—」）。"""
+    import ui_qml.bridge.estimate_bridge as eb
+
+    class _FakeRefining:
+        def ore_skill_info(self, type_id):
+            return (True, "凡晶石处理技术") if type_id == 34 else (False, "")
+
+        def calc_value(self, type_id, quantity=1, **kwargs):
+            if type_id != 34:
+                return {"output": [], "total_value": 0.0}
+            assert kwargs["ore_skill"] == 4, "矿石专精等级必须从人物技能表里取"
+            return {"output": [{"name": "三钛合金"}], "total_value": 123.0 * quantity}
+
+    monkeypatch.setattr(eb, "get_container", lambda: type("C", (), {"refining_service": _FakeRefining()})())
+    monkeypatch.setattr(eb, "resolve_char_config", lambda **kw: {"skills": {"凡晶石处理技术": 4}})
+
+    b = _bridge_with_rows()
+    b._rebuild_refine_values()
+
+    assert b._model._rows[0]["refine_value"] == pytest.approx(123.0 * 100)
+    assert b._model._rows[1]["refine_value"] is None
+    assert b._model.data(b._model.index(0, 7)) == "12,300.00"
+    assert b._model.data(b._model.index(1, 7)) == "—"
 
 
 def test_summary_matches_widgets_formulas(qapp):
@@ -73,25 +154,12 @@ def test_summary_matches_widgets_formulas(qapp):
     assert b.summary["rowCount"] == 2
 
 
-def test_price_type_switches_unit_price(qapp):
+def test_unit_price_follows_sell_price(qapp):
+    """单价固定取卖价（买/卖的选择由底部两个「…到剪贴板」按钮承担）。"""
     b = _bridge_with_rows()
-
-    b.priceType = "buy"
-    assert b.priceType == "buy"
-    assert b._model._rows[0]["unit_price"] == pytest.approx(4.0)
-
-    b.priceType = "avg"
-    assert b._model._rows[0]["unit_price"] == pytest.approx(4.5)
-
-    b.priceType = "sell"
     assert b._model._rows[0]["unit_price"] == pytest.approx(5.0)
-
-
-def test_price_type_rejects_unknown_value(qapp):
-    """非法值必须被忽略，否则 QML 传错字符串会让单价算成 0。"""
-    b = _bridge_with_rows()
-    b.priceType = "nonsense"
-    assert b.priceType == "sell"
+    b.discount = 2.0
+    assert b._model._rows[0]["unit_price"] == pytest.approx(10.0)
 
 
 def test_discount_applies_to_totals(qapp):

@@ -14,11 +14,7 @@ from __future__ import annotations
 import pytest
 
 from ui_qml.shell_window import ShellWindow
-from ui_qml.workers.main_window_workers import (
-    PriceCheckWorker,
-    PriceUpdateWorker,
-    needs_price_update,
-)
+from ui_qml.workers.main_window_workers import PriceCheckWorker, needs_price_update
 
 pytestmark = pytest.mark.ui
 
@@ -37,13 +33,6 @@ def shell(app, mock_db):
     yield win
     win.close()
     win.deleteLater()
-
-
-class TestPriceUpdateWorker:
-    """价格更新后台线程"""
-
-    def test_worker_can_be_created(self, qapp):
-        assert PriceUpdateWorker() is not None
 
 
 class TestPriceCheckWorker:

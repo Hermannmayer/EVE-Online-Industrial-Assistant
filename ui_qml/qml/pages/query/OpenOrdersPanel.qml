@@ -104,28 +104,7 @@ Item {
             }
         }
 
-        // ── 买单（上）────────────────────────────────────────
-        Text {
-            Layout.fillWidth: true
-            Layout.preferredHeight: root.headRowH
-            verticalAlignment: Text.AlignVCenter
-            text: qsTr("买单 · %1 笔").arg(root.dashboard ? root.dashboard.buyOrderCount : 0)
-            color: Theme.accentGreen
-            font.family: Theme.fontFamily
-            font.pixelSize: root.fntSmall
-        }
-
-        PanelTable {
-            objectName: "buyOrdersTable"
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            headers: root.heads
-            ratios: root.ratios
-            rows: root.dashboard ? root.dashboard.buyOrderRows : []
-            emptyText: root.dashboard ? root.dashboard.buyEmptyText : ""
-        }
-
-        // ── 卖单（下）────────────────────────────────────────
+        // ── 卖单（上）────────────────────────────────────────
         Text {
             Layout.fillWidth: true
             Layout.preferredHeight: root.headRowH
@@ -144,6 +123,27 @@ Item {
             ratios: root.ratios
             rows: root.dashboard ? root.dashboard.sellOrderRows : []
             emptyText: root.dashboard ? root.dashboard.sellEmptyText : ""
+        }
+
+        // ── 买单（下）────────────────────────────────────────
+        Text {
+            Layout.fillWidth: true
+            Layout.preferredHeight: root.headRowH
+            verticalAlignment: Text.AlignVCenter
+            text: qsTr("买单 · %1 笔").arg(root.dashboard ? root.dashboard.buyOrderCount : 0)
+            color: Theme.accentGreen
+            font.family: Theme.fontFamily
+            font.pixelSize: root.fntSmall
+        }
+
+        PanelTable {
+            objectName: "buyOrdersTable"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            headers: root.heads
+            ratios: root.ratios
+            rows: root.dashboard ? root.dashboard.buyOrderRows : []
+            emptyText: root.dashboard ? root.dashboard.buyEmptyText : ""
         }
 
         // ── 汇总 ──────────────────────────────────────────────
