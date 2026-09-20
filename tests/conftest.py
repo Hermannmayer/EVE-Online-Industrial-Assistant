@@ -104,17 +104,33 @@ def _create_temp_databases(tmpdir: str):
             type_id INTEGER PRIMARY KEY,
             zh_name TEXT,
             en_name TEXT,
-            volume REAL DEFAULT 1.0
+            volume REAL DEFAULT 1.0,
+            market_group_id INTEGER
         );
         CREATE TABLE industry_system_costs (
             solar_system_id INTEGER,
             activity TEXT,
             cost_index REAL
         );
-        INSERT INTO item VALUES (1001, '三钛合金', 'Tritanium', 0.01);
-        INSERT INTO item VALUES (1002, '类银超金属', 'Pyerite', 0.01);
-        INSERT INTO item VALUES (2001, '渡鸦级', 'Raven', 50000);
-        INSERT INTO item VALUES (2002, '无人机', 'Drone', 5);
+        -- 市场分类树：4/9 是顶层，100 挂在 4 下面（跨区域排行的分类筛选走递归 CTE）
+        CREATE TABLE market_tree (
+            market_group_id INTEGER PRIMARY KEY,
+            parent_group_id INTEGER,
+            zh_name TEXT,
+            en_name TEXT
+        );
+        INSERT INTO market_tree VALUES (4, NULL, '舰船', 'Ships');
+        INSERT INTO market_tree VALUES (9, NULL, '舰船装备', 'Ship Equipment');
+        INSERT INTO market_tree VALUES (19, NULL, '贸易货物', 'Trade Goods');
+        INSERT INTO market_tree VALUES (100, 4, '护卫舰', 'Frigates');
+        INSERT INTO item (type_id, zh_name, en_name, volume, market_group_id)
+            VALUES (1001, '三钛合金', 'Tritanium', 0.01, 19);
+        INSERT INTO item (type_id, zh_name, en_name, volume, market_group_id)
+            VALUES (1002, '类银超金属', 'Pyerite', 0.01, 19);
+        INSERT INTO item (type_id, zh_name, en_name, volume, market_group_id)
+            VALUES (2001, '渡鸦级', 'Raven', 50000, 100);
+        INSERT INTO item (type_id, zh_name, en_name, volume, market_group_id)
+            VALUES (2002, '无人机', 'Drone', 5, 9);
     """)
     conn.execute("PRAGMA user_version = 1")
     conn.commit()
@@ -139,6 +155,17 @@ def _create_temp_databases(tmpdir: str):
         -- 成品价格 (Jita region 10000002)
         INSERT INTO market_prices VALUES (2001, 10000002, 50000000, 55000000, 50000000, 1000000, 800000, '2026-01-01 00:00:00');
         INSERT INTO market_prices VALUES (2002, 10000002, 100000, 120000, 110000, 500000, 400000, '2026-01-01 00:00:00');
+        -- 挂单量快照（跨区域排行的「B侧挂单变化」读它；日期由各用例自己插）
+        CREATE TABLE market_volume_snapshots (
+            type_id INTEGER NOT NULL,
+            region_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            buy_price REAL DEFAULT 0,
+            sell_price REAL DEFAULT 0,
+            buy_volume BIGINT DEFAULT 0,
+            sell_volume BIGINT DEFAULT 0,
+            PRIMARY KEY (type_id, region_id, date)
+        );
     """)
     conn.execute("PRAGMA user_version = 2")
     conn.commit()

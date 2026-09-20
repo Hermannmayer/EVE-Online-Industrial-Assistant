@@ -60,7 +60,7 @@
 | 工业制造 `industry` | ✅ | ✅ `TopToolbar` | ✅ `_view_stack` | ✅ `StatusBar` | ✅ `ActionButtons` |
 | 估价 `estimate` | — | 顶部输入区 | ✅ `QTableView` | 底部汇总栏 | — |
 | 物品查询 `query` | — | ✅ `#query_toolbar` | ✅ 两态：仪表盘 / 结果表 + 详情面板 | ✅ `#query_status` | — |
-| 市场贸易 `trade` | — | — | ✅ `QTabWidget` | — | — |
+| 市场贸易 `trade` | — | ✅ `#tradeToolbar` | ✅ 排行表 + `#rankEmpty` 空态 | ✅ `#statusText` + `#cartSummary` | ✅ `#cartButton` |
 | 价格监控 `watchlist` | — | — | ✅ `QTableView` | — | — |
 | 合同市场 `contract` | — | ✅ 页面工具栏 | ✅ `FTabBar` + 三个页签 | ✅ 状态条 | — |
 | 仓库管理 `storage` | — | — | ✅ `QTabWidget` | — | — |

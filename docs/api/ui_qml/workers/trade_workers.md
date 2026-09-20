@@ -8,25 +8,25 @@
 
 ## 类
 
-### `class CrossRegionPriceWorker`（继承 `QThread`）
+### `class CrossRegionRankWorker`（继承 `QThread`）
 
-获取物品在四大贸易中心的价格
+A → B 全品类价差排行（含 B 侧挂单变化）。
 
-定义行：`11`
+定义行：`8`
 
 #### 方法
 
 ##### `__init__`
 
 ```python
-def __init__(self, type_id: int, db, parent=None)
+def __init__(self, region_a: int, region_b: int, side_a: str='sell', side_b: str='buy', group_ids: list[int] | None=None, change_days: int=7, parent=None)
 ```
 
 ::: warning ⚠️ 待补 docstring
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`16`
+定义行：`13`
 ##### `run`
 
 ```python
@@ -37,66 +37,4 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`21`
-
-### `class TradeScoreWorker`（继承 `BaseScoreWorker`）
-
-单项贸易评分 — 继承 BaseScoreWorker
-
-定义行：`44`
-
-#### 方法
-
-##### `__init__`
-
-```python
-def __init__(self, type_id: int, buy_hub: str='Jita', sell_hub: str='Jita', buy_price_type: str='buy', sell_price_type: str='sell', quantity: int=1, parent=None)
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`47`
-##### `_compute`
-
-```python
-def _compute(self) -> dict
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`64`
-
-### `class TransportWorker`（继承 `BaseScoreWorker`）
-
-跨区域运输利润计算 — 继承 BaseScoreWorker
-
-定义行：`80`
-
-#### 方法
-
-##### `__init__`
-
-```python
-def __init__(self, type_id: int, buy_hub: str, sell_hub: str, buy_price_type: str, sell_price_type: str, quantity: int, distance_jumps: int, use_public_freight: bool=True, char_config: dict | None=None, parent=None)
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`83`
-##### `_compute`
-
-```python
-def _compute(self) -> dict
-```
-
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
-
-定义行：`105`
+定义行：`31`

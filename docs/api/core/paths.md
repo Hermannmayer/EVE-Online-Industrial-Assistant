@@ -161,6 +161,16 @@ def window_geometry_file() -> str
 
 定义行：`107`
 
+### `trade_cart_file`
+
+```python
+def trade_cart_file() -> str
+```
+
+贸易购物车文件路径（跨区域价差排行加入的候选）
+
+定义行：`112`
+
 ### `log_dir`
 
 ```python
@@ -169,7 +179,7 @@ def log_dir() -> Path
 
 日志目录（用户主目录 .eve-assistant 下，不随 exe 目录移动）
 
-定义行：`112`
+定义行：`117`
 
 ### `crashes_dir`
 
@@ -179,7 +189,7 @@ def crashes_dir() -> Path
 
 崩溃转储目录（用户主目录 .eve-assistant 下，不随 exe 目录移动）
 
-定义行：`117`
+定义行：`122`
 
 ### `ensure_dirs_exist`
 
@@ -189,4 +199,4 @@ def ensure_dirs_exist()
 
 确保所有必要目录存在（打包后首次运行时创建）
 
-定义行：`122`
+定义行：`127`

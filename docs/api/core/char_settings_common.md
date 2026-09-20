@@ -59,3 +59,33 @@ def format_pct(value: float) -> str
 :::
 
 定义行：`192`
+
+### `apply_skill_queue_finished`
+
+```python
+def apply_skill_queue_finished(levels: dict[int, int], queue: list[dict], now: str) -> dict[int, int]
+```
+
+把技能队列里已练完的条目叠加到 `/skills` 的结果上。
+
+定义行：`196`
+
+### `merge_esi_skill_levels`
+
+```python
+def merge_esi_skill_levels(existing: dict[str, int], esi: dict[str, int], panel_names: list[str]) -> dict[str, int]
+```
+
+把 ESI 等级落到「面板能显示的名字 ∪ 配置里已有的名字」上。
+
+定义行：`216`
+
+### `union_skill_levels`
+
+```python
+def union_skill_levels(characters: dict, esi: dict[str, int], panel_names: list[str]) -> dict[str, int]
+```
+
+新导入角色的初始技能集 = 面板全集 ∪ 其它角色用过的技能名，等级取自 ESI。
+
+定义行：`231`

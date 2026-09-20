@@ -340,6 +340,12 @@ class ShellWindow(QQuickView):
         self._price_timer: QTimer | None = None
         self._price_worker: Any = None
         self._check_worker: Any = None
+        #: 正在跑的那一轮价格更新：(regions, 完成回调列表)
+        self._price_active: tuple[Any, list[Any]] | None = None
+        #: 排队等着的下一轮 —— 串行化，避免两处同时写 market.db / 撞 ESI 限流
+        self._price_queue: list[tuple[Any, Any]] = []
+        #: 购物车控制器（懒建；页面与独立窗口共用同一实例）
+        self._trade_cart: Any = None
         self._tray_icon: QSystemTrayIcon | None = None
         self._pages: dict[str, QmlPage] = {}
         self._current_key = ""
@@ -372,6 +378,13 @@ class ShellWindow(QQuickView):
         self._content_area.heightChanged.connect(self._resize_pages)
 
         # ── 页面 ──
+        # ⚠️ 建页面之前先把 `services.importers` 整包导入完（此刻只有主线程在跑）。
+        # 这个包一次导入 10 个子模块，而页面建起来就有 worker 线程开始惰性导入 ——
+        # 谁先抢到包锁谁定序，两边顺序相反时撞 `_DeadlockError`（实测「开始计算」
+        # 触发价格刷新时偶发：价格没刷上，界面不报错，只留一行 traceback）。
+        # 详见 `ui_qml/workers/main_window_workers.py` 顶部同名说明。
+        import services.importers  # noqa: F401
+
         self._register_pages()
 
         # ── 窗口状态 ──
@@ -625,6 +638,14 @@ class ShellWindow(QQuickView):
                     shutdown()
                 except Exception:
                     log.exception("页面关机钩子失败")
+        # 购物车窗口不在 `_pages` 里（它是外壳持有的独立窗口），上面的循环扫不到它 ——
+        # 漏掉的后果是关主窗后它仍可见，且退出时主题单例已拆、绑定重算刷告警。
+        cart, self._trade_cart = self._trade_cart, None
+        if cart is not None:
+            try:
+                cart.dispose()
+            except Exception:
+                log.exception("购物车窗口关闭失败")
         for worker in self.findChildren(QThread):
             if worker.isRunning():
                 worker.requestInterruption()
@@ -769,25 +790,45 @@ class ShellWindow(QQuickView):
             self.set_status("价格数据需要更新（自动更新已关闭）")
 
     def trigger_price_update(self) -> None:
-        if self._price_worker is not None and self._price_worker.isRunning():
-            self.set_status("价格更新已在运行中")
-            return
-
         regions = None if set(self._update_regions) == set(TRADE_HUBS) else self._update_regions
         if regions is not None and not regions:
             self.set_status("请先在区域菜单勾选至少一个贸易中心")
             return
+        self.request_price_update(regions)
+
+    def request_price_update(self, regions: list[str] | None, on_done: Any = None) -> None:
+        """请求更新指定区域的价格，跑完调 `on_done(regions, message)`。
+
+        `regions=None` 表示全部贸易中心（与主工具栏的「更新价格」同义）。
+
+        **已有更新在跑时排队，不并发、也不挂信号**：挂信号等到的完成事件可能属于
+        另一组区域（那组里没有本次要的中心），回调会拿到旧价还以为刷新过了。
+
+        回调在主线程执行（worker 的 parent 是本窗口，跨线程连接自动是 Queued），
+        所以回调里可以放心碰模型与 QML。
+        """
+        if self._price_worker is not None and self._price_worker.isRunning():
+            self._price_queue.append((regions, on_done))
+            self.set_status("价格更新已在运行中，本次已排队")
+            return
+        self._start_price_update(regions, on_done)
+
+    def _start_price_update(self, regions: list[str] | None, on_done: Any) -> None:
         self.set_status(f"正在更新 {', '.join(regions)}..." if regions else "正在从 ESI 获取市场价格...")
         self.show_progress(self._status_text, 0)
 
         from ui_qml.workers.main_window_workers import PriceUpdateWorker
 
+        self._price_active = (regions, [on_done] if on_done is not None else [])
         self._price_worker = PriceUpdateWorker(regions, self)
         self._price_worker.finished_signal.connect(self._on_price_update_done)
         self._price_worker.start()
 
     def _on_price_update_done(self, success: bool, message: str) -> None:
         self.hide_progress("价格更新完成" if success else f"价格更新失败: {message}")
+        active, self._price_active = self._price_active, None
+        self._fire_price_callbacks(active, message)
+        self._drain_price_queue()
         if not success:
             return
         try:
@@ -803,6 +844,38 @@ class ShellWindow(QQuickView):
         if callable(refresh):
             refresh()
         self._check_and_notify_price_changes()
+
+    @staticmethod
+    def _fire_price_callbacks(active: Any, message: str) -> None:
+        """回调逐个隔离：一个炸了不该拖住队列里其余的。"""
+        if not active:
+            return
+        regions, callbacks = active
+        for cb in callbacks:
+            try:
+                cb(regions, message)
+            except Exception:
+                log.exception("价格更新完成回调失败")
+
+    def _drain_price_queue(self) -> None:
+        """起下一轮排队的更新。
+
+        不检查 `isRunning()`：`finished_signal` 是在 `run()` **内部**发的，排队连接下
+        这个槽执行时线程可能还没完全退栈 —— 照 `isRunning` 判断会把队首又塞回去，
+        排队的更新永远起不来。上一轮此时已跑完 `run_price_update`，不会再有写库动作。
+        """
+        if not self._price_queue:
+            return
+        regions, on_done = self._price_queue.pop(0)
+        self._start_price_update(regions, on_done)
+
+    def trade_cart(self) -> Any:
+        """购物车控制器（懒建单例）—— 贸易页与购物车窗口共用同一份。"""
+        if self._trade_cart is None:
+            from ui_qml.views.trade_cart_window import TradeCartController
+
+            self._trade_cart = TradeCartController(self)
+        return self._trade_cart
 
     def _check_and_notify_price_changes(self) -> None:
         try:
