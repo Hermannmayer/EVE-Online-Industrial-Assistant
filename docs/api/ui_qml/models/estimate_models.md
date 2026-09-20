@@ -12,7 +12,7 @@
 
 估价表格模型
 
-定义行：`25`
+定义行：`29`
 
 #### 方法
 
@@ -26,7 +26,7 @@ def __init__(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`28`
+定义行：`32`
 ##### `set_discount`
 
 ```python
@@ -37,7 +37,7 @@ def set_discount(self, discount: float)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`35`
+定义行：`39`
 ##### `set_rows`
 
 ```python
@@ -48,7 +48,7 @@ def set_rows(self, rows: list[dict])
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`43`
+定义行：`47`
 ##### `_recalc_totals`
 
 ```python
@@ -59,7 +59,7 @@ def _recalc_totals(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`50`
+定义行：`54`
 ##### `add_row`
 
 ```python
@@ -70,7 +70,7 @@ def add_row(self, row_data: dict)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`60`
+定义行：`64`
 ##### `remove_row`
 
 ```python
@@ -81,7 +81,7 @@ def remove_row(self, row_idx: int)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`71`
+定义行：`75`
 ##### `clear_all`
 
 ```python
@@ -92,7 +92,7 @@ def clear_all(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`77`
+定义行：`81`
 ##### `get_rows`
 
 ```python
@@ -103,7 +103,7 @@ def get_rows(self) -> list[dict]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`83`
+定义行：`87`
 ##### `rowCount`
 
 ```python
@@ -114,7 +114,7 @@ def rowCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`86`
+定义行：`90`
 ##### `columnCount`
 
 ```python
@@ -125,7 +125,7 @@ def columnCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`89`
+定义行：`93`
 ##### `flags`
 
 ```python
@@ -136,7 +136,7 @@ def flags(self, index)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`92`
+定义行：`96`
 ##### `setData`
 
 ```python
@@ -147,7 +147,7 @@ def setData(self, index, value, role=Qt.ItemDataRole.EditRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`99`
+定义行：`103`
 ##### `data`
 
 ```python
@@ -158,7 +158,7 @@ def data(self, index, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`115`
+定义行：`119`
 ##### `_get_display`
 
 ```python
@@ -169,7 +169,7 @@ def _get_display(self, row: dict, col: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`148`
+定义行：`152`
 ##### `headerData`
 
 ```python
@@ -180,7 +180,7 @@ def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`169`
+定义行：`177`
 ##### `sort`
 
 ```python
@@ -191,4 +191,4 @@ def sort(self, column, order=Qt.SortOrder.AscendingOrder)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`179`
+定义行：`187`

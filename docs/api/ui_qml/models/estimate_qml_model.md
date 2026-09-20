@@ -25,7 +25,7 @@
 
 估价表格模型 + QML 命名角色。逻辑全在父类，这里只补角色。
 
-定义行：`52`
+定义行：`54`
 
 #### 方法
 
@@ -39,7 +39,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`57`
+定义行：`59`
 ##### `data`
 
 ```python
@@ -50,7 +50,7 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`60`
+定义行：`62`
 ##### `sort`
 
 ```python
@@ -59,4 +59,4 @@ def sort(self, column: int, order: Qt.SortOrder=Qt.SortOrder.AscendingOrder) -> 
 
 排序后行号全变，必须让 QML 重新拉取 rowIndex。
 
-定义行：`94`
+定义行：`100`
