@@ -35,10 +35,21 @@ Window {
      *   setMinimumSize(560, 480)         → minimumWidth / minimumHeight
      *   show() / raise_() / activateWindow() → 由控制器转发（QML 里没有对等写法：
      *                                        `Window.raise()` / `requestActivate()`）
+     *
+     * ⚠️ 宽度按**实测的内容最小宽**定，不按「好看」定：这个窗口也常与游戏同屏
+     * （工具条上有「置顶」），宽了就挡游戏。量出来的两处下限（字体缩放 1.0）：
+     *   - L2 占用面板的容量方块行（`FCapacityRow`）≈ 420 ← 由它定 `minimumWidth`
+     *   - L1 工具条（两个下拉 + 置顶）≈ 350
+     * `minimumWidth` 取 420 + 10 余量：离屏量的是方框字，真字体的字宽可能略胖。
+     * 默认宽度取 520：行卡片的「名称 / 副标题」还读得全，再窄就只剩省略号。
+     * 两个值都乘 `Theme.fontScale`：方块与文字随字体放大，写死数字的话放大字体后又会被裁。
+     * 护栏：`tests/test_production_launcher.py::test_narrowest_window_clips_nothing`。
      */
-    width: 880
+    readonly property int contentMinWidth: Math.round(430 * Theme.fontScale)
+    readonly property int defaultWidth: Math.round(520 * Theme.fontScale)
+    width: win.defaultWidth
     height: 760
-    minimumWidth: 560
+    minimumWidth: win.contentMinWidth
     minimumHeight: 480
     title: win.launcher ? win.launcher.titleText : ""
     // 窗口清屏色 = 页面底色：首帧之前也不会闪一下白底
@@ -88,6 +99,7 @@ Window {
 
     Item {
         id: toolbar
+        objectName: "toolbar"
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
@@ -189,6 +201,7 @@ Window {
 
     Item {
         id: occPanel
+        objectName: "occPanel"
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: occHeader.bottom
@@ -282,6 +295,7 @@ Window {
                 }
 
                 RowLayout {
+                    objectName: "rowCardRow"
                     anchors.fill: parent
                     anchors.leftMargin: win.padMd + modelData.indent
                     anchors.rightMargin: win.padMd
@@ -496,6 +510,7 @@ Window {
 
     Rectangle {
         id: bottomPanel
+        objectName: "bottomPanel"
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom

@@ -28,14 +28,26 @@ Window {
      *   resize(760, 820)                             → width / height（窄高，一眼看全）
      *   show() / raise_() / activateWindow() / done()/Esc → 控制器转发 + 下面的 Shortcut
      *
-     * ⚠️ 宽度按**工具栏那一行**定，不是按表格：表格 5 列只要 ~530px，而工具栏
-     * （两个下拉 + 三个按钮 + 完成所有 + 置顶）实测要 ~753px。窗口比它窄就会把最
-     * 右边的「置顶」切掉 —— 用户报的「首次打开显示不全」也包含这一处。
-     * 动过工具栏（加按钮 / 加宽下拉 / 改文案）后请重新量那一行的 implicitWidth。
+     * ⚠️ **这个窗口是置顶用的**（往游戏里照着录单），所以宽度按「内容真正需要的
+     * 最小宽」定，不按好看的宽定：`minimumWidth` = 内容最小宽，`width` 开局就等于
+     * `minimumWidth`。窗口比内容窄就会把最右边的控件切掉（用户报过两次
+     * 「首次打开显示不全」）。
+     *
+     * 宽度预算（改动下面任何一行都要重量）：
+     *   - 工具栏第一行（两个下拉 + 置顶）≈ 367px，**比表格窄**，所以它不再是下限
+     *   - 工具栏第二行是 `Flow`，**会自动折行** —— 加按钮只多占一行高度，不会顶宽
+     *   - **下限由表格定**：4 个固定列的像素宽之和（368，与 `procurement_bridge._COLUMNS`
+     *     同源）+ 每列 `FSummaryTable.cellPadding`（随字体缩放）+ 名称列下限 80 + 左右边距 16
+     *
+     * 所以最小值写成**算式**而不是一个数：固定列宽是绝对像素，cellPadding 却随
+     * `Theme.fontScale` 变 —— 写死数字的话，用户把字体调大后右侧列又会被裁掉。
+     * `tests/test_procurement_tab.py::test_narrowest_window_clips_nothing` 按渲染结果
+     * 兜这条（改了列宽/边距忘了改这里就会红）。
      */
-    width: 800
+    readonly property int contentMinWidth: 368 + Math.round(12 * Theme.fontScale) * 5 + 80 + 16
+    width: page.contentMinWidth
     height: 820
-    minimumWidth: 640
+    minimumWidth: page.contentMinWidth
     minimumHeight: 400
     title: page.pc ? page.pc.titleText : ""
     // 窗口清屏色 = 页面底色：首帧之前也不会闪一下白底
@@ -134,8 +146,9 @@ Window {
         anchors.margins: Theme.spacingSm
         spacing: Theme.spacingSm
 
-        // ── 工具栏 ──
+        // ── 工具栏 · 第一行：两个下拉 + 置顶（这一行定窗口最小宽）──
         RowLayout {
+            objectName: "toolbar"
             Layout.fillWidth: true
             spacing: Theme.spacingSm
 
@@ -148,7 +161,7 @@ Window {
 
             FComboBox {
                 objectName: "priceTypeBox"
-                Layout.preferredWidth: Math.round(100 * Theme.fontScale)
+                Layout.preferredWidth: Math.round(84 * Theme.fontScale)
                 textRole: "label"
                 model: page.pc ? page.pc.priceTypeOptions : []
                 currentIndex: page.pc ? page.pc.priceTypeIndex : 0
@@ -165,7 +178,7 @@ Window {
 
             FComboBox {
                 objectName: "hubBox"
-                Layout.preferredWidth: Math.round(128 * Theme.fontScale)
+                Layout.preferredWidth: Math.round(92 * Theme.fontScale)
                 textRole: "label"
                 model: page.pc ? page.pc.hubOptions : []
                 currentIndex: page.pc ? page.pc.hubIndex : 0
@@ -176,6 +189,23 @@ Window {
             Item {
                 Layout.fillWidth: true
             }
+
+            FCheckBox {
+                objectName: "pinBox"
+                text: qsTr("置顶")
+                checked: page.pc ? page.pc.pinned : false
+                onToggled: if (page.pc)
+                    page.pc.setPinned(checked)
+            }
+        }
+
+        // ── 工具栏 · 第二行：动作按钮（`Flow` 自动折行）──
+        // ⚠️ **不要换回 RowLayout**：单行 RowLayout 的内容宽度会顶到窗口上（加一个
+        // 按钮就把最右边的切掉，用户报过），Flow 则会换行，永不裁切。
+        Flow {
+            objectName: "actionBar"
+            Layout.fillWidth: true
+            spacing: Theme.spacingSm
 
             FButton {
                 objectName: "refreshButton"
@@ -197,20 +227,25 @@ Window {
             }
 
             FButton {
+                objectName: "importPurchasesButton"
+                text: qsTr("从剪贴板导入")
+                onClicked: if (page.pc)
+                    page.pc.importPurchases()
+
+                HoverHandler {
+                    id: buyImportHover
+                }
+                ToolTip.visible: buyImportHover.hovered
+                ToolTip.text: qsTr("在游戏「钱包 → 交易记录」里 Ctrl+A/C 复制后点这里：把负 ISK 的买入行按单价（成本）入到指定机库")
+            }
+
+            FButton {
                 objectName: "completeAllButton"
                 visible: page.pc ? page.pc.completeAllVisible : false
                 text: page.pc ? page.pc.completeAllText : ""
                 primary: true
                 onClicked: if (page.pc)
                     page.pc.completeAll()
-            }
-
-            FCheckBox {
-                objectName: "pinBox"
-                text: qsTr("置顶")
-                checked: page.pc ? page.pc.pinned : false
-                onToggled: if (page.pc)
-                    page.pc.setPinned(checked)
             }
         }
 

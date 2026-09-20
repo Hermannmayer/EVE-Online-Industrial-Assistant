@@ -52,43 +52,6 @@ def split_clipboard_lines(raw: str) -> list[dict]:
     return out
 
 
-def compute_transfer_rows(
-    rows: list[dict],
-    source_stock: dict[int, int],
-    target_stock: dict[int, int] | None = None,
-) -> list[dict]:
-    """按剪贴板行生成移库计划（纯函数）。
-
-    Args:
-        rows: 已解析行 [{type_id, qty, ...}]（仅已匹配行；type_id 为 None 的行被过滤）
-        source_stock: 源机库库存快照 {type_id: 数量}
-        target_stock: 目标机库库存快照 {type_id: 数量}（缺省按空）
-
-    Returns:
-        [{type_id, clipboard_qty, source_avail, target_avail, move_qty, capped}]
-        move_qty = min(clipboard_qty, source_avail)；capped 表示剪贴板数量超出源库现有。
-    """
-    target_stock = target_stock or {}
-    out: list[dict] = []
-    for r in rows:
-        tid = r.get("type_id")
-        if not tid:
-            continue
-        clip = int(r.get("qty") or 0)
-        avail = int(source_stock.get(tid, 0))
-        out.append(
-            {
-                "type_id": tid,
-                "clipboard_qty": clip,
-                "source_avail": avail,
-                "target_avail": int(target_stock.get(tid, 0)),
-                "move_qty": min(clip, avail),
-                "capped": clip > avail,
-            }
-        )
-    return out
-
-
 def compute_row_delta(mode: str, qty: int, current: int) -> tuple[int, int]:
     """计算单行导入的 (delta, final)。
 

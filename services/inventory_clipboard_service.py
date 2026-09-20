@@ -3,6 +3,9 @@
 材料仓库只导入材料：已匹配行按物品种类过滤蓝图，未匹配行按名字标记过滤（见
 ``_filter_blueprint_rows``），避免游戏内复制整仓时把蓝图（含 ME/TE/流程列）当成
 材料导入。
+
+另有 `parse_purchase_clipboard`：「钱包 → 交易记录」的**买入行**（带单价）入库，
+与整仓复制是两种文本，故不共用上面的蓝图过滤 —— 买蓝图同样是正当入库。
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ from core.logger import log
 from services.inventory_import import split_clipboard_lines
 from services.item_kind import blueprint_type_ids, looks_like_blueprint_name
 from services.name_resolver import resolve_item_name, search_item_type_ids_batch
+from services.wallet_import import parse_purchase_records
 
 
 def parse_clipboard(raw: str) -> tuple[list[dict], int]:
@@ -65,6 +69,40 @@ def parse_clipboard_rows(
                 }
             )
     return _filter_blueprint_rows(conn, rows)
+
+
+def parse_purchase_clipboard(raw: str) -> tuple[list[dict], dict]:
+    """解析「钱包 → 交易记录」的买入行 → (行, stats)。stats 见 `parse_purchase_records`。"""
+    with get_container().db.connect("ref") as conn:
+        return parse_purchase_rows(conn, raw)
+
+
+def parse_purchase_rows(
+    conn: sqlite3.Connection | sqlite3.Cursor,
+    raw: str,
+) -> tuple[list[dict], dict]:
+    """按 ref 连接解析买入行并匹配 type_id（可单测，不依赖容器）。
+
+    Returns:
+        ``(rows, stats)``：rows 为买入行 ``[{time, raw_name, qty, unit_price, seller,
+        type_id|None, zh_name, status}]``（``status`` = matched / unmatched），
+        stats 为 ``{"sales": 卖出行数, "unparsed": 认不出的行数}``。
+    """
+    parsed, stats = parse_purchase_records(raw)
+    matched = search_item_type_ids_batch(conn, [r["raw_name"] for r in parsed])
+    rows: list[dict] = []
+    for row in parsed:
+        type_id = matched.get(row["raw_name"])
+        name = resolve_item_name(conn, type_id) if type_id else ""
+        rows.append(
+            {
+                **row,
+                "type_id": type_id,
+                "zh_name": name if name and not name.isdigit() else row["raw_name"],
+                "status": "matched" if type_id else "unmatched",
+            }
+        )
+    return rows, stats
 
 
 def _filter_blueprint_rows(

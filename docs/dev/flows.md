@@ -254,9 +254,9 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
 ## 库存管理
 
 - 表：user 库 `hangars` / `inventory_items` / `user_blueprints`
-- UI 同步调用（无独立 worker）：`inventory_manager.add_item`（加权平均成本）、`set_item_quantity`（经 `inventory_import.compute_import_diff` 全量覆盖/删除）、`move_quantity`/`move_items`（transfer 弹窗）
+- UI 同步调用（无独立 worker）：`inventory_manager.add_item`（加权平均成本）、`set_item_quantity`（经 `inventory_import.compute_import_diff` 全量覆盖/删除）、`move_items`（右键「移动到机库」）
 - `deduct_item` 被计划启动/展开/重建调用
-- 剪贴板导入按仓库类型校验（同一机库分两张表、两页签）：材料侧 `inventory_clipboard_service.parse_clipboard`（机库管理「库存修正/增量粘贴」、采购页「增量添加到仓库」、「移库」）过滤蓝图行；蓝图侧 `ui_data_service.parse_blueprint_clipboard`（蓝图管理「粘贴导入蓝图」）过滤材料行。判定见 `services/item_kind.py`（`item` group 名后缀 = 蓝图，失败开放），过滤数在预览框统计栏提示
+- 剪贴板导入按仓库类型校验（同一机库分两张表、两页签）：材料侧 `inventory_clipboard_service.parse_clipboard`（机库管理「库存修正/增量粘贴」、采购页「增量添加到仓库」）过滤蓝图行；`parse_purchase_clipboard`（机库管理 / 采购页「从剪贴板导入」）吃「钱包 → 交易记录」的买入行、不过滤蓝图；蓝图侧 `ui_data_service.parse_blueprint_clipboard`（蓝图管理「粘贴导入蓝图」）过滤材料行。判定见 `services/item_kind.py`（`item` group 名后缀 = 蓝图，失败开放），过滤数在预览框统计栏提示
   - 蓝图侧解析**同时接受 `manufacturing` 与 `reaction`**：反应公式是蓝图仓库的正式成员，
     只认 manufacturing 会让它们在剪贴板里解析不出、进而被「全量同步」当成库中冗余删除。
     结构完整却认不出蓝图的行计入「未识别」计数并在预览框提示（不再无声消失）。

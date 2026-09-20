@@ -11,7 +11,7 @@
   弹出它的机库设置本身已经是 QML 页面了。
 
 `QInputDialog.getText` 换成 `InputQmlDialog.get_text`；`QMessageBox.warning` 换成桥的
-`set_error` 通道（与 `transfer_bridge` 同一手法）。
+`set_error` 通道。
 """
 
 from __future__ import annotations

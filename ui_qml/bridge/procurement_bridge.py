@@ -48,12 +48,16 @@ _INT_COPY_COLS = (1, 2)
 #: 列宽（名称列吃满剩余空间）。
 #: ⚠️ 固定列宽之和必须**留得下名称列**：`FSummaryTable.colWidth` 给弹性列的下限是 80px
 #: 且不会挤掉固定列 —— 固定列一多（曾经 6 列 ×104）总宽就超出窗口，右侧列被裁掉，
-#: 表现为「首次打开所有列显示不全」。加列时按 `Σ(w+cellPadding(12)) + 12` 估一遍。
+#: 表现为「首次打开所有列显示不全」。加列时按 `Σ(w+cellPadding(12)) + 12` 估一遍，
+#: 并保证 `+ 名称列下限 80 + 窗口左右边距 16` 不超 `ProcurementWindow.qml` 的 `minimumWidth`
+#: （那条闸在 `tests/test_procurement_tab.py::test_table_fits_the_narrowest_window` 里）。
+#: **这个窗口是置顶用的**，宽度按内容最小值定，所以列宽只留够内容：三列数量/价差按
+#: 「千分位整数 / 两位小数」的常见长度给，总价留足十位以上（五十亿那种也要能整段显示）。
 _COLUMNS = [
     {"title": _HEADERS[0], "width": 0},
-    {"title": _HEADERS[1], "width": 84},
-    {"title": _HEADERS[2], "width": 84},
-    {"title": _HEADERS[3], "width": 92},
+    {"title": _HEADERS[1], "width": 76},
+    {"title": _HEADERS[2], "width": 76},
+    {"title": _HEADERS[3], "width": 84},
     {"title": _HEADERS[4], "width": 132},
 ]
 
@@ -283,6 +287,11 @@ class ProcurementBridge(QObject):
     @Slot()
     def addToHangar(self) -> None:
         self._page.add_to_hangar()
+
+    @Slot()
+    def importPurchases(self) -> None:
+        """剪贴板里的「钱包 → 交易记录」买入行 → 选机库 → 按单价入库。"""
+        self._page.import_purchases_from_clipboard()
 
     @Slot()
     def completeAll(self) -> None:

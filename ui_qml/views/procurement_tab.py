@@ -585,6 +585,23 @@ class ProcurementDialog(QObject):
         self.recalculate()
         self.plans_changed.emit()  # 库存变化 → 通知主界面重载计划
 
+    def import_purchases_from_clipboard(self) -> None:
+        """从剪贴板导入购买记录（「钱包 → 交易记录」的负 ISK 行）→ 选机库 → 按单价入库。
+
+        与「增量添加到仓库」的差别：来源是**带单价的市场明细**（成本跟着记录走），
+        目标机库现选、默认预选默认材料机库。
+        """
+        from services.inventory_manager import get_default_mat_hangar_and_system
+        from ui_qml.bridge.review_bridge import run_purchase_import
+
+        hid, _sys = get_default_mat_hangar_and_system()
+        summary = run_purchase_import(hid, self)
+        if not summary:
+            return
+        self.show_copy_hint(summary)
+        self.recalculate()
+        self.plans_changed.emit()  # 库存变化 → 通知主界面重载计划
+
     def complete_all(self) -> None:
         """一键完成所有待下线计划：走与工业页**同一套**下线编排（含发明结果回填）。
 

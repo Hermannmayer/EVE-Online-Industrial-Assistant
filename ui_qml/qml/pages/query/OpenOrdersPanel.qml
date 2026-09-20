@@ -55,6 +55,23 @@ Item {
                     root.dashboard.readOrders()
             }
 
+            // 与「读取订单」同排：两个都是「从游戏拿数」的动作。**不能挪到钱包余额那一排** ——
+            // 那个输入框是 fillWidth，多一个按钮就把它挤到放不下 9 位数余额。
+            FButton {
+                objectName: "importWalletButton"
+                text: qsTr("从剪贴板导入")
+                Layout.preferredHeight: root.barH
+                enabled: root.dashboard !== null && !root.dashboard.busy
+                onClicked: if (root.dashboard)
+                    root.dashboard.importWalletFromClipboard()
+
+                HoverHandler {
+                    id: walletImportHover
+                }
+                ToolTip.visible: walletImportHover.hovered
+                ToolTip.text: qsTr("在游戏「钱包 → 交易记录」里 Ctrl+A/C 复制后点这里：读取最新一笔的余额并记录，免手打")
+            }
+
             Text {
                 Layout.fillWidth: true
                 verticalAlignment: Text.AlignVCenter

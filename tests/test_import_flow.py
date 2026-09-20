@@ -4,7 +4,6 @@
   - compute_row_delta: 增量/全量 四象限（有库存/无库存/归零/负 delta）
   - compute_import_diff: 增/减/成本变化/无变化过滤
   - split_clipboard_lines: Tab/空格分隔、星号、千分位、体积字段、表头跳过
-  - compute_transfer_rows: 移库计划（clamp/过滤未匹配）
 """
 
 import pytest
@@ -12,7 +11,6 @@ import pytest
 from services.inventory_import import (
     compute_import_diff,
     compute_row_delta,
-    compute_transfer_rows,
     split_clipboard_lines,
 )
 
@@ -160,51 +158,3 @@ class TestSplitClipboardLines:
         """空行跳过，空输入返回空列表"""
         assert split_clipboard_lines("") == []
         assert split_clipboard_lines("\n\n三钛合金\t100\n\n") == [{"name": "三钛合金", "qty": 100}]
-
-
-# ════════════════════════════════════════════════════════════════
-#  compute_transfer_rows
-# ════════════════════════════════════════════════════════════════
-
-
-class TestComputeTransferRows:
-    def test_normal_move(self):
-        """剪贴板数量在源库额度内 → move_qty=clipboard，不 clamp"""
-        rows = [{"type_id": 34, "qty": 50}]
-        result = compute_transfer_rows(rows, {34: 80}, {34: 20})
-        assert result[0] == {
-            "type_id": 34,
-            "clipboard_qty": 50,
-            "source_avail": 80,
-            "target_avail": 20,
-            "move_qty": 50,
-            "capped": False,
-        }
-
-    def test_capped_by_source(self):
-        """剪贴板数量超源库现有 → move_qty=源库现有，capped=True"""
-        rows = [{"type_id": 34, "qty": 100}]
-        result = compute_transfer_rows(rows, {34: 80})
-        assert result[0]["move_qty"] == 80
-        assert result[0]["capped"] is True
-
-    def test_source_missing(self):
-        """源库无该物品 → source_avail=0, move_qty=0"""
-        rows = [{"type_id": 35, "qty": 100}]
-        result = compute_transfer_rows(rows, {34: 80})
-        assert result[0]["source_avail"] == 0
-        assert result[0]["move_qty"] == 0
-        assert result[0]["capped"] is True
-
-    def test_unmatched_filtered(self):
-        """type_id 为 None 的未匹配行被过滤"""
-        rows = [{"type_id": 34, "qty": 100}, {"type_id": None, "qty": 999}]
-        result = compute_transfer_rows(rows, {34: 80})
-        assert len(result) == 1
-        assert result[0]["type_id"] == 34
-
-    def test_target_stock_default(self):
-        """未传 target_stock 时 target_avail=0"""
-        rows = [{"type_id": 34, "qty": 50}]
-        result = compute_transfer_rows(rows, {34: 80})
-        assert result[0]["target_avail"] == 0

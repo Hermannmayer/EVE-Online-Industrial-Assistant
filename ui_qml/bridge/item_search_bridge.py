@@ -2,8 +2,8 @@
 
 对照 Widgets 版 `ui_pyside6/views/inventory/item_search_dialog.py`：
 搜索 item 表（含 terminology 里注册的基础矿物），选中后返回
-`{type_id, zh_name, en_name}`。库存修正 / 移库对话框用它处理「未匹配」行 ——
-这两个对话框自己也在本批次迁 QML，所以它是二级弹出。
+`{type_id, zh_name, en_name}`。库存修正对话框用它处理「未匹配」行 ——
+该对话框自己也在本批次迁 QML，所以它是二级弹出。
 
 布局复用 `FPickList`（与星系搜索同一份）；本类只负责查与选。
 """

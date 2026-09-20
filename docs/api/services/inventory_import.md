@@ -20,16 +20,6 @@ def split_clipboard_lines(raw: str) -> list[dict]
 
 定义行：`17`
 
-### `compute_transfer_rows`
-
-```python
-def compute_transfer_rows(rows: list[dict], source_stock: dict[int, int], target_stock: dict[int, int] | None=None) -> list[dict]
-```
-
-按剪贴板行生成移库计划（纯函数）。
-
-定义行：`55`
-
 ### `compute_row_delta`
 
 ```python
@@ -38,7 +28,7 @@ def compute_row_delta(mode: str, qty: int, current: int) -> tuple[int, int]
 
 计算单行导入的 (delta, final)。
 
-定义行：`92`
+定义行：`55`
 
 ### `compute_import_diff`
 
@@ -48,4 +38,4 @@ def compute_import_diff(before: dict[int, tuple[int, float]], after: dict[int, t
 
 对比导入前后库存，返回发生变化行列表。
 
-定义行：`112`
+定义行：`75`
