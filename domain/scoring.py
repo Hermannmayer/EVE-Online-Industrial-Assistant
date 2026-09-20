@@ -111,7 +111,6 @@ def calc_manufacturing_score(
                 "base_qty": mat.base_qty,
                 "qty": waste_qty,
                 "wastefactor": wastefactor,
-                "waste_factor": round(per_run_qty / mat.base_qty, 4) if mat.base_qty > 0 else 1.0,
                 "unit_price": mat_price or 0.0,
                 "subtotal": round((mat_price or 0.0) * waste_qty, 2),
                 "is_whole_item": is_whole_item,
@@ -393,23 +392,20 @@ def calc_reaction_score(
         "breakdown": {},
     }
 
-    # 材料成本（反应无 ME 浪费，waste_factor=1.0）
-    waste_factor = 1.0
+    # 材料成本（反应无 ME 浪费）
     total_mat_cost = 0.0
     mat_detail = []
     for mat_id, mat_name, mat_qty in materials:
         mat_price = prices.get_price(mat_id, price_type_mat, mat_source_hub)
-        waste_qty = mat_qty * waste_factor
         if mat_price:
-            total_mat_cost += waste_qty * mat_price
+            total_mat_cost += mat_qty * mat_price
         mat_detail.append(
             {
                 "name": mat_name,
                 "base_qty": mat_qty,
-                "qty": round(waste_qty, 2),
-                "waste_factor": round(waste_factor, 2),
+                "qty": round(mat_qty, 2),
                 "unit_price": mat_price or 0.0,
-                "subtotal": round((mat_price or 0.0) * waste_qty, 2),
+                "subtotal": round((mat_price or 0.0) * mat_qty, 2),
             }
         )
     result["materials"] = mat_detail
@@ -478,7 +474,6 @@ def calc_reaction_score(
             "hours_per_run": round(hours_per_run, 2),
             "status": "",
             "breakdown": {
-                "waste_factor": round(waste_factor, 2),
                 "profit_score": round(profit_score, 1),
                 "volume_score": round(volume_score, 1),
                 "efficiency_score": round(efficiency_score, 1),

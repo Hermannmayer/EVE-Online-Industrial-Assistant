@@ -1890,7 +1890,17 @@ class TestBindingLineCapacity:
         with db.connect("user") as conn:
             assert _binding_shortfall(conn, [stacked_bpo], parallels=2, runs=2) is None
 
-    def test_consumption_charges_every_line(self, user_env):
+    def test_short_per_copy_runs_rejected_even_with_many_copies(self, user_env):
+        """份数多但每份流程少 → 仍判不足：一张蓝图一次只能进一个作业，没有哪一份够跑。
+
+        回归：校验曾用 `份数 × 流程` 的**总量**判（10 × 1 = 10 ≥ 5 就放行），
+        但游戏里每份只有 1 流程，喂不了 `runs=5` 的作业。
+        """
+        db = user_env.db
+        many_short = _insert_blueprint(db, 3001, is_bpo=False, runs=1, quantity=10)
+        with db.connect("user") as conn:
+            msg = _binding_shortfall(conn, [many_short], parallels=2, runs=5)
+        assert msg is not None and "流程" in msg
         """完成时按产线条数消耗：3 条线 × 每线 10 流程 = 30 流程，从 3×30 的堆里扣。"""
         db = user_env.db
         stacked = _insert_blueprint(db, 3001, is_bpo=False, runs=30, quantity=3)

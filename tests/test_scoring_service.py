@@ -625,8 +625,10 @@ class TestManufacturingScore:
         me10_qty = result_me10["materials"][0]["qty"]
         # ME10 材料用量应少于 ME0
         assert me0_qty > me10_qty
-        # waste_factor 在材料列表中，不在 breakdown 中
+        # 材料明细里只有原始的 wastefactor（SDE 字段），没有另算的减成比值 ——
+        # 曾经有个 `waste_factor`（单轮比值）与材料明细的整批减成口径不一致，已删
         assert "wastefactor" in result_me10["materials"][0]
+        assert "waste_factor" not in result_me10["materials"][0]
 
     def test_unprofitable_scores_zero(self, temp_db):
         """材料成本超成品售价时 score 为 0"""
@@ -666,7 +668,6 @@ def test_me_and_te_reduce_waste_and_time(temp_db):
     assert low_qty > high_qty, "ME10 材料用量应少于 ME0"
 
     assert r_low["materials"][0]["wastefactor"] == 10
-    assert r_high["materials"][0]["waste_factor"] < 1.0
 
     assert r_high["hours_per_run"] < r_low["hours_per_run"], "TE20 应比 TE0 耗时更短"
     assert r_high["isk_per_hour"] > r_low["isk_per_hour"]

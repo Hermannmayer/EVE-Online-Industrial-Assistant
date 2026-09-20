@@ -6,7 +6,6 @@ EVE Online 游戏公式常量。
 - 贸易: https://wiki.eveuniversity.org/Trade
 """
 
-
 from core.constants import (
     HUB_NAMES,  # noqa: F401 — re-export
     TRADE_HUB_IDS,
@@ -28,7 +27,6 @@ BROKER_FEE_MIN = 0.1  # 最低经纪人费率，来源: EVE Wiki
 INDUSTRY_SKILL_MULT = 0.04  # 工业理论 (3380) 每级 -4% 时间
 ADV_INDUSTRY_SKILL_MULT = 0.03  # 高级工业理论 (3388) 每级 -3% 时间
 TE_MULT_PER_LEVEL = 0.01  # TE 每级 -1% 时间
-ME_WASTE_BASE = 0.1  # 线性化近似 — 实际公式见 domain/formulas.py 的 calc_waste_factor
 
 # ════════════════════════════════════════════════════
 #  贸易 — 来源: https://wiki.eveuniversity.org/Trade

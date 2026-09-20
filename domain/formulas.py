@@ -62,24 +62,6 @@ BP_SKILL_TIME_MULT = 0.01
 # ═══════════════════════════════════════════════════════════
 
 
-def _waste_mult(wastefactor: int, me_level: int) -> float:
-    """保留兼容，新公式已不使用 wastefactor。"""
-    if me_level < 0:
-        me_level = 0
-    return 1.0 + (wastefactor / 100.0) / (1.0 + me_level)
-
-
-def calc_waste_factor(wastefactor: int, me_level: int) -> float:
-    """计算材料减成倍率（相对 SDE quantity）。
-
-    线性公式: (100 - me_level) / 100
-    ME 0 → 1.0（100%），ME 10 → 0.9（90%），每级减 1%。
-    """
-    if me_level < 0:
-        me_level = 0
-    return (100.0 - me_level) / 100.0
-
-
 def calc_material_per_run(
     db_qty: int,
     wastefactor: int = 10,

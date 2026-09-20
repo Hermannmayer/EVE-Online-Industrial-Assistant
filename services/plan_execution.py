@@ -1011,8 +1011,7 @@ def plan_blueprint_ready(plan: dict) -> bool:
                 return False
             if rule == RULE_BPC_RUNS:
                 for bid in bound:
-                    row = conn.execute("SELECT is_bpo FROM user_blueprints WHERE id=?", (bid,)).fetchone()
-                    if row is not None and not bool(row[0]) and _bp_available_runs(conn, bid) < runs:
+                    if _bp_per_copy_runs(conn, bid) < runs:
                         return False
             capacity = sum(min(_binding_line_capacity(conn, bid), parallels) for bid in bound)
     except Exception:
@@ -1560,6 +1559,21 @@ def _binding_line_capacity(conn, bp_id: int) -> int:
     return blueprint_line_capacity(row[0])
 
 
+def _bp_per_copy_runs(conn, bp_id: int) -> int | float:
+    """该绑定**每份**的流程数（校验用）：BPO → 大数（不会被消耗）；BPC → 该行的 runs。
+
+    校验必须按**每份**判，不能按 `quantity × runs` 的总量判：一张蓝图一次只能进一个作业，
+    「份数 10 × 每份 1 流程」喂不了 `runs=5` 的作业（没有哪一份有 5 流程）。
+    总量口径（`_bp_available_runs`）只用于「还能喂多少流程」的展示。
+    """
+    row = conn.execute("SELECT is_bpo, runs FROM user_blueprints WHERE id=?", (bp_id,)).fetchone()
+    if not row:
+        return 0
+    if row[0]:
+        return 10**15
+    return max(0, int(row[1] or 0))
+
+
 def _bp_available_runs(conn, bp_id: int) -> int | float:
     """连接内查 BPC 可用流程 = quantity×runs；BPO 返回大数（视为无限）。"""
     row = conn.execute("SELECT is_bpo, runs, quantity FROM user_blueprints WHERE id=?", (bp_id,)).fetchone()
@@ -1585,8 +1599,8 @@ def _binding_shortfall(conn, bound_ids: list[int], parallels: int, runs: int) ->
     if capacity < parallels:
         return f"绑定蓝图可覆盖 {capacity} 条产线，不足 {parallels} 条（还差 {parallels - capacity} 张）"
     for i, bid in enumerate(bound_ids, 1):
-        if _bp_available_runs(conn, bid) < runs:
-            return f"第 {i} 张绑定蓝图流程不足（需 ≥ {runs} 流程，当前产线每条要跑 {runs} 轮）"
+        if _bp_per_copy_runs(conn, bid) < runs:
+            return f"第 {i} 张绑定蓝图流程不足（每份需 ≥ {runs} 流程，当前产线每条要跑 {runs} 轮）"
     return None
 
 
