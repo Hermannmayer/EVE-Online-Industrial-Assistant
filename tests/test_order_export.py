@@ -21,6 +21,9 @@ _ORDER_KEYS = {
     "type_name",
     "issued",
     "duration",
+    # 归属列（变动识别按 (char_id, is_corp) 分组比较，缺了会误判成交、错算钱）
+    "char_id",
+    "is_corp",
 }
 
 # 真实的「My Orders」表头（列序固定，range/minVolume/regionID 等与解析无关）
@@ -150,6 +153,8 @@ def test_heuristic_chinese_header_and_row():
     assert (o["volume_total"], o["volume_remain"]) == (1000, 800)
     assert o["location_name"] == "吉他"
     assert o["duration"] == 30
+    # 这份表头没有 charID / isCorp 列 → 归属落 0 组，**不能猜**
+    assert (o["char_id"], o["is_corp"]) == (0, 0)
 
 
 def test_heuristic_buy_direction():
@@ -234,6 +239,9 @@ def test_real_client_export_is_parsed_field_by_field():
     assert o["location_id"] == 60003760
     assert o["duration"] == 90
     assert o["issued"] == "2026-09-16 12:00:43.000", "真实列名是 issueDate"
+    # 归属列：变动识别按 (char_id, is_corp) 分组比较，读不出来就会误判成交、错算钱
+    assert o["char_id"] == 2115252966, "真实列名是 charID"
+    assert o["is_corp"] == 1, "真实列名是 isCorp，值是 True（这份导出是军团单）"
 
 
 def test_localized_wrapper_is_unwrapped_to_the_games_own_text():

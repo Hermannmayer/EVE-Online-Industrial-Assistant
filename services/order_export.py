@@ -36,6 +36,8 @@ def _empty_order() -> dict:
         "type_name": "",
         "issued": "",
         "duration": 0,
+        "char_id": 0,
+        "is_corp": 0,
     }
 
 
@@ -67,6 +69,10 @@ _FIELD_ALIASES: dict[str, set[str]] = {
     "type_name": {"typename", "item", "itemname", "物品名称", "名称", "物品"},
     "issued": {"issued", "issueddate", "issuedate", "issuetime", "时间", "发布日期"},
     "duration": {"duration", "有效期"},
+    # 归属列。挂单有两个来源（游戏导出 / ESI），且「个人订单-…」与「军团订单-…」是
+    # 两份独立导出 —— 不区分就会把另一份里的挂单判成「已成交」。真实表头是 charID / isCorp。
+    "char_id": {"charid", "characterid", "角色id"},
+    "is_corp": {"iscorp", "iscorporation", "军团"},
 }
 _ALIAS_TO_FIELD: dict[str, str] = {alias: field for field, aliases in _FIELD_ALIASES.items() for alias in aliases}
 
@@ -240,10 +246,10 @@ def _assign(row: dict, field: str, val: str) -> None:
     if field in ("location_name", "type_name", "issued"):
         row[field] = val
         return
-    if field == "is_buy":
+    if field in ("is_buy", "is_corp"):
         b = _to_bool(val)
         if b is not None:
-            row["is_buy"] = b
+            row[field] = b
         return
     if field == "price":
         f = _to_float(val)

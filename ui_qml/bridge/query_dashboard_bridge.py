@@ -117,7 +117,8 @@ _EMPTY_ASSET_TEXT = "还没有资产快照 —— 数据从首次记录开始按
 
 # ── 挂单 ────────────────────────────────────────────────────
 #: 两张表各自维护表头（**没有「方向」列** —— 表本身就是方向）
-_ORDER_HEADS_LIST: tuple[str, ...] = ("物品", "价格", "剩余/总量", "位置")
+#: 「角色」在末尾：ESI 汇总全部已绑定角色，不标归属就分不清挂单是谁的。
+_ORDER_HEADS_LIST: tuple[str, ...] = ("物品", "价格", "剩余/总量", "位置", "角色")
 _ORDER_DB_COLUMNS: tuple[str, ...] = (
     "order_id",
     "is_buy",
@@ -130,6 +131,8 @@ _ORDER_DB_COLUMNS: tuple[str, ...] = (
     "type_name",
     "issued",
     "duration",
+    "char_id",
+    "is_corp",
     "imported_at",
 )
 _TOKEN_PLAIN = "TEXT_PRIMARY"
@@ -171,6 +174,22 @@ def _order_svc() -> Any | None:
             log.warning("services.order_export 不可用：挂单导入已停用")
         return None
     return order_export
+
+
+def _char_names() -> dict[int, str]:
+    """`char_id` → 角色名（取自 `esi_tokens` 的绑定行），供挂单表标注归属。
+
+    日志导入的 `charID` 若从没绑定过 ESI 就查不到，调用方回退显示 `#<id>`。
+    这里的 `except Exception` 吞的是「读绑定表/导入 aiohttp 链路」的失败（表不存在、
+    库被占用等）—— 挂单列表不该因为读不到名字就整张画不出来，退化成编号即可。
+    """
+    try:
+        from ui_qml.workers.esi_skill_worker import list_token_rows
+
+        return {int(r["character_id"]): str(r["character_name"] or "") for r in list_token_rows()}
+    except Exception:
+        log.exception("角色名读取失败（挂单归属列退化为编号）")
+        return {}
 
 
 def _open_change_dialog(rows: list[dict], parent: Any, wallet: float) -> tuple[list[dict], bool]:
@@ -458,6 +477,7 @@ class QueryDashboardBridge(QObject):
         self._sell_rows: list[dict] = []
         self._orders_loaded = False
         self._pending_changes: list[dict] = []  # 最近一次导入产生的变动（待用户确认）
+        self._esi_worker: Any = None  # 在途的 ESI 钱包/挂单拉取线程（页面销毁时 shutdown）
         self._busy = False
         self._status = "就绪"
         # 指纹缓存（refresh 幂等：没变就不重算、不发 changed）
@@ -801,8 +821,16 @@ class QueryDashboardBridge(QObject):
 
         self._fill_location_names(records)
         self._fill_type_names(records)
-        # 写库前先取一份「旧快照」—— 变动分类要的正是「写前 / 写后」的差集
-        before = {int(r["order_id"]): r for r in self._snapshot_orders()}
+        # 变动只在「本次覆盖到的归属组」内比较。挂单有两个来源（游戏日志 / ESI），
+        # 一个账号还能绑多个角色，个人单与军团单又是两份独立导出 —— 拿全表做差会把
+        # 别的组的挂单判成「已成交」，进而**错误增减钱包**。
+        covered = {(int(r["char_id"]), int(r["is_corp"])) for r in records}
+        # 写库前先取一份「旧快照」—— 变动分类要的正是「写前 / 写后」的差集。
+        # **必须仍在 _write_orders 之前取**：写库会把归属列改写成新值，
+        # 挪到写库之后取的话过滤条件会对存量行全中，等于没过滤、bug 原样回来。
+        before = {
+            int(r["order_id"]): r for r in self._snapshot_orders() if (int(r["char_id"]), int(r["is_corp"])) in covered
+        }
         imported_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
             self._write_orders(records, imported_at)
@@ -824,6 +852,111 @@ class QueryDashboardBridge(QObject):
         # 有变动才弹「订单变动」确认框（确认框在桥里弹，QML 只调 readOrders）
         self._review_changes(prefix)
         self.changed.emit()
+
+    # ── ESI：钱包余额 + 未结挂单 ──────────────────────────────
+
+    @Slot()
+    def syncOrdersFromEsi(self) -> None:
+        """从 ESI 拉**全部已绑定角色**的钱包余额与未结挂单 → 写库 → 回写快照。
+
+        与 `readOrders` 的本质区别：**这条路径不做变动推断**。ESI 给的钱包余额是
+        绝对值、挂单是「该角色当前未结」的完整集，所以这里是**快照替换** ——
+        钱包 `set_wallet_balance(合计)` 绝对覆盖，订单按 `(char_id, is_corp)` 组整体替换。
+        **绝不能接 `_apply_outcomes` 的 `adjust_wallet_balance`**：那会把钱算两遍。
+        """
+        if self._busy:
+            return
+        from ui_qml.workers.esi_wallet_worker import EsiWalletOrdersWorker
+
+        worker = EsiWalletOrdersWorker(parent=self)
+        self._esi_worker = worker
+        worker.result_signal.connect(self._on_esi_pulled)
+        worker.finished_signal.connect(self._on_esi_finished)
+        self._busy = True
+        self._status = "正在从 ESI 同步钱包与挂单…"
+        self.changed.emit()
+        worker.start()
+
+    @Slot(dict)
+    def _on_esi_pulled(self, payload: dict) -> None:
+        """worker 拉成功 → 落库。整体失败走 `_on_esi_finished`。"""
+        records = [_normalize_order(r) for r in payload.get("orders") or []]
+        records = [r for r in records if r["order_id"]]
+        if records:
+            self._fill_location_names(records)
+            self._fill_type_names(records)
+        groups = {(int(g[0]), int(g[1])) for g in payload.get("groups") or []}
+        try:
+            self._replace_order_groups(groups, records)
+        except sqlite3.Error:
+            log.exception("ESI 挂单写入 user.db 失败 count=%s", len(records))
+            self._status = "ESI 挂单写入本地库失败，详见日志"
+            self.changed.emit()
+            return
+
+        wallet_total = payload.get("wallet_total")
+        if wallet_total is not None:
+            svc = _asset_svc()
+            if svc is not None:
+                try:
+                    svc.set_wallet_balance(float(wallet_total))
+                except Exception:
+                    log.exception("ESI 钱包余额写入失败")
+
+        self._ensure_orders(force=True)
+        self._ensure_wallet(force=True)
+        snapshot_ok = self._record_snapshot()
+        self._refresh_snapshots()
+        tail = "已记入资产快照" if snapshot_ok else "资产快照写入失败，详见日志"
+        chars = int(payload.get("chars") or 0)
+        self._status = f"已从 ESI 同步 {chars} 个角色、{len(records)} 笔挂单，{tail}"
+        errors = [str(e) for e in payload.get("errors") or []]
+        if errors:
+            # 部分角色失败：成功的照常写，这里明说哪几个没拉到
+            self._status += f"；未同步：{'；'.join(errors)}"
+        self.changed.emit()
+
+    @Slot(bool, str)
+    def _on_esi_finished(self, ok: bool, message: str) -> None:
+        self._busy = False
+        if not ok:
+            self._status = f"ESI 同步失败：{message or '未知错误'}"
+        self.changed.emit()
+
+    def _replace_order_groups(self, groups: set[tuple[int, int]], records: list[dict]) -> None:
+        """按 `(char_id, is_corp)` 组整体替换：先删该组旧行，再写本次的完整集。
+
+        只 UPSERT 不行：ESI 返回的是「当前未结」的完整集，已成交的旧行会永远留在表里
+        （日志路径靠 `_apply_outcomes` 删掉已结束的，这条路径没有确认框）。
+        `groups` 里含**同步成功但当前无挂单**的组 —— 少了它就会留下幽灵行。
+        """
+        if not groups:
+            return
+        imported_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with _user_conn() as conn:
+            for char_id, is_corp in sorted(groups):
+                conn.execute(
+                    "DELETE FROM open_orders WHERE char_id = ? AND is_corp = ?",
+                    (int(char_id), int(is_corp)),
+                )
+        if records:
+            self._write_orders(records, imported_at)
+
+    @Slot()
+    def shutdown(self) -> None:
+        """停掉在途的 ESI 拉取线程。**页面销毁（切页 / 关窗 / 退出）时必须调**。
+
+        为什么必须：ESI 是阻塞式请求（超时 30 秒），本桥被销毁时 Qt 会去析构一个
+        还在跑的 QThread —— 那是直接崩，**输出里连一行 traceback 都没有**
+        （见 `docs/dev/flows.md` 的「在途取数线程必须在页面销毁时停」）。
+        走 `detach_worker`：`requestInterruption()` 对阻塞请求无效，中断不了就摘出
+        对话树保活，而不是 `terminate()`（那会连主线程一起锁死）。
+        """
+        from ui_qml.workers.lifecycle import detach_worker
+
+        worker, self._esi_worker = self._esi_worker, None
+        if worker is not None:
+            detach_worker(worker)
 
     @Slot(result=list)
     def previewOrderChanges(self) -> list[dict]:
@@ -1365,8 +1498,9 @@ class QueryDashboardBridge(QObject):
             return
         self._order_records = [_normalize_order(_row_to_dict(row)) for row in raw]
         self._order_records = [r for r in self._order_records if r["order_id"]]
-        self._buy_rows = self._order_cell_rows(r for r in self._order_records if r["is_buy"])
-        self._sell_rows = self._order_cell_rows(r for r in self._order_records if not r["is_buy"])
+        char_names = _char_names()
+        self._buy_rows = self._order_cell_rows((r for r in self._order_records if r["is_buy"]), char_names)
+        self._sell_rows = self._order_cell_rows((r for r in self._order_records if not r["is_buy"]), char_names)
         imported = [str(r["imported_at"]) for r in self._order_records if r["imported_at"]]
         self._last_import_at = max(imported) if imported else ""
 
@@ -1429,11 +1563,13 @@ class QueryDashboardBridge(QObject):
                 record["type_name"] = found
 
     @staticmethod
-    def _order_cell_rows(records: Any) -> list[dict]:
+    def _order_cell_rows(records: Any, char_names: Mapping[int, str] | None = None) -> list[dict]:
         """挂单 → 单元格行（形状同 `order_popup_bridge.order_rows`，QML 侧表组件直接吃）。
 
         **不含「方向」列**：买单 / 卖单各有一张表，方向由表本身承载。
         `records` 可以是任意可迭代（调用方传的是生成器，一次遍历完）。
+        `char_names` 是 `char_id → 角色名`（ESI 汇总多角色时标注归属）；查不到就显示
+        `#<id>`，**`char_id` 为 0（老日志的启发式解析）显示「—」而不是「角色 #0」**。
         """
         rows: list[dict] = []
         for record in records:
@@ -1441,6 +1577,8 @@ class QueryDashboardBridge(QObject):
             if not location:
                 location = f"#{int(record['location_id'])}" if record["location_id"] else "—"
             name = str(record["type_name"] or "") or (f"#{int(record['type_id'])}" if record["type_id"] else "—")
+            char_id = int(record.get("char_id") or 0)
+            owner = ((char_names or {}).get(char_id) or f"#{char_id}") if char_id else "—"
             rows.append(
                 {
                     "cells": [
@@ -1448,6 +1586,7 @@ class QueryDashboardBridge(QObject):
                         cell(f"{float(record['price']):,.2f}", _TOKEN_PLAIN),
                         cell(f"{int(record['volume_remain']):,}/{int(record['volume_total']):,}", _TOKEN_PLAIN),
                         cell(location, _TOKEN_PLAIN),
+                        cell(owner, _TOKEN_PLAIN),
                     ]
                 }
             )
@@ -1468,6 +1607,8 @@ def _normalize_order(row: Mapping[str, Any]) -> dict:
         "type_name": str(row.get("type_name") or ""),
         "issued": str(row.get("issued") or ""),
         "duration": _as_int(row.get("duration")),
+        "char_id": _as_int(row.get("char_id")),
+        "is_corp": _as_int(row.get("is_corp")),
         "imported_at": str(row.get("imported_at") or ""),
     }
 

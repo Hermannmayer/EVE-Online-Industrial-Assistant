@@ -32,8 +32,9 @@ Item {
 
     //: 两张表各自一行标题（「买单 · N 笔」/「卖单 · N 笔」）。与详情页 OrderPanel 同做法。
     readonly property var heads: dashboard ? dashboard.openOrderHeads : []
-    //: 列宽比：物品 / 价格 / 剩余·总量 / 位置（**没有方向列** —— 表本身就是方向）
-    readonly property var ratios: [2.6, 1.5, 1.6, 2.4]
+    //: 列宽比：物品 / 价格 / 剩余·总量 / 位置 / 角色（**没有方向列** —— 表本身就是方向）
+    //: 「角色」加在**末尾**：ESI 会汇总全部已绑定角色，不标归属就分不清是谁的挂单。
+    readonly property var ratios: [2.4, 1.4, 1.5, 2.2, 1.3]
 
     ColumnLayout {
         anchors.fill: parent
@@ -48,11 +49,27 @@ Item {
             FButton {
                 objectName: "readOrdersButton"
                 text: qsTr("读取订单")
-                primary: true
                 Layout.preferredHeight: root.barH
                 enabled: root.dashboard !== null && !root.dashboard.busy
                 onClicked: if (root.dashboard)
                     root.dashboard.readOrders()
+            }
+
+            // ESI 是主路径（自动、覆盖全部已绑定角色），日志导出保留作离线兜底
+            FButton {
+                objectName: "syncFromEsiButton"
+                text: qsTr("从 ESI 同步")
+                primary: true
+                Layout.preferredHeight: root.barH
+                enabled: root.dashboard !== null && !root.dashboard.busy
+                onClicked: if (root.dashboard)
+                    root.dashboard.syncOrdersFromEsi()
+
+                HoverHandler {
+                    id: esiSyncHover
+                }
+                ToolTip.visible: esiSyncHover.hovered
+                ToolTip.text: qsTr("从 ESI 拉取所有已绑定角色的钱包余额与未结挂单。余额是绝对值、挂单是完整集，会直接覆盖本地，不再逐条问「成交还是撤销」。")
             }
 
             // 与「读取订单」同排：两个都是「从游戏拿数」的动作。**不能挪到钱包余额那一排** ——

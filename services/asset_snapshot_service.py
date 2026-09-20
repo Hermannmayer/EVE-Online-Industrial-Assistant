@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS open_orders (
     type_name TEXT DEFAULT '',
     issued TEXT DEFAULT '',
     duration INTEGER DEFAULT 0,
+    char_id INTEGER DEFAULT 0,               -- 挂单归属角色（ESI 给 character_id；日志导出取 charID 列）
+    is_corp INTEGER DEFAULT 0,               -- 军团单标记（个人单/军团单是两份独立导出）
     imported_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE TABLE IF NOT EXISTS order_events (

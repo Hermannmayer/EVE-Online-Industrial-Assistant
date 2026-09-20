@@ -135,7 +135,8 @@ def _make_db() -> sqlite3.Connection:
             order_id INTEGER PRIMARY KEY, is_buy INTEGER, price REAL,
             volume_total INTEGER, volume_remain INTEGER, location_id INTEGER,
             location_name TEXT, type_id INTEGER, type_name TEXT, issued TEXT,
-            duration INTEGER, imported_at TEXT
+            duration INTEGER, char_id INTEGER DEFAULT 0, is_corp INTEGER DEFAULT 0,
+            imported_at TEXT
         );
         CREATE TABLE order_events (
             order_id INTEGER NOT NULL, applied_at TEXT NOT NULL, outcome TEXT DEFAULT '',
@@ -165,6 +166,8 @@ def _order(
     location_id: int = 60003760,
     location_name: str = "Jita IV-4",
     type_name: str = "三钛合金",
+    char_id: int = 0,
+    is_corp: bool = False,
 ) -> dict:
     return {
         "order_id": order_id,
@@ -176,6 +179,8 @@ def _order(
         "location_name": location_name,
         "type_id": 1001,
         "type_name": type_name,
+        "char_id": char_id,
+        "is_corp": is_corp,
     }
 
 
@@ -739,9 +744,16 @@ def test_read_orders_imports_and_records_snapshot(h, tmp_path):
     assert h.assets.snapshots == [None]  # record_snapshot() 回写一条资产快照
     assert "跳过 2 行" in bridge.statusText  # 解析器报的跳过行数要透出来
 
-    # 单元格格式化：物品 / 价格 / 剩余÷总量 / 位置（**没有方向列** —— 表本身就是方向）
-    assert [cell["text"] for cell in bridge.sellOrderRows[0]["cells"]] == ["三钛合金", "2.50", "4/4", "Jita IV-4"]
-    assert [cell["text"] for cell in bridge.buyOrderRows[0]["cells"]] == ["三钛合金", "100.00", "10/10", "Jita IV-4"]
+    # 单元格格式化：物品 / 价格 / 剩余÷总量 / 位置 / 角色（**没有方向列** —— 表本身就是方向）
+    # 这份导出没带 charID → 归属列显示「—」，而不是「#0」
+    assert [cell["text"] for cell in bridge.sellOrderRows[0]["cells"]] == ["三钛合金", "2.50", "4/4", "Jita IV-4", "—"]
+    assert [cell["text"] for cell in bridge.buyOrderRows[0]["cells"]] == [
+        "三钛合金",
+        "100.00",
+        "10/10",
+        "Jita IV-4",
+        "—",
+    ]
     assert bridge.buyOrderCount == 1
     assert bridge.sellOrderCount == 1
 
@@ -989,6 +1001,34 @@ def test_read_orders_does_not_ask_on_failure(h, tmp_path, monkeypatch):
     bridge.readOrders()
     assert h.change_dialog.calls == []
     assert "未从" in bridge.statusText
+
+
+def test_read_orders_only_compares_orders_of_the_same_owner(h, tmp_path):
+    """回归：导入某一角色的**个人单**，不能把库里其他角色 / 军团单判成「已成交」。
+
+    挂单有两个来源（游戏日志 / ESI），一个账号还能绑多个角色，而「个人订单-…」与
+    「军团订单-…」是两份独立导出。变动识别原先是拿**全表**和本次文件做差 ——
+    别的组的挂单会被判成「消失」→ 误判成交 → **错误增减钱包**。
+    修复：按 `(char_id, is_corp)` 分组比较。
+    """
+    with h.conn:
+        h.conn.executemany(
+            "INSERT INTO open_orders"
+            " (order_id, is_buy, price, volume_total, volume_remain, char_id, is_corp, imported_at)"
+            " VALUES (?, 0, 100.0, 10, 10, ?, ?, '2026-09-19 10:00:00')",
+            [(1, 111, 0), (2, 222, 0), (3, 111, 1)],
+        )
+    h.assets.wallet = 500.0
+
+    h.orders.path = _write_export(tmp_path)
+    # 本次只导入「角色 111 的个人单」，且与库里那条逐字一致 → 组内无变动
+    h.orders.rows = [_order(1, is_buy=False, char_id=111, is_corp=False)]
+    bridge = h.bridge()
+    bridge.readOrders()
+
+    assert {r["order_id"] for r in _orders_in(h.conn)} == {1, 2, 3}, "别的归属组被动了"
+    assert h.change_dialog.calls == [], "把别的角色/军团单判成了已成交"
+    assert h.assets.wallet == 500.0, "钱包被错误增减"
 
 
 # ════════════════════════════════════════════════════════════

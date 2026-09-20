@@ -44,12 +44,17 @@ AUTHORIZE_URL = "https://login.eveonline.com/v2/oauth/authorize"
 TOKEN_URL = "https://login.eveonline.com/v2/oauth/token"
 ESI_BASE = "https://esi.evetech.net/latest"
 
-#: 只请求本功能要用的三个；应用上另勾的权限是给后续功能预留的，这里不请求也能用
+#: 只请求本功能要用的；应用上另勾的权限是给后续功能预留的，这里不请求也能用
 #: （refresh 时只能传原子集的子集，传了没勾的反而会失败）。
+#: ⚠️ 加 scope 后**老 token 不会刷新失败**（`_refresh` 不传 scope，拿到的是原子集），
+#: 而是打新接口时 403 → 用户要重新授权一次；且**必须先在本应用的开发者门户勾选**，
+#: 否则授权直接 `invalid_scope`，代码侧无解。
 SCOPES = (
     "esi-skills.read_skills.v1",
     "esi-skills.read_skillqueue.v1",
     "esi-clones.read_implants.v1",
+    "esi-wallet.read_character_wallet.v1",
+    "esi-markets.read_character_orders.v1",
 )
 
 #: access token 官方寿命 1200s（20 分钟）。剩不足这个裕量就提前刷新。
@@ -115,16 +120,29 @@ def _token_conn():
     return conn
 
 
+#: 绑定行的列（`load_token_row` / `list_token_rows` 共用，避免两处漂移）
+_TOKEN_COLUMNS = "character_id, character_name, refresh_token, access_token, access_expires_at"
+
+
 def load_token_row(character_name: str) -> dict | None:
     """按角色名取绑定行（token 按角色绑定，名字是配置里的匹配键）。"""
     conn = _token_conn()
     try:
         row = conn.execute(
-            "SELECT character_id, character_name, refresh_token, access_token, access_expires_at"
-            " FROM esi_tokens WHERE character_name = ?",
+            f"SELECT {_TOKEN_COLUMNS} FROM esi_tokens WHERE character_name = ?",
             (character_name,),
         ).fetchone()
         return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def list_token_rows() -> list[dict]:
+    """全部已绑定角色 —— ESI 钱包/挂单同步要遍历每个角色各拉一份。"""
+    conn = _token_conn()
+    try:
+        rows = conn.execute(f"SELECT {_TOKEN_COLUMNS} FROM esi_tokens ORDER BY character_name").fetchall()
+        return [dict(row) for row in rows]
     finally:
         conn.close()
 
@@ -284,9 +302,13 @@ async def _post_token(client, data: dict) -> dict:
         return payload if isinstance(payload, dict) else {}
 
 
-async def _get_json(client, url: str, token: str):
+async def _get_json(client, url: str, token: str, *, scope_hint: str = "技能/增效体"):
     """带 Bearer 的 GET。自己看状态码 —— `APIClient.fetch` 把 401/403 都吞成 None，
-    而我们必须把「授权失效」和「缺 scope」分开告诉用户。"""
+    而我们必须把「授权失效」和「缺 scope」分开告诉用户。
+
+    `scope_hint` 决定 403 的文案。**必须按接口传**：写死「技能/增效体」的话，
+    钱包/挂单 403 时会把用户引去勾错的权限，怎么试都不成功。
+    """
     headers = {"Authorization": f"Bearer {token}"}
     for attempt in range(2):
         await client.limiter.acquire()
@@ -294,7 +316,7 @@ async def _get_json(client, url: str, token: str):
             if resp.status == 401:
                 raise EsiAuthRevoked("授权已失效，请重新授权")
             if resp.status == 403:
-                raise EsiScopeMissing("授权缺少技能/增效体权限，请在开发者应用勾选对应 scope 后重新授权")
+                raise EsiScopeMissing(f"授权缺少{scope_hint}权限，请在开发者应用勾选对应 scope 后重新授权")
             if resp.status == 429 and attempt == 0:
                 retry_after = resp.headers.get("Retry-After", "5")
                 await asyncio.sleep(min(int(retry_after) if retry_after.isdigit() else 5, 60))
@@ -382,10 +404,19 @@ class EsiSkillImportWorker(QThread):
 
     # ── 令牌 ──
 
-    async def _obtain_token(self, client) -> tuple[str, int, str]:
-        """有可用绑定就静默刷新，否则开浏览器授权。`force_browser` 时跳过静默路径。"""
-        if self._character_name and not self._force_browser:
-            row = load_token_row(self._character_name)
+    async def _obtain_token(
+        self, client, character_name: str | None = None, *, allow_browser: bool = True
+    ) -> tuple[str, int, str]:
+        """有可用绑定就静默刷新，否则开浏览器授权。`force_browser` 时跳过静默路径。
+
+        `character_name` 省略时用构造期那个（`EsiSkillImportWorker` 的原行为）；
+        多角色同步的调用方逐个显式传入 —— 这样不必把这段逻辑复制第二遍。
+        `allow_browser=False` 时**不弹浏览器**，直接按授权失效报错：批量同步里
+        一个角色掉线不该让用户连着走三次授权流程（每次最长等 10 分钟）。
+        """
+        name = character_name or self._character_name
+        if name and not self._force_browser:
+            row = load_token_row(name)
             if row:
                 if self._still_valid(row.get("access_expires_at")) and row.get("access_token"):
                     return str(row["access_token"]), int(row["character_id"]), str(row["character_name"])
@@ -399,6 +430,8 @@ class EsiSkillImportWorker(QThread):
                     # 这里报个错让他再点一次没有意义。
                     log.info("ESI 授权已撤销，转入重新授权: %s", row.get("character_name"))
                     delete_token_row(int(row["character_id"]))
+        if not allow_browser:
+            raise EsiAuthRevoked(f"{name or '该角色'} 的绑定已失效，请重新授权")
         return await self._browser_authorize(client)
 
     @staticmethod
