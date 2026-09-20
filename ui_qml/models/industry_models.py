@@ -39,6 +39,22 @@ def _sort_key(value):
     return (1, str(value or "").lower())
 
 
+def bound_line_capacity(p: dict) -> int:
+    """计划行已绑蓝图能覆盖的**产线条数**。
+
+    优先用 `plan_service` enrich 算好的 `bound_capacity`；手工构造 / 旧口径的行没有这个
+    派生字段 → 退回按绑定行数算（单值列也算一条，与迁移前口径一致）。
+    容量的定义见 `services.plan_execution.blueprint_line_capacity`（BPO 顶全部、BPC 按份数）。
+    """
+    capacity = p.get("bound_capacity")
+    if capacity is not None:
+        return int(capacity)
+    bound = p.get("bound_blueprint_ids") or []
+    if not bound and p.get("assigned_blueprint_id"):
+        bound = [p["assigned_blueprint_id"]]
+    return len(bound)
+
+
 class PlanTableModel(QAbstractTableModel):
     """19 列生产计划模型 — 支持 checkbox、类别、图标、行内编辑、排序"""
 
@@ -297,16 +313,14 @@ class PlanTableModel(QAbstractTableModel):
                 me = min(a for a, _b in levels)
                 te = min(b for _a, b in levels)
             has_img = "有图" if p.get("has_image", False) else "没图"
-            bound = p.get("bound_blueprint_ids") or []
-            if not bound and p.get("assigned_blueprint_id"):
-                bound = [p["assigned_blueprint_id"]]
+            # 覆盖条数按**容量**比（BPO 一条顶全部、BPC 行按份数），不能按绑定行数比 ——
+            # 见 `bound_line_capacity`
             need = int(p.get("need_blueprints") or 1)
-            if not bound:
-                bp_mark = f" 差{need}张" if need > 0 else ""
-            elif len(bound) >= need:
-                bp_mark = f" ✔{len(bound)}/{need}"
+            capacity = bound_line_capacity(p)
+            if capacity >= need:
+                bp_mark = f" ✔{capacity}/{need}"
             else:
-                bp_mark = f" 差{need - len(bound)}张"
+                bp_mark = f" 差{need - capacity}张" if need > 0 else ""
             return f"{me}-{te}{mixed}[{has_img}]{bp_mark}"
         if c == 11:
             status = p.get("status", "")

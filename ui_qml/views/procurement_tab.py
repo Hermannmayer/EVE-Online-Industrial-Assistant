@@ -586,13 +586,20 @@ class ProcurementDialog(QObject):
         self.plans_changed.emit()  # 库存变化 → 通知主界面重载计划
 
     def complete_all(self) -> None:
-        """一键完成所有待下线计划：标记为 completed + 自动入库（经 `plan_execution.complete_plan`）"""
+        """一键完成所有待下线计划：走与工业页**同一套**下线编排（含发明结果回填）。
+
+        必须走 `complete_plans`，不能直接调 `plan_execution.complete_plan`：
+        发明是概率作业，产出要用户按游戏实际结果回填（成功几条产线），
+        直接调会被 `code='need_outcome'` 拒绝并静默跳过 —— 表现成
+        「一键完成后发明行没动静、还要去工业页补填」。
+        `update_hangar=False`：这条入口不选机库，入库目标沿用计划自己配的机库。
+        """
         ready_plans = [p for p in self._active_plans if p.get("status") == "ready"]
         if not ready_plans:
             return
 
-        from services import plan_execution
         from ui_qml.bridge.complete_guard import confirm_bp_shortfall
+        from ui_qml.views.industry.complete_plans_dialog import complete_plans
 
         # 蓝图流程不足是软阻塞：确认一次后整批强制完成。
         # 不覆盖这条入口的话，强制启动过的计划在这里会永远卡住。
@@ -600,30 +607,17 @@ class ProcurementDialog(QObject):
         if allow_bp_short is None:
             return
 
-        completed = 0
-        deposited = 0
-        removed = 0
-        need_outcome = 0
-        for plan in ready_plans:
-            plan_id = plan.get("id")
-            if not plan_id:
-                continue
-            try:
-                res = plan_execution.complete_plan(plan, allow_bp_short=allow_bp_short)
-                if res.get("ok"):
-                    completed += 1
-                    deposited += 1 if res.get("deposited") else 0
-                    removed += int(res.get("removed") or 0)
-                elif res.get("code") == "need_outcome":
-                    # 发明是概率作业：产出必须由用户按游戏结果回填，这里不静默完成
-                    need_outcome += 1
-                else:
-                    log.warning("完成计划 %s 失败: %s", plan_id, res.get("message"))
-            except Exception:
-                log.exception("完成计划 %s 失败", plan_id)
+        result = complete_plans(ready_plans, 0, parent=self, allow_bp_short=allow_bp_short, update_hangar=False)
+        completed = int(result.get("completed") or 0)
+        deposited = int(result.get("deposited") or 0)
+        removed = int(result.get("removed") or 0)
+        skipped = list(result.get("skipped") or [])
+        for reason in result.get("failed_reasons") or []:
+            log.warning("一键完成：%s", reason)
 
-        if need_outcome:
-            self.show_copy_hint(f"{need_outcome} 条发明计划未填产出已跳过（到工业页补填）")
+        if skipped:
+            # 走编排后这里只剩「用户在回填窗点了取消」，不再是「静默跳过」
+            self.show_copy_hint(f"{len(skipped)} 条发明的结果回填被取消，未完成")
 
         if completed > 0:
             msg = f"已完成 {completed}/{len(ready_plans)} 项" + (f"，{deposited} 项入库" if deposited else "")

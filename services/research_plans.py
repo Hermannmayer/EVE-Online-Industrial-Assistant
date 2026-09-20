@@ -258,7 +258,15 @@ def create_research_plan(
     不做蓝图绑定——由调用方经 ensure_plan_auto_bind 或显式绑定。
     """
     from core.container import get_container
+    from domain.research import clamp_research_target, research_level_cap
     from services.plan_service import calculate_plan_metrics, datetime_now_str
+
+    # ME/TE 研究的 `runs` 就是目标等级（标签见 `plan_edit_bridge._RUNS_LABELS`）。
+    # 夹到游戏上限（ME 10 / TE 20），避免建出「ME 50」这种游戏里做不到的计划；
+    # 调用方没显式给 `research_target_level` 时按 runs 补上 —— 完成时靠它提升绑定原本的等级。
+    runs = clamp_research_target(activity, runs)
+    if research_level_cap(activity) is not None:
+        research_target_level = clamp_research_target(activity, research_target_level or runs)
 
     plan_input = {
         "product_type_id": blueprint_type_id,

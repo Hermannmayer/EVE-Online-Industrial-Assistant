@@ -25,6 +25,7 @@ from PySide6.QtGui import QGuiApplication
 
 import ui_qml.theme.registry as theme
 from core.container import get_container
+from core.logger import log
 from ui_qml.models.industry_models import PlanTableModel
 from ui_qml.models.plan_table_constants import (
     COL_BLUEPRINT,
@@ -294,6 +295,7 @@ class PlanTable(QObject):
                 facility=facility,
                 **extra,
             )
+            self._resync_bindings(plan["id"])
             # 更新内存模型的基础字段（facility/mat_hub/sell_hub 由工具栏价格设置与
             # 「设置设施星系」管理，编辑不改）
             plan["runs"] = updated["runs"]
@@ -387,6 +389,8 @@ class PlanTable(QObject):
                     ids.append(plan["id"])
             if ids:
                 get_container().plan_repo.update_many(ids, **fields)
+                for pid in ids:
+                    self._resync_bindings(pid)
 
             # 同步内存模型
             for r in rows:
@@ -423,6 +427,19 @@ class PlanTable(QObject):
             if plan.get("id"):
                 get_container().plan_repo.update(plan["id"], notes=text.strip())
             self.plan_updated.emit()
+
+    def _resync_bindings(self, plan_id: int) -> None:
+        """改流程 / 改并行后重新对齐蓝图绑定（不够就补、多余就裁，够用则不动）。
+
+        没有它就会出现：绑了 1 张的制造计划把并行改成 3 条、或把流程改成 20（绑的那张只有
+        10 流程）之后绑定照旧，直到启动才报「蓝图不足」。
+        """
+        from services.plan_execution import resync_plan_bindings
+
+        try:
+            resync_plan_bindings(int(plan_id))
+        except Exception:
+            log.exception("改流程/并行后重绑蓝图失败 plan=%s", plan_id)
 
     def _modify_runs(self, row: int) -> None:
         if self._model is None:
@@ -617,6 +634,13 @@ class PlanTable(QObject):
             plan["assigned_blueprint_id"] = bound[0] if bound else None
             plan["bound_blueprint_ids"] = list(bound)
             plan["need_blueprints"] = dlg.bridge.need_count()
+            # 覆盖条数按容量算（BPO 一条顶全部、BPC 行按份数）—— 界面「差N张」要用它，
+            # 否则手工选完蓝图后会立刻显示成「不足」
+            from services.plan_execution import get_plan_binding_state
+
+            plan["bound_capacity"] = (
+                int(get_plan_binding_state(int(plan["id"]))["capacity"]) if plan.get("id") else len(bound)
+            )
             model.layoutChanged.emit()
             self.plan_updated.emit()
 

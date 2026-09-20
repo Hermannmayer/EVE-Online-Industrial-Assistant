@@ -18,14 +18,17 @@ def complete_plans(
     parent=None,
     ask_outcome: bool = True,
     allow_bp_short: bool = False,
+    update_hangar: bool = True,
 ) -> dict:
     """把一批 ready 计划下线到指定机库。
 
     hangar_id > 0 → 入库该机库；否则置 NULL（不自动入库，跳过入库仍完成）。
     每条计划先更新 deposit_hangar_id 再调用 complete_plan（幂等）。
+    update_hangar=False → **不动**计划的产出机库，沿用库里已存的：采购页「一键完成」
+    走这条（它不选机库，入库目标仍是计划自己配的那个）。
     allow_bp_short: 蓝图流程不足时是否放行（与 `start_plan` 成对使用）。
 
-    发明行先弹 InventionOutcomeDialog 回填实际产出（用户取消 → 该行不完成）。
+    发明行先弹 InventionOutcomeDialog 回填**成功产线数**（用户取消 → 该行不完成）。
     ⚠️ validate 档测试在**没有 QApplication** 的情况下直调本函数时必须传
     `ask_outcome=False`，否则弹窗会崩或挂死。
     Returns: {"completed": int, "deposited": int, "removed": int, "failed": [...],
@@ -43,14 +46,22 @@ def complete_plans(
     skipped: list[str] = []
     deposit = hangar_id if hangar_id and hangar_id > 0 else None
     for plan in plans:
-        set_plan_deposit_hangar(get_container().db, plan["id"], deposit)
+        if update_hangar:
+            set_plan_deposit_hangar(get_container().db, plan["id"], deposit)
         actual = None
+        actual_bpc = None
         if ask_outcome and _is_pending_invention(plan):
-            actual = _ask_invention_outcome(plan, parent)
-            if actual is None:  # 用户取消
+            outcome = _ask_invention_outcome(plan, parent)
+            if outcome is None:  # 用户取消
                 skipped.append(plan.get("product_name") or str(plan.get("id")))
                 continue
-        res = plan_execution.complete_plan(plan, actual_output_runs=actual, allow_bp_short=allow_bp_short)
+            actual, actual_bpc = outcome
+        res = plan_execution.complete_plan(
+            plan,
+            actual_output_runs=actual,
+            actual_bpc_count=actual_bpc,
+            allow_bp_short=allow_bp_short,
+        )
         if res.get("ok"):
             completed += 1
             if res.get("deposited"):
@@ -111,25 +122,32 @@ def _is_pending_invention(plan: dict) -> bool:
     return normalize(plan.get("activity")) == "invention" and plan.get("actual_output_runs") is None
 
 
-def _ask_invention_outcome(plan: dict, parent) -> int | None:
-    """弹出发明结果回填对话框；取消 → None。"""
+def _ask_invention_outcome(plan: dict, parent) -> tuple[int, int] | None:
+    """弹出发明结果回填对话框。返回 (实际产出流程数, BPC 张数)；取消 → None。"""
     from domain.research import get_decryptor
     from ui_qml.bridge.invention_outcome_bridge import InventionOutcomeQmlDialog as InventionOutcomeDialog
 
     bd = plan.get("breakdown") or {}
-    expected = int(bd.get("expected_runs") or bd.get("output_runs") or 0)
-    if expected <= 0:
-        # 计划行没带 breakdown（批量行）→ 退化为「尝试次数 × 每次产出」
-        attempts = max(int(plan.get("runs") or 1), 1)
-        runs_per = int(bd.get("runs_per_bpc") or 0)
-        expected = attempts * runs_per if runs_per else attempts
+    attempts = max(int(plan.get("runs") or 1), 1)
+    expected_runs = int(bd.get("expected_runs") or bd.get("output_runs") or 0)
+    runs_per = int(bd.get("runs_per_bpc") or 0)
+    expected_bpc = int(bd.get("expected_bpc") or 0)
+    if expected_bpc <= 0:
+        # 没跑过评分（批量行）→ 用成功率估期望张数；再没有就退化为「每条产线成功一次」
+        rate = bd.get("success_rate")
+        expected_bpc = round(attempts * float(rate)) if rate is not None else attempts
+    if runs_per <= 0 and expected_bpc > 0 and expected_runs > 0:
+        # 同样是没有 breakdown 的退化路径：从「期望流程 ÷ 期望张数」反推每次流程，
+        # 免得把成功数换算成 0 流程
+        runs_per = max(1, expected_runs // expected_bpc)
     d = get_decryptor(plan.get("decryptor_type_id"))
     dlg = InventionOutcomeDialog(
         plan_name=plan.get("product_name") or str(plan.get("id")),
-        expected_runs=expected,
+        expected_runs=expected_runs,
+        expected_bpc=expected_bpc,
         attempts=int(plan.get("runs") or 0),
         decryptor_name=d.name if d else "",
-        runs_per_bpc=int(bd.get("runs_per_bpc") or 0),
+        runs_per_bpc=runs_per,
         parent=parent,
     )
     from PySide6.QtWidgets import QDialog

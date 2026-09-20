@@ -304,8 +304,7 @@ def invention_plan_cost(
         if attempts_override is not None
         else invention_attempts(output_runs_needed, rate, runs_per_bpc)
     )
-    # 每次尝试的数据核心；解码器每次消耗 1 个（成败都扣）
-    per_attempt_mats = job_batch_materials(materials, 1)
+    # 每次尝试消耗：数据核心（SDE 里给的是单次量）+ 解码器 1 个（成败都扣）
     # 尝试次数为 0（成功率为 0 或产出为 0）→ 无作业、无消耗
     batch_mats = job_batch_materials(materials, attempts) if attempts > 0 else []
     if decryptor and attempts > 0:
@@ -342,7 +341,12 @@ def invention_plan_cost(
         "expected_runs": expected_runs,
         "bpc_unit_cost": round(bpc_unit_cost, 2),
         "is_actual": is_actual,
-        "materials": per_attempt_mats,  # 每尝试一次的量（供采购/展示）
+        # 返回**按尝试次数的总量**（含每次尝试 1 个解码器），与 copying / research 两个
+        # 兄弟函数同口径 —— `plan_execution.material_requirements` 对科研分支不再乘倍数
+        # （那里的 docstring 写明「科研的 materials 已按作业次数算好」）。
+        # 以前这里返回「每尝试一次的量」：30 次尝试的计划只备 1 次的料，解码器还完全不在
+        # 需求里（从不下架、不校验），两个 bug 都出在这个口径上。
+        "materials": batch_mats,
     }
 
 

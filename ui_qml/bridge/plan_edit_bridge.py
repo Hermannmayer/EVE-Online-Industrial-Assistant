@@ -19,12 +19,14 @@ from domain.research import (
     ACTIVITY_RESEARCH_ME,
     ACTIVITY_RESEARCH_TE,
     Decryptor,
+    clamp_research_target,
     decryptor_ids,
     decryptor_labels,
     get_decryptor,
     invention_output_me_te,
     invention_output_runs,
     invention_probability,
+    research_level_cap,
 )
 from services import inventory_manager
 from services.plan_job_kinds import ACTIVITY_MANUFACTURING, normalize
@@ -84,7 +86,8 @@ class PlanEditBridge(DialogBridge):
         self._parallel_label = "产出份数" if activity == "copying" else "并行数"
         self._parallel_tip = "拷贝行表示产出的 BPC 份数" if activity == "copying" else ""
 
-        self._runs = int(self._plan.get("runs", 1) or 1)
+        # 研究行的 runs 就是目标等级 → 按游戏上限夹紧（旧数据里可能存过 ME 50 这种）
+        self._runs = clamp_research_target(activity, int(self._plan.get("runs", 1) or 1))
         self._parallels = int(self._plan.get("parallels", 1) or 1)
         self._sync_runs = not self._batch_mode
         self._notes = str(self._plan.get("notes", "") or "")
@@ -198,6 +201,12 @@ class PlanEditBridge(DialogBridge):
         notify=fieldsChanged,
     )
 
+    def _runs_max(self) -> int:
+        """流程数 / 目标等级输入框的上限：研究活动有游戏硬上限（ME 10 / TE 20），其余 99999。"""
+        return research_level_cap(self._activity) or 99999
+
+    runsMax = Property(int, lambda self: self._runs_max(), constant=True)
+
     # ── 发明预期结果（只读展示，随 runs / parallels / 解码器实时重算）──────
     #
     # 全部走 domain.research 的纯函数；**不调用** services.plan_metrics.invention_plan_cost
@@ -268,7 +277,7 @@ class PlanEditBridge(DialogBridge):
 
     @Slot(int)
     def setRuns(self, value: int) -> None:
-        self._runs = max(1, min(99999, int(value)))
+        self._runs = max(1, min(self._runs_max(), int(value)))
         self.fieldsChanged.emit()
 
     @Slot(int)

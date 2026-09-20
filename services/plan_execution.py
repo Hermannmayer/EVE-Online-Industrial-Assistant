@@ -326,9 +326,40 @@ def start_plan(
             auto_bound = True
     assigned_bp = None
     bp_short_warn = ""
+    if not bound_ids:
+        # 严格规则（拷贝/研究要 BPO、发明要 BPC）**没绑输入蓝图根本开不了工** ——
+        # 游戏里这类作业必须先指定输入蓝图。旧的「并行=1 不绑也能启动」宽松语义
+        # 只留给制造/反应（它们可以靠「先启动、后勾蓝图」补救）。
+        from services.plan_job_kinds import RULE_BPC_RUNS, RULE_BPO_ONLY, input_blueprint_rule
+
+        with _container().db.connect("user") as conn:
+            unbound_activity = _plan_activity(conn, plan_id, str(plan.get("activity") or ""))
+        unbound_rule = input_blueprint_rule(unbound_activity)
+        if unbound_rule in (RULE_BPO_ONLY, RULE_BPC_RUNS):
+            return {
+                "ok": False,
+                "code": "blueprint_missing",
+                "message": "未绑定输入蓝图：拷贝/研究必须指定一张蓝图原本（BPO）"
+                if unbound_rule == RULE_BPO_ONLY
+                else "未绑定输入蓝图：发明必须指定一张流程足够的蓝图拷贝（BPC）",
+                "shortfalls": [],
+                "plan_id": plan_id,
+            }
     if bound_ids:
         with _container().db.connect("user") as conn:
+            activity = _plan_activity(conn, plan_id, str(plan.get("activity") or ""))
+            kind_violation = _blueprint_kind_violation(conn, activity, bound_ids)
             short = _binding_shortfall(conn, bound_ids, plan_parallels, plan_runs)
+        if kind_violation:
+            # 蓝图类型是**游戏规则**，不随 allow_bp_short 放行 —— 那不是库存不够，
+            # 是游戏里根本做不到（拷贝/研究只能对 BPO，发明只能对 BPC）。
+            return {
+                "ok": False,
+                "code": "blueprint_kind",
+                "message": kind_violation,
+                "shortfalls": [],
+                "plan_id": plan_id,
+            }
         if short and not allow_bp_short:
             return {
                 "ok": False,
@@ -753,13 +784,14 @@ def _deposit_research_output(
     runs: int,
     parallels: int,
     actual_output_runs: int | None,
+    actual_bpc_count: int | None = None,
     decryptor_type_id: int | None,
     messages: list[str],
 ) -> int:
     """把科研作业的产出（BPC）写入 user_blueprints。返回 1=有入库，0=跳过。
 
     - 拷贝：产出 parallels 份 BPC，每份 runs 流程；ME/TE 继承输入原图（游戏口径）。
-    - 发明：产出 **1 份** T2 BPC，流程数取 actual_output_runs
+    - 发明：产出 **成功产线数** 份 T2 BPC，每份流程数 = `actual_output_runs ÷ 张数`
       （NULL=未回填不写；0=失败不产出），ME/TE 由解码器决定（见 domain.research）。
 
     同机库 + 同蓝图 + 同 ME/TE + 同 runs 的已有 BPC → 累加 quantity，不新增行。
@@ -783,7 +815,9 @@ def _deposit_research_output(
             return 0
         out_runs = int(actual_output_runs)
         me, te = invention_output_me_te(get_decryptor(decryptor_type_id))
-        out_qty = 1
+        # 成功几条产线就产几张 BPC（每张 out_runs 流程）。未传张数时退化为 1 张，
+        # 兼容旧调用方（它们只给总流程数）。
+        out_qty = max(1, int(actual_bpc_count or 1))
     else:  # copying
         out_runs = max(1, int(runs))
         me, te = _input_blueprint_me_te(conn, plan_id)
@@ -812,6 +846,67 @@ def _deposit_research_output(
         )
         messages.append(f"产出蓝图已入库（{specs}）")
     return 1
+
+
+def _improve_bound_bpo_level(
+    conn,
+    *,
+    plan_id: int,
+    activity: str,
+    target_level: int,
+    messages: list[str],
+) -> int:
+    """ME/TE 研究完成：把绑定**蓝图原本**的等级提到目标等级（只升不降）。返回 1=改了。
+
+    游戏规则（`docs/eve_wiki_knowledge_base.md`「材料效率研究」「时间效率研究」）：
+    研究只能作用于蓝图原本（BPO）—— 基于蓝图拷贝不能再研究；作用对象是原本本身，
+    上限 ME 10 / TE 20（`create_research_plan` 侧已夹紧）。
+
+    以前这条分支缺失（`OUTPUT_IMPROVED_BPO` 零消费方），研究行会掉进「普通成品入库」
+    分支，把蓝图当物品塞进 `inventory_items`：等级不提升、还多出幻影库存。
+    """
+    from services.plan_job_kinds import ACTIVITY_RESEARCH_ME, ACTIVITY_RESEARCH_TE
+
+    # 列名不能进 f-string 拼 SQL（CLAUDE.md 代码规则），写成字面量三件套
+    sql = {
+        ACTIVITY_RESEARCH_ME: (
+            "ME",
+            "SELECT is_bpo, me_level FROM user_blueprints WHERE id=?",
+            "UPDATE user_blueprints SET me_level=? WHERE id=?",
+        ),
+        ACTIVITY_RESEARCH_TE: (
+            "TE",
+            "SELECT is_bpo, te_level FROM user_blueprints WHERE id=?",
+            "UPDATE user_blueprints SET te_level=? WHERE id=?",
+        ),
+    }.get(activity)
+    if sql is None:
+        return 0
+    label, select_sql, update_sql = sql
+
+    bound = get_plan_blueprints(plan_id)
+    if not bound:
+        messages.append("研究计划未绑定蓝图原本，跳过等级提升")
+        return 0
+    target = max(0, int(target_level or 0))
+    if target <= 0:
+        messages.append("研究计划没记目标等级，跳过等级提升（可在编辑计划里补上）")
+        return 0
+
+    changed = 0
+    for blueprint_id in bound:
+        row = conn.execute(select_sql, (blueprint_id,)).fetchone()
+        if row is None or not bool(row[0]):
+            messages.append("绑定的不是蓝图原本，等级不生效（游戏规则：拷贝不能再研究）")
+            continue
+        current = int(row[1] or 0)
+        if current >= target:
+            messages.append(f"蓝图原本 {label} 已是 {current} 级，无需提升（目标 {target}）")
+            continue
+        conn.execute(update_sql, (target, blueprint_id))
+        messages.append(f"蓝图原本 {label} {current} → {target}")
+        changed = 1
+    return changed
 
 
 def _input_blueprint_me_te(conn, plan_id: int) -> tuple[int, int]:
@@ -844,6 +939,42 @@ def output_per_run(product_type_id: int) -> int:
         return 1
 
 
+def _plan_activity(conn, plan_id: int, fallback: str = "") -> str:
+    """计划的活动类型，**以库为准**。
+
+    调用方可能只传 `{"id": …}`（部分启动、批量路径就是这样），拿不到 activity 就会让
+    蓝图类型规则静默失效 —— 游戏规则不能取决于入参完整度。
+    """
+    row = conn.execute("SELECT COALESCE(activity,'') FROM production_plans WHERE id=?", (plan_id,)).fetchone()
+    return str(row[0]) if row and row[0] else fallback
+
+
+def _blueprint_kind_violation(conn, activity: str, bound_ids: list[int]) -> str:
+    """绑定蓝图与活动规则不符时返回可读原因；合规 → 空串。
+
+    游戏规则（`docs/eve_wiki_knowledge_base.md`「拷贝」）：
+      - 拷贝 / 研究 → 必须绑**蓝图原本（BPO）**：基于蓝图拷贝不能再拷贝、也不能再研究；
+      - 发明       → 必须绑**蓝图拷贝（BPC）**：发明只吃拷贝（BPO 不可用于发明）。
+    规则表见 `services.plan_job_kinds.INPUT_BLUEPRINT_RULE`。
+    """
+    from services.plan_job_kinds import RULE_BPC_RUNS, RULE_BPO_ONLY, input_blueprint_rule
+
+    rule = input_blueprint_rule(activity)
+    if rule not in (RULE_BPO_ONLY, RULE_BPC_RUNS):
+        return ""
+    want_bpo = rule == RULE_BPO_ONLY
+    for bid in bound_ids:
+        row = conn.execute("SELECT is_bpo FROM user_blueprints WHERE id=?", (bid,)).fetchone()
+        if row is None:
+            continue
+        is_bpo = bool(row[0])
+        if want_bpo and not is_bpo:
+            return "选的是蓝图拷贝（BPC）：拷贝不能再拷贝、也不能再研究，请改用蓝图原本（BPO）"
+        if not want_bpo and is_bpo:
+            return "选的是蓝图原本（BPO）：发明只能用蓝图拷贝（BPC），请先拷贝出 BPC"
+    return ""
+
+
 def plan_blueprint_ready(plan: dict) -> bool:
     """该计划的输入蓝图是否已就绪（按活动规则判定，取代旧的 has_image 口径）。
 
@@ -872,25 +1003,24 @@ def plan_blueprint_ready(plan: dict) -> bool:
 
     runs = max(int(plan.get("runs") or 1), 1)
     parallels = max(int(plan.get("parallels") or 1), 1)
+    capacity = 0
     try:
         with _container().db.connect("user") as conn:
-            for bid in bound:
-                row = conn.execute("SELECT is_bpo FROM user_blueprints WHERE id=?", (bid,)).fetchone()
-                if row is None:
-                    continue
-                is_bpo = bool(row[0])
-                if rule == RULE_BPO_ONLY and not is_bpo:
-                    return False
-                if rule == RULE_BPC_RUNS:
-                    if is_bpo:
-                        return False  # 发明只能用 BPC（BPO 不可用于发明）
-                    if _bp_available_runs(conn, bid) < runs:
+            # 类型规则与 `start_plan` 共用同一个函数，避免两处规则漂移
+            if _blueprint_kind_violation(conn, str(plan.get("activity") or ""), bound):
+                return False
+            if rule == RULE_BPC_RUNS:
+                for bid in bound:
+                    row = conn.execute("SELECT is_bpo FROM user_blueprints WHERE id=?", (bid,)).fetchone()
+                    if row is not None and not bool(row[0]) and _bp_available_runs(conn, bid) < runs:
                         return False
+            capacity = sum(min(_binding_line_capacity(conn, bid), parallels) for bid in bound)
     except Exception:
         log.debug("校验计划 %s 输入蓝图失败", plan_id, exc_info=True)
         return True  # 读不到时不拦（与旧宽松语义一致）
-    # 张数要求沿用 _binding_shortfall 的口径：并行几条线就要几张
-    return len(bound) >= parallels or rule not in (RULE_BPO_ONLY, RULE_BPC_RUNS)
+    # 覆盖条数沿用 `_binding_shortfall` 的口径（按容量：BPO 顶全部、BPC 行按份数），
+    # 只有拷贝/研究这类单作业活动只要一张
+    return capacity >= parallels or rule == RULE_BPO_ONLY
 
 
 def complete_plan(
@@ -898,6 +1028,7 @@ def complete_plan(
     *,
     conn=None,
     actual_output_runs: int | None = None,
+    actual_bpc_count: int | None = None,
     allow_bp_short: bool = False,
 ) -> dict:
     """ready/pending/in_progress → completed：入库产出 + 消耗绑定 BPC。
@@ -925,7 +1056,7 @@ def complete_plan(
     if not plan_id:
         return {"ok": False, "message": "计划无 id", "deposited": 0}
     from services import inventory_manager
-    from services.plan_job_kinds import OUTPUT_BPC, is_science, output_kind
+    from services.plan_job_kinds import OUTPUT_BPC, OUTPUT_IMPROVED_BPO, is_science, output_kind
 
     own_conn = conn is None
     if own_conn:
@@ -937,7 +1068,8 @@ def complete_plan(
         row = conn.execute(
             "SELECT status, product_type_id, deposit_hangar_id, runs, parallels, material_cost, "
             "assigned_blueprint_id, material_cost_snapshot, activity, actual_output_runs, "
-            "decryptor_type_id, group_number, sub_level FROM production_plans WHERE id=?",
+            "decryptor_type_id, group_number, sub_level, research_target_level "
+            "FROM production_plans WHERE id=?",
             (plan_id,),
         ).fetchone()
         if row is None:
@@ -957,6 +1089,7 @@ def complete_plan(
             decryptor_type_id,
             group_number,
             sub_level,
+            target_level,
         ) = row
         if db_status in ("completed", "done"):
             return {"ok": True, "message": "计划已完成", "deposited": 0}
@@ -1032,7 +1165,17 @@ def complete_plan(
                 runs=plan_runs,
                 parallels=plan_parallels,
                 actual_output_runs=effective_actual,
+                actual_bpc_count=actual_bpc_count,
                 decryptor_type_id=decryptor_type_id,
+                messages=messages,
+            )
+        elif kind == OUTPUT_IMPROVED_BPO:
+            # ME/TE 研究：把绑定**蓝图原本**的等级提上去，不是入库物品
+            deposited = _improve_bound_bpo_level(
+                conn,
+                plan_id=plan_id,
+                activity=activity,
+                target_level=int(target_level or 0),
                 messages=messages,
             )
         elif deposit_hangar_id and deposit_hangar_id > 0 and product_type_id:
@@ -1057,14 +1200,23 @@ def complete_plan(
         #    - 发明：每次尝试消耗输入 T1 BPC 的 1 个流程（本计划 attempts 轮）；
         #    - 拷贝/研究：**不消耗**输入蓝图流程（拷贝不消耗原图流程；研究只提升等级）。
         if kind == OUTPUT_BPC and activity == "invention":
+            # 总消耗 = 每线 runs 流程 × 产线条数 = 本计划的总尝试数（每次尝试消耗 1 流程）。
+            # 按各绑定行的**容量**分摊：BPO 顶任意条数、BPC 行按份数顶。
+            remaining_lines = plan_parallels
             for bid in bound_ids:
-                res = consume_bpc_runs(conn, bid, plan_runs)
+                lines = min(_binding_line_capacity(conn, bid), remaining_lines)
+                if lines <= 0:
+                    continue
+                remaining_lines -= lines
+                res = consume_bpc_runs(conn, bid, plan_runs * lines)
                 if res.get("skipped"):
                     continue
                 if res.get("deleted"):
                     messages.append("输入蓝图已耗尽并移除")
                 else:
                     messages.append(f"输入蓝图剩余 {res.get('new_quantity')}×{res.get('new_runs')} 流程")
+            if remaining_lines > 0:
+                messages.append(f"⚠ 绑定蓝图只够 {plan_parallels - remaining_lines} 条产线，消耗已按实际可用量计")
         elif not is_science(activity):
             for bid in bound_ids:
                 brow = conn.execute("SELECT is_bpo FROM user_blueprints WHERE id=?", (bid,)).fetchone()
@@ -1215,7 +1367,10 @@ def cancel_plan(plan: dict) -> dict:
 def reset_plan_for_reuse(plan_id: int) -> dict:
     """设为待生产：仅 completed 计划复用（不返还材料——材料已变为成品）。
 
-    清除 started_at / completed_at / deposited / material_short / 启动成本快照与蓝图占用，
+    清除 started_at / completed_at / deposited / material_short / 启动成本快照与蓝图占用、
+    以及**发明实际产出回填**（`actual_output_runs`）—— 不清它，「待下线」判定
+    （`_is_pending_invention` 靠它是否为 NULL）会认为已回填过，复用的第二轮不再弹回填窗，
+    产出/成本还会沿用上一轮的旧值。
     置回 pending 供再次启动。不触碰库存（成品已入库、材料不退回）。
     快照必须清掉：否则「复用后未重新启动就再次下线」会误用上一轮的启动成本。
 
@@ -1232,6 +1387,7 @@ def reset_plan_for_reuse(plan_id: int) -> dict:
         conn.execute(
             "UPDATE production_plans SET status='pending', started_at=NULL, completed_at=NULL, "
             "deposited=0, material_short='', deducted_materials='', material_cost_snapshot='', "
+            "actual_output_runs=NULL, "
             "assigned_blueprint_id=NULL WHERE id=?",
             (plan_id,),
         )
@@ -1378,7 +1534,30 @@ def get_plan_binding_state(plan_id: int) -> dict:
             log.debug("旧库无关联表，回退单值列", exc_info=True)
             row = conn.execute("SELECT assigned_blueprint_id FROM production_plans WHERE id=?", (plan_id,)).fetchone()
             bound = [row[0]] if row and row[0] else []
-    return {"bound": bound, "need": parallels, "runs": runs}
+        capacity = sum(min(_binding_line_capacity(conn, bid), parallels) for bid in bound)
+    return {"bound": bound, "need": parallels, "runs": runs, "capacity": capacity}
+
+
+def blueprint_line_capacity(quantity: int | None) -> int:
+    """一条蓝图记录能覆盖**几条并行产线** = 该行**份数**（quantity）。
+
+    游戏规则：一张蓝图（BPO 还是 BPC 都一样）同一时刻只能进**一个**作业，所以并行 N 条线
+    就要 N 张蓝图。导入路径每张蓝图写一行、quantity=1；而发明/拷贝产出的 BPC 会按同规格
+    **合并成一行**（quantity=N）—— 那种堆必须能供 N 条线，否则「用发明出来的 T2 BPC 并行
+    造 T2 物品」会被误判成蓝图不足。
+
+    与 `_bp_available_runs` 的区别：那个算「还能喂多少**流程**」（BPO 视为无限，因为 BPO
+    不会被消耗）；这里算的是「能顶几条**产线**」。
+    """
+    return max(0, int(quantity or 0))
+
+
+def _binding_line_capacity(conn, bp_id: int) -> int:
+    """库存行版：读 `user_blueprints` 后按 `blueprint_line_capacity` 算覆盖条数。"""
+    row = conn.execute("SELECT quantity FROM user_blueprints WHERE id=?", (bp_id,)).fetchone()
+    if not row:
+        return 0
+    return blueprint_line_capacity(row[0])
 
 
 def _bp_available_runs(conn, bp_id: int) -> int | float:
@@ -1395,9 +1574,16 @@ def _bp_available_runs(conn, bp_id: int) -> int | float:
 
 
 def _binding_shortfall(conn, bound_ids: list[int], parallels: int, runs: int) -> str | None:
-    """校验绑定是否满足一条产线一张蓝图且每张流程≥runs；不足返回原因文本，满足返回 None。"""
-    if len(bound_ids) < parallels:
-        return f"绑定蓝图 {len(bound_ids)} 张不足 {parallels} 条产线（还差 {parallels - len(bound_ids)} 张）"
+    """校验绑定能否覆盖 parallels 条产线、且每条的流程数 ≥ runs；不足返回原因，满足 None。
+
+    **覆盖条数按容量算，不按行数**：BPO 一条顶全部、BPC 行按份数顶（见
+    `blueprint_line_capacity`）—— 这样「一张图纸合成一行、份数=3」也能供 3 条线。
+    """
+    capacity = 0
+    for bid in bound_ids:
+        capacity += min(_binding_line_capacity(conn, bid), parallels)
+    if capacity < parallels:
+        return f"绑定蓝图可覆盖 {capacity} 条产线，不足 {parallels} 条（还差 {parallels - capacity} 张）"
     for i, bid in enumerate(bound_ids, 1):
         if _bp_available_runs(conn, bid) < runs:
             return f"第 {i} 张绑定蓝图流程不足（需 ≥ {runs} 流程，当前产线每条要跑 {runs} 轮）"
@@ -1632,6 +1818,41 @@ def _occupied_ids(conn, *, exclude_plan_id: int | None = None) -> set[int]:
     return occupied
 
 
+def _available_blueprint_options(product_type_id: int | None, blueprint_type_id: int | None) -> list[dict]:
+    """该计划产品的库存蓝图（**不过滤占用**，每条带 `occupied` / `available_runs`）。
+
+    制造按产物反查制造蓝图；科研行直接用 `blueprint_type_id`（发明 = 被发明的 T2 蓝图，
+    拷贝/研究 = 被操作的 BPO）。
+
+    **占用过滤留给调用方**：`_auto_bind_blueprints` 只挑没被占的；而「按当前绑定重新对齐」
+    （`resync_plan_bindings`）必须连**本计划自己绑的那张**也看得见 —— 那种行也带
+    `occupied`，滤掉就会把现有绑定当成「不可用」而误判成需要重挑。
+    """
+    target_bp = int(blueprint_type_id or 0)
+    with _container().db.connect("user", "bp", "ref") as conn:
+        if not target_bp:
+            row = conn.execute(
+                "SELECT blueprint_type_id FROM blueprint_products "
+                "WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
+                (product_type_id,),
+            ).fetchone()
+            if not row:
+                return []
+            target_bp = int(row[0])
+        return find_available_blueprints(conn, target_bp)
+
+
+def _blueprint_capable(option: dict, rule: str, runs: int) -> bool:
+    """这张蓝图是否满足活动的类型规则与流程要求（规则见 services.plan_job_kinds）。"""
+    from services.plan_job_kinds import RULE_BPC_RUNS, RULE_BPO_ONLY
+
+    if rule == RULE_BPO_ONLY:
+        return bool(option.get("is_bpo"))
+    if rule == RULE_BPC_RUNS:
+        return not option.get("is_bpo") and (option.get("available_runs") or 0) >= runs
+    return bool(option.get("is_bpo")) or (option.get("available_runs") or 0) >= runs
+
+
 def _auto_bind_blueprints(plan: dict) -> list[int]:
     """自动选最优库存蓝图。返回应绑定的库存蓝图 id 清单（按活动规则）。
 
@@ -1653,21 +1874,7 @@ def _auto_bind_blueprints(plan: dict) -> list[int]:
     parallels = max(int(plan.get("parallels", 1)), 1)
     rule = input_blueprint_rule(plan.get("activity"))
 
-    # 绑定哪张蓝图：制造按产物反查制造蓝图；科研行直接用 blueprint_type_id
-    # （发明 = 被发明的 T2 蓝图；拷贝/研究 = 被操作的 BPO）。
-    target_bp = int(blueprint_type_id or 0)
-    with _container().db.connect("user", "bp", "ref") as conn:
-        if not target_bp:
-            cur = conn.execute(
-                "SELECT blueprint_type_id FROM blueprint_products "
-                "WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-                (product_type_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                return []
-            target_bp = int(row[0])
-        options = [o for o in find_available_blueprints(conn, target_bp) if not o.get("occupied")]
+    options = [o for o in _available_blueprint_options(product_type_id, blueprint_type_id) if not o.get("occupied")]
     if not options:
         return []
 
@@ -1683,9 +1890,19 @@ def _auto_bind_blueprints(plan: dict) -> list[int]:
             capable = [o for o in options if not o.get("is_bpo") and (o.get("available_runs") or 0) >= runs]
             capable.sort(key=lambda b: (b.get("me_level", 0), b.get("te_level", 0)), reverse=True)
             picks.extend(capable)
-    # 制造/反应：并行几条线绑几张；拷贝/研究/发明只需一张
-    need = parallels if rule not in (RULE_BPO_ONLY, RULE_BPC_RUNS) else 1
-    return [int(o["id"]) for o in picks[:need]]
+    # 拷贝/研究是「一个作业」（拷贝的 parallels 是**产出份数**、研究的并行恒为 1）→ 一张。
+    # 制造/反应/发明按**覆盖条数**凑：一张蓝图只能进一个作业，所以并行 N 条线要凑够
+    # N 条线的容量（份数），见 `blueprint_line_capacity`。
+    if rule == RULE_BPO_ONLY:
+        return [int(picks[0]["id"])] if picks else []
+    out: list[int] = []
+    capacity = 0
+    for option in picks:
+        out.append(int(option["id"]))
+        capacity += min(blueprint_line_capacity(option.get("quantity")), parallels)
+        if capacity >= parallels:
+            break
+    return out
 
 
 def ensure_plan_auto_bind(plan_id: int) -> bool:
@@ -1708,4 +1925,80 @@ def ensure_plan_auto_bind(plan_id: int) -> bool:
     if not picks:
         return False
     bind_blueprints(plan_id, picks)
+    return True
+
+
+def resync_plan_bindings(plan_id: int) -> bool:
+    """按计划当前的 runs/parallels **重新对齐**蓝图绑定；返回是否改动了绑定。
+
+    与 `ensure_plan_auto_bind` 的分工：那个只在**零绑定**时动手（建计划用），所以
+    「原来绑 1 张、并行改成 3 条」或「流程改成 20、绑的那张只有 10 流程」都不会补 ——
+    要等启动时才报蓝图不足。**改流程 / 改并行后就该调本函数**。
+
+    现有绑定仍然合规且够用 → 一根不动（不打扰用户的手工选择，也避免来回抢图）；
+    不够或多余 → 以「够用的现有绑定优先」重挑，补位沿用 `_auto_bind_blueprints` 的规则。
+    """
+    from services.plan_job_kinds import RULE_BPO_ONLY, input_blueprint_rule
+
+    if not plan_id or plan_id <= 0:
+        return False
+    with _container().db.connect("user") as conn:
+        row = conn.execute(
+            "SELECT product_type_id, blueprint_type_id, COALESCE(runs,1), COALESCE(parallels,1), COALESCE(activity,'') "
+            "FROM production_plans WHERE id=?",
+            (plan_id,),
+        ).fetchone()
+    if row is None:
+        return False
+    product_type_id, blueprint_type_id, runs, parallels, activity = row
+    runs = max(int(runs), 1)
+    parallels = max(int(parallels), 1)
+    rule = input_blueprint_rule(activity)
+    # 拷贝/研究是单作业（拷贝的 parallels 是**产出份数**）→ 只要能覆盖 1 条线；
+    # 其余按**覆盖条数**凑够 parallels（BPO 一条顶全部、BPC 行按份数顶）。
+    target_lines = 1 if rule == RULE_BPO_ONLY else parallels
+    current = get_plan_binding_state(plan_id)["bound"]
+
+    options = _available_blueprint_options(product_type_id, blueprint_type_id)
+    by_id = {int(o["id"]): o for o in options}
+
+    def _capacity_of(blueprint_id: int) -> int:
+        option = by_id.get(blueprint_id)
+        if option is None:
+            return 0
+        return min(blueprint_line_capacity(option.get("quantity")), target_lines)
+
+    keep: list[int] = []
+    covered = 0
+    for bid in current:
+        option = by_id.get(bid)
+        if option is None or not _blueprint_capable(option, rule, runs):
+            continue
+        keep.append(bid)
+        covered += _capacity_of(bid)
+        if covered >= target_lines:
+            break
+    if covered >= target_lines and len(keep) == len(current):
+        return False  # 现有绑定正好覆盖全部产线、也没有多余的 → 不动
+
+    plan = {
+        "product_type_id": product_type_id,
+        "blueprint_type_id": blueprint_type_id,
+        "runs": runs,
+        "parallels": parallels,
+        "activity": activity,
+    }
+    final: list[int] = []
+    capacity = 0
+    for bid in keep + [b for b in _auto_bind_blueprints(plan) if b not in keep]:
+        lines = _capacity_of(bid)
+        if lines <= 0:
+            continue
+        final.append(bid)
+        capacity += lines
+        if capacity >= target_lines:
+            break
+    if set(final) == set(current):
+        return False
+    bind_blueprints(plan_id, final)
     return True

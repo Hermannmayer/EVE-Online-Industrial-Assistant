@@ -30,6 +30,41 @@ BASE_PROB = 0.34
 BASE_RUNS = 10  # min(T1 拷贝上限 200, T2 制造上限 10)
 
 
+class TestInventionMaterialsAreTotals:
+    """发明的 `materials` 返回**按尝试次数的总量**（含解码器），与拷贝/研究同口径。
+
+    回归的缺陷：这里曾返回「每尝试一次的量」，而 `material_requirements` 对科研分支
+    **不乘倍数**（见它的 docstring：科研的 materials 已按作业次数算好）—— 于是 30 次尝试
+    的计划只备 1 次的料；解码器更是只在价格里、不在需求里，从不下架也不校验。
+    """
+
+    def test_datacores_scale_with_attempts(self):
+        cost = invention_plan_cost(
+            base_probability=BASE_PROB,
+            materials=INVENTION_MATS,
+            prices=PRICES,
+            sci=JITA_INVENTION_SCI,
+            base_runs=BASE_RUNS,
+            attempts_override=30,
+        )
+        assert cost["attempts"] == 30
+        assert cost["materials"] == [(MECH_DATACORE, 30), (NUCLEAR_DATACORE, 30)]
+
+    def test_decryptor_counted_once_per_attempt(self):
+        """解码器每次尝试消耗 1 个（成败都扣），总量 = 尝试次数。"""
+        decryptor_id = next(iter(DECRYPTORS))
+        cost = invention_plan_cost(
+            base_probability=BASE_PROB,
+            materials=INVENTION_MATS,
+            prices=PRICES,
+            sci=JITA_INVENTION_SCI,
+            decryptor=DECRYPTORS[decryptor_id],
+            base_runs=BASE_RUNS,
+            attempts_override=7,
+        )
+        assert (decryptor_id, 7) in cost["materials"]
+
+
 class TestJobBatchMaterials:
     def test_scales_linearly_with_job_count(self):
         assert job_batch_materials([(20416, 2)], 5) == [(20416, 10)]

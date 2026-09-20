@@ -80,6 +80,11 @@ class TestBlueprintColumn:
         m = PlanTableModel([_plan(has_image=True, need_blueprints=3)])
         assert m.data(m.index(0, _COL_BLUEPRINT), Qt.ItemDataRole.DisplayRole).endswith("[有图] 差3张")
 
+    def test_stacked_row_counts_as_capacity(self):
+        """一行份数=3 的 BPC 能供 3 条线 → 显示 ✔3/3，而不是按行数算成「差2张」。"""
+        m = PlanTableModel([_plan(has_image=True, bound_blueprint_ids=[5], bound_capacity=3, need_blueprints=3)])
+        assert m.data(m.index(0, _COL_BLUEPRINT), Qt.ItemDataRole.DisplayRole).endswith("[有图] ✔3/3")
+
 
 class TestTick:
     def test_tick_flips_expired_to_ready(self, qapp):

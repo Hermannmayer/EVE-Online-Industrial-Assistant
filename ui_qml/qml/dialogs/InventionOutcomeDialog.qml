@@ -46,7 +46,7 @@ FDialogFrame {
         }
     }
 
-    // ── 实际产出 ──
+    // ── 实际结果：成功几条产线（实际流程数由桥换算，只读展示）──
     RowLayout {
         Layout.fillWidth: true
         spacing: Theme.spacingSm
@@ -54,24 +54,33 @@ FDialogFrame {
         Text {
             Layout.preferredWidth: Math.round(96 * Theme.fontScale)
             horizontalAlignment: Text.AlignRight
-            text: qsTr("实际产出流程:")
+            text: qsTr("成功产线数:")
             color: Theme.textPrimary
             font.family: Theme.fontFamily
             font.pixelSize: Math.round(12 * Theme.fontScale)
         }
         FSpinBox {
-            Layout.preferredWidth: 160
+            objectName: "successBox"
+            Layout.preferredWidth: 120
             from: 0
-            to: 1000000
-            value: frame.inv ? frame.inv.actualRuns : 0
+            // 一条产线最多成功一次 → 上限就是本计划的尝试次数
+            to: frame.inv && frame.inv.attempts > 0 ? frame.inv.attempts : 1000000
+            value: frame.inv ? frame.inv.successes : 0
             onValueModified: if (frame.inv)
-                frame.inv.setActualRuns(value)
+                frame.inv.setSuccesses(value)
 
             HoverHandler {
                 id: runsHover
             }
             ToolTip.visible: runsHover.hovered
-            ToolTip.text: qsTr("按游戏里实际拿到的 T2 BPC 流程数填写；没成功就填 0")
+            ToolTip.text: qsTr("按游戏里实际成功的产线条数填写（上限 = 本计划尝试次数）；一条都没成功就填 0")
+        }
+
+        Text {
+            text: frame.inv ? qsTr("= %1 流程").arg(frame.inv.actualRuns) : ""
+            color: Theme.textSecondary
+            font.family: Theme.fontFamily
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         FButton {
@@ -83,7 +92,7 @@ FDialogFrame {
                 id: failHover
             }
             ToolTip.visible: failHover.hovered
-            ToolTip.text: qsTr("把实际产出置 0（材料与输入蓝图流程已被消耗，这是游戏事实）")
+            ToolTip.text: qsTr("把成功数置 0（材料与输入蓝图流程已被消耗，这是游戏事实）")
         }
 
         Item {

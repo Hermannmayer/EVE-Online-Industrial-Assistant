@@ -201,6 +201,14 @@ def _load_enrich_data(conn):
     need_map: dict[int, int] = {}
     for pid, par in conn.execute("SELECT id, COALESCE(parallels,1) FROM production_plans").fetchall():
         need_map[int(pid)] = max(int(par), 1)
+    # 各蓝图能覆盖几条并行产线 = 该行**份数**（一张蓝图只能进一个作业）—— 与
+    # plan_execution.blueprint_line_capacity 同一规则，界面「蓝图」列的 ✔/差N 按它比。
+    from services.plan_execution import blueprint_line_capacity
+
+    cap_map: dict[int, int] = {
+        int(bid): blueprint_line_capacity(quantity)
+        for bid, quantity in conn.execute("SELECT id, quantity FROM user_blueprints").fetchall()
+    }
     # 各蓝图的 ME/TE —— 逐线计算的等级来源（逐线只按绑定蓝图的等级算）
     bp_level: dict[int, tuple[int, int]] = {
         int(bid): (int(me or 0), int(te or 0))
@@ -213,6 +221,7 @@ def _load_enrich_data(conn):
         "binding_map": binding_map,
         "need_map": need_map,
         "bp_level": bp_level,
+        "cap_map": cap_map,
     }
 
 
@@ -243,6 +252,7 @@ def _enrich_rows(rows: list[dict], enrich: dict) -> list[dict]:
     binding_map = enrich["binding_map"]
     need_map = enrich["need_map"]
     bp_level = enrich["bp_level"]
+    cap_map = enrich["cap_map"]
     for row in rows:
         ptid = row.get("product_type_id")
         has_bp = bool(row.get("assigned_blueprint_id")) or any(
@@ -259,10 +269,14 @@ def _enrich_rows(rows: list[dict], enrich: dict) -> list[dict]:
                 bound = [row["assigned_blueprint_id"]]
             row["bound_blueprint_ids"] = list(bound) if bound else []
             row["need_blueprints"] = int(need_map.get(int(pid), 1))
+            # 覆盖条数按容量比（BPO 一条顶全部、BPC 行按份数），界面据此显示 ✔N/M 或 差N张
+            need_n = row["need_blueprints"]
+            row["bound_capacity"] = sum(min(int(cap_map.get(b, 0)), need_n) for b in row["bound_blueprint_ids"])
             row["line_levels"] = _line_levels(row["bound_blueprint_ids"], row["need_blueprints"], bp_level)
         else:
             row["bound_blueprint_ids"] = []
             row["need_blueprints"] = 1
+            row["bound_capacity"] = 0
             row["line_levels"] = []
 
     # 类别：优先按行存的 activity（同一张蓝图可能既有制造计划又有拷贝计划，

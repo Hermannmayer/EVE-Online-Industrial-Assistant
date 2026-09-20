@@ -12,6 +12,7 @@ import pytest
 from services import inventory_manager, plan_execution
 from services.plan_execution import (
     _auto_bind_blueprints,
+    _binding_shortfall,
     _split_bpc_consumption,
     bind_blueprint,
     bind_blueprints,
@@ -32,6 +33,7 @@ from services.plan_execution import (
     release_blueprint,
     remaining_seconds,
     reset_plan_for_reuse,
+    resync_plan_bindings,
     start_plan,
     start_plan_batch,
 )
@@ -438,10 +440,11 @@ class TestAutoBindBlueprints:
         assert _auto_bind_blueprints({"product_type_id": 2001, "runs": 2, "parallels": 1}) == []
 
     def test_bpo_plus_bpc_fills_parallels(self, user_env):
-        _insert_blueprint(user_env.db, 3001, is_bpo=True)
-        _insert_blueprint(user_env.db, 3001, is_bpo=False, me=5, runs=10)
+        """一张蓝图只能进一个作业 → 并行 2 条线，1 张 BPO 不够，用 BPC 补第 2 张。"""
+        bpo = _insert_blueprint(user_env.db, 3001, is_bpo=True)
+        bpc = _insert_blueprint(user_env.db, 3001, is_bpo=False, me=5, runs=10)
         picks = _auto_bind_blueprints({"product_type_id": 2001, "runs": 2, "parallels": 2})
-        assert len(picks) == 2
+        assert sorted(picks) == sorted([bpo, bpc])
 
 
 class TestEnsurePlanAutoBind:
@@ -1617,3 +1620,311 @@ class TestCompletedChildCleanup:
         with user_env.db.connect("user") as conn:
             left = conn.execute("SELECT COUNT(*) FROM plan_blueprint_bindings WHERE plan_id=?", (child,)).fetchone()[0]
         assert left == 0
+
+
+# ════════════════════════════════════════════════════════════════
+#  科研链路回归（研究提升等级 / 蓝图类型门 / 复用清回填）
+# ════════════════════════════════════════════════════════════════
+
+
+class TestResearchCompletion:
+    """ME/TE 研究完成 → 提升**绑定蓝图原本**的等级，且不把它当物品入库。
+
+    回归的缺陷：`complete_plan` 只认 `OUTPUT_BPC`（`OUTPUT_IMPROVED_BPO` 零消费方），
+    研究行掉进「普通成品入库」分支 —— 等级不提升（研究白做），还往 `inventory_items`
+    塞进「目标等级」件蓝图（幻影库存，蓝图不是制造品）。
+    """
+
+    def test_raises_bound_bpo_level_and_writes_no_item(self, user_env):
+        db = user_env.db
+        bp_id = _insert_blueprint(db, 3001, is_bpo=True, me=2, te=4)
+        plan_id = _insert_plan(
+            db,
+            activity="researching_material_efficiency",
+            runs=8,
+            parallels=1,
+            research_target_level=8,
+            product_type_id=3001,
+            deposit_hangar_id=1,
+            status="ready",
+        )
+        bind_blueprints(plan_id, [bp_id])
+
+        res = complete_plan({"id": plan_id})
+        assert res["ok"], res
+
+        with db.connect("user") as conn:
+            me, te = conn.execute("SELECT me_level, te_level FROM user_blueprints WHERE id=?", (bp_id,)).fetchone()
+            items = conn.execute("SELECT COUNT(*) FROM inventory_items WHERE hangar_id=1").fetchone()[0]
+        assert (me, te) == (8, 4)  # ME 提到目标等级；TE 不动
+        assert items == 0, "研究完成不该往物品库存写任何东西（曾经的幻影蓝图 bug）"
+
+    def test_never_downgrades(self, user_env):
+        """目标等级低于现有等级 → 保持不动（研究不能降级）。"""
+        db = user_env.db
+        bp_id = _insert_blueprint(db, 3001, is_bpo=True, me=10, te=20)
+        plan_id = _insert_plan(
+            db,
+            activity="researching_time_efficiency",
+            runs=5,
+            research_target_level=5,
+            product_type_id=3001,
+            deposit_hangar_id=1,
+            status="ready",
+        )
+        bind_blueprints(plan_id, [bp_id])
+        assert complete_plan({"id": plan_id})["ok"]
+
+        with db.connect("user") as conn:
+            te = conn.execute("SELECT te_level FROM user_blueprints WHERE id=?", (bp_id,)).fetchone()[0]
+        assert te == 20
+
+    def test_bpc_binding_does_not_change_level(self, user_env):
+        """绑的是拷贝（BPC）→ 等级不生效（游戏规则：基于拷贝不能再研究）。"""
+        db = user_env.db
+        bp_id = _insert_blueprint(db, 3001, is_bpo=False, me=0, te=0)
+        plan_id = _insert_plan(
+            db,
+            activity="researching_material_efficiency",
+            runs=8,
+            research_target_level=8,
+            product_type_id=3001,
+            deposit_hangar_id=1,
+            status="ready",
+        )
+        bind_blueprints(plan_id, [bp_id])
+        assert complete_plan({"id": plan_id})["ok"]
+
+        with db.connect("user") as conn:
+            me = conn.execute("SELECT me_level FROM user_blueprints WHERE id=?", (bp_id,)).fetchone()[0]
+        assert me == 0
+
+
+class TestBlueprintKindGate:
+    """启动时的蓝图类型门：拷贝/研究只能用 BPO，发明只能用 BPC。
+
+    回归的缺陷：这条规则只写在 `plan_blueprint_ready`（仅产线小助手调用），
+    `start_plan` 只查流程数不查类型 —— 拿 BPC 去建拷贝/研究计划照样能启动。
+    """
+
+    @staticmethod
+    def _start(plan_id: int) -> dict:
+        return start_plan({"id": plan_id}, mat_hangar_id=None, auto_bind=False)
+
+    def test_copying_rejects_bpc(self, user_env):
+        db = user_env.db
+        bp_id = _insert_blueprint(db, 3001, is_bpo=False, runs=10)
+        plan_id = _insert_plan(db, activity="copying", runs=2, parallels=1, status="pending")
+        bind_blueprints(plan_id, [bp_id])
+        assert get_plan_binding_state(plan_id)["bound"] == [bp_id], "绑定没落库，后面的断言没意义"
+        res = self._start(plan_id)
+        assert res["ok"] is False and res["code"] == "blueprint_kind", res
+
+    def test_research_rejects_bpc(self, user_env):
+        db = user_env.db
+        bp_id = _insert_blueprint(db, 3001, is_bpo=False, runs=10)
+        plan_id = _insert_plan(
+            db,
+            activity="researching_material_efficiency",
+            runs=5,
+            research_target_level=5,
+            status="pending",
+        )
+        bind_blueprints(plan_id, [bp_id])
+        res = self._start(plan_id)
+        assert res["ok"] is False and res["code"] == "blueprint_kind", res
+
+    def test_invention_rejects_bpo(self, user_env):
+        db = user_env.db
+        bp_id = _insert_blueprint(db, 3001, is_bpo=True, runs=10)
+        plan_id = _insert_plan(db, activity="invention", runs=2, parallels=1, status="pending")
+        bind_blueprints(plan_id, [bp_id])
+        res = self._start(plan_id)
+        assert res["ok"] is False and res["code"] == "blueprint_kind", res
+
+    def test_copying_without_binding_is_rejected(self, user_env):
+        """没绑输入蓝图 → 直接拒绝启动（游戏里拷贝必须先指定一张 BPO）。"""
+        plan_id = _insert_plan(user_env.db, activity="copying", runs=2, parallels=1, status="pending")
+        res = self._start(plan_id)
+        assert res["ok"] is False and res["code"] == "blueprint_missing", res
+
+    def test_research_without_binding_is_rejected(self, user_env):
+        plan_id = _insert_plan(
+            user_env.db,
+            activity="researching_material_efficiency",
+            runs=5,
+            research_target_level=5,
+            status="pending",
+        )
+        res = self._start(plan_id)
+        assert res["ok"] is False and res["code"] == "blueprint_missing", res
+
+    def test_invention_without_binding_is_rejected(self, user_env):
+        plan_id = _insert_plan(user_env.db, activity="invention", runs=2, parallels=1, status="pending")
+        res = self._start(plan_id)
+        assert res["ok"] is False and res["code"] == "blueprint_missing", res
+
+    def test_manufacturing_without_binding_still_starts(self, user_env):
+        """制造/反应保持旧的宽松语义（可以「先启动、后勾蓝图」补救）。"""
+        plan_id = _insert_plan(user_env.db, activity="manufacturing", runs=2, parallels=1, status="pending")
+        res = self._start(plan_id)
+        assert res["ok"] is True, res
+
+
+class TestResyncBindings:
+    """改流程 / 改并行后按新参数重新对齐蓝图绑定。
+
+    回归的缺陷：`ensure_plan_auto_bind` 只在**零绑定**时动手（建计划用），编辑路径只写
+    `runs/parallels` 不重绑 —— 绑 1 张的计划把并行改成 3 条、或把流程改到超过绑定蓝图的
+    可用流程，都要等启动才报「蓝图不足」。
+    """
+
+    def test_raising_parallels_binds_more(self, user_env):
+        """并行 1→2 且绑的是单张 BPO → 补第 2 张（一张蓝图只能进一个作业）。"""
+        db = user_env.db
+        first = _insert_blueprint(db, 3001, is_bpo=True, runs=10)
+        plan_id = _insert_plan(db, runs=2, parallels=1, status="pending")
+        bind_blueprints(plan_id, [first])
+        second = _insert_blueprint(db, 3001, is_bpo=True, runs=10)
+
+        with db.connect("user") as conn:
+            conn.execute("UPDATE production_plans SET parallels=2 WHERE id=?", (plan_id,))
+        assert resync_plan_bindings(plan_id) is True
+        assert sorted(get_plan_binding_state(plan_id)["bound"]) == sorted([first, second])
+
+    def test_stack_with_enough_copies_is_left_alone(self, user_env):
+        """BPC 行份数够覆盖新并行数 → 也不动（按容量比，不按行数比）。"""
+        db = user_env.db
+        stacked = _insert_blueprint(db, 3001, is_bpo=False, runs=30, quantity=3)
+        plan_id = _insert_plan(db, activity="invention", runs=10, parallels=1, status="pending")
+        bind_blueprints(plan_id, [stacked])
+
+        with db.connect("user") as conn:
+            conn.execute("UPDATE production_plans SET parallels=3 WHERE id=?", (plan_id,))
+        assert resync_plan_bindings(plan_id) is False
+
+    def test_raising_runs_swaps_to_a_long_enough_blueprint(self, user_env):
+        db = user_env.db
+        short = _insert_blueprint(db, 3001, is_bpo=False, runs=5)
+        plan_id = _insert_plan(db, runs=2, parallels=1, status="pending")
+        bind_blueprints(plan_id, [short])
+        long_enough = _insert_blueprint(db, 3001, is_bpo=False, runs=50)
+
+        with db.connect("user") as conn:
+            conn.execute("UPDATE production_plans SET runs=20 WHERE id=?", (plan_id,))
+        assert resync_plan_bindings(plan_id) is True
+        assert get_plan_binding_state(plan_id)["bound"] == [long_enough]
+
+    def test_valid_bindings_are_left_alone(self, user_env):
+        """现有绑定够用 → 一根不动（不打扰手工选择）。"""
+        db = user_env.db
+        bp_id = _insert_blueprint(db, 3001, is_bpo=True, runs=10)
+        plan_id = _insert_plan(db, runs=2, parallels=1, status="pending")
+        bind_blueprints(plan_id, [bp_id])
+        assert resync_plan_bindings(plan_id) is False
+        assert get_plan_binding_state(plan_id)["bound"] == [bp_id]
+
+    def test_parallel_invention_binds_one_blueprint_per_line(self, user_env):
+        """并行发明 N 条线 → 需要 N 张输入 BPC（一张蓝图不能同时进两个作业）。
+
+        回归的缺陷：自动绑定曾把发明当成「只需一张」（只对拷贝/研究成立），于是并行 3 条线
+        只绑 1 张，启动时 `_binding_shortfall` 反倒报「还差 2 张」。
+        """
+        db = user_env.db
+        first = _insert_blueprint(db, 3001, is_bpo=False, runs=30)
+        plan_id = _insert_plan(db, activity="invention", runs=10, parallels=2, status="pending")
+        # 库存只有 1 张 → 只能绑到 1 张
+        assert _auto_bind_blueprints(_get_plan(db, plan_id)) == [first]
+
+        second = _insert_blueprint(db, 3001, is_bpo=False, runs=30)
+        assert sorted(_auto_bind_blueprints(_get_plan(db, plan_id))) == sorted([first, second])
+
+    def test_raising_parallels_on_invention_binds_more(self, user_env):
+        """并行数从 1 改成 2 的发明计划 → resync 补上第 2 张输入 BPC。"""
+        db = user_env.db
+        first = _insert_blueprint(db, 3001, is_bpo=False, runs=30)
+        plan_id = _insert_plan(db, activity="invention", runs=10, parallels=1, status="pending")
+        bind_blueprints(plan_id, [first])
+        second = _insert_blueprint(db, 3001, is_bpo=False, runs=30)
+
+        with db.connect("user") as conn:
+            conn.execute("UPDATE production_plans SET parallels=2 WHERE id=?", (plan_id,))
+        assert resync_plan_bindings(plan_id) is True
+        assert sorted(get_plan_binding_state(plan_id)["bound"]) == sorted([first, second])
+
+
+class TestBindingLineCapacity:
+    """覆盖条数按**容量**算：BPO 一条顶全部，BPC 一行按**份数**顶。
+
+    回归的场景：剪贴板全量导入会把同规格 BPC 合并成一行（quantity=N）。按行数比的话，
+    并行 3 条线的计划只绑到 1 行就被判成「蓝图不足」，实际那行有 3 份各自可用。
+    """
+
+    def test_stacked_bpc_covers_multiple_lines(self, user_env):
+        db = user_env.db
+        plan_id = _insert_plan(db, activity="invention", runs=10, parallels=3, status="pending")
+        stacked = _insert_blueprint(db, 3001, is_bpo=False, runs=30, quantity=3)  # 一行三份
+
+        assert _auto_bind_blueprints(_get_plan(db, plan_id)) == [stacked]
+        with db.connect("user") as conn:
+            assert _binding_shortfall(conn, [stacked], parallels=3, runs=10) is None
+
+    def test_single_copy_does_not_cover_three_lines(self, user_env):
+        db = user_env.db
+        one = _insert_blueprint(db, 3001, is_bpo=False, runs=30, quantity=1)
+        with db.connect("user") as conn:
+            msg = _binding_shortfall(conn, [one], parallels=3, runs=10)
+        assert msg is not None and "2" in msg
+
+    def test_bpo_row_covers_one_line_per_copy(self, user_env):
+        """一张蓝图只能进一个作业 → 单张 BPO（份数 1）只顶 1 条线，并行 4 条不够。"""
+        db = user_env.db
+        bpo = _insert_blueprint(db, 3001, is_bpo=True, runs=10)
+        with db.connect("user") as conn:
+            assert _binding_shortfall(conn, [bpo], parallels=4, runs=2) is not None
+
+    def test_capacity_is_by_quantity_not_blueprint_kind(self, user_env):
+        """份数决定条数，与 BPO/BPC 无关：两个 BPO 副本合成一行也能供 2 条线。"""
+        db = user_env.db
+        stacked_bpo = _insert_blueprint(db, 3001, is_bpo=True, runs=10, quantity=2)
+        with db.connect("user") as conn:
+            assert _binding_shortfall(conn, [stacked_bpo], parallels=2, runs=2) is None
+
+    def test_consumption_charges_every_line(self, user_env):
+        """完成时按产线条数消耗：3 条线 × 每线 10 流程 = 30 流程，从 3×30 的堆里扣。"""
+        db = user_env.db
+        stacked = _insert_blueprint(db, 3001, is_bpo=False, runs=30, quantity=3)
+        plan_id = _insert_plan(
+            db,
+            activity="invention",
+            runs=10,
+            parallels=3,
+            deposit_hangar_id=1,
+            status="in_progress",
+        )
+        bind_blueprints(plan_id, [stacked])
+
+        res = complete_plan({"id": plan_id}, actual_output_runs=15, actual_bpc_count=1)
+        assert res["ok"], res
+        with db.connect("user") as conn:
+            left = conn.execute("SELECT quantity, runs FROM user_blueprints WHERE id=?", (stacked,)).fetchone()
+        assert int(left[0]) * int(left[1]) == 60  # 90 - 30
+
+
+class TestResetClearsOutcome:
+    """复用计划要清 `actual_output_runs`。
+
+    回归的缺陷：不清它 → `_is_pending_invention` 认为已回填过，复用的第二轮不再弹
+    回填窗（`complete_plan` 还会拿上一轮的旧值当本轮产出）。
+    """
+
+    def test_reset_clears_actual_output_runs(self, user_env):
+        db = user_env.db
+        plan_id = _insert_plan(db, activity="invention", runs=2, parallels=1, status="completed")
+        with db.connect("user") as conn:
+            conn.execute("UPDATE production_plans SET actual_output_runs=7 WHERE id=?", (plan_id,))
+
+        res = reset_plan_for_reuse(plan_id)
+
+        assert res["ok"], res
+        assert _get_plan(db, plan_id)["actual_output_runs"] is None

@@ -61,7 +61,8 @@ Item {
                 objectName: "runsBox"
                 Layout.preferredWidth: Math.round(88 * Theme.fontScale)
                 from: 1
-                to: 99999
+                // 研究行的 runs 就是目标等级，上限走游戏规则（ME 10 / TE 20，见桥的 runsMax）
+                to: root.dlg ? root.dlg.runsMax : 99999
                 value: root.dlg ? root.dlg.runs : 1
                 onValueModified: if (root.dlg)
                     root.dlg.setRuns(value)

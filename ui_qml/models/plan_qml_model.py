@@ -33,7 +33,7 @@ from PySide6.QtGui import QColor
 from ui_qml.icon_cache import icon_url as _png_url
 from ui_qml.icon_provider import PROVIDER_ID
 from ui_qml.icons import svg_path
-from ui_qml.models.industry_models import PlanTableModel
+from ui_qml.models.industry_models import PlanTableModel, bound_line_capacity
 from ui_qml.models.plan_table_constants import (
     COL_BLUEPRINT,
     COL_CATEGORY,
@@ -220,9 +220,8 @@ class PlanQmlModel(PlanTableModel):
                     return _token("ACCENT_RED")
                 return _token("TEXT_SECONDARY")
         if c == COL_BLUEPRINT and (p.get("status") or "") not in ("completed", "done"):
-            # 蓝图绑定不足：标红提示「差 N 张」
-            bound = p.get("bound_blueprint_ids") or []
-            if len(bound) < int(p.get("need_blueprints") or 1):
+            # 蓝图绑定不足：标红提示「差 N 张」。按**容量**比（BPO 顶全部、BPC 行按份数）
+            if bound_line_capacity(p) < int(p.get("need_blueprints") or 1):
                 return _token("ACCENT_RED")
         return ""
 

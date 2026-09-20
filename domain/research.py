@@ -102,6 +102,37 @@ def decryptor_labels() -> list[str]:
 
 
 # ═══════════════════════════════════════════════════════════
+#  研究等级上限
+# ═══════════════════════════════════════════════════════════
+
+#: 材料效率：每张蓝图原本最多 10 级，每级 −1% 材料需求。
+MAX_ME_LEVEL = 10
+#: 时间效率：每张原本最多 10 次研究、每次 −2% 制造时间。本仓把 TE 存成 0-20 的百分比
+#: （`domain.formulas.TE_MULT_PER_LEVEL = 0.01`），所以上限写 20，与游戏等价。
+MAX_TE_LEVEL = 20
+
+
+def research_level_cap(activity: str) -> int | None:
+    """该活动的目标等级上限；非研究活动 → None（不限制）。"""
+    if activity == ACTIVITY_RESEARCH_ME:
+        return MAX_ME_LEVEL
+    if activity == ACTIVITY_RESEARCH_TE:
+        return MAX_TE_LEVEL
+    return None
+
+
+def clamp_research_target(activity: str, level: int) -> int:
+    """目标等级夹进 [1, 上限]；非研究活动只保证 ≥ 1（与调用方原有的 max(1, …) 同义）。
+
+    来源：`docs/eve_wiki_knowledge_base.md`「材料效率研究」「时间效率研究」
+    （CCP 支持文章）—— 研究只能作用于蓝图原本，且各有限级。
+    """
+    value = max(1, int(level or 1))
+    cap = research_level_cap(activity)
+    return min(value, cap) if cap is not None else value
+
+
+# ═══════════════════════════════════════════════════════════
 #  发明成功率
 # ═══════════════════════════════════════════════════════════
 

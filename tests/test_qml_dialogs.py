@@ -375,7 +375,14 @@ def invention_factory(qapp):
     from ui_qml.bridge.invention_outcome_bridge import InventionOutcomeQmlDialog
 
     return lambda **kw: InventionOutcomeQmlDialog(
-        **{"plan_name": "渡鸦级", "expected_runs": 10, "attempts": 3, "runs_per_bpc": 2, **kw}
+        **{
+            "plan_name": "渡鸦级",
+            "expected_runs": 10,
+            "expected_bpc": 3,
+            "attempts": 5,
+            "runs_per_bpc": 2,
+            **kw,
+        }
     )
 
 
@@ -392,19 +399,27 @@ def complete_plans_factory(qapp, monkeypatch):
 
 
 def test_invention_hint_follows_the_value(invention_factory):
-    """提示三种状态：失败 / 与期望差太多 / 正常 —— 与 Widgets 版同一判据。"""
+    """提示三种状态：失败 / 与期望差太多 / 正常 —— 与 Widgets 版同一判据。
+
+    回填口径是**成功产线数**，实际流程数 = 成功数 × 每张流程（桥里换算）。
+    """
     dialog = invention_factory()
     try:
         bridge = dialog.bridge
-        assert bridge.actualRuns == 10
-        assert "成功后产出 10 流程" in bridge.hintText
+        assert bridge.successes == 3  # 预填期望张数
+        assert bridge.actualRuns == 6  # 3 张 × 每张 2 流程
+        assert "成功后产出 3 张蓝图拷贝" in bridge.hintText
 
         bridge.markFailed()
+        assert bridge.successes == 0
         assert bridge.actualRuns == 0
         assert "发明失败" in bridge.hintText
 
-        bridge.setActualRuns(2)  # 与期望 10 差 8 > max(1, 10//5)
+        bridge.setSuccesses(1)  # 与期望 3 差 2 > max(1, 3//5)
         assert "相差较大" in bridge.hintText
+
+        bridge.setSuccesses(99)  # 一条产线最多成功一次 → 夹到尝试次数
+        assert bridge.successes == 5
     finally:
         dialog.deleteLater()
 
@@ -413,9 +428,9 @@ def test_invention_outcome_is_none_until_accepted(invention_factory):
     dialog = invention_factory()
     try:
         assert dialog.outcome() is None
-        dialog.bridge.setActualRuns(4)
+        dialog.bridge.setSuccesses(2)
         dialog.bridge.accept()
-        assert dialog.outcome() == 4
+        assert dialog.outcome() == (4, 2)  # (总流程, 张数) = 2 张 × 每张 2 流程
     finally:
         dialog.deleteLater()
 
