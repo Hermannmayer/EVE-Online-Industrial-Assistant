@@ -13,15 +13,15 @@ Item {
     id: page
 
     // 与 Widgets 版 _COLUMNS 的宽度逐列对齐
-    readonly property var columnWidths: [50, 160, 70, 110, 120, 120, 80]
+    readonly property var columnWidths: [50, 160, 70, 110, 120, 120, 80, 120]
     /* 列宽：provider / delegate / 点击区必须同口径。 */
     function colWidth(col) {
         return page.columnWidths[col]
     }
 
-    readonly property var columnTitles: ["图标", "名字", "数量", "单价", "卖价合计", "买价合计", "体积 m³"]
+    readonly property var columnTitles: ["图标", "名字", "数量", "单价", "卖价合计", "买价合计", "体积 m³", "精炼价值"]
     // 可排序列 → 模型字段（与 _SORT_KEYS 对齐；图标列不可排）
-    readonly property var sortKeys: [null, "name", "qty", "unit_price", "sell_total", "buy_total", "volume"]
+    readonly property var sortKeys: [null, "name", "qty", "unit_price", "sell_total", "buy_total", "volume", "refine_value"]
 
     property int selectedRow: -1
     property int sortColumn: -1
@@ -36,7 +36,17 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // ── 导入栏 ──
+        /* ── 工具栏（两行三组）──
+         *
+         * 两行按**功能**切，不按控件多少切：
+         *   行1 = 数据进出（导入 / 清空）+ 取价口径（中心 / 折扣 / 更新价格）
+         *   行2 = 精炼口径（人物 / 场地）—— 只影响表格的「精炼价值」列
+         *
+         * 早先这里是「导入栏 + 精炼栏」，控件按历史顺序堆着：卖价/买价的选择与底部两个
+         * 「…到剪贴板」按钮重复；「刷新」与底部的「更新价格」是同一个 Slot，两处各有一个；
+         * 「气云解压率」是个被丢掉的值（全库没有气云压缩逻辑，压缩比固定 10:1 也是物品
+         * 固有属性，不是可调参数），「残余也精炼掉」同样从来没人读。
+         */
         RowLayout {
             Layout.fillWidth: true
             Layout.leftMargin: Theme.spacingSm
@@ -44,24 +54,22 @@ Item {
             Layout.topMargin: 6
             spacing: Theme.spacingSm
 
-            Text {
-                text: qsTr("价格取自")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fs(12)
-            }
-            FComboBox {
-                id: priceSource
-                implicitWidth: 92
-                model: bridge ? bridge.priceTypes : []
-                currentIndex: 0
-                onActivated: bridge.priceType = ["sell", "buy", "avg"][currentIndex]
-            }
-
             FButton {
                 text: qsTr("粘贴剪贴板")
                 enabled: bridge && !bridge.busy
                 onClicked: bridge.paste()
+            }
+
+            //: 一键清空当前估价（与「粘贴」互为反操作，放一起）。清空是幂等的，
+            //: 不弹二次确认 —— 用户要的就是「一键」。
+            FButton {
+                objectName: "estimateClearButton"
+                text: qsTr("清空")
+                enabled: bridge && bridge.summary.rowCount > 0
+                onClicked: {
+                    bridge.clearAll()
+                    page.selectedRow = -1
+                }
             }
 
             Text {
@@ -71,10 +79,26 @@ Item {
                 font.pixelSize: Theme.fs(12)
                 HoverHandler { id: helpHover }
                 ToolTip.visible: helpHover.hovered
-                ToolTip.text: qsTr("从游戏内复制物品列表（Ctrl+C）\n然后点击「粘贴剪贴板」即可自动估价")
+                ToolTip.text: qsTr("从游戏内复制物品列表（Ctrl+C）\n然后点击「粘贴剪贴板」即可自动估价\n「精炼价值」列按下方人物与场地的技能/设施算")
             }
 
             Item { Layout.fillWidth: true }
+
+            Text {
+                text: qsTr("价格中心")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fs(12)
+            }
+            FComboBox {
+                id: hubCombo
+                implicitWidth: 132
+                textRole: "label"
+                valueRole: "value"
+                model: hubModel
+                onActivated: if (bridge)
+                    bridge.hub = currentValue
+            }
 
             Text {
                 text: qsTr("折扣")
@@ -92,72 +116,50 @@ Item {
                 value: bridge ? bridge.discount : 1.0
                 onValueModified: bridge.discount = value
             }
+
+            FButton {
+                text: qsTr("更新价格")
+                enabled: bridge && !bridge.busy && bridge.summary.rowCount > 0
+                onClicked: bridge.refreshPrices()
+            }
         }
 
-        // ── 精炼栏 ──
+        // ── 工具栏第二行：精炼口径 ──
         RowLayout {
             Layout.fillWidth: true
             Layout.leftMargin: Theme.spacingSm
             Layout.rightMargin: Theme.spacingSm
-            Layout.topMargin: 2
             Layout.bottomMargin: 2
             spacing: Theme.spacingSm
 
-            FButton {
-                text: qsTr("一键精炼")
-                enabled: bridge && !bridge.busy && bridge.summary.rowCount > 0
-                onClicked: bridge.refine(refineMode.currentText, skillPreset.currentText,
-                                         Number(gasRate.text || 0), residualCheck.checked)
+            Text {
+                text: qsTr("人物")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fs(12)
+            }
+            /* 真实人物（`data/char_config.json`），不再是「技能全5 / 技能全0」两档死值 ——
+             * 精炼产率吃的是人物的提炼学概论/提炼效率理论/矿石专精等级。 */
+            FComboBox {
+                id: charCombo
+                implicitWidth: 140
+                model: bridge ? bridge.characters : []
+                onActivated: if (bridge)
+                    bridge.character = currentText
             }
 
             Text {
-                text: qsTr("模式")
+                text: qsTr("精炼场地")
                 color: Theme.textSecondary
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fs(12)
             }
             FComboBox {
-                id: refineMode
-                implicitWidth: 80
-                model: bridge ? bridge.refineModes : []
-                currentIndex: 0
-            }
-
-            Text {
-                text: qsTr("技能")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fs(12)
-            }
-            FComboBox {
-                id: skillPreset
+                id: refineModeCombo
                 implicitWidth: 104
-                model: bridge ? bridge.skillPresets : []
-                currentIndex: 0
-            }
-
-            Text {
-                text: qsTr("气云解压率(%)")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fs(12)
-            }
-            FTextField {
-                id: gasRate
-                implicitWidth: 72
-                text: "0"
-                horizontalAlignment: TextInput.AlignRight
-            }
-
-            FButton {
-                text: qsTr("刷新")
-                enabled: bridge && !bridge.busy
-                onClicked: bridge.refreshPrices()
-            }
-
-            FCheckBox {
-                id: residualCheck
-                text: qsTr("残余也精炼掉")
+                model: bridge ? bridge.refineModes : []
+                onActivated: if (bridge)
+                    bridge.refineMode = currentText
             }
 
             Item { Layout.fillWidth: true }
@@ -276,6 +278,7 @@ Item {
                                 if (column === 4) return model.sellTotalText
                                 if (column === 5) return model.buyTotalText
                                 if (column === 6) return model.volumeText
+                                if (column === 7) return model.refineValueText
                                 return ""
                             }
                             color: column === 4 ? Theme.accentGreen
@@ -341,9 +344,9 @@ Item {
             Layout.leftMargin: Theme.spacingSm
             Layout.rightMargin: Theme.spacingSm
             Layout.bottomMargin: Theme.spacingSm
-            // 高度按右侧按钮网格算：3 行 32px + 2 个间距 + 卡片内边距，
-            // 给少了会把「添加到机库 / 更新价格」裁掉（之前写死 96 就是这样）。
-            Layout.preferredHeight: 3 * 32 + 2 * Theme.spacingXs + 2 * Theme.spacingMd
+            // 高度按右侧按钮网格算：2 行 32px + 1 个间距 + 卡片内边距，
+            // 给少了会把「添加到机库」裁掉（之前写死 96 就是这样）。
+            Layout.preferredHeight: 2 * 32 + Theme.spacingXs + 2 * Theme.spacingMd
             interactive: false
 
             RowLayout {
@@ -454,23 +457,13 @@ Item {
                         Layout.preferredWidth: actionGrid.cellWidth
                         onClicked: bridge.addToHangar(hangarCombo.currentValue)
                     }
-
-                    // 占位，让「更新价格」落在右列（与上一行按钮左边缘对齐）
-                    Item {
-                        Layout.preferredWidth: actionGrid.cellWidth
-                        Layout.preferredHeight: 1
-                    }
-                    FButton {
-                        text: qsTr("更新价格")
-                        Layout.preferredWidth: actionGrid.cellWidth
-                        onClicked: bridge.refreshPrices()
-                    }
                 }
             }
         }
     }
 
     ListModel { id: hangarModel }
+    ListModel { id: hubModel }
 
     function _reloadHangars() {
         hangarModel.clear()
@@ -481,7 +474,39 @@ Item {
             hangarModel.append(list[i])
     }
 
-    Component.onCompleted: _reloadHangars()
+    function _reloadHubs() {
+        hubModel.clear()
+        if (!bridge)
+            return
+        const list = bridge.hubOptions()
+        let index = 0
+        for (let i = 0; i < list.length; ++i) {
+            hubModel.append(list[i])
+            if (list[i].value === bridge.hub)
+                index = i
+        }
+        hubCombo.currentIndex = index
+    }
+
+    /* 人物下拉：真实角色名列表 + 默认选中 `char_config.json` 的 current。
+     * 这里只是把初值同步到下拉，之后以控件自己的选择为准（与 hub 同理）。 */
+    function _syncCharacter() {
+        if (!bridge)
+            return
+        const list = bridge.characters
+        for (let i = 0; i < list.length; ++i) {
+            if (list[i] === bridge.character) {
+                charCombo.currentIndex = i
+                return
+            }
+        }
+    }
+
+    Component.onCompleted: {
+        _reloadHangars()
+        _reloadHubs()
+        _syncCharacter()
+    }
 
     // ── 右键菜单 ──
     // 用 FMenu 而非原生 Menu：Qt 官方 Fluent 样式的菜单表面是中性灰图集、
@@ -594,95 +619,8 @@ Item {
         }
     }
 
-    // ── 精炼结果 ──
-    FDialog {
-        id: refineDialog
-        title: qsTr("精炼产出估算")
-        standardButtons: Dialog.Close
-        implicitWidth: 640
-        implicitHeight: 460
-
-        // 不能叫 result —— Dialog 自带 FINAL 的 result（done() 的结果码）
-        property var refineData: ({})
-
-        ColumnLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: Theme.spacingSm
-
-            Text {
-                Layout.fillWidth: true
-                text: {
-                    const r = refineDialog.refineData
-                    if (!r || r.total_input_value === undefined)
-                        return ""
-                    return qsTr("原材料价值: %1 ISK　|　精炼产物价值: %2 ISK　|　利润: %3 ISK")
-                        .arg(Math.round(r.total_input_value).toLocaleString(Qt.locale(), 'f', 0))
-                        .arg(Math.round(r.total_output_value).toLocaleString(Qt.locale(), 'f', 0))
-                        .arg(Math.round(r.total_profit).toLocaleString(Qt.locale(), 'f', 0))
-                }
-                color: Theme.textPrimary
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fs(13)
-                wrapMode: Text.WordWrap
-            }
-
-            ListView {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-                model: refineDialog.refineData.items || []
-                spacing: Theme.spacingSm
-
-                delegate: ColumnLayout {
-                    required property var modelData
-                    width: ListView.view.width
-                    spacing: 2
-
-                    Text {
-                        text: qsTr("%1 ×%2　产率 %3%　精炼前 %4　精炼后 %5")
-                            .arg(modelData.input_name)
-                            .arg(modelData.input_qty)
-                            .arg((modelData.yield_rate * 100).toFixed(1))
-                            .arg(Math.round(modelData.input_value).toLocaleString(Qt.locale(), 'f', 0))
-                            .arg(Math.round(modelData.output_value).toLocaleString(Qt.locale(), 'f', 0))
-                        color: Theme.textPrimary
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fs(12)
-                    }
-                    Repeater {
-                        model: modelData.output || []
-                        delegate: Text {
-                            required property var modelData
-                            text: qsTr("　• %1　%2　@ %3")
-                                .arg(modelData.name)
-                                .arg(modelData.qty.toFixed(1))
-                                .arg(modelData.price.toLocaleString(Qt.locale(), 'f', 2))
-                            color: Theme.textSecondary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fs(11)
-                        }
-                    }
-                }
-            }
-
-            Text {
-                Layout.fillWidth: true
-                visible: (refineDialog.refineData.errors || []).length > 0
-                text: qsTr("警告: %1 项计算失败").arg((refineDialog.refineData.errors || []).length)
-                color: Theme.accentRed
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fs(11)
-            }
-        }
-    }
-
     Connections {
         target: bridge
-        function onRefineResult(result) {
-            refineDialog.refineData = result
-            refineDialog.open()
-        }
         function onStatusChanged(message) {
             if (shell)
                 shell.setStatus(message)

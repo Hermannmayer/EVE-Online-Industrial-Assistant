@@ -30,6 +30,7 @@ EXPECTED_ROLES = {
     "buyTotalText",
     "volumeText",
     "rowIndex",
+    "refineValueText",
 }
 
 
