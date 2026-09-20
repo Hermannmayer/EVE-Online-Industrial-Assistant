@@ -19,7 +19,9 @@ TRADE_HUB_SYSTEM_IDS: dict[str, int] = {
     "Amarr": 30002187,
     "Dodixie": 30002659,
     "Rens": 30002510,
-    "Hek": 30002070,
+    #: 30002070 是 **Uriok**（SCI 0.0014），不是 Hek —— 写错会让「Hek 的 SCI」取到别的
+    #: 星系（实测差 ~50 倍）。真值经 `reference.db.solar_system` 核对：Hek = 30002053。
+    "Hek": 30002053,
 }
 
 # 系统成本指数(SCI)兜底值：星系未知或库中无该星系数据时使用（≈吉他制造 SCI 水平）。
