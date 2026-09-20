@@ -13,9 +13,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from core.paths import market_db_path, reference_db_path
+
 pytestmark = pytest.mark.fast
+
+# 需要**真实数据库**：本测试的意义就是「两条取价路径在真库上给出同一结果」，桩上比对测不出
+# 差异（见文件头）。而 `database/` 是 gitignored、CI 上不生成这些库 —— 缺库时整模块 skip，
+# 否则 CI 的测试 job 会因为这 4 条一直红（2026-09-20 查实：CI 连续多次 failure 的成因之一）。
+if not (Path(market_db_path()).is_file() and Path(reference_db_path()).is_file()):
+    pytest.skip("需要真实 database/（market.db + reference.db）；CI 上不生成这些库", allow_module_level=True)
 
 
 @pytest.fixture(scope="module")
