@@ -109,16 +109,21 @@
 
 ## 产线启动小助手（独立工具窗）
 
-`ui_qml/views/industry/production_launcher.py`。区域编号用 **L1–L4**，与上面的窗口级 1–7、页面级 8–12 区分开，避免歧义。
+`ui_qml/views/industry/production_launcher.py`（控制器）+ `ui_qml/qml/pages/LauncherWindow.qml`（**整窗 QML**，批次 7.4 起）。
+区域编号用 **L1–L4**，与上面的窗口级 1–7、页面级 8–12 区分开，避免歧义。
+下面「代码定位」给的是**当前 QML 的 `objectName`**（老文档里的 `#launcher_toolbar` 那套是 Widgets 版遗留，已随该版本删除）。
 
-| # | 中文名 | 代码定位 | 说明 |
+| # | 中文名 | 代码定位（QML `objectName`） | 说明 |
 |---|---|---|---|
-| L1 | 工具条 | `#launcher_toolbar`（`QFrame`） | 线型筛选 `#line_filter` + 人物筛选 `#char_filter` + 过滤指示 `#filter_summary` + 置顶 `#pin_btn`；固定单行 |
-| L2 | 占用面板 | `#occ_header` + `#occ_scroll` | 标题行（折叠钮 `#occ_disc` + `#occ_title` + `#occ_summary`）+ 每角色一行 `CapacitySlotBar`；≤4 行不滚动，超出内部滚动 |
-| L3 | 产线列表 | `#launcher_list` | 主工作区（`stretch=1`）；行卡片 `#plan_row` 内含 `#row_indent` / `#row_title` / `#status_badge` / `#row_meta` / `#row_duration` / 动作槽（四个按钮互斥显隐、槽宽固定，见下「动作槽位」） |
-| L4 | 详情/执行面板 | `#launcher_bottom` | 未选中为紧凑态 `#bottom_hint`；选中后展开 `#detail_summary` + `#executor_combo` + `#btn_launch` + `#feedback`（无内容时不占位） |
+| L1 | 工具条 | `toolbar` | 蓝图类别筛选 + 人物筛选两个下拉 + 过滤摘要 + 置顶；固定单行 |
+| L2 | 占用面板 | `occPanel`（标题行是 QML id `occHeader`，无 objectName） | 标题行（折叠钮 + 标题 + 摘要）+ 每角色一行 `FCapacityRow`；≤4 行不滚动，超出内部滚动 |
+| L3 | 产线列表 | `listArea` | 主工作区；行卡片内容行是 `rowCardRow`（图标 / 名称+徽章+副标题 / 时长+动作槽），点击区 `launcherClickArea`，右键菜单 `rowMenu` |
+| L4 | 详情/执行面板 | `bottomPanel` | 未选中为紧凑提示；选中后展开参数摘要 + 执行人下拉 + 主按钮 + 反馈 |
 
-L1 的 `#launcher_toolbar` **必须是 `QFrame`**（不能是裸布局），否则 QSS 的 id 选择器命中不到。
+**窗口宽度**：`width` 默认 520、`minimumWidth` 430（两个都 × `Theme.fontScale`）。取的是**实测的内容最小宽**，
+不是「好看」的宽 —— 这窗常与游戏同屏（L1 有「置顶」），宽了就挡游戏。下限由 L2 的容量方块行定（≈420），
+L1 只需 ≈350；默认 520 是「行卡片的名称 / 副标题还读得全」的折中。改尺寸相关值（方块、下拉宽、字号）后跑
+`tests/test_production_launcher.py::test_narrowest_window_clips_nothing`（按渲染几何兜「控件被裁」）。
 
 **`#line_filter` 按蓝图类别过滤，不是按产线容量线型**：选项为 全部 / 制造 / 复制 / 发明 / 反应，
 名称取自 `services.terminology.term.activity()`（CCP 官方中文），data 存 `frozenset[str] | None`。

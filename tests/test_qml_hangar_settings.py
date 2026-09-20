@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import cast
 
+from tests.qml_click import spin
 from ui_qml.bridge import hangar_settings_bridge as hsb
 from ui_qml.bridge.hangar_settings_bridge import HangarSettingsBridge
 
@@ -669,19 +670,51 @@ def test_accept_clears_a_previous_error(qapp, monkeypatch):
 
 
 # ════════════════════════════════════════════════════════════════
+#  布局护栏
 # ════════════════════════════════════════════════════════════════
-#  布局护栏（静态读数）
-# ════════════════════════════════════════════════════════════════
 
 
-def test_config_tab_left_column_pins_all_three_widths():
-    """「机库配置」页左栏宽度必须 preferred / minimum / maximum **三个都钉死**。
+def _find(item, name: str):
+    if item.objectName() == name:
+        return item
+    for ch in item.childItems():
+        got = _find(ch, name)
+        if got is not None:
+            return got
+    return None
 
-    只写 `Layout.preferredWidth` 时，右侧编辑区会被挤成几个像素宽 ——
-    看起来就像「右边栏整个没了」，而业务断言全绿、也不报任何 QML 警告，
-    只有量布局才看得出来。同一坑 `LauncherWindow.qml` 的动作槽已经踩过并写了注释，
-    这里是回归护栏：读源码即可，因为失败形态是布局塌缩，没有可断言的业务量。
+
+def _walk(item, depth: int = 0, limit: int = 8):
+    yield item, depth
+    if depth >= limit:
+        return
+    for ch in item.childItems():
+        yield from _walk(ch, depth + 1, limit)
+
+
+def _rect(item, root) -> tuple[float, float, float, float]:
+    """控件相对根元素的 (x, y, w, h)。"""
+    x, y = item.x(), item.y()
+    p = item.parentItem()
+    while p is not None and p is not root:
+        x += p.x()
+        y += p.y()
+        p = p.parentItem()
+    return x, y, item.width(), item.height()
+
+
+def test_left_column_never_overlaps_the_editor(qapp, monkeypatch):
+    """左栏宽度必须钉死，**且实测两栏不重叠、左栏内容不溢出**。
+
+    静态那半（读源码钉住三段宽度）：只写 `Layout.preferredWidth` 时右侧编辑区会被挤成
+    几个像素宽 —— 看起来就像「右边栏整个没了」，业务断言全绿、也不报 QML 警告。
+
+    动态这半（量真实几何）：宽度钉死成 240 时**一行三个 `FButton` 装不下** ——
+    `FButton.implicitWidth` 的下限写死 88（与文字无关），三个 = 272，超出的 32px 直接
+    压到右栏上，列表盒子也被撑到 272（用户 2026-09-20 报的「机库设置有重叠」）。
+    所以 paneWidth 取 280，按钮行用 `Flow`（装不下就折行，不溢出）。
     """
+    from ui_qml.bridge.hangar_settings_bridge import HangarSettingsQmlDialog
     from ui_qml.host import QML_ROOT
 
     text = (QML_ROOT / "dialogs" / "HangarSettingsDialog.qml").read_text(encoding="utf-8")
@@ -691,3 +724,27 @@ def test_config_tab_left_column_pins_all_three_widths():
         "Layout.maximumWidth: paneWidth",
     ):
         assert line in text, f"左栏没钉死宽度（缺 `{line}`）——右侧编辑区会被挤没"
+    assert "Flow {" in text, "左栏按钮行必须是 Flow：单行装不下要折行，不能溢出到右栏"
+
+    _install(monkeypatch, hangars=_two_hangars())
+    dlg = HangarSettingsQmlDialog(None)
+    dlg.resize(860, 620)  # = `HangarSettingsQmlDialog` 打开时的 size
+    dlg.show()
+    spin(200)
+    root = dlg._host.rootObject()
+    left = _find(root, "hangarPane")
+    right = _find(root, "editorPane")
+    assert left is not None and right is not None, "两栏的 objectName 不见了（hangarPane / editorPane）"
+
+    lx, _, lw, _ = _rect(left, root)
+    rx, _, _, _ = _rect(right, root)
+    assert lx + lw <= rx + 0.5, f"左栏右缘 {lx + lw:.0f} 压到右栏（起点 {rx:.0f}）"
+
+    worst = max(
+        #: 只看左栏的**直接子项**（按钮行 + 列表盒子）：`FButton` 内部有个悬停/按下用的
+        #: 装饰矩形，故意比按钮大 32px，逐层扫会把它误判成溢出。
+        (_rect(c, root)[0] + _rect(c, root)[2] for c, depth in _walk(left, limit=1) if c is not left and c.width() > 0),
+        default=0.0,
+    )
+    dlg.close()
+    assert worst <= lx + lw + 0.5, f"左栏内容伸出左栏 {worst - (lx + lw):.0f}px（会压到右栏上）"

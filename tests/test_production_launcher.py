@@ -210,6 +210,45 @@ def _make_launcher(qapp, monkeypatch, chars=("甲", "乙"), plans=None):
     return w, pl
 
 
+def _walk_items(item, depth: int = 0):
+    """深度优先遍历 `childItems()`（限 8 层，够到容量方块那一层）。"""
+    yield item, depth
+    if depth >= 8:
+        return
+    for ch in item.childItems():
+        yield from _walk_items(ch, depth + 1)
+
+
+def test_narrowest_window_clips_nothing(qapp, monkeypatch):
+    """窗口拉到最小宽时，四个区里的控件都不能伸到右边界之外（伸出去就是被裁，静默）。
+
+    宽度下限是实测出来的：L2 占用面板的容量方块行 ≈420px（字体缩放 1.0），L1 工具条 ≈350。
+    改了这些尺寸（方块、下拉宽度、字号）就要同步改 `LauncherWindow.qml` 的
+    `contentMinWidth`，否则这条会红 —— 与采购窗口同款护栏。
+    """
+    w, _ = _make_launcher(qapp, monkeypatch)
+    win = w._window
+    assert win is not None
+    win.setWidth(win.minimumWidth())
+    win.show()
+    spin(200)
+    root = win.contentItem()
+
+    offenders: list[str] = []
+    for item, depth in _walk_items(root):
+        if not item.isVisible() or item.width() <= 0:
+            continue
+        right = item.x()
+        parent = item.parentItem()
+        while parent is not None and parent is not root:
+            right += parent.x()
+            parent = parent.parentItem()
+        if right > root.width() + 0.5:
+            offenders.append(f"{type(item).__name__} depth={depth} right={right:.0f}")
+    win.close()
+    assert not offenders, f"最小宽 {win.minimumWidth()} 下这些控件超出右边界（会被裁）：\n" + "\n".join(offenders[:5])
+
+
 class TestProductionLauncher:
     def test_constructs_and_builds_rows(self, qapp, monkeypatch):
         w, _ = _make_launcher(qapp, monkeypatch)

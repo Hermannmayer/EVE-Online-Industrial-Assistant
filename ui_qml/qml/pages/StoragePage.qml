@@ -24,7 +24,7 @@ import "../components"
  * **点击命中也由 `FTableClickArea` 统一负责**，不在 delegate 里挂 TapHandler：
  * 后者在内容甩动/沉降时会整次丢掉点击（详见该组件的说明）。
  *
- * 各类对话框（库存修正审阅、移库、材料覆盖、蓝图导入审查、科研计划…）仍是 Widgets，
+ * 各类对话框（库存修正审阅、材料覆盖、蓝图导入审查、科研计划…）仍是 Widgets，
  * 属阶段 4；本页只负责把参数凑齐后交给桥。
  */
 Item {
@@ -209,9 +209,15 @@ Item {
                         ToolTip.text: qsTr("读取剪贴板（游戏内复制物品 Ctrl+C），按增量累加的方式加入当前机库（只增不减）")
                     }
                     FButton {
-                        text: qsTr("移库")
+                        text: qsTr("从剪贴板导入")
                         onClicked: if (page.inv)
-                            page.inv.transferFromClipboard()
+                            page.inv.importPurchasesFromClipboard()
+
+                        HoverHandler {
+                            id: buyImportHover
+                        }
+                        ToolTip.visible: buyImportHover.hovered
+                        ToolTip.text: qsTr("在游戏「钱包 → 交易记录」里 Ctrl+A/C 复制后点这里：把负 ISK 的买入行按单价（成本）入到指定机库")
                     }
                     FButton {
                         text: qsTr("查看规划缺失材料")

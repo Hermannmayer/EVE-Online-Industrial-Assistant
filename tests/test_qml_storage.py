@@ -282,15 +282,6 @@ def test_item_menu_state_reports_move_targets(bridge):
 
 
 @pytest.mark.ui
-def test_item_hint_reports_empty_clipboard(bridge, monkeypatch):
-    from PySide6.QtWidgets import QApplication
-
-    monkeypatch.setattr(QApplication, "clipboard", staticmethod(lambda: SimpleNamespace(text=lambda: "   ")))
-    bridge.transferFromClipboard()
-    assert "剪贴板为空" in bridge.itemCountText
-
-
-@pytest.mark.ui
 def test_blueprint_filters_and_counts(bridge):
     from ui_qml.bridge import inventory_bridge as mod
 

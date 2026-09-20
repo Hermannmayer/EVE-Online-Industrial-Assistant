@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QApplication, QWidget
 
 import ui_qml.theme.registry as theme
 from core.container import get_container
@@ -66,6 +66,7 @@ from services.char_capacity import (
 )
 from services.char_config_resolver import get_character_list, load_all_data
 from services.plan_service import load_plans_for_wizard
+from services.wallet_import import latest_balance, parse_wallet_journal
 from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.bridge.price_chart_bridge import axis_values, map_values, nice_range, pick_indices
 from ui_qml.bridge.summary_dialog import cell
@@ -645,26 +646,53 @@ class QueryDashboardBridge(QObject):
             self._status = f"钱包余额「{text}」不是有效金额（可带千分位，如 1,234,567.89）"
             self.changed.emit()
             return
-        text_value = f"{value:,.2f}"
+        tail = self._save_wallet(value)
+        if tail is None:  # `_save_wallet` 已写好失败文案
+            self.changed.emit()
+            return
+        self._status = f"已记录钱包余额 {value:,.2f} ISK {tail}"
+        self.changed.emit()
+
+    @Slot()
+    def importWalletFromClipboard(self) -> None:
+        """剪贴板里的「钱包 → 交易记录」→ 取最新一笔的余额，落库并记快照。
+
+        金额列不是重点，**余额列**才是：它是逐笔累计后的实时余额，所以最新一笔的余额
+        就是当前钱包余额。解析与取数见 `services.wallet_import`。
+        """
+        clipboard = QApplication.clipboard()
+        raw = clipboard.text() if clipboard is not None else ""
+        rows = parse_wallet_journal(raw)
+        latest = latest_balance(rows)
+        if latest is None:
+            self._status = "剪贴板里没有可识别的交易记录 —— 请在游戏「钱包 → 交易记录」里 Ctrl+A/C 后再点"
+            self.changed.emit()
+            return
+        value, when = latest
+        tail = self._save_wallet(value)
+        if tail is None:
+            self.changed.emit()
+            return
+        self._status = f"已从剪贴板读取钱包余额 {value:,.2f} ISK（{len(rows)} 条流水，最新 {when}）{tail}"
+        self.changed.emit()
+
+    def _save_wallet(self, value: float) -> str | None:
+        """落库 + 写资产快照，返回状态文案后缀；失败时返回 None（文案已写好）。"""
         svc = _asset_svc()
         if svc is None:
             self._status = "资产快照模块不可用：钱包余额未保存"
-            self.changed.emit()
-            return
+            return None
         try:
             svc.set_wallet_balance(value)
             snapshot_ok = self._record_snapshot(wallet=value)
         except Exception:
             log.exception("钱包余额保存失败 value=%s", value)
             self._status = "钱包余额保存失败，详见日志"
-            self.changed.emit()
-            return
-        self._wallet_text = text_value
+            return None
+        self._wallet_text = f"{value:,.2f}"
         self._wallet_loaded = True
         self._refresh_snapshots()
-        tail = "并写入资产快照" if snapshot_ok else "（资产快照写入失败，详见日志）"
-        self._status = f"已记录钱包余额 {text_value} ISK {tail}"
-        self.changed.emit()
+        return "并写入资产快照" if snapshot_ok else "（资产快照写入失败，详见日志）"
 
     # ── 挂单 ──────────────────────────────────────────────────
 

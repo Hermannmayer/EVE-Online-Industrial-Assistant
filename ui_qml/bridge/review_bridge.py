@@ -40,7 +40,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.logger import log
-from services.inventory_clipboard_service import parse_clipboard
+from services.inventory_clipboard_service import parse_clipboard, parse_purchase_clipboard
 from services.inventory_import import compute_import_diff, compute_row_delta
 from services.inventory_manager import apply_inventory_import, get_hangars, get_items
 from services.user_settings import get_material_price_mult, set_material_price_mult
@@ -58,6 +58,7 @@ __all__ = [
     "ImportReviewQmlDialog",
     "review_row",
     "run_clipboard_import",
+    "run_purchase_import",
 ]
 
 _REVIEW_QML = "dialogs/ImportReviewDialog.qml"
@@ -799,3 +800,74 @@ def run_clipboard_import(
     names = {**names_before, **names_after}
     changes = compute_import_diff(before, after, names, type_ids)
     ImportChangeQmlDialog(changes, added, moved, hangar_name, parent).exec()
+
+
+# ══════════════════════════════════════════════════════════════
+#  钱包交易记录导入（仓库 / 采购共用）
+# ══════════════════════════════════════════════════════════════
+
+
+def _hangar_choices(default_hangar_id: int | None) -> tuple[list[str], list[int], int]:
+    """机库下拉的 (标签, id, 默认下标)。标签口径与 `inventory_bridge._reload_hangars` 一致。"""
+    from services.name_resolver import resolve_system_display_names_batch
+
+    hangars = get_hangars()
+    systems = resolve_system_display_names_batch([h["solar_system_id"] for h in hangars if h.get("solar_system_id")])
+    labels: list[str] = []
+    for hangar in hangars:
+        sid = hangar.get("solar_system_id")
+        labels.append(f"{hangar['name']} ({systems[sid]})" if sid in systems else str(hangar["name"]))
+    ids = [int(h["id"]) for h in hangars]
+    index = ids.index(int(default_hangar_id)) if default_hangar_id in ids else 0
+    return labels, ids, index
+
+
+def _purchase_summary(imported: int, unmatched: int, stats: dict) -> str:
+    """导入结果一行汇总 —— **跳过项都要报数**，不然用户以为全进去了。"""
+    parts = [f"已入库 {imported} 项"]
+    if unmatched:
+        parts.append(f"{unmatched} 条物品名未匹配已跳过")
+    if stats.get("sales"):
+        parts.append(f"{stats['sales']} 条卖出行已跳过")
+    if stats.get("unparsed"):
+        parts.append(f"{stats['unparsed']} 行认不出已跳过")
+    return "，".join(parts)
+
+
+def run_purchase_import(default_hangar_id: int | None, parent: Any) -> str | None:
+    """读剪贴板里的「钱包 → 交易记录」→ 选机库 → 按粘贴的单价入库。仓库/采购共用入口。
+
+    只吃**金额为负**的行（你付出 ISK = 买入）；卖出（正）与认不出的行统计后跳过。
+    成本按记录里的**单价**写入，同物品多行进 `add_item` 加权平均（`apply_inventory_import`
+    整批一个事务，失败整体回滚）。
+
+    Returns:
+        一行汇总文案；剪贴板为空 / 一条买入行都没有 / 用户取消机库选择 → None
+        （前两种已弹提示）。
+    """
+    raw = QApplication.clipboard().text().strip()
+    if not raw:
+        FMessageDialog.warning(parent, "提示", "剪贴板为空，请先在游戏「钱包 → 交易记录」里 Ctrl+A/C 复制购买记录")
+        return None
+    rows, stats = parse_purchase_clipboard(raw)
+    if not rows:
+        FMessageDialog.information(parent, "提示", _purchase_summary(0, 0, stats))
+        return None
+
+    labels, ids, index = _hangar_choices(default_hangar_id)
+    if not ids:
+        FMessageDialog.warning(parent, "提示", "还没有机库，请先建一个再导入")
+        return None
+    from ui_qml.bridge.input_dialog import InputQmlDialog
+
+    name, ok = InputQmlDialog.get_item(parent, "入库机库", "目标机库:", labels, index)
+    if not ok or name not in labels:
+        return None
+
+    matched = [r for r in rows if r.get("type_id")]
+    data: list[tuple[int, int, float, int | None]] = [
+        (int(r["type_id"]), int(r["qty"]), float(r["unit_price"]), None) for r in matched
+    ]
+    if data:
+        apply_inventory_import(ids[labels.index(name)], data, "incremental")
+    return _purchase_summary(len(matched), len(rows) - len(matched), stats)

@@ -114,7 +114,7 @@ def _like_type_id(conn: sqlite3.Connection | sqlite3.Cursor, name: str) -> int |
 def search_item_type_id(conn: sqlite3.Connection | sqlite3.Cursor, name: str) -> int | None:
     """名称→type_id：精确 → terminology 反向 → LIKE 模糊 → 引号归一化 LIKE。
 
-    未命中返回 None。供剪贴板解析（库存修正/移库）使用。
+    未命中返回 None。供剪贴板解析（库存修正 / 购买记录导入）使用。
 
     注意：基础矿物（type_id 34-40）不在 item 表，仅在 terminology.json 注册，
     因此 terminology 反向必须在 LIKE 之前，避免「三钛合金」被 LIKE 误匹配到

@@ -747,29 +747,6 @@ def apply_inventory_import(
     return added, moved
 
 
-def move_quantity(from_hangar_id: int, type_id: int, quantity: int, to_hangar_id: int) -> int:
-    """按数量把物品从源机库移到目标机库，成本沿用源库单位成本。
-
-    剪贴板数量超过源库现有量时按源库现有量扣减（clamp，不报错）；
-    源库行扣空则删除；目标库合并走 add_item 加权平均。同一事务内完成。
-    Returns: 实际移动数量（源库无该物品/数量<=0/同库返回 0）。
-    """
-    if quantity <= 0 or from_hangar_id == to_hangar_id:
-        return 0
-    with _default_db().connect("user") as conn:
-        row = conn.execute(
-            "SELECT quantity, cost_price FROM inventory_items WHERE hangar_id = ? AND type_id = ?",
-            (from_hangar_id, type_id),
-        ).fetchone()
-        if not row:
-            return 0
-        cost = row[1] or 0
-        deducted = deduct_item(from_hangar_id, type_id, quantity, conn=conn)
-        if deducted > 0:
-            add_item(to_hangar_id, type_id, deducted, cost, conn=conn)
-        return deducted
-
-
 def get_total_value(hangar_id: int, price_type: str = "sell", discount: float = 0) -> dict:
     col = "sell_price" if price_type == "sell" else "buy_price"
     with _default_db().connect("user", "mkt") as conn:

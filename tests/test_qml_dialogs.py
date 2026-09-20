@@ -164,18 +164,6 @@ def _case_blueprint_import_change(monkeypatch):
     return lambda: BlueprintImportChangeQmlDialog([], added=0, removed=0, hangar_name="测试机库")
 
 
-def _case_transfer(monkeypatch):
-    import ui_qml.bridge.transfer_bridge as tb
-
-    monkeypatch.setattr(tb, "get_hangars", lambda: [{"id": 1, "name": "源仓"}, {"id": 2, "name": "目标仓"}])
-    monkeypatch.setattr(tb, "get_items", lambda hid: [])
-    monkeypatch.setattr(tb, "get_hangar_stock", lambda hid: {})
-
-    from ui_qml.bridge.transfer_bridge import HangarTransferQmlDialog
-
-    return lambda: HangarTransferQmlDialog([], 2, "目标仓")
-
-
 def _case_price_chart(monkeypatch):
     monkeypatch.setattr("ui_qml.workers.price_history_worker.PriceHistoryWorker", _StubHistoryWorker)
 
@@ -261,7 +249,6 @@ _LOADS_CASES: list[tuple[str, Any]] = [
     ("选择来源机库物品", _case_hangar_pick),
     ("蓝图导入预览", _case_blueprint_import_review),
     ("蓝图导入变动汇总", _case_blueprint_import_change),
-    ("移库", _case_transfer),
     ("价格走势图", _case_price_chart),
     ("批量查价", _case_batch_price),
     ("机库设置", _case_hangar_settings),
@@ -1613,7 +1600,7 @@ def test_summary_table_row_hit_accounts_for_listview_scroll(qapp):
         dialog.deleteLater()
 
 
-# ── 批次 1 收尾：导入审查 / 蓝图导入 / 移库（含二级弹出）──
+# ── 批次 1 收尾：导入审查 / 蓝图导入（含二级弹出）──
 # （「加载无告警」那几条已并入文件顶部的 `test_dialog_loads_without_warnings` 参数化）
 
 

@@ -14,7 +14,7 @@ import "../components"
  * **编辑区为什么包在 `Repeater` 里**：QML 里 `FSpinBox.value` / `FComboBox.currentIndex` 是
  * 声明式绑定，用户手动改一次就会打断它；换机库时不重建控件，微调框会留着上一个机库的数值。
  * 桥给的 `editorKey` 在换机库 / 重载列表时递增，`[editorKey]` 一换 `Repeater` 就重建整块
- * 编辑区，绑定随之重建。（`TransferDialog` 靠 ListView 重建规避同一问题，这里没有列表可用。）
+ * 编辑区，绑定随之重建。
  *
  * 删除走**两步确认条**（`requestDelete` → `confirmDelete`），不再弹原生 `QMessageBox`，
  * 也不再弹第二个对话框 —— 这个页面本身已经是 QML 了。
@@ -73,10 +73,16 @@ FDialogFrame {
 
             // ── 左：增删改 + 机库列表 ──
             ColumnLayout {
+                objectName: "hangarPane"
                 /* 宽度**三个都要钉死**（只给 preferredWidth 会被 RowLayout 撑开，
                  * 右侧编辑区就被挤成 3px 宽、看起来像整块没了）。
-                 * 同一条教训 `LauncherWindow.qml` 的动作槽已经写过一次。 */
-                readonly property int paneWidth: Math.round(240 * Theme.fontScale)
+                 * 同一条教训 `LauncherWindow.qml` 的动作槽已经写过一次。
+                 *
+                 * ⚠️ 240 装不下下面那一行按钮：`FButton` 的最小宽是 88（与文字无关），
+                 * 三个 = 88×3 + 2×4 = **272**，超出部分会直接压到右栏上（用户报的
+                 * 「机库设置有重叠」，列表盒子也被撑到 272）。所以取 280 = 272 + 余量；
+                 * 按钮行本身再用 `Flow` 兜底 —— 字体调小 / 以后加按钮时它会折行，而不是溢出。 */
+                readonly property int paneWidth: Math.round(280 * Theme.fontScale)
                 Layout.preferredWidth: paneWidth
                 Layout.minimumWidth: paneWidth
                 Layout.maximumWidth: paneWidth
@@ -84,7 +90,9 @@ FDialogFrame {
                 Layout.fillHeight: true
                 spacing: frame.gap
 
-                RowLayout {
+                // ⚠️ 不要换回 `RowLayout`：单行装不下就会溢出到右栏（见上面 paneWidth 的注释）
+                Flow {
+                    objectName: "hangarActions"
                     Layout.fillWidth: true
                     spacing: Theme.spacingXs
 
@@ -173,6 +181,7 @@ FDialogFrame {
                面板会以 0×0 落在布局原点、从左侧列表底下铺开（实测：右侧面板压住列表右缘）。
                所以外面套一层被布局的 Item，面板改锚定它。重建语义不变。 */
             Item {
+                objectName: "editorPane"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
 

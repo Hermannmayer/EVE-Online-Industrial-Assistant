@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtGui import QGuiApplication
 
+from tests.qml_click import spin as _spin
 from ui_qml.bridge.procurement_bridge import procure_rows, procure_table_headers
 from ui_qml.views.procurement_tab import (
     ProcurementDialog,
@@ -169,21 +170,76 @@ def test_column_lists_stay_index_aligned():
     assert procure_table_headers() == pb._HEADERS
 
 
-def test_table_stays_narrow_enough_to_fit_the_window():
-    """固定列宽之和必须留得下名称列 —— 否则右侧列会被裁掉（「打开时显示不全」）。
+def test_narrowest_window_clips_nothing(qapp, make_dlg):
+    """窗口拉到最小宽时：工具栏、按钮行、表格列一个都不能被裁（用户报过两次「打开显示不全」）。
 
-    `FSummaryTable.colWidth` 给弹性列的下限是 80px，且**不会**为了塞下而挤固定列：
-    固定列一多，总宽就超出窗口，右边几列直接看不见。窗口默认 760、最小 620。
+    为什么非量不可：`FSummaryTable.colWidth` **不会**为了塞下而挤固定列 —— 它只把
+    弹性列压到 80 下限，然后整行溢出、右边几列直接看不见（静默，不报错）。
+
+    两层一起兜：
+      - **静态**：固定列宽之和必须与 `ProcurementWindow.qml` 的 `contentMinWidth` 算式常数一致
+        （列宽改宽了、窗口算式没跟着改 → 漂移即裁切）；
+      - **渲染**：按最小宽真跑一遍，量工具栏、按钮行、表格列的右边缘。
+
+    按钮行是 `Flow`（加按钮只多占一行高度）；换回单行 `RowLayout` 就会把窗口顶宽、切掉最右边的控件。
     """
+    from pathlib import Path
+
     from ui_qml.bridge import procurement_bridge as pb
 
     cell_padding = 12  # 与 FSummaryTable.cellPadding 同口径（Theme 缩放为 1 时）
-    fixed = sum(c["width"] + cell_padding for c in pb._COLUMNS if c["width"] > 0) + cell_padding
-    flexible_floor = 80
-    assert fixed + flexible_floor <= 620 - 32, (
-        f"固定列合计 {fixed}px + 名称列下限 {flexible_floor}px 已经装不进最小窗口宽（620）"
-    )
+    raw_fixed = sum(c["width"] for c in pb._COLUMNS if c["width"] > 0)  # 固定列宽本身，不含内边距
     assert sum(1 for c in pb._COLUMNS if c["width"] <= 0) == 1, "只留名称列吃满剩余空间"
+
+    src = (Path(__file__).resolve().parent.parent / "ui_qml/qml/pages/ProcurementWindow.qml").read_text(
+        encoding="utf-8"
+    )
+    assert f"contentMinWidth: {raw_fixed} + " in src, (
+        f"QML 最小宽算式里的固定列合计不是 {raw_fixed}（改了列宽就得同步改算式，否则右侧列被裁）"
+    )
+    assert "+ 80 + 16" in src, "算式里少了「名称列下限 80 + 左右边距 16」"
+    assert f"Math.round({cell_padding} * Theme.fontScale) * " in src, "内边距没跟字体缩放走"
+
+    dlg = make_dlg()
+    win = dlg._window
+    assert win is not None
+    win.show()
+    _spin(120)
+    win.setWidth(win.minimumWidth())
+    _spin(120)
+    root = win.contentItem()
+
+    def _right_edge(item) -> float:
+        return max((c.x() + c.width() for c in item.childItems() if c.isVisible()), default=0.0)
+
+    for name in ("toolbar", "actionBar"):
+        item = _find_item(root, name)
+        assert item is not None, f"{name} 不见了"
+        assert _right_edge(item) <= item.width() + 0.5, f"{name} 里有控件超出右边界（会被裁）"
+
+    for name in ("table_buy", "table_stock"):
+        table = _find_item(root, name)
+        assert table is not None, f"{name} 不见了"
+        cols = next(
+            (c for c in _walk_items(table) if len([k for k in c.childItems() if k.width() > 0]) == len(pb._COLUMNS)),
+            None,
+        )
+        assert cols is not None, f"{name} 里没找到 {len(pb._COLUMNS)} 个列位"
+        assert _right_edge(cols) <= cols.width() + 0.5, f"{name} 的列装不下（右侧列被裁）"
+    win.close()
+
+
+def _walk_items(item, depth: int = 0):
+    """深度优先遍历 `childItems()`（限 5 层，够到表头里的列位）。"""
+    yield item
+    if depth >= 5:
+        return
+    for ch in item.childItems():
+        yield from _walk_items(ch, depth + 1)
+
+
+def _find_item(item, name: str):
+    return next((c for c in _walk_items(item) if c.objectName() == name), None)
 
 
 def test_spread_cell_renders_value_or_dash():

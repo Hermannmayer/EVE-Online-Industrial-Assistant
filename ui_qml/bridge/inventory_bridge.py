@@ -343,42 +343,18 @@ class InventoryBridge(QObject):
         self.refreshItems()
 
     @Slot()
-    def transferFromClipboard(self) -> None:
-        """移库：读剪贴板 → 选来源机库 → 把数量搬到当前机库。"""
-        if self._current_hangar_id is None:
-            return
-        clipboard = QApplication.clipboard()
-        raw = clipboard.text().strip() if clipboard is not None else ""
-        if not raw:
-            self._set_items_hint("剪贴板为空，请先在游戏中复制物品（Ctrl+C）")
-            return
+    def importPurchasesFromClipboard(self) -> None:
+        """从剪贴板导入购买记录（「钱包 → 交易记录」的负 ISK 行）→ 选机库 → 按单价入库。
 
-        parsed, filtered = self._parse_clipboard(raw)
-        if not parsed:
-            if filtered:
-                self._set_items_hint(f"剪贴板中的 {filtered} 行都是蓝图，材料仓库只导入材料，已全部过滤")
-            return
+        与「增量粘贴」的差别：这里读的是**带单价的市场明细**，成本跟着记录走；
+        目标机库现选（默认当前机库），见 `review_bridge.run_purchase_import`。
+        """
+        from ui_qml.bridge.review_bridge import run_purchase_import
 
-        from ui_qml.bridge.transfer_bridge import HangarTransferQmlDialog as HangarTransferDialog
-
-        parent = None
-        dialog = HangarTransferDialog(
-            parsed,
-            self._current_hangar_id,
-            self._current_hangar_label(),
-            parent,
-            filtered_note=filtered,
-        )
-        from PySide6.QtWidgets import QDialog
-
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        summary = run_purchase_import(self._current_hangar_id, None)
+        if summary:
             self.refreshItems()
-
-    @staticmethod
-    def _parse_clipboard(raw: str) -> tuple[list[dict], int]:
-        from services.inventory_clipboard_service import parse_clipboard
-
-        return parse_clipboard(raw)
+            self._set_items_hint(summary)
 
     @Slot()
     def openMaterialCoverage(self) -> None:
