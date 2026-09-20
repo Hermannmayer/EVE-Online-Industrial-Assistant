@@ -10,6 +10,20 @@ from PySide6.QtCore import QThread, Signal
 from core.container import get_container
 from core.logger import log
 
+#: ⚠️ **必须在模块加载期（= 主线程）导入，不能挪进 `PriceUpdateWorker.run` 里。**
+#:
+#: `services/importers/__init__.py` 会一次性导入全部 10 个子模块。若这个包的**首次**
+#: 导入发生在线程里，就会与主线程上其它惰性导入（`ui_qml/views/industry_view.py`
+#: 的 `from services.importers.getindustry import …`、`contract_workers` 等）抢同一批
+#: 模块锁，撞出 `_frozen_importlib._DeadlockError: deadlock detected by
+#: _ModuleLock('services.importers.getindustry')` —— 实测「开始计算」触发价格刷新时
+#: 偶发，价格没刷新但界面不报错，只留一行 traceback。
+#:
+#: 用**模块限定名**（`getprices.run_price_update`）而不是 `from … import run_price_update`：
+#: 后者会把函数对象绑死在模块上，`monkeypatch.setattr(getprices, "run_price_update", …)`
+#: （`tests/conftest.py` 的断网护栏）就再也拦不住它了。
+from services.importers import getprices
+
 
 def needs_price_update(diff_seconds: float, interval_minutes: int) -> bool:
     """价格是否过期需要更新（纯函数）。
@@ -32,9 +46,7 @@ class PriceUpdateWorker(QThread):
 
     def run(self):
         try:
-            from services.importers.getprices import run_price_update
-
-            run_price_update(self._regions)
+            getprices.run_price_update(self._regions)
             self.finished_signal.emit(True, "价格更新完成")
         except Exception as e:
             log.exception("价格更新数据一致性检查失败: %s", e)

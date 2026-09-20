@@ -378,6 +378,13 @@ class ShellWindow(QQuickView):
         self._content_area.heightChanged.connect(self._resize_pages)
 
         # ── 页面 ──
+        # ⚠️ 建页面之前先把 `services.importers` 整包导入完（此刻只有主线程在跑）。
+        # 这个包一次导入 10 个子模块，而页面建起来就有 worker 线程开始惰性导入 ——
+        # 谁先抢到包锁谁定序，两边顺序相反时撞 `_DeadlockError`（实测「开始计算」
+        # 触发价格刷新时偶发：价格没刷上，界面不报错，只留一行 traceback）。
+        # 详见 `ui_qml/workers/main_window_workers.py` 顶部同名说明。
+        import services.importers  # noqa: F401
+
         self._register_pages()
 
         # ── 窗口状态 ──

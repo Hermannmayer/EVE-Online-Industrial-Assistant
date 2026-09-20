@@ -35,6 +35,41 @@ def shell(app, mock_db):
     win.deleteLater()
 
 
+class TestPriceUpdateWorkerImportTiming:
+    """`PriceUpdateWorker.run` 里**不许** import。
+
+    捕获的缺陷：`services/importers/__init__.py` 一次导入 10 个子模块，而这个包的
+    **首次**导入原先发生在线程里（`run()` 里的 `from services.importers.getprices
+    import …`）。它和主线程上其它惰性导入（`ui_qml/views/industry_view.py` 的
+    `from services.importers.getindustry import …` 等）抢同一批模块锁，顺序相反时撞
+    `_frozen_importlib._DeadlockError` —— 实测「开始计算」触发价格刷新时偶发：
+    价格没刷上、界面不报错，只留一行 traceback。
+
+    真实回归跑不出来（要卡到那个时序），所以这里盯**成因**：run() 不许 import。
+    """
+
+    def test_run_does_not_import(self):
+        import ast
+        import inspect
+        import textwrap
+
+        from ui_qml.workers import main_window_workers
+
+        src = textwrap.dedent(inspect.getsource(main_window_workers.PriceUpdateWorker.run))
+        found = [
+            ast.unparse(node) for node in ast.walk(ast.parse(src)) if isinstance(node, (ast.Import, ast.ImportFrom))
+        ]
+        assert not found, f"PriceUpdateWorker.run 里又出现了 import（会在 worker 线程里触发首次导入）：{found}"
+
+    def test_importer_module_is_resolved_at_import_time(self):
+        """用**模块限定名**调用：既保证包在主线程解析完，又让 `monkeypatch.setattr(
+        getprices, "run_price_update", …)` 这种断网护栏拦得住（`from … import 函数名`
+        会把函数对象绑死，patch 就落空了）。"""
+        from ui_qml.workers import main_window_workers
+
+        assert main_window_workers.getprices.__name__ == "services.importers.getprices"
+
+
 class TestPriceCheckWorker:
     """价格时效检查后台线程"""
 

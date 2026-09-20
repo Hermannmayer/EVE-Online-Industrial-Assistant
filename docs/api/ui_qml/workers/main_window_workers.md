@@ -18,7 +18,7 @@ def needs_price_update(diff_seconds: float, interval_minutes: int) -> bool
 
 价格是否过期需要更新（纯函数）。
 
-定义行：`14`
+定义行：`28`
 
 ## 类
 
@@ -26,7 +26,7 @@ def needs_price_update(diff_seconds: float, interval_minutes: int) -> bool
 
 后台线程执行价格更新
 
-定义行：`24`
+定义行：`38`
 
 #### 方法
 
@@ -40,7 +40,7 @@ def __init__(self, regions: list[str] | None=None, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`29`
+定义行：`43`
 ##### `run`
 
 ```python
@@ -51,13 +51,13 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`33`
+定义行：`47`
 
 ### `class PriceCheckWorker`（继承 `QThread`）
 
 后台线程检查价格数据时效
 
-定义行：`44`
+定义行：`56`
 
 #### 方法
 
@@ -71,7 +71,7 @@ def __init__(self, interval_minutes: int=30, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`49`
+定义行：`61`
 ##### `run`
 
 ```python
@@ -82,4 +82,4 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`53`
+定义行：`65`
