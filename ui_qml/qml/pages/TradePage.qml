@@ -3,17 +3,15 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
 
-/* 贸易页 —— 阶段 3。
- *
- * 对照 Widgets 版 `ui_pyside6/views/trade_view.py`：两个 Tab
- *   1) 跨区域价差：搜索 → 四大贸易中心价格对比表 → 贸易评分 + 最优路线
- *   2) 运输利润：搜索 → 目的地/数量/运输模式/跳跃数 → 运费后净利润
- *
- * **业务动作一律不在这里实现**：每次交互都调 `trade.<方法>`，
- * 由 `ui_qml/bridge/trade_bridge.py` 转给既有的 worker。
- *
- * 结果卡片用 `FFieldList` 画 —— 桥给出的就是 `{label, value, color, strong}` 列表，
- * 「哪一项标红加粗」这类规则留在 Python 侧（与 Widgets 版逐项对齐）。
+/* 贸易页 —— A 贸易中心 → B 贸易中心的全品类价差排行。
+
+ * 工具栏：从 [中心][买/卖] 到 [中心][买/卖] [⇄] [分类] [开始计算]
+ * 主工作区：排行表（默认按每方利润倒序，点表头换列）
+ * 页面状态栏：行数 + 两个中心的价格时间 + 购物车汇总
+ * 页面功能按钮：「购物车」（打开置顶独立窗口）
+
+ * **页面加载不查库、不拉取** —— 只有点「开始计算」才动作（用户明确要求）。
+ * 业务全在 `ui_qml/bridge/trade_bridge.py`，这里只画与转发。
  */
 Item {
     id: page
@@ -32,520 +30,393 @@ Item {
         color: Theme.bgDark
     }
 
-    /* 候选列表：两个 Tab 各一个输入框，共用同一个内联组件定义。
-     * 位置以输入框为父项（**不用 mapToItem**：函数调用不被绑定依赖追踪）。 */
-    component SuggestPopup: Popup {
-        id: suggest
-        objectName: "suggestPopup"
-        property var items: []
-        property var pickHandler: null
-
-        x: 0
-        y: 0
-        width: 320
-        padding: 2
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        visible: items.length > 0
-
-        background: Rectangle {
-            color: Theme.bgElevated
-            border.color: Theme.border
-            border.width: 1
-            radius: Theme.radius
-        }
-
-        contentItem: ListView {
-            clip: true
-            implicitHeight: Math.min(220, contentHeight)
-            model: suggest.items
-            ScrollIndicator.vertical: ScrollIndicator {}
-
-            delegate: ItemDelegate {
-                id: row
-                required property int index
-                required property var modelData
-                width: ListView.view.width
-                implicitHeight: 28
-
-                contentItem: Text {
-                    leftPadding: Theme.spacingSm
-                    rightPadding: Theme.spacingSm
-                    verticalAlignment: Text.AlignVCenter
-                    text: String(row.modelData.text)
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: page.fntBase
-                    elide: Text.ElideRight
-                }
-
-                background: Rectangle {
-                    radius: Theme.radiusSmall
-                    color: row.highlighted ? Theme.bgHover : "transparent"
-                }
-
-                onClicked: if (suggest.pickHandler)
-                    suggest.pickHandler(row.index)
-            }
-        }
-    }
-
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // 用 `FTabBar` 而不是裸 `TabBar`：铺满整行时两者一致，收窄时只有它不截标签
-        FTabBar {
-            id: tabBar
+        // ═══════════════════════════════════════════════════
+        //  页面工具栏
+        // ═══════════════════════════════════════════════════
+        // 外层 RowLayout 只为把「开始计算」顶到最右；筛选那一组用 **Flow** 承载，
+        // 窗口收窄时它会自己折行、永不裁切（单行 RowLayout 会把最右边的控件切掉，
+        // 采购窗那边踩过）。
+        RowLayout {
+            objectName: "tradeToolbar"
             Layout.fillWidth: true
+            Layout.margins: page.pad
+            spacing: page.pad
 
-            TabButton {
-                text: qsTr("跨区域价差")
+            Flow {
+                objectName: "tradeFromTo"
+                Layout.fillWidth: true
+                spacing: page.pad
+
+                Text {
+                    text: qsTr("从")
+                    color: Theme.textPrimary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: page.fntBase
+                    height: 32
+                    verticalAlignment: Text.AlignVCenter
+                }
+
+                FComboBox {
+                    objectName: "fromHubBox"
+                    implicitWidth: 120
+                    model: page.trade ? page.trade.hubs : []
+                    currentIndex: page.trade ? page.trade.fromIndex : 0
+                    onActivated: if (page.trade)
+                        page.trade.setFromIndex(currentIndex)
+                }
+
+                FComboBox {
+                    objectName: "fromSideBox"
+                    implicitWidth: 90
+                    model: page.trade ? page.trade.sideLabels : []
+                    currentIndex: page.trade ? page.trade.fromSideIndex : 0
+                    onActivated: if (page.trade)
+                        page.trade.setFromSideIndex(currentIndex)
+                }
+
+                Text {
+                    text: qsTr("到")
+                    color: Theme.textPrimary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: page.fntBase
+                    height: 32
+                    verticalAlignment: Text.AlignVCenter
+                }
+
+                FComboBox {
+                    objectName: "toHubBox"
+                    implicitWidth: 120
+                    model: page.trade ? page.trade.hubs : []
+                    currentIndex: page.trade ? page.trade.toIndex : 0
+                    onActivated: if (page.trade)
+                        page.trade.setToIndex(currentIndex)
+                }
+
+                FComboBox {
+                    objectName: "toSideBox"
+                    implicitWidth: 90
+                    model: page.trade ? page.trade.sideLabels : []
+                    currentIndex: page.trade ? page.trade.toSideIndex : 0
+                    onActivated: if (page.trade)
+                        page.trade.setToSideIndex(currentIndex)
+                }
+
+                FButton {
+                    objectName: "swapButton"
+                    compact: true
+                    text: qsTr("⇄ 切换方向")
+                    onClicked: if (page.trade)
+                        page.trade.swapDirection()
+                }
             }
-            TabButton {
-                text: qsTr("运输利润")
+
+            FButton {
+                objectName: "analyzeButton"
+                primary: true
+                text: (page.trade && page.trade.busy) ? qsTr("计算中…") : qsTr("开始计算")
+                enabled: page.trade ? !page.trade.busy : false
+                onClicked: if (page.trade)
+                    page.trade.analyze()
             }
         }
 
-        StackLayout {
+        // ── 筛选项（独立一行，对齐标注里的「筛选项：」）─────────
+        // 用 Flow：窄窗口下自动折行，不会把最右边的控件切掉
+        Flow {
+            objectName: "tradeFilters"
+            Layout.fillWidth: true
+            Layout.leftMargin: page.pad
+            Layout.rightMargin: page.pad
+            spacing: page.pad
+
+            Text {
+                text: qsTr("筛选项：")
+                color: Theme.textPrimary
+                font.family: Theme.fontFamily
+                font.pixelSize: page.fntBase
+                height: 28
+                verticalAlignment: Text.AlignVCenter
+            }
+
+            FComboBox {
+                objectName: "categoryBox"
+                implicitWidth: 160
+                model: page.trade ? page.trade.categories.map(function (c) {
+                    return c.name;
+                }) : []
+                currentIndex: page.trade ? page.trade.categoryIndex : 0
+                onActivated: if (page.trade)
+                    page.trade.setCategoryIndex(currentIndex)
+            }
+
+            FCheckBox {
+                objectName: "profitableBox"
+                text: qsTr("只看赚钱的")
+                checked: page.trade ? page.trade.hideUnprofitable : false
+                onToggled: if (page.trade)
+                    page.trade.setHideUnprofitable(checked)
+            }
+
+            FComboBox {
+                objectName: "liquidityBox"
+                implicitWidth: 150
+                model: page.trade ? page.trade.liquidityOptions : []
+                currentIndex: page.trade ? page.trade.liquidityIndex : 0
+                onActivated: if (page.trade)
+                    page.trade.setLiquidityIndex(currentIndex)
+            }
+
+            Text {
+                text: qsTr("（对手盘：两侧在所选价位的挂单量）")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: page.fntSmall
+                height: 28
+                verticalAlignment: Text.AlignVCenter
+            }
+        }
+
+        Text {
+            objectName: "hintText"
+            Layout.fillWidth: true
+            Layout.leftMargin: 2 * page.pad
+            Layout.rightMargin: 2 * page.pad
+            text: page.trade ? page.trade.hintText : ""
+            color: Theme.textSecondary
+            font.family: Theme.fontFamily
+            font.pixelSize: page.fntSmall
+            elide: Text.ElideRight
+        }
+
+        // ═══════════════════════════════════════════════════
+        //  主工作区：排行表
+        // ═══════════════════════════════════════════════════
+        Item {
+            objectName: "rankArea"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            currentIndex: tabBar.currentIndex
+            Layout.margins: page.pad
 
-            // ═══════════════════════════════════════════════════
-            //  Tab 1：跨区域价差
-            // ═══════════════════════════════════════════════════
+            HorizontalHeaderView {
+                id: rankHeader
+                objectName: "rankHeader"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                height: Math.max(24, page.fntSmall + 12)
+                syncView: rankTable
+                clip: true
+                /* ⚠️ `textRole` 必须是模型 `roleNames()` 里**真有**的角色。
+                 * 写 Qt 保留的 `"display"` 会每帧刷一条
+                 * 「The 'textRole' property contains a role that doesn't exist in the model」——
+                 * `TradeRankQmlModel` 只登记了 `text` / `fg` / `iconUrl` … 那几个命名角色。 */
+                textRole: "text"
+                /* ⚠️ **不要给这里加 `model:`**。写上 `model: page.trade.columns` 会让本页
+                 * 在装配期必崩（access violation，崩点落在 `registry.build_qml_page` 的
+                 * `component.create`）：那份列表每次求值都是**新建**的 JS 数组+对象，
+                 * 与 `syncView` 的同步机制撞在一起。
+                 * 表头本来就从 `syncView` 取模型（列名走 `TradeRankQmlModel.headerData`），
+                 * 宽度也由同步给出 —— 委托里只按 index 读一次列元数据。 */
 
-            ColumnLayout {
-                spacing: page.pad
-                Layout.margins: page.pad
+                delegate: Item {
+                    id: headCell
+                    required property int index
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: page.pad
-                    Layout.rightMargin: page.pad
-                    Layout.topMargin: page.pad
-                    spacing: page.pad
+                    readonly property var meta: (page.trade && page.trade.columns.length > headCell.index)
+                                                ? page.trade.columns[headCell.index] : null
+                    readonly property bool isSorted: page.trade ? page.trade.sortColumn === headCell.index : false
 
-                    FTextField {
-                        id: searchInput
-                        Layout.fillWidth: true
-                        placeholderText: qsTr("搜索物品名称（如 渡鸦级）→ 查看跨区域价差 → 贸易评分")
-                        onTextChanged: if (page.trade)
-                            page.trade.onSearchChanged(text)
-                        Keys.onEscapePressed: searchSuggest.close()
-                    }
+                    implicitHeight: rankHeader.height
 
-                    FButton {
-                        text: qsTr("分析")
-                        primary: true
-                        onClicked: if (page.trade)
-                            page.trade.analyze()
-                    }
-                }
+                    Rectangle {
+                        anchors.fill: parent
+                        color: Theme.bgSurface
 
-                Text {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 2 * page.pad
-                    Layout.rightMargin: 2 * page.pad
-                    text: page.trade ? page.trade.previewText : ""
-                    color: page.trade ? page.trade.previewColor : Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: page.fntBase
-                    wrapMode: Text.WordWrap
-                }
-
-                FSection {
-                    Layout.leftMargin: page.pad
-                    Layout.rightMargin: page.pad
-                    title: qsTr("跨区域价格对比")
-
-                    Item {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 150
-
-                        HorizontalHeaderView {
-                            id: hubHeader
+                        Rectangle {
                             anchors.left: parent.left
                             anchors.right: parent.right
-                            anchors.top: parent.top
-                            height: Math.max(22, page.fntSmall + 10)
-                            syncView: hubTable
-                            clip: true
-                            textRole: "text"
-
-                            delegate: Item {
-                                id: hubCell
-                                required property int index
-                                implicitHeight: hubHeader.height
-
-                                readonly property var meta: (page.trade && page.trade.hubColumns.length > hubCell.index)
-                                                             ? page.trade.hubColumns[hubCell.index] : null
-
-                                Rectangle {
-                                    anchors.fill: parent
-                                    color: Theme.bgSurface
-
-                                    Rectangle {
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.bottom: parent.bottom
-                                        height: 1
-                                        color: Theme.border
-                                    }
-                                }
-
-                                Text {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 6
-                                    anchors.rightMargin: 6
-                                    verticalAlignment: Text.AlignVCenter
-                                    horizontalAlignment: hubCell.index === 0 ? Text.AlignLeft : Text.AlignRight
-                                    text: hubCell.meta ? hubCell.meta.title : ""
-                                    color: Theme.textSecondary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: page.fntSmall
-                                    elide: Text.ElideRight
-                                }
-                            }
-                        }
-
-                        TableView {
-                            id: hubTable
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.top: hubHeader.bottom
                             anchors.bottom: parent.bottom
-
-                            clip: true
-                            boundsBehavior: Flickable.StopAtBounds
-                            model: page.trade ? page.trade.hubModel : null
-                            selectionBehavior: TableView.SelectionDisabled
-                            reuseItems: true
-                            rowHeightProvider: function (row) { return 24 }
-                            columnWidthProvider: function (col) {
-                                const cols = page.trade ? page.trade.hubColumns : []
-                                return col < cols.length ? cols[col].width : 100
-                            }
-
-                            delegate: Item {
-                                id: hubRow
-                                required property int row
-                                required property int column
-                                required property var model
-
-                                readonly property var colMeta: (page.trade && page.trade.hubColumns.length > hubRow.column)
-                                                               ? page.trade.hubColumns[hubRow.column] : null
-
-                                implicitWidth: hubRow.colMeta ? hubRow.colMeta.width : 100
-                                implicitHeight: 24
-
-                                Rectangle {
-                                    anchors.fill: parent
-                                    color: hubRow.row % 2 === 1 ? Theme.bgDark : Theme.bgSurface
-                                }
-
-                                Image {
-                                    visible: hubRow.column === 0
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: 4
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: 18
-                                    height: 18
-                                    source: hubRow.model.iconUrl
-                                    sourceSize.width: width
-                                    sourceSize.height: height
-                                    smooth: true
-                                    fillMode: Image.PreserveAspectFit
-                                }
-
-                                Text {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: hubRow.column === 0 ? 26 : 6
-                                    anchors.rightMargin: 6
-                                    verticalAlignment: Text.AlignVCenter
-                                    horizontalAlignment: hubRow.model.alignRight ? Text.AlignRight : Text.AlignLeft
-                                    text: hubRow.model.text
-                                    color: hubRow.model.fg || Theme.textPrimary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: page.fntBase
-                                    elide: Text.ElideRight
-                                }
-                            }
+                            height: 1
+                            color: Theme.border
                         }
                     }
 
                     Text {
-                        Layout.fillWidth: true
-                        text: page.trade ? page.trade.hubStatus : ""
-                        color: Theme.textSecondary
+                        anchors.fill: parent
+                        anchors.leftMargin: 6
+                        anchors.rightMargin: 6
+                        verticalAlignment: Text.AlignVCenter
+                        horizontalAlignment: (headCell.index === 0 || headCell.index === 1 || headCell.index === 2)
+                                             ? Text.AlignLeft : Text.AlignRight
+                        text: {
+                            var title = headCell.meta ? headCell.meta.title : "";
+                            if (!headCell.isSorted)
+                                return title;
+                            return title + (page.trade.sortAscending ? " ▲" : " ▼");
+                        }
+                        color: headCell.isSorted ? Theme.textPrimary : Theme.textSecondary
                         font.family: Theme.fontFamily
                         font.pixelSize: page.fntSmall
-                    }
-                }
-
-                FSection {
-                    Layout.leftMargin: page.pad
-                    Layout.rightMargin: page.pad
-                    visible: page.trade ? page.trade.scoreVisible : false
-                    title: qsTr("贸易评分")
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: page.pad
-
-                        Text {
-                            text: qsTr("买入区域:")
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: page.fntBase
-                        }
-                        FComboBox {
-                            implicitWidth: 110
-                            model: page.trade ? page.trade.hubs : []
-                            currentIndex: page.trade ? page.trade.buyHubIndex : 0
-                            onActivated: if (page.trade)
-                                page.trade.setBuyHubIndex(currentIndex)
-                        }
-
-                        Text {
-                            text: qsTr("卖出区域:")
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: page.fntBase
-                        }
-                        FComboBox {
-                            implicitWidth: 110
-                            model: page.trade ? page.trade.hubs : []
-                            currentIndex: page.trade ? page.trade.sellHubIndex : 0
-                            onActivated: if (page.trade)
-                                page.trade.setSellHubIndex(currentIndex)
-                        }
-
-                        Text {
-                            text: qsTr("数量:")
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: page.fntBase
-                        }
-                        FSpinBox {
-                            implicitWidth: 120
-                            from: 1
-                            to: 1000000
-                            value: page.trade ? page.trade.quantity : 1
-                            onValueModified: if (page.trade)
-                                page.trade.setQuantity(value)
-                        }
-
-                        FButton {
-                            text: qsTr("计算贸易评分")
-                            onClicked: if (page.trade)
-                                page.trade.computeScore()
-                        }
-
-                        Item {
-                            Layout.fillWidth: true
-                        }
+                        elide: Text.ElideRight
                     }
 
-                    FFieldList {
-                        Layout.fillWidth: true
-                        fields: page.trade ? page.trade.scoreFields : []
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: if (page.trade)
+                            page.trade.sortBy(headCell.index)
                     }
-                }
-
-                FSection {
-                    Layout.leftMargin: page.pad
-                    Layout.rightMargin: page.pad
-                    Layout.bottomMargin: page.pad
-                    visible: page.trade ? page.trade.pairVisible : false
-                    title: qsTr("最优路线")
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: page.trade ? page.trade.pairText : ""
-                        color: Theme.textPrimary
-                        font.family: Theme.fontFamily
-                        font.pixelSize: page.fntBase
-                        wrapMode: Text.WordWrap
-                    }
-                }
-
-                Item {
-                    Layout.fillHeight: true
                 }
             }
 
-            // ═══════════════════════════════════════════════════
-            //  Tab 2：运输利润
-            // ═══════════════════════════════════════════════════
+            TableView {
+                id: rankTable
+                objectName: "rankTable"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: rankHeader.bottom
+                anchors.bottom: parent.bottom
 
-            ColumnLayout {
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                model: page.trade ? page.trade.model : null
+                selectionBehavior: TableView.SelectionDisabled
+                // 1.2 万行量级，必须复用 delegate，否则光建项就卡死
+                reuseItems: true
+                rowHeightProvider: function (row) { return 26 }
+                columnWidthProvider: function (col) {
+                    const cols = page.trade ? page.trade.columns : [];
+                    return col < cols.length ? cols[col].width : 100;
+                }
+
+                delegate: Item {
+                    id: rankRow
+                    required property int row
+                    required property int column
+                    required property var model
+
+                    implicitWidth: 100
+                    implicitHeight: 26
+
+                    Rectangle {
+                        anchors.fill: parent
+                        color: rankRow.row % 2 === 1 ? Theme.bgDark : Theme.bgSurface
+                    }
+
+                    Image {
+                        visible: rankRow.column === 0
+                        anchors.left: parent.left
+                        anchors.leftMargin: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 20
+                        height: 20
+                        source: rankRow.model.iconUrl
+                        sourceSize.width: width
+                        sourceSize.height: height
+                        smooth: true
+                        fillMode: Image.PreserveAspectFit
+                    }
+
+                    Text {
+                        anchors.fill: parent
+                        anchors.leftMargin: rankRow.column === 0 ? 28 : 6
+                        anchors.rightMargin: 6
+                        verticalAlignment: Text.AlignVCenter
+                        horizontalAlignment: rankRow.model.alignRight ? Text.AlignRight : Text.AlignLeft
+                        text: rankRow.model.text
+                        color: rankRow.model.fg || Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: page.fntBase
+                        elide: Text.ElideRight
+                    }
+
+                    // 每行一个「加入购物车」。用 Loader 只在操作列建按钮 ——
+                    // 直接摆 FButton 的话，视口里每一格都会实例化一个按钮。
+                    Loader {
+                        anchors.centerIn: parent
+                        active: rankRow.model ? rankRow.model.isAction : false
+                        visible: active
+                        sourceComponent: Component {
+                            FButton {
+                                compact: true
+                                text: qsTr("加入购物车")
+                                onClicked: if (page.trade)
+                                    page.trade.addToCart(rankRow.row)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text {
+                objectName: "rankEmpty"
+                anchors.centerIn: parent
+                visible: page.trade ? page.trade.isEmpty : true
+                text: page.trade ? page.trade.emptyHint : ""
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: page.fntBase
+            }
+        }
+
+        // ═══════════════════════════════════════════════════
+        //  页面状态栏
+        // ═══════════════════════════════════════════════════
+        Rectangle {
+            Layout.fillWidth: true
+            implicitHeight: Math.max(28, page.fntSmall + 14)
+            color: Theme.bgSurface
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 2 * page.pad
+                anchors.rightMargin: 2 * page.pad
                 spacing: page.pad
-                Layout.margins: page.pad
 
-                RowLayout {
+                Text {
+                    objectName: "statusText"
                     Layout.fillWidth: true
-                    Layout.leftMargin: page.pad
-                    Layout.rightMargin: page.pad
-                    Layout.topMargin: page.pad
-                    spacing: page.pad
-
-                    FTextField {
-                        id: transportInput
-                        Layout.fillWidth: true
-                        placeholderText: qsTr("搜索物品名称 → 计算运费后净利润")
-                        onTextChanged: if (page.trade)
-                            page.trade.onTransportSearchChanged(text)
-                        Keys.onEscapePressed: transportSuggest.close()
-                    }
-
-                    FButton {
-                        text: qsTr("分析运输")
-                        primary: true
-                        onClicked: if (page.trade)
-                            page.trade.analyzeTransport()
-                    }
+                    text: page.trade ? page.trade.statusText : ""
+                    color: Theme.textSecondary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: page.fntSmall
+                    elide: Text.ElideRight
+                    verticalAlignment: Text.AlignVCenter
                 }
 
                 Text {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 2 * page.pad
-                    Layout.rightMargin: 2 * page.pad
-                    text: page.trade ? page.trade.transportPreview : ""
-                    color: page.trade ? page.trade.transportPreviewColor : Theme.textSecondary
+                    objectName: "cartSummary"
+                    text: page.trade ? page.trade.cartSummary : ""
+                    color: Theme.textPrimary
                     font.family: Theme.fontFamily
-                    font.pixelSize: page.fntBase
-                    wrapMode: Text.WordWrap
-                }
-
-                FSection {
-                    Layout.leftMargin: page.pad
-                    Layout.rightMargin: page.pad
-                    title: qsTr("运输配置")
-
-                    GridLayout {
-                        Layout.fillWidth: true
-                        columns: 6
-                        columnSpacing: page.pad
-                        rowSpacing: Theme.spacingXs
-
-                        Text {
-                            text: qsTr("买入区域:")
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: page.fntBase
-                        }
-                        FComboBox {
-                            implicitWidth: 110
-                            model: page.trade ? page.trade.hubs : []
-                            currentIndex: page.trade ? page.trade.transportBuyHubIndex : 0
-                            onActivated: if (page.trade)
-                                page.trade.setTransportBuyHubIndex(currentIndex)
-                        }
-
-                        Text {
-                            text: qsTr("卖出区域:")
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: page.fntBase
-                        }
-                        FComboBox {
-                            implicitWidth: 110
-                            model: page.trade ? page.trade.hubs : []
-                            currentIndex: page.trade ? page.trade.transportSellHubIndex : 0
-                            onActivated: if (page.trade)
-                                page.trade.setTransportSellHubIndex(currentIndex)
-                        }
-
-                        Text {
-                            text: qsTr("数量:")
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: page.fntBase
-                        }
-                        FSpinBox {
-                            implicitWidth: 120
-                            from: 1
-                            to: 1000000
-                            value: page.trade ? page.trade.transportQuantity : 100
-                            onValueModified: if (page.trade)
-                                page.trade.setTransportQuantity(value)
-                        }
-
-                        Text {
-                            text: qsTr("运输模式:")
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: page.fntBase
-                        }
-                        FComboBox {
-                            implicitWidth: 110
-                            model: page.trade ? page.trade.modes : []
-                            currentIndex: page.trade ? page.trade.transportModeIndex : 0
-                            onActivated: if (page.trade)
-                                page.trade.setTransportModeIndex(currentIndex)
-                        }
-
-                        Text {
-                            text: (page.trade && page.trade.transportJumpsAuto)
-                                  ? qsTr("跳跃数 (自动):") : qsTr("跳跃数:")
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: page.fntBase
-                        }
-                        FSpinBox {
-                            implicitWidth: 120
-                            from: 1
-                            to: 500
-                            value: page.trade ? page.trade.transportJumps : 72
-                            onValueModified: if (page.trade)
-                                page.trade.setTransportJumps(value)
-                        }
-                    }
-                }
-
-                FSection {
-                    Layout.leftMargin: page.pad
-                    Layout.rightMargin: page.pad
-                    Layout.bottomMargin: page.pad
-                    visible: page.trade ? page.trade.transportResultVisible : false
-                    title: qsTr("运输利润分析")
-
-                    FFieldList {
-                        Layout.fillWidth: true
-                        fields: page.trade ? page.trade.transportFields : []
-                    }
-                }
-
-                Item {
-                    Layout.fillHeight: true
+                    font.pixelSize: page.fntSmall
+                    verticalAlignment: Text.AlignVCenter
                 }
             }
         }
-    }
 
-    // 两个 Tab 的候选弹窗（挂在各自的输入框下面）
-    SuggestPopup {
-        id: searchSuggest
-        parent: searchInput
-        y: searchInput.height + 2
-        width: Math.max(searchInput.width, 320)
-        items: page.trade ? page.trade.results : []
-        pickHandler: function (index) {
-            page.trade.pickResult(index)
-            searchInput.forceActiveFocus()
-        }
-    }
+        // ═══════════════════════════════════════════════════
+        //  页面功能按钮
+        // ═══════════════════════════════════════════════════
+        RowLayout {
+            objectName: "actionButtons"
+            Layout.fillWidth: true
+            Layout.margins: page.pad
+            spacing: page.pad
 
-    SuggestPopup {
-        id: transportSuggest
-        parent: transportInput
-        y: transportInput.height + 2
-        width: Math.max(transportInput.width, 320)
-        items: page.trade ? page.trade.transportResults : []
-        pickHandler: function (index) {
-            page.trade.pickTransportResult(index)
-            transportInput.forceActiveFocus()
+            Item {
+                Layout.fillWidth: true
+            }
+
+            FButton {
+                objectName: "cartButton"
+                text: qsTr("购物车")
+                onClicked: if (page.trade)
+                    page.trade.openCart()
+            }
         }
     }
 }

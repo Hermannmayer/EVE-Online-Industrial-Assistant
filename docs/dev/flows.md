@@ -8,7 +8,7 @@
 ## 制造评分
 
 ```
-UI（工业/贸易页）→ workers/industry_workers.ScoreWorker、trade_workers.TradeScoreWorker
+UI（工业页）→ workers/industry_workers.ScoreWorker
   → scoring_service.ScoringService.calc_manufacturing_score（薄委托，签名稳定）
   → scoring_facade.calc_manufacturing_score（编排）
       · db.connect("ref","mkt","bp") 跨库读蓝图/材料/SDE
@@ -22,13 +22,43 @@ UI（工业/贸易页）→ workers/industry_workers.ScoreWorker、trade_workers
 - 入口：`services/scoring_service.py` 的 `ScoringService.calc_manufacturing_score`
 - **关键差异**：评分链路取价走 `scoring_service` 模块级 `get_price`（直查 `mkt.market_prices`），**不走 `PricingService`**
 
-## 贸易评分
+## 跨区域价差排行（市场贸易页）
+
+```
+贸易页「开始计算」→ ShellWindow.request_price_update([A, B], on_done)
+  → workers/main_window_workers.PriceUpdateWorker → importers/getprices.run_price_update
+  → 回来后：workers/trade_workers.CrossRegionRankWorker
+      · market_browser_service.fetch_cross_region_spread（A/B 两 region JOIN，可选市场分类子树）
+      · market_browser_service.fetch_hub_order_change（B 侧挂单量的近日变化，零请求）
+  → models/trade_rank_model.TradeRankQmlModel（一个物品一行）
+```
+
+- 「开始计算」**先刷新两个中心的价格再算**，刷新走外壳那条单写者通道（`request_price_update`
+  串行排队），**不自己起 `PriceUpdateWorker`** —— 两个写者同时动 `market.db` 会撞锁
+- ⚠️ `PriceUpdateWorker` 的 `success` 标志**不可信**：`run_price_update` 在拉取失败时
+  不抛异常（失败 region 被跳过、旧价保留）。判断「刷新到底生没生效」要回头看
+  `fetch_hub_fetch_time`，页面状态栏就是这么标的
+- 页面**加载不查库、不拉取**，只有点按钮才动作
+- **筛选项在内存里做**（`TradeBridge._apply_filters`）：切筛选项不重算 SQL、不重读库。
+  两个开关都是「排除」语义，默认全开：
+  - 「只看赚钱的」→ `价差 > 0`
+  - 「两侧 ≥ N」→ `min(A侧、B侧对手盘挂单量) ≥ N`。**对手盘挂单量取自 `market_prices`
+    的 `buy_volume`/`sell_volume`**（按所选价位取对应那侧）。这一项是必要的：
+    `importers/getprices.save_prices` 会把 ESI `/markets/prices/` 的全局均价作为兜底
+    混进 `market_prices`，那种行两侧价格看着很高、挂单量却是 0，根本成交不了 ——
+    实测全量 11604 行里这类「假价差」占了绝大多数，默认筛选后只剩 312 行
+- 购物车（`ui_qml/views/trade_cart_window.py`）存 `data/trade_cart.json`，按方向分组；
+  外壳 `ShellWindow.trade_cart()` 持单例，页面与独立窗口共用同一份
+
+## 贸易评分（无 UI 入口）
 
 同制造评分的编排结构，入口为 `ScoringService.calc_trade_score` → `scoring_facade.calc_trade_score`：
 
 - 额外读取：reference.db `item.volume`（体积成本）、`_ss.get_volume`（成交量门槛）
 - 参数维度：buy_hub / sell_hub / buy_price_type / sell_price_type / char_config
 - 产物：每跳利润估计等，经 `domain/scoring.py` trade 分支
+- **当前没有 UI 调用方**：市场贸易页重构成排行表后，原先的「贸易评分」区块已删除。
+  链路本身（服务与纯算法）保留未动
 
 ## 统一定价
 
@@ -63,16 +93,21 @@ services/bom_expander.py: expand_bom / get_material_tree / get_flat_materials（
   · 输入/产出价：PricingService.get_price（mkt.market_prices）
 ```
 
-## 物流运费
+## 物流运费（当前无 UI 入口）
 
 ```
-贸易页 → workers/trade_workers.TransportWorker → services/logistics.py
+services/logistics.py
   · estimate_freight_cost / calc_transport_profit
   · get_distance_jumps：TRADE_HUB_DISTANCES 硬编码距离表（含 Hek）
   · 体积：reference.db item.volume
   · 价格：PricingService.get_price
   · 费率常量：core/eve_formulas（经纪人费/销售税）
 ```
+
+- **市场贸易页的「运输利润」Tab 已删除**（2026-09），这些函数的调用方随之消失；
+  服务与纯算法保留，**计划挪到合同市场**（合同页的运输 Tab 目前只算合同报酬口径：
+  `domain/contract_analysis.courier_metrics`，没有运费成本与净利润）
+- `compute_jumps` 仍被 `services/contract_service.py` 使用
 
 ## 生产计划
 

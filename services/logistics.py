@@ -4,7 +4,11 @@
 提供跨区域运输的运费估算和净利润计算功能。
 支持两种运输模式：公开货运（按体积+抵押计价）和自有运输（按跳跃数计价）。
 数据来源：硬编码 TRADE_HUB_DISTANCES 距离表、reference.db item.volume、
-market.db market_prices（经 PricingService）。被贸易页 TransportWorker 消费。
+market.db market_prices（经 PricingService）。
+
+⚠️ **当前没有 UI 调用方**：市场贸易页的「运输利润」Tab 已删除（2026-09），
+`estimate_freight_cost` / `calc_transport_profit` 保留待合同市场接入；
+`compute_jumps` 仍被 `services/contract_service.py` 使用。
 """
 
 from collections import deque

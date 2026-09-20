@@ -109,6 +109,11 @@ def window_geometry_file() -> str:
     return os.path.join(data_dir(), "window_geometry.json")
 
 
+def trade_cart_file() -> str:
+    """贸易购物车文件路径（跨区域价差排行加入的候选）"""
+    return os.path.join(data_dir(), "trade_cart.json")
+
+
 def log_dir() -> Path:
     """日志目录（用户主目录 .eve-assistant 下，不随 exe 目录移动）"""
     return Path.home() / ".eve-assistant" / "logs"

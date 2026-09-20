@@ -1,540 +1,449 @@
-"""贸易页 bridge —— QML 与既有 worker 之间的唯一通道。
+"""贸易页 bridge —— QML 与 worker 之间的唯一通道。
 
-对照的 Widgets 版是 `ui_pyside6/views/trade_view.py`（两个 Tab：跨区域价差/评分、运输利润）。
+页面只做一件事：**A 贸易中心 → B 贸易中心的全品类价差排行**。
+「开始计算」的时序是「先刷新两个中心的价格、再算排行」——
 
-**计算全在既有 worker 里**（`CrossRegionPriceWorker` / `TradeScoreWorker` /
-`TransportWorker`），本类只做三件事：转发请求、把结果整理成 QML 好渲染的形状、
-维护选中与预览文案。
+  `analyze()` → `shell.request_price_update([A, B], on_done)` → `_on_price_refreshed`
+             → `CrossRegionRankWorker` → 出表
 
-结果卡片以「字段列表」的形式给出（`scoreFields` / `transportFields`），
-QML 用 Repeater 画 —— 比在 QML 里写十几个具名属性更好维护，
-也便于把「哪一项标红加粗」这类规则留在 Python 侧（与 Widgets 版逐项对齐）。
+刷新走外壳那套（`ShellWindow.request_price_update`），复用它的单写者排队、进度条与
+缓存失效；**不自己起 `PriceUpdateWorker`**，否则两处同时写 `market.db` 会撞锁。
+
+⚠️ `PriceUpdateWorker.finished_signal` 里的 `success` **不可信**：
+`services.importers.getprices.run_price_update` 在拉取失败时不抛异常（失败的 region
+被跳过、旧价保留），照常返回。所以「这次刷新到底生没生效」只能**回头查价格时间**
+（`fetch_hub_fetch_time`），不能信那个布尔值。
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from typing import Any
+
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
 from core.constants import TRADE_HUB_IDS
-from core.container import get_container
-from ui_qml.models.trade_qml_model import TradeHubQmlModel
-from ui_qml.theme import registry as theme
-from ui_qml.theme.registry import token as _token
+from ui_qml.models.trade_rank_model import COLUMNS, TradeRankQmlModel
 
 __all__ = ["TradeBridge"]
 
 _HUBS = list(TRADE_HUB_IDS.keys())
-_MODES = ("公开货运", "自有运输")
+#: 价格类型下拉（顺序即 index）：从 A 默认「卖单」（买入要付卖单价）、到 B 默认「买单」
+_SIDES = ("sell", "buy")
+_SIDE_LABELS = ("卖单", "买单")
 
-#: 结果卡片里「值」的颜色语义
-_GREEN = "ACCENT_GREEN"
-_RED = "ACCENT_RED"
-_PRIMARY = "PRIMARY"
-_TEXT = "TEXT_PRIMARY"
+_ALL_CATEGORY = {"id": 0, "name": "全部品类"}
+#: 挂单变化的观察窗口（天）
+_CHANGE_DAYS = 7
+#: 超过这个分钟数就认为「刚点的刷新没生效」
+_STALE_MINUTES = 60
+
+#: 「只看有对手盘的」下限档位（件）。**0 = 不限**。
+#: 第 1 档（≥1）就能滤掉 `save_prices` 混进来的 ESI 基准价兜底行 ——
+#: 那种行两侧价格看着都很高，对手盘挂单量却是 0，根本成交不了。
+_LIQUIDITY_THRESHOLDS = (0, 1, 10, 100)
+_LIQUIDITY_LABELS = ("不限", "两侧 ≥ 1", "两侧 ≥ 10", "两侧 ≥ 100")
+_LIQUIDITY_DEFAULT = 1
 
 
-def _field(label: str, value: str, token: str = _TEXT, strong: bool = False) -> dict:
-    return {"label": label, "value": value, "color": _token(token), "strong": strong}
+def _age_text(ts: str | None) -> str:
+    """`fetch_time` → 「刚刚 / 35 分钟前 / 3 天前」。解析不了就原样回显。"""
+    if not ts:
+        return "无价格"
+    try:
+        dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return str(ts)
+    minutes = (datetime.now(UTC).replace(tzinfo=None) - dt).total_seconds() / 60
+    if minutes < 2:
+        return "刚刚"
+    if minutes < 120:
+        return f"{minutes:.0f} 分钟前"
+    hours = minutes / 60
+    if hours < 48:
+        return f"{hours:.0f} 小时前"
+    return f"{hours / 24:.0f} 天前"
+
+
+def _age_minutes(ts: str | None) -> float:
+    if not ts:
+        return float("inf")
+    try:
+        dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return float("inf")
+    return (datetime.now(UTC).replace(tzinfo=None) - dt).total_seconds() / 60
+
+
+def _category_id(cat: dict) -> int:
+    """分类项里的 id（非整数一律当 0 = 全部品类）。"""
+    raw = cat.get("id")
+    return raw if isinstance(raw, int) else 0
 
 
 class TradeBridge(QObject):
     """贸易页的 QML 后端。"""
 
-    searchChanged = Signal()  # 候选 / 选中 / 预览（Tab 1）
-    hubChanged = Signal()  # 跨区域表 / 评分卡片 / 贸易对
-    transportChanged = Signal()  # Tab 2 的全部状态
+    stateChanged = Signal()  # 工具栏 / 状态栏 / 计算中标志
+    rowsChanged = Signal()  # 结果表整体换了
 
     def __init__(self, shell: object | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._shell = shell
 
-        # ── Tab 1 ──
-        self._search_text = ""
-        self._results: list[dict] = []
-        self._selected_tid: int | None = None
-        self._selected_name = ""
-        self._preview = "搜索物品 → 查看四大贸易中心价差 → 计算贸易评分"
-        self._preview_token = _TEXT
-        self._hub_model = TradeHubQmlModel()
-        self._hub_rows: list[dict] = []
-        self._hub_status = ""
-        self._buy_hub_index = _HUBS.index("Jita")
-        self._sell_hub_index = _HUBS.index("Amarr")
-        self._quantity = 1
-        self._score_visible = False
-        self._score_fields: list[dict] = []
-        self._pair_text = ""
-        self._pair_visible = False
+        self._from_index = _HUBS.index("Jita")
+        self._to_index = _HUBS.index("Amarr")
+        self._from_side = 0  # 卖单
+        self._to_side = 1  # 买单
+        self._category_index = 0
+        self._categories = self._load_categories()
+        #: 「只看赚钱的」——价差 ≤ 0 的倒卖没有意义
+        self._hide_unprofitable = True
+        #: 「只看有对手盘的」档位下标（见 `_LIQUIDITY_THRESHOLDS`）
+        self._liquidity_index = _LIQUIDITY_DEFAULT
 
-        # ── Tab 2 ──
-        self._t_search_text = ""
-        self._t_results: list[dict] = []
-        self._t_selected_tid: int | None = None
-        self._t_selected_name = ""
-        self._t_preview = "搜索物品 → 选择贸易中心 → 计算运输利润"
-        self._t_preview_token = _TEXT
-        self._t_buy_hub_index = _HUBS.index("Jita")
-        self._t_sell_hub_index = _HUBS.index("Amarr")
-        self._t_quantity = 100
-        self._t_mode_index = 0
-        self._t_jumps = 72
-        self._t_jumps_auto = False
-        self._t_result_visible = False
-        self._t_fields: list[dict] = []
+        self._model = TradeRankQmlModel()
+        #: 全量结果（未筛选）。筛选在内存里做 —— 切筛选项不必重算 SQL
+        self._rows: list[dict] = []
+        #: 筛选后真正进表的那批
+        self._visible: list[dict] = []
+        self._empty_hint = "还没有数据 — 选好两个贸易中心，点「开始计算」"
+        self._status = "选好两个贸易中心，点「开始计算」"
+        self._hint = ""
+        self._busy = False
+        #: 计算代次 —— 参数中途被改时，回来的旧结果靠它丢弃
+        self._gen = 0
+        self._worker: QObject | None = None
 
-        self._search_worker: QObject | None = None
-        self._t_search_worker: QObject | None = None
-        self._hub_worker: QObject | None = None
-        self._score_worker: QObject | None = None
-        self._transport_worker: QObject | None = None
-
-        self._remove_theme_listener = theme.add_theme_listener(self._on_theme_changed)
+        #: `TradeCartController`（外壳的懒建单例）—— 用 `Any` 是因为桥不该反向依赖 views，
+        #: 而它只在 `cartSummary` / `addToCart` / `openCart` 三处被鸭子类型调用。
+        self._cart: Any = None
+        cart = getattr(shell, "trade_cart", None)
+        if callable(cart):
+            try:
+                self._cart = cart()
+                self._cart.changed.connect(self._on_cart_changed)
+            except Exception:
+                # 购物车建不起来（QML 缺失等）不该拖垮整页
+                self._cart = None
 
     # ═══════════════════════════════════════════════════════════
-    #  公共选项
+    #  工具栏
     # ═══════════════════════════════════════════════════════════
 
     hubs = Property(list, lambda self: list(_HUBS), constant=True)
-    modes = Property(list, lambda self: list(_MODES), constant=True)
-
-    # ═══════════════════════════════════════════════════════════
-    #  Tab 1：搜索与选中
-    # ═══════════════════════════════════════════════════════════
-
-    searchText = Property(str, lambda self: self._search_text, notify=searchChanged)
-    results = Property(list, lambda self: self._results, notify=searchChanged)
-    previewText = Property(str, lambda self: self._preview, notify=searchChanged)
-    previewColor = Property(str, lambda self: _token(self._preview_token), notify=searchChanged)
-
-    @Slot(str)
-    def onSearchChanged(self, text: str) -> None:
-        self._search_text = str(text)
-        if not text.strip():
-            self._results = []
-            self.searchChanged.emit()
-            return
-        from ui_qml.workers.industry_workers import SearchWorker
-
-        worker = SearchWorker(text.strip(), get_container().db, self)
-        self._search_worker = worker
-        worker.finished_signal.connect(self._on_search_result)
-        worker.start()
-
-    def _on_search_result(self, results: list) -> None:
-        self._results = [
-            {
-                "typeId": int(r["type_id"]),
-                "text": f"[{r['type_id']}] {r.get('zh_name') or r.get('en_name') or ''}",
-                "name": r.get("zh_name") or r.get("en_name") or str(r["type_id"]),
-            }
-            for r in (results or [])
-        ]
-        self.searchChanged.emit()
-
-    @Slot(int)
-    def pickResult(self, index: int) -> None:
-        """选中候选项：填回输入框、清掉上一次的评分与贸易对，并**自动触发**跨区域分析。"""
-        if not 0 <= index < len(self._results):
-            return
-        item = self._results[index]
-        self._selected_tid = int(item["typeId"])
-        self._selected_name = str(item["name"])
-        self._search_text = self._selected_name
-        self._results = []
-        self._preview = f"已选: {self._selected_name} — 点「分析」查看跨区域价格"
-        self._preview_token = _TEXT
-        self._score_visible = False
-        self._pair_visible = False
-        self.searchChanged.emit()
-        self.hubChanged.emit()
-        self.analyze()
-
-    # ═══════════════════════════════════════════════════════════
-    #  Tab 1：跨区域价格
-    # ═══════════════════════════════════════════════════════════
-
-    hubModel = Property(QObject, lambda self: self._hub_model, constant=True)
-    hubStatus = Property(str, lambda self: self._hub_status, notify=hubChanged)
-
-    hubColumns = Property(
+    sideLabels = Property(list, lambda self: list(_SIDE_LABELS), constant=True)
+    categories = Property(list, lambda self: list(self._categories), constant=True)
+    columns = Property(
         list,
-        lambda self: [
-            {"title": title, "width": width}
-            for title, width in zip(self._hub_model._HEADERS, (120, 110, 110, 110, 80, 100), strict=True)
-        ],
+        lambda self: [{"title": t, "width": w} for t, w, _ in COLUMNS],
         constant=True,
     )
+    actionColumn = Property(int, lambda self: len(COLUMNS) - 1, constant=True)
+
+    fromIndex = Property(int, lambda self: self._from_index, notify=stateChanged)
+    toIndex = Property(int, lambda self: self._to_index, notify=stateChanged)
+    fromSideIndex = Property(int, lambda self: self._from_side, notify=stateChanged)
+    toSideIndex = Property(int, lambda self: self._to_side, notify=stateChanged)
+    categoryIndex = Property(int, lambda self: self._category_index, notify=stateChanged)
+    busy = Property(bool, lambda self: self._busy, notify=stateChanged)
+    statusText = Property(str, lambda self: self._status, notify=stateChanged)
+    hintText = Property(str, lambda self: self._hint, notify=stateChanged)
+    emptyHint = Property(str, lambda self: self._empty_hint, notify=rowsChanged)
+    #: 结果表是否为空（按**筛选后**算）—— QML 靠它决定要不要盖那条提示。
+    #: 必须走 Property 而不是 QML 里调 `model.rowCount()`：函数调用不被绑定依赖追踪，
+    #: 出结果后提示不会消失（不报错，只是不动）。
+    isEmpty = Property(bool, lambda self: not self._visible, notify=rowsChanged)
+
+    # ── 筛选项 ──────────────────────────────────────────────
+
+    hideUnprofitable = Property(bool, lambda self: self._hide_unprofitable, notify=stateChanged)
+    liquidityOptions = Property(list, lambda self: list(_LIQUIDITY_LABELS), constant=True)
+    liquidityIndex = Property(int, lambda self: self._liquidity_index, notify=stateChanged)
+
+    @Slot(bool)
+    def setHideUnprofitable(self, checked: bool) -> None:
+        if bool(checked) != self._hide_unprofitable:
+            self._hide_unprofitable = bool(checked)
+            self._apply_filters()
+
+    @Slot(int)
+    def setLiquidityIndex(self, index: int) -> None:
+        if 0 <= index < len(_LIQUIDITY_THRESHOLDS) and index != self._liquidity_index:
+            self._liquidity_index = index
+            self._apply_filters()
+
+    def _apply_filters(self) -> None:
+        """按筛选项从全量结果里挑出可见行（内存里做，不重算 SQL）。"""
+        rows = self._rows
+        if self._hide_unprofitable:
+            rows = [r for r in rows if float(r.get("spread") or 0) > 0]
+        threshold = _LIQUIDITY_THRESHOLDS[self._liquidity_index]
+        if threshold:
+            # 两侧都要有对手盘：A 侧买得到、B 侧卖得掉，缺一边这单就成不了
+            rows = [r for r in rows if min(int(r.get("va") or 0), int(r.get("vb") or 0)) >= threshold]
+        self._visible = rows
+        self._model.set_rows(rows)
+        self._status = self._status_text()
+        self._empty_hint = (
+            "当前筛选下没有符合条件的物品 — 放宽「筛选项」，或点「开始计算」重算"
+            if self._rows and not rows
+            else "还没有数据 — 选好两个贸易中心，点「开始计算」"
+        )
+        self.rowsChanged.emit()
+        self.stateChanged.emit()
+
+    @Slot(int)
+    def setFromIndex(self, index: int) -> None:
+        if 0 <= index < len(_HUBS) and index != self._from_index:
+            self._from_index = index
+            self._invalidate()
+            self.stateChanged.emit()
+
+    @Slot(int)
+    def setToIndex(self, index: int) -> None:
+        if 0 <= index < len(_HUBS) and index != self._to_index:
+            self._to_index = index
+            self._invalidate()
+            self.stateChanged.emit()
+
+    @Slot(int)
+    def setFromSideIndex(self, index: int) -> None:
+        if 0 <= index < len(_SIDES) and index != self._from_side:
+            self._from_side = index
+            self._invalidate()
+            self.stateChanged.emit()
+
+    @Slot(int)
+    def setToSideIndex(self, index: int) -> None:
+        if 0 <= index < len(_SIDES) and index != self._to_side:
+            self._to_side = index
+            self._invalidate()
+            self.stateChanged.emit()
+
+    @Slot(int)
+    def setCategoryIndex(self, index: int) -> None:
+        if 0 <= index < len(self._categories) and index != self._category_index:
+            self._category_index = index
+            self.stateChanged.emit()
+
+    @Slot()
+    def swapDirection(self) -> None:
+        """切换方向：两个中心与各自的价格类型一起对调。"""
+        self._from_index, self._to_index = self._to_index, self._from_index
+        self._from_side, self._to_side = self._to_side, self._from_side
+        self._invalidate()
+        self.stateChanged.emit()
+
+    # ═══════════════════════════════════════════════════════════
+    #  计算
+    # ═══════════════════════════════════════════════════════════
+
+    model = Property(QObject, lambda self: self._model, constant=True)
 
     @Slot()
     def analyze(self) -> None:
-        if self._selected_tid is None:
-            self._set_preview("请先选一个物品", _TEXT)
+        """「开始计算」：先刷新两个中心的价格，回来后算排行。"""
+        if self._busy:
             return
-        self._set_preview(f"正在获取 {self._selected_name} 跨区域价格...", _TEXT)
+        self._gen += 1
+        gen = self._gen
+        self._busy = True
+        self._hint = ""
+        self._status = f"正在刷新 {self._hub(self._from_index)} / {self._hub(self._to_index)} 的价格..."
+        self.stateChanged.emit()
 
-        from ui_qml.workers.trade_workers import CrossRegionPriceWorker
+        request = getattr(self._shell, "request_price_update", None)
+        if not callable(request):
+            # 没有外壳（测试 / 独立使用）：直接算，不刷新
+            self._start_rank(gen)
+            return
+        request([self._hub(self._from_index), self._hub(self._to_index)], self._on_price_refreshed_gen(gen))
 
-        worker = CrossRegionPriceWorker(self._selected_tid, get_container().db, self)
-        self._hub_worker = worker
-        worker.finished_signal.connect(self._on_cross_region_result)
+    def _on_price_refreshed_gen(self, gen: int):
+        def _cb(regions: object, message: object) -> None:
+            self._on_price_refreshed(gen)
+
+        return _cb
+
+    def _on_price_refreshed(self, gen: int) -> None:
+        if gen != self._gen or self._busy is False:
+            return  # 用户中途改了参数，这一轮作废
+        self._start_rank(gen)
+
+    def _start_rank(self, gen: int) -> None:
+        from ui_qml.workers.trade_workers import CrossRegionRankWorker
+
+        self._status = "正在计算排行..."
+        self.stateChanged.emit()
+
+        group_ids = self._selected_group_ids()
+        worker = CrossRegionRankWorker(
+            region_a=TRADE_HUB_IDS[self._hub(self._from_index)],
+            region_b=TRADE_HUB_IDS[self._hub(self._to_index)],
+            side_a=_SIDES[self._from_side],
+            side_b=_SIDES[self._to_side],
+            group_ids=group_ids,
+            change_days=_CHANGE_DAYS,
+        )
+        self._worker = worker
+        worker.finished_signal.connect(lambda rows: self._on_rank(gen, rows))
         worker.start()
 
-    def _on_cross_region_result(self, rows: list) -> None:
-        if not rows:
-            self._hub_model.set_rows([])
-            self._hub_rows = []
-            self._hub_status = ""
-            self._set_preview(f"{self._selected_name}: 无价格数据", _TEXT)
-            self.hubChanged.emit()
-            return
+    def _on_rank(self, gen: int, rows: list) -> None:
+        if gen != self._gen:
+            return  # 过期结果：参数已经变过了
+        self._busy = False
+        self._rows = list(rows or [])
+        self._apply_filters()
 
-        self._hub_model.set_rows(rows)
-        self._hub_rows = rows
-
-        n_with_data = sum(1 for r in rows if r.get("sell_price", 0) > 0)
-        max_spread, max_pair = self._best_spread(rows)
-        spread_info = f"  |  最大价差: {max_pair}" if max_spread > 0 else ""
-        self._hub_status = f"已获取 {n_with_data}/4 个贸易中心的价格数据"
-        self._set_preview(f"{self._selected_name} | {n_with_data} 个区域有数据{spread_info}", _TEXT)
-
-        # 自动把买卖区域切到最优对（与 Widgets 版一致）
-        best = self._best_pair(rows)
-        if best is not None:
-            self._buy_hub_index = _HUBS.index(best[0]) if best[0] in _HUBS else self._buy_hub_index
-            self._sell_hub_index = _HUBS.index(best[1]) if best[1] in _HUBS else self._sell_hub_index
-
-        self._score_visible = True
-        self.hubChanged.emit()
-        self.computeScore()
-
-    @staticmethod
-    def _best_pair(rows: list[dict]) -> tuple[str, str] | None:
-        best_profit = 0
-        best: tuple[str, str] | None = None
-        for buy_row in rows:
-            for sell_row in rows:
-                if buy_row.get("hub") == sell_row.get("hub"):
-                    continue
-                if buy_row.get("buy_price", 0) <= 0 or sell_row.get("sell_price", 0) <= 0:
-                    continue
-                diff = sell_row["sell_price"] - buy_row["buy_price"]
-                if diff > best_profit:
-                    best_profit = diff
-                    best = (str(buy_row["hub"]), str(sell_row["hub"]))
-        return best
-
-    @staticmethod
-    def _best_spread(rows: list[dict]) -> tuple[float, str]:
-        max_spread = 0.0
-        max_pair = ""
-        for buy_row in rows:
-            for sell_row in rows:
-                if buy_row.get("hub") == sell_row.get("hub"):
-                    continue
-                buy_price = buy_row.get("buy_price", 0)
-                if buy_price <= 0 or sell_row.get("sell_price", 0) <= 0:
-                    continue
-                spread = sell_row["sell_price"] - buy_price
-                if spread > max_spread:
-                    max_spread = spread
-                    pct = spread / buy_price * 100
-                    max_pair = f"{buy_row['hub']} 买 → {sell_row['hub']} 卖 ({pct:.1f}%)"
-        return max_spread, max_pair
-
-    # ═══════════════════════════════════════════════════════════
-    #  Tab 1：贸易评分
-    # ═══════════════════════════════════════════════════════════
-
-    buyHubIndex = Property(int, lambda self: self._buy_hub_index, notify=hubChanged)
-    sellHubIndex = Property(int, lambda self: self._sell_hub_index, notify=hubChanged)
-    quantity = Property(int, lambda self: self._quantity, notify=hubChanged)
-    scoreVisible = Property(bool, lambda self: self._score_visible, notify=hubChanged)
-    scoreFields = Property(list, lambda self: self._score_fields, notify=hubChanged)
-    pairText = Property(str, lambda self: self._pair_text, notify=hubChanged)
-    pairVisible = Property(bool, lambda self: self._pair_visible, notify=hubChanged)
-
-    @Slot(int)
-    def setBuyHubIndex(self, index: int) -> None:
-        if 0 <= index < len(_HUBS) and index != self._buy_hub_index:
-            self._buy_hub_index = index
-            self.hubChanged.emit()
-
-    @Slot(int)
-    def setSellHubIndex(self, index: int) -> None:
-        if 0 <= index < len(_HUBS) and index != self._sell_hub_index:
-            self._sell_hub_index = index
-            self.hubChanged.emit()
-
-    @Slot(int)
-    def setQuantity(self, value: int) -> None:
-        value = max(1, min(1_000_000, int(value)))
-        if value != self._quantity:
-            self._quantity = value
-            self.hubChanged.emit()
-
-    @Slot()
-    def computeScore(self) -> None:
-        if self._selected_tid is None:
-            return
-        self._set_preview(f"正在计算 {self._selected_name} 贸易评分...", _TEXT)
-
-        from ui_qml.workers.trade_workers import TradeScoreWorker
-
-        worker = TradeScoreWorker(
-            self._selected_tid,
-            _HUBS[self._buy_hub_index],
-            _HUBS[self._sell_hub_index],
-            "buy",
-            "sell",
-            self._quantity,
-            self,
+    def _status_text(self) -> str:
+        hub_a = self._hub(self._from_index)
+        hub_b = self._hub(self._to_index)
+        if not self._rows:
+            return "选好两个贸易中心，点「开始计算」"
+        # 筛掉多少要看得见 —— 否则「只有 200 行」会被当成数据缺失
+        count = (
+            f"{len(self._visible)} / {len(self._rows)} 行（已筛选）"
+            if len(self._visible) != len(self._rows)
+            else f"{len(self._rows)} 行"
         )
-        self._score_worker = worker
-        worker.finished_signal.connect(self._on_score_result)
-        worker.start()
+        times = self._fetch_times()
+        age_a = times.get(TRADE_HUB_IDS[hub_a])
+        age_b = times.get(TRADE_HUB_IDS[hub_b])
+        stale = max(_age_minutes(age_a), _age_minutes(age_b)) >= _STALE_MINUTES
+        # 「刷新没生效」只能这样看出来 —— worker 的 success 标志对失败不敏感
+        tail = "  ·  价格未更新，用的是本地缓存" if stale else ""
+        return f"{count}  ·  {hub_a} {_age_text(age_a)} / {hub_b} {_age_text(age_b)}{tail}"
 
-    def _on_score_result(self, result: dict) -> None:
-        status = result.get("status", "")
-        if status:
-            self._set_preview(f"{self._selected_name}: {status}", _TEXT)
-            return
+    def _fetch_times(self) -> dict:
+        from services.market_browser_service import fetch_hub_fetch_time
 
-        score = result.get("score", 0)
-        buy_cost = result.get("buy_cost", 0)
-        sell_revenue = result.get("sell_revenue", 0)
-        gross_profit = result.get("gross_profit", 0)
-        margin_pct = result.get("margin_pct", 0)
-        profit_m3 = result.get("profit_per_m3", 0)
-        profit_token = _GREEN if gross_profit > 0 else _RED
-
-        self._score_fields = [
-            _field("贸易评分:", f"{score:.0f}/100", _PRIMARY if score >= 50 else profit_token, strong=True),
-            _field("买入成本:", f"{buy_cost:,.0f} ISK"),
-            _field("卖出收入:", f"{sell_revenue:,.0f} ISK"),
-            _field("毛利润:", f"{gross_profit:,.0f} ISK", profit_token, strong=True),
-            _field("利润率:", f"{margin_pct:.1f}%", profit_token),
-            _field("每m³利润:", f"{profit_m3:,.0f} ISK/m³"),
-        ]
-        self._set_preview(
-            f"{self._selected_name} | 评分: {score:.0f} | 利润: {gross_profit:,.0f} ISK | 利润率: {margin_pct:.1f}%",
-            profit_token,
-        )
-        self._update_trade_pair()
-        self.hubChanged.emit()
-
-    def _update_trade_pair(self) -> None:
-        rows = self._hub_rows
-        if not rows:
-            self._pair_visible = False
-            self.hubChanged.emit()
-            return
-
-        best_profit = 0.0
-        best_buy = best_sell = ""
-        buy_price_val = sell_price_val = 0.0
-        for buy_row in rows:
-            for sell_row in rows:
-                if buy_row.get("hub") == sell_row.get("hub"):
-                    continue
-                if buy_row.get("buy_price", 0) <= 0 or sell_row.get("sell_price", 0) <= 0:
-                    continue
-                diff = sell_row["sell_price"] - buy_row["buy_price"]
-                if diff > best_profit:
-                    best_profit = diff
-                    best_buy = str(buy_row["hub"])
-                    best_sell = str(sell_row["hub"])
-                    buy_price_val = buy_row["buy_price"]
-                    sell_price_val = sell_row["sell_price"]
-
-        if best_profit > 0:
-            pct = best_profit / buy_price_val * 100 if buy_price_val > 0 else 0
-            total = best_profit * self._quantity
-            self._pair_text = (
-                f"最优路线: {best_buy} 买入 ({buy_price_val:,.0f} ISK) → "
-                f"{best_sell} 卖出 ({sell_price_val:,.0f} ISK)\n"
-                f"单件利润: {best_profit:,.0f} ISK ({pct:.1f}%) | "
-                f"{self._quantity} 件总利润: {total:,.0f} ISK"
+        try:
+            return fetch_hub_fetch_time(
+                [TRADE_HUB_IDS[self._hub(self._from_index)], TRADE_HUB_IDS[self._hub(self._to_index)]]
             )
-            self._pair_visible = True
-        else:
-            self._pair_visible = False
+        except Exception:
+            from core.logger import log
+
+            log.exception("读取各中心价格时间失败")
+            return {}
 
     # ═══════════════════════════════════════════════════════════
-    #  Tab 2：运输
+    #  排序
     # ═══════════════════════════════════════════════════════════
 
-    transportSearchText = Property(str, lambda self: self._t_search_text, notify=transportChanged)
-    transportResults = Property(list, lambda self: self._t_results, notify=transportChanged)
-    transportPreview = Property(str, lambda self: self._t_preview, notify=transportChanged)
-    transportPreviewColor = Property(str, lambda self: _token(self._t_preview_token), notify=transportChanged)
-    transportBuyHubIndex = Property(int, lambda self: self._t_buy_hub_index, notify=transportChanged)
-    transportSellHubIndex = Property(int, lambda self: self._t_sell_hub_index, notify=transportChanged)
-    transportQuantity = Property(int, lambda self: self._t_quantity, notify=transportChanged)
-    transportModeIndex = Property(int, lambda self: self._t_mode_index, notify=transportChanged)
-    transportJumps = Property(int, lambda self: self._t_jumps, notify=transportChanged)
-    transportJumpsAuto = Property(bool, lambda self: self._t_jumps_auto, notify=transportChanged)
-    transportResultVisible = Property(bool, lambda self: self._t_result_visible, notify=transportChanged)
-    transportFields = Property(list, lambda self: self._t_fields, notify=transportChanged)
-
-    @Slot(str)
-    def onTransportSearchChanged(self, text: str) -> None:
-        self._t_search_text = str(text)
-        if not text.strip():
-            self._t_results = []
-            self.transportChanged.emit()
-            return
-        from ui_qml.workers.industry_workers import SearchWorker
-
-        worker = SearchWorker(text.strip(), get_container().db, self)
-        self._t_search_worker = worker
-        worker.finished_signal.connect(self._on_transport_search_result)
-        worker.start()
-
-    def _on_transport_search_result(self, results: list) -> None:
-        self._t_results = [
-            {
-                "typeId": int(r["type_id"]),
-                "text": f"[{r['type_id']}] {r.get('zh_name') or r.get('en_name') or ''}",
-                "name": r.get("zh_name") or r.get("en_name") or str(r["type_id"]),
-            }
-            for r in (results or [])
-        ]
-        self.transportChanged.emit()
+    sortColumn = Property(int, lambda self: self._model.sortColumn(), notify=rowsChanged)
+    sortAscending = Property(bool, lambda self: not self._model.sortDescending(), notify=rowsChanged)
 
     @Slot(int)
-    def pickTransportResult(self, index: int) -> None:
-        if not 0 <= index < len(self._t_results):
-            return
-        item = self._t_results[index]
-        self._t_selected_tid = int(item["typeId"])
-        self._t_selected_name = str(item["name"])
-        self._t_search_text = self._t_selected_name
-        self._t_results = []
-        self._t_preview = f"已选: {self._t_selected_name} — 点「分析运输」计算运费后利润"
-        self._t_preview_token = _TEXT
-        self._t_result_visible = False
-        self.transportChanged.emit()
+    def sortBy(self, column: int) -> None:
+        from PySide6.QtCore import Qt
 
-    @Slot(int)
-    def setTransportBuyHubIndex(self, index: int) -> None:
-        if 0 <= index < len(_HUBS) and index != self._t_buy_hub_index:
-            self._t_buy_hub_index = index
-            self._auto_update_jumps()
-
-    @Slot(int)
-    def setTransportSellHubIndex(self, index: int) -> None:
-        if 0 <= index < len(_HUBS) and index != self._t_sell_hub_index:
-            self._t_sell_hub_index = index
-            self._auto_update_jumps()
-
-    @Slot(int)
-    def setTransportQuantity(self, value: int) -> None:
-        value = max(1, min(1_000_000, int(value)))
-        if value != self._t_quantity:
-            self._t_quantity = value
-            self.transportChanged.emit()
-
-    @Slot(int)
-    def setTransportModeIndex(self, index: int) -> None:
-        if 0 <= index < len(_MODES) and index != self._t_mode_index:
-            self._t_mode_index = index
-            self.transportChanged.emit()
-
-    @Slot(int)
-    def setTransportJumps(self, value: int) -> None:
-        value = max(1, min(500, int(value)))
-        if value != self._t_jumps:
-            self._t_jumps = value
-            self._t_jumps_auto = False  # 手动改过就不再标「自动」
-            self.transportChanged.emit()
-
-    def _auto_update_jumps(self) -> None:
-        """按买卖区域自动填跳跃数（查不到就保留用户值，只把「自动」标记去掉）。"""
-        from services.logistics import get_distance_jumps
-
-        jumps = get_distance_jumps(_HUBS[self._t_buy_hub_index], _HUBS[self._t_sell_hub_index])
-        if jumps is not None:
-            self._t_jumps = int(jumps)
-            self._t_jumps_auto = True
+        if column == self._model.sortColumn():
+            ascending = self._model.sortDescending()  # 再点一次反向
         else:
-            self._t_jumps_auto = False
-        self.transportChanged.emit()
+            ascending = column in (1, 2)  # 名称列默认升序，数值列默认降序
+        self._model.sort(
+            column,
+            Qt.SortOrder.AscendingOrder if ascending else Qt.SortOrder.DescendingOrder,
+        )
+        self.rowsChanged.emit()
+
+    # ═══════════════════════════════════════════════════════════
+    #  购物车
+    # ═══════════════════════════════════════════════════════════
+
+    @Property(str, notify=stateChanged)
+    def cartSummary(self) -> str:
+        if self._cart is None:
+            return ""
+        t = self._cart.totals()  # type: ignore[attr-defined]
+        if not t["count"]:
+            return "购物车为空"
+        return f"购物车 {t['count']} 项 · 金额 {t['amount']:,.0f} · 体积 {t['volume']:,.2f} m³"
+
+    @Slot(int)
+    def addToCart(self, row: int) -> None:
+        if self._cart is None:
+            self._hint = "购物车不可用"
+            self.stateChanged.emit()
+            return
+        try:
+            data = self._model.row_at(row)
+        except IndexError:
+            return
+        payload = {
+            **data,
+            "from_hub": self._hub(self._from_index),
+            "from_mode": _SIDES[self._from_side],
+            "to_hub": self._hub(self._to_index),
+            "to_mode": _SIDES[self._to_side],
+        }
+        self._hint = str(self._cart.add(payload))  # type: ignore[attr-defined]
+        self.stateChanged.emit()
 
     @Slot()
-    def analyzeTransport(self) -> None:
-        if self._t_selected_tid is None:
-            self._set_transport_preview("请先搜索并选择一个物品", _TEXT)
+    def openCart(self) -> None:
+        if self._cart is None:
             return
+        self._cart.show()  # type: ignore[attr-defined]
 
-        self._set_transport_preview(f"正在计算 {self._t_selected_name} 运输利润...", _TEXT)
-        from ui_qml.workers.trade_workers import TransportWorker
+    def _on_cart_changed(self) -> None:
+        self.stateChanged.emit()
 
-        worker = TransportWorker(
-            type_id=self._t_selected_tid,
-            buy_hub=_HUBS[self._t_buy_hub_index],
-            sell_hub=_HUBS[self._t_sell_hub_index],
-            buy_price_type="buy",
-            sell_price_type="sell",
-            quantity=self._t_quantity,
-            distance_jumps=self._t_jumps,
-            use_public_freight=self._t_mode_index == 0,
-            parent=self,
-        )
-        self._transport_worker = worker
-        worker.finished_signal.connect(self._on_transport_result)
-        worker.start()
+    # ═══════════════════════════════════════════════════════════
+    #  收尾
+    # ═══════════════════════════════════════════════════════════
 
-    def _on_transport_result(self, result: dict) -> None:
-        status = result.get("status", "")
-        if status:
-            self._set_transport_preview(f"{self._t_selected_name}: {status}", _TEXT)
-            return
-
-        freight = result["freight_cost"]
-        net = result["net_profit"]
-        margin = result["margin_pct"]
-        profit_token = _GREEN if net > 0 else _RED
-
-        self._t_fields = [
-            _field("买入成本:", f"{result['buy_cost']:,.0f} ISK"),
-            _field("卖出收入:", f"{result['sell_revenue']:,.0f} ISK"),
-            _field("运费:", f"{freight:,.0f} ISK", _RED),
-            _field("经纪人费:", f"{result['broker_cost']:,.0f} ISK"),
-            _field("销售税:", f"{result['sales_tax']:,.0f} ISK"),
-            _field("净利润:", f"{net:,.0f} ISK", profit_token, strong=True),
-            _field("利润率:", f"{margin:.1f}%", profit_token),
-            _field("每m³利润:", f"{result['isk_per_m3']:,.0f} ISK/m³"),
-        ]
-        mode_text = "公开货运" if result.get("freight_mode") == "public_freight" else "自有运输"
-        self._set_transport_preview(
-            f"{self._t_selected_name} | {mode_text} | 运费: {freight:,.0f} ISK | "
-            f"净利润: {net:,.0f} ISK | 利润率: {margin:.1f}%",
-            profit_token,
-        )
-        self._t_result_visible = True
-        self.transportChanged.emit()
+    @Slot()
+    def shutdown(self) -> None:
+        """页面销毁前让在跑的 worker 收尾（线程还在跑时宿主被销毁 → Qt abort）。"""
+        worker = self._worker
+        if worker is not None and worker.isRunning():  # type: ignore[attr-defined]
+            worker.wait(3000)  # type: ignore[attr-defined]
 
     # ═══════════════════════════════════════════════════════════
     #  内部
     # ═══════════════════════════════════════════════════════════
 
-    def _set_preview(self, text: str, token: str) -> None:
-        self._preview = text
-        self._preview_token = token
-        self.searchChanged.emit()
+    def _invalidate(self) -> None:
+        """参数变了：作废在途结果，并清掉上一次的排行（旧方向的数字留着会误导）。"""
+        self._gen += 1
+        self._busy = False
+        if self._rows:
+            self._rows = []
+            self._visible = []
+            self._model.set_rows([])
+            self.rowsChanged.emit()
+        self._status = "参数已改，点「开始计算」重新算"
+        self._empty_hint = "参数已改 — 点「开始计算」重新算"
 
-    def _set_transport_preview(self, text: str, token: str) -> None:
-        self._t_preview = text
-        self._t_preview_token = token
-        self.transportChanged.emit()
+    @staticmethod
+    def _hub(index: int) -> str:
+        return _HUBS[index] if 0 <= index < len(_HUBS) else _HUBS[0]
 
-    def _on_theme_changed(self) -> None:
-        """主题切换：卡片颜色是算出来的字符串，重算一次并让表格重绘。"""
-        self._hub_model.refresh_colors()
-        if self._score_fields:
-            self._score_fields = list(self._score_fields)
-        if self._t_fields:
-            self._t_fields = list(self._t_fields)
-        self.searchChanged.emit()
-        self.hubChanged.emit()
-        self.transportChanged.emit()
+    def _selected_group_ids(self) -> list[int] | None:
+        """选中的分类 id 列表；「全部品类」（id 0）表示不筛。"""
+        cat = self._categories[self._category_index] if self._categories else _ALL_CATEGORY
+        gid = _category_id(cat)
+        return [gid] if gid else None
+
+    @staticmethod
+    def _load_categories() -> list[dict]:
+        """市场分类的顶层（`reference.db.market_tree` 一级节点）+ 开头的「全部品类」。
+
+        读本地静态表、一次 2000 行左右，与合同页进门查库同类；失败就只剩「全部品类」，
+        不拦着用户算排行。
+        """
+        from core.logger import log
+        from services.market_browser_service import fetch_market_tree
+
+        cats = [dict(_ALL_CATEGORY)]
+        try:
+            for node in fetch_market_tree():
+                if not node.get("p"):
+                    cats.append({"id": int(node["id"]), "name": str(node.get("n") or node["id"])})
+        except Exception:
+            log.exception("读取市场分类失败，筛选下拉只保留「全部品类」")
+        return cats

@@ -1,9 +1,8 @@
-"""贸易页（阶段 3）的契约测试。
+"""贸易页的契约测试（重构后：A → B 全品类价差排行）。
 
 分三层（与 `tests/test_qml_query.py` 同构）：
-  - **纯函数层**（`fast`）：`TradeHubQmlModel` 的命名角色与展示规则；
-  - **桥层**（`ui`）：`TradeBridge` 的状态机与结果整形（用合成 payload 直接喂
-    `_on_*` 处理器，不依赖 DB / 网络）；
+  - **纯函数层**（`fast`）：`TradeRankQmlModel` 的命名角色、展示与排序；
+  - **桥层**（`ui`）：`TradeBridge` 的参数状态机与加购物车；
   - **页面层**（`ui`）：`TradePage.qml` 能加载、无 QML 告警。
 """
 
@@ -13,35 +12,51 @@ import pytest
 from PySide6.QtCore import Qt
 
 from tests.qml_page_load import assert_page_loads_quietly, page_host
-from ui_qml.models.trade_qml_model import ROLE_NAMES, TradeHubQmlModel
+from ui_qml.models.trade_rank_model import (
+    COLUMNS,
+    ROLE_NAMES,
+    TradeRankQmlModel,
+    format_order_change,
+)
 
 _BASE = Qt.ItemDataRole.UserRole
 _TEXT = _BASE + 1
 _FG = _BASE + 2
 _ICON_URL = _BASE + 3
 _ALIGN_RIGHT = _BASE + 4
-_HUB = _BASE + 6
+_TYPE_ID = _BASE + 5
+_IS_ACTION = _BASE + 6
+
+_PM3_COL = 7
+_CHG_COL = 8
+_ACTION_COL = len(COLUMNS) - 1
+_NAME_COL = 1
 
 
-def _hub_row(
-    hub: str = "Jita",
-    buy: float = 100.0,
-    sell: float = 130.0,
-    spread_pct: float = 30.0,
+def _row(
     tid: int = 34,
-) -> dict:
+    spread: float = 5.0,
+    pm3: float | None = 500.0,
+    chg: float | None = 12.0,
+    va: int = 1000,
+    vb: int = 1000,
+):
     return {
-        "hub": hub,
-        "type_id": tid,
-        "buy_price": buy,
-        "sell_price": sell,
-        "spread": sell - buy,
-        "spread_pct": spread_pct,
-        "volume": 1000,
+        "id": tid,
+        "z": "三钛合金",
+        "e": "Tritanium",
+        "v": 0.01,
+        "pa": 4.0,
+        "pb": 4.0 + spread,
+        "spread": spread,
+        "pm3": pm3,
+        "chg": chg,
+        "va": va,
+        "vb": vb,
     }
 
 
-def _cell(model: TradeHubQmlModel, row: int, col: int, role: int):
+def _cell(model: TradeRankQmlModel, row: int, col: int, role: int):
     return model.data(model.index(row, col), role)
 
 
@@ -60,247 +75,408 @@ def test_role_names_are_unique_and_contiguous():
 
 @pytest.mark.fast
 def test_every_role_is_readable_on_every_cell():
-    model = TradeHubQmlModel([_hub_row()])
+    model = TradeRankQmlModel()
+    model.set_rows([_row()])
     for col in range(model.columnCount()):
         for role in ROLE_NAMES:
             model.data(model.index(0, col), role)
 
 
 @pytest.mark.fast
-def test_text_matches_the_widgets_columns():
-    model = TradeHubQmlModel([_hub_row()])
-    assert _cell(model, 0, 0, _TEXT) == "Jita"
-    assert _cell(model, 0, 1, _TEXT) == "100.00"
-    assert _cell(model, 0, 2, _TEXT) == "130.00"
-    assert _cell(model, 0, 3, _TEXT) == "30.00"
-    assert _cell(model, 0, 4, _TEXT) == "30.0%"
-    assert _cell(model, 0, 5, _TEXT) == "1,000"
+def test_column_headers_and_count_match_the_bridge():
+    model = TradeRankQmlModel()
+    model.set_rows([_row()])
+
+    assert model.columnCount() == len(COLUMNS)
+    titles = [model.headerData(c, Qt.Orientation.Horizontal) for c in range(model.columnCount())]
+    assert "中文名称" in titles
+    assert "每方利润" in titles
+    assert "B侧挂单变化" in titles
 
 
 @pytest.mark.fast
-def test_hub_column_is_left_aligned_the_rest_right():
-    model = TradeHubQmlModel([_hub_row()])
-    assert _cell(model, 0, 0, _ALIGN_RIGHT) is False
-    for col in range(1, model.columnCount()):
+def test_text_matches_the_column_meaning():
+    model = TradeRankQmlModel()
+    model.set_rows([_row(tid=34, spread=5.0, pm3=500.0, chg=12.0)])
+
+    assert _cell(model, 0, 1, _TEXT) == "三钛合金"
+    assert _cell(model, 0, 2, _TEXT) == "Tritanium"
+    assert _cell(model, 0, 3, _TEXT) == "4.00"
+    assert _cell(model, 0, 4, _TEXT) == "9.00"
+    assert _cell(model, 0, 5, _TEXT) == "5.00"
+    assert _cell(model, 0, 6, _TEXT) == "0.01"
+    assert _cell(model, 0, _PM3_COL, _TEXT) == "500.00"
+
+
+@pytest.mark.fast
+def test_missing_numbers_show_a_dash_instead_of_zero():
+    """无值不能显示成 0 —— 那会被读成「真的等于零」。"""
+    model = TradeRankQmlModel()
+    model.set_rows([_row(pm3=None, chg=None) | {"v": 0}])
+
+    assert _cell(model, 0, _PM3_COL, _TEXT) == "—"
+    assert _cell(model, 0, _CHG_COL, _TEXT) == "—"
+    assert _cell(model, 0, 6, _TEXT) == "—"
+
+
+@pytest.mark.fast
+def test_name_columns_are_left_aligned_the_rest_right():
+    model = TradeRankQmlModel()
+    model.set_rows([_row()])
+
+    assert _cell(model, 0, _NAME_COL, _ALIGN_RIGHT) is False
+    for col in (3, 5, _PM3_COL, _CHG_COL):
         assert _cell(model, 0, col, _ALIGN_RIGHT) is True
 
 
 @pytest.mark.fast
-def test_spread_pct_is_coloured_by_sign():
-    positive = TradeHubQmlModel([_hub_row(spread_pct=12.0)])
-    negative = TradeHubQmlModel([_hub_row(spread_pct=-3.0)])
-    flat = TradeHubQmlModel([_hub_row(spread_pct=0.0)])
+def test_profit_and_change_are_coloured_by_sign():
+    model = TradeRankQmlModel()
+    model.set_rows([_row(pm3=10.0, chg=5.0), _row(pm3=-10.0, chg=-5.0)])
 
-    assert _cell(positive, 0, 4, _FG)
-    assert _cell(negative, 0, 4, _FG)
-    assert _cell(positive, 0, 4, _FG) != _cell(negative, 0, 4, _FG)
-    assert _cell(flat, 0, 4, _FG) == ""
-    # 只有价差% 列染色
-    assert _cell(positive, 0, 1, _FG) == ""
-
-
-@pytest.mark.fast
-def test_hub_role_and_icon_column():
-    model = TradeHubQmlModel([_hub_row(hub="Amarr")])
-    assert _cell(model, 0, 0, _HUB) == "Amarr"
-    assert _cell(model, 0, 0, _ICON_URL) == "" or _cell(model, 0, 0, _ICON_URL).startswith("file:")
-    assert _cell(model, 0, 3, _ICON_URL) == ""  # 非首列不给图标
+    assert _cell(model, 0, _PM3_COL, _FG)
+    assert _cell(model, 1, _PM3_COL, _FG)
+    assert _cell(model, 0, _PM3_COL, _FG) != _cell(model, 1, _PM3_COL, _FG)
+    assert _cell(model, 0, _CHG_COL, _FG) != _cell(model, 1, _CHG_COL, _FG)
+    # 价差列只是差值，不染色
+    assert _cell(model, 0, 5, _FG) == ""
 
 
 @pytest.mark.fast
-def test_set_rows_replaces_content():
-    model = TradeHubQmlModel([_hub_row(hub="Jita")])
-    model.set_rows([_hub_row(hub="Rens"), _hub_row(hub="Hek")])
+def test_action_column_is_flagged_and_carries_no_text():
+    model = TradeRankQmlModel()
+    model.set_rows([_row()])
+
+    assert _cell(model, 0, _ACTION_COL, _IS_ACTION) is True
+    assert _cell(model, 0, _NAME_COL, _IS_ACTION) is False
+    assert _cell(model, 0, _ACTION_COL, _TEXT) == ""
+
+
+@pytest.mark.fast
+def test_type_id_role_feeds_the_cart():
+    model = TradeRankQmlModel()
+    model.set_rows([_row(tid=4242)])
+
+    assert _cell(model, 0, _NAME_COL, _TYPE_ID) == 4242
+
+
+@pytest.mark.fast
+def test_only_the_icon_column_carries_an_icon():
+    model = TradeRankQmlModel()
+    model.set_rows([_row()])
+
+    assert _cell(model, 0, _NAME_COL, _ICON_URL) == ""
+
+
+@pytest.mark.fast
+def test_sort_uses_raw_numbers_not_formatted_text():
+    """按「每方利润」排的是原始数值：'9,999' 必须排在 10000 前面（字符串排会反过来）。"""
+    model = TradeRankQmlModel()
+    model.set_rows(
+        [
+            _row(tid=1, pm3=9999.0),
+            _row(tid=2, pm3=10000.0),
+            _row(tid=3, pm3=None),
+        ]
+    )
+
+    model.sort(_PM3_COL, Qt.SortOrder.DescendingOrder)
+    assert [model.row_at(i)["id"] for i in range(3)] == [2, 1, 3]
+
+    model.sort(_PM3_COL, Qt.SortOrder.AscendingOrder)
+    assert [model.row_at(i)["id"] for i in range(3)] == [3, 1, 2]
+
+
+@pytest.mark.fast
+def test_none_sorts_last_regardless_of_direction():
+    model = TradeRankQmlModel()
+    model.set_rows([_row(tid=1, chg=None), _row(tid=2, chg=-3.0), _row(tid=3, chg=8.0)])
+
+    model.sort(_CHG_COL, Qt.SortOrder.DescendingOrder)
+    assert [model.row_at(i)["id"] for i in range(3)] == [3, 2, 1]
+
+
+@pytest.mark.fast
+def test_set_rows_reapplies_the_current_sort():
+    model = TradeRankQmlModel()
+    model.set_rows([_row(tid=1, pm3=1.0)])
+    model.sort(_NAME_COL, Qt.SortOrder.AscendingOrder)
+
+    model.set_rows([_row(tid=2, pm3=1.0), _row(tid=3, pm3=9.0)])
+
     assert model.rowCount() == 2
-    assert _cell(model, 0, 0, _TEXT) == "Rens"
-    model.set_rows([])
+    assert model.sortColumn() == _NAME_COL
+
+
+@pytest.mark.fast
+def test_icon_and_action_columns_are_not_sortable():
+    model = TradeRankQmlModel()
+    model.set_rows([_row()])
+    model.sort(_NAME_COL, Qt.SortOrder.AscendingOrder)
+
+    model.sort(0, Qt.SortOrder.AscendingOrder)
+    assert model.sortColumn() == _NAME_COL
+
+    model.sort(_ACTION_COL, Qt.SortOrder.AscendingOrder)
+    assert model.sortColumn() == _NAME_COL
+
+
+@pytest.mark.fast
+def test_empty_model_is_safe():
+    model = TradeRankQmlModel()
     assert model.rowCount() == 0
+    model.set_rows([])
+    model.refresh_colors()  # 空表补发颜色不该炸
 
 
 # ════════════════════════════════════════════════════════════
-#  桥：Tab 1（跨区域价差 / 评分）
+#  挂单变化的文案（纯函数）
 # ════════════════════════════════════════════════════════════
+
+
+@pytest.mark.fast
+@pytest.mark.parametrize(
+    ("per_day", "expected"),
+    [
+        (None, "—"),
+        (0.0, "0/天"),
+        (450.0, "↓450/天"),  # 正数 = 挂单在减少 = 有人在吃单
+        (-120.0, "↑120/天"),  # 负数 = 挂单在堆积
+        (12345.6, "↓12,346/天"),
+    ],
+)
+def test_format_order_change(per_day, expected):
+    assert format_order_change(per_day) == expected
+
+
+# ════════════════════════════════════════════════════════════
+#  桥
+# ════════════════════════════════════════════════════════════
+
+
+class _FakeShell:
+    """只提供购物车的最小外壳替身（桥不去碰外壳的其它部分）。"""
+
+    def __init__(self, cart):
+        self._cart = cart
+
+    def trade_cart(self):
+        return self._cart
 
 
 @pytest.fixture
-def bridge(qapp):
+def bridge(qapp, tmp_path, monkeypatch):
     from ui_qml.bridge.trade_bridge import TradeBridge
+    from ui_qml.views import trade_cart_window as tcw
 
-    return TradeBridge(None)
+    monkeypatch.setattr(tcw, "trade_cart_file", lambda: str(tmp_path / "cart.json"))
+    return TradeBridge(_FakeShell(tcw.TradeCartController()))
 
 
 @pytest.mark.ui
-def test_hubs_and_modes_come_from_shared_sources(bridge):
+def test_defaults_are_buy_at_a_sell_at_b(bridge):
+    """从 Jita 的卖单买入、卖到 Amarr 的买单 —— 这才是「买入价 / 卖出价」。"""
     from core.constants import TRADE_HUB_IDS
 
     assert bridge.hubs == list(TRADE_HUB_IDS.keys())
-    assert bridge.modes == ["公开货运", "自有运输"]
-    assert len(bridge.hubColumns) == 6
-    assert [c["title"] for c in bridge.hubColumns][0] == "贸易中心"
+    assert bridge.hubs[bridge.fromIndex] == "Jita"
+    assert bridge.hubs[bridge.toIndex] == "Amarr"
+    assert bridge.sideLabels[bridge.fromSideIndex] == "卖单"
+    assert bridge.sideLabels[bridge.toSideIndex] == "买单"
+    assert bridge.busy is False
+    assert bridge.isEmpty is True
+    assert "开始计算" in bridge.statusText
 
 
 @pytest.mark.ui
-def test_defaults_match_the_widgets_version(bridge):
-    """初始买卖区域 Jita→Amarr、数量 1、评分卡片隐藏（对齐 trade_view）。"""
-    assert bridge.hubs[bridge.buyHubIndex] == "Jita"
-    assert bridge.hubs[bridge.sellHubIndex] == "Amarr"
-    assert bridge.quantity == 1
-    assert bridge.scoreVisible is False
-    assert bridge.pairVisible is False
-    assert bridge.transportQuantity == 100
-    assert bridge.transportModeIndex == 0
+def test_category_list_starts_with_all(bridge, monkeypatch):
+    """分类下拉第一项永远是「全部品类」，其余是市场分类的顶层。"""
+    import services.market_browser_service as mbs
+
+    monkeypatch.setattr(
+        mbs,
+        "fetch_market_tree",
+        lambda: [{"id": 4, "p": None, "n": "舰船"}, {"id": 100, "p": 4, "n": "护卫舰"}],
+    )
+    from ui_qml.bridge.trade_bridge import TradeBridge
+
+    cats = TradeBridge(None).categories
+
+    assert cats[0]["name"] == "全部品类"
+    assert [c["name"] for c in cats[1:]] == ["舰船"]  # 子节点不进下拉
 
 
 @pytest.mark.ui
-def test_cross_region_result_fills_table_and_switches_to_best_pair(bridge):
-    """跨区域结果：填表、算出最大价差、把买卖区域切到最优对、显示评分卡片。"""
-    bridge._selected_tid = 34
-    bridge._selected_name = "三钛合金"
-    rows = [
-        _hub_row("Jita", buy=100.0, sell=110.0),
-        _hub_row("Amarr", buy=90.0, sell=200.0),
-        _hub_row("Rens", buy=95.0, sell=120.0),
-        _hub_row("Hek", buy=80.0, sell=85.0),
-    ]
+def test_swap_direction_flips_hubs_and_sides(bridge):
+    bridge.swapDirection()
 
-    bridge._on_cross_region_result(rows)
-
-    assert bridge.hubModel.rowCount() == 4
-    assert "4/4" in bridge.hubStatus
-    assert bridge.scoreVisible is True
-    # 最优对：Hek 买(80) → Amarr 卖(200)，差 120（比 Rens 95→200 的 105 大）
-    assert bridge.hubs[bridge.buyHubIndex] == "Hek"
-    assert bridge.hubs[bridge.sellHubIndex] == "Amarr"
+    assert bridge.hubs[bridge.fromIndex] == "Amarr"
+    assert bridge.hubs[bridge.toIndex] == "Jita"
+    assert bridge.sideLabels[bridge.fromSideIndex] == "买单"
+    assert bridge.sideLabels[bridge.toSideIndex] == "卖单"
 
 
 @pytest.mark.ui
-def test_empty_cross_region_result_clears_the_table(bridge):
-    bridge._selected_tid = 34
-    bridge._selected_name = "三钛合金"
-    bridge._on_cross_region_result([])
-    assert bridge.hubModel.rowCount() == 0
-    assert "无价格数据" in bridge.previewText
+def test_changing_a_parameter_drops_the_stale_table(bridge):
+    """参数改了就把旧方向的排行清掉 —— 留着旧数字会误导。"""
+    bridge._rows = [_row()]
+    bridge._model.set_rows(bridge._rows)
+
+    bridge.setToIndex(bridge.toIndex + 1)
+
+    assert bridge.isEmpty is True
+    assert bridge.model.rowCount() == 0
+    assert "参数已改" in bridge.statusText
 
 
 @pytest.mark.ui
-def test_score_result_builds_the_field_list(bridge):
-    """评分卡片：6 项、分值与利润按阈值取色、负数利润标红。"""
-    bridge._selected_tid = 34
-    bridge._selected_name = "三钛合金"
-    bridge._on_score_result(
-        {
-            "score": 72,
-            "buy_cost": 1_000_000,
-            "sell_revenue": 1_500_000,
-            "gross_profit": 500_000,
-            "margin_pct": 50.0,
-            "profit_per_m3": 12_345,
-        }
+def test_selecting_the_same_parameter_keeps_the_table(bridge):
+    before = bridge.statusText
+    bridge.setFromIndex(bridge.fromIndex)
+
+    assert bridge.statusText == before
+
+
+@pytest.mark.ui
+def test_sort_by_toggles_direction_on_repeat(bridge):
+    bridge._rows = [_row(spread=1.0), _row(spread=2.0)]
+    bridge._model.set_rows(bridge._rows)
+
+    bridge.sortBy(_NAME_COL)
+    assert bridge.sortColumn == _NAME_COL
+    assert bridge.sortAscending is True
+
+    bridge.sortBy(_NAME_COL)
+    assert bridge.sortAscending is False
+
+
+@pytest.mark.ui
+def test_add_to_cart_carries_the_current_direction(bridge):
+    bridge._rows = [_row(tid=34)]
+    bridge._model.set_rows(bridge._rows)
+
+    bridge.addToCart(0)
+
+    group = bridge._cart.groups()[0]
+    assert group["label"] == "Jita(卖单) → Amarr(买单)"
+    assert group["rows"][0]["typeId"] == 34
+    assert "购物车 1 项" in bridge.cartSummary
+
+
+@pytest.mark.ui
+def test_add_to_cart_out_of_range_is_ignored(bridge):
+    bridge._rows = []
+    bridge._model.set_rows([])
+
+    bridge.addToCart(5)
+
+    assert bridge._cart.count() == 0
+
+
+# ── 筛选项 ──────────────────────────────────────────────────
+
+
+def _feed(bridge, rows):
+    bridge._rows = list(rows)
+    bridge._apply_filters()
+
+
+@pytest.mark.ui
+def test_filters_are_on_by_default(bridge):
+    """默认就把「不赚钱的」和「没对手盘的」挡在外面 —— 否则榜首全是空挂单的垃圾。"""
+    assert bridge.hideUnprofitable is True
+    assert bridge.liquidityOptions[bridge.liquidityIndex] == "两侧 ≥ 1"
+
+
+@pytest.mark.ui
+def test_unprofitable_rows_are_hidden(bridge):
+    _feed(bridge, [_row(tid=1, spread=5.0), _row(tid=2, spread=-5.0), _row(tid=3, spread=0.0)])
+
+    assert [r["id"] for r in bridge._visible] == [1]
+
+
+@pytest.mark.ui
+def test_rows_without_a_counterparty_are_hidden(bridge):
+    """任一侧对手盘为 0（= 那侧没有真实报价，价是 ESI 基准价兜底填的）就成不了单。"""
+    _feed(
+        bridge,
+        [
+            _row(tid=1, va=10, vb=10),
+            _row(tid=2, va=0, vb=50),
+            _row(tid=3, va=50, vb=0),
+            _row(tid=4, va=0, vb=0),
+        ],
     )
 
-    labels = [f["label"] for f in bridge.scoreFields]
-    assert labels[0] == "贸易评分:"
-    assert len(bridge.scoreFields) == 6
-    assert bridge.scoreFields[0]["value"] == "72/100"
-    assert bridge.scoreFields[0]["strong"] is True
-    assert "500,000" in bridge.scoreFields[3]["value"]
-    assert "评分: 72" in bridge.previewText
-
-    bridge._on_score_result({"score": 10, "gross_profit": -1, "margin_pct": -1})
-    assert bridge.scoreFields[3]["color"] == bridge.scoreFields[4]["color"]
+    assert [r["id"] for r in bridge._visible] == [1]
 
 
 @pytest.mark.ui
-def test_score_result_with_status_keeps_the_card_untouched(bridge):
-    bridge._selected_tid = 34
-    bridge._selected_name = "三钛合金"
-    bridge._on_score_result({"status": "无价格数据"})
-    assert bridge.scoreFields == []
-    assert "无价格数据" in bridge.previewText
+def test_raising_the_liquidity_bar_is_stricter(bridge):
+    rows = [_row(tid=1, va=5, vb=5), _row(tid=2, va=20, vb=20), _row(tid=3, va=500, vb=500)]
+    _feed(bridge, rows)
+    assert len(bridge._visible) == 3
+
+    bridge.setLiquidityIndex(2)  # 两侧 ≥ 10
+    assert [r["id"] for r in bridge._visible] == [2, 3]
+
+    bridge.setLiquidityIndex(3)  # 两侧 ≥ 100
+    assert [r["id"] for r in bridge._visible] == [3]
+
+    bridge.setLiquidityIndex(0)  # 不限
+    assert len(bridge._visible) == 3
 
 
 @pytest.mark.ui
-def test_trade_pair_prefers_the_widest_spread_and_scales_by_quantity(bridge):
-    bridge._selected_tid = 34
-    bridge._selected_name = "三钛合金"
-    bridge._hub_rows = [
-        _hub_row("Jita", buy=100.0, sell=110.0),
-        _hub_row("Amarr", buy=90.0, sell=200.0),
-    ]
-    bridge.setQuantity(10)
-    bridge._update_trade_pair()
+def test_status_reports_how_many_were_filtered_out(bridge):
+    """筛掉多少必须看得见，否则「只有 200 行」会被当成数据缺失。"""
+    _feed(bridge, [_row(tid=1), _row(tid=2, va=0)])
 
-    assert bridge.pairVisible is True
-    assert "Amarr" in bridge.pairText and "Jita" in bridge.pairText
-    assert "1,000" in bridge.pairText  # (200 − 100) × 10 件
+    assert "1 / 2 行" in bridge.statusText
+
+    bridge.setLiquidityIndex(0)
+    assert bridge.statusText.startswith("2 行")
 
 
 @pytest.mark.ui
-def test_quantity_is_clamped(bridge):
-    bridge.setQuantity(0)
-    assert bridge.quantity == 1
-    bridge.setQuantity(10_000_000)
-    assert bridge.quantity == 1_000_000
+def test_filters_do_not_refetch(bridge):
+    """切筛选项只在内存里挑，全量结果一份都不动（也不重算 SQL）。"""
+    _feed(bridge, [_row(tid=1), _row(tid=2, va=0)])
 
+    bridge.setLiquidityIndex(0)
 
-# ════════════════════════════════════════════════════════════
-#  桥：Tab 2（运输）
-# ════════════════════════════════════════════════════════════
+    assert len(bridge._rows) == 2
 
 
 @pytest.mark.ui
-def test_transport_jumps_are_auto_filled_on_hub_change(bridge, monkeypatch):
-    """切买卖区域 → 自动查跳跃数并标「自动」；手动改过就不再标。"""
-    monkeypatch.setattr("services.logistics.get_distance_jumps", lambda src, dst: 12)
-    bridge.setTransportBuyHubIndex(bridge.hubs.index("Rens"))
-    assert bridge.transportJumps == 12
-    assert bridge.transportJumpsAuto is True
+def test_empty_hint_distinguishes_filtered_from_no_data(bridge):
+    """全被筛掉 ≠ 没算过 —— 两种空表的提示文案不能一样。"""
+    assert "还没有数据" in bridge.emptyHint
 
-    bridge.setTransportJumps(7)
-    assert bridge.transportJumps == 7
-    assert bridge.transportJumpsAuto is False
+    _feed(bridge, [_row(tid=1, va=0)])
+    assert bridge.isEmpty is True
+    assert "筛选" in bridge.emptyHint
 
 
 @pytest.mark.ui
-def test_transport_jumps_fall_back_when_no_route_is_known(bridge, monkeypatch):
-    """查不到跳跃数时保留原值，并去掉「自动」标记（不静默改用户看到的数）。"""
-    monkeypatch.setattr("services.logistics.get_distance_jumps", lambda src, dst: None)
-    before = bridge.transportJumps
-    bridge.setTransportBuyHubIndex(bridge.hubs.index("Hek"))
-    assert bridge.transportJumps == before
-    assert bridge.transportJumpsAuto is False
+def test_changing_parameters_clears_the_filtered_view_too(bridge):
+    _feed(bridge, [_row(tid=1)])
+    bridge.setToIndex(bridge.toIndex + 1)
+
+    assert bridge.isEmpty is True
+    assert bridge._visible == []
 
 
 @pytest.mark.ui
-def test_transport_result_builds_the_field_list(bridge):
-    bridge._t_selected_tid = 34
-    bridge._t_selected_name = "三钛合金"
-    bridge._on_transport_result(
-        {
-            "buy_cost": 1_000_000,
-            "sell_revenue": 2_000_000,
-            "freight_cost": 100_000,
-            "broker_cost": 30_000,
-            "sales_tax": 20_000,
-            "net_profit": 850_000,
-            "margin_pct": 42.5,
-            "isk_per_m3": 5_000,
-            "freight_mode": "public_freight",
-        }
-    )
+def test_bridge_without_a_shell_still_works():
+    """测试/独立使用时不带外壳：默认参数照旧，只是没有购物车。"""
+    from ui_qml.bridge.trade_bridge import TradeBridge
 
-    assert bridge.transportResultVisible is True
-    labels = [f["label"] for f in bridge.transportFields]
-    assert labels == ["买入成本:", "卖出收入:", "运费:", "经纪人费:", "销售税:", "净利润:", "利润率:", "每m³利润:"]
-    assert "公开货运" in bridge.transportPreview
-    assert "42.5%" in bridge.transportPreview
+    b = TradeBridge(None)
 
-
-@pytest.mark.ui
-def test_transport_analyze_without_selection_only_updates_preview(bridge):
-    bridge.analyzeTransport()
-    assert "请先搜索并选择一个物品" in bridge.transportPreview
-    assert bridge.transportResultVisible is False
+    assert b.cartSummary == ""
+    b.addToCart(0)  # 不该抛
+    assert "购物车不可用" in b.hintText
 
 
 # ════════════════════════════════════════════════════════════
@@ -321,3 +497,19 @@ def test_page_loads_and_is_quiet(trade_page):
     """能加载 + 桥到位 + 不给 Qt 刷告警（共用实现见 `tests/qml_page_load.py`）。"""
     host, bridge = trade_page
     assert_page_loads_quietly(host, bridge, key="trade", size=(1280, 720))
+
+
+@pytest.mark.ui
+def test_page_has_no_removed_sections(trade_page):
+    """重构删掉的区块不能再冒出来：搜索框 / 贸易评分 / 最优路线 / 运输 Tab。"""
+    from PySide6.QtCore import QObject
+
+    host, _ = trade_page
+    names = {o.objectName() for o in host.rootObject().findChildren(QObject)}
+
+    assert "tradeToolbar" in names
+    assert "analyzeButton" in names
+    assert "cartButton" in names
+    assert "suggestPopup" not in names
+    assert "transportInput" not in names
+    assert "searchInput" not in names
