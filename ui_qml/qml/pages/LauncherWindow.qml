@@ -41,12 +41,13 @@ Window {
      *   - L2 占用面板的容量方块行（`FCapacityRow`）≈ 420 ← 由它定 `minimumWidth`
      *   - L1 工具条（两个下拉 + 置顶）≈ 350
      * `minimumWidth` 取 420 + 10 余量：离屏量的是方框字，真字体的字宽可能略胖。
-     * 默认宽度取 520：行卡片的「名称 / 副标题」还读得全，再窄就只剩省略号。
+     * 默认宽度取 620：Q2=A 起动作列多了「行内执行人物下拉」（约 104px），行卡片的
+     * 名称 / 副标题要仍读得全 —— 再窄就只剩省略号。
      * 两个值都乘 `Theme.fontScale`：方块与文字随字体放大，写死数字的话放大字体后又会被裁。
      * 护栏：`tests/test_production_launcher.py::test_narrowest_window_clips_nothing`。
      */
     readonly property int contentMinWidth: Math.round(430 * Theme.fontScale)
-    readonly property int defaultWidth: Math.round(520 * Theme.fontScale)
+    readonly property int defaultWidth: Math.round(620 * Theme.fontScale)
     width: win.defaultWidth
     height: 760
     minimumWidth: win.contentMinWidth
@@ -209,7 +210,18 @@ Window {
         anchors.rightMargin: win.padXs
 
         readonly property bool collapsed: win.launcher ? win.launcher.occupancyCollapsed : false
-        readonly property int rowH: Math.max(26, Math.round(Math.max(14, win.fntBody + 1)) + 10)
+        /* 行高必须 ≥ delegate 的自然高，否则**每行被静默裁掉一截**。
+         *
+         * ⚠️ 这里曾经写 `Math.max(26, …) + 10` = 26，而 `FCapacityRow.implicitHeight` 是
+         * `Math.max(32, round(blockH) + 14)` = 32（blockH = max(14, fntBody+1) = 15）
+         * —— 行距比控件矮 6px，`clip: true` 之下每个人物底部被切掉，
+         * 表现就是用户报的「第 3 个人物只剩半个名字」。
+         *
+         * 故这里**逐项镜像 `FCapacityRow.implicitHeight` 的表达式**（同一个公式写两处是
+         * 这次缺陷的来源，但 QML 里 delegate 尚未实例化时读不到它的 implicitHeight，
+         * 只能镜像）；delegate 侧另显式 `height: occPanel.rowH` 兜一层，
+         * 公式万一再漂移也以本值为准、不会裁切。改任一处必须同时改另一处。 */
+        readonly property int rowH: Math.max(32, Math.round(Math.max(14, win.fntBody + 1)) + 14)
         readonly property int maxRows: 4
         readonly property int rowCount: win.launcher ? win.launcher.occupancyRows.length : 0
         height: collapsed ? 0 : Math.min(rowCount, maxRows) * (rowH + 1) + 2
@@ -224,10 +236,17 @@ Window {
             clip: true
             interactive: contentHeight > height
             boundsBehavior: Flickable.StopAtBounds
+            // 人物多于 maxRows（4）时靠滚动查看 —— 不能只 `interactive` 而不给滚动条：
+            // 那样内容能滚但**看不出还有更多**（用户的诉求是「人物显示不全，加个滚动栏」）。
+            ScrollBar.vertical: ScrollBar {
+                policy: ScrollBar.AsNeeded
+            }
 
             delegate: FCapacityRow {
                 required property var modelData
                 width: occList.width
+                // 显式定高：面板的行高才是权威（见 occPanel.rowH 的说明）
+                height: occPanel.rowH
                 charName: modelData.name
                 nameWidth: modelData.nameWidth
                 lines: modelData.lines
@@ -422,42 +441,70 @@ Window {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 26
 
-                            FButton {
-                                anchors.right: parent.right
-                                width: parent.width
-                                implicitHeight: 26
-                                visible: rowCard.modelData.actionKind === "start"
-                                primary: true
-                                text: rowCard.modelData.actionText
-                                onClicked: win.launcher.rowStart(rowCard.modelData.id)
-                            }
+                            Row {
+                                anchors.fill: parent
+                                spacing: win.padXs
 
-                            FButton {
-                                anchors.right: parent.right
-                                width: parent.width
-                                implicitHeight: 26
-                                visible: rowCard.modelData.actionKind === "toggle"
-                                text: rowCard.modelData.actionText
-                                onClicked: win.launcher.rowToggle(rowCard.modelData.groupId)
-                            }
+                                /* 行内执行人物（Q2=A）—— 原先在底部 L4 面板里选，
+                                 * 行内点「启动」用的却是那个**跨行共享**的下拉值。
+                                 * 现在每行各带一个：只在 `start` 态出现（其余态选人无意义，
+                                 * 白占本窗最稀缺的横向空间 —— 它常与游戏同屏）。 */
+                                FComboBox {
+                                    id: rowExecutor
+                                    objectName: "rowExecutor" + rowCard.modelData.id
+                                    visible: rowCard.modelData.actionKind === "start"
+                                             && (rowCard.modelData.executorOptions || []).length > 1
+                                    // 紧凑档：只够显示人名，下拉弹层按最长条目自适应（FComboBox 自己算）
+                                    width: visible ? Math.round(104 * Theme.fontScale) : 0
+                                    height: 26
+                                    model: rowCard.modelData.executorOptions || []
+                                    textRole: "label"
+                                    currentIndex: rowCard.modelData.executorIndex
+                                    onActivated: win.launcher.setRowExecutorIndex(
+                                                     rowCard.modelData.id, currentIndex)
+                                    ToolTip.visible: rowExecHover.hovered
+                                    ToolTip.text: qsTr("本条产线由谁执行（各行独立）")
+                                    HoverHandler {
+                                        id: rowExecHover
+                                    }
+                                }
 
-                            FButton {
-                                anchors.right: parent.right
-                                width: parent.width
-                                implicitHeight: 26
-                                visible: rowCard.modelData.actionKind === "complete"
-                                primary: true
-                                text: rowCard.modelData.actionText
-                                onClicked: win.launcher.rowComplete(rowCard.modelData.id)
-                            }
+                                FButton {
+                                    id: startBtn
+                                    width: rowExecutor.visible
+                                           ? parent.width - rowExecutor.width - parent.spacing
+                                           : parent.width
+                                    implicitHeight: 26
+                                    visible: rowCard.modelData.actionKind === "start"
+                                    primary: true
+                                    text: rowCard.modelData.actionText
+                                    onClicked: win.launcher.rowStart(rowCard.modelData.id)
+                                }
 
-                            FButton {
-                                anchors.right: parent.right
-                                width: parent.width
-                                implicitHeight: 26
-                                visible: rowCard.modelData.actionKind === "blocked"
-                                text: rowCard.modelData.actionText
-                                onClicked: win.launcher.rowBlocked(rowCard.modelData.id)
+                                FButton {
+                                    width: parent.width
+                                    implicitHeight: 26
+                                    visible: rowCard.modelData.actionKind === "toggle"
+                                    text: rowCard.modelData.actionText
+                                    onClicked: win.launcher.rowToggle(rowCard.modelData.groupId)
+                                }
+
+                                FButton {
+                                    width: parent.width
+                                    implicitHeight: 26
+                                    visible: rowCard.modelData.actionKind === "complete"
+                                    primary: true
+                                    text: rowCard.modelData.actionText
+                                    onClicked: win.launcher.rowComplete(rowCard.modelData.id)
+                                }
+
+                                FButton {
+                                    width: parent.width
+                                    implicitHeight: 26
+                                    visible: rowCard.modelData.actionKind === "blocked"
+                                    text: rowCard.modelData.actionText
+                                    onClicked: win.launcher.rowBlocked(rowCard.modelData.id)
+                                }
                             }
                         }
                     }
@@ -466,10 +513,29 @@ Window {
             }
 
             /* 行点击命中固定在按下那一刻（见 FTableClickArea 的说明）。
-             * 这是 ListView 行卡片：整行一格（`columnWidth: null`），行距 = 卡片高 + spacing。 */
+             * 这是 ListView 行卡片：整行一格（`columnWidth: null`），行距 = 卡片高 + spacing。
+             *
+             * ⚠️ **必须让出右侧动作列**：本组件 `anchors.fill: parent`，而它是 ListView
+             * 声明在 `contentItem` **之后**的子项 → 层叠在 delegate 之上，**会吃掉行内五个
+             * 动作按钮的全部点击**。实测（离屏）：点「启动」/「可下线」只触发
+             * `select_plan + copy_blueprint`，按钮自己的 `clicked` 完全不触发 ——
+             * 用户看到的就是「点行内启动没反应，必须去下面选人物再点底部按钮」。
+             *
+             * 修法就是这里把动作列宽度让出去（y 轴算行不受影响，`columnWidth: null`）。
+             *
+             * ⚠️ **不要照抄 `ImportReviewDialog.qml:199-204` 的 `z: -1` 写法**：它在本仓
+             * 实测无效 —— `ListView`（Flickable）自己会吃掉空白区的点击，delegate 也收不到，
+             * 于是「让出」变成了「整行点不动」。缩宽度是可靠做法。
+             *
+             * 已知取舍（有意为之）：动作列那一段不再参与「整行点击 / 右键选中」——
+             * 它上面现在有真正的控件（执行人物下拉 + 动作按钮），点到那里就该由控件接管。
+             */
+            readonly property int actionZoneW: (win.launcher ? win.launcher.actionSlotWidth : 88) + win.padMd
+
             FTableClickArea {
                 objectName: "launcherClickArea"
                 anchors.fill: parent
+                anchors.rightMargin: planList.actionZoneW
                 rowHeight: win.launcher ? win.launcher.rowHeight : 68
                 rowSpacing: planList.spacing
                 columnWidth: null
@@ -558,14 +624,10 @@ Window {
                 RowLayout {
                     spacing: win.padMd
 
-                    FComboBox {
-                        id: executorCombo
-                        model: win.launcher ? win.launcher.executors : []
-                        textRole: "label"
-                        Layout.preferredWidth: 220
-                        Layout.maximumWidth: 300
-                        onActivated: win.launcher.setExecutorIndex(currentIndex)
-                    }
+                    /* 原先这里有个「执行人物」下拉（`executorCombo`）—— Q2=A 起已搬到
+                     * 每一行的动作槽里（见 L3 的 `rowExecutor`）。删掉它的原因不只是「位置
+                     * 不对」：那份状态是**跨行共享的单例**，用户在底部选了人之后，
+                     * 行内点启动到底用谁要看「上一次选中过哪一行」，语义混乱。 */
 
                     Item {
                         Layout.fillWidth: true
@@ -615,10 +677,6 @@ Window {
             if (charFilter.currentIndex !== win.launcher.charFilterIndex)
                 charFilter.currentIndex = win.launcher.charFilterIndex
         }
-        function onBottomChanged() {
-            if (executorCombo.currentIndex !== win.launcher.executorIndex)
-                executorCombo.currentIndex = win.launcher.executorIndex
-        }
         // 行右键：条目与可见性由 Python 判定（`_can_partial_start` 要读计划状态）
         function onContextMenuRequested(planId, canPartial) {
             rowMenu.planId = planId
@@ -660,6 +718,5 @@ Window {
             return
         lineFilter.currentIndex = win.launcher.lineFilterIndex
         charFilter.currentIndex = win.launcher.charFilterIndex
-        executorCombo.currentIndex = win.launcher.executorIndex
     }
 }

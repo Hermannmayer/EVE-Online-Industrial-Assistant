@@ -165,6 +165,15 @@ class LauncherBridge(QObject):
     def rowStart(self, plan_id: int) -> None:
         self._page.row_start(int(plan_id))
 
+    @Slot(int, int)
+    def setRowExecutorIndex(self, plan_id: int, index: int) -> None:
+        """行内执行人物下拉选人（Q2=A：执行人物在每一行，不再有底部那份全局下拉）。
+
+        QML 侧不必回调读取——该行下拉自己持有 currentIndex；选中值记在页面里，
+        `_sync_rows` 下次重建行时会把它算回 `executorIndex` 下发。
+        """
+        self._page.set_row_executor_index(int(plan_id), int(index))
+
     @Slot(int)
     def rowToggle(self, group_id: int) -> None:
         self._page.row_toggle(int(group_id))
@@ -202,18 +211,6 @@ class LauncherBridge(QObject):
     @Property(str, notify=bottomChanged)
     def paramsText(self) -> str:
         return self._page.params_text()
-
-    @Property(list, notify=bottomChanged)
-    def executors(self) -> list[dict]:
-        return self._page.executor_options()
-
-    @Property(int, notify=bottomChanged)
-    def executorIndex(self) -> int:
-        return self._page.executor_index()
-
-    @Slot(int)
-    def setExecutorIndex(self, index: int) -> None:
-        self._page.set_executor_index(int(index))
 
     @Property(str, notify=bottomChanged)
     def mainButtonText(self) -> str:

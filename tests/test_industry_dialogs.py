@@ -465,9 +465,15 @@ class TestChildParallelDialog:
 
 
 class TestCompletePlansDialog:
-    """下线确认对话框 — 计划清单 / 机库默认值"""
+    """下线确认对话框 — 计划清单 / 逐行机库 / 「统一设为」"""
 
-    def test_default_hangar_from_settings(self, qapp, monkeypatch):
+    def test_each_row_keeps_its_own_hangar_and_bulk_set_overrides_all(self, qapp, monkeypatch):
+        """每行初值 = **该计划自己**的 `deposit_hangar_id`；「统一设为」覆盖所有行。
+
+        回归 `d2ac6a2`：批量下线曾退化成「一个下拉覆盖整批」，且单行初值取的是**全局默认**
+        而不是计划自己的值 —— 用户在各计划编辑对话框里逐条配好的产出机库被静默丢掉
+        （那个值只在清单第 4 列当只读文本显示）。这里把两半一起钉住：逐行独立 + 批量覆盖。
+        """
         monkeypatch.setattr("services.plan_execution.output_per_run", lambda *a: 1)
         plans = [
             {
@@ -477,30 +483,58 @@ class TestCompletePlansDialog:
                 "runs": 2,
                 "parallels": 3,
                 "deposit_hangar_id": 5,
-            }
+            },
+            {
+                "id": 2,
+                "product_name": "无人机",
+                "product_type_id": 2002,
+                "runs": 1,
+                "parallels": 1,
+                "deposit_hangar_id": 2,
+            },
+            {
+                "id": 3,
+                "product_name": "三钛合金",
+                "product_type_id": 1001,
+                "runs": 1,
+                "parallels": 1,
+                "deposit_hangar_id": None,
+            },
         ]
         hangars = [{"id": 1, "name": "矿仓"}, {"id": 2, "name": "组件仓"}]
-        dlg = CompletePlansDialog(plans, hangars, 2)  # 默认 = 设置的默认产出机库
-        assert dlg.selected_hangar_id() == 2
+        dlg = CompletePlansDialog(plans, hangars, 1)  # 全局默认 = 矿仓
+        # 第 1 行自己的 id=5 不在机库表里 → 退化全局默认；第 2 行用自己的 2；
+        # 第 3 行没有自己的值 → 全局默认。三行**各不相同**，不是同一个值盖全批。
+        assert [dlg.bridge.hangarIndexAt(i) for i in range(3)] == [1, 2, 1]
+        assert dlg.selected_hangar_ids() == [1, 2, 1]
+        assert dlg.bridge.hangarIndexAt(99) == 0  # 越界 → 「不自动入库」，不抛
+
         rows = dlg.bridge.rows
-        assert len(rows) == 1
+        assert len(rows) == 3
         assert rows[0]["name"] == "渡鸦级"
         assert rows[0]["runs"] == "3X2"
         assert rows[0]["qty"] == "6"  # 产出量 = 3 并行 × 2 流程 × 每次 1
-        assert rows[0]["deposit"] == "不自动入库"  # 计划里存的机库 id=5 不在机库表里
+
+        # 底部「统一设为」：一次覆盖全部行（含上面各不相同的行）
+        dlg.bridge.setAllHangars(0)
+        assert dlg.selected_hangar_ids() == [-1, -1, -1], "统一设为「不自动入库」必须覆盖所有行"
+        dlg.bridge.setAllHangars(2)
+        assert dlg.selected_hangar_ids() == [2, 2, 2], "统一设为组件仓必须覆盖所有行"
 
     def test_default_fallback_first_hangar(self, qapp, monkeypatch):
         monkeypatch.setattr("services.plan_execution.output_per_run", lambda *a: 1)
         plans = [{"id": 1, "product_name": "渡鸦级", "runs": 1, "parallels": 1, "deposit_hangar_id": None}]
         hangars = [{"id": 1, "name": "矿仓"}, {"id": 2, "name": "组件仓"}]
         dlg = CompletePlansDialog(plans, hangars, None)
-        assert dlg.selected_hangar_id() == 1  # 无默认时选第一个机库
+        assert dlg.selected_hangar_id() == 1  # 无默认时选第一个机库（单行路径仍走标量）
+        assert dlg.selected_hangar_ids() == [1]
 
     def test_no_hangar_keeps_no_auto_deposit(self, qapp, monkeypatch):
         monkeypatch.setattr("services.plan_execution.output_per_run", lambda *a: 1)
         plans = [{"id": 1, "product_name": "渡鸦级", "runs": 1, "parallels": 1}]
         dlg = CompletePlansDialog(plans, [], -1)
         assert dlg.selected_hangar_id() == -1  # 无机库时保持「不自动入库」
+        assert dlg.selected_hangar_ids() == [-1]
 
 
 class TestCompleteGuard:
@@ -582,6 +616,9 @@ class TestStatusBarCompleteAllGuard:
 
             def selected_hangar_id(self):
                 return 4
+
+            def selected_hangar_ids(self):
+                return [4]
 
         captured: dict = {}
 

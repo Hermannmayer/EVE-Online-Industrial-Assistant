@@ -10,7 +10,8 @@
 from unittest.mock import MagicMock
 
 import pytest
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QPoint, Qt
+from PySide6.QtTest import QTest
 
 import services.plan_execution as plan_execution
 from tests.clipboard_wait import wait_for_clipboard
@@ -188,8 +189,10 @@ def _make_launcher(qapp, monkeypatch, chars=("甲", "乙"), plans=None):
                     "skills": {
                         "高级量产技术": 5,
                         "批量生产学": 5,
+                        # 科研容量 = 1 + 实验室运作理论 + 高级实验室运作理论
+                        # （不是「科学网络学」—— 那个只管远程开作业的距离，见 char_capacity）
+                        "实验室运作理论": 5,
                         "高级实验室运作理论": 5,
-                        "科学网络学": 5,
                         "大规模反应理论": 5,
                         "高级大规模反应理论": 5,
                     }
@@ -211,9 +214,15 @@ def _make_launcher(qapp, monkeypatch, chars=("甲", "乙"), plans=None):
 
 
 def _walk_items(item, depth: int = 0):
-    """深度优先遍历 `childItems()`（限 8 层，够到容量方块那一层）。"""
+    """深度优先遍历 `childItems()`。
+
+    限深从 8 提到 12：Q2=A 起行卡片里多了一层（动作槽由单按钮改成
+    `Row(执行人物下拉 + 按钮)`），行内按钮落在**深度 9** —— 原来限 8 时
+    `test_narrowest_window_clips_nothing` 与行内按钮查找会**漏掉整层**，
+    表现为「测试说没问题、按钮其实没被检查到」。
+    """
     yield item, depth
-    if depth >= 8:
+    if depth >= 12:
         return
     for ch in item.childItems():
         yield from _walk_items(ch, depth + 1)
@@ -416,7 +425,7 @@ class TestProductionLauncher:
         try:
             assert sorted(_ids(w)) == [1, 2, 3, 4]  # 默认「全部」
 
-            w.set_line_filter_index(2)  # [全部, 制造, 拷贝, 发明, 反应]
+            w.set_line_filter_index(2)  # [全部, 制造, 拷贝, 发明, 反应, 研究]
             assert _ids(w) == [2]
 
             w.set_line_filter_index(1)
@@ -424,23 +433,32 @@ class TestProductionLauncher:
         finally:
             w.close()
 
-    def test_line_filter_invention_absorbs_research(self, qapp, monkeypatch):
-        """「发明」项收纳 invention / 材料效率研究 / 生产效率研究 三类。
+    def test_line_filter_research_is_its_own_item(self, qapp, monkeypatch):
+        """「研究」独立成项，且**按真实 category 匹配**。
 
-        后两类在本应用建不出计划（`production_plans` 无 activity 字段，取数链路全写死
-        manufacturing），独立成项会恒空，故并入「发明」。
+        回归背景：本项原先与「发明」合并，且 `_ACTIVITY_FILTERS` 用的匹配值写成
+        `"research_material"` / `"research_time"` —— 那是蓝图材料表的活动名口径
+        （`domain.research.MATERIAL_ACTIVITY`），不是 `category_for_activity()` 的返回值。
+        真实的 ME/TE 研究计划 category 是 `"research"`，于是**研究类计划不被任何筛选项
+        匹配**（只在「全部」里可见）。
+
+        这里断言的就是生产链路真正会产生的 category（`category_for_activity` 的输出），
+        不再喂那个永不出现的值。
         """
+        from services.plan_category import CATEGORY_RESEARCH, category_for_activity
         from services.terminology import term
 
         w, _ = _make_launcher(qapp, monkeypatch)
         try:
             labels = [o["label"] for o in w.line_filter_options()]
-            assert term.activity("invention") in labels
+            assert term.activity("research") in labels
 
-            w.set_line_filter_index(3)  # 「发明」
-            for cat in ("invention", "research_material", "research_time"):
-                assert w._match_filters({"category": cat}), cat
-            assert not w._match_filters({"category": "manufacturing"})
+            w.set_line_filter_index(5)  # 「研究」是第 5 项（全部 + 4 类 + 研究）
+            for act in ("researching_material_efficiency", "researching_time_efficiency"):
+                assert category_for_activity(act) == CATEGORY_RESEARCH, act
+                assert w._match_filters({"category": category_for_activity(act)}), act
+            # 研究不吞发明/拷贝，也不被它们吞
+            assert not w._match_filters({"category": "invention"})
             assert not w._match_filters({"category": "copying"})
         finally:
             w.close()
@@ -458,6 +476,7 @@ class TestProductionLauncher:
                 term.activity("copying"),
                 term.activity("invention"),
                 term.activity("reaction"),
+                term.activity("research"),
             ]
             assert w.line_filter_options()[0]["value"] is None
         finally:
@@ -1032,6 +1051,82 @@ class TestLauncherRowClick:
     命中，而 `ListView` 也是 Flickable —— 内容一移动（甩动/惯性沉降），按下位置那行
     已经被复用走，整次点击被丢掉。
     """
+
+    def test_row_action_button_receives_click(self, qapp, monkeypatch):
+        """行内「启动」按钮必须**真的收到点击**（回归：被 launcherClickArea 吃掉）。
+
+        缺陷背景：`launcherClickArea`（`FTableClickArea`）声明在 `ListView` 的
+        `contentItem` **之后** → 层叠在 delegate 之上，且 `anchors.fill: parent`，
+        于是**吃掉行内五个动作按钮的全部点击**。实测：点「启动」只触发
+        `select_plan + copy_blueprint`（点行＝复制蓝图名），按钮自己的 `clicked`
+        完全不触发 —— 用户感受就是「行内启动点不动，得去下面选人物再按底部按钮」。
+
+        本用例不复现「点不准」那种概率性问题，而是直接钉住**路由**：
+        在按钮中心真按下-释放，断言启动真的被派发到 `row_start`。
+        判据取「启动被调用」而不是「按钮自己被点」（后者是实现细节代理）。
+        """
+        w, _ = _make_launcher(qapp, monkeypatch)
+        try:
+            w.resize(1000, 700)
+            w.show()
+            spin(400)
+
+            started: list[int] = []
+            monkeypatch.setattr(w, "_on_row_start", lambda pid: started.append(pid))
+
+            # ⚠️ 必须沿 `childItems()` 递归找，**不能用 `findChildren()`**：
+            # ListView 的 delegate 挂在 `contentItem` 下，实测 `findChildren(QQuickItem)`
+            # 在根是 `Window` 时找不全（同 `_root()` 那段注释的成因）。
+            # 行内按钮在**深度 9**（`_walk_items` 的限深已相应提到 12）。
+            btn = None
+            btn_row_id = None
+            for item in _walk_items(w._window.contentItem()):
+                it = item[0]
+                if (
+                    it.metaObject().className().startswith("FButton")
+                    and it.property("text") == "启动"
+                    and it.property("visible")
+                ):
+                    btn = it
+                    # 从按钮对象名反查它属于哪一行：Row 里的执行人物下拉带 objectName
+                    # "rowExecutor<id>"，用它同层的按钮即可定位行 id。
+                    break
+            assert btn is not None, "找不到可见的行内「启动」按钮"
+            # 用「哪个计划是 start 态」定期望值（SAMPLE_PLANS 里 manufacturing 且可启动的那些）
+            startable = [int(r["id"]) for r in w._bridge.rows if r["actionKind"] == "start"]
+            assert startable, "用例前提：至少要有一行处于 start 态"
+            btn_row_id = startable[0]
+
+            center = btn.mapToItem(None, btn.width() / 2, btn.height() / 2)
+            QTest.mouseClick(
+                w._window,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+                QPoint(int(center.x()), int(center.y())),
+            )
+            spin(250)
+            # 期望值取「那行自己的 id」，不写死：行顺序由 group_and_sort_plans 决定
+            assert started == [btn_row_id], (
+                f"点第 {btn_row_id} 行的「启动」应派发启动，实得 {started}（点击被点击区吃掉了？）"
+            )
+        finally:
+            w.close()
+
+    def test_row_executor_is_per_row(self, qapp, monkeypatch):
+        """执行人物按行独立：A 行选的人不影响 B 行（Q2=A 的核心诉求）。"""
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(_plan(201)), dict(_plan(202))])
+        try:
+            opts_201 = w.row_executor_options(201)
+            opts_202 = w.row_executor_options(202)
+            assert opts_201 and opts_202
+            # 两行都默认落在各自计划自身的人物（SAMPLE_PLANS 里都是「甲」→ index 0）
+            assert w.row_executor_index(201) == 0
+            # 改 201 行的选择，202 行不动
+            w.set_row_executor_index(201, 1)
+            assert w._executor_value({"id": 201, "char_name": "甲"}) == "乙"
+            assert w._executor_value({"id": 202, "char_name": "甲"}) == "甲"
+        finally:
+            w.close()
 
     def test_click_survives_content_move(self, qapp, monkeypatch):
         w, _ = _make_launcher(qapp, monkeypatch)

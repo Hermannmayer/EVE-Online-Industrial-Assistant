@@ -10,7 +10,8 @@ production_plans 无 activity 字段（计划全为制造作业），类别从�
 ⚠️ copying 判据必须排除 manufacturing：EVE 里几乎每个可制造蓝图都能复制，
 只看 copying 会把普通制造蓝图误判成复制类（实测全库 3283 个 → 修正后 70 个）。
 
-材料效率研究 / 生产效率研究不在类别内 —— 本应用只能建制造计划，无研究作业。
+材料效率研究 / 生产效率研究各自占科研线（`CATEGORY_RESEARCH`），可以建研究计划
+（计划行有 `activity` 列，取 `researching_material_efficiency` / `researching_time_efficiency`）。
 
 约定：conn 的 primary 库须含蓝图表（reference.db 或 blueprint.db）。
 """

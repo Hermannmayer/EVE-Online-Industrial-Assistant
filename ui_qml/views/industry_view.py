@@ -829,7 +829,13 @@ class IndustryPage(QObject):
         allow_bp_short = confirm_bp_shortfall(self, ready)
         if allow_bp_short is None:
             return
-        result = complete_plans(ready, dlg.selected_hangar_id(), parent=self, allow_bp_short=allow_bp_short)
+        result = complete_plans(
+            ready,
+            dlg.selected_hangar_id(),
+            parent=self,
+            allow_bp_short=allow_bp_short,
+            hangar_ids=dlg.selected_hangar_ids(),
+        )
         self.load_plans()
         msg = f"已下线 {result['completed']} 项"
         if result["deposited"]:

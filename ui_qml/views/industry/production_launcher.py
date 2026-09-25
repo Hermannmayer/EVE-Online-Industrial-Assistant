@@ -53,6 +53,7 @@ from services.plan_category import (
     CATEGORY_INVENTION,
     CATEGORY_MANUFACTURING,
     CATEGORY_REACTION,
+    CATEGORY_RESEARCH,
 )
 from services.plan_service import group_and_sort_plans, load_plans_for_wizard
 from services.plan_start_check import can_force_start, plan_start_block
@@ -68,16 +69,24 @@ LAUNCHER_QML = "pages/LauncherWindow.qml"
 
 # ── 线型筛选 ────────────────────────────────────────────
 # 对齐游戏工业窗口的作业类型；名称走术语中心（`term.activity`），不硬编码中文。
-# `production_plans` 无 activity 字段（每条计划都是制造作业），故只能按「蓝图用途性质」
-# 分类，即 `services/plan_category` 推导出的 category —— 不能用 capacity_line_for_category，
-# 那个映射是为「技能决定的产线容量」服务的（copying/invention 合并成科研线）。
-# 材料效率研究 / 生产效率研究并入「发明」：本应用建不了研究计划（取数链路写死
-# activity='manufacturing'），独立成项会恒空。
+# 按 `services/plan_category` 推导出的 category 分类（`production_plans.activity` 已存在，
+# `_enrich_rows` 优先按它推导）—— 不能用 capacity_line_for_category，那个映射是为
+# 「技能决定的产线容量」服务的（copying/invention 合并成科研线）。
+#
+# ⚠️ 筛选项的值必须是 `category_for_activity()` 真正会返回的 category
+# （`services/plan_category` 的 CATEGORY_*）。历史缺陷：这里曾写
+# `"research_material"` / `"research_time"` —— 那是**蓝图材料表的活动名口径**
+# （`domain.research.MATERIAL_ACTIVITY`），不是 category；而真正的 ME/TE 研究计划
+# 的 category 是 `CATEGORY_RESEARCH = "research"`。两处口径不一致的结果是
+# **研究类计划不被任何筛选项匹配**（只在「全部」里可见）。
 _ACTIVITY_FILTERS: tuple[tuple[str, frozenset[str]], ...] = (
     ("manufacturing", frozenset({CATEGORY_MANUFACTURING})),
     ("copying", frozenset({CATEGORY_COPYING})),
-    ("invention", frozenset({CATEGORY_INVENTION, "research_material", "research_time"})),
+    ("invention", frozenset({CATEGORY_INVENTION})),
     ("reaction", frozenset({CATEGORY_REACTION})),
+    # ME/TE 效率研究独立成项：`category_for_activity("researching_*")` → `research`。
+    # 不能并入「发明」—— 合并后用户点「发明」会把研究计划一起捞出来，与游戏作业类型对不上。
+    ("research", frozenset({CATEGORY_RESEARCH})),
 )
 
 # ── 间距标尺（Windows/Fluent 8/12/16 体系） ──────────────
@@ -165,6 +174,9 @@ def _short_label(code: str | None, status: str) -> str:
 # 动作槽宽度按这些文案的**最宽者**取值（新增短标签会自动纳入，不会截断）
 _SLOT_SAMPLES = (_START_LABEL, _COMPLETE_LABEL, "折叠(99)", "展开(99)", *_BLOCK_SHORT_LABELS.values())
 _SLOT_MIN_W = 88
+#: 行内执行人物下拉的宽度（Q2=A）。`LauncherWindow.qml` 的 `rowExecutor.width` 与之对应；
+#: 它从动作槽宽度里出，故 `action_slot_width()` 要把它加回去，否则 start 态会被挤窄。
+_ROW_EXECUTOR_W = 104
 
 
 def _fmt_hms(seconds) -> str:
@@ -234,8 +246,9 @@ class ProductionLauncher(QObject):
         self._hint_text = "在上方列表选一条产线"
         self._feedback_text = ""
         self._params_text = ""
-        self._executor_options: list[dict] = []
-        self._executor_index = 0
+        #: 行内执行人物：plan_id → 用户在该行下拉里选中的人。无记录 → 用计划自身 char_name。
+        #: 存**人名**而不是下标：下拉选项列表每次同步都会按角色表重建，下标会漂。
+        self._row_executor: dict[int, str] = {}
         self._main_btn_text = ""
         self._main_btn_tip = ""
         self._main_btn_visible = False
@@ -480,12 +493,17 @@ class ProductionLauncher(QObject):
         """动作槽固定宽度：按全部候选短标签的最宽者算。
 
         五个按钮互斥显隐但**占位不变**，槽宽按最长文案取值，切换时不左右跳动。
+
+        Q2=A 起动作行**多了一个行内执行人物下拉**（`start` 态），故槽宽再加
+        `_ROW_EXECUTOR_W` + 一个 XS 间距 —— 否则 `start` 态的按钮被挤窄、
+        与其它态的行宽度不一致（槽宽的全部意义就是「切换时不左右跳」）。
+        `LauncherWindow.qml` 的 `rowExecutor.width` 用的就是这个常量。
         """
         font = QFont(theme.FONT_FAMILY)
         font.setPixelSize(theme.fs(_FS_BODY))
         fm = QFontMetrics(font)
         text_w = max(fm.horizontalAdvance(sample) for sample in _SLOT_SAMPLES)
-        return max(_SLOT_MIN_W, text_w + 2 * _GAP_MD)
+        return max(_SLOT_MIN_W, text_w + 2 * _GAP_MD) + _ROW_EXECUTOR_W + _GAP_XS
 
     def select_plan(self, plan_id: int) -> None:
         """把某计划设为列表选中项（行内启动 / 阻塞提示共用）。"""
@@ -881,6 +899,13 @@ class ProductionLauncher(QObject):
             text = _short_label(block_code, status)
             tip = block_reason or _STATUS_LABELS.get(status, status) or "不可启动"
 
+        # 只有「能启动」的行才给执行人物下拉 —— 其余态（折叠/待下线/阻塞）选人无意义，
+        # 给了只会白占横向空间（本窗常与游戏同屏，宽度是稀缺资源）。
+        executor_options: list[dict] = []
+        executor_index = 0
+        if kind == "start":
+            executor_options, executor_index = self._executor_view_for(plan, cat)
+
         return {
             "id": pid,
             "name": (_PARENT_GLYPH if level == 0 else "") + name,
@@ -897,7 +922,32 @@ class ProductionLauncher(QObject):
             "actionKind": kind,
             "actionText": text,
             "actionTip": tip,
+            "executorOptions": executor_options,
+            "executorIndex": executor_index,
         }
+
+    def _executor_view_for(self, plan: dict, cat: str) -> tuple[list[dict], int]:
+        """某行「执行人物」下拉的 (选项, 选中下标)。口径与底部面板原先那一份完全一致。
+
+        选项标签带**该人物在该线型上的剩余容量**（`剩 N 条`），选中项取
+        `self._row_executor[plan_id]`（用户在该行显式选过的人）→ 退化该计划自身
+        `char_name` → 退化第 0 项。
+        """
+        options: list[dict] = []
+        chars = list(self._char_list)
+        plan_char = (plan.get("char_name") or "").strip()
+        chosen = self._row_executor.get(int(plan.get("id") or 0), plan_char)
+        if plan_char and plan_char not in chars:
+            chars.insert(0, plan_char)
+        if chosen and chosen not in chars:
+            chars.insert(0, chosen)
+        index = 0
+        for char_name in chars:
+            remaining = max_lines_for_category(char_name, cat) - int(self._usage.get(char_name or "", {}).get(cat, 0))
+            options.append({"label": f"{char_name}（剩 {max(remaining, 0)} 条）", "value": char_name})
+            if chosen and char_name == chosen:
+                index = len(options) - 1
+        return options, index
 
     @staticmethod
     def _location_text(plan: dict) -> str:
@@ -1106,14 +1156,17 @@ class ProductionLauncher(QObject):
         self._notify_bottom()
 
     def _update_bottom(self) -> None:
-        """算出 L4 底部面板的内容：未选中 = 紧凑单行；选中 = 参数摘要 + 执行人物 + 主按钮。"""
+        """算出 L4 底部面板的内容：未选中 = 紧凑单行；选中 = 参数摘要 + 主按钮。
+
+        ⚠️ Q2=A 起**执行人物下拉已搬到每一行**（见 `row_executor_*`），本面板不再有它。
+        原先这里维护的 `_executor_options`/`_executor_index` 是**跨行共享的单例状态**，
+        正是「必须去下面选人物、点了启动却用了别人的设置」的来源，故一并删除。
+        """
         plan = self._plan_map.get(self._selected_id or -1)
         if plan is None:
             # 紧凑态：只留一行提示，不再露出全宽空下拉
             self._bottom_expanded = False
             self._params_text = ""
-            self._executor_options = []
-            self._executor_index = 0
             self._main_btn_text = ""
             self._main_btn_tip = ""
             self._main_btn_visible = False
@@ -1142,21 +1195,6 @@ class ProductionLauncher(QObject):
         if cost:
             parts.append(f"预计成本 {cost:,.0f} ISK")
         self._params_text = " · ".join(parts)
-
-        # 执行人物下拉（含剩余容量）—— 注意别复用 `name`（那是产品名）
-        options: list[dict] = []
-        chars = list(self._char_list)
-        plan_char = (plan.get("char_name") or "").strip()
-        if plan_char and plan_char not in chars:
-            chars.insert(0, plan_char)
-        index = 0
-        for char_name in chars:
-            remaining = max_lines_for_category(char_name, cat) - int(self._usage.get(char_name or "", {}).get(cat, 0))
-            options.append({"label": f"{char_name}（剩 {max(remaining, 0)} 条）", "value": char_name})
-            if plan_char and char_name == plan_char:
-                index = len(options) - 1
-        self._executor_options = options
-        self._executor_index = index
         self._feedback_text = ""
 
         # 主按钮
@@ -1199,16 +1237,6 @@ class ProductionLauncher(QObject):
 
     def params_text(self) -> str:
         return self._params_text
-
-    def executor_options(self) -> list[dict]:
-        return self._executor_options
-
-    def executor_index(self) -> int:
-        return self._executor_index
-
-    def set_executor_index(self, index: int) -> None:
-        if 0 <= int(index) < len(self._executor_options):
-            self._executor_index = int(index)
 
     def main_button_text(self) -> str:
         return self._main_btn_text
@@ -1339,16 +1367,50 @@ class ProductionLauncher(QObject):
             FMessageDialog.warning(self, "启动失败", res.get("message", "未知错误"))
 
     def _executor_value(self, plan: dict | None = None) -> str | None:
-        """底部执行人物下拉当前选中的人。
+        """本次要启动的这条计划，用哪个执行人物。
 
-        下拉未初始化（还没选中过任何行，例如行内直接点「启动」）时，
-        退回**本次要启动的那条计划**自身的人物 —— 这是旧实现的口径，
-        退回「当前选中行」会拿到 None（选中行与本次启动的行并不总是同一条）。
+        口径（Q2=A 起执行人物搬到行内）：**该行下拉里选的人** → 退化该计划自身
+        `char_name` → 退化 None。行内下拉是按行独立的，所以这里必须按**传入的计划**
+        取，不能读「当前选中行」—— 行内直接点启动时，选中行与本次启动的行并不总是同一条
+        （旧实现靠 `_executor_options`/`_executor_index` 的全局单例状态，正是因为这一点
+        才需要注释说明「退回本次要启动的那条计划自身的人物」；现在改成按 plan_id 查表，
+        语义更直白，也不再依赖「下拉是否初始化过」）。
         """
-        if self._executor_options and 0 <= self._executor_index < len(self._executor_options):
-            return str(self._executor_options[self._executor_index]["value"])
-        fallback = plan if plan is not None else (self._plan_map.get(self._selected_id or -1) or {})
-        return (fallback.get("char_name") or "").strip() or None
+        target = plan if plan is not None else (self._plan_map.get(self._selected_id or -1) or {})
+        pid = int(target.get("id") or 0)
+        chosen = self._row_executor.get(pid)
+        if chosen:
+            return chosen
+        return (target.get("char_name") or "").strip() or None
+
+    # ── 行内执行人物（Q2=A：执行人物从底部搬到每一行）──────
+
+    def row_executor_options(self, plan_id: int) -> list[dict]:
+        """某行的执行人物选项（给 QML 行内下拉用）。"""
+        plan = self._plan_map.get(int(plan_id))
+        if plan is None:
+            return []
+        cat = capacity_line_for_category(str(plan.get("category") or ""))
+        return self._executor_view_for(plan, cat)[0]
+
+    def row_executor_index(self, plan_id: int) -> int:
+        """某行执行人物下拉当前选中下标。"""
+        plan = self._plan_map.get(int(plan_id))
+        if plan is None:
+            return 0
+        cat = capacity_line_for_category(str(plan.get("category") or ""))
+        return self._executor_view_for(plan, cat)[1]
+
+    def set_row_executor_index(self, plan_id: int, index: int) -> None:
+        """用户在行内下拉里选人 → 记住这个人（按 plan_id，存人名不存下标）。"""
+        plan = self._plan_map.get(int(plan_id))
+        if plan is None:
+            return
+        cat = capacity_line_for_category(str(plan.get("category") or ""))
+        options = self._executor_view_for(plan, cat)[0]
+        if not 0 <= int(index) < len(options):
+            return
+        self._row_executor[int(plan_id)] = str(options[int(index)]["value"])
 
     def main_action(self) -> None:
         """底部主按钮：待下线走下线流程，其余走启动。"""

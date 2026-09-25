@@ -428,7 +428,14 @@ def test_occupancy_by_char_empty_without_characters(h, monkeypatch):
 def test_asset_plot_empty_state(h):
     bridge = h.bridge()
     bridge.refresh()
-    assert bridge.assetPlot == {"isEmpty": True, "count": 0, "series": [], "xTicks": [], "yTicks": []}
+    assert bridge.assetPlot == {
+        "isEmpty": True,
+        "count": 0,
+        "series": [],
+        "xLines": [],
+        "xTicks": [],
+        "yTicks": [],
+    }
     assert all(row["latestText"] == "" for row in bridge.assetSeries)
     assert [row["valueText"] for row in bridge.assetSummaryRows] == ["", "", "", "", ""]
     assert [row["deltaText"] for row in bridge.assetSummaryRows] == ["—", "—", "—", "—", "—"]
@@ -493,6 +500,9 @@ def test_asset_plot_geometry(h):
     # 轴刻度：x 用日期、y 按量级自适应单位（K/M/B）
     assert [tick["label"] for tick in plot["xTicks"]] == [row["date"] for row in _snapshots(3)]
     assert plot["yTicks"] and all(tick["label"].endswith(("K", "M", "B", "0", "5")) for tick in plot["yTicks"])
+    # 竖线覆盖**全部**点：`xTicks` 采样 ≤6 会漏点（count=7 时下标 3 无刻度 = 那条竖线消失）
+    assert [line["pos"] for line in plot["xLines"]] == [point["x"] for point in plot["series"][0]["points"]]
+    assert len(plot["xLines"]) == plot["count"]
 
 
 def test_format_axis_value_units():
@@ -672,7 +682,18 @@ def test_set_range_index_trims_by_natural_window(h):
     bridge.refresh()
     assert bridge.rangeIndex == 0
     assert bridge.rangeLabels == ["近 7 天", "本月", "本年", "总"]
-    assert bridge.assetPlot["count"] == 7
+    # 7 > _MAX_X_TICKS(6)：竖线仍**每点一根**（含 `pick_indices` 漏掉的下标 3 —— 那条
+    # 09-22 的竖线就是这么消失的），标签只采样 6 个且缩成 MM-DD（7 个全日期在
+    # ~416px 的面板里会互相压字）。
+    plot = bridge.assetPlot
+    assert plot["count"] == 7
+    assert [line["pos"] for line in plot["xLines"]] == [i / 6 for i in range(7)]
+    assert len(plot["xTicks"]) == qdb._MAX_X_TICKS
+    assert all(len(tick["label"]) == 5 and tick["label"][2] == "-" for tick in plot["xTicks"]), "MM-DD"
+    # 采样漏掉的那天（下标 3）照样有竖线，只是没有标签落在上面
+    assert 0.5 in {line["pos"] for line in plot["xLines"]}
+    assert 0.5 not in {tick["pos"] for tick in plot["xTicks"]}
+    assert {tick["pos"] for tick in plot["xTicks"]} <= {line["pos"] for line in plot["xLines"]}
 
     bridge.setRangeIndex(1)  # 本月：自然月起点到今天
     month_start = today.replace(day=1)

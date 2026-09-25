@@ -224,9 +224,9 @@ Item {
                 }
             }
 
-            // 纵向网格 + 日期
+            // 纵向网格：**每个数据点一根**（吃 `xLines`，不是采样的 `xTicks`）
             Repeater {
-                model: root.plot ? root.plot.xTicks : []
+                model: root.plot ? root.plot.xLines : []
 
                 Item {
                     required property var modelData
@@ -242,15 +242,29 @@ Item {
                         color: Theme.border
                         opacity: 0.35
                     }
+                }
+            }
 
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        y: root.plotH + Theme.spacingXs
-                        text: modelData.label
-                        color: Theme.textSecondary
-                        font.family: Theme.fontFamily
-                        font.pixelSize: root.fntSmall
-                    }
+            /* 日期标签：吃采样的 `xTicks`（≤6 个，`xLines` 有 90 个时不能都当标签）。
+             * **标签位置向内对齐、刻度 x 不动**：`padR` 只有 14px，而 `"2026-09-25"`
+             * 实测宽约 58px（半宽 29px），居中会把最后一个标签压到右侧挂单面板上
+             * （祖先 `FPanel` 没有 `clip`，溢出会直接盖到邻居上）。
+             * 首标签左对齐、末标签右对齐，中段仍居中 —— 竖线仍落在 `padL + pos*plotW`。 */
+            Repeater {
+                model: root.plot ? root.plot.xTicks : []
+
+                Text {
+                    required property var modelData
+                    required property int index
+                    readonly property bool _first: index === 0
+                    readonly property bool _last: root.plot ? index === root.plot.xTicks.length - 1 : false
+                    x: root.padL + modelData.pos * root.plotW
+                       - (_first ? 0 : (_last ? width : width / 2))
+                    y: root.padT + root.plotH + Theme.spacingXs
+                    text: modelData.label
+                    color: Theme.textSecondary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: root.fntSmall
                 }
             }
 

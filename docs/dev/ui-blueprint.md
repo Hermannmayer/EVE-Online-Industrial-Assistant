@@ -137,14 +137,16 @@
 L1 只需 ≈350；默认 520 是「行卡片的名称 / 副标题还读得全」的折中。改尺寸相关值（方块、下拉宽、字号）后跑
 `tests/test_production_launcher.py::test_narrowest_window_clips_nothing`（按渲染几何兜「控件被裁」）。
 
-**`#line_filter` 按蓝图类别过滤，不是按产线容量线型**：选项为 全部 / 制造 / 复制 / 发明 / 反应，
+**`#line_filter` 按蓝图类别过滤，不是按产线容量线型**：选项为 全部 / 制造 / 拷贝 / 发明 / 反应 / 研究，
 名称取自 `services.terminology.term.activity()`（CCP 官方中文），data 存 `frozenset[str] | None`。
-判据是 `services.plan_category.load_category_map` 推出的 `plan["category"]`，
-**不能用 `char_capacity.capacity_line_for_category`** —— 那个映射把 copying/invention 合并成「科研」，
-是为「技能决定的产线容量」（L2 占用面板）服务的，拿来当筛选项就会漏筛（历史缺陷：能制造+能复制的
-普通蓝图全被判成 copying，制造计划漏进科研筛选）。
-「发明」一项同时收纳 `invention` / `research_material` / `research_time`：后两类在本应用建不出计划
-（`production_plans` 无 activity 字段，取数链路全写死 `manufacturing`），独立成项会恒空。
+判据是 `plan["category"]`（`services.plan_category.category_for_activity` 按计划行 `activity` 推导，
+`_enrich_rows` 已 enrich），**不能用 `char_capacity.capacity_line_for_category`** —— 那个映射把
+copying/invention 合并成「科研」，是为「技能决定的产线容量」（L2 占用面板）服务的，拿来当筛选项就会漏筛
+（历史缺陷：能制造+能复制的普通蓝图全被判成 copying，制造计划漏进科研筛选）。
+⚠️ 筛选项的匹配值必须是 `category_for_activity()` **真正会返回的 category**。历史缺陷：
+这里曾写 `"research_material"` / `"research_time"`（那是蓝图材料表的活动名口径，
+见 `domain.research.MATERIAL_ACTIVITY`），而真实研究计划的 category 是 `"research"` ——
+两处口径不一致导致**研究类计划不被任何筛选项匹配**（只在「全部」里可见）。
 
 ### 设计依据（改本窗前先读）
 

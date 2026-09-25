@@ -221,11 +221,14 @@ class PlanTable(QObject):
         self.plan_updated.emit()
 
     def _complete_rows_with_dialog(self, rows: list[int]) -> None:
-        """批量下线：**一次**对话框选产出机库，再整批完成。
+        """批量下线：**一次**对话框逐行选产出机库，再整批完成。
 
         右键「下线」是批量入口，逐行调 `_complete_plan_with_dialog` 会连弹 N 次框；
-        这里复用 `complete_plans(plans, hangar_id)` 的单次对话流程。
+        这里复用 `complete_plans(plans, hangar_id, hangar_ids=...)` 的单次对话流程。
         `deposit_hangar_id` 为空的行也在对话框里选机库，不再静默跳过入库。
+
+        对话框每行一个下拉（初值 = 该计划自己的机库），所以交回的是**逐条**机库
+        （`selected_hangar_ids()`）而不是一个覆盖全批的标量。
         """
         if self._model is None:
             return
@@ -245,7 +248,9 @@ class PlanTable(QObject):
         allow_bp_short = confirm_bp_shortfall(self, ready)
         if allow_bp_short is None:
             return
-        result = complete_plans(ready, dlg.selected_hangar_id(), allow_bp_short=allow_bp_short)
+        result = complete_plans(
+            ready, dlg.selected_hangar_id(), allow_bp_short=allow_bp_short, hangar_ids=dlg.selected_hangar_ids()
+        )
         if result["failed"]:
             detail = "\n".join(result.get("failed_reasons") or []) or "、".join(result["failed"])
             FMessageDialog.warning(self, "下线失败", detail)

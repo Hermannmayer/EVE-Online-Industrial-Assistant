@@ -19,6 +19,7 @@ def complete_plans(
     ask_outcome: bool = True,
     allow_bp_short: bool = False,
     update_hangar: bool = True,
+    hangar_ids: list[int] | None = None,
 ) -> dict:
     """把一批 ready 计划下线到指定机库。
 
@@ -27,6 +28,8 @@ def complete_plans(
     update_hangar=False → **不动**计划的产出机库，沿用库里已存的：采购页「一键完成」
     走这条（它不选机库，入库目标仍是计划自己配的那个）。
     allow_bp_short: 蓝图流程不足时是否放行（与 `start_plan` 成对使用）。
+    hangar_ids: **逐条**产出机库 id（与 `plans` 同序）。批量入口传它 —— 每行在对话框里
+    各自选一个机库。不给（None）时沿用 `hangar_id` 覆盖全批，**既有调用方语义不变**。
 
     发明行先弹 InventionOutcomeDialog 回填**成功产线数**（用户取消 → 该行不完成）。
     ⚠️ validate 档测试在**没有 QApplication** 的情况下直调本函数时必须传
@@ -44,9 +47,15 @@ def complete_plans(
     failed: list[str] = []
     failed_reasons: list[str] = []
     skipped: list[str] = []
-    deposit = hangar_id if hangar_id and hangar_id > 0 else None
-    for plan in plans:
+    scalar_deposit = hangar_id if hangar_id and hangar_id > 0 else None
+    for i, plan in enumerate(plans):
         if update_hangar:
+            # 逐条优先：给了 hangar_ids 就按序号取，否则整批用同一个标量（向后兼容）
+            if hangar_ids is not None:
+                one = hangar_ids[i] if i < len(hangar_ids) else hangar_id
+                deposit = one if one and one > 0 else None
+            else:
+                deposit = scalar_deposit
             set_plan_deposit_hangar(get_container().db, plan["id"], deposit)
         actual = None
         actual_bpc = None

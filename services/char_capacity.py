@@ -5,7 +5,7 @@
 
 新：三类产线容量（制造/科研/反应），每类由两个技能叠加：
   制造 = 1 + 高级量产技术 + 批量生产学
-  科研 = 1 + 高级实验室运作理论 + 科学网络学
+  科研 = 1 + 实验室运作理论 + 高级实验室运作理论
   反应 = 1 + 大规模反应理论 + 高级大规模反应理论
 满级（技能各 5）→ 1+5+5 = 11 条。
 计划按 `category`（services.plan_category 推导）归类到三类线型。
@@ -31,7 +31,7 @@ _LINE_LABELS = {
 # 线型 → 容量技能（中文名，与 char_config.json 的 skills key 一致）
 _CATEGORY_SKILLS: dict[str, tuple[str, str]] = {
     CAPACITY_LINE_MANUFACTURING: ("高级量产技术", "批量生产学"),
-    CAPACITY_LINE_RESEARCH: ("高级实验室运作理论", "科学网络学"),
+    CAPACITY_LINE_RESEARCH: ("实验室运作理论", "高级实验室运作理论"),
     CAPACITY_LINE_REACTION: ("大规模反应理论", "高级大规模反应理论"),
 }
 

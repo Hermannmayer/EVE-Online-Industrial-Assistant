@@ -115,8 +115,15 @@ _MAX_Y_TICKS = 5
 _RANGE_ALL_DAYS = 3650
 _RANGE_LABELS: tuple[str, ...] = ("近 7 天", "本月", "本年", "总")
 _RANGE_ALL_INDEX = 3
-#: 折线图空态：QML 只看 `isEmpty`
-_EMPTY_PLOT: dict = {"isEmpty": True, "count": 0, "series": [], "xTicks": [], "yTicks": []}
+#: 折线图空态：QML 只看 `isEmpty`；`xLines` 必须与正常态同键（否则空态取到 undefined）
+_EMPTY_PLOT: dict = {
+    "isEmpty": True,
+    "count": 0,
+    "series": [],
+    "xLines": [],
+    "xTicks": [],
+    "yTicks": [],
+}
 #: 空态占位文案。**必须写清「从首次记录开始累积」**：本功能刚上线时只有零星几个点，
 #: 不写用户会以为坏了。
 _EMPTY_ASSET_TEXT = "还没有资产快照 —— 数据从首次记录开始按天累积，导入一次挂单或填写钱包余额即可记下今天这一天。"
@@ -353,7 +360,11 @@ def asset_plot(
     形状与 `price_chart_bridge.plot_model` 同族：
         {isEmpty, count,
          series: [{label, key, color, points: [{x, y}]}],
-         xTicks / yTicks: [{pos, label}]}
+         xLines: [{pos}], xTicks / yTicks: [{pos, label}]}
+
+    - `xLines` = **全部**数据点的 x（每点一根竖线）；`xTicks` 采样 ≤ `_MAX_X_TICKS`，**只用于标签**。
+      （`pick_indices` 的 `round + set` 去重会漏点：count=7 → 下标 3 无刻度，竖线就少一根。）
+    - `count > _MAX_X_TICKS` 时 `xTicks` 的标签缩成 `MM-DD`，避免 7 个全日期标签互相压字。
 
     - `series` **只含当前可见的线**，y 轴量程也只看这些线 —— 切换显示时刻度会跟着变，
       这是刻意行为（用户点掉「钱包余额」后不该被它的数量级压扁其它线）。
@@ -389,11 +400,18 @@ def asset_plot(
         )
 
     tick_values = axis_values(lo, hi, step)
+    #: `count > _MAX_X_TICKS` 时标签缩成 MM-DD：7 个全日期（"2026-09-22"）在约 416px 的
+    #: 中间面板里会互相压字。**只影响文案**，竖线位置由全量的 `xLines` 给。
+    tick_texts = [(text[5:] if len(text) >= 10 else text) if count > _MAX_X_TICKS else text for text in dates]
     return {
         "isEmpty": False,
         "count": count,
         "series": series,
-        "xTicks": [{"pos": xs[i], "label": dates[i]} for i in pick_indices(count, _MAX_X_TICKS)],
+        #: **每一个数据点一根竖线**（`xTicks` 是采样 ≤6，会漏点：count=7 时下标 3 被丢掉，
+        #: 用户看到的就是「9月22号那一条的竖线没有了」）。形状与 xTicks 同族，只带位置。
+        "xLines": [{"pos": x} for x in xs],
+        #: `xTicks` 语义收窄为**只用于标签**（QML 侧不再拿它画竖线）。
+        "xTicks": [{"pos": xs[i], "label": tick_texts[i]} for i in pick_indices(count, _MAX_X_TICKS)],
         "yTicks": [
             {"pos": pos, "label": format_axis_value(value)}
             for value, pos in zip(tick_values, map_values(tick_values, lo, hi), strict=True)

@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 import services.char_capacity as cc
 
 
@@ -80,34 +82,30 @@ class TestActiveProductionLines:
 
 
 class TestMaxLinesForCategory:
-    def test_full_level_eleven(self):
-        skills = {"高级量产技术": 5, "批量生产学": 5}
-        assert cc.max_lines_for_category("X", cc.CAPACITY_LINE_MANUFACTURING, skills=skills) == 11
-
-    def test_research_two_skills(self):
-        skills = {"高级实验室运作理论": 5, "科学网络学": 5}
-        assert cc.max_lines_for_category("X", cc.CAPACITY_LINE_RESEARCH, skills=skills) == 11
-
-    def test_reaction_two_skills(self):
-        skills = {"大规模反应理论": 5, "高级大规模反应理论": 5}
-        assert cc.max_lines_for_category("X", cc.CAPACITY_LINE_REACTION, skills=skills) == 11
-
-    def test_partial_levels(self):
-        skills = {"高级量产技术": 3, "批量生产学": 2}
-        assert cc.max_lines_for_category("X", cc.CAPACITY_LINE_MANUFACTURING, skills=skills) == 6
-
-    def test_no_skills_base_one(self):
-        assert cc.max_lines_for_category("X", cc.CAPACITY_LINE_MANUFACTURING, skills={}) == 1
-
-    def test_missing_skill_zero(self):
-        skills = {"高级量产技术": 5}
-        assert cc.max_lines_for_category("X", cc.CAPACITY_LINE_MANUFACTURING, skills=skills) == 6
+    @pytest.mark.parametrize(
+        ("line", "skills", "expected"),
+        [
+            (cc.CAPACITY_LINE_MANUFACTURING, {"高级量产技术": 5, "批量生产学": 5}, 11),
+            # 回归①：科研两条技能各 5 级 → 11（旧代码喂的是「高级实验室运作理论+科学网络学」错对）
+            (cc.CAPACITY_LINE_RESEARCH, {"实验室运作理论": 5, "高级实验室运作理论": 5}, 11),
+            (cc.CAPACITY_LINE_REACTION, {"大规模反应理论": 5, "高级大规模反应理论": 5}, 11),
+            # 回归②：用户实际报的现象——高级实验室运作理论 4 级应得 10（旧代码算出 6）
+            (cc.CAPACITY_LINE_RESEARCH, {"实验室运作理论": 5, "高级实验室运作理论": 4}, 10),
+            # 回归③：科学网络学只管远程开研究作业的距离，不是槽位技能 → 只有它时仍是基础 1
+            (cc.CAPACITY_LINE_RESEARCH, {"科学网络学": 5}, 1),
+            (cc.CAPACITY_LINE_MANUFACTURING, {"高级量产技术": 3, "批量生产学": 2}, 6),
+            (cc.CAPACITY_LINE_MANUFACTURING, {}, 1),
+            (cc.CAPACITY_LINE_MANUFACTURING, {"高级量产技术": 5}, 6),
+        ],
+    )
+    def test_skill_levels(self, line, skills, expected):
+        assert cc.max_lines_for_category("X", line, skills=skills) == expected
 
     def test_resolves_config_when_no_skills(self, monkeypatch):
         monkeypatch.setattr(
             cc,
             "resolve_char_config",
-            lambda char_name=None: {"skills": {"高级实验室运作理论": 5, "科学网络学": 5}},
+            lambda char_name=None: {"skills": {"实验室运作理论": 5, "高级实验室运作理论": 5}},
         )
         assert cc.max_lines_for_category("X", cc.CAPACITY_LINE_RESEARCH) == 11
 
