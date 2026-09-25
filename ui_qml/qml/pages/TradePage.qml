@@ -254,7 +254,20 @@ Item {
                                              ? Text.AlignLeft : Text.AlignRight
                         text: {
                             var title = headCell.meta ? headCell.meta.title : "";
-                            if (!headCell.isSorted)
+                            /* ⚠️ 这里**必须**同时挡住 `page.trade`，不能只信 `headCell.isSorted`。
+                             *
+                             * `isSorted` 是**派生**属性（`page.trade ? … : false`），自己带缓存。
+                             * 只要它在某一轮算过 `true`，而此后 `page.trade` 变成 null 时绑定没
+                             * 能及时重算（退出期拆场景就是这个窗口），下面那行就会对着 null 取
+                             * `sortAscending`，日志刷
+                             * `TradePage.qml:259: Cannot read property 'sortAscending' of null`
+                             * —— 实测出现在关窗那一刻（其后紧跟 killTimer / QThread 告警）。
+                             *
+                             * 判断条件要**自足**：同一个绑定里直接验源头，不依赖另一个派生
+                             * 属性的新鲜度。`page.trade` 为 null 时本就只该返回纯标题 —— 与
+                             * `headCell.meta`（上一行，也是直接验 `page.trade`）同一个口径，
+                             * 行为不变、箭头照常。 */
+                            if (!page.trade || !headCell.isSorted)
                                 return title;
                             return title + (page.trade.sortAscending ? " ▲" : " ▼");
                         }

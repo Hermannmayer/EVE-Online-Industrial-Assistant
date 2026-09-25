@@ -319,8 +319,11 @@ Item {
                             anchors.rightMargin: 6
                             verticalAlignment: Text.AlignVCenter
                             // 排序箭头画在表头里：光能点、看不出按哪列排过，等于没排
+                            // 必须同时挡 `pane.c`：`chead.sorted` 是派生属性（带缓存），
+                            // 桥变成 null 时它可能还是上一轮的 true，见 TradePage.qml 同款说明
                             text: (chead.meta ? chead.meta.title : "")
-                                  + (chead.sorted ? (pane.c.sortAscending ? " ▲" : " ▼") : "")
+                                  + ((pane.c && chead.sorted)
+                                     ? (pane.c.sortAscending ? " ▲" : " ▼") : "")
                             color: chead.sorted ? Theme.primary : Theme.textPrimary
                             font.family: Theme.fontFamily
                             font.pixelSize: pane.fntSmall
@@ -487,8 +490,10 @@ Item {
                                     anchors.leftMargin: 6
                                     anchors.rightMargin: 6
                                     verticalAlignment: Text.AlignVCenter
+                                    // 同上面材料表头：派生属性 `sorted` 会滞后，源头要自己验
                                     text: (ihead.meta ? ihead.meta.title : "")
-                                          + (ihead.sorted ? (pane.c.itemSortAscending ? " ▲" : " ▼") : "")
+                                          + ((pane.c && ihead.sorted)
+                                             ? (pane.c.itemSortAscending ? " ▲" : " ▼") : "")
                                     color: ihead.sorted ? Theme.primary : Theme.textPrimary
                                     font.family: Theme.fontFamily
                                     font.pixelSize: pane.fntSmall

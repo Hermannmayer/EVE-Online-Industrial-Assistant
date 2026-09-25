@@ -624,6 +624,7 @@ class ShellWindow(QQuickView):
         from PySide6.QtCore import QThread
 
         from core.qt_noise import begin_shutdown
+        from ui_qml.workers.lifecycle import drop_worker
 
         # 托盘「退出」走 app.quit()，不经过 closeEvent —— 这里补上同一个标记
         begin_shutdown()
@@ -646,10 +647,26 @@ class ShellWindow(QQuickView):
                 cart.dispose()
             except Exception:
                 log.exception("购物车窗口关闭失败")
+        # 线程收尾走 `lifecycle.drop_worker`，**不要**内联写 `requestInterruption()+wait()`。
+        #
+        # 内联写法漏掉的是「摘出」这一步：`wait(3000)` 超时后什么也不做，worker 仍是本窗的
+        # 子对象 —— 紧接着 `super().closeEvent()` 拆窗，子线程被**连带析构**。Qt 对「运行中的
+        # QThread 被析构」的处理是直接 `abort()`：实测进程以 `0xC0000409` 退出、连一行
+        # Python traceback 都不留（复现法：造一个不响应中断的 QThread 挂到外壳下，关窗即可；
+        # 护栏见 `tests/test_qml_shell.py::test_shutdown_detaches_uninterruptible_worker`）。
+        # 与日志里那对告警是同一件事：
+        #     QObject::killTimer: Timers cannot be stopped from another thread
+        #     QThread: Destroyed while thread '' is still running
+        # 前两行是先兆（Qt 已在另一个线程上拆事件分发器），最后一行是临终通告。
+        #
+        # `drop_worker` 超时后调 `_detach()`：`setParent(None)` 摘出对话树 + 挂进模块级
+        # 强引用集合保活，等它自己 `finished` 再放掉。这样窗口怎么拆都不会碰到它。
+        #
+        # 为什么不能只靠 `requestInterruption()`：`PriceUpdateWorker.run` 跑的是
+        # `getprices.run_price_update()`（实测一次拉 809 页订单簿），中途**不查**中断标志 ——
+        # 中断请求对它无效，只能等或摘出去。
         for worker in self.findChildren(QThread):
-            if worker.isRunning():
-                worker.requestInterruption()
-                worker.wait(3000)
+            drop_worker(worker, wait_ms=3000)
 
     # ══════════════════════════════════════════════════════════
     #  外壳公开 API（页面的桥按鸭子类型调，与 MainWindow 同形）

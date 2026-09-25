@@ -325,6 +325,54 @@ def test_shutdown_hook_reaches_page_controllers(shell, monkeypatch):
     assert set(called) == expected, f"关机钩子没覆盖到全部页面：{sorted(expected - set(called))}"
 
 
+def test_shutdown_detaches_uninterruptible_worker(shell, monkeypatch):
+    """关窗时收不完的后台线程必须被**摘出**外壳，否则会被连带析构 → Qt 直接 abort()。
+
+    回归背景：`_stop_running_threads` 曾内联写 `requestInterruption() + wait(3000)`，
+    超时之后**什么也不做** —— worker 仍是本窗的子对象。紧接着 `closeEvent` 拆窗，
+    运行中的 QThread 被连带析构，而 Qt 对这件事的处理是 `abort()`：实测进程以
+    `0xC0000409` 退出、**一行 Python traceback 都不留**，日志里只剩一对先兆
+    （`QObject::killTimer: Timers cannot be stopped from another thread`）和临终通告
+    （`QThread: Destroyed while thread '' is still running`）。
+
+    为什么必须有一条：中断请求对阻塞式 worker **无效** —— `PriceUpdateWorker.run`
+    跑的是 `getprices.run_price_update()`（实测一次 809 页订单簿），中途不查中断标志。
+    所以「超时之后怎么办」才是唯一能防住崩溃的地方。
+
+    这里验的是**可观察契约**「摘出去了」：不再是外壳的子对象 → 拆窗带不走它。
+    没断言 `drop_worker` 被调用（那是实现细节代理）。
+    """
+    import time
+
+    from PySide6.QtCore import QThread
+
+    class _StubbornWorker(QThread):
+        """无视 `requestInterruption()` —— 模拟阻塞式 ESI 拉取。"""
+
+        def run(self) -> None:
+            for _ in range(45):  # 4.5s > wait_ms(3000)，保证走「超时」分支
+                time.sleep(0.1)
+
+    monkeypatch.setattr(ShellWindow, "_init_price_check", lambda self: None)
+    shell._pages.clear()  # 只关心线程收尾，绕开页面关机钩子
+
+    w = _StubbornWorker(shell)
+    w.start()
+    try:
+        time.sleep(0.3)
+        assert w.isRunning(), "前提：worker 必须在跑"
+
+        shell._stop_running_threads()
+
+        assert w.isRunning(), "前提：它不该被中断请求停掉 —— 否则测的不是超时分支"
+        assert w.parent() is not shell, (
+            "超时后必须把线程摘出对话树（`lifecycle.drop_worker` 的 `_detach`），"
+            "否则紧随其后的拆窗会连带析构一个运行中的 QThread → Qt abort()"
+        )
+    finally:
+        w.wait(10000)  # 让它自己收尾，别把运行中的线程留给别的用例
+
+
 # ── 7. 主题监听器在「窗口已销毁」时自己收敛 ────────────────────
 
 

@@ -353,7 +353,10 @@ Item {
                             verticalAlignment: Text.AlignVCenter
                             horizontalAlignment: Text.AlignHCenter
                             text: (hcell.colMeta ? hcell.colMeta.title : "")
-                                  + (hcell.sorted ? (page.mi.sortAscending ? " ▲" : " ▼") : "")
+                                  // 必须同时挡 `page.mi`：`hcell.sorted` 是派生属性（带缓存），
+                                  // 桥变成 null 时它可能还是上一轮的 true，见 TradePage.qml 同款说明
+                                  + ((page.mi && hcell.sorted)
+                                     ? (page.mi.sortAscending ? " ▲" : " ▼") : "")
                             color: Theme.textPrimary
                             font.family: Theme.fontFamily
                             font.pixelSize: page.fntSmall
