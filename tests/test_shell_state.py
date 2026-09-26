@@ -193,3 +193,66 @@ class TestMaximizeDrag:
     # （离屏平台下窗口操作期间会漂，实测偏差百余像素），要么断 `setPosition` 的绝对值
     # （离屏虚拟屏只有 800x800，位置被钳制）。属项目规矩里的「几何/像素断言不写测试」，
     # 走 `shell_snapshot.py --real` 真窗口核对。
+
+
+class _DumbWindow:
+    """只实现 setGeometry/resize/geometry 的哑窗。
+
+    不用真 `ShellWindow`：它自带 1200x700 的最小尺寸约束，平台会把越界尺寸再夹回来，
+    那样测到的是平台钳制而不是本函数的判定。哑窗如实回报被设进去的矩形。
+    """
+
+    def __init__(self) -> None:
+        from PySide6.QtCore import QRect
+
+        self._rect = QRect()
+
+    def setGeometry(self, *args) -> None:  # 模拟 Qt 接口名（N802 未启用，不用 noqa）
+        from PySide6.QtCore import QRect
+
+        self._rect = QRect(*args)
+
+    def resize(self, width: int, height: int) -> None:
+        from PySide6.QtCore import QSize
+
+        self._rect.setSize(QSize(width, height))
+
+    def geometry(self):
+        from PySide6.QtCore import QRect
+
+        return QRect(self._rect)
+
+
+class TestRestoreWindowGeometry:
+    """越界保存值的自愈。
+
+    回归背景：`ShellWindow` 关闭时会把窗口坐标写进 `data/window_geometry.json`，
+    而离屏平台的虚拟屏只有 800x800 —— `_restore_before_move` 据此写下
+    `{"x": -1310, "y": -6, "w": 1400, "h": 900}`，`restore_window_geometry` 又原样
+    `setGeometry`，于是主窗口重开时几乎整块在屏幕外（实测只露 90px 宽一条缝）。
+    """
+
+    def test_out_of_screen_saved_geometry_lands_on_a_screen(self, qapp, tmp_path, monkeypatch):
+        """保存的矩形整块越界时，恢复结果必须落在某块屏幕的可用区域内。
+
+        「与屏幕相交」不成立为判据：坏值 `(-1310, -6, 1400, 900)` 与 2560x1400 主屏
+        仍是相交的（相交区只剩 90px），相交判定会原样放行、缺陷不自愈。所以断言的是
+        **被包含** —— 即「窗口开在屏幕内」这条业务不变量。
+        """
+        import json
+
+        from PySide6.QtGui import QGuiApplication
+
+        from ui_qml.theme import registry
+
+        path = tmp_path / "window_geometry.json"
+        path.write_text(json.dumps({"x": -1310, "y": -6, "w": 1400, "h": 900}), encoding="utf-8")
+        monkeypatch.setattr(registry, "WINDOW_GEOMETRY_FILE", str(path))
+
+        window = _DumbWindow()
+        registry.restore_window_geometry(window)
+
+        avail = [s.availableGeometry() for s in QGuiApplication.screens()]
+        assert any(a.contains(window.geometry()) for a in avail), (
+            f"恢复后的窗口矩形 {window.geometry()} 不在任何屏幕的可用区域内：{avail}"
+        )

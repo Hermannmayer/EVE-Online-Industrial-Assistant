@@ -212,22 +212,22 @@ def order_change_per_day(
     return (int(first_volume) - int(last_volume)) / span
 
 
+#: 每个 type_id 一行：首末两天的卖单量、首末日期、快照条数。
+#:
+#: 先用一次 GROUP BY 取 MIN(date)/MAX(date)/COUNT(*)，再按 (type_id, date) 等值 JOIN 回快照表
+#: 取首末挂单量。旧写法的三个窗口函数（rn/rn_desc/cnt）会让 SQLite 对同一分区跑三趟
+#: co-routine、建三个临时 B 树；首末两天各只有一行，两个 JOIN 不会放大行数。
 _ORDER_CHANGE_SQL = (
-    "WITH w AS ("
-    "  SELECT type_id, date, sell_volume,"
-    "    ROW_NUMBER() OVER (PARTITION BY type_id ORDER BY date) AS rn,"
-    "    ROW_NUMBER() OVER (PARTITION BY type_id ORDER BY date DESC) AS rn_desc,"
-    "    COUNT(*) OVER (PARTITION BY type_id) AS cnt"
+    "WITH b AS ("
+    "  SELECT type_id, MIN(date) AS d0, MAX(date) AS d1, COUNT(*) AS cnt"
     "  FROM market_volume_snapshots"
     "  WHERE region_id = ? AND date >= date('now', ?)"
+    "  GROUP BY type_id"
     ") "
-    "SELECT type_id,"
-    "  MAX(CASE WHEN rn = 1 THEN sell_volume END),"
-    "  MAX(CASE WHEN rn_desc = 1 THEN sell_volume END),"
-    "  MAX(CASE WHEN rn = 1 THEN date END),"
-    "  MAX(CASE WHEN rn_desc = 1 THEN date END),"
-    "  MAX(cnt) "
-    "FROM w GROUP BY type_id"
+    "SELECT b.type_id, f.sell_volume, l.sell_volume, b.d0, b.d1, b.cnt"
+    " FROM b"
+    " JOIN market_volume_snapshots f ON f.type_id = b.type_id AND f.region_id = ? AND f.date = b.d0"
+    " JOIN market_volume_snapshots l ON l.type_id = b.type_id AND l.region_id = ? AND l.date = b.d1"
 )
 
 
@@ -241,7 +241,9 @@ def fetch_hub_order_change(region_id: int, days: int = 7) -> dict[int, dict]:
     """
     with get_container().db.connect("mkt") as conn:
         c = conn.cursor()
-        c.execute(_ORDER_CHANGE_SQL, (region_id, f"-{max(1, int(days))} day"))
+        # 4 个占位符：窗口谓词一次 + 两个等值 JOIN 各带上 region_id（不能省，否则会串中心）
+        since = f"-{max(1, int(days))} day"
+        c.execute(_ORDER_CHANGE_SQL, (region_id, since, region_id, region_id))
         rows = c.fetchall()
     out: dict[int, dict] = {}
     for tid, first_v, last_v, d0, d1, cnt in rows:

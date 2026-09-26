@@ -52,10 +52,15 @@ Item {
             Layout.leftMargin: Theme.spacingSm
             Layout.rightMargin: Theme.spacingSm
             Layout.topMargin: 6
-            spacing: Theme.spacingSm
+            //: 组与组之间用 spacingLg；组内「标签 + 控件」用 spacingXs（见各组 RowLayout）——
+            //: 全用 spacingSm 时分不出「标签↔自己的控件」与「控件↔下一组的标签」。
+            spacing: Theme.spacingLg
 
+            //: 页面主操作：放大档 + primary，与同行的「清空」形成尺寸与配色的双重主次。
             FButton {
                 text: qsTr("粘贴剪贴板")
+                large: true
+                primary: true
                 enabled: bridge && !bridge.busy
                 onClicked: bridge.paste()
             }
@@ -84,37 +89,43 @@ Item {
 
             Item { Layout.fillWidth: true }
 
-            Text {
-                text: qsTr("价格中心")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fs(12)
-            }
-            FComboBox {
-                id: hubCombo
-                implicitWidth: 132
-                textRole: "label"
-                valueRole: "value"
-                model: hubModel
-                onActivated: if (bridge)
-                    bridge.hub = currentValue
+            RowLayout {
+                spacing: Theme.spacingXs
+                Text {
+                    text: qsTr("价格中心")
+                    color: Theme.textSecondary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fs(12)
+                }
+                FComboBox {
+                    id: hubCombo
+                    implicitWidth: 132
+                    textRole: "label"
+                    valueRole: "value"
+                    model: hubModel
+                    onActivated: if (bridge)
+                        bridge.hub = currentValue
+                }
             }
 
-            Text {
-                text: qsTr("折扣")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fs(12)
-            }
-            FDoubleSpinBox {
-                id: discountBox
-                implicitWidth: 96
-                from: 0.01
-                to: 10.0
-                stepSize: 0.01
-                decimals: 2
-                value: bridge ? bridge.discount : 1.0
-                onValueModified: bridge.discount = value
+            RowLayout {
+                spacing: Theme.spacingXs
+                Text {
+                    text: qsTr("折扣")
+                    color: Theme.textSecondary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fs(12)
+                }
+                FDoubleSpinBox {
+                    id: discountBox
+                    implicitWidth: 96
+                    from: 0.01
+                    to: 10.0
+                    stepSize: 0.01
+                    decimals: 2
+                    value: bridge ? bridge.discount : 1.0
+                    onValueModified: bridge.discount = value
+                }
             }
 
             FButton {
@@ -130,36 +141,43 @@ Item {
             Layout.leftMargin: Theme.spacingSm
             Layout.rightMargin: Theme.spacingSm
             Layout.bottomMargin: 2
-            spacing: Theme.spacingSm
+            //: 与行1 同一口径：组间 spacingLg，组内 spacingXs。
+            spacing: Theme.spacingLg
 
-            Text {
-                text: qsTr("人物")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fs(12)
-            }
-            /* 真实人物（`data/char_config.json`），不再是「技能全5 / 技能全0」两档死值 ——
-             * 精炼产率吃的是人物的提炼学概论/提炼效率理论/矿石专精等级。 */
-            FComboBox {
-                id: charCombo
-                implicitWidth: 140
-                model: bridge ? bridge.characters : []
-                onActivated: if (bridge)
-                    bridge.character = currentText
+            RowLayout {
+                spacing: Theme.spacingXs
+                Text {
+                    text: qsTr("人物")
+                    color: Theme.textSecondary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fs(12)
+                }
+                /* 真实人物（`data/char_config.json`），不再是「技能全5 / 技能全0」两档死值 ——
+                 * 精炼产率吃的是人物的提炼学概论/提炼效率理论/矿石专精等级。 */
+                FComboBox {
+                    id: charCombo
+                    implicitWidth: 140
+                    model: bridge ? bridge.characters : []
+                    onActivated: if (bridge)
+                        bridge.character = currentText
+                }
             }
 
-            Text {
-                text: qsTr("精炼场地")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fs(12)
-            }
-            FComboBox {
-                id: refineModeCombo
-                implicitWidth: 104
-                model: bridge ? bridge.refineModes : []
-                onActivated: if (bridge)
-                    bridge.refineMode = currentText
+            RowLayout {
+                spacing: Theme.spacingXs
+                Text {
+                    text: qsTr("精炼场地")
+                    color: Theme.textSecondary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fs(12)
+                }
+                FComboBox {
+                    id: refineModeCombo
+                    implicitWidth: 104
+                    model: bridge ? bridge.refineModes : []
+                    onActivated: if (bridge)
+                        bridge.refineMode = currentText
+                }
             }
 
             Item { Layout.fillWidth: true }
@@ -418,7 +436,7 @@ Item {
 
                     Layout.alignment: Qt.AlignVCenter
                     columns: 2
-                    columnSpacing: Theme.spacingSm
+                    columnSpacing: Theme.spacingMd
                     rowSpacing: Theme.spacingXs
 
                     FButton {

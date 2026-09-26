@@ -490,15 +490,79 @@ def save_window_geometry(window):
         pass
 
 
+#: 无保存值（首次启动 / 文件损坏 / 位置已失效）时的默认窗口尺寸。
+#: 会被夹进主屏可用区域，所以小屏上不会溢出。
+_DEFAULT_WINDOW_SIZE = (1400, 800)
+
+
+def _screen_for(rect) -> object | None:
+    """返回可承载 `rect` 的屏幕；没有就返回 None。
+
+    **判据是「中心点落在某块屏幕的可用区域内」，不是 `x >= 0`**：左侧副屏
+    合法占用负坐标，用 `x >= 0` 会把副屏上的窗口判成越界并强行搬到主屏。
+    `screenAt()` 也优于 `intersects()` —— 后者对「只露出几十像素的一条缝」判为有效
+    （实测坏值 `(-1310, -6, 1400, 900)` 在主屏 2560x1400 上的相交区只剩 90px 宽，
+    仍然相交），于是窗口照旧几乎全在屏幕外，自愈路径永远不触发。
+    """
+    from PySide6.QtGui import QGuiApplication
+
+    if rect is None or rect.isEmpty():
+        return None
+    return QGuiApplication.screenAt(rect.center())
+
+
+def _center_on(screen, width: int, height: int) -> tuple[int, int, int, int]:
+    """把 `width`x`height` 居中到 `screen` 的可用区域，尺寸夹进该区域。"""
+    avail = screen.availableGeometry()
+    width = max(1, min(width, avail.width()))
+    height = max(1, min(height, avail.height()))
+    x = avail.x() + (avail.width() - width) // 2
+    y = avail.y() + (avail.height() - height) // 2
+    return x, y, width, height
+
+
 def restore_window_geometry(window):
+    """恢复上次的窗口矩形；结果保证落在某块屏幕的可用区域内。
+
+    保存值可用（中心点在某块屏幕上）时**行为与历史完全一致**：原样 `setGeometry`。
+    无文件 / 解析失败 / 位置已失效（例如旧版本写下的 `(-1310, -6)`）→ 主屏居中，
+    尺寸夹进主屏可用区域 —— 这是「主窗口打开到屏幕外」缺陷的自愈路径。
+
+    惰性 import Qt（与 `apply_theme` 内的 `from PySide6.QtGui import QFont` 同一惯例），
+    保持模块顶层无 Qt：`tests/test_theme_registry.py` 会在没有 QApplication 的情况下调本模块。
+    """
     if WINDOW_GEOMETRY_FILE is None:
         return
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QGuiApplication
+
+    screen = QGuiApplication.primaryScreen()
+    if screen is None:
+        # 没有屏幕信息（无 QApplication）—— 无从判定，保持历史兜底行为
+        window.resize(*_DEFAULT_WINDOW_SIZE)
+        return
+
+    data = None
     try:
         if os.path.exists(WINDOW_GEOMETRY_FILE):
             with open(WINDOW_GEOMETRY_FILE) as f:
                 data = json.load(f)
-            window.setGeometry(data["x"], data["y"], data["w"], data["h"])
-        else:
-            window.resize(1400, 800)
+    # 文件损坏 / 缺字段 / 类型不对 → 落到下面的居中分支
     except Exception:
-        window.resize(1400, 800)
+        data = None
+
+    rect = None
+    if data is not None:
+        try:
+            rect = QRect(int(data["x"]), int(data["y"]), int(data["w"]), int(data["h"]))
+        except Exception:
+            rect = None
+
+    if rect is not None:
+        saved_screen = _screen_for(rect)
+        if saved_screen is not None:
+            # 保存值依然落在一块屏幕上 —— 原样套用，行为与历史一致
+            window.setGeometry(rect)
+            return
+
+    window.setGeometry(*_center_on(screen, *_DEFAULT_WINDOW_SIZE))

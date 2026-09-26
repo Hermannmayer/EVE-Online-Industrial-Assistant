@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
 from PySide6.QtCore import Qt
 
@@ -259,6 +261,8 @@ class _FakeShell:
 
     def __init__(self, cart):
         self._cart = cart
+        #: 「开始计算」不该碰它（只读本地价）—— 留给 `assert_not_called`
+        self.request_price_update = Mock()
 
     def trade_cart(self):
         return self._cart
@@ -477,6 +481,36 @@ def test_bridge_without_a_shell_still_works():
     assert b.cartSummary == ""
     b.addToCart(0)  # 不该抛
     assert "购物车不可用" in b.hintText
+
+
+@pytest.mark.ui
+def test_analyze_reads_local_prices_only(bridge, monkeypatch):
+    """「开始计算」只读本地价：不触发 ESI 拉取，但排行 worker 必须真的起来。
+
+    捕获的缺陷：`request_price_update` 那一跳没删干净（点一次计算顺带全量拉取），
+    或者删过头把排行也一起删了（按钮变成空转）。两侧都要守。
+    """
+    import ui_qml.workers.trade_workers as tw
+
+    started: list[dict] = []
+
+    class _FakeWorker:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.finished_signal = Mock()
+
+        def start(self):
+            started.append(self.kwargs)
+
+        def isRunning(self):
+            return False
+
+    monkeypatch.setattr(tw, "CrossRegionRankWorker", _FakeWorker)
+
+    bridge.analyze()
+
+    bridge._shell.request_price_update.assert_not_called()
+    assert len(started) == 1
 
 
 # ════════════════════════════════════════════════════════════

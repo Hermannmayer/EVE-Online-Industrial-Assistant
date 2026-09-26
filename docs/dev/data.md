@@ -62,7 +62,7 @@
 | `data/char_config.json` | 多角色配置（技能、所在地、资金） | JSON |
 | `data/score_settings.json` | 评分参数设置 | JSON |
 | `data/search_history.json` | 搜索历史（最近 20 条） | JSON |
-| `data/window_geometry.json` | 窗口位置和大小 | JSON |
+| `data/window_geometry.json` | 窗口位置和大小。启动时若记录的位置与**任一屏幕的可用区域都不相交**（例如上次在离屏平台/已拔掉的显示器上算出的负坐标），回正为主屏居中并夹进可用区域 | JSON |
 | `data/update_progress.json` | 数据更新进度 | JSON |
 | `data/caches/icons/` | 物品图标缓存 | PNG |
 | `data/terminology.json` | EVE 术语映射表（技能名翻译等） | JSON |

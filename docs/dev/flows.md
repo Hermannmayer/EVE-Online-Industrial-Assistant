@@ -25,20 +25,27 @@ UI（工业页）→ workers/industry_workers.ScoreWorker
 ## 跨区域价差排行（市场贸易页）
 
 ```
-贸易页「开始计算」→ ShellWindow.request_price_update([A, B], on_done)
-  → workers/main_window_workers.PriceUpdateWorker → importers/getprices.run_price_update
-  → 回来后：workers/trade_workers.CrossRegionRankWorker
+贸易页「开始计算」→ workers/trade_workers.CrossRegionRankWorker（**零网络请求**）
       · market_browser_service.fetch_cross_region_spread（A/B 两 region JOIN，可选市场分类子树）
       · market_browser_service.fetch_hub_order_change（B 侧挂单量的近日变化，零请求）
   → models/trade_rank_model.TradeRankQmlModel（一个物品一行）
 ```
 
-- 「开始计算」**先刷新两个中心的价格再算**，刷新走外壳那条单写者通道（`request_price_update`
-  串行排队），**不自己起 `PriceUpdateWorker`** —— 两个写者同时动 `market.db` 会撞锁
+- 「开始计算」**只读 `market.db` 里已存的价格**，不拉 ESI —— 这是用户明确要求：算得快，
+  且「这份价新不新」由用户自己看着状态栏判断，而不是被按着头等一次全量刷新。
+  **全库唯一的取价入口是主工具栏右上角的「更新价格」**
+  （`shell/Main.qml` → `ShellWindow.trigger_price_update` → `request_price_update`），
+  那条通道带单写者排队与进度条，页面不得自行起 `PriceUpdateWorker` —— 两个写者同时动
+  `market.db` 会撞锁。工业页的「刷新」是**例外**：它走 `PlanPriceRefreshWorker` 只拉当前
+  计划相关的 type_id（带 5 分钟缓存判定），不是全量更新，故保留在页面内。
+- 价格时效**直接显示在页面状态栏**：`{行数} · {A} {刚刚/35 分钟前/3 天前} / {B} {…}`，
+  取数走 `market_browser_service.fetch_hub_fetch_time`（各中心 `MAX(fetch_time)`，
+  5 个中心的刷新节奏并不一致，混着新旧价看排行会误判）。格式化在
+  `TradeBridge._age_text`。
 - ⚠️ `PriceUpdateWorker` 的 `success` 标志**不可信**：`run_price_update` 在拉取失败时
-  不抛异常（失败 region 被跳过、旧价保留）。判断「刷新到底生没生效」要回头看
-  `fetch_hub_fetch_time`，页面状态栏就是这么标的
-- 页面**加载不查库、不拉取**，只有点按钮才动作
+  不抛异常（失败 region 被跳过、旧价保留）。所以「这份价到底是不是刚拉的」只能靠
+  `fetch_hub_fetch_time` 如实读出来 —— 这也是状态栏那一行的存在理由
+- 页面**加载不查库、不拉取**，只有点「开始计算」才读一遍本地价
 - **筛选项在内存里做**（`TradeBridge._apply_filters`）：切筛选项不重算 SQL、不重读库。
   两个开关都是「排除」语义，默认全开：
   - 「只看赚钱的」→ `价差 > 0`
@@ -46,7 +53,8 @@ UI（工业页）→ workers/industry_workers.ScoreWorker
     的 `buy_volume`/`sell_volume`**（按所选价位取对应那侧）。这一项是必要的：
     `importers/getprices.save_prices` 会把 ESI `/markets/prices/` 的全局均价作为兜底
     混进 `market_prices`，那种行两侧价格看着很高、挂单量却是 0，根本成交不了 ——
-    实测全量 11604 行里这类「假价差」占了绝大多数，默认筛选后只剩 312 行
+    实测全量约 1.15 万行里这类「假价差」占了绝大多数，默认筛选后只剩两三百行
+    （具体数字随行情漂，别把它当断言）
 - 购物车（`ui_qml/views/trade_cart_window.py`）存 `data/trade_cart.json`，按方向分组；
   外壳 `ShellWindow.trade_cart()` 持单例，页面与独立窗口共用同一份
 
