@@ -596,7 +596,7 @@ class ContractBridge(QObject):
 
     @Slot(result=str)
     def itemSummary(self) -> str:
-        items = self._item_model._rows
+        items = self._item_model.rows()
         if not items:
             return ""
         lines = []
@@ -609,7 +609,7 @@ class ContractBridge(QObject):
 
     @Slot(result=bool)
     def hasItems(self) -> bool:
-        return bool(self._item_model._rows)
+        return bool(self._item_model.rows())
 
     @Slot()
     def shutdown(self) -> None:
@@ -621,15 +621,22 @@ class ContractBridge(QObject):
         加上「进门即加载」后必现）。所以页面在 `Component.onDestruction` 里调本方法。
 
         取数都是本地查询，几毫秒到几百毫秒，等一下是安全的。
+
+        超时后必须**摘出去**（`lifecycle.drop_worker` 的做法）：补齐线程跑的是 ESI 请求
+        （`APIClient(timeout=60)`），中断标志只在批次之间看得到，等不到 3 秒是常态。
+        内联写 `requestInterruption() + wait()` 时超时后什么也不做，线程仍是本桥的子对象，
+        紧接着页面/桥被拆就会连带析构它 —— Qt 对运行中的 QThread 就是这么处理的，直接
+        `abort()`（`shell_window._stop_running_threads` 的注释记了同一条，`0xC0000409`）。
         """
+        from ui_qml.workers.lifecycle import drop_worker
+
         for worker in (self._busy_worker, self._items_worker):
             if worker is None:
                 continue
             stop = getattr(worker, "stop", None)
             if callable(stop) and worker is self._busy_worker:
                 stop()  # 补齐任务要主动请求中断，否则它会一直跑下去
-            if worker.isRunning():  # type: ignore[attr-defined]
-                worker.wait(3000)  # type: ignore[attr-defined]
+            drop_worker(worker, wait_ms=3000)
 
     # ── 右键菜单动作 ──────────────────────────────────────────
 
@@ -652,7 +659,7 @@ class ContractBridge(QObject):
     @Slot()
     def copyItems(self) -> None:
         """把当前合同的物品列表（已加载的那份）复制到剪贴板。"""
-        items = self._item_model._rows
+        items = self._item_model.rows()
         if not items:
             self._status = "请先点击合同加载物品列表"
             self.rowsChanged.emit()
@@ -669,7 +676,7 @@ class ContractBridge(QObject):
         """把当前合同的物品加入关注列表。"""
         from services.watchlist_manager import add_to_watchlist
 
-        items = self._item_model._rows
+        items = self._item_model.rows()
         if not items:
             self._status = "请先点击合同加载物品列表"
             self.rowsChanged.emit()

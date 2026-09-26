@@ -177,6 +177,19 @@ def _safe_unlink(target: Path):
 
 
 def _is_pid_alive(pid: int) -> bool:
+    """探活：pid 对应的进程是否还在。
+
+    ⚠️ **Windows 上不得用 `os.kill(pid, 0)`** —— 它在 Windows 不是「只探测」：
+    CPython 文档写明任意非控制台信号都会走 `TerminateProcess`，实测这里还会把
+    **整个控制台进程组**打断。两处真实后果（2026-09-26 实测）：
+      1. `tests/test_single_instance.py::TestIsPidAlive::test_current_process_is_alive`
+         调 `_is_pid_alive(os.getpid())` → 整轮 pytest 在那一行直接没了（无 traceback）；
+      2. 应用侧 `try_lock` 在「残留锁文件 + 命名互斥体已释放」时会对**别人的 pid**
+         调到这里 —— 那等于去终止一个无关进程。
+    所以 Windows 走 Win32 API（`OpenProcess` + `GetExitCodeProcess`），`os.kill` 只留给 POSIX。
+    """
+    if os.name == "nt":
+        return _win32_is_pid_alive(pid)
     try:
         os.kill(pid, 0)
         return True
@@ -184,27 +197,36 @@ def _is_pid_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True
-    except (AttributeError, OSError):
-        return _win32_is_pid_alive(pid)
+    except OSError:
+        return True
 
 
 def _win32_is_pid_alive(pid: int) -> bool:
+    """Win32 探活：打不开句柄要区分「进程不存在」与「权限不足」。
+
+    `OpenProcess` 返回 NULL 有两种原因：pid 不存在（ERROR_INVALID_PARAMETER）或
+    对方保护级别更高（ERROR_ACCESS_DENIED）。后者**是活着的**，必须返回 True ——
+    返回 False 会让调用方把别人的锁当残留删掉并启动第二个实例。
+    """
     if os.name != "nt":
         return True
     try:
         import ctypes
 
         STILL_ACTIVE = 259
+        ERROR_ACCESS_DENIED = 5
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if not handle:
-            return False
+            return ctypes.get_last_error() == ERROR_ACCESS_DENIED
         try:
             code = ctypes.c_uint()
-            ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True  # 查不到退出码 → 保守当作活着
             return code.value == STILL_ACTIVE
         finally:
-            ctypes.windll.kernel32.CloseHandle(handle)
+            kernel32.CloseHandle(handle)
     except Exception:
         return True
 

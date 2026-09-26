@@ -130,3 +130,43 @@ def set_material_price_mult(value: float) -> None
 写回材料价格调整系数（读-改-写，只动 price_settings.mat_mult，保留其它键）。
 
 定义行：`168`
+
+### `get_include_corp_wallet`
+
+```python
+def get_include_corp_wallet() -> bool
+```
+
+ESI 同步是否合计军团钱包（默认 False）。settings.json 可手改，只认真值。
+
+定义行：`181`
+
+### `set_include_corp_wallet`
+
+```python
+def set_include_corp_wallet(value: bool) -> None
+```
+
+写回「含军团钱包」开关（读-改-写，保留其它键）。
+
+定义行：`186`
+
+### `get_esi_orders_synced_at`
+
+```python
+def get_esi_orders_synced_at() -> str
+```
+
+上次 ESI 同步挂单的时刻；从没同步过返回空串（空串不挡任何导入）。
+
+定义行：`196`
+
+### `set_esi_orders_synced_at`
+
+```python
+def set_esi_orders_synced_at(value: str) -> None
+```
+
+记下 ESI 同步挂单的时刻（读-改-写，保留其它键）。
+
+定义行：`205`

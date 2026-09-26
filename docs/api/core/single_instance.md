@@ -90,9 +90,7 @@ def _safe_unlink(target: Path)
 def _is_pid_alive(pid: int) -> bool
 ```
 
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
+探活：pid 对应的进程是否还在。
 
 定义行：`179`
 
@@ -102,11 +100,9 @@ def _is_pid_alive(pid: int) -> bool
 def _win32_is_pid_alive(pid: int) -> bool
 ```
 
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
+Win32 探活：打不开句柄要区分「进程不存在」与「权限不足」。
 
-定义行：`191`
+定义行：`204`
 
 ### `unlock`
 
@@ -116,7 +112,7 @@ def unlock(lock_file: Path | str | None=None)
 
 Release the single-instance lock.
 
-定义行：`212`
+定义行：`234`
 
 ### `show_message`
 
@@ -126,4 +122,4 @@ def show_message()
 
 Print a notice to stderr that another instance is already running.
 
-定义行：`231`
+定义行：`253`

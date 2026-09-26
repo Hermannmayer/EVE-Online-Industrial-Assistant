@@ -16,7 +16,8 @@ production_plans 无 activity 字段（计划全为制造作业），类别从�
 ⚠️ copying 判据必须排除 manufacturing：EVE 里几乎每个可制造蓝图都能复制，
 只看 copying 会把普通制造蓝图误判成复制类（实测全库 3283 个 → 修正后 70 个）。
 
-材料效率研究 / 生产效率研究不在类别内 —— 本应用只能建制造计划，无研究作业。
+材料效率研究 / 生产效率研究各自占科研线（`CATEGORY_RESEARCH`），可以建研究计划
+（计划行有 `activity` 列，取 `researching_material_efficiency` / `researching_time_efficiency`）。
 
 约定：conn 的 primary 库须含蓝图表（reference.db 或 blueprint.db）。
 
@@ -30,7 +31,7 @@ def category_for_activity(activity: str | None, *, fallback: str=CATEGORY_MANUFA
 
 计划行的 activity → 展示类别。
 
-定义行：`47`
+定义行：`48`
 
 ### `category_symbol`
 
@@ -40,7 +41,7 @@ def category_symbol(cat: str) -> str
 
 类别符号（⚙📋💡⚗）。
 
-定义行：`58`
+定义行：`59`
 
 ### `load_category_map`
 
@@ -50,4 +51,4 @@ def load_category_map(conn: Connection, blueprint_type_ids: list[int]) -> dict[i
 
 蓝图 id → 类别。优先级：reaction → invention → copying → manufacturing。
 
-定义行：`63`
+定义行：`64`

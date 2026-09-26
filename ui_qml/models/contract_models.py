@@ -538,6 +538,10 @@ class ContractItemTableModel(QAbstractTableModel):
         if self._sort_col >= 0:
             self.sort(self._sort_col, self._sort_order)
 
+    def rows(self) -> list[dict]:
+        """当前行的只读副本（桥据此拼摘要/复制/加关注，不必碰 `_rows`）。"""
+        return list(self._rows)
+
     def sort(self, column: int, order=Qt.SortOrder.AscendingOrder) -> None:
         key = _ITEM_SORT_KEYS.get(column)
         if key is None:

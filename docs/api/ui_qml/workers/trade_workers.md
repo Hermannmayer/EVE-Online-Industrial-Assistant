@@ -6,13 +6,25 @@
 
 贸易页面 — 后台 Worker 线程
 
+## 函数
+
+### `spawn`
+
+```python
+def spawn(worker: QThread) -> QThread
+```
+
+保活运行中的排行线程，避免桥替换引用时 QThread 被提前析构。
+
+定义行：`11`
+
 ## 类
 
 ### `class CrossRegionRankWorker`（继承 `QThread`）
 
 A → B 全品类价差排行（含 B 侧挂单变化）。
 
-定义行：`8`
+定义行：`19`
 
 #### 方法
 
@@ -26,7 +38,7 @@ def __init__(self, region_a: int, region_b: int, side_a: str='sell', side_b: str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`13`
+定义行：`25`
 ##### `run`
 
 ```python
@@ -37,4 +49,4 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`31`
+定义行：`43`

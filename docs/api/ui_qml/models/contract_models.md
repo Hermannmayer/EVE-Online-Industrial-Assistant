@@ -399,6 +399,15 @@ def set_rows(self, rows: list[dict]) -> None
 :::
 
 定义行：`534`
+##### `rows`
+
+```python
+def rows(self) -> list[dict]
+```
+
+当前行的只读副本（桥据此拼摘要/复制/加关注，不必碰 `_rows`）。
+
+定义行：`541`
 ##### `sort`
 
 ```python
@@ -409,7 +418,7 @@ def sort(self, column: int, order=Qt.SortOrder.AscendingOrder) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`541`
+定义行：`545`
 ##### `rowCount`
 
 ```python
@@ -420,7 +429,7 @@ def rowCount(self, parent=None) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`555`
+定义行：`559`
 ##### `columnCount`
 
 ```python
@@ -431,7 +440,7 @@ def columnCount(self, parent=None) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`558`
+定义行：`562`
 ##### `roleNames`
 
 ```python
@@ -442,7 +451,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`561`
+定义行：`565`
 ##### `_display`
 
 ```python
@@ -453,7 +462,7 @@ def _display(self, row: dict, col: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`564`
+定义行：`568`
 ##### `data`
 
 ```python
@@ -464,7 +473,7 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`585`
+定义行：`589`
 ##### `headerData`
 
 ```python
@@ -475,4 +484,4 @@ def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`606`
+定义行：`610`

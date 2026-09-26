@@ -114,8 +114,15 @@ def test_migrations_idempotent(tmp_mkt_db):
     assert v == 4
 
 
-def test_mkt_v3_to_v4_creates_snapshot_region_date_index(tmp_mkt_db):
-    """v3 库 → v4：为挂单变化按 region/date 聚合创建索引。"""
+def test_mkt_v3_to_v4_collects_snapshot_stats_without_an_index(tmp_mkt_db):
+    """v3 库 → v4：为挂单变化聚合收集统计信息，且**不得**新建 region/date 索引。
+
+    两件都要守：
+      - 统计信息要落地（`sqlite_stat1` 里有这张表），否则规划器又回到盲扫；
+      - 索引**不能**出现 —— 2026-09-26 在真实 63.8 万行库上实测，多那个索引会让
+        SQLite 丢掉 join 侧主键精确定位，查询 168 ms → 5760 ms（34× 慢）。
+        这条断言是防止有人「顺手补个索引」把它加回来。
+    """
     conn = sqlite3.connect(str(tmp_mkt_db))
     conn.execute(
         """
@@ -129,6 +136,11 @@ def test_mkt_v3_to_v4_creates_snapshot_region_date_index(tmp_mkt_db):
         )
         """
     )
+    # 必须有数据：SQLite 对**空表**的 ANALYZE 不写 sqlite_stat1 行
+    conn.executemany(
+        "INSERT INTO market_volume_snapshots (type_id, region_id, date, sell_volume) VALUES (?, ?, ?, ?)",
+        [(1001, 10000002, "2026-09-01", 10), (1001, 10000002, "2026-09-25", 8), (1002, 10000002, "2026-09-25", 5)],
+    )
     conn.execute("PRAGMA user_version = 3")
     conn.commit()
     conn.close()
@@ -138,8 +150,13 @@ def test_mkt_v3_to_v4_creates_snapshot_region_date_index(tmp_mkt_db):
     assert result["after"] == 4
     conn = sqlite3.connect(str(tmp_mkt_db))
     idxs = {r[1] for r in conn.execute("PRAGMA index_list(market_volume_snapshots)")}
+    stats = conn.execute("SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = 'market_volume_snapshots'").fetchone()[0]
     conn.close()
-    assert "idx_market_volume_snapshots_region_date" in idxs
+
+    assert stats > 0, "v3→v4 应收集 market_volume_snapshots 的统计信息"
+    assert "idx_market_volume_snapshots_region_date" not in idxs, (
+        "该索引会让挂单变化查询慢 34 倍（见迁移函数与 AUDIT-20260926.md 的 P2-2），不要加"
+    )
 
 
 def test_ensure_schema_missing_db_returns_none(tmp_path):

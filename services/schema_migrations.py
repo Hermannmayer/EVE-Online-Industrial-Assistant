@@ -26,7 +26,7 @@ BACKUP_KEEP = 5
 # 每次有 schema 变更时加 1
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
-    "mkt": 4,  # v1→v2: adjusted_price 列; v2→v3: market_prices(fetch_time) 索引; v3→v4: market_volume_snapshots(region_id,date) 索引
+    "mkt": 4,  # v1→v2: adjusted_price 列; v2→v3: market_prices(fetch_time) 索引; v3→v4: market_volume_snapshots 统计信息（**不建索引**，理由见迁移函数）
     "user": 20,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 科研作业列（activity/decryptor_type_id/success_rate/research_target_level/actual_output_runs）;  v13→v14: 修复「版本已到 13 但科研列缺失」的历史库;  v14→v15: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）;  v15→v16: user_blueprints 原图权威化（runs<0 → is_bpo=1/runs=0，-1 退场）;  v16→v17: asset_snapshots / open_orders 表;  v17→v18: asset_snapshots.line_value 列（运行中产线价值）+ order_events 台账表;  v18→v19: esi_tokens 表（按角色绑定的 ESI 刷新令牌）;  v19→v20: open_orders 归属列（char_id/is_corp —— 挂单变动按「角色 × 军团单」分组比较，多来源并存时不再互相误判成交）
     "bp": 3,  # v1→v2: blueprint_materials.wastefactor 列;  v2→v3: 蓝图表查找索引（逐件研究成本 37×）
 }
@@ -74,17 +74,21 @@ def _migrate_mkt_v2_to_v3(db_path: str) -> str:
 
 
 def _migrate_mkt_v3_to_v4(db_path: str) -> str:
-    """v3→v4: market_volume_snapshots(region_id,date) 索引 — 加速中心挂单变化聚合"""
+    """v3→v4: 为 market_volume_snapshots 收集统计信息（挂单变化聚合查询的规划器输入）。
+
+    **刻意不建 `(region_id, date)` 索引** —— 2026-09-26 在真实 63.8 万行库上实测：
+    加了那个索引，SQLite 改用 region_id 单列去探，丢掉 join 侧
+    `(type_id, region_id, date)` 主键的精确定位，查询从 **168 ms 变成 5760 ms（34× 慢）**；
+    而 `ANALYZE` 之后规划器改用主键跳扫（`ANY(type_id) AND region_id=? AND date>?`），
+    查询 **153 ms** —— 既不盲扫，也不比基线慢。索引在这里是负收益，见 AUDIT-20260926.md 的 P2-2。
+    """
     conn = sqlite3.connect(db_path)
     try:
         if not _table_exists(conn, "market_volume_snapshots"):
             return "market_volume_snapshots 表不存在，跳过"
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_market_volume_snapshots_region_date "
-            "ON market_volume_snapshots(region_id, date)"
-        )
+        conn.execute("ANALYZE market_volume_snapshots")  # 实测 132 ms / 638,837 行
         conn.commit()
-        return "新增 market_volume_snapshots(region_id,date) 索引"
+        return "已收集 market_volume_snapshots 统计信息（挂单变化聚合走主键跳扫）"
     finally:
         conn.close()
 

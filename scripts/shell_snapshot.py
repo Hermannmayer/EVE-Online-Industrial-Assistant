@@ -123,6 +123,16 @@ def main() -> int:
     # 掐掉真实价格检查/下载：否则每跑一次都快照都会联网拉 ESI（慢、且结果不确定）。
     # 与 tests/conftest.py 对 MainWindow 的处理同一个理由。
     ShellWindow._init_price_check = lambda self: None  # type: ignore[method-assign]
+    # 合同页是唯一「进门就起 QThread」的页面：`navigate_to` 会触发它的 `on_shown` →
+    # 自动补齐当前列表（几万次 ESI 请求）。对一次截图来说这是纯粹的无用功，而且**会让进程
+    # 在退出时崩**：截图写完 → 脚本立刻 `sys.exit` → `contract_workers._LIVE_WORKERS`
+    # 这个模块级强引用集合在解释器收尾时被清掉 → 仍在跑的那个 QThread 被析构 →
+    # Qt `abort()`，实测 `QThread: Destroyed while thread '' is still running` +
+    # 退出码 -1073740791（`--page contract` 必现，其余 6 个页面 exit=0）。
+    # 与上面那句同一个手法：把会自动联网的入口换成空操作。
+    from ui_qml.bridge.contract_bridge import ContractBridge
+
+    ContractBridge._start_backfill = lambda self, rows: None  # type: ignore[method-assign]
     # 几何文件必须隔离，且必须**在构造窗口之前**生效（见 _isolate_geometry_file）
     geometry_file = _isolate_geometry_file()
     print(f"[外壳] 窗口几何文件已隔离到：{geometry_file}")

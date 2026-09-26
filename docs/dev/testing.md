@@ -40,6 +40,12 @@ scripts/run_tests.sh full       # validate + ui-retest 两阶段
 .venv/Scripts/python.exe -m pytest --lf          # 只重跑上次失败的
 ```
 
+> ⚠️ **本地跑 pytest 时不要自己设 `QT_QPA_PLATFORM`**。测试套件没有设它：Windows 上默认走原生平台，
+> `offscreen` 只给 Linux CI（runner 无显示器）与 `scripts/shell_snapshot.py` 用。
+> 在 Windows 上强行 `QT_QPA_PLATFORM=offscreen` 跑 `test_qml_*.py` 会让 `PageHost` 加载页签时挂死
+> —— 表现为卡满 `pyproject.toml` 里 `faulthandler_timeout = 120` 的整点超时、栈停在
+> `tests/qml_page_load.py::page_host`（2026-09-26 实测，同一用例去掉该变量后 1.3s 通过）。
+
 ## 测试分档与标记
 
 档位由 `pyproject.toml` 的 `markers` 驱动，**只有两个**：
@@ -152,4 +158,5 @@ pre-commit 钩子（`.pre-commit-config.yaml`，`git commit` 时自动跑）：r
 5. **Codecov** — 上传 `coverage.xml`
 
 **`version-check`**（独立 job）：`scripts/check_version.py` 校验
-`core/version.py` == CHANGELOG 最新版本段 == git tag（发版态），需 `fetch-depth: 0`。
+`core/version.py` == CHANGELOG 最新版本段 == `pyproject.toml [project].version` == git tag（发版态），
+需 `fetch-depth: 0`。

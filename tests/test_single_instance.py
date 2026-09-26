@@ -131,3 +131,23 @@ class TestIsPidAlive:
 
     def test_invalid_pid_is_dead(self):
         assert _is_pid_alive(999999) is False
+
+    def test_windows_probe_never_calls_os_kill(self, monkeypatch):
+        """回归：Windows 上探活**不得**走 `os.kill(pid, 0)`。
+
+        `os.kill` 在 Windows 不是探活 —— CPython 文档写明任意非控制台信号走
+        `TerminateProcess`，实测还会打断整个控制台进程组。修复前这条用例一跑，
+        整轮 pytest 在 `test_current_process_is_alive` 那行就没了（无 traceback、
+        退出码 0，看着像「跑完了」）。所以这里把 `os.kill` 换成会炸的替身，
+        断言探活照样给出正确答案。
+        """
+        if os.name != "nt":
+            pytest.skip("该风险只在 Windows 上存在")
+
+        def _boom(*_a, **_kw):
+            raise AssertionError("Windows 上不得用 os.kill 探活（会终止目标进程）")
+
+        monkeypatch.setattr(si.os, "kill", _boom)
+
+        assert _is_pid_alive(os.getpid()) is True
+        assert _is_pid_alive(999999) is False

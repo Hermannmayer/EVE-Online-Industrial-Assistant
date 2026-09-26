@@ -4,7 +4,8 @@
 校验规则（dev 态 / 发版态）：
   1. `core/version.py` 的 `__version__` 必须等于 `CHANGELOG.md` 中最新版本段
      （`<!-- version list -->` 之后的第一个 `## vX.Y.Z` 标题）。
-  2. 发版态（HEAD 恰好指向一个 `vX.Y.Z` tag）额外要求 `__version__`
+  2. `pyproject.toml` 的 `[project].version` 必须等于 `__version__`。
+  3. 发版态（HEAD 恰好指向一个 `vX.Y.Z` tag）额外要求 `__version__`
      与该 git tag 完全一致。
 
 用法：
@@ -12,6 +13,11 @@
 退出码：
     0 = 通过
     1 = 不一致（CI 会 fail，阻断合并）
+
+⚠️ 第 2 条是 2026-09-26 补的：此前只校验 version.py 与 CHANGELOG，而
+`[tool.semantic_release].version_toml` 的点号路径写错（`pyproject.toml:version`
+—— dotty 路径查不到 `[project] version`），PSR 会**静默跳过**它，
+于是 pyproject / uv.lock 长期停在 0.24.2 而 version.py 已到 0.25.0，没有任何检查发现。
 """
 
 from __future__ import annotations
@@ -19,12 +25,14 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 # ── 路径 ──
 ROOT = Path(__file__).resolve().parent.parent
 VERSION_FILE = ROOT / "core" / "version.py"
 CHANGELOG_FILE = ROOT / "CHANGELOG.md"
+PYPROJECT_FILE = ROOT / "pyproject.toml"
 
 # 兼容 Windows GBK 控制台：无法编码的字符（emoji 等）用 ? 替换
 # （TextIO.reconfigure 为 Python 3.7+ 运行时存在但 typeshed 未收录）
@@ -62,6 +70,17 @@ def _read_latest_changelog_version() -> str:
     return m.group(1)
 
 
+def _read_pyproject_version() -> str:
+    """从 pyproject.toml 的 `[project].version` 解析包元数据版本。"""
+    if not PYPROJECT_FILE.exists():
+        sys.exit(f"❌ 缺少 pyproject.toml: {PYPROJECT_FILE}")
+    data = tomllib.loads(PYPROJECT_FILE.read_text(encoding="utf-8"))
+    version = data.get("project", {}).get("version")
+    if not version:
+        sys.exit("❌ pyproject.toml 中未找到 [project].version")
+    return str(version)
+
+
 def _head_exact_tag() -> str | None:
     """HEAD 恰好指向某个 vX.Y.Z tag 时返回该版本，否则 None。"""
     try:
@@ -83,11 +102,15 @@ def _head_exact_tag() -> str | None:
 def main() -> int:
     version = _read_version_file()
     changelog_version = _read_latest_changelog_version()
+    pyproject_version = _read_pyproject_version()
 
     errors: list[str] = []
 
     if version != changelog_version:
         errors.append(f"core/version.py = {version!r} ≠ CHANGELOG.md 最新版本段 = {changelog_version!r}")
+
+    if version != pyproject_version:
+        errors.append(f"core/version.py = {version!r} ≠ pyproject.toml [project].version = {pyproject_version!r}")
 
     # 发版态：HEAD 指向 tag → 三源必须一致
     if (tag := _head_exact_tag()) is not None:
@@ -100,10 +123,13 @@ def main() -> int:
         print("❌ 版本一致性校验失败：")
         for e in errors:
             print(f"   - {e}")
-        print("   请同步 core/version.py / CHANGELOG.md / git tag 三者版本。")
+        print("   请同步 core/version.py / CHANGELOG.md / pyproject.toml / git tag 的版本。")
         return 1
 
-    print(f"✅ 版本一致性校验通过：core/version.py = CHANGELOG = {version!r}" + (f" = git tag v{tag}" if tag else ""))
+    print(
+        f"✅ 版本一致性校验通过：core/version.py = CHANGELOG = pyproject.toml = {version!r}"
+        + (f" = git tag v{tag}" if tag else "")
+    )
     return 0
 
 

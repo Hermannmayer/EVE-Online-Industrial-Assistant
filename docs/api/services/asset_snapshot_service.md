@@ -39,7 +39,7 @@ def _default_db() -> DatabaseManager
 
 惰性获取 DatabaseManager（经容器）。
 
-定义行：`97`
+定义行：`99`
 
 ### `_ensure_schema`
 
@@ -49,7 +49,7 @@ def _ensure_schema(conn) -> None
 
 在给定连接上创建基线表（IF NOT EXISTS，幂等）。
 
-定义行：`102`
+定义行：`104`
 
 ### `ensure_schema`
 
@@ -59,7 +59,7 @@ def ensure_schema() -> None
 
 确保基线表存在（给外部调用方/新库兜底）。
 
-定义行：`107`
+定义行：`109`
 
 ### `_inventory_value`
 
@@ -69,7 +69,7 @@ def _inventory_value() -> float
 
 inventory 线：遍历全部机库按卖单价估值求和。
 
-定义行：`113`
+定义行：`115`
 
 ### `_orders_value`
 
@@ -79,7 +79,7 @@ def _orders_value() -> float
 
 orders 线：逐行 ``price * volume_remain`` 求和（卖单用 sell 语义价、买单同理，直接取自身 price）。
 
-定义行：`122`
+定义行：`124`
 
 ### `_sell_prices`
 
@@ -89,7 +89,7 @@ def _sell_prices(type_ids: set[int]) -> dict[int, float]
 
 market.db 里这批 type_id 的 Jita 卖单价（缺失/为 0 的不进结果）。
 
-定义行：`130`
+定义行：`132`
 
 ### `_line_value`
 
@@ -99,7 +99,7 @@ def _line_value() -> float
 
 line_value 线：**制造中**产线的材料占用 × 卖单价。
 
-定义行：`143`
+定义行：`145`
 
 ### `record_snapshot`
 
@@ -109,7 +109,7 @@ def record_snapshot(wallet: float | None=None) -> dict
 
 采集当日资产快照并 upsert（同日重复覆盖，不累积）。
 
-定义行：`203`
+定义行：`205`
 
 ### `load_series`
 
@@ -119,7 +119,7 @@ def load_series(days: int=90) -> list[dict]
 
 按日期升序返回最近 ``days`` 天内的快照序列。
 
-定义行：`237`
+定义行：`239`
 
 ### `adjust_wallet_balance`
 
@@ -129,7 +129,7 @@ def adjust_wallet_balance(delta: float) -> float
 
 按订单变动增减钱包余额（返回调整后的值）。
 
-定义行：`257`
+定义行：`259`
 
 ### `get_wallet_balance`
 
@@ -139,7 +139,7 @@ def get_wallet_balance() -> float
 
 wallet 线：读 settings.json 里的钱包余额；缺失/非数值一律 0.0。
 
-定义行：`268`
+定义行：`270`
 
 ### `set_wallet_balance`
 
@@ -149,4 +149,4 @@ def set_wallet_balance(value: float) -> None
 
 写回钱包余额（read-modify-write，保留 settings.json 其余键）。
 
-定义行：`277`
+定义行：`279`

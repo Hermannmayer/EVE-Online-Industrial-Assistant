@@ -6,9 +6,9 @@
 数据来源：硬编码 TRADE_HUB_DISTANCES 距离表、reference.db item.volume、
 market.db market_prices（经 PricingService）。
 
-⚠️ **当前没有 UI 调用方**：市场贸易页的「运输利润」Tab 已删除（2026-09），
-`estimate_freight_cost` / `calc_transport_profit` 保留待合同市场接入；
-`compute_jumps` 仍被 `services/contract_service.py` 使用。
+⚠️ **运费/运输利润当前没有 UI 调用方**：市场贸易页的「运输利润」Tab 已删除（2026-09），
+`estimate_freight_cost` / `calc_transport_profit` 保留待合同市场接入。
+**`compute_jumps` 不受此限 —— 它仍被 `services/contract_service.py` 使用**（合同运输页每行算跳数）。
 """
 
 from collections import deque
