@@ -13,6 +13,9 @@ import QtQuick.Effects
    `compact` 是给**页面工具栏**用的紧一档尺寸（28px 高、内边距 12、无 88px 最小宽）：
    工具栏里按钮与下拉框要同高，而默认档的 32px 最小宽 88px 会让「添加」这种两字按钮
    比文字宽出三倍。默认 `false` 时几何与历史完全一致，其余调用方不受影响。
+
+   `large` 是给**页面主操作**用的放大一档（40px 高、内边距 24）：同一行里与默认档按钮
+   形成明确的尺寸主次，不必靠配色区分。与 `compact` 一样默认 `false` = 历史几何。
 */
 Button {
     id: root
@@ -20,6 +23,8 @@ Button {
     property bool primary: false
     //: 紧一档尺寸（页面工具栏用）。默认 false = 历史几何，改动面为零。
     property bool compact: false
+    //: 放大一档尺寸（页面主操作用）。默认 false = 历史几何，改动面为零。
+    property bool large: false
 
     // 用 TextMetrics 独立量文字，不依赖 contentItem 的 implicitWidth。
     // 依赖 contentItem 会引入「控件尺寸 ← 内容尺寸 ← 控件尺寸」的惰性依赖，
@@ -27,17 +32,22 @@ Button {
     TextMetrics {
         id: labelMetrics
         font.family: Theme.fontFamily
-        font.pixelSize: Theme.fs(13)
+        font.pixelSize: root.large ? Theme.fs(14) : Theme.fs(13)
         font.weight: Font.DemiBold
         text: root.text
     }
 
-    //: 文字两侧的内边距：紧凑档 12（spacingMd），默认档 16（spacingLg，规范值）
-    readonly property int sidePad: root.compact ? Theme.spacingMd : Theme.spacingLg
+    //: 文字两侧的内边距：紧凑档 12（spacingMd）、默认档 16（spacingLg，规范值）、
+    //: 放大档 24（spacingLg + spacingSm，比默认档更舒展）
+    readonly property int sidePad: root.large
+                                   ? Theme.spacingLg + Theme.spacingSm
+                                   : (root.compact ? Theme.spacingMd : Theme.spacingLg)
     //: 最小宽：紧凑档不设下限（宽度贴合文字），默认档保留历史的 88px
     readonly property int minWidth: root.compact ? 0 : 88
 
-    implicitHeight: root.compact ? Math.max(24, Math.round(28 * Theme.fontScale)) : 32
+    implicitHeight: root.large
+                    ? Math.max(36, Math.round(40 * Theme.fontScale))
+                    : (root.compact ? Math.max(24, Math.round(28 * Theme.fontScale)) : 32)
     implicitWidth: Math.max(root.minWidth, Math.ceil(labelMetrics.width) + root.sidePad * 2)
 
     // active:scale-[0.97]
@@ -119,7 +129,7 @@ Button {
         id: label
         text: root.text
         font.family: Theme.fontFamily
-        font.pixelSize: Theme.fs(13)
+        font.pixelSize: root.large ? Theme.fs(14) : Theme.fs(13)
         font.weight: Font.DemiBold
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter

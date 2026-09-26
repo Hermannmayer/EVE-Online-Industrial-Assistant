@@ -1119,7 +1119,16 @@ class ShellWindow(QQuickView):
         cur = QCursor.pos()
         left = cur.x() - int(width * min(max(ratio, 0.0), 1.0))
         # 纵向让光标落在标题行上（标题行高 32，取其中点附近），与原生观感一致
-        self.setPosition(left, cur.y() - 16)
+        top = cur.y() - 16
+        # 夹进「光标所在屏幕（取不到则主屏）」的可用区域 —— 只夹位置，**不动尺寸**：
+        # 尺寸是最大化前的既定值，这里改它会违背「还原到最大化前的大小」这条语义。
+        # 负坐标是合法的（左侧副屏就在 x<0），所以判据是屏幕矩形而不是 `x >= 0`。
+        screen = QGuiApplication.screenAt(cur) or QGuiApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            left = max(avail.left(), min(left, avail.right() - width + 1))
+            top = max(avail.top(), min(top, avail.bottom() - height + 1))
+        self.setPosition(left, top)
 
     def _save_settings(self) -> None:
         from services.user_settings import save_settings

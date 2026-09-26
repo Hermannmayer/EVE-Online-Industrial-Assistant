@@ -85,6 +85,23 @@ def isolate_user_settings(tmp_path, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def isolate_window_geometry(tmp_path, monkeypatch):
+    """把窗口几何文件指向临时文件 —— 测试绝不写用户真实的 `data/window_geometry.json`。
+
+    回归背景：`ShellWindow.__init__` 无条件 `theme.set_geometry_file(window_geometry_file())`，
+    而 `closeEvent` 会 `save_window_geometry`。跑一次 UI 档就等于把测试平台下的窗口坐标
+    （离屏虚拟屏只有 800x800）写回用户真实文件；该文件在开发机上还是**跨 worktree 的硬链接**，
+    于是「测试把主窗口挪到屏幕外」这种故障能被一次测试跑出来。
+
+    patch 的是 `ui_qml.shell_window` 里的模块级名字（`shell_window.py:32` 是
+    `from core.paths import … window_geometry_file`，import 时已绑定），这样才命中
+    `__init__` 里的那次调用。
+    """
+    monkeypatch.setattr("ui_qml.shell_window.window_geometry_file", lambda: str(tmp_path / "window_geometry.json"))
+    yield
+
+
 # ════════════════════════════════════════════════════════════════
 #  辅助：创建标准临时数据库套件
 # ════════════════════════════════════════════════════════════════

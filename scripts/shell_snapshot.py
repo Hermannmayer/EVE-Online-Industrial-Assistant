@@ -67,6 +67,25 @@ def _isolate_app_root() -> str:
     return tmp
 
 
+def _isolate_geometry_file() -> str:
+    """把窗口几何文件指到系统临时目录下的固定文件名。
+
+    **必须做**：`ShellWindow.closeEvent` 会 `save_window_geometry()`，而离屏平台的
+    虚拟屏只有 800x800 —— 不隔离时每跑一次快照都会把基于那个虚拟屏的坐标
+    （实测 `{"x": -1310, "y": -6, ...}`，窗口几乎全在屏幕外）写回**用户真实**的
+    `data/window_geometry.json`。`--real` 那份虽然已经把应用根目录隔离到临时目录，
+    这里也一并指走，两种模式口径一致。
+
+    patch 的是 `ui_qml.shell_window` 里的模块级名字：该模块 import 时
+    `from core.paths import window_geometry_file` 就把名字绑死了，改 `core.paths` 不生效。
+    """
+    from ui_qml import shell_window
+
+    path = str(Path(tempfile.gettempdir()) / "eve-shell-snapshot-window_geometry.json")
+    shell_window.window_geometry_file = lambda: path  # type: ignore[assignment]
+    return path
+
+
 def _spin(ms: int) -> None:
     """跑一小段事件循环（页面加载、布局、定时器都要它）。"""
     loop = QEventLoop()
@@ -104,6 +123,9 @@ def main() -> int:
     # 掐掉真实价格检查/下载：否则每跑一次都快照都会联网拉 ESI（慢、且结果不确定）。
     # 与 tests/conftest.py 对 MainWindow 的处理同一个理由。
     ShellWindow._init_price_check = lambda self: None  # type: ignore[method-assign]
+    # 几何文件必须隔离，且必须**在构造窗口之前**生效（见 _isolate_geometry_file）
+    geometry_file = _isolate_geometry_file()
+    print(f"[外壳] 窗口几何文件已隔离到：{geometry_file}")
 
     win = ShellWindow()
     if args.opaque:

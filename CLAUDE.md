@@ -184,8 +184,11 @@ python scripts/shell_snapshot.py --page industry # 切到某页再拍
 ```
 
 **离屏下 `QFontDatabase` 是 0 个字体**（文字全成方框），字形必须用 `--real` 看。
-产出 `<page>.png`（整窗截图）与 `<page>.tree.md`（控件树：类名/objectName/文本/几何/可见性），
-可直接用 Read 工具查看。默认走 offscreen 平台——不弹窗、不抢焦点、可反复执行。
+产出 `<page>.png`（整窗截图，`<page>` 为页 key；不传 `--page` 时为 `shell.png`），
+可直接用 Read 工具查看。脚本只印几行摘要（尺寸/已装载页面/当前页/可见页面数），
+**不产出控件树 `.md`** —— 要核对具体控件几何，得自己在临时目录写探针脚本遍历
+`childItems()` + `mapToItem()`（别把探针留在仓库里）。
+默认走 offscreen 平台——不弹窗、不抢焦点、可反复执行。
 
 ## 计划自检（ExitPlanMode 前）
 

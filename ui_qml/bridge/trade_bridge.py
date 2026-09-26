@@ -1,18 +1,15 @@
 """贸易页 bridge —— QML 与 worker 之间的唯一通道。
 
 页面只做一件事：**A 贸易中心 → B 贸易中心的全品类价差排行**。
-「开始计算」的时序是「先刷新两个中心的价格、再算排行」——
+「开始计算」**只读本地 `market.db`**，不发起任何 ESI 请求：
 
-  `analyze()` → `shell.request_price_update([A, B], on_done)` → `_on_price_refreshed`
-             → `CrossRegionRankWorker` → 出表
+  `analyze()` → `CrossRegionRankWorker` → 出表
 
-刷新走外壳那套（`ShellWindow.request_price_update`），复用它的单写者排队、进度条与
-缓存失效；**不自己起 `PriceUpdateWorker`**，否则两处同时写 `market.db` 会撞锁。
+要更新价格走顶栏「更新价格」（`ShellWindow.request_price_update`，自带单写者排队、
+进度条与缓存失效）—— 贸易页不再挂钩它，否则点一次「开始计算」会顺带触发一次全量拉取。
 
-⚠️ `PriceUpdateWorker.finished_signal` 里的 `success` **不可信**：
-`services.importers.getprices.run_price_update` 在拉取失败时不抛异常（失败的 region
-被跳过、旧价保留），照常返回。所以「这次刷新到底生没生效」只能**回头查价格时间**
-（`fetch_hub_fetch_time`），不能信那个布尔值。
+状态栏那行价格时间（`fetch_hub_fetch_time`）是**只读**的：它显示本地快照有多旧，
+不负责刷新。
 """
 
 from __future__ import annotations
@@ -35,8 +32,6 @@ _SIDE_LABELS = ("卖单", "买单")
 _ALL_CATEGORY = {"id": 0, "name": "全部品类"}
 #: 挂单变化的观察窗口（天）
 _CHANGE_DAYS = 7
-#: 超过这个分钟数就认为「刚点的刷新没生效」
-_STALE_MINUTES = 60
 
 #: 「只看有对手盘的」下限档位（件）。**0 = 不限**。
 #: 第 1 档（≥1）就能滤掉 `save_prices` 混进来的 ESI 基准价兜底行 ——
@@ -63,16 +58,6 @@ def _age_text(ts: str | None) -> str:
     if hours < 48:
         return f"{hours:.0f} 小时前"
     return f"{hours / 24:.0f} 天前"
-
-
-def _age_minutes(ts: str | None) -> float:
-    if not ts:
-        return float("inf")
-    try:
-        dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        return float("inf")
-    return (datetime.now(UTC).replace(tzinfo=None) - dt).total_seconds() / 60
 
 
 def _category_id(cat: dict) -> int:
@@ -243,32 +228,13 @@ class TradeBridge(QObject):
 
     @Slot()
     def analyze(self) -> None:
-        """「开始计算」：先刷新两个中心的价格，回来后算排行。"""
+        """「开始计算」：只读本地价格，直接算排行。"""
         if self._busy:
             return
         self._gen += 1
         gen = self._gen
         self._busy = True
         self._hint = ""
-        self._status = f"正在刷新 {self._hub(self._from_index)} / {self._hub(self._to_index)} 的价格..."
-        self.stateChanged.emit()
-
-        request = getattr(self._shell, "request_price_update", None)
-        if not callable(request):
-            # 没有外壳（测试 / 独立使用）：直接算，不刷新
-            self._start_rank(gen)
-            return
-        request([self._hub(self._from_index), self._hub(self._to_index)], self._on_price_refreshed_gen(gen))
-
-    def _on_price_refreshed_gen(self, gen: int):
-        def _cb(regions: object, message: object) -> None:
-            self._on_price_refreshed(gen)
-
-        return _cb
-
-    def _on_price_refreshed(self, gen: int) -> None:
-        if gen != self._gen or self._busy is False:
-            return  # 用户中途改了参数，这一轮作废
         self._start_rank(gen)
 
     def _start_rank(self, gen: int) -> None:
@@ -311,10 +277,8 @@ class TradeBridge(QObject):
         times = self._fetch_times()
         age_a = times.get(TRADE_HUB_IDS[hub_a])
         age_b = times.get(TRADE_HUB_IDS[hub_b])
-        stale = max(_age_minutes(age_a), _age_minutes(age_b)) >= _STALE_MINUTES
-        # 「刷新没生效」只能这样看出来 —— worker 的 success 标志对失败不敏感
-        tail = "  ·  价格未更新，用的是本地缓存" if stale else ""
-        return f"{count}  ·  {hub_a} {_age_text(age_a)} / {hub_b} {_age_text(age_b)}{tail}"
+        # 只报「本地这份快照是什么时候拉的」—— 本页不刷新，不做任何新鲜度判断
+        return f"{count}  ·  {hub_a} {_age_text(age_a)} / {hub_b} {_age_text(age_b)}"
 
     def _fetch_times(self) -> dict:
         from services.market_browser_service import fetch_hub_fetch_time
