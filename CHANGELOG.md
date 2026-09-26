@@ -6,6 +6,39 @@
 
 <!-- version list -->
 
+## v0.25.1 (2026-09-26)
+
+### Bug Fixes
+
+- 版本一致性静默失效 + 单实例探活会杀进程 + P2-2 索引改判 + 三页收尾修复
+  ([`d57935e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d57935eba5840124ab2e425e9451ed5a38e8df69))
+
+- **外壳/估价/贸易**: 主窗口越界回正、估价页按钮分组、贸易页改读本地价并提速
+  ([`b704207`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b704207a4be670d4e9bfb46d28db802eb61a1eb2))
+
+- **贸易/工业/合同**: 三页审计问题修复 —— 线程生命周期、异常复位、重算补算、详情串号
+  ([`69dd036`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/69dd0362a1ee548342bf005a8b0fd2be1eb53c6e))
+
+- **退出期**: 运行中线程被连带析构导致 Qt abort + QML 表头空指针
+  ([`851c554`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/851c55487716a039f2562b42932f676c15cfced0))
+
+### Chores
+
+- **文档**: 删除两份已过期的历史存档审计文档
+  ([`b4e3338`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b4e3338db5671977d572322d8d4a1450455df12b))
+
+- **工具**: 新增 dsh-worktree.json，声明 worktree 项目约定
+  ([`1a5c80c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/1a5c80cfcb2470d90ecc487263529dc387848473))
+
+### Features
+
+- **界面**: 汇总表双击复制 + 「人物占用」改用仪表盘面板并按已规划统计
+  ([`6d885e0`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/6d885e07524f767006fca367e2e246f798a271d5))
+
+- **工业/贸易/查询**: 六项改动 —— 科研容量、逐条下线机库、行内启动、占用面板、图表竖线
+  ([`b626a9e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b626a9eb8b2afe8ebcadeb96f84b3cd7fb7a4883))
+
+
 ## v0.25.0 (2026-09-20)
 
 ### Bug Fixes
