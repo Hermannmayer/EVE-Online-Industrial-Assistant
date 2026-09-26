@@ -4,8 +4,10 @@ import "../components"
 
 /* 只读汇总表对话框（阶段 4）。
  *
- * 「产出总表」「人物占用」「材料总表」「研究分析」共用这一份：列、行、状态文案都由桥给出，
- * 表格渲染统一交给 `FSummaryTable`（它也被合同详情 / NPC 卖家 / 星系搜索复用）。
+ * 「产出总表」「所需蓝图清单」「填料总表」「材料覆盖」「研究分析」共用这一份：
+ * 列、行、状态文案都由桥给出，表格渲染统一交给 `FSummaryTable`
+ * （它也被合同详情 / NPC 卖家 / 星系搜索复用）。
+ * 双击任一格 = 复制那一格的文字（`SummaryTableBridge.copyCell`）。
  */
 
 Item {
@@ -50,6 +52,12 @@ Item {
             onActionClicked: function (row) {
                 if (page.table)
                     page.table.copyRow(row)
+            }
+            /* 双击 = 复制该格文字（蓝图名 / 物品名 / 角色名……往游戏里贴）。
+             * 与行内「复制」按钮、顶栏「一键复制」同一套反馈（都走桥的 `error` 通道）。 */
+            onRowDoubleClicked: function (row, column) {
+                if (page.table)
+                    page.table.copyCell(row, column)
             }
         }
 

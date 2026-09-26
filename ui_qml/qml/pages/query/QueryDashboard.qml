@@ -59,7 +59,7 @@ Item {
 
             OccupancyPanel {
                 anchors.fill: parent
-                dashboard: root.dashboard
+                occupancyBridge: root.dashboard
             }
         }
 

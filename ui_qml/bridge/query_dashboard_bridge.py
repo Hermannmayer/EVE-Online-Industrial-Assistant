@@ -5,8 +5,9 @@
 
 1. **产线详情** `occupancyByChar` —— **每人物一块，块内制造/科研/反应各一行**。
    块尾给「待下线 N」（该人物该线型的 `status=='ready'` 计划数）与「空 N」（剩余产线）。
-   算法底层仍是 `services.char_capacity.active_lines_by_category` + `max_lines_for_category`
-   （与产线启动小助手同源），只是**转置方向按人物**（仪表盘左栏要的是「谁在用」）。
+   聚合走 `services.char_capacity.char_line_usage`、块数据走 `ui_qml.bridge.occupancy`
+   （工业页「人物占用情况」对话框渲染同一块面板，两边共用一份；口径不同 ——
+   仪表盘只算**正在生产**，那个对话框算**已规划**）。
    另有 `occupancyRows` 保留 `launcher_bridge.occupancyRows` 的同形状输出（共用契约）。
 
 2. **资产折线图** `assetPlot` / `assetSeries` / `reloadAssets()` —— 数据源
@@ -55,14 +56,10 @@ from PySide6.QtWidgets import QApplication, QWidget
 import ui_qml.theme.registry as theme
 from core.container import get_container
 from core.logger import log
-from domain.theme_contrast import ensure_contrast
 from services.char_capacity import (
-    CAPACITY_LINE_MANUFACTURING,
-    CAPACITY_LINE_REACTION,
-    CAPACITY_LINE_RESEARCH,
-    active_lines_by_category,
+    LINE_TYPES,
+    char_line_usage,
     line_label,
-    max_lines_for_category,
 )
 from services.char_config_resolver import get_character_list, load_all_data
 from services.plan_service import load_plans_for_wizard
@@ -74,6 +71,7 @@ from services.user_settings import (
 )
 from services.wallet_import import latest_balance, parse_wallet_journal
 from ui_qml.bridge.message_dialog import FMessageDialog
+from ui_qml.bridge.occupancy import LINE_COLORS, build_occupancy_blocks, char_status, occupancy_summary
 from ui_qml.bridge.price_chart_bridge import axis_values, map_values, nice_range, pick_indices
 from ui_qml.bridge.summary_dialog import cell
 
@@ -89,12 +87,6 @@ __all__ = [
 ]
 
 # ── 产线详情（与生产启动小助手同口径）─────────────────────────
-_LINE_TYPES = (CAPACITY_LINE_MANUFACTURING, CAPACITY_LINE_RESEARCH, CAPACITY_LINE_REACTION)
-_LINE_COLORS = {
-    CAPACITY_LINE_MANUFACTURING: "ACCENT_GREEN",
-    CAPACITY_LINE_RESEARCH: "ACCENT_CYAN",
-    CAPACITY_LINE_REACTION: "ACCENT_PURPLE",
-}
 #: 角色名列宽。原实现按字体量宽（`QFontMetrics`），本面板固定为
 #: `FCapacityRow.qml` 的 `nameWidth` 默认值 76 —— 量字体要 `QGuiApplication`，
 #: 而桥要能在无 GUI 的测试里跑。
@@ -546,13 +538,13 @@ class QueryDashboardBridge(QObject):
 
     @Property(list, notify=changed)
     def occupancyByChar(self) -> list[dict]:
-        """**每人物一块**的占用数据（仪表盘左栏用，见 `_build_occupancy_by_char`）。
+        """**每人物一块**的占用数据（仪表盘左栏用，形状见 `ui_qml.bridge.occupancy`）。
 
         `[{"name", "statusText", "statusColor",
            "lines": [{"key", "label", "color", "active", "max", "cap",
                       "readyN", "readyText", "freeN", "detailText"}]}]`
 
-        `cap` 是**各人物该线型上限之和**（进度条分母，让所有人的条子同长可比），
+        `cap` 是**各人物该线型上限中的最大值**（进度条分母，让所有人的条子同长可比），
         `max` 是该人物自己的上限；`readyText` 是该人物该线型**待下线**的计划数
         （用户明确要求「提示带下线多少」），`freeN` 是「还能再上几条」（空槽位数）。
         """
@@ -1339,36 +1331,19 @@ class QueryDashboardBridge(QObject):
 
     def _refresh_occupancy(self, plans: list[dict]) -> None:
         """算两份占用数据：`occupancyRows`（按人物，与小助手同形状）与
-        `occupancyByChar`（按人物分块 + 每型一行，仪表盘左栏用）。"""
-        usage = active_lines_by_category(plans)
-        chars_data = (load_all_data() or {}).get("characters", {}) or {}
-        chars = list(get_character_list())
-        for char in usage:
-            if char and char not in chars:
-                chars.append(char)
+        `occupancyByChar`（按人物分块 + 每型一行，仪表盘左栏用）。
 
-        if not chars:
+        人物 × 线型的聚合只在 `services.char_capacity.char_line_usage` 里算一次；
+        块数据（左栏那套）由 `ui_qml.bridge.occupancy` 生成 —— 工业页「人物占用情况」
+        对话框渲染的是**同一块面板**，两边共用一份，不再各算一遍。
+        本方法只负责仪表盘特有的一份：`occupancyRows`（与小助手的共用契约）。
+        """
+        per_char, line_caps = char_line_usage(plans)
+        if not per_char:
             self._occupancy_summary = "（无人物配置，请在人物设置中添加）"
             self._occupancy_rows = []
             self._occupancy_by_char = []
             return
-
-        per_char: list[tuple[str, dict[str, tuple[int, int]]]] = []
-        line_caps: dict[str, int] = dict.fromkeys(_LINE_TYPES, 0)
-        active_total = 0
-        max_total = 0
-        for char in chars:
-            skills = (chars_data.get(char, {}) or {}).get("skills", {}) or {}
-            char_usage = usage.get(char or "", {})
-            per_line: dict[str, tuple[int, int]] = {}
-            for line in _LINE_TYPES:
-                maximum = max_lines_for_category(char, line, skills=skills)
-                active = int(char_usage.get(line, 0))
-                per_line[line] = (active, maximum)
-                line_caps[line] = max(line_caps[line], maximum)
-                active_total += active
-                max_total += maximum
-            per_char.append((char, per_line))
 
         slot_total = max(sum(line_caps.values()), 1)
         rows: list[dict] = []
@@ -1376,14 +1351,14 @@ class QueryDashboardBridge(QObject):
             lines_data = [
                 {
                     "label": line_label(line),
-                    "color": self._series_color(_LINE_COLORS[line]),
+                    "color": self._series_color(LINE_COLORS[line]),
                     "active": int(per_line[line][0]),
                     "max": int(per_line[line][1]),
                     "cap": int(line_caps[line]),
                 }
-                for line in _LINE_TYPES
+                for line in LINE_TYPES
             ]
-            status_text, status_token = self._char_status(per_line)
+            status_text, status_token = char_status(per_line)
             rows.append(
                 {
                     "name": char or "(未分配)",
@@ -1395,87 +1370,8 @@ class QueryDashboardBridge(QObject):
                 }
             )
         self._occupancy_rows = rows
-        self._occupancy_summary = f"{len(chars)} 人物 · 占用 {active_total}/{max_total}"
-        self._occupancy_by_char = self._build_occupancy_by_char(per_char, plans)
-
-    def _build_occupancy_by_char(
-        self, per_char: list[tuple[str, dict[str, tuple[int, int]]]], plans: list[dict]
-    ) -> list[dict]:
-        """**每人物一块，块内制造/科研/反应各一行** —— 仪表盘左栏用这个形状。
-
-        用户要求「每个人物都有制造、科研、反应三行，然后提示带下线多少」。
-        竖排列出来以后左栏下半的空白就被填满了，人物多了靠外层 ListView 滚动。
-
-        - ``cap``：各人物该线型上限中的**最大值** —— 所有人共用同一个分母（槽位同宽、
-          条子等长可比）。早先取的是**之和**，于是单个人物跑满自己那 11 条线时
-          只点亮了整条的一半（分母是所有人加起来的 22）。
-        - ``max``：该人物自己的上限（上限内的格数）。
-        - ``readyN``：该人物该线型下 **待下线**（``status=='ready'``）的计划数，
-          取自已加载的计划表（`load_plans_for_wizard` 已 enrich ``category``），不额外查库。
-        - ``freeN``：还能再上几条线（上限 − 已占，负数按 0）。
-        """
-        ready = self._ready_count_by_char_line(plans)
-        cap_by_line: dict[str, int] = {
-            line: max((int(per_line.get(line, (0, 0))[1]) for _char, per_line in per_char), default=0)
-            for line in _LINE_TYPES
-        }
-        blocks: list[dict] = []
-        for char, per_line in per_char:
-            status_text, status_token = self._char_status(per_line)
-            lines_data: list[dict] = []
-            for line in _LINE_TYPES:
-                active, maximum = per_line.get(line, (0, 0))
-                ready_n = int(ready.get((char or "", line), 0))
-                lines_data.append(
-                    {
-                        "key": str(line),
-                        "label": line_label(line),
-                        "color": self._series_color(_LINE_COLORS[line]),
-                        "active": int(active),
-                        "max": int(maximum),
-                        "cap": int(cap_by_line.get(line, maximum)),
-                        "readyN": ready_n,
-                        "readyText": f"待下线 {ready_n}" if ready_n else "",
-                        "freeN": max(int(maximum) - int(active), 0),
-                        "detailText": f"{line_label(line)} 已占 {int(active)} / 上限 {int(maximum)}"
-                        + (f" · 待下线 {ready_n}" if ready_n else "")
-                        + f" · 空闲 {max(int(maximum) - int(active), 0)}",
-                    }
-                )
-            blocks.append(
-                {
-                    "name": char or "(未分配)",
-                    "statusText": status_text,
-                    "statusColor": self._series_color(status_token),
-                    "lines": lines_data,
-                }
-            )
-        return blocks
-
-    @staticmethod
-    def _ready_count_by_char_line(plans: list[dict]) -> dict[tuple[str, str], int]:
-        """`{(人物, 线型): 待下线计划数}` —— 用计划表自己的 `category` → 线型映射。"""
-        from services.char_capacity import capacity_line_for_category
-
-        counts: dict[tuple[str, str], int] = {}
-        for plan in plans:
-            if str(plan.get("status") or "").lower() != "ready":
-                continue
-            char = str(plan.get("char_name") or "").strip()
-            line = capacity_line_for_category(str(plan.get("category") or ""))
-            counts[(char, line)] = counts.get((char, line), 0) + 1
-        return counts
-
-    @staticmethod
-    def _char_status(per_line: dict[str, tuple[int, int]]) -> tuple[str, str]:
-        """(状态文本, 语义色 token) —— 超员 / 空闲 / 生产中（文案与产线小助手逐字一致）。"""
-        active_total = sum(per_line.get(line, (0, 0))[0] for line in _LINE_TYPES)
-        max_total = sum(per_line.get(line, (0, 0))[1] for line in _LINE_TYPES)
-        if active_total > max_total:
-            return f"超员 +{active_total - max_total}", "ACCENT_RED"
-        if active_total == 0:
-            return "空闲", "ACCENT_GREEN"
-        return "生产中", "PRIMARY"
+        self._occupancy_summary = occupancy_summary(per_char)
+        self._occupancy_by_char = build_occupancy_blocks(per_char, plans)
 
     # ── 资产折线 ──────────────────────────────────────────────
 
@@ -1484,11 +1380,11 @@ class QueryDashboardBridge(QObject):
 
     @staticmethod
     def _series_color(token: str) -> str:
-        """主题 token → 经对比度校正的 hex（token 缺失时返回原样，不抛）。"""
-        raw = str(getattr(theme, token, "") or "")
-        if not raw.startswith("#"):
-            return raw
-        return ensure_contrast(raw, theme.BG_DARK)
+        """主题 token → 经对比度校正的 hex（token 缺失时返回原样，不抛）。
+
+        校正逻辑只有一份：`theme.token_color`（占用面板也走它，见 `bridge/occupancy.py`）。
+        """
+        return theme.token_color(token)
 
     def _refresh_snapshots(self, force: bool = False) -> None:
         """读全量快照 → 按当前区间裁剪 → 重算几何。"""

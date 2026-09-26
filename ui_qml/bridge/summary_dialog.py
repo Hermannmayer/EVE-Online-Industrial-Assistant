@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import Property, Signal, Slot
+from PySide6.QtGui import QGuiApplication
 
 from ui_qml.dialog_host import DialogBridge, QmlDialog
 from ui_qml.theme import registry as theme
@@ -95,6 +96,28 @@ class SummaryTableBridge(DialogBridge):
     @Slot(int)
     def copyRow(self, row: int) -> None:
         """行内动作（默认什么也不做，子类覆写）。"""
+
+    @Slot(int, int)
+    def copyCell(self, row: int, column: int) -> None:
+        """双击单元格 → 复制该格文字（全项目统一的「双击 = 复制该格」）。
+
+        复制的是**显示文本**（千分位、`fmt_isk` 缩写、状态词），也就是用户眼睛看到的那一份
+        —— 拿它去游戏里搜蓝图/物品名正合适；要原始数值的地方（清单导入之类）另走专用动作。
+
+        空文本与 `—` 占位不复制：它们不是「名字」，写进剪贴板只会把上一次复制的内容冲掉。
+        """
+        if not 0 <= row < len(self._rows):
+            return
+        cells = self._rows[row].get("cells") or []
+        if not 0 <= column < len(cells):
+            return
+        text = str(cells[column].get("text", ""))
+        if not text or text == "—":
+            return
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(text)
+        self.set_error(f"已复制：{text}")
 
     @Slot()
     def reload(self) -> None:

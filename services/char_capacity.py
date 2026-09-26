@@ -14,13 +14,22 @@
 from __future__ import annotations
 
 from core.container import get_container
-from services.char_config_resolver import resolve_char_config
+from services.char_config_resolver import get_character_list, load_all_data, resolve_char_config
 from services.terminology import term
 
 # 三类产线常量
 CAPACITY_LINE_MANUFACTURING = "manufacturing"
 CAPACITY_LINE_RESEARCH = "research"
 CAPACITY_LINE_REACTION = "reaction"
+
+#: 三类线型的**展示顺序**（制造 / 科研 / 反应）—— 占用面板逐行按它排
+LINE_TYPES: tuple[str, ...] = (CAPACITY_LINE_MANUFACTURING, CAPACITY_LINE_RESEARCH, CAPACITY_LINE_REACTION)
+
+#: 「正在生产」—— 产线小助手 / 查询页仪表盘的口径：只有真在跑的计划占线
+RUNNING_STATUSES: tuple[str, ...] = ("in_progress", "running")
+#: 「已规划」—— 工业页「人物占用情况」的口径：还在排产（待生产）的计划也先把线占上，
+#: 外加待下线的（成品没下线之前那条线也腾不出来）。「已完成 / 已下线」不占。
+PLANNED_STATUSES: tuple[str, ...] = ("pending", "in_progress", "running", "ready")
 
 _LINE_LABELS = {
     CAPACITY_LINE_MANUFACTURING: "制造",
@@ -76,20 +85,58 @@ def max_lines_for_category(char_name: str | None, line: str, *, skills: dict | N
     return 1 + _sum_skill_levels(skills, names)
 
 
-def active_lines_by_category(plans: list[dict]) -> dict[str, dict[str, int]]:
+def active_lines_by_category(
+    plans: list[dict], *, statuses: tuple[str, ...] = RUNNING_STATUSES
+) -> dict[str, dict[str, int]]:
     """从已 enrich category 的活跃计划行聚合 {char_name(''=未分配): {线型: SUM(parallels)}}。
 
-    只统计 status in ('in_progress','running')。纯函数（无 DB）。
+    `statuses` 决定「哪些计划算占着线」—— 两个口径，别混：
+    `RUNNING_STATUSES`（默认，产线小助手 / 仪表盘）只算正在跑的，
+    `PLANNED_STATUSES`（工业页「人物占用情况」）把待生产的也算上。
+    纯函数（无 DB）。
     """
     result: dict[str, dict[str, int]] = {}
     for p in plans:
-        if (p.get("status") or "").lower() not in ("in_progress", "running"):
+        if (p.get("status") or "").lower() not in statuses:
             continue
         char = (p.get("char_name") or "").strip() or ""
         line = capacity_line_for_category(str(p.get("category") or ""))
         bucket = result.setdefault(char, {})
         bucket[line] = bucket.get(line, 0) + max(int(p.get("parallels") or 0), 0)
     return result
+
+
+def char_line_usage(
+    plans: list[dict], *, statuses: tuple[str, ...] = RUNNING_STATUSES
+) -> tuple[list[tuple[str, dict[str, tuple[int, int]]]], dict[str, int]]:
+    """[(角色名, {线型: (已占, 上限)})]，外加各线型「所有人上限里的最大值」。
+
+    角色顺序 = `char_config.json` 里登记的**全部**角色（没排产的人也留一行、条子归零），
+    再补「有计划但没登记进配置」的角色 —— 否则那些人的占用会凭空消失。
+    上限由技能算（`max_lines_for_category`）。
+
+    第二个返回值是**统一分母**：某线型下各人物上限的最大值。占用面板用它把所有人的
+    条子画得一样长，才比得出谁快满了（早先取的是各人之和，单人跑满自己的线只点亮半条）。
+    """
+    usage = active_lines_by_category(plans, statuses=statuses)
+    chars_data = (load_all_data() or {}).get("characters", {}) or {}
+    chars = list(get_character_list())
+    for char in usage:
+        if char and char not in chars:
+            chars.append(char)
+
+    per_char: list[tuple[str, dict[str, tuple[int, int]]]] = []
+    line_caps: dict[str, int] = dict.fromkeys(LINE_TYPES, 0)
+    for char in chars:
+        skills = (chars_data.get(char, {}) or {}).get("skills", {}) or {}
+        char_usage = usage.get(char or "", {})
+        per_line: dict[str, tuple[int, int]] = {}
+        for line in LINE_TYPES:
+            maximum = max_lines_for_category(char, line, skills=skills)
+            per_line[line] = (int(char_usage.get(line, 0)), maximum)
+            line_caps[line] = max(line_caps[line], maximum)
+        per_char.append((char, per_line))
+    return per_char, line_caps
 
 
 def _skill_key() -> str:

@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta
 import pytest
 
 import ui_qml.bridge.query_dashboard_bridge as qdb
+from services import char_capacity as cc
 from ui_qml.bridge.query_dashboard_bridge import QueryDashboardBridge
 
 pytestmark = pytest.mark.fast
@@ -235,6 +236,19 @@ class _Harness:
         return QueryDashboardBridge()
 
 
+def _stub_chars(monkeypatch, chars: list[str], data: dict) -> None:
+    """角色列表与技能配置**两处都要打桩**。
+
+    `qdb._char_signature` 读的是本模块里的那两个名字（刷新指纹），而占用聚合
+    （`services.char_capacity.char_line_usage`）读的是它自己模块里的那份 ——
+    只 patch 一边，另一边就会去读开发机真实的 `char_config.json`，断言随机器漂移。
+    """
+    monkeypatch.setattr(qdb, "get_character_list", lambda: list(chars))
+    monkeypatch.setattr(qdb, "load_all_data", lambda: data)
+    monkeypatch.setattr(cc, "get_character_list", lambda: list(chars))
+    monkeypatch.setattr(cc, "load_all_data", lambda: data)
+
+
 @pytest.fixture
 def h(monkeypatch) -> _Harness:
     harness = _Harness()
@@ -246,8 +260,7 @@ def h(monkeypatch) -> _Harness:
     monkeypatch.setattr(qdb, "get_esi_orders_synced_at", lambda: harness.esi_synced_at)
     monkeypatch.setattr(qdb, "set_esi_orders_synced_at", lambda value: setattr(harness, "esi_synced_at", str(value)))
     monkeypatch.setattr(qdb, "load_plans_for_wizard", lambda: [dict(p) for p in harness.plans])
-    monkeypatch.setattr(qdb, "get_character_list", lambda: [_CHAR])
-    monkeypatch.setattr(qdb, "load_all_data", lambda: {"characters": {_CHAR: {"skills": dict(_SKILLS)}}})
+    _stub_chars(monkeypatch, [_CHAR], {"characters": {_CHAR: {"skills": dict(_SKILLS)}}})
     # `_line_value()`（服务侧）会经评分链路读材料需求 / 机库库存；本文件只验桥的整形，
     # 把它顶成「没有制造中产线」即可（`_FakeAsset` 的快照数据已给定 line_value）。
     monkeypatch.setattr("services.plan_service.load_plans_for_wizard", lambda: [])
@@ -328,8 +341,7 @@ def test_occupancy_status_texts(h):
 
 
 def test_occupancy_empty_without_characters(h, monkeypatch):
-    monkeypatch.setattr(qdb, "get_character_list", lambda: [])
-    monkeypatch.setattr(qdb, "load_all_data", lambda: {"characters": {}})
+    _stub_chars(monkeypatch, [], {"characters": {}})
     bridge = h.bridge()
     bridge.refresh()
     assert bridge.occupancyRows == []
@@ -400,6 +412,12 @@ def test_occupancy_by_char_cap_is_shared_denominator(h, monkeypatch):
         "load_all_data",
         lambda: {"characters": {_CHAR: {"skills": dict(_SKILLS)}, "人物B": {"skills": {}}}},
     )
+    monkeypatch.setattr(cc, "get_character_list", lambda: [_CHAR, "人物B"])
+    monkeypatch.setattr(
+        cc,
+        "load_all_data",
+        lambda: {"characters": {_CHAR: {"skills": dict(_SKILLS)}, "人物B": {"skills": {}}}},
+    )
     h.plans = [_plan(1, status="in_progress", parallels=11)]
     bridge = h.bridge()
     bridge.refresh()
@@ -413,8 +431,7 @@ def test_occupancy_by_char_cap_is_shared_denominator(h, monkeypatch):
 
 
 def test_occupancy_by_char_empty_without_characters(h, monkeypatch):
-    monkeypatch.setattr(qdb, "get_character_list", lambda: [])
-    monkeypatch.setattr(qdb, "load_all_data", lambda: {"characters": {}})
+    _stub_chars(monkeypatch, [], {"characters": {}})
     bridge = h.bridge()
     bridge.refresh()
     assert bridge.occupancyByChar == []

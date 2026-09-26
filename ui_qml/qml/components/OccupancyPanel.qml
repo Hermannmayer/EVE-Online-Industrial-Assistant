@@ -1,9 +1,15 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import "../../components"
 
-/* 空闲态仪表盘 · 产线详情（**每人物一块，块内制造 / 科研 / 反应三行**）。
+/* 产线占用面板 · 产线详情（**每人物一块，块内制造 / 科研 / 反应三行**）。
+ *
+ * 两个入口渲染同一块面板：
+ *   - 查询页空闲态仪表盘左栏（`pages/query/QueryDashboard.qml`，口径 = **正在生产**）；
+ *   - 工业页「人物占用情况」对话框（`dialogs/CharUsageDialog.qml`，口径 = **已规划**，
+ *     待生产的计划也先把线占上）。
+ * 所以数据源只认 `occupancyBridge` 上的两个属性：`occupancyByChar` / `occupancySummary`
+ * （形状见 `ui_qml.bridge.occupancy`，两个桥都产出同一份）。
  *
  * 对应界面标注图「产线详情 / 人物、产线占用情况」。早先的版本是「每种产线类型一行」，
  * 那样在竖排的左栏里下半截全是空白（实测左栏约 260px、只有 3 行数据），
@@ -26,10 +32,10 @@ import "../../components"
 Item {
     id: root
 
-    //: `bridge.dashboard`
-    property var dashboard: null
+    //: 带 `occupancyByChar` / `occupancySummary` 的桥（仪表盘桥或人物占用对话框的桥）
+    property var occupancyBridge: null
 
-    readonly property var charBlocks: dashboard ? dashboard.occupancyByChar : []
+    readonly property var charBlocks: occupancyBridge ? occupancyBridge.occupancyByChar : []
 
     readonly property int fntSmall: Math.round(11 * Theme.fontScale)
     readonly property int fntBase: Math.round(12 * Theme.fontScale)
@@ -52,7 +58,7 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: root.headH
             verticalAlignment: Text.AlignVCenter
-            text: root.dashboard ? root.dashboard.occupancySummary : ""
+            text: root.occupancyBridge ? root.occupancyBridge.occupancySummary : ""
             color: Theme.textSecondary
             font.family: Theme.fontFamily
             font.pixelSize: root.fntSmall

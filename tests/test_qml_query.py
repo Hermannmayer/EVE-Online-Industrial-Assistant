@@ -175,7 +175,7 @@ def test_occupancy_delegate_guards_model_data(qapp):
     这条守的是「形状」而不是像素：只要 delegate 里出现 `modelData.lines`，
     就必须写成带 `modelData &&` 的守卫形式。
     """
-    src = (_ROOT / "ui_qml" / "qml" / "pages" / "query" / "OccupancyPanel.qml").read_text(encoding="utf-8")
+    src = (_ROOT / "ui_qml" / "qml" / "components" / "OccupancyPanel.qml").read_text(encoding="utf-8")
     assert "modelData && charBlock.modelData.lines" in src, (
         "delegate 的 lines 绑定缺少 modelData 空值守卫 —— 真窗口下会静默画不出任何人"
     )
@@ -195,12 +195,16 @@ def test_page_declares_the_query_panel_import(qapp):
 
 @pytest.mark.ui
 def test_query_panels_all_exist():
-    """面板文件一个都不能少 —— 缺一个就是「整页加载失败、本页暂缺」。"""
+    """面板文件一个都不能少 —— 缺一个就是「整页加载失败、本页暂缺」。
+
+    `OccupancyPanel.qml` 不在这个清单里：它已经搬到 `components/`（工业页
+    「人物占用情况」对话框也渲染它，见 `CharUsageDialog.qml`），存在性由
+    `test_qml_dialogs.py` 的对话框加载用例兜住。
+    """
     panel_dir = _ROOT / "ui_qml" / "qml" / "pages" / "query"
     expected = {
         "QueryDashboard.qml",
         "QueryDetailPane.qml",
-        "OccupancyPanel.qml",
         "AssetChartPanel.qml",
         "OpenOrdersPanel.qml",
         "HubPricePanel.qml",

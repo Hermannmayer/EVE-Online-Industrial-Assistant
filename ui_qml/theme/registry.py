@@ -21,6 +21,7 @@ from collections.abc import Callable
 from typing import TypedDict, cast
 
 from core.logger import log
+from domain.theme_contrast import ensure_contrast
 
 # ═══════════════════════════════════════════
 #  色板定义 —— 微软 Fluent Design
@@ -212,6 +213,19 @@ def token(name: str) -> str:
     QML 侧原先有 6 份逐字相同的本地副本（2 个桥 + 5 个模型），汇总到这一处。
     """
     return str(globals().get(name) or "")
+
+
+def token_color(name: str) -> str:
+    """按 token 名取**经对比度校正**的当前主题色值；名字不存在返回空串。
+
+    与 `token()` 的分工：`token()` 给原色，本函数额外过一遍
+    `ensure_contrast(…, BG_DARK)` —— 画在深底上的**动态**色（折线、占用条、状态徽章）
+    用它，省得每个调用方各抄一遍校正逻辑。
+    """
+    raw = str(globals().get(name) or "")
+    if not raw.startswith("#"):
+        return raw
+    return ensure_contrast(raw, BG_DARK)
 
 
 def bg_elevated() -> str:

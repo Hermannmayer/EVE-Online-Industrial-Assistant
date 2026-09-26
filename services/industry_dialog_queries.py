@@ -25,7 +25,6 @@ from services.plan_execution import find_available_blueprints
 __all__ = [
     "get_blueprint_picker_data",
     "get_blueprint_requirements",
-    "get_character_usage",
     "get_child_parallel_data",
     "get_item_name",
     "get_mass_parallel_data",
@@ -36,20 +35,6 @@ __all__ = [
     "get_system_name",
     "set_plan_deposit_hangar",
 ]
-
-
-def get_character_usage(db) -> list[tuple[Any, Any, Any]]:
-    """按 char_name 统计活跃计划。"""
-    with db.connect("user") as conn:
-        rows = conn.execute(
-            "SELECT char_name, COUNT(*) as cnt, "
-            "GROUP_CONCAT(COALESCE(product_name, CAST(product_type_id AS TEXT)), ', ') as details "
-            "FROM production_plans "
-            "WHERE status IN ('pending', 'in_progress', 'running') "
-            "GROUP BY char_name "
-            "ORDER BY cnt DESC"
-        ).fetchall()
-        return [(row[0], row[1], row[2]) for row in rows]
 
 
 def get_output_summary(db) -> list[dict[str, Any]] | None:

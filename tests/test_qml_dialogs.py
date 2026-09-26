@@ -16,8 +16,9 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from PySide6.QtCore import QObject, QtMsgType, Signal, qInstallMessageHandler
+from PySide6.QtCore import QObject, QPoint, Qt, QtMsgType, Signal, qInstallMessageHandler
 from PySide6.QtGui import qAlpha
+from PySide6.QtTest import QTest
 
 import ui_qml.theme.registry as theme
 from tests.clipboard_wait import wait_for_clipboard
@@ -450,9 +451,24 @@ def output_factory(qapp, monkeypatch):
 
 @pytest.fixture
 def char_usage_factory(qapp, monkeypatch):
-    import services.industry_dialog_queries as q
+    """「人物占用情况」的工厂：一个满级制造（11 条线）的人物 + 一条**待生产**的并行 3 计划。
 
-    monkeypatch.setattr(q, "get_character_usage", lambda db: [("甲", 5, "渡鸦级 x2"), ("乙", 1, "—")])
+    角色配置与计划都打桩 —— 两个数据源都读真实文件/库的话，断言会随开发机的
+    `char_config.json` 漂移（`test_query_dashboard` 对同一对数据源也是这么打桩的）。
+    """
+    import services.char_capacity as cc
+    import services.plan_service as ps
+
+    monkeypatch.setattr(
+        ps,
+        "load_plans_for_wizard",
+        lambda: [{"status": "pending", "char_name": "甲", "category": "manufacturing", "parallels": 3}],
+    )
+    monkeypatch.setattr(cc, "get_character_list", lambda: ["甲"])
+    monkeypatch.setattr(
+        cc, "load_all_data", lambda: {"characters": {"甲": {"skills": {"高级量产技术": 5, "批量生产学": 5}}}}
+    )
+
     from ui_qml.bridge.char_usage_bridge import CharacterUsageQmlDialog
 
     return CharacterUsageQmlDialog
@@ -489,24 +505,24 @@ def test_output_summary_colours_profit_and_status(output_factory):
         dialog.deleteLater()
 
 
-def test_char_usage_colours_by_load(qapp, monkeypatch):
-    """活跃计划数越多越警示（≥5 红、≥3 黄、其余绿）。"""
-    import services.industry_dialog_queries as q
+def test_char_usage_counts_planned_lines(char_usage_factory):
+    """占用条按「已规划」算：**待生产**（pending）的计划也占线，不只在跑的。
 
-    monkeypatch.setattr(q, "get_character_usage", lambda db: [("甲", 5, ""), ("乙", 3, ""), ("丙", 1, "")])
-    from ui_qml.bridge.char_usage_bridge import CharacterUsageQmlDialog, _load_token
-
-    # 阈值规则本身（与主题具体色值解耦）
-    assert _load_token(5) == "ACCENT_RED"
-    assert _load_token(3) == "ACCENT_YELLOW"
-    assert _load_token(1) == "ACCENT_GREEN"
-
-    dialog = CharacterUsageQmlDialog()
+    回归点：早先这张表只统计 `in_progress/running`，于是刚排完产、一条都没启动时
+    面板上全是 0 —— 用户报的正是「要显示已规划的产线占用，而不只是正在运行的」。
+    """
+    dialog = char_usage_factory()
     try:
-        colors = [row["cells"][1]["color"] for row in dialog.bridge.rows]
-        assert all(colors), "每行都应有颜色（token 解析不出来会得到空串）"
-        assert "3 个角色" in dialog.bridge.statusText
-        assert "9 个活跃计划" in dialog.bridge.statusText
+        blocks = dialog.bridge.occupancyByChar
+        assert [block["name"] for block in blocks] == ["甲"]
+        block = blocks[0]
+        assert [line["label"] for line in block["lines"]] == ["制造", "科研", "反应"]
+        manufacturing = block["lines"][0]
+        assert manufacturing["active"] == 3, "待生产的 3 条并行线必须算进占用"
+        assert manufacturing["max"] == 11, "上限由技能算（高级量产技术 + 批量生产学 各 5 级）"
+        assert manufacturing["cap"] == 11
+        assert block["statusText"] == "生产中"
+        assert dialog.bridge.occupancySummary == "1 人物 · 已规划 3/13"
     finally:
         dialog.deleteLater()
 
@@ -640,6 +656,48 @@ def test_blueprint_requirements_empty_states(monkeypatch, qapp):
             assert dialog.bridge.statusText == hint
         finally:
             dialog.deleteLater()
+
+
+def test_summary_table_double_click_copies_the_cell(blueprint_requirements_factory):
+    """双击任一格 → 复制该格文字（「所需蓝图清单」等只读汇总表的统一行为）。
+
+    两个回归点缺一不可，只测其中一个都会漏：
+
+    - 桥的 `copyCell` 把**显示文本**写进剪贴板并给出反馈；
+    - `SummaryTableDialog.qml` 真把 `FSummaryTable.rowDoubleClicked` 接到了桥上 ——
+      只调桥的话，QML 里那三行接错了照样绿（本仓踩过这种「假绿」）。
+    """
+    dialog = blueprint_requirements_factory()
+    try:
+        host = dialog._host
+        root = host.rootObject()
+        assert root is not None
+        area = _qml_child(root, lambda it: it.objectName() == "summaryClickArea")
+        assert area is not None, "SummaryTableDialog 的行区应当有 summaryClickArea"
+
+        dialog.resize(900, 520)
+        dialog.show()
+        _spin(250)
+
+        # 行序按蓝图名排：三钛合金蓝图 / 渡鸦级蓝图 / 缺少的蓝图；x=12 落在第一列内
+        row_h = float(area.property("rowHeight"))
+        pt = area.mapToItem(None, 12.0, row_h / 2)
+        QTest.mouseDClick(
+            host, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(int(pt.x()), int(pt.y()))
+        )
+        _spin(60)
+
+        assert wait_for_clipboard("三钛合金蓝图") == "三钛合金蓝图", "双击第一列应把蓝图名复制走"
+        assert "已复制" in dialog.bridge.error
+
+        # 占位符与越界行号都静默忽略：往剪贴板写一个「—」只会把上一次复制的内容冲掉
+        before = dialog.bridge.error
+        dialog.bridge.copyCell(2, 1)  # 「缺少」那行的类型列是 "—"
+        dialog.bridge.copyCell(99, 0)
+        assert dialog.bridge.error == before, "占位符/越界不该发新反馈"
+        assert wait_for_clipboard("三钛合金蓝图") == "三钛合金蓝图", "剪贴板里应还是上一次复制的内容"
+    finally:
+        dialog.deleteLater()
 
 
 # ════════════════════════════════════════════════════════════════
