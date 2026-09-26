@@ -48,7 +48,7 @@ def _create_mkt_v1(db_path):
 
 
 def test_v0_db_runs_all_migrations(tmp_mkt_db):
-    """有表但 user_version=0（半迁移/旧库）→ 应补跑全部迁移（v1→v3），而非跳过"""
+    """有表但 user_version=0（半迁移/旧库）→ 应补跑全部迁移（v1→v4），而非跳过"""
     _create_mkt_v1(tmp_mkt_db)
     conn = sqlite3.connect(str(tmp_mkt_db))
     conn.execute("PRAGMA user_version = 0")  # 模拟版本丢失
@@ -57,20 +57,20 @@ def test_v0_db_runs_all_migrations(tmp_mkt_db):
 
     result = sm.ensure_schema("mkt")
 
-    assert result["after"] == 3, "应从 v0 补跑到最新 v3"
+    assert result["after"] == 4, "应从 v0 补跑到最新 v4"
     conn = sqlite3.connect(str(tmp_mkt_db))
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     cols = {r[1] for r in conn.execute("PRAGMA table_info(market_prices)")}
     idxs = {r[1] for r in conn.execute("PRAGMA index_list(market_prices)")}
     conn.close()
 
-    assert v == 3
+    assert v == 4
     assert "adjusted_price" in cols, "v1→v2 的 adjusted_price 列应补上"
     assert "idx_market_prices_fetch_time" in idxs, "v2→v3 的 fetch_time 索引应补上"
 
 
 def test_mkt_v2_to_v3_creates_fetch_time_index(tmp_mkt_db):
-    """v2 库 → v3：创建 fetch_time 索引（MAX 查询加速）"""
+    """v2 库 → 最新版本：创建 fetch_time 与快照聚合索引。"""
     conn = sqlite3.connect(str(tmp_mkt_db))
     conn.execute(
         """
@@ -93,7 +93,7 @@ def test_mkt_v2_to_v3_creates_fetch_time_index(tmp_mkt_db):
 
     result = sm.ensure_schema("mkt")
 
-    assert result["after"] == 3
+    assert result["after"] == 4
     assert any("索引" in s for s in result["applied"])
     conn = sqlite3.connect(str(tmp_mkt_db))
     idxs = {r[1] for r in conn.execute("PRAGMA index_list(market_prices)")}
@@ -111,7 +111,35 @@ def test_migrations_idempotent(tmp_mkt_db):
     conn = sqlite3.connect(str(tmp_mkt_db))
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 3
+    assert v == 4
+
+
+def test_mkt_v3_to_v4_creates_snapshot_region_date_index(tmp_mkt_db):
+    """v3 库 → v4：为挂单变化按 region/date 聚合创建索引。"""
+    conn = sqlite3.connect(str(tmp_mkt_db))
+    conn.execute(
+        """
+        CREATE TABLE market_volume_snapshots (
+            type_id INTEGER NOT NULL,
+            region_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            buy_volume INTEGER DEFAULT 0,
+            sell_volume INTEGER DEFAULT 0,
+            PRIMARY KEY (type_id, region_id, date)
+        )
+        """
+    )
+    conn.execute("PRAGMA user_version = 3")
+    conn.commit()
+    conn.close()
+
+    result = sm.ensure_schema("mkt")
+
+    assert result["after"] == 4
+    conn = sqlite3.connect(str(tmp_mkt_db))
+    idxs = {r[1] for r in conn.execute("PRAGMA index_list(market_volume_snapshots)")}
+    conn.close()
+    assert "idx_market_volume_snapshots_region_date" in idxs
 
 
 def test_ensure_schema_missing_db_returns_none(tmp_path):
@@ -1121,7 +1149,7 @@ def test_mkt_migration_continues_when_backup_fails(tmp_mkt_db, monkeypatch):
 
     result = sm.ensure_schema("mkt")
 
-    assert result["after"] == 3
+    assert result["after"] == 4
     assert not result.get("failed")
 
 

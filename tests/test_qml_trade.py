@@ -484,6 +484,26 @@ def test_bridge_without_a_shell_still_works():
 
 
 @pytest.mark.ui
+def test_failed_rank_clears_busy_and_explains(bridge):
+    """排行线程抛异常后「开始计算」必须恢复可用，并如实说明原因。
+
+    回归用例：`run()` 里没有 try/except，`finished_signal` 永不发射 → `_busy` 卡在 True
+    → 按钮由 `enabled: !busy` 永久禁用，只能重开页面；同时逃逸异常会走 `sys.excepthook`
+    弹「程序遇到了意外错误，请重启应用」—— 一次可恢复的 `database is locked` 被报成崩溃。
+    """
+    bridge._busy = True
+    bridge._on_rank_failed(bridge._gen, "database is locked")
+
+    assert bridge.busy is False
+    assert "database is locked" in bridge.statusText
+
+    # 过期代次的失败不得复位当前这一轮（否则旧线程能把新计算的忙碌状态清掉）
+    bridge._busy = True
+    bridge._on_rank_failed(bridge._gen - 1, "陈旧失败")
+    assert bridge.busy is True
+
+
+@pytest.mark.ui
 def test_analyze_reads_local_prices_only(bridge, monkeypatch):
     """「开始计算」只读本地价：不触发 ESI 拉取，但排行 worker 必须真的起来。
 
@@ -498,6 +518,9 @@ def test_analyze_reads_local_prices_only(bridge, monkeypatch):
         def __init__(self, **kwargs):
             self.kwargs = kwargs
             self.finished_signal = Mock()
+            self.failed_signal = Mock()
+            #: 真实 QThread 必有 `finished`；桥的 `spawn()` 会连它做保活自摘
+            self.finished = Mock()
 
         def start(self):
             started.append(self.kwargs)

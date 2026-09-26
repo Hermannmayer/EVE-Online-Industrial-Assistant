@@ -58,6 +58,40 @@ def test_three_tab_models_are_wired(contract_page):
     assert bridge.auctionColumns and bridge.exchangeColumns and bridge.courierColumns
 
 
+def test_stale_items_result_is_dropped(contract_page):
+    """迟到的旧明细结果不得覆盖当前合同的物品表（物品与选中合同串号）。
+
+    回归用例：每次选择合同都新起一个 `ContractItemsLoadWorker`，回调原先既不校验
+    `sender` 也不校验 `contract_id` —— 谁后到谁赢。补齐期间 `_on_fill_progress` 每 500 条
+    还会重播一次列表，同一份合同会被反复起线程，竞争同一个槽，肉眼表现为
+    「上面选中的是合同 B，下面列的是合同 A 的物品与价差」。
+    """
+    _host, bridge = contract_page
+
+    class _Worker:
+        """最小的 worker 替身 —— `shutdown()` 会调 `isRunning()`/`wait()`。"""
+
+        def isRunning(self):
+            return False
+
+        def wait(self, _ms):
+            return True
+
+    stale = _Worker()
+    current = _Worker()
+    bridge._selected_contract = {"contract_id": 2}
+    bridge._items_worker = current
+
+    bridge._on_items_loaded(1, stale, [{"type_id": 34, "quantity": 1}])
+    assert bridge._item_model.rowCount() == 0, "旧合同的迟到结果必须被丢弃"
+
+    bridge._on_items_loaded(2, stale, [{"type_id": 34, "quantity": 1}])
+    assert bridge._item_model.rowCount() == 0, "已被替换的 worker 的结果同样要丢弃"
+
+    bridge._on_items_loaded(2, current, [{"type_id": 34, "quantity": 1}])
+    assert bridge._item_model.rowCount() == 1, "当前 worker + 当前合同的结果必须落到表里"
+
+
 def test_row_click_survives_content_move(contract_page):
     """行点击命中固定在按下那一刻（见 `FTableClickArea` 的说明）。
 

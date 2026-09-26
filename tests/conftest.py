@@ -184,7 +184,7 @@ def _create_temp_databases(tmpdir: str):
             PRIMARY KEY (type_id, region_id, date)
         );
     """)
-    conn.execute("PRAGMA user_version = 2")
+    conn.execute("PRAGMA user_version = 4")  # 与 DB_SCHEMA_VERSIONS["mkt"] 同步（见 docs/dev/schema-migration.md）
     conn.commit()
     conn.close()
 

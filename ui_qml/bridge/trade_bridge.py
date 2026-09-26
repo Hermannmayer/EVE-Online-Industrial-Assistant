@@ -244,6 +244,8 @@ class TradeBridge(QObject):
         self.stateChanged.emit()
 
         group_ids = self._selected_group_ids()
+        from ui_qml.workers.trade_workers import spawn
+
         worker = CrossRegionRankWorker(
             region_a=TRADE_HUB_IDS[self._hub(self._from_index)],
             region_b=TRADE_HUB_IDS[self._hub(self._to_index)],
@@ -254,7 +256,10 @@ class TradeBridge(QObject):
         )
         self._worker = worker
         worker.finished_signal.connect(lambda rows: self._on_rank(gen, rows))
-        worker.start()
+        failed_signal = getattr(worker, "failed_signal", None)
+        if failed_signal is not None:
+            failed_signal.connect(lambda message: self._on_rank_failed(gen, message))
+        spawn(worker)
 
     def _on_rank(self, gen: int, rows: list) -> None:
         if gen != self._gen:
@@ -262,6 +267,14 @@ class TradeBridge(QObject):
         self._busy = False
         self._rows = list(rows or [])
         self._apply_filters()
+
+    def _on_rank_failed(self, gen: int, message: str) -> None:
+        if gen != self._gen:
+            return
+        self._busy = False
+        self._status = f"排行失败: {message}"
+        self._hint = "请稍后重试；若正在更新价格，请等待更新完成"
+        self.stateChanged.emit()
 
     def _status_text(self) -> str:
         hub_a = self._hub(self._from_index)

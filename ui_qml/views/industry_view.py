@@ -81,6 +81,9 @@ class IndustryPage(QObject):
         #: 评分线程；`None` = 当前没有在跑的。类型写 `Any` 是因为它有两个来源
         #: （`ScoreWorker` / 断线重连后的新实例），用联合类型反而更难读。
         self._score_worker: Any = None
+        #: 当前批量估值采用的价格口径；口径在 worker 运行期间变化时标记脏并补算。
+        self._recalc_price_fp: tuple | None = None
+        self._recalc_dirty = False
 
         # 计划表：只作业务控制器，桥注入给 QML 树
         self._plan_table_widget: PlanTable = PlanTable(headless=True)
@@ -418,13 +421,30 @@ class IndustryPage(QObject):
             self._proc_result = None
             self._refresh_procurement_summary(self._proc_rows)
 
+    def _recalc_settings_fp(self) -> tuple:
+        """批量估值所用的完整价格口径，用于识别 worker 期间的设置变更。"""
+        ps = get_price_settings()
+        return (
+            ps.get("mat_hub") or "Jita",
+            ps.get("mat_price_type") or "sell",
+            round(float(ps.get("mat_mult") or 1.0), 4),
+            ps.get("prod_hub") or "Jita",
+            ps.get("prod_price_type") or "sell",
+            round(float(ps.get("prod_mult") or 1.0), 4),
+        )
+
     def _auto_calculate_plans(self, rows):
         """自动重算计划利润/边际（后台线程触发）"""
+        current_fp = self._recalc_settings_fp()
         # 避免重入 — 防止 on_recalc_done → load_plans → _auto_calculate 循环
         if getattr(self, "_recalc_busy", False):
+            if current_fp != self._recalc_price_fp:
+                self._recalc_dirty = True
             return
-        # 避免重复启动
+        # 运行中的 worker 使用旧口径时，不能静默丢掉本次设置变更。
         if self._recalc_worker and self._recalc_worker.isRunning():
+            if current_fp != self._recalc_price_fp:
+                self._recalc_dirty = True
             return
         # 只重算 pending/in_progress/ready 的计划
         todo = [
@@ -444,6 +464,8 @@ class IndustryPage(QObject):
             char_config = {}
         # 获取工具栏当前价格设置
         ps = get_price_settings()
+        self._recalc_price_fp = current_fp
+        self._recalc_dirty = False
         self._recalc_worker = BatchPlanCalcWorker(
             todo,
             char_config,
@@ -503,6 +525,7 @@ class IndustryPage(QObject):
         if not clean:
             return
         # 设置重入锁，避免 load_plans → _auto_calculate → 新 worker -> ... 无限循环
+        stale_price = self._recalc_dirty or self._recalc_settings_fp() != self._recalc_price_fp
         self._recalc_busy = True
         try:
             rows = []
@@ -544,6 +567,10 @@ class IndustryPage(QObject):
                 self._bridge.show_message(f"⚠ {len(failed)} 条计划估值失败（{shown}），成本沿用上次值", 8000)
         finally:
             self._recalc_busy = False
+        if stale_price:
+            # 旧结果已经落库并刷新过一次，锁解除后按最新价格口径再跑一轮。
+            self._recalc_dirty = False
+            self.load_plans()
 
     def _check_industry_data(self):
         """检查工业数据，缺失或过时（fetch_time 超阈值）时在后台拉取"""
@@ -658,6 +685,10 @@ class IndustryPage(QObject):
         from services import inventory_manager
 
         preview_system_id = inventory_manager.get_hangar_system_id(_default_mat_hangar_id())
+
+        if self._score_worker is not None and self._score_worker.isRunning():
+            self._bridge.show_message("正在计算预览，请稍候", timeout=3000)
+            return
 
         self._score_worker = ScoreWorker(
             type_id=type_id,

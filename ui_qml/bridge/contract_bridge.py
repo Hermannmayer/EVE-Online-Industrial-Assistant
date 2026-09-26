@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import time
+
 from PySide6.QtCore import Property, QObject, Qt, Signal, Slot
 
 from core.constants import TRADE_HUB_IDS, TRADE_HUBS
@@ -70,6 +72,7 @@ class ContractBridge(QObject):
         self._fill_worker: QObject | None = None
         self._items_worker: QObject | None = None
         self._selected_contract: dict | None = None
+        self._last_fill_reload_at = 0.0
         #: 当前页签已查出来的行（`on_shown` 时据此决定补什么）
         self._loaded_rows: list[dict] = []
         #: 页面是否被打开过 —— 自动补齐的门槛，见 `on_shown`
@@ -490,6 +493,7 @@ class ContractBridge(QObject):
         from ui_qml.workers.contract_workers import ContractFillWorker
 
         self._preload_importers()
+        self._last_fill_reload_at = 0.0
         worker = ContractFillWorker(self._region_id, self._tab_key, issuer_ids=issuer_ids, contract_ids=contract_ids)
         self._busy_worker = worker
         self._fill_worker = worker
@@ -514,6 +518,7 @@ class ContractBridge(QObject):
         from ui_qml.workers.contract_workers import ContractFillWorker
 
         self._preload_importers()
+        self._last_fill_reload_at = 0.0
         self._status = "正在补齐本星域全部物品…"
         self.rowsChanged.emit()
 
@@ -527,7 +532,8 @@ class ContractBridge(QObject):
     def _on_fill_progress(self, done: int, total: int) -> None:
         self._status = f"物品补齐中… {done:,} / {total:,}"
         self.rowsChanged.emit()
-        if done and done % 500 == 0:
+        if done and done % 500 == 0 and time.monotonic() - self._last_fill_reload_at >= 1.0:
+            self._last_fill_reload_at = time.monotonic()
             self._reload_rows()  # 边补边刷新，价差/图标逐行填上（**不再触发自动补齐**）
 
     def _on_fill_done(self, written: int, message: str) -> None:
@@ -560,6 +566,8 @@ class ContractBridge(QObject):
         self._selected_contract = data
         # 物品表末尾三列（合同价/内容物市价/价差）取自这份合同
         self._item_model.set_contract(data)
+        self._item_model.set_rows([])
+        self.itemsChanged.emit()
         self._load_items(int(data.get("contract_id") or 0), data.get("region_id"))
 
     def _load_items(self, contract_id: int, region_id: int | None = None) -> None:
@@ -571,10 +579,18 @@ class ContractBridge(QObject):
             _PRICE_KEYS[self._price_type_index],
         )
         self._items_worker = worker
-        worker.finished_signal.connect(self._on_items_loaded)
+        worker.finished_signal.connect(
+            lambda items, cid=contract_id, source=worker: self._on_items_loaded(cid, source, items)
+        )
         spawn(worker)
 
-    def _on_items_loaded(self, items: list) -> None:
+    def _on_items_loaded(self, contract_id: int, worker: QObject, items: list) -> None:
+        """只接受当前选中合同、且仍是当前明细 worker 的结果。"""
+        selected = self._selected_contract
+        if worker is not self._items_worker or selected is None:
+            return
+        if int(selected.get("contract_id") or 0) != contract_id:
+            return
         self._item_model.set_rows(items)
         self.itemsChanged.emit()
 

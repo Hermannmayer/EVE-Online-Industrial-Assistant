@@ -178,6 +178,46 @@ def test_procurement_summary_cached_when_nothing_changed(industry_page, monkeypa
     assert len(started) == 1, "计划与价格都未变时不应重复查询"
 
 
+def test_recalc_reruns_when_price_settings_change_mid_flight(industry_page, monkeypatch):
+    """重算线程在跑时改价格设置 → 记脏，线程收尾后按新口径补算。
+
+    回归用例：`_auto_calculate_plans` 见到 `isRunning()` 直接 return（不记任何标记），
+    而 `_on_recalc_done` 里 `_recalc_busy` 又挡住 `load_plans()` 触发的重算，`finally`
+    才复位 —— 于是「用新口径重算」这一轮彻底没发生，表里成本/利润一直是旧值。
+    与采购汇总那条链同类，那边已有 `_proc_fp` 补算（见上一个用例）。
+    """
+    from ui_qml.views import industry_view as iv
+
+    settings = {
+        "mat_hub": "Jita",
+        "mat_price_type": "sell",
+        "mat_mult": 1.0,
+        "prod_hub": "Jita",
+        "prod_price_type": "sell",
+        "prod_mult": 1.0,
+    }
+
+    class _RunningWorker:
+        def isRunning(self):  # 对齐 QThread 的 camelCase API
+            return True
+
+    monkeypatch.setattr(iv, "get_price_settings", lambda: dict(settings))
+    industry_page._recalc_worker = _RunningWorker()
+    industry_page._recalc_price_fp = industry_page._recalc_settings_fp()
+    industry_page._recalc_dirty = False
+
+    rows = [{"id": 1, "status": "pending"}]
+
+    # 口径一字未改 → 不该凭空多排一轮
+    industry_page._auto_calculate_plans(rows)
+    assert industry_page._recalc_dirty is False
+
+    # 只改倍率 → 必须记脏，否则这一轮的新口径永远补不上
+    settings["prod_mult"] = 1.5
+    industry_page._auto_calculate_plans(rows)
+    assert industry_page._recalc_dirty is True, "跑动期间改价格设置必须记脏并补算"
+
+
 class TestNotesInlineEditPersists:
     """备注列内联编辑必须落库。
 
