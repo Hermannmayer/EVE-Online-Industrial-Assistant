@@ -1,0 +1,5 @@
+{
+  "link": [".venv", "database"],
+  "linkIgnored": ["data"],
+  "setup": "uv sync --dev"
+}
