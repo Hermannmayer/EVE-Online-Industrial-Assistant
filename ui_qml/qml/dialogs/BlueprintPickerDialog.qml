@@ -28,8 +28,10 @@ FDialogFrame {
     dlg: frame.bp
     acceptText: qsTr("完成")
 
-    //: 右键菜单作用的行号（Ctrl+左键多选）
+    //: 右键菜单作用的行号（Ctrl+左键切换、Shift+左键从锚点连选）
     property var selRows: []
+    //: Shift 连选的锚点（上一次「点中」的行）；-1 = 还没点过
+    property int selAnchor: -1
     //: 打开菜单前算一次「所选里是否有已勾选的」——菜单项按它决定是否显示
     property bool menuAnyChecked: false
 
@@ -60,6 +62,21 @@ FDialogFrame {
 
     function colWidth(index) {
         return index >= 0 && index < frame.colWidths.length ? frame.colWidths[index] : -1;
+    }
+
+    //: 闭区间 [a, b] 的行号（Shift 连选用；与计划表 `_select_range` 同口径）
+    function rangeRows(a, b) {
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        const out = [];
+        for (let i = lo; i <= hi; ++i)
+            out.push(i);
+        return out;
+    }
+
+    //: 行号升序（Ctrl 切换后可能乱序；计划表那边的选中集也是有序的，口径保持一致）
+    function sortRows(rows) {
+        return rows.slice().sort(function (a, b) { return a - b; });
     }
 
     function colAlignOf(index) {
@@ -152,6 +169,7 @@ FDialogFrame {
 
         ListView {
             id: rowList
+            objectName: "rowList"
             anchors.fill: parent
             anchors.margins: 1
             clip: true
@@ -180,15 +198,22 @@ FDialogFrame {
                            : (rowItem.index % 2 === 0 ? Theme.bgSurface : Theme.bgDark)
                 }
 
-                // 点空白处选中该行（Ctrl 多选）；右键直接开批量菜单。
-                // 声明在内容之前 = 垫在下面，复选框自己的点击不会被它抢走。
+                /* 点空白处选中该行；右键直接开批量菜单。
+                 * 修饰键口径与 `plan_table_bridge.selectRow`（计划表）**逐条一致**：
+                 *   普通 = 只选它｜Ctrl = 切换该行｜Shift = 从锚点连选到本行（替换选中集，锚点不动，
+                 *   于是连续 Shift 可以扩/缩）；右键落在未选中的行上 → 选中集换成它（对齐
+                 *   `ensureRowSelected`）。之前只实现了 Ctrl，Shift 走的是「普通点击」分支，
+                 *   表现就是「Shift 多选不了」。
+                 * 声明在内容之前 = 垫在下面，复选框自己的点击不会被它抢走。 */
                 MouseArea {
                     anchors.fill: parent
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
                     onClicked: function (mouse) {
                         if (mouse.button === Qt.RightButton) {
-                            if (frame.selRows.indexOf(rowItem.index) < 0)
+                            if (frame.selRows.indexOf(rowItem.index) < 0) {
                                 frame.selRows = [rowItem.index];
+                                frame.selAnchor = rowItem.index;
+                            }
                             frame.menuAnyChecked = frame.anySelectedChecked();
                             rowMenu.popupSoon();
                         } else if (mouse.modifiers & Qt.ControlModifier) {
@@ -198,9 +223,13 @@ FDialogFrame {
                                 next.splice(at, 1);
                             else
                                 next.push(rowItem.index);
-                            frame.selRows = next;
+                            frame.selRows = frame.sortRows(next);
+                            frame.selAnchor = rowItem.index;
+                        } else if ((mouse.modifiers & Qt.ShiftModifier) && frame.selAnchor >= 0) {
+                            frame.selRows = frame.rangeRows(frame.selAnchor, rowItem.index);
                         } else {
                             frame.selRows = [rowItem.index];
+                            frame.selAnchor = rowItem.index;
                         }
                     }
                 }
@@ -219,7 +248,9 @@ FDialogFrame {
                          * 初值取模型里的 `checked`（= 打开时的绑定集，行数据是常量，这条绑定
                          * 不会被重建冲掉）；用户点一下 → 交给桥 → 再把桥的回读值写回自己
                          * （`checked` 一旦被赋值就与初值绑定脱钩，这是 QML 的正常语义）。
-                         * `Connections` 那条心跳负责**别的行**改动引起的同步。 */
+                         * `Component.onCompleted` 那条回读管**行被 ListView 回收后重建**
+                         * （不回读会显示成打开时的旧值 —— 正是「滑到中段」那个场景）；
+                         * `Connections` 那条心跳管**别的行**改动引起的同步。 */
                         FCheckBox {
                             id: checkBox
                             anchors.centerIn: parent
@@ -231,6 +262,9 @@ FDialogFrame {
                                 frame.bp.toggle(rowItem.modelData.index, checked)
                                 checkBox.checked = frame.bp.isChecked(rowItem.modelData.index)
                             }
+
+                            Component.onCompleted: if (frame.bp)
+                                checkBox.checked = frame.bp.isChecked(rowItem.modelData.index)
 
                             Connections {
                                 target: frame.bp
