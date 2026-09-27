@@ -10,7 +10,9 @@
 """
 
 import logging
+import shutil
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -105,4 +107,58 @@ def prune_logs(logs_dir: Path, crashes_dir: Path, retention_days: int = 14) -> i
             except OSError:
                 stream = sys.stderr if sys.stderr is not None else NullWriter()
                 stream.write(f"[logger] 无法清理日志目录 {base_dir}\n")
+    return removed
+
+
+# 会往 %TEMP% 里造目录的前缀白名单 —— 每一项都能指到造它的那行代码。
+# 工具/用例正常退出时自己会删，这里兜的是**被强杀**的残留（进程被 faulthandler
+# 杀掉、测试会话被中断时，yield 后面的清理不会执行）。
+_TEMP_WORKSPACE_PREFIXES: tuple[str, ...] = (
+    "eve-shell-check-",  # scripts/shell_snapshot.py --real 的隔离应用根目录（单份 600~900 MB）
+    "eve_test_",  # tests/conftest.py temp_db（另含 test_getitems / test_sde_loader 等）
+    "eve_dbmgr_",  # tests/conftest.py db_manager
+    "eve_snap_",  # tests/test_asset_snapshot.py
+    "eve_planexec_",  # tests/test_plan_execution.py
+    "eve_mkt_",  # tests/test_price_history.py
+    "eve_proc_",  # tests/test_procurement.py
+    "eve_wl_",  # tests/test_watchlist_manager.py
+    "inv_test_",  # tests/test_inventory_manager.py
+    "inv_import_",  # tests/test_inventory_manager.py
+    "init_check_",  # tests/test_init_check.py
+)
+
+
+def prune_temp_workspaces(
+    prefixes: tuple[str, ...] = _TEMP_WORKSPACE_PREFIXES,
+    max_age_days: int = 3,
+) -> int:
+    """删除 %TEMP% 下超过 max_age_days 天的临时工作目录，返回删除数量。
+
+    口径与 `prune_logs` 一致：按 `st_mtime` 判定、失败只记日志不抛出。
+    区别是这里删的是**目录**且风险更高 —— `%TEMP%` 是共享目录，所以加两道闸：
+    名字必须命中 prefixes 白名单，且必须是目录（文件与符号链接一律不碰）。
+    """
+    temp_dir = Path(tempfile.gettempdir())
+    cutoff = time.time() - max_age_days * 86400
+    removed = 0
+    try:
+        entries = list(temp_dir.iterdir())
+    except OSError:
+        log.warning("[logger] 无法读取临时目录 %s，跳过清理", temp_dir)
+        return 0
+
+    for entry in entries:
+        if not entry.name.startswith(prefixes):
+            continue
+        if entry.is_symlink() or not entry.is_dir():
+            continue
+        try:
+            if entry.stat().st_mtime >= cutoff:
+                continue
+            shutil.rmtree(entry)
+        except OSError:
+            # 被占用（另一个实例正在用这个目录）/ 权限不足：留着下次再试
+            log.debug("[logger] 临时工作目录删除失败，跳过：%s", entry)
+            continue
+        removed += 1
     return removed

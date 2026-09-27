@@ -22,7 +22,7 @@ if sys.platform == "win32":
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from core.diagnostics import install_background_hooks, write_crash_dump  # noqa: E402
-from core.logger import log, prune_logs  # noqa: E402
+from core.logger import log, prune_logs, prune_temp_workspaces  # noqa: E402
 from core.paths import (  # noqa: E402
     BP_DB_PATH,
     DB_PATH,
@@ -214,6 +214,8 @@ def main():
     # sys.excepthook 在主线程未捕获异常时写崩溃转储（弹窗守卫保证 QApplication 未创建时跳过）
     install_background_hooks()
     prune_logs(log_dir(), crashes_dir())
+    # 清 %TEMP% 里被强杀留下的临时工作目录（快照隔离目录单份 600~900 MB，最要紧的就是它）
+    prune_temp_workspaces()
     sys.excepthook = _global_exception_handler
 
     HOT_RELOAD = "--hot-reload" in sys.argv

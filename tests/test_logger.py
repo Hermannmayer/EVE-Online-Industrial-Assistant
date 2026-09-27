@@ -2,11 +2,12 @@
 
 import logging
 import os
+import tempfile
 import time
 
 import pytest
 
-from core.logger import log, prune_logs, set_debug
+from core.logger import log, prune_logs, prune_temp_workspaces, set_debug
 
 pytestmark = pytest.mark.fast
 
@@ -84,3 +85,33 @@ def test_prune_logs_removes_expired_only(tmp_path):
     assert keep_crash.exists()
     # 非日志模式文件不受影响
     assert unrelated.exists()
+
+
+def test_prune_temp_workspaces_spares_unrelated_names_and_files(tmp_path, monkeypatch):
+    """捕获「清 %TEMP% 时删了别人的目录 / 删了同名文件」这类破坏性缺陷。"""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    now = time.time()
+
+    old_hit = tmp_path / "eve-shell-check-old"
+    old_hit.mkdir()
+    os.utime(old_hit, (now - 10 * 86400, now - 10 * 86400))
+
+    fresh_hit = tmp_path / "eve-shell-check-fresh"  # 命中前缀但没到年限 → 留着
+    fresh_hit.mkdir()
+
+    unrelated = tmp_path / "some-other-tool"
+    unrelated.mkdir()
+    os.utime(unrelated, (now - 30 * 86400, now - 30 * 86400))
+
+    same_name_file = tmp_path / "eve-shell-check-file"  # 同名但是文件，不是目录
+    same_name_file.write_text("x", encoding="utf-8")
+    os.utime(same_name_file, (now - 30 * 86400, now - 30 * 86400))
+
+    removed = prune_temp_workspaces()
+
+    assert removed == 1
+    assert not old_hit.exists()
+    assert fresh_hit.exists()
+    # 负向断言：非白名单前缀的目录、同名文件必须原封不动
+    assert unrelated.exists()
+    assert same_name_file.exists()

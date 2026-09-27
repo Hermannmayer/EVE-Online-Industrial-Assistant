@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import os
 import shutil
 import sys
@@ -52,13 +53,31 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _OUT_DIR = _ROOT / ".claude" / "ui-snapshots"
 
+# 当前隔离出来的应用根目录（只有 --real 会设）。清理由两条路径兜：main() 的 finally
+# 管正常返回，atexit 管 sys.exit 与未捕获异常 —— 重复调用是幂等的。
+_ISOLATED_ROOT: str | None = None
+
+
+def _cleanup_isolated_root() -> None:
+    """删掉隔离的应用根目录。删不动（被占用）就放弃，绝不因为收尾失败而中断脚本。"""
+    if _ISOLATED_ROOT:
+        shutil.rmtree(_ISOLATED_ROOT, ignore_errors=True)
+
 
 def _isolate_app_root() -> str:
     """把应用根目录指到临时目录（复制 database/ 与 data/），**不碰用户真实数据**。
 
     `core.paths.app_root()` 每次调用都读 `EVE_ASSISTANT_APP_ROOT`，所以在这里设就行。
+
+    **跑完必须删**：单份 database/ + data/ 有 600~900 MB，历史上因为从未清理，
+    `%TEMP%` 里累积了 100+ 份 ≈ 60 GB。这里注册 atexit 兜住 `sys.exit` / 异常路径，
+    正常路径由 `__main__` 的 finally 负责；`core.logger.prune_temp_workspaces()`
+    是最后一道保险（针对被强杀、连 atexit 都没跑成的残留）。
     """
+    global _ISOLATED_ROOT
     tmp = tempfile.mkdtemp(prefix="eve-shell-check-")
+    _ISOLATED_ROOT = tmp
+    atexit.register(_cleanup_isolated_root)
     for name in ("database", "data"):
         src = _ROOT / name
         if src.is_dir():
@@ -261,4 +280,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    finally:
+        # --real 模式下 main() 有几条 return / sys.exit 路径，finally 保证它们都清干净
+        _cleanup_isolated_root()
