@@ -252,21 +252,38 @@ def test_no_hangars_leaves_the_editor_empty(qapp, monkeypatch):
 
 
 def test_rigs_are_mutually_exclusive_within_a_category(qapp, monkeypatch):
-    """同制造类别互斥：勾第二个时第一个自动取消；不同类别互不影响。"""
+    """同制造类别互斥：勾第二个时第一个自动取消；不同类别互不影响。
+
+    且勾选**只打 `rigCheckRevisionChanged` 心跳、不发 `editorChanged`**：`editorChanged` 是
+    `rigGroups` 的通知信号，发它会让内层 `Repeater` 重建 —— 而这次调用正是从那个复选框自己的
+    `onToggled` 里进来的，于是 delegate 在自己的 QML 信号处理器里被同步销毁，属 qFatal 家族
+    （`Object … destroyed while one of its QML signal handlers is in progress`）。
+    """
     cfg = {**DEFAULT_CFG, "facility_type": "raitaru", "rig_ids": [1816]}
     _install(monkeypatch, cfg=cfg, catalog=CATALOG)
 
     bridge = HangarSettingsBridge()
     assert [item["checked"] for item in _rig_items(bridge)] == [True, False, False]
 
+    rebuilds: list[int] = []
+    beats: list[int] = []
+    bridge.editorChanged.connect(lambda: rebuilds.append(1))
+    bridge.rigCheckRevisionChanged.connect(lambda: beats.append(1))
+
     bridge.setRigChecked(1819, True)  # 同属「装备制造」
     assert [item["checked"] for item in _rig_items(bridge)] == [False, True, False]
+    assert bridge.isRigChecked(1816) is False and bridge.isRigChecked(1819) is True
+    assert rebuilds == [], "勾选不许发 editorChanged（发它 = 换 rigGroups 模型 = 销毁正在处理信号的 delegate）"
+    assert len(beats) == 1, "勾选要打一次心跳，同类别被取消的那一格靠它同步"
+    assert bridge.rigCheckRevision == 1
 
     bridge.setRigChecked(1820, True)  # 另一个类别 → 共存
     assert [item["checked"] for item in _rig_items(bridge)] == [False, True, True]
+    assert bridge.isRigChecked(1820) is True
 
     bridge.setRigChecked(1819, False)
     assert [item["checked"] for item in _rig_items(bridge)] == [False, False, True]
+    assert rebuilds == [] and len(beats) == 3
 
 
 def test_unknown_rig_id_is_ignored(qapp, monkeypatch):
@@ -337,7 +354,13 @@ def test_editor_key_changes_on_hangar_switch(qapp, monkeypatch):
 
 
 def test_pick_system_writes_and_updates_the_label(qapp, monkeypatch):
-    """「选择星系…」复用已迁好的星系搜索对话框，选中即落库并刷新列表后缀。"""
+    """「选择星系…」复用已迁好的星系搜索对话框，选中即落库并刷新列表后缀。
+
+    且**模态框要推迟出 QML 信号处理器**（`pickSystem()` 返回时还没弹）：那颗按钮在编辑区的
+    `Repeater` 代理里（`model: [editorKey]`），而 `exec()` 是嵌套事件循环 —— 期间编辑区一旦
+    重建，持有这次 `onClicked` 的 delegate 就被销毁，Qt 会判定「QML 信号处理器进行中，
+    对象被销毁」并**直接 qFatal** 闪退。同 `launcher_bridge._defer`。
+    """
     calls = _install(monkeypatch)
 
     class _FakeSearch:
@@ -353,6 +376,9 @@ def test_pick_system_writes_and_updates_the_label(qapp, monkeypatch):
 
     bridge = HangarSettingsBridge()
     bridge.pickSystem()
+    assert calls["system"] == [], "模态框要排到本轮派发之后，不能在 QML 处理器里同步 exec()"
+
+    spin()  # 放那个 singleShot(0) 跑
     assert calls["system"] == [(1, 30000142)]
     assert bridge.systemText == "吉他 (Jita)"
     assert bridge.hangarLabels == ["制造仓 (吉他 (Jita))"]
@@ -631,7 +657,7 @@ def test_accept_writes_tax_and_rigs_of_the_edited_hangar(qapp, monkeypatch):
     bridge = HangarSettingsBridge()
     bridge.setTaxFollowDefault(False)
     bridge.setTaxValue(0.75)
-    bridge.setRigChecked(1820, True)
+    bridge.setRigChecked(1820, True)  # 勾选只走心跳：保存读到的仍必须是这一份取舍
     bridge.accept()
 
     assert calls["config"] == [(1, "raitaru", 0.75, [1820])]

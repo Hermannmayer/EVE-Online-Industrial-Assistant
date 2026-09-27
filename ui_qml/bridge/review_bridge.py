@@ -16,6 +16,11 @@
 等调用点由主流程切过来后随该文件一并删除。
 
 与原版的**刻意差异**（其余逐条对齐）：
+- 预览表的**勾选态不重建行模型**（2026-09-27）：勾选只改行字典里的 `checked` 位 + 打一次
+  `checkRevisionChanged` 心跳，统计行走 `statusChanged`；`stateChanged` 留给真正改了行结构
+  的路径（装载 / 切模式 / 改「最终」/ 删行）。原实现每次勾选都发 `stateChanged`，而它正是
+  `rows` 的通知信号 → QML 的行区 `Repeater` 整体重建、正在处理信号的 delegate 被同步销毁。
+  详见 `ImportReviewBridge` 的类 docstring（含探针实测数字）。
 - 表格列宽由「ResizeToContents + 最小宽」改为固定宽 + 名称列吃满 —— QML 这边
   表格是自绘的，没有 QHeaderView 的自动量宽；列宽单点放在桥的 `columns` 里便于断言。
 - 「变化」列在有值时是 `FSpinBox`：输入不出非法值。原版是可编辑单元格，非数字
@@ -203,9 +208,21 @@ def change_summary(changes: list[dict], added: int, moved: int) -> str:
 
 
 class HangarPickBridge(DialogBridge):
-    """另一机库的物品清单 —— 勾选要移入的物品。"""
+    """另一机库的物品清单 —— 勾选要移入的物品。
+
+    **勾选态与行数据分离**（2026-09-27，照 `ui_qml/bridge/blueprint_picker_bridge.py`）：
+    勾选只改桥单独持有的 `_checked`，再打一次 `checkRevisionChanged` 心跳让 QML 的复选框
+    回读；**不重建 `rows`**。原先 `setChecked()` 把结果写回行字典后发 `stateChanged`，而
+    `stateChanged` 正是 `rows` 的通知信号 —— QML 的 `model` 是普通 var 列表 →
+    `ListView` 整体重建 → **滚动位置回顶**：滑到中段点一格，列表直接跳回最顶端。
+
+    `stateChanged` 这一条通知**保持原样**（`rows` 仍归它管，只是它不再承载勾选态，
+    勾选也就不会再触发它）。
+    """
 
     stateChanged = Signal()
+    #: 勾选态心跳：QML 的每个复选框靠它把自己拉回与桥一致
+    checkRevisionChanged = Signal()
 
     def __init__(self, source_items: list[dict]) -> None:
         super().__init__()
@@ -216,27 +233,45 @@ class HangarPickBridge(DialogBridge):
                 "name": str(it.get("display_name") or it.get("zh_name") or it.get("en_name") or f"ID:{it['type_id']}"),
                 "qtyText": f"{int(it['quantity']):,}",
                 "qty": int(it["quantity"]),
+                #: **只是 QML 打开那一刻的初值**：勾选态的真身是下面的 `_checked`
                 "checked": True,  # 原版新勾选框默认全选
             }
             for it in source_items
         ]
+        self._checked: list[bool] = [True] * len(self._rows)  # 同上：默认全选
+        self._check_revision = 0
 
     @Property(list, notify=stateChanged)
     def rows(self) -> list[dict]:
         return list(self._rows)
 
+    #: 勾选态心跳（自增）—— 勾选**不发** `stateChanged`：发它 QML 会重读 `rows`
+    #: （普通 var 列表）→ ListView 重建 → 滚动回顶
+    @Property(int, notify=checkRevisionChanged)
+    def checkRevision(self) -> int:
+        return self._check_revision
+
     @Slot(int, bool)
     def setChecked(self, row: int, checked: bool) -> None:
-        if not 0 <= row < len(self._rows):
+        """勾选一行：只改勾选位 + 打心跳，**不重建 `rows`**（重建 = ListView 回顶）。"""
+        if not 0 <= row < len(self._checked):
             return
-        self._rows[row]["checked"] = bool(checked)
-        self.stateChanged.emit()
+        self._checked[row] = bool(checked)
+        self._check_revision += 1
+        self.checkRevisionChanged.emit()
+
+    @Slot(int, result=bool)
+    def isChecked(self, row: int) -> bool:
+        """某行当前是否勾选 —— QML 的复选框靠它回读。"""
+        if not 0 <= row < len(self._checked):
+            return False
+        return bool(self._checked[row])
 
     def selected_items(self) -> list[tuple[int, int]]:
         """勾选的 `(type_id, 数量)`；没勾任何一项返回空表（调用方据此决定要不要重填）。"""
         picked: list[tuple[int, int]] = []
-        for row in self._rows:
-            if row["checked"]:
+        for i, row in enumerate(self._rows):
+            if self._checked[i]:
                 picked.append((int(row["typeId"]), int(row["qty"])))
         return picked
 
@@ -259,9 +294,31 @@ class HangarPickQmlDialog(QmlDialog):
 
 
 class ImportReviewBridge(DialogBridge):
-    """粘贴导入预览的 QML 后端：勾选 / 改数量 / 改成本价 / 右键批量。"""
+    """粘贴导入预览的 QML 后端：勾选 / 改数量 / 改成本价 / 右键批量。
 
+    **勾选态不重建行模型**（2026-09-27，照 `ui_qml/bridge/blueprint_picker_bridge.py` 的手法）：
+    勾选只改行字典里的 `checked` 位，再打一次 `checkRevisionChanged` 心跳让 QML 的复选框回读；
+    统计行另走 `statusChanged`。原先 `setChecked()` / `setAllChecked()` 都发 `stateChanged`，
+    而它正是 `rows` 的通知信号 —— QML 那边的 `model` 是普通 var 列表（不是
+    `QAbstractItemModel`）→ 行区 `Repeater` 整体重建。
+
+    这不是「多刷一次表」那么轻：探针实测（QQuickView + 真鼠标点击），只要 `setChecked()` 仍发
+    `stateChanged`，点一下复选框就把 **60/60 个行代理在它自己的 `onToggled` 处理器里同步销毁**，
+    QML 当场在回读那一行报 `ReferenceError: frame is not defined`（那句踩的是已销毁对象，
+    Python 侧拿到的是 `Internal C++ object already deleted`）—— 与 `pickSystem()` 记的
+    qFatal 家族同源，只是这条路径上没有嵌套事件循环兜着。ListView 版的对话框（见
+    `BlueprintPickerDialog.qml` 头部）还会连滚动位置一起顶回顶部。
+
+    `stateChanged` 这条通知**不降级**：它仍是 `rows` / 模式 / 贸易中心 / 倍率的通知，
+    只是不再承载勾选态（`setFinal` 改的是行里的显示口径，仍走它 —— 理由见该方法）。
+    """
+
+    #: `rows` / 模式 / 贸易中心 / 倍率的通知 —— 只在**装载 / 切模式 / 改「最终」/ 删行**时发
     stateChanged = Signal()
+    #: 底部统计行（`summaryText`）—— 勾选要刷它，但**不能**顺带让 QML 重读 `rows`（= 整表重建）
+    statusChanged = Signal()
+    #: 勾选态心跳：QML 的每个复选框靠它把自己拉回与桥一致（全选 / 取消全选也走这条）
+    checkRevisionChanged = Signal()
 
     #: 宿主窗口 —— 二级弹出（搜索匹配 / 选物品）与消息框都拿它当父窗口。
     #: 由宿主在 `super().__init__()` **之后**写入（同 `parent_decompose_bridge` 的做法）：
@@ -291,6 +348,7 @@ class ImportReviewBridge(DialogBridge):
         self._rows: list[dict] = []
         self._summary = ""
         self._menu_rows: list[int] = []
+        self._check_revision = 0
 
         # 预加载数据（顺序同原 `__init__`）
         self._fetch_existing_inventory()
@@ -313,7 +371,9 @@ class ImportReviewBridge(DialogBridge):
     discountMax = Property(float, lambda self: 10.0, constant=True)
 
     rows = Property(list, lambda self: list(self._rows), notify=stateChanged)
-    summaryText = Property(str, lambda self: self._summary, notify=stateChanged)
+    #: 统计行走 `statusChanged` 而不是 `stateChanged`：勾选要刷新它，但**不能**顺带让 QML
+    #: 重读 `rows`（普通 var 列表，重读 = 行区整体重建），见类 docstring
+    summaryText = Property(str, lambda self: self._summary, notify=statusChanged)
 
     @Property(int, notify=stateChanged)
     def modeIndex(self) -> int:
@@ -326,6 +386,11 @@ class ImportReviewBridge(DialogBridge):
     @Property(float, notify=stateChanged)
     def discount(self) -> float:
         return self._discount
+
+    @Property(int, notify=checkRevisionChanged)
+    def checkRevision(self) -> int:
+        """勾选态心跳（自增），见 `checkRevisionChanged`。"""
+        return self._check_revision
 
     # ── QML 写回来的槽 ────────────────────────────────────────
 
@@ -360,24 +425,43 @@ class ImportReviewBridge(DialogBridge):
 
     @Slot(int, bool)
     def setChecked(self, row: int, checked: bool) -> None:
+        """勾选一行：只改勾选位 + 打心跳，**不重建 `rows`**（重建 = 整表重来，见类 docstring）。"""
         if not 0 <= row < len(self._rows) or not self._rows[row]["checkable"]:
             return
         self._rows[row]["checked"] = bool(checked)
-        self._update_summary()
-        self.stateChanged.emit()
+        self._sync_checks()
+
+    @Slot(int, result=bool)
+    def isChecked(self, row: int) -> bool:
+        """某行当前是否勾选 —— QML 的复选框靠它回读（全选 / 取消全选也要同步回去）。"""
+        if not 0 <= row < len(self._rows):
+            return False
+        return bool(self._rows[row]["checked"])
 
     @Slot(bool)
     def setAllChecked(self, checked: bool) -> None:
-        """全选 / 取消全选（未匹配行的勾选框是禁用的，跳过）。"""
+        """全选 / 取消全选（未匹配行的勾选框是禁用的，跳过）—— 批量同样只打心跳。"""
         for row in self._rows:
             if row["checkable"]:
                 row["checked"] = bool(checked)
-        self._update_summary()
-        self.stateChanged.emit()
+        self._sync_checks()
 
     @Slot(int, int)
     def setFinal(self, row: int, value: int) -> None:
-        """「变化」列被改：重算该行增减并着色（原 `_on_final_changed`）。"""
+        """「变化」列被改：重算该行增减并着色（原 `_on_final_changed`）。
+
+        **这条仍然发 `stateChanged`（= 重建 `rows`）**：改的是行里的显示口径
+        （`delta` / `deltaText` / `deltaToken` / `final`），而 QML 只从 `modelData` 读它们。
+        探针实测（QTest 点上箭头 → `onValueModified` → 这里）：只改行字典 + 发 `statusChanged`
+        的话，「比原纪录」列**留在旧值**（文本还是改之前那个数）；发 `stateChanged` 才跟着变，
+        底部统计行则两条路都能刷。
+
+        代价：这一行的 delegate（含刚点的那颗微调框）会在它自己的 QML 处理器里被销毁重建 ——
+        与 `setRigChecked` 同形（那条要避免，因为紧接着还有一句回读，且模型重建本身在勾选这种
+        连续操作里不可接受）。这里后面没有回读、也没嵌套事件循环，所以只是静默重建一次；
+        给这几个字段单开一条按行的心跳（再配几个回读槽）比它值的钱贵，而这里是用户对某一行的
+        **一次刻意提交**（点上箭头 / 回车 / 失焦），不是逐格勾选那种连续操作。
+        """
         if not 0 <= row < len(self._rows):
             return
         target = self._rows[row]
@@ -473,6 +557,9 @@ class ImportReviewBridge(DialogBridge):
 
         **保留原版的口径**：未匹配行的增量也是 "0"，它们本就未勾选、`setChecked(False)`
         是空操作，但原版照样计入「已过滤 N 项」——这里同样计入，避免文案悄悄变样。
+
+        勾选（这里是批量取消）只走心跳、**不发 `stateChanged`** —— 它同样会让 QML 重读
+        `rows`、把整张表（含右键点中的那一行）重建一遍，与 `setChecked` 是同一个缺陷。
         """
         filtered = 0
         for row in self._rows:
@@ -481,10 +568,17 @@ class ImportReviewBridge(DialogBridge):
             if row["checkable"] and row["checked"]:
                 row["checked"] = False
             filtered += 1
+        suffix = f"  [已过滤 {filtered} 项无变化]" if filtered else ""
+        self._sync_checks(suffix)
+
+    def _sync_checks(self, suffix: str = "") -> None:
+        """勾选态变化的统一出口：刷统计行 + 打心跳。**不碰 `rows`**（见类 docstring）。"""
         self._update_summary()
-        if filtered:
-            self._summary += f"  [已过滤 {filtered} 项无变化]"
-            self.stateChanged.emit()
+        if suffix:
+            self._summary += suffix
+            self.statusChanged.emit()
+        self._check_revision += 1
+        self.checkRevisionChanged.emit()
 
     @Slot()
     def searchMatch(self) -> None:
@@ -643,7 +737,11 @@ class ImportReviewBridge(DialogBridge):
         self.stateChanged.emit()
 
     def _update_summary(self) -> None:
-        """统计行（原 `_update_summary`，含「已过滤 N 行蓝图」前缀）。"""
+        """统计行（原 `_update_summary`，含「已过滤 N 行蓝图」前缀）。
+
+        自己发 `statusChanged`（而不是让每个调用点记着发）：这条通知**不带着 `rows` 一起变**
+        （见类 docstring），漏发的表现是统计行停在上一次的数字上。
+        """
         checked = 0
         total_delta = 0
         total_value = 0.0
@@ -660,6 +758,7 @@ class ImportReviewBridge(DialogBridge):
         if self._filtered_note:
             text = f"[已过滤 {self._filtered_note} 行蓝图] {text}"
         self._summary = text
+        self.statusChanged.emit()
 
 
 class ImportReviewQmlDialog(QmlDialog):

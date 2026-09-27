@@ -16,9 +16,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import Property, Signal, Slot
+from PySide6.QtCore import Property, QTimer, Signal, Slot
 
 from services import inventory_manager, user_settings
 from services.hangar_industry_config import (
@@ -96,6 +97,8 @@ class HangarSettingsBridge(DialogBridge):
     currentChanged = Signal()
     #: 当前机库的可编辑字段变了（设施 / 税 / 改件 / 星系 / 汇总）
     editorChanged = Signal()
+    #: 改件勾选态心跳：QML 的每个改件复选框靠它回读（同类别互斥取消的那一格也靠它同步）
+    rigCheckRevisionChanged = Signal()
     #: 「默认机库」四行的选项或选中变了
     defaultsChanged = Signal()
     #: 删除确认条的开合
@@ -119,6 +122,8 @@ class HangarSettingsBridge(DialogBridge):
         #: 用户手动改一次就会**打断**绑定；换机库时若不重建，控件会留着上一个机库的值
         #: （`TransferDialog` 靠 ListView 重建规避，这里没有可用的 ListView）。
         self._editor_key = 0
+        #: 改件勾选态心跳（自增），见 `rigCheckRevisionChanged`
+        self._rig_check_revision = 0
 
         self._reload_hangars()
         self._build_defaults()
@@ -200,6 +205,11 @@ class HangarSettingsBridge(DialogBridge):
             }
             for items in grouped.values()
         ]
+
+    @Property(int, notify=rigCheckRevisionChanged)
+    def rigCheckRevision(self) -> int:
+        """改件勾选态心跳（自增）—— 勾选**不发** `editorChanged`，见 `setRigChecked`。"""
+        return self._rig_check_revision
 
     @Property(str, notify=editorChanged)
     def summaryText(self) -> str:
@@ -415,6 +425,22 @@ class HangarSettingsBridge(DialogBridge):
 
         用 `type_id` 而不是「组号 + 行号」：QML 那边嵌套 `Repeater` 的组号容易在模型
         重建后错位，而 type_id 是稳定标识。
+
+        **只打心跳，不改 `rigGroups` 的形状、不发 `editorChanged`**（2026-09-27，照
+        `ui_qml/bridge/blueprint_picker_bridge.py` 的「勾选态与数据分离 + 心跳」手法）：
+
+        `editorChanged` 是 `rigGroups` 的通知信号。发它的那一刻，内层 `Repeater`
+        （`model: rigGroup.modelData.items`）会被重建 —— 而这次调用**正是从那个复选框自己的
+        `onToggled` 里进来的**，于是 delegate 在自己的 QML 信号处理器里被同步销毁，落进
+        `pickSystem()` 上面记的那个 qFatal 家族（`Object … destroyed while one of its QML
+        signal handlers is in progress`）；现在没炸只是因为这条路径上没有嵌套事件循环
+        （`exec()`）兜着，属于侥幸，不是安全。
+
+        也没选「推迟到本轮派发之后再换模型」（`self._defer(self.editorChanged.emit)`）：
+        那样只把销毁挪出处理器，模型照样每次勾选重建 —— 用户点的那一格仍会被销毁重建
+        （探针实测：改前一次点击把三个改件复选框全换了对象），纯属把问题推后一次派发。
+        分离之后勾选只改 `cfg["rig_ids"]`：装载 / 换设施 / 换机库仍走 `editorChanged`
+        （那时该重建），勾选走心跳 + `isRigChecked()` 回读。
         """
         cfg = self._current_config()
         if cfg is None:
@@ -429,11 +455,45 @@ class HangarSettingsBridge(DialogBridge):
             rigs.append(int(type_id))
         order = {int(c["type_id"]): i for i, c in enumerate(catalog)}
         cfg["rig_ids"] = sorted(rigs, key=lambda r: order.get(r, 0))
-        self.editorChanged.emit()
+        self._rig_check_revision += 1
+        self.rigCheckRevisionChanged.emit()
+
+    @Slot(int, result=bool)
+    def isRigChecked(self, type_id: int) -> bool:
+        """该改件当前是否勾选 —— QML 的复选框靠它回读（同类别互斥取消也靠这条同步）。"""
+        cfg = self._current_config()
+        if cfg is None:
+            return False
+        return int(type_id) in {int(r) for r in cfg["rig_ids"]}
+
+    # ── 延后一拍：不在 QML 信号处理器里弹模态框 ────────────────
+    #
+    # 「选择星系…」那颗按钮在**编辑区的 `Repeater` 代理里**（`HangarSettingsDialog.qml`
+    # 用 `model: [editorKey]` 强制重建编辑区）。`dialog.exec()` 是嵌套事件循环；期间只要
+    # 编辑区被重建（换机库 / 重载机库列表都会递增 `editorKey`），持有这次 `onClicked` 的
+    # delegate 就顺势被销毁，Qt 在 `QQmlData::destroyed` 里判定「QML 信号处理器进行中，
+    # 对象被销毁」并**直接 qFatal**：
+    #
+    #     Object 0x… destroyed while one of its QML signal handlers is in progress.
+    #     Most likely the object was deleted synchronously (use QObject::deleteLater()
+    #     instead), or the application is running a nested event loop.
+    #     This behavior is NOT supported!
+    #
+    # 推迟到本轮派发之后（同 `launcher_bridge._defer`），对话框打开时栈上已经没有 QML
+    # 处理器，重建编辑区就只是普通重建。只推迟**从代理里触发、且会弹模态框**的入口：
+    # 页面级按钮（新建 / 重命名 / 删除确认条）不在代理里，保持原样。
+
+    def _defer(self, fn: Callable[[], None]) -> None:
+        """把动作排到本轮信号派发之后（以 `self` 为上下文：桥先没了就不执行）。"""
+        QTimer.singleShot(0, self, fn)
 
     @Slot()
     def pickSystem(self) -> None:
-        """「选择星系…」—— 复用已迁好的星系搜索对话框（原 `_on_select_system`）。"""
+        """「选择星系…」—— 推迟出 QML 处理器再弹（见上面的 qFatal 记录）。"""
+        self._defer(self._pick_system)
+
+    def _pick_system(self) -> None:
+        """复用已迁好的星系搜索对话框（原 `_on_select_system`）。"""
         from ui_qml.bridge.system_search_bridge import SystemSearchQmlDialog
 
         dialog = SystemSearchQmlDialog(self.host_widget(), "设置机库星系")

@@ -14,6 +14,10 @@ import "../components"
  * 「最终」列用 `FTextField` + `onEditingFinished`：提交（回车/失焦）才回桥，避免逐字符
  * 回调重建整个 ListView 把焦点弄丢（原版 `itemChanged` 也是提交时才发）。
  *
+ * 逐行勾选同理**不重建行模型**（2026-09-27）：勾选只打桥的 `checkRevision` 心跳，QML 的
+ * 复选框按心跳回读。原先 `toggleCheck()` 会让桥重建 `rows`，而这里的 `model` 是普通 var
+ * 列表 → `ListView` 整体重建 → **滚动位置回顶**：滑到中段取消一行，列表直接跳回最顶端。
+ *
  * 颜色 / 增减规则全在桥里算好（token），这里只把 token 翻成主题色。
  */
 
@@ -204,11 +208,34 @@ FDialogFrame {
                         Layout.preferredWidth: frame.colCheck
                         Layout.fillHeight: true
 
+                        /* 勾选态由桥持有（全选 / 取消全选也要能同步回来），QML 只负责画：
+                         * 初值取模型里的 `checked`（= 打开那一刻的取舍）；用户点一下 → 交给桥
+                         * → 再把桥的回读值写回自己（`checked` 一旦被赋值就与初值绑定脱钩，
+                         * 这是 QML 的正常语义）。`Connections` 那条心跳负责批量变化。
+                         *
+                         * `Component.onCompleted` 的回读是必需的：行被 ListView 回收后重建时，
+                         * `modelData.checked` 还是打开那一刻的旧值（勾选不重建 rows），不回读
+                         * 就会出现「明明取消了、滑走再滑回来又变回勾上」。 */
                         FCheckBox {
+                            id: checkBox
                             anchors.centerIn: parent
                             checked: rowItem.modelData.checked
-                            onToggled: if (frame.rv)
+                            onToggled: {
+                                if (!frame.rv)
+                                    return
                                 frame.rv.toggleCheck(rowItem.index, checked)
+                                checkBox.checked = frame.rv.isChecked(rowItem.index)
+                            }
+
+                            Component.onCompleted: if (frame.rv)
+                                checkBox.checked = frame.rv.isChecked(rowItem.index)
+
+                            Connections {
+                                target: frame.rv
+                                function onCheckRevisionChanged() {
+                                    checkBox.checked = frame.rv ? frame.rv.isChecked(rowItem.index) : false
+                                }
+                            }
                         }
                     }
 

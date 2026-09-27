@@ -133,19 +133,42 @@ def test_summary_text_incremental_has_no_full_suffix(diff_rows, qapp):
     assert bridge.rows[0]["editable"] is False
 
 
-def test_select_all_and_deselect_all(diff_rows, qapp):
+def test_check_toggles_do_not_rebuild_rows(diff_rows, qapp):
+    """勾选 / 全选 / 取消全选只走勾选态心跳：**不发 `contentChanged`、不动 `rows`**。
+
+    缺陷背景（用户实测）：原 `toggleCheck()` → `_rebuild()` → `contentChanged`，而 QML 那边
+    `model` 是 `bridge.rows`（普通 var 列表，不是 `QAbstractItemModel`）→ `ListView` 整体重建、
+    **滚动位置回顶**：滑到中段取消/勾选一行，列表直接跳回最顶端。勾选态改由桥单独持有，
+    QML 的复选框按 `checkRevision` 心跳 + `isChecked(index)` 回读（见对话框 QML）。
+    """
     bridge = BlueprintImportReviewBridge(diff_rows, "矿仓")
+    rebuilds: list[int] = []
+    beats: list[int] = []
+    bridge.contentChanged.connect(lambda: rebuilds.append(1))
+    bridge.checkRevisionChanged.connect(lambda: beats.append(1))
+    rows_before = [dict(r) for r in bridge.rows]
+
+    bridge.toggleCheck(2, False)  # 第 2 行默认勾选（张数没变但流程数变了），取消它
+    assert bridge.isChecked(2) is False
+    assert rebuilds == [], "勾选不许发 contentChanged（发它 = QML 重读 rows = ListView 重建 = 回顶）"
+    assert len(beats) == 1, "勾选要打一次心跳，QML 的复选框靠它回读"
+    assert [dict(r) for r in bridge.rows] == rows_before, "勾选不该改行模型"
+    assert "已勾选 1 项" in bridge.summaryText, "统计行要跟着勾选走（它走 statusChanged，不连累 rows）"
+
     bridge.deselectAll()
-    assert all(r["checked"] is False for r in bridge.rows)
+    assert [bridge.isChecked(r) for r in range(3)] == [False, False, False]
+    assert "已勾选 0 项" in bridge.summaryText
+
     bridge.selectAll()
-    assert all(r["checked"] is True for r in bridge.rows)
+    assert [bridge.isChecked(r) for r in range(3)] == [True, True, True]
+    assert rebuilds == [], "全选 / 取消全选同样不许重建行模型（同一颗按钮也会撞上回顶）"
 
 
 def test_mode_switch_keeps_user_choices(diff_rows, qapp):
     """切模式重建表，但用户手改的勾选不得被默认策略复活（对齐原 `_snapshot_state`）。"""
     bridge = BlueprintImportReviewBridge(diff_rows, "矿仓")
     bridge.toggleCheck(1, True)  # 第 1 行是纯删除，默认不勾，用户手动勾上
-    assert bridge.rows[1]["checked"] is True
+    assert bridge.isChecked(1) is True
 
     bridge.setModeIndex(0)  # 切到增量
     assert bridge.mode() == "incremental"

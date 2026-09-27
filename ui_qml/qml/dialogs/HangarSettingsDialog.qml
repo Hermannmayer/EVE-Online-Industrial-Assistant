@@ -16,6 +16,11 @@ import "../components"
  * 桥给的 `editorKey` 在换机库 / 重载列表时递增，`[editorKey]` 一换 `Repeater` 就重建整块
  * 编辑区，绑定随之重建。
  *
+ * **改件复选框例外：勾选不重建模型**（2026-09-27）。`rigGroups` 只在装载 / 换设施 / 换机库
+ * 时变；勾选走桥的 `rigCheckRevision` 心跳 + `isRigChecked(typeId)` 回读 —— 勾选时重建模型
+ * 会把正在处理 `onToggled` 的 delegate 同步销毁（qFatal 家族，见桥里 `setRigChecked` 的注释），
+ * 每点一格都把三个复选框连同用户刚点的那一格一起换掉。
+ *
  * 删除走**两步确认条**（`requestDelete` → `confirmDelete`），不再弹原生 `QMessageBox`，
  * 也不再弹第二个对话框 —— 这个页面本身已经是 QML 了。
  */
@@ -345,13 +350,40 @@ FDialogFrame {
                                         Repeater {
                                             model: rigGroup.modelData.items
 
+                                            /* 勾选态由桥持有（同制造类别互斥会把另一格也取消），QML 只负责画：
+                                             * 初值取 `modelData.checked`；用户点一下 → 交给桥 → 再把桥的回读值
+                                             * 写回自己（`checked` 一旦被赋值就与初值绑定脱钩，这是 QML 的正常
+                                             * 语义）。勾选**不重建 `rigGroups`**：桥只打 `rigCheckRevision`
+                                             * 心跳 —— 发 `editorChanged` 换模型会让**正在处理这次 `onToggled`
+                                             * 的这个 delegate 被同步销毁**，落进 qFatal 家族（见桥的注释）。
+                                             *
+                                             * `Component.onCompleted` 那条回读管编辑区重建（换机库 / 换设施
+                                             * 之后模型是新的，但被打断的绑定要复读一次）；`Connections` 那条
+                                             * 心跳管互斥取消引起的同步（探针实测：同类别那一格**当场**变
+                                             * False，全程只调桥一次 —— 心跳里的赋值是程序化改动，
+                                             * Qt Quick Controls 不会再发 `toggled`，所以不会连锁回调）。 */
                                             FCheckBox {
+                                                id: rigBox
                                                 required property var modelData
                                                 Layout.fillWidth: true
                                                 text: modelData.text
                                                 checked: modelData.checked
-                                                onToggled: if (frame.bp)
-                                                    frame.bp.setRigChecked(modelData.typeId, checked)
+                                                onToggled: {
+                                                    if (!frame.bp)
+                                                        return;
+                                                    frame.bp.setRigChecked(modelData.typeId, checked);
+                                                    rigBox.checked = frame.bp.isRigChecked(modelData.typeId);
+                                                }
+
+                                                Component.onCompleted: if (frame.bp)
+                                                    rigBox.checked = frame.bp.isRigChecked(modelData.typeId)
+
+                                                Connections {
+                                                    target: frame.bp
+                                                    function onRigCheckRevisionChanged() {
+                                                        rigBox.checked = frame.bp ? frame.bp.isRigChecked(rigBox.modelData.typeId) : false;
+                                                    }
+                                                }
                                             }
                                         }
                                     }

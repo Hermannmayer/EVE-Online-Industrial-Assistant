@@ -17,6 +17,14 @@
 **没有后台线程**：解析剪贴板是既有 `_BlueprintImportWorker` 的活，由调用方自己起并保活
 （见 `blueprint_actions.paste_blueprints` 的 `_import_worker`），对话框只吃算好的 diff。
 所以这两个桥不需要 `stop()`（`QmlDialog._stop_bridge` 探不到 `stop` 就什么也不做）。
+
+**逐行勾选不重建行模型**（2026-09-27，照 `ui_qml/bridge/blueprint_picker_bridge.py` 的手法）：
+勾选只改勾选态（`_checked_state`）并打一次 `checkRevisionChanged` 心跳，底部统计行走
+`statusChanged` —— **两条都不碰 `rows`**。原先 `toggleCheck()` 直接 `_rebuild()` +
+`contentChanged`，而 QML 的 `model` 是普通 var 列表（不是 `QAbstractItemModel`）→
+`ListView` 整体重建 → **滚动位置回顶**：滑到中段取消/勾选一行，列表直接跳回最顶端。
+`rows` 因此仍归 `contentChanged` 管，但 `_rebuild()` 只留给**真正改行结构**的路径：
+切导入模式、改「最终」数量（原 `_snapshot_state` / `setFinal` 的语义）。
 """
 
 from __future__ import annotations
@@ -161,6 +169,10 @@ class BlueprintImportReviewBridge(DialogBridge):
     """蓝图导入预览的 QML 后端。逐行勾选与「最终」手改正文本都按**行号**记账。"""
 
     contentChanged = Signal()
+    #: 底部统计行（「已勾选 N 项 / 蓝图增减 …」）变化 —— 勾选要刷它，但**不能**连累 `rows`
+    statusChanged = Signal()
+    #: 勾选态心跳：QML 的每个复选框靠它把自己拉回与桥一致（全选 / 取消全选也走这条）
+    checkRevisionChanged = Signal()
 
     def __init__(
         self,
@@ -185,6 +197,7 @@ class BlueprintImportReviewBridge(DialogBridge):
         self._pending_confirm = False
         self._rows: list[dict] = []
         self._summary = ""
+        self._check_revision = 0
         self._rebuild()
 
     # ── QML 读的属性 ──────────────────────────────────────────
@@ -192,10 +205,14 @@ class BlueprintImportReviewBridge(DialogBridge):
     modes = Property(list, lambda self: [{"label": label} for _value, label in _MODES], constant=True)
     rows = Property(list, lambda self: list(self._rows), notify=contentChanged)
     rowCount = Property(int, lambda self: len(self._rows), notify=contentChanged)
-    summaryText = Property(str, lambda self: self._summary, notify=contentChanged)
+    #: 统计行走 `statusChanged` 而不是 `contentChanged`：勾选要刷新它，但**不能**顺带让 QML
+    #: 重读 `rows`（普通 var 列表，重读 = ListView 重建 = 滚动回顶），见模块 docstring
+    summaryText = Property(str, lambda self: self._summary, notify=statusChanged)
     modeIndex = Property(int, lambda self: 0 if self._mode == "incremental" else 1, notify=contentChanged)
     #: 全量模式才有可编辑的「最终」列（增量模式只增不减，最终值恒等于现有 + 剪贴板）
     isFullMode = Property(bool, lambda self: self._mode == "full", notify=contentChanged)
+    #: 勾选态心跳（自增），见 `checkRevisionChanged`
+    checkRevision = Property(int, lambda self: self._check_revision, notify=checkRevisionChanged)
 
     # ── QML 写回来的槽 ────────────────────────────────────────
 
@@ -210,11 +227,18 @@ class BlueprintImportReviewBridge(DialogBridge):
 
     @Slot(int, bool)
     def toggleCheck(self, row: int, checked: bool) -> None:
+        """勾选一行：只改勾选态 + 打心跳，**不重建 `rows`**（重建 = ListView 回顶）。"""
         if not 0 <= row < len(self._diff_rows):
             return
         self._checked_state[row] = bool(checked)
-        self._pending_confirm = False
-        self._rebuild()
+        self._sync_checks()
+
+    @Slot(int, result=bool)
+    def isChecked(self, row: int) -> bool:
+        """某行当前是否勾选 —— QML 的复选框靠它回读（全选 / 取消全选也要同步回去）。"""
+        if not 0 <= row < len(self._diff_rows):
+            return False
+        return self._is_checked(row)
 
     @Slot(int, str)
     def setFinal(self, row: int, text: str) -> None:
@@ -404,15 +428,26 @@ class BlueprintImportReviewBridge(DialogBridge):
     def _set_all(self, checked: bool) -> None:
         for r in range(len(self._diff_rows)):
             self._checked_state[r] = checked
+        self._sync_checks()
+
+    def _sync_checks(self) -> None:
+        """勾选态变化的统一出口：刷统计行 + 打心跳。**不碰 `rows`**（见模块 docstring）。"""
         self._pending_confirm = False
-        self._rebuild()
+        self._summary = self._summary_text()
+        self._check_revision += 1
+        # 任何改动都作废上一次的校验/删除确认提示（原版每步各自拦一次，没有常驻提示）
+        self.set_error("")
+        self.statusChanged.emit()
+        self.checkRevisionChanged.emit()
 
     def _rebuild(self) -> None:
+        """**只在行结构真的变了**的时候调用（切模式 / 改「最终」/ 装载）。勾选不走这里。"""
         self._rows = self._build_rows()
         self._summary = self._summary_text()
         # 任何改动都作废上一次的校验/删除确认提示（原版每步各自拦一次，没有常驻提示）
         self.set_error("")
         self.contentChanged.emit()
+        self.statusChanged.emit()
 
 
 class BlueprintImportReviewQmlDialog(QmlDialog):

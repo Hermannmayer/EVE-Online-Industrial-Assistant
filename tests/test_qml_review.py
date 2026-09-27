@@ -199,8 +199,19 @@ def test_review_bridge_hub_switch_refetches_prices(harness: _Harness):
 
 
 def test_review_bridge_final_edit_recomputes_delta(harness: _Harness):
+    """「最终」列仍然重建 `rows`（走 `stateChanged`）：它改的是行里的显示口径，不是勾选态。
+
+    见 `setFinal` 的 docstring —— 「比原纪录」列的 `delta` / `deltaText` / `deltaToken` 只从
+    `modelData` 读，不重读模型就会留着旧值、跟旁边已经改过的微调框对不上。
+    """
     b = harness.bridge
+    rebuilds: list[int] = []
+    beats: list[int] = []
+    b.stateChanged.connect(lambda: rebuilds.append(1))
+    b.checkRevisionChanged.connect(lambda: beats.append(1))
+
     b.setFinal(0, 1200)
+    assert rebuilds == [1] and beats == [], "改「最终」走 stateChanged（重建 rows），不走勾选心跳"
     assert b.rows[0]["final"] == 1200
     assert b.rows[0]["delta"] == 200
     assert b.rows[0]["deltaText"] == "+200" and b.rows[0]["deltaToken"] == "ACCENT_GREEN"
@@ -218,22 +229,51 @@ def test_review_bridge_unmatched_row_cannot_be_edited_or_checked(harness: _Harne
 
 
 def test_review_bridge_select_all_skips_unmatched(harness: _Harness):
+    """全选 / 取消全选只改勾选态 + 打心跳，**不发 `stateChanged`**（发它 = 重读 `rows` = 整表重建）。
+
+    缺陷背景：`setAllChecked()` 原先发 `stateChanged`，而它正是 `rows` 的通知信号 —— QML 那边
+    `model` 是普通 var 列表（不是 `QAbstractItemModel`）→ 行区 `Repeater` 整体重建；而勾选正是
+    从复选框自己的 `onToggled` 里进来的，于是**正在处理信号的 delegate 被同步销毁**（qFatal
+    家族，探针实测一次点击 60/60 个行代理全换）。心跳是批量的（一次调用一格，不是一行一格），
+    QML 的复选框按 `checkRevision` 回读。
+    """
     b = harness.bridge
+    rebuilds: list[int] = []
+    beats: list[int] = []
+    b.stateChanged.connect(lambda: rebuilds.append(1))
+    b.checkRevisionChanged.connect(lambda: beats.append(1))
+
     b.setAllChecked(False)
     assert [r["checked"] for r in b.rows] == [False, False]
-    assert "已勾选 0 项" in b.summaryText
+    assert [b.isChecked(r) for r in range(2)] == [False, False]
+    assert "已勾选 0 项" in b.summaryText, "统计行走 statusChanged，勾选照样要刷它"
+    assert rebuilds == [], "勾选不许发 stateChanged（发它 = QML 重读 rows = 行区整体重建）"
+    assert beats == [1], "批量也只打一次心跳"
+    assert b.checkRevision == 1
+
     b.setAllChecked(True)
     assert [r["checked"] for r in b.rows] == [True, False]
+    assert b.isChecked(0) is True
+    assert b.isChecked(1) is False, "未匹配行不可勾（`isChecked` 是 QML 回读的唯一来源，也得说 false）"
     assert "已勾选 1 项" in b.summaryText
+    assert rebuilds == [] and len(beats) == 2
 
 
 def test_review_bridge_import_data_and_sync_targets(harness: _Harness):
+    """勾选只走心跳、不重建 `rows` —— 但「确定导入」读到的仍是用户最后一次取舍。"""
     b = harness.bridge
     assert b.get_import_data() == [(34, -500, 5.5, None)]
     assert b.get_sync_targets() == {34: 500}
     b.setChecked(0, False)
     assert b.get_import_data() == []
     assert b.get_sync_targets() == {}
+    b.setChecked(0, True)
+    assert b.get_import_data() == [(34, -500, 5.5, None)]
+    assert b.get_sync_targets() == {34: 500}
+    accepted: list[bool] = []
+    b.accepted.connect(lambda: accepted.append(True))
+    b.accept()
+    assert accepted == [True], "勾选态与行数据分离后，「确定导入」的取舍口径不许跟着变"
 
 
 def test_review_bridge_delete_rows(harness: _Harness):
@@ -246,13 +286,23 @@ def test_review_bridge_delete_rows(harness: _Harness):
 
 
 def test_review_bridge_filter_no_change_keeps_the_original_count(harness: _Harness):
-    """过滤无变化项：未匹配行无增量也算进「已过滤 N 项」（原版口径，照搬不修）。"""
+    """过滤无变化项：未匹配行无增量也算进「已过滤 N 项」（原版口径，照搬不修）。
+
+    这里也是**批量取消勾选**，同样只走心跳 —— 右键菜单往往就是在表格中段调的，发
+    `stateChanged` 一样会把整张表重建一遍（与 `setAllChecked` 同一个缺陷）。
+    """
     b = harness.bridge
     b.setModeIndex(0)
     b.setFinal(0, 1000)  # delta 归零
+    rebuilds: list[int] = []
+    beats: list[int] = []
+    b.stateChanged.connect(lambda: rebuilds.append(1))
+    b.checkRevisionChanged.connect(lambda: beats.append(1))
     b.filterNoChange()
     assert b.rows[0]["checked"] is False
+    assert b.isChecked(0) is False
     assert b.summaryText.endswith("[已过滤 2 项无变化]"), b.summaryText
+    assert rebuilds == [] and len(beats) == 1
 
 
 # ════════════════════════════════════════════════════════════════
@@ -400,16 +450,34 @@ def test_review_search_match_replaces_the_unmatched_row(harness: _Harness, monke
 
 
 def test_hangar_pick_defaults_to_all_checked(qapp):
+    """默认全选；勾选只走勾选态心跳 —— **不发 `stateChanged`**（= 不重建 `rows` = 不回顶）。
+
+    缺陷背景：原 `setChecked()` 把结果写回行字典后发 `stateChanged`，而它正是 `rows` 的通知
+    信号 —— QML 那边 `model` 是普通 var 列表 → `ListView` 整体重建 → **滚动位置回顶**：
+    在这张可能很长的机库物品表里，滑到中段点一格就跳回最顶端。
+    """
     from ui_qml.bridge.review_bridge import HangarPickBridge
 
     bridge = HangarPickBridge(_SOURCE_ITEMS)
     assert bridge.title_text() == "选择要移动的物品"
     row = bridge.rows[0]
     assert (row["typeId"], row["name"], row["qtyText"], row["checked"]) == (35, "类晶体胶矿", "20", True)
+
+    rebuilds: list[int] = []
+    beats: list[int] = []
+    bridge.stateChanged.connect(lambda: rebuilds.append(1))
+    bridge.checkRevisionChanged.connect(lambda: beats.append(1))
+
     bridge.setChecked(0, False)
+    assert bridge.isChecked(0) is False
     assert bridge.selected_items() == []
+    assert rebuilds == [], "勾选不许发 stateChanged（发它 = QML 重读 rows = ListView 重建 = 回顶）"
+    assert len(beats) == 1, "勾选要打一次心跳，QML 的复选框靠它回读"
+
     bridge.setChecked(0, True)
+    assert bridge.isChecked(0) is True
     assert bridge.selected_items() == [(35, 20)]
+    assert rebuilds == []
 
 
 def test_change_summary_matches_the_original_wording():

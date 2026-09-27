@@ -22,6 +22,14 @@ import "../components"
  * 之前并置 `z: -1`，行里除复选框与两个微调框外的区域都点得到它。Ctrl 多选：修饰键在
  * Python 侧读（`FTableClickArea` 只发行列号），QML 只维护 `selRows` 这个 UI 状态。
  *
+ * **勾选不重建行模型**（2026-09-27）：复选框点一下只调桥的 `setChecked`，桥改勾选态 + 打
+ * `checkRevision` 心跳，复选框按心跳（以及 `Component.onCompleted`）回读 `isChecked(index)`。
+ * 原先桥每次勾选都发 `stateChanged`，而它正是 `rows` 的通知信号 —— 行区 `Repeater` 整体重建
+ * （探针实测：点一下 60/60 个行代理全换），而且是在**这个复选框自己的 `onToggled` 里**换掉
+ * 的：正在处理信号的对象被同步销毁，下面那句回读会踩在已销毁的对象上（qFatal 家族，
+ * 见 `ui_qml/bridge/hangar_settings_bridge.py` 里 `pickSystem` 那段记录）。全选 / 取消全选是
+ * 批量，同样只走心跳。
+ *
  * 与原版的差异见 `ui_qml/bridge/review_bridge.py` 的文件头。
  */
 
@@ -270,7 +278,17 @@ FDialogFrame {
                                 Layout.preferredWidth: frame.colW(0)
                                 Layout.fillHeight: true
 
+                                /* 勾选态由桥持有（全选 / 取消全选也要能同步回来），QML 只负责画：
+                                 * 初值取模型里的 `checked`（= 打开那一刻的取舍）；用户点一下 → 交给桥
+                                 * → 再把桥的回读值写回自己（`checked` 一旦被赋值就与初值绑定脱钩，
+                                 * 这是 QML 的正常语义）。`Connections` 那条心跳负责批量变化
+                                 * （全选 / 取消全选 / 右键过滤无变化项）。
+                                 *
+                                 * `Component.onCompleted` 的回读也是必需的：勾选**不重建 rows**，
+                                 * 行数据里的 `checked` 会停在打开那一刻 —— 行区被重建（换模式 / 改
+                                 * 「最终」/ 删行）时，不复读就会把用户已取消的行又画成勾上。 */
                                 FCheckBox {
+                                    id: rowCheck
                                     objectName: "rowCheck"
                                     // 复选框的 implicitWidth 是「指示器 + 空文本内边距」算出来的（实测 73px），
                                     // 直接居中会往左溢出 30px 的格子、勾选框贴着表边。收窄到指示器宽度即可。
@@ -279,8 +297,22 @@ FDialogFrame {
                                     anchors.centerIn: parent
                                     enabled: rowItem.modelData.checkable
                                     checked: rowItem.modelData.checked
-                                    onToggled: if (frame.rv)
-                                        frame.rv.setChecked(rowItem.index, checked)
+                                    onToggled: {
+                                        if (!frame.rv)
+                                            return;
+                                        frame.rv.setChecked(rowItem.index, checked);
+                                        rowCheck.checked = frame.rv.isChecked(rowItem.index);
+                                    }
+
+                                    Component.onCompleted: if (frame.rv)
+                                        rowCheck.checked = frame.rv.isChecked(rowItem.index)
+
+                                    Connections {
+                                        target: frame.rv
+                                        function onCheckRevisionChanged() {
+                                            rowCheck.checked = frame.rv ? frame.rv.isChecked(rowItem.index) : false;
+                                        }
+                                    }
                                 }
                             }
 
