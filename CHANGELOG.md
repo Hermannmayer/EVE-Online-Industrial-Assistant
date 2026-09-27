@@ -6,6 +6,29 @@
 
 <!-- version list -->
 
+## v0.25.2 (2026-09-27)
+
+### Bug Fixes
+
+- **产线/工业**: 子项行不能部分启动 + 行内动作在 QML 信号处理器里弹框导致闪退
+  ([`89b6723`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/89b6723ab06fc24ae655bd29d3033a3f17a32523))
+
+- **工业/蓝图绑定**: 绑定弹窗多选后一次性写库、滚动位置不再回顶、列宽贴合内容
+  ([`dd10834`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/dd108342d415c247f3fe4d513f2c334685ca1984))
+
+- **工业/蓝图绑定**: 绑定弹窗补上 Shift 连选，口径与计划表一致
+  ([`a673c9b`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a673c9ba466fe6d587d2cd83e1c957f2e52c2c1f))
+
+- **工具**: 快照/测试的临时工作目录不再泄漏 —— 跑完自清 + 启动时清历史残留
+  ([`c62695f`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/c62695f804c77a926f679ff72f6ff240f8bbdeb1))
+
+- **界面**: 五处「勾选即重建整个行模型」清掉 —— 导入预览/机库清单/机库设置不再整表重建
+  ([`380b55b`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/380b55bf1299431394883f29ee199375da288d17))
+
+- **窗口**: 置顶不再持久化 —— 所有窗口一律以不置顶启动，点了置顶按钮才置顶
+  ([`0501ad9`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/0501ad93d1ce4df4e41a2bb26b6b5bd24e4be32f))
+
+
 ## v0.25.1 (2026-09-26)
 
 ### Bug Fixes
