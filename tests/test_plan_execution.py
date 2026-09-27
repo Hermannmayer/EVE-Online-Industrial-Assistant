@@ -1404,15 +1404,27 @@ class TestPartialStart:
         with user_env.db.connect("user") as conn:
             assert conn.execute("SELECT COUNT(*) FROM production_plans").fetchone()[0] == 1
 
-    def test_child_row_rejected(self, user_env):
-        """子项行由母项需求驱动，拆了会被重放改写 —— 直接拒绝。"""
+    def test_child_row_allowed_and_remainder_stays_child(self, user_env):
+        """子项行也能部分启动，余量行必须**仍是同组子项**（2026-09-27 用户拍板放开）。
+
+        缺陷背景：原实现以 `child_row` 直接拒绝，理由是「子项由母项需求驱动，拆了会被
+        重放改写」—— 但母项动辄二三十条并行、一条一图，不给子项分批就永远开不动
+        （点「启动」只会被 `start_plan` 以「请先在蓝图列绑定 N 张蓝图」挡回来）。
+        放开的前提是余量行照抄 `sub_level`/`group_number`：否则它会被主表当成独立计划，
+        母项的需求核算（按组汇总子项）就少了一半。
+        """
         user_env.scoring.calculate_plan_metrics.side_effect = self._per_line_metrics
         pid = _insert_plan(user_env.db, parallels=3, group_number=7, sub_level=1)
+        src = _get_plan(user_env.db, pid)
 
         res = plan_execution.start_plan_partial(pid, 1, mat_hangar_id=None)
 
-        assert res["ok"] is False
-        assert res["code"] == "child_row"
+        assert res["ok"], res
+        started = _get_plan(user_env.db, pid)
+        assert (started["status"], started["parallels"]) == ("in_progress", 1)
+        rem = _get_plan(user_env.db, res["remainder_plan_id"])
+        assert (rem["status"], rem["parallels"]) == ("pending", 2)
+        assert (rem["sub_level"], rem["group_number"]) == (src["sub_level"], src["group_number"])
 
     def test_mother_with_pending_children_rejected(self, user_env):
         user_env.scoring.calculate_plan_metrics.side_effect = self._per_line_metrics

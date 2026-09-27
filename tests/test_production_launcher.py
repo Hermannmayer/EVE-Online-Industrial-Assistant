@@ -842,11 +842,13 @@ class TestLauncherContextMenu:
         finally:
             w.close()
 
-    def test_partial_start_hidden_for_child_row(self, qapp, monkeypatch):
+    def test_partial_start_visible_for_child_row(self, qapp, monkeypatch):
+        """子项行也给「部分启动」（2026-09-27 用户拍板）：母项二三十条并行、一条一图，
+        不分批就开不动。见 `ProductionLauncher._can_partial_start`。"""
         child = _plan(202, name="子项", child_level=1, parallels=3)
         w, _ = _make_launcher(qapp, monkeypatch, plans=[child])
         try:
-            assert w._can_partial_start(w._plan_map[202]) is False
+            assert w._can_partial_start(w._plan_map[202]) is True
         finally:
             w.close()
 
@@ -985,6 +987,10 @@ class TestLauncherRowMenuWiring:
 
         回归背景：这几个名字一度只在页面里以 `_on_*` 形式存在，桥一调就是
         `AttributeError` —— QML 里点启动/折叠/可下线、右键行，全部断掉。
+
+        会弹模态框的四个（启动/下线/备注/部分启动）现在经 `_defer` 迟一拍到达，
+        所以断言前要转一次事件循环；时机本身由
+        `TestRowActionDispatching` 钉住。
         """
         w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(PARTIAL_PLAN)])
         try:
@@ -1008,15 +1014,16 @@ class TestLauncherRowMenuWiring:
             w._bridge.rowNotes(201)
             w._bridge.rowPartialStart(201)
             w._bridge.rowContextMenu(201)
+            spin()
 
-            assert calls == [
-                ("row_start", 201),
-                ("row_toggle", 7),
-                ("row_complete", 201),
-                ("row_notes", 201),
-                ("row_partial_start", 201),
-                ("row_context_menu", 201),
-            ]
+            assert dict(calls) == {
+                "row_start": 201,
+                "row_toggle": 7,
+                "row_complete": 201,
+                "row_notes": 201,
+                "row_partial_start": 201,
+                "row_context_menu": 201,
+            }
         finally:
             w.close()
 
@@ -1147,6 +1154,49 @@ class TestLauncherRowClick:
                 expect=rows[3]["id"],
                 delta=1,
             )
+        finally:
+            w.close()
+
+
+class TestRowActionDispatching:
+    """行内/底部动作的**派发时机**：不得在 QML 信号处理器里同步跑。
+
+    缺陷背景（0.25.1 真机闪退）：这些动作会打开模态对话框（`FMessageDialog.exec()`
+    = 嵌套事件循环），而对话框开着时 5s 轮询重建行 → 持有该 `onClicked` 的 delegate
+    被销毁 → Qt `qFatal`：
+
+        Object 0x… destroyed while one of its QML signal handlers is in progress.
+        … or the application is running a nested event loop.
+        This behavior is NOT supported!
+
+    进程静默死掉，日志里只留这一行 CRITICAL、定位到 `LauncherWindow.qml` 的 `onClicked`。
+    修法是 `LauncherBridge._defer`：把动作排到本轮信号派发之后，对话框打开时栈上
+    已经没有 QML 处理器。本用例钉住「不在处理器里同步执行」这条不变量。
+    """
+
+    @pytest.mark.parametrize(
+        ("slot", "page_method", "arg"),
+        [
+            ("rowStart", "row_start", 201),
+            ("rowComplete", "row_complete", 201),
+            ("rowNotes", "row_notes", 201),
+            ("rowPartialStart", "row_partial_start", 201),
+            ("mainAction", "main_action", None),
+        ],
+    )
+    def test_modal_actions_defer_out_of_the_qml_handler(self, qapp, monkeypatch, slot, page_method, arg):
+        w, _ = _make_launcher(qapp, monkeypatch, plans=[dict(PARTIAL_PLAN)])
+        try:
+            calls: list = []
+            monkeypatch.setattr(w, page_method, lambda *a: calls.append(a))
+
+            if arg is None:
+                w._bridge.mainAction()
+            else:
+                getattr(w._bridge, slot)(arg)
+
+            assert calls == [], f"{slot} 在 QML 信号处理器内同步执行了页面动作"
+            assert _wait_true(lambda: len(calls) == 1), f"{slot} 迟一拍后仍未落到页面"
         finally:
             w.close()
 

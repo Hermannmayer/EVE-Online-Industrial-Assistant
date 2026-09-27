@@ -489,7 +489,8 @@ def existing_blueprint_ids(conn, bp_ids: list[int]) -> set[int]:
 
 
 def _has_pending_children(conn, plan: dict) -> bool:
-    """母项是否还有未完成子项（部分启动的守门条件）。"""
+    """母项是否还有未完成子项（部分启动的守门条件）。**只对母项调用** ——
+    子项行自己在这个计数里，对它会恒为真（调用方按 `sub_level==0` 收口）。"""
     gid = int(plan.get("group_number") or 0)
     if not gid:
         return False
@@ -638,7 +639,12 @@ def start_plan_partial(
     若先启动再切走多余绑定、中途异常，就会留下「parallels=N 却挂 P 张绑定」的行，
     下线时超扣流程。先拆的最坏结果只是两条 pending 行，且有 `_rollback_split` 兜底。
 
-    仅供**独立计划**与**子项全部完成的母项**使用（子项行由母项需求驱动，拆了会被重放改写）。
+    独立计划、母项（子项全部完成时）与**子项行**都可以部分启动：余量行由
+    `insert_split_remainder` 照抄结构列（含 `group_number` / `sub_level`），仍是同组的子项行。
+
+    ⚠️ 子项行拆开之后**不要**再对母项用「重算子项」：那条路径按母项当前需求重放整组子项，
+    会把拆出的两半一起改写。历史实现正是因此直接禁止子项部分启动，用户拍板放开
+    （母项一步就要几十张蓝图，先开 N 条是唯一能落地的姿势）。
 
     Returns: {"ok", "code", "message", "started_lines", "remainder_plan_id", ...}
     """
@@ -650,13 +656,6 @@ def start_plan_partial(
     status = str(src.get("status") or "").lower()
     if status != "pending":
         return {"ok": False, "code": "not_pending", "message": "只有待生产计划可以部分启动", "started_lines": 0}
-    if int(src.get("sub_level") or 0) != 0:
-        return {
-            "ok": False,
-            "code": "child_row",
-            "message": "子项产线由母项需求驱动，不支持部分启动",
-            "started_lines": 0,
-        }
     try:
         lines = int(lines)
     except (TypeError, ValueError):
@@ -666,7 +665,9 @@ def start_plan_partial(
 
     gate = _container().db.direct_connect("user")
     try:
-        if _has_pending_children(gate, src):
+        # 只看**母项**：`_has_pending_children` 数的是「同组 sub_level>0 且未完成」的行，
+        # 子项行自己就在这个计数里，对它会恒为真（那正是放开子项后必须收敛到的口径）。
+        if int(src.get("sub_level") or 0) == 0 and _has_pending_children(gate, src):
             return {
                 "ok": False,
                 "code": "children_pending",

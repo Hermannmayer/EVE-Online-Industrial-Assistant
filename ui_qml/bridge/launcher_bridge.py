@@ -15,9 +15,10 @@ from __future__ import annotations
 # ui_qml → 包初始化」的循环），于是它的每个返回值对 mypy 都是 Any。
 # 这些属性本就是「原样转发给 QML」的通道，逐处 cast 只会淹没真正的问题。
 # mypy: disable-error-code="no-any-return"
+from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import Property, QObject, Signal, Slot
+from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
 __all__ = ["LauncherBridge"]
 
@@ -161,9 +162,33 @@ class LauncherBridge(QObject):
     def rowClicked(self, plan_id: int) -> None:
         self._page.copy_blueprint(int(plan_id))
 
+    # ── 延后一拍：不在 QML 信号处理器里弹模态框 ────────────────
+    #
+    # 行内按钮的动作**不能**在 QML 的 `onClicked` 里同步跑到底：它们会打开模态对话框
+    # （`FMessageDialog.question/warning` 的 `exec()` 是嵌套事件循环），而对话框开着的
+    # 时候 5s 轮询（`ProductionLauncher._on_poll` → `_apply_filters` → `_sync_rows` →
+    # `rowsChanged`）会重建行 —— 持有那次 `onClicked` 的 delegate 顺势被销毁，Qt 在
+    # `QQmlData::destroyed` 里判定「QML 信号处理器进行中，对象被销毁」并**直接 qFatal**：
+    #
+    #     Object 0x… destroyed while one of its QML signal handlers is in progress.
+    #     Most likely the object was deleted synchronously (use QObject::deleteLater()
+    #     instead), or the application is running a nested event loop.
+    #     This behavior is NOT supported!
+    #
+    # 实测（0.25.1 真机）：点行内「启动」→ 弹「人物产线超员」/「启动失败」→ 进程静默死掉，
+    # 日志里只留这一行 CRITICAL，定位行就是 `LauncherWindow.qml` 的 `onClicked`。
+    # 推迟到本轮派发之后，对话框打开时栈上已经没有 QML 处理器，重建行就只是普通重建。
+    #
+    # 只推迟**会弹模态框**的那几个入口。选中 / 折叠 / 复制蓝图这类同步动作保持原样：
+    # 折叠虽然也重建行，但它同步返回、不进入嵌套循环，实测没有这个问题。
+
+    def _defer(self, fn: Callable[[], None]) -> None:
+        """把动作排到本轮信号派发之后（以 `self` 为上下文：桥先没了就不执行）。"""
+        QTimer.singleShot(0, self, fn)
+
     @Slot(int)
     def rowStart(self, plan_id: int) -> None:
-        self._page.row_start(int(plan_id))
+        self._defer(lambda: self._page.row_start(int(plan_id)))
 
     @Slot(int, int)
     def setRowExecutorIndex(self, plan_id: int, index: int) -> None:
@@ -184,7 +209,7 @@ class LauncherBridge(QObject):
 
     @Slot(int)
     def rowComplete(self, plan_id: int) -> None:
-        self._page.row_complete(int(plan_id))
+        self._defer(lambda: self._page.row_complete(int(plan_id)))
 
     @Slot(int)
     def rowContextMenu(self, plan_id: int) -> None:
@@ -192,11 +217,11 @@ class LauncherBridge(QObject):
 
     @Slot(int)
     def rowNotes(self, plan_id: int) -> None:
-        self._page.row_notes(int(plan_id))
+        self._defer(lambda: self._page.row_notes(int(plan_id)))
 
     @Slot(int)
     def rowPartialStart(self, plan_id: int) -> None:
-        self._page.row_partial_start(int(plan_id))
+        self._defer(lambda: self._page.row_partial_start(int(plan_id)))
 
     # ── L4 详情 / 执行面板 ────────────────────────────────────
 
@@ -230,7 +255,7 @@ class LauncherBridge(QObject):
 
     @Slot()
     def mainAction(self) -> None:
-        self._page.main_action()
+        self._defer(lambda: self._page.main_action())
 
     # ── 刷新通知（由页面在数据变化后调用） ──────────────────────
 

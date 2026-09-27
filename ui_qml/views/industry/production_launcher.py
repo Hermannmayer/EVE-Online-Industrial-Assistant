@@ -1034,16 +1034,21 @@ class ProductionLauncher(QObject):
         self._bridge.request_context_menu(int(plan_id), bool(self._can_partial_start(plan)))
 
     def _can_partial_start(self, plan: dict) -> bool:
-        """部分启动的可见条件。
+        """部分启动的可见条件：待生产、并行 > 1，且当前可启动（或可强制启动：缺料/蓝图流程不足）。
 
-        用户口径：只对**独立计划**与**子项全部完成的母项**开放 —— 即
-        `child_level == 0` 且该行当前可启动（或可强制启动：缺料/蓝图流程不足）。
-        子项行由母项需求驱动，拆了会被重放改写；母项还有未完成子项时
-        `_block_state` 会给出 `children_running`/`waiting_children` 且不可强制，自然被排除。
+        **子项行一样给**（2026-09-27 用户拍板）：母项动辄二三十条并行，一条一图，
+        不分批就永远开不动（实测点「启动」只会被 `start_plan` 以「请先在蓝图列绑定
+        28 张蓝图」挡回来）。`start_plan_partial` 侧同步放开了子项，余量行照抄
+        `sub_level`/`group_number`，仍是同组子项。
+
+        仍要排除的情形，全由 `_block_state` 给出、不再自己判：
+        - 母项还有未完成子项 → `children_running`/`waiting_children`，不可强制 → 不显示；
+        - 生产中的行 → status 非 pending，`plan_start_block` 直接拦。
+
+        ⚠️ 拆开之后不要对母项用「重算子项」：那会按母项需求重放整组子项，把拆出的
+        两半一起改写（同 `services.plan_execution.start_plan_partial` 的说明）。
         """
         if not plan.get("id") or plan.get("_synthetic"):
-            return False
-        if int(plan.get("child_level") or plan.get("sub_level") or 0) != 0:
             return False
         if str(plan.get("status") or "").lower() != "pending":
             return False

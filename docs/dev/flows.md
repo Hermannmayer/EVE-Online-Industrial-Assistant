@@ -123,7 +123,7 @@ services/logistics.py
 - 仓库：`services/repositories/plan_repository.py`（不存在 `services/plan_repository.py`）
 - 保存：`plan_service.insert_plan`；批量导入 `insert_plans_batch`（blueprint 导入走批量）
 - 启动：`plan_table._start_plan` → `plan_start_check.plan_start_block`（**纯逻辑、零 DB**；返回 `(类别码, 文案)`，UI 用码选短标签、用文案做 tooltip；`plan_start_block_reason` 是同一次判定的文案投影）→ `plan_execution.check_materials` → `start_plan`（原子 UPDATE status + `inventory_manager.deduct_item`）
-- 部分启动：`plan_execution.start_plan_partial(plan_id, lines, ...)` —— 只启动 N 条产线。**时序必须是「先拆行、后启动」**：先 `UPDATE parallels=N` + `insert_split_remainder`（复制结构列、清空执行列、`source_mother_ids` 置 `''`）+ `move_bindings`（把前 N 张之外的绑定**移动**给余量行），**提交后**再 `plan_service.load_plan` 重新取数（漏了这步会按 P 条扣料），最后 `start_plan(auto_bind=False)`（自动绑定走自己的连接立即提交，是回滚看不见的副作用）。失败则 `_rollback_split` 把两行并回一条。仅限**独立计划与子项全部完成的母项**（子项行由需求重放驱动，拆了会被改写）。预览用 `preview_partial_start`（按 N 条口径报缺口）
+- 部分启动：`plan_execution.start_plan_partial(plan_id, lines, ...)` —— 只启动 N 条产线。**时序必须是「先拆行、后启动」**：先 `UPDATE parallels=N` + `insert_split_remainder`（复制结构列、清空执行列、`source_mother_ids` 置 `''`）+ `move_bindings`（把前 N 张之外的绑定**移动**给余量行），**提交后**再 `plan_service.load_plan` 重新取数（漏了这步会按 P 条扣料），最后 `start_plan(auto_bind=False)`（自动绑定走自己的连接立即提交，是回滚看不见的副作用）。失败则 `_rollback_split` 把两行并回一条。独立计划、子项全部完成的母项、**子项行**都可以部分启动（余量行照抄 `sub_level`/`group_number`，仍是同组子项；子项拆开后不要用母项的「重算子项」，那会按母项需求重放整组子项）。预览用 `preview_partial_start`（按 N 条口径报缺口）
 - 完成：`plan_execution.complete_plan`（成品入 `inventory_items` + `consume_bpc_runs` 消耗 `user_blueprints` + 清 bindings）；撤销 `cancel_plan` 返还材料
 - **母项结束时清理已完成的子项行**：`complete_plan` 在**同一事务**内（`deposited` 回写之后、`commit` 之前）调
   `plan_execution.remove_completed_children(group_number, conn=conn)`，返回体带 `removed` 计数供 UI 出文案。
@@ -208,6 +208,14 @@ services/logistics.py
   - 菜单里**没有**「设置蓝图等级」「查看蓝图原图的 NPC 卖家」「产线启动小助手」：
     蓝图等级统一由库存蓝图带出（不再有计划级的手填等级），NPC 卖家仍在蓝图选择弹窗里，
     小助手在工业页底部状态栏已有按钮。
+- **行内动作要推迟出 QML 信号处理器**：`LauncherBridge` 的 `rowStart` / `rowComplete` /
+  `rowNotes` / `rowPartialStart` / `mainAction` 一律经 `_defer`（`QTimer.singleShot(0, self, …)`）
+  再落到页面。这些动作会开模态框（`FMessageDialog.exec()` = 嵌套事件循环），而对话框开着时
+  5s 轮询重建行 → 持有该 `onClicked` 的 delegate 被销毁 → Qt `qFatal`
+  「Object … destroyed while one of its QML signal handlers is in progress …
+  or the application is running a nested event loop. This behavior is NOT supported!」
+  → 进程静默闪退（0.25.1 真机实测，日志只留一行 CRITICAL 指向 `LauncherWindow.qml:481`）。
+  同步动作（选中 / 折叠 / 复制蓝图）不推迟：它们不进入嵌套循环。
 - **蓝图流程不足可强制启动**：`_binding_shortfall` 有两道（张数 / 每张流程 ≥ runs），
   `start_plan` 与 `complete_plan` **成对**提供 `allow_bp_short` —— **只放开启动会造成死锁**
   （强制启动的计划永远无法下线）。强制时**不换绑**，完成时 `consume_bpc_runs` 按实际可用量消耗；
