@@ -2,14 +2,26 @@
 
 对照 Widgets 版 `ui_pyside6/views/industry/blueprint_picker_dialog.py`：
 一条产线（parallels 之一）独占一张库存蓝图，勾选 parallels 张可用蓝图，
-每张可用流程 ≥ runs。**勾选即实时落库**（勾选集 = 最终绑定集，全量替换）。
+每张可用流程 ≥ runs。
 
-与原版逐条对齐的行为：
+**勾选阶段不落库，点「完成」才写**（2026-09-27 改）。原实现是「勾选即实时落库」：
+每次勾选都全量替换写库 + `_rebuild()` 换掉整个行模型，而 QML 那边 `model` 是普通
+var 列表（不是 `QAbstractItemModel`）→ `ListView` 整体重建、**滚动位置回顶**。
+用户实测：滑到中段勾第一格，列表直接跳回最顶端，于是「多选」根本没法用。
+
+现在的分工：
+
+- **行数据是常量**（`rows`，`constant=True`）：只有装载时算一次，勾选永远不碰它；
+- **勾选态单独承载**：`checkedIndexes` / `isChecked()` + `checkRevisionChanged` 心跳，
+  QML 的复选框按心跳回读（超需回滚、右键批量勾选都能同步过去）；
+- **写库只发生在 `accept()`**（「完成」）：「取消 / 点 X」不写任何东西。
+
+其余行为与原版逐条对齐：
 
 - 绑定状态以 DB 为权威（`plan_execution.get_plan_binding_state`），不信任传入的 plan dict；
 - 被其他活跃计划占用的行禁勾选；自己已绑定的行不算占用，默认勾选；
 - 满额（已勾 = 需求）后再勾会**回滚并提示**，不做静默截断；
-- 写入失败（竞态：刚被别的计划占用）→ 按 DB 现状还原勾选 + 红字提示。
+- 写入失败（竞态：刚被别的计划占用）→ 按 DB 现状还原勾选 + 红字提示，且**不关窗**。
 
 差异：原版用 `QMessageBox` 弹确认/警告，这里改成桥的提示文案（页面已经是 QML）；
 「完成」时绑定不足也改成本地两步确认（`pendingClose`），不弹原生框。
@@ -46,7 +58,12 @@ def available_runs(opt: dict) -> int:
 class BlueprintPickerBridge(DialogBridge):
     """蓝图多选绑定的 QML 后端。"""
 
+    #: 静态内容（行 / 表头 / 空态提示）变化 —— **只在装载时发一次**（`rows` 是常量）
     contentChanged = Signal()
+    #: 状态行（计数 / 提示）变化
+    statusChanged = Signal()
+    #: 勾选态心跳：QML 的每个复选框靠它把自己拉回与桥一致（含超需回滚、右键批量）
+    checkRevisionChanged = Signal()
 
     def __init__(self, plan: dict) -> None:
         super().__init__()
@@ -66,6 +83,7 @@ class BlueprintPickerBridge(DialogBridge):
         self._need = 1
         self._runs = 1
         self._selected_ids: list[int] = []
+        self._check_revision = 0
 
         self.set_title(f"绑定库存蓝图 - {plan.get('product_name', '')}")
         self._get_picker_data = get_blueprint_picker_data
@@ -75,15 +93,19 @@ class BlueprintPickerBridge(DialogBridge):
 
     needLabel = Property(str, lambda self: self._need_label(), notify=contentChanged)
     headers = Property(list, lambda self: list(_HEADERS), constant=True)
-    rows = Property(list, lambda self: list(self._rows), notify=contentChanged)
-    statusText = Property(str, lambda self: self._status_text, notify=contentChanged)
-    statusToken = Property(str, lambda self: self._status_token, notify=contentChanged)
+    #: 行数据**常量**：勾选态不在其中（`checked` 只作打开时的初值）。
+    #: 每次交互重建它 = ListView 重建 = 滚动位置回顶，见模块 docstring。
+    rows = Property(list, lambda self: list(self._rows), constant=True)
+    statusText = Property(str, lambda self: self._status_text, notify=statusChanged)
+    statusToken = Property(str, lambda self: self._status_token, notify=statusChanged)
     emptyHint = Property(str, lambda self: self._empty_hint, notify=contentChanged)
     hasOptions = Property(bool, lambda self: bool(self._options), notify=contentChanged)
     canNpcSeller = Property(bool, lambda self: self._blueprint_type_id is not None, notify=contentChanged)
-    #: 确认后的绑定集合（调用方用它回填 plan dict）
-    selectedBlueprintIds = Property(list, lambda self: list(self._selected_ids), notify=contentChanged)
+    #: 当前勾选集合（点「完成」前的暂存值；调用方在 `exec()` 返回真之后读它 = 已落库那份）
+    selectedBlueprintIds = Property(list, lambda self: list(self._selected_ids), notify=statusChanged)
     needCount = Property(int, lambda self: self._need, notify=contentChanged)
+    #: 勾选态心跳（自增），见 `checkRevisionChanged`
+    checkRevision = Property(int, lambda self: self._check_revision, notify=checkRevisionChanged)
 
     def _need_label(self) -> str:
         return (
@@ -135,7 +157,9 @@ class BlueprintPickerBridge(DialogBridge):
             for opt in options
         ]
         self._loading = False
-        self._reconcile()
+        # 行数据只在这里算一次（之后是常量，勾选不再重建它）；勾选态走心跳通道
+        self._rebuild()
+        self._sync_checks()
 
     # ── 行渲染 ────────────────────────────────────────────────
 
@@ -174,23 +198,63 @@ class BlueprintPickerBridge(DialogBridge):
         self.contentChanged.emit()
 
     # ── 交互 ──────────────────────────────────────────────────
+    #
+    # **勾选阶段一律不写库、不重建 `rows`**：写库在 `accept()`，重建 `rows` 会换掉
+    # QML 的 ListView model（普通 var 列表）→ 滚动位置回顶，正是「滑到中段勾一格就跳回
+    # 最顶端」的成因。勾选态只改 `_checked` 并打一次 `checkRevisionChanged` 心跳。
 
     def _count_checked(self) -> int:
         return sum(1 for i, on in enumerate(self._checked) if on and not self._disabled[i])
 
+    def _pending_ids(self) -> list[int]:
+        """按行序取勾选集合（行序 = 蓝图 id 顺序，与旧 `_reconcile` 的 `checked[:need]` 同口径）。"""
+        return [
+            int(o["id"])
+            for i, o in enumerate(self._options)
+            if i < len(self._checked) and self._checked[i] and not self._disabled[i]
+        ]
+
+    def _cap_checked(self) -> bool:
+        """超需 → 从**行号大**的一头回滚；返回是否回滚过（批量勾选走这条）。"""
+        need = max(int(self._need), 1)
+        if self._count_checked() <= need:
+            return False
+        keep = 0
+        for i in range(len(self._options)):
+            if self._checked[i] and not self._disabled[i]:
+                keep += 1
+                if keep > need:
+                    self._checked[i] = False
+        return True
+
+    def _sync_checks(self, *, truncated: bool = False) -> None:
+        """勾选态变化的统一出口：算选中集 + 状态行 + 心跳。**不碰 `rows`**。"""
+        self._selected_ids = self._pending_ids()
+        self._check_revision += 1
+        self._refresh_status(truncated=truncated)
+        self.checkRevisionChanged.emit()
+
     @Slot(int, bool)
     def toggle(self, index: int, checked: bool) -> None:
-        """勾选变化：一条产线一张蓝图，最多勾 need 张，超出的勾选回滚并提示。"""
+        """勾选变化：一条产线一张蓝图，最多勾 need 张，超出的**这一次勾选**回滚并提示。"""
         if self._loading or not 0 <= index < len(self._options) or self._disabled[index]:
             return
         self._checked[index] = bool(checked)
         self._pending_close = False
+        truncated = False
         if checked and self._count_checked() > max(int(self._need), 1):
             self._checked[index] = False
-            self._rebuild()
-            self._refresh_status(truncated=True)
-            return
-        self._reconcile()
+            truncated = True
+        self._sync_checks(truncated=truncated)
+
+    @Slot(int, result=bool)
+    def isChecked(self, index: int) -> bool:
+        """某行当前是否勾选 —— QML 的复选框靠它回读，超需回滚 / 右键批量都能同步回去。"""
+        if not 0 <= index < len(self._checked):
+            return False
+        if index < len(self._disabled) and self._disabled[index]:
+            return False
+        return bool(self._checked[index])
 
     @Slot(list)
     def checkRows(self, indices: list) -> None:
@@ -213,7 +277,7 @@ class BlueprintPickerBridge(DialogBridge):
         for i in range(len(self._options)):
             if not self._disabled[i]:
                 self._checked[i] = i in keep
-        self._reconcile()
+        self._sync_checks(truncated=self._cap_checked())
 
     def _bulk(self, indices: list, value: Any) -> None:
         self._pending_close = False
@@ -221,46 +285,21 @@ class BlueprintPickerBridge(DialogBridge):
             i = int(raw)
             if 0 <= i < len(self._options) and not self._disabled[i]:
                 self._checked[i] = bool(value(i))
-        self._reconcile()
-
-    def _reconcile(self) -> None:
-        """收集勾选集 → 全量替换写入绑定 → 刷新状态（原 `_reconcile`）。"""
-        plan_id = self._plan.get("id")
-        checked = [int(opt["id"]) for i, opt in enumerate(self._options) if self._checked[i] and not self._disabled[i]]
-        need = max(int(self._need), 1)
-        truncated = len(checked) > need
-        if truncated:
-            checked = checked[:need]
-
-        if plan_id and not plan_execution.bind_blueprints(plan_id, checked):
-            # 竞态：刚被其他计划占用 → 按 DB 现状还原勾选
-            state = plan_execution.get_plan_binding_state(plan_id)
-            valid = set(state["bound"])
-            for i, opt in enumerate(self._options):
-                self._checked[i] = opt["id"] in valid
-            self._selected_ids = checked
-            self._rebuild()
-            self._status_text = "所选蓝图刚被其他活跃计划占用，已还原为当前绑定，请重新勾选"
-            self._status_token = "ACCENT_RED"
-            self.contentChanged.emit()
-            return
-
-        self._selected_ids = checked
-        self._refresh_status(truncated=truncated)
+        self._sync_checks(truncated=self._cap_checked())
 
     def _refresh_status(self, *, truncated: bool = False) -> None:
         count = len(self._selected_ids)
         need = max(int(self._need), 1)
         if truncated:
-            self._status_text = f"一条产线一张蓝图：已按需取前 {need} 张兑现（勾选 {count} → 绑 {need} 张）"
+            self._status_text = f"一条产线一张蓝图：已按需保留前 {need} 张（多勾的已取消）"
             self._status_token = "ACCENT_ORANGE"
         elif count >= need:
-            self._status_text = f"已选 {count} / 需 {need} 张 ✔"
+            self._status_text = f"已选 {count} / 需 {need} 张 ✔ 点「完成」写入"
             self._status_token = "GREEN"
         else:
             self._status_text = f"已选 {count} / 需 {need} 张 — 还差 {need - count} 张蓝图"
             self._status_token = "ACCENT_RED"
-        self._rebuild()
+        self.statusChanged.emit()
 
     # ── 按钮 ──────────────────────────────────────────────────
 
@@ -278,16 +317,43 @@ class BlueprintPickerBridge(DialogBridge):
 
     @Slot()
     def accept(self) -> None:
-        """「完成」：绑定不足时先在本地确认一次，再点一次才关闭（替代原生确认框）。"""
+        """「完成」：**这一次**才把勾选集写库；绑定不足时先在本地确认一次（点两次才关）。
+
+        先确认再写：不足的那一次不进 `_commit`，所以「取消 / 点 X」不会留下任何写入。
+        """
         count = len(self._selected_ids)
         need = max(int(self._need), 1)
         if count < need and not self._pending_close:
             self._pending_close = True
             self.set_error(
-                f"当前仅绑定 {count}/{need} 条产线的蓝图，不足部分完成后无法启动。仍要关闭请再点一次「完成」。"
+                f"当前仅选 {count}/{need} 条产线的蓝图，不足部分完成后无法启动。仍要关闭请再点一次「完成」。"
             )
             return
+        if not self._commit(self._pending_ids()):
+            return
         self.accepted.emit()
+
+    def _commit(self, checked: list[int]) -> bool:
+        """把勾选集**全量替换**写库（一条产线一张蓝图）。
+
+        竞态（刚被别的活跃计划占用）→ 按 DB 现状还原勾选 + 红字提示，**不关窗**，
+        与原 `_reconcile` 的失败口径一致。
+        """
+        plan_id = self._plan.get("id")
+        if plan_id and not plan_execution.bind_blueprints(plan_id, checked):
+            state = plan_execution.get_plan_binding_state(plan_id)
+            valid = set(state["bound"])
+            for i, opt in enumerate(self._options):
+                self._checked[i] = opt["id"] in valid
+            self._selected_ids = self._pending_ids()
+            self._status_text = "所选蓝图刚被其他活跃计划占用，已还原为当前绑定，请重新勾选"
+            self._status_token = "ACCENT_RED"
+            self._check_revision += 1
+            self.statusChanged.emit()
+            self.checkRevisionChanged.emit()
+            return False
+        self._selected_ids = checked
+        return True
 
     def selected_ids(self) -> list[int]:
         """给 Python 侧读绑定集合（`selectedBlueprintIds` 在 mypy 眼里是 Property 描述符）。"""
@@ -299,8 +365,13 @@ class BlueprintPickerBridge(DialogBridge):
 
 
 class BlueprintPickerQmlDialog(QmlDialog):
-    """QML 版「绑定库存蓝图」。`BlueprintPickerDialog(plan, parent)` 的调用方原样可用。"""
+    """QML 版「绑定库存蓝图」。`BlueprintPickerDialog(plan, parent)` 的调用方原样可用。
+
+    `size` 由 720×520 收窄到 **540×470**（2026-09-27）：列宽改成「按内容取值、只让状态列吃
+    余量」之后，720 宽会在「机库」和「状态」之间空出一大块 —— 用户报的「错位、不紧凑」
+    有一半来自这个多出来的宽度。窗口仍可拉大（多出来的宽度进状态列）。
+    """
 
     def __init__(self, plan: dict, parent: Any = None) -> None:
         bridge = BlueprintPickerBridge(plan)
-        super().__init__(_QML_FILE, bridge, parent=parent, size=(720, 520))
+        super().__init__(_QML_FILE, bridge, parent=parent, size=(540, 470))

@@ -916,54 +916,72 @@ def test_picker_row_states(blueprint_picker_factory):
         dialog.deleteLater()
 
 
-def test_picker_writes_through_and_caps_at_need(blueprint_picker_factory):
-    """勾选即落库；满额后再勾回滚并给橙色提示，且不再写库。"""
+def test_picker_defers_write_to_accept_and_caps_at_need(blueprint_picker_factory):
+    """**勾选阶段不写库、也不动行模型**；满额后再勾回滚并给橙色提示；写库只在「完成」。
+
+    缺陷背景（用户实测）：原实现每次勾选都 `bind_blueprints()` 落库 + `_rebuild()`
+    重算整个行模型，而 QML 那边 `model` 是普通 var 列表（不是 `QAbstractItemModel`）
+    → `ListView` 整体重建、**滚动位置回顶**：滑到中段勾第一格，列表直接跳回最顶端，
+    多选根本没法用。所以这里钉两条：
+      1. 勾选不写库（`writes` 保持为空，直到 `accept()`）；
+      2. 勾选不改行模型（`rows` 逐项不变 —— 它是 `constant=True` 的那个列表）。
+    """
     dialog = blueprint_picker_factory()
     try:
         bridge = dialog.bridge
-        # 构建期已按 DB 现状落一次库（自己绑定 1 张，需 2 张）
-        assert blueprint_picker_factory.writes[-1] == [1]
+        assert blueprint_picker_factory.writes == [], "打开弹窗不该写库（原实现会先按 DB 现状落一次）"
         assert bridge.selectedBlueprintIds == [1]
+        assert bridge.isChecked(0) is True and bridge.isChecked(1) is False
         assert bridge.statusToken == "ACCENT_RED"
         assert "还差 1 张" in bridge.statusText
 
-        bridge.toggle(1, True)
-        assert blueprint_picker_factory.writes[-1] == [1, 2]
+        rows_before = [dict(r) for r in bridge.rows]
+
+        bridge.toggle(1, True)  # 勾第 2 张
+        assert bridge.isChecked(1) is True
         assert bridge.statusToken == "GREEN"
         assert "已选 2 / 需 2 张" in bridge.statusText
+        assert blueprint_picker_factory.writes == [], "勾选阶段不许写库"
+        assert [dict(r) for r in bridge.rows] == rows_before, "勾选不该改行模型（改它 = ListView 重建 = 滚动回顶）"
 
-        writes_before = len(blueprint_picker_factory.writes)
         bridge.toggle(3, True)  # 第 3 张 → 超需，回滚
-        assert bridge.rows[3]["checked"] is False
+        assert bridge.isChecked(3) is False
         assert bridge.statusToken == "ACCENT_ORANGE"
-        assert "按需取前 2 张" in bridge.statusText
-        assert len(blueprint_picker_factory.writes) == writes_before, "回滚不该再写库"
+        assert "多勾的已取消" in bridge.statusText
+        assert blueprint_picker_factory.writes == [], "回滚更不该写库"
+
+        bridge.accept()
+        assert blueprint_picker_factory.writes == [[1, 2]], "「完成」才写库，且是这一次的勾选集"
     finally:
         dialog.deleteLater()
 
 
 def test_picker_batch_actions_and_accept(blueprint_picker_factory):
-    """右键批量：仅保留所选；绑定不足时「完成」要先本地确认一次。"""
+    """右键批量：勾选守 need 上限、仅保留所选；不足时「完成」要先本地确认一次（不写库）。"""
     dialog = blueprint_picker_factory()
     try:
         bridge = dialog.bridge
-        bridge.checkRows([1, 3])  # 批量勾选（占用行 2 会被 _bulk 跳过）
-        assert bridge.rows[1]["checked"] is True
-        assert bridge.rows[3]["checked"] is True
-        assert bridge.rows[2]["checked"] is False
+        bridge.checkRows([1, 3])  # 0 已勾、占用行 2 被 _bulk 跳过、3 超出 need 当场回滚
+        assert bridge.isChecked(1) is True
+        assert bridge.isChecked(3) is False, "批量勾选也要守 need 上限（不留「看着勾了其实没绑」的假勾选）"
+        assert bridge.isChecked(2) is False
+        assert "多勾的已取消" in bridge.statusText
+        assert blueprint_picker_factory.writes == []
 
         bridge.onlyKeep([0])  # 参数是**行号**（QML 的 selRows），返回值才是蓝图 id
         assert bridge.selectedBlueprintIds == [1]
-        assert bridge.rows[1]["checked"] is False
-        assert bridge.rows[3]["checked"] is False
+        assert bridge.isChecked(1) is False
+        assert bridge.isChecked(3) is False
 
         accepted: list[bool] = []
         bridge.accepted.connect(lambda: accepted.append(True))
-        bridge.accept()  # 1 < 需 2 → 只提示，不关闭
+        bridge.accept()  # 1 < 需 2 → 只提示，不关闭、不写库
         assert accepted == []
+        assert blueprint_picker_factory.writes == [], "确认那一步不该写库"
         assert "仍要关闭请再点一次" in bridge.error
         bridge.accept()
         assert accepted == [True]
+        assert blueprint_picker_factory.writes == [[1]]
     finally:
         dialog.deleteLater()
 

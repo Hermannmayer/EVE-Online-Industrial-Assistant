@@ -5,8 +5,16 @@ import "../components"
 
 /* 绑定库存蓝图（阶段 4）。
  *
- * 一条产线独占一张库存蓝图：勾选 parallels 张可用蓝图，**勾选即实时落库**
- * （勾选集 = 最终绑定集）。被其他活跃计划占用的行禁勾选；自己已绑定的默认勾选。
+ * 一条产线独占一张库存蓝图：勾选 parallels 张可用蓝图。
+ * 被其他活跃计划占用的行禁勾选；自己已绑定的默认勾选。
+ *
+ * **勾选阶段不落库，点「完成」才写**（2026-09-27 改）。原实现每次勾选都写库 + 让桥
+ * 重建整个行模型，而这里的 `model` 是普通 var 列表 → `ListView` 整体重建、滚动位置
+ * **回顶**：用户滑到中段勾第一格，列表直接跳回最顶端，多选根本没法用。现在：
+ *   1. 行数据是**常量**（`bridge.rows`），勾选不碰它 → 滚动位置不再被重置；
+ *   2. 勾选态由桥单独持有，`checkRevision` 心跳 + `bridge.isChecked(index)` 回读 ——
+ *      超需回滚、右键批量勾选都能同步回每个复选框；
+ *   3. 写库在 `accept()`（「完成」），「取消」/点 X 不写任何东西。
  *
  * 右键菜单对**选中行**批量操作（勾选 / 取消勾选 / 仅保留所选）。选中态是纯 UI
  * 状态，留在 QML（`selRows`）——桥只管「哪几张被勾上」这个业务事实。
@@ -26,8 +34,37 @@ FDialogFrame {
     property bool menuAnyChecked: false
 
     readonly property int colCheck: Math.round(36 * Theme.fontScale)
-    readonly property int colSmall: Math.round(56 * Theme.fontScale)
-    readonly property int colAvail: Math.round(90 * Theme.fontScale)
+
+    /* 文本列宽度：下标与 `bridge.headers` 一一对应
+     * （类型 / ME / TE / 可用流程 / 机库 / 状态），`-1` = 该列吸收剩余宽度。
+     * **表头与行共用这一份**，改一处两边同时对齐 —— 原先两边都写死 `colAvail`(90px)，
+     * 2 个字的「类型」也占 90px、而「机库/状态」挤在右侧，看着就是错位 + 不紧凑。
+     * 余量只给**最后一列**（状态）：放中间任何一列都会在表格中段留一条空档。 */
+    readonly property var colWidths: [
+        Math.round(52 * Theme.fontScale),
+        Math.round(44 * Theme.fontScale),
+        Math.round(44 * Theme.fontScale),
+        Math.round(86 * Theme.fontScale),
+        Math.round(96 * Theme.fontScale),
+        -1
+    ]
+    //: 各列对齐：数值列居中/靠右、文本列靠左（表头与行同口径）
+    readonly property var colAlign: [
+        Text.AlignLeft,
+        Text.AlignHCenter,
+        Text.AlignHCenter,
+        Text.AlignRight,
+        Text.AlignLeft,
+        Text.AlignLeft
+    ]
+
+    function colWidth(index) {
+        return index >= 0 && index < frame.colWidths.length ? frame.colWidths[index] : -1;
+    }
+
+    function colAlignOf(index) {
+        return index >= 0 && index < frame.colAlign.length ? frame.colAlign[index] : Text.AlignLeft;
+    }
 
     function tokenColor(token) {
         switch (token) {
@@ -47,10 +84,8 @@ FDialogFrame {
     function anySelectedChecked() {
         if (!frame.bp)
             return false;
-        const rows = frame.bp.rows;
         for (let i = 0; i < frame.selRows.length; ++i) {
-            const row = rows[frame.selRows[i]];
-            if (row && row.checked)
+            if (frame.bp.isChecked(frame.selRows[i]))
                 return true;
         }
         return false;
@@ -93,8 +128,9 @@ FDialogFrame {
                     required property var modelData
                     required property int index
 
-                    Layout.preferredWidth: index === frame.bp.headers.length - 1 ? -1 : frame.colAvail
-                    Layout.fillWidth: index === frame.bp.headers.length - 1
+                    Layout.preferredWidth: frame.colWidth(index)
+                    Layout.fillWidth: frame.colWidth(index) < 0
+                    horizontalAlignment: frame.colAlignOf(index)
                     text: modelData
                     color: Theme.textPrimary
                     font.family: Theme.fontFamily
@@ -179,12 +215,29 @@ FDialogFrame {
                         Layout.preferredWidth: frame.colCheck
                         Layout.fillHeight: true
 
+                        /* 勾选态由桥持有（超需回滚、右键批量都要能同步回来），QML 只负责画：
+                         * 初值取模型里的 `checked`（= 打开时的绑定集，行数据是常量，这条绑定
+                         * 不会被重建冲掉）；用户点一下 → 交给桥 → 再把桥的回读值写回自己
+                         * （`checked` 一旦被赋值就与初值绑定脱钩，这是 QML 的正常语义）。
+                         * `Connections` 那条心跳负责**别的行**改动引起的同步。 */
                         FCheckBox {
+                            id: checkBox
                             anchors.centerIn: parent
                             enabled: rowItem.modelData.checkable
                             checked: rowItem.modelData.checked
-                            onToggled: if (frame.bp)
-                                frame.bp.toggle(rowItem.index, checked)
+                            onToggled: {
+                                if (!frame.bp)
+                                    return
+                                frame.bp.toggle(rowItem.modelData.index, checked)
+                                checkBox.checked = frame.bp.isChecked(rowItem.modelData.index)
+                            }
+
+                            Connections {
+                                target: frame.bp
+                                function onCheckRevisionChanged() {
+                                    checkBox.checked = frame.bp ? frame.bp.isChecked(rowItem.modelData.index) : false
+                                }
+                            }
                         }
                     }
 
@@ -195,8 +248,9 @@ FDialogFrame {
                             required property var modelData
                             required property int index
 
-                            Layout.preferredWidth: index === rowItem.modelData.cells.length - 1 ? -1 : frame.colAvail
-                            Layout.fillWidth: index === rowItem.modelData.cells.length - 1
+                            Layout.preferredWidth: frame.colWidth(index)
+                            Layout.fillWidth: frame.colWidth(index) < 0
+                            horizontalAlignment: frame.colAlignOf(index)
                             verticalAlignment: Text.AlignVCenter
                             text: modelData.text
                             color: rowItem.modelData.disabled

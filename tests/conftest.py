@@ -1,8 +1,12 @@
 """pytest 共享配置与 fixtures"""
 
+import json
+import os
 import shutil
 import sqlite3
+import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +17,196 @@ from PySide6.QtWidgets import QApplication
 #   fast  = 纯计算/轻服务白名单
 #   ui    = Qt 界面 + 真 QThread
 # validate = -m "not ui"，ui-retest = -m "ui"，二者互斥覆盖全部用例。
+
+
+# ════════════════════════════════════════════════════════════════
+#  跑测账本：把「一次任务跑一次测试」变成一道可执行的门
+# ════════════════════════════════════════════════════════════════
+#
+# 约定（CLAUDE.md「测试边界」）原先只有散文，没有任何执行点 —— 同一档被跑第二遍、
+# `--lf` 在没有失败项时退化成**整档**、两个整档同时对撞（实测两个 `-m ui` 一起卡在
+# QQuickWidget 死锁上白烧十几分钟），这些都只在「事后自述」里才看得见。这里补三道闸：
+#
+#   1. 重复闸：同一档（同一 marker 整档 / 同一组文件）窗口期内已跑绿 → 拒绝启动；
+#   2. 并发闸：已有整档在跑 → 拒绝再起整档（点名不同文件仍可并行）；
+#   3. `--lf` 空缓存：它会退化成整档跑 → 直接拒绝。
+#
+# CLAUDE.md 明文允许的例外**不受闸限制**：单文件（TDD 迭代）、`-k`、具体 node id、
+# 有失败项的 `--lf`。账本落在 `.pytest_cache/`（已 gitignore）。
+# 逃生：`EVE_TEST_RERUN=1` 放行重复闸；`EVE_TEST_LEDGER=0` 整关。
+# CI 每个 job 只跑一次 `pytest tests/`，不受影响。
+
+_LEDGER_DIR = Path(__file__).resolve().parent.parent / ".pytest_cache"
+_LEDGER_FILE = _LEDGER_DIR / "eve_test_ledger.jsonl"
+_ACTIVE_DIR = _LEDGER_DIR / "eve_test_active"
+_REPEAT_WINDOW_S = 30 * 60
+_ACTIVE_STALE_S = 2 * 60 * 60
+_STATE: dict = {}
+
+
+def _opt(config, name, default=None):
+    """取 pytest 选项；插件被禁用（如 `-p no:cacheprovider`）时不炸。"""
+    try:
+        return config.getoption(name)
+    except Exception:
+        return default
+
+
+def _targets(config) -> list[str]:
+    return [str(a) for a in config.args if not str(a).startswith("-")]
+
+
+def _is_whole(config) -> bool:
+    targets = _targets(config)
+    return not targets or targets in (["tests"], ["tests/"])
+
+
+def _run_key(config) -> str:
+    """档位键：整档按 marker 表达式的原文分，点名按文件集合分。"""
+    expr = " ".join(str(_opt(config, "markexpr") or "").split())
+    if expr:
+        return f"marker:{expr}" if _is_whole(config) else "files:" + "|".join(sorted(_targets(config)))
+    return "full" if _is_whole(config) else "files:" + "|".join(sorted(_targets(config)))
+
+
+def _is_narrow(config) -> bool:
+    """CLAUDE.md 明文允许的例外：单文件 TDD、`-k`、具体 node id、有失败项的 `--lf`。"""
+    if _opt(config, "lf") or _opt(config, "keyword"):
+        return True
+    targets = _targets(config)
+    if any("::" in t for t in targets):
+        return True
+    return len(targets) == 1 and targets[0].endswith(".py")
+
+
+def _ledger_rows() -> list[dict]:
+    try:
+        text = _LEDGER_FILE.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    rows = []
+    for line in text.splitlines():
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            continue
+    return rows
+
+
+def _active_rows() -> list[dict]:
+    """当前活跃的跑测记录；顺手清掉被强杀留下的僵尸条目。"""
+    if not _ACTIVE_DIR.is_dir():
+        return []
+    now = time.time()
+    rows = []
+    for path in list(_ACTIVE_DIR.glob("*.json")):
+        try:
+            row = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if now - float(row.get("started") or 0) > _ACTIVE_STALE_S:
+            path.unlink(missing_ok=True)
+            continue
+        rows.append(row)
+    return rows
+
+
+def _hhmm(ts) -> str:
+    return time.strftime("%H:%M:%S", time.localtime(float(ts or 0)))
+
+
+def _refuse(reason: str) -> None:
+    pytest.exit(
+        f"\n[跑测账本] {reason}\n"
+        "  约定见 CLAUDE.md「测试边界」；逃生："
+        "EVE_TEST_RERUN=1（放行重复闸）/ EVE_TEST_LEDGER=0（整关）\n",
+        returncode=2,
+    )
+
+
+def _drop_active_entry() -> None:
+    entry = _STATE.pop("entry", None)
+    if entry is None:
+        return
+    try:
+        entry.unlink(missing_ok=True)
+    except OSError as exc:
+        print(f"[跑测账本] 摘除活跃标记失败：{exc}", file=sys.stderr)
+
+
+def _enter_test_run_gate(config) -> None:
+    if os.environ.get("EVE_TEST_LEDGER") == "0" or _opt(config, "collectonly"):
+        return
+    key = _run_key(config)
+    narrow = _is_narrow(config)
+    whole = _is_whole(config)
+
+    cache = getattr(config, "cache", None)
+    lastfailed = (cache.get("cache/lastfailed", {}) or {}) if cache is not None else {}
+    if _opt(config, "lf") and not lastfailed:
+        _refuse("`--lf` 现在没有失败项可跑 —— pytest 会退化成**整档**跑（踩过这个坑）。请点名 node id，或先让它红。")
+
+    for row in _active_rows():
+        if row.get("key") == key:
+            _refuse(f"同一档已经在跑：{key}（pid {row.get('pid')}，起于 {_hhmm(row.get('started'))}）。")
+        if whole and row.get("whole"):
+            _refuse(
+                f"已有整档在跑（{row.get('key')}，pid {row.get('pid')}，起于 {_hhmm(row.get('started'))}）"
+                "—— 两个整档对撞只会互相拖慢，Qt 档还会一起卡死。等它跑完，或点名不同文件并行。"
+            )
+
+    if not narrow and not os.environ.get("EVE_TEST_RERUN"):
+        now = time.time()
+        for row in reversed(_ledger_rows()):
+            if float(row.get("ts") or 0) < now - _REPEAT_WINDOW_S:
+                break
+            if row.get("key") == key and row.get("ok"):
+                _refuse(
+                    f"这一档刚跑绿过：{key} @ {_hhmm(row.get('ts'))}（{row.get('summary')}）。"
+                    "「一次任务跑一次测试」—— 不要为「确认一下没坏」重跑已经绿过的档。"
+                )
+
+    _ACTIVE_DIR.mkdir(parents=True, exist_ok=True)
+    entry = _ACTIVE_DIR / f"{os.getpid()}.json"
+    entry.write_text(
+        json.dumps({"pid": os.getpid(), "key": key, "whole": whole, "started": time.time()}), encoding="utf-8"
+    )
+    _STATE.update(entry=entry, key=key, narrow=narrow)
+
+
+def _leave_test_run_gate(session, exitstatus) -> None:
+    _drop_active_entry()
+    key = _STATE.pop("key", None)
+    narrow = _STATE.pop("narrow", False)
+    if key is None or narrow:
+        return  # 例外档（单文件 / -k / node id / --lf）不入账，免得挡住后续
+    collected = int(getattr(session, "testscollected", 0) or 0)
+    failed = int(getattr(session, "testsfailed", 0) or 0)
+    ok = int(exitstatus) == 0 and not failed
+    summary = f"{collected - failed} passed" if ok else f"{failed} failed / exit {int(exitstatus)}（{collected} 条）"
+    try:
+        _LEDGER_DIR.mkdir(parents=True, exist_ok=True)
+        with _LEDGER_FILE.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"ts": time.time(), "key": key, "ok": bool(ok), "summary": summary}) + "\n")
+    except OSError as exc:
+        print(f"[跑测账本] 写账本失败：{exc}", file=sys.stderr)
+
+
+def pytest_sessionstart(session) -> None:
+    try:
+        _enter_test_run_gate(session.config)
+    except BaseException:
+        _drop_active_entry()
+        raise
+
+
+def pytest_sessionfinish(session, exitstatus) -> None:
+    """只在**测试真的跑过**时记账 —— 收集期就退出的（UsageError / 收集失败）不算一次跑测。"""
+    if _opt(session.config, "collectonly"):
+        _drop_active_entry()
+        _STATE.clear()
+        return
+    _leave_test_run_gate(session, exitstatus)
 
 
 @pytest.fixture(autouse=True)
