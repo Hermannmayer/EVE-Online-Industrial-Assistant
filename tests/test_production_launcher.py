@@ -1206,12 +1206,39 @@ class TestRowActionDispatching:
 # ═══════════════════════════════════════════════════
 
 
-def test_show_reasserts_the_pin(qapp, monkeypatch):
-    """窗口显示时必须重申置顶 —— 与采购小助手同一条。
+def test_pin_is_session_only_and_never_restored(qapp, monkeypatch):
+    """置顶**只对本次会话有效**：构造时不置顶（旧 settings 里的 true 不再被恢复），`set_pinned` 不落盘。
 
-    `_restore_pin` 只在构造时设过置顶，而那一刻窗口还没显示（SetWindowPos 作用在一个
+    回归背景：旧实现把 `production_launcher_pin` 写进 `data/settings.json`、构造时 `_restore_pin()`
+    读回来 —— 于是「上次勾过置顶」会让小助手每次打开都压在游戏之上。
+    """
+    from services import user_settings
+
+    # 旧配置里的键还是 true：不许再被读回来
+    monkeypatch.setattr(user_settings, "load_settings", lambda: {"production_launcher_pin": True})
+    saved: list[dict] = []
+    monkeypatch.setattr(user_settings, "save_settings", lambda values: saved.append(dict(values)))
+
+    w, _ = _make_launcher(qapp, monkeypatch)
+    try:
+        assert w.is_pinned() is False, "旧 settings 里的 production_launcher_pin 不该再被恢复"
+        w.set_pinned(True)
+        assert w.is_pinned() is True, "点过置顶后本次会话内要生效"
+        assert saved == [], "置顶不该再落盘（save_settings 一次都不该被调）"
+        w.set_pinned(False)
+        assert w.is_pinned() is False
+        assert saved == []
+    finally:
+        w.close()
+
+
+def test_show_reasserts_the_pin(qapp, monkeypatch):
+    """置顶态下窗口显示时必须重申置顶 —— 与采购小助手同一条。
+
+    为什么非重申不可：`set_pinned` 那一刻窗口可能还没显示（SetWindowPos 作用在一个
     随后会被 Qt 重新定位、显示的平台窗口上）；`QWindow.raise_()` 又是 `SetWindowPos(HWND_TOP)`。
     两者都可能让置顶在用户真正看到窗口之前丢掉，表现是「勾着置顶却没置顶，再点一次才好」。
+    `pinned=False` 时它是空操作（见 `test_reassert_pin_only_touches_the_window_when_pinned`）。
     """
     w, _ = _make_launcher(qapp, monkeypatch)
     try:

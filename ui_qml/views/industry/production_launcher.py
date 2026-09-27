@@ -238,7 +238,7 @@ class ProductionLauncher(QObject):
         # ── QML 渲染状态（阶段 2c：四个区都交给 QML，这里只存数据） ──
         self._line_filter_index = 0  # 0 = 全部
         self._char_filter_index = 0  # 0 = 全部人物
-        self._pinned = False
+        self._pinned = False  # 只记本次会话的置顶态，不持久化：窗口一律不置顶启动
         self._filter_summary = ""
         self._occ_summary = ""
         self._occ_rows: list[dict] = []
@@ -268,7 +268,6 @@ class ProductionLauncher(QObject):
         self._poll_timer.start()
 
         self._on_poll()
-        self._restore_pin()
 
     # ── 窗口 ────────────────────────────────────────────
     #
@@ -437,27 +436,10 @@ class ProductionLauncher(QObject):
             return
         self._pinned = bool(value)
         # 置顶作用在**窗口**上，不是控制器上（`apply_window_pin` 两种窗口都吃）。
+        # ⚠️ 只改本次会话状态，**不落盘**：窗口一律以不置顶启动，见 `_pinned` 的初始化注释。
         if self._window is not None:
             apply_window_pin(self._window, self._pinned)
-        from services.user_settings import save_settings
-
-        try:
-            save_settings({"production_launcher_pin": self._pinned})
-        except Exception:
-            log.exception("保存产线小助手置顶偏好失败")
         self._notify_toolbar()
-
-    def _restore_pin(self) -> None:
-        try:
-            from services.user_settings import load_settings
-
-            if load_settings().get("production_launcher_pin"):
-                self._pinned = True
-                if self._window is not None:
-                    apply_window_pin(self._window, True)
-                self._notify_toolbar()
-        except Exception:
-            log.exception("恢复产线小助手置顶偏好失败")
 
     # ── L2 折叠 ──────────────────────────────────────────
 

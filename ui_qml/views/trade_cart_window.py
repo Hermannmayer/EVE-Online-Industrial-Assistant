@@ -32,7 +32,6 @@ __all__ = ["MODE_LABELS", "TradeCartController", "group_key_of", "group_label_of
 
 _QML_FILE = "pages/TradeCartWindow.qml"
 _CART_VERSION = 1
-_PIN_KEY = "trade_cart_pin"
 
 #: 价格类型 → 界面文案（与贸易页的两个下拉一致）
 MODE_LABELS = {"buy": "买单", "sell": "卖单"}
@@ -72,11 +71,10 @@ class TradeCartController(QObject):
         self._bridge: Any = None
         self._items: list[dict] = []
         self._groups: list[dict] = []
-        self._pinned = False
+        self._pinned = False  # 只记本次会话的置顶态，不持久化：窗口一律不置顶启动
         self._hint = ""
         self._load()
         self._rebuild()
-        self._restore_pin()
 
     # ── 读 ──────────────────────────────────────────────────
 
@@ -369,26 +367,10 @@ class TradeCartController(QObject):
         return bool(self._pinned)
 
     def set_pinned(self, checked: bool) -> None:
+        """只改本次会话状态 —— 不落盘，窗口一律以不置顶启动（见 `_pinned` 的初始化注释）。"""
         self._pinned = bool(checked)
         if self._window is not None:
             apply_window_pin(self._window, self._pinned)
-        try:
-            from services.user_settings import save_settings
-
-            save_settings({_PIN_KEY: self._pinned})
-        except Exception:
-            log.warning("保存购物车置顶偏好失败", exc_info=True)
-
-    def _restore_pin(self) -> None:
-        try:
-            from services.user_settings import load_settings
-
-            if load_settings().get(_PIN_KEY):
-                self._pinned = True
-                if self._window is not None:
-                    apply_window_pin(self._window, True)
-        except Exception:
-            log.warning("读取购物车置顶偏好失败", exc_info=True)
 
     def window_visibility_changed(self, visible: bool) -> None:
         """QML 的 `onVisibleChanged` 转发过来（窗口显示后重申一次置顶）。"""

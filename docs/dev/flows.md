@@ -187,10 +187,13 @@ services/logistics.py
     按 `Σ(列宽+cellPadding 12) + 12 + 80` 估表格，再量工具栏那行的 `implicitWidth`（实测 ~753px），
     两者取大。护栏：`test_procurement_tab.py::test_table_stays_narrow_enough_to_fit_the_window`。
 - **工具窗的置顶要在显示/前置时重申**（`pin_utils.reassert_pin`，采购小助手与产线启动小助手共用）：
-  `apply_window_pin` 在**构造时**就跑过一次，那一刻窗口还没显示；而 `QWindow.raise_()` 在 Windows 上是
-  `SetWindowPos(HWND_TOP)` —— 不带 `HWND_TOPMOST` 的插入位置。两者都可能让置顶在用户真正看到窗口之前丢掉，
+  窗口刚构造时还没显示，置顶是在显示那一刻才第一次真正设上去；而 `QWindow.raise_()` 在 Windows 上是
+  `SetWindowPos(HWND_TOP)` —— 不带 `HWND_TOPMOST` 的插入位置，可能让置顶在用户真正看到窗口之前丢掉，
   表现是「勾着置顶却没置顶，再点一次才好」。所以 `window_visibility_changed(True)` 与置顶态下的 `raise_()`
   都重申一次（幂等、一次 Win32 调用）。
+- **置顶不持久化（只对本次会话有效）**：窗口一律以**不置顶**启动，只有点了置顶按钮才置顶。
+  `self._pinned` 构造时恒为 `False`，`set_pinned(...)` 只改会话状态、**不写 settings**；
+  旧配置里的 `*_pin` 键不再读写（残留值是死数据，不删用户配置）。
 - **启动成本快照**（`production_plans.material_cost_snapshot`，schema v12→v13）：`start_plan` 在**扣减之前、事务之外**采样机库加权单价，写入 `{"total": 总成本, "unit": {type_id: 单价}}`：
   - 两个「之前」都是硬约束 —— `deduct_item` 把余量清到 0 会删行（扣完再取价得 0）；`db.connect()` 同线程复用连接、嵌套 with 退出会提前 commit（在事务内取价会毁掉「失败整体回滚」）
   - `complete_plan` 按快照 `total` 算成品入库单价；`cancel_plan` 按快照 `unit` 返还成本 —— 都是**启动那一刻**的口径，不受在产期间价格重算影响

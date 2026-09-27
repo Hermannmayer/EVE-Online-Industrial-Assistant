@@ -1,9 +1,9 @@
 """外壳状态与价格 worker 的护栏。
 
 原先这些用例测的是 `ui_pyside6.main_window.MainWindow`；批次 6.2 把 Widgets 外壳删掉后
-改指 `ui_qml.shell_window.ShellWindow` —— **测的行为一条没变**（状态序列化、置顶持久化、
-价格检查的间隔判定），只是宿主换了。NAV_TREE 与图标那几组随 Widgets 控件一起删掉：
-导航现在是 QML 的，等价断言在 `tests/test_qml_shell.py`（导航条目、图标映射）。
+改指 `ui_qml.shell_window.ShellWindow` —— **测的行为一条没变**（状态序列化、价格检查的间隔判定），
+只是宿主换了；置顶那条已按「只对本次会话有效、不落盘」的新口径重写。NAV_TREE 与图标那几组随 Widgets
+控件一起删掉：导航现在是 QML 的，等价断言在 `tests/test_qml_shell.py`（导航条目、图标映射）。
 
 `needs_price_update` 的间隔判定是**纯函数**，与本仓踩过的坑直接相关
 （「数据 ≥ 间隔−60s 触发」是为了消除严格 `>` 导致的 2× 周期跳过），必须留着。
@@ -113,21 +113,39 @@ class TestShellState:
         """空 / None / 未知页面 key 均不崩溃。"""
         shell.restore_state(state)
 
-    def test_pin_persists_across_windows(self, shell, app, mock_db, monkeypatch):
-        """置顶开关要落到 settings 并能读回来。"""
-        monkeypatch.setattr(ShellWindow, "_init_price_check", lambda self: None)
-        shell.set_pinned(True)
-        assert shell.is_pinned() is True
+    def test_pin_is_session_only_and_never_restored(self, shell, app, mock_db, monkeypatch):
+        """置顶开关现在**只对本次会话有效**：不落盘，也不从 settings 读回来。
+
+        回归背景：旧实现把 `window_pin` 写进 `data/settings.json`、构造时 `_load_window_pin()`
+        读回来 —— 于是「上次勾过置顶」会让窗口**每次启动就压在游戏之上**。现在窗口一律以
+        不置顶启动，只有点了置顶按钮才置顶。
+        """
+        from services import user_settings
+
+        # 旧配置里这个键还是 true（本机真实配置就是如此）：不许再被读回来
+        monkeypatch.setattr(user_settings, "load_settings", lambda: {"window_pin": True})
+        saved: list[dict] = []
+        monkeypatch.setattr(user_settings, "save_settings", lambda values: saved.append(dict(values)))
 
         again = ShellWindow()
         try:
-            assert again.is_pinned() is True, "置顶状态没持久化"
+            assert again.is_pinned() is False, "旧 settings 里的 window_pin 不该再被恢复"
         finally:
             again.close()
             again.deleteLater()
 
+        assert shell.is_pinned() is False, "构造时一律不置顶"
+        shell.set_pinned(True)
+        assert shell.is_pinned() is True
+        assert saved == [], "置顶不该再落盘（save_settings 一次都不该被调）"
+
         shell.set_pinned(False)
         assert shell.is_pinned() is False
+        assert saved == []
+
+        # 其余设置照旧落盘，但**不再**带 `window_pin` 键（写了就等于又持久化了置顶）
+        shell.set_auto_update(True)
+        assert saved and "window_pin" not in saved[-1], f"设置里不该再有 window_pin：{saved[-1]}"
 
 
 class TestMaximizeDrag:

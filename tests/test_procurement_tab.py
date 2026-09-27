@@ -585,14 +585,38 @@ class TestCompleteAllReload:
 
 
 # ═══════════════════════════════════════════════════
-#  置顶：显示 / 前置时重申
+#  置顶：只对本次会话有效 / 显示与前置时重申
 #
-#  回归背景：`_restore_pin` 只在**构造时**设过一次置顶，而那一刻窗口还没显示
-#  （SetWindowPos 作用在一个随后会被 Qt 重新定位、显示的平台窗口上）；而
-#  `QWindow.raise_()` 在 Windows 上是 `SetWindowPos(HWND_TOP)` —— 不带 HWND_TOPMOST
-#  的插入位置。用户看到的是「勾着置顶却没置顶，再点一次才好」。
-#  现在这两条路径都重申一次，幂等、一次 Win32 调用。
+#  回归背景之一（会话态）：置顶曾被写进 `data/settings.json` 并在构造时读回来，
+#  本机真实配置里 `procurement_pin` 就是 true —— 于是采购小助手每次打开都自动
+#  压在游戏之上。现在窗口一律以不置顶启动，只有点了置顶按钮才置顶。
+#
+#  回归背景之二（重申）：`set_pinned` 可能在窗口还没显示时执行（SetWindowPos 作用在
+#  一个随后会被 Qt 重新定位、显示的平台窗口上）；而 `QWindow.raise_()` 在 Windows 上是
+#  `SetWindowPos(HWND_TOP)` —— 不带 HWND_TOPMOST 的插入位置。用户看到的是
+#  「勾着置顶却没置顶，再点一次才好」。现在这两条路径都重申一次，幂等、一次 Win32 调用。
 # ═══════════════════════════════════════════════════
+
+
+def test_pin_is_session_only_and_never_restored(qapp, make_dlg, monkeypatch):
+    """构造时一律不置顶（旧 settings 里的 true 不再被恢复），`set_pinned` 只改会话状态。"""
+    from services import user_settings
+
+    # 旧配置里的键还是 true：不许再被读回来
+    monkeypatch.setattr(user_settings, "load_settings", lambda: {"procurement_pin": True})
+    saved: list[dict] = []
+    monkeypatch.setattr(user_settings, "save_settings", lambda values: saved.append(dict(values)))
+
+    dlg = make_dlg()
+    assert dlg.pinned() is False, "旧 settings 里的 procurement_pin 不该再被恢复"
+
+    dlg.set_pinned(True)
+    assert dlg.pinned() is True, "点过置顶后本次会话内要生效"
+    assert saved == [], "置顶不该再落盘（save_settings 一次都不该被调）"
+
+    dlg.set_pinned(False)
+    assert dlg.pinned() is False
+    assert saved == []
 
 
 def test_reassert_pin_only_touches_the_window_when_pinned(monkeypatch):

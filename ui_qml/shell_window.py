@@ -336,7 +336,9 @@ class ShellWindow(QQuickView):
         self._update_regions: list[str] = self._load_update_regions()
         self._update_interval_minutes = self._load_interval()
         self._auto_update_enabled = self._load_auto_update()
-        self._pinned = self._load_window_pin()
+        # 只记本次会话的置顶态，**不持久化**：窗口一律以不置顶启动，只有点了置顶按钮才置顶。
+        # 旧配置里的 `window_pin` 键不再读写（残留值就是死数据，不去删用户配置）。
+        self._pinned = False
         self._price_timer: QTimer | None = None
         self._price_worker: Any = None
         self._check_worker: Any = None
@@ -1032,11 +1034,6 @@ class ShellWindow(QQuickView):
                 return valid
         return ["Jita"]
 
-    def _load_window_pin(self) -> bool:
-        from services.user_settings import load_settings
-
-        return bool(load_settings().get("window_pin", False))
-
     # ── 标题栏拖动（最大化即还原并跟手）───────────────────────
 
     def moveEvent(self, event: Any) -> None:
@@ -1139,7 +1136,6 @@ class ShellWindow(QQuickView):
                     "update_interval": self._update_interval_minutes,
                     "auto_update_enabled": self._auto_update_enabled,
                     "update_regions": list(self._update_regions),
-                    "window_pin": self._pinned,
                 }
             )
         except Exception as e:
@@ -1151,9 +1147,9 @@ class ShellWindow(QQuickView):
         return self._pinned
 
     def set_pinned(self, pinned: bool) -> None:
+        """只改本次会话状态 —— 不落盘，窗口一律以不置顶启动（见 `_pinned` 的初始化注释）。"""
         self._pinned = bool(pinned)
         self._apply_pin(self._pinned)
-        self._save_settings()
         self._bridge.notify()
 
     def _apply_pin(self, checked: bool) -> None:

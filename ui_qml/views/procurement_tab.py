@@ -81,13 +81,12 @@ class ProcurementDialog(QObject):
         self._summary_text = ""
         self._copy_hint_text = ""
         self._complete_all_text = ""
-        self._pinned = False
+        self._pinned = False  # 只记本次会话的置顶态，不持久化：窗口一律不置顶启动
         self._poll_timer: QTimer | None = None
         self._copy_hint_timer: QTimer | None = None
 
         self._build_window()
         self._reload_plans()
-        self._restore_pin()
 
     # ── 窗口 ──────────────────────────────────────────────────
     #
@@ -235,14 +234,9 @@ class ProcurementDialog(QObject):
     def set_pinned(self, checked: bool) -> None:
         self._pinned = bool(checked)
         # 置顶作用在**窗口**上，不是控制器上（`apply_window_pin` 两种窗口都吃）。
+        # ⚠️ 只改本次会话状态，**不落盘**：窗口一律以不置顶启动，见 `_pinned` 的初始化注释。
         if self._window is not None:
             apply_window_pin(self._window, self._pinned)
-        try:
-            from services.user_settings import save_settings
-
-            save_settings({"procurement_pin": self._pinned})
-        except Exception:
-            log.warning("保存采购窗置顶偏好失败", exc_info=True)
         self._notify()
 
     def complete_all_text(self) -> str:
@@ -347,20 +341,6 @@ class ProcurementDialog(QObject):
             self._reload_plans()
         except Exception:
             log.exception("待采购轮询失败")
-
-    # ── 置顶 ──────────────────────────────────────────────
-
-    def _restore_pin(self) -> None:
-        try:
-            from services.user_settings import load_settings
-
-            if load_settings().get("procurement_pin"):
-                self._pinned = True
-                if self._window is not None:
-                    apply_window_pin(self._window, True)
-                self._notify()
-        except Exception:
-            log.warning("读取采购窗置顶偏好失败", exc_info=True)
 
     # ── 计算 ──────────────────────────────────────────────
 
