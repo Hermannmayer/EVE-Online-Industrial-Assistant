@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import os
 
+import pytest
 from PySide6.QtCore import Qt
 
 from ui_qml.icon_cache import item_icon_path
 from ui_qml.models import EstimateQmlModel
 from ui_qml.models.estimate_qml_model import ROLE_NAMES, _icon_url
+
+#: 本模块 import 了 PySide6 与 QML 模型 —— 归 `ui` 档（`validate` 是「不碰 Qt」那档）。
+pytestmark = pytest.mark.ui
 
 # 按名字取角色号的便捷映射（测试里反复用）
 ROLE = {name.decode(): role for role, name in ROLE_NAMES.items()}

@@ -35,6 +35,8 @@ _STATUS_KEY = Qt.ItemDataRole.UserRole + 7
 _FOLD_STATE = Qt.ItemDataRole.UserRole + 9
 _TOOLTIP = Qt.ItemDataRole.UserRole + 11
 
+pytestmark = pytest.mark.ui
+
 
 def _plan(**kw) -> dict:
     base = {

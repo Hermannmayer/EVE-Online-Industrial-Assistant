@@ -21,6 +21,8 @@ from ui_qml.models.query_detail_model import (
 
 _HUBS = ["Jita", "Amarr", "Dodixie", "Rens", "Hek"]
 
+pytestmark = pytest.mark.ui
+
 
 def _snap(buy: float, sell: float) -> dict:
     return {"buy": buy, "sell": sell, "buy_volume": 1, "sell_volume": 1}

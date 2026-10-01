@@ -11,9 +11,14 @@ from __future__ import annotations
 
 from typing import cast
 
+import pytest
+
 from tests.qml_click import spin
 from ui_qml.bridge import hangar_settings_bridge as hsb
 from ui_qml.bridge.hangar_settings_bridge import HangarSettingsBridge
+
+#: 本模块 import 了 QML 桥与 `qml_click`（真 QThread）—— 归 `ui` 档。
+pytestmark = pytest.mark.ui
 
 #: 与 Widgets 版同名测试文件里的 DEFAULT_CFG 同形（未配置任何设施）
 DEFAULT_CFG: dict = {

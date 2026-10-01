@@ -15,6 +15,8 @@ from ui_qml.views import trade_cart_window as tcw
 
 JITA, AMARR = "Jita", "Amarr"
 
+pytestmark = pytest.mark.ui
+
 
 @pytest.fixture
 def cart(tmp_path, monkeypatch):

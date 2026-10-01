@@ -25,6 +25,8 @@ _MONO = _BASE + 6
 _WATCH_ID = _BASE + 8
 _ITEM_NAME = _BASE + 9
 
+pytestmark = pytest.mark.ui
+
 
 def _row(
     wid: int = 1,

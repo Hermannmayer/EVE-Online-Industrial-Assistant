@@ -34,6 +34,8 @@ _CHG_COL = 8
 _ACTION_COL = len(COLUMNS) - 1
 _NAME_COL = 1
 
+pytestmark = pytest.mark.ui
+
 
 def _row(
     tid: int = 34,

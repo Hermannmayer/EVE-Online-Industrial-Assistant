@@ -29,6 +29,8 @@ from ui_qml.bridge.init_wizard_bridge import InitWizardQmlDialog, format_elapsed
 #  替身：初始化线程
 # ════════════════════════════════════════════════════════════════
 
+pytestmark = pytest.mark.ui
+
 
 class _StubWorker(QObject):
     """`InitServiceWorker` 的同步替身：信号与签名照抄（少一个，桥 connect 时就 AttributeError）。

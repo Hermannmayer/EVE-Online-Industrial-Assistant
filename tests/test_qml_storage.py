@@ -40,6 +40,8 @@ _B_FG = _BASE + 2
 _B_ALIGN = _BASE + 4
 _B_NAME = _BASE + 7
 
+pytestmark = pytest.mark.ui
+
 
 def _item(iid: int = 1, tid: int = 34, qty: int = 100, cost: float = 5.0) -> dict:
     return {

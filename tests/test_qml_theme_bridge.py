@@ -18,6 +18,8 @@ from tests.test_theme_registry import _COLOR_KEYS
 from ui_qml.bridge import CONTEXT_NAME, ThemeBridge, theme_singleton
 from ui_qml.bridge.theme_bridge import COLOR_TOKENS
 
+pytestmark = pytest.mark.ui
+
 
 def test_color_tokens_match_registry_schema():
     """桥暴露的颜色 token 必须与主题注册表的 schema 完全一致（单一来源）。"""

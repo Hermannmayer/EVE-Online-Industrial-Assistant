@@ -28,6 +28,8 @@ from ui_qml.bridge.batch_price_bridge import (
 #  替身：搜索与查价线程
 # ════════════════════════════════════════════════════════════════
 
+pytestmark = pytest.mark.ui
+
 
 def _result(name: str, *, buy: float = 4.0, sell: float = 5.0, not_found: bool = False) -> dict:
     """一行查询结果（字段与原 `BatchPriceWorker._query_one` 的输出同构）。
