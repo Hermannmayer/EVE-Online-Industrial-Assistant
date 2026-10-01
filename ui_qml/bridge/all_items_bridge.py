@@ -47,7 +47,7 @@ from ui_qml.dialog_host import DialogBridge, QmlDialog
 from ui_qml.models.all_items_models import BCOLS, DASH, MCOLS, TCOLS, Proxy
 from ui_qml.models.all_items_qml_model import AllItemsQmlModel, icon_url
 from ui_qml.workers.all_items_workers import JITA_RID, ItemsW, SearchItemsW, TreeW
-from ui_qml.workers.lifecycle import drop_worker
+from ui_qml.workers.lifecycle import detach_worker, drop_worker
 from ui_qml.workers.score_worker import ScoreW
 
 __all__ = [
@@ -310,6 +310,13 @@ class AllItemsBridge(DialogBridge):
         self._filt: list[dict] = []
         self._mfg: dict[str, Any] = {"hub": "Jita", "char": "main", "tax": 0}
         self._trade: dict[str, Any] = {"bh": "Amarr", "sh": "Jita", "bs": "sell", "ss": "sell", "char": "main"}
+        #: 价格查询区域（查询页右上角那个下拉）。原先 `_reload_items` / `_do_search`
+        #: **硬编码** `JITA_RID`，所以换区域对它毫无影响 —— 用户报的「右上角选价格区域
+        #: 对全物品不生效」就是这个。现在由 `QueryBridge.setRegionIndex` 经 `setRegionId` 转发。
+        self._region_id = JITA_RID
+        #: 当前列表对应的分类 id 集合（`None` = 全量）。换价格区域时按**同一批 id**
+        #: 重取，而不是退回全量 —— 否则切个区域就把用户选中的分类丢了。
+        self._cur_ids: list[Any] | None = None
         self._load_settings()
 
         self._show_m = False
@@ -395,6 +402,29 @@ class AllItemsBridge(DialogBridge):
     sortAscending = Property(bool, lambda self: self._sort_ascending, notify=sortChanged)
 
     # ── 顶栏 / 筛选 ──────────────────────────────────────────
+
+    @Slot(int)
+    def setRegionId(self, region_id: int) -> None:
+        """换价格区域（查询页右上角那个下拉转发进来的）。
+
+        **三处 hub 都要跟着换**：`_mfg["hub"]`（制造评分的材料/成品中心）与
+        `_trade["bh"]/["sh"]`（贸易评分的买/卖中心）。只换 `_region_id` 的话，
+        基础价格列变了、评分列还是旧区域的 —— 两列会自相矛盾。
+
+        换完按**同一批 id** 重取（`_cur_ids`），不退回全量：那会把用户选中的分类丢掉。
+        """
+        rid = int(region_id) or JITA_RID
+        if rid == self._region_id:
+            return
+        self._region_id = rid
+        from core.constants import TRADE_HUB_IDS
+
+        hub = next((h for h, r in TRADE_HUB_IDS.items() if r == rid), None)
+        if hub:
+            self._mfg["hub"] = hub
+            self._trade["bh"] = hub
+            self._trade["sh"] = hub
+        self._reload_items(self._cur_ids)
 
     @Slot(str)
     def setSearchText(self, text: str) -> None:
@@ -512,6 +542,10 @@ class AllItemsBridge(DialogBridge):
         ids = subtree_ids(self._tree_all, node_id)
         if not ids:
             return
+        # 同一节点重复点（连点、或双击里多出来的那一次）直接返回：再跑一遍
+        # `_reload_items` 只会白等 `drop_worker` 的 2 秒，而且结果一模一样。
+        if int(node_id) == self._selected_tree_id and self._cur_ids is not None:
+            return
         self._selected_tree_id = int(node_id)
         # 原版 `self._search_input.clear()`：清空搜索框且不改动正在加载的数据集
         self._search_text = ""
@@ -521,8 +555,13 @@ class AllItemsBridge(DialogBridge):
         self.stateChanged.emit()
 
     def _reload_items(self, ids: list[Any] | None) -> None:
-        drop_worker(self._iw)
-        worker = ItemsW(ids, rid=JITA_RID, parent=self)
+        # 记住这批 id：换价格区域时按同一批重取（见 `setRegionId`），别退回全量
+        self._cur_ids = ids
+        # 用 `detach_worker`（短超时）而不是 `drop_worker`（2s）：这三个 worker 的 run()
+        # 都不查中断标志，`drop_worker` 会实打实在 GUI 线程等满 2 秒 —— 用户点分类树时
+        # 感受到的「卡住」就是它。
+        detach_worker(self._iw)
+        worker = ItemsW(ids, rid=self._region_id, parent=self)
         worker.done.connect(self._on_items)
         worker.start()
         self._iw = worker
@@ -539,9 +578,9 @@ class AllItemsBridge(DialogBridge):
         query = self._search_text.strip()
         if not query:
             return
-        drop_worker(self._sw)
+        detach_worker(self._sw)
         self._set_status("搜索中...")
-        worker = SearchItemsW(query, JITA_RID, self)
+        worker = SearchItemsW(query, self._region_id, self)
         worker.done.connect(self._on_search_done)
         worker.start()
         self._sw = worker
@@ -642,6 +681,7 @@ class AllItemsBridge(DialogBridge):
     def _calc(self, is_mfg: bool) -> None:
         # 原版直接覆盖 `self._wp`（旧线程继续跑、`done` 仍连着本桥，会拿过期数据回调）。
         # 这里先收尾旧线程：既是防「点两次评分弹两次结果」，也避免它在关窗时被连带析构。
+        # 评分线程不同：`ScoreW.run` 逐行查 `isInterruptionRequested`，收得快，按默认超时等它收尾即可
         drop_worker(self._wp)
         self._progress_visible = True
         self._progress_max = len(self._filt)
@@ -863,6 +903,18 @@ class AllItemsBridge(DialogBridge):
             log.exception("保存评分设置失败 path=%s", path)
 
     # ── 关窗收尾 ─────────────────────────────────────────────
+
+    def shutdown(self) -> None:
+        """停掉三个在跑的线程 —— `stop()` 的别名。
+
+        ⚠️ **这个名字必须有**：`QueryBridge.shutdown()` 是按 `getattr(sub, "shutdown")`
+        遍历子桥的，而本类原先只有 `stop()`（那是 `QmlDialog` 关窗那条路用的）。
+        内嵌态（查询页里那一块）走的正是 `QueryPage` 的
+        `Component.onDestruction → query.shutdown()` —— 少了它就停不掉
+        `TreeW/ItemsW/ScoreW`，QThread 在运行中被析构 = Qt 直接 qFatal、
+        退出码 127、一行日志都没有（本模块头部第 1 条警告）。
+        """
+        self.stop()
 
     def stop(self) -> None:
         """`QmlDialog._stop_bridge` 关窗时调它 —— 见模块 docstring 第 1 条。"""

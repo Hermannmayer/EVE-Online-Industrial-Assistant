@@ -4,6 +4,8 @@ import ctypes
 import ctypes.wintypes
 import sys
 
+from core.logger import log
+
 _DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 _DWMWA_SYSTEMBACKDROP_TYPE = 38
 _DWMWA_WINDOW_CORNER_PREFERENCE = 33
@@ -17,6 +19,23 @@ _DWMWCP_ROUND = 2
 _GWL_STYLE = -16
 _WS_THICKFRAME = 0x00040000
 _WS_CAPTION = 0x00C00000  # WS_BORDER | WS_DLGFRAME
+#: 实测（2026-10-01 用真窗口探针读 GWL_STYLE）：无边框外壳上 `WS_THICKFRAME` /
+#: `WS_CAPTION` 事后**是在的**，但这两位**恒为 False** —— 而 Aero Snap（拖到屏幕边缘
+#: 吸附、拖到顶部最大化）要求窗口**可最大化**，缺 `WS_MAXIMIZEBOX` 时拖到边缘毫无反应。
+#: 这正是用户报的「不吸附、也不能改变窗口大小」。
+_WS_MINIMIZEBOX = 0x00020000
+_WS_MAXIMIZEBOX = 0x00010000
+_WS_FRAME_BITS = _WS_THICKFRAME | _WS_CAPTION | _WS_MINIMIZEBOX | _WS_MAXIMIZEBOX
+
+#: `SetWindowPos` 的 `SWP_FRAMECHANGED`：改完样式**必须**重算一次非客户区，
+#: 否则 `SetWindowLongPtr` 只是改了记录、系统的命中测试仍按旧样式走。
+_SWP_NOSIZE, _SWP_NOMOVE, _SWP_NOZORDER, _SWP_NOACTIVATE, _SWP_FRAMECHANGED = (
+    0x0001,
+    0x0002,
+    0x0004,
+    0x0010,
+    0x0020,
+)
 
 _WIN11_22000 = (10, 0, 22000)
 _WIN11_22621 = (10, 0, 22621)
@@ -40,20 +59,43 @@ def _set_window_style(hwnd: int, style: int) -> None:
     func(hwnd, _GWL_STYLE, style)
 
 
-def enable_native_resize(hwnd: int) -> bool:
-    """给无边框窗口重新加上 WS_THICKFRAME，让 Windows 恢复原生边缘缩放与 Aero Snap 贴边吸附。
+def _refresh_window_frame(hwnd: int) -> None:
+    """让系统重新计算本窗口的非客户区 / 命中测试（样式改完必须调用一次）。"""
+    ctypes.windll.user32.SetWindowPos(
+        hwnd,
+        0,
+        0,
+        0,
+        0,
+        0,
+        _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE | _SWP_FRAMECHANGED,
+    )
 
-    Qt 的 FramelessWindowHint 会移除原生边框样式；没有 WS_THICKFRAME 时，
-    WM_NCHITTEST 返回边缘命中码系统也不执行缩放/吸附。必须在窗口创建后恢复该样式。
+
+def enable_native_resize(hwnd: int) -> bool:
+    """给无边框窗口补回原生边框样式，恢复边缘缩放、Aero Snap 与最小化/最大化。
+
+    Qt 的 `FramelessWindowHint` 会把这些样式位一起清掉；没有它们时，
+    `WM_NCHITTEST` 返回边缘命中码系统也不执行缩放，拖到屏幕边缘也不吸附。
+
+    实测（2026-10-01，真窗口探针）：`WS_THICKFRAME`/`WS_CAPTION` 事后**已经在**，
+    但 `WS_MAXIMIZEBOX`/`WS_MINIMIZEBOX` **一直是 False** —— 所以必须把它们也补上，
+    否则「不吸附」那条永远好不了。
+
+    样式真的变了才动窗口，并在改完后 `SWP_FRAMECHANGED` 重算一次 frame。
     """
     if sys.platform != "win32" or not hwnd:
         return False
     try:
         style = _get_window_style(hwnd)
-        style |= _WS_THICKFRAME | _WS_CAPTION
-        _set_window_style(hwnd, style)
+        new_style = style | _WS_FRAME_BITS
+        if new_style != style:
+            _set_window_style(hwnd, new_style)
+            _refresh_window_frame(hwnd)
         return True
     except Exception:
+        # 失败是**静默降级**（无边框外观照旧，只是拖边缘/吸附不可用），所以必须留日志
+        log.warning("恢复原生窗口样式失败（边缘缩放与 Aero Snap 会不可用）: hwnd=%s", hwnd, exc_info=True)
         return False
 
 

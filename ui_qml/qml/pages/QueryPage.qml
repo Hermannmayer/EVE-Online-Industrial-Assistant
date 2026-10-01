@@ -62,17 +62,29 @@ Item {
             Layout.bottomMargin: Theme.spacingSm
             spacing: Theme.spacingSm
 
+            /* 同一个按钮当开关用：进全物品 / 退回查询页。原先只有「进」这一个方向，
+             * 而 `QueryBridge.closeAllItems()` 在 QML 里**没有任何调用点** ——
+             * 不双击某一行就退不出这个面板（用户说的「卡住」里就有这一条）。 */
             FButton {
                 id: allItemsButton
-                text: qsTr("全物品")
-                onClicked: if (page.query)
-                    page.query.openAllItems()
+                text: workArea.showingAllItems ? qsTr("返回") : qsTr("全物品")
+                onClicked: {
+                    if (!page.query)
+                        return;
+                    if (workArea.showingAllItems)
+                        page.query.closeAllItems();
+                    else
+                        page.query.openAllItems();
+                    // 这个框在全物品态就是筛选框（面板自带的那个已隐藏）—— 进出都清一次，
+                    // 免得残留上次的关键词让人以为没筛。
+                    searchInput.text = "";
+                }
 
                 HoverHandler {
                     id: allItemsHover
                 }
                 ToolTip.visible: allItemsHover.hovered
-                ToolTip.text: qsTr("打开全物品浏览器")
+                ToolTip.text: qsTr("全物品浏览器（在下方直接展示）")
             }
 
             FTextField {
@@ -80,8 +92,16 @@ Item {
                 objectName: "searchInput"
                 Layout.fillWidth: true
                 placeholderText: qsTr("输入物品名称或 ID...")
-                onTextChanged: if (page.query)
-                    page.query.onTextChanged(text)
+                /* 「全物品」内嵌时，这一个框就是**全物品的筛选框**（面板自带那个已隐藏）——
+                 * 一个框两用，页面上不会出现两个搜索框。其余时候照旧走候选/详情那条路。 */
+                onTextChanged: {
+                    if (!page.query)
+                        return;
+                    if (workArea.showingAllItems && page.query.allItems)
+                        page.query.allItems.setSearchText(text);
+                    else
+                        page.query.onTextChanged(text);
+                }
 
                 /* 回车 = 选第一条候选。页面已经没有「搜索」这一步 —— 候选就是匹配清单，
                  * 选中即出详情。取的是**桥**里那份候选（与弹窗显示的是同一份），
@@ -109,8 +129,18 @@ Item {
                 text: qsTr("清空")
                 onClicked: {
                     searchInput.text = ""
-                    if (page.query)
-                        page.query.clear()
+                    if (!page.query)
+                        return;
+                    /* 全物品态要清的是**全物品的筛选**，不是查询页的选中物品：
+                     * `query.clear()` 会把 `detail.typeId` 置 0 → 工作区的 `idle` 判据变真，
+                     * 而全物品面板的 `visible` 仍是真 —— 两块面板会叠在一起；
+                     * 而且它清不掉全物品的搜索词（框空了、表格还是上一轮的结果）。 */
+                    if (workArea.showingAllItems) {
+                        if (page.query.allItems)
+                            page.query.allItems.setSearchText("");
+                    } else {
+                        page.query.clear();
+                    }
                 }
             }
 

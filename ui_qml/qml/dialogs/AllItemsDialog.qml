@@ -152,7 +152,12 @@ Item {
             Layout.fillWidth: true
             spacing: Theme.spacingXs
 
+            /* 内嵌态**藏掉自带的搜索框**：查询页工具栏已经有一个，两个并排就是重复。
+             * 那个页面级的搜索框在「全物品」态会转发到本桥的 `setSearchText`
+             * （见 `QueryPage.qml` 的 `searchInput.onTextChanged`），所以筛选没丢，
+             * 只是页面上只剩一个框。类别 / 状态筛选是本面板独有的，照旧显示。 */
             Text {
+                visible: !page.embedded
                 text: qsTr("搜索:")
                 color: Theme.textSecondary
                 font.family: Theme.fontFamily
@@ -162,6 +167,7 @@ Item {
             FTextField {
                 id: searchField
                 objectName: "searchField"
+                visible: !page.embedded
                 Layout.fillWidth: true
                 placeholderText: qsTr("名称/ID...")
                 // 回写时加不等值判断：不加就是「设 text → textChanged → setSearchText → 属性变 → 重绑」的循环

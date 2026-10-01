@@ -177,6 +177,13 @@ class QueryBridge(QObject):
         reload_orders = getattr(self._detail_bridge, "reloadOrders", None)
         if callable(reload_orders):
             reload_orders()
+        # 内嵌的「全物品」面板也要跟着换区域 —— 它原先把区域硬编码成 Jita，页面上的
+        # 区域下拉对它等于不存在（用户报的那条）。只碰**已经建出来**的那一份：
+        # 读 `self.allItems` 会白建整条业务链（同 `_get_detail` 的教训）。
+        if self._all_bridge is not None:
+            setter = getattr(self._all_bridge, "setRegionId", None)
+            if callable(setter):
+                setter(region_id)
 
     # ── 状态 ──────────────────────────────────────────────────
 
@@ -335,6 +342,8 @@ class QueryBridge(QObject):
                 return None
             self._all_bridge = AllItemsBridge(embedded=True)
             self._all_bridge.itemActivated.connect(self.selectItemFromAllItems)
+            # 「先选区域、后开全物品」也要对得上：新桥默认 Jita，这里补一次当前区域
+            self._all_bridge.setRegionId(self._region_id)
         return self._all_bridge
 
     allItems = Property(QObject, _get_all_items, constant=True)

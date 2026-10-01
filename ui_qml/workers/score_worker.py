@@ -9,6 +9,7 @@ from core.cache import TtlLRUCache
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.formatting import fmt_tag as _fmt_tag
+from core.logger import log
 from services import char_config_resolver
 from ui_qml.workers.base_worker import BaseBatchScoreWorker
 
@@ -46,6 +47,26 @@ class ScoreW(BaseBatchScoreWorker):
 
         self._system_id = get_default_mat_hangar_system_id()
 
+        # 研究成本（T1 拷贝 / T2-T3 发明）**整批一次算好**：逐件算会让每件重跑一遍
+        # 拷贝/发明查询 —— `scoring_facade` 自己标注这条占批量耗时 **93%**。
+        # `system_id` 必须与下面逐件传入的一致，否则命中不了同一份缓存
+        # （同仓 `industry_workers` 的正确写法）。
+        self._research_costs: dict[int, float] = {}
+        if self._mfg:
+            try:
+                from services.research_calculator import research_costs_batch
+
+                batch_tids = [row.get("id") for row in self._items if row.get("id")]
+                if batch_tids:
+                    with get_container().db.connect("bp") as bp_conn:
+                        self._research_costs = research_costs_batch(
+                            bp_conn, batch_tids, solar_system_id=self._system_id
+                        )
+            except Exception:
+                # 失败就退回逐件算（慢但结果一样），不能让整批评分挂掉
+                log.exception("批量研究成本预计算失败，回退逐件计算（会明显变慢）")
+                self._research_costs = {}
+
         for i, item in enumerate(self._items):
             if self.isInterruptionRequested():
                 return
@@ -77,6 +98,7 @@ class ScoreW(BaseBatchScoreWorker):
                         hub,
                         self._cfg.get("tax", 0),
                         system_id=self._system_id,
+                        research_costs=self._research_costs,
                     )
                 )
                 _cache.set(k, r)

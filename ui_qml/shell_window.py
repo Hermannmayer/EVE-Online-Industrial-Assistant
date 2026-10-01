@@ -515,16 +515,33 @@ class ShellWindow(QQuickView):
                 log.exception("nativeEvent 处理失败")
         return super().nativeEvent(eventType, message)
 
-    @staticmethod
-    def _minmax_info(lParam: int) -> int:
-        """WM_GETMINMAXINFO：把最大化尺寸/位置钳制到工作区。"""
+    def _minmax_info(self, lParam: int) -> int:
+        """`WM_GETMINMAXINFO`：把最大化尺寸/位置钳制到**本窗口所在显示器**的工作区。
+
+        ⚠️ 原先用 `SystemParametersInfoW(SPI_GETWORKAREA)` —— 那是**主显示器**的工作区，
+        于是副屏上点最大化会把窗口整块搬到主屏去（用户看到的「最大化后尺寸/位置不对」）。
+        换成 `MonitorFromWindow(MONITOR_DEFAULTTONEAREST)` 拿当前显示器。
+        """
         import ctypes
         import ctypes.wintypes
 
-        SPI_GETWORKAREA = 0x0030
-        work = ctypes.wintypes.RECT()
-        if not ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(work), 0):
+        MONITOR_DEFAULTTONEAREST = 2
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", ctypes.wintypes.DWORD),
+                ("rcMonitor", ctypes.wintypes.RECT),
+                ("rcWork", ctypes.wintypes.RECT),
+                ("dwFlags", ctypes.wintypes.DWORD),
+            ]
+
+        user32 = ctypes.windll.user32
+        monitor = user32.MonitorFromWindow(int(self.winId()), MONITOR_DEFAULTTONEAREST)
+        mon_info = MONITORINFO()
+        mon_info.cbSize = ctypes.sizeof(MONITORINFO)
+        if not monitor or not user32.GetMonitorInfoW(monitor, ctypes.byref(mon_info)):
             return 0
+        work = mon_info.rcWork
 
         class MINMAXINFO(ctypes.Structure):
             _fields_ = [
@@ -542,6 +559,27 @@ class ShellWindow(QQuickView):
         info.ptMaxPosition.y = work.top
         return 0
 
+    @staticmethod
+    def _resize_border_width() -> int:
+        """边缘缩放的命中带宽 —— **必须**取系统的，不能写死。
+
+        原先写死 `6`：本机 `SM_CXSIZEFRAME(5) + SM_CXPADDEDBORDER(6) = 11`，也就是只有
+        标准带宽的一半略多。用户按系统习惯去拖边框，得精准落在 6px 以内才生效 ——
+        感受就是「窗口边缘拖不动、改不了大小」。
+        """
+        if sys.platform != "win32":
+            return 6
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            SM_CXSIZEFRAME, SM_CXPADDEDBORDER = 32, 92
+            frame = int(user32.GetSystemMetrics(SM_CXSIZEFRAME))
+            padded = int(user32.GetSystemMetrics(SM_CXPADDEDBORDER))
+            return max(6, frame + padded)
+        except Exception:
+            return 6
+
     def _nchittest(self, lParam: int) -> int:
         """WM_NCHITTEST 命中码：边缘缩放；标题栏一律 HTCLIENT 交给 QML 拖动。
 
@@ -558,7 +596,7 @@ class ShellWindow(QQuickView):
         from PySide6.QtGui import QCursor
 
         pt = self.mapFromGlobal(QCursor.pos())
-        margin = 6
+        margin = self._resize_border_width()
         w, h = self.width(), self.height()
         if pt.y() <= margin:
             if pt.x() <= margin:
@@ -1095,8 +1133,32 @@ class ShellWindow(QQuickView):
         if self.windowState() == Qt.WindowState.WindowMaximized:
             ratio = (x / self.width()) if self.width() else 0.5
             self._restore_before_move(ratio)
-        self.startSystemMove()
+        self._start_native_drag()
         return True
+
+    def _start_native_drag(self) -> None:
+        """把这段拖动交棒给**Windows 原生标题栏拖动循环**。
+
+        为什么不用 `QWindow.startSystemMove()`（用户报的「拖到屏幕边缘不吸附」就是它）：
+        Qt 在 Windows 上投的是 `WM_SYSCOMMAND / SC_MOVE` —— 那条路**没有 Aero Snap**，
+        贴边吸附、拖到顶部最大化、拖动时跟随的半透明预览全都不会出现。
+
+        原生标题栏拖动是 `ReleaseCapture()` + `WM_NCLBUTTONDOWN(HTCAPTION)`：系统把整段
+        拖动当作「拖标题栏」处理，上面那套行为**全部跟着回来**，而且与真实标题栏的观感一致。
+
+        非 Windows 退回 Qt 的实现（那边 `startSystemMove` 本来就是对的）。
+        """
+        if sys.platform != "win32":
+            self.startSystemMove()
+            return
+        import ctypes
+
+        HTCAPTION, WM_NCLBUTTONDOWN = 2, 0x00A1
+        user32 = ctypes.windll.user32
+        user32.ReleaseCapture()
+        # PostMessage（不是 Send）：拖动循环会阻塞到鼠标抬起，Send 会把当前这次
+        # QML 移动事件的处理器一并卡在里面。
+        user32.PostMessageW(int(self.winId()), WM_NCLBUTTONDOWN, HTCAPTION, 0)
 
     def end_move(self) -> None:
         """本次按下结束（抬起 / 取消 / 新的一次按下）—— 复位交棒标记。

@@ -177,7 +177,10 @@ class TestMaximizeDrag:
         再调一次，那次 `ReleaseCapture()` 会把循环掐断，表现成「按住标题栏拖不动」。
         """
         started: list[int] = []
-        monkeypatch.setattr(type(shell), "startSystemMove", lambda _self: (started.append(1), True)[1])
+        # 起拖的落点已从 `startSystemMove()` 换成 `_start_native_drag()`：后者在 Windows 上走
+        # 原生 `WM_NCLBUTTONDOWN(HTCAPTION)` —— Qt 的 `SC_MOVE` 那条路拿不到 Aero Snap
+        # （见该方法说明）。钉的契约没变：**同一次按下只起拖一次**。
+        monkeypatch.setattr(type(shell), "_start_native_drag", lambda _self: started.append(1))
 
         assert shell.begin_move(100.0, 10.0, 300.0, 10.0) is True
         assert shell.begin_move(100.0, 10.0, 320.0, 12.0) is True
