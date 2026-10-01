@@ -105,6 +105,14 @@ MouseArea {
     //: 诊断用：按下时的原始位置（内容坐标）
     property real pressY: -1
 
+    /* 最近一次按下的键盘修饰键（`Qt.ControlModifier` / `Qt.ShiftModifier`）。
+     *
+     * 三个点击信号本身不带它，而「Ctrl 切换 / Shift 连选」这类多选语义只有
+     * `MouseArea` 的 `mouse.modifiers` 拿得到 —— 点击区是**覆盖式**的，调用方
+     * 摸不到那个 MouseArea。所以在按下时记一份给调用方读，**不扩信号签名**
+     * （扩了每个既有调用点都要跟着改）。 */
+    property int lastModifiers: 0
+
     /* 所属的表 —— 显式传了就用它，否则沿父链找。
      * 行数上限直接取它的 `rows`（TableView）/ `count`（ListView），
      * 调用方不必再为了「最后一行以下算空白」多传一个参数。 */
@@ -186,6 +194,8 @@ MouseArea {
         root.pressY = mouse.y
         root.pressRow = root.rowAt(mouse.y)
         root.pressColumn = root.columnAt(mouse.x)
+        // 多选语义（Ctrl 切换 / Shift 连选）要在**点击**时读到它，见 `lastModifiers`
+        root.lastModifiers = mouse.modifiers
     }
 
     // 拖动超过阈值时 MouseArea 收到 canceled（Flickable 抢走手势），不会走到这里——

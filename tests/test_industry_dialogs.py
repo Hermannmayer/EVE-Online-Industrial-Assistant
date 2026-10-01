@@ -18,7 +18,12 @@ from ui_qml.bridge.mass_parallel_bridge import (
     compute_parallel_by_duration,
     compute_parallel_by_lines,
 )
-from ui_qml.bridge.parent_decompose_bridge import ParentDecomposeQmlDialog as ParentDecomposeDialog
+from ui_qml.bridge.parent_decompose_bridge import (
+    ParentDecomposeBridge,
+)
+from ui_qml.bridge.parent_decompose_bridge import (
+    ParentDecomposeQmlDialog as ParentDecomposeDialog,
+)
 
 pytestmark = pytest.mark.ui
 
@@ -336,17 +341,33 @@ class TestParentDecomposeDialogMulti:
             conn.execute("INSERT INTO blueprint_activities VALUES (3003,'manufacturing',600)")
         with db_manager.connect("user") as conn:
             conn.execute("INSERT INTO production_plans (id, product_type_id) VALUES (1, 2001)")
-        dlg = ParentDecomposeDialog([_mother(1)])
-        n_rows = dlg.bridge.rowCount
+        # 直接造桥，不造 `QmlDialog` 窗口：这条用例要的是**行号映射与删除语义**，
+        # 窗口只是外壳。造真 QML 窗口在本机 offscreen 下会把整档拖住（同
+        # `test_qml_shell.py` 的症状），而「对话框能加载」另有
+        # `tests/test_qml_dialogs.py` 的 `_LOADS_CASES` 参数化覆盖。
+        bridge = ParentDecomposeBridge([_mother(1)])
+        n_rows = bridge.rowCount
         assert n_rows >= 2  # 渡鸦级拆出碳纤维 + 三钛合金
-        assert [l_idx for _a, l_idx, _line in dlg.bridge._refs] == list(range(n_rows))
+        assert [l_idx for _a, l_idx, _line in bridge._refs] == list(range(n_rows))
 
         # 逐行移除（倒序，避免行号漂移）→ 不得越界，且子项列表清空
         for row in reversed(range(n_rows)):
-            dlg.bridge.removeRow(row)
-        assert dlg.bridge.rowCount == 0
-        assert dlg.bridge._assignments[0][2] == []
-        assert dlg.bridge.statusText == f"已移除 {n_rows} 个组件（本轮不内造，改外购）"
+            bridge.removeRow(row)
+        assert bridge.rowCount == 0
+        assert bridge._assignments[0][2] == []
+        assert bridge.statusText == f"已移除 {n_rows} 个组件（本轮不内造，改外购）"
+
+        # 批量移除（Ctrl / Shift 多选后点「移除选中行」）：QML 的 `selectedRows` 是**升序**的，
+        # 所以降序化必须由 `removeRows` 自己做 —— 升序删会因下标前移而漏掉后半（甚至错删）。
+        bridge2 = ParentDecomposeBridge([_mother(1)])
+        assert bridge2.rowCount == n_rows
+        bridge2.removeRows(list(range(n_rows)))  # 故意传升序
+        assert bridge2.rowCount == 0
+        assert bridge2._assignments[0][2] == []
+        assert bridge2.statusText == f"已移除 {n_rows} 个组件（本轮不内造，改外购）"
+        # 重复行号只算一次（QML 侧理论上不会给重，但按集合处理才不会被删两次）
+        bridge2.removeRows([0, 0, 0])
+        assert bridge2.statusText == f"已移除 {n_rows} 个组件（本轮不内造，改外购）"
 
 
 # ════════════════════════════════════════════════════════════════
@@ -369,6 +390,62 @@ class TestComputeParallelByLines:
         subitems = [{"id": 1, "demand": 10, "per_run": 1}, {"id": 2, "demand": 10, "per_run": 1}]
         result = compute_parallel_by_lines(subitems, 1)
         assert {r["id"]: r["parallels"] for r in result} == {1: 1, 2: 1}  # 每子项至少 1
+
+
+# ════════════════════════════════════════════════════════════════
+#  产出总表底栏（OutputSummaryBridge）
+# ════════════════════════════════════════════════════════════════
+
+
+def test_output_summary_footer_reports_total_margin(qapp, monkeypatch):
+    """底栏要给出**总利润率**，且分母必须与利润同口径。
+
+    回归背景（2026-09-28，用户要求）：底栏原先只有「总产出价值 / 总利润 / N 个计划存在
+    材料溢出」，看不出整体赚几个点。
+
+    ⚠️ 分母**不能**用表格里那列「成本」（`production_plans.material_cost`，纯材料）——
+    利润减掉的是材料 + 安装费 + 经纪人/改单/销售税 + T1 拷贝/T2-T3 发明研究成本
+    （`domain/scoring.py` 的 total_cost），两者不同源；用成本列当分母会把利润率系统性
+    抬高。这里让 `plan_value − profit` 恰好等于已知成本，把口径钉死。
+    """
+    from types import SimpleNamespace
+
+    from ui_qml.bridge import output_dialog_bridge as mod
+
+    fake = [
+        {
+            "plan_name": "A",
+            "product_type_id": 1,
+            "total_qty": 1,
+            "plan_value": 200.0,
+            "material_cost": 100.0,  # ← 故意与真成本 150 不同：拿它当分母会算出 75%，那是错的
+            "profit": 50.0,
+            "margin_pct": 33.3,
+            "status": "pending",
+            "overflow_text": "—",
+            "has_overflow": False,
+        },
+        {
+            "plan_name": "B",
+            "product_type_id": 2,
+            "total_qty": 1,
+            "plan_value": 100.0,
+            "material_cost": 20.0,
+            "profit": 25.0,
+            "margin_pct": 33.3,
+            "status": "pending",
+            "overflow_text": "—",
+            "has_overflow": False,
+        },
+    ]
+    monkeypatch.setattr("services.industry_dialog_queries.get_output_summary", lambda db: fake)
+    monkeypatch.setattr(mod, "get_container", lambda: SimpleNamespace(db=None))
+
+    bridge = mod.OutputSummaryBridge()
+    bridge.reload()
+
+    # 真成本 = (200−50) + (100−25) = 225，利润 = 75 → 33.3%
+    assert "总利润率 33.3%" in bridge.statusText, bridge.statusText
 
     def test_empty(self):
         assert compute_parallel_by_lines([], 10) == []

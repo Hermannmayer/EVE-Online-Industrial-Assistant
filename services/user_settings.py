@@ -205,3 +205,56 @@ def get_esi_orders_synced_at() -> str:
 def set_esi_orders_synced_at(value: str) -> None:
     """记下 ESI 同步挂单的时刻（读-改-写，保留其它键）。"""
     save_settings({_ESI_ORDERS_SYNCED_AT_KEY: str(value)})
+
+
+# ── 用户数据备份（设置页「备份」标签）─────────────────────────────
+# 只备份 user.db（生产计划/机库/库存/蓝图绑定/ESI 令牌…）：
+# reference.db 与 blueprint.db 是可重下发的 SDE 缓存、market.db 是行情缓存，重建即可。
+
+_BACKUP_ENABLED_KEY = "backup_enabled"
+_BACKUP_KEEP_KEY = "backup_keep"
+_LAST_BACKUP_DATE_KEY = "last_backup_date"
+
+#: 保留份数的白名单（设置页只给这几个选项）。手改 settings.json 写成别的值一律回落默认。
+BACKUP_KEEP_ALLOWED: tuple[int, ...] = (3, 5, 10, 20)
+BACKUP_KEEP_DEFAULT = 5
+
+
+def get_backup_enabled() -> bool:
+    """是否每天自动备份用户数据。**默认开**：这是保护性功能，默认关掉就没人受益。"""
+    raw = load_settings().get(_BACKUP_ENABLED_KEY)
+    return True if raw is None else raw is True
+
+
+def set_backup_enabled(value: bool) -> None:
+    """写回「每天自动备份」开关（读-改-写，保留其它键）。"""
+    save_settings({_BACKUP_ENABLED_KEY: bool(value)})
+
+
+def get_backup_keep() -> int:
+    """最大保留备份份数。非数值 / 不在白名单 → 回落 ``BACKUP_KEEP_DEFAULT``。"""
+    try:
+        value = int(load_settings().get(_BACKUP_KEEP_KEY))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return BACKUP_KEEP_DEFAULT
+    return value if value in BACKUP_KEEP_ALLOWED else BACKUP_KEEP_DEFAULT
+
+
+def set_backup_keep(value: int) -> None:
+    """写回保留份数；不在白名单内按默认值落盘（UI 只给白名单选项，这里兜住手改）。"""
+    keep = int(value)
+    save_settings({_BACKUP_KEEP_KEY: keep if keep in BACKUP_KEEP_ALLOWED else BACKUP_KEEP_DEFAULT})
+
+
+def get_last_backup_date() -> str:
+    """上次自动备份的日期（``YYYY-MM-DD``）；从没备过返回空串。
+
+    固定宽度格式 → **字典序即时间序**，调用方直接字符串相等比较即可。
+    """
+    raw = load_settings().get(_LAST_BACKUP_DATE_KEY)
+    return str(raw) if isinstance(raw, str) else ""
+
+
+def set_last_backup_date(value: str) -> None:
+    """记下本次自动备份的日期（读-改-写，保留其它键）。"""
+    save_settings({_LAST_BACKUP_DATE_KEY: str(value)})

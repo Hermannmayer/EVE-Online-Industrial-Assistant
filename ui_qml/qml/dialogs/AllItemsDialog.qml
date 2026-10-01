@@ -28,9 +28,16 @@ import "../components"
 Item {
     id: page
 
-    //: 全物品桥，由 `PageHost` 以 context property `bridge` 注入。
-    //: 别名不与 context property 同名（同名声明会遮蔽它，恒为 null 且无报错）。
-    readonly property var ai: typeof bridge !== "undefined" ? bridge : null
+    /* 全物品桥。独立窗那条路由 `PageHost` 以 context property `bridge` 注入；
+     * **内嵌**在查询页里时由 `QueryPage` 显式赋 `ai: page.query.allItems` —— 那时页面
+     * 上下文里的 `bridge` 是 `QueryBridge`，代理对象整体不同。所以这里**不能 `readonly`**
+     * （readonly 就没法在实例上覆盖），否则内嵌态的 `ai` 会绑到错的桥上。 */
+    property var ai: typeof bridge !== "undefined" ? bridge : null
+
+    /* 内嵌态（查询页工作区里那一块）：按用户要求去掉「制造评分设置 / 贸易评分设置 /
+     * 批量对比 / 导出」四个按钮与右键菜单；双击改为走查询页详情（见桥的 `openMaterials`）。
+     * 默认 false = 独立窗，行为与改造前一字不差。 */
+    property bool embedded: false
 
     readonly property int fntSmall: Math.round(11 * Theme.fontScale)
     readonly property int fntBase: Math.round(12 * Theme.fontScale)
@@ -80,8 +87,12 @@ Item {
                     page.ai.showMfgMode()
             }
 
+            /* 内嵌态去掉这四个按钮（用户要求：首页那个全物品查询不要「制造评分设置 /
+             * 贸易评分设置 / 批量对比 / 导出」）。独立窗态照旧显示 —— 那里是改评分参数
+             * 的入口之一，不能一并砍掉。 */
             FButton {
                 objectName: "mfgSettingsButton"
+                visible: !page.embedded
                 text: qsTr("设置")
                 onClicked: if (page.ai)
                     page.ai.openMfgSettings()
@@ -96,6 +107,7 @@ Item {
 
             FButton {
                 objectName: "tradeSettingsButton"
+                visible: !page.embedded
                 text: qsTr("设置")
                 onClicked: if (page.ai)
                     page.ai.openTradeSettings()
@@ -103,6 +115,7 @@ Item {
 
             FButton {
                 objectName: "compareButton"
+                visible: !page.embedded
                 text: qsTr("批量对比")
                 onClicked: if (page.ai)
                     page.ai.openCompare()
@@ -110,6 +123,7 @@ Item {
 
             FButton {
                 objectName: "exportButton"
+                visible: !page.embedded
                 text: qsTr("导出")
                 onClicked: if (page.ai)
                     page.ai.exportData()
@@ -121,6 +135,8 @@ Item {
 
             FCheckBox {
                 objectName: "pinBox"
+                // 内嵌态没有独立窗口可置顶，隐藏（是 Item 的属性，FCheckBox 继承得到）
+                visible: !page.embedded
                 text: qsTr("置顶")
                 checked: page.ai ? page.ai.pinned : false
                 onToggled: if (page.ai)
@@ -484,7 +500,9 @@ Item {
                         }
 
                         onRowRightClicked: function (row, _column, x, y) {
-                            if (!page.ai)
+                            // 内嵌态**不要右键菜单**（用户要求）。直接不弹 —— 点击区照旧
+                            // 派发单击/双击，只是不再有这一层菜单。
+                            if (page.embedded || !page.ai)
                                 return
                             const info = page.ai.rowInfo(row)
                             if (!info.valid)
@@ -517,7 +535,9 @@ Item {
 
     // 换模式 / 换分类会换一整套列：`columnWidthProvider` 是函数，属性变了要显式重排
     Connections {
-        target: page.ai
+        // `page.ai` 在**内嵌实例**的初始化早期可能还是 `undefined`（父项属性尚未赋值完），
+        // 直接当 target 会报「Unable to assign [undefined] to QObject*」—— 归一成 null。
+        target: page.ai ? page.ai : null
 
         function onStateChanged() {
             tableView.forceLayout()

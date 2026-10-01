@@ -134,6 +134,11 @@ class TestShellState:
             again.close()
             again.deleteLater()
 
+        # 构造外壳本身会保存一次**主题偏好**（`theme.apply_theme` → `save_settings`）——
+        # 上面那个 `again = ShellWindow()` 就产生了这么一条。它跟「置顶持久化」无关，
+        # 清掉再验，否则这条用例永远红（而且红得让人以为是置顶的锅）。
+        saved.clear()
+
         assert shell.is_pinned() is False, "构造时一律不置顶"
         shell.set_pinned(True)
         assert shell.is_pinned() is True

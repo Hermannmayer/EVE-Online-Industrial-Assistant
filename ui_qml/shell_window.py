@@ -421,6 +421,9 @@ class ShellWindow(QQuickView):
 
         QTimer.singleShot(500, self._check_first_run)
         QTimer.singleShot(100, self._init_tray_icon)
+        # 每天最多一次的用户数据备份。扔进事件循环而不是在 __init__ 里同步做：
+        # `VACUUM INTO` 是阻塞的，别拖首帧（user.db 一般只有几 MB，延迟 1.2s 足够）。
+        QTimer.singleShot(1200, self._maybe_daily_backup)
 
         # 退出时必须**两条路都**等线程收尾：关窗走 closeEvent，而托盘菜单的「退出」
         # 直接调 `QApplication.quit()` —— 它只退出事件循环，**不会关窗**，
@@ -582,7 +585,14 @@ class ShellWindow(QQuickView):
         begin_shutdown()
         _hr.clear_trigger()
         self._closing = True
-        self._teardown_qml()  # 先拆场景，再谈别的（见该方法说明）
+        # ⚠️ 顺序：`_stop_running_threads()` **必须在前**。它靠遍历 `self._pages` 找页面控制器
+        # 的关机钩子（工业页那两个工具窗的 QML 场景就挂在那个钩子里拆），而 `_teardown_qml()`
+        # 会把 `_pages.clear()` 掉 —— 顺序反了钩子就是**静默空转**：采购窗/产线小助手的
+        # `QQmlEngine` 与 QML 树活到解释器收尾，`Theme` 单例一被回收，场景里的绑定重算就
+        # 成片对着 null 求值（实测 183 行 `Cannot read property 'xxx' of null`，全出自
+        # `ProcurementWindow.qml` 及其组件）。
+        self._stop_running_threads()
+        self._teardown_qml()  # 拆场景（含 `_pages.clear()`），见该方法说明
         theme.remove_theme_listener(self._on_theme_changed)
         theme.save_window_geometry(self)
         for w in QApplication.topLevelWidgets():
@@ -594,7 +604,6 @@ class ShellWindow(QQuickView):
         for win in QGuiApplication.topLevelWindows():
             if win is not self and win.isVisible():
                 win.close()
-        self._stop_running_threads()
         if self._tray_icon:
             self._tray_icon.hide()
         super().closeEvent(event)  # type: ignore[arg-type]
@@ -1204,6 +1213,19 @@ class ShellWindow(QQuickView):
             "数据来源: EVE Swagger Interface (ESI)\n"
             "© 2026",
         )
+
+    def _maybe_daily_backup(self) -> None:
+        """启动时的「每天一次」用户数据备份（设置页的「每天自动备份」可关）。
+
+        只备份 user.db —— 生产计划 / 机库 / 库存 / 蓝图绑定 / ESI 令牌才是用户自己的
+        东西；行情与 SDE 是可重下发的缓存，重建即可。失败只记日志：备份没成功
+        不该影响启动，也不该挡住任何界面。
+        """
+        from services import db_backup, user_settings
+
+        if not user_settings.get_backup_enabled():
+            return
+        db_backup.maybe_daily_backup(keep=user_settings.get_backup_keep())
 
     def _check_first_run(self) -> None:
         from services.init_check import check_all

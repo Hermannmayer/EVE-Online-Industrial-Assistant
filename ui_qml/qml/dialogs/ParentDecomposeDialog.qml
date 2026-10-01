@@ -16,6 +16,15 @@ FDialogFrame {
 
     readonly property var pd: typeof bridge !== "undefined" ? bridge : null
 
+    /* 批量移除并清空选中集。参数是 QML 的 JS 数组 → 桥侧收 `QVariantList`。
+     * 单行删除（行内「移除」按钮）与批量走同一条路，避免两份语义漂移。 */
+    function removeRows(rows) {
+        if (!frame.pd || !rows || rows.length === 0)
+            return
+        frame.pd.removeRows(rows)
+        decomposeTable.selectedRows = []
+    }
+
     dlg: frame.pd
     acceptText: qsTr("确认拆解")
     acceptVisible: frame.pd ? !frame.pd.isEmpty : false
@@ -33,6 +42,7 @@ FDialogFrame {
     }
 
     FSummaryTable {
+        id: decomposeTable
         objectName: "decomposeTable"
         Layout.fillWidth: true
         Layout.fillHeight: true
@@ -43,9 +53,20 @@ FDialogFrame {
         actionText: qsTr("移除")
         emptyText: frame.pd ? frame.pd.emptyText : ""
         onActionClicked: function (row) {
-            if (frame.pd)
-                frame.pd.removeRow(row);
+            frame.removeRows([row]);
         }
+        onRowDoubleClicked: function (row, _column) {
+            frame.removeRows([row]);
+        }
+    }
+
+    /* 多选批量移除。鼠标语义（Ctrl 切换 / Shift 连选）在 `FSummaryTable` 里维护，
+     * 这里只把当前选中集交给桥 —— 桥按行号**降序**删，顺序删会因下标前移而漏删。 */
+    FButton {
+        Layout.alignment: Qt.AlignRight
+        visible: decomposeTable.selectedRows.length > 0
+        text: qsTr("移除选中行（%1）").arg(decomposeTable.selectedRows.length)
+        onClicked: frame.removeRows(decomposeTable.selectedRows)
     }
 
     Text {

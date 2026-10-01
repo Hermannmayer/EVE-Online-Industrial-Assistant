@@ -39,6 +39,51 @@ Item {
     //: 行是否可选中（选中态画高亮底）
     property bool selectable: false
 
+    /* 多选选中的行号（升序）。默认空数组 = 没有任何行被选中 ——
+     * 因此不碰多选的既有使用者行为一字未变（高亮判据里这一项恒不成立）。 */
+    property var selectedRows: []
+    //: Shift 连选的锚点（上一次「点中」的行）；-1 = 还没点过
+    property int selAnchor: -1
+
+    signal selectionChanged()
+
+    //: 闭区间 [a, b] 的行号（Shift 连选用；与 `BlueprintPickerDialog.rangeRows` 同口径）
+    function rangeRows(a, b) {
+        const lo = Math.min(a, b)
+        const hi = Math.max(a, b)
+        const out = []
+        for (let i = lo; i <= hi; ++i)
+            out.push(i)
+        return out
+    }
+
+    /* 行点击 → 维护选中集。语义逐条对齐 `BlueprintPickerDialog.qml:213-231`：
+     *   普通 = 只选它 ｜ Ctrl = 切换该行 ｜ Shift = 从锚点连选到本行（替换选中集、锚点不动，
+     *   于是连续 Shift 可以扩也可以缩）。
+     * 修饰键只能从点击区拿（见 `FTableClickArea.lastModifiers`）。 */
+    function handleRowClicked(row) {
+        const mods = clickArea.lastModifiers
+        if ((mods & Qt.ShiftModifier) && root.selAnchor >= 0) {
+            root.selectedRows = root.rangeRows(root.selAnchor, row)
+        } else if (mods & Qt.ControlModifier) {
+            const next = root.selectedRows.slice()
+            const at = next.indexOf(row)
+            if (at >= 0)
+                next.splice(at, 1)
+            else
+                next.push(row)
+            next.sort(function (a, b) {
+                return a - b
+            })
+            root.selectedRows = next
+            root.selAnchor = row
+        } else {
+            root.selectedRows = [row]
+            root.selAnchor = row
+        }
+        root.selectionChanged()
+    }
+
     /* 可排序的列号列表（空 = 表头不可点，行为与加这个特性之前完全一样）。
      * 排序列在表头上带 ▲/▼；点击只**发信号**，排哪一份数据由调用方决定
      * （各表的数据源不同：有的是模型的 sort()，有的是桥里排一遍列表）。 */
@@ -69,7 +114,11 @@ Item {
 
     function colWidth(col) {
         const cols = root.columns
-        if (col >= cols.length)
+        // ⚠️ 负数也要挡：`columns` 还没赋值时长度是 0，调用方算「最后一列」会得到 -1，
+        // 而 `cols[-1]` 是 undefined —— 接着取 `.width` 就抛
+        // 「Value is undefined and could not be converted to an object」。
+        // 这条绑定会被反复重算（`columns` 一改就重算），在测试里表现为整档挂住。
+        if (!cols || col < 0 || col >= cols.length)
             return 0
         if (cols[col].width > 0)
             return cols[col].width
@@ -169,7 +218,10 @@ Item {
 
                 Rectangle {
                     anchors.fill: parent
-                    color: root.selectable && root.currentRow === rowItem.index ? Theme.primary
+                    // 多选高亮（`selectedRows`）与单选高亮（`currentRow`，需 `selectable`）并存：
+                    // 母项拆解弹窗走前者，其余老使用者走后者，默认空选中集不改变任何旧行为。
+                    color: (root.selectable && root.currentRow === rowItem.index)
+                           || root.selectedRows.indexOf(rowItem.index) >= 0 ? Theme.primary
                            : (rowItem.index % 2 === 0 ? Theme.bgSurface : Theme.bgDark)
                 }
 
@@ -227,13 +279,29 @@ Item {
          * 行内「操作」按钮的点击。代价是父链里找不到表，所以必须显式把 `owner` 指过去，
          * 否则滚过之后按 y 算出的行号会少算「已经滚过去的行数」。 */
         FTableClickArea {
+            id: clickArea
             objectName: "summaryClickArea"
             anchors.fill: parent
+            /* ⚠️ 有行内动作列时**必须让出那一列**：本组件锚 `fill` 且是 `rowList` 之后
+             * 声明的兄弟节点（靠声明顺序压在内容之上），会吃掉行内动作按钮的全部点击 ——
+             * 点击落到 `rowClicked`，而调用方接的是 `actionClicked`，于是「点了没反应」。
+             * 实测受害的是母项递归拆解弹窗的「移除」与材料总表的「复制采购」。
+             *
+             * 同型缺陷与修法见 `LauncherWindow.qml:518-538`（那里让的是 `actionZoneW`）。
+             * ⚠️ 不要改用 `z: -1`：`LauncherWindow.qml:526-528` 实测在本仓无效 ——
+             * ListView（Flickable）会自己吃掉空白区的点击，整行都点不动。
+             *
+             * 已知取舍（与 LauncherWindow 一致，有意为之）：动作列那一段不再参与
+             * 整行点击 / 双击 / 右键 —— 那里现在是真的按钮，点击该由它接管。 */
+            anchors.rightMargin: root.hasActionColumn && root.columns.length > 0
+                                 ? root.colWidth(root.columns.length - 1) + root.cellPadding
+                                 : 0
             owner: rowList
             rowHeight: root.rowHeight
             columnWidth: root.colWidth
 
             onRowClicked: function (row, _column) {
+                root.handleRowClicked(row)
                 root.rowClicked(row)
             }
             onRowDoubleClicked: function (row, column) {

@@ -44,6 +44,9 @@ FDialogFrame {
             TabButton {
                 text: qsTr("默认参数")
             }
+            TabButton {
+                text: qsTr("备份")
+            }
         }
 
         Item {
@@ -187,6 +190,139 @@ FDialogFrame {
                     text: qsTr("关于")
                     onClicked: if (frame.sb)
                         frame.sb.openAbout()
+                }
+            }
+
+            Item {
+                Layout.fillHeight: true
+            }
+        }
+
+        // ═══════════════════════════════════════════════════
+        //  Tab 4：备份（只备份用户数据）
+        // ═══════════════════════════════════════════════════
+
+        ColumnLayout {
+            spacing: Theme.spacingMd
+
+            FSection {
+                title: qsTr("用户数据备份")
+
+                Text {
+                    Layout.fillWidth: true
+                    text: qsTr("只备份用户自己那份数据（生产计划 / 机库 / 库存 / 蓝图绑定 / ESI 令牌）。\n"
+                               + "行情与 SDE 是可重建的缓存，不占备份空间。")
+                    color: Theme.textSecondary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    wrapMode: Text.WordWrap
+                }
+
+                FCheckBox {
+                    objectName: "backupEnabledCheck"
+                    text: qsTr("每天自动备份")
+                    checked: frame.sb ? frame.sb.backupEnabled : false
+                    onToggled: if (frame.sb)
+                        frame.sb.setBackupEnabled(checked)
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingSm
+
+                    Text {
+                        text: qsTr("最多保留")
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
+
+                    FComboBox {
+                        objectName: "backupKeepCombo"
+                        Layout.preferredWidth: Math.round(120 * Theme.fontScale)
+                        model: frame.sb ? frame.sb.backupKeepOptions : []
+                        // 选项是白名单里的整数；桥回读白名单兜底后的真实值，这里只负责对上号
+                        currentIndex: {
+                            if (!frame.sb)
+                                return 0;
+                            const opts = frame.sb.backupKeepOptions;
+                            const i = opts.indexOf(frame.sb.backupKeep);
+                            return i >= 0 ? i : 0;
+                        }
+                        onActivated: function (index) {
+                            if (frame.sb)
+                                frame.sb.setBackupKeep(model[index]);
+                        }
+                    }
+
+                    Text {
+                        text: qsTr("份")
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
+
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                }
+
+                RowLayout {
+                    spacing: Theme.spacingSm
+
+                    FButton {
+                        objectName: "backupNowButton"
+                        text: qsTr("立即备份")
+                        onClicked: if (frame.sb)
+                            frame.sb.backupNow()
+                    }
+
+                    FButton {
+                        objectName: "exportNowButton"
+                        text: qsTr("导出用户数据…")
+                        onClicked: if (frame.sb)
+                            frame.sb.exportNow()
+                    }
+                }
+
+                /* 还原：从已有备份里挑一份盖回去。
+                 * 桥那边**会先把「现在这个库」也备一份**，所以选错还能退回来；
+                 * 还原完必须重启应用（内存里的模型/缓存都还指着旧数据）。 */
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingSm
+
+                    Text {
+                        text: qsTr("还原到")
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
+
+                    FComboBox {
+                        id: backupRestoreCombo
+                        objectName: "backupRestoreCombo"
+                        Layout.fillWidth: true
+                        model: frame.sb ? frame.sb.backupItems : []
+                    }
+
+                    FButton {
+                        objectName: "restoreNowButton"
+                        text: qsTr("还原选中备份")
+                        enabled: backupRestoreCombo.count > 0
+                        onClicked: if (frame.sb)
+                            frame.sb.restoreBackup(backupRestoreCombo.currentIndex)
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    visible: frame.sb ? frame.sb.backupStatus !== "" : false
+                    text: frame.sb ? frame.sb.backupStatus : ""
+                    color: Theme.accentGreen
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    wrapMode: Text.WordWrap
                 }
             }
 

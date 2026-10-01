@@ -248,10 +248,21 @@ def rebuild_children(*, create: bool = False, prune: bool = False) -> dict:
         if _sub_level(r) <= 0:
             continue
         tid = int(r.get("product_type_id") or 0)
-        if tid in children_by_tid:
-            dup_rows.append(int(r["id"]))
-        else:
+        prev = children_by_tid.get(tid)
+        if prev is None:
             children_by_tid[tid] = r
+            continue
+        # 同 tid 的重复旧行：**优先保留已投产的那条**。「部分启动」会把一行拆成
+        # 「投产行 + pending 余量行」（`plan_repository.insert_split_remainder`），
+        # 按 `SELECT *` 的 rowid 先到先得的话，留下的可能是余量行、而在产那行被当重复删掉。
+        drop, keep = (prev, r) if (_is_locked(r) and not _is_locked(prev)) else (r, prev)
+        children_by_tid[tid] = keep
+        # ⚠️ 要丢掉的这行如果**在产 / 已完工**，就留着别删：删掉在产行之后，下一次
+        # `create=True` 会按需求补建一条 `pending` 行 —— 而那条新行对着**已经扣减过的
+        # 库存**必然显示「材料不足」（用户报的「新子线把在跑的产线搞坏了」就是这个表象）。
+        # 与 `plan_table._cascade_children`、`_remove_planning_discarded` 同一口径。
+        if not _is_locked(drop) and (drop.get("status") or "").lower() not in _DONE_STATUSES:
+            dup_rows.append(int(drop["id"]))
 
     nodes: dict[int, dict] = {}
     if active_mothers:

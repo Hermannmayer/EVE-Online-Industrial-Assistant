@@ -29,7 +29,11 @@ _KEYS = [key for key, _label, _icon, _color in NAV_TREE]
 
 @pytest.fixture(autouse=True)
 def _no_price_network(monkeypatch):
-    """掐掉启动即发的价格检查：它是真 QThread + 真 ESI，测试里不该跑。"""
+    """掐掉启动即发的价格检查：它是真 QThread + 真 ESI。
+
+    （「每天一次的自动备份」由 conftest 的 `no_auto_daily_backup` 全局关掉 —— 那是
+    写磁盘 + 写 settings.json 的副作用，不止本文件受影响。）
+    """
     monkeypatch.setattr(ShellWindow, "_init_price_check", lambda self: None)
 
 
@@ -37,9 +41,17 @@ def _no_price_network(monkeypatch):
 def shell(app, mock_db, monkeypatch):
     """造一个 QML 外壳。
 
-    `mock_db` 之外还要给仓库管理补一层 mock：`InventoryBridge` 构造时会把
-    Widgets 版仓库页也拉起来（它调 `init_db()`），没有这层就整页建不出来
-    —— 与 `conftest.inventory_page` 同一个理由。
+    `mock_db` 之外还要给仓库管理补一层 mock：`InventoryBridge` / `EstimateBridge` /
+    `ContractBridge` 构造时会去读 `hangars` / `region` 这类**只存在于真实 user/ref 库**的
+    表，换成真实临时库（`temp_db`）会因为**建表不全**直接抛 `no such table`，
+    这些异常又被 pytest-qt 的异常捕获器算成 SETUP ERROR。
+
+    ⚠️ 关于「这个文件以前会整档挂死」——**根因不在 DB fixture，也不在本文件**：
+    `pytest` 默认捕获 stdout/stderr，而 Qt/QML 会把加载期告警写到那里；管道写满之后
+    QML 线程与主线程在 `setSource()` 的同步等待上互相卡住（`faulthandler` 的 2 分钟
+    超时转储停在 `shell_window.py` 的 `setSource()` + `QQmlThread <no Python frame>`）。
+    **加 `-s`（或任何禁掉捕获的方式）后整档 21.6s 跑完** —— 独立进程里构造同一个
+    `ShellWindow` 一直只要几秒，就是这条差异。`scripts/run_tests.sh` 的 ui 档因此带 `-s`。
     """
     from unittest.mock import MagicMock
 
@@ -306,13 +318,21 @@ def test_switching_to_a_page_calls_its_on_shown_hook(shell, monkeypatch):
     assert seen == [target], f"切到 {target} 应当只调它的 on_shown，实际 {seen}"
 
 
-def test_shutdown_hook_reaches_page_controllers(shell, monkeypatch):
+def test_shutdown_hook_reaches_page_controllers(shell, app, monkeypatch):
     """关窗必须把页面控制器的关机钩子也走一遍。
 
     外壳自己的线程靠 `findChildren(QThread)` 收得到，但**页面控制器不是外壳的子对象**：
     `IndustryPage(main_window)` 的第一个参数是位置参数、不是 `parent`，所以
     `findChildren` 找不到它名下的 worker。漏掉的后果是 `QThread` 在运行中被析构 ——
     Qt 直接 `abort()`，静默死进程且不留一行日志。
+
+    ⚠️ 必须走**真实 `closeEvent`**（`shell.close()`），不能图省事直接调
+    `_stop_running_threads()` —— 钩子能不能被分发，取决于它在 `closeEvent` 里的**次序**：
+    `_teardown_qml()` 会 `_pages.clear()`，钩子分发一旦排在它后面就是**静默空转**。
+    回归背景（2026-09-28）：采购窗与产线小助手的 QML 场景正挂在工业页的关机钩子里拆，
+    空转后它们活到解释器收尾，`Theme` 单例一被回收，场景里的绑定就成片对着 null 求值
+    —— 实测 183 行 `Cannot read property 'xxx' of null`。原先这条用例直接调
+    `_stop_running_threads()`，恰好绕开了那个次序，所以没能拦住它。
     """
     called: list[str] = []
     for key, page in shell._pages.items():
@@ -320,8 +340,10 @@ def test_shutdown_hook_reaches_page_controllers(shell, monkeypatch):
             continue
         monkeypatch.setattr(page.hooks, "shutdown", lambda k=key: called.append(k), raising=False)
 
-    shell._stop_running_threads()
     expected = {k for k, p in shell._pages.items() if p.hooks is not None}
+    shell.show()  # 没显示过的窗口 `close()` 不派发 closeEvent（Qt 的行为）
+    shell.close()
+    app.processEvents()
     assert set(called) == expected, f"关机钩子没覆盖到全部页面：{sorted(expected - set(called))}"
 
 

@@ -65,7 +65,6 @@ def add_blueprints_to_plan(bridge: Any, blueprints: list[dict]) -> None:
         )
         groups.setdefault(key, []).append(bp)
 
-    product_name = valid[0].get("product_name") or valid[0].get("display_name") or "?"
     char_name = ""
     try:
         from services.char_config_resolver import get_character_list
@@ -76,7 +75,10 @@ def add_blueprints_to_plan(bridge: Any, blueprints: list[dict]) -> None:
     except Exception:
         char_name = ""
 
-    bulk = _BulkPlanMetricsWorker(list(groups.values()), product_name, char_name, parent=_parent(bridge))  # type: ignore[arg-type]
+    # 产品名**不在这里取**：`valid` 可以横跨多种产品，取 `valid[0]` 的名字会让整批
+    # 计划都写成第一张蓝图的产品（本类曾经就是这么错的，见 worker 里的回归说明）。
+    # 每组的产品名由 `_BulkPlanMetricsWorker` 从该组自己那张蓝图读。
+    bulk = _BulkPlanMetricsWorker(list(groups.values()), char_name, parent=_parent(bridge))  # type: ignore[arg-type]
     bridge._add_plan_bulk = bulk  # 强引用保活，防止局部 QThread 被 GC
 
     def _on_bulk_done(rows: list) -> None:

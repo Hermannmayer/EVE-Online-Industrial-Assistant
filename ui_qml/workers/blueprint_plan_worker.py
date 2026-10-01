@@ -11,10 +11,9 @@ class _BulkPlanMetricsWorker(QThread):
 
     done = Signal(list)
 
-    def __init__(self, group_items: list[list[dict]], product_name: str, char_name: str, parent=None):
+    def __init__(self, group_items: list[list[dict]], char_name: str, parent=None):
         super().__init__(parent)
         self._group_items = group_items
-        self._product_name = product_name
         self._char_name = char_name
 
     def run(self):
@@ -36,6 +35,14 @@ class _BulkPlanMetricsWorker(QThread):
         rows = []
         for bps in self._group_items:
             parallels = len(bps)
+            # ⚠️ 产品名必须**按组各取自己那张蓝图**的，不能沿用同批第一张的。
+            # 回归背景（2026-09-28）：本类原先只收一个 `product_name`（调用方取
+            # `valid[0]`），而一次多选可以横跨**多种产品** —— 于是每组都写成第一张
+            # 蓝图的产品名。`product_type_id` 是对的，只有这个冗余展示列被写串，
+            # 所以界面上表现成「几条不同产品的产线名字全变成同一个」，而排序/筛选都
+            # 只是把这个假象摆到眼前（模型层排序已验证正确）。
+            # 实测用户库：3 行「索敌增强器 II」/「中型工业核心 II」被写成「金星 II」。
+            product_name = str(bps[0].get("product_name") or bps[0].get("display_name") or "")
             d = {
                 "parallels": parallels,
                 "me": bps[0].get("me_level") or 0,
@@ -47,7 +54,7 @@ class _BulkPlanMetricsWorker(QThread):
             metrics = plan_service.calculate_plan_metrics(
                 {
                     "product_type_id": bps[0]["product_type_id"],
-                    "product_name": self._product_name,
+                    "product_name": product_name,
                     "runs": d["runs"],
                     "parallels": parallels,
                     "me_level": d["me"],
@@ -66,7 +73,7 @@ class _BulkPlanMetricsWorker(QThread):
             rows.append(
                 {
                     "type_id": bps[0]["product_type_id"],
-                    "product_name": self._product_name,
+                    "product_name": product_name,
                     "data": d,
                     "metrics": metrics,
                     "bp_ids": [b["id"] for b in bps],

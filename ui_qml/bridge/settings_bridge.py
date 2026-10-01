@@ -17,13 +17,17 @@
 
 from __future__ import annotations
 
+import os
 import weakref
 from typing import Any
 
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 from PySide6.QtWidgets import QWidget
 
+from services import db_backup, user_settings
+from services.user_settings import BACKUP_KEEP_ALLOWED, BACKUP_KEEP_DEFAULT
 from ui_qml.dialog_host import DialogBridge, QmlDialog
+from ui_qml.file_dialogs import get_save_filename
 from ui_qml.theme import registry as theme
 
 __all__ = ["SettingsBridge", "SettingsQmlDialog", "ThemeSelectorBridge"]
@@ -135,6 +139,12 @@ class SettingsBridge(DialogBridge):
         self._interval = 0
         self._auto_update = False
         self._font_size = theme.BASE_FONT_PX
+        #: 备份设置**直接落 `services.user_settings`**，不走宿主 `_save_settings()` ——
+        #: 那三个键（间隔/自动更新/区域）属于外壳，备份不属于，塞进去就是两个来源。
+        self._backup_enabled = True
+        self._backup_keep = BACKUP_KEEP_DEFAULT
+        #: 「立即备份 / 导出」的结果回显（失败也要说话，否则用户以为点了没反应）
+        self._backup_status = ""
         self.reload_state()
 
     @property
@@ -184,6 +194,88 @@ class SettingsBridge(DialogBridge):
         self._font_size = int(px)
         self.stateChanged.emit()
 
+    # ── 用户数据备份（设置页「备份」标签）──────────────────────
+
+    @Property(bool, notify=stateChanged)
+    def backupEnabled(self) -> bool:
+        """是否每天自动备份用户数据（user.db）。"""
+        return self._backup_enabled
+
+    @Property(int, notify=stateChanged)
+    def backupKeep(self) -> int:
+        """最多保留几份备份。"""
+        return self._backup_keep
+
+    #: 保留份数的可选项 —— 设置页的下拉只给这几个（白名单在 `user_settings` 里兜底）
+    backupKeepOptions = Property(list, lambda self: list(BACKUP_KEEP_ALLOWED), constant=True)
+
+    @Property(str, notify=stateChanged)
+    def backupStatus(self) -> str:
+        """上一次「立即备份 / 导出」的结果文案；空串 = 本次打开还没操作过。"""
+        return self._backup_status
+
+    @Slot(bool)
+    def setBackupEnabled(self, enabled: bool) -> None:
+        """开关**即时落盘** —— 与主题卡片同样「点了就生效」，不吃「应用/确定」。"""
+        self._backup_enabled = bool(enabled)
+        user_settings.set_backup_enabled(self._backup_enabled)
+        self.stateChanged.emit()
+
+    @Slot(int)
+    def setBackupKeep(self, keep: int) -> None:
+        """保留份数即时落盘；**回读**一次，让白名单兜底后的真实值回到界面。"""
+        user_settings.set_backup_keep(int(keep))
+        self._backup_keep = user_settings.get_backup_keep()
+        self.stateChanged.emit()
+
+    @Slot()
+    def backupNow(self) -> None:
+        """立即备份一份 —— 手动入口**不受「每天一次」限制**（用户点了就该备）。"""
+        path = db_backup.backup_user_db(keep=self._backup_keep)
+        if path is None:
+            self._set_backup_status("备份失败，详见日志")
+            return
+        self._set_backup_status(f"已备份 {os.path.basename(path)}（现有 {len(db_backup.list_backups())} 份）")
+
+    @Slot()
+    def exportNow(self) -> None:
+        """把 user.db 导出到用户选定的位置（原生保存框）。"""
+        parent = self._mw if isinstance(self._mw, QWidget) else None
+        dest = get_save_filename(parent, "eve-user-data.db", "SQLite 数据库 (*.db)")
+        if not dest:
+            return
+        path = db_backup.export_user_db(dest)
+        self._set_backup_status(f"已导出到 {path}" if path else "导出失败，详见日志")
+
+    @Property(list, notify=stateChanged)
+    def backupItems(self) -> list[str]:
+        """已有备份的**文件名**（新的在前）—— 设置页那个「还原到」下拉直接用。
+
+        随 `stateChanged` 重读：点完「立即备份」列表立刻多一份，不用重开设置。
+        """
+        return [os.path.basename(p) for p in db_backup.list_backups()]
+
+    @Slot(int)
+    def restoreBackup(self, index: int) -> None:
+        """用选中的那份备份覆盖当前用户数据。
+
+        `restore_user_db` **会先把「现在这个库」也备一份**，所以选错了还能退回来。
+        还原成功后**必须重启应用**：外壳/页面/桥里全是旧库的数据与缓存，不重启会看到
+        「还原了但界面没变」，之后任何一次写回都可能把旧数据盖到新库上。
+        """
+        paths = db_backup.list_backups()
+        if not 0 <= index < len(paths):
+            return
+        target = paths[index]
+        if not db_backup.restore_user_db(target):
+            self._set_backup_status("还原失败，详见日志")
+            return
+        self._set_backup_status(f"已还原 {os.path.basename(target)} —— 请重启应用让界面读到新数据")
+
+    def _set_backup_status(self, text: str) -> None:
+        self._backup_status = text
+        self.stateChanged.emit()
+
     # ── 状态同步 ──────────────────────────────────────────────
 
     def reload_state(self) -> None:
@@ -196,6 +288,8 @@ class SettingsBridge(DialogBridge):
             self._interval = int(getattr(self._mw, "_update_interval_minutes", 0))
             self._auto_update = bool(getattr(self._mw, "_auto_update_enabled", False))
         self._font_size = round(theme.BASE_FONT_PX * theme.FONT_SCALE)
+        self._backup_enabled = user_settings.get_backup_enabled()
+        self._backup_keep = user_settings.get_backup_keep()
         self._themes.set_current(theme.current_theme())
         self.stateChanged.emit()
 

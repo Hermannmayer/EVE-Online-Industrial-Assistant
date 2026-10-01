@@ -263,12 +263,61 @@ Item {
             visible: page.industry ? page.industry.viewMode === "data" : true
         }
 
-        FGanttChart {
-            id: ganttView
+        /* 甘特图 + 下方的「时间粒度」缩进条。
+         * 甘特图**不再** `anchors.fill` —— 底部留一行给滑块，这就是用户要的
+         * 「下面有一个缩进条，用来控制时间的粒度」。 */
+        Item {
             anchors.fill: parent
             visible: page.industry ? page.industry.viewMode === "gantt" : false
-            rows: page.industry ? page.industry.ganttRows : []
-            maxHours: page.industry ? page.industry.ganttMaxHours : 48
+
+            FGanttChart {
+                id: ganttView
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: ganttZoomRow.top
+                rows: page.industry ? page.industry.ganttRows : []
+                maxHours: page.industry ? page.industry.ganttMaxHours : 48
+                axisStartMs: page.industry ? page.industry.ganttAxisStartMs : 0
+                // 粒度滑块直接给「每小时多少像素」：拉大看细节（横向滚动），拉小看全局
+                pxPerHourBase: ganttZoom.value
+            }
+
+            RowLayout {
+                id: ganttZoomRow
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: Math.round(28 * Theme.fontScale)
+                spacing: Theme.spacingSm
+
+                Text {
+                    text: qsTr("时间粒度")
+                    color: Theme.textSecondary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                }
+
+                /* ⚠️ 只认 `onMoved` 语义的滑块：这里读 `value` 做单向绑定
+                 * （`pxPerHourBase: ganttZoom.value`），滑块自己不回写 —— 不会形成回环。
+                 * 先例与教训见 `FSkillsTab.qml:207-219`。 */
+                FSlider {
+                    id: ganttZoom
+                    Layout.fillWidth: true
+                    from: 4
+                    to: 60
+                    value: 12
+                    stepSize: 1
+                    snapMode: Slider.SnapAlways
+                }
+
+                Text {
+                    text: qsTr("每小时 %1 px").arg(Math.round(ganttZoom.value))
+                    color: Theme.textSecondary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                }
+            }
         }
     }
 

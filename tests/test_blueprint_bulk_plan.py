@@ -68,20 +68,50 @@ class TestBulkPlanMetricsWorker:
 
         group_items = [
             [
-                {"id": 1, "blueprint_type_id": 3001, "product_type_id": 2001, "me_level": 0, "te_level": 0, "runs": 1},
-                {"id": 2, "blueprint_type_id": 3001, "product_type_id": 2001, "me_level": 0, "te_level": 0, "runs": 1},
+                {
+                    "id": 1,
+                    "blueprint_type_id": 3001,
+                    "product_type_id": 2001,
+                    "product_name": "渡鸦级",
+                    "me_level": 0,
+                    "te_level": 0,
+                    "runs": 1,
+                },
+                {
+                    "id": 2,
+                    "blueprint_type_id": 3001,
+                    "product_type_id": 2001,
+                    "product_name": "渡鸦级",
+                    "me_level": 0,
+                    "te_level": 0,
+                    "runs": 1,
+                },
             ],
             [
-                {"id": 3, "blueprint_type_id": 3002, "product_type_id": 1001, "me_level": 5, "te_level": 0, "runs": 1},
+                {
+                    "id": 3,
+                    "blueprint_type_id": 3002,
+                    "product_type_id": 1001,
+                    "product_name": "碳纤维",
+                    "me_level": 5,
+                    "te_level": 0,
+                    "runs": 1,
+                },
             ],
         ]
-        worker = _BulkPlanMetricsWorker(group_items, "测试产品", "", parent=None)
+        worker = _BulkPlanMetricsWorker(group_items, "", parent=None)
         captured: list[list[dict]] = []
         worker.done.connect(captured.append)
         worker.run()
         rows = captured[0]
 
         assert len(rows) == 2  # 两组 → 2 行
+        # 每组的产品名必须是**它自己**那件产品的。回归（2026-09-28）：worker 原先只收
+        # 一个 `product_name`（调用方取 `valid[0]`），一次多选横跨多种产品时整批都写成
+        # 第一件的名字 —— `product_type_id` 正确、只有展示列串味，界面上表现为
+        # 「几条不同产品的产线名字全变成同一个」。
+        assert rows[0]["product_name"] == "渡鸦级"
+        assert rows[1]["product_name"] == "碳纤维"
         # 第一组 2 张同蓝图 → parallels=2（组大小）；第二组 1 张 → parallels=1
         assert rows[0]["data"]["parallels"] == 2
         assert rows[1]["data"]["parallels"] == 1
@@ -112,7 +142,7 @@ class TestBulkPlanMetricsWorker:
                 }
             ]
         ]
-        worker = _BulkPlanMetricsWorker(group_items, "渡鸦级", "", parent=None)
+        worker = _BulkPlanMetricsWorker(group_items, "", parent=None)
         captured: list[list[dict]] = []
         worker.done.connect(captured.append)
         worker.run()
@@ -160,7 +190,7 @@ class TestBulkPlanMetricsWorker:
                 }
             ]
         ]
-        worker = _BulkPlanMetricsWorker(group_items, "测试产品", "", parent=None)
+        worker = _BulkPlanMetricsWorker(group_items, "", parent=None)
         captured: list[list[dict]] = []
         worker.done.connect(captured.append)
         worker.run()
@@ -187,7 +217,7 @@ class TestBulkPlanMetricsWorker:
 
         holder = SimpleNamespace()
 
-        worker = _BulkPlanMetricsWorker([], "", "", parent=None)
+        worker = _BulkPlanMetricsWorker([], "", parent=None)
         holder.worker = worker  # 强引用保活（与 BlueprintTab._add_plan_bulk 同模式）
 
         worker.start()

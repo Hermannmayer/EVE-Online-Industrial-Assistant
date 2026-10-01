@@ -316,6 +316,15 @@ def calculate_output_with_overflow(
         all_type_ids.add(plan.get("product_type_id", 0))
     prices = get_market_prices(conn, all_type_ids, region_id)
 
+    # 只有**真的会被自制**的中间件才谈得上「溢出」——即这批计划里存在指向它的子项产线
+    # （sub_level/child_level > 0）。纯采购的件按定义买多少用多少，永远不溢出。
+    #
+    # 回归背景（2026-09-28，用户报告）：原先只看 SDE —— 只要 `blueprint_products` 里
+    # 这件东西有制造蓝图，就按 `ceil(需求/单次产出)` 假装你会自己跑，于是**全部直接采购**
+    # 的计划也报溢出（实测 R.A.M.-装甲/船体科技「溢出 62 个」、R.A.M.-能源科技「91 个」），
+    # 而用户根本没造过。列名又正好叫「材料溢出」，必然被读成 bug。
+    self_made = self_made_type_ids(plans)
+
     results: list[dict[str, Any]] = []
 
     for plan in plans:
@@ -340,6 +349,8 @@ def calculate_output_with_overflow(
         for step in walk_bom(reader, pid, total_qty, me_level=me, max_depth=max_depth, seen_mode="global"):
             if step.blueprint is None:
                 continue  # 叶子（无蓝图 / 环 / 深度封顶）→ 无溢出
+            if step.type_id not in self_made:
+                continue  # 没有子项产线 → 这件是买来的，不判溢出
             per_run_out = step.blueprint[1]
             overflow = step.runs * per_run_out - step.qty
             if overflow > 0:

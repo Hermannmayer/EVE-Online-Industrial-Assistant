@@ -52,6 +52,9 @@ class QueryBridge(QObject):
         # 模块级/构造期建它等于每次造桥都加载整条业务链。
         self._detail_bridge: QObject | None = None
         self._dash_bridge: QObject | None = None
+        #: 全物品浏览器**内嵌**在查询页工作区里（不再弹二级窗口），见 `openAllItems`
+        self._all_bridge: QObject | None = None
+        self._all_visible = False
 
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
@@ -126,12 +129,16 @@ class QueryBridge(QObject):
 
     @Slot()
     def shutdown(self) -> None:
-        """停掉两个子桥的在途取数线程。**页面被销毁时必须调**（见 `QueryDetailBridge.shutdown`）。
+        """停掉子桥的在途取数线程。**页面被销毁时必须调**（见 `QueryDetailBridge.shutdown`）。
 
         只处理**已经建出来**的子桥 —— 这里绝不能读 `self.detail` / `self.dashboard`
         （那两个 getter 会把没用到过的子桥无谓地创建出来，连带 import 整条业务链）。
+
+        ⚠️ 全物品桥**必须一起停**：它自带 `TreeW` / `ItemsW` / `ScoreW` 三个 QThread，
+        漏掉就是「QThread 在运行中被析构」→ Qt 直接 abort（`all_items_bridge.py` 头部
+        记着同一条教训）。
         """
-        for sub in (self._detail_bridge, self._dash_bridge):
+        for sub in (self._detail_bridge, self._dash_bridge, self._all_bridge):
             if sub is None:
                 continue
             stop = getattr(sub, "shutdown", None)
@@ -315,23 +322,70 @@ class QueryBridge(QObject):
 
     # ── 子窗口 ────────────────────────────────────────────────
 
+    # ── 全物品（**内嵌**在查询页工作区里）─────────────────────
+
+    def _get_all_items(self) -> QObject | None:
+        """全物品浏览器子桥。**懒建** —— 它一起来就要拉整张物品表 + 市场分类树两个线程，
+        进查询页就建等于每次进页都白烧一次（见 `AllItemsBridge.start`）。"""
+        if self._all_bridge is None:
+            try:
+                from ui_qml.bridge.all_items_bridge import AllItemsBridge
+            except ImportError:
+                log.exception("全物品桥加载失败，该面板将不可用")
+                return None
+            self._all_bridge = AllItemsBridge(embedded=True)
+            self._all_bridge.itemActivated.connect(self.selectItemFromAllItems)
+        return self._all_bridge
+
+    allItems = Property(QObject, _get_all_items, constant=True)
+
+    @Property(bool, notify=statusChanged)
+    def allItemsVisible(self) -> bool:
+        """工作区是否切到「全物品」面板（QML 用它决定显示哪一块）。"""
+        return self._all_visible
+
     @Slot()
     def openAllItems(self) -> None:
-        """打开全物品浏览器（非模态独立窗，单实例复用）。
+        """把工作区切到**内嵌**的全物品面板。
 
-        复用靠 `dialog_host.find_modeless` 查保活表，**不用实例属性缓存** ——
-        独立窗关掉即销毁（`WA_DeleteOnClose`），缓存下来的 Python 包装器会变成
-        悬空对象，下次 `show()` 直接抛「Internal C++ object already deleted」。
+        改造原因（用户要求）：二级窗口挡着主界面，而「全物品」本质上是查询页的另一种
+        列表形态 —— 直接在下方详细信息面板区展示，双击一行就走到与「输入查找物品」
+        完全相同的详情页。独立窗那条路仍然保留（`AllItemsQmlDialog`），它照旧带
+        制造/贸易评分设置等按钮；**内嵌态**按用户要求去掉那些按钮与右键菜单。
         """
-        from ui_qml.bridge.all_items_bridge import AllItemsQmlDialog as AllItemsDialog
-        from ui_qml.dialog_host import find_modeless
+        bridge = self._get_all_items()
+        if bridge is None:
+            return
+        start = getattr(bridge, "start", None)
+        if callable(start):
+            start()  # 幂等：内部只在没起过时启动那两个线程
+        self._all_visible = True
+        self.statusChanged.emit()
 
-        dialog = find_modeless(AllItemsDialog)
-        if dialog is None:
-            dialog = AllItemsDialog()
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
+    @Slot()
+    def closeAllItems(self) -> None:
+        """从全物品面板退回空闲态仪表盘。"""
+        if not self._all_visible:
+            return
+        self._all_visible = False
+        self.statusChanged.emit()
+
+    @Slot(int, str)
+    def selectItemFromAllItems(self, type_id: int, name: str) -> None:
+        """全物品里双击一行 → 走**与输入查找完全相同**的详情路径，并收起全物品面板。
+
+        与 `pickSuggestion` 末尾保持一致的三步：写搜索历史 → 推给详情桥 → 更新状态。
+        """
+        if int(type_id) <= 0:
+            return
+        # 与 `pickSuggestion` 末尾同一套：`add_search_history` 是 `core.search_history`
+        # 的**模块级函数**，不是本桥的方法。
+        from core.search_history import add_search_history
+
+        add_search_history(str(name))
+        self._all_visible = False
+        self._show_detail(int(type_id), str(name))
+        self.set_status(f"已选中：{name}")
 
     @Slot()
     def openBatchPrice(self) -> None:
@@ -344,7 +398,7 @@ class QueryBridge(QObject):
 
     @Slot()
     def refreshColors(self) -> None:
-        for sub in (self._detail_bridge, self._dash_bridge):
+        for sub in (self._detail_bridge, self._dash_bridge, self._all_bridge):
             if sub is not None:
                 notify = getattr(sub, "changed", None)
                 if notify is not None:

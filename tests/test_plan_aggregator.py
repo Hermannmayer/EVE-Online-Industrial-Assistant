@@ -236,3 +236,42 @@ class TestSelfMadeComponents:
                 self_made=self_made_type_ids([mother, *running_sublines]),
             )
             assert 2003 not in {r["type_id"] for r in rows2}, "自制件被重复计成待采购了"
+
+    def test_pure_purchase_plan_reports_no_overflow(self, temp_db):
+        """**纯采购**的计划不许报「材料溢出」——溢出只在真的自制时成立。
+
+        回归背景（2026-09-28，用户报告）：溢出原先只看 SDE —— 只要中间件在
+        `blueprint_products` 里有制造蓝图，就按 `ceil(需求/单次产出)` 假装你会自己跑，
+        于是**全部直接采购**的计划也报溢出（实测 R.A.M.-装甲/船体科技「溢出 62 个」、
+        R.A.M.-能源科技「91 个 / 65 个」）。列名又叫「材料溢出」，必然被读成 bug。
+
+        修法是加自制闸门：`step.type_id` 必须真的出现在这批计划的子项产线里
+        （`sub_level > 0`）才算。这里同时钉死**不能修过头** —— 一旦真有子线，照旧要报。
+        """
+        self._seed_intermediate(temp_db)
+        # 让中间件 2003 每轮产 4（`_seed_intermediate` 默认产 1），这样母项对它取整后
+        # 一定多产几个 → 旧口径下溢出必然 > 0，修复后必然为 False，对比才有意义。
+        with temp_db.connect("bp") as conn:
+            conn.execute("DELETE FROM blueprint_products WHERE blueprint_type_id=3003")
+            conn.execute("INSERT INTO blueprint_products VALUES (3003,'manufacturing',2003,4)")
+
+        from services.plan_aggregator import calculate_output_with_overflow
+
+        mother = {
+            "product_type_id": 2001,
+            "product_name": "渡鸦级",
+            "runs": 1,
+            "parallels": 1,
+            "me_level": 0,
+            "sub_level": 0,  # 母项
+            "status": "pending",
+        }
+        with temp_db.connect("user", "ref", "bp", "mkt") as conn:
+            out = calculate_output_with_overflow(conn, [mother])
+            assert out[0]["has_overflow"] is False, f"纯采购不该报溢出：{out[0]['overflow_text']}"
+
+            # 同一件一旦真有子项产线，就该照旧报溢出（修复不能修过头）
+            subline = {**mother, "product_type_id": 2003, "sub_level": 1, "status": "in_progress"}
+            out2 = calculate_output_with_overflow(conn, [mother, subline])
+            row = next(r for r in out2 if r["product_type_id"] == 2001)
+            assert row["has_overflow"] is True, "有子线自制时应当照旧报溢出"

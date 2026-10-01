@@ -267,6 +267,23 @@ def _reset_qt_noise_state():
 
 
 @pytest.fixture(autouse=True)
+def no_auto_daily_backup(monkeypatch):
+    """测试里绝不跑「每天一次的用户数据备份」—— 它是**写磁盘 + 写 settings.json** 的副作用。
+
+    回归背景（2026-09-28）：`ShellWindow.__init__` 挂了
+    `QTimer.singleShot(1200, _maybe_daily_backup)`，测试的事件循环只要跑到 1.2s 就会触发：
+
+    - 往**真实**的 `database/backups/user/` 写备份（`mock_db` 不替换 `DB_PATH_MAP`）；
+    - 调 `user_settings.set_last_backup_date` → 触发 `save_settings`，于是
+      `test_shell_state.py::test_pin_is_session_only_and_never_restored`（它断言
+      「置顶不该落盘 ⇒ save_settings 一次都不该被调」）被这条无关的写入搞红。
+
+    ⚠️ 只关这**一个**开关，不动 `DB_PATH_MAP`（动它会构造出缺表的空库，把页面建页打挂）。
+    """
+    monkeypatch.setattr("services.user_settings.get_backup_enabled", lambda: False)
+
+
+@pytest.fixture(autouse=True)
 def isolate_user_settings(tmp_path, monkeypatch):
     """把 settings.json 指向临时文件 —— 测试绝不写用户真实数据。
 

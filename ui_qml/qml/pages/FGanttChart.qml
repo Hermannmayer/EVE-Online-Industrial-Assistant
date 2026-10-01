@@ -18,14 +18,21 @@ Item {
     // 由 bridge 注入：每项 { name, start, duration, endText }
     property var rows: []
     property int maxHours: 48
-    // 每 12 小时一个刻度
-    readonly property int tickStep: 12
+    //: 横轴起点的绝对时刻（UTC 毫秒，由 bridge 注入）—— 刻度按它换算成「几月几号」，
+    //: 与柱形条用的是同一个「现在」，否则刻度会整体偏掉。
+    property double axisStartMs: 0
+    //: 每**天**一个刻度（改造前是每 12 小时，用户要求改成日期刻度）
+    readonly property int tickStep: 24
 
     readonly property int labelWidth: 200
     readonly property int rowHeight: 32
     readonly property int headerHeight: 40
-    // 时间轴最小宽度（与原 minimumSizeHint 一致：labelWidth + maxHours*12）
-    readonly property real minChartSpan: maxHours * 12
+
+    /* 时间粒度：每小时占多少像素。由图表下方的「时间粒度」滑块驱动 ——
+     * 拉大看细节（超出宽度就横向滚动），拉小看全局。默认 12 与改造前的隐式下限一致。 */
+    property real pxPerHourBase: 12
+    //: 轴至少铺满一整天，否则刻度只剩一两根，看不出时间感
+    readonly property real hourSpan: Math.max(maxHours, 24)
 
     TextMetrics {
         id: endLabelMetrics
@@ -35,7 +42,7 @@ Item {
     }
 
     readonly property real endLabelWidth: endLabelMetrics.width + 8
-    readonly property real contentW: Math.max(width, labelWidth + minChartSpan + 10 + endLabelWidth)
+    readonly property real contentW: Math.max(width, labelWidth + hourSpan * pxPerHourBase + 10 + endLabelWidth)
     readonly property real axisWidth: contentW - labelWidth - 10 - endLabelWidth
     // 刻度线与柱形条共用这一个比例，改分母时不要只改一处
     readonly property real pxPerHour: maxHours > 0 ? axisWidth / maxHours : 0
@@ -89,7 +96,8 @@ Item {
                     width: 30
                     height: 15
                     horizontalAlignment: Text.AlignHCenter
-                    text: (parent.index * root.tickStep) + "h"
+                    // 日期刻度（改造前是「0h / 12h / 24h」）：轴起点 + n 天
+                    text: Qt.formatDateTime(new Date(root.axisStartMs + parent.index * root.tickStep * 3600000), "MM-dd")
                     color: Theme.textSecondary
                     font.family: Theme.fontFamily
                     font.pixelSize: Math.round(10 * Theme.fontScale)

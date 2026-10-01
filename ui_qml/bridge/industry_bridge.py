@@ -69,6 +69,7 @@ class IndustryBridge(QObject):
         self._complete_all_visible = False
         self._gantt_rows: list[dict] = []
         self._gantt_max_hours = 48
+        self._gantt_axis_start_ms = 0.0
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.timeout.connect(self._run_search)
@@ -323,10 +324,25 @@ class IndustryBridge(QObject):
     def ganttMaxHours(self) -> int:
         return self._gantt_max_hours
 
+    @Property(float, notify=ganttChanged)
+    def ganttAxisStartMs(self) -> float:
+        """横轴起点的绝对时刻（UTC 毫秒）—— QML 靠它把「第 n 天」换算成几月几号。
+
+        起点就是排期用的那个「现在」（在产行按剩余时长画、完工行不画），所以图会随
+        时间推进而收窄，而不是每刷新一次整张右滑。
+        """
+        return self._gantt_axis_start_ms
+
     def set_gantt_plans(self, plans: list[dict]) -> None:
         """按计划集重算甘特条（排期逻辑在 `services.plan_gantt`，这里只搬运）。"""
-        from services.plan_gantt import build_rows, max_hours
+        from datetime import UTC, datetime
 
-        self._gantt_rows = build_rows(plans)
+        from services.plan_gantt import axis_start_ms, build_rows, max_hours
+
+        # **同一个 now** 喂给排期与轴起点：各取一次 `datetime.now()` 的话刻度会和柱形条
+        # 错开（毫秒级，但没有理由让它错开）。
+        now = datetime.now(UTC)
+        self._gantt_rows = build_rows(plans, now=now)
         self._gantt_max_hours = max_hours(self._gantt_rows)
+        self._gantt_axis_start_ms = axis_start_ms(now)
         self.ganttChanged.emit()

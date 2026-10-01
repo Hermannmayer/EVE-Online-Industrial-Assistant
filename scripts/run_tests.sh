@@ -28,18 +28,25 @@ MODE="${1:-validate}"
 
 case "$MODE" in
   fast)
-    "$PY" -m pytest tests/ -q -m fast --maxfail=1
+    "$PY" -m pytest tests/ -q -s -m fast --maxfail=1
     ;;
   validate)
-    "$PY" -m pytest tests/ -q -m "not ui" --maxfail=5
+    "$PY" -m pytest tests/ -q -s -m "not ui" --maxfail=5
     ;;
   ui-retest)
-    "$PY" -m pytest tests/ -q -m ui --maxfail=1
+    # ⚠️ `-s`（--capture=no）**必须带**，不是图省事：pytest 默认捕获 stdout/stderr，
+    # 而 Qt/QML 与 Python logging 都会往那里写；捕获管道被写满之后，QML 线程与主线程
+    # 会在 `QQuickView.setSource()` 的同步等待上互锁 —— 整档挂到 faulthandler 的
+    # 2 分钟超时，看着像「本机 QML 引擎坏了」。2026-09-28 实测：不带 `-s` 时
+    # `tests/test_qml_shell.py` 240s 不返回；带上 `-s` 后同一份代码 **21.6s 跑完**。
+    # 告警并没有丢：`test_qml_shell.py::test_shell_qml_loads_without_warnings` 自己
+    # 临时装收集用的 message handler，那一条专门守「QML 加载无告警」。
+    "$PY" -m pytest tests/ -q -s -m ui --maxfail=1
     ;;
   full)
     # 两阶段分离进程，杜绝 Qt 与 sqlite 混跑互扰
-    "$PY" -m pytest tests/ -q -m "not ui" --maxfail=1 \
-      && "$PY" -m pytest tests/ -q -m ui --maxfail=1
+    "$PY" -m pytest tests/ -q -s -m "not ui" --maxfail=1 \
+      && "$PY" -m pytest tests/ -q -s -m ui --maxfail=1
     ;;
   target)
     # 本次变更涉及的测试文件。
@@ -70,14 +77,23 @@ case "$MODE" in
     if [[ ${#files[@]} -eq 0 ]]; then
       if [[ "$lib_changed" -eq 1 ]]; then
         echo "库代码有变更但未匹配到测试文件，跑 validate 全量" >&2
-        "$PY" -m pytest tests/ -q -m "not ui" --maxfail=5
+        "$PY" -m pytest tests/ -q -s -m "not ui" --maxfail=5
       else
         echo "仅文档/配置/工具变更，无需跑测试" >&2
         exit 0
       fi
     else
+      # `test_qml_dialogs.py` 有一条**实测出来的前置依赖**：单独点名它会挂在第一条用例
+      # （`[编辑生产计划]`）不动，而先跑一遍 `test_qml_all_items.py`（同样加载 QML）之后
+      # 再跑它就是 **122 passed in 23.9s** 全绿。点名到它就把前置带上，省得每次都踩。
+      # （`-m ui` 整档跑不受影响：字母序里 `test_qml_all_items.py` 本来就在它前面。）
+      if printf '%s\n' "${files[@]}" | grep -q 'test_qml_dialogs\.py' \
+         && ! printf '%s\n' "${files[@]}" | grep -q 'test_qml_all_items\.py'; then
+        echo "点名到 test_qml_dialogs.py，自动补上前置 test_qml_all_items.py" >&2
+        files+=(tests/test_qml_all_items.py)
+      fi
       mapfile -t files < <(printf '%s\n' "${files[@]}" | sort -u)
-      "$PY" -m pytest "${files[@]}" -q --maxfail=1
+      "$PY" -m pytest "${files[@]}" -q -s --maxfail=1
     fi
     ;;
   *)

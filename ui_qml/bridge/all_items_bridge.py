@@ -291,10 +291,17 @@ class AllItemsBridge(DialogBridge):
     searchChanged = Signal()
     #: 表头排序指示
     sortChanged = Signal()
+    #: 双击一行 —— **内嵌态**交给查询页走详情（与「输入查找物品」同一条路）；
+    #: 独立窗态仍弹材料明细，见 `openMaterials`。
+    itemActivated = Signal(int, str)
 
-    def __init__(self, manufacturable_only: bool = False) -> None:
+    def __init__(self, manufacturable_only: bool = False, *, embedded: bool = False) -> None:
         super().__init__()
         self._manufacturable_only = bool(manufacturable_only)
+        #: 是否内嵌在查询页工作区（不是独立窗）—— 见 `embedded` 属性
+        self._embedded = bool(embedded)
+        #: `start()` 只跑一次的标记（内嵌态每次点「全物品」都会调它）
+        self._started = False
         self.set_title("可制造物品 - 添加至生产计划" if self._manufacturable_only else "全物品查询")
 
         self._categories: list[str] = list(MFG_CATEGORIES if self._manufacturable_only else CATEGORIES)
@@ -343,7 +350,13 @@ class AllItemsBridge(DialogBridge):
     # ── 启动 ─────────────────────────────────────────────────
 
     def start(self) -> None:
-        """开窗时拉起首次加载（原版在 `__init__` 末尾做同样两件事）。"""
+        """拉起首次加载（原版在 `__init__` 末尾做同样两件事）。
+
+        **幂等**：内嵌态下用户每点一次「全物品」都会调到这里，重复起线程纯属白烧。
+        """
+        if self._started:
+            return
+        self._started = True
         self._tw = TreeW(self)
         self._tw.done.connect(self._on_tree_data)
         self._tw.start()
@@ -354,6 +367,16 @@ class AllItemsBridge(DialogBridge):
     model = Property(QObject, lambda self: self._proxy, constant=True)
     categories = Property(list, lambda self: list(self._categories), constant=True)
     manufacturableOnly = Property(bool, lambda self: self._manufacturable_only, constant=True)
+
+    @Property(bool, constant=True)
+    def embedded(self) -> bool:
+        """是否**内嵌**在查询页工作区（不是独立窗）。
+
+        内嵌态按用户要求去掉「制造评分设置 / 贸易评分设置 / 批量对比 / 导出」四个按钮
+        与右键菜单，双击改为走查询页详情；独立窗态（原「全物品」弹窗）行为一字未改。
+        """
+        return self._embedded
+
     columns = Property(list, lambda self: [dict(c) for c in _col_dicts(self._col_specs)], notify=stateChanged)
     statusText = Property(str, lambda self: self._status, notify=stateChanged)
     categoryIndex = Property(int, lambda self: self._cat_index, notify=stateChanged)
@@ -711,9 +734,17 @@ class AllItemsBridge(DialogBridge):
 
     @Slot(int)
     def openMaterials(self, row: int) -> None:
-        """双击物品行 → 制造材料明细（原 `_dbl` → `MatDlg`）。"""
+        """双击物品行 → 制造材料明细（原 `_dbl` → `MatDlg`）。
+
+        **内嵌态改为发 `itemActivated`**：在查询页里双击一行，用户要的是「与输入查找
+        物品相同」的详情页，而不是再叠一层材料明细窗 —— 那一层在内嵌布局里连宿主窗口
+        都没有（`host_widget()` 会返回 None）。
+        """
         data = self._row_at(row)
         if not data or not data.get("id"):
+            return
+        if self._embedded:
+            self.itemActivated.emit(int(data["id"]), str(data.get("z") or data.get("name") or ""))
             return
         MatQmlDialog(int(data["id"]), self.host_widget()).show()
 

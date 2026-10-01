@@ -44,6 +44,10 @@ _TIP = (
 
 _EMPTY_HINT = "所选母项均无中间组件可拆解（直接材料均可外购）。"
 
+#: 在产的子项产线不删 —— 与 `plan_table._RUNNING_STATUSES` 同一口径。
+#: 两处必须一致，否则「删母项」保得住、「拆解预览移除组件」保不住（用户报的就是后者）。
+_RUNNING_STATUSES = ("in_progress", "running")
+
 
 def line_cells(group_number: int, line: dict, name: str, profit: float | None) -> list[dict]:
     """一条拆解预览行 → 单元格。纯函数，便于单测。
@@ -178,6 +182,20 @@ class ParentDecomposeBridge(DialogBridge):
         self._removed_count += 1
         self._rebuild()
 
+    @Slot("QVariantList")
+    def removeRows(self, rows: list) -> None:
+        """批量移除（Ctrl / Shift 多选后点「移除选中行」）。
+
+        ⚠️ **必须按行号降序删**：`removeRow` 是按下标 `del` 的，而每次删完行号都会前移 ——
+        升序删会漏掉后一半（删了第 2 行之后，原来的第 5 行已经变成第 4 行，
+        再去删「第 5 行」就落到别的行上或越界）。降序删则前面的行号不受影响。
+
+        顺手去重：Shift 连选的区间理论上不会重复，但 QML 侧传什么都得按集合处理，
+        否则同一行会被删两次、`_removed_count` 也跟着多记。
+        """
+        for row in sorted({int(r) for r in rows}, reverse=True):
+            self.removeRow(row)
+
     def _resolve_name(self, type_id: int) -> str:
         return get_item_name(get_container().db, type_id)
 
@@ -282,7 +300,17 @@ class ParentDecomposeBridge(DialogBridge):
         self.accepted.emit()
 
     def _remove_planning_discarded(self, removed_types: set[int]) -> int:
-        """删除被用户在预览中移除的组件对应的子项产线（含同组子孙）。返回删除行数。"""
+        """删除被用户在预览中移除的组件对应的子项产线（含同组子孙）。返回删除行数。
+
+        ⚠️ **在产（in_progress/running）的子项不删**，与 `plan_table._cascade_children`
+        和 `plan_rebuild._is_locked` 同一口径：已投产的产线保下来，比删掉让用户去游戏里
+        找强。
+
+        回归背景（2026-09-28，用户报告「新加入的子线把原本在跑的产线搞坏了」）：原先这里
+        不看 `status`，把 `in_progress/running` 的子项与其它一律 `delete_many` —— 下一次
+        `rebuild_children(create=True)` 又按需求补建一条 `pending` 行，而那条新行对
+        **已经扣减过的库存**必然显示「材料不足」。用户看到的就是「在跑的产线突然缺料」。
+        """
         removed_types = {t for t in removed_types if t}
         if not removed_types:
             return 0
@@ -293,11 +321,16 @@ class ParentDecomposeBridge(DialogBridge):
             rows = [
                 dict(r)
                 for r in conn.execute(
-                    "SELECT id, product_type_id, group_number, sub_level, component_parent_type_id "
+                    "SELECT id, product_type_id, group_number, sub_level, component_parent_type_id, status "
                     "FROM production_plans WHERE sub_level > 0"
                 ).fetchall()
             ]
         ids = collect_removed_child_ids(rows, removed_types)
+        running = {int(r["id"]) for r in rows if (r.get("status") or "").lower() in _RUNNING_STATUSES}
+        kept = ids & running
+        ids -= running
+        if kept:
+            log.info("母项拆解：%d 条在产子项保留未删（已投产的产线不动）", len(kept))
         if not ids:
             return 0
         for pid in ids:

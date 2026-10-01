@@ -297,13 +297,13 @@ def test_user_v3_to_v4_adds_execution_columns(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 20  # v3 库会一路补跑到最新 v20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]  # v3 库会一路补跑到最新 v20
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     idxs = {r[1] for r in conn.execute("PRAGMA index_list(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 20
+    assert v == sm.DB_SCHEMA_VERSIONS["user"]
     for col in ("assigned_blueprint_id", "mat_hangar_id", "material_short"):
         assert col in cols, f"{col} 列应被 v3→v4 迁移添加"
     assert "idx_prod_plans_assigned_bp" in idxs
@@ -321,13 +321,13 @@ def test_user_v14_to_v15_adds_material_cost_snapshot(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
     assert any("启动成本快照" in s for s in result["applied"]), "应执行 v14→v15 加列迁移"
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 20
+    assert v == sm.DB_SCHEMA_VERSIONS["user"]
     assert "material_cost_snapshot" in cols
     assert "deducted_materials" in cols, "旧列不应被迁移删除"
 
@@ -340,7 +340,7 @@ def test_user_v3_to_v4_skips_missing_table(tmp_user_db):
     conn.close()
 
     result = sm.ensure_schema("user")
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
 
 
 # ────────────────────────────────────────────
@@ -356,13 +356,13 @@ def test_user_v4_to_v5_adds_solar_system_columns(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
     conn = sqlite3.connect(str(tmp_user_db))
     h_cols = {r[1] for r in conn.execute("PRAGMA table_info(hangars)")}
     p_cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 20
+    assert v == sm.DB_SCHEMA_VERSIONS["user"]
     assert "solar_system_id" in h_cols, "hangars.solar_system_id 列应被 v4→v5 迁移添加"
     assert "solar_system_id" in p_cols, "production_plans.solar_system_id 列应被 v4→v5 迁移添加"
     assert "facility_cost_mult" in p_cols, "v2→v3 遗漏的 facility_cost_mult 应在 v4→v5 补齐"
@@ -380,12 +380,12 @@ def test_user_v5_to_v6_adds_industry_columns(tmp_user_db):
 
     _create_user_v5(tmp_user_db)
     result = sm.ensure_schema("user")
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
     conn = sqlite3.connect(str(tmp_user_db))
     h_cols = {r[1] for r in conn.execute("PRAGMA table_info(hangars)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 20
+    assert v == sm.DB_SCHEMA_VERSIONS["user"]
     for col in ("facility_type", "facility_tax", "rigs"):
         assert col in h_cols, f"{col} 列应被 v5→v6 迁移添加"
 
@@ -459,13 +459,13 @@ def test_user_v7_to_v8_backfills_null_system(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
     assert any("回填" in s for s in result["applied"]), "应执行 v7→v8 回填迁移"
     conn = sqlite3.connect(str(tmp_user_db))
     rows = {r[0]: r[1] for r in conn.execute("SELECT id, solar_system_id FROM production_plans ORDER BY id")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 20
+    assert v == sm.DB_SCHEMA_VERSIONS["user"]
     assert rows[1] == 30000145, "空星系计划应从材料机库(新加达里)带出星系"
     assert rows[2] is None, "材料机库无星系 → 保持 NULL"
     assert rows[3] == 30000142, "已手动设置的星系不应被覆盖"
@@ -526,13 +526,13 @@ def test_user_v8_to_v9_heals_missing_v2_columns(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
     assert any("补齐" in s for s in result["applied"]), "应执行 v8→v9 补列迁移"
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 20
+    assert v == sm.DB_SCHEMA_VERSIONS["user"]
     for col in (
         "calculated_time",
         "notes",
@@ -612,13 +612,13 @@ def test_user_v9_to_v10_adds_deducted_materials(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
     assert any("扣减快照" in s for s in result["applied"]), "应执行 v9→v11 扣减快照迁移"
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 20
+    assert v == sm.DB_SCHEMA_VERSIONS["user"]
     assert "deducted_materials" in cols, "deducted_materials 列应被 v9→v11 迁移添加"
 
 
@@ -803,12 +803,12 @@ def test_user_v12_to_v13_adds_research_columns(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 20
+    assert v == sm.DB_SCHEMA_VERSIONS["user"]
     for col in (
         "activity",
         "decryptor_type_id",
@@ -871,7 +871,7 @@ def test_user_v15_to_v16_promotes_negative_runs_to_bpo(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
     assert any("原图归一" in s for s in result["applied"]), "应执行 v15→v16 原图归一迁移"
     conn = sqlite3.connect(str(tmp_user_db))
     boosted = conn.execute(
@@ -886,7 +886,7 @@ def test_user_v15_to_v16_promotes_negative_runs_to_bpo(tmp_user_db):
     assert boosted == 3, "runs=-1 的行应全部升为原图"
     assert untouched == (0, 4000), "普通拷贝不应被改写"
     assert guard == 0, "is_bpo=1 的行 runs 应归一到 0"
-    assert v == 20
+    assert v == sm.DB_SCHEMA_VERSIONS["user"]
 
 
 # ────────────────────────────────────────────
@@ -903,7 +903,7 @@ def test_user_v16_to_v17_creates_dashboard_tables(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
     assert any("asset_snapshots" in s for s in result["applied"]), "应执行 v16→v17 建表迁移"
     conn = sqlite3.connect(str(tmp_user_db))
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -911,7 +911,7 @@ def test_user_v16_to_v17_creates_dashboard_tables(tmp_user_db):
     order_cols = {r[1] for r in conn.execute("PRAGMA table_info(open_orders)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 20
+    assert v == sm.DB_SCHEMA_VERSIONS["user"]
     assert {"asset_snapshots", "open_orders"} <= tables
     assert {"snap_date", "total", "orders", "inventory", "wallet"} <= snap_cols
     assert {"order_id", "is_buy", "price", "volume_total", "volume_remain", "type_id"} <= order_cols
@@ -932,13 +932,13 @@ def test_user_v17_to_v18_adds_line_value_and_order_events(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
     conn = sqlite3.connect(str(tmp_user_db))
     snap_cols = {r[1] for r in conn.execute("PRAGMA table_info(asset_snapshots)")}
     event_cols = {r[1] for r in conn.execute("PRAGMA table_info(order_events)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 20
+    assert v == sm.DB_SCHEMA_VERSIONS["user"]
     assert "line_value" in snap_cols, "asset_snapshots 应有 line_value 列"
     assert {"order_id", "applied_at", "outcome", "is_buy", "price", "volume", "delta"} <= event_cols
 
@@ -961,12 +961,12 @@ def test_user_v18_to_v19_adds_esi_tokens(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(esi_tokens)")}
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert v == 20
+    assert v == sm.DB_SCHEMA_VERSIONS["user"]
     assert {"character_id", "character_name", "refresh_token", "access_token", "access_expires_at"} <= cols
     # 用 any 而不是 applied[-1]：以后再加迁移时，最后一条就不是本次这一条了
     assert any("esi_tokens" in s for s in result["applied"])
@@ -1002,16 +1002,16 @@ def test_user_v19_to_v20_adds_order_owner_columns(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
     conn = sqlite3.connect(str(tmp_user_db))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(open_orders)")}
     row = conn.execute("SELECT char_id, is_corp FROM open_orders WHERE order_id = 7").fetchone()
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
-    assert version == 20
+    assert version == sm.DB_SCHEMA_VERSIONS["user"]
     assert {"char_id", "is_corp"} <= cols
     assert row == (0, 0), "存量行应补 0（归属未知）"
-    assert "open_orders.char_id/is_corp" in result["applied"][-1]
+    assert any("open_orders.char_id/is_corp" in step for step in result["applied"])
 
     # 幂等：已到 v20 的库不再有任何动作
     assert sm.ensure_schema("user")["applied"] == []
@@ -1024,6 +1024,82 @@ def test_user_v19_to_v20_adds_order_owner_columns(tmp_user_db):
 #  相同（ensure_schema 两次 → applied==[] 或直接推进版本号）。这里各收敛成一条
 #  参数化用例：种子函数取自本模块，lazy 放在文件末尾以避免前向引用。
 # ════════════════════════════════════════════
+
+
+def _create_user_v20_with_stale_names(db_path):
+    """v20 库：production_plans 里既有串味的产品名，也有不该被碰的行。"""
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """
+        CREATE TABLE production_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_type_id INTEGER NOT NULL,
+            product_name TEXT,
+            activity TEXT
+        )
+        """
+    )
+    conn.executemany(
+        "INSERT INTO production_plans (product_type_id, product_name, activity) VALUES (?, ?, ?)",
+        [
+            (2001, "渡鸦级", None),  # 本来就对
+            (1001, "渡鸦级", None),  # 串味（批量加入规划时被写成了第一张蓝图的产物）
+            (2001, "渡鸦级", "manufacturing"),  # 显式 manufacturing，本来就对
+            (1002, "Raven Blueprint", "copying"),  # 科研计划：product_type_id 是蓝图 id，绝不碰
+            (9999, "查不到的东西", None),  # item 表里没有这个 type_id
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+
+def _create_ref_items(db_path):
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT)")
+    conn.executemany(
+        "INSERT INTO item VALUES (?, ?, ?)",
+        [(2001, "渡鸦级", "Raven"), (1001, "碳纤维", "Carbon Fiber"), (1002, "渡鸦级蓝图", "Raven Blueprint")],
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_user_v20_to_v21_backfills_stale_product_names(tmp_user_db, tmp_path, monkeypatch):
+    """v20→v21: 只回填**制造**计划里与 SDE 真名不符的 product_name。
+
+    回归背景：多蓝图批量加入规划时 worker 只收一个 product_name（调用方取
+    `valid[0]`），一次多选横跨多种产品时整批写成第一张蓝图的产品名 ——
+    `product_type_id` 是对的，只有这个冗余展示列串味。
+
+    这里必须钉死两条边界：**科研计划不能碰**（它的 product_type_id 存的是蓝图 id，
+    名字口径与 item 表不同），**查不到 type_id 的行不能清空**。
+    """
+    ref_path = tmp_path / "reference.db"
+    _create_ref_items(ref_path)
+    monkeypatch.setitem(sm._DB_PATH_MAP, "ref", str(ref_path))
+    _create_user_v20_with_stale_names(tmp_user_db)
+
+    desc = sm._migrate_user_v20_to_v21(str(tmp_user_db))
+    assert "回填 1 条" in desc, desc
+
+    conn = sqlite3.connect(str(tmp_user_db))
+    names = dict(conn.execute("SELECT id, product_name FROM production_plans"))
+    conn.close()
+
+    assert names[1] == "渡鸦级", "本来就对的行不该被改"
+    assert names[2] == "碳纤维", "串味的产品名要按 product_type_id 纠回来"
+    assert names[3] == "渡鸦级"
+    assert names[4] == "Raven Blueprint", "科研计划的产品名不该被 item 表覆盖"
+    assert names[5] == "查不到的东西", "item 表没有该 type_id 时不能把名字清空"
+
+    # 幂等：再跑一次没有可改的行
+    assert "回填 0 条" in sm._migrate_user_v20_to_v21(str(tmp_user_db))
+
+
+def test_user_v20_to_v21_skips_without_reference_db(tmp_user_db, tmp_path, monkeypatch):
+    monkeypatch.setitem(sm._DB_PATH_MAP, "ref", str(tmp_path / "missing-reference.db"))
+    _create_user_v20_with_stale_names(tmp_user_db)
+    assert "跳过" in sm._migrate_user_v20_to_v21(str(tmp_user_db))
 
 
 def _seed_v3(path):
@@ -1115,7 +1191,7 @@ def test_user_migrations_skip_when_no_tables(tmp_user_db, pragma):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
     assert result["applied"], "应记录迁移（即便无表可改）"
 
 
@@ -1128,7 +1204,7 @@ def test_user_v15_to_v16_skips_missing_table(tmp_user_db):
 
     result = sm.ensure_schema("user")
 
-    assert result["after"] == 20
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
     assert any("跳过" in s for s in result["applied"])
 
 

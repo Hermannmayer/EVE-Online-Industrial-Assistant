@@ -59,6 +59,13 @@ class OutputSummaryBridge(SummaryTableBridge):
         rows: list[dict] = []
         total_value = 0.0
         total_profit = 0.0
+        # 与利润**同口径**的成本 = 产出价值 − 利润（即材料 + 安装费 + 经纪人/改单/销售税
+        # + T1 拷贝/T2-T3 发明研究成本，见 domain/scoring.py 的 total_cost 组装）。
+        #
+        # ⚠️ 底栏利润率**绝不能**拿表格里那列「成本」当分母：那一列是
+        # `production_plans.material_cost`（**纯材料**），拿它当分母会把利润率系统性抬高
+        # （少的正是税与科研成本那一块）。两列不同源，这里必须按利润反推。
+        total_cost = 0.0
         overflow_plans = 0
 
         for result in results:
@@ -71,6 +78,7 @@ class OutputSummaryBridge(SummaryTableBridge):
                 overflow_plans += 1
             total_value += result["plan_value"]
             total_profit += profit
+            total_cost += result["plan_value"] - profit
 
             profit_token = "ACCENT_GREEN" if profit > 0 else ("ACCENT_RED" if profit < 0 else "")
             status_token = {
@@ -98,10 +106,14 @@ class OutputSummaryBridge(SummaryTableBridge):
                 }
             )
 
+        # 总利润率 = 总利润 / 总成本。成本 ≤ 0（数据没算过 / 全是白捡）时不硬算成
+        # 一个荒谬的百分比，直接给 —。
+        margin_text = f"{total_profit / total_cost * 100:.1f}%" if total_cost > 0 else "—"
         self.set_content(
             rows,
             f"共 {len(results)} 个计划，总产出价值 {fmt_isk(total_value)}，"
-            f"总利润 {fmt_isk(total_profit)}，{overflow_plans} 个计划存在材料溢出",
+            f"总利润 {fmt_isk(total_profit)}，总利润率 {margin_text}，"
+            f"{overflow_plans} 个计划存在材料溢出",
         )
 
 

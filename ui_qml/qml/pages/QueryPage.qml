@@ -5,6 +5,8 @@ import "../components"
 // 两态面板都在 pages/query/ 下 —— QML 只按**同目录**解析本地类型，
 // 不写这一行会报「QueryDetailPane is not a type」而整页加载失败。
 import "query"
+// 内嵌的「全物品」面板本体在 dialogs/ 下（与独立窗共用同一个 QML 文件）
+import "../dialogs"
 
 /* 物品查询页 —— 阶段 3。
  *
@@ -209,10 +211,14 @@ Item {
              * 在仪表盘与详情之间来回翻两次（本仓既有教训）。 */
             readonly property bool idle: !(page.query && page.query.detail && page.query.detail.typeId > 0)
 
+            /* 第三态：全物品面板占住工作区（工具栏「全物品」进来，选中一行或清空即离开）。
+             * 它不是「二级窗口」了 —— 用户要求直接在下方的详细信息面板区展示。 */
+            readonly property bool showingAllItems: page.query ? page.query.allItemsVisible : false
+
             QueryDashboard {
                 objectName: "queryDashboard"
                 anchors.fill: parent
-                visible: workArea.idle
+                visible: workArea.idle && !workArea.showingAllItems
                 dashboard: page.query ? page.query.dashboard : null
             }
 
@@ -222,8 +228,22 @@ Item {
             QueryDetailPane {
                 objectName: "queryDetailPane"
                 anchors.fill: parent
-                visible: !workArea.idle
+                visible: !workArea.idle && !workArea.showingAllItems
                 detail: page.query ? page.query.detail : null
+            }
+
+            /* 全物品（**内嵌**，不再弹二级窗口）。
+             * ⚠️ `ai` 必须显式指到查询桥的全物品子桥：本实例所在上下文里的 `bridge`
+             * 是 `QueryBridge`（页面宿主注入的），与 `AllItemsDialog.qml` 默认绑的那个
+             * 不是同一个对象 —— 不覆盖就会对着错桥求值。
+             * `embedded: true` 按用户要求去掉制造/贸易评分设置、批量对比、导出与右键菜单，
+             * 双击改为走查询页详情（与「输入查找物品」同一条路）。 */
+            AllItemsDialog {
+                objectName: "queryAllItems"
+                anchors.fill: parent
+                visible: workArea.showingAllItems
+                embedded: true
+                ai: page.query ? page.query.allItems : null
             }
         }
     }

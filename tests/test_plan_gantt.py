@@ -146,3 +146,44 @@ class TestGanttEndTime:
         text = end_time_text(plan, 2, now)
 
         assert text == (now.astimezone().replace(tzinfo=None) + timedelta(hours=2)).strftime("%m-%d %H:%M")
+
+
+@pytest.mark.fast
+class TestGanttAxisFollowsTheClock:
+    """横轴口径 —— 对应用户提的三条：图随时间缩短 / 刻度按日期 / 完工不占位。
+
+    回归背景（2026-09-28）：原先每行 `start` 恒为 0、`duration` 恒为**完整**时长，
+    轴的起点永远与真实时间无关 —— 于是「长度不随时间推进缩短，永远等长」，而且一条
+    已开工 8 小时、只剩 2 小时的计划柱子仍画满原始时长，右侧 ETA 文字却是真实的
+    `now + 2h`（柱长与标签自相矛盾）。
+    """
+
+    def test_finished_plans_do_not_take_horizontal_space(self):
+        """完工的行不画 —— 图上只留「还要做的事」，做完了自然变短。"""
+        plans = [_plan(1, name="做完的", hours=5, status="completed"), _plan(2, name="待做的", hours=3)]
+        assert [r["name"] for r in build_rows(plans)] == ["待做的"]
+
+    def test_running_plan_draws_only_the_remaining_time(self):
+        """在产行按**剩余**时长画：开工越久条越短（这就是「随时间推进而缩短」）。"""
+        started = (datetime.now(UTC) - timedelta(hours=4)).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+        rows = build_rows([_plan(1, name="在产", hours=6, status="in_progress", started_at=started)])
+
+        assert len(rows) == 1
+        # 总时长 6h、已跑 4h → 剩 ~2h（放容差给用例自身的执行耗时）
+        assert 1.5 < rows[0]["duration"] < 2.5, rows[0]["duration"]
+
+    def test_axis_is_rounded_to_whole_days(self):
+        """轴上限按**整天**取整 —— 刻度是「几月几号」，不按整天取整会把末刻度顶出轴外。"""
+        from services.plan_gantt import AXIS_GRANULARITY
+
+        assert AXIS_GRANULARITY == 24, "日期刻度必须按整天取整"
+        rounded = max_hours(build_rows([_plan(1, hours=30)]))
+        assert rounded == 48, rounded  # 30h 向上取整到 2 天
+        assert rounded % 24 == 0
+
+    def test_axis_start_is_an_absolute_instant(self):
+        """轴起点必须是**绝对时刻**（QML 靠它把「第 n 天」换算成日期）；可注入才好断言。"""
+        from services.plan_gantt import axis_start_ms
+
+        fixed = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
+        assert axis_start_ms(fixed) == pytest.approx(fixed.timestamp() * 1000.0)

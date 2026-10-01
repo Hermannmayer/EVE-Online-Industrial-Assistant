@@ -15,27 +15,48 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-__all__ = ["build_rows", "end_time_text", "max_hours"]
+__all__ = ["axis_start_ms", "build_rows", "end_time_text", "max_hours"]
 
-#: 排期时间轴的取整粒度（小时）：轴上限向上取整到它的倍数
-AXIS_GRANULARITY = 12
+#: 排期时间轴的取整粒度（小时）：轴上限向上取整到它的倍数。
+#: **24（整天）** —— 横轴刻度按「几月几号」走，取整不是整天的话末端刻度会落在轴外。
+AXIS_GRANULARITY = 24
 #: 空数据时的轴上限
 DEFAULT_MAX_HOURS = 48
 #: `calculated_time` 缺失时的兜底：每流程每并行按 2 小时估
 FALLBACK_HOURS_PER_RUN = 2
 
 
-def build_rows(plans: list[dict]) -> list[dict]:
+def axis_start_ms(now: datetime | None = None) -> float:
+    """横轴起点的绝对时刻（UTC 毫秒）—— QML 靠它把「第 n 天」换算成日期。
+
+    必须与 `build_rows` 用的是同一个「现在」，否则刻度线与柱形条会错位。
+    """
+    return (now or datetime.now(UTC)).timestamp() * 1000.0
+
+
+def build_rows(plans: list[dict], *, now: datetime | None = None) -> list[dict]:
     """把计划列表排成「按 BOM 依赖串行」的甘特条。
 
     返回每项含 `name` / `start` / `duration`（小时）/ `endText` / `planId`。
     颜色不在这里定 —— 那是主题的事，由 QML 按行号取调色板。
+
+    **轴起点是「现在」，不是全部任务的最早开始**（这一条决定了图会不会随时间缩短）：
+    - 已完工（completed/done）的行**不画** —— 图上只该留「还要做的事」；
+    - 在产（in_progress/running）的行按**剩余时长**画，已经跑掉的那段不占位；
+    - 待产的行按自身完整时长排，前驱约束仍由 `_apply_dependencies` 推后。
+
+    于是随着时间推进，整体跨度单调收窄，而不是每刷新一次就整张图右滑一遍。
     """
+    from services.plan_execution import remaining_seconds
     from services.plan_service import group_and_sort_plans
 
+    now_utc = now or datetime.now(UTC)
     ordered = [p for p in group_and_sort_plans(list(plans)) if p.get("id") is not None]
     rows: list[dict] = []
     for i, plan in enumerate(ordered):
+        status = str(plan.get("status") or "").lower()
+        if status in ("completed", "done"):
+            continue  # 做完的不再占横向空间，否则图永远等长
         calculated = plan.get("calculated_time", 0) or 0
         if calculated > 0:
             hours = calculated / 3600  # 秒 → 小时
@@ -43,6 +64,11 @@ def build_rows(plans: list[dict]) -> list[dict]:
             runs = plan.get("runs", 1) or 1
             parallels = plan.get("parallels", 1) or 1
             hours = runs * parallels * FALLBACK_HOURS_PER_RUN  # 兜底占位
+        if status in ("in_progress", "running"):
+            rem = remaining_seconds(plan, now=now_utc)
+            if rem is not None:
+                # 只画剩下的：轴起点就是现在，已经跑掉的那段不占位 —— 时间越往后，条越短
+                hours = max(rem / 3600, 0.0)
         rows.append(
             {
                 "name": plan.get("product_name", f"计划#{plan.get('id', i)}"),
@@ -54,9 +80,8 @@ def build_rows(plans: list[dict]) -> list[dict]:
         )
     _apply_dependencies(rows)
 
-    now = datetime.now(UTC)
     for row in rows:
-        row["endText"] = end_time_text(row["plan"], row["start"] + row["duration"], now)
+        row["endText"] = end_time_text(row["plan"], row["start"] + row["duration"], now_utc)
         row.pop("plan", None)
     return rows
 

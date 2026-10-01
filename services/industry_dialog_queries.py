@@ -42,7 +42,7 @@ def get_output_summary(db) -> list[dict[str, Any]] | None:
     with db.connect("user", "ref", "bp", "mkt") as conn:
         plan_rows = conn.execute(
             "SELECT id, product_type_id, product_name, runs, parallels, "
-            "material_cost, profit, margin, market_margin, status, me_level "
+            "material_cost, profit, margin, market_margin, status, me_level, sub_level "
             "FROM production_plans ORDER BY created_at DESC, id ASC"
         ).fetchall()
 
@@ -62,6 +62,8 @@ def get_output_summary(db) -> list[dict[str, Any]] | None:
                 "market_margin": r[8] or r[7] or 0.0,
                 "status": r[9] or "pending",
                 "me_level": r[10] or 0,
+                # 溢出判定要看「这件有没有子项产线真的去造」（见 calculate_output_with_overflow）
+                "sub_level": r[11] or 0,
             }
             for r in plan_rows
         ]
