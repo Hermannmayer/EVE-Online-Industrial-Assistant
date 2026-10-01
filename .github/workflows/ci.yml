@@ -62,7 +62,7 @@ jobs:
       # UI 档按本仓「测试边界」由本地 `scripts/run_tests.sh ui-retest` +
       # `scripts/shell_snapshot.py` 出图兜底。要让 CI 也覆盖 UI，正确做法是引入
       # `xvfb-run`（真 X 显示）再跑 `-m ui`，**不要**用 offscreen 硬顶。
-      run: uv run pytest tests/ -q -s -m "not ui" --maxfail=5 --cov=. --cov-report=xml
+      run: uv run pytest tests/ -q -s -m "not ui" --maxfail=5
       env:
         QT_QPA_PLATFORM: offscreen   # 非 UI 档里仍有少数用例会碰 Qt，无显示环境下需要它
 
@@ -70,12 +70,11 @@ jobs:
     - name: Check docs internal links
       run: uv run python scripts/check_docs_links.py
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
+    # 原先这里还有一步 `codecov/codecov-action`。仓库没配 `CODECOV_TOKEN`，它每次都只往
+    # 日志里刷 `Token required - not valid tokenless upload`，**从未成功上传过任何覆盖率**
+    # （job 结论不受影响，但日志一直红）。既然没有消费方，连同 pytest 的
+    # `--cov=. --cov-report=xml` 一并去掉：CI 更快、日志干净。
+    # 要恢复：配好 CODECOV_TOKEN，再把那个 step 与这两个参数加回来。
 
   # 版本一致性：core/version.py == CHANGELOG 最新版本段 == git tag（发版态）
   version-check:
