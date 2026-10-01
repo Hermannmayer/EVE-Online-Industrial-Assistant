@@ -92,16 +92,13 @@ Item {
                 objectName: "searchInput"
                 Layout.fillWidth: true
                 placeholderText: qsTr("输入物品名称或 ID...")
-                /* 「全物品」内嵌时，这一个框就是**全物品的筛选框**（面板自带那个已隐藏）——
-                 * 一个框两用，页面上不会出现两个搜索框。其余时候照旧走候选/详情那条路。 */
-                onTextChanged: {
-                    if (!page.query)
-                        return;
-                    if (workArea.showingAllItems && page.query.allItems)
-                        page.query.allItems.setSearchText(text);
-                    else
-                        page.query.onTextChanged(text);
-                }
+                /* 「全物品」内嵌时整条隐藏 —— 那一态用的是**面板自己的**搜索框（筛当前列表）。
+                 * 同一时刻页面上只有一个搜索框（用户要求），但两个框的语义各归各的。
+                 * ⚠️ 别再让这一个兼任全物品筛选：那会把「搜物品名 → 候选 → 详情」变成
+                 * 「筛全物品表」，用户点了候选也进不去详情（踩过这条）。 */
+                visible: !workArea.showingAllItems
+                onTextChanged: if (page.query)
+                    page.query.onTextChanged(text)
 
                 /* 回车 = 选第一条候选。页面已经没有「搜索」这一步 —— 候选就是匹配清单，
                  * 选中即出详情。取的是**桥**里那份候选（与弹窗显示的是同一份），
