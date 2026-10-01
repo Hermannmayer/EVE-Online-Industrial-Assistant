@@ -236,19 +236,28 @@ def no_auto_price_download(monkeypatch):
     外壳换成 QML（批次 6.1）之后那个 patch 点**直接消失**，而它在 autouse fixture 里，
     等于每个测试的 setup 都炸。教训：**别把全局安全网挂在某一层外壳的私有方法上**。
 
-    现在挂在**会自己发请求的那几个入口**上（两条价格 worker + 价格更新服务），
-    与外壳无关、与页面无关：谁在什么时候起线程都拦得住。
+    现在挂在**会自己发请求的那几个入口**上（两条价格 worker + 价格更新服务 +
+    工业数据 worker），与外壳无关、与页面无关：谁在什么时候起线程都拦得住。
 
     **不**在 `aiohttp.ClientSession` 这一层封：那样会把 `test_client.py` /
     `test_price_history.py` 这些「用 mock 会话测客户端本身」的用例一起打挂
     —— 它们要的正是真实的 ClientSession 语义。
+
+    **工业数据 worker（2026-10-01 补）**：`IndustryPage.__init__` 排了
+    `QTimer.singleShot(200, _check_industry_data)`；没有本地 `database/reference.db`
+    时（CI）必然判定数据缺失、起 `IndustryDataWorker`（QThread）去拉 ESI。线程会一直跑，
+    而页面随用例析构 → `QThread: Destroyed while thread '' is still running` 直接把
+    整个进程 abort（Windows `0xC0000409` / Linux SIGABRT），同进程**后续**用例一并陪葬
+    （实测：`test_qt_noise.py` 那条建外壳的用例会把 `test_research_calculator.py` 的 SCI
+    两条与 `test_watchlist_manager.py` 带红）。这里让它空转即可。
     """
     from services.importers import getprices
-    from ui_qml.workers import main_window_workers
+    from ui_qml.workers import industry_page_workers, main_window_workers
 
     monkeypatch.setattr(main_window_workers.PriceCheckWorker, "run", _refuse_network)
     monkeypatch.setattr(main_window_workers.PriceUpdateWorker, "run", _refuse_network)
     monkeypatch.setattr(getprices, "run_price_update", _refuse_network)
+    monkeypatch.setattr(industry_page_workers.IndustryDataWorker, "run", _refuse_network)
     yield
 
 
@@ -643,6 +652,22 @@ def mock_db():
     # plan_service 用 `from core.container import get_container` 绑定旧引用，
     # patch core.container 无法覆盖已导入模块里的名字；须同时 patch 该模块引用，
     # 否则依赖 load_plans 的 UI 测试会穿透到真实库（no such table）。
+    #
+    # ⚠️ `AppContainer` 是**进程级单例**，`db` / `item_repo` / `scoring_service` … 都是
+    # 「解析一次就永久缓存」。`patch("core.container.get_container")` 只堵住这一个入口：
+    # 窗口期内若有代码经 `bootstrap.container.get_container`（`core.container` 只是它的
+    # 转发）或经**早已绑好的模块级引用**拿到那个**真容器**，真容器的 `_db` 就会被解析成
+    # mock 并留在单例里 —— 窗口关掉之后，同进程后续用例继续拿到 mock db。
+    # 实测（2026-10-01，无本地库的 CI 环境）：`test_qt_noise.py` 那条建 QML 外壳的用例
+    # 之后，`test_watchlist_manager.py` 的 CRUD 拿到 MagicMock 游标
+    # （`'>' not supported between 'MagicMock' and 'int'`）、`test_research_calculator.py`
+    # 的 SCI 查询退化成默认值（`assert 54.62 > 54.62`）。
+    # 因此：把真容器的缓存状态整个存下来，窗口关掉后原样放回。
+    from bootstrap import container as _bootstrap_container
+
+    real = _bootstrap_container._container
+    saved_state = dict(vars(real)) if real is not None else None
+
     with (
         patch("services.database_manager.get_db", return_value=mock_mgr),
         patch("core.container.get_container") as mock_cont,
@@ -651,7 +676,16 @@ def mock_db():
         cont = mock_cont.return_value
         cont.db = mock_mgr
         mock_plan_cont.return_value = cont
-        yield
+        try:
+            yield
+        finally:
+            if real is not None and saved_state is not None:
+                vars(real).clear()
+                vars(real).update(saved_state)
+            elif real is None and _bootstrap_container._container is not None:
+                # 真容器是这段窗口里第一次被建出来的（`_db` 已经是 mock）→ 丢掉这个单例，
+                # 下次 `get_container()` 会重新建一个干净的。
+                _bootstrap_container._container = None
 
 
 # ════════════════════════════════════════════════════════════════

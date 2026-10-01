@@ -102,7 +102,8 @@ pytestmark = pytest.mark.ui  # 整个文件是 Qt 用例时的常见写法
 
 几条 `autouse` 的全局安全网，加测试时值得知道它们的存在：
 
-- `no_auto_price_download` —— 阻断应用**自动发起**的网络（价格检查/下载、SDE/ESI 初始化）。
+- `no_auto_price_download` —— 阻断应用**自动发起**的网络（价格检查/下载、SDE/ESI 初始化、
+  工业数据拉取 worker）。
   它挂在「会自己发请求的那几个入口」上，不挂在某一层外壳的私有方法上（那样外壳一换就整片 setup 炸）；
 - `isolate_user_settings` —— 把 `settings.json` 指向临时文件，测试绝不写用户真实数据；
 - `_reset_qt_noise_state` —— 复位 `core.qt_noise` 的进程级退出标记（不复位会让后续用例的
