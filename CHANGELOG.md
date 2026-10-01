@@ -6,6 +6,23 @@
 
 <!-- version list -->
 
+## v0.25.3 (2026-10-01)
+
+### Bug Fixes
+
+- **工业/查询/设置**: 用户清单七项缺陷 + 数据备份/还原 + 三处自查真问题
+  ([`5f9a6d1`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5f9a6d162114d2082a10a9488addd30b9d03e0c7))
+
+- **查询**: 「全物品」与搜索框不再互相顶替 —— 修回不到查询详情
+  ([`1ddc483`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/1ddc4837f694170b72a7e7386b3e8dc6a9e7f78f))
+
+- **查询**: 首页的「全物品」面板去掉制造/贸易评分按钮
+  ([`3c55ba6`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/3c55ba605ce2db3df60b4340356b6d34fa1dcb47))
+
+- **窗口/查询**: 无边框窗口吸附与边缘缩放 + 全物品区域/性能/卡顿
+  ([`8157650`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/815765022e702eee3d539d107bdc734535c44768))
+
+
 ## v0.25.2 (2026-09-27)
 
 ### Bug Fixes
