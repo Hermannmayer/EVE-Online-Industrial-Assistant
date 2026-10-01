@@ -6,6 +6,48 @@
 
 <!-- version list -->
 
+## v0.25.4 (2026-10-01)
+
+### Bug Fixes
+
+- **ESI**: Token 端点 5xx 退避重试，文案不再误报「授权失效」
+  ([`c563181`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/c563181e43d1fd3f1cc7beb878e0c1d5b77056b4))
+
+- **查询**: 资产折线图本月档位、x 轴日期，订单列表条数与取数
+  ([`51294c2`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/51294c2b9dc2f1403ccba13f63af71b771661ae8))
+
+- **计划**: 递归拆解只作用于本次母项，不再全库重放
+  ([`b0c66e4`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b0c66e47a8738f8d3eeeebf28dba4d6e22463ba8))
+
+### Chores
+
+- **release**: Uv.lock 同步到 0.25.3
+  ([`14d7e32`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/14d7e326b1ea0538465c7dbffa11b9eed016a9a1))
+
+### Continuous Integration
+
+- 只跑非 UI 档并补 -s，修掉 offscreen 下的批量 ERROR 与 62% 段错误
+  ([`790e12a`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/790e12a2358aec2a5832a5f761a3eb23c6799702))
+
+### Documentation
+
+- **api**: 重生成 API 文档
+  ([`97f867a`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/97f867af14343a2908135d3c0189b246dc02337c))
+
+- **发版**: 补「本地一步发版」—— PYTHONUTF8 + GH_TOKEN 一条命令走完
+  ([`2f8e451`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/2f8e451018615bb4c8525d6b42b823d5c6ad0c71))
+
+### Features
+
+- **仓库/蓝图**: 一批用户报障与新列，价格来源可选
+  ([`353f9ec`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/353f9ecb2c1df89ea64ec6d770747330426420b1))
+
+### Performance Improvements
+
+- **订单**: 复用 APIClient/session，取数稳态快约 2.9×
+  ([`a2b0ec8`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/a2b0ec8ba155e26904bd50c9084345954bc59357))
+
+
 ## v0.25.3 (2026-10-01)
 
 ### Bug Fixes
