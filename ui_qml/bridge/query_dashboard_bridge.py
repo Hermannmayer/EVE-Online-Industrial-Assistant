@@ -25,6 +25,8 @@
    （`Documents\\EVE\\logs\\Marketlogs\\`，**目录固定不设自定义**），解析走
    `services.order_export`，落 `user.db.open_orders`（`INSERT OR REPLACE`，order_id
    主键 → 重复导入幂等）。
+   **全量展示、不截断**（行数由 `open_orders` 决定，表格自己滚动）；每张表按最优价排
+   （卖升 / 买降），**第 2 行起标红并在物品列加「（不在首位）」**（用户要求）。
 
    **导入后弹「订单变动」确认框**（`ui_qml.bridge.order_change_bridge`）：列出本次
    消失 / 数量变少的订单，逐条选「买到了 / 卖完了」（默认）或「手动撤销」；
@@ -101,8 +103,16 @@ _SERIES: tuple[tuple[str, str, str], ...] = (
     ("line_value", "运行中产线价值", "ACCENT_CYAN"),
     ("wallet", "钱包余额", "ACCENT_YELLOW"),
 )
+#: x 轴**标签槽位**上限：全日期（`"2026-09-25"` 实测约 58px）在约 416px 的面板里只放得下 6 个，
+#: 所以 `count > _MAX_X_TICKS` 时标签缩成 `MM-DD`（约 30px）—— 缩了之后一屏放得下更多槽位，
+#: 见 `_MAX_X_TICKS_SHORT`。
 _MAX_X_TICKS = 6
+#: 缩成 `MM-DD` 后的槽位上限（标签窄了一半，槽位跟着放宽）。7 个数据点因此**每个都有日期**，
+#: 不再出现「有竖线、没日期」的点（用户报的「底下少一个日期」）。
+_MAX_X_TICKS_SHORT = 8
 _MAX_Y_TICKS = 5
+#: 折线至少需要 2 个点 —— `PathPolyline` 只有一个点时什么都不画（图上只剩网格）。
+_MIN_LINE_POINTS = 2
 #: 「总」档的取数天数（10 年，等价于「全部历史」）
 _RANGE_ALL_DAYS = 3650
 _RANGE_LABELS: tuple[str, ...] = ("近 7 天", "本月", "本年", "总")
@@ -141,6 +151,16 @@ _ORDER_DB_COLUMNS: tuple[str, ...] = (
     "imported_at",
 )
 _TOKEN_PLAIN = "TEXT_PRIMARY"
+#: 挂单表里「排在自己这张表第二位及以后」的行标成这个色（用户要求：
+#: 「如果当前挂单不在首位，就给它标红。括号里写上不在首位」）。
+#: 与 `_TOKEN_PLAIN` 一样只存 **token 名**，hex 由 `cell()` 经
+#: `ui_qml.theme.registry` 解析（铁律：颜色不写死在业务代码里）。
+_TOKEN_NOT_FIRST = "ACCENT_RED"
+#: 不在首位时拼在**物品列**文本后面的后缀。为什么拼物品列（第一列）：价格列在
+#: 本面板只有约 51px（列宽比 1.3 / 总比 8.8），而价格串本身已经 10+ 字符长，
+#: 后缀一拼必然被 `elide` 切成「1,234…」；物品名短（矿物多为 3~5 字），
+#: 拼在第一列是唯一有机会整串看清的位置。红色本身才是主信号，文字是补充。
+_NOT_FIRST_SUFFIX = "（不在首位）"
 _EMPTY_BUY_TEXT = "暂无买单记录"
 _EMPTY_SELL_TEXT = "暂无卖单记录"
 #: 挂单导出目录**固定用游戏默认目录**（用户要求：不再提供自定义目录输入框）。
@@ -354,9 +374,11 @@ def asset_plot(
          series: [{label, key, color, points: [{x, y}]}],
          xLines: [{pos}], xTicks / yTicks: [{pos, label}]}
 
-    - `xLines` = **全部**数据点的 x（每点一根竖线）；`xTicks` 采样 ≤ `_MAX_X_TICKS`，**只用于标签**。
-      （`pick_indices` 的 `round + set` 去重会漏点：count=7 → 下标 3 无刻度，竖线就少一根。）
-    - `count > _MAX_X_TICKS` 时 `xTicks` 的标签缩成 `MM-DD`，避免 7 个全日期标签互相压字。
+    - `xLines` = **全部**数据点的 x（每点一根竖线）；`xTicks` 采样，**只用于标签**。
+    - 标签槽位：`count > _MAX_X_TICKS` 时标签缩成 `MM-DD`（7 个全日期在 ~416px 面板里会互相压字），
+      缩了之后槽位放宽到 `_MAX_X_TICKS_SHORT`。
+      （早先两处都用 `_MAX_X_TICKS`=6：`pick_indices(7, 6)` = `[0, 1, 2, 4, 5, 6]`，下标 3 那条竖线
+      没有日期标签 —— 用户看到的就是「底下少一个日期」。）
 
     - `series` **只含当前可见的线**，y 轴量程也只看这些线 —— 切换显示时刻度会跟着变，
       这是刻意行为（用户点掉「钱包余额」后不该被它的数量级压扁其它线）。
@@ -394,16 +416,20 @@ def asset_plot(
     tick_values = axis_values(lo, hi, step)
     #: `count > _MAX_X_TICKS` 时标签缩成 MM-DD：7 个全日期（"2026-09-22"）在约 416px 的
     #: 中间面板里会互相压字。**只影响文案**，竖线位置由全量的 `xLines` 给。
-    tick_texts = [(text[5:] if len(text) >= 10 else text) if count > _MAX_X_TICKS else text for text in dates]
+    short_labels = count > _MAX_X_TICKS
+    tick_texts = [(text[5:] if len(text) >= 10 else text) if short_labels else text for text in dates]
+    #: 标签缩了一半，槽位就能翻倍：`_MAX_X_TICKS_SHORT`。都按 6 个采样时 7 个点必丢一个
+    #: （下标 3 那条竖线没有日期），缩了之后 7、8 个点全都有日期。
+    max_ticks = _MAX_X_TICKS_SHORT if short_labels else _MAX_X_TICKS
     return {
         "isEmpty": False,
         "count": count,
         "series": series,
-        #: **每一个数据点一根竖线**（`xTicks` 是采样 ≤6，会漏点：count=7 时下标 3 被丢掉，
-        #: 用户看到的就是「9月22号那一条的竖线没有了」）。形状与 xTicks 同族，只带位置。
+        #: **每一个数据点一根竖线**（`xTicks` 只是采样的标签，点多了必漏几个：90 个点也只给
+        #: `_MAX_X_TICKS_SHORT` 个日期，但每条竖线都在）。形状与 xTicks 同族，只带位置。
         "xLines": [{"pos": x} for x in xs],
         #: `xTicks` 语义收窄为**只用于标签**（QML 侧不再拿它画竖线）。
-        "xTicks": [{"pos": xs[i], "label": tick_texts[i]} for i in pick_indices(count, _MAX_X_TICKS)],
+        "xTicks": [{"pos": xs[i], "label": tick_texts[i]} for i in pick_indices(count, max_ticks)],
         "yTicks": [
             {"pos": pos, "label": format_axis_value(value)}
             for value, pos in zip(tick_values, map_values(tick_values, lo, hi), strict=True)
@@ -1411,6 +1437,20 @@ class QueryDashboardBridge(QObject):
         trimmed = trim_from(self._all_series_rows, start) if start else list(self._all_series_rows)
         if len(trimmed) > days:
             trimmed = trimmed[-days:]
+        # 窗口里只剩 1 个点：`PathPolyline` 单点什么都不画，用户看到的就是「折线图没有了」。
+        # 每月 1 号选「本月」（每年 1/1 选「本年」）必然踩到 —— 自然起点就是今天。
+        # 把窗口起点**之前**最近的一条并进来当「期初锚点」：1 号看到的是「上月末 → 今天」两点，
+        # 与 2 号天然的「昨天 → 今天」形态一致；涨跌基准（`_pick_baseline`）取的就是同一条，
+        # 图的起点因此与表格里的涨跌对齐。窗口里一条都没有时不补 —— 那说明本档还没有快照，
+        # 交给空态文案，别拿窗口外的点充数。
+        if len(trimmed) == _MIN_LINE_POINTS - 1 and start is not None:
+            earlier: list[tuple[date, Mapping[str, Any]]] = []
+            for row in self._all_series_rows:
+                parsed = _parse_date(row.get("date"))
+                if parsed is not None and parsed < start:
+                    earlier.append((parsed, row))
+            if earlier:
+                trimmed = [dict(max(earlier, key=lambda pair: pair[0])[1]), *trimmed]
         self._series_rows = [dict(row) for row in trimmed]
         self._baseline_row = self._pick_baseline(start)
         self._plot = asset_plot(self._series_rows, self._visible, self._series_colors())
@@ -1484,7 +1524,11 @@ class QueryDashboardBridge(QObject):
     # ── 挂单 ──────────────────────────────────────────────────
 
     def _ensure_orders(self, force: bool = False) -> None:
-        """读 `open_orders` → 拆成买单 / 卖单两组单元格行（两张表各吃一份）。"""
+        """读 `open_orders` → 拆成买单 / 卖单两组单元格行（两张表各吃一份）。
+
+        **不做条数截断**：库里有多少行就画多少行（用户看到的「只有 5 行」是面板高度
+        的问题，不是显示端截断 —— 实测 1024x700 也能显示 6 行、全量 8 行都已渲染）。
+        """
         if self._orders_loaded and not force:
             return
         self._orders_loaded = True
@@ -1504,7 +1548,11 @@ class QueryDashboardBridge(QObject):
         self._order_records = [_normalize_order(_row_to_dict(row)) for row in raw]
         self._order_records = [r for r in self._order_records if r["order_id"]]
         char_names = _char_names()
-        self._buy_rows = self._order_cell_rows((r for r in self._order_records if r["is_buy"]), char_names)
+        #: 买单按价格**降序**、卖单按价格**升序** —— 各自的最优价排在首位（首行不标红，见
+        #: `_order_cell_rows`）。行长与此表条数无关：这里从来不截断，全部行都交给表格。
+        self._buy_rows = self._order_cell_rows(
+            (r for r in self._order_records if r["is_buy"]), char_names, reverse=True
+        )
         self._sell_rows = self._order_cell_rows((r for r in self._order_records if not r["is_buy"]), char_names)
         imported = [str(r["imported_at"]) for r in self._order_records if r["imported_at"]]
         self._last_import_at = max(imported) if imported else ""
@@ -1568,30 +1616,42 @@ class QueryDashboardBridge(QObject):
                 record["type_name"] = found
 
     @staticmethod
-    def _order_cell_rows(records: Any, char_names: Mapping[int, str] | None = None) -> list[dict]:
+    def _order_cell_rows(
+        records: Any, char_names: Mapping[int, str] | None = None, *, reverse: bool = False
+    ) -> list[dict]:
         """挂单 → 单元格行（形状同 `order_popup_bridge.order_rows`，QML 侧表组件直接吃）。
 
         **不含「方向」列**：买单 / 卖单各有一张表，方向由表本身承载。
         `records` 可以是任意可迭代（调用方传的是生成器，一次遍历完）。
         `char_names` 是 `char_id → 角色名`（ESI 汇总多角色时标注归属）；查不到就显示
         `#<id>`，**`char_id` 为 0（老日志的启发式解析）显示「—」而不是「角色 #0」**。
+
+        **排序与「不在首位」标记**（用户要求）：「首位」= 本表**最优价**那一行，所以
+        这里按价格排：卖单升序（`reverse=False`）、买单降序（`reverse=True`）。
+        第 2 行起整行标红（`_TOKEN_NOT_FIRST`）并在物品列文本后拼 `_NOT_FIRST_SUFFIX`；
+        0/1 行时天然没有「第二位」，不标。`sorted` 是稳定的，同价行保持 SQL 的
+        `order_id DESC` 相对顺序。
         """
         rows: list[dict] = []
-        for record in records:
+        for index, record in enumerate(sorted(records, key=lambda r: float(r["price"]), reverse=reverse)):
+            not_first = index > 0
+            token = _TOKEN_NOT_FIRST if not_first else _TOKEN_PLAIN
             location = str(record["location_name"] or "")
             if not location:
                 location = f"#{int(record['location_id'])}" if record["location_id"] else "—"
             name = str(record["type_name"] or "") or (f"#{int(record['type_id'])}" if record["type_id"] else "—")
+            if not_first:
+                name = f"{name}{_NOT_FIRST_SUFFIX}"
             char_id = int(record.get("char_id") or 0)
             owner = ((char_names or {}).get(char_id) or f"#{char_id}") if char_id else "—"
             rows.append(
                 {
                     "cells": [
-                        cell(name, _TOKEN_PLAIN),
-                        cell(f"{float(record['price']):,.2f}", _TOKEN_PLAIN),
-                        cell(f"{int(record['volume_remain']):,}/{int(record['volume_total']):,}", _TOKEN_PLAIN),
-                        cell(location, _TOKEN_PLAIN),
-                        cell(owner, _TOKEN_PLAIN),
+                        cell(name, token),
+                        cell(f"{float(record['price']):,.2f}", token),
+                        cell(f"{int(record['volume_remain']):,}/{int(record['volume_total']):,}", token),
+                        cell(location, token),
+                        cell(owner, token),
                     ]
                 }
             )

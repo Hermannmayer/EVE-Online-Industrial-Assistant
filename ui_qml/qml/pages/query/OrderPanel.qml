@@ -2,9 +2,11 @@ import QtQuick
 import QtQuick.Controls
 import "../../components"
 
-/* 详情面板 · 实时订单列表（左「卖单」/ 右「买单」，各取最优 5 条）。
+/* 详情面板 · 实时订单列表（左「卖单」/ 右「买单」，各取最优 10 条）。
  *
- * 对应界面标注图「订单列表 / 卖单 / 买单 / 5 个 / 复制卖单、买单价格按钮」。
+ * 对应界面标注图「订单列表 / 卖单 / 买单 / 5 个 / 复制卖单、买单价格按钮」——
+ * 标注图写的 5 个，用户后来要求提到 10，条数常量在
+ * `ui_qml/workers/order_workers.py` 的 `_ORDER_BOOK_ROWS`（QML 不做截断）。
  *
  * 取数走 ESI 实时（`ui_qml/workers/order_workers.py`），无本地订单表 —— 断网时这里显示
  * 失败文案而不是空白，见 `detail.orderStatus`。渲染用既有的纯函数

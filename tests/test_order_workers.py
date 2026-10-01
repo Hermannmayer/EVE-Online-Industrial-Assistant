@@ -85,3 +85,29 @@ def test_already_cached_location_is_skipped(qapp, monkeypatch):
     asyncio.run(_worker()._resolve_names([_NPC_STATION]))
 
     assert calls == [], "缓存命中就不该再查"
+
+
+def test_order_book_takes_ten_best_per_side(qapp, monkeypatch):
+    """买卖两侧各取**最优 10 条**（买降序 / 卖升序）—— 回归用户报的「各 5 个不太够」。
+
+    截断常量原先硬编码 `[:5]`；现在走 `_ORDER_BOOK_ROWS`。并发取数（`asyncio.gather`）
+    只是把两次 GET 同时发出去，不改结果集 —— 这里桩掉网络，只验截断与排序口径。
+    """
+    buys = [{"order_id": i, "price": float(i), "volume_remain": 1, "location_id": _NPC_STATION} for i in range(1, 16)]
+    sells = [{**o, "order_id": 100 + int(o["order_id"])} for o in buys]
+
+    async def _fake_fetch_raw(self, url):  # 替身：签名随被测调用处
+        return buys if "order_type=buy" in url else sells
+
+    monkeypatch.setattr("services.client.APIClient.fetch_raw", _fake_fetch_raw)
+
+    async def _no_remote(self, ids):  # pragma: no cover - 本地 SDE 能解析，不该走网络
+        return None
+
+    monkeypatch.setattr(OrderFetchWorker, "_resolve_names_remote", _no_remote)
+
+    got_buy, got_sell = asyncio.run(_worker()._fetch())
+
+    assert len(got_buy) == len(got_sell) == order_workers._ORDER_BOOK_ROWS == 10
+    assert [o["order_id"] for o in got_buy] == list(range(15, 5, -1)), "买单：价格最高的 10 条、降序"
+    assert [o["order_id"] for o in got_sell] == list(range(101, 111)), "卖单：价格最低的 10 条、升序"

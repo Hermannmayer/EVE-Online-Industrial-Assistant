@@ -23,6 +23,7 @@ import pytest
 import ui_qml.bridge.query_dashboard_bridge as qdb
 from services import char_capacity as cc
 from ui_qml.bridge.query_dashboard_bridge import QueryDashboardBridge
+from ui_qml.theme import registry as theme
 
 pytestmark = pytest.mark.fast
 
@@ -517,7 +518,7 @@ def test_asset_plot_geometry(h):
     # 轴刻度：x 用日期、y 按量级自适应单位（K/M/B）
     assert [tick["label"] for tick in plot["xTicks"]] == [row["date"] for row in _snapshots(3)]
     assert plot["yTicks"] and all(tick["label"].endswith(("K", "M", "B", "0", "5")) for tick in plot["yTicks"])
-    # 竖线覆盖**全部**点：`xTicks` 采样 ≤6 会漏点（count=7 时下标 3 无刻度 = 那条竖线消失）
+    # 竖线覆盖**全部**点：`xTicks` 只是采样的**标签**（点多了必漏几个），竖线必须每点一根
     assert [line["pos"] for line in plot["xLines"]] == [point["x"] for point in plot["series"][0]["points"]]
     assert len(plot["xLines"]) == plot["count"]
 
@@ -699,34 +700,68 @@ def test_set_range_index_trims_by_natural_window(h):
     bridge.refresh()
     assert bridge.rangeIndex == 0
     assert bridge.rangeLabels == ["近 7 天", "本月", "本年", "总"]
-    # 7 > _MAX_X_TICKS(6)：竖线仍**每点一根**（含 `pick_indices` 漏掉的下标 3 —— 那条
-    # 09-22 的竖线就是这么消失的），标签只采样 6 个且缩成 MM-DD（7 个全日期在
-    # ~416px 的面板里会互相压字）。
+    # 7 > _MAX_X_TICKS(6)：竖线仍**每点一根**；标签缩成 MM-DD 后槽位放宽到
+    # `_MAX_X_TICKS_SHORT`，7 个点**每个都有日期**（回归：早先标签也只按 6 个采样，
+    # `pick_indices(7, 6)` = [0, 1, 2, 4, 5, 6] 丢掉下标 3 —— 那条竖线没有日期，
+    # 用户报的就是「底下还是少一个日期」）。
     plot = bridge.assetPlot
     assert plot["count"] == 7
     assert [line["pos"] for line in plot["xLines"]] == [i / 6 for i in range(7)]
-    assert len(plot["xTicks"]) == qdb._MAX_X_TICKS
     assert all(len(tick["label"]) == 5 and tick["label"][2] == "-" for tick in plot["xTicks"]), "MM-DD"
-    # 采样漏掉的那天（下标 3）照样有竖线，只是没有标签落在上面
-    assert 0.5 in {line["pos"] for line in plot["xLines"]}
-    assert 0.5 not in {tick["pos"] for tick in plot["xTicks"]}
-    assert {tick["pos"] for tick in plot["xTicks"]} <= {line["pos"] for line in plot["xLines"]}
+    assert [tick["label"] for tick in plot["xTicks"]] == [row["date"][5:] for row in h.assets.series[-7:]]
+    # 标签与竖线一一对应：不再有「有竖线、没日期」的点
+    assert {tick["pos"] for tick in plot["xTicks"]} == {line["pos"] for line in plot["xLines"]}
 
     bridge.setRangeIndex(1)  # 本月：自然月起点到今天
     month_start = today.replace(day=1)
     expected_month = sum(1 for row in h.assets.series if date.fromisoformat(row["date"]) >= month_start)
-    assert bridge.assetPlot["count"] == expected_month
+    # 当月 1 号（每年 1/1 的「本年」同理）窗口里只剩当天一条 → 桥补一条「期初锚点」把线画出来
+    assert bridge.assetPlot["count"] == max(expected_month, qdb._MIN_LINE_POINTS)
 
     bridge.setRangeIndex(2)  # 本年：自然年起点到今天
     year_start = today.replace(month=1, day=1)
     expected_year = sum(1 for row in h.assets.series if date.fromisoformat(row["date"]) >= year_start)
-    assert bridge.assetPlot["count"] == expected_year
+    assert bridge.assetPlot["count"] == max(expected_year, qdb._MIN_LINE_POINTS)
 
     bridge.setRangeIndex(3)  # 总
     assert bridge.assetPlot["count"] == 90
+    # 点多了才采样：90 个点给 `_MAX_X_TICKS_SHORT` 个 MM-DD 标签
+    assert len(bridge.assetPlot["xTicks"]) == qdb._MAX_X_TICKS_SHORT
 
     bridge.setRangeIndex(99)  # 越界忽略
     assert bridge.rangeIndex == 3
+
+
+def test_month_range_at_month_start_gets_one_anchor_point(h, monkeypatch):
+    """每月 1 号选「本月」：自然月起点就是今天，窗口里只剩当天一条 —— 单点画不出折线
+    （`PathPolyline` 只有一个点 = 什么都不画），用户报「本月的折线图没有了」。
+
+    口径：窗口里只剩 1 个点时，把窗口起点**之前**最近的那条并进来当「期初锚点」。
+    1 号看到的是「上月末 → 今天」，与 2 号天然的「昨天 → 今天」形态一致；涨跌基准
+    （`_pick_baseline`）取的就是同一条，图的起点因此与表格里的涨跌对齐。
+    真实库（2026-10-01）当天也正好只有 1 条本月记录，所以这不是造出来的场景。
+    """
+    real_range_window = qdb.range_window
+    #: 把「今天」钉在 2026-10-01（当月 1 号）—— 否则这条用例只在每月 1 号才复现
+    monkeypatch.setattr(
+        qdb, "range_window", lambda index, today=None: real_range_window(index, today or date(2026, 10, 1))
+    )
+
+    def _row(day: str, total: float) -> dict:
+        return {"date": day, "total": total, "orders": 0.0, "inventory": 0.0, "line_value": 0.0, "wallet": 0.0}
+
+    h.assets.series = [_row("2026-09-29", 900.0), _row("2026-09-30", 950.0), _row("2026-10-01", 1000.0)]
+    bridge = h.bridge()
+    bridge._all_series_rows = [dict(r) for r in h.assets.series]
+    bridge.setRangeIndex(1)  # 「本月」
+
+    plot = bridge.assetPlot
+    assert plot["count"] == 2, "1 号也要画得出一条线（单点 = 空图）"
+    # 补的是**紧邻起点**的 09-30，不是再早一天的 09-29
+    assert [tick["label"] for tick in plot["xTicks"]] == ["2026-09-30", "2026-10-01"]
+    assert [point["x"] for point in plot["series"][0]["points"]] == [0.0, 1.0]
+    assert bridge._baseline_row["date"] == "2026-09-30"
+    assert bridge.assetSummaryRows[0]["deltaText"] == "+50.00 (+5.3%)"
 
 
 # ════════════════════════════════════════════════════════════
@@ -807,6 +842,28 @@ def test_read_orders_imports_and_records_snapshot(h, tmp_path):
 
     # 汇总：买卖单计数与挂单总额都是算出来的
     assert bridge.openOrderSummary.startswith("2 笔挂单 · 卖单 1 · 买单 1 · 挂单总额 1,010.00 ISK")
+
+    # 「不在首位」标记（用户要求）：每侧只有 1 行 → 它就是首位，整行默认色、不带后缀
+    assert [c["color"] for c in bridge.sellOrderRows[0]["cells"]] == [theme.TEXT_PRIMARY] * 5
+    assert [c["color"] for c in bridge.buyOrderRows[0]["cells"]] == [theme.TEXT_PRIMARY] * 5
+    assert not any("不在首位" in c["text"] for c in bridge.sellOrderRows[0]["cells"])
+
+    # 再加两笔（一笔更贵的卖单 / 一笔更便宜的买单）验证「第 2 行起」标红：
+    # 卖单按价格升序 → 2.50 仍是首位；买单按价格降序 → 100.00 仍是首位
+    with h.user_conn() as conn:
+        conn.executemany(
+            "INSERT INTO open_orders (order_id, is_buy, price, volume_total, volume_remain,"
+            " location_name, type_id, type_name, imported_at)"
+            " VALUES (?, ?, ?, 1, 1, 'Jita IV-4', 1001, '三钛合金', '2026-09-16 10:00:00')",
+            [(13, 0, 9.0), (14, 1, 90.0)],
+        )
+    marked = h.bridge()
+    assert [c["text"] for c in marked.sellOrderRows[0]["cells"]][:2] == ["三钛合金", "2.50"]
+    assert [c["text"] for c in marked.sellOrderRows[1]["cells"]][:2] == ["三钛合金（不在首位）", "9.00"]
+    assert [c["color"] for c in marked.sellOrderRows[1]["cells"]] == [theme.ACCENT_RED] * 5
+    assert [c["text"] for c in marked.buyOrderRows[0]["cells"]][:2] == ["三钛合金", "100.00"]
+    assert [c["text"] for c in marked.buyOrderRows[1]["cells"]][:2] == ["三钛合金（不在首位）", "90.00"]
+    assert [c["color"] for c in marked.buyOrderRows[1]["cells"]] == [theme.ACCENT_RED] * 5
 
 
 def test_read_orders_falls_back_to_location_id_and_name_backfill(h, tmp_path, monkeypatch):
