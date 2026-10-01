@@ -89,6 +89,32 @@ sequenceDiagram
 
 > 关键：semantic-release 使用 `GITHUB_TOKEN` push，不会再次触发 workflow（防止死循环）。
 
+## 本地一步发版（不依赖 CI）
+
+CI 那条路（push main → `release.yml`）是常规路径。需要**在本地一次做完**（改版本 →
+CHANGELOG → commit → tag → push → 建 GitHub Release）时：
+
+```powershell
+# 中文 Windows 必须带 PYTHONUTF8：PSR 按 GBK 解码，读 UTF-8 的提交信息时会崩
+# （'gbk' codec can't decode byte 0x80 in position ...，2026-10-01 实测）
+$env:PYTHONUTF8 = "1"
+# token 只放进**当前会话**的环境变量，用完随 shell 消失。
+# 不要写进 $PROFILE / .bashrc / .env —— 那才是落盘。
+$env:GH_TOKEN   = (gh auth token)
+
+.\.venv\Scripts\semantic-release.exe version    # bump + CHANGELOG + commit + tag + push
+.\.venv\Scripts\semantic-release.exe publish    # 用 CHANGELOG 当 notes 建 GitHub Release
+```
+
+- `version` **自己会 push**（含 tag），不需要再 `git push --tags`
+- ⚠️ **`uv.lock` 不会被改写**（它不在 `version_variables` / `version_toml` 里）→ 发版后补一次：
+  `uv lock`，或手工改「本项目条目」的 `version`，再单独提交一次
+  `chore(release): uv.lock 同步到 x.y.z`
+- ⚠️ **不要加 `-vv`**：详细日志可能把请求头里的 token 打进终端
+- 自检（只算版本、不改任何文件，安全）：`semantic-release version --print`
+- **没有 `GH_TOKEN` 时的退路**：`version --no-push` → `git push origin main --tags` →
+  `gh release create v{version} --title "v{version}" --notes-file <CHANGELOG 里那一段>`
+  （`gh` 用系统凭据库里的登录态，与本条等价，只是多一次手动调用）
 ## 手动发版 Checklist
 
 如需手动发版（不通过 semantic-release）：
