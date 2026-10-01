@@ -7,8 +7,8 @@ import "../components"
  *
  * 对照 Widgets 版 `ui_pyside6/views/inventory/`：
  *   顶部共享机库选择器 + 两个 Tab
- *     · 机库管理：5 个操作按钮 + 8 列物品表（含统计）
- *     · 蓝图管理：粘贴导入 / 刷新计算 + 三个过滤器 + 搜索 + 11 列蓝图表
+ *     · 机库管理：5 个操作按钮 + 9 列物品表（含统计）
+ *     · 蓝图管理：粘贴导入 / 刷新计算 + 三个过滤器 + 搜索 + 13 列蓝图表
  *
  * **业务动作一律不在这里实现**：每次交互都调 `inv.<方法>`，
  * 由 `ui_qml/bridge/inventory_bridge.py` 转给既有 service / worker。
@@ -119,6 +119,18 @@ Item {
         return col < cols.length ? cols[col].width : 80
     }
 
+    /* 把桥里的价格来源设置灌进两个 FPriceSourceRow。
+     *
+     * 为什么必须主动同步：`FPriceSourceRow` 刻意不写属性绑定（见其头部注释，写成绑定
+     * 用户就切不动下拉框）。所以要「初始一次 + 每次设置变化再来一次」。 */
+    function syncPriceSettings() {
+        if (!inv)
+            return
+        const s = inv.priceSettings
+        bpMatPriceRow.applySettings(s.mat_hub || "", s.mat_price_type || "sell", s.mat_mult || 1.0)
+        bpProdPriceRow.applySettings(s.prod_hub || "", s.prod_price_type || "sell", s.prod_mult || 1.0)
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: page.gap
@@ -161,6 +173,7 @@ Item {
             // 收窄的标签栏用 `FTabBar`（普通 `TabBar` 会等分宽度、截掉最长的标签）
             FTabBar {
                 id: tabBar
+                objectName: "storageTabBar"
 
                 TabButton {
                     text: qsTr("机库管理")
@@ -209,7 +222,7 @@ Item {
                         ToolTip.text: qsTr("读取剪贴板（游戏内复制物品 Ctrl+C），按增量累加的方式加入当前机库（只增不减）")
                     }
                     FButton {
-                        text: qsTr("从剪贴板导入")
+                        text: qsTr("从钱包交易记录粘贴")
                         onClicked: if (page.inv)
                             page.inv.importPurchasesFromClipboard()
 
@@ -223,11 +236,6 @@ Item {
                         text: qsTr("查看规划缺失材料")
                         onClicked: if (page.inv)
                             page.inv.openMaterialCoverage()
-                    }
-                    FButton {
-                        text: qsTr("手动添加物品")
-                        onClicked: if (page.inv)
-                            page.inv.addItemManually()
                     }
 
                     Item {
@@ -310,7 +318,7 @@ Item {
                                 anchors.leftMargin: 6
                                 anchors.rightMargin: 6
                                 verticalAlignment: Text.AlignVCenter
-                                horizontalAlignment: ih.index >= 2 ? Text.AlignRight : Text.AlignLeft
+                                horizontalAlignment: (ih.meta && ih.meta.alignRight) ? Text.AlignRight : Text.AlignLeft
                                 text: (ih.meta ? ih.meta.title : "")
                                       + (page.inv && page.inv.itemSortColumn === ih.index
                                          ? (page.inv.itemSortAscending ? " ▲" : " ▼") : "")
@@ -409,6 +417,81 @@ Item {
                         onClicked: if (page.inv)
                             page.inv.refreshEconomics()
                     }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                }
+
+                /* ── 价格来源：材料成本 / 销售收入各一行 ──
+                 *
+                 * **与工业页工具栏的「双行价格设置」共用同一份 `settings.json.price_settings`**
+                 * （`mat_hub` / `mat_price_type` / `mat_mult` / `prod_hub` / `prod_price_type` /
+                 * `prod_mult`）—— 一处改，另一处跟着变；「材料倍率」早先就已经是这么共用的。
+                 * 本页的「材料成本」「销售收入」「利润率」三列直接按它算。
+                 *
+                 * `FPriceSourceRow` **不做属性绑定同步**（见该组件头部：写成绑定会让用户的选择
+                 * 被立刻冲回去），所以初始值与外部变更都靠主动 `applySettings()`。 */
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: page.gap
+                    Layout.rightMargin: page.gap
+                    spacing: page.gap
+
+                    FPriceSourceRow {
+                        id: bpMatPriceRow
+                        objectName: "bpMatPriceRow"
+                        label: qsTr("材料")
+                        hubs: page.inv ? page.inv.hubs : []
+                        priceTypes: page.inv ? page.inv.priceTypes : []
+                        onHubEdited: value => {
+                            if (page.inv)
+                                page.inv.setPriceSetting("mat_hub", value);
+                        }
+                        onPriceTypeEdited: value => {
+                            if (page.inv)
+                                page.inv.setPriceSetting("mat_price_type", value);
+                        }
+                        onMultEdited: value => {
+                            if (page.inv)
+                                page.inv.setPriceSetting("mat_mult", value);
+                        }
+                    }
+
+                    // 组间分隔竖线。两个坑都在这一小块里，别再踩：
+                    // ① **不用 `Divider`** —— 那是 `IndustryPage.qml` 的**内联组件**
+                    //    （`component Divider: Rectangle`），作用域只在本文件，引用它会
+                    //    当场 ReferenceError、整页加载失败。
+                    // ② **不给它 `Layout.fillHeight: true`**（实测 2026-10-01）：在
+                    //    `RowLayout` 的直接子项上挂 fillHeight 会让**整个 RowLayout**
+                    //    吃掉本列的全部剩余高度 —— 分隔线被拉成 585px 高，价格行跟着
+                    //    拉满，表格被挤成 60px（用户报「蓝图管理界面崩掉」）。
+                    //    照 `IndustryPage` 的分隔线写法：只给显式 width/height。
+                    Rectangle {
+                        width: 1
+                        height: Math.round(28 * Theme.fontScale)
+                        color: Theme.border
+                    }
+
+                    FPriceSourceRow {
+                        id: bpProdPriceRow
+                        objectName: "bpProdPriceRow"
+                        label: qsTr("成品")
+                        hubs: page.inv ? page.inv.hubs : []
+                        priceTypes: page.inv ? page.inv.priceTypes : []
+                        onHubEdited: value => {
+                            if (page.inv)
+                                page.inv.setPriceSetting("prod_hub", value);
+                        }
+                        onPriceTypeEdited: value => {
+                            if (page.inv)
+                                page.inv.setPriceSetting("prod_price_type", value);
+                        }
+                        onMultEdited: value => {
+                            if (page.inv)
+                                page.inv.setPriceSetting("prod_mult", value);
+                        }
+                    }
+
                     Item {
                         Layout.fillWidth: true
                     }
@@ -533,7 +616,7 @@ Item {
                                 anchors.leftMargin: 6
                                 anchors.rightMargin: 6
                                 verticalAlignment: Text.AlignVCenter
-                                horizontalAlignment: bh.index >= 2 ? Text.AlignRight : Text.AlignLeft
+                                horizontalAlignment: (bh.meta && bh.meta.alignRight) ? Text.AlignRight : Text.AlignLeft
                                 text: (bh.meta ? bh.meta.title : "")
                                       + (page.inv && page.inv.blueprintSortColumn === bh.index
                                          ? (page.inv.blueprintSortAscending ? " ▲" : " ▼") : "")
@@ -628,6 +711,16 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    // 价格来源：初始灌一次，之后靠桥的信号同步（见 syncPriceSettings 的说明）
+    Component.onCompleted: page.syncPriceSettings()
+
+    Connections {
+        target: page.inv
+        function onPriceSettingsChanged() {
+            page.syncPriceSettings();
         }
     }
 

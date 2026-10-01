@@ -19,12 +19,14 @@ from PySide6.QtWidgets import QApplication
 
 from tests.qml_click import spin as _spin
 from tests.qml_page_load import assert_page_loads_quietly, page_host
+from ui_qml.models.inventory_helpers import BlueprintTableModel, InvTableModel
 from ui_qml.models.inventory_qml_models import (
     BP_ROLE_NAMES,
     INV_ROLE_NAMES,
     BlueprintQmlModel,
     InvQmlModel,
 )
+from ui_qml.theme.registry import token
 
 _BASE = Qt.ItemDataRole.UserRole
 _I_TEXT = _BASE + 1
@@ -32,6 +34,7 @@ _I_ICON = _BASE + 2
 _I_ALIGN = _BASE + 3
 _I_TIP = _BASE + 4
 _I_ID = _BASE + 6
+_I_FG = _BASE + 8
 _B_TEXT = _BASE + 1
 _B_FG = _BASE + 2
 _B_ALIGN = _BASE + 4
@@ -47,7 +50,6 @@ def _item(iid: int = 1, tid: int = 34, qty: int = 100, cost: float = 5.0) -> dic
         "plan_usage": 10,
         "plan_remain": 90,
         "sell_price": 6.0,
-        "research_cost": 1000,
         "display_name": "三钛合金",
     }
 
@@ -96,8 +98,9 @@ def test_inv_model_text_and_roles():
     assert model.data(model.index(0, 3), _I_TEXT) == "5.00"
     assert model.data(model.index(0, 4), _I_TEXT) == "10"
     assert model.data(model.index(0, 5), _I_TEXT) == "90"
-    assert model.data(model.index(0, 6), _I_TEXT) == "600"  # 100 × 6.0
-    assert model.data(model.index(0, 7), _I_TEXT) == "1,000"
+    assert model.data(model.index(0, 6), _I_TEXT) == "-"  # 规划占用 10 < 库存 100 → 无缺口
+    assert model.data(model.index(0, 7), _I_TEXT) == "500"  # 占用资金 = 5.0 × 100
+    assert model.data(model.index(0, 8), _I_TEXT) == "600"  # 100 × 6.0
     assert model.data(model.index(0, 0), _I_ID) == 1
     assert model.data(model.index(0, 4), _I_TIP) == "待启动计划预留"
     assert model.data(model.index(0, 3), _I_TIP) == ""
@@ -106,6 +109,12 @@ def test_inv_model_text_and_roles():
     assert model.data(model.index(0, 2), _I_ALIGN) is True
     # 图标列给的是 URL 或空串（缓存缺失时为空）
     assert model.data(model.index(0, 1), _I_ICON) == ""
+    # 缺口 > 0 才下发红色 token（无缺口给空串 = 不覆盖主题色）
+    assert model.data(model.index(0, 6), _I_FG) == ""
+    short = InvQmlModel()
+    short.set_rows([{**_item(qty=40), "plan_usage": 100}])
+    assert short.data(short.index(0, 6), _I_TEXT) == "缺 60"
+    assert short.data(short.index(0, 6), _I_FG) == token("ACCENT_RED")
 
 
 @pytest.mark.fast
@@ -113,9 +122,11 @@ def test_inv_model_handles_missing_prices():
     model = InvQmlModel()
     model.set_rows([{**_item(), "cost_price": 0, "sell_price": None, "plan_usage": 0, "plan_remain": None}])
     assert model.data(model.index(0, 3), _I_TEXT) == "-"
-    assert model.data(model.index(0, 6), _I_TEXT) == "-"
+    assert model.data(model.index(0, 7), _I_TEXT) == "-"  # 成本价 0 → 占用资金占位
+    assert model.data(model.index(0, 8), _I_TEXT) == "-"
     assert model.data(model.index(0, 4), _I_TEXT) == "0"
     assert model.data(model.index(0, 5), _I_TEXT) == "100"  # 无剩余时回落库存数量
+    assert model.data(model.index(0, 6), _I_TEXT) == "-"  # 规划占用 0 → 无缺口
 
 
 @pytest.mark.fast
@@ -128,14 +139,19 @@ def test_blueprint_model_text_and_colours():
     assert model.data(model.index(0, 6), _B_TEXT) == "1h 0m"
     assert model.data(model.index(0, 7), _B_TEXT) == "无限"  # BPO
     assert model.data(model.index(0, 8), _B_TEXT) == "1,000 ISK"
-    assert model.data(model.index(0, 10), _B_TEXT) == "+12.5%"
+    assert model.data(model.index(0, 9), _B_TEXT) == "1,200 ISK"
+    assert model.data(model.index(0, 10), _B_TEXT) == "200 ISK"  # 1,200 − 1,000（每流程）
+    assert model.data(model.index(0, 11), _B_TEXT) == "+12.5%"
     assert model.data(model.index(0, 0), _B_NAME) == "三钛合金蓝图"
     assert model.data(model.index(0, 2), _B_FG) == ""  # 未占用不染色
-    assert model.data(model.index(0, 10), _B_FG)  # 利润率有正负色
+    assert model.data(model.index(0, 10), _B_FG) == token("ACCENT_GREEN")  # 正利润绿
+    assert model.data(model.index(0, 11), _B_FG) == token("ACCENT_GREEN")
 
     negative = BlueprintQmlModel()
-    negative.set_rows([_bp(margin=-3.0)])
-    assert negative.data(negative.index(0, 10), _B_FG) != model.data(model.index(0, 10), _B_FG)
+    negative.set_rows([{**_bp(margin=-3.0), "revenue": 900.0}])
+    assert negative.data(negative.index(0, 10), _B_FG) == token("ACCENT_RED")  # 亏损红
+    assert negative.data(negative.index(0, 10), _B_TEXT) == "-100 ISK"
+    assert negative.data(negative.index(0, 11), _B_FG) != model.data(model.index(0, 11), _B_FG)
 
 
 @pytest.mark.fast
@@ -153,11 +169,86 @@ def test_occupied_blueprint_is_marked_orange():
 @pytest.mark.fast
 def test_blueprint_alignment_and_set_rows():
     model = BlueprintQmlModel()
-    model.set_rows([_bp(), _bp(bpid=2)])
+    model.set_rows([{**_bp(), "status": "库中有成品 · 正在制造"}, _bp(bpid=2)])
     assert model.data(model.index(0, 1), _B_ALIGN) is False
     assert model.data(model.index(0, 2), _B_ALIGN) is True
+    assert model.data(model.index(0, 11), _B_ALIGN) is True  # 利润率仍是数值列
+    assert model.data(model.index(0, 12), _B_TEXT) == "库中有成品 · 正在制造"  # 末尾的「状态」列
+    assert model.data(model.index(1, 12), _B_TEXT) == "-"  # 一个状态都没命中
+    assert model.data(model.index(0, 12), _B_ALIGN) is False  # 文字列 → 左对齐
     model.set_rows([])
     assert model.rowCount() == 0
+
+
+@pytest.mark.fast
+@pytest.mark.parametrize(
+    ("statuses", "expected"),
+    [
+        (set(), "-"),
+        ({"有挂单"}, "有挂单"),
+        ({"正在制造", "库中有成品", "正在发明"}, "库中有成品 · 正在发明 · 正在制造"),
+    ],
+)
+def test_format_blueprint_status_orders_and_joins(statuses, expected):
+    """状态 → 显示串：固定顺序 + ` · ` 连接，全未命中给 `-`（显示串同时是排序键）。"""
+    from services.inventory_manager import format_blueprint_status
+
+    assert format_blueprint_status(statuses) == expected
+
+
+@pytest.mark.fast
+def test_blueprint_status_map_hits_stock_orders_and_running_plans(tmp_path, monkeypatch):
+    """批量查询一次判出全部状态（临时 sqlite，不碰真库）。
+
+    回归背景：计划 → 蓝图必须走 `plan_blueprint_bindings`（`assigned_blueprint_id` 兜底）——
+    按 `production_plans.blueprint_type_id` 关联会恒空，那一列 `insert_plan` 从不写、
+    真实库里全为 NULL（2026-10 实测）。同时守着两条口径：`pending` 不算「正在」、
+    挂单要 `volume_remain > 0`（买单也算）。
+    """
+    import contextlib
+    import sqlite3
+
+    import services.inventory_manager as im
+
+    db = tmp_path / "user.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE inventory_items (type_id INTEGER, quantity INTEGER);
+        CREATE TABLE open_orders (type_id INTEGER, volume_remain INTEGER, is_buy INTEGER);
+        CREATE TABLE production_plans (id INTEGER, status TEXT, activity TEXT, assigned_blueprint_id INTEGER);
+        CREATE TABLE plan_blueprint_bindings (plan_id INTEGER, blueprint_id INTEGER);
+        INSERT INTO inventory_items VALUES (34, 500), (37, 0);
+        INSERT INTO open_orders VALUES (35, 10, 1), (37, 0, 0);
+        INSERT INTO production_plans VALUES (9, 'in_progress', 'manufacturing', 1), (10, 'pending', 'manufacturing', 3);
+        INSERT INTO plan_blueprint_bindings VALUES (9, 1), (10, 3);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    @contextlib.contextmanager
+    def _connect(*_aliases):
+        c = sqlite3.connect(db)
+        try:
+            yield c
+        finally:
+            c.close()
+
+    monkeypatch.setattr(im, "_default_db", lambda: SimpleNamespace(connect=_connect))
+
+    rows = [
+        {"id": 1, "blueprint_type_id": 1000, "product_type_id": 34},
+        {"id": 2, "blueprint_type_id": 2000, "product_type_id": 35},
+        {"id": 3, "blueprint_type_id": 3000, "product_type_id": 36},
+        {"id": 4, "blueprint_type_id": 4000, "product_type_id": 37},
+    ]
+    assert im.get_blueprint_status_map(rows) == {
+        1: "库中有成品 · 正在制造",  # 库存有 34；在跑计划 9 绑的正是这一行
+        2: "有挂单",  # 买单也算
+        3: "-",  # 计划 10 是 pending → 不算「正在」
+        4: "-",  # 库存 0、挂单剩余 0
+    }
 
 
 # ════════════════════════════════════════════════════════════
@@ -208,6 +299,11 @@ def test_hangars_and_items_load_at_construction(bridge):
     assert bridge.itemModel.rowCount() == 2
     assert bridge.itemCountText == "共 2 项"
     assert "按卖单价格" in bridge.itemTotalText
+    # 列定义与模型表头一一配对（zip(strict=True) → 项数不一致会当场 ValueError），
+    # 且表头对齐读的是元数据里的 alignRight（QML 侧不再按列号区间特判）
+    assert [c["title"] for c in bridge.itemColumns] == InvTableModel._HEADERS
+    assert bridge.itemColumns[1]["alignRight"] is False
+    assert bridge.itemColumns[6]["alignRight"] is True  # 「缺口」数值列右对齐
 
 
 @pytest.mark.ui
@@ -328,6 +424,44 @@ def test_blueprint_menu_rows_fall_back(bridge):
     assert bridge.blueprintsForMenu(2) == [2]
     assert bridge.blueprintRowSelected(2) is True
     assert bridge.blueprintMenuState(2)["single"] is True
+
+
+@pytest.mark.ui
+def test_blueprint_status_column_is_batched(bridge, monkeypatch):
+    """「状态」列：桥把**整批行**交给一次批量查询，再按蓝图行 id 回填。
+
+    蓝图表 1300+ 行，逐行查会卡死 —— 所以这里断言的是「传了什么参数」（一次拿到整批行、
+    按行 id 回填），而不是查询被调用几次。
+    """
+    import services.inventory_manager as im
+
+    seen: dict[int, int | None] = {}
+
+    def fake_status_map(rows: list[dict]) -> dict[int, str]:
+        seen.update({r["id"]: r.get("product_type_id") for r in rows})
+        return {7: "库中有成品 · 正在制造"}
+
+    monkeypatch.setattr(im, "get_blueprints", lambda hid=None: [{**_bp(bpid=7, bp_type_id=1000), "occupied": False}])
+    monkeypatch.setattr(
+        im,
+        "get_blueprint_product_info_batch",
+        lambda ids: {
+            1000: {"product_type_id": 34, "product_name": "三钛合金", "product_quantity": 100, "base_time": 60}
+        },
+    )
+    monkeypatch.setattr(im, "get_blueprint_status_map", fake_status_map)
+    bridge.loadBlueprints()
+
+    assert seen == {7: 34}
+    model = bridge.blueprintModel
+    assert model.rowCount() == 1
+    assert model.data(model.index(0, 12), _B_TEXT) == "库中有成品 · 正在制造"
+    # 列定义与模型表头一一配对；表头对齐读元数据
+    assert [c["title"] for c in bridge.blueprintColumns] == BlueprintTableModel._HEADERS
+    assert bridge.blueprintColumns[10]["title"] == "每流程利润"
+    assert bridge.blueprintColumns[10]["alignRight"] is True
+    assert bridge.blueprintColumns[12]["title"] == "状态"
+    assert bridge.blueprintColumns[12]["alignRight"] is False
 
 
 # ════════════════════════════════════════════════════════════
@@ -655,7 +789,7 @@ def test_blueprint_sort_survives_set_rows(qapp):
     model.set_rows([dict(r) for r in source])  # 模拟一次刷新：同一批数据、原始顺序
     assert [r["id"] for r in model.rows()] == [2, 3, 1], "刷新后被打回原始顺序 = 用户报的「排序失效」"
 
-    model.sort(10, Qt.SortOrder.DescendingOrder)  # 利润率降序
+    model.sort(11, Qt.SortOrder.DescendingOrder)  # 利润率降序
     assert [r["id"] for r in model.rows()] == [2, 3, 1]
 
     model.set_rows([dict(r) for r in source])

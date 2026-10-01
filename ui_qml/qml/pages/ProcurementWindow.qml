@@ -228,7 +228,7 @@ Window {
 
             FButton {
                 objectName: "importPurchasesButton"
-                text: qsTr("从剪贴板导入")
+                text: qsTr("从钱包交易记录粘贴")
                 onClicked: if (page.pc)
                     page.pc.importPurchases()
 

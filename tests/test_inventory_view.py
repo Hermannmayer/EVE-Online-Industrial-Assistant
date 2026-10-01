@@ -61,15 +61,25 @@ class TestInvTableModel:
         """可构造，行数列数正确；列数恒定"""
         model = InvTableModel(self.SAMPLE_ITEMS)
         assert model.rowCount() == 3
-        assert model.columnCount() == 8
+        assert model.columnCount() == 9
         empty = InvTableModel([])
         assert empty.rowCount() == 0
-        assert empty.columnCount() == 8
+        assert empty.columnCount() == 9
 
     def test_header_data(self, qapp):
-        """表头信息正确（已移除「生产中投入」）"""
+        """表头信息正确（已移除「生产中投入」与「拷贝/发明成本」，新增「缺口」「占用资金」）"""
         model = InvTableModel([])
-        expected = ["图标", "名称", "库存数量", "单个成本记录", "规划占用", "规划剩余", "按卖单总价值", "拷贝/发明成本"]
+        expected = [
+            "图标",
+            "名称",
+            "库存数量",
+            "单个成本记录",
+            "规划占用",
+            "规划剩余",
+            "缺口",
+            "占用资金",
+            "按卖单总价值",
+        ]
         for i, h in enumerate(expected):
             actual = model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
             assert actual == h, f"列 {i} 表头应为 '{h}', 得到 '{actual}'"
@@ -85,8 +95,11 @@ class TestInvTableModel:
         (2, 4): "0",  # plan_usage = None
         (0, 5): "49,000",
         (2, 5): "1",  # plan_remain = None → 回退库存量
-        (0, 6): "275,000",  # 50000 × 5.50
-        (2, 6): "-",  # 无卖价
+        (0, 6): "-",  # 规划占用 1,000 < 库存 50,000 → 无缺口
+        (0, 7): "256,000",  # 5.12 × 50,000
+        (2, 7): "-",  # cost_price = 0
+        (0, 8): "275,000",  # 50000 × 5.50
+        (2, 8): "-",  # 无卖价
     }
 
     def test_display_values(self, qapp):
@@ -149,6 +162,33 @@ class TestInvTableModel:
         names = [model.item_at(i)["zh_name"] or model.item_at(i)["en_name"] for i in range(model.rowCount())]
         assert names == sorted(names)
 
+    def test_gap_and_locked_isk_sort_by_value(self, qapp):
+        """「缺口」「占用资金」按**数值**排，不是显示串。
+
+        陷阱：显示串带「缺 N」前缀与千位分隔 —— 字符串序会把「缺 10」排到「缺 9」前、
+        把「1,000」排到「500」前。这里特意只用能暴露该差异的数据。
+        """
+        from ui_qml.theme import registry as theme
+
+        rows = [
+            {"type_id": 1, "quantity": 10, "cost_price": 100.0, "plan_usage": 19},  # 缺 9；占用 1,000
+            {"type_id": 2, "quantity": 10, "cost_price": 50.0, "plan_usage": 20},  # 缺 10；占用 500
+        ]
+        gaps = InvTableModel([dict(r) for r in rows])
+        gaps.sort(6, Qt.SortOrder.AscendingOrder)
+        assert [gaps.item_at(i)["type_id"] for i in range(2)] == [1, 2]
+        assert gaps.data(gaps.index(0, 6), Qt.ItemDataRole.DisplayRole) == "缺 9"
+        assert gaps.data(gaps.index(0, 6), Qt.ItemDataRole.ForegroundRole).name() == theme.ACCENT_RED
+
+        locked = InvTableModel([dict(r) for r in rows])
+        locked.sort(7, Qt.SortOrder.AscendingOrder)
+        assert [locked.item_at(i)["type_id"] for i in range(2)] == [2, 1]
+        assert locked.data(locked.index(1, 7), Qt.ItemDataRole.DisplayRole) == "1,000"
+
+        no_gap = InvTableModel([{"type_id": 1, "quantity": 100, "plan_usage": 0}])
+        assert no_gap.data(no_gap.index(0, 6), Qt.ItemDataRole.DisplayRole) == "-"
+        assert no_gap.data(no_gap.index(0, 6), Qt.ItemDataRole.ForegroundRole) is None
+
     def test_item_at(self, qapp):
         """item_at 取行数据；越界/空模型返回 None"""
         model = InvTableModel(self.SAMPLE_ITEMS)
@@ -207,11 +247,11 @@ class TestBlueprintTableModel:
         """可构造，行数列数正确；空数据列数恒定"""
         model = BlueprintTableModel(self.SAMPLE_ROWS)
         assert model.rowCount() == 2
-        assert model.columnCount() == 11
+        assert model.columnCount() == 13
         assert BlueprintTableModel([]).rowCount() == 0
 
     def test_header_data(self, qapp):
-        """表头正确"""
+        """表头正确（含「每流程利润」与「状态」）"""
         model = BlueprintTableModel([])
         expected = [
             "图标",
@@ -224,7 +264,9 @@ class TestBlueprintTableModel:
             "流程数量",
             "材料成本",
             "销售收入",
+            "每流程利润",
             "利润率",
+            "状态",
         ]
         for i, h in enumerate(expected):
             assert model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == h
@@ -244,7 +286,9 @@ class TestBlueprintTableModel:
         (1, 7): "50",  # runs
         (0, 8): "30,000,000 ISK",
         (0, 9): "55,000,000 ISK",
-        (0, 10): "+83.3%",
+        (0, 10): "25,000,000 ISK",  # 55,000,000 − 30,000,000（每流程）
+        (0, 11): "+83.3%",
+        (1, 10): "119,500 ISK",  # 120,000 − 500
     }
 
     def test_display_values(self, qapp):
@@ -282,23 +326,38 @@ class TestBlueprintTableModel:
         idx = model.index(0, 8)
         assert idx.data(Qt.ItemDataRole.DisplayRole) == "-"
 
+    def test_run_profit_none_and_foreground(self, qapp):
+        """任一侧缺失 → 每流程利润显示横线且不染色；正绿负红"""
+        from ui_qml.theme import registry as theme
+
+        missing = BlueprintTableModel([{"blueprint_type_id": 9999, "revenue": 100.0}])
+        assert missing.data(missing.index(0, 10), Qt.ItemDataRole.DisplayRole) == "-"
+        assert missing.data(missing.index(0, 10), Qt.ItemDataRole.ForegroundRole) is None
+
+        loss = BlueprintTableModel([{"blueprint_type_id": 9999, "revenue": 100.0, "material_cost": 250.0}])
+        assert loss.data(loss.index(0, 10), Qt.ItemDataRole.DisplayRole) == "-150 ISK"
+        assert loss.data(loss.index(0, 10), Qt.ItemDataRole.ForegroundRole).name() == theme.ACCENT_RED
+
+        gain = BlueprintTableModel(self.SAMPLE_ROWS)
+        assert gain.data(gain.index(0, 10), Qt.ItemDataRole.ForegroundRole).name() == theme.ACCENT_GREEN
+
     def test_margin_non_positive_and_none(self, qapp):
         """负利润率带符号；无利润率显示横线"""
         model = BlueprintTableModel([{"blueprint_type_id": 9999, "margin": -15.5}])
-        assert model.data(model.index(0, 10), Qt.ItemDataRole.DisplayRole) == "-15.5%"
+        assert model.data(model.index(0, 11), Qt.ItemDataRole.DisplayRole) == "-15.5%"
         model2 = BlueprintTableModel([{"blueprint_type_id": 9999}])
-        assert model2.data(model2.index(0, 10), Qt.ItemDataRole.DisplayRole) == "-"
+        assert model2.data(model2.index(0, 11), Qt.ItemDataRole.DisplayRole) == "-"
 
     def test_margin_foreground(self, qapp):
         """正利润率绿色、负利润率红色、无利润率 None"""
         from ui_qml.theme import registry as theme
 
         pos = BlueprintTableModel(self.SAMPLE_ROWS)
-        assert pos.data(pos.index(0, 10), Qt.ItemDataRole.ForegroundRole).name() == theme.ACCENT_GREEN
+        assert pos.data(pos.index(0, 11), Qt.ItemDataRole.ForegroundRole).name() == theme.ACCENT_GREEN
         neg = BlueprintTableModel([{"blueprint_type_id": 9999, "margin": -10.0}])
-        assert neg.data(neg.index(0, 10), Qt.ItemDataRole.ForegroundRole).name() == theme.ACCENT_RED
+        assert neg.data(neg.index(0, 11), Qt.ItemDataRole.ForegroundRole).name() == theme.ACCENT_RED
         none = BlueprintTableModel([{"blueprint_type_id": 9999}])
-        assert none.data(none.index(0, 10), Qt.ItemDataRole.ForegroundRole) is None
+        assert none.data(none.index(0, 11), Qt.ItemDataRole.ForegroundRole) is None
 
     def test_row_at(self, qapp):
         """row_at 取行数据；越界返回 None"""
@@ -316,9 +375,23 @@ class TestBlueprintTableModel:
     def test_sort_by_margin(self, qapp):
         """按利润率升序"""
         model = BlueprintTableModel(self.SAMPLE_ROWS)
-        model.sort(10, Qt.SortOrder.AscendingOrder)
+        model.sort(11, Qt.SortOrder.AscendingOrder)
         margins = [r["margin"] for r in model._rows if r.get("margin") is not None]
         assert margins == sorted(margins)
+
+    def test_sort_by_run_profit(self, qapp):
+        """「每流程利润」按**数值**排（显示串带千位分隔：字符串序会把 1,000 排到 900 前）"""
+        rows = [
+            {"blueprint_type_id": 1, "revenue": 1900.0, "material_cost": 1000.0},  # 900 ISK
+            {"blueprint_type_id": 2, "revenue": 2000.0, "material_cost": 1000.0},  # 1,000 ISK
+        ]
+        model = BlueprintTableModel(rows)
+        model.sort(10, Qt.SortOrder.AscendingOrder)
+        assert [model.row_at(i)["blueprint_type_id"] for i in range(2)] == [1, 2]
+        # 缺任一侧的行按 -inf 参与排序（升序排最前，与「利润率」列同口径）
+        mixed = BlueprintTableModel([*[dict(r) for r in rows], {"blueprint_type_id": 3, "revenue": 100.0}])
+        mixed.sort(10, Qt.SortOrder.AscendingOrder)
+        assert [mixed.row_at(i)["blueprint_type_id"] for i in range(3)] == [3, 1, 2]
 
 
 # ══════════════════════════════════════
@@ -334,7 +407,7 @@ class TestBatchCostPriceDialog:
     """
 
     def test_defaults(self, qapp):
-        """默认吉他卖价 + 倍率 1.0（跟随生产规划页）"""
+        """默认卖价 + 倍率 1.0（跟随生产规划页）；贸易中心可选、初值跟随「材料价格来源」。"""
         from ui_qml.bridge.hangar_dialogs import BatchCostPriceQmlDialog
 
         dlg = BatchCostPriceQmlDialog()
@@ -343,6 +416,12 @@ class TestBatchCostPriceDialog:
             assert dlg.discount() == 1.0  # 不再是硬编码 0.9
             # 范围与生产规划页工具栏的倍率一致（可溢价，不只是打折）
             assert dlg.bridge.multiplierMax == 10.0
+            # 回归：来源项早先写死「吉他卖价/买价/均价」，整个窗口钉死在吉他上，
+            # 用户报「没法设置其他贸易中心的价格」。现在贸易中心由下拉选。
+            assert dlg.bridge.hubs[0] == "Jita"
+            assert dlg.hub_name() == dlg.bridge.hubs[dlg.bridge.hubIndex]
+            dlg.bridge.setHubIndex(1)
+            assert dlg.hub_name() == "Amarr"
         finally:
             dlg.deleteLater()
 

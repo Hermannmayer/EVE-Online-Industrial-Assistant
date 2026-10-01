@@ -485,10 +485,44 @@ class ImportReviewBridge(DialogBridge):
         self._update_summary()
         self.stateChanged.emit()
 
-    @Slot(result=bool)
-    def ctrlHeld(self) -> bool:
-        """Ctrl 是否按下 —— 修饰键在 Python 侧读（QML 的 `FTableClickArea` 只发行列号）。"""
-        return bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier)
+    @Slot(list, int, int, result=dict)
+    def updateSelection(self, rows: list, row: int, anchor: int) -> dict:
+        """表行选中：普通=只选它，Ctrl=切换，Shift=从锚点连选到该行（原版 QTableWidget 的语义）。
+
+        返回 `{"rows": sorted(选中行), "anchor": 新锚点}` —— 锚点由 QML 侧持有（它是纯 UI 状态），
+        但**语义算在桥里**：QML 只负责把上一步的结果原样带回来，不做任何分支。
+
+        - Ctrl：`row` 在选中集里就摘掉、不在就加上；**锚点不动**（连选起点不该被点选打断）
+        - Shift：从锚点连选到 `row`，返回**区间内的全部行号**（不与原选中集并集 —— 原版
+          `QTableWidget` 在 `ExtendedSelection` 下也是这个口径）；锚点 <0 时（还没点过任何行）
+          以 `row` 当锚点，于是退化成只选这一行
+        - 其余：只选 `row`
+        - Shift / 普通点击都把锚点更新成 `row`，Ctrl 不更新（与
+          `ui_qml/bridge/inventory_bridge.py::_apply_selection` 的既有语义一致）
+
+        修饰键从下面的 `_modifiers()` 读，不读 QML 传来的值：`FTableClickArea` 只发行列号。
+        """
+        if not 0 <= row < len(self._rows):
+            return {"rows": sorted(int(r) for r in rows), "anchor": int(anchor)}
+        modifiers = self._modifiers()
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            picked = {int(r) for r in rows}
+            picked.symmetric_difference_update({row})
+            new_anchor = int(anchor)
+        elif modifiers & Qt.KeyboardModifier.ShiftModifier:
+            first, last = sorted((anchor if anchor >= 0 else row, row))
+            picked = set(range(first, last + 1))
+            new_anchor = row
+        else:
+            picked = {row}
+            new_anchor = row
+        return {"rows": sorted(picked), "anchor": new_anchor}
+
+    def _modifiers(self) -> Qt.KeyboardModifier:
+        """当前修饰键。**留成方法是为了可测**：PySide6 的 `QGuiApplication` 是 C++ 类型，
+        测试里 `monkeypatch.setattr` 它不生效（静默失败），只能从这一层注入。
+        """
+        return QApplication.keyboardModifiers()
 
     # ── 右键菜单 ──────────────────────────────────────────────
 

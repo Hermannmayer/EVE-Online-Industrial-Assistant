@@ -19,8 +19,10 @@ import "../components"
  * 也是「每行都建控件、不做虚拟化」，行数与开销与这里同量级。
  *
  * **行点击一律走 `FTableClickArea`**（不用 TapHandler，理由见该组件头部）；它声明在行
- * 之前并置 `z: -1`，行里除复选框与两个微调框外的区域都点得到它。Ctrl 多选：修饰键在
- * Python 侧读（`FTableClickArea` 只发行列号），QML 只维护 `selRows` 这个 UI 状态。
+ * 之前并置 `z: -1`，行里除复选框与两个微调框外的区域都点得到它。选中语义（普通=只选它 /
+ * Ctrl=切换 / Shift=从锚点连选区间）在桥的 `updateSelection` 里，修饰键也在 Python 侧读
+ * （`FTableClickArea` 只发行列号）；QML 只持有 `selRows` / `selAnchor` 这两个 UI 状态，
+ * 点一下就把它们原样带回桥、再把桥返回的新值写回。
  *
  * **勾选不重建行模型**（2026-09-27）：复选框点一下只调桥的 `setChecked`，桥改勾选态 + 打
  * `checkRevision` 心跳，复选框按心跳（以及 `Component.onCompleted`）回读 `isChecked(index)`。
@@ -41,8 +43,10 @@ FDialogFrame {
     dlg: frame.rv
     acceptText: qsTr("确定导入")
 
-    //: 右键菜单作用的行号（Ctrl+左键多选）—— 纯 UI 状态
+    //: 右键菜单作用的行号（Ctrl 切换 / Shift 区间）—— 纯 UI 状态，语义在桥的 `updateSelection` 里
     property var selRows: []
+    //: Shift 连选的起点行号（-1 = 还没点过任何行）—— 与 `selRows` 同生共死，凡重置它的地方一并复位
+    property int selAnchor: -1
     //: 行高（Widgets 版 `verticalHeader().setDefaultSectionSize(32)`）
     readonly property int rowH: Math.round(32 * Theme.fontScale)
 
@@ -88,6 +92,7 @@ FDialogFrame {
                 if (!frame.rv)
                     return;
                 frame.selRows = [];  // 整表重算，旧行号作废
+                frame.selAnchor = -1;
                 frame.rv.setModeIndex(currentIndex);
             }
         }
@@ -112,6 +117,16 @@ FDialogFrame {
         Item {
             Layout.fillWidth: true
         }
+    }
+
+    /* 工具栏拆成**两行**（2026-10-01）。原先四项全挤在一行 `RowLayout` 里，
+     * 离屏探针实测最小宽 895px > 内容区 876px（fontScale=1.077）——两个 `fillWidth`
+     * 间隔项被压到 0，最右的「材料倍率」微调框出框 7px 被裁；全局字号调到 1.5× 后
+     * 最小宽涨到 1172px、溢出 284px，「全选 / 取消全选 / 材料倍率」整排被切。
+     * 拆成两行后每行最宽约 500px，字号放大也放得下（同探针复测：无控件出框）。 */
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: Theme.spacingSm
 
         FButton {
             text: qsTr("全选")
@@ -218,24 +233,18 @@ FDialogFrame {
                 onRowClicked: function (row, _column) {
                     if (!frame.rv)
                         return;
-                    if (frame.rv.ctrlHeld()) {
-                        const next = frame.selRows.slice();
-                        const at = next.indexOf(row);
-                        if (at >= 0)
-                            next.splice(at, 1);
-                        else
-                            next.push(row);
-                        frame.selRows = next;
-                    } else {
-                        frame.selRows = [row];
-                    }
+                    const sel = frame.rv.updateSelection(frame.selRows, row, frame.selAnchor);
+                    frame.selRows = sel.rows;
+                    frame.selAnchor = sel.anchor;
                 }
                 onRowRightClicked: function (row, _column, x, y) {
                     if (!frame.rv)
                         return;
                     // 右键到未选中行时只操作该行（原版 `_on_context_menu` 的判据）
-                    if (frame.selRows.indexOf(row) < 0)
+                    if (frame.selRows.indexOf(row) < 0) {
                         frame.selRows = [row];
+                        frame.selAnchor = -1;  // 选中集被换掉，锚点跟着作废
+                    }
                     frame.rv.openMenu(frame.selRows);
                     rowMenu.state = frame.rv.menuState(frame.selRows);
                     const p = mapToItem(frame, x, y);
@@ -473,6 +482,7 @@ FDialogFrame {
                     return;
                 frame.rv.deleteRows();
                 frame.selRows = [];
+                frame.selAnchor = -1;
             }
         }
         FMenuSeparator {}
@@ -521,6 +531,7 @@ FDialogFrame {
                     return;
                 frame.rv.searchMatch();
                 frame.selRows = [];
+                frame.selAnchor = -1;
             }
         }
     }

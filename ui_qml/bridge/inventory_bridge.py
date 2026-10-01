@@ -22,13 +22,32 @@ from PySide6.QtCore import Property, QObject, Qt, Signal, Slot
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QWidget
 
-from core.constants import TRADE_HUB_IDS
+from core.constants import TRADE_HUB_IDS, TRADE_HUBS
+from services.user_settings import get_price_settings, save_settings
+from ui_qml.bridge.industry_bridge import PRICE_TYPES
 from ui_qml.models.inventory_qml_models import BlueprintQmlModel, InvQmlModel
 
 __all__ = ["InventoryBridge"]
 
 _TYPE_FILTERS = ["全部", "蓝图原图", "蓝图拷贝", "反应公式"]
 _TECH_FILTERS = ["全部", "T1", "T2", "T3"]
+
+
+def _hub_region(hub: object) -> int:
+    """价格来源里的 hub 名 → region_id；认不出就回落到吉他。
+
+    `settings.json` 是可手改的，认不出的 hub 名不能让整页炸掉（`KeyError`）。
+    """
+    return TRADE_HUB_IDS.get(str(hub or ""), TRADE_HUB_IDS["Jita"])
+
+
+def _positive_mult(raw: object, default: float = 1.0) -> float:
+    """倍率一律取正数；非数值 / 非正数回落 `default`（同 `get_material_price_mult`）。"""
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 class InventoryBridge(QObject):
@@ -38,6 +57,7 @@ class InventoryBridge(QObject):
     itemsChanged = Signal()  # 机库物品表 + 统计
     blueprintsChanged = Signal()  # 蓝图表 + 统计 + 过滤器
     selectionChanged = Signal()  # 选中集（含修订号）
+    priceSettingsChanged = Signal()  # 蓝图管理的价格来源设置变化（QML 重读 priceSettings）
 
     def __init__(self, shell: object | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -244,11 +264,30 @@ class InventoryBridge(QObject):
 
     @Property(list, constant=True)
     def itemColumns(self) -> list[dict]:
-        """机库表列定义（标题 + 初始宽度）。"""
+        """机库表列定义（标题 + 初始宽度 + 对齐）。
+
+        **宽度元组的项数必须与 `InvTableModel._HEADERS` 相等** —— 下面是
+        `zip(..., strict=True)`，项数不一致会当场 `ValueError`（列增删时两处一起改）。
+        表头与单元格都读同一份 `alignRight`（别在 QML 里按列号区间特判）。
+        """
         from ui_qml.models.inventory_helpers import InvTableModel
 
-        widths = (36, 220, 90, 110, 80, 80, 120, 120)
-        return [{"title": title, "width": width} for title, width in zip(InvTableModel._HEADERS, widths, strict=True)]
+        # (宽度, 右对齐)
+        columns = (
+            (36, False),
+            (220, False),
+            (90, True),
+            (110, True),
+            (80, True),
+            (80, True),
+            (80, True),
+            (110, True),
+            (120, True),
+        )
+        return [
+            {"title": title, "width": width, "alignRight": align_right}
+            for title, (width, align_right) in zip(InvTableModel._HEADERS, columns, strict=True)
+        ]
 
     itemCountText = Property(str, lambda self: self._items_count, notify=itemsChanged)
     itemTotalText = Property(str, lambda self: self._items_total, notify=itemsChanged)
@@ -344,8 +383,10 @@ class InventoryBridge(QObject):
 
     @Slot()
     def importPurchasesFromClipboard(self) -> None:
-        """从剪贴板导入购买记录（「钱包 → 交易记录」的负 ISK 行）→ 选机库 → 按单价入库。
+        """从钱包交易记录粘贴购买记录（「钱包 → 交易记录」的负 ISK 行）→ 选机库 → 按单价入库。
 
+        按钮名就叫「从钱包交易记录粘贴」：叫「从剪贴板导入」时用户分不清它和
+        「增量粘贴」（那个读的是游戏里的**物品清单**），两个都以剪贴板为入口。
         与「增量粘贴」的差别：这里读的是**带单价的市场明细**，成本跟着记录走；
         目标机库现选（默认当前机库），见 `review_bridge.run_purchase_import`。
         """
@@ -364,28 +405,6 @@ class InventoryBridge(QObject):
 
         parent = None
         MaterialCoverageQmlDialog(self._current_hangar_id, self._current_hangar_label(), parent).show()
-
-    @Slot()
-    def addItemManually(self) -> None:
-        if self._current_hangar_id is None:
-            return
-        from PySide6.QtWidgets import QDialog
-
-        from services.inventory_manager import add_item
-        from ui_qml.bridge.hangar_dialogs import AddItemQmlDialog
-
-        parent = None
-        dialog = AddItemQmlDialog(self._current_hangar_label(), parent)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        data = dialog.result_data()
-        if not data:
-            return
-        type_id, quantity, cost = data
-        if add_item(self._current_hangar_id, type_id, quantity, cost) == -1:
-            self._set_items_hint("添加失败")
-            return
-        self.refreshItems()
 
     @Slot(int)
     def editItemQuantity(self, row: int) -> None:
@@ -428,7 +447,12 @@ class InventoryBridge(QObject):
 
     @Slot("QVariantList")
     def editItemsCost(self, rows: list) -> None:
-        """批量设置成本价：吉他卖价/买价/均价 × 材料倍率，或手动输入。"""
+        """批量设置成本价：**所选贸易中心**的卖价/买价/均价 × 材料倍率，或手动输入。
+
+        早先这里把 region 写死成吉他（`TRADE_HUB_IDS["Jita"]`），用户报「没法设置其他
+        贸易中心的价格」—— 说的就是这个窗口（机库表右键「编辑成本价」弹的）。
+        现在用对话框里选中的贸易中心；认不出的名字回落吉他（见 `_hub_region`）。
+        """
         from PySide6.QtWidgets import QDialog
 
         from services.inventory_manager import update_cost_price
@@ -457,9 +481,8 @@ class InventoryBridge(QObject):
                 updated += 1
         else:
             discount = dialog.discount()
-            prices = dict(
-                self._market_repo().get_prices_by_region([it["type_id"] for it in items], TRADE_HUB_IDS["Jita"], source)
-            )
+            region_id = _hub_region(dialog.hub_name())
+            prices = dict(self._market_repo().get_prices_by_region([it["type_id"] for it in items], region_id, source))
             for item in items:
                 base = prices.get(item["type_id"])
                 if base is None:
@@ -507,12 +530,35 @@ class InventoryBridge(QObject):
 
     @Property(list, constant=True)
     def blueprintColumns(self) -> list[dict]:
-        """蓝图表列定义（固定宽度，避免按内容扫描全表卡顿 —— 与 Widgets 版同款）。"""
+        """蓝图表列定义（固定宽度，避免按内容扫描全表卡顿 —— 与 Widgets 版同款）。
+
+        每项带 `alignRight`：数值列右对齐、「名称/产物名/状态」等文字列左对齐。
+        表头与单元格**都读这一份**，别在 QML 里按列号特判。
+
+        元组项数必须与 `BlueprintTableModel._HEADERS` 相等 —— 下面是
+        `zip(..., strict=True)`，项数不一致会当场 `ValueError`（列增删时两处一起改）。
+        """
         from ui_qml.models.inventory_helpers import BlueprintTableModel
 
-        widths = (28, 160, 90, 60, 60, 130, 90, 70, 100, 100, 80)
+        # (宽度, 右对齐)；「每流程利润」在「销售收入」后、「利润率」前
+        columns = (
+            (28, False),
+            (160, False),
+            (90, True),
+            (60, True),
+            (60, True),
+            (130, True),
+            (90, True),
+            (70, True),
+            (100, True),
+            (100, True),
+            (110, True),
+            (80, True),
+            (140, False),
+        )
         return [
-            {"title": title, "width": width} for title, width in zip(BlueprintTableModel._HEADERS, widths, strict=True)
+            {"title": title, "width": width, "alignRight": align_right}
+            for title, (width, align_right) in zip(BlueprintTableModel._HEADERS, columns, strict=True)
         ]
 
     blueprintCountText = Property(str, lambda self: self._bp_count, notify=blueprintsChanged)
@@ -567,6 +613,7 @@ class InventoryBridge(QObject):
         from core.container import get_container
         from services.inventory_manager import (
             get_blueprint_product_info_batch,
+            get_blueprint_status_map,
             get_blueprint_tech_levels,
             get_blueprints,
         )
@@ -609,16 +656,39 @@ class InventoryBridge(QObject):
             bp["is_reaction"] = bpid in self._bp_reaction_ids
             rows.append(bp)
 
+        # 「状态」列：**批量取一次**（蓝图表 1300+ 行，逐行查会卡死）；按蓝图行 id 回填
+        status_map = get_blueprint_status_map(rows)
+        for row in rows:
+            row["status"] = status_map.get(row["id"], "-")
+
         self._bp_all_rows = rows
         self._calc_economics()
         self.applyBlueprintFilter()
         _ = get_container  # 保持导入（供子类/后续使用）
 
     def _calc_economics(self) -> None:
-        """批量算材料成本 / 销售收入 / 利润率（原来的 1300 次逐条查询已批量化）。"""
+        """批量算材料成本 / 销售收入 / 利润率（原来的 1300 次逐条查询已批量化）。
+
+        价格口径**整份跟随工业页工具栏的「双行价格设置」**（`settings.json` 的
+        `price_settings`）：材料按 `mat_hub` + `mat_price_type` + `mat_mult`，
+        销售收入按 `prod_hub` + `prod_price_type` + `prod_mult`。
+
+        早先这里两句写死了「吉他（10000002）的卖单价」，于是用户在蓝图管理页改了
+        价格来源也看不出任何变化 —— 用户报的「没有配置项 / 数字不动」就是它。
+        材料与产品的价格类型**可能不同**（一个买单价、一个卖单价），所以是两个
+        独立批量查询，不能合成一次。
+        """
         if not self._bp_all_rows:
             return
         from services.inventory_manager import get_blueprint_materials_batch
+
+        settings = get_price_settings()
+        mat_region = _hub_region(settings.get("mat_hub"))
+        prod_region = _hub_region(settings.get("prod_hub"))
+        mat_price_type = str(settings.get("mat_price_type") or "sell")
+        prod_price_type = str(settings.get("prod_price_type") or "sell")
+        mat_mult = _positive_mult(settings.get("mat_mult"))
+        prod_mult = _positive_mult(settings.get("prod_mult"))
 
         bp_materials = get_blueprint_materials_batch([r["blueprint_type_id"] for r in self._bp_all_rows])
 
@@ -628,19 +698,22 @@ class InventoryBridge(QObject):
                 material_ids.add(mid)
         product_ids: set[int] = {r["product_type_id"] for r in self._bp_all_rows if r.get("product_type_id")}
 
-        prices: dict[int, float] = {}
-        all_ids = material_ids | product_ids
-        if all_ids:
-            prices = dict(self._market_repo().get_sell_prices(list(all_ids), 10000002))
+        repo = self._market_repo()
+        mat_prices: dict[int, float] = {}
+        prod_prices: dict[int, float] = {}
+        if material_ids:
+            mat_prices = dict(repo.get_prices_by_region(sorted(material_ids), mat_region, mat_price_type))
+        if product_ids:
+            prod_prices = dict(repo.get_prices_by_region(sorted(product_ids), prod_region, prod_price_type))
 
         for row in self._bp_all_rows:
             materials = bp_materials.get(row["blueprint_type_id"], [])
-            total_cost = sum(qty * prices[mid] for mid, qty in materials if prices.get(mid))
+            total_cost = sum(qty * mat_prices[mid] * mat_mult for mid, qty in materials if mat_prices.get(mid))
             product_id = row.get("product_type_id")
-            product_price = prices.get(product_id) if product_id else None
+            product_price = prod_prices.get(product_id) if product_id else None
 
             row["material_cost"] = total_cost if total_cost > 0 else None
-            row["revenue"] = (product_price * row.get("product_quantity", 1)) if product_price else None
+            row["revenue"] = (product_price * prod_mult * row.get("product_quantity", 1)) if product_price else None
             cost, revenue = row["material_cost"], row["revenue"]
             row["margin"] = ((revenue - cost) / cost * 100) if (cost and revenue) else None
 
@@ -648,6 +721,36 @@ class InventoryBridge(QObject):
     def refreshEconomics(self) -> None:
         self._calc_economics()
         self.applyBlueprintFilter()
+
+    # ── 蓝图管理：价格来源（与工业页工具栏**同一份**设置）────────
+
+    @Property(list, constant=True)
+    def hubs(self) -> list[str]:
+        return list(TRADE_HUBS)
+
+    @Property(list, constant=True)
+    def priceTypes(self) -> list[dict]:
+        return [{"value": value, "label": label} for value, label in PRICE_TYPES]
+
+    @Property(dict, notify=priceSettingsChanged)
+    def priceSettings(self) -> dict:
+        return get_price_settings()
+
+    @Slot(str, "QVariant")
+    def setPriceSetting(self, key: str, value: Any) -> None:
+        """改一项价格来源设置：落盘 → 通知 QML 回读 → 用新口径重算蓝图表。
+
+        键名与 `services.user_settings` 的 `price_settings` 完全一致：
+        `mat_hub` / `mat_price_type` / `mat_mult` / `prod_hub` / `prod_price_type` / `prod_mult`。
+        **值没变就不落盘也不重算** —— 倍率微调框每次失焦都会回调一次。
+        """
+        settings = dict(get_price_settings())
+        if settings.get(key) == value:
+            return
+        settings[key] = value
+        save_settings({"price_settings": settings})
+        self.priceSettingsChanged.emit()
+        self.refreshEconomics()
 
     @Slot()
     def applyBlueprintFilter(self) -> None:

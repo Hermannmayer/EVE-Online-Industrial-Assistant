@@ -61,7 +61,7 @@
 |------|------|
 | `ui_qml/qml/pages/StoragePage.qml` | 仓库管理页（机库管理 / 蓝图管理 两个 Tab） |
 | `ui_qml/bridge/inventory_bridge.py` | QML ↔ 既有服务 / worker 的通道（含多选与对话框编排） |
-| `ui_qml/models/inventory_qml_models.py` | QML 表适配（机库物品 8 列 / 蓝图 11 列） |
+| `ui_qml/models/inventory_qml_models.py` | QML 表适配（机库物品 9 列 / 蓝图 13 列） |
 | `ui_qml/models/inventory_helpers.py` | 公共表模型与常量（`InvTableModel` / `BlueprintTableModel`） |
 | `ui_qml/workers/blueprint_import_worker.py` | 蓝图剪贴板批量导入 Worker |
 

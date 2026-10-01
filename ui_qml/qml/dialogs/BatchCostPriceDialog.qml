@@ -4,8 +4,12 @@ import "../components"
 
 /* 批量设置成本价对话框（阶段 4b）。
  *
- * 价格来源 = 吉他卖价 / 买价 / 均价 → 按市场价 × 材料倍率；或「手动输入价格」→ 直接给一个数。
- * 换来源时隐藏/显示对应那一行（原 Widgets 版是 `_on_source_changed` 里逐个 setVisible）。
+ * 价格来源 = **所选贸易中心**的 卖价 / 买价 / 均价 → 按市场价 × 材料倍率；
+ * 或「手动输入价格」→ 直接给一个数。换来源时隐藏/显示对应那一行。
+ *
+ * 「贸易中心」下拉是 2026-10-01 补的：早先来源项直接叫「吉他卖价/吉他买价/吉他均价」，
+ * 等于把这个窗口钉死在吉他上，用户报「没法设置其他贸易中心的价格」。
+ * 它只影响这次批量取价，不写回设置；初值取「材料价格来源」的 hub（见桥）。
  *
  * 「材料倍率」与生产规划页工具栏那个是**同一个设置**，点确定时写回（见桥的 `accept`）。
  */
@@ -23,6 +27,24 @@ FDialogFrame {
         spacing: Theme.spacingSm
 
         Text {
+            text: qsTr("贸易中心:")
+            visible: frame.bp ? !frame.bp.isManual : true
+            color: Theme.textPrimary
+            font.family: Theme.fontFamily
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+
+        FComboBox {
+            objectName: "hubBox"
+            visible: frame.bp ? !frame.bp.isManual : true
+            Layout.preferredWidth: Math.round(120 * Theme.fontScale)
+            model: frame.bp ? frame.bp.hubs : []
+            currentIndex: frame.bp ? frame.bp.hubIndex : 0
+            onActivated: if (frame.bp)
+                frame.bp.setHubIndex(currentIndex)
+        }
+
+        Text {
             text: qsTr("价格来源:")
             color: Theme.textPrimary
             font.family: Theme.fontFamily
@@ -31,7 +53,7 @@ FDialogFrame {
 
         FComboBox {
             objectName: "sourceBox"
-            Layout.preferredWidth: Math.round(180 * Theme.fontScale)
+            Layout.preferredWidth: Math.round(150 * Theme.fontScale)
             textRole: "label"
             model: frame.bp ? frame.bp.sources : []
             currentIndex: frame.bp ? frame.bp.sourceIndex : 0

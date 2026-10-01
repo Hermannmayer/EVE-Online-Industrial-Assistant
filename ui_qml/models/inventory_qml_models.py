@@ -1,9 +1,10 @@
 """仓库页两张表的 QML 适配。
 
-- `InvQmlModel`：机库物品（8 列）。数量类列右对齐、图标列取物品 PNG、
-  「规划占用」带 tooltip。展示规则照搬 `InvTableModel.data()`。
-- `BlueprintQmlModel`：蓝图（11 列）。「类型」列在被活跃计划占用时标橙、
-  「利润率」列按正负染绿红。展示规则照搬 `BlueprintTableModel.data()`。
+- `InvQmlModel`：机库物品（9 列）。数量/金额类列右对齐、图标列取物品 PNG、
+  「规划占用」带 tooltip、「缺口」为红色 token。展示规则照搬 `InvTableModel.data()`。
+- `BlueprintQmlModel`：蓝图（13 列，「状态」列由 `services.inventory_manager` 批量查出、
+  多状态以 ` · ` 并列）。「类型」列在被活跃计划占用时标橙、
+  「每流程利润」与「利润率」列按正负染绿红。展示规则照搬 `BlueprintTableModel.data()`。
 
 两个模型都补了 `set_rows`：原版每次刷新都**新建**模型实例
 （`self._model = InvTableModel(items)`），QML 侧需要一个稳定实例 + 整体换数据。
@@ -18,7 +19,13 @@ from typing import Any
 from PySide6.QtCore import QModelIndex, Qt
 
 from ui_qml.icon_cache import icon_url as _png_url
-from ui_qml.models.inventory_helpers import BlueprintTableModel, InvTableModel
+from ui_qml.models.inventory_helpers import (
+    BlueprintTableModel,
+    InvTableModel,
+    blueprint_run_profit,
+    item_gap,
+    item_locked_isk,
+)
 from ui_qml.theme.registry import token as _token
 
 __all__ = ["InvQmlModel", "BlueprintQmlModel"]
@@ -33,6 +40,7 @@ INV_ROLE_NAMES: dict[int, bytes] = {
     _BASE + 5: b"rowIndex",
     _BASE + 6: b"itemId",
     _BASE + 7: b"selected",
+    _BASE + 8: b"fg",
 }
 _I_TEXT = _BASE + 1
 _I_ICON = _BASE + 2
@@ -41,6 +49,7 @@ _I_TIP = _BASE + 4
 _I_ROW = _BASE + 5
 _I_ID = _BASE + 6
 _I_SELECTED = _BASE + 7
+_I_FG = _BASE + 8
 
 BP_ROLE_NAMES: dict[int, bytes] = {
     _BASE + 1: b"text",
@@ -67,7 +76,7 @@ class InvQmlModel(InvTableModel):
 
     #: 可排序列（与父类 `sort()` 的键一致）—— QML 用它决定表头是否可点，
     #: 判据只此一份，别在 QML 里再写一遍
-    SORTABLE = frozenset({1, 2, 3, 4, 5, 6, 7})
+    SORTABLE = frozenset({1, 2, 3, 4, 5, 6, 7, 8})
 
     def __init__(self, items: list[dict] | None = None) -> None:
         super().__init__(list(items or []))
@@ -125,6 +134,11 @@ class InvQmlModel(InvTableModel):
             return row.get("id")
         if role == _I_SELECTED:
             return index.row() in self._selection
+        if role == _I_FG:
+            # 缺口 > 0 标红；其余交给 Theme 默认色（空串 = 不覆盖）
+            if col == 6 and item_gap(row) > 0:
+                return _token("ACCENT_RED")
+            return ""
         return super().data(index, role)
 
     @staticmethod
@@ -141,19 +155,22 @@ class InvQmlModel(InvTableModel):
             remain = row.get("plan_remain")
             return f"{remain:,}" if remain is not None else f"{row['quantity']:,}"
         if col == 6:
+            gap = item_gap(row)
+            return f"缺 {gap:,}" if gap else "-"
+        if col == 7:
+            locked = item_locked_isk(row)
+            return f"{locked:,.0f}" if locked else "-"
+        if col == 8:
             sell_price = row.get("sell_price")
             return f"{row['quantity'] * sell_price:,.0f}" if sell_price else "-"
-        if col == 7:
-            research_cost = row.get("research_cost")
-            return f"{research_cost:,.0f}" if research_cost else ""
         return ""
 
 
 class BlueprintQmlModel(BlueprintTableModel):
     """蓝图表：命名角色 + 可整体换行。"""
 
-    #: 可排序列（父类 `sort()` 覆盖 0..10 全部列）
-    SORTABLE = frozenset(range(11))
+    #: 可排序列（父类 `sort()` 覆盖 0..12 全部列）
+    SORTABLE = frozenset(range(13))
 
     def __init__(self, rows: list[dict] | None = None) -> None:
         super().__init__(list(rows or []))
@@ -202,11 +219,16 @@ class BlueprintQmlModel(BlueprintTableModel):
         if role == _B_ICON:
             return _png_url(row.get("product_type_id")) if col == 0 else ""
         if role == _B_ALIGN:
-            return col >= 2
+            # 「状态」列是文字，左对齐（数值列 2..11 才右对齐）
+            return 2 <= col <= 11
         if role == _B_FG:
             if col == 2 and row.get("occupied"):
                 return _token("ACCENT_ORANGE")
             if col == 10:
+                profit = blueprint_run_profit(row)
+                if profit is not None:
+                    return _token("ACCENT_GREEN") if profit >= 0 else _token("ACCENT_RED")
+            if col == 11:
                 margin = row.get("margin")
                 if margin is not None:
                     return _token("ACCENT_GREEN") if margin >= 0 else _token("ACCENT_RED")
@@ -251,8 +273,13 @@ class BlueprintQmlModel(BlueprintTableModel):
             revenue = row.get("revenue")
             return f"{revenue:,.0f} ISK" if revenue is not None else "-"
         if col == 10:
+            profit = blueprint_run_profit(row)
+            return "-" if profit is None else f"{profit:,.0f} ISK"
+        if col == 11:
             margin = row.get("margin")
             return "-" if margin is None else f"{margin:+.1f}%"
+        if col == 12:
+            return str(row.get("status") or "-")
         return ""
 
     @staticmethod

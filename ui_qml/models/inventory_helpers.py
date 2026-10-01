@@ -15,6 +15,40 @@ from ui_qml.icon_cache import load_item_icon
 from ui_qml.theme import registry as theme
 
 # ════════════════════════════════════════════════════
+#  派生数值（纯函数：展示 / 排序 / 染色共用一套口径）
+# ════════════════════════════════════════════════════
+
+
+def item_gap(row: dict) -> int:
+    """缺口 = max(0, 规划占用 − 库存数量)。纯函数。"""
+    return max(0, int(row.get("plan_usage") or 0) - int(row.get("quantity") or 0))
+
+
+def item_locked_isk(row: dict) -> float:
+    """占用资金 = 单个成本记录 × 库存数量（成本价缺失/为 0 → 0）。纯函数。"""
+    return float(row.get("cost_price") or 0) * float(row.get("quantity") or 0)
+
+
+def blueprint_run_profit(row: dict) -> float | None:
+    """每流程利润 = 销售收入 − 材料成本（任一侧缺失 → None）。
+
+    这两列本来就是**每流程**口径（材料量取 `blueprint_materials.quantity`，未乘 `runs`；
+    收入是单价 × `product_quantity`），所以差值就是单张流程的利润。纯函数。
+    """
+    revenue = row.get("revenue")
+    cost = row.get("material_cost")
+    if revenue is None or cost is None:
+        return None
+    return float(revenue) - float(cost)
+
+
+def _profit_sort_key(row: dict) -> float:
+    """「每流程利润」的排序键：缺失沉底（与「利润率」列同口径）。"""
+    profit = blueprint_run_profit(row)
+    return profit if profit is not None else float("-inf")
+
+
+# ════════════════════════════════════════════════════
 #  InvTableModel
 # ════════════════════════════════════════════════════
 
@@ -22,7 +56,7 @@ from ui_qml.theme import registry as theme
 class InvTableModel(QAbstractTableModel):
     """机库物品表格模型"""
 
-    _HEADERS = ["图标", "名称", "库存数量", "单个成本记录", "规划占用", "规划剩余", "按卖单总价值", "拷贝/发明成本"]
+    _HEADERS = ["图标", "名称", "库存数量", "单个成本记录", "规划占用", "规划剩余", "缺口", "占用资金", "按卖单总价值"]
 
     def __init__(self, items: list[dict]):
         super().__init__()
@@ -59,15 +93,24 @@ class InvTableModel(QAbstractTableModel):
                 remain = r.get("plan_remain")
                 return f"{remain:,}" if remain is not None else f"{r['quantity']:,}"
             if c == 6:
+                gap = item_gap(r)
+                return f"缺 {gap:,}" if gap else "-"
+            if c == 7:
+                locked = item_locked_isk(r)
+                return f"{locked:,.0f}" if locked else "-"
+            if c == 8:
                 sp = r.get("sell_price")
                 return f"{r['quantity'] * sp:,.0f}" if sp else "-"
-            if c == 7:
-                rc = r.get("research_cost")
-                return f"{rc:,.0f}" if rc else ""
 
         elif role == Qt.ItemDataRole.ToolTipRole:
             if c == 4:
                 return "待启动计划预留"
+
+        elif role == Qt.ItemDataRole.ForegroundRole:
+            # 缺口 > 0 标红（与蓝图「利润率」「每流程利润」同一套主题 token）
+            if c == 6 and item_gap(r) > 0:
+                return QColor(theme.ACCENT_RED)
+            return None
 
         elif role == Qt.ItemDataRole.DecorationRole:
             if c == 0:
@@ -109,8 +152,9 @@ class InvTableModel(QAbstractTableModel):
             3: lambda r: r.get("cost_price") or 0,
             4: lambda r: r.get("plan_usage") or 0,
             5: lambda r: r.get("plan_remain") if r.get("plan_remain") is not None else r.get("quantity", 0),
-            6: lambda r: (r.get("quantity", 0) or 0) * (r.get("sell_price") or 0),
-            7: lambda r: r.get("research_cost") or 0,
+            6: lambda r: item_gap(r),
+            7: lambda r: item_locked_isk(r),
+            8: lambda r: (r.get("quantity", 0) or 0) * (r.get("sell_price") or 0),
         }.get(column)
 
     def reapply_sort(self) -> None:
@@ -151,7 +195,9 @@ class BlueprintTableModel(QAbstractTableModel):
         "流程数量",
         "材料成本",
         "销售收入",
+        "每流程利润",
         "利润率",
+        "状态",
     ]
 
     def __init__(self, rows: list[dict]):
@@ -214,10 +260,15 @@ class BlueprintTableModel(QAbstractTableModel):
                 rev = r.get("revenue")
                 return f"{rev:,.0f} ISK" if rev is not None else "-"
             if c == 10:
+                profit = blueprint_run_profit(r)
+                return f"{profit:,.0f} ISK" if profit is not None else "-"
+            if c == 11:
                 margin = r.get("margin")
                 if margin is None:
                     return "-"
                 return f"{margin:+.1f}%"
+            if c == 12:
+                return r.get("status") or "-"
 
         elif role == Qt.ItemDataRole.DecorationRole:
             if c == 0:
@@ -230,13 +281,18 @@ class BlueprintTableModel(QAbstractTableModel):
             if c == 2 and r.get("occupied"):
                 return QColor(theme.ACCENT_ORANGE)
             if c == 10:
+                profit = blueprint_run_profit(r)
+                if profit is not None:
+                    return QColor(theme.ACCENT_GREEN) if profit >= 0 else QColor(theme.ACCENT_RED)
+            if c == 11:
                 margin = r.get("margin")
                 if margin is not None:
                     return QColor(theme.ACCENT_GREEN) if margin >= 0 else QColor(theme.ACCENT_RED)
             return None
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
-            if c >= 2:
+            # 「状态」列是文字，左对齐（数值列 2..11 才右对齐）
+            if 2 <= c <= 11:
                 return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 
         return None
@@ -273,7 +329,9 @@ class BlueprintTableModel(QAbstractTableModel):
             7: lambda r: float("inf") if r.get("is_bpo") else r.get("runs", 0),
             8: lambda r: r.get("material_cost") or 0,
             9: lambda r: r.get("revenue") or 0,
-            10: lambda r: r.get("margin") or float("-inf"),
+            10: _profit_sort_key,
+            11: lambda r: r.get("margin") or float("-inf"),
+            12: lambda r: str(r.get("status") or "-"),
         }.get(column)
 
     def reapply_sort(self) -> None:

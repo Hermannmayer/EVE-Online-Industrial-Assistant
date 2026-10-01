@@ -13,6 +13,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtQuick import QQuickItem
+from PySide6.QtTest import QTest
 
 pytestmark = pytest.mark.ui
 
@@ -442,6 +445,74 @@ def test_review_search_match_replaces_the_unmatched_row(harness: _Harness, monke
     assert b.rows[1]["name"] == "类晶体胶矿"
     assert b.rows[1]["price"] == 12.0
     assert b.rows[1]["checkable"] is True
+
+
+# ════════════════════════════════════════════════════════════════
+#  QML 弹窗：Shift 区间多选（端到端走真点击）
+# ════════════════════════════════════════════════════════════════
+
+
+def test_review_dialog_shift_click_selects_the_range(harness: _Harness, qapp, monkeypatch):
+    """用户报障「增量粘贴的预览框无法按 Shift 多选」：真鼠标点击行区 → 桥算区间 → 写回 QML。
+
+    **必须走真点击**（`QTest.mouseClick` 打在弹窗的 `reviewClickArea` 上）：只测桥的话，
+    QML 的 `onRowClicked` 接错了照样绿 —— 缺陷就在 QML 那一侧（旧实现只读 Ctrl、没有 Shift 分支），
+    本仓踩过这种「桥绿、界面坏」的假绿。
+
+    `harness` fixture 在这里只取它的桩（`get_items` / `get_container().market_repo` / `get_hangars`）：
+    弹窗要 3 行数据，而那两条剪贴板行只有 2 行。修饰键从桥的 `_modifiers()` 注入 ——
+    PySide6 的 `QGuiApplication` 是 C++ 类型，`monkeypatch.setattr` 它不生效（静默失败）。
+    """
+    import ui_qml.bridge.review_bridge as mod
+    from tests.qml_click import spin
+
+    parsed = [
+        {"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium", "qty": 500, "status": "matched"},
+        {"type_id": 35, "zh_name": "类晶体胶矿", "en_name": "Pyerite", "qty": 20, "status": "matched"},
+        {"type_id": 36, "zh_name": "同位聚合体", "en_name": "Isogen", "qty": 5, "status": "matched"},
+    ]
+    dialog = mod.ImportReviewQmlDialog(parsed, "矿仓", 7, None, default_mode="full")
+    try:
+        assert dialog.ok(), "弹窗 QML 没加载起来：" + "; ".join(str(e) for e in dialog._host.errors())
+        dialog.resize(900, 560)
+        dialog.show()
+        spin(250)
+
+        root = dialog._host.rootObject()
+        assert root is not None
+        # 按 **QQuickItem** 取（不是 QObject）：下面要调 `mapToItem` 算点击坐标，
+        # `QObject` 没有这个方法，mypy 会报 attr-defined。
+        area = root.findChild(QQuickItem, "reviewClickArea")
+        assert area is not None, "ImportReviewDialog 的行区应当有 reviewClickArea（objectName 改了吗？）"
+        row_h = float(area.property("rowHeight"))
+        assert row_h > 0
+
+        # x 取「前两列之后 30px」= 名称列内、避开勾选框与三个微调框（那几处自己吃鼠标事件）
+        x = sum(int(c["width"]) for c in dialog.bridge.columns[:2]) + 30.0
+
+        def click_row(row: int) -> None:
+            # `None` = 映射到场景（对顶层 QQuickWidget 就是窗口坐标）。PySide6 的 stub
+            # 只收 `QQuickItem`，运行期接受 None —— 这是 stub 的窄化，不是错用。
+            point = area.mapToItem(None, x, row * row_h + row_h / 2.0)  # type: ignore[call-overload]
+            QTest.mouseClick(
+                dialog._host,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+                QPoint(int(point.x()), int(point.y())),
+            )
+            spin(120)
+
+        click_row(0)
+        assert list(root.property("selRows")) == [0], "普通点击只选该行"
+
+        mods = {"value": Qt.KeyboardModifier.ShiftModifier}
+        monkeypatch.setattr(dialog.bridge, "_modifiers", lambda: mods["value"])
+        click_row(2)
+        assert sorted(root.property("selRows")) == [0, 1, 2], "Shift 点第 2 行应从锚点 0 连选到 2"
+        assert root.property("selAnchor") == 2, "Shift 之后锚点落在刚点的那一行"
+    finally:
+        dialog.deleteLater()
+        spin(60)
 
 
 # ════════════════════════════════════════════════════════════════

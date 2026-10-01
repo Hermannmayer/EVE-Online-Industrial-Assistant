@@ -4,11 +4,19 @@
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from datetime import UTC, datetime
+from typing import Any
 
 from core.container import get_container
 from core.logger import log
 from services.database_manager import DatabaseManager
+from services.plan_category import (
+    CATEGORY_COPYING,
+    CATEGORY_INVENTION,
+    CATEGORY_MANUFACTURING,
+    category_for_activity,
+)
 from services.terminology import term
 
 
@@ -294,9 +302,9 @@ def get_items(
 ) -> list[dict]:
     """机库物品列表。
 
-    include_derived=False 只取基础字段（数量/成本/名称/卖单价），跳过计划占用聚合与
-    研究成本计算 —— 供「粘贴导入预览」这类只用数量/名称的调用方（那些派生列要额外的
-    跨库查询，且对同机库会重复算）。
+    include_derived=False 只取基础字段（数量/成本/名称/卖单价），跳过计划占用聚合 ——
+    供「粘贴导入预览」这类只用数量/名称的调用方（那个聚合要额外的跨库查询，
+    且对同机库会重复算）。
     need_ids 非空时只返回这些 type_id 的行（预览只关心剪贴板里出现过的物品）。
     """
     with _default_db().connect("user", "ref", "mkt", "bp") as conn:
@@ -372,18 +380,6 @@ def get_items(
             )
         # 名称排序（terminology 覆盖项 SQL 无法排序，Python 端统一排）
         items.sort(key=lambda it: it["display_name"])
-        # 研究成本（拷贝/发明）批量填充 — 蓝图表在 blueprint.db；SCI 跟随该机库所在星系
-        if include_derived:
-            try:
-                from services.research_calculator import research_costs_batch
-
-                sys_id = get_hangar_system_id(hangar_id)
-                with _default_db().connect("bp") as bp_conn:
-                    costs = research_costs_batch(bp_conn, [it["type_id"] for it in items], solar_system_id=sys_id)
-                for it in items:
-                    it["research_cost"] = costs.get(it["type_id"])
-            except Exception:
-                log.exception("计算研究成本失败")
         return items
 
 
@@ -1078,3 +1074,142 @@ def get_blueprint_reaction_ids() -> set[int]:
         c = conn.cursor()
         c.execute("SELECT DISTINCT blueprint_type_id FROM blueprint_activities WHERE activity = 'reaction'")
         return {r[0] for r in c.fetchall()}
+
+
+# ── 蓝图「状态」列 ──────────────────────────────────────────────
+# 顺序 = 展示顺序（用户列举顺序），别改；显示串同时是该列的排序键。
+
+BLUEPRINT_STATUS_STOCKED = "库中有成品"
+BLUEPRINT_STATUS_ORDERED = "有挂单"
+BLUEPRINT_STATUS_INVENTION = "正在发明"
+BLUEPRINT_STATUS_COPYING = "正在拷贝"
+BLUEPRINT_STATUS_MANUFACTURING = "正在制造"
+
+BLUEPRINT_STATUSES: tuple[str, ...] = (
+    BLUEPRINT_STATUS_STOCKED,
+    BLUEPRINT_STATUS_ORDERED,
+    BLUEPRINT_STATUS_INVENTION,
+    BLUEPRINT_STATUS_COPYING,
+    BLUEPRINT_STATUS_MANUFACTURING,
+)
+
+#: 「正在」只算在跑的计划（与 `plan_service.load_running` 同口径）；pending（待排）不算
+_RUNNING_PLAN_STATUSES: tuple[str, ...] = ("in_progress", "running")
+
+#: plan_category 类别 → 状态文本。反应/研究不在用户列举的状态里，不显示。
+_CATEGORY_STATUS: dict[str, str] = {
+    CATEGORY_MANUFACTURING: BLUEPRINT_STATUS_MANUFACTURING,
+    CATEGORY_COPYING: BLUEPRINT_STATUS_COPYING,
+    CATEGORY_INVENTION: BLUEPRINT_STATUS_INVENTION,
+}
+
+
+def format_blueprint_status(statuses: Iterable[str]) -> str:
+    """状态集合 → 显示串：按 `BLUEPRINT_STATUSES` 顺序以 ` · ` 连接；全未命中 → `-`。
+
+    纯函数（无 DB）。显示串同时是「状态」列的排序键，所以顺序必须稳定。
+    """
+    hit = set(statuses)
+    return " · ".join(s for s in BLUEPRINT_STATUSES if s in hit) or "-"
+
+
+def get_blueprint_status_map(rows: Iterable[dict[str, Any]]) -> dict[int, str]:
+    """批量取蓝图「状态」列显示串，返回 `{user_blueprints.id: 显示串}`。
+
+    入参是 `get_blueprints()` 的行（读 `id` / `blueprint_type_id` / `product_type_id`
+    三个键；后两个由桥补全）。按**蓝图行**打标 —— 正在被作业占用的往往是具体那一份
+    BPC，同型号的其它份不该跟着显示「正在制造」（与「（占用中）」同粒度）。
+
+    蓝图表 1300+ 行，**必须批量**：一次 `connect("user", "bp")` 内 3 条
+    `SELECT ... WHERE ... IN (...)`：
+
+    1. `inventory_items`（全部机库合计，不限当前机库）→ 库中有成品
+    2. `open_orders`（买单卖单都算）→ 有挂单
+    3. `production_plans LEFT JOIN plan_blueprint_bindings`
+       （`COALESCE(b.blueprint_id, pp.assigned_blueprint_id)`，与 `plan_service`
+       的绑定口径同一套）→ 正在发明 / 拷贝 / 制造
+
+    ⚠️ 第 3 条**不能**按 `production_plans.blueprint_type_id` 关联：那一列
+    `insert_plan`/`insert_plans_batch` 从不写，真实库里全为 NULL（2026-10 实测），
+    照它关联「正在*」恒空。
+
+    `activity` 为空的历史行再走一次 `plan_category.load_category_map` 蓝图反查
+    （`plan_service._enrich_rows` 的既有口径，不写第二套）—— 实测当前库 0 行走这里。
+    """
+    product_by_row: dict[int, int | None] = {}
+    bp_type_by_row: dict[int, int] = {}
+    for row in rows:
+        row_id = row.get("id")
+        if not row_id:
+            continue
+        product_by_row[int(row_id)] = row.get("product_type_id")
+        bp_type_by_row[int(row_id)] = int(row.get("blueprint_type_id") or 0)
+    if not product_by_row:
+        return {}
+
+    row_ids = sorted(product_by_row)
+    product_ids = sorted({p for p in product_by_row.values() if p})
+    hits: dict[int, list[str]] = {row_id: [] for row_id in row_ids}
+
+    def _add(row_id: int, text: str) -> None:
+        if text not in hits[row_id]:
+            hits[row_id].append(text)
+
+    with _default_db().connect("user", "bp") as conn:
+        if product_ids:
+            placeholders = ",".join("?" * len(product_ids))
+            stocked = {
+                row[0]
+                for row in conn.execute(
+                    f"SELECT DISTINCT type_id FROM inventory_items WHERE quantity > 0 AND type_id IN ({placeholders})",
+                    product_ids,
+                ).fetchall()
+            }
+            listed = {
+                row[0]
+                for row in conn.execute(
+                    f"SELECT DISTINCT type_id FROM open_orders WHERE volume_remain > 0 AND type_id IN ({placeholders})",
+                    product_ids,
+                ).fetchall()
+            }
+            for row_id in row_ids:
+                product_id = product_by_row.get(row_id)
+                if product_id is None:
+                    continue
+                if product_id in stocked:
+                    _add(row_id, BLUEPRINT_STATUS_STOCKED)
+                if product_id in listed:
+                    _add(row_id, BLUEPRINT_STATUS_ORDERED)
+
+        row_placeholders = ",".join("?" * len(row_ids))
+        status_placeholders = ",".join("?" * len(_RUNNING_PLAN_STATUSES))
+        plan_rows = conn.execute(
+            f"SELECT COALESCE(b.blueprint_id, pp.assigned_blueprint_id) AS ub_id, pp.activity "
+            f"FROM production_plans pp "
+            f"LEFT JOIN plan_blueprint_bindings b ON b.plan_id = pp.id "
+            f"WHERE pp.status IN ({status_placeholders}) "
+            f"AND COALESCE(b.blueprint_id, pp.assigned_blueprint_id) IN ({row_placeholders})",
+            (*_RUNNING_PLAN_STATUSES, *row_ids),
+        ).fetchall()
+        blank_activity_ids: list[int] = []
+        for ub_id, activity in plan_rows:
+            if not str(activity or "").strip():
+                blank_activity_ids.append(int(ub_id))
+                continue
+            text = _CATEGORY_STATUS.get(category_for_activity(activity))
+            if text:
+                _add(int(ub_id), text)
+
+        if blank_activity_ids:
+            # 历史行兜底：与 `plan_service._enrich_rows` 同一套蓝图反查（不写第二套）
+            from services.plan_category import load_category_map
+
+            bp_types = sorted({bp_type_by_row.get(row_id, 0) for row_id in blank_activity_ids} - {0})
+            if bp_types:
+                category_by_bp_type = load_category_map(conn, bp_types)
+                for row_id in blank_activity_ids:
+                    text = _CATEGORY_STATUS.get(category_by_bp_type.get(bp_type_by_row.get(row_id, 0), ""))
+                    if text:
+                        _add(row_id, text)
+
+    return {row_id: format_blueprint_status(hits[row_id]) for row_id in row_ids}

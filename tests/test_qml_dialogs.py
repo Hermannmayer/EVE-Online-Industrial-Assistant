@@ -121,14 +121,6 @@ def _case_batch_cost_price(monkeypatch):
     return BatchCostPriceQmlDialog
 
 
-def _case_add_item(monkeypatch):
-    monkeypatch.setattr("ui_qml.bridge.item_search_bridge.find_items", lambda text: [])
-
-    from ui_qml.bridge.hangar_dialogs import AddItemQmlDialog
-
-    return lambda: AddItemQmlDialog("矿仓")
-
-
 def _case_parent_decompose(monkeypatch):
     from ui_qml.bridge.parent_decompose_bridge import ParentDecomposeQmlDialog
 
@@ -242,7 +234,6 @@ _LOADS_CASES: list[tuple[str, Any]] = [
     ("材料覆盖", "coverage_factory"),
     ("编辑数量", _case_edit_qty),
     ("批量设置成本价", _case_batch_cost_price),
-    ("手动添加物品", _case_add_item),
     ("母项拆解(空态)", _case_parent_decompose),
     ("导入审查", _case_import_review),
     ("导入变动汇总", _case_import_change),
@@ -261,7 +252,7 @@ _LOADS_CASES: list[tuple[str, Any]] = [
 
 @pytest.mark.parametrize(("label", "case"), _LOADS_CASES, ids=[c[0] for c in _LOADS_CASES])
 def test_dialog_loads_without_warnings(request, qapp, monkeypatch, label, case):
-    """44 个对话框共用的一条：QML 能加载、布局不给 Qt 刷告警。"""
+    """37 个对话框共用的一条：QML 能加载、布局不给 Qt 刷告警。"""
     factory = case(monkeypatch) if callable(case) else request.getfixturevalue(case)
     _assert_loads_and_quiet(factory, label)
 
@@ -1471,7 +1462,7 @@ def test_material_coverage_empty_state(qapp, monkeypatch):
     assert bridge.statusText == "关联计划 0 条"
 
 
-# ── 机库三个对话框（编辑数量 / 批量成本价 / 手动添加）──
+# ── 机库两个对话框（编辑数量 / 批量成本价）──
 
 
 def test_edit_qty_returns_the_spun_value(qapp):
@@ -1484,28 +1475,6 @@ def test_edit_qty_returns_the_spun_value(qapp):
         dlg.bridge.setValue(250)
         dlg.bridge.accept()
         assert dlg.quantity() == 250
-    finally:
-        dlg.deleteLater()
-
-
-def test_add_item_returns_type_qty_cost(qapp, monkeypatch):
-    monkeypatch.setattr(
-        "ui_qml.bridge.item_search_bridge.find_items",
-        lambda text: [{"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium"}],
-    )
-    monkeypatch.setattr("ui_qml.bridge.hangar_dialogs.get_item_price", lambda type_id: 5.5)
-    from ui_qml.bridge.hangar_dialogs import AddItemQmlDialog
-
-    dlg = AddItemQmlDialog("矿仓")
-    try:
-        assert dlg.result_data() is None, "还没选物品时不该有结果"
-        dlg.bridge.setQuery("三钛")
-        dlg.bridge.runSearch()
-        # 选中时按市场价带出成本价（原 `_on_row_selected` 的行为）
-        assert dlg.bridge.cost == 5.5
-        dlg.bridge.setQuantity(7)
-        dlg.bridge.accept()
-        assert dlg.result_data() == (34, 7, 5.5)
     finally:
         dlg.deleteLater()
 
