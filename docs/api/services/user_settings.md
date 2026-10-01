@@ -170,3 +170,63 @@ def set_esi_orders_synced_at(value: str) -> None
 记下 ESI 同步挂单的时刻（读-改-写，保留其它键）。
 
 定义行：`205`
+
+### `get_backup_enabled`
+
+```python
+def get_backup_enabled() -> bool
+```
+
+是否每天自动备份用户数据。**默认开**：这是保护性功能，默认关掉就没人受益。
+
+定义行：`223`
+
+### `set_backup_enabled`
+
+```python
+def set_backup_enabled(value: bool) -> None
+```
+
+写回「每天自动备份」开关（读-改-写，保留其它键）。
+
+定义行：`229`
+
+### `get_backup_keep`
+
+```python
+def get_backup_keep() -> int
+```
+
+最大保留备份份数。非数值 / 不在白名单 → 回落 ``BACKUP_KEEP_DEFAULT``。
+
+定义行：`234`
+
+### `set_backup_keep`
+
+```python
+def set_backup_keep(value: int) -> None
+```
+
+写回保留份数；不在白名单内按默认值落盘（UI 只给白名单选项，这里兜住手改）。
+
+定义行：`243`
+
+### `get_last_backup_date`
+
+```python
+def get_last_backup_date() -> str
+```
+
+上次自动备份的日期（``YYYY-MM-DD``）；从没备过返回空串。
+
+定义行：`249`
+
+### `set_last_backup_date`
+
+```python
+def set_last_backup_date(value: str) -> None
+```
+
+记下本次自动备份的日期（读-改-写，保留其它键）。
+
+定义行：`258`

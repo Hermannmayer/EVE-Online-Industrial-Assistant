@@ -8,13 +8,55 @@
 
 包含 InvTableModel 和 BlueprintTableModel。
 
+## 函数
+
+### `item_gap`
+
+```python
+def item_gap(row: dict) -> int
+```
+
+缺口 = max(0, 规划占用 − 库存数量)。纯函数。
+
+定义行：`22`
+
+### `item_locked_isk`
+
+```python
+def item_locked_isk(row: dict) -> float
+```
+
+占用资金 = 单个成本记录 × 库存数量（成本价缺失/为 0 → 0）。纯函数。
+
+定义行：`27`
+
+### `blueprint_run_profit`
+
+```python
+def blueprint_run_profit(row: dict) -> float | None
+```
+
+每流程利润 = 销售收入 − 材料成本（任一侧缺失 → None）。
+
+定义行：`32`
+
+### `_profit_sort_key`
+
+```python
+def _profit_sort_key(row: dict) -> float
+```
+
+「每流程利润」的排序键：缺失沉底（与「利润率」列同口径）。
+
+定义行：`45`
+
 ## 类
 
 ### `class InvTableModel`（继承 `QAbstractTableModel`）
 
 机库物品表格模型
 
-定义行：`22`
+定义行：`56`
 
 #### 方法
 
@@ -28,7 +70,7 @@ def __init__(self, items: list[dict])
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`27`
+定义行：`61`
 ##### `rowCount`
 
 ```python
@@ -39,7 +81,7 @@ def rowCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`35`
+定义行：`69`
 ##### `columnCount`
 
 ```python
@@ -50,7 +92,7 @@ def columnCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`38`
+定义行：`72`
 ##### `data`
 
 ```python
@@ -61,7 +103,7 @@ def data(self, index, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`41`
+定义行：`75`
 ##### `headerData`
 
 ```python
@@ -72,7 +114,7 @@ def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`86`
+定义行：`129`
 ##### `item_at`
 
 ```python
@@ -83,7 +125,7 @@ def item_at(self, row: int) -> dict | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`91`
+定义行：`134`
 ##### `sort`
 
 ```python
@@ -94,7 +136,7 @@ def sort(self, column: int, order=Qt.SortOrder.AscendingOrder)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`94`
+定义行：`137`
 ##### `_sort_key`
 
 ```python
@@ -103,7 +145,7 @@ def _sort_key(self, column: int) -> Callable[[dict], Any] | None
 
 列的排序键（纯函数、不碰状态）。`None` = 该列不可排。
 
-定义行：`104`
+定义行：`147`
 ##### `reapply_sort`
 
 ```python
@@ -112,13 +154,13 @@ def reapply_sort(self) -> None
 
 按**当前**排序设置重排 `self._items`。
 
-定义行：`116`
+定义行：`160`
 
 ### `class BlueprintTableModel`（继承 `QAbstractTableModel`）
 
 蓝图表格模型
 
-定义行：`140`
+定义行：`184`
 
 #### 方法
 
@@ -132,7 +174,7 @@ def __init__(self, rows: list[dict])
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`157`
+定义行：`203`
 ##### `rowCount`
 
 ```python
@@ -143,7 +185,7 @@ def rowCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`164`
+定义行：`210`
 ##### `columnCount`
 
 ```python
@@ -154,7 +196,7 @@ def columnCount(self, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`167`
+定义行：`213`
 ##### `data`
 
 ```python
@@ -165,7 +207,7 @@ def data(self, index, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`170`
+定义行：`216`
 ##### `headerData`
 
 ```python
@@ -176,7 +218,7 @@ def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`244`
+定义行：`300`
 ##### `row_at`
 
 ```python
@@ -187,7 +229,7 @@ def row_at(self, row: int) -> dict | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`249`
+定义行：`305`
 ##### `sort`
 
 ```python
@@ -198,7 +240,7 @@ def sort(self, column: int, order=Qt.SortOrder.AscendingOrder)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`252`
+定义行：`308`
 ##### `_sort_key`
 
 ```python
@@ -207,7 +249,7 @@ def _sort_key(self, column: int) -> Callable[[dict], Any] | None
 
 列的排序键（纯函数、不碰状态）。`None` = 该列不可排。
 
-定义行：`262`
+定义行：`318`
 ##### `reapply_sort`
 
 ```python
@@ -216,4 +258,4 @@ def reapply_sort(self) -> None
 
 按**当前**排序设置重排 `self._rows`。
 
-定义行：`279`
+定义行：`337`

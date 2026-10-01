@@ -18,15 +18,25 @@
 
 ## 函数
 
+### `axis_start_ms`
+
+```python
+def axis_start_ms(now: datetime | None=None) -> float
+```
+
+横轴起点的绝对时刻（UTC 毫秒）—— QML 靠它把「第 n 天」换算成日期。
+
+定义行：`29`
+
 ### `build_rows`
 
 ```python
-def build_rows(plans: list[dict]) -> list[dict]
+def build_rows(plans: list[dict], *, now: datetime | None=None) -> list[dict]
 ```
 
 把计划列表排成「按 BOM 依赖串行」的甘特条。
 
-定义行：`28`
+定义行：`37`
 
 ### `max_hours`
 
@@ -36,7 +46,7 @@ def max_hours(rows: list[dict]) -> int
 
 时间轴上限：覆盖最右侧柱形条，向上取整到 `AXIS_GRANULARITY` 的倍数。
 
-定义行：`64`
+定义行：`89`
 
 ### `_apply_dependencies`
 
@@ -46,7 +56,7 @@ def _apply_dependencies(rows: list[dict]) -> None
 
 同组内按 `component_parent_type_id` 建依赖边：父项 start = max(子项 end)。
 
-定义行：`71`
+定义行：`96`
 
 ### `_parent_row`
 
@@ -56,7 +66,7 @@ def _parent_row(row: dict, by_tid: dict, mother: dict | None) -> dict | None
 
 行在时间上的前驱：同组内 `component_parent_type_id` 指向的那一行。
 
-定义行：`104`
+定义行：`129`
 
 ### `_level`
 
@@ -68,7 +78,7 @@ def _level(plan: dict) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`116`
+定义行：`141`
 
 ### `end_time_text`
 
@@ -78,4 +88,4 @@ def end_time_text(plan: dict, end_hours: float, now: datetime | None=None) -> st
 
 柱形条末端的预计完成时刻（**本地时区** MM-DD HH:MM）。
 
-定义行：`120`
+定义行：`145`

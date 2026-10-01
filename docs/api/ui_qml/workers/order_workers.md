@@ -17,7 +17,7 @@
 
 后台获取 ESI 订单数据
 
-定义行：`25`
+定义行：`30`
 
 #### 方法
 
@@ -31,7 +31,7 @@ def __init__(self, type_id: int, region_id: int=10000002, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`31`
+定义行：`36`
 ##### `run`
 
 ```python
@@ -42,7 +42,7 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`36`
+定义行：`41`
 ##### `_fetch`
 
 ```python
@@ -53,7 +53,7 @@ async def _fetch(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`55`
+定义行：`60`
 ##### `_resolve_names`
 
 ```python
@@ -62,7 +62,7 @@ async def _resolve_names(self, location_ids: list[int]) -> None
 
 location_id → 站名：**先查本地 SDE，只有本地没有的才打 ESI**。
 
-定义行：`85`
+定义行：`96`
 ##### `_resolve_names_remote`
 
 ```python
@@ -71,7 +71,7 @@ async def _resolve_names_remote(self, ids: list[int]) -> None
 
 ESI `/universe/names/` 兜底（实际只会走到玩家建筑）。
 
-定义行：`112`
+定义行：`123`
 ##### `_resolve_names_one_by_one`
 
 ```python
@@ -82,7 +82,7 @@ async def _resolve_names_one_by_one(self, client, ids: list[int], url: str) -> N
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`143`
+定义行：`154`
 ##### `_absorb`
 
 ```python
@@ -93,4 +93,4 @@ def _absorb(payload: list) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`160`
+定义行：`171`

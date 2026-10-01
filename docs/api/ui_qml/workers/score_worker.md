@@ -16,7 +16,7 @@ QML 侧（全物品页 / 可制造页）与 Widgets 对话框共用这一份。
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`19`
+定义行：`20`
 
 #### 方法
 
@@ -30,7 +30,7 @@ def __init__(self, items, is_mfg, cfg, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`23`
+定义行：`24`
 ##### `run`
 
 ```python
@@ -39,7 +39,7 @@ def run(self)
 
 ScoreW 自定义 run：预加载市场数据，迭代 _calc_item 并 emit done(list)
 
-定义行：`30`
+定义行：`31`
 ##### `_calc_item`
 
 ```python
@@ -50,4 +50,4 @@ def _calc_item(self, row) -> dict
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`60`
+定义行：`81`

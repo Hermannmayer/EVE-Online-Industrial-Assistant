@@ -21,7 +21,7 @@
 ##### `__init__`
 
 ```python
-def __init__(self, group_items: list[list[dict]], product_name: str, char_name: str, parent=None)
+def __init__(self, group_items: list[list[dict]], char_name: str, parent=None)
 ```
 
 ::: warning ⚠️ 待补 docstring
@@ -39,4 +39,4 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`20`
+定义行：`19`

@@ -112,7 +112,7 @@ def _format_overflow(details: list[dict]) -> str
 
 格式化溢出信息为短文本
 
-定义行：`379`
+定义行：`390`
 
 ### `_pick_price`
 
@@ -122,7 +122,7 @@ def _pick_price(price_map: dict[str, float], price_type: str) -> float
 
 按价格类型取价；缺省回退另一个来源，均无数据返回 0.0
 
-定义行：`396`
+定义行：`407`
 
 ### `_spread`
 
@@ -132,7 +132,7 @@ def _spread(price_map: dict[str, float], qty: float) -> float | None
 
 (卖价 − 买价) × 数量 —— 同一 hub 的挂单价差，按采购量换算成金额。任一侧没有挂单 → `None`。
 
-定义行：`405`
+定义行：`416`
 
 ### `self_made_type_ids`
 
@@ -142,7 +142,7 @@ def self_made_type_ids(plans: list[dict]) -> set[int]
 
 会被「自制」覆盖的产物 id：**未完工的子项产线**的产物。
 
-定义行：`425`
+定义行：`436`
 
 ### `aggregate_procurement`
 
@@ -152,7 +152,7 @@ def aggregate_procurement(conn, plans: list[dict], *, hangar_id: int | None=None
 
 聚合「备料中」计划的待采购材料并扣库存 → (rows, total_cost, total_volume)。
 
-定义行：`448`
+定义行：`459`
 
 ### `collect_direct_materials`
 
@@ -162,4 +162,4 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]
 
 聚合各计划的直接材料（recipe 一层，非递归），排除由子项产线自制的组件。
 
-定义行：`606`
+定义行：`617`

@@ -32,7 +32,7 @@ def get_blueprint_requirements(db) -> dict[str, Any]
 
 查询活跃计划、展开蓝图需求并对比库存。
 
-定义行：`71`
+定义行：`73`
 
 ### `get_blueprint_picker_data`
 
@@ -42,7 +42,7 @@ def get_blueprint_picker_data(db, product_type_id: int) -> tuple[int | None, lis
 
 查询产品对应的制造蓝图类型及其可用库存蓝图。
 
-定义行：`105`
+定义行：`107`
 
 ### `get_child_parallel_data`
 
@@ -52,7 +52,7 @@ def get_child_parallel_data(db, plans: list[dict], sub_plans: list[dict]) -> tup
 
 子项并行弹窗初始化数据：母项需求 / 单轮产出 / 格式化时长。
 
-定义行：`119`
+定义行：`121`
 
 ### `get_mass_parallel_data`
 
@@ -62,7 +62,7 @@ def get_mass_parallel_data(db, plans: list[dict], sub_plans: list[dict]) -> tupl
 
 大规模并行弹窗初始化数据：母项需求 / 单轮产出 / 单线总时长秒。
 
-定义行：`140`
+定义行：`142`
 
 ### `_child_demand_from_rows`
 
@@ -72,7 +72,7 @@ def _child_demand_from_rows(sub_plans: list[dict], conn, plans: list[dict]) -> d
 
 共享子项需求：优先读 v12 引用式 demand 列；老库按母项 parent_needs 推导。
 
-定义行：`158`
+定义行：`160`
 
 ### `get_materials_summary`
 
@@ -82,7 +82,7 @@ def get_materials_summary(db) -> dict[str, Any] | None
 
 查询活跃计划 BOM、库存与市场价；无活跃计划时返回 None。
 
-定义行：`165`
+定义行：`167`
 
 ### `get_max_group_number`
 
@@ -92,7 +92,7 @@ def get_max_group_number(db) -> int
 
 返回 production_plans 当前最大 group_number，无记录为 0。
 
-定义行：`194`
+定义行：`196`
 
 ### `get_subitem_plans`
 
@@ -102,7 +102,7 @@ def get_subitem_plans(db, group_number: int, deeper_than: int) -> list[dict[str,
 
 查询同组更深子项产线，按 sub_level DESC, id DESC。
 
-定义行：`201`
+定义行：`203`
 
 ### `get_item_name`
 
@@ -112,7 +112,7 @@ def get_item_name(db, type_id: int) -> str
 
 按旧 UI 语义查询 item 表名称：zh_name → en_name → str(type_id)。
 
-定义行：`211`
+定义行：`213`
 
 ### `get_system_name`
 
@@ -122,7 +122,7 @@ def get_system_name(db, solar_system_id: int) -> str
 
 查询星系显示名（中文 (英文)）。
 
-定义行：`218`
+定义行：`220`
 
 ### `set_plan_deposit_hangar`
 
@@ -132,7 +132,7 @@ def set_plan_deposit_hangar(db, plan_id: int, hangar_id: int | None) -> None
 
 更新计划的下线产出机库。
 
-定义行：`226`
+定义行：`228`
 
 ### `_query_blueprint_output`
 
@@ -144,7 +144,7 @@ def _query_blueprint_output(conn, product_type_id: int) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`240`
+定义行：`242`
 
 ### `_query_blueprint_duration_sec`
 
@@ -156,7 +156,7 @@ def _query_blueprint_duration_sec(conn, blueprint_type_id) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`248`
+定义行：`250`
 
 ### `_format_blueprint_duration`
 
@@ -168,4 +168,4 @@ def _format_blueprint_duration(conn, blueprint_type_id) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`256`
+定义行：`258`

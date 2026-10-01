@@ -6,10 +6,11 @@
 
 仓库页两张表的 QML 适配。
 
-- `InvQmlModel`：机库物品（8 列）。数量类列右对齐、图标列取物品 PNG、
-  「规划占用」带 tooltip。展示规则照搬 `InvTableModel.data()`。
-- `BlueprintQmlModel`：蓝图（11 列）。「类型」列在被活跃计划占用时标橙、
-  「利润率」列按正负染绿红。展示规则照搬 `BlueprintTableModel.data()`。
+- `InvQmlModel`：机库物品（9 列）。数量/金额类列右对齐、图标列取物品 PNG、
+  「规划占用」带 tooltip、「缺口」为红色 token。展示规则照搬 `InvTableModel.data()`。
+- `BlueprintQmlModel`：蓝图（13 列，「状态」列由 `services.inventory_manager` 批量查出、
+  多状态以 ` · ` 并列）。「类型」列在被活跃计划占用时标橙、
+  「每流程利润」与「利润率」列按正负染绿红。展示规则照搬 `BlueprintTableModel.data()`。
 
 两个模型都补了 `set_rows`：原版每次刷新都**新建**模型实例
 （`self._model = InvTableModel(items)`），QML 侧需要一个稳定实例 + 整体换数据。
@@ -22,7 +23,7 @@
 
 机库物品表：命名角色 + 可整体换行。
 
-定义行：`65`
+定义行：`74`
 
 #### 方法
 
@@ -36,7 +37,7 @@ def __init__(self, items: list[dict] | None=None) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`72`
+定义行：`81`
 ##### `set_rows`
 
 ```python
@@ -47,7 +48,7 @@ def set_rows(self, items: list[dict]) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`76`
+定义行：`85`
 ##### `rows`
 
 ```python
@@ -56,7 +57,7 @@ def rows(self) -> list[dict]
 
 底层行数据（只读用途：桥排序后要按 id 找回选中行）。
 
-定义行：`87`
+定义行：`96`
 ##### `set_selection`
 
 ```python
@@ -65,7 +66,7 @@ def set_selection(self, rows: set[int]) -> None
 
 把选中行灌进模型，只通知受影响的那段行。
 
-定义行：`91`
+定义行：`100`
 ##### `roleNames`
 
 ```python
@@ -76,7 +77,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`105`
+定义行：`114`
 ##### `data`
 
 ```python
@@ -87,7 +88,7 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole) -> Any
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`108`
+定义行：`117`
 ##### `_display`
 
 ```python
@@ -98,13 +99,13 @@ def _display(row: dict, col: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`131`
+定义行：`145`
 
 ### `class BlueprintQmlModel`（继承 `BlueprintTableModel`）
 
 蓝图表：命名角色 + 可整体换行。
 
-定义行：`152`
+定义行：`169`
 
 #### 方法
 
@@ -118,7 +119,7 @@ def __init__(self, rows: list[dict] | None=None) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`158`
+定义行：`175`
 ##### `set_rows`
 
 ```python
@@ -129,7 +130,7 @@ def set_rows(self, rows: list[dict]) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`162`
+定义行：`179`
 ##### `rows`
 
 ```python
@@ -138,7 +139,7 @@ def rows(self) -> list[dict]
 
 底层行数据（只读用途：桥排序后要按 id 找回选中行）。
 
-定义行：`173`
+定义行：`190`
 ##### `set_selection`
 
 ```python
@@ -147,7 +148,7 @@ def set_selection(self, rows: set[int]) -> None
 
 把选中行灌进模型，只通知受影响的那段行。
 
-定义行：`177`
+定义行：`194`
 ##### `roleNames`
 
 ```python
@@ -158,7 +159,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`191`
+定义行：`208`
 ##### `data`
 
 ```python
@@ -169,7 +170,7 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole) -> Any
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`194`
+定义行：`211`
 ##### `_display`
 
 ```python
@@ -180,7 +181,7 @@ def _display(self, row: dict, col: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`224`
+定义行：`246`
 ##### `_name`
 
 ```python
@@ -189,7 +190,7 @@ def _name(row: dict) -> str
 
 与父类同一套取名口径（terminology 覆盖优先）。
 
-定义行：`259`
+定义行：`286`
 ##### `refresh_colors`
 
 ```python
@@ -200,4 +201,4 @@ def refresh_colors(self) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`270`
+定义行：`297`
