@@ -82,13 +82,14 @@ Item {
 
             FButton {
                 objectName: "mfgScoreButton"
+                visible: !page.embedded
                 text: qsTr("制造评分")
                 onClicked: if (page.ai)
                     page.ai.showMfgMode()
             }
 
-            /* 内嵌态去掉这四个按钮（用户要求：首页那个全物品查询不要「制造评分设置 /
-             * 贸易评分设置 / 批量对比 / 导出」）。独立窗态照旧显示 —— 那里是改评分参数
+            /* 内嵌态（首页那个全物品查询）去掉**制造评分 / 贸易评分**以及它们的「设置」、
+             * 独立窗（从别处打开的那个）仍然全都要 —— 那里的入口不能少。
              * 的入口之一，不能一并砍掉。 */
             FButton {
                 objectName: "mfgSettingsButton"
@@ -100,6 +101,7 @@ Item {
 
             FButton {
                 objectName: "tradeScoreButton"
+                visible: !page.embedded
                 text: qsTr("贸易评分")
                 onClicked: if (page.ai)
                     page.ai.showTradeMode()
