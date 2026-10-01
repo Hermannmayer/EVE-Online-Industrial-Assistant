@@ -72,6 +72,10 @@ _AUTH_TIMEOUT_S = 600
 #: 单请求超时
 _TIMEOUT = aiohttp.ClientTimeout(total=30)
 
+#: token 端点的重试次数与退避基数（秒）。**只对 5xx 生效** —— 见 `_post_token`。
+_TOKEN_RETRIES = 3
+_TOKEN_RETRY_BASE_S = 1.0
+
 
 class _Interrupted(Exception):
     """用户关掉了对话框 —— 不是错误，不要发信号。"""
@@ -83,6 +87,9 @@ class _TokenError(RuntimeError):
     def __init__(self, code: str, desc: str, status: int) -> None:
         super().__init__(desc or code or f"token 端点返回 {status}")
         self.code = code
+        #: HTTP 状态码。调用方靠它区分「授权坏了（4xx invalid_grant）」与
+        #: 「CCP 服务端故障（5xx）」—— 两者对用户的含义完全相反。
+        self.status = status
 
 
 class EsiAuthRevoked(RuntimeError):
@@ -297,17 +304,32 @@ async def _post_token(client, data: dict) -> dict:
 
     注意：OAuth 的 token 端点要 **form 编码**，`APIClient.post` 发的是 JSON 体，
     所以这里直接用 session 发，只用它的共享限流器。
+
+    **5xx 会退避重试**（`_TOKEN_RETRY_BASE_S` × 轮次，最多 `_TOKEN_RETRIES` 次）。
+    原因（用户实测）：CCP 的 token 端点偶尔整段返回 500，三个角色一起失败，而调用方
+    把任何非 `invalid_grant` 都当「刷新授权失败」上报 —— 用户读到的是「我的授权坏了」，
+    会去删令牌/重新授权，白折腾。**授权没坏，是服务端瞬时故障**，重试一次多半就过。
+    4xx 不重试：那是请求/授权本身的问题，重试没有意义。
     """
-    await client.limiter.acquire()
-    async with client.session.post(TOKEN_URL, data=data, timeout=_TIMEOUT) as resp:
-        text = await resp.text()
-        try:
-            payload = json.loads(text) if text.strip() else {}
-        except json.JSONDecodeError:
-            payload = {}
-        if resp.status != 200:
-            raise _TokenError(str(payload.get("error") or ""), str(payload.get("error_description") or ""), resp.status)
-        return payload if isinstance(payload, dict) else {}
+    last_status = 0
+    for attempt in range(_TOKEN_RETRIES):
+        await client.limiter.acquire()
+        async with client.session.post(TOKEN_URL, data=data, timeout=_TIMEOUT) as resp:
+            text = await resp.text()
+            try:
+                payload = json.loads(text) if text.strip() else {}
+            except json.JSONDecodeError:
+                payload = {}
+            if resp.status == 200:
+                return payload if isinstance(payload, dict) else {}
+            last_status = resp.status
+            if resp.status < 500 or attempt + 1 >= _TOKEN_RETRIES:
+                raise _TokenError(
+                    str(payload.get("error") or ""), str(payload.get("error_description") or ""), resp.status
+                )
+        # 退避要放在 `async with` **之外**：连接已经关掉，别把等待算进请求时间
+        await asyncio.sleep(_TOKEN_RETRY_BASE_S * (attempt + 1))
+    raise _TokenError("", "", last_status)  # pragma: no cover - 上面的循环必然 return 或 raise
 
 
 async def _get_json(client, url: str, token: str, *, scope_hint: str = "技能/增效体"):
@@ -446,6 +468,13 @@ class EsiSkillImportWorker(QThread):
                 try:
                     return await self._refresh(client, row)
                 except _TokenError as e:
+                    if e.status >= 500:
+                        # 5xx：CCP 的登录服务故障（`_post_token` 已退避重试过）。
+                        # **授权本身没坏** —— 文案必须说清楚，否则用户会去删令牌、重新
+                        # 授权，白折腾一圈还是不通（用户截图里的三个角色一起 500 就是这个）。
+                        raise RuntimeError(
+                            f"ESI 登录服务暂时不可用（HTTP {e.status}），你的授权没有失效，请稍后重试"
+                        ) from e
                     if e.code != "invalid_grant":
                         raise RuntimeError(f"刷新授权失败：{e}") from e
                     # invalid_grant = 用户在 support 站点撤销了（或令牌已作废）。

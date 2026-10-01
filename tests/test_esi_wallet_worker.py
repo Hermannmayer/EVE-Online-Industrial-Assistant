@@ -20,6 +20,7 @@ import asyncio
 
 import pytest
 
+from ui_qml.workers import esi_skill_worker as esw
 from ui_qml.workers import esi_wallet_worker as eww
 from ui_qml.workers.esi_skill_worker import EsiAuthRevoked, EsiScopeMissing
 
@@ -167,3 +168,78 @@ def test_corp_wallet_failure_keeps_orders_but_skips_wallet(qapp, monkeypatch):
     assert payload["corp_total"] is None
     assert [o["order_id"] for o in payload["orders"]] == [1], "挂单不该因为读不到钱而丢失"
     assert any("军团钱包" in e for e in payload["errors"])
+
+
+# ════════════════════════════════════════════════════════════════
+#  token 端点的重试策略（纯 async、不需要 Qt —— 放这里只因为本文件已经在测
+#  `esi_skill_worker` 的授权异常；上面那批 worker 用例才是 `ui` 标记的来源）
+# ════════════════════════════════════════════════════════════════
+
+
+class _FakeResp:
+    def __init__(self, status: int, body: str = "") -> None:
+        self.status = status
+        self._body = body
+
+    async def text(self) -> str:
+        return self._body
+
+
+class _FakePost:
+    def __init__(self, resp: _FakeResp) -> None:
+        self._resp = resp
+
+    async def __aenter__(self) -> _FakeResp:
+        return self._resp
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False
+
+
+class _FakeSession:
+    """按脚本逐个回状态码；脚本用完后**重复最后一个**（模拟「一直 500」）。"""
+
+    def __init__(self, statuses: list[int]) -> None:
+        self.statuses = list(statuses)
+        self.calls = 0
+
+    def post(self, *_args: object, **_kwargs: object) -> _FakePost:
+        status = self.statuses[min(self.calls, len(self.statuses) - 1)]
+        self.calls += 1
+        return _FakePost(_FakeResp(status, '{"access_token": "a"}' if status == 200 else ""))
+
+
+class _FakeLimiter:
+    async def acquire(self) -> None:
+        return None
+
+
+class _FakeClient:
+    def __init__(self, statuses: list[int]) -> None:
+        self.session = _FakeSession(statuses)
+        self.limiter = _FakeLimiter()
+
+
+@pytest.mark.parametrize(
+    ("statuses", "expect_calls", "expect_ok"),
+    [([500, 200], 2, True), ([500], esw._TOKEN_RETRIES, False), ([400], 1, False)],
+    ids=["5xx 后成功", "一直 5xx", "4xx 不重试"],
+)
+def test_post_token_retry_policy(monkeypatch, statuses, expect_calls, expect_ok):
+    """token 端点的重试策略。
+
+    缺陷背景（用户实测截图）：CCP 的 token 端点偶发**整段 500**，三个角色一起失败，
+    而当时 `_post_token` **一次都不重试**，调用方又把任何非 `invalid_grant` 都叫
+    「刷新授权失败」—— 用户读到的是「我的授权坏了」，会去删令牌、重新授权，白折腾。
+    所以钉三条：5xx 退避重试、4xx 不重试、`_TokenError.status` 带上真实状态码
+    （调用方靠它把「服务端故障」与「授权失效」分成相反的文案）。
+    """
+    monkeypatch.setattr(esw, "_TOKEN_RETRY_BASE_S", 0.0)  # 测试里不退避
+    client = _FakeClient(statuses)
+    if expect_ok:
+        assert asyncio.run(esw._post_token(client, {"grant_type": "refresh_token"})) == {"access_token": "a"}
+    else:
+        with pytest.raises(esw._TokenError) as err:
+            asyncio.run(esw._post_token(client, {"grant_type": "refresh_token"}))
+        assert err.value.status == statuses[-1]
+    assert client.session.calls == expect_calls
