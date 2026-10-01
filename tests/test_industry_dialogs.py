@@ -369,6 +369,91 @@ class TestParentDecomposeDialogMulti:
         bridge2.removeRows([0, 0, 0])
         assert bridge2.statusText == f"已移除 {n_rows} 个组件（本轮不内造，改外购）"
 
+    def test_removed_child_only_touches_this_dialogs_mother(self, db_manager, monkeypatch, qapp):
+        """P0 回归：预览里移除子项，只许作用于本次对话框那条母项，别的组一行都不许动。
+
+        用户报障（2026-09-28）：「对未开始的产线进行对母项进行递归拆解，并在弹出的窗口中
+        移除不需要新建的子项，会导致所有生产计划，不管是否在运行，都自动拆解母项。」
+
+        `accept()` 里两条路径都是**全库**的，这才是「所有生产计划」的来源：
+
+        - `rebuild_children(create=True, prune=True)` 是全库重放 —— DB 里任何
+          `group_number>0` 的 level-0 行都被当母项重新拆解，缺失的子项行被补建，
+          于是本次对话框没碰过的组（含在产）也被「自动拆解」；
+        - `_remove_planning_discarded()` 只拿到一组 `type_id`，`collect_removed_child_ids`
+          按 `product_type_id` 全库命中：别的组引用的同一组件行（引用式合并后就是同一行）
+          一并被删 —— 在产母项需要的子项产线凭空消失。
+
+        构造：A = 本次要拆的未开始母项 2001（拆出 1001 与 35）；B = 与 A 无关的在产组
+        （母项 2010 在产，引用 1001（与 A 共享同一行）与 1010（该行用户已删、改外购））。
+        """
+        _build_dbs(db_manager)
+        _patch(db_manager, monkeypatch)
+        with db_manager.connect("bp") as conn:
+            # A 的母项 2001 拆出两条子项：1001（bp3002 已有）+ 35（补 bp3003）
+            conn.execute("INSERT INTO blueprint_products VALUES (3003,'manufacturing',35,1)")
+            conn.execute("INSERT INTO blueprint_materials VALUES (3003,'manufacturing',34,1)")
+            conn.execute("INSERT INTO blueprint_activities VALUES (3003,'manufacturing',600)")
+            # B 组：母项 2010 吃 1001×3（与 A 共享）与 1010×2；1010 由 bp3011 产
+            conn.execute("INSERT INTO blueprint_products VALUES (3010,'manufacturing',2010,1)")
+            conn.execute("INSERT INTO blueprint_materials VALUES (3010,'manufacturing',1001,3)")
+            conn.execute("INSERT INTO blueprint_materials VALUES (3010,'manufacturing',1010,2)")
+            conn.execute("INSERT INTO blueprint_activities VALUES (3010,'manufacturing',3600)")
+            conn.execute("INSERT INTO blueprint_products VALUES (3011,'manufacturing',1010,1)")
+            conn.execute("INSERT INTO blueprint_materials VALUES (3011,'manufacturing',34,1)")
+            conn.execute("INSERT INTO blueprint_activities VALUES (3011,'manufacturing',600)")
+        with db_manager.connect("user") as conn:
+            # A：未开始的母项（还没拆过，group_number=0）
+            conn.execute(
+                "INSERT INTO production_plans (id, product_type_id, product_name, runs, parallels, status, "
+                "group_number, sub_level, mat_hangar_id) VALUES (1, 2001, '渡鸦级', 2, 1, 'pending', 0, 0, 1)"
+            )
+            # B：无关的在产组。1001 行在库里（引用式合并后与 A 共用一行）；
+            #    1010 行用户已删（改外购）—— 修复后不许被对话框补建回来。
+            conn.execute(
+                "INSERT INTO production_plans (id, product_type_id, product_name, runs, parallels, status, "
+                "group_number, sub_level, mat_hangar_id, source_mother_ids, component_parent_type_id, demand) "
+                "VALUES (10, 2010, '别的母项', 1, 1, 'in_progress', 9, 0, 1, '', NULL, 0)"
+            )
+            conn.execute(
+                "INSERT INTO production_plans (id, product_type_id, product_name, runs, parallels, status, "
+                "group_number, sub_level, mat_hangar_id, source_mother_ids, component_parent_type_id, demand) "
+                "VALUES (11, 1001, '碳纤维', 3, 1, 'pending', 9, 1, 1, '10', 2010, 3)"
+            )
+
+        bridge = ParentDecomposeBridge([_mother(1)])
+        # A 的预览里移除 1001 那行（用户判为「不需要新建」）
+        idx = next(i for i, (_a, _l, line) in enumerate(bridge._refs) if int(line["product_type_id"]) == 1001)
+        bridge.removeRow(idx)
+        bridge.accept()
+
+        with db_manager.connect("user") as conn:
+            rows = {
+                int(r["id"]): dict(r)
+                for r in conn.execute(
+                    "SELECT id, product_type_id, group_number, sub_level, status, source_mother_ids, runs "
+                    "FROM production_plans"
+                ).fetchall()
+            }
+        # 1）B 组不许被「自动拆解」：1010 那一行是用户特意删掉改外购的，不许补建
+        assert [r for r in rows.values() if int(r["product_type_id"]) == 1010] == []
+        # 2）B 在产母项还引用的 1001 行不许被删、状态不许变
+        assert 11 in rows, "别的组引用的子项行被删了"
+        assert rows[11]["status"] == "pending"
+        assert "10" in str(rows[11]["source_mother_ids"]).split(",")
+        # 3）B 的母项行不许被动
+        assert (
+            rows[10]["status"],
+            int(rows[10]["group_number"]),
+            int(rows[10]["sub_level"]),
+        ) == ("in_progress", 9, 0)
+        # 4）A 自己保留的组件仍要正常拆出来（别把功能一起修坏）
+        assert [
+            r
+            for r in rows.values()
+            if int(r["product_type_id"]) == 35 and "1" in str(r["source_mother_ids"]).split(",")
+        ]
+
 
 # ════════════════════════════════════════════════════════════════
 #  mass_parallel / ChildParallel — 并行（原 test_industry_parallel.py）

@@ -55,6 +55,20 @@ def _parse_sources(row: dict) -> set[int]:
     return {int(x) for x in raw.split(",") if x.strip().isdigit()}
 
 
+def _in_scope(sources: set[int], group_number: int, scope: set[int] | None, scope_groups: set[int]) -> bool:
+    """这一行是否落在本次写入作用域内（`rebuild_children(mother_ids=...)`）。
+
+    scope=None → 全库重放，全部在域内（旧行为）。行有来源记录时看**母项引用**交集；
+    没有来源记录的老行按组号兜底 —— 与 `plan_execution.remove_completed_children`
+    判「无归属」的口径一致（来源不明的行不跨组误伤）。
+    """
+    if scope is None:
+        return True
+    if sources:
+        return bool(sources & scope)
+    return group_number in scope_groups
+
+
 def _collect_mothers(all_rows: list[dict]) -> list[dict]:
     """识别母项：sub_level=0 且（旧式 group>0 或被子项 source 引用/自身带 source 的拆解母项）。"""
     referenced: set[int] = set()
@@ -213,19 +227,26 @@ def compute_child_forest(
     return nodes
 
 
-def rebuild_children(*, create: bool = False, prune: bool = False) -> dict:
+def rebuild_children(*, create: bool = False, prune: bool = False, mother_ids: set[int] | None = None) -> dict:
     """按母项当前需求同步子项（增量，默认不创建/不删除——避免误删子项被自动加回）。
 
     create: True 时按需生成缺失的子项产线（右键「母项拆解」用；普通编辑联动不创建，
            以免用户手动删掉的子产线被自动重建）。
     prune:  True 时删除需求归零/不再被引用的旧子项（删母项收缩用；普通编辑联动不动手删，
             避免意外砍掉用户在用的子产线）。
+    mother_ids: 限定**写入**范围的母项 id（右键「母项拆解」那条对话框传它：只许动它选中
+           的母项）。传了以后只有**这些母项引用得到**的子项行会被创建/更新/清理，别的组
+           （含在产组）一行都不动 —— 这正是用户报的「拆解一条母项，全库计划都被自动拆解」。
+           需求传播仍按**全库**活跃母项算：共享件的 demand 必须是所有引用者之和，只按本组
+           算会把共享行算小、把别的组的产线需求削掉。默认 None = 全库重放（编辑联动 /
+           「重算子项」用）。
 
     返回 {"created": n, "updated": n, "deleted": n}。
     create/prune 均为 False 时仅更新已存在子项的现有需求（幂等）。
     """
     db = get_container().db
     repo = get_container().plan_repo
+    scope = {int(i) for i in mother_ids if i} if mother_ids is not None else None
     with db.connect("user") as conn:
         rows = [dict(r) for r in conn.execute("SELECT * FROM production_plans").fetchall()]
 
@@ -235,6 +256,9 @@ def rebuild_children(*, create: bool = False, prune: bool = False) -> dict:
     mothers = _collect_mothers(rows)
     active_mothers = [m for m in mothers if _is_active(m) and _mother_key(m)]
 
+    #: 作用域内母项的组号：老行（v12 之前）没有 `source_mother_ids`，按组号兜底判归属
+    scope_groups = {_group_of(m) for m in mothers if scope is not None and _mother_key(m) in scope}
+
     stocks: dict[int, dict[int, int]] = {}
     for m in active_mothers:
         hid = m.get("mat_hangar_id")
@@ -243,7 +267,7 @@ def rebuild_children(*, create: bool = False, prune: bool = False) -> dict:
 
     # 现有子项：按 product_type_id 归并（同名共享组件若有重复旧行只保留第一个，其余删除）
     children_by_tid: dict[int, dict] = {}
-    dup_rows: list[int] = []
+    dup_rows: list[dict] = []
     for r in rows:
         if _sub_level(r) <= 0:
             continue
@@ -262,7 +286,7 @@ def rebuild_children(*, create: bool = False, prune: bool = False) -> dict:
         # 库存**必然显示「材料不足」（用户报的「新子线把在跑的产线搞坏了」就是这个表象）。
         # 与 `plan_table._cascade_children`、`_remove_planning_discarded` 同一口径。
         if not _is_locked(drop) and (drop.get("status") or "").lower() not in _DONE_STATUSES:
-            dup_rows.append(int(drop["id"]))
+            dup_rows.append(drop)
 
     nodes: dict[int, dict] = {}
     if active_mothers:
@@ -285,6 +309,10 @@ def rebuild_children(*, create: bool = False, prune: bool = False) -> dict:
         if row is None:
             # 仅「拆解」模式创建缺失子项；普通编辑联动不创建（防已删子产线被自动加回）
             if not create:
+                continue
+            # 作用域外的母项（本次对话框没碰的组）不补建子项 —— 否则「拆解 A」会把
+            # 别组（含在产组）的产线一并拆出来，用户在表里看到的就是「全库都被拆解了」
+            if not _in_scope(node["sources"], gnum, scope, scope_groups):
                 continue
             new_pid = repo.insert_child_plan(
                 product_type_id=tid,
@@ -312,6 +340,9 @@ def rebuild_children(*, create: bool = False, prune: bool = False) -> dict:
 
         # 已存在：投产/生产中子项保护 runs（已投产产线不砍）；已完成行整行冻结（历史记录不改写）
         if (row.get("status") or "").lower() in _DONE_STATUSES:
+            continue
+        # 作用域外（别的母项引用、本次对话框没碰的组）已有行不重写
+        if not _in_scope(node["sources"], _group_of(row), scope, scope_groups):
             continue
         fields: dict = {
             "source_mother_ids": sources_str,
@@ -342,13 +373,18 @@ def rebuild_children(*, create: bool = False, prune: bool = False) -> dict:
         for tid, row in children_by_tid.items():
             if tid in nodes:
                 continue
+            # 作用域外的行不清理：本次对话框只收拾自己那条母项引用的子项
+            if not _in_scope(_parse_sources(row), _group_of(row), scope, scope_groups):
+                continue
             if _is_locked(row):
                 repo.update(int(row["id"]), source_mother_ids="", demand=0)
                 continue
             if (row.get("status") or "").lower() in _DONE_STATUSES:
                 continue
             to_delete.append(int(row["id"]))
-        to_delete.extend(dup_rows)
+        to_delete.extend(
+            int(r["id"]) for r in dup_rows if _in_scope(_parse_sources(r), _group_of(r), scope, scope_groups)
+        )
     deleted = len(to_delete)
     if to_delete:
         # 先释放子项蓝图绑定再删行：delete_many 不清理 plan_blueprint_bindings，

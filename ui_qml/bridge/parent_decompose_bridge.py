@@ -44,10 +44,6 @@ _TIP = (
 
 _EMPTY_HINT = "所选母项均无中间组件可拆解（直接材料均可外购）。"
 
-#: 在产的子项产线不删 —— 与 `plan_table._RUNNING_STATUSES` 同一口径。
-#: 两处必须一致，否则「删母项」保得住、「拆解预览移除组件」保不住（用户报的就是后者）。
-_RUNNING_STATUSES = ("in_progress", "running")
-
 
 def line_cells(group_number: int, line: dict, name: str, profit: float | None) -> list[dict]:
     """一条拆解预览行 → 单元格。纯函数，便于单测。
@@ -285,12 +281,16 @@ class ParentDecomposeBridge(DialogBridge):
 
         # 按全局引用式需求重放子项：共享组件跨母项合并为一行，需求=所有母项之和。
         # 拆解模式 create+prune：补建缺失子项、清理不再被引用的旧子项。
+        # ⚠️ **必须带 `mother_ids` 作用域**：不带就是全库重放 —— DB 里任何 `group_number>0`
+        # 的母项（含在产组、本次对话框没碰的组）都会被重新拆解一次，用户看到的就是
+        # 「所有生产计划都被自动拆解母项」。
         from services.plan_rebuild import rebuild_children
 
-        res = rebuild_children(create=True, prune=True)
+        mother_ids = {int(p["id"]) for p, _gnum, _lines in self._assignments if p.get("id")}
+        res = rebuild_children(create=True, prune=True, mother_ids=mother_ids)
 
         # 预览中移除的行 → 确认后按 组内血缘 删掉对应子项产线（本轮不内造，改外购）
-        removed = self._remove_planning_discarded(self._removed_types)
+        removed = self._remove_planning_discarded(self._removed_types, mother_ids=mother_ids)
         msg = f"已重算子项产线：新增 {res['created']}、更新 {res['updated']}、清理 {res['deleted']} 条"
         if removed:
             msg += f"，未建 {removed} 条"
@@ -299,17 +299,32 @@ class ParentDecomposeBridge(DialogBridge):
         FMessageDialog.information(self.host_widget(), "完成", msg)
         self.accepted.emit()
 
-    def _remove_planning_discarded(self, removed_types: set[int]) -> int:
+    def _remove_planning_discarded(self, removed_types: set[int], *, mother_ids: set[int]) -> int:
         """删除被用户在预览中移除的组件对应的子项产线（含同组子孙）。返回删除行数。
 
-        ⚠️ **在产（in_progress/running）的子项不删**，与 `plan_table._cascade_children`
-        和 `plan_rebuild._is_locked` 同一口径：已投产的产线保下来，比删掉让用户去游戏里
-        找强。
+        作用域**只限本次对话框的那条母项（那一组）**，三条硬约束：
 
-        回归背景（2026-09-28，用户报告「新加入的子线把原本在跑的产线搞坏了」）：原先这里
-        不看 `status`，把 `in_progress/running` 的子项与其它一律 `delete_many` —— 下一次
-        `rebuild_children(create=True)` 又按需求补建一条 `pending` 行，而那条新行对
-        **已经扣减过的库存**必然显示「材料不足」。用户看到的就是「在跑的产线突然缺料」。
+        1. 只删本次对话框母项引用的行（`source_mother_ids` 与作用域有交集；老行没有来源
+           记录时按本次分配的组号兜底）；
+        2. **别的活跃母项还引用着的共享行不删** —— 引用式合并下跨组共享件就是同一行，
+           删了就是让在产计划凭空缺件；
+        3. 只删 `pending` 行 —— 在产（in_progress/running）、待下线（ready）、已完成
+           （completed/done）的产线任何情况下都不许被动。
+
+        ⚠️ **回归背景（2026-09-28，用户报告 P0）**：「对未开始的母项做递归拆解，在弹窗里
+        移除不需要新建的子项 → 全库所有生产计划（含在产）都被自动拆解母项」。原先这里只拿到
+        一组 `type_id`，`collect_removed_child_ids` 按 `product_type_id` **全库**命中，于是把
+        别的组引用的同一组件行（引用式合并后本就是同一行）一起删了；同时 `accept()` 里那次
+        **全库** `rebuild_children(create=True, prune=True)` 又把别组缺失的子项行补建了回来。
+        两处现在都收敛到本次对话框的母项作用域。
+
+        （更早的 2026-09-28 回归：这里不看 `status`，把 `in_progress/running` 的子项与其它
+        一律 `delete_many` —— 下一次 `rebuild_children(create=True)` 又按需求补建一条
+        `pending` 行，而那条新行对**已经扣减过的库存**必然显示「材料不足」。）
+
+        ⚠️ **已知残留（不在本次修复范围）**：被移除的组件若同时被作用域外的活跃母项引用，
+        这一行会保留下来，但它的 `demand` 仍是全库之和（含本次母项那份）。「A 改外购、
+        B 继续自制」在同一行里表达不出来，属引用式合并的既有口径 —— 保数据优先。
         """
         removed_types = {t for t in removed_types if t}
         if not removed_types:
@@ -317,29 +332,60 @@ class ParentDecomposeBridge(DialogBridge):
         from core.logger import log
         from services import plan_execution
 
+        scope = {int(i) for i in mother_ids if i}
+        scope_groups = {int(gnum) for _plan, gnum, _lines in self._assignments}
         with get_container().db.connect("user") as conn:
             rows = [
                 dict(r)
                 for r in conn.execute(
-                    "SELECT id, product_type_id, group_number, sub_level, component_parent_type_id, status "
-                    "FROM production_plans WHERE sub_level > 0"
+                    "SELECT id, product_type_id, group_number, sub_level, component_parent_type_id, "
+                    "source_mother_ids, status FROM production_plans WHERE sub_level > 0"
                 ).fetchall()
             ]
+            # 全库活跃母项：判断「这一行还有没有别的（作用域外的）母项在引用」
+            active_mothers = {
+                int(r[0])
+                for r in conn.execute(
+                    "SELECT id FROM production_plans WHERE sub_level = 0 AND status NOT IN ('completed','done')"
+                ).fetchall()
+            }
+        outside_active = active_mothers - scope
+
         ids = collect_removed_child_ids(rows, removed_types)
-        running = {int(r["id"]) for r in rows if (r.get("status") or "").lower() in _RUNNING_STATUSES}
-        kept = ids & running
-        ids -= running
+        doomed: list[int] = []
+        kept = 0
+        for r in rows:
+            pid = int(r["id"])
+            if pid not in ids:
+                continue
+            # 3）只删没开工的行：在产 / 待下线 / 已完成的行一律保留
+            if (r.get("status") or "").lower() != "pending":
+                kept += 1
+                continue
+            sources = {int(x) for x in str(r.get("source_mother_ids") or "").split(",") if x.strip().isdigit()}
+            if sources:
+                # 2）别的活跃母项还在用这一行 → 保留
+                if sources & outside_active:
+                    kept += 1
+                    continue
+                # 1）不属于本次对话框那条母项 → 不是我们该动的
+                if not sources & scope:
+                    continue
+            elif int(r.get("group_number") or 0) not in scope_groups:
+                continue
+            doomed.append(pid)
+
         if kept:
-            log.info("母项拆解：%d 条在产子项保留未删（已投产的产线不动）", len(kept))
-        if not ids:
+            log.info("母项拆解：%d 条子项因在产或仍被其他活跃母项引用而保留未删", kept)
+        if not doomed:
             return 0
-        for pid in ids:
+        for pid in doomed:
             try:
                 plan_execution.release_blueprint(pid)
             except Exception:
                 log.warning("释放被删子项 %s 蓝图绑定失败", pid, exc_info=True)
-        get_container().plan_repo.delete_many(sorted(ids))
-        return len(ids)
+        get_container().plan_repo.delete_many(sorted(doomed))
+        return len(doomed)
 
 
 class ParentDecomposeQmlDialog(QmlDialog):
