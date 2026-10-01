@@ -133,7 +133,9 @@ _EMPTY_ASSET_TEXT = "还没有资产快照 —— 数据从首次记录开始按
 # ── 挂单 ────────────────────────────────────────────────────
 #: 两张表各自维护表头（**没有「方向」列** —— 表本身就是方向）
 #: 「角色」在末尾：ESI 汇总全部已绑定角色，不标归属就分不清挂单是谁的。
-_ORDER_HEADS_LIST: tuple[str, ...] = ("物品", "价格", "剩余/总量", "位置", "角色")
+#: 「位次」放在**物品之后**（不是末尾）：1024 窄窗口下右栏会被窗口右边裁掉，末尾那列
+#: （角色）整列都看不见 —— 而「不在首位」必须在窄窗口里也完整可见（用户要求）。
+_ORDER_HEADS_LIST: tuple[str, ...] = ("物品", "位次", "价格", "剩余/总量", "位置", "角色")
 _ORDER_DB_COLUMNS: tuple[str, ...] = (
     "order_id",
     "is_buy",
@@ -156,11 +158,13 @@ _TOKEN_PLAIN = "TEXT_PRIMARY"
 #: 与 `_TOKEN_PLAIN` 一样只存 **token 名**，hex 由 `cell()` 经
 #: `ui_qml.theme.registry` 解析（铁律：颜色不写死在业务代码里）。
 _TOKEN_NOT_FIRST = "ACCENT_RED"
-#: 不在首位时拼在**物品列**文本后面的后缀。为什么拼物品列（第一列）：价格列在
-#: 本面板只有约 51px（列宽比 1.3 / 总比 8.8），而价格串本身已经 10+ 字符长，
-#: 后缀一拼必然被 `elide` 切成「1,234…」；物品名短（矿物多为 3~5 字），
-#: 拼在第一列是唯一有机会整串看清的位置。红色本身才是主信号，文字是补充。
-_NOT_FIRST_SUFFIX = "（不在首位）"
+#: 「位次」列的两种文案。写在**独立的一列**而不是拼在物品名后面：物品列在窄窗口
+#: （1024×700）下可用宽约 70px，拼上「（不在首位）」（真字体 12px 实测 72px）必然被
+#: `elide` 吃掉 —— 实测物品列 / 价格列 / 剩余列都放不下它。
+#: 列宽**不按比例分**：`OpenOrdersPanel.qml` 的 `fitTexts` 让 `PanelTable` 按当前字号
+#: 量出「不在首位」的宽度（font_size=14 时约 68px），所以字号放大也不会被截。
+_FIRST_TEXT = "首位"
+_NOT_FIRST_TEXT = "不在首位"
 _EMPTY_BUY_TEXT = "暂无买单记录"
 _EMPTY_SELL_TEXT = "暂无卖单记录"
 #: 挂单导出目录**固定用游戏默认目录**（用户要求：不再提供自定义目录输入框）。
@@ -1628,9 +1632,9 @@ class QueryDashboardBridge(QObject):
 
         **排序与「不在首位」标记**（用户要求）：「首位」= 本表**最优价**那一行，所以
         这里按价格排：卖单升序（`reverse=False`）、买单降序（`reverse=True`）。
-        第 2 行起整行标红（`_TOKEN_NOT_FIRST`）并在物品列文本后拼 `_NOT_FIRST_SUFFIX`；
-        0/1 行时天然没有「第二位」，不标。`sorted` 是稳定的，同价行保持 SQL 的
-        `order_id DESC` 相对顺序。
+        第 2 行起整行标红（`_TOKEN_NOT_FIRST`），「位次」列写 `_NOT_FIRST_TEXT`，
+        首位那行写 `_FIRST_TEXT`（不标红）；0 行时没有这一列的内容。
+        `sorted` 是稳定的，同价行保持 SQL 的 `order_id DESC` 相对顺序。
         """
         rows: list[dict] = []
         for index, record in enumerate(sorted(records, key=lambda r: float(r["price"]), reverse=reverse)):
@@ -1640,14 +1644,13 @@ class QueryDashboardBridge(QObject):
             if not location:
                 location = f"#{int(record['location_id'])}" if record["location_id"] else "—"
             name = str(record["type_name"] or "") or (f"#{int(record['type_id'])}" if record["type_id"] else "—")
-            if not_first:
-                name = f"{name}{_NOT_FIRST_SUFFIX}"
             char_id = int(record.get("char_id") or 0)
             owner = ((char_names or {}).get(char_id) or f"#{char_id}") if char_id else "—"
             rows.append(
                 {
                     "cells": [
                         cell(name, token),
+                        cell(_NOT_FIRST_TEXT if not_first else _FIRST_TEXT, token),
                         cell(f"{float(record['price']):,.2f}", token),
                         cell(f"{int(record['volume_remain']):,}/{int(record['volume_total']):,}", token),
                         cell(location, token),

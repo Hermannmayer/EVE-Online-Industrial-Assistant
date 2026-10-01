@@ -1,16 +1,19 @@
-"""`ui_qml/workers/order_workers.py` 的站名解析口径测试。
+"""`ui_qml/workers/order_workers.py` 的站名解析口径 + 共享 session 编排测试。
 
-守的是**两条**曾经出过问题的规则（用户实测「空间站列全是数字」）：
+守的是**三条**曾经出过问题的规则：
 
 1. NPC 空间站走本地 SDE，不该白跑一趟 ESI；
 2. **解析失败绝不写缓存** —— 写进去等于把「没解析出来」记成解析结果，
-   而解析入口靠「缓存里有没有」判断要不要重试，于是该 location 会永久显示编号。
+   而解析入口靠「缓存里有没有」判断要不要重试，于是该 location 会永久显示编号；
+3. 连续两次取数**复用同一个 `ClientSession`** —— 每次新建就等于每次重付 TCP+TLS
+   （实测冷单 GET 中位 767.8ms，而稳态共享 session 只要 ~180ms）。
 """
 
 from __future__ import annotations
 
 import asyncio
 
+import aiohttp
 import pytest
 
 from ui_qml.workers import order_workers
@@ -43,7 +46,7 @@ def test_local_sde_hit_is_cached_without_touching_esi(qapp, monkeypatch):
     )
     called: list[list[int]] = []
 
-    async def _spy(self, ids):  # pragma: no cover - 不该被调到
+    async def _spy(self, client, ids):  # pragma: no cover - 不该被调到
         called.append(ids)
 
     monkeypatch.setattr(OrderFetchWorker, "_resolve_names_remote", _spy)
@@ -62,7 +65,7 @@ def test_failed_resolution_is_not_cached(qapp, monkeypatch):
     """
     monkeypatch.setattr("services.npc_seller.resolve_stations_by_ids", lambda ids: {})
 
-    async def _no_remote(self, ids):
+    async def _no_remote(self, client, ids):
         return None  # 模拟 ESI 没给出任何结果
 
     monkeypatch.setattr(OrderFetchWorker, "_resolve_names_remote", _no_remote)
@@ -101,7 +104,7 @@ def test_order_book_takes_ten_best_per_side(qapp, monkeypatch):
 
     monkeypatch.setattr("services.client.APIClient.fetch_raw", _fake_fetch_raw)
 
-    async def _no_remote(self, ids):  # pragma: no cover - 本地 SDE 能解析，不该走网络
+    async def _no_remote(self, client, ids):  # pragma: no cover - 本地 SDE 能解析，不该走网络
         return None
 
     monkeypatch.setattr(OrderFetchWorker, "_resolve_names_remote", _no_remote)
@@ -111,3 +114,45 @@ def test_order_book_takes_ten_best_per_side(qapp, monkeypatch):
     assert len(got_buy) == len(got_sell) == order_workers._ORDER_BOOK_ROWS == 10
     assert [o["order_id"] for o in got_buy] == list(range(15, 5, -1)), "买单：价格最高的 10 条、降序"
     assert [o["order_id"] for o in got_sell] == list(range(101, 111)), "卖单：价格最低的 10 条、升序"
+
+
+def test_two_fetches_reuse_one_session(qapp, monkeypatch):
+    """连续两次取数复用**同一个** `ClientSession` —— 跨线程异步编排的端到端。
+
+    为什么守这条：`OrderFetchWorker.run()` 现在把协程交给常驻循环里的共享 `APIClient`。
+    若每次取数都新建 session，TCP+TLS 就白付了（实测冷单 GET 中位 767.8ms；共享 session
+    稳态 228ms，见 `_shared_client`）。这里数 `aiohttp.ClientSession` 建了几次：
+    两次取数只能 1 次，且第二次用的仍是它。网络全部桩掉，不打 ESI。
+    """
+    sessions: list[object] = []
+    real_init = aiohttp.ClientSession.__init__
+
+    def _counting_init(self, *args: object, **kwargs: object) -> None:
+        sessions.append(self)
+        real_init(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(aiohttp.ClientSession, "__init__", _counting_init)
+
+    async def _fake_fetch_raw(self, url):  # 替身：签名随被测调用处
+        return [{"order_id": 1, "price": 1.0, "volume_remain": 1, "location_id": _NPC_STATION}]
+
+    monkeypatch.setattr("services.client.APIClient.fetch_raw", _fake_fetch_raw)
+    monkeypatch.setattr(order_workers, "_SHARED_CLIENT", None)
+
+    emitted: list[tuple[int, int, int]] = []
+    for _ in range(2):
+        worker = _worker()
+        # 直接调 run()（不 start()）：测的就是 run() 里「提交到常驻循环 + 等结果」那段
+        worker.finished_signal.connect(lambda tid, buy, sell: emitted.append((tid, len(buy), len(sell))))
+        worker.run()
+
+    try:
+        assert len(sessions) == 1, f"两次取数只该建 1 个 ClientSession，实际 {len(sessions)}"
+        assert order_workers._SHARED_CLIENT is not None
+        assert order_workers._SHARED_CLIENT.session is sessions[0], "第二次取数该用同一个 session"
+        assert emitted == [(34, 1, 1), (34, 1, 1)], "两次取数都要拿到结果"
+    finally:
+        # 收尾：生产路径里共享 session 活到进程结束；测试里把它关掉，免得留「未关闭」噪音
+        client = order_workers._SHARED_CLIENT
+        if client is not None:
+            asyncio.run_coroutine_threadsafe(client.__aexit__(None, None, None), order_workers._shared_loop()).result(5)

@@ -32,12 +32,16 @@ Item {
 
     //: 两张表各自一行标题（「买单 · N 笔」/「卖单 · N 笔」）。与详情页 OrderPanel 同做法。
     readonly property var heads: dashboard ? dashboard.openOrderHeads : []
-    //: 列宽比：物品 / 价格 / 剩余·总量 / 位置 / 角色（**没有方向列** —— 表本身就是方向）
+    //: 列宽比：物品 / 位次 / 价格 / 剩余·总量 / 位置 / 角色（**没有方向列** —— 表本身就是方向）
     //: 「角色」加在**末尾**：ESI 会汇总全部已绑定角色，不标归属就分不清是谁的挂单。
     //: 它比位置列还宽 —— 名字截成「Me...」等于没标（实测过）。
-    //: 行数与颜色都由桥决定：**每张表按最优价排首位，第 2 行起整行红 + 物品列带
-    //: 「（不在首位）」**，本文件不做排序/染色/截断。
-    readonly property var ratios: [2.1, 1.3, 1.4, 1.8, 2.2]
+    //: 「位次」那格写 0：它的宽度**不按比例分**，由 `fitTexts` 按当前字号量出来（见下）——
+    //: 按比例分时 font_size=14 下「不在首位」正好差一点被 elide。
+    readonly property var ratios: [2.1, 0, 1.3, 1.4, 1.8, 2.2]
+    //: 「位次」列必须完整显示「不在首位」；排在物品之后而不是末尾，因为 1024 窄窗口下
+    //: 右栏右边会被窗口裁掉，末尾那列（角色）整列看不见。
+    //: 文本写在桥的 `query_dashboard_bridge._NOT_FIRST_TEXT`，这里只负责「按字号量宽」。
+    readonly property var fitTexts: ["", "不在首位", "", "", "", ""]
 
     ColumnLayout {
         anchors.fill: parent
@@ -177,6 +181,7 @@ Item {
             Layout.fillHeight: true
             headers: root.heads
             ratios: root.ratios
+            fitTexts: root.fitTexts
             rows: root.dashboard ? root.dashboard.sellOrderRows : []
             emptyText: root.dashboard ? root.dashboard.sellEmptyText : ""
         }
@@ -198,6 +203,7 @@ Item {
             Layout.fillHeight: true
             headers: root.heads
             ratios: root.ratios
+            fitTexts: root.fitTexts
             rows: root.dashboard ? root.dashboard.buyOrderRows : []
             emptyText: root.dashboard ? root.dashboard.buyEmptyText : ""
         }

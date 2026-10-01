@@ -24,6 +24,14 @@ Item {
     property var headers: []
     property var rows: []
     property var ratios: []
+    /* 必须**完整显示**的列：与 headers 等长的文本数组，非空 = 该列宽度按当前字号量出来
+     * （文本宽 + 两侧 padH + 4px 余量），而不是按 ratios 分。
+     *
+     * 为什么需要：只按比例分时列宽是「表宽 × 比例」，而字号跟着 settings.json 的 font_size
+     * 放大 —— 实测 font_size=14（scale 1.077）下「不在首位」在 52.1px 可用宽里差一点点，
+     * 被 elide 成「不在…」。量出来就与字号无关：字大了列也宽。
+     * 空数组 = 全部按 ratios 分（默认，与改动前逐字一致）。 */
+    property var fitTexts: []
     property string emptyText: ""
 
     readonly property int fntSmall: Math.round(11 * Theme.fontScale)
@@ -32,27 +40,54 @@ Item {
     readonly property int headerH: Math.max(20, fntSmall + 10)
     readonly property int padH: Math.round(6 * Theme.fontScale)
 
+    //: 与单元格同字体 —— `fitTexts` 的列宽就是按它量出来的（字体族/字号必须与格里的 Text 一致）
+    FontMetrics {
+        id: cellMetrics
+        font.family: Theme.fontFamily
+        font.pixelSize: root.fntBase
+    }
+
     /* 每列像素宽 —— 算一次供所有格复用。
      * 写成块绑定（而不是逐个格调 colX()）是因为本组件的行数×列数可能上百，
-     * 每格重扫一遍列宽在滚动时是实打实的开销（计划表踩过同一个坑）。 */
+     * 每格重扫一遍列宽在滚动时是实打实的开销（计划表踩过同一个坑）。
+     * 有 `fitTexts` 的列先拿走「量出来的宽度」，剩下的表宽按 ratios 分给其余列。 */
     readonly property var colWidths: {
         const n = root.headers.length
         if (n === 0)
             return []
-        let sum = 0
+        const fit = (root.fitTexts.length === n) ? root.fitTexts : []
+        const ratio = []
         const out = []
+        let fixedTotal = 0
+        let sum = 0
         for (let i = 0; i < n; ++i) {
             const r = (root.ratios.length === n) ? Number(root.ratios[i]) : 1.0
-            out.push(r > 0 ? r : 0.0)
-            sum += out[i]
+            if (String(fit[i] || "") !== "") {
+                out.push(cellMetrics.advanceWidth(String(fit[i])) + 2 * root.padH + 4)
+                ratio.push(0)
+                fixedTotal += out[i]
+            } else {
+                out.push(0)
+                ratio.push(r > 0 ? r : 0.0)
+                sum += ratio[i]
+            }
         }
-        if (sum <= 0) {
+        const rest = root.width - fixedTotal
+        if (sum <= 0 || rest <= 0) {
+            // 没有比例列（或固定列已吃满表宽）：剩下的列等分剩余宽度（可能为 0）
+            let flexible = 0
             for (let j = 0; j < n; ++j)
-                out[j] = root.width / n
+                if (out[j] === 0)
+                    flexible += 1
+            const share = Math.max(0, rest) / Math.max(1, flexible)
+            for (let k = 0; k < n; ++k)
+                if (out[k] === 0)
+                    out[k] = share
             return out
         }
-        for (let k = 0; k < n; ++k)
-            out[k] = root.width * out[k] / sum
+        for (let m = 0; m < n; ++m)
+            if (out[m] === 0)
+                out[m] = rest * ratio[m] / sum
         return out
     }
 

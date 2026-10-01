@@ -827,11 +827,19 @@ def test_read_orders_imports_and_records_snapshot(h, tmp_path):
     assert h.assets.snapshots == [None]  # record_snapshot() 回写一条资产快照
     assert "跳过 2 行" in bridge.statusText  # 解析器报的跳过行数要透出来
 
-    # 单元格格式化：物品 / 价格 / 剩余÷总量 / 位置 / 角色（**没有方向列** —— 表本身就是方向）
+    # 单元格格式化：物品 / 位次 / 价格 / 剩余÷总量 / 位置 / 角色（**没有方向列** —— 表本身就是方向）
     # 这份导出没带 charID → 归属列显示「—」，而不是「#0」
-    assert [cell["text"] for cell in bridge.sellOrderRows[0]["cells"]] == ["三钛合金", "2.50", "4/4", "Jita IV-4", "—"]
+    assert [cell["text"] for cell in bridge.sellOrderRows[0]["cells"]] == [
+        "三钛合金",
+        "首位",
+        "2.50",
+        "4/4",
+        "Jita IV-4",
+        "—",
+    ]
     assert [cell["text"] for cell in bridge.buyOrderRows[0]["cells"]] == [
         "三钛合金",
+        "首位",
         "100.00",
         "10/10",
         "Jita IV-4",
@@ -843,12 +851,12 @@ def test_read_orders_imports_and_records_snapshot(h, tmp_path):
     # 汇总：买卖单计数与挂单总额都是算出来的
     assert bridge.openOrderSummary.startswith("2 笔挂单 · 卖单 1 · 买单 1 · 挂单总额 1,010.00 ISK")
 
-    # 「不在首位」标记（用户要求）：每侧只有 1 行 → 它就是首位，整行默认色、不带后缀
-    assert [c["color"] for c in bridge.sellOrderRows[0]["cells"]] == [theme.TEXT_PRIMARY] * 5
-    assert [c["color"] for c in bridge.buyOrderRows[0]["cells"]] == [theme.TEXT_PRIMARY] * 5
-    assert not any("不在首位" in c["text"] for c in bridge.sellOrderRows[0]["cells"])
+    # 「不在首位」标记（用户要求）：每侧只有 1 行 → 它就是首位，整行默认色、位次列写「首位」
+    assert [c["color"] for c in bridge.sellOrderRows[0]["cells"]] == [theme.TEXT_PRIMARY] * 6
+    assert [c["color"] for c in bridge.buyOrderRows[0]["cells"]] == [theme.TEXT_PRIMARY] * 6
+    assert "不在首位" not in [c["text"] for c in bridge.sellOrderRows[0]["cells"]]
 
-    # 再加两笔（一笔更贵的卖单 / 一笔更便宜的买单）验证「第 2 行起」标红：
+    # 再加两笔（一笔更贵的卖单 / 一笔更便宜的买单）验证「第 2 行起」标红 + 位次列文案：
     # 卖单按价格升序 → 2.50 仍是首位；买单按价格降序 → 100.00 仍是首位
     with h.user_conn() as conn:
         conn.executemany(
@@ -858,12 +866,12 @@ def test_read_orders_imports_and_records_snapshot(h, tmp_path):
             [(13, 0, 9.0), (14, 1, 90.0)],
         )
     marked = h.bridge()
-    assert [c["text"] for c in marked.sellOrderRows[0]["cells"]][:2] == ["三钛合金", "2.50"]
-    assert [c["text"] for c in marked.sellOrderRows[1]["cells"]][:2] == ["三钛合金（不在首位）", "9.00"]
-    assert [c["color"] for c in marked.sellOrderRows[1]["cells"]] == [theme.ACCENT_RED] * 5
-    assert [c["text"] for c in marked.buyOrderRows[0]["cells"]][:2] == ["三钛合金", "100.00"]
-    assert [c["text"] for c in marked.buyOrderRows[1]["cells"]][:2] == ["三钛合金（不在首位）", "90.00"]
-    assert [c["color"] for c in marked.buyOrderRows[1]["cells"]] == [theme.ACCENT_RED] * 5
+    assert [c["text"] for c in marked.sellOrderRows[0]["cells"]][:3] == ["三钛合金", "首位", "2.50"]
+    assert [c["text"] for c in marked.sellOrderRows[1]["cells"]][:3] == ["三钛合金", "不在首位", "9.00"]
+    assert [c["color"] for c in marked.sellOrderRows[1]["cells"]] == [theme.ACCENT_RED] * 6
+    assert [c["text"] for c in marked.buyOrderRows[0]["cells"]][:3] == ["三钛合金", "首位", "100.00"]
+    assert [c["text"] for c in marked.buyOrderRows[1]["cells"]][:3] == ["三钛合金", "不在首位", "90.00"]
+    assert [c["color"] for c in marked.buyOrderRows[1]["cells"]] == [theme.ACCENT_RED] * 6
 
 
 def test_read_orders_falls_back_to_location_id_and_name_backfill(h, tmp_path, monkeypatch):
@@ -882,13 +890,13 @@ def test_read_orders_falls_back_to_location_id_and_name_backfill(h, tmp_path, mo
     bridge.readOrders()
     cells = [cell["text"] for cell in bridge.buyOrderRows[0]["cells"]]
     assert cells[0] == "#1001"  # 物品名缺失 → #type_id
-    assert cells[3] == "#60003760"  # 补不到空间站名 → #location_id
+    assert cells[4] == "#60003760"  # 补不到空间站名 → #location_id
 
     # 补得到时用真名（补名发生在解析器之外）
     monkeypatch.setattr("services.npc_seller.resolve_stations_by_ids", _one_station)
     h.orders.rows = [_order(22, location_name="", location_id=60003760)]
     bridge.readOrders()
-    assert [cell["text"] for cell in bridge.buyOrderRows[0]["cells"]][3] == "Jita IV-4"
+    assert [cell["text"] for cell in bridge.buyOrderRows[0]["cells"]][4] == "Jita IV-4"
 
 
 def test_read_orders_uses_default_dir_always(h, tmp_path):
