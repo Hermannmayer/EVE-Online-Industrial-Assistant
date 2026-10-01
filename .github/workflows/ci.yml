@@ -45,9 +45,26 @@ jobs:
       run: uv run mypy . --ignore-missing-imports
 
     - name: Test with pytest
-      run: uv run pytest tests/ -v --cov=. --cov-report=xml
+      # ⚠️ 只跑**非 UI 档**（= `scripts/run_tests.sh validate`，`-m "not ui"`）。
+      #
+      # 为什么不再跑整档（2026-10-01 实测，run 36824867391）：
+      #   1. 整档会带上 `-m ui` 的 Qt/QML 用例，而 GitHub runner 是无显示环境，只能靠
+      #      `QT_QPA_PLATFORM=offscreen` —— 本仓已记录 offscreen + `QQuickWidget` 会
+      #      死锁/崩（`tests/test_industry_dialogs.py:345`）。CI 上的表现是：大批 QML
+      #      fixture ERROR + FAILED，然后在 `tests/test_qml_init_wizard.py::
+      #      test_auto_mode_starts_downloading_on_its_own` 的 Qt 定时器回调里
+      #      `Fatal Python error: Segmentation fault`，**整轮在 62% 崩掉、连汇总都
+      #      打不出来**（exit 139），后面 38% 的用例根本没跑。
+      #   2. `-s`（`--capture=no`）**必需**：pytest 默认捕获 stdout/stderr，而 Qt/QML 与
+      #      logging 都往那里写；管道写满后 QML 线程与主线程会在
+      #      `QQuickView.setSource()` 的同步等待上互锁（实测 240s 不返回 vs 带 `-s` 21.6s）。
+      #
+      # UI 档按本仓「测试边界」由本地 `scripts/run_tests.sh ui-retest` +
+      # `scripts/shell_snapshot.py` 出图兜底。要让 CI 也覆盖 UI，正确做法是引入
+      # `xvfb-run`（真 X 显示）再跑 `-m ui`，**不要**用 offscreen 硬顶。
+      run: uv run pytest tests/ -q -s -m "not ui" --maxfail=5 --cov=. --cov-report=xml
       env:
-        QT_QPA_PLATFORM: offscreen   # 无显示环境下跑 Qt 测试
+        QT_QPA_PLATFORM: offscreen   # 非 UI 档里仍有少数用例会碰 Qt，无显示环境下需要它
 
     # 文档站内部链接校验（防止提交时绕过本地 pre-commit）
     - name: Check docs internal links
