@@ -12,6 +12,7 @@ from services.inventory_import import (
     compute_import_diff,
     compute_missing_in_hangar,
     compute_row_delta,
+    merge_same_type_rows,
     split_clipboard_lines,
 )
 
@@ -190,3 +191,44 @@ class TestSplitClipboardLines:
         """空行跳过，空输入返回空列表"""
         assert split_clipboard_lines("") == []
         assert split_clipboard_lines("\n\n三钛合金\t100\n\n") == [{"name": "三钛合金", "qty": 100}]
+
+
+class TestMergeSameTypeRows:
+    """同一 type_id 的多堆合并 —— 不合并就会被 full 模式的覆盖写吃掉（用户报障）。"""
+
+    def test_stacks_are_summed(self):
+        """莫尔石 2999 + 184 + 176 → 一行 3359，并记下每一堆便于核对。"""
+        rows = merge_same_type_rows(
+            [
+                {"type_id": 11399, "qty": 2999},
+                {"type_id": 11399, "qty": 184},
+                {"type_id": 11399, "qty": 176},
+            ]
+        )
+        assert len(rows) == 1
+        assert rows[0]["qty"] == 3359
+        assert rows[0]["merged"] == [2999, 184, 176]
+
+    def test_order_is_first_seen_and_other_items_untouched(self):
+        rows = merge_same_type_rows(
+            [
+                {"type_id": 34, "qty": 100},
+                {"type_id": 11399, "qty": 5},
+                {"type_id": 34, "qty": 1},
+                {"type_id": 35, "qty": 7},
+            ]
+        )
+        assert [r["type_id"] for r in rows] == [34, 11399, 35]
+        assert [r["qty"] for r in rows] == [101, 5, 7]
+        assert "merged" not in rows[1] and "merged" not in rows[2]
+
+    def test_unmatched_rows_are_not_merged(self):
+        """未匹配行没有 type_id —— 没有同一性判据，一律保留原样，别误合并。"""
+        rows = merge_same_type_rows(
+            [
+                {"type_id": None, "raw_name": "认不出的东西", "qty": 1},
+                {"type_id": None, "raw_name": "认不出的东西", "qty": 2},
+            ]
+        )
+        assert len(rows) == 2
+        assert [r["qty"] for r in rows] == [1, 2]

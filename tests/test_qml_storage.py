@@ -546,6 +546,37 @@ def test_full_sync_clear_targets_respect_uncheck_and_manual_target(_review_bridg
     assert b.get_sync_targets() == {34: 1000, 41484: 3}
 
 
+def test_same_item_multiple_stacks_are_summed_not_overwritten(qapp, monkeypatch):
+    """回归（用户报障）：剪贴板里同一种物品有**多堆**时必须相加。
+
+    EVE 的「物品」列表里同一种东西可以有多堆，复制出来就是多行同名物品；而 full 模式的
+    落库是 `set_item_quantity(type_id, 最终数量)` —— **覆盖写**。不合并的话后一行会把前一行
+    覆盖掉，只剩最后一堆。实测：莫尔石 2999 + 184 + 176 只写进了 176，于是待采购报
+    「需求 3175 − 176 = 2999」，用户看到的是「我库里明明有 2999，却让我买 2999」。
+    """
+    import ui_qml.bridge.review_bridge as mod
+
+    hangar = [{"type_id": 11399, "quantity": 10, "cost_price": 17980.0, "zh_name": "莫尔石"}]
+    parsed = [
+        {"type_id": 11399, "zh_name": "莫尔石", "en_name": "Morphite", "qty": 2999, "status": "matched"},
+        {"type_id": 11399, "zh_name": "莫尔石", "en_name": "Morphite", "qty": 184, "status": "matched"},
+        {"type_id": 11399, "zh_name": "莫尔石", "en_name": "Morphite", "qty": 176, "status": "matched"},
+    ]
+    monkeypatch.setattr(mod, "get_items", lambda hangar_id, **_kw: list(hangar) if hangar_id == 7 else [])
+    monkeypatch.setattr(mod, "get_container", lambda: SimpleNamespace(market_repo=_ReviewMarketRepo()))
+    monkeypatch.setattr(mod, "get_hangars", lambda: [{"id": 7, "name": "通用仓库"}])
+    monkeypatch.setattr(mod, "get_material_price_mult", lambda: 1.0)
+
+    b = mod.ImportReviewBridge(parsed, "通用仓库", 7, default_mode="full")
+    b.setOnlyChanged(False)
+
+    assert [r["typeId"] for r in b.rows] == [11399], "三堆要合成一行，不能变成三行"
+    row = b.rows[0]
+    assert row["final"] == 3359, "full 模式的目标数量 = 三堆之和（旧实现只留最后一堆 176）"
+    assert b.get_sync_targets() == {11399: 3359}
+    assert "2,999" in row["mergedText"] and "3,359" in row["mergedText"], "要看得见每一堆各是多少"
+
+
 def test_incremental_mode_has_no_clear_targets(qapp, monkeypatch):
     """incremental 只增不减：预览里根本不出现待清零行。"""
     import ui_qml.bridge.review_bridge as mod

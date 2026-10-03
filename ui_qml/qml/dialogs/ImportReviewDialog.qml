@@ -362,7 +362,9 @@ FDialogFrame {
                                 Layout.fillHeight: true
                                 verticalAlignment: Text.AlignVCenter
                                 horizontalAlignment: Text.AlignLeft
-                                text: rowItem.modelData.name
+                                // 同名多堆会被桥合并成一行并相加（full 模式按 type_id 覆盖写，
+                                // 不合并只有最后一堆生效）—— 这里把每一堆列出来给用户核对
+                                text: rowItem.modelData.name + (rowItem.modelData.mergedText || "")
                                 color: rowItem.modelData.unmatched ? Theme.textSecondary : Theme.textPrimary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Math.round(12 * Theme.fontScale)

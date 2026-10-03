@@ -72,6 +72,48 @@ def compute_row_delta(mode: str, qty: int, current: int) -> tuple[int, int]:
     return delta, final
 
 
+def merge_same_type_rows(items: list[dict]) -> list[dict]:
+    """把**同一个 type_id 的多堆**合并成一行、数量相加（纯函数，无 DB/Qt 依赖）。
+
+    为什么必须合并：EVE 的「物品」列表里同一种东西可以有多堆（不同属主/不同来源的堆叠
+    不会自动合并），复制出来就是多行同名物品；而 full 模式的落库是
+    `set_item_quantity(type_id, 最终数量)` —— **覆盖写**。不合并的话后一行会把前一行
+    覆盖掉，只剩最后一堆的数量。
+
+    实测（2026-10-03 用户报障）：剪贴板里莫尔石有 3 堆 `2999 + 184 + 176`，旧实现只写进
+    `176`，于是待采购报出「需求 3175 − 176 = 2999」，而用户库里其实有 3359 ——
+    看起来就是「我明明有 2999，却让我买 2999」。
+
+    规则：
+    - 按 `type_id` 合并、`qty` 相加，**保留第一次出现的顺序**（预览行序稳定、便于核对）；
+    - `type_id` 为空（未匹配行）不合并 —— 没有 id 就没有同一性的判据，合并会误伤；
+    - 被合并的行数 > 1 时在该行记 `merged` = 每一堆的数量列表，供预览显示
+      「2999 + 184 + 176 = 3,359（3 堆合并）」，让用户看得见这次到底加了几笔。
+    """
+    merged: list[dict] = []
+    index_of: dict[int, int] = {}
+    for item in items:
+        tid = item.get("type_id")
+        if not tid:
+            merged.append(dict(item))
+            continue
+        key = int(tid)
+        qty = int(item.get("qty") or 0)
+        if key not in index_of:
+            index_of[key] = len(merged)
+            row = dict(item)
+            row["qty"] = qty
+            merged.append(row)
+            continue
+        row = merged[index_of[key]]
+        prev = int(row.get("qty") or 0)
+        if "merged" not in row:
+            row["merged"] = [prev]
+        row["merged"].append(qty)
+        row["qty"] = prev + qty
+    return merged
+
+
 def compute_missing_in_hangar(
     hangar_qty: dict[int, int],
     clipboard_type_ids: set[int],

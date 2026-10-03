@@ -57,7 +57,7 @@ from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.logger import log
 from services.inventory_clipboard_service import parse_purchase_clipboard
-from services.inventory_import import compute_missing_in_hangar, compute_row_delta
+from services.inventory_import import compute_missing_in_hangar, compute_row_delta, merge_same_type_rows
 from services.inventory_manager import apply_inventory_import, get_hangars, get_items
 from services.user_settings import get_material_price_mult, set_material_price_mult
 from ui_qml.bridge.message_dialog import FMessageDialog
@@ -171,9 +171,17 @@ def review_row(
             "unmatched": True,
         }
     delta, final = compute_row_delta(mode, int(item.get("qty") or 0), int(current))
+    merged = [int(x) for x in (item.get("merged") or [])]
     return {
         "typeId": int(type_id),
         "name": str(item.get("display_name") or item.get("zh_name") or item.get("en_name") or f"ID:{type_id}"),
+        #: 同名多堆合并的提示（空串 = 单堆）。合并是**必须**的：full 模式按 type_id 覆盖写，
+        #: 不合并就只有最后一堆生效（实测莫尔石 2999+184+176 只写进了 176）。
+        #: 这里把每一堆都列出来，让用户看得见「这次到底加了几笔」。
+        "mergedText": f"（{' + '.join(f'{q:,}' for q in merged)} = {sum(merged):,}，{len(merged)} 堆合并）"
+        if len(merged) > 1
+        else "",
+        "merged": merged,
         "iconUrl": _png_url(type_id),
         "current": int(current),
         "currentText": f"{int(current):,}",
@@ -387,7 +395,7 @@ class ImportReviewBridge(DialogBridge):
     ) -> None:
         super().__init__()
         self.set_title(f"导入预览 → {hangar_name}")
-        self._items = list(items)  # 工作副本（对应原 `_parsed_items`，与 _rows 同长同序）
+        self._items = merge_same_type_rows(items)  # 工作副本（同名多堆合并，见该函数）
         self._filtered_note = max(int(filtered_note or 0), 0)
         self._target_hangar_id = int(target_hangar_id)
         self._region_id = TRADE_HUB_IDS["Jita"]
