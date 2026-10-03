@@ -6,6 +6,35 @@
 
 <!-- version list -->
 
+## v0.25.5 (2026-10-03)
+
+### Bug Fixes
+
+- **备料**: 子线已覆盖的自制件缺口不再报「材料不足」，改显示「等待子项」
+  ([`670ae64`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/670ae64ef246075e9f278488b7c0f6f4376ffbed))
+
+- **库存**: 同名多堆必须累加后入库，否则只写最后一堆
+  ([`b1539e0`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b1539e03964b490b7282f1d746fb3668c991c972))
+
+### Chores
+
+- **release**: Uv.lock 同步到 0.25.4
+  ([`d9b1160`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d9b1160b92678dc7f46e7f9a13d5f4ba7d130bc1))
+
+### Continuous Integration
+
+- 去掉永远失败的 Codecov 上传与无人消费的 --cov，日志不再刷 Token required
+  ([`994833a`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/994833ac5295e23c8304ea2a794feb07b9267e0d))
+
+### Testing
+
+- **CI**: 修掉无库环境下的进程 abort 与容器单例污染，非 UI 档 0 failed
+  ([`34850d5`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/34850d53b9ebf2a1824cdef74afcc5f11e908907))
+
+- **标记**: 11 个加载 Qt 的测试文件补上 ui 标记，让「非 UI 档」headless 安全
+  ([`19393f1`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/19393f12244457ab5523cdff116c620835084a5f))
+
+
 ## v0.25.4 (2026-10-01)
 
 ### Bug Fixes
