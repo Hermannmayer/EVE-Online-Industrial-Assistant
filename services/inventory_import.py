@@ -72,6 +72,25 @@ def compute_row_delta(mode: str, qty: int, current: int) -> tuple[int, int]:
     return delta, final
 
 
+def compute_missing_in_hangar(
+    hangar_qty: dict[int, int],
+    clipboard_type_ids: set[int],
+) -> dict[int, int]:
+    """全量同步的**反向差集**：「目标机库里有、剪贴板里没有」的物品 → {type_id: 现有数量}。
+
+    「库存修正 / 全量同步」是以剪贴板为准的**双向**比对：正向按剪贴板数量 set，
+    反向把这条差集清零（数量归零 = 删掉机库里的那一行）。只做正向就是本条缺陷的根因 ——
+    用户修正库存后，上一份清单里有、这次没复制的物品会**永久残留**在软件里
+    （实测 `41484 旗舰级电容器电池 I` 残留 6 个，计划表据此少排 6 个）。
+
+    只收 `quantity > 0` 的行（0 行本来就不在库里）；结果按 type_id 升序，
+    便于预览与确认文案稳定排序。纯函数、无 DB 依赖，由调用方把机库快照喂进来。
+    """
+    return {
+        int(tid): int(qty) for tid, qty in sorted(hangar_qty.items()) if int(qty) > 0 and tid not in clipboard_type_ids
+    }
+
+
 def compute_import_diff(
     before: dict[int, tuple[int, float]],
     after: dict[int, tuple[int, float]],

@@ -174,17 +174,82 @@ def material_requirements(plan: dict) -> list[dict]:
     return reqs
 
 
+def _active_plans_for_material_check() -> list[dict]:
+    """全量**活跃**计划行（`completed`/`done` 排除），供材料校验算「子线将产出」。
+
+    为什么按需查一次而不是让每个调用方传：`check_materials` 的 5 个调用点形状各异
+    （启动闸门 / 部分启动预览 / 状态列标注 / 产线小助手 5s 轮询），它们手里未必有全量行；
+    而这里只读 `status/sub_level/product_type_id/runs/parallels` 几个列，一次查询很便宜。
+    已完工行排除：它们的产出早已入库，再算一次会重复计。
+    """
+    with _container().db.connect("user") as conn:
+        return [
+            dict(r)
+            for r in conn.execute(
+                "SELECT status, sub_level, product_type_id, runs, parallels FROM production_plans "
+                "WHERE status NOT IN ('completed', 'done')"
+            )
+        ]
+
+
+def _pending_children_output_by_type(all_plans: list[dict]) -> dict[int, int]:
+    """子线将产出的成品数量 {type_id: 数量}（只算**未完成**的子项行）。
+
+    口径 = `runs × parallels × 每轮产出`，与「整批产出」同一条公式（`services/char_capacity.py:3`）。
+    `runs=0` 的行产 0；已完工（completed/done）的行**不计** —— 那时产出已入库，
+    再算一次就是重复计。
+
+    用途见 `check_materials(..., all_plans=...)`：母项对某个**自制中间件**的需求，
+    如果同组子线已经排产去造它，就不该再算成「该去买的缺料」（用户报的
+    「采购小助手说不用买、产线却提示子项材料不足」）。
+    """
+    from services.bom_expander import _find_blueprint_for_product
+
+    done = ("completed", "done")
+    out: dict[int, int] = {}
+    pending = [
+        p
+        for p in all_plans
+        if int(p.get("child_level") or p.get("sub_level") or 0) > 0
+        and (p.get("status") or "").lower() not in done
+        and int(p.get("product_type_id") or 0)
+    ]
+    if not pending:
+        return out
+    with _container().db.connect("ref", "user", "bp") as conn:
+        for p in pending:
+            runs = max(int(p.get("runs") or 0), 0)
+            parallels = max(int(p.get("parallels") or 1), 1)
+            if runs <= 0:
+                continue
+            bp = _find_blueprint_for_product(conn, int(p["product_type_id"]), "manufacturing")
+            per_run = max(int(bp[1] or 1), 1) if bp else 1
+            tid = int(p["product_type_id"])
+            out[tid] = out.get(tid, 0) + runs * parallels * per_run
+    return out
+
+
 def check_materials(
     plan: dict,
     mat_hangar_id: int | None,
     *,
     stock: dict[int, int] | None = None,
+    all_plans: list[dict] | dict[int, int] | None = None,
 ) -> list[dict]:
     """对照材料机库库存，返回 [{type_id, name, need, owned, missing}]。
 
     mat_hangar_id 为 None（未设置材料机库）时不校验，返回空列表。
     stock: 已取好的机库库存快照 {type_id: qty}；不传则自行查询。
       调用方（如产线小助手的 5s 轮询）可传同一份，避免每个计划重复查库。
+    all_plans: 全量计划行（或**已算好的** `{type_id: 子线将产出}` 映射）。传了就把
+      「子线将产出的自制件」算进可用量：母项对本组子项产物的需求，不该因为
+      「仓库里现在没有」就报「缺料」——那部分由子线自己造，采购侧本来也不买它
+      （`plan_aggregator.self_made_type_ids`）。
+      **逐行循环调用时请传预算好的映射**（`_pending_children_output_by_type(rows)` 算一次），
+      否则每行都会重查一次全库计划。不传 = 旧口径（只看机库），向后兼容。
+
+    Returns 的每行额外带 `from_children`（子线将产出、已计入可用量的数量），
+    供界面解释「为什么这条不缺」。
     """
     if not mat_hangar_id:
         return []
@@ -193,10 +258,25 @@ def check_materials(
     reqs = material_requirements(plan)
     if stock is None:
         stock = inventory_manager.get_hangar_stock(mat_hangar_id)
+    if isinstance(all_plans, dict):
+        from_children = all_plans
+    elif all_plans:
+        from_children = _pending_children_output_by_type(all_plans)
+    else:
+        from_children = {}
     result = []
     for r in reqs:
-        owned = int(stock.get(r["type_id"], 0))
-        result.append({**r, "owned": owned, "missing": max(0, r["need"] - owned)})
+        tid = int(r["type_id"])
+        owned = int(stock.get(tid, 0))
+        by_children = int(from_children.get(tid, 0))
+        result.append(
+            {
+                **r,
+                "owned": owned,
+                "from_children": by_children,
+                "missing": max(0, r["need"] - owned - by_children),
+            }
+        )
     return result
 
 
@@ -294,7 +374,7 @@ def start_plan(
     shortfalls: list[dict] = []
     short_json = ""
     if mat_hangar_id:
-        reqs = check_materials(plan, mat_hangar_id)
+        reqs = check_materials(plan, mat_hangar_id, all_plans=_active_plans_for_material_check())
         shortfalls = [r for r in reqs if (r.get("missing") or 0) > 0]
         if shortfalls and not allow_short:
             return {
@@ -516,7 +596,11 @@ def preview_partial_start(plan_id: int, lines: int, mat_hangar_id: int | None) -
     total = max(int(fresh.get("parallels") or 1), 1)
     lines = max(min(int(lines), total - 1), 1) if total > 1 else 0
     preview = {**fresh, "parallels": lines, "line_levels": list(fresh.get("line_levels") or [])[:lines]}
-    shortfalls = [r for r in check_materials(preview, mat_hangar_id) if (r.get("missing") or 0) > 0]
+    shortfalls = [
+        r
+        for r in check_materials(preview, mat_hangar_id, all_plans=_active_plans_for_material_check())
+        if (r.get("missing") or 0) > 0
+    ]
 
     conn = _container().db.direct_connect("user")
     try:
@@ -642,8 +726,8 @@ def start_plan_partial(
     独立计划、母项（子项全部完成时）与**子项行**都可以部分启动：余量行由
     `insert_split_remainder` 照抄结构列（含 `group_number` / `sub_level`），仍是同组的子项行。
 
-    ⚠️ 子项行拆开之后**不要**再对母项用「重算子项」：那条路径按母项当前需求重放整组子项，
-    会把拆出的两半一起改写。历史实现正是因此直接禁止子项部分启动，用户拍板放开
+    ⚠️ 子项行拆开之后**不要**再对母项做「母项调整（递归拆解）」：那条路径按母项当前需求
+    重放整组子项，会把拆出的两半一起改写。历史实现正是因此直接禁止子项部分启动，用户拍板放开
     （母项一步就要几十张蓝图，先开 N 条是唯一能落地的姿势）。
 
     Returns: {"ok", "code", "message", "started_lines", "remainder_plan_id", ...}

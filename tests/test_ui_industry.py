@@ -218,6 +218,70 @@ def test_recalc_reruns_when_price_settings_change_mid_flight(industry_page, monk
     assert industry_page._recalc_dirty is True, "跑动期间改价格设置必须记脏并补算"
 
 
+def test_inventory_change_reruns_recalc_on_heartbeat(industry_page, monkeypatch):
+    """库存导入后成本/利润列必须自愈 —— 30s 心跳发现库存快照变了就走重算路径。
+
+    回归背景：`_recalc_settings_fp()` 只含价格口径、`_on_countdown_tick` 也不会因
+    库存变化走 `load_plans()`，于是手动粘贴导入库存（或仓库页批量改成本价）之后
+    成本/利润/两个利润率一直停在旧值，直到用户编辑计划、改价格设置或重启。
+    对应诉求：「不要我手动来回切页」。
+
+    断言落在**既有入口**上（心跳 → `load_plans()` → `_auto_calculate_plans` 是否又起了
+    一个 `BatchPlanCalcWorker`），不新造接口；worker 用替身，不跑真实评分线程。
+    """
+    from services import inventory_manager
+    from ui_qml.views import industry_view as iv
+
+    stock = {1001: (10, 5.0)}
+    started: list[list[dict]] = []
+
+    class _Signal:
+        def connect(self, _fn):
+            return None
+
+    class _FakeWorker:
+        def __init__(self, plans, char_config, **kwargs):
+            started.append(plans)
+            self.finished_signal = _Signal()
+
+        def isRunning(self):  # 对齐 QThread 的 camelCase API
+            return False
+
+        def start(self):
+            return None
+
+    plan = {
+        "id": 1,
+        "status": "pending",
+        "runs": 1,
+        "parallels": 1,
+        "me_level": 0,
+        "mat_hangar_id": 1,
+        "char_name": "甲",
+    }
+    monkeypatch.setattr(iv, "BatchPlanCalcWorker", _FakeWorker)
+    monkeypatch.setattr(inventory_manager, "get_inventory_cost_map", lambda *a, **k: dict(stock))
+    monkeypatch.setattr("services.plan_service.load_plans", lambda *a, **k: [dict(plan)])
+
+    # 基线：页面已按当前库存算过一轮（等价于启动后的初始 load_plans）
+    industry_page.load_plans()
+    assert len(started) == 1
+    fp_before = industry_page._recalc_settings_fp()
+    assert industry_page._tick_recalc_fp == fp_before, "load_plans 收尾要记下心跳判据基线"
+
+    # 库存一字未改 → 心跳不该白排一轮评分
+    industry_page._on_countdown_tick()
+    assert len(started) == 1, "口径没变时心跳不该再起批量重算"
+
+    # 模拟粘贴导入新库存：数量与成本价都变了
+    stock[1001] = (20, 9.0)
+    assert industry_page._recalc_settings_fp() != fp_before, "库存快照必须进重算指纹"
+
+    industry_page._on_countdown_tick()
+    assert len(started) == 2, "库存变化后心跳必须自己走到重算路径，不需要用户切页"
+    assert industry_page._tick_recalc_fp == industry_page._recalc_settings_fp(), "重算后基线要跟上新库存"
+
+
 class TestNotesInlineEditPersists:
     """备注列内联编辑必须落库。
 

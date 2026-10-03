@@ -740,7 +740,9 @@ class ProductionLauncher(QObject):
             try:
                 missing = [
                     r
-                    for r in plan_execution.check_materials(plan, mat, stock=self._stock_cache.get(int(mat)))
+                    for r in plan_execution.check_materials(
+                        plan, mat, stock=self._stock_cache.get(int(mat)), all_plans=self._all_plans
+                    )
                     if (r.get("missing") or 0) > 0
                 ]
                 count = len(missing)
@@ -1027,7 +1029,7 @@ class ProductionLauncher(QObject):
         - 母项还有未完成子项 → `children_running`/`waiting_children`，不可强制 → 不显示；
         - 生产中的行 → status 非 pending，`plan_start_block` 直接拦。
 
-        ⚠️ 拆开之后不要对母项用「重算子项」：那会按母项需求重放整组子项，把拆出的
+        ⚠️ 拆开之后不要对母项做「母项调整（递归拆解）」：那会按母项需求重放整组子项，把拆出的
         两半一起改写（同 `services.plan_execution.start_plan_partial` 的说明）。
         """
         if not plan.get("id") or plan.get("_synthetic"):
@@ -1319,7 +1321,9 @@ class ProductionLauncher(QObject):
             try:
                 shortfalls = [
                     r
-                    for r in plan_execution.check_materials(plan, mat, stock=self._stock_cache.get(int(mat)))
+                    for r in plan_execution.check_materials(
+                        plan, mat, stock=self._stock_cache.get(int(mat)), all_plans=self._all_plans
+                    )
                     if (r.get("missing") or 0) > 0
                 ]
             except Exception:

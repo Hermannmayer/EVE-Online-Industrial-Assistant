@@ -48,6 +48,9 @@ _HEADER_TEXT_MARGIN = 24
 #: 卡到与文字同宽会出现「最后一个字变省略号」，所以给到 16 留一点余量。
 _BODY_TEXT_MARGIN = 16
 
+#: 子项行没有「编辑生产计划」时的去处提示（右键菜单那条置灰项与双击提示共用）。
+CHILD_EDIT_HINT = "子项数量请在「智能调整」里改"
+
 
 def _header_metrics() -> QFontMetrics:
     """表头字体（11px）的度量。表头字号与数据格不同，必须分开量。"""
@@ -107,6 +110,9 @@ class PlanTableBridge(QObject):
         self._selection: QItemSelectionModel | None = None
         #: Shift 连选的锚点（上次「点中」的行）
         self._anchor_row: int = -1
+
+    #: 子项行的去处提示（右键菜单那条置灰项与双击提示共用同一句话）
+    childEditHint = Property(str, lambda self: CHILD_EDIT_HINT, constant=True)
 
     # ── 行选中 ────────────────────────────────────────────────
     #
@@ -397,6 +403,21 @@ class PlanTableBridge(QObject):
 
     @Slot(int)
     def doubleClick(self, row: int) -> None:
+        """双击非可编辑列：母项开「编辑生产计划」；子项**不给**那个入口，改为提示去处。
+
+        子项数量是拆解出来的（`plan_rebuild` 的净口径排产），在编辑对话框里手改 runs
+        会与下一次重放打架 —— 用户拍板：子项数量只能从「智能调整」改。
+        """
+        if self.isChild(row):
+            from ui_qml.bridge.message_dialog import FMessageDialog
+
+            FMessageDialog.information(
+                self,
+                "子项数量不可直接编辑",
+                f"{CHILD_EDIT_HINT}。\n可用右键「智能调整 → 子项调整（并行配置）」按净缺口重排，"
+                "或用「子项大规模产线并行」按产线数/工期分配。",
+            )
+            return
         self._table._edit_plan(row)
 
     #: `PlanQmlModel.ROLE_NAMES` 里的角色号：text = UserRole+1、editable = UserRole+6。
@@ -428,6 +449,18 @@ class PlanTableBridge(QObject):
         """单元格内联编辑落库（备注/人物/设施/成功率/解码器）。"""
         return bool(self._table.commit_cell_edit(row, column, text))
 
+    @Slot(int, result=bool)
+    def isChild(self, row: int) -> bool:
+        """该行是不是子项（`child_level`/`sub_level` > 0，口径同 `plan_table._plan_level`）。"""
+        model = self._table.get_model()
+        return self._is_child(model.get_plan(row) if model is not None else None)
+
+    @staticmethod
+    def _is_child(plan: dict | None) -> bool:
+        if plan is None:
+            return False
+        return int(plan.get("child_level") or plan.get("sub_level") or 0) > 0
+
     @Slot(int, result=dict)
     def menuState(self, row: int) -> dict:
         """行右键菜单需要的状态：决定哪些项可见、勾选文案。"""
@@ -438,6 +471,8 @@ class PlanTableBridge(QObject):
             "synthetic": bool(plan.get("_synthetic")) if plan else False,
             "status": str((plan or {}).get("status") or "").lower(),
             "materialsReady": bool((plan or {}).get("materials_ready", 0)),
+            #: 子项行不给「编辑生产计划」，改显示去处提示（见 `_is_child`）
+            "isChild": self._is_child(plan),
         }
 
     # ── 菜单动作（逐个具名，避免字符串分发的错别字风险） ──────────
@@ -501,10 +536,6 @@ class PlanTableBridge(QObject):
     @Slot("QVariantList")
     def massParallel(self, rows: list) -> None:
         self._table._mass_parallel([int(r) for r in rows])
-
-    @Slot("QVariantList")
-    def recalcChildren(self, rows: list) -> None:
-        self._table._recalc_children([int(r) for r in rows])
 
     @Slot("QVariantList")
     def deletePlans(self, rows: list) -> None:

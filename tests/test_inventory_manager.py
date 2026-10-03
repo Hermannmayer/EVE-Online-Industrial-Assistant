@@ -372,6 +372,48 @@ class TestApplyInventoryImport:
         assert (added, moved) == (1, 0)
         assert self._stock(import_db, hid) == {}
 
+    def test_full_clear_missing_zeroes_rows_absent_from_clipboard(self, import_db):
+        """全量同步的反向差集：「库里有、剪贴板没有」的行必须清零（删行）。
+
+        回归背景：full 原先只遍历剪贴板行，「库里有、剪贴板里没有的」整类永远不动 ——
+        用户改完库存后残留的 `41484=6` 一直在，计划表把不存在的 6 个当可用。
+        `clear_missing` 的值是**该行现有数量**（调用方核对用），服务一律清零。
+        """
+        hid = create_hangar("主仓")
+        add_item(hid, 1001, 10, 5.0)  # 剪贴板里有 → 按 7 覆盖
+        add_item(hid, 1002, 6, 3.0)  # 剪贴板里没有 → 清零删行
+        added, moved = apply_inventory_import(
+            hid, [(1001, 0, 5.0, None)], "full", targets={1001: 7}, clear_missing={1002: 6}
+        )
+        assert (added, moved) == (2, 0)
+        assert self._stock(import_db, hid) == {1001: 7}
+
+    def test_full_clear_missing_value_is_informational(self, import_db):
+        """`clear_missing` 的值不参与写库：传现有数量也照样清零（不是 set 回原值）。"""
+        hid = create_hangar("主仓")
+        add_item(hid, 1002, 6, 3.0)
+        added, _moved = apply_inventory_import(hid, [], "full", targets={}, clear_missing={1002: 6})
+        assert added == 1
+        assert self._stock(import_db, hid) == {}
+
+    def test_full_clear_missing_does_not_clobber_clipboard_target(self, import_db):
+        """与剪贴板目标撞车时以剪贴板为准 —— 不许把用户刚 set 的值再清掉（删数据兜底）。"""
+        hid = create_hangar("主仓")
+        add_item(hid, 1001, 10, 5.0)
+        _added, _moved = apply_inventory_import(
+            hid, [(1001, 0, 5.0, None)], "full", targets={1001: 4}, clear_missing={1001: 10}
+        )
+        assert self._stock(import_db, hid) == {1001: 4}
+
+    def test_incremental_ignores_clear_missing(self, import_db):
+        """incremental 只增不减：clear_missing 一律不生效（语义一字不变）。"""
+        hid = create_hangar("主仓")
+        add_item(hid, 1001, 10, 5.0)
+        add_item(hid, 1002, 6, 3.0)
+        added, moved = apply_inventory_import(hid, [(1001, 5, 5.0, None)], "incremental", clear_missing={1002: 0})
+        assert (added, moved) == (1, 0)
+        assert self._stock(import_db, hid) == {1001: 15, 1002: 6}
+
     def test_move_from_other_hangar(self, import_db):
         """跨机库行：源机库整体移动到目标，计入 moved"""
         src = create_hangar("源仓")

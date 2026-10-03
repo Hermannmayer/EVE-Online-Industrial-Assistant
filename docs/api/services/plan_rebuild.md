@@ -124,19 +124,26 @@ def _accumulate(conn, nodes: dict[int, dict], first_mother: dict, type_id: int, 
 def _finalize_runs(node: dict, stocks: dict[int, dict[int, int]]) -> None
 ```
 
-把本轮收齐的 demand 折算成 runs（含「首个引用母项机库」的库存覆盖）。
+把本轮收齐的 demand 折算成 runs（**每条产线的流程数**，净口径）：
+`total_runs = ceil(demand/per_run)` → `covered_lines = min(库存 // per_run, total_runs)`
+→ `runs = max(1, ceil((total_runs - covered_lines) / parallels))`。
+
+- 库存扣的是**成品自己的机库库存**（按 `per_run` 整批取整），原材料库存由下游扣一次；
+- **先扣再摊 parallels**：`runs × parallels × per_run` 才是整批产出，先除再扣会算出 `3×0`，
+  不摊 parallels 会放大 parallels 倍；
+- `demand <= 0` 时 `runs = 0`。
 
 定义行：`140`
 
 ### `compute_child_forest`
 
 ```python
-def compute_child_forest(conn, active_mothers: list[dict], stocks: dict[int, dict[int, int]], existing_parallels: dict[int, int]) -> dict[int, dict]
+def compute_child_forest(conn, active_mothers: list[dict], existing_parallels: dict[int, int]) -> dict[int, dict]
 ```
 
 全局需求传播 → &#123;type_id: node&#125;。
 
-定义行：`150`
+定义行：`222`
 
 ### `rebuild_children`
 
@@ -146,7 +153,7 @@ def rebuild_children(*, create: bool=False, prune: bool=False, mother_ids: set[i
 
 按母项当前需求同步子项（增量，默认不创建/不删除——避免误删子项被自动加回）。
 
-定义行：`230`
+定义行：`307`
 
 ### `_resolve_name`
 
@@ -158,7 +165,7 @@ def _resolve_name(type_id: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`411`
+定义行：`497`
 
 ### `_field_diff`
 
@@ -168,7 +175,7 @@ def _field_diff(row: dict, fields: dict) -> dict
 
 返回 fields 中与本行当前值不同的子集（幂等：值未变则跳过，计 0）。
 
-定义行：`417`
+定义行：`503`
 
 ### `_inherited_solar_system`
 
@@ -180,4 +187,4 @@ def _inherited_solar_system(mother: dict) -> int | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`431`
+定义行：`517`

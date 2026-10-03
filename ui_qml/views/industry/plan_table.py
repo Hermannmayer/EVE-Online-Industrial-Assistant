@@ -319,32 +319,11 @@ class PlanTable(QObject):
             char_name = updated.get("char_name", "").strip()
             char_config = resolve_char_config(char_name=char_name) or {}
             metrics = get_container().scoring_service().calculate_plan_metrics(plan, char_config)
-            # 编辑母项：同组有更深子项时，材料成本立即改按子项制造价（不再依赖后续批量重算，
-            # 避免瞬时显示市场价）
-            from services.plan_metrics import adjust_mother_metrics, mother_subitem_cost_map
-
-            gid = plan.get("group_id") or plan.get("group_number")
-            if gid:
-                from services.industry_dialog_queries import get_subitem_plans
-
-                subs = get_subitem_plans(
-                    get_container().db, gid, int(plan.get("child_level") or plan.get("sub_level") or 0)
-                )
-                if subs:
-                    base: dict[int, tuple[dict, dict]] = {}
-                    for s in subs:
-                        s["group_id"] = s.get("group_number", 0)
-                        s["child_level"] = s.get("sub_level", 0)
-                        sc = resolve_char_config(char_name=s.get("char_name") or "") or {}
-                        base[s["id"]] = (s, get_container().scoring_service().calculate_plan_metrics(s, sc))
-                    sub_cost_map = mother_subitem_cost_map(base, plan)
-                    if sub_cost_map:
-                        total_mult = max(int(plan.get("runs", 1)), 1) * max(int(plan.get("parallels", 1)), 1)
-                        adj_mat, adj_profit, adj_margin, _ = adjust_mother_metrics(metrics, sub_cost_map, total_mult)
-                        metrics = dict(metrics)
-                        metrics["material_cost"] = adj_mat
-                        metrics["profit"] = adj_profit
-                        metrics["margin"] = adj_margin
+            # ⚠️ 这里**不**把母项材料成本换成同组子项的自制制造价：`adjust_mother_metrics`
+            # 产出的是**个人（自制/库存）口径**，而「成本/利润/利润率」三列按**市场口径**
+            # （用户 2026-10-03 拍板）。批量重算同口径：`industry_workers._apply_mother_subitem_cost`
+            # 只取 overrides 喂「个人利润率%」列，不写回 material_cost/profit/margin。
+            # 个人口径的补充由随后的批量重算（`plan_updated` → `load_plans`）落列，此处不越权。
             plan.update(metrics)
 
             self._rebuild_subitems()
@@ -513,7 +492,12 @@ class PlanTable(QObject):
         allow_bp_short = False
         shortfalls: list[dict] = []
         if mat_hangar_id:
-            shortfalls = [r for r in plan_execution.check_materials(plan, mat_hangar_id) if (r.get("missing") or 0) > 0]
+            all_plans = self._model._plans if self._model is not None else None
+            shortfalls = [
+                r
+                for r in plan_execution.check_materials(plan, mat_hangar_id, all_plans=all_plans)
+                if (r.get("missing") or 0) > 0
+            ]
         bp_short = plan_execution.binding_shortfall(plan["id"])
 
         reasons: list[str] = []
@@ -663,27 +647,6 @@ class PlanTable(QObject):
 
             log.exception("自动重放子项失败")
 
-    def _recalc_children(self, rows: list[int]) -> None:
-        """手动兜底：按母项当前需求全量重放子项（数量/并行/ME 联动）。"""
-        if self._model is None or not rows:
-            return
-        from services.plan_rebuild import rebuild_children
-        from ui_qml.bridge.message_dialog import FMessageDialog
-
-        if not FMessageDialog.question(
-            self,
-            "重算子项",
-            "按所有母项当前的需求（数量/并行/ME）重新生成子项产线？\n已投产中的子项流程不会被改动。",
-        ):
-            return
-        res = rebuild_children(create=True, prune=True)
-        FMessageDialog.information(
-            self,
-            "完成",
-            f"重算完成：新增 {res['created']}、更新 {res['updated']}、清理 {res['deleted']} 条子项",
-        )
-        self.plan_updated.emit()
-
     def _delete_rows(self, rows: list[int]) -> None:
         """删除产线：删本行 + 连带的子项，解除蓝图绑定，**不动库存材料**。
 
@@ -691,7 +654,7 @@ class PlanTable(QObject):
           （需求式收缩，跨母项共享件不会被连坐）。
         - 删子项：沿 `component_parent_type_id` 一并删除**同组子孙**（子项自己的下级产线
           也是它的「连带子项」，不收就会留下一串没人引用的孤儿行挂在表里）。
-        - 删子项后不会因后续编辑母项/重放被自动加回，仅显式「母项拆解/重算子项」才会重新生成。
+        - 删子项后不会因后续编辑母项/重放被自动加回，仅显式「母项拆解」才会重新生成。
         - **不动库存**：不返还已扣减材料、不改任何盘点行（领域模型见 AUDIT-20260801.md：
           与游戏「取消产线只退蓝图」一致）。要退材料请走「撤销启动（返还材料）」；
           在产计划被删后材料不会退回，所以删前必须让用户知情。

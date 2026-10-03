@@ -33,26 +33,42 @@
   「没有勾选」「N 行未匹配」「无物品」「无价格数据」。前两条**尤其不能**改成桥的
   `error` 通道 —— 原版是弹完继续 `accept()`／`return`，走 error 通道会在
   「确定导入」关窗后无人看见。
+- **导入链路的耗时活全部移到后台线程**（2026-10-03，用户报「库存修正导致整个软件卡死」）：
+  解析剪贴板 / 整库快照 / 整仓卖价 / 落库 / 导入后快照与差异对比走
+  `ui_qml/workers/inventory_import_worker.py` 的两个 QThread（`_wait_worker` 用嵌套
+  `QEventLoop` 等结果、忙碌光标做非阻塞反馈）。主线程只弹预览/汇总两个对话框；
+  `run_clipboard_import` 的**返回时机**与改动前一致（两个现成调用方都在它返回后刷新列表，
+  且它们不在本任务的写范围里）。
+- **预览默认只显示有变更的行**（2026-10-03，用户报「几百行里看不出哪几行变了」）：
+  `_all_rows` 是提交真源（勾选/改值/汇总/`get_import_data`/`get_sync_targets` 全按它），
+  `_rows` 只是**可见视图**（`setOnlyChanged` + `_row_changed`）；未匹配行与跨机库移动行
+  恒显示。行号类操作（勾选/改值/右键/删除/搜索匹配）走可见下标，靠行上的 `itemIndex`
+  映射回 `_items`。
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Property, Qt, Signal, Slot
+from PySide6.QtCore import Property, QEventLoop, Qt, Signal, Slot
 from PySide6.QtWidgets import QApplication, QDialog
 
 from core.constants import TRADE_HUB_IDS
 from core.container import get_container
 from core.logger import log
-from services.inventory_clipboard_service import parse_clipboard, parse_purchase_clipboard
-from services.inventory_import import compute_import_diff, compute_row_delta
+from services.inventory_clipboard_service import parse_purchase_clipboard
+from services.inventory_import import compute_missing_in_hangar, compute_row_delta
 from services.inventory_manager import apply_inventory_import, get_hangars, get_items
 from services.user_settings import get_material_price_mult, set_material_price_mult
 from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.bridge.summary_dialog import SummaryTableBridge, SummaryTableQmlDialog, cell
 from ui_qml.dialog_host import DialogBridge, QmlDialog
 from ui_qml.icon_cache import icon_url as _png_url
+from ui_qml.workers.inventory_import_worker import (
+    InventoryImportApplyWorker,
+    InventoryImportFetchWorker,
+    item_display_name,
+)
 
 __all__ = [
     "HangarPickBridge",
@@ -61,6 +77,7 @@ __all__ = [
     "ImportChangeQmlDialog",
     "ImportReviewBridge",
     "ImportReviewQmlDialog",
+    "missing_row",
     "review_row",
     "run_clipboard_import",
     "run_purchase_import",
@@ -69,6 +86,14 @@ __all__ = [
 _REVIEW_QML = "dialogs/ImportReviewDialog.qml"
 _CHANGE_QML = "dialogs/ImportChangeDialog.qml"
 _HANGAR_PICK_QML = "dialogs/HangarPickDialog.qml"
+
+#: 忙碌光标嵌套深度（`_set_busy` 用引用计数，避免内层提前复位）
+_BUSY_DEPTH = 0
+#: 正在跑的导入 worker —— **强引用保活**（调用方传的 `parent` 可能是 `None`，
+#: 见 `inventory_bridge.runClipboardImport`；局部 QThread 被 GC 会 abort 进程）
+_ACTIVE_WORKERS: set[Any] = set()
+#: 导入进行中标记 —— 这条路径会写用户库存，嵌套事件循环期间再被触发就直接挡掉
+_IMPORT_IN_FLIGHT = False
 
 #: 贸易中心（顺序与 Widgets 版的 combo 一致）
 _HUB_ORDER = ["Jita", "Amarr", "Dodixie", "Rens"]
@@ -160,6 +185,32 @@ def review_row(
         "checked": True,
         "checkable": True,
         "unmatched": False,
+    }
+
+
+def missing_row(type_id: int, name: str, current: int, sell_price: float = 0.0) -> dict:
+    """全量同步的**待清零行**（库里有、剪贴板没有）→ QML 行字典（纯函数，便于单测）。
+
+    形状与 `review_row` 完全一致，只多一个 `missing` 标记（供 `deleteRows` 区分合成行、
+    供统计文案计数）。`final` 固定初值 0 = 清零（`set_item_quantity` 见 0 就删行），
+    `checked=True` = 默认勾选、用户可取消；用户也可以把「变化」列改成 N 表示「保留/设为 N」。
+    """
+    current = int(current)
+    return {
+        "typeId": int(type_id),
+        "name": str(name or f"ID:{type_id}"),
+        "iconUrl": _png_url(int(type_id)),
+        "current": current,
+        "currentText": f"{current:,}",
+        "delta": -current,
+        "deltaText": f"{-current:,}",
+        "deltaToken": _delta_token(-current),
+        "final": 0,
+        "price": float(sell_price or 0.0),
+        "checked": True,
+        "checkable": True,
+        "unmatched": False,
+        "missing": True,
     }
 
 
@@ -332,6 +383,7 @@ class ImportReviewBridge(DialogBridge):
         *,
         default_mode: str = "full",
         filtered_note: int = 0,
+        prefetched: dict | None = None,
     ) -> None:
         super().__init__()
         self.set_title(f"导入预览 → {hangar_name}")
@@ -342,15 +394,29 @@ class ImportReviewBridge(DialogBridge):
         self._hub_index = 0
         self._sell_prices: dict[int, float] = {}
         self._existing_qty: dict[int, int] = {}
+        #: 全量模式：目标机库的**整库**快照 `{type_id: 数量}` 与显示名 —— 反向差集要用
+        #: （「库里有、剪贴板没有」= 待清零项），见 `_fetch_existing_inventory`
+        self._hangar_qty: dict[int, int] = {}
+        self._hangar_names: dict[int, str] = {}
+        #: 后台线程预取的数据（`inventory_import_worker.build_import_preview`）——
+        #: 给了就不再在主线程查库/取价，见 `_fetch_existing_inventory` / `_fetch_sell_prices`
+        self._prefetched: dict | None = dict(prefetched) if prefetched else None
         self._source_hangar: dict[int, int] = {}
         self._mode = default_mode if default_mode in {value for value, _ in _MODES} else "full"
         self._discount = float(get_material_price_mult())
+        #: **提交真源**：剪贴板行 + （full 模式）待清零合成行，与过滤无关。
+        #: `get_import_data` / `get_sync_targets` / 汇总 / 全选 / 过滤无变化 都走它。
+        self._all_rows: list[dict] = []
+        #: **可见视图**：`_all_rows` 过滤后的子集（同一批 dict 对象，勾选/改值双向可见）。
+        #: 行号类操作（勾选、改值、右键、删除）都按这个列表的下标。
         self._rows: list[dict] = []
+        #: 「只看有变更的行」开关，默认开（用户报的「一屏几百行看不出哪几行变了」）
+        self._only_changed = True
         self._summary = ""
         self._menu_rows: list[int] = []
         self._check_revision = 0
 
-        # 预加载数据（顺序同原 `__init__`）
+        # 预加载数据（顺序同原 `__init__`）。有预取数据时这两步都是内存读，不碰 DB。
         self._fetch_existing_inventory()
         self._fetch_sell_prices()
         self._populate_rows()
@@ -375,6 +441,11 @@ class ImportReviewBridge(DialogBridge):
     #: 重读 `rows`（普通 var 列表，重读 = 行区整体重建），见类 docstring
     summaryText = Property(str, lambda self: self._summary, notify=statusChanged)
 
+    @Property(bool, notify=stateChanged)
+    def onlyChanged(self) -> bool:
+        """「只看有变更的行」开关（默认 True）—— 只影响显示，见 `setOnlyChanged`。"""
+        return self._only_changed
+
     @Property(int, notify=stateChanged)
     def modeIndex(self) -> int:
         return next((i for i, (value, _label) in enumerate(_MODES) if value == self._mode), 0)
@@ -396,10 +467,15 @@ class ImportReviewBridge(DialogBridge):
 
     @Slot(int)
     def setModeIndex(self, index: int) -> None:
-        """导入模式切换：整表重算（原 `_on_mode_changed`）。"""
+        """导入模式切换：整表重算（原 `_on_mode_changed`）。
+
+        切到 full 要重取**整库**快照（反向差集用），切回 incremental 只取剪贴板涉及的
+        物品 —— 所以重取放在重算之前，而不是只在 `__init__` 里取一次。
+        """
         if not 0 <= index < len(_MODES):
             return
         self._mode = _MODES[index][0]
+        self._fetch_existing_inventory()
         self._populate_rows()
 
     @Slot(int)
@@ -411,7 +487,7 @@ class ImportReviewBridge(DialogBridge):
         self._region_id = TRADE_HUB_IDS.get(_HUB_ORDER[index], TRADE_HUB_IDS["Jita"])
         self._sell_prices = {}
         self._fetch_sell_prices()
-        for row in self._rows:
+        for row in self._all_rows:
             type_id = row["typeId"]
             if type_id:
                 row["price"] = float(self._sell_prices.get(type_id, 0.0))
@@ -422,6 +498,37 @@ class ImportReviewBridge(DialogBridge):
     def setDiscount(self, value: float) -> None:
         """材料倍率（与生产规划页工具栏同一个设置，确认时写回）。"""
         self._discount = float(value)
+
+    @Slot(bool)
+    def setOnlyChanged(self, checked: bool) -> None:
+        """「只看有变更的行」开关：**只换可见视图**，不动 `_all_rows`。
+
+        勾选态/手改的数量都挂在同一批 row dict 上，所以隐藏/显示来回切不会丢失用户取舍；
+        提交内容（`get_import_data` / `get_sync_targets`）与汇总口径也一律按 `_all_rows`，
+        不会因为过滤而少提交或多报。
+        """
+        value = bool(checked)
+        if value == self._only_changed:
+            return
+        self._only_changed = value
+        self._rows = [r for r in self._all_rows if self._row_changed(r)] if value else list(self._all_rows)
+        self._update_summary()
+        self.stateChanged.emit()
+
+    def _row_changed(self, row: dict) -> bool:
+        """这一行本次导入会不会改变库存（「只看有变更的」唯一判据）。
+
+        - 待清零合成行（`missing`，「库里有、剪贴板没有」）/ **未匹配**行 / **跨机库移动**行
+          一律算「要显示」—— 前两类是本次导入的真实变更，未匹配与移动行必须让用户看见
+          （认不出的行被藏起来最危险）；
+        - `full`：最终数量 ≠ 机库现值（`final` 由剪贴板数量或用户手改而来）；
+        - `incremental`：增量 ≠ 0（只增不减，qty>0 才有变更）。
+        """
+        if row.get("missing") or not row["typeId"] or row["typeId"] in self._source_hangar:
+            return True
+        if self._mode == "full":
+            return int(row["final"]) != int(row["current"])
+        return int(row["delta"]) != 0
 
     @Slot(int, bool)
     def setChecked(self, row: int, checked: bool) -> None:
@@ -440,8 +547,12 @@ class ImportReviewBridge(DialogBridge):
 
     @Slot(bool)
     def setAllChecked(self, checked: bool) -> None:
-        """全选 / 取消全选（未匹配行的勾选框是禁用的，跳过）—— 批量同样只打心跳。"""
-        for row in self._rows:
+        """全选 / 取消全选（未匹配行的勾选框是禁用的，跳过）—— 批量同样只打心跳。
+
+        作用于**全部行**（含被「只看有变更的」藏起来的那些）：全选是提交语义，
+        不能因为当前视图过滤而少勾。
+        """
+        for row in self._all_rows:
             if row["checkable"]:
                 row["checked"] = bool(checked)
         self._sync_checks()
@@ -576,11 +687,24 @@ class ImportReviewBridge(DialogBridge):
 
     @Slot()
     def deleteRows(self) -> None:
-        """删除右键选中的行（表与数据同步删，倒序以免下标位移）。"""
-        for row in sorted(set(self._menu_rows), reverse=True):
-            if 0 <= row < len(self._rows):
-                del self._rows[row]
-                del self._items[row]
+        """删除右键选中的行（表与数据同步删，倒序以免下标位移）。
+
+        **合成行（`missing=True`）不对应 `_items` 里的行** —— 它们排在剪贴板行之后，
+        按下标一起删会删错剪贴板行（甚至越界），所以只从 `_items` 删非合成行。
+        """
+        for visible_row in sorted(set(self._menu_rows), reverse=True):
+            if not 0 <= visible_row < len(self._rows):
+                continue
+            target = self._rows[visible_row]
+            # 可见下标可能被「只看有变更的」搬过 → 只能用行上记的 `itemIndex` 找 `_items`
+            item_index = target.get("itemIndex")
+            if item_index is not None and 0 <= item_index < len(self._items):
+                del self._items[item_index]
+                for row in self._all_rows:  # 后面的源下标整体左移
+                    if row.get("itemIndex") is not None and row["itemIndex"] > item_index:
+                        row["itemIndex"] -= 1
+            self._all_rows = [r for r in self._all_rows if r is not target]
+            self._rows = [r for r in self._rows if r is not target]
         self._menu_rows = []
         self._update_summary()
         self.stateChanged.emit()
@@ -596,7 +720,7 @@ class ImportReviewBridge(DialogBridge):
         `rows`、把整张表（含右键点中的那一行）重建一遍，与 `setChecked` 是同一个缺陷。
         """
         filtered = 0
-        for row in self._rows:
+        for row in self._all_rows:  # 全部行：藏起来的「无变化」行也要一并取消勾选
             if row["delta"] != 0:
                 continue
             if row["checkable"] and row["checked"]:
@@ -631,9 +755,11 @@ class ImportReviewBridge(DialogBridge):
         sel = dlg.selected_item()
         if not sel:
             return
-        if not 0 <= row < len(self._items) or self._items[row].get("type_id"):
+        # 可见下标 ≠ `_items` 下标（「只看有变更的」会过滤）→ 用行上记的 `itemIndex`
+        item_index = self._rows[row].get("itemIndex") if 0 <= row < len(self._rows) else None
+        if item_index is None or not 0 <= item_index < len(self._items) or self._items[item_index].get("type_id"):
             return
-        self._items[row].update(
+        self._items[item_index].update(
             {
                 "type_id": sel["type_id"],
                 "zh_name": sel["zh_name"],
@@ -641,7 +767,8 @@ class ImportReviewBridge(DialogBridge):
                 "status": "matched",
             }
         )
-        self._fetch_existing_inventory()
+        # 搜索匹配引入了新 type_id（预取快照里没有）→ 强制查库
+        self._fetch_existing_inventory(prefer_prefetch=False)
         self._fetch_sell_prices()
         self._populate_rows()
 
@@ -665,7 +792,8 @@ class ImportReviewBridge(DialogBridge):
             added += 1
 
         if added:
-            self._fetch_existing_inventory()
+            # 移入的是**别的机库**的物品（预取快照里没有）→ 强制查库
+            self._fetch_existing_inventory(prefer_prefetch=False)
             self._fetch_sell_prices()
             self._populate_rows()
 
@@ -673,8 +801,12 @@ class ImportReviewBridge(DialogBridge):
 
     @Slot()
     def accept(self) -> None:
-        """确定导入：先校验（两个消息框），再把倍率写回共享设置。"""
-        checked = [row for row in self._rows if row["checked"]]
+        """确定导入：先校验（两个消息框），再把倍率写回共享设置。
+
+        校验按**全部行**（过滤只影响显示）——「只看有变更的」开着时藏起来的未匹配行
+        同样要提示，不能因为没显示就当作没有。
+        """
+        checked = [row for row in self._all_rows if row["checked"]]
         if not checked:
             FMessageDialog.warning(self.host_widget(), "提示", "没有勾选的物品，无法导入")
             return
@@ -696,9 +828,12 @@ class ImportReviewBridge(DialogBridge):
         return self._mode
 
     def get_import_data(self) -> list[tuple[int, int, float, int | None]]:
-        """最终导入数据 list[(type_id, delta_qty, cost_price, source_hangar_id)]。"""
+        """最终导入数据 list[(type_id, delta_qty, cost_price, source_hangar_id)]。
+
+        **按全部行**取（与是否过滤显示无关）：提交内容不能因为「只看有变更的」而变。
+        """
         result: list[tuple[int, int, float, int | None]] = []
-        for row in self._rows:
+        for row in self._all_rows:
             if not row["checked"] or not row["typeId"]:
                 continue
             type_id = int(row["typeId"])
@@ -706,14 +841,58 @@ class ImportReviewBridge(DialogBridge):
         return result
 
     def get_sync_targets(self) -> dict[int, int]:
-        """全量模式下 {type_id: 目标数量}；跨机库移动行不参与全量 set。"""
+        """全量模式下 {type_id: 目标数量}；跨机库移动行不参与全量 set。**按全部行**取。"""
         targets: dict[int, int] = {}
-        for row in self._rows:
+        for row in self._all_rows:
             type_id = row["typeId"]
             if not row["checked"] or not type_id or type_id in self._source_hangar:
                 continue
             targets[int(type_id)] = int(row["final"])
         return targets
+
+    def get_clear_missing(self) -> dict[int, int]:
+        """全量模式的**反向差集**（已勾选、且用户没改过「变化」列的待清零行）
+        → `{type_id: 该行现有数量}`，喂给 `apply_inventory_import(..., clear_missing=...)`。
+
+        只含勾选行 → 用户取消勾选就等于「这一项不要清零」。默认 `final=0` 即清零删行；
+        用户在「变化」列把它改成 N>0 就表示「设为 N 而不是删」—— 那种行走
+        `get_sync_targets()`（服务端与 `targets` 撞车时会跳过清零，见
+        `apply_inventory_import`），所以这里不再列它。
+        `incremental` 模式没有合成行，恒空（只增不减的语义一字不变）。
+        """
+        return {int(row["typeId"]): int(row["current"]) for row in self._missing_to_clear()}
+
+    def clear_missing_text(self) -> str:
+        """待清零项的确认文案（最多列 10 项）；没有待清零项时返回空串。
+
+        由调用方（`run_clipboard_import`）拿去弹二次确认 —— 删行不可撤销，必须在
+        用户点「确定导入」之后再确认一次，不能静默清库。
+        """
+        checked = self._missing_to_clear()
+        if not checked:
+            return ""
+        lines = [f"  {row['name']}：现有 {int(row['current']):,} → 清零（删行）" for row in checked]
+        detail = "\n".join(lines[:10])
+        if len(lines) > 10:
+            detail += f"\n  …等共 {len(lines)} 项"
+        return (
+            f"以下 {len(checked)} 项在你的机库里、但不在本次剪贴板中。\n"
+            "全量同步以剪贴板为准，会把它们清零（数量归零 = 从机库删除）：\n\n"
+            f"{detail}\n\n"
+            "删除不可撤销。确认继续？\n"
+            "（要保留某一项，请回到预览表取消它的勾选）"
+        )
+
+    def _missing_to_clear(self) -> list[dict]:
+        """已勾选、目标为 0 的待清零行（`get_clear_missing` 与确认文案的唯一口径）。
+
+        按**全部行**取 —— 清零清单与确认文案不能因为视图过滤而漏项。
+        """
+        return [
+            row
+            for row in self._all_rows
+            if row.get("missing") and row["checked"] and row["typeId"] and int(row["final"]) == 0
+        ]
 
     # ── 内部 ──────────────────────────────────────────────────
 
@@ -724,21 +903,52 @@ class ImportReviewBridge(DialogBridge):
         row = self._row(index)
         return bool(row and row["unmatched"])
 
-    def _fetch_existing_inventory(self) -> None:
+    def _fetch_existing_inventory(self, *, prefer_prefetch: bool = True) -> None:
         """查询剪贴板涉及物品在目标机库里的现存量（只取基础字段）。
 
         `get_items` 默认还会算研究成本 / 计划占用 / 价格列，预览一个都不用 —— 走
         `include_derived=False` + `need_ids` 避免打开对话框时白算一整库。
+
+        **全量模式例外**：反向差集要「库里有、剪贴板没有」的整份清单，`need_ids` 恰好会把
+        要清零的行滤掉 —— 所以 full 模式取**整库**（仍走 `include_derived=False`），
+        数量与显示名一并留下。
+
+        **预取优先**：后台线程（`inventory_import_worker.build_import_preview`）已经把整库
+        快照算好了，`prefer_prefetch=True` 时直接用内存里的那份，不在主线程查库。
+        `searchMatch` / `addFromHangar` 会引入**新的** type_id（别的机库/搜索选中），
+        那份快照里没有 → 它们传 `prefer_prefetch=False` 强制查库。
         """
+        prefetched = self._prefetched if prefer_prefetch else None
         try:
             need = {int(it["type_id"]) for it in self._items if it.get("type_id")}
+            if prefetched:
+                self._existing_qty.update({int(k): int(v) for k, v in prefetched["existing_qty"].items()})
+                self._hangar_qty = {int(k): int(v) for k, v in prefetched["existing_qty"].items()}
+                self._hangar_names = {int(k): str(v) for k, v in prefetched["hangar_names"].items()}
+                for tid in need:
+                    self._existing_qty.setdefault(tid, 0)
+                return
+            if self._mode == "full":
+                items = get_items(self._target_hangar_id, include_derived=False)
+                self._hangar_qty = {int(it["type_id"]): int(it["quantity"]) for it in items}
+                self._hangar_names = {int(it["type_id"]): item_display_name(it) for it in items}
+                for tid, qty in self._hangar_qty.items():
+                    self._existing_qty[tid] = qty
+                for tid in need:  # 剪贴板里有、库里没有 → 现存量 0
+                    self._existing_qty.setdefault(tid, 0)
+                return
+            self._hangar_qty = {}
+            self._hangar_names = {}
             for it in get_items(self._target_hangar_id, include_derived=False, need_ids=need):
                 self._existing_qty[it["type_id"]] = it["quantity"]
         except Exception:
             log.exception("获取现有库存失败")
 
     def _fetch_sell_prices(self) -> None:
-        """预加载所有物品在当前贸易中心的卖单价。"""
+        """预加载所有物品在当前贸易中心的卖单价（预取数据优先，见 `_fetch_existing_inventory`）。"""
+        if self._prefetched:
+            self._sell_prices = {int(k): float(v) for k, v in self._prefetched["sell_prices"].items()}
+            return
         type_ids = list({it["type_id"] for it in self._items if it.get("type_id")})
         if not type_ids:
             return
@@ -749,26 +959,48 @@ class ImportReviewBridge(DialogBridge):
 
         原版在这里重建整张表：勾选全部回到 True、手改的数量与价格被市价覆盖。
         `_on_mode_changed` 与「搜索匹配」都依赖这一重置行为，故照做。
+
+        **全量模式**在剪贴板行之后追加「库里有、剪贴板没有」的**待清零行**
+        （`missing_row`，默认勾选）—— 这是本缺陷的修复点：原先这些行既不在 `data`
+        也不在 `targets` 里，于是永远不动、数量原样残留。
         """
         rows: list[dict] = []
-        for item in self._items:
+        for index, item in enumerate(self._items):
             # 未匹配行的 type_id 是 None —— 归一到 0 只为了查表（`existing_qty` / `source_hangar`
             # 里不会有 0 号物品），行的分支由 `review_row` 按 type_id 真假决定
             tid = int(item["type_id"]) if item.get("type_id") else 0
             # 跨机库移动行始终按增量语义（不参与全量 set）；其余按当前导入模式
             row_mode = "incremental" if tid in self._source_hangar else self._mode
-            rows.append(
-                review_row(
-                    item,
-                    current=self._existing_qty.get(tid, 0),
-                    sell_price=self._sell_prices.get(tid, 0.0),
-                    mode=row_mode,
-                    source_hangar_id=self._source_hangar.get(tid),
-                )
+            row = review_row(
+                item,
+                current=self._existing_qty.get(tid, 0),
+                sell_price=self._sell_prices.get(tid, 0.0),
+                mode=row_mode,
+                source_hangar_id=self._source_hangar.get(tid),
             )
-        self._rows = rows
+            # 行号类操作（右键搜索匹配 / 删除）要能找回 `_items` 里的源行 ——
+            # 「只看有变更的」开着时可见下标 ≠ `_items` 下标，不能再按下标硬对。
+            row["itemIndex"] = index
+            rows.append(row)
+        if self._mode == "full":
+            clipboard_ids = {int(it["type_id"]) for it in self._items if it.get("type_id")}
+            for tid, qty in compute_missing_in_hangar(self._hangar_qty, clipboard_ids).items():
+                rows.append(
+                    missing_row(
+                        tid,
+                        self._hangar_names.get(tid, f"ID:{tid}"),
+                        qty,
+                        self._sell_prices.get(tid, 0.0),
+                    )
+                )
+        self._all_rows = rows
+        self._rebuild_visible_rows()
         self._update_summary()
         self.stateChanged.emit()
+
+    def _rebuild_visible_rows(self) -> None:
+        """按开关重算可见视图（`_only_changed` 关 → 全部行；开 → 只留有变更的）。"""
+        self._rows = [r for r in self._all_rows if self._row_changed(r)] if self._only_changed else list(self._all_rows)
 
     def _update_summary(self) -> None:
         """统计行（原 `_update_summary`，含「已过滤 N 行蓝图」前缀）。
@@ -779,16 +1011,24 @@ class ImportReviewBridge(DialogBridge):
         checked = 0
         total_delta = 0
         total_value = 0.0
-        for row in self._rows:
+        for row in self._all_rows:
             if not row["checked"]:
                 continue
             checked += 1
             total_delta += int(row["delta"])
             total_value += float(row["price"]) * int(row["delta"])
         text = (
-            f"已勾选 {checked} 项 / 总计 {len(self._rows)} 项 / "
+            f"已勾选 {checked} 项 / 总计 {len(self._all_rows)} 项 / "
             f"总增减 {total_delta:,} / 预估成本 {total_value:,.0f} ISK"
         )
+        if self._only_changed:
+            hidden = len(self._all_rows) - len(self._rows)
+            if hidden:
+                text += f"  ｜ 已隐藏 {hidden} 行无变化（取消勾选「只看有变更的行」可核对）"
+        if self._mode == "full":
+            missing = sum(1 for row in self._all_rows if row.get("missing"))
+            if missing:
+                text += f"  ｜ 全量同步：库里有 {missing} 项不在剪贴板中，勾选后将清零（默认勾选，可取消）"
         if self._filtered_note:
             text = f"[已过滤 {self._filtered_note} 行蓝图] {text}"
         self._summary = text
@@ -811,6 +1051,7 @@ class ImportReviewQmlDialog(QmlDialog):
         *,
         default_mode: str = "full",
         filtered_note: int = 0,
+        prefetched: dict | None = None,
     ) -> None:
         bridge = ImportReviewBridge(
             items,
@@ -818,6 +1059,7 @@ class ImportReviewQmlDialog(QmlDialog):
             target_hangar_id,
             default_mode=default_mode,
             filtered_note=filtered_note,
+            prefetched=prefetched,
         )
         super().__init__(_REVIEW_QML, bridge, parent=parent, size=(900, 560))
         # 桥的 `dialog` 必须在 `super().__init__()` **之后**才写：那之前 QDialog 的
@@ -832,6 +1074,14 @@ class ImportReviewQmlDialog(QmlDialog):
 
     def get_sync_targets(self) -> dict[int, int]:
         return self._review_bridge.get_sync_targets()
+
+    def get_clear_missing(self) -> dict[int, int]:
+        """全量模式下「库里有、剪贴板没有」的勾选项 → {type_id: 目标数量（0=清零）}。"""
+        return self._review_bridge.get_clear_missing()
+
+    def clear_missing_text(self) -> str:
+        """待清零项的确认文案；无待清零项时为空串。"""
+        return self._review_bridge.clear_missing_text()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -878,9 +1128,60 @@ class ImportChangeQmlDialog(SummaryTableQmlDialog):
 # ══════════════════════════════════════════════════════════════
 
 
-def _item_display_name(item: dict) -> str:
-    """统一显示名：display_name（terminology 覆盖优先）→ zh → en → str(type_id)。"""
-    return str(item.get("display_name") or item.get("zh_name") or item.get("en_name") or item.get("type_id", ""))
+def _set_busy(on: bool) -> None:
+    """忙碌光标（非阻塞反馈）。
+
+    解析/取数/落库都在后台线程跑，主线程只等结果 —— 光标是「正在算」的可见信号，
+    不弹模态框、不用 `processEvents()` 硬撑。用引用计数避免嵌套调用提前复位。
+    """
+    global _BUSY_DEPTH
+    if on:
+        _BUSY_DEPTH += 1
+        if _BUSY_DEPTH == 1:
+            QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
+        return
+    _BUSY_DEPTH = max(_BUSY_DEPTH - 1, 0)
+    if _BUSY_DEPTH == 0:
+        QApplication.restoreOverrideCursor()
+
+
+def _wait_worker(worker: InventoryImportFetchWorker | InventoryImportApplyWorker, parent: Any, what: str) -> Any:
+    """起线程 + 嵌套事件循环等它结束，返回结果（`None` = 失败，已弹提示）。
+
+    **不是 `processEvents()` 硬撑**：`QEventLoop.exec()` 期间 UI 照常重绘、定时器照常跑，
+    只是本函数要到 worker 结束才返回 —— 调用方（`inventory_bridge` / `procurement_tab`）
+    依赖 `run_clipboard_import` 同步返回后刷新列表，所以保持返回时机不变。
+    `_ACTIVE_WORKERS` 是强引用保活（调用方传的 `parent` 可能是 `None`，见
+    `inventory_bridge.runClipboardImport`）。
+    """
+    loop = QEventLoop()
+    result: dict[str, Any] = {}
+
+    def _done(payload: dict) -> None:
+        result["payload"] = payload
+        loop.quit()
+
+    def _failed(message: str) -> None:
+        result["error"] = message
+        loop.quit()
+
+    worker.finished_signal.connect(_done)
+    worker.error_signal.connect(_failed)
+    worker.finished.connect(loop.quit)  # worker 线程异常退出兜底，别把主线程挂死
+    _ACTIVE_WORKERS.add(worker)
+    try:
+        worker.start()
+        loop.exec()
+    finally:
+        _ACTIVE_WORKERS.discard(worker)
+        worker.wait(5000)
+    if "error" in result:
+        FMessageDialog.warning(parent, "导入失败", f"{what}失败：{result['error']}\n（详见日志，库存未被修改）")
+        return None
+    if "payload" not in result:
+        FMessageDialog.warning(parent, "导入失败", f"{what}未完成（后台线程异常退出），库存未被修改")
+        return None
+    return result["payload"]
 
 
 def run_clipboard_import(
@@ -890,16 +1191,56 @@ def run_clipboard_import(
     *,
     mode: str = "incremental",
 ) -> None:
-    """读剪贴板 → 解析 → 导入预览 → 应用 → 变动汇总。仓库/采购共用入口。
+    """读剪贴板 → **后台**解析/取数 → 导入预览 → **后台**落库/算差异 → 变动汇总。
 
-    与 Widgets 版同名函数逐行等价，差别只有对话框实现（QML 版宿主）。剪贴板为空 /
-    无有效行 / 用户取消 → 静默返回；蓝图行被过滤（材料仓库只导入材料），全部被过滤时提示一次。
+    仓库/采购共用入口。剪贴板为空 / 无有效行 / 用户取消 → 静默返回；蓝图行被过滤
+    （材料仓库只导入材料），全部被过滤时提示一次。
+
+    **全量同步是以剪贴板为准的双向比对**：预览行里除了剪贴板物品，还追加「库里有、
+    剪贴板没有」的待清零行（默认勾选、可取消），并做一次二次确认（`default_yes=False`）
+    才落库 —— 单向 set 会让上一份清单里的物品永久残留（用户报的「库里没有那 6 个电池」）。
+
+    **耗时活全在 worker 线程**（`ui_qml/workers/inventory_import_worker.py`）：解析剪贴板、
+    整库快照、整仓卖价、落库、导入后快照与差异对比。主线程只弹两个对话框 + 忙碌光标 ——
+    用户报的「库存修正导致整个软件卡死」就是这么消掉的。
+
+    **重入挡掉**：本函数会写用户库存，而等待 worker 时用的是嵌套事件循环（理论上期间可被
+    再次触发）→ 已在导入中就直接提示并返回，绝不套第二个事件循环、更不会写两遍。
     """
-    raw = QApplication.clipboard().text().strip()
+    global _IMPORT_IN_FLIGHT
+    if _IMPORT_IN_FLIGHT:
+        FMessageDialog.information(parent, "提示", "正在导入库存，请稍候……")
+        return
+    _IMPORT_IN_FLIGHT = True
+    try:
+        _run_clipboard_import(target_hangar_id, hangar_name, parent, mode=mode)
+    finally:
+        _IMPORT_IN_FLIGHT = False
+
+
+def _run_clipboard_import(
+    target_hangar_id: int,
+    hangar_name: str,
+    parent: Any,
+    *,
+    mode: str,
+) -> None:
+    """`run_clipboard_import` 的实际流程（重入守卫的 `try/finally` 之外，见那边 docstring）。"""
+    clipboard = QApplication.clipboard()
+    raw = clipboard.text().strip() if clipboard is not None else ""
     if not raw:
         FMessageDialog.warning(parent, "提示", "剪贴板为空，请先在游戏中复制物品（Ctrl+C）")
         return
-    parsed, filtered = parse_clipboard(raw)
+
+    _set_busy(True)
+    try:
+        payload = _wait_worker(InventoryImportFetchWorker(raw, target_hangar_id, parent), parent, "解析剪贴板")
+    finally:
+        _set_busy(False)
+    if payload is None:
+        return
+    parsed = payload["parsed"]
+    filtered = payload["filtered"]
     if not parsed:
         if filtered:
             FMessageDialog.information(
@@ -909,30 +1250,52 @@ def run_clipboard_import(
             )
         return
 
-    # 导入前后快照（数量+成本），供差异对比 —— 只取基础字段，见 `_fetch_existing_inventory`
-    before_items = get_items(target_hangar_id, include_derived=False)
-    before = {it["type_id"]: (it["quantity"], it.get("cost_price") or 0) for it in before_items}
-    names_before = {it["type_id"]: _item_display_name(it) for it in before_items}
-
+    # 预览所需的现存量/整库快照/卖价都是 worker 预取的，这里不再查库
     dlg = ImportReviewQmlDialog(
-        parsed, hangar_name, target_hangar_id, parent, default_mode=mode, filtered_note=filtered
+        parsed,
+        hangar_name,
+        target_hangar_id,
+        parent,
+        default_mode=mode,
+        filtered_note=filtered,
+        prefetched=payload,
     )
     if dlg.exec() != QDialog.DialogCode.Accepted:
         return
     data = dlg.get_import_data()
-    if not data:
-        return
     actual_mode = dlg.mode()
+    # 全量同步的反向差集：用户取消勾选的项不进这里；incremental 恒空（只增不减）
+    clear_missing = dlg.get_clear_missing() if actual_mode == "full" else {}
+    if not data and not clear_missing:
+        return
+    if clear_missing and not FMessageDialog.question(
+        parent, "全量同步 — 清零确认", dlg.clear_missing_text(), default_yes=False
+    ):
+        # 删行不可撤销：用户点「否」→ 一行都不写
+        return
     targets = dlg.get_sync_targets() if actual_mode == "full" else None
-    added, moved = apply_inventory_import(target_hangar_id, data, actual_mode, targets)
 
-    after_items = get_items(target_hangar_id, include_derived=False)
-    after = {it["type_id"]: (it["quantity"], it.get("cost_price") or 0) for it in after_items}
-    names_after = {it["type_id"]: _item_display_name(it) for it in after_items}
-    type_ids = list(dict.fromkeys(list(before) + list(after)))
-    names = {**names_before, **names_after}
-    changes = compute_import_diff(before, after, names, type_ids)
-    ImportChangeQmlDialog(changes, added, moved, hangar_name, parent).exec()
+    _set_busy(True)
+    try:
+        result = _wait_worker(
+            InventoryImportApplyWorker(
+                target_hangar_id,
+                data,
+                actual_mode,
+                targets,
+                clear_missing or None,
+                payload["before"],
+                payload["names_before"],
+                parent,
+            ),
+            parent,
+            "写入库存",
+        )
+    finally:
+        _set_busy(False)
+    if result is None:
+        return
+    ImportChangeQmlDialog(result["changes"], result["added"], result["moved"], hangar_name, parent).exec()
 
 
 # ══════════════════════════════════════════════════════════════

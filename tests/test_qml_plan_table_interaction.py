@@ -669,7 +669,7 @@ def test_row_menu_is_grouped_and_dropped_entries_stay_out(table, clicks):
     menu = clicks.wait_open("rowMenu")
     labels = _visible_labels(menu)
 
-    for gone in ("设置蓝图等级...", "查看蓝图原图的NPC卖家", "产线启动小助手"):
+    for gone in ("设置蓝图等级...", "查看蓝图原图的NPC卖家", "产线启动小助手", "重算子项（按母项当前需求）"):
         assert gone not in labels, f"「{gone}」不该再出现在行右键菜单里：{labels}"
 
     assert labels[-1] == "删除产线", f"破坏性操作要单独压到最后：{labels}"
@@ -713,3 +713,88 @@ def test_synthetic_shared_row_menu_only_collapses(table, clicks):
 
     submenu = clicks.menu("smartMenu")
     assert submenu.property("enabled") is False, "合成根下「智能调整」要置灰"
+
+
+# ════════════════════════════════════════════════════════════
+#  子项行的入口收敛：数量只能从「智能调整」改
+# ════════════════════════════════════════════════════════════
+
+#: 子项行右键菜单里的去处提示（QML 里同文案，两处一起改）。
+CHILD_EDIT_HINT = "子项数量请在「智能调整」里改"
+
+#: 母项行 + 它的子项行。`child_level` 是 enrich 注入的层级别名（模型按它判层级）。
+_CHILD_ROW_PLANS = [
+    {"id": 1, "product_name": "母项", "status": "pending", "runs": 1, "parallels": 1},
+    {
+        "id": 2,
+        "product_name": "子项",
+        "status": "pending",
+        "runs": 1,
+        "parallels": 1,
+        "child_level": 1,
+        "group_id": 1,
+        "source_mother_ids": "1",
+    },
+]
+
+
+def _child_row_pane() -> _Pane:
+    pane = _new_pane()
+    pane.set_model(PlanTableModel([dict(p) for p in _CHILD_ROW_PLANS]))
+    pane.resize(900, 640)
+    pane.move(60, 60)
+    pane.show()
+    _spin(400)
+    return pane
+
+
+def test_child_row_menu_hides_edit_and_shows_the_hint(qapp):
+    """子项行不给「编辑生产计划」，改给一条去处提示；母项行一字不动。"""
+    pane = _child_row_pane()
+    try:
+        clicks = _Clicks(pane)
+
+        clicks.click(1)
+        clicks.right_click(1)
+        labels = _visible_labels(clicks.wait_open("rowMenu"))
+        assert "编辑生产计划" not in labels, f"子项行不该有「编辑生产计划」：{labels}"
+        assert CHILD_EDIT_HINT in labels, f"子项行要给「去哪里改」的提示：{labels}"
+        assert "绑定库存蓝图..." in labels, f"只该收掉「编辑生产计划」，其余入口不动：{labels}"
+
+        clicks.menu("rowMenu").close()
+        _spin(150)
+        clicks.click(0)
+        clicks.right_click(0)
+        labels = _visible_labels(clicks.wait_open("rowMenu"))
+        assert "编辑生产计划" in labels, f"母项行必须仍能编辑：{labels}"
+        assert CHILD_EDIT_HINT not in labels, f"母项行不该冒出子项提示：{labels}"
+    finally:
+        pane.dispose()
+        _spin(60)
+
+
+def test_double_click_on_a_child_row_shows_the_hint_instead_of_the_editor(qapp, monkeypatch):
+    """双击子项的非可编辑列：弹提示，**不开**「编辑生产计划」；母项照旧开。"""
+    from ui_qml.bridge import message_dialog
+
+    pane = _child_row_pane()
+    try:
+        edits: list[int] = []
+        monkeypatch.setattr(pane._table, "_edit_plan", lambda row: edits.append(row))
+        hints: list[str] = []
+        monkeypatch.setattr(
+            message_dialog.FMessageDialog,
+            "information",
+            staticmethod(lambda parent, title, text: hints.append(text)),
+        )
+
+        pane.bridge.doubleClick(1)
+        assert edits == [], "子项双击不该开「编辑生产计划」"
+        assert hints and "智能调整" in hints[0], f"要提示去哪里改：{hints}"
+
+        pane.bridge.doubleClick(0)
+        assert edits == [0], "母项双击必须照旧打开编辑对话框"
+        assert len(hints) == 1, "母项双击不该再弹子项提示"
+    finally:
+        pane.dispose()
+        _spin(60)

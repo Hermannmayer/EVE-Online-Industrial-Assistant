@@ -467,6 +467,370 @@ def test_blueprint_status_column_is_batched(bridge, monkeypatch):
 
 
 # ════════════════════════════════════════════════════════════
+#  剪贴板全量同步的预览（回归：库里有、剪贴板没有 → 待清零项）
+# ════════════════════════════════════════════════════════════
+
+
+class _ReviewMarketRepo:
+    """审阅桥的最小市价替身（本组用例不关心价格）。"""
+
+    def get_sell_prices(self, type_ids: list, region_id: int) -> dict[int, float]:
+        return {}
+
+
+@pytest.fixture
+def _review_bridge(qapp, monkeypatch):
+    """目标机库 7 = {34: 1000, 41484: 6}；剪贴板只复制了 34。
+
+    `41484 旗舰级电容器电池 I` 就是用户报的那 6 个残留电池：它必须在预览里
+    以 `final=0`、默认勾选的形式出现，否则「全量同步」就是静默留档。
+    """
+    import ui_qml.bridge.review_bridge as mod
+
+    hangar = [
+        {"type_id": 34, "quantity": 1000, "cost_price": 5.0, "zh_name": "三钛合金"},
+        {"type_id": 41484, "quantity": 6, "cost_price": 2460055.19, "zh_name": "旗舰级电容器电池 I"},
+    ]
+    parsed = [{"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium", "qty": 1000, "status": "matched"}]
+    monkeypatch.setattr(mod, "get_items", lambda hangar_id, **_kw: list(hangar) if hangar_id == 7 else [])
+    monkeypatch.setattr(mod, "get_container", lambda: SimpleNamespace(market_repo=_ReviewMarketRepo()))
+    monkeypatch.setattr(mod, "get_hangars", lambda: [{"id": 7, "name": "通用仓库"}])
+    monkeypatch.setattr(mod, "get_material_price_mult", lambda: 1.0)
+    return mod.ImportReviewBridge(parsed, "通用仓库", 7, default_mode="full")
+
+
+def test_full_sync_preview_lists_rows_missing_from_clipboard(_review_bridge):
+    """回归：全量同步原先只对剪贴板里出现过的物品做 set，「库里有、剪贴板没有」整类不动。
+
+    现在这类物品必须在预览里可见（名称 + 现有数量 + 目标 0）、默认勾选、可取消，
+    并在 `get_clear_missing()` 里作为待清零项报给落库层。默认「只看有变更的行」时
+    剪贴板那行（34：1000 = 库内 1000，无变化）被隐藏，待清零行仍在。
+    """
+    b = _review_bridge
+    assert [r["typeId"] for r in b.rows] == [41484], "待清零项必须可见（不能静默留档）"
+    zero = b.rows[0]
+    assert zero["missing"] is True
+    assert (zero["typeId"], zero["name"], zero["current"], zero["final"], zero["delta"]) == (
+        41484,
+        "旗舰级电容器电池 I",
+        6,
+        0,
+        -6,
+    )
+    assert zero["checked"] is True, "默认勾选（用户可取消）"
+    assert zero["checkable"] is True
+    assert b.get_clear_missing() == {41484: 6}, "待清零项的值 = 该行现有数量"
+    assert "旗舰级电容器电池 I" in b.clear_missing_text()
+    assert "现有 6" in b.clear_missing_text()
+    assert "1 项" in b.summaryText and "清零" in b.summaryText
+
+    # 关掉「只看有变更的行」→ 无变化的那行也要能核对；过滤不改清零清单
+    b.setOnlyChanged(False)
+    assert [r["typeId"] for r in b.rows] == [34, 41484]
+    assert b.get_clear_missing() == {41484: 6}
+
+
+def test_full_sync_clear_targets_respect_uncheck_and_manual_target(_review_bridge):
+    """取消勾选 → 不清零；把「变化」列改成 3 → 走全量 set（设为 3）而不是删。"""
+    b = _review_bridge
+    b.setOnlyChanged(False)  # 本用例按行号操作 → 先让全部行可见
+    assert [r["typeId"] for r in b.rows] == [34, 41484]
+    b.setChecked(1, False)
+    assert b.get_clear_missing() == {}
+    assert b.clear_missing_text() == ""
+    assert 41484 not in b.get_sync_targets(), "取消勾选的行不许参与全量 set（否则仍会被清零）"
+
+    b.setChecked(1, True)
+    b.setFinal(1, 3)
+    assert b.get_clear_missing() == {}, "用户显式改成 3 → 不再算待清零项"
+    assert b.get_sync_targets() == {34: 1000, 41484: 3}
+
+
+def test_incremental_mode_has_no_clear_targets(qapp, monkeypatch):
+    """incremental 只增不减：预览里根本不出现待清零行。"""
+    import ui_qml.bridge.review_bridge as mod
+
+    monkeypatch.setattr(
+        mod,
+        "get_items",
+        lambda hangar_id, **_kw: [{"type_id": 41484, "quantity": 6, "cost_price": 1.0, "zh_name": "电池"}],
+    )
+    monkeypatch.setattr(mod, "get_container", lambda: SimpleNamespace(market_repo=_ReviewMarketRepo()))
+    monkeypatch.setattr(mod, "get_material_price_mult", lambda: 1.0)
+    bridge = mod.ImportReviewBridge(
+        [{"type_id": 34, "zh_name": "三钛合金", "qty": 5, "status": "matched"}],
+        "通用仓库",
+        7,
+        default_mode="incremental",
+    )
+    assert [r for r in bridge.rows if r.get("missing")] == []
+    assert bridge.get_clear_missing() == {}
+
+
+# ════════════════════════════════════════════════════════════
+#  「只看有变更的行」（回归：几百行里看不出哪几行真的会变）
+# ════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def _review_bridge_mixed(qapp, monkeypatch):
+    """3 行：34 有变化（库 1000 → 剪贴板 700）、35 无变化（库 20 → 剪贴板 20）、1 行未匹配。"""
+    import ui_qml.bridge.review_bridge as mod
+
+    hangar = [
+        {"type_id": 34, "quantity": 1000, "cost_price": 5.0, "zh_name": "三钛合金"},
+        {"type_id": 35, "quantity": 20, "cost_price": 11.0, "zh_name": "类晶体胶矿"},
+    ]
+    parsed = [
+        {"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium", "qty": 700, "status": "matched"},
+        {"type_id": 35, "zh_name": "类晶体胶矿", "en_name": "Pyerite", "qty": 20, "status": "matched"},
+        {"type_id": None, "raw_name": "神秘物品", "zh_name": "", "en_name": "", "qty": 3, "status": "unmatched"},
+    ]
+    prices = {34: 5.5, 35: 12.0}
+    monkeypatch.setattr(mod, "get_items", lambda hangar_id, **_kw: list(hangar) if hangar_id == 7 else [])
+    monkeypatch.setattr(
+        mod,
+        "get_container",
+        lambda: SimpleNamespace(
+            market_repo=SimpleNamespace(get_sell_prices=lambda ids, region: {t: prices[t] for t in ids if t in prices})
+        ),
+    )
+    monkeypatch.setattr(mod, "get_material_price_mult", lambda: 1.0)
+    return mod.ImportReviewBridge(parsed, "通用仓库", 7, default_mode="full")
+
+
+def test_preview_defaults_to_rows_that_change_something(_review_bridge_mixed):
+    """默认「只看有变更的行」：无变化那行隐藏；未匹配行必须照样可见。
+
+    回归背景（用户原话）：「导入预览应该只显示有变更的，而不是全部显示。这样根本看不出来
+    哪些是变更的。」整仓粘贴几百行时，一屏几百行里找不出真正会动的那几行。
+    """
+    b = _review_bridge_mixed
+    assert [r["typeId"] for r in b.rows] == [34, None], "默认视图 = 变化行(34) + 未匹配行"
+    assert len(b._all_rows) == 3, "提交真源仍是全部 3 行"
+    assert "已隐藏 1 行无变化" in b.summaryText
+
+    # 汇总口径不变：总增减 = **全部行**之和（过滤不能让数字变小）
+    all_delta = sum(int(r["delta"]) for r in b._all_rows)
+    assert all_delta == -300, "34: 700-1000=-300；35 与未匹配行都是 0"
+    assert f"总增减 {all_delta:,}" in b.summaryText
+    assert "总计 3 项" in b.summaryText
+
+    # 提交内容不变：仍是全部行的勾选结果（未匹配行没有 type_id，本就不参与提交）
+    assert b.get_import_data() == [(34, -300, 5.5, None), (35, 0, 12.0, None)]
+    assert b.get_sync_targets() == {34: 700, 35: 20}
+
+    # 关掉开关 → 全部 3 行都在（用户要能核对）
+    b.setOnlyChanged(False)
+    assert len(b.rows) == 3
+    assert "已隐藏" not in b.summaryText
+    assert b.get_import_data() == [(34, -300, 5.5, None), (35, 0, 12.0, None)], "切开关不改提交内容"
+
+    # 增量模式：判据是「增量 ≠ 0」；未匹配行仍恒显示
+    b.setModeIndex(0)  # _MODES[0] = incremental
+    assert [r["typeId"] for r in b.rows] == [34, 35, None]
+
+
+# ════════════════════════════════════════════════════════════
+#  库存修正的编排（回归：解析/落库必须离开主线程 + 清零确认门）
+# ════════════════════════════════════════════════════════════
+
+
+def _stub_import_threads(monkeypatch):
+    """打桩「剪贴板 → 解析 → 落库」三段，记录各自跑在哪个线程。
+
+    返回 (记录表, 预览替身类, 汇总替身类)。三个桩都**不**碰真库：
+    `run_clipboard_import` 只该在 worker 线程里调它们（用户报的「卡死」就是它们在主线程跑）。
+    """
+    from PySide6.QtCore import QThread
+    from PySide6.QtWidgets import QDialog
+
+    import ui_qml.bridge.review_bridge as mod
+    import ui_qml.workers.inventory_import_worker as worker_mod
+
+    seen: dict = {"apply_calls": []}
+    calls = {"n": 0}
+
+    def _parse(raw: str):
+        seen["parse_thread"] = QThread.currentThread()
+        return [{"type_id": 34, "zh_name": "三钛合金", "en_name": "Tritanium", "qty": 1000, "status": "matched"}], 0
+
+    def _get_items(hangar_id, **_kw):
+        seen.setdefault("get_items_thread", QThread.currentThread())
+        calls["n"] += 1
+        # 第 1 次 = 导入前快照 1000；之后 = 导入后 1010（模拟落库加了 10）
+        return [
+            {"type_id": 34, "quantity": 1000 + (10 if calls["n"] > 1 else 0), "cost_price": 5.0, "zh_name": "三钛合金"}
+        ]
+
+    def _apply(hangar_id, data, mode, targets, clear_missing=None):
+        seen["apply_thread"] = QThread.currentThread()
+        seen["apply_calls"].append((hangar_id, data, mode, targets, clear_missing))
+        return 1, 0
+
+    monkeypatch.setattr(worker_mod, "parse_clipboard", _parse)
+    monkeypatch.setattr(worker_mod, "get_items", _get_items)
+    monkeypatch.setattr(worker_mod, "apply_inventory_import", _apply)
+    monkeypatch.setattr(
+        worker_mod,
+        "get_container",
+        lambda: SimpleNamespace(market_repo=SimpleNamespace(get_sell_prices=lambda ids, region: {34: 5.5})),
+    )
+
+    class _Clipboard:
+        def text(self) -> str:
+            return "三钛合金\t1000\n"
+
+    monkeypatch.setattr(
+        mod,
+        "QApplication",
+        SimpleNamespace(
+            clipboard=lambda: _Clipboard(),
+            setOverrideCursor=lambda *_: None,
+            restoreOverrideCursor=lambda: None,
+        ),
+    )
+
+    class _Preview:
+        last: dict = {}
+        reenter_hook = None
+        seen_exec = False
+
+        def __init__(self, items, hangar_name, target_hangar_id, parent=None, **kw):
+            _Preview.last = {"items": items, "prefetched": kw.get("prefetched")}
+
+        def exec(self) -> int:
+            if not _Preview.seen_exec and _Preview.reenter_hook is not None:
+                _Preview.seen_exec = True
+                _Preview.reenter_hook()  # 模拟「等待期间又被触发一次导入」
+            return QDialog.DialogCode.Accepted
+
+        def get_import_data(self):
+            return [(34, 0, 5.0, None)]
+
+        def mode(self) -> str:
+            return "full"
+
+        def get_sync_targets(self):
+            return {34: 1000}
+
+        def get_clear_missing(self):
+            return {}
+
+        def clear_missing_text(self) -> str:
+            return ""
+
+    class _Change:
+        last: dict = {}
+
+        def __init__(self, changes, added, moved, hangar_name, parent=None):
+            _Change.last = {"changes": changes, "added": added, "moved": moved}
+
+        def exec(self) -> int:
+            return 0
+
+    class _Box:
+        calls: list = []
+        answer = True
+
+        @staticmethod
+        def warning(_parent, _title, text, *a, **kw):
+            _Box.calls.append(("warning", text))
+
+        @staticmethod
+        def information(_parent, _title, text, *a, **kw):
+            _Box.calls.append(("information", text))
+
+        @staticmethod
+        def question(_parent, _title, text, *a, **kw):
+            _Box.calls.append(("question", text, kw.get("default_yes")))
+            return _Box.answer
+
+    monkeypatch.setattr(mod, "ImportReviewQmlDialog", _Preview)
+    monkeypatch.setattr(mod, "ImportChangeQmlDialog", _Change)
+    monkeypatch.setattr(mod, "FMessageDialog", _Box)
+    return seen, _Preview, _Change, _Box
+
+
+def test_run_clipboard_import_keeps_blocking_work_off_the_main_thread(qapp, monkeypatch):
+    """端到端：解析/取数/落库都在 worker 线程，主线程只弹预览与汇总。
+
+    回归背景：用户报「库存修正会导致整个软件卡死并进行计算」—— 原先
+    `parse_clipboard`（整仓名字匹配，秒级）/ `get_items` / `apply_inventory_import`
+    全在主线程同步跑。这里用桩记录 `QThread.currentThread()` 做断言（不逐信号断言）。
+    """
+    from PySide6.QtCore import QThread
+
+    import ui_qml.bridge.review_bridge as mod
+
+    seen, preview, change, box = _stub_import_threads(monkeypatch)
+    main_thread = QThread.currentThread()
+
+    # 重入守卫：预览 exec() 里再触发一次导入（模拟「嵌套事件循环期间又被点一次」）
+    preview.reenter_hook = lambda: mod.run_clipboard_import(7, "通用仓库", None, mode="full")
+
+    mod.run_clipboard_import(7, "通用仓库", None, mode="full")
+
+    assert seen.get("parse_thread") is not None, "没走到解析"
+    assert seen["parse_thread"] is not main_thread, "解析仍在主线程（会卡界面）"
+    assert seen["get_items_thread"] is not main_thread, "取库存仍在主线程"
+    assert seen.get("apply_thread") is not None, "没走到落库"
+    assert seen["apply_thread"] is not main_thread, "落库仍在主线程"
+    # 主线程只负责弹窗：预览拿到 worker 预取的整库快照（不再自己查库）+ 汇总收到结果
+    assert preview.last["prefetched"]["existing_qty"] == {34: 1000}
+    assert [c[0] for c in seen["apply_calls"]] == [7], "重入的第二次调用不许产生第二轮落库"
+    assert any("正在导入" in text for _kind, text in box.calls), "重入必须给用户可见提示"
+    assert change.last["added"] == 1 and change.last["moved"] == 0
+    assert change.last["changes"], "导入后的变动汇总必须有行"
+
+
+def test_run_clipboard_import_clear_confirm_declined_writes_nothing(qapp, monkeypatch):
+    """清零确认门：点「否」→ 一行都不写；点「是」→ 带着 clear_missing 落库。"""
+    import ui_qml.bridge.review_bridge as mod
+
+    seen, _preview, _change, box = _stub_import_threads(monkeypatch)
+
+    class _PreviewWithClear:
+        """预览替身：报出一个待清零项（库里有 41484=6、剪贴板没有）。"""
+
+        def __init__(self, items, hangar_name, target_hangar_id, parent=None, **kw):
+            pass
+
+        def exec(self):
+            from PySide6.QtWidgets import QDialog
+
+            return QDialog.DialogCode.Accepted
+
+        def get_import_data(self):
+            return [(34, 0, 5.0, None)]
+
+        def mode(self):
+            return "full"
+
+        def get_sync_targets(self):
+            return {34: 1000}
+
+        def get_clear_missing(self):
+            return {41484: 6}
+
+        def clear_missing_text(self):
+            return "以下 1 项在你的机库里、但不在本次剪贴板中"
+
+    monkeypatch.setattr(mod, "ImportReviewQmlDialog", _PreviewWithClear)
+
+    box.answer = False
+    mod.run_clipboard_import(7, "通用仓库", None, mode="full")
+    assert seen["apply_calls"] == [], "确认点「否」时不许写库"
+    assert box.calls[-1][0] == "question"
+    assert box.calls[-1][2] is False, "破坏性操作的确认框必须 default_yes=False"
+
+    box.answer = True
+    mod.run_clipboard_import(7, "通用仓库", None, mode="full")
+    assert len(seen["apply_calls"]) == 1, "确认点「是」才落库"
+    assert seen["apply_calls"][0][4] == {41484: 6}, "待清零项必须原样传给 service"
+
+
+# ════════════════════════════════════════════════════════════
 #  页面层
 # ════════════════════════════════════════════════════════════
 

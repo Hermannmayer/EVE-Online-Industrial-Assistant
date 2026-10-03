@@ -445,6 +445,34 @@ def test_status_column_keeps_pending_when_materials_are_enough():
     assert _cell(model, 0, COL_STATUS, Qt.ItemDataRole.DisplayRole) == "待生产"
 
 
+def test_status_column_shows_waiting_children_for_pending_parent():
+    """母项还有未完成子项 → 状态列显示「等待 N 条子项」，而不是光秃秃的「待生产」。
+
+    子项是母项的前置条件：子项没做完，母项这一行根本轮不到开工。数量由控制器
+    （`plan_start_check.pending_children_count`）算好塞进派生字段，模型只负责显示。
+    """
+    model = PlanQmlModel([_plan(status="pending", material_waiting=2)])
+    assert _cell(model, 0, COL_STATUS, Qt.ItemDataRole.DisplayRole) == "等待 2 条子项"
+
+
+def test_waiting_children_beats_material_short():
+    """两种派生状态同时存在时报「等子项」：母项对自制中间件的需求本就由子线去造，
+    标成「材料不足」会把用户指去采购一个买不到的东西（回归「采购说不用买、产线却说缺料」）。"""
+    model = PlanQmlModel([_plan(status="pending", material_status="short", material_waiting=2)])
+    assert _cell(model, 0, COL_STATUS, Qt.ItemDataRole.DisplayRole) == "等待 2 条子项"
+
+
+def test_material_short_still_shown_without_waiting_children():
+    """没有待完成子项时缺料照报 —— 那才是真该去买的部分。"""
+    model = PlanQmlModel([_plan(status="pending", material_status="short")])
+    assert _cell(model, 0, COL_STATUS, Qt.ItemDataRole.DisplayRole) == "材料不足"
+
+
+def test_status_tooltip_lists_waiting_children():
+    model = PlanQmlModel([_plan(status="pending", material_waiting=2, material_waiting_tip="等待 2 条子项完成")])
+    assert _cell(model, 0, COL_STATUS, Qt.UserRole + 11) == "等待 2 条子项完成"
+
+
 def test_status_column_ignores_stale_short_flag_on_non_pending_rows():
     """标注是派生字段、不落库 —— 行走到 ready 之后残留的标注不该继续显示。
 

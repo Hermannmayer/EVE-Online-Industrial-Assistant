@@ -65,6 +65,7 @@ data/settings.json
 data/window_geometry.json
 data/search_history.json
 data/update_progress.json
+data/trade_cart.json
 services/data/update_progress.json
 
 # 数据库目录（本地运行时数据，不入库，含 WAL 日志）

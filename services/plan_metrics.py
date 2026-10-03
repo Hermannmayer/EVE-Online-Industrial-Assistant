@@ -99,18 +99,30 @@ def calculate_personal_margin(
 def child_manufacturing_cost(plan: dict, metrics: dict) -> float:
     """一条子项产线的总制造价 = 材料成本 + 制造作业费（安装费）。
 
+    **口径**：产出的是**个人（自制/库存）口径**成本 —— 即「自己把这批子项造出来」要花的钱。
+    市场口径不受影响：母项的市场利润率始终由调用方在调整前留存（`market_margin` 列）。
+
+    0 轮产线不产出任何成品，制造价必须是 0：`runs` 或 `parallels` 为**字面 0** 时返回 0.0
+    （不能把 0 轮当成 1 轮去乘安装费，否则母项那一行会被换成凭空的低成本）。
+    只有 `runs`/`parallels` **缺失/None** 时才保留 `max(..., 1)` 兜底。
+
     Args:
         plan: 子项计划 dict（runs/parallels 用于把单轮安装费放大到整条产线）。
         metrics: calculate_plan_metrics() 对子项返回的 dict
                  （须含 material_cost 与 breakdown.installation_fee）。
 
     Returns:
-        子项产线制造价合计（材料 + 作业费）。breakdown 缺失时兜底仅材料成本。
+        子项产线制造价合计（材料 + 作业费）；产线为 0 轮时 0.0。
+        breakdown 缺失时兜底仅材料成本。
     """
     material = metrics.get("material_cost", 0) or 0
     breakdown = metrics.get("breakdown", {}) or {}
     job_per_run = breakdown.get("installation_fee", 0) or 0
-    total_mult = max(int(plan.get("runs", 1)), 1) * max(int(plan.get("parallels", 1)), 1)
+    runs = 1 if plan.get("runs") is None else int(plan["runs"])
+    parallels = 1 if plan.get("parallels") is None else int(plan["parallels"])
+    if runs == 0 or parallels == 0:
+        return 0.0
+    total_mult = max(runs, 1) * max(parallels, 1)
     return round(material + job_per_run * total_mult, 2)
 
 
@@ -120,8 +132,12 @@ def mother_subitem_cost_map(
 ) -> dict[int, float]:
     """母项同组更深子项的自制成本映射 {子项 product_type_id: 制造价合计}。
 
-    子项制造价 = child_manufacturing_cost（材料 + 作业费×runs×parallels）。
+    子项制造价 = child_manufacturing_cost（材料 + 作业费×runs×parallels），
+    是**个人（自制/库存）口径**成本；市场口径不在这里，仍由调用方留存的 `market_margin` 表示。
     供批量重算 / 单条编辑复用：母项材料表中命中子项的行由市场价换成制造价。
+    制造价为 0 的子项（0 轮产线，见 child_manufacturing_cost）**不进映射** ——
+    否则「自制件成本 0 ISK」会被当成真实成本写进母项；剔除后
+    `adjust_mother_metrics` 走 else 分支，该行回退市价。
     非母项（无 group）或同组无更深子项时返回空 dict。
     """
     gid = mother.get("group_id") or mother.get("group_number")
@@ -136,7 +152,16 @@ def mother_subitem_cost_map(
     ]
     if not subs:
         return {}
-    return {int(p["product_type_id"]): child_manufacturing_cost(p, r) for p, r in subs if p.get("product_type_id")}
+    out: dict[int, float] = {}
+    for p, r in subs:
+        pid = p.get("product_type_id")
+        if not pid:
+            continue
+        cost = child_manufacturing_cost(p, r)
+        if cost <= 0:
+            continue
+        out[int(pid)] = cost
+    return out
 
 
 def adjust_mother_metrics(
@@ -146,10 +171,17 @@ def adjust_mother_metrics(
 ) -> tuple[float, float, float, dict[int, float]]:
     """把拆解母项的自制子项按其制造价计入成本，其余材料仍按市场价。
 
+    **口径**：本函数产出的是**个人（自制/库存）口径**的 material_cost / profit / margin
+    （自制子项按自己的制造价，不按买入市价）。**市场口径不在返回值里** ——
+    调用方必须在调用前留存调整前的 `margin`，写进 `market_margin` 列；
+    调整后的 margin 与个人利润率（`calculate_personal_margin`）才是同一口径。
+    本次不改变任何数值语义，只把口径写清楚（列语义由用户拍板）。
+
     Args:
         metrics: calculate_plan_metrics() 对母项返回的 dict
                  （须含 materials/revenue/fees，materials 为每轮量）。
         sub_cost_map: {子项 product_type_id: 子项制造价（整条产线合计，见 child_manufacturing_cost）}。
+                制造价为 0 的子项已被 mother_subitem_cost_map 剔除，这里的行会回退市价。
         total_mult: runs × parallels。
 
     Returns:

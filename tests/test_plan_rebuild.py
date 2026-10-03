@@ -61,6 +61,25 @@ def _seed_third_level(db) -> None:
             conn.execute("INSERT INTO blueprint_materials VALUES (?,?,?,?,?)", mat)
 
 
+def _seed_stock_covered_child_case(db) -> None:
+    """复刻真实数据（plan 343 = 41484）：母项 bp3001 只吃 2010×1，子件每轮产 1 个。
+
+    母项 6 轮 × 3 并行 = 18 个子件 2010；子件机库存 6 个 2010 → **净需求 12**。
+    三种口径：旧写法 `ceil(18/(3×1)) - 6//1 = 0`（界面「3×0」）；毛需求写法无视库存，
+    排 3×6 = 18 个（多产 6）；净口径扣库存 + 并行数寻优（断言在下面的用例里）。
+    """
+    with db.connect("bp") as conn:
+        conn.execute("DELETE FROM blueprint_activities WHERE blueprint_type_id IN (3001, 3010)")
+        conn.execute("DELETE FROM blueprint_products WHERE blueprint_type_id IN (3001, 3010)")
+        conn.execute("DELETE FROM blueprint_materials WHERE blueprint_type_id IN (3001, 3010)")
+        conn.execute("INSERT INTO blueprint_activities VALUES (3001, 'manufacturing', 3600)")
+        conn.execute("INSERT INTO blueprint_activities VALUES (3010, 'manufacturing', 600)")
+        conn.execute("INSERT INTO blueprint_products VALUES (3001, 'manufacturing', 2001, 1)")
+        conn.execute("INSERT INTO blueprint_products VALUES (3010, 'manufacturing', 2010, 1)")
+        conn.execute("INSERT INTO blueprint_materials VALUES (3001, 'manufacturing', 2010, 1, 10)")
+        conn.execute("INSERT INTO blueprint_materials VALUES (3010, 'manufacturing', 1001, 10, 10)")
+
+
 def _container(db):
     return SimpleNamespace(db=db, plan_repo=PlanRepository(db))
 
@@ -129,6 +148,14 @@ def test_shared_child_merged_across_mothers(temp_db, monkeypatch):
     assert sorted(int(x) for x in k["source_mother_ids"].split(",") if x) == sorted([m1, m2])
     assert k["sub_level"] == 1
 
+    # 共享件设 5 条并行线后重放：并行数寻优看的是**全库累加的净需求 30**，
+    # 不是单个母项那 10 / 20 —— 5×6=30 零多余；不会退化成 `1×30`，
+    # 也不会因为「某个母项只要 10」就把并行数压到 1。
+    c.plan_repo.update(k["id"], parallels=5)
+    plan_rebuild.rebuild_children(create=True, prune=True)
+    k2 = _child_rows(temp_db)[0]
+    assert (k2["demand"], k2["parallels"], k2["runs"]) == (30, 5, 6), k2
+
 
 def test_shared_intermediate_expands_to_its_own_children(temp_db, monkeypatch):
     """共享中间件的**下级**（level≥2）必须建出来，且需求不重复累加。
@@ -167,7 +194,7 @@ def test_prune_keeps_grandchildren_when_a_second_mother_shows_up(temp_db, monkey
     """第二个母项加入后重算，不能把已存在的孙项当孤儿删掉。
 
     `prune` 的判据是「type 不在 `nodes` 里」—— 只要传播漏掉一层，孙项就会被当成
-    没人引用而清掉（先单母项拆解出孙项、再加第二个母项、重算子项 → 孙项消失）。
+    没人引用而清掉（先单母项拆解出孙项、再加第二个母项、再拆解一次 → 孙项消失）。
     """
     c = _test_setup(temp_db, monkeypatch)
     _seed_third_level(temp_db)
@@ -251,6 +278,70 @@ def test_remove_last_mother_deletes_child(temp_db, monkeypatch):
     res = plan_rebuild.rebuild_children(create=True, prune=True)
     assert res["created"] == 0 and res["deleted"] == 1
     assert _child_rows(temp_db) == []
+
+
+def test_child_runs_deducts_hangar_stock_by_output_batch(temp_db, monkeypatch):
+    """扣成品库存 + 并行数寻优：既不多造，也不能扣成 `3×0`、更不能退化成 `1×13`。
+
+    母项 6 轮 × 3 并行 = 18 个子件 2010（每轮产 1 个）；机库存 6 个 2010 → **净需求 12**。
+    三种口径的差别就是这条用例守的东西：
+
+    - 旧错法 `ceil(18/(3×1)) - 6//1 = 0` —— 先除再扣，把 6 **件**库存当成 6 个「线·轮」，
+      界面显示「3×0」，把其实缺的 12 个当成不用生产（量纲混用）；
+    - 毛需求法 `ceil(18/(3×1)) = 6` —— 无视库存，实产 3×6 = 18 个，比需求多 6 个；
+    - 净口径 —— 先按整批扣库存（18 − 6 = 12 个净需求），再在既有并行数内寻优：
+      既有 3 条线 → `3×4 = 12` 零多余；既有 5 条线 → `5×3 = 15` 多 3 个，降到 `4×3 = 12`。
+
+    末尾几条直接调 `_finalize_runs` 守边界：`net<=0`、`parallels==1`、
+    以及**净需求不能整除时不许退化成 `1×13`**（容忍度 = 一轮整批产量）。
+    """
+    c = _test_setup(temp_db, monkeypatch)
+    _seed_stock_covered_child_case(temp_db)
+    hangar = inventory_manager.create_hangar("母项制造机库")
+    inventory_manager.add_item(hangar, 2010, 6)
+    _insert_mother(c.plan_repo, 2001, runs=6, parallels=3, group=1, mat_hangar_id=hangar)
+
+    plan_rebuild.rebuild_children(create=True, prune=True)
+    kid = {k["product_type_id"]: k for k in _child_rows(temp_db)}[2010]
+    c.plan_repo.update(kid["id"], parallels=3)  # 用户给子项排了 3 条并行线
+
+    plan_rebuild.rebuild_children()
+
+    kids = {k["product_type_id"]: k for k in _child_rows(temp_db)}
+    assert set(kids) == {2010}, kids
+    assert kids[2010]["demand"] == 18  # 毛需求：1×（6×3）
+    assert (kids[2010]["parallels"], kids[2010]["runs"]) == (3, 4)  # 3×4=12 零多余（不是 6、更不是 0）
+
+    # 用户把子项改成 5 条并行线：5×3=15 会多出 3 个 → 寻优降到 4×3=12（零多余）。
+    # 同轮数（3）比超出件数：P=4 的 0 件赢 P=5 的 3 件；也赢 P=3/r=4 与 P=1/r=12（轮数更多）。
+    c.plan_repo.update(kid["id"], parallels=5)
+    plan_rebuild.rebuild_children()
+
+    kids5 = {k["product_type_id"]: k for k in _child_rows(temp_db)}
+    assert (kids5[2010]["demand"], kids5[2010]["parallels"], kids5[2010]["runs"]) == (18, 4, 3)
+    assert kids5[2010]["parallels"] * kids5[2010]["runs"] == kids5[2010]["demand"] - 6  # 整批产出 = 净需求
+
+    # 需求为 0 的节点必须保持 runs=0：兜成 1 就是凭空排一轮产出
+    zero = {"demand": 0, "output_qty": 1, "parallels": 3}
+    plan_rebuild._finalize_runs(zero, {})
+    assert zero["runs"] == 0
+
+    # 库存 ≥ 需求：covered 夹取生效，runs 兜底为 1（不是负数、也不是 0）；
+    # 并行数是用户的选择，库存全顶住时原样保留（只钉 runs）。
+    covered = {"demand": 10, "output_qty": 1, "parallels": 4, "product_type_id": 2010, "first_mother": {"id": 1}}
+    plan_rebuild._finalize_runs(covered, {1: {2010: 100}})
+    assert (covered["parallels"], covered["runs"]) == (4, 1)
+
+    # parallels == 1（母项默认/单线）：不做寻优、直接按净需求排轮次
+    single = {"demand": 2040, "output_qty": 1, "parallels": 1, "product_type_id": 11554, "first_mother": {"id": 1}}
+    plan_rebuild._finalize_runs(single, {1: {11554: 680}})
+    assert (single["parallels"], single["runs"]) == (1, 1360)
+
+    # net=13（不能整除）、5 条线：容忍度 = 一轮整批 5 件 → 取工期最短的 `5×3 = 15`（多 2 ≤ 5）。
+    # **不是** `1×13`（零多余但 13 轮压在一条线，工期 13 倍）。
+    odd = {"demand": 13, "output_qty": 1, "parallels": 5, "product_type_id": 2010, "first_mother": {"id": 1}}
+    plan_rebuild._finalize_runs(odd, {})
+    assert (odd["parallels"], odd["runs"]) == (5, 3)
 
 
 def test_rebuild_preserves_user_parallels(temp_db, monkeypatch):

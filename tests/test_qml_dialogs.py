@@ -708,8 +708,9 @@ class _DialogFactory:
         for name, value in stubs.items():
             setattr(self, name, value)
 
-    def __call__(self):
-        return self.qml_cls(self.plans)
+    def __call__(self, plans: list[dict] | None = None):
+        """`plans` 省略时用夹具默认数据；给了就换一套（同一套 ref 库/容器桩）。"""
+        return self.qml_cls(plans if plans is not None else self.plans)
 
 
 def _build_parallel_ref(db_manager):
@@ -774,9 +775,51 @@ def mass_parallel_factory(db_manager, monkeypatch, qapp):
     return _DialogFactory(MassParallelQmlDialog, _parallel_plans(), repo=repo)
 
 
-def test_mass_parallel_preview_then_apply(mass_parallel_factory):
-    """算预览 → 出六列表 → 应用只写 parallels（runs 不动）。"""
-    dialog = mass_parallel_factory()
+@pytest.mark.parametrize(
+    ("stock", "expected"),
+    [({1001: 6}, (6, 2, 6, 12)), ({}, (9, 2, 0, 18))],
+    ids=["with_stock", "no_stock"],
+)
+def test_mass_parallel_preview_then_apply(mass_parallel_factory, monkeypatch, stock, expected):
+    """算预览 → 出八列表 → 应用**同时写回 parallels 与 runs**，整批产出 = 净缺口。
+
+    回归背景：旧实现只写 `parallels`，`runs`（= 每条产线的流程数）留着不动 ——
+    把 348 的并行从 1 条提到 7 条于是变成 `7×1360 = 9520`，是净缺口 1360 的 7 倍。
+    `parallels` 的语义是「几条线同时做**同一批**活」（提并行数是为了缩短工期，不是多产出），
+    所以 runs 必须按分配到的并行数重排，两列同批写回。
+
+    两例都覆盖「分配到的并行数是上限、`plan_net_runs` 会按零多余优先再降」：
+    - 机库有 6：净缺口 12，分到 10 条线 → 落地 `6×2 = 12`（不是 `10×…`）；
+    - 无库存：净缺口 18，分到 10 条线 → 落地 `9×2 = 18`。
+
+    在产行（整行只读）另有 `test_mass_parallel_skips_in_production_rows` 单独钉。
+    """
+    from services import inventory_manager
+
+    monkeypatch.setattr(inventory_manager, "get_hangar_stock", lambda hid: dict(stock))
+    plans = [
+        {
+            "id": 10,
+            "product_type_id": 2001,
+            "sub_level": 0,
+            "runs": 1,
+            "parallels": 1,
+            "me_level": 0,
+            "mat_hangar_id": 1,
+        },
+        {
+            "id": 11,
+            "product_type_id": 1001,
+            "sub_level": 1,
+            "runs": 3,
+            "parallels": 1,
+            "demand": 18,
+            "blueprint_type_id": 3002,
+            "source_mother_ids": "10",
+        },
+    ]
+    exp_parallels, exp_runs, exp_stock, exp_net = expected
+    dialog = mass_parallel_factory(plans)
     try:
         bridge = dialog.bridge
         assert bridge.hasPreview is False
@@ -790,17 +833,200 @@ def test_mass_parallel_preview_then_apply(mass_parallel_factory):
 
         assert bridge.hasPreview is True
         assert len(bridge.rows) == 1
-        cells = bridge.rows[0]["cells"]
+        row = bridge.rows[0]
+        assert row["locked"] is False
+        assert (row["parallels"], row["runs"]) == (exp_parallels, exp_runs)
+        assert exp_parallels * exp_runs == exp_net, "整批产出必须落回净缺口（零多余）"
+        cells = row["cells"]
         assert cells[0]["text"] == "碳纤维"
-        assert cells[1]["text"] == "2"  # 母项需求
-        assert cells[3]["text"] == "10"  # 调整后并行 = 单子项吃掉全部 9 条余量 + 1
-        assert cells[5]["text"] == "✓"
+        assert cells[1]["text"] == "18"  # 毛需求
+        assert cells[2]["text"] == str(exp_stock)  # 机库成品库存
+        assert cells[3]["text"] == str(exp_net)  # 净缺口
+        assert cells[4]["text"] == "3"  # 当前产出 = 库里 1 并行 × 3 轮
+        assert cells[5]["text"] == str(exp_parallels)  # 调整后并行（≤ 分配到的 10）
+        assert cells[6]["text"] == str(exp_net)  # 调整后产出 = 净缺口，不是 ×并行数
+        assert cells[7]["text"] == "✓"
         assert bridge.anyShort is False
 
         bridge.accept()
-        assert mass_parallel_factory.repo.update_batch.call_args[0][0] == [(11, {"parallels": 10})]
+        assert mass_parallel_factory.repo.update_batch.call_args[0][0] == [
+            (11, {"parallels": exp_parallels, "runs": exp_runs})
+        ]
     finally:
         dialog.deleteLater()
+
+
+def test_mass_parallel_skips_in_production_rows(mass_parallel_factory, monkeypatch):
+    """在产行整行只读：不参与并行分配、预览等于库中现值、写库实参里没有它。
+
+    回归背景：`runs` 就算冻结，`parallels` 照样能放大整批产出
+    （产出 = `parallels × runs × 单轮产出`：346 冻结 runs=4、拖到 10 条 → 40 件，净缺口只有 12）。
+    所以 `in_progress`/`running` 的整行只读（口径同 `plan_rebuild._LOCKED_RUNS_STATUSES`
+    「已投产产线不砍流程」）。这里混一条可写行，验证「实参里只有可写行」。
+    """
+    from services import inventory_manager
+
+    monkeypatch.setattr(inventory_manager, "get_hangar_stock", lambda hid: {})
+    plans = [
+        {
+            "id": 10,
+            "product_type_id": 2001,
+            "sub_level": 0,
+            "runs": 1,
+            "parallels": 1,
+            "me_level": 0,
+            "mat_hangar_id": 1,
+        },
+        {  # 在产（只读）：产品 2001 无制造蓝图 → 单轮产出按 1
+            "id": 11,
+            "product_type_id": 2001,
+            "sub_level": 1,
+            "runs": 4,
+            "parallels": 3,
+            "status": "in_progress",
+            "demand": 18,
+            "source_mother_ids": "10",
+        },
+        {  # 可写：净缺口 18、单轮产出 1、分到全部 10 条线 → 9×2 = 18
+            "id": 12,
+            "product_type_id": 1001,
+            "sub_level": 1,
+            "runs": 3,
+            "parallels": 1,
+            "demand": 18,
+            "blueprint_type_id": 3002,
+            "source_mother_ids": "10",
+        },
+    ]
+    dialog = mass_parallel_factory(plans)
+    try:
+        bridge = dialog.bridge
+        bridge.setParamValue(10)
+        bridge.computePreview()
+        assert bridge.hasPreview is True
+
+        locked_row, free_row = bridge.rows
+        assert locked_row["planId"] == 11 and locked_row["locked"] is True
+        assert (locked_row["parallels"], locked_row["runs"]) == (3, 4), "在产行预览 = 库中现值"
+        check = locked_row["cells"][7]["text"]
+        assert "在产" in check and "只读" in check, check
+        assert (free_row["planId"], free_row["parallels"], free_row["runs"]) == (12, 9, 2)
+
+        bridge.accept()
+
+        payload = mass_parallel_factory.repo.update_batch.call_args[0][0]
+        assert all(pid != 11 for pid, _fields in payload), f"在产行不许进写库集合：{payload}"
+        assert payload == [(12, {"parallels": 9, "runs": 2})]
+        assert (plans[1]["parallels"], plans[1]["runs"]) == (3, 4), "内存里的在产行也不许动"
+    finally:
+        dialog.deleteLater()
+
+
+def test_child_parallel_runs_use_the_net_gap(child_parallel_factory, monkeypatch):
+    """毛需求 18、机库成品 6 → 只排净缺口 12（4×3），不再按毛需求排成 5×4=20。
+
+    回归背景：`_compute_runs` 拿**毛需求** `ceil(demand/(per_run×parallels))`，不扣成品库存 ——
+    用户打开「子项调整（并行配置）」再点确定，就把 `_finalize_runs` 已经算好的 `4×3=12`
+    写回成 `5×4=20`（多造 8 个）。口径真源在 `plan_rebuild.plan_net_runs`。
+
+    这里只借 `child_parallel_factory` 搭好的 ref 库与容器桩（它本身不造对话框），
+    直接打桥 —— 断言的是桥给出的 `(parallels, runs)`。
+    """
+    from services import inventory_manager
+    from ui_qml.bridge.child_parallel_bridge import ChildParallelBridge
+
+    monkeypatch.setattr(inventory_manager, "get_hangar_stock", lambda hid: {1001: 6})
+    plans = [
+        {
+            "id": 10,
+            "product_type_id": 2001,
+            "sub_level": 0,
+            "runs": 1,
+            "parallels": 1,
+            "me_level": 0,
+            "mat_hangar_id": 1,
+        },
+        {
+            "id": 11,
+            "product_type_id": 1001,
+            "sub_level": 1,
+            "runs": 3,
+            "parallels": 5,
+            "demand": 18,
+            "blueprint_type_id": 3002,
+            "source_mother_ids": "10",
+        },
+    ]
+    bridge = ChildParallelBridge(plans)
+
+    row = bridge.rows[0]
+    assert (row["parallels"], row["runs"]) == (4, 3), f"净缺口 12 → 4×3，零多余：{row}"
+    assert row["parallels"] * row["runs"] + 6 >= 18
+    assert row["available"] == 6 and row["netDemand"] == 12
+    assert "库存 6" in row["check"] and "净缺口 12" in row["check"]
+    assert bridge.canAccept is True
+
+
+def test_child_parallel_freezes_runs_for_in_production_rows(child_parallel_factory, db_manager, monkeypatch, qapp):
+    """在产子项**整行只读**：`parallels` 与 `runs` 都写不动，`accept()` 实参里没有它。
+
+    回归背景：两个对话框新接管了 `parallels`/`runs` 的写权，而 `_finalize_runs` /
+    `rebuild_children` 那条链本来有 `_is_locked` 保护（`in_progress`/`running` 不改，
+    口径是「已投产产线不砍流程」）。对话框不能把它绕过去 —— 而且**只冻 runs 不够**：
+    整批产出 = `parallels × runs × 单轮产出`，`runs` 冻死时拖并行数照样成倍放大产出
+    （实测 346 冻结 runs=4、拖到 10 条 → 40 件，净缺口只有 12）。
+
+    这里混一条可写行，验证「实参里只有在产行之外的行」。
+    """
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from ui_qml.bridge.child_parallel_bridge import ChildParallelBridge
+
+    repo = MagicMock()
+    # 覆盖夹具的容器桩，好抓住 update_batch 的入参（夹具本身只用来建 ref 库）
+    monkeypatch.setattr(
+        "ui_qml.bridge.child_parallel_bridge.get_container",
+        lambda: SimpleNamespace(db=db_manager, plan_repo=repo),
+    )
+    plans = [
+        {"id": 10, "product_type_id": 2001, "sub_level": 0, "runs": 2, "parallels": 1, "me_level": 0},
+        {  # 在产（只读）：产品 2001 无制造蓝图 → 单轮产出按 1
+            "id": 11,
+            "product_type_id": 2001,
+            "sub_level": 1,
+            "runs": 7,
+            "parallels": 2,
+            "status": "in_progress",
+            "demand": 2,
+        },
+        {  # 可写：净缺口 2、单轮产出 1、库中 1 并行 → 1×2 = 2
+            "id": 12,
+            "product_type_id": 1001,
+            "sub_level": 1,
+            "runs": 1,
+            "parallels": 1,
+            "demand": 2,
+            "blueprint_type_id": 3002,
+        },
+    ]
+    bridge = ChildParallelBridge(plans)
+
+    locked_row, free_row = bridge.rows
+    assert locked_row["planId"] == 11 and locked_row["locked"] is True
+    assert (locked_row["parallels"], locked_row["runs"]) == (2, 7), "在产行预览 = 库中现值"
+    assert "在产" in locked_row["check"] and "只读" in locked_row["check"], locked_row["check"]
+    assert (free_row["planId"], free_row["parallels"], free_row["runs"]) == (12, 1, 2)
+
+    # 在产行连并行数都改不动（setParallels 直接忽略）
+    bridge.setParallels(0, 5)
+    assert (locked_row["parallels"], locked_row["runs"]) == (2, 7), "在产行整行只读"
+
+    bridge.accept()
+    payload = repo.update_batch.call_args[0][0]
+    assert all(pid != 11 for pid, _fields in payload), f"在产行不许进写库集合：{payload}"
+    assert payload == [(12, {"parallels": 1, "runs": 2})]
+    assert (plans[1]["parallels"], plans[1]["runs"]) == (2, 7), "内存里的在产行也不许动"
 
 
 def test_mass_parallel_mode_switch_resets_param(mass_parallel_factory):

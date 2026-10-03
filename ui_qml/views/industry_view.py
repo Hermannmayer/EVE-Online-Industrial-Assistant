@@ -84,6 +84,9 @@ class IndustryPage(QObject):
         #: 当前批量估值采用的价格口径；口径在 worker 运行期间变化时标记脏并补算。
         self._recalc_price_fp: tuple | None = None
         self._recalc_dirty = False
+        #: 心跳判据基线：上一次「已按当前口径算过」时的 `_recalc_settings_fp()`。
+        #: 由 `load_plans()` 每次收尾时记录，心跳据此判断「要不要重走一遍加载」。
+        self._tick_recalc_fp: tuple | None = None
 
         # 计划表：只作业务控制器，桥注入给 QML 树
         self._plan_table_widget: PlanTable = PlanTable(headless=True)
@@ -133,6 +136,9 @@ class IndustryPage(QObject):
 
         model.tick() 只处理当前筛选可见的行（刷新倒计时显示）；
         expire_overdue_plans() 在 DB 层补算所有进行中计划，不受当前筛选影响。
+
+        另外两件事挂在这条 30s 心跳上（都靠指纹「变了才动」，否则就是空转）：
+        「材料不足」标注（`_refresh_material_status`）与库存变化后的成本/利润重算。
         """
         model = self._plan_table_widget.get_model()
         if model is None:
@@ -146,11 +152,30 @@ class IndustryPage(QObject):
             log.exception("倒计时补算失败")
             expired_db = 0
         if expired_visible or expired_db:
-            self.load_plans()
+            try:
+                self.load_plans()
+            except Exception:
+                # 同下：心跳里的加载失败不许抛进事件循环（见文件末尾那条注释的来由）
+                log.exception("心跳重载计划失败（计划到期触发）")
             return
         # 顺带刷新「材料不足」标注：材料补齐后没有别的路径会重算，
         # 不挂在这里的话标注会一直陈旧到用户手动刷新（产线小助手 5s 轮询修的就是同一个缺陷）
         self._refresh_material_status()
+        # 库存导入（手动粘贴）后成本/利润列必须自愈：`_recalc_settings_fp` 里含库存快照，
+        # 快照变了才走既有的 `load_plans()`（其末尾接 `_auto_calculate_plans`）。
+        # 不新开线程/定时器 —— 批量重算进行中再触发时，`_recalc_busy` / `_recalc_worker`
+        # 那套既有守卫会把它记成 `_recalc_dirty` 排队，不会并行起第二个 worker。
+        fp = self._recalc_settings_fp()
+        if fp == self._tick_recalc_fp:
+            return
+        self._tick_recalc_fp = fp
+        try:
+            self.load_plans()
+        except Exception:
+            # 心跳不能把异常抛进 Qt 事件循环：本页的 30s 定时器活得比「当次用的库」更久
+            # （测试里每个用例换个临时 user 库、页面可能还没销毁），抛出去会打断
+            # 无关用例的事件循环、把他们一起弄红。真出问题记日志，下一拍继续重试。
+            log.exception("心跳重载计划失败（库存指纹变化触发）")
 
     def shutdown(self) -> None:
         """停掉本页在跑的后台线程并等它们结束（外壳关窗时按钩子名调进来）。
@@ -242,28 +267,44 @@ class IndustryPage(QObject):
         return (tuple(hids), tuple(stock_fp), plans_fp)
 
     def _annotate_material_status(self, rows: list[dict]) -> None:
-        """给**待生产**行标注缺料情况（`material_status` / `material_short_tip`）。
+        """给**待生产**行标注缺料 / 等子项情况（派生字段，不落库）。
 
         只算 pending 行：其余状态与「能不能启动」无关，算了也没人看。
 
         写的是**派生字段**，**绝不覆写 `plan["status"]`** —— 覆写会同时污染第 7 列的
         排序键、右键菜单的互斥分支（判 `status === "pending"`）与落库路径。
+
+        两个派生字段的优先级：**等子项优先于缺料**。子项是母项的前置条件；而母项对
+        自制中间件的那份需求，本来就由子线排产去造（采购侧也不买它，见
+        `plan_aggregator.self_made_type_ids`），把它标成「材料不足」会让用户去采购一个
+        买不到的东西（用户报的「采购说不用买、产线却说子项缺料」）。
+        `check_materials(..., all_plans=rows)` 已经把「子线将产出」计入，所以这里的
+        `short` 只剩「子线也补不上 / 真该买的原材料」，那才是缺料。
         """
-        from services.plan_execution import check_materials
+        from services.plan_execution import _pending_children_output_by_type, check_materials
+        from services.plan_start_check import pending_children_count
 
         pending = [r for r in rows if (r.get("status") or "") == "pending"]
         if not pending:
             return
         hids = {int(r["mat_hangar_id"]) for r in pending if r.get("mat_hangar_id")}
         stock = self._material_stock(hids)
+        # 子线将产出算一次给所有行共用（逐行重算就是 N 次全库查询）
+        from_children = _pending_children_output_by_type(rows)
         for r in pending:
             r["material_status"] = None
             r["material_short_tip"] = ""
+            # 子项是母项的前置条件：同组还有未完成的子项 → 母项这一行「等子项」，
+            # 不是「材料不足」。判定复用 `plan_start_check`（启动小助手的唯一真源），
+            # 两处永不漂移。数量进派生字段、文本由模型拼（与 `material_short_tip` 分工一致）。
+            waiting = pending_children_count(r, rows)
+            r["material_waiting"] = waiting
+            r["material_waiting_tip"] = f"等待 {waiting} 条子项完成" if waiting else ""
             hid = r.get("mat_hangar_id")
             if not hid:
                 continue
             try:
-                res = check_materials(r, int(hid), stock=stock.get(int(hid)))
+                res = check_materials(r, int(hid), stock=stock.get(int(hid)), all_plans=from_children)
             except Exception:
                 log.exception("材料判定失败: %s", r.get("id"))
                 continue
@@ -274,6 +315,9 @@ class IndustryPage(QObject):
             tip = "\n".join(f"{x.get('name') or x['type_id']}: 缺 {x['missing']:,.0f}" for x in short[:8])
             if len(short) > 8:
                 tip += f"\n… 等 {len(short)} 种"
+            # 还在等子项的母项：子线没补齐的那部分也一并说清楚，两种原因都写在 tooltip 里
+            if waiting:
+                tip = f"{r['material_waiting_tip']}\n子线补不上、仍需采购的部分：\n{tip}"
             r["material_short_tip"] = tip
 
     def _refresh_material_status(self) -> None:
@@ -331,6 +375,10 @@ class IndustryPage(QObject):
         if self._bridge.viewMode == "gantt":
             self.refresh_gantt()
         self._auto_calculate_plans(rows)
+        # 心跳判据基线：本轮已按当前口径（价格 + 库存）算过，记下来免得下一个
+        # 30s tick 白跑一次 `load_plans`（`_auto_calculate_plans` 未必起 worker：
+        # 没有可算的行时它直接 return，此时基线更不能缺）。
+        self._tick_recalc_fp = self._recalc_settings_fp()
 
     def _price_fp(self) -> tuple[int, str, float, int | None]:
         """汇总用到的价格口径 —— 工具栏材料行（Hub / 卖价买价 / 倍率）+ 默认材料机库。
@@ -421,8 +469,35 @@ class IndustryPage(QObject):
             self._proc_result = None
             self._refresh_procurement_summary(self._proc_rows)
 
+    def _inventory_fp(self) -> frozenset:
+        """库存内容指纹 —— 就是批量估值真正吃的那份快照（`get_inventory_cost_map()`）。
+
+        口径刻意与 `_material_fingerprint` **不同**：那条链给待生产行判缺料，只查
+        **待生产行的机库**、且只取数量；而 `BatchPlanCalcWorker` 的材料成本读的是
+        全库 `type_id → (数量, 加权成本)`，数量与**成本价**任一变化都改变估值结果
+        （仓库页「批量设置成本价」正是只动成本价不动数量）。所以要覆盖全部机库 + 成本价。
+
+        一次 GROUP BY 查询即可，且只在 `_recalc_settings_fp()` 里调用 —— 心跳是
+        「先取指纹、再比基线」，没变就一次评分都不排。
+        """
+        from services import inventory_manager
+
+        try:
+            return frozenset(inventory_manager.get_inventory_cost_map().items())
+        except Exception:
+            # 读不到就退回空集：宁可指纹变动多算一轮，也不能把查询失败当成「没变化」
+            # 而让成本/利润列永久陈旧（那正是本次要修的缺陷）。
+            log.exception("读取库存成本快照失败")
+            return frozenset()
+
     def _recalc_settings_fp(self) -> tuple:
-        """批量估值所用的完整价格口径，用于识别 worker 期间的设置变更。"""
+        """批量估值所用的完整口径（价格设置 + 库存快照），用于识别 worker 期间的口径变更。
+
+        库存必须进指纹：估值读的是 `get_inventory_cost_map()`，手动粘贴导入库存后
+        口径就变了。不含库存时 `_auto_calculate_plans` 无从察觉，成本/利润/利润率会
+        一直停在旧值，直到用户编辑计划、改价格设置或重启（用户要的正是「不要我手动
+        来回切页」）。
+        """
         ps = get_price_settings()
         return (
             ps.get("mat_hub") or "Jita",
@@ -431,6 +506,7 @@ class IndustryPage(QObject):
             ps.get("prod_hub") or "Jita",
             ps.get("prod_price_type") or "sell",
             round(float(ps.get("prod_mult") or 1.0), 4),
+            self._inventory_fp(),
         )
 
     def _auto_calculate_plans(self, rows):

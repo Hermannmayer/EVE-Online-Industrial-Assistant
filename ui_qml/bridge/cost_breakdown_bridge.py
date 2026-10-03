@@ -3,9 +3,11 @@
 对照 Widgets 版 `ui_pyside6/views/industry/cost_breakdown_dialog.py`：
 左边材料清单（6 列），右边三块「标签: 值」明细（制造作业费 / 市场费用 / 汇总）。
 
-计算口径**一字未改**：统一走 `scoring_service().calculate_plan_metrics()`（与主表
+计算口径：统一走 `scoring_service().calculate_plan_metrics()`（与主表
 批量重算同一条路径），拆解母项时自制子项按制造价计入成本而非市场买入价
-（`_compute_subitem_costs` 原地搬过来，含嵌套拆解的自底向上算法）。
+（`_compute_subitem_costs`，含嵌套拆解的自底向上算法）。唯一的口径修正：子项成本映射
+改为复用 `plan_metrics.mother_subitem_cost_map` / `child_manufacturing_cost`，**制造价为 0
+的子项（0 轮产线）不进映射**、该行回退市价 —— 与主表批量重算那条路径对齐。
 
 与原版的两处差异：
 
@@ -359,9 +361,19 @@ class CostBreakdownBridge(DialogBridge):
         """读同组更深子项产线，返回 {子项 product_type_id: 制造价合计（材料+作业费）}。
 
         自底向上按 sub_level 降序计算：最深子项先算，父层用子层调整后的成本，
-        支持嵌套拆解。制造价经 ScoringService.child_manufacturing_cost 含子项制造作业费。
+        支持嵌套拆解。
+
+        **口径与 `services.plan_metrics.mother_subitem_cost_map` 同一条规则**：子项制造价经
+        `child_manufacturing_cost`（材料 + 作业费×runs×parallels），**制造价 ≤ 0 的子项
+        （0 轮产线）不进返回的映射** —— 否则「自制件成本 0 ISK」会被当成真实成本写进母项
+        （实测把母项 material_cost 打成 0.00）。剔除后调用方 `adjust_mother_metrics` 走 else
+        分支、该行回退市价。改这条 0 值规则时两处必须一起改。
         """
-        from services.scoring_service import ScoringService
+        from services.plan_metrics import (
+            adjust_mother_metrics,
+            child_manufacturing_cost,
+            mother_subitem_cost_map,
+        )
 
         rows = get_subitem_plans(get_container().db, group_number, deeper_than)
         if not rows:
@@ -371,28 +383,41 @@ class CostBreakdownBridge(DialogBridge):
             p["child_level"] = p.get("sub_level", 0)
 
         svc = get_container().scoring_service()
-        cost_by_id: dict[int, float] = {}
+        #: plan id → (plan, metrics)；自底向上逐层把子层制造价折进父层 metrics
+        base: dict[int, tuple[dict, dict]] = {}
         for p in rows:
-            metrics = svc.calculate_plan_metrics(
+            base[int(p.get("id") or 0)] = (
                 p,
-                self._char_config or {},
-                price_type_mat=self._price_type_mat,
-                price_type_prod=self._price_type_prod,
-                mat_mult=self._mat_mult,
-                prod_mult=self._prod_mult,
+                svc.calculate_plan_metrics(
+                    p,
+                    self._char_config or {},
+                    price_type_mat=self._price_type_mat,
+                    price_type_prod=self._price_type_prod,
+                    mat_mult=self._mat_mult,
+                    prod_mult=self._prod_mult,
+                ),
             )
-            lvl = int(p.get("sub_level") or 0)
-            kids = [c for c in rows if int(c.get("sub_level") or 0) > lvl]
-            if kids:
-                child_map = {
-                    int(k.get("product_type_id") or 0): cost_by_id.get(int(k.get("id") or 0), 0.0) for k in kids
-                }
-                total_mult = max(int(p.get("runs", 1)), 1) * max(int(p.get("parallels", 1)), 1)
-                adj_mat, _, _, _ = ScoringService.adjust_mother_metrics(metrics, child_map, total_mult)
+
+        # `get_subitem_plans` 已按 sub_level DESC 返回，这里再显式排一次，不依赖 SQL 顺序
+        costs: dict[int, float] = {}
+        for p in sorted(rows, key=lambda r: -int(r.get("sub_level") or 0)):
+            metrics = base[int(p.get("id") or 0)][1]
+            child_map = mother_subitem_cost_map(base, p)
+            if child_map:
+                total_mult = max(int(p.get("runs") or 1), 1) * max(int(p.get("parallels") or 1), 1)
+                adj_mat, _, _, _ = adjust_mother_metrics(metrics, child_map, total_mult)
                 metrics = dict(metrics)
                 metrics["material_cost"] = adj_mat
-            cost_by_id[int(p.get("id") or 0)] = ScoringService.child_manufacturing_cost(p, metrics)
-        return {int(p.get("product_type_id") or 0): cost_by_id.get(int(p.get("id") or 0), 0.0) for p in rows}
+                base[int(p.get("id") or 0)] = (p, metrics)
+            costs[int(p.get("id") or 0)] = child_manufacturing_cost(p, metrics)
+
+        out: dict[int, float] = {}
+        for p in rows:
+            cost = costs.get(int(p.get("id") or 0), 0.0)
+            if cost <= 0:  # 与 mother_subitem_cost_map 同规则：0 值自制件不进映射
+                continue
+            out[int(p.get("product_type_id") or 0)] = cost
+        return out
 
     def material_row_count(self) -> int:
         return len(self._material_rows)

@@ -154,6 +154,59 @@ def test_compute_subitem_costs_nested(db_manager, monkeypatch, qapp):
     assert costs[2002] == pytest.approx(250, abs=0.01)
 
 
+def test_compute_subitem_costs_zero_run_child_excluded(db_manager, monkeypatch, qapp):
+    """0 轮子项（制造价 0）不进映射 → 母项该行回退市价，而不是「自制件 0 ISK」。
+
+    回归背景：这条路径原先自建子项成本映射、没做 0 值剔除，于是 `runs=0` 的子项被算成
+    0 成本自制件，母项 `material_cost` 被 `adjust_mother_metrics` 打成 **0.00**
+    （与 `services.plan_metrics.mother_subitem_cost_map` 的 `cost <= 0` 剔除规则不一致）。
+    """
+    _insert_plans(
+        db_manager,
+        [
+            {
+                "id": 1,
+                "product_type_id": 2001,
+                "product_name": "母项",
+                "runs": 1,
+                "parallels": 1,
+                "group_number": 7,
+                "sub_level": 0,
+            },
+            {
+                "id": 2,
+                "product_type_id": 2002,
+                "product_name": "0 轮子项",
+                "runs": 0,
+                "parallels": 1,
+                "group_number": 7,
+                "sub_level": 1,
+            },
+            {
+                "id": 3,
+                "product_type_id": 2003,
+                "product_name": "在造子项",
+                "runs": 3,
+                "parallels": 1,
+                "group_number": 7,
+                "sub_level": 1,
+            },
+        ],
+    )
+
+    def _metrics(plan, char_config, **kw):
+        pid = plan.get("product_type_id")
+        if pid == 2002:
+            return {"material_cost": 4800.0, "breakdown": {"installation_fee": 100.0}}
+        if pid == 2003:
+            return {"material_cost": 300.0, "breakdown": {"installation_fee": 50.0}}
+        return {}
+
+    bridge = _bridge_with_metrics(db_manager, monkeypatch, _metrics)
+    # 在造子项 = 300 + 50×3 = 450；0 轮子项制造价 0 → 整条不进映射
+    assert bridge._compute_subitem_costs(7, 0) == {2003: pytest.approx(450, abs=0.01)}
+
+
 # ════════════════════════════════════════════════════════════════
 #  ParentDecomposeDialog — 母项拆解多母项（原 test_parent_decompose_multi.py）
 # ════════════════════════════════════════════════════════════════

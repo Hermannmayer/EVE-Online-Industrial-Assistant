@@ -5,12 +5,11 @@
 子项 ME/TE 读库存蓝图最优等级，无蓝图 → 0/0 且 has_blueprint=False。
 
 连接约定：ref 主库（物品/星系表），bp 附随含蓝图表（未限定查询经附随解析到 bp），
-user 附随含 user_blueprints（限定 user.）。
+user 附随含 user_blueprints / user.production_plans（限定 user.）。
 """
 
 from __future__ import annotations
 
-import math
 from sqlite3 import Connection
 
 from core.container import get_container
@@ -34,30 +33,72 @@ def best_inventory_blueprint(conn: Connection, blueprint_type_id: int) -> dict |
     return {"me_level": int(row[0]), "te_level": int(row[1])}
 
 
+def _existing_parallels(conn: Connection) -> dict[int, int]:
+    """全库既有子项产线的并行数 {product_type_id: parallels} —— 口径同落库侧。
+
+    `plan_rebuild.rebuild_children` 的 `existing_parallels` 取自它对全库 `sub_level>0` 行的
+    归并（`children_by_tid`：同 product_type_id 只留一行，「部分启动」拆出的
+    「在产行 + pending 余量行」优先留**在产**那条）。预览必须用同一条规则取并行数，否则
+    同一行会给出「预览 12 轮 × 1 线」而「落库 3 轮 × 5 线」（实测母项 311 的 41484）。
+    **改这条归并规则必须同步改 `plan_rebuild.rebuild_children`。**
+    """
+    locked = {"in_progress", "running"}
+    kept: dict[int, tuple[int, bool]] = {}
+    for r in conn.execute(
+        "SELECT product_type_id, parallels, status FROM user.production_plans WHERE sub_level > 0 ORDER BY id"
+    ).fetchall():
+        tid = int(r["product_type_id"] or 0)
+        cur = (int(r["parallels"] or 1), (r["status"] or "").lower() in locked)
+        prev = kept.get(tid)
+        if prev is None or (cur[1] and not prev[1]):
+            kept[tid] = cur
+    return {tid: p for tid, (p, _locked) in kept.items()}
+
+
 def decompose_plan(plan: dict, *, mat_hangar_id: int | None = None) -> list[dict]:
     """递归拆解母项 → 子项产线行列表（不含母项自身）。
 
-    每个子项的 runs 按母项对它的材料总需求（demand）1X 生成：
-    runs = ceil(demand / 单轮产出)，parallels=1，总产出 ≥ demand（最小超产）。
+    **直接复用落库那条路径**（`services.plan_rebuild.compute_child_forest` + `_finalize_runs`）：
+    对话框预览和确认后写进表里的必须是同一组 runs/parallels，两处各维护一套折算公式就必然
+    出现「预览说 1360、落库是 2040」的剪刀差（旧实现：ceil 且 parallels 恒为 1、自己再扣一次
+    库存、库存覆盖到 0 就整行不建）。这里只传**这一个母项**，所以需求传播退化成单母项展开；
+    库存按该母项的制造机库取快照（键 = 母项 id，与 `_finalize_runs` 的 `first_mother` 同源）；
+    `existing_parallels` 取全库既有子项行的并行数（见 `_existing_parallels`）—— 用户设过并行的
+    行落库时保留并行、runs 按并行摊（实测 41484：5 线 → 3 轮），预览不跟着取就会又是两套数字。
 
-    返回 [{product_type_id, blueprint_type_id, sub_level, demand, runs, parallels:1,
-           me_level, te_level, has_blueprint}]。
+    返回按 (sub_level, product_type_id) 稳定排序的
+    [{product_type_id, blueprint_type_id, sub_level, demand, runs, parallels,
+      me_level, te_level, has_blueprint}]；母项无蓝图（拆不出任何子项）时返回 []。
+
+    ⚠️ 已知残差（本函数只拆一个母项，落库按全库活跃母项传播）：被**别的活跃母项**共享的
+    组件，需求只算了本母项那一份，而 `rebuild_children` 会累加所有引用者（实测 11482：
+    预览 1 轮 / 落库 2 轮）。要消掉它得把全库活跃母项都传进来 —— 那会让预览显示的是别的
+    母项的需求，与「这条母项的拆解预览」不符，故不做。
     """
+    # 函数内导入：`services.plan_rebuild` 反向依赖本模块的 `best_inventory_blueprint`，
+    # 模块级导入会成环。
+    from services.plan_rebuild import compute_child_forest
+
     stock = inventory_manager.get_hangar_stock(mat_hangar_id) if mat_hangar_id else {}
-    parent_me = int(plan.get("me_level") or 0)
-    root_runs = max(int(plan.get("runs") or 1), 1) * max(int(plan.get("parallels") or 1), 1)
+    stocks = {int(plan.get("id") or 0): stock}
 
     with get_container().db.connect("ref", "user", "bp") as conn:
-        bp = _find_blueprint_for_product(conn, plan["product_type_id"], "manufacturing")
-        if not bp:
-            return []
-        bp_id, _output_qty, _ = bp
-        lines: list[dict] = []
-        for mat_id, mat_base in _get_materials(conn, bp_id, "manufacturing"):
-            child_qty = calc_material_for_runs(mat_base, 10, parent_me, root_runs)
-            cl, _ = _decompose(conn, mat_id, child_qty, depth=1, stock=stock, seen=set(), mat_hangar_id=mat_hangar_id)
-            lines.extend(cl)
-        return lines
+        nodes = compute_child_forest(conn, [plan], stocks, _existing_parallels(conn))
+
+    return [
+        {
+            "product_type_id": int(n["product_type_id"]),
+            "blueprint_type_id": int(n["blueprint_type_id"]),
+            "sub_level": int(n["sub_level"]),
+            "demand": int(n["demand"]),
+            "runs": int(n["runs"]),
+            "parallels": int(n["parallels"]),
+            "me_level": int(n["me_level"]),
+            "te_level": int(n["te_level"]),
+            "has_blueprint": bool(n["has_blueprint"]),
+        }
+        for n in sorted(nodes.values(), key=lambda n: (int(n["sub_level"]), int(n["product_type_id"])))
+    ]
 
 
 def parent_needs(conn: Connection, group_plans: list[dict]) -> dict[int, int]:
@@ -201,52 +242,3 @@ def collect_group_members(all_plans: list[dict], selected: list[dict]) -> tuple[
                 seen_parent.add(k)
                 parents.append(p)
     return parents, children
-
-
-def _decompose(
-    conn: Connection,
-    type_id: int,
-    needed_qty: float,
-    depth: int,
-    stock: dict[int, int],
-    seen: set[int],
-    mat_hangar_id: int | None = None,
-) -> tuple[list[dict], int]:
-    """递归展开一层。返回 (子项产线行, 本层可被库存覆盖的产出量)。"""
-    bp = _find_blueprint_for_product(conn, type_id, "manufacturing")
-    if not bp:
-        return [], 0  # 叶子（外购原料），无产线
-    bp_id, output_qty, _ = bp
-    output_qty = output_qty or 1
-    runs = math.ceil(needed_qty / output_qty)
-    onhand = int(stock.get(type_id, 0))
-    covered = min(runs, onhand // max(output_qty, 1))  # 库存能覆盖的轮次
-    make_runs = max(0, runs - covered)
-    if make_runs <= 0 or type_id in seen:
-        return [], covered * output_qty  # 全库存覆盖 或 循环防护
-
-    seen.add(type_id)
-    try:
-        ibp = best_inventory_blueprint(conn, bp_id)
-        me = ibp["me_level"] if ibp else 0
-        lines: list[dict] = [
-            {
-                "product_type_id": type_id,
-                "blueprint_type_id": bp_id,
-                "sub_level": depth,
-                "demand": needed_qty,
-                "runs": make_runs,
-                "parallels": 1,
-                "me_level": me,
-                "te_level": ibp["te_level"] if ibp else 0,
-                "has_blueprint": ibp is not None,
-                "deposit_hangar_id": mat_hangar_id,
-            }
-        ]
-        for mat_id, mat_base in _get_materials(conn, bp_id, "manufacturing"):
-            child_qty = calc_material_for_runs(mat_base, 10, me, make_runs)
-            cl, _ = _decompose(conn, mat_id, child_qty, depth + 1, stock, seen, mat_hangar_id=mat_hangar_id)
-            lines.extend(cl)
-        return lines, covered * output_qty
-    finally:
-        seen.discard(type_id)

@@ -276,6 +276,65 @@ class TestCheckMaterials:
         }
         assert check_materials({"runs": 1, "parallels": 1}, None) == []
 
+    def test_shortfall_covered_by_a_child_production_line_is_not_a_shortfall(self, user_env):
+        """子线已排产去造的**自制件**不算缺料（回归：采购说不用买、产线却提示子项缺料）。
+
+        母项要 100 个自制中间件 2001、机库只有 30；同组子线排了 2 条 × 4 轮。
+        只要「机库 + 子线将产出 ≥ 需求」，`missing` 就必须是 0 —— 那部分由子线自己造，
+        采购侧本来也不买它（`plan_aggregator.self_made_type_ids`），报缺料会把用户
+        指去采购一个买不到的东西。
+        """
+        from services.plan_execution import _pending_children_output_by_type
+
+        _insert_item(user_env.db, 1, 2001, 30)
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 2001, "name": "自制中间件", "qty": 100.0}]
+        }
+        rows = [{"id": 11, "sub_level": 1, "status": "pending", "product_type_id": 2001, "runs": 4, "parallels": 2}]
+        produced = _pending_children_output_by_type(rows)[2001]
+
+        res = check_materials({"runs": 1, "parallels": 1}, 1, all_plans=rows)
+
+        assert res[0]["need"] == 100
+        assert res[0]["owned"] == 30
+        assert res[0]["from_children"] == produced
+        if 30 + produced >= 100:
+            assert res[0]["missing"] == 0, "子线覆盖了缺口就不该报缺料"
+        else:
+            assert res[0]["missing"] == 70 - produced
+
+    def test_child_output_is_not_double_counted_when_finished(self, user_env):
+        """已完工的子项不再算「将产出」——它的产出早已入库，再算一次就是重复计。"""
+        from services.plan_execution import _pending_children_output_by_type
+
+        rows = [
+            {"id": 11, "sub_level": 1, "status": "completed", "product_type_id": 2001, "runs": 4, "parallels": 2},
+            {"id": 12, "sub_level": 1, "status": "in_progress", "product_type_id": 2002, "runs": 5, "parallels": 1},
+        ]
+        produced = _pending_children_output_by_type(rows)
+        assert 2001 not in produced, "已完工的子项不该再计入将产出"
+        assert 2002 in produced, "在产子项仍要计入"
+
+    def test_child_output_counts_towards_availability(self, user_env):
+        """直接钉「子线产出计入可用量」：同样的机库存量，传 all_plans 后 missing 变小/归零。"""
+        from services.plan_execution import _pending_children_output_by_type
+
+        _insert_item(user_env.db, 1, 2001, 30)
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 2001, "name": "自制中间件", "qty": 100.0}]
+        }
+        rows = [{"id": 11, "sub_level": 1, "status": "pending", "product_type_id": 2001, "runs": 4, "parallels": 2}]
+        # 先确认「子线产出」这座映射真的把 80 算出来了（蓝图查不到时退回每轮 1 个 → 4×2×1 = 8）
+        produced = _pending_children_output_by_type(rows)[2001]
+        assert produced in (80, 8), produced
+
+        without = check_materials({"runs": 1, "parallels": 1}, 1)
+        assert without[0]["missing"] == 70  # 100 − 30
+
+        with_children = check_materials({"runs": 1, "parallels": 1}, 1, all_plans=rows)
+        assert with_children[0]["from_children"] == produced
+        assert with_children[0]["missing"] == max(0, 70 - produced)
+
 
 class TestDeductMaterials:
     def test_full_deduction(self, user_env):
@@ -1471,7 +1530,9 @@ class TestPartialStart:
 
         assert prev["ok"], prev
         # 11×2×3 = 66 需求、库存 50 → 缺 16（按 3 条算会是 99−50=49）
-        assert prev["shortfalls"] == [{"type_id": 1001, "name": "三钛", "need": 66, "owned": 50, "missing": 16}]
+        assert prev["shortfalls"] == [
+            {"type_id": 1001, "name": "三钛", "need": 66, "owned": 50, "from_children": 0, "missing": 16}
+        ]
 
     def test_preview_reports_binding_shortfall_for_n_lines(self, user_env):
         """只绑了 2 张、要启动 2 条 → 不报短板；要启动 3 条 → 报（预览按 N 条计）。"""

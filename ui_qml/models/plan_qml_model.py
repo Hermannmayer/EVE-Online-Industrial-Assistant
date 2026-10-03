@@ -153,9 +153,11 @@ class PlanQmlModel(PlanTableModel):
         if role == _TOOLTIP:
             if c == COL_BLUEPRINT:
                 return self._levels_tooltip(p)
-            if c == COL_STATUS and p.get("material_status") == "short":
-                # 缺哪几种、各缺多少（控制器算好塞进来的派生字段）
-                return p.get("material_short_tip") or ""
+            if c == COL_STATUS:
+                # 缺料（缺哪几种、各缺多少，控制器算好的派生字段）与「等几条子项」拼一起：
+                # 前者可操作、后者说明为什么这条线本身还轮不到。
+                parts = [p.get("material_short_tip") or "", p.get("material_waiting_tip") or ""]
+                return "\n".join(x for x in parts if x)
             return ""
         if role == _ROW_INDEX:
             return index.row()

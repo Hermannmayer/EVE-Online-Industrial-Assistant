@@ -143,11 +143,16 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
             return {}
 
     def _apply_mother_subitem_cost(self, item, result, base_results) -> dict[int, float]:
-        """拆解母项成本改按子项制造价合计（材料 + 子项制造作业费）。
+        """拆解母项的自制子项制造价 → cost_overrides（**只供个人利润率使用**）。
 
-        母项直接材料中由子项产线自制的组件，其成本从「市场价」改为「子项制造价」；
-        未拆解的直接材料仍按市场价。返回 cost_overrides {type_id: 子项制造价}，
-        供个人利润率计算使用。非母项/无子项时返回空 dict（不改动）。
+        「成本」「利润」两列按**市场口径**（用户 2026-10-03 拍板）：因此本方法**不再覆写**
+        `result` 的 material_cost / profit / margin —— 它们保持 calculate_plan_metrics 的市场口径。
+        自制子项按自己制造价计的口径只体现在 `_calc_personal_margin(..., cost_overrides=...)`
+        产出的「个人利润率%」列（它反映的是自己的成本优势，与市场口径各归其位）。
+
+        返回 cost_overrides {type_id: 子项制造价}；非母项/无子项时返回空 dict。
+        0 轮子项的制造价为 0，已被 `mother_subitem_cost_map` 剔除、进不了 override
+        （否则个人利润率会凭空调高）。
         """
         from services.plan_metrics import adjust_mother_metrics, mother_subitem_cost_map
 
@@ -155,10 +160,8 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         if not sub_cost_map:
             return {}
         total_mult = max(int(item.get("runs", 1)), 1) * max(int(item.get("parallels", 1)), 1)
-        mat_cost, profit, margin, overrides = adjust_mother_metrics(result, sub_cost_map, total_mult)
-        result["material_cost"] = mat_cost
-        result["profit"] = profit
-        result["margin"] = margin
+        # 只取 overrides：mat/profit/margin 是个人口径，**不写回 result**（列语义走市场口径）
+        _mat, _profit, _margin, overrides = adjust_mother_metrics(result, sub_cost_map, total_mult)
         return overrides
 
     def _calc_personal_margin(self, plan: dict, result: dict, cost_overrides: dict[int, float] | None = None) -> float:
@@ -194,10 +197,11 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         return self._inv_map
 
     def run(self):
-        """两遍计算：先算所有计划基准指标，再对拆解母项按子项制造价调整成本。
+        """两遍计算：先算所有计划基准指标，再按子项制造价算拆解母项的**个人利润率**。
 
-        深度优先（子级深者先算），保证嵌套拆解里子项先按孙项制造价调整，
-        母项再读到正确的子项制造价；调整前留存市场利润率供「市场利润率」列使用。
+        深度优先（子级深者先算），保证嵌套拆解里子项先按孙项制造价算好，
+        母项再读到正确的子项制造价。子项制造价只经 cost_overrides 进「个人利润率%」列；
+        **成本 / 利润 / 利润率列保持市场口径**（用户 2026-10-03 拍板），市场利润率另列留存。
 
         **估值失败的行不发出去**（评分异常返回空 dict、或 status 属于
         `_ZERO_COST_STATUSES`）——它们的 material_cost 是 0，写回会把库里的正确值清零。
@@ -244,7 +248,9 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
                 self.failed_names.append(str(item.get("product_name") or pid))
                 continue
             try:
-                market_margin = result.get("margin", 0) or 0  # 调整前留存市场口径利润率
+                # 调整前留存市场口径利润率（「市场利润率%」列）：_apply_mother_subitem_cost 不再
+                # 覆写 result["margin"]，所以这一份与「利润率%」列同值，二者都是市场口径。
+                market_margin = result.get("margin", 0) or 0
                 overrides = self._apply_mother_subitem_cost(item, result, base_results)
                 personal = self._calc_personal_margin(item, result, overrides)
             except Exception:
@@ -256,15 +262,15 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
             results.append(
                 (
                     pid,
-                    result.get("profit", 0),
-                    result.get("margin", 0),
+                    result.get("profit", 0),  # 市场口径（industry_view 写 production_plans.profit）
+                    result.get("margin", 0),  # 市场口径（写 production_plans.margin，与 profit 自洽）
                     result.get("score", 0),
                     result.get("iskph", 0),
-                    result.get("material_cost", 0),
+                    result.get("material_cost", 0),  # 市场口径（写 production_plans.material_cost）
                     result.get("calculated_time", 0) / 3600,  # 秒→小时
                     result.get("daily_output", 0),
-                    personal,
-                    market_margin,
+                    personal,  # 个人（库存/自制）口径 → production_plans.personal_margin
+                    market_margin,  # 市场口径 → production_plans.market_margin（与 margin 同值）
                 )
             )
         self.finished_signal.emit(results)

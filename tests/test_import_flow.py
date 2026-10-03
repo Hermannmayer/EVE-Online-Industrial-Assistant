@@ -10,6 +10,7 @@ import pytest
 
 from services.inventory_import import (
     compute_import_diff,
+    compute_missing_in_hangar,
     compute_row_delta,
     split_clipboard_lines,
 )
@@ -120,6 +121,37 @@ class TestComputeImportDiff:
         result = compute_import_diff(before, after, names, [1001, 1002])
         assert len(result) == 1
         assert result[0]["type_id"] == 1002
+
+
+# ════════════════════════════════════════════════════════════════
+#  compute_missing_in_hangar
+# ════════════════════════════════════════════════════════════════
+
+
+class TestComputeMissingInHangar:
+    """全量同步的反向差集：「库里有、剪贴板没有」= 待清零项。
+
+    回归背景：原先 full 只对剪贴板里出现过的物品做 set，这类物品**永远不会被处理** ——
+    用户修正库存后残留的 `41484 旗舰级电容器电池 I` 6 个一直挂在库里，计划表据此
+    只排净缺口 12 个（真实为 0 时应排 18 个）。
+    """
+
+    def test_returns_rows_absent_from_clipboard(self):
+        """剪贴板只覆盖了一部分 → 返回剩下那些（带现有数量，供预览显示）。"""
+        assert compute_missing_in_hangar({1001: 10, 1002: 6}, {1001}) == {1002: 6}
+
+    def test_empty_when_clipboard_covers_hangar(self):
+        """剪贴板覆盖整库 → 没有待清零项。"""
+        assert compute_missing_in_hangar({1001: 10}, {1001, 1002}) == {}
+        assert compute_missing_in_hangar({}, {1001}) == {}
+
+    def test_non_positive_quantities_skipped(self):
+        """0/负数量的行本来就不在库里 → 不算待清零项（否则会多出一条假删除）。"""
+        assert compute_missing_in_hangar({1001: 0, 1002: -3, 1003: 5}, set()) == {1003: 5}
+
+    def test_sorted_by_type_id(self):
+        """按 type_id 升序 → 预览与确认文案的顺序稳定。"""
+        assert list(compute_missing_in_hangar({9: 1, 3: 2, 7: 3}, set())) == [3, 7, 9]
 
 
 # ════════════════════════════════════════════════════════════════

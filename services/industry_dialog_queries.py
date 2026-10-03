@@ -122,11 +122,13 @@ def get_child_parallel_data(
     db,
     plans: list[dict],
     sub_plans: list[dict],
-) -> tuple[dict[int, int], dict[int, int], dict[int, str]]:
-    """子项并行弹窗初始化数据：母项需求 / 单轮产出 / 格式化时长。
+) -> tuple[dict[int, int], dict[int, int], dict[int, str], dict[int, int]]:
+    """子项并行弹窗初始化数据：母项需求 / 单轮产出 / 格式化时长 / 成品库存。
 
     需求优先读子项行的 demand 列（v12 引用式全局合并需求，避免重复求和）；
     老库无该列时回退 parent_needs 按母项当前需求推导。
+    第三项之后多一个 `available`（子项成品在母项材料机库里的数量）—— 子项 runs 是
+    **净口径**（`plan_rebuild.plan_net_runs`），弹窗不给库存就对不上账。
     """
     with db.connect("ref", "user", "bp") as conn:
         demand = _child_demand_from_rows(sub_plans, conn, plans)
@@ -136,15 +138,18 @@ def get_child_parallel_data(
             pid = int(p["product_type_id"])
             output_per_run[pid] = _query_blueprint_output(conn, pid)
             durations[pid] = _format_blueprint_duration(conn, p.get("blueprint_type_id"))
-        return demand, output_per_run, durations
+        return demand, output_per_run, durations, _child_available_stock(plans, sub_plans)
 
 
 def get_mass_parallel_data(
     db,
     plans: list[dict],
     sub_plans: list[dict],
-) -> tuple[dict[int, int], dict[int, int], dict[int, int]]:
-    """大规模并行弹窗初始化数据：母项需求 / 单轮产出 / 单线总时长秒。"""
+) -> tuple[dict[int, int], dict[int, int], dict[int, int], dict[int, int]]:
+    """大规模并行弹窗初始化数据：母项需求 / 单轮产出 / 单线总时长秒 / 成品库存。
+
+    第四项 `available` 与 `get_child_parallel_data` 同源（净口径排产要用）。
+    """
     with db.connect("ref", "user", "bp") as conn:
         demand = _child_demand_from_rows(sub_plans, conn, plans)
         per_run: dict[int, int] = {}
@@ -154,7 +159,55 @@ def get_mass_parallel_data(
             per_run[pid] = _query_blueprint_output(conn, pid)
             dur = _query_blueprint_duration_sec(conn, p.get("blueprint_type_id"))
             duration[pid] = dur * int(p.get("runs") or 1)
-        return demand, per_run, duration
+        return demand, per_run, duration, _child_available_stock(plans, sub_plans)
+
+
+def _child_available_stock(plans: list[dict], sub_plans: list[dict]) -> dict[int, int]:
+    """每个子项成品在**首个引用母项的制造机库**里的库存 {product_type_id: 数量}。
+
+    口径与 `plan_rebuild._finalize_runs` 的 `stocks` 同源：按母项 `mat_hangar_id` 取那个机库的
+    成品库存快照（不是原材料库存）。「首个引用母项」取 `source_mother_ids` 里 id 最小的一条
+    （`rebuild_children` 按 `SELECT *` 顺序挑 `first_mother`，rowid 序即 id 序）；
+    老行没有 `source_mother_ids` 就按组号找同组母项，再退回子项自己的 `mat_hangar_id`
+    （建行时就是照抄母项那个）。
+    """
+    from services import inventory_manager
+
+    mothers = {
+        int(p["id"]): p for p in plans if p.get("id") and int(p.get("child_level") or p.get("sub_level") or 0) == 0
+    }
+    cache: dict[int, dict[int, int]] = {}
+    out: dict[int, int] = {}
+    for p in sub_plans:
+        pid = int(p.get("product_type_id") or 0)
+        hid = _first_mother_hangar(p, mothers, plans)
+        if not hid:
+            out[pid] = 0
+            continue
+        if hid not in cache:
+            cache[hid] = inventory_manager.get_hangar_stock(hid)
+        out[pid] = int(cache[hid].get(pid, 0))
+    return out
+
+
+def _first_mother_hangar(child: dict, mothers: dict[int, dict], plans: list[dict]) -> int | None:
+    """子项对应的「首个引用母项」的材料机库 id（取不到返回 None）。"""
+    sources = sorted(
+        int(s) for s in str(child.get("source_mother_ids") or "").replace(" ", "").split(",") if s.isdigit()
+    )
+    for mid in sources:
+        hid = (mothers.get(mid) or {}).get("mat_hangar_id")
+        if hid:
+            return int(hid)
+    gid = child.get("group_id") or child.get("group_number")
+    if gid:
+        for m in plans:
+            if int(m.get("child_level") or m.get("sub_level") or 0) != 0:
+                continue
+            if (m.get("group_id") or m.get("group_number")) == gid and m.get("mat_hangar_id"):
+                return int(m["mat_hangar_id"])
+    hid = child.get("mat_hangar_id")
+    return int(hid) if hid else None
 
 
 def _child_demand_from_rows(sub_plans: list[dict], conn, plans: list[dict]) -> dict[int, int]:

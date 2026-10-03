@@ -290,10 +290,18 @@ class PlanTableModel(QAbstractTableModel):
         if c == 6:
             return str(p.get("child_level", 0))
         if c == 7:
-            # 派生状态「材料不足」优先。**只在待生产行上有意义** —— 行走到 ready/completed
+            # 派生状态优先。**只在待生产行上有意义** —— 行走到 ready/completed
             # 后残留的标注不该继续显示（标注是控制器按当前库存算的，不落库）。
-            if p.get("material_status") == "short" and (p.get("status") or "") == "pending":
-                return "材料不足"
+            # 顺序：**等子项 > 缺料 > 落库状态**。子项是母项的前置条件；母项对自制中间件的
+            # 需求本就由子线排产去造（采购侧不买它），标成「材料不足」会误导用户去买一个
+            # 买不到的东西。`check_materials(..., all_plans=...)` 已把子线产出计入，
+            # 所以 `material_status == "short"` 时剩下的才是「子线也补不上」的真缺料。
+            if (p.get("status") or "") == "pending":
+                waiting = int(p.get("material_waiting") or 0)
+                if waiting > 0:
+                    return f"等待 {waiting} 条子项"
+                if p.get("material_status") == "short":
+                    return "材料不足"
             return cast(str, self._STATUS_LABELS.get(p.get("status", ""), p.get("status", "")))
         if c == 8:
             return p.get("char_name", "") or "-"

@@ -2,7 +2,7 @@
 
 import pytest
 
-from services.plan_aggregator import aggregate_procurement
+from services.plan_aggregator import aggregate_procurement, collect_direct_materials
 
 
 def _inventory(db_manager, hangar_id, type_id, qty):
@@ -172,6 +172,36 @@ class TestAggregateProcurement:
         assert by_type[1001]["owned"] == 400
         assert by_type[1001]["to_buy"] == 900
         assert cost == pytest.approx(900 * 5 + 500 * 9)
+
+    def test_zero_runs_plan_contributes_nothing(self, temp_db):
+        """runs=0 的产线一个都不产出 → 它不该往待采购里塞任何需求（其余计划的需求不变）。
+
+        回归（用户报「待采购提示 7000 万、计划表却显示已满足」）：`total_runs` 原先写
+        `max(int(runs or 1), 1)`，把 runs=0 兜成「1 轮 × 并行数」算料，于是这条没在跑的
+        产线报出一份没人消耗的需求；1b 段的 `material_short` 与 `collect_direct_materials`
+        同病。0 轮 = 0 材料、0 产出，三个入口必须同意这一条。
+        """
+        running = {"product_type_id": 2001, "runs": 1, "parallels": 1, "me_level": 0}
+        stopped = {
+            "product_type_id": 2002,  # 无人机：100 三钛/轮
+            "runs": 0,
+            "parallels": 3,
+            "me_level": 0,
+            "material_short": '{"1002": 77}',  # 强制启动缺口也不该并入
+        }
+        with temp_db.connect("user", "ref", "bp", "mkt") as conn:
+            rows, cost, _vol = aggregate_procurement(conn, [running, stopped], price_type="sell")
+            solo, solo_cost, _v = aggregate_procurement(conn, [running], price_type="sell")
+            mats = collect_direct_materials(conn, [running, stopped])
+
+        by_type = {r["type_id"]: r for r in rows}
+        # 1001 只要 1000（不是 1000 + 100/轮 × 3 并行）；1002 只要 500（不是 +77）
+        assert (by_type[1001]["need"], by_type[1002]["need"]) == (1000, 500)
+        assert cost == pytest.approx(solo_cost)
+        assert {(r["type_id"], r["need"], r["to_buy"]) for r in rows} == {
+            (r["type_id"], r["need"], r["to_buy"]) for r in solo
+        }, "runs=0 的计划不得改变其余计划的需求"
+        assert mats[1001]["total_qty"] == 1000, "collect_direct_materials 必须同一口径"
 
     def test_rows_include_raw_names(self, temp_db):
         """行携带 zh_name/en_name 原值供 UI 名称展示，而非回退 type_id。"""

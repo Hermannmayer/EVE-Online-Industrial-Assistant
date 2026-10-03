@@ -705,6 +705,7 @@ def apply_inventory_import(
     data: list[tuple[int, int, float, int | None]],
     mode: str,
     targets: dict[int, int] | None = None,
+    clear_missing: dict[int, int] | None = None,
 ) -> tuple[int, int]:
     """按导入数据应用库存变更，返回 (added, moved)。
 
@@ -715,6 +716,11 @@ def apply_inventory_import(
         ``"full"`` 全量同步——按 ``targets`` 的最终数量覆盖（对话框算出的列）。
     targets: full 模式下 ``{type_id: 最终数量}``；跨机库移动行（``src_hangar`` 非空）
         不参与全量 set，保持移动语义。
+    clear_missing: full 模式的**反向差集** —— 「目标机库里有、剪贴板里没有」的既有行
+        ``{type_id: 该行现有数量}``（值只作调用方核对/日志用，服务**一律清零删行**，
+        要设成别的数量请走 ``targets``）。由调用方算好传进来（service 拿不到剪贴板，
+        也不该反查整库）；``incremental`` 只增不减，**永远不处理**它。
+        与 ``targets`` 撞车时以 ``targets`` 为准（不清零）。
 
     **整批共用一个事务**：逐行各自开事务时每行一次 commit（= 一次 fsync），几百行就是
     秒级卡顿。单事务下任一行失败整体回滚 —— 与「库存修正」语义一致（要么全改，要么
@@ -739,6 +745,14 @@ def apply_inventory_import(
                     continue
                 rid = add_item(hangar_id, type_id, delta, price, conn=conn)
                 if rid != -1:
+                    added += 1
+        if mode == "full" and clear_missing:
+            # 反向差集：剪贴板里根本没有的既有行 → 数量归零（`set_item_quantity` 见 0 就 DELETE）。
+            # 保留原成本价（传 None）；与剪贴板目标撞车时跳过，避免把用户刚 set 的值清掉。
+            for type_id in clear_missing:
+                if targets and type_id in targets:
+                    continue
+                if set_item_quantity(hangar_id, int(type_id), 0, None, conn=conn):
                     added += 1
     return added, moved
 

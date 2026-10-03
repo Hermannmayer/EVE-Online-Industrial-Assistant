@@ -140,6 +140,17 @@ FDialogFrame {
                 frame.rv.setAllChecked(false)
         }
 
+        /* 「只看有变更的行」开关（默认开）：整仓粘贴动辄几百行，全显示就找不出哪几行真的会变。
+         * 只影响**显示**——提交内容与统计行仍按全部行算；未匹配/跨机库移动行恒显示（藏起来最危险）。
+         * 绑定写法与 AllItemsDialog 的「置顶」同一套（属性 + onToggled 回写）。 */
+        FCheckBox {
+            objectName: "onlyChangedBox"
+            text: qsTr("只看有变更的行")
+            checked: frame.rv ? frame.rv.onlyChanged : true
+            onToggled: if (frame.rv)
+                frame.rv.setOnlyChanged(checked)
+        }
+
         Item {
             Layout.fillWidth: true
         }

@@ -686,8 +686,11 @@ Item {
         property var targetRows: []
         property var state: ({})
 
-        //: 普通计划行（非共享组件合成根）。下面所有 `visible` 都以它为准。
+        // 普通计划行（非共享组件合成根）。下面所有 `visible` 都以它为准。
         readonly property bool plain: !state.synthetic
+
+        //: 子项行：数量由拆解/智能调整排，不能从「编辑生产计划」手改。
+        readonly property bool childRow: state.isChild === true
 
         // 共享组件合成根：只有折叠一项
         FMenuItem {
@@ -698,10 +701,17 @@ Item {
         FMenuSeparator { visible: rowMenu.plain }
 
         // ── 计划编辑 ────────────────────────────────────────────
+        // 「编辑生产计划」只给母项：子项数量是拆解排出来的（净口径），手改会和重放打架。
+        // 子项行改由下面那条置灰说明项指路（用户要求「记得给子项加提示」）。
         FMenuItem {
             text: qsTr("编辑生产计划")
-            visible: rowMenu.plain
+            visible: rowMenu.plain && !rowMenu.childRow
             onTriggered: root.planBridge.editPlans(rowMenu.targetRows)
+        }
+        FMenuItem {
+            text: root.planBridge ? root.planBridge.childEditHint : ""
+            visible: rowMenu.plain && rowMenu.childRow
+            enabled: false
         }
         FMenuItem {
             text: qsTr("绑定库存蓝图...")
@@ -776,10 +786,6 @@ Item {
             FMenuItem {
                 text: qsTr("子项大规模产线并行")
                 onTriggered: root.planBridge.massParallel(rowMenu.targetRows)
-            }
-            FMenuItem {
-                text: qsTr("重算子项（按母项当前需求）")
-                onTriggered: root.planBridge.recalcChildren(rowMenu.targetRows)
             }
         }
 

@@ -456,6 +456,17 @@ def self_made_type_ids(plans: list[dict]) -> set[int]:
     }
 
 
+def _plan_total_runs(plan: dict) -> int:
+    """计划的**字面**总作业数 = `runs × parallels`；`runs=0` 就是 0，不兜成 1。
+
+    `runs=0` 的产线消耗 0 材料、产出 0 产品，不该往待采购里塞任何需求。
+    以前三处各自写 `or 1`，这种计划被当成「1 轮 × 并行数」算料 —— 报出一份没人消耗的
+    需求，与计划表的「库存够」自相矛盾（用户报的「提示采购 7000 万、界面却显示已满足」）。
+    `parallels` 缺省仍是 1（并行数没有「0 台」这种状态）。
+    """
+    return max(int(plan.get("runs") or 0), 0) * max(int(plan.get("parallels") or 1), 1)
+
+
 def aggregate_procurement(
     conn,
     plans: list[dict],
@@ -471,7 +482,8 @@ def aggregate_procurement(
 
     Args:
         conn: 已 ATTACH user/ref/bp/mkt 的数据库连接
-        plans: 计划列表（需含 product_type_id / runs / parallels / me_level）
+        plans: 计划列表（需含 product_type_id / runs / parallels / me_level）。
+               `runs=0` 的产线按 0 轮算 —— 一个都不产出，也就不贡献任何需求（见 `_plan_total_runs`）
         hangar_id: 非 None 时全部需求统一扣该机库库存（采购弹窗模式）；
                    None 时按各计划 mat_hangar_id 分组各自扣减（统计条模式），
                    计划无 mat_hangar_id 用 default_hangar_id 兜底
@@ -508,7 +520,9 @@ def aggregate_procurement(
         # 走 plan_execution.material_requirements 的统一路径，这里跳过。
         if is_science(plan.get("activity")):
             continue
-        total_runs = max(int(plan.get("runs") or 1), 1) * max(int(plan.get("parallels") or 1), 1)
+        total_runs = _plan_total_runs(plan)
+        if total_runs <= 0:
+            continue  # 0 轮 = 0 材料、0 产出：这条产线不贡献任何需求
         me = int(plan.get("me_level") or 0)
         bp = conn.execute(
             "SELECT blueprint_type_id FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
@@ -539,6 +553,8 @@ def aggregate_procurement(
         raw = plan.get("material_short") or ""
         if not raw:
             continue
+        if _plan_total_runs(plan) <= 0:
+            continue  # 0 轮的产线根本没在启动，它的缺口不是要买的东西
         try:
             short = json.loads(raw)
         except Exception:
@@ -633,7 +649,9 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]:
         pid = plan.get("product_type_id")
         if not pid:
             continue
-        total_runs = max(int(plan.get("runs") or 1), 1) * max(int(plan.get("parallels") or 1), 1)
+        total_runs = _plan_total_runs(plan)
+        if total_runs <= 0:
+            continue  # 与 aggregate_procurement 同一口径：0 轮不贡献需求
         me = int(plan.get("me_level") or 0)
         bp = conn.execute(
             "SELECT blueprint_type_id FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",

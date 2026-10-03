@@ -123,7 +123,7 @@ services/logistics.py
 - 仓库：`services/repositories/plan_repository.py`（不存在 `services/plan_repository.py`）
 - 保存：`plan_service.insert_plan`；批量导入 `insert_plans_batch`（blueprint 导入走批量）
 - 启动：`plan_table._start_plan` → `plan_start_check.plan_start_block`（**纯逻辑、零 DB**；返回 `(类别码, 文案)`，UI 用码选短标签、用文案做 tooltip；`plan_start_block_reason` 是同一次判定的文案投影）→ `plan_execution.check_materials` → `start_plan`（原子 UPDATE status + `inventory_manager.deduct_item`）
-- 部分启动：`plan_execution.start_plan_partial(plan_id, lines, ...)` —— 只启动 N 条产线。**时序必须是「先拆行、后启动」**：先 `UPDATE parallels=N` + `insert_split_remainder`（复制结构列、清空执行列、`source_mother_ids` 置 `''`）+ `move_bindings`（把前 N 张之外的绑定**移动**给余量行），**提交后**再 `plan_service.load_plan` 重新取数（漏了这步会按 P 条扣料），最后 `start_plan(auto_bind=False)`（自动绑定走自己的连接立即提交，是回滚看不见的副作用）。失败则 `_rollback_split` 把两行并回一条。独立计划、子项全部完成的母项、**子项行**都可以部分启动（余量行照抄 `sub_level`/`group_number`，仍是同组子项；子项拆开后不要用母项的「重算子项」，那会按母项需求重放整组子项）。预览用 `preview_partial_start`（按 N 条口径报缺口）
+- 部分启动：`plan_execution.start_plan_partial(plan_id, lines, ...)` —— 只启动 N 条产线。**时序必须是「先拆行、后启动」**：先 `UPDATE parallels=N` + `insert_split_remainder`（复制结构列、清空执行列、`source_mother_ids` 置 `''`）+ `move_bindings`（把前 N 张之外的绑定**移动**给余量行），**提交后**再 `plan_service.load_plan` 重新取数（漏了这步会按 P 条扣料），最后 `start_plan(auto_bind=False)`（自动绑定走自己的连接立即提交，是回滚看不见的副作用）。失败则 `_rollback_split` 把两行并回一条。独立计划、子项全部完成的母项、**子项行**都可以部分启动（余量行照抄 `sub_level`/`group_number`，仍是同组子项；子项拆开后不要用母项的「母项调整（递归拆解）」，那会按母项需求重放整组子项）。预览用 `preview_partial_start`（按 N 条口径报缺口）
 - 完成：`plan_execution.complete_plan`（成品入 `inventory_items` + `consume_bpc_runs` 消耗 `user_blueprints` + 清 bindings）；撤销 `cancel_plan` 返还材料
 - **母项结束时清理已完成的子项行**：`complete_plan` 在**同一事务**内（`deposited` 回写之后、`commit` 之前）调
   `plan_execution.remove_completed_children(group_number, conn=conn)`，返回体带 `removed` 计数供 UI 出文案。
@@ -146,7 +146,7 @@ services/logistics.py
   - **别在累需求过程中折算 runs**：共享中间件会被每个母项各展开一遍，下级 demand 翻倍（实测 60 算成 80）。
   - **别用短路写递归**（`changed = changed or _propagate(...)`）：本节点 runs 有变化时就不往下走了，
     而「正在变」恰是最该往下走的时候。多母项共享中间件时每轮都在变，level≥2 永远进不了 `nodes`；
-    `prune` 又按「type 不在 nodes 里」判孤儿，会把已存在的孙项行删掉（先单母项拆解出孙项、再加第二个母项、重算子项 → 孙项消失）。
+    `prune` 又按「type 不在 nodes 里」判孤儿，会把已存在的孙项行删掉（先单母项拆解出孙项、再加第二个母项、再拆解一次 → 孙项消失）。
     回归防线：`tests/test_plan_rebuild.py::test_shared_intermediate_expands_to_its_own_children`
     与 `::test_prune_keeps_grandchildren_when_a_second_mother_shows_up`。
 - 读取：`plan_service.load_plans`；价格快照 `save_price_snapshots`

@@ -7,7 +7,13 @@ from services import inventory_manager
 
 
 def _build_dbs(db_manager):
-    """bp 蓝图表（与生产拆分一致）；user 附随含 user_blueprints/hangars/inventory_items。"""
+    """bp 蓝图表（与生产拆分一致）；user 附随含 user_blueprints/hangars/inventory_items。
+
+    `production_plans` 也建出来：`decompose_plan` 现在按落库同一条口径读既有子项的
+    `parallels`（见 `plan_decompose._existing_parallels`），真库一定有这张表。
+    """
+    from services.repositories.plan_repository import PlanRepository
+
     with db_manager.connect("bp") as conn:
         conn.execute(
             "CREATE TABLE blueprint_products (blueprint_type_id INTEGER, activity TEXT, "
@@ -27,6 +33,7 @@ def _build_dbs(db_manager):
         conn.execute("INSERT INTO blueprint_activities VALUES (3001,'manufacturing',3600)")
         conn.execute("INSERT INTO blueprint_activities VALUES (3002,'manufacturing',1800)")
     with db_manager.connect("user") as conn:
+        conn.executescript(PlanRepository.SCHEMA)
         conn.execute(
             "CREATE TABLE user_blueprints (id INTEGER PRIMARY KEY, hangar_id INTEGER, "
             "blueprint_type_id INTEGER, is_bpo INTEGER DEFAULT 1, me_level INTEGER DEFAULT 0, "
@@ -94,6 +101,98 @@ class TestDecomposePlan:
         assert lines[0]["has_blueprint"] is False
         assert lines[0]["me_level"] == 0
         assert lines[0]["te_level"] == 0
+
+
+class TestPreviewMatchesRebuild:
+    """预览（decompose_plan）与落库（rebuild_children）必须是同一组 runs/parallels。
+
+    回归背景：预览曾走独立的 `_decompose` 折算（ceil 且 parallels 恒为 1、自己再扣一次库存、
+    **库存覆盖到 0 就整行不建**），落库走 `compute_child_forest` + `_finalize_runs`
+    （先扣库存再摊并行、需求>0 至少排 1 轮）。同一份输入因此给出两套数字 —— 用户实测
+    对话框预览 11554=1360 / 41484=12，确认后表里是 2040 / 4。
+    """
+
+    def test_preview_matches_landed_runs_and_parallels(self, db_manager, monkeypatch):
+        from services import plan_rebuild
+        from services.repositories.plan_repository import PlanRepository
+
+        _build_dbs(db_manager)
+        _patch(db_manager, monkeypatch)
+        monkeypatch.setattr(
+            plan_rebuild,
+            "get_container",
+            lambda: SimpleNamespace(db=db_manager, plan_repo=PlanRepository(db_manager)),
+        )
+        with db_manager.connect("ref") as conn:
+            # 落库路径的 `_resolve_name` 要查 ref.item
+            conn.execute("CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT)")
+            conn.execute("INSERT INTO item VALUES (1001,'碳纤维','Carbon Fiber')")
+            conn.execute("INSERT INTO item VALUES (35,'三钛合金','Tritanium')")
+        with db_manager.connect("bp") as conn:
+            # 给 35 配一张蓝图 → 母项拆出两条子项线（35 ← 34×2，34 无蓝图是叶子）
+            conn.execute("INSERT INTO blueprint_products VALUES (3003,'manufacturing',35,1)")
+            conn.execute("INSERT INTO blueprint_materials VALUES (3003,'manufacturing',34,2)")
+            conn.execute("INSERT INTO blueprint_activities VALUES (3003,'manufacturing',600)")
+        with db_manager.connect("user") as conn:
+            conn.execute(
+                "INSERT INTO production_plans (id, product_type_id, product_name, runs, parallels, me_level, "
+                "status, group_number, sub_level, mat_hangar_id) "
+                "VALUES (1, 2001, '渡鸦级', 2, 1, 0, 'pending', 7, 0, 1)"
+            )
+            # 机库库存：1001 需 10 有 6（净差 4）；35 需 20 有 20（库存全顶 → 仍要排 1 轮）
+            conn.execute("INSERT INTO inventory_items (hangar_id, type_id, quantity, cost_price) VALUES (1,1001,6,0)")
+            conn.execute("INSERT INTO inventory_items (hangar_id, type_id, quantity, cost_price) VALUES (1,35,20,0)")
+
+        plan = {
+            "id": 1,
+            "product_type_id": 2001,
+            "runs": 2,
+            "parallels": 1,
+            "me_level": 0,
+            "group_number": 7,
+            "sub_level": 0,
+            "mat_hangar_id": 1,
+        }
+        preview = {
+            int(line["product_type_id"]): (int(line["runs"]), int(line["parallels"]))
+            for line in pd.decompose_plan(dict(plan), mat_hangar_id=1)
+        }
+        plan_rebuild.rebuild_children(create=True, prune=True, mother_ids={1})
+        with db_manager.connect("user") as conn:
+            landed = {
+                int(r["product_type_id"]): (int(r["runs"]), int(r["parallels"]))
+                for r in conn.execute(
+                    "SELECT product_type_id, runs, parallels FROM production_plans WHERE sub_level > 0"
+                ).fetchall()
+            }
+
+        # 逐位一致（含「库存全顶住的那条线」：预览不许把整行丢掉，落库也没有丢）
+        assert preview == landed
+        assert preview == {1001: (4, 1), 35: (1, 1)}
+
+        # 既有子项行设过并行（用户在并行弹窗里设的）→ 预览必须按同一组 `existing_parallels`
+        # 折算，否则预览按 1 条线摊、落库以用户线数为上限寻优，又是两套数字（实测母项 311 的
+        # 41484 就是这个：预览 12 轮 × 1 线，落库以既有 5 线为上限寻优成 3 轮 × 4 线）。
+        with db_manager.connect("user") as conn:
+            conn.execute("UPDATE production_plans SET parallels=5 WHERE product_type_id=1001 AND sub_level>0")
+
+        preview2 = {
+            int(line["product_type_id"]): (int(line["runs"]), int(line["parallels"]))
+            for line in pd.decompose_plan(dict(plan), mat_hangar_id=1)
+        }
+        plan_rebuild.rebuild_children(create=True, prune=True, mother_ids={1})
+        with db_manager.connect("user") as conn:
+            landed2 = {
+                int(r["product_type_id"]): (int(r["runs"]), int(r["parallels"]))
+                for r in conn.execute(
+                    "SELECT product_type_id, runs, parallels FROM production_plans WHERE sub_level > 0"
+                ).fetchall()
+            }
+
+        assert preview2 == landed2
+        # 净差 4 个线·轮 → 寻优到 4 线 × 1 轮（零多余）；旧值 (1, 5) 是「沿用既有并行不寻优」，
+        # 会 5×1=5 多造 1 个（见 `plan_rebuild._finalize_runs` 的并行数寻优）。
+        assert preview2 == {1001: (1, 4), 35: (1, 1)}
 
 
 class TestCollectGroupMembers:
