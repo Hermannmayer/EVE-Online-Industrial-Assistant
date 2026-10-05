@@ -184,20 +184,30 @@ class TradeRankQmlModel(QAbstractTableModel):
         if key is None:
             return 0
         v = row.get("chg") if key == "chg" else row.get(key)
+        # 文本列**恒**返回字符串、数值列**恒**返回 float：混着返回（缺值给 `-inf`）会在
+        # `list.sort` 里抛 `TypeError: '<' not supported between 'str' and 'float'` ——
+        # 那是在 Slot 里抛的，表现为「点了表头没反应」。
+        if key in ("z", "e"):
+            return str(v or "")
         if isinstance(v, int | float):
-            return v
-        if isinstance(v, str):
-            return v
+            return float(v)
         return _SORT_NONE
 
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:  # type: ignore[override]
+        """点表头排序：**必须走模型重置**，不能只发 `layoutAboutToBeChanged/layoutChanged`。
+
+        实测（2026-10-05 出图核对）：只发 layout 信号时 QML `TableView`（本页
+        `reuseItems: true`）不重排 —— 表头箭头变成「中文名称 ▲」了，行序还是原样，
+        用户看到的就是「排序没生效」。同仓能工作的那张表（`industry_models.PlanTableModel.sort`）
+        用的正是 `beginResetModel/endResetModel`，照它办。
+        """
         if not 0 <= column < len(COLUMNS) or COLUMNS[column][2] is None:
             return  # 图标列与操作列不参与排序
+        self.beginResetModel()
         self._sort_col = column
         self._sort_desc = order == Qt.SortOrder.DescendingOrder
-        self.layoutAboutToBeChanged.emit()
         self._rows.sort(key=self._sort_key, reverse=self._sort_desc)
-        self.layoutChanged.emit()
+        self.endResetModel()
 
     def refresh_colors(self) -> None:
         """主题切换后补发 dataChanged（两列的颜色是算出来的字符串）。"""

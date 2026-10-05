@@ -179,11 +179,9 @@ def _sort_key(self, row: dict)
 def sort(self, column: int, order: Qt.SortOrder=Qt.SortOrder.AscendingOrder) -> None
 ```
 
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
+点表头排序：**必须走模型重置**，不能只发 `layoutAboutToBeChanged/layoutChanged`。
 
-定义行：`193`
+定义行：`196`
 ##### `refresh_colors`
 
 ```python
@@ -192,4 +190,4 @@ def refresh_colors(self) -> None
 
 主题切换后补发 dataChanged（两列的颜色是算出来的字符串）。
 
-定义行：`202`
+定义行：`212`
