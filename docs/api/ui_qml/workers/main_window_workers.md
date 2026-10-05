@@ -40,7 +40,16 @@ def __init__(self, regions: list[str] | None=None, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`43`
+定义行：`44`
+##### `_emit_progress`
+
+```python
+def _emit_progress(self, pct: int, message: str) -> None
+```
+
+`run_price_update` 的进度回调 → 信号（信号签名带最大值，这里固定 100）。
+
+定义行：`48`
 ##### `run`
 
 ```python
@@ -51,13 +60,13 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`47`
+定义行：`52`
 
 ### `class PriceCheckWorker`（继承 `QThread`）
 
 后台线程检查价格数据时效
 
-定义行：`56`
+定义行：`61`
 
 #### 方法
 
@@ -71,7 +80,7 @@ def __init__(self, interval_minutes: int=30, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`61`
+定义行：`66`
 ##### `run`
 
 ```python
@@ -82,4 +91,4 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`65`
+定义行：`70`

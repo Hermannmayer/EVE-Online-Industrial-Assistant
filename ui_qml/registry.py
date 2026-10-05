@@ -133,6 +133,14 @@ def register_migrated_pages() -> None:
 
         QML_PAGE_FACTORIES["industry"] = build_industry_spec
 
+    # 市场监控页：**一个导航项两块内容**（首页=大盘，子视图=关注物品），
+    # 所以也走页工厂 —— 要注入两个桥（`bridge` 关注桥 / `pulseBridge` 大盘桥），
+    # 单 bridge 形态的 `QML_BRIDGES` 表达不了（见 `ui_qml/monitor_page.py`）。
+    if "watchlist" not in QML_PAGE_FACTORIES:
+        from ui_qml.monitor_page import build_monitor_spec
+
+        QML_PAGE_FACTORIES["watchlist"] = build_monitor_spec
+
 
 def _spec_for(qml_file: str, key: str, shell: object | None) -> PageSpec:
     """常规 QML 页（单 context）的规格：`bridge` + 可选的 `shell`。"""

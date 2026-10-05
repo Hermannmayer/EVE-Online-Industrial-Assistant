@@ -3,21 +3,25 @@ import QtQuick.Controls
 import QtQuick.Effects
 import QtQuick.Layouts
 import "../components"
+import "watchlist"
 
-/* 价格监控页 —— 阶段 3。
+/* 关注 Tab（原「价格监控」页）—— 阶段 3 建的页，WP5 重构成**两栏**：
  *
- * 对照 Widgets 版 `ui_pyside6/views/watchlist_view.py`：
- *   顶部「搜索物品 + 区域 + 备注 + 添加关注」、中部 10 列关注表、
- *   底部「刷新价格 / 删除选中 / 计数」，行右键菜单与双击设置阈值。
+ *   ┌ 顶部：搜索物品 + 区域 + 备注 + 添加关注（原样保留） ─────────────┐
+ *   ├ 左（220–260px，可拖拽）：关注列表 + 排序 ─┬ 右：选中物品详情 ────┤
+ *   │  阈值触发/价格变化的行底色、右键菜单照旧   │  `WatchlistDetailPane` │
+ *   ├ 底部：刷新价格 / 删除选中 / 计数（原样保留）─────────────────────┤
  *
  * **业务动作一律不在这里实现**：每次交互都调 `watch.<方法>`，
  * 由 `ui_qml/bridge/watchlist_bridge.py` 转给 `services.watchlist_manager`。
  *
- * 与 Widgets 版的两处差异（有意）：
- *   1. 阈值设置从内联 `QDialog` 改成这里的小弹层（阶段 4 少一个对话框）；
- *   2. 删除只作用于**当前行** —— 原版的多选只被「删除选中」用到，
- *      而 QML `TableView` 的内建多选在 Qt 6.11 上不工作（见 PlanTableBridge 的说明），
- *      为它单独实现一套选中模型不划算。
+ * 左侧列表从 10 列 `TableView` 改成**行卡片 `ListView`**（窄栏放不下 10 列）：
+ *   - 行内两段文字：物品名 / 「买 x 卖 y 涨幅」；
+ *   - 行点击仍走 `FTableClickArea`（`objectName: "watchClickArea"`，命中固定在按下那一刻）；
+ *   - **阈值能力没有丢**：右键菜单（设置买价/卖价阈值）与右详情面板的两个按钮都在，
+ *     外加**双击行 = 设置买价阈值**（原版双击第 7 列做的事，窄列表里没有那一列了）。
+ *
+ * 参考：`docs/dev/market-monitor-plan.md` 4.2（关注 Tab 的目标结构）。
  */
 Item {
     id: page
@@ -28,8 +32,8 @@ Item {
 
     readonly property int fntBase: Math.round(12 * Theme.fontScale)
     readonly property int fntSmall: Math.round(11 * Theme.fontScale)
-    readonly property int rowH: Math.max(26, Math.round(13 * Theme.fontScale) + 13)
-    readonly property int headerH: Math.max(26, fntSmall + 15)
+    //: 左列表的行高（两行文字）；`FTableClickArea` 的命中口径依赖它恒定
+    readonly property int listRowH: Math.max(42, Math.round(26 * Theme.fontScale))
     readonly property int pad: Theme.spacingSm
 
     //: 当前行（右键菜单 / 删除 / 阈值编辑都作用于它）
@@ -37,26 +41,13 @@ Item {
     //: 阈值弹层的目标
     property int thresholdRow: -1
     property string thresholdKind: "buy"
+    //: 顶部提示（添加失败等），短暂显示
+    property string hint: ""
 
     // 整页不透明底（宿主是透明清屏的 QQuickWidget，见 IndustryPage 的同款说明）
     Rectangle {
         anchors.fill: parent
         color: Theme.bgDark
-    }
-
-    /* 列宽：provider 与点击区必须同口径 —— 两处各算一次会错位。 */
-    function colWidth(col) {
-        const cols = page.watch ? page.watch.columns : []
-        if (col >= cols.length)
-            return 0
-        // 最后一列（备注）吃满剩余空间，对齐原版的 Stretch
-        if (col === cols.length - 1) {
-            let used = 0
-            for (let i = 0; i < cols.length - 1; ++i)
-                used += cols[i].width
-            return Math.max(80, tableView.width - used)
-        }
-        return cols[col].width
     }
 
     function openThreshold(row, kind) {
@@ -71,6 +62,17 @@ Item {
                                : qsTr("当卖价 ≥ 此值时提醒")) + "\n" + info.name
         thresholdInput.value = kind === "buy" ? info.buyThreshold : info.sellThreshold
         thresholdPopup.open()
+    }
+
+    /* 列表刷新（60 秒轮询 / 增删 / 排序后）行号会变，当前行以桥里的选中行为准 —— 桥按
+     * `watchlist_items.id` 重新定位，这里只把结果同步到高亮用的 `currentRow`。 */
+    Connections {
+        target: page.watch
+
+        function onRowsChanged() {
+            if (page.watch)
+                page.currentRow = page.watch.selectedRow
+        }
     }
 
     ColumnLayout {
@@ -170,186 +172,197 @@ Item {
         }
 
         // ═══════════════════════════════════════════════════════
-        //  2. 关注列表
+        //  2. 左列表 + 右详情（窄栏可拖拽）
         // ═══════════════════════════════════════════════════════
 
-        Item {
+        SplitView {
+            id: split
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.leftMargin: 2 * page.pad
             Layout.rightMargin: 2 * page.pad
+            orientation: Qt.Horizontal
 
+            // 3px 分隔条（Controls 2 的 SplitView 没有 handleWidth 属性，只能这样给 handle 定宽）
+            handle: Rectangle {
+                implicitWidth: 3
+                implicitHeight: 3
+                color: Theme.border
+            }
+
+            // ── 左：关注列表 ────────────────────────────────────
             Rectangle {
-                anchors.fill: parent
+                objectName: "watchListPane"
+                SplitView.preferredWidth: 240
+                SplitView.minimumWidth: 220
+                SplitView.maximumWidth: 260
                 color: Theme.bgSurface
                 radius: Theme.radius
                 border.width: 1
                 border.color: Theme.border
-            }
 
-            HorizontalHeaderView {
-                id: headerView
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                height: page.headerH
-                syncView: tableView
-                clip: true
-                // 标题由 delegate 自己取；这个角色没人读，但必须真实存在（Qt 默认 "display" 不在模型里）
-                textRole: "text"
-
-                delegate: Item {
-                    id: hcell
-                    required property int index
-                    implicitHeight: page.headerH
-
-                    readonly property var meta: (page.watch && page.watch.columns.length > hcell.index)
-                                                 ? page.watch.columns[hcell.index] : null
-
-                    Rectangle {
-                        anchors.fill: parent
-                        color: Theme.bgSurface
-
-                        Rectangle {
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.bottom: parent.bottom
-                            height: 1
-                            color: Theme.border
-                        }
-                        Rectangle {
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            anchors.bottom: parent.bottom
-                            width: 1
-                            color: Theme.border
-                        }
-                    }
-
-                    Text {
-                        anchors.fill: parent
-                        anchors.leftMargin: 6
-                        anchors.rightMargin: 6
-                        verticalAlignment: Text.AlignVCenter
-                        horizontalAlignment: hcell.index >= 4 && hcell.index <= 8 ? Text.AlignRight : Text.AlignLeft
-                        text: hcell.meta ? hcell.meta.title : ""
-                        color: Theme.textPrimary
-                        font.family: Theme.fontFamily
-                        font.pixelSize: page.fntSmall
-                        elide: Text.ElideRight
-                    }
-                }
-            }
-
-            TableView {
-                id: tableView
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: headerView.bottom
-                anchors.bottom: parent.bottom
-
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-                model: page.watch ? page.watch.model : null
-                // 内建选中在 Qt 6.11 上不工作（详见 PlanTableBridge 的说明），
-                // 这里只需要「当前行」，高亮由 delegate 读 page.currentRow 自己画
-                selectionBehavior: TableView.SelectionDisabled
-                reuseItems: true
-                rowHeightProvider: function (row) { return page.rowH }
-                columnWidthProvider: function (col) { return page.colWidth(col) }
-
-                ScrollBar.vertical: ScrollBar {
-                    policy: ScrollBar.AsNeeded
-                }
-                ScrollBar.horizontal: ScrollBar {
-                    policy: ScrollBar.AsNeeded
-                }
-
-                delegate: Item {
-                    id: cell
-
-                    required property int row
-                    required property int column
-                    required property bool selected
-                    required property var model
-
-                    readonly property bool isCurrent: page.currentRow === row
-                    readonly property var colMeta: (page.watch && page.watch.columns.length > cell.column)
-                                                  ? page.watch.columns[cell.column] : null
-
-                    implicitWidth: cell.colMeta ? cell.colMeta.width : 100
-                    implicitHeight: page.rowH
-
-                    Rectangle {
-                        anchors.fill: parent
-                        // 价格变化/阈值触发的底色带 alpha，直接叠在偶数行底色上
-                        color: cell.isCurrent ? Theme.primary : (cell.model.bg || Theme.bgSurface)
-                    }
-
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        height: 1
-                        color: Theme.border
-                    }
-
-                    Image {
-                        visible: cell.column === 0
-                        anchors.centerIn: parent
-                        width: Math.round(22 * Theme.fontScale)
-                        height: width
-                        source: cell.model.iconUrl
-                        sourceSize.width: width
-                        sourceSize.height: height
-                        smooth: true
-                        fillMode: Image.PreserveAspectFit
-                    }
-
-                    Text {
-                        visible: cell.column !== 0
-                        anchors.fill: parent
-                        anchors.leftMargin: Math.round(6 * Theme.fontScale)
-                        anchors.rightMargin: Math.round(6 * Theme.fontScale)
-                        verticalAlignment: Text.AlignVCenter
-                        horizontalAlignment: cell.model.alignRight ? Text.AlignRight : Text.AlignLeft
-                        text: cell.model.text
-                        color: cell.isCurrent ? Theme.textOnPrimary : (cell.model.fg || Theme.textPrimary)
-                        font.family: cell.model.mono ? "Consolas" : Theme.fontFamily
-                        font.pixelSize: page.fntBase
-                        elide: Text.ElideRight
-                    }
-
-                    HoverHandler {
-                        cursorShape: Qt.PointingHandCursor
-                    }
-
-                }
-
-                // 行点击命中固定在按下那一刻（见 FTableClickArea 的说明）
-                FTableClickArea {
-                    objectName: "watchClickArea"
+                ColumnLayout {
                     anchors.fill: parent
-                    rowHeight: page.rowH
-                    columnWidth: page.colWidth
+                    anchors.margins: 2
+                    spacing: Theme.spacingXs
 
-                    onRowClicked: function (row, _column) {
-                        page.currentRow = row
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingXs
+
+                        Text {
+                            text: qsTr("排序:")
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: page.fntSmall
+                        }
+                        FComboBox {
+                            Layout.fillWidth: true
+                            model: page.watch ? page.watch.sortOptions : []
+                            currentIndex: page.watch ? page.watch.sortIndex : 0
+                            onActivated: if (page.watch)
+                                page.watch.setSortIndex(currentIndex)
+                        }
                     }
-                    onRowDoubleClicked: function (row, column) {
-                        page.currentRow = row
-                        if (column === 7)
-                            page.openThreshold(row, "buy")
-                        else if (column === 8)
-                            page.openThreshold(row, "sell")
+
+                    ListView {
+                        id: watchList
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        // 行卡片由桥算好（`list_rows`），这里用 JS 数组模型 —— 与仓里其它
+                        // ListView 同款（`modelData`），不走 QAbstractItemModel 的角色查找
+                        model: page.watch ? page.watch.listRows : []
+                        boundsBehavior: Flickable.StopAtBounds
+                        reuseItems: true
+                        spacing: 0
+
+                        ScrollBar.vertical: ScrollBar {
+                            policy: ScrollBar.AsNeeded
+                        }
+
+                        delegate: Item {
+                            id: rowCard
+
+                            required property int index
+                            required property var modelData
+
+                            readonly property bool isCurrent: page.currentRow === rowCard.index
+
+                            width: ListView.view ? ListView.view.width : 0
+                            height: page.listRowH
+
+                            Rectangle {
+                                anchors.fill: parent
+                                // 价格变化/阈值触发是行底色（模型给的是带 alpha 的 #aarrggbb）
+                                color: rowCard.isCurrent ? Theme.primary
+                                                         : (rowCard.modelData.bg ? rowCard.modelData.bg : Theme.bgSurface)
+                            }
+
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                height: 1
+                                color: Theme.border
+                            }
+
+                            Image {
+                                id: rowIcon
+                                anchors.left: parent.left
+                                anchors.leftMargin: 4
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: Math.round(22 * Theme.fontScale)
+                                height: width
+                                source: rowCard.modelData.iconUrl
+                                sourceSize.width: width
+                                sourceSize.height: height
+                                smooth: true
+                                fillMode: Image.PreserveAspectFit
+                            }
+
+                            Text {
+                                id: rowNameText
+                                anchors.left: rowIcon.right
+                                anchors.leftMargin: 6
+                                anchors.right: parent.right
+                                anchors.rightMargin: 6
+                                anchors.top: parent.top
+                                anchors.topMargin: Math.round(3 * Theme.fontScale)
+                                text: rowCard.modelData.name
+                                color: rowCard.isCurrent ? Theme.textOnPrimary : Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: page.fntBase
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                anchors.left: rowNameText.left
+                                anchors.right: parent.right
+                                anchors.rightMargin: 6
+                                anchors.top: rowNameText.bottom
+                                text: qsTr("买 %1  卖 %2  %3").arg(rowCard.modelData.buyText).arg(rowCard.modelData.sellText).arg(rowCard.modelData.riseText)
+                                color: rowCard.isCurrent ? Theme.textOnPrimary : Theme.textSecondary
+                                font.family: "Consolas"
+                                font.pixelSize: page.fntSmall
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        /* 行点击命中固定在按下那一刻（见 FTableClickArea 的说明）。
+                         * `columnWidth` 不传 = 整行一格（窄列表只有一列）。 */
+                        FTableClickArea {
+                            objectName: "watchClickArea"
+                            anchors.fill: parent
+                            rowHeight: page.listRowH
+                            rowSpacing: watchList.spacing
+
+                            onRowClicked: function (row, _column) {
+                                page.currentRow = row
+                                if (page.watch)
+                                    page.watch.selectRow(row)
+                            }
+                            onRowDoubleClicked: function (row, _column) {
+                                // 窄列表里没有独立的买/卖阈值列，双击沿用原「第 7 列」的买价阈值；
+                                // 卖价阈值走右键菜单或右侧详情面板的按钮（能力没丢）
+                                page.currentRow = row
+                                if (page.watch)
+                                    page.watch.selectRow(row)
+                                page.openThreshold(row, "buy")
+                            }
+                            onRowRightClicked: function (row, _column, x, y) {
+                                page.currentRow = row
+                                if (page.watch)
+                                    page.watch.selectRow(row)
+                                const p = mapToItem(page, x, y)
+                                rowMenu.row = row
+                                rowMenu.x = p.x
+                                rowMenu.y = p.y
+                                rowMenu.openSoon()
+                            }
+                        }
                     }
-                    onRowRightClicked: function (row, _column, x, y) {
-                        page.currentRow = row
-                        const p = mapToItem(page, x, y)
-                        rowMenu.row = row
-                        rowMenu.x = p.x
-                        rowMenu.y = p.y
-                        rowMenu.openSoon()
+                }
+            }
+
+            // ── 右：选中物品详情 ────────────────────────────────
+            Rectangle {
+                objectName: "watchDetailFrame"
+                SplitView.fillWidth: true
+                SplitView.minimumWidth: 320
+                color: Theme.bgSurface
+                radius: Theme.radius
+                border.width: 1
+                border.color: Theme.border
+
+                WatchlistDetailPane {
+                    id: detailPane
+                    anchors.fill: parent
+                    anchors.margins: 2
+                    watch: page.watch
+
+                    onThresholdRequested: function (kind) {
+                        page.openThreshold(page.currentRow, kind)
                     }
                 }
             }
@@ -391,8 +404,6 @@ Item {
         }
     }
 
-    //: 顶部提示（添加失败等），短暂显示
-    property string hint: ""
     Timer {
         interval: 2500
         running: page.hint !== ""

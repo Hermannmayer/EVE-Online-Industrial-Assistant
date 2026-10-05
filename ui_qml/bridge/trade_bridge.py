@@ -20,6 +20,8 @@ from typing import Any
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
 from core.constants import TRADE_HUB_IDS
+from core.logger import log
+from ui_qml.bridge.all_items_bridge import market_tree_rows, subtree_ids, visible_tree_rows
 from ui_qml.models.trade_rank_model import COLUMNS, TradeRankQmlModel
 
 __all__ = ["TradeBridge"]
@@ -71,6 +73,7 @@ class TradeBridge(QObject):
 
     stateChanged = Signal()  # 工具栏 / 状态栏 / 计算中标志
     rowsChanged = Signal()  # 结果表整体换了
+    treeChanged = Signal()  # 左树（可见行 / 选中节点）
 
     def __init__(self, shell: object | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -81,7 +84,9 @@ class TradeBridge(QObject):
         self._from_side = 0  # 卖单
         self._to_side = 1  # 买单
         self._category_index = 0
-        self._categories = self._load_categories()
+        #: 市场分类节点：下拉与左树**共用这一次查询**（见 `_load_market_nodes`）
+        _nodes = self._load_market_nodes()
+        self._categories = self._categories_from(_nodes)
         #: 「只看赚钱的」——价差 ≤ 0 的倒卖没有意义
         self._hide_unprofitable = True
         #: 「只看有对手盘的」档位下标（见 `_LIQUIDITY_THRESHOLDS`）
@@ -100,6 +105,19 @@ class TradeBridge(QObject):
         self._gen = 0
         self._worker: QObject | None = None
 
+        # ── 左树：市场分类（与「可制造物品」窗口同一份市场树）────────────────
+        # 节点来自上面那一次 `fetch_market_tree()`（本地静态表，与分类下拉同源同次）；
+        # 选中节点后按**整棵子树**筛，能精确到子分类 —— 下拉只支持单个一级分组。
+        self._tree_all: list[dict] = market_tree_rows(_nodes) if _nodes else []
+        self._tree_visible: list[dict] = []
+        self._expanded: set[Any] = set()
+        self._selected_tree_id = -1
+        self._selected_tree_name = ""
+        #: 选中节点子树里的物品 type_id（选中时算一次；映射是静态的）
+        self._selected_items: set[int] = set()
+        #: 分组 → 物品 type_id（ref 库一次查完，按窗口缓存）
+        self._items_by_group: dict[int, set[int]] = {}
+
         #: `TradeCartController`（外壳的懒建单例）—— 用 `Any` 是因为桥不该反向依赖 views，
         #: 而它只在 `cartSummary` / `addToCart` / `openCart` 三处被鸭子类型调用。
         self._cart: Any = None
@@ -111,6 +129,10 @@ class TradeBridge(QObject):
             except Exception:
                 # 购物车建不起来（QML 缺失等）不该拖垮整页
                 self._cart = None
+
+        # 树先落一次可见行（折叠到根、还不置灰 —— 这时候一条结果都还没有）。
+        # 少了这一步 QML 打开时树是空的，直到第一次改筛选才冒出来。
+        self._refresh_tree()
 
     # ═══════════════════════════════════════════════════════════
     #  工具栏
@@ -140,6 +162,111 @@ class TradeBridge(QObject):
     #: 出结果后提示不会消失（不报错，只是不动）。
     isEmpty = Property(bool, lambda self: not self._visible, notify=rowsChanged)
 
+    # ── 左树：市场分类 ──────────────────────────────────────
+    treeRows = Property(list, lambda self: self._tree_visible, notify=treeChanged)
+    selectedTreeId = Property(int, lambda self: self._selected_tree_id, notify=treeChanged)
+    selectedTreeName = Property(str, lambda self: self._selected_tree_name, notify=treeChanged)
+
+    @Slot(int)
+    def toggleTreeNode(self, index: int) -> None:
+        if not 0 <= index < len(self._tree_visible):
+            return
+        row = self._tree_visible[index]
+        if not row["hasChildren"]:
+            return
+        node_id = row["id"]
+        if node_id in self._expanded:
+            self._expanded.discard(node_id)
+        else:
+            self._expanded.add(node_id)
+        self._refresh_tree()
+
+    @Slot(int)
+    def selectTreeNode(self, index: int) -> None:
+        """点分类节点：按**整棵子树**筛。
+
+        下拉那个分类只支持单个一级分组（`market_group_id IN (一个 id)`，子分类里的物品
+        全都看不到），树能精确到子分类 —— 这也是加树的主要原因。
+        """
+        if not 0 <= index < len(self._tree_visible):
+            return
+        row = self._tree_visible[index]
+        self._selected_tree_id = int(row["id"])
+        self._selected_tree_name = str(row["name"])
+        self._selected_items = self._node_items(self._selected_tree_id)
+        self._category_index = 0  # 与下拉互斥：树生效时下拉回到「全部品类」
+        self._apply_filters()
+        self.stateChanged.emit()
+
+    @Slot()
+    def clearTreeSelection(self) -> None:
+        """「全部」：清掉树的筛选（下拉不动）。"""
+        if self._selected_tree_id < 0:
+            return
+        self._clear_tree_selection()
+        self._apply_filters()
+        self.stateChanged.emit()
+
+    def _clear_tree_selection(self) -> None:
+        self._selected_tree_id = -1
+        self._selected_tree_name = ""
+        self._selected_items = set()
+
+    def _refresh_tree(self) -> None:
+        """重算可见行 + 「这个分类下当前结果里有没有物品」的置灰标记。"""
+        present = {r.get("id") for r in self._rows}
+        # 还没有结果时**不置灰**（全是灰的会让人以为分类是空的）
+        hit = self._tree_has_rows(present) if present else {}
+        rows: list[dict] = []
+        for row in visible_tree_rows(self._tree_all, self._expanded):
+            item = dict(row)
+            item["empty"] = bool(present) and not hit.get(row["id"], False)
+            rows.append(item)
+        self._tree_visible = rows
+        self.treeChanged.emit()
+
+    def _tree_has_rows(self, present: set[Any]) -> dict[Any, bool]:
+        """每个节点子树里有没有「当前结果」里的物品。
+
+        自底向上一次算完（每个节点只跟**自己那一个分组**的物品求交集，再往上累积），
+        避免逐节点 `subtree_ids` + 求并集那套 O(节点 × 子树) 的做法。
+        """
+        mapping = self._items_by_group_map()
+        hit = {row["id"]: bool(mapping.get(int(row["id"]), set()) & present) for row in self._tree_all}
+        for row in reversed(self._tree_all):
+            parent = row.get("parent")
+            if parent is not None and hit.get(row["id"]):
+                hit[parent] = True  # type: ignore[index]
+        return hit
+
+    def _node_items(self, node_id: int) -> set[int]:
+        """节点子树里的物品 type_id（选中时算一次，映射是静态的）。"""
+        mapping = self._items_by_group_map()
+        out: set[int] = set()
+        for gid in subtree_ids(self._tree_all, node_id):
+            out |= mapping.get(int(gid), set())
+        return out
+
+    def _items_by_group_map(self) -> dict[int, set[int]]:
+        """分组 id → 该分组下的物品 type_id（ref 库一次查完、**按窗口缓存**）。
+
+        `item` 表 5 万行量级，懒查一次即可；失败就退化成空映射（树只看得到结构，
+        过滤不出东西），不拦着用户算排行。
+        """
+        if self._items_by_group:
+            return self._items_by_group
+        from core.container import get_container
+
+        try:
+            with get_container().db.connect("ref") as conn:
+                for gid, tid in conn.execute(
+                    "SELECT market_group_id, type_id FROM item WHERE market_group_id IS NOT NULL"
+                ):
+                    self._items_by_group.setdefault(int(gid), set()).add(int(tid))
+        except Exception:
+            log.exception("读取「市场分组 → 物品」映射失败，左树过滤会退化成空")
+        return self._items_by_group
+
     # ── 筛选项 ──────────────────────────────────────────────
 
     hideUnprofitable = Property(bool, lambda self: self._hide_unprofitable, notify=stateChanged)
@@ -167,16 +294,23 @@ class TradeBridge(QObject):
         if threshold:
             # 两侧都要有对手盘：A 侧买得到、B 侧卖得掉，缺一边这单就成不了
             rows = [r for r in rows if min(int(r.get("va") or 0), int(r.get("vb") or 0)) >= threshold]
+        # 左树选中的分类：按**整棵子树**里的物品筛
+        if self._selected_tree_id >= 0:
+            rows = [r for r in rows if r.get("id") in self._selected_items]
         self._visible = rows
         self._model.set_rows(rows)
         self._status = self._status_text()
-        self._empty_hint = (
-            "当前筛选下没有符合条件的物品 — 放宽「筛选项」，或点「开始计算」重算"
-            if self._rows and not rows
-            else "还没有数据 — 选好两个贸易中心，点「开始计算」"
-        )
+        if self._rows and not rows:
+            self._empty_hint = (
+                f"「{self._selected_tree_name}」下没有符合条件的物品 — 换分类或放宽「筛选项」"
+                if self._selected_tree_id >= 0
+                else "当前筛选下没有符合条件的物品 — 放宽「筛选项」，或点「开始计算」重算"
+            )
+        else:
+            self._empty_hint = "还没有数据 — 选好两个贸易中心，点「开始计算」"
         self.rowsChanged.emit()
         self.stateChanged.emit()
+        self._refresh_tree()
 
     @Slot(int)
     def setFromIndex(self, index: int) -> None:
@@ -208,8 +342,12 @@ class TradeBridge(QObject):
 
     @Slot(int)
     def setCategoryIndex(self, index: int) -> None:
+        """选一级分类下拉：与左树**互斥**（两个都是分类筛选，选了这个那个就作废）。"""
         if 0 <= index < len(self._categories) and index != self._category_index:
             self._category_index = index
+            if self._selected_tree_id >= 0:
+                self._clear_tree_selection()
+                self.treeChanged.emit()
             self.stateChanged.emit()
 
     @Slot()
@@ -401,26 +539,34 @@ class TradeBridge(QObject):
         return _HUBS[index] if 0 <= index < len(_HUBS) else _HUBS[0]
 
     def _selected_group_ids(self) -> list[int] | None:
-        """选中的分类 id 列表；「全部品类」（id 0）表示不筛。"""
+        """选中的市场分组：**左树的子树优先**，其次下拉里的单个一级分类；「全部」= 不筛。"""
+        if self._selected_tree_id >= 0:
+            groups = sorted(int(g) for g in subtree_ids(self._tree_all, self._selected_tree_id))
+            return groups or None
         cat = self._categories[self._category_index] if self._categories else _ALL_CATEGORY
         gid = _category_id(cat)
         return [gid] if gid else None
 
     @staticmethod
-    def _load_categories() -> list[dict]:
-        """市场分类的顶层（`reference.db.market_tree` 一级节点）+ 开头的「全部品类」。
+    def _load_market_nodes() -> list[dict]:
+        """市场分类原始节点（`reference.db.market_tree`，一次 2000 行左右）。
 
-        读本地静态表、一次 2000 行左右，与合同页进门查库同类；失败就只剩「全部品类」，
-        不拦着用户算排行。
+        分类下拉与左树共用这一次查询。读本地静态表、进门查一次，与合同页进门补物品同类；
+        失败就只剩「全部品类」+ 空树，不拦着用户算排行。
         """
-        from core.logger import log
         from services.market_browser_service import fetch_market_tree
 
-        cats = [dict(_ALL_CATEGORY)]
         try:
-            for node in fetch_market_tree():
-                if not node.get("p"):
-                    cats.append({"id": int(node["id"]), "name": str(node.get("n") or node["id"])})
+            return list(fetch_market_tree())
         except Exception:
-            log.exception("读取市场分类失败，筛选下拉只保留「全部品类」")
+            log.exception("读取市场分类失败，分类下拉只保留「全部品类」、左树为空")
+            return []
+
+    @staticmethod
+    def _categories_from(nodes: list[dict]) -> list[dict]:
+        """分类下拉 = 「全部品类」+ 市场分类的**顶层**（子分类交给左树）。"""
+        cats = [dict(_ALL_CATEGORY)]
+        for node in nodes:
+            if not node.get("p"):
+                cats.append({"id": int(node["id"]), "name": str(node.get("n") or node["id"])})
         return cats

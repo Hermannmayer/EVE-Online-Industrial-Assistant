@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
+#: `IN (...)` 分批上限（SQLite 变量上限 999，留余量）
+_BATCH_SIZE = 900
+
 
 class BlueprintRepository:
     """蓝图只读查询"""
@@ -84,7 +89,15 @@ class BlueprintRepository:
             return {r[0] for r in rows}
 
     def get_manufacturable_market_tree(self) -> list[dict]:
-        """可制造物品关联的市场分类树（id/parent/name 字典列表）。"""
+        """可制造物品关联的市场分类树（id/parent/name 字典列表）。
+
+        `activity` 同时取 `manufacturing` 与 `reaction`：反应产物（111 个）原先
+        进不了树 —— 「类别 = 反应」下整棵树 988/988 个节点全空（节点的可制造性由
+        同一个 `blueprint_products` 判，树里没有它的分类自然一个都点不出来）。
+        实测并入后 988 → 994 行，新增 6 个节点全在「制造和研究 → 材料 → 反应材料」下
+        （反应材料 / 高级卫星材料 / 加工过的卫星材料 / 增效剂材料 / 聚合物材料 /
+        分子熔铸材料），无节点消失。
+        """
         with self._db.connect("ref", "bp") as conn:
             rows = conn.execute(
                 """
@@ -92,7 +105,7 @@ class BlueprintRepository:
                     SELECT DISTINCT i.market_group_id
                     FROM item i
                     JOIN blueprint_products bp ON i.type_id = bp.product_type_id
-                    WHERE bp.activity = 'manufacturing'
+                    WHERE bp.activity IN ('manufacturing', 'reaction')
                     UNION ALL
                     SELECT mt.parent_group_id
                     FROM market_tree mt
@@ -106,6 +119,48 @@ class BlueprintRepository:
                 """
             ).fetchall()
             return [{"id": i, "p": p, "n": z or f"G{i}"} for i, p, z in rows]
+
+    def get_product_market_groups(self, type_ids: Iterable[int]) -> dict[int, int]:
+        """产物 type_id → 市场分类 id（`{product_type_id: market_group_id}`）。
+
+        只含 `reference.db.item` 里查得到、且 `market_group_id IS NOT NULL` 的行；
+        查不到的产物不在返回字典里（调用方按「没有分类」处理）。空输入 → `{}`。
+
+        调用方（可制造物品窗口）拿它判断每个树节点在当前「类别」下有没有物品。
+        """
+        ids = sorted({int(t) for t in type_ids})
+        out: dict[int, int] = {}
+        if not ids:
+            return out
+        with self._db.connect("ref") as conn:
+            for start in range(0, len(ids), _BATCH_SIZE):
+                batch = ids[start : start + _BATCH_SIZE]
+                placeholders = ",".join("?" * len(batch))
+                rows = conn.execute(
+                    f"SELECT type_id, market_group_id FROM item "
+                    f"WHERE market_group_id IS NOT NULL AND type_id IN ({placeholders})",
+                    batch,
+                ).fetchall()
+                out.update({int(r[0]): int(r[1]) for r in rows})
+        return out
+
+    def get_manufacturing_blueprint_name(self, product_type_id: int) -> str | None:
+        """产物 type_id → 其制造/反应蓝图的**中文名**（蓝图物品本身的名字）。
+
+        同一物品既有制造又有反应蓝图时优先制造。找不到蓝图、或蓝图物品在
+        `item` 表里没有名字（中英文都空）→ `None`。
+        """
+        with self._db.connect("ref", "bp") as conn:
+            row = conn.execute(
+                """SELECT i.zh_name, i.en_name
+                   FROM blueprint_products bp JOIN item i ON i.type_id = bp.blueprint_type_id
+                   WHERE bp.product_type_id = ? AND bp.activity IN ('manufacturing', 'reaction')
+                   ORDER BY CASE WHEN bp.activity = 'manufacturing' THEN 0 ELSE 1 END LIMIT 1""",
+                (product_type_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return row[0] or row[1] or None
 
     def get_manufacturing_materials(
         self, product_type_id: int

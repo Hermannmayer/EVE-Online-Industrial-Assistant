@@ -79,8 +79,12 @@ def get_blueprint_requirements(db) -> dict[str, Any]:
     - bp_inv: {blueprint_type_id: inventory info}
     """
     with db.connect("user", "ref", "bp") as conn:
+        # `activity` 必须取：科研行（拷贝/发明/研究）的 product_type_id 是**蓝图**，
+        # 少了它 `is_science(None)` 会归一到制造 → 按「产物反查制造蓝图」查不到 →
+        # 整行静默丢弃，发明/拷贝的前置蓝图在表里一个都不显示（2026-10-02 修）。
+        # `id` 供拷贝行解析 `plan_blueprint_bindings` 的绑定 BPO。
         active_plans = conn.execute(
-            "SELECT id, product_type_id, product_name, runs, parallels, me_level "
+            "SELECT id, product_type_id, product_name, runs, parallels, me_level, activity "
             "FROM production_plans WHERE status IN ('pending','in_progress','running','ready')"
         ).fetchall()
 
@@ -89,11 +93,13 @@ def get_blueprint_requirements(db) -> dict[str, Any]:
 
         plans = [
             {
+                "id": r[0],
                 "product_type_id": r[1],
                 "product_name": r[2],
                 "runs": r[3],
                 "parallels": r[4],
                 "me_level": r[5],
+                "activity": r[6],
             }
             for r in active_plans
         ]

@@ -17,7 +17,7 @@ def spawn(worker: QThread) -> QThread:
 
 
 class CrossRegionRankWorker(QThread):
-    """A → B 全品类价差排行（含 B 侧挂单变化）。"""
+    """A → B 全品类价差排行（含 B 侧挂单变化 + 两端的日成交量）。"""
 
     finished_signal = Signal(list)
     failed_signal = Signal(str)
@@ -55,7 +55,25 @@ class CrossRegionRankWorker(QThread):
                 info = change.get(row["id"])
                 row["chg"] = info["per_day"] if info else None
                 row["chg_days"] = info["days"] if info else 0
+            self._attach_volumes(rows)
             self.finished_signal.emit(rows)
         except Exception as ex:
             log.exception("跨区域价差排行失败")
             self.failed_signal.emit(str(ex))
+
+    def _attach_volumes(self, rows: list[dict]) -> None:
+        """两端各自的近 7 日平均成交量 —— **只读本地 `price_history`，零 ESI 请求**。
+
+        数据由主界面「更新价格」按**它同步的那些中心**统一拉取（`fetch_and_save_histories`），
+        本页只按当前选的起点/终点区域取缓存；缺数据或本地历史过期 → `None` → 表格 `—`。
+        """
+        if not rows:
+            return
+        from services.price_history import get_history_summary
+
+        ids = [row["id"] for row in rows]
+        for key, region_id in (("vola", self._region_a), ("volb", self._region_b)):
+            summary = get_history_summary(ids, region_id=region_id, days=self._change_days)
+            for row in rows:
+                item = summary.get(row["id"])
+                row[key] = item["vol"] if item else None

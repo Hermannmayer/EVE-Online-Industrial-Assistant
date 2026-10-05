@@ -18,7 +18,11 @@ from ui_qml.icon_cache import icon_url as _icon_url
 from ui_qml.models.watchlist_models import WatchlistTableModel
 from ui_qml.theme.registry import token as _token
 
-__all__ = ["WatchlistQmlModel", "ROLE_NAMES"]
+__all__ = ["DASH", "ROLE_NAMES", "WatchlistQmlModel"]
+
+#: 缺数据的统一占位 —— **不用 0 冒充**（价格 0 表示没有挂单，不是「卖 0 ISK」）。
+#: 定义在这里：表格模型与桥（对比表、材料表）共用一份，避免两处各写一个字面量。
+DASH = "—"
 
 _BASE = Qt.ItemDataRole.UserRole
 ROLE_NAMES: dict[int, bytes] = {
@@ -31,6 +35,13 @@ ROLE_NAMES: dict[int, bytes] = {
     _BASE + 7: b"rowIndex",
     _BASE + 8: b"watchId",
     _BASE + 9: b"itemName",
+    # 左侧窄列表（`ListView`）用的**行级**角色：与列无关，列 0 上取也一样。
+    # 窄列表每行只有 4 段文字（名称 / 买价 / 卖价 / 涨幅），列级角色取不到。
+    _BASE + 10: b"rowName",
+    _BASE + 11: b"buyText",
+    _BASE + 12: b"sellText",
+    _BASE + 13: b"riseText",
+    _BASE + 14: b"note",
 }
 _TEXT = _BASE + 1
 _FG = _BASE + 2
@@ -41,6 +52,11 @@ _MONO = _BASE + 6
 _ROW_INDEX = _BASE + 7
 _WATCH_ID = _BASE + 8
 _ITEM_NAME = _BASE + 9
+_ROW_NAME = _BASE + 10
+_BUY_TEXT = _BASE + 11
+_SELL_TEXT = _BASE + 12
+_RISE_TEXT = _BASE + 13
+_NOTE = _BASE + 14
 
 #: 右对齐 + 等宽字体的列（对齐 `WatchlistTableModel.data()`）
 _ALIGNED_COLS = frozenset({4, 5, 6, 7, 8})
@@ -88,6 +104,18 @@ class WatchlistQmlModel(WatchlistTableModel):
             return row.get("id")
         if role == _ITEM_NAME:
             return row.get("zh_name") or row.get("en_name") or ""
+        # ── 左侧窄列表的行级角色（与列无关） ──
+        if role == _ROW_NAME:
+            return row.get("zh_name") or row.get("en_name") or ""
+        if role == _BUY_TEXT:
+            return self._get_display(row, 4)
+        if role == _SELL_TEXT:
+            return self._get_display(row, 5)
+        if role == _RISE_TEXT:
+            # 由桥在 refresh() 里按 `added_price` 算好塞进行里；缺失时桥给的就是 DASH
+            return str(row.get("rise_text") or DASH)
+        if role == _NOTE:
+            return str(row.get("note") or "")
         return super().data(index, role)
 
     # ── 展示规则（逐条对齐 `WatchlistTableModel.data()`） ─────────
@@ -131,6 +159,29 @@ class WatchlistQmlModel(WatchlistTableModel):
 
         # 3) 隔行
         return _token("BG_SURFACE") if row_index % 2 == 0 else _token("BG_DARK")
+
+    def list_rows(self) -> list[dict[str, Any]]:
+        """左侧窄列表（`ListView`）的行卡片载荷。
+
+        `ListView` 用 JS 数组模型（本仓所有 `ListView` 的既有做法），所以这里把**行级角色**
+        挨个取一遍 —— 走的是同一个 `data()`，展示规则仍只有一份，不会与列级角色漂移。
+        `bg` 取列 1 只为拿行底色（`_bg` 与列无关）。
+        """
+        out: list[dict[str, Any]] = []
+        for row_index in range(len(self._rows)):
+            cell = self.index(row_index, 0)
+            out.append(
+                {
+                    "row": row_index,
+                    "name": self.data(cell, _ROW_NAME),
+                    "buyText": self.data(cell, _BUY_TEXT),
+                    "sellText": self.data(cell, _SELL_TEXT),
+                    "riseText": self.data(cell, _RISE_TEXT),
+                    "iconUrl": self.data(cell, _ICON_URL),
+                    "bg": self.data(self.index(row_index, 1), _BG),
+                }
+            )
+        return out
 
     def refresh_colors(self) -> None:
         """主题切换 / 价格变化后补发 dataChanged（颜色都是算出来的字符串）。"""

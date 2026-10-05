@@ -137,9 +137,19 @@ class QueryBridge(QObject):
         ⚠️ 全物品桥**必须一起停**：它自带 `TreeW` / `ItemsW` / `ScoreW` 三个 QThread，
         漏掉就是「QThread 在运行中被析构」→ Qt 直接 abort（`all_items_bridge.py` 头部
         记着同一条教训）。
+
+        ⚠️ **进来先问一句 `isValid`**：本方法由 QML 的 `Component.onDestruction` 调
+        （`QueryPage.qml:40`），而 QML 对象的销毁可能比 Python 侧 bridge 的 C++ 析构晚一拍
+        —— 那时 Python 包装还在、C++ 已经没了，碰任何一个子对象都是
+        `Internal C++ object already deleted`（实测：整档 ui 里 `QTimer already deleted`
+        → 紧随 `QObject::disconnect: Unexpected nullptr` → 进程访问违例）。
         """
+        from shiboken6 import isValid
+
+        if not isValid(self):
+            return
         for sub in (self._detail_bridge, self._dash_bridge, self._all_bridge):
-            if sub is None:
+            if sub is None or not isValid(sub):
                 continue
             stop = getattr(sub, "shutdown", None)
             if callable(stop):

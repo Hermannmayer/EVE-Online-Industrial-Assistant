@@ -30,7 +30,7 @@ from __future__ import annotations
 from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtGui import QGuiApplication
 
-__all__ = ["clipboard_text", "wait_for_clipboard", "wait_for_clipboard_prefix"]
+__all__ = ["clipboard_text", "wait_for_clipboard", "wait_for_clipboard_prefix", "wait_for_copy"]
 
 
 def clipboard_text() -> str:
@@ -69,4 +69,25 @@ def wait_for_clipboard_prefix(prefix: str, timeout_ms: int = 2000, step_ms: int 
         loop.exec()
         waited += step_ms
         text = clipboard_text()
+    return text
+
+
+def wait_for_copy(action, prefix: str, timeout_ms: int = 2000, attempts: int = 3) -> str:
+    """执行一次「复制」动作再等剪贴板；没等到就**重放动作**，最多 `attempts` 次。
+
+    `wait_for_clipboard*` 守的是「读」的竞态（见模块头），但还有第二种环境竞态：
+    系统剪贴板被别的进程占用时 Qt 的 `setText` **整个失败**（实测
+    `OleSetClipboard: Failed to set mime data (text/plain) on clipboard:
+    COM error 0x800401d0` + 一串 `Retrying to obtain clipboard`），此时读回的是旧值，
+    再等也不会变 —— 必须**重放复制动作**。整档 `-m ui` 在本机就是被这条打红过一次。
+
+    返回值与 `wait_for_clipboard_prefix` 一致（超时也返回最后一次读到的内容），
+    断言仍由调用方做。
+    """
+    text = clipboard_text()
+    for _ in range(max(1, attempts)):
+        action()
+        text = wait_for_clipboard_prefix(prefix, timeout_ms)
+        if text.startswith(prefix):
+            return text
     return text

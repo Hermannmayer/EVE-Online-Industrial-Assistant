@@ -31,6 +31,8 @@ _IS_ACTION = _BASE + 6
 
 _PM3_COL = 7
 _CHG_COL = 8
+_VOLA_COL = 9
+_VOLB_COL = 10
 _ACTION_COL = len(COLUMNS) - 1
 _NAME_COL = 1
 
@@ -223,6 +225,23 @@ def test_icon_and_action_columns_are_not_sortable():
 
     model.sort(_ACTION_COL, Qt.SortOrder.AscendingOrder)
     assert model.sortColumn() == _NAME_COL
+
+
+@pytest.mark.fast
+def test_both_ends_have_a_daily_volume_column():
+    """两端各一列「日成交量」：有数就显示、查不到 / 历史过期显示 `—`（不用 0 冒充）。"""
+    model = TradeRankQmlModel()
+    model.set_rows([dict(_row(tid=1), vola=1234.5, volb=None), dict(_row(tid=2), vola=None, volb=7.0)])
+    titles = [c[0] for c in COLUMNS]
+
+    assert titles[_VOLA_COL] == "起点日成交量"
+    assert titles[_VOLB_COL] == "终点日成交量"
+    assert _cell(model, 0, _VOLA_COL, _TEXT) == "1,234"  # 件/天，取整
+    assert _cell(model, 0, _VOLB_COL, _TEXT) == "—"
+    assert _cell(model, 1, _VOLB_COL, _TEXT) == "7"
+    # 也参与排序（数值列）
+    model.sort(_VOLA_COL, Qt.SortOrder.DescendingOrder)
+    assert model.row_at(0)["id"] == 1
 
 
 @pytest.mark.fast
@@ -569,6 +588,84 @@ def test_page_has_no_removed_sections(trade_page):
     assert "tradeToolbar" in names
     assert "analyzeButton" in names
     assert "cartButton" in names
-    assert "suggestPopup" not in names
+    assert "suggestBox" not in names
     assert "transportInput" not in names
     assert "searchInput" not in names
+
+
+@pytest.mark.fast
+def test_sort_reorders_rows_and_survives_missing_values():
+    """点表头要**真换行序**（回归），且缺值不能把排序搞崩。
+
+    回归：`sort()` 原先只发 `layoutAboutToBeChanged/layoutChanged` —— QML `TableView`
+    （本页 `reuseItems: true`）不重排，出图核对看到「箭头变成 ▲ 了、行序还是原样」。
+    现在照同仓能工作的那张表（`industry_models.PlanTableModel.sort`）走模型重置。
+
+    缺值那条守的是另一类「点了没反应」：`_sort_key` 原先对缺值返回 `-inf`（float），
+    与文本列的字符串混在一批里比较会抛 `TypeError` —— 在 Slot 里抛，用户只看到没反应。
+    """
+    model = TradeRankQmlModel()
+    model.set_rows(
+        [
+            dict(_row(tid=1, pm3=10.0), z="丙"),
+            dict(_row(tid=2, pm3=30.0), z="甲"),
+            dict(_row(tid=3, pm3=20.0), z="乙"),
+        ]
+    )
+    model.sort(_NAME_COL, Qt.SortOrder.AscendingOrder)
+    assert [model.row_at(i)["z"] for i in range(3)] == ["丙", "乙", "甲"], "按中文名的码点序"
+    model.sort(_NAME_COL, Qt.SortOrder.DescendingOrder)
+    assert [model.row_at(i)["z"] for i in range(3)] == ["甲", "乙", "丙"]
+
+    model.sort(_PM3_COL, Qt.SortOrder.DescendingOrder)
+    assert [model.row_at(i)["pm3"] for i in range(3)] == [30.0, 20.0, 10.0]
+
+    # 缺值（名字没有 / 数值没有）混在一起也不能抛
+    model.set_rows([dict(_row(tid=1), z="有"), {"id": 2, "z": None, "pm3": None}])
+    model.sort(_NAME_COL, Qt.SortOrder.AscendingOrder)
+    assert [model.row_at(i)["id"] for i in range(2)] == [2, 1], "缺名当最小排前面"
+    model.sort(_PM3_COL, Qt.SortOrder.AscendingOrder)
+    assert [model.row_at(i)["id"] for i in range(2)] == [2, 1], "缺值当最小"
+
+
+@pytest.mark.ui
+def test_tree_filters_by_the_whole_subtree(qapp, tmp_path, monkeypatch):
+    """左树：点节点按**整棵子树**筛，点「全部」复位，与分类下拉互斥。
+
+    下拉那个分类只支持单个一级分组（`market_group_id IN (一个 id)`），子分类里的物品
+    全都看不到 —— 树按子树筛才是用户要的那件事。
+    """
+    import services.market_browser_service as mbs
+    from ui_qml.bridge.trade_bridge import TradeBridge
+    from ui_qml.views import trade_cart_window as tcw
+
+    monkeypatch.setattr(tcw, "trade_cart_file", lambda: str(tmp_path / "cart.json"))
+    monkeypatch.setattr(
+        mbs,
+        "fetch_market_tree",
+        lambda: [{"id": 4, "p": None, "n": "舰船"}, {"id": 100, "p": 4, "n": "护卫舰"}],
+    )
+    # 分组 → 物品：4（舰船）下有 34，100（护卫舰）下有 35
+    monkeypatch.setattr(TradeBridge, "_items_by_group_map", lambda self: {4: {34}, 100: {35}})
+
+    br = TradeBridge(None)
+    assert [r["id"] for r in br.treeRows] == [4], "折叠时只看得到根"
+    br.toggleTreeNode(0)
+    assert [r["id"] for r in br.treeRows] == [4, 100]
+
+    br._rows = [_row(tid=34), _row(tid=35)]
+    br._apply_filters()
+    assert br.treeRows[0]["empty"] is False, "舰船子树里有物品 → 不置灰"
+
+    br.selectTreeNode(1)  # 护卫舰
+    assert br.selectedTreeId == 100
+    assert br.selectedTreeName == "护卫舰"
+    assert [r["id"] for r in br._visible] == [35]
+    assert br._selected_group_ids() == [100], "只取这棵子树的（不是整个一级分类）"
+
+    br.clearTreeSelection()
+    assert [r["id"] for r in br._visible] == [34, 35]
+
+    br.selectTreeNode(1)
+    br.setCategoryIndex(1)  # 下拉选「舰船」→ 树的选中作废（两个都是分类筛选）
+    assert br.selectedTreeId == -1

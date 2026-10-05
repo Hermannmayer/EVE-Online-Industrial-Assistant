@@ -36,7 +36,22 @@ UI（工业页）→ workers/industry_workers.ScoreWorker
   **全库唯一的取价入口是主工具栏右上角的「更新价格」**
   （`shell/Main.qml` → `ShellWindow.trigger_price_update` → `request_price_update`），
   那条通道带单写者排队与进度条，页面不得自行起 `PriceUpdateWorker` —— 两个写者同时动
-  `market.db` 会撞锁。工业页的「刷新」是**例外**：它走 `PlanPriceRefreshWorker` 只拉当前
+  `market.db` 会撞锁。更新价格现在还会**按 TTL 增量**拉取可制造/反应产物的**市场历史**
+  （`market.db.price_history`，即「日订单量 / 日成交量」的来源；见
+  `services/importers/getprices.fetch_and_save_histories`）—— 页面同样不得自己拉 ESI。
+  **勾了哪些中心就拉哪些中心**（用户口径：「同步哪些市场的数据，就自动把成交量一块拉过来」）：
+  覆盖集 = 制造产物 ∪ 反应产物 ∪ **被当材料的 type** ∪ PLEX（实测 **5554 个**），
+  请求量 = 5554 × 勾选的中心数，单中心约 4.6 分钟（@20 req/s 全局限流），靠 12h TTL 增量摊平；
+  升级后**首轮**必然跑满（材料此前从没拉过历史）。读端各自显式传 `region_id`：
+  可制造物品窗口按 Jita，贸易页按它当前选的起点/终点（两列「起点/终点日成交量」）。
+  同一步还会写**全服统一价快照**（`market.db.global_price_daily`，只存没有区域成交历史的
+  品种 = PLEX）：`/markets/prices/` 那一次请求已经拉过，顺手落 1 行/天 —— 它是大盘 PLEX 锚
+  的唯一数据源（ESI 的区块历史对 PLEX 恒返回空，实测 Jita/Amarr 都是空列表）。
+  ⚠️ 这两列的聚合窗口是**最近 7 个日历天**（`services/price_history.get_history_summary`），
+  缺失的日子按 0 计入：ESI 历史**只返回有成交的日子**，按「最近 7 条记录」取会把冷门物品
+  算成「上次活跃那几天」的平均值（实测 `屹立白蚁 II` 已 80 天没成交却报 21.6/天）。
+  本地历史整段过期（`fetched_at` 也早于窗口）时给 `—` 而不是 0。
+  工业页的「刷新」是**例外**：它走 `PlanPriceRefreshWorker` 只拉当前
   计划相关的 type_id（带 5 分钟缓存判定），不是全量更新，故保留在页面内。
 - 价格时效**直接显示在页面状态栏**：`{行数} · {A} {刚刚/35 分钟前/3 天前} / {B} {…}`，
   取数走 `market_browser_service.fetch_hub_fetch_time`（各中心 `MAX(fetch_time)`，
@@ -395,6 +410,11 @@ services.order_export.find_latest_export(None)   ← 目录固定游戏默认（
      geticon → PNG 图标缓存
 就绪判定：init_check.check_all（各 check_* 数行数）
 ```
+
+- 初始化里的价格步骤是 `getprices.fetch_baseline_only`（只拉 1 次 `/markets/prices/` 做兜底），
+  **不写市场历史**；`market.db.price_history` 由「更新价格」流程
+  （`getprices.main` → `fetch_and_save_histories`）按 12 小时 TTL 增量补，**只拉 Jita**
+  （读端固定按 Jita 聚合），每产物每区域只保留近 180 天。
 
 ## 角色配置
 

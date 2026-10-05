@@ -16,7 +16,7 @@ def _db() -> DatabaseManager
 
 惰性获取 DatabaseManager（经容器，消除模块级单例双轨）。
 
-定义行：`8`
+定义行：`9`
 
 ### `init_db`
 
@@ -26,7 +26,17 @@ def init_db()
 
 初始化关注列表表
 
-定义行：`37`
+定义行：`43`
+
+### `_added_sell_price`
+
+```python
+def _added_sell_price(conn, type_id: int) -> float | None
+```
+
+加入关注那一刻的 Jita 卖价；没有记录或价格为空 → None（不拿 0 冒充）。
+
+定义行：`52`
 
 ### `add_to_watchlist`
 
@@ -34,9 +44,9 @@ def init_db()
 def add_to_watchlist(type_id: int, region_id: int=10000002, note: str='', buy_threshold: float | None=None, sell_threshold: float | None=None) -> int
 ```
 
-添加物品到关注列表，返回新记录 id
+添加物品到关注列表，返回新记录 id。
 
-定义行：`46`
+定义行：`63`
 
 ### `remove_from_watchlist`
 
@@ -46,7 +56,7 @@ def remove_from_watchlist(item_id: int) -> bool
 
 删除关注列表中的物品
 
-定义行：`74`
+定义行：`96`
 
 ### `get_watchlist`
 
@@ -56,7 +66,7 @@ def get_watchlist() -> list[dict]
 
 获取所有关注物品，JOIN item 表获取名称和市场价格
 
-定义行：`83`
+定义行：`105`
 
 ### `update_watchlist_item`
 
@@ -66,7 +76,7 @@ def update_watchlist_item(item_id: int, note: str | None=None, buy_threshold: fl
 
 更新关注物品的备注或阈值
 
-定义行：`129`
+定义行：`152`
 
 ### `check_price_changes`
 
@@ -78,4 +88,4 @@ def check_price_changes() -> list[dict]
 返回有变化的物品列表：[(type_id, 名称, 原买价, 新买价, 原卖价, 新卖价), ...]
 同时更新 last_buy_price / last_sell_price。
 
-定义行：`158`
+定义行：`181`

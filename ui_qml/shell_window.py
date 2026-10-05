@@ -888,7 +888,18 @@ class ShellWindow(QQuickView):
         self._price_active = (regions, [on_done] if on_done is not None else [])
         self._price_worker = PriceUpdateWorker(regions, self)
         self._price_worker.finished_signal.connect(self._on_price_update_done)
+        self._price_worker.progress.connect(self._on_price_update_progress)
         self._price_worker.start()
+
+    def _on_price_update_progress(self, value: int, maximum: int, message: str) -> None:
+        """价格更新中途的进度 → 状态栏（不确定态 → 确定态）。
+
+        `_start_price_update` 先 `show_progress(text, 0)`（转圈）；第一次收到进度就带
+        最大值重设一次，之后只推进数值。收尾仍走 `_on_price_update_done` 的
+        `hide_progress`，这里不碰完成路径。
+        """
+        self.show_progress(message, maximum)
+        self.update_progress(value)
 
     def _on_price_update_done(self, success: bool, message: str) -> None:
         self.hide_progress("价格更新完成" if success else f"价格更新失败: {message}")
