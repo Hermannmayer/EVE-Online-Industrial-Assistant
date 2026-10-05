@@ -743,6 +743,9 @@ def _mover_view(raw: dict, labels: dict[str, str]) -> dict:
         "ratioText": _ratio(raw.get("volume_ratio")),
         "thin": volume is not None and volume < _THIN_VOLUME,
         "qualified": bool(raw.get("qualified")),
+        #: |涨幅| ≥ 200%（`market_movers_service.EXTREME_CHG_PCT`）：可能是真行情、
+        #: 也可能是数据问题 —— UI 上标一下让用户自己判断，而不是替用户过滤掉
+        "extreme": bool(raw.get("extreme")),
         "indexText": "、".join(names) if names else _DASH,
     }
 
@@ -1262,7 +1265,10 @@ class MarketPulseBridge(QObject):
         if not views:
             self._movers_note = "没有异动数据 —— 先在顶栏「更新价格」补齐成交均价历史"
         else:
-            self._movers_note = f"窗口 {_MOVER_DAYS} 天 · 每区显示前 {_MOVER_DISPLAY_CAP} 条（共 {len(views)} 条）"
+            self._movers_note = (
+                f"窗口 {_MOVER_DAYS} 天 · 每区显示前 {_MOVER_DISPLAY_CAP} 条（共 {len(views)} 条）"
+                " · 已过滤：日均成交 <5 件、近期成交 <2 天、价格双峰（这些没有参考价值）"
+            )
 
     def _apply_breadth(self, breadth: dict, turnover: list[dict]) -> None:
         self._breadth = breadth

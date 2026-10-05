@@ -178,9 +178,11 @@ Item {
               "color": Theme.textSecondary, "right": true, "bold": false, "size": page.fntSmall },
             { "text": row.ratioText, "w": widths[4], "indent": 0,
               "color": Theme.textSecondary, "right": true, "bold": false, "size": page.fntSmall },
-            // 「薄」= 近 N 日日均成交量太低，百分比很可能只是一笔成交推出来的
-            { "text": row.thin ? qsTr("薄") : "", "w": widths[5], "indent": 0,
-              "color": Theme.accentYellow, "right": false, "bold": false, "size": page.fntSmall },
+            // 「薄」= 近 N 日日均成交量太低（百分比很可能只是一笔成交推出来的）；
+            // 「极端」= |涨幅| ≥ 200%，可能是真行情也可能是数据问题 —— 标出来让人自己判断
+            { "text": row.thin ? qsTr("薄") : (row.extreme ? qsTr("极端") : ""), "w": widths[5], "indent": 0,
+              "color": row.thin ? Theme.accentYellow : Theme.accentOrange, "right": false, "bold": false,
+              "size": page.fntSmall },
             { "text": row.indexText, "w": widths[6], "indent": 0,
               "color": Theme.textSecondary, "right": true, "bold": false, "size": page.fntSmall }
         ];
@@ -903,7 +905,7 @@ Item {
 
                 FSection {
                     objectName: "marketSection"
-                    title: qsTr("异动榜 ② 全市场（可能是个别玩家操作，只作线索；涨幅极大值多来自单笔成交，见「薄」标记）")
+                    title: qsTr("异动榜 ② 全市场（未过指数准入的也列出来，只作线索；标「极端」的是 ≥200% 的大幅波动）")
 
                     Column {
                         id: marketTable
