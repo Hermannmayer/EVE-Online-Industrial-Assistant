@@ -298,7 +298,34 @@ def pytest_sessionfinish(session, exitstatus) -> None:
         _drop_active_entry()
         _STATE.clear()
         return
+    _teardown_qt_leftovers()
     _leave_test_run_gate(session, exitstatus)
+
+
+def _teardown_qt_leftovers() -> None:
+    """会话结束前，把还活着的 QML 宿主 / 顶层窗口在**事件循环还在**的时候拆掉。
+
+    为什么：Qt 在解释器退出阶段按自己的顺序销毁残留对象，顺序不受我们控制。整档
+    `-m ui`（58 个模块）实测会在**测试全部跑完、摘要都打出来之后**以 `0xC000041D`
+    （回调里未处理异常）收场 —— 拿到 1156 passed 却拿不到退码 0，CI 照样判红。
+    6 个重 UI 文件一起跑是干净的（252 passed / exit 0），只有攒到整档才出。
+
+    这段只做「关窗 → 清 DeferredDelete → 跑一轮事件循环」，不改任何业务状态：
+    测试用的 settings / 窗口几何在 `isolate_*` fixture 里已经指向临时文件。
+    """
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QGuiApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    for window in list(QGuiApplication.topLevelWindows()):
+        window.close()
+    for widget in list(app.topLevelWidgets()):
+        widget.close()
+        widget.deleteLater()
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
 
 
 @pytest.fixture(autouse=True)
@@ -383,6 +410,14 @@ def _flush_deferred_deletes():
 
     每个用例结束时清一次，「一次清一批」变成「一次清一个」，卡死的前提就不成立了。
     顺带的好处：上一个用例的窗口不会活到下一个用例（主题/置顶这类进程级状态更干净）。
+
+    ⚠️ **只 `sendPostedEvents(DeferredDelete)`，不跑 `processEvents()`**：要的只是把
+    `deleteLater()` 排下的删除事件清掉，而 `processEvents()` 会把**任意**排队工作也跑一遍
+    —— 那等于在 teardown 里跑业务事件（QThread 收尾、信号回调都可能被提前触发），
+    实测把「碰已析构对象」的窗口放大到别的用例头上（2026-10-05 审计：崩溃落在一个
+    只跑 worker 的用例的 teardown，末句是 `QObject::disconnect: Unexpected nullptr`）。
+    `ShellWindow._teardown_qml` 的注释也写着：真删 `deleteLater` 靠 `sendPostedEvents`，
+    `processEvents()` 在嵌套层级不匹配时**不**处理它。
     """
     yield
     app = QApplication.instance()
@@ -391,7 +426,6 @@ def _flush_deferred_deletes():
     from PySide6.QtCore import QEvent
 
     app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    app.processEvents()
 
 
 @pytest.fixture(autouse=True)

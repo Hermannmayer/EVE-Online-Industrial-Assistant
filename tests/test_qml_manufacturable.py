@@ -753,7 +753,7 @@ def test_click_cell_selects_and_copies(qapp):
 
         bridge.clickCell(0, 1)  # 中文名列
         assert bridge.selectedRow == 0
-        assert wait_for_clipboard("渡鸦级") == "渡鸦级"
+        assert wait_for_copy(lambda: bridge.clickCell(0, 1), "渡鸦级") == "渡鸦级"
 
         QGuiApplication.clipboard().setText("未改动")
         bridge.clickCell(0, 0)  # 图标列没有值
@@ -802,12 +802,10 @@ def test_copy_name_and_blueprint_name(qapp):
         assert info["name"] == "渡鸦级"
         assert info["blueprintName"] == "渡鸦级蓝图"
 
-        bridge.copyName(0)
-        assert wait_for_clipboard("渡鸦级") == "渡鸦级"
+        assert wait_for_copy(lambda: bridge.copyName(0), "渡鸦级") == "渡鸦级"
         assert bridge.statusText == "已复制名称: 渡鸦级"
 
-        bridge.copyBlueprintName(0)
-        assert wait_for_clipboard("渡鸦级蓝图") == "渡鸦级蓝图"
+        assert wait_for_copy(lambda: bridge.copyBlueprintName(0), "渡鸦级蓝图") == "渡鸦级蓝图"
         assert bridge.statusText == "已复制蓝图名称: 渡鸦级蓝图"
     finally:
         dlg.deleteLater()
