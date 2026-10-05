@@ -22,7 +22,7 @@ def _tint(name: str) -> str
 
 带透明度的主题色的 `#aarrggbb` 形式。
 
-定义行：`68`
+定义行：`52`
 
 ## 类
 
@@ -30,7 +30,7 @@ def _tint(name: str) -> str
 
 关注列表：命名角色（行数据与刷新仍走父类）。
 
-定义行：`77`
+定义行：`61`
 
 #### 方法
 
@@ -44,7 +44,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`80`
+定义行：`64`
 ##### `data`
 
 ```python
@@ -55,7 +55,7 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole) -> Any
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`83`
+定义行：`67`
 ##### `_fg`
 
 ```python
@@ -66,7 +66,7 @@ def _fg(row: dict, col: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`124`
+定义行：`96`
 ##### `_bg`
 
 ```python
@@ -77,16 +77,7 @@ def _bg(self, row: dict, row_index: int) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`136`
-##### `list_rows`
-
-```python
-def list_rows(self) -> list[dict[str, Any]]
-```
-
-左侧窄列表（`ListView`）的行卡片载荷。
-
-定义行：`163`
+定义行：`108`
 ##### `refresh_colors`
 
 ```python
@@ -95,4 +86,4 @@ def refresh_colors(self) -> None
 
 主题切换 / 价格变化后补发 dataChanged（颜色都是算出来的字符串）。
 
-定义行：`186`
+定义行：`135`

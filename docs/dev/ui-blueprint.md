@@ -61,7 +61,7 @@
 | 估价 `estimate` | — | 顶部输入区 | ✅ `QTableView` | 底部汇总栏 | — |
 | 物品查询 `query` | — | ✅ `#query_toolbar` | ✅ 两态：仪表盘 / 结果表 + 详情面板 | ✅ `#query_status` | — |
 | 市场贸易 `trade` | — | ✅ `#tradeToolbar` | ✅ 排行表 + `#rankEmpty` 空态 | ✅ `#statusText` + `#cartSummary` | ✅ `#cartButton` |
-| 市场监控 `watchlist` | — | ✅ 大盘页自带（7 日均线开关 + 刷新指数） | ✅ **两块内容**：大盘（默认）/ 关注物品，分段页签切换 | ✅ 大盘页脚数据概况 | — |
+| 价格监控 `watchlist` | — | — | ✅ `QTableView` | — | — |
 | 合同市场 `contract` | — | ✅ 页面工具栏 | ✅ `FTabBar` + 三个页签 | ✅ 状态条 | — |
 | 仓库管理 `storage` | — | — | ✅ `QTabWidget` | — | — |
 

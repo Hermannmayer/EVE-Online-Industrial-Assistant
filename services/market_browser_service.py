@@ -15,21 +15,6 @@ _SQL = (
     "FROM mkt.market_prices WHERE type_id=i.type_id AND region_id=?) "
 )
 
-#: 「有制造/反应蓝图产物」下推谓词（`manufacturable_only=True` 用）。
-#: 走 `idx_bp_products_prod_act`（product_type_id, activity）覆盖索引；实测「舰船装备」
-#: 整条查询 54.2 ms → 59.0 ms（可制造行 792 → 1265），代价可忽略。
-_MFG_EXISTS = (
-    "EXISTS (SELECT 1 FROM bp.blueprint_products p "
-    "WHERE p.product_type_id = i.type_id AND p.activity IN ('manufacturing','reaction'))"
-)
-
-#: 行数上限。**不要**指望它替「类别」过滤兜底：先截断再在客户端过滤会静默丢物品 ——
-#: 「舰船装备」子树共 3203 个物品（含大量不可制造的弹药/晶体），真实可制造 1265 个，
-#: 截断后只能显示 792 个（丢 473 个）。制造窗口改走 `manufacturable_only=True` 下推后，
-#: 全树「可制造物品最多」的节点就是 1265（舰船装备），没有节点触顶；「全物品查询」
-#: 窗口仍按原样截断展示。
-_LIMIT = " ORDER BY i.zh_name LIMIT 2000"
-
 
 def _rows_to_dicts(rows) -> list[dict]:
     r = []
@@ -60,27 +45,14 @@ def fetch_market_tree() -> list[dict]:
         return [{"id": i, "p": p, "n": z or f"G{i}"} for i, p, z in c.fetchall()]
 
 
-def fetch_items(ids: list[int] | None, rid: int, manufacturable_only: bool = False) -> list[dict]:
-    """按市场分类（`ids` 为空 = 全部）取物品行。
-
-    `manufacturable_only=True` 时在 SQL 里下推「有制造或反应蓝图产物」过滤 ——
-    「可制造物品」窗口用：只把可制造的行交给客户端，`LIMIT` 就不会先截掉可制造的物品
-    （见 `_LIMIT` 注释）。`False`（默认）与旧的「全物品查询」行为逐字一致。
-    """
-    where: list[str] = []
-    params: tuple = (rid, rid)
-    if ids:
-        placeholders = ",".join("?" * len(ids))
-        where.append(f"i.market_group_id IN ({placeholders})")
-        params = (rid, rid, *ids)
-    if manufacturable_only:
-        where.append(_MFG_EXISTS)
-    sql = _SQL + ("WHERE " + " AND ".join(where) if where else "") + _LIMIT
-    # 默认「全物品」路径不 ATTACH bp（与旧行为一致，不多付 ATTACH 开销）
-    aliases = ("ref", "mkt", "bp") if manufacturable_only else ("ref", "mkt")
-    with get_container().db.connect(*aliases) as conn:
+def fetch_items(ids: list[int] | None, rid: int) -> list[dict]:
+    with get_container().db.connect("ref", "mkt") as conn:
         c = conn.cursor()
-        c.execute(sql, params)
+        if ids:
+            ph = ",".join("?" * len(ids))
+            c.execute(_SQL + f"WHERE i.market_group_id IN ({ph}) ORDER BY i.zh_name LIMIT 2000", (rid, rid, *ids))
+        else:
+            c.execute(_SQL + "ORDER BY i.zh_name LIMIT 2000", (rid, rid))
         return _rows_to_dicts(c.fetchall())
 
 

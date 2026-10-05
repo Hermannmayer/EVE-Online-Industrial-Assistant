@@ -24,8 +24,6 @@ Item {
     readonly property int fntBase: Math.round(12 * Theme.fontScale)
     readonly property int fntSmall: Math.round(11 * Theme.fontScale)
     readonly property int pad: Theme.spacingSm
-    readonly property int treeRowH: Math.max(20, Math.round(13 * Theme.fontScale) + 8)
-    readonly property int treeIndent: Math.round(12 * Theme.fontScale)
 
     // 整页不透明底（宿主是透明清屏的 QQuickWidget，见 IndustryPage 的同款说明）
     Rectangle {
@@ -196,140 +194,6 @@ Item {
         }
 
         // ═══════════════════════════════════════════════════
-        // ═══════════════════════════════════════════════════
-        //  主工作区：左树（市场分类）+ 右表（排行）
-        // ═══════════════════════════════════════════════════
-        RowLayout {
-            objectName: "tradeWorkArea"
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: 0
-
-            /* 左树：与「可制造物品」窗口同一份市场树（`bridge.treeRows`）。
-             * 点节点按**整棵子树**筛（下拉那个只支持单个一级分组，子分类里的物品看不到），
-             * 点「全部」复位。置灰 = 当前结果里这个分类下没有物品。 */
-            Rectangle {
-                objectName: "tradeTreePane"
-                Layout.preferredWidth: 170
-                Layout.fillHeight: true
-                Layout.margins: page.pad
-                color: Theme.bgSurface
-                radius: Theme.radius
-                border.width: 1
-                border.color: Theme.border
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    spacing: 0
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.margins: 4
-                        spacing: 4
-
-                        Text {
-                            Layout.fillWidth: true
-                            text: qsTr("市场分类")
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: page.fntSmall
-                            elide: Text.ElideRight
-                        }
-
-                        Text {
-                            objectName: "treeClear"
-                            text: qsTr("全部")
-                            color: (page.trade && page.trade.selectedTreeId >= 0) ? Theme.primary : Theme.textSecondary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: page.fntSmall
-
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: if (page.trade)
-                                    page.trade.clearTreeSelection()
-                            }
-                        }
-                    }
-
-                    ListView {
-                        id: tradeTree
-                        objectName: "tradeTree"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        clip: true
-                        model: page.trade ? page.trade.treeRows : []
-                        boundsBehavior: Flickable.StopAtBounds
-
-                        ScrollBar.vertical: ScrollBar {
-                            policy: ScrollBar.AsNeeded
-                        }
-
-                        delegate: Item {
-                            id: tradeTreeRow
-
-                            required property var modelData
-
-                            readonly property bool selected: page.trade && page.trade.selectedTreeId === tradeTreeRow.modelData.id
-                            readonly property bool empty: tradeTreeRow.modelData.empty === true
-
-                            width: tradeTree.width
-                            height: page.treeRowH
-
-                            Rectangle {
-                                anchors.fill: parent
-                                color: tradeTreeRow.selected ? Theme.primary : "transparent"
-                            }
-
-                            Text {
-                                id: tradeArrow
-                                anchors.left: parent.left
-                                anchors.leftMargin: 2
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: page.treeIndent
-                                text: tradeTreeRow.modelData.hasChildren
-                                      ? (tradeTreeRow.modelData.expanded ? "▾" : "▸") : ""
-                                color: Theme.textSecondary
-                                font.family: Theme.fontFamily
-                                font.pixelSize: page.fntSmall
-                                horizontalAlignment: Text.AlignHCenter
-                            }
-
-                            Text {
-                                anchors.left: tradeArrow.right
-                                anchors.leftMargin: 2 + tradeTreeRow.modelData.depth * page.treeIndent
-                                anchors.right: parent.right
-                                anchors.rightMargin: 4
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: tradeTreeRow.modelData.name
-                                color: (tradeTreeRow.empty && !tradeTreeRow.selected)
-                                       ? Theme.textSecondary : Theme.textPrimary
-                                font.family: Theme.fontFamily
-                                font.pixelSize: page.fntSmall
-                                elide: Text.ElideRight
-                            }
-                        }
-
-                        FTableClickArea {
-                            objectName: "tradeTreeClickArea"
-                            anchors.fill: parent
-                            rowHeight: page.treeRowH
-                            columnWidth: function (col) {
-                                return col === 0 ? page.treeIndent + 2 : tradeTree.width;
-                            }
-                            onRowClicked: function (row, column) {
-                                if (!page.trade)
-                                    return
-                                if (column === 0)
-                                    page.trade.toggleTreeNode(row)
-                                else
-                                    page.trade.selectTreeNode(row)
-                            }
-                        }
-                    }
-                }
-            }
-
         //  主工作区：排行表
         // ═══════════════════════════════════════════════════
         Item {
@@ -442,16 +306,6 @@ Item {
                     return col < cols.length ? cols[col].width : 100;
                 }
 
-                /* 列比窗口宽时要能横向滚 —— 加了「两端日成交量」之后列总宽约 1330，
-                 * 1500 宽的窗口里表格区只有 1000 出头，没有横向滚动条就会把最后两列
-                 * （终点日成交量、加入购物车）直接切掉（出图核对时发现）。 */
-                ScrollBar.horizontal: ScrollBar {
-                    policy: ScrollBar.AsNeeded
-                }
-                ScrollBar.vertical: ScrollBar {
-                    policy: ScrollBar.AsNeeded
-                }
-
                 delegate: Item {
                     id: rankRow
                     required property int row
@@ -520,7 +374,6 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: page.fntBase
             }
-        }
         }
 
         // ═══════════════════════════════════════════════════

@@ -18,7 +18,7 @@ def _rows_to_dicts(rows) -> list[dict]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`34`
+定义行：`19`
 
 ### `fetch_market_tree`
 
@@ -30,17 +30,19 @@ def fetch_market_tree() -> list[dict]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`56`
+定义行：`41`
 
 ### `fetch_items`
 
 ```python
-def fetch_items(ids: list[int] | None, rid: int, manufacturable_only: bool=False) -> list[dict]
+def fetch_items(ids: list[int] | None, rid: int) -> list[dict]
 ```
 
-按市场分类（`ids` 为空 = 全部）取物品行。
+::: warning ⚠️ 待补 docstring
+此函数暂无 docstring，欢迎补充。
+:::
 
-定义行：`63`
+定义行：`48`
 
 ### `search_items`
 
@@ -52,7 +54,7 @@ def search_items(query: str, rid: int) -> list[dict]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`87`
+定义行：`59`
 
 ### `_spread_row`
 
@@ -62,7 +64,7 @@ def _spread_row(row) -> dict
 
 把 SQL 行算成排行行。**体积 ≤ 0 时每方利润为 None，不做除零。**
 
-定义行：`140`
+定义行：`112`
 
 ### `fetch_cross_region_spread`
 
@@ -72,7 +74,7 @@ def fetch_cross_region_spread(region_a: int, region_b: int, side_a: str='sell', 
 
 A → B 全品类价差排行。
 
-定义行：`167`
+定义行：`139`
 
 ### `fetch_hub_fetch_time`
 
@@ -82,7 +84,7 @@ def fetch_hub_fetch_time(region_ids: list[int]) -> dict[int, str]
 
 各贸易中心最新价格的抓取时间 → `&#123;region_id: "YYYY-MM-DD HH:MM:SS"&#125;`。
 
-定义行：`196`
+定义行：`168`
 
 ### `_day_span`
 
@@ -92,7 +94,7 @@ def _day_span(d0: str, d1: str) -> int
 
 两个 `YYYY-MM-DD` 之间的天数差。
 
-定义行：`214`
+定义行：`186`
 
 ### `order_change_per_day`
 
@@ -102,7 +104,7 @@ def order_change_per_day(first_volume: int | None, last_volume: int | None, firs
 
 窗口内挂单量的**日均净变化**。
 
-定义行：`219`
+定义行：`191`
 
 ### `fetch_hub_order_change`
 
@@ -112,4 +114,4 @@ def fetch_hub_order_change(region_id: int, days: int=7) -> dict[int, dict]
 
 目的贸易中心 B 侧卖单挂单量的近日变化 → `&#123;type_id: &#123;"per_day": …, "days": …&#125;&#125;`。
 
-定义行：`262`
+定义行：`234`

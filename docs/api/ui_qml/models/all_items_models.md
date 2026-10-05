@@ -6,18 +6,6 @@
 
 全物品市场 — 表格模型 + 排序代理
 
-## 函数
-
-### `display_text`
-
-```python
-def display_text(row: dict, key: str) -> str
-```
-
-单元格的显示文本（千分位 / `DASH` 占位）。
-
-定义行：`47`
-
 ## 类
 
 ### `class AModel`（继承 `QAbstractTableModel`）
@@ -26,7 +14,7 @@ def display_text(row: dict, key: str) -> str
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`74`
+定义行：`32`
 
 #### 方法
 
@@ -40,7 +28,7 @@ def __init__(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`75`
+定义行：`33`
 ##### `set_rows`
 
 ```python
@@ -51,7 +39,7 @@ def set_rows(self, r)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`80`
+定义行：`38`
 ##### `set_cols`
 
 ```python
@@ -62,7 +50,7 @@ def set_cols(self, c)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`85`
+定义行：`43`
 ##### `rowCount`
 
 ```python
@@ -73,7 +61,7 @@ def rowCount(self, p=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`90`
+定义行：`48`
 ##### `columnCount`
 
 ```python
@@ -84,7 +72,7 @@ def columnCount(self, p=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`93`
+定义行：`51`
 ##### `data`
 
 ```python
@@ -95,7 +83,7 @@ def data(self, idx, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`96`
+定义行：`54`
 ##### `headerData`
 
 ```python
@@ -106,7 +94,7 @@ def headerData(self, s, o, r=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`134`
+定义行：`107`
 
 ### `class Proxy`（继承 `QSortFilterProxyModel`）
 
@@ -114,7 +102,7 @@ def headerData(self, s, o, r=Qt.ItemDataRole.DisplayRole)
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`140`
+定义行：`113`
 
 #### 方法
 
@@ -128,4 +116,4 @@ def lessThan(self, left, right)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`141`
+定义行：`114`

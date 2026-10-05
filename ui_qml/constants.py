@@ -21,7 +21,7 @@ NAV_TREE = [
     ("estimate", "估价", "coins", "ACCENT_YELLOW"),
     ("industry", "工业制造", "factory", "ACCENT_ORANGE"),
     ("trade", "市场贸易", "chart", "ACCENT_GREEN"),
-    ("watchlist", "市场监控", "trend-up", "ACCENT_RED"),
+    ("watchlist", "价格监控", "bell", "ACCENT_RED"),
     ("contract", "合同市场", "contract", "ACCENT_PURPLE"),
     ("storage", "仓库管理", "package", "ACCENT_CYAN"),
 ]

@@ -43,7 +43,7 @@ def run(self)
 ##### `__init__`
 
 ```python
-def __init__(self, ids=None, rid: int=0, parent=None, manufacturable_only: bool=False)
+def __init__(self, ids=None, rid: int=0, parent=None)
 ```
 
 ::: warning ⚠️ 待补 docstring
@@ -61,13 +61,13 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`29`
+定义行：`26`
 
 ### `class SearchItemsW`（继承 `QThread`）
 
 按名称/ID 搜索物品
 
-定义行：`33`
+定义行：`30`
 
 #### 方法
 
@@ -81,7 +81,7 @@ def __init__(self, query: str, rid: int, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`38`
+定义行：`35`
 ##### `run`
 
 ```python
@@ -92,4 +92,4 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`43`
+定义行：`40`

@@ -26,9 +26,6 @@ _COLUMNS = [
     {"title": "所需流程数", "width": 110},
     {"title": "可用流程数", "width": 110},
     {"title": "状态", "width": 80},
-    # 「用途/来源」放在**最后一列**：这张表既列制造蓝图，也列拷贝/发明/研究的前置蓝图，
-    # 不写清楚为什么列出来用户读不懂（发明输入那张往往不是 user_blueprints 里的东西）。
-    {"title": "用途/来源", "width": 110},
 ]
 
 
@@ -81,8 +78,6 @@ class BlueprintRequirementsBridge(SummaryTableBridge):
                         cell(f"{info['needed_runs']:,}"),
                         cell(available),
                         cell(status, token),
-                        # 老调用方（含测试替身）给的 needed 项可能没有 source → 显示 `—`
-                        cell(info.get("source") or "—"),
                     ]
                 }
             )

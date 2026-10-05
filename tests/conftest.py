@@ -124,90 +124,6 @@ def _refuse(reason: str) -> None:
     )
 
 
-# ════════════════════════════════════════════════════════════════
-#  跑测环境守卫：Windows 上禁止用 offscreen 平台
-# ════════════════════════════════════════════════════════════════
-#
-# 本仓用 `QQuickWidget` 承载 QML 页面（`ui_qml/host.py::PageHost`）。**Windows +
-# `QT_QPA_PLATFORM=offscreen`** 这个组合下，`PageHost.setSource()` 会卡在 Qt 的 QML 线程上
-# 永远不返回（`QQmlThread` 空转、无 Python 栈、换哪个对话框都能中）：
-#
-#   Thread 0x... [QQmlThread] (most recent call first):
-#     <no Python frame>
-#   Thread 0x... (most recent call first):
-#     File "ui_qml/host.py", line 66 in __init__      ← self.setSource(...)
-#
-# 2026-09-27 记过一次（当时把整个 `ui-retest` 档拖成无摘要），2026-10-05 本机又踩：
-# 同一个 `tests/test_qt_noise.py` 真平台 **2.36s 通过**、offscreen **卡死**；
-# `tests/test_qml_dialogs.py` 同样是「offscreen 卡第一个用例、真平台全绿」。
-#
-# 这条规矩原先只写在 `docs/dev/testing.md` 的散文里 —— 没人看，所以这里做成**硬门**：
-# 与其让人在「随机卡死、没有栈」上白烧半小时，不如启动就拒绝并说清原因。
-#
-# Linux CI（无显示器）**必须**用它，且 CI 只跑 `-m "not ui"`（非 QML 档）—— 故守卫只在
-# Windows 生效。确要压过去做实验：`EVE_ALLOW_OFFSCREEN_TESTS=1`。
-
-_WINDOWS = "win32"
-_OFFSCREEN_ALLOW_ENV = "EVE_ALLOW_OFFSCREEN_TESTS"
-
-
-def offscreen_is_forbidden(platform_name: str, qpa_platform: str, allow_env: str) -> bool:
-    """这次跑测是否该因 offscreen 平台被拒（纯函数，便于单测）。
-
-    `allow_env` 传 `EVE_ALLOW_OFFSCREEN_TESTS` 的值：`"1"` = 显式放行。
-    """
-    if platform_name != _WINDOWS:
-        return False
-    if (qpa_platform or "").strip().lower() != "offscreen":
-        return False
-    return allow_env != "1"
-
-
-def _refuse_offscreen() -> None:
-    pytest.exit(
-        "\n[跑测环境] 检测到 Windows + QT_QPA_PLATFORM=offscreen —— 这个组合下 QQuickWidget 会卡死在\n"
-        "  `PageHost.setSource()`（Qt 的 QML 线程空转、没有 Python 栈；现场记录见 tests/conftest.py）。\n"
-        "  本仓测试**不需要**离屏：Windows 上默认就跑真平台（多数用例不 show()，少数窗口一闪而过）。\n"
-        "  请去掉该环境变量后重跑，例如：\n"
-        "      Remove-Item Env:\\QT_QPA_PLATFORM      # PowerShell\n"
-        "  确要压过去做实验：EVE_ALLOW_OFFSCREEN_TESTS=1\n",
-        returncode=2,
-    )
-
-
-def pytest_configure(config) -> None:
-    """会话级 Qt 消息处理器：丢掉 **Qt 自带 QML** 的告警（判据与生产同一份）。
-
-    生产在 `Main.py` 里装处理器、且只在「退出已开始」之后丢这类噪音
-    （`core.qt_noise` 说明：FluentWinUI3 自己的 `qrc:` 文件在引擎拆除期成片报 null，
-    不是我们的 QML 写错了）。**测试里要一直丢**：测试就是「建窗口 → `deleteLater()`」
-    的循环，析构随时发生，而 `begin_shutdown()` 只在 `closeEvent` 里调，于是同一批
-    噪音一直刷 —— 本机整档 `-m ui` 实测 **6 MB stderr**，既拖慢跑测、又把真正的告警
-    埋掉（`ci.yml` 还记过「管道写满会让 QML 线程与主线程死锁」）。我们自己 `.qml` 的
-    告警一条都不丢。
-
-    其余消息照生产的做法转给 `core.logger`，测试输出与真机同形同源。
-    """
-    from PySide6.QtCore import QtMsgType, qInstallMessageHandler
-
-    from core import qt_noise
-    from core.logger import log
-
-    def _handler(msg_type, _context, message: str) -> None:
-        if qt_noise.is_qt_internal_qml(str(message)):
-            return
-        if msg_type == QtMsgType.QtDebugMsg:
-            log.debug(message)
-        elif msg_type == QtMsgType.QtWarningMsg:
-            log.warning(message)
-        elif msg_type == QtMsgType.QtCriticalMsg:
-            log.error(message)
-        elif msg_type == QtMsgType.QtFatalMsg:
-            log.critical(message)
-
-    qInstallMessageHandler(_handler)
-
-
 def _drop_active_entry() -> None:
     entry = _STATE.pop("entry", None)
     if entry is None:
@@ -219,15 +135,7 @@ def _drop_active_entry() -> None:
 
 
 def _enter_test_run_gate(config) -> None:
-    if _opt(config, "collectonly"):
-        return
-    # 平台守卫**不受账本开关影响**：它是「换了平台就必挂」的硬伤，
-    # 不是「同一档别跑第二遍」的流程约定。
-    if offscreen_is_forbidden(
-        sys.platform, os.environ.get("QT_QPA_PLATFORM", ""), os.environ.get(_OFFSCREEN_ALLOW_ENV, "")
-    ):
-        _refuse_offscreen()
-    if os.environ.get("EVE_TEST_LEDGER") == "0":
+    if os.environ.get("EVE_TEST_LEDGER") == "0" or _opt(config, "collectonly"):
         return
     key = _run_key(config)
     narrow = _is_narrow(config)
@@ -298,34 +206,7 @@ def pytest_sessionfinish(session, exitstatus) -> None:
         _drop_active_entry()
         _STATE.clear()
         return
-    _teardown_qt_leftovers()
     _leave_test_run_gate(session, exitstatus)
-
-
-def _teardown_qt_leftovers() -> None:
-    """会话结束前，把还活着的 QML 宿主 / 顶层窗口在**事件循环还在**的时候拆掉。
-
-    为什么：Qt 在解释器退出阶段按自己的顺序销毁残留对象，顺序不受我们控制。整档
-    `-m ui`（58 个模块）实测会在**测试全部跑完、摘要都打出来之后**以 `0xC000041D`
-    （回调里未处理异常）收场 —— 拿到 1156 passed 却拿不到退码 0，CI 照样判红。
-    6 个重 UI 文件一起跑是干净的（252 passed / exit 0），只有攒到整档才出。
-
-    这段只做「关窗 → 清 DeferredDelete → 跑一轮事件循环」，不改任何业务状态：
-    测试用的 settings / 窗口几何在 `isolate_*` fixture 里已经指向临时文件。
-    """
-    from PySide6.QtCore import QEvent
-    from PySide6.QtGui import QGuiApplication
-
-    app = QApplication.instance()
-    if app is None:
-        return
-    for window in list(QGuiApplication.topLevelWindows()):
-        window.close()
-    for widget in list(app.topLevelWidgets()):
-        widget.close()
-        widget.deleteLater()
-    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    app.processEvents()
 
 
 @pytest.fixture(autouse=True)
@@ -392,40 +273,6 @@ def _reset_qt_noise_state():
     from core import qt_noise
 
     qt_noise._shutting_down = False
-
-
-@pytest.fixture(autouse=True)
-def _flush_deferred_deletes():
-    """每个用例结束后把 `DeferredDelete` 事件清干净 —— 别把 QML 宿主堆到下一次清。
-
-    QML 宿主的析构走 `deleteLater()`，而它**要等事件循环处理 `DeferredDelete` 才会真删**。
-    测试之间没人跑事件循环（pytest 也不跑），于是：
-
-    - 每个用例 `deleteLater()` 掉的对话框/页面/外壳都被搁置；
-    - 攒到 `tests/test_qml_shell.py::test_theme_change_after_the_window_is_destroyed_is_harmless`
-      里那句 `app.sendPostedEvents(None, DeferredDelete)` —— 那是**整档里第一次真正清账**，
-      一次性销毁几十个模块累积下来的上百个 QML 宿主与引擎（每个都带自己的 `QQmlEngine`
-      和 QML 线程）→ 直接卡死（2026-10-05 整档 `-m ui` 复现：stdout 停在那个用例、
-      `faulthandler_timeout=120` 整点超时、栈在 `sendPostedEvents`）。
-
-    每个用例结束时清一次，「一次清一批」变成「一次清一个」，卡死的前提就不成立了。
-    顺带的好处：上一个用例的窗口不会活到下一个用例（主题/置顶这类进程级状态更干净）。
-
-    ⚠️ **只 `sendPostedEvents(DeferredDelete)`，不跑 `processEvents()`**：要的只是把
-    `deleteLater()` 排下的删除事件清掉，而 `processEvents()` 会把**任意**排队工作也跑一遍
-    —— 那等于在 teardown 里跑业务事件（QThread 收尾、信号回调都可能被提前触发），
-    实测把「碰已析构对象」的窗口放大到别的用例头上（2026-10-05 审计：崩溃落在一个
-    只跑 worker 的用例的 teardown，末句是 `QObject::disconnect: Unexpected nullptr`）。
-    `ShellWindow._teardown_qml` 的注释也写着：真删 `deleteLater` 靠 `sendPostedEvents`，
-    `processEvents()` 在嵌套层级不匹配时**不**处理它。
-    """
-    yield
-    app = QApplication.instance()
-    if app is None:
-        return
-    from PySide6.QtCore import QEvent
-
-    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 @pytest.fixture(autouse=True)

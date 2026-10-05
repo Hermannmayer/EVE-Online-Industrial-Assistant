@@ -114,5 +114,3 @@ data/sde_cache_manifest.json
 
 # 全新开箱模式（dev.py --fresh）的隔离模拟环境
 fresh_env/
-
-data/market_monitor_cache.json

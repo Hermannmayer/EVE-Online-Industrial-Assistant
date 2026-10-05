@@ -628,18 +628,10 @@ class ContractBridge(QObject):
         紧接着页面/桥被拆就会连带析构它 —— Qt 对运行中的 QThread 就是这么处理的，直接
         `abort()`（`shell_window._stop_running_threads` 的注释记了同一条，`0xC0000409`）。
         """
-        from shiboken6 import isValid
-
         from ui_qml.workers.lifecycle import drop_worker
 
-        # QML 的 `Component.onDestruction`（`ContractPage.qml:41`）可能比本桥的 C++ 析构
-        # 晚一拍：那时 Python 包装还在、C++ 已经没了，碰 `self._busy_worker` 这种子对象
-        # 就是 `Internal C++ object already deleted`。先问一句再动（同 `QueryBridge.shutdown`）。
-        if not isValid(self):
-            return
-
         for worker in (self._busy_worker, self._items_worker):
-            if worker is None or not isValid(worker):
+            if worker is None:
                 continue
             stop = getattr(worker, "stop", None)
             if callable(stop) and worker is self._busy_worker:

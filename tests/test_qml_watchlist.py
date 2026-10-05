@@ -1,29 +1,19 @@
-"""价格监控 / 关注页（阶段 3 建的页，WP5 重构成左列表 + 右详情）的契约测试。
+"""价格监控页（阶段 3）的契约测试。
 
 分三层（与 `test_qml_query.py` / `test_qml_trade.py` 同构）：
   - **纯函数层**（`fast`）：`WatchlistQmlModel` 的角色与三层行底色规则；
-    以及右详情的纯计算（排序 / 对比表 / 加入以来涨幅 / BOM 节点合并）；
-  - **桥层**（`ui`）：`WatchlistBridge` 的增删改、状态栏文案、右详情装配（DB 调用全部打桩）；
-  - **页面层**（`ui`）：`WatchlistPage.qml` 能加载、无 QML 告警、行点击与折线归一化。
+  - **桥层**（`ui`）：`WatchlistBridge` 的增删改与状态栏文案（DB 调用全部打桩）；
+  - **页面层**（`ui`）：`WatchlistPage.qml` 能加载、无 QML 告警。
 """
 
 from __future__ import annotations
 
-from datetime import date, timedelta
-from types import SimpleNamespace
-
 import pytest
-from PySide6.QtCore import QObject, Qt
+from PySide6.QtCore import Qt
 
 from tests.qml_click import press_move_release
 from tests.qml_click import spin as _spin
 from tests.qml_page_load import assert_page_loads_quietly, page_host
-from ui_qml.bridge.watchlist_bridge import (
-    bom_nodes,
-    comparison_rows,
-    rise_pct,
-    sort_rows,
-)
 from ui_qml.models.watchlist_qml_model import ROLE_NAMES, WatchlistQmlModel
 
 _BASE = Qt.ItemDataRole.UserRole
@@ -34,7 +24,6 @@ _ALIGN_RIGHT = _BASE + 5
 _MONO = _BASE + 6
 _WATCH_ID = _BASE + 8
 _ITEM_NAME = _BASE + 9
-_RISE_TEXT = _BASE + 13
 
 pytestmark = pytest.mark.ui
 
@@ -48,7 +37,6 @@ def _row(
     buy_threshold: float | None = None,
     sell_threshold: float | None = None,
     note: str = "",
-    added_price: float | None = None,
 ) -> dict:
     return {
         "id": wid,
@@ -61,7 +49,6 @@ def _row(
         "buy_threshold": buy_threshold,
         "sell_threshold": sell_threshold,
         "note": note,
-        "added_price": added_price,
     }
 
 
@@ -112,23 +99,6 @@ def test_id_and_name_roles():
     model.set_rows([_row(wid=7)])
     assert _cell(model, 0, 0, _WATCH_ID) == 7
     assert _cell(model, 0, 0, _ITEM_NAME) == "三钛合金"
-    # 左侧窄列表（`ListView`）用的**行级**角色：与列无关，列 0 上取也一样
-    assert _cell(model, 0, 0, _BASE + 10) == "三钛合金"  # rowName
-    assert _cell(model, 0, 0, _BASE + 11) == "5.00"  # buyText
-    assert _cell(model, 0, 0, _BASE + 12) == "6.00"  # sellText
-    assert _cell(model, 0, 0, _RISE_TEXT) == "—"  # 桥没注入 rise_text（无 added_price）→ 不冒充 0
-    assert _cell(model, 0, 0, _BASE + 14) == ""  # note
-
-    # 左列表的行卡片载荷走的是同一个 data()（展示规则不漂移）
-    card = model.list_rows()[0]
-    assert (card["row"], card["name"], card["buyText"], card["sellText"], card["riseText"]) == (
-        0,
-        "三钛合金",
-        "5.00",
-        "6.00",
-        "—",
-    )
-    assert card["bg"], "行底色必须由模型给（价格变化/阈值触发都在这条链上）"
 
 
 @pytest.mark.fast
@@ -185,91 +155,6 @@ def test_background_alternates_without_triggers():
 
 
 # ════════════════════════════════════════════════════════════
-#  右详情（WP5）：纯计算
-# ════════════════════════════════════════════════════════════
-
-
-@pytest.mark.fast
-@pytest.mark.parametrize(
-    ("row", "expected"),
-    [
-        ({"sell_price": 120.0, "added_price": 100.0}, 20.0),
-        ({"sell_price": 100.0, "added_price": 100.0}, 0.0),
-        # 缺任一侧 → None（显示 `—`）：**不拿 0 冒充**
-        ({"sell_price": 120.0}, None),  # WP1 迁移前的库：行里没有 added_price 键
-        ({"sell_price": 120.0, "added_price": None}, None),  # 加入时库里没价
-        ({"sell_price": 120.0, "added_price": 0.0}, None),  # 挂单价 0 = 没有挂单，不是「卖 0 ISK」
-        ({"sell_price": None, "added_price": 100.0}, None),
-    ],
-)
-def test_rise_pct_needs_both_sides(row, expected):
-    assert rise_pct(row) == expected
-
-
-@pytest.mark.fast
-def test_sort_modes_put_missing_keys_last():
-    rows = [
-        {**_row(wid=1, tid=10), "created_at": "2026-01-01"},
-        {**_row(wid=2, tid=20), "created_at": "2026-03-01", "buy_threshold": 99.0},
-        {**_row(wid=3, tid=30), "created_at": "2026-04-01"},
-    ]
-    # 添加时间：新 → 旧
-    assert [r["id"] for r in sort_rows(rows, 0)] == [3, 2, 1]
-    # 涨幅：高 → 低，算不出的（None）排最后
-    assert [r["id"] for r in sort_rows(rows, 1, {10: 5.0, 20: None, 30: 9.0})] == [3, 1, 2]
-    # 阈值触发：触发的在前，组内仍按添加时间新 → 旧
-    assert [r["id"] for r in sort_rows(rows, 2)] == [2, 3, 1]
-
-
-@pytest.mark.fast
-def test_comparison_rows_show_dash_instead_of_zero_for_missing_data():
-    """对比表 5 行：当前 / 加入时 / 30 / 90 / 180 天前，涨跌以**当前**为基准。"""
-    rows = comparison_rows(100.0, None, {30: 80.0, 90: None, 180: 60.0})
-    assert [r["label"] for r in rows] == ["当前", "加入时", "30 天前", "90 天前", "180 天前"]
-    assert [r["caliber"] for r in rows] == ["挂单价", "挂单价", "成交均价", "成交均价", "成交均价"]
-    by_label = {r["label"]: r for r in rows}
-
-    # 缺数据的单元格一律 `—`（**不用 0 冒充**，也不留空串）
-    for label in ("加入时", "90 天前"):
-        assert by_label[label]["text"] == "—"
-        assert by_label[label]["deltaText"] == "—"
-        assert by_label[label]["pctText"] == "—"
-        assert by_label[label]["price"] is None
-    # 「当前」行不跟自己比
-    assert by_label["当前"]["deltaText"] == "—"
-    assert by_label["当前"]["pctText"] == "—"
-
-    # 有数据的档位：涨跌 = 当前 − 该档位（绝对值 + 百分比两栏）
-    assert by_label["30 天前"]["text"] == "80.00"
-    assert by_label["30 天前"]["deltaText"] == "+20.00"
-    assert by_label["30 天前"]["pctText"] == "+25.0%"
-    assert by_label["180 天前"]["deltaText"] == "+40.00"
-
-    # 当前价也没有时：各档位照常显示自己的价，涨跌一律 `—`
-    no_cur = {r["label"]: r for r in comparison_rows(None, 50.0, {30: 80.0})}
-    assert no_cur["加入时"]["text"] == "50.00"
-    assert no_cur["加入时"]["pctText"] == "—"
-    assert no_cur["30 天前"]["text"] == "80.00"
-    assert no_cur["30 天前"]["deltaText"] == "—"
-
-
-@pytest.mark.fast
-def test_bom_nodes_merge_duplicates_and_keep_the_shallowest_level():
-    """BOM 是 DAG：同一物品在多处出现要**按 typeId 合并**（层级取最浅、数量求和）。"""
-    leaf_deep = SimpleNamespace(type_id=34, name="三钛合金", quantity=100.0, depth=2, children=[])
-    leaf_shallow = SimpleNamespace(type_id=34, name="三钛合金", quantity=50.0, depth=1, children=[])
-    mid = SimpleNamespace(type_id=35, name="类晶胶", quantity=10.0, depth=1, children=[leaf_deep])
-    root = SimpleNamespace(type_id=587, name="裂谷级", quantity=1.0, depth=0, children=[mid, leaf_shallow])
-
-    nodes = bom_nodes(root, 2)
-    assert [(n["typeId"], n["level"], n["qty"]) for n in nodes] == [
-        (587, 0, 1.0),
-        (35, 1, 10.0),
-        (34, 1, 150.0),
-    ]
-
-
-# ════════════════════════════════════════════════════════════
 #  桥
 # ════════════════════════════════════════════════════════════
 
@@ -278,7 +163,6 @@ def test_bom_nodes_merge_duplicates_and_keep_the_shallowest_level():
 def bridge(qapp, monkeypatch):
     """桥会真的读关注列表与建表，这里把 DB 层全部打桩。"""
     import services.watchlist_manager as wm
-    from ui_qml.bridge import watchlist_bridge as wb
 
     rows: list[dict] = []
     calls: list[tuple] = []
@@ -293,8 +177,6 @@ def bridge(qapp, monkeypatch):
     monkeypatch.setattr(wm, "remove_from_watchlist", lambda wid: rows.clear())
     monkeypatch.setattr(wm, "update_watchlist_item", lambda wid, **kw: calls.append((wid, kw)))
     monkeypatch.setattr(wm, "check_price_changes", lambda: [])
-    # 右详情的价格历史也读库：默认给「没有历史」，需要历史的用例自己再打一次
-    monkeypatch.setattr(wb, "read_history", lambda *a, **kw: [])
 
     from ui_qml.bridge.watchlist_bridge import WatchlistBridge
 
@@ -396,12 +278,10 @@ def test_price_check_pushes_status_to_shell(bridge, monkeypatch):
 @pytest.fixture
 def watch_page(qapp, monkeypatch):
     import services.watchlist_manager as wm
-    from ui_qml.bridge import watchlist_bridge as wb
     from ui_qml.bridge.watchlist_bridge import WatchlistBridge
 
     monkeypatch.setattr(wm, "init_db", lambda: None)
     monkeypatch.setattr(wm, "get_watchlist", lambda: [])
-    monkeypatch.setattr(wb, "read_history", lambda *a, **kw: [])
 
     with page_host("pages/WatchlistPage.qml", WatchlistBridge(None)) as pair:
         yield pair
@@ -430,160 +310,3 @@ def test_row_click_survives_content_move(watch_page):
     press_move_release(
         host, root, area_name="watchClickArea", row=3, read_current=lambda: root.property("currentRow"), delta=1
     )
-
-
-@pytest.mark.ui
-def test_detail_shows_added_price_when_present_and_dash_when_absent(bridge, monkeypatch):
-    """`added_price` 两种情形：有 → 显示「加入时」价与加入以来涨幅；无 → `—`（不是 0）。"""
-    from ui_qml.bridge import watchlist_bridge as wb
-
-    today = date.today()
-    history = [
-        ((today - timedelta(days=179)).isoformat(), 60.0, 10),
-        ((today - timedelta(days=90)).isoformat(), 70.0, 20),
-        ((today - timedelta(days=30)).isoformat(), 80.0, 30),
-        (today.isoformat(), 100.0, 40),
-    ]
-    monkeypatch.setattr(wb, "read_history", lambda *a, **kw: list(history))
-
-    bridge._model.set_rows([_row(wid=1, sell=120.0, added_price=100.0), _row(wid=2, sell=120.0)])
-    bridge.selectRow(0)
-
-    assert bridge.detail["valid"] is True
-    assert bridge.detail["name"] == "三钛合金"
-    rows = {r["label"]: r for r in bridge.detail["rows"]}
-    assert rows["加入时"]["text"] == "100.00"
-    assert rows["加入时"]["pctText"] == "+20.0%"  # 120 / 100 − 1
-    assert rows["30 天前"]["text"] == "80.00"
-    assert rows["30 天前"]["pctText"] == "+50.0%"  # (120 − 80) / 80
-
-    # 折线：成交均价 + 成交量同轴同日（窗口 180 天，最早那条 179 天前刚好在内）
-    assert bridge.chartLabels == [day for day, _avg, _vol in history]
-    assert bridge.priceSeries[0]["points"][-1]["y"] == 100.0
-    assert bridge.volumeSeries[0]["points"][-1]["y"] == 40
-
-    # 没有 added_price（迁移前的库，行里压根没这个键）→ `—`，**不是 0.00**
-    bridge._model.set_rows([_row(wid=2, sell=120.0)])
-    bridge.selectRow(0)
-    rows = {r["label"]: r for r in bridge.detail["rows"]}
-    assert rows["加入时"]["text"] == "—"
-    assert rows["加入时"]["pctText"] == "—"
-
-
-@pytest.mark.ui
-def test_chart_range_switches_slice_loaded_points_without_rereading(bridge, monkeypatch):
-    """折线时间粒度（近 7/30/90/180 天）：默认 180，切粒度**只切已装配好的点**。
-
-    捕获的缺陷：切粒度回去调 `_load_detail()`（重读 `price_history`）或重跑 BOM 展开 ——
-    每点一下按钮就敲一次库；以及 `baseNote` 里写的粒度与实际点数对不上。
-    """
-    from ui_qml.bridge import watchlist_bridge as wb
-
-    today = date.today()
-    history = [((today - timedelta(days=179 - i)).isoformat(), 50.0 + i, 10 + i) for i in range(180)]
-    reads: list[str] = []
-
-    def _history(*_args, **_kw):
-        reads.append("history")
-        return list(history)
-
-    def _materials(*_args, **_kw):
-        reads.append("materials")
-        return {
-            "rows": [],
-            "series": [
-                {"label": "裂谷级", "color": "#123456", "points": [{"x": i, "y": 10.0 + i} for i in range(180)]}
-            ],
-            "hint": "",
-        }
-
-    monkeypatch.setattr(wb, "read_history", _history)
-    monkeypatch.setattr(wb, "load_materials", _materials)
-
-    bridge._model.set_rows([_row(wid=1, added_price=100.0)])
-    bridge.selectRow(0)
-    bridge.setShowMaterials(True)
-
-    assert bridge.rangeLabels == ["近 7 天", "近 30 天", "近 90 天", "近 180 天"]
-    assert bridge.rangeIndex == 3, "默认 180 天（与加载窗口一致）"
-    assert len(bridge.priceSeries[0]["points"]) == 180
-    assert "180 个交易日" in bridge.baseNote
-    assert "180 个交易日" in bridge.materialBaseNote
-
-    reads_before = list(reads)
-    assert reads_before == ["history", "materials"], "选中行读一次历史，勾材料读一次 BOM"
-
-    bridge.setRangeIndex(1)  # 近 30 天
-
-    assert bridge.rangeIndex == 1
-    assert reads == reads_before, "切粒度只切已装配好的点：不重读 price_history、不重跑 BOM 展开"
-    assert len(bridge.chartLabels) <= 30
-    for series in (bridge.priceSeries, bridge.volumeSeries, bridge.materialSeries):
-        assert 0 < len(series[0]["points"]) <= 30
-    assert "30 个交易日" in bridge.baseNote
-    assert "30 个交易日" in bridge.materialBaseNote
-    # 口径如实写：材料图归一化（基期 = 每条线自己的首个显示点），主物品两条线是绝对值
-    assert "首个显示点" in bridge.materialBaseNote
-    assert "100" not in bridge.baseNote
-
-    # 越界 / 重复点击都不动状态、也不读库
-    bridge.setRangeIndex(9)
-    bridge.setRangeIndex(1)
-    assert bridge.rangeIndex == 1
-    assert reads == reads_before
-
-
-@pytest.mark.ui
-def test_material_series_are_absolute_in_bridge_and_normalised_by_the_chart(watch_page, monkeypatch):
-    """勾选「显示制造材料」：桥给**绝对值**，`FLineChart` 按各自首点归一到 100。
-
-    捕获的缺陷：归一化写反成「绝对值叠加」—— 材料价格差 3~4 个数量级时会压成一条直线，
-    且图例里的「基期=100」说明与实际画法不符。
-    """
-    from ui_qml.bridge import watchlist_bridge as wb
-
-    payload = {
-        "rows": [
-            {
-                "name": "裂谷级",
-                "typeId": 587,
-                "level": 0,
-                "indent": 0,
-                "qtyText": "1",
-                "priceText": "5.00",
-                "agoText": "4.00",
-                "pctText": "+25.0%",
-                "pct": 25.0,
-                "caliber": "挂单价",
-            },
-        ],
-        "series": [
-            {
-                "label": "裂谷级",
-                "color": "#123456",
-                "points": [{"x": 0, "y": 5.0}, {"x": 1, "y": 6.0}, {"x": 2, "y": 7.5}],
-            },
-            {"label": "三钛合金", "color": "#654321", "points": [{"x": 0, "y": 100.0}, {"x": 1, "y": 200.0}]},
-        ],
-        "hint": "口径：挂单价",
-    }
-    monkeypatch.setattr(wb, "load_materials", lambda *a, **kw: payload)
-
-    host, bridge = watch_page
-    bridge._model.set_rows([_row(wid=1, added_price=100.0)])
-    bridge.selectRow(0)
-    bridge.setShowMaterials(True)
-    _spin(150)
-
-    root = host.rootObject()
-    chart = root.findChild(QObject, "materialChart")
-    assert chart is not None, "详情面板里应有材料折线（objectName: materialChart）"
-    assert chart.property("normalize") is True
-    # 桥给的是绝对值（归一化是组件的事；桥里归一化会让图例与表里的绝对值对不上）
-    assert bridge.materialSeries[0]["points"][0]["y"] == 5.0
-
-    rng = chart.property("_range")
-    values = rng if isinstance(rng, dict) else rng.toVariant()
-    # 两条线都单调不降 → 归一化后全图最小值就是各线首点（= 100），最大值来自第二条线
-    assert values["lo"] == 100.0
-    assert values["hi"] == 200.0

@@ -48,11 +48,6 @@ COLUMNS: list[tuple[str, int, str | None]] = [
     ("每单位体积", 90, "v"),
     ("每方利润", 100, "pm3"),
     ("B侧挂单变化", 120, "chg"),
-    # 两端各自的**近 7 个日历天平均成交量**（`price_history`，按当前选的中心读；
-    # 数据由主界面「更新价格」按它同步的中心统一拉取，本页零 ESI 请求）。
-    # 查不到 / 本地历史过期 → `—`（`get_history_summary` 的 `stale`）。
-    ("起点日成交量", 104, "vola"),
-    ("终点日成交量", 104, "volb"),
     ("", 88, None),  # 加入购物车
 ]
 
@@ -60,9 +55,6 @@ _ICON_COL = 0
 _ACTION_COL = len(COLUMNS) - 1
 _PM3_COL = 7
 _CHG_COL = 8
-#: 两端日成交量（顺序与 `COLUMNS` 一致）
-_VOLA_COL = 9
-_VOLB_COL = 10
 #: 左对齐的列（其余右对齐）
 _LEFT_COLS = {0, 1, 2}
 
@@ -84,10 +76,6 @@ def _cell_text(row: dict, col: int) -> str:
     key = COLUMNS[col][2]
     if key == "chg":
         return format_order_change(row.get("chg"))
-    if key in ("vola", "volb"):
-        # 近 7 日**平均**成交量（件/天）。`None` = 查不到或本地历史过期 → `—`，不用 0 冒充
-        v = row.get(key)
-        return f"{v:,.0f}" if isinstance(v, int | float) else DASH
     if key == "pm3":
         v = row.get("pm3")
         return f"{v:,.2f}" if isinstance(v, int | float) else DASH
@@ -196,30 +184,20 @@ class TradeRankQmlModel(QAbstractTableModel):
         if key is None:
             return 0
         v = row.get("chg") if key == "chg" else row.get(key)
-        # 文本列**恒**返回字符串、数值列**恒**返回 float：混着返回（缺值给 `-inf`）会在
-        # `list.sort` 里抛 `TypeError: '<' not supported between 'str' and 'float'` ——
-        # 那是在 Slot 里抛的，表现为「点了表头没反应」。
-        if key in ("z", "e"):
-            return str(v or "")
         if isinstance(v, int | float):
-            return float(v)
+            return v
+        if isinstance(v, str):
+            return v
         return _SORT_NONE
 
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:  # type: ignore[override]
-        """点表头排序：**必须走模型重置**，不能只发 `layoutAboutToBeChanged/layoutChanged`。
-
-        实测（2026-10-05 出图核对）：只发 layout 信号时 QML `TableView`（本页
-        `reuseItems: true`）不重排 —— 表头箭头变成「中文名称 ▲」了，行序还是原样，
-        用户看到的就是「排序没生效」。同仓能工作的那张表（`industry_models.PlanTableModel.sort`）
-        用的正是 `beginResetModel/endResetModel`，照它办。
-        """
         if not 0 <= column < len(COLUMNS) or COLUMNS[column][2] is None:
             return  # 图标列与操作列不参与排序
-        self.beginResetModel()
         self._sort_col = column
         self._sort_desc = order == Qt.SortOrder.DescendingOrder
+        self.layoutAboutToBeChanged.emit()
         self._rows.sort(key=self._sort_key, reverse=self._sort_desc)
-        self.endResetModel()
+        self.layoutChanged.emit()
 
     def refresh_colors(self) -> None:
         """主题切换后补发 dataChanged（两列的颜色是算出来的字符串）。"""

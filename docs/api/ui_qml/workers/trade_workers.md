@@ -22,7 +22,7 @@ def spawn(worker: QThread) -> QThread
 
 ### `class CrossRegionRankWorker`（继承 `QThread`）
 
-A → B 全品类价差排行（含 B 侧挂单变化 + 两端的日成交量）。
+A → B 全品类价差排行（含 B 侧挂单变化）。
 
 定义行：`19`
 
@@ -50,12 +50,3 @@ def run(self)
 :::
 
 定义行：`43`
-##### `_attach_volumes`
-
-```python
-def _attach_volumes(self, rows: list[dict]) -> None
-```
-
-两端各自的近 7 日平均成交量 —— **只读本地 `price_history`，零 ESI 请求**。
-
-定义行：`64`

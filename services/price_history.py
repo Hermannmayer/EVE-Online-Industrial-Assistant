@@ -3,7 +3,7 @@ Market price history — ESI /markets/{region_id}/history/
 Cache in market.db price_history table
 """
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime
 
 import aiohttp
 
@@ -15,39 +15,25 @@ REGION_ID = 10000002  # The Forge
 # Cache TTL: 1 hour (ESI history updates daily, 1h is conservative)
 CACHE_TTL_SECONDS = 3600
 
-#: `price_history` 的建表语句 —— **单一来源**。
-#: 除了这里的 `_ensure_table`，「更新价格」流程（`services/importers/getprices.py`）也会
-#: 用 aiosqlite 直接写这张表，两边必须完全一致，所以 DDL 只留这一份。
-#: market.db 是可重建缓存，故不走 `schema_migrations`（克制条款第 3 条）。
-PRICE_HISTORY_DDL = """
-    CREATE TABLE IF NOT EXISTS price_history (
-        type_id INTEGER NOT NULL,
-        region_id INTEGER NOT NULL,
-        date TEXT NOT NULL,
-        average REAL NOT NULL,
-        highest REAL NOT NULL DEFAULT 0,
-        lowest REAL NOT NULL DEFAULT 0,
-        volume INTEGER NOT NULL DEFAULT 0,
-        order_count INTEGER NOT NULL DEFAULT 0,
-        fetched_at TEXT NOT NULL,
-        PRIMARY KEY (type_id, region_id, date)
-    )
-"""
-
-#: `(region_id, date)` 索引 —— **大盘页性能的关键**。
-#: 主键是 `(type_id, region_id, date)`，按 `region_id + date` 过滤（广度、日成交额、
-#: 指数装载窗口）**用不上主键前缀**，会全表扫 116 万行：实测（2026-10，真实库）
-#: `get_breadth` 2.04s、`_turnover_series` 0.67s、`get_index_series` 合计近 10s，
-#: 切到「市场监控」页一次性阻塞主线程 16 秒。加上本索引后这些范围扫描走索引。
-PRICE_HISTORY_INDEX_DDL = "CREATE INDEX IF NOT EXISTS idx_price_history_region_date ON price_history(region_id, date)"
-
 
 def _ensure_table(db=None) -> None:
-    """Ensure price_history table（与索引）exists in market.db"""
+    """Ensure price_history table exists in market.db"""
     conn_mgr = db or get_db()
     with conn_mgr.connect("mkt") as conn:
-        conn.execute(PRICE_HISTORY_DDL)
-        conn.execute(PRICE_HISTORY_INDEX_DDL)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS price_history (
+                type_id INTEGER NOT NULL,
+                region_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                average REAL NOT NULL,
+                highest REAL NOT NULL DEFAULT 0,
+                lowest REAL NOT NULL DEFAULT 0,
+                volume INTEGER NOT NULL DEFAULT 0,
+                order_count INTEGER NOT NULL DEFAULT 0,
+                fetched_at TEXT NOT NULL,
+                PRIMARY KEY (type_id, region_id, date)
+            )
+        """)
 
 
 async def fetch_history(
@@ -138,99 +124,6 @@ def save_cache(type_id: int, region_id: int, data: list[dict], _db=None) -> None
                     now,
                 ),
             )
-
-
-#: 「日订单量 / 日成交量」两列默认的聚合窗口（**日历天**）。
-#: 与 `CACHE_TTL_SECONDS` 无关：那个管「多久算过期」，这个管「平均几天」。
-SUMMARY_DAYS = 7
-
-#: 一次 SQL 里 `IN (...)` 的参数个数上限（SQLite 变量上限的保守取值，与 blueprint_repository 同口径）
-_SQL_PARAM_CHUNK = 900
-
-
-def get_history_summary(
-    type_ids,
-    region_id: int = REGION_ID,
-    days: int = SUMMARY_DAYS,
-    _db=None,
-    today: date | None = None,
-) -> dict[int, dict]:
-    """读本地缓存，算「最近 `days` 个**日历天**的平均订单量 / 成交量」→ `{type_id: {...}}`。
-
-    载荷：`{"oc": 平均 order_count | None, "vol": 平均 volume | None,
-    "days": 窗口内有记录的天数, "last": 最新记录日期, "stale": 本地历史是否整段早于窗口}`。
-
-    ⚠️ **必须按日历天，不能按「最近 `days` 条记录」**：ESI 的
-    `/markets/{region_id}/history/` **只返回有成交的日子**（日期是跳的），冷门物品那 7 条
-    能横跨好几个月 —— 「近 7 日平均」于是变成「上次活跃那几天平均」。实测 `屹立白蚁 II`
-    （type 47128）最新记录 2026-07-17、最近 7 条横跨 2026-05-14 ~ 07-17，算出 21.6/天，
-    而它已经两个多月没成交（用户报的正是这条）。
-
-    窗口内**没有记录的日子按 0 计入**（ESI 不返回那天 = 那天成交 0），所以分母恒为 `days`
-    —— 算出来就是「最近这些天真能卖多少」。
-
-    查不到的 type **不出现在返回值里**（调用方 `.get(id)` → `None` → 表格显示 `—`）：
-    这里**不用 0 冒充「查不到」**。
-
-    「本地没拉过」与「物品真没成交」必须分开（靠 `fetched_at`）：
-
-    - 最近 `days` 天内**拉过**这份历史（`fetched_at` 在窗口内）→ 没记录就是**真的 0 成交**，
-      照实给 `0`；
-    - 最后一次拉取也早于窗口 → 本地这份数据过期，给 `stale=True` + `oc`/`vol` = `None`
-      （显示 `—`，状态行提示去「更新价格」），**不拿 0 冒充「没人买」**。
-
-    `today` 只为测试注入；缺省取本机当天。
-    """
-    ids = [int(t) for t in type_ids if t]
-    if not ids:
-        return {}
-
-    window = max(1, int(days))
-    end_day = today or date.today()
-    start = (end_day - timedelta(days=window - 1)).isoformat()
-    end = end_day.isoformat()
-
-    conn_mgr = _db or get_db()
-    with conn_mgr.connect("mkt") as conn:
-        # 只读路径不做 DDL：表还没建（从没打开过价格走势图、也从没更新过价格）就是没有数据
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_history'").fetchone():
-            return {}
-
-        marks: dict[int, tuple[str, str]] = {}
-        window_sums: dict[int, tuple[float, float, int]] = {}
-        for offset in range(0, len(ids), _SQL_PARAM_CHUNK):
-            chunk = ids[offset : offset + _SQL_PARAM_CHUNK]
-            ph = ",".join("?" * len(chunk))
-            for tid, last, fetched in conn.execute(
-                f"SELECT type_id, MAX(date), MAX(fetched_at) FROM price_history "
-                f"WHERE region_id = ? AND type_id IN ({ph}) GROUP BY type_id",
-                (region_id, *chunk),
-            ).fetchall():
-                marks[int(tid)] = (str(last), str(fetched))
-            for tid, vol_sum, oc_sum, covered in conn.execute(
-                f"SELECT type_id, SUM(volume), SUM(order_count), COUNT(*) FROM price_history "
-                f"WHERE region_id = ? AND type_id IN ({ph}) AND date >= ? AND date <= ? GROUP BY type_id",
-                (region_id, *chunk, start, end),
-            ).fetchall():
-                window_sums[int(tid)] = (float(vol_sum or 0), float(oc_sum or 0), int(covered))
-
-    out: dict[int, dict] = {}
-    for tid, (last, fetched) in marks.items():
-        # `fetched_at` 是 ISO 串（`2026-10-05T12:34:56.789+00:00`）→ 前 10 位就是日期
-        pulled_in_window = fetched[:10] >= start
-        if not pulled_in_window:
-            # 本地这份历史整段早于窗口（很久没点「更新价格」）→ 不知道，不是 0
-            out[tid] = {"oc": None, "vol": None, "days": 0, "last": last, "stale": True}
-            continue
-        vol_sum, oc_sum, covered = window_sums.get(tid, (0.0, 0.0, 0))
-        out[tid] = {
-            "oc": oc_sum / window,
-            "vol": vol_sum / window,
-            "days": covered,
-            "last": last,
-            "stale": False,
-        }
-    return out
 
 
 class PriceHistoryService:

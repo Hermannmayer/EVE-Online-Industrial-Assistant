@@ -27,7 +27,7 @@ BACKUP_KEEP = 5
 DB_SCHEMA_VERSIONS: dict[str, int] = {
     "ref": 1,
     "mkt": 4,  # v1→v2: adjusted_price 列; v2→v3: market_prices(fetch_time) 索引; v3→v4: market_volume_snapshots 统计信息（**不建索引**，理由见迁移函数）
-    "user": 22,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 科研作业列（activity/decryptor_type_id/success_rate/research_target_level/actual_output_runs）;  v13→v14: 修复「版本已到 13 但科研列缺失」的历史库;  v14→v15: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）;  v15→v16: user_blueprints 原图权威化（runs<0 → is_bpo=1/runs=0，-1 退场）;  v16→v17: asset_snapshots / open_orders 表;  v17→v18: asset_snapshots.line_value 列（运行中产线价值）+ order_events 台账表;  v18→v19: esi_tokens 表（按角色绑定的 ESI 刷新令牌）;  v19→v20: open_orders 归属列（char_id/is_corp —— 挂单变动按「角色 × 军团单」分组比较，多来源并存时不再互相误判成交）;  v20→v21: 回填制造计划的 product_name（多蓝图批量加入规划时整批写成第一张蓝图产品名的历史脏数据）;  v21→v22: watchlist_items.added_price（加入关注时的 Jita 卖价，取不到留 NULL）
+    "user": 21,  # v1→v2: user_blueprints.cost_per_run;  v2→v3: production_plans 扩展列;  v3→v4: production_plans 执行列;  v4→v5: 机库/计划星系列 + facility_cost_mult 补齐;  v5→v6: hangars 设施类型/设施税/改件;  v6→v7: plan_blueprint_bindings 多蓝图绑定表;  v7→v8: 回填空星系计划（从材料机库带出）;  v8→v9: 修复 production_plans 缺 v2 扩展列的历史库;  v9→v10: production_plans 扣减快照列（撤销精确返还）;  v10→v11: price_snapshots 表收口到迁移;  v11→v12: production_plans 引用式子项需求列（source_mother_ids/component_parent_type_id/demand，共享合并+母项联动重算）;  v12→v13: production_plans 科研作业列（activity/decryptor_type_id/success_rate/research_target_level/actual_output_runs）;  v13→v14: 修复「版本已到 13 但科研列缺失」的历史库;  v14→v15: production_plans 启动成本快照列（material_cost_snapshot，入库/撤销按启动时成本）;  v15→v16: user_blueprints 原图权威化（runs<0 → is_bpo=1/runs=0，-1 退场）;  v16→v17: asset_snapshots / open_orders 表;  v17→v18: asset_snapshots.line_value 列（运行中产线价值）+ order_events 台账表;  v18→v19: esi_tokens 表（按角色绑定的 ESI 刷新令牌）;  v19→v20: open_orders 归属列（char_id/is_corp —— 挂单变动按「角色 × 军团单」分组比较，多来源并存时不再互相误判成交）;  v20→v21: 回填制造计划的 product_name（多蓝图批量加入规划时整批写成第一张蓝图产品名的历史脏数据）
     "bp": 3,  # v1→v2: blueprint_materials.wastefactor 列;  v2→v3: 蓝图表查找索引（逐件研究成本 37×）
 }
 
@@ -645,24 +645,6 @@ def _migrate_user_v20_to_v21(db_path: str) -> str:
         conn.close()
 
 
-def _migrate_user_v21_to_v22(db_path: str) -> str:
-    """v21→v22: watchlist_items 新增 ``added_price`` 列（加入关注时的 Jita 卖价）。
-
-    关注表要显示「加入时 → 现在」的涨跌，`added_price` 是那一端的锚点。
-    存量行**一律留 NULL**：加入时的价格在过去没记过，编不出来；读端见到 NULL 就不显示涨跌。
-    取不到价格时写 NULL 而不是 0 —— 0 会被读端当成「那时卖 0 ISK」，涨跌算成无穷大。
-    幂等：已存在的列跳过，重复运行无变化。
-    """
-    conn = sqlite3.connect(db_path)
-    try:
-        if not _table_exists(conn, "watchlist_items"):
-            return "watchlist_items 表不存在，跳过"
-    finally:
-        conn.close()
-    net = _add_columns(db_path, "watchlist_items", [("added_price", "REAL DEFAULT NULL")])
-    return f"watchlist_items.added_price (新增 {net} 列)"
-
-
 def _migrate_bp_v2_to_v3(db_path: str) -> str:
     """v2→v3: 蓝图表查找索引（实测逐件研究成本 3.92ms → 0.10ms）"""
     from services.blueprint_reader import blueprint_index_sql
@@ -725,7 +707,6 @@ _MIGRATIONS: dict[str, dict[int, Callable[[str], str]]] = {
         18: _migrate_user_v18_to_v19,
         19: _migrate_user_v19_to_v20,
         20: _migrate_user_v20_to_v21,
-        21: _migrate_user_v21_to_v22,
     },
     "bp": {
         1: _migrate_bp_v1_to_v2,

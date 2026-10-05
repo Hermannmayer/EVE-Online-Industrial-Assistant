@@ -6,7 +6,7 @@
 import shutil
 import sqlite3
 import tempfile
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -14,14 +14,7 @@ import aiohttp
 import pytest
 
 from services.database_manager import DB_PATH_MAP, get_db
-from services.price_history import (
-    CACHE_TTL_SECONDS,
-    _ensure_table,
-    fetch_history,
-    get_cached_history,
-    get_history_summary,
-    save_cache,
-)
+from services.price_history import CACHE_TTL_SECONDS, _ensure_table, fetch_history, get_cached_history, save_cache
 
 MOCK_HISTORY_DATA = [
     {"date": "2026-06-01", "average": 5.0, "highest": 6.0, "lowest": 4.0, "volume": 100000, "order_count": 50},
@@ -185,81 +178,3 @@ class TestCacheRoundtrip:
         assert len(c1) == 3
         assert len(c2) == 1
         assert c2[0]["average"] == 100.0
-
-
-# ── get_history_summary：日订单量 / 日成交量的窗口口径 ──
-
-
-class TestHistorySummary:
-    """窗口是**日历天**，不是「最近 N 条记录」。
-
-    回归（用户 2026-10-05 报）：`屹立白蚁 II`（47128）在游戏里两个多月没成交，
-    窗口却显示 20+/天 —— 因为按「最近 7 条」取，那 7 条横跨 2026-05-14 ~ 07-17。
-    """
-
-    @staticmethod
-    def _insert(rows: list[tuple[int, str, int, int]], fetched_at: str = "2026-10-05T00:00:00") -> None:
-        _ensure_table()
-        with get_db().connect("mkt") as conn:
-            for tid, day, vol, oc in rows:
-                conn.execute(
-                    "INSERT INTO price_history "
-                    "  (type_id, region_id, date, average, highest, lowest, volume, order_count, fetched_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (tid, 10000002, day, 1.0, 1.0, 1.0, vol, oc, fetched_at),
-                )
-
-    #: `屹立白蚁 II`（47128）真实的形状：最近 7 条横跨 5 个月，最新一条在 80 天前
-    _STALE_TAIL = [
-        (47128, "2026-07-17", 2, 1),
-        (47128, "2026-07-11", 1, 1),
-        (47128, "2026-06-20", 86, 6),
-        (47128, "2026-06-05", 1, 1),
-        (47128, "2026-05-27", 1, 1),
-        (47128, "2026-05-25", 54, 14),
-        (47128, "2026-05-14", 6, 1),
-    ]
-
-    def test_recently_pulled_history_says_zero_not_the_old_tail(self, temp_mkt_db):
-        """今天拉过：窗口内没记录 = **真的没成交** → 0（回归：原来报 21.6/天）。"""
-        self._insert(self._STALE_TAIL, fetched_at="2026-10-05T08:00:00")
-        got = get_history_summary([47128], today=date(2026, 10, 5))[47128]
-
-        assert got["stale"] is False
-        assert got["vol"] == 0.0, "近 7 天没有成交就是 0，不能拿 5 个月前的 7 条算"
-        assert got["oc"] == 0.0
-        assert got["days"] == 0
-        assert got["last"] == "2026-07-17", "要能说出「最后有记录是哪天」"
-
-    def test_data_never_refreshed_reports_unknown(self, temp_mkt_db):
-        """本地这份历史也是几个月前拉的 → `—`（不知道），不拿 0 冒充「没人买」。"""
-        self._insert(self._STALE_TAIL, fetched_at="2026-07-18T00:00:00")
-        got = get_history_summary([47128], today=date(2026, 10, 5))[47128]
-
-        assert got["stale"] is True
-        assert got["vol"] is None
-        assert got["oc"] is None
-
-    def test_active_item_divides_by_the_whole_window(self, temp_mkt_db):
-        """窗口内没有记录的日子按 0 计入：分母恒为 7 天，而不是「有几条算几条」。"""
-        self._insert(
-            [
-                (33681, "2026-10-03", 70, 30),
-                (33681, "2026-10-01", 7, 3),
-                (33681, "2026-09-29", 21, 9),
-                (33681, "2026-09-20", 999, 99),  # 窗口外，不参与
-            ]
-        )
-        got = get_history_summary([33681], today=date(2026, 10, 5))[33681]
-
-        assert got["stale"] is False
-        assert got["days"] == 3
-        assert got["vol"] == pytest.approx((70 + 7 + 21) / 7)
-        assert got["oc"] == pytest.approx((30 + 3 + 9) / 7)
-        assert got["last"] == "2026-10-03"
-
-    def test_no_history_at_all_is_absent_from_the_result(self, temp_mkt_db):
-        """从来没拉过历史的 type 不出现在结果里（调用方 `.get` → `None` → 表格 `—`）。"""
-        _ensure_table()
-        assert get_history_summary([99999], today=date(2026, 10, 5)) == {}
-        assert get_history_summary([], today=date(2026, 10, 5)) == {}
