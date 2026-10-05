@@ -40,6 +40,12 @@ _GROUPS = {2001: 10, 34: 11}
 #: 库存/挂单标记：2001 库中有、34 有挂单
 _STOCK_FLAGS = {2001: (True, False), 34: (False, True)}
 
+#: 蓝图/计划状态标记：2001 有原图待拷贝、34 我们没有蓝图（其余两项样例里不命中）
+_STATE_FLAGS = {
+    2001: frozenset({mi.STATE_BPO}),
+    34: frozenset({mi.STATE_NO_BLUEPRINT}),
+}
+
 #: 近 7 日聚合的替身：2001 卖得动（50/天）、34 卖不动（3/天）
 _HISTORY = {2001: {"oc": 2.0, "vol": 50.0, "days": 7, "last": "2026-01-07"}}
 _HISTORY_DEFAULT = {"oc": 1.0, "vol": 3.0, "days": 7, "last": "2026-01-07"}
@@ -194,6 +200,11 @@ def stub_env(monkeypatch, tmp_path):
     monkeypatch.setattr(mi, "data_dir", lambda: str(tmp_path))
     monkeypatch.setattr(mi, "FMessageDialog", _MsgBox)
     monkeypatch.setattr(mi, "get_stock_and_order_flags", lambda ids, db=None: dict(_STOCK_FLAGS))
+    monkeypatch.setattr(
+        mi,
+        "get_production_state_flags",
+        lambda ids, db=None: {int(i): _STATE_FLAGS[int(i)] for i in ids if int(i) in _STATE_FLAGS},
+    )
     monkeypatch.setattr(mi, "get_history_summary", _fake_history)
     _RecordingDialog.calls = []
     _RecordingDialog.accept = False
@@ -256,8 +267,17 @@ def test_defaults(qapp):
         assert bridge.hubs == list(mi.TRADE_HUBS)
         assert bridge.characters == ["main", "alt"]
         assert (bridge.hubIndex, bridge.charIndex, bridge.tax) == (0, 0, 0.0)
-        # 筛选器默认全部不筛
-        assert bridge.stockFilters == ["全部", "库中有", "有挂单", "库中有且有挂单"]
+        # 筛选器默认全部不筛（库存那一栏里同时挂着蓝图/计划状态，用户要求并进同一个下拉）
+        assert bridge.stockFilters == [
+            "全部",
+            "库中有",
+            "有挂单",
+            "库中有且有挂单",
+            "无蓝图",
+            "有原图待拷贝",
+            "有拷贝待发明",
+            "正在制造",
+        ]
         assert bridge.stockFilterIndex == 0
         assert bridge.salesFilters == ["全部", "≥1", "≥10", "≥100", "≥1000"]
         assert bridge.salesFilterIndex == 0
@@ -575,9 +595,14 @@ def test_category_id_sets_are_cached_per_window(qapp, monkeypatch):
         (1, [2001]),  # 库中有
         (2, [34]),  # 有挂单
         (3, []),  # 库中有且有挂单
+        (4, [34]),  # 无蓝图 —— 见 `_STATE_FLAGS`
+        (5, [2001]),  # 有原图待拷贝
+        (6, []),  # 有拷贝待发明
+        (7, []),  # 正在制造
     ],
 )
 def test_stock_filter_uses_the_batch_flags(qapp, index, expected):
+    """同一个下拉里既有库存/挂单，也有蓝图与计划状态（用户要求并进一栏）。"""
     dlg = _dialog()
     try:
         bridge = dlg.bridge

@@ -50,7 +50,14 @@ from core.container import get_container
 from core.logger import log
 from core.paths import data_dir
 from services import char_config_resolver
-from services.inventory_manager import get_stock_and_order_flags
+from services.inventory_manager import (
+    STATE_BPC_INVENTABLE,
+    STATE_BPO,
+    STATE_IN_PLAN,
+    STATE_NO_BLUEPRINT,
+    get_production_state_flags,
+    get_stock_and_order_flags,
+)
 from services.price_history import get_history_summary
 from ui_qml.bridge.all_items_bridge import (
     drop_worker,
@@ -110,9 +117,32 @@ _MFG_MCOLS = [
 #: 类别下拉项 ↔ 产物 id 集合的键（顺序必须与 `MFG_CATEGORIES` 一致）
 _CAT_KEYS = ("all", "t1", "t2", "faction", "reaction")
 
-#: 「库存 / 挂单」筛选（语义与仓库页状态列一致：`inventory_items.quantity>0` 全机库合计；
-#: `open_orders.volume_remain>0` 买卖单都算）
-_STOCK_FILTERS = ["全部", "库中有", "有挂单", "库中有且有挂单"]
+#: 「库存 / 状态」筛选。前四档是库存挂单（语义与仓库页状态列一致：`inventory_items.quantity>0`
+#: 全机库合计；`open_orders.volume_remain>0` 买卖单都算），**后四档按用户要求并进同一个下拉**
+#: （原来想单开一个「状态」下拉，用户否了：不加新筛选，并到这一栏里）：
+#: 无蓝图 / 有原图待拷贝 / 有拷贝待发明 / 正在制造（有库存 = 上面的「库中有」）。
+_STOCK_FILTERS = [
+    "全部",
+    "库中有",
+    "有挂单",
+    "库中有且有挂单",
+    "无蓝图",
+    "有原图待拷贝",
+    "有拷贝待发明",
+    "正在制造",
+]
+
+#: `_STOCK_FILTERS` 后四档对应的状态标记（前四档为 `None` —— 它们查的是库存/挂单两个布尔）
+_STOCK_STATE_KEYS: tuple[str | None, ...] = (
+    None,
+    None,
+    None,
+    None,
+    STATE_NO_BLUEPRINT,
+    STATE_BPO,
+    STATE_BPC_INVENTABLE,
+    STATE_IN_PLAN,
+)
 
 #: 「日销量」筛选（按「日成交量」列 = 近 7 日平均成交量）
 _SALES_FILTERS = ["全部", "≥1", "≥10", "≥100", "≥1000"]
@@ -584,14 +614,22 @@ class ManufacturableItemsBridge(DialogBridge):
         self._upd()
 
     def _attach_stock_flags(self, rows: list[dict]) -> None:
-        """一次批量查「库中有 / 有挂单」（本机两张表分别 158 / 8 行，微秒级）。"""
+        """一次批量查「库中有 / 有挂单」（本机两张表分别 158 / 8 行，微秒级）+ 状态标记。
+
+        状态标记（无蓝图 / 有原图 / 有拷贝可发明 / 在跑的计划）见
+        `services.inventory_manager.get_production_state_flags`：同样是批量、本地库，零 ESI。
+        两者一起挂，是因为它们喂的是**同一个下拉**（用户要求并进「库存」那一栏）。
+        """
         if not rows:
             return
-        flags = get_stock_and_order_flags([r["id"] for r in rows], db=get_container().db)
+        ids = [r["id"] for r in rows]
+        flags = get_stock_and_order_flags(ids, db=get_container().db)
+        states = get_production_state_flags(ids, db=get_container().db)
         for row in rows:
             stocked, listed = flags.get(row["id"], (False, False))
             row["_stock"] = stocked
             row["_orders"] = listed
+            row["_state"] = states.get(row["id"], frozenset())
 
     def _stock_ok(self, row: dict) -> bool:
         if self._stock_index == 0:
@@ -602,7 +640,10 @@ class ManufacturableItemsBridge(DialogBridge):
             return stocked
         if self._stock_index == 2:
             return listed
-        return stocked and listed
+        if self._stock_index == 3:
+            return stocked and listed
+        key = _STOCK_STATE_KEYS[self._stock_index]
+        return key in (row.get("_state") or ())
 
     def _attach_history(self, rows: list[dict]) -> None:
         """近 7 日平均订单量 / 成交量 —— **本地缓存一次 SQL，零 ESI 请求**。

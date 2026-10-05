@@ -75,7 +75,8 @@ Item {
         spacing: 1
 
         // ═══════════════════════════════════════════════════════
-        //  1. 工具栏：**一行**装下功能按钮 + 搜索 + 全部筛选 + 内联设置 + 最右「置顶」
+        //  1. 工具栏：搜索 + 全部筛选 + 内联设置，**宽度不够就折行**；
+        //     「置顶」在折行区之外，任何窗口尺寸下都露出来
         // ═══════════════════════════════════════════════════════
 
         RowLayout {
@@ -85,183 +86,225 @@ Item {
 
             FButton {
                 objectName: "refreshButton"
+                Layout.alignment: Qt.AlignVCenter
                 text: qsTr("刷新计算")
                 onClicked: if (page.mi)
                     page.mi.refreshScores()
             }
 
-            /* 搜索框：**做成一眼能看见的**（用户要求「更明显一点」）——
-             * 铺一层浅底 + 圆角 + 1px 边框（聚焦转主题色），前面挂放大镜。
-             * 这是这一行里唯一 `Layout.fillWidth` 的控件：窗口拉宽时先喂它。 */
-            FTextField {
-                id: searchField
-                objectName: "searchField"
+            /* 折行区：`Flow` 从左到右排，放不下就换行。
+             *
+             * 为什么不是普通 `RowLayout`：窗口可以缩到 1000px（还能被上次保存的几何恢复），
+             * 而这一排控件实测要 ~1350px —— 用 RowLayout 的话最右的「置顶」会被推出可视区
+             * （用户截图实测：「打开小窗口时置顶没显示」）。所以中间这坨交给 Flow 折成两行，
+             * **「置顶」留在 Flow 外面**，永远在最右。
+             * `Flow` 的隐式高度由折行结果决定，外层 `ColumnLayout` 会把高度让给它。
+             *
+             * 每个「标签 + 控件」自己是一组 `RowLayout`：Flow 是按**直接子项**折行的，
+             * 不分组的话会出现「标签在上一行末尾、控件在下一行开头」。 */
+            Flow {
+                objectName: "mfgToolbarFlow"
                 Layout.fillWidth: true
-                Layout.minimumWidth: 190
-                Layout.preferredWidth: 240
-                leftPadding: 26
-                placeholderText: qsTr("搜索物品名称 / ID…")
-                // 回写时加不等值判断：不加就是「设 text → textChanged → setSearchText → 属性变 → 重绑」的循环
-                text: page.mi ? page.mi.searchText : ""
-                onTextChanged: if (page.mi && text !== page.mi.searchText)
-                    page.mi.setSearchText(text)
+                Layout.alignment: Qt.AlignVCenter
+                spacing: Theme.spacingXs
 
-                background: Rectangle {
-                    color: Theme.bgSurfaceLight
-                    radius: Theme.radiusSmall
-                    border.width: 1
-                    border.color: searchField.activeFocus ? Theme.primary : Theme.border
+                /* 搜索框：**做成一眼能看见的** —— 浅底 + 圆角 + 1px 边框（聚焦转主题色），
+                 * 左侧挂放大镜。宽度固定：Flow 里不能用 `Layout.*`。 */
+                FTextField {
+                    id: searchField
+                    objectName: "searchField"
+                    width: 176
+                    leftPadding: 26
+                    placeholderText: qsTr("搜索物品名称 / ID…")
+                    // 回写时加不等值判断：不加就是「设 text → textChanged → setSearchText → 属性变 → 重绑」的循环
+                    text: page.mi ? page.mi.searchText : ""
+                    onTextChanged: if (page.mi && text !== page.mi.searchText)
+                        page.mi.setSearchText(text)
+
+                    background: Rectangle {
+                        color: Theme.bgSurfaceLight
+                        radius: Theme.radiusSmall
+                        border.width: 1
+                        border.color: searchField.activeFocus ? Theme.primary : Theme.border
+                    }
+
+                    /* 放大镜走图标 provider（`image://phosphor/<name>`，与外壳同一套）。
+                     * **不能用 `🔍` 字符**：真平台上它会渲染成一个彩色圆点（emoji 回退），
+                     * 出图核对时一眼就看出来了。`c` 必须 encodeURIComponent（见 ShellIconButton）。 */
+                    Image {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 14
+                        height: 14
+                        sourceSize.width: 14
+                        sourceSize.height: 14
+                        fillMode: Image.PreserveAspectFit
+                        source: "image://phosphor/magnifying-glass?c="
+                                + encodeURIComponent(Theme.hex(Theme.textSecondary)) + "&s=14"
+                    }
                 }
 
-                /* 放大镜走图标 provider（`image://phosphor/<name>`，与外壳同一套）。
-                 * **不能用 `🔍` 字符**：真平台上它会渲染成一个彩色圆点（emoji 回退），
-                 * 出图核对时一眼就看出来了。`c` 必须 encodeURIComponent（见 ShellIconButton）。 */
-                Image {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 8
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 14
-                    height: 14
-                    sourceSize.width: 14
-                    sourceSize.height: 14
-                    fillMode: Image.PreserveAspectFit
-                    source: "image://phosphor/magnifying-glass?c="
-                            + encodeURIComponent(Theme.hex(Theme.textSecondary)) + "&s=14"
-                }            }
+                // ── 筛选：类别 / 库存 / 状态 / 日销量 / 利润率下限 ──
+                RowLayout {
+                    spacing: 4
 
-            // ── 筛选（原「筛选行」，按用户要求与上面并成一行）──
-            Text {
-                text: qsTr("类别:")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntSmall
+                    Text {
+                        text: qsTr("类别:")
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: page.fntSmall
+                    }
+
+                    FComboBox {
+                        objectName: "categoryBox"
+                        implicitWidth: 106
+                        model: page.mi ? page.mi.categories : []
+                        currentIndex: page.mi ? page.mi.categoryIndex : 0
+                        onActivated: if (page.mi)
+                            page.mi.setCategoryIndex(currentIndex)
+                    }
+                }
+
+                RowLayout {
+                    spacing: 4
+
+                    Text {
+                        text: qsTr("库存/状态:")
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: page.fntSmall
+                    }
+
+                    FComboBox {
+                        objectName: "stockBox"
+                        implicitWidth: 138
+                        model: page.mi ? page.mi.stockFilters : []
+                        currentIndex: page.mi ? page.mi.stockFilterIndex : 0
+                        onActivated: if (page.mi)
+                            page.mi.setStockFilterIndex(currentIndex)
+                    }
+                }
+
+                RowLayout {
+                    spacing: 4
+
+                    Text {
+                        text: qsTr("日销量:")
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: page.fntSmall
+                    }
+
+                    FComboBox {
+                        objectName: "salesBox"
+                        implicitWidth: 80
+                        model: page.mi ? page.mi.salesFilters : []
+                        currentIndex: page.mi ? page.mi.salesFilterIndex : 0
+                        onActivated: if (page.mi)
+                            page.mi.setSalesFilterIndex(currentIndex)
+                    }
+                }
+
+                RowLayout {
+                    spacing: 4
+
+                    Text {
+                        text: qsTr("利润率 ≥")
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: page.fntSmall
+                    }
+
+                    /* 阈值输入框：**空 = 不筛**（不能拿 0 当默认 —— 那会把亏损行默认滤掉）。
+                     * 不限制只能输数字：非法输入桥侧一律当作「不筛」，比弹校验提示省事。 */
+                    FTextField {
+                        id: marginField
+                        objectName: "marginField"
+                        implicitWidth: 48
+                        placeholderText: qsTr("不限")
+                        text: page.mi ? page.mi.minMarginText : ""
+                        onTextChanged: if (page.mi && text !== page.mi.minMarginText)
+                            page.mi.setMinMarginText(text)
+                    }
+
+                    Text {
+                        text: qsTr("%")
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: page.fntSmall
+                    }
+                }
+
+                // ── 内联设置：中心 / 人物 / 设施税（原「设置」二级对话框的三个字段）──
+                RowLayout {
+                    spacing: 4
+
+                    Text {
+                        text: qsTr("中心:")
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: page.fntSmall
+                    }
+
+                    FComboBox {
+                        objectName: "hubBox"
+                        implicitWidth: 80
+                        model: page.mi ? page.mi.hubs : []
+                        currentIndex: page.mi ? page.mi.hubIndex : 0
+                        onActivated: if (page.mi)
+                            page.mi.setHubIndex(currentIndex)
+                    }
+                }
+
+                RowLayout {
+                    spacing: 4
+
+                    Text {
+                        text: qsTr("人物:")
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: page.fntSmall
+                    }
+
+                    FComboBox {
+                        objectName: "charBox"
+                        implicitWidth: 92
+                        model: page.mi ? page.mi.characters : []
+                        currentIndex: page.mi ? page.mi.charIndex : 0
+                        onActivated: if (page.mi)
+                            page.mi.setCharIndex(currentIndex)
+                    }
+                }
+
+                RowLayout {
+                    spacing: 4
+
+                    Text {
+                        text: qsTr("设施税:")
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: page.fntSmall
+                    }
+
+                    FDoubleSpinBox {
+                        objectName: "taxBox"
+                        implicitWidth: 66
+                        from: 0
+                        to: 100
+                        decimals: 2
+                        value: page.mi ? page.mi.tax : 0
+                        onValueModified: if (page.mi)
+                            page.mi.setTax(value)
+                    }
+                }
             }
 
-            FComboBox {
-                objectName: "categoryBox"
-                implicitWidth: 130
-                model: page.mi ? page.mi.categories : []
-                currentIndex: page.mi ? page.mi.categoryIndex : 0
-                onActivated: if (page.mi)
-                    page.mi.setCategoryIndex(currentIndex)
-            }
-
-            Text {
-                text: qsTr("库存:")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntSmall
-            }
-
-            FComboBox {
-                objectName: "stockBox"
-                implicitWidth: 120
-                model: page.mi ? page.mi.stockFilters : []
-                currentIndex: page.mi ? page.mi.stockFilterIndex : 0
-                onActivated: if (page.mi)
-                    page.mi.setStockFilterIndex(currentIndex)
-            }
-
-            Text {
-                text: qsTr("日销量:")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntSmall
-            }
-
-            FComboBox {
-                objectName: "salesBox"
-                implicitWidth: 92
-                model: page.mi ? page.mi.salesFilters : []
-                currentIndex: page.mi ? page.mi.salesFilterIndex : 0
-                onActivated: if (page.mi)
-                    page.mi.setSalesFilterIndex(currentIndex)
-            }
-
-            Text {
-                text: qsTr("利润率 ≥")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntSmall
-            }
-
-            /* 阈值输入框：**空 = 不筛**（不能拿 0 当默认 —— 那会把亏损行默认滤掉）。
-             * 不限制只能输数字：非法输入桥侧一律当作「不筛」，比弹校验提示省事。 */
-            FTextField {
-                id: marginField
-                objectName: "marginField"
-                implicitWidth: 52
-                placeholderText: qsTr("不限")
-                text: page.mi ? page.mi.minMarginText : ""
-                onTextChanged: if (page.mi && text !== page.mi.minMarginText)
-                    page.mi.setMinMarginText(text)
-            }
-
-            Text {
-                text: qsTr("%")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntSmall
-            }
-
-            // ── 内联设置：中心 / 人物 / 设施税（原「设置」二级对话框的三个字段）──
-            Text {
-                text: qsTr("中心:")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntSmall
-            }
-
-            FComboBox {
-                objectName: "hubBox"
-                implicitWidth: 92
-                model: page.mi ? page.mi.hubs : []
-                currentIndex: page.mi ? page.mi.hubIndex : 0
-                onActivated: if (page.mi)
-                    page.mi.setHubIndex(currentIndex)
-            }
-
-            Text {
-                text: qsTr("人物:")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntSmall
-            }
-
-            FComboBox {
-                objectName: "charBox"
-                implicitWidth: 110
-                model: page.mi ? page.mi.characters : []
-                currentIndex: page.mi ? page.mi.charIndex : 0
-                onActivated: if (page.mi)
-                    page.mi.setCharIndex(currentIndex)
-            }
-
-            Text {
-                text: qsTr("设施税:")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntSmall
-            }
-
-            FDoubleSpinBox {
-                objectName: "taxBox"
-                implicitWidth: 76
-                from: 0
-                to: 100
-                decimals: 2
-                value: page.mi ? page.mi.tax : 0
-                onValueModified: if (page.mi)
-                    page.mi.setTax(value)
-            }
-
-            Item {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 8
-            }
-
+            /* 「置顶」放在 Flow **外面**：折行只影响中间那坨，它永远贴在最右、任何宽度都可见
+             * （用户明确要求：显示不全可以两行，但置顶一定要露出来）。 */
             FCheckBox {
                 objectName: "pinBox"
+                Layout.alignment: Qt.AlignVCenter
                 text: qsTr("置顶")
                 checked: page.mi ? page.mi.pinned : false
                 onToggled: if (page.mi)

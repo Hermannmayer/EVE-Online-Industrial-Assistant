@@ -17,6 +17,7 @@ from services.plan_category import (
     CATEGORY_MANUFACTURING,
     category_for_activity,
 )
+from services.plan_job_kinds import is_science
 from services.terminology import term
 
 
@@ -1186,6 +1187,112 @@ def get_stock_and_order_flags(
         stocked = _stocked_type_ids(conn, ids)
         listed = _listed_type_ids(conn, ids)
     return {tid: (tid in stocked, tid in listed) for tid in ids if tid in stocked or tid in listed}
+
+
+#: 「状态」筛选项的标记键（可制造物品窗口用；它把这几个并进「库存」同一个下拉）
+STATE_NO_BLUEPRINT = "no_blueprint"
+STATE_BPO = "bpo"
+STATE_BPC_INVENTABLE = "bpc_inventable"
+STATE_STOCKED = "stocked"
+STATE_IN_PLAN = "in_plan"
+
+
+def get_production_state_flags(type_ids: Iterable[int], db: DatabaseManager | None = None) -> dict[int, frozenset[str]]:
+    """批量取「这个产物现在处于什么状态」：`{product_type_id: {标记…}}`。
+
+    供可制造物品窗口的「库存 / 状态」下拉使用（用户要求并进一个下拉，不新开筛选），
+    一次算清这几件事（键见 `STATE_*`）：
+
+    - `no_blueprint`：**我们没有任何**该产物的制造/反应蓝图（该产物在 SDE 里可制造，指的是自持情况）；
+    - `bpo`：持有该产物的**原图**（`user_blueprints.is_bpo = 1`）且该蓝图有拷贝活动 → 待拷贝；
+    - `bpc_inventable`：持有该产物的**拷贝**（`is_bpo = 0`、可用流程 `quantity × runs > 0`），
+      且该蓝图在 SDE 里**可作发明输入**（`blueprint_products.activity='invention'`）→ 待发明；
+    - `stocked`：仓库里有该产物（与仓库页状态列同一口径，复用 `_stocked_type_ids`）；
+    - `in_plan`：该产物在一条**在跑**的生产计划里（`_RUNNING_PLAN_STATUSES`，待排不算）。
+
+    ⚠️ 关联口径四处讲究：
+    1. 蓝图 → 产物走 `bp.blueprint_products`（`activity IN ('manufacturing','reaction')`），**不是**按
+       `user_blueprints.product_type_id`（那张表没有这一列，桥是另外补的）。反应产物只有 `reaction`
+       行 —— 只认 `manufacturing` 会把它们全判成「无蓝图」（与 `blueprint_repository` 的口径一致）。
+    2. 在跑计划按 `production_plans.product_type_id` 关联（该列由 `insert_plan` 写入）；
+       **不能**用 `blueprint_type_id`（从不写、全 NULL，见 `get_blueprint_status_map` 的告诫）。
+       科研作业（`is_science`：拷贝/发明/ME-TE 研究）的 `product_type_id` 是**蓝图**，必须排掉，
+       否则「正在拷贝某蓝图」会被算成「正在制造该物品」。
+    3. 「能不能拷」= `blueprint_activities` 有 `activity='copying'` 行。库里**没有**「剩余可拷贝次数」
+       字段（原图 `runs` 恒 0；`max_production_limit` 是单次拷贝的流程上限，不是消耗计数），
+       所以「待拷贝」只能到这一步。
+    4. 「能不能发明」= 该蓝图有 `activity='invention'` 的产物行（发明作业的输入是这张 T1/T2 蓝图，
+       产物是上一级蓝图）。两张判定集合都按**全表一次**取，避免逐行单点查的 N+1。
+    """
+    ids = sorted({int(t) for t in type_ids})
+    if not ids:
+        return {}
+
+    flags: dict[int, set[str]] = {tid: set() for tid in ids}
+    with (db or _default_db()).connect("user") as conn:
+        for tid in _stocked_type_ids(conn, ids):
+            if tid in flags:
+                flags[tid].add(STATE_STOCKED)
+        status_placeholders = ",".join("?" * len(_RUNNING_PLAN_STATUSES))
+        for activity, product_id in conn.execute(
+            f"SELECT DISTINCT activity, product_type_id FROM production_plans WHERE status IN ({status_placeholders})",
+            _RUNNING_PLAN_STATUSES,
+        ).fetchall():
+            # 科研作业（拷贝/发明/ME-TE 研究）的 `product_type_id` 是**蓝图**，不是物品：
+            # 不排掉的话「正在拷贝某蓝图」会被算成「正在制造该物品」。
+            if product_id in flags and not is_science(activity):
+                flags[int(product_id)].add(STATE_IN_PLAN)
+
+    # 蓝图侧要跨库（user_blueprints 在 user.db，blueprint_products 在 blueprint.db）。
+    # 「能不能拷 / 能不能发明」各自一条**全表**小查询先取成集合，再逐行判 —— 逐行单点查
+    # 就是 N+1（产物上千，`blueprint_products` 只有千余行，全表取一次更便宜）。
+    with (db or _default_db()).connect("user", "bp") as conn:
+        copyable_bps: set[int] = {
+            int(row[0])
+            for row in conn.execute(
+                "SELECT DISTINCT blueprint_type_id FROM blueprint_activities WHERE activity = 'copying'"
+            ).fetchall()
+        }
+        inventable_bps: set[int] = {
+            int(row[0])
+            for row in conn.execute(
+                "SELECT DISTINCT blueprint_type_id FROM blueprint_products WHERE activity = 'invention'"
+            ).fetchall()
+        }
+        owned_products: set[int] = set()
+        for batch in _in_batches(ids):
+            placeholders = ",".join("?" * len(batch))
+            rows = conn.execute(
+                f"SELECT ub.is_bpo, ub.runs, ub.quantity, bpr.product_type_id, ub.blueprint_type_id "
+                f"FROM user_blueprints ub "
+                f"JOIN blueprint_products bpr ON bpr.blueprint_type_id = ub.blueprint_type_id "
+                f"  AND bpr.activity IN ('manufacturing', 'reaction') "
+                f"WHERE bpr.product_type_id IN ({placeholders})",
+                batch,
+            ).fetchall()
+            for is_bpo, runs, quantity, product_id, blueprint_type_id in rows:
+                product_id = int(product_id)
+                if product_id not in flags:
+                    continue
+                owned_products.add(product_id)
+                bp_id = int(blueprint_type_id)
+                if is_bpo:
+                    # 原图（`is_bpo=1` 时 `runs` 恒 0，见 docs/dev/data.md 的不变量）。
+                    # ⚠️ 库**没有**「剩余可拷贝次数」：可实现的判据只有「是原图 ∧ 该蓝图存在拷贝活动」
+                    # （`max_production_limit` 是单次拷贝的流程上限，不是消耗计数）。
+                    if bp_id in copyable_bps:
+                        flags[product_id].add(STATE_BPO)
+                    continue
+                # 拷贝：可用流程 = `quantity × runs`（`plan_execution._bp_available_runs` 同口径）
+                if int(quantity or 0) <= 0 or int(runs or 0) <= 0:
+                    continue  # 用尽的拷贝：既不能造也不能发明
+                if bp_id in inventable_bps:
+                    flags[product_id].add(STATE_BPC_INVENTABLE)
+        for tid in ids:
+            if tid not in owned_products:
+                flags[tid].add(STATE_NO_BLUEPRINT)
+
+    return {tid: frozenset(hit) for tid, hit in flags.items() if hit}
 
 
 def get_blueprint_status_map(rows: Iterable[dict[str, Any]]) -> dict[int, str]:
