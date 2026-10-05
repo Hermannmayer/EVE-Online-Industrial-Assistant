@@ -29,13 +29,17 @@ ESI_BASE_URL = "https://esi.evetech.net/latest"
 TRADE_REGIONS = list(TRADE_HUB_IDS.items())
 
 #: 市场历史（ESI `/markets/{region_id}/history/`）的增量 TTL。
-#: ESI 历史按天更新，12 小时足够新。**没有这个 TTL 就会每轮把 4908 个可制造/反应产物
-#: 全拉一遍**（20 req/s 限流下约 4 分钟纯等待）；TTL 命中时本轮 **0 请求**。
+#: ESI 历史按天更新，12 小时足够新。**没有这个 TTL 就会每轮把 ~5554 个候选 type
+#: 全拉一遍**（20 req/s 限流下约 4.6 分钟纯等待）；TTL 命中时本轮 **0 请求**。
 HISTORY_TTL_SECONDS = 12 * 3600
+
+#: 市场历史候选里**不属于蓝图产物/材料**的额外 type：PLEX（44992）。
+#: 大盘指数要盯它，但它既不是任何蓝图的产物、也不当材料，进不了另外两个集合。
+PLEX_TYPE_ID = 44992
 
 #: `price_history` 里每个 `(type_id, region_id)` 最多保留的天数。
 #: 「可制造物品」窗口的日订单量/日成交量只聚合最近 7 条记录，不裁剪会让 market.db
-#: 多出约 200 万行（4908 产物 × 约 400 天 × 每区域一行）。
+#: 多出约 220 万行（5554 个 type × 约 400 天 × 每区域一行）。
 HISTORY_KEEP_DAYS = 180
 
 #: 市场历史的分批大小（照 `services/importers/getitems.py` 的 ESI 补拉骨架）
@@ -359,7 +363,7 @@ def _history_is_fresh(fetched_at: str | None, cutoff: datetime) -> bool:
 async def _pending_history_tasks(region_ids: list[int], type_ids: set[int], cutoff: datetime) -> list[tuple[int, int]]:
     """算出本轮要拉的 `(region_id, type_id)`：没有记录、或记录早于 TTL 的才算。
 
-    每个区域一条 `GROUP BY` 读最新 `fetched_at`（不是 4908 条单查）。
+    每个区域一条 `GROUP BY` 读最新 `fetched_at`（不是 5554 条单查）。
     表不存在时先按 `PRICE_HISTORY_DDL` 建表（与 `services/price_history.py` 同一份 DDL）
     —— 没建表就等于全部待拉。
     """
@@ -417,25 +421,46 @@ async def _save_histories(entries: dict[tuple[int, int], list[tuple]], date_cuto
     return written
 
 
+def _material_type_ids() -> set[int]:
+    """被制造/反应蓝图当材料用的 type（实测 1646 个 distinct）。
+
+    这些 type 自己没有 `blueprint_products` 行 —— 单看产物集合会漏掉它们，
+    而「大盘指数 / 材料走势」要的正是它们的历史。一条 `DISTINCT` 查询即可
+    （结果只有千余行，不需要用 `IN (...)` 分批）。
+    """
+    with get_container().db.connect("bp") as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT material_type_id FROM blueprint_materials WHERE activity IN ('manufacturing', 'reaction')"
+        ).fetchall()
+    return {int(r[0]) for r in rows if r[0] is not None}
+
+
 async def fetch_and_save_histories(
     regions: list[tuple[str, int]],
     progress_cb: Callable[[int, str], None] | None = None,
 ) -> int:
-    """按 TTL 增量拉取可制造/反应产物的市场历史，写入 market.db.price_history。
+    """按 TTL 增量拉取「产物 ∪ 材料 ∪ PLEX」的市场历史，写入 market.db.price_history。
 
     「日订单量 / 日成交量」两列的数据从这条通道来 —— 与实时订单同属**唯一**的
     「更新价格」入口（`main`），页面不自己拉 ESI：
 
-    - 候选 type_id：blueprint.db 的 manufacturing | reaction 全部产物（实测 4797 + 111 = 4908）
+    - 候选 type_id（三路求并，去重）：
+      1. blueprint.db 的 manufacturing | reaction 全部产物（实测 4797 + 111）
+      2. 被 `blueprint_materials`（activity IN manufacturing/reaction）当材料的 type
+         （实测 1646 —— 材料走势与大盘指数靠它们，单看产物会全漏）
+      3. PLEX（`PLEX_TYPE_ID`，不是产物也不是材料，但指数要盯）
+      —— 实测并集 **5554** 个 type。
     - 区域：**本次更新勾了哪些中心就拉哪些**（用户口径：「同步哪些市场的数据，就自动把
       成交量一块拉过来」）。读端各自显式传 `region_id`：可制造物品窗口按 Jita
       （`HISTORY_REGION_ID`）、贸易页按它当前选的起点/终点。
     - 增量过滤：`(type_id, region_id)` 的最新 `fetched_at` 在 `HISTORY_TTL_SECONDS` 内就跳过，
       TTL 全命中时本轮 0 请求
     - 失败隔离：单条 404/超时/异常只 `log.warning` 跳过，不写缓存，既不中断本批也不影响整次价格更新
+    - 每 `(type_id, region_id)` 只保留 `HISTORY_KEEP_DAYS` 内的行（写前裁剪）
 
-    ⚠️ 请求量 = 产物数 × 勾选的中心数（4908 × N）：一个中心约 4 分钟（全局限流 20 req/s），
-    5 个中心齐勾就是一小时量级 —— 靠 12h TTL 增量摊平，但用户该知道这个代价。
+    ⚠️ 请求量 = type 数 × 勾选的中心数（5554 × N）：**Jita 单中心 5554 条 ≈ 4.6 分钟**
+    （全局限流 20 req/s）；5 个中心齐勾 **≈ 23 分钟**，且升级后的第一轮 TTL 全未命中、
+    必然跑满这个量。12h TTL 只摊平后续轮次，首次代价用户该知道。
 
     Returns:
         实际写入的历史行数。
@@ -448,15 +473,17 @@ async def fetch_and_save_histories(
     repo = get_container().blueprint_repo
     type_ids = set(repo.get_all_product_ids("manufacturing"))
     type_ids |= set(repo.get_all_product_ids("reaction"))
+    type_ids |= _material_type_ids()
     if not type_ids:
-        log.warning("蓝图库里没有可制造/反应产物，跳过市场历史拉取")
+        log.warning("蓝图库里没有可制造/反应产物及其材料，跳过市场历史拉取")
         return 0
+    type_ids.add(PLEX_TYPE_ID)
 
     now = datetime.now(UTC)
     pending = await _pending_history_tasks(region_ids, type_ids, now - timedelta(seconds=HISTORY_TTL_SECONDS))
     if not pending:
         log.info(
-            "市场历史均在 TTL（%s 小时）内，本轮 0 请求（%s 个产物 × %s 个区域）",
+            "市场历史均在 TTL（%s 小时）内，本轮 0 请求（%s 个 type × %s 个区域）",
             HISTORY_TTL_SECONDS // 3600,
             len(type_ids),
             len(region_ids),
@@ -467,7 +494,7 @@ async def fetch_and_save_histories(
 
     total = len(pending)
     log.info(
-        "市场历史待拉取 %s 条（%s 个产物 × %s 个区域，TTL 内跳过 %s 条）",
+        "市场历史待拉取 %s 条（%s 个 type × %s 个区域，TTL 内跳过 %s 条）",
         total,
         len(type_ids),
         len(region_ids),

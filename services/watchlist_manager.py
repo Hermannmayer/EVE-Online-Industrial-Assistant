@@ -2,6 +2,7 @@
 关注列表数据层 — 价格监控 CRUD / 阈值设置 / 价格变化检测
 """
 
+from core.constants import TRADE_HUB_IDS
 from services.database_manager import DatabaseManager
 
 
@@ -28,10 +29,15 @@ CREATE TABLE IF NOT EXISTS watchlist_items (
     price_threshold_sell REAL,
     last_buy_price REAL,
     last_sell_price REAL,
+    added_price REAL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
+
+#: 「加入时价格」的取价市场：恒定 Jita 卖价（关注表要的是「加入时的市价」锚点，
+#: 与关注的 region_id 无关）。取不到 → NULL，**不拿 0 冒充**。
+_ADDED_PRICE_REGION_ID = TRADE_HUB_IDS["Jita"]
 
 
 def init_db():
@@ -43,6 +49,17 @@ def init_db():
 # ── CRUD ──
 
 
+def _added_sell_price(conn, type_id: int) -> float | None:
+    """加入关注那一刻的 Jita 卖价；没有记录或价格为空 → None（不拿 0 冒充）。"""
+    row = conn.execute(
+        "SELECT sell_price FROM mkt.market_prices WHERE type_id = ? AND region_id = ? ORDER BY fetch_time DESC LIMIT 1",
+        (type_id, _ADDED_PRICE_REGION_ID),
+    ).fetchone()
+    if not row or not row["sell_price"]:
+        return None
+    return float(row["sell_price"])
+
+
 def add_to_watchlist(
     type_id: int,
     region_id: int = 10000002,
@@ -50,8 +67,12 @@ def add_to_watchlist(
     buy_threshold: float | None = None,
     sell_threshold: float | None = None,
 ) -> int:
-    """添加物品到关注列表，返回新记录 id"""
-    with _db().connect("user") as conn:
+    """添加物品到关注列表，返回新记录 id。
+
+    同时记下加入时的 Jita 卖价（`added_price`）——「加入时 → 现在」涨跌的锚点。
+    价格库里没有这个物品时留 NULL（不是 0：0 会被读端当成「那时卖 0 ISK」）。
+    """
+    with _db().connect("user", "mkt") as conn:
         c = conn.cursor()
         # 检查是否已存在
         c.execute(
@@ -61,11 +82,12 @@ def add_to_watchlist(
         existing = c.fetchone()
         if existing:
             return int(existing[0])
+        added_price = _added_sell_price(conn, type_id)
         c.execute(
             """INSERT INTO watchlist_items
-               (type_id, region_id, note, price_threshold_buy, price_threshold_sell)
-               VALUES (?, ?, ?, ?, ?)""",
-            (type_id, region_id, note, buy_threshold, sell_threshold),
+               (type_id, region_id, note, price_threshold_buy, price_threshold_sell, added_price)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (type_id, region_id, note, buy_threshold, sell_threshold, added_price),
         )
         conn.commit()
         return c.lastrowid or 0
@@ -91,7 +113,7 @@ def get_watchlist() -> list[dict]:
                    wi.last_buy_price, wi.last_sell_price,
                    wi.created_at, wi.updated_at,
                    i.zh_name, i.en_name,
-                   mp.buy_price, mp.sell_price
+                   mp.buy_price, mp.sell_price, wi.added_price
             FROM watchlist_items wi
             LEFT JOIN ref.item i ON wi.type_id = i.type_id
             LEFT JOIN mkt.market_prices mp ON mp.type_id = wi.type_id
@@ -121,6 +143,7 @@ def get_watchlist() -> list[dict]:
                     "en_name": r[11] or "",
                     "buy_price": buy_price,
                     "sell_price": sell_price,
+                    "added_price": r[14],
                 }
             )
         return items

@@ -40,6 +40,8 @@ CREATE TABLE market_prices (
 INSERT INTO market_prices VALUES (1001, 10000002, 4.0, 5.0, 10000000, 8000000, '2026-06-30 12:00:00');
 INSERT INTO market_prices VALUES (2001, 10000002, 50000000, 55000000, 1000000, 800000, '2026-06-30 12:00:00');
 INSERT INTO market_prices VALUES (2002, 10000002, 100000, 120000, 500000, 400000, '2026-06-30 12:00:00');
+-- 有记录但卖价为 0：`added_price` 必须留 NULL，不能把 0 当「加入时卖 0 ISK」
+INSERT INTO market_prices VALUES (2003, 10000002, 0.0, 0.0, 10, 10, '2026-06-30 12:00:00');
 """
 
 
@@ -156,6 +158,28 @@ class TestWatchlistCRUD:
         init_db()
         items = get_watchlist()
         assert items == []
+
+
+class TestWatchlistAddedPrice:
+    """`added_price`：加入关注时记下 Jita 卖价。
+
+    取不到价格（没记录 / 卖价为 0）一律留 NULL —— 0 会被读端当成「那时卖 0 ISK」，
+    涨跌算成无穷大。
+    """
+
+    @pytest.mark.parametrize(
+        ("type_id", "expected"),
+        [(1001, 5.0), (3001, None), (2003, None)],
+        ids=["有Jita卖价", "无价格记录", "卖价为0"],
+    )
+    def test_add_records_jita_sell_price(self, temp_watchlist_db, type_id, expected):
+        from services.watchlist_manager import add_to_watchlist, get_watchlist, init_db
+
+        init_db()
+        add_to_watchlist(type_id)
+
+        item = next(i for i in get_watchlist() if i["type_id"] == type_id)
+        assert item["added_price"] == expected
 
 
 class TestWatchlistUpdate:
@@ -368,3 +392,62 @@ class TestWatchlistUpdateNotePreservesOtherFields:
         item = next(i for i in items if i["type_id"] == 1001)
         assert item["note"] == "v3"
         assert item["buy_threshold"] == 3.5  # 始终不变
+
+
+# ── schema 迁移回归：旧 user.db → added_price ──
+
+
+def _create_user_v21_watchlist(db_path):
+    """构造 v21 的 `watchlist_items`（还没有 `added_price` 列），并放一行老关注。"""
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript("""
+        CREATE TABLE watchlist_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type_id INTEGER NOT NULL,
+            region_id INTEGER NOT NULL DEFAULT 10000002,
+            note TEXT,
+            price_threshold_buy REAL,
+            price_threshold_sell REAL,
+            last_buy_price REAL,
+            last_sell_price REAL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO watchlist_items (type_id, region_id, note) VALUES (1001, 10000002, '老关注');
+    """)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(watchlist_items)")}
+    assert "added_price" not in cols, "夹具应模拟还没有该列的老库"
+    conn.execute("PRAGMA user_version = 21")
+    conn.commit()
+    conn.close()
+
+
+def test_user_v21_to_v22_adds_added_price_keeping_rows_null(tmp_path, monkeypatch):
+    """user v21→v22：`watchlist_items` 加 `added_price`，**已有行留 NULL**。
+
+    老行加入时的价格过去没记过、编不出来；给 0 会让读端以为「那时卖 0 ISK」。
+    迁移跑一半会毁用户数据，所以盯：列真加上、老行原样在、版本号推到最新、可重入。
+    """
+    from services import schema_migrations as sm
+
+    db_path = tmp_path / "user.db"
+    monkeypatch.setitem(sm._DB_PATH_MAP, "user", str(db_path))
+    _create_user_v21_watchlist(db_path)
+
+    result = sm.ensure_schema("user")
+
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
+    assert any("added_price" in s for s in result["applied"]), "应执行 v21→v22 加列迁移"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(watchlist_items)")}
+        rows = conn.execute("SELECT type_id, note, added_price FROM watchlist_items").fetchall()
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
+    assert "added_price" in cols
+    assert rows == [(1001, "老关注", None)], "老行必须原样保留，added_price 为 NULL（不是 0）"
+    assert version == sm.DB_SCHEMA_VERSIONS["user"]
+
+    # 幂等：已到最新版的库不再有任何动作
+    assert sm.ensure_schema("user")["applied"] == []
