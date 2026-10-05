@@ -451,19 +451,56 @@ def test_items_land_in_the_table_then_score(qapp):
 
 
 def test_column_set_is_the_windows_own(qapp):
-    """本窗口的列：删了均价·体积·日利润·收益，加了日订单量·日成交量。"""
+    """本窗口的列：删了均价·体积·日利润·收益·收入，加了日订单量·日成交量·利润/件。"""
     dlg = _dialog()
     try:
         dlg.bridge._on_items(_ROWS)  # type: ignore[attr-defined]
         titles = _titles(dlg)
         assert titles == _full_titles("Jita")
-        for gone in ("均价", "体积", "日利润", "收益"):
+        for gone in ("均价", "体积", "日利润", "收益", "收入"):
             assert gone not in titles
+        assert "利润/件" in titles, "这一列是卖价−成本，不再是把卖价抄一份"
         # 历史只按 Jita 聚合 → 两列标题必须写明区域（中心可以切到 Amarr）
         assert "日订单量(Jita)" in titles
         assert "日成交量(Jita)" in titles
     finally:
         dlg.deleteLater()
+
+
+@pytest.mark.parametrize(
+    ("cost", "revenue", "expected"),
+    [(100.0, 150.0, 50.0), (100.0, 40.0, -60.0), (None, 150.0, None)],
+)
+def test_profit_per_unit_is_revenue_minus_cost(qapp, cost, revenue, expected):
+    """「利润/件」= 卖价 − 成本；任一侧取不到就给 None（列里显示 `—`，不是 0）。"""
+    dlg = _dialog()
+    try:
+        row: dict = {"id": 2001, "z": "渡鸦级"}
+        if cost is not None:
+            row["mc"] = cost
+        if revenue is not None:
+            row["mr"] = revenue
+        dlg.bridge._on_scored([row])  # type: ignore[attr-defined]
+        assert dlg.bridge._view[0]["mr"] == expected  # type: ignore[attr-defined]
+        assert dlg.bridge._view[0]["mr"] != 150.0 or revenue != 150.0, "别再把卖价原样抄过来"
+    finally:
+        dlg.deleteLater()
+
+
+def test_filters_are_remembered(qapp):
+    """筛选项落盘：下次打开窗口还是上次的选择（用户要求不要每次重设）。"""
+    first = mi.ManufacturableItemsBridge()
+    first.setCategoryIndex(2)
+    first.setStockFilterIndex(1)
+    first.setSalesFilterIndex(2)
+    first.setMinMarginText("15")
+
+    second = mi.ManufacturableItemsBridge()
+    assert second.categoryIndex == 2
+    assert second.stockFilterIndex == 1
+    assert second.salesFilterIndex == 2
+    assert second.minMarginText == "15"
+    assert second._min_margin == 15.0  # type: ignore[attr-defined]  # 阈值也要还原（不只是输入框文本）
 
 
 def test_hub_change_relabels_the_price_columns(qapp):

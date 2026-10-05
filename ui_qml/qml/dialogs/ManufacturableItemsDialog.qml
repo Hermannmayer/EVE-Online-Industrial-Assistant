@@ -39,8 +39,8 @@ Item {
     readonly property int headerH: Math.max(26, fntSmall + 15)
     readonly property int treeRowH: Math.max(20, Math.round(13 * Theme.fontScale) + 8)
     readonly property int treeIndent: Math.round(12 * Theme.fontScale)
-    //: 内联设置控件的高度（与 FDoubleSpinBox / FComboBox / FTextField 一致）
-    readonly property int ctlW: 130
+    //: 底部状态脚注的高（见文件末尾那个 `statusText`）
+    readonly property int statusH: Math.max(18, fntSmall + 7)
 
     /* 列宽：`TableView` 的 provider 与点击区必须同口径。
      * **不再把剩余宽度补给末列**（那是「列固定宽 + 铺满视口」的老口径）：宽度由桥按
@@ -71,10 +71,11 @@ Item {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 2
+        anchors.bottomMargin: page.statusH  // 给底部的状态脚注让位
         spacing: 1
 
         // ═══════════════════════════════════════════════════════
-        //  1. 工具栏：功能按钮 + 内联评分设置 + 最右「置顶」
+        //  1. 工具栏：**一行**装下功能按钮 + 搜索 + 全部筛选 + 内联设置 + 最右「置顶」
         // ═══════════════════════════════════════════════════════
 
         RowLayout {
@@ -89,91 +90,46 @@ Item {
                     page.mi.refreshScores()
             }
 
-            // ── 内联设置：中心 / 人物 / 设施税（原「设置」二级对话框的三个字段）──
-            Text {
-                text: qsTr("中心:")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntSmall
-            }
-
-            FComboBox {
-                objectName: "hubBox"
-                implicitWidth: page.ctlW
-                model: page.mi ? page.mi.hubs : []
-                currentIndex: page.mi ? page.mi.hubIndex : 0
-                onActivated: if (page.mi)
-                    page.mi.setHubIndex(currentIndex)
-            }
-
-            Text {
-                text: qsTr("人物:")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntSmall
-            }
-
-            FComboBox {
-                objectName: "charBox"
-                implicitWidth: page.ctlW
-                model: page.mi ? page.mi.characters : []
-                currentIndex: page.mi ? page.mi.charIndex : 0
-                onActivated: if (page.mi)
-                    page.mi.setCharIndex(currentIndex)
-            }
-
-            Text {
-                text: qsTr("设施税:")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntSmall
-            }
-
-            FDoubleSpinBox {
-                objectName: "taxBox"
-                implicitWidth: 90
-                from: 0
-                to: 100
-                decimals: 2
-                value: page.mi ? page.mi.tax : 0
-                onValueModified: if (page.mi)
-                    page.mi.setTax(value)
-            }
-
-            Item {
-                Layout.fillWidth: true
-            }
-
-            FCheckBox {
-                objectName: "pinBox"
-                text: qsTr("置顶")
-                checked: page.mi ? page.mi.pinned : false
-                onToggled: if (page.mi)
-                    page.mi.setPinned(checked)
-            }
-        }
-
-        // ═══════════════════════════════════════════════════════
-        //  2. 筛选行（状态行也在这一行的右端）
-        // ═══════════════════════════════════════════════════════
-
-        RowLayout {
-            objectName: "mfgFilterRow"
-            Layout.fillWidth: true
-            spacing: Theme.spacingXs
-
+            /* 搜索框：**做成一眼能看见的**（用户要求「更明显一点」）——
+             * 铺一层浅底 + 圆角 + 1px 边框（聚焦转主题色），前面挂放大镜。
+             * 这是这一行里唯一 `Layout.fillWidth` 的控件：窗口拉宽时先喂它。 */
             FTextField {
                 id: searchField
                 objectName: "searchField"
                 Layout.fillWidth: true
-                Layout.minimumWidth: 140
-                placeholderText: qsTr("搜索物品名称/ID...")
+                Layout.minimumWidth: 190
+                Layout.preferredWidth: 240
+                leftPadding: 26
+                placeholderText: qsTr("搜索物品名称 / ID…")
                 // 回写时加不等值判断：不加就是「设 text → textChanged → setSearchText → 属性变 → 重绑」的循环
                 text: page.mi ? page.mi.searchText : ""
                 onTextChanged: if (page.mi && text !== page.mi.searchText)
                     page.mi.setSearchText(text)
-            }
 
+                background: Rectangle {
+                    color: Theme.bgSurfaceLight
+                    radius: Theme.radiusSmall
+                    border.width: 1
+                    border.color: searchField.activeFocus ? Theme.primary : Theme.border
+                }
+
+                /* 放大镜走图标 provider（`image://phosphor/<name>`，与外壳同一套）。
+                 * **不能用 `🔍` 字符**：真平台上它会渲染成一个彩色圆点（emoji 回退），
+                 * 出图核对时一眼就看出来了。`c` 必须 encodeURIComponent（见 ShellIconButton）。 */
+                Image {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 14
+                    height: 14
+                    sourceSize.width: 14
+                    sourceSize.height: 14
+                    fillMode: Image.PreserveAspectFit
+                    source: "image://phosphor/magnifying-glass?c="
+                            + encodeURIComponent(Theme.hex(Theme.textSecondary)) + "&s=14"
+                }            }
+
+            // ── 筛选（原「筛选行」，按用户要求与上面并成一行）──
             Text {
                 text: qsTr("类别:")
                 color: Theme.textSecondary
@@ -183,7 +139,7 @@ Item {
 
             FComboBox {
                 objectName: "categoryBox"
-                implicitWidth: 170
+                implicitWidth: 130
                 model: page.mi ? page.mi.categories : []
                 currentIndex: page.mi ? page.mi.categoryIndex : 0
                 onActivated: if (page.mi)
@@ -199,7 +155,7 @@ Item {
 
             FComboBox {
                 objectName: "stockBox"
-                implicitWidth: 150
+                implicitWidth: 120
                 model: page.mi ? page.mi.stockFilters : []
                 currentIndex: page.mi ? page.mi.stockFilterIndex : 0
                 onActivated: if (page.mi)
@@ -215,7 +171,7 @@ Item {
 
             FComboBox {
                 objectName: "salesBox"
-                implicitWidth: 100
+                implicitWidth: 92
                 model: page.mi ? page.mi.salesFilters : []
                 currentIndex: page.mi ? page.mi.salesFilterIndex : 0
                 onActivated: if (page.mi)
@@ -234,7 +190,7 @@ Item {
             FTextField {
                 id: marginField
                 objectName: "marginField"
-                implicitWidth: 64
+                implicitWidth: 52
                 placeholderText: qsTr("不限")
                 text: page.mi ? page.mi.minMarginText : ""
                 onTextChanged: if (page.mi && text !== page.mi.minMarginText)
@@ -248,16 +204,68 @@ Item {
                 font.pixelSize: page.fntSmall
             }
 
+            // ── 内联设置：中心 / 人物 / 设施税（原「设置」二级对话框的三个字段）──
             Text {
-                objectName: "statusText"
-                Layout.fillWidth: true
-                Layout.minimumWidth: 120
-                horizontalAlignment: Text.AlignRight
-                text: page.mi ? page.mi.statusText : ""
+                text: qsTr("中心:")
                 color: Theme.textSecondary
                 font.family: Theme.fontFamily
                 font.pixelSize: page.fntSmall
-                elide: Text.ElideRight
+            }
+
+            FComboBox {
+                objectName: "hubBox"
+                implicitWidth: 92
+                model: page.mi ? page.mi.hubs : []
+                currentIndex: page.mi ? page.mi.hubIndex : 0
+                onActivated: if (page.mi)
+                    page.mi.setHubIndex(currentIndex)
+            }
+
+            Text {
+                text: qsTr("人物:")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: page.fntSmall
+            }
+
+            FComboBox {
+                objectName: "charBox"
+                implicitWidth: 110
+                model: page.mi ? page.mi.characters : []
+                currentIndex: page.mi ? page.mi.charIndex : 0
+                onActivated: if (page.mi)
+                    page.mi.setCharIndex(currentIndex)
+            }
+
+            Text {
+                text: qsTr("设施税:")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: page.fntSmall
+            }
+
+            FDoubleSpinBox {
+                objectName: "taxBox"
+                implicitWidth: 76
+                from: 0
+                to: 100
+                decimals: 2
+                value: page.mi ? page.mi.tax : 0
+                onValueModified: if (page.mi)
+                    page.mi.setTax(value)
+            }
+
+            Item {
+                Layout.fillWidth: true
+                Layout.minimumWidth: 8
+            }
+
+            FCheckBox {
+                objectName: "pinBox"
+                text: qsTr("置顶")
+                checked: page.mi ? page.mi.pinned : false
+                onToggled: if (page.mi)
+                    page.mi.setPinned(checked)
             }
         }
 
@@ -596,6 +604,28 @@ Item {
         function onStateChanged() {
             tableView.forceLayout()
         }
+    }
+
+    /* 状态行：单开一条**细脚注**，不占工具栏宽度。
+     *
+     * 为什么挪出来：工具栏按需求并成了一行（刷新 + 搜索 + 4 个筛选 + 3 个设置 + 置顶），
+     * 再塞一个 240px 的状态文本就会把「置顶」挤出可视区（出图核对时实测被裁掉）。
+     * 状态文本不是筛选项，放脚注更合适。 */
+    Text {
+        objectName: "statusText"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: Theme.spacingSm
+        anchors.rightMargin: Theme.spacingSm
+        height: page.statusH
+        verticalAlignment: Text.AlignVCenter
+        horizontalAlignment: Text.AlignRight
+        text: page.mi ? page.mi.statusText : ""
+        color: Theme.textSecondary
+        font.family: Theme.fontFamily
+        font.pixelSize: page.fntSmall
+        elide: Text.ElideLeft
     }
 
     // ═══════════════════════════════════════════════════════════

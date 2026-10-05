@@ -99,7 +99,7 @@ _MFG_BCOLS = [
 #: 不写清楚会把「Amarr 的买价」和「Jita 的销量」看成同一个市场。
 _MFG_MCOLS = [
     ("成本", 100, "mc"),
-    ("收入", 100, "mr"),
+    ("利润/件", 100, "mr"),
     ("产能/天", 62, "mh"),
     ("日订单量(Jita)", 96, "oc"),
     ("日成交量(Jita)", 96, "ocv"),
@@ -244,6 +244,13 @@ class ManufacturableItemsBridge(DialogBridge):
         self._filt: list[dict] = []
         self._view: list[dict] = []
         self._mfg: dict[str, Any] = {"hub": "Jita", "char": "main", "tax": 0}
+        #: 筛选器：类别 + 库存/挂单 + 日销量 + 利润率下限（空 = 不筛）。
+        #: **要在 `_load_settings()` 之前给默认值** —— 落盘里存着上次的选择（用户要求
+        #: 「筛选项能保存，不要每次都去设置」）。
+        self._stock_index = 0
+        self._sales_index = 0
+        self._min_margin_text = ""
+        self._min_margin: float | None = None
         self._load_settings()
 
         self._characters: list[str] = _character_names()
@@ -266,11 +273,6 @@ class ManufacturableItemsBridge(DialogBridge):
         self._sort_column = -1
         self._sort_ascending = True
 
-        #: 筛选器：库存/挂单、日销量、利润率下限（空 = 不筛）
-        self._stock_index = 0
-        self._sales_index = 0
-        self._min_margin_text = ""
-        self._min_margin: float | None = None
         #: 当前这批行**整批**都没有市场历史（状态行据此提示去更新价格）
         self._history_missing = False
 
@@ -361,6 +363,7 @@ class ManufacturableItemsBridge(DialogBridge):
         """换类别：重刷树的置灰标记 + 用同一批物品重筛（**不重新取数**）。"""
         if 0 <= index < len(self._categories) and index != self._cat_index:
             self._cat_index = index
+            self._save_settings()
             self._refresh_tree()
             self._apply()
 
@@ -368,12 +371,14 @@ class ManufacturableItemsBridge(DialogBridge):
     def setStockFilterIndex(self, index: int) -> None:
         if 0 <= index < len(_STOCK_FILTERS) and index != self._stock_index:
             self._stock_index = index
+            self._save_settings()
             self._apply()
 
     @Slot(int)
     def setSalesFilterIndex(self, index: int) -> None:
         if 0 <= index < len(_SALES_FILTERS) and index != self._sales_index:
             self._sales_index = index
+            self._save_settings()
             self._apply_view()
 
     @Slot(str)
@@ -381,6 +386,7 @@ class ManufacturableItemsBridge(DialogBridge):
         """「利润率 ≥ x%」：空 / 非法输入 = 不筛（**不能拿 0 当默认**，否则默认滤掉亏损行）。"""
         self._min_margin_text = str(text)
         self._min_margin = self._parse_margin(self._min_margin_text)
+        self._save_settings()
         self._apply_view()
 
     @staticmethod
@@ -677,6 +683,13 @@ class ManufacturableItemsBridge(DialogBridge):
     def _on_scored(self, rows: list[dict]) -> None:
         self._filt = rows
         self._progress_visible = False
+        # 「利润/件」= 卖价 − 成本（用户要求：这一列不该是把卖价再抄一份）。
+        # 评分线程每次都重写 `mr`（= `revenue_per_unit`），所以这里改是幂等的；
+        # 原始字段 `revenue_per_unit` 不动，核算明细/右键仍按原口径取。
+        for row in rows:
+            cost = row.get("mc")
+            revenue = row.get("mr")
+            row["mr"] = (revenue - cost) if isinstance(revenue, int | float) and isinstance(cost, int | float) else None
         self._apply_view()
 
     # ── 视图筛选（利润率 / 日销量）───────────────────────────
@@ -938,6 +951,11 @@ class ManufacturableItemsBridge(DialogBridge):
         return os.path.join(data_dir(), "mfg_browser_settings.json")
 
     def _load_settings(self) -> None:
+        """读上次的设置：评分参数（中心/人物/设施税）+ **筛选器**。
+
+        筛选器也落盘（用户要求「不希望每次都去设置」）：类别 / 库存 / 日销量 /
+        利润率下限。窗口下次打开时按落盘值还原；越界或已下线的选项退回默认（0 / 空）。
+        """
         path = self._settings_path()
         if not os.path.exists(path):
             return
@@ -945,16 +963,48 @@ class ManufacturableItemsBridge(DialogBridge):
             with open(path, encoding="utf-8") as f:
                 saved = json.load(f)
             self._mfg.update(saved.get("mfg", {}))
+            filters = saved.get("filters", {})
+            if isinstance(filters, dict):
+                cat = self._clamp_index(filters.get("category"), len(self._categories))
+                if cat is not None:
+                    self._cat_index = cat
+                stock = self._clamp_index(filters.get("stock"), len(_STOCK_FILTERS))
+                if stock is not None:
+                    self._stock_index = stock
+                sales = self._clamp_index(filters.get("sales"), len(_SALES_FILTERS))
+                if sales is not None:
+                    self._sales_index = sales
+                margin = filters.get("min_margin")
+                if isinstance(margin, str):
+                    self._min_margin_text = margin
+                    self._min_margin = self._parse_margin(margin)
         except Exception:
             # 原版这里是一段裸 `except: pass`；本仓禁止，改为记日志后按默认值继续
             log.exception("读取可制造物品设置失败 path=%s", path)
 
+    @staticmethod
+    def _clamp_index(value: Any, size: int) -> int | None:
+        """落盘的下标 → 合法下标；不是整数或越界 → `None`（保持默认）。"""
+        if not isinstance(value, int) or isinstance(value, bool):
+            return None
+        return value if 0 <= value < size else None
+
     def _save_settings(self) -> None:
+        """落盘：评分参数 + 当前筛选器（用户要求筛选项能保存）。"""
         path = self._settings_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        payload = {
+            "mfg": self._mfg,
+            "filters": {
+                "category": self._cat_index,
+                "stock": self._stock_index,
+                "sales": self._sales_index,
+                "min_margin": self._min_margin_text,
+            },
+        }
         try:
             with open(path, "w", encoding="utf-8") as f:
-                json.dump({"mfg": self._mfg}, f, ensure_ascii=False, indent=2)
+                json.dump(payload, f, ensure_ascii=False, indent=2)
         except Exception:
             log.exception("保存可制造物品设置失败 path=%s", path)
 
@@ -983,7 +1033,9 @@ class ManufacturableItemsQmlDialog(QmlDialog):
 
     def __init__(self, parent: Any = None) -> None:
         bridge = ManufacturableItemsBridge()
-        super().__init__(_QML_FILE, bridge, parent=parent, size=(1000, 620), modeless=True)
+        # 工具栏是**一行**（用户要求把筛选与设置并到一行），所以默认开宽一点；
+        # 列宽本身仍按内容实测（末列不铺满），窗口再窄也不会把列拉宽。
+        super().__init__(_QML_FILE, bridge, parent=parent, size=(1420, 640), modeless=True)
         self._mfg_bridge = bridge
-        self.setMinimumSize(800, 400)
+        self.setMinimumSize(1000, 420)
         bridge.start()
