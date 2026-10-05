@@ -42,6 +42,8 @@ Item {
     property string baseNote: ""
     //: 被点掉的线（存 `label`；组件内部状态，不落盘）
     property var hiddenLabels: []
+    //: 鼠标悬停命中的**x 序号**（-1 = 没悬停）：竖线、圆点、数值气泡都看它
+    property int hoverIndex: -1
     //: 没有任何点时显示的文案
     property string emptyText: qsTr("暂无数据")
 
@@ -51,7 +53,10 @@ Item {
     readonly property int padR: Math.round(14 * Theme.fontScale)
     readonly property int padT: Math.round(8 * Theme.fontScale)
     readonly property int padB: Math.round(22 * Theme.fontScale)
-    readonly property int legendH: showLegend ? Math.max(18, fntSmall + 8) : 0
+    readonly property int legendLineH: Math.max(18, fntSmall + 8)
+    readonly property int legendGap: Math.round(6 * Theme.fontScale)
+    //: 图例按**最多两行**预留高度（Flow 自动换行）：五条线一行放不下，会给「文字超出框」
+    readonly property int legendH: showLegend ? legendLineH * 2 : 0
     readonly property int plotW: Math.max(0, width - padL - padR)
     readonly property int plotH: Math.max(0, height - padT - padB - legendH)
 
@@ -234,7 +239,7 @@ Item {
         visible: chart.hasData
         clip: true
 
-        // 横网格 + 左轴刻度
+        // 横向网格线（**只画线**：纵轴刻度文字必须画在 plotBox 之外，见下方）
         Repeater {
             model: chart.hasData ? chart._axis.ticks : []
 
@@ -251,20 +256,6 @@ Item {
                     height: 1
                     color: Theme.border
                     opacity: 0.5
-                }
-
-                Text {
-                    x: -chart.padL
-                    width: chart.padL - Theme.spacingXs
-                    height: Math.round(14 * Theme.fontScale)
-                    y: -height / 2
-                    verticalAlignment: Text.AlignVCenter
-                    horizontalAlignment: Text.AlignRight
-                    text: modelData.label + chart.unit
-                    color: Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: chart.fntSmall
-                    elide: Text.ElideRight
                 }
             }
         }
@@ -292,23 +283,171 @@ Item {
             }
         }
 
-        // 横轴标签：采样 ≤6 个（首标签左对齐、末标签右对齐，避免压出绘图区）
+        /* ── 悬停读数：竖线 + 该 x 上每条可见线的数值 ───────────────
+         * 用户口径：「希望看到具体的数值，鼠标放在这条线上可以有一个小悬浮提示」。
+         * 这里不做「命中某条线」的判定（线很细、很难点中），而是**按最近的 x** 给出
+         * 该日期上全部可见线的值 —— 多线对比时这才是想看的。
+         * `HoverHandler` 不占布局，也不会挡住图例/分段按钮的点击。 */
+        HoverHandler {
+            id: plotHover
+            enabled: chart.hasData
+            onPointChanged: {
+                const n = chart._pointCount
+                if (n <= 1 || plotBox.width <= 0) {
+                    chart.hoverIndex = -1
+                    return
+                }
+                const ratio = Math.max(0, Math.min(1, point.position.x / plotBox.width))
+                chart.hoverIndex = Math.round(ratio * (n - 1))
+            }
+            onHoveredChanged: if (!hovered)
+                chart.hoverIndex = -1
+        }
+
+        // 竖线（十字线的竖边）
+        Rectangle {
+            objectName: "flineCrosshair"
+            visible: chart.hoverIndex >= 0 && chart._pointCount > 1
+            width: 1
+            height: plotBox.height
+            color: Theme.textSecondary
+            opacity: 0.7
+            x: chart._pointCount > 1 ? (chart.hoverIndex / (chart._pointCount - 1)) * plotBox.width : 0
+        }
+
+        // 该 x 上的点（每条可见线一个圆点，方便看出「值落在哪」）
         Repeater {
-            model: chart.hasData ? chart.xTickIndexes(chart._pointCount) : []
+            model: chart.hoverIndex >= 0 ? chart.visibleSeries : []
+
+            Rectangle {
+                required property var modelData
+
+                readonly property var _vals: chart.valuesOf(modelData)
+
+                visible: chart.hoverIndex >= 0 && chart.hoverIndex < _vals.length
+                width: Math.round(7 * Theme.fontScale)
+                height: width
+                radius: width / 2
+                color: modelData.color
+                x: (chart._pointCount > 1 ? (chart.hoverIndex / (chart._pointCount - 1)) * plotBox.width : 0) - width / 2
+                y: (1 - (_vals[chart.hoverIndex] - chart._axis.lo) / Math.max(1e-9, chart._axis.hi - chart._axis.lo))
+                   * plotBox.height - height / 2
+            }
+        }
+    }
+
+    /* 悬停气泡：日期 + 每条可见线的数值（原始值，归一化时同时给归一化值）。
+     * 放在绘图区之外的**根 Item** 上，位置跟着竖线走，但会被左右边界夹住不越界。 */
+    Rectangle {
+        id: hoverTip
+
+        objectName: "flineHoverTip"
+        visible: chart.hoverIndex >= 0 && chart.hasData
+        z: 10
+        width: Math.min(hoverCol.implicitWidth + 2 * Math.round(8 * Theme.fontScale), chart.width - 8)
+        height: hoverCol.implicitHeight + 2 * Math.round(6 * Theme.fontScale)
+        radius: Theme.radiusSmall
+        color: Theme.bgSurfaceLight
+        border.width: 1
+        border.color: Theme.border
+        // 贴着竖线右侧；靠近右边界时翻到左侧；上下的 4px 只是别贴边
+        x: Math.max(4, Math.min(chart.padL + (chart._pointCount > 1
+                                              ? (chart.hoverIndex / (chart._pointCount - 1)) * chart.plotW
+                                              : 0) + 10,
+                                chart.width - width - 4))
+        y: Math.max(4, chart.padT + 6)
+
+        Column {
+            id: hoverCol
+            anchors.centerIn: parent
+            spacing: 2
 
             Text {
-                required property var modelData
-                required property int index
-                readonly property bool _first: index === 0
-                readonly property bool _last: index === (chart.xTickIndexes(chart._pointCount).length - 1)
-                x: (chart._pointCount > 1 ? (modelData / (chart._pointCount - 1)) * plotBox.width : 0)
-                   - (_first ? 0 : (_last ? width : width / 2))
-                y: plotBox.height + Theme.spacingXs
-                text: (chart.xLabels && chart.xLabels.length > modelData) ? chart.xLabels[modelData] : ""
-                color: Theme.textSecondary
+                text: (chart.xLabels && chart.hoverIndex >= 0 && chart.xLabels.length > chart.hoverIndex)
+                      ? chart.xLabels[chart.hoverIndex] : ""
+                color: Theme.textBright
                 font.family: Theme.fontFamily
                 font.pixelSize: chart.fntSmall
+                font.bold: true
             }
+
+            Repeater {
+                model: hoverTip.visible ? chart.visibleSeries : []
+
+                Row {
+                    required property var modelData
+
+                    readonly property var _vals: chart.valuesOf(modelData)
+                    readonly property real _shown: (chart.hoverIndex >= 0 && chart.hoverIndex < _vals.length)
+                                                   ? _vals[chart.hoverIndex] : 0
+                    readonly property real _raw: (modelData.points && chart.hoverIndex >= 0
+                                                  && chart.hoverIndex < modelData.points.length)
+                                                 ? modelData.points[chart.hoverIndex].y : 0
+
+                    spacing: 4
+
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.round(7 * Theme.fontScale)
+                        height: width
+                        radius: width / 2
+                        color: modelData.color
+                    }
+
+                    Text {
+                        /* 归一化模式下「指数/归一值」和原始价**都要给**：前者看相对走势，
+                         * 后者才是能下单的数字。 */
+                        text: modelData.label + "  " + chart.formatValue(parent._shown)
+                              + (chart.normalize ? "（原值 " + chart.formatValue(parent._raw) + "）" : "")
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: chart.fntSmall
+                    }
+                }
+            }
+        }
+    }
+
+    /* 纵轴刻度文字：画在**根 Item** 上（绘图区左侧留白里）。
+     * ⚠️ 不能写在 `plotBox` 里 —— 它 `clip: true`，`x: -padL` 的文字会被整条裁掉，
+     * 表现就是「只有横轴没有纵轴」。 */
+    Repeater {
+        model: chart.hasData ? chart._axis.ticks : []
+
+        Text {
+            required property var modelData
+            x: 0
+            width: chart.padL - Theme.spacingXs
+            height: Math.round(14 * Theme.fontScale)
+            y: chart.padT + (1 - modelData.pos) * chart.plotH - height / 2
+            verticalAlignment: Text.AlignVCenter
+            horizontalAlignment: Text.AlignRight
+            text: modelData.label + chart.unit
+            color: Theme.textSecondary
+            font.family: Theme.fontFamily
+            font.pixelSize: chart.fntSmall
+            elide: Text.ElideRight
+        }
+    }
+
+    /* 横轴日期标签：**必须画在 `plotBox` 之外** —— `plotBox` 有 `clip: true`，
+     * 标签原本写在 `y: plotBox.height + …`（即绘图区下方），会被整条裁掉，
+     * 于是用户「看不到横轴的日期」。这里挪到根 Item 上，x 仍与竖线对齐。 */
+    Repeater {
+        model: (chart.hasData && chart.hoverIndex < 0) ? chart.xTickIndexes(chart._pointCount) : []
+
+        Text {
+            required property var modelData
+            required property int index
+            readonly property bool _first: index === 0
+            readonly property bool _last: index === (chart.xTickIndexes(chart._pointCount).length - 1)
+            x: chart.padL + (chart._pointCount > 1 ? (modelData / (chart._pointCount - 1)) * chart.plotW : 0)
+               - (_first ? 0 : (_last ? width : width / 2))
+            y: chart.padT + chart.plotH + Theme.spacingXs
+            text: (chart.xLabels && chart.xLabels.length > modelData) ? chart.xLabels[modelData] : ""
+            color: Theme.textSecondary
+            font.family: Theme.fontFamily
+            font.pixelSize: chart.fntSmall
         }
     }
 
@@ -328,8 +467,10 @@ Item {
         elide: Text.ElideRight
     }
 
-    // 图例：色点 + 名称 + 末值（归一化时标「=100」）；**可点击切换该线显示/隐藏**
-    Row {
+    // 图例：色点 + 名称 + 末值（归一化时标「=100」）；**可点击切换该线显示/隐藏**。
+    // 用 `Flow` 而**不是** `Row`：五条线各带「现值 · 30 日涨跌」，一行放不下会直接画到面板外面
+    // （用户报「文字超出框」）；Flow 自动换行 + clip 兜底，最多两行，超出的截断。
+    Flow {
         id: legend
         anchors.left: parent.left
         anchors.leftMargin: chart.padL
@@ -337,7 +478,8 @@ Item {
         anchors.rightMargin: chart.padR
         anchors.bottom: parent.bottom
         height: chart.legendH
-        spacing: Theme.spacingSm
+        spacing: chart.legendGap
+        clip: true
         visible: chart.hasData && chart.showLegend
 
         Repeater {
@@ -369,9 +511,11 @@ Item {
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    /* `note`（可选）：桥给的「现值 · 涨跌」补充 —— 五条线只看名字看不出
-                     * 各自在什么水平、最近有没有动。 */
-                    text: legendItem.modelData.label + (chart.normalize ? qsTr("（基期=100）") : "")
+                    /* 图例只写名字 + 可选 `note`（现值 · 涨跌）。
+                     * **不写「（基期=100）」**：基期在图上方的 `baseNote` 里已经统一说明一次
+                     * （用户口径：「基期=100，就没必要每个都显示这个吧」），每条都挂既啰嗦、
+                     * 又把一行占满容易溢出。 */
+                    text: legendItem.modelData.label
                           + (legendItem.modelData.note ? "  " + legendItem.modelData.note : "")
                     color: legendItem.off ? Theme.textSecondary : Theme.textPrimary
                     font.family: Theme.fontFamily
@@ -379,17 +523,27 @@ Item {
                     font.strikeout: legendItem.off
                 }
 
-                MouseArea {
+                /* 点击切换显隐用 `TapHandler`/`HoverHandler`，**不要用 MouseArea + anchors.fill**：
+                 * 图例是位置器（Flow），位置器里设 anchors 的子项会参与布局竞争 —— 实测
+                 * 加了个 `anchors.fill: parent` 的 MouseArea 之后**整条图例都不见了**。
+                 * 输入处理器不占布局空间，正好合适。 */
+                TapHandler {
                     objectName: "flineLegendToggle"
-                    anchors.fill: parent
                     enabled: chart.legendClickable
-                    hoverEnabled: true
                     cursorShape: chart.legendClickable ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: chart.toggleLabel(legendItem.modelData.label, legendItem.index)
-
-                    ToolTip.visible: containsMouse && chart.legendClickable
-                    ToolTip.text: legendItem.off ? qsTr("点击显示这条线") : qsTr("点击隐藏这条线")
+                    onTapped: chart.toggleLabel(legendItem.modelData.label, legendItem.index)
                 }
+
+                HoverHandler {
+                    id: legendHover
+                    enabled: chart.legendClickable
+                }
+
+                /* ToolTip 必须挂在**Item**（这个 Row）上 —— 挂在 HoverHandler 上会告警
+                 * 「QML HoverHandler: ToolTip attached …」（处理器不是 Item）。 */
+                ToolTip.visible: legendHover.hovered && chart.legendClickable
+                ToolTip.text: legendItem.off ? qsTr("点击显示这条线") : qsTr("点击隐藏这条线")
+                ToolTip.delay: 400
             }
         }
     }

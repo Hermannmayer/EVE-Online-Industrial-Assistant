@@ -9,6 +9,11 @@
 2. 详情侧：`detail`（价格对比表）+ `priceSeries` / `volumeSeries` / `chartLabels`（主物品折线）
    + `materialRows` / `materialSeries`（勾选「显示制造材料」后的 BOM 展开与归一化折线）。
 
+**折线的时间粒度**（`rangeLabels` / `rangeIndex` / `setRangeIndex`）：近 7/30/90/180 天，
+默认 180。切粒度**只切已装配好的点**（`chart_points` 的交易日切尾 + 材料序列切尾），
+不重读 DB、不发 ESI —— 用户口径：「如果我想看近 7 日或者近 30 天的，这个时间粒度没有筛选」。
+粒度状态由本桥自己持有（与 `market_pulse_bridge` 同构但互不相干，**不 import 它的常量**）。
+
 **阈值设置改在 QML 里做**：原版为它内联了一个 `QDialog`（`_set_threshold`），
 迁到 QML 后由页面里的小弹层 + `setThreshold(row, kind, value)` 承担 ——
 比让 QML 去调一个 Widgets 对话框干净，也少一个阶段 4 的对话框。
@@ -39,8 +44,11 @@ from ui_qml.models.watchlist_qml_model import DASH, WatchlistQmlModel
 from ui_qml.theme import registry as theme
 
 __all__ = [
+    "DEFAULT_RANGE_INDEX",
     "HISTORY_OFFSETS",
     "MAX_MATERIAL_SERIES",
+    "RANGE_LABELS",
+    "RANGE_OPTIONS",
     "SORT_MODES",
     "WatchlistBridge",
     "bom_nodes",
@@ -71,6 +79,14 @@ HISTORY_TOLERANCE_DAYS = 15
 
 #: 折线窗口（天）
 CHART_DAYS = 180
+
+#: 折线图的时间粒度（`rangeIndex` 的下标）。与大盘页（`market_pulse_bridge`）同构，
+#: 但**本桥自己持有**这份状态，不 import 它的常量 —— 两个页面的粒度互不影响。
+#: 切粒度只切已装配好的点，不重读 DB、不发 ESI。
+RANGE_OPTIONS: tuple[int, ...] = (7, 30, 90, CHART_DAYS)
+RANGE_LABELS: tuple[str, ...] = ("近 7 天", "近 30 天", "近 90 天", "近 180 天")
+#: 默认 180 天（与 `CHART_DAYS` 的加载窗口一致）
+DEFAULT_RANGE_INDEX = 3
 
 #: BOM 逐级展开的默认层级（0 = 本物品，1 = 直接材料，2 = 二级材料）
 MATERIAL_DEPTH = 2
@@ -256,6 +272,24 @@ def comparison_rows(
     return rows
 
 
+def _points_view(
+    rows: Iterable[tuple[str, float, int]],
+) -> tuple[list[str], list[dict[str, float]], list[dict[str, float]]]:
+    """`(横轴日期, 成交均价点, 成交量点)` —— 同一批记录，两条线共用一个横轴。
+
+    `x` 是序号：`FLineChart` 按序号均匀铺开（不看 x 的值）。
+    """
+    labels: list[str] = []
+    price: list[dict[str, float]] = []
+    volume: list[dict[str, float]] = []
+    for day, average, vol in rows:
+        index = len(labels)
+        labels.append(str(day)[:10])
+        price.append({"x": index, "y": float(average)})
+        volume.append({"x": index, "y": float(vol or 0)})
+    return labels, price, volume
+
+
 def chart_points(
     points: list[tuple[str, float, int]],
     days: int = CHART_DAYS,
@@ -263,23 +297,19 @@ def chart_points(
 ) -> tuple[list[str], list[dict[str, float]], list[dict[str, float]]]:
     """`(横轴日期, 成交均价点, 成交量点)` —— 同一批记录，两条线共用一个横轴。
 
-    只取窗口内 `days` 天。`x` 是序号：`FLineChart` 按序号均匀铺开（不看 x 的值）。
+    两段窗口，**顺序不能反**：
+
+    1. 先按 `CHART_DAYS` 天（**日历天**）裁掉更早的记录 —— 折线的加载窗口；
+    2. 再取最后 `days` 个**交易日**（= 有记录的日子）—— 时间粒度「近 7/30/90/180 天」的口径。
+
+    第 2 步按点数、不按日历天：冷门物品几个月才有一条记录，按日历天切会把「近 7 天」
+    切成 0~1 个点，图上看不出走势（材料快照更是只有「更新价格」那天才有）。
     """
     end = today or date.today()
-    start = (end - timedelta(days=max(1, int(days)) - 1)).isoformat()
+    start = (end - timedelta(days=CHART_DAYS - 1)).isoformat()
     stop = end.isoformat()
-    labels: list[str] = []
-    price: list[dict[str, float]] = []
-    volume: list[dict[str, float]] = []
-    for day, average, vol in points:
-        text = str(day)[:10]
-        if text < start or text > stop:
-            continue
-        index = len(labels)
-        labels.append(text)
-        price.append({"x": index, "y": float(average)})
-        volume.append({"x": index, "y": float(vol or 0)})
-    return labels, price, volume
+    window = [row for row in points if start <= str(row[0])[:10] <= stop]
+    return _points_view(window[-max(1, int(days)) :])
 
 
 def bom_nodes(tree: Any, max_depth: int = MATERIAL_DEPTH) -> list[dict[str, Any]]:
@@ -492,6 +522,7 @@ class WatchlistBridge(QObject):
     detailChanged = Signal()  # 右侧详情（选中行 + 对比表 + 主物品折线）
     materialsChanged = Signal()  # 右侧「显示制造材料」的表与归一化折线
     sortChanged = Signal()
+    rangeChanged = Signal()  # 折线图时间粒度（近 7/30/90/180 天）
 
     def __init__(self, shell: object | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -518,9 +549,17 @@ class WatchlistBridge(QObject):
         self._chart_labels: list[str] = []
         self._price_series: list[dict] = []
         self._volume_series: list[dict] = []
+        #: 折线图时间粒度（下标进 `RANGE_OPTIONS`）+ **已装配好的**历史点
+        #: （切粒度只在这上面切尾，不重读 `price_history`）
+        self._range_index = DEFAULT_RANGE_INDEX
+        self._history_points: list[tuple[str, float, int]] = []
+        self._base_note = ""
         self._show_materials = False
         self._material_rows: list[dict] = []
         self._material_series: list[dict] = []
+        #: 材料序列的原始（绝对值）形态 —— 切粒度只切它，不重跑 BOM 展开/取价
+        self._material_series_raw: list[dict] = []
+        self._material_base_note = ""
         self._material_hint = ""
 
         self._suggest_worker: QObject | None = None
@@ -819,37 +858,70 @@ class WatchlistBridge(QObject):
     chartLabels = Property(list, lambda self: self._chart_labels, notify=detailChanged)
     priceSeries = Property(list, lambda self: self._price_series, notify=detailChanged)
     volumeSeries = Property(list, lambda self: self._volume_series, notify=detailChanged)
+    #: 折线图时间粒度：`rangeLabels` 给 QML 画分段按钮，`rangeIndex` 是当前选项
+    rangeLabels = Property(list, lambda self: list(RANGE_LABELS), constant=True)
+    rangeIndex = Property(int, lambda self: self._range_index, notify=rangeChanged)
+    #: 图上写出来的口径 + 粒度说明（主物品这两条线是**绝对值**，材料叠加图才归一化）
+    baseNote = Property(str, lambda self: self._base_note, notify=detailChanged)
+
+    @Slot(int)
+    def setRangeIndex(self, index: int) -> None:
+        """切折线图的时间粒度（近 7/30/90/180 天）—— **只切已装配好的点**。
+
+        用户口径：「如果我想看近 7 日或者近 30 天的，这个时间粒度没有筛选」。
+        这里不重读 `price_history`、不重跑 BOM 展开、不发 ESI：历史点在 `_load_detail`
+        里、材料序列在 `_load_materials` 里已经装配好，切粒度只是按点数切尾 + 重发信号。
+        """
+        index = int(index)
+        if not 0 <= index < len(RANGE_OPTIONS) or index == self._range_index:
+            return
+        self._range_index = index
+        self.rangeChanged.emit()
+        self._rebuild_charts()
+        self.detailChanged.emit()
+        self._rebuild_material_series()
+        self.materialsChanged.emit()
 
     def _clear_detail(self) -> None:
         self._detail = {"valid": False, "rows": []}
         self._chart_labels = []
         self._price_series = []
         self._volume_series = []
+        self._history_points = []
+        self._base_note = ""
 
     def _load_detail(self) -> None:
-        """按选中行装配对比表与主物品折线（一次 SQL 读全量，再在内存里切窗口/档位）。"""
+        """按选中行**读一次** `price_history`，装配对比表与折线（切粒度不再读库）。"""
         item = self._row(self._selected_row)
         if item is None:
             self._clear_detail()
             return
         type_id = _tid(item)
         region_id = int(item.get("region_id") or 0)
-        points = read_history(type_id, region_id)
-        labels, price, volume = chart_points(points)
+        self._history_points = read_history(type_id, region_id)
+        self._rebuild_charts()
         self._detail = {
             "valid": True,
             "name": str(item.get("zh_name") or item.get("en_name") or type_id),
             "typeId": type_id,
             "note": str(item.get("note") or ""),
             "rows": comparison_rows(
-                _num(item.get("sell_price")), _num(item.get("added_price")), history_anchors(points)
+                _num(item.get("sell_price")), _num(item.get("added_price")), history_anchors(self._history_points)
             ),
-            "hasHistory": bool(labels),
+            "hasHistory": bool(self._chart_labels),
             "hint": "「加入时 / 当前」＝挂单价；「30/90/180 天前」＝成交均价（口径不同，涨跌仅作参照）",
         }
+
+    def _rebuild_charts(self) -> None:
+        """按当前**粒度**切已加载的点（不读库）→ 主物品两条折线 + 图上说明。"""
+        days = RANGE_OPTIONS[self._range_index]
+        labels, price, volume = chart_points(self._history_points, days)
         self._chart_labels = labels
         self._price_series = [{"label": "成交均价", "color": theme.token_color("ACCENT_CYAN"), "points": price}]
         self._volume_series = [{"label": "成交量", "color": theme.token_color("ACCENT_ORANGE"), "points": volume}]
+        # 这两条线**没有归一化**（`FLineChart.normalize` 默认 false，纵轴是绝对值）——
+        # 图上不许写「基期 = 100」：那是材料叠加图与大盘页的口径（如实写，别编）。
+        self._base_note = f"纵轴为绝对值（未归一化）· 当前显示最近 {days} 个交易日"
 
     # ── 右详情：制造材料（BOM 展开 + 归一化折线） ──────────────
 
@@ -857,6 +929,8 @@ class WatchlistBridge(QObject):
     materialRows = Property(list, lambda self: self._material_rows, notify=materialsChanged)
     materialSeries = Property(list, lambda self: self._material_series, notify=materialsChanged)
     materialHint = Property(str, lambda self: self._material_hint, notify=materialsChanged)
+    #: 材料叠加图是**归一化**的：`FLineChart` 按每条线自己的首个（显示中的）点归一到 100
+    materialBaseNote = Property(str, lambda self: self._material_base_note, notify=materialsChanged)
 
     @Slot(bool)
     def setShowMaterials(self, shown: bool) -> None:
@@ -872,6 +946,8 @@ class WatchlistBridge(QObject):
         if not self._show_materials or item is None:
             self._material_rows = []
             self._material_series = []
+            self._material_series_raw = []
+            self._material_base_note = ""
             self._material_hint = ""
             return
         try:
@@ -882,8 +958,22 @@ class WatchlistBridge(QObject):
             log.exception("BOM 材料展开失败")
             payload = {"rows": [], "series": [], "hint": "材料展开失败（详见日志）"}
         self._material_rows = list(payload.get("rows") or [])
-        self._material_series = list(payload.get("series") or [])
+        self._material_series_raw = list(payload.get("series") or [])
+        self._rebuild_material_series()
         self._material_hint = str(payload.get("hint") or "")
+
+    def _rebuild_material_series(self) -> None:
+        """按当前**粒度**切材料序列（只切已装配的点，不重读库、不重跑 BOM 展开）。"""
+        days = RANGE_OPTIONS[self._range_index]
+        series: list[dict] = []
+        for line in self._material_series_raw:
+            points = list(line.get("points") or [])[-days:]
+            # 切完重新编号：`x` 与数组下标保持一致（`FLineChart` 按序号铺开）
+            series.append({**line, "points": [{"x": i, "y": float(point["y"])} for i, point in enumerate(points)]})
+        self._material_series = series
+        # 基期如实写：归一化用的是**每条线自己的首个显示点**，不是「加入时」价 —— 切粒度会
+        # 换掉那个点，所以说明里只能写「首个显示点」，写「加入时」就是编。
+        self._material_base_note = f"各线按自身首个显示点 = 100 归一化 · 当前显示最近 {days} 个交易日"
 
     # ── 价格变化轮询 ──────────────────────────────────────────
 

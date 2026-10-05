@@ -21,10 +21,9 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import date, timedelta
 
-from core.logger import log
+from services import market_index_service
 from services.database_manager import get_db
 from services.name_resolver import resolve_item_names_batch
 
@@ -33,7 +32,8 @@ JITA_RID = 10000002
 
 #: 五条指数线（计划 §2.1），**顺序即 `index_keys` 的输出顺序**。
 #: 与 `services/market_index_service.INDEX_KEYS` 是同一组字面量：这里各留一份，
-#: 是为了让分析服务不硬依赖指数服务（那个模块在建库/物化表之前不可用）。
+#: 便于分析服务独立于指数模块的物化表/建表流程；但**成分口径不重复实现**：PPPI/SPPI
+#: 走 `market_index_service.production_input_classes`（见 `_index_membership`）。
 INDEX_KEYS = ("mpi", "pppi", "sppi", "cpi", "plex")
 
 #: MPI 的 8 种矿物（CCP 官方口径，type_id 固定）
@@ -59,38 +59,25 @@ def _window_price(turnover: float, volume: float, avg_sum: float, covered: int) 
     return None
 
 
-def _index_membership(conn, turnover_30d: dict[int, float]) -> dict[int, list[str]]:
+def _index_membership(conn_mgr, turnover_30d: dict[int, float]) -> dict[int, list[str]]:
     """`{type_id: 命中的指数 key}`（顺序按 `INDEX_KEYS`）。
 
-    分类口径（计划 §2.1，全部来自现有 blueprint 数据）：
+    分类口径与**指数篮子同一处实现**（`market_index_service.production_input_classes`）：
+    生产投入品 = 被 ≥ `MIN_VALID_RECIPES`（4）张**有效配方**当材料（有效配方 = 产出物在
+    `ref.item.market_group_id` 非空；见 `market_index_service.VALID_RECIPE_NOTE`）。
 
     - `mpi` / `plex`：固定 type 集合。
-    - `pppi` / `sppi`：被 manufacturing/reaction 当材料的 type 里，**其产物仍被当材料**的
-      是 PPPI（初级投入品），产物不再被当材料的是 SPPI（直接供消费品）。
-    - `cpi`：有成交、**不被任何蓝图当材料**，按近 30 天成交额取 top-N（代理口径）。
+    - `pppi` / `sppi`：生产投入品里，**其产物仍是生产投入品**的是 PPPI（初级投入品），
+      产物不再是生产投入品的是 SPPI（直接供消费品）。
+    - `cpi`：有成交、**不是生产投入品**，按近 30 天成交额取 top-N（代理口径）。
+
+    旧口径（「被任何一张制造/反应蓝图当材料」）会把只被少量蓝图用到的成品舰船标成 `sppi` ——
+    用户能看见的矛盾：那件东西已不在 SPPI 篮子里，异动榜却还说它是次级投入品。
 
     近 30 天成交额必须传**全部候选**（CPI 是排名，只看榜上那几条会算错）。
     """
-    materials: set[int] = set()
-    product_of: dict[int, set[int]] = {}
-    try:
-        rows = conn.execute(
-            """SELECT DISTINCT bm.material_type_id, bp.product_type_id
-               FROM bp.blueprint_materials bm
-               LEFT JOIN bp.blueprint_products bp
-                   ON bp.blueprint_type_id = bm.blueprint_type_id AND bp.activity = bm.activity
-               WHERE bm.activity IN ('manufacturing', 'reaction')"""
-        ).fetchall()
-    except sqlite3.Error:
-        # blueprint.db 还没导入（可以先更新价格再导蓝图）→ 全部按「不属于任何指数」处理
-        log.debug("blueprint 表不可用，异动榜的 index_keys 一律为空")
-        rows = []
-    for mat, prod in rows:
-        materials.add(int(mat))
-        if prod is not None:
-            product_of.setdefault(int(mat), set()).add(int(prod))
-    pppi = {m for m in materials if product_of.get(m, set()) & materials}
-    sppi = materials - pppi
+    pppi, sppi = market_index_service.production_input_classes(conn_mgr)
+    materials = pppi | sppi
     ranked = sorted(turnover_30d.items(), key=lambda kv: (-kv[1], kv[0]))
     cpi = {tid for tid, turn in ranked[:CPI_TOP_N] if turn > 0 and tid not in materials}
 
@@ -206,7 +193,7 @@ def get_movers(
                 }
             )
 
-        membership = _index_membership(conn, w30_turnover)
+        membership = _index_membership(conn_mgr, w30_turnover)
         # 同 |涨幅| 时按 typeId 升序 —— 保证同一次数据下榜单顺序稳定
         items.sort(key=lambda d: (-abs(d["chg"]), d["typeId"]))
         top_items = items[:top]

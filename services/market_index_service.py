@@ -54,6 +54,9 @@
 表的 `type_id` 列存的是指数的**保留负数 id**（:data:`INDEX_TYPE_IDS`，真实 EVE type_id 恒为正），
 `price` = 指数点位，`volume` = 当日成员成交额；`get_index_cards` / `get_index_series`
 优先读这张表，表里没有该指数时退化为实时计算（不写库）。
+
+大盘页要「卡片 + 序列」两样：用 :func:`get_dashboard` 一次算完（成分集 / 观测装载 / 逐日累乘
+只跑一遍），不要分别调那两个函数 —— 那会把同一套计算整跑两遍。
 """
 
 from __future__ import annotations
@@ -623,6 +626,24 @@ def _blueprint_classes(conn_mgr) -> tuple[set[int], set[int]]:
     return pppi, materials - pppi
 
 
+def production_input_classes(db=None) -> tuple[set[int], set[int]]:
+    """**生产投入品**的 PPPI / SPPI 划分 —— 指数篮子与异动榜共用的唯一口径。
+
+    判据见 :data:`VALID_RECIPE_NOTE` 与 :data:`MIN_VALID_RECIPES`（被 ≥4 张**有效配方**当材料）。
+    `db` 传 `services.database_manager` 的 manager（含临时库 fixture），不传则用 `get_db()`。
+
+    异动榜（`services.market_movers_service`）复用本函数、不再自己抄一份 SQL：
+    两份口径一旦分叉，用户就会看到「同一件东西在指数篮子里、却在异动榜里标成另一个指数」。
+    """
+    return _blueprint_classes(db or get_db())
+
+
+def production_inputs(db=None) -> set[int]:
+    """生产投入品 = PPPI ∪ SPPI（见 :func:`production_input_classes`）。"""
+    pppi, sppi = production_input_classes(db)
+    return pppi | sppi
+
+
 def _cpi_candidates(conn_mgr, region_id: int, materials: set[int], anchor: date | None) -> list[int]:
     """CPI 代理篮子：近 30 天成交额 top-:data:`CPI_TOP_N`，排除**生产投入品**（`materials`）。
 
@@ -678,16 +699,29 @@ def _member_sets(
     return out, materials
 
 
-def _build_for(conn_mgr, region_id: int, keys: Sequence[str]) -> dict[str, _IndexPoints]:
-    """实时计算若干指数的点位（不写库）。"""
+def _build_for(
+    conn_mgr,
+    region_id: int,
+    keys: Sequence[str],
+    anchor: date | None = None,
+    sets: Mapping[str, set[int]] | None = None,
+) -> dict[str, _IndexPoints]:
+    """实时计算若干指数的点位（不写库）。
+
+    `anchor`（最新数据日）与 `sets`（成分集）可传入调用方已算好的结果 —— 见
+    :func:`get_dashboard`：它把成分集算一遍后同时喂给卡片与序列两条路。`sets` 里
+    多出来的 key 不参与观测装载（只装 `keys` 要用的那部分）。
+    """
     empty = {key: _IndexPoints(points=[], weights={}) for key in keys}
-    anchor = _last_day(conn_mgr, region_id)
+    if anchor is None:
+        anchor = _last_day(conn_mgr, region_id)
     if anchor is None:
         return empty
-    sets, _materials = _member_sets(conn_mgr, region_id, keys, anchor)
+    if sets is None:
+        sets, _materials = _member_sets(conn_mgr, region_id, keys, anchor)
     union: set[int] = set()
-    for members in sets.values():
-        union |= members
+    for key in keys:
+        union |= sets[key]
     obs = _load_observations(conn_mgr, region_id, union, anchor - timedelta(days=LOAD_WINDOW_DAYS - 1), anchor)
     return {key: _build_index(obs, sets[key]) for key in keys}
 
@@ -707,8 +741,17 @@ def _read_materialized(conn_mgr, region_id: int, key: str) -> list[dict]:
     return [{"date": str(day), "value": float(price), "volume": int(volume or 0)} for day, price, volume in rows]
 
 
-def _resolve_points(conn_mgr, region_id: int, keys: Sequence[str]) -> dict[str, list[dict]]:
-    """点位：优先读物化缓存，缺失的指数实时计算（**不**写库）。"""
+def _resolve_points(
+    conn_mgr,
+    region_id: int,
+    keys: Sequence[str],
+    anchor: date | None = None,
+    sets: Mapping[str, set[int]] | None = None,
+) -> dict[str, list[dict]]:
+    """点位：优先读物化缓存，缺失的指数实时计算（**不**写库）。
+
+    `anchor` / `sets` 透传给 :func:`_build_for`（:func:`get_dashboard` 一次算完时用）。
+    """
     out: dict[str, list[dict]] = {}
     missing: list[str] = []
     for key in keys:
@@ -717,7 +760,7 @@ def _resolve_points(conn_mgr, region_id: int, keys: Sequence[str]) -> dict[str, 
         if not cached:
             missing.append(key)
     if missing:
-        for key, built in _build_for(conn_mgr, region_id, missing).items():
+        for key, built in _build_for(conn_mgr, region_id, missing, anchor, sets).items():
             out[key] = built.points
     return out
 
@@ -772,14 +815,8 @@ def _value_before(points: Sequence[dict], days: int) -> float | None:
     return found
 
 
-def get_index_cards(region_id: int = JITA_RID, _db=None) -> list[dict]:
-    """五张指数卡：`[{key,label,value,chg1,chg7,chg30,chg90,chg180,days,base_date}]`。
-
-    涨跌是百分比（`float`）；数据不足的窗口给 `None`（不用 0 冒充）。
-    """
-    conn_mgr = _db or get_db()
-    points_map = _resolve_points(conn_mgr, region_id, INDEX_KEYS)
-
+def _cards_from_points(points_map: Mapping[str, Sequence[dict]]) -> list[dict]:
+    """点位表 → 五张指数卡（`get_index_cards` / `get_dashboard` 共用这一份口径）。"""
     cards: list[dict] = []
     for key in INDEX_KEYS:
         points = points_map.get(key) or []
@@ -805,23 +842,20 @@ def get_index_cards(region_id: int = JITA_RID, _db=None) -> list[dict]:
     return cards
 
 
-def get_index_series(keys: Sequence[str] | None = None, region_id: int = JITA_RID, _db=None) -> list[dict]:
-    """指数折线 + 篮子成员表：`[{key,label,points:[{date,value}],members:[...]}]`。
+def _series_from_points(
+    conn_mgr,
+    region_id: int,
+    keys: Sequence[str],
+    points_map: Mapping[str, Sequence[dict]],
+    member_sets: Mapping[str, set[int]],
+) -> list[dict]:
+    """点位表 + 成分集 → 折线 + 篮子成员表（`get_index_series` / `get_dashboard` 共用）。
 
-    成员字段：`{typeId,name,weight,capped,price,chg30,source}`；`weight` 是该指数**最后一个指数日**
-    的近 30 天成交额权重（准入 + 25% 上限后归一化），`price` = 该成员在同一锚定日（含）之前最近一次
-    成交均价（当日没成交则取此前最近一次；完全没有 → `None`）。固定篮子（MPI/PLEX）恒列出全部固定成员
-    （不满足准入的权重 0），其余篮子只列当日有正权重的成员。未知 key 直接忽略。
+    成员字段与口径见 :func:`get_index_series` 的 docstring；`member_sets` 由调用方传入，
+    于是成分集只算一遍。
     """
-    conn_mgr = _db or get_db()
-    wanted = [key for key in (keys if keys is not None else INDEX_KEYS) if key in INDEX_LABELS]
-    if not wanted:
-        return []
-    points_map = _resolve_points(conn_mgr, region_id, wanted)
-
-    member_sets, _materials = _member_sets(conn_mgr, region_id, wanted, _last_day(conn_mgr, region_id))
     anchors: dict[str, date] = {}
-    for key in wanted:
+    for key in keys:
         points = points_map.get(key) or []
         if points:
             anchors[key] = date.fromisoformat(str(points[-1]["date"]))
@@ -836,7 +870,7 @@ def get_index_series(keys: Sequence[str] | None = None, region_id: int = JITA_RI
     names = _load_names(conn_mgr, union)
 
     out: list[dict] = []
-    for key in wanted:
+    for key in keys:
         members_out: list[dict] = []
         anchor = anchors.get(key)
         weights = _weights_at(obs, member_sets[key], anchor) if anchor is not None else {}
@@ -855,6 +889,50 @@ def get_index_series(keys: Sequence[str] | None = None, region_id: int = JITA_RI
             }
         )
     return out
+
+
+def get_index_cards(region_id: int = JITA_RID, _db=None) -> list[dict]:
+    """五张指数卡：`[{key,label,value,chg1,chg7,chg30,chg90,chg180,days,base_date}]`。
+
+    涨跌是百分比（`float`）；数据不足的窗口给 `None`（不用 0 冒充）。
+    """
+    conn_mgr = _db or get_db()
+    return _cards_from_points(_resolve_points(conn_mgr, region_id, INDEX_KEYS))
+
+
+def get_index_series(keys: Sequence[str] | None = None, region_id: int = JITA_RID, _db=None) -> list[dict]:
+    """指数折线 + 篮子成员表：`[{key,label,points:[{date,value}],members:[...]}]`。
+
+    成员字段：`{typeId,name,weight,capped,price,chg30,source}`；`weight` 是该指数**最后一个指数日**
+    的近 30 天成交额权重（准入 + 25% 上限后归一化），`price` = 该成员在同一锚定日（含）之前最近一次
+    成交均价（当日没成交则取此前最近一次；完全没有 → `None`）。固定篮子（MPI/PLEX）恒列出全部固定成员
+    （不满足准入的权重 0），其余篮子只列当日有正权重的成员。未知 key 直接忽略。
+    """
+    conn_mgr = _db or get_db()
+    wanted = [key for key in (keys if keys is not None else INDEX_KEYS) if key in INDEX_LABELS]
+    if not wanted:
+        return []
+    points_map = _resolve_points(conn_mgr, region_id, wanted)
+    member_sets, _materials = _member_sets(conn_mgr, region_id, wanted, _last_day(conn_mgr, region_id))
+    return _series_from_points(conn_mgr, region_id, wanted, points_map, member_sets)
+
+
+def get_dashboard(region_id: int = JITA_RID, _db=None) -> dict:
+    """卡片 + 序列**一次算完** → `{"cards": [...], "series": [...]}`。
+
+    形状与值同分别调 :func:`get_index_cards` / :func:`get_index_series` **逐字段一致**，
+    区别只在「只算一遍」：成分集（蓝图层级 + CPI 候选）、观测装载、逐日累乘都只跑一次，
+    两个返回值从同一份中间结果派生。大盘页原先分别调那两个函数 —— 同一套计算整跑两遍
+    （真实库实测合计约 13s，虽在后台线程不卡 UI，但没必要）。
+    """
+    conn_mgr = _db or get_db()
+    anchor = _last_day(conn_mgr, region_id)
+    member_sets, _materials = _member_sets(conn_mgr, region_id, INDEX_KEYS, anchor)
+    points_map = _resolve_points(conn_mgr, region_id, INDEX_KEYS, anchor, member_sets)
+    return {
+        "cards": _cards_from_points(points_map),
+        "series": _series_from_points(conn_mgr, region_id, INDEX_KEYS, points_map, member_sets),
+    }
 
 
 def _member_row(

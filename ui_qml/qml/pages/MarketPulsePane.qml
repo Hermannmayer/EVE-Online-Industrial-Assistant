@@ -187,7 +187,7 @@ Item {
     }
 
     function chainHead(total) {
-        return page.headCells([qsTr("传导层级（点异动行 → 它的上游材料）"), qsTr("用量"), qsTr("成本占比"),
+        return page.headCells([qsTr("传导层级（点物品行 → 它的上游材料）"), qsTr("用量"), qsTr("成本占比"),
                                qsTr("30日"), qsTr("90日"), qsTr("180日"), qsTr("口径")],
                               page.chainWidths(), total);
     }
@@ -219,6 +219,19 @@ Item {
     //: 挂载即拉一次本地数据（全是本地库的读，不碰网络；失败的那块由桥退化成空）
     Component.onCompleted: if (page.pulse)
         page.pulse.refresh()
+
+    /* 行右键：把菜单弹在鼠标处。
+     * `source` 是发出事件的 MouseArea —— 坐标必须先 `mapToItem` 到 page：`FMenu` 是声明在
+     * page 下的 Popup，x/y 用的是**本页坐标系**，直接给 mouse.x/y 会错位（表格还在
+     * Flickable 里，滚动之后差得更多）。同 `WatchlistPage` 的 `onRowRightClicked`。 */
+    function openRowMenu(section, row, source, mouseX, mouseY) {
+        const p = source.mapToItem(page, mouseX, mouseY);
+        rowMenu.section = section;
+        rowMenu.row = row;
+        rowMenu.x = p.x;
+        rowMenu.y = p.y;
+        rowMenu.openSoon();
+    }
 
     // 整页不透明底（宿主是透明清屏的 QQuickWidget，见 TradePage 的同款说明）
     Rectangle {
@@ -744,6 +757,26 @@ Item {
                                         }
                                     }
                                 }
+
+                                /* 成员行也能点开右侧抽屉（挂单建议 + BOM 传导链）——
+                                 * 用户口径：「大盘页每行物品都能点出挂单建议」，
+                                 * 原先只有异动榜两行能点。右键与异动行同一份菜单。 */
+                                MouseArea {
+                                    id: memberClickArea
+
+                                    objectName: "memberRowClick"
+
+                                    anchors.fill: parent
+                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: function (mouse) {
+                                        if (mouse.button === Qt.RightButton)
+                                            page.openRowMenu("member", memberRow.index, memberClickArea,
+                                                             mouse.x, mouse.y);
+                                        else if (page.pulse)
+                                            page.pulse.openMember(memberRow.index);
+                                    }
+                                }
                             }
                         }
 
@@ -836,10 +869,20 @@ Item {
                                 }
 
                                 MouseArea {
+                                    id: qualifiedClickArea
+
+                                    objectName: "qualifiedRowClick"
+
                                     anchors.fill: parent
+                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: if (page.pulse)
-                                        page.pulse.openMover("qualified", qualifiedRow.index)
+                                    onClicked: function (mouse) {
+                                        if (mouse.button === Qt.RightButton)
+                                            page.openRowMenu("qualified", qualifiedRow.index, qualifiedClickArea,
+                                                             mouse.x, mouse.y);
+                                        else if (page.pulse)
+                                            page.pulse.openMover("qualified", qualifiedRow.index);
+                                    }
                                 }
                             }
                         }
@@ -931,10 +974,20 @@ Item {
                                 }
 
                                 MouseArea {
+                                    id: marketClickArea
+
+                                    objectName: "marketRowClick"
+
                                     anchors.fill: parent
+                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: if (page.pulse)
-                                        page.pulse.openMover("market", marketRow.index)
+                                    onClicked: function (mouse) {
+                                        if (mouse.button === Qt.RightButton)
+                                            page.openRowMenu("market", marketRow.index, marketClickArea,
+                                                             mouse.x, mouse.y);
+                                        else if (page.pulse)
+                                            page.pulse.openMover("market", marketRow.index);
+                                    }
                                 }
                             }
                         }
@@ -1349,6 +1402,40 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    /* ── 行右键菜单 ──────────────────────────────────────────
+     * 成员表与异动榜两区**共用一份**：`section` + `row` 记下这一行的位置，
+     * 三个动作都由桥按 (区, 行) 去取行数据（`_row_of`）—— 页面不自己缓存行内容，
+     * 桥重新装配数据后菜单也不会指向旧行。 */
+    FMenu {
+        id: rowMenu
+
+        objectName: "rowMenu"
+
+        property string section: "member"
+        property int row: -1
+
+        FMenuItem {
+            objectName: "rowMenuCopyName"
+            text: qsTr("复制名称")
+            onTriggered: if (page.pulse)
+                page.pulse.copyName(rowMenu.section, rowMenu.row)
+        }
+
+        FMenuItem {
+            objectName: "rowMenuWatchlist"
+            text: qsTr("加入关注列表")
+            onTriggered: if (page.pulse)
+                page.pulse.addToWatchlist(rowMenu.section, rowMenu.row)
+        }
+
+        FMenuItem {
+            objectName: "rowMenuPlan"
+            text: qsTr("加入制造列表")
+            onTriggered: if (page.pulse)
+                page.pulse.addToPlan(rowMenu.section, rowMenu.row)
         }
     }
 }

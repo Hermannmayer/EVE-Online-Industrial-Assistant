@@ -31,9 +31,9 @@ _QUOTES = {
     2004: _span((0, 1, 2), 5.0, 50),
     # 大跌，用来验 |涨幅| 排序
     2005: _span((0, 1), 10.0, 10) + _span((3, 4), 100.0, 10),
-    # MPI 矿物：产物 1001 也被当材料 → PPPI
+    # MPI 矿物：被 4 张有效配方当材料，产物 1001 本身也是投入品 → PPPI
     34: _span((0, 1, 2), 4.0, 1000) + _span((3, 4, 5), 3.5, 1000),
-    # 被当材料、产物不再被当材料 → SPPI
+    # 被 4 张有效配方当材料，产物 2001/2002 不再被当材料 → SPPI
     1001: _span((0, 1, 2), 12.0, 100) + _span((3, 4, 5), 10.0, 100),
     # PLEX
     44992: _span((0, 1), 5_000_000.0, 10) + _span((3, 4), 4_000_000.0, 10),
@@ -46,7 +46,14 @@ def _day(offset: int) -> str:
 
 @pytest.fixture
 def movers_db(temp_db):
-    """价格历史 + 两张蓝图（34 → 1001 是材料；1001 的产物 2005 不是材料）。"""
+    """价格历史 + 蓝图；材料口径与**指数篮子**一致：被 ≥4 张**有效配方**当材料才算投入品。
+
+    - 34 被 4 张蓝图（9001/9003/9004/9005）当材料，产物 1001 在 `ref.item` 里有市场分类
+      → 有效配方；且 1001 本身也是投入品 → 34 是 **PPPI**。
+    - 1001 被 4 张蓝图（3001/3002/9006/9007）当材料 → **SPPI**（产物 2001/2002 不再是投入品）。
+    - 2001 只被 3 张蓝图（9008/9009/9010）当材料 → **不够门槛，不算投入品**（回归用）。
+    - 9002 制造 2005 ← 1001：2005 在 `ref.item` 里没有市场分类（占位配方）→ 该材料关系不算数。
+    """
     with temp_db.connect("mkt", "ref", "bp") as conn:
         conn.execute(PRICE_HISTORY_DDL)
         for type_id, quotes in _QUOTES.items():
@@ -56,10 +63,36 @@ def movers_db(temp_db):
                     "volume, order_count, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
                     (type_id, REGION, _day(offset), average, average, average, volume, "2026-01-01T00:00:00+00:00"),
                 )
-        conn.execute("INSERT INTO blueprint_products VALUES (9001, 'manufacturing', 1001, 1)")
-        conn.execute("INSERT INTO blueprint_materials VALUES (9001, 'manufacturing', 34, 100, 10)")
-        conn.execute("INSERT INTO blueprint_products VALUES (9002, 'manufacturing', 2005, 1)")
-        conn.execute("INSERT INTO blueprint_materials VALUES (9002, 'manufacturing', 1001, 10, 10)")
+        conn.executemany(
+            "INSERT INTO blueprint_products VALUES (?, 'manufacturing', ?, 1)",
+            [
+                (9001, 1001),
+                (9003, 1001),
+                (9004, 1001),
+                (9005, 1001),  # 34 × 4 张有效配方
+                (9006, 2002),
+                (9007, 2002),  # 1001 × 4（另两张是 conftest 的 3001/3002）
+                (9008, 2002),
+                (9009, 2002),
+                (9010, 2002),  # 2001 × 3（不够门槛）
+                (9002, 2005),  # 占位配方：2005 没有市场分类
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO blueprint_materials VALUES (?, 'manufacturing', ?, 10, 10)",
+            [
+                (9001, 34),
+                (9003, 34),
+                (9004, 34),
+                (9005, 34),
+                (9006, 1001),
+                (9007, 1001),
+                (9008, 2001),
+                (9009, 2001),
+                (9010, 2001),
+                (9002, 1001),
+            ],
+        )
     return temp_db
 
 
@@ -114,12 +147,24 @@ def test_sorted_by_abs_change_then_limit(movers_db):
 
 
 def test_index_keys_cover_all_five_lines(movers_db):
-    """index_keys 命中 MPI / PPPI / SPPI / CPI / PLEX。"""
+    """index_keys 命中 MPI / PPPI / SPPI / CPI / PLEX（口径与指数篮子同一处实现）。"""
     by_id = {r["typeId"]: r for r in get_movers(days=3, limit=100, _db=movers_db)}
-    assert by_id[34]["index_keys"] == ["mpi", "pppi"]  # 矿物，且产物 1001 还被当材料
-    assert by_id[1001]["index_keys"] == ["sppi"]  # 被当材料，产物 2005 不再被当材料
+    assert by_id[34]["index_keys"] == ["mpi", "pppi"]  # 矿物，且产物 1001 还是投入品
+    assert by_id[1001]["index_keys"] == ["sppi"]  # 被 4 张有效配方当材料，产物 2001/2002 不是
     assert by_id[2001]["index_keys"] == ["cpi"]  # 有成交、不被当材料
     assert by_id[44992]["index_keys"] == ["cpi", "plex"]
+
+
+def test_index_keys_follow_the_index_basket_recipe_cutoff(movers_db):
+    """回归：口径与指数篮子对齐 —— 被 **< 4 张有效配方**当材料的成品不算投入品。
+
+    2001 只被 9008/9009/9010 三张有效配方当材料（`< market_index_service.MIN_VALID_RECIPES`）：
+    旧口径（「被任何一张制造/反应蓝图当材料」）会把它标成 `sppi`，而 SPPI 篮子里根本没有它 ——
+    同一件东西在两个页面上自相矛盾。真投入品 1001（被 4 张有效配方用）仍该命中 `sppi`。
+    """
+    by_id = {r["typeId"]: r for r in get_movers(days=3, limit=100, _db=movers_db)}
+    assert by_id[2001]["index_keys"] == ["cpi"]  # 3 张有效配方 < 4 → 只是消费品
+    assert by_id[1001]["index_keys"] == ["sppi"]  # 4 张有效配方 → 真投入品
 
 
 def test_no_price_history_table_returns_empty(db_manager):

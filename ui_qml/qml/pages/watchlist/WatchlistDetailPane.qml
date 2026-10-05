@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import "../../components"
 
 /* 关注 Tab 的**右详情面板**（关注页 = 左窄列表 + 本面板，见 `WatchlistPage.qml`）。
@@ -11,6 +12,10 @@ import "../../components"
      ② 主物品折线：`watch.priceSeries`（成交均价）+ `watch.volumeSeries`（成交量）
      ③ 勾选「显示制造材料」→ `watch.materialRows` / `watch.materialSeries`（BOM 2 级展开，
         子项**基期=100** 归一化叠加由 `FLineChart` 的 `normalize: true` 完成）
+
+   **时间粒度**：三张图各一排分段按钮（`RangeBar`，`watch.rangeLabels`），但它们共用桥上
+   **同一份状态**（`watch.rangeIndex` / `watch.setRangeIndex`）—— 切粒度只切已装配好的点，
+   不重读库。图上口径写在 `baseNote`（绝对值图）与 `materialBaseNote`（归一化图）里。
 
    **缺数据一律显示 `—`**（桥给的就是 `—`，本组件不做 0 兜底）。
 
@@ -76,6 +81,59 @@ Item {
 
     //: 右详情里的阈值按钮 → 由页面弹弹层（弹层目标行 = 当前选中行）
     signal thresholdRequested(string kind)
+
+    /* 折线图的**时间粒度**分段按钮（近 7/30/90/180 天）—— 主物品价格图、成交量图、材料
+       叠加图各一排，但共用桥上同一份状态（`watch.rangeIndex`）：点任意一排，三张图一起切。
+       样式照 `MarketPulsePane.qml` 的 `rangeBar`（选中填主色 + 文字反白，其余描边透明底）。
+       ⚠️ 本组件在 `FPanel` 之外（`Flickable + Column`），`Layout.*` 只对 `RowLayout` 生效，
+       实例上仍要自己给 `width: parent.width`。 */
+    component RangeBar: RowLayout {
+        id: rangeBar
+
+        height: Math.round(24 * Theme.fontScale)
+        spacing: 2
+
+        Repeater {
+            model: pane.watch ? pane.watch.rangeLabels : []
+
+            Rectangle {
+                required property var modelData
+                required property int index
+
+                readonly property bool active: !!pane.watch && pane.watch.rangeIndex === index
+
+                Layout.preferredWidth: rangeLabel.implicitWidth + 2 * Math.round(10 * Theme.fontScale)
+                Layout.fillHeight: true
+                radius: Theme.radiusSmall
+                color: active ? Theme.primary
+                              : (rangeMouse.containsMouse ? Theme.bgHover : "transparent")
+                border.width: active ? 0 : 1
+                border.color: Theme.border
+
+                Text {
+                    id: rangeLabel
+                    anchors.centerIn: parent
+                    text: modelData
+                    color: active ? Theme.textOnPrimary : Theme.textSecondary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: pane.fntSmall
+                }
+
+                MouseArea {
+                    id: rangeMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: if (pane.watch)
+                        pane.watch.setRangeIndex(index)
+                }
+            }
+        }
+
+        Item {
+            Layout.fillWidth: true
+        }
+    }
 
     // ── 两个小单元格（表头 / 数据），只在本文件内用 ────────────────
 
@@ -330,11 +388,15 @@ Item {
             // ═══════════════════════════════════════════════════
 
             Text {
-                text: qsTr("成交均价（近 180 天）")
+                text: qsTr("成交均价")
                 color: Theme.textPrimary
                 font.family: Theme.fontFamily
                 font.pixelSize: pane.fntBase
                 font.bold: true
+            }
+            RangeBar {
+                objectName: "priceRangeBar"
+                width: parent.width
             }
             FLineChart {
                 objectName: "priceChart"
@@ -342,15 +404,21 @@ Item {
                 height: Math.round(170 * Theme.fontScale)
                 series: pane.priceSeries
                 xLabels: pane.chartLabels
+                // 这两条线是绝对值（没开 normalize）→ 图上如实写口径 + 当前粒度
+                baseNote: pane.watch ? pane.watch.baseNote : ""
                 emptyText: qsTr("本地没有成交历史（先「更新价格」）")
             }
 
             Text {
-                text: qsTr("成交量（近 180 天）")
+                text: qsTr("成交量")
                 color: Theme.textPrimary
                 font.family: Theme.fontFamily
                 font.pixelSize: pane.fntBase
                 font.bold: true
+            }
+            RangeBar {
+                objectName: "volumeRangeBar"
+                width: parent.width
             }
             FLineChart {
                 objectName: "volumeChart"
@@ -358,6 +426,7 @@ Item {
                 height: Math.round(130 * Theme.fontScale)
                 series: pane.volumeSeries
                 xLabels: pane.chartLabels
+                baseNote: pane.watch ? pane.watch.baseNote : ""
                 emptyText: qsTr("本地没有成交历史（先「更新价格」）")
             }
 
@@ -383,6 +452,12 @@ Item {
                 wrapMode: Text.WordWrap
             }
 
+            RangeBar {
+                objectName: "materialRangeBar"
+                width: parent.width
+                visible: pane.showMaterials
+            }
+
             /* 子项折线：`normalize: true` → 每条线按**自己的首点**归一到 100（见 FLineChart.valuesOf）。
                绝对值在下面的材料表里。 */
             FLineChart {
@@ -392,6 +467,8 @@ Item {
                 visible: pane.showMaterials
                 normalize: true
                 series: pane.materialSeries
+                // 归一化的基期是「每条线自己的首个显示点」，不是「加入时」价 —— 别写错
+                baseNote: pane.watch ? pane.watch.materialBaseNote : ""
                 emptyText: qsTr("本地没有材料挂单快照（先「更新价格」）")
             }
 

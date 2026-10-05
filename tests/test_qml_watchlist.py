@@ -471,6 +471,69 @@ def test_detail_shows_added_price_when_present_and_dash_when_absent(bridge, monk
 
 
 @pytest.mark.ui
+def test_chart_range_switches_slice_loaded_points_without_rereading(bridge, monkeypatch):
+    """折线时间粒度（近 7/30/90/180 天）：默认 180，切粒度**只切已装配好的点**。
+
+    捕获的缺陷：切粒度回去调 `_load_detail()`（重读 `price_history`）或重跑 BOM 展开 ——
+    每点一下按钮就敲一次库；以及 `baseNote` 里写的粒度与实际点数对不上。
+    """
+    from ui_qml.bridge import watchlist_bridge as wb
+
+    today = date.today()
+    history = [((today - timedelta(days=179 - i)).isoformat(), 50.0 + i, 10 + i) for i in range(180)]
+    reads: list[str] = []
+
+    def _history(*_args, **_kw):
+        reads.append("history")
+        return list(history)
+
+    def _materials(*_args, **_kw):
+        reads.append("materials")
+        return {
+            "rows": [],
+            "series": [
+                {"label": "裂谷级", "color": "#123456", "points": [{"x": i, "y": 10.0 + i} for i in range(180)]}
+            ],
+            "hint": "",
+        }
+
+    monkeypatch.setattr(wb, "read_history", _history)
+    monkeypatch.setattr(wb, "load_materials", _materials)
+
+    bridge._model.set_rows([_row(wid=1, added_price=100.0)])
+    bridge.selectRow(0)
+    bridge.setShowMaterials(True)
+
+    assert bridge.rangeLabels == ["近 7 天", "近 30 天", "近 90 天", "近 180 天"]
+    assert bridge.rangeIndex == 3, "默认 180 天（与加载窗口一致）"
+    assert len(bridge.priceSeries[0]["points"]) == 180
+    assert "180 个交易日" in bridge.baseNote
+    assert "180 个交易日" in bridge.materialBaseNote
+
+    reads_before = list(reads)
+    assert reads_before == ["history", "materials"], "选中行读一次历史，勾材料读一次 BOM"
+
+    bridge.setRangeIndex(1)  # 近 30 天
+
+    assert bridge.rangeIndex == 1
+    assert reads == reads_before, "切粒度只切已装配好的点：不重读 price_history、不重跑 BOM 展开"
+    assert len(bridge.chartLabels) <= 30
+    for series in (bridge.priceSeries, bridge.volumeSeries, bridge.materialSeries):
+        assert 0 < len(series[0]["points"]) <= 30
+    assert "30 个交易日" in bridge.baseNote
+    assert "30 个交易日" in bridge.materialBaseNote
+    # 口径如实写：材料图归一化（基期 = 每条线自己的首个显示点），主物品两条线是绝对值
+    assert "首个显示点" in bridge.materialBaseNote
+    assert "100" not in bridge.baseNote
+
+    # 越界 / 重复点击都不动状态、也不读库
+    bridge.setRangeIndex(9)
+    bridge.setRangeIndex(1)
+    assert bridge.rangeIndex == 1
+    assert reads == reads_before
+
+
+@pytest.mark.ui
 def test_material_series_are_absolute_in_bridge_and_normalised_by_the_chart(watch_page, monkeypatch):
     """勾选「显示制造材料」：桥给**绝对值**，`FLineChart` 按各自首点归一到 100。
 

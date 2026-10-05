@@ -426,6 +426,62 @@ def test_refresh_index_daily_materializes_and_cards_use_cache(db_manager):
     assert mis.refresh_index_daily() == rows  # 重建幂等（先 DELETE 再插）
 
 
+def test_dashboard_equals_separate_card_and_series_calls(db_manager):
+    """`get_dashboard()` 与「`get_index_cards()` + `get_index_series()`」逐字段相等。
+
+    这是「一次算完」的核心契约：成分集 / 观测装载 / 逐日累乘内部只跑一遍（省一半耗时），
+    但两个返回值的形状与值必须与旧的两个公开入口一字不差（键序、点数、成员权重、价格、来源）。
+    """
+    # ① 空库（无历史、无蓝图）：全 None 的卡片 + 固定篮子成员，两条路径同样等价
+    assert mis.get_dashboard(_db=db_manager) == {
+        "cards": mis.get_index_cards(_db=db_manager),
+        "series": mis.get_index_series(_db=db_manager),
+    }
+
+    # ② 有数据：34/35（MPI 矿物；同时进 CPI 候选）、2001（被 4 张有效配方当材料 → SPPI）、PLEX（全服价）
+    _insert_prices(
+        db_manager,
+        [(34, _day(i), 100.0 + i, 10) for i in range(12)]
+        + [(35, _day(i), 200.0 + i, 5) for i in range(12)]
+        + [(2001, _day(i), 50.0 + i, 3) for i in range(12)],
+    )
+    _insert_global_prices(db_manager, [(mis.PLEX_TYPE_ID, _day(i), 1000.0 + i) for i in range(12)])
+    with db_manager.connect("bp") as conn:
+        conn.execute(
+            "CREATE TABLE blueprint_materials (blueprint_type_id INTEGER, activity TEXT, "
+            "material_type_id INTEGER, quantity INTEGER, wastefactor INTEGER DEFAULT 10)"
+        )
+        conn.execute(
+            "CREATE TABLE blueprint_products (blueprint_type_id INTEGER, activity TEXT, "
+            "product_type_id INTEGER, quantity INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO blueprint_products VALUES (?, 'manufacturing', 3001, 1)",
+            [(9001,), (9002,), (9003,), (9004,)],
+        )
+        conn.executemany(
+            "INSERT INTO blueprint_materials VALUES (?, 'manufacturing', 2001, 10, 10)",
+            [(9001,), (9002,), (9003,), (9004,)],
+        )
+    with db_manager.connect("ref") as conn:
+        conn.execute(
+            "CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT, market_group_id INTEGER)"
+        )
+        conn.execute("INSERT INTO item VALUES (?, ?, ?, ?)", (mis.PLEX_TYPE_ID, "伊甸币", "PLEX", 19))
+    _seed_market_groups(db_manager, {2001, 3001, 34, 35})  # 3001 有市场分类 → 那 4 张是有效配方
+
+    dashboard = mis.get_dashboard(_db=db_manager)
+
+    # 非空校验：两条路都得真算出东西，「相等」才不是「都空转」
+    assert any(card["value"] is not None for card in dashboard["cards"])
+    assert any(series["members"] for series in dashboard["series"])
+
+    assert dashboard == {
+        "cards": mis.get_index_cards(_db=db_manager),
+        "series": mis.get_index_series(_db=db_manager),
+    }
+
+
 def test_breadth_counts_advancers_decliners_and_turnover(db_manager):
     """广度：当日有成交且此前有成交的 type 才计数；当日成交额只算最新交易日。"""
     _insert_prices(

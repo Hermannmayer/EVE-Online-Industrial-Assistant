@@ -3,21 +3,26 @@
 分两层（与 `test_qml_watchlist.py` / `test_qml_trade.py` 同构）：
 
   - **桥层**：`MarketPulseBridge` 对三个后端服务的装配 —— 指数卡 / 主图（含 7 日均线）/
-    量价广度（含量价背离）/ 篮子成员 / 异动榜两区 / 数据状态行 / 抽屉里的传导链；
+    量价广度（含量价背离）/ 篮子成员 / 异动榜两区 / 数据状态行 / 抽屉里的传导链与挂单建议 /
+    行右键的三个动作（复制名称 / 加入关注列表 / 加入制造列表）；
   - **页面层**：`MarketPulsePane.qml` 能加载、无 QML 告警。
 
-三个后端服务（`market_index_service` / `market_movers_service` / `market_chain_service`）
-在这里**全部换替身**：本页与它们并行开发，替身让这两条用例既不依赖真实 `market.db`，
-也不受那边接口微调影响 —— 桥对它们的唯一入口就是模块级的
-`_index_service()` / `_movers_service()` / `_chain_service()` 三个取值函数。
+后端服务（`market_index_service` / `market_movers_service` / `market_chain_service` /
+`market_advice_service`）与行右键写库的两个入口（`watchlist_manager` / 蓝图仓储 +
+落计划）在这里**全部换替身**：本页与它们并行开发，替身让这两条用例既不依赖真实
+`market.db` / `user.db` / `blueprint.db`，也不受那边接口微调影响 —— 桥对它们的唯一入口
+就是模块级的 `_index_service()` / `_movers_service()` / `_chain_service()` /
+`_advice_service()` / `_watchlist_service()` / `_blueprint_repo()` / `_add_to_plan()`
+这几个取值函数。
 
-生产环境里仍然是真的惰性 import（见桥的模块 docstring），这里只换了取值函数。
+生产环境里仍然是真的惰性 import（见桥的 module docstring），这里只换了取值函数。
 """
 
 from __future__ import annotations
 
 import pytest
 
+from tests.clipboard_wait import wait_for_copy
 from tests.qml_page_load import assert_page_loads_quietly, page_host
 
 pytestmark = pytest.mark.ui
@@ -204,11 +209,65 @@ class _FakeChainService:
         ]
 
 
+class _FakeAdviceService:
+    """`services.market_advice_service` 的替身（只用 `get_trade_advice`）。"""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def get_trade_advice(self, type_id: int, region_id: int = _JITA, *, trend_30d=None, _db=None) -> dict:
+        self.calls.append((int(type_id), int(region_id), trend_30d))
+        return {
+            "verdict": "two_sided",
+            "buyAdvice": "买单挂 5.40 ISK（比最低卖单低 1.8%）",
+            "sellAdvice": "卖单挂 5.60 ISK（排在当前最低卖单前面）",
+            "reasons": ["价差 3.60% 高于来回费用 2.40%"],
+            "caliber": "成交均价 · Jita",
+            "spreadPct": 3.6,
+            "roundTripFeePct": 2.4,
+            "dayVolume": 12000.0,
+            "orderVolume": 2705.0,
+            "turnDays": 89.3,
+        }
+
+
+class _FakeWatchlistService:
+    """`services.watchlist_manager` 的替身 —— **绝不**真写 user.db。"""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+        #: 返回值：>0 = 写成功（或已存在），0 = 服务拒绝（用例据此断言失败文案）
+        self.result = 1
+
+    def add_to_watchlist(self, type_id: int, region_id: int = _JITA, note: str = "") -> int:
+        self.calls.append((int(type_id), int(region_id)))
+        return int(self.result)
+
+
+class _FakeBlueprintRepo:
+    """蓝图仓储替身：只有产物有制造蓝图，矿物（34 / 35）返回 `None`。"""
+
+    #: 有制造蓝图的产物 type_id（替身里的「全市场异动」那几条）
+    PRODUCTS = frozenset({12345, 99001, 99002})
+
+    def __init__(self) -> None:
+        self.calls: list[int] = []
+
+    def get_blueprint_for_product(self, product_type_id: int, activity: str = "manufacturing") -> tuple | None:
+        self.calls.append(int(product_type_id))
+        return (2001, 1, 3600.0) if int(product_type_id) in self.PRODUCTS else None
+
+
 class _FakeBackend:
     def __init__(self) -> None:
         self.index = _FakeIndexService()
         self.movers = _FakeMoversService()
         self.chain = _FakeChainService()
+        self.advice = _FakeAdviceService()
+        self.watchlist = _FakeWatchlistService()
+        self.blueprint = _FakeBlueprintRepo()
+        #: 落计划的替身记录（(type_id, name)）—— 真写 user.db 会污染用户数据
+        self.plan_calls: list[tuple] = []
 
 
 def _hub_rows() -> list[dict]:
@@ -229,13 +288,27 @@ def _turnover_rows() -> list[dict]:
 
 @pytest.fixture
 def stubs(monkeypatch) -> _FakeBackend:
-    """把三个服务与两段就地 SQL 一起换成替身（页面测试不该碰真实 market.db）。"""
+    """把后端服务与行右键写库的入口一起换成替身（页面测试不该碰真实 market/user.db）。"""
     import ui_qml.bridge.market_pulse_bridge as mpb
 
     backend = _FakeBackend()
+
+    def _fake_add_to_plan(type_id: int, name: str) -> None:
+        backend.plan_calls.append((int(type_id), str(name)))
+
     monkeypatch.setattr(mpb, "_index_service", lambda: backend.index)
+    # 磁盘缓存与设置必须隔离：桥的 `__init__` 会先用**上次运行的整页缓存**铺首屏
+    # （用户要的「点开就出数」），跑测试时那份缓存是真实数据、会把替身数据盖掉
+    monkeypatch.setattr(mpb, "_load_cached_payload", lambda: {})
+    monkeypatch.setattr(mpb, "_read_settings", lambda: {})
+    monkeypatch.setattr(mpb, "_save_cached_payload", lambda payload: None)
+    monkeypatch.setattr(mpb, "_write_settings", lambda payload: None)
     monkeypatch.setattr(mpb, "_movers_service", lambda: backend.movers)
     monkeypatch.setattr(mpb, "_chain_service", lambda: backend.chain)
+    monkeypatch.setattr(mpb, "_advice_service", lambda: backend.advice)
+    monkeypatch.setattr(mpb, "_watchlist_service", lambda: backend.watchlist)
+    monkeypatch.setattr(mpb, "_blueprint_repo", lambda: backend.blueprint)
+    monkeypatch.setattr(mpb, "_add_to_plan", _fake_add_to_plan)
     monkeypatch.setattr(mpb, "_hub_snapshot_rows", _hub_rows)
     monkeypatch.setattr(mpb, "_turnover_series", lambda region_id, days=30: _turnover_rows())
     return backend
@@ -247,7 +320,7 @@ def stubs(monkeypatch) -> _FakeBackend:
 
 
 def test_bridge_assembles_cards_chart_movers_and_chain(qapp, stubs):
-    """一次 `refresh()` 后各区块的数据装配（卡片/主图/广度/成员/异动/状态行/抽屉）。
+    """一次 `refresh()` 后各区块的数据装配（卡片/主图/广度/成员/异动/状态行/抽屉/行右键）。
 
     并成一条用例：它们共用同一次取数，拆开只会把同一份替身断言抄几遍。
     """
@@ -360,6 +433,46 @@ def test_bridge_assembles_cards_chart_movers_and_chain(qapp, stubs):
     assert bridge.detailOpen is False and bridge.detailRows == []
     bridge.openMover("qualified", 99)  # 越界行：不动抽屉、不抛
     assert bridge.detailOpen is False
+
+    # ── 篮子成员行也能点开**同一个**抽屉（用户：每行物品都要能点出挂单建议）──
+    bridge.openMember(0)  # 成员表第一行：三钛合金
+    assert stubs.chain.calls[-1] == (34, 2, _JITA)
+    assert bridge.detailOpen is True and bridge.detailTitle == "三钛合金"
+    # 挂单建议一并装配（替身记下传进去的 type_id / 区域 / 大盘方向）
+    assert stubs.advice.calls[-1] == (34, _JITA, None)
+    assert bridge.advice["verdict"] == "two_sided" and bridge.advice["title"] == "两侧挂单划算"
+    assert bridge.advice["metrics"][0] == {"label": "价差（卖−买）", "value": "+3.60%"}
+    assert "2 行" in bridge.detailStatus and "成交均价" in bridge.detailStatus
+    bridge.openMember(99)  # 越界行：不动抽屉、不抛
+    assert bridge.detailOpen is True
+    bridge.closeDetail()
+
+    # ── 行右键三个动作（全走替身：不真写 user.db、不真建计划）──
+    # 复制名称：剪贴板拿到物品名（剪贴板是异步的，等一等，见 tests/clipboard_wait.py）
+    assert wait_for_copy(lambda: bridge.copyName("market", 0), "某人炒作货") == "某人炒作货"
+    assert bridge.statusText == "已复制名称：某人炒作货"
+
+    # 加入关注列表：替身记下传进去的 type_id + 区域
+    bridge.addToWatchlist("market", 0)
+    assert stubs.watchlist.calls == [(12345, _JITA)]
+    assert bridge.statusText == "已加入关注列表：某人炒作货"
+    # 服务拒绝（返回 0）时状态栏必须说清原因，不能静默失败
+    stubs.watchlist.result = 0
+    bridge.addToWatchlist("member", 1)  # 类晶体胶矿
+    assert stubs.watchlist.calls[-1] == (35, _JITA)
+    assert "加入关注列表失败" in bridge.statusText and "类晶体胶矿" in bridge.statusText
+    bridge.addToWatchlist("member", 99)  # 越界行：不调服务
+    assert stubs.watchlist.calls[-1] == (35, _JITA)
+
+    # 加入制造列表：先查蓝图（是不是产物），再落计划 —— 替身记下 type_id
+    bridge.addToPlan("market", 0)  # 某人炒作货（12345）：替身里有制造蓝图
+    assert stubs.blueprint.calls[-1] == 12345
+    assert stubs.plan_calls == [(12345, "某人炒作货")]
+    assert "已加入制造列表" in bridge.statusText
+    bridge.addToPlan("member", 0)  # 三钛合金（34）：矿物，服务侧没有制造蓝图
+    assert stubs.blueprint.calls[-1] == 34
+    assert stubs.plan_calls == [(12345, "某人炒作货")], "非产物不落库"
+    assert "不是制造产物" in bridge.statusText and "三钛合金" in bridge.statusText
 
     # 外壳切页钩子（`ui_qml/monitor_page.py` 的转发器会调）：只重读本地数据，
     # **不**自动重算指数 —— 重算要聚合几十万行、且对 market.db 有真实写入副作用

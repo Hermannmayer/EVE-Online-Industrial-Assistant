@@ -2,8 +2,12 @@
 
 页面规格来自 `docs/dev/market-monitor-plan.md` §4.1（大盘 Tab）：
 指数卡 ×5 → 主图（五条基期=100 的指数折线 + 7 日均线开关）→ 量价/广度 →
-篮子成员表 → 异动榜两区（合格成分 / 全市场）→ 数据状态行；点异动行在右侧抽屉看
-`get_transmission_chain` 的逐级传导表。
+篮子成员表 → 异动榜两区（合格成分 / 全市场）→ 数据状态行。
+
+**点任意物品行**（篮子成员表 / 异动榜两区）都在右侧抽屉看 `get_transmission_chain`
+的逐级传导表 + `get_trade_advice` 的挂单建议；行上**右键**出菜单：复制名称 /
+加入关注列表 / 加入制造列表（后两项的结果都写进页面状态栏 `statusText`，不静默失败）。
+三个入口共用同一个抽屉装配函数 `_open_detail()`，行数据统一由 `_row_of()` 取。
 
 **本页只读本地 `market.db`，不发起任何 ESI 请求** —— 唯一的例外是顶部「刷新指数」，
 它走 `IndexRefreshWorker`（QThread）重算 `market_index_daily` 物化表。
@@ -33,14 +37,18 @@
 
 from __future__ import annotations
 
+import json
+import os
 import time
 from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtCore import Property, QObject, QThread, Signal, Slot
+from PySide6.QtGui import QGuiApplication
 
 from core.constants import TRADE_HUB_IDS
 from core.logger import log
+from core.paths import data_dir
 
 __all__ = ["IndexRefreshWorker", "MarketPulseBridge"]
 
@@ -131,6 +139,26 @@ def _advice_service() -> Any:
     return market_advice_service
 
 
+def _watchlist_service() -> Any:
+    """惰性取 `services.watchlist_manager`（行右键「加入关注列表」）。"""
+    from services import watchlist_manager
+
+    return watchlist_manager
+
+
+def _blueprint_repo() -> Any:
+    """惰性取蓝图仓储 —— 只用来回答「这一行是不是产物」。
+
+    异动榜/成员表里两类都有：产物（有制造蓝图）和原料（矿物、月矿……没有）。
+    加入制造列表要的正是**产物 id**，所以先问一次 `get_blueprint_for_product`：
+    返回 `None` 就是服务侧没有这张制造蓝图，此时如实告诉用户，
+    而不是插一条永远开不了工的计划。
+    """
+    from core.container import get_container
+
+    return get_container().blueprint_repo
+
+
 # ═══════════════════════════════════════════════════════════
 #  就地查询（后端暂时没有的接口，见各自 docstring）
 # ═══════════════════════════════════════════════════════════
@@ -216,6 +244,34 @@ def _turnover_series(region_id: int, days: int = _TURNOVER_DAYS) -> list[dict]:
         while len(out) >= 3 and out[-1][2] < 0.5 * typical:
             out.pop()
     return [{"date": day, "isk": isk} for day, isk, _n in out]
+
+
+# ═══════════════════════════════════════════════════════════
+#  行操作（右键「加入制造列表」）
+# ═══════════════════════════════════════════════════════════
+
+#: 「加入制造列表」的默认生产参数：右键菜单没有参数对话框，给一套能开局的最小值
+#: （1 批 × 1 并行、ME/TE 0、人物留空）。要调参数去制造页改那一条计划。
+_PLAN_DEFAULTS: dict[str, Any] = {"runs": 1, "parallels": 1, "me": 0, "te": 0, "fac": "", "char": ""}
+
+#: 本页只做 Jita（见 `_region_id()`），计划的市场口径跟着它。
+_PLAN_HUB = "Jita"
+
+
+def _add_to_plan(type_id: int, name: str) -> None:
+    """把一个**产物**写进制造计划 —— 复用全物品/可制造窗口那条唯一的落库路径。
+
+    `insert_plan_from_score`（先例 `manufacturable_items_bridge.addToPlan`）内部就是
+    `services.plan_service.insert_plan` + `inventory_manager` 取默认材料机库/星系，
+    所以这里不抄第二份 INSERT：大盘页没有评分缓存、也没有参数对话框，
+    评分给空字典、参数给 `_PLAN_DEFAULTS` 即可。
+
+    **不做**「是不是产物」的判定：那是调用方（`MarketPulseBridge.addToPlan`）先查
+    蓝图仓储的事 —— 失败原因要能在状态栏里说清，不是在这里静默 return。
+    """
+    from ui_qml.bridge.all_items_bridge import insert_plan_from_score
+
+    insert_plan_from_score(type_id, name, {}, dict(_PLAN_DEFAULTS), {"hub": _PLAN_HUB})
 
 
 # ═══════════════════════════════════════════════════════════
@@ -355,6 +411,79 @@ RANGE_LABELS: tuple[str, ...] = ("近 7 天", "近 30 天", "近 90 天", "近 1
 DEFAULT_RANGE_INDEX = 3  # 默认 180 天（与「刷新指数」的物化窗口一致）
 
 
+def _settings_path() -> str:
+    """大盘页自己的设置文件（引导是否已读、折线粒度）。"""
+    return os.path.join(data_dir(), "market_monitor_settings.json")
+
+
+def _cache_path() -> str:
+    """上一份整页数据的缓存文件 —— **让首屏秒出**，不用等十几秒重算。"""
+    return os.path.join(data_dir(), "market_monitor_cache.json")
+
+
+def _read_json(path: str) -> dict:
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            loaded = json.load(handle)
+    except Exception:
+        # 吞的是「读缓存/设置」这类失败（文件损坏、权限、半截写入）—— 退回默认值即可
+        log.exception("读取 %s 失败，按默认值处理", os.path.basename(path))
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _atomic_write_json(path: str, payload: dict) -> None:
+    """先写临时文件再 `os.replace` —— 半截写入会毁掉缓存/设置，用户下次启动直接报错。"""
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def _read_settings() -> dict:
+    return _read_json(_settings_path())
+
+
+def _write_settings(payload: dict) -> None:
+    _atomic_write_json(_settings_path(), payload)
+
+
+#: 磁盘缓存的保鲜期（秒）。超过就不再用它铺首屏（历史/成分都可能已经变了），
+#: 但要**立即**拉一次新数据 —— 缓存只是「别让首屏空白」，不是数据源。
+_CACHE_MAX_AGE_S = 12 * 3600
+
+
+def _clamp_range_index(raw: Any) -> int:
+    """设置文件里的粒度下标 → 合法下标（越界/缺失退回默认）。"""
+    try:
+        index = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_RANGE_INDEX
+    return index if 0 <= index < len(RANGE_OPTIONS) else DEFAULT_RANGE_INDEX
+
+
+def _load_cached_payload() -> dict:
+    """读上一份 dashboard 缓存（过期/损坏 → `{}`）。"""
+    cached = _read_json(_cache_path())
+    fetched = cached.get("fetched_at")
+    if not isinstance(fetched, (int, float)):
+        return {}
+    if time.time() - float(fetched) > _CACHE_MAX_AGE_S:
+        return {}
+    payload = cached.get("payload")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _save_cached_payload(payload: dict) -> None:
+    """存一份 dashboard 缓存（失败只记日志：缓存坏了不该影响页面）。"""
+    try:
+        _atomic_write_json(_cache_path(), {"fetched_at": time.time(), "payload": payload})
+    except Exception:
+        log.exception("写大盘页缓存失败（首屏下次仍要等重算）")
+
+
 def _series_views(raw_series: list[dict]) -> tuple[list[dict], list[dict], list[str]]:
     """`get_index_series` → `(原线, 7 日均线, 横轴日期标签)`。
 
@@ -432,7 +561,8 @@ _GUIDE_TEXT = (
     "这一页回答一个问题：现在这个市场，该囤、该卖、还是该停。\n"
     "① 先看上面的诊断条与四条实体线的方向（10 秒）；\n"
     "② 哪条线明显偏离就去点它的成员表，看是谁在拉/在拖（「贡献」那一列）；\n"
-    "③ 再用下面的异动榜找具体物品、点开抽屉看 BOM 传导链与挂单建议 —— 提前备料或提前出货。\n"
+    "③ 成员表与异动榜的**每一行都能点**：左键开右侧抽屉（挂单建议 + BOM 传导链），"
+    "右键出菜单（复制名称 / 加入关注列表 / 加入制造列表）—— 提前备料或提前出货。\n"
     "口径：只用 Jita 的成交均价（挂单价一个人就能推，只做供给予警）；指数 100 = 基期，"
     "跌 = 这一篮子东西整体变便宜。PLEX 是全服统一价，与另外四条不是同一种口径。"
 )
@@ -768,9 +898,21 @@ def _load_payload(region_id: int) -> dict[str, Any]:
     except Exception:
         log.exception("大盘后端未落地，整页退化成空态")
         return {}
+
+    # 卡片 + 序列**一次算完**：分别调 `get_index_cards` / `get_index_series` 会把同一套
+    # 成分/权重/逐日累乘跑两遍（真实库实测合计约 13s）。`get_dashboard` 是它们的合并版，
+    # 形状逐字段一致 —— 服务还没落地时退回分别调（并行开发期的过渡路径）。
+    dashboard = read("读取指数卡片与序列", lambda: dict(api.get_dashboard(region_id)), {})
+    if dashboard:
+        cards_raw = list(dashboard.get("cards") or [])
+        series_raw = list(dashboard.get("series") or [])
+    else:
+        cards_raw = list(read("读取指数卡片", lambda: api.get_index_cards(region_id), []))
+        series_raw = list(read("读取指数序列", lambda: api.get_index_series(keys=None, region_id=region_id), []))
+
     return {
-        "cards": list(read("读取指数卡片", lambda: api.get_index_cards(region_id), [])),
-        "series": list(read("读取指数序列", lambda: api.get_index_series(keys=None, region_id=region_id), [])),
+        "cards": cards_raw,
+        "series": series_raw,
         "breadth": dict(read("读取市场广度", lambda: api.get_breadth(region_id), {})),
         "turnover": list(read("读取日成交额序列", lambda: _turnover_series(region_id), [])),
         "movers": list(
@@ -850,9 +992,9 @@ class MarketPulseBridge(QObject):
         self._status_rows: list[dict] = []
         self._status_hint = ""
         self._diagnosis: list[dict] = []
-        #: 首次使用引导：说明「这一页能回答什么问题」。只对本次会话有效（与「置顶」同口径，
-        #: 不落盘）—— 用户学会之后关掉即可
-        self._guide_visible = True
+        #: 首次使用引导：说明「这一页能回答什么问题」。
+        #: **落盘**（用户口径：「这个初始提示每次开启都会显示」）—— 点过「知道了」就不再弹。
+        self._guide_visible = not bool(_read_settings().get("guide_dismissed"))
 
         #: 量价/广度那三行（`refresh` 之前 QML 就会绑定它们，必须先有初值 ——
         #: 绑定里读不存在的属性是**静默失败**，只会让那一格空着）
@@ -869,17 +1011,31 @@ class MarketPulseBridge(QObject):
         #: 上次读完的时间（`time.monotonic()`）——`_REFRESH_TTL_S` 内的切页直接复用
         self._loaded_at = 0.0
         self._load_worker: PulseLoadWorker | None = None
-        #: 折线图时间粒度（下标进 `RANGE_OPTIONS`）+ 原始 180 天点位
-        self._range_index = DEFAULT_RANGE_INDEX
+        #: 折线图时间粒度（下标进 `RANGE_OPTIONS`）+ 原始 180 天点位。
+        #: 粒度也落盘：上次看的是近 30 天，下次打开还是近 30 天
+        self._range_index = _clamp_range_index(_read_settings().get("range_index"))
         self._range_days = RANGE_OPTIONS[self._range_index]
         self._series_raw: list[dict] = []
         self._base_note = ""
+
+        # 首屏秒出：先把**上次的整页结果**（磁盘缓存）铺上，再让后台去读新的。
+        # 用户口径：「点开市场监控之后，这个指数要过很长一段时间，好几秒才能显示出来。没有本地缓存吗？」
+        cached = _load_cached_payload()
+        if cached:
+            self._on_loaded(cached)
+            self._status_text = "已显示上次数据，正在后台刷新…"
+            self.refreshStateChanged.emit()
 
         self._detail_open = False
         self._detail_title = ""
         self._detail_status = ""
         self._detail_rows: list[dict] = []
         self._advice: dict = dict(_EMPTY_ADVICE)
+
+        # 缓存铺完之后**立刻**发起一次后台刷新（`_loaded_at` 已在 `_on_loaded` 里被写成「刚刚」，
+        # 这里显式 force 一次，否则会被 TTL 挡掉、用户就一直看着旧数据）
+        if cached:
+            self.refresh(force=True)
 
     # ── 指数卡 / 主图 ────────────────────────────────────────
 
@@ -1012,6 +1168,9 @@ class MarketPulseBridge(QObject):
         self._loaded_at = time.monotonic()
         self._loading = False
         self._load_worker = None
+        # 落盘一份（首屏秒出用）；只在**真实读到了东西**时写，避免把空态当缓存
+        if self._cards or self._series_raw:
+            _save_cached_payload(data)
         self.dataChanged.emit()
         self.refreshStateChanged.emit()
 
@@ -1144,24 +1303,58 @@ class MarketPulseBridge(QObject):
         self._divergence_text, self._divergence_token = _divergence(self._index_chg_pct(), self._turnover)
 
     # ═══════════════════════════════════════════════════════
-    #  异动行 → 传导链抽屉
+    #  物品行 → 传导链抽屉 / 行右键菜单
     # ═══════════════════════════════════════════════════════
+
+    def _row_of(self, section: str, row: int) -> dict | None:
+        """「哪个区 + 第几行」→ 行数据；越界或没有行返回 `None`。
+
+        三张表共用一份：篮子成员表（`member`）与异动榜两区（`qualified` / `market`）。
+        区名不是 `member` / `qualified` 时按全市场处理 —— 与 `openMover` 的既有口径一致
+        （它原先只认 `qualified`，其余一律当全市场）。
+        """
+        if section == "member":
+            rows = self._members
+        elif section == "qualified":
+            rows = self._qualified
+        else:
+            rows = self._market
+        if not 0 <= row < len(rows):
+            return None
+        return rows[row]
 
     @Slot(str, int)
     def openMover(self, section: str, row: int) -> None:
-        """点异动行：右侧抽屉显示该物品的 BOM 传导链（`section` 是 `qualified` / `market`）。"""
-        rows = self._qualified if section == "qualified" else self._market
-        if not 0 <= row < len(rows):
+        """点异动行：右侧抽屉显示该物品的建议与 BOM 传导链（`section` 是 `qualified` / `market`）。"""
+        mover = self._row_of(section, row)
+        if mover is None:
             return
-        mover = rows[row]
-        type_id = int(mover["typeId"])
+        self._open_detail(int(mover["typeId"]), str(mover["name"]))
 
+    @Slot(int)
+    def openMember(self, index: int) -> None:
+        """点**篮子成员行**：开同一个右侧抽屉。
+
+        用户口径：「大盘页每行物品都能点出挂单建议」—— 成员表原先点了没反应，
+        而它恰恰是「这条线是谁在拉/在拖」的入口，看到某个成分异动就想点开看它的
+        上游材料与挂单建议。
+        """
+        member = self._row_of("member", index)
+        if member is None:
+            return
+        self._open_detail(int(member["typeId"]), str(member["name"]))
+
+    def _open_detail(self, type_id: int, name: str) -> None:
+        """抽屉的唯一装配路径（成员行 / 异动行共用）。
+
+        先把抽屉开出来并立刻 `detailChanged`（读得慢也知道点到了），再读传导链与建议。
+        """
         self._detail_open = True
-        self._detail_title = str(mover["name"])
+        self._detail_title = str(name)
         self._detail_status = "正在读本地数据…"
         self._detail_rows = []
         self._advice = dict(_EMPTY_ADVICE)
-        self.detailChanged.emit()  # 先把抽屉开出来，读得慢也知道点到了
+        self.detailChanged.emit()
 
         raw = self._safe(
             "读取 BOM 传导链",
@@ -1174,6 +1367,82 @@ class MarketPulseBridge(QObject):
         self._detail_status = _detail_note(raw)
         self._advice = self._load_advice(type_id)
         self.detailChanged.emit()
+
+    # ── 行右键菜单 ──────────────────────────────────────────
+
+    @Slot(str, int)
+    def copyName(self, section: str, row: int) -> None:
+        """右键「复制名称」：把这一行的物品名写进剪贴板。"""
+        data = self._row_of(section, row)
+        if data is None:
+            return
+        name = str(data.get("name") or "")
+        if not name:
+            # 不拿空串覆盖剪贴板（同 `manufacturable_items_bridge.copyBlueprintName` 的口径）
+            self._set_action_status("这一行没有名称可复制")
+            return
+        QGuiApplication.clipboard().setText(name)
+        self._set_action_status(f"已复制名称：{name}")
+
+    @Slot(str, int)
+    def addToWatchlist(self, section: str, row: int) -> None:
+        """右键「加入关注列表」：写 `user.db` 的关注表（走既有 `watchlist_manager`）。
+
+        物品已经关注过时服务返回已存在的行 id（同样是成功），所以只有 id ≤ 0 才算失败。
+        """
+        data = self._row_of(section, row)
+        if data is None:
+            return
+        type_id = int(data.get("typeId") or 0)
+        name = str(data.get("name") or type_id)
+        try:
+            new_id = int(_watchlist_service().add_to_watchlist(type_id, region_id=self._region_id()) or 0)
+        except Exception as ex:
+            # 吞的是 user.db 写失败（被写锁住 / 表还没建）与 market_prices 读失败：
+            # 右键动作必须让用户知道成没成，不能静默失败
+            log.exception("加入关注列表失败 type_id=%s", type_id)
+            self._set_action_status(f"加入关注列表失败：{ex}")
+            return
+        if new_id > 0:
+            self._set_action_status(f"已加入关注列表：{name}")
+        else:
+            self._set_action_status(f"加入关注列表失败：「{name}」没有写进关注表")
+
+    @Slot(str, int)
+    def addToPlan(self, section: str, row: int) -> None:
+        """右键「加入制造列表」：先确认这一行**是产物**，再落一条计划。
+
+        成员表里的矿物（如三钛合金）不是产物 —— 服务侧没有它的制造蓝图，
+        插进制造列表只会得到一条永远开不了工的计划。所以先查蓝图仓储，
+        没有蓝图就把原因写进状态栏；落库失败（`insert_plan` 抛错）同样如实回报。
+        """
+        data = self._row_of(section, row)
+        if data is None:
+            return
+        type_id = int(data.get("typeId") or 0)
+        name = str(data.get("name") or type_id)
+        try:
+            blueprint = _blueprint_repo().get_blueprint_for_product(type_id)
+        except Exception as ex:
+            # 吞的是蓝图库读失败（blueprint.db 打不开 / 表还没建）—— 报原因，不当作成功
+            log.exception("查询制造蓝图失败 type_id=%s", type_id)
+            self._set_action_status(f"加入制造列表失败：{ex}")
+            return
+        if blueprint is None:
+            self._set_action_status(f"「{name}」不是制造产物（没有制造蓝图），不能加入制造列表")
+            return
+        try:
+            _add_to_plan(type_id, name)
+        except Exception as ex:
+            log.exception("加入制造列表失败 type_id=%s", type_id)
+            self._set_action_status(f"加入制造列表失败：{ex}")
+            return
+        self._set_action_status(f"已加入制造列表：{name}（默认 1 批 × 1 并行，参数可在制造页调整）")
+
+    def _set_action_status(self, text: str) -> None:
+        """把行操作的结果写进页面状态栏（`statusText`）—— 成功与失败都要说清。"""
+        self._status_text = str(text)
+        self.refreshStateChanged.emit()
 
     def _load_advice(self, type_id: int) -> dict:
         """取该物品的挂单/卖单建议（带大盘方向修正）。
@@ -1223,10 +1492,23 @@ class MarketPulseBridge(QObject):
 
     @Slot()
     def dismissGuide(self) -> None:
-        """关掉首次使用引导（只对本次会话有效，与「置顶」同口径：不落盘）。"""
-        if self._guide_visible:
-            self._guide_visible = False
-            self.guideChanged.emit()
+        """关掉首次使用引导，并**落盘**（用户口径：「这个初始提示每次开启都会显示」）。
+
+        与「置顶」那种只对本次会话有效的开关不同：引导是「学会一次就够」的东西，
+        下次启动不该再弹。落盘位置与「可制造物品」窗口的设置同目录（`paths.data_dir()`）。
+        """
+        if not self._guide_visible:
+            return
+        self._guide_visible = False
+        self.guideChanged.emit()
+        try:
+            payload = _read_settings()
+            payload["guide_dismissed"] = True
+            _write_settings(payload)
+        except Exception:
+            # 吞的是「写设置文件」这类失败（磁盘只读/路径不可用）—— 引导下次还会弹，
+            # 但不该因此影响页面使用
+            log.exception("保存大盘页设置失败（引导下次仍会显示）")
 
     @Slot(int)
     def setRangeIndex(self, index: int) -> None:
@@ -1235,6 +1517,13 @@ class MarketPulseBridge(QObject):
             return
         self._range_index = int(index)
         self._range_days = RANGE_OPTIONS[self._range_index]
+        # 粒度也落盘（下次打开还是这个粒度）；失败只记日志，不影响切换
+        try:
+            settings = _read_settings()
+            settings["range_index"] = self._range_index
+            _write_settings(settings)
+        except Exception:
+            log.exception("保存折线粒度失败")
         self._rebuild_series()
         # 图例的「现值 · 30 日涨跌」在重建后要重新贴上
         by_key = {card["key"]: card for card in self._cards}
