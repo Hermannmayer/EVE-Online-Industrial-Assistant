@@ -28,6 +28,49 @@ MCOLS = [
 ]
 TCOLS = [("花费", 105, "tc"), ("收入", 105, "tr"), ("收益", 75, "_tag"), ("利润率%", 70, "tm"), ("每方利率", 90, "tpm")]
 
+#: 状态码 → 中文（`ms` 列）
+_STATUS_TEXT = {
+    "no_blueprint": "无蓝图",
+    "no_price": "无价格",
+    "no_materials": "无材料",
+    "no_depth": "市场无买单",
+}
+
+#: 两位小数的金额列
+_MONEY_KEYS = ("bp", "sp", "ap", "mc", "mr", "tc", "tr")
+#: 一位小数的比率列
+_RATE_KEYS = ("mm", "tm", "tpm", "mdp", "_tag_sort")
+#: 整数均值列（近 N 日订单量 / 成交量）—— `None` 是「查不到」，与 0 不同，都走 DASH
+_COUNT_KEYS = ("oc", "ocv")
+
+
+def display_text(row: dict, key: str) -> str:
+    """单元格的显示文本（千分位 / `DASH` 占位）。
+
+    **独立成函数是为了给列宽实测复用**：`data()` 与 `ManufacturableItemsBridge`
+    的「按内容自适应列宽」必须看到同一份文本，否则量出来的宽度和画出来的字对不上
+    （先例：`plan_table_bridge` 也是拿模型的文本角色量宽）。
+    """
+    v = row.get(key)
+    if key in _MONEY_KEYS:
+        return f"{v:,.2f}" if isinstance(v, int | float) and v is not None else DASH
+    if key == "_tag":
+        return v or DASH
+    if key in _RATE_KEYS:
+        return f"{float(v):,.1f}" if v is not None else DASH
+    if key in _COUNT_KEYS:
+        return f"{v:,.0f}" if isinstance(v, int | float) and v is not None else DASH
+    if key == "mh":
+        return f"{v:.2f}" if isinstance(v, int | float) and v else DASH
+    if key == "ms":
+        # 状态码 → 中文；没登记过的码原样回显，空/None 走 DASH（与旧实现同义）
+        return _STATUS_TEXT.get(str(v), str(v)) if v else DASH
+    if key in ("z", "e"):
+        return v or ""
+    if key == "v":
+        return f"{v:,.2f}" if v else DASH
+    return str(v) if v is not None else ""
+
 
 class AModel(QAbstractTableModel):
     def __init__(self):
@@ -58,22 +101,7 @@ class AModel(QAbstractTableModel):
         _, _, k = self._cols[idx.column()]
         v = r.get(k)
         if role == Qt.ItemDataRole.DisplayRole:
-            if k in ("bp", "sp", "ap", "mc", "mr", "tc", "tr"):
-                return f"{v:,.2f}" if isinstance(v, int | float) and v is not None else DASH
-            if k in ("_tag",):
-                return v or DASH
-            if k in ("mm", "tm", "tpm", "mdp", "_tag_sort"):
-                return f"{float(v):,.1f}" if v is not None else DASH
-            if k == "mh":
-                return f"{v:.2f}" if isinstance(v, int | float) and v else DASH
-            if k == "ms":
-                s = {"no_blueprint": "无蓝图", "no_price": "无价格", "no_materials": "无材料", "no_depth": "市场无买单"}
-                return s.get(v, v) or DASH
-            if k in ("z", "e"):
-                return v or ""
-            if k == "v":
-                return f"{v:,.2f}" if v else DASH
-            return str(v) if v is not None else ""
+            return display_text(r, k)
         if role == Qt.ItemDataRole.DecorationRole and k == "i":
             pix = load_item_icon(r.get("id"), size=30)
             if pix is not None:

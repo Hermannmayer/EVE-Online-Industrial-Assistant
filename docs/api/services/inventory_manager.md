@@ -317,7 +317,7 @@ def _move_item_row(conn: sqlite3.Connection, src_hangar: int, type_id: int, targ
 ### `apply_inventory_import`
 
 ```python
-def apply_inventory_import(hangar_id: int, data: list[tuple[int, int, float, int | None]], mode: str, targets: dict[int, int] | None=None) -> tuple[int, int]
+def apply_inventory_import(hangar_id: int, data: list[tuple[int, int, float, int | None]], mode: str, targets: dict[int, int] | None=None, clear_missing: dict[int, int] | None=None) -> tuple[int, int]
 ```
 
 按导入数据应用库存变更，返回 (added, moved)。
@@ -334,7 +334,7 @@ def get_total_value(hangar_id: int, price_type: str='sell', discount: float=0) -
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`746`
+定义行：`760`
 
 ### `add_blueprint`
 
@@ -344,7 +344,7 @@ def add_blueprint(hangar_id: int, blueprint_type_id: int, is_bpo: bool=True, me_
 
 新增蓝图。conn 传入时在同一连接执行且不提交（由调用方统一事务）。
 
-定义行：`778`
+定义行：`792`
 
 ### `get_blueprints`
 
@@ -354,7 +354,7 @@ def get_blueprints(hangar_id: int | None=None) -> list[dict]
 
 获取用户蓝图列表，可指定机库或全部
 
-定义行：`807`
+定义行：`821`
 
 ### `update_blueprint`
 
@@ -364,7 +364,7 @@ def update_blueprint(bp_id: int, *, conn=None, **kwargs) -> bool
 
 更新蓝图属性，kwargs 可含 is_bpo, me_level, te_level, runs, quantity, notes
 
-定义行：`847`
+定义行：`861`
 
 ### `delete_blueprint`
 
@@ -374,7 +374,7 @@ def delete_blueprint(bp_id: int, *, conn=None) -> bool
 
 删除蓝图。conn 传入时在同一连接执行且不提交（由调用方统一事务）。
 
-定义行：`872`
+定义行：`886`
 
 ### `delete_blueprints_batch`
 
@@ -384,7 +384,7 @@ def delete_blueprints_batch(ids: list[int]) -> int
 
 批量删除蓝图，返回删除行数
 
-定义行：`894`
+定义行：`908`
 
 ### `move_blueprints_to_hangar`
 
@@ -394,7 +394,7 @@ def move_blueprints_to_hangar(ids: list[int], hangar_id: int) -> int
 
 批量移动蓝图到目标机库
 
-定义行：`916`
+定义行：`930`
 
 ### `update_blueprints_batch`
 
@@ -404,7 +404,7 @@ def update_blueprints_batch(ids: list[int], **kwargs) -> int
 
 批量更新蓝图属性（me_level, te_level, runs, cost_per_run 等）
 
-定义行：`927`
+定义行：`941`
 
 ### `get_blueprint_product_info`
 
@@ -414,7 +414,7 @@ def get_blueprint_product_info(blueprint_type_id: int) -> dict | None
 
 获取蓝图的产物信息（名称、产量、制造时间）
 
-定义行：`944`
+定义行：`958`
 
 ### `get_blueprint_product_info_batch`
 
@@ -424,7 +424,7 @@ def get_blueprint_product_info_batch(bp_ids: list[int]) -> dict[int, dict]
 
 批量获取蓝图产物信息，返回 &#123;blueprint_type_id: &#123;product_type_id, product_name, product_quantity, base_time&#125;&#125;
 
-定义行：`974`
+定义行：`988`
 
 ### `get_blueprint_materials_batch`
 
@@ -434,7 +434,7 @@ def get_blueprint_materials_batch(bp_ids: list[int]) -> dict[int, list[tuple[int
 
 批量获取蓝图材料，返回 &#123;blueprint_type_id: [(material_type_id, quantity), ...]&#125;
 
-定义行：`1005`
+定义行：`1019`
 
 ### `check_blueprint_exists`
 
@@ -444,7 +444,7 @@ def check_blueprint_exists(blueprint_type_id: int) -> bool
 
 检查用户蓝图库中是否已存在指定类型的蓝图
 
-定义行：`1026`
+定义行：`1040`
 
 ### `get_blueprint_tech_levels`
 
@@ -454,7 +454,7 @@ def get_blueprint_tech_levels()
 
 从 reference.db 获取各蓝图的科技等级
 
-定义行：`1034`
+定义行：`1048`
 
 ### `get_blueprint_reaction_ids`
 
@@ -464,7 +464,7 @@ def get_blueprint_reaction_ids() -> set[int]
 
 获取所有反应公式的 blueprint_type_id
 
-定义行：`1071`
+定义行：`1085`
 
 ### `format_blueprint_status`
 
@@ -474,7 +474,49 @@ def format_blueprint_status(statuses: Iterable[str]) -> str
 
 状态集合 → 显示串：按 `BLUEPRINT_STATUSES` 顺序以 ` · ` 连接；全未命中 → `-`。
 
-定义行：`1107`
+定义行：`1121`
+
+### `_in_batches`
+
+```python
+def _in_batches(type_ids: list[int]) -> Iterator[list[int]]
+```
+
+::: warning ⚠️ 待补 docstring
+此函数暂无 docstring，欢迎补充。
+:::
+
+定义行：`1138`
+
+### `_stocked_type_ids`
+
+```python
+def _stocked_type_ids(conn: sqlite3.Connection, type_ids: list[int]) -> set[int]
+```
+
+库中有成品：`inventory_items.quantity > 0`，**全部机库合计**（不限当前机库）。
+
+定义行：`1143`
+
+### `_listed_type_ids`
+
+```python
+def _listed_type_ids(conn: sqlite3.Connection, type_ids: list[int]) -> set[int]
+```
+
+有挂单：`open_orders.volume_remain > 0`，**买单卖单都算**（没筛 `is_buy`）。
+
+定义行：`1158`
+
+### `get_stock_and_order_flags`
+
+```python
+def get_stock_and_order_flags(type_ids: Iterable[int], db: DatabaseManager | None=None) -> dict[int, tuple[bool, bool]]
+```
+
+批量取 `&#123;type_id: (库中有, 有挂单)&#125;`，只含命中项（未命中视为 `(False, False)`）。
+
+定义行：`1173`
 
 ### `get_blueprint_status_map`
 
@@ -484,4 +526,4 @@ def get_blueprint_status_map(rows: Iterable[dict[str, Any]]) -> dict[int, str]
 
 批量取蓝图「状态」列显示串，返回 `&#123;user_blueprints.id: 显示串&#125;`。
 
-定义行：`1116`
+定义行：`1191`

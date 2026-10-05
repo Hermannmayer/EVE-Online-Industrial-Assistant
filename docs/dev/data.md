@@ -24,6 +24,7 @@
 |----|------|------|
 | `market_prices` | type_id, buy_price, sell_price, buy_volume, sell_volume, fetch_time | 实时订单价格快照 |
 | `market_volume_snapshots` | type_id, volume, fetch_time | 成交量快照 |
+| `price_history` | type_id, region_id, date, average, highest, lowest, volume, order_count, fetched_at；主键 `(type_id, region_id, date)` | 可制造/反应产物的**日级**市场历史，「日订单量 / 日成交量」两列的来源。写入方有两处：`services/importers/getprices.fetch_and_save_histories`（「更新价格」流程，**只拉 Jita**、按 12h TTL 增量、每 `(type_id, region_id)` 只保留近 180 天）与 `services/price_history.save_cache`（价格走势图，单 type 全量覆盖写）。建表 DDL 单一来源是 `services/price_history.PRICE_HISTORY_DDL` |
 
 ### blueprint.db — 蓝图数据
 

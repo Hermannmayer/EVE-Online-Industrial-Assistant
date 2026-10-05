@@ -4,7 +4,7 @@
 
 import json
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -1127,6 +1127,67 @@ def format_blueprint_status(statuses: Iterable[str]) -> str:
     return " · ".join(s for s in BLUEPRINT_STATUSES if s in hit) or "-"
 
 
+# ── 库存 / 挂单标记 ────────────────────────────────────────────
+# 「库中有成品」「有挂单」两条口径的唯一实现：仓库页的状态列（`get_blueprint_status_map`）
+# 与可制造物品窗口的库存标记（`get_stock_and_order_flags`）共用，不写第二套 SQL。
+
+#: `IN (...)` 分批上限（SQLite 变量上限 999，留余量）
+_IN_BATCH_SIZE = 900
+
+
+def _in_batches(type_ids: list[int]) -> Iterator[list[int]]:
+    for start in range(0, len(type_ids), _IN_BATCH_SIZE):
+        yield type_ids[start : start + _IN_BATCH_SIZE]
+
+
+def _stocked_type_ids(conn: sqlite3.Connection, type_ids: list[int]) -> set[int]:
+    """库中有成品：`inventory_items.quantity > 0`，**全部机库合计**（不限当前机库）。"""
+    out: set[int] = set()
+    for batch in _in_batches(type_ids):
+        placeholders = ",".join("?" * len(batch))
+        out.update(
+            row[0]
+            for row in conn.execute(
+                f"SELECT DISTINCT type_id FROM inventory_items WHERE quantity > 0 AND type_id IN ({placeholders})",
+                batch,
+            ).fetchall()
+        )
+    return out
+
+
+def _listed_type_ids(conn: sqlite3.Connection, type_ids: list[int]) -> set[int]:
+    """有挂单：`open_orders.volume_remain > 0`，**买单卖单都算**（没筛 `is_buy`）。"""
+    out: set[int] = set()
+    for batch in _in_batches(type_ids):
+        placeholders = ",".join("?" * len(batch))
+        out.update(
+            row[0]
+            for row in conn.execute(
+                f"SELECT DISTINCT type_id FROM open_orders WHERE volume_remain > 0 AND type_id IN ({placeholders})",
+                batch,
+            ).fetchall()
+        )
+    return out
+
+
+def get_stock_and_order_flags(
+    type_ids: Iterable[int], db: DatabaseManager | None = None
+) -> dict[int, tuple[bool, bool]]:
+    """批量取 `{type_id: (库中有, 有挂单)}`，只含命中项（未命中视为 `(False, False)`）。
+
+    口径与仓库页「状态」列逐字一致（`inventory_items.quantity > 0` 全机库合计、
+    `open_orders.volume_remain > 0` 不筛买卖方向）。空输入 → `{}`；
+    `db` 缺省走 `_default_db()`（测试可注入）。
+    """
+    ids = sorted({int(t) for t in type_ids})
+    if not ids:
+        return {}
+    with (db or _default_db()).connect("user") as conn:
+        stocked = _stocked_type_ids(conn, ids)
+        listed = _listed_type_ids(conn, ids)
+    return {tid: (tid in stocked, tid in listed) for tid in ids if tid in stocked or tid in listed}
+
+
 def get_blueprint_status_map(rows: Iterable[dict[str, Any]]) -> dict[int, str]:
     """批量取蓝图「状态」列显示串，返回 `{user_blueprints.id: 显示串}`。
 
@@ -1171,21 +1232,8 @@ def get_blueprint_status_map(rows: Iterable[dict[str, Any]]) -> dict[int, str]:
 
     with _default_db().connect("user", "bp") as conn:
         if product_ids:
-            placeholders = ",".join("?" * len(product_ids))
-            stocked = {
-                row[0]
-                for row in conn.execute(
-                    f"SELECT DISTINCT type_id FROM inventory_items WHERE quantity > 0 AND type_id IN ({placeholders})",
-                    product_ids,
-                ).fetchall()
-            }
-            listed = {
-                row[0]
-                for row in conn.execute(
-                    f"SELECT DISTINCT type_id FROM open_orders WHERE volume_remain > 0 AND type_id IN ({placeholders})",
-                    product_ids,
-                ).fetchall()
-            }
+            stocked = _stocked_type_ids(conn, product_ids)
+            listed = _listed_type_ids(conn, product_ids)
             for row_id in row_ids:
                 product_id = product_by_row.get(row_id)
                 if product_id is None:

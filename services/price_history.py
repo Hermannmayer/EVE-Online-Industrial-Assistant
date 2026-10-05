@@ -15,25 +15,31 @@ REGION_ID = 10000002  # The Forge
 # Cache TTL: 1 hour (ESI history updates daily, 1h is conservative)
 CACHE_TTL_SECONDS = 3600
 
+#: `price_history` 的建表语句 —— **单一来源**。
+#: 除了这里的 `_ensure_table`，「更新价格」流程（`services/importers/getprices.py`）也会
+#: 用 aiosqlite 直接写这张表，两边必须完全一致，所以 DDL 只留这一份。
+#: market.db 是可重建缓存，故不走 `schema_migrations`（克制条款第 3 条）。
+PRICE_HISTORY_DDL = """
+    CREATE TABLE IF NOT EXISTS price_history (
+        type_id INTEGER NOT NULL,
+        region_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        average REAL NOT NULL,
+        highest REAL NOT NULL DEFAULT 0,
+        lowest REAL NOT NULL DEFAULT 0,
+        volume INTEGER NOT NULL DEFAULT 0,
+        order_count INTEGER NOT NULL DEFAULT 0,
+        fetched_at TEXT NOT NULL,
+        PRIMARY KEY (type_id, region_id, date)
+    )
+"""
+
 
 def _ensure_table(db=None) -> None:
     """Ensure price_history table exists in market.db"""
     conn_mgr = db or get_db()
     with conn_mgr.connect("mkt") as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS price_history (
-                type_id INTEGER NOT NULL,
-                region_id INTEGER NOT NULL,
-                date TEXT NOT NULL,
-                average REAL NOT NULL,
-                highest REAL NOT NULL DEFAULT 0,
-                lowest REAL NOT NULL DEFAULT 0,
-                volume INTEGER NOT NULL DEFAULT 0,
-                order_count INTEGER NOT NULL DEFAULT 0,
-                fetched_at TEXT NOT NULL,
-                PRIMARY KEY (type_id, region_id, date)
-            )
-        """)
+        conn.execute(PRICE_HISTORY_DDL)
 
 
 async def fetch_history(
@@ -124,6 +130,71 @@ def save_cache(type_id: int, region_id: int, data: list[dict], _db=None) -> None
                     now,
                 ),
             )
+
+
+#: 「日订单量 / 日成交量」两列默认的聚合窗口（天）。
+#: 与 `CACHE_TTL_SECONDS` 无关：那个管「多久算过期」，这个管「平均几天」。
+SUMMARY_DAYS = 7
+
+#: 一次 SQL 里 `IN (...)` 的参数个数上限（SQLite 变量上限的保守取值，与 blueprint_repository 同口径）
+_SQL_PARAM_CHUNK = 900
+
+
+def get_history_summary(
+    type_ids,
+    region_id: int = REGION_ID,
+    days: int = SUMMARY_DAYS,
+    _db=None,
+) -> dict[int, dict]:
+    """读本地缓存，算出「近 `days` 天平均订单量 / 成交量」→ `{type_id: {...}}`。
+
+    载荷：`{"oc": 平均 order_count | None, "vol": 平均 volume | None,
+    "days": 参与平均的天数, "last": 最新一条历史的日期}`。
+
+    **窗口按「最近 `days` 条记录」取，不是「最近 days 个日历天」**：历史是按天入库的，
+    但某个 type 可能只在打开价格走势图时被拉过一次，日期停在几个月前 —— 按日历窗口会让
+    整列变空，而「最近 7 条」总能回答「上次有数据时一天卖多少」。
+
+    查不到的 type **不出现在返回值里**（调用方 `.get(id)` 即得 `None` → 表格显示 `—`）：
+    这里**不用 0 冒充「查不到」**，0 是「确实没人下单」。
+    """
+    ids = [int(t) for t in type_ids if t]
+    if not ids:
+        return {}
+
+    conn_mgr = _db or get_db()
+    with conn_mgr.connect("mkt") as conn:
+        # 只读路径不做 DDL：表还没建（从没打开过价格走势图、也从没更新过价格）就是没有数据
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_history'").fetchone():
+            return {}
+
+        out: dict[int, dict] = {}
+        for start in range(0, len(ids), _SQL_PARAM_CHUNK):
+            chunk = ids[start : start + _SQL_PARAM_CHUNK]
+            ph = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"""
+                SELECT type_id, AVG(order_count) AS oc, AVG(volume) AS vol,
+                       COUNT(*) AS n, MAX(date) AS last
+                FROM (
+                    SELECT type_id, order_count, volume, date,
+                           ROW_NUMBER() OVER (PARTITION BY type_id ORDER BY date DESC) AS rn
+                    FROM price_history
+                    WHERE region_id = ? AND type_id IN ({ph})
+                )
+                WHERE rn <= ?
+                GROUP BY type_id
+                """,
+                (region_id, *chunk, days),
+            ).fetchall()
+            for tid, oc, vol, n, last in rows:
+                out[int(tid)] = {
+                    "oc": float(oc) if oc is not None else None,
+                    "vol": float(vol) if vol is not None else None,
+                    "days": int(n),
+                    "last": last,
+                }
+        return out
 
 
 class PriceHistoryService:

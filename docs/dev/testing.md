@@ -45,6 +45,12 @@ scripts/run_tests.sh full       # validate + ui-retest 两阶段
 > 在 Windows 上强行 `QT_QPA_PLATFORM=offscreen` 跑 `test_qml_*.py` 会让 `PageHost` 加载页签时挂死
 > —— 表现为卡满 `pyproject.toml` 里 `faulthandler_timeout = 120` 的整点超时、栈停在
 > `tests/qml_page_load.py::page_host`（2026-09-26 实测，同一用例去掉该变量后 1.3s 通过）。
+>
+> **这条现在有硬门**：`tests/conftest.py` 的 `offscreen_is_forbidden()` 在
+> 「Windows + `QT_QPA_PLATFORM=offscreen`」时会**直接拒绝这次跑测**并打印原因（逃生开关
+> `EVE_ALLOW_OFFSCREEN_TESTS=1`）。2026-10-05 又踩了一次同一个坑：`tests/test_qt_noise.py`
+> 真平台 2.36s 通过、offscreen 卡死；`tests/test_qml_dialogs.py` 同样是「offscreen 卡第一个用例、
+> 真平台全绿」。判定表见 `tests/test_test_env_guards.py`。
 
 ## 测试分档与标记
 

@@ -39,14 +39,19 @@ class PriceUpdateWorker(QThread):
     """后台线程执行价格更新"""
 
     finished_signal = Signal(bool, str)  # success, message
+    progress = Signal(int, int, str)  # value, maximum, text（订单簿 + 市场历史两步共用）
 
     def __init__(self, regions: list[str] | None = None, parent=None):
         super().__init__(parent)
         self._regions = regions
 
+    def _emit_progress(self, pct: int, message: str) -> None:
+        """`run_price_update` 的进度回调 → 信号（信号签名带最大值，这里固定 100）。"""
+        self.progress.emit(int(pct), 100, str(message))
+
     def run(self):
         try:
-            getprices.run_price_update(self._regions)
+            getprices.run_price_update(self._regions, self._emit_progress)
             self.finished_signal.emit(True, "价格更新完成")
         except Exception as e:
             log.exception("价格更新数据一致性检查失败: %s", e)

@@ -18,13 +18,16 @@ class TreeW(QThread):
 class ItemsW(QThread):
     done = Signal(list)
 
-    def __init__(self, ids=None, rid: int = 0, parent=None):
+    def __init__(self, ids=None, rid: int = 0, parent=None, manufacturable_only: bool = False):
         super().__init__(parent)
         self._ids = ids
         self._rid = rid
+        #: 「可制造物品」窗口传 True → 过滤下推到 SQL（见 `fetch_items`）；
+        #: 全物品窗口保持默认 False，行为不变。
+        self._manufacturable_only = bool(manufacturable_only)
 
     def run(self):
-        self.done.emit(fetch_items(self._ids, self._rid or JITA_RID))
+        self.done.emit(fetch_items(self._ids, self._rid or JITA_RID, self._manufacturable_only))
 
 
 class SearchItemsW(QThread):

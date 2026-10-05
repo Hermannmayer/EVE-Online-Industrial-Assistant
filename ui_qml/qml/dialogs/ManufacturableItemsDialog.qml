@@ -3,25 +3,27 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
 
-/* 可制造物品浏览器（阶段 4b）—— 对照
- * `ui_pyside6/views/manufacturable_items_dialog.py::ManufacturableItemsDialog`。
+/* 可制造物品浏览器 —— 覆盖在游戏上使用的浮窗。
  *
- * 工具栏（刷新计算 / 设置 / 批量对比 / 导出 / 钉，居中）→ 筛选行（搜索 + 类别 + 状态）→
- * 3px 进度条 → 左「可制造分类树」右「表单（基础列 + 制造列）」的可拖动分栏。
- * 表的列固定是 基础列 + 制造列（这个窗口只做制造评分），没有全物品窗口的模式切换。
+ * 布局：工具栏（刷新计算 + **内联的评分设置**「中心 / 人物 / 设施税」+ 最右「置顶」）
+ * → 筛选行（搜索 / 类别 / 库存 / 日销量 / 利润率下限 / 状态）→ 3px 进度条 →
+ * 左「可制造分类树」右「表单」的可拖动分栏。
  *
- * 业务一律不在这里实现：每次交互都调 `mi.<方法>`，由
- * `ui_qml/bridge/manufacturable_items_bridge.py` 转给既有 worker / service / 原模型。
- * 分类树、线程收尾、「加入制造列表」落库与「制造材料」明细都与全物品窗口同一份实现。
+ * 与其它窗口统一的四件事（用户要求「按钮逻辑统一」）：
+ *   1. 功能按钮靠左、**置顶复选框贴最右**（与 `AllItemsDialog.qml` / `ProcurementWindow.qml`
+ *      同款）；没有二级「设置」对话框，设置项直接铺在工具栏。
+ *   2. 内联设置控件用 `onActivated / onValueModified` 主动回写，**不写属性绑定**
+ *      （写成 `currentIndex: model.indexOf(...)` 会被绑定立刻冲回去，见 `FPriceSourceRow.qml`）。
+ *   3. 已按需求删掉「批量对比」「导出」两个按钮。
+ *   4. **末列不再吃满剩余宽度**：列宽由桥按内容实测（`QFontMetrics`），越窄越好 ——
+ *      这个窗口要在游戏界面上层显示，不能遮住后面的游戏数据。
  *
- * 与原版逐条对齐 / 有意不同的地方：
- *   1. **分类树是「带缩进的平表」**（QML 没有树控件），展开状态在桥里按 id 记。
- *   2. **表头可点排序**：排序规则仍走 `Proxy.lessThan`（原 `setSortingEnabled(True)`）。
- *   3. **末列吃满剩余宽度**：即原版 `setStretchLastSection(True)` 的行为。
- *   4. **Ctrl+C / Ctrl+A 用 `Shortcut`** 实现（原版是 `keyPressEvent`）：
- *      Ctrl+C 复制当前行；Ctrl+A 原版是「全选 + 复制」，QML 表只有单行选中，
- *      于是直接复制整表 —— 同一件事的超集。
- *   5. 行点击一律走 `FTableClickArea`，分类树同理（见该组件头部）。
+ * 表格列：图标 / 中文名 / English / 买价(hub) / 卖价(hub) / 成本 / 收入 / 产能·天 /
+ * 日订单量 / 日成交量 / 状态 / 利润率%（已按需求删掉「均价 / 体积 / 日利润 / 收益」）。
+ * 「日订单量 / 日成交量」是近 7 日平均（`order_count` / `volume`），由主界面右上角的
+ * 「更新价格」统一拉取到本地 —— 本窗口零 ESI 请求。
+ *
+ * 业务一律不在这里实现：每次交互都调 `mi.<方法>`，由桥转给既有 worker / service。
  */
 
 Item {
@@ -37,19 +39,15 @@ Item {
     readonly property int headerH: Math.max(26, fntSmall + 15)
     readonly property int treeRowH: Math.max(20, Math.round(13 * Theme.fontScale) + 8)
     readonly property int treeIndent: Math.round(12 * Theme.fontScale)
+    //: 内联设置控件的高度（与 FDoubleSpinBox / FComboBox / FTextField 一致）
+    readonly property int ctlW: 130
 
-    /* 列宽：`TableView` 的 provider 与点击区必须同口径。末列吃满剩余空间
-     * （原版 `setStretchLastSection(True)`；列超出视口时没有剩余，等于原宽）。 */
+    /* 列宽：`TableView` 的 provider 与点击区必须同口径。
+     * **不再把剩余宽度补给末列**（那是「列固定宽 + 铺满视口」的老口径）：宽度由桥按
+     * 内容实测，表格右侧留白好过把每一列都拉宽 —— 这是覆盖在游戏上的浮窗。 */
     function colWidth(col) {
         const cols = page.mi ? page.mi.columns : []
-        if (col >= cols.length)
-            return 0
-        if (col !== cols.length - 1)
-            return cols[col].width
-        let used = 0
-        for (let i = 0; i < col; ++i)
-            used += cols[i].width
-        return Math.max(cols[col].width, tableView.width - used)
+        return col < cols.length ? cols[col].width : 0
     }
 
     Rectangle {
@@ -76,16 +74,13 @@ Item {
         spacing: 1
 
         // ═══════════════════════════════════════════════════════
-        //  1. 工具栏（原版两侧各一个 stretch —— 按钮居中）
+        //  1. 工具栏：功能按钮 + 内联评分设置 + 最右「置顶」
         // ═══════════════════════════════════════════════════════
 
         RowLayout {
+            objectName: "mfgToolbar"
             Layout.fillWidth: true
             spacing: Theme.spacingXs
-
-            Item {
-                Layout.fillWidth: true
-            }
 
             FButton {
                 objectName: "refreshButton"
@@ -94,36 +89,67 @@ Item {
                     page.mi.refreshScores()
             }
 
-            FButton {
-                objectName: "settingsButton"
-                text: qsTr("设置")
-                onClicked: if (page.mi)
-                    page.mi.openMfgSettings()
+            // ── 内联设置：中心 / 人物 / 设施税（原「设置」二级对话框的三个字段）──
+            Text {
+                text: qsTr("中心:")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: page.fntSmall
             }
 
-            FButton {
-                objectName: "compareButton"
-                text: qsTr("批量对比")
-                onClicked: if (page.mi)
-                    page.mi.openCompare()
+            FComboBox {
+                objectName: "hubBox"
+                implicitWidth: page.ctlW
+                model: page.mi ? page.mi.hubs : []
+                currentIndex: page.mi ? page.mi.hubIndex : 0
+                onActivated: if (page.mi)
+                    page.mi.setHubIndex(currentIndex)
             }
 
-            FButton {
-                objectName: "exportButton"
-                text: qsTr("导出")
-                onClicked: if (page.mi)
-                    page.mi.exportData()
+            Text {
+                text: qsTr("人物:")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: page.fntSmall
             }
 
-            FButton {
-                objectName: "pinButton"
-                text: page.mi ? page.mi.pinLabel : qsTr("钉")
-                onClicked: if (page.mi)
-                    page.mi.setPinned(!page.mi.pinned)
+            FComboBox {
+                objectName: "charBox"
+                implicitWidth: page.ctlW
+                model: page.mi ? page.mi.characters : []
+                currentIndex: page.mi ? page.mi.charIndex : 0
+                onActivated: if (page.mi)
+                    page.mi.setCharIndex(currentIndex)
+            }
+
+            Text {
+                text: qsTr("设施税:")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: page.fntSmall
+            }
+
+            FDoubleSpinBox {
+                objectName: "taxBox"
+                implicitWidth: 90
+                from: 0
+                to: 100
+                decimals: 2
+                value: page.mi ? page.mi.tax : 0
+                onValueModified: if (page.mi)
+                    page.mi.setTax(value)
             }
 
             Item {
                 Layout.fillWidth: true
+            }
+
+            FCheckBox {
+                objectName: "pinBox"
+                text: qsTr("置顶")
+                checked: page.mi ? page.mi.pinned : false
+                onToggled: if (page.mi)
+                    page.mi.setPinned(checked)
             }
         }
 
@@ -132,6 +158,7 @@ Item {
         // ═══════════════════════════════════════════════════════
 
         RowLayout {
+            objectName: "mfgFilterRow"
             Layout.fillWidth: true
             spacing: Theme.spacingXs
 
@@ -139,6 +166,7 @@ Item {
                 id: searchField
                 objectName: "searchField"
                 Layout.fillWidth: true
+                Layout.minimumWidth: 140
                 placeholderText: qsTr("搜索物品名称/ID...")
                 // 回写时加不等值判断：不加就是「设 text → textChanged → setSearchText → 属性变 → 重绑」的循环
                 text: page.mi ? page.mi.searchText : ""
@@ -155,7 +183,7 @@ Item {
 
             FComboBox {
                 objectName: "categoryBox"
-                implicitWidth: 190
+                implicitWidth: 170
                 model: page.mi ? page.mi.categories : []
                 currentIndex: page.mi ? page.mi.categoryIndex : 0
                 onActivated: if (page.mi)
@@ -163,8 +191,67 @@ Item {
             }
 
             Text {
+                text: qsTr("库存:")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: page.fntSmall
+            }
+
+            FComboBox {
+                objectName: "stockBox"
+                implicitWidth: 150
+                model: page.mi ? page.mi.stockFilters : []
+                currentIndex: page.mi ? page.mi.stockFilterIndex : 0
+                onActivated: if (page.mi)
+                    page.mi.setStockFilterIndex(currentIndex)
+            }
+
+            Text {
+                text: qsTr("日销量:")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: page.fntSmall
+            }
+
+            FComboBox {
+                objectName: "salesBox"
+                implicitWidth: 100
+                model: page.mi ? page.mi.salesFilters : []
+                currentIndex: page.mi ? page.mi.salesFilterIndex : 0
+                onActivated: if (page.mi)
+                    page.mi.setSalesFilterIndex(currentIndex)
+            }
+
+            Text {
+                text: qsTr("利润率 ≥")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: page.fntSmall
+            }
+
+            /* 阈值输入框：**空 = 不筛**（不能拿 0 当默认 —— 那会把亏损行默认滤掉）。
+             * 不限制只能输数字：非法输入桥侧一律当作「不筛」，比弹校验提示省事。 */
+            FTextField {
+                id: marginField
+                objectName: "marginField"
+                implicitWidth: 64
+                placeholderText: qsTr("不限")
+                text: page.mi ? page.mi.minMarginText : ""
+                onTextChanged: if (page.mi && text !== page.mi.minMarginText)
+                    page.mi.setMinMarginText(text)
+            }
+
+            Text {
+                text: qsTr("%")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: page.fntSmall
+            }
+
+            Text {
                 objectName: "statusText"
                 Layout.fillWidth: true
+                Layout.minimumWidth: 120
                 horizontalAlignment: Text.AlignRight
                 text: page.mi ? page.mi.statusText : ""
                 color: Theme.textSecondary
@@ -197,7 +284,7 @@ Item {
         }
 
         // ═══════════════════════════════════════════════════════
-        //  4. 左树 + 右表（原版是 QSplitter，初始 [140, 960]，树宽 100–250）
+        //  4. 左树 + 右表
         // ═══════════════════════════════════════════════════════
 
         SplitView {
@@ -205,7 +292,7 @@ Item {
             Layout.fillHeight: true
             orientation: Qt.Horizontal
 
-            // 1px 分隔条（原版 `QSplitter.setHandleWidth(1)`）
+            // 1px 分隔条
             handle: Rectangle {
                 implicitWidth: 1
                 implicitHeight: 1
@@ -214,9 +301,9 @@ Item {
 
             Rectangle {
                 objectName: "treePane"
-                SplitView.preferredWidth: 140
+                SplitView.preferredWidth: 130
                 SplitView.minimumWidth: 100
-                SplitView.maximumWidth: 250
+                SplitView.maximumWidth: 240
                 color: Theme.bgSurface
                 border.width: 1
                 border.color: Theme.border
@@ -239,6 +326,8 @@ Item {
                         required property var modelData
 
                         readonly property bool selected: page.mi && page.mi.selectedTreeId === treeRow.modelData.id
+                        //: 当前类别下这个分类里没有可制造物品 → 置灰（仍可点，点了表格给提示）
+                        readonly property bool empty: treeRow.modelData.empty === true
 
                         width: treeList.width
                         height: page.treeRowH
@@ -269,7 +358,7 @@ Item {
                             anchors.rightMargin: 4
                             anchors.verticalCenter: parent.verticalCenter
                             text: treeRow.modelData.name
-                            color: Theme.textPrimary
+                            color: (treeRow.empty && !treeRow.selected) ? Theme.textSecondary : Theme.textPrimary
                             font.family: Theme.fontFamily
                             font.pixelSize: page.fntSmall
                             elide: Text.ElideRight
@@ -354,7 +443,7 @@ Item {
                             horizontalAlignment: Text.AlignHCenter
                             text: (hcell.colMeta ? hcell.colMeta.title : "")
                                   // 必须同时挡 `page.mi`：`hcell.sorted` 是派生属性（带缓存），
-                                  // 桥变成 null 时它可能还是上一轮的 true，见 TradePage.qml 同款说明
+                                  // 桥变成 null 时它可能还是上一轮的 true
                                   + ((page.mi && hcell.sorted)
                                      ? (page.mi.sortAscending ? " ▲" : " ▼") : "")
                             color: Theme.textPrimary
@@ -377,10 +466,10 @@ Item {
                 TableView {
                     id: tableView
                     anchors.left: parent.left
-                    anchors.right: parent.right
                     anchors.top: headerView.bottom
                     anchors.bottom: parent.bottom
-
+                    // 列宽按内容实测、末列不铺满：表格宽度自己撑，超出就横向滚动
+                    width: Math.min(parent.width, contentWidth)
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
                     model: page.mi ? page.mi.model : null
@@ -473,6 +562,7 @@ Item {
                             rowMenu.row = row
                             rowMenu.typeId = info.typeId
                             rowMenu.itemName = info.name
+                            rowMenu.blueprintName = info.blueprintName
                             rowMenu.hasMfgDetail = info.hasMfgDetail
                             const p = mapToItem(page, x, y)
                             rowMenu.x = p.x
@@ -482,10 +572,15 @@ Item {
                     }
                 }
 
+                /* 空态：**说清原因**（「这个分类在当前类别下没有物品」与「没有数据」不是一回事），
+                 * 子树的置灰标记与它是配套的两半。 */
                 Text {
                     anchors.centerIn: parent
+                    width: Math.max(120, parent.width - 40)
                     visible: (page.mi ? page.mi.rowCount : 0) === 0
-                    text: qsTr("没有数据")
+                    text: page.mi ? page.mi.emptyText : qsTr("没有数据")
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
                     color: Theme.textSecondary
                     font.family: Theme.fontFamily
                     font.pixelSize: page.fntBase
@@ -504,9 +599,10 @@ Item {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  行右键菜单（对齐「全物品查询」窗口那一套）
+    //  行右键菜单
     //
     //  少一项「贸易核算明细」：本窗口只建了制造缓存，没有贸易模式。
+    //  复制项按需求只保留「名称 / 蓝图名称」（**没有**「复制ID」）。
     // ═══════════════════════════════════════════════════════════
 
     FMenu {
@@ -516,18 +612,30 @@ Item {
         property int row: -1
         property int typeId: 0
         property string itemName: ""
+        property string blueprintName: ""
         property bool hasMfgDetail: false
 
         FMenuItem {
-            text: qsTr("复制: ") + rowMenu.itemName
+            objectName: "copyNameItem"
+            text: qsTr("复制名称: ") + rowMenu.itemName
             onTriggered: if (page.mi)
                 page.mi.copyName(rowMenu.row)
         }
 
         FMenuItem {
-            text: qsTr("复制ID: ") + rowMenu.typeId
+            objectName: "copyBlueprintItem"
+            // 没有制造蓝图的物品不显示这一项（副标题里带蓝图名，选中前就知道复制的是什么）
+            visible: rowMenu.blueprintName !== ""
+            text: qsTr("复制蓝图名称: ") + rowMenu.blueprintName
             onTriggered: if (page.mi)
-                page.mi.copyId(rowMenu.row)
+                page.mi.copyBlueprintName(rowMenu.row)
+        }
+
+        FMenuItem {
+            objectName: "copyRowItem"
+            text: qsTr("复制整行")
+            onTriggered: if (page.mi)
+                page.mi.copyRow(rowMenu.row)
         }
 
         FMenuSeparator {}

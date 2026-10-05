@@ -533,3 +533,32 @@ class TestHangarReferences:
         assert im.get_hangar_name(old) == ""
         with full_db.connect("user") as conn:
             assert conn.execute("SELECT mat_hangar_id FROM production_plans WHERE id=1").fetchone()[0] == new
+
+
+@pytest.mark.parametrize(
+    ("type_ids", "expected"),
+    [
+        ([1001], {1001: (True, True)}),  # 库中有 + 有挂单同时命中
+        ([1003, 1004], {1003: (False, True), 1004: (False, True)}),  # 买单 / 卖单都算
+        ([1002, 9999], {}),  # quantity=0、volume_remain=0、查不到 → 不含
+        ([], {}),  # 空输入
+    ],
+)
+def test_stock_and_order_flags(inv_db, type_ids, expected):
+    """`get_stock_and_order_flags` 的口径必须与仓库页「状态」列逐字一致。
+
+    库中有 = `inventory_items.quantity > 0`（全部机库合计），有挂单 =
+    `open_orders.volume_remain > 0` 且**不筛 `is_buy`**（买单也算）；只含命中项。
+    """
+    import services.inventory_manager as im
+
+    hid = create_hangar("测试仓")
+    with im._default_db().connect("user") as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS open_orders (type_id INTEGER, volume_remain INTEGER, is_buy INTEGER)")
+        conn.execute(
+            "INSERT INTO inventory_items (hangar_id, type_id, quantity) VALUES (?, ?, ?), (?, ?, ?)",
+            (hid, 1001, 500, hid, 1002, 0),
+        )
+        conn.execute("INSERT INTO open_orders VALUES (1001, 10, 1), (1002, 0, 0), (1003, 7, 1), (1004, 3, 0)")
+
+    assert im.get_stock_and_order_flags(type_ids) == expected

@@ -51,9 +51,47 @@ class WatchlistBridge(QObject):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.checkPriceChanges)
         self._timer.start(CHECK_INTERVAL_MS)
+        #: 关机收尾标记（见 `shutdown`）：已排队的 timeout 事件可能还会到，到了就跳过
+        self._shutting_down = False
 
         self._remove_theme_listener = theme.add_theme_listener(self._on_theme_changed)
+        # 归属：页面 bridge 没有 QObject 父对象，外壳 `deleteLater()` 带不走它 —— 把
+        # 「外壳析构」也接成收尾触发点。两条都要接：`build_qml_page` 接的是**页面 Item**
+        # 销毁，而外壳析构时子对象的销毁顺序并不保证在 bridge 死之前
+        # （2026-10-05 整档实测：外壳的 `ShellWindowBridge` 已析构、本桥还在轮询）。
+        if isinstance(shell, QObject):
+            shell.destroyed.connect(self.shutdown)
         self.refresh()
+
+    # ── 关机收尾 ──────────────────────────────────────────────
+
+    def shutdown(self) -> None:
+        """页面/外壳销毁时收尾 —— **必须有**，否则本桥的常驻定时器会打已销毁的外壳。
+
+        为什么会有这个坑：页面 bridge 是 `registry.build_qml_page` 造出来直接塞进 QML
+        context 的，**没有 QObject 父对象**（context property 不接管所有权，同
+        `PageHost` 里那段说明）。于是外壳被 `deleteLater()` 掉时它不会跟着死，而
+        `self._timer` 每 60 秒就会 `checkPriceChanges → refresh → _push_status` →
+        `shell.set_status(...)` —— 外壳的 `ShellWindowBridge` 已经随窗口析构了，于是：
+
+            RuntimeError: Signal source has been deleted   （随后访问违例）
+
+        2026-10-05 整档 `-m ui` 就是这么崩的。触发点由 `build_qml_page` 统一接在
+        页面 Item 的 `destroyed` 上（`ShellWindow.closeEvent` 那条路只覆盖「关窗」，
+        覆盖不到 `deleteLater()`）。
+        """
+        self._shutting_down = True
+        self._timer.stop()
+        remover = getattr(self, "_remove_theme_listener", None)
+        if callable(remover):
+            remover()
+            self._remove_theme_listener = None
+        worker = self._suggest_worker
+        if worker is not None:
+            from ui_qml.workers.lifecycle import drop_worker
+
+            drop_worker(worker)
+            self._suggest_worker = None
 
     # ── 列表 ──────────────────────────────────────────────────
 
@@ -77,6 +115,9 @@ class WatchlistBridge(QObject):
         self._push_status()
 
     def _push_status(self) -> None:
+        # 已收尾（页面/外壳销毁）就什么都不做：排队的 timeout 可能比 `stop()` 晚到
+        if self._shutting_down:
+            return
         setter = getattr(self._shell, "set_status", None)
         if not callable(setter):
             return

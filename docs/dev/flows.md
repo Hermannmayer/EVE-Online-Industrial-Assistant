@@ -36,7 +36,10 @@ UI（工业页）→ workers/industry_workers.ScoreWorker
   **全库唯一的取价入口是主工具栏右上角的「更新价格」**
   （`shell/Main.qml` → `ShellWindow.trigger_price_update` → `request_price_update`），
   那条通道带单写者排队与进度条，页面不得自行起 `PriceUpdateWorker` —— 两个写者同时动
-  `market.db` 会撞锁。工业页的「刷新」是**例外**：它走 `PlanPriceRefreshWorker` 只拉当前
+  `market.db` 会撞锁。更新价格现在还会**按 TTL 增量**拉取可制造/反应产物的**市场历史**
+  （`market.db.price_history`，即「日订单量 / 日成交量」的来源；见
+  `services/importers/getprices.fetch_and_save_histories`）—— 页面同样不得自己拉 ESI。
+  工业页的「刷新」是**例外**：它走 `PlanPriceRefreshWorker` 只拉当前
   计划相关的 type_id（带 5 分钟缓存判定），不是全量更新，故保留在页面内。
 - 价格时效**直接显示在页面状态栏**：`{行数} · {A} {刚刚/35 分钟前/3 天前} / {B} {…}`，
   取数走 `market_browser_service.fetch_hub_fetch_time`（各中心 `MAX(fetch_time)`，
@@ -395,6 +398,11 @@ services.order_export.find_latest_export(None)   ← 目录固定游戏默认（
      geticon → PNG 图标缓存
 就绪判定：init_check.check_all（各 check_* 数行数）
 ```
+
+- 初始化里的价格步骤是 `getprices.fetch_baseline_only`（只拉 1 次 `/markets/prices/` 做兜底），
+  **不写市场历史**；`market.db.price_history` 由「更新价格」流程
+  （`getprices.main` → `fetch_and_save_histories`）按 12 小时 TTL 增量补，**只拉 Jita**
+  （读端固定按 Jita 聚合），每产物每区域只保留近 180 天。
 
 ## 角色配置
 
