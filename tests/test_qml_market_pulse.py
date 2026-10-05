@@ -377,6 +377,17 @@ def test_bridge_assembles_cards_chart_movers_and_chain(qapp, stubs):
     assert bridge._loading is False
     assert bridge.busy is False
 
+    # 折线图时间粒度（用户口径：「我想看近 7 日或者近 30 天的，这个时间粒度没有筛选」）：
+    # 默认拉满 180 天；切粒度**只切已加载的点**，不重读库
+    assert bridge.rangeIndex == 3 and list(bridge.rangeLabels)[:2] == ["近 7 天", "近 30 天"]
+    assert bridge.baseNote.startswith("基期")  # 图上必须写出「100 是从哪天开始」
+    calls_after_shown = len(stubs.index.calls)
+    bridge.setRangeIndex(1)
+    assert bridge.rangeIndex == 1
+    assert all(len(line["points"]) <= 30 for line in bridge.series)
+    assert len(stubs.index.calls) == calls_after_shown  # 切粒度不重读
+    assert "30 个交易日" in bridge.baseNote
+
 
 # ════════════════════════════════════════════════════════════
 #  页面层

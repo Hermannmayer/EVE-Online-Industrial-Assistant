@@ -348,6 +348,13 @@ def _card_view(raw: dict) -> dict:
     }
 
 
+#: 折线图的时间粒度（点数 = 交易日数）。用户口径：「如果我想看近 7 日或者近 30 天的，
+#: 这个时间粒度没有筛选」——图默认拉满 180 天，五条线挤在一起看不出近期的拐点。
+RANGE_OPTIONS: tuple[int, ...] = (7, 30, 90, 180)
+RANGE_LABELS: tuple[str, ...] = ("近 7 天", "近 30 天", "近 90 天", "近 180 天")
+DEFAULT_RANGE_INDEX = 3  # 默认 180 天（与「刷新指数」的物化窗口一致）
+
+
 def _series_views(raw_series: list[dict]) -> tuple[list[dict], list[dict], list[str]]:
     """`get_index_series` → `(原线, 7 日均线, 横轴日期标签)`。
 
@@ -862,6 +869,11 @@ class MarketPulseBridge(QObject):
         #: 上次读完的时间（`time.monotonic()`）——`_REFRESH_TTL_S` 内的切页直接复用
         self._loaded_at = 0.0
         self._load_worker: PulseLoadWorker | None = None
+        #: 折线图时间粒度（下标进 `RANGE_OPTIONS`）+ 原始 180 天点位
+        self._range_index = DEFAULT_RANGE_INDEX
+        self._range_days = RANGE_OPTIONS[self._range_index]
+        self._series_raw: list[dict] = []
+        self._base_note = ""
 
         self._detail_open = False
         self._detail_title = ""
@@ -880,6 +892,12 @@ class MarketPulseBridge(QObject):
     displaySeries = Property(list, lambda self: self._ma7 if self._show_ma7 else self._series, notify=dataChanged)
     showMa7 = Property(bool, lambda self: self._show_ma7, notify=dataChanged)
     selectedKey = Property(str, lambda self: self._selected_key, notify=dataChanged)
+
+    #: 折线图时间粒度：`rangeLabels` 给 QML 画按钮，`rangeIndex` 是当前选项
+    rangeLabels = Property(list, lambda self: list(RANGE_LABELS), notify=dataChanged)
+    rangeIndex = Property(int, lambda self: self._range_index, notify=dataChanged)
+    #: 图上要写出来的基期说明（「基期 2026-03-04 = 100 · 当前显示最近 180 个交易日」）
+    baseNote = Property(str, lambda self: self._base_note, notify=dataChanged)
 
     @Slot(str)
     def selectIndex(self, key: str) -> None:
@@ -1034,12 +1052,14 @@ class MarketPulseBridge(QObject):
 
     def _apply_indices(self, cards_raw: list[dict], series_raw: list[dict]) -> None:
         self._cards = [_card_view(raw) for raw in cards_raw]
-        self._series, self._ma7, self._x_labels = _series_views(series_raw)
+        # 序列原始点位留一份（180 天），时间粒度筛选只**切点**，不重读库
+        self._series_raw = list(series_raw or [])
         self._members_by_key = _members_by_key(series_raw)
         # 卡片副标题（构成 N 个成分 + 权重口径）与「怎么看」提示：成员数只有这里知道
         for card in self._cards:
             members = self._members_by_key.get(card["key"]) or []
             card["subtitle"], card["toolTipText"] = _card_meta(card["key"], len(members))
+        self._rebuild_series()
         # 图例带上「现值 · 30 日涨跌」：五条线只看名字看不出各自在什么水平
         by_key = {card["key"]: card for card in self._cards}
         for line in self._series:
@@ -1052,6 +1072,27 @@ class MarketPulseBridge(QObject):
         for card in self._cards:
             card["selected"] = card["key"] == self._selected_key
         self._sync_members()
+
+    def _rebuild_series(self) -> None:
+        """按当前**时间粒度**切点并重建图例线（不发请求、不读库 —— 用户切粒度要瞬时）。
+
+        用户口径：「如果我想看近 7 日或者近 30 天的，这个时间粒度没有筛选」。
+        后端给的序列固定是 180 天，这里只按日期裁掉左边的点。
+        """
+        sliced: list[dict] = []
+        days = self._range_days
+        for item in self._series_raw or []:
+            points = list(item.get("points") or [])
+            if days and len(points) > days:
+                points = points[-days:]
+            sliced.append({**item, "points": points})
+        self._series, self._ma7, self._x_labels = _series_views(sliced)
+        # 基期说明：图上必须自己写出「100 从哪天开始」（用户问过），再补当前粒度
+        base = min((card["baseDate"] for card in self._cards if card.get("baseDate") not in ("", _DASH)), default="")
+        if base:
+            self._base_note = f"基期 {base} = 100 · 当前显示最近 {days} 个交易日"
+        else:
+            self._base_note = f"当前显示最近 {days} 个交易日（还没有基期）"
 
     def _apply_movers(self, raw: list[dict]) -> None:
         labels = {card["key"]: card["label"] for card in self._cards}
@@ -1186,6 +1227,22 @@ class MarketPulseBridge(QObject):
         if self._guide_visible:
             self._guide_visible = False
             self.guideChanged.emit()
+
+    @Slot(int)
+    def setRangeIndex(self, index: int) -> None:
+        """切折线图的时间粒度（近 7/30/90/180 天）—— 只切已加载的点，不重读库。"""
+        if not 0 <= index < len(RANGE_OPTIONS) or index == self._range_index:
+            return
+        self._range_index = int(index)
+        self._range_days = RANGE_OPTIONS[self._range_index]
+        self._rebuild_series()
+        # 图例的「现值 · 30 日涨跌」在重建后要重新贴上
+        by_key = {card["key"]: card for card in self._cards}
+        for line in self._series:
+            card = by_key.get(line["key"]) or {}
+            chg = _as_float(card.get("chg30"))
+            line["note"] = card.get("valueText", _DASH) + ("" if chg is None else f" · 30日 {_pct(chg)}")
+        self.dataChanged.emit()
 
     @Slot()
     def refreshIndex(self) -> None:

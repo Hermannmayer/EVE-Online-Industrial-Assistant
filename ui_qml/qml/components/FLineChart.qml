@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Shapes
 
 /* 通用折线图 —— 大盘指数与关注物品共用（**只画，不取数**）。
@@ -35,6 +36,12 @@ Item {
     //: 纵轴数值后缀（如 " % "）
     property string unit: ""
     property bool showLegend: true
+    //: 图例可否点击切换显隐（默认可以 —— 线一多就没法看，用户要求「点名字显示/隐藏那条线」）
+    property bool legendClickable: true
+    //: 图表左上角的补充说明（例如「基期 2026-03-04 = 100」）；空则不画
+    property string baseNote: ""
+    //: 被点掉的线（存 `label`；组件内部状态，不落盘）
+    property var hiddenLabels: []
     //: 没有任何点时显示的文案
     property string emptyText: qsTr("暂无数据")
 
@@ -58,6 +65,35 @@ Item {
         return false
     }
 
+    //: 图例被点掉之后**实际参与绘制**的线（轴范围也跟着它走，否则隐藏的线会把尺度带偏）
+    readonly property var visibleSeries: {
+        const rows = chart.series || []
+        const hidden = chart.hiddenLabels || []
+        return rows.filter(function (row, index) {
+            const key = row && row.label !== undefined ? row.label : String(index)
+            return hidden.indexOf(key) < 0
+        })
+    }
+
+    //: 点一下图例：显示 ↔ 隐藏（全隐藏时允许，用户自己再点回来）
+    function toggleLabel(label, index) {
+        if (!chart.legendClickable)
+            return
+        const key = (label !== undefined && label !== null && label !== "") ? label : String(index)
+        const next = (chart.hiddenLabels || []).slice()
+        const at = next.indexOf(key)
+        if (at >= 0)
+            next.splice(at, 1)
+        else
+            next.push(key)
+        chart.hiddenLabels = next
+    }
+
+    function isHidden(label, index) {
+        const key = (label !== undefined && label !== null && label !== "") ? label : String(index)
+        return (chart.hiddenLabels || []).indexOf(key) >= 0
+    }
+
     /* 一条线归一化后的纵值：`normalize` 时首点当 100，首点为 0/缺失则退回原始值。 */
     function valuesOf(row) {
         const out = []
@@ -71,11 +107,11 @@ Item {
         return out
     }
 
-    //: 全部线的纵值范围（空数据给 0..1，避免除零）
+    //: 全部**可见**线的纵值范围（空数据给 0..1，避免除零）—— 隐藏的线不该带偏尺度
     function valueRange() {
         let lo = Number.POSITIVE_INFINITY
         let hi = Number.NEGATIVE_INFINITY
-        const rows = chart.series || []
+        const rows = chart.visibleSeries
         for (let i = 0; i < rows.length; ++i) {
             const vs = chart.valuesOf(rows[i])
             for (let j = 0; j < vs.length; ++j) {
@@ -233,9 +269,10 @@ Item {
             }
         }
 
-        // 折线：倒序声明（先声明的在下层），让列表里靠前的线压在上面
+        // 折线：倒序声明（先声明的在下层），让列表里靠前的线压在上面；
+        // 只画 `visibleSeries`（图例点掉的线不画，轴范围也跟着它）
         Repeater {
-            model: chart.hasData ? (chart.series || []).slice().reverse() : []
+            model: chart.hasData ? chart.visibleSeries.slice().reverse() : []
 
             Shape {
                 required property var modelData
@@ -275,7 +312,23 @@ Item {
         }
     }
 
-    // 图例：色点 + 名称 + 末值（归一化时标「=100」，避免误读成绝对价）
+    /* 基期/口径说明（可选）：用户问「100 是从什么日期开始的」——图上必须自己写出来，
+     * 不能只把基期日期藏在小卡片里。 */
+    Text {
+        objectName: "flineChartBaseNote"
+        anchors.left: parent.left
+        anchors.leftMargin: chart.padL
+        anchors.top: parent.top
+        anchors.topMargin: Math.max(2, chart.padT - 2)
+        text: chart.baseNote
+        visible: chart.baseNote !== "" && chart.hasData
+        color: Theme.textSecondary
+        font.family: Theme.fontFamily
+        font.pixelSize: chart.fntSmall
+        elide: Text.ElideRight
+    }
+
+    // 图例：色点 + 名称 + 末值（归一化时标「=100」）；**可点击切换该线显示/隐藏**
     Row {
         id: legend
         anchors.left: parent.left
@@ -291,27 +344,51 @@ Item {
             model: chart.hasData ? chart.series : []
 
             Row {
+                id: legendItem
+
                 required property var modelData
+                required property int index
+
+                readonly property bool off: chart.isHidden(legendItem.modelData.label, legendItem.index)
+
                 spacing: 4
                 height: legend.height
+                opacity: legendItem.off ? 0.45 : 1.0
 
                 Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     width: Math.round(8 * Theme.fontScale)
                     height: width
                     radius: width / 2
-                    color: modelData.color
+                    color: legendItem.modelData.color
+                    // 隐藏的线：色点画成空心，一眼看出这条被点掉了
+                    border.width: legendItem.off ? 1 : 0
+                    border.color: legendItem.modelData.color
+                    opacity: legendItem.off ? 0 : 1
                 }
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
                     /* `note`（可选）：桥给的「现值 · 涨跌」补充 —— 五条线只看名字看不出
                      * 各自在什么水平、最近有没有动。 */
-                    text: modelData.label + (chart.normalize ? qsTr("（基期=100）") : "")
-                          + (modelData.note ? "  " + modelData.note : "")
-                    color: Theme.textSecondary
+                    text: legendItem.modelData.label + (chart.normalize ? qsTr("（基期=100）") : "")
+                          + (legendItem.modelData.note ? "  " + legendItem.modelData.note : "")
+                    color: legendItem.off ? Theme.textSecondary : Theme.textPrimary
                     font.family: Theme.fontFamily
                     font.pixelSize: chart.fntSmall
+                    font.strikeout: legendItem.off
+                }
+
+                MouseArea {
+                    objectName: "flineLegendToggle"
+                    anchors.fill: parent
+                    enabled: chart.legendClickable
+                    hoverEnabled: true
+                    cursorShape: chart.legendClickable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: chart.toggleLabel(legendItem.modelData.label, legendItem.index)
+
+                    ToolTip.visible: containsMouse && chart.legendClickable
+                    ToolTip.text: legendItem.off ? qsTr("点击显示这条线") : qsTr("点击隐藏这条线")
                 }
             }
         }

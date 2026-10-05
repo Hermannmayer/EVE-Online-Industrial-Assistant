@@ -558,12 +558,74 @@ Item {
                            ? qsTr("五大指数 · 7 日均线（基期=100）")
                            : qsTr("五大指数（基期=100）")
 
+                    /* 时间粒度：用户口径「我想看近 7 日或者近 30 天的，这个时间粒度没有筛选」。
+                     * 切粒度只切已加载的点（`setRangeIndex`），不重读库 → 瞬时。
+                     * ⚠️ `FPanel` 的子项塞在普通 `Item` 里，`Layout.*` 会被静默忽略 ——
+                     * 这里必须用 anchors 自己定位，图表再锚在它下面。 */
+                    RowLayout {
+                        id: rangeBar
+
+                        objectName: "rangeBar"
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        height: Math.round(24 * Theme.fontScale)
+                        spacing: 2
+
+                        Repeater {
+                            model: page.pulse ? page.pulse.rangeLabels : []
+
+                            Rectangle {
+                                required property var modelData
+                                required property int index
+
+                                readonly property bool active: page.pulse && page.pulse.rangeIndex === index
+
+                                Layout.preferredWidth: rangeLabel.implicitWidth + 2 * Math.round(10 * Theme.fontScale)
+                                Layout.fillHeight: true
+                                radius: Theme.radiusSmall
+                                color: active ? Theme.primary
+                                              : (rangeMouse.containsMouse ? Theme.bgHover : "transparent")
+                                border.width: active ? 0 : 1
+                                border.color: Theme.border
+
+                                Text {
+                                    id: rangeLabel
+                                    anchors.centerIn: parent
+                                    text: modelData
+                                    color: active ? Theme.textOnPrimary : Theme.textSecondary
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: page.fntSmall
+                                }
+
+                                MouseArea {
+                                    id: rangeMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: if (page.pulse)
+                                        page.pulse.setRangeIndex(index)
+                                }
+                            }
+                        }
+
+                        Item {
+                            Layout.fillWidth: true
+                        }
+                    }
+
                     FLineChart {
                         objectName: "pulseChart"
-                        anchors.fill: parent
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: rangeBar.bottom
+                        anchors.topMargin: 4
+                        anchors.bottom: parent.bottom
                         series: page.chartSeries(page.pulse ? page.pulse.displaySeries : [])
                         xLabels: page.pulse ? page.pulse.xLabels : []
                         normalize: true
+                        // 图上写明基期是哪天（用户问过「100 是从什么日期开始的」）
+                        baseNote: page.pulse ? page.pulse.baseNote : ""
                         emptyText: qsTr("暂无指数序列 —— 先在顶栏「更新价格」补历史，再点「刷新指数」")
                     }
                 }
