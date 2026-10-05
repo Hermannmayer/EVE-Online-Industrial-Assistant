@@ -13,10 +13,10 @@
 ------
 ==================  ==========================================================================
 ``mpi``             固定 8 种矿物（:data:`MPI_TYPES`），与 CCP MPI 一致
-``pppi``            初级投入品：被 manufacturing/reaction 当材料，**且它供入的产物本身又被当材料**
-                    （用途层级 ≥2，近似 CCP 的 ore/moon/PI/发明用品）
-``sppi``            次级投入品：被当材料，但供入的产物**不再被当材料**（直接供给消费品）
-``cpi``             消费品（代理）：有成交、不被任何蓝图当材料，按近 30 天成交额取 top-:data:`CPI_TOP_N`
+``pppi``            初级投入品：被**有效配方**当材料（:data:`VALID_RECIPE_NOTE`），
+                    **且它供入的产物本身又是生产投入品**（用途层级 ≥2，近似 CCP 的 ore/moon/PI/发明用品）
+``sppi``            次级投入品：是生产投入品，但供入的产物**不再是生产投入品**（直接供给消费品）
+``cpi``             消费品（代理）：有成交、**不是生产投入品**，按近 30 天成交额取 top-:data:`CPI_TOP_N`
 ``plex``            固定 44992（ISK 锚）
 ==================  ==========================================================================
 
@@ -36,6 +36,11 @@
 
 口径备注（实现时做的取舍，逐条写清）
 ------------------------------------
+- **「生产投入品」= 被 ≥ :data:`MIN_VALID_RECIPES` 张**有效配方**当材料**（:data:`VALID_RECIPE_NOTE`）：
+  二值判定（「被任何一张蓝图当材料」）会把**成品舰船**算成投入品 —— 因为 CCP 在 SDE 里留着
+  **游戏内造不出来**的占位配方（变体版蓝图 `帕拉丁级血袭者版蓝图` 之类），加上「海军型/舰队型」
+  这类真实但会拿 T1 舰身当材料的变体配方。实测口径对比见 :data:`MIN_VALID_RECIPES` 的注释：
+  两条一起用才把带「级」的成分从 151 个 / 52.4% 压到 7 个 / 5.1%（零舰船）。
 - **PPPI 判定方向**：计划 §3 的伪代码 `product_of(mat) ∈ materials` 读作「mat 供入的蓝图产物
   是否还被当材料」，即 `blueprint_materials × blueprint_products` 按 (blueprint_type_id, activity)
   自连接后看 `product_type_id` 是否在材料集合里。这与计划 §2.1 的「它的产物又被当材料（层级 ≥2）」
@@ -66,7 +71,7 @@ def clamp_return(value: float | None) -> float | None
 
 单成分日收益去极值：超过 :data:`RETURN_CLAMP`（±20%）按 ±20% 计。
 
-定义行：`161`
+定义行：`200`
 
 ### `weighted_median`
 
@@ -76,7 +81,7 @@ def weighted_median(values: Sequence[float], weights: Sequence[float]) -> float 
 
 成交量加权中位数（权重非正的样本不参与）。
 
-定义行：`172`
+定义行：`211`
 
 ### `cap_weights`
 
@@ -86,7 +91,7 @@ def cap_weights(raw: Mapping[K, float]) -> dict[K, tuple[float, bool]]
 
 成交额权重：单成分上限 :data:`WEIGHT_CAP`（25%）后按合计归一化。
 
-定义行：`199`
+定义行：`238`
 
 ### `_build_index`
 
@@ -96,7 +101,7 @@ def _build_index(obs: Mapping[int, Sequence[tuple[str, float, int]]], members: I
 
 把「成员 → 逐日 `(date, average, volume)`」链式累乘成指数。
 
-定义行：`221`
+定义行：`260`
 
 ### `_price_change`
 
@@ -106,7 +111,7 @@ def _price_change(rows: Sequence[tuple[str, float, int]], days: int) -> float | 
 
 成员自身近 `days` 个日历天的成交均价涨幅（%）—— 数据不足 → `None`。
 
-定义行：`315`
+定义行：`354`
 
 ### `_last_price`
 
@@ -116,7 +121,7 @@ def _last_price(rows: Sequence[tuple[str, float, int]], anchor: date | None) -> 
 
 成员在 `anchor` 日（含）之前**最近一次**成交均价；没有可用观测 → `None`（不用 0 冒充）。
 
-定义行：`331`
+定义行：`370`
 
 ### `_weights_at`
 
@@ -126,7 +131,7 @@ def _weights_at(obs: Mapping[int, Sequence[tuple[str, float, int]]], members: It
 
 以 `anchor` 为最后一天，算成员表用的 30 天成交额权重（准入 + 25% 上限 + 归一化）。
 
-定义行：`344`
+定义行：`383`
 
 ### `_table_exists`
 
@@ -134,11 +139,9 @@ def _weights_at(obs: Mapping[int, Sequence[tuple[str, float, int]]], members: It
 def _table_exists(conn, name: str) -> bool
 ```
 
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
+表是否存在。`name` 可以带库前缀（如 `ref.item`）—— 带前缀时查那张库的 `sqlite_master`。
 
-定义行：`372`
+定义行：`411`
 
 ### `_last_history_day`
 
@@ -148,7 +151,7 @@ def _last_history_day(conn_mgr, region_id: int) -> date | None
 
 最新**已补齐**的**成交**数据日（只看 `price_history`，覆盖数达标的那天）。
 
-定义行：`382`
+定义行：`432`
 
 ### `_last_day`
 
@@ -158,7 +161,7 @@ def _last_day(conn_mgr, region_id: int) -> date | None
 
 指数计算用的最新数据日：**成交**的已补齐日 与 **全服价**的最新日取较晚者。
 
-定义行：`406`
+定义行：`456`
 
 ### `_load_observations`
 
@@ -168,7 +171,7 @@ def _load_observations(conn_mgr, region_id: int, type_ids: Iterable[int], start:
 
 读 `price_history` → `&#123;type_id: [(date, average, volume), ...]&#125;`（按日期升序）。
 
-定义行：`424`
+定义行：`474`
 
 ### `_load_global_observations`
 
@@ -178,7 +181,7 @@ def _load_global_observations(conn, type_ids: Iterable[int], start: date, end: d
 
 读 `global_price_daily`（全服统一价）→ 与 `price_history` 同形的序列。
 
-定义行：`465`
+定义行：`515`
 
 ### `_load_names`
 
@@ -188,7 +191,7 @@ def _load_names(conn_mgr, type_ids: Iterable[int]) -> dict[int, str]
 
 `&#123;type_id: 中文名（退回英文名，再退回 #id）&#125;`；reference.db 没表 → `&#123;&#125;`。
 
-定义行：`492`
+定义行：`542`
 
 ### `_blueprint_classes`
 
@@ -196,9 +199,9 @@ def _load_names(conn_mgr, type_ids: Iterable[int]) -> dict[int, str]
 def _blueprint_classes(conn_mgr) -> tuple[set[int], set[int]]
 ```
 
-蓝图层级判定 → `(PPPI 候选, SPPI 候选)`（都取自「被 manufacturing/reaction 当材料」的 type）。
+蓝图层级判定 → `(PPPI 候选, SPPI 候选)`（都取自**生产投入品**）。
 
-定义行：`512`
+定义行：`562`
 
 ### `_cpi_candidates`
 
@@ -206,9 +209,9 @@ def _blueprint_classes(conn_mgr) -> tuple[set[int], set[int]]
 def _cpi_candidates(conn_mgr, region_id: int, materials: set[int], anchor: date | None) -> list[int]
 ```
 
-CPI 代理篮子：近 30 天成交额 top-:data:`CPI_TOP_N`，排除「被当材料」的 type。
+CPI 代理篮子：近 30 天成交额 top-:data:`CPI_TOP_N`，排除**生产投入品**（`materials`）。
 
-定义行：`547`
+定义行：`624`
 
 ### `_member_sets`
 
@@ -216,9 +219,9 @@ CPI 代理篮子：近 30 天成交额 top-:data:`CPI_TOP_N`，排除「被当�
 def _member_sets(conn_mgr, region_id: int, keys: Sequence[str], anchor: date | None) -> tuple[dict[str, set[int]], set[int]]
 ```
 
-`(&#123;key: 候选成分&#125;)`, `materials`。候选成分**未**做准入过滤（准入在逐日权重里做）。
+`(&#123;key: 候选成分&#125;)`, **生产投入品**集合（= PPPI ∪ SPPI）。候选成分**未**做准入过滤（准入在逐日权重里做）。
 
-定义行：`575`
+定义行：`655`
 
 ### `_build_for`
 
@@ -228,7 +231,7 @@ def _build_for(conn_mgr, region_id: int, keys: Sequence[str]) -> dict[str, _Inde
 
 实时计算若干指数的点位（不写库）。
 
-定义行：`599`
+定义行：`679`
 
 ### `_read_materialized`
 
@@ -238,7 +241,7 @@ def _read_materialized(conn_mgr, region_id: int, key: str) -> list[dict]
 
 读物化表里某指数的点位；没有表/没有行 → `[]`。
 
-定义行：`613`
+定义行：`693`
 
 ### `_resolve_points`
 
@@ -248,7 +251,7 @@ def _resolve_points(conn_mgr, region_id: int, keys: Sequence[str]) -> dict[str, 
 
 点位：优先读物化缓存，缺失的指数实时计算（**不**写库）。
 
-定义行：`628`
+定义行：`708`
 
 ### `refresh_index_daily`
 
@@ -258,7 +261,7 @@ def refresh_index_daily(region_id: int=JITA_RID) -> int
 
 重建 `market.db.market_index_daily`（五个指数逐日点位），返回写入行数。
 
-定义行：`648`
+定义行：`728`
 
 ### `_pct`
 
@@ -268,7 +271,7 @@ def _pct(value: float | None, base: float | None) -> float | None
 
 百分比涨幅；基数缺失/为 0 → `None`（不用 0 冒充）。
 
-定义行：`672`
+定义行：`752`
 
 ### `_value_before`
 
@@ -278,7 +281,7 @@ def _value_before(points: Sequence[dict], days: int) -> float | None
 
 最后一个点往前 `days` 个日历天（含）之前最近一个点的点位；不够长 → `None`。
 
-定义行：`679`
+定义行：`759`
 
 ### `get_index_cards`
 
@@ -288,7 +291,7 @@ def get_index_cards(region_id: int=JITA_RID, _db=None) -> list[dict]
 
 五张指数卡：`[&#123;key,label,value,chg1,chg7,chg30,chg90,chg180,days,base_date&#125;]`。
 
-定义行：`693`
+定义行：`773`
 
 ### `get_index_series`
 
@@ -298,7 +301,7 @@ def get_index_series(keys: Sequence[str] | None=None, region_id: int=JITA_RID, _
 
 指数折线 + 篮子成员表：`[&#123;key,label,points:[&#123;date,value&#125;],members:[...]&#125;]`。
 
-定义行：`726`
+定义行：`806`
 
 ### `_member_row`
 
@@ -310,7 +313,7 @@ def _member_row(tid: int, weight: float, capped: bool, names: Mapping[int, str],
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`778`
+定义行：`858`
 
 ### `get_breadth`
 
@@ -320,7 +323,7 @@ def get_breadth(region_id: int=JITA_RID, _db=None) -> dict
 
 最新交易日的市场广度：`&#123;date,advancers,decliners,unchanged,turnover&#125;`。
 
-定义行：`799`
+定义行：`879`
 
 ## 类
 
@@ -328,4 +331,4 @@ def get_breadth(region_id: int=JITA_RID, _db=None) -> dict
 
 一条指数的计算结果：逐日点位 + 最后一个指数日的成分权重。
 
-定义行：`149`
+定义行：`188`

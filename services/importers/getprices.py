@@ -21,7 +21,7 @@ from core.logger import log
 from core.paths import market_db_path, progress_file
 from domain.market_depth import BUY, SELL, depth_price
 from services.client import APIClient
-from services.price_history import PRICE_HISTORY_DDL, fetch_history
+from services.price_history import PRICE_HISTORY_DDL, PRICE_HISTORY_INDEX_DDL, fetch_history
 
 DATABASE_PATH = market_db_path()
 ESI_BASE_URL = "https://esi.evetech.net/latest"
@@ -393,6 +393,7 @@ async def _pending_history_tasks(region_ids: list[int], type_ids: set[int], cuto
     pending: list[tuple[int, int]] = []
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(PRICE_HISTORY_DDL)
+        await db.execute(PRICE_HISTORY_INDEX_DDL)
         await db.commit()
         for rid in region_ids:
             cursor = await db.execute(

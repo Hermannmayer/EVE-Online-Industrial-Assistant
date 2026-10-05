@@ -209,6 +209,44 @@ def _case_init_wizard(monkeypatch):
     return InitWizardQmlDialog
 
 
+class _StubAdviceService:
+    """`services.market_advice_service` 的替身（加载护栏不该去读真库）。
+
+    `metrics` / `reasons` 必须**非空**：QML 的 `Repeater` 空模型不建项，空着的话
+    护栏就测不到数字行与依据行的绑定 —— 而那是这个对话框里最容易写错的地方。
+    """
+
+    JITA_RID = 10000002
+    _PAYLOAD = {
+        "typeId": 2001,
+        "name": "渡鸦级",
+        "spreadPct": 12.3456,
+        "roundTripFeePct": 3.6,
+        "dayVolume": 1234.5,
+        "orderVolume": 2705.0,
+        "turnDays": 2.19,
+        "verdict": "two_sided",
+        "buyAdvice": "挂买单：买价 × 1.01 = …",
+        "sellAdvice": "挂卖单：卖价 × 0.99 = …",
+        "reasons": ["价差 12.35% > 来回费用的 2 倍", "近 7 个日历天日均成交 1,234.50 件"],
+        "caliber": "买卖价=挂单价；成交量=成交历史（近 7 个日历天）",
+    }
+
+    @classmethod
+    def get_trade_advice(cls, type_id: int, region_id: int = JITA_RID, **kwargs: object) -> dict:
+        return dict(cls._PAYLOAD)
+
+
+def _case_market_advice(monkeypatch):
+    import ui_qml.bridge.market_advice_bridge as mab
+
+    monkeypatch.setattr(mab, "_advice_service", lambda: _StubAdviceService)
+
+    from ui_qml.bridge.market_advice_bridge import MarketAdviceQmlDialog
+
+    return lambda: MarketAdviceQmlDialog(2001, "渡鸦级")
+
+
 _LOADS_CASES: list[tuple[str, Any]] = [
     ("编辑生产计划", "plan_edit_factory"),
     ("批量编辑生产计划", _case_plan_edit_batch),
@@ -247,12 +285,13 @@ _LOADS_CASES: list[tuple[str, Any]] = [
     ("贸易评分设置", _case_trade_params),
     ("批量对比", _case_compare),
     ("数据初始化向导", _case_init_wizard),
+    ("挂单建议", _case_market_advice),
 ]
 
 
 @pytest.mark.parametrize(("label", "case"), _LOADS_CASES, ids=[c[0] for c in _LOADS_CASES])
 def test_dialog_loads_without_warnings(request, qapp, monkeypatch, label, case):
-    """37 个对话框共用的一条：QML 能加载、布局不给 Qt 刷告警。"""
+    """38 个对话框共用的一条：QML 能加载、布局不给 Qt 刷告警。"""
     factory = case(monkeypatch) if callable(case) else request.getfixturevalue(case)
     _assert_loads_and_quiet(factory, label)
 

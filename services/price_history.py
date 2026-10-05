@@ -34,12 +34,20 @@ PRICE_HISTORY_DDL = """
     )
 """
 
+#: `(region_id, date)` 索引 —— **大盘页性能的关键**。
+#: 主键是 `(type_id, region_id, date)`，按 `region_id + date` 过滤（广度、日成交额、
+#: 指数装载窗口）**用不上主键前缀**，会全表扫 116 万行：实测（2026-10，真实库）
+#: `get_breadth` 2.04s、`_turnover_series` 0.67s、`get_index_series` 合计近 10s，
+#: 切到「市场监控」页一次性阻塞主线程 16 秒。加上本索引后这些范围扫描走索引。
+PRICE_HISTORY_INDEX_DDL = "CREATE INDEX IF NOT EXISTS idx_price_history_region_date ON price_history(region_id, date)"
+
 
 def _ensure_table(db=None) -> None:
-    """Ensure price_history table exists in market.db"""
+    """Ensure price_history table（与索引）exists in market.db"""
     conn_mgr = db or get_db()
     with conn_mgr.connect("mkt") as conn:
         conn.execute(PRICE_HISTORY_DDL)
+        conn.execute(PRICE_HISTORY_INDEX_DDL)
 
 
 async def fetch_history(

@@ -3,7 +3,8 @@
 对照重构后的窗口：桥的属性、分类树防抖与「置灰」标记、筛选器（类别 / 库存挂单 /
 日销量 / 利润率下限）、评分列（自己的列集合：删了均价·体积·日利润·收益，加了
 日订单量·日成交量）、列宽实测、Ctrl+C / Ctrl+A 复制、右键菜单（复制名称与
-复制蓝图名称，**没有**复制ID）、内联评分设置（中心 / 人物 / 设施税）、置顶走共享实现。
+复制蓝图名称，**没有**复制ID；外加「挂单建议」这条只读对话框入口）、内联评分设置
+（中心 / 人物 / 设施税）、置顶走共享实现。
 
 `qapp` fixture 是**必须**的：这些用例都要构造 QWidget（`QmlDialog` 是 QDialog），
 漏了会挂死而不是报错（本仓踩过）。
@@ -901,6 +902,96 @@ def test_open_materials_uses_the_qml_material_dialog(qapp, monkeypatch):
 
         bridge.openMaterials(9)  # 越界：不弹
         assert len(_RecordingDialog.calls) == 1
+    finally:
+        dlg.deleteLater()
+
+
+class _AdviceStub:
+    """`services.market_advice_service` 的替身：换 `payload` 就换一档判定。"""
+
+    JITA_RID = 10000002
+
+    #: 两侧挂单：数字都是真值
+    two_sided = {
+        "typeId": 2001,
+        "name": "渡鸦级",
+        "spreadPct": 12.3456,
+        "roundTripFeePct": 3.6,
+        "dayVolume": 1234.5,
+        "orderVolume": 2705.0,
+        "turnDays": 2.19,
+        "verdict": "two_sided",
+        "buyAdvice": "挂买单：买价 × 1.01 = 100.00 ISK",
+        "sellAdvice": "挂卖单：卖价 × 0.99 = 120.00 ISK",
+        "reasons": ["价差 12.35% > 来回费用的 2 倍", "近 7 个日历天日均成交 1,234.50 件"],
+        "caliber": "买卖价=挂单价；成交量=成交历史（近 7 个日历天）",
+    }
+
+    #: 没有报价：价差 / 日均成交 / 卖单队列都是 `None`（**不是** 0）
+    no_data = {
+        "typeId": 2001,
+        "name": "渡鸦级",
+        "spreadPct": None,
+        "roundTripFeePct": 3.6,
+        "dayVolume": None,
+        "orderVolume": None,
+        "turnDays": None,
+        "verdict": "no_data",
+        "buyAdvice": "先跑一次「更新价格」（本页数据来自本地缓存）",
+        "sellAdvice": "先跑一次「更新价格」（本页数据来自本地缓存）",
+        "reasons": ["取不到买价和卖价：本地 market_prices 里没有该物品挂单行"],
+        "caliber": "买卖价=挂单价；成交量=成交历史（近 7 个日历天）",
+    }
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, int]] = []
+        self.payload: dict = dict(self.two_sided)
+
+    def get_trade_advice(self, type_id: int, region_id: int = JITA_RID, **_kwargs: object) -> dict:
+        self.calls.append((int(type_id), int(region_id)))
+        return dict(self.payload)
+
+
+def test_market_advice_entry_shows_the_assembled_panel(qapp, monkeypatch):
+    """右键「挂单建议」：入口按行的 type_id/名开窗，面板字段按服务返回值装配。
+
+    覆盖两件事（同一层：挂单建议的桥）：
+
+    1. **入口**：`showMarketAdvice(row)` 用行的 type_id + 物品名构造只读对话框，
+       走 `show()`（不是 `exec()`）——与同桥的「制造材料」同一条宿主链路；越界行不弹。
+    2. **装配**：verdict 标题 / 买 / 卖建议 / 依据 / 关键数字都来自服务返回；
+       `no_data` 那档的三个空数字必须是 `—` —— 本仓口径里 0 是**真值**，不能冒充没数据。
+    """
+    from ui_qml.bridge import market_advice_bridge as mab
+
+    stub = _AdviceStub()
+    monkeypatch.setattr(mab, "MarketAdviceQmlDialog", _RecordingDialog)
+    monkeypatch.setattr(mab, "_advice_service", lambda: stub)
+
+    dlg = _dialog()
+    try:
+        bridge = dlg.bridge
+        bridge._on_items(_ROWS)  # type: ignore[attr-defined]
+
+        bridge.showMarketAdvice(0)
+        assert _RecordingDialog.calls[-1]["args"][:2] == (2001, "渡鸦级")
+        bridge.showMarketAdvice(9)  # 越界：不弹
+        assert len(_RecordingDialog.calls) == 1
+
+        panel = mab.MarketAdviceBridge(2001, "渡鸦级")
+        assert stub.calls == [(2001, 10000002)], "区域取服务自己的 JITA_RID"
+        assert panel.headerText == "渡鸦级 (Type ID: 2001)"
+        assert (panel.verdict, panel.title, panel.token) == ("two_sided", "两侧挂单划算", "ACCENT_GREEN")
+        assert panel.buyAdvice.startswith("挂买单") and panel.sellAdvice.startswith("挂卖单")
+        assert panel.reasons[0].startswith("价差")
+        assert [row["value"] for row in panel.metrics] == ["12.35%", "3.60%", "1,234.50", "2,705 件 ≈ 2.2 天"]
+
+        stub.payload = dict(_AdviceStub.no_data)
+        empty = mab.MarketAdviceBridge(2001, "渡鸦级")
+        values = [row["value"] for row in empty.metrics]
+        assert (empty.verdict, empty.title) == ("no_data", "本地没有这只物品的挂单/成交数据")
+        assert (values[0], values[2], values[3]) == ("—", "—", "—"), "缺值一律 —，不拿 0 冒充"
+        assert values[1] == "3.60%", "算得出来的那一项照常给数字"
     finally:
         dlg.deleteLater()
 

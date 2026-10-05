@@ -676,6 +676,8 @@ Item {
     //
     //  少一项「贸易核算明细」：本窗口只建了制造缓存，没有贸易模式。
     //  复制项按需求只保留「名称 / 蓝图名称」（**没有**「复制ID」）。
+    //  「挂单建议」走桥里的 `showMarketAdvice`（弹 `MarketAdviceDialog.qml`，
+    //  只读本地行情，不依赖制造缓存）。
     // ═══════════════════════════════════════════════════════════
 
     FMenu {
@@ -718,6 +720,15 @@ Item {
             visible: rowMenu.hasMfgDetail
             onTriggered: if (page.mi)
                 page.mi.showBreakdown(rowMenu.row)
+        }
+
+        /* 「挂单建议」：同一座桥弹一个 QML 对话框（与双击行的「制造材料」同一形态）。
+         * 不看 `hasMfgDetail` —— 建议只依赖本地行情，没有制造缓存的物品一样能看。 */
+        FMenuItem {
+            objectName: "marketAdviceItem"
+            text: qsTr("挂单建议")
+            onTriggered: if (page.mi)
+                page.mi.showMarketAdvice(rowMenu.row)
         }
 
         FMenuSeparator {}

@@ -933,6 +933,25 @@ class ManufacturableItemsBridge(DialogBridge):
             FMessageDialog.information(self.host_widget(), "制造核算明细", breakdown_text(cached))
 
     @Slot(int)
+    def showMarketAdvice(self, row: int) -> None:
+        """右键「挂单建议」：弹只读建议框（本地行情，零 ESI 请求）。
+
+        与同一座桥的 `openMaterials`（双击行的「制造材料」）**同一条宿主链路**：
+        `host_widget()` 当 parent、`QmlDialog(modeless=True)` + `show()` —— 只读查看器
+        没有返回值要给调用方，也不该把父窗锁住。**不是** `showBreakdown` 那种
+        `FMessageDialog` 模态消息框（那是纯文本消息，装不下这一屏数字与依据）。
+
+        用 `rowInfo` 而不是直接读行数据：它已经处理了「这一行还有没有效」，
+        并且给出的就是菜单里显示的那个物品名。
+        """
+        info = self.rowInfo(row)
+        if not info["valid"]:
+            return
+        from ui_qml.bridge.market_advice_bridge import MarketAdviceQmlDialog
+
+        MarketAdviceQmlDialog(int(info["typeId"]), str(info["name"]), self.host_widget()).show()
+
+    @Slot(int)
     def addToPlan(self, row: int) -> None:
         """「加入制造列表」（原 `_ctx._do_add_plan`）。"""
         info = self.rowInfo(row)

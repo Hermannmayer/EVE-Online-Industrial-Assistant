@@ -974,6 +974,7 @@ Item {
         id: drawer
 
         objectName: "detailDrawer"
+
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         anchors.right: parent.right
@@ -1026,17 +1027,40 @@ Item {
                 }
             }
 
-            Text {
-                objectName: "detailStatus"
+            // 抽屉内容**可滚动**：建议文案与传导链（实测最多 23 行）加起来常常超过抽屉高度，
+            // 用户报「这个字超出了框」。抽屉自己有 `clip`，但被裁掉的链子看不到 ——
+            // 所以这里给内容一层 Flickable（内容宽度锁在抽屉宽度上，避免横向溢出）。
+            Flickable {
+                id: detailScroll
+
+                objectName: "detailScroll"
                 Layout.fillWidth: true
-                Layout.leftMargin: page.pad
-                Layout.rightMargin: page.pad
-                text: page.pulse ? page.pulse.detailStatus : ""
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntSmall
-                wrapMode: Text.WordWrap
-            }
+                Layout.fillHeight: true
+                clip: true
+                contentWidth: width
+                contentHeight: detailBody.implicitHeight
+                boundsBehavior: Flickable.StopAtBounds
+
+                ScrollBar.vertical: ScrollBar {
+                    policy: ScrollBar.AsNeeded
+                }
+
+                ColumnLayout {
+                    id: detailBody
+                    width: detailScroll.width
+                    spacing: page.pad
+
+                    Text {
+                        objectName: "detailStatus"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: page.pad
+                        Layout.rightMargin: page.pad
+                        text: page.pulse ? page.pulse.detailStatus : ""
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: page.fntSmall
+                        wrapMode: Text.WordWrap
+                    }
 
             /* ── 交易建议（挂单/卖单该怎么做）───────────────────────
              * 用户口径：「真给我来点挂单、卖单之类的建议」。这里给的是**规则推导**：
@@ -1246,20 +1270,22 @@ Item {
                 }
             }
 
-            Text {
-                objectName: "chainEmpty"
-                Layout.fillWidth: true
-                Layout.margins: page.pad
-                visible: page.pulse ? page.pulse.detailRows.length === 0 : true
-                text: qsTr("（没有可展开的制造链）")
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: page.fntSmall
-                wrapMode: Text.WordWrap
-            }
+                    Text {
+                        objectName: "chainEmpty"
+                        Layout.fillWidth: true
+                        Layout.margins: page.pad
+                        visible: page.pulse ? page.pulse.detailRows.length === 0 : true
+                        text: qsTr("（没有可展开的制造链）")
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: page.fntSmall
+                        wrapMode: Text.WordWrap
+                    }
 
-            Item {
-                Layout.fillHeight: true
+                    Item {
+                        Layout.fillHeight: true
+                    }
+                }
             }
         }
     }

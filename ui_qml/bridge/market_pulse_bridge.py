@@ -33,6 +33,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -734,6 +735,73 @@ class IndexRefreshWorker(QThread):
             self.failed_signal.emit(str(ex))
 
 
+#: 切页重读的 TTL（秒）：窗口内重复切到本页直接复用上次结果。
+#: 为什么要有：整页读取实测约 11 秒（卡片 3.1s + 曲线/成员 7.0s + 异动 0.8s，真实库 116 万行），
+#: 每次切页都重跑既浪费又让用户等；数据变化只可能来自「更新价格」或「刷新指数」，
+#: 那两个入口都会 `force=True` 绕开它。
+_REFRESH_TTL_S = 60.0
+
+
+def _load_payload(region_id: int) -> dict[str, Any]:
+    """整页要用的本地数据，**一次读全**（在后台线程里跑，绝不碰网络）。
+
+    每一块的失败都单独吞掉并记日志（与桥里原来的 `_safe` 同口径）：某个后端没落地时
+    那一块退化成空，其余照常显示，而不是整页打不开。
+    """
+
+    def read(what: str, load: Callable[[], Any], default: Any) -> Any:
+        try:
+            return load()
+        except Exception:
+            log.exception("%s 失败", what)
+            return default
+
+    try:
+        api = _index_service()
+    except Exception:
+        log.exception("大盘后端未落地，整页退化成空态")
+        return {}
+    return {
+        "cards": list(read("读取指数卡片", lambda: api.get_index_cards(region_id), [])),
+        "series": list(read("读取指数序列", lambda: api.get_index_series(keys=None, region_id=region_id), [])),
+        "breadth": dict(read("读取市场广度", lambda: api.get_breadth(region_id), {})),
+        "turnover": list(read("读取日成交额序列", lambda: _turnover_series(region_id), [])),
+        "movers": list(
+            read(
+                "读取市场异动榜",
+                lambda: _movers_service().get_movers(
+                    days=_MOVER_DAYS, limit=_MOVER_LIMIT, region_id=region_id, qualified_only=False
+                ),
+                [],
+            )
+        ),
+        "status": list(read("读取各中心快照天数", _hub_snapshot_rows, [])),
+    }
+
+
+class PulseLoadWorker(QThread):
+    """整页数据后台读取（卡片/曲线/篮子成员/广度/成交额/异动/数据状态行）。
+
+    为什么必须开线程：实测真实库下这几步合计约 11 秒，同步跑会让「切到市场监控」卡住
+    整个主窗口。用户口径：「每次点市场监控这一页都会卡半天」「重算指数不应该阻塞主窗口，
+    应该自己在后台算就行」。写法同 :class:`IndexRefreshWorker`：结果走信号回主线程。
+    """
+
+    loaded_signal = Signal(object)  # dict payload
+    failed_signal = Signal(str)
+
+    def __init__(self, region_id: int, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._region_id = int(region_id)
+
+    def run(self) -> None:
+        try:
+            self.loaded_signal.emit(_load_payload(self._region_id))
+        except Exception as ex:
+            log.exception("读取大盘页数据失败")
+            self.failed_signal.emit(str(ex))
+
+
 # ═══════════════════════════════════════════════════════════
 #  桥
 # ═══════════════════════════════════════════════════════════
@@ -789,12 +857,17 @@ class MarketPulseBridge(QObject):
         self._status_text = "正在读取本地数据…"
         self._busy = False
         self._worker: QThread | None = None
+        #: 整页数据是否正在后台读（`refresh()` 的并发闸门）
+        self._loading = False
+        #: 上次读完的时间（`time.monotonic()`）——`_REFRESH_TTL_S` 内的切页直接复用
+        self._loaded_at = 0.0
+        self._load_worker: PulseLoadWorker | None = None
 
         self._detail_open = False
         self._detail_title = ""
         self._detail_status = ""
         self._detail_rows: list[dict] = []
-        self._advice: dict = {}
+        self._advice: dict = dict(_EMPTY_ADVICE)
 
     # ── 指数卡 / 主图 ────────────────────────────────────────
 
@@ -879,18 +952,57 @@ class MarketPulseBridge(QObject):
     # ═══════════════════════════════════════════════════════
 
     @Slot()
-    def refresh(self) -> None:
-        """重新读一遍页面数据（全部是本地库的读，不碰网络）。"""
-        region = self._region_id()
-        self._refresh_indices(region)
-        self._refresh_movers(region)
-        self._refresh_breadth(region)
-        self._refresh_status(region)
+    def refresh(self, force: bool = False) -> None:
+        """重新读一遍页面数据（**全部是本地库的读**，不碰网络）—— 在后台线程里跑。
+
+        为什么必须离开主线程：实测真实库（116 万行 `price_history`）卡片 3.1s +
+        曲线与篮子成员 7.0s + 异动 0.8s，同步跑会让「切到市场监控」卡住主窗口近 11 秒。
+        用户口径：「重算指数不应该阻塞主窗口，应该自己在后台算就行」。
+
+        另外做一层 TTL（:data:`_REFRESH_TTL_S`）：切页来回一次不该重跑十几秒的重算 ——
+        窗口内的切页直接复用上次结果。手动「刷新指数」重算完成时会 `force=True` 绕开它。
+        """
+        if self._loading:
+            return  # 已经在读，别叠第二个 worker
+        if not force and self._loaded_at and (time.monotonic() - self._loaded_at) < _REFRESH_TTL_S:
+            return
+
+        self._loading = True
+        self._status_text = "正在读取本地数据…"
+        self.refreshStateChanged.emit()
+
+        from ui_qml.workers.trade_workers import spawn
+
+        worker = PulseLoadWorker(self._region_id())
+        self._load_worker = worker
+        worker.loaded_signal.connect(self._on_loaded)
+        worker.failed_signal.connect(self._on_load_failed)
+        spawn(worker)
+
+    @Slot(object)
+    def _on_loaded(self, payload: object) -> None:
+        """后台读完了：把结果装上并通知 QML（主线程）。"""
+        data = dict(payload or {}) if isinstance(payload, dict) else {}
+        self._apply_indices(list(data.get("cards") or []), list(data.get("series") or []))
+        self._apply_movers(list(data.get("movers") or []))
+        self._apply_breadth(dict(data.get("breadth") or {}), list(data.get("turnover") or []))
+        self._apply_status(list(data.get("status") or []))
         self._status_text = (
             f"指数 {len(self._cards)} 个 · 异动 {len(self._qualified)} 条合格成分 / "
             f"{len(self._market)} 条全市场 · 成交额窗口 {len(self._turnover)} 天"
         )
+        self._loaded_at = time.monotonic()
+        self._loading = False
+        self._load_worker = None
         self.dataChanged.emit()
+        self.refreshStateChanged.emit()
+
+    @Slot(str)
+    def _on_load_failed(self, message: str) -> None:
+        """整页读取失败（后端没落地/库坏了）：留空态 + 如实写状态，不装成功。"""
+        self._loading = False
+        self._load_worker = None
+        self._status_text = f"读取本地数据失败：{message}"
         self.refreshStateChanged.emit()
 
     def _region_id(self) -> int:
@@ -920,16 +1032,7 @@ class MarketPulseBridge(QObject):
             log.exception("%s 失败", what)
             return default
 
-    def _refresh_indices(self, region: int) -> None:
-        def _load() -> tuple[list[dict], list[dict]]:
-            api = _index_service()
-            return (
-                list(api.get_index_cards(region)),
-                list(api.get_index_series(keys=None, region_id=region)),
-            )
-
-        cards_raw, series_raw = self._safe("读取指数卡片与序列", _load, ([], []))
-
+    def _apply_indices(self, cards_raw: list[dict], series_raw: list[dict]) -> None:
         self._cards = [_card_view(raw) for raw in cards_raw]
         self._series, self._ma7, self._x_labels = _series_views(series_raw)
         self._members_by_key = _members_by_key(series_raw)
@@ -950,18 +1053,7 @@ class MarketPulseBridge(QObject):
             card["selected"] = card["key"] == self._selected_key
         self._sync_members()
 
-    def _refresh_movers(self, region: int) -> None:
-        def _load() -> list[dict]:
-            return list(
-                _movers_service().get_movers(
-                    days=_MOVER_DAYS,
-                    limit=_MOVER_LIMIT,
-                    region_id=region,
-                    qualified_only=False,
-                )
-            )
-
-        raw = self._safe("读取市场异动榜", _load, [])
+    def _apply_movers(self, raw: list[dict]) -> None:
         labels = {card["key"]: card["label"] for card in self._cards}
         views = [_mover_view(row, labels) for row in raw]
         # 「合格成分」是可信的那一区（白名单准入 + 流动性门槛），「全市场」把噪音也放进来
@@ -972,19 +1064,18 @@ class MarketPulseBridge(QObject):
         else:
             self._movers_note = f"窗口 {_MOVER_DAYS} 天 · 每区显示前 {_MOVER_DISPLAY_CAP} 条（共 {len(views)} 条）"
 
-    def _refresh_breadth(self, region: int) -> None:
-        self._breadth = self._safe("读取市场广度", lambda: dict(_index_service().get_breadth(region)), {})
-        self._turnover = self._safe("读取日成交额序列", lambda: _turnover_series(region), [])
+    def _apply_breadth(self, breadth: dict, turnover: list[dict]) -> None:
+        self._breadth = breadth
+        self._turnover = turnover
         self._turnover_text = _turnover_text(self._turnover, self._breadth)
         self._adv_decl_text = _adv_decl_text(self._breadth)
         self._sync_divergence()
         # 诊断条要同时看指数与广度，放在两者都算完之后
         self._diagnosis = _diagnosis(self._cards, self._breadth, self._adv_decl_text)
 
-    def _refresh_status(self, region: int) -> None:
-        raw = self._safe("读取各中心快照天数", _hub_snapshot_rows, [])
+    def _apply_status(self, raw: list[dict]) -> None:
         self._status_rows = [_status_view(row) for row in raw]
-        self._status_hint = _status_hint(raw, region)
+        self._status_hint = _status_hint(raw, self._region_id())
 
     def _sync_members(self) -> None:
         """成员表按**选中**的指数取；没选中就默认第一条（否则一进页面是一张空表）。"""
@@ -1028,7 +1119,7 @@ class MarketPulseBridge(QObject):
         self._detail_title = str(mover["name"])
         self._detail_status = "正在读本地数据…"
         self._detail_rows = []
-        self._advice = {}
+        self._advice = dict(_EMPTY_ADVICE)
         self.detailChanged.emit()  # 先把抽屉开出来，读得慢也知道点到了
 
         raw = self._safe(
@@ -1058,7 +1149,7 @@ class MarketPulseBridge(QObject):
             lambda: dict(_advice_service().get_trade_advice(type_id, self._region_id(), trend_30d=trend)),
             {},
         )
-        return _advice_view(raw)
+        return _advice_view(raw or {})
 
     @Slot()
     def closeDetail(self) -> None:
@@ -1068,7 +1159,7 @@ class MarketPulseBridge(QObject):
         self._detail_open = False
         self._detail_rows = []
         self._detail_status = ""
-        self._advice = {}
+        self._advice = dict(_EMPTY_ADVICE)
         self.detailChanged.emit()
 
     # ═══════════════════════════════════════════════════════
@@ -1114,8 +1205,9 @@ class MarketPulseBridge(QObject):
         spawn(worker)
 
     def _on_index_refreshed(self, written: int) -> None:
-        self.refresh()
         self._busy = False
+        # 重算完成 → 强制重读一次（绕开 `_REFRESH_TTL_S`：物化表刚变，缓存必须作废）
+        self.refresh(force=True)
         self._status_text = f"指数已重算（写入 {written} 行日指数）· {self._status_text}"
         self.refreshStateChanged.emit()
 
@@ -1129,11 +1221,14 @@ class MarketPulseBridge(QObject):
         """页面/外壳销毁前收尾在跑的线程（宿主先走而线程还在跑 → Qt 直接 abort）。"""
         from ui_qml.workers.lifecycle import drop_worker
 
-        worker = self._worker
-        if worker is None:
-            return
-        drop_worker(worker)
-        self._worker = None
+        # 两个 worker 都要收：`_worker` 是「刷新指数」的重算线程，
+        # `_load_worker` 是整页数据的后台读取线程（切页/关窗时可能还在读）
+        for attr in ("_worker", "_load_worker"):
+            worker = getattr(self, attr, None)
+            if worker is not None:
+                drop_worker(worker)
+                setattr(self, attr, None)
+        self._loading = False
 
 
 _ADVICE_TITLES: dict[str, str] = {
@@ -1150,6 +1245,19 @@ _ADVICE_TOKENS: dict[str, str] = {
     "no_data": "TEXT_SECONDARY",
 }
 
+#: 没有建议时的**完整形状**（而不是空 dict）：QML 直接读 `advice.buyAdvice`，
+#: 空 dict 上取键在 QML 里是 `undefined` 并刷「Unable to assign [undefined]」告警。
+_EMPTY_ADVICE: dict[str, Any] = {
+    "verdict": "",
+    "title": "",
+    "token": "",
+    "buyAdvice": "",
+    "sellAdvice": "",
+    "reasons": [],
+    "caliber": "",
+    "metrics": [],
+}
+
 
 def _advice_view(raw: dict) -> dict:
     """`get_trade_advice` → QML 展示字段（含关键数字行）。
@@ -1158,7 +1266,7 @@ def _advice_view(raw: dict) -> dict:
     只给一句「两侧挂单划算」用户无法判断该不该信。
     """
     if not raw:
-        return {}
+        return dict(_EMPTY_ADVICE)
     verdict = str(raw.get("verdict") or "")
     metrics = [
         {"label": "价差（卖−买）", "value": _pct(raw.get("spreadPct"))},

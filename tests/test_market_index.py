@@ -61,6 +61,23 @@ def _insert_global_prices(db, rows: list[tuple[int, str, float]]) -> None:
         )
 
 
+def _seed_market_groups(db, type_ids: set[int]) -> None:
+    """给这些 type 在临时 `ref` 库里造出 `item.market_group_id`（= SDE 里已发布的市场物品）。
+
+    指数分类的「有效配方」判据靠它：产出物 `market_group_id` 为空 = CCP 留在 SDE 里、
+    游戏内造不出来的占位配方（`帕拉丁级血袭者版蓝图` 之类），其材料关系不算数。
+    **没被列进 `type_ids` 的产出物就是占位物品**（用例故意不给）。
+    """
+    with db.connect("ref") as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS item (type_id INTEGER PRIMARY KEY, zh_name TEXT, market_group_id INTEGER)"
+        )
+        conn.executemany(
+            "INSERT OR REPLACE INTO item (type_id, zh_name, market_group_id) VALUES (?, ?, ?)",
+            [(int(t), f"#{int(t)}", 1000 + int(t)) for t in sorted(type_ids)],
+        )
+
+
 # ════════════════════════════════════════════════════════════════
 #  纯计算
 # ════════════════════════════════════════════════════════════════
@@ -155,10 +172,17 @@ def test_index_clamps_single_member_daily_return():
 
 
 def test_blueprint_classes_split_primary_and_secondary(db_manager):
-    """材料供入的产物**本身还是材料** → PPPI；否则 → SPPI；invention 不参与判定。
+    """生产投入品按「产物是否还是生产投入品」分 PPPI / SPPI；占位配方不算配方。
 
-    9001 制造 2000 ← 1000/1100；9002 制造 4000 ← 2000/3000/1100；9003 反应 5000 ← 2000；
-    9005 反应 2000 ← 3000；9004 发明 6000 ← 9999（invention 必须被过滤掉）。
+    口径（2026-10 按用户反馈改）：**只有「有效配方」的材料关系才算数** —— 有效配方 =
+    产出物在 `ref.item.market_group_id` 上有值（SDE 里已发布的市场物品）。CCP 在 SDE 里留着
+    游戏内造不出来的占位配方（变体版蓝图 `帕拉丁级血袭者版蓝图` 这类），它们会把成品舰船当材料，
+    旧口径（「被任何蓝图当材料即投入品」）因此把 151 个带「级」的成分（52.4% 权重）塞进 SPPI。
+
+    9001~9004 制造 2000 ← 1000/1100（产物 2000 有市场分类 → 有效配方）
+    9005~9007 制造 4000 ← 2000/3000/1100/1200；9009/9010 反应 2000 ← 3000
+    9008 反应 5000 ← 2000；9011 发明 6000 ← 9999（invention 必须过滤掉）
+    **9012 制造 7000 ← 1300，但 7000 的 market_group_id 为 NULL（占位配方）→ 1300 不算投入品**
     """
     with db_manager.connect("bp") as conn:
         conn.execute(
@@ -173,10 +197,17 @@ def test_blueprint_classes_split_primary_and_secondary(db_manager):
             "INSERT INTO blueprint_products VALUES (?, ?, ?, 1)",
             [
                 (9001, "manufacturing", 2000),
-                (9002, "manufacturing", 4000),
-                (9003, "reaction", 5000),
-                (9005, "reaction", 2000),
-                (9004, "invention", 6000),
+                (9002, "manufacturing", 2000),
+                (9003, "manufacturing", 2000),
+                (9004, "manufacturing", 2000),
+                (9005, "manufacturing", 4000),
+                (9006, "manufacturing", 4000),
+                (9007, "manufacturing", 4000),
+                (9008, "reaction", 5000),
+                (9009, "reaction", 2000),
+                (9010, "reaction", 2000),
+                (9011, "invention", 6000),
+                (9012, "manufacturing", 7000),  # 占位配方：7000 没有市场分类
             ],
         )
         conn.executemany(
@@ -184,23 +215,89 @@ def test_blueprint_classes_split_primary_and_secondary(db_manager):
             [
                 (9001, "manufacturing", 1000),
                 (9001, "manufacturing", 1100),
-                (9002, "manufacturing", 2000),
-                (9002, "manufacturing", 3000),
+                (9002, "manufacturing", 1000),
                 (9002, "manufacturing", 1100),
-                (9003, "reaction", 2000),
-                (9005, "reaction", 3000),
-                (9004, "invention", 9999),
+                (9003, "manufacturing", 1000),
+                (9003, "manufacturing", 1100),
+                (9004, "manufacturing", 1000),
+                (9004, "manufacturing", 1100),
+                (9005, "manufacturing", 2000),
+                (9005, "manufacturing", 3000),
+                (9005, "manufacturing", 1100),
+                (9005, "manufacturing", 1200),
+                (9006, "manufacturing", 2000),
+                (9006, "manufacturing", 3000),
+                (9006, "manufacturing", 1100),
+                (9006, "manufacturing", 1200),
+                (9007, "manufacturing", 2000),
+                (9007, "manufacturing", 3000),
+                (9007, "manufacturing", 1200),
+                (9008, "reaction", 2000),
+                (9009, "reaction", 3000),
+                (9010, "reaction", 3000),
+                (9011, "invention", 9999),
+                (9012, "manufacturing", 1300),
             ],
         )
+    _seed_market_groups(db_manager, {1000, 1100, 1200, 1300, 2000, 3000, 4000, 5000})  # 7000 故意不给
 
     pppi, sppi = mis._blueprint_classes(db_manager)
 
-    # 1000/1100 供入 2000（还是材料）；3000 供入 4000 与反应产物 2000（后者是材料）→ PPPI
+    # 1000/1100 供入 2000（还是投入品）；3000 供入 4000 与反应产物 2000（后者是投入品）→ PPPI
     assert pppi == {1000, 1100, 3000}
-    # 2000 的产物（4000 / 反应 5000）都不再是材料 → SPPI
+    # 2000 的产物（4000 / 反应 5000）都不再是投入品 → SPPI
     assert sppi == {2000}
+    # 1300 只被 1 张有效配方（9012）用 → 不够 MIN_VALID_RECIPES，不算投入品
+    assert mis.MIN_VALID_RECIPES == 4
+    assert 1300 not in pppi | sppi
+    # 1200 只被 3 张有效配方用（9005/9006/9007）→ 同样不够门槛
+    assert 1200 not in pppi | sppi
     # invention 的 9999 不算材料，不该出现在任何一边
     assert 9999 not in pppi | sppi
+
+
+def test_placeholder_recipe_makes_ship_a_consumer_good(db_manager):
+    """回归：被**占位配方**（变体版蓝图）当材料的成品舰船 → 算消费品，不进 SPPI。
+
+    用户报的 bug：「消费品和次级投入品是怎么算的？我看有很多舰船在里面」，并补充
+    「帕拉丁级血袭者版这类在游戏里根本造不出来，虽然它有蓝图」。真实库实测：`先知级血袭者版`
+    (33875)、`地狱天使级塔什蒙贡版`(33623) 的 `market_group_id` 为 NULL（未发布占位物品），
+    而 `帕拉丁级`(28659)=1081 等真实市场物品有值 —— 占位配方的材料关系不算数。
+
+    造数：舰船 5001 被制造蓝图 7001 当材料，但 7001 的产物 5002 **没有市场分类**（占位配方）；
+    真投入品 4001 被 7002~7005 当材料，产物 4200 有市场分类。两者都有 30 天窗口内的成交。
+    """
+    with db_manager.connect("bp") as conn:
+        conn.execute(
+            "CREATE TABLE blueprint_materials (blueprint_type_id INTEGER, activity TEXT, "
+            "material_type_id INTEGER, quantity INTEGER, wastefactor INTEGER DEFAULT 10)"
+        )
+        conn.execute(
+            "CREATE TABLE blueprint_products (blueprint_type_id INTEGER, activity TEXT, "
+            "product_type_id INTEGER, quantity INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO blueprint_products VALUES (?, 'manufacturing', ?, 1)",
+            [(7001, 5002), (7002, 4200), (7003, 4200), (7004, 4200), (7005, 4200)],
+        )
+        conn.executemany(
+            "INSERT INTO blueprint_materials VALUES (?, 'manufacturing', ?, 10, 10)",
+            [(7001, 5001), (7002, 4001), (7003, 4001), (7004, 4001), (7005, 4001)],
+        )
+    _seed_market_groups(db_manager, {4001, 4200, 5001})  # 5002（占位产物的产物）故意不给
+
+    _insert_prices(
+        db_manager,
+        [(5001, _day(i), 100.0, 10) for i in range(5)] + [(4001, _day(i), 100.0, 10) for i in range(5)],
+    )
+    anchor = _BASE_DAY + timedelta(days=4)
+
+    sets, materials = mis._member_sets(db_manager, _RID, ["pppi", "sppi", "cpi"], anchor)
+
+    assert 4001 in materials and 4001 in sets["sppi"] and 4001 not in sets["cpi"]  # 真投入品：SPPI
+    assert 5001 not in sets["sppi"]  # 占位配方里的成品舰船不算次级投入品
+    assert 5001 not in sets["pppi"]
+    assert 5001 in sets["cpi"]  # 回到消费品篮子（有成交额 + 覆盖天数足够）
 
 
 # ════════════════════════════════════════════════════════════════

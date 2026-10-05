@@ -7,10 +7,10 @@
 ------
 ==================  ==========================================================================
 ``mpi``             固定 8 种矿物（:data:`MPI_TYPES`），与 CCP MPI 一致
-``pppi``            初级投入品：被 manufacturing/reaction 当材料，**且它供入的产物本身又被当材料**
-                    （用途层级 ≥2，近似 CCP 的 ore/moon/PI/发明用品）
-``sppi``            次级投入品：被当材料，但供入的产物**不再被当材料**（直接供给消费品）
-``cpi``             消费品（代理）：有成交、不被任何蓝图当材料，按近 30 天成交额取 top-:data:`CPI_TOP_N`
+``pppi``            初级投入品：被**有效配方**当材料（:data:`VALID_RECIPE_NOTE`），
+                    **且它供入的产物本身又是生产投入品**（用途层级 ≥2，近似 CCP 的 ore/moon/PI/发明用品）
+``sppi``            次级投入品：是生产投入品，但供入的产物**不再是生产投入品**（直接供给消费品）
+``cpi``             消费品（代理）：有成交、**不是生产投入品**，按近 30 天成交额取 top-:data:`CPI_TOP_N`
 ``plex``            固定 44992（ISK 锚）
 ==================  ==========================================================================
 
@@ -30,6 +30,11 @@
 
 口径备注（实现时做的取舍，逐条写清）
 ------------------------------------
+- **「生产投入品」= 被 ≥ :data:`MIN_VALID_RECIPES` 张**有效配方**当材料**（:data:`VALID_RECIPE_NOTE`）：
+  二值判定（「被任何一张蓝图当材料」）会把**成品舰船**算成投入品 —— 因为 CCP 在 SDE 里留着
+  **游戏内造不出来**的占位配方（变体版蓝图 `帕拉丁级血袭者版蓝图` 之类），加上「海军型/舰队型」
+  这类真实但会拿 T1 舰身当材料的变体配方。实测口径对比见 :data:`MIN_VALID_RECIPES` 的注释：
+  两条一起用才把带「级」的成分从 151 个 / 52.4% 压到 7 个 / 5.1%（零舰船）。
 - **PPPI 判定方向**：计划 §3 的伪代码 `product_of(mat) ∈ materials` 读作「mat 供入的蓝图产物
   是否还被当材料」，即 `blueprint_materials × blueprint_products` 按 (blueprint_type_id, activity)
   自连接后看 `product_type_id` 是否在材料集合里。这与计划 §2.1 的「它的产物又被当材料（层级 ≥2）」
@@ -53,11 +58,14 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Hashable, Iterable, Mapping, Sequence
 from datetime import date, timedelta
 from typing import NamedTuple
 
 from services.database_manager import get_db
+
+log = logging.getLogger(__name__)
 
 #: Jita（The Forge）—— 目前唯一历史天数够长的中心（计划 §6 风险表）
 JITA_RID = 10000002
@@ -83,6 +91,41 @@ PLEX_TYPE_ID = 44992
 
 #: 用途层级判定只看这两个活动（与计划 §3 一致）
 BASED_ACTIVITIES: tuple[str, str] = ("manufacturing", "reaction")
+
+#: 「生产投入品」的判据 = 被**有效配方**当材料。有效配方 = 该蓝图在 SDE 里**真的能用**：
+#: 产出物在 `ref.item.market_group_id` 上有值（已发布的市场物品）。
+#:
+#: 为什么需要这条：CCP 在 SDE 里留了一批**游戏内造不出来**的占位配方，典型是「变体版蓝图」
+#: （`帕拉丁级血袭者版蓝图`：manufacturing 10s / copying 8s、只有 1 行材料）。它们把**成品舰船**
+#: 当材料，于是「被任何蓝图当材料就算投入品」的二值判定会把舰船塞进 SPPI —— 实测 151 个名字带
+#: 「级」的成分、权重合计 52.4%。用户口径：「这些船生产出来就能直接开，是消费品」。
+#:
+#: 为什么用 `market_group_id` 而不是别的：
+#: - 「制造时间短」会误杀真货：`碳化晶体附甲` 25s、`米亚莫斯级酷菲特强版` 10s 都有真实挂单；
+#: - 「有没有挂单」也会误判（占位配方照样可能有挂单）；
+#: - 占位配方的产出物在 SDE 里就是**未发布物品**：`先知级血袭者版`(33875)、`地狱天使级塔什蒙贡版`
+#:   (33623) 的 `market_group_id` 均为 NULL；真实市场物品都有值（帕拉丁级 1081、碳化晶体附甲 1888、
+#:   三钛合金 1857）。制造产物里市场分类为空的有 610 个（B级克隆、大量「弃用的…」等）。
+#:
+#: 实测效果：材料集 1646 → **1565**；SPPI 里当投入品的舰船 151 → **17**，且剩下 17 个都是真实配方
+#: （`旗舰级核心温度调节器` 被 44 张有效配方用；`乌鸦级`/`狂暴级`/`灾难级` 各 1 张 = 海军型变体，
+#: 确实要拿成品舰船去造）。
+#: 实测效果（2026-10 真实库，只读对比）：
+#: 材料集 1646 → **437**；SPPI 候选 1182 → **227**；SPPI 里名字带「级」的成分
+#: **151 个 / 37.4% → 3 个 / 2.1%（零舰船）**，权重前 5 从「帕拉丁级 4.69%、魔像级 3.85%…」
+#: 变成「逻辑电路 26.47%、纳米聚合体 7.80%、完好的装甲附甲 7.12%…」。
+VALID_RECIPE_NOTE = "产出物在 ref.item.market_group_id 上有值（SDE 里已发布的市场物品）"
+
+#: 被判为「生产投入品」还需要的**最少有效配方数**。
+#: 只过滤占位配方还不够：实测材料集仍有 1,565 个，SPPI 里带「级」的成分 142 个 / 权重 27.4%
+#: （旧口径 151 个 / 52.4%）—— 因为「海军型/舰队型」这类变体配方是**真实有效**的，
+#: 也确实要拿 T1 舰身当材料，但它们不该把整条舰船线拖进「次级投入品」篮子。
+#: 真正的投入品（矿物/组件/反应原料）被成百上千张有效配方使用。四口径实测对比：
+#:   任意蓝图当材料        材料集 1646，SPPI 带「级」151 个 / 52.4%
+#:   ≥4 张蓝图             材料集  452，带「级」17 个 / 14.7%
+#:   只过滤占位配方        材料集 1565，带「级」142 个 / 27.4%
+#:   **≥4 张有效配方**     材料集  437，带「级」**7 个 / 5.1%（零舰船）** ← 采用
+MIN_VALID_RECIPES = 4
 
 #: 成员来源（`get_index_series` 的 `members[].source`）：
 #: ``fixed`` 固定篮子 / ``tier`` 蓝图层级推导 / ``liquidity`` 流动性（成交额 top-N）
@@ -370,7 +413,18 @@ def _weights_at(
 
 
 def _table_exists(conn, name: str) -> bool:
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+    """表是否存在。`name` 可以带库前缀（如 `ref.item`）—— 带前缀时查那张库的 `sqlite_master`。
+
+    ⚠️ 不带前缀的查询只看**主库**：`db.connect("bp", "ref")` 之后
+    `SELECT ... FROM sqlite_master WHERE name='item'` 是查不到 `ref.item` 的（ATTACH 进来的库
+    有自己的 `sqlite_master`），照那样判会把「有效配方过滤」整条静默跳过。
+    """
+    if "." in name:
+        schema, _, table = name.partition(".")
+        row = conn.execute(f"SELECT 1 FROM {schema}.sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+    else:
+        row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+    return row is not None
 
 
 #: 尾部「还没补齐的一天」的判定阈值：当天覆盖的 type 数低于窗口常态的这个比例时不算数据日。
@@ -510,42 +564,70 @@ def _load_names(conn_mgr, type_ids: Iterable[int]) -> dict[int, str]:
 
 
 def _blueprint_classes(conn_mgr) -> tuple[set[int], set[int]]:
-    """蓝图层级判定 → `(PPPI 候选, SPPI 候选)`（都取自「被 manufacturing/reaction 当材料」的 type）。
+    """蓝图层级判定 → `(PPPI 候选, SPPI 候选)`（都取自**生产投入品**）。
 
-    PPPI = 材料 **供入**的蓝图产物本身还是材料（用途层级 ≥2）；SPPI = 余下的材料。
+    生产投入品 = 被**有效配方**当材料的 type；有效配方的判据见 :data:`VALID_RECIPE_NOTE`。
+    PPPI = 它的**蓝图产物本身也是生产投入品**（层级 ≥2）；SPPI = 余下的生产投入品。
     blueprint.db 缺表 → `(set(), set())`。
     """
     placeholders = ",".join("?" * len(BASED_ACTIVITIES))
-    with conn_mgr.connect("bp") as conn:
+    with conn_mgr.connect("bp", "ref") as conn:
         if not (_table_exists(conn, "blueprint_materials") and _table_exists(conn, "blueprint_products")):
             return set(), set()
-        materials = {
-            int(row[0])
-            for row in conn.execute(
-                f"SELECT DISTINCT material_type_id FROM blueprint_materials WHERE activity IN ({placeholders})",
-                BASED_ACTIVITIES,
-            )
-        }
-        pppi = {
-            int(row[0])
-            for row in conn.execute(
-                f"""SELECT DISTINCT bm.material_type_id
-                    FROM blueprint_materials bm
-                    JOIN blueprint_products bp
-                      ON bp.blueprint_type_id = bm.blueprint_type_id AND bp.activity = bm.activity
-                    WHERE bm.activity IN ({placeholders})
-                      AND bp.product_type_id IN (
-                          SELECT material_type_id FROM blueprint_materials WHERE activity IN ({placeholders})
-                      )""",
-                (*BASED_ACTIVITIES, *BASED_ACTIVITIES),
-            )
-        }
+        if _table_exists(conn, "ref.item"):
+            materials = {
+                int(row[0])
+                for row in conn.execute(
+                    f"""SELECT bm.material_type_id
+                        FROM blueprint_materials bm
+                        WHERE bm.activity IN ({placeholders})
+                          AND EXISTS (
+                              SELECT 1 FROM blueprint_products vp
+                              JOIN ref.item vi ON vi.type_id = vp.product_type_id
+                              WHERE vp.blueprint_type_id = bm.blueprint_type_id
+                                AND vp.activity = bm.activity
+                                AND vi.market_group_id IS NOT NULL
+                          )
+                        GROUP BY bm.material_type_id
+                        HAVING COUNT(DISTINCT bm.blueprint_type_id) >= ?""",
+                    (*BASED_ACTIVITIES, MIN_VALID_RECIPES),
+                )
+            }
+        else:
+            # reference.db 没导好 → 退化成「所有配方都算」（仍按最少有效配方数卡一道）
+            log.warning("reference.db 缺 item 表，占位配方过滤失效（SPPI 可能混入成品舰船）")
+            materials = {
+                int(row[0])
+                for row in conn.execute(
+                    f"""SELECT material_type_id FROM blueprint_materials
+                        WHERE activity IN ({placeholders})
+                        GROUP BY material_type_id
+                        HAVING COUNT(DISTINCT blueprint_type_id) >= ?""",
+                    (*BASED_ACTIVITIES, MIN_VALID_RECIPES),
+                )
+            }
+        # PPPI = 它的**蓝图产物本身也是生产投入品**（层级 ≥2）。
+        # ⚠️ 这里必须用**收紧后**的 `materials`（有效配方 ∧ ≥MIN_VALID_RECIPES）判断产物，
+        # 不能再用「被任何蓝图当材料」的全集 —— 否则 code 与上面 docstring/计划 §2.1 的定义不一致，
+        # 实测会把 210 个算成 PPPI（收紧后应为 78）。
+        product_pairs = conn.execute(
+            f"""SELECT DISTINCT bm.material_type_id, bp.product_type_id
+                FROM blueprint_materials bm
+                JOIN blueprint_products bp
+                  ON bp.blueprint_type_id = bm.blueprint_type_id AND bp.activity = bm.activity
+                WHERE bm.activity IN ({placeholders})""",
+            BASED_ACTIVITIES,
+        ).fetchall()
+    pppi = {int(mat) for mat, prod in product_pairs if prod is not None and int(prod) in materials}
     pppi &= materials
     return pppi, materials - pppi
 
 
 def _cpi_candidates(conn_mgr, region_id: int, materials: set[int], anchor: date | None) -> list[int]:
-    """CPI 代理篮子：近 30 天成交额 top-:data:`CPI_TOP_N`，排除「被当材料」的 type。"""
+    """CPI 代理篮子：近 30 天成交额 top-:data:`CPI_TOP_N`，排除**生产投入品**（`materials`）。
+
+    被少量蓝图（变体版蓝图）当材料的成品舰船/模块不在 `materials` 里 → 回到消费品篮子。
+    """
     if anchor is None:
         return []
     start = anchor - timedelta(days=REBALANCE_DAYS - 1)
@@ -575,7 +657,7 @@ def _cpi_candidates(conn_mgr, region_id: int, materials: set[int], anchor: date 
 def _member_sets(
     conn_mgr, region_id: int, keys: Sequence[str], anchor: date | None
 ) -> tuple[dict[str, set[int]], set[int]]:
-    """`({key: 候选成分})`, `materials`。候选成分**未**做准入过滤（准入在逐日权重里做）。"""
+    """`({key: 候选成分})`, **生产投入品**集合（= PPPI ∪ SPPI）。候选成分**未**做准入过滤（准入在逐日权重里做）。"""
     pppi, sppi = _blueprint_classes(conn_mgr)
     materials = pppi | sppi
     cpi: list[int] | None = None
@@ -804,48 +886,54 @@ def get_breadth(region_id: int = JITA_RID, _db=None) -> dict:
     """
     empty = {"date": None, "advancers": None, "decliners": None, "unchanged": None, "turnover": None}
     conn_mgr = _db or get_db()
+    # 用**已补齐的成交锚点日**（不是各 type 自己最新的那天）：ESI 的尾部残缺日只有几百个
+    # type 有数据，按它统计会把涨跌家数从 2,300+ 掉到 399，量价背离也跟着假报
+    # （见 `COVERAGE_RATIO`）。
+    anchor = _last_history_day(conn_mgr, region_id)
+    if anchor is None:
+        return empty
+    latest = anchor.isoformat()
+
     with conn_mgr.connect("mkt") as conn:
         if not _table_exists(conn, "price_history"):
             return empty
+        # ⚠️ 三个坑都踩过（实测真实库 116 万行）：
+        # 1. `ROW_NUMBER() OVER (PARTITION BY type_id ...)`：加了 `(region_id, date)` 索引后改走
+        #    「扫索引 + 临时 B 树排序」，`get_breadth` 从 2.04s 恶化到 10.16s；
+        # 2. 「前一次观测」写成不限期窗口的 `GROUP BY type_id` 子查询：11.8s；
+        # 3. 写成 `prev_days ⋈ cur ⋈ prev` 的 join：优化器会拿 `prev` 当驱动表并丢掉日期约束
+        #    （`SEARCH prev ... (region_id=?)` = 扫该区域全部 110 万行 + 逐行主键探测），17.4~28.4s，
+        #    连 `MATERIALIZED` 也治不住。
+        # 正解 = **相关标量子查询**：`cur` 走 (region_id, date) 索引（当日 2,926 行），
+        # 每个 type 再用主键 `(type_id, region_id, date)` 做一次倒序范围扫取前一次观测，
+        # 并限制在 `RETURN_GAP_DAYS` 天内（日度广度不该拿一个月前的价格比）。实测 **0.05s**。
         rows = conn.execute(
-            """WITH ranked AS (
-                   SELECT type_id, date, average, volume,
-                          ROW_NUMBER() OVER (PARTITION BY type_id ORDER BY date DESC) AS rn
-                   FROM price_history WHERE region_id = ?
-               )
-               SELECT type_id, date, average, volume, rn FROM ranked WHERE rn <= 2""",
-            (region_id,),
+            """SELECT cur.type_id, cur.average, cur.volume,
+                      (SELECT p.average FROM price_history p
+                        WHERE p.type_id = cur.type_id AND p.region_id = cur.region_id
+                          AND p.date < cur.date AND p.date >= date(cur.date, ?)
+                        ORDER BY p.date DESC LIMIT 1) AS prev
+               FROM price_history cur
+               WHERE cur.region_id = ? AND cur.date = ?""",
+            (f"-{RETURN_GAP_DAYS} days", region_id, latest),
         ).fetchall()
     if not rows:
         return empty
 
-    newest: dict[int, tuple[str, float]] = {}
-    previous: dict[int, tuple[str, float]] = {}
-    for tid, day, average, _volume, rn in rows:
-        (newest if int(rn) == 1 else previous)[int(tid)] = (str(day), float(average or 0.0))
-
-    # 用**已补齐的成交锚点日**（而不是各 type 自己最新的那天）：ESI 的尾部残缺日只有几百个
-    # type 有数据，按它统计会把涨跌家数从 2,300+ 掉到 399，量价背离也跟着假报
-    # （见 `COVERAGE_RATIO`）。锚点日在窗口里就统计它，取不到则退回最新日。
-    anchor = _last_history_day(conn_mgr, region_id)
-    latest = anchor.isoformat() if anchor is not None else max(day for day, _average in newest.values())
     advancers = decliners = unchanged = 0
     turnover = 0.0
-    for tid, (day, average) in newest.items():
-        if day != latest:
-            continue
-        prior = previous.get(tid)
+    for _tid, average, volume, prior in rows:  # 列序与 SELECT 一致：type_id, average, volume, prev
+        now = float(average or 0.0)
+        turnover += now * float(volume or 0)
         if prior is None:
-            continue
-        if average > prior[1]:
+            continue  # 30 天内没有前一次观测 → 算不出涨跌方向，只计成交额
+        before = float(prior or 0.0)
+        if now > before:
             advancers += 1
-        elif average < prior[1]:
+        elif now < before:
             decliners += 1
         else:
             unchanged += 1
-    for _tid, day, average, volume, rn in rows:
-        if int(rn) == 1 and str(day) == latest:
-            turnover += float(average or 0.0) * float(volume or 0)
 
     return {
         "date": latest,

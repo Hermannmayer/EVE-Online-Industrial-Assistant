@@ -142,7 +142,7 @@ async def _fetch_history_with_limit(client: APIClient, region_id: int, type_id: 
 
 经 `GLOBAL_ESI_LIMITER` 拉单条市场历史。
 
-定义行：`409`
+定义行：`410`
 
 ### `_save_histories`
 
@@ -152,7 +152,7 @@ async def _save_histories(entries: dict[tuple[int, int], list[tuple]], date_cuto
 
 批量写入历史：先按 `(type_id, region_id)` 裁掉 `date_cutoff` 之前的行，再 `INSERT OR REPLACE`。
 
-定义行：`420`
+定义行：`421`
 
 ### `_material_type_ids`
 
@@ -162,7 +162,7 @@ def _material_type_ids() -> set[int]
 
 被制造/反应蓝图当材料用的 type（实测 1646 个 distinct）。
 
-定义行：`447`
+定义行：`448`
 
 ### `fetch_and_save_histories`
 
@@ -172,7 +172,7 @@ async def fetch_and_save_histories(regions: list[tuple[str, int]], progress_cb: 
 
 按 TTL 增量拉取「产物 ∪ 材料 ∪ PLEX」的市场历史，写入 market.db.price_history。
 
-定义行：`461`
+定义行：`462`
 
 ### `save_global_price_snapshot`
 
@@ -182,7 +182,7 @@ async def save_global_price_snapshot(baseline: dict[int, dict], day: str | None=
 
 把 `/markets/prices/` 的**全服统一价**按天存一条（只存锚定集合）。
 
-定义行：`573`
+定义行：`574`
 
 ### `main`
 
@@ -194,7 +194,7 @@ async def main(regions: list[tuple[str, int]] | None=None, progress_cb: Callable
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`610`
+定义行：`611`
 
 ### `fetch_baseline_only`
 
@@ -204,7 +204,7 @@ async def fetch_baseline_only(progress_cb: Callable[[int, str], None] | None=Non
 
 快速基础价格兜底 — 仅拉 /markets/prices/（1 次请求）。
 
-定义行：`666`
+定义行：`667`
 
 ### `run_price_update`
 
@@ -214,4 +214,4 @@ def run_price_update(regions: list[str] | None=None, progress_cb: Callable[[int,
 
 运行价格更新。
 
-定义行：`688`
+定义行：`689`

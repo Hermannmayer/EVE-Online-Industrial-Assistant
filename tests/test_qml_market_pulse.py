@@ -251,10 +251,13 @@ def test_bridge_assembles_cards_chart_movers_and_chain(qapp, stubs):
 
     并成一条用例：它们共用同一次取数，拆开只会把同一份替身断言抄几遍。
     """
+    import ui_qml.bridge.market_pulse_bridge as mpb
     from ui_qml.bridge.market_pulse_bridge import MarketPulseBridge
 
     bridge = MarketPulseBridge(None)
-    bridge.refresh()
+    # `refresh()` 现在走**后台线程**（用户口径：切页/重算不该阻塞主窗口），用例不等真线程，
+    # 直接跑同一条「读 → 装配」路径：`_load_payload` 是 worker 里跑的那个读函数。
+    bridge._on_loaded(mpb._load_payload(bridge._region_id()))
 
     # ── 指数卡 ×5：现值 + 五档涨跌，缺值 `—`（不是 0）──
     assert [card["key"] for card in bridge.cards] == [key for key, _ in _CARD_KEYS]
@@ -360,10 +363,18 @@ def test_bridge_assembles_cards_chart_movers_and_chain(qapp, stubs):
 
     # 外壳切页钩子（`ui_qml/monitor_page.py` 的转发器会调）：只重读本地数据，
     # **不**自动重算指数 —— 重算要聚合几十万行、且对 market.db 有真实写入副作用
+    assert all(call[0] != "refresh" for call in stubs.index.calls)
+
+    # TTL 契约（性能修复的核心）：整页读取实测约 11 秒，刚读完 60 秒内再切回本页
+    # **不重复读**；过期后才真的去后台重读（这里只验它起了线程，不等读完）
     calls_before = len(stubs.index.calls)
     bridge.on_shown()
-    assert len(stubs.index.calls) > calls_before
-    assert all(call[0] != "refresh" for call in stubs.index.calls)
+    assert len(stubs.index.calls) == calls_before
+    bridge._loaded_at = 0.0
+    bridge.refresh()
+    assert bridge._loading is True and bridge._load_worker is not None
+    bridge.shutdown()
+    assert bridge._loading is False
     assert bridge.busy is False
 
 
