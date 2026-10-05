@@ -44,6 +44,9 @@ UI（工业页）→ workers/industry_workers.ScoreWorker
   请求量 = 5554 × 勾选的中心数，单中心约 4.6 分钟（@20 req/s 全局限流），靠 12h TTL 增量摊平；
   升级后**首轮**必然跑满（材料此前从没拉过历史）。读端各自显式传 `region_id`：
   可制造物品窗口按 Jita，贸易页按它当前选的起点/终点（两列「起点/终点日成交量」）。
+  同一步还会写**全服统一价快照**（`market.db.global_price_daily`，只存没有区域成交历史的
+  品种 = PLEX）：`/markets/prices/` 那一次请求已经拉过，顺手落 1 行/天 —— 它是大盘 PLEX 锚
+  的唯一数据源（ESI 的区块历史对 PLEX 恒返回空，实测 Jita/Amarr 都是空列表）。
   ⚠️ 这两列的聚合窗口是**最近 7 个日历天**（`services/price_history.get_history_summary`），
   缺失的日子按 0 计入：ESI 历史**只返回有成交的日子**，按「最近 7 条记录」取会把冷门物品
   算成「上次活跃那几天」的平均值（实测 `屹立白蚁 II` 已 80 天没成交却报 21.6/天）。

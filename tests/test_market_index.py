@@ -12,6 +12,7 @@ from datetime import date, timedelta
 import pytest
 
 from services import market_index_service as mis
+from services.importers.getprices import GLOBAL_PRICE_DDL
 from services.price_history import PRICE_HISTORY_DDL
 
 _RID = mis.JITA_RID
@@ -42,6 +43,21 @@ def _insert_prices(db, rows: list[tuple[int, str, float, int]], region_id: int =
                 (tid, region_id, day, average, average, average, volume, 0, "2026-01-01T00:00:00+00:00")
                 for tid, day, average, volume in rows
             ],
+        )
+
+
+def _insert_global_prices(db, rows: list[tuple[int, str, float]]) -> None:
+    """写入 `global_price_daily`（**全服统一价**，`rows` = `[(type_id, date, average_price), ...]`）。
+
+    PLEX 走这张表：它的价格全服一致、没有区域划分，ESI 的区块历史对它恒返回空
+    （见 `services/importers/getprices.GLOBAL_PRICE_DDL` 的说明）。
+    """
+    with db.connect("mkt") as conn:
+        conn.execute(GLOBAL_PRICE_DDL)
+        conn.executemany(
+            "INSERT OR REPLACE INTO global_price_daily "
+            "(type_id, date, average_price, adjusted_price, fetched_at) VALUES (?, ?, ?, ?, ?)",
+            [(tid, day, average, average, "2026-01-01T00:00:00+00:00") for tid, day, average in rows],
         )
 
 
@@ -194,7 +210,7 @@ def test_blueprint_classes_split_primary_and_secondary(db_manager):
 
 def test_cards_short_window_gives_none(db_manager):
     """只有 6 天数据：能出基期与 chg1，7/30/90/180 天窗口一律 None（不用 0 冒充）。"""
-    _insert_prices(db_manager, [(mis.PLEX_TYPE_ID, _day(i), 100.0 if i < 5 else 110.0, 10) for i in range(6)])
+    _insert_global_prices(db_manager, [(mis.PLEX_TYPE_ID, _day(i), 100.0 if i < 5 else 110.0) for i in range(6)])
 
     cards = {card["key"]: card for card in mis.get_index_cards(_db=db_manager)}
     plex = cards["plex"]
@@ -206,6 +222,37 @@ def test_cards_short_window_gives_none(db_manager):
     assert plex["chg1"] == pytest.approx(10.0)
     for field in ("chg7", "chg30", "chg90", "chg180"):
         assert plex[field] is None
+
+
+def test_plex_uses_global_price_when_no_region_history(db_manager):
+    """PLEX 的序列来自**全服统一价**（`global_price_daily`）—— 区块历史对它恒为空。
+
+    用户口径：PLEX 价格全服统一、没有本地市场划分；ESI 的区块历史端点在 Jita/Amarr
+    都返回空列表（实测），所以它的时间序列只能靠 `/markets/prices/` 的每日快照攒。
+    """
+    _insert_global_prices(db_manager, [(mis.PLEX_TYPE_ID, _day(i), 100.0 if i < 5 else 110.0) for i in range(6)])
+
+    plex = {card["key"]: card for card in mis.get_index_cards(_db=db_manager)}["plex"]
+
+    # 基期 = 第 4 天（覆盖满 5 天）=100，第 5 天 +10% → 110
+    assert plex["value"] == pytest.approx(110.0)
+    assert plex["days"] == 2
+
+
+def test_region_history_wins_over_global_fallback(db_manager):
+    """全服价是**退路，不是覆盖**：区块成交序列存在时以它为准。
+
+    回归用例：曾经无条件覆盖，而当时 8 种矿物也在全服快照表里 → 矿物的 398 天成交序列
+    被换成「1 行当日价」，MPI 整条指数变空。
+    """
+    # 区块序列：+100%（±20% 截断后 +20% → 120）
+    _insert_prices(db_manager, [(mis.PLEX_TYPE_ID, _day(i), 1000.0 if i < 5 else 2000.0, 10) for i in range(6)])
+    # 全服序列：+10%（若被误用会得 110）
+    _insert_global_prices(db_manager, [(mis.PLEX_TYPE_ID, _day(i), 100.0 if i < 5 else 110.0) for i in range(6)])
+
+    plex = {card["key"]: card for card in mis.get_index_cards(_db=db_manager)}["plex"]
+
+    assert plex["value"] == pytest.approx(120.0)
 
 
 def test_cards_and_series_without_data(db_manager):

@@ -123,6 +123,13 @@ def _chain_service() -> Any:
     return market_chain_service
 
 
+def _advice_service() -> Any:
+    """惰性取 `services.market_advice_service`（挂单/卖单建议）。"""
+    from services import market_advice_service
+
+    return market_advice_service
+
+
 # ═══════════════════════════════════════════════════════════
 #  就地查询（后端暂时没有的接口，见各自 docstring）
 # ═══════════════════════════════════════════════════════════
@@ -179,6 +186,10 @@ def _turnover_series(region_id: int, days: int = _TURNOVER_DAYS) -> list[dict]:
     一次按日聚合即可。等后端补出成交额序列后应删掉本函数（与 `_hub_snapshot_rows` 同一处境）。
 
     返回按日期升序的 `[{date, isk}]`；表不存在返回空列表。
+
+    **尾部残缺日会被丢掉**：ESI 的历史按天逐步出，最后一天常常只有几百个 type
+    （实测 2026-10-04 只有 434 个、前一天 2,926 个），把它算进环比会得到
+    「−83.6%」这种纯属数据没补齐的假信号。
     """
     try:
         from services.database_manager import get_db
@@ -187,7 +198,7 @@ def _turnover_series(region_id: int, days: int = _TURNOVER_DAYS) -> list[dict]:
             if not _has_table(conn, "price_history"):
                 return []
             rows = conn.execute(
-                "SELECT date, SUM(average * volume) AS isk FROM price_history "
+                "SELECT date, COUNT(*) AS n, SUM(average * volume) AS isk FROM price_history "
                 "WHERE region_id = ? AND date >= date((SELECT MAX(date) FROM price_history WHERE region_id = ?), ?) "
                 "GROUP BY date ORDER BY date ASC",
                 (region_id, region_id, f"-{max(1, int(days))} days"),
@@ -197,7 +208,13 @@ def _turnover_series(region_id: int, days: int = _TURNOVER_DAYS) -> list[dict]:
         log.exception("读取日成交额序列失败")
         return []
 
-    return [{"date": str(r["date"]), "isk": float(r["isk"] or 0.0)} for r in rows]
+    out: list[tuple[str, float, int]] = [(str(r["date"]), float(r["isk"] or 0.0), int(r["n"] or 0)) for r in rows]
+    # 尾部残缺日：覆盖 type 数明显低于窗口常态的日子（通常是还没补齐的当天/昨天），直接丢掉
+    if len(out) >= 3:
+        typical = max(n for _day, _isk, n in out[:-1])
+        while len(out) >= 3 and out[-1][2] < 0.5 * typical:
+            out.pop()
+    return [{"date": day, "isk": isk} for day, isk, _n in out]
 
 
 # ═══════════════════════════════════════════════════════════
@@ -289,8 +306,24 @@ def _ma7(points: list[dict]) -> list[dict]:
 # ── 各段数据的「视图」装配 ──────────────────────────────────
 
 
+def _card_hint(key: str, days: int, value: float | None) -> str:
+    """卡片的补充说明（空串 = 不显示）。
+
+    PLEX 必须单独说清口径：**它的价格全服统一、没有区域划分**，ESI 的区块历史对它恒返回空
+    —— 数据来自「更新价格」里 `/markets/prices/` 的每日快照，与另外四条（区域成交均价）
+    不是一回事，不能让人以为它是同口径的第五个指数。
+    """
+    if key == "plex":
+        if value is None:
+            return "全服统一价：ESI 不提供区域历史，先跑一次「更新价格」才有序列"
+        return "全服统一价（口径不同于另外四条的区域成交均价）"
+    if days < 30:
+        return "基期短，长窗口不全"
+    return ""
+
+
 def _card_view(raw: dict) -> dict:
-    """指数卡：现值 + 今日/7/30/90/180 涨跌（缺值 `—`）。"""
+    """指数卡：现值 + 今日/7/30/90/180 涨跌（缺值 `—`）+ 口径/基期提示。"""
     changes = (
         ("今日", raw.get("chg1")),
         ("7日", raw.get("chg7")),
@@ -298,14 +331,18 @@ def _card_view(raw: dict) -> dict:
         ("90日", raw.get("chg90")),
         ("180日", raw.get("chg180")),
     )
+    key = str(raw.get("key") or "")
+    days = int(_as_float(raw.get("days")) or 0)
     return {
-        "key": str(raw.get("key") or ""),
+        "key": key,
         "label": str(raw.get("label") or raw.get("key") or ""),
         "valueText": _num(raw.get("value")),
         "chg1": _as_float(raw.get("chg1")),  # 量价背离要用原始值，不解析文案
-        "days": int(_as_float(raw.get("days")) or 0),
+        "chg30": _as_float(raw.get("chg30")),  # 图例与诊断要原始值
+        "days": days,
         "baseDate": str(raw.get("base_date") or _DASH),
         "selected": False,
+        "hint": _card_hint(key, days, _as_float(raw.get("value"))),
         "chgs": [{"label": label, "text": _pct(value), "token": _chg_token(value)} for label, value in changes],
     }
 
@@ -350,11 +387,17 @@ def _members_by_key(raw_series: list[dict]) -> dict[str, list[dict]]:
 
 
 def _member_view(raw: dict) -> dict:
-    """篮子成员行：权重、现价、30 日涨跌、是否触顶（`capped`）、口径。
+    """篮子成员行：权重、现价、30 日涨跌、**对指数的贡献**、是否触顶（`capped`）、口径。
 
     `price` 是后端在**锚定指数日（含）之前最近一次成交均价**（当日没成交就往前找，
     完全没有观测给 `None`）—— 与指数、异动榜同一口径，不用挂单价。
+
+    贡献（百分点）= 权重 × 该成员 30 日涨跌：指数跌 8% 时，一眼看出是**谁在拖**（哪几个
+    成分贡献了大部分跌幅）—— 只按权重排序看不出这件事。
     """
+    weight = _as_float(raw.get("weight"))
+    chg30 = _as_float(raw.get("chg30"))
+    contrib = None if weight is None or chg30 is None else weight * chg30
     return {
         "typeId": int(_as_float(raw.get("typeId")) or 0),
         "name": str(raw.get("name") or raw.get("typeId") or ""),
@@ -362,9 +405,167 @@ def _member_view(raw: dict) -> dict:
         "priceText": _num(raw.get("price")),
         "chg30Text": _pct(raw.get("chg30")),
         "chg30Token": _chg_token(raw.get("chg30")),
+        "contribText": _pp_text(contrib),
+        "contribToken": _chg_token(contrib),
         "capped": bool(raw.get("capped")),
         "sourceText": _source_text(raw.get("source")),
     }
+
+
+def _pp_text(value: float | None) -> str:
+    """百分点文案（贡献度）：`-1.23pp` / `—`。"""
+    if value is None:
+        return _DASH
+    return f"{value:+.2f}pp"
+
+
+#: 首次使用引导：这一页能回答什么问题、3 步怎么用（用户口径：「有点门槛，我不太会用」）。
+_GUIDE_TEXT = (
+    "这一页回答一个问题：现在这个市场，该囤、该卖、还是该停。\n"
+    "① 先看上面的诊断条与四条实体线的方向（10 秒）；\n"
+    "② 哪条线明显偏离就去点它的成员表，看是谁在拉/在拖（「贡献」那一列）；\n"
+    "③ 再用下面的异动榜找具体物品、点开抽屉看 BOM 传导链与挂单建议 —— 提前备料或提前出货。\n"
+    "口径：只用 Jita 的成交均价（挂单价一个人就能推，只做供给予警）；指数 100 = 基期，"
+    "跌 = 这一篮子东西整体变便宜。PLEX 是全服统一价，与另外四条不是同一种口径。"
+)
+
+
+#: 每张指数卡的「构成 + 口径」副标题与「怎么看」提示（键 = 指数 key，成员数在调用处补）。
+_CARD_META: dict[str, tuple[str, str]] = {
+    "mpi": (
+        "8 种矿物 · 成交额加权 · 30 天滚动再平衡",
+        "CCP 官方 MPI 同款篮子。100 = 基期水平；读数 82 表示这 8 种矿比基期平均便宜 18%。"
+        "矿物全线涨 → 采矿端紧缩或需求爆发（该抢料）；全线跌 → 上游在松，别囤料。",
+    ),
+    "pppi": (
+        "初级投入品 · 成交额加权 · 30 天滚动再平衡",
+        "供入的对象**仍然是材料**的那些东西（矿石/月矿/行星产物/发明用品）。它涨而 SPPI 没涨 → 冶炼与中间品在吃利润。",
+    ),
+    "sppi": (
+        "次级投入品 · 成交额加权 · 30 天滚动再平衡",
+        "直接供消费品生产的材料与物品（T2 组件、R.A.M. 等）。它涨得比 CPI 快 → 生产端瓶颈，该卖组件而不是卖成品。",
+    ),
+    "cpi": (
+        "消费品（成交额前 N，代理 CCP 的 4000+ 篮子）",
+        "终端需求的温度计：成品在跌而原料没跌 → 加工利润被压缩；成品跌得比原料快 → 需求在退，别囤料、成品早出手。",
+    ),
+    "plex": (
+        "全服统一价 · ISK 锚（不走区域成交历史）",
+        "PLEX 价格**全服统一、没有区域划分**，ESI 不提供它的区块历史，本线取自 "
+        "「更新价格」里 /markets/prices/ 的每日快照。它涨 = ISK 贬值；四条实体线不动而它涨，"
+        "说明只是货币现象，不是供需。",
+    ),
+}
+
+
+def _card_meta(key: str, members: int) -> tuple[str, str]:
+    """卡片副标题（构成/口径）与「怎么看」提示；成员数塞进 N 占位。"""
+    subtitle, tip = _CARD_META.get(key, ("", ""))
+    if members > 0:
+        subtitle = subtitle.replace("N", str(members))
+    elif "N" in subtitle:
+        subtitle = "消费品（篮子按成交额选取）"
+    return subtitle, tip
+
+
+def _diagnosis(cards: list[dict], breadth: dict, adv_decl: str) -> list[dict]:
+    """把指数与广度压成 2~4 条**带含义的结论**（规则推导，不是预测）。
+
+    每条给 `{text, token}`：`text` 是人话结论 + 「含义：…」，`token` 决定颜色
+    （涨绿/跌红/中性）。用户口径是「不知道这页有什么用」——所以这里必须把数字翻译成
+    「那我该干什么」，而不是再摆一遍数字。
+    """
+    by_key = {card["key"]: card for card in cards}
+    real = [k for k in ("mpi", "pppi", "sppi", "cpi") if by_key.get(k, {}).get("chg30") is not None]
+    out: list[dict] = []
+
+    if not real:
+        return [
+            {
+                "text": "还没有可算的指数 —— 先在顶栏「更新价格」拉一次市场历史"
+                "（成交历史在 ESI 侧一次给全，跑一轮就有 90/180 天窗口）",
+                "token": "TEXT_SECONDARY",
+            }
+        ]
+
+    avg30 = sum(float(by_key[k]["chg30"]) for k in real) / len(real)
+    if avg30 <= -3:
+        out.append(
+            {
+                "text": f"整体在通缩：四条实体线近 30 天平均 {avg30:+.1f}%"
+                "。含义：现金更值钱，别囤料、成品尽快出手，扩产要谨慎。",
+                "token": "ACCENT_GREEN" if avg30 > 0 else "ACCENT_RED",
+            }
+        )
+    elif avg30 >= 3:
+        out.append(
+            {
+                "text": f"整体在通胀：四条实体线近 30 天平均 {avg30:+.1f}%"
+                "。含义：实物在涨价，可考虑提前备料；但先看是全线涨还是单环节涨。",
+                "token": "ACCENT_YELLOW",
+            }
+        )
+    else:
+        out.append(
+            {
+                "text": f"大盘走平：四条实体线近 30 天平均 {avg30:+.1f}%（±3% 以内视为横盘）"
+                "。含义：趋势不帮忙，收益主要看具体物品的价差与产能。",
+                "token": "TEXT_SECONDARY",
+            }
+        )
+
+    mpi = _as_float(by_key.get("mpi", {}).get("chg30"))
+    cpi = _as_float(by_key.get("cpi", {}).get("chg30"))
+    if mpi is not None and cpi is not None:
+        gap = cpi - mpi  # 成品相对原料的强弱
+        if gap >= 1.5:
+            out.append(
+                {
+                    "text": f"加工端在改善：成品（CPI {cpi:+.1f}%）比原料（MPI {mpi:+.1f}%）更抗跌。"
+                    "含义：制造出售的价差在变宽，值得多排产。",
+                    "token": "ACCENT_GREEN",
+                }
+            )
+        elif gap <= -1.5:
+            out.append(
+                {
+                    "text": f"加工端在恶化：成品（CPI {cpi:+.1f}%）比原料（MPI {mpi:+.1f}%）跌得更狠。"
+                    "含义：造出来卖不上价，先按需生产、别压库存。",
+                    "token": "ACCENT_RED",
+                }
+            )
+
+    adv = _as_float(breadth.get("advancers"))
+    dec = _as_float(breadth.get("decliners"))
+    if adv is not None and dec is not None and (adv + dec) > 0:
+        ratio = adv / max(1.0, dec)
+        if ratio >= 1.5:
+            word, token = "普涨（涨家数明显多于跌家数）", "ACCENT_GREEN"
+        elif ratio <= 0.67:
+            word, token = "普跌（跌家数明显多于涨家数）", "ACCENT_RED"
+        else:
+            word, token = "分化（涨跌家数接近，说明是个别板块在动）", "TEXT_SECONDARY"
+        out.append(
+            {
+                "text": f"广度：{word} —— {adv_decl}。含义："
+                + ("普涨时跟大盘走比较安全；" if ratio >= 1.5 else "")
+                + ("普跌时优先保现金；" if ratio <= 0.67 else "")
+                + "分化时去看下面的异动榜找线索。",
+                "token": token,
+            }
+        )
+
+    thin = [card["key"] for card in cards if card.get("days", 0) < 180 and card["key"] != "plex"]
+    if thin:
+        out.append(
+            {
+                "text": "长窗口还在补数："
+                + "、".join(card["label"] for card in cards if card["key"] in thin)
+                + " 的 90/180 天窗口未满 —— 成交历史一次能拉全，跑一轮「更新价格」即可。",
+                "token": "TEXT_SECONDARY",
+            }
+        )
+    return out
 
 
 def _chg_display_text(value: Any) -> str:
@@ -551,6 +752,7 @@ class MarketPulseBridge(QObject):
     dataChanged = Signal()
     refreshStateChanged = Signal()
     detailChanged = Signal()
+    guideChanged = Signal()
 
     def __init__(self, shell: object | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -572,6 +774,10 @@ class MarketPulseBridge(QObject):
         self._movers_note = ""
         self._status_rows: list[dict] = []
         self._status_hint = ""
+        self._diagnosis: list[dict] = []
+        #: 首次使用引导：说明「这一页能回答什么问题」。只对本次会话有效（与「置顶」同口径，
+        #: 不落盘）—— 用户学会之后关掉即可
+        self._guide_visible = True
 
         #: 量价/广度那三行（`refresh` 之前 QML 就会绑定它们，必须先有初值 ——
         #: 绑定里读不存在的属性是**静默失败**，只会让那一格空着）
@@ -588,6 +794,7 @@ class MarketPulseBridge(QObject):
         self._detail_title = ""
         self._detail_status = ""
         self._detail_rows: list[dict] = []
+        self._advice: dict = {}
 
     # ── 指数卡 / 主图 ────────────────────────────────────────
 
@@ -642,6 +849,15 @@ class MarketPulseBridge(QObject):
     statusRows = Property(list, lambda self: self._status_rows, notify=dataChanged)
     statusHint = Property(str, lambda self: self._status_hint, notify=dataChanged)
 
+    # ── 市场诊断与首次引导 ──────────────────────────────────
+
+    #: `[{text, token}]` —— 规则从指数/广度推出来的结论（**不是预测**，也不构成投资建议）
+    diagnosis = Property(list, lambda self: self._diagnosis, notify=dataChanged)
+
+    #: 这一页能回答什么、怎么用（3 步）。关掉只影响本次会话
+    guideVisible = Property(bool, lambda self: self._guide_visible, notify=guideChanged)
+    guideText = Property(str, lambda self: _GUIDE_TEXT, notify=guideChanged)
+
     # ── 刷新状态 ────────────────────────────────────────────
 
     busy = Property(bool, lambda self: self._busy, notify=refreshStateChanged)
@@ -653,6 +869,10 @@ class MarketPulseBridge(QObject):
     detailTitle = Property(str, lambda self: self._detail_title, notify=detailChanged)
     detailStatus = Property(str, lambda self: self._detail_status, notify=detailChanged)
     detailRows = Property(list, lambda self: self._detail_rows, notify=detailChanged)
+
+    #: 挂单/卖单建议（点异动行时装配；空 dict = 还没点或读失败）：
+    #: `{verdict, title, token, buyAdvice, sellAdvice, reasons, caliber, metrics}`
+    advice = Property(dict, lambda self: self._advice, notify=detailChanged)
 
     # ═══════════════════════════════════════════════════════
     #  取数
@@ -713,6 +933,16 @@ class MarketPulseBridge(QObject):
         self._cards = [_card_view(raw) for raw in cards_raw]
         self._series, self._ma7, self._x_labels = _series_views(series_raw)
         self._members_by_key = _members_by_key(series_raw)
+        # 卡片副标题（构成 N 个成分 + 权重口径）与「怎么看」提示：成员数只有这里知道
+        for card in self._cards:
+            members = self._members_by_key.get(card["key"]) or []
+            card["subtitle"], card["toolTipText"] = _card_meta(card["key"], len(members))
+        # 图例带上「现值 · 30 日涨跌」：五条线只看名字看不出各自在什么水平
+        by_key = {card["key"]: card for card in self._cards}
+        for line in self._series:
+            card = by_key.get(line["key"]) or {}
+            chg = _as_float(card.get("chg30"))
+            line["note"] = card.get("valueText", _DASH) + ("" if chg is None else f" · 30日 {_pct(chg)}")
         # 选中的指数已经不在卡片里（数据/成分变了）→ 清掉，免得成员表停在旧篮子上
         if self._selected_key and self._selected_key not in {card["key"] for card in self._cards}:
             self._selected_key = ""
@@ -748,6 +978,8 @@ class MarketPulseBridge(QObject):
         self._turnover_text = _turnover_text(self._turnover, self._breadth)
         self._adv_decl_text = _adv_decl_text(self._breadth)
         self._sync_divergence()
+        # 诊断条要同时看指数与广度，放在两者都算完之后
+        self._diagnosis = _diagnosis(self._cards, self._breadth, self._adv_decl_text)
 
     def _refresh_status(self, region: int) -> None:
         raw = self._safe("读取各中心快照天数", _hub_snapshot_rows, [])
@@ -794,9 +1026,10 @@ class MarketPulseBridge(QObject):
 
         self._detail_open = True
         self._detail_title = str(mover["name"])
-        self._detail_status = "正在读本地 BOM 传导链…"
+        self._detail_status = "正在读本地数据…"
         self._detail_rows = []
-        self.detailChanged.emit()  # 先把抽屉开出来，链子读得慢也知道点到了
+        self._advice = {}
+        self.detailChanged.emit()  # 先把抽屉开出来，读得慢也知道点到了
 
         raw = self._safe(
             "读取 BOM 传导链",
@@ -807,7 +1040,25 @@ class MarketPulseBridge(QObject):
         )
         self._detail_rows = [_chain_view(row_) for row_ in raw]
         self._detail_status = _detail_note(raw)
+        self._advice = self._load_advice(type_id)
         self.detailChanged.emit()
+
+    def _load_advice(self, type_id: int) -> dict:
+        """取该物品的挂单/卖单建议（带大盘方向修正）。
+
+        `trend_30d` 用 **CPI 的近 30 天涨跌** —— 它就是「成品端在涨还是跌」，与诊断条同源；
+        没有 CPI 数据就给 `None`（服务侧会跳过那句大盘话术）。
+        """
+        trend: float | None = None
+        for card in self._cards:
+            if card["key"] == "cpi":
+                trend = _as_float(card.get("chg30"))
+        raw = self._safe(
+            "读取交易建议",
+            lambda: dict(_advice_service().get_trade_advice(type_id, self._region_id(), trend_30d=trend)),
+            {},
+        )
+        return _advice_view(raw)
 
     @Slot()
     def closeDetail(self) -> None:
@@ -817,6 +1068,7 @@ class MarketPulseBridge(QObject):
         self._detail_open = False
         self._detail_rows = []
         self._detail_status = ""
+        self._advice = {}
         self.detailChanged.emit()
 
     # ═══════════════════════════════════════════════════════
@@ -836,6 +1088,13 @@ class MarketPulseBridge(QObject):
         首次打开若指数物化表是空的，页面会显示「点右上『刷新指数』」。
         """
         self.refresh()
+
+    @Slot()
+    def dismissGuide(self) -> None:
+        """关掉首次使用引导（只对本次会话有效，与「置顶」同口径：不落盘）。"""
+        if self._guide_visible:
+            self._guide_visible = False
+            self.guideChanged.emit()
 
     @Slot()
     def refreshIndex(self) -> None:
@@ -875,6 +1134,59 @@ class MarketPulseBridge(QObject):
             return
         drop_worker(worker)
         self._worker = None
+
+
+_ADVICE_TITLES: dict[str, str] = {
+    "two_sided": "两侧挂单划算",
+    "take_orders": "直接吃单更划算",
+    "avoid_thin": "薄市场：别挂大单",
+    "no_data": "本地没有这只物品的挂单/成交数据",
+}
+
+_ADVICE_TOKENS: dict[str, str] = {
+    "two_sided": "ACCENT_GREEN",
+    "take_orders": "PRIMARY",
+    "avoid_thin": "ACCENT_YELLOW",
+    "no_data": "TEXT_SECONDARY",
+}
+
+
+def _advice_view(raw: dict) -> dict:
+    """`get_trade_advice` → QML 展示字段（含关键数字行）。
+
+    数字行把「为什么这么建议」摊开：价差、来回费用、日均成交、卖单队列天数 ——
+    只给一句「两侧挂单划算」用户无法判断该不该信。
+    """
+    if not raw:
+        return {}
+    verdict = str(raw.get("verdict") or "")
+    metrics = [
+        {"label": "价差（卖−买）", "value": _pct(raw.get("spreadPct"))},
+        {"label": "来回费用（买+卖+税）", "value": _pct(raw.get("roundTripFeePct"))},
+        {"label": "近 7 天日均成交", "value": _qty_text(raw.get("dayVolume"))},
+        {"label": "卖单队列", "value": _order_queue_text(raw.get("orderVolume"), raw.get("turnDays"))},
+    ]
+    return {
+        "verdict": verdict,
+        "title": _ADVICE_TITLES.get(verdict, "—"),
+        "token": _ADVICE_TOKENS.get(verdict, "TEXT_SECONDARY"),
+        "buyAdvice": str(raw.get("buyAdvice") or ""),
+        "sellAdvice": str(raw.get("sellAdvice") or ""),
+        "reasons": [str(r) for r in (raw.get("reasons") or [])],
+        "caliber": str(raw.get("caliber") or ""),
+        "metrics": metrics,
+    }
+
+
+def _order_queue_text(order_volume: Any, turn_days: Any) -> str:
+    """卖单队列：`2,705 件 ≈ 89.3 天` —— 挂单量除以日均成交量就是「要排队几天」。"""
+    vol = _as_float(order_volume)
+    days = _as_float(turn_days)
+    if vol is None:
+        return _DASH
+    if days is None:
+        return f"{_int_text(vol)} 件"
+    return f"{_int_text(vol)} 件 ≈ {days:,.1f} 天"
 
 
 def _detail_note(raw: list[dict]) -> str:

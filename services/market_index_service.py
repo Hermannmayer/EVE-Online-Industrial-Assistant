@@ -69,7 +69,7 @@ INDEX_LABELS: dict[str, str] = {
     "pppi": "初级投入品 (PPPI)",
     "sppi": "次级投入品 (SPPI)",
     "cpi": "消费品 (CPI·代理)",
-    "plex": "PLEX (ISK 锚)",
+    "plex": "PLEX (全服统一价)",
 }
 
 #: 物化表里「指数本身」用的保留 `type_id`。真实 EVE type_id 恒为正数，这里用负数区分合成行。
@@ -229,6 +229,8 @@ def _build_index(obs: Mapping[int, Sequence[tuple[str, float, int]]], members: I
     turnovers: dict[int, list[float]] = {}
     returns: dict[int, list[float | None]] = {}
     windows: dict[int, tuple[list[float], list[int]]] = {}
+    #: 该成员**完全没有成交量**（全服统一价品种）→ 只按覆盖天数准入、权重等权
+    price_only: dict[int, bool] = {}
 
     for tid in member_ids:
         rows = list(obs.get(tid) or [])
@@ -260,6 +262,10 @@ def _build_index(obs: Mapping[int, Sequence[tuple[str, float, int]]], members: I
         turnovers[tid] = turns
         returns[tid] = member_returns
         windows[tid] = (win_turn, win_cov)
+        # 全服统一价品种（PLEX）在我们的数据里**没有成交量**（`/markets/prices/` 只给价），
+        # 成交额权重恒为 0 → 会被下面的「成交额门槛」整条筛掉。它本身就是**固定锚**，
+        # 不是「按交易活跃度加权」的对象：只按覆盖天数准入、权重按等权给。
+        price_only[tid] = not any(turns)
         for i, row in enumerate(rows):
             day_rows.setdefault(row[0], []).append((tid, i))
 
@@ -277,6 +283,12 @@ def _build_index(obs: Mapping[int, Sequence[tuple[str, float, int]]], members: I
             if ret is None:
                 continue
             win_turn, win_cov = windows[tid]
+            if price_only.get(tid):
+                if win_cov[i] < MIN_COVERED_DAYS:
+                    continue
+                day_returns[tid] = ret
+                raw_weights[tid] = 1.0
+                continue
             if win_turn[i] <= MIN_TURNOVER_ISK or win_cov[i] < MIN_COVERED_DAYS:
                 continue
             day_returns[tid] = ret
@@ -361,15 +373,52 @@ def _table_exists(conn, name: str) -> bool:
     return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
 
 
-def _last_day(conn_mgr, region_id: int) -> date | None:
-    """该区域本地历史的最新日期（`None` = 没数据/没表）。"""
+#: 尾部「还没补齐的一天」的判定阈值：当天覆盖的 type 数低于窗口常态的这个比例时不算数据日。
+#: ESI 的市场历史**按天逐步出**，最新一两天往往只有几百个 type（实测 2026-10-04 只有 434 个，
+#: 前一天 2,926 个）—— 把它当锚点，广度与指数会落在残缺的一天上（涨跌家数从 2,300+ 掉到 399）。
+COVERAGE_RATIO = 0.5
+
+
+def _last_history_day(conn_mgr, region_id: int) -> date | None:
+    """最新**已补齐**的**成交**数据日（只看 `price_history`，覆盖数达标的那天）。
+
+    广度/成交额这类「当日成交」统计必须用它：全服价表里的日子没有成交量，
+    拿来当统计日会得到 0 家涨跌（见 `get_breadth`）。
+    """
+    best: str | None = None
     with conn_mgr.connect("mkt") as conn:
-        if not _table_exists(conn, "price_history"):
-            return None
-        row = conn.execute("SELECT MAX(date) FROM price_history WHERE region_id = ?", (region_id,)).fetchone()
-    if not row or not row[0]:
-        return None
-    return date.fromisoformat(str(row[0]))
+        if _table_exists(conn, "price_history"):
+            rows = conn.execute(
+                "SELECT date, COUNT(*) FROM price_history WHERE region_id = ? GROUP BY date ORDER BY date",
+                (region_id,),
+            ).fetchall()
+            if rows:
+                typical = max(int(r[1] or 0) for r in rows)
+                threshold = typical * COVERAGE_RATIO
+                # 从最后往前找第一个「覆盖数达标」的日子（通常就是倒数第二天）
+                for day, count in reversed(rows):
+                    if int(count or 0) >= threshold:
+                        best = str(day)
+                        break
+    return date.fromisoformat(best) if best else None
+
+
+def _last_day(conn_mgr, region_id: int) -> date | None:
+    """指数计算用的最新数据日：**成交**的已补齐日 与 **全服价**的最新日取较晚者。
+
+    - 只看「MAX(date)」会被 ESI 的尾部残缺日骗到（见 `COVERAGE_RATIO`）；
+    - 只看 `price_history` 又会让「只装了全服价」的库算不出 PLEX（它的序列在
+      `global_price_daily` 里）。
+    """
+    best = _last_history_day(conn_mgr, region_id)
+    with conn_mgr.connect("mkt") as conn:
+        if _table_exists(conn, "global_price_daily"):
+            row = conn.execute("SELECT MAX(date) FROM global_price_daily").fetchone()
+            if row and row[0]:
+                global_day = date.fromisoformat(str(row[0]))
+                if best is None or global_day > best:
+                    best = global_day
+    return best
 
 
 def _load_observations(
@@ -379,25 +428,64 @@ def _load_observations(
     start: date,
     end: date,
 ) -> dict[int, list[tuple[str, float, int]]]:
-    """读 `price_history` → `{type_id: [(date, average, volume), ...]}`（按日期升序）。"""
+    """读 `price_history` → `{type_id: [(date, average, volume), ...]}`（按日期升序）。
+
+    **全服统一价的品种（PLEX）改用 `global_price_daily` 覆盖**：它的价格全服一致、没有区域
+    划分，ESI 的区块历史对它恒返回空（实测 Jita/Amarr 都是空列表），所以 `price_history`
+    里永远不会有它。两种口径不能混在同一条序列里，命中就整段替换。
+    """
     ids = sorted({int(t) for t in type_ids})
     out: dict[int, list[tuple[str, float, int]]] = {}
     if not ids:
         return out
     with conn_mgr.connect("mkt") as conn:
-        if not _table_exists(conn, "price_history"):
-            return out
-        for offset in range(0, len(ids), _SQL_CHUNK):
-            chunk = ids[offset : offset + _SQL_CHUNK]
-            placeholders = ",".join("?" * len(chunk))
-            rows = conn.execute(
-                f"SELECT type_id, date, average, volume FROM price_history "
-                f"WHERE region_id = ? AND date >= ? AND date <= ? AND type_id IN ({placeholders}) "
-                f"ORDER BY type_id, date",
-                (region_id, start.isoformat(), end.isoformat(), *chunk),
-            ).fetchall()
-            for tid, day, average, volume in rows:
-                out.setdefault(int(tid), []).append((str(day), float(average or 0.0), int(volume or 0)))
+        # 两张表各自判断存在性：只装了 `global_price_daily`（还没跑过历史拉取）时，
+        # PLEX 也应该有数 —— 早退会让它整条线空掉
+        if _table_exists(conn, "price_history"):
+            for offset in range(0, len(ids), _SQL_CHUNK):
+                chunk = ids[offset : offset + _SQL_CHUNK]
+                placeholders = ",".join("?" * len(chunk))
+                rows = conn.execute(
+                    f"SELECT type_id, date, average, volume FROM price_history "
+                    f"WHERE region_id = ? AND date >= ? AND date <= ? AND type_id IN ({placeholders}) "
+                    f"ORDER BY type_id, date",
+                    (region_id, start.isoformat(), end.isoformat(), *chunk),
+                ).fetchall()
+                for tid, day, average, volume in rows:
+                    out.setdefault(int(tid), []).append((str(day), float(average or 0.0), int(volume or 0)))
+        for tid, rows in _load_global_observations(conn, ids, start, end).items():
+            # 全服价是**退路，不是覆盖**：只有该品种在窗口里完全没有区域成交序列时才用它。
+            # （曾经写成无条件覆盖 —— 那时把 8 种矿物也放进了全服快照表，结果矿物的
+            #  398 天成交序列被换成 1 行当日价，MPI 直接整条空掉。）
+            if not out.get(tid):
+                out[tid] = rows
+    return out
+
+
+def _load_global_observations(
+    conn,
+    type_ids: Iterable[int],
+    start: date,
+    end: date,
+) -> dict[int, list[tuple[str, float, int]]]:
+    """读 `global_price_daily`（全服统一价）→ 与 `price_history` 同形的序列。
+
+    成交量给 0：这张表只有价格，没有成交（PLEX 的成交量 ESI 也不按区块给）。
+    """
+    ids = sorted({int(t) for t in type_ids})
+    out: dict[int, list[tuple[str, float, int]]] = {}
+    if not ids or not _table_exists(conn, "global_price_daily"):
+        return out
+    for offset in range(0, len(ids), _SQL_CHUNK):
+        chunk = ids[offset : offset + _SQL_CHUNK]
+        placeholders = ",".join("?" * len(chunk))
+        rows = conn.execute(
+            f"SELECT type_id, date, average_price FROM global_price_daily "
+            f"WHERE date >= ? AND date <= ? AND type_id IN ({placeholders}) ORDER BY type_id, date",
+            (start.isoformat(), end.isoformat(), *chunk),
+        ).fetchall()
+        for tid, day, average in rows:
+            out.setdefault(int(tid), []).append((str(day), float(average or 0.0), 0))
     return out
 
 
@@ -736,7 +824,11 @@ def get_breadth(region_id: int = JITA_RID, _db=None) -> dict:
     for tid, day, average, _volume, rn in rows:
         (newest if int(rn) == 1 else previous)[int(tid)] = (str(day), float(average or 0.0))
 
-    latest = max(day for day, _average in newest.values())
+    # 用**已补齐的成交锚点日**（而不是各 type 自己最新的那天）：ESI 的尾部残缺日只有几百个
+    # type 有数据，按它统计会把涨跌家数从 2,300+ 掉到 399，量价背离也跟着假报
+    # （见 `COVERAGE_RATIO`）。锚点日在窗口里就统计它，取不到则退回最新日。
+    anchor = _last_history_day(conn_mgr, region_id)
+    latest = anchor.isoformat() if anchor is not None else max(day for day, _average in newest.values())
     advancers = decliners = unchanged = 0
     turnover = 0.0
     for tid, (day, average) in newest.items():

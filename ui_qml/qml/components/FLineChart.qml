@@ -305,7 +305,10 @@ Item {
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
+                    /* `note`（可选）：桥给的「现值 · 涨跌」补充 —— 五条线只看名字看不出
+                     * 各自在什么水平、最近有没有动。 */
                     text: modelData.label + (chart.normalize ? qsTr("（基期=100）") : "")
+                          + (modelData.note ? "  " + modelData.note : "")
                     color: Theme.textSecondary
                     font.family: Theme.fontFamily
                     font.pixelSize: chart.fntSmall

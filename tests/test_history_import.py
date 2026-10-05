@@ -175,3 +175,40 @@ async def test_keeps_only_recent_180_days():
     expected_cutoff = (datetime.now(UTC) - timedelta(days=getprices.HISTORY_KEEP_DAYS)).strftime("%Y-%m-%d")
     assert deletes[0].args[1] == (1, _REGION, expected_cutoff)
     assert "INSERT OR REPLACE INTO price_history" in h.db.executemany.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_global_price_snapshot_only_writes_anchor_types():
+    """④ 全服统一价每日快照：**只写锚定集合**，`/markets/prices/` 里其它 type 一律不落库。
+
+    这张表是 PLEX 锚的数据源（用户口径：PLEX 价格全服统一、没有本地市场划分）。
+    当前锚定集合只有 PLEX 一个 —— **矿物不能加进来**：它们有权威的区域成交历史
+    （一次能拉 398 天），而全服价只有当日一个点，混进来会被当退路数据源污染指数
+    （实测：无条件覆盖时矿物的 398 天序列被换成 1 行当日价，MPI 整条变空）。
+    """
+    baseline = {t: {"buy_price": 10.0 + t, "adjusted_price": 1.0} for t in (44992, 34, 999999)}
+
+    cm, db = _fake_db([])
+    with ExitStack() as stack:
+        stack.enter_context(patch("services.importers.getprices.aiosqlite.connect", return_value=cm))
+        written = await getprices.save_global_price_snapshot(baseline, day="2026-10-05")
+
+    rows = db.executemany.await_args.args[1]
+    assert written == len(rows) == 1  # 只有 PLEX；矿物 34 与不存在的 999999 都不写
+    assert [r[0] for r in rows] == [44992]
+    assert rows[0][1] == "2026-10-05"
+    assert rows[0][2] == pytest.approx(45002.0)  # average_price
+    assert "INSERT OR REPLACE INTO global_price_daily" in db.executemany.await_args.args[0]
+    assert any("CREATE TABLE IF NOT EXISTS global_price_daily" in c.args[0] for c in db.execute.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_global_price_snapshot_no_anchor_data_writes_nothing():
+    """锚定 type 全不在基准价里（网络返回残缺）→ 不建表、不写行，也不抛异常。"""
+    cm, db = _fake_db([])
+    with ExitStack() as stack:
+        stack.enter_context(patch("services.importers.getprices.aiosqlite.connect", return_value=cm))
+        written = await getprices.save_global_price_snapshot({})
+
+    assert written == 0
+    db.executemany.assert_not_awaited()

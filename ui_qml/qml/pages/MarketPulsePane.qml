@@ -38,7 +38,7 @@ Item {
     readonly property int pad: Theme.spacingSm
     readonly property int rowH: Math.max(22, Math.round(12 * Theme.fontScale) + 10)
     readonly property int cardW: Math.round(226 * Theme.fontScale)
-    readonly property int cardH: Math.round(112 * Theme.fontScale)
+    readonly property int cardH: Math.round(130 * Theme.fontScale)  // 含副标题（构成/口径）一行
     readonly property int chgColW: Math.round(38 * Theme.fontScale)
     readonly property int drawerW: Math.round(560 * Theme.fontScale)
     readonly property int indentW: Math.round(12 * Theme.fontScale)
@@ -78,7 +78,10 @@ Item {
             out.push({
                 "label": row.label,
                 "color": page.tokenColor(row.token),
-                "points": row.points
+                "points": row.points,
+                // 图例带上「现值 · 30 日涨跌」（FLineChart 的 note）——漏了这个字段，
+                // 五条线在图上就只剩名字，看不出各自什么水平
+                "note": row.note || ""
             });
         }
         return out;
@@ -86,9 +89,12 @@ Item {
 
     // ── 三张表的列宽（单位 px，已按全局字号缩放）────────────────
     //: 第 0 列（名称）吃剩余宽度，所以数组第 0 项是占位 0。
+    //: 「贡献」= 权重 × 30 日涨跌（百分点）——指数跌 8% 时一眼看出是谁在拖；
+    //: 只按权重排序看不出这件事（最大成分未必是最大拖累）。
     function memberWidths() {
         return [0, Math.round(84 * Theme.fontScale), Math.round(104 * Theme.fontScale),
-                Math.round(78 * Theme.fontScale), Math.round(52 * Theme.fontScale)];
+                Math.round(78 * Theme.fontScale), Math.round(74 * Theme.fontScale),
+                Math.round(52 * Theme.fontScale)];
     }
 
     function moverWidths() {
@@ -130,7 +136,8 @@ Item {
     }
 
     function memberHead(total) {
-        return page.headCells([qsTr("成分"), qsTr("权重"), qsTr("现价"), qsTr("30 日涨跌"), qsTr("触顶")],
+        return page.headCells([qsTr("成分"), qsTr("权重"), qsTr("现价"), qsTr("30 日涨跌"),
+                               qsTr("贡献"), qsTr("触顶")],
                               page.memberWidths(), total);
     }
 
@@ -145,7 +152,9 @@ Item {
               "color": Theme.textPrimary, "right": true, "bold": false, "size": page.fntBase },
             { "text": row.chg30Text, "w": widths[3], "indent": 0,
               "color": page.tokenColor(row.chg30Token), "right": true, "bold": false, "size": page.fntBase },
-            { "text": row.capped ? qsTr("已触顶") : "", "w": widths[4], "indent": 0,
+            { "text": row.contribText, "w": widths[4], "indent": 0,
+              "color": page.tokenColor(row.contribToken), "right": true, "bold": false, "size": page.fntBase },
+            { "text": row.capped ? qsTr("已触顶") : "", "w": widths[5], "indent": 0,
               "color": Theme.accentYellow, "right": false, "bold": false, "size": page.fntSmall }
         ];
     }
@@ -298,6 +307,103 @@ Item {
                 width: pulseScroll.width - 2 * page.pad
                 spacing: page.pad
 
+                // ── 0. 首次使用引导（可关，关掉只影响本次会话）────────
+                FPanel {
+                    objectName: "guidePanel"
+                    Layout.fillWidth: true
+                    visible: page.pulse ? page.pulse.guideVisible : false
+                    implicitHeight: guideCol.implicitHeight + 2 * page.pad
+
+                    ColumnLayout {
+                        id: guideCol
+                        anchors.fill: parent
+                        anchors.margins: page.pad
+                        spacing: 4
+
+                        RowLayout {
+                            Layout.fillWidth: true
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: qsTr("这一页怎么用")
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: page.fntBase
+                                font.bold: true
+                            }
+
+                            FButton {
+                                objectName: "dismissGuideButton"
+                                text: qsTr("知道了")
+                                onClicked: if (page.pulse)
+                                    page.pulse.dismissGuide()
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: page.pulse ? page.pulse.guideText : ""
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: page.fntSmall
+                            wrapMode: Text.WordWrap
+                            lineHeight: 1.25
+                        }
+                    }
+                }
+
+                // ── 0b. 市场诊断：把指数/广度翻译成「那我该干什么」──
+                FPanel {
+                    objectName: "diagnosisPanel"
+                    Layout.fillWidth: true
+                    implicitHeight: diagCol.implicitHeight + 2 * page.pad
+
+                    ColumnLayout {
+                        id: diagCol
+                        anchors.fill: parent
+                        anchors.margins: page.pad
+                        spacing: 4
+
+                        RowLayout {
+                            Layout.fillWidth: true
+
+                            Text {
+                                text: qsTr("市场诊断")
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: page.fntBase
+                                font.bold: true
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                /* 明说这是规则推导：不写这句，用户会当成预测/投资建议 */
+                                text: qsTr("（按指数与广度规则推导，不是预测、也不是投资建议）")
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: page.fntSmall
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        Repeater {
+                            model: page.pulse ? page.pulse.diagnosis : []
+
+                            Text {
+                                required property var modelData
+
+                                Layout.fillWidth: true
+                                text: "· " + modelData.text
+                                color: page.tokenColor(modelData.token)
+                                font.family: Theme.fontFamily
+                                font.pixelSize: page.fntSmall
+                                wrapMode: Text.WordWrap
+                                lineHeight: 1.25
+                            }
+                        }
+                    }
+                }
+
                 // ── 1. 指数卡 ×5 ────────────────────────────────
                 Flow {
                     objectName: "indexCards"
@@ -333,6 +439,18 @@ Item {
                                     font.family: Theme.fontFamily
                                     font.pixelSize: page.fntBase
                                     font.bold: true
+                                    elide: Text.ElideRight
+                                }
+
+                                /* 「这个指数由什么构成、怎么加权」——用户不知道 MPI/PPPI 是什么，
+                                 * 没有这一行就得靠记忆。文案在桥里（`_CARD_META`）。 */
+                                Text {
+                                    objectName: "indexCardSubtitle"
+                                    width: parent.width
+                                    text: indexCard.modelData.subtitle || ""
+                                    color: Theme.textSecondary
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: page.fntSmall
                                     elide: Text.ElideRight
                                 }
 
@@ -389,9 +507,13 @@ Item {
                                 }
 
                                 Text {
+                                    objectName: "indexCardHint"
                                     width: parent.width
-                                    visible: indexCard.modelData.days < 30
-                                    text: qsTr("基期短，长窗口不全")
+                                    visible: indexCard.modelData.hint !== ""
+                                    /* 文案由桥给（口径/基期提示），因为这三种情况要说的话不一样：
+                                     * 「基期短，长窗口不全」是数据不足；PLEX 是**全服统一价**、
+                                     * 口径与另外四条不同 —— 写死在这里必然有一边是误导。 */
+                                    text: indexCard.modelData.hint
                                     color: Theme.accentYellow
                                     font.family: Theme.fontFamily
                                     font.pixelSize: page.fntSmall
@@ -399,12 +521,18 @@ Item {
                                 }
                             }
 
-                            // 点卡切换选中：再点一次取消（成员表跟着切）
+                            // 点卡切换选中：再点一次取消（成员表跟着切）；悬停看「怎么看」
                             MouseArea {
+                                objectName: "indexCardHover"
                                 anchors.fill: parent
+                                hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: if (page.pulse)
                                     page.pulse.selectIndex(indexCard.modelData.key)
+
+                                ToolTip.visible: containsMouse && !!indexCard.modelData.toolTipText
+                                ToolTip.text: indexCard.modelData.toolTipText || ""
+                                ToolTip.delay: 400
                             }
                         }
                     }
@@ -908,6 +1036,130 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: page.fntSmall
                 wrapMode: Text.WordWrap
+            }
+
+            /* ── 交易建议（挂单/卖单该怎么做）───────────────────────
+             * 用户口径：「真给我来点挂单、卖单之类的建议」。这里给的是**规则推导**：
+             * verdict + 两条具体建议价 + 关键数字（价差/来回费用/日均成交/队列天数）+ 依据，
+             * 并明确写「不构成投资建议」——数字口径都在 `market_advice_service` 里。 */
+            FPanel {
+                objectName: "advicePanel"
+                Layout.fillWidth: true
+                Layout.leftMargin: page.pad
+                Layout.rightMargin: page.pad
+                Layout.topMargin: page.pad
+                visible: page.pulse ? page.pulse.advice.verdict !== undefined
+                                      && page.pulse.advice.verdict !== "" : false
+                implicitHeight: adviceCol.implicitHeight + 2 * page.pad
+
+                ColumnLayout {
+                    id: adviceCol
+                    anchors.fill: parent
+                    anchors.margins: page.pad
+                    spacing: 3
+
+                    RowLayout {
+                        Layout.fillWidth: true
+
+                        Text {
+                            objectName: "adviceTitle"
+                            text: page.pulse ? page.pulse.advice.title : ""
+                            color: page.pulse ? page.tokenColor(page.pulse.advice.token) : Theme.textPrimary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: page.fntBase
+                            font.bold: true
+                            elide: Text.ElideRight
+                        }
+
+                        Item {
+                            Layout.fillWidth: true
+                        }
+
+                        Text {
+                            text: qsTr("挂单建议")
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: page.fntSmall
+                        }
+                    }
+
+                    // 关键数字：为什么这么建议，摊开给用户看
+                    Repeater {
+                        model: page.pulse ? page.pulse.advice.metrics : []
+
+                        RowLayout {
+                            required property var modelData
+
+                            Layout.fillWidth: true
+                            spacing: page.pad
+
+                            Text {
+                                Layout.preferredWidth: Math.round(150 * Theme.fontScale)
+                                text: modelData.label
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: page.fntSmall
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: modelData.value
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: page.fntSmall
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
+
+                    Text {
+                        objectName: "adviceBuy"
+                        Layout.fillWidth: true
+                        text: page.pulse ? page.pulse.advice.buyAdvice : ""
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: page.fntSmall
+                        wrapMode: Text.WordWrap
+                        lineHeight: 1.2
+                    }
+
+                    Text {
+                        objectName: "adviceSell"
+                        Layout.fillWidth: true
+                        text: page.pulse ? page.pulse.advice.sellAdvice : ""
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: page.fntSmall
+                        wrapMode: Text.WordWrap
+                        lineHeight: 1.2
+                    }
+
+                    Repeater {
+                        model: page.pulse ? page.pulse.advice.reasons : []
+
+                        Text {
+                            required property var modelData
+
+                            Layout.fillWidth: true
+                            text: "· " + modelData
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: page.fntSmall
+                            wrapMode: Text.WordWrap
+                            lineHeight: 1.2
+                        }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: (page.pulse ? page.pulse.advice.caliber : "") + qsTr("　· 规则推导，不构成投资建议")
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: page.fntSmall
+                        wrapMode: Text.WordWrap
+                    }
+                }
             }
 
             // 传导链表

@@ -597,9 +597,9 @@ def blueprint_requirements_factory(qapp, monkeypatch):
         lambda db: {
             "status": "ok",
             "needed": {
-                1001: {"name": "渡鸦级蓝图", "needed_runs": 20},
-                1002: {"name": "三钛合金蓝图", "needed_runs": 5},
-                1003: {"name": "缺少的蓝图", "needed_runs": 1},
+                1001: {"name": "渡鸦级蓝图", "needed_runs": 20, "source": "制造蓝图"},
+                1002: {"name": "三钛合金蓝图", "needed_runs": 5, "source": "被拷贝蓝图"},
+                1003: {"name": "缺少的蓝图", "needed_runs": 1},  # 老调用方没有 source → 末列显示 —
             },
             "bp_inv": {
                 1001: {"is_bpo": True, "best_me": 10, "best_te": 20},
@@ -613,7 +613,10 @@ def blueprint_requirements_factory(qapp, monkeypatch):
 
 
 def test_blueprint_requirements_three_state_status(blueprint_requirements_factory):
-    """三色状态：BPO 无限=足够、可用不足=不足、无库存=缺少；状态行给出三种计数。"""
+    """三色状态：BPO 无限=足够、可用不足=不足、无库存=缺少；状态行给出三种计数。
+
+    末列「用途/来源」紧跟状态列（老调用方不给 `source` 时显示 `—`）。
+    """
     dialog = blueprint_requirements_factory()
     try:
         bridge = dialog.bridge
@@ -623,6 +626,8 @@ def test_blueprint_requirements_three_state_status(blueprint_requirements_factor
         assert by_name["渡鸦级蓝图"][6]["text"] == "足够"
         assert by_name["三钛合金蓝图"][6]["text"] == "不足"
         assert by_name["缺少的蓝图"][6]["text"] == "缺少"
+        assert by_name["渡鸦级蓝图"][7]["text"] == "制造蓝图"
+        assert by_name["缺少的蓝图"][7]["text"] == "—"
         # 三种状态各自的颜色互不相同
         colors = {by_name[n][6]["color"] for n in by_name}
         assert len(colors) == 3

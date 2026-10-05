@@ -24,11 +24,25 @@ import json
 import math
 from typing import Any
 
+from core.logger import log
 from domain.bom import walk_bom
 from domain.formulas import calc_material_for_runs
+from domain.research import (
+    ACTIVITY_COPYING,
+    ACTIVITY_INVENTION,
+    ACTIVITY_RESEARCH_ME,
+    ACTIVITY_RESEARCH_TE,
+)
 from services.blueprint_reader import SqliteBlueprintReader
+from services.item_kind import blueprint_type_ids
 from services.name_resolver import resolve_item_name
-from services.plan_job_kinds import is_science
+from services.plan_job_kinds import (
+    ACTIVITY_MANUFACTURING,
+    ACTIVITY_REACTION,
+    is_science,
+    normalize,
+)
+from services.terminology import term
 
 # ════════════════════════════════════════════════════════════════
 #  内部辅助
@@ -56,11 +70,11 @@ def _resolve_bp_name(conn, bp_type_id: int) -> str:
     return name
 
 
-def _get_per_run_output(conn, bp_type_id: int) -> int:
-    """获取蓝图每次制造的产出数量"""
+def _get_per_run_output(conn, bp_type_id: int, activity: str = ACTIVITY_MANUFACTURING) -> int:
+    """获取蓝图每次作业的产出数量（默认制造；反应产物的产出挂在 `activity='reaction'` 行上）"""
     row = conn.execute(
-        "SELECT quantity FROM blueprint_products WHERE blueprint_type_id = ? AND activity = 'manufacturing' LIMIT 1",
-        (bp_type_id,),
+        "SELECT quantity FROM blueprint_products WHERE blueprint_type_id = ? AND activity = ? LIMIT 1",
+        (bp_type_id, activity),
     ).fetchone()
     return row[0] if row and row[0] else 1
 
@@ -70,64 +84,213 @@ def _get_per_run_output(conn, bp_type_id: int) -> int:
 # ════════════════════════════════════════════════════════════════
 
 
+#: 「用途/来源」列文案模板（`{act}` 由术语中心填）。制造/反应行共用同一列。
+_SOURCE_TPL = {
+    ACTIVITY_COPYING: "被{act}蓝图",  # 被拷贝蓝图
+    ACTIVITY_INVENTION: "{act}输入",  # 发明输入
+}
+#: ME/TE 研究行：模板里的活动词取术语中心的聚合键 `research`（"研究"），
+#: 不是 `researching_material_efficiency` 那个长名（否则成「被材料效率研究蓝图」）。
+_RESEARCH_SOURCE_TPL = "被{act}蓝图"  # 被研究蓝图
+
+
+def _source_label(activity: str | None) -> str:
+    """「用途/来源」列文案 —— 这张蓝图在本计划里是干什么用的。
+
+    活动中文名一律走术语中心（铁律：不硬编码活动名），模板只加前后缀。
+    """
+    act = normalize(activity)
+    tpl = _SOURCE_TPL.get(act)
+    if tpl:
+        return tpl.format(act=term.activity(act))
+    if act in (ACTIVITY_RESEARCH_ME, ACTIVITY_RESEARCH_TE):
+        return _RESEARCH_SOURCE_TPL.format(act=term.activity("research"))
+    return f"{term.activity(act)}蓝图"  # 制造蓝图 / 反应蓝图
+
+
+def _bound_blueprint_type(conn, plan: dict) -> int | None:
+    """计划绑定的那张库存蓝图的 **blueprint_type_id**（未绑定/取不到 → None）。
+
+    绑定口径与 `inventory_manager.get_blueprint_status_map` 第三条完全一致：
+    `COALESCE(plan_blueprint_bindings.blueprint_id, production_plans.assigned_blueprint_id)`
+    指向的是 `user_blueprints.id`——**行 id，不是蓝图 type_id**，必须再查一次
+    `user_blueprints.blueprint_type_id`；拿行 id 当 type_id 会查到完全不相关的蓝图。
+    一张计划绑了多份时取行 id 最小的那份（拷贝/研究按规则只能绑一张 BPO）。
+    """
+    plan_id = plan.get("id")
+    if not plan_id:
+        return None
+    row = conn.execute(
+        "SELECT ub.blueprint_type_id FROM user_blueprints ub "
+        "WHERE ub.id = ("
+        "  SELECT COALESCE(b.blueprint_id, pp.assigned_blueprint_id) "
+        "  FROM production_plans pp "
+        "  LEFT JOIN plan_blueprint_bindings b ON b.plan_id = pp.id "
+        "  WHERE pp.id = ? ORDER BY b.blueprint_id LIMIT 1)",
+        (int(plan_id),),
+    ).fetchone()
+    return int(row[0]) if row and row[0] else None
+
+
+def _science_input_blueprint(conn, plan: dict, pid: int) -> int | None:
+    """科研行真正要消耗的那张蓝图 type_id（反查不到 → None，不编造）。
+
+    语义真源见 `services.plan_job_kinds`：
+    - copying       → 计划绑定的那张 BPO（`_bound_blueprint_type`，与蓝图库状态列同一口径）；
+                      未绑定（老行 / 自动绑定失败）时回退 `product_type_id` —— 拷贝行的
+                      `product_type_id` 就是「产出的 BPC 代表的蓝图」，即被拷贝的那张
+    - invention     → T1 输入（`research_plans.resolve_invention_source`，与蓝图库右键
+                      「加入发明规划」同一条口径）。**入参是发明产物那张蓝图**（T2/T3），
+                      传 T1 会查不到它
+    - researching_* → 被研究的那张 BPO 本身（`product_type_id`）
+    """
+    act = normalize(plan.get("activity"))
+    if act == ACTIVITY_INVENTION:
+        from services.research_plans import resolve_invention_source
+
+        src = resolve_invention_source(conn, pid)
+        return int(src["t1_blueprint_type_id"]) if src else None
+    if act == ACTIVITY_COPYING:
+        return _bound_blueprint_type(conn, plan) or pid
+    return pid  # researching_*（调用方只在 is_science 时进来）
+
+
+def _science_needed_runs(plan: dict, activity: str) -> int:
+    """科研行的「所需流程数」（缺列按制造行同一套 defaults 兜 1，不编造不存在的量）。
+
+    - copying       = `parallels`（产出份数 = 拷贝作业数）。BPO 本身不限流程，
+                      表里那一行的「可用流程数」仍显示「无限」，这列读的是要跑几份
+    - invention     = `runs × parallels`（总尝试次数，每个 T1 BPC 流程 = 一次尝试）
+    - researching_* = 1（只需要被研究的那张 BPO 本身；等级是目标，不是流程数）
+    """
+    if activity == ACTIVITY_COPYING:
+        return max(int(plan.get("parallels", 1) or 1), 1)
+    if activity == ACTIVITY_INVENTION:
+        return max(int(plan.get("runs", 1) or 1), 1) * max(int(plan.get("parallels", 1) or 1), 1)
+    return 1
+
+
+def _add_source(entry: dict, label: str) -> None:
+    """同一张蓝图被多条计划以不同用途需要时并起用途标签（同一用途不重复）。"""
+    old = str(entry.get("source") or "")
+    if label not in old:
+        entry["source"] = f"{old}、{label}" if old else label
+
+
+def _invention_input_suffix(conn, activity: str, bp_tid: int) -> str:
+    """发明输入**不是蓝图**时补的括注 —— T3 发明的输入是古遗物，不是 T1 蓝图。
+
+    这类输入在 `user_blueprints` 里永远查不到，表格会照实显示红色「缺少」
+    （用户就该看到「这件东西没有」）；不括注的话会被读成「缺一张蓝图」。
+    是不是蓝图走 `item_kind.blueprint_type_ids` —— 全仓唯一的蓝图判定口径
+    （group 名后缀谓词，不依赖老库里可能为 NULL 的 `item.category_id`）。
+    """
+    if activity != ACTIVITY_INVENTION:
+        return ""
+    return "" if blueprint_type_ids(conn, [bp_tid]) else "（遗物）"
+
+
 def expand_blueprint_requirements(
     conn,
     plans: list[dict],
     *,
     me_level: int = 0,
 ) -> dict[int, dict[str, Any]]:
-    """收集每个生产计划顶层产物的蓝图需求（不递归展开 BOM 子项）。
+    """收集每个生产计划**真正要消耗的那张蓝图**（不递归展开 BOM 子项）。
 
     用户的生产模式是每项计划只制造自己的成品，
     子项材料直接购买成品，不会自己造子项的蓝图。
-    所以只需查每个 plan.product_type_id 对应的制造蓝图即可。
 
-    ⚠️ 科研行（拷贝/发明/研究）**整行跳过**：它们的产物本身就是一张蓝图、
-    也不需要额外买制造蓝图——要买的只有作业材料（数据核心/解码器/拷贝材料），
-    那条需求由 material_requirements（经 plan_execution）覆盖。
+    各活动要的是哪张蓝图（语义真源 `services.plan_job_kinds`）：
+    - 制造 → 该产物的制造蓝图（口径未变）
+    - 反应 → 该产物的反应蓝图（反应产物的蓝图挂在 `activity='reaction'` 行上）
+    - 拷贝     → 被拷贝的那张 BPO
+    - 发明     → T1 输入蓝图（由发明产物那张蓝图反查）
+    - ME/TE 研究 → 被研究的那张 BPO
+
+    ⚠️ 科研行的 `product_type_id` 是**蓝图**不是物品，按「产物反查制造蓝图」查不到；
+    以前又因为调用方没把 `activity` 传进来（`is_science(None)` 归一到制造）导致整行静默
+    丢弃 —— 这就是「发明/拷贝的前置蓝图整表不显示」（2026-10-02 修）。
 
     Args:
         conn: 已 ATTACH user/ref/bp/mkt 的数据库连接
-        plans: 计划列表，每项需含 product_type_id, runs, parallels（科研行还需 activity）
+        plans: 计划列表，每项需含 product_type_id, runs, parallels；
+               科研行还需 activity（拷贝行另需 id 以解析绑定的 BPO）
         me_level: 默认材料等级（各计划不同时从 plan 中取）
 
     Returns:
-        {blueprint_type_id: {"name": str, "needed_runs": int}}
+        {blueprint_type_id: {"name": str, "needed_runs": int, "source": str}}
+        `source` 是「用途/来源」列文案（制造蓝图 / 被拷贝蓝图 / 发明输入 / 被研究蓝图）；
+        发明输入不是蓝图时带「（遗物）」括注（T3 发明的输入是古遗物，见
+        `_invention_input_suffix`）
     """
     needed: dict[int, dict[str, Any]] = {}
 
     for plan in plans:
-        if is_science(plan.get("activity")):
-            continue
         pid = plan.get("product_type_id")
         if not pid:
             continue
+        activity = normalize(plan.get("activity"))
+
+        if is_science(activity):
+            src_bp = _science_input_blueprint(conn, plan, int(pid))
+            if src_bp is None:
+                log.warning("计划 %s 的 %s 输入蓝图反查不到，所需蓝图表跳过该行", plan.get("id"), activity)
+                continue
+            label = f"{_source_label(activity)}{_invention_input_suffix(conn, activity, src_bp)}"
+            entry = needed.get(src_bp)
+            if entry is None:
+                needed[src_bp] = {
+                    "name": _resolve_bp_name(conn, src_bp),
+                    "needed_runs": _science_needed_runs(plan, activity),
+                    "source": label,
+                }
+            else:
+                # 已有条目（多为另一条计划、另一种用途）→ 只并用途，不重复累计流程
+                _add_source(entry, label)
+            continue
+
         runs = plan.get("runs", 1) or 1
         parallels = plan.get("parallels", 1) or 1
         total_qty = runs * parallels
 
-        # 直接查该产品的制造蓝图（不递归材料）
-        bp_row = conn.execute(
-            "SELECT blueprint_type_id FROM blueprint_products "
-            "WHERE product_type_id = ? AND activity = 'manufacturing' LIMIT 1",
-            (pid,),
-        ).fetchone()
+        # 直接查该产品的蓝图（不递归材料）。
+        # **反应产物的蓝图挂在 `activity='reaction'` 上**，没有 manufacturing 行 ——
+        # 只认 'manufacturing' 会让反应计划整行静默丢失（与发明/拷贝同一个坑）。
+        # 谓词口径同 `market_browser_service._MFG_EXISTS` /
+        # `blueprint_repository.get_manufacturing_materials`：两者都取这一对。
+        if activity == ACTIVITY_REACTION:
+            bp_row = conn.execute(
+                "SELECT blueprint_type_id FROM blueprint_products "
+                "WHERE product_type_id = ? AND activity IN ('manufacturing','reaction') LIMIT 1",
+                (pid,),
+            ).fetchone()
+        else:
+            bp_row = conn.execute(
+                "SELECT blueprint_type_id FROM blueprint_products "
+                "WHERE product_type_id = ? AND activity = 'manufacturing' LIMIT 1",
+                (pid,),
+            ).fetchone()
         if not bp_row:
-            continue  # 该产品无制造蓝图（不应发生，创建计划时已校验）
+            continue  # 该产品无制造/反应蓝图（不应发生，创建计划时已校验）
 
         bp_tid = bp_row[0]
-        per_run = _get_per_run_output(conn, bp_tid)
+        # 单轮产出也要按同一个活动取：反应蓝图在 reaction 行上（拿 manufacturing 会兜成 1，
+        # 「所需流程数」直接虚高 N 倍）
+        per_run = _get_per_run_output(conn, bp_tid, activity)
         if per_run < 1:
             per_run = 1
         activations = math.ceil(total_qty / per_run)
 
         if bp_tid in needed:
             needed[bp_tid]["needed_runs"] += activations
+            _add_source(needed[bp_tid], _source_label(activity))
         else:
             name = _resolve_bp_name(conn, bp_tid)
             needed[bp_tid] = {
                 "name": name,
                 "needed_runs": activations,
+                "source": _source_label(activity),
             }
 
     return needed

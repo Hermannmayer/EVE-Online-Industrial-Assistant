@@ -37,6 +37,29 @@ HISTORY_TTL_SECONDS = 12 * 3600
 #: 大盘指数要盯它，但它既不是任何蓝图的产物、也不当材料，进不了另外两个集合。
 PLEX_TYPE_ID = 44992
 
+#: 「全服统一价」每日快照的建表语句 —— **单一来源**。
+#: 为什么需要它：**PLEX 这类品种的价格全服统一、没有区域划分**，ESI 的区块历史
+#: （`/markets/{region_id}/history/`）对它们**恒返回空列表**（实测 Jita/Amarr 都是空），
+#: 所以只能把 `/markets/prices/`（`fetch_baseline_prices`，1 次请求拿全部 type 的
+#: `average_price` / `adjusted_price`，**全服口径**）按天存下来当序列。
+#: market.db 是可重建缓存，直接建表、不走 `schema_migrations`（与 `price_history` 同先例）。
+GLOBAL_PRICE_DDL = """
+    CREATE TABLE IF NOT EXISTS global_price_daily (
+        type_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        average_price REAL DEFAULT 0,
+        adjusted_price REAL DEFAULT 0,
+        fetched_at TEXT NOT NULL,
+        PRIMARY KEY (type_id, date)
+    )
+"""
+
+#: 只给**没有区域成交历史**的品种存全服快照。当前只有 PLEX 一个：
+#: 它的价格全服统一、ESI 的区块历史对它恒返回空。**不要**把矿物之类加进来 ——
+#: 它们有权威的区域成交均价历史（一次能拉 398 天），全服价只有当日一个点，
+#: 加进来既浪费行数、又会被当成退路数据源污染指数（见 `_load_global_observations`）。
+GLOBAL_PRICE_TYPE_IDS: tuple[int, ...] = (PLEX_TYPE_ID,)
+
 #: `price_history` 里每个 `(type_id, region_id)` 最多保留的天数。
 #: 「可制造物品」窗口的日订单量/日成交量只聚合最近 7 条记录，不裁剪会让 market.db
 #: 多出约 220 万行（5554 个 type × 约 400 天 × 每区域一行）。
@@ -547,6 +570,43 @@ async def fetch_and_save_histories(
     return written
 
 
+async def save_global_price_snapshot(baseline: dict[int, dict], day: str | None = None) -> int:
+    """把 `/markets/prices/` 的**全服统一价**按天存一条（只存锚定集合）。
+
+    PLEX 的价格全服一致、没有区域划分（ESI 区块历史对它恒空，见 `GLOBAL_PRICE_DDL` 的说明），
+    所以它的时间序列只能靠这个每日快照攒。
+
+    Returns:
+        实际写入的行数（`baseline` 里没有锚定 type 时返回 0）。
+    """
+    if not baseline:
+        return 0
+    today = day or datetime.now(UTC).strftime("%Y-%m-%d")
+    now = datetime.now(UTC).isoformat()
+    rows = [
+        (
+            tid,
+            today,
+            float(baseline[tid].get("buy_price") or 0.0),
+            float(baseline[tid].get("adjusted_price") or 0.0),
+            now,
+        )
+        for tid in GLOBAL_PRICE_TYPE_IDS
+        if baseline.get(tid)
+    ]
+    if not rows:
+        return 0
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(GLOBAL_PRICE_DDL)
+        await db.executemany(
+            "INSERT OR REPLACE INTO global_price_daily "
+            "  (type_id, date, average_price, adjusted_price, fetched_at) VALUES (?, ?, ?, ?, ?)",
+            rows,
+        )
+        await db.commit()
+    return len(rows)
+
+
 async def main(regions: list[tuple[str, int]] | None = None, progress_cb: Callable[[int, str], None] | None = None):
     t0 = datetime.now()
     regions = regions or TRADE_REGIONS
@@ -562,6 +622,13 @@ async def main(regions: list[tuple[str, int]] | None = None, progress_cb: Callab
         progress_cb(10, pm)
     baseline = await fetch_baseline_prices()
     log.info(f"  基准价格: {len(baseline)} 个物品")
+    # 全服统一价每日快照（PLEX 锚的数据源）：1 次请求已经拉过，这里只写 9 行；
+    # 失败同样不连累价格更新
+    try:
+        await save_global_price_snapshot(baseline)
+    except Exception:
+        # 吞的是「写全服快照的任何异常」（磁盘/SQLite）—— 它只是大盘 PLEX 锚的附加数据源
+        log.exception("全服统一价快照写入失败（不影响本次价格更新）")
 
     write_progress(2, 5, pm := "拉取实时订单簿...")
     if progress_cb:
