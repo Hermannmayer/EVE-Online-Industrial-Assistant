@@ -16,7 +16,7 @@ def _default_db() -> DatabaseManager
 
 惰性获取 DatabaseManager（经容器，消除模块级单例双轨）。
 
-定义行：`23`
+定义行：`24`
 
 ### `init_db`
 
@@ -28,7 +28,7 @@ def init_db()
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`70`
+定义行：`71`
 
 ### `get_hangars`
 
@@ -40,7 +40,7 @@ def get_hangars() -> list[dict]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`87`
+定义行：`88`
 
 ### `create_hangar`
 
@@ -52,7 +52,7 @@ def create_hangar(name: str, solar_system_id: int | None=None) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`105`
+定义行：`106`
 
 ### `rename_hangar`
 
@@ -64,7 +64,7 @@ def rename_hangar(hangar_id: int, name: str) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`115`
+定义行：`116`
 
 ### `update_hangar_system`
 
@@ -74,7 +74,7 @@ def update_hangar_system(hangar_id: int, solar_system_id: int | None) -> bool
 
 设置机库所在星系（None 清除）。
 
-定义行：`122`
+定义行：`123`
 
 ### `get_hangar_system_id`
 
@@ -84,7 +84,7 @@ def get_hangar_system_id(hangar_id: int | None, *, _db: DatabaseManager | None=N
 
 读取机库所在星系的 solar_system_id（无机库/未设置返回 None）。
 
-定义行：`130`
+定义行：`131`
 
 ### `get_hangar_name`
 
@@ -94,7 +94,7 @@ def get_hangar_name(hangar_id: int | None) -> str
 
 读取机库名称（无机库/未设置返回空串）。
 
-定义行：`140`
+定义行：`141`
 
 ### `get_default_mat_hangar_and_system`
 
@@ -104,7 +104,7 @@ def get_default_mat_hangar_and_system() -> tuple[int | None, int | None]
 
 返回 (默认材料机库 id, 其所在星系 id)。settings 未配置/读取失败 → (None, None)。
 
-定义行：`152`
+定义行：`153`
 
 ### `get_default_mat_hangar_system_id`
 
@@ -114,7 +114,7 @@ def get_default_mat_hangar_system_id() -> int | None
 
 从 settings.json 默认材料机库带出星系（无计划上下文的 SCI 依据）。
 
-定义行：`171`
+定义行：`172`
 
 ### `update_hangar_config`
 
@@ -124,7 +124,7 @@ def update_hangar_config(hangar_id: int, facility_type: str | None, facility_tax
 
 更新机库工业配置（设施类型/设施税/改件）。rigs 存 JSON 数组。
 
-定义行：`176`
+定义行：`177`
 
 ### `get_hangar_config`
 
@@ -134,7 +134,7 @@ def get_hangar_config(hangar_id: int | None) -> dict
 
 读取机库工业配置 &#123;facility_type, facility_tax, rigs: list[int]&#125;；无机库/未配置返回默认。
 
-定义行：`192`
+定义行：`193`
 
 ### `hangar_references`
 
@@ -144,7 +144,7 @@ def hangar_references(hangar_id: int) -> list[str]
 
 返回引用该机库的位置描述，如 ['默认材料机库', '3 条计划的材料机库']。
 
-定义行：`221`
+定义行：`222`
 
 ### `repoint_hangar_references`
 
@@ -154,7 +154,7 @@ def repoint_hangar_references(old_id: int, new_id: int) -> int
 
 把指向 old_id 的引用改指到 new_id，返回改动处数。
 
-定义行：`250`
+定义行：`251`
 
 ### `delete_hangar`
 
@@ -164,7 +164,7 @@ def delete_hangar(hangar_id: int, *, repoint_to: int | None=None) -> bool
 
 删除机库及其物品（蓝图/物品由 ON DELETE CASCADE 连带删除）。
 
-定义行：`282`
+定义行：`283`
 
 ### `get_items`
 
@@ -174,7 +174,7 @@ def get_items(hangar_id: int, *, include_derived: bool=True, need_ids: set[int] 
 
 机库物品列表。
 
-定义行：`297`
+定义行：`298`
 
 ### `get_item_price`
 
@@ -186,7 +186,7 @@ def get_item_price(type_id: int) -> float | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`386`
+定义行：`387`
 
 ### `get_inventory_cost_map`
 
@@ -196,7 +196,7 @@ def get_inventory_cost_map(_db: DatabaseManager | None=None) -> dict[int, tuple[
 
 跨机库汇总各物品库存数量与加权平均成本（成本按数量加权）。
 
-定义行：`394`
+定义行：`395`
 
 ### `add_item`
 
@@ -206,7 +206,7 @@ def add_item(hangar_id: int, type_id: int, quantity: int, cost_price: float=0, *
 
 把 quantity 件物品加入机库，按加权平均成本合并。
 
-定义行：`425`
+定义行：`426`
 
 ### `set_item_quantity`
 
@@ -216,7 +216,7 @@ def set_item_quantity(hangar_id: int, type_id: int, quantity: int, cost_price: f
 
 全量同步：把 (hangar_id, type_id) 的数量设为 quantity。
 
-定义行：`463`
+定义行：`464`
 
 ### `update_cost_price`
 
@@ -226,7 +226,7 @@ def update_cost_price(item_id: int, cost_price: float) -> bool
 
 直接覆盖该库存行的单位成本价（参数化 UPDATE，返回是否命中）。
 
-定义行：`513`
+定义行：`514`
 
 ### `get_hangar_stock`
 
@@ -236,7 +236,7 @@ def get_hangar_stock(hangar_id: int) -> dict[int, int]
 
 单机库库存快照 &#123;type_id: quantity&#125;（quantity > 0 才计入）。
 
-定义行：`521`
+定义行：`522`
 
 ### `get_hangar_cost_map`
 
@@ -246,7 +246,7 @@ def get_hangar_cost_map(hangar_id: int) -> dict[int, float]
 
 单机库物品成本快照 &#123;type_id: 加权平均成本&#125;。
 
-定义行：`538`
+定义行：`539`
 
 ### `deduct_item`
 
@@ -256,7 +256,7 @@ def deduct_item(hangar_id: int, type_id: int, quantity: int, *, conn=None) -> in
 
 从机库扣减 quantity，返回实际扣减量。
 
-定义行：`554`
+定义行：`555`
 
 ### `remove_item`
 
@@ -268,7 +268,7 @@ def remove_item(item_id: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`590`
+定义行：`591`
 
 ### `update_quantity`
 
@@ -280,7 +280,7 @@ def update_quantity(item_id: int, quantity: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`597`
+定义行：`598`
 
 ### `move_items`
 
@@ -292,7 +292,7 @@ def move_items(item_ids: list[int], to_hangar_id: int)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`609`
+定义行：`610`
 
 ### `_move_item_between_hangars`
 
@@ -302,7 +302,7 @@ def _move_item_between_hangars(src_hangar: int, type_id: int, target_hangar: int
 
 把源机库中 type_id 的物品**按数量整体**移到目标机库，返回是否移动。
 
-定义行：`641`
+定义行：`642`
 
 ### `_move_item_row`
 
@@ -312,7 +312,7 @@ def _move_item_row(conn: sqlite3.Connection, src_hangar: int, type_id: int, targ
 
 `_move_item_between_hangars` 的实际搬运（在同一连接/事务内，由调用方提交）。
 
-定义行：`660`
+定义行：`661`
 
 ### `apply_inventory_import`
 
@@ -322,7 +322,7 @@ def apply_inventory_import(hangar_id: int, data: list[tuple[int, int, float, int
 
 按导入数据应用库存变更，返回 (added, moved)。
 
-定义行：`703`
+定义行：`704`
 
 ### `get_total_value`
 
@@ -334,7 +334,7 @@ def get_total_value(hangar_id: int, price_type: str='sell', discount: float=0) -
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`760`
+定义行：`761`
 
 ### `add_blueprint`
 
@@ -344,7 +344,7 @@ def add_blueprint(hangar_id: int, blueprint_type_id: int, is_bpo: bool=True, me_
 
 新增蓝图。conn 传入时在同一连接执行且不提交（由调用方统一事务）。
 
-定义行：`792`
+定义行：`793`
 
 ### `get_blueprints`
 
@@ -354,7 +354,7 @@ def get_blueprints(hangar_id: int | None=None) -> list[dict]
 
 获取用户蓝图列表，可指定机库或全部
 
-定义行：`821`
+定义行：`822`
 
 ### `update_blueprint`
 
@@ -364,7 +364,7 @@ def update_blueprint(bp_id: int, *, conn=None, **kwargs) -> bool
 
 更新蓝图属性，kwargs 可含 is_bpo, me_level, te_level, runs, quantity, notes
 
-定义行：`861`
+定义行：`862`
 
 ### `delete_blueprint`
 
@@ -374,7 +374,7 @@ def delete_blueprint(bp_id: int, *, conn=None) -> bool
 
 删除蓝图。conn 传入时在同一连接执行且不提交（由调用方统一事务）。
 
-定义行：`886`
+定义行：`887`
 
 ### `delete_blueprints_batch`
 
@@ -384,7 +384,7 @@ def delete_blueprints_batch(ids: list[int]) -> int
 
 批量删除蓝图，返回删除行数
 
-定义行：`908`
+定义行：`909`
 
 ### `move_blueprints_to_hangar`
 
@@ -394,7 +394,7 @@ def move_blueprints_to_hangar(ids: list[int], hangar_id: int) -> int
 
 批量移动蓝图到目标机库
 
-定义行：`930`
+定义行：`931`
 
 ### `update_blueprints_batch`
 
@@ -404,7 +404,7 @@ def update_blueprints_batch(ids: list[int], **kwargs) -> int
 
 批量更新蓝图属性（me_level, te_level, runs, cost_per_run 等）
 
-定义行：`941`
+定义行：`942`
 
 ### `get_blueprint_product_info`
 
@@ -414,7 +414,7 @@ def get_blueprint_product_info(blueprint_type_id: int) -> dict | None
 
 获取蓝图的产物信息（名称、产量、制造时间）
 
-定义行：`958`
+定义行：`959`
 
 ### `get_blueprint_product_info_batch`
 
@@ -424,7 +424,7 @@ def get_blueprint_product_info_batch(bp_ids: list[int]) -> dict[int, dict]
 
 批量获取蓝图产物信息，返回 &#123;blueprint_type_id: &#123;product_type_id, product_name, product_quantity, base_time&#125;&#125;
 
-定义行：`988`
+定义行：`989`
 
 ### `get_blueprint_materials_batch`
 
@@ -434,7 +434,7 @@ def get_blueprint_materials_batch(bp_ids: list[int]) -> dict[int, list[tuple[int
 
 批量获取蓝图材料，返回 &#123;blueprint_type_id: [(material_type_id, quantity), ...]&#125;
 
-定义行：`1019`
+定义行：`1020`
 
 ### `check_blueprint_exists`
 
@@ -444,7 +444,7 @@ def check_blueprint_exists(blueprint_type_id: int) -> bool
 
 检查用户蓝图库中是否已存在指定类型的蓝图
 
-定义行：`1040`
+定义行：`1041`
 
 ### `get_blueprint_tech_levels`
 
@@ -454,7 +454,7 @@ def get_blueprint_tech_levels()
 
 从 reference.db 获取各蓝图的科技等级
 
-定义行：`1048`
+定义行：`1049`
 
 ### `get_blueprint_reaction_ids`
 
@@ -464,7 +464,7 @@ def get_blueprint_reaction_ids() -> set[int]
 
 获取所有反应公式的 blueprint_type_id
 
-定义行：`1085`
+定义行：`1086`
 
 ### `format_blueprint_status`
 
@@ -474,7 +474,7 @@ def format_blueprint_status(statuses: Iterable[str]) -> str
 
 状态集合 → 显示串：按 `BLUEPRINT_STATUSES` 顺序以 ` · ` 连接；全未命中 → `-`。
 
-定义行：`1121`
+定义行：`1122`
 
 ### `_in_batches`
 
@@ -486,7 +486,7 @@ def _in_batches(type_ids: list[int]) -> Iterator[list[int]]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`1138`
+定义行：`1139`
 
 ### `_stocked_type_ids`
 
@@ -496,7 +496,7 @@ def _stocked_type_ids(conn: sqlite3.Connection, type_ids: list[int]) -> set[int]
 
 库中有成品：`inventory_items.quantity > 0`，**全部机库合计**（不限当前机库）。
 
-定义行：`1143`
+定义行：`1144`
 
 ### `_listed_type_ids`
 
@@ -506,7 +506,7 @@ def _listed_type_ids(conn: sqlite3.Connection, type_ids: list[int]) -> set[int]
 
 有挂单：`open_orders.volume_remain > 0`，**买单卖单都算**（没筛 `is_buy`）。
 
-定义行：`1158`
+定义行：`1159`
 
 ### `get_stock_and_order_flags`
 
@@ -516,7 +516,17 @@ def get_stock_and_order_flags(type_ids: Iterable[int], db: DatabaseManager | Non
 
 批量取 `&#123;type_id: (库中有, 有挂单)&#125;`，只含命中项（未命中视为 `(False, False)`）。
 
-定义行：`1173`
+定义行：`1174`
+
+### `get_production_state_flags`
+
+```python
+def get_production_state_flags(type_ids: Iterable[int], db: DatabaseManager | None=None) -> dict[int, frozenset[str]]
+```
+
+批量取「这个产物现在处于什么状态」：`&#123;product_type_id: &#123;标记…&#125;&#125;`。
+
+定义行：`1200`
 
 ### `get_blueprint_status_map`
 
@@ -526,4 +536,4 @@ def get_blueprint_status_map(rows: Iterable[dict[str, Any]]) -> dict[int, str]
 
 批量取蓝图「状态」列显示串，返回 `&#123;user_blueprints.id: 显示串&#125;`。
 
-定义行：`1191`
+定义行：`1298`

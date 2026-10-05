@@ -305,6 +305,8 @@ class ManufacturableItemsBridge(DialogBridge):
 
         #: 当前这批行**整批**都没有市场历史（状态行据此提示去更新价格）
         self._history_missing = False
+        #: 有历史但**整批都过期**（最新记录早于近 7 天窗口）→ 同样提示去更新价格
+        self._history_stale = False
 
         self._tree_all: list[dict] = []
         self._tree_visible: list[dict] = []
@@ -646,13 +648,18 @@ class ManufacturableItemsBridge(DialogBridge):
         return key in (row.get("_state") or ())
 
     def _attach_history(self, rows: list[dict]) -> None:
-        """近 7 日平均订单量 / 成交量 —— **本地缓存一次 SQL，零 ESI 请求**。
+        """近 7 个**日历天**平均订单量 / 成交量 —— **本地缓存一次 SQL，零 ESI 请求**。
 
         数据由「更新价格」统一拉取（见 `docs/dev/flows.md`）。查不到 → `None`（表格显示 `—`），
-        **不用 0 冒充**：0 是「确实没人下单」，`—` 是「不知道」。
+        **不用 0 冒充**：0 是「这些天确实没成交」，`—` 是「不知道」。
+
+        ⚠️ 窗口是日历天（`get_history_summary` 的说明）：ESI 历史只返回有成交的日子，
+        按「最近 7 条记录」会变成「上次活跃那几天」——实测 `屹立白蚁 II` 已经两个多月
+        没成交，却算出 21.6/天。
         """
         if not rows:
             self._history_missing = False
+            self._history_stale = False
             return
         summary = get_history_summary([r["id"] for r in rows], region_id=JITA_RID, _db=get_container().db)
         for row in rows:
@@ -662,6 +669,11 @@ class ManufacturableItemsBridge(DialogBridge):
         # 整批都没有历史 → 状态行提示去「更新价格」（在**取数**这一步判定，
         # 不在 `_view_status` 里按当前行猜 —— 评分后的行是另一批 dict）
         self._history_missing = all(r.get("ocv") is None for r in rows)
+        # 有历史、但**整批都过期**（最新记录早于 7 天窗口）→ 状态行说清「数据太旧」，
+        # 否则满屏 `—` 会让人以为是物品的问题
+        self._history_stale = (
+            bool(summary) and not self._history_missing and all(item.get("stale") for item in summary.values())
+        )
 
     def _set_columns(self, cols: list[tuple]) -> None:
         self._col_specs = list(cols)
@@ -762,6 +774,8 @@ class ManufacturableItemsBridge(DialogBridge):
         tail = " | 评分已计算"
         if self._history_missing:
             tail += " | 市场历史为空：请点右上角「更新价格」"
+        elif self._history_stale:
+            tail += " | 本地历史已过期（近 7 天无记录）：请点右上角「更新价格」"
         return head + tail
 
     # ── 列宽实测（紧凑优先）──────────────────────────────────

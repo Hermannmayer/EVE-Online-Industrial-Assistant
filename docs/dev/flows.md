@@ -39,6 +39,10 @@ UI（工业页）→ workers/industry_workers.ScoreWorker
   `market.db` 会撞锁。更新价格现在还会**按 TTL 增量**拉取可制造/反应产物的**市场历史**
   （`market.db.price_history`，即「日订单量 / 日成交量」的来源；见
   `services/importers/getprices.fetch_and_save_histories`）—— 页面同样不得自己拉 ESI。
+  ⚠️ 这两列的聚合窗口是**最近 7 个日历天**（`services/price_history.get_history_summary`），
+  缺失的日子按 0 计入：ESI 历史**只返回有成交的日子**，按「最近 7 条记录」取会把冷门物品
+  算成「上次活跃那几天」的平均值（实测 `屹立白蚁 II` 已 80 天没成交却报 21.6/天）。
+  本地历史整段过期（`fetched_at` 也早于窗口）时给 `—` 而不是 0。
   工业页的「刷新」是**例外**：它走 `PlanPriceRefreshWorker` 只拉当前
   计划相关的 type_id（带 5 分钟缓存判定），不是全量更新，故保留在页面内。
 - 价格时效**直接显示在页面状态栏**：`{行数} · {A} {刚刚/35 分钟前/3 天前} / {B} {…}`，

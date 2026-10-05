@@ -3,7 +3,7 @@ Market price history — ESI /markets/{region_id}/history/
 Cache in market.db price_history table
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import aiohttp
 
@@ -132,7 +132,7 @@ def save_cache(type_id: int, region_id: int, data: list[dict], _db=None) -> None
             )
 
 
-#: 「日订单量 / 日成交量」两列默认的聚合窗口（天）。
+#: 「日订单量 / 日成交量」两列默认的聚合窗口（**日历天**）。
 #: 与 `CACHE_TTL_SECONDS` 无关：那个管「多久算过期」，这个管「平均几天」。
 SUMMARY_DAYS = 7
 
@@ -145,22 +145,42 @@ def get_history_summary(
     region_id: int = REGION_ID,
     days: int = SUMMARY_DAYS,
     _db=None,
+    today: date | None = None,
 ) -> dict[int, dict]:
-    """读本地缓存，算出「近 `days` 天平均订单量 / 成交量」→ `{type_id: {...}}`。
+    """读本地缓存，算「最近 `days` 个**日历天**的平均订单量 / 成交量」→ `{type_id: {...}}`。
 
     载荷：`{"oc": 平均 order_count | None, "vol": 平均 volume | None,
-    "days": 参与平均的天数, "last": 最新一条历史的日期}`。
+    "days": 窗口内有记录的天数, "last": 最新记录日期, "stale": 本地历史是否整段早于窗口}`。
 
-    **窗口按「最近 `days` 条记录」取，不是「最近 days 个日历天」**：历史是按天入库的，
-    但某个 type 可能只在打开价格走势图时被拉过一次，日期停在几个月前 —— 按日历窗口会让
-    整列变空，而「最近 7 条」总能回答「上次有数据时一天卖多少」。
+    ⚠️ **必须按日历天，不能按「最近 `days` 条记录」**：ESI 的
+    `/markets/{region_id}/history/` **只返回有成交的日子**（日期是跳的），冷门物品那 7 条
+    能横跨好几个月 —— 「近 7 日平均」于是变成「上次活跃那几天平均」。实测 `屹立白蚁 II`
+    （type 47128）最新记录 2026-07-17、最近 7 条横跨 2026-05-14 ~ 07-17，算出 21.6/天，
+    而它已经两个多月没成交（用户报的正是这条）。
 
-    查不到的 type **不出现在返回值里**（调用方 `.get(id)` 即得 `None` → 表格显示 `—`）：
-    这里**不用 0 冒充「查不到」**，0 是「确实没人下单」。
+    窗口内**没有记录的日子按 0 计入**（ESI 不返回那天 = 那天成交 0），所以分母恒为 `days`
+    —— 算出来就是「最近这些天真能卖多少」。
+
+    查不到的 type **不出现在返回值里**（调用方 `.get(id)` → `None` → 表格显示 `—`）：
+    这里**不用 0 冒充「查不到」**。
+
+    「本地没拉过」与「物品真没成交」必须分开（靠 `fetched_at`）：
+
+    - 最近 `days` 天内**拉过**这份历史（`fetched_at` 在窗口内）→ 没记录就是**真的 0 成交**，
+      照实给 `0`；
+    - 最后一次拉取也早于窗口 → 本地这份数据过期，给 `stale=True` + `oc`/`vol` = `None`
+      （显示 `—`，状态行提示去「更新价格」），**不拿 0 冒充「没人买」**。
+
+    `today` 只为测试注入；缺省取本机当天。
     """
     ids = [int(t) for t in type_ids if t]
     if not ids:
         return {}
+
+    window = max(1, int(days))
+    end_day = today or date.today()
+    start = (end_day - timedelta(days=window - 1)).isoformat()
+    end = end_day.isoformat()
 
     conn_mgr = _db or get_db()
     with conn_mgr.connect("mkt") as conn:
@@ -168,33 +188,41 @@ def get_history_summary(
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_history'").fetchone():
             return {}
 
-        out: dict[int, dict] = {}
-        for start in range(0, len(ids), _SQL_PARAM_CHUNK):
-            chunk = ids[start : start + _SQL_PARAM_CHUNK]
+        marks: dict[int, tuple[str, str]] = {}
+        window_sums: dict[int, tuple[float, float, int]] = {}
+        for offset in range(0, len(ids), _SQL_PARAM_CHUNK):
+            chunk = ids[offset : offset + _SQL_PARAM_CHUNK]
             ph = ",".join("?" * len(chunk))
-            rows = conn.execute(
-                f"""
-                SELECT type_id, AVG(order_count) AS oc, AVG(volume) AS vol,
-                       COUNT(*) AS n, MAX(date) AS last
-                FROM (
-                    SELECT type_id, order_count, volume, date,
-                           ROW_NUMBER() OVER (PARTITION BY type_id ORDER BY date DESC) AS rn
-                    FROM price_history
-                    WHERE region_id = ? AND type_id IN ({ph})
-                )
-                WHERE rn <= ?
-                GROUP BY type_id
-                """,
-                (region_id, *chunk, days),
-            ).fetchall()
-            for tid, oc, vol, n, last in rows:
-                out[int(tid)] = {
-                    "oc": float(oc) if oc is not None else None,
-                    "vol": float(vol) if vol is not None else None,
-                    "days": int(n),
-                    "last": last,
-                }
-        return out
+            for tid, last, fetched in conn.execute(
+                f"SELECT type_id, MAX(date), MAX(fetched_at) FROM price_history "
+                f"WHERE region_id = ? AND type_id IN ({ph}) GROUP BY type_id",
+                (region_id, *chunk),
+            ).fetchall():
+                marks[int(tid)] = (str(last), str(fetched))
+            for tid, vol_sum, oc_sum, covered in conn.execute(
+                f"SELECT type_id, SUM(volume), SUM(order_count), COUNT(*) FROM price_history "
+                f"WHERE region_id = ? AND type_id IN ({ph}) AND date >= ? AND date <= ? GROUP BY type_id",
+                (region_id, *chunk, start, end),
+            ).fetchall():
+                window_sums[int(tid)] = (float(vol_sum or 0), float(oc_sum or 0), int(covered))
+
+    out: dict[int, dict] = {}
+    for tid, (last, fetched) in marks.items():
+        # `fetched_at` 是 ISO 串（`2026-10-05T12:34:56.789+00:00`）→ 前 10 位就是日期
+        pulled_in_window = fetched[:10] >= start
+        if not pulled_in_window:
+            # 本地这份历史整段早于窗口（很久没点「更新价格」）→ 不知道，不是 0
+            out[tid] = {"oc": None, "vol": None, "days": 0, "last": last, "stale": True}
+            continue
+        vol_sum, oc_sum, covered = window_sums.get(tid, (0.0, 0.0, 0))
+        out[tid] = {
+            "oc": oc_sum / window,
+            "vol": vol_sum / window,
+            "days": covered,
+            "last": last,
+            "stale": False,
+        }
+    return out
 
 
 class PriceHistoryService:

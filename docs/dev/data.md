@@ -24,7 +24,7 @@
 |----|------|------|
 | `market_prices` | type_id, buy_price, sell_price, buy_volume, sell_volume, fetch_time | 实时订单价格快照 |
 | `market_volume_snapshots` | type_id, volume, fetch_time | 成交量快照 |
-| `price_history` | type_id, region_id, date, average, highest, lowest, volume, order_count, fetched_at；主键 `(type_id, region_id, date)` | 可制造/反应产物的**日级**市场历史，「日订单量 / 日成交量」两列的来源。写入方有两处：`services/importers/getprices.fetch_and_save_histories`（「更新价格」流程，**只拉 Jita**、按 12h TTL 增量、每 `(type_id, region_id)` 只保留近 180 天）与 `services/price_history.save_cache`（价格走势图，单 type 全量覆盖写）。建表 DDL 单一来源是 `services/price_history.PRICE_HISTORY_DDL` |
+| `price_history` | type_id, region_id, date, average, highest, lowest, volume, order_count, fetched_at；主键 `(type_id, region_id, date)` | 可制造/反应产物的**日级**市场历史，「日订单量 / 日成交量」两列的来源。⚠️ **聚合窗口是「最近 7 个日历天」**（`services/price_history.get_history_summary`，窗口内没有记录的日子按 0 计入 —— ESI 只返回**有成交**的日子，取「最近 7 条」会变成「上次活跃那几天」的平均值）；本地 `fetched_at` 也早于窗口时给 `—`（不知道），不拿 0 冒充。写入方有两处：`services/importers/getprices.fetch_and_save_histories`（「更新价格」流程，**只拉 Jita**、按 12h TTL 增量、每 `(type_id, region_id)` 只保留近 180 天）与 `services/price_history.save_cache`（价格走势图，单 type 全量覆盖写）。建表 DDL 单一来源是 `services/price_history.PRICE_HISTORY_DDL` |
 
 ### blueprint.db — 蓝图数据
 

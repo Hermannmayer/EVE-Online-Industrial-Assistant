@@ -52,10 +52,10 @@ Save price history to market.db cache
 ### `get_history_summary`
 
 ```python
-def get_history_summary(type_ids, region_id: int=REGION_ID, days: int=SUMMARY_DAYS, _db=None) -> dict[int, dict]
+def get_history_summary(type_ids, region_id: int=REGION_ID, days: int=SUMMARY_DAYS, _db=None, today: date | None=None) -> dict[int, dict]
 ```
 
-读本地缓存，算出「近 `days` 天平均订单量 / 成交量」→ `&#123;type_id: &#123;...&#125;&#125;`。
+读本地缓存，算「最近 `days` 个**日历天**的平均订单量 / 成交量」→ `&#123;type_id: &#123;...&#125;&#125;`。
 
 定义行：`143`
 
@@ -65,7 +65,7 @@ def get_history_summary(type_ids, region_id: int=REGION_ID, days: int=SUMMARY_DA
 
 价格历史服务 — 容器注入 DatabaseManager（替代模块级 get_db 单例）
 
-定义行：`202`
+定义行：`228`
 
 #### 方法
 
@@ -79,7 +79,7 @@ def __init__(self, db)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`205`
+定义行：`231`
 ##### `fetch`
 
 ```python
@@ -88,7 +88,7 @@ async def fetch(self, type_id: int, region_id: int=REGION_ID, session=None) -> l
 
 拉取 ESI 历史价格（失败返回 None）
 
-定义行：`208`
+定义行：`234`
 ##### `get_cached`
 
 ```python
@@ -97,7 +97,7 @@ def get_cached(self, type_id: int, region_id: int=REGION_ID) -> list[dict] | Non
 
 读取缓存历史价格（TTL 内命中，否则 None）
 
-定义行：`212`
+定义行：`238`
 ##### `save`
 
 ```python
@@ -106,4 +106,4 @@ def save(self, type_id: int, region_id: int, data: list[dict]) -> None
 
 写入缓存历史价格
 
-定义行：`216`
+定义行：`242`
