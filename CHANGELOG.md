@@ -6,6 +6,14 @@
 
 <!-- version list -->
 
+## v0.26.0 (2026-10-05)
+
+### Features
+
+- **市场监控)+fix(工业规划**: 大盘与关注页重构、异动榜可用化、性能与分类口径修正
+  ([`3c051e9`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/3c051e91ea02667b2c295f1424e9f9af52f5f03f))
+
+
 ## v0.25.5 (2026-10-03)
 
 ### Bug Fixes
