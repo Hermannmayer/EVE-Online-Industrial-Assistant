@@ -442,6 +442,16 @@ Item {
                     return col < cols.length ? cols[col].width : 100;
                 }
 
+                /* 列比窗口宽时要能横向滚 —— 加了「两端日成交量」之后列总宽约 1330，
+                 * 1500 宽的窗口里表格区只有 1000 出头，没有横向滚动条就会把最后两列
+                 * （终点日成交量、加入购物车）直接切掉（出图核对时发现）。 */
+                ScrollBar.horizontal: ScrollBar {
+                    policy: ScrollBar.AsNeeded
+                }
+                ScrollBar.vertical: ScrollBar {
+                    policy: ScrollBar.AsNeeded
+                }
+
                 delegate: Item {
                     id: rankRow
                     required property int row

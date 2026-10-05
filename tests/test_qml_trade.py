@@ -31,6 +31,8 @@ _IS_ACTION = _BASE + 6
 
 _PM3_COL = 7
 _CHG_COL = 8
+_VOLA_COL = 9
+_VOLB_COL = 10
 _ACTION_COL = len(COLUMNS) - 1
 _NAME_COL = 1
 
@@ -223,6 +225,23 @@ def test_icon_and_action_columns_are_not_sortable():
 
     model.sort(_ACTION_COL, Qt.SortOrder.AscendingOrder)
     assert model.sortColumn() == _NAME_COL
+
+
+@pytest.mark.fast
+def test_both_ends_have_a_daily_volume_column():
+    """两端各一列「日成交量」：有数就显示、查不到 / 历史过期显示 `—`（不用 0 冒充）。"""
+    model = TradeRankQmlModel()
+    model.set_rows([dict(_row(tid=1), vola=1234.5, volb=None), dict(_row(tid=2), vola=None, volb=7.0)])
+    titles = [c[0] for c in COLUMNS]
+
+    assert titles[_VOLA_COL] == "起点日成交量"
+    assert titles[_VOLB_COL] == "终点日成交量"
+    assert _cell(model, 0, _VOLA_COL, _TEXT) == "1,234"  # 件/天，取整
+    assert _cell(model, 0, _VOLB_COL, _TEXT) == "—"
+    assert _cell(model, 1, _VOLB_COL, _TEXT) == "7"
+    # 也参与排序（数值列）
+    model.sort(_VOLA_COL, Qt.SortOrder.DescendingOrder)
+    assert model.row_at(0)["id"] == 1
 
 
 @pytest.mark.fast

@@ -82,30 +82,35 @@ def _fake_client():
 
 @pytest.mark.asyncio
 async def test_fresh_records_skip_requests():
-    """① 增量过滤 + 区域收敛（两条性能红线）：
-    TTL 内的 type 一条请求都不发；5 个中心一起更新也只查 1 次 Jita；只勾 Amarr 则整步跳过。
+    """① 增量过滤 + 区域口径：
+    TTL 内的 type 一条请求都不发；**勾了几个中心就查几个中心**（不再写死 Jita ——
+    贸易页要按当前选的起点/终点读「两端日成交量」，用户口径是「同步哪些市场就拉哪些」）。
     """
     now = datetime.now(UTC).isoformat()
     rows = [(tid, now) for tid in _MANUFACTURING + _REACTION]
 
     with _Harness(fetched_rows=rows) as h:
         written = await getprices.fetch_and_save_histories(getprices.TRADE_REGIONS)
-        # 只勾了 Amarr：读端固定按 Jita 聚合，拉 Amarr 的历史没人读 → 整步跳过
-        assert await getprices.fetch_and_save_histories([("Amarr", 10000043)]) == 0
 
     assert written == 0
     h.fetch_history.assert_not_awaited()
     h.api.assert_not_called()  # TTL 全命中时连 APIClient 都不建
     selects = h.executes_matching("SELECT type_id, MAX(fetched_at)")
-    assert len(selects) == 1, "每个区域一条 GROUP BY，不是每个 type 一条"
-    assert selects[0].args[1] == (_REGION,), "只查读端用的那个区域（Jita）"
+    assert len(selects) == len(getprices.TRADE_REGIONS), "每个区域一条 GROUP BY，不是每个 type 一条"
+    assert {c.args[1][0] for c in selects} == {rid for _, rid in getprices.TRADE_REGIONS}
+
+    # 只勾 Amarr：照样查 Amarr（原来这里整步跳过）
+    with _Harness(fetched_rows=rows) as h2:
+        assert await getprices.fetch_and_save_histories([("Amarr", 10000043)]) == 0
+    selects2 = h2.executes_matching("SELECT type_id, MAX(fetched_at)")
+    assert [c.args[1] for c in selects2] == [(10000043,)]
 
 
 @pytest.mark.asyncio
 async def test_single_failure_is_isolated():
     """② 单条 404 / 超时被跳过，同批其余仍写入，进度照常走到 100%。
 
-    传 5 个中心：请求量仍是 `4 个产物 × 1 个区域`（不是 20 条）—— 读端固定按 Jita 聚合。
+    传 5 个中心：请求量是 `4 个产物 × 5 个区域 = 20 条`（每个同步的中心都要历史）。
     """
 
     async def _history(tid, region_id, session=None):
@@ -121,14 +126,16 @@ async def test_single_failure_is_isolated():
             getprices.TRADE_REGIONS, progress_cb=lambda pct, msg: progress.append((pct, msg))
         )
 
-    assert written == 1, "坏的三条不该把好的一条一起丢掉"
-    assert h.fetch_history.await_count == 4, "单条异常不得中断整批"
-    assert {c.args[1] for c in h.fetch_history.await_args_list} == {_REGION}, "5 个中心也只拉 Jita"
-    _sql, inserted = h.db.executemany.await_args.args
-    assert len(inserted) == 1
+    assert written == len(getprices.TRADE_REGIONS), "好的那一条在 5 个中心各写一行"
+    assert h.fetch_history.await_count == 4 * len(getprices.TRADE_REGIONS), "单条异常不得中断整批"
+    assert {c.args[1] for c in h.fetch_history.await_args_list} == {rid for _, rid in getprices.TRADE_REGIONS}
+    # 写库按区域分批（`executemany` 一次一个区域），所以要把各批摊平再看
+    inserted = [row for call in h.db.executemany.await_args_list for row in call.args[1]]
+    assert len(inserted) == len(getprices.TRADE_REGIONS)
+    assert {row[1] for row in inserted} == {rid for _, rid in getprices.TRADE_REGIONS}
     assert inserted[0][:8] == (1, _REGION, "2026-09-30", 5.5, 6.0, 5.0, 120, 8)
     assert inserted[0][8], "fetched_at 必须写入 —— 下一轮的 TTL 判定靠它"
-    assert progress == [(100, "拉取市场历史 4/4")]
+    assert progress == [(100, "拉取市场历史 20/20")]
 
 
 @pytest.mark.asyncio

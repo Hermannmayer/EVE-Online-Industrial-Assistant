@@ -22,7 +22,7 @@ def write_progress(cur: int, total: int, phase: str='')
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`58`
+定义行：`56`
 
 ### `init_db`
 
@@ -32,7 +32,7 @@ async def init_db()
 
 确保 market_prices 和 market_volume_snapshots 表存在（幂等）
 
-定义行：`68`
+定义行：`66`
 
 ### `fetch_baseline_prices`
 
@@ -42,7 +42,7 @@ async def fetch_baseline_prices() -> dict[int, dict]
 
 /markets/prices/ — 1次请求，极快
 
-定义行：`105`
+定义行：`103`
 
 ### `_fetch_order_pages_detailed`
 
@@ -52,7 +52,7 @@ async def _fetch_order_pages_detailed(client: APIClient, region_id: int, order_t
 
 并发拉取一个区域指定方向的所有订单页（全局限流 ≤20 req/s）。
 
-定义行：`124`
+定义行：`122`
 
 ### `fetch_order_pages`
 
@@ -62,7 +62,7 @@ async def fetch_order_pages(client: APIClient, region_id: int, order_type: str, 
 
 并发拉取一个区域指定方向的所有订单页（兼容旧签名，只返回数据）。
 
-定义行：`162`
+定义行：`160`
 
 ### `discover_pages`
 
@@ -72,7 +72,7 @@ async def discover_pages(client: APIClient, targets: list[tuple[str, int]] | Non
 
 并发获取所有流的总页数（8次请求）
 
-定义行：`168`
+定义行：`166`
 
 ### `fetch_orders_detailed`
 
@@ -82,7 +82,7 @@ async def fetch_orders_detailed(regions: list[tuple[str, int]] | None=None) -> t
 
 4 区域实时订单，按 region_id → type_id 组织，并返回完整拉取成功的区域。
 
-定义行：`198`
+定义行：`196`
 
 ### `fetch_orders`
 
@@ -92,7 +92,7 @@ async def fetch_orders(regions: list[tuple[str, int]] | None=None) -> dict[int, 
 
 兼容旧签名：只返回 &#123;region_id: &#123;type_id: &#123;...&#125;&#125;&#125;。
 
-定义行：`256`
+定义行：`254`
 
 ### `save_snapshot`
 
@@ -102,7 +102,7 @@ async def save_snapshot(all_regions: dict[int, dict[int, dict]])
 
 保存各区域当日成交量快照
 
-定义行：`262`
+定义行：`260`
 
 ### `save_prices`
 
@@ -112,7 +112,7 @@ async def save_prices(baseline: dict[int, dict], order_prices: dict[int, dict[in
 
 写入各区域价格（仅覆盖指定区域）。
 
-定义行：`294`
+定义行：`292`
 
 ### `_history_is_fresh`
 
@@ -122,7 +122,7 @@ def _history_is_fresh(fetched_at: str | None, cutoff: datetime) -> bool
 
 `fetched_at` 是否落在 TTL 内（缺失/解析失败一律当作过期 → 重拉）。
 
-定义行：`348`
+定义行：`346`
 
 ### `_pending_history_tasks`
 
@@ -132,7 +132,7 @@ async def _pending_history_tasks(region_ids: list[int], type_ids: set[int], cuto
 
 算出本轮要拉的 `(region_id, type_id)`：没有记录、或记录早于 TTL 的才算。
 
-定义行：`361`
+定义行：`359`
 
 ### `_fetch_history_with_limit`
 
@@ -142,7 +142,7 @@ async def _fetch_history_with_limit(client: APIClient, region_id: int, type_id: 
 
 经 `GLOBAL_ESI_LIMITER` 拉单条市场历史。
 
-定义行：`384`
+定义行：`382`
 
 ### `_save_histories`
 
@@ -152,7 +152,7 @@ async def _save_histories(entries: dict[tuple[int, int], list[tuple]], date_cuto
 
 批量写入历史：先按 `(type_id, region_id)` 裁掉 `date_cutoff` 之前的行，再 `INSERT OR REPLACE`。
 
-定义行：`395`
+定义行：`393`
 
 ### `fetch_and_save_histories`
 
@@ -162,7 +162,7 @@ async def fetch_and_save_histories(regions: list[tuple[str, int]], progress_cb: 
 
 按 TTL 增量拉取可制造/反应产物的市场历史，写入 market.db.price_history。
 
-定义行：`422`
+定义行：`420`
 
 ### `main`
 
@@ -174,7 +174,7 @@ async def main(regions: list[tuple[str, int]] | None=None, progress_cb: Callable
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`521`
+定义行：`523`
 
 ### `fetch_baseline_only`
 
@@ -184,7 +184,7 @@ async def fetch_baseline_only(progress_cb: Callable[[int, str], None] | None=Non
 
 快速基础价格兜底 — 仅拉 /markets/prices/（1 次请求）。
 
-定义行：`570`
+定义行：`572`
 
 ### `run_price_update`
 
@@ -194,4 +194,4 @@ def run_price_update(regions: list[str] | None=None, progress_cb: Callable[[int,
 
 运行价格更新。
 
-定义行：`592`
+定义行：`594`

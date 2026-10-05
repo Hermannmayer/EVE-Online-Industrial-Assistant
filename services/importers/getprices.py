@@ -41,12 +41,10 @@ HISTORY_KEEP_DAYS = 180
 #: 市场历史的分批大小（照 `services/importers/getitems.py` 的 ESI 补拉骨架）
 _HISTORY_BATCH = 100
 
-#: 市场历史只拉这一个区域 —— **读端固定按 Jita 聚合**：「可制造物品」窗口的价格与
-#: 日订单量/日成交量都取 Jita（`ui_qml/workers/all_items_workers.JITA_RID` →
-#: `ui_qml/bridge/manufacturable_items_bridge.py:603` 的 `get_history_summary(region_id=JITA_RID)`）。
-#: 拉别的贸易中心只会在 market.db 里堆没人读的行，而且 5 区域 × 4908 ≈ 2.4 万请求不可接受
-#: （主工具栏「更新价格」勾满 5 个中心时 `run_price_update` 会传 `regions=None` → main 拿到 5 个区域）。
-#: 读端哪天按区域可配置了，这里必须跟着改。
+#: 「可制造物品」窗口读历史时用的**缺省区域**（Jita）。历史本身按「本次更新勾了哪些中心」
+#: 全拉（见 `fetch_and_save_histories`）：贸易页要显示两端各自的日成交量，读端会显式传
+#: 它当前选的起点/终点区域；这里只给「没有区域语境的读端」一个默认值
+#: （`manufacturable_items_bridge` 显式传 JITA_RID，其实也不依赖这个默认）。
 HISTORY_REGION_ID = TRADE_HUB_IDS["Jita"]
 
 # 缓存已知页数，下次跳过 page-1 发现环节；带时间戳以便 TTL 失效
@@ -429,18 +427,22 @@ async def fetch_and_save_histories(
     「更新价格」入口（`main`），页面不自己拉 ESI：
 
     - 候选 type_id：blueprint.db 的 manufacturing | reaction 全部产物（实测 4797 + 111 = 4908）
-    - 区域：**只拉本次更新里的 Jita**（`HISTORY_REGION_ID`，读端固定按 Jita 聚合）；
-      没勾 Jita 就整步跳过。5 个区域 × 4908 ≈ 2.4 万请求，不可接受
+    - 区域：**本次更新勾了哪些中心就拉哪些**（用户口径：「同步哪些市场的数据，就自动把
+      成交量一块拉过来」）。读端各自显式传 `region_id`：可制造物品窗口按 Jita
+      （`HISTORY_REGION_ID`）、贸易页按它当前选的起点/终点。
     - 增量过滤：`(type_id, region_id)` 的最新 `fetched_at` 在 `HISTORY_TTL_SECONDS` 内就跳过，
       TTL 全命中时本轮 0 请求
     - 失败隔离：单条 404/超时/异常只 `log.warning` 跳过，不写缓存，既不中断本批也不影响整次价格更新
 
+    ⚠️ 请求量 = 产物数 × 勾选的中心数（4908 × N）：一个中心约 4 分钟（全局限流 20 req/s），
+    5 个中心齐勾就是一小时量级 —— 靠 12h TTL 增量摊平，但用户该知道这个代价。
+
     Returns:
         实际写入的历史行数。
     """
-    region_ids = [rid for _, rid in regions if rid == HISTORY_REGION_ID]
+    region_ids = [rid for _, rid in regions]
     if not region_ids:
-        log.info("本次未更新 Jita，跳过市场历史拉取（读端固定按 Jita 聚合）")
+        log.info("本次没有要更新的区域，跳过市场历史拉取")
         return 0
 
     repo = get_container().blueprint_repo

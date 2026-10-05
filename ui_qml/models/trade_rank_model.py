@@ -48,6 +48,11 @@ COLUMNS: list[tuple[str, int, str | None]] = [
     ("每单位体积", 90, "v"),
     ("每方利润", 100, "pm3"),
     ("B侧挂单变化", 120, "chg"),
+    # 两端各自的**近 7 个日历天平均成交量**（`price_history`，按当前选的中心读；
+    # 数据由主界面「更新价格」按它同步的中心统一拉取，本页零 ESI 请求）。
+    # 查不到 / 本地历史过期 → `—`（`get_history_summary` 的 `stale`）。
+    ("起点日成交量", 104, "vola"),
+    ("终点日成交量", 104, "volb"),
     ("", 88, None),  # 加入购物车
 ]
 
@@ -55,6 +60,9 @@ _ICON_COL = 0
 _ACTION_COL = len(COLUMNS) - 1
 _PM3_COL = 7
 _CHG_COL = 8
+#: 两端日成交量（顺序与 `COLUMNS` 一致）
+_VOLA_COL = 9
+_VOLB_COL = 10
 #: 左对齐的列（其余右对齐）
 _LEFT_COLS = {0, 1, 2}
 
@@ -76,6 +84,10 @@ def _cell_text(row: dict, col: int) -> str:
     key = COLUMNS[col][2]
     if key == "chg":
         return format_order_change(row.get("chg"))
+    if key in ("vola", "volb"):
+        # 近 7 日**平均**成交量（件/天）。`None` = 查不到或本地历史过期 → `—`，不用 0 冒充
+        v = row.get(key)
+        return f"{v:,.0f}" if isinstance(v, int | float) else DASH
     if key == "pm3":
         v = row.get("pm3")
         return f"{v:,.2f}" if isinstance(v, int | float) else DASH
