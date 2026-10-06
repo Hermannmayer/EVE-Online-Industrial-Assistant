@@ -6,6 +6,34 @@
 
 <!-- version list -->
 
+## v0.26.1 (2026-10-06)
+
+### Features
+
+- **自制成本**: 查看核算 / 采购小助手 / 生产计划大表三处加「自己造一件要多少钱」列，用来判断一件料
+  自己造还是买（口径：料钱 + 作业费 ÷ 单轮产出，制造与反应产物都算，无配方显示 `—`）
+  ([`9ac3a1c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/9ac3a1cc5faa9573d6abea9e57352ef6de789c6b))
+
+- **工业规划**: 改材料机库时问一句「绑定的蓝图要不要一起挪过去」，点「是」才动库存
+  ([`59b3e65`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/59b3e65a8d77b98a90c73db6653da5297d25014e))
+
+### Bug Fixes
+
+- **工业规划**: 蓝图不在材料机库也算启动短板 —— 小助手/启动闸门显示「缺蓝图」并说清蓝图现在在哪个机库
+  ([`b385df1`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b385df1a7e8e72c57b97d27ba40de5146ecb252a))
+
+- **科研**: 产线小助手/计划表显示物品图标；双击复制的蓝图名给输入 T1 而不是产物 T2
+  ([`bc22752`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/bc2275263d728016a761bf4e84995432de733b80))
+
+- **库存**: 新建机库后仓库管理与采购入库立刻可选；入库机库选择收敛成一份
+  ([`bac2388`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/bac238817856525a1b01905b3a37e2c7bf5b1363))
+
+- **工业规划**: 「填料总表」列出科研材料（数据核心 + 解码器）
+  ([`b1afced`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/b1afced88d113d24eda4f5d23b06289910901600))
+
+- **工业规划**: 科研材料进待采购 + 蓝图绑定按活动解析输入蓝图（发明要绑 T1、拷贝绑被拷的 BPO）
+  ([`bcc87ca`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/bcc87cafb3c279a6063e5cfcecd9a64a1b515a21))
+
 ## v0.26.0 (2026-10-05)
 
 ### Features
