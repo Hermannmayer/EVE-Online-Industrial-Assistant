@@ -1091,6 +1091,153 @@ class ScoringService:
             research_costs=research_costs,
         )
 
+    # ── 「自己造 vs 买」：每件自制成本 ──────────────────────────
+
+    def manufacturing_unit_costs(
+        self,
+        type_ids: list[int] | set[int],
+        *,
+        mat_hub: str = "Jita",
+        price_type_mat: str = "sell",
+        mat_mult: float = 1.0,
+        char_config: dict | None = None,
+        system_id: int | None = None,
+        facility_tax_pct: float = 0.0,
+        hangar_id: int | None = None,
+    ) -> dict[int, float]:
+        """这些物品**自己造一件**要多少钱 → `{type_id: cost_per_unit}`（算不出的物品不在结果里）。
+
+        「自己造」同时覆盖**制造与反应**两种配方（碳化钨、富勒化合物这类反应产物同样是
+        「自己造还是买」的对象）：制造走 `calc_manufacturing_score`，产物只挂
+        `activity='reaction'` 的走 `calc_reaction_score`，两者的 `cost_per_unit` 同义
+        （料钱 + 作业费 ÷ 单轮产出，见 `domain.scoring`），只是按**当前价格设置**
+        （`mat_hub` / 卖价买价 / 材料倍率）逐个算，制造并用用户手上**最好的那张蓝图**的 ME/TE ——
+        这样「自制成本」是用户真能做到的数，和旁边同一价格口径的市价直接可比。
+
+        `hangar_id` 传了就用该机库的设施与改件（结构成本倍率 / 材料减成 / 时间折扣）及其所在星系；
+        `system_id` / `facility_tax_pct` 显式给了优先。**无制造/反应配方、或取不到价格 → 不进结果**
+        （调用方显示 `—`，别拿 0 冒充成本）。
+
+        `ScoringService.calc_manufacturing_score` 自带按类型/价格/倍率/角色指纹的 TTL 缓存，
+        所以轮询（采购小助手 5s 一刷）不会每轮重算；反应那条链路不缓存，但调用量同样很小。
+        """
+        ids = sorted({int(t) for t in type_ids if t})
+        if not ids:
+            return {}
+        from services.hangar_industry_config import resolve_hangar_industry_config
+
+        structure_bonus, structure_time_mod, structure_mat_saving = 0.0, 1.0, 1.0
+        if hangar_id:
+            cfg = resolve_hangar_industry_config(hangar_id, _db=self._db)
+            structure_bonus = float(cfg["structure_cost_mult"]) - 1.0
+            structure_time_mod = float(cfg["structure_time_mod"])
+            structure_mat_saving = float(cfg["structure_mat_saving"])
+            if system_id is None:
+                from services.inventory_manager import get_hangar_system_id
+
+                system_id = get_hangar_system_id(hangar_id, _db=self._db)
+            if facility_tax_pct <= 0 and cfg.get("facility_tax") is not None:
+                facility_tax_pct = float(cfg["facility_tax"])
+
+        levels = self._best_blueprint_levels(ids)
+        reaction_ids = self._reaction_product_ids(ids)
+        out: dict[int, float] = {}
+        for tid in ids:
+            me, te = levels.get(tid, (0, 0))
+            try:
+                if tid in reaction_ids:
+                    result = self.calc_reaction_score(
+                        tid,
+                        char_config or {},
+                        mat_source_hub=mat_hub,
+                        sell_hub=mat_hub,
+                        price_type_mat=price_type_mat,
+                        price_type_prod=price_type_mat,
+                        system_id=system_id,
+                        facility_tax_pct=facility_tax_pct,
+                        structure_bonus=structure_bonus,
+                    )
+                else:
+                    result = self.calc_manufacturing_score(
+                        tid,
+                        char_config or {},
+                        mat_source_hub=mat_hub,
+                        sell_hub=mat_hub,
+                        price_type_mat=price_type_mat,
+                        price_type_prod=price_type_mat,
+                        bp_me=me,
+                        bp_te=te,
+                        system_id=system_id,
+                        facility_tax_pct=facility_tax_pct,
+                        structure_bonus=structure_bonus,
+                        structure_time_mod=structure_time_mod,
+                        structure_mat_saving=structure_mat_saving,
+                        mat_price_mult=mat_mult,
+                    )
+            except Exception:
+                from core.logger import log
+
+                log.exception("自制成本计算失败 type_id=%s", tid)
+                continue
+            cost = float(result.get("cost_per_unit") or 0.0)
+            if result.get("status") or cost <= 0:
+                continue
+            out[tid] = cost
+        return out
+
+    def _reaction_product_ids(self, type_ids: list[int]) -> set[int]:
+        """这批里哪些是**反应产物**（产物只挂在 `activity='reaction'` 上）—— 一次查询。"""
+        placeholders = ",".join("?" for _ in type_ids)
+        try:
+            with self._db.connect("bp") as conn:
+                return {
+                    int(r[0])
+                    for r in conn.execute(
+                        f"SELECT DISTINCT product_type_id FROM blueprint_products "
+                        f"WHERE activity='reaction' AND product_type_id IN ({placeholders})",
+                        tuple(type_ids),
+                    ).fetchall()
+                }
+        except Exception:
+            from core.logger import log
+
+            log.exception("读反应产物清单失败")
+            return set()
+
+    def _best_blueprint_levels(self, type_ids: list[int]) -> dict[int, tuple[int, int]]:
+        """`{物品 type_id: (ME, TE)}` —— 用户库存里「该物品的制造蓝图」最好的那一张。
+
+        没有对应蓝图行 → 不进结果（调用方按 ME0/TE0 算，同「没有蓝图就没法造」的观感一致）。
+        一次两查：产物 → 制造蓝图（`blueprint_products`），蓝图 → 最高 ME/TE（`user_blueprints`）。
+        """
+        placeholders = ",".join("?" for _ in type_ids)
+        try:
+            with self._db.connect("bp", "user") as conn:
+                prod2bp = {
+                    int(r[0]): int(r[1])
+                    for r in conn.execute(
+                        f"SELECT product_type_id, blueprint_type_id FROM blueprint_products "
+                        f"WHERE activity='manufacturing' AND product_type_id IN ({placeholders})",
+                        tuple(type_ids),
+                    ).fetchall()
+                }
+                if not prod2bp:
+                    return {}
+                bps = sorted(set(prod2bp.values()))
+                bp_ph = ",".join("?" for _ in bps)
+                rows = conn.execute(
+                    f"SELECT blueprint_type_id, MAX(me_level), MAX(te_level) FROM user_blueprints "
+                    f"WHERE blueprint_type_id IN ({bp_ph}) GROUP BY blueprint_type_id",
+                    tuple(bps),
+                ).fetchall()
+        except Exception:
+            from core.logger import log
+
+            log.exception("读最佳蓝图等级失败")
+            return {}
+        best = {int(r[0]): (int(r[1] or 0), int(r[2] or 0)) for r in rows}
+        return {tid: best[bpid] for tid, bpid in prod2bp.items() if bpid in best}
+
     # ── 贸易评分 ──
 
     def calc_trade_score(

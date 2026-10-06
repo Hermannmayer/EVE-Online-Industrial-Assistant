@@ -103,6 +103,16 @@ SELECT * FROM production_plans（可选 WHERE），统一排序与 enrich。
 
 定义行：`322`
 
+### `_attach_make_costs`
+
+```python
+def _attach_make_costs(rows: list[dict]) -> list[dict]
+```
+
+给每行补「自己造一件」的成本 → 派生字段 `make_cost`（算不出 → `None`，界面显示 `—`）。
+
+定义行：`344`
+
 ### `load_plan`
 
 ```python
@@ -111,7 +121,7 @@ def load_plan(plan_id: int) -> dict | None
 
 按 id 取单条计划（与 `load_plans` 同一条 `_fetch_rows` + enrich 管线）。
 
-定义行：`339`
+定义行：`405`
 
 ### `load_plans`
 
@@ -119,9 +129,9 @@ def load_plan(plan_id: int) -> dict | None
 def load_plans(filter_key: str) -> list[dict]
 ```
 
-加载生产计划列表，并补全蓝图可用标记/类别/机库名称。
+加载生产计划列表，并补全蓝图可用标记/类别/机库名称 + 「自制成本/件」。
 
-定义行：`350`
+定义行：`416`
 
 ### `load_plans_for_wizard`
 
@@ -131,7 +141,7 @@ def load_plans_for_wizard() -> list[dict]
 
 产线启动小助手数据源：全部非完成计划（completed/done 排除），走同一 enrich。
 
-定义行：`364`
+定义行：`430`
 
 ### `_sub_level`
 
@@ -143,7 +153,7 @@ def _sub_level(p: dict) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`372`
+定义行：`438`
 
 ### `_is_shared_child`
 
@@ -153,7 +163,7 @@ def _is_shared_child(p: dict) -> bool
 
 跨 ≥2 个母项引用的子行归入「共享组件」区（引用式需求合并）。
 
-定义行：`376`
+定义行：`442`
 
 ### `group_and_sort_plans`
 
@@ -163,7 +173,7 @@ def group_and_sort_plans(plans: list[dict]) -> list[dict]
 
 母项在前树状排序 + 独立计划 + 独立「共享组件」区殿后。
 
-定义行：`384`
+定义行：`450`
 
 ### `collect_refresh_type_ids`
 
@@ -173,7 +183,7 @@ def collect_refresh_type_ids() -> tuple[set[int], int]
 
 收集工业页定向刷新所需的 type_id 集合，并返回其中 5 分钟内已缓存的条数。
 
-定义行：`434`
+定义行：`500`
 
 ### `save_price_snapshots`
 
@@ -183,7 +193,7 @@ def save_price_snapshots() -> int
 
 为活跃计划及其物料保存当前 Jita 价格快照，返回保存条数。
 
-定义行：`472`
+定义行：`538`
 
 ### `load_active_plans_for_procurement`
 
@@ -193,4 +203,4 @@ def load_active_plans_for_procurement() -> list[dict]
 
 加载采购对话框所需的活跃计划列表。
 
-定义行：`509`
+定义行：`575`

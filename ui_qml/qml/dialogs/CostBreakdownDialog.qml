@@ -49,7 +49,8 @@ FDialogFrame {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.preferredWidth: Math.round(560 * Theme.fontScale)
+            // 加了「自制成本」列（第 7 列，96px 档）→ 左栏加宽，否则材料名列被挤到只剩几像素
+            Layout.preferredWidth: Math.round(680 * Theme.fontScale)
             Layout.horizontalStretchFactor: 3
             color: Theme.bgSurface
             radius: Theme.radius

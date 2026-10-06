@@ -37,7 +37,7 @@ __all__ = ["CostBreakdownBridge", "CostBreakdownQmlDialog", "fmt_material_saving
 
 _QML_FILE = "dialogs/CostBreakdownDialog.qml"
 
-_MATERIAL_HEADERS = ["材料", "基础量", "材料减成%", "实际量", "单价", "小计"]
+_MATERIAL_HEADERS = ["材料", "基础量", "材料减成%", "实际量", "单价", "自制成本", "小计"]
 
 
 def fmt_material_saving(total_qty: float, base_qty: int, total_mult: int) -> str:
@@ -197,7 +197,8 @@ class CostBreakdownBridge(DialogBridge):
         materials = metrics.get("materials", [])
         self._status_text = (
             f"计划设定: {parallels} 并行 × {runs} 流程 = {total_mult} 总流程 "
-            f"| 共 {len(materials)} 种材料 | 评分 {score:.1f} | 利润 {fmt_isk_exact(profit)} | 利润率 {margin:.1f}%"
+            f"| 共 {len(materials)} 种材料 | 评分 {score:.1f} | 利润 {fmt_isk_exact(profit)} | 利润率 {margin:.1f}% "
+            f"| 自制成本 = 料+作业费÷单轮产出（同一价格口径，— 表示无制造蓝图）"
         )
 
         # ── 制造作业费 ──
@@ -263,8 +264,13 @@ class CostBreakdownBridge(DialogBridge):
 
         structure_mat_saving = metrics.get("structure_mat_saving", 1.0)
         me = self._plan.get("me_level", 0) or 0
+        materials = metrics.get("materials", [])
+        # 「这件料自己造要多少钱」——与「可制造物品」窗口的成本列**同源**（`cost_per_unit`）：
+        # 料钱 + 作业费（含 SCI/设施税）÷ 单轮产出，用用户手上最好的那张蓝图的 ME/TE，
+        # T2 含拷贝/发明研究费，**不递归**。算不出的（矿物/数据核心/解码器等无制造蓝图）显示 `—`。
+        make_costs = self._unit_make_costs([m.get("type_id") for m in materials])
         rows: list[dict] = []
-        for mat in metrics.get("materials", []):
+        for mat in materials:
             base = mat.get("base_qty", 0)
             # 整批取整：优先用评分链路算好的 `total_qty`。口径的**单一定义处**是
             # `domain.formulas.material_total_for_runs` —— 这段以前把同一套规则内联在这里，
@@ -284,6 +290,7 @@ class CostBreakdownBridge(DialogBridge):
                 unit_price = mat.get("unit_price", 0) or 0
                 sub_total = unit_price * total_qty
                 name_display = mat.get("name", "")
+            cost = make_costs.get(int(mid)) if mid else None
             rows.append(
                 {
                     "cells": [
@@ -292,11 +299,43 @@ class CostBreakdownBridge(DialogBridge):
                         cell(fmt_material_saving(total_qty, base, total_mult)),
                         cell(f"{total_qty:,.0f}"),
                         cell(fmt_isk_exact(unit_price)),
+                        cell(fmt_isk_exact(cost) if cost else "—"),
                         cell(fmt_isk_exact(sub_total)),
                     ]
                 }
             )
         self._material_rows = rows
+
+    def _unit_make_costs(self, type_ids: list[Any]) -> dict[int, float]:
+        """每件「自己造」的成本（口径见 `ScoringService.manufacturing_unit_costs`）。
+
+        按**本对话框当前的价格设置**（计划 hub / 工具栏卖价买价 / 材料倍率）与**计划的材料机库**
+        （设施成本倍率、材料减成、设施税、星系 SCI）算 —— 这样它和左边「单价」列是同一口径，
+        两列并排就能看出「这件料自己造 vs 直接买」。取不到（无制造蓝图）→ 不在结果里 → 显示 `—`。
+        """
+        ids = [int(t) for t in type_ids if t]
+        if not ids:
+            return {}
+        try:
+            costs: dict[int, float] = (
+                get_container()
+                .scoring_service()
+                .manufacturing_unit_costs(
+                    ids,
+                    mat_hub=str(self._plan.get("mat_hub") or "Jita"),
+                    price_type_mat=str(self._price_type_mat or "sell"),
+                    mat_mult=float(self._mat_mult or 1.0),
+                    char_config=self._char_config or {},
+                    hangar_id=int(self._plan.get("mat_hangar_id") or 0) or None,
+                    facility_tax_pct=float(self._plan.get("facility_tax") or 0.0),
+                )
+            )
+            return costs
+        except Exception:
+            from core.logger import log
+
+            log.exception("自制成本计算失败（查看核算）: %s", self._plan.get("product_name"))
+            return {}
 
     @staticmethod
     def _research_fields(bd: dict, activity: str, total_mult: int) -> list[dict]:
@@ -449,4 +488,5 @@ class CostBreakdownQmlDialog(QmlDialog):
             mat_mult=mat_mult,
             prod_mult=prod_mult,
         )
-        super().__init__(_QML_FILE, bridge, parent=parent, size=(960, 720), modeless=True)
+        # 尺寸：加了「自制成本」列后左表要更宽（560→680），窗口同步加宽，右栏宽度不变
+        super().__init__(_QML_FILE, bridge, parent=parent, size=(1120, 720), modeless=True)

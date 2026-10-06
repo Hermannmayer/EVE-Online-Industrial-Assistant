@@ -56,7 +56,7 @@ def bound_line_capacity(p: dict) -> int:
 
 
 class PlanTableModel(QAbstractTableModel):
-    """19 列生产计划模型 — 支持 checkbox、类别、图标、行内编辑、排序"""
+    """20 列生产计划模型 — 支持 checkbox、类别、图标、行内编辑、排序"""
 
     _HEADERS = [
         "☐",  # 0  勾选/备料
@@ -74,10 +74,11 @@ class PlanTableModel(QAbstractTableModel):
         "产能",  # 12
         "设施",  # 13
         "输出",  # 14
-        "成本",  # 15
-        "利润",  # 16
-        "市场利润率%",  # 17
-        "个人利润率%",  # 18
+        "成本",  # 15  材料成本**总额**（不含作业费）
+        "自制成本/件",  # 16  料钱 + 作业费 ÷ 单轮产出（单件；与 15 口径不同，名字必须带「/件」）
+        "利润",  # 17
+        "市场利润率%",  # 18
+        "个人利润率%",  # 19
     ]
 
     # 可编辑列集合（仅 active 状态下生效）
@@ -101,13 +102,14 @@ class PlanTableModel(QAbstractTableModel):
         13: "facility",
         14: "output_hangar",
         15: "material_cost",
-        16: "profit",
-        17: "market_margin",
-        18: "personal_margin",
+        16: "make_cost",
+        17: "profit",
+        18: "market_margin",
+        19: "personal_margin",
     }
 
     # 数值列（排序时按数字比较）
-    _NUMERIC_SORT_COLS = {0, 5, 6, 9, 10, 11, 12, 15, 16, 17, 18}
+    _NUMERIC_SORT_COLS = {0, 5, 6, 9, 10, 11, 12, 15, 16, 17, 18, 19}
 
     # 状态 → 显示文本
     _STATUS_LABELS = {
@@ -256,7 +258,7 @@ class PlanTableModel(QAbstractTableModel):
         return f"各并行线按各自绑定蓝图的等级独立结算：\n{rows}\n（列中显示的是最低那组）"
 
     def _display_text(self, p: dict, c: int) -> str:
-        """列 0~18 的 DisplayRole 文本"""
+        """列 0~19 的 DisplayRole 文本"""
         if c == 0:
             return ""  # 备料列由 CheckStateRole 渲染真实复选框
         if c == 1:
@@ -355,12 +357,22 @@ class PlanTableModel(QAbstractTableModel):
             cost = p.get("material_cost", 0) or 0
             return f"{cost:,.0f}"
         if c == 16:
+            # 「自制成本/件」：单件成本（料钱 + 作业费 ÷ 单轮产出，见
+            # `ScoringService.manufacturing_unit_costs`）。**算不出给 `—` 而不是 0** ——
+            # 0 会被读成「自己造不要钱」，而 `—` 是「没有制造蓝图/取不到价」（矿物、数据核心、
+            # 科研行产物、反应产物等）。两位小数：单件成本常不足 1 ISK，`:.0f` 会把 0.4 印成
+            # 「0」，与「算不出」的观感撞车。
+            make = p.get("make_cost")
+            if make is None:
+                return "—"
+            return f"{float(make):,.2f}"
+        if c == 17:
             profit = p.get("profit", 0) or 0
             return f"{profit:,.0f}"
-        if c == 17:
+        if c == 18:
             margin = p.get("market_margin", 0) or 0
             return f"{margin:.1f}%"
-        if c == 18:
+        if c == 19:
             margin = p.get("personal_margin", 0) or 0
             return f"{margin:.1f}%"
         return ""

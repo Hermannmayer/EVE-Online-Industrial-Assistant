@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt
 
 from services.repositories.plan_repository import PlanRepository
 from ui_qml.models.industry_models import PlanTableModel
+from ui_qml.models.plan_table_constants import COL_MARKET_MARGIN, COL_PROFIT
 
 pytestmark = pytest.mark.ui
 
@@ -129,9 +130,9 @@ class TestPlanTableIntegration:
         assert "2X5" in val
 
     def test_plan_display_margin(self, qapp):
-        """市场利润率列展示（列16）"""
+        """市场利润率列展示（列号走常量：加「自制成本/件」后会整体后移）"""
         model = PlanTableModel(self.SAMPLE_PLANS)
-        val = model.data(model.index(0, 17), Qt.ItemDataRole.DisplayRole)
+        val = model.data(model.index(0, COL_MARKET_MARGIN), Qt.ItemDataRole.DisplayRole)
         assert "20.0%" in str(val)
 
     def test_plan_status_pending(self, qapp):
@@ -155,7 +156,7 @@ class TestPlanTableIntegration:
         from ui_qml.models.plan_qml_model import PlanQmlModel
 
         model = PlanQmlModel([dict(self.SAMPLE_PLANS[0], profit=100.0)])
-        assert model.data(model.index(0, 16), Qt.ItemDataRole.UserRole + 2) != ""
+        assert model.data(model.index(0, COL_PROFIT), Qt.ItemDataRole.UserRole + 2) != ""
 
     def test_set_model_replace(self, qapp):
         """替换模型数据"""

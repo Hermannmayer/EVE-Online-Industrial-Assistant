@@ -124,6 +124,69 @@ class TestTradeScoreEdgeCases:
         assert result["gross_profit"] > 0
 
 
+class TestManufacturingUnitCosts:
+    """「这件料自己造要多少钱」—— 三处界面（查看核算 / 采购小助手 / 大表）共用一个取数。
+
+    口径 = 料钱 + 作业费 ÷ 单轮产出，按传入的价格口径与机库设施算（`domain.scoring.cost_per_unit`）。
+    """
+
+    def test_manufacturable_items_only(self, temp_db):
+        """能造的给出正数（≥ 料钱）；不能造的（矿物等无制造蓝图）**不进结果**。"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        costs = svc.manufacturing_unit_costs([2001, 1001], mat_hub="Jita", price_type_mat="sell")
+        assert 1001 not in costs, "矿物没有制造蓝图 → 不进结果（界面显示 —，不是 0）"
+        # 渡鸦级 1 件：1000×5 + 500×9 = 9500 料钱（作业费只会往上加）
+        assert costs[2001] >= 9500
+
+    def test_price_type_and_mult_are_honoured(self, temp_db):
+        """按当前价格设置算：买价 < 卖价、材料倍率放大成本（换口径要换数，别命中旧缓存）。"""
+        svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+        sell = svc.manufacturing_unit_costs([2001], price_type_mat="sell")[2001]
+        buy = svc.manufacturing_unit_costs([2001], price_type_mat="buy")[2001]
+        doubled = svc.manufacturing_unit_costs([2001], price_type_mat="sell", mat_mult=2.0)[2001]
+        assert buy < sell < doubled
+
+    def test_reaction_products_are_covered(self, db_manager):
+        """反应产物（产物只挂 `activity='reaction'`）也要有自制成本。
+
+        只认 manufacturing 会让碳化钨/富勒化合物这类反应产物全显示 `—`，而它们正是
+        「自己造还是买」的常见对象（用户的制造计划里一大半材料都是反应产物）。
+        """
+        with db_manager.connect("ref") as conn:
+            conn.execute(
+                "CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT, volume REAL DEFAULT 1)"
+            )
+            conn.execute("CREATE TABLE industry_system_costs (solar_system_id INT, activity TEXT, cost_index REAL)")
+            conn.execute("INSERT INTO item VALUES (5001, '反应产物', 'Reacted', 1)")
+            conn.execute("INSERT INTO item VALUES (1001, '月矿', 'Moon Ore', 1)")
+            conn.execute("INSERT INTO industry_system_costs VALUES (30000142, 'reaction', 0.0)")
+        with db_manager.connect("bp") as conn:
+            conn.execute(
+                "CREATE TABLE blueprint_products (blueprint_type_id INT, activity TEXT, product_type_id INT, quantity INT)"
+            )
+            conn.execute("CREATE TABLE blueprint_activities (blueprint_type_id INT, activity TEXT, time INT)")
+            conn.execute(
+                "CREATE TABLE blueprint_materials (blueprint_type_id INT, activity TEXT, material_type_id INT, "
+                "quantity INT, wastefactor INT DEFAULT 10)"
+            )
+            conn.execute("INSERT INTO blueprint_products VALUES (5002, 'reaction', 5001, 5)")
+            conn.execute("INSERT INTO blueprint_activities VALUES (5002, 'reaction', 3600)")
+            conn.execute("INSERT INTO blueprint_materials VALUES (5002, 'reaction', 1001, 10, 10)")
+        with db_manager.connect("mkt") as conn:
+            conn.execute(
+                "CREATE TABLE market_prices (type_id INT, region_id INT, buy_price REAL, sell_price REAL, "
+                "adjusted_price REAL DEFAULT 0, buy_volume INT DEFAULT 0, sell_volume INT DEFAULT 0, fetch_time TEXT)"
+            )
+            conn.execute("INSERT INTO market_prices VALUES (1001, 10000002, 4, 5, 4, 1000, 1000, '2026-01-01')")
+            conn.execute("INSERT INTO market_prices VALUES (5001, 10000002, 100, 120, 100, 100, 100, '2026-01-01')")
+
+        svc = ScoringService(db_manager, TtlLRUCache(max_size=10))
+        costs = svc.manufacturing_unit_costs([5001], mat_hub="Jita", price_type_mat="sell")
+
+        # 料钱 10 × 5 = 50 ÷ 单轮产出 5 = 10/件（作业费只会往上加）
+        assert costs[5001] >= 10
+
+
 class TestPriceMultiplier:
     """工具栏「材料/成品倍率」接入评分链路（红框之外：表格成本/利润列同源）。"""
 

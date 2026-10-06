@@ -25,6 +25,7 @@ __all__ = [
     "ProcurementBridge",
     "copy_cell_text",
     "display_name",
+    "make_cost_text",
     "procure_rows",
     "procure_table_headers",
     "resolve_item_name",
@@ -33,16 +34,19 @@ __all__ = [
 ]
 
 #: 表头（与 Widgets 版 `ProcureTableModel._HEADERS` 同源）
-#: ⚠️ 这张表的四处**按索引对齐**：`_HEADERS` / `_SORT_FIELDS` / `_COPY_FIELDS` /
-#: `procure_rows` 的 cells。加列必须四处一起插，插错位会让「排序按这列、复制按那列」静默错位。
+#: ⚠️ 这张表的**五处按索引对齐**：`_HEADERS` / `_SORT_FIELDS` / `_COPY_FIELDS` /
+#: `_COLUMNS` / `procure_rows` 的 cells。加列必须五处一起插，插错位会让
+#: 「排序按这列、复制按那列」静默错位。
 #: 「库存」「单价」「体积」三列已下线（列表太宽、装不下）：数据仍在行里（`owned`/`price`/`volume`），
 #: 只是不上表 —— 汇总行、复制整单、增量添加都还在用它们。
-_HEADERS = ["物品名称", "总需求", "需采购", "买卖差价", "总价"]
-_SORT_FIELDS = ["name", "need", "to_buy", "spread", "total"]
+#: 「自制成本/件」必须带「/件」：同行「总价」是**整批**金额，两个口径不同的数并排，
+#: 名字不带单位就会被读成同一量级（大表那列同样叫「自制成本/件」，三处一致）。
+_HEADERS = ["物品名称", "总需求", "需采购", "买卖差价", "总价", "自制成本/件"]
+_SORT_FIELDS = ["name", "need", "to_buy", "spread", "total", "make_cost"]
 
 #: 双击复制的列 → 剪贴板文本：数量列取整、价格/价差保留两位，一律不带千分位
 #: （游戏输入框不认逗号，复制出来必须能直接粘贴）
-_COPY_FIELDS = ["name", "need", "to_buy", "spread", "total"]
+_COPY_FIELDS = ["name", "need", "to_buy", "spread", "total", "make_cost"]
 _INT_COPY_COLS = (1, 2)
 
 #: 列宽（名称列吃满剩余空间）。
@@ -54,12 +58,15 @@ _INT_COPY_COLS = (1, 2)
 #: **这个窗口是置顶用的**，宽度按内容最小值定，所以列宽只留够内容：两列数量按「千分位整数」
 #: 的常见长度给，**价差与总价都留足十位以上**（五十亿那种也要能整段显示）—— 价差是
 #: 「需采购 × (卖价 − 买价)」的金额，量级与总价同阶，按单价差的长度给会被截断。
+#: 「自制成本」是**每件**金额（与单价同量级，比总价小得多），但格式与总价同一套
+#: （`f"{v:,.2f}"`）、且它是判断「自己造还是买」的依据，宁可宽一点也不让它被 elide 截掉。
 _COLUMNS = [
     {"title": _HEADERS[0], "width": 0},
     {"title": _HEADERS[1], "width": 76},
     {"title": _HEADERS[2], "width": 76},
     {"title": _HEADERS[3], "width": 132},
     {"title": _HEADERS[4], "width": 132},
+    {"title": _HEADERS[5], "width": 132},
 ]
 
 
@@ -102,6 +109,22 @@ def spread_text(row: dict) -> str:
     return "-" if spread is None else f"{spread:,.2f}"
 
 
+def make_cost_text(row: dict) -> str:
+    """「自制成本」列的显示文本（**每件**）—— 用来判断这件料自己造还是买。
+
+    值由控制器经 `ScoringService.manufacturing_unit_costs` 算好写进 `row["make_cost"]`
+    （口径 = 「可制造物品」窗口那套：料钱 + 作业费 ÷ 单轮产出，hub / 卖价买价 /
+    材料机库设施与旁边的市价列同源；**制造走用户手上最好那张蓝图的 ME/TE，反应产物走配方**）。
+
+    `None` = **既没有制造配方、也没有反应配方**（或取不到价格）—— 矿物、数据核心、
+    解码器、科研行的产物都属此类 → 显示 `—`，**不是 0**：0 会被读成「自己造不要钱」，
+    那是相反的意思。这个标记刻意与「买卖差价」列的 `-` 分开：同样是「算不出」，
+    两列各用各的符号。
+    """
+    cost = row.get("make_cost")
+    return "—" if cost is None else f"{cost:,.2f}"
+
+
 def copy_cell_text(row: dict, column: int) -> str:
     """单元格的剪贴板文本（与显示同口径，去掉千分位）。纯函数，便于单测。"""
     if column == 0:
@@ -131,6 +154,8 @@ def _display_cells(r: dict) -> list[dict]:
         cell(f"{to_buy:,.0f}", "ACCENT_RED" if to_buy > 0 else "GREEN"),
         cell(spread_text(r)),
         cell(f"{total:,.2f}", "ACCENT_RED" if total > 0 else ""),
+        # 自制成本不染色：它是「如果自己造」的中性参考数，不是欠款/收益（染色会被读成结论）
+        cell(make_cost_text(r)),
     ]
 
 

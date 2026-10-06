@@ -404,10 +404,12 @@ Item {
                 anchors.rightMargin: cell.pad
                 text: cell.model.text
                 // 对齐：勾选/类别/图标/组号/子级/状态居中，金额右对齐（对齐 Widgets 版的 delegate）
+                // 右对齐区间 **12~19**：产能/设施/输出/成本/自制成本每件/利润/市场利润率%/个人利润率%
+                // —— 末尾一旦加列（如第 16 列「自制成本/件」），这里的上界要跟着 `NUM_COLUMNS` 挪。
                 horizontalAlignment: {
                     if (cell.column === 5 || cell.column === 6 || cell.column === 7 || cell.column === 9)
                         return Text.AlignHCenter
-                    if (cell.column >= 12 && cell.column <= 18)
+                    if (cell.column >= 12 && cell.column <= 19)
                         return Text.AlignRight
                     return Text.AlignLeft
                 }

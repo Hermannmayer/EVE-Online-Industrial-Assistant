@@ -23,7 +23,10 @@ pytestmark = pytest.mark.ui
 
 # to_buy>0：34/35 需采购；to_buy=0：2001 库存已备足
 # `spread`（(卖价−买价) × 需采购量，金额）：34 有双边挂单、35 只有单边（None）、2001 双边同向
-ROWS = [
+# `make_cost`（自制成本，每件）：34 可造（制造或反应配方都算）、**35 不可造**
+# （矿物那类「既没有制造配方也没有反应配方」→ 界面 `—`）、2001 是五位以上金额
+# （与「总价」同格式，验证不被截断）
+ROWS: list[dict] = [
     {
         "type_id": 34,
         "name": "Tritanium",
@@ -36,6 +39,7 @@ ROWS = [
         "total": 5000.0,
         "volume": 10.0,
         "spread": 1.25,
+        "make_cost": 3.5,
     },
     {
         "type_id": 35,
@@ -49,6 +53,7 @@ ROWS = [
         "total": 900.0,
         "volume": 1.0,
         "spread": None,
+        "make_cost": None,
     },
     {
         "type_id": 2001,
@@ -62,8 +67,13 @@ ROWS = [
         "total": 0.0,
         "volume": 0.0,
         "spread": 0.1,
+        "make_cost": 55000000.0,
     },
 ]
+
+#: 「算不出」的显示标记：价差列是 `-`（单边挂单）、自制成本列是 `—`（没有制造/反应配方）。
+#: 两格都**不复制任何东西** —— 落进数字分支会复制出 0.00，那是「算不出」伪装成「就是 0」。
+_UNKNOWN_MARKS = ("-", "—")
 
 
 def _make_mock_db():
@@ -87,17 +97,36 @@ def make_dlg(qapp):
     """构造 ProcurementDialog，patch get_container + aggregate_procurement 使重算返回固定 rows。
 
     补丁在测试期间保持生效，允许测试内再次重算（如排序状态重放）。
+
+    `aggregate`：要换掉聚合函数（如断言它收到了哪些参数）时**必须走这个口**，不要在测试里
+    再 `monkeypatch.setattr` 同一目标 —— 手工 `patch(...).start()` 与 monkeypatch 的撤销顺序
+    会让其中一个把**替身**还原回去，替身就泄漏到后面跑的其他测试文件
+    （实测：泄漏后 `tests/test_research_dispatch.py` 拿到的采购行是这里的夹具行）。
     """
     created: list[tuple[ProcurementDialog, list]] = []
 
-    def _make(rows: list[dict] | None = None, plans: list[dict] | None = None):
+    def _make(rows: list[dict] | None = None, plans: list[dict] | None = None, aggregate=None):
         db = _make_mock_db()
         cont = MagicMock()
         cont.db = db
         rows = ROWS if rows is None else rows
+
+        def _fake_unit_costs(type_ids: list[int], **_kwargs: object) -> dict[int, float]:
+            """回显夹具行上的 `make_cost`：缺键 = 没有制造/反应配方 → 界面显示 `—`（服务契约）。"""
+            wanted = {int(t) for t in type_ids}
+            return {
+                int(r["type_id"]): float(r["make_cost"])
+                for r in rows
+                if int(r["type_id"]) in wanted and r.get("make_cost") is not None
+            }
+
+        # 控制器会问 ScoringService 要自制成本（真实实现读 bp/user 库并按库存最好那张蓝图算）
+        cont.scoring_service.return_value.manufacturing_unit_costs.side_effect = _fake_unit_costs
         patchers = [
             patch("core.container.get_container", return_value=cont),
-            patch(
+            patch("services.plan_aggregator.aggregate_procurement", new=aggregate)
+            if aggregate is not None
+            else patch(
                 "services.plan_aggregator.aggregate_procurement",
                 return_value=([dict(r) for r in rows], 0.0, 0.0),
             ),
@@ -138,13 +167,14 @@ def test_split_sections_empty_half():
 def test_copy_text_matches_display():
     """复制文本 = 显示文本去掉千分位（两处口径不得漂移）。
 
-    唯一例外是**算不出**的格子（价差单边挂单，显示 `-`）：复制给空串而不是 `-`，
-    否则粘进游戏输入框的是一串废字符。见 `test_copying_a_one_sided_spread_does_not_copy_a_fake_zero`。
+    唯一例外是**算不出**的格子（价差单边挂单显示 `-`、自制成本没有制造/反应配方显示 `—`）：
+    复制给空串而不是那两个符号，否则粘进游戏输入框的是一串废字符。
+    见 `test_copying_a_one_sided_spread_does_not_copy_a_fake_zero`。
     """
     for r in ROWS:
         shown = procure_rows([r])[0]["cells"]
         for col in range(len(shown)):
-            if shown[col]["text"] == "-":
+            if shown[col]["text"] in _UNKNOWN_MARKS:
                 assert copy_cell_text(r, col) == ""
                 continue
             assert copy_cell_text(r, col) == shown[col]["text"].replace(",", ""), f"物品 {r['type_id']} 列 {col}"
@@ -156,7 +186,7 @@ def test_copy_text_matches_display():
 
 
 def test_column_lists_stay_index_aligned():
-    """四处列定义必须同长同序 —— 它们**按索引对齐**，插错位就是「排序按这列、复制按那列」。
+    """五处列定义必须同长同序 —— 它们**按索引对齐**，插错位就是「排序按这列、复制按那列」。
 
     串列不报错也不崩，只是数字悄悄对不上，所以用一条显式断言钉住。
     """
@@ -166,8 +196,13 @@ def test_column_lists_stay_index_aligned():
     assert pb._HEADERS[3] == "买卖差价"
     assert pb._SORT_FIELDS[3] == "spread", "价差列要能排序（表头点得动）"
     assert pb._COPY_FIELDS[3] == "spread"
+    assert pb._HEADERS[-1] == "自制成本/件", "新列名带「/件」——同行「总价」是整批金额，不带单位会被读成同一量级"
+    assert pb._SORT_FIELDS[-1] == pb._COPY_FIELDS[-1] == "make_cost"
     assert [c["title"] for c in pb._COLUMNS] == pb._HEADERS
     assert procure_table_headers() == pb._HEADERS
+    # 第五处：单元格列表长度必须与表头一致 —— 只加表头忘了 `_display_cells` 时，
+    # 上面几条长度断言全都过得去，界面却会整行错位（这一格才是那处的守卫）
+    assert [len(r["cells"]) for r in procure_rows(ROWS)] == [len(pb._HEADERS)] * len(ROWS)
 
 
 def test_narrowest_window_clips_nothing(qapp, make_dlg):
@@ -245,6 +280,41 @@ def _find_item(item, name: str):
 def test_spread_cell_renders_value_or_dash():
     """价差列：双边挂单给数值（千分位、两位小数），单边给 `-`（不是 0）。"""
     assert [r["cells"][3]["text"] for r in procure_rows(ROWS)] == ["1.25", "-", "0.10"]
+
+
+def test_make_cost_cell_renders_value_or_dash():
+    """自制成本列（每件）：可造（制造**或反应**配方）给两位小数（与总价同格式），
+    不可造给 `—`。
+
+    `—` **不是 0**：0 会被读成「自己造不要钱」，正好是相反的意思（服务对算不出的物品
+    不返回 key —— 矿物、数据核心、解码器、科研行产物；**反应产物会给数字**，由服务分支）。
+    """
+    assert [r["cells"][5]["text"] for r in procure_rows(ROWS)] == ["3.50", "—", "55,000,000.00"]
+
+
+def test_make_cost_column_is_sorted_and_wired_to_the_service(qapp, make_dlg):
+    """自制成本列：控制器把服务算出的值写进行里、表头能按它排、`—` 那格不复制任何东西。
+
+    - 「有没有真的问服务要」：`section_rows` 里的 `make_cost` 来自 `manufacturing_unit_costs`
+      （夹具的替身按行回显），不是聚合结果自带的；
+    - 排序：`None` 按 0 参与比较（与价差列同口径），升序时排最前，不炸也不排到天上；
+    - 复制：`None` → 空串（`copy_cell` 直接不复制），绝不复制出 `0.00`。
+    """
+    dlg = make_dlg()
+    assert [r["make_cost"] for r in dlg.section_rows("buy")] == [3.5, None]
+
+    dlg.sort_section("buy", 5)
+    assert [r["type_id"] for r in dlg.section_rows("buy")] == [35, 34]
+    dlg.sort_section("buy", 5)
+    assert [r["type_id"] for r in dlg.section_rows("buy")] == [34, 35]
+
+    assert copy_cell_text(ROWS[1], 5) == ""
+    clip = QGuiApplication.clipboard()
+    with patch.object(clip, "setText") as m_set:
+        dlg.copy_cell("buy", 1, 5)  # 第 1 行是「类银超金属」：没有制造/反应配方
+        m_set.assert_not_called()
+        dlg.copy_cell("buy", 0, 5)
+        assert m_set.call_args.args[0] == "3.50"
 
 
 def test_display_name_prefers_zh_then_en_then_id():
@@ -345,7 +415,7 @@ def test_double_click_copies_clicked_column(qapp, make_dlg):
     用 setText spy 断言，规避全量跑时系统剪贴板读回被前置测试扰动的偶发。"""
     dlg = make_dlg()
     clip = QGuiApplication.clipboard()
-    expected = {0: "三钛合金", 1: "1000", 2: "1000", 3: "1.25", 4: "5000.00"}
+    expected = {0: "三钛合金", 1: "1000", 2: "1000", 3: "1.25", 4: "5000.00", 5: "3.50"}
     with patch.object(clip, "setText") as m_set:
         for col, text in expected.items():
             dlg.copy_cell("buy", 0, col)
@@ -687,7 +757,7 @@ def test_show_and_raise_reassert_the_pin(qapp, make_dlg, monkeypatch):
     assert calls == [], "没置顶时前置走原生路径"
 
 
-def test_recalculate_excludes_running_sublines(qapp, make_dlg, monkeypatch):
+def test_recalculate_excludes_running_sublines(qapp, make_dlg):
     """重算必须把「正在生产的子项产线」的产物排除掉，且这个集合按**全量**计划算。
 
     回归：排除集原先由 `aggregate_procurement` 从**传进来的** `plans` 现算，而本窗传的是
@@ -705,10 +775,10 @@ def test_recalculate_excludes_running_sublines(qapp, make_dlg, monkeypatch):
             {"id": 1, "product_type_id": 3955, "runs": 1, "parallels": 1, "status": "pending", "materials_ready": 1},
             # 子项产线：生产中（不会进「备料中」那一份），但它的产物必须被排除
             {"id": 2, "product_type_id": 11694, "sub_level": 1, "status": "in_progress", "materials_ready": 1},
-        ]
+        ],
+        # 替身走夹具的 patch 口（别用 monkeypatch 再叠一层：撤销顺序会把替身泄漏到别的测试文件）
+        aggregate=_fake,
     )
-    # 补丁必须在 `make_dlg` **之后**打：夹具自己也会 patch 这个函数，先打会被它盖掉
-    monkeypatch.setattr("services.plan_aggregator.aggregate_procurement", _fake)
     dlg.recalculate()
 
     assert seen["self_made"] == {11694}, "自制件集合没按全量计划算"

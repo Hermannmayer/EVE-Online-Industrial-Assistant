@@ -56,6 +56,9 @@ def _bridge_with_metrics(db_manager, monkeypatch, metrics_fn):
     """造一个成本明细桥，把 `calculate_plan_metrics` 换成 `metrics_fn`（阶段 4 后走桥）。"""
     svc = MagicMock()
     svc.calculate_plan_metrics.side_effect = metrics_fn
+    # 「自制成本」列另走一个取数（`manufacturing_unit_costs`）：本组用例只关心子项制造价，
+    # 这里给空映射，免得 MagicMock 的返回值被当成金额格式化（那是另一条链的断言）
+    svc.manufacturing_unit_costs.return_value = {}
     monkeypatch.setattr(
         "ui_qml.bridge.cost_breakdown_bridge.get_container",
         lambda: SimpleNamespace(db=db_manager, scoring_service=lambda: svc),

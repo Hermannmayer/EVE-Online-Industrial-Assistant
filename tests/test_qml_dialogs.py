@@ -1413,6 +1413,8 @@ def cost_breakdown_factory(qapp, monkeypatch):
     svc.calculate_plan_metrics.side_effect = lambda plan, cfg, **kw: _breakdown_metrics(
         plan.get("_activity", "manufacturing")
     )
+    # 「自制成本」列走的是另一个取数：这里给固定值（1001 那行算得出），34（三钛）没有制造蓝图 → 显示 —
+    svc.manufacturing_unit_costs.return_value = {1001: 1234.5}
     monkeypatch.setattr(
         "ui_qml.bridge.cost_breakdown_bridge.get_container",
         lambda: SimpleNamespace(db=MagicMock(), scoring_service=lambda: svc),
@@ -1437,6 +1439,11 @@ def test_cost_breakdown_renders_materials_and_summary(cost_breakdown_factory):
         assert bridge.materialRows[0]["cells"][0]["text"] == "碳纤维"
         assert bridge.materialRows[0]["cells"][1]["text"] == "1"
         assert bridge.materialRows[1]["cells"][1]["text"] == "100"
+        # 「自制成本」列：算得出给金额、算不出给 —（不是 0）—— 用来判断这件料自己造还是买
+        assert bridge.materialHeaders[5] == "自制成本"
+        assert bridge.materialRows[0]["cells"][5]["text"] == "1,234.50"
+        assert bridge.materialRows[1]["cells"][5]["text"] == "—"
+        assert len(bridge.materialRows[0]["cells"]) == len(bridge.materialHeaders) == 7
 
         job = {f["label"]: f for f in bridge.jobFields}
         assert job["制造作业费:"]["strong"] is True

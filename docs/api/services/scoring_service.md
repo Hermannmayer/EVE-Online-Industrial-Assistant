@@ -314,6 +314,33 @@ def calc_manufacturing_score(self, type_id: int, char_config: dict, mat_source_h
 计算制造评分。
 
 定义行：`1042`
+##### `manufacturing_unit_costs`
+
+```python
+def manufacturing_unit_costs(self, type_ids: list[int] | set[int], *, mat_hub: str='Jita', price_type_mat: str='sell', mat_mult: float=1.0, char_config: dict | None=None, system_id: int | None=None, facility_tax_pct: float=0.0, hangar_id: int | None=None) -> dict[int, float]
+```
+
+这些物品**自己造一件**要多少钱 → `&#123;type_id: cost_per_unit&#125;`（算不出的物品不在结果里）。
+
+定义行：`1096`
+##### `_reaction_product_ids`
+
+```python
+def _reaction_product_ids(self, type_ids: list[int]) -> set[int]
+```
+
+这批里哪些是**反应产物**（产物只挂在 `activity='reaction'` 上）—— 一次查询。
+
+定义行：`1188`
+##### `_best_blueprint_levels`
+
+```python
+def _best_blueprint_levels(self, type_ids: list[int]) -> dict[int, tuple[int, int]]
+```
+
+`&#123;物品 type_id: (ME, TE)&#125;` —— 用户库存里「该物品的制造蓝图」最好的那一张。
+
+定义行：`1207`
 ##### `calc_trade_score`
 
 ```python
@@ -322,7 +349,7 @@ def calc_trade_score(self, type_id: int, buy_hub: str='Jita', sell_hub: str='Jit
 
 计算贸易评分。纯算法在 domain.scoring，编排在 services.scoring_facade。
 
-定义行：`1096`
+定义行：`1243`
 ##### `calc_reaction_score`
 
 ```python
@@ -331,4 +358,4 @@ def calc_reaction_score(self, type_id: int, char_config: dict, mat_source_hub: s
 
 计算反应（Reaction）利润评分。纯算法在 domain.scoring，编排在 services.scoring_facade。
 
-定义行：`1123`
+定义行：`1270`

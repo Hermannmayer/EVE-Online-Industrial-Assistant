@@ -8,6 +8,7 @@ import pytest
 from PySide6.QtCore import Qt
 
 from ui_qml.models.industry_models import PlanTableModel
+from ui_qml.models.plan_table_constants import COL_MAKE_COST, COL_PROFIT
 
 pytestmark = pytest.mark.ui
 
@@ -38,7 +39,7 @@ class TestPlanTableModel:
         ]
         model = PlanTableModel(plans)
         assert model.rowCount() == 1
-        assert model.columnCount() == 19
+        assert model.columnCount() == 20
 
     def test_header_data(self, qapp):
         """表头正确"""
@@ -60,6 +61,7 @@ class TestPlanTableModel:
             "设施",
             "输出",
             "成本",
+            "自制成本/件",
             "利润",
             "市场利润率%",
             "个人利润率%",
@@ -81,8 +83,25 @@ class TestPlanTableModel:
         ]
         model = PlanTableModel(plans)
         assert model.data(model.index(0, 3), Qt.ItemDataRole.DisplayRole) == "渡鸦级"
-        assert model.data(model.index(0, 16), Qt.ItemDataRole.DisplayRole) == "5,000,000"
+        assert model.data(model.index(0, COL_PROFIT), Qt.ItemDataRole.DisplayRole) == "5,000,000"
         assert model.data(model.index(0, 7), Qt.ItemDataRole.DisplayRole) == "生产中"
+
+    def test_make_cost_column_shows_number_or_dash(self, qapp):
+        """「自制成本/件」：算得出给千分位 + 两位小数，算不出给 `—`（**不是 0**）。
+
+        0 会被读成「自己造不要钱」；而「没有制造蓝图 / 取不到价 / 科研行产物是蓝图 /
+        反应产物的蓝图挂在 reaction 行」这些情形必须与真正的 0 成本区分开。
+        也钉住小数位：`0.4` 用 `:.0f` 会印成「0」，正好撞上上面那条语义。
+        """
+        plans = [
+            {"product_type_id": 2001, "product_name": "渡鸦级", "make_cost": 1234567.891},
+            {"product_type_id": 34, "product_name": "三钛合金", "make_cost": 0.4},
+            {"product_type_id": 3009, "product_name": "某蓝图", "activity": "invention", "make_cost": None},
+            {"product_type_id": 5678, "product_name": "缺数据"},  # 字段缺失同样按算不出处理
+        ]
+        model = PlanTableModel(plans)
+        texts = [model.data(model.index(i, COL_MAKE_COST), Qt.ItemDataRole.DisplayRole) for i in range(len(plans))]
+        assert texts == ["1,234,567.89", "0.40", "—", "—"]
 
     def test_category_column_symbol(self, qapp):
         """类别列符号与行底色"""

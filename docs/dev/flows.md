@@ -191,11 +191,15 @@ services/logistics.py
     （原来给的是单价差，读着像单价、和旁边 `数量 × 单价` 的总价对不上，用户报过）。**不吃 `price_mult`**
     （倍率是跨区运费/溢价的模拟，价差是市场事实本身）。**单边无挂单 → `None`**，显示 `-`、复制给空串 ——
     给 0 会被读成「卖买同价」。`get_market_prices` 本来就同时返回 sell/buy，这一列不额外查库。
-  - 采购表当前 5 列：物品名称 / 总需求 / 需采购 / 买卖差价 / 总价。「库存」「单价」「体积」已从**显示**下线
-    （列表太宽装不下），数据仍在行里（`owned`/`price`/`volume`）—— 汇总行、复制整单、增量添加都还在用。
-  - ⚠️ 列**四处按索引对齐**：`procurement_bridge._HEADERS` / `_SORT_FIELDS` / `_COPY_FIELDS` /
-    `procure_rows` 的 cells。加列必须四处一起插，插错位是「排序按这列、复制按那列」的静默串列
-    （回归防线：`tests/test_procurement_tab.py::test_column_lists_stay_index_aligned`）。
+  - 采购表当前 6 列：物品名称 / 总需求 / 需采购 / 买卖差价 / 总价 / **自制成本/件**。「库存」「单价」「体积」
+    已从**显示**下线（列表太宽装不下），数据仍在行里（`owned`/`price`/`volume`）—— 汇总行、复制整单、
+    增量添加都还在用。「自制成本/件」是**每件**金额（口径见下文「自制成本」段；**必须带「/件」**：
+    同行「总价」是整批金额），由控制器 `_apply_make_costs` 在每次 `recalculate()` 后写进行里；
+    窗口最小宽因此 572 → 716px。
+  - ⚠️ 列**五处按索引对齐**：`procurement_bridge._HEADERS` / `_SORT_FIELDS` / `_COPY_FIELDS` /
+    `_COLUMNS` / `procure_rows` 的 cells。加列必须五处一起插，插错位是「排序按这列、复制按那列」的
+    静默串列（回归防线：`tests/test_procurement_tab.py::test_column_lists_stay_index_aligned`，
+    含「cells 数 == 表头数」那条 —— 只改表头忘了 `_display_cells` 时长度断言会放过）。
     QML 侧的 `allColumns` 从 `columns` 长度推，不要写死下标数组。
   - ⚠️ 窗口宽度按**工具栏那一行**定，不是按表格：`FSummaryTable.colWidth` 给弹性列的下限是 80px，
     且**不会**为了塞下而挤固定列 —— 固定列一多总宽就超出窗口、右侧列被裁（「首次打开显示不全」）。
@@ -342,6 +346,27 @@ services/logistics.py
 **物品**、没有蓝图 png，所以科研行取「这张蓝图造出来的物品」（`bp.blueprint_products` 的
 manufacturing 反向表）；制造/反应就是产物本身。界面（计划表图标列、产线小助手行首）只读
 这一列，缺图才回退类别首字。不这么取，科研行会退回类别首字「科」。
+
+**「自制成本」三处共用一个取数**（判断这件料/这个产物自己造还是买）：
+`ScoringService.manufacturing_unit_costs(type_ids, mat_hub=…, price_type_mat=…, mat_mult=…,`
+`char_config=…, hangar_id=…, facility_tax_pct=…, system_id=…)` → `{type_id: 每件成本}`。
+口径 = `domain.scoring` 的 `cost_per_unit`（**料钱 + 作业费（含 SCI/设施税）÷ 单轮产出**）：
+制造走 `calc_manufacturing_score`、产物只挂 `activity='reaction'` 的走 `calc_reaction_score`；
+用用户库存里**最好的那张蓝图**的 ME/TE（`MAX(me_level/te_level)`）；T2 含拷贝/发明研究费
+（facade 未传 `research_costs` 时按件现算）；**不递归**（不把"料也自己造"逐层算下去）、
+不含市场费用/佣金。**既没有制造配方也没有反应配方**的（矿物、数据核心、解码器、科研行产物/蓝图行）
+**不进结果** —— 界面一律显示 `—`，不许填 0 冒充成本。
+消费方：查看核算材料表「自制成本」列（与左边「单价」并排）、采购小助手「自制成本/件」列、
+生产计划大表「自制成本/件」列（**必须带"/件"**：采购表同行「总价」、大表第 15 列「成本」都是
+整批/总额口径，两列并排时不带单位会被读成同一个量级）。三处各用**自己窗口的价格设置**
+（查看核算=计划的 hub/工具栏卖价买价/倍率，采购=窗口 Hub/卖价买价/倍率，大表=工具栏），
+所以同一件料在三处可能显示不同的值 —— 这是有意的，别把它们"统一"成一份缓存。
+制造那条链路带 TTL 缓存（重复调用 ~1ms），反应那条不缓存但调用量很小。
+
+**「自制成本」在真库上的样子**（判断列对不对时的参照）：制造/反应产物有数
+（重型离子疾速炮 I 188,780.78、碳化钨 34,037.55）；**行星工业产物与矿物没有蓝图产物行**
+（三钛合金、莫尔石、机械元件、传信器、微型电子元件、合成神经键…）→ `—`。
+行星工业（PI）本程序不建模，所以那些料只能自己看市场价决定。
 
 **已知陷阱**（改这块前先看）：
 - `plan_execution.plan_blueprint_ready` 取代旧 `has_image` 口径；`has_image` 对科研行恒 False。

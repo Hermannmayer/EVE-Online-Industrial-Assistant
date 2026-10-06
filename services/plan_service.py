@@ -320,7 +320,12 @@ def _enrich_rows(rows: list[dict], enrich: dict) -> list[dict]:
 
 
 def _fetch_rows(where_sql: str = "", params: tuple = ()) -> list[dict]:
-    """SELECT * FROM production_plans（可选 WHERE），统一排序与 enrich。"""
+    """SELECT * FROM production_plans（可选 WHERE），统一排序与 enrich。
+
+    ⚠️ **不含**「自制成本/件」（`make_cost`）：那条链路要问评分服务，而本函数也被
+    产线小助手的 **5s 轮询**（`load_plans_for_wizard`）调用 —— 成本只挂计划大表的
+    `load_plans` 上（理由见 `_attach_make_costs`）。
+    """
     with get_container().db.connect("user", "bp") as conn:
         sql = "SELECT * FROM production_plans"
         if where_sql:
@@ -336,6 +341,67 @@ def _fetch_rows(where_sql: str = "", params: tuple = ()) -> list[dict]:
     return _enrich_rows(rows, enrich)
 
 
+def _attach_make_costs(rows: list[dict]) -> list[dict]:
+    """给每行补「自己造一件」的成本 → 派生字段 `make_cost`（算不出 → `None`，界面显示 `—`）。
+
+    口径就是 `ScoringService.manufacturing_unit_costs`（料钱 + 作业费 ÷ 单轮产出，
+    取用户手上最好的那张蓝图的 ME/TE）。**制造产物与反应产物都会给数**；
+    `—` 只表示「既没有制造配方、也没有反应配方」（矿物、数据核心、解码器、
+    科研行产物是蓝图本身）。helper 不返回的 type 保持 `None`，**绝不填 0**
+    （0 与「算不出」在界面上必须能区分）。
+
+    挂点：**只挂计划大表的 `load_plans`**，不放 `_fetch_rows` —— 后者还被产线小助手的
+    **5s 轮询**（`load_plans_for_wizard`）调用，而 helper 里反应那条链路**没有 TTL 缓存**
+    （制造那条有 30 分钟缓存，实测二次 0.002s）。计划大表这边由 30s 心跳只在
+    「库存/价格指纹变了」时触发一次 `load_plans`，不会每轮重算。
+
+    参数按「本行自己的口径」取：材料 Hub 用计划行的 `mat_hub`，作业费/设施用它的
+    `mat_hangar_id`（设施成本倍率 / 改件 / 星系 SCI / 设施税由 helper 自己解析），
+    价格类型与材料倍率用工具栏那份全局设置（`get_price_settings`）—— 与同行的
+    「成本」列同一套价格口径。`char_config` 不传：技能只影响作业**时间**，
+    对单件成本的影响远小于价格波动，避免为它把角色配置解析拉进加载路径。
+    """
+    if not rows:
+        return rows
+    from services.user_settings import get_price_settings
+
+    ps = get_price_settings()
+    price_type = str(ps.get("mat_price_type") or "sell")
+    mat_mult = float(ps.get("mat_mult") or 1.0)
+
+    # helper 一次只接受一组参数 → 先按（材料 Hub, 材料机库）分组，各调一次
+    groups: dict[tuple[str, int], list[int]] = {}
+    for row in rows:
+        tid = int(row.get("product_type_id") or 0)
+        if not tid:
+            row["make_cost"] = None
+            continue
+        hub = str(row.get("mat_hub") or ps.get("mat_hub") or "Jita")
+        hangar = int(row.get("mat_hangar_id") or 0)
+        groups.setdefault((hub, hangar), []).append(tid)
+
+    cost_map: dict[int, float] = {}
+    if groups:
+        try:
+            service = get_container().scoring_service()
+            for (hub, hangar), type_ids in groups.items():
+                cost_map.update(
+                    service.manufacturing_unit_costs(
+                        type_ids,
+                        mat_hub=hub,
+                        price_type_mat=price_type,
+                        mat_mult=mat_mult,
+                        hangar_id=hangar or None,
+                    )
+                )
+        except Exception:
+            # 成本补不出来只是少一列信息，绝不能让整张计划表加载失败
+            log.exception("批量算「自制成本/件」失败，本列留空")
+    for row in rows:
+        row["make_cost"] = cost_map.get(int(row.get("product_type_id") or 0))
+    return rows
+
+
 def load_plan(plan_id: int) -> dict | None:
     """按 id 取单条计划（与 `load_plans` 同一条 `_fetch_rows` + enrich 管线）。
 
@@ -348,7 +414,7 @@ def load_plan(plan_id: int) -> dict | None:
 
 
 def load_plans(filter_key: str) -> list[dict]:
-    """加载生产计划列表，并补全蓝图可用标记/类别/机库名称。"""
+    """加载生产计划列表，并补全蓝图可用标记/类别/机库名称 + 「自制成本/件」。"""
     where = ""
     if filter_key == "待排":
         where = "status = 'pending'"
@@ -358,7 +424,7 @@ def load_plans(filter_key: str) -> list[dict]:
         where = "status = 'ready'"
     elif filter_key == "已完成":
         where = "status IN ('completed','done')"
-    return _fetch_rows(where)
+    return _attach_make_costs(_fetch_rows(where))
 
 
 def load_plans_for_wizard() -> list[dict]:

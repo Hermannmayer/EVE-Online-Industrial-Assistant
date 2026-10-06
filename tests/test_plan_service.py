@@ -25,8 +25,24 @@ def _build_user(db_manager):
     return db_manager
 
 
-def _patch_container(db_manager, monkeypatch):
-    container = SimpleNamespace(db=db_manager)
+class _StubScoring:
+    """容器里 `scoring_service()` 的最小替身：只认 `manufacturing_unit_costs`。
+
+    默认「什么都算不出」= 空 dict（对应无制造蓝图/科研行产物/反应产物），
+    界面据此显示 `—`；`calls` 记下每次问的 (type_ids, 参数)，供分组口径断言。
+    """
+
+    def __init__(self, unit_costs: dict[int, float] | None = None) -> None:
+        self.unit_costs = unit_costs or {}
+        self.calls: list[tuple[list[int], dict]] = []
+
+    def manufacturing_unit_costs(self, type_ids, **kw) -> dict[int, float]:
+        self.calls.append((sorted(int(t) for t in type_ids), kw))
+        return {int(t): self.unit_costs[int(t)] for t in type_ids if int(t) in self.unit_costs}
+
+
+def _patch_container(db_manager, monkeypatch, scoring=None):
+    container = SimpleNamespace(db=db_manager, scoring_service=lambda: scoring or _StubScoring())
     monkeypatch.setattr(plan_service, "get_container", lambda: container)
     # insert_plan/insert_plans_batch 内部自动绑定走 plan_execution._container，也指向临时库
     monkeypatch.setattr(plan_execution, "_container", lambda: container)
@@ -326,3 +342,28 @@ class TestLineLevels:
         from services.plan_service import _line_levels
 
         assert _line_levels([10, 11, 12], 2, {10: (5, 10), 11: (6, 11), 12: (7, 12)}) == [(5, 10), (6, 11)]
+
+
+def test_attach_make_costs_groups_by_hub_and_hangar_and_keeps_none(monkeypatch):
+    """「自制成本/件」补数：按（材料 Hub, 材料机库）分组批量问，**算不出的保持 None**。
+
+    helper 不返回的 type（无制造蓝图 / 取不到价 / 科研行产物是蓝图 / 反应产物）不能填 0
+    —— 界面靠 `None` 显示 `—`，0 会被读成「自己造不要钱」。
+    """
+    stub = _StubScoring({2001: 1234.5})
+    _patch_container(None, monkeypatch, stub)
+
+    rows = plan_service._attach_make_costs(
+        [
+            {"id": 1, "product_type_id": 2001, "mat_hub": "Jita", "mat_hangar_id": 5},
+            {"id": 2, "product_type_id": 3009, "mat_hub": "Jita", "mat_hangar_id": 5},
+            {"id": 3, "product_type_id": 2002, "mat_hub": "Amarr", "mat_hangar_id": None},
+            {"id": 4, "product_type_id": None},
+        ]
+    )
+
+    assert [r["make_cost"] for r in rows] == [1234.5, None, None, None]
+    assert [(tids, kw["mat_hub"], kw["hangar_id"]) for tids, kw in stub.calls] == [
+        ([2001, 3009], "Jita", 5),
+        ([2002], "Amarr", None),
+    ]

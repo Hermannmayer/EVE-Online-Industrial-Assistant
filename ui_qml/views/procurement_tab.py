@@ -372,6 +372,7 @@ class ProcurementDialog(QObject):
         self._rows = rows
         self._apply_deleted_filter()
         self._apply_manual_overrides()
+        self._apply_make_costs()
 
         # 检查是否有「待下线」的计划，显示「完成所有」按钮
         ready_plans = [p for p in self._active_plans if p.get("status") == "ready"]
@@ -434,6 +435,48 @@ class ProcurementDialog(QObject):
                 qty = self._manual_overrides[int(tid)]
                 row["to_buy"] = qty
                 row["total"] = qty * row.get("price", 0)
+
+    def _apply_make_costs(self) -> None:
+        """给每行补「自制成本（每件）」—— 判断这件料自己造还是买。
+
+        口径由 `ScoringService.manufacturing_unit_costs` 提供（= 「可制造物品」窗口那一套：
+        料钱 + 作业费 ÷ 单轮产出，**不递归**；制造走用户手上**最好的那张蓝图**的 ME/TE、
+        T2 含拷贝/发明研究费，**反应产物走配方** —— 两类都在服务里，本窗不分支）。
+        参数与上面 `aggregate_procurement` 保持同源 —— 同一个 hub / 卖价买价 /
+        材料机库的设施与税，否则这一列与旁边的市价列不可比。
+
+        「材料倍率」：本窗没有这个控件，聚合调用也没传 `price_mult`（= 1.0），故这里同样 1.0。
+
+        服务对**既没有制造配方、也没有反应配方**（或取不到价格）的物品不返回 key
+        （矿物、数据核心、解码器、科研行的产物）→ 这里保持 `None`，界面显示 `—`，
+        不拿 0 冒充成本。
+
+        整段用 try 兜住：这列是**附加信息**，它算不出来（库里缺价格/表被锁）不该让整张采购表
+        开不出来 —— 失败时全列退化成 `—` 并写日志，其余列照常。
+        """
+        from core.container import get_container
+
+        ids = [int(r["type_id"]) for r in self._rows if r.get("type_id")]
+        if not ids:
+            return
+        try:
+            costs = (
+                get_container()
+                .scoring_service()
+                .manufacturing_unit_costs(
+                    ids,
+                    mat_hub=self._hub_text,
+                    price_type_mat=self._price_type,
+                    mat_mult=1.0,
+                    hangar_id=self._default_mat_hangar_id,
+                )
+            )
+            resolved = {int(k): float(v) for k, v in dict(costs).items()}
+        except Exception:
+            log.exception("计算自制成本失败，该列退化为「—」")
+            resolved = {}
+        for row in self._rows:
+            row["make_cost"] = resolved.get(int(row.get("type_id") or 0))
 
     def _update_summary(self) -> None:
         """底部统计（两分区汇总）。"""
