@@ -968,3 +968,13 @@ class InventoryBridge(QObject):
         self._reload_hangars()
         self.refreshItems()
         self.loadBlueprints()
+
+    def on_shown(self) -> None:
+        """页面被切到前台：机库可能刚在「机库设置」里增删改过，整页重取一遍。
+
+        机库增删改**不发信号**（`HangarSettingsBridge` 只管自己那份列表），而本页的
+        `_hangars` 与物品表是构造时算好的 —— 不重取就是「新建了机库、仓库管理里看不到、
+        也没法当入库目标」（用户 2026-10-06 报）。外壳 `navigate_to` 按名调这个钩子
+        （见 `shell_window._HOOK_SHOWN`）。
+        """
+        self.refreshAll()

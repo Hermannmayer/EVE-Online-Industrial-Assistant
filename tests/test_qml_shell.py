@@ -318,6 +318,29 @@ def test_switching_to_a_page_calls_its_on_shown_hook(shell, monkeypatch):
     assert seen == [target], f"切到 {target} 应当只调它的 on_shown，实际 {seen}"
 
 
+def test_hangar_settings_refreshes_the_storage_page(shell, monkeypatch):
+    """关掉「机库设置」后，仓库管理页的机库列表要立刻重取。
+
+    回归（2026-10-06 用户报）：机库增/删/改只落在 DB 里、**不发信号**，而仓库管理页的
+    机库下拉是构造时算好的 —— 原先 `show_hangar_settings` 只刷工业页，于是新建的机库
+    在仓库管理里看不到、也没法当入库目标，要重启才出现。
+    """
+    from types import SimpleNamespace
+
+    from ui_qml.bridge import hangar_settings_bridge as hsb
+
+    storage = shell._pages["storage"].hooks
+    monkeypatch.setattr(
+        "services.inventory_manager.get_hangars",
+        lambda: [{"id": 1, "name": "研发", "solar_system_id": None}],
+    )
+    monkeypatch.setattr(hsb, "HangarSettingsQmlDialog", lambda *a, **k: SimpleNamespace(exec=lambda: 0))
+
+    shell.show_hangar_settings()
+
+    assert storage.hangarNames == ["研发"], "新建的机库没出现在仓库管理页"
+
+
 def test_shutdown_hook_reaches_page_controllers(shell, app, monkeypatch):
     """关窗必须把页面控制器的关机钩子也走一遍。
 

@@ -598,6 +598,36 @@ class TestCompleteAllReload:
 # ═══════════════════════════════════════════════════
 
 
+def test_add_to_hangar_asks_for_the_target_hangar(qapp, make_dlg, monkeypatch):
+    """回归：增量添加到仓库要**现选机库**（默认预选默认材料机库）。
+
+    原先固定塞进默认材料机库、连问都不问 —— 新建的机库在这条入口上没有任何可选之处
+    （用户 2026-10-06 报「采购小助手增量到机库时没有可以选择的机库」）。
+    """
+    import ui_qml.bridge.review_bridge as rb
+    from services import inventory_manager as im
+
+    dlg = make_dlg()
+    monkeypatch.setattr(im, "get_default_mat_hangar_and_system", lambda: (7, None))
+    seen: dict = {}
+
+    def _choose(default: int | None, _parent: object) -> tuple[int, str]:
+        seen["default"] = default
+        return 9, "研发"
+
+    monkeypatch.setattr(rb, "choose_hangar", _choose)
+    monkeypatch.setattr(
+        rb,
+        "run_clipboard_import",
+        lambda hid, name, parent, mode="": seen.update(hid=hid, name=name, mode=mode),
+    )
+
+    dlg.add_to_hangar()
+
+    assert seen["default"] == 7, "默认材料机库应当作为预选项传进机库选择框"
+    assert (seen["hid"], seen["name"], seen["mode"]) == (9, "研发", "incremental")
+
+
 def test_pin_is_session_only_and_never_restored(qapp, make_dlg, monkeypatch):
     """构造时一律不置顶（旧 settings 里的 true 不再被恢复），`set_pinned` 只改会话状态。"""
     from services import user_settings

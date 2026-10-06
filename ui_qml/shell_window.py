@@ -1261,10 +1261,18 @@ class ShellWindow(QQuickView):
         from ui_qml.bridge.hangar_settings_bridge import HangarSettingsQmlDialog
 
         HangarSettingsQmlDialog(self).exec()
+        # 机库增/删/改只落在 DB 里，**不发任何信号** —— 把机库列表缓存在内存里的页面
+        # 各自重取一次。原先只刷工业页，漏了仓库管理页：它的机库下拉是构造时算好的，
+        # 于是「新建的机库在仓库管理里看不见」（用户 2026-10-06 报，而用户未必是从
+        # 那个页面进的设置，所以不能只靠 storage 页自己的 `on_shown`）。
         page = self._pages.get("industry")
         load_plans = getattr(page.hooks, "load_plans", None) if page else None
         if callable(load_plans):
             load_plans()
+        storage = self._pages.get("storage")
+        refresh_all = getattr(storage.hooks, "refreshAll", None) if storage else None
+        if callable(refresh_all):
+            refresh_all()
 
     def _show_init_wizard(self, auto_mode: bool = False) -> None:
         from ui_qml.bridge.init_wizard_bridge import InitWizardQmlDialog

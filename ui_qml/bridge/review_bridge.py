@@ -77,6 +77,7 @@ __all__ = [
     "ImportChangeQmlDialog",
     "ImportReviewBridge",
     "ImportReviewQmlDialog",
+    "choose_hangar",
     "missing_row",
     "review_row",
     "run_clipboard_import",
@@ -1338,6 +1339,25 @@ def _purchase_summary(imported: int, unmatched: int, stats: dict) -> str:
     return "，".join(parts)
 
 
+def choose_hangar(default_hangar_id: int | None, parent: Any) -> tuple[int, str] | None:
+    """现选一个入库机库 → `(机库 id, 下拉里那个显示名)`；没有机库 / 用户取消 → None。
+
+    默认预选 `default_hangar_id`（取不到就是第一项）。「仓库管理」与「采购小助手」的
+    入库入口共用它 —— 各写一份就会出现「一个入口让你选机库、另一个直接塞进默认机库」，
+    新建的机库在后者里根本没得选（用户 2026-10-06 报）。标签口径见 `_hangar_choices`。
+    """
+    labels, ids, index = _hangar_choices(default_hangar_id)
+    if not ids:
+        FMessageDialog.warning(parent, "提示", "还没有机库，请先在「机库设置」里建一个")
+        return None
+    from ui_qml.bridge.input_dialog import InputQmlDialog
+
+    name, ok = InputQmlDialog.get_item(parent, "入库机库", "目标机库:", labels, index)
+    if not ok or name not in labels:
+        return None
+    return ids[labels.index(name)], name
+
+
 def run_purchase_import(default_hangar_id: int | None, parent: Any) -> str | None:
     """读剪贴板里的「钱包 → 交易记录」→ 选机库 → 按粘贴的单价入库。仓库/采购共用入口。
 
@@ -1358,20 +1378,15 @@ def run_purchase_import(default_hangar_id: int | None, parent: Any) -> str | Non
         FMessageDialog.information(parent, "提示", _purchase_summary(0, 0, stats))
         return None
 
-    labels, ids, index = _hangar_choices(default_hangar_id)
-    if not ids:
-        FMessageDialog.warning(parent, "提示", "还没有机库，请先建一个再导入")
+    chosen = choose_hangar(default_hangar_id, parent)
+    if chosen is None:
         return None
-    from ui_qml.bridge.input_dialog import InputQmlDialog
-
-    name, ok = InputQmlDialog.get_item(parent, "入库机库", "目标机库:", labels, index)
-    if not ok or name not in labels:
-        return None
+    hangar_id, _label = chosen
 
     matched = [r for r in rows if r.get("type_id")]
     data: list[tuple[int, int, float, int | None]] = [
         (int(r["type_id"]), int(r["qty"]), float(r["unit_price"]), None) for r in matched
     ]
     if data:
-        apply_inventory_import(ids[labels.index(name)], data, "incremental")
+        apply_inventory_import(hangar_id, data, "incremental")
     return _purchase_summary(len(matched), len(rows) - len(matched), stats)

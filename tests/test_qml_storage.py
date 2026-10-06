@@ -309,6 +309,27 @@ def test_hangars_and_items_load_at_construction(bridge):
 
 
 @pytest.mark.ui
+def test_on_shown_picks_up_hangars_created_after_load(bridge, monkeypatch):
+    """回归：新建的机库必须在仓库管理页里出现（页面重新可见时重取一次列表）。
+
+    原先本页只在构造时读一次 `hangars`、也没有 `on_shown` 钩子 —— 用户在「机库设置」里
+    建完机库回到仓库管理，看不到它（2026-10-06 报）。
+    """
+    import services.inventory_manager as im
+
+    assert bridge.hangarNames == ["A 库", "B 库"]
+    monkeypatch.setattr(
+        im,
+        "get_hangars",
+        lambda: [{"id": 1, "name": "A 库"}, {"id": 2, "name": "B 库"}, {"id": 9, "name": "研发"}],
+    )
+
+    bridge.on_shown()
+
+    assert bridge.hangarNames == ["A 库", "B 库", "研发"]
+
+
+@pytest.mark.ui
 def test_switching_hangar_reloads_items(bridge):
     bridge.setHangarIndex(1)
     assert bridge.hangarIndex == 1

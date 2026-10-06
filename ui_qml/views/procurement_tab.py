@@ -552,16 +552,21 @@ class ProcurementDialog(QObject):
     # ── 顶部动作 ──────────────────────────────────────────
 
     def add_to_hangar(self) -> None:
-        """增量添加到仓库 — 读剪贴板（游戏内复制已购材料），走仓库同款导入预览后增量入默认材料机库。"""
-        from services.inventory_manager import get_default_mat_hangar_and_system, get_hangar_name
-        from ui_qml.bridge.review_bridge import run_clipboard_import
+        """增量添加到仓库 — 读剪贴板（游戏内复制已购材料）→ **选机库** → 增量入库。
 
-        hid, _sys = get_default_mat_hangar_and_system()
-        if not hid:
-            self.show_copy_hint("未设置默认材料机库，请先在设置中指定")
+        目标机库现选、默认预选默认材料机库（与「从钱包交易记录粘贴」同一套口径）。
+        以前固定塞进默认材料机库、连问都不问：新建的机库在这条入口上没有任何可选之处
+        （用户 2026-10-06 报「增量到机库时没有可以选择的机库」）。
+        """
+        from services.inventory_manager import get_default_mat_hangar_and_system
+        from ui_qml.bridge.review_bridge import choose_hangar, run_clipboard_import
+
+        default_hid, _sys = get_default_mat_hangar_and_system()
+        chosen = choose_hangar(default_hid, self)
+        if chosen is None:
             return
-        hangar_name = get_hangar_name(hid) or f"机库{hid}"
-        run_clipboard_import(hid, hangar_name, self, mode="incremental")
+        hangar_id, hangar_name = chosen
+        run_clipboard_import(hangar_id, hangar_name, self, mode="incremental")
         self.recalculate()
         self.plans_changed.emit()  # 库存变化 → 通知主界面重载计划
 

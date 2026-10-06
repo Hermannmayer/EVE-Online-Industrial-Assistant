@@ -335,6 +335,14 @@ services/logistics.py
 ## 库存管理
 
 - 表：user 库 `hangars` / `inventory_items` / `user_blueprints`
+- **机库列表的刷新契约**：机库增/删/改（「机库设置」对话框）只落 DB、**不发信号**，所以
+  把机库列表缓存在内存里的地方必须自己重取 —— 仓库管理页（`InventoryBridge._hangars`）
+  靠 `on_shown`（外壳切页钩子）+ `ShellWindow.show_hangar_settings` 收尾时显式
+  `refreshAll()`；其余入口（估价页 `hangars()`、各计划对话框、入库机库选择框）都是
+  用的时候现查 `get_hangars()`。漏掉重取的表现是「新建的机库在仓库管理里看不到、
+  也不能当入库目标，要重启才出现」（2026-10-06 报）。入库机库选择框只有一份实现
+  （`review_bridge.choose_hangar`）：「采购小助手」的增量添加与钱包粘贴、
+  「仓库管理」的钱包粘贴都走它，默认预选默认材料机库
 - UI 同步调用（无独立 worker）：`inventory_manager.add_item`（加权平均成本）、`set_item_quantity`（经 `inventory_import.compute_import_diff` 全量覆盖/删除）、`move_items`（右键「移动到机库」）
 - `deduct_item` 被计划启动/展开/重建调用
 - 剪贴板导入按仓库类型校验（同一机库分两张表、两页签）：材料侧 `inventory_clipboard_service.parse_clipboard`（机库管理「库存修正/增量粘贴」、采购页「增量添加到仓库」）过滤蓝图行；`parse_purchase_clipboard`（机库管理 / 采购页「从钱包交易记录粘贴」）吃「钱包 → 交易记录」的买入行、不过滤蓝图；蓝图侧 `ui_data_service.parse_blueprint_clipboard`（蓝图管理「粘贴导入蓝图」）过滤材料行。判定见 `services/item_kind.py`（`item` group 名后缀 = 蓝图，失败开放），过滤数在预览框统计栏提示
