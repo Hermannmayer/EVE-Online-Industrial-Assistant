@@ -75,19 +75,20 @@ def research_db(db_manager, monkeypatch):
     with sqlite3.connect(ref_path) as conn:
         conn.executescript(
             """
-            CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT, group_id INT);
+            CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT, group_id INT,
+                volume REAL DEFAULT 1.0);
             CREATE TABLE industry_system_costs (
                 solar_system_id INT, activity TEXT, cost_index REAL, fetch_time TIMESTAMP,
                 PRIMARY KEY (solar_system_id, activity));
             """
         )
         for tid, zh in ((MECH_DATACORE, "数据核心 - 机械工程"), (NUCLEAR_DATACORE, "数据核心 - 核芯物理")):
-            conn.execute("INSERT INTO item VALUES (?,?,?,?)", (tid, zh, zh, 0))
+            conn.execute("INSERT INTO item VALUES (?,?,?,?,?)", (tid, zh, zh, 0, 1.0))
         # 发明技能条目（success 率解析要按中文名查 item）
         for sid, zh in ((11453, "电子工程学"), (11454, "加达里星舰工程学"), (21790, "加达里加密技术原理")):
-            conn.execute("INSERT INTO item VALUES (?,?,?,?)", (sid, zh, zh, 270))
-        conn.execute("INSERT INTO item VALUES (?,?,?,?)", (3812, "测试材料", "Test Mat", 0))
-        conn.execute("INSERT INTO item VALUES (?,?,?,?)", (11459, "测试报告", "Test Report", 0))
+            conn.execute("INSERT INTO item VALUES (?,?,?,?,?)", (sid, zh, zh, 270, 1.0))
+        conn.execute("INSERT INTO item VALUES (?,?,?,?,?)", (3812, "测试材料", "Test Mat", 0, 1.0))
+        conn.execute("INSERT INTO item VALUES (?,?,?,?,?)", (11459, "测试报告", "Test Report", 0, 1.0))
         for act, sci in (
             ("manufacturing", 0.1722),
             ("copying", 0.0014),
@@ -260,6 +261,31 @@ class TestManufacturingUnaffected:
         r = _calc(plan)
         assert "activity" not in r
         assert r.get("status") == "no_blueprint"
+
+
+class TestProcurementIncludesScienceMaterials:
+    """发明计划的数据核心 + 解码器必须出现在「待采购」里。
+
+    回归（2026-10-06 用户报「发明规划所需要的解码器不会添加到采购小组手里」）：
+    `plan_aggregator.aggregate_procurement` 原先对科研行整行 `continue`（口径与制造不同），
+    配方注释里写的「走 plan_execution.material_requirements」实际只有启动校验在用 ——
+    于是计划表报「材料不足（缺数据核心/解码器）」、采购小助手却一份都不要。
+    """
+
+    def test_invention_materials_reach_procurement(self, research_db):
+        """总尝试 2 次 → 数据核心各 2 个 + 解码器 2 个，且都按卖价进了待采购金额。"""
+        from services.plan_aggregator import aggregate_procurement
+
+        plan = _plan("invention", decryptor_type_id=DECRYPTOR_AMPLIFIED, runs=2)
+        with research_db.connect("user", "ref", "bp", "mkt") as conn:
+            rows, cost, _vol = aggregate_procurement(conn, [plan], price_type="sell")
+
+        by_type = {r["type_id"]: r for r in rows}
+        assert by_type[MECH_DATACORE]["need"] == 2  # 每次尝试 1 个 × 2 次
+        assert by_type[NUCLEAR_DATACORE]["need"] == 2
+        assert by_type[DECRYPTOR_AMPLIFIED]["need"] == 2  # 解码器成败都扣，按尝试次数
+        assert by_type[MECH_DATACORE]["to_buy"] == 2  # 机库里没有 → 全要买
+        assert cost == pytest.approx((27890.0 + 96830.0 + 708900.0) * 2)
 
 
 class _FakeContainer:

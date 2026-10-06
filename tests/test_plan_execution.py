@@ -45,6 +45,11 @@ from services.repositories.plan_repository import PlanRepository
 
 _PLAN_SCHEMA = PlanRepository.SCHEMA
 
+#: 发明路径（见 `_module_user_db`）：T1 3001 发明出 T2 3009。
+#: 发明计划的 `blueprint_type_id` 是**产物那张 T2**，要绑的输入 T1 由它反查。
+T1_BP = 3001
+T2_BP = 3009
+
 
 @pytest.fixture(scope="module")
 def _module_user_db():
@@ -72,6 +77,14 @@ def _module_user_db():
             "plan_id INTEGER NOT NULL, blueprint_id INTEGER NOT NULL, runs_used INTEGER DEFAULT 0, "
             "PRIMARY KEY (plan_id, blueprint_id))"
         )
+    # 发明路径 T1 3001 → T2 3009：科研行的 `blueprint_type_id` 存的是**产物那张**（T2），
+    # 要绑的输入 T1 得由它反查（`services/plan_aggregator.plan_input_blueprint_type_id`）。
+    # conftest 的最小 bp 夹具没有 `probability` 列，反查要它，这里补上。
+    with db.connect("bp") as conn:
+        conn.execute("ALTER TABLE blueprint_products ADD COLUMN probability REAL")
+        conn.execute("ALTER TABLE blueprint_activities ADD COLUMN max_production_limit INTEGER")
+        conn.execute("INSERT INTO blueprint_products VALUES (3001, 'invention', 3009, 10, 0.34)")
+        conn.execute("INSERT INTO blueprint_activities VALUES (3001, 'invention', 3600, NULL)")
     yield db
     DB_PATH_MAP.clear()
     DB_PATH_MAP.update(saved)
@@ -1869,7 +1882,15 @@ class TestResyncBindings:
         """BPC 行份数够覆盖新并行数 → 也不动（按容量比，不按行数比）。"""
         db = user_env.db
         stacked = _insert_blueprint(db, 3001, is_bpo=False, runs=30, quantity=3)
-        plan_id = _insert_plan(db, activity="invention", runs=10, parallels=1, status="pending")
+        plan_id = _insert_plan(
+            db,
+            activity="invention",
+            runs=10,
+            parallels=1,
+            status="pending",
+            product_type_id=T2_BP,
+            blueprint_type_id=T2_BP,
+        )
         bind_blueprints(plan_id, [stacked])
 
         with db.connect("user") as conn:
@@ -1904,21 +1925,59 @@ class TestResyncBindings:
         只绑 1 张，启动时 `_binding_shortfall` 反倒报「还差 2 张」。
         """
         db = user_env.db
-        first = _insert_blueprint(db, 3001, is_bpo=False, runs=30)
-        plan_id = _insert_plan(db, activity="invention", runs=10, parallels=2, status="pending")
+        first = _insert_blueprint(db, T1_BP, is_bpo=False, runs=30)
+        plan_id = _insert_plan(
+            db,
+            activity="invention",
+            runs=10,
+            parallels=2,
+            status="pending",
+            product_type_id=T2_BP,
+            blueprint_type_id=T2_BP,
+        )
         # 库存只有 1 张 → 只能绑到 1 张
         assert _auto_bind_blueprints(_get_plan(db, plan_id)) == [first]
 
-        second = _insert_blueprint(db, 3001, is_bpo=False, runs=30)
+        second = _insert_blueprint(db, T1_BP, is_bpo=False, runs=30)
         assert sorted(_auto_bind_blueprints(_get_plan(db, plan_id))) == sorted([first, second])
+
+    def test_invention_picks_t1_copies_not_the_product_blueprint(self, user_env):
+        """回归：发明计划要绑的是**输入 T1 拷贝**，不是产物那张 T2 的拷贝。
+
+        老实现拿 `blueprint_type_id`（= 产物那张 T2）去列库存：弹窗列不出 T1 拷贝
+        （用户报「点『蓝图差几张』弹窗完全为空」），自动绑定还会去绑 T2 拷贝 ——
+        而完成时扣的正是绑定行，等于把用户的 T2 BPC 扣掉。
+        """
+        db = user_env.db
+        t1_copy = _insert_blueprint(db, T1_BP, is_bpo=False, runs=30)
+        _insert_blueprint(db, T2_BP, is_bpo=False, runs=30)  # 产物那张的拷贝：不该被选
+        plan_id = _insert_plan(
+            db,
+            activity="invention",
+            runs=10,
+            parallels=1,
+            status="pending",
+            product_type_id=T2_BP,
+            blueprint_type_id=T2_BP,
+        )
+
+        assert _auto_bind_blueprints(_get_plan(db, plan_id)) == [t1_copy]
 
     def test_raising_parallels_on_invention_binds_more(self, user_env):
         """并行数从 1 改成 2 的发明计划 → resync 补上第 2 张输入 BPC。"""
         db = user_env.db
-        first = _insert_blueprint(db, 3001, is_bpo=False, runs=30)
-        plan_id = _insert_plan(db, activity="invention", runs=10, parallels=1, status="pending")
+        first = _insert_blueprint(db, T1_BP, is_bpo=False, runs=30)
+        plan_id = _insert_plan(
+            db,
+            activity="invention",
+            runs=10,
+            parallels=1,
+            status="pending",
+            product_type_id=T2_BP,
+            blueprint_type_id=T2_BP,
+        )
         bind_blueprints(plan_id, [first])
-        second = _insert_blueprint(db, 3001, is_bpo=False, runs=30)
+        second = _insert_blueprint(db, T1_BP, is_bpo=False, runs=30)
 
         with db.connect("user") as conn:
             conn.execute("UPDATE production_plans SET parallels=2 WHERE id=?", (plan_id,))
@@ -1935,8 +1994,16 @@ class TestBindingLineCapacity:
 
     def test_stacked_bpc_covers_multiple_lines(self, user_env):
         db = user_env.db
-        plan_id = _insert_plan(db, activity="invention", runs=10, parallels=3, status="pending")
-        stacked = _insert_blueprint(db, 3001, is_bpo=False, runs=30, quantity=3)  # 一行三份
+        plan_id = _insert_plan(
+            db,
+            activity="invention",
+            runs=10,
+            parallels=3,
+            status="pending",
+            product_type_id=T2_BP,
+            blueprint_type_id=T2_BP,
+        )
+        stacked = _insert_blueprint(db, T1_BP, is_bpo=False, runs=30, quantity=3)  # 一行三份
 
         assert _auto_bind_blueprints(_get_plan(db, plan_id)) == [stacked]
         with db.connect("user") as conn:

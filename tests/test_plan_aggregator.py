@@ -511,3 +511,29 @@ def test_get_blueprint_requirements_includes_science_rows(db_manager):
     assert set(result["bp_inv"]) == set(result["needed"])
     assert result["bp_inv"][4001]["count"] == 0  # T1 不在库里 → 桥显示「缺少」
     assert result["bp_inv"][4009]["is_bpo"] is True  # 绑定的那份是 BPO → 「无限」
+
+
+def test_plan_input_blueprint_type_id_resolves_per_activity(db_manager):
+    """「要绑哪张蓝图」按活动解析 —— 弹窗与自动绑定共用这一份取数。
+
+    回归（2026-10-06，用户报「点『蓝图差几张』弹窗完全为空」）：老口径无脑按
+    `product_type_id` 反查 `activity='manufacturing'`，而科研行的产物是**蓝图**、不是
+    制造品，必然查不到；发明的输入更是要由产物那张 T2 **反查 T1**（发明作业跑在 T1 上）。
+    同一份取数也供 `plan_execution._available_blueprint_options` 用，两处不会各说一套。
+    """
+    from services.plan_aggregator import plan_input_blueprint_type_id
+
+    _seed_science_plans(db_manager)
+    with db_manager.connect("user", "ref", "bp") as conn:
+        got = {p["id"]: plan_input_blueprint_type_id(conn, p) for p in _SCIENCE_PLANS}
+
+    assert got == {
+        1: 3001,  # 制造：按产物反查
+        2: 4001,  # 发明：产物 T2 4002 → 输入 T1 4001
+        3: 4003,  # 拷贝未绑定：回退 product_type_id（产出的 BPC 就代表这张）
+        4: 4009,  # 拷贝已绑定：绑的那份的类型（绑定存的是行 id 9，≠ type_id 4009）
+        5: 4003,  # 研究：被研究的那张本身
+        6: 4008,
+        7: 4010,  # T3 发明：输入是古遗物（调用方据 is_blueprint 提示绑不了）
+        8: 5002,  # 反应：蓝图挂在 activity='reaction' 行上
+    }

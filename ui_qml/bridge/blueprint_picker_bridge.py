@@ -35,6 +35,7 @@ from PySide6.QtCore import Property, Signal, Slot
 
 from core.container import get_container
 from services import plan_execution
+from services.plan_job_kinds import RULE_BPC_RUNS, RULE_BPO_ONLY, input_blueprint_rule
 from ui_qml.bridge.summary_dialog import cell
 from ui_qml.dialog_host import DialogBridge, QmlDialog
 
@@ -46,6 +47,17 @@ _BIG_INFINITY = 10**15
 
 #: 表格文本列（复选框列由 QML 单独画）
 _HEADERS = ["类型", "ME", "TE", "可用流程", "机库", "状态"]
+
+#: 输入蓝图规则 → `needLabel` 里的名词（「需 N 张<这个>」）。活动真源见 `services.plan_job_kinds`。
+_NEED_KIND_TEXT: dict[str, str] = {
+    RULE_BPC_RUNS: "蓝图拷贝",  # 发明：T1 BPC
+    RULE_BPO_ONLY: "蓝图原本",  # 拷贝 / 研究：只能是原图
+}
+#: 输入蓝图规则 → 空态提示里的括注（没有对应规则就不括注）
+_EMPTY_KIND_TEXT: dict[str, str] = {
+    RULE_BPC_RUNS: "（BPC 拷贝）",
+    RULE_BPO_ONLY: "（BPO 原本）",
+}
 
 
 def available_runs(opt: dict) -> int:
@@ -71,6 +83,9 @@ class BlueprintPickerBridge(DialogBridge):
 
         self._plan = plan
         self._blueprint_type_id: int | None = None
+        self._bp_name = ""
+        self._kind_label_text = "蓝图"
+        self._empty_kind_label = ""
         self._options: list[dict] = []
         self._checked: list[bool] = []
         self._disabled: list[bool] = []
@@ -108,17 +123,29 @@ class BlueprintPickerBridge(DialogBridge):
     checkRevision = Property(int, lambda self: self._check_revision, notify=checkRevisionChanged)
 
     def _need_label(self) -> str:
-        return (
-            f"产品 {self._plan.get('product_name', '')}  "
-            f"需 {self._need} 张蓝图（{self._need} 条并行产线）× 每条 {self._runs} 流程"
-        )
+        """需求行 —— **要绑的是哪一张蓝图**（解析不出名字时退回旧文案）。
+
+        只写「需 N 张蓝图」时，科研行（发明/拷贝/研究）的用户根本不知道要绑定的是
+        哪张图；名字由活动感知查询给出（发明 = T2 反查出的 T1）。
+        """
+        product = self._plan.get("product_name", "")
+        if self._bp_name:
+            return (
+                f"产品 {product}  需 {self._need} 张{self._kind_label_text}「{self._bp_name}」"
+                f"（{self._need} 条并行产线）× 每条 {self._runs} 流程"
+            )
+        return f"产品 {product}  需 {self._need} 张蓝图（{self._need} 条并行产线）× 每条 {self._runs} 流程"
 
     # ── 数据加载 ──────────────────────────────────────────────
 
     def _load(self) -> None:
-        """读绑定状态 + 可选蓝图，构建行（原 `_load` 逐行照搬）。"""
+        """读绑定状态 + **按活动**解析该计划要绑的那张蓝图，构建行（原 `_load` 逐行照搬）。
+
+        查询走 `get_blueprint_picker_data(db, plan)`（活动感知）。以前按
+        `product_type_id` 反查 `activity='manufacturing'`：科研行的 `product_type_id`
+        本身就是一张蓝图、反查不到 → 整个弹窗空白（用户报的「点『蓝图差几张』弹出空白」）。
+        """
         plan_id = self._plan.get("id")
-        product_type_id = self._plan.get("product_type_id")
         runs = max(int(self._plan.get("runs", 1)), 1)
 
         # 以 DB 权威值为准读取当前绑定与产线数
@@ -133,17 +160,41 @@ class BlueprintPickerBridge(DialogBridge):
         self._need = need
         self._runs = db_runs
 
-        blueprint_type_id, options = self._get_picker_data(get_container().db, int(product_type_id or 0))
-        self._blueprint_type_id = blueprint_type_id
-        if blueprint_type_id is None:
-            self._empty_hint = "无法确定该产品的蓝图类型"
+        # 需求行/空态文案里的名词由输入蓝图规则决定（发明只能绑 BPC、拷贝/研究只能绑 BPO）
+        rule = input_blueprint_rule(self._plan.get("activity"))
+        self._kind_label_text = _NEED_KIND_TEXT.get(rule, "蓝图")
+        self._empty_kind_label = _EMPTY_KIND_TEXT.get(rule, "")
+
+        data = self._get_picker_data(get_container().db, self._plan)
+        self._blueprint_type_id = data.get("type_id")
+        self._bp_name = str(data.get("name") or "")
+        is_blueprint = bool(data.get("is_blueprint", True))
+
+        if self._blueprint_type_id is None:
+            # 空态也要说清「这张计划本来该绑哪张蓝图」：活动 + 蓝图库里没有配方行
+            act = self._plan.get("activity") or "manufacturing"
+            self._empty_hint = f"解析不出该计划要绑的输入蓝图（活动：{act}）—— 蓝图库里没有对应的配方行"
             self._options = []
             self._loading = False
             self._rebuild()
             return
+        if not is_blueprint:
+            # T3 发明的输入是古遗物：有类型、有名字，但库存蓝图库里永远没有它
+            self._empty_hint = (
+                f"该作业的输入是「{self._bp_name}」，不是蓝图（T3 发明的输入是古遗物），无法在蓝图库里绑定"
+            )
+            self._options = []
+            self._loading = False
+            self._rebuild()
+            return
+
+        options = list(data.get("options") or [])
         self._options = options
         if not options:
-            self._empty_hint = "库存中没有该蓝图。可通过「查看NPC卖家」购买原图，或从游戏粘贴导入。"
+            self._empty_hint = (
+                f"库存里没有「{self._bp_name}」{self._empty_kind_label}。"
+                "可在蓝图管理里从游戏粘贴导入，或用「查看NPC卖家」购买原图。"
+            )
             self._loading = False
             self._rebuild()
             return
@@ -305,13 +356,17 @@ class BlueprintPickerBridge(DialogBridge):
 
     @Slot()
     def npcSeller(self) -> None:
-        """查看NPC卖家。"""
+        """查看NPC卖家 —— 卖家窗的标题用**要绑的那张蓝图**的名字。
+
+        以前拿 `plan["product_name"]`：科研行那是**产物**的名字（发明 = 产出的 T2 蓝图），
+        跟 NPC 卖的输入 T1 原图对不上，标题会指错图。
+        """
         if self._blueprint_type_id is None:
             return
 
         from ui_qml.bridge.npc_seller_bridge import NpcSellerQmlDialog
 
-        name = self._plan.get("product_name", str(self._blueprint_type_id))
+        name = self._bp_name or self._plan.get("product_name") or str(self._blueprint_type_id)
         parent = self.host_widget()
         NpcSellerQmlDialog(self._blueprint_type_id, name, parent).show()
 

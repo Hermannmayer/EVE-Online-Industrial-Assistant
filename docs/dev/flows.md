@@ -309,8 +309,18 @@ services/logistics.py
 
 **语义契约**（`product_type_id` 恒为「本计划的产物」）：制造=物品、拷贝/研究=被操作的蓝图、
 发明=产出的 T2/T3 蓝图。科研行的产物**不在** `blueprint_products.activity='manufacturing'` 里，
-所以 `plan_aggregator` 对科研行整行跳过蓝图采购，材料（数据核心/解码器）走
-`plan_execution.material_requirements` 的科研分支（材料量已按作业次数算好，**不再乘 runs×parallels**）。
+所以 `plan_aggregator` 不按产物反查它的「制造蓝图」（那是蓝图需求清单的口径）；
+**待采购材料**与启动校验走同一路径：`aggregate_procurement` 对科研行调
+`plan_execution.material_requirements`（数据核心/解码器按作业次数算好，**不再乘 runs×parallels**），
+于是「采购小助手 / 状态栏备料中采购」与启动闸门 `check_materials` 不会各说一套
+（2026-10-06 前采购侧整行跳过科研行 → 计划表报缺数据核心/解码器、采购却一份不要）。
+
+**「要绑哪张蓝图」的唯一取数**：`plan_aggregator.plan_input_blueprint_type_id` ——
+制造/反应 → 该产物的蓝图；拷贝/研究 → 被操作的那张 BPO；**发明 → 由产物那张 T2 反查出的 T1**
+（发明作业跑在 T1 上）。弹窗（`industry_dialog_queries.get_blueprint_picker_data`）与
+自动绑定（`plan_execution._available_blueprint_options`）共用它 —— 两处各写一份就会出现
+「弹窗说缺 T1 拷贝、自动绑定却去绑产物那张拷贝」（旧口径按 `product_type_id` 反查
+`activity='manufacturing'`，科研行必然空白，即用户报的「点『蓝图差几张』弹窗全空」）。
 
 **已知陷阱**（改这块前先看）：
 - `plan_execution.plan_blueprint_ready` 取代旧 `has_image` 口径；`has_image` 对科研行恒 False。

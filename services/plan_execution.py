@@ -1917,28 +1917,28 @@ def _occupied_ids(conn, *, exclude_plan_id: int | None = None) -> set[int]:
     return occupied
 
 
-def _available_blueprint_options(product_type_id: int | None, blueprint_type_id: int | None) -> list[dict]:
-    """该计划产品的库存蓝图（**不过滤占用**，每条带 `occupied` / `available_runs`）。
+def _available_blueprint_options(plan: dict) -> list[dict]:
+    """该计划**要绑的那张蓝图**的库存可选行（**不过滤占用**，每条带 `occupied` / `available_runs`）。
 
-    制造按产物反查制造蓝图；科研行直接用 `blueprint_type_id`（发明 = 被发明的 T2 蓝图，
-    拷贝/研究 = 被操作的 BPO）。
+    目标蓝图按活动解析（`plan_aggregator.plan_input_blueprint_type_id`，与「绑定库存蓝图」
+    弹窗同一口径）：制造/反应 → 该产物的蓝图；拷贝/研究 → 被操作的那张 BPO；
+    **发明 → 由产物那张 T2 反查出的 T1**。
+
+    发明以前直接拿 `blueprint_type_id`（= 产物那张 T2）去找库存，结果两头都错：
+    弹窗列不出真正的输入 T1 拷贝（用户报「弹出的小窗口完全为空」），自动绑定还会去绑
+    产物那张拷贝 —— 而完成时扣的正是绑定行，等于把用户的 T2 BPC 扣掉了。
 
     **占用过滤留给调用方**：`_auto_bind_blueprints` 只挑没被占的；而「按当前绑定重新对齐」
     （`resync_plan_bindings`）必须连**本计划自己绑的那张**也看得见 —— 那种行也带
     `occupied`，滤掉就会把现有绑定当成「不可用」而误判成需要重挑。
     """
-    target_bp = int(blueprint_type_id or 0)
+    from services.plan_aggregator import plan_input_blueprint_type_id
+
     with _container().db.connect("user", "bp", "ref") as conn:
+        target_bp = plan_input_blueprint_type_id(conn, plan)
         if not target_bp:
-            row = conn.execute(
-                "SELECT blueprint_type_id FROM blueprint_products "
-                "WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-                (product_type_id,),
-            ).fetchone()
-            if not row:
-                return []
-            target_bp = int(row[0])
-        return find_available_blueprints(conn, target_bp)
+            return []
+        return find_available_blueprints(conn, int(target_bp))
 
 
 def _blueprint_capable(option: dict, rule: str, runs: int) -> bool:
@@ -1973,7 +1973,7 @@ def _auto_bind_blueprints(plan: dict) -> list[int]:
     parallels = max(int(plan.get("parallels", 1)), 1)
     rule = input_blueprint_rule(plan.get("activity"))
 
-    options = [o for o in _available_blueprint_options(product_type_id, blueprint_type_id) if not o.get("occupied")]
+    options = [o for o in _available_blueprint_options(plan) if not o.get("occupied")]
     if not options:
         return []
 
@@ -2058,7 +2058,16 @@ def resync_plan_bindings(plan_id: int) -> bool:
     target_lines = 1 if rule == RULE_BPO_ONLY else parallels
     current = get_plan_binding_state(plan_id)["bound"]
 
-    options = _available_blueprint_options(product_type_id, blueprint_type_id)
+    # 计划 dict 一次建好，供取选项与补选共用（`id` 是拷贝行解析已绑 BPO 用的）
+    plan = {
+        "id": plan_id,
+        "product_type_id": product_type_id,
+        "blueprint_type_id": blueprint_type_id,
+        "runs": runs,
+        "parallels": parallels,
+        "activity": activity,
+    }
+    options = _available_blueprint_options(plan)
     by_id = {int(o["id"]): o for o in options}
 
     def _capacity_of(blueprint_id: int) -> int:
@@ -2080,13 +2089,6 @@ def resync_plan_bindings(plan_id: int) -> bool:
     if covered >= target_lines and len(keep) == len(current):
         return False  # 现有绑定正好覆盖全部产线、也没有多余的 → 不动
 
-    plan = {
-        "product_type_id": product_type_id,
-        "blueprint_type_id": blueprint_type_id,
-        "runs": runs,
-        "parallels": parallels,
-        "activity": activity,
-    }
     final: list[int] = []
     capacity = 0
     for bid in keep + [b for b in _auto_bind_blueprints(plan) if b not in keep]:

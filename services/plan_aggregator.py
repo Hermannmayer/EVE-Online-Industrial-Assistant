@@ -132,6 +132,34 @@ def _bound_blueprint_type(conn, plan: dict) -> int | None:
     return int(row[0]) if row and row[0] else None
 
 
+def plan_input_blueprint_type_id(conn, plan: dict) -> int | None:
+    """本计划要绑的那张**输入蓝图** type_id（活动契约的取数实现；反查不到 → None）。
+
+    与 `_science_input_blueprint` 的分工：那个只答科研行，本函数把制造/反应一起答了，
+    供「绑定库存蓝图」弹窗与自动绑定共用 —— 两处若各写一份，就会出现
+    「弹窗说缺 T1 拷贝、自动绑定却去绑产物那张拷贝」这种自相矛盾。
+
+    - 制造 / 反应 → 计划里存了 `blueprint_type_id` 就用它，否则按产物反查对应活动的蓝图
+      （制造/反应行的这一列常常是 NULL，产物反查才是常态）；
+    - 科研（拷贝/发明/研究）→ `_science_input_blueprint`（拷贝/研究 = 被操作那张；
+      **发明 = 由产物那张 T2 反查出的 T1**，发明作业跑在 T1 上）。
+    """
+    pid = int(plan.get("product_type_id") or 0)
+    act = normalize(plan.get("activity"))
+    if is_science(act):
+        return _science_input_blueprint(conn, plan, pid) if pid else None
+    stored = int(plan.get("blueprint_type_id") or 0)
+    if stored:
+        return stored
+    if not pid:
+        return None
+    row = conn.execute(
+        "SELECT blueprint_type_id FROM blueprint_products WHERE product_type_id = ? AND activity = ? LIMIT 1",
+        (pid, act),
+    ).fetchone()
+    return int(row[0]) if row and row[0] else None
+
+
 def _science_input_blueprint(conn, plan: dict, pid: int) -> int | None:
     """科研行真正要消耗的那张蓝图 type_id（反查不到 → None，不编造）。
 
@@ -630,6 +658,34 @@ def _plan_total_runs(plan: dict) -> int:
     return max(int(plan.get("runs") or 0), 0) * max(int(plan.get("parallels") or 1), 1)
 
 
+def _science_material_requirements(plan: dict) -> list[dict]:
+    """科研计划要买的材料（数据核心 / 解码器 / 拷贝与研究的耗材）[{type_id, name, need}]。
+
+    走 `plan_execution.material_requirements`（= 启动校验 `check_materials` 的同一路径）——
+    科研分支的量在那里已按**作业次数**算好（发明=总尝试次数 ×（数据核心 + 解码器）），
+    本函数不重算，采购清单与启动闸门因此不会分叉。
+
+    以前采购聚合对科研行整行跳过，于是「计划表报材料不足（缺数据核心/解码器），
+    采购小助手却一份都不要」（用户 2026-10-06 报）。
+    """
+    from services.plan_execution import material_requirements
+
+    return material_requirements(plan)
+
+
+def _cache_item_meta(conn, mid: int, names: dict, volumes: dict, zh_en: dict) -> None:
+    """补一份该材料的名称/体积缓存（制造、科研、强制启动缺口三条取料分支共用）。
+
+    三处原先各抄一遍同样四行；抄错一处就是「采购表里那一格没名字 / 体积算 0」。
+    """
+    if mid in zh_en:
+        return
+    r = conn.execute("SELECT zh_name, en_name, volume FROM item WHERE type_id=?", (mid,)).fetchone()
+    zh_en[mid] = (r[0], r[1]) if r else (None, None)
+    names[mid] = _resolve_name(conn, mid)
+    volumes[mid] = float(r[2]) if r and r[2] else 0.0
+
+
 def aggregate_procurement(
     conn,
     plans: list[dict],
@@ -679,9 +735,22 @@ def aggregate_procurement(
         pid = plan.get("product_type_id")
         if not pid:
             continue
-        # 科研行的材料口径与制造不同（且 attempts/目标等级已由评分算进总量），
-        # 走 plan_execution.material_requirements 的统一路径，这里跳过。
+        gid = hangar_id if hangar_id is not None else (plan.get("mat_hangar_id") or default_hangar_id)
+        bucket = group_need.setdefault(gid, {})
+        # 科研行（拷贝/发明/研究）的材料口径与制造不同：量已由评分按作业次数算好
+        # （发明 = 总尝试次数 ×（数据核心 + 解码器）、拷贝 = 总授权流程、研究 = 目标等级），
+        # 再乘 runs×parallels 会重复放大 —— 走 plan_execution.material_requirements
+        # （启动校验 check_materials 的同一路径），采购清单与启动闸门永不分叉。
         if is_science(plan.get("activity")):
+            if _plan_total_runs(plan) <= 0:
+                continue  # 0 轮 = 0 作业、0 材料：不往待采购里塞需求
+            for req in _science_material_requirements(plan):
+                mid = int(req["type_id"])
+                need = float(req.get("need") or 0)
+                if need <= 0:
+                    continue
+                bucket[mid] = bucket.get(mid, 0.0) + need
+                _cache_item_meta(conn, mid, names, volumes, zh_en)
             continue
         total_runs = _plan_total_runs(plan)
         if total_runs <= 0:
@@ -698,18 +767,12 @@ def aggregate_procurement(
             "WHERE blueprint_type_id=? AND activity='manufacturing'",
             (bp[0],),
         ).fetchall()
-        gid = hangar_id if hangar_id is not None else (plan.get("mat_hangar_id") or default_hangar_id)
-        bucket = group_need.setdefault(gid, {})
         for mid, qty, wf in mats:
             if mid in sub_prod_ids:
                 continue  # 自制组件：由子项产线覆盖，买其原材料（子线计划已计入）
             need = calc_material_for_runs(qty, wf, me, total_runs)
             bucket[mid] = bucket.get(mid, 0.0) + float(need)
-            if mid not in zh_en:
-                r = conn.execute("SELECT zh_name, en_name, volume FROM item WHERE type_id=?", (mid,)).fetchone()
-                zh_en[mid] = (r[0], r[1]) if r else (None, None)
-                names[mid] = _resolve_name(conn, mid)
-                volumes[mid] = float(r[2]) if r and r[2] else 0.0
+            _cache_item_meta(conn, mid, names, volumes, zh_en)
 
     # 1b. 合并强制启动计划的材料缺口计入需求（计入该计划所在机库；不排除子项自制件，与旧口径一致）
     for plan in plans:
@@ -730,11 +793,7 @@ def aggregate_procurement(
             except (TypeError, ValueError):
                 continue
             bucket[mid] = bucket.get(mid, 0.0) + float(missing)
-            if mid not in zh_en:
-                r = conn.execute("SELECT zh_name, en_name, volume FROM item WHERE type_id=?", (mid,)).fetchone()
-                zh_en[mid] = (r[0], r[1]) if r else (None, None)
-                names[mid] = _resolve_name(conn, mid)
-                volumes[mid] = float(r[2]) if r and r[2] else 0.0
+            _cache_item_meta(conn, mid, names, volumes, zh_en)
 
     # 2. 每个出现过的机库各查一次库存（同机库跨计划合并后统一扣减）
     inv_by_hangar: dict[int | None, dict[int, float]] = {}

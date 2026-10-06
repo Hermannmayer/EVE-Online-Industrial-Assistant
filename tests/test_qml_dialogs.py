@@ -1113,14 +1113,32 @@ class _PickerHarness:
         {"id": 4, "is_bpo": False, "available_runs": 1, "me_level": 0, "te_level": 0, "hangar_name": ""},
     ]
 
-    def __init__(self, qml_cls, state, writes, bind_ok=True):
+    #: 默认计划（制造）+ 默认查询结果（一张有库存的蓝图）
+    PLAN = {"id": 7, "product_type_id": 1001, "product_name": "碳纤维", "runs": 3, "parallels": 2}
+    DATA = {"type_id": 3002, "name": "碳纤维蓝图", "is_blueprint": True, "options": OPTIONS}
+
+    def __init__(self, state, writes, qml_cls=None):
         self.qml_cls = qml_cls
         self.state = state
         self.writes = writes
-        self.bind_ok = bind_ok
+        self.plan = dict(self.PLAN)
+        self.data = dict(self.DATA)
+        #: 每次查询收到的 plan —— 契约是 `(db, plan)`（不是旧的 `(db, product_type_id)`）
+        self.queries: list[dict] = []
 
     def __call__(self):
-        return self.qml_cls({"id": 7, "product_type_id": 1001, "product_name": "碳纤维", "runs": 3, "parallels": 2})
+        return self.qml_cls(self.plan)
+
+    def open(self, plan: dict, data: dict):
+        """换一条计划 + 对应查询结果再开一个弹窗（一个用例里可开多个）。"""
+        self.plan = dict(plan)
+        self.data = dict(data)
+        return self.qml_cls(self.plan)
+
+    def respond(self, plan: dict) -> dict:
+        """查询替身：记下收到的 plan，返回一份新数据（options 逐项复制，防用例间互改）。"""
+        self.queries.append(plan)
+        return {**self.data, "options": [dict(o) for o in self.data["options"]]}
 
 
 @pytest.fixture
@@ -1132,12 +1150,13 @@ def blueprint_picker_factory(qapp, monkeypatch):
 
     state = {"bound": [1], "need": 2, "runs": 3}
     writes: list[list[int]] = []
+    harness = _PickerHarness(state, writes)
 
     monkeypatch.setattr(pe, "get_plan_binding_state", lambda plan_id: dict(state))
     monkeypatch.setattr(pe, "get_occupied_blueprint_ids", lambda db, exclude_plan_id=None: {3})
-    monkeypatch.setattr(
-        q, "get_blueprint_picker_data", lambda db, pid: (3002, [dict(o) for o in _PickerHarness.OPTIONS])
-    )
+    # 冻结契约：get_blueprint_picker_data(db, plan) ->
+    #   {"type_id", "name", "is_blueprint", "options"}
+    monkeypatch.setattr(q, "get_blueprint_picker_data", lambda db, plan: harness.respond(plan))
     monkeypatch.setattr("ui_qml.bridge.blueprint_picker_bridge.get_container", lambda: SimpleNamespace(db=None))
 
     def _bind(plan_id: int, ids: list[int]) -> bool:
@@ -1149,7 +1168,8 @@ def blueprint_picker_factory(qapp, monkeypatch):
 
     from ui_qml.bridge.blueprint_picker_bridge import BlueprintPickerQmlDialog
 
-    return _PickerHarness(BlueprintPickerQmlDialog, state, writes)
+    harness.qml_cls = BlueprintPickerQmlDialog
+    return harness
 
 
 def test_picker_row_states(blueprint_picker_factory):
@@ -1245,6 +1265,101 @@ def test_picker_batch_actions_and_accept(blueprint_picker_factory):
         assert blueprint_picker_factory.writes == [[1]]
     finally:
         dialog.deleteLater()
+
+
+def test_picker_need_label_names_the_t1_blueprint(blueprint_picker_factory):
+    """发明计划要绑的是**反查出来的 T1 蓝图**：需求行必须写出它的名字。
+
+    回归背景（用户报）：点计划表「蓝图差几张」弹出的绑定窗完全空白 —— 旧查询按
+    `product_type_id` 反查 `activity='manufacturing'`，而发明行的 `product_type_id`
+    是 T2 蓝图本身，查不到。这里顺带钉住新契约的调用口径：查询收到的是**整个 plan dict**。
+    """
+    harness = blueprint_picker_factory
+    harness.state.update({"bound": [1], "need": 2, "runs": 5})
+    dialog = harness.open(
+        {
+            "id": 9,
+            "product_type_id": 4002,
+            "product_name": "寒鸦级蓝图",
+            "activity": "invention",
+            "runs": 5,
+            "parallels": 2,
+        },
+        {
+            "type_id": 4001,
+            "name": "完整的小型船体舱段",
+            "is_blueprint": True,
+            "options": [dict(o) for o in _PickerHarness.OPTIONS],
+        },
+    )
+    try:
+        bridge = dialog.bridge
+        # 发明 → 只能绑 BPC 拷贝（`plan_job_kinds.input_blueprint_rule`），名字来自活动感知查询
+        assert bridge.needLabel == (
+            "产品 寒鸦级蓝图  需 2 张蓝图拷贝「完整的小型船体舱段」（2 条并行产线）× 每条 5 流程"
+        )
+        assert harness.queries[0]["activity"] == "invention", (
+            "查询必须收到整个 plan（契约从 (db, pid) 改成 (db, plan)）"
+        )
+    finally:
+        dialog.deleteLater()
+
+
+def test_picker_empty_hint_names_the_missing_blueprint(blueprint_picker_factory):
+    """库存里没有所需蓝图时，空态提示必须点名「缺的是哪一张」（否则用户只看到一片空白）。"""
+    harness = blueprint_picker_factory
+    dialog = harness.open(
+        {
+            "id": 9,
+            "product_type_id": 4002,
+            "product_name": "寒鸦级蓝图",
+            "activity": "invention",
+            "runs": 5,
+            "parallels": 2,
+        },
+        {"type_id": 4001, "name": "寒鸦级 T1 蓝图", "is_blueprint": True, "options": []},
+    )
+    try:
+        bridge = dialog.bridge
+        assert bridge.emptyHint == (
+            "库存里没有「寒鸦级 T1 蓝图」（BPC 拷贝）。可在蓝图管理里从游戏粘贴导入，或用「查看NPC卖家」购买原图。"
+        )
+        assert bridge.hasOptions is False
+        assert bridge.canNpcSeller is True, "解析出蓝图类型 ≠ 有库存：NPC 卖家按钮照给"
+    finally:
+        dialog.deleteLater()
+
+
+def test_picker_empty_hint_explains_non_blueprint_and_unresolved(blueprint_picker_factory):
+    """另两种空态各自说清原因：输入是古遗物 / 蓝图库里根本没有对应配方行。"""
+    harness = blueprint_picker_factory
+    relic = harness.open(
+        {
+            "id": 10,
+            "product_type_id": 34829,
+            "product_name": "寒鸦级蓝图",
+            "activity": "invention",
+            "runs": 5,
+            "parallels": 5,
+        },
+        {"type_id": 34412, "name": "完整的小型船体舱段", "is_blueprint": False, "options": []},
+    )
+    unresolved = harness.open(
+        {"id": 11, "product_type_id": 99, "product_name": "某个蓝图", "activity": "copying", "runs": 1, "parallels": 1},
+        {"type_id": None, "name": "", "is_blueprint": True, "options": []},
+    )
+    try:
+        assert relic.bridge.emptyHint == (
+            "该作业的输入是「完整的小型船体舱段」，不是蓝图（T3 发明的输入是古遗物），无法在蓝图库里绑定"
+        )
+        assert relic.bridge.canNpcSeller is True, "遗物有类型（34412），按钮不该消失"
+        assert unresolved.bridge.emptyHint == (
+            "解析不出该计划要绑的输入蓝图（活动：copying）—— 蓝图库里没有对应的配方行"
+        )
+        assert unresolved.bridge.canNpcSeller is False, "解析不出类型就不能给 NPC 卖家按钮"
+    finally:
+        relic.deleteLater()
+        unresolved.deleteLater()
 
 
 # ════════════════════════════════════════════════════════════════

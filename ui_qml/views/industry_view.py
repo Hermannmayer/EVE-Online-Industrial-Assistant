@@ -422,6 +422,11 @@ class IndustryPage(QObject):
                         p.get("materials_ready"),
                         p.get("status"),
                         p.get("mat_hangar_id"),
+                        # 科研行取料还看这三项：活动决定走哪条材料口径，蓝图决定数据核心，
+                        # 解码器按**每次尝试**扣（换一个解码器，待采购金额就变了）。
+                        p.get("activity"),
+                        p.get("blueprint_type_id"),
+                        p.get("decryptor_type_id"),
                     )
                     for p in procur
                 )

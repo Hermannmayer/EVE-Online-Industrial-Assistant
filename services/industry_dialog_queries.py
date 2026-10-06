@@ -110,18 +110,36 @@ def get_blueprint_requirements(db) -> dict[str, Any]:
         return {"status": "ok", "needed": needed, "bp_inv": bp_inv}
 
 
-def get_blueprint_picker_data(db, product_type_id: int) -> tuple[int | None, list[dict[str, Any]]]:
-    """查询产品对应的制造蓝图类型及其可用库存蓝图。"""
+def get_blueprint_picker_data(db, plan: dict) -> dict[str, Any]:
+    """「绑定库存蓝图」弹窗的数据：该计划要绑的输入蓝图 + 库存里可选的行。
+
+    目标蓝图按**活动**解析（`plan_aggregator.plan_input_blueprint_type_id`）：制造/反应按产物
+    反查、拷贝/研究 = 被操作的那张 BPO、**发明 = 由产物那张 T2 反查出的 T1**（发明作业跑在
+    T1 上）。以前无脑按 `product_type_id` 反查 `activity='manufacturing'` 的蓝图 —— 科研行的
+    产物是蓝图、不是制造品，必然查不到，弹窗一片空白且不告诉用户到底缺哪张图（2026-10-06 报）。
+
+    Returns:
+        {"type_id": int | None,   # 要绑的输入蓝图；None = 蓝图库里没有对应配方行
+         "name": str,             # 该蓝图显示名（解析不出时 ""）
+         "is_blueprint": bool,    # False = 解析出的输入不是蓝图（T3 发明的输入是古遗物）
+         "options": list[dict]}   # 库存可选蓝图，结构见 `plan_execution.find_available_blueprints`
+    """
+    from services.item_kind import blueprint_type_ids
+    from services.plan_aggregator import _resolve_bp_name, plan_input_blueprint_type_id
+
     with db.connect("user", "bp", "ref") as conn:
-        row = conn.execute(
-            "SELECT blueprint_type_id FROM bp.blueprint_products "
-            "WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-            (product_type_id,),
-        ).fetchone()
-        if not row:
-            return None, []
-        blueprint_type_id = int(row[0])
-        return blueprint_type_id, find_available_blueprints(conn, blueprint_type_id)
+        bp_tid = plan_input_blueprint_type_id(conn, plan)
+        if not bp_tid:
+            return {"type_id": None, "name": "", "is_blueprint": False, "options": []}
+        bp_tid = int(bp_tid)
+        return {
+            "type_id": bp_tid,
+            # `_resolve_bp_name` 与「所需蓝图清单」同一份取数（含「item 里没有就用产物名」回退），
+            # 私有名跨模块复用有先例（plan_execution 也用 bom_expander._find_blueprint_for_product）
+            "name": _resolve_bp_name(conn, bp_tid),
+            "is_blueprint": bool(blueprint_type_ids(conn, [bp_tid])),
+            "options": find_available_blueprints(conn, bp_tid),
+        }
 
 
 def get_child_parallel_data(

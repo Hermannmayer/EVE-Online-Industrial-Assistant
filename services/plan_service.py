@@ -494,14 +494,21 @@ def save_price_snapshots() -> int:
 
 
 def load_active_plans_for_procurement() -> list[dict]:
-    """加载采购对话框所需的活跃计划列表。"""
+    """加载采购对话框所需的活跃计划列表。
+
+    `activity` / `blueprint_type_id` / `decryptor_type_id` 是**科研行取料**用的：
+    `plan_aggregator.aggregate_procurement` 对科研行走
+    `plan_execution.material_requirements`（数据核心 + 解码器按作业次数算），
+    少了这几列会被当成制造行、一份材料都算不出来。
+    """
     plans: list[dict] = []
     with get_container().db.connect("user", "ref", "mkt") as conn:
         c = conn.cursor()
         c.execute(
             "SELECT id, product_type_id, product_name, runs, parallels, me_level, mat_hub, sell_hub, "
             "materials_ready, status, deposit_hangar_id, deposited, material_cost, "
-            "assigned_blueprint_id, mat_hangar_id, material_short, group_number, sub_level "
+            "assigned_blueprint_id, mat_hangar_id, material_short, group_number, sub_level, "
+            "activity, blueprint_type_id, decryptor_type_id "
             "FROM production_plans WHERE status IN ('pending', 'in_progress', 'running', 'ready')"
         )
         for pr in c.fetchall():
@@ -525,6 +532,9 @@ def load_active_plans_for_procurement() -> list[dict]:
                     "material_short": pr[15],
                     "group_id": pr[16],
                     "child_level": pr[17],
+                    "activity": pr[18],
+                    "blueprint_type_id": pr[19],
+                    "decryptor_type_id": pr[20],
                 }
             )
     return plans
