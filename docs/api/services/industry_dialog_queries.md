@@ -112,7 +112,7 @@ def get_max_group_number(db) -> int
 
 返回 production_plans 当前最大 group_number，无记录为 0。
 
-定义行：`273`
+定义行：`284`
 
 ### `get_subitem_plans`
 
@@ -122,7 +122,7 @@ def get_subitem_plans(db, group_number: int, deeper_than: int) -> list[dict[str,
 
 查询同组更深子项产线，按 sub_level DESC, id DESC。
 
-定义行：`280`
+定义行：`291`
 
 ### `get_item_name`
 
@@ -132,7 +132,7 @@ def get_item_name(db, type_id: int) -> str
 
 按旧 UI 语义查询 item 表名称：zh_name → en_name → str(type_id)。
 
-定义行：`290`
+定义行：`301`
 
 ### `get_system_name`
 
@@ -142,7 +142,7 @@ def get_system_name(db, solar_system_id: int) -> str
 
 查询星系显示名（中文 (英文)）。
 
-定义行：`297`
+定义行：`308`
 
 ### `set_plan_deposit_hangar`
 
@@ -152,7 +152,7 @@ def set_plan_deposit_hangar(db, plan_id: int, hangar_id: int | None) -> None
 
 更新计划的下线产出机库。
 
-定义行：`305`
+定义行：`316`
 
 ### `_query_blueprint_output`
 
@@ -164,7 +164,7 @@ def _query_blueprint_output(conn, product_type_id: int) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`319`
+定义行：`330`
 
 ### `_query_blueprint_duration_sec`
 
@@ -176,7 +176,7 @@ def _query_blueprint_duration_sec(conn, blueprint_type_id) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`327`
+定义行：`338`
 
 ### `_format_blueprint_duration`
 
@@ -188,4 +188,4 @@ def _format_blueprint_duration(conn, blueprint_type_id) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`335`
+定义行：`346`

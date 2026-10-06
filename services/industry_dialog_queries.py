@@ -242,10 +242,18 @@ def _child_demand_from_rows(sub_plans: list[dict], conn, plans: list[dict]) -> d
 
 
 def get_materials_summary(db) -> dict[str, Any] | None:
-    """查询活跃计划 BOM、库存与市场价；无活跃计划时返回 None。"""
+    """查询活跃计划 BOM、库存与市场价；无活跃计划时返回 None。
+
+    `activity` / `blueprint_type_id` / `decryptor_type_id` 是**科研行取料**用的（同
+    `load_active_plans_for_procurement`）：填料总表对科研行走
+    `plan_execution.material_requirements`（数据核心 + 解码器按作业次数算），
+    少了 `activity` 会被当成制造行按产物反查蓝图 —— 而科研行的产物是蓝图、查不到，
+    整行静默消失（用户 2026-10-06 报）。
+    """
     with db.connect("user", "ref", "bp", "mkt") as conn:
         active_rows = conn.execute(
-            "SELECT product_type_id, runs, parallels, me_level, group_number, sub_level "
+            "SELECT product_type_id, runs, parallels, me_level, group_number, sub_level, "
+            "activity, blueprint_type_id, decryptor_type_id "
             "FROM production_plans WHERE status IN ('pending','in_progress','running','ready')"
         ).fetchall()
         if not active_rows:
@@ -259,6 +267,9 @@ def get_materials_summary(db) -> dict[str, Any] | None:
                 "me_level": r[3],
                 "group_id": r[4],
                 "child_level": r[5],
+                "activity": r[6],
+                "blueprint_type_id": r[7],
+                "decryptor_type_id": r[8],
             }
             for r in active_rows
         ]

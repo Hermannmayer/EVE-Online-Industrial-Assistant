@@ -288,6 +288,49 @@ class TestProcurementIncludesScienceMaterials:
         assert cost == pytest.approx((27890.0 + 96830.0 + 708900.0) * 2)
 
 
+class TestMaterialsSummaryIncludesScienceMaterials:
+    """「填料总表」（get_materials_summary）也要列科研材料：数据核心 + 解码器。
+
+    回归（2026-10-06 用户报）：`get_materials_summary` 的计划查询不取 `activity`、
+    `collect_direct_materials` 对科研行整行 `continue` —— 计划表报缺数据核心/解码器，
+    填料总表与待采购却一种都不列。端到端跑（真查 production_plans），顺带钉住
+    「查询必须把 `activity` 取出来」：漏了它，发明行会退化成制造行按产物反查蓝图，
+    而发明行的产物是蓝图、查不到 → 整行静默消失。
+    """
+
+    def test_invention_materials_reach_materials_summary(self, research_db):
+        from services.industry_dialog_queries import get_materials_summary
+
+        with research_db.connect("user") as conn:
+            conn.executescript(
+                """
+                CREATE TABLE production_plans (
+                    id INTEGER PRIMARY KEY, product_type_id INTEGER, runs INTEGER, parallels INTEGER,
+                    me_level INTEGER DEFAULT 0, group_number INTEGER DEFAULT 0, sub_level INTEGER DEFAULT 0,
+                    status TEXT, activity TEXT, blueprint_type_id INTEGER, decryptor_type_id INTEGER,
+                    solar_system_id INTEGER);
+                CREATE TABLE inventory_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, hangar_id INTEGER, type_id INTEGER, quantity INTEGER);
+                """
+            )
+            # 2 次尝试的发明计划（每次尝试：数据核心各 1 + 解码器 1）
+            conn.execute(
+                "INSERT INTO production_plans VALUES (1,?,2,1,0,0,0,'pending','invention',?,?,?)",
+                (T2_BP, T2_BP, DECRYPTOR_AMPLIFIED, JITA),
+            )
+            conn.execute("INSERT INTO inventory_items (hangar_id, type_id, quantity) VALUES (1,?,1)", (MECH_DATACORE,))
+
+        data = get_materials_summary(research_db)
+        assert data is not None
+        materials = data["materials"]
+        assert materials[MECH_DATACORE] == {"name": "数据核心 - 机械工程", "total_qty": 2.0, "volume": 1.0}
+        assert materials[NUCLEAR_DATACORE]["total_qty"] == 2
+        assert materials[DECRYPTOR_AMPLIFIED]["total_qty"] == 2
+        # 库存 / 价格两半照旧拼得上（桥按 materials / inventory / prices 三块渲染）
+        assert data["inventory"][MECH_DATACORE] == 1
+        assert data["prices"][DECRYPTOR_AMPLIFIED]["sell"] == pytest.approx(708900.0)
+
+
 class _FakeContainer:
     """把 calculate_plan_metrics 内部与 facade 用的 get_container() 指向临时库。"""
 

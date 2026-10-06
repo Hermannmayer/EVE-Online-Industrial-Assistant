@@ -254,6 +254,16 @@ def aggregate_procurement(conn, plans: list[dict], *, hangar_id: int | None=None
 
 定义行：`689`
 
+### `_item_meta_entry`
+
+```python
+def _item_meta_entry(conn, mid: int) -> dict
+```
+
+材料条目的元数据骨架 `&#123;name, total_qty, volume&#125;`（`expand_material_requirements` 同结构）。
+
+定义行：`855`
+
 ### `collect_direct_materials`
 
 ```python
@@ -262,4 +272,4 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]
 
 聚合各计划的直接材料（recipe 一层，非递归），排除由子项产线自制的组件。
 
-定义行：`855`
+定义行：`868`

@@ -852,12 +852,31 @@ def aggregate_procurement(
     return rows_out, total_cost, total_volume
 
 
+def _item_meta_entry(conn, mid: int) -> dict:
+    """材料条目的元数据骨架 `{name, total_qty, volume}`（`expand_material_requirements` 同结构）。
+
+    制造与科研两条取料分支都要它：抄第二遍就会出现「科研材料那一格没名字 / 体积算 0」。
+    """
+    v = conn.execute("SELECT volume FROM item WHERE type_id=?", (mid,)).fetchone()
+    return {
+        "name": _resolve_name(conn, mid),
+        "total_qty": 0.0,
+        "volume": float(v[0]) if v and v[0] else 0.0,
+    }
+
+
 def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]:
     """聚合各计划的直接材料（recipe 一层，非递归），排除由子项产线自制的组件。
 
     母项拆解后：有子线的组件改为买其原材料（子线计划已计入），未拆解的组件直接采购；
     子线被删后组件回到待采购。返回格式对齐 expand_material_requirements：
     {type_id: {"name", "total_qty", "volume"}}
+
+    **科研行（拷贝/发明/研究）也要列**：量由 `plan_execution.material_requirements` 给出
+    （已按作业次数算好：发明 = 总尝试次数 ×（数据核心 + 解码器）），与启动闸门
+    `check_materials`、待采购聚合 `aggregate_procurement` 同一条路径。
+    以前这里整行 `continue`，于是「填料总表」只列制造材料 —— 计划表报缺数据核心/解码器、
+    这张表却一种都不列（用户 2026-10-06 报，与待采购那个是同一个根因面）。
     """
     sub_prod_ids = {
         p.get("product_type_id")
@@ -867,7 +886,18 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]:
     result: dict[int, dict] = {}
     for plan in plans:
         if is_science(plan.get("activity")):
-            continue  # 科研行材料口径不同，走 plan_execution.material_requirements
+            if _plan_total_runs(plan) <= 0:
+                continue  # 与 aggregate_procurement 同一口径：0 轮不贡献需求
+            for req in _science_material_requirements(plan):
+                mid = int(req["type_id"])
+                need = float(req.get("need") or 0)
+                if need <= 0:
+                    continue
+                entry = result.get(mid)
+                if entry is None:
+                    entry = result[mid] = _item_meta_entry(conn, mid)
+                entry["total_qty"] += need
+            continue
         pid = plan.get("product_type_id")
         if not pid:
             continue
@@ -890,13 +920,8 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]:
             if mid in sub_prod_ids:
                 continue  # 自制组件：由子项产线覆盖，买其原材料（子线计划已计入）
             need = calc_material_for_runs(qty, wf, me, total_runs)
-            if mid in result:
-                result[mid]["total_qty"] += need
-            else:
-                v = conn.execute("SELECT volume FROM item WHERE type_id=?", (mid,)).fetchone()
-                result[mid] = {
-                    "name": _resolve_name(conn, mid),
-                    "total_qty": float(need),
-                    "volume": float(v[0]) if v and v[0] else 0.0,
-                }
+            entry = result.get(mid)
+            if entry is None:
+                entry = result[mid] = _item_meta_entry(conn, mid)
+            entry["total_qty"] += need
     return result

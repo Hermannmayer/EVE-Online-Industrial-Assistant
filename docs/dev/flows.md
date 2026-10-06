@@ -310,10 +310,11 @@ services/logistics.py
 **语义契约**（`product_type_id` 恒为「本计划的产物」）：制造=物品、拷贝/研究=被操作的蓝图、
 发明=产出的 T2/T3 蓝图。科研行的产物**不在** `blueprint_products.activity='manufacturing'` 里，
 所以 `plan_aggregator` 不按产物反查它的「制造蓝图」（那是蓝图需求清单的口径）；
-**待采购材料**与启动校验走同一路径：`aggregate_procurement` 对科研行调
+**待采购材料**与启动校验走同一路径：`aggregate_procurement`（采购小助手 + 状态栏备料中采购）
+与 `collect_direct_materials`（「填料总表」）对科研行都调
 `plan_execution.material_requirements`（数据核心/解码器按作业次数算好，**不再乘 runs×parallels**），
-于是「采购小助手 / 状态栏备料中采购」与启动闸门 `check_materials` 不会各说一套
-（2026-10-06 前采购侧整行跳过科研行 → 计划表报缺数据核心/解码器、采购却一份不要）。
+于是这两处与启动闸门 `check_materials` 不会各说一套
+（2026-10-06 前两处都整行跳过科研行 → 计划表报缺数据核心/解码器、采购与填料总表却一份不要）。
 
 **「要绑哪张蓝图」的唯一取数**：`plan_aggregator.plan_input_blueprint_type_id` ——
 制造/反应 → 该产物的蓝图；拷贝/研究 → 被操作的那张 BPO；**发明 → 由产物那张 T2 反查出的 T1**
