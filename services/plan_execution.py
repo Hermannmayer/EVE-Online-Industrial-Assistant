@@ -429,7 +429,8 @@ def start_plan(
         with _container().db.connect("user") as conn:
             activity = _plan_activity(conn, plan_id, str(plan.get("activity") or ""))
             kind_violation = _blueprint_kind_violation(conn, activity, bound_ids)
-            short = _binding_shortfall(conn, bound_ids, plan_parallels, plan_runs)
+            # 机库也一并校验：蓝图得跟材料在同一个机库，否则游戏那边装不下这个作业
+            short = _binding_shortfall(conn, bound_ids, plan_parallels, plan_runs, mat_hangar_id=mat_hangar_id)
         if kind_violation:
             # 蓝图类型是**游戏规则**，不随 allow_bp_short 放行 —— 那不是库存不够，
             # 是游戏里根本做不到（拷贝/研究只能对 BPO，发明只能对 BPC）。
@@ -607,7 +608,11 @@ def preview_partial_start(plan_id: int, lines: int, mat_hangar_id: int | None) -
         bound = list(fresh.get("bound_blueprint_ids") or [])
         existing = existing_blueprint_ids(conn, bound)
         keep = [b for b in bound if b in existing][:lines]
-        bp_short = _binding_shortfall(conn, keep, lines, max(int(fresh.get("runs") or 1), 1)) if lines else None
+        bp_short = (
+            _binding_shortfall(conn, keep, lines, max(int(fresh.get("runs") or 1), 1), mat_hangar_id=mat_hangar_id)
+            if lines
+            else None
+        )
     finally:
         conn.close()
     return {"ok": True, "shortfalls": shortfalls, "bp_short": bp_short}
@@ -1672,12 +1677,53 @@ def _bp_available_runs(conn, bp_id: int) -> int | float:
     return max(0, int(row[2] or 0) * int(row[1] or 0))
 
 
-def _binding_shortfall(conn, bound_ids: list[int], parallels: int, runs: int) -> str | None:
+def _binding_hangar_mismatch(conn, bound_ids: list[int], mat_hangar_id: int | None) -> str | None:
+    """绑定的蓝图不在计划的**材料机库**里 → 返回可读原因（含它现在在哪）；对齐/未设机库 → None。
+
+    EVE 里作业的输入（材料 + 蓝图）必须和作业在同一个地点：改了材料机库而绑定蓝图没跟着挪，
+    游戏那边就装不下这个作业 —— 所以它和「流程数不够」一样是**启动短板**，得在界面里报出来。
+    回归（2026-10-06 用户报）：改了机库、蓝图还在原机库，小助手既不提示缺蓝图也不拦。
+    """
+    if not mat_hangar_id or not bound_ids:
+        return None
+    placeholders = ",".join("?" for _ in bound_ids)
+    rows = conn.execute(
+        f"SELECT ub.hangar_id, h.name FROM user_blueprints ub "
+        f"LEFT JOIN hangars h ON h.id = ub.hangar_id WHERE ub.id IN ({placeholders})",
+        tuple(bound_ids),
+    ).fetchall()
+    elsewhere: list[str] = []
+    for hid, name in rows:
+        if int(hid or 0) == int(mat_hangar_id):
+            continue
+        label = str(name or "") or f"机库 #{hid if hid else '?'}"
+        if label not in elsewhere:
+            elsewhere.append(label)
+    if not elsewhere:
+        return None
+    row = conn.execute("SELECT name FROM hangars WHERE id=?", (int(mat_hangar_id),)).fetchone()
+    target = str(row[0]) if row and row[0] else f"机库 #{mat_hangar_id}"
+    return (
+        f"绑定蓝图不在材料机库「{target}」（现在「{'、'.join(elsewhere)}」）—— "
+        "作业要用的蓝图得跟材料在同一个机库，先把它挪过去"
+    )
+
+
+def _binding_shortfall(
+    conn, bound_ids: list[int], parallels: int, runs: int, *, mat_hangar_id: int | None = None
+) -> str | None:
     """校验绑定能否覆盖 parallels 条产线、且每条的流程数 ≥ runs；不足返回原因，满足 None。
 
     **覆盖条数按容量算，不按行数**：BPO 一条顶全部、BPC 行按份数顶（见
     `blueprint_line_capacity`）—— 这样「一张图纸合成一行、份数=3」也能供 3 条线。
+
+    `mat_hangar_id` 传了才校验**蓝图所在机库**（见 `_binding_hangar_mismatch`）：
+    启动/部分启动预览这条链传它；**完成**那条链不传 —— 货都造出来了，蓝图当时在哪
+    不该拦住记账。
     """
+    mismatch = _binding_hangar_mismatch(conn, bound_ids, mat_hangar_id)
+    if mismatch:
+        return mismatch
     capacity = 0
     for bid in bound_ids:
         capacity += min(_binding_line_capacity(conn, bid), parallels)
@@ -1689,13 +1735,16 @@ def _binding_shortfall(conn, bound_ids: list[int], parallels: int, runs: int) ->
     return None
 
 
-def binding_shortfall(plan_id: int) -> str | None:
-    """预检该计划的蓝图绑定是否满足「一条产线一张、每张流程 ≥ runs」。
+def binding_shortfall(plan_id: int, *, mat_hangar_id: int | None = None) -> str | None:
+    """预检该计划的蓝图绑定是否满足「一条产线一张、每张流程 ≥ runs」（+ 可选机库校验）。
 
     供 UI 在**调用 `start_plan` 之前**判断要不要弹「强制启动」确认 ——
     与 `plan_start_block_reason` 的注入式判定同思路，DB 访问收敛在服务层。
     不足返回原因文本；满足 / 一张未绑 / 计划不存在返回 None
     （「没绑」由 `plan_start_block_reason` 的 has_image 分支负责）。
+
+    `mat_hangar_id`：调用方手上的**生效材料机库**（计划没设时通常是设置里的默认材料机库）。
+    传了才校验蓝图所在机库；不传（完成/下线那条链）保持旧口径。
     """
     if not plan_id:
         return None
@@ -1703,7 +1752,9 @@ def binding_shortfall(plan_id: int) -> str | None:
     if not state["bound"]:
         return None
     with _container().db.connect("user") as conn:
-        return _binding_shortfall(conn, state["bound"], int(state["need"]), int(state["runs"]))
+        return _binding_shortfall(
+            conn, state["bound"], int(state["need"]), int(state["runs"]), mat_hangar_id=mat_hangar_id
+        )
 
 
 def get_plan_blueprints(plan_id: int) -> list[int]:

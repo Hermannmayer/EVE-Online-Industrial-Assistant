@@ -753,11 +753,18 @@ class ProductionLauncher(QObject):
         return count
 
     def _bp_short(self, plan: dict) -> str | None:
-        """蓝图流程不足的原因（本轮轮询内每计划只查一次）。"""
+        """蓝图短板的原因（本轮轮询内每计划只查一次）。
+
+        带上**生效材料机库**（计划没设就用设置里的默认）：绑定蓝图如果还在别的机库，
+        这里要报「不在材料机库…」而不是当作没短板 —— 否则改了机库后蓝图没挪过来，
+        小助手既不提示缺蓝图也照常给「启动」（用户 2026-10-06 报）。
+        """
         pid = int(plan.get("id") or 0)
         if pid not in self._bp_short_cache:
             try:
-                self._bp_short_cache[pid] = plan_execution.binding_shortfall(pid)
+                self._bp_short_cache[pid] = plan_execution.binding_shortfall(
+                    pid, mat_hangar_id=plan.get("mat_hangar_id") or self._default_mat_hangar
+                )
             except Exception:
                 log.exception("蓝图流程预检失败 plan_id=%s", pid)
                 self._bp_short_cache[pid] = None

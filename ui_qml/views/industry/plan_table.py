@@ -505,7 +505,8 @@ class PlanTable(QObject):
                 for r in plan_execution.check_materials(plan, mat_hangar_id, all_plans=all_plans)
                 if (r.get("missing") or 0) > 0
             ]
-        bp_short = plan_execution.binding_shortfall(plan["id"])
+        # 带生效材料机库：绑定蓝图还在别的机库时也要在确认框里说清（不是只有流程数不足）
+        bp_short = plan_execution.binding_shortfall(plan["id"], mat_hangar_id=mat_hangar_id)
 
         reasons: list[str] = []
         if shortfalls:
@@ -514,7 +515,7 @@ class PlanTable(QObject):
                 lines += f"\n  … 等 {len(shortfalls)} 种"
             reasons.append(f"材料不足：\n{lines}")
         if bp_short:
-            reasons.append(f"蓝图流程不足：{bp_short}")
+            reasons.append(f"蓝图：{bp_short}")
         if reasons:
             if not FMessageDialog.question(
                 self,

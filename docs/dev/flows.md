@@ -238,6 +238,13 @@ services/logistics.py
   `start_plan` 与 `complete_plan` **成对**提供 `allow_bp_short` —— **只放开启动会造成死锁**
   （强制启动的计划永远无法下线）。强制时**不换绑**，完成时 `consume_bpc_runs` 按实际可用量消耗；
   账面偏差由用户在蓝图管理做**全量剪贴板导入**矫正。
+  - **蓝图所在机库也是启动短板**：`_binding_shortfall(..., mat_hangar_id=…)` 传了生效材料机库才校验
+    「绑定蓝图是否在这个机库」（`_binding_hangar_mismatch`，消息里带它现在在哪）。EVE 里作业的输入
+    （材料 + 蓝图）必须同一地点 —— 改了材料机库而蓝图没跟着挪，游戏那边装不下这个作业。
+    **只有启动链传它**（`start_plan` / `preview_partial_start` / 小助手与计划表的
+    `binding_shortfall(plan_id, mat_hangar_id=…)`）；**完成链不传** —— 货都造出来了，蓝图当时在哪
+    不该拦住记账（`complete_plan` / `complete_guard` 保持旧口径）。
+    回归背景（2026-10-06 用户报）：改了机库、蓝图还在原机库，小助手既不提示「缺蓝图」也照常给「启动」。
   - **五条下线入口都要覆盖**：计划表格状态列（单行）、计划表格右键（批量）、采购页「一键完成」、
     工业页底部状态栏「全部下线」、产线启动小助手行内「可下线」（单行）。
     **单行**下线共用 `ui_qml/views/industry/complete_plans_dialog.py::complete_one_plan`

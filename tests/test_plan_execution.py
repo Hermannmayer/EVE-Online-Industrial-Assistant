@@ -1276,6 +1276,33 @@ class TestBlueprintForceStart:
         pid = _insert_plan(user_env.db, runs=1, parallels=1)
         assert plan_execution.binding_shortfall(pid) is None
 
+    def test_binding_shortfall_reports_blueprint_in_another_hangar(self, user_env):
+        """绑定蓝图还在别的机库 → 必须报出来（回归：改了机库、蓝图没挪，界面也不提示缺蓝图）。
+
+        `_insert_blueprint`/`add_blueprint(1, …)` 把蓝图放进机库 1「矿仓」；计划材料机库
+        设成一个新建的机库。不传 `mat_hangar_id` 时保持旧口径（不校验位置）——「完成」
+        那条链就是这么调的。
+        """
+        db = user_env.db
+        user_env.scoring.calculate_plan_metrics.return_value = {"materials": []}  # 启动闸门会走材料校验
+        bp_id = inventory_manager.add_blueprint(1, 3001, is_bpo=False, runs=30, quantity=1)
+        target = inventory_manager.create_hangar("研发")
+        same_hangar = inventory_manager.add_blueprint(target, 3001, is_bpo=False, runs=30, quantity=1)
+        plan_id = _insert_plan(db, runs=10, parallels=1, status="pending", mat_hangar_id=target)
+        bind_blueprints(plan_id, [bp_id])
+
+        with db.connect("user") as conn:
+            assert _binding_shortfall(conn, [bp_id], parallels=1, runs=10) is None, "不传机库 = 旧口径"
+            msg = _binding_shortfall(conn, [bp_id], parallels=1, runs=10, mat_hangar_id=target)
+            assert _binding_shortfall(conn, [same_hangar], parallels=1, runs=10, mat_hangar_id=target) is None
+
+        assert msg and "材料机库" in msg and "矿仓" in msg, msg
+        assert plan_execution.binding_shortfall(plan_id, mat_hangar_id=target) == msg
+        # 启动闸门同样按生效机库判：不是「能启动但游戏里装不下」
+        res = start_plan({"id": plan_id}, mat_hangar_id=target)
+        assert res["ok"] is False and res["code"] == "blueprint_short", res
+        assert "材料机库" in res["message"]
+
     def test_start_rejects_without_flag(self, user_env):
         plan, _bp = self._plan_with_short_bp(user_env)
         res = start_plan(plan, mat_hangar_id=None)

@@ -20,7 +20,7 @@ def _resolve_db(db)
 
 返回调用方传入的 DatabaseManager；未传时使用容器中的全局实例。
 
-定义行：`25`
+定义行：`24`
 
 ### `search_item_by_name`
 
@@ -30,7 +30,7 @@ def search_item_by_name(name: str, db=None) -> dict | None
 
 按中文/英文名搜索物品，返回 &#123;type_id, zh_name, en_name, iconID, volume&#125; 或 None。
 
-定义行：`51`
+定义行：`50`
 
 ### `query_suggest_items`
 
@@ -40,7 +40,7 @@ def query_suggest_items(query: str, db=None) -> list[Any]
 
 候选搜索：返回 item 表原始行 (type_id, en_name, zh_name)。
 
-定义行：`98`
+定义行：`97`
 
 ### `has_solar_system_data`
 
@@ -50,7 +50,7 @@ def has_solar_system_data(db=None) -> bool
 
 reference.solar_system 表是否已有数据。
 
-定义行：`133`
+定义行：`132`
 
 ### `search_solar_systems`
 
@@ -60,7 +60,7 @@ def search_solar_systems(query: str, db=None) -> list[tuple[int, str, float]]
 
 按名称搜索星系，返回 [(solar_system_id, display_name, security), ...]。
 
-定义行：`143`
+定义行：`142`
 
 ### `get_item_names_batch`
 
@@ -70,7 +70,7 @@ def get_item_names_batch(type_ids: list[int], db=None) -> dict[int, str]
 
 批量查询 item 名称，返回 &#123;type_id: zh_name or en_name or str(type_id)&#125;。
 
-定义行：`175`
+定义行：`174`
 
 ### `resolve_plan_blueprint_name`
 
@@ -78,9 +78,9 @@ def get_item_names_batch(type_ids: list[int], db=None) -> dict[int, str]
 def resolve_plan_blueprint_name(plan: dict, db=None) -> str
 ```
 
-计划行 → 蓝图名（供产线小助手点击复制）。绝不把产物名当蓝图名。
+计划行 → **这次作业要用的那张蓝图**的名字（供产线小助手 / 计划表点击复制）。
 
-定义行：`189`
+定义行：`188`
 
 ### `parse_blueprint_clipboard`
 
@@ -90,7 +90,7 @@ def parse_blueprint_clipboard(raw: str, conn) -> tuple[list[dict], int, int]
 
 解析 EVE 蓝图剪贴板 → (蓝图行, 被过滤材料行数, 未识别蓝图行数)
 
-定义行：`214`
+定义行：`211`
 
 ### `parse_blueprint_clipboard_text`
 
@@ -100,7 +100,7 @@ def parse_blueprint_clipboard_text(raw: str, db=None) -> tuple[list[dict], int, 
 
 打开 ref/bp 连接并解析剪贴板蓝图 → (蓝图行, 被过滤材料行数, 未识别蓝图行数)。
 
-定义行：`276`
+定义行：`273`
 
 ### `_lookup_bpid`
 
@@ -110,7 +110,7 @@ def _lookup_bpid(c, name_part)
 
 蓝图名 → blueprint_type_id（精确匹配蓝图；T2 名称去「蓝图」后缀后按产物反查）
 
-定义行：`282`
+定义行：`279`
 
 ### `_lookup_name`
 
@@ -120,7 +120,7 @@ def _lookup_name(c, bpid: int, fallback: str) -> str
 
 蓝图类型 ID → 显示名（找不到用剪贴板名兜底）
 
-定义行：`319`
+定义行：`316`
 
 ### `apply_blueprint_diff`
 
@@ -130,7 +130,7 @@ def apply_blueprint_diff(diff_rows: list[dict], hangar_id: int, mode: str='full'
 
 按勾选组应用增删，返回 (added, removed, blocked)。
 
-定义行：`326`
+定义行：`323`
 
 ### `search_manufacturable_items`
 
@@ -140,7 +140,7 @@ def search_manufacturable_items(query: str, db=None) -> list[dict]
 
 搜索可制造物品（item 表），返回 [&#123;type_id, zh_name, en_name&#125;, ...]。
 
-定义行：`403`
+定义行：`400`
 
 ### `get_all_manufacturable_product_ids`
 
@@ -150,7 +150,7 @@ def get_all_manufacturable_product_ids(db=None) -> list[int]
 
 获取所有制造活动蓝图的产品 type_id。
 
-定义行：`421`
+定义行：`418`
 
 ### `aggregate_procurement_summary`
 
@@ -160,4 +160,4 @@ def aggregate_procurement_summary(plans: list[dict], *, default_mat_hangar_id: i
 
 按统计条模式聚合备料中计划的采购金额/体积。
 
-定义行：`433`
+定义行：`430`

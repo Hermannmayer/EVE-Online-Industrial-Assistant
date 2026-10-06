@@ -152,7 +152,7 @@ def move_bindings(conn, from_plan_id: int, to_plan_id: int, blueprint_ids: list[
 
 把蓝图绑定关系从一条计划**挪到**另一条（不是复制）。
 
-定义行：`541`
+定义行：`542`
 
 ### `existing_blueprint_ids`
 
@@ -162,7 +162,7 @@ def existing_blueprint_ids(conn, bp_ids: list[int]) -> set[int]
 
 过滤出确实存在于 `user_blueprints` 的绑定 id。
 
-定义行：`559`
+定义行：`560`
 
 ### `_has_pending_children`
 
@@ -173,7 +173,7 @@ def _has_pending_children(conn, plan: dict) -> bool
 母项是否还有未完成子项（部分启动的守门条件）。**只对母项调用** ——
 子项行自己在这个计数里，对它会恒为真（调用方按 `sub_level==0` 收口）。
 
-定义行：`571`
+定义行：`572`
 
 ### `preview_partial_start`
 
@@ -183,7 +183,7 @@ def preview_partial_start(plan_id: int, lines: int, mat_hangar_id: int | None) -
 
 拆行前预览「只启动 N 条」的材料缺口与蓝图短板。
 
-定义行：`585`
+定义行：`586`
 
 ### `_rollback_split`
 
@@ -193,7 +193,7 @@ def _rollback_split(plan_id: int, rem_id: int, total: int, src: dict, moved: lis
 
 部分启动失败 → 把拆出的两行并回一条（**单事务**）。
 
-定义行：`616`
+定义行：`621`
 
 ### `_no_other_active_mother`
 
@@ -203,7 +203,7 @@ def _no_other_active_mother(conn, plan_id: int, group_number: int) -> bool
 
 同组是否已没有别的活跃 level-0 行（本行刚置为 completed，自然不计入）。
 
-定义行：`642`
+定义行：`647`
 
 ### `remove_completed_children`
 
@@ -213,7 +213,7 @@ def remove_completed_children(group_number: int, *, conn=None) -> int
 
 清理「已无归属」的已完成子项行，返回删除数（母项结束时调用）。
 
-定义行：`657`
+定义行：`662`
 
 ### `start_plan_partial`
 
@@ -223,7 +223,7 @@ def start_plan_partial(plan_id: int, lines: int, *, mat_hangar_id: int | None, c
 
 部分启动：把计划拆成「已启动 lines 条」+「未启动 P−lines 条」两行，并启动前者。
 
-定义行：`710`
+定义行：`715`
 
 ### `start_plan_batch`
 
@@ -233,7 +233,7 @@ def start_plan_batch(plans: list[dict], *, mat_hangar_id: int | None, allow_shor
 
 批量启动（产线小助手/组）。逐条独立，单条失败不中断其余。
 
-定义行：`834`
+定义行：`839`
 
 ### `_deposit_research_output`
 
@@ -243,7 +243,7 @@ def _deposit_research_output(conn, *, plan_id: int, activity: str, product_type_
 
 把科研作业的产出（BPC）写入 user_blueprints。返回 1=有入库，0=跳过。
 
-定义行：`862`
+定义行：`867`
 
 ### `_improve_bound_bpo_level`
 
@@ -253,7 +253,7 @@ def _improve_bound_bpo_level(conn, *, plan_id: int, activity: str, target_level:
 
 ME/TE 研究完成：把绑定**蓝图原本**的等级提到目标等级（只升不降）。返回 1=改了。
 
-定义行：`936`
+定义行：`941`
 
 ### `_input_blueprint_me_te`
 
@@ -263,7 +263,7 @@ def _input_blueprint_me_te(conn, plan_id: int) -> tuple[int, int]
 
 取计划绑定输入蓝图的 ME/TE（拷贝产出的 BPC 继承原图等级）。缺失 → (0, 0)。
 
-定义行：`997`
+定义行：`1002`
 
 ### `output_per_run`
 
@@ -273,7 +273,7 @@ def output_per_run(product_type_id: int) -> int
 
 蓝图单流程产出量（查 blueprint_products，缺省 1）。
 
-定义行：`1010`
+定义行：`1015`
 
 ### `_plan_activity`
 
@@ -283,7 +283,7 @@ def _plan_activity(conn, plan_id: int, fallback: str='') -> str
 
 计划的活动类型，**以库为准**。
 
-定义行：`1027`
+定义行：`1032`
 
 ### `_blueprint_kind_violation`
 
@@ -293,7 +293,7 @@ def _blueprint_kind_violation(conn, activity: str, bound_ids: list[int]) -> str
 
 绑定蓝图与活动规则不符时返回可读原因；合规 → 空串。
 
-定义行：`1037`
+定义行：`1042`
 
 ### `plan_blueprint_ready`
 
@@ -303,7 +303,7 @@ def plan_blueprint_ready(plan: dict) -> bool
 
 该计划的输入蓝图是否已就绪（按活动规则判定，取代旧的 has_image 口径）。
 
-定义行：`1063`
+定义行：`1068`
 
 ### `complete_plan`
 
@@ -313,7 +313,7 @@ def complete_plan(plan: dict, *, conn=None, actual_output_runs: int | None=None,
 
 ready/pending/in_progress → completed：入库产出 + 消耗绑定 BPC。
 
-定义行：`1110`
+定义行：`1115`
 
 ### `cancel_plan`
 
@@ -323,7 +323,7 @@ def cancel_plan(plan: dict) -> dict
 
 撤销启动：in_progress → pending，并返还已扣减材料到材料机库。
 
-定义行：`1354`
+定义行：`1359`
 
 ### `reset_plan_for_reuse`
 
@@ -333,7 +333,7 @@ def reset_plan_for_reuse(plan_id: int) -> dict
 
 设为待生产：仅 completed 计划复用（不返还材料——材料已变为成品）。
 
-定义行：`1451`
+定义行：`1456`
 
 ### `bind_blueprint`
 
@@ -343,7 +343,7 @@ def bind_blueprint(plan_id: int, blueprint_id: int) -> bool
 
 把一张库存蓝图绑定到计划（单条产线）。BPC 已被其他活跃计划占用时拒绝；BPO 可共享。
 
-定义行：`1487`
+定义行：`1492`
 
 ### `bind_blueprints`
 
@@ -353,7 +353,7 @@ def bind_blueprints(plan_id: int, blueprint_ids: list[int]) -> bool
 
 全量替换绑定：一条产线一张蓝图。
 
-定义行：`1492`
+定义行：`1497`
 
 ### `bind_blueprints_many`
 
@@ -363,7 +363,7 @@ def bind_blueprints_many(bindings: list[tuple[int, list[int]]]) -> bool
 
 批量全量替换绑定多计划（一次连接/事务）。
 
-定义行：`1543`
+定义行：`1548`
 
 ### `get_plan_binding_state`
 
@@ -373,7 +373,7 @@ def get_plan_binding_state(plan_id: int) -> dict
 
 返回计划蓝图绑定状态：bound(已绑张数清单)、need(需要的产线条数=parallels)、runs(每条产线流程)。
 
-定义行：`1598`
+定义行：`1603`
 
 ### `blueprint_line_capacity`
 
@@ -383,7 +383,7 @@ def blueprint_line_capacity(quantity: int | None) -> int
 
 一条蓝图记录能覆盖**几条并行产线** = 该行**份数**（quantity）。
 
-定义行：`1625`
+定义行：`1630`
 
 ### `_binding_line_capacity`
 
@@ -393,7 +393,7 @@ def _binding_line_capacity(conn, bp_id: int) -> int
 
 库存行版：读 `user_blueprints` 后按 `blueprint_line_capacity` 算覆盖条数。
 
-定义行：`1639`
+定义行：`1644`
 
 ### `_bp_per_copy_runs`
 
@@ -403,7 +403,7 @@ def _bp_per_copy_runs(conn, bp_id: int) -> int | float
 
 该绑定**每份**的流程数（校验用）：BPO → 大数（不会被消耗）；BPC → 该行的 runs。
 
-定义行：`1647`
+定义行：`1652`
 
 ### `_bp_available_runs`
 
@@ -413,27 +413,37 @@ def _bp_available_runs(conn, bp_id: int) -> int | float
 
 连接内查 BPC 可用流程 = quantity×runs；BPO 返回大数（视为无限）。
 
-定义行：`1662`
+定义行：`1667`
+
+### `_binding_hangar_mismatch`
+
+```python
+def _binding_hangar_mismatch(conn, bound_ids: list[int], mat_hangar_id: int | None) -> str | None
+```
+
+绑定的蓝图不在计划的**材料机库**里 → 返回可读原因（含它现在在哪）；对齐/未设机库 → None。
+
+定义行：`1680`
 
 ### `_binding_shortfall`
 
 ```python
-def _binding_shortfall(conn, bound_ids: list[int], parallels: int, runs: int) -> str | None
+def _binding_shortfall(conn, bound_ids: list[int], parallels: int, runs: int, *, mat_hangar_id: int | None=None) -> str | None
 ```
 
 校验绑定能否覆盖 parallels 条产线、且每条的流程数 ≥ runs；不足返回原因，满足 None。
 
-定义行：`1675`
+定义行：`1712`
 
 ### `binding_shortfall`
 
 ```python
-def binding_shortfall(plan_id: int) -> str | None
+def binding_shortfall(plan_id: int, *, mat_hangar_id: int | None=None) -> str | None
 ```
 
-预检该计划的蓝图绑定是否满足「一条产线一张、每张流程 ≥ runs」。
+预检该计划的蓝图绑定是否满足「一条产线一张、每张流程 ≥ runs」（+ 可选机库校验）。
 
-定义行：`1692`
+定义行：`1738`
 
 ### `get_plan_blueprints`
 
@@ -443,7 +453,7 @@ def get_plan_blueprints(plan_id: int) -> list[int]
 
 返回计划绑定的库存蓝图 id 列表（关联表；无关联表时回退旧单值列）。
 
-定义行：`1709`
+定义行：`1760`
 
 ### `_clear_plan_bindings`
 
@@ -453,7 +463,7 @@ def _clear_plan_bindings(conn, plan_id: int) -> None
 
 清空计划的多蓝图绑定关联行（兼容旧库无关联表）。
 
-定义行：`1724`
+定义行：`1775`
 
 ### `release_blueprint`
 
@@ -463,7 +473,7 @@ def release_blueprint(plan_id: int) -> bool
 
 计划取消/删除/回退时释放占用（清空关联表与旧单值列）。
 
-定义行：`1732`
+定义行：`1783`
 
 ### `get_occupied_blueprint_ids`
 
@@ -473,7 +483,7 @@ def get_occupied_blueprint_ids(db=None, *, exclude_plan_id: int | None=None) -> 
 
 返回被活跃计划（非 completed/done）占用的 user_blueprints.id 集合。
 
-定义行：`1746`
+定义行：`1797`
 
 ### `find_available_blueprints`
 
@@ -483,7 +493,7 @@ def find_available_blueprints(conn, blueprint_type_id: int) -> list[dict]
 
 按蓝图类型列出库存蓝图（含占用标注/可用流程）。
 
-定义行：`1780`
+定义行：`1831`
 
 ### `consume_bpc_runs`
 
@@ -493,7 +503,7 @@ def consume_bpc_runs(conn, bp_id: int, runs_used: int) -> dict
 
 完成时消耗 BPC 剩余流程；BPO 无操作。
 
-定义行：`1818`
+定义行：`1869`
 
 ### `_split_bpc_consumption`
 
@@ -503,7 +513,7 @@ def _split_bpc_consumption(quantity: int, runs: int, used: int) -> tuple[int, in
 
 纯函数：消耗 used 流程后返回应保留的 (数量, 每张剩余流程)。
 
-定义行：`1853`
+定义行：`1904`
 
 ### `_container`
 
@@ -515,7 +525,7 @@ def _container()
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`1879`
+定义行：`1930`
 
 ### `_occupied_ids`
 
@@ -525,7 +535,7 @@ def _occupied_ids(conn, *, exclude_plan_id: int | None=None) -> set[int]
 
 连接内查询占用蓝图 id 集合（兼容关联表与旧单值列）。
 
-定义行：`1885`
+定义行：`1936`
 
 ### `_available_blueprint_options`
 
@@ -535,7 +545,7 @@ def _available_blueprint_options(plan: dict) -> list[dict]
 
 该计划**要绑的那张蓝图**的库存可选行（**不过滤占用**，每条带 `occupied` / `available_runs`）。
 
-定义行：`1920`
+定义行：`1971`
 
 ### `_blueprint_capable`
 
@@ -545,7 +555,7 @@ def _blueprint_capable(option: dict, rule: str, runs: int) -> bool
 
 这张蓝图是否满足活动的类型规则与流程要求（规则见 services.plan_job_kinds）。
 
-定义行：`1944`
+定义行：`1995`
 
 ### `_auto_bind_blueprints`
 
@@ -555,7 +565,7 @@ def _auto_bind_blueprints(plan: dict) -> list[int]
 
 自动选最优库存蓝图。返回应绑定的库存蓝图 id 清单（按活动规则）。
 
-定义行：`1955`
+定义行：`2006`
 
 ### `ensure_plan_auto_bind`
 
@@ -565,7 +575,7 @@ def ensure_plan_auto_bind(plan_id: int) -> bool
 
 计划尚无绑定且库存有可用蓝图时，自动绑定并行所需张数。返回是否新绑。
 
-定义行：`2007`
+定义行：`2058`
 
 ### `resync_plan_bindings`
 
@@ -575,4 +585,4 @@ def resync_plan_bindings(plan_id: int) -> bool
 
 按计划当前的 runs/parallels **重新对齐**蓝图绑定；返回是否改动了绑定。
 
-定义行：`2030`
+定义行：`2081`
