@@ -89,6 +89,15 @@ sequenceDiagram
 
 > 关键：semantic-release 使用 `GITHUB_TOKEN` push，不会再次触发 workflow（防止死循环）。
 
+### 「手改版本号的小版本」这条回退路径的说明从哪来
+
+PSR 判定「无需发版」（只有 docs/ci/chore 之类提交，或版本号已手动改好并打上 tag）时，
+`release.yml` 回退用 `core/version.py` 的版本打包，Release 由 `action-gh-release` 创建。
+⚠️ 这个 action **没有 body 时会把提交信息当 Release 说明** —— 2026-10-06 实测
+v0.26.0 页面被贴上整段提交正文（异动榜那份长文），所以回退分支现在显式跑
+`scripts/release_notes.py <版本> release_notes.md`，从 `CHANGELOG.md` 抽出该版本段当说明；
+PSR 正常发版那条路径 `body_path` 留空，保留 PSR 自己写好的说明（实测不会被清掉）。
+
 ## 本地一步发版（不依赖 CI）
 
 CI 那条路（push main → `release.yml`）是常规路径。需要**在本地一次做完**（改版本 →

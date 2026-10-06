@@ -38,6 +38,9 @@
 
 ### Features
 
+- **异动榜**: 只留有参考价值的条目 —— 流动性/稳定性门槛、抗污染窗口价、`极端` 标记
+  ([`e6f5bc4`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/e6f5bc46678e6deea177e6174cf72ef45da942d9))
+
 - **市场监控)+fix(工业规划**: 大盘与关注页重构、异动榜可用化、性能与分类口径修正
   ([`3c051e9`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/3c051e91ea02667b2c295f1424e9f9af52f5f03f))
 

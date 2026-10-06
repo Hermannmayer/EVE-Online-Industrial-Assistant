@@ -54,16 +54,24 @@ jobs:
       shell: bash
       run: |
         TAG="${{ steps.semver.outputs.tag }}"
+        BODY=""
         if [ -n "$TAG" ]; then
-          NEEDED=true                      # PSR 刚发版 → 必然要打包
+          NEEDED=true                      # PSR 刚发版 → 必然要打包（说明也由 PSR 写好）
         else
           VER=$(uv run python -c "import core.version as v; print(v.__version__)")
           TAG="v$VER"
           # 该版本的 Release 已存在 → 不重复打包（省 CI，也避免同名资产冲突）
           if gh release view "$TAG" >/dev/null 2>&1; then NEEDED=false; else NEEDED=true; fi
+          # 回退分支的说明要自己给：`action-gh-release` 没有 body 时会把**提交信息**
+          # 当成 Release 说明（2026-10-06 实测：v0.26.0 页面被贴上整段提交正文）。
+          if [ "$NEEDED" = "true" ]; then
+            uv run python scripts/release_notes.py "$VER" release_notes.md
+            BODY=release_notes.md
+          fi
         fi
         echo "tag=$TAG" >> "$GITHUB_OUTPUT"
         echo "needed=$NEEDED" >> "$GITHUB_OUTPUT"
+        echo "body_path=$BODY" >> "$GITHUB_OUTPUT"
         echo "安装包按 $TAG 处理（需要打包：$NEEDED）"
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -84,11 +92,14 @@ jobs:
 
     # tag 不存在时 action-gh-release 会按当前分支创建它 —— 这正是「手改版本号的小版本也能
     # 出安装包 + Release」的关键；PSR 已发版时则往它建好的 Release 上补资产。
+    # `body_path` 只在回退分支（PSR 没发版）有值：那时 Release 由本 action 创建，
+    # 不给说明它就拿提交信息顶上；PSR 那条路径留空 → 保留 PSR 写好的说明。
     - name: Upload zip to GitHub Release
       if: steps.rel.outputs.needed == 'true'
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ steps.rel.outputs.tag }}
+        body_path: ${{ steps.rel.outputs.body_path }}
         files: dist/EVE商人助手_v*.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
