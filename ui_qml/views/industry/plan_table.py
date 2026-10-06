@@ -446,10 +446,17 @@ class PlanTable(QObject):
             self.plan_updated.emit()
 
     def _copy_blueprint_name(self, row: int) -> None:
+        """右键「复制蓝图名称」→ 复制**这次作业要用的那张蓝图**的名字。
+
+        与产线小助手的双击复制走同一处解析：发明行给的是输入 T1 蓝图（产物那张 T2
+        复制到游戏里开不了工），制造行给制造蓝图、拷贝/研究给被操作的那张。
+        """
         if self._model is None:
             return
         plan = self._model.get_plan(row)
-        bp_name = plan.get("blueprint_name") or plan.get("product_name", "")
+        from services.ui_data_service import resolve_plan_blueprint_name
+
+        bp_name = resolve_plan_blueprint_name(plan, db=get_container().db)
         if bp_name:
             # 借用的 QtGui（不是真 Widgets 依赖）：`clipboard()` 定义在 `QGuiApplication`
             # 上，`QApplication` 只是它的子类，所以 `self` 不再是 QWidget 也照样能用，

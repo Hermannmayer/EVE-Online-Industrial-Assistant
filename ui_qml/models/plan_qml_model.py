@@ -213,7 +213,9 @@ class PlanQmlModel(PlanTableModel):
 
     def _icon_url(self, p: dict, c: int) -> str:
         if c == COL_ICON:
-            return _png_url(p.get("product_type_id"))
+            # `icon_type_id`：科研行的产物是蓝图，图标要取「这张蓝图造出来的物品」
+            # （图标缓存里没有蓝图 png）；enrich 没给值时退回产物本身。
+            return _png_url(p.get("icon_type_id") or p.get("product_type_id"))
         if c == COL_CATEGORY:
             spec = _CATEGORY_ICONS.get(str(p.get("category", "manufacturing")))
             return phosphor_url(spec[0], _token(spec[1]), 16) if spec else ""

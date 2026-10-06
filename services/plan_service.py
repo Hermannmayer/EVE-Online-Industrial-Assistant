@@ -183,10 +183,13 @@ def _load_enrich_data(conn):
     """一次连接内收集 owned_bp / prod_to_bp / hangar_names / 蓝图绑定张数（供 _enrich_rows 复用）。"""
     owned_bp = {r[0] for r in conn.execute("SELECT DISTINCT blueprint_type_id FROM user_blueprints").fetchall()}
     prod_to_bp: dict[int, list[int]] = {}
+    #: 蓝图 → 它造出来的物品（图标用）—— 同一个查询顺手建反向表
+    bp_to_prod: dict[int, int] = {}
     for tid, bpid in conn.execute(
         "SELECT product_type_id, blueprint_type_id FROM bp.blueprint_products WHERE activity='manufacturing'"
     ).fetchall():
         prod_to_bp.setdefault(tid, []).append(bpid)
+        bp_to_prod.setdefault(int(bpid), int(tid))
     hangar_names = dict(conn.execute("SELECT id, name FROM hangars").fetchall())
     # 蓝图绑定张数（关联表口径）：plan_id -> [blueprint_id,...]；并行产线条数 need 张
     binding_map: dict[int, list[int]] = {}
@@ -217,6 +220,7 @@ def _load_enrich_data(conn):
     return {
         "owned_bp": owned_bp,
         "prod_to_bp": prod_to_bp,
+        "bp_to_prod": bp_to_prod,
         "hangar_names": hangar_names,
         "binding_map": binding_map,
         "need_map": need_map,
@@ -245,14 +249,17 @@ def _line_levels(bound: list[int], need: int, bp_level: dict[int, tuple[int, int
 
 
 def _enrich_rows(rows: list[dict], enrich: dict) -> list[dict]:
-    """补 has_image/group_id/child_level/category + 机库显示名 + 蓝图绑定张数（内存派生，不落库）。"""
+    """补 has_image/group_id/child_level/category/icon_type_id + 机库显示名 + 蓝图绑定张数（不落库）。"""
     owned_bp = enrich["owned_bp"]
     prod_to_bp = enrich["prod_to_bp"]
+    bp_to_prod = enrich.get("bp_to_prod") or {}
     hangar_names = enrich["hangar_names"]
     binding_map = enrich["binding_map"]
     need_map = enrich["need_map"]
     bp_level = enrich["bp_level"]
     cap_map = enrich["cap_map"]
+    from services.plan_job_kinds import product_is_blueprint
+
     for row in rows:
         ptid = row.get("product_type_id")
         has_bp = bool(row.get("assigned_blueprint_id")) or any(
@@ -261,6 +268,12 @@ def _enrich_rows(rows: list[dict], enrich: dict) -> list[dict]:
         row["has_image"] = has_bp
         row["group_id"] = row.get("group_number", 0)
         row["child_level"] = row.get("sub_level", 0)
+        # 图标用的 type_id：科研行的产物是**蓝图**，而图标缓存里只有物品（没有蓝图 png）——
+        # 直接拿 product_type_id 去查必然查不到，界面就退回类别首字（「科」）。
+        # 取「这张蓝图造出来的那个物品」的图标；反查不到留 0，界面自己回退。
+        row["icon_type_id"] = (
+            bp_to_prod.get(int(ptid or 0), 0) if product_is_blueprint(row.get("activity")) else int(ptid or 0)
+        )
         # 绑定张数：关联表优先，回退单值列
         pid = row.get("id")
         if pid is not None:

@@ -945,12 +945,16 @@ class ProductionLauncher(QObject):
     def _icon_view(plan: dict, cat: str) -> tuple[str, str, str]:
         """(图标 URL, 无图时的占位字, tooltip)。
 
+        图标 type_id 取 enrich 算好的 `icon_type_id`：科研行的产物是**蓝图**，而图标缓存里
+        只有物品、没有蓝图 png —— 直接用 `product_type_id` 必然查不到，界面就只剩类别首字
+        （用户看到的那个「科」）。`icon_type_id` 对科研行给的是「这张蓝图造出来的物品」。
+
         没有图标文件时用**类别首字**占位，不用 `category_symbol()` 的 emoji
         （⚙ 📋 ⚗ 💡）—— 它们来自符号/emoji 字体，在本窗的字体环境里会渲染成空白或豆腐块。
         """
         from ui_qml.icon_cache import item_icon_path
 
-        type_id = int(plan.get("product_type_id") or 0)
+        type_id = int(plan.get("icon_type_id") or plan.get("product_type_id") or 0)
         if type_id:
             path = item_icon_path(type_id)
             if os.path.isfile(path):

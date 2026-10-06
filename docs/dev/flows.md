@@ -318,10 +318,19 @@ services/logistics.py
 
 **「要绑哪张蓝图」的唯一取数**：`plan_aggregator.plan_input_blueprint_type_id` ——
 制造/反应 → 该产物的蓝图；拷贝/研究 → 被操作的那张 BPO；**发明 → 由产物那张 T2 反查出的 T1**
-（发明作业跑在 T1 上）。弹窗（`industry_dialog_queries.get_blueprint_picker_data`）与
-自动绑定（`plan_execution._available_blueprint_options`）共用它 —— 两处各写一份就会出现
-「弹窗说缺 T1 拷贝、自动绑定却去绑产物那张拷贝」（旧口径按 `product_type_id` 反查
-`activity='manufacturing'`，科研行必然空白，即用户报的「点『蓝图差几张』弹窗全空」）。
+（发明作业跑在 T1 上）。四个消费方共用它：绑定弹窗
+（`industry_dialog_queries.get_blueprint_picker_data`）、自动绑定
+（`plan_execution._available_blueprint_options`）、以及**复制蓝图名**的两条入口
+（产线小助手双击 / 计划表右键「复制蓝图名称」，都经
+`ui_data_service.resolve_plan_blueprint_name`）—— 发明行复制过去必须是 T1 拷贝，
+拿到产物那张 T2 在游戏里开不了工。各写一份就会出现「弹窗说缺 T1 拷贝、自动绑定却去绑
+产物那张拷贝」（旧口径按 `product_type_id` 反查 `activity='manufacturing'`，科研行必然空白，
+即用户报的「点『蓝图差几张』弹窗全空」）。
+
+**科研行的图标**：`plan_service._enrich_rows` 给每行算 `icon_type_id` —— 图标缓存里只有
+**物品**、没有蓝图 png，所以科研行取「这张蓝图造出来的物品」（`bp.blueprint_products` 的
+manufacturing 反向表）；制造/反应就是产物本身。界面（计划表图标列、产线小助手行首）只读
+这一列，缺图才回退类别首字。不这么取，科研行会退回类别首字「科」。
 
 **已知陷阱**（改这块前先看）：
 - `plan_execution.plan_blueprint_ready` 取代旧 `has_image` 口径；`has_image` 对科研行恒 False。

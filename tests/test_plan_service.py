@@ -32,6 +32,35 @@ def _patch_container(db_manager, monkeypatch):
     monkeypatch.setattr(plan_execution, "_container", lambda: container)
 
 
+def test_enrich_icon_type_id_uses_the_blueprint_product_for_science_rows():
+    """科研行的图标 type_id 取「这张蓝图造出来的物品」。
+
+    回归（2026-10-06 用户报）：科研行的 `product_type_id` 是**蓝图**，而图标缓存里只有
+    物品（没有蓝图 png）—— 拿它去查必然没有图标，产线小助手的行首于是只剩类别首字
+    「科」。制造行不受影响（产物本身就是物品）。
+    """
+    enrich = {
+        "owned_bp": set(),
+        "prod_to_bp": {},
+        "bp_to_prod": {3009: 2002},
+        "hangar_names": {},
+        "binding_map": {},
+        "need_map": {},
+        "bp_level": {},
+        "cap_map": {},
+    }
+    rows = plan_service._enrich_rows(
+        [
+            {"id": 1, "product_type_id": 2001, "activity": "manufacturing"},
+            {"id": 2, "product_type_id": 3009, "activity": "invention"},
+            {"id": 3, "product_type_id": 3008, "activity": "copying"},  # 蓝图没查到产物 → 0
+        ],
+        enrich,
+    )
+
+    assert [r["icon_type_id"] for r in rows] == [2001, 2002, 0]
+
+
 def test_insert_plan(db_manager, monkeypatch):
     _build_user(db_manager)
     _patch_container(db_manager, monkeypatch)

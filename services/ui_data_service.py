@@ -14,7 +14,6 @@ from typing import Any
 from core.container import get_container
 from domain.blueprint_sync import normalize_clipboard_attr, plan_group_sync, target_units
 from services import inventory_manager
-from services.blueprint_reader import get_blueprint_products
 from services.item_kind import is_material_name
 from services.name_resolver import resolve_item_name, resolve_system_name
 from services.plan_aggregator import aggregate_procurement
@@ -187,24 +186,22 @@ def get_item_names_batch(type_ids: list[int], db=None) -> dict[int, str]:
 
 
 def resolve_plan_blueprint_name(plan: dict, db=None) -> str:
-    """计划行 → 蓝图名（供产线小助手点击复制）。绝不把产物名当蓝图名。
+    """计划行 → **这次作业要用的那张蓝图**的名字（供产线小助手 / 计划表点击复制）。
 
-    1. ``plan.blueprint_type_id`` 直取 → ``resolve_item_name``（term→zh→en→id）；
-    2. 缺失 → ``blueprint_reader.get_blueprint_products`` 按产物反查制造蓝图；
-    3. 无蓝图（不可制造的共享材料子行）→ 回退 ``plan.product_name`` 保留旧行为。
+    口径与「绑定库存蓝图」弹窗、自动绑定同一处取数
+    （`plan_aggregator.plan_input_blueprint_type_id`）：
+      制造/反应 → 该产物的制造蓝图；拷贝/研究 → 被操作的那张 BPO；
+      **发明 → 输入 T1 蓝图**（游戏里发明作业选的是 T1 拷贝，把产物那张 T2 复制过去
+      根本开不了工 —— 用户 2026-10-06 报）。
+    无蓝图（不可制造的共享材料子行）→ 回退 ``plan.product_name`` 保留旧行为。
     """
     db = _resolve_db(db)
-    bpid = plan.get("blueprint_type_id")
-    if not bpid:
-        pid = int(plan.get("product_type_id") or 0)
-        if pid:
-            with db.connect("bp") as conn:
-                row = get_blueprint_products(conn, pid, "manufacturing")
-            if row:
-                bpid = int(row[0])
-    if not bpid:
-        return plan.get("product_name") or ""
-    with db.connect("ref") as conn:
+    with db.connect("user", "bp", "ref") as conn:
+        from services.plan_aggregator import plan_input_blueprint_type_id
+
+        bpid = plan_input_blueprint_type_id(conn, plan)
+        if not bpid:
+            return plan.get("product_name") or ""
         return resolve_item_name(conn, int(bpid))
 
 
