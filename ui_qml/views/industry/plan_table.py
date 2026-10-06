@@ -375,6 +375,9 @@ class PlanTable(QObject):
                 get_container().plan_repo.update_many(ids, **fields)
                 for pid in ids:
                     self._resync_bindings(pid)
+                if fields.get("mat_hangar_id"):
+                    # 换了材料机库：绑定蓝图如果还在别的机库，问一句要不要一起挪
+                    self._offer_blueprint_move(ids, int(fields["mat_hangar_id"]))
 
             # 同步内存模型
             for r in rows:
@@ -424,6 +427,45 @@ class PlanTable(QObject):
             resync_plan_bindings(int(plan_id))
         except Exception:
             log.exception("改流程/并行后重绑蓝图失败 plan=%s", plan_id)
+
+    def _offer_blueprint_move(self, plan_ids: list[int], mat_hangar_id: int) -> int:
+        """换了材料机库后：绑定蓝图还在别的机库 → 问一次要不要一起挪（返回挪了几张）。
+
+        用户 2026-10-06 报的场景：把计划改到「研发」，绑定的 T1 蓝图还留在「通用仓库」——
+        游戏那边作业装不下，而库存数据不会自己走。**点「是」才动库存行**；
+        不点就维持现状，由小助手/启动闸门报「缺蓝图」+ 说明它在哪。
+        """
+        from services import inventory_manager
+        from services.plan_execution import misplaced_bound_blueprints
+
+        if not plan_ids or not mat_hangar_id:
+            return 0
+        try:
+            misplaced = misplaced_bound_blueprints(list(plan_ids), int(mat_hangar_id))
+        except Exception:
+            log.exception("查绑定蓝图所在机库失败 plans=%s", plan_ids)
+            return 0
+        if not misplaced:
+            return 0
+
+        target = inventory_manager.get_hangar_name(mat_hangar_id) or f"机库 #{mat_hangar_id}"
+        froms = "、".join(sorted({str(m["hangar_name"]) for m in misplaced}))
+        kinds = sorted({str(m["name"]) for m in misplaced})
+        what = kinds[0] if len(kinds) == 1 else f"{len(kinds)} 种蓝图"
+
+        from ui_qml.bridge.message_dialog import FMessageDialog
+
+        if not FMessageDialog.question(
+            self,
+            "蓝图跟不跟着挪",
+            f"绑定的 {len(misplaced)} 张{what}还在「{froms}」，不在材料机库「{target}」。\n"
+            f"作业要用的蓝图得跟材料在同一个机库 —— 要一起挪到「{target}」吗？",
+        ):
+            return 0
+        moved = inventory_manager.move_blueprints_to_hangar([int(m["id"]) for m in misplaced], int(mat_hangar_id))
+        if moved:
+            FMessageDialog.information(self, "已挪动蓝图", f"{moved} 张蓝图已挪到「{target}」")
+        return int(moved)
 
     def _modify_runs(self, row: int) -> None:
         if self._model is None:

@@ -1735,6 +1735,44 @@ def _binding_shortfall(
     return None
 
 
+def misplaced_bound_blueprints(plan_ids: list[int], mat_hangar_id: int | None) -> list[dict]:
+    """这些计划绑定的、**不在** `mat_hangar_id` 的蓝图行（供「改了机库后问一句要不要一起挪」）。
+
+    每行：`{id, blueprint_type_id, name, hangar_id, hangar_name}`（id = `user_blueprints` 行 id，
+    可直接喂 `inventory_manager.move_blueprints_to_hangar`）。plan_ids 为空 / 未给机库 → 空列表。
+
+    与 `_binding_hangar_mismatch` 同一口径：那个出提示文案，这个出「能直接挪」的行。
+    """
+    if not plan_ids or not mat_hangar_id:
+        return []
+    from services.name_resolver import resolve_item_names_batch
+
+    with _container().db.connect("user", "bp", "ref") as conn:
+        placeholders = ",".join("?" for _ in plan_ids)
+        rows = conn.execute(
+            f"SELECT ub.id, ub.blueprint_type_id, ub.hangar_id, h.name "
+            f"FROM plan_blueprint_bindings b "
+            f"JOIN user_blueprints ub ON ub.id = b.blueprint_id "
+            f"LEFT JOIN hangars h ON h.id = ub.hangar_id "
+            f"WHERE b.plan_id IN ({placeholders}) AND COALESCE(ub.hangar_id, 0) <> ? "
+            f"ORDER BY ub.id",
+            (*plan_ids, int(mat_hangar_id)),
+        ).fetchall()
+        if not rows:
+            return []
+        names = resolve_item_names_batch(conn, sorted({int(r[1] or 0) for r in rows}))
+        return [
+            {
+                "id": int(r[0]),
+                "blueprint_type_id": int(r[1] or 0),
+                "name": names.get(int(r[1] or 0), str(r[1] or "")),
+                "hangar_id": int(r[2] or 0),
+                "hangar_name": str(r[3] or "") or f"机库 #{r[2] or '?'}",
+            }
+            for r in rows
+        ]
+
+
 def binding_shortfall(plan_id: int, *, mat_hangar_id: int | None = None) -> str | None:
     """预检该计划的蓝图绑定是否满足「一条产线一张、每张流程 ≥ runs」（+ 可选机库校验）。
 

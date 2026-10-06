@@ -245,6 +245,10 @@ services/logistics.py
     `binding_shortfall(plan_id, mat_hangar_id=…)`）；**完成链不传** —— 货都造出来了，蓝图当时在哪
     不该拦住记账（`complete_plan` / `complete_guard` 保持旧口径）。
     回归背景（2026-10-06 用户报）：改了机库、蓝图还在原机库，小助手既不提示「缺蓝图」也照常给「启动」。
+  - **改机库时连带问一句要不要挪蓝图**：`PlanTable._offer_blueprint_move` 在「编辑生产计划」
+    写入 `mat_hangar_id` 之后调 `misplaced_bound_blueprints(plan_ids, mat_hangar_id)` 拿「不在目标
+    机库的绑定行」，弹「绑定的 N 张蓝图还在「X」，要一起挪到「Y」吗？」—— 点「是」才走
+    `inventory_manager.move_blueprints_to_hangar`（库存是用户数据，不静默搬）。
   - **五条下线入口都要覆盖**：计划表格状态列（单行）、计划表格右键（批量）、采购页「一键完成」、
     工业页底部状态栏「全部下线」、产线启动小助手行内「可下线」（单行）。
     **单行**下线共用 `ui_qml/views/industry/complete_plans_dialog.py::complete_one_plan`

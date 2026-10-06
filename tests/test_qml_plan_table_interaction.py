@@ -798,3 +798,50 @@ def test_double_click_on_a_child_row_shows_the_hint_instead_of_the_editor(qapp, 
     finally:
         pane.dispose()
         _spin(60)
+
+
+def test_changing_mat_hangar_offers_to_move_bound_blueprints(qapp, monkeypatch):
+    """改了材料机库 → 绑定蓝图还在别的机库时问一次，点「是」才把库存行挪过去。
+
+    回归（2026-10-06 用户报）：把计划改到「研发」、绑定的 T1 蓝图还留在「通用仓库」，
+    界面既不提示缺蓝图、库存也不会自己走。问句里要写清「几张、从哪、到哪」。
+    """
+    from services import inventory_manager, plan_execution
+    from ui_qml.bridge import message_dialog
+    from ui_qml.views.industry.plan_table import PlanTable
+
+    table = PlanTable()
+    monkeypatch.setattr(
+        plan_execution,
+        "misplaced_bound_blueprints",
+        lambda ids, mat: [
+            {
+                "id": 7001,
+                "blueprint_type_id": 43546,
+                "name": "游击战指挥脉冲波蓝图 I",
+                "hangar_id": 4,
+                "hangar_name": "通用仓库",
+            }
+        ],
+    )
+    monkeypatch.setattr(inventory_manager, "get_hangar_name", lambda hid: "研发" if hid == 8 else "")
+    moved: list[tuple[list[int], int]] = []
+    monkeypatch.setattr(
+        inventory_manager, "move_blueprints_to_hangar", lambda ids, hid: moved.append((list(ids), hid)) or len(ids)
+    )
+    monkeypatch.setattr(message_dialog.FMessageDialog, "information", staticmethod(lambda *a, **k: None))
+    asked: list[str] = []
+    monkeypatch.setattr(
+        message_dialog.FMessageDialog, "question", staticmethod(lambda parent, title, text: asked.append(text) or True)
+    )
+    try:
+        assert table._offer_blueprint_move([364], 8) == 1
+        assert moved == [([7001], 8)], "点「是」才动库存行，且挪的是那几行"
+        assert "1 张" in asked[0] and "通用仓库" in asked[0] and "研发" in asked[0], asked
+
+        # 点「否」→ 一行都不动（不静默改库存）
+        monkeypatch.setattr(message_dialog.FMessageDialog, "question", staticmethod(lambda *a, **k: False))
+        assert table._offer_blueprint_move([364], 8) == 0
+        assert moved == [([7001], 8)]
+    finally:
+        table.deleteLater()

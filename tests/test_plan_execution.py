@@ -1303,6 +1303,23 @@ class TestBlueprintForceStart:
         assert res["ok"] is False and res["code"] == "blueprint_short", res
         assert "材料机库" in res["message"]
 
+    def test_misplaced_bound_blueprints_lists_only_the_ones_elsewhere(self, user_env):
+        """「改了机库后要不要一起挪」要拿到**具体哪几行、现在在哪**（点「是」直接挪）。"""
+        db = user_env.db
+        stray = inventory_manager.add_blueprint(1, 3001, is_bpo=False, runs=30, quantity=1)
+        target = inventory_manager.create_hangar("研发B")  # 机库名唯一：模块级夹具不清 hangars
+        home = inventory_manager.add_blueprint(target, 3001, is_bpo=False, runs=30, quantity=1)
+        plan_id = _insert_plan(db, runs=10, parallels=2, status="pending", mat_hangar_id=target)
+        bind_blueprints(plan_id, [stray, home])
+
+        rows = plan_execution.misplaced_bound_blueprints([plan_id], target)
+
+        assert [r["id"] for r in rows] == [stray], "只列不在目标机库的那几行"
+        assert rows[0]["blueprint_type_id"] == 3001
+        assert rows[0]["hangar_name"] == "矿仓"
+        assert plan_execution.misplaced_bound_blueprints([plan_id], None) == [], "未给机库不动库存"
+        assert plan_execution.misplaced_bound_blueprints([], target) == []
+
     def test_start_rejects_without_flag(self, user_env):
         plan, _bp = self._plan_with_short_bp(user_env)
         res = start_plan(plan, mat_hangar_id=None)
