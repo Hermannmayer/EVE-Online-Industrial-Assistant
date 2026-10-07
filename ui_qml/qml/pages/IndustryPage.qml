@@ -218,6 +218,17 @@ Item {
                 onActivated: page.industry.setFilterIndex(currentIndex)
             }
 
+            /* 类别筛选：与状态筛选**正交**（两者一起决定显示哪些行，见
+             * `industry_view._visible_rows`），几何与 `filterCombo` 完全同款 ——
+             * 并列两个下拉，不引入第三种控件样式（用户反馈：类别不该是 chips）。 */
+            FComboBox {
+                id: categoryCombo
+                model: page.industry ? page.industry.categoryOptions : []
+                implicitWidth: 96
+                implicitHeight: page.ctrlH
+                onActivated: page.industry.setCategoryIndex(currentIndex)
+            }
+
             FButton {
                 text: qsTr("刷新")
                 compact: true
@@ -533,6 +544,10 @@ Item {
         function onFilterChanged() {
             if (filterCombo.currentIndex !== page.industry.filterIndex)
                 filterCombo.currentIndex = page.industry.filterIndex
+        }
+        function onCategoryChanged() {
+            if (categoryCombo.currentIndex !== page.industry.categoryIndex)
+                categoryCombo.currentIndex = page.industry.categoryIndex
         }
     }
 }

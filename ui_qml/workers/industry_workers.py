@@ -190,17 +190,21 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
             return {}
         return out
 
-    def _apply_mother_subitem_cost(self, item, result, base_results) -> dict[int, SubitemCost]:
-        """拆解母项的自制子项制造价 → cost_overrides（**只供个人利润率使用**）。
+    def _apply_mother_subitem_cost(
+        self, item, result, base_results
+    ) -> tuple[float, float, float, dict[int, SubitemCost]]:
+        """拆解母项的**个人口径**（同组自制件按自制单件价、缺口按库存/市价）。
 
-        「成本」「利润」两列按**市场口径**（用户 2026-10-03 拍板）：因此本方法**不再覆写**
-        `result` 的 material_cost / profit / margin —— 它们保持 calculate_plan_metrics 的市场口径。
-        自制子项按自己制造价计的口径只体现在 `_calc_personal_margin(..., cost_overrides=...)`
-        产出的「个人利润率%」列（它反映的是自己的成本优势，与市场口径各归其位）。
+        「成本」「利润」「利润率」三列按**个人口径**（用户 2026-10-07 拍板；10-03 曾定市场口径）。
+        理由：市场口径把用户自己排产的自制件按**买入市价**计（灼烧XL 的紫外晶体 XL 市价一度是
+        自制价的 1.8 倍），于是同一行出现「利润 −2.88 亿」+「个人利润率 +21%」这种自相矛盾的
+        展示，核算对话框也跟大表对不上。现在两列都用 `adjust_mother_metrics` 的同一套算法，
+        与「个人利润率%」和查看核算汇总同源。
+        市场口径由调用方在调整前留存、写进 `market_margin` 列（「市场利润率%」= 假如全按市价买卖）。
 
-        返回 cost_overrides {子项 product_type_id: `SubitemCost`（单件制造价 + 覆盖数量）}；
-        非母项/无子项时返回空 dict。0 轮子项的制造价为 0，已被 `mother_subitem_cost_map`
-        剔除、进不了 override（否则个人利润率会凭空调高）。
+        返回 `(material_cost, profit, margin, cost_overrides)`；
+        非母项/无子项时原样返回 result 的三个市场值（此时市场口径 ≡ 个人口径），overrides 为空 dict。
+        0 轮子项的制造价为 0，已被 `mother_subitem_cost_map` 剔除、进不了 override。
         `output_qty_by_plan` 带上子项产线的**实际产出量**：子项产线排净需求，产出常小于母项
         需求，缺口得由消费方按库存/市价补齐（见 `services.plan_metrics.SubitemCost`）。
         """
@@ -212,11 +216,15 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
             output_qty_by_plan=self._subitem_output_qty(item, base_results),
         )
         if not sub_cost_map:
-            return {}
+            return (
+                result.get("material_cost", 0) or 0,
+                result.get("profit", 0) or 0,
+                result.get("margin", 0) or 0,
+                {},
+            )
         total_mult = max(int(item.get("runs", 1)), 1) * max(int(item.get("parallels", 1)), 1)
-        # 只取 overrides：mat/profit/margin 是个人口径，**不写回 result**（列语义走市场口径）
-        _mat, _profit, _margin, overrides = adjust_mother_metrics(result, sub_cost_map, total_mult)
-        return overrides
+        mat, profit, margin, overrides = adjust_mother_metrics(result, sub_cost_map, total_mult)
+        return mat, profit, margin, overrides
 
     def _calc_personal_margin(
         self, plan: dict, result: dict, cost_overrides: dict[int, SubitemCost] | None = None
@@ -253,11 +261,11 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         return self._inv_map
 
     def run(self):
-        """两遍计算：先算所有计划基准指标，再按子项制造价算拆解母项的**个人利润率**。
+        """两遍计算：先算所有计划基准指标，再按子项自制价折算拆解母项。
 
-        深度优先（子级深者先算），保证嵌套拆解里子项先按孙项制造价算好，
-        母项再读到正确的子项制造价。子项制造价只经 cost_overrides 进「个人利润率%」列；
-        **成本 / 利润 / 利润率列保持市场口径**（用户 2026-10-03 拍板），市场利润率另列留存。
+        深度优先（子级深者先算），保证嵌套拆解里子项先按孙项制造价算好，母项再读到正确的值。
+        **成本 / 利润 / 利润率 / ISK/h 走个人口径**（母项的同组自制件按自制单件价、缺口按库存/市价，
+        用户 2026-10-07 拍板）；**市场口径**另存 `market_margin`（「市场利润率%」列）。
 
         **估值失败的行不发出去**（评分异常返回空 dict、或 status 属于
         `_ZERO_COST_STATUSES`）——它们的 material_cost 是 0，写回会把库里的正确值清零。
@@ -304,11 +312,14 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
                 self.failed_names.append(str(item.get("product_name") or pid))
                 continue
             try:
-                # 调整前留存市场口径利润率（「市场利润率%」列）：_apply_mother_subitem_cost 不再
-                # 覆写 result["margin"]，所以这一份与「利润率%」列同值，二者都是市场口径。
+                # 调整前留存**市场口径**利润率（「市场利润率%」列 = 假如全按市价买卖）；
+                # 下面的 成本/利润/利润率 走个人口径（母项按同组自制件自制价折算）。
                 market_margin = result.get("margin", 0) or 0
-                overrides = self._apply_mother_subitem_cost(item, result, base_results)
+                mat_cost, profit, margin, overrides = self._apply_mother_subitem_cost(item, result, base_results)
                 personal = self._calc_personal_margin(item, result, overrides)
+                hours_total = result.get("calculated_time", 0) / 3600  # 秒→小时
+                # ISK/h 必须与上面那份利润同口径（否则同一行又会「利润正、时均负」）
+                iskph = profit / hours_total if hours_total > 0 else result.get("iskph", 0)
             except Exception:
                 # 单条计划数据异常（如子项制造价调整收到非法值）不应让整个批量重算线程
                 # 崩溃并抛到 Qt 事件循环；跳过该条，保留库中原值。
@@ -318,15 +329,15 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
             results.append(
                 (
                     pid,
-                    result.get("profit", 0),  # 市场口径（industry_view 写 production_plans.profit）
-                    result.get("margin", 0),  # 市场口径（写 production_plans.margin，与 profit 自洽）
+                    profit,  # 个人口径（写 production_plans.profit）
+                    margin,  # 个人口径（写 production_plans.margin，与 profit 自洽）
                     result.get("score", 0),
-                    result.get("iskph", 0),
-                    result.get("material_cost", 0),  # 市场口径（写 production_plans.material_cost）
-                    result.get("calculated_time", 0) / 3600,  # 秒→小时
+                    iskph,
+                    mat_cost,  # 个人口径（写 production_plans.material_cost）
+                    hours_total,
                     result.get("daily_output", 0),
                     personal,  # 个人（库存/自制）口径 → production_plans.personal_margin
-                    market_margin,  # 市场口径 → production_plans.market_margin（与 margin 同值）
+                    market_margin,  # 市场口径 → production_plans.market_margin（与「市场利润率%」列同值）
                 )
             )
         self.finished_signal.emit(results)

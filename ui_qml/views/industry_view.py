@@ -550,13 +550,34 @@ class IndustryPage(QObject):
             log.exception("读取库存成本快照失败")
             return frozenset()
 
-    def _recalc_settings_fp(self) -> tuple:
-        """批量估值所用的完整口径（价格设置 + 库存快照），用于识别 worker 期间的口径变更。
+    def _price_data_fp(self) -> str | None:
+        """市场数据版本 = `market_prices` 里最新的 `fetch_time`（读不到 → None）。
 
-        库存必须进指纹：估值读的是 `get_inventory_cost_map()`，手动粘贴导入库存后
-        口径就变了。不含库存时 `_auto_calculate_plans` 无从察觉，成本/利润/利润率会
-        一直停在旧值，直到用户编辑计划、改价格设置或重启（用户要的正是「不要我手动
-        来回切页」）。
+        「更新价格」只换库里的**价格**、不动价格设置，所以不上这一项的话指纹不变 → 心跳不重算 →
+        「成本/利润/利润率」停在旧价格，而每次 `load_plans` 都实时重算的「自制成本/件」已是新价格
+        —— 同一行两代价格（用户实测：紫外晶体 XL 从 ~97 万跌到 ~51 万，它占该批材料 60%，
+        整条产线从「亏 2.88 亿」翻成「赚 2.88 亿」，大表却还挂着旧的那个负数）。
+        有索引 `idx_market_prices_fetch_time`，一次 `MAX(fetch_time)`。
+        """
+        try:
+            latest = get_container().market_repo.get_latest_fetch_time()
+            return str(latest) if latest else None
+        except Exception:
+            # 读不到就返回 None：宁可指纹多动一轮，也不能把失败当成「价格没变」而永久陈旧
+            log.exception("读取价格数据版本失败")
+            return None
+
+    def _recalc_settings_fp(self) -> tuple:
+        """批量估值所用的完整口径（价格设置 + **市场数据版本** + 库存快照），用于识别口径变更。
+
+        三样都必须进指纹，否则成本/利润列会一直停在旧值，直到用户手动刷新：
+        - 价格设置（hub / 卖价买价 / 倍率）：改了口径就该重算。
+        - **市场数据版本**（`market_prices` 最新 `fetch_time`）：点「更新价格」后必须自己发现
+          —— 库里的数字变了、设置没变，只靠设置项察觉不到（用户报的「大表利润还是旧价格」）。
+        - 库存快照（`get_inventory_cost_map()`）：手动粘贴导入库存后成本价变了，估值结果也变。
+
+        调用点在心跳里「先取指纹、再比基线」，没变就一次评分都不排 —— 所以这里每 30s 只多一次
+        索引 MAX 查询。
         """
         ps = get_price_settings()
         return (
@@ -566,6 +587,7 @@ class IndustryPage(QObject):
             ps.get("prod_hub") or "Jita",
             ps.get("prod_price_type") or "sell",
             round(float(ps.get("prod_mult") or 1.0), 4),
+            self._price_data_fp(),
             self._inventory_fp(),
         )
 

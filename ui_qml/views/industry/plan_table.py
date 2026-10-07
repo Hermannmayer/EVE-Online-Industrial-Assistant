@@ -319,11 +319,12 @@ class PlanTable(QObject):
             char_name = updated.get("char_name", "").strip()
             char_config = resolve_char_config(char_name=char_name) or {}
             metrics = get_container().scoring_service().calculate_plan_metrics(plan, char_config)
-            # ⚠️ 这里**不**把母项材料成本换成同组子项的自制制造价：`adjust_mother_metrics`
-            # 产出的是**个人（自制/库存）口径**，而「成本/利润/利润率」三列按**市场口径**
-            # （用户 2026-10-03 拍板）。批量重算同口径：`industry_workers._apply_mother_subitem_cost`
-            # 只取 overrides 喂「个人利润率%」列，不写回 material_cost/profit/margin。
-            # 个人口径的补充由随后的批量重算（`plan_updated` → `load_plans`）落列，此处不越权。
+            # 这里填的是 `calculate_plan_metrics` 的**市场口径**一版，随后的批量重算
+            # （`plan_updated` → `load_plans` → `BatchPlanCalcWorker`）会按**个人口径**覆盖：
+            # 母项的同组自制件按自制单件价、缺口按库存/市价（用户 2026-10-07 拍板；
+            # 与「个人利润率%」和查看核算汇总同一算法）。**别在编辑路径里自己折一遍** ——
+            # 折算要用 `output_qty_by_plan`（子项产线实际产出的数量）与缺口规则，
+            # 抄一份必然与 `industry_workers._apply_mother_subitem_cost` 漂移。
             plan.update(metrics)
 
             self._rebuild_subitems()

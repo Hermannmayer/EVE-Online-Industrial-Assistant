@@ -31,15 +31,6 @@ Item {
      */
     readonly property var planBridge: typeof planTableBridge !== "undefined" ? planTableBridge : null
 
-    /* 工业页骨架桥（context property `bridge`，由 `IndustryPage.qml` 那一层注入）——
-     * 类别筛选（制造 / 科研 / 反应）挂在它上面。别名不与 context property 同名，
-     * 理由同上一行。 */
-    readonly property var industryBridge: typeof bridge !== "undefined" ? bridge : null
-    /* 类别筛选条高度：**没有桥就 0**。独立挂载本组件时（只注入 planTableBridge 的
-     * 宿主，如 `test_qml_plan_table_interaction`）没有可绑的筛选项，也就不该占位 ——
-     * 表格起始 y 保持历史值，按 headerH 换算的点击坐标不受影响。 */
-    readonly property int categoryBarH: industryBridge !== null ? Math.max(30, Math.round(32 * Theme.fontScale)) : 0
-
     readonly property int fntTiny: Math.round(10 * Theme.fontScale)
     readonly property int fntSmall: Math.round(11 * Theme.fontScale)
     readonly property int fntBase: Math.round(12 * Theme.fontScale)
@@ -218,48 +209,6 @@ Item {
     }
 
     Component.onCompleted: initColumns()
-
-    // ═══════════════════════════════════════════════════════════
-    //  类别筛选（制造 / 科研 / 反应）
-    // ═══════════════════════════════════════════════════════════
-
-    /* 与工具栏的状态筛选**正交**：两者一起决定显示哪些行（见
-     * `industry_view._visible_rows`）。当前项用主色实心，其余描边 —— 与工具栏
-     * 「数据视图 / 甘特图」那组分段切换同款（`FButton` 的 `primary` 开关）。
-     * 颜色/尺寸一律走 Theme 单例，不写裸色值。
-     *
-     * ⚠️ 只筛**显示行**，不改任何一行的材料判定/成本/利润：缺料与「等 N 条子项」
-     * 一律按全量计划算（用户报的「筛选后材料不足替代等待子项」）。 */
-    Item {
-        id: categoryBar
-        objectName: "categoryBar"
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
-        height: root.categoryBarH
-        visible: height > 0
-
-        Row {
-            anchors.left: parent.left
-            anchors.leftMargin: Math.round(8 * Theme.fontScale)
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Math.round(6 * Theme.fontScale)
-
-            Repeater {
-                model: root.industryBridge ? root.industryBridge.categoryOptions : []
-
-                FButton {
-                    required property int index
-                    required property string modelData
-                    text: modelData
-                    compact: true
-                    primary: root.industryBridge !== null && root.industryBridge.categoryIndex === index
-                    onClicked: if (root.industryBridge)
-                        root.industryBridge.setCategoryIndex(index)
-                }
-            }
-        }
-    }
 
     Connections {
         target: root.planBridge
@@ -558,8 +507,6 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        // 类别筛选条占位时整表下移：表头与数据行的起点随之走（点击坐标按此换算）
-        anchors.topMargin: root.categoryBarH
         height: root.headerH
         syncView: tableView
         clip: true
@@ -702,7 +649,7 @@ Item {
                 px += root.widthOf(i)
             return px - tableView.contentX
         }
-        y: root.categoryBarH + root.editRow * root.rowH - tableView.contentY + headerView.height
+        y: root.editRow * root.rowH - tableView.contentY + headerView.height
         width: root.editCol >= 0 ? root.widthOf(root.editCol) : 0
         height: root.rowH
         font.pixelSize: root.fntBase

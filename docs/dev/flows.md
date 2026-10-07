@@ -192,6 +192,17 @@ services/logistics.py
   （断言的是**调用次数**而不是耗时 —— 耗时断言在 CI 上会飘）。
 - 旁路：`plan_aggregator` 是**采购/需求聚合**，不是计划展开
 - 价格口径（工具栏双行价格设置）：`mat_hub/mat_price_type/mat_mult` 与 `prod_hub/prod_price_type/prod_mult` 由 `top_toolbar.get_price_settings()` 提供，消费方必须**整套一起透传**（漏一项就是「改设置数字不动」的缺陷）：
+  - **「成本 / 利润 / 利润率」三列 = 个人口径**（用户 2026-10-07 拍板，推翻 10-03 的市场口径）：
+    拆解母项的同组自制件按**自制单件价**计、缺口按库存/市价（`plan_metrics.adjust_mother_metrics`，
+    与「个人利润率%」和查看核算汇总同一套算法）。原因：市场口径把用户自己排产的自制件按**买入市价**计，
+    同一行会出现「利润 −2.88 亿」+「个人利润率 +21%」这种自相矛盾，核算对话框也跟大表对不上。
+    **市场口径**另存 `production_plans.market_margin`（「市场利润率%」列）= 假如全按市价买卖的参考；
+    `ISK/h` 必须与当行利润同口径（`profit ÷ 耗时`），别取市场口径的 `metrics["iskph"]`。
+  - **心跳重算的指纹必须含「市场数据版本」**（`industry_view._price_data_fp()` = `market_prices`
+    最新 `fetch_time`）：「更新价格」只换库里的价格、不动价格设置，缺这一项指纹不变 → 心跳不重算 →
+    成本/利润停在旧价格，而每次 `load_plans` 都实时重算的「自制成本/件」已是新价格（实测：
+    紫外晶体 XL 从 ~97 万跌到 ~51 万，占该批材料 60%，整条产线从亏 2.88 亿翻成赚 2.88 亿，
+    大表却还挂着旧那个负数）。指纹 = 价格设置 + 市场数据版本 + 库存快照，三样缺一不可。
   - 计划成本/利润：`BatchPlanCalcWorker`（表格批量重算）、`industry_view._on_plan_add`、`plan_table._view_cost_breakdown` → 成本明细弹窗、`parent_decompose_dialog`、`blueprint_tab` 的「加入制造规划」预览 → `ScoringService.calculate_plan_metrics(mat_mult=, prod_mult=)` → `scoring_facade.calc_manufacturing_score` → `domain.scoring`
   - ⚠️ `scoring_facade` 有 TTL 缓存，`mat_price_mult/prod_price_mult` **必须进 cache_key**，否则同一类陈旧缓存缺陷会在评分层复现
   - 倍率只作用于玩家买卖价：材料价乘 `mat_mult`、成品价乘 `prod_mult`；**EIV 用的 adjusted_price 不乘**（CCP 官方估价，与买卖价无关）

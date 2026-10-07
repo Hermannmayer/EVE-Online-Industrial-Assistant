@@ -258,10 +258,11 @@ def test_worker_personal_margin(qapp, sample_char_config):
     assert w._inv_map is not None  # 快照只取一次
 
 
-def test_mother_subitem_override_not_written_back(qapp, sample_char_config, temp_db, monkeypatch):
-    """拆解母项：子项制造价只作 cost_overrides 返回，**不覆写** result 的成本/利润（市场口径）。
+def test_mother_subitem_override_feeds_cost_and_profit(qapp, sample_char_config, temp_db, monkeypatch):
+    """拆解母项：子项自制价既进 overrides（供个人利润率），也**折算进成本/利润/利润率**。
 
-    2026-10-03 用户拍板：「成本/利润」列走市场口径，子项制造价只进个人利润率。
+    用户 2026-10-07 拍板：成本/利润 改个人口径（10-03 曾定市场口径），所以这里返回的是
+    「(成本, 利润, 利润率, overrides)」四元组，`result` 本身仍不被修改。
     子项产线的**产出量**走 `output_qty_by_plan`（这里 2 轮×1 件 = 2 件）→ 制造价摊成单件。
     """
     from ui_qml.workers.industry_workers import BatchPlanCalcWorker
@@ -305,17 +306,20 @@ def test_mother_subitem_override_not_written_back(qapp, sample_char_config, temp
             {"material_cost": 4800.0, "breakdown": {"installation_fee": 100.0}},
         ),
     }
-    overrides = w._apply_mother_subitem_cost(mother, result, base_results)
+    mat, profit, margin, overrides = w._apply_mother_subitem_cost(mother, result, base_results)
     # 子项制造价 = 材料 4800 + 作业费 100×2 runs = 5000（整线），产出 2 件 → 单件 2500
     assert overrides == {2002: SubitemCost(unit_cost=2500.0, covered_qty=2.0)}
-    # 成本/利润/利润率保持市场口径（未被个人口径覆写）
+    # 个人口径成本 = 50（未拆解的料）+ 2×2500（子项自制件）；利润/利润率随之重算
+    assert mat == pytest.approx(5050.0, abs=0.01)
+    assert profit == pytest.approx(20000.0 - 5050.0 - 100.0, abs=0.01)
+    assert margin == pytest.approx(profit / (mat + 100.0) * 100, abs=0.01)
+    # 入参 result 不被修改（调用方还要拿它留存市场口径）
     assert result["material_cost"] == pytest.approx(2048.0, abs=0.01)
     assert result["profit"] == pytest.approx(17852.0, abs=0.01)
-    assert result["margin"] == pytest.approx(17852 / 2148 * 100, abs=0.01)
 
 
 def test_ungrouped_mother_not_adjusted(qapp, sample_char_config):
-    """无子项的普通计划不受子项分摊影响。"""
+    """无子项的普通计划不受子项分摊影响：四个返回值都原样回吐 result 的口径。"""
     from ui_qml.workers.industry_workers import BatchPlanCalcWorker
 
     w = BatchPlanCalcWorker(
@@ -335,9 +339,8 @@ def test_ungrouped_mother_not_adjusted(qapp, sample_char_config):
         "profit": 0,
         "margin": 0,
     }
-    overrides = w._apply_mother_subitem_cost(plan, result, {1: (plan, result)})
-    assert overrides == {}
-    assert result["material_cost"] == pytest.approx(0, abs=0.01)  # 未调整
+    mat, profit, margin, overrides = w._apply_mother_subitem_cost(plan, result, {1: (plan, result)})
+    assert (mat, profit, margin, overrides) == (0, 0, 0, {})
 
 
 def test_personal_margin_uses_cost_override(qapp):
@@ -414,8 +417,12 @@ def test_adjust_mother_metrics_does_not_mutate_input():
     assert "material_cost" not in metrics  # 入参未被修改
 
 
-def test_worker_run_preserves_market_margin(qapp, sample_char_config, temp_db, monkeypatch):
-    """run()：成本/利润列保持市场口径，个人利润率走子项自制单件价（显著高于市场利润率）。"""
+def test_worker_run_uses_personal_basis_for_cost_profit(qapp, sample_char_config, temp_db, monkeypatch):
+    """run()：成本/利润/利润率/ISK/h 走**个人口径**（同组自制件按自制单件价），市场口径另存 market_margin。
+
+    用户 2026-10-07 拍板：之前成本/利润按市场口径（自制件按买入市价），于是同一行会出现
+    「利润 −2.88 亿」+「个人利润率 +21%」自相矛盾、核算对话框也跟大表对不上。
+    """
     from unittest.mock import patch
 
     from ui_qml.workers.industry_workers import BatchPlanCalcWorker
@@ -476,18 +483,20 @@ def test_worker_run_preserves_market_margin(qapp, sample_char_config, temp_db, m
     by_id = {r[0]: r for r in captured[0]}
     mother_out = by_id[1]
     market_margin = (20000.0 - 2048.0 - 100.0) / (2048.0 + 100.0) * 100.0
+    personal_material = 10 * 5.0 + 2 * 600.0  # 子项 2 件按自制单件价 600（1200 整线 ÷ 2 件）
+    personal_profit = 20000.0 - personal_material - 100.0
+    personal_margin = personal_profit / (personal_material + 100.0) * 100.0
     # 市场利润率列 = 调整前留存的市场口径
     assert mother_out[9] == pytest.approx(market_margin, abs=0.01)
-    # 成本/利润列 = 市场口径（10×5 + 2×999 = 2048），子项制造价不再覆写它们
-    assert mother_out[5] == pytest.approx(2048, abs=0.01)
-    assert mother_out[1] == pytest.approx(20000.0 - 2048.0 - 100.0, abs=0.01)
-    # 个人利润率（自制成本）：子项 2 件按自制单件价 600（1200 整线 ÷ 2 件）计
-    assert mother_out[8] == pytest.approx(
-        (20000.0 - (50.0 + 2 * 600.0 + 100.0)) / (50.0 + 2 * 600.0 + 100.0) * 100, abs=0.01
-    )
+    # 成本/利润/利润率列 = 个人口径（自制件按自制价，不再按 999 的买入市价）
+    assert mother_out[5] == pytest.approx(personal_material, abs=0.01)
+    assert mother_out[1] == pytest.approx(personal_profit, abs=0.01)
+    assert mother_out[2] == pytest.approx(personal_margin, abs=0.005)
+    # ISK/h 与利润同口径：耗时 1h → 就是利润本身（旧写法取市场口径的 iskph）
+    assert mother_out[4] == pytest.approx(personal_profit, abs=0.01)
+    # 个人利润率（库存成本口径；本用例无库存 → 与利润率列同值）
+    assert mother_out[8] == pytest.approx(personal_margin, abs=0.01)
     assert mother_out[8] > market_margin
-    # 利润率列与利润同口径（市场），不再被个人口径覆写
-    assert mother_out[2] == pytest.approx(market_margin, abs=0.005)
 
 
 # ════════════════════════════════════════════════════════════════
