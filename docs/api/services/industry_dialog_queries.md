@@ -22,7 +22,7 @@ def get_output_summary(db) -> list[dict[str, Any]] | None
 
 查询所有生产计划并计算产出价值与溢出；无计划时返回 None。
 
-定义行：`40`
+定义行：`41`
 
 ### `get_blueprint_requirements`
 
@@ -32,7 +32,7 @@ def get_blueprint_requirements(db) -> dict[str, Any]
 
 查询活跃计划、展开蓝图需求并对比库存。
 
-定义行：`73`
+定义行：`74`
 
 ### `get_blueprint_picker_data`
 
@@ -42,7 +42,7 @@ def get_blueprint_picker_data(db, plan: dict) -> dict[str, Any]
 
 「绑定库存蓝图」弹窗的数据：该计划要绑的输入蓝图 + 库存里可选的行。
 
-定义行：`113`
+定义行：`114`
 
 ### `get_child_parallel_data`
 
@@ -52,7 +52,7 @@ def get_child_parallel_data(db, plans: list[dict], sub_plans: list[dict]) -> tup
 
 子项并行弹窗初始化数据：母项需求 / 单轮产出 / 格式化时长 / 成品库存。
 
-定义行：`145`
+定义行：`146`
 
 ### `get_mass_parallel_data`
 
@@ -62,7 +62,7 @@ def get_mass_parallel_data(db, plans: list[dict], sub_plans: list[dict]) -> tupl
 
 大规模并行弹窗初始化数据：母项需求 / 单轮产出 / 单线总时长秒 / 成品库存。
 
-定义行：`168`
+定义行：`169`
 
 ### `_child_available_stock`
 
@@ -72,7 +72,7 @@ def _child_available_stock(plans: list[dict], sub_plans: list[dict]) -> dict[int
 
 每个子项成品在**首个引用母项的制造机库**里的库存 &#123;product_type_id: 数量&#125;。
 
-定义行：`189`
+定义行：`190`
 
 ### `_first_mother_hangar`
 
@@ -82,7 +82,7 @@ def _first_mother_hangar(child: dict, mothers: dict[int, dict], plans: list[dict
 
 子项对应的「首个引用母项」的材料机库 id（取不到返回 None）。
 
-定义行：`217`
+定义行：`218`
 
 ### `_child_demand_from_rows`
 
@@ -92,7 +92,7 @@ def _child_demand_from_rows(sub_plans: list[dict], conn, plans: list[dict]) -> d
 
 共享子项需求：优先读 v12 引用式 demand 列；老库按母项 parent_needs 推导。
 
-定义行：`237`
+定义行：`238`
 
 ### `get_materials_summary`
 
@@ -102,7 +102,7 @@ def get_materials_summary(db) -> dict[str, Any] | None
 
 查询活跃计划 BOM、库存与市场价；无活跃计划时返回 None。
 
-定义行：`244`
+定义行：`245`
 
 ### `get_max_group_number`
 
@@ -112,7 +112,7 @@ def get_max_group_number(db) -> int
 
 返回 production_plans 当前最大 group_number，无记录为 0。
 
-定义行：`284`
+定义行：`285`
 
 ### `get_subitem_plans`
 
@@ -122,7 +122,7 @@ def get_subitem_plans(db, group_number: int, deeper_than: int) -> list[dict[str,
 
 查询同组更深子项产线，按 sub_level DESC, id DESC。
 
-定义行：`291`
+定义行：`292`
 
 ### `get_item_name`
 
@@ -132,7 +132,7 @@ def get_item_name(db, type_id: int) -> str
 
 按旧 UI 语义查询 item 表名称：zh_name → en_name → str(type_id)。
 
-定义行：`301`
+定义行：`302`
 
 ### `get_system_name`
 
@@ -142,7 +142,7 @@ def get_system_name(db, solar_system_id: int) -> str
 
 查询星系显示名（中文 (英文)）。
 
-定义行：`308`
+定义行：`309`
 
 ### `set_plan_deposit_hangar`
 
@@ -152,7 +152,7 @@ def set_plan_deposit_hangar(db, plan_id: int, hangar_id: int | None) -> None
 
 更新计划的下线产出机库。
 
-定义行：`316`
+定义行：`317`
 
 ### `_query_blueprint_output`
 
@@ -160,11 +160,9 @@ def set_plan_deposit_hangar(db, plan_id: int, hangar_id: int | None) -> None
 def _query_blueprint_output(conn, product_type_id: int) -> int
 ```
 
-::: warning ⚠️ 待补 docstring
-此函数暂无 docstring，欢迎补充。
-:::
+单轮产出量（按产物取配方，缺省 1）。统一入口会排除 CCP 测试蓝图。
 
-定义行：`330`
+定义行：`331`
 
 ### `_query_blueprint_duration_sec`
 
@@ -176,7 +174,7 @@ def _query_blueprint_duration_sec(conn, blueprint_type_id) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`338`
+定义行：`337`
 
 ### `_format_blueprint_duration`
 
@@ -188,4 +186,4 @@ def _format_blueprint_duration(conn, blueprint_type_id) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`346`
+定义行：`345`

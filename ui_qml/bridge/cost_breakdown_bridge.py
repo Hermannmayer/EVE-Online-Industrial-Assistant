@@ -4,10 +4,18 @@
 左边材料清单（6 列），右边三块「标签: 值」明细（制造作业费 / 市场费用 / 汇总）。
 
 计算口径：统一走 `scoring_service().calculate_plan_metrics()`（与主表
-批量重算同一条路径），拆解母项时自制子项按制造价计入成本而非市场买入价
-（`_compute_subitem_costs`，含嵌套拆解的自底向上算法）。唯一的口径修正：子项成本映射
-改为复用 `plan_metrics.mother_subitem_cost_map` / `child_manufacturing_cost`，**制造价为 0
-的子项（0 轮产线）不进映射**、该行回退市价 —— 与主表批量重算那条路径对齐。
+批量重算同一条路径）。**对话框整块是个人口径**（同组自制子项按自制价，缺口按市价/库存），
+市场口径只以「调整前的 margin」出现在两处标注里 —— 两个数挨着显示，不能看起来像同一个。
+
+拆解母项时自制子项按制造价计入成本而非市场买入价（`_compute_subitem_costs`，含嵌套拆解的
+自底向上算法），映射值走 `plan_metrics.SubitemCost` 契约（**单件制造价 + 子项自己的产出量**）：
+
+- 单件制造价 = 子项整线制造价 ÷ 子项产出量（`runs × parallels × 每轮产出`，每轮产出按该计划的
+  activity 查配方）。子项产线排的是**净需求**（库存已被扣掉），产出量常小于母项需求，
+  于是**缺口按市价补齐** —— 旧口径把整线价当成「覆盖全部需求」，等于把缺口算成 0 成本。
+- **制造价为 0 的子项（0 轮产线）不进映射**、该行回退市价 —— 与主表批量重算那条路径对齐。
+- 同一汇总框里的 `ISK/h` 必须与调整后的利润同口径（直接用 `profit / hours` 重算），
+  不再取市场口径的 `metrics["iskph"]`（实测利润为个人口径、ISK/h 取市场口径时符号相反）。
 
 与原版的两处差异：
 
@@ -29,6 +37,7 @@ from PySide6.QtCore import Property, Signal
 from core.container import get_container
 from core.formatting import fmt_isk_exact
 from services.industry_dialog_queries import get_subitem_plans, get_system_name
+from services.plan_metrics import SubitemCost
 from ui_qml.bridge.summary_dialog import cell
 from ui_qml.dialog_host import DialogBridge, QmlDialog
 from ui_qml.theme import registry as theme
@@ -146,18 +155,22 @@ class CostBreakdownBridge(DialogBridge):
         )
 
         # 拆解母项：自制子项按其制造价（材料+作业费）计入成本，而非市场买入价
-        sub_cost_map: dict[int, float] = {}
+        sub_cost_map: dict[int, SubitemCost] = {}
         try:
             gid = self._plan.get("group_id") or self._plan.get("group_number")
             my_lvl = int(self._plan.get("sub_level") or self._plan.get("child_level") or 0)
             if gid:
-                sub_cost_map = self._compute_subitem_costs(gid, my_lvl)
+                sub_cost_map = self._compute_subitem_costs(
+                    gid, my_lvl, need_by_type=self._material_needs(metrics, total_mult)
+                )
         except Exception:
             from core.logger import log
 
             log.exception("计算拆解子项成本失败: %s", self._plan.get("product_name"))
             sub_cost_map = {}
 
+        # 市场口径利润率 = 调整前留存（个人口径的调整只换材料成本，收入/费用不动）
+        market_margin = metrics.get("margin", 0) or 0
         if sub_cost_map:
             from services.scoring_service import ScoringService
 
@@ -169,8 +182,10 @@ class CostBreakdownBridge(DialogBridge):
             margin = metrics.get("margin", 0)
 
         score = metrics.get("score", 0) or 0
-        isk_per_hour = metrics.get("iskph", 0)
         hours = metrics.get("calculated_time", 0) / 3600 if metrics.get("calculated_time") else 0
+        # ISK/h 与上面这份利润**同口径**：手动重算，不取市场口径的 `metrics["iskph"]`
+        # （实测原写法在同一个汇总框里给出「利润 +3.4 亿 / ISK/h −514 万」这种自相矛盾的值）
+        isk_per_hour = profit / hours if hours > 0 else 0
         daily_output = metrics.get("daily_output", 0)
 
         # 统一从 calculate_plan_metrics 的结果取 breakdown/材料/状态（避免双重解析不一致，
@@ -196,9 +211,11 @@ class CostBreakdownBridge(DialogBridge):
 
         materials = metrics.get("materials", [])
         self._status_text = (
-            f"计划设定: {parallels} 并行 × {runs} 流程 = {total_mult} 总流程 "
+            f"口径: 个人口径（同组自制子项按自制价，缺口按市价/库存）"
+            f" | 计划设定: {parallels} 并行 × {runs} 流程 = {total_mult} 总流程 "
             f"| 共 {len(materials)} 种材料 | 评分 {score:.1f} | 利润 {fmt_isk_exact(profit)} | 利润率 {margin:.1f}% "
-            f"| 自制成本 = 料+作业费÷单轮产出（同一价格口径，— 表示无制造蓝图）"
+            f"（市场口径 {market_margin:.1f}%）"
+            f"| 自制成本 = 料+作业费(+研究费)÷单轮产出，不含卖出费用（— 表示无制造蓝图）"
         )
 
         # ── 制造作业费 ──
@@ -252,6 +269,8 @@ class CostBreakdownBridge(DialogBridge):
             _field("收入:", fmt_isk_exact(revenue * total_mult)),
             _field("利润:", fmt_isk_exact(profit), "GREEN" if profit >= 0 else "RED", strong=True),
             _field("利润率:", f"{margin:.2f}%"),
+            # 两个口径挨着显示且各自标明来源：个人口径（上面那行）与市场口径不是同一个数
+            _field("市场口径利润率:", f"{market_margin:.2f}%", "TEXT_SECONDARY"),
             _field("耗时:", f"{hours:.2f}h"),
             _field("日产能:", f"{daily_output:.1f} 件/天"),
             _field("日利润:", fmt_isk_exact(daily_profit)),
@@ -259,15 +278,17 @@ class CostBreakdownBridge(DialogBridge):
             _field("ISK/h:", fmt_isk_exact(isk_per_hour)),
         ]
 
-    def _build_material_rows(self, metrics: dict, total_mult: int, sub_cost_map: dict[int, float]) -> None:
+    def _build_material_rows(self, metrics: dict, total_mult: int, sub_cost_map: dict[int, SubitemCost]) -> None:
         from domain.formulas import material_total_for_runs
 
         structure_mat_saving = metrics.get("structure_mat_saving", 1.0)
         me = self._plan.get("me_level", 0) or 0
         materials = metrics.get("materials", [])
-        # 「这件料自己造要多少钱」——与「可制造物品」窗口的成本列**同源**（`cost_per_unit`）：
-        # 料钱 + 作业费（含 SCI/设施税）÷ 单轮产出，用用户手上最好的那张蓝图的 ME/TE，
-        # T2 含拷贝/发明研究费，**不递归**。算不出的（矿物/数据核心/解码器等无制造蓝图）显示 `—`。
+        # 「这件料自己造要多少钱」—— 口径 = `domain.scoring.make_cost_per_unit`：
+        # 料钱 + 作业费（含 SCI/设施税）+ 研究费 ÷ 单轮产出，用用户手上最好的那张蓝图的 ME/TE，
+        # **不含**经纪费/改单费/销售税（那是卖出去才产生的花费，且按售价算）。
+        # 本列**不递归**（不把「料也自己造」逐层算下去）。算不出的（矿物/数据核心/解码器等
+        # 无制造蓝图）显示 `—`。
         make_costs = self._unit_make_costs([m.get("type_id") for m in materials])
         rows: list[dict] = []
         for mat in materials:
@@ -281,11 +302,21 @@ class CostBreakdownBridge(DialogBridge):
                     mat, total_mult, me_level=me, structure_mat_saving=structure_mat_saving
                 )
             mid = mat.get("type_id")
-            if mid in sub_cost_map:
-                # 自制子项：单价 = 子项制造价 / 本计划总需求，小计 = 子项制造价
-                sub_total = sub_cost_map[mid]
+            sub = sub_cost_map.get(int(mid)) if mid else None
+            if sub is not None:
+                # 自制子项：覆盖到的那部分（= min(需求, 子项产出量)）按子项单件制造价，
+                # 缺口按市价补齐（子项产线排的是净需求，差的那批在库存里/要买）。
+                # 覆盖量拿不到（无配方）时按「整线覆盖全部需求」处理，与 adjust_mother_metrics 一致。
+                covered = float(total_qty) if sub.covered_qty is None else min(float(total_qty), float(sub.covered_qty))
+                gap = max(0.0, float(total_qty) - covered)
+                sub_total = covered * sub.unit_cost + gap * (mat.get("unit_price", 0) or 0)
                 unit_price = sub_total / total_qty if total_qty > 0 else 0.0
-                name_display = f"{mat.get('name', '')}（自制）"
+                name = mat.get("name", "")
+                name_display = (
+                    f"{name}（自制 {covered:,.0f}/{total_qty:,.0f}）"
+                    if sub.covered_qty is not None
+                    else f"{name}（自制）"
+                )
             else:
                 unit_price = mat.get("unit_price", 0) or 0
                 sub_total = unit_price * total_qty
@@ -396,17 +427,63 @@ class CostBreakdownBridge(DialogBridge):
             _field("拷贝/发明研究成本:", f"—（研究不消耗蓝图流程）{approx}", "TEXT_SECONDARY"),
         ]
 
-    def _compute_subitem_costs(self, group_number: int, deeper_than: int) -> dict[int, float]:
-        """读同组更深子项产线，返回 {子项 product_type_id: 制造价合计（材料+作业费）}。
+    @staticmethod
+    def _material_needs(metrics: dict, total_mult: int) -> dict[int, float]:
+        """母项每种材料的需求量 {type_id: 需求}，口径与 `adjust_mother_metrics` 一致。
 
-        自底向上按 sub_level 降序计算：最深子项先算，父层用子层调整后的成本，
-        支持嵌套拆解。
+        只在「某子项查不到配方、拿不到自己的产出量」时用来把整线价折成单件价
+        （见 `_compute_subitem_costs`）。
+        """
+        out: dict[int, float] = {}
+        for mat in metrics.get("materials", []) or []:
+            mid = mat.get("type_id")
+            if not mid:
+                continue
+            need = mat.get("total_qty")
+            if need is None:
+                need = (mat.get("qty", 0) or 0) * total_mult
+            out[int(mid)] = float(need)
+        return out
 
-        **口径与 `services.plan_metrics.mother_subitem_cost_map` 同一条规则**：子项制造价经
-        `child_manufacturing_cost`（材料 + 作业费×runs×parallels），**制造价 ≤ 0 的子项
-        （0 轮产线）不进返回的映射** —— 否则「自制件成本 0 ISK」会被当成真实成本写进母项
-        （实测把母项 material_cost 打成 0.00）。剔除后调用方 `adjust_mother_metrics` 走 else
-        分支、该行回退市价。改这条 0 值规则时两处必须一起改。
+    @staticmethod
+    def _subitem_output_qty(rows: list[dict]) -> dict[int, int]:
+        """{子项 plan_id: 子项产线产出量} —— 口径与 `child_manufacturing_cost` 同一条规则。
+
+        每轮产出与「0 轮 = 不产出」的判定都在 `services/blueprint_reader.plan_output_qty`
+        里（那里查询也排除 SDE 的两张测试蓝图）—— 别再在桥里抄一份。0 轮产线与查不到配方的
+        都不进结果，调用方退回「整线价覆盖全部需求」的旧口径。
+        """
+        from services.blueprint_reader import plan_output_qty
+
+        out: dict[int, int] = {}
+        with get_container().db.connect("bp", "ref") as conn:
+            for p in rows:
+                qty = plan_output_qty(conn, p)
+                if qty > 0:
+                    out[int(p.get("id") or 0)] = qty
+        return out
+
+    def _compute_subitem_costs(
+        self,
+        group_number: int,
+        deeper_than: int,
+        need_by_type: dict[int, float] | None = None,
+    ) -> dict[int, SubitemCost]:
+        """读同组更深子项产线，返回 {子项 product_type_id: `SubitemCost`（单件制造价 + 产出量）}。
+
+        自底向上按 sub_level 降序计算：最深子项先算，父层用子层调整后的成本，支持嵌套拆解。
+
+        **单件制造价 = 子项整线制造价 ÷ 子项自己的产出量**（`_subitem_output_qty`）。
+        子项产线排的是**净需求**（`services.plan_rebuild.plan_net_runs` 先扣掉了库存），
+        产出量常小于母项需求，差的那部分由消费方按市价补齐 —— 只带整线价、当成
+        「覆盖全部需求」会把缺口算成 0 成本（实测单价偏低 4.24%、总成本偏低）。
+        查不到配方（拿不到每轮产出）时退回旧口径：按母项需求 `need_by_type` 折算单件价、
+        `covered_qty=None`（消费方按「整线覆盖全部需求」处理）；连需求都没有就不猜，
+        该行不进映射、回退市价。
+
+        **制造价 ≤ 0 的子项（0 轮产线）不进返回的映射**（与
+        `services.plan_metrics.mother_subitem_cost_map` 同规则）—— 否则「自制件成本 0 ISK」
+        会被当成真实成本写进母项（实测把母项 material_cost 打成 0.00）。
         """
         from services.plan_metrics import (
             adjust_mother_metrics,
@@ -436,12 +513,13 @@ class CostBreakdownBridge(DialogBridge):
                     prod_mult=self._prod_mult,
                 ),
             )
+        output_qty = self._subitem_output_qty(rows)
 
         # `get_subitem_plans` 已按 sub_level DESC 返回，这里再显式排一次，不依赖 SQL 顺序
         costs: dict[int, float] = {}
         for p in sorted(rows, key=lambda r: -int(r.get("sub_level") or 0)):
             metrics = base[int(p.get("id") or 0)][1]
-            child_map = mother_subitem_cost_map(base, p)
+            child_map = mother_subitem_cost_map(base, p, output_qty_by_plan=output_qty)
             if child_map:
                 total_mult = max(int(p.get("runs") or 1), 1) * max(int(p.get("parallels") or 1), 1)
                 adj_mat, _, _, _ = adjust_mother_metrics(metrics, child_map, total_mult)
@@ -450,12 +528,22 @@ class CostBreakdownBridge(DialogBridge):
                 base[int(p.get("id") or 0)] = (p, metrics)
             costs[int(p.get("id") or 0)] = child_manufacturing_cost(p, metrics)
 
-        out: dict[int, float] = {}
+        out: dict[int, SubitemCost] = {}
         for p in rows:
-            cost = costs.get(int(p.get("id") or 0), 0.0)
+            pid = int(p.get("id") or 0)
+            cost = costs.get(pid, 0.0)
             if cost <= 0:  # 与 mother_subitem_cost_map 同规则：0 值自制件不进映射
                 continue
-            out[int(p.get("product_type_id") or 0)] = cost
+            type_id = int(p.get("product_type_id") or 0)
+            qty = output_qty.get(pid)
+            # 单件价**不取整**：消费方要按 `覆盖量 × 单件价` 还原整线价（实测先 round 到分
+            # 会让母项总成本少 2.62 ISK/行，与右侧汇总对不上）
+            if qty:
+                out[type_id] = SubitemCost(unit_cost=cost / qty, covered_qty=float(qty))
+                continue
+            need = (need_by_type or {}).get(type_id)
+            if need and need > 0:  # 无配方：整线价按需求折成单件价（covered_qty=None = 覆盖全部需求）
+                out[type_id] = SubitemCost(unit_cost=cost / need, covered_qty=None)
         return out
 
     def material_row_count(self) -> int:

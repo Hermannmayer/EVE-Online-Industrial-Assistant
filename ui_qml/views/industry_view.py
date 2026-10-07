@@ -39,6 +39,34 @@ if TYPE_CHECKING:
 #: 人物选择已移除，全应用固定用 main（与旧 TopToolbar.get_char_name 一致）
 MAIN_CHAR_NAME = "main"
 
+#: 状态筛选 → 落库状态取值。与 `plan_service.load_plans(filter_key)` 的 WHERE 一一对应；
+#: 这里是**Python 侧**的同一份口径，供「全量加载 + 内存筛显示行」用（见 `load_plans`）。
+_STATUS_FILTERS: dict[str, frozenset[str]] = {
+    "待排": frozenset({"pending"}),
+    "运行中": frozenset({"in_progress", "running"}),
+    "待下线": frozenset({"ready"}),
+    "已完成": frozenset({"completed", "done"}),
+}
+
+
+def _status_match(row: dict, filter_key: str) -> bool:
+    """行是否命中状态筛选（「全部」/未知筛选 → 全命中）。"""
+    allowed = _STATUS_FILTERS.get(filter_key)
+    return allowed is None or str(row.get("status") or "").lower() in allowed
+
+
+def _category_match(row: dict, line: str) -> bool:
+    """行是否命中类别筛选（`""` = 全部 → 全命中）。
+
+    类别按**三类产线**归类（`char_capacity.capacity_line_for_category`：拷贝/发明/
+    ME-TE 研究 → 科研），与占用面板同一个口径。
+    """
+    if not line:
+        return True
+    from services.char_capacity import capacity_line_for_category
+
+    return capacity_line_for_category(str(row.get("category") or "")) == line
+
 
 def _default_mat_hangar_id() -> int | None:
     """默认材料机库（机库设置里配置，settings.default_mat_hangar_id）。"""
@@ -321,7 +349,11 @@ class IndustryPage(QObject):
             r["material_short_tip"] = tip
 
     def _refresh_material_status(self) -> None:
-        """心跳里顺手刷新缺料标注；指纹没变则连评分都不做，只花每机库一次库存查询。"""
+        """心跳里顺手刷新缺料标注；指纹没变则连评分都不做，只花每机库一次库存查询。
+
+        `_loaded_rows` 是**全量**计划（见 `load_plans`），表格里的行是它的子集且
+        共享同一批 dict —— 所以这里改到的派生字段会直接反映到界面，不需要按筛选重取。
+        """
         rows = getattr(self, "_loaded_rows", None)
         if not rows:
             return
@@ -336,6 +368,21 @@ class IndustryPage(QObject):
 
     # ── load_plans ────────────────────────────────────────────
 
+    def _visible_rows(self, rows: list[dict]) -> list[dict]:
+        """按当前（状态 + 类别）筛出**要显示的行**。
+
+        `rows` 一律是**全量**（含所有拆解组子项，不论状态），派生字段也已标好；
+        本函数只决定哪些行进表格 —— 判定口径与显示口径分离。
+
+        历史缺陷（用户报的「筛选后重算」）：原先直接把筛选串喂给
+        `plan_service.load_plans`，SQL 先按状态筛掉同组的运行中/待下线子项，
+        `pending_children_count` 与 `_pending_children_output_by_type` 于是看不到它们，
+        母项从「等待 N 条子项」掉到「材料不足」，成本/利润率也被重算成另一套值。
+        """
+        status = self._bridge.current_filter()
+        line = self._bridge.current_category()
+        return [r for r in rows if _status_match(r, status) and _category_match(r, line)]
+
     def load_plans(self):
         # 首次加载前补算：重启后已超时的进行中计划 → ready（避免永远停在生产中）
         if not getattr(self, "_overdue_checked", False):
@@ -349,7 +396,9 @@ class IndustryPage(QObject):
 
         from services.plan_service import load_plans
 
-        rows = load_plans(self._bridge.current_filter())
+        # **全量**加载（`"全部"`，不带状态筛选）：缺料/等子项判定依赖同组子项行，
+        # 先筛行会让判定少一半输入。筛选只决定显示哪些行（`_visible_rows`）。
+        rows = load_plans("全部")
         from ui_qml.models.industry_models import PlanTableModel
 
         # 缺料标注（派生字段）：先记指纹再算，免得 30s 心跳立刻重复算一遍
@@ -360,14 +409,20 @@ class IndustryPage(QObject):
         # 注入当前材料机库（启动旧计划时兜底）
         self._plan_table_widget.set_mat_hangar_id(_default_mat_hangar_id())
 
+        # 表格只装筛出来的行（与 `rows` 共享同一批 dict —— 心跳补标注改的就是它们，
+        # 所以 `_refresh_material_status` 不必再按筛选重取数据）
+        visible = self._visible_rows(rows)
+
         # 复用已有 model，避免 setModel 清除选中状态
         model = self._plan_table_widget.get_model()
         if model is None:
-            model = PlanTableModel(rows)
+            model = PlanTableModel(visible)
             self._plan_table_widget.set_model(model)
         else:
-            model.set_plans(rows)
+            model.set_plans(visible)
 
+        # 统计 / 采购汇总 / 批量重算都用**全量**：状态栏「计划总数」本来就是全局口径，
+        # 而成本与利润率按全量算才与筛选前一致（否则切一下筛选就变一套数）。
         self._bridge.update_stats(rows)
         self._refresh_procurement_summary(rows)
 

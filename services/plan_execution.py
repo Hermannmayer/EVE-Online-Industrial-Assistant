@@ -12,6 +12,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 from core.logger import log
+from services.blueprint_reader import get_blueprint_products
 
 # ════════════════════════════════════════════════════════════════
 #  时间工具
@@ -1013,17 +1014,16 @@ def _input_blueprint_me_te(conn, plan_id: int) -> tuple[int, int]:
 
 
 def output_per_run(product_type_id: int) -> int:
-    """蓝图单流程产出量（查 blueprint_products，缺省 1）。"""
+    """蓝图单流程产出量（按产物取配方，缺省 1）。
+
+    走统一入口 `get_blueprint_products`：同一产物挂测试蓝图与真实蓝图时取真实蓝图
+    （碳化钨 16672 的测试蓝图是 20/轮，真实配方是 10000/轮）。连接必须带 `ref`，
+    否则没有 `item` 表可用来排除测试蓝图。
+    """
     try:
-        bp_conn = _container().db.direct_connect("bp")
-        try:
-            row = bp_conn.execute(
-                "SELECT quantity FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-                (product_type_id,),
-            ).fetchone()
-            return int(row[0]) if row and row[0] else 1
-        finally:
-            bp_conn.close()
+        with _container().db.connect("ref", "bp") as bp_conn:
+            row = get_blueprint_products(bp_conn, product_type_id, "manufacturing")
+            return int(row[1]) if row and row[1] else 1
     except Exception:
         log.exception("查询产出量失败 type_id=%s", product_type_id)
         return 1

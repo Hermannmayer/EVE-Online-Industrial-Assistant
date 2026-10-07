@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from core.cache import TtlLRUCache
 from core.constants import TRADE_HUB_SYSTEM_IDS
 from core.container import get_container
@@ -29,6 +31,9 @@ from services.char_config_resolver import DEFAULT_SKILLS, resolve_char_config  #
 from services.database_manager import DatabaseManager
 from services.name_resolver import resolve_item_name  # noqa: F401  # 由 application 门面经模块属性访问
 from services.repositories.market_repository import MarketRepository
+
+if TYPE_CHECKING:
+    from services.plan_metrics import SubitemCost
 
 
 def _hub_to_system_id(hub: str) -> int | None:
@@ -84,6 +89,32 @@ def _batch_materials(materials: list[dict], total_runs: int, me_level: int, savi
 def _default_db() -> DatabaseManager:
     """惰性获取 DatabaseManager（经容器，消除模块级单例双轨）。"""
     return get_container().db
+
+
+def _unit_cost_with_overrides(result: dict, cost_overrides: dict[int, float], base: float) -> float:
+    """把「同组自制件按自制价计」折算进单件自制成本。
+
+    `cost_overrides` = `{料 type_id: 该料的自制单件成本}`：母项每轮材料表里命中该料的行
+    按自制单件价重算（未命中的料保持原价），差额按**单轮产出**摊到每件上：
+
+        单件成本 = 基础单件成本 + Σ(自制单件价 − 材料市价) × 每轮用量 ÷ 单轮产出
+
+    口径与 `services.plan_service._attach_make_costs` 的第二遍一致（那里也用本入口）。
+    `output_qty` 缺失/为 0 时无从摊分 → 原样返回 `base`。
+    """
+    out_qty = float(result.get("output_qty") or 0.0)
+    if out_qty <= 0:
+        return base
+    delta = 0.0
+    for mat in result.get("materials") or []:
+        tid = mat.get("type_id")
+        if tid not in cost_overrides:
+            continue
+        qty = float(mat.get("qty") or 0.0)
+        if qty <= 0:
+            continue
+        delta += (float(cost_overrides[tid]) - float(mat.get("unit_price") or 0.0)) * qty
+    return round(base + delta / out_qty, 2)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -216,17 +247,19 @@ def _empty_plan_metrics() -> dict:
 
 
 def _resolve_blueprint_for_product(db, product_type_id) -> int:
-    """按产物 type_id 反查它的制造蓝图（旧计划行只带 product_type_id 时用）。缺失 → 0。"""
+    """按产物 type_id 反查它的制造蓝图（旧计划行只带 product_type_id 时用）。缺失 → 0。
+
+    统一入口排除 CCP 测试蓝图；连接带 `ref` 才有 `item` 表可用来做这个排除
+    （碳化钨 16672 同时挂测试蓝图 45732 与真实 46207）。
+    """
     if not product_type_id:
         return 0
     try:
-        with db.connect("bp") as conn:
-            row = conn.execute(
-                "SELECT blueprint_type_id FROM blueprint_products "
-                "WHERE product_type_id = ? AND activity = 'manufacturing' LIMIT 1",
-                (int(product_type_id),),
-            ).fetchone()
-        return int(row[0]) if row else 0
+        from services.blueprint_reader import get_blueprint_type_for_product
+
+        with db.connect("ref", "bp") as conn:
+            bp_id = get_blueprint_type_for_product(conn, int(product_type_id), "manufacturing")
+        return int(bp_id) if bp_id else 0
     except Exception:
         from core.logger import log
 
@@ -1012,7 +1045,7 @@ class ScoringService:
         inv_map: dict[int, tuple[int, float]],
         runs: int = 1,
         parallels: int = 1,
-        cost_overrides: dict[int, float] | None = None,
+        cost_overrides: dict[int, SubitemCost] | None = None,
     ) -> float:
         """计算考虑库存成本的个人利润率（%）。实现见 services.plan_metrics。"""
         from services.plan_metrics import calculate_personal_margin as _f
@@ -1029,9 +1062,9 @@ class ScoringService:
     @staticmethod
     def adjust_mother_metrics(
         metrics: dict,
-        sub_cost_map: dict[int, float],
+        sub_cost_map: dict[int, SubitemCost],
         total_mult: int,
-    ) -> tuple[float, float, float, dict[int, float]]:
+    ) -> tuple[float, float, float, dict[int, SubitemCost]]:
         """把拆解母项的自制子项按其制造价计入成本。实现见 services.plan_metrics。"""
         from services.plan_metrics import adjust_mother_metrics as _f
 
@@ -1104,19 +1137,24 @@ class ScoringService:
         system_id: int | None = None,
         facility_tax_pct: float = 0.0,
         hangar_id: int | None = None,
+        cost_overrides: dict[int, float] | None = None,
     ) -> dict[int, float]:
-        """这些物品**自己造一件**要多少钱 → `{type_id: cost_per_unit}`（算不出的物品不在结果里）。
+        """这些物品**自己造一件**要多少钱 → `{type_id: 单件自制成本}`（算不出的物品不在结果里）。
 
         「自己造」同时覆盖**制造与反应**两种配方（碳化钨、富勒化合物这类反应产物同样是
         「自己造还是买」的对象）：制造走 `calc_manufacturing_score`，产物只挂
-        `activity='reaction'` 的走 `calc_reaction_score`，两者的 `cost_per_unit` 同义
-        （料钱 + 作业费 ÷ 单轮产出，见 `domain.scoring`），只是按**当前价格设置**
-        （`mat_hub` / 卖价买价 / 材料倍率）逐个算，制造并用用户手上**最好的那张蓝图**的 ME/TE ——
+        `activity='reaction'` 的走 `calc_reaction_score`，两者取 `make_cost_per_unit` 同义
+        （料钱 + 作业费 + 研究费 ÷ 单轮产出，**不含**经纪费/改单费/销售税，见 `domain.scoring`），
+        只是按**当前价格设置**（`mat_hub` / 卖价买价 / 材料倍率）逐个算，制造并用用户手上
+        **最好的那张蓝图**的 ME/TE ——
         这样「自制成本」是用户真能做到的数，和旁边同一价格口径的市价直接可比。
 
         `hangar_id` 传了就用该机库的设施与改件（结构成本倍率 / 材料减成 / 时间折扣）及其所在星系；
         `system_id` / `facility_tax_pct` 显式给了优先。**无制造/反应配方、或取不到价格 → 不进结果**
         （调用方显示 `—`，别拿 0 冒充成本）。
+
+        `cost_overrides`：可选 `{料 type_id: 该料的自制单件成本}`——拆解母项把自己的
+        同组自制件按自制价（而不是市价）计，见 `_unit_cost_with_overrides`。
 
         `ScoringService.calc_manufacturing_score` 自带按类型/价格/倍率/角色指纹的 TTL 缓存，
         所以轮询（采购小助手 5s 一刷）不会每轮重算；反应那条链路不缓存，但调用量同样很小。
@@ -1179,9 +1217,11 @@ class ScoringService:
 
                 log.exception("自制成本计算失败 type_id=%s", tid)
                 continue
-            cost = float(result.get("cost_per_unit") or 0.0)
+            cost = float(result.get("make_cost_per_unit") or 0.0)
             if result.get("status") or cost <= 0:
                 continue
+            if cost_overrides:
+                cost = _unit_cost_with_overrides(result, cost_overrides, cost)
             out[tid] = cost
         return out
 

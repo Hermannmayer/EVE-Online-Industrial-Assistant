@@ -21,6 +21,16 @@ UI（工业页）→ workers/industry_workers.ScoreWorker
 - 数据结构：blueprint.db（`blueprint_products`/`blueprint_activities`/`blueprint_materials`）、reference.db（`item` 名称、`industry_system_costs`、研究成本）、market.db（`market_prices`）
 - 入口：`services/scoring_service.py` 的 `ScoringService.calc_manufacturing_score`
 - **关键差异**：评分链路取价走 `scoring_service` 模块级 `get_price`（直查 `mkt.market_prices`），**不走 `PricingService`**
+- **「按产物取配方蓝图」只能走 `services/blueprint_reader.py`**（`get_blueprint_products` /
+  `get_blueprint_type_for_product`，`services/scoring_facade.py` 与 `plan_aggregator` 等已收口）：
+  它**优先非测试蓝图**，同一产物多张时再按 `blueprint_type_id` 升序取 —— 结果必须确定，
+  不能随插入顺序变；连接要带 `ref`（只 attach `bp` 时读不到 `item` 名称，函数会退化成
+  「只按 type_id 取」，测试蓝图排除就失效）。理由：CCP 在 SDE 里塞了两张测试蓝图
+  （45732「Test Reaction Blueprint / 测试反应堆蓝图」、26843「…TEST Blueprint / …测试蓝图」），
+  而**碳化钨(16672) 同时挂 45732（20/轮）与 46207「碳化钨反应配方」（10000/轮）** ——
+  旧写法 `... AND bp.activity='reaction' LIMIT 1`（无 ORDER BY）命中的是测试蓝图，
+  自制成本被算成 33,818.87/件（市价 86，真实 ≈76.4）。只有测试蓝图的产物（26842 狂暴级部族型）
+  仍返回它，别整批排除 —— 那会让界面凭空少掉配方。
 
 ## 跨区域价差排行（市场贸易页）
 
@@ -165,6 +175,14 @@ services/logistics.py
     回归防线：`tests/test_plan_rebuild.py::test_shared_intermediate_expands_to_its_own_children`
     与 `::test_prune_keeps_grandchildren_when_a_second_mother_shows_up`。
 - 读取：`plan_service.load_plans`；价格快照 `save_price_snapshots`
+- **筛选只影响「显示哪些行」，绝不影响任何判定**：状态筛选（`industry_bridge.FILTERS` =
+  全部/待排/运行中/待下线/已完成）与**类别筛选**（全部/制造/科研/反应，按行上 `_enrich_rows`
+  给的 `category`）都只是视图条件；材料/等子项判定的基准是**全量计划集**（含所有状态的同组子项）。
+  历史缺陷：先按状态 SQL 过滤、再拿筛过的行去标注 → 运行中的子项被筛掉，
+  母项的 `pending_children_count` 从 1 掉到 0、缺料从 0 种变 1 种，界面从「等待 1 条子项」
+  跳到「材料不足」（实测计划 365 母项 / 375 运行中子项；两个筛选下同一行的
+  `make_cost`/`market_margin`/`personal_margin` 也必须逐字相同）。`_loaded_rows`
+  （30s 心跳重算标注的基线）与状态栏统计同样按全量 —— 「计划总数」本来就是全局口径。
 - **计划表的派生视图要缓存**（`industry_models.PlanTableModel._view_cache`）：可见行、行号映射、
   「有子项的组」都是 O(行数)，却被 `data()` 按「列 × 角色」**逐格**调用 —— 实测 50 行、折叠两个组时
   全表刷一遍 485ms（不折叠 58ms），QML 滚动每帧都要取角色，于是「几十行就开始卡」。
@@ -349,12 +367,21 @@ manufacturing 反向表）；制造/反应就是产物本身。界面（计划�
 
 **「自制成本」三处共用一个取数**（判断这件料/这个产物自己造还是买）：
 `ScoringService.manufacturing_unit_costs(type_ids, mat_hub=…, price_type_mat=…, mat_mult=…,`
-`char_config=…, hangar_id=…, facility_tax_pct=…, system_id=…)` → `{type_id: 每件成本}`。
-口径 = `domain.scoring` 的 `cost_per_unit`（**料钱 + 作业费（含 SCI/设施税）÷ 单轮产出**）：
+`char_config=…, hangar_id=…, facility_tax_pct=…, system_id=…, cost_overrides=…)` → `{type_id: 每件成本}`。
+口径 = `domain.scoring` 的 **`make_cost_per_unit`**（料钱 + 作业费（含 SCI/设施税）+ 研究费 ÷ 单轮产出，
+**不含**经纪费/改单费/销售税）。刻意与 `cost_per_unit` 分开：后者是「可制造物品」窗口的
+历史全成本口径（含卖出费用，且那两笔按**售价**算），拿它当「自己造一件多少钱」会随市价浮动，
+也不该和左边「单价」并排比 —— **别为了让两列一样去改 `cost_per_unit`**。
 制造走 `calc_manufacturing_score`、产物只挂 `activity='reaction'` 的走 `calc_reaction_score`；
 用用户库存里**最好的那张蓝图**的 ME/TE（`MAX(me_level/te_level)`）；T2 含拷贝/发明研究费
-（facade 未传 `research_costs` 时按件现算）；**不递归**（不把"料也自己造"逐层算下去）、
-不含市场费用/佣金。**既没有制造配方也没有反应配方**的（矿物、数据核心、解码器、科研行产物/蓝图行）
+（facade 未传 `research_costs` 时按件现算）。
+**材料里「用户自己排了产线」的同组自制件按它的自制单件价计入**（`cost_overrides`，由
+`plan_service._attach_make_costs` 第二遍按 `sub_level` 降序算好），其余料仍按市价 ——
+也就是说这是**一层递归**，只认自己排产线的东西，不去猜「有蓝图就该自己造」。
+不这么做，母项会拿自制中间件的**市场价**去比成品卖价：灼烧XL(383) 的紫外晶体 XL
+市价 972,500/件、自制只要 ≈538,371/件，于是「自制成本/件」被高估到 1,423,889.99
+（> 成品卖价 1,213,000），列上读成「买更划算」，与同一行「个人利润率」的结论相反。
+**既没有制造配方也没有反应配方**的（矿物、数据核心、解码器、科研行产物/蓝图行）
 **不进结果** —— 界面一律显示 `—`，不许填 0 冒充成本。
 消费方：查看核算材料表「自制成本」列（与左边「单价」并排）、采购小助手「自制成本/件」列、
 生产计划大表「自制成本/件」列（**必须带"/件"**：采购表同行「总价」、大表第 15 列「成本」都是
@@ -364,9 +391,23 @@ manufacturing 反向表）；制造/反应就是产物本身。界面（计划�
 制造那条链路带 TTL 缓存（重复调用 ~1ms），反应那条不缓存但调用量很小。
 
 **「自制成本」在真库上的样子**（判断列对不对时的参照）：制造/反应产物有数
-（重型离子疾速炮 I 188,780.78、碳化钨 34,037.55）；**行星工业产物与矿物没有蓝图产物行**
-（三钛合金、莫尔石、机械元件、传信器、微型电子元件、合成神经键…）→ `—`。
-行星工业（PI）本程序不建模，所以那些料只能自己看市场价决定。
+（重型离子疾速炮 I 188,780.78、碳化钨 ≈76.4、紫外晶体 XL ≈538,371、灼烧XL 大表列 ≈959,435）；
+**行星工业产物与矿物没有蓝图产物行**（三钛合金、莫尔石、机械元件、传信器、微型电子元件、合成神经键…）
+→ `—`。行星工业（PI）本程序不建模，所以那些料只能自己看市场价决定。
+
+**查看核算（成本明细）的口径**（`ui_qml/bridge/cost_breakdown_bridge.py`）：
+- 汇总里的 总成本/利润/利润率/日利润/ISK/h **全是个人口径**，彼此同源：利润由
+  `adjust_mother_metrics` 调整后算出，`ISK/h = 调整后利润 ÷ 耗时`。历史缺陷是只换了
+  profit/margin、ISK/h 仍取市场口径的 `metrics["iskph"]`，于是同一个框里
+  「利润 +3.4 亿」和「ISK/h −514.7 万」自相矛盾。汇总另列一行**市场口径利润率**，两个口径
+  不许混着看。
+- **拆解子项**用 `plan_metrics.SubitemCost(unit_cost, covered_qty)`：子项产线排的是**净需求**
+  （`services/plan_rebuild.plan_net_runs` 先扣掉母项机库里已有的成品），所以「产出量」常小于母项需求
+  —— 实测紫外晶体 XL 需求 1368、只排 1310（差的 58 件在库存里）。行内
+  `小计 = min(需求, 覆盖量)×单件价 + 缺口×市价`、`单价 = 小计 ÷ 需求`，行名标「（自制 1310/1368）」。
+  旧写法把整线总价直接除以母项需求（701,615,501.12 ÷ 1368 = 512,876.83，比子项真实单件
+  535,584.35 低 4.24%），还把那 58 件当 0 成本 —— 单件价与同行的「自制成本」列自相矛盾。
+  `covered_qty=None` = 取不到产出量时的回退（等价于覆盖全部需求），别把它当正常值。
 
 **已知陷阱**（改这块前先看）：
 - `plan_execution.plan_blueprint_ready` 取代旧 `has_image` 口径；`has_image` 对科研行恒 False。

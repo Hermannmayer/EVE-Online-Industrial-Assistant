@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from services import plan_execution, plan_service
 
 
@@ -367,3 +369,44 @@ def test_attach_make_costs_groups_by_hub_and_hangar_and_keeps_none(monkeypatch):
         ([2001, 3009], "Jita", 5),
         ([2002], "Amarr", None),
     ]
+
+
+def test_attach_make_costs_folds_group_subitem_make_cost(temp_db, monkeypatch):
+    """拆解母项的「自制成本/件」按同组更深子项的**自制单件成本**折算。
+
+    回归：只看当前 filter 的 rows 会让被筛掉的子项按**市价**算 —— 母项成本虚高
+    （真库 383 灼烧 XL：1,423,889.99 市价口径 → 959,435 自制口径）。子项行必须
+    直接从 user.db 按 `group_number` 查。
+    """
+    from core.cache import TtlLRUCache
+    from services.scoring_service import ScoringService
+
+    with temp_db.connect("user") as conn:
+        conn.execute(
+            "CREATE TABLE production_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "product_type_id INTEGER, group_number INTEGER DEFAULT 0, sub_level INTEGER DEFAULT 0, "
+            "runs INTEGER DEFAULT 1, parallels INTEGER DEFAULT 1, mat_hub TEXT, mat_hangar_id INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO production_plans (id, product_type_id, group_number, sub_level, runs, parallels, mat_hub) "
+            "VALUES (1, 2001, 7, 0, 1, 1, 'Jita'), (2, 2002, 7, 1, 1, 1, 'Jita')"
+        )
+    # 渡鸦级(2001) 多要 2 个无人机(2002)：同组另有一条 2002 的自制产线
+    with temp_db.connect("bp") as conn:
+        conn.execute("INSERT INTO blueprint_materials VALUES (3001, 'manufacturing', 2002, 2, 10)")
+
+    svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+    _patch_container(temp_db, monkeypatch, svc)
+
+    sub_cost = svc.manufacturing_unit_costs([2002], mat_hub="Jita", price_type_mat="sell")[2002]
+    plain = svc.manufacturing_unit_costs([2001], mat_hub="Jita", price_type_mat="sell")[2001]
+    expected = svc.manufacturing_unit_costs(
+        [2001], mat_hub="Jita", price_type_mat="sell", cost_overrides={2002: sub_cost}
+    )[2001]
+
+    rows = plan_service._attach_make_costs(
+        [{"id": 1, "product_type_id": 2001, "group_number": 7, "sub_level": 0, "mat_hub": "Jita"}]
+    )
+
+    assert expected < plain, "自制件比市价便宜，折算后必须更低（否则这个用例测不出折叠）"
+    assert rows[0]["make_cost"] == pytest.approx(expected, abs=0.01)

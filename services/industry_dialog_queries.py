@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from services.blueprint_reader import get_blueprint_products
 from services.plan_aggregator import (
     calculate_output_with_overflow,
     check_inventory,
@@ -328,11 +329,9 @@ def set_plan_deposit_hangar(db, plan_id: int, hangar_id: int | None) -> None:
 
 
 def _query_blueprint_output(conn, product_type_id: int) -> int:
-    row = conn.execute(
-        "SELECT quantity FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-        (product_type_id,),
-    ).fetchone()
-    return int(row[0]) if row and row[0] else 1
+    """单轮产出量（按产物取配方，缺省 1）。统一入口会排除 CCP 测试蓝图。"""
+    row = get_blueprint_products(conn, product_type_id, "manufacturing")
+    return int(row[1]) if row and row[1] else 1
 
 
 def _query_blueprint_duration_sec(conn, blueprint_type_id) -> int:

@@ -12,7 +12,7 @@
 
 搜索可制造物品
 
-定义行：`14`
+定义行：`21`
 
 #### 方法
 
@@ -26,7 +26,7 @@ def __init__(self, query: str, db, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`19`
+定义行：`26`
 ##### `run`
 
 ```python
@@ -37,13 +37,13 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`24`
+定义行：`31`
 
 ### `class ScoreWorker`（继承 `BaseScoreWorker`）
 
 单项制造评分 — 继承 BaseScoreWorker
 
-定义行：`30`
+定义行：`37`
 
 #### 方法
 
@@ -57,7 +57,7 @@ def __init__(self, type_id: int, bp_me: int, bp_te: int, mat_hub: str, sell_hub:
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`33`
+定义行：`40`
 ##### `_compute`
 
 ```python
@@ -68,13 +68,13 @@ def _compute(self) -> dict
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`57`
+定义行：`64`
 
 ### `class BatchPlanCalcWorker`（继承 `BaseBatchScoreWorker`）
 
 后台批量重算所有生产计划的利润/评分
 
-定义行：`76`
+定义行：`83`
 
 #### 方法
 
@@ -88,7 +88,7 @@ def __init__(self, plans: list[dict], char_config: dict, parent=None, char_name:
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`83`
+定义行：`90`
 ##### `_resolve_char_config`
 
 ```python
@@ -97,7 +97,7 @@ def _resolve_char_config(self, plan_char_name: str) -> dict
 
 按计划角色名解析配置，带缓存
 
-定义行：`108`
+定义行：`115`
 ##### `_calc_base`
 
 ```python
@@ -106,25 +106,34 @@ def _calc_base(self, item) -> dict
 
 单计划基准指标（calculate_plan_metrics），异常返回空 dict。
 
-定义行：`118`
+定义行：`125`
+##### `_subitem_output_qty`
+
+```python
+def _subitem_output_qty(self, mother: dict, base_results: dict) -> dict[int, int]
+```
+
+同组更深子项产线的**实际产出量** `&#123;子项 plan_id: runs × parallels × 单轮产出&#125;`。
+
+定义行：`152`
 ##### `_apply_mother_subitem_cost`
 
 ```python
-def _apply_mother_subitem_cost(self, item, result, base_results) -> dict[int, float]
+def _apply_mother_subitem_cost(self, item, result, base_results) -> dict[int, SubitemCost]
 ```
 
-拆解母项成本改按子项制造价合计（材料 + 子项制造作业费）。
+拆解母项的自制子项制造价 → cost_overrides（**只供个人利润率使用**）。
 
-定义行：`145`
+定义行：`193`
 ##### `_calc_personal_margin`
 
 ```python
-def _calc_personal_margin(self, plan: dict, result: dict, cost_overrides: dict[int, float] | None=None) -> float
+def _calc_personal_margin(self, plan: dict, result: dict, cost_overrides: dict[int, SubitemCost] | None=None) -> float
 ```
 
 计算考虑库存成本的个人利润率（%）。
 
-定义行：`164`
+定义行：`221`
 ##### `_get_inventory_cost_map`
 
 ```python
@@ -133,22 +142,22 @@ def _get_inventory_cost_map(self) -> dict[int, tuple[int, float]]
 
 批量重算期间库存快照只取一次（避免每计划重复聚合查询）
 
-定义行：`188`
+定义行：`247`
 ##### `run`
 
 ```python
 def run(self)
 ```
 
-两遍计算：先算所有计划基准指标，再对拆解母项按子项制造价调整成本。
+两遍计算：先算所有计划基准指标，再按子项制造价算拆解母项的**个人利润率**。
 
-定义行：`196`
+定义行：`255`
 
 ### `class RankWorker`（继承 `QThread`）
 
 批量评分所有可制造物品
 
-定义行：`273`
+定义行：`335`
 
 #### 方法
 
@@ -162,7 +171,7 @@ def __init__(self, mat_hub: str, sell_hub: str, mat_price_type: str, bp_me: int,
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`280`
+定义行：`342`
 ##### `run`
 
 ```python
@@ -173,13 +182,13 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`306`
+定义行：`368`
 
 ### `class ProcurementSummaryWorker`（继承 `QThread`）
 
 后台聚合「备料中」计划的待采购金额/体积（统计条模式，按计划机库扣库存）
 
-定义行：`363`
+定义行：`425`
 
 #### 方法
 
@@ -193,7 +202,7 @@ def __init__(self, plans: list[dict], *, default_mat_hangar_id: int | None=None,
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`368`
+定义行：`430`
 ##### `run`
 
 ```python
@@ -204,4 +213,4 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`390`
+定义行：`452`

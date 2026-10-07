@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from domain.formulas import calc_eiv, calc_job_cost_fees, calc_material_for_runs
 from domain.research import (
     Decryptor,
@@ -24,12 +26,47 @@ DEFAULT_FACILITY_TAX = 0.0025
 DEFAULT_SCC_SURCHARGE = 0.04
 
 
+@dataclass(frozen=True)
+class SubitemCost:
+    """拆解子项的自制成本口径：**单件制造价** + 子项产线**自己产出的数量**。
+
+    为什么不是「整条产线总价」：子项产线排的是**净需求**（`services/plan_rebuild.plan_net_runs`
+    会先扣掉母项机库里已有的成品库存），所以「产出量」通常 **小于** 母项的材料需求 ——
+    实测 紫外晶体 XL（计划 385）需求 1368、产出 1310（差的 58 件在库存里）。
+
+    旧口径只传整线总价、消费方一律当成「覆盖母项全部需求」，等于把那 58 件当 0 成本：
+    既让「单价」偏低（701,615,501.12 ÷ 1368 = 512,876.83，而子项真实单件 535,584.35），
+    又让个人口径的总成本偏低。这里把两个数都带出来，由消费方按
+    「`min(需求, 产出量)` 件按单件制造价 + 缺口按库存/市价」结算。
+
+    `covered_qty=None` = 调用方拿不到产出量（老调用点）→ 消费方退回旧口径
+    （等价于产出量 = 需求）。
+    """
+
+    unit_cost: float
+    covered_qty: float | None = None
+
+
+def _cost_for_need(
+    need: float,
+    unit_price: float,
+    stock_qty: float,
+    stock_cost: float,
+) -> float:
+    """一批料的个人口径成本：库存够就全按库存成本，不够则「库存部分 + 缺口按市价」。"""
+    if stock_qty >= need:
+        return need * stock_cost
+    if stock_qty > 0:
+        return stock_qty * stock_cost + (need - stock_qty) * unit_price
+    return need * unit_price
+
+
 def calculate_personal_margin(
     result: dict,
     inv_map: dict[int, tuple[int, float]],
     runs: int = 1,
     parallels: int = 1,
-    cost_overrides: dict[int, float] | None = None,
+    cost_overrides: dict[int, SubitemCost] | None = None,
 ) -> float:
     """计算考虑库存成本的个人利润率（%）。
 
@@ -42,8 +79,9 @@ def calculate_personal_margin(
                 （需含 revenue_per_run / fees_per_run / materials / margin）
         inv_map: get_inventory_cost_map() 的返回 {type_id: (总数量, 加权平均成本)}
         runs / parallels: 流程数 / 并行数
-        cost_overrides: 可选 {type_id: 固定成本}——拆解母项的子项自制件按其制造价计，
-                        不再走库存/市场价。
+        cost_overrides: 可选 {type_id: `SubitemCost`}——拆解母项的同组自制件
+                        **单件制造价 + 覆盖数量**（见 `SubitemCost`）；覆盖不到的部分
+                        仍走库存/市价，不能按 0 成本计。
 
     Returns:
         个人利润率（%），round 到 2 位小数。异常或无效输入回退 result 的市场 margin。
@@ -71,18 +109,17 @@ def calculate_personal_margin(
             need = mat.get("total_qty")
             if need is None:
                 need = qty_per_run * total_mult
+            unit_price = mat.get("unit_price", 0) or 0
+            stock_qty, stock_cost = inv_map.get(mid, (0, 0))
             if cost_overrides and mid in cost_overrides:
-                # 子项自制件：成本 = 子项制造价（合计，非库存/市场价）
-                mat_cost = cost_overrides[mid]
+                # 子项自制件：覆盖到的那部分按子项单件制造价，**缺口仍按库存/市价**
+                sub = cost_overrides[mid]
+                covered = need if sub.covered_qty is None else min(float(need), sub.covered_qty)
+                mat_cost = covered * sub.unit_cost + _cost_for_need(
+                    max(0.0, float(need) - covered), unit_price, stock_qty, stock_cost
+                )
             else:
-                unit_price = mat.get("unit_price", 0) or 0
-                stock_qty, stock_cost = inv_map.get(mid, (0, 0))
-                if stock_qty >= need:
-                    mat_cost = need * stock_cost
-                elif stock_qty > 0:
-                    mat_cost = stock_qty * stock_cost + (need - stock_qty) * unit_price
-                else:
-                    mat_cost = need * unit_price
+                mat_cost = _cost_for_need(need, unit_price, stock_qty, stock_cost)
             total_personal_cost += mat_cost
 
         total_cost = total_personal_cost + fees_per_run * total_mult
@@ -129,8 +166,10 @@ def child_manufacturing_cost(plan: dict, metrics: dict) -> float:
 def mother_subitem_cost_map(
     base_results: dict[int, tuple[dict, dict]],
     mother: dict,
-) -> dict[int, float]:
-    """母项同组更深子项的自制成本映射 {子项 product_type_id: 制造价合计}。
+    *,
+    output_qty_by_plan: dict[int, int] | None = None,
+) -> dict[int, SubitemCost]:
+    """母项同组更深子项的自制成本映射 {子项 product_type_id: `SubitemCost`}。
 
     子项制造价 = child_manufacturing_cost（材料 + 作业费×runs×parallels），
     是**个人（自制/库存）口径**成本；市场口径不在这里，仍由调用方留存的 `market_margin` 表示。
@@ -139,6 +178,12 @@ def mother_subitem_cost_map(
     否则「自制件成本 0 ISK」会被当成真实成本写进母项；剔除后
     `adjust_mother_metrics` 走 else 分支，该行回退市价。
     非母项（无 group）或同组无更深子项时返回空 dict。
+
+    映射值给的是**单件**制造价（整线制造价 ÷ 子项产出量）与子项产线**实际产出的数量**：
+    子项产线排的是净需求（扣掉库存），产出量常小于母项需求，缺口得由消费方按
+    库存/市价补齐（见 `SubitemCost` 的说明）。`output_qty_by_plan` 是
+    `{子项 plan_id: 产出量}`，不去查库（本模块是纯函数）—— 取不到时
+    `covered_qty=None`，消费方退回「整线覆盖全部需求」的旧口径。
     """
     gid = mother.get("group_id") or mother.get("group_number")
     if not gid:
@@ -152,7 +197,7 @@ def mother_subitem_cost_map(
     ]
     if not subs:
         return {}
-    out: dict[int, float] = {}
+    out: dict[int, SubitemCost] = {}
     for p, r in subs:
         pid = p.get("product_type_id")
         if not pid:
@@ -160,28 +205,37 @@ def mother_subitem_cost_map(
         cost = child_manufacturing_cost(p, r)
         if cost <= 0:
             continue
-        out[int(pid)] = cost
+        covered = (output_qty_by_plan or {}).get(int(p.get("id") or 0))
+        if covered is None or covered <= 0:
+            # 拿不到产出量 → 退回旧口径（消费方按「覆盖全部需求」处理）
+            out[int(pid)] = SubitemCost(unit_cost=cost, covered_qty=None)
+        else:
+            # 单件价**不取整**：消费方要按 `覆盖量 × 单件价` 还原整线价
+            # （先 round 到分会让母项成本少几 ISK，与另一侧汇总对不上）
+            out[int(pid)] = SubitemCost(unit_cost=cost / covered, covered_qty=float(covered))
     return out
 
 
 def adjust_mother_metrics(
     metrics: dict,
-    sub_cost_map: dict[int, float],
+    sub_cost_map: dict[int, SubitemCost],
     total_mult: int,
-) -> tuple[float, float, float, dict[int, float]]:
+) -> tuple[float, float, float, dict[int, SubitemCost]]:
     """把拆解母项的自制子项按其制造价计入成本，其余材料仍按市场价。
 
     **口径**：本函数产出的是**个人（自制/库存）口径**的 material_cost / profit / margin
     （自制子项按自己的制造价，不按买入市价）。**市场口径不在返回值里** ——
     调用方必须在调用前留存调整前的 `margin`，写进 `market_margin` 列；
     调整后的 margin 与个人利润率（`calculate_personal_margin`）才是同一口径。
-    本次不改变任何数值语义，只把口径写清楚（列语义由用户拍板）。
+
+    子项只覆盖了 `min(需求, 子项产出量)` 件，**缺口按市价**补齐
+    （子项产线排的是净需求，差的那些在库存里/要买 —— 当成 0 成本会让母项成本偏低）。
 
     Args:
         metrics: calculate_plan_metrics() 对母项返回的 dict
                  （须含 materials/revenue/fees，materials 为每轮量）。
-        sub_cost_map: {子项 product_type_id: 子项制造价（整条产线合计，见 child_manufacturing_cost）}。
-                制造价为 0 的子项已被 mother_subitem_cost_map 剔除，这里的行会回退市价。
+        sub_cost_map: `{子项 product_type_id: SubitemCost}`（见 mother_subitem_cost_map）。
+                制造价为 0 的子项已被剔除，这里的行会回退市价。
         total_mult: runs × parallels。
 
     Returns:
@@ -192,19 +246,22 @@ def adjust_mother_metrics(
     revenue = metrics.get("revenue", 0) or 0
     fees = metrics.get("fees", 0) or 0
     new_material_cost = 0.0
-    cost_overrides: dict[int, float] = {}
+    cost_overrides: dict[int, SubitemCost] = {}
     for mat in metrics.get("materials", []) or []:
         mid = mat.get("type_id")
         qty_per_run = mat.get("qty", 0) or 0
         if qty_per_run <= 0:
             continue
+        need = mat.get("total_qty")
+        if need is None:
+            need = qty_per_run * total_mult
         if mid in sub_cost_map:
-            new_material_cost += sub_cost_map[mid]
-            cost_overrides[mid] = sub_cost_map[mid]
+            sub = sub_cost_map[mid]
+            covered = need if sub.covered_qty is None else min(float(need), sub.covered_qty)
+            new_material_cost += covered * sub.unit_cost
+            new_material_cost += max(0.0, float(need) - covered) * (mat.get("unit_price", 0) or 0)
+            cost_overrides[mid] = sub
         else:
-            need = mat.get("total_qty")
-            if need is None:
-                need = qty_per_run * total_mult
             new_material_cost += need * (mat.get("unit_price", 0) or 0)
     new_material_cost = round(new_material_cost, 2)
     profit = round(revenue - new_material_cost - fees, 2)

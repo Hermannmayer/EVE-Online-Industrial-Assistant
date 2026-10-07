@@ -12,7 +12,7 @@
 
 蓝图只读查询
 
-定义行：`11`
+定义行：`13`
 
 #### 方法
 
@@ -26,7 +26,7 @@ def __init__(self, db)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`14`
+定义行：`16`
 ##### `get_blueprint_for_product`
 
 ```python
@@ -35,7 +35,7 @@ def get_blueprint_for_product(self, product_type_id: int, activity: str='manufac
 
 查找产出指定物品的蓝图 → (blueprint_type_id, output_qty, base_time) or None
 
-定义行：`17`
+定义行：`19`
 ##### `get_materials`
 
 ```python

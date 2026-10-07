@@ -1461,6 +1461,11 @@ def test_cost_breakdown_renders_materials_and_summary(cost_breakdown_factory):
         assert summ["利润:"]["value"] == "500"
         assert summ["利润:"]["color"] == str(theme.GREEN), "正利润该染主题绿"
         assert summ["总成本:"]["value"] == "1,234.50"
+        # ISK/h 与利润同口径（500 / 2h），不再取市场口径的 iskph=3,000,000；
+        # 两个口径各自标注，别让「个人口径利润率」与「市场口径利润率」看起来像同一个数
+        assert summ["ISK/h:"]["value"] == "250"
+        assert summ["市场口径利润率:"]["value"] == "12.50%"
+        assert "个人口径（同组自制子项按自制价，缺口按市价/库存）" in bridge.statusText
     finally:
         dialog.deleteLater()
 

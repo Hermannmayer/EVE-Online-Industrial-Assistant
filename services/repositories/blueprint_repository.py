@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from services.blueprint_reader import get_blueprint_products
+
 #: `IN (...)` 分批上限（SQLite 变量上限 999，留余量）
 _BATCH_SIZE = 900
 
@@ -15,15 +17,13 @@ class BlueprintRepository:
         self._db = db
 
     def get_blueprint_for_product(self, product_type_id: int, activity: str = "manufacturing") -> tuple | None:
-        """查找产出指定物品的蓝图 → (blueprint_type_id, output_qty, base_time) or None"""
+        """查找产出指定物品的蓝图 → (blueprint_type_id, output_qty, base_time) or None
+
+        走统一入口 `blueprint_reader.get_blueprint_products`：同一产物挂 CCP 测试蓝图
+        与真实蓝图时取真实蓝图（见该模块 `_TEST_BLUEPRINT_SQL` 说明）。
+        """
         with self._db.connect("ref", "bp") as conn:
-            r = conn.execute(
-                """SELECT bp.blueprint_type_id, bp.quantity, ba.time
-                   FROM bp.blueprint_products bp
-                   JOIN bp.blueprint_activities ba ON ba.blueprint_type_id = bp.blueprint_type_id AND ba.activity = bp.activity
-                   WHERE bp.product_type_id = ? AND bp.activity = ? LIMIT 1""",
-                (product_type_id, activity),
-            ).fetchone()
+            r = get_blueprint_products(conn, product_type_id, activity)
             return (r[0], r[1] or 1, r[2]) if r else None
 
     def get_materials(self, blueprint_type_id: int, activity: str = "manufacturing") -> list[tuple]:
@@ -171,12 +171,7 @@ class BlueprintRepository:
         无制造蓝图时返回 None。
         """
         with self._db.connect("ref", "mkt", "bp") as conn:
-            bp = conn.execute(
-                """SELECT blueprint_type_id
-                FROM blueprint_products
-                WHERE product_type_id=? AND activity='manufacturing' ORDER BY blueprint_type_id LIMIT 1""",
-                (product_type_id,),
-            ).fetchone()
+            bp = get_blueprint_products(conn, product_type_id, "manufacturing")
             if not bp:
                 return None
             bp_id = int(bp[0])

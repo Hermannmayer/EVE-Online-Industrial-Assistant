@@ -31,6 +31,26 @@ def get_blueprint_materials(conn: sqlite3.Connection, blueprint_type_id: int, ac
 
 定义行：`31`
 
+### `get_blueprint_type_for_product`
+
+```python
+def get_blueprint_type_for_product(conn: sqlite3.Connection, product_type_id: int, activity: str='manufacturing') -> int | None
+```
+
+按产物取**配方蓝图 type_id**（优先非测试蓝图，确定性）；无配方 → None。
+
+定义行：`83`
+
+### `plan_output_qty`
+
+```python
+def plan_output_qty(conn: sqlite3.Connection, plan: dict, *, activity: str | None=None) -> int
+```
+
+一条产线的**总产出量** = `runs × parallels × 单轮产出`（0 轮 / 取不到配方 → 0）。
+
+定义行：`93`
+
 ### `get_blueprint_products`
 
 ```python
@@ -39,7 +59,7 @@ def get_blueprint_products(conn: sqlite3.Connection, product_type_id: int, activ
 
 根据产品 type_id 查找对应的蓝图信息。
 
-定义行：`58`
+定义行：`115`
 
 ## 类
 
@@ -47,7 +67,7 @@ def get_blueprint_products(conn: sqlite3.Connection, product_type_id: int, activ
 
 BlueprintReader 适配 — 基于 sqlite 连接的蓝图查询（实现 domain.bom.BlueprintReader）。
 
-定义行：`91`
+定义行：`150`
 
 #### 方法
 
@@ -61,7 +81,7 @@ def __init__(self, conn)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`94`
+定义行：`153`
 ##### `product`
 
 ```python
@@ -72,7 +92,7 @@ def product(self, product_type_id: int, activity: str='manufacturing') -> tuple[
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`97`
+定义行：`156`
 ##### `materials`
 
 ```python
@@ -83,4 +103,4 @@ def materials(self, blueprint_type_id: int, activity: str='manufacturing') -> li
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`103`
+定义行：`162`

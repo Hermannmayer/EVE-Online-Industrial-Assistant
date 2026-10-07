@@ -16,13 +16,23 @@ from typing import Any
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
 from core.constants import TRADE_HUBS
+from services.char_capacity import LINE_TYPES, line_label
 from services.terminology import term
 from services.user_settings import get_price_settings, save_settings
 
-__all__ = ["IndustryBridge", "FILTERS", "PRICE_TYPES"]
+__all__ = ["CATEGORY_FILTERS", "FILTERS", "PRICE_TYPES", "IndustryBridge"]
 
 #: 计划状态筛选（与旧 TopToolbar.FILTERS 一致，顺序即下拉项顺序）
 FILTERS: tuple[str, ...] = ("全部", "待排", "运行中", "待下线", "已完成")
+
+#: 计划**类别**筛选（与状态筛选正交）：空串 = 全部，其余取 `char_capacity.LINE_TYPES`。
+#:
+#: 归线口径复用 `char_capacity.capacity_line_for_category`（拷贝 / 发明 / ME-TE 研究 →
+#: 科研），与「人物占用」面板同一套三类产线 —— 这正是游戏工业窗口的作业类型分法。
+#: 标签同源 `char_capacity.line_label`（制造 / 科研 / 反应），不在这里另写一份中文。
+#: ⚠️ 值必须是 `plan_category` 真会返回的 category 能映射到的线型（同
+#: `production_launcher._ACTIVITY_FILTERS` 那条注释记的历史缺陷：值写错 = 永远筛不出东西）。
+CATEGORY_FILTERS: tuple[tuple[str, str], ...] = (("", "全部"),) + tuple((line, line_label(line)) for line in LINE_TYPES)
 
 #: 价格类型：(值, 显示名)。显示名走术语中心，不写死中文。
 PRICE_TYPES: tuple[tuple[str, str], ...] = (
@@ -49,6 +59,8 @@ class IndustryBridge(QObject):
     suggestionsChanged = Signal()
     #: 筛选条件变化
     filterChanged = Signal()
+    #: 类别筛选变化（与 `filterChanged` 正交：两者一起决定显示行）
+    categoryChanged = Signal()
     #: 视图模式变化（数据视图 ↔ 甘特图）
     viewModeChanged = Signal()
     #: 甘特图数据变化
@@ -58,6 +70,7 @@ class IndustryBridge(QObject):
         super().__init__(parent)
         self._page = page
         self._filter_index = 0
+        self._category_index = 0
         self._view_mode = "data"
         self._suggestions: list[str] = []
         self._last_query = ""
@@ -109,6 +122,31 @@ class IndustryBridge(QObject):
     def current_filter(self) -> str:
         """当前筛选文案（`IndustryPage` 读它组装查询条件）。"""
         return FILTERS[self._filter_index] if 0 <= self._filter_index < len(FILTERS) else FILTERS[0]
+
+    # ── 类别筛选（制造 / 科研 / 反应）────────────────────────────
+
+    @Property(list, constant=True)
+    def categoryOptions(self) -> list[str]:
+        return [label for _value, label in CATEGORY_FILTERS]
+
+    @Property(int, notify=categoryChanged)
+    def categoryIndex(self) -> int:
+        return self._category_index
+
+    @Slot(int)
+    def setCategoryIndex(self, index: int) -> None:
+        index = max(0, min(int(index), len(CATEGORY_FILTERS) - 1))
+        if index == self._category_index:
+            return
+        self._category_index = index
+        self.categoryChanged.emit()
+        self._page.load_plans()
+
+    def current_category(self) -> str:
+        """当前类别线型（`""` = 全部）。`IndustryPage` 读它过滤**显示**行。"""
+        if 0 <= self._category_index < len(CATEGORY_FILTERS):
+            return CATEGORY_FILTERS[self._category_index][0]
+        return ""
 
     # ── 视图模式 ──────────────────────────────────────────────
 

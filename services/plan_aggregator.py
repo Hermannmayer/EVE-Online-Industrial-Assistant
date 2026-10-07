@@ -33,7 +33,7 @@ from domain.research import (
     ACTIVITY_RESEARCH_ME,
     ACTIVITY_RESEARCH_TE,
 )
-from services.blueprint_reader import SqliteBlueprintReader
+from services.blueprint_reader import SqliteBlueprintReader, get_blueprint_products
 from services.item_kind import blueprint_type_ids
 from services.name_resolver import resolve_item_name
 from services.plan_job_kinds import (
@@ -153,11 +153,8 @@ def plan_input_blueprint_type_id(conn, plan: dict) -> int | None:
         return stored
     if not pid:
         return None
-    row = conn.execute(
-        "SELECT blueprint_type_id FROM blueprint_products WHERE product_type_id = ? AND activity = ? LIMIT 1",
-        (pid, act),
-    ).fetchone()
-    return int(row[0]) if row and row[0] else None
+    row = get_blueprint_products(conn, pid, act)
+    return row[0] if row else None
 
 
 def _science_input_blueprint(conn, plan: dict, pid: int) -> int | None:
@@ -285,27 +282,18 @@ def expand_blueprint_requirements(
         # 直接查该产品的蓝图（不递归材料）。
         # **反应产物的蓝图挂在 `activity='reaction'` 上**，没有 manufacturing 行 ——
         # 只认 'manufacturing' 会让反应计划整行静默丢失（与发明/拷贝同一个坑）。
-        # 谓词口径同 `market_browser_service._MFG_EXISTS` /
-        # `blueprint_repository.get_manufacturing_materials`：两者都取这一对。
-        if activity == ACTIVITY_REACTION:
-            bp_row = conn.execute(
-                "SELECT blueprint_type_id FROM blueprint_products "
-                "WHERE product_type_id = ? AND activity IN ('manufacturing','reaction') LIMIT 1",
-                (pid,),
-            ).fetchone()
-        else:
-            bp_row = conn.execute(
-                "SELECT blueprint_type_id FROM blueprint_products "
-                "WHERE product_type_id = ? AND activity = 'manufacturing' LIMIT 1",
-                (pid,),
-            ).fetchone()
+        # 统一入口负责排除 CCP 测试蓝图（碳化钨 16672 同时挂测试蓝图 45732 与真实 46207）。
+        # 该产物若只有测试蓝图（如 26842），**照样返回它** —— 整批排除会让界面凭空少掉配方。
+        bp_row = get_blueprint_products(
+            conn, pid, activity if activity == ACTIVITY_REACTION else ACTIVITY_MANUFACTURING
+        )
         if not bp_row:
             continue  # 该产品无制造/反应蓝图（不应发生，创建计划时已校验）
 
         bp_tid = bp_row[0]
-        # 单轮产出也要按同一个活动取：反应蓝图在 reaction 行上（拿 manufacturing 会兜成 1，
+        # 单轮产出也按同一个活动取：反应蓝图在 reaction 行上（拿 manufacturing 会兜成 1，
         # 「所需流程数」直接虚高 N 倍）
-        per_run = _get_per_run_output(conn, bp_tid, activity)
+        per_run = bp_row[1]
         if per_run < 1:
             per_run = 1
         activations = math.ceil(total_qty / per_run)
@@ -756,10 +744,7 @@ def aggregate_procurement(
         if total_runs <= 0:
             continue  # 0 轮 = 0 材料、0 产出：这条产线不贡献任何需求
         me = int(plan.get("me_level") or 0)
-        bp = conn.execute(
-            "SELECT blueprint_type_id FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-            (pid,),
-        ).fetchone()
+        bp = get_blueprint_products(conn, pid, ACTIVITY_MANUFACTURING)
         if not bp:
             continue
         mats = conn.execute(
@@ -905,10 +890,7 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]:
         if total_runs <= 0:
             continue  # 与 aggregate_procurement 同一口径：0 轮不贡献需求
         me = int(plan.get("me_level") or 0)
-        bp = conn.execute(
-            "SELECT blueprint_type_id FROM blueprint_products WHERE product_type_id=? AND activity='manufacturing' LIMIT 1",
-            (pid,),
-        ).fetchone()
+        bp = get_blueprint_products(conn, pid, ACTIVITY_MANUFACTURING)
         if not bp:
             continue
         mats = conn.execute(

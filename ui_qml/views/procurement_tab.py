@@ -439,11 +439,13 @@ class ProcurementDialog(QObject):
     def _apply_make_costs(self) -> None:
         """给每行补「自制成本（每件）」—— 判断这件料自己造还是买。
 
-        口径由 `ScoringService.manufacturing_unit_costs` 提供（= 「可制造物品」窗口那一套：
-        料钱 + 作业费 ÷ 单轮产出，**不递归**；制造走用户手上**最好的那张蓝图**的 ME/TE、
-        T2 含拷贝/发明研究费，**反应产物走配方** —— 两类都在服务里，本窗不分支）。
-        参数与上面 `aggregate_procurement` 保持同源 —— 同一个 hub / 卖价买价 /
-        材料机库的设施与税，否则这一列与旁边的市价列不可比。
+        口径由 `ScoringService.manufacturing_unit_costs` 提供（= `domain.scoring` 的
+        `make_cost_per_unit`：料钱 + 作业费 + 研究费 ÷ 单轮产出，**不含**经纪费/改单费/销售税
+        —— 那两笔是「卖出去才产生的花费」；**制造走用户手上最好的那张蓝图**的 ME/TE、
+        T2 含拷贝/发明研究费、**反应产物走配方** —— 两类都在服务里，本窗不分支）。
+        本窗**不传 `cost_overrides`**（按整颗料自己的配方算，不按拆解组自制价折算）——
+        那只有计划大表按同组子项才算。参数与上面 `aggregate_procurement` 保持同源 ——
+        同一个 hub / 卖价买价 / 材料机库的设施与税，否则这一列与旁边的市价列不可比。
 
         「材料倍率」：本窗没有这个控件，聚合调用也没传 `price_mult`（= 1.0），故这里同样 1.0。
 

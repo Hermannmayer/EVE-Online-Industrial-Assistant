@@ -66,20 +66,17 @@ def _resolve_name(c, type_id: int) -> str:
 
 
 def _find_blueprint_for_product(conn, product_type_id: int, activity: str = "manufacturing"):
-    """查找产出指定物品的蓝图 → (bp_id, output_qty, base_time)"""
-    row = conn.execute(
-        """
-        SELECT bp.blueprint_type_id, bp.quantity, ba.time
-        FROM blueprint_products bp
-        JOIN blueprint_activities ba
-            ON ba.blueprint_type_id = bp.blueprint_type_id
-            AND ba.activity = bp.activity
-        WHERE bp.product_type_id = ? AND bp.activity = ?
-        LIMIT 1
-        """,
-        (product_type_id, activity),
-    ).fetchone()
-    return row  # (bp_id, qty, time) or None
+    """查找产出指定物品的蓝图 → (bp_id, output_qty, base_time)。
+
+    走统一入口 `blueprint_reader.get_blueprint_products`：同一产物可能挂多张蓝图
+    （实测制造 4 个），而且 SDE 里有两张 CCP **测试蓝图**（碳化钨 16672 挂
+    45732「Test Reaction Blueprint」20/轮、以及 26843）—— 手写 `... LIMIT 1`
+    无排序会命中测试蓝图，与 `market_chain_service` / 评分链路查到的蓝图不一致。
+    连接带 `ref` 时才会排除测试蓝图（不带就退化成按 type_id 取，见该函数说明）。
+    """
+    from services.blueprint_reader import get_blueprint_products
+
+    return get_blueprint_products(conn, product_type_id, activity)  # (bp_id, qty, time) or None
 
 
 def _get_materials(conn, bp_id: int, activity: str = "manufacturing"):

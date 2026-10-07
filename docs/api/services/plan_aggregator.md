@@ -92,7 +92,7 @@ def _science_input_blueprint(conn, plan: dict, pid: int) -> int | None
 
 科研行真正要消耗的那张蓝图 type_id（反查不到 → None，不编造）。
 
-定义行：`163`
+定义行：`160`
 
 ### `_science_needed_runs`
 
@@ -102,7 +102,7 @@ def _science_needed_runs(plan: dict, activity: str) -> int
 
 科研行的「所需流程数」（缺列按制造行同一套 defaults 兜 1，不编造不存在的量）。
 
-定义行：`186`
+定义行：`183`
 
 ### `_add_source`
 
@@ -112,7 +112,7 @@ def _add_source(entry: dict, label: str) -> None
 
 同一张蓝图被多条计划以不同用途需要时并起用途标签（同一用途不重复）。
 
-定义行：`201`
+定义行：`198`
 
 ### `_invention_input_suffix`
 
@@ -122,7 +122,7 @@ def _invention_input_suffix(conn, activity: str, bp_tid: int) -> str
 
 发明输入**不是蓝图**时补的括注 —— T3 发明的输入是古遗物，不是 T1 蓝图。
 
-定义行：`208`
+定义行：`205`
 
 ### `expand_blueprint_requirements`
 
@@ -132,7 +132,7 @@ def expand_blueprint_requirements(conn, plans: list[dict], *, me_level: int=0) -
 
 收集每个生产计划**真正要消耗的那张蓝图**（不递归展开 BOM 子项）。
 
-定义行：`221`
+定义行：`218`
 
 ### `check_user_blueprints`
 
@@ -142,7 +142,7 @@ def check_user_blueprints(conn, bp_type_ids: set[int]) -> dict[int, dict[str, An
 
 查询用户蓝图库存，返回每个 blueprint_type_id 的拥有情况。
 
-定义行：`332`
+定义行：`320`
 
 ### `check_inventory`
 
@@ -152,7 +152,7 @@ def check_inventory(conn, type_ids: set[int]) -> dict[int, int]
 
 查询用户库存（所有机库合计），返回 &#123;type_id: total_quantity&#125;
 
-定义行：`425`
+定义行：`413`
 
 ### `get_market_prices`
 
@@ -162,7 +162,7 @@ def get_market_prices(conn, type_ids: set[int], region_id: int=10000002) -> dict
 
 批量查询市场价，返回 &#123;type_id: &#123;"sell": float, "buy": float, "avg": float&#125;&#125;
 
-定义行：`452`
+定义行：`440`
 
 ### `calculate_output_with_overflow`
 
@@ -172,7 +172,7 @@ def calculate_output_with_overflow(conn, plans: list[dict], *, me_level: int=0, 
 
 计算所有计划的产出数据，含中间产品的 batch 溢出信息。
 
-定义行：`485`
+定义行：`473`
 
 ### `_format_overflow`
 
@@ -182,7 +182,7 @@ def _format_overflow(details: list[dict]) -> str
 
 格式化溢出信息为短文本
 
-定义行：`581`
+定义行：`569`
 
 ### `_pick_price`
 
@@ -192,7 +192,7 @@ def _pick_price(price_map: dict[str, float], price_type: str) -> float
 
 按价格类型取价；缺省回退另一个来源，均无数据返回 0.0
 
-定义行：`598`
+定义行：`586`
 
 ### `_spread`
 
@@ -202,7 +202,7 @@ def _spread(price_map: dict[str, float], qty: float) -> float | None
 
 (卖价 − 买价) × 数量 —— 同一 hub 的挂单价差，按采购量换算成金额。任一侧没有挂单 → `None`。
 
-定义行：`607`
+定义行：`595`
 
 ### `self_made_type_ids`
 
@@ -212,7 +212,7 @@ def self_made_type_ids(plans: list[dict]) -> set[int]
 
 会被「自制」覆盖的产物 id：**未完工的子项产线**的产物。
 
-定义行：`627`
+定义行：`615`
 
 ### `_plan_total_runs`
 
@@ -222,7 +222,7 @@ def _plan_total_runs(plan: dict) -> int
 
 计划的**字面**总作业数 = `runs × parallels`；`runs=0` 就是 0，不兜成 1。
 
-定义行：`650`
+定义行：`638`
 
 ### `_science_material_requirements`
 
@@ -232,7 +232,7 @@ def _science_material_requirements(plan: dict) -> list[dict]
 
 科研计划要买的材料（数据核心 / 解码器 / 拷贝与研究的耗材）[&#123;type_id, name, need&#125;]。
 
-定义行：`661`
+定义行：`649`
 
 ### `_cache_item_meta`
 
@@ -242,7 +242,7 @@ def _cache_item_meta(conn, mid: int, names: dict, volumes: dict, zh_en: dict) ->
 
 补一份该材料的名称/体积缓存（制造、科研、强制启动缺口三条取料分支共用）。
 
-定义行：`676`
+定义行：`664`
 
 ### `aggregate_procurement`
 
@@ -252,7 +252,7 @@ def aggregate_procurement(conn, plans: list[dict], *, hangar_id: int | None=None
 
 聚合「备料中」计划的待采购材料并扣库存 → (rows, total_cost, total_volume)。
 
-定义行：`689`
+定义行：`677`
 
 ### `_item_meta_entry`
 
@@ -262,7 +262,7 @@ def _item_meta_entry(conn, mid: int) -> dict
 
 材料条目的元数据骨架 `&#123;name, total_qty, volume&#125;`（`expand_material_requirements` 同结构）。
 
-定义行：`855`
+定义行：`840`
 
 ### `collect_direct_materials`
 
@@ -272,4 +272,4 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]
 
 聚合各计划的直接材料（recipe 一层，非递归），排除由子项产线自制的组件。
 
-定义行：`868`
+定义行：`853`

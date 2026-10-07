@@ -18,6 +18,7 @@ from domain.scoring import BlueprintRecipe, Material
 from domain.scoring import calc_manufacturing_score as _pure_calc
 from domain.scoring import calc_reaction_score as _pure_reaction
 from domain.scoring import calc_trade_score as _pure_trade
+from services.blueprint_reader import get_blueprint_products
 from services.repositories.market_repository import MarketRepository
 
 
@@ -157,20 +158,9 @@ def calc_manufacturing_score(
     }
 
     with db.connect("ref", "mkt", "bp") as conn:
-        c = conn.cursor()
-
-        c.execute(
-            """
-            SELECT bp.blueprint_type_id, bp.quantity, ba.time
-            FROM blueprint_products bp
-            JOIN blueprint_activities ba ON ba.blueprint_type_id = bp.blueprint_type_id
-                AND ba.activity = bp.activity
-            WHERE bp.product_type_id = ? AND bp.activity = 'manufacturing'
-            LIMIT 1
-        """,
-            (type_id,),
-        )
-        bp_row = c.fetchone()
+        # 走统一入口：同一产物挂测试蓝图与真实蓝图时（碳化钨 16672 即如此）必须取真实蓝图。
+        # 连接已带 ref，`get_blueprint_products` 才有 item 表可用来排除测试蓝图。
+        bp_row = get_blueprint_products(conn, type_id, "manufacturing")
         if not bp_row:
             result["status"] = "no_blueprint"
             return result
@@ -353,18 +343,8 @@ def calc_reaction_score(
     with db.connect("ref", "mkt", "bp") as conn:
         c = conn.cursor()
 
-        c.execute(
-            """
-            SELECT bp.blueprint_type_id, bp.quantity, ba.time
-            FROM blueprint_products bp
-            JOIN blueprint_activities ba ON ba.blueprint_type_id = bp.blueprint_type_id
-                AND ba.activity = bp.activity
-            WHERE bp.product_type_id = ? AND bp.activity = 'reaction'
-            LIMIT 1
-        """,
-            (type_id,),
-        )
-        bp_row = c.fetchone()
+        # 同上：反应配方也必须优先非测试蓝图（16672 的测试蓝图 45732 是 20/轮、真实 46207 是 10000/轮）
+        bp_row = get_blueprint_products(conn, type_id, "reaction")
         if not bp_row:
             result["status"] = "no_blueprint"
             return result

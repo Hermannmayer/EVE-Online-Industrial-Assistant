@@ -363,6 +363,9 @@ _SCIENCE_PLANS = [
     {"id": 7, "product_type_id": 4005, "product_name": "T3蓝图", "runs": 2, "parallels": 3, "activity": "invention"},
     # 反应：蓝图挂在 activity='reaction' 行上（每轮产 4），只认 manufacturing 会查不到
     {"id": 8, "product_type_id": 5001, "product_name": "反应产物", "runs": 4, "parallels": 5, "activity": "reaction"},
+    # 同一产物挂**两张**反应蓝图：4011「测试反应配方」（20/轮）与 4012 真配方（2/轮）。
+    # 旧 SQL 无 ORDER BY，哪张先返回全看 rowid 运气 —— 这里两张都插，钉死必须取真配方。
+    {"id": 9, "product_type_id": 6001, "product_name": "双蓝图产物", "runs": 2, "parallels": 2, "activity": "reaction"},
 ]
 
 #: {蓝图 type_id: (needed_runs, 用途/来源列文案)}
@@ -374,6 +377,7 @@ _SCIENCE_EXPECTED = {
     4008: (1, "被研究蓝图"),
     4010: (6, "发明输入（遗物）"),  # T3 发明的输入是冬眠者遗物，永远不在 user_blueprints 里
     5002: (5, "反应蓝图"),  # 4×5=20 产出 ÷ 每轮 4 = 5 次反应作业
+    4012: (2, "反应蓝图"),  # 2×2=4 产出 ÷ 每轮 2 = 2 次（**不是**测试蓝图 4011 的 20/轮 → 4）
 }
 
 
@@ -430,6 +434,13 @@ def _seed_science_plans(db) -> None:
             (4010, "完整的小型船体舱段", "冬眠者船体"),  # 古遗物：group 不以「蓝图」结尾
             (5001, "反应产物", "反应材料"),
             (5002, "反应式蓝图", "反应蓝图"),
+            (6001, "双蓝图产物", "反应材料"),
+            # 4001 / 4003 / 4008 / 4009 / 4010 走的是**别的**查询路径，但统一入口
+            # 「排除测试蓝图」要靠 `ref.item` 的名称判 —— 真实 SDE 里每张蓝图在 item 表
+            # 都有行，所以这里也必须给全，否则测的是一个不存在的形状。4011 的名字带
+            # 「测试」→ 正是统一入口的排除判据。
+            (4011, "测试反应配方", "反应蓝图"),
+            (4012, "真反应配方", "反应蓝图"),
         ):
             conn.execute(
                 "INSERT INTO item (type_id, zh_name, en_name, zh_group_name, en_group_name) VALUES (?,?,?,?,?)",
@@ -450,6 +461,13 @@ def _seed_science_plans(db) -> None:
             INSERT INTO blueprint_products VALUES (4001, 'invention', 4002, 1, 0.34);
             INSERT INTO blueprint_products VALUES (4010, 'invention', 4005, 1, 0.34);
             INSERT INTO blueprint_products VALUES (5002, 'reaction', 5001, 4, NULL);
+            INSERT INTO blueprint_products VALUES (4011, 'reaction', 6001, 20, NULL);
+            INSERT INTO blueprint_products VALUES (4012, 'reaction', 6001, 2, NULL);
+            -- 统一入口按 (blueprint_type_id, activity) 内连活动表取时间，缺行等于「没这张蓝图」
+            INSERT INTO blueprint_activities VALUES (3001, 'manufacturing', 3600, NULL);
+            INSERT INTO blueprint_activities VALUES (5002, 'reaction', 3600, NULL);
+            INSERT INTO blueprint_activities VALUES (4011, 'reaction', 3600, NULL);
+            INSERT INTO blueprint_activities VALUES (4012, 'reaction', 3600, NULL);
             INSERT INTO blueprint_activities VALUES (4001, 'invention', 3600, NULL);
             INSERT INTO blueprint_activities VALUES (4010, 'invention', 3600, NULL);
             """
@@ -463,7 +481,9 @@ def test_expand_blueprint_requirements_covers_science_rows(db_manager):
     行 id ≠ type_id）/ 未绑定回退；研究 → 被研究的那张 BPO 本身；反应 → 挂在
     `activity='reaction'` 行上的反应蓝图（单轮产出也按 reaction 行取）；同一张蓝图的
     多种用途并成一格；发明输入**不是蓝图**（T3 遗物）时用途列带「（遗物）」；
-    制造行 `needed_runs` 仍是 `ceil(runs×parallels ÷ 单轮产出)`。
+    制造行 `needed_runs` 仍是 `ceil(runs×parallels ÷ 单轮产出)`；
+    **同一产物同时挂测试蓝图与真实蓝图时必须取真实蓝图**（产物 6001 两张都挂，
+    旧 SQL 没有 ORDER BY，取到哪张全看 rowid 运气 → 流程数会差 10 倍量级）。
     """
     from services.plan_aggregator import expand_blueprint_requirements
 
@@ -475,6 +495,15 @@ def test_expand_blueprint_requirements_covers_science_rows(db_manager):
     assert needed[4001]["name"] == "T1蓝图"
     assert needed[4009]["name"] == "绑定的蓝图"
     assert needed[4010]["name"] == "完整的小型船体舱段"
+    # 测试蓝图 4011 与真实蓝图 4012 都产出 6001：只许留下真实的那张
+    assert 4011 not in needed, "测试蓝图被当成了配方"
+    assert needed[4012]["needed_runs"] == 2, "取到测试蓝图的话这里是 2×2÷20 → 1"
+
+    # 同一判据的另一个入口（「要绑哪张蓝图」弹窗），用的是同一个统一入口
+    from services.plan_aggregator import plan_input_blueprint_type_id
+
+    with db_manager.connect("user", "ref", "bp") as conn:
+        assert plan_input_blueprint_type_id(conn, _SCIENCE_PLANS[8]) == 4012
 
 
 def test_expand_blueprint_requirements_covers_reaction_rows(db_manager):
@@ -490,7 +519,10 @@ def test_expand_blueprint_requirements_covers_reaction_rows(db_manager):
     with db_manager.connect("user", "ref", "bp") as conn:
         needed = expand_blueprint_requirements(conn, reaction_plans)
 
-    assert {tid: (v["needed_runs"], v["source"]) for tid, v in needed.items()} == {5002: (5, "反应蓝图")}
+    assert {tid: (v["needed_runs"], v["source"]) for tid, v in needed.items()} == {
+        5002: (5, "反应蓝图"),
+        4012: (2, "反应蓝图"),  # 6001 挂了测试 4011(20/轮) 与真实 4012(2/轮) → 必须取后者
+    }
 
 
 def test_get_blueprint_requirements_includes_science_rows(db_manager):
@@ -536,4 +568,5 @@ def test_plan_input_blueprint_type_id_resolves_per_activity(db_manager):
         6: 4008,
         7: 4010,  # T3 发明：输入是古遗物（调用方据 is_blueprint 提示绑不了）
         8: 5002,  # 反应：蓝图挂在 activity='reaction' 行上
+        9: 4012,  # 6001 同时挂测试蓝图 4011 与真配方 4012 → 必须给真的那张
     }

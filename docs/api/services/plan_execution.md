@@ -20,7 +20,7 @@ def parse_cost_snapshot(raw: str | None) -> dict
 
 解析 `material_cost_snapshot` JSON → ``&#123;"total": float | None, "unit": &#123;type_id: 单价&#125;&#125;``。
 
-定义行：`23`
+定义行：`24`
 
 ### `_snapshot_total`
 
@@ -30,7 +30,7 @@ def _snapshot_total(raw: str | None) -> float | None
 
 快照里的材料总成本；无快照返回 None（调用方回退 material_cost）。
 
-定义行：`51`
+定义行：`52`
 
 ### `_now_str`
 
@@ -42,7 +42,7 @@ def _now_str() -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`56`
+定义行：`57`
 
 ### `remaining_seconds`
 
@@ -52,7 +52,7 @@ def remaining_seconds(plan: dict, *, now: datetime | None=None) -> int | None
 
 倒计时剩余秒数。非进行中 / 无 started_at / 无时长 → None；已超时返回负值。
 
-定义行：`60`
+定义行：`61`
 
 ### `expire_overdue_plans`
 
@@ -62,7 +62,7 @@ def expire_overdue_plans(db=None) -> int
 
 把已超时的进行中计划置为 ready（重启补算）。返回受影响行数。
 
-定义行：`81`
+定义行：`82`
 
 ### `material_requirements`
 
@@ -72,7 +72,7 @@ def material_requirements(plan: dict) -> list[dict]
 
 计算计划总材料需求 [&#123;type_id, name, need&#125;]。
 
-定义行：`119`
+定义行：`120`
 
 ### `_active_plans_for_material_check`
 
@@ -82,7 +82,7 @@ def _active_plans_for_material_check() -> list[dict]
 
 全量**活跃**计划行（`completed`/`done` 排除），供材料校验算「子线将产出」。
 
-定义行：`177`
+定义行：`178`
 
 ### `_pending_children_output_by_type`
 
@@ -92,7 +92,7 @@ def _pending_children_output_by_type(all_plans: list[dict]) -> dict[int, int]
 
 子线将产出的成品数量 &#123;type_id: 数量&#125;（只算**未完成**的子项行）。
 
-定义行：`195`
+定义行：`196`
 
 ### `check_materials`
 
@@ -102,7 +102,7 @@ def check_materials(plan: dict, mat_hangar_id: int | None, *, stock: dict[int, i
 
 对照材料机库库存，返回 [&#123;type_id, name, need, owned, missing&#125;]。
 
-定义行：`232`
+定义行：`233`
 
 ### `get_plans_for_mat_hangar`
 
@@ -112,7 +112,7 @@ def get_plans_for_mat_hangar(mat_hangar_id: int) -> list[dict]
 
 列出以该机库为材料机库的活跃计划（status NOT IN ('completed','done')）。
 
-定义行：`283`
+定义行：`284`
 
 ### `aggregate_material_requirements`
 
@@ -122,7 +122,7 @@ def aggregate_material_requirements(plans: list[dict], mat_hangar_id: int) -> li
 
 跨计划聚合材料需求：按 type_id 累加 need，对照材料机库库存算缺口。
 
-定义行：`297`
+定义行：`298`
 
 ### `deduct_materials`
 
@@ -132,7 +132,7 @@ def deduct_materials(plan: dict, mat_hangar_id: int) -> list[dict]
 
 从材料机库逐个扣减，返回 [&#123;type_id, name, need, owned, deducted, missing&#125;]。
 
-定义行：`328`
+定义行：`329`
 
 ### `start_plan`
 
@@ -142,7 +142,7 @@ def start_plan(plan: dict, *, mat_hangar_id: int | None, allow_short: bool=False
 
 启动一条计划：校验 → 扣减材料 → 绑定蓝图 → 写 started_at/in_progress。
 
-定义行：`346`
+定义行：`347`
 
 ### `move_bindings`
 
@@ -152,7 +152,7 @@ def move_bindings(conn, from_plan_id: int, to_plan_id: int, blueprint_ids: list[
 
 把蓝图绑定关系从一条计划**挪到**另一条（不是复制）。
 
-定义行：`542`
+定义行：`543`
 
 ### `existing_blueprint_ids`
 
@@ -162,7 +162,7 @@ def existing_blueprint_ids(conn, bp_ids: list[int]) -> set[int]
 
 过滤出确实存在于 `user_blueprints` 的绑定 id。
 
-定义行：`560`
+定义行：`561`
 
 ### `_has_pending_children`
 
@@ -173,7 +173,7 @@ def _has_pending_children(conn, plan: dict) -> bool
 母项是否还有未完成子项（部分启动的守门条件）。**只对母项调用** ——
 子项行自己在这个计数里，对它会恒为真（调用方按 `sub_level==0` 收口）。
 
-定义行：`572`
+定义行：`573`
 
 ### `preview_partial_start`
 
@@ -183,7 +183,7 @@ def preview_partial_start(plan_id: int, lines: int, mat_hangar_id: int | None) -
 
 拆行前预览「只启动 N 条」的材料缺口与蓝图短板。
 
-定义行：`586`
+定义行：`587`
 
 ### `_rollback_split`
 
@@ -193,7 +193,7 @@ def _rollback_split(plan_id: int, rem_id: int, total: int, src: dict, moved: lis
 
 部分启动失败 → 把拆出的两行并回一条（**单事务**）。
 
-定义行：`621`
+定义行：`622`
 
 ### `_no_other_active_mother`
 
@@ -203,7 +203,7 @@ def _no_other_active_mother(conn, plan_id: int, group_number: int) -> bool
 
 同组是否已没有别的活跃 level-0 行（本行刚置为 completed，自然不计入）。
 
-定义行：`647`
+定义行：`648`
 
 ### `remove_completed_children`
 
@@ -213,7 +213,7 @@ def remove_completed_children(group_number: int, *, conn=None) -> int
 
 清理「已无归属」的已完成子项行，返回删除数（母项结束时调用）。
 
-定义行：`662`
+定义行：`663`
 
 ### `start_plan_partial`
 
@@ -223,7 +223,7 @@ def start_plan_partial(plan_id: int, lines: int, *, mat_hangar_id: int | None, c
 
 部分启动：把计划拆成「已启动 lines 条」+「未启动 P−lines 条」两行，并启动前者。
 
-定义行：`715`
+定义行：`716`
 
 ### `start_plan_batch`
 
@@ -233,7 +233,7 @@ def start_plan_batch(plans: list[dict], *, mat_hangar_id: int | None, allow_shor
 
 批量启动（产线小助手/组）。逐条独立，单条失败不中断其余。
 
-定义行：`839`
+定义行：`840`
 
 ### `_deposit_research_output`
 
@@ -243,7 +243,7 @@ def _deposit_research_output(conn, *, plan_id: int, activity: str, product_type_
 
 把科研作业的产出（BPC）写入 user_blueprints。返回 1=有入库，0=跳过。
 
-定义行：`867`
+定义行：`868`
 
 ### `_improve_bound_bpo_level`
 
@@ -253,7 +253,7 @@ def _improve_bound_bpo_level(conn, *, plan_id: int, activity: str, target_level:
 
 ME/TE 研究完成：把绑定**蓝图原本**的等级提到目标等级（只升不降）。返回 1=改了。
 
-定义行：`941`
+定义行：`942`
 
 ### `_input_blueprint_me_te`
 
@@ -263,7 +263,7 @@ def _input_blueprint_me_te(conn, plan_id: int) -> tuple[int, int]
 
 取计划绑定输入蓝图的 ME/TE（拷贝产出的 BPC 继承原图等级）。缺失 → (0, 0)。
 
-定义行：`1002`
+定义行：`1003`
 
 ### `output_per_run`
 
@@ -271,9 +271,9 @@ def _input_blueprint_me_te(conn, plan_id: int) -> tuple[int, int]
 def output_per_run(product_type_id: int) -> int
 ```
 
-蓝图单流程产出量（查 blueprint_products，缺省 1）。
+蓝图单流程产出量（按产物取配方，缺省 1）。
 
-定义行：`1015`
+定义行：`1016`
 
 ### `_plan_activity`
 

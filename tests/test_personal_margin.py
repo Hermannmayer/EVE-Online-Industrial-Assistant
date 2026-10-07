@@ -9,12 +9,13 @@
 - worker 层（库存快照只取一次）
 """
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from core.cache import TtlLRUCache
-from services.plan_metrics import mother_subitem_cost_map
+from services.plan_metrics import SubitemCost, mother_subitem_cost_map
 from services.scoring_service import ScoringService
 
 pytestmark = pytest.mark.ui
@@ -257,10 +258,11 @@ def test_worker_personal_margin(qapp, sample_char_config):
     assert w._inv_map is not None  # 快照只取一次
 
 
-def test_mother_subitem_override_not_written_back(qapp, sample_char_config):
+def test_mother_subitem_override_not_written_back(qapp, sample_char_config, temp_db, monkeypatch):
     """拆解母项：子项制造价只作 cost_overrides 返回，**不覆写** result 的成本/利润（市场口径）。
 
     2026-10-03 用户拍板：「成本/利润」列走市场口径，子项制造价只进个人利润率。
+    子项产线的**产出量**走 `output_qty_by_plan`（这里 2 轮×1 件 = 2 件）→ 制造价摊成单件。
     """
     from ui_qml.workers.industry_workers import BatchPlanCalcWorker
 
@@ -272,11 +274,16 @@ def test_mother_subitem_override_not_written_back(qapp, sample_char_config):
         prod_hub="Jita",
         prod_price_type="sell",
     )
+    # 子项每轮产出查蓝图库（无人机 2002 = 1 件/轮）
+    monkeypatch.setattr(
+        "ui_qml.workers.industry_workers.get_container",
+        lambda: SimpleNamespace(db=temp_db),
+    )
     mother = {"id": 1, "group_id": 10, "child_level": 0, "runs": 1, "parallels": 1}
     result = {
         "materials": [
             {"type_id": 1001, "qty": 10, "unit_price": 5.0},  # 未拆解 → 10×5=50
-            {"type_id": 2002, "qty": 2, "unit_price": 999.0},  # 子项自制 → 制造价 5000
+            {"type_id": 2002, "qty": 2, "unit_price": 999.0},  # 子项自制 → 整线制造价 5000
         ],
         "revenue": 20000.0,
         "fees": 100.0,
@@ -299,8 +306,8 @@ def test_mother_subitem_override_not_written_back(qapp, sample_char_config):
         ),
     }
     overrides = w._apply_mother_subitem_cost(mother, result, base_results)
-    # 子项制造价 = 材料 4800 + 作业费 100×2 runs = 5000 → 个人利润率的 cost_overrides
-    assert overrides == {2002: 5000.0}
+    # 子项制造价 = 材料 4800 + 作业费 100×2 runs = 5000（整线），产出 2 件 → 单件 2500
+    assert overrides == {2002: SubitemCost(unit_cost=2500.0, covered_qty=2.0)}
     # 成本/利润/利润率保持市场口径（未被个人口径覆写）
     assert result["material_cost"] == pytest.approx(2048.0, abs=0.01)
     assert result["profit"] == pytest.approx(17852.0, abs=0.01)
@@ -334,19 +341,21 @@ def test_ungrouped_mother_not_adjusted(qapp, sample_char_config):
 
 
 def test_personal_margin_uses_cost_override(qapp):
-    """子项自制件按其制造价计（覆盖库存/市场价）。"""
+    """子项自制件按其**自制单件价**计：覆盖到的按自制价，**缺口仍按市价**（不再当 0 成本）。"""
     from services.scoring_service import ScoringService
 
     result = {
         "margin": 12.5,
-        "revenue_per_run": 1000.0,
+        "revenue_per_run": 10000.0,
         "fees_per_run": 100.0,
-        "materials": [{"type_id": 2002, "qty": 2, "unit_price": 999.0}],
+        "materials": [{"type_id": 2002, "qty": 4, "unit_price": 999.0}],
     }
-    # 制造价 5000（覆盖 2×999 市场价 / 库存）
-    personal = ScoringService.calculate_personal_margin(result, {2002: (10, 1.0)}, 1, 1, cost_overrides={2002: 5000.0})
-    # 成本 = 5000 + 100 = 5100
-    assert personal == pytest.approx((1000 - 5100) / 5100 * 100, abs=0.005)
+    # 自制单件 500、覆盖 3 件（子项产线只排了净需求）；缺的 1 件无库存 → 按市价 999
+    personal = ScoringService.calculate_personal_margin(
+        result, {}, 1, 1, cost_overrides={2002: SubitemCost(unit_cost=500.0, covered_qty=3.0)}
+    )
+    exp_cost = 3 * 500.0 + 1 * 999.0 + 100.0
+    assert personal == pytest.approx((10000.0 - exp_cost) / exp_cost * 100, abs=0.005)
 
 
 def test_child_manufacturing_cost_includes_job_fee():
@@ -395,20 +404,27 @@ def test_adjust_mother_metrics_does_not_mutate_input():
         "revenue": 20000.0,
         "fees": 100.0,
     }
-    mat, profit, margin, overrides = ScoringService.adjust_mother_metrics(metrics, {2002: 5000.0}, 1)
-    assert mat == pytest.approx(5050, abs=0.01)  # 50(三钛) + 5000(子项制造价)
+    mat, profit, margin, overrides = ScoringService.adjust_mother_metrics(
+        metrics, {2002: SubitemCost(unit_cost=2500.0, covered_qty=2.0)}, 1
+    )
+    assert mat == pytest.approx(5050, abs=0.01)  # 50(三钛) + 2×2500(子项自制单件价)
     assert profit == pytest.approx(14850, abs=0.01)
     assert margin == pytest.approx(14850 / 5150 * 100, abs=0.01)
-    assert overrides == {2002: 5000.0}
+    assert overrides == {2002: SubitemCost(unit_cost=2500.0, covered_qty=2.0)}
     assert "material_cost" not in metrics  # 入参未被修改
 
 
-def test_worker_run_preserves_market_margin(qapp, sample_char_config):
-    """run()：成本/利润列保持市场口径，个人利润率走子项制造价（显著高于市场利润率）。"""
+def test_worker_run_preserves_market_margin(qapp, sample_char_config, temp_db, monkeypatch):
+    """run()：成本/利润列保持市场口径，个人利润率走子项自制单件价（显著高于市场利润率）。"""
     from unittest.mock import patch
 
     from ui_qml.workers.industry_workers import BatchPlanCalcWorker
 
+    # 子项每轮产出按蓝图查（无人机 2002 = 1 件/轮 × 2 轮 = 2 件）
+    monkeypatch.setattr(
+        "ui_qml.workers.industry_workers.get_container",
+        lambda: SimpleNamespace(db=temp_db),
+    )
     mother = {"id": 1, "group_id": 10, "child_level": 0, "runs": 1, "parallels": 1}
     child = {"id": 2, "group_id": 10, "child_level": 1, "product_type_id": 2002, "runs": 2, "parallels": 1}
     w = BatchPlanCalcWorker(
@@ -465,7 +481,10 @@ def test_worker_run_preserves_market_margin(qapp, sample_char_config):
     # 成本/利润列 = 市场口径（10×5 + 2×999 = 2048），子项制造价不再覆写它们
     assert mother_out[5] == pytest.approx(2048, abs=0.01)
     assert mother_out[1] == pytest.approx(20000.0 - 2048.0 - 100.0, abs=0.01)
-    # 个人利润率（自制成本）显著高于市场利润率
+    # 个人利润率（自制成本）：子项 2 件按自制单件价 600（1200 整线 ÷ 2 件）计
+    assert mother_out[8] == pytest.approx(
+        (20000.0 - (50.0 + 2 * 600.0 + 100.0)) / (50.0 + 2 * 600.0 + 100.0) * 100, abs=0.01
+    )
     assert mother_out[8] > market_margin
     # 利润率列与利润同口径（市场），不再被个人口径覆写
     assert mother_out[2] == pytest.approx(market_margin, abs=0.005)
@@ -477,7 +496,11 @@ def test_worker_run_preserves_market_margin(qapp, sample_char_config):
 
 
 def test_mother_subitem_cost_map_basic():
-    """母项同组更深子项 → {子项 product_type_id: 制造价（材料+作业费×mult）}。"""
+    """母项同组更深子项 → {子项 product_type_id: SubitemCost}。
+
+    给了 `output_qty_by_plan`（子项产线实际产出量）就摊成**单件**制造价 + 覆盖数量；
+    没给则退回旧口径（`covered_qty=None` = 消费方按「覆盖全部需求」处理）。
+    """
     base = {
         2: (
             {"id": 2, "product_type_id": 42527, "group_number": 1, "sub_level": 1, "runs": 2, "parallels": 1},
@@ -485,7 +508,11 @@ def test_mother_subitem_cost_map_basic():
         )
     }
     mother = {"id": 1, "group_number": 1, "sub_level": 0}
-    assert mother_subitem_cost_map(base, mother) == {42527: 1020.0}  # 1000 + 10×2
+    assert mother_subitem_cost_map(base, mother) == {42527: SubitemCost(unit_cost=1020.0, covered_qty=None)}
+    # 整线制造价 1020、产出 4 件 → 单件 255，覆盖 4 件
+    assert mother_subitem_cost_map(base, mother, output_qty_by_plan={2: 4}) == {
+        42527: SubitemCost(unit_cost=255.0, covered_qty=4.0)
+    }
 
 
 def test_mother_subitem_cost_map_no_group():

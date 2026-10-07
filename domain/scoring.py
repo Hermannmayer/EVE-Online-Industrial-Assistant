@@ -76,6 +76,10 @@ def calc_manufacturing_score(
         "margin_pct": 0.0,
         "isk_per_hour": 0.0,
         "cost_per_unit": 0.0,
+        # 个人口径单件自制成本（材料 + 作业费 + 研究费 ÷ 单轮产出，**不含**卖出费用）
+        # 与 `output_qty`（单轮产出）配套；`cost_per_unit` 是含市场费用的历史口径，两者并存。
+        "make_cost_per_unit": 0.0,
+        "output_qty": int(recipe.prod_qty),
         "revenue_per_unit": 0.0,
         "hours_per_run": 0.0,
         "status": "",
@@ -182,6 +186,13 @@ def calc_manufacturing_score(
     hours_per_run = actual_time / 3600
     margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
 
+    # 「自己造一件」的**个人口径**成本 = (材料 + 作业费 + 研究费) ÷ 单轮产出，
+    # **剔除**卖出费用（经纪费 / 改单费 / 销售税）—— 那是「卖出去才产生的花费」，
+    # 与「自己造一件要多少钱」无关。`cost_per_unit` 保持历史口径（含市场费用）不动。
+    make_cost_per_unit = (
+        round((total_mat_cost + installation_fee + research_cost) / recipe.prod_qty, 2) if recipe.prod_qty > 0 else 0.0
+    )
+
     # 费用明细字典（与游戏安装费类目对齐）
     breakdown = {
         "bp_me": bp_me,
@@ -216,6 +227,9 @@ def calc_manufacturing_score(
                 "margin_pct": round(margin_pct, 2),
                 "profit_per_run": round(profit, 2),
                 "cost_per_unit": round(total_cost / recipe.prod_qty, 2),
+                # 负利润分支同样给「自己造一件」的个人口径成本（料钱 + 作业费 + 研究费，
+                # 不含经纪费/改单费/销售税）—— 拆解母项常常是负市场利润，这里漏了就没数
+                "make_cost_per_unit": make_cost_per_unit,
                 "hours_per_run": round(hours_per_run, 2),
                 "revenue_per_unit": round(prod_price, 2),
                 "breakdown": breakdown,
@@ -250,6 +264,7 @@ def calc_manufacturing_score(
             "margin_pct": round(margin_pct, 2),
             "isk_per_hour": round(isk_per_hour, 2),
             "cost_per_unit": round(total_cost / recipe.prod_qty, 2),
+            "make_cost_per_unit": make_cost_per_unit,
             "revenue_per_unit": round(prod_price, 2),
             "hours_per_run": round(hours_per_run, 2),
             "status": "",
@@ -386,6 +401,9 @@ def calc_reaction_score(
         "margin_pct": 0.0,
         "isk_per_hour": 0.0,
         "cost_per_unit": 0.0,
+        # 个人口径单件自制成本（材料 + 作业费 ÷ 单轮产出，**不含**卖出费用）+ 单轮产出
+        "make_cost_per_unit": 0.0,
+        "output_qty": int(prod_qty),
         "revenue_per_unit": 0.0,
         "hours_per_run": 0.0,
         "status": "",
@@ -402,6 +420,7 @@ def calc_reaction_score(
         mat_detail.append(
             {
                 "name": mat_name,
+                "type_id": mat_id,
                 "base_qty": mat_qty,
                 "qty": round(mat_qty, 2),
                 "unit_price": mat_price or 0.0,
@@ -440,11 +459,16 @@ def calc_reaction_score(
     actual_time = base_time * skill_mod
     hours_per_run = actual_time / 3600
 
+    # 「自己造一件」的**个人口径**成本 = (材料 + 反应作业费) ÷ 单轮产出，
+    # **剔除**卖出费用（经纪费 / 改单费 / 销售税）；`cost_per_unit` 保持历史口径不动。
+    make_cost_per_unit = round((total_mat_cost + reaction_install_fee) / prod_qty, 2) if prod_qty > 0 else 0.0
+
     # 负利润时提前返回
     if profit <= 0:
         result["margin_pct"] = round(margin_pct, 2)
         result["profit_per_run"] = round(profit, 2)
         result["cost_per_unit"] = round(total_cost / prod_qty, 2)
+        result["make_cost_per_unit"] = make_cost_per_unit
         result["hours_per_run"] = round(hours_per_run, 2)
         result["revenue_per_unit"] = round(prod_price, 2)
         return result
@@ -470,6 +494,7 @@ def calc_reaction_score(
             "margin_pct": round(margin_pct, 2),
             "isk_per_hour": round(isk_per_hour, 2),
             "cost_per_unit": round(total_cost / prod_qty, 2),
+            "make_cost_per_unit": make_cost_per_unit,
             "revenue_per_unit": round(prod_price, 2),
             "hours_per_run": round(hours_per_run, 2),
             "status": "",

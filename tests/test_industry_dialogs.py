@@ -10,6 +10,7 @@ import pytest
 
 import services.plan_decompose as pd
 from services import inventory_manager
+from services.plan_metrics import SubitemCost
 from services.repositories.plan_repository import PlanRepository
 from ui_qml.bridge import parent_decompose_bridge as dlg_mod
 from ui_qml.bridge.complete_plans_bridge import CompletePlansQmlDialog as CompletePlansDialog
@@ -52,6 +53,23 @@ def _insert_plans(db, rows: list[dict]) -> None:
             )
 
 
+def _insert_bp_products(db, rows: list[tuple[int, int, int]]) -> None:
+    """bp 库：`(blueprint_type_id, product_type_id, 每轮产出)` → 子项产出量的来源。"""
+    with db.connect("bp") as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS blueprint_products (blueprint_type_id INTEGER, activity TEXT, "
+            "product_type_id INTEGER, quantity INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS blueprint_activities (blueprint_type_id INTEGER, activity TEXT, time REAL)"
+        )
+        for bp_id, product_type_id, qty in rows:
+            conn.execute(
+                "INSERT INTO blueprint_products VALUES (?,?,?,?)", (bp_id, "manufacturing", product_type_id, qty)
+            )
+            conn.execute("INSERT INTO blueprint_activities VALUES (?,?,?)", (bp_id, "manufacturing", 60.0))
+
+
 def _bridge_with_metrics(db_manager, monkeypatch, metrics_fn):
     """造一个成本明细桥，把 `calculate_plan_metrics` 换成 `metrics_fn`（阶段 4 后走桥）。"""
     svc = MagicMock()
@@ -67,7 +85,11 @@ def _bridge_with_metrics(db_manager, monkeypatch, metrics_fn):
 
 
 def test_compute_subitem_costs_single_level(db_manager, monkeypatch, qapp):
-    """拆解母项：子项制造价 = 材料成本 + 作业费 × runs。"""
+    """拆解母项：子项单件制造价 = (材料 + 作业费 × runs) ÷ 子项自己的产出量。
+
+    产出量 = `runs × parallels × 每轮产出`（每轮产出查该计划 activity 的配方），
+    **不是**母项的需求 —— 子项产线排的是净需求，拿需求当分母会低估单价。
+    """
     _insert_plans(
         db_manager,
         [
@@ -91,6 +113,7 @@ def test_compute_subitem_costs_single_level(db_manager, monkeypatch, qapp):
             },
         ],
     )
+    _insert_bp_products(db_manager, [(4002, 2002, 1)])
 
     def _metrics(plan, char_config, **kw):
         if plan.get("product_type_id") == 2002:
@@ -99,8 +122,8 @@ def test_compute_subitem_costs_single_level(db_manager, monkeypatch, qapp):
 
     bridge = _bridge_with_metrics(db_manager, monkeypatch, _metrics)
     costs = bridge._compute_subitem_costs(7, 0)
-    # 子项制造价 = 4800 + 100×2 = 5000
-    assert costs == {2002: pytest.approx(5000, abs=0.01)}
+    # 整线制造价 = 4800 + 100×2 = 5000；产出量 = 2×1×1 = 2 → 单件 2500
+    assert costs == {2002: SubitemCost(unit_cost=2500.0, covered_qty=2.0)}
 
 
 def test_compute_subitem_costs_nested(db_manager, monkeypatch, qapp):
@@ -137,6 +160,7 @@ def test_compute_subitem_costs_nested(db_manager, monkeypatch, qapp):
             },
         ],
     )
+    _insert_bp_products(db_manager, [(4002, 2002, 1), (4003, 3003, 1)])
 
     def _metrics(plan, char_config, **kw):
         pid = plan.get("product_type_id")
@@ -152,9 +176,9 @@ def test_compute_subitem_costs_nested(db_manager, monkeypatch, qapp):
 
     bridge = _bridge_with_metrics(db_manager, monkeypatch, _metrics)
     costs = bridge._compute_subitem_costs(7, 0)
-    # 孙项制造价 = 100 + 50 = 150；子项制造价 = 150(孙项) + 100(作业费) = 250
-    assert costs[3003] == pytest.approx(150, abs=0.01)
-    assert costs[2002] == pytest.approx(250, abs=0.01)
+    # 孙项制造价 = 100 + 50 = 150（产出 1）；子项制造价 = 150(孙项) + 100(作业费) = 250（产出 1）
+    assert costs[3003] == SubitemCost(unit_cost=150.0, covered_qty=1.0)
+    assert costs[2002] == SubitemCost(unit_cost=250.0, covered_qty=1.0)
 
 
 def test_compute_subitem_costs_zero_run_child_excluded(db_manager, monkeypatch, qapp):
@@ -196,6 +220,7 @@ def test_compute_subitem_costs_zero_run_child_excluded(db_manager, monkeypatch, 
             },
         ],
     )
+    _insert_bp_products(db_manager, [(4002, 2002, 1), (4003, 2003, 1)])
 
     def _metrics(plan, char_config, **kw):
         pid = plan.get("product_type_id")
@@ -206,8 +231,139 @@ def test_compute_subitem_costs_zero_run_child_excluded(db_manager, monkeypatch, 
         return {}
 
     bridge = _bridge_with_metrics(db_manager, monkeypatch, _metrics)
-    # 在造子项 = 300 + 50×3 = 450；0 轮子项制造价 0 → 整条不进映射
-    assert bridge._compute_subitem_costs(7, 0) == {2003: pytest.approx(450, abs=0.01)}
+    # 在造子项 = (300 + 50×3) ÷ 产出 3 = 150/件；0 轮子项制造价 0 → 整条不进映射
+    assert bridge._compute_subitem_costs(7, 0) == {2003: SubitemCost(unit_cost=150.0, covered_qty=3.0)}
+
+
+def test_compute_subitem_costs_without_recipe_needs_the_mother_demand(db_manager, monkeypatch, qapp):
+    """查不到配方（拿不到每轮产出）→ 整线价按母项需求折成单件价，`covered_qty=None`。
+
+    这条是旧口径的等价写法：`adjust_mother_metrics` 对 `covered_qty=None` 按「整线覆盖
+    全部需求」处理，所以 `需求 × 单件价` 必须正好还原整线价；连需求都拿不到时**不猜**
+    （不进映射、该行回退市价），免得把一个凭空的单件价写进母项成本。
+    """
+    _insert_plans(
+        db_manager,
+        [
+            {
+                "id": 1,
+                "product_type_id": 2001,
+                "product_name": "母项",
+                "runs": 1,
+                "parallels": 1,
+                "group_number": 7,
+                "sub_level": 0,
+            },
+            {
+                "id": 2,
+                "product_type_id": 2002,
+                "product_name": "无配方子项",
+                "runs": 2,
+                "parallels": 1,
+                "group_number": 7,
+                "sub_level": 1,
+            },
+        ],
+    )
+
+    def _metrics(plan, char_config, **kw):
+        if plan.get("product_type_id") == 2002:
+            return {"material_cost": 4800.0, "breakdown": {"installation_fee": 100.0}}
+        return {}
+
+    bridge = _bridge_with_metrics(db_manager, monkeypatch, _metrics)
+    # 整线 5000 / 需求 8 = 625/件，covered_qty=None → 消费方按需求 8 件结算 = 5000
+    assert bridge._compute_subitem_costs(7, 0, need_by_type={2002: 8.0}) == {
+        2002: SubitemCost(unit_cost=625.0, covered_qty=None)
+    }
+    assert bridge._compute_subitem_costs(7, 0) == {}
+
+
+def test_cost_breakdown_subitem_coverage_gap_and_iskph(db_manager, monkeypatch, qapp):
+    """汇总框三件事一起钉住：自制子项按产出计价 + 缺口按市价、ISK/h 与利润同口径、两个口径分别标注。
+
+    回归背景（真库 plan 383 灼烧XL 实测）：① 利润被换成个人口径、`ISK/h` 却仍取市场口径的
+    `metrics["iskph"]`，同一个汇总框里「利润 +3.4 亿 / ISK/h −514 万」自相矛盾；
+    ② 子项单价用「子项产线总价 ÷ 母项需求」，把子项没覆盖的那部分（库存/待买）当 0 成本，
+    单价偏低且与右栏「自制成本」不可比。
+    """
+    _insert_plans(
+        db_manager,
+        [
+            {
+                "id": 1,
+                "product_type_id": 2001,
+                "product_name": "母项",
+                "runs": 1,
+                "parallels": 1,
+                "group_number": 7,
+                "sub_level": 0,
+            },
+            {
+                "id": 2,
+                "product_type_id": 2002,
+                "product_name": "子项A",
+                "runs": 3,
+                "parallels": 2,
+                "group_number": 7,
+                "sub_level": 1,
+            },
+            {
+                "id": 3,
+                "product_type_id": 2003,
+                "product_name": "子项B",
+                "runs": 1,
+                "parallels": 1,
+                "group_number": 7,
+                "sub_level": 1,
+            },
+        ],
+    )
+    # 只有 2002 有配方：每轮产出 5 → 产出量 3×2×5 = 30（母项需求 40，缺口 10 在库存里）
+    _insert_bp_products(db_manager, [(4002, 2002, 5)])
+
+    def _metrics(plan, char_config, **kw):
+        pid = plan.get("product_type_id")
+        if pid == 2002:
+            return {"material_cost": 900.0, "breakdown": {"installation_fee": 100.0}}  # 900+100×6=1500
+        if pid == 2003:
+            return {"material_cost": 700.0, "breakdown": {"installation_fee": 0.0}}  # 无配方 → 700/需求 10
+        return {
+            "material_cost": 4000.0,
+            "revenue": 10_000.0,
+            "fees": 0.0,
+            "profit": 3_000.0,
+            "margin": -14.81,
+            "score": 42.0,
+            "iskph": -5_147_145.46,
+            "calculated_time": 3_600.0,
+            "daily_output": 8.0,
+            "status": "",
+            "structure_mat_saving": 1.0,
+            "materials": [
+                {"name": "子项A", "base_qty": 40, "qty": 40, "type_id": 2002, "unit_price": 100.0, "total_qty": 40},
+                {"name": "子项B", "base_qty": 10, "qty": 10, "type_id": 2003, "unit_price": 100.0, "total_qty": 10},
+            ],
+            "breakdown": {"activity": "manufacturing", "revenue": 10_000.0},
+        }
+
+    bridge = _bridge_with_metrics(db_manager, monkeypatch, _metrics)
+    rows = [c["text"] for r in bridge.materialRows for c in r["cells"]]
+    # 子项A：30 件自制（1500/30 = 50/件）+ 10 件缺口按市价 100 → 小计 2500、单价 2500/40 = 62.50
+    assert "子项A（自制 30/40）" in rows
+    assert bridge.materialRows[0]["cells"][4]["text"] == "62.50"
+    assert bridge.materialRows[0]["cells"][6]["text"] == "2,500"
+    # 子项B：查不到配方 → 整线价 700 按需求 10 折成 70/件，行名不带覆盖量
+    assert "子项B（自制）" in rows
+    assert bridge.materialRows[1]["cells"][6]["text"] == "700"
+
+    summ = {f["label"]: f["value"] for f in bridge.summaryFields}
+    assert summ["总成本:"] == "3,200"
+    assert summ["利润:"] == "6,800"
+    assert summ["利润率:"] == "212.50%"  # 个人口径：(10000−3200)/3200
+    assert summ["市场口径利润率:"] == "-14.81%"  # 调整前留存的市场口径，别与上面那个混为一谈
+    assert summ["ISK/h:"] == "6,800"  # 6800 利润 / 1h —— 不是 metrics["iskph"] 的 −5,147,145
+    assert "个人口径（同组自制子项按自制价，缺口按市价/库存）" in bridge.statusText
 
 
 # ════════════════════════════════════════════════════════════════

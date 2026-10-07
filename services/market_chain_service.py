@@ -161,19 +161,17 @@ def get_transmission_chain(
     conn_mgr = _db or get_db()
     with conn_mgr.connect("ref", "mkt", "bp") as conn:
         # 1) 原始用量：manufacturing 优先，取不到（没有该活动的材料行）退回 reaction。
-        #    蓝图查找与 `bom_expander._find_blueprint_for_product` 用**同一条 SQL**（含
-        #    `blueprint_activities` 的 JOIN）——同一个产物可能有 2 张制造蓝图（实测 4 个），
-        #    两边查不同的蓝图就会拿到与展开树不一致的用量。
+        #    蓝图查找必须走 `blueprint_reader.get_blueprint_products`（`bom_expander` 那条
+        #    展开链也走它）：同一个产物可能挂多张蓝图（实测制造 4 个、反应 1 个），
+        #    两边查不同的蓝图就会拿到与展开树不一致的用量；而且 SDE 里有两张 CCP **测试蓝图**
+        #    （碳化钨 16672 同时挂 45732「Test Reaction Blueprint」20/轮 与 46207 真实配方
+        #    10000/轮），手写 `... LIMIT 1` 无排序会命中测试蓝图。
+        from services.blueprint_reader import get_blueprint_products
+
         qty: dict[tuple[int, int], float] = {}
         for parent_id in {parent for parent, _, _ in edges}:
             for activity in ("manufacturing", "reaction"):
-                bp_row = conn.execute(
-                    """SELECT bp.blueprint_type_id FROM bp.blueprint_products bp
-                       JOIN bp.blueprint_activities ba
-                           ON ba.blueprint_type_id = bp.blueprint_type_id AND ba.activity = bp.activity
-                       WHERE bp.product_type_id = ? AND bp.activity = ? LIMIT 1""",
-                    (parent_id, activity),
-                ).fetchone()
+                bp_row = get_blueprint_products(conn, parent_id, activity)
                 if not bp_row:
                     continue
                 materials = conn.execute(

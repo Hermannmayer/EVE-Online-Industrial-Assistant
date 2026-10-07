@@ -103,6 +103,56 @@ SELECT * FROM production_plans（可选 WHERE），统一排序与 enrich。
 
 定义行：`322`
 
+### `_make_cost_hub`
+
+```python
+def _make_cost_hub(row: dict, ps: dict) -> str
+```
+
+本行「自制成本」用的材料 Hub（行自己的 > 全局设置 > Jita）。
+
+定义行：`344`
+
+### `_make_cost_hangar`
+
+```python
+def _make_cost_hangar(row: dict) -> int
+```
+
+本行「自制成本」用的材料机库 id（0 = 未指定 → helper 按 NPC 设施算）。
+
+定义行：`349`
+
+### `_plan_sub_level`
+
+```python
+def _plan_sub_level(p: dict) -> int
+```
+
+计划行的拆解层级（`sub_level`，旧字段名 `child_level`）。
+
+定义行：`354`
+
+### `_plan_group`
+
+```python
+def _plan_group(p: dict) -> int
+```
+
+计划行的拆解组号（`group_number`，enrich 后另有 `group_id` 别名）。
+
+定义行：`359`
+
+### `_attach_group_make_costs`
+
+```python
+def _attach_group_make_costs(rows: list[dict], service, *, price_type: str, mat_mult: float, ps: dict) -> None
+```
+
+第二遍：拆解组的**母项**按「同组更深子项的自制单件成本」折算自己的 `make_cost`。
+
+定义行：`364`
+
 ### `_attach_make_costs`
 
 ```python
@@ -111,7 +161,7 @@ def _attach_make_costs(rows: list[dict]) -> list[dict]
 
 给每行补「自己造一件」的成本 → 派生字段 `make_cost`（算不出 → `None`，界面显示 `—`）。
 
-定义行：`344`
+定义行：`469`
 
 ### `load_plan`
 
@@ -121,7 +171,7 @@ def load_plan(plan_id: int) -> dict | None
 
 按 id 取单条计划（与 `load_plans` 同一条 `_fetch_rows` + enrich 管线）。
 
-定义行：`405`
+定义行：`538`
 
 ### `load_plans`
 
@@ -131,7 +181,7 @@ def load_plans(filter_key: str) -> list[dict]
 
 加载生产计划列表，并补全蓝图可用标记/类别/机库名称 + 「自制成本/件」。
 
-定义行：`416`
+定义行：`549`
 
 ### `load_plans_for_wizard`
 
@@ -141,7 +191,7 @@ def load_plans_for_wizard() -> list[dict]
 
 产线启动小助手数据源：全部非完成计划（completed/done 排除），走同一 enrich。
 
-定义行：`430`
+定义行：`563`
 
 ### `_sub_level`
 
@@ -153,7 +203,7 @@ def _sub_level(p: dict) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`438`
+定义行：`571`
 
 ### `_is_shared_child`
 
@@ -163,7 +213,7 @@ def _is_shared_child(p: dict) -> bool
 
 跨 ≥2 个母项引用的子行归入「共享组件」区（引用式需求合并）。
 
-定义行：`442`
+定义行：`575`
 
 ### `group_and_sort_plans`
 
@@ -173,7 +223,7 @@ def group_and_sort_plans(plans: list[dict]) -> list[dict]
 
 母项在前树状排序 + 独立计划 + 独立「共享组件」区殿后。
 
-定义行：`450`
+定义行：`583`
 
 ### `collect_refresh_type_ids`
 
@@ -183,7 +233,7 @@ def collect_refresh_type_ids() -> tuple[set[int], int]
 
 收集工业页定向刷新所需的 type_id 集合，并返回其中 5 分钟内已缓存的条数。
 
-定义行：`500`
+定义行：`633`
 
 ### `save_price_snapshots`
 
@@ -193,7 +243,7 @@ def save_price_snapshots() -> int
 
 为活跃计划及其物料保存当前 Jita 价格快照，返回保存条数。
 
-定义行：`538`
+定义行：`671`
 
 ### `load_active_plans_for_procurement`
 
@@ -203,4 +253,4 @@ def load_active_plans_for_procurement() -> list[dict]
 
 加载采购对话框所需的活跃计划列表。
 
-定义行：`575`
+定义行：`708`

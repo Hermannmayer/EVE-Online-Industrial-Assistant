@@ -341,14 +341,142 @@ def _fetch_rows(where_sql: str = "", params: tuple = ()) -> list[dict]:
     return _enrich_rows(rows, enrich)
 
 
+def _make_cost_hub(row: dict, ps: dict) -> str:
+    """本行「自制成本」用的材料 Hub（行自己的 > 全局设置 > Jita）。"""
+    return str(row.get("mat_hub") or ps.get("mat_hub") or "Jita")
+
+
+def _make_cost_hangar(row: dict) -> int:
+    """本行「自制成本」用的材料机库 id（0 = 未指定 → helper 按 NPC 设施算）。"""
+    return int(row.get("mat_hangar_id") or 0)
+
+
+def _plan_sub_level(p: dict) -> int:
+    """计划行的拆解层级（`sub_level`，旧字段名 `child_level`）。"""
+    return int(p.get("child_level") or p.get("sub_level") or 0)
+
+
+def _plan_group(p: dict) -> int:
+    """计划行的拆解组号（`group_number`，enrich 后另有 `group_id` 别名）。"""
+    return int(p.get("group_id") or p.get("group_number") or 0)
+
+
+def _attach_group_make_costs(rows: list[dict], service, *, price_type: str, mat_mult: float, ps: dict) -> None:
+    """第二遍：拆解组的**母项**按「同组更深子项的自制单件成本」折算自己的 `make_cost`。
+
+    口径（用户 2026-10-04 拍板）：母项的自制成本 = 料钱 + 作业费 + 研究费，其中
+    **同组自制件按它自己的自制单件成本计**（不按买入市价）；其余材料仍按市价。
+    折算走 `ScoringService.manufacturing_unit_costs(cost_overrides=...)`，
+    所以母项与子项同一套价格口径/机库设施。
+
+    两处关键实现约束：
+
+    1. **子项行必须直接从 user.db 查**（按 `group_number`）—— 不能用当前 filter 的
+       `rows`：大表筛成「待排」之类时子项常常不在结果集里，漏掉就会按市价算，
+       母项成本虚高（这正是本方法要修的缺陷）。
+    2. 按 `sub_level` **降序**处理（深的先算）：嵌套拆解里子项要先按孙项的自制价折算完，
+       母项才能读到折算后的子项成本。
+
+    只写回 `rows` 里那些行（被筛掉的组内行只在内存里参与折算）。任何异常都只影响这一列。
+    """
+    gids = {_plan_group(r) for r in rows}
+    gids.discard(0)
+    if not gids or service is None:
+        return
+
+    placeholders = ",".join("?" for _ in gids)
+    try:
+        with get_container().db.connect("user") as conn:
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT * FROM production_plans WHERE group_number IN ({placeholders})",
+                tuple(sorted(gids)),
+            )
+            cols = [d[0] for d in cur.description]
+            group_rows = [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
+    except Exception:
+        # 组内行取不到只是少一列精度（母项回退市价），不能让整张计划表加载失败
+        log.exception("读拆解组计划行失败，「自制成本/件」按市价口径")
+        return
+
+    seen = {int(r.get("id") or 0) for r in rows}
+    all_rows = list(rows) + [r for r in group_rows if int(r.get("id") or 0) not in seen]
+
+    # 组内每个计划的自制单件成本（第一遍只算过当前 filter 的行；被筛掉的行在这里补算）
+    plan_cost: dict[int, float] = {}
+    for r in all_rows:
+        if "make_cost" in r and r.get("make_cost") is not None:
+            plan_cost[int(r.get("id") or 0)] = float(r["make_cost"])
+
+    missing = [r for r in all_rows if "make_cost" not in r and int(r.get("product_type_id") or 0)]
+    buckets: dict[tuple[str, int], list[dict]] = {}
+    for r in missing:
+        buckets.setdefault((_make_cost_hub(r, ps), _make_cost_hangar(r)), []).append(r)
+    for (hub, hangar), bucket in buckets.items():
+        try:
+            costs = service.manufacturing_unit_costs(
+                [int(r["product_type_id"]) for r in bucket],
+                mat_hub=hub,
+                price_type_mat=price_type,
+                mat_mult=mat_mult,
+                hangar_id=hangar or None,
+            )
+        except Exception:
+            log.exception("批量算「自制成本/件」失败（拆解组内被筛掉的行）")
+            continue
+        for r in bucket:
+            tid = int(r.get("product_type_id") or 0)
+            if tid in costs:
+                plan_cost[int(r.get("id") or 0)] = float(costs[tid])
+
+    for row in sorted(all_rows, key=lambda r: -_plan_sub_level(r)):
+        gid = _plan_group(row)
+        tid = int(row.get("product_type_id") or 0)
+        lvl = _plan_sub_level(row)
+        if not gid or not tid:
+            continue
+        overrides: dict[int, float] = {}
+        for sub in all_rows:
+            if _plan_group(sub) != gid or _plan_sub_level(sub) <= lvl:
+                continue
+            sub_tid = int(sub.get("product_type_id") or 0)
+            sub_cost = plan_cost.get(int(sub.get("id") or 0))
+            if sub_tid and sub_cost:
+                overrides[sub_tid] = float(sub_cost)
+        if not overrides:
+            continue
+        try:
+            new_costs = service.manufacturing_unit_costs(
+                [tid],
+                mat_hub=_make_cost_hub(row, ps),
+                price_type_mat=price_type,
+                mat_mult=mat_mult,
+                hangar_id=_make_cost_hangar(row) or None,
+                cost_overrides=overrides,
+            )
+        except Exception:
+            log.exception("母项自制成本折算失败 plan=%s", row.get("id"))
+            continue
+        if tid in new_costs:
+            plan_cost[int(row.get("id") or 0)] = float(new_costs[tid])
+
+    for row in rows:
+        pid = int(row.get("id") or 0)
+        if pid in plan_cost:
+            row["make_cost"] = plan_cost[pid]
+
+
 def _attach_make_costs(rows: list[dict]) -> list[dict]:
     """给每行补「自己造一件」的成本 → 派生字段 `make_cost`（算不出 → `None`，界面显示 `—`）。
 
-    口径就是 `ScoringService.manufacturing_unit_costs`（料钱 + 作业费 ÷ 单轮产出，
-    取用户手上最好的那张蓝图的 ME/TE）。**制造产物与反应产物都会给数**；
+    口径就是 `ScoringService.manufacturing_unit_costs`（料钱 + 作业费 + 研究费 ÷ 单轮产出，
+    **剔除**经纪费/改单费/销售税，取用户手上最好的那张蓝图的 ME/TE）。**制造产物与反应产物都会给数**；
     `—` 只表示「既没有制造配方、也没有反应配方」（矿物、数据核心、解码器、
     科研行产物是蓝图本身）。helper 不返回的 type 保持 `None`，**绝不填 0**
     （0 与「算不出」在界面上必须能区分）。
+
+    两遍：第一遍按 (材料 Hub, 材料机库) 分组批量算全部行；第二遍把**拆解母项**按同组
+    自制件的自制单件成本折算（见 `_attach_group_make_costs`）。
 
     挂点：**只挂计划大表的 `load_plans`**，不放 `_fetch_rows` —— 后者还被产线小助手的
     **5s 轮询**（`load_plans_for_wizard`）调用，而 helper 里反应那条链路**没有 TTL 缓存**
@@ -369,18 +497,17 @@ def _attach_make_costs(rows: list[dict]) -> list[dict]:
     price_type = str(ps.get("mat_price_type") or "sell")
     mat_mult = float(ps.get("mat_mult") or 1.0)
 
-    # helper 一次只接受一组参数 → 先按（材料 Hub, 材料机库）分组，各调一次
+    # ── 第一遍：按 (材料 Hub, 材料机库) 分组批量算所有行 ──
     groups: dict[tuple[str, int], list[int]] = {}
     for row in rows:
         tid = int(row.get("product_type_id") or 0)
         if not tid:
             row["make_cost"] = None
             continue
-        hub = str(row.get("mat_hub") or ps.get("mat_hub") or "Jita")
-        hangar = int(row.get("mat_hangar_id") or 0)
-        groups.setdefault((hub, hangar), []).append(tid)
+        groups.setdefault((_make_cost_hub(row, ps), _make_cost_hangar(row)), []).append(tid)
 
     cost_map: dict[int, float] = {}
+    service = None
     if groups:
         try:
             service = get_container().scoring_service()
@@ -399,6 +526,12 @@ def _attach_make_costs(rows: list[dict]) -> list[dict]:
             log.exception("批量算「自制成本/件」失败，本列留空")
     for row in rows:
         row["make_cost"] = cost_map.get(int(row.get("product_type_id") or 0))
+
+    # ── 第二遍：拆解母项按同组自制件的自制单件成本折算 ──
+    try:
+        _attach_group_make_costs(rows, service, price_type=price_type, mat_mult=mat_mult, ps=ps)
+    except Exception:
+        log.exception("拆解母项「自制成本/件」折算失败，母项沿用市价口径")
     return rows
 
 

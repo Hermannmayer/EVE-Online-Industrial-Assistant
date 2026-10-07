@@ -41,6 +41,7 @@ from core.cache import TtlLRUCache
 from core.container import get_container
 from core.logger import log
 from core.paths import data_dir
+from services.blueprint_reader import get_blueprint_products
 from ui_qml.bridge.message_dialog import FMessageDialog
 from ui_qml.constants import CATEGORIES, MFG_CATEGORIES
 from ui_qml.dialog_host import DialogBridge, QmlDialog
@@ -973,10 +974,8 @@ def _add_research_plan(parent: Any, type_id: int, name: str, kind: str) -> None:
                 ).fetchone()
             )
             if not is_bp_item:
-                row = conn.execute(
-                    "SELECT blueprint_type_id FROM blueprint_products WHERE product_type_id = ? LIMIT 1",
-                    (bp_id,),
-                ).fetchone()
+                # 统一入口：排除 CCP 测试蓝图，并在同一产物挂多张时取确定的一张
+                row = get_blueprint_products(conn, bp_id, "manufacturing")
                 if not row:
                     FMessageDialog.information(parent, "提示", f"「{name}」没有蓝图，无法加入科研规划")
                     return

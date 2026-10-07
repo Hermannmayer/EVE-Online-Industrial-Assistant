@@ -1,10 +1,17 @@
 """工业制造 — 后台 Worker 线程"""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import QThread, Signal
 
 from core.container import get_container
 from core.logger import log
 from ui_qml.workers.base_worker import BaseBatchScoreWorker, BaseScoreWorker
+
+if TYPE_CHECKING:
+    from services.plan_metrics import SubitemCost
 
 # 估值失败的状态：`calculate_plan_metrics` 对它们返回**全零** dict（含 material_cost=0）。
 # 这类行不得写回数据库 —— 否则一次失败就把库里正确的成本覆盖成 0，下线时按 0 成本入库。
@@ -142,7 +149,48 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
             log.exception("计划 %s 基准指标计算失败，本轮跳过不写库", plan_id)
             return {}
 
-    def _apply_mother_subitem_cost(self, item, result, base_results) -> dict[int, float]:
+    def _subitem_output_qty(self, mother: dict, base_results: dict) -> dict[int, int]:
+        """同组更深子项产线的**实际产出量** `{子项 plan_id: runs × parallels × 单轮产出}`。
+
+        子项产线排的是**净需求**（`services.plan_rebuild.plan_net_runs` 会先扣掉母项机库里
+        已有的成品库存），所以它的产出量常常**小于**母项的材料需求（实测 紫外晶体 XL：
+        需求 1368、产出 1310，差的 58 件在库存里）。拿不到产出量时调用方会退回
+        「整线覆盖全部需求」的旧口径，等于把那 58 件当 0 成本。
+
+        每条子线的产出量走 `services/blueprint_reader.plan_output_qty`（单轮产出按计划自己的
+        activity 查配方、连接带 `ref` 才能排除 CCP 测试蓝图；「0 轮 = 不产出」也只有那一份规则）
+        —— 查看核算桥用的是同一个函数，别再各写一份。
+        取不到 / 出异常 → 返回 `{}`（旧口径，不报错）。
+        """
+        from services.blueprint_reader import plan_output_qty
+        from services.plan_job_kinds import normalize as normalize_activity
+
+        gid = mother.get("group_id") or mother.get("group_number")
+        if not gid:
+            return {}
+        lvl = int(mother.get("child_level") or mother.get("sub_level") or 0)
+        subs = [
+            p
+            for _pid, (p, _r) in base_results.items()
+            if (p.get("group_id") or p.get("group_number")) == gid
+            and int(p.get("child_level") or p.get("sub_level") or 0) > lvl
+        ]
+        if not subs:
+            return {}
+        out: dict[int, int] = {}
+        try:
+            with get_container().db.connect("ref", "bp") as conn:
+                for p in subs:
+                    pid = int(p.get("id") or 0)
+                    qty = plan_output_qty(conn, p, activity=normalize_activity(p.get("activity")))
+                    if pid and qty > 0:
+                        out[pid] = qty
+        except Exception:
+            log.exception("读子项每轮产出失败，母项按「覆盖全部需求」的旧口径")
+            return {}
+        return out
+
+    def _apply_mother_subitem_cost(self, item, result, base_results) -> dict[int, SubitemCost]:
         """拆解母项的自制子项制造价 → cost_overrides（**只供个人利润率使用**）。
 
         「成本」「利润」两列按**市场口径**（用户 2026-10-03 拍板）：因此本方法**不再覆写**
@@ -150,13 +198,19 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         自制子项按自己制造价计的口径只体现在 `_calc_personal_margin(..., cost_overrides=...)`
         产出的「个人利润率%」列（它反映的是自己的成本优势，与市场口径各归其位）。
 
-        返回 cost_overrides {type_id: 子项制造价}；非母项/无子项时返回空 dict。
-        0 轮子项的制造价为 0，已被 `mother_subitem_cost_map` 剔除、进不了 override
-        （否则个人利润率会凭空调高）。
+        返回 cost_overrides {子项 product_type_id: `SubitemCost`（单件制造价 + 覆盖数量）}；
+        非母项/无子项时返回空 dict。0 轮子项的制造价为 0，已被 `mother_subitem_cost_map`
+        剔除、进不了 override（否则个人利润率会凭空调高）。
+        `output_qty_by_plan` 带上子项产线的**实际产出量**：子项产线排净需求，产出常小于母项
+        需求，缺口得由消费方按库存/市价补齐（见 `services.plan_metrics.SubitemCost`）。
         """
         from services.plan_metrics import adjust_mother_metrics, mother_subitem_cost_map
 
-        sub_cost_map = mother_subitem_cost_map(base_results, item)
+        sub_cost_map = mother_subitem_cost_map(
+            base_results,
+            item,
+            output_qty_by_plan=self._subitem_output_qty(item, base_results),
+        )
         if not sub_cost_map:
             return {}
         total_mult = max(int(item.get("runs", 1)), 1) * max(int(item.get("parallels", 1)), 1)
@@ -164,7 +218,9 @@ class BatchPlanCalcWorker(BaseBatchScoreWorker):
         _mat, _profit, _margin, overrides = adjust_mother_metrics(result, sub_cost_map, total_mult)
         return overrides
 
-    def _calc_personal_margin(self, plan: dict, result: dict, cost_overrides: dict[int, float] | None = None) -> float:
+    def _calc_personal_margin(
+        self, plan: dict, result: dict, cost_overrides: dict[int, SubitemCost] | None = None
+    ) -> float:
         """计算考虑库存成本的个人利润率（%）。
 
         数据源完全来自 calculate_plan_metrics 的 result
