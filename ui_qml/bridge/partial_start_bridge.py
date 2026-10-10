@@ -1,6 +1,6 @@
 """部分启动对话框的桥（阶段 4）。
 
-对照 Widgets 版 `ui_pyside6/views/industry/partial_start_dialog.py`：
+对照旧 Widgets 版：
 选择本次启动几条并行产线（1 .. total-1），其余留在「待生产」行里。
 """
 

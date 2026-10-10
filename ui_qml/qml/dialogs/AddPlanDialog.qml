@@ -5,7 +5,7 @@ import "../components"
 
 /* 「加入制造计划」对话框（阶段 4b 收尾）。
  *
- * 对照 Widgets 版 `ui_pyside6/dialogs/industry_dialogs.py` 的 `AddPlanDialog`。
+ * 对照原 Widgets 版的同名对话框。
  * 取值为 `{runs, parallels, me, te, char}`，落在桥
  * （`industry_dialogs_bridge.AddPlanBridge`）里。角色行与科研三框共用 `CharField`。
  *

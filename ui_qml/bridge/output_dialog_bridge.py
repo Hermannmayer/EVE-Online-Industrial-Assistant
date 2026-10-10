@@ -1,6 +1,6 @@
 """产出总表对话框的桥（阶段 4）。
 
-对照 Widgets 版 `ui_pyside6/views/industry/output_dialog.py`：
+对照旧 Widgets 版：
 每个计划展开 BOM 树，算产出数量/价值/利润，并标出材料溢出。
 展示走通用的 `SummaryTableBridge`（只读表 + 状态行），颜色规则留在本类里。
 """

@@ -6,7 +6,7 @@
 这里只有「路径怎么拼」和「SVG 文本怎么读」，**没有任何 Qt 类型**：
 QML 侧的 `icon_provider` 拿原始文本自己注入 `fill` 染色，所以它只需要本模块。
 按主题取色、把 SVG 渲染成 `QPixmap`、`QIconEngine` 那一半是 Widgets 专有，
-留在 `ui_pyside6/icons.py`（它从这里导入，并对旧调用方保持原 API）。
+已随 Widgets 层一起删除 —— 现在只剩本模块这一份。
 """
 
 import os

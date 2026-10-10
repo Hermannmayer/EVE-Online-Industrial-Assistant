@@ -1,6 +1,6 @@
 """材料覆盖对话框的桥（阶段 4b）。
 
-对照 Widgets 版 `ui_pyside6/views/inventory/material_coverage_dialog.py`：
+对照旧 Widgets 版：
 以某个机库为材料机库的**活跃生产计划**聚合材料需求，展示 需求 / 现有 / 缺口，
 缺口 > 0 的行标红。空态提示该机库未被任何计划用作材料机库。
 

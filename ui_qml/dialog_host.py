@@ -281,7 +281,7 @@ class QmlDialog(QDialog):
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
     def ok(self) -> bool:
-        """QML 是否加载成功（调用方据此决定要不要回退到 Widgets 版）。"""
+        """QML 是否加载成功。"""
         return self._host.ok()
 
     # ── 关窗收尾 ─────────────────────────────────────────────

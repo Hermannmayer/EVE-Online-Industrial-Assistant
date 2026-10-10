@@ -204,7 +204,7 @@ async def fetch_baseline_only(progress_cb: Callable[[int, str], None] | None=Non
 
 快速基础价格兜底 — 仅拉 /markets/prices/（1 次请求）。
 
-定义行：`667`
+定义行：`666`
 
 ### `run_price_update`
 
@@ -214,4 +214,4 @@ def run_price_update(regions: list[str] | None=None, progress_cb: Callable[[int,
 
 运行价格更新。
 
-定义行：`689`
+定义行：`688`

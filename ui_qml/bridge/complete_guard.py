@@ -5,8 +5,8 @@
 `allow_bp_short`，于是强制启动过的计划（蓝图流程账面不足，或原图尚未归一）
 在该入口**永远无法下线**，且失败原因被 `complete_plans` 吞成一句「下线失败」。
 
-原先住在 `ui_pyside6/views/industry/complete_guard.py`。批次 7.4 搬到 `ui_qml/bridge/`：
-`ui_pyside6/` 要在 7.5 整个删掉，而这条确认的四个调用点都还活着，不搬就会连带打断它们。
+原先住在 Widgets 工业页视图层，QML 迁移时搬到 `ui_qml/bridge/`：
+这条确认的四个调用点都还活着，不搬就会连带打断它们。
 搬迁同时把 `QMessageBox.question` 换成自绘的 `FMessageDialog.question`。
 
 **接缝没变**：`confirm_bp_shortfall(parent, plans) -> bool | None` 一个字不改 ——

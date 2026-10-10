@@ -1,6 +1,6 @@
 """查看核算（成本明细）对话框的桥（阶段 4）。
 
-对照 Widgets 版 `ui_pyside6/views/industry/cost_breakdown_dialog.py`：
+对照旧 Widgets 版：
 左边材料清单（6 列），右边三块「标签: 值」明细（制造作业费 / 市场费用 / 汇总）。
 
 计算口径：统一走 `scoring_service().calculate_plan_metrics()`（与主表

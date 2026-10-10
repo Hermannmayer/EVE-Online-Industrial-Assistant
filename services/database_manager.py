@@ -94,7 +94,6 @@ class DatabaseManager:
         if key in cache:
             return cache[key]
 
-        # 创建新连接
         db_path = DB_PATH_MAP[primary]
         conn = sqlite3.connect(db_path)
 

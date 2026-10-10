@@ -6,7 +6,7 @@ import "../components"
 
 /* 产线启动小助手 —— 阶段 2c：整窗由 QML 渲染（L1–L4 四区）。
  *
- * 对照 Widgets 版 `ui_pyside6/views/industry/production_launcher.py`：
+ * 对照原 Widgets 版：
  *   L1 工具条（线型/人物筛选 + 筛选摘要 + 置顶）
  *   L2 占用面板（可折叠，逐角色一行容量方块）
  *   L3 产线列表（行卡片，图标 + 标题/徽章/副标题 + 时长 + 动作槽）
@@ -39,7 +39,8 @@ Window {
      * ⚠️ 宽度按**实测的内容最小宽**定，不按「好看」定：这个窗口也常与游戏同屏
      * （工具条上有「置顶」），宽了就挡游戏。量出来的两处下限（字体缩放 1.0）：
      *   - L2 占用面板的容量方块行（`FCapacityRow`）≈ 420 ← 由它定 `minimumWidth`
-     *   - L1 工具条（两个下拉 + 置顶）≈ 350
+     *   - L1 工具条（两个下拉 + 置顶）≈ 350：置顶从 88px 最小宽的按钮换成勾选框后
+     *     只会更窄（≈314，按两控件宽度折算），不构成下限 —— `minimumWidth` 由上面那 420 决定
      * `minimumWidth` 取 420 + 10 余量：离屏量的是方框字，真字体的字宽可能略胖。
      * 默认宽度取 620：Q2=A 起动作列多了「行内执行人物下拉」（约 104px），行卡片的
      * 名称 / 副标题要仍读得全 —— 再窄就只剩省略号。
@@ -146,10 +147,19 @@ Window {
                 Layout.fillWidth: true
             }
 
-            FButton {
+            /* 置顶是**勾选**，不是动作 —— 与另外三个工具窗
+             * （`TradeCartWindow` / `ProcurementWindow` / `ManufacturableItemsDialog`）
+             * 统一用 `FCheckBox`。只有标题栏那种「没有文字位」的窄区才用图标按钮：
+             * 那里右端是 4 颗 28px 图标，塞不下「☑ 置顶」。
+             * 顺带更窄：`FButton` 默认档有 88px 最小宽，本组件约 52px，
+             * 所以 L1 工具条那条 ≈350px 的下限只会变小，不会把窗口顶宽。*/
+            FCheckBox {
+                id: pinBox
+                objectName: "pinBox"
                 text: qsTr("置顶")
-                primary: win.launcher ? win.launcher.pinned : false
-                onClicked: win.launcher.setPinned(!win.launcher.pinned)
+                checked: win.launcher ? win.launcher.pinned : false
+                onToggled: if (win.launcher)
+                    win.launcher.setPinned(checked)
             }
         }
     }

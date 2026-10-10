@@ -1,6 +1,6 @@
 """批量对比对话框的桥（阶段 4b）。
 
-对照 Widgets 版 `ui_pyside6/views/compare/compare_dialog.py::CompareDialog`。
+对照旧 Widgets 版。
 
 **计算一行都没搬过来**：对比仍走 `compare_chart.CompareWorker`（后台线程，
 按模式调 `scoring_service`），物品搜索仍走 `compare_chart.search_items`，

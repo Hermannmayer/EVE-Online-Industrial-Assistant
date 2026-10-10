@@ -56,7 +56,7 @@ def remove_from_watchlist(item_id: int) -> bool
 
 删除关注列表中的物品
 
-定义行：`96`
+定义行：`95`
 
 ### `get_watchlist`
 
@@ -66,7 +66,7 @@ def get_watchlist() -> list[dict]
 
 获取所有关注物品，JOIN item 表获取名称和市场价格
 
-定义行：`105`
+定义行：`104`
 
 ### `update_watchlist_item`
 
@@ -76,7 +76,7 @@ def update_watchlist_item(item_id: int, note: str | None=None, buy_threshold: fl
 
 更新关注物品的备注或阈值
 
-定义行：`152`
+定义行：`151`
 
 ### `check_price_changes`
 
@@ -88,4 +88,4 @@ def check_price_changes() -> list[dict]
 返回有变化的物品列表：[(type_id, 名称, 原买价, 新买价, 原卖价, 新卖价), ...]
 同时更新 last_buy_price / last_sell_price。
 
-定义行：`181`
+定义行：`180`

@@ -1,4 +1,4 @@
-"""倒计时与蓝图列渲染测试 — ui_pyside6/models/industry_models.py
+"""倒计时与蓝图列渲染测试 — `ui_qml/models/industry_models.py`
 
 覆盖：PlanTableModel.tick 到期转 ready、时长列倒计时渲染、蓝图列有图/绑定标记。
 """

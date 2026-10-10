@@ -5,7 +5,7 @@ import "../components"
 
 /* 工业制造页 —— 阶段 2b：整页骨架（5 区）。
  *
- * 对照 Widgets 版 `ui_pyside6/views/industry_view.py` 的分区：
+ * 对照原 Widgets 版的分区：
  *   1 页面标题栏   2 顶部工具栏   3 主工作区（表格 / 甘特图）   4 状态栏   5 功能按钮
  *
  * **业务动作一律不在这里实现**：每次交互都调 `industry.<方法>`，

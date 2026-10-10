@@ -1,6 +1,6 @@
 """研究分析对话框的桥（阶段 4）。
 
-对照 Widgets 版 `ui_pyside6/views/industry/research_cost_dialog.py`：
+对照旧 Widgets 版：
 只读展示一张蓝图的拷贝/发明成本明细（材料清单、安装费、单份总成本、
 可发明产物、解码器选项…）。
 

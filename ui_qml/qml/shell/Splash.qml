@@ -2,14 +2,15 @@ import QtQuick
 import QtQuick.Window
 import QtQuick.Shapes
 
-/* 启动画面（阶段 7 批次 7.2）—— 顶替 `ui_pyside6/splash_screen.py`。
+/* 启动画面（阶段 7 批次 7.2）—— 原 QWidget 启动画面随 Widgets 目录一并删除，
+   这里是它唯一的替代实现。
 
    **全应用第一个 QML 面**：它跑在 `QQuickStyle` 之后、`qInstallMessageHandler` 之前。
    因此本文件只 import QtQuick 基础模块 + Window + Shapes，**不 import QtQuick.Controls**
    —— 控件样式一加载就要解析整套 Fluent 组件，会直接堆到「进程启动 → splash 可见」这段
    首帧时间上（判据见计划 7.2：不得比原来的 QWidget 版差）。
 
-   窗口语义逐项对齐原 QWidget（`ui_pyside6/splash_screen.py`）：
+   窗口语义逐项对齐原 QWidget 版：
 
      setFixedSize(360,470)              → Window 的 minimum/maximum 宽高
      FramelessWindowHint|StaysOnTopHint → Window 的 flags

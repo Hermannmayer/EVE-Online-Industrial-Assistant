@@ -612,7 +612,6 @@ class IndustryPage(QObject):
         ]
         if not todo:
             return
-        # 加载角色配置
         try:
             char_data = load_all_data()
             current_char = char_data.get("current", "main")
@@ -620,7 +619,6 @@ class IndustryPage(QObject):
         except Exception:
             current_char = "main"
             char_config = {}
-        # 获取工具栏当前价格设置
         ps = get_price_settings()
         self._recalc_price_fp = current_fp
         self._recalc_dirty = False

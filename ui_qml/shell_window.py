@@ -1,4 +1,4 @@
-"""QML 外壳窗口（阶段 5 批次 6.1）—— 顶替 `ui_pyside6/main_window.MainWindow`。
+"""QML 外壳窗口 —— 顶替 Widgets 版主窗口。
 
 **为什么必须是 `QQuickWindow`（这里是它的子类 `QQuickView`）**：外壳一旦由 QML 绘制，
 页面就不能再是 `QQuickWidget`（它是 QWidget，Qt 明确不支持嵌进 `QQuickWindow`），

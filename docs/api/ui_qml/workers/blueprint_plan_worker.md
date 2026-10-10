@@ -6,15 +6,13 @@
 
 蓝图批量加入规划时的派生指标计算线程。
 
-原先在 `ui_pyside6/views/inventory/blueprint_tab.py`。
-
 ## 类
 
 ### `class _BulkPlanMetricsWorker`（继承 `QThread`）
 
 后台批量计算各组合并后的派生指标（评分较重，避免卡死 UI）。
 
-定义行：`9`
+定义行：`6`
 
 #### 方法
 
@@ -28,7 +26,7 @@ def __init__(self, group_items: list[list[dict]], char_name: str, parent=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`14`
+定义行：`11`
 ##### `run`
 
 ```python
@@ -39,4 +37,4 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`19`
+定义行：`16`

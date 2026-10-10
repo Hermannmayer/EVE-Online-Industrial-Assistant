@@ -1,6 +1,6 @@
 """母项拆解对话框的桥（阶段 4a 收尾）。
 
-对照 Widgets 版 `ui_pyside6/views/industry/parent_decompose_dialog.py`：
+对照旧 Widgets 版：
 把选中母项递归拆成子项产线（`sub_level` 逐级 +1），每行预览 需求/流程/利润，
 可移除不内造的行（改外购），确认后写库并按全局引用式需求重放子项。
 

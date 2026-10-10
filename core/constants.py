@@ -28,10 +28,7 @@ TRADE_HUB_SYSTEM_IDS: dict[str, int] = {
 # 统一未知与查无两个分支，避免一个给 0.05、一个给 1.0 的语义分裂。
 DEFAULT_SYSTEM_COST_INDEX = 0.05
 
-# ── 订单簿深度取价（domain/market_depth.py）──
-# 直接取 min(卖价)/max(买价) 会被「只有一两个单位」的凑数挂单带偏
-# （实例：大型EMP立体炸弹 I 的卖单里有一笔 2 个 @543,800，真实深度在 995,900）。
-# 改为按挂单量累计取价，阈值占该物品该侧总挂单量的比例。
+# ── 订单簿深度取价（判据与理由见 domain/market_depth.py 模块 docstring）──
 PRICE_DEPTH_VOLUME_PCT = 0.01
 # 阈值下限：挂单量太小时不受比例约束（总量 100 的 1% 只有 1 个单位，剔除不动）
 PRICE_DEPTH_MIN_UNITS = 5

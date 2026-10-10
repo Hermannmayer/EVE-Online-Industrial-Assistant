@@ -450,7 +450,7 @@ def test_bridge_assembles_cards_chart_movers_and_chain(qapp, stubs):
     # ── 行右键三个动作（全走替身：不真写 user.db、不真建计划）──
     # 复制名称：剪贴板拿到物品名（剪贴板是异步的，等一等，见 tests/clipboard_wait.py）
     assert wait_for_copy(lambda: bridge.copyName("market", 0), "某人炒作货") == "某人炒作货"
-    assert bridge.statusText == "已复制名称：某人炒作货"
+    assert bridge.statusText == "已复制名称: 某人炒作货"
 
     # 加入关注列表：替身记下传进去的 type_id + 区域
     bridge.addToWatchlist("market", 0)

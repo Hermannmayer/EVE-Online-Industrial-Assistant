@@ -4,11 +4,10 @@
 `_load_icon` 与裸 `QPixmap(icon_path)` 加载（原本各拼路径、部分无缓存）。
 
 **没有 QtWidgets 依赖**（只用 QtGui 的 `QPixmap`/`QPixmapCache`），所以 QML 侧
-（`ui_qml/models/*` 与各对话框桥）与 Widgets 侧共用这一份；`item_icon_path()`
+（`ui_qml/models/*` 与各对话框桥）与残留控制器共用这一份；`item_icon_path()`
 连 Qt 都不用，只拼路径。
 
-原先在 `ui_pyside6/icon_cache.py`，为让 `ui_qml` 不再反向依赖而搬来这里；
-旧路径留了一层属性转发器。
+原先在 Widgets 视图层，为让 `ui_qml` 不再反向依赖而 QML 迁移时搬来这里。
 """
 
 import os

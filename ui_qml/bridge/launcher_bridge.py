@@ -2,7 +2,7 @@
 
 覆盖 L1–L4 四区（工具条 / 占用面板 / 产线列表 / 详情执行面板）。
 
-**只做转发与整形**：业务动作仍留在 `ui_pyside6/views/industry/production_launcher.py`
+**只做转发与整形**：业务动作仍留在 `ui_qml/views/industry/production_launcher.py`
 的 `ProductionLauncher` 里；本类把 QML 的调用翻译成对它的方法调用，
 并把「行 / 占用条」这类需要逐项算的业务数据取回来交给 QML 渲染。
 
@@ -11,7 +11,7 @@ QML 侧以 context property `bridge` 注入（见 `ui_qml/host.PageHost`）。
 
 from __future__ import annotations
 
-# `_page` 刻意是 Any：本模块不能导入 ui_pyside6.views（会形成「包初始化 → 页面 →
+# `_page` 刻意是 Any：本模块不能导入 `ui_qml.views`（会形成「包初始化 → 页面 →
 # ui_qml → 包初始化」的循环），于是它的每个返回值对 mypy 都是 Any。
 # 这些属性本就是「原样转发给 QML」的通道，逐处 cast 只会淹没真正的问题。
 # mypy: disable-error-code="no-any-return"

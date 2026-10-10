@@ -260,6 +260,8 @@ Item {
                         id: segMouse
                         anchors.fill: parent
                         hoverEnabled: true
+                        // 与全仓可点元素一致的手型（分段控件此前漏了，同一行的相邻控件都有）
+                        cursorShape: Qt.PointingHandCursor
                         onClicked: if (page.contract) page.contract.setTabIndex(seg.index)
                     }
                 }

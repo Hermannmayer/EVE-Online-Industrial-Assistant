@@ -54,7 +54,7 @@ def _resolve_name(c, type_id: int) -> str
 def _find_blueprint_for_product(conn, product_type_id: int, activity: str='manufacturing')
 ```
 
-查找产出指定物品的蓝图 → (bp_id, output_qty, base_time)
+查找产出指定物品的蓝图 → (bp_id, output_qty, base_time)。
 
 定义行：`68`
 
@@ -66,7 +66,7 @@ def _get_materials(conn, bp_id: int, activity: str='manufacturing')
 
 获取蓝图材料列表 → [(material_type_id, quantity), ...]
 
-定义行：`85`
+定义行：`82`
 
 ### `_expand`
 
@@ -76,7 +76,7 @@ def _expand(conn, type_id: int, needed_qty: float, bp_me: int, price_hub: str, p
 
 内部递归展开。
 
-定义行：`103`
+定义行：`100`
 
 ### `expand_bom`
 
@@ -86,7 +86,7 @@ def expand_bom(type_id: int, quantity: int=1, bp_me: int=0, price_hub: str='Jita
 
 递归展开 BOM 树，返回完整的材料层级结构。
 
-定义行：`260`
+定义行：`256`
 
 ### `get_material_tree`
 
@@ -96,7 +96,7 @@ def get_material_tree(type_id: int, quantity: int=1, bp_me: int=0, price_hub: st
 
 返回 BOM 树根节点（简洁接口）
 
-定义行：`381`
+定义行：`377`
 
 ### `get_flat_materials`
 
@@ -106,7 +106,7 @@ def get_flat_materials(type_id: int, quantity: int=1, bp_me: int=0, price_hub: s
 
 返回扁平化的所有叶子材料列表（购物清单）
 
-定义行：`399`
+定义行：`395`
 
 ### `print_tree`
 
@@ -116,7 +116,7 @@ def print_tree(node: BomNode, indent: int=0) -> str
 
 调试用：打印 BOM 树结构
 
-定义行：`417`
+定义行：`413`
 
 ## 类
 

@@ -1,6 +1,6 @@
 """外壳状态与价格 worker 的护栏。
 
-原先这些用例测的是 `ui_pyside6.main_window.MainWindow`；批次 6.2 把 Widgets 外壳删掉后
+原先这些用例测的是 Widgets 版 `MainWindow`；QML 迁移时把 Widgets 外壳删掉后
 改指 `ui_qml.shell_window.ShellWindow` —— **测的行为一条没变**（状态序列化、价格检查的间隔判定），
 只是宿主换了；置顶那条已按「只对本次会话有效、不落盘」的新口径重写。NAV_TREE 与图标那几组随 Widgets
 控件一起删掉：导航现在是 QML 的，等价断言在 `tests/test_qml_shell.py`（导航条目、图标映射）。

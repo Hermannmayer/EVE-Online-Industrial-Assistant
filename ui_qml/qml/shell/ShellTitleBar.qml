@@ -1,6 +1,7 @@
 import QtQuick
 
-/* 标题行（阶段 5 批次 6.1）—— Widgets 版是 `ui_pyside6/title_bar.py`。
+/* 标题行（阶段 5 批次 6.1）—— 原 Widgets 外壳的标题栏在 QML 外壳落地时随目录一并删除，
+   这里是它唯一的替代实现。
 
    空区可拖动、双击最大化。拖动**不直接** `startSystemMove()`，而是把屏幕坐标交给
    Python 判一次（`shell.beginMove(globalX, globalY)`）：最大化时系统拖动循环不会自动
@@ -72,7 +73,9 @@ Item {
             tooltip: "窗口置顶（点击切换开/关）"
             checkable: true
             checked: shell.pinned
-            tint: shell.pinned ? Theme.textOnPrimary : Theme.textPrimary
+            /* 不写 `tint`：选中只由底色块表达（见 `ShellIconButton.qml` 头部）。
+               这里曾写 `pinned ? textOnPrimary : textPrimary`，而那个反白色和
+               「选中」用的浅底色块只有 1.4:1 —— 「已置顶」等于看不见。*/
             onClicked: shell.togglePin()
         }
         ShellIconButton {

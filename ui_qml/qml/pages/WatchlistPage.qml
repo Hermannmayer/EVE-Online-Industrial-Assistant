@@ -628,7 +628,9 @@ Item {
                 }
                 FButton {
                     text: qsTr("删除")
-                    primary: true
+                    /* **不**用 `primary`：`primary` 在本项目里是「推荐执行的动作」，
+                       破坏性动作标成主色会误导。全仓唯一的成体系危险确认
+                       （`HangarSettingsDialog` 的删除确认条）就是普通按钮 + 橙色警示。 */
                     onClicked: {
                         if (page.watch && page.currentRow >= 0)
                             page.watch.removeRow(page.currentRow)

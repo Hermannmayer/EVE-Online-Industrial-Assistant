@@ -4,7 +4,7 @@
 
 > 模块说明：
 
-关注列表的候选搜索线程（原先在 `ui_pyside6/views/watchlist_view.py`）。
+关注列表的候选搜索线程。
 
 ## 类
 

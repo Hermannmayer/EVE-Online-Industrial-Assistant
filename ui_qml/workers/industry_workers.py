@@ -384,7 +384,6 @@ class RankWorker(QThread):
         started = time.time()
         results = []
 
-        # 加载实际角色技能配置
         char_config = resolve_char_config(char_name=self._char_name)
 
         from services.ui_data_service import get_all_manufacturable_product_ids

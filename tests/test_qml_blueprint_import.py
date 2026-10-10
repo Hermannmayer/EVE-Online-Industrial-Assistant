@@ -4,7 +4,7 @@
 桥的属性与槽、worker 产出回填。宿主的「加载无告警」那条由主流程在
 `tests/test_qml_dialogs.py` 里统一加，这里不重复。
 
-业务判定的真源是原文件 `ui_pyside6/views/inventory/blueprint_import_dialog.py`
+业务判定的真源是原 Widgets 版导入对话框
 （桥只是整形），所以这里断言的是「桥有没有把它如实搬出来」。
 """
 

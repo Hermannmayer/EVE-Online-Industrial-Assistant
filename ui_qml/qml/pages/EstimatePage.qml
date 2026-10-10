@@ -5,7 +5,7 @@ import "../components"
 
 /* 估价页 —— 阶段 1 试点页。
 
-   对照 Widgets 版 ui_pyside6/views/estimate_view.py，四个区块逐项对齐：
+   对照原 Widgets 版，四个区块逐项对齐：
    导入栏 / 精炼栏 / 主工作区（表格）/ 底部汇总栏。
    所有颜色与尺寸取自 Theme，禁止字面量。
 */

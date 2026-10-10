@@ -4,7 +4,7 @@
 把请求转发给既有实现、把结果整理成 QML 好用的形状、把状态回传给外壳状态栏。
 不复制任何计算逻辑。
 
-对照的 Widgets 版是 `ui_pyside6/views/estimate_view.py`，行为逐项对齐。
+对照旧 Widgets 版，行为逐项对齐。
 """
 
 from __future__ import annotations

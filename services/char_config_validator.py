@@ -73,18 +73,15 @@ def validate_char_config(data: dict) -> dict:
     errors = []
     warnings = []
 
-    # 检查 data 是否为字典
     if not isinstance(data, dict):
         return {"valid": False, "errors": ["配置文件格式错误：应为 JSON 对象"], "warnings": []}
 
-    # 检查顶层字段类型
     for field, expected_type in TOP_LEVEL_SCHEMA.items():
         if field not in data:
             errors.append(f"缺少顶层字段: {field}")
         elif not isinstance(data[field], expected_type):
             errors.append(f"字段 '{field}' 类型错误：期望 {expected_type.__name__}，实际 {type(data[field]).__name__}")
 
-    # 检查 current 字段
     if "current" in data and isinstance(data["current"], str):
         if "characters" in data and isinstance(data["characters"], dict):
             if data["current"] not in data["characters"]:
@@ -92,21 +89,18 @@ def validate_char_config(data: dict) -> dict:
     elif "current" in data and not isinstance(data["current"], str):
         pass  # 已在上面的类型检查中报告
 
-    # 检查 characters 字段
     if "characters" in data and isinstance(data["characters"], dict):
         for char_name, char_data in data["characters"].items():
             if not isinstance(char_data, dict):
                 errors.append(f"角色 '{char_name}' 数据格式错误：应为 JSON 对象")
                 continue
 
-            # 检查角色数据的期望字段
             for field, expected_type in CHARACTER_SCHEMA.items():
                 if field not in char_data:
                     warnings.append(f"角色 '{char_name}' 缺少字段: {field}，将使用默认值")
                 elif not isinstance(char_data[field], expected_type):
                     errors.append(f"角色 '{char_name}' 的 '{field}' 类型错误：期望 {expected_type.__name__}")
 
-            # 检查技能值范围
             if "skills" in char_data and isinstance(char_data["skills"], dict):
                 for skill_name, level in char_data["skills"].items():
                     if not isinstance(level, int) or not (SKILL_LEVEL_MIN <= level <= SKILL_LEVEL_MAX):
@@ -115,7 +109,6 @@ def validate_char_config(data: dict) -> dict:
                             f"有效范围 {SKILL_LEVEL_MIN}-{SKILL_LEVEL_MAX}"
                         )
 
-            # 检查市场数据
             if "market" in char_data and isinstance(char_data["market"], dict):
                 for hub in MARKET_HUBS:
                     if hub in char_data["market"]:
@@ -124,7 +117,6 @@ def validate_char_config(data: dict) -> dict:
                             errors.append(f"角色 '{char_name}' 交易中心 '{hub}' 数据格式错误")
                             continue
 
-                        # 检查声望值范围
                         for standing_key in ["faction_standing", "corp_standing"]:
                             if standing_key in hub_data:
                                 val = hub_data[standing_key]
@@ -136,7 +128,6 @@ def validate_char_config(data: dict) -> dict:
                                         f"有效范围 {STANDING_MIN}-{STANDING_MAX}"
                                     )
 
-            # 检查增效体列表
             if "implants" in char_data and isinstance(char_data["implants"], list):
                 if len(char_data["implants"]) > 3:
                     warnings.append(f"角色 '{char_name}' 增效体数量超过 3 个，将截断")

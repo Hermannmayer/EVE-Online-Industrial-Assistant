@@ -340,7 +340,8 @@ Window {
         FMenuSeparator {}
 
         FMenuItem {
-            text: qsTr("复制此行")
+            // 「整行」与全物品查询的同一动作同名（此前这里写「复制此行」）
+            text: qsTr("复制整行")
             onTriggered: if (page.pc)
                 page.pc.copyLine(rowMenu.sectionKey, rowMenu.row)
         }

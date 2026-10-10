@@ -1,6 +1,6 @@
 """发明结果回填对话框的桥（阶段 4）。
 
-对照 Widgets 版 `ui_pyside6/views/industry/invention_outcome_dialog.py`：
+对照旧 Widgets 版：
 发明是概率作业，期望值只适合事前估算，完成后必须由用户回填实际结果 ——
 否则产出记不准、后续成本与库存全错（见 `docs/dev/flows.md`「科研计划」）。
 

@@ -1,6 +1,6 @@
 """批量查价对话框的桥（阶段 4b）。
 
-对照 Widgets 版 `ui_pyside6/views/batch_price_dialog.py`：粘贴一批物品名 / ID（每行一个）
+对照旧 Widgets 版：粘贴一批物品名 / ID（每行一个）
 → 解析成 type_id → 逐条查市场最新价 → 预览（买价 / 卖价 / 均价 / 价差 / 成交量）→ 导出 CSV。
 
 **取数与格式化不重写**：直接复用原模块的 `BatchPriceWorker`（`_query_one` 里的千分位

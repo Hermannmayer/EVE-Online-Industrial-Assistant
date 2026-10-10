@@ -5,7 +5,7 @@ import "../components"
 
 /* 人物设置对话框（阶段 4b）：多角色切换 + 技能 / 增效体 / 市场费率三个 Tab。
  *
- * 对照 Widgets 版 `ui_pyside6/views/char_settings_view.CharSettingsDialog`：
+ * 对照原 Widgets 版：
  * 顶部角色栏（下拉 / 名字框 / 添加 / 删除）+ 三个 Tab + 底部保存/取消。
  * 三个 Tab 的正文是 `components/` 下的 `FSkillsTab` / `FImplantsTab` / `FMarketTab`，
  * 各自绑到宿主桥暴露的从属桥（`skills` / `implants` / `market`）上。

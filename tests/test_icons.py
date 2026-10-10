@@ -1,7 +1,7 @@
 """Phosphor 语义键 → SVG 资源的映射护栏。
 
 原先这里还测 Widgets 专有的 `QIconEngine` 染色（`themed_icon` / `status_icon` /
-`_pixmap_cache`）。批次 7.5 把 `ui_pyside6/icons.py` 那半删掉后，那些全没了 —— QML 侧的
+`_pixmap_cache`）。QML 迁移时把 Widgets 版图标模块那半删掉后，那些全没了 —— QML 侧的
 染色走 `icon_provider`（拿 SVG 原文自己注入 `fill`），不经过 `QIconEngine`。
 
 留下的是**跨两端都成立**的那条：`ICON_MAP` 里每个语义键都必须映射到**真实存在**的 SVG。

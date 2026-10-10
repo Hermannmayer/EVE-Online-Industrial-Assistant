@@ -3,7 +3,7 @@
 覆盖阶段 2b 前的五个 Widgets 子控件：顶部工具栏（蓝图导入 / 价格来源 / 视图筛选）、
 底部状态栏（统计 + 采购汇总 + 全部下线）、功能按钮组、甘特图。
 
-**只做转发**：业务动作仍留在 `ui_pyside6/views/industry_view.py` 的 `IndustryPage`
+**只做转发**：业务动作仍留在 `ui_qml/views/industry_view.py` 的 `IndustryPage`
 里，QML 的每次交互都调 `bridge.<方法>` 转过去，保证迁移期只有一份业务实现。
 
 QML 侧以 context property `bridge` 注入（见 `ui_qml/host.PageHost`）。

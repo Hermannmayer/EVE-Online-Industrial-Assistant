@@ -5,7 +5,7 @@ import QtQuick.Controls
  *
  * 排期算法**不在 QML 里**：`services/plan_gantt.build_rows()` 算好每根柱形条的
  * start / duration / endText，这里只负责画。原实现是 QWidget + QPainter 自绘
- * （`ui_pyside6/views/industry/gantt_view.py`，阶段 2b 删除）。
+ * （阶段 2b 随 Widgets 目录一并删除）。
  *
  * 尺寸口径与原实现逐项对齐：
  *   LABEL_WIDTH=200 / ROW_HEIGHT=32 / HEADER_HEIGHT=40

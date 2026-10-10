@@ -10,7 +10,7 @@ import "../dialogs"
 
 /* 物品查询页 —— 阶段 3。
  *
- * 对照 Widgets 版 `ui_pyside6/views/query/query_page.py`：
+ * 对照原 Widgets 版：
  *   工具栏（全物品 / 搜索框+候选 / 清空 / 批量查价 / 区域）
  *   + 进度条 + 状态行 + 下方面板。
  *

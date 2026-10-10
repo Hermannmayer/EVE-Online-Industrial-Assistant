@@ -4,7 +4,7 @@
 
 > 模块说明：
 
-可制造物品的分类树加载线程（原先在 `ui_pyside6/views/manufacturable_items_dialog.py`）。
+可制造物品的分类树加载线程。
 
 ## 类
 

@@ -18,12 +18,10 @@
 调用方塌成一行 `if not FMessageDialog.question(...): return`。**语义不变**：
 取消（Esc / 关闭按钮 /「否」）一律是 `False`。
 
-⚠️ 三处**故意不换**：
+⚠️ 两处**故意不换**：
 - `Main.py` 的崩溃兜底弹窗 —— 它在 `sys.excepthook` 里，此刻 QML 引擎完全可能
   就是坏掉的那一个，把最后的用户可见兜底面换成 QML 等于让崩溃路径依赖崩溃源；
-- `ui_qml/file_dialogs.py` 的原生保存框 —— 那是平台惯例且保持同步语义；
-- `ui_pyside6/` 里那些 `(self, …)` 的调用点（含 `complete_guard`）—— 它们的 `self`
-  在批次 7.4 之后不再是 QWidget，先改会白改两遍，归 7.3/7.4。
+- `ui_qml/file_dialogs.py` 的原生保存框 —— 那是平台惯例且保持同步语义。
 """
 
 from __future__ import annotations

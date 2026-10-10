@@ -1,7 +1,8 @@
 import QtQuick
 import QtQuick.Controls
+import "../components"
 
-/* 整页外壳（阶段 5 批次 6.1）—— 顶替 Widgets 版 `ui_pyside6/main_window.py` 的外框。
+/* 整页外壳（阶段 5 批次 6.1）—— 原 Widgets 主窗口的外框在迁移到 QML 外壳时删除。
 
    由 `ui_qml/shell_window.ShellWindow`（`QQuickView` 子类）加载；根元素是 `Item`
    不是 `Window`，因为窗口本身要在 Python 里继承（`nativeEvent` 要处理
@@ -74,7 +75,7 @@ Item {
                         label: shell.regionText
                         tooltip: "选择价格更新区域"
                         tint: Theme.textSecondary
-                        onClicked: regionMenu.popup()
+                        onClicked: regionMenu.popupSoon()
                     }
 
                     // 分隔：区域是「查询范围」，后面三项是「价格是否新鲜」
@@ -135,11 +136,14 @@ Item {
                     onClicked: shell.refreshPrice()
                 }
 
-                Menu {
+                /* 用 `FMenu` 而不是裸 `Menu`：Qt 官方 Fluent 样式把菜单表面画成中性灰图集
+                   （实测恒为 `#353535`，不跟 `QPalette`），全仓其余 12 处菜单都走 `FMenu`。
+                   本处曾是唯一例外，于是「选择价格更新区域」是灰底、别处是彩色底。 */
+                FMenu {
                     id: regionMenu
                     Repeater {
                         model: shell.regions
-                        MenuItem {
+                        FMenuItem {
                             required property var modelData
                             text: modelData.name
                             checkable: true

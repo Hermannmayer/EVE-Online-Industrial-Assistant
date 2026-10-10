@@ -1,7 +1,6 @@
 """系统设置对话框的桥（阶段 4b）：主题卡片选择器 + ESI/数据 · 外观 · 默认参数。
 
-对照 Widgets 版 `ui_pyside6/views/settings_view.SettingsDialog` 与
-`ui_pyside6/views/theme_selector.ThemeSelector`。两者必须同一个桥族：
+对照旧 Widgets 版的设置对话框与主题选择器。两者必须同一个桥族：
 
 - `SettingsDialog` 里**嵌着** `ThemeSelector`，拆成两个模块会留下跨模块的 Widgets 依赖；
 - 主题卡片点击要**立刻切主题**（`theme.apply_theme`），再回填到宿主的“应用/确定”流程 ——

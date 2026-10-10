@@ -1,4 +1,4 @@
-"""`PageHost` —— 把 QML 页面嵌进现有 Widgets 外壳的宿主控件。
+"""`PageHost` —— 把 QML 页面嵌进 `QWidget` 的宿主控件（现服务于 QML 对话框与测试）。
 
 迁移期（阶段 0–4）每个 QML 页面都装在一个 `QQuickWidget` 里，放进
 `QStackedWidget#content_stack` 对应的位置；阶段 5 再整体换成 `QQuickWindow`。
@@ -114,5 +114,5 @@ class PageHost(QQuickWidget):
         return self._qml_file
 
     def ok(self) -> bool:
-        """QML 是否加载成功（调用方据此决定是否回退到 Widgets 版）。"""
+        """QML 是否加载成功。"""
         return self.status() == QQuickWidget.Status.Ready

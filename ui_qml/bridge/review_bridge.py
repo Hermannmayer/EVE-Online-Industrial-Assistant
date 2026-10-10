@@ -1,6 +1,6 @@
 """剪贴板导入审阅链路的 QML 版（阶段 4b-3）。
 
-对照 Widgets 版 `ui_pyside6/views/inventory/review_dialog.py`，一次迁三样：
+对照旧 Widgets 版审阅对话框，一次迁三样：
 
 - `ImportReviewDialog`  → `ImportReviewBridge` + `ImportReviewQmlDialog`
 - `ImportChangeDialog`  → `ImportChangeBridge` + `ImportChangeQmlDialog`（复用汇总表骨架）

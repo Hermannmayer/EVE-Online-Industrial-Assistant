@@ -1,6 +1,6 @@
 """订单取数的共享部分：名称缓存 + ESI 线程。
 
-原先是 `ui_pyside6/views/query/query_order_popup.py` 里订单弹窗的配套部分（6.0 拆到这里）。
+原先是 Widgets 版订单弹窗的配套部分，QML 迁移时拆到这里。
 订单弹窗已删除，本模块仍服务物品查询页的「订单列表」详情面板
 （`QueryDetailBridge`）。`order_cache` 的**唯一写入方**是
 `QueryDetailBridge._on_orders_fetched`。

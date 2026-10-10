@@ -4,7 +4,7 @@
 
 > 模块说明：
 
-把 Widgets 版（原 `ui_pyside6`，已在批次 7.5 删除）的表格模型适配成 QML 可消费的形式。
+把 Widgets 版表格模型适配成 QML 可消费的形式。
 
 **这是所有表格迁移的样板。** QML 的 `TableView` 与 QWidgets 的 `QTableView`
 对模型的要求差两点，本模块就是补这两点：
@@ -16,8 +16,7 @@
    直接吃 URL，还能用 QML 自带的图片缓存）。
 
 做法是**继承**原模型而不是包装：原模型的 `_rows`/`_recalc_totals`/`sort` 等逻辑
-全部复用，QWidgets 视图（`data(DisplayRole)` 等）也照常工作——迁移期两个视图
-可以共用同一个模型实例。
+全部复用，不必再抄一遍。
 
 ## 类
 
@@ -25,7 +24,7 @@
 
 估价表格模型 + QML 命名角色。逻辑全在父类，这里只补角色。
 
-定义行：`54`
+定义行：`53`
 
 #### 方法
 
@@ -39,7 +38,7 @@ def roleNames(self) -> dict[int, bytes]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`59`
+定义行：`58`
 ##### `data`
 
 ```python
@@ -50,7 +49,7 @@ def data(self, index: QModelIndex, role: int=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`62`
+定义行：`61`
 ##### `sort`
 
 ```python
@@ -59,4 +58,4 @@ def sort(self, column: int, order: Qt.SortOrder=Qt.SortOrder.AscendingOrder) -> 
 
 排序后行号全变，必须让 QML 重新拉取 rowIndex。
 
-定义行：`100`
+定义行：`99`

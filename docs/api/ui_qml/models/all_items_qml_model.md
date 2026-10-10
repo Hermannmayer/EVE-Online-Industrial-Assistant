@@ -6,7 +6,7 @@
 
 全物品市场表的 QML 适配（阶段 4b）。
 
-对照 Widgets 版 `ui_pyside6/models/all_items_models.py::AModel` —— **展示规则一行都不重写**：
+对照旧 Widgets 版 —— **展示规则一行都不重写**：
 千分位、破折号占位（`DASH`）、收益等级（`_tag`）染色、利润率正负染色、金额列右对齐、
 图标列的 `DecorationRole`，全部仍走父类 `data()`，本类只补**命名角色**（QML 读不到
 Qt 那几个无名角色）。

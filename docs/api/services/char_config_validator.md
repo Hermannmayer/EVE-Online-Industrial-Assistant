@@ -26,7 +26,7 @@ def migrate_char_config(data: dict) -> dict
 
 迁移旧配置到新格式。添加缺失的默认字段。
 
-定义行：`147`
+定义行：`138`
 
 ### `_migrate_legacy_skill_keys`
 
@@ -36,7 +36,7 @@ def _migrate_legacy_skill_keys(skills: dict) -> None
 
 把旧技能名的等级搬到现行名下（就地修改，幂等）。
 
-定义行：`238`
+定义行：`229`
 
 ### `load_char_config`
 
@@ -46,4 +46,4 @@ def load_char_config(path: str) -> dict
 
 读取、校验、迁移一站式函数。
 
-定义行：`247`
+定义行：`238`

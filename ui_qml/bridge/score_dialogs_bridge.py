@@ -1,6 +1,6 @@
 """制造 / 贸易评分设置对话框的桥（阶段 4b）。
 
-对照 Widgets 版 `ui_pyside6/views/score_dialogs.py` 里的 `MfgDlg` / `TradeDlg`。
+对照旧 Widgets 版的 `MfgDlg` / `TradeDlg`。
 两个对话框都是「一组下拉 + 一两个数值 → 点确定 → 调用方读 `get()`」的形状，
 桥只负责把控件状态搬进属性、把 `get()` 的返回结构原样保留。
 
@@ -14,7 +14,7 @@
 
 **同文件的 `ScoreW` 不过桥**：它是 `BaseBatchScoreWorker` 的后台线程，没有一行 UI，
 业务实现也只有那一份。原文件按约定不删，`ScoreW` 继续从
-`ui_pyside6.views.score_dialogs` 导入。
+`ui_qml/workers/score_worker.py` 导入。
 
 两处对齐 Widgets 版的细节（都容易被「顺手改对」而改错）：
 

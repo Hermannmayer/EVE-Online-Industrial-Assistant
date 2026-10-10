@@ -1388,7 +1388,7 @@ class MarketPulseBridge(QObject):
             self._set_action_status("这一行没有名称可复制")
             return
         QGuiApplication.clipboard().setText(name)
-        self._set_action_status(f"已复制名称：{name}")
+        self._set_action_status(f"已复制名称: {name}")
 
     @Slot(str, int)
     def addToWatchlist(self, section: str, row: int) -> None:

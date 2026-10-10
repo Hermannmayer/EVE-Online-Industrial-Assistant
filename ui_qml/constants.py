@@ -9,7 +9,7 @@ from services.terminology import term
 __all__ = ["CATEGORIES", "MFG_CATEGORIES", "NAV_TREE"]
 
 #: 左侧导航条目：`(key, 标题, 图标语义键, 图标配色)`；`key` 就是页面键，顺序即显示顺序。
-#: 原先在 `ui_pyside6/main_window_nav.py`，QML 外壳也要这份，故上移成单一来源。
+#: 原先在 Widgets 视图层，QML 外壳也要这份，故上移成单一来源。
 #: （曾经首项是 `("__section__", "核心功能", "lightning")` 分组标题，已按界面改版去掉。）
 #:
 #: 配色写的是**主题 token 名**而不是色值：本模块刻意不依赖 Qt / 主题（QML 与 Widgets

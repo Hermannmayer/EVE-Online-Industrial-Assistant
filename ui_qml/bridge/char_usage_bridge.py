@@ -1,6 +1,6 @@
 """人物占用情况对话框的桥（阶段 4）。
 
-对照 Widgets 版 `ui_pyside6/views/industry/char_usage_dialog.py`，但**展示换了**：
+对照旧 Widgets 版，但**展示换了**：
 原先是一张五列表（「队列时长 / 技能等级」两列常年 N/A），现在直接渲染查询页空闲态
 仪表盘左栏那块「产线详情」面板（`qml/components/OccupancyPanel.qml`）—— 每人物一块、
 块内制造 / 科研 / 反应三行容量条 + 「待下线 N」，一眼看出谁的线快满了。

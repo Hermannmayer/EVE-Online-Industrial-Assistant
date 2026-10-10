@@ -1,6 +1,6 @@
 """蓝图 NPC 卖家对话框的桥（阶段 4）。
 
-对照 Widgets 版 `ui_pyside6/dialogs/npc_seller_dialog.py`：选贸易中心 → 从 ESI 拉
+对照旧 Widgets 版：选贸易中心 → 从 ESI 拉
 该蓝图的卖单 → 筛出 NPC 公司的直售单（BPO）。取数在 `NpcOrderWorker` 里跑，
 本类只负责组织与文案；行构造是纯函数 `npc_seller_rows`（已随线程挪到 workers）。
 """

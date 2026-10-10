@@ -1,6 +1,6 @@
 """下线确认对话框的桥（阶段 4）。
 
-对照 Widgets 版 `ui_pyside6/views/industry/complete_plans_dialog.py` 里的
+对照旧 Widgets 版「完成所有」对话框里的
 `CompletePlansDialog`：展示待下线清单 + 选产出机库。
 
 **产出量与流水号的计算留在 `complete_plans_dialog` 的既有函数里**

@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 
-/* 主题卡片网格 —— 对齐 Widgets 版 `ui_pyside6/views/theme_selector.ThemeSelector`。
+/* 主题卡片网格 —— 对齐原 Widgets 版的主题选择器。
  *
  * 一行三张卡：三个色块预览 + 中文名 + 暗/亮角标 + 材质小字，点一张即切主题。
  *

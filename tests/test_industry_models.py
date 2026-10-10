@@ -1,4 +1,4 @@
-"""工业制造 Table Model 单元测试 — ui_pyside6/models/industry_models.py
+"""工业制造 Table Model 单元测试 — `ui_qml/models/industry_models.py`
 
 测试覆盖:
   - PlanTableModel: 生产计划表模型

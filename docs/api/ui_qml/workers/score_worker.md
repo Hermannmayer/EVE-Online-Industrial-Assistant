@@ -4,9 +4,9 @@
 
 > 模块说明：
 
-评分线程 `ScoreW`（原先在 `ui_pyside6/views/score_dialogs.py`）。
+评分线程 `ScoreW`。
 
-QML 侧（全物品页 / 可制造页）与 Widgets 对话框共用这一份。
+QML 侧（全物品页 / 可制造页）与批量评分桥共用这一份。
 
 ## 类
 

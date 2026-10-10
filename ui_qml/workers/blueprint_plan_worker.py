@@ -1,7 +1,4 @@
-"""蓝图批量加入规划时的派生指标计算线程。
-
-原先在 `ui_pyside6/views/inventory/blueprint_tab.py`。
-"""
+"""蓝图批量加入规划时的派生指标计算线程。"""
 
 from PySide6.QtCore import QThread, Signal
 

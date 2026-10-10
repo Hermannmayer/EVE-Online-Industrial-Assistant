@@ -1,6 +1,6 @@
 """采购小助手（非模态工具窗）的 QML 桥（阶段 4b）。
 
-对照 Widgets 版 `ui_pyside6/views/procurement_tab.py`，**只做转发与整形**：
+对照旧 Widgets 版采购页，**只做转发与整形**：
 业务（聚合采购需求、删除/手改的回放、轮询同步、置顶、完成所有）留在
 `ProcurementDialog` 里 —— 它是纯控制器（批次 7.4 起基类是 `QObject`，窗口在
 `qml/pages/ProcurementWindow.qml` 里），与 `production_launcher` 同款。

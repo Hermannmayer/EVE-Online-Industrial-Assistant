@@ -1,7 +1,7 @@
 """仓库页 bridge —— QML 与既有服务 / worker 之间的唯一通道。
 
-覆盖两个 Tab（机库管理 / 蓝图管理），对照的 Widgets 版是
-`ui_pyside6/views/inventory/{inventory_page,hangar_tab,blueprint_tab}.py`。
+覆盖两个 Tab（机库管理 / 蓝图管理），
+是原 Widgets 版仓库页（inventory_page / hangar_tab / blueprint_tab）的 QML 替代。
 
 **多选在本桥里实现**：机库页的批量删除/移库/改成本价、蓝图页的批量操作都靠多选，
 而 QML `TableView` 的内建选中在 Qt 6.11 上不工作（见 `PlanTableBridge` 的说明）。

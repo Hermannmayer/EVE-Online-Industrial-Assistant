@@ -1,7 +1,7 @@
 """生产计划表的 Python ↔ QML 桥。
 
 **只做转发**：所有业务动作（启动/下线/删行/拆解/落库…）仍留在
-`ui_pyside6/views/industry/plan_table.py` 的 `PlanTable` 里，本类只把 QML 的
+`ui_qml/views/industry/plan_table.py` 的 `PlanTable` 里，本类只把 QML 的
 调用翻译成对它的方法调用并把结果整形回去。这样迁移期只有一个业务副本，
 QML 与 Widgets 两条路径不会各写一套逻辑。
 

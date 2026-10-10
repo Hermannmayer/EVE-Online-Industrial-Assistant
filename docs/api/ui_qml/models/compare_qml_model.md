@@ -6,7 +6,7 @@
 
 对比结果表的 QML 适配（阶段 4b）。
 
-对照 Widgets 版 `ui_pyside6/views/compare/compare_models.py::CompareTableModel` ——
+对照旧 Widgets 版 ——
 **展示规则一行都不重写**：ISK 缩写、利润率百分号、状态中文、利润正负染色、
 金额列右对齐、物品列图标，全部仍走父类 `data()`，本类只补**命名角色**。
 

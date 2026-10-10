@@ -1,6 +1,6 @@
 """蓝图粘贴导入的两个对话框的桥（阶段 4b）：导入预览 / 导入完成变动汇总。
 
-对照 Widgets 版 `ui_pyside6/views/inventory/blueprint_import_dialog.py`。两个宿主都保持
+对照旧 Widgets 版。两个宿主都保持
 原 API（构造 → `exec()` → 读 accessor），所以调用点只换类名：
 
     dlg = BlueprintImportReviewQmlDialog(diff, label, parent, default_mode="full",

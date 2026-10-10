@@ -74,7 +74,6 @@ def add_to_watchlist(
     """
     with _db().connect("user", "mkt") as conn:
         c = conn.cursor()
-        # 检查是否已存在
         c.execute(
             "SELECT id FROM watchlist_items WHERE type_id = ? AND region_id = ?",
             (type_id, region_id),
@@ -220,7 +219,6 @@ def check_price_changes() -> list[dict]:
                     }
                 )
                 has_change = True
-            # 更新快照价格
             if has_change or old_buy == 0:
                 c.execute(
                     f"UPDATE watchlist_items SET last_buy_price = ?, "

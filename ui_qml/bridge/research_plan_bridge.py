@@ -1,6 +1,6 @@
 """科研计划对话框的桥（阶段 4b 收尾）：拷贝 / 发明 / 效率研究。
 
-对照 Widgets 版 `ui_pyside6/dialogs/research_plan_dialogs.py`。三个类共用同一套
+对照旧 Widgets 版。三个类共用同一套
 「角色 / 材料机库 / 输出机库 / 设施」骨架（原 `_ResearchDialogBase`）——QML 里
 没有可继承的私有窗口基类，所以把公共字段与取值搬进 `_ResearchBridgeBase`，
 QML 侧的同一块再抽成 `ResearchCommonFields.qml`，避免三份重复。

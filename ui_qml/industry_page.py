@@ -11,7 +11,7 @@
 
 批次 7.4 删掉了「把控制器包成 QWidget 的 `SpecPageHost`」那条路
 （`IndustryQmlHost` / `make_qml_host` / `build_industry_page`）：控制器基类已改成
-`QObject`（见 `ui_pyside6/views/industry_view.py`），不再有任何自建 QML 宿主的路径 ——
+`QObject`（见 `ui_qml/views/industry_view.py`），不再有任何自建 QML 宿主的路径 ——
 宿主形态完全由外壳决定（`ui_qml.registry.build_qml_page` 把规格实例化成 `Item`）。
 
 外壳按鸭子类型调用的钩子（`save_state` / `restore_state` / `refresh_display` /

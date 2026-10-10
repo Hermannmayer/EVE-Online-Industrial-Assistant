@@ -4,7 +4,7 @@
 这条回归）、保存时的校验与落库。
 **不放**「加载无告警」那条 —— 由主流程在 `tests/test_qml_dialogs.py` 统一加。
 
-与 Widgets 版 `ui_pyside6/views/hangar_settings_view.py` 逐条对齐。
+与 Widgets 版 `hangar_settings_view` 逐条对齐。
 """
 
 from __future__ import annotations

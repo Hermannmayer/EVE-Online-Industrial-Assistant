@@ -1,6 +1,6 @@
 """配色对比度 —— WCAG 计算与校正，**纯 hex、不碰 Qt**。
 
-原先住在 `ui_pyside6/views/industry/production_launcher.py` 里，用的是 `QColor`。
+原先住在 `ui_qml/views/industry/production_launcher.py` 里，用的是 `QColor`。
 搬到 `domain/` 就不能再构造 Qt 对象（铁律：domain 无 DB/Qt/缓存），
 所以这里一律走 `#rrggbb` 字符串与整数元组；要画的时候由调用方自己包 `QColor`。
 

@@ -6,7 +6,7 @@
 
 蓝图 NPC 卖家查询的后台 Worker。
 
-原先定义在 `ui_pyside6/dialogs/npc_seller_dialog.py` 里（对话框与线程同文件）。
+原先定义在 Widgets 视图层里（对话框与线程同文件）。
 对话框迁到 QML 后那个模块被删除，线程按项目约定挪到 `ui_qml/workers/`。
 
 ## 函数

@@ -1,6 +1,6 @@
 """查询页的搜索历史（纯文件 I/O，零 Qt）。
 
-原先在 `ui_pyside6/views/query/query_search.py`：它只依赖 `core.paths`，
+原先在 Widgets 查询页，QML 迁移时搬到 `core/`：它只依赖 `core.paths`，
 放在 UI 层里没有道理，QML 侧也要用。
 """
 

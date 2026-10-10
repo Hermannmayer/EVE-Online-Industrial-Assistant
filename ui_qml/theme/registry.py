@@ -4,13 +4,13 @@
 **单一 token 源**：QML 的 `Theme` 单例（经 `ui_qml.bridge.theme_bridge`）与所有
 `theme.XXX` 取值都读这里，禁止在别处写颜色字面量。
 
-本模块原先在 `ui_pyside6/theme.py`，因为 QML 侧要读同一份 token 才搬到 `ui_qml/`。
-搬迁期间 `ui_pyside6/` 下留过一层同名转发器，批次 7.0 已随引用方全部改指而删除 ——
-那个旧路径现在不存在，新代码一律 import 本模块。
+本模块原先在 Widgets 主题层，因为 QML 侧要读同一份 token 才搬到 `ui_qml/`。
+搬迁期间旧路径下留过一层同名转发器，引用方全部改指后已删 ——
+新代码一律 import 本模块。
 
-批次 7.5 之前这里还带着 QSS 生成（14 个 `_*_styles()` + `get_stylesheet()` +
-`themed_menu()`），那是 Widgets 外壳专有的；外壳在 6.1 换成 QML 之后它就已是死代码，
-7.5 随 `ui_pyside6/` 一并删除（本文件 1099 行 → 494 行）。
+QML 迁移前这里还带着 QSS 生成（14 个 `_*_styles()` + `get_stylesheet()` +
+`themed_menu()`），那是 Widgets 外壳专有的；外壳换成 QML 之后它就是死代码，
+随 Widgets 层一并删除。
 **QML 侧不套 QSS**，它靠 `Theme` 绑定的属性重绘。
 """
 
@@ -340,7 +340,6 @@ def apply_theme(theme_name: str) -> None:
     RADIUS = spec["radius"]
     RADIUS_SMALL = max(2, spec["radius"] - 2)
 
-    # 更新别名
     globals()["GREEN"] = globals()["ACCENT_GREEN"]
     globals()["RED"] = globals()["ACCENT_RED"]
     globals()["YELLOW"] = globals()["ACCENT_YELLOW"]

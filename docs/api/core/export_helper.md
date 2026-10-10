@@ -6,7 +6,7 @@
 
 导出工具 — CSV / Excel 批量导出（纯 Python，零 Qt）。
 
-原先在 `ui_pyside6/views/export_helper.py`，随批次 6.0 搬来 `core/`：
+原先在 Widgets 视图层，QML 迁移时搬到 `core/`：
 两个函数只依赖标准库与 openpyxl，两套 UI 都要用。
 弹保存框的 `get_save_filename` 依赖 QFileDialog，落在 `ui_qml/file_dialogs.py`。
 

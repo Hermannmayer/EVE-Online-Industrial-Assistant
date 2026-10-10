@@ -1,6 +1,6 @@
 """编辑生产计划对话框的桥（阶段 4 的样板）。
 
-对照 Widgets 版 `ui_pyside6/views/industry/plan_edit_dialog.py`，
+对照旧 Widgets 版，
 对外契约保持一致：`exec()` → `get_updated_data()` 返回同一个字段字典
 （含批量模式下「未勾选同步则流程/并行为 None」那条规则）。
 

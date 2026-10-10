@@ -1,7 +1,7 @@
 import QtQuick
 
-/* 左侧导航（阶段 5 批次 6.1；界面改版第 1 步重排）—— Widgets 版是
-   `ui_pyside6/main_window_nav._build_nav_tree`。
+/* 左侧导航（阶段 5 批次 6.1；界面改版第 1 步重排）—— 原 Widgets 外壳的导航树
+   在 QML 外壳落地时随目录一并删除。
 
    条目来自 `shell.navItems`（Python 侧的 `NAV_TREE`，单一来源不复制到 QML）。
    曾经首项是「核心功能」分组标题，改版已去掉 —— delegate 因此只剩一种行样式。

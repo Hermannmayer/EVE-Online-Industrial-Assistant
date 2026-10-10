@@ -4,7 +4,7 @@ import "../components"
 
 /* 评分设置对话框（阶段 4b）—— 制造与贸易共用这一份。
  *
- * 对照 Widgets 版 `ui_pyside6/views/score_dialogs.py` 的 `MfgDlg` / `TradeDlg`：
+ * 对照原 Widgets 版：
  * 上半是两种模式共有的物品图标 + 区域 + 人物，
  * 制造模式多一行「设施税」，贸易模式多「卖出区域 / 买价 / 卖价」三行。
  * 由桥的 `isTrade` 决定显示哪一组 —— 与 `InputDialog.qml` 按 `mode` 切控件同一个套路。

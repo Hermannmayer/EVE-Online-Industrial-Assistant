@@ -1,9 +1,9 @@
 """对比结果的数据模型与格式化（零 QtWidgets）。
 
-`CompareTableModel` 原先在 `ui_pyside6/views/compare/compare_models.py`，
+`CompareTableModel` 原先在 Widgets 视图层，
 同一文件里还混着对话框的 QSS 构建；随批次 6.0 把「模型 + 纯格式化」拆出来，
 因为 QML 侧（`ui_qml/models/compare_qml_model.py`）也要用这一份展示规则。
-QSS 那一半留在原处（它只服务 Widgets 对话框）。
+QSS 那一半已随 Widgets 层一起删除。
 """
 
 import os

@@ -5,7 +5,7 @@ import "../components"
 
 /* 系统设置对话框（阶段 4b）：ESI 与数据 / 外观 / 默认参数 三个标签页。
  *
- * 对照 Widgets 版 `ui_pyside6/views/settings_view.SettingsDialog`：
+ * 对照原 Widgets 版：
  * - 标签页、表单字段、三个按钮（确定 / 取消 / 应用）逐条对齐；
  * - 「应用」不关窗，走 `FThemeCards` 的 `applyRequested`（`FDialogFrame` 里那个可选按钮）；
  * - 「外观」页嵌 `FThemeCards`（原版嵌 `ThemeSelector`），点卡片**即时换肤**，

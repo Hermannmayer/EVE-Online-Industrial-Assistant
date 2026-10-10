@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
 
-/* 制造材料明细（阶段 4b）—— 对照 `ui_pyside6/views/all_items_view.py::MatDlg`。
+/* 制造材料明细（阶段 4b）—— 对照原 Widgets 版的材料明细对话框。
  *
  * 标题行 → 材料列表（图标 + 「名称 x数量 @ 单价 = 小计」）→ 总成本 → 关闭。
  * 数据一律由 `ui_qml/bridge/all_items_bridge.py` 的 `MatBridge` 取好

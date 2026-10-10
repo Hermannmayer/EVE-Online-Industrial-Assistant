@@ -71,7 +71,10 @@ Item {
                             readonly property bool active: container.tabIndex === seg.index
 
                             implicitWidth: segLabel.implicitWidth + 2 * Math.round(16 * Theme.fontScale)
-                            implicitHeight: Math.round(30 * Theme.fontScale)
+                            // 段高/选中加粗与合同页的 `SegTab` 对齐（同一套「页面级分段页签」，
+                            // 两处不一致就是设计语言漂移）。段间距这里保留 2px 而不是 0：
+                            // 合同页 3 段带条数徽标、靠 1px 分隔线分段，这里只有 2 段、无徽标。
+                            implicitHeight: Math.round(32 * Theme.fontScale)
                             radius: Theme.radiusSmall
                             color: seg.active ? Theme.primary
                                               : (segMouse.containsMouse ? Theme.bgHover : "transparent")
@@ -83,6 +86,7 @@ Item {
                                 color: seg.active ? Theme.textOnPrimary : Theme.textSecondary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: container.fntBase
+                                font.bold: seg.active
                             }
 
                             MouseArea {

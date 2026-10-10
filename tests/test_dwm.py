@@ -1,6 +1,6 @@
 """DWM 毛玻璃纯逻辑测试。
 
-原文件还测 Widgets 版标题栏（`ui_pyside6.title_bar.TitleBar`）—— 批次 6.2 连同
+原文件还测 Widgets 版标题栏（`TitleBar`）—— QML 迁移时连同
 Widgets 外壳一起删掉了；QML 标题栏的等价断言在 `tests/test_qml_shell.py` 的图标组里。
 """
 

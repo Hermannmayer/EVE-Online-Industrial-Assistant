@@ -1,6 +1,6 @@
 """关注列表的列定义与表格模型（零 QtWidgets）。
 
-原先在 `ui_pyside6/views/watchlist_view.py`，QML 侧复用同一份展示规则。
+原先在 Widgets 视图层，QML 侧复用同一份展示规则。
 """
 
 from PySide6.QtCore import QAbstractTableModel, Qt

@@ -1,6 +1,6 @@
 """所需蓝图清单对话框的桥（阶段 4）。
 
-对照 Widgets 版 `ui_pyside6/views/industry/blueprint_dialog.py`：
+对照旧 Widgets 版：
 展开所有活跃计划的 BOM，列出蓝图需求与拥有情况（BPO 无限 / BPC 按可用流程），
 三色状态：足够（绿）/ 不足（黄）/ 缺少（红）。
 

@@ -1,6 +1,6 @@
 """价格走势图对话框的桥与 QML 宿主（阶段 4b）。
 
-对照 Widgets 版 `ui_pyside6/views/price_chart.py` 的 `PriceChartDialog`（QtCharts 版）：
+对照旧 Widgets 版的 `PriceChartDialog`（QtCharts 版）：
 后台拉某物品的历史价 → 画「日均价 + 成交量」双 Y 轴折线。
 
 **几何计算全在本模块的纯函数里**（轴范围、刻度值、点坐标归一化），QML 那份 `Canvas`

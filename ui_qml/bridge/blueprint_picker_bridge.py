@@ -1,6 +1,6 @@
 """绑定库存蓝图对话框的桥（阶段 4）。
 
-对照 Widgets 版 `ui_pyside6/views/industry/blueprint_picker_dialog.py`：
+对照旧 Widgets 版：
 一条产线（parallels 之一）独占一张库存蓝图，勾选 parallels 张可用蓝图，
 每张可用流程 ≥ runs。
 

@@ -1,6 +1,6 @@
 """机库设置对话框的桥（阶段 4b 收尾）：机库配置（星系 / 设施 / 改件 / 税）+ 默认机库。
 
-对照 Widgets 版 `ui_pyside6/views/hangar_settings_view.py` 的三个类：
+对照旧 Widgets 版机库设置视图的三个类：
 
 - `HangarSettingsDialog` → `HangarSettingsQmlDialog`（宿主签名 `(main_window, parent=None)` 逐字不变）。
 - `_HangarEditor` → 本桥里「每个机库一份工作状态」（`_configs`）+ QML 里的编辑区区块。

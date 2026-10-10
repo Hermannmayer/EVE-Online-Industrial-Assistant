@@ -24,7 +24,7 @@ def get_db() -> DatabaseManager
 
 获取全局 DatabaseManager 单例
 
-定义行：`177`
+定义行：`176`
 
 ## 类
 
@@ -85,7 +85,7 @@ def connect(self, primary: DB_ALIAS, *attach: DB_ALIAS) -> Generator[sqlite3.Con
 
 获取连接（自动复用），ATTACH 需要的辅助库。
 
-定义行：`123`
+定义行：`122`
 ##### `direct_connect`
 
 ```python
@@ -94,7 +94,7 @@ def direct_connect(self, db_alias: DB_ALIAS) -> sqlite3.Connection
 
 直接连接（不经过 context manager，不走缓存），用于 Worker/后台线程等简单场景。
 
-定义行：`147`
+定义行：`146`
 ##### `close_all`
 
 ```python
@@ -103,4 +103,4 @@ def close_all(self)
 
 关闭当前线程的所有缓存连接（应用退出时调用）
 
-定义行：`161`
+定义行：`160`

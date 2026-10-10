@@ -186,7 +186,6 @@ def _expand(
     # 计算需要制造多少次（向上取整）
     runs = math.ceil(needed_qty / output_qty)
 
-    # 获取材料
     mat_rows = _get_materials(conn, bp_id, "manufacturing")
     if not mat_rows:
         # 蓝图无材料记录 → 降级为叶子节点

@@ -1,6 +1,6 @@
 """工业制造「加入制造计划」对话框的桥（阶段 4b 收尾）。
 
-对照 Widgets 版 `ui_pyside6/dialogs/industry_dialogs.py` 的 `AddPlanDialog`。
+对照旧 Widgets 版的 `AddPlanDialog`。
 对外契约一致：`exec()` → `result_data()` 返回
 `{runs, parallels, me, te, char, fac}`。
 """

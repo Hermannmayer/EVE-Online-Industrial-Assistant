@@ -1,6 +1,6 @@
 """星系搜索选择对话框的桥（阶段 4）。
 
-对照 Widgets 版 `ui_pyside6/dialogs/system_search_dialog.py`：输入名称 → 选一行 →
+对照旧 Widgets 版：输入名称 → 选一行 →
 确定，返回 `(solar_system_id, 星系名)`。供机库设置 / 生产计划设施选择复用，
 返回值的形状与 `get_selected()` 的名字都没变，两个调用方一行不用改。
 

@@ -1,6 +1,6 @@
 """关注（价格监控）Tab 的 bridge —— QML 与 `services.watchlist_manager` 之间的唯一通道。
 
-对照的 Widgets 版是 `ui_pyside6/views/watchlist_view.py`（已随批次 7.5 删除）。
+对应的 Widgets 版实现已随 QML 迁移删除。
 
 页面结构（见 `docs/dev/market-monitor-plan.md` 4.2）：**左窄列表 + 右详情**。
 本桥提供两块数据：

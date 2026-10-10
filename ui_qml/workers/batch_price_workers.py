@@ -1,4 +1,4 @@
-"""批量查价的线程与搜索助手（原先在 `ui_pyside6/views/batch_price_dialog.py`）。"""
+"""批量查价的线程与搜索助手。"""
 
 from PySide6.QtCore import QThread, Signal
 

@@ -1,6 +1,6 @@
 """材料总表（填料总表）对话框的桥（阶段 4）。
 
-对照 Widgets 版 `ui_pyside6/views/industry/materials_dialog.py`：
+对照旧 Widgets 版：
 活跃计划的 BOM 汇总 + 库存比对 → 缺口 / 单价 / 总价 / 体积 / 状态，
 外加「行内复制采购」与「一键复制全部」。
 
@@ -125,7 +125,7 @@ class MaterialsSummaryBridge(SummaryTableBridge):
         clipboard = QApplication.clipboard()
         if clipboard is not None:
             clipboard.setText(f"{item['name']}\t{item['gap']:,.0f}")
-        self.set_error(f"已复制：{item['name']} 需购 {item['gap']:,.0f}")
+        self.set_error(f"已复制: {item['name']} 需购 {item['gap']:,.0f}")
 
     @Slot()
     def topAction(self) -> None:

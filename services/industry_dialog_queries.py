@@ -1,6 +1,6 @@
 """行业弹窗专用数据查询收敛层。
 
-把原先散落在 ui_pyside6/views/industry/*.py 中的
+把原先散落在 Widgets 工业页视图中的
 ``get_container().db.connect(...)`` 直接 SQL 收敛到 services 层。
 
 这些函数只接收 DatabaseManager（由 UI 从容器传入），保持同步调用，

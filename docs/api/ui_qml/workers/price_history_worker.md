@@ -4,7 +4,7 @@
 
 > 模块说明：
 
-价格历史取数线程（原先在 `ui_pyside6/views/price_chart.py`）。
+价格历史取数线程。
 
 ## 类
 

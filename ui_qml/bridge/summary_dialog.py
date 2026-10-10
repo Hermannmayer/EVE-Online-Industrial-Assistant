@@ -117,7 +117,7 @@ class SummaryTableBridge(DialogBridge):
         clipboard = QGuiApplication.clipboard()
         if clipboard is not None:
             clipboard.setText(text)
-        self.set_error(f"已复制：{text}")
+        self.set_error(f"已复制: {text}")
 
     @Slot()
     def reload(self) -> None:

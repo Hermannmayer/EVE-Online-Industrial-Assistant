@@ -1,6 +1,6 @@
 """甘特图排期 —— 纯计算，不依赖 Qt。
 
-原先这套逻辑长在 `ui_pyside6/views/industry/gantt_view.py` 的 QWidget 里，
+原先这套逻辑长在 Widgets 版甘特视图的 QWidget 里，
 与 QPainter 自绘混在一起。阶段 2b 把绘制交给 QML，排期计算上移到服务层，
 这样它可以脱离界面单测（原先要构造 QWidget 才能测）。
 

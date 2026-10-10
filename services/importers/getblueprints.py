@@ -150,7 +150,6 @@ def _load_blueprints_yaml(path: str, loader) -> dict:
 async def run_blueprint_update(progress_cb=None):
     os.makedirs(CACHE_DIR, exist_ok=True)
 
-    # 检查是否已填充
     try:
         async with aiosqlite.connect(DATABASE_PATH) as db:
             cursor = await db.execute("SELECT COUNT(*) FROM blueprint_activities")
@@ -169,7 +168,6 @@ async def run_blueprint_update(progress_cb=None):
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await create_tables(db)
 
-    # 获取 blueprints.yaml 缓存
     if progress_cb:
         progress_cb(10, "获取 blueprints.yaml")
 

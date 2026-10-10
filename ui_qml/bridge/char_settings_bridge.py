@@ -1,7 +1,7 @@
 """人物设置对话框的桥（阶段 4b）：多角色 / 技能 / 增效体 / 市场费率。
 
-对照 Widgets 版 `ui_pyside6/views/char_settings_view.CharSettingsDialog` 与
-`ui_pyside6/views/char_settings_pages.py`（`SkillsPage` / `ImplantsPage` / `MarketPage` /
+对照旧 Widgets 版角色设置（`char_settings_view` / `char_settings_pages`：
+`SkillsPage` / `ImplantsPage` / `MarketPage` / `SkillSlider`）。
 `SkillSlider`）。
 
 **三个 Tab 页做成了三个从属桥**（`SkillsBridge` / `ImplantsBridge` / `MarketBridge`），

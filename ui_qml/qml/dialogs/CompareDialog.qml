@@ -5,7 +5,7 @@ import "../components"
 
 /* 批量对比对话框（阶段 4b）。
  *
- * 对照 Widgets 版 `ui_pyside6/views/compare/compare_dialog.py::CompareDialog`：
+ * 对照原 Widgets 版：
  * 搜索添加区 → 已添加列表 → 参数行 → 进度条 → 对比结果表 → 状态行，
  * 表格右键「复制行 / 复制全部 / 查看物品」。
  *

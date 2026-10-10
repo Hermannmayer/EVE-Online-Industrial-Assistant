@@ -1,6 +1,6 @@
 """机库页两个对话框的桥（阶段 4b）：编辑数量 / 批量成本价。
 
-对照 Widgets 版 `ui_pyside6/dialogs/hangar_dialogs.py`。两个类都保持原 API
+对照旧 Widgets 版。两个类都保持原 API
 （构造 → `exec()` → 读 accessor），所以调用点只换类名。
 
 **顺带删掉了 `PasteImportDialog`**：它在 Widgets 版里就是死代码（除了

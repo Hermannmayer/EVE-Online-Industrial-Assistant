@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
 
-/* 全物品浏览器（阶段 4b）—— 对照 `ui_pyside6/views/all_items_view.py::AllItemsDialog`。
+/* 全物品浏览器（阶段 4b）—— 对照原 Widgets 版对应对话框。
  *
  * 工具栏（制造评分 / 设置 / 贸易评分 / 设置 / 批量对比 / 导出 + 置顶）→
  * 筛选行（搜索 + 类别 + 状态）→ 3px 进度条 → 左「市场分类树」右「物品表」的可拖动分栏。
@@ -567,13 +567,15 @@ Item {
         property bool hasTradeDetail: false
 
         FMenuItem {
-            text: qsTr("复制: ") + rowMenu.itemName
+            // 名词不能省：全仓其余同类项都是「复制<名词>: <值>」，这里原先只有 `复制: `
+            text: qsTr("复制名称: ") + rowMenu.itemName
             onTriggered: if (page.ai)
                 page.ai.copyName(rowMenu.row)
         }
 
         FMenuItem {
-            text: qsTr("复制ID: ") + rowMenu.typeId
+            // `Type ID` 的写法与估价页右键一致（那儿本来就是「复制 Type ID」）
+            text: qsTr("复制 Type ID: ") + rowMenu.typeId
             onTriggered: if (page.ai)
                 page.ai.copyId(rowMenu.row)
         }

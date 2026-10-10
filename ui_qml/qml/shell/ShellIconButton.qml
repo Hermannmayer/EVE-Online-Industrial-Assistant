@@ -9,6 +9,13 @@ import QtQuick.Controls
 
    本组件**无内部状态**：`checked` 由调用方绑定到桥的真实状态，点击只发信号，
    免得出现「按钮亮了但外壳没真置顶」这种两套状态。
+
+   **选中态只由底色块（`bgSurfaceLight`）承担，不换前景色。**
+   `checkable` 只是叠一层「这是个开关」的语义，没有理由把图标色反转：本组件默认
+   `tint = textPrimary`，未选中时图标本来就是它。组件曾经把选中态刷成 `textOnPrimary`，
+   而底色是 `bgSurfaceLight` —— `#0f172a` 压在 `#24334b` 上是 **1.4:1**，浅色主题
+   `#ffffff` 压在 `#e6eaf8` 上是 **1.2:1**：**开着等于看不见**，两个调用方传进来的
+   `tint`（置顶 / 自动更新的开态色）也全被吃掉。现在 `tint` 一律照传，选中只加底块。
 */
 Item {
     id: root
@@ -33,10 +40,11 @@ Item {
         anchors.fill: parent
         radius: Theme.radiusSmall
         color: {
+            const on = root.checked && root.checkable;
             if (mouse.containsMouse)
                 return root.dangerHover ? Theme.accentRed
-                     : (root.checked ? Theme.bgSurfaceLight : Theme.bgHover);
-            return root.checked ? Theme.bgSurfaceLight : "transparent";
+                     : (on ? Theme.bgSurfaceLight : Theme.bgHover);
+            return on ? Theme.bgSurfaceLight : "transparent";
         }
 
         Image {
@@ -53,7 +61,7 @@ Item {
                     "image://phosphor/" + root.icon + "?c=" +
                     encodeURIComponent(Theme.hex(
                         mouse.containsMouse && root.dangerHover ? Theme.textOnPrimary
-                      : (root.checked && root.checkable ? Theme.textOnPrimary : root.tint))) +
+                                                               : root.tint)) +
                     "&s=" + root.iconSize
         }
 
@@ -66,8 +74,7 @@ Item {
             text: root.label
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fs(12)
-            color: mouse.containsMouse && root.dangerHover ? Theme.textOnPrimary
-                 : (root.checked && root.checkable ? Theme.textOnPrimary : root.labelTint)
+            color: mouse.containsMouse && root.dangerHover ? Theme.textOnPrimary : root.labelTint
         }
     }
 

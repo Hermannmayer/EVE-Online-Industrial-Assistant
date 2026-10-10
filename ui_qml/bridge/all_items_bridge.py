@@ -1,14 +1,14 @@
 """全物品浏览器 + 制造材料明细的桥（阶段 4b）。
 
-对照两个 Widgets 版：
-- `ui_pyside6/views/all_items_view.py::AllItemsDialog`（含左树 + 表格 + 评分模式切换 + 导出）
+对照旧 Widgets 版两个对话框：
+- 全物品浏览器（含左树 + 表格 + 评分模式切换 + 导出）
 - 同文件 `MatDlg`（双击物品行弹出的「制造材料」明细）
 
 **取数、筛选、评分、排序、导出格式一行都没搬过来**：
 分类树走 `ui_qml.workers.all_items_workers.TreeW`，物品/搜索走同文件的 `ItemsW` /
-`SearchItemsW`，评分走 `ui_pyside6.views.score_dialogs.ScoreW`（`BaseBatchScoreWorker`
+`SearchItemsW`，评分走 `ui_qml/workers/score_worker.py`（`BaseBatchScoreWorker`
 的后台线程，零 UI，继续用原类），类别筛选仍是 `blueprint_repo` 的那几个 product_ids 查询，
-表格展示与排序仍是 `ui_pyside6/models/all_items_models.py` 的 `AModel` / `Proxy`
+表格展示与排序仍是 `ui_qml/models/all_items_models.py` 的 `AModel` / `Proxy`
 （经 `ui_qml/models/all_items_qml_model.py` 补命名角色）。桥只做「界面状态 ↔ 属性/槽」。
 
 四处需要留意的接线：

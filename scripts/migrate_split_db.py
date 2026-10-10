@@ -223,7 +223,6 @@ def copy_table(src: sqlite3.Connection, dst: sqlite3.Connection, table: str):
         log.info(f"  ⏭ {table}: 无数据")
         return
 
-    # 获取列名
     col_names = [d[0] for d in cursor.description]
     placeholders = ",".join("?" * len(col_names))
     cols_str = ",".join(col_names)
@@ -247,7 +246,6 @@ def run_migration():
     log.info(f"  用户库: {USR_DB_PATH}")
     log.info("=" * 50)
 
-    # 连接源数据库
     src_conn = sqlite3.connect(src_path)
 
     # ── 参考数据库 ──

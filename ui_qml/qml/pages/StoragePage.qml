@@ -5,7 +5,7 @@ import "../components"
 
 /* 仓库管理页 —— 阶段 3（最后一个页面）。
  *
- * 对照 Widgets 版 `ui_pyside6/views/inventory/`：
+ * 对照原 Widgets 版：
  *   顶部共享机库选择器 + 两个 Tab
  *     · 机库管理：5 个操作按钮 + 10 列物品表（含统计；末列「估值可信」标出卖单价不可信的行）
  *     · 蓝图管理：粘贴导入 / 刷新计算 + 三个过滤器 + 搜索 + 13 列蓝图表
@@ -24,8 +24,8 @@ import "../components"
  * **点击命中也由 `FTableClickArea` 统一负责**，不在 delegate 里挂 TapHandler：
  * 后者在内容甩动/沉降时会整次丢掉点击（详见该组件的说明）。
  *
- * 各类对话框（库存修正审阅、材料覆盖、蓝图导入审查、科研计划…）仍是 Widgets，
- * 属阶段 4；本页只负责把参数凑齐后交给桥。
+ * 各类对话框（库存修正审阅、材料覆盖、蓝图导入审查、科研计划…）都已是 QML
+ * （`ui_qml/qml/dialogs/`）；本页只负责把参数凑齐后交给桥。
  */
 Item {
     id: page
@@ -778,7 +778,8 @@ Item {
             onTriggered: page.inv.copyItemNames(itemMenu.targetRows)
         }
         FMenuItem {
-            text: qsTr("复制 type_id")
+            // 名词用中文全称，与估价页的「复制 Type ID」同一写法（此前是 `复制 type_id`）
+            text: qsTr("复制 Type ID")
             onTriggered: page.inv.copyItemTypeIds(itemMenu.targetRows)
         }
     }

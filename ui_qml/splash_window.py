@@ -1,4 +1,4 @@
-"""QML 启动画面（阶段 7 批次 7.2）—— 顶替 `ui_pyside6/splash_screen.py`。
+"""QML 启动画面 —— 顶替 Widgets 版启动画面。
 
 **这是全应用第一个 QML 面**，比别的 QML 面多一条硬要求：**它坏掉等于启动时什么都不显示**，
 而此刻 `qInstallMessageHandler` 还没装、日志 handler 也未必已经可用。所以本模块的加载

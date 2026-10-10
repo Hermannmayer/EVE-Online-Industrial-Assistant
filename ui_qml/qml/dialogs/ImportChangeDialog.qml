@@ -4,7 +4,7 @@ import "../components"
 
 /* 导入完成变动汇总对话框（阶段 4b-3）。
  *
- * 对照 Widgets 版 `ui_pyside6/views/inventory/review_dialog.py::ImportChangeDialog`：
+ * 对照原 Widgets 版：
  * 表格上方一行汇总（共 N 项变化 / 增加 / 减少 / 成功导入 / 跨机库移动），
  * 下面只读表（名称 / 数量 前→后 / 成本 前→后），行数少了不加装饰。
  *

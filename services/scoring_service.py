@@ -362,7 +362,7 @@ class ScoringService:
 
         # 利润用**增量式**重算：只把材料省下的那部分加回去。
         # 不能自己拼 `total_cost = 材料 + 费用` —— `fees_per_run` 里**没有** research_cost，
-        # 那是在 `domain/scoring.py:165` 才加进 total_cost 的，自己拼会让 T2/T3
+        # 那是在 `domain/scoring.py` 里 `total_cost += research_cost` 才加进去的，自己拼会让 T2/T3
         # （拷贝/发明）计划的利润虚高 `research_cost × 倍数`。
         total_profit = profit_per_run * total_mult + (mat_cost * total_mult - total_mat_cost)
         total_time_hours = hours_per_run * runs_only

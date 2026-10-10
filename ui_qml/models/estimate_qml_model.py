@@ -1,4 +1,4 @@
-"""把 Widgets 版（原 `ui_pyside6`，已在批次 7.5 删除）的表格模型适配成 QML 可消费的形式。
+"""把 Widgets 版表格模型适配成 QML 可消费的形式。
 
 **这是所有表格迁移的样板。** QML 的 `TableView` 与 QWidgets 的 `QTableView`
 对模型的要求差两点，本模块就是补这两点：
@@ -10,8 +10,7 @@
    直接吃 URL，还能用 QML 自带的图片缓存）。
 
 做法是**继承**原模型而不是包装：原模型的 `_rows`/`_recalc_totals`/`sort` 等逻辑
-全部复用，QWidgets 视图（`data(DisplayRole)` 等）也照常工作——迁移期两个视图
-可以共用同一个模型实例。
+全部复用，不必再抄一遍。
 """
 
 from __future__ import annotations
@@ -93,8 +92,8 @@ class EstimateQmlModel(EstimateTableModel):
             refined = row.get("refine_value")
             return "—" if refined is None else f"{refined:,.2f}"
 
-        # 其余角色（Display/Decoration/Foreground/UserRole…）交回父类，
-        # 这样 QWidgets 版的 EstimatePage 仍能用同一个模型实例。
+        # 其余 Qt 角色（Display/Decoration/Foreground/UserRole…）交回父类，
+        # 由 `estimate_models.EstimateTableModel` 那套规则给出。
         return super().data(index, role)
 
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:

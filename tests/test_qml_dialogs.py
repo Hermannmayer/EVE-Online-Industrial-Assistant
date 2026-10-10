@@ -1970,7 +1970,7 @@ def test_summary_table_row_hit_accounts_for_listview_scroll(qapp):
 class _StubHistoryWorker(QObject):
     """价格历史拉取线程的同步替身（不联网）。
 
-    签名与信号**照抄** `ui_pyside6.views.price_chart.PriceHistoryWorker` ——
+    签名与信号**照抄** Widgets 版 `PriceHistoryWorker` ——
     少一个信号，桥在 connect 时就会 AttributeError。
     """
 

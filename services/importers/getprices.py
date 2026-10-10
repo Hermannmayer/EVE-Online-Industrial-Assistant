@@ -642,7 +642,6 @@ async def main(regions: list[tuple[str, int]] | None = None, progress_cb: Callab
     cnt = await save_prices(baseline, order_prices, [rid for _, rid in regions], complete_regions)
     log.info(f"  写入 {cnt} 条")
 
-    # 保存当日快照
     if order_prices:
         await save_snapshot(order_prices)
 

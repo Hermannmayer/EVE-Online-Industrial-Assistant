@@ -1,6 +1,6 @@
 """EstimateBridge 契约测试 —— QML 页面后端的行为对齐。
 
-对照 `ui_pyside6/views/estimate_view.py`：bridge 只做转发与整形，
+对照 Widgets 版 estimate 视图：bridge 只做转发与整形，
 但**转发得对不对**必须锁住，否则 QML 版的数字会和 Widgets 版对不上。
 """
 

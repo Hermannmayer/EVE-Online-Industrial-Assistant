@@ -1,6 +1,6 @@
 """物品搜索对话框的桥（阶段 4b）。
 
-对照 Widgets 版 `ui_pyside6/views/inventory/item_search_dialog.py`：
+对照旧 Widgets 版：
 搜索 item 表（含 terminology 里注册的基础矿物），选中后返回
 `{type_id, zh_name, en_name}`。库存修正对话框用它处理「未匹配」行 ——
 该对话框自己也在本批次迁 QML，所以它是二级弹出。

@@ -4,7 +4,7 @@ import "../components"
 
 /* 生产计划表（Fluent） —— 阶段 2a。
  *
- * 对照 Widgets 版 ui_pyside6/views/industry/plan_table.py + plan_table_delegate.py：
+ * 对照原 Widgets 版：
  * 19 列、类别染色、图标、备料勾选、折叠、表头排序/列宽拖拽/列可见性、行右键菜单、
  * 单元格内联编辑、待下线按钮，逐项对齐。
  *
@@ -313,15 +313,22 @@ Item {
                 color: Theme.border
             }
 
-            // ── 备料勾选（列 0）──
+            /* ── 备料勾选（列 0）──
+             * 形态语言照 `components/FCheckBox.qml`：圆角取 `Theme.radiusSmall` 而不是
+             * 硬编码 3、**选中态不留边框**（FCheckBox 是 `border.width: checked ? 0 : 1`）。
+             * 为什么**不**直接换 `FCheckBox`：本格子的点击已由 delegate 的统一点击区处理
+             * （见上面 `cell.clickable`），再叠一个自带 `MouseArea` 的 `CheckBox` 会双触发；
+             * 而且 FCheckBox 的 `implicitHeight` 是 28，会顶高这张 19 列密集表的行。
+             * 尺寸 15 与「对勾用 Image 不走 Shape」都保留：前者是行高约束，
+             * 后者颜色由模型给的 `checkTint`（= `TEXT_ON_PRIMARY`）驱动。 */
             Rectangle {
                 visible: cell.column === 0
                 anchors.centerIn: parent
                 width: Math.round(15 * Theme.fontScale)
                 height: width
-                radius: 3
+                radius: Theme.radiusSmall
                 color: cell.model.checked ? Theme.primary : "transparent"
-                border.width: 1
+                border.width: cell.model.checked ? 0 : 1
                 border.color: cell.model.checked ? Theme.primary : Theme.textSecondary
 
                 Image {

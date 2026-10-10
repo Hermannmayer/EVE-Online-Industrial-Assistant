@@ -5,7 +5,7 @@ import "../components"
 
 /* 粘贴导入预览对话框（阶段 4b-3）。
  *
- * 对照 Widgets 版 `ui_pyside6/views/inventory/review_dialog.py::ImportReviewDialog`：
+ * 对照原 Widgets 版：
  * 工具栏（导入模式 / 贸易中心 / 全选 / 材料倍率）+ 预览表 + 统计行 + 确定导入。
  *
  * 表格是**自绘**的（`FSummaryTable` 只能只读渲染，这里每行带复选框、可编辑数量、
