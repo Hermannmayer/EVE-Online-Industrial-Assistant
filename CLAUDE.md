@@ -176,6 +176,45 @@ scripts/run_tests.sh full       # 全量（实测 5~8 分钟，看机器负载�
 | 查/改 EVE 术语 | `data/terminology.json` + `services/terminology.py` | `docs/dev/glossary.md` |
 | 改 UI 配色 | `ui_qml/theme/registry.py` | `docs/dev/architecture.md`（主题） |
 
+## 文档索引（全量，按需读）
+
+上表按任务类型给**最短路径**；本节是全量清单 —— **按需读，不要通读**（`docs/dev/flows.md` 单文件 57KB，
+`docs/dev/feature-inventory.md` 50KB，通读是纯浪费）。
+
+两条协作规则：
+
+- 想改一条**现行条款**前，先看 `docs/dev/decisions.md`（决策记录）里它当初的因果链 —— 说不清为什么要改，
+  就先别改（这正是「不许顺手重构」的执行方式）。
+- 新发现的缺陷/待决策项**先登记到 `docs/dev/backlog.md`**（缺陷与待办台账），再决定怎么修；
+  **不要先就地 hotfix**。
+
+| 页面 | 什么时候读 |
+|---|---|
+| `docs/dev/setup.md` 开发环境 | 依赖或环境变更、首次跑起来 |
+| `docs/dev/architecture.md` 架构说明 | 改分层、主题、异步机制 |
+| `docs/dev/ui-blueprint.md` 界面结构规范图 | 任何 UI 改动前（区域命名以它为准） |
+| `docs/dev/flows.md` 功能链路速查 | 不清楚某功能从 UI 到 DB 怎么走 |
+| `docs/dev/data.md` 数据格式 | 改 `market.db` / 导入器 / 字段 |
+| `docs/dev/database-er.md` 数据库 ER 图 | 跨表查询、加列 |
+| `docs/dev/schema-migration.md` 迁移规范 | 改 schema 前（配合克制条款 3） |
+| `docs/dev/testing.md` 测试与规范 | 判定表没覆盖到的情形、想改测试策略 |
+| `docs/dev/decisions.md` 决策记录 | 想改现行条款前，查它的历史因果链与证据 |
+| `docs/dev/backlog.md` 缺陷与待办台账 | 发现缺陷、需要决策、或想知道有哪些已知限制 |
+| `docs/dev/audit-report.md` 审计报告与待办 | **历史快照**（2026-07-31），不代表现状，只作溯源 |
+| `docs/dev/versioning.md` 版本管理 | 发版、CHANGELOG、semantic-release |
+| `docs/dev/contribution.md` 贡献指南 | 外部贡献者流程 |
+| `docs/dev/feature-inventory.md` 功能清单 | 确认某功能是否**已经存在**（防重复实现） |
+| `docs/dev/demo-data.md` 演示数据集 | 改公开 README 配图、造演示库（`scripts/build_demo_data.py`，全合成，零账号数据） |
+| `docs/dev/glossary.md` 术语表 | 术语对不上时查（配合铁律「术语」） |
+| `docs/dev/api-reference.md`、`docs/api/**` | 函数级签名。`docs/api/` 由 `scripts/gen_api_docs.py` **生成**，不要手改 |
+| `docs/eve_wiki_knowledge_base.md` EVE 知识库 | 改公式前查这里有没有已验算过的结论 |
+| `docs/user/*`、`docs/guide/*` | 面向用户的功能说明与安装引导；改了 UI 行为后同步对应页 |
+| `docs/promo.md` 项目宣传文案 | 改产品定位/卖点时同步（不在文档站侧边栏内，发布前按其末尾清单自检） |
+
+文档站的**侧边栏索引**在 `docs/.vitepress/config.mts`：新增页面必须在 `nav`/`sidebar` 登记，
+否则站点里点不到。文档间的内部链接用 `.venv/Scripts/python.exe scripts/check_docs_links.py` 校验
+（它只查死链，不查「页面有没有进侧边栏」，后者要自己看 config.mts）。
+
 ## 界面感知（改 UI 前必读）
 
 **区域命名以 `docs/dev/ui-blueprint.md` 为准**（窗口级 7 区 + 页面级 5 区，含标注图）。

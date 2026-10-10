@@ -69,6 +69,8 @@ export default withMermaid(
               { text: '测试与规范', link: '/dev/testing' },
               { text: '版本管理', link: '/dev/versioning' },
               { text: '贡献指南', link: '/dev/contribution' },
+              { text: '决策记录', link: '/dev/decisions' },
+              { text: '缺陷台账', link: '/dev/backlog' },
               { text: 'API 参考', link: '/dev/api-reference' },
               { text: '审计报告与待办', link: '/dev/audit-report' },
               { text: '术语表', link: '/dev/glossary' },
