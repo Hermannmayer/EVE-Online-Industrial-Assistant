@@ -215,7 +215,7 @@ _REAL_HEADER = (
     "orderState,duration,escrow,isCorp,accountID,accountOwnerID,accountKey,"
 )
 _REAL_ROW = (
-    "7422573405,3989,2115252966,Meyer Hermann,10000002,"
+    "1000000001,3989,1234567890,Demo Trader,10000002,"
     '<localized hint="The Forge">多美星域*</localized>,30000142,'
     '<localized hint="Jita">吉他*</localized>,60003760,'
     '<localized hint="Jita IV - Moon 4 - Caldari Navy Assembly Plant">吉他 IV - 卫星 4 - 加达里海军组装车间*</localized>,'
@@ -230,7 +230,7 @@ def test_real_client_export_is_parsed_field_by_field():
     assert unparsed == 0, "真实格式不该有识别不出的行"
     assert len(orders) == 1
     o = orders[0]
-    assert o["order_id"] == 7422573405
+    assert o["order_id"] == 1000000001
     assert o["type_id"] == 3989
     assert o["is_buy"] == 0, "bid=False 是卖单"
     assert o["price"] == 2183000.0
@@ -240,7 +240,7 @@ def test_real_client_export_is_parsed_field_by_field():
     assert o["duration"] == 90
     assert o["issued"] == "2026-09-16 12:00:43.000", "真实列名是 issueDate"
     # 归属列：变动识别按 (char_id, is_corp) 分组比较，读不出来就会误判成交、错算钱
-    assert o["char_id"] == 2115252966, "真实列名是 charID"
+    assert o["char_id"] == 1234567890, "真实列名是 charID"
     assert o["is_corp"] == 1, "真实列名是 isCorp，值是 True（这份导出是军团单）"
 
 
@@ -252,7 +252,7 @@ def test_localized_wrapper_is_unwrapped_to_the_games_own_text():
 
 
 def test_localized_without_inner_text_falls_back_to_hint():
-    raw = f'{_REAL_HEADER}\n7422573405,3989,1,x,10000002,,30000142,,60003760,<localized hint="Jita IV-4"></localized>,1,False,5.0,1,1.0,1,2026-09-16 12:00:00,0,90,0,True,1,1,1000,'
+    raw = f'{_REAL_HEADER}\n1000000001,3989,1,x,10000002,,30000142,,60003760,<localized hint="Jita IV-4"></localized>,1,False,5.0,1,1.0,1,2026-09-16 12:00:00,0,90,0,True,1,1,1000,'
     orders, _ = parse_order_export(raw)
     assert orders[0]["location_name"] == "Jita IV-4"
 
