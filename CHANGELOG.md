@@ -6,6 +6,33 @@
 
 <!-- version list -->
 
+## v0.26.2 (2026-10-10)
+
+### Bug Fixes
+
+- **库存估值**: 最低卖单价被离群挂单带飞 —— 加可信度判据并剔出资产总额
+  ([`e0e6b64`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/e0e6b6499cfa999bddadf617e96de3687031b830))
+
+- **文档+隐私**: README 重写为面向用户的宣传文档；测试夹具脱敏
+  ([`16d1843`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/16d18430ca58b049087c977e1c46593b13b085e2))
+
+- **核算/筛选**: 修测试蓝图取错配方、自制成本口径、查看核算矛盾与筛选重判
+  ([`397cffb`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/397cffbfa1bd50128084afb36174acb50aae1502))
+
+- **计划表**: 成本/利润改个人口径、价格更新后自动重算、类别筛选改下拉
+  ([`ea4b943`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/ea4b9437c0cd5fe2b6a0a1fdadaf7a099f33e220))
+
+### Code Style
+
+- **设计语言)+chore(注释**: 同种语义的界面形态统一；注释去陈旧与复述
+  ([`bf3fdfa`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/bf3fdfa58de193da74418a3c95abb67c461cb055))
+
+### Continuous Integration
+
+- **release**: 回退发版路径补上 CHANGELOG 说明（不再拿提交正文当 Release 说明）
+  ([`c479ffc`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/c479ffcc6de2c8055b4002542ddc226461806f36))
+
+
 ## v0.26.1 (2026-10-06)
 
 ### Features
