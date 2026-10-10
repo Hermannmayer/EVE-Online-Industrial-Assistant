@@ -61,13 +61,13 @@ class TestInvTableModel:
         """可构造，行数列数正确；列数恒定"""
         model = InvTableModel(self.SAMPLE_ITEMS)
         assert model.rowCount() == 3
-        assert model.columnCount() == 9
+        assert model.columnCount() == 10
         empty = InvTableModel([])
         assert empty.rowCount() == 0
-        assert empty.columnCount() == 9
+        assert empty.columnCount() == 10
 
     def test_header_data(self, qapp):
-        """表头信息正确（已移除「生产中投入」与「拷贝/发明成本」，新增「缺口」「占用资金」）"""
+        """表头信息正确（已移除「生产中投入」与「拷贝/发明成本」，新增「缺口」「占用资金」「估值可信」）"""
         model = InvTableModel([])
         expected = [
             "图标",
@@ -79,6 +79,7 @@ class TestInvTableModel:
             "缺口",
             "占用资金",
             "按卖单总价值",
+            "估值可信",
         ]
         for i, h in enumerate(expected):
             actual = model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
@@ -100,6 +101,8 @@ class TestInvTableModel:
         (2, 7): "-",  # cost_price = 0
         (0, 8): "275,000",  # 50000 × 5.50
         (2, 8): "-",  # 无卖价
+        (0, 9): "-",  # 样本没带 price_credible → 三态里的「无价」，不该谎报可信
+        (2, 9): "-",
     }
 
     def test_display_values(self, qapp):
@@ -198,6 +201,59 @@ class TestInvTableModel:
         assert model.item_at(-1) is None
         assert model.item_at(999) is None
         assert InvTableModel([]).item_at(0) is None
+
+    def test_unreliable_price_marked_but_number_still_shown(self, qapp):
+        """方案 C：离群卖单价的行**不隐藏**虚高数字，只把「金额 + 估值可信」两列标橙并给 tooltip。
+
+        回归背景：隔热剂 106 件 × 最低卖单价 68,000,000（卖侧仅 4 件挂单）在仓库页
+        被读成 72.08 亿 ISK。数字必须留着（用户要看见问题），但要标出它不计入总额。
+
+        文案用「市价不可信」而不是「卖单离群」：判据同时覆盖「卖侧太薄」与「没有买盘」两支，
+        写成「卖单离群」会把后者说错。
+        """
+        from ui_qml.models.inventory_helpers import PRICE_UNRELIABLE_TIP
+        from ui_qml.theme import registry as theme
+
+        rows = [
+            {
+                "type_id": 23165,
+                "quantity": 106,
+                "cost_price": 29.0,
+                "sell_price": 68_000_000.0,
+                "price_credible": False,
+            },
+            {"type_id": 1001, "quantity": 100, "cost_price": 5.0, "sell_price": 5.5, "price_credible": True},
+            {"type_id": 34, "quantity": 10, "cost_price": 0, "sell_price": None, "price_credible": None},
+        ]
+        model = InvTableModel(rows)
+
+        assert model.data(model.index(0, 8), Qt.ItemDataRole.DisplayRole) == "7,208,000,000"
+        assert model.data(model.index(0, 9), Qt.ItemDataRole.DisplayRole) == "⚠ 市价不可信"
+        assert model.data(model.index(0, 9), Qt.ItemDataRole.ForegroundRole).name() == theme.ACCENT_ORANGE
+        assert model.data(model.index(0, 8), Qt.ItemDataRole.ForegroundRole).name() == theme.ACCENT_ORANGE
+        assert model.data(model.index(0, 9), Qt.ItemDataRole.ToolTipRole) == PRICE_UNRELIABLE_TIP
+
+        # 可信行不标橙、无 tooltip；无价行是"-"、也不标橙（无价 ≠ 不可信）
+        assert model.data(model.index(1, 9), Qt.ItemDataRole.DisplayRole) == "可"
+        assert model.data(model.index(1, 9), Qt.ItemDataRole.ForegroundRole) is None
+        assert model.data(model.index(1, 9), Qt.ItemDataRole.ToolTipRole) is None
+        assert model.data(model.index(2, 9), Qt.ItemDataRole.DisplayRole) == "-"
+        assert model.data(model.index(2, 9), Qt.ItemDataRole.ForegroundRole) is None
+
+    def test_sort_by_price_credibility(self, qapp):
+        """「估值可信」列可排：降序时**可信行全部排在前面**，不可信/无价行留在后面。"""
+        rows = [
+            {"type_id": 1, "quantity": 1, "sell_price": 5.0, "price_credible": None},
+            {"type_id": 2, "quantity": 1, "sell_price": 5.0, "price_credible": True},
+            {"type_id": 3, "quantity": 1, "sell_price": 5.0, "price_credible": False},
+            {"type_id": 4, "quantity": 1, "sell_price": 5.0, "price_credible": True},
+        ]
+        model = InvTableModel(rows)
+        model.sort(9, Qt.SortOrder.DescendingOrder)
+        order = [model.item_at(i)["type_id"] for i in range(4)]
+        # 同键行之间的先后不写死（Python 稳定排序的细节，不是业务契约）：只验分组
+        assert set(order[:2]) == {2, 4}, f"可信行必须排在前面，实际 {order}"
+        assert set(order[2:]) == {1, 3}, f"不可信/无价行应在后面，实际 {order}"
 
 
 # ══════════════════════════════════════

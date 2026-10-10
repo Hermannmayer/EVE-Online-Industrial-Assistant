@@ -50,6 +50,23 @@ def _positive_mult(raw: object, default: float = 1.0) -> float:
     return value if value > 0 else default
 
 
+def _items_total_text(total: dict | None) -> str:
+    """机库底部总额文案。
+
+    `total` 是 `inventory_manager.get_total_value(hangar, "sell")` 的返回值（None = 空态）。
+    离群卖单价的行已被服务层剔出 `market_total`，这里把「剔了多少」说出来 ——
+    否则用户看到表里几行上亿的数字、总额却小得多，会以为算错了。
+    """
+    if not total:
+        return "按卖单价格: -- ISK"
+    text = f"按卖单价格: {float(total.get('market_total') or 0):,.0f} ISK"
+    count = int(total.get("unreliable_count") or 0)
+    if count:
+        # 措辞用「市价不可信」而不是「卖单价离群」：判据同时覆盖「卖侧太薄」与「没有买盘」两支
+        text += f"（{count} 项市价不可信，{float(total.get('unreliable_total') or 0):,.0f} ISK 未计入）"
+    return text
+
+
 class InventoryBridge(QObject):
     """仓库页（机库 + 蓝图）的 QML 后端。"""
 
@@ -72,7 +89,7 @@ class InventoryBridge(QObject):
         self._current_hangar_id: int | None = None
         self._items = InvQmlModel()
         self._items_count = ""
-        self._items_total = "按卖单价格: -- ISK"
+        self._items_total = _items_total_text(None)
         self._item_selection: set[int] = set()
 
         # ── 蓝图 ──
@@ -283,6 +300,7 @@ class InventoryBridge(QObject):
             (80, True),
             (110, True),
             (120, True),
+            (90, False),
         )
         return [
             {"title": title, "width": width, "alignRight": align_right}
@@ -336,20 +354,21 @@ class InventoryBridge(QObject):
 
     @Slot()
     def refreshItems(self) -> None:
-        from services.inventory_manager import get_items
+        from services.inventory_manager import get_items, get_total_value
 
         if self._current_hangar_id is None:
             self._items.set_rows([])
             self._items_count = ""
-            self._items_total = "按卖单价格: -- ISK"
+            self._items_total = _items_total_text(None)
             self.itemsChanged.emit()
             return
 
         items = get_items(self._current_hangar_id)
         self._items.set_rows(items)
         self._items_count = f"共 {len(items)} 项"
-        total = sum((it["quantity"] * (it.get("sell_price") or 0)) for it in items if it.get("sell_price"))
-        self._items_total = f"按卖单价格: {total:,.0f} ISK"
+        # 总额直接取服务层口径（**不在桥里再 sum 一遍**）：表里第 9 列标出的离群卖单价
+        # 已被同一个判据剔出合计，桥自己算就会与列上数字打架 —— 这正是本 bug 的形态。
+        self._items_total = _items_total_text(get_total_value(self._current_hangar_id, "sell"))
         self.itemsChanged.emit()
 
     @Slot(int, result=dict)

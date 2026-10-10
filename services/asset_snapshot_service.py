@@ -4,6 +4,8 @@
 
 - ``inventory``（库存材料金额）= 遍历全部机库求和
   ``inventory_manager.get_total_value(hangar_id, price_type="sell")["market_total"]``
+  —— **卖单价立不住的行已剔除**（判据 `domain/market_depth.sell_price_reliable`；
+  极薄单边品种里一笔离谱卖单就是「最低卖价」，会把库存估成几百亿）。
 - ``orders``（挂单金额）= ``SELECT SUM(price * volume_remain) FROM open_orders``
 - ``line_value``（运行中产线价值）= **只取制造中产线**（``category=='manufacturing'`` 且
   ``status IN ('in_progress','running')``）的材料占用 × **卖单价**，见 ``_line_value()``。
@@ -112,13 +114,21 @@ def ensure_schema() -> None:
         _ensure_schema(conn)
 
 
-def _inventory_value() -> float:
-    """inventory 线：遍历全部机库按卖单价估值求和。"""
+def _inventory_value() -> tuple[float, float]:
+    """inventory 线：遍历全部机库按卖单价估值求和。
+
+    Returns:
+        ``(可信合计, 未计入合计)`` —— 卖单价立不住的行（见
+        ``domain.market_depth.sell_price_reliable``，实例：隔热剂卖侧仅 4 件挂单
+        把 106 件库存估成 72 亿 ISK）不进「库存材料金额」，只作为告警依据返回。
+    """
     total = 0.0
+    unreliable = 0.0
     for hangar in inventory_manager.get_hangars():
         value = inventory_manager.get_total_value(hangar["id"], price_type="sell")
         total += float(value.get("market_total", 0) or 0)
-    return round(total, 2)
+        unreliable += float(value.get("unreliable_total", 0) or 0)
+    return round(total, 2), round(unreliable, 2)
 
 
 def _orders_value() -> float:
@@ -215,7 +225,13 @@ def record_snapshot(wallet: float | None = None) -> dict:
         wallet = get_wallet_balance()
     wallet = float(wallet)
 
-    inventory = _inventory_value()
+    inventory, unreliable = _inventory_value()
+    if unreliable > 0:
+        # 别静默：库存线被剔过东西，折线图上「总资产」会明显低于仓库页「按卖单价格」的直觉值
+        log.warning(
+            "库存估值：卖单价离群的行未计入，合计 %s ISK（判据见 domain/market_depth.sell_price_reliable）",
+            f"{unreliable:,.2f}",
+        )
     orders = _orders_value()
     line_value = _line_value()
     total = round(inventory + orders + line_value + wallet, 2)

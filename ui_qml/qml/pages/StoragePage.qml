@@ -7,7 +7,7 @@ import "../components"
  *
  * 对照 Widgets 版 `ui_pyside6/views/inventory/`：
  *   顶部共享机库选择器 + 两个 Tab
- *     · 机库管理：5 个操作按钮 + 9 列物品表（含统计）
+ *     · 机库管理：5 个操作按钮 + 10 列物品表（含统计；末列「估值可信」标出卖单价不可信的行）
  *     · 蓝图管理：粘贴导入 / 刷新计算 + 三个过滤器 + 搜索 + 13 列蓝图表
  *
  * **业务动作一律不在这里实现**：每次交互都调 `inv.<方法>`，
@@ -94,6 +94,16 @@ Item {
             font.family: Theme.fontFamily
             font.pixelSize: page.fntBase
             elide: Text.ElideRight
+
+            /* 逐格 tooltip：模型的 `tooltip` 角色（如「估值可信」列的不可信原因）必须在这里
+             * 消费，否则模型算了也没人显示。挂在本 Text 上而不是 HoverHandler 上 ——
+             * ToolTip 附加属性要求宿主是 Item（见 FLineChart 的同款说明）。 */
+            HoverHandler {
+                id: cellHover
+            }
+            ToolTip.visible: cellHover.hovered && !!tcell.model.tooltip
+            ToolTip.text: tcell.model.tooltip || ""
+            ToolTip.delay: 500
         }
     }
 

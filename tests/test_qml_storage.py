@@ -43,7 +43,7 @@ _B_NAME = _BASE + 7
 pytestmark = pytest.mark.ui
 
 
-def _item(iid: int = 1, tid: int = 34, qty: int = 100, cost: float = 5.0) -> dict:
+def _item(iid: int = 1, tid: int = 34, qty: int = 100, cost: float = 5.0, credible: bool | None = True) -> dict:
     return {
         "id": iid,
         "type_id": tid,
@@ -53,7 +53,16 @@ def _item(iid: int = 1, tid: int = 34, qty: int = 100, cost: float = 5.0) -> dic
         "plan_remain": 90,
         "sell_price": 6.0,
         "display_name": "三钛合金",
+        "price_credible": credible,
     }
+
+
+def _unreliable_item(iid: int = 9, tid: int = 23165, qty: int = 106) -> dict:
+    """卖单价离群的一行（真实病灶：隔热剂卖侧仅 4 件挂单 @68,000,000）。"""
+    row = _item(iid, tid, qty, cost=29.0, credible=False)
+    row["sell_price"] = 68_000_000.0
+    row["display_name"] = "隔热剂"
+    return row
 
 
 def _bp(bpid: int = 1, bp_type_id: int = 1000, occupied: bool = False, margin: float = 12.5) -> dict:
@@ -266,12 +275,28 @@ def bridge(qapp, monkeypatch):
     from core import container as container_mod
 
     hangars = [{"id": 1, "name": "A 库", "solar_system_id": None}, {"id": 2, "name": "B 库"}]
-    items: dict[int, list[dict]] = {1: [_item(1), _item(2, tid=35)], 2: [_item(3, tid=36)]}
+    items: dict[int, list[dict]] = {
+        1: [_item(1), _item(2, tid=35), _unreliable_item()],
+        2: [_item(3, tid=36)],
+    }
     blueprints: list[dict] = []
 
     monkeypatch.setattr(im, "init_db", lambda: None)
     monkeypatch.setattr(im, "get_hangars", lambda: list(hangars))
     monkeypatch.setattr(im, "get_items", lambda hid=None: list(items.get(hid, [])))
+    # 总额一律走服务层口径（桥里不再自己 sum）：这里给 A 库一个「已剔掉 13.6 亿」的结果
+    monkeypatch.setattr(
+        im,
+        "get_total_value",
+        lambda hid, price_type="sell", discount=0: {
+            "market_total": 1200.0 if hid == 1 else 600.0,
+            "discounted_total": 1200.0 if hid == 1 else 600.0,
+            "discount": discount,
+            "items_with_price": 3 if hid == 1 else 1,
+            "unreliable_total": 13_600_000_000.0 if hid == 1 else 0.0,
+            "unreliable_count": 1 if hid == 1 else 0,
+        },
+    )
     monkeypatch.setattr(im, "get_blueprints", lambda hid=None: list(blueprints))
     monkeypatch.setattr(im, "get_blueprint_tech_levels", lambda: {})
     monkeypatch.setattr(im, "get_blueprint_reaction_ids", lambda: set())
@@ -298,14 +323,43 @@ def bridge(qapp, monkeypatch):
 def test_hangars_and_items_load_at_construction(bridge):
     assert bridge.hangarNames == ["A 库", "B 库"]
     assert bridge.hangarIndex == 0
-    assert bridge.itemModel.rowCount() == 2
-    assert bridge.itemCountText == "共 2 项"
-    assert "按卖单价格" in bridge.itemTotalText
+    assert bridge.itemModel.rowCount() == 3
+    assert bridge.itemCountText == "共 3 项"
+    # 总额与服务层同源，并说清「有几项没计入」（否则表里上亿的数字与总额对不上会被当成算错）
+    assert bridge.itemTotalText == "按卖单价格: 1,200 ISK（1 项市价不可信，13,600,000,000 ISK 未计入）"
     # 列定义与模型表头一一配对（zip(strict=True) → 项数不一致会当场 ValueError），
     # 且表头对齐读的是元数据里的 alignRight（QML 侧不再按列号区间特判）
     assert [c["title"] for c in bridge.itemColumns] == InvTableModel._HEADERS
     assert bridge.itemColumns[1]["alignRight"] is False
     assert bridge.itemColumns[6]["alignRight"] is True  # 「缺口」数值列右对齐
+
+
+@pytest.mark.ui
+def test_unreliable_price_row_is_marked_not_hidden(bridge):
+    """离群卖单价的行：第 9 列标「⚠ 卖单离群」且两列标橙；第 8 列数字**照显**（方案 C 口径）。"""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor
+
+    from ui_qml.theme import registry as theme
+
+    def _hex(value) -> str:
+        """角色值可能是 token 名（`token()` 返回的十六进制串）或 QColor（Qt 自动转换）。"""
+        return (value if isinstance(value, QColor) else QColor(str(value))).name()
+
+    model = bridge.itemModel
+    row = next(i for i in range(model.rowCount()) if model.rows()[i].get("price_credible") is False)
+
+    assert model.data(model.index(row, 9), Qt.ItemDataRole.DisplayRole) == "⚠ 市价不可信"
+    assert model.data(model.index(row, 8), Qt.ItemDataRole.DisplayRole) == "7,208,000,000"
+    assert _hex(model.data(model.index(row, 8), Qt.ItemDataRole.ForegroundRole)) == theme.ACCENT_ORANGE
+    assert _hex(model.data(model.index(row, 9), Qt.ItemDataRole.ForegroundRole)) == theme.ACCENT_ORANGE
+    assert "不计入总额" in model.data(model.index(row, 9), Qt.ItemDataRole.ToolTipRole)
+
+    # 可信行不标橙、无 tooltip（不覆盖时角色值是空串 / None，取决于是否跨边界）
+    ok = next(i for i in range(model.rowCount()) if model.rows()[i].get("price_credible") is True)
+    assert model.data(model.index(ok, 9), Qt.ItemDataRole.DisplayRole) == "可"
+    assert not model.data(model.index(ok, 9), Qt.ItemDataRole.ForegroundRole)
+    assert not model.data(model.index(ok, 9), Qt.ItemDataRole.ToolTipRole)
 
 
 @pytest.mark.ui

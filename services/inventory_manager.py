@@ -10,6 +10,7 @@ from typing import Any
 
 from core.container import get_container
 from core.logger import log
+from domain.market_depth import sell_price_reliable
 from services.database_manager import DatabaseManager
 from services.plan_category import (
     CATEGORY_COPYING,
@@ -313,7 +314,7 @@ def get_items(
         sql = """
             SELECT ii.id, ii.type_id, ii.quantity, ii.cost_price,
                    i.zh_name, i.en_name,
-                   mp.sell_price, mp.buy_price
+                   mp.sell_price, mp.buy_price, mp.buy_volume, mp.sell_volume
             FROM inventory_items ii
             LEFT JOIN ref.item i ON ii.type_id = i.type_id
             LEFT JOIN mkt.market_prices mp ON mp.type_id = i.type_id
@@ -374,6 +375,19 @@ def get_items(
                     "display_name": display_name,
                     "sell_price": r[6],
                     "buy_price": r[7],
+                    "buy_volume": r[8],
+                    "sell_volume": r[9],
+                    # True 可信 / False 有价但立不住 / None 无卖价（三态语义见
+                    # domain/market_depth.sell_price_reliable）—— 仓库页据此标「估值可信」，
+                    # 并保证底部总额与该列口径一致（见 get_total_value）。
+                    "price_credible": sell_price_reliable(
+                        {
+                            "sell_price": r[6],
+                            "buy_price": r[7],
+                            "buy_volume": r[8],
+                            "sell_volume": r[9],
+                        }
+                    ),
                     "plan_usage": plan_qty,
                     "plan_active": plan_active,
                     "plan_remain": remain,
@@ -759,12 +773,32 @@ def apply_inventory_import(
 
 
 def get_total_value(hangar_id: int, price_type: str = "sell", discount: float = 0) -> dict:
+    """机库估值合计。
+
+    **不可信的市价不进合计**：判据是 `domain.market_depth.sell_price_reliable`（三态）。
+    病灶实例：type 23165 隔热剂在 Jita 的卖侧只有 1 笔 4 件挂单 @68,000,000（买侧 200 万件
+    @12 ISK），106 件库存按最低卖单价就成了 72.08 亿 ISK —— 而按买盘只值 1,272 ISK。
+    这类行改记进 `unreliable_total` / `unreliable_count`，供仓库页说明「N 项未计入」。
+
+    「无卖价」的行（判据给 `None`）**不算不可信**：它们本来就没价可估，既不进 `market_total`
+    也不进 `unreliable_*` —— 否则没市价的物品（基础矿物等）会把「未计入」刷成大数字。
+
+    为什么 `price_type="buy"` 也走同一判据：判据的语义是「这一行的市价能不能拿去估值」，
+    两个方向都是估值；且同一函数服务两侧，只对 sell 特判会留下一条悄悄涨价的口子。
+
+    Returns:
+        `market_total`（可信行合计）/ `discounted_total` / `discount` / `items_with_price`
+        （**有价**行数，口径不变）/ `unreliable_total`（有价但不可信的金额合计）/
+        `unreliable_count`（这类行数）。
+    """
     col = "sell_price" if price_type == "sell" else "buy_price"
     with _default_db().connect("user", "mkt") as conn:
         c = conn.cursor()
         c.execute(
             f"""
-            SELECT ii.quantity, mkt.market_prices.{col}
+            SELECT ii.quantity, mkt.market_prices.{col},
+                   mkt.market_prices.buy_price, mkt.market_prices.buy_volume,
+                   mkt.market_prices.sell_volume
             FROM inventory_items ii
             LEFT JOIN mkt.market_prices ON mkt.market_prices.type_id = ii.type_id
             AND mkt.market_prices.region_id = 10000002
@@ -772,18 +806,35 @@ def get_total_value(hangar_id: int, price_type: str = "sell", discount: float = 
         """,
             (hangar_id,),
         )
-        total = 0
+        total = 0.0
         count = 0
-        for qty, price in c.fetchall():
-            if price:
-                total += qty * price
-                count += 1
+        unreliable_total = 0.0
+        unreliable_count = 0
+        for qty, price, buy_price, buy_volume, sell_volume in c.fetchall():
+            if not price:
+                continue
+            count += 1
+            credible = sell_price_reliable(
+                {
+                    "sell_price": price,
+                    "buy_price": buy_price,
+                    "buy_volume": buy_volume,
+                    "sell_volume": sell_volume,
+                }
+            )
+            if credible is False:
+                unreliable_total += qty * price
+                unreliable_count += 1
+                continue
+            total += qty * price
         factor = (100 - discount) / 100
         return {
             "market_total": round(total, 2),
             "discounted_total": round(total * factor, 2),
             "discount": discount,
             "items_with_price": count,
+            "unreliable_total": round(unreliable_total, 2),
+            "unreliable_count": unreliable_count,
         }
 
 

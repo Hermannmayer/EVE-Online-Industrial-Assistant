@@ -10,6 +10,8 @@
 
 - ``inventory``（库存材料金额）= 遍历全部机库求和
   ``inventory_manager.get_total_value(hangar_id, price_type="sell")["market_total"]``
+  —— **卖单价立不住的行已剔除**（判据 `domain/market_depth.sell_price_reliable`；
+  极薄单边品种里一笔离谱卖单就是「最低卖价」，会把库存估成几百亿）。
 - ``orders``（挂单金额）= ``SELECT SUM(price * volume_remain) FROM open_orders``
 - ``line_value``（运行中产线价值）= **只取制造中产线**（``category=='manufacturing'`` 且
   ``status IN ('in_progress','running')``）的材料占用 × **卖单价**，见 ``_line_value()``。
@@ -39,7 +41,7 @@ def _default_db() -> DatabaseManager
 
 惰性获取 DatabaseManager（经容器）。
 
-定义行：`99`
+定义行：`101`
 
 ### `_ensure_schema`
 
@@ -49,7 +51,7 @@ def _ensure_schema(conn) -> None
 
 在给定连接上创建基线表（IF NOT EXISTS，幂等）。
 
-定义行：`104`
+定义行：`106`
 
 ### `ensure_schema`
 
@@ -59,17 +61,17 @@ def ensure_schema() -> None
 
 确保基线表存在（给外部调用方/新库兜底）。
 
-定义行：`109`
+定义行：`111`
 
 ### `_inventory_value`
 
 ```python
-def _inventory_value() -> float
+def _inventory_value() -> tuple[float, float]
 ```
 
 inventory 线：遍历全部机库按卖单价估值求和。
 
-定义行：`115`
+定义行：`117`
 
 ### `_orders_value`
 
@@ -79,7 +81,7 @@ def _orders_value() -> float
 
 orders 线：逐行 ``price * volume_remain`` 求和（卖单用 sell 语义价、买单同理，直接取自身 price）。
 
-定义行：`124`
+定义行：`134`
 
 ### `_sell_prices`
 
@@ -89,7 +91,7 @@ def _sell_prices(type_ids: set[int]) -> dict[int, float]
 
 market.db 里这批 type_id 的 Jita 卖单价（缺失/为 0 的不进结果）。
 
-定义行：`132`
+定义行：`142`
 
 ### `_line_value`
 
@@ -99,7 +101,7 @@ def _line_value() -> float
 
 line_value 线：**制造中**产线的材料占用 × 卖单价。
 
-定义行：`145`
+定义行：`155`
 
 ### `record_snapshot`
 
@@ -109,7 +111,7 @@ def record_snapshot(wallet: float | None=None) -> dict
 
 采集当日资产快照并 upsert（同日重复覆盖，不累积）。
 
-定义行：`205`
+定义行：`215`
 
 ### `load_series`
 
@@ -119,7 +121,7 @@ def load_series(days: int=90) -> list[dict]
 
 按日期升序返回最近 ``days`` 天内的快照序列。
 
-定义行：`239`
+定义行：`252`
 
 ### `adjust_wallet_balance`
 
@@ -129,7 +131,7 @@ def adjust_wallet_balance(delta: float) -> float
 
 按订单变动增减钱包余额（返回调整后的值）。
 
-定义行：`259`
+定义行：`272`
 
 ### `get_wallet_balance`
 
@@ -139,7 +141,7 @@ def get_wallet_balance() -> float
 
 wallet 线：读 settings.json 里的钱包余额；缺失/非数值一律 0.0。
 
-定义行：`270`
+定义行：`283`
 
 ### `set_wallet_balance`
 
@@ -149,4 +151,4 @@ def set_wallet_balance(value: float) -> None
 
 写回钱包余额（read-modify-write，保留 settings.json 其余键）。
 
-定义行：`279`
+定义行：`292`

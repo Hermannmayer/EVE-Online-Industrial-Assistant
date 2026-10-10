@@ -237,6 +237,91 @@ class TestGetItemsDisplayName:
         items = im.get_items(hid)
         assert items[0]["display_name"] == "99999"
 
+
+class TestPriceCredibleValuation:
+    """离群卖单价不得进库存估值 —— 真实盘口数据回归（2026-10-10 Jita ESI 实测）。
+
+    病灶：隔热剂(type 23165)卖侧只有 1 笔 4 件 @68,000,000，买侧 200 万件 @12 ISK；
+    预燃室(type 21594)同理（4 件 @64,000,000，买侧 540 万件 @12.1）。原实现取「最低卖单价」
+    当市值，机库 4 的 153.86 亿里 121.36 亿来自这两行，而按买盘只值 2 千 ISK。
+
+    ⚠️ 用 1001/1002 这两个夹具里**有 item 行**的 id 承载同样的盘口数字：`get_items()` 的
+    market 侧 JOIN 是 `i.type_id = mp.type_id`，ref.item 没有的 type 拿不到价格列
+    （真实 23165 在测试库里就落这个坑，会得到 price_credible=None 而不是 False）。
+    """
+
+    #: 106 件 × 68,000,000 = 7,208,000,000，卖侧仅 4 件 → 离群
+    OFF_MARKET = (1002, 106, 68_000_000.0, 12.0, 2_034_545, 4)
+    #: 60 件 × 23,440,000 = 1,406,400,000，卖侧 486 件（≥ 阈值）→ 可信
+    THIN_BUT_REAL = (1001, 60, 23_440_000.0, 105.0, 858_830, 486)
+
+    @staticmethod
+    def _seed_market(db, type_id: int, sell: float, buy: float, buy_vol: int, sell_vol: int) -> None:
+        with db.connect("mkt") as conn:
+            conn.execute("DELETE FROM market_prices WHERE type_id = ?", (type_id,))
+            conn.execute(
+                "INSERT INTO market_prices (type_id, region_id, buy_price, sell_price, "
+                "adjusted_price, buy_volume, sell_volume, fetch_time) VALUES (?,?,?,?,0,?,?,'2026-10-10 00:00:00')",
+                (type_id, 10000002, buy, sell, buy_vol, sell_vol),
+            )
+
+    def test_off_market_sell_price_excluded_from_total(self, full_db):
+        """有价但立不住的行：不进合计、进 unreliable_*；三态标记为 False。"""
+        import services.inventory_manager as im
+
+        im.init_db()
+        hid = im.create_hangar("回归仓")
+        tid, qty, sell, buy, buy_vol, sell_vol = self.OFF_MARKET
+        self._seed_market(full_db, tid, sell, buy, buy_vol, sell_vol)
+        im.add_item(hid, tid, qty)
+
+        items = im.get_items(hid)
+        row = next(it for it in items if it["type_id"] == tid)
+        assert row["price_credible"] is False, "卖侧仅 4 件挂单 → 卖单价不可信"
+        assert row["sell_price"] == sell and row["sell_volume"] == sell_vol
+
+        got = im.get_total_value(hid, "sell")
+        assert got["market_total"] == 0.0, "不可信的离群估值不得进合计"
+        assert got["unreliable_total"] == 7_208_000_000.0  # 106 × 68,000,000
+        assert got["unreliable_count"] == 1
+        assert got["items_with_price"] == 1, "「有价行数」口径不变"
+
+    def test_thin_but_real_book_is_still_counted(self, full_db):
+        """对照组：卖侧 486 件（≥ 阈值）薄但立得住价 → 判可信、照常计入。"""
+        import services.inventory_manager as im
+
+        im.init_db()
+        hid = im.create_hangar("对照仓")
+        tid, qty, sell, buy, buy_vol, sell_vol = self.THIN_BUT_REAL
+        self._seed_market(full_db, tid, sell, buy, buy_vol, sell_vol)
+        im.add_item(hid, tid, qty)
+
+        row = next(it for it in im.get_items(hid) if it["type_id"] == tid)
+        assert row["price_credible"] is True
+
+        got = im.get_total_value(hid, "sell")
+        assert got["market_total"] == 1_406_400_000.0  # 60 × 23,440,000
+        assert got["unreliable_count"] == 0
+        assert got["unreliable_total"] == 0.0
+
+    def test_no_market_row_is_not_counted_as_unreliable(self, full_db):
+        """没市价的行是三态里的 None：既不进合计，也不算「不可信」（否则乱报 N 项未计入）。"""
+        import services.inventory_manager as im
+
+        im.init_db()
+        hid = im.create_hangar("无价仓")
+        im.add_item(hid, 1001, 10, 0)  # temp_db 里 1001 有价（5.0，量足够 → 可信）
+        im.add_item(hid, 99999, 3)  # 库里没有它的 market_prices 行
+
+        rows = {it["type_id"]: it for it in im.get_items(hid)}
+        assert rows[99999]["price_credible"] is None
+        assert rows[1001]["price_credible"] is True
+
+        got = im.get_total_value(hid, "sell")
+        assert got["market_total"] == 50.0  # 10 × 5.0
+        assert got["unreliable_count"] == 0
+        assert got["items_with_price"] == 1
+
     def test_plan_active_counts_in_progress(self, full_db):
         """in_progress 计划计入 plan_active，pending 计入 plan_usage"""
         import services.inventory_manager as im

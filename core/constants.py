@@ -37,3 +37,12 @@ PRICE_DEPTH_VOLUME_PCT = 0.01
 PRICE_DEPTH_MIN_UNITS = 5
 # 盘口总量低于此值时不剔除薄单（整个市场都很薄时，薄单就是真实价）
 PRICE_DEPTH_MIN_BOOK = 50
+
+# ── 卖单价可信度（domain/market_depth.sell_price_reliable）──
+# 仓库/资产估值一律取「最低卖单价」。实测病灶：极薄的单边品种，一笔离谱卖单就是全市场最低卖价。
+#   type 23165 隔热剂 Jita：卖侧 1 笔 @68,000,000×4 件，买侧 7 笔共 2,034,545 件 @1~12 ISK
+#   type 21594 预燃室 Jita：卖侧 1 笔 @64,000,000×4 件，买侧 5 笔共 5,408,323 件 @9~12 ISK
+# 库里 3 件库存按卖单价估值 135.42 亿 ISK，按买盘实际只值 8,504 ISK（价差 5,700~7,500 倍）。
+# 判据只认「卖侧盘口在绝对量级上根本立不住价」，不看价格倍数 —— 价格倍数会把薄单当真实价。
+PRICE_CREDIBLE_MIN_SELL_VOLUME = 100
+PRICE_CREDIBLE_SELL_BUY_VOLUME_RATIO = 0.01

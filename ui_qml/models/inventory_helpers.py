@@ -29,6 +29,35 @@ def item_locked_isk(row: dict) -> float:
     return float(row.get("cost_price") or 0) * float(row.get("quantity") or 0)
 
 
+#: 卖单价不可信的说明。两处表格模型（Widgets / QML）共用同一句话，别各写一份。
+#: 判据有两个成因（见 domain/market_depth.sell_price_reliable）：卖侧盘口太薄、
+#: 或根本没有买盘。文案必须同时覆盖两者 —— 只写「卖侧挂单量极小」会把「无买盘」那类说错。
+PRICE_UNRELIABLE_TIP = (
+    "该物品的市场深度立不住价：卖侧挂单量极小（或根本没有买盘），"
+    "「最低卖单价」不代表能卖到的价；本行按卖单价的估值已不计入总额。"
+)
+
+
+def price_unreliable(row: dict) -> bool:
+    """这一行的卖单价是否**有价但立不住**（三态里的 False；无价 None 不算）。纯函数。
+
+    判据唯一实现在 `domain/market_depth.sell_price_reliable`（服务层算好放进 `price_credible`）。
+    """
+    return row.get("price_credible") is False
+
+
+def price_credible_text(row: dict) -> str:
+    """「估值可信」列的显示串：无价 → `-`，不可信 → 警示，可信 → `可`。
+
+    警示语不带「卖单」二字：判据里「没有买盘」与「卖侧太薄」是同一档 ——
+    写成「卖单离群」会把前者描述错（实测全市场 1,531 行属「无买盘」那支）。
+    """
+    credible = row.get("price_credible")
+    if credible is None:
+        return "-"
+    return "可" if credible else "⚠ 市价不可信"
+
+
 def blueprint_run_profit(row: dict) -> float | None:
     """每流程利润 = 销售收入 − 材料成本（任一侧缺失 → None）。
 
@@ -56,7 +85,18 @@ def _profit_sort_key(row: dict) -> float:
 class InvTableModel(QAbstractTableModel):
     """机库物品表格模型"""
 
-    _HEADERS = ["图标", "名称", "库存数量", "单个成本记录", "规划占用", "规划剩余", "缺口", "占用资金", "按卖单总价值"]
+    _HEADERS = [
+        "图标",
+        "名称",
+        "库存数量",
+        "单个成本记录",
+        "规划占用",
+        "规划剩余",
+        "缺口",
+        "占用资金",
+        "按卖单总价值",
+        "估值可信",
+    ]
 
     def __init__(self, items: list[dict]):
         super().__init__()
@@ -101,15 +141,22 @@ class InvTableModel(QAbstractTableModel):
             if c == 8:
                 sp = r.get("sell_price")
                 return f"{r['quantity'] * sp:,.0f}" if sp else "-"
+            if c == 9:
+                return price_credible_text(r)
 
         elif role == Qt.ItemDataRole.ToolTipRole:
             if c == 4:
                 return "待启动计划预留"
+            if c in (8, 9) and price_unreliable(r):
+                return PRICE_UNRELIABLE_TIP
 
         elif role == Qt.ItemDataRole.ForegroundRole:
             # 缺口 > 0 标红（与蓝图「利润率」「每流程利润」同一套主题 token）
             if c == 6 and item_gap(r) > 0:
                 return QColor(theme.ACCENT_RED)
+            # 卖单价离群：金额与可信度两列一起标橙 —— 数字照显（不藏虚高值），只是标明不可信
+            if c in (8, 9) and price_unreliable(r):
+                return QColor(theme.ACCENT_ORANGE)
             return None
 
         elif role == Qt.ItemDataRole.DecorationRole:
@@ -155,6 +202,7 @@ class InvTableModel(QAbstractTableModel):
             6: lambda r: item_gap(r),
             7: lambda r: item_locked_isk(r),
             8: lambda r: (r.get("quantity", 0) or 0) * (r.get("sell_price") or 0),
+            9: lambda r: r.get("price_credible") is True,
         }.get(column)
 
     def reapply_sort(self) -> None:

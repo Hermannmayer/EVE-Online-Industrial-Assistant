@@ -1,7 +1,9 @@
 """仓库页两张表的 QML 适配。
 
-- `InvQmlModel`：机库物品（9 列）。数量/金额类列右对齐、图标列取物品 PNG、
+- `InvQmlModel`：机库物品（10 列）。数量/金额类列右对齐、图标列取物品 PNG、
   「规划占用」带 tooltip、「缺口」为红色 token。展示规则照搬 `InvTableModel.data()`。
+  末列「估值可信」标出卖单价离群的行（`price_credible is False`）：该行按卖单价的估值
+  已不计入仓库页底部总额，这两列一起标橙并带 tooltip 说明原因。
 - `BlueprintQmlModel`：蓝图（13 列，「状态」列由 `services.inventory_manager` 批量查出、
   多状态以 ` · ` 并列）。「类型」列在被活跃计划占用时标橙、
   「每流程利润」与「利润率」列按正负染绿红。展示规则照搬 `BlueprintTableModel.data()`。
@@ -20,11 +22,14 @@ from PySide6.QtCore import QModelIndex, Qt
 
 from ui_qml.icon_cache import icon_url as _png_url
 from ui_qml.models.inventory_helpers import (
+    PRICE_UNRELIABLE_TIP,
     BlueprintTableModel,
     InvTableModel,
     blueprint_run_profit,
     item_gap,
     item_locked_isk,
+    price_credible_text,
+    price_unreliable,
 )
 from ui_qml.theme.registry import token as _token
 
@@ -76,7 +81,7 @@ class InvQmlModel(InvTableModel):
 
     #: 可排序列（与父类 `sort()` 的键一致）—— QML 用它决定表头是否可点，
     #: 判据只此一份，别在 QML 里再写一遍
-    SORTABLE = frozenset({1, 2, 3, 4, 5, 6, 7, 8})
+    SORTABLE = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9})
 
     def __init__(self, items: list[dict] | None = None) -> None:
         super().__init__(list(items or []))
@@ -125,9 +130,15 @@ class InvQmlModel(InvTableModel):
         if role == _I_ICON:
             return _png_url(row.get("type_id")) if col == 0 else ""
         if role == _I_ALIGN:
-            return col >= 2
+            # 与 `InventoryBridge.itemColumns` 的 alignRight 元数据同口径：数值列 2..8 右对齐，
+            # 末列「估值可信」是短文字列，左对齐（写成 `col >= 2` 会让表头与单元格两个口径）。
+            return 2 <= col <= 8
         if role == _I_TIP:
-            return "待启动计划预留" if col == 4 else ""
+            if col == 4:
+                return "待启动计划预留"
+            if col in (8, 9) and price_unreliable(row):
+                return PRICE_UNRELIABLE_TIP
+            return ""
         if role == _I_ROW:
             return index.row()
         if role == _I_ID:
@@ -135,9 +146,11 @@ class InvQmlModel(InvTableModel):
         if role == _I_SELECTED:
             return index.row() in self._selection
         if role == _I_FG:
-            # 缺口 > 0 标红；其余交给 Theme 默认色（空串 = 不覆盖）
+            # 缺口 > 0 标红；卖单价离群的两列（金额 / 可信度）标橙；其余交给 Theme 默认色
             if col == 6 and item_gap(row) > 0:
                 return _token("ACCENT_RED")
+            if col in (8, 9) and price_unreliable(row):
+                return _token("ACCENT_ORANGE")
             return ""
         return super().data(index, role)
 
@@ -163,6 +176,8 @@ class InvQmlModel(InvTableModel):
         if col == 8:
             sell_price = row.get("sell_price")
             return f"{row['quantity'] * sell_price:,.0f}" if sell_price else "-"
+        if col == 9:
+            return price_credible_text(row)
         return ""
 
 
