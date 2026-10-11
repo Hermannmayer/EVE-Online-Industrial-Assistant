@@ -422,6 +422,32 @@
   `tests/test_research_dispatch.py::TestInventionOutcomeDefaults` 与
   `tests/test_industry_dialogs.py::TestCompletePlansInventionBatch::test_attempts_multiplies_parallels`。
 
+## BL-020 启动小助手刷新列表后滚动位置跳回顶部
+
+- 类型：缺陷
+- 状态：已关闭（ed2780f）
+- 证据（launcher-scroll 队友 2026-10-11 用临时离屏探针实测，探针在 `%TEMP%`、未入库；本轮我复核了代码链与回归用例，探针数值按队友口径引用）：
+  - 窗口 1000×700、40 行（`contentHeight=2476`、ListView 高 530），先设 `contentY=500`：
+    - `_start(pid)`（该行 pending→in_progress，触发 `_on_poll`）→ **500 → 0**，行数与 `contentHeight` 都不变；
+    - QTest 真点视口内行内的「启动」按钮 → **500 → 0**。
+  - 机制隔离（绕过页面代码直写 `ListView.model`）：换**内容不同**的新数组（长度/行高不变，只改一行 `statusText`）→ **500 → 0**；
+    把**同一份内容**原样再给一次 → **500 → 500**。→ Qt `QQuickItemView::setModel()` 对**相等**的 QVariantList 提前返回、不重建，**内容一变**就整视图重建回顶部。
+  - 由此「只有点启动才跳」的真相是：点启动必然改动那一行；而 5s 轮询里运行中计划的 `durationText` 每轮都重算，**轮询同样在跳**（实测行数 40→80 → 500→0；同长度只改一行 → 500→0）。
+  - 根因链（**工作区行号**；同一提交里 `_sync_rows` 的 docstring 加长 5 行，故 HEAD 行号 = 下面各值 −5，即 HEAD `:983`/`:1322`/`:1367`）：
+    `ui_qml/views/industry/production_launcher.py:988` `_on_row_start` → `:1327` `_start` → 成功后 `:1372` `self._on_poll()`
+    → `:671` `_apply_filters` → `:825` `_sync_rows`（整表重建）→ `:843` `self._notify_rows()` → `:511-513` 桥 `notify_rows()`
+    → QML 换数组（HEAD 为 `ui_qml/qml/pages/LauncherWindow.qml:301 model: win.launcher ? win.launcher.rows : []`）。
+  - 项目自带旁证：`_sync_rows:828` 自述「每次全量重建」；`_on_tick:548-552` 明说「（比整表重置便宜，）也不会把滚动位置与选中态冲掉」。
+- 影响：用户滚到列表中间逐条启动产线时，每点一次「启动」列表就跳回开头，得重新滚回原处找下一条（小助手正是逐条启动的主界面，体验直接受损）。
+- 下一步：已修（QML 侧自保滚动位置）——`ui_qml/qml/pages/LauncherWindow.qml:317-318` 改为 `model: rowsModel` + `onModelChanged: restoreKeepContentY()`；
+  `:320-328` 私有属性 `rowsModel` / `keepContentY` 与 `applyRows()`（**先记 `contentY` 再换数组**，不挂绑定以免每滚一像素重算 model）；
+  `:333-341` `restoreKeepContentY()` 内用 `Qt.callLater` 补一拍还原（`setModel()` 返回时 `contentHeight` 可能还没重算完，会把 `contentY` 夹小）；
+  `:345` `Component.onCompleted: applyRows()`。Python 侧只加了契约 docstring（`production_launcher.py:825-833`，diff 为 +9/−1），未改逻辑。
+  回归：`tests/test_production_launcher.py:1161-1217` 的 `TestLauncherScrollKept.test_list_keeps_scroll_position_when_a_row_changes`（断言 `abs(contentY − 500) ≤ 1.0`，
+  失败信息「期望仍在 500，实得 contentY=…」）；敏感性已验证：临时回退 QML 修复后该用例红（实得 `contentY=-0.0`）。
+  ⚠️ 该文件 `tests/test_production_launcher.py:20` 有 `pytestmark = pytest.mark.ui`，`validate` 档会跳过 → 验证要走 `ui-retest` 或直接点名这个 node id（CLAUDE.md 的已知假绿坑）。
+  改后实测：`_start` 500→500、真点启动按钮 500→496（那 4px 是既有的「把选中行滚进视口」）、纯轮询 700→700。
+
 ---
 
 ## 复核记录（本轮实测）
