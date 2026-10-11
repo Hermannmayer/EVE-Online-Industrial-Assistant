@@ -1279,3 +1279,129 @@ class TestCompletePlansAggregate:
 
         assert result["completed"] == 1
         assert result["removed"] == 0
+
+
+class TestCompletePlansInventionBatch:
+    """批量下线的发明回填：**本批只弹一次**列表对话框，成功数换算成实际流程数。
+
+    回归背景：`complete_plans` 原先在循环里逐条弹单条对话框 —— 10 条发明集中下线
+    要点 10 次「确认」+ 10 次「关闭」（2026-10-11 用户报的体验问题）。改写后待回填的
+    发明行先收集、一次填完；取消列表对话框**只跳过发明行**，普通行照常完成。
+
+    数值口径：`actual_output_runs = 成功数 × 每张流程`，每张流程取该行 breakdown 的
+    `runs_per_bpc`（没有时才回 SDE 走 `invention_output_runs`）。「总尝试次数」= `runs × parallels`
+    （评分侧 `breakdown["attempts"]` 优先，见 `_invention_attempts`），它同时是成功数输入框的上限 ——
+    漏乘 parallels 会让用户不知道该填到多少（计划 364：显示 10、实际 50）。
+    """
+
+    PLANS = [
+        {
+            "id": 1,
+            "product_name": "发明甲",
+            "activity": "invention",
+            "runs": 4,
+            "parallels": 3,  # 总尝试 = 4 × 3 = 12（不是单线次数 4）
+            "breakdown": {"runs_per_bpc": 5, "expected_bpc": 2},
+        },
+        {"id": 2, "product_name": "普通行", "activity": "manufacturing", "runs": 1},
+        {
+            "id": 3,
+            "product_name": "发明乙",
+            "activity": "invention",
+            "runs": 6,
+            "parallels": 2,  # runs×parallels=12，但评分侧给了权威 attempts → 以它为准
+            "breakdown": {"runs_per_bpc": 10, "expected_bpc": 1, "attempts": 7},
+        },
+    ]
+
+    def _run(self, monkeypatch, *, accept: bool):
+        """跑一次**真实 `complete_plans`**，只把对话框与落库换成替身。"""
+        from ui_qml.views.industry import complete_plans_dialog as cpd
+
+        popped: list[list[dict]] = []
+        completed: list[tuple] = []
+
+        class _Dlg:
+            def __init__(self, rows, parent=None):
+                self._rows = [dict(r) for r in rows]
+                popped.append(self._rows)
+
+            def exec(self):
+                return 1 if accept else 0
+
+            def outcome(self):
+                # 两行都填「成功 2 条产线」→ 实际流程 = 2 × 每张流程
+                return {r["plan_id"]: (2 * r["runs_per_bpc"], 2) for r in self._rows}
+
+        def _complete_plan(plan, **kwargs):
+            completed.append((plan["id"], kwargs.get("actual_output_runs"), kwargs.get("actual_bpc_count")))
+            return {"ok": True, "deposited": 1}
+
+        monkeypatch.setattr(cpd, "set_plan_deposit_hangar", lambda db, pid, dep: None)
+        monkeypatch.setattr(cpd, "get_container", lambda: SimpleNamespace(db=MagicMock()))
+        monkeypatch.setattr(cpd.plan_execution, "complete_plan", _complete_plan)
+        # 对话框在 `_ask_invention_outcomes` 里**函数内导入**，故打在桥模块的属性上
+        monkeypatch.setattr("ui_qml.bridge.invention_batch_bridge.InventionOutcomeListQmlDialog", _Dlg)
+
+        result = cpd.complete_plans([dict(p) for p in self.PLANS], 4)
+        return popped, completed, result
+
+    def test_one_dialog_for_the_batch_then_cancel_skips_only_invention(self, qapp, monkeypatch):
+        popped, completed, result = self._run(monkeypatch, accept=True)
+
+        assert len(popped) == 1, "本批 2 条发明必须只弹一次列表对话框（原先是每条一次）"
+        assert [r["plan_id"] for r in popped[0]] == [1, 3], "只有待回填的发明行进列表"
+        rows_by_id = {r["plan_id"]: r for r in popped[0]}
+        assert rows_by_id[1]["attempts"] == 12, "总尝试次数 = runs × parallels（4×3），不是单线次数 4"
+        assert rows_by_id[3]["attempts"] == 7, "评分侧有 breakdown['attempts'] 权威值时优先用它"
+        assert result["completed"] == 3
+        by_id = {pid: (runs, bpc) for pid, runs, bpc in completed}
+        assert by_id[1] == (10, 2), "2 条成功 × 每张 5 流程"
+        assert by_id[3] == (20, 2), "2 条成功 × 每张 10 流程"
+        assert by_id[2] == (None, None), "普通行不得被塞进发明结果"
+
+        popped, completed, result = self._run(monkeypatch, accept=False)
+
+        assert len(popped) == 1, "取消也只弹这一次"
+        assert result["skipped"] == ["发明甲", "发明乙"]
+        assert [c[0] for c in completed] == [2], "取消列表只跳过发明行，普通行照常完成"
+        assert result["completed"] == 1
+
+        # 单条路径（N==1）走单条对话框：`attempts=` 也必须是**总**尝试次数（同一口径）
+        from ui_qml.views.industry import complete_plans_dialog as cpd
+
+        single: dict = {}
+
+        class _SingleDlg:
+            def __init__(self, **kwargs):
+                single.update(kwargs)
+
+            def exec(self):
+                return 1
+
+            def outcome(self):
+                return (0, 0)
+
+        monkeypatch.setattr("ui_qml.bridge.invention_outcome_bridge.InventionOutcomeQmlDialog", _SingleDlg)
+        cpd.complete_plans([dict(self.PLANS[0])], 4)
+        assert single["attempts"] == 12, "单条对话框也要显示总尝试次数（runs × parallels）"
+
+    def test_attempts_multiplies_parallels(self):
+        """回归（2026-10-11 用户澄清）：总尝试次数 = `runs × parallels`。
+
+        计划 364（runs=10、parallels=5）实际跑了 50 次 —— 启动时就是按 50 扣的解码器
+        与数据核心；但回填框一度显示「本计划尝试次数：10」（只取了 runs），
+        用户没法判断成功数该填到多少。没有 breakdown 的表格行走同一口径。
+        """
+        from ui_qml.views.industry.complete_plans_dialog import _invention_expected
+
+        with_bd = {
+            "runs": 10,
+            "parallels": 5,
+            "breakdown": {"runs_per_bpc": 19, "expected_bpc": 17, "success_rate": 0.34, "attempts": 50},
+        }
+        assert _invention_expected(with_bd)[::3] == (19, 50)  # (runs_per, attempts)
+
+        # 无 breakdown（表格行没跑过评分）→ 同样按 runs × parallels，而不是单线次数
+        no_bd = {"runs": 10, "parallels": 5, "blueprint_type_id": 0}
+        assert _invention_expected(no_bd)[3] == 50
