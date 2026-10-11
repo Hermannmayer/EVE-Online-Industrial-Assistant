@@ -146,7 +146,10 @@ def _plan(activity: str, **over):
 
 
 def _calc(plan: dict) -> dict:
-    return ScoringService.calculate_plan_metrics(plan, {"skills": {}, "market": {}})
+    # 显式给「高级工业理论」0：本文件几条时长断言按**无技能**口径写。
+    # 该键缺失时按制造侧同口径兜底 5（见 scoring_service._calculate_research_metrics），
+    # 兜底值不该被这里的时长断言间接钉死。
+    return ScoringService.calculate_plan_metrics(plan, {"skills": {"高级工业理论": 0}, "market": {}})
 
 
 class TestInventionDispatch:
@@ -194,6 +197,19 @@ class TestInventionDispatch:
         assert bd["attempts"] == 6
         # 墙钟按每线 runs 次串行算，并行线同时跑 —— 不乘 parallels
         assert r["calculated_time"] == pytest.approx(13800 * 3)
+
+    def test_adv_industry_skill_scales_job_time(self, research_db):
+        """回归（2026-10-11）：科研时长必须吃 3388 高级工业理论 −3%/级。
+
+        域函数的回归在 `tests/test_research_formulas.py`（改坏因子就红）；这条守的是
+        **服务层接线** —— 独立核验实测：删掉 `_calculate_research_metrics` 里传
+        `adv_industry_skill=` 的那一行，域测试仍全绿，只有这条会红。
+        """
+        r = ScoringService.calculate_plan_metrics(
+            _plan("invention", runs=3, parallels=2),
+            {"skills": {"高级工业理论": 5}, "market": {}},
+        )
+        assert r["calculated_time"] == pytest.approx(13800 * 3 * 0.85)
 
     def test_success_rate_override_used(self, research_db):
         r = _calc(_plan("invention", success_rate=0.5, runs=1))
