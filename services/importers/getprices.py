@@ -37,11 +37,24 @@ HISTORY_TTL_SECONDS = 12 * 3600
 #: 大盘指数要盯它，但它既不是任何蓝图的产物、也不当材料，进不了另外两个集合。
 PLEX_TYPE_ID = 44992
 
+#: 官方 **Global PLEX Market** 的 region id（官方名 `GPMR-01`，星座 `GPMC-01`）。
+#: 依据 CCP dev blog 2025-07-04
+#: （https://developers.eveonline.com/blog/global-plex-market-and-sde-updates）：
+#: 「This update adds the new Global PLEX Market region (ID: `19000001`). Third-party
+#: developers can use the existing ESI market routes to query the current PLEX orders
+#: and history with this new region ID.」
+#: 2026-10-11 实测：`/markets/19000001/history/?type_id=44992` → 200，404 条日线
+#: （2025-09-01 ~ 2026-10-09，**每行带 volume / order_count**）；同一时刻 4 个贸易中心的
+#: 同一端点是空列表 `[]` —— PLEX 自 2025-07-07 起全服统一交易，区域市场里它最后一个
+#: 交易日已滚出 ESI 的滚动窗口（约 404 天）。`/latest/markets/19000001/types/` → `[44992]`。
+PLEX_REGION_ID = 19000001
+
 #: 「全服统一价」每日快照的建表语句 —— **单一来源**。
-#: 为什么需要它：**PLEX 这类品种的价格全服统一、没有区域划分**，ESI 的区块历史
-#: （`/markets/{region_id}/history/`）对它们**恒返回空列表**（实测 Jita/Amarr 都是空），
-#: 所以只能把 `/markets/prices/`（`fetch_baseline_prices`，1 次请求拿全部 type 的
-#: `average_price` / `adjusted_price`，**全服口径**）按天存下来当序列。
+#: 为什么还留着它：PLEX 日线的主数据源已经换成 Global PLEX Market region
+#: （`PLEX_REGION_ID`）的成交历史，但那个 region 的历史**按天出、且用户可能还没跑过一轮
+#: 「更新价格」**；`/markets/prices/`（`fetch_baseline_prices`，1 次请求拿全部 type 的
+#: `average_price` / `adjusted_price`，**全服口径**）按天存下来，给 PLEX 序列当**兜底**
+#: （读端优先级见 `services.market_index_service._load_observations`）。
 #: market.db 是可重建缓存，直接建表、不走 `schema_migrations`（与 `price_history` 同先例）。
 GLOBAL_PRICE_DDL = """
     CREATE TABLE IF NOT EXISTS global_price_daily (
@@ -55,7 +68,7 @@ GLOBAL_PRICE_DDL = """
 """
 
 #: 只给**没有区域成交历史**的品种存全服快照。当前只有 PLEX 一个：
-#: 它的价格全服统一、ESI 的区块历史对它恒返回空。**不要**把矿物之类加进来 ——
+#: 它的价格全服统一，区域市场里没有它的历史（见 `PLEX_REGION_ID`）。**不要**把矿物之类加进来 ——
 #: 它们有权威的区域成交均价历史（一次能拉 398 天），全服价只有当日一个点，
 #: 加进来既浪费行数、又会被当成退路数据源污染指数（见 `_load_global_observations`）。
 GLOBAL_PRICE_TYPE_IDS: tuple[int, ...] = (PLEX_TYPE_ID,)
@@ -384,13 +397,31 @@ def _history_is_fresh(fetched_at: str | None, cutoff: datetime) -> bool:
 
 
 async def _pending_history_tasks(region_ids: list[int], type_ids: set[int], cutoff: datetime) -> list[tuple[int, int]]:
-    """算出本轮要拉的 `(region_id, type_id)`：没有记录、或记录早于 TTL 的才算。
+    """算出本轮要拉的 `(region_id, type_id)`：没有记录、或记录早于 TTL 的才算；
+    再按「该区域**有挂单** ∪ **已有历史**」丢掉注定返回空的组合（BL-013）。
 
     每个区域一条 `GROUP BY` 读最新 `fetched_at`（不是 5554 条单查）。
     表不存在时先按 `PRICE_HISTORY_DDL` 建表（与 `services/price_history.py` 同一份 DDL）
     —— 没建表就等于全部待拉。
+
+    过滤判据（`market_prices` 与 `price_history` 同库，且每轮订单更新都会重写，所以「有挂单」是即时的）：
+
+    - **有挂单**：`market_prices` 同一 `(type_id, region_id)` 的
+      `buy_volume + sell_volume > 0`。ESI 的 `/markets/{region}/history/` **只返回有成交的日子**，
+      该区域连挂单都没有的 type 必然返回空 —— 实测（2026-10-11 真实库，脚本复算）：
+      贸易中心候选 5553 个 type × 5 个中心 = **27765** 条请求里 **7283 条（26%）** 是这种
+      注定空响应的组合，过滤后 **20482** 条（Jita 4865 / Amarr 4559 / Dodixie 4194 /
+      Rens 3774 / Hek 2231）。若按旧口径把 PLEX 也算进候选集，就是 27770 → 7288 条。
+    - **已有历史**：`price_history` 里已有该 `(type_id, region_id)` 的任意一行（**不看 TTL**）。
+      这一支必须保留：`market_prices` 每个区域都被整表重写，一次订单拉取失败、或某个 type
+      临时无人挂单，就会把已有序列误判成「无挂单」丢掉。代价实测只有 14~285 个/区域
+      （Jita 14 / Amarr 112 / Dodixie 216 / Hek 232 / Rens 285），换来的是「一条序列都不丢」。
+    - 该区域**一条有量的挂单记录都没有**时退回「不过滤」：那是**订单簿证据缺失**
+      （全新库只跑过 `fetch_baseline_only`，`/markets/prices/` 写进来的 volume 恒 0；
+      或整轮订单拉取失败），不是「这个区域真没市场」。拿它当判据会把整轮历史拉取静默清空。
     """
     pending: list[tuple[int, int]] = []
+    filtered_out = 0
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(PRICE_HISTORY_DDL)
         await db.execute(PRICE_HISTORY_INDEX_DDL)
@@ -402,8 +433,23 @@ async def _pending_history_tasks(region_ids: list[int], type_ids: set[int], cuto
             )
             rows = await cursor.fetchall()
             await cursor.close()
+            have_history = {int(t) for t, _ts in rows}
             fresh = {int(t) for t, ts in rows if _history_is_fresh(ts, cutoff)}
-            pending.extend((rid, tid) for tid in sorted(type_ids - fresh))
+            active_cursor = await db.execute(
+                "SELECT type_id FROM market_prices WHERE region_id = ? "
+                "AND COALESCE(buy_volume, 0) + COALESCE(sell_volume, 0) > 0",
+                (rid,),
+            )
+            active = {int(r[0]) for r in await active_cursor.fetchall()}
+            await active_cursor.close()
+            keep = (have_history | active) if active else None
+            for tid in sorted(type_ids - fresh):
+                if keep is not None and tid not in keep:
+                    filtered_out += 1
+                    continue
+                pending.append((rid, tid))
+    if filtered_out:
+        log.info("市场历史候选过滤：跳过 %s 条「该区域无挂单且无历史」的组合（不发请求）", filtered_out)
     return pending
 
 
@@ -463,28 +509,34 @@ async def fetch_and_save_histories(
     regions: list[tuple[str, int]],
     progress_cb: Callable[[int, str], None] | None = None,
 ) -> int:
-    """按 TTL 增量拉取「产物 ∪ 材料 ∪ PLEX」的市场历史，写入 market.db.price_history。
+    """按 TTL 增量拉取「产物 ∪ 材料」+「PLEX 全域」的市场历史，写入 market.db.price_history。
 
     「日订单量 / 日成交量」两列的数据从这条通道来 —— 与实时订单同属**唯一**的
     「更新价格」入口（`main`），页面不自己拉 ESI：
 
-    - 候选 type_id（三路求并，去重）：
+    - 候选 type_id（两路求并，去重）：
       1. blueprint.db 的 manufacturing | reaction 全部产物（实测 4797 + 111）
       2. 被 `blueprint_materials`（activity IN manufacturing/reaction）当材料的 type
          （实测 1646 —— 材料走势与大盘指数靠它们，单看产物会全漏）
-      3. PLEX（`PLEX_TYPE_ID`，不是产物也不是材料，但指数要盯）
-      —— 实测并集 **5554** 个 type。
+      —— 实测并集 **5553** 个 type。
+    - **PLEX（`PLEX_TYPE_ID`）单独一个任务**，走官方 Global PLEX Market region
+      （`PLEX_REGION_ID`，官方名 `GPMR-01`）—— 它自 2025-07-07 起全服统一交易，
+      4 个贸易中心的历史对它**恒返回空**（实测 2026-10-11 都是 `[]`），
+      混进上面的候选集只会每个中心多发一次注定空的请求。
     - 区域：**本次更新勾了哪些中心就拉哪些**（用户口径：「同步哪些市场的数据，就自动把
       成交量一块拉过来」）。读端各自显式传 `region_id`：可制造物品窗口按 Jita
       （`HISTORY_REGION_ID`）、贸易页按它当前选的起点/终点。
-    - 增量过滤：`(type_id, region_id)` 的最新 `fetched_at` 在 `HISTORY_TTL_SECONDS` 内就跳过，
-      TTL 全命中时本轮 0 请求
+    - 增量过滤：`(type_id, region_id)` 的最新 `fetched_at` 在 `HISTORY_TTL_SECONDS` 内就跳过
+      （PLEX 任务同样走这条 TTL，不另立机制），TTL 全命中时本轮 0 请求
+    - 前置过滤：只发「该区域**有挂单** ∪ **已有历史**」的 `(region_id, type_id)`，
+      丢掉注定空响应的组合（见 `_pending_history_tasks`）
     - 失败隔离：单条 404/超时/异常只 `log.warning` 跳过，不写缓存，既不中断本批也不影响整次价格更新
     - 每 `(type_id, region_id)` 只保留 `HISTORY_KEEP_DAYS` 内的行（写前裁剪）
 
-    ⚠️ 请求量 = type 数 × 勾选的中心数（5554 × N）：**Jita 单中心 5554 条 ≈ 4.6 分钟**
+    ⚠️ 请求量 = type 数 × 勾选的中心数（5553 × N）+ PLEX 1 条：**Jita 单中心 ≈ 4.6 分钟**
     （全局限流 20 req/s）；5 个中心齐勾 **≈ 23 分钟**，且升级后的第一轮 TTL 全未命中、
-    必然跑满这个量。12h TTL 只摊平后续轮次，首次代价用户该知道。
+    必然跑满这个量（前置过滤能砍掉其中约 26%，见 `_pending_history_tasks`）。
+    12h TTL 只摊平后续轮次，首次代价用户该知道。
 
     Returns:
         实际写入的历史行数。
@@ -501,13 +553,17 @@ async def fetch_and_save_histories(
     if not type_ids:
         log.warning("蓝图库里没有可制造/反应产物及其材料，跳过市场历史拉取")
         return 0
-    type_ids.add(PLEX_TYPE_ID)
+    # PLEX 不属于「贸易中心的候选集」，它走上面的全域 region 单独一条任务
+    type_ids.discard(PLEX_TYPE_ID)
 
     now = datetime.now(UTC)
-    pending = await _pending_history_tasks(region_ids, type_ids, now - timedelta(seconds=HISTORY_TTL_SECONDS))
+    cutoff = now - timedelta(seconds=HISTORY_TTL_SECONDS)
+    pending = await _pending_history_tasks(region_ids, type_ids, cutoff)
+    # PLEX 全域历史：与贸易中心同一条 TTL/写入通道，只是 region 换成 19000001
+    pending.extend(await _pending_history_tasks([PLEX_REGION_ID], {PLEX_TYPE_ID}, cutoff))
     if not pending:
         log.info(
-            "市场历史均在 TTL（%s 小时）内，本轮 0 请求（%s 个 type × %s 个区域）",
+            "市场历史均在 TTL（%s 小时）内，本轮 0 请求（%s 个 type × %s 个区域 + PLEX 全域）",
             HISTORY_TTL_SECONDS // 3600,
             len(type_ids),
             len(region_ids),
@@ -517,12 +573,13 @@ async def fetch_and_save_histories(
         return 0
 
     total = len(pending)
+    considered = len(type_ids) * len(region_ids) + 1  # +1 = PLEX 全域任务
     log.info(
-        "市场历史待拉取 %s 条（%s 个 type × %s 个区域，TTL 内跳过 %s 条）",
+        "市场历史待拉取 %s 条（%s 个 type × %s 个区域 + PLEX 全域 1 条；TTL 命中或过滤后跳过 %s 条）",
         total,
         len(type_ids),
         len(region_ids),
-        len(type_ids) * len(region_ids) - total,
+        considered - total,
     )
     fetched_at = now.isoformat()
     date_cutoff = (now - timedelta(days=HISTORY_KEEP_DAYS)).strftime("%Y-%m-%d")
@@ -574,8 +631,9 @@ async def fetch_and_save_histories(
 async def save_global_price_snapshot(baseline: dict[int, dict], day: str | None = None) -> int:
     """把 `/markets/prices/` 的**全服统一价**按天存一条（只存锚定集合）。
 
-    PLEX 的价格全服一致、没有区域划分（ESI 区块历史对它恒空，见 `GLOBAL_PRICE_DDL` 的说明），
-    所以它的时间序列只能靠这个每日快照攒。
+    PLEX 的权威日线在 Global PLEX Market region（`PLEX_REGION_ID`）的成交历史里，
+    这张表只是**兜底**：那个 region 的历史还没拉过时，PLEX 的序列仍有当日一个点
+    （读端优先级见 `services.market_index_service._load_observations`）。
 
     Returns:
         实际写入的行数（`baseline` 里没有锚定 type 时返回 0）。
@@ -623,8 +681,8 @@ async def main(regions: list[tuple[str, int]] | None = None, progress_cb: Callab
         progress_cb(10, pm)
     baseline = await fetch_baseline_prices()
     log.info(f"  基准价格: {len(baseline)} 个物品")
-    # 全服统一价每日快照（PLEX 锚的数据源）：1 次请求已经拉过，这里只写 9 行；
-    # 失败同样不连累价格更新
+    # 全服统一价每日快照（PLEX 序列的**兜底**数据源，主源是 19000001 的成交历史）：
+    # 1 次请求已经拉过，这里只写锚定集合那几行；失败同样不连累价格更新
     try:
         await save_global_price_snapshot(baseline)
     except Exception:
