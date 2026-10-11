@@ -1146,6 +1146,51 @@ class TestPlanTableCompleteFailure:
         holder.plan_updated.emit.assert_called_once()
 
 
+class TestFinishPlansNow:
+    """右键「立即完成」：**不等倒计时走完**，把在产行直接下线（2026-10-11 用户需求）。
+
+    守的是这次新增的**放宽规则**：`in_progress` / `running` 必须放行，
+    `pending` 必须挡在门外 —— 待生产行没启动过（材料没扣、游戏里没开工），
+    完成它只会凭空入库。回归点在 `plan_table._finish_rows_now_with_dialog` 的 statuses。
+    """
+
+    def test_in_progress_passes_and_pending_is_blocked(self, qapp, monkeypatch):
+        from ui_qml.views.industry.plan_table import PlanTable
+
+        plans = {
+            1: {"id": 1, "product_name": "在产", "status": "in_progress"},
+            2: {"id": 2, "product_name": "待生产", "status": "pending"},
+            3: {"id": 3, "product_name": "待下线", "status": "ready"},
+        }
+        model = MagicMock()
+        model.get_plan = lambda r: plans.get(r)
+
+        captured: dict = {}
+
+        class _Dlg:
+            def __init__(self, rows, *_a, **_k):
+                captured["rows"] = rows
+
+            def exec(self):
+                return 0  # 用户取消 → 不落库，本用例只验「谁进了这个对话框」
+
+        monkeypatch.setattr("ui_qml.bridge.complete_plans_bridge.CompletePlansQmlDialog", _Dlg)
+        monkeypatch.setattr("services.inventory_manager.get_hangars", lambda: [])
+        monkeypatch.setattr("services.user_settings.get_default_hangar_id", lambda _key: None)
+
+        holder = SimpleNamespace(_model=model, _rebuild_subitems=lambda: None, plan_updated=MagicMock())
+        # `_finish_rows_now_with_dialog` 本身只是「换一组 statuses 再调一次批量下线」，
+        # 所以把**真实实现**挂到替身上（而不是 mock 掉它），过滤逻辑才是被测的那一段。
+        holder._complete_rows_with_dialog = lambda rows, *, statuses=("ready",): PlanTable._complete_rows_with_dialog(
+            holder, rows, statuses=statuses
+        )
+        PlanTable._finish_rows_now_with_dialog(holder, [1, 2, 3])  # type: ignore[arg-type]
+
+        got = {p["status"] for p in captured["rows"]}
+        assert got == {"in_progress", "ready"}
+        assert "pending" not in got, "待生产行没启动过，不得被「立即完成」凭空入库"
+
+
 class TestPartialStartDialog:
     """部分启动对话框 —— 取值范围 1..P-1，摘要随条数实时更新。
 

@@ -753,6 +753,15 @@ Item {
             visible: rowMenu.plain && (rowMenu.state.status === "in_progress" || rowMenu.state.status === "running")
             onTriggered: root.planBridge.undoStartPlans(rowMenu.targetRows)
         }
+        /* 「立即完成」：**不等倒计时走完**，在产行直接下线。
+         * 与「下线」共用同一条落库路径（`plan_table._finish_rows_now_with_dialog`），
+         * 差别只在放行的状态：in_progress / running / ready 放行，pending 故意不放
+         * （待生产行没启动过，完成它只会凭空入库）。 */
+        FMenuItem {
+            text: qsTr("立即完成（不等倒计时）")
+            visible: rowMenu.plain && (rowMenu.state.status === "in_progress" || rowMenu.state.status === "running")
+            onTriggered: root.planBridge.finishPlansNow(rowMenu.targetRows)
+        }
         FMenuItem {
             text: qsTr("下线")
             visible: rowMenu.plain && rowMenu.state.status === "ready"
