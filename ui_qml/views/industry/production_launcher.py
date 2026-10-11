@@ -825,8 +825,13 @@ class ProductionLauncher(QObject):
     def _sync_rows(self, visible: list[dict]) -> None:
         """把可见计划算成 QML 直接可画的行视图模型。
 
-        每次全量重建（行数不大）：`row_view_models()` 返回新列表，
-        QML 的 ListView 才会重绘；选中态由 `selectedId` 单独承载，不受重建影响。
+        每次全量重建（行数不大）：`row_view_models()` 返回新列表，QML 的 ListView 才会重绘；
+        选中态由 `selectedId` 单独承载，不受重建影响。
+
+        **滚动位置由 QML 侧自己保**（用户 2026-10-07 报「每点一次启动列表滚回最开头」）：
+        Qt 的 `QQuickItemView::setModel()` 一旦拿到内容不同的新数组就把视图重建到顶部，
+        故 `LauncherWindow.qml` 的 `planList.applyRows()` 在换 model 前记下 `contentY`、
+        `onModelChanged` 后还原。改动那一侧时别把这条链拆了。
         """
         rows: list[dict] = []
         self._plan_map.clear()
