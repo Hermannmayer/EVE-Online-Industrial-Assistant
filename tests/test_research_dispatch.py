@@ -231,6 +231,37 @@ class TestInventionDispatch:
         assert r["status"] == "no_blueprint"
 
 
+class TestInventionOutcomeDefaults:
+    """发明结果回填框的「每次成功产出流程数」。
+
+    回归（2026-10-11 用户报的 bug）：表格行没跑过评分时 `plan["breakdown"]` 为空，
+    旧实现只从 breakdown 取 `runs_per_bpc`（得到 0），那条退化路径又要求
+    `expected_runs > 0`（同样是 0）→ 框里显示「每张 0 流程、共 0 流程」，
+    用户填多少条成功产线都会被换算成 0 流程入库。
+    现在缺 breakdown 就回 SDE 取：基础流程 + 解码器修正。
+    """
+
+    def test_runs_per_bpc_comes_from_sde_when_breakdown_missing(self, research_db):
+        from domain.research import get_decryptor, invention_output_runs
+        from ui_qml.views.industry.complete_plans_dialog import _invention_defaults_from_sde
+
+        plan = {"blueprint_type_id": T2_BP, "decryptor_type_id": DECRYPTOR_AMPLIFIED}
+        base_runs, probability = _invention_defaults_from_sde(plan)
+
+        # fixture：blueprint_products(821, invention, 2890, quantity=10, probability=0.34)
+        assert base_runs == 10
+        assert probability == pytest.approx(0.34)
+        # 放大装置解码器 runs_mod = +9 → 每次成功产 19 流程（旧实现给 0）
+        assert invention_output_runs(base_runs, get_decryptor(DECRYPTOR_AMPLIFIED)) == 19
+
+    def test_unknown_blueprint_returns_zero_defaults(self, research_db):
+        """不是发明产物 / 查不到 → (0, 0.0)，让调用方走兜底而不是抛异常。"""
+        from ui_qml.views.industry.complete_plans_dialog import _invention_defaults_from_sde
+
+        assert _invention_defaults_from_sde({"blueprint_type_id": 999999}) == (0, 0.0)
+        assert _invention_defaults_from_sde({}) == (0, 0.0)
+
+
 class TestCopyingDispatch:
     def test_materials_use_total_licensed_runs(self, research_db):
         r = _calc(_plan("copying", product_type_id=STANDARD_BP, blueprint_type_id=STANDARD_BP, runs=50, parallels=2))
