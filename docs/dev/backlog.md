@@ -398,6 +398,30 @@
 - 下一步：单独立项（涉及 `domain/market_depth` 与多个读端）。market-data 在 task-6 报告里已整理 15+ 处受影响读端 `file:line` 清单，动工前先取那份清单；
   建议先做只读影响面审计，确认读端能否区分「baseline 兜底行」与「真实盘口行」，再定写入改造与读端范围。
 
+## BL-019 发明结果回填框「每张 0 流程」+ 尝试次数漏乘 parallels
+
+- 类型：缺陷
+- 状态：已关闭（470a966 修「每张 0 流程」；0a6cdf7 修 attempts 口径）
+- 证据（2026-10-11 用户截图 + Lead 复算）：
+  - 截图：发明结果回填框（游击战指挥脉冲波蓝图 II）显示「成功产线数 10 → = 0 流程」与
+    「成功 0 流程…每张 0 流程，共 0 流程」。
+  - 根因 1：`ui_qml/views/industry/complete_plans_dialog.py` 的 `_ask_invention_outcome`
+    只从 `plan["breakdown"]` 取 `runs_per_bpc`；表格行没跑过评分时 breakdown 为空 → 得 0，
+    而那条退化路径要求 `expected_runs > 0`（它同样是 0）→ 失效，`runs_per` 停在 0。
+    权威值：`blueprint_products`(43546, 'invention', 43611, quantity=10) + 放大装置解码器
+    `runs_mod=+9` → 应为 **19 流程/张**。
+  - 根因 2：尝试次数写成 `max(int(plan.get("runs") or 1), 1)`，**漏乘 `parallels`**：
+    计划 id=364（runs=10、parallels=5）启动时按 **50 次**扣了解码器 34203×50 与数据核心，
+    框里却显示「本计划尝试次数：10」。正确口径同评分侧 `scoring_service` 的
+    `total_attempts = runs × parallels`（也就是 `breakdown["attempts"]`）。
+- 影响：用户按框架提示填多少条成功产线，都会被换算成 0 流程入库；尝试次数偏小还让
+  「期望成功」估算偏低，用户没法判断该填多少。
+- 下一步：已修 —— `_invention_defaults_from_sde` 回 SDE 取权威值，并把 breakdown→SDE
+  兜底公式抽成单条/列表共用的 `_invention_expected`（`attempts` 优先取
+  `breakdown.attempts`，否则 `runs × parallels`）。回归见
+  `tests/test_research_dispatch.py::TestInventionOutcomeDefaults` 与
+  `tests/test_industry_dialogs.py::TestCompletePlansInventionBatch::test_attempts_multiplies_parallels`。
+
 ---
 
 ## 复核记录（本轮实测）
