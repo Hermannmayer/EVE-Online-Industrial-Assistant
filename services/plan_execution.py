@@ -11,6 +11,13 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 
+from core.constants import (
+    PLAN_LOCKED_STATUSES,
+    PLAN_RUNNING_STATUSES,
+    PLAN_STATUS_PENDING,
+    PLAN_TERMINAL_STATUSES,
+    PLAN_UNFINISHED_STATUSES,
+)
 from core.logger import log
 from services.blueprint_reader import get_blueprint_products
 
@@ -19,6 +26,11 @@ from services.blueprint_reader import get_blueprint_products
 # ════════════════════════════════════════════════════════════════
 
 _TIME_FMT = "%Y-%m-%d %H:%M:%S"
+
+
+def _placeholders(values: tuple[str, ...]) -> str:
+    """状态集合 → 参数化 `IN (...)` 占位串。值必须继续作为参数传入，禁止拼进 SQL。"""
+    return ",".join("?" for _ in values)
 
 
 def parse_cost_snapshot(raw: str | None) -> dict:
@@ -63,7 +75,7 @@ def remaining_seconds(plan: dict, *, now: datetime | None = None) -> int | None:
 
     now 可注入便于测试；started_at 以 naive UTC 解析（存储格式 "%Y-%m-%d %H:%M:%S"）。
     """
-    if plan.get("status") not in ("in_progress", "running"):
+    if plan.get("status") not in PLAN_RUNNING_STATUSES:
         return None
     started = plan.get("started_at")
     duration = float(plan.get("calculated_time") or 0)
@@ -90,7 +102,8 @@ def expire_overdue_plans(db=None) -> int:
     with db_mgr.connect("user") as conn:
         rows = conn.execute(
             "SELECT id, started_at, calculated_time FROM production_plans "
-            "WHERE status IN ('in_progress','running') AND started_at IS NOT NULL"
+            f"WHERE status IN ({_placeholders(PLAN_RUNNING_STATUSES)}) AND started_at IS NOT NULL",
+            PLAN_RUNNING_STATUSES,
         ).fetchall()
         for pid, started, dur in rows:
             try:
@@ -105,8 +118,9 @@ def expire_overdue_plans(db=None) -> int:
         if overdue:
             ph = ",".join("?" for _ in overdue)
             cur = conn.execute(
-                f"UPDATE production_plans SET status='ready' WHERE id IN ({ph}) AND status IN ('in_progress','running')",
-                overdue,
+                f"UPDATE production_plans SET status='ready' WHERE id IN ({ph}) "
+                f"AND status IN ({_placeholders(PLAN_RUNNING_STATUSES)})",
+                [*overdue, *PLAN_RUNNING_STATUSES],
             )
             updated = cur.rowcount
     return updated
@@ -117,7 +131,16 @@ def expire_overdue_plans(db=None) -> int:
 # ════════════════════════════════════════════════════════════════
 
 
-def material_requirements(plan: dict) -> list[dict]:
+class MaterialRequirementError(RuntimeError):
+    """材料需求计算失败（评分链路异常）。
+
+    `material_requirements(strict=True)` 抛出；启动闸门据此**拒绝启动**，
+    不允许把「算不出需求」当成「零需求」静默放行（那会不校验、不扣料直接写 in_progress，
+    完成时照常入库 —— 材料守恒被无声破坏，见 03-9）。
+    """
+
+
+def material_requirements(plan: dict, *, strict: bool = False) -> list[dict]:
     """计算计划总材料需求 [{type_id, name, need}]。
 
     口径按活动分派（见 services.plan_job_kinds）：
@@ -126,7 +149,9 @@ def material_requirements(plan: dict) -> list[dict]:
         （发明=尝试次数、拷贝=总授权流程、研究=目标等级）算好了总量，
         再乘 runs×parallels 会重复放大。
 
-    数据源为 scoring_service.calculate_plan_metrics 返回的 materials；失败返回空并记 log。
+    数据源为 scoring_service.calculate_plan_metrics 返回的 materials。
+    strict=False（默认）：失败返回空并记 log（预览/聚合等只读调用方，空值不破坏守恒）；
+    strict=True：抛 `MaterialRequirementError`（启动闸门，禁止按零需求放行）。
     """
     from services.char_config_resolver import resolve_char_config
     from services.plan_job_kinds import is_science
@@ -135,8 +160,10 @@ def material_requirements(plan: dict) -> list[dict]:
     try:
         char_config = resolve_char_config(char_name=char_name) or {}
         metrics = _container().scoring_service().calculate_plan_metrics(plan, char_config)
-    except Exception:
+    except Exception as exc:
         log.exception("计算计划 %s 材料需求失败", plan.get("id"))
+        if strict:
+            raise MaterialRequirementError(f"计划 {plan.get('id')} 材料需求计算失败") from exc
         return []
     if is_science(plan.get("activity")):
         # 科研作业（拷贝/发明/研究）没有「并行产线」概念：需求量就是每轮量
@@ -188,7 +215,8 @@ def _active_plans_for_material_check() -> list[dict]:
             dict(r)
             for r in conn.execute(
                 "SELECT status, sub_level, product_type_id, runs, parallels FROM production_plans "
-                "WHERE status NOT IN ('completed', 'done')"
+                f"WHERE status NOT IN ({_placeholders(PLAN_TERMINAL_STATUSES)})",
+                PLAN_TERMINAL_STATUSES,
             )
         ]
 
@@ -236,6 +264,7 @@ def check_materials(
     *,
     stock: dict[int, int] | None = None,
     all_plans: list[dict] | dict[int, int] | None = None,
+    strict: bool = False,
 ) -> list[dict]:
     """对照材料机库库存，返回 [{type_id, name, need, owned, missing}]。
 
@@ -251,12 +280,14 @@ def check_materials(
 
     Returns 的每行额外带 `from_children`（子线将产出、已计入可用量的数量），
     供界面解释「为什么这条不缺」。
+    strict: 透传 `material_requirements` —— True 时算不出需求抛 `MaterialRequirementError`
+      （启动闸门用），False 时返回空列表（只读展示用）。
     """
     if not mat_hangar_id:
         return []
     from services import inventory_manager
 
-    reqs = material_requirements(plan)
+    reqs = material_requirements(plan, strict=strict)
     if stock is None:
         stock = inventory_manager.get_hangar_stock(mat_hangar_id)
     if isinstance(all_plans, dict):
@@ -282,14 +313,15 @@ def check_materials(
 
 
 def get_plans_for_mat_hangar(mat_hangar_id: int) -> list[dict]:
-    """列出以该机库为材料机库的活跃计划（status NOT IN ('completed','done')）。
+    """列出以该机库为材料机库的活跃计划（`PLAN_TERMINAL_STATUSES` 排除）。
 
     供「材料覆盖率/缺口」视图聚合需求使用。
     """
     with _container().db.connect("user") as conn:
         cur = conn.execute(
-            "SELECT * FROM production_plans WHERE mat_hangar_id = ? AND status NOT IN ('completed','done') ORDER BY id",
-            (mat_hangar_id,),
+            "SELECT * FROM production_plans WHERE mat_hangar_id = ? "
+            f"AND status NOT IN ({_placeholders(PLAN_TERMINAL_STATUSES)}) ORDER BY id",
+            (mat_hangar_id, *PLAN_TERMINAL_STATUSES),
         )
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
@@ -344,6 +376,23 @@ def deduct_materials(plan: dict, mat_hangar_id: int) -> list[dict]:
 # ════════════════════════════════════════════════════════════════
 
 
+#: 启动被状态拦下时的错误码/文案（错误码优先级：状态先于材料/蓝图 —— 03-7）
+_START_STATUS_REJECTIONS: dict[str, tuple[str, str]] = {
+    "in_progress": ("already_started", "计划已在生产中"),
+    "running": ("already_started", "计划已在生产中"),
+    "ready": ("already_ready", "计划已到期待下线，不能再次启动（请直接完成或先撤销启动）"),
+    "completed": ("already_completed", "计划已完成，请先重置为生产中"),
+    "done": ("already_completed", "计划已完成，请先重置为生产中"),
+}
+
+
+def _plan_status(plan_id: int) -> str:
+    """计划的 DB 权威状态（小写）；行不存在返回空串。"""
+    with _container().db.connect("user") as conn:
+        row = conn.execute("SELECT status FROM production_plans WHERE id=?", (plan_id,)).fetchone()
+    return str(row[0] or "").lower() if row else ""
+
+
 def start_plan(
     plan: dict,
     *,
@@ -362,7 +411,9 @@ def start_plan(
 
     Returns:
         {"ok": bool, "code": str, "message": str, "shortfalls": list, "plan_id": int}
-    code 取值: already_started / already_completed / material_short / ok
+    code 取值: already_started / already_ready / already_completed / material_short /
+              blueprint_missing / blueprint_kind / blueprint_short / requirement_failed /
+              snapshot_exists / ok
     """
     from services import inventory_manager
 
@@ -370,12 +421,29 @@ def start_plan(
     if not plan_id:
         return {"ok": False, "code": "no_id", "message": "计划无 id", "shortfalls": [], "plan_id": None}
 
+    # 0. 状态前置检查：先判状态再判材料/蓝图（旧实现材料校验先 return，把「已完成」
+    #    误报成 material_short）。原子 UPDATE 仍保留同一白名单作并发防线。
+    status = _plan_status(plan_id)
+    if status != PLAN_STATUS_PENDING:
+        code, message = _START_STATUS_REJECTIONS.get(status, ("no_id", "计划不存在"))
+        return {"ok": False, "code": code, "message": message, "shortfalls": [], "plan_id": plan_id}
+
     # 1. 材料校验（mat_hangar_id 未设置则跳过）
     reqs: list[dict] = []
     shortfalls: list[dict] = []
     short_json = ""
     if mat_hangar_id:
-        reqs = check_materials(plan, mat_hangar_id, all_plans=_active_plans_for_material_check())
+        try:
+            # strict：评分链路失败时**拒绝启动**，不能按「零材料需求」不校验不扣料直接开产
+            reqs = check_materials(plan, mat_hangar_id, all_plans=_active_plans_for_material_check(), strict=True)
+        except MaterialRequirementError:
+            return {
+                "ok": False,
+                "code": "requirement_failed",
+                "message": "材料需求计算失败，已阻止启动（详见日志）",
+                "shortfalls": [],
+                "plan_id": plan_id,
+            }
         shortfalls = [r for r in reqs if (r.get("missing") or 0) > 0]
         if shortfalls and not allow_short:
             return {
@@ -430,8 +498,11 @@ def start_plan(
         with _container().db.connect("user") as conn:
             activity = _plan_activity(conn, plan_id, str(plan.get("activity") or ""))
             kind_violation = _blueprint_kind_violation(conn, activity, bound_ids)
-            # 机库也一并校验：蓝图得跟材料在同一个机库，否则游戏那边装不下这个作业
-            short = _binding_shortfall(conn, bound_ids, plan_parallels, plan_runs, mat_hangar_id=mat_hangar_id)
+            # 机库也一并校验：蓝图得跟材料在同一个机库，否则游戏那边装不下这个作业。
+            # need 按活动算：拷贝/研究的 parallels 是**产出份数**、不是产线数（03-6）。
+            short = _binding_shortfall(
+                conn, bound_ids, plan_parallels, plan_runs, mat_hangar_id=mat_hangar_id, activity=activity
+            )
         if kind_violation:
             # 蓝图类型是**游戏规则**，不随 allow_bp_short 放行 —— 那不是库存不够，
             # 是游戏里根本做不到（拷贝/研究只能对 BPO，发明只能对 BPC）。
@@ -467,6 +538,9 @@ def start_plan(
 
     # 3. 持久化：先用条件 UPDATE 原子抢占状态，再用同一事务扣减材料；
     #    任一步失败整体回滚，避免部分扣减残留和并发重复启动。
+    #    白名单只放 **pending**（旧黑名单漏了 ready → 到期待下线的计划可再启动，
+    #    二次扣料并覆盖撤销快照，撤销只退一轮，净丢一轮材料）；`deducted_materials`
+    #    非空说明上次启动的扣料快照还在，同样不许覆盖。
     now = _now_str()
     new_solar = inventory_manager.get_hangar_system_id(mat_hangar_id) if mat_hangar_id else None
     # 启动单价快照必须在两个「之前」：
@@ -481,29 +555,27 @@ def start_plan(
             "assigned_blueprint_id=?, material_short=?, deducted_materials=?, "
             "char_name=COALESCE(?, char_name), facility=COALESCE(?, facility), "
             "mat_hangar_id=COALESCE(?, mat_hangar_id), solar_system_id=COALESCE(?, solar_system_id) "
-            "WHERE id=? AND status NOT IN ('in_progress','running','completed','done')",
+            "WHERE id=? AND status='pending' AND COALESCE(deducted_materials, '')=''",
             (now, assigned_bp, short_json, deducted_json, char_name, facility, mat_hangar_id, new_solar, plan_id),
         )
         if cur.rowcount == 0:
-            row = conn.execute("SELECT status FROM production_plans WHERE id=?", (plan_id,)).fetchone()
-            status = row[0] if row else "missing"
-            if status in ("in_progress", "running"):
+            row = conn.execute(
+                "SELECT status, deducted_materials FROM production_plans WHERE id=?", (plan_id,)
+            ).fetchone()
+            if row is None:
+                return {"ok": False, "code": "no_id", "message": "计划不存在", "shortfalls": [], "plan_id": plan_id}
+            status = str(row[0] or "").lower()
+            if status == PLAN_STATUS_PENDING:
+                log.warning("计划 %s 残留启动扣料快照，拒绝再次启动（防覆盖快照）", plan_id)
                 return {
                     "ok": False,
-                    "code": "already_started",
-                    "message": "计划已在生产中",
+                    "code": "snapshot_exists",
+                    "message": "计划残留上次启动的扣料快照，请先撤销启动或重置计划后再试",
                     "shortfalls": [],
                     "plan_id": plan_id,
                 }
-            if status in ("completed", "done"):
-                return {
-                    "ok": False,
-                    "code": "already_completed",
-                    "message": "计划已完成，请先重置为生产中",
-                    "shortfalls": [],
-                    "plan_id": plan_id,
-                }
-            return {"ok": False, "code": "no_id", "message": "计划不存在", "shortfalls": [], "plan_id": plan_id}
+            code, message = _START_STATUS_REJECTIONS.get(status, ("no_id", "计划不存在"))
+            return {"ok": False, "code": code, "message": message, "shortfalls": [], "plan_id": plan_id}
 
         if mat_hangar_id:
             deducted_snapshot: dict[str, int] = {}
@@ -578,8 +650,8 @@ def _has_pending_children(conn, plan: dict) -> bool:
         return False
     row = conn.execute(
         "SELECT COUNT(*) FROM production_plans WHERE group_number=? AND sub_level>0 "
-        "AND status IN ('pending','in_progress','running')",
-        (gid,),
+        f"AND status IN ({_placeholders(PLAN_UNFINISHED_STATUSES)})",
+        (gid, *PLAN_UNFINISHED_STATUSES),
     ).fetchone()
     return bool(row and row[0])
 
@@ -610,7 +682,14 @@ def preview_partial_start(plan_id: int, lines: int, mat_hangar_id: int | None) -
         existing = existing_blueprint_ids(conn, bound)
         keep = [b for b in bound if b in existing][:lines]
         bp_short = (
-            _binding_shortfall(conn, keep, lines, max(int(fresh.get("runs") or 1), 1), mat_hangar_id=mat_hangar_id)
+            _binding_shortfall(
+                conn,
+                keep,
+                lines,
+                max(int(fresh.get("runs") or 1), 1),
+                mat_hangar_id=mat_hangar_id,
+                activity=str(fresh.get("activity") or ""),
+            )
             if lines
             else None
         )
@@ -654,8 +733,8 @@ def _no_other_active_mother(conn, plan_id: int, group_number: int) -> bool:
     """
     row = conn.execute(
         "SELECT COUNT(*) FROM production_plans WHERE group_number=? AND sub_level=0 "
-        "AND id<>? AND status NOT IN ('completed','done')",
-        (group_number, plan_id),
+        f"AND id<>? AND status NOT IN ({_placeholders(PLAN_TERMINAL_STATUSES)})",
+        (group_number, plan_id, *PLAN_TERMINAL_STATUSES),
     ).fetchone()
     return not (row and row[0])
 
@@ -681,14 +760,17 @@ def remove_completed_children(group_number: int, *, conn=None) -> int:
     def _do(c) -> int:
         rows = c.execute(
             "SELECT id, group_number, source_mother_ids FROM production_plans "
-            "WHERE sub_level>0 AND status IN ('completed','done')"
+            f"WHERE sub_level>0 AND status IN ({_placeholders(PLAN_TERMINAL_STATUSES)})",
+            PLAN_TERMINAL_STATUSES,
         ).fetchall()
         if not rows:
             return 0
         active_mothers = {
             int(r[0])
             for r in c.execute(
-                "SELECT id FROM production_plans WHERE sub_level=0 AND status NOT IN ('completed','done')"
+                "SELECT id FROM production_plans WHERE sub_level=0 "
+                f"AND status NOT IN ({_placeholders(PLAN_TERMINAL_STATUSES)})",
+                PLAN_TERMINAL_STATUSES,
             ).fetchall()
         }
         to_delete: list[int] = []
@@ -1120,26 +1202,35 @@ def complete_plan(
     actual_bpc_count: int | None = None,
     allow_bp_short: bool = False,
 ) -> dict:
-    """ready/pending/in_progress → completed：入库产出 + 消耗绑定 BPC。
+    """ready/in_progress/running → completed：入库产出 + 消耗绑定 BPC。
+
+    **pending 不能完成**：材料只在启动时扣减，允许 pending→completed 会凭空入库
+    （实测：pending 直接完成 → 库存 +4、T1 BPC 各扣 2 流程、状态 completed，见 03-2）。
+    完成前置白名单 = `PLAN_LOCKED_STATUSES`（在产 + 待下线），其余返回 code=not_started。
 
     按 activity 分派产出口径（见 services.plan_job_kinds.output_kind）：
       - manufacturing / reaction → 物品入 inventory_items；
       - copying                  → 产出的 BPC 入 user_blueprints（不消耗原图流程）；
       - invention                → **必须先回填 actual_output_runs**（成功流程数 / 0=失败），
                                    成功的 T2 BPC 入 user_blueprints，并消耗 T1 BPC 流程；
+                                   声明尝试数 = runs×parallels 必须与实际可用流程守恒（03-3）。
       - researching_*_efficiency → 只提升蓝图等级（等级仍由用户手动维护，本轮不回写）。
 
     conn: 可选注入的用户库连接（UI 已持有事务时传入）；None 时自开。
-    产出入库 / BPC 消耗 / 状态更新在同一连接同一事务内完成，失败整体回滚；
+    产出入库 / BPC 消耗 / 状态更新在同一连接同一事务内完成；
+    **统一用 SAVEPOINT**：注入连接时失败只回滚本次完成，不会把调用方的半成品事务留在
+    「status=completed 但没入库/没扣流程」的脏状态（03-9）。
     已 completed 的计划幂等返回（不重复入库）。
     allow_bp_short: 蓝图流程不足时是否放行（与 `start_plan` 成对使用 ——
-    只放开启动的话，强制启动的计划将永远无法下线）。
+    只放开启动的话，强制启动的计划将永远无法下线）。发明强制完成时把缺口写进
+    `bp_attempt_short` 审计列（声明尝试数 − 实际可用流程），不做静默少扣。
     **母项结束时顺带清理其名下已无归属的已完成子项行**（同事务，见
     `remove_completed_children`）—— 子项自身完成不删自己，因为母项的「市场」口径成本
     依赖同组子项行存在（见 `services.plan_metrics.mother_subitem_cost_map`）。
     Returns: {"ok": bool, "message": str, "deposited": int, "removed": int, "code"?: str}
     removed = 本次清理掉的子项行数（非母项恒为 0）
-    code 取值: need_outcome（发明未回填产出）
+    code 取值: not_started（未启动）/ need_outcome（发明未回填产出）/
+              need_blueprint（科研未绑输入蓝图）/ blueprint_short（发明声明尝试数不守恒）
     """
     plan_id = plan.get("id")
     if not plan_id:
@@ -1152,7 +1243,20 @@ def complete_plan(
         conn = _container().db.direct_connect("user")
     messages: list[str] = []
     deposited = 0
+    removed = 0
+    savepoint = f"sp_complete_{int(plan_id)}"
+
+    def _reject(payload: dict) -> dict:
+        """拒绝/幂等提前返回：本次尚未写库，释放 SAVEPOINT 后原样返回。
+
+        不释放会让注入连接上留一个 OPEN savepoint（调用方后续 commit/rollback 也会
+        隐式释放，但显式释放的语义更清楚）。
+        """
+        conn.execute(f"RELEASE {savepoint}")
+        return payload
+
     try:
+        conn.execute(f"SAVEPOINT {savepoint}")
         # 以 DB 权威值为准（调用方传入的 plan dict 可能是完成前的旧值）+ 幂等
         row = conn.execute(
             "SELECT status, product_type_id, deposit_hangar_id, runs, parallels, material_cost, "
@@ -1163,7 +1267,7 @@ def complete_plan(
         ).fetchone()
         if row is None:
             # 母项结束时子项行会被清理；从调用方视角「从未存在」与「刚被清掉」不可区分
-            return {"ok": False, "message": "计划不存在或已完成", "deposited": 0}
+            return _reject({"ok": False, "message": "计划不存在或已完成", "deposited": 0})
         (
             db_status,
             product_type_id,
@@ -1180,48 +1284,92 @@ def complete_plan(
             sub_level,
             target_level,
         ) = row
-        if db_status in ("completed", "done"):
-            return {"ok": True, "message": "计划已完成", "deposited": 0}
+        if db_status in PLAN_TERMINAL_STATUSES:
+            return _reject({"ok": True, "message": "计划已完成", "deposited": 0})
+        if db_status not in PLAN_LOCKED_STATUSES:
+            # pending（或未知旧状态）没有扣过料：不允许直接完成凭空入库（03-2）
+            return _reject(
+                {
+                    "ok": False,
+                    "code": "not_started",
+                    "message": "计划尚未启动（材料未扣减），请先启动再下线",
+                    "deposited": 0,
+                }
+            )
 
         effective_actual = actual_output_runs if actual_output_runs is not None else actual_output_runs_db
 
         # 发明是概率作业：产出必须由用户按游戏实际结果回填后才算完成，
         # 否则产出记不准、后续成本与库存全错（见 docs/dev/flows.md「科研计划」）。
         if is_science(activity) and activity == "invention" and effective_actual is None:
-            return {
-                "ok": False,
-                "code": "need_outcome",
-                "message": "发明作业需要先填写实际产出流程数（成功）或标记发明失败",
-                "deposited": 0,
-            }
+            return _reject(
+                {
+                    "ok": False,
+                    "code": "need_outcome",
+                    "message": "发明作业需要先填写实际产出流程数（成功）或标记发明失败",
+                    "deposited": 0,
+                }
+            )
 
-        # 0. 蓝图绑定校验：一条产线一张蓝图，每张流程 ≥ runs；不足拒绝完成（防 BPC 缺流程仍照常完成）
+        # 0. 蓝图绑定校验：按活动算需覆盖的蓝图张数、每张流程 ≥ runs；不足拒绝完成。
         plan_parallels = max(int(parallels or 1), 1)
         plan_runs = max(int(runs or 1), 1)
         bound_ids = get_plan_blueprints(plan_id)
         if not bound_ids and assigned_bp:
             bound_ids = [assigned_bp]
         if bound_ids:
-            short = _binding_shortfall(conn, bound_ids, plan_parallels, plan_runs)
+            short = _binding_shortfall(conn, bound_ids, plan_parallels, plan_runs, activity=activity)
             if short and not allow_bp_short and not is_science(activity):
                 # 科研作业不吃「一条产线一张图」的张数规则（发明一次尝试只耗 1 流程）
-                return {
-                    "ok": False,
-                    "message": f"蓝图绑定不满足完成条件：{short}。请先在蓝图列补绑蓝图后重试。",
-                    "deposited": 0,
-                }
+                return _reject(
+                    {
+                        "ok": False,
+                        "message": f"蓝图绑定不满足完成条件：{short}。请先在蓝图列补绑蓝图后重试。",
+                        "deposited": 0,
+                    }
+                )
             if short:
                 # 强制完成：货已经造出来了，不该因为账面流程不足而拒绝记录现实。
                 # 消耗仍走 consume_bpc_runs（按实际可用尽力扣、耗尽删行）。
                 messages.append(f"⚠ 蓝图流程不足（{short}），已强制下线；请用全量剪贴板导入矫正账面")
                 log.warning("强制完成计划 %s：%s", plan_id, short)
         elif is_science(activity):
-            return {
-                "ok": False,
-                "code": "need_blueprint",
-                "message": "科研作业需要先绑定输入蓝图才能完成",
-                "deposited": 0,
-            }
+            return _reject(
+                {
+                    "ok": False,
+                    "code": "need_blueprint",
+                    "message": "科研作业需要先绑定输入蓝图才能完成",
+                    "deposited": 0,
+                }
+            )
+
+        # 0.4 发明守恒（03-3）：启动按「声明尝试数 = runs×parallels」扣了材料，
+        #     完成就必须消耗同样多的输入流程。绑定 BPC 可用流程不足时：
+        #       非强制 → 拒绝完成（不再静默少扣，缺口被 completed 掩盖）；
+        #       强制放行 → 按实际可用流程消耗，并把缺口写进 bp_attempt_short 审计列。
+        bp_attempt_short: int | None = None
+        if activity == "invention":
+            need_attempts = plan_runs * plan_parallels
+            available_attempts = sum(int(_bp_available_runs(conn, bid)) for bid in bound_ids)
+            if need_attempts > available_attempts:
+                if not allow_bp_short:
+                    return _reject(
+                        {
+                            "ok": False,
+                            "code": "blueprint_short",
+                            "message": (
+                                f"声明 {need_attempts} 次尝试，绑定 BPC 仅 {available_attempts} 流程；"
+                                "请补绑流程足够的 T1 蓝图拷贝，或显式强制完成（会记录流程缺口）"
+                            ),
+                            "deposited": 0,
+                        }
+                    )
+                bp_attempt_short = need_attempts - available_attempts
+                messages.append(
+                    f"⚠ 发明流程不足：声明 {need_attempts} 次尝试，绑定 BPC 仅 {available_attempts} 流程；"
+                    f"缺口 {bp_attempt_short} 已记入审计列"
+                )
+                log.warning("强制完成发明计划 %s：尝试缺口 %s", plan_id, bp_attempt_short)
 
         # 0.5 发明回填：先把用户填的实际产出落库，后续入库/成本口径都用它
         if actual_output_runs is not None and is_science(activity):
@@ -1235,11 +1383,11 @@ def complete_plan(
         cur = conn.execute(
             "UPDATE production_plans SET status='completed', completed_at=?, deposited=0, "
             "assigned_blueprint_id=NULL, material_short='', deducted_materials='' "
-            "WHERE id=? AND status NOT IN ('completed','done')",
-            (now, plan_id),
+            f"WHERE id=? AND status IN ({_placeholders(PLAN_LOCKED_STATUSES)})",
+            (now, plan_id, *PLAN_LOCKED_STATUSES),
         )
         if cur.rowcount == 0:
-            return {"ok": True, "message": "计划已完成", "deposited": 0}
+            return _reject({"ok": True, "message": "计划已完成", "deposited": 0})
 
         kind = output_kind(activity)
 
@@ -1289,23 +1437,28 @@ def complete_plan(
         #    - 发明：每次尝试消耗输入 T1 BPC 的 1 个流程（本计划 attempts 轮）；
         #    - 拷贝/研究：**不消耗**输入蓝图流程（拷贝不消耗原图流程；研究只提升等级）。
         if kind == OUTPUT_BPC and activity == "invention":
-            # 总消耗 = 每线 runs 流程 × 产线条数 = 本计划的总尝试数（每次尝试消耗 1 流程）。
-            # 按各绑定行的**容量**分摊：BPO 顶任意条数、BPC 行按份数顶。
-            remaining_lines = plan_parallels
+            # 守恒口径（03-3）：总消耗 = 声明尝试数 = runs×parallels。
+            # 按各绑定行的**可用流程**顺序扣（BPO 视为无限），不再是「按容量分 lines
+            # 再乘 runs」——那条老口径在强制完成时只扣出部分尝试，剩下 40 流程的缺口
+            # 被 completed 状态直接掩盖。缺口在 0.4 已校验/记录（bp_attempt_short）。
+            need_left = plan_runs * plan_parallels
             for bid in bound_ids:
-                lines = min(_binding_line_capacity(conn, bid), remaining_lines)
-                if lines <= 0:
+                take = min(need_left, int(_bp_available_runs(conn, bid)))
+                if take <= 0:
                     continue
-                remaining_lines -= lines
-                res = consume_bpc_runs(conn, bid, plan_runs * lines)
+                need_left -= take
+                res = consume_bpc_runs(conn, bid, take)
                 if res.get("skipped"):
                     continue
                 if res.get("deleted"):
                     messages.append("输入蓝图已耗尽并移除")
                 else:
                     messages.append(f"输入蓝图剩余 {res.get('new_quantity')}×{res.get('new_runs')} 流程")
-            if remaining_lines > 0:
-                messages.append(f"⚠ 绑定蓝图只够 {plan_parallels - remaining_lines} 条产线，消耗已按实际可用量计")
+            if need_left > 0:
+                # 非强制路径在 0.4 已拒绝；走到这里只可能是强制放行（缺口已记审计列）
+                messages.append(
+                    f"⚠ 输入流程仅够 {plan_runs * plan_parallels - need_left} 次尝试，缺口 {need_left} 已记审计列"
+                )
         elif not is_science(activity):
             for bid in bound_ids:
                 brow = conn.execute("SELECT is_bpo FROM user_blueprints WHERE id=?", (bid,)).fetchone()
@@ -1332,7 +1485,6 @@ def complete_plan(
             conn.execute("UPDATE production_plans SET deposited=? WHERE id=?", (deposited, plan_id))
 
         # 5. 母项结束时清理「已无归属」的已完成子项行（**同一事务**，与置 completed 同生共死）
-        removed = 0
         if (
             int(sub_level or 0) == 0
             and int(group_number or 0) > 0
@@ -1342,13 +1494,28 @@ def complete_plan(
             if removed:
                 messages.append(f"已清理 {removed} 条已完成的子项产线")
 
+        # 6. 审计列：发明强制完成时的尝试流程缺口（NULL = 无缺口）
+        if bp_attempt_short is not None:
+            conn.execute(
+                "UPDATE production_plans SET bp_attempt_short=? WHERE id=?",
+                (bp_attempt_short, plan_id),
+            )
+
+        conn.execute(f"RELEASE {savepoint}")
         if own_conn:
             conn.commit()
     except Exception:
         log.exception("完成计划 %s 失败", plan_id)
+        try:
+            conn.execute(f"ROLLBACK TO {savepoint}")
+            conn.execute(f"RELEASE {savepoint}")
+        except Exception:
+            # 写库前就抛（如 SELECT 失败）时 SAVEPOINT 可能已释放/未建立 —— 记下即可，
+            # 下面 own_conn 的 rollback 仍会丢掉整段事务。
+            log.exception("完成计划 %s 回滚 SAVEPOINT 失败", plan_id)
         if own_conn:
             conn.rollback()
-        return {"ok": False, "message": "完成失败，见日志", "deposited": 0}
+        return {"ok": False, "code": "complete_failed", "message": "完成失败，已回滚（详见日志）", "deposited": 0}
     finally:
         if own_conn:
             conn.close()
@@ -1388,7 +1555,7 @@ def cancel_plan(plan: dict) -> dict:
         if row is None:
             return {"ok": False, "message": "计划不存在", "returned": 0, "returned_list": []}
         db_status, mat_hangar_id, material_short, deducted_materials, cost_snap = row
-        if db_status not in ("in_progress", "running"):
+        if db_status not in PLAN_RUNNING_STATUSES:
             return {"ok": False, "message": "仅生产中计划可撤销", "returned": 0, "returned_list": []}
 
         # 已扣减量优先取启动时持久化的快照（精确还原，不依赖评分重算——评分失败不再丢材料）；
@@ -1402,7 +1569,9 @@ def cancel_plan(plan: dict) -> dict:
             if raw_snapshot:
                 try:
                     snapshot = {int(k): int(v) for k, v in json.loads(raw_snapshot).items()}
-                except Exception:
+                except (TypeError, ValueError):
+                    # 快照损坏时回退「需求 − 缺口」推导，不阻断撤销；记下以便排查脏数据
+                    log.warning("计划 %s 的 deducted_materials 快照无法解析，回退推导口径", plan_id)
                     snapshot = {}
             if snapshot:
                 try:
@@ -1411,7 +1580,9 @@ def cancel_plan(plan: dict) -> dict:
                     with _container().db.connect("ref") as ref_conn:
                         names = resolve_item_names_batch(ref_conn, list(snapshot.keys()))
                 except Exception:
-                    names = {}  # 名称解析失败不阻断返还（name 仅用于返回列表展示）
+                    # 名称解析失败不阻断返还（name 仅用于返回列表展示）
+                    log.warning("撤销计划 %s：材料名称解析失败，返还列表名称留空", plan_id, exc_info=True)
+                    names = {}
                 for tid, deducted in snapshot.items():
                     if deducted > 0:
                         returned_list.append({"type_id": tid, "name": names.get(tid, ""), "qty": deducted})
@@ -1422,7 +1593,8 @@ def cancel_plan(plan: dict) -> dict:
                 if raw:
                     try:
                         short = {int(k): int(v) for k, v in json.loads(raw).items()}
-                    except Exception:
+                    except (TypeError, ValueError):
+                        log.warning("计划 %s 的 material_short 无法解析，按无缺口推导返还量", plan_id)
                         short = {}
                 for r in reqs:
                     tid = int(r["type_id"])
@@ -1434,8 +1606,8 @@ def cancel_plan(plan: dict) -> dict:
         cur = conn.execute(
             "UPDATE production_plans SET status='pending', started_at=NULL, material_short='', "
             "deducted_materials='', material_cost_snapshot='', assigned_blueprint_id=NULL "
-            "WHERE id=? AND status IN ('in_progress','running')",
-            (plan_id,),
+            f"WHERE id=? AND status IN ({_placeholders(PLAN_RUNNING_STATUSES)})",
+            (plan_id, *PLAN_RUNNING_STATUSES),
         )
         if cur.rowcount == 0:
             return {"ok": False, "message": "仅生产中计划可撤销", "returned": 0, "returned_list": []}
@@ -1460,6 +1632,8 @@ def reset_plan_for_reuse(plan_id: int) -> dict:
     以及**发明实际产出回填**（`actual_output_runs`）—— 不清它，「待下线」判定
     （`_is_pending_invention` 靠它是否为 NULL）会认为已回填过，复用的第二轮不再弹回填窗，
     产出/成本还会沿用上一轮的旧值。
+    `bp_attempt_short`（上一轮强制完成的流程缺口审计）也一并清空，否则复用后会被当成
+    「本轮缺口」展示。
     置回 pending 供再次启动。不触碰库存（成品已入库、材料不退回）。
     快照必须清掉：否则「复用后未重新启动就再次下线」会误用上一轮的启动成本。
 
@@ -1471,12 +1645,12 @@ def reset_plan_for_reuse(plan_id: int) -> dict:
         row = conn.execute("SELECT status FROM production_plans WHERE id=?", (plan_id,)).fetchone()
         if row is None:
             return {"ok": False, "message": "计划不存在"}
-        if row[0] not in ("completed", "done"):
+        if row[0] not in PLAN_TERMINAL_STATUSES:
             return {"ok": False, "message": "仅已完成计划可设为待生产"}
         conn.execute(
             "UPDATE production_plans SET status='pending', started_at=NULL, completed_at=NULL, "
             "deposited=0, material_short='', deducted_materials='', material_cost_snapshot='', "
-            "actual_output_runs=NULL, "
+            "actual_output_runs=NULL, bp_attempt_short=NULL, "
             "assigned_blueprint_id=NULL WHERE id=?",
             (plan_id,),
         )
@@ -1523,8 +1697,9 @@ def bind_blueprints(plan_id: int, blueprint_ids: list[int]) -> bool:
             cur = conn.execute(
                 "SELECT COUNT(*) FROM plan_blueprint_bindings b "
                 "JOIN production_plans pp ON pp.id=b.plan_id "
-                "WHERE b.blueprint_id=? AND b.plan_id<>? AND pp.status NOT IN ('completed','done')",
-                (bp_id, plan_id),
+                f"WHERE b.blueprint_id=? AND b.plan_id<>? "
+                f"AND pp.status NOT IN ({_placeholders(PLAN_TERMINAL_STATUSES)})",
+                (bp_id, plan_id, *PLAN_TERMINAL_STATUSES),
             )
             if cur.fetchone()[0] > 0:
                 return False
@@ -1575,8 +1750,9 @@ def bind_blueprints_many(bindings: list[tuple[int, list[int]]]) -> bool:
                 cur = conn.execute(
                     "SELECT COUNT(*) FROM plan_blueprint_bindings b "
                     "JOIN production_plans pp ON pp.id=b.plan_id "
-                    "WHERE b.blueprint_id=? AND b.plan_id<>? AND pp.status NOT IN ('completed','done')",
-                    (bp_id, plan_id),
+                    f"WHERE b.blueprint_id=? AND b.plan_id<>? "
+                    f"AND pp.status NOT IN ({_placeholders(PLAN_TERMINAL_STATUSES)})",
+                    (bp_id, plan_id, *PLAN_TERMINAL_STATUSES),
                 )
                 if cur.fetchone()[0] > 0:
                     bad = True
@@ -1601,8 +1777,11 @@ def bind_blueprints_many(bindings: list[tuple[int, list[int]]]) -> bool:
 
 
 def get_plan_binding_state(plan_id: int) -> dict:
-    """返回计划蓝图绑定状态：bound(已绑张数清单)、need(需要的产线条数=parallels)、runs(每条产线流程)。
+    """返回计划蓝图绑定状态：bound(已绑张数清单)、need(需覆盖的蓝图张数)、runs(每条产线流程)。
 
+    `need` 按活动算（`binding_line_need`）：制造/反应/发明 = 并行条数；
+    拷贝/研究 = 1（`parallels` 对拷贝是**产出份数**，不是产线数 —— 当成产线数会误报
+    「还差 N 张 BPO」并卡住启动，见 03-6）。
     供 UI（蓝图列差几张显示/选择弹窗）与启动校验共用；关联表缺失时回退旧单值列。
     """
     with _container().db.connect("user") as conn:
@@ -1611,6 +1790,7 @@ def get_plan_binding_state(plan_id: int) -> dict:
         ).fetchone()
         runs = max(int(prow[0]), 1) if prow else 1
         parallels = max(int(prow[1]), 1) if prow else 1
+        activity = _plan_activity(conn, plan_id)
         try:
             rows = conn.execute(
                 "SELECT blueprint_id FROM plan_blueprint_bindings WHERE plan_id=? "
@@ -1623,8 +1803,22 @@ def get_plan_binding_state(plan_id: int) -> dict:
             log.debug("旧库无关联表，回退单值列", exc_info=True)
             row = conn.execute("SELECT assigned_blueprint_id FROM production_plans WHERE id=?", (plan_id,)).fetchone()
             bound = [row[0]] if row and row[0] else []
-        capacity = sum(min(_binding_line_capacity(conn, bid), parallels) for bid in bound)
-    return {"bound": bound, "need": parallels, "runs": runs, "capacity": capacity}
+        need = binding_line_need(activity, parallels)
+        capacity = sum(min(_binding_line_capacity(conn, bid), need) for bid in bound)
+    return {"bound": bound, "need": need, "runs": runs, "capacity": capacity, "activity": activity}
+
+
+def binding_line_need(activity: str | None, parallels: int) -> int:
+    """绑定校验需要覆盖的**蓝图张数**（单一真源，启动/完成/重对齐/UI 共用）。
+
+    拷贝/研究的输入是「一个作业」：`parallels` 对它们是产出份数（拷贝）或恒 1（研究），
+    不是并行产线数 → 只要 1 张 BPO。制造/反应/发明按覆盖条数凑够 `parallels` 条线。
+    """
+    from services.plan_job_kinds import RULE_BPO_ONLY, input_blueprint_rule
+
+    if input_blueprint_rule(activity) == RULE_BPO_ONLY:
+        return 1
+    return max(int(parallels or 1), 1)
 
 
 def blueprint_line_capacity(quantity: int | None) -> int:
@@ -1710,12 +1904,16 @@ def _binding_hangar_mismatch(conn, bound_ids: list[int], mat_hangar_id: int | No
 
 
 def _binding_shortfall(
-    conn, bound_ids: list[int], parallels: int, runs: int, *, mat_hangar_id: int | None = None
+    conn, bound_ids: list[int], parallels: int, runs: int, *, mat_hangar_id: int | None = None, activity: str = ""
 ) -> str | None:
-    """校验绑定能否覆盖 parallels 条产线、且每条的流程数 ≥ runs；不足返回原因，满足 None。
+    """校验绑定能否覆盖所需蓝图张数、且每张流程数 ≥ runs；不足返回原因，满足 None。
 
     **覆盖条数按容量算，不按行数**：BPO 一条顶全部、BPC 行按份数顶（见
     `blueprint_line_capacity`）—— 这样「一张图纸合成一行、份数=3」也能供 3 条线。
+
+    `activity` 决定**需要几张**（`binding_line_need`）：制造/反应/发明按并行条数，
+    拷贝/研究只要 1 张（parallels 对拷贝是产出份数，不是产线数 —— 03-6）。
+    不传 activity 时按制造口径（旧行为，测试直接调本函数时保持兼容）。
 
     `mat_hangar_id` 传了才校验**蓝图所在机库**（见 `_binding_hangar_mismatch`）：
     启动/部分启动预览这条链传它；**完成**那条链不传 —— 货都造出来了，蓝图当时在哪
@@ -1724,11 +1922,14 @@ def _binding_shortfall(
     mismatch = _binding_hangar_mismatch(conn, bound_ids, mat_hangar_id)
     if mismatch:
         return mismatch
+    need = binding_line_need(activity, parallels)
     capacity = 0
     for bid in bound_ids:
-        capacity += min(_binding_line_capacity(conn, bid), parallels)
-    if capacity < parallels:
-        return f"绑定蓝图可覆盖 {capacity} 条产线，不足 {parallels} 条（还差 {parallels - capacity} 张）"
+        capacity += min(_binding_line_capacity(conn, bid), need)
+    if capacity < need:
+        return f"绑定蓝图可覆盖 {capacity} 条产线，不足 {need} 条（还差 {need - capacity} 张）"
+    # 每张的流程门槛对拷贝/研究无意义（BPO 流程视为无限，且作业只跑一遍）——
+    # 但 BPC 被误绑时仍要按 runs 拦（类型门在启动侧另有 _blueprint_kind_violation）。
     for i, bid in enumerate(bound_ids, 1):
         if _bp_per_copy_runs(conn, bid) < runs:
             return f"第 {i} 张绑定蓝图流程不足（每份需 ≥ {runs} 流程，当前产线每条要跑 {runs} 轮）"
@@ -1791,7 +1992,12 @@ def binding_shortfall(plan_id: int, *, mat_hangar_id: int | None = None) -> str 
         return None
     with _container().db.connect("user") as conn:
         return _binding_shortfall(
-            conn, state["bound"], int(state["need"]), int(state["runs"]), mat_hangar_id=mat_hangar_id
+            conn,
+            state["bound"],
+            int(state["need"]),
+            int(state["runs"]),
+            mat_hangar_id=mat_hangar_id,
+            activity=str(state.get("activity") or ""),
         )
 
 
@@ -1805,7 +2011,8 @@ def get_plan_blueprints(plan_id: int) -> list[int]:
             if rows:
                 return [r[0] for r in rows]
         except Exception:
-            pass  # 旧库无关联表
+            # 旧库无关联表（v6→v7 迁移前的历史库）→ 回退旧单值列，不是业务异常
+            log.debug("旧库无 plan_blueprint_bindings 表，回退单值列", exc_info=True)
         row = conn.execute("SELECT assigned_blueprint_id FROM production_plans WHERE id=?", (plan_id,)).fetchone()
         return [row[0]] if row and row[0] else []
 
@@ -1815,7 +2022,8 @@ def _clear_plan_bindings(conn, plan_id: int) -> None:
     try:
         conn.execute("DELETE FROM plan_blueprint_bindings WHERE plan_id=?", (plan_id,))
     except Exception:
-        pass
+        # 旧库无关联表（v6→v7 前的历史库）：没有可清的绑定行，不是业务异常
+        log.debug("旧库无 plan_blueprint_bindings 表，跳过清空 plan=%s", plan_id, exc_info=True)
 
 
 def release_blueprint(plan_id: int) -> bool:
@@ -1845,9 +2053,9 @@ def get_occupied_blueprint_ids(db=None, *, exclude_plan_id: int | None = None) -
             rows = conn.execute(
                 "SELECT DISTINCT b.blueprint_id FROM plan_blueprint_bindings b "
                 "JOIN production_plans pp ON pp.id=b.plan_id "
-                "WHERE pp.status NOT IN ('completed','done')"
+                f"WHERE pp.status NOT IN ({_placeholders(PLAN_TERMINAL_STATUSES)})"
                 + (" AND b.plan_id<>?" if exclude_plan_id is not None else ""),
-                (exclude_plan_id,) if exclude_plan_id is not None else (),
+                (*(PLAN_TERMINAL_STATUSES), *((exclude_plan_id,) if exclude_plan_id is not None else ())),
             ).fetchall()
             occupied = {r[0] for r in rows}
         except Exception:
@@ -1855,9 +2063,9 @@ def get_occupied_blueprint_ids(db=None, *, exclude_plan_id: int | None = None) -
         try:
             rows = conn.execute(
                 "SELECT DISTINCT assigned_blueprint_id FROM production_plans "
-                "WHERE assigned_blueprint_id IS NOT NULL AND status NOT IN ('completed','done')"
+                f"WHERE assigned_blueprint_id IS NOT NULL AND status NOT IN ({_placeholders(PLAN_TERMINAL_STATUSES)})"
                 + (" AND id<>?" if exclude_plan_id is not None else ""),
-                (exclude_plan_id,) if exclude_plan_id is not None else (),
+                (*(PLAN_TERMINAL_STATUSES), *((exclude_plan_id,) if exclude_plan_id is not None else ())),
             ).fetchall()
             occupied.update(r[0] for r in rows if r[0] is not None)
         except Exception:
@@ -1974,34 +2182,24 @@ def _container():
 def _occupied_ids(conn, *, exclude_plan_id: int | None = None) -> set[int]:
     """连接内查询占用蓝图 id 集合（兼容关联表与旧单值列）。"""
     occupied: set[int] = set()
+    excluded = (exclude_plan_id,) if exclude_plan_id is not None else ()
     try:
-        if exclude_plan_id is not None:
-            rows = conn.execute(
-                "SELECT DISTINCT b.blueprint_id FROM plan_blueprint_bindings b "
-                "JOIN production_plans pp ON pp.id=b.plan_id "
-                "WHERE pp.status NOT IN ('completed','done') AND b.plan_id<>?",
-                (exclude_plan_id,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT DISTINCT b.blueprint_id FROM plan_blueprint_bindings b "
-                "JOIN production_plans pp ON pp.id=b.plan_id "
-                "WHERE pp.status NOT IN ('completed','done')"
-            ).fetchall()
+        rows = conn.execute(
+            "SELECT DISTINCT b.blueprint_id FROM plan_blueprint_bindings b "
+            "JOIN production_plans pp ON pp.id=b.plan_id "
+            f"WHERE pp.status NOT IN ({_placeholders(PLAN_TERMINAL_STATUSES)})"
+            + (" AND b.plan_id<>?" if exclude_plan_id is not None else ""),
+            (*PLAN_TERMINAL_STATUSES, *excluded),
+        ).fetchall()
         occupied = {r[0] for r in rows}
     except Exception:
         log.debug("旧库无 plan_blueprint_bindings 表，回退单值列", exc_info=True)
-    if exclude_plan_id is not None:
-        rows = conn.execute(
-            "SELECT DISTINCT assigned_blueprint_id FROM production_plans "
-            "WHERE assigned_blueprint_id IS NOT NULL AND status NOT IN ('completed','done') AND id<>?",
-            (exclude_plan_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT DISTINCT assigned_blueprint_id FROM production_plans "
-            "WHERE assigned_blueprint_id IS NOT NULL AND status NOT IN ('completed','done')"
-        ).fetchall()
+    rows = conn.execute(
+        "SELECT DISTINCT assigned_blueprint_id FROM production_plans "
+        f"WHERE assigned_blueprint_id IS NOT NULL AND status NOT IN ({_placeholders(PLAN_TERMINAL_STATUSES)})"
+        + (" AND id<>?" if exclude_plan_id is not None else ""),
+        (*PLAN_TERMINAL_STATUSES, *excluded),
+    ).fetchall()
     occupied.update(r[0] for r in rows)
     return occupied
 
@@ -2126,7 +2324,7 @@ def resync_plan_bindings(plan_id: int) -> bool:
     现有绑定仍然合规且够用 → 一根不动（不打扰用户的手工选择，也避免来回抢图）；
     不够或多余 → 以「够用的现有绑定优先」重挑，补位沿用 `_auto_bind_blueprints` 的规则。
     """
-    from services.plan_job_kinds import RULE_BPO_ONLY, input_blueprint_rule
+    from services.plan_job_kinds import input_blueprint_rule
 
     if not plan_id or plan_id <= 0:
         return False
@@ -2144,7 +2342,8 @@ def resync_plan_bindings(plan_id: int) -> bool:
     rule = input_blueprint_rule(activity)
     # 拷贝/研究是单作业（拷贝的 parallels 是**产出份数**）→ 只要能覆盖 1 条线；
     # 其余按**覆盖条数**凑够 parallels（BPO 一条顶全部、BPC 行按份数顶）。
-    target_lines = 1 if rule == RULE_BPO_ONLY else parallels
+    # 与启动/完成侧共用 `binding_line_need`，避免两处口径漂移。
+    target_lines = binding_line_need(activity, parallels)
     current = get_plan_binding_state(plan_id)["bound"]
 
     # 计划 dict 一次建好，供取选项与补选共用（`id` 是拷贝行解析已绑 BPO 用的）

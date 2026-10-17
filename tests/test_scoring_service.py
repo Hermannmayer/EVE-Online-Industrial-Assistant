@@ -21,44 +21,41 @@ DEFAULT_CHAR = {"skills": DEFAULT_SKILLS}
 
 
 class TestBrokerCalculations:
-    """经纪人费率/改单折扣/销售税 独立计算"""
+    """经纪人费率/改单折扣/销售税 独立计算（2025-03/2019-07 现行口径）"""
 
     def test_calc_broker_rate_default(self, temp_db):
-        """默认声望(5.0/5.0) + 经纪人关系学 0级 → 0.5%"""
+        """无声望、无技能 → NPC 站基准 3%"""
         cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         rate = svc._calc_broker_rate({}, {})
-        # standing_factor = 2^(0.14*5 + 0.06*5) = 2^1 = 2
-        # rate = (1.0 - 0.05*0) / 2 = 0.5
-        assert rate == 0.5
+        # 3% - 0.3%×0 - 0.03%×0 - 0.02%×0 = 3.0
+        assert rate == 3.0
 
     def test_calc_broker_rate_custom(self, temp_db):
-        """高声望 + 满技能 → 费率明显低于默认（< 0.35%）"""
+        """高声望 + 满技能 → 3% − 0.3%×5 − 0.03%×9 − 0.02%×8 = 1.07%"""
         cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
         skills = {"经纪人关系学": 5}
         market_data = {"faction_standing": 9.0, "corp_standing": 8.0}
         rate = svc._calc_broker_rate(skills, market_data)
-        # standing_factor = 2^(0.14*9 + 0.06*8) ≈ 3.34
-        # rate = (1.0 - 0.05*5) / 3.34 = 0.75 / 3.34 ≈ 0.225
-        assert 0.1 <= rate < 0.35
+        assert rate == pytest.approx(1.07)
 
     def test_calc_relist_discount(self, temp_db):
-        """改单折扣 = min(50 + 高级经纪人关系学*5, 100)"""
+        """改单折扣 = min(50 + 高级经纪人关系学×6, 100)；V 级 = 80"""
         cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
-        assert svc._calc_relist_discount({"高级经纪人关系学": 5}) == 75.0
+        assert svc._calc_relist_discount({"高级经纪人关系学": 5}) == 80.0
         assert svc._calc_relist_discount({"高级经纪人关系学": 0}) == 50.0
         assert svc._calc_relist_discount({"高级经纪人关系学": 10}) == 100.0
         assert svc._calc_relist_discount({}) == 50.0
 
     def test_calc_sales_tax_rate(self, temp_db):
-        """销售税 = 2% * (1 - 0.03 * 会计学)"""
+        """销售税 = 7.5% × (1 - 0.11 × 会计学)"""
         cache = TtlLRUCache(max_size=10)
         svc = ScoringService(temp_db, cache)
-        assert svc._calc_sales_tax_rate({"会计学": 5}) == 1.7
-        assert svc._calc_sales_tax_rate({"会计学": 0}) == 2.0
-        assert svc._calc_sales_tax_rate({}) == 2.0
+        assert svc._calc_sales_tax_rate({"会计学": 5}) == pytest.approx(3.375)
+        assert svc._calc_sales_tax_rate({"会计学": 0}) == 7.5
+        assert svc._calc_sales_tax_rate({}) == 7.5
 
 
 class TestManufacturingEdgeCases:
@@ -78,10 +75,10 @@ class TestManufacturingEdgeCases:
         assert result["status"] == ""
         assert result["score"] > 0
         assert result["profit_per_run"] > 0
-        # 技能全部为 0 → broker_rate=0.5（经纪人关系学=0, 默认声望5/5）
-        assert result["breakdown"]["broker_rate"] == 0.5
-        # 会计学=0 → sales_tax_rate=2.0
-        assert result["breakdown"]["sales_tax_rate"] == 2.0
+        # 技能全部为 0、无声望 → 现行 NPC 站基准 broker_rate=3.0
+        assert result["breakdown"]["broker_rate"] == 3.0
+        # 会计学=0 → sales_tax_rate=7.5
+        assert result["breakdown"]["sales_tax_rate"] == 7.5
         # 高级经纪人关系学=0 → relist_discount=50
         assert result["breakdown"]["relist_discount"] == 50.0
 
@@ -767,37 +764,57 @@ class TestTradeScoreBasic:
         assert result["score"] == 0.0
 
 
-def test_trade_score_relist_fee_is_delta_based():
-    """卖出改单 broker 只按买/卖价差额计（原为全额，高估费用）"""
-    import services.scoring_service as ss
+def test_relist_fee_is_two_part_official_formula():
+    """改单费 = 涨价差额×全额费率 + 新总价×费率×(1−改单折扣)（官方两段式）。
 
-    class FakeSvc(ss.ScoringService):
-        def __init__(self):
-            super().__init__(db=None, cache=None)  # type: ignore[arg-type]
+    旧实现只对差额乘折扣、且漏掉「新总价」那一段 → 卖出成本系统性少算。
+    """
+    from core.eve_formulas import calc_relist_fee
 
-        def _calc_broker_rate(self, skills, market_data):
-            return 0.5  # 0.5%
+    # 1 亿售价、涨 1000 万；费率 2.75%、改单折扣 80%（高级经纪人关系学 V）
+    fee = calc_relist_fee(new_total=1e8, price_increase=1e7, broker_rate_pct=2.75, relist_discount_pct=80)
+    assert fee == pytest.approx(1e7 * 0.0275 + 1e8 * 0.0275 * 0.2)  # 275,000 + 550,000
 
-        def _calc_relist_discount(self, skills):
-            return 50.0  # 50% 折扣
+    # 降价（差额 ≤ 0）只收第二段
+    assert calc_relist_fee(1e8, -5e6, 2.75, 80) == pytest.approx(1e8 * 0.0275 * 0.2)
+    # 无折扣时第二段按全额收
+    assert calc_relist_fee(1000.0, 0.0, 3.0, 0) == pytest.approx(30.0)
 
-        def _calc_sales_tax_rate(self, skills):
-            return 2.0  # 2%
 
-    FakeSvc()  # 实例化验证构造路径
-    # 直接调用私有计算路径验证 fee 构成：买 100 卖 200，qty 1
-    # 期望：sell_fee = 初始挂单 0.5% + 改单差额 (100/200)*0.5%*50% + 税 2%
-    buy_price, sell_price = 100.0, 200.0
-    broker_rate, relist_discount, sales_tax_rate = 0.5, 50.0, 2.0
+def test_trade_score_sell_side_uses_two_part_relist():
+    """卖出侧改单费 = 差额全额段 + 新总价折扣段（官方两段式），不再只对差额打折。"""
+    from domain.scoring import calc_trade_score
 
-    sell_fee_total = (
-        broker_rate + (sell_price - buy_price) / sell_price * broker_rate * (1 - relist_discount / 100) + sales_tax_rate
+    class _Prices:
+        def get_price(self, type_id, price_type, hub=None):
+            return None
+
+        def get_volume(self, type_id, vol_type="total", hub=None):
+            return 1_000_000
+
+        def get_system_cost_index(self, system_id, activity="manufacturing", hub="Jita"):
+            return 0.0
+
+        def get_adjusted_price(self, type_id):
+            return None
+
+    result = calc_trade_score(
+        type_id=1,
+        buy_price=100.0,
+        sell_price=200.0,
+        volume_m3=1.0,
+        prices=_Prices(),
+        char_config={"skills": {}, "market": {"jita": {"faction_standing": 0.0, "corp_standing": 0.0}}},
+        buy_hub="Jita",
+        sell_hub="Jita",
+        quantity=1,
     )
-    expected_sell_fee = 0.5 + (100.0 / 200.0) * 0.5 * 0.5 + 2.0  # = 0.5 + 0.125 + 2.0 = 2.625
-
-    assert sell_fee_total == pytest.approx(expected_sell_fee, abs=1e-9)
-    # 旧公式（全额）是 0.5*0.5 + 0.5 + 2 = 2.75 → 差额计费应更小
-    assert sell_fee_total < 2.75
+    # broker 3%（技能 0/无声望）、改单折扣 50%、销售税 7.5%
+    # 买：初始 3% + 同价改单 3%×0.5 = 4.5% → 100×1.045
+    assert result["buy_cost"] == pytest.approx(104.5)
+    # 卖：初始 3% + 差额 (100/200)×3% + 新总价 3%×0.5 + 税 7.5% = 13.5% → 200×0.865
+    # 旧实现（差额乘折扣）只有 3% + 0.75% + 7.5% = 11.25% → 177.5（高估收入 4.5）
+    assert result["sell_revenue"] == pytest.approx(173.0)
 
 
 # ════════════════════════════════════════════════════════════════

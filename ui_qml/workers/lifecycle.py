@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["DEFAULT_WAIT_MS", "detach_worker", "drop_worker"]
+__all__ = ["DEFAULT_WAIT_MS", "detach_worker", "drop_worker", "wait_detached"]
 
 #: 默认等待时长（ms）。会响应中断的 worker 正常远小于它。
 DEFAULT_WAIT_MS = 2000
@@ -68,3 +68,24 @@ def detach_worker(worker: Any) -> None:
     if worker.wait(BLOCKING_WAIT_MS):
         return
     _detach(worker)
+
+
+def wait_detached(timeout_ms: int = 15_000) -> int:
+    """等所有被摘出的线程结束（工具脚本退场前用）。
+
+    业务代码不需要它；`scripts/shell_snapshot.py` 这类「拍完立刻退出」的工具在
+    `win.close()` 后调用，避免仍在跑的 QThread 在解释器收尾时被析构 → Qt abort()
+    （表现为截图成功但退出码 -1073740791）。
+
+    Args:
+        timeout_ms: 最长等待时长；到点仍不结束就放弃（不阻塞进程退出）。
+
+    Returns:
+        超时后仍在运行的线程数（0 表示已全部收干净）。
+    """
+    import time
+
+    deadline = time.monotonic() + timeout_ms / 1000
+    while _DETACHED and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return len(_DETACHED)

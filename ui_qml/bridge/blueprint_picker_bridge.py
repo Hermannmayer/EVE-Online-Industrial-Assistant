@@ -115,7 +115,6 @@ class BlueprintPickerBridge(DialogBridge):
     statusToken = Property(str, lambda self: self._status_token, notify=statusChanged)
     emptyHint = Property(str, lambda self: self._empty_hint, notify=contentChanged)
     hasOptions = Property(bool, lambda self: bool(self._options), notify=contentChanged)
-    canNpcSeller = Property(bool, lambda self: self._blueprint_type_id is not None, notify=contentChanged)
     #: 当前勾选集合（点「完成」前的暂存值；调用方在 `exec()` 返回真之后读它 = 已落库那份）
     selectedBlueprintIds = Property(list, lambda self: list(self._selected_ids), notify=statusChanged)
     needCount = Property(int, lambda self: self._need, notify=contentChanged)
@@ -191,10 +190,7 @@ class BlueprintPickerBridge(DialogBridge):
         options = list(data.get("options") or [])
         self._options = options
         if not options:
-            self._empty_hint = (
-                f"库存里没有「{self._bp_name}」{self._empty_kind_label}。"
-                "可在蓝图管理里从游戏粘贴导入，或用「查看NPC卖家」购买原图。"
-            )
+            self._empty_hint = f"库存里没有「{self._bp_name}」{self._empty_kind_label}。可在蓝图管理里从游戏粘贴导入。"
             self._loading = False
             self._rebuild()
             return
@@ -353,22 +349,6 @@ class BlueprintPickerBridge(DialogBridge):
         self.statusChanged.emit()
 
     # ── 按钮 ──────────────────────────────────────────────────
-
-    @Slot()
-    def npcSeller(self) -> None:
-        """查看NPC卖家 —— 卖家窗的标题用**要绑的那张蓝图**的名字。
-
-        以前拿 `plan["product_name"]`：科研行那是**产物**的名字（发明 = 产出的 T2 蓝图），
-        跟 NPC 卖的输入 T1 原图对不上，标题会指错图。
-        """
-        if self._blueprint_type_id is None:
-            return
-
-        from ui_qml.bridge.npc_seller_bridge import NpcSellerQmlDialog
-
-        name = self._bp_name or self._plan.get("product_name") or str(self._blueprint_type_id)
-        parent = self.host_widget()
-        NpcSellerQmlDialog(self._blueprint_type_id, name, parent).show()
 
     @Slot()
     def accept(self) -> None:

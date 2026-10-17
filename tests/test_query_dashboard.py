@@ -885,7 +885,7 @@ def test_read_orders_falls_back_to_location_id_and_name_backfill(h, tmp_path, mo
 
     h.orders.path = _write_export(tmp_path)
     h.orders.rows = [_order(21, location_name="", location_id=60003760, type_name="")]
-    monkeypatch.setattr("services.npc_seller.resolve_stations_by_ids", _no_station)
+    monkeypatch.setattr("services.name_resolver.resolve_stations_by_ids", _no_station)
     bridge = h.bridge()
     bridge.readOrders()
     cells = [cell["text"] for cell in bridge.buyOrderRows[0]["cells"]]
@@ -893,7 +893,7 @@ def test_read_orders_falls_back_to_location_id_and_name_backfill(h, tmp_path, mo
     assert cells[4] == "#60003760"  # 补不到空间站名 → #location_id
 
     # 补得到时用真名（补名发生在解析器之外）
-    monkeypatch.setattr("services.npc_seller.resolve_stations_by_ids", _one_station)
+    monkeypatch.setattr("services.name_resolver.resolve_stations_by_ids", _one_station)
     h.orders.rows = [_order(22, location_name="", location_id=60003760)]
     bridge.readOrders()
     assert [cell["text"] for cell in bridge.buyOrderRows[0]["cells"]][4] == "Jita IV-4"

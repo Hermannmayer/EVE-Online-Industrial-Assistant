@@ -293,7 +293,6 @@ _LOADS_CASES: list[tuple[str, Any]] = [
     ("子项大规模产线并行", "mass_parallel_factory"),
     ("绑定库存蓝图", "blueprint_picker_factory"),
     ("查看核算", "cost_breakdown_factory"),
-    ("蓝图 NPC 卖家", "npc_seller_factory"),
     ("星系搜索", "system_search_factory"),
     ("取值对话框(文本)", _case_input_text),
     ("取值对话框(整数)", _case_input_int),
@@ -1352,11 +1351,8 @@ def test_picker_empty_hint_names_the_missing_blueprint(blueprint_picker_factory)
     )
     try:
         bridge = dialog.bridge
-        assert bridge.emptyHint == (
-            "库存里没有「寒鸦级 T1 蓝图」（BPC 拷贝）。可在蓝图管理里从游戏粘贴导入，或用「查看NPC卖家」购买原图。"
-        )
+        assert bridge.emptyHint == ("库存里没有「寒鸦级 T1 蓝图」（BPC 拷贝）。可在蓝图管理里从游戏粘贴导入。")
         assert bridge.hasOptions is False
-        assert bridge.canNpcSeller is True, "解析出蓝图类型 ≠ 有库存：NPC 卖家按钮照给"
     finally:
         dialog.deleteLater()
 
@@ -1383,11 +1379,9 @@ def test_picker_empty_hint_explains_non_blueprint_and_unresolved(blueprint_picke
         assert relic.bridge.emptyHint == (
             "该作业的输入是「完整的小型船体舱段」，不是蓝图（T3 发明的输入是古遗物），无法在蓝图库里绑定"
         )
-        assert relic.bridge.canNpcSeller is True, "遗物有类型（34412），按钮不该消失"
         assert unresolved.bridge.emptyHint == (
             "解析不出该计划要绑的输入蓝图（活动：copying）—— 蓝图库里没有对应的配方行"
         )
-        assert unresolved.bridge.canNpcSeller is False, "解析不出类型就不能给 NPC 卖家按钮"
     finally:
         relic.deleteLater()
         unresolved.deleteLater()
@@ -1518,33 +1512,8 @@ def test_cost_breakdown_science_activity_fields(cost_breakdown_factory):
 
 # ══════════════════════════════════════════════════════════════
 # 阶段 4 收尾：从已 QML 化页面里弹出来的残留对话框
-# （蓝图 NPC 卖家 / 星系搜索）
+# （星系搜索）
 # ══════════════════════════════════════════════════════════════
-
-
-class _FakeNpcWorker(QObject):
-    """ESI 拉单线程的同步替身。"""
-
-    result = Signal(list, str)
-
-    def __init__(self, region_id: int, blueprint_type_id: int, parent=None) -> None:
-        super().__init__(parent)
-        self.region_id = region_id
-        self.blueprint_type_id = blueprint_type_id
-
-    def start(self) -> None:
-        self.result.emit([], "")
-
-    def isRunning(self) -> bool:
-        return False
-
-
-@pytest.fixture
-def npc_seller_factory(qapp, monkeypatch):
-    monkeypatch.setattr("ui_qml.bridge.npc_seller_bridge.NpcOrderWorker", _FakeNpcWorker)
-    from ui_qml.bridge.npc_seller_bridge import NpcSellerQmlDialog
-
-    return lambda name="渡鸦级蓝图": NpcSellerQmlDialog(1160, name)
 
 
 @pytest.fixture
@@ -1557,38 +1526,6 @@ def system_search_factory(qapp, monkeypatch):
     from ui_qml.bridge.system_search_bridge import SystemSearchQmlDialog
 
     return lambda: SystemSearchQmlDialog(None, "设置设施星系")
-
-
-def test_npc_seller_result_states(npc_seller_factory):
-    """三种返回：有单 / 无单（给解释性提示，不是错误）/ 真错误。"""
-    dialog = npc_seller_factory()
-    try:
-        bridge = dialog.bridge
-        assert bridge.rowCount == 0
-        assert "没有 NPC 直售单" in bridge.statusText
-
-        bridge._on_result([{"corp": "核心统合部", "location": "吉他 IV（吉他）", "price": 1234.5, "volume": 7}], "")
-        assert bridge.statusText == "共 1 条 NPC 直售单"
-        cells = bridge.rows[0]["cells"]
-        assert [c["text"] for c in cells] == ["核心统合部", "吉他 IV（吉他）", "1,234.50", "7"]
-
-        bridge._on_result([], "拉取失败：超时")
-        assert bridge.statusText == "拉取失败：超时"
-        assert bridge.rowCount == 0
-    finally:
-        dialog.deleteLater()
-
-
-def test_npc_seller_hub_switch_refetches(npc_seller_factory):
-    dialog = npc_seller_factory()
-    try:
-        bridge = dialog.bridge
-        assert [h["label"] for h in bridge.hubs][0] == "吉他 (Jita)"
-        bridge.setHub(2)
-        assert bridge.hubIndex == 2
-        assert bridge.loading is False, "同步替身已在 start() 里回结果"
-    finally:
-        dialog.deleteLater()
 
 
 def test_system_search_returns_the_picked_system(system_search_factory):
@@ -1658,6 +1595,8 @@ class _SlowWorker(QObject):
     def isRunning(self) -> bool:
         return True
 
+    def cancel(self) -> None: ...
+
     def requestInterruption(self) -> None:
         self.interrupted = True
 
@@ -1666,21 +1605,22 @@ class _SlowWorker(QObject):
         return True
 
 
-def test_closing_a_dialog_finishes_its_worker(qapp, monkeypatch):
+def test_closing_a_dialog_finishes_its_worker(qapp):
     """关窗必须让在跑的后台线程收尾。
 
     不收尾的话，线程是桥的子对象、桥随对话框一起销毁 —— `QThread` 在运行时被析构
     Qt 直接 `abort()`，整个进程静默死掉（实测退出码 127、一行日志都没有）。
 
     挂在本例上而不是某个具体对话框上：守的是 `ui_qml.dialog_host._stop_bridge`
-    → 桥的 `stop()` 这条接线（原先是拿「合同详情」当靶子，那个二级窗口已按用户要求删除）。
+    → 桥的 `stop()` 这条接线。靶子用 `CompareQmlDialog`（NPC 卖家对话框已随 02-02
+    外部契约失效整链删除；合同详情二级窗更早已按用户要求删除）。
     """
-    monkeypatch.setattr("ui_qml.bridge.npc_seller_bridge.NpcOrderWorker", _SlowWorker)
-    from ui_qml.bridge.npc_seller_bridge import NpcSellerQmlDialog
+    from ui_qml.bridge.compare_bridge import CompareQmlDialog
 
-    dialog = NpcSellerQmlDialog(1160, "渡鸦级蓝图")
+    dialog = CompareQmlDialog(None)
     try:
-        worker = dialog.bridge._worker
+        worker = _SlowWorker()
+        dialog._compare_bridge._worker = worker
         assert worker.isRunning(), "替身应当一直说自己在跑"
 
         dialog.done(0)  # 确定 / 取消 / Esc 都走这里

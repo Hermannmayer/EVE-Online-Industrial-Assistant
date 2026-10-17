@@ -158,7 +158,7 @@ def price_map_for(type_ids: Iterable[int], region_id: int, price_type: str = "se
 def _station_lookup(location_ids: Iterable[int]) -> dict[int, dict]:
     """location_id → 站名 / 星系名 / 安全等级。
 
-    没复用 `npc_seller.resolve_stations`：它返回 `(站名, 星系名)` 的二元组，而这里还
+    没复用 `name_resolver.resolve_stations`：它返回 `(站名, 星系名)` 的二元组，而这里还
     需要安全等级，改它的返回形状会连累 `resolve_stations_by_ids` 的四处调用方与其测试。
     玩家建筑（id ≥ 1e12）不在 `station` 表里 —— 查不到即「未知」，这是如实反映。
     """

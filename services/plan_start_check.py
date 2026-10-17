@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from core.constants import PLAN_RUNNING_STATUSES, PLAN_STATUS_PENDING, PLAN_UNFINISHED_STATUSES
+
 # 非待生产状态 → (类别码, 原因文案)。码供 UI 选短标签，文案供 tooltip，
 # 同一处定义保证两者永不漂移。
 _STATUS_BLOCK = {
@@ -16,9 +18,6 @@ _STATUS_BLOCK = {
     "completed": ("status_done", "已完成"),
     "done": ("status_done", "已完成"),
 }
-
-_ACTIVE_STATUSES = ("in_progress", "running")
-_UNFINISHED_STATUSES = ("pending", "in_progress", "running")
 
 
 def _plan_group_id(plan: dict) -> int:
@@ -40,7 +39,7 @@ def children_running(plan: dict, all_plans: list[dict]) -> bool:
         return False
     gid = _plan_group_id(plan)
     return any(
-        _plan_group_id(p) == gid and _plan_level(p) > 0 and (p.get("status") or "").lower() in _ACTIVE_STATUSES
+        _plan_group_id(p) == gid and _plan_level(p) > 0 and (p.get("status") or "").lower() in PLAN_RUNNING_STATUSES
         for p in all_plans
     )
 
@@ -53,7 +52,9 @@ def pending_children_count(plan: dict, all_plans: list[dict]) -> int:
     return sum(
         1
         for p in all_plans
-        if _plan_group_id(p) == gid and _plan_level(p) > 0 and (p.get("status") or "").lower() in _UNFINISHED_STATUSES
+        if _plan_group_id(p) == gid
+        and _plan_level(p) > 0
+        and (p.get("status") or "").lower() in PLAN_UNFINISHED_STATUSES
     )
 
 
@@ -80,7 +81,7 @@ def plan_start_block(
     入参含义同 `plan_start_block_reason` 的 docstring。
     """
     status = (plan.get("status") or "").lower()
-    if status != "pending":
+    if status != PLAN_STATUS_PENDING:
         return _STATUS_BLOCK.get(status, ("status_other", f"状态「{status}」不可启动"))
     if not mat_hangar_id:
         return "no_mat_hangar", "材料机库未设置"

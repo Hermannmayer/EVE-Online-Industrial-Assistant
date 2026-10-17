@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+from core.constants import PLAN_ACTIVE_STATUSES, PLAN_RUNNING_STATUSES
 from core.container import get_container
 from services.char_config_resolver import get_character_list, load_all_data, resolve_char_config
 from services.terminology import term
@@ -26,10 +27,10 @@ CAPACITY_LINE_REACTION = "reaction"
 LINE_TYPES: tuple[str, ...] = (CAPACITY_LINE_MANUFACTURING, CAPACITY_LINE_RESEARCH, CAPACITY_LINE_REACTION)
 
 #: 「正在生产」—— 产线小助手 / 查询页仪表盘的口径：只有真在跑的计划占线
-RUNNING_STATUSES: tuple[str, ...] = ("in_progress", "running")
+RUNNING_STATUSES: tuple[str, ...] = PLAN_RUNNING_STATUSES
 #: 「已规划」—— 工业页「人物占用情况」的口径：还在排产（待生产）的计划也先把线占上，
 #: 外加待下线的（成品没下线之前那条线也腾不出来）。「已完成 / 已下线」不占。
-PLANNED_STATUSES: tuple[str, ...] = ("pending", "in_progress", "running", "ready")
+PLANNED_STATUSES: tuple[str, ...] = PLAN_ACTIVE_STATUSES
 
 _LINE_LABELS = {
     CAPACITY_LINE_MANUFACTURING: "制造",
@@ -155,19 +156,17 @@ def max_production_lines(char_name: str | None) -> int:
 
 def active_production_lines(char_name: str | None) -> int:
     """人物当前占用产线条数 = SUM(parallels)（仅 in_progress/running）。"""
+    status_ph = ",".join("?" for _ in RUNNING_STATUSES)
     if char_name:
-        sql = (
-            "SELECT COALESCE(SUM(parallels),0) FROM production_plans "
-            "WHERE char_name = ? AND status IN ('in_progress','running')"
-        )
-        params: tuple = (char_name,)
+        sql = f"SELECT COALESCE(SUM(parallels),0) FROM production_plans WHERE char_name = ? AND status IN ({status_ph})"
+        params: tuple = (char_name, *RUNNING_STATUSES)
     else:
         sql = (
             "SELECT COALESCE(SUM(parallels),0) FROM production_plans "
             "WHERE (char_name IS NULL OR char_name='') "
-            "AND status IN ('in_progress','running')"
+            f"AND status IN ({status_ph})"
         )
-        params = ()
+        params = RUNNING_STATUSES
     with get_container().db.connect("user") as conn:
         row = conn.execute(sql, params).fetchone()
         return int(row[0] if row else 0)
@@ -176,11 +175,13 @@ def active_production_lines(char_name: str | None) -> int:
 def active_lines_per_character() -> dict[str, int]:
     """全人物占用 {char_name: active}（未分配归空串）。"""
     result: dict[str, int] = {}
+    status_ph = ",".join("?" for _ in RUNNING_STATUSES)
     with get_container().db.connect("user") as conn:
         rows = conn.execute(
             "SELECT COALESCE(char_name,''), COALESCE(SUM(parallels),0) "
-            "FROM production_plans WHERE status IN ('in_progress','running') "
-            "GROUP BY char_name"
+            f"FROM production_plans WHERE status IN ({status_ph}) "
+            "GROUP BY char_name",
+            RUNNING_STATUSES,
         ).fetchall()
     for name, active in rows:
         result[name] = int(active)

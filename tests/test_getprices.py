@@ -80,7 +80,7 @@ class TestInitDb:
 
     @pytest.mark.asyncio
     async def test_creates_tables_and_migrates(self):
-        """验证 CREATE IF NOT EXISTS + ALTER 兜底迁移，commit 被调用，不再 DROP"""
+        """验证 CREATE IF NOT EXISTS（market_prices / 成交量快照 / price_history）+ etag 列兜底，commit 被调用，不再 DROP"""
         db = MagicMock()
         db.execute = AsyncMock()
         db.commit = AsyncMock()
@@ -91,16 +91,15 @@ class TestInitDb:
         with patch("services.importers.getprices.aiosqlite.connect", return_value=cm):
             await init_db()
 
-        # CREATE market_prices + CREATE volume_snapshots = 2 次（不再有 ALTER 兜底）
-        assert db.execute.await_count == 2
+        # 3 张表 CREATE + 1 次 etag 列 ALTER（02-07 条件请求；market.db 可重建缓存，
+        # 按克制条款第 3 条就地补列）
         sqls = [c[0][0] for c in db.execute.await_args_list]
+        assert len(sqls) == 4, sqls
 
         assert any("CREATE TABLE IF NOT EXISTS market_prices" in s for s in sqls)
-        assert not any("ALTER TABLE" in s for s in sqls), "列缺失应交由 schema_migrations，不在导入器里 DDL"
+        assert any("CREATE TABLE IF NOT EXISTS price_history" in s for s in sqls)
         assert any("CREATE TABLE IF NOT EXISTS market_volume_snapshots" in s for s in sqls)
-        # 验证 volume_snapshots 表有复合主键
-        assert any("PRIMARY KEY (type_id, region_id, date)" in s for s in sqls)
-        # 不再 DROP TABLE（保留已有价格数据）
+        assert any("ALTER TABLE price_history ADD COLUMN etag" in s for s in sqls)
         assert not any(s.strip().upper().startswith("DROP") for s in sqls)
 
         db.commit.assert_awaited_once()
@@ -116,13 +115,16 @@ class TestFetchBaselinePrices:
 
     @pytest.mark.asyncio
     async def test_maps_average_and_adjusted_prices(self):
-        """验证 average_price→buy_price, adjusted_price→sell_price 映射
+        """回归（02-04）：adjusted_price 只进 adjusted 列；sell_price 绝不因 adjusted=0 写成 0
 
-        覆盖场景：正常值、None、缺失字段
+        旧实现把 adjusted_price 直接当 sell_price，于是 PLEX 等 7,589/16,055 个
+        `adjusted_price=0` 的品种卖价被写成 0 → 读端误判「无价」。新口径：
+        adjusted>0 暂作兜底卖价；adjusted=0 退回 average_price。
         """
         fake_json = [
             {"type_id": 1001, "average_price": 4.5, "adjusted_price": 5.0},
             {"type_id": 1002, "average_price": None, "adjusted_price": 9.5},
+            {"type_id": 1003, "average_price": 4735089.99, "adjusted_price": 0.0},  # PLEX 同形
         ]
 
         client = _mock_client()
@@ -133,7 +135,7 @@ class TestFetchBaselinePrices:
             mock_api.return_value.__aexit__ = AsyncMock(return_value=False)
             result = await fetch_baseline_prices()
 
-        assert len(result) == 2
+        assert len(result) == 3
         assert result[1001] == {
             "buy_price": 4.5,
             "sell_price": 5.0,
@@ -148,6 +150,9 @@ class TestFetchBaselinePrices:
             "buy_volume": 0,
             "sell_volume": 0,
         }
+        # adjusted=0 → sell 退回 average，不是 0（回归 02-04 的 PLEX 场景）
+        assert result[1003]["sell_price"] == pytest.approx(4735089.99)
+        assert result[1003]["adjusted_price"] == 0.0
 
         # 验证请求发送至正确 URL
         client.fetch_raw.assert_awaited_once()
@@ -458,3 +463,66 @@ class TestFetchBaselineOnly:
             await fetch_baseline_only()
 
         mock_save.assert_not_awaited()
+
+
+# ════════════════════════════════════════════════════════════
+#  02-04 / 02-06：PLEX 全域盘口 + 成交量快照只接完整区域
+# ════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_plex_global_book_uses_depth_price():
+    """02-04：PLEX 卖价取全域 region 19000001 真实盘口（深度价），不是 adjusted/0。"""
+    from services.importers import getprices
+
+    page1 = [
+        {"type_id": 44992, "is_buy_order": False, "price": 5_090_000.0, "volume_remain": 530},
+        {"type_id": 44992, "is_buy_order": True, "price": 4_900_000.0, "volume_remain": 100},
+    ]
+    page2 = [{"type_id": 44992, "is_buy_order": False, "price": 5_100_000.0, "volume_remain": 10}]
+    client = _mock_client()
+    client.get_headers = AsyncMock(return_value={"X-Pages": "2"})
+    client.fetch_raw = AsyncMock(side_effect=lambda url: page2 if "page=2" in url else page1)
+
+    with patch("services.importers.getprices.APIClient") as mock_api:
+        mock_api.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_api.return_value.__aexit__ = AsyncMock(return_value=False)
+        book = await getprices.fetch_plex_global_book()
+
+    assert book[getprices.PLEX_TYPE_ID]["sell_price"] > 0, "卖价必须来自真实卖盘"
+    assert book[getprices.PLEX_TYPE_ID]["sell_volume"] == 540
+    assert book[getprices.PLEX_TYPE_ID]["buy_volume"] == 100
+    # 页数从 X-Pages 读，第 2 页必须被拉取（旧实现只取第 1 页）
+    assert any("page=2" in c.args[0] for c in client.fetch_raw.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_fetch_orders_detailed_forwards_targets():
+    """02-04 前置：自定义 region（PLEX 全域）必须把 targets 传给 discover_pages，否则页数全空。"""
+    from services.importers import getprices
+
+    targets = [("GPMR-01", getprices.PLEX_REGION_ID)]
+    client = MagicMock()
+    client.fetch_raw = AsyncMock(return_value=[])
+    with (
+        patch("services.importers.getprices.APIClient") as mock_api,
+        patch("services.importers.getprices.discover_pages", AsyncMock(return_value={})) as discover,
+        patch("services.importers.getprices._fetch_order_pages_detailed", AsyncMock(return_value=([], True))),
+    ):
+        mock_api.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_api.return_value.__aexit__ = AsyncMock(return_value=False)
+        await getprices.fetch_orders_detailed(targets)
+
+    assert discover.await_args.args[1] == targets
+
+
+def test_snapshot_only_takes_complete_regions():
+    """02-06：成交量快照只写「买卖全部页都成功」的区域，残缺区域不能覆盖当日快照。"""
+    from services.importers import getprices
+
+    order_prices = {10000002: {"a": {}}, 10000043: {"b": {}}}
+    full = getprices._complete_regions_only(order_prices, {10000002, 10000043})
+    assert full == order_prices
+    partial = getprices._complete_regions_only(order_prices, {10000002})
+    assert list(partial) == [10000002], "失败/不完整区域必须被剔除"
+    assert getprices._complete_regions_only(order_prices, None) == order_prices

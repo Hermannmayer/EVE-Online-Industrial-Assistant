@@ -1102,6 +1102,47 @@ def test_user_v20_to_v21_skips_without_reference_db(tmp_user_db, tmp_path, monke
     assert "跳过" in sm._migrate_user_v20_to_v21(str(tmp_user_db))
 
 
+def test_user_v22_to_v23_adds_bp_attempt_short(tmp_user_db):
+    """v22→v23：production_plans 新增 ``bp_attempt_short``（发明强制完成的尝试流程缺口审计列）。
+
+    03-3：启动按「声明尝试数 = runs×parallels」扣料，完成就必须消耗同样多的输入流程。
+    强制放行时缺口写本列留痕，否则每次强制完成都是「静默少扣」。存量行必须 NULL
+    （「未发生缺口」），不能用 0 —— 0 会被读成「缺口为 0」。
+    """
+    conn = sqlite3.connect(str(tmp_user_db))
+    conn.executescript(
+        """
+        CREATE TABLE production_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            status TEXT DEFAULT 'pending'
+        );
+        INSERT INTO production_plans (status) VALUES ('pending');
+        """
+    )
+    conn.execute("PRAGMA user_version = 22")
+    conn.commit()
+    conn.close()
+
+    result = sm.ensure_schema("user")
+
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
+    assert any("bp_attempt_short" in s for s in result["applied"]), result["applied"]
+    conn = sqlite3.connect(str(tmp_user_db))
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
+        old_value = conn.execute("SELECT bp_attempt_short FROM production_plans").fetchone()[0]
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
+    assert "bp_attempt_short" in cols
+    assert old_value is None, "存量行必须留 NULL（未发生缺口）"
+    assert version == sm.DB_SCHEMA_VERSIONS["user"]
+
+    # 幂等：重复运行不再产生迁移
+    assert sm.ensure_schema("user")["applied"] == []
+    assert "新增 0 列" in sm._migrate_user_v22_to_v23(str(tmp_user_db))
+
+
 def _seed_v3(path):
     _create_user_v3(path)
 

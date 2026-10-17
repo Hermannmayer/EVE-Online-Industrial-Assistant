@@ -40,15 +40,6 @@ def load_search_history() -> list:
     return []
 
 
-def clear_search_history():
-    """清空搜索历史文件"""
-    try:
-        HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        HISTORY_FILE.write_text("[]", encoding="utf-8")
-    except Exception:
-        pass
-
-
 # ═══════════════════════════════════════
 #  搜索结果格式化
 # ═══════════════════════════════════════

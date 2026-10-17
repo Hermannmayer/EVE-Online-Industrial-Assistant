@@ -282,6 +282,81 @@ def test_inventory_change_reruns_recalc_on_heartbeat(industry_page, monkeypatch)
     assert industry_page._tick_recalc_fp == industry_page._recalc_settings_fp(), "重算后基线要跟上新库存"
 
 
+def test_recalc_only_starts_for_pending_plans(industry_page, monkeypatch):
+    """03-4 回归：批量重算的输入只留**待生产**行。
+
+    在产/待下线计划的时长与成本冻结在启动口径（启动扣料快照 + 已启动 runs）；
+    旧实现把 in_progress/ready 也塞进 worker，算完写回 calculated_time/material_cost，
+    倒计时与 ISK·h 会无提示跳变。
+    """
+    from ui_qml.views import industry_view as iv
+
+    started: list[list[int]] = []
+
+    class _Signal:
+        def connect(self, _fn):
+            return None
+
+    class _FakeWorker:
+        def __init__(self, plans, char_config, **kwargs):
+            started.append([p["id"] for p in plans])
+            self.finished_signal = _Signal()
+
+        def isRunning(self):  # 对齐 QThread 的 camelCase API
+            return False
+
+        def start(self):
+            return None
+
+    monkeypatch.setattr(
+        iv,
+        "get_price_settings",
+        lambda: {
+            "mat_hub": "Jita",
+            "mat_price_type": "sell",
+            "prod_hub": "Jita",
+            "prod_price_type": "sell",
+        },
+    )
+    monkeypatch.setattr(iv.IndustryPage, "_recalc_settings_fp", lambda self: ("fp", 1))
+    monkeypatch.setattr(iv, "BatchPlanCalcWorker", _FakeWorker)
+
+    rows = [
+        {"id": 1, "status": "pending"},
+        {"id": 2, "status": "in_progress"},
+        {"id": 3, "status": "running"},
+        {"id": 4, "status": "ready"},
+    ]
+
+    industry_page._auto_calculate_plans(rows)
+
+    assert started == [[1]], "只有待生产行参与重算（在产/待下线冻结）"
+
+
+def test_recalc_write_filters_rows_started_mid_flight(temp_db, monkeypatch):
+    """03-4 第二道防线：worker 跑动期间被启动的行，写库前按 DB 现状滤掉。
+
+    场景：`_auto_calculate_plans` 起线程时该行还是 pending，算完前用户点了启动 ——
+    若照写 calculated_time/material_cost，就把启动口径覆盖了。
+    """
+    from types import SimpleNamespace
+
+    from services.repositories.plan_repository import PlanRepository
+    from ui_qml.views import industry_view as iv
+
+    with temp_db.connect("user") as conn:
+        conn.executescript(PlanRepository.SCHEMA)
+        conn.execute("INSERT INTO production_plans (id, product_type_id, status) VALUES (1, 2001, 'pending')")
+        conn.execute("INSERT INTO production_plans (id, product_type_id, status) VALUES (2, 2001, 'in_progress')")
+    monkeypatch.setattr(iv, "get_container", lambda: SimpleNamespace(db=temp_db))
+
+    rows = [(1, {"profit": 1.0}), (2, {"profit": 2.0})]
+
+    kept = iv.IndustryPage._pending_recalc_rows(SimpleNamespace(), rows)
+
+    assert kept == [(1, {"profit": 1.0})], "已启动的行不得回写重算结果"
+
+
 class TestNotesInlineEditPersists:
     """备注列内联编辑必须落库。
 
@@ -509,13 +584,24 @@ class TestPlanTableInputDialogs:
         repo.update.assert_not_called()
 
     def test_modify_runs_uses_the_int_dialog(self, qapp, monkeypatch):
-        """流程数：范围与调用参数（1..99999）一字未改，只换了弹窗实现。"""
+        """流程数：范围与调用参数（1..99999）一字未改；保存后**同步重算并落库**。
+
+        回归（03-5）：旧实现只按比值改内存里的 calculated_time、落库只写 runs →
+        切页/重启从 DB 读回旧 calculated_time，倒计时与 ISK/h 回退。
+        """
+        from types import SimpleNamespace
         from unittest.mock import MagicMock
 
         from ui_qml.views.industry.plan_table import PlanTable
 
         repo = MagicMock()
-        monkeypatch.setattr("ui_qml.views.industry.plan_table.get_container", _fake_container(repo))
+        scoring = MagicMock()
+        scoring.calculate_plan_metrics.return_value = {"calculated_time": 1234, "daily_output": 5.5}
+        monkeypatch.setattr(
+            "ui_qml.views.industry.plan_table.get_container",
+            lambda: SimpleNamespace(plan_repo=repo, scoring_service=lambda: scoring),
+        )
+        monkeypatch.setattr("services.char_config_resolver.resolve_char_config", lambda **_k: {})
         seen: dict = {}
 
         def _fake(parent, title, label, value=0, minimum=0, maximum=0, step=1):
@@ -524,14 +610,15 @@ class TestPlanTableInputDialogs:
 
         monkeypatch.setattr("ui_qml.bridge.input_dialog.InputQmlDialog.get_int", staticmethod(_fake))
 
-        plan = {"id": 7, "runs": 5, "calculated_time": 100, "daily_output": 20}
+        plan = {"id": 7, "runs": 5, "calculated_time": 100, "daily_output": 20, "char_name": "甲"}
         holder = _holder([plan])
         PlanTable._modify_runs(holder, 0)
 
         assert seen == {"title": "修改流程数", "value": 5, "minimum": 1, "maximum": 99999}
         assert plan["runs"] == 10
-        assert plan["calculated_time"] == 200  # 按比值即时更新
-        repo.update.assert_called_once_with(7, runs=10)
+        assert plan["calculated_time"] == 1234, "时长必须来自评分重算，不是按比值缩放"
+        assert plan["daily_output"] == 5.5
+        repo.update.assert_called_once_with(7, runs=10, calculated_time=1234, daily_output=5.5)
 
 
 def test_plan_table_has_no_native_dialogs_left():

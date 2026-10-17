@@ -61,6 +61,8 @@ class PlanRepository:
             "success_rate",
             "research_target_level",
             "actual_output_runs",
+            # v23 发明强制完成的尝试流程缺口（审计列）
+            "bp_attempt_short",
         }
     )
 
@@ -111,7 +113,8 @@ class PlanRepository:
         decryptor_type_id INTEGER DEFAULT NULL,
         success_rate REAL DEFAULT NULL,
         research_target_level INTEGER DEFAULT 0,
-        actual_output_runs INTEGER DEFAULT NULL
+        actual_output_runs INTEGER DEFAULT NULL,
+        bp_attempt_short INTEGER DEFAULT NULL
     );"""
 
     def ensure_table(self):

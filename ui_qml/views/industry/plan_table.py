@@ -24,6 +24,7 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QGuiApplication
 
 import ui_qml.theme.registry as theme
+from core.constants import PLAN_RUNNING_STATUSES
 from core.container import get_container
 from core.logger import log
 from ui_qml.models.industry_models import PlanTableModel
@@ -39,8 +40,8 @@ if TYPE_CHECKING:
     from ui_qml.bridge.plan_table_bridge import PlanTableBridge
     from ui_qml.models.plan_qml_model import PlanQmlModel
 
-#: 正在生产中的计划状态（口径同 `services.plan_rebuild._LOCKED_RUNS_STATUSES`）
-_RUNNING_STATUSES = ("in_progress", "running")
+#: 正在生产中的计划状态（删行/级联守卫用；单一真源见 core.constants）
+_RUNNING_STATUSES = PLAN_RUNNING_STATUSES
 
 
 def _plan_level(plan: dict) -> int:
@@ -232,8 +233,8 @@ class PlanTable(QObject):
 
         statuses: 允许进入本入口的计划状态。默认只有 `ready`（倒计时走完的待下线行）；
         右键「立即完成」传 `("in_progress", "running", "ready")` 放过在产行 —— 底层
-        `plan_execution.complete_plan` 的 docstring 本就是「ready/pending/in_progress →
-        completed」，挡在前端的从来是这里的过滤，不是业务层。
+        `plan_execution.complete_plan` 的完成白名单就是**在产 + 待下线**，
+        `pending` 会被业务层以 `not_started` 拒绝（未扣料，不允许凭空入库）。
         """
         if self._model is None:
             return
@@ -496,21 +497,33 @@ class PlanTable(QObject):
     def _modify_runs(self, row: int) -> None:
         if self._model is None:
             return
+        from services.char_config_resolver import resolve_char_config
         from ui_qml.bridge.input_dialog import InputQmlDialog
 
         plan = self._model.get_plan(row)
+        if not plan:
+            return
         current = int(plan.get("runs", 0))
         val, ok = InputQmlDialog.get_int(self, "修改流程数", "流程数:", current, 1, 99999)
         if ok:
-            # 按比值即时更新时长和产能
-            if current > 0:
-                ratio = val / current
-                plan["calculated_time"] = round(plan.get("calculated_time", 0) * ratio)
-                plan["daily_output"] = plan.get("daily_output", 0) / ratio if ratio > 0 else 0
             plan["runs"] = val
+            # 与「编辑计划」同一条同步重算路径：旧实现只按比值改内存里的 calculated_time，
+            # 落库只写 runs → 切页/重启从 DB 读回旧值，倒计时/ISK·h 回退（03-5）。
+            char_name = str(plan.get("char_name") or "").strip()
+            char_config = resolve_char_config(char_name=char_name) or {}
+            metrics = get_container().scoring_service().calculate_plan_metrics(plan, char_config)
+            calculated_time = round(metrics.get("calculated_time") or 0)
+            daily_output = metrics.get("daily_output") or 0
+            plan.update(metrics)
+            plan["runs"] = val  # metrics 不含 runs，显式保留（防将来口径变化覆盖用户输入）
             self._model.layoutChanged.emit()
             if plan.get("id"):
-                get_container().plan_repo.update(plan["id"], runs=val)
+                get_container().plan_repo.update(
+                    plan["id"],
+                    runs=val,
+                    calculated_time=calculated_time,
+                    daily_output=daily_output,
+                )
             self.plan_updated.emit()
 
     def _copy_blueprint_name(self, row: int) -> None:
@@ -659,7 +672,7 @@ class PlanTable(QObject):
         from services import plan_execution
         from ui_qml.bridge.message_dialog import FMessageDialog
 
-        if plan.get("status") not in ("in_progress", "running"):
+        if plan.get("status") not in _RUNNING_STATUSES:
             FMessageDialog.warning(self, "提示", "仅生产中计划可撤销启动")
             return
 

@@ -10,8 +10,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from core.eve_formulas import calc_broker_rate, calc_relist_discount, calc_sales_tax_rate
+from core.eve_formulas import (
+    calc_broker_rate,
+    calc_relist_discount,
+    calc_relist_fee,
+    calc_sales_tax_rate,
+)
 from domain.formulas import (
+    ALPHA_TAX,
     REACTIONS_SKILL_MULT,
     calc_job_cost_fees,
     calc_material_per_run,
@@ -89,12 +95,19 @@ def calc_manufacturing_score(
     # 材料成本计算（使用正确的浪费公式 + ceil 取整）
     total_mat_cost = 0.0
     mat_detail = []
+    # EIV 官方口径 = Σ(基础量 × ESI adjusted_price)；若任一材料缺 adjusted_price，
+    # **整项**回退到「材料市价 EIV」并在 breakdown 标 eiv_source —— 不允许同一次 EIV
+    # 里一部分用 adjusted、一部分用 sell（两个价格体系混在一起不再是官方 EIV）。
     eiv_materials: list[tuple[int, float]] = []
+    eiv_market_materials: list[tuple[int, float]] = []
+    missing_adjusted = False
     for mat in recipe.materials:
         wastefactor = mat.wastefactor or 10  # 兜底 T1
         mat_price = (prices.get_price(mat.type_id, price_type_mat, mat_source_hub) or 0.0) * mat_price_mult
-        # EIV 使用 adjusted_price（更稳定），兜底用 mat_price
-        adj_price = prices.get_adjusted_price(mat.type_id) or mat_price or 0.0
+        adj_price = prices.get_adjusted_price(mat.type_id)
+        if adj_price is None:
+            missing_adjusted = True
+            adj_price = 0.0
         # 单件材料(基础量=1)不受ME影响——如T1舰船、矿物、组件等
         # 因为 ceil(1×(100-ME)/100)=1，ME 无法将 1 个减到 0 个
         if mat.base_qty <= 1:
@@ -106,8 +119,9 @@ def calc_manufacturing_score(
         waste_qty = per_run_qty  # 每轮次仅用 per_run_qty（已含 ME 调整）
         if mat_price:
             total_mat_cost += waste_qty * mat_price
-        # EIV 基础材料量（ME0 无浪费）× adjusted_price
+        # EIV 基础材料量（ME0 无浪费）：adjusted 与市价两套各自完整，择一使用
         eiv_materials.append((mat.base_qty, adj_price))
+        eiv_market_materials.append((mat.base_qty, mat_price or 0.0))
         mat_detail.append(
             {
                 "name": mat.name,
@@ -134,11 +148,13 @@ def calc_manufacturing_score(
     sci = prices.get_system_cost_index(system_id, "manufacturing", hub=sell_hub)
 
     # EIV 计算 & 安装费（加法结构）
-    eiv = sum(qty * price for qty, price in eiv_materials)
+    # 单一来源：全部材料都有 adjusted_price 才用官方 EIV，否则整项回退到市价 EIV。
+    eiv_source = "market_fallback" if missing_adjusted else "adjusted"
+    eiv = sum(qty * price for qty, price in (eiv_market_materials if missing_adjusted else eiv_materials))
     # structure_bonus: 传入的 0.0 表示 NPC 无加成 → 乘数 1.0
     # 传入的负值表示折扣（如 -0.1 → 乘数 0.9）
     sb_mult = 1.0 + structure_bonus
-    alpha_tax = 0.0025 if is_alpha else 0.0
+    alpha_tax = ALPHA_TAX if is_alpha else 0.0
     fee_detail = calc_job_cost_fees(
         eiv=eiv,
         sci=sci,
@@ -154,11 +170,12 @@ def calc_manufacturing_score(
     total_cost += installation_fee
 
     broker_init = revenue * (broker_rate / 100)
-    # 改单差额计费：改单只对「改价差额」部分收一次 broker 费（× 改单折扣）。
-    # 无历史挂单价时用成本价近似 —— 假设已按成本挂单、改价到售价只补差额。
+    # 改单费（官方两段式，见 core.eve_formulas.calc_relist_fee）：
+    #   ① 涨价差额 × 全额费率；② 新总价 × 费率 × (1 − 改单折扣)。
+    # 无历史挂单价时用成本价近似 —— 假设已按成本挂单、改价到售价。
     unit_cost = total_cost / recipe.prod_qty if recipe.prod_qty > 0 else 0.0
     relist_delta = max(0.0, prod_price - unit_cost) * recipe.prod_qty
-    broker_relist = relist_delta * (broker_rate / 100) * (1 - relist_discount / 100)
+    broker_relist = calc_relist_fee(revenue, relist_delta, broker_rate, relist_discount)
     sales_tax = revenue * (sales_tax_rate / 100)
     total_cost += broker_init + broker_relist + sales_tax
 
@@ -173,8 +190,8 @@ def calc_manufacturing_score(
     profit = revenue - total_cost
 
     # 时间计算（使用 calc_production_time）
-    ind_lvl = skills.get("工业理论", 5)
-    adv_lvl = skills.get("高级工业理论", 5)
+    ind_lvl = skills.get("工业理论", 0)
+    adv_lvl = skills.get("高级工业理论", 0)
     actual_time = calc_production_time(
         base_time=recipe.base_time,
         industry_skill=ind_lvl,
@@ -184,6 +201,9 @@ def calc_manufacturing_score(
         required_skill_levels=[int(skills.get(n, 0) or 0) for n in bp_required_skills],
     )
     hours_per_run = actual_time / 3600
+    # 未取整的秒级原始值：计划级聚合必须用它（hours_per_run 是 round 到 2 位的展示值，
+    # 用它乘 runs 会把误差放大 —— 见 BL-014）。
+    result["actual_time_seconds"] = actual_time
     margin_pct = profit / total_cost * 100 if total_cost > 0 else 0
 
     # 「自己造一件」的**个人口径**成本 = (材料 + 作业费 + 研究费) ÷ 单轮产出，
@@ -205,6 +225,7 @@ def calc_manufacturing_score(
         "sales_tax": round(sales_tax, 2),
         # 安装费（Job Cost）— 与游戏内显示结构一致
         "eiv": round(eiv, 2),  # 预估物品价值
+        "eiv_source": eiv_source,  # "adjusted"（官方）/ "market_fallback"（缺 adjusted_price 整项回退）
         "sci": round(sci, 4),  # 星系成本指数
         "system_cost": round(system_cost_fee, 2),  # 项目毛成本（星系成本指数 × EIV）
         "facility_tax": round(facility_tax_fee, 2),  # 设施税
@@ -314,15 +335,18 @@ def calc_trade_score(
     relist_discount = calc_relist_discount(skills)
     sales_tax_rate = calc_sales_tax_rate(skills)
 
-    # 差额计费：初始挂单全额 broker；改单只对「买/卖价差额」部分收一次 broker（× 改单折扣）
+    # 官方两段式改单费（core.eve_formulas.calc_relist_fee）：
+    #   ① 涨价差额 × 全额费率；② 新总价 × 费率 × (1 − 改单折扣)。
+    # 买单按「同价改单」建模（差额 = 0）：初始挂单 + 新总价折扣段。
     buy_fee_total = broker_rate + broker_rate * (1 - relist_discount / 100)
 
     sell_rate = calc_broker_rate(skills, market_data_sell)
-    # 卖出侧：初始挂单全额 broker（按买入成本近似）+ 改单差额 broker + 销售税
+    # 卖出侧：初始挂单全额 broker（新总价）+ 改单①差额全额段 + 改单②新总价折扣段 + 销售税
     sell_fee_total = (
         (
             broker_rate
-            + (sell_price - buy_price) / sell_price * broker_rate * (1 - relist_discount / 100)
+            + (sell_price - buy_price) / sell_price * broker_rate
+            + broker_rate * (1 - relist_discount / 100)
             + sales_tax_rate
         )
         if sell_price > 0
@@ -445,7 +469,9 @@ def calc_reaction_score(
     reaction_install_fee = install_base * sci * (1 - structure_bonus) * (1 + facility_tax_pct / 100)
     total_cost += reaction_install_fee
     broker_init = revenue * (broker_rate / 100)
-    broker_relist = revenue * (broker_rate / 100) * (1 - relist_discount / 100)
+    # 反应无「改价前挂单价」可依据，按同价改单建模（差额段 0）：只收新总价的折扣段，
+    # 与制造/贸易共用同一份官方两段式实现。
+    broker_relist = calc_relist_fee(revenue, 0.0, broker_rate, relist_discount)
     sales_tax = revenue * (sales_tax_rate_val / 100)
     total_cost += broker_init + broker_relist + sales_tax
 

@@ -313,7 +313,7 @@ FDialogFrame {
         }
     }
 
-    // ── 状态行 + 查看NPC卖家 ──
+    // ── 状态行 ──
     RowLayout {
         Layout.fillWidth: true
         spacing: Theme.spacingSm
@@ -326,13 +326,6 @@ FDialogFrame {
             font.pixelSize: Math.round(12 * Theme.fontScale)
             font.bold: true
             elide: Text.ElideRight
-        }
-
-        FButton {
-            text: qsTr("查看NPC卖家")
-            visible: frame.bp ? frame.bp.canNpcSeller : false
-            onClicked: if (frame.bp)
-                frame.bp.npcSeller()
         }
     }
 

@@ -15,7 +15,7 @@ from services.market_advice_service import CALIBER, NO_DATA_ADVICE, get_trade_ad
 from services.price_history import PRICE_HISTORY_DDL
 
 REGION = 10000002
-#: 默认费率（经纪人 1% × 两侧 + 销售税 2%）下的来回费用
+#: 默认费率（经纪人 3% × 两侧 + 销售税 7.5%）下的来回费用
 DEFAULT_FEE = 2 * BROKER_FEE_BASE + SALES_TAX_BASE
 
 _MKT_DDL = """
@@ -84,12 +84,15 @@ def _seed(
 
 
 def test_two_sided_math_and_advice_text(advice_db):
-    """双向挂单：spread / roundTripFeePct / turnDays 三个数一起对，建议给两侧报价。"""
-    _seed(advice_db, 1, buy=10.0, sell=12.0, volumes=[300] * 7, snapshot=2100, name="渡鸦级")
+    """双向挂单：spread / roundTripFeePct / turnDays 三个数一起对，建议给两侧报价。
+
+    注：现行费率来回费用 13.5%，`two_sided` 要求价差 > 27%，所以这里用 10/20（价差 50%）。
+    """
+    _seed(advice_db, 1, buy=10.0, sell=20.0, volumes=[300] * 7, snapshot=2100, name="渡鸦级")
     out = get_trade_advice(1, _db=advice_db)
     assert (out["typeId"], out["name"]) == (1, "渡鸦级")
     # 百分比字段保留 4 位小数，所以容差给到 1e-3
-    assert out["spreadPct"] == pytest.approx((12.0 - 10.0) / 12.0 * 100.0, abs=1e-3)
+    assert out["spreadPct"] == pytest.approx((20.0 - 10.0) / 20.0 * 100.0, abs=1e-3)
     assert out["roundTripFeePct"] == pytest.approx(DEFAULT_FEE)
     assert out["dayVolume"] == pytest.approx(300.0)  # 7 天合计 2100 ÷ 7
     assert out["orderVolume"] == pytest.approx(2100.0)
@@ -97,7 +100,7 @@ def test_two_sided_math_and_advice_text(advice_db):
     assert out["caliber"] == CALIBER
     assert out["verdict"] == "two_sided"
     assert out["buyAdvice"] == "挂买单：买价 × 1.01 = 10.10 ISK（贴着现有最高买价往上 1 个点，别直接吃卖单）"
-    assert out["sellAdvice"] == "挂卖单：卖价 × 0.99 = 11.88 ISK（压过现有最低卖价）"
+    assert out["sellAdvice"] == "挂卖单：卖价 × 0.99 = 19.80 ISK（压过现有最低卖价）"
 
 
 @pytest.mark.parametrize(
@@ -109,7 +112,7 @@ def test_two_sided_math_and_advice_text(advice_db):
         pytest.param(10.0, 12.0, [2] * 7, {}, "avoid_thin", id="avoid_thin_low_volume"),
         pytest.param(10.0, 12.0, None, {}, "avoid_thin", id="avoid_thin_no_history"),
         pytest.param(10.0, 10.2, [300] * 7, {}, "take_orders", id="take_orders_narrow"),
-        pytest.param(10.0, 12.0, [300] * 7, {}, "two_sided", id="two_sided"),
+        pytest.param(10.0, 20.0, [300] * 7, {}, "two_sided", id="two_sided"),
     ],
 )
 def test_verdict_matrix(advice_db, buy, sell, volumes, kwargs, expected):
@@ -124,7 +127,7 @@ def test_verdict_matrix(advice_db, buy, sell, volumes, kwargs, expected):
 def test_spread_collision_falls_back_to_take_orders(advice_db):
     """边界：买价 × 1.01 ≥ 卖价 × 0.99 → 不算 two_sided，退回 take_orders。
 
-    只有**低费率**下这条边界才可达：默认 4% 来回费用要求价差 > 8%，而 1 个点的两侧报价
+    只有**低费率**下这条边界才可达：默认 13.5% 来回费用要求价差 > 27%，而 1 个点的两侧报价
     偏移最多只留约 2% 的价差 —— 所以这里显式传 0.25% / 0% 的费率。
     """
     _seed(advice_db, 1, buy=10.0, sell=10.15, volumes=[300] * 7)
@@ -185,7 +188,7 @@ def test_sub_isk_prices_keep_precision_in_advice(advice_db):
     """0.01 级的小额报价在建议文案里不能被四舍五入成一个不能用的挂单价。"""
     _seed(advice_db, 1, buy=0.02, sell=0.03, volumes=[300] * 7)
     out = get_trade_advice(1, _db=advice_db)
-    assert out["verdict"] == "two_sided"  # 价差 33.3% > 8%
+    assert out["verdict"] == "two_sided"  # 价差 33.3% > 27%（现行费率来回 13.5% 的两倍）
     assert "= 0.0202 ISK" in out["buyAdvice"]  # 0.02 × 1.01
     assert "= 0.0297 ISK" in out["sellAdvice"]  # 0.03 × 0.99
 

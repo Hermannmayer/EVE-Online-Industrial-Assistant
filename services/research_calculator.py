@@ -45,8 +45,11 @@ def _default_research_system_id() -> int:
     return _JITA_SYSTEM_ID
 
 
-def _installation_fee(activity: str, eiv: float, solar_system_id: int | None, sci: float | None = None) -> float:
-    """研究活动安装费（EIV × SCI(活动, 设施星系) × 结构 + 税 + SCC）。
+def _installation_fee(activity: str, job_value: float, solar_system_id: int | None, sci: float | None = None) -> float:
+    """研究活动安装费 = job value × SCI(活动, 设施星系) × 结构 + 税 + SCC。
+
+    ``job_value`` 由调用方按官方口径算出（拷贝/研究 = 2%×EIV(制造投入)；
+    发明 = 2%×EIV(T2 制造投入)），不是科学材料本身的 EIV。
 
     SCI 从 reference.db 按设施星系查询；未提供星系时回退默认科研机库星系。
     ``sci`` 已给出时跳过查询 —— 批量调用方一次解析好整批复用，避免每件重查。
@@ -65,7 +68,7 @@ def _installation_fee(activity: str, eiv: float, solar_system_id: int | None, sc
         except Exception:
             pass
         sci = default_sci
-    fees = calc_job_cost_fees(eiv, sci, _STRUCTURE_MULT, _FACILITY_TAX)
+    fees = calc_job_cost_fees(job_value, sci, _STRUCTURE_MULT, _FACILITY_TAX)
     return float(fees["total_fee"])
 
 
@@ -111,6 +114,16 @@ def _material_cost(conn: Connection, prices: dict[int, float], blueprint_type_id
     for mat_id, qty in rows:
         total += prices.get(mat_id, 0.0) * float(qty or 0)
     return total
+
+
+def _manufacturing_eiv(conn: Connection, prices: dict[int, float], blueprint_type_id: int) -> float:
+    """该蓝图**制造投入**的 EIV（安装费 job value 的官方基数，审计 01-7）。"""
+    rows = conn.execute(
+        "SELECT material_type_id, quantity FROM blueprint_materials "
+        "WHERE blueprint_type_id=? AND activity='manufacturing'",
+        (blueprint_type_id,),
+    ).fetchall()
+    return sum(prices.get(mat_id, 0.0) * float(qty or 0) for mat_id, qty in rows)
 
 
 def research_cost_for_item(bp_conn: Connection, type_id: int, *, solar_system_id: int | None = None) -> float | None:
@@ -177,7 +190,7 @@ def research_costs_batch(
             r[0]
             for r in bp_conn.execute(
                 f"SELECT material_type_id FROM blueprint_materials "
-                f"WHERE activity IN ('copying','invention') AND blueprint_type_id IN ({mat_ph})",
+                f"WHERE activity IN ('copying','invention','manufacturing') AND blueprint_type_id IN ({mat_ph})",
                 tuple(mat_bp_ids),
             ).fetchall()
         }
@@ -195,7 +208,8 @@ def research_costs_batch(
             result[tid] = None  # 无制造蓝图
             continue
         if tid in inv_products:
-            # T2/T3 → 发明成本：T1 蓝图的 invention 行（材料+成功率），产出即本物品
+            # T2/T3 → 发明成本：T1 蓝图的 invention 行（材料+成功率），产出即本物品。
+            # 安装费 job value = 2%×EIV(T2 成品的制造投入)（官方口径，审计 01-7）。
             t1_row = bp_conn.execute(
                 "SELECT blueprint_type_id, probability FROM blueprint_products "
                 "WHERE activity='invention' AND product_type_id=? LIMIT 1",
@@ -203,11 +217,14 @@ def research_costs_batch(
             ).fetchone()
             probability = float(t1_row[1]) if t1_row and t1_row[1] else 1.0
             mat = _material_cost(bp_conn, prices, t1_row[0], "invention") if t1_row else 0.0
-            fee = _installation_fee("invention", mat, solar_system_id, sci.get("invention"))
+            job_value = 0.02 * _manufacturing_eiv(bp_conn, prices, bp_id)
+            fee = _installation_fee("invention", job_value, solar_system_id, sci.get("invention"))
             result[tid] = round((mat + fee) / max(probability, 0.01), 2)
         else:
-            # T1 → 拷贝成本 = 拷贝材料 + 安装费
+            # T1 → 拷贝成本 = 拷贝材料 + 安装费（单份拷贝）
+            # 安装费 job value = 2%×EIV(该蓝图制造投入)（官方拷贝费公式 ×0.02）
             mat = _material_cost(bp_conn, prices, bp_id, "copying")
-            fee = _installation_fee("copying", mat, solar_system_id, sci.get("copying"))
+            job_value = 0.02 * _manufacturing_eiv(bp_conn, prices, bp_id)
+            fee = _installation_fee("copying", job_value, solar_system_id, sci.get("copying"))
             result[tid] = round(mat + fee, 2)
     return result

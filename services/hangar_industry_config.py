@@ -219,17 +219,61 @@ def validate_rig_set(rig_ids: list[int], facility_type: str | None, *, _db: Data
     return problems
 
 
+#: 科研活动 → 改件类别 key（`RIG_GROUP_MAP` 的 category_key）
+_SCIENCE_RIG_CATEGORY: dict[str, str] = {
+    "copying": "bp_copy",
+    "invention": "invention",
+    "researching_material_efficiency": "me_research",
+    "researching_time_efficiency": "te_research",
+}
+#: 只作用于科研的改件类别（制造作业不应吃到它们的加成，反之亦然）
+_SCIENCE_RIG_CATEGORIES = frozenset({"invention", "me_research", "te_research", "bp_copy", "laboratory"})
+
+
+def _rig_matches_activity(
+    rig_group: int,
+    *,
+    activity: str | None,
+    blueprint_category: str | None,
+) -> bool:
+    """该改件是否作用于当前活动/蓝图类别。
+
+    ``activity`` 为 None → 不筛（向后兼容旧调用方 / 机库设置页展示）。
+    制造活动按 `blueprint_category` 匹配类别；不给类别时只排除科研类改件。
+    """
+    if activity is None:
+        return True
+    _size, cat, _effect = RIG_GROUP_MAP.get(int(rig_group), ("", "", "mat"))
+    if not cat:
+        return False
+    science_cat = _SCIENCE_RIG_CATEGORY.get(activity)
+    if science_cat is not None:
+        return cat == science_cat
+    if cat in _SCIENCE_RIG_CATEGORIES:
+        return False
+    return blueprint_category is None or cat == blueprint_category
+
+
 def resolve_rig_multipliers(
     rig_ids: list[int],
     *,
+    activity: str | None = None,
+    blueprint_category: str | None = None,
     _db: DatabaseManager | None = None,
 ) -> tuple[float, float]:
-    """(材料倍率, 时间倍率) 乘算叠加：Π(1 + bonus/100)。structure_rigs 缺行按加成 0。"""
+    """(材料倍率, 时间倍率) 乘算叠加：Π(1 + bonus/100)。structure_rigs 缺行按加成 0。
+
+    传入 ``activity`` 时只叠加**匹配该活动/蓝图类别**的改件（RIG_GROUP_MAP 的
+    category_key）；不传则保持旧行为（全部改件都算，供机库设置页展示用）。
+    成本类改件（effect="cost"）的数值不在 structure_rigs 表里（该表只有 mat/time），
+    因此成本加成尚未建模 —— 见审计 01-13 的剩余缺口。
+    """
     mat_mult = 1.0
     time_mult = 1.0
     if not rig_ids:
         return mat_mult, time_mult
     conn_mgr = _db or _default_db()
+    groups: dict[int, int] | None = None
     try:
         with conn_mgr.connect("ref") as conn:
             placeholders = ",".join("?" * len(rig_ids))
@@ -237,6 +281,19 @@ def resolve_rig_multipliers(
                 f"SELECT type_id, mat_bonus, time_bonus FROM structure_rigs WHERE type_id IN ({placeholders})",
                 rig_ids,
             ).fetchall()
+            if activity is not None and rows:
+                # 需要 group_id 才能按活动/类别筛改件；结构表可能来自不含 item 表的测试库，
+                # 查不到时退回「不筛活动」（与旧行为一致，不会丢加成）。
+                try:
+                    groups = {
+                        int(r[0]): int(r[1])
+                        for r in conn.execute(
+                            f"SELECT type_id, group_id FROM item WHERE type_id IN ({placeholders})",
+                            tuple(int(r[0]) for r in rows),
+                        ).fetchall()
+                    }
+                except Exception:  # sqlite3.OperationalError：测试库缺 item 表
+                    groups = None
     except Exception:
         # structure_rigs 表未初始化（未运行改件数据拉取）→ 无加成
         log.warning("structure_rigs 表未就绪，改件加成按 0")
@@ -244,6 +301,10 @@ def resolve_rig_multipliers(
     bonus = {int(r[0]): (float(r[1] or 0), float(r[2] or 0)) for r in rows}
     for rid in rig_ids:
         mb, tb = bonus.get(int(rid), (0.0, 0.0))
+        if groups is not None and not _rig_matches_activity(
+            groups.get(int(rid), 0), activity=activity, blueprint_category=blueprint_category
+        ):
+            continue
         mat_mult *= 1.0 + mb / 100.0
         time_mult *= 1.0 + tb / 100.0
     return round(mat_mult, 6), round(time_mult, 6)
@@ -252,10 +313,16 @@ def resolve_rig_multipliers(
 def resolve_hangar_industry_config(
     hangar_id: int | None,
     *,
+    activity: str | None = None,
+    blueprint_category: str | None = None,
     _db: DatabaseManager | None = None,
 ) -> dict:
     """解析机库工业配置 → {structure_mat_saving, structure_time_mod, structure_cost_mult,
-    facility_tax, facility_type, rig_ids}。无机库/未配置 → 全默认（倍率 1.0、税 None）。"""
+    facility_tax, facility_type, rig_ids}。无机库/未配置 → 全默认（倍率 1.0、税 None）。
+
+    ``activity``（如 manufacturing / invention / copying / researching_*）传入时，
+    改件加成只叠加与该活动匹配的类别（避免「发明加速 rig」把制造时长也减了，审计 01-13）。
+    """
     conn_mgr = _db or _default_db()
     facility_type: str | None = None
     facility_tax: float | None = None
@@ -271,10 +338,14 @@ def resolve_hangar_industry_config(
                 facility_tax = row[1]
                 rig_ids = parse_rigs(row[2])
     base = STRUCTURE_BASE.get(facility_type or "npc", STRUCTURE_BASE["npc"])
-    mat_mult, time_mult = resolve_rig_multipliers(rig_ids, _db=_db)
+    mat_mult, time_mult = resolve_rig_multipliers(
+        rig_ids, activity=activity, blueprint_category=blueprint_category, _db=_db
+    )
     return {
         "structure_mat_saving": round(base["mat"] * mat_mult, 6),
         "structure_time_mod": round(base["time"] * time_mult, 6),
+        # 成本类改件（invention/me_research/te_research/bp_copy 成本优化）的数值不在
+        # structure_rigs（只有 mat/time_bonus），因此这里仍只取结构本体倍率。
         "structure_cost_mult": base["cost"],
         "facility_tax": facility_tax,
         "facility_type": facility_type,

@@ -103,11 +103,29 @@ class TestInventionPlanCost:
         assert r["runs_per_bpc"] == 10
         assert r["attempts"] == 3
         assert r["material_cost"] == pytest.approx(124720.0 * 3)
-        # 安装费 = EIV(124720×3) × (SCI + 税 + SCC)
+        # 安装费 = EIV(124720×3) × (SCI + 税 + SCC) —— 未给 job_value 时的旧口径兜底
         eiv = 124720.0 * 3
         assert r["fee"] == pytest.approx(eiv * (JITA_INVENTION_SCI + 0.0025 + 0.04), rel=1e-6)
-        assert r["output_runs"] == 30
+        # 01-12：期望产出 = 尝试 × 成功率 × 每张流程 = 3 × 0.34 × 10 = 10.2；
+        # 全成功上限 30 单独给，不再混用
+        assert r["expected_runs"] == pytest.approx(10.2)
+        assert r["max_output_runs"] == 30
+        assert r["output_runs"] == 10
         assert not r["is_actual"]
+
+    def test_installation_fee_uses_official_job_value(self):
+        """01-7 回归：发明安装费基数 = 2%×EIV(T2 制造投入)×尝试次数（官方口径）。"""
+        job_value = 0.02 * 10_500_915.07 * 10
+        r = invention_plan_cost(
+            base_probability=BASE_PROB,
+            materials=INVENTION_MATS,
+            prices=PRICES,
+            sci=0.0959,
+            base_runs=BASE_RUNS,
+            attempts_override=10,
+            job_value=job_value,
+        )
+        assert r["fee"] == pytest.approx(job_value * (0.0959 + 0.0025 + 0.04), rel=1e-6)
 
     def test_amplified_decryptor_lowers_chance_but_raises_runs(self):
         """放大装置解码器：×0.60 → 成功率 0.204；+9 流程 → 产出 19 流程/次。
@@ -318,8 +336,8 @@ class TestCopyingPlanCost:
         assert r["runs_per_copy"] == 200
         assert r["per_copy_cost"] == 0.0
 
-    def test_materials_scale_with_total_runs(self):
-        """材料按总授权流程数计（份数 × 每份流程），不是按份数。"""
+    def test_materials_scale_with_copies_only(self):
+        """01-6 回归：材料只随**拷贝份数**放大，不随每份授权流程数（官方文案）。"""
         r = copying_plan_cost(
             materials=[(3812, 10)],
             prices={3812: 100.0},
@@ -327,13 +345,35 @@ class TestCopyingPlanCost:
             total_copy_runs=200,
             copies=2,
         )
-        assert r["material_cost"] == pytest.approx(10 * 200 * 100.0)
+        assert r["material_cost"] == pytest.approx(10 * 2 * 100.0)
         assert r["runs_per_copy"] == 100
         assert r["per_copy_cost"] == pytest.approx(r["total_cost"] / 2)
 
-    def test_installation_fee_uses_sci(self):
-        r = copying_plan_cost(materials=[(3812, 1)], prices={3812: 1000.0}, sci=0.0014, total_copy_runs=1, copies=1)
-        assert r["fee"] == pytest.approx(1000.0 * (0.0014 + 0.0025 + 0.04), rel=1e-6)
+    def test_materials_do_not_scale_with_runs_per_copy(self):
+        """同一份数、不同每份流程 → 材料量相同（10× 放大缺陷的最小回归）。"""
+        base = {
+            "materials": [(11458, 1), (3812, 6)],
+            "prices": {11458: 5000.0, 3812: 300.0},
+            "sci": 0.0,
+            "copies": 5,
+        }
+        r10 = copying_plan_cost(**base, total_copy_runs=50)
+        r1 = copying_plan_cost(**base, total_copy_runs=5)
+        assert r10["material_cost"] == pytest.approx(r1["material_cost"])
+        assert r10["materials"] == r1["materials"] == [(11458, 5), (3812, 30)]
+
+    def test_installation_fee_uses_job_value(self):
+        """01-7 回归：安装费基数 = 官方 job value（2%×EIV(制造投入)），不是拷贝材料 EIV。"""
+        job_value = 0.02 * 10_500_915.07
+        r = copying_plan_cost(
+            materials=[(3812, 1)],
+            prices={3812: 1000.0},
+            sci=0.0503,
+            total_copy_runs=50,
+            copies=5,
+            job_value=job_value,
+        )
+        assert r["fee"] == pytest.approx(job_value * (0.0503 + 0.0025 + 0.04), rel=1e-6)
 
 
 class TestResearchPlanCost:

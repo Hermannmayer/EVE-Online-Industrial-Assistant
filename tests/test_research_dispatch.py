@@ -263,14 +263,15 @@ class TestInventionOutcomeDefaults:
 
 
 class TestCopyingDispatch:
-    def test_materials_use_total_licensed_runs(self, research_db):
+    def test_materials_scale_with_copies_not_runs(self, research_db):
+        """01-6：拷贝材料只随**份数**放大（官方：材料随拷贝生产数量变化，不受每份授权流程数影响）。"""
         r = _calc(_plan("copying", product_type_id=STANDARD_BP, blueprint_type_id=STANDARD_BP, runs=50, parallels=2))
         bd = r["breakdown"]
         assert bd["activity"] == "copying"
         assert bd["copies"] == 2
         assert bd["runs_per_copy"] == 50
-        # 材料按总授权流程 2×50=100 计：10 × 100 × ¥100 = ¥100,000
-        assert r["material_cost"] == pytest.approx(100000.0)
+        # 材料只按份数 2 计：10 × 2 × ¥100 = ¥200（旧口径按 2×50=100 流程会放大成 ¥100,000）
+        assert r["material_cost"] == pytest.approx(2000.0)
         assert r["calculated_time"] > 0
 
     def test_runs_per_copy_clamped_to_blueprint_limit(self, research_db):
@@ -292,7 +293,11 @@ class TestResearchDispatch:
         bd = r["breakdown"]
         assert bd["activity"] == "researching_material_efficiency"
         assert bd["target_level"] == 5
-        assert bd["time_is_approximate"] is True
+        assert bd["current_level"] == 0
+        # 01-4：时长 = 逐级表求和（首级 210 s → rank 2；0→5 级 = 2×5724 = 11,448 s），
+        # 不再标「首级近似」
+        assert bd["time_is_approximate"] is False
+        assert r["calculated_time"] == pytest.approx(11448)
         assert r["material_cost"] == pytest.approx(2 * 5 * 1000.0)  # 材料 2 × 5 级 × ¥1,000
 
 

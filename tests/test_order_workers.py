@@ -41,7 +41,7 @@ def _worker() -> OrderFetchWorker:
 def test_local_sde_hit_is_cached_without_touching_esi(qapp, monkeypatch):
     """本地查得到就写缓存，且**不**该再去打 ESI。"""
     monkeypatch.setattr(
-        "services.npc_seller.resolve_stations_by_ids",
+        "services.name_resolver.resolve_stations_by_ids",
         lambda ids: {_NPC_STATION: ("Jita IV - Moon 4 - Caldari Navy Assembly Plant", "Jita")},
     )
     called: list[list[int]] = []
@@ -63,7 +63,7 @@ def test_failed_resolution_is_not_cached(qapp, monkeypatch):
     原先失败时 `setdefault(lid, str(lid))`，而解析入口的 `need` 过滤会把已缓存的
     location 整个跳过 —— 一次失败就永久显示编号，重启前好不了。
     """
-    monkeypatch.setattr("services.npc_seller.resolve_stations_by_ids", lambda ids: {})
+    monkeypatch.setattr("services.name_resolver.resolve_stations_by_ids", lambda ids: {})
 
     async def _no_remote(self, client, ids):
         return None  # 模拟 ESI 没给出任何结果
@@ -81,7 +81,7 @@ def test_already_cached_location_is_skipped(qapp, monkeypatch):
     calls: list[set[int]] = []
 
     monkeypatch.setattr(
-        "services.npc_seller.resolve_stations_by_ids",
+        "services.name_resolver.resolve_stations_by_ids",
         lambda ids: calls.append(set(ids)) or {},
     )
 
@@ -99,10 +99,10 @@ def test_order_book_takes_ten_best_per_side(qapp, monkeypatch):
     buys = [{"order_id": i, "price": float(i), "volume_remain": 1, "location_id": _NPC_STATION} for i in range(1, 16)]
     sells = [{**o, "order_id": 100 + int(o["order_id"])} for o in buys]
 
-    async def _fake_fetch_raw(self, url):  # 替身：签名随被测调用处
-        return buys if "order_type=buy" in url else sells
+    async def _fake_fetch_state(self, url):  # 替身：签名随被测调用处（02-08 三态）
+        return (200, buys if "order_type=buy" in url else sells, {})
 
-    monkeypatch.setattr("services.client.APIClient.fetch_raw", _fake_fetch_raw)
+    monkeypatch.setattr("services.client.APIClient.fetch_state", _fake_fetch_state)
 
     async def _no_remote(self, client, ids):  # pragma: no cover - 本地 SDE 能解析，不该走网络
         return None
@@ -133,10 +133,10 @@ def test_two_fetches_reuse_one_session(qapp, monkeypatch):
 
     monkeypatch.setattr(aiohttp.ClientSession, "__init__", _counting_init)
 
-    async def _fake_fetch_raw(self, url):  # 替身：签名随被测调用处
-        return [{"order_id": 1, "price": 1.0, "volume_remain": 1, "location_id": _NPC_STATION}]
+    async def _fake_fetch_state(self, url):  # 替身：签名随被测调用处（02-08 三态）
+        return (200, [{"order_id": 1, "price": 1.0, "volume_remain": 1, "location_id": _NPC_STATION}], {})
 
-    monkeypatch.setattr("services.client.APIClient.fetch_raw", _fake_fetch_raw)
+    monkeypatch.setattr("services.client.APIClient.fetch_state", _fake_fetch_state)
     monkeypatch.setattr(order_workers, "_SHARED_CLIENT", None)
 
     emitted: list[tuple[int, int, int]] = []
@@ -156,3 +156,42 @@ def test_two_fetches_reuse_one_session(qapp, monkeypatch):
         client = order_workers._SHARED_CLIENT
         if client is not None:
             asyncio.run_coroutine_threadsafe(client.__aexit__(None, None, None), order_workers._shared_loop()).result(5)
+
+
+def test_fetch_side_paginates_and_reports_failure(qapp, monkeypatch):
+    """02-08/02-11：`X-Pages>1` 要拉全；任一页失败 → status=None（调用方报错，不装空盘口）。
+
+    PLEX 全域单 type 实测 `X-Pages=2`，旧的「只取第 1 页」会静默截断一半盘口；
+    旧的「失败/空都折叠成 None」会让 UI 把拉取失败显示成「没有订单」。
+    """
+
+    async def _fake_fetch_state(self, url):
+        if "page=1" in url:
+            return (
+                200,
+                [{"order_id": 1, "price": 10.0, "volume_remain": 1, "location_id": _NPC_STATION}],
+                {"X-Pages": "2"},
+            )
+        return 200, [{"order_id": 2, "price": 9.0, "volume_remain": 1, "location_id": _NPC_STATION}], {}
+
+    monkeypatch.setattr("services.client.APIClient.fetch_state", _fake_fetch_state)
+    monkeypatch.setattr(order_workers, "_SHARED_CLIENT", None)
+
+    emitted: list[tuple[int, list, list]] = []
+    worker = _worker()
+    worker.finished_signal.connect(lambda tid, buy, sell: emitted.append((tid, buy, sell)))
+    worker.run()
+    assert len(emitted) == 1
+    # 买、卖各 2 页 → 各 2 条（旧实现各 1 条）；买降序 / 卖升序
+    assert [o["order_id"] for o in emitted[0][1]] == [1, 2]
+    assert [o["order_id"] for o in emitted[0][2]] == [2, 1]
+
+    errors: list[tuple[int, str]] = []
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    fake_client = SimpleNamespace(fetch_state=AsyncMock(return_value=(None, None, {})))
+    worker = _worker()
+    worker.error_signal.connect(lambda tid, msg: errors.append((tid, msg)))
+    asyncio.run(worker._fetch_orders(fake_client))
+    assert errors and "失败" in errors[0][1], "拉取失败必须走 error_signal，不能静默空盘口"

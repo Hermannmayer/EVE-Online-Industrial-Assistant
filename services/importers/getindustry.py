@@ -91,6 +91,23 @@ async def create_tables():
         await db.commit()
 
 
+def _facility_row(fac: dict, now: str) -> tuple:
+    """一条 `/industry/facilities/` 响应 → industry_facilities 行（02-09）。
+
+    `tax` 自 2026-10 起不再出现在响应里（实测 2,321 条带 tax 键的 = 0）：
+    缺字段存 **NULL**，不写 0.0 —— 0 会被读端当成「零税」。
+    """
+    return (
+        fac["facility_id"],
+        fac["solar_system_id"],
+        fac["type_id"],
+        fac.get("owner_id"),
+        fac.get("region_id"),
+        fac.get("tax"),
+        now,
+    )
+
+
 async def run_industry_update(progress_cb=None):
     if progress_cb:
         progress_cb(5, "创建表结构")
@@ -130,18 +147,7 @@ async def run_industry_update(progress_cb=None):
         if progress_cb:
             progress_cb(65, f"获取工业设施数据 ({len(facilities)} 个设施)")
 
-        fac_rows = [
-            (
-                fac["facility_id"],
-                fac["solar_system_id"],
-                fac["type_id"],
-                fac.get("owner_id"),
-                fac.get("region_id"),
-                fac.get("tax", 0.0),
-                now,
-            )
-            for fac in facilities
-        ]
+        fac_rows = [_facility_row(fac, now) for fac in facilities]
         async with _ref_db() as db:
             total_f = len(fac_rows)
             for i in range(0, total_f, 1000):

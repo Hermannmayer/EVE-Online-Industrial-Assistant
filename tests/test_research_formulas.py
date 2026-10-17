@@ -22,6 +22,7 @@ from domain.research import (
     invention_output_me_te,
     invention_output_runs,
     invention_probability,
+    research_level_time_seconds,
     science_job_time,
 )
 
@@ -232,3 +233,51 @@ class TestScienceJobTime:
 
     def test_negative_skills_treated_as_zero(self):
         assert science_job_time(1000, activity=ACTIVITY_INVENTION, research_skill=-3) == pytest.approx(1000)
+
+
+class TestOptimizedAugmentationDecryptor:
+    """01-5 回归：34208「优化的放大装置解码器」的概率倍率是 **0.90**（官方 −10%）。
+
+    旧值 1.10 是从「优化的获取装置 +90%」串行抄错；SDE typeDogma 34208 属性
+    1112 inventionPropabilityMultiplier = 0.9（ME+2 / TE0 / +7 流程三项原本就对）。
+    """
+
+    def test_probability_multiplier_is_090(self):
+        d = get_decryptor(34208)
+        assert d is not None
+        assert d.prob_mult == pytest.approx(0.90)
+        # 其余三项不受影响
+        assert (d.runs_mod, d.me_mod, d.te_mod) == (7, 2, 0)
+
+    def test_plan_476_success_rate(self):
+        """计划 476：base 0.3、科学技能 0+5、加密 0、用 34208 → 0.3×(1+5/30)×0.9 = 0.315"""
+        rate = invention_probability(0.3, 0, 5, 0, prob_mult=get_decryptor(34208).prob_mult)
+        assert rate == pytest.approx(0.315)
+
+
+class TestResearchLevelTime:
+    """01-4 回归：ME/TE 研究时长 = rank × Σ 逐级基础时长，不是「首级 × 目标等级」。
+
+    来源：CCP Crius 博客 / EVE Uni「Research」页表
+    105 / 250 / 595 / 1,414 / 3,360 / 8,000 / 19,000 / 45,255 / 107,700 / 256,000 s；
+    SDE 的 research_material/time 记录的是首级时长（= rank × 105）。
+    """
+
+    def test_bp11189_rank_400(self):
+        """bp11189 首级 42000 s → rank 400；0→10 的裸时长为 400×441679 = 176,671,600 s。"""
+        assert research_level_time_seconds(42000, target_level=10) == pytest.approx(176671600.0)
+
+    @pytest.mark.parametrize("target, expected", [(1, 26775.0), (2, 90525.0), (5, 1459620.0), (10, 112628145.0)])
+    def test_with_skills_and_structure(self, target, expected):
+        """冶金学 5（−25%）+ 高级工业理论 5（−15%）后与审计报告真值一致。"""
+        raw = research_level_time_seconds(42000, target_level=target)
+        assert raw * 0.75 * 0.85 == pytest.approx(expected)
+
+    def test_current_level_subtracts_finished_levels(self):
+        """从 ME5 研究到 ME10 只需后 5 级的时长（不是重新算前 5 级）。"""
+        full = research_level_time_seconds(42000, target_level=10)
+        part = research_level_time_seconds(42000, target_level=10, current_level=5)
+        assert part == pytest.approx(full - research_level_time_seconds(42000, target_level=5))
+
+    def test_target_not_above_current_returns_zero(self):
+        assert research_level_time_seconds(42000, target_level=5, current_level=5) == 0.0

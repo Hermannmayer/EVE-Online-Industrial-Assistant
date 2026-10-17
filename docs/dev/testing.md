@@ -160,9 +160,10 @@ pre-commit 钩子（`.pre-commit-config.yaml`，`git commit` 时自动跑）：r
 1. **ruff** — `ruff check .`
    （**不跑** `ruff format --check .`：仓库存在历史未格式化文件，跑则 CI 恒红，整改应单独立项）
 2. **mypy** — `mypy . --ignore-missing-imports`
-3. **pytest** — 全量 + 覆盖率，`QT_QPA_PLATFORM=offscreen`（无头 Qt；runner 需装 `libegl1`/`libgl1`）
+3. **pytest** — 非 UI 档（`-q -s -m "not ui" --maxfail=5`），`QT_QPA_PLATFORM=offscreen`
+   （无头 Qt；runner 需装 `libegl1`/`libgl1`）。UI 档不进 CI，由本地 `ui-retest` +
+   `shell_snapshot.py` 兜底；覆盖率与 Codecov 已移除（无消费方）。
 4. **文档站内部链接校验** — `scripts/check_docs_links.py`
-5. **Codecov** — 上传 `coverage.xml`
 
 **`version-check`**（独立 job）：`scripts/check_version.py` 校验
 `core/version.py` == CHANGELOG 最新版本段 == `pyproject.toml [project].version` == git tag（发版态），

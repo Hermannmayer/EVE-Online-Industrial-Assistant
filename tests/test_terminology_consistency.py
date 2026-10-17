@@ -251,15 +251,18 @@ def test_blueprint_group_suffix_matches_ccp_category():
     对老库（用户没重跑 `sde_data`、category_id 仍为 NULL）跳过：那种库上
     没有权威来源可比，而 `item_kind` 的谓词本身就是为兼容它才这么写的。
 
-    CI（`database/` 不存在）同样跳过：**`database/*.db` 是 gitignored 的可重建缓存，
-    CI 上不生成**；`sqlite3.connect()` 会就地新建一个空库，于是抛 `no such table: item`。
+    CI（`database/` 目录不存在）同样跳过：**`database/*.db` 是 gitignored 的可重建缓存，
+    CI 上不生成**；`sqlite3.connect()` 连目录都没有时会抛 `unable to open database file`。
     那种情况下没有权威来源，跳过即可 —— 不能让它变成「谓词被判错」的假红。
     """
     import sqlite3
 
     from core.paths import REF_DB_PATH
 
-    conn = sqlite3.connect(str(REF_DB_PATH))
+    try:
+        conn = sqlite3.connect(str(REF_DB_PATH))
+    except sqlite3.Error as exc:  # 干净检出没有 database/ 目录 → 无权威来源可比对
+        pytest.skip(f"需要本地 database/reference.db（CI 不生成这些库，不可打开）：{exc}")
     try:
         try:
             cat9 = {r[0] for r in conn.execute("SELECT type_id FROM item WHERE category_id = 9")}

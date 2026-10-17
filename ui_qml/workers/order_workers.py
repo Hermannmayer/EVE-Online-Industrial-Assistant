@@ -154,6 +154,31 @@ class OrderFetchWorker(QThread):
         async with _Client(timeout=30) as owned:
             return await self._fetch_orders(owned)
 
+    async def _fetch_side(self, client: APIClient, url: str, order_type: str) -> tuple[int | None, list]:
+        """取一个方向的**全部页**；返回 `(status, rows)`（02-08/02-11）。
+
+        - `status is None` ⇒ 网络/限流/5xx 失败（调用方必须报错，不能当空盘口）；
+        - `404` ⇒ 该市场没有此 type 的订单（合法空）；
+        - `200` ⇒ `X-Pages` 大于 1 时继续翻页（PLEX 全域单 type 实测 2 页）。
+        """
+        base = f"{url}?type_id={self._type_id}&order_type={order_type}"
+        status, first, headers = await client.fetch_state(f"{base}&page=1")
+        if status is None:
+            return None, []
+        if status == 404:
+            return 404, []
+        try:
+            pages = min(int(headers.get("X-Pages", 1)), 20)  # 上限防御：不无限翻页
+        except (TypeError, ValueError):
+            pages = 1
+        rows = list(first or [])
+        for page in range(2, pages + 1):
+            st, chunk, _ = await client.fetch_state(f"{base}&page={page}")
+            if st is None:
+                return None, []  # 宁可不展示，也不用残缺页冒充完整盘口
+            rows.extend(chunk or [])
+        return status, rows
+
     async def _fetch_orders(self, client: APIClient) -> tuple[list, list]:
         if self.isInterruptionRequested():
             return [], []
@@ -165,15 +190,19 @@ class OrderFetchWorker(QThread):
         #   并发：第 1 次 492~662ms，稳态(第 2..4 次) **166~221ms**
         # 并发稳态仍快约 2.3×（第一条连接握手之后两条连接都在池里），所以保留并发。
         # ⚠️ 这跟「每次新建 session」的旧条件不同：那时并发要新开连接、TLS 另算，收益很小。
-        buy_data, sell_data = await asyncio.gather(
-            client.fetch_raw(f"{url}?type_id={self._type_id}&order_type=buy"),
-            client.fetch_raw(f"{url}?type_id={self._type_id}&order_type=sell"),
+        (buy_status, buy_data), (sell_status, sell_data) = await asyncio.gather(
+            self._fetch_side(client, url, "buy"),
+            self._fetch_side(client, url, "sell"),
         )
 
         if self.isInterruptionRequested():
             return [], []
-        buy_orders = sorted(buy_data or [], key=lambda o: o["price"], reverse=True)[:_ORDER_BOOK_ROWS]
-        sell_orders = sorted(sell_data or [], key=lambda o: o["price"])[:_ORDER_BOOK_ROWS]
+        if buy_status is None or sell_status is None:
+            # 02-08：失败必须可见 —— 不能把「拉取失败」压成空盘口
+            self.error_signal.emit(self._type_id, "订单拉取失败（网络/限流），请稍后重试")
+            return [], []
+        buy_orders = sorted(buy_data, key=lambda o: o["price"], reverse=True)[:_ORDER_BOOK_ROWS]
+        sell_orders = sorted(sell_data, key=lambda o: o["price"])[:_ORDER_BOOK_ROWS]
 
         all_loc_ids = set()
         for o in buy_orders + sell_orders:
@@ -196,7 +225,7 @@ class OrderFetchWorker(QThread):
         `/universe/names/`。`client` 传进来就用它（共享 session，不再开第二条连接）；
         不传就临时建一个（测试直调路径）。
         """
-        from services.npc_seller import resolve_stations_by_ids
+        from services.name_resolver import resolve_stations_by_ids
 
         need = [lid for lid in location_ids if lid and lid not in _station_name_cache]
         if not need:

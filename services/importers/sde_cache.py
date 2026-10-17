@@ -31,6 +31,15 @@ ZIP_PART_PATH = SDE_ZIP_PATH + ".part"  # 下载中断残留 = 断点，下次 R
 MANIFEST_PATH = os.path.join(CACHE_DIR, "sde_cache_manifest.json")
 MANIFEST_VERSION = 1
 
+#: 官方 SDE 发布源的 build 号指针（02-03 A 段）。旧 S3 `sde.zip` 自 2025-07-07 起
+#: 被冻结；这个 JSONL 每次启动只请求一次（~100B），用来判断本地缓存是否过期。
+#: 真正迁移到新发布源（扁平 102 文件包，`fsd/`/`bsd/`/`universe/` 已消失）属 B 段，
+#: 需要逐导入器适配，本轮只做**新鲜度检测与告警**，不做静默重下。
+SDE_LATEST_URL = "https://developers.eveonline.com/static-data/tranquility/latest.jsonl"
+
+#: 最近一次新鲜度检查结果（供 UI/诊断读取；`get_sde_freshness()`）。
+_FRESHNESS: dict[str, object] = {}
+
 # 下载限流重试：429/503 时按服务端 Retry-After 等待，否则用默认退避
 _DL_MAX_RETRIES = 5
 _DL_DEFAULT_BACKOFF = 30.0
@@ -120,12 +129,55 @@ def _write_yaml_atomic(fname: str, raw: str) -> None:
         raise
 
 
-def _write_manifest() -> None:
-    """原子写完成标记（临时文件名唯一，多进程互踩不影响正确性）"""
+def _read_manifest() -> dict:
+    """读完成标记；缺失/损坏/版本不符 → 空 dict。"""
+    try:
+        with open(MANIFEST_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) and data.get("version") == MANIFEST_VERSION else {}
+
+
+def cached_sde_build() -> int | None:
+    """本地缓存对应的 SDE build 号；旧 manifest 没记过 → None（= 未知，视同过期）。"""
+    build = _read_manifest().get("build")
+    try:
+        return int(build) if build is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def is_sde_stale(remote_build: int | None, local_build: int | None) -> bool:
+    """官方 build 比本地新（或本地未知）⇒ 过期。官方拿不到时不判过期（离线可用）。"""
+    if remote_build is None:
+        return False
+    return local_build is None or remote_build > local_build
+
+
+def _zip_build_number(zf: zipfile.ZipFile) -> int | None:
+    """从 zip 的 `_sde.yaml`（新发布源的 build 元数据）读 build 号；旧包没有 → None。"""
+    try:
+        raw = zf.read("_sde.yaml")
+        data = yaml.safe_load(raw) or {}
+        build = (data.get("sde") or {}).get("buildNumber") if isinstance(data, dict) else None
+        return int(build) if build is not None else None
+    except (KeyError, ValueError, TypeError, yaml.YAMLError):
+        return None
+
+
+def _write_manifest(build: int | None = None) -> None:
+    """原子写完成标记（临时文件名唯一，多进程互踩不影响正确性）。
+
+    build = 产生这批 YAML 的 SDE build 号（旧冻结包没有 → None，读端视同未知）。
+    """
     fd, tmp = tempfile.mkstemp(dir=CACHE_DIR, prefix=".manifest_", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump({"version": MANIFEST_VERSION, "files": sorted(YAML_FILES)}, f)
+            json.dump(
+                {"version": MANIFEST_VERSION, "files": sorted(YAML_FILES), "build": build},
+                f,
+            )
         os.replace(tmp, MANIFEST_PATH)
     except OSError:
         try:
@@ -144,9 +196,11 @@ def _backfill_manifest_from_zip() -> bool:
     """
     if not os.path.exists(SDE_ZIP_PATH):
         return False
+    build = None
     try:
         with zipfile.ZipFile(SDE_ZIP_PATH) as zf:
             sizes = {info.filename: info.file_size for info in zf.infolist()}
+            build = _zip_build_number(zf)
     except (zipfile.BadZipFile, OSError):
         return False
     for fname in YAML_FILES:
@@ -157,7 +211,7 @@ def _backfill_manifest_from_zip() -> bool:
         matches = [name for name in sizes if name.endswith(zip_name)]
         if not matches or sizes[matches[0]] != os.path.getsize(dest):
             return False
-    _write_manifest()
+    _write_manifest(build=build)
     return True
 
 
@@ -337,7 +391,9 @@ async def _download_and_extract(progress_cb: Callable[[int, str], None] | None =
                 log.warning("清理提取残留失败 %s: %s", stale, e)
 
     missing: list[str] = []
+    build: int | None = None
     with zipfile.ZipFile(SDE_ZIP_PATH) as zf:
+        build = _zip_build_number(zf)
         for fname in sorted(YAML_FILES):
             zip_name = ZIP_LOOKUP.get(fname, fname)
             candidates = [p for p in zf.namelist() if p.endswith(zip_name)]
@@ -353,8 +409,8 @@ async def _download_and_extract(progress_cb: Callable[[int, str], None] | None =
         # 不写标记 → 下次启动重试；此时 _all_cached() 为假，不会把缺文件的缓存当成完整缓存
         log.error("SDE YAML 提取不完整，缺少: %s（未写完成标记，下次启动会重新提取）", ", ".join(missing))
         return
-    _write_manifest()
-    log.info("SDE YAML 缓存完成")
+    _write_manifest(build=build)
+    log.info("SDE YAML 缓存完成（build=%s）", build)
 
 
 async def ensure_sde_cache(progress_cb: Callable[[int, str], None] | None = None):
@@ -377,6 +433,60 @@ async def ensure_sde_cache(progress_cb: Callable[[int, str], None] | None = None
 
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _sync_ensure_sde_cache, progress_cb)
+
+
+async def fetch_latest_sde_build(timeout: int = 10) -> int | None:
+    """官方 `latest.jsonl` 的当前 build 号（1 次小请求）。失败/离线 → None。"""
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=timeout),
+            headers={"Accept": "application/json", "User-Agent": "EveApp/1.0"},
+        ) as session:
+            async with session.get(SDE_LATEST_URL) as resp:
+                if resp.status != 200:
+                    return None
+                text = await resp.text()
+    except (TimeoutError, aiohttp.ClientError, OSError):
+        return None
+    for line in text.splitlines():
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and data.get("_key") == "sde":
+            try:
+                return int(data["buildNumber"])
+            except (KeyError, TypeError, ValueError):
+                return None
+    return None
+
+
+async def warn_if_sde_stale() -> dict:
+    """02-03 A 段：检测本地 SDE build 是否落后官方并告警（不触发重下/重导）。
+
+    Returns:
+        `{"local_build": int|None, "remote_build": int|None, "stale": bool}`；
+        网络失败时 `remote_build=None / stale=False`（离线可用，不误报）。
+    """
+    local = cached_sde_build()
+    remote = await fetch_latest_sde_build()
+    stale = is_sde_stale(remote, local)
+    _FRESHNESS.clear()
+    _FRESHNESS.update({"local_build": local, "remote_build": remote, "stale": stale})
+    if stale:
+        log.warning(
+            "SDE 静态数据已过期：本地 build=%s / 官方 build=%s。"
+            "本轮只告警不自动重导（新发布源布局适配见 02-03 B 段）；"
+            "新物品/新蓝图在适配完成前不会出现在应用里。",
+            local,
+            remote,
+        )
+    return get_sde_freshness()
+
+
+def get_sde_freshness() -> dict:
+    """最近一次 SDE 新鲜度检查结果（未检查过 → 空 dict）。"""
+    return dict(_FRESHNESS)
 
 
 def _build_name_map(zip_path: str) -> dict[int, str]:

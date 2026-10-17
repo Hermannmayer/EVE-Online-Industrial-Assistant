@@ -148,11 +148,12 @@ def test_skill_change_triggers_a_market_recompute(harness):
 def test_market_fees_follow_the_accounting_skill(harness):
     """费率公式来自 `char_settings_common`（本项目只有这一份实现）。"""
     bridge = harness.bridge
+    # 2025-03-12.1 起：销售税基础 7.5%、会计学每级 -11% → 0 级 7.50%、5 级 ≈3.375%（显示 3.37%）
     bridge.market.set_skills_data({"会计学": 0})
-    assert "销售税率: 2.00%" in bridge.market.results[0]
+    assert "销售税率: 7.50%" in bridge.market.results[0]
 
     bridge.market.set_skills_data({"会计学": 5})
-    assert "销售税率: 1.70%" in bridge.market.results[0]
+    assert "销售税率: 3.37%" in bridge.market.results[0]
 
 
 # ── 市场页 ───────────────────────────────────────────────────

@@ -6,9 +6,21 @@
 
 from __future__ import annotations
 
+from core.constants import (
+    PLAN_ACTIVE_STATUSES,
+    PLAN_RUNNING_STATUSES,
+    PLAN_STATUS_PENDING,
+    PLAN_TERMINAL_STATUSES,
+    PLAN_UNFINISHED_STATUSES,
+)
 from core.container import get_container
 from core.logger import log
 from services.char_config_resolver import resolve_char_config
+
+
+def _placeholders(values: tuple[str, ...]) -> str:
+    """状态集合 → 参数化 `IN (...)` 占位串（值必须继续作为参数传入）。"""
+    return ",".join("?" for _ in values)
 
 
 def calculate_plan_metrics(
@@ -549,15 +561,19 @@ def load_plan(plan_id: int) -> dict | None:
 def load_plans(filter_key: str) -> list[dict]:
     """加载生产计划列表，并补全蓝图可用标记/类别/机库名称 + 「自制成本/件」。"""
     where = ""
+    params: tuple = ()
     if filter_key == "待排":
-        where = "status = 'pending'"
+        where = "status = ?"
+        params = (PLAN_STATUS_PENDING,)
     elif filter_key == "运行中":
-        where = "status IN ('in_progress','running')"
+        where = f"status IN ({_placeholders(PLAN_RUNNING_STATUSES)})"
+        params = PLAN_RUNNING_STATUSES
     elif filter_key == "待下线":
         where = "status = 'ready'"
     elif filter_key == "已完成":
-        where = "status IN ('completed','done')"
-    return _attach_make_costs(_fetch_rows(where))
+        where = f"status IN ({_placeholders(PLAN_TERMINAL_STATUSES)})"
+        params = PLAN_TERMINAL_STATUSES
+    return _attach_make_costs(_fetch_rows(where, params))
 
 
 def load_plans_for_wizard() -> list[dict]:
@@ -565,7 +581,10 @@ def load_plans_for_wizard() -> list[dict]:
 
     占用区与中部列表共用这一次查询，内存拆用（active 子集 → 占用；选中角色 → 列表）。
     """
-    return _fetch_rows("status NOT IN ('completed','done')")
+    return _fetch_rows(
+        f"status NOT IN ({_placeholders(PLAN_TERMINAL_STATUSES)})",
+        PLAN_TERMINAL_STATUSES,
+    )
 
 
 def _sub_level(p: dict) -> int:
@@ -634,8 +653,8 @@ def collect_refresh_type_ids() -> tuple[set[int], int]:
     """收集工业页定向刷新所需的 type_id 集合，并返回其中 5 分钟内已缓存的条数。"""
     with get_container().db.connect("user") as conn:
         rows = conn.execute(
-            "SELECT id, product_type_id FROM production_plans "
-            "WHERE status IN ('pending','in_progress','running','ready')"
+            f"SELECT id, product_type_id FROM production_plans WHERE status IN ({_placeholders(PLAN_ACTIVE_STATUSES)})",
+            PLAN_ACTIVE_STATUSES,
         ).fetchall()
         product_ids = {r[1] for r in rows}
 
@@ -672,7 +691,10 @@ def save_price_snapshots() -> int:
     """为活跃计划及其物料保存当前 Jita 价格快照，返回保存条数。"""
     with get_container().db.connect("user", "ref", "mkt", "bp") as conn:
         c = conn.cursor()
-        c.execute("SELECT product_type_id FROM production_plans WHERE status IN ('pending','in_progress','running')")
+        c.execute(
+            f"SELECT product_type_id FROM production_plans WHERE status IN ({_placeholders(PLAN_UNFINISHED_STATUSES)})",
+            PLAN_UNFINISHED_STATUSES,
+        )
         plan_pids = [r[0] for r in c.fetchall()]
         if not plan_pids:
             return 0
@@ -721,7 +743,8 @@ def load_active_plans_for_procurement() -> list[dict]:
             "materials_ready, status, deposit_hangar_id, deposited, material_cost, "
             "assigned_blueprint_id, mat_hangar_id, material_short, group_number, sub_level, "
             "activity, blueprint_type_id, decryptor_type_id "
-            "FROM production_plans WHERE status IN ('pending', 'in_progress', 'running', 'ready')"
+            f"FROM production_plans WHERE status IN ({_placeholders(PLAN_ACTIVE_STATUSES)})",
+            PLAN_ACTIVE_STATUSES,
         )
         for pr in c.fetchall():
             plans.append(

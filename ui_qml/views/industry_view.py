@@ -6,7 +6,13 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, QThread, QTimer
 
-from core.constants import TRADE_HUB_IDS
+from core.constants import (
+    PLAN_AWAITING_STATUSES,
+    PLAN_RUNNING_STATUSES,
+    PLAN_STATUS_PENDING,
+    PLAN_TERMINAL_STATUSES,
+    TRADE_HUB_IDS,
+)
 from core.container import get_container
 from core.logger import log
 from services.char_config_resolver import load_all_data
@@ -42,11 +48,16 @@ MAIN_CHAR_NAME = "main"
 #: 状态筛选 → 落库状态取值。与 `plan_service.load_plans(filter_key)` 的 WHERE 一一对应；
 #: 这里是**Python 侧**的同一份口径，供「全量加载 + 内存筛显示行」用（见 `load_plans`）。
 _STATUS_FILTERS: dict[str, frozenset[str]] = {
-    "待排": frozenset({"pending"}),
-    "运行中": frozenset({"in_progress", "running"}),
-    "待下线": frozenset({"ready"}),
-    "已完成": frozenset({"completed", "done"}),
+    "待排": frozenset({PLAN_STATUS_PENDING}),
+    "运行中": frozenset(PLAN_RUNNING_STATUSES),
+    "待下线": frozenset(PLAN_AWAITING_STATUSES),
+    "已完成": frozenset(PLAN_TERMINAL_STATUSES),
 }
+
+#: 批量重算只碰**待生产**行：在产/待下线计划的时长与成本冻结在启动口径
+#: （启动扣料快照 + 已启动 runs），重算覆盖会让倒计时/ISK·h 无提示跳变（03-4）。
+#: 空串是历史行（status 缺失）的兼容口径，与旧 `todo` 过滤一致。
+_RECALC_STATUSES: tuple[str, ...] = (PLAN_STATUS_PENDING, "")
 
 
 def _status_match(row: dict, filter_key: str) -> bool:
@@ -604,12 +615,9 @@ class IndustryPage(QObject):
             if current_fp != self._recalc_price_fp:
                 self._recalc_dirty = True
             return
-        # 只重算 pending/in_progress/ready 的计划
-        todo = [
-            r
-            for r in rows
-            if r.get("id") and r.get("status", "").lower() in ("pending", "in_progress", "running", "ready", "")
-        ]
+        # 只重算 pending：在产/待下线计划的时长与成本**冻结在启动口径**
+        # （启动扣料快照 + 已启动 runs），重算覆盖等于让倒计时/ISK·h 无提示跳变（03-4）。
+        todo = [r for r in rows if r.get("id") and (r.get("status") or "").lower() in _RECALC_STATUSES]
         if not todo:
             return
         try:
@@ -680,6 +688,10 @@ class IndustryPage(QObject):
             clean.append(row)
         if not clean:
             return
+        # 第二道防线：worker 运行期间计划可能已被启动/完成 —— 写库前按 DB 现状再筛一次
+        clean = self._pending_recalc_rows(clean)
+        if not clean:
+            return
         # 设置重入锁，避免 load_plans → _auto_calculate → 新 worker -> ... 无限循环
         stale_price = self._recalc_dirty or self._recalc_settings_fp() != self._recalc_price_fp
         self._recalc_busy = True
@@ -727,6 +739,26 @@ class IndustryPage(QObject):
             # 旧结果已经落库并刷新过一次，锁解除后按最新价格口径再跑一轮。
             self._recalc_dirty = False
             self.load_plans()
+
+    def _pending_recalc_rows(self, rows: list) -> list:
+        """写库前按 DB 当前状态二次过滤：只保留**仍是待生产**的行。
+
+        `_auto_calculate_plans` 的 todo 过滤在起线程**前**；worker 在后台跑时用户可能把
+        某行启动/完成了 —— 此时把新算的 calculated_time/material_cost 写回去会覆盖
+        启动口径（倒计时/ISK·h 无提示跳变）。这里按 DB 现状再筛一次（03-4 第二道防线）。
+        """
+        ids = [int(row[0]) for row in rows]
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        with get_container().db.connect("user") as conn:
+            statuses = {
+                int(pid): str(status or "").lower()
+                for pid, status in conn.execute(
+                    f"SELECT id, status FROM production_plans WHERE id IN ({placeholders})", ids
+                ).fetchall()
+            }
+        return [row for row in rows if statuses.get(int(row[0]), "") in _RECALC_STATUSES]
 
     def _check_industry_data(self):
         """检查工业数据，缺失或过时（fetch_time 超阈值）时在后台拉取"""

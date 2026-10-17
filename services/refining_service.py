@@ -96,20 +96,38 @@ class RefiningService:
         *,
         skills=None,
         is_player_facility=False,
+        structure_type=None,
+        security_mult=0.0,
+        rig_mult=0.0,
         price_hub="Jita",
         yield_override=None,
         ore_skill=0,
     ) -> dict:
-        """完整实现（从 scoring_service.py 迁移）"""
+        """完整实现（从 scoring_service.py 迁移）。
+
+        ``structure_type`` / ``security_mult`` / ``rig_mult``：玩家 Upwell 结构的产率项
+        （Citadel/工程复合体 50%、Athanor 51%、Tatara 52% + 安全区/rig 加成），
+        NPC 站路径忽略；``yield_override`` 仍可覆盖整个产率。
+        """
+        from core.eve_formulas import REPROCESSING_MAX_YIELD_FACILITY, REPROCESSING_MAX_YIELD_NPC
         from services.name_resolver import resolve_item_name
 
         yield_rate = (
             yield_override
             if yield_override is not None
-            else calc_refining_yield(skills, is_player_facility=is_player_facility, ore_skill_level=ore_skill)
+            else calc_refining_yield(
+                skills,
+                is_player_facility=is_player_facility,
+                structure_type=structure_type,
+                security_mult=security_mult,
+                rig_mult=rig_mult,
+                ore_skill_level=ore_skill,
+            )
         )
-        # 矿石专精已进公式（乘性）；上限由公式按 NPC 站/玩家结构分别施加
-        yield_rate = min(yield_rate, 0.85)
+        # 矿石专精/安全区/rig 已进公式（乘性）；上限与公式同源（NPC 70% / 结构 90.6%）
+        yield_rate = min(
+            yield_rate, REPROCESSING_MAX_YIELD_FACILITY if is_player_facility else REPROCESSING_MAX_YIELD_NPC
+        )
 
         with self._db.connect("ref") as conn:
             cur = conn.cursor()

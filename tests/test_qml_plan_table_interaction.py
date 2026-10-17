@@ -659,17 +659,16 @@ def test_row_menu_is_grouped_and_dropped_entries_stay_out(table, clicks):
     """菜单按用途分组，且三项已下线功能**不得复活**。
 
     - 「设置蓝图等级...」：蓝图等级统一由库存蓝图带出（计划上不再有手填入口，蓝图不会凭空出现）
-    - 「查看蓝图原图的NPC卖家」：入口仍在蓝图选择弹窗里
     - 「产线启动小助手」：工业页底部状态栏已有同名按钮
 
-    这三条的**功能都还在**，只是计划表的入口该消失 —— 读 QML 源码看不出来，
+    这两条的**功能都还在**，只是计划表的入口该消失 —— 读 QML 源码看不出来，
     所以在这里把「菜单里没有它们」钉死。
     """
     clicks.right_click(0)
     menu = clicks.wait_open("rowMenu")
     labels = _visible_labels(menu)
 
-    for gone in ("设置蓝图等级...", "查看蓝图原图的NPC卖家", "产线启动小助手", "重算子项（按母项当前需求）"):
+    for gone in ("设置蓝图等级...", "产线启动小助手", "重算子项（按母项当前需求）"):
         assert gone not in labels, f"「{gone}」不该再出现在行右键菜单里：{labels}"
 
     assert labels[-1] == "删除产线", f"破坏性操作要单独压到最后：{labels}"

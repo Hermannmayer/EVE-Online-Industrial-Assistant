@@ -137,6 +137,52 @@ SKILL_CATEGORIES = [
     ("建筑制造", "buildings", ["空间定锚", "哨站建造研究"]),
     ("旗舰制造", "sailboat", ["旗舰级船只建造研究", "高级旗舰建造"]),
     ("生产线", "package", ["高级量产技术", "批量生产学"]),
+    # ── 蓝图制造/发明实际要求、但原面板缺失的技能 ──
+    # 来源：`database/reference.db item WHERE category_id=16` ∩
+    #       `database/blueprint.db blueprint_skills.activity='manufacturing'`（2026-10-17 实测
+    #       31 个不在原面板）。缺键会让 `domain/formulas.calc_production_time` 与发明成功率
+    #       一律按 0 级算（角色满级也填不进去、ESI 也不会写入）。名字必须与 reference.db
+    #       `item.zh_name` 逐字一致 —— ESI 技能导入按这个名字回填（见 esi_skill_worker）。
+    (
+        "蓝图技能",
+        "flask",
+        [
+            "激光物理学",
+            "磁流体物理学",
+            "纳米工程学",
+            "分子工程学",
+            "盖伦特星舰工程学",
+            "米玛塔尔星舰工程学",
+            "艾玛星舰工程学",
+            "加达里星舰工程学",
+            "药品制备",
+            "全能理论",
+            "推进子系统技术",
+            "核心子系统技术",
+            "防御子系统技术",
+            "攻击子系统技术",
+            "殷郡技术研究",
+            "冬眠者技术研究",
+            "塔洛迦技术研究",
+            "艾玛加密技术原理",
+            "盖伦特加密技术原理",
+            "加达里加密技术原理",
+            "塔克玛技术研究",
+            "母星管理",
+            "米玛塔尔加密技术原理",
+            "生产管理学",
+            "电子子系统技术",
+            "精炼厂管理",
+            "首席科研官培训",
+            "空间航行工程学",
+            "超网络科学",
+            "空间站管理学",
+            "神经毒化控制理论",
+        ],
+    ),
+    # 交易费率（经纪人费 / 销售税 / 改单折扣）的三个技能键：原先根本不在面板，
+    # 导致 `core.eve_formulas` 的费率永远按 0 级（最差档）算，用户也没地方填。
+    ("贸易", "coins", ["会计学", "经纪人关系学", "高级经纪人关系学"]),
 ]
 
 ALL_SKILLS = []
@@ -152,15 +198,19 @@ TRADE_HUBS = [
 ]
 
 
-def calc_broker_fee(skills: dict, faction_standing: float, corp_standing: float, base_rate: float = 1.0) -> float:
-    """计算经纪人费率 (%)。委托 core.eve_formulas.calc_broker_rate。"""
+def calc_broker_fee(skills: dict, faction_standing: float, corp_standing: float, base_rate: float = 3.0) -> float:
+    """计算 NPC 空间站经纪人费率 (%)。委托 core.eve_formulas.calc_broker_rate。
+
+    ``base_rate`` 只在非常规缩放时使用（现行公式基准 3%；传入其它值时按比例缩放），
+    常规调用不传即得官方口径。玩家 Upwell 结构市场由结构主定价、技能无效。
+    """
     from core.eve_formulas import calc_broker_rate
 
     market_data = {"faction_standing": faction_standing, "corp_standing": corp_standing}
-    if base_rate != 1.0:
-        rate = calc_broker_rate(skills, market_data)
-        return max(0.1, rate * base_rate)  # type: ignore[no-any-return]
-    return calc_broker_rate(skills, market_data)  # type: ignore[no-any-return]
+    rate = calc_broker_rate(skills, market_data)
+    if base_rate != 3.0:
+        return max(1.0, rate * base_rate / 3.0)  # type: ignore[no-any-return]
+    return rate  # type: ignore[no-any-return]
 
 
 def calc_relist_discount(skills: dict) -> float:
@@ -170,13 +220,13 @@ def calc_relist_discount(skills: dict) -> float:
     return _calc_relist_discount(skills)  # type: ignore[no-any-return]
 
 
-def calc_sales_tax(skills: dict, base_tax: float = 2.0) -> float:
-    """计算销售税率 (%)。委托 core.eve_formulas。"""
+def calc_sales_tax(skills: dict, base_tax: float = 7.5) -> float:
+    """计算销售税率 (%)。委托 core.eve_formulas。``base_tax`` 非常规缩放用（基准 7.5%）。"""
     from core.eve_formulas import calc_sales_tax_rate
 
     rate = calc_sales_tax_rate(skills)
-    if base_tax != 2.0:
-        return rate * (base_tax / 2.0)  # type: ignore[no-any-return]
+    if base_tax != 7.5:
+        return rate * (base_tax / 7.5)  # type: ignore[no-any-return]
     return rate  # type: ignore[no-any-return]
 
 

@@ -299,3 +299,36 @@ def resolve_system_display_names_batch(solar_system_ids: list[int]) -> dict[int,
             return resolve_system_names_batch(conn, solar_system_ids)
     except Exception:
         return {}
+
+
+# ════════════════════════════════════════════════════════════
+#  空间站地点名（订单详情 / 查询页的地点列）
+# ════════════════════════════════════════════════════════════
+#
+# 原属于已删除的 NPC 卖家模块（2025-07 起 ESI 公开订单不再返回 corporation_id /
+# is_corporation_order，该查询已整体删除，02-02）。但订单地点名称解析仍在用
+# （`ui_qml/workers/order_workers.py`、`ui_qml/bridge/query_dashboard_bridge.py`），
+# 所以搬到这里——与「把 id 解析成可读名字」同职责。
+
+
+def resolve_stations(conn: sqlite3.Connection, location_ids: set[int]) -> dict[int, tuple[str, str]]:
+    """location_id → (空间站名, 星系名)。NPC 空间站的 location_id 即 `station.station_id`。"""
+    location_ids = {lid for lid in location_ids if lid}
+    if not location_ids:
+        return {}
+    placeholders = ",".join("?" * len(location_ids))
+    rows = conn.execute(
+        f"SELECT s.station_id, s.station_name, ss.solar_system_name "
+        f"FROM station s LEFT JOIN solar_system ss ON ss.solar_system_id = s.solar_system_id "
+        f"WHERE s.station_id IN ({placeholders})",
+        tuple(location_ids),
+    ).fetchall()
+    return {r[0]: (r[1] or "", r[2] or "") for r in rows}
+
+
+def resolve_stations_by_ids(location_ids: set[int]) -> dict[int, tuple[str, str]]:
+    """打开 reference.db 并解析空间站名称（订单地点列兜底）。"""
+    from core.container import get_container
+
+    with get_container().db.connect("ref") as conn:
+        return resolve_stations(conn, location_ids)

@@ -50,9 +50,10 @@ BASE_INVENTION_TE = 4
 class Decryptor:
     """解码器修正值。
 
-    ⚠️ 硬编码：reference.db.item_dogma 里这 8 个 type_id 的 dogma_attrs 实测为空 `{}`，
-    SDE 没有可查的属性，只能按官方支持中心公布的表格固化。
-    来源: docs/eve_wiki_knowledge_base.md「解码器」节（与 EVE University 表一致）。
+    ⚠️ 硬编码：reference.db.item_dogma 只覆盖制造类改件，**不含技能**；解码器的第一方数据
+    在 SDE `data/sde.zip → fsd/typeDogma.yaml`（属性 1112 概率倍率 / 1113 ME / 1114 TE /
+    1124 流程上限），8 个 type_id 已逐项核对。来源: docs/eve_wiki_knowledge_base.md「解码器」节
+    + SDE typeDogma（2026-07 快照）。
     """
 
     type_id: int
@@ -71,7 +72,7 @@ DECRYPTORS: dict[int, Decryptor] = {
     34205: Decryptor(34205, "处理装置解码器", 1.10, 0, 3, 6),
     34206: Decryptor(34206, "对称装置解码器", 1.00, 2, 1, 8),
     34207: Decryptor(34207, "优化的获取装置解码器", 1.90, 2, 1, -2),
-    34208: Decryptor(34208, "优化的放大装置解码器", 1.10, 7, 2, 0),
+    34208: Decryptor(34208, "优化的放大装置解码器", 0.90, 7, 2, 0),
 }
 
 
@@ -287,3 +288,52 @@ def science_job_time(
     elif activity == ACTIVITY_RESEARCH_ME:
         mult *= 1.0 - METALLURGY_SKILL_MULT * max(0, int(metallurgy_skill))
     return max(0.0, float(base_time)) * max(0.0, mult) * max(0.0, structure_time_mod)
+
+
+# ═══════════════════════════════════════════════════════════
+#  ME/TE 研究时长（逐级递增）
+# ═══════════════════════════════════════════════════════════
+
+#: 研究首级基础时长表（秒）——CCP Crius 公布，第 n 级时长 = rank × 表[n-1]。
+#: 来源: https://wiki.eveuniversity.org/Research「How long does research take?」
+RESEARCH_LEVEL_BASE_SECONDS: tuple[int, ...] = (
+    105,
+    250,
+    595,
+    1414,
+    3360,
+    8000,
+    19000,
+    45255,
+    107700,
+    256000,
+)
+#: SDE `blueprint_activities.time`（research_material/research_time）记录的正是**首级**时长，
+#: 且首级 = rank × 105 —— 用它反推 rank。
+RESEARCH_BASE_RANK_SECONDS = 105
+#: 研究作业 job value（安装费基数）的时长时间权重，官方研究安装费公式
+#: `process_time_value = (基础时长_n − 基础时长_{n−1}) × 0.02105 × EIV`。
+#: ⚠️ 该系数只见于 EVE Uni「Research」页转述，官方支持页直连 403，审计标**存疑**。
+RESEARCH_PROCESS_TIME_VALUE_RATE = 0.02105
+
+
+def research_level_time_seconds(
+    base_first_level: float,
+    *,
+    target_level: int,
+    current_level: int = 0,
+) -> float:
+    """从 ``current_level`` 研究到 ``target_level`` 的**累计时长（秒，未乘技能/结构）**。
+
+    ``base_first_level`` = SDE 里该研究活动的首级时长（= rank × 105）。
+    公式：``rank × Σ base[i]``（i = current+1 … target），即逐级递增后再求和；
+    不是「首级时长 × 目标等级」的线性外推（那会在 0→10 时低估 357×）。
+
+    返回 0 表示 target ≤ current（无需研究）。
+    """
+    rank = max(0.0, float(base_first_level)) / RESEARCH_BASE_RANK_SECONDS
+    lo = max(0, int(current_level))
+    hi = max(lo, int(target_level))
+    hi = min(hi, len(RESEARCH_LEVEL_BASE_SECONDS))
+    lo = min(lo, hi)
+    return rank * float(sum(RESEARCH_LEVEL_BASE_SECONDS[lo:hi]))

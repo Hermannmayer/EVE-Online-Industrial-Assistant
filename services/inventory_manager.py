@@ -8,6 +8,7 @@ from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
+from core.constants import PLAN_LOCKED_STATUSES, PLAN_RUNNING_STATUSES
 from core.container import get_container
 from core.logger import log
 from domain.market_depth import sell_price_reliable
@@ -329,16 +330,17 @@ def get_items(
         c.execute(sql, params)
         rows = c.fetchall()
         type_ids = [r[1] for r in rows]
-        # 生产计划占用批量聚合：pending 为待启动预留；in_progress/ready 已物理扣减，作核对参考
+        # 生产计划占用批量聚合：pending 为待启动预留；在产/待下线（PLAN_LOCKED）已物理扣减，作核对参考
         usage_map: dict[int, tuple[int, int]] = {}
         if include_derived and type_ids:
             placeholders = ",".join("?" * len(type_ids))
+            locked_placeholders = ",".join("?" * len(PLAN_LOCKED_STATUSES))
             c.execute(
                 f"""
                 SELECT bm.material_type_id,
                     COALESCE(SUM(CASE WHEN pp.status = 'pending'
                                      THEN bm.quantity * pp.runs * pp.parallels ELSE 0 END), 0),
-                    COALESCE(SUM(CASE WHEN pp.status IN ('in_progress', 'ready')
+                    COALESCE(SUM(CASE WHEN pp.status IN ({locked_placeholders})
                                      THEN bm.quantity * pp.runs * pp.parallels ELSE 0 END), 0)
                 FROM production_plans pp
                 JOIN bp.blueprint_products bp ON bp.product_type_id = pp.product_type_id
@@ -348,7 +350,7 @@ def get_items(
                 WHERE bm.material_type_id IN ({placeholders})
                 GROUP BY bm.material_type_id
             """,
-                type_ids,
+                (*PLAN_LOCKED_STATUSES, *type_ids),
             )
             for row in c.fetchall():
                 usage_map[int(row[0])] = (int(row[1] or 0), int(row[2] or 0))
@@ -1160,7 +1162,7 @@ BLUEPRINT_STATUSES: tuple[str, ...] = (
 )
 
 #: 「正在」只算在跑的计划（与 `plan_service.load_running` 同口径）；pending（待排）不算
-_RUNNING_PLAN_STATUSES: tuple[str, ...] = ("in_progress", "running")
+_RUNNING_PLAN_STATUSES: tuple[str, ...] = PLAN_RUNNING_STATUSES
 
 #: plan_category 类别 → 状态文本。反应/研究不在用户列举的状态里，不显示。
 _CATEGORY_STATUS: dict[str, str] = {

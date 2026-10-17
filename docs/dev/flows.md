@@ -473,7 +473,7 @@ manufacturing 反向表）；制造/反应就是产物本身。界面（计划�
 - 子桥**懒建**：`QueryBridge._get_detail` / `_get_dashboard` 首次被 QML 读到才 import 并构造（`query_detail_bridge` / `query_dashboard_bridge`）；导入失败返回 `None`，QML 按 `detail === null` 写占位，**不连累整页**（外壳只把该面板记为暂缺）
 - 详情面板四块（`QueryDetailBridge`）：① 价格 `market_repo.get_batch_market_snapshot`（每 hub 一次）；② 订单 `workers/order_workers.OrderFetchWorker` + `order_popup_bridge.order_rows`（订单弹窗已删，这个纯函数只剩详情面板一个调用方），缓存 `order_workers.order_cache` 由 `QueryDetailBridge._on_orders_fetched` 写入；③ 精炼 `workers/refine_worker.RefineWorker`（产率按**所选人物**的提炼技能算，人物与数量/站点都是面板上的输入）；④ 制造材料 `bom_expander.get_flat_materials`（买/卖各展开一次）。几何/文案在 `ui_qml/models/query_detail_model.py` 纯函数里
 - 候选口径：`services/ui_data_service.query_suggest_items` 只做**前缀**匹配（Type ID 全等，或名字 `LIKE 'x%'`），并排除无用类别 `_JUNK_CATEGORY_IDS`（`category_id=11` 那类 0 价 0 蓝图的遗留条目，也是候选里「两条一模一样的 `♦ 毒蜥级`」的来源）；**不设条数上限**。原先「查询串命中类别名 → 返回整个类别」的兜底、名字子串匹配、以及按名字跑整表搜索的 `query_search_items*` 都已删除
-- 站名解析：`order_workers.OrderFetchWorker._resolve_names` **先查本地 SDE `reference.db.station`**（复用 `services.npc_seller.resolve_stations_by_ids`），只有本地没有的玩家建筑才打 ESI `/universe/names/`；解析失败**不写缓存**（写进去会让该 location 永久显示编号）
+- 站名解析：`order_workers.OrderFetchWorker._resolve_names` **先查本地 SDE `reference.db.station`**（复用 `services.name_resolver.resolve_stations_by_ids`），只有本地没有的玩家建筑才打 ESI `/universe/names/`；解析失败**不写缓存**（写进去会让该 location 永久显示编号）
 
 空闲态三条线（`QueryDashboardBridge`）：
 - **产线详情**：`occupancyByChar`（**每人物一块，块内制造/科研/反应各一行**；行尾给「待下线 N」= 该人物该线型 `status=='ready'` 的计划数，与「空 N」= 剩余产线）← `_refresh_occupancy` ← `services.char_capacity.char_line_usage`（人物 × 线型聚合）+ `ui_qml.bridge.occupancy`（块数据：标签/语义色/统一分母 `cap`/待下线提示）。同一算法另出 `occupancyRows`（按人物，与 `LauncherBridge.occupancyRows` 逐字同形状）。渲染是 `components/OccupancyPanel.qml`，**工业页「人物占用情况」对话框用的是同一块面板**（`dialogs/CharUsageDialog.qml` + `ui_qml.bridge.char_usage_bridge`）—— 两者只差口径：仪表盘 `RUNNING_STATUSES`（正在生产），对话框 `PLANNED_STATUSES`（已规划：待生产/生产中/待下线都占线）。（仪表盘原有的「快捷操作（可启动 / 可下线）」列表已按用户要求删除 —— 启动/下线在**生产计划表**与**产线启动小助手**里都有）
@@ -486,7 +486,7 @@ manufacturing 反向表）；制造/反应就是产物本身。界面（计划�
 services.order_export.find_latest_export(None)   ← 目录固定游戏默认（%USERPROFILE%\Documents\EVE\logs\Marketlogs；文件名含 order/订单）
   → services.order_export.read_export_text（utf-8-sig → utf-16 → gbk 逐档）
   → services.order_export.parse_order_export（表头驱动 CSV，退化启发式；不抛异常）
-  → QueryDashboardBridge._fill_location_names → services.npc_seller.resolve_stations_by_ids（补中文站名）
+  → QueryDashboardBridge._fill_location_names → services.name_resolver.resolve_stations_by_ids（补中文站名）
   → QueryDashboardBridge._fill_type_names → ref.item（补中文物品名；真实导出**无物品名列**）
   → _snapshot_orders（写库**之前**的挂单快照 = before）
   → QueryDashboardBridge._write_orders → INSERT OR REPLACE INTO open_orders（order_id 主键 → 幂等）

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.constants import PLAN_ACTIVE_STATUSES
 from services.blueprint_reader import get_blueprint_products
 from services.plan_aggregator import (
     calculate_output_with_overflow,
@@ -86,7 +87,8 @@ def get_blueprint_requirements(db) -> dict[str, Any]:
         # `id` 供拷贝行解析 `plan_blueprint_bindings` 的绑定 BPO。
         active_plans = conn.execute(
             "SELECT id, product_type_id, product_name, runs, parallels, me_level, activity "
-            "FROM production_plans WHERE status IN ('pending','in_progress','running','ready')"
+            f"FROM production_plans WHERE status IN ({','.join('?' for _ in PLAN_ACTIVE_STATUSES)})",
+            PLAN_ACTIVE_STATUSES,
         ).fetchall()
 
         if not active_plans:
@@ -255,7 +257,8 @@ def get_materials_summary(db) -> dict[str, Any] | None:
         active_rows = conn.execute(
             "SELECT product_type_id, runs, parallels, me_level, group_number, sub_level, "
             "activity, blueprint_type_id, decryptor_type_id "
-            "FROM production_plans WHERE status IN ('pending','in_progress','running','ready')"
+            f"FROM production_plans WHERE status IN ({','.join('?' for _ in PLAN_ACTIVE_STATUSES)})",
+            PLAN_ACTIVE_STATUSES,
         ).fetchall()
         if not active_rows:
             return None

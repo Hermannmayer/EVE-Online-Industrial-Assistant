@@ -17,7 +17,9 @@ from core.logger import log
 from core.paths import data_dir
 from services.char_config_validator import load_char_config
 
-DEFAULT_SKILLS = {"工业理论": 5, "高级工业理论": 5}
+#: 缺技能时的兜底等级集合。**空** = 未配置的技能一律按 0 级算，不默认满级
+#: （满级默认会让「新角色/未导入 ESI」的时间凭空快 32%，审计 01-11）。
+DEFAULT_SKILLS: dict[str, int] = {}
 
 
 def char_config_path() -> str:

@@ -14,6 +14,7 @@ from typing import Any
 
 import services.scoring_service as _ss
 from core.constants import TRADE_HUB_IDS
+from domain.formulas import BP_TIME_SKILL_TYPE_IDS
 from domain.scoring import BlueprintRecipe, Material
 from domain.scoring import calc_manufacturing_score as _pure_calc
 from domain.scoring import calc_reaction_score as _pure_reaction
@@ -203,15 +204,20 @@ def calc_manufacturing_score(
             materials=materials,
         )
         prices = _DbPriceProvider(db, preloaded)
-        # 该蓝图制造活动所需技能名 → 供 domain 按角色等级算「每级 -1% 生产时间」
-        # （客户端技能文案：机械工程学「每升一级，所有需要机械工程学技能的物品的生产时间减少 1%」）
+        # 该蓝图制造活动所需技能名 → 供 domain 按角色等级算「每级 -1% 生产时间」。
+        # **只取带 SDE 属性 `1982 manufactureTimePerLevel` 的技能**（见 domain.formulas.
+        # BP_TIME_SKILL_TYPE_IDS）：3380/3388 的减免已在 calc_production_time 的 skill_mod
+        # 里计过，若把「蓝图要求的全部技能」都乘进去会二次计入（真实 8/8 计划偏短 5~11%）。
+        _time_skill_ids = sorted(BP_TIME_SKILL_TYPE_IDS)
+        _ph = ",".join("?" * len(_time_skill_ids))
         bp_required_skills = tuple(
             row[0]
             for row in conn.execute(
                 "SELECT COALESCE(i.zh_name, i.en_name, CAST(bs.skill_type_id AS TEXT)) "
                 "FROM blueprint_skills bs LEFT JOIN item i ON i.type_id = bs.skill_type_id "
-                "WHERE bs.blueprint_type_id = ? AND bs.activity = 'manufacturing'",
-                (bp_id,),
+                f"WHERE bs.blueprint_type_id = ? AND bs.activity = 'manufacturing' "
+                f"AND bs.skill_type_id IN ({_ph})",
+                (bp_id, *_time_skill_ids),
             ).fetchall()
         )
         research_cost = (

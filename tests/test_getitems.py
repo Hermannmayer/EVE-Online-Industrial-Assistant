@@ -307,3 +307,12 @@ class TestMainSdeDownloadProgress:
         # 0/50/99 → 10/25/39（映射到步骤 10-39，避免进度条跳变）
         assert [p for p, _ in dl] == [10, 25, 39]
         assert captured["cb"] is not None
+
+
+def test_esi_type_name_is_string_not_legacy_dict():
+    """02-12：现行 ESI 的 name 是字符串；旧降级源按 {en,zh} dict 解析会永远拿不到名字。"""
+    from services.importers.getitems import _esi_name
+
+    assert _esi_name({"name": "Jita"}) == "Jita"
+    assert _esi_name({"name": {"en": "Jita", "zh": "吉他"}}) == "", "旧 dict 格式不再支持"
+    assert _esi_name(None) == ""

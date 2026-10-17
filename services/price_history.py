@@ -12,8 +12,21 @@ from services.database_manager import get_db
 ESI_BASE_URL = "https://esi.evetech.net/latest"
 REGION_ID = 10000002  # The Forge
 
-# Cache TTL: 1 hour (ESI history updates daily, 1h is conservative)
-CACHE_TTL_SECONDS = 3600
+#: ESI `/markets/{region_id}/history/` 的日更时刻（UTC，实测响应 `Expires` 为当日 11:05、
+#: `Last-Modified` 为前一日 11:05）。缓存新鲜度按「是否已跨过最近的日更点」判定，
+#: 而不是固定 1h：固定 1h 会让同一份一天只变一次的数据一天被拉 24 次（02-07）。
+HISTORY_UPDATE_HOUR_UTC = 11
+HISTORY_UPDATE_MINUTE_UTC = 5
+
+#: 历史缓存 TTL —— **全仓单一来源**（`services/importers/getprices.py` 也 import 它）。
+HISTORY_TTL_SECONDS = 24 * 3600
+
+#: 旧名兼容：UI 走势图 worker 与既有测试仍 import 这个常量。
+CACHE_TTL_SECONDS = HISTORY_TTL_SECONDS
+
+#: `fetch_history` 收到 304（条件请求命中）时的哨兵：与「404/失败返回 None」、
+#: 「200+[] 合法空」区分开，调用方据此只续 `fetched_at` 而不重写 410 行。
+NOT_MODIFIED = object()
 
 #: `price_history` 的建表语句 —— **单一来源**。
 #: 除了这里的 `_ensure_table`，「更新价格」流程（`services/importers/getprices.py`）也会
@@ -30,6 +43,7 @@ PRICE_HISTORY_DDL = """
         volume INTEGER NOT NULL DEFAULT 0,
         order_count INTEGER NOT NULL DEFAULT 0,
         fetched_at TEXT NOT NULL,
+        etag TEXT,
         PRIMARY KEY (type_id, region_id, date)
     )
 """
@@ -40,6 +54,17 @@ PRICE_HISTORY_DDL = """
 #: `get_breadth` 2.04s、`_turnover_series` 0.67s、`get_index_series` 合计近 10s，
 #: 切到「市场监控」页一次性阻塞主线程 16 秒。加上本索引后这些范围扫描走索引。
 PRICE_HISTORY_INDEX_DDL = "CREATE INDEX IF NOT EXISTS idx_price_history_region_date ON price_history(region_id, date)"
+
+
+def _last_history_update(now: datetime) -> datetime:
+    """最近一次 ESI 日更点（UTC naive）。
+
+    `fetched_at >= 这个点` ⇒ 缓存已经是「今天这一版」；否则说明跨过了日更点，要重拉。
+    这样 TTL 不依赖用户点刷新的时刻，也不会在 11:05 前后各拉一次。
+    """
+    now = now.replace(tzinfo=None) if now.tzinfo is not None else now
+    candidate = now.replace(hour=HISTORY_UPDATE_HOUR_UTC, minute=HISTORY_UPDATE_MINUTE_UTC, second=0, microsecond=0)
+    return candidate if now >= candidate else candidate - timedelta(days=1)
 
 
 def _ensure_table(db=None) -> None:
@@ -54,21 +79,33 @@ async def fetch_history(
     type_id: int,
     region_id: int = REGION_ID,
     session: aiohttp.ClientSession | None = None,
-) -> list[dict] | None:
+    *,
+    etag: str | None = None,
+    etag_holder: list | None = None,
+) -> list[dict] | None | object:
     """Fetch price history from ESI /markets/{region_id}/history/
 
     Returns list of {date, average, highest, lowest, volume, order_count}
-    None on 404 or error.
+    `None` on 404/error; `NOT_MODIFIED` on 304（条件请求命中，调用方只续 fetched_at）。
+
+    etag: 上次响应头里的 ETag。`session` 路径会发 `If-None-Match`；不传 session
+    （临时 APIClient 路径）时条件请求不支持，按普通 GET 处理。
+    etag_holder: 传入一个 list 时，200 响应会把新 ETag append 进去（供批量导入落库）。
     """
     url = f"{ESI_BASE_URL}/markets/{region_id}/history/"
     params = {"type_id": type_id}
+    headers = {"If-None-Match": etag} if etag else None
 
-    async def _do(s: aiohttp.ClientSession) -> list[dict] | None:
-        async with s.get(url, params=params) as resp:
+    async def _do(s: aiohttp.ClientSession) -> list[dict] | None | object:
+        async with s.get(url, params=params, headers=headers) as resp:
+            if resp.status == 304:
+                return NOT_MODIFIED
             if resp.status == 404:
                 return None
             if not resp.ok:
                 resp.raise_for_status()
+            if etag_holder is not None:
+                etag_holder.append(resp.headers.get("ETag"))
             return await resp.json()  # type: ignore[no-any-return]
 
     if session is not None:
@@ -98,7 +135,8 @@ def get_cached_history(type_id: int, region_id: int = REGION_ID, _db=None) -> li
             now = datetime.now(UTC).replace(tzinfo=None)
             if fetched.tzinfo:
                 fetched = fetched.replace(tzinfo=None)
-            if (now - fetched).total_seconds() < CACHE_TTL_SECONDS:
+            # 已跨过最近一次 ESI 日更点 ⇒ 缓存过期（一天只拉一次，见 02-07）
+            if fetched >= _last_history_update(now):
                 rows = conn.execute(
                     "SELECT date, average, highest, lowest, volume, order_count "
                     "FROM price_history WHERE type_id=? AND region_id=? "
@@ -240,8 +278,13 @@ class PriceHistoryService:
         self._db = db
 
     async def fetch(self, type_id: int, region_id: int = REGION_ID, session=None) -> list[dict] | None:
-        """拉取 ESI 历史价格（失败返回 None）"""
-        return await fetch_history(type_id, region_id, session)
+        """拉取 ESI 历史价格（失败返回 None）。
+
+        条件请求命中（304）时 `fetch_history` 返回 `NOT_MODIFIED` 哨兵；本服务不暴露该语义
+        （调用方没有 ETag 上下文），统一折叠成 None。
+        """
+        data = await fetch_history(type_id, region_id, session)
+        return data if isinstance(data, list) else None
 
     def get_cached(self, type_id: int, region_id: int = REGION_ID) -> list[dict] | None:
         """读取缓存历史价格（TTL 内命中，否则 None）"""

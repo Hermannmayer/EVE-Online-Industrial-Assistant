@@ -317,15 +317,6 @@ class QueryBridge(QObject):
         self._suggestions = []
         self._show_history()
 
-    @Slot()
-    def clearHistory(self) -> None:
-        from core.search_history import clear_search_history
-
-        clear_search_history()
-        self._suggestions = []
-        self._history = []
-        self.suggestionsChanged.emit()
-
     # ── 清空 ──────────────────────────────────────────────────
 
     @Slot()

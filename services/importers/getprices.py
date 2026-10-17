@@ -21,17 +21,21 @@ from core.logger import log
 from core.paths import market_db_path, progress_file
 from domain.market_depth import BUY, SELL, depth_price
 from services.client import APIClient
-from services.price_history import PRICE_HISTORY_DDL, PRICE_HISTORY_INDEX_DDL, fetch_history
+from services.price_history import (
+    HISTORY_TTL_SECONDS,
+    NOT_MODIFIED,
+    PRICE_HISTORY_DDL,
+    PRICE_HISTORY_INDEX_DDL,
+    fetch_history,
+)
 
 DATABASE_PATH = market_db_path()
 ESI_BASE_URL = "https://esi.evetech.net/latest"
 
 TRADE_REGIONS = list(TRADE_HUB_IDS.items())
 
-#: 市场历史（ESI `/markets/{region_id}/history/`）的增量 TTL。
-#: ESI 历史按天更新，12 小时足够新。**没有这个 TTL 就会每轮把 ~5554 个候选 type
-#: 全拉一遍**（20 req/s 限流下约 4.6 分钟纯等待）；TTL 命中时本轮 **0 请求**。
-HISTORY_TTL_SECONDS = 12 * 3600
+#: 市场历史增量 TTL 的**单一来源**是 `services.price_history`（按 ESI 每日 11:05 UTC
+#: 的日更点对齐；见 02-07）。这里不再自己定义 12h —— 两套 TTL 是缺陷，不是特性。
 
 #: 市场历史候选里**不属于蓝图产物/材料**的额外 type：PLEX（44992）。
 #: 大盘指数要盯它，但它既不是任何蓝图的产物、也不当材料，进不了另外两个集合。
@@ -137,11 +141,29 @@ async def init_db():
                 PRIMARY KEY (type_id, region_id, date)
             )
         """)
+        # price_history 也在这里确保存在（DDL 单一来源在 services.price_history）；
+        # etag 列给条件请求用（02-07）。market.db 是可重建缓存，按克制条款第 3 条
+        # 允许就地 ALTER；失败只可能是「列已存在」，忽略即可。
+        await db.execute(PRICE_HISTORY_DDL)
+        try:
+            await db.execute("ALTER TABLE price_history ADD COLUMN etag TEXT")
+        except Exception:
+            # 吞的是「列已存在」这一条（SQLite 无 IF NOT EXISTS 的 ADD COLUMN）；
+            # 其它错误（磁盘/锁）会在后续 INSERT 时暴露，不在这里掩盖
+            pass
         await db.commit()
 
 
 async def fetch_baseline_prices() -> dict[int, dict]:
-    """/markets/prices/ — 1次请求，极快"""
+    """/markets/prices/ — 1次请求，极快。
+
+    ⚠️ `adjusted_price` 是 CCP 用于工业作业成本（EIV）的**调整价**，是可为零的估值，
+    **不是**可成交卖价（2026-10 实测 16,055 条里 7,589 条为 0，PLEX 正是 0.0）。
+    所以它只单独进 `adjusted_price` 列；`sell_price` 的兜底口径是
+    「adjusted>0 时暂用 adjusted，否则退回 average_price」——绝不写 0，否则下游
+    （`domain.market_depth.sell_price_reliable` / 估值 / 价差）会把「有价」误判成「无价」。
+    真实卖价仍由区域订单簿覆盖；PLEX 由 `fetch_plex_global_book` 用全域盘口覆盖。
+    """
     async with APIClient(timeout=60) as client:
         data = await client.fetch_raw(f"{ESI_BASE_URL}/markets/prices/")
     if data is None:
@@ -149,14 +171,63 @@ async def fetch_baseline_prices() -> dict[int, dict]:
         return {}
     result = {}
     for item in data:
+        adjusted = float(item.get("adjusted_price") or 0.0)
         result[item["type_id"]] = {
             "buy_price": item.get("average_price"),
-            "sell_price": item.get("adjusted_price"),
-            "adjusted_price": item.get("adjusted_price"),
+            "sell_price": adjusted if adjusted > 0 else item.get("average_price"),
+            "adjusted_price": adjusted,
             "buy_volume": 0,
             "sell_volume": 0,
         }
     return result
+
+
+async def fetch_plex_global_book() -> dict[int, dict]:
+    """用 Global PLEX Market（region `PLEX_REGION_ID`）的真实盘口覆盖 PLEX 兜底价。
+
+    区域市场对 PLEX 的 orders/history 都是 `[]`（2025-07-07 起全服统一交易），真盘口在
+    19000001。这里取 `order_type=all` 的全部页（实测 X-Pages=2），用统一深度价函数
+    `depth_price` 算买卖价——口径与区域订单完全一致，避免 PLEX 的 sell_price=0 被读端
+    当成「无价」（02-04）。
+
+    Returns:
+        `{44992: {buy_price, sell_price, buy_volume, sell_volume}}`；
+        任一页失败/空盘口 → 返回 `{}`（宁可不覆盖，也不写残缺值）。
+    """
+    base = f"{ESI_BASE_URL}/markets/{PLEX_REGION_ID}/orders/?order_type=all"
+    async with APIClient(timeout=120) as client:
+        headers = await client.get_headers(f"{base}&page=1")
+        if headers is None:
+            log.warning("PLEX 全域盘口页数探测失败，保留 baseline 兜底价")
+            return {}
+        try:
+            pages = max(1, int(headers.get("X-Pages", 1)))
+        except (TypeError, ValueError):
+            pages = 1
+        if pages > 20:  # 防御：极端情况不无限翻页
+            log.warning("PLEX 全域盘口页数异常（X-Pages=%s），按 20 页上限处理", pages)
+            pages = 20
+
+        orders: list[dict] = []
+        for page in range(1, pages + 1):
+            chunk = await client.fetch_raw(f"{base}&page={page}")
+            if chunk is None:
+                log.warning("PLEX 全域盘口第 %s/%s 页拉取失败，保留 baseline 兜底价", page, pages)
+                return {}
+            orders.extend(chunk)
+
+    sell_levels = [(o["price"], o.get("volume_remain", 0)) for o in orders if not o.get("is_buy_order")]
+    buy_levels = [(o["price"], o.get("volume_remain", 0)) for o in orders if o.get("is_buy_order")]
+    if not sell_levels and not buy_levels:
+        return {}
+    return {
+        PLEX_TYPE_ID: {
+            "buy_price": depth_price(buy_levels, BUY) or 0.0,
+            "sell_price": depth_price(sell_levels, SELL) or 0.0,
+            "buy_volume": sum(v for _, v in buy_levels),
+            "sell_volume": sum(v for _, v in sell_levels),
+        }
+    }
 
 
 async def _fetch_order_pages_detailed(
@@ -245,7 +316,9 @@ async def fetch_orders_detailed(
     targets = regions or TRADE_REGIONS
     log.info("发现订单页数...")
     async with APIClient(timeout=120) as client:
-        page_map = await discover_pages(client)
+        # 必须把 targets 传下去：不传会退回 TRADE_REGIONS，自定义区域（如 02-04 的 PLEX 全域
+        # 19000001）拿不到 X-Pages → page_map 全空 → 该区域被当成「完整但零数据」。
+        page_map = await discover_pages(client, targets)
 
         total_reqs = sum(page_map.values())
         log.info("  共 %s 页，开始拉取...", total_reqs)
@@ -295,6 +368,20 @@ async def fetch_orders(regions: list[tuple[str, int]] | None = None) -> dict[int
     """兼容旧签名：只返回 {region_id: {type_id: {...}}}。"""
     result, _complete = await fetch_orders_detailed(regions)
     return result
+
+
+def _complete_regions_only(
+    order_prices: dict[int, dict[int, dict]],
+    complete_regions: set[int] | None,
+) -> dict[int, dict[int, dict]]:
+    """只保留「买卖两方向全部页都成功」的区域，供成交量快照写入（02-06）。
+
+    `save_prices` 用 `complete_regions` 保护价格；快照路径必须同口径，否则部分失败的区域会
+    用残缺页覆盖当日成交量/挂单量。`complete_regions=None`（旧调用口径）视为全部完整。
+    """
+    if complete_regions is None:
+        return dict(order_prices)
+    return {rid: items for rid, items in order_prices.items() if rid in complete_regions}
 
 
 async def save_snapshot(all_regions: dict[int, dict[int, dict]]):
@@ -396,7 +483,9 @@ def _history_is_fresh(fetched_at: str | None, cutoff: datetime) -> bool:
     return ts >= cutoff
 
 
-async def _pending_history_tasks(region_ids: list[int], type_ids: set[int], cutoff: datetime) -> list[tuple[int, int]]:
+async def _pending_history_tasks(
+    region_ids: list[int], type_ids: set[int], cutoff: datetime
+) -> list[tuple[int, int, str | None]]:
     """算出本轮要拉的 `(region_id, type_id)`：没有记录、或记录早于 TTL 的才算；
     再按「该区域**有挂单** ∪ **已有历史**」丢掉注定返回空的组合（BL-013）。
 
@@ -420,7 +509,7 @@ async def _pending_history_tasks(region_ids: list[int], type_ids: set[int], cuto
       （全新库只跑过 `fetch_baseline_only`，`/markets/prices/` 写进来的 volume 恒 0；
       或整轮订单拉取失败），不是「这个区域真没市场」。拿它当判据会把整轮历史拉取静默清空。
     """
-    pending: list[tuple[int, int]] = []
+    pending: list[tuple[int, int, str | None]] = []
     filtered_out = 0
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(PRICE_HISTORY_DDL)
@@ -428,13 +517,28 @@ async def _pending_history_tasks(region_ids: list[int], type_ids: set[int], cuto
         await db.commit()
         for rid in region_ids:
             cursor = await db.execute(
-                "SELECT type_id, MAX(fetched_at) FROM price_history WHERE region_id = ? GROUP BY type_id",
+                # SQLite 的 MAX() + 裸列会取「fetched_at 最大那行」的 etag，
+                # 正是该 (type,region) 最近一次响应的 ETag（条件请求用，02-07）
+                "SELECT type_id, MAX(fetched_at), etag FROM price_history WHERE region_id = ? GROUP BY type_id",
                 (rid,),
             )
             rows = await cursor.fetchall()
             await cursor.close()
-            have_history = {int(t) for t, _ts in rows}
-            fresh = {int(t) for t, ts in rows if _history_is_fresh(ts, cutoff)}
+            fresh: set[int] = set()
+            etags: dict[int, str | None] = {}
+            have_history: set[int] = set()
+            for row in rows:
+                try:
+                    tid = int(row[0])
+                    ts = row[1]
+                    tag = row[2] if len(row) > 2 else None
+                except (TypeError, ValueError, IndexError):
+                    continue
+                have_history.add(tid)
+                if _history_is_fresh(ts, cutoff):
+                    fresh.add(tid)
+                elif tag:
+                    etags[tid] = str(tag)
             active_cursor = await db.execute(
                 "SELECT type_id FROM market_prices WHERE region_id = ? "
                 "AND COALESCE(buy_volume, 0) + COALESCE(sell_volume, 0) > 0",
@@ -447,33 +551,46 @@ async def _pending_history_tasks(region_ids: list[int], type_ids: set[int], cuto
                 if keep is not None and tid not in keep:
                     filtered_out += 1
                     continue
-                pending.append((rid, tid))
+                pending.append((rid, tid, etags.get(tid)))
     if filtered_out:
         log.info("市场历史候选过滤：跳过 %s 条「该区域无挂单且无历史」的组合（不发请求）", filtered_out)
     return pending
 
 
-async def _fetch_history_with_limit(client: APIClient, region_id: int, type_id: int) -> list[dict] | None:
-    """经 `GLOBAL_ESI_LIMITER` 拉单条市场历史。
+async def _fetch_history_with_limit(
+    client: APIClient, region_id: int, type_id: int, etag: str | None = None
+) -> tuple[list[dict] | None | object, str | None]:
+    """经 `GLOBAL_ESI_LIMITER` 拉单条市场历史（带 ETag 条件请求，02-07）。
 
     `price_history.fetch_history(session=…)` 走的是 APIClient 的底层 session，**本身不过限流器**，
     所以这里显式 `limiter.acquire()`，并复用 `APIClient(concurrency=…)` 的并发闸。
+    返回 `(data | NOT_MODIFIED | None, 本轮响应头里的新 ETag)`。
     """
     await client.limiter.acquire()
     async with client.semaphore:  # type: ignore[union-attr]
-        return await fetch_history(type_id, region_id, session=client.session)
+        holder: list = []
+        result = await fetch_history(
+            type_id,
+            region_id,
+            session=client.session,
+            etag=etag,
+            etag_holder=holder,
+        )
+        new_etag = holder[0] if holder else None
+        return result, (str(new_etag) if new_etag else None)
 
 
-async def _save_histories(entries: dict[tuple[int, int], list[tuple]], date_cutoff: str) -> int:
+async def _save_histories(entries: dict[tuple[int, int], tuple[list[tuple], str | None]], date_cutoff: str) -> int:
     """批量写入历史：先按 `(type_id, region_id)` 裁掉 `date_cutoff` 之前的行，再 `INSERT OR REPLACE`。
 
     裁剪放在插入前（`date < ?` 严格小于），把每个产物的历史限制在 `HISTORY_KEEP_DAYS` 窗口内。
+    entries 的值是 `(rows, etag)`；etag 写进每行，供下一轮 304 条件请求（02-07）。
     """
     if not entries:
         return 0
     written = 0
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        for (type_id, region_id), rows in entries.items():
+        for (type_id, region_id), (rows, etag) in entries.items():
             await db.execute(
                 "DELETE FROM price_history WHERE type_id = ? AND region_id = ? AND date < ?",
                 (type_id, region_id, date_cutoff),
@@ -481,14 +598,28 @@ async def _save_histories(entries: dict[tuple[int, int], list[tuple]], date_cuto
             await db.executemany(
                 """
                 INSERT OR REPLACE INTO price_history
-                (type_id, region_id, date, average, highest, lowest, volume, order_count, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (type_id, region_id, date, average, highest, lowest, volume, order_count, fetched_at, etag)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                rows,
+                [(*row, etag) for row in rows],
             )
             written += len(rows)
         await db.commit()
     return written
+
+
+async def _touch_histories(pairs: list[tuple[int, int]], fetched_at: str) -> int:
+    """304 命中时只把 `fetched_at` 续到本轮 —— 不重写 410 行行情（省 43KB/条，02-07）。"""
+    if not pairs:
+        return 0
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        for type_id, region_id in pairs:
+            await db.execute(
+                "UPDATE price_history SET fetched_at = ? WHERE type_id = ? AND region_id = ?",
+                (fetched_at, type_id, region_id),
+            )
+        await db.commit()
+    return len(pairs)
 
 
 def _material_type_ids() -> set[int]:
@@ -584,26 +715,38 @@ async def fetch_and_save_histories(
     fetched_at = now.isoformat()
     date_cutoff = (now - timedelta(days=HISTORY_KEEP_DAYS)).strftime("%Y-%m-%d")
     written = 0
+    not_modified = 0
     done = 0
     # APIClient 自带全局限流（GLOBAL_ESI_LIMITER，20 req/s）+ 并发闸 + 429 重试
     async with APIClient(concurrency=10, timeout=30) as client:
         for start in range(0, total, _HISTORY_BATCH):
             batch = pending[start : start + _HISTORY_BATCH]
             results = await asyncio.gather(
-                *[_fetch_history_with_limit(client, rid, tid) for rid, tid in batch],
+                *[_fetch_history_with_limit(client, rid, tid, etag) for rid, tid, etag in batch],
                 return_exceptions=True,
             )
-            entries: dict[tuple[int, int], list[tuple]] = {}
-            for (rid, tid), result in zip(batch, results, strict=True):
-                if isinstance(result, BaseException):
-                    log.warning("市场历史拉取异常，跳过 type=%s region=%s: %s", tid, rid, result)
+            entries: dict[tuple[int, int], tuple[list[tuple], str | None]] = {}
+            touched: list[tuple[int, int]] = []
+            for (rid, tid, _etag), outcome in zip(batch, results, strict=True):
+                if isinstance(outcome, BaseException):
+                    log.warning("市场历史拉取异常，跳过 type=%s region=%s: %s", tid, rid, outcome)
+                    continue
+                result, new_etag = outcome
+                if result is NOT_MODIFIED:
+                    # 304：行情一行没变，只续 fetched_at（下一轮 TTL 从这里算）
+                    touched.append((tid, rid))
                     continue
                 if not result:
                     log.warning("市场历史为空/404，跳过 type=%s region=%s", tid, rid)
                     continue
+                if not isinstance(result, list):
+                    # `fetch_history` 的返回类型含 NOT_MODIFIED 哨兵；上面已排除它，
+                    # 这里再窄化一次供 mypy 与运行期兜底（不可能是别的类型）。
+                    log.warning("市场历史返回类型异常，跳过 type=%s region=%s: %r", tid, rid, type(result))
+                    continue
                 try:
                     # 只有「这条载荷本身坏掉」（缺 date/average 等）才跳过，不牵连同批其余条目
-                    entries[(tid, rid)] = [
+                    rows = [
                         (
                             tid,
                             rid,
@@ -620,11 +763,13 @@ async def fetch_and_save_histories(
                 except (KeyError, TypeError, ValueError):
                     log.warning("市场历史数据格式异常，跳过 type=%s region=%s", tid, rid)
                     continue
+                entries[(tid, rid)] = (rows, new_etag)
             written += await _save_histories(entries, date_cutoff)
+            not_modified += await _touch_histories(touched, fetched_at)
             done += len(batch)
             if progress_cb:
                 progress_cb(min(100, int(done / total * 100)), f"拉取市场历史 {done}/{total}")
-    log.info("市场历史写入 %s 行（本轮请求 %s 条）", written, total)
+    log.info("市场历史写入 %s 行（304 命中 %s 条；本轮请求 %s 条）", written, not_modified, total)
     return written
 
 
@@ -681,6 +826,24 @@ async def main(regions: list[tuple[str, int]] | None = None, progress_cb: Callab
         progress_cb(10, pm)
     baseline = await fetch_baseline_prices()
     log.info(f"  基准价格: {len(baseline)} 个物品")
+    # PLEX 真实盘口（全域 region 19000001）覆盖 baseline 里的 PLEX 兜底价：
+    # 区域订单对 PLEX 恒空，不覆盖的话 sell_price 只能是 adjusted/average 兜底（02-04）。
+    # 失败不连累价格更新：保留 baseline，后续读端仍能用 history@19000001。
+    try:
+        plex_book = await fetch_plex_global_book()
+        if plex_book and baseline.get(PLEX_TYPE_ID):
+            baseline[PLEX_TYPE_ID].update(plex_book[PLEX_TYPE_ID])
+            log.info(
+                "  PLEX 全域盘口: 卖 %s / 买 %s（成交量 %s/%s）",
+                plex_book[PLEX_TYPE_ID]["sell_price"],
+                plex_book[PLEX_TYPE_ID]["buy_price"],
+                plex_book[PLEX_TYPE_ID]["sell_volume"],
+                plex_book[PLEX_TYPE_ID]["buy_volume"],
+            )
+    except Exception:
+        # 吞的是「PLEX 盘口这一步的任何异常」——它只是给 PLEX 行补真实买卖价的附加数据源，
+        # baseline/history 都已拿到，不能连累整次价格更新
+        log.exception("PLEX 全域盘口拉取失败（保留 baseline 兜底价）")
     # 全服统一价每日快照（PLEX 序列的**兜底**数据源，主源是 19000001 的成交历史）：
     # 1 次请求已经拉过，这里只写锚定集合那几行；失败同样不连累价格更新
     try:
@@ -700,8 +863,13 @@ async def main(regions: list[tuple[str, int]] | None = None, progress_cb: Callab
     cnt = await save_prices(baseline, order_prices, [rid for _, rid in regions], complete_regions)
     log.info(f"  写入 {cnt} 条")
 
-    if order_prices:
-        await save_snapshot(order_prices)
+    # 成交量快照只接「完整拉取成功」的区域（02-06）：部分失败的区域若写快照，当日
+    # 成交量/挂单量会被残缺页覆盖，且与 save_prices 保留旧价的处置口径不一致。
+    snapshot_regions = _complete_regions_only(order_prices, complete_regions)
+    if snapshot_regions:
+        await save_snapshot(snapshot_regions)
+    elif order_prices:
+        log.warning("  所有区域订单均不完整，跳过当日成交量快照写入（保留旧快照）")
 
     # 市场历史（日订单量/日成交量）—— 独立一步，**失败绝不能让整次价格更新失败**：
     # 它只是个可有可无的附加数据源，而订单簿价格已经写完了。

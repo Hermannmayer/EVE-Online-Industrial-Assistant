@@ -36,9 +36,12 @@ def _build_bp(db_manager):
         # T1 物品 2001 ← 制造蓝图 3001；拷贝材料 1001×5
         conn.execute("INSERT INTO blueprint_products VALUES (3001,'manufacturing',2001,1,NULL)")
         conn.execute("INSERT INTO blueprint_materials VALUES (3001,'copying',1001,5)")
+        # 制造投入材料（01-7：科研安装费 job value = 2%×EIV(制造投入)，没有它安装费恒 0）
+        conn.execute("INSERT INTO blueprint_materials VALUES (3001,'manufacturing',1010,100)")
         conn.execute("INSERT INTO blueprint_activities VALUES (3001,'copying',4800)")
         # T2 物品 2002 ← 制造蓝图 3002（自身是 invention 产物）；发明材料挂在 T1 蓝图 3003
         conn.execute("INSERT INTO blueprint_products VALUES (3002,'manufacturing',2002,1,NULL)")
+        conn.execute("INSERT INTO blueprint_materials VALUES (3002,'manufacturing',1011,50)")
         conn.execute("INSERT INTO blueprint_products VALUES (3003,'invention',2002,1,0.3)")
         conn.execute("INSERT INTO blueprint_materials VALUES (3003,'invention',1002,2)")
         conn.execute("INSERT INTO blueprint_activities VALUES (3003,'invention',63900)")

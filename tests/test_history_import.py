@@ -148,7 +148,7 @@ async def test_fresh_records_skip_requests():
 
     # TTL 全未命中（本地无记录）→ 逐条请求；请求的 (region, type) 就是候选集合本身，
     # 且 PLEX **只**出现在全域 region 上（BL-012 的最小回归）
-    with _Harness(history=lambda tid, region_id, session=None: None) as h3:
+    with _Harness(history=lambda tid, region_id, session=None, **kw: None) as h3:
         assert await getprices.fetch_and_save_histories([("Jita", _REGION)]) == 0
     assert {(c.args[1], c.args[0]) for c in h3.fetch_history.await_args_list} == {
         (_REGION, tid) for tid in set(_CANDIDATES) - {_PLEX}
@@ -159,7 +159,9 @@ async def test_fresh_records_skip_requests():
     # （订单侧本次不动），按「证据缺失 → 不过滤」照旧请求。
     stale = (datetime.now(UTC) - timedelta(days=30)).isoformat()
     with _Harness(
-        fetched_rows=[(2, stale)], history=lambda tid, region_id, session=None: None, active_by_region={_REGION: [1]}
+        fetched_rows=[(2, stale)],
+        history=lambda tid, region_id, session=None, **kw: None,
+        active_by_region={_REGION: [1]},
     ) as h4:
         await getprices.fetch_and_save_histories([("Jita", _REGION)])
     assert {(c.args[1], c.args[0]) for c in h4.fetch_history.await_args_list} == {
@@ -177,7 +179,7 @@ async def test_single_failure_is_isolated():
     （每个同步的中心都要历史；PLEX 只走全域 region，见 BL-012）。
     """
 
-    async def _history(tid, region_id, session=None):
+    async def _history(tid, region_id, session=None, **kw):
         if tid == 1:
             return _GOOD_ENTRY
         if tid == 2:
@@ -208,7 +210,7 @@ async def test_single_failure_is_isolated():
 @pytest.mark.asyncio
 async def test_keeps_only_recent_180_days():
     """③ 写库前按 `date < now-180d` 裁剪，插入用 INSERT OR REPLACE。"""
-    history = AsyncMock(side_effect=lambda tid, region_id, session=None: _GOOD_ENTRY if tid == 1 else None)
+    history = AsyncMock(side_effect=lambda tid, region_id, session=None, **kw: _GOOD_ENTRY if tid == 1 else None)
 
     with _Harness(history=history) as h:
         await getprices.fetch_and_save_histories([("Jita", _REGION)])
@@ -255,3 +257,27 @@ async def test_global_price_snapshot_no_anchor_data_writes_nothing():
 
     assert written == 0
     db.executemany.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_conditional_request_304_only_touches_fetched_at():
+    """⑤ 02-07 条件请求：304 → 不重写任何行情行，只把 fetched_at 续到本轮；ETag 按 (type,region) 传回。
+
+    旧实现无 If-None-Match，同一份「一天只变一次」的历史每天重下 410 行 × 43KB。
+    """
+    from services.price_history import NOT_MODIFIED
+
+    stale = (datetime.now(UTC) - timedelta(days=3)).isoformat()
+    rows = [(tid, stale, '"etag-1"') for tid in _CANDIDATES]
+
+    async def _history(tid, region_id, session=None, **kw):
+        assert kw.get("etag") == '"etag-1"', "已有 ETag 时必须带 If-None-Match"
+        return NOT_MODIFIED
+
+    with _Harness(fetched_rows=rows, history=_history) as h:
+        written = await getprices.fetch_and_save_histories([("Jita", _REGION)])
+
+    assert written == 0
+    assert h.db.executemany.await_count == 0, "304 不该重写任何行情行"
+    updates = h.executes_matching("UPDATE price_history SET fetched_at")
+    assert len(updates) == len(_CANDIDATES), "每条 304 都要续 fetched_at（含 PLEX 全域任务）"

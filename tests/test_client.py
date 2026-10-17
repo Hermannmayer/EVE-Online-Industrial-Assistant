@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import aiohttp
 import pytest
 
-from services.client import APIClient
+from services.client import GLOBAL_ESI_LIMITER, MARKET_ORDER_LIMITER, APIClient
 
 pytestmark = pytest.mark.fast
 
@@ -177,3 +177,79 @@ class TestRateLimiter:
 
         asyncio.run(run())
         assert len(passed) == 20
+
+
+# ════════════════════════════════════════════════════════════
+#  02-05 限流分组 / 429 等待上限
+# ════════════════════════════════════════════════════════════
+
+
+class TestRateLimitGroups:
+    def test_order_route_uses_market_order_limiter(self):
+        """订单路由归 `market-order` 组（12000/15m、2 tokens/2XX ≈ 6.67 req/s），其余用全局桶。"""
+        client = APIClient()
+        order_url = "https://esi.evetech.net/latest/markets/10000002/orders/?type_id=34"
+        hist_url = "https://esi.evetech.net/latest/markets/10000002/history/?type_id=34"
+        assert client._limiter_for(order_url) is MARKET_ORDER_LIMITER
+        assert client._limiter_for(hist_url) is GLOBAL_ESI_LIMITER
+        assert MARKET_ORDER_LIMITER.rate <= 6.67 + 1e-6, "持续上限不能超过组上限 6.67 req/s"
+
+    def test_429_long_retry_after_does_not_block(self):
+        """Retry-After=900（窗口上限）不傻睡：>300s 抛 ClientError 让上层标失败（旧实现封顶 120s 后仍 429）。"""
+        from unittest.mock import patch
+
+        sleeps: list[float] = []
+
+        async def _fake_sleep(sec):
+            sleeps.append(sec)
+
+        resp = Mock()
+        resp.headers = {"Retry-After": "900"}
+        with patch("services.client.asyncio.sleep", _fake_sleep):
+            with pytest.raises(aiohttp.ClientError):
+                asyncio.run(APIClient._handle_rate_limit(resp))
+        assert not sleeps or max(sleeps) <= 300, f"不该阻塞等待 900s：{sleeps}"
+
+    def test_429_short_retry_after_is_honored(self):
+        """窗口内的 Retry-After（30s）照实等待。"""
+        from unittest.mock import patch
+
+        sleeps: list[float] = []
+
+        async def _fake_sleep(sec):
+            sleeps.append(sec)
+
+        resp = Mock()
+        resp.headers = {"Retry-After": "30"}
+        with patch("services.client.asyncio.sleep", _fake_sleep):
+            asyncio.run(APIClient._handle_rate_limit(resp))
+        assert sleeps == [30]
+
+
+# ════════════════════════════════════════════════════════════
+#  02-08 三态取数：404 / 200+[] / 失败 必须可区分
+# ════════════════════════════════════════════════════════════
+
+
+class TestFetchState:
+    def test_three_states_are_distinguishable(self):
+        """404=(404,None)；200+[]=(200,[])；500/网络=(None,None)。"""
+        # 这里只验证纯状态码分支，不验证 header 透传（分页用例在 test_order_workers）
+        resp_404 = TestAPIClient._make_mock_resp(status=404)
+        resp_empty = TestAPIClient._make_mock_resp(status=200, text="[]")
+        resp_500 = TestAPIClient._make_mock_resp(status=500)
+
+        async def run():
+            client = APIClient(retries=1)
+            async with client:
+                client.session.get = Mock(return_value=resp_404)
+                assert await client.fetch_state("https://esi.example.com/a") == (404, None, {})
+            async with client:
+                client.session.get = Mock(return_value=resp_empty)
+                status, data, _headers = await client.fetch_state("https://esi.example.com/a")
+                assert status == 200 and data == []
+            async with client:
+                client.session.get = Mock(return_value=resp_500)
+                assert await client.fetch_state("https://esi.example.com/a") == (None, None, {})
+
+        asyncio.run(run())

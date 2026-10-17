@@ -24,6 +24,24 @@ TRADE_HUB_SYSTEM_IDS: dict[str, int] = {
     "Hek": 30002053,
 }
 
+# ── 生产计划状态（单一真源）──
+# 状态机：pending ──启动──▶ in_progress ──倒计时到期──▶ ready ──完成──▶ completed
+# 历史别名（0 写点，保留兼容旧库/旧脚本）：running ≡ in_progress、done ≡ completed。
+# 各处**不要**再手写状态元组：口径分裂会让「材料占用 / 重排保护 / 批量重算冻结」各算各的。
+PLAN_STATUS_PENDING = "pending"
+#: 已启动、仍在生产
+PLAN_RUNNING_STATUSES: tuple[str, ...] = ("in_progress", "running")
+#: 已造完、待下线
+PLAN_AWAITING_STATUSES: tuple[str, ...] = ("ready",)
+#: 已结束（下发/复用前）
+PLAN_TERMINAL_STATUSES: tuple[str, ...] = ("completed", "done")
+#: 活跃 = 待生产 + 在产 + 待下线（这些行参与材料/蓝图需求与批量重算）
+PLAN_ACTIVE_STATUSES: tuple[str, ...] = (PLAN_STATUS_PENDING, *PLAN_RUNNING_STATUSES, *PLAN_AWAITING_STATUSES)
+#: 已锁料 = 材料已物理扣减 + 蓝图仍被占用（在产 / 待下线）
+PLAN_LOCKED_STATUSES: tuple[str, ...] = (*PLAN_RUNNING_STATUSES, *PLAN_AWAITING_STATUSES)
+#: 未结束 = 待生产 + 在产（子项「未完成」的判定口径）
+PLAN_UNFINISHED_STATUSES: tuple[str, ...] = (PLAN_STATUS_PENDING, *PLAN_RUNNING_STATUSES)
+
 # 系统成本指数(SCI)兜底值：星系未知或库中无该星系数据时使用（≈吉他制造 SCI 水平）。
 # 统一未知与查无两个分支，避免一个给 0.05、一个给 1.0 的语义分裂。
 DEFAULT_SYSTEM_COST_INDEX = 0.05

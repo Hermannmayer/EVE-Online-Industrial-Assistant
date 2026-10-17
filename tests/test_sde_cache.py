@@ -745,3 +745,17 @@ class TestDownloadZipRetry:
             await sde_cache._download_zip()
         assert sde_cache.asyncio.sleep.await_count == sde_cache._DL_MAX_RETRIES
         assert part.exists(), "限流不应删除断点文件"
+
+
+def test_sde_build_freshness_gate(tmp_path, monkeypatch):
+    """02-03 A 段：manifest 记 build；官方 build 比本地新（或本地未知）⇒ 过期；离线不误报。"""
+    from services.importers import sde_cache
+
+    monkeypatch.setattr(sde_cache, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(sde_cache, "MANIFEST_PATH", str(tmp_path / "sde_cache_manifest.json"))
+    assert sde_cache.cached_sde_build() is None, "旧 manifest 没记 build = 未知"
+    sde_cache._write_manifest(build=3607705)
+    assert sde_cache.cached_sde_build() == 3607705
+    assert sde_cache.is_sde_stale(3607706, 3607705) is True
+    assert sde_cache.is_sde_stale(3607705, 3607705) is False
+    assert sde_cache.is_sde_stale(None, None) is False, "官方拿不到时不判过期（离线可用）"

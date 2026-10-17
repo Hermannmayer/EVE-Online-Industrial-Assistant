@@ -183,8 +183,8 @@ Item {
                             required property int index
                             required property var modelData
 
-                            x: root.colOffsets[index]
-                            width: root.colWidths[index]
+                            x: root.colOffsets[index] !== undefined ? root.colOffsets[index] : 0
+                            width: root.colWidths[index] !== undefined ? root.colWidths[index] : 0
                             height: rowItem.height
 
                             readonly property string cellColor: (cellItem.modelData && cellItem.modelData.color)

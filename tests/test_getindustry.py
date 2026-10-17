@@ -223,3 +223,15 @@ class TestIndustryDataFresh:
         old = (datetime.now(UTC) - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")
         db = self._make_db(tmp_path, old)
         assert industry_data_is_fresh(db, max_age_days=1) is False
+
+
+def test_facility_row_keeps_missing_tax_as_none():
+    """02-09：ESI 不再返回 tax 时存 NULL，不写 0.0（0 会被读端当成零税）。"""
+    from services.importers.getindustry import _facility_row
+
+    row = _facility_row({"facility_id": 1, "solar_system_id": 30000142, "type_id": 1928}, "2026-10-17")
+    assert row[5] is None
+    row_with_tax = _facility_row(
+        {"facility_id": 2, "solar_system_id": 30000142, "type_id": 1928, "tax": 0.02}, "2026-10-17"
+    )
+    assert row_with_tax[5] == 0.02

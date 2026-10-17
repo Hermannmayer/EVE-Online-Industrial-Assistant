@@ -405,6 +405,62 @@ class TestStartPlan:
         res = start_plan(plan, mat_hangar_id=1)
         assert res["code"] == "already_completed"
 
+    def test_status_checked_before_material_shortfall(self, user_env):
+        """错误码优先级（03-7）：状态先于材料 —— 已完成的行不得报 material_short。
+
+        旧实现先做材料校验并 return，材料不足的已完成计划会得到 material_short，
+        用户以为「补料就能重开」，其实这条计划已经完成了。
+        """
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 1001, "name": "三钛合金", "qty": 1000.0}]
+        }
+        pid = _insert_plan(user_env.db, status="completed")
+        res = start_plan(_get_plan(user_env.db, pid), mat_hangar_id=1)
+        assert res["code"] == "already_completed", res
+
+    def test_ready_plan_is_rejected_and_keeps_deduction_snapshot(self, user_env):
+        """03-1 回归：ready（到期待下线）再 start 必须拒绝，且不动库存/快照。
+
+        旧守卫是黑名单 `status NOT IN ('in_progress','running','completed','done')`，
+        漏了 ready：到期的计划再点一次「启动」会二次扣料并覆盖 `deducted_materials`
+        快照（两轮同参数，覆盖不可察觉）→ 撤销只返一轮，净损一轮材料。
+        """
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 1001, "name": "三钛合金", "qty": 7.0}]
+        }
+        _insert_item(user_env.db, 1, 1001, 1000)
+        pid = _insert_plan(user_env.db, runs=1)
+        assert start_plan(_get_plan(user_env.db, pid), mat_hangar_id=1)["ok"]
+        with user_env.db.connect("user") as conn:
+            conn.execute("UPDATE production_plans SET status='ready' WHERE id=?", (pid,))
+        before = _get_plan(user_env.db, pid)
+        stock_before = inventory_manager.get_hangar_stock(1)[1001]
+
+        res = start_plan(_get_plan(user_env.db, pid), mat_hangar_id=1)
+
+        assert res["ok"] is False, res
+        assert res["code"] == "already_ready", res
+        after = _get_plan(user_env.db, pid)
+        assert after["status"] == "ready"
+        assert inventory_manager.get_hangar_stock(1)[1001] == stock_before, "不得二次扣料"
+        assert after["deducted_materials"] == before["deducted_materials"], "不得覆盖撤销快照"
+
+    def test_pending_with_stale_snapshot_is_not_restarted(self, user_env):
+        """03-1 第二道防线：pending 但 `deducted_materials` 非空 → 拒绝（防覆盖快照）。"""
+        pid = _insert_plan(user_env.db)
+        with user_env.db.connect("user") as conn:
+            conn.execute(
+                "UPDATE production_plans SET deducted_materials=? WHERE id=?",
+                ('{"1001": 7}', pid),
+            )
+
+        res = start_plan(_get_plan(user_env.db, pid), mat_hangar_id=None)
+
+        assert res["ok"] is False, res
+        assert res["code"] == "snapshot_exists", res
+        assert _get_plan(user_env.db, pid)["status"] == "pending"
+        assert _get_plan(user_env.db, pid)["deducted_materials"] == '{"1001": 7}'
+
     def test_material_short_blocks_without_allow(self, user_env):
         _insert_item(user_env.db, 1, 1001, 10)
         user_env.scoring.calculate_plan_metrics.return_value = {
@@ -990,6 +1046,27 @@ class TestCompletePlan:
         assert db_plan["deposited"] == 1
         assert db_plan["completed_at"] is not None
 
+    def test_pending_plan_cannot_complete(self, user_env):
+        """03-2 回归：pending 未启动（未扣料）直接完成 → 拒绝，且库存/蓝图/状态全不变。
+
+        旧实现只拦 completed/done，pending 直接完成会凭空入库
+        （实测 runs2×parallels2 → 库存 +4、BPC 各扣 2 流程），材料守恒被静默破坏。
+        """
+        bp_id = _insert_blueprint(user_env.db, 3001, is_bpo=False, runs=10)
+        pid = _insert_plan(user_env.db, status="pending", runs=2, parallels=2, deposit_hangar_id=1, material_cost=600)
+        bind_blueprints(pid, [bp_id])
+        stock_before = dict(inventory_manager.get_hangar_stock(1))
+
+        res = complete_plan(_get_plan(user_env.db, pid))
+
+        assert res["ok"] is False, res
+        assert res["code"] == "not_started", res
+        assert _get_plan(user_env.db, pid)["status"] == "pending"
+        assert inventory_manager.get_hangar_stock(1) == stock_before, "不得凭空入库"
+        with user_env.db.connect("user") as conn:
+            runs = conn.execute("SELECT runs, quantity FROM user_blueprints WHERE id=?", (bp_id,)).fetchone()
+        assert tuple(runs) == (10, 1), "未启动不得消耗蓝图流程"
+
     def test_no_deposit_hangar_skips(self, user_env):
         pid = _insert_plan(user_env.db, status="ready", deposit_hangar_id=None)
         plan = _get_plan(user_env.db, pid)
@@ -1352,6 +1429,57 @@ class TestBlueprintForceStart:
         assert "不满足完成条件" in done["message"]
 
 
+class TestInventionAttemptConservation:
+    """03-3 回归：发明完成必须消耗与「声明尝试数 = runs×parallels」相等的输入流程。
+
+    旧实现按容量分摊产线、每线扣 runs，容量不足只记一句 message 就 completed ——
+    隔离库实测声明 50 次尝试、实际只扣 10 流程，40 流程的缺口被 completed 掩盖。
+    """
+
+    @staticmethod
+    def _ready_invention(user_env, *, runs=10, parallels=5, bpc_runs=10, quantity=1) -> tuple[int, int]:
+        user_env.scoring.calculate_plan_metrics.return_value = {"materials": []}
+        bpc = inventory_manager.add_blueprint(1, 3001, is_bpo=False, runs=bpc_runs, quantity=quantity)
+        pid = _insert_plan(
+            user_env.db,
+            activity="invention",
+            product_type_id=3009,
+            blueprint_type_id=3009,
+            runs=runs,
+            parallels=parallels,
+            status="ready",
+            actual_output_runs=10,  # 用户回填成功 10 流程（不影响尝试数 50 的守恒）
+            deposit_hangar_id=1,
+        )
+        bind_blueprints(pid, [bpc])
+        return pid, bpc
+
+    def test_short_attempts_rejected_then_force_records_gap(self, user_env):
+        pid, bpc = self._ready_invention(user_env)  # 声明 5×10=50 次尝试，绑定 BPC 只有 10 流程
+
+        rejected = complete_plan(_get_plan(user_env.db, pid))
+
+        assert rejected["ok"] is False, rejected
+        assert rejected["code"] == "blueprint_short", rejected
+        assert "50" in rejected["message"] and "10" in rejected["message"]
+        assert _get_plan(user_env.db, pid)["status"] == "ready", "被拒不得改状态"
+        with user_env.db.connect("user") as conn:
+            assert conn.execute("SELECT 1 FROM user_blueprints WHERE id=?", (bpc,)).fetchone() is not None
+
+        forced = complete_plan(_get_plan(user_env.db, pid), allow_bp_short=True)
+
+        assert forced["ok"] is True, forced
+        plan = _get_plan(user_env.db, pid)
+        assert plan["status"] == "completed"
+        assert plan["bp_attempt_short"] == 40, "强制放行必须留审计缺口（声明 50 − 实际 10）"
+        with user_env.db.connect("user") as conn:
+            assert conn.execute("SELECT 1 FROM user_blueprints WHERE id=?", (bpc,)).fetchone() is None
+            out = conn.execute(
+                "SELECT runs, quantity FROM user_blueprints WHERE blueprint_type_id=3009 AND is_bpo=0"
+            ).fetchone()
+        assert tuple(out) == (10, 1), "实际产出（10 流程 1 张）照常入库"
+
+
 class TestBpoCompletionRegression:
     """计划 127「电磁发生器」回归：5 条产线绑 3 张原图 + 2 张流程充足的拷贝。
 
@@ -1699,7 +1827,8 @@ class TestCompletedChildCleanup:
     def test_partial_start_split_does_not_clean_early(self, user_env):
         """同组两条 level-0（部分启动拆出的两半）→ 要先都结束才清，否则另一半口径回退。"""
         first = _insert_plan(user_env.db, group_number=7, sub_level=0, status="ready")
-        second = _insert_plan(user_env.db, group_number=7, sub_level=0, status="pending", parallels=2)
+        # 另一半用 in_progress 建模：03-2 起 pending 不可直接完成（材料未扣）
+        second = _insert_plan(user_env.db, group_number=7, sub_level=0, status="in_progress", parallels=2)
         child = self._child(user_env, first, group=7)
 
         res_first = complete_plan(_get_plan(user_env.db, first))
@@ -1899,6 +2028,22 @@ class TestBlueprintKindGate:
         plan_id = _insert_plan(user_env.db, activity="manufacturing", runs=2, parallels=1, status="pending")
         res = self._start(plan_id)
         assert res["ok"] is True, res
+
+    def test_copying_parallels_are_copies_not_lines(self, user_env):
+        """03-6 回归：拷贝的 parallels 是**产出份数**，启动只要求 1 张 BPO。
+
+        旧校验把 parallels 当产线数传给 `_binding_shortfall` → 2 份拷贝要求 2 张 BPO，
+        一张原图就被判「不足 2 条产线」，只能走强制启动。
+        """
+        db = user_env.db
+        bp_id = _insert_blueprint(db, 3001, is_bpo=True)
+        plan_id = _insert_plan(db, activity="copying", runs=2, parallels=2, status="pending")
+        bind_blueprints(plan_id, [bp_id])
+
+        assert get_plan_binding_state(plan_id)["need"] == 1, "拷贝计划需覆盖的蓝图张数恒为 1"
+        res = start_plan({"id": plan_id}, mat_hangar_id=None, auto_bind=False)
+        assert res["ok"] is True, res
+        assert res["code"] == "ok", res
 
 
 class TestResyncBindings:
@@ -2116,9 +2261,53 @@ class TestResetClearsOutcome:
         db = user_env.db
         plan_id = _insert_plan(db, activity="invention", runs=2, parallels=1, status="completed")
         with db.connect("user") as conn:
-            conn.execute("UPDATE production_plans SET actual_output_runs=7 WHERE id=?", (plan_id,))
+            conn.execute("UPDATE production_plans SET actual_output_runs=7, bp_attempt_short=40 WHERE id=?", (plan_id,))
 
         res = reset_plan_for_reuse(plan_id)
 
         assert res["ok"], res
-        assert _get_plan(db, plan_id)["actual_output_runs"] is None
+        plan = _get_plan(db, plan_id)
+        assert plan["actual_output_runs"] is None
+        assert plan["bp_attempt_short"] is None, "复用后上一轮的流程缺口不得残留"
+
+
+class TestMaterialRequirementFailureGuard:
+    """03-9 回归：材料需求算不出来时**拒绝启动**，不能按「零需求」不校验不扣料开产。"""
+
+    def test_scoring_failure_blocks_start(self, user_env):
+        user_env.scoring.calculate_plan_metrics.side_effect = RuntimeError("market.db locked")
+        pid = _insert_plan(user_env.db)
+        _insert_item(user_env.db, 1, 1001, 1000)
+        stock_before = inventory_manager.get_hangar_stock(1)[1001]
+
+        res = start_plan(_get_plan(user_env.db, pid), mat_hangar_id=1)
+
+        assert res["ok"] is False, res
+        assert res["code"] == "requirement_failed", res
+        assert _get_plan(user_env.db, pid)["status"] == "pending"
+        assert inventory_manager.get_hangar_stock(1)[1001] == stock_before
+
+    def test_injected_conn_is_rolled_back_to_savepoint(self, user_env, monkeypatch):
+        """03-9 注入连接路径：完成失败只回滚本次 SAVEPOINT，调用方事务里不留脏状态。
+
+        旧实现 `except` 只对自开连接 rollback；注入连接时异常被吞、返回 ok=False，
+        但已执行的 `UPDATE ... status='completed'` 留在调用方事务里 —— 调用方 commit
+        后就是「已完成 / 没入库 / 蓝图没扣」的脏行。
+        """
+        pid = _insert_plan(user_env.db, status="ready", runs=2, parallels=1, deposit_hangar_id=1, material_cost=600)
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("simulated deposit failure")
+
+        monkeypatch.setattr(inventory_manager, "add_item", _boom)
+        conn = user_env.db.direct_connect("user")
+        try:
+            res = complete_plan(_get_plan(user_env.db, pid), conn=conn)
+            assert res["ok"] is False, res
+            assert res["code"] == "complete_failed", res
+            conn.commit()  # 调用方提交：本次完成的写入必须已被 SAVEPOINT 回滚
+        finally:
+            conn.close()
+
+        assert _get_plan(user_env.db, pid)["status"] == "ready", "注入连接路径失败必须回滚状态"
+        assert 2001 not in inventory_manager.get_hangar_stock(1)

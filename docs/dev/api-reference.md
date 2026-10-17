@@ -96,7 +96,6 @@
 | [`ui_qml.workers.all_items_workers`](/api/ui_qml/workers/all_items_workers) | 全部物品分类树 / 物品 / 搜索 Worker |
 | [`ui_qml.workers.init_workers`](/api/ui_qml/workers/init_workers) | 数据初始化 Worker |
 | [`ui_qml.workers.refine_worker`](/api/ui_qml/workers/refine_worker) | 精炼计算 Worker |
-| [`ui_qml.workers.npc_seller_workers`](/api/ui_qml/workers/npc_seller_workers) | NPC 收购单 Worker |
 | [`ui_qml.workers.score_worker`](/api/ui_qml/workers/score_worker) | 评分线程 `ScoreW`（全物品 / 可制造页共用） |
 | [`ui_qml.workers.query_workers`](/api/ui_qml/workers/query_workers) | 查询页搜索 / 候选 / 类别树线程 |
 | [`ui_qml.workers.order_workers`](/api/ui_qml/workers/order_workers) | 订单缓存 + ESI 取数线程 |

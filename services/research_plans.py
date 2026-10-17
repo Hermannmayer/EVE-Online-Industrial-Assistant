@@ -249,6 +249,7 @@ def create_research_plan(
     decryptor_type_id: int | None = None,
     success_rate: float | None = None,
     research_target_level: int = 0,
+    current_level: int = 0,
     mat_hub: str = "Jita",
     sell_hub: str = "Jita",
 ) -> int:
@@ -256,9 +257,17 @@ def create_research_plan(
 
     单次 INSERT：科研专属列与指标一起写，避免「先建行再补字段」的两步写入。
     不做蓝图绑定——由调用方经 ensure_plan_auto_bind 或显式绑定。
+
+    ``current_level``：绑定 BPO 当前等级（ME/TE 研究用）。研究时长是「从当前等级到目标
+    等级的逐级累计」，所以必须能表达「已是 ME8、只研究到 10」——以前恒写 0 会多算前面各级。
     """
     from core.container import get_container
-    from domain.research import clamp_research_target, research_level_cap
+    from domain.research import (
+        ACTIVITY_RESEARCH_ME,
+        ACTIVITY_RESEARCH_TE,
+        clamp_research_target,
+        research_level_cap,
+    )
     from services.plan_service import calculate_plan_metrics, datetime_now_str
 
     # ME/TE 研究的 `runs` 就是目标等级（标签见 `plan_edit_bridge._RUNS_LABELS`）。
@@ -267,6 +276,10 @@ def create_research_plan(
     runs = clamp_research_target(activity, runs)
     if research_level_cap(activity) is not None:
         research_target_level = clamp_research_target(activity, research_target_level or runs)
+    # 当前等级夹到 [0, 目标−1]：目标 10、当前 10 → 无需研究（调用方应拦截）
+    current_level = max(0, int(current_level or 0))
+    if research_level_cap(activity) is not None:
+        current_level = min(current_level, max(0, int(research_target_level) - 1))
 
     plan_input = {
         "product_type_id": blueprint_type_id,
@@ -275,8 +288,9 @@ def create_research_plan(
         "activity": activity,
         "runs": max(1, int(runs)),
         "parallels": max(1, int(parallels)),
-        "me_level": 0,
-        "te_level": 0,
+        # ME/TE 研究的 me_level/te_level 表示「绑定 BPO 当前等级」（见 _calculate_research_metrics）
+        "me_level": current_level if activity == ACTIVITY_RESEARCH_ME else 0,
+        "te_level": current_level if activity == ACTIVITY_RESEARCH_TE else 0,
         "mat_hub": mat_hub,
         "sell_hub": sell_hub,
         "char_name": char_name,
@@ -308,8 +322,8 @@ def create_research_plan(
                     blueprint_type_id,
                     plan_input["runs"],
                     plan_input["parallels"],
-                    0,
-                    0,
+                    plan_input["me_level"],
+                    plan_input["te_level"],
                     mat_hub,
                     sell_hub,
                     facility,

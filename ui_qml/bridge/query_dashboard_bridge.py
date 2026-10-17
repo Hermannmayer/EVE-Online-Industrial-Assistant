@@ -1579,7 +1579,7 @@ class QueryDashboardBridge(QObject):
             return
         names: dict[int, tuple[str, str]] = {}
         try:
-            from services.npc_seller import resolve_stations_by_ids
+            from services.name_resolver import resolve_stations_by_ids
 
             names = resolve_stations_by_ids(missing)
         except Exception:

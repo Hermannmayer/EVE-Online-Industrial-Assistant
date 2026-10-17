@@ -223,8 +223,8 @@ scripts/run_tests.sh full       # 全量（实测 5~8 分钟，看机器负载�
 只读代码理解不了界面。改 UI 前先跑一次快照，用截图确认现状，改完再跑一次对比：
 
 ```bash
-python scripts/shell_snapshot.py                 # QML 外壳（离屏，验结构/配色）
-python scripts/shell_snapshot.py --real          # QML 外壳（真窗口，验字形/毛玻璃；数据目录自动隔离）
+python scripts/shell_snapshot.py                 # QML 外壳（离屏，验结构/配色；默认隔离应用根）
+python scripts/shell_snapshot.py --real          # QML 外壳（真窗口，验字形/毛玻璃）
 python scripts/shell_snapshot.py --page industry # 切到某页再拍
 ```
 
@@ -234,6 +234,10 @@ python scripts/shell_snapshot.py --page industry # 切到某页再拍
 **不产出控件树 `.md`** —— 要核对具体控件几何，得自己在临时目录写探针脚本遍历
 `childItems()` + `mapToItem()`（别把探针留在仓库里）。
 默认走 offscreen 平台——不弹窗、不抢焦点、可反复执行。
+
+快照默认把 `database/` + `data/` 复制到 `%TEMP%` 隔离根（`EVE_ASSISTANT_APP_ROOT`），退出即删，
+**不会再写真实用户库**；只有显式 `--no-isolate` 才碰真实数据。脚本已设生产样式
+（`QQuickStyle FluentWinUI3`），所以正常快照的样式告警应为 0。
 
 ## 计划自检（ExitPlanMode 前）
 

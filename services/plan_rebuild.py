@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 
+from core.constants import PLAN_LOCKED_STATUSES, PLAN_TERMINAL_STATUSES
 from core.container import get_container
 from core.logger import log
 from domain.formulas import calc_material_for_runs
@@ -24,8 +25,9 @@ from services.plan_decompose import best_inventory_blueprint
 _MAX_ROUNDS = 10
 
 # 母项参与重放的排除状态
-_DONE_STATUSES = ("completed", "done")
-_LOCKED_RUNS_STATUSES = ("in_progress", "running")  # 已投产的子项 runs 不再改动
+_DONE_STATUSES = PLAN_TERMINAL_STATUSES
+#: 已锁 runs 的子项状态：在产 **+ 待下线**（造完未下线仍占线，重排 runs 会让已造出的口径回退）
+_LOCKED_RUNS_STATUSES = PLAN_LOCKED_STATUSES
 
 
 def _is_active(row: dict) -> bool:

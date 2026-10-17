@@ -344,7 +344,15 @@ class ScoringService:
         """
         total_mult = max(runs, 1) * max(parallels, 1)
         runs_only = max(runs, 1)
-        hours_per_run = per_run.get("hours_per_run", 0) or 1
+        # 总时长必须用 domain 给出的**未取整秒数**；hours_per_run 是 round 到 2 位的展示值，
+        # 直接拿它乘 runs 会把 ±18 s/轮的量化误差放大（BL-014）。
+        raw_seconds = per_run.get("actual_time_seconds")
+        if raw_seconds is not None:
+            hours_per_run = float(raw_seconds) / 3600
+            if hours_per_run <= 0:
+                hours_per_run = float(per_run.get("hours_per_run", 0) or 1)
+        else:
+            hours_per_run = per_run.get("hours_per_run", 0) or 1
         profit_per_run = per_run.get("profit_per_run", 0) or 0
         breakdown = per_run.get("breakdown") or {}
         mat_cost = breakdown.get("material_cost", 0) or 0
@@ -383,6 +391,8 @@ class ScoringService:
                 "total_material_cost": round(total_mat_cost, 2),
                 "total_profit": round(total_profit, 2),
                 "total_time_hours": round(total_time_hours, 2),
+                # 秒级原值（未 round）：写入 production_plans.calculated_time 用它，避免二次取整
+                "total_time_seconds": total_time_hours * 3600,
                 "total_isk_per_hour": round(total_iskph, 2),
                 "total_daily_output": round(daily_output, 1),
                 "total_margin_pct": round(total_margin, 2),
@@ -409,7 +419,15 @@ class ScoringService:
         """
         runs = max(int(runs or 1), 1)
         worst = min(per_line, key=lambda r: r.get("profit_per_run", 0) or 0)
-        hours = [float(r.get("hours_per_run", 0) or 0) for r in per_line]
+        # 与 calculate_total_metrics 同口径：优先用未取整的 actual_time_seconds（BL-014）
+        hours = [
+            (
+                float(r["actual_time_seconds"]) / 3600
+                if r.get("actual_time_seconds") is not None
+                else float(r.get("hours_per_run", 0) or 0)
+            )
+            for r in per_line
+        ]
         max_hours = max(hours) if hours else 0.0
 
         structure_saving = float((worst.get("breakdown") or {}).get("structure_mat_saving") or 1.0)
@@ -441,6 +459,7 @@ class ScoringService:
             "total_revenue": round(total_revenue, 2),
             "total_fees": round(total_fees, 2),
             "total_time_hours": round(total_hours, 2),
+            "total_time_seconds": total_hours * 3600,
             "total_isk_per_hour": round(total_profit / total_hours, 2) if total_hours > 0 else 0.0,
             "total_daily_output": round(sum(24.0 / h for h in hours if h > 0), 1),
             "total_margin_pct": round(total_profit / total_cost * 100, 2) if total_cost > 0 else 0.0,
@@ -528,7 +547,11 @@ class ScoringService:
         from domain.formulas import FACILITY_TAX_NPC
         from services.hangar_industry_config import resolve_hangar_industry_config
 
-        hangar_cfg = resolve_hangar_industry_config(plan_data.get("mat_hangar_id"), _db=getattr(svc, "_db", None))
+        # 改件按**活动**筛选：发明/研究/拷贝类 rig 不再影响制造作业（反之亦然），审计 01-13
+        plan_activity = str(plan_data.get("activity") or "manufacturing")
+        hangar_cfg = resolve_hangar_industry_config(
+            plan_data.get("mat_hangar_id"), activity=plan_activity, _db=getattr(svc, "_db", None)
+        )
         # 成本倍率：计划 facility_cost_mult 显式(≠1.0) > 机库 > 1.0
         plan_mult = float(plan_data.get("facility_cost_mult", 1.0) or 1.0)
         structure_cost_mult = plan_mult if plan_mult != 1.0 else hangar_cfg["structure_cost_mult"]
@@ -564,7 +587,7 @@ class ScoringService:
                     sell_hub=resolved_sell_hub,
                     price_type_mat=resolved_price_type_mat,
                     price_type_prod=resolved_price_type_prod,
-                    system_id=resolved_system_id,
+                    system_id=effective_system_id,
                     effective_system_id=effective_system_id,
                     structure_cost_mult=structure_cost_mult,
                     structure_time_mod=structure_time_mod,
@@ -585,7 +608,7 @@ class ScoringService:
                 structure_bonus=structure_bonus,
                 structure_time_mod=structure_time_mod,
                 structure_mat_saving=structure_mat_saving,
-                system_id=resolved_system_id,
+                system_id=effective_system_id,
                 mat_price_mult=mat_mult,
                 prod_price_mult=prod_mult,
             )
@@ -610,7 +633,7 @@ class ScoringService:
                         structure_bonus=structure_bonus,
                         structure_time_mod=structure_time_mod,
                         structure_mat_saving=structure_mat_saving,
-                        system_id=resolved_system_id,
+                        system_id=effective_system_id,
                         mat_price_mult=mat_mult,
                         prod_price_mult=prod_mult,
                     )
@@ -631,7 +654,7 @@ class ScoringService:
                     structure_bonus=structure_bonus,
                     structure_time_mod=structure_time_mod,
                     structure_mat_saving=structure_mat_saving,
-                    system_id=resolved_system_id,
+                    system_id=effective_system_id,
                     mat_price_mult=mat_mult,
                     prod_price_mult=prod_mult,
                 )
@@ -660,7 +683,7 @@ class ScoringService:
             "margin": round(total.get("total_margin_pct", 0), 2),
             "score": per_run.get("score", 0),
             "iskph": round(total.get("total_isk_per_hour", 0), 2),
-            "calculated_time": round(total.get("total_time_hours", 0) * 3600),
+            "calculated_time": round(total.get("total_time_seconds", total.get("total_time_hours", 0) * 3600)),
             "daily_output": round(total.get("total_daily_output", 0), 1),
             # ── 个人利润率输入（新增）──
             "revenue": round(total_revenue if total_revenue is not None else revenue_per_run * total_mult, 2),
@@ -760,16 +783,21 @@ class ScoringService:
         """
         from core.container import get_container
         from core.logger import log
+        from domain.formulas import calc_eiv
         from domain.research import (
             ACTIVITY_COPYING,
             ACTIVITY_INVENTION,
+            ACTIVITY_RESEARCH_ME,
+            ACTIVITY_RESEARCH_TE,
             ADV_INDUSTRY_TIME_SKILL,
             MATERIAL_ACTIVITY,
             METALLURGY_TIME_SKILL,
+            RESEARCH_PROCESS_TIME_VALUE_RATE,
             RESEARCH_TIME_SKILL,
             SCIENCE_TIME_SKILL,
             copy_job_runs,
             get_decryptor,
+            research_level_time_seconds,
             science_job_time,
         )
         from services.plan_metrics import (
@@ -794,6 +822,9 @@ class ScoringService:
         decryptor = get_decryptor(plan_data.get("decryptor_type_id")) if activity == ACTIVITY_INVENTION else None
 
         bp_materials: list[tuple[int, int]] = []
+        # 该蓝图的**制造投入**材料：科研安装费的官方 job value 基数是它（EIV 的 2%），
+        # 而不是拷贝/发明材料本身（见审计 01-7）。发明时 blueprint_type_id = T2 蓝图，同上。
+        manu_materials: list[tuple[int, int]] = []
         base_time = 0
         max_production_limit = 0
         base_probability = 0.0
@@ -809,6 +840,14 @@ class ScoringService:
                     "SELECT material_type_id, quantity FROM blueprint_materials "
                     "WHERE blueprint_type_id = ? AND activity = ?",
                     (blueprint_type_id, mat_act),
+                ).fetchall()
+            ]
+            manu_materials = [
+                (int(r[0]), int(r[1] or 0))
+                for r in conn.execute(
+                    "SELECT material_type_id, quantity FROM blueprint_materials "
+                    "WHERE blueprint_type_id = ? AND activity = 'manufacturing'",
+                    (blueprint_type_id,),
                 ).fetchall()
             ]
             # 注意连接启用了 sqlite3.Row：不能元组解包，须按索引取
@@ -868,6 +907,8 @@ class ScoringService:
         # 材料单价：adjusted_price 优先（0/缺失 → sell_price）
         prices: dict[int, float] = {}
         mat_ids = {mid for mid, _q in bp_materials if mid}
+        # 制造投入材料的单价也要取（科研安装费 job value 用它们的 EIV）
+        mat_ids |= {mid for mid, _q in manu_materials if mid}
         if decryptor:
             mat_ids.add(decryptor.type_id)
         if mat_ids:
@@ -880,6 +921,9 @@ class ScoringService:
                     ).fetchone()
                     if row:
                         prices[mid] = float(row[0] or 0) or float(row[1] or 0) or float(row[2] or 0)
+
+        # 科研安装费的 job value 基数 = 该蓝图**制造投入**的 EIV（官方口径 2%）。
+        eiv_manu = calc_eiv([(qty, prices.get(mid, 0.0)) for mid, qty in manu_materials])
 
         sci = 0.0
         try:
@@ -895,6 +939,7 @@ class ScoringService:
             # 总尝试 = 每线尝试次数 × 并行作业数。与执行侧扣料口径一致：
             # plan_execution 为每条绑定产线消耗 runs 个 T1 流程，共 parallels 条线。
             total_attempts = max(1, runs) * max(1, parallels)
+            # 安装费 job value = 2% × EIV(该 T2 蓝图的制造投入) × 总尝试次数（官方口径）
             cost = invention_plan_cost(
                 base_probability=base_probability,
                 materials=bp_materials,
@@ -909,6 +954,7 @@ class ScoringService:
                 input_bpc_cost_per_run=float(plan_data.get("input_bpc_cost_per_run") or 0.0),
                 success_rate_override=plan_data.get("success_rate"),
                 actual_output_runs=plan_data.get("actual_output_runs"),
+                job_value=0.02 * eiv_manu * total_attempts,
                 structure_mult=structure_mult,
                 facility_tax=facility_tax,
             )
@@ -921,7 +967,9 @@ class ScoringService:
                 "runs_per_bpc": cost["runs_per_bpc"],
                 "bpc_unit_cost": cost["bpc_unit_cost"],
                 "output_runs": output_runs,
+                # expected_runs = 概率期望（attempts × 成功率 × 每张流程）；max_output_runs = 全成功上限
                 "expected_runs": cost["expected_runs"],
+                "max_output_runs": cost["max_output_runs"],
                 "is_actual": cost["is_actual"],
                 "base_probability": round(base_probability, 4),
                 "skills": skill_note,
@@ -937,12 +985,15 @@ class ScoringService:
         elif activity == ACTIVITY_COPYING:
             copies = max(1, parallels)
             total_runs = copy_job_runs(copies, runs, max_production_limit)
+            # 安装费 job value = 2% × EIV(制造投入) × 总授权流程（官方拷贝费公式 ×0.02）；
+            # 材料量在 plan_metrics 内部只按**份数**放大（官方口径，审计 01-6）。
             cost = copying_plan_cost(
                 materials=bp_materials,
                 prices=prices,
                 sci=sci,
                 total_copy_runs=total_runs,
                 copies=copies,
+                job_value=0.02 * eiv_manu * total_runs,
                 structure_mult=structure_mult,
                 facility_tax=facility_tax,
             )
@@ -956,30 +1007,65 @@ class ScoringService:
             }
         else:  # ME/TE 研究
             target_level = max(1, runs)
+            # 当前等级 = 绑定 BPO 的现有等级（计划行 me_level/te_level；缺省 0）。
+            # 从 m 级研究到 n 级只需做 n−m 个等级的作业，且时长是**逐级求和**（见
+            # domain.research.research_level_time_seconds），不是「首级 × 目标等级」。
+            current_level = int(plan_data.get("me_level" if activity == ACTIVITY_RESEARCH_ME else "te_level") or 0)
+            current_level = max(0, min(current_level, target_level - 1))
+            levels_to_do = max(1, target_level - current_level)
+            # 研究安装费：官方 process_time_value = 逐级时长增量 × 0.02105 × EIV(制造投入)。
+            # （0.02105 口径见 domain.research.RESEARCH_PROCESS_TIME_VALUE_RATE，审计标存疑）
+            process_time = research_level_time_seconds(
+                base_time, target_level=target_level, current_level=current_level
+            )
             cost = research_plan_cost(
                 materials=bp_materials,
                 prices=prices,
                 sci=sci,
-                target_level=target_level,
+                target_level=levels_to_do,
+                job_value=RESEARCH_PROCESS_TIME_VALUE_RATE * process_time * eiv_manu,
                 structure_mult=structure_mult,
                 facility_tax=facility_tax,
             )
-            job_k = target_level
+            job_k = levels_to_do
             output_runs = 1
-            extra = {"target_level": target_level, "time_is_approximate": True}
+            extra = {
+                "target_level": target_level,
+                "current_level": current_level,
+                "time_is_approximate": False,
+            }
 
-        time_per_job = science_job_time(
-            base_time,
-            activity=activity,
-            research_skill=int(skills.get(RESEARCH_TIME_SKILL, 0) or 0),
-            metallurgy_skill=int(skills.get(METALLURGY_TIME_SKILL, 0) or 0),
-            science_skill=int(skills.get(SCIENCE_TIME_SKILL, 0) or 0),
-            # 3388「所有制造和研究时间 -3%/级」：缺失时与制造侧（domain/scoring.py 的
-            # skills.get("高级工业理论", 5)）同样兜底 5，两侧口径必须一致
-            adv_industry_skill=int(skills.get(ADV_INDUSTRY_TIME_SKILL, 5) or 0),
-            structure_time_mod=structure_time_mod,
-        )
-        total_seconds = time_per_job * job_k
+        # 科学作业时长：技能系数（含 3388 高级工业理论 -3%/级，缺失按 0）+ 结构。
+        # 研究活动先把**逐级时长求和**再乘系数；拷贝/发明按「单位作业时长 × 作业数」。
+        research_skill = int(skills.get(RESEARCH_TIME_SKILL, 0) or 0)
+        metallurgy_skill = int(skills.get(METALLURGY_TIME_SKILL, 0) or 0)
+        science_skill = int(skills.get(SCIENCE_TIME_SKILL, 0) or 0)
+        # 技能未配置按 0 级（不默认满级），与制造侧 domain/scoring.py 同口径
+        adv_industry_skill = int(skills.get(ADV_INDUSTRY_TIME_SKILL, 0) or 0)
+        if activity in (ACTIVITY_RESEARCH_ME, ACTIVITY_RESEARCH_TE):
+            total_seconds = research_level_time_seconds(
+                base_time, target_level=target_level, current_level=current_level
+            ) * science_job_time(
+                1.0,
+                activity=activity,
+                research_skill=research_skill,
+                metallurgy_skill=metallurgy_skill,
+                science_skill=science_skill,
+                adv_industry_skill=adv_industry_skill,
+                structure_time_mod=structure_time_mod,
+            )
+            time_per_job = total_seconds / job_k if job_k else 0.0
+        else:
+            time_per_job = science_job_time(
+                base_time,
+                activity=activity,
+                research_skill=research_skill,
+                metallurgy_skill=metallurgy_skill,
+                science_skill=science_skill,
+                adv_industry_skill=adv_industry_skill,
+                structure_time_mod=structure_time_mod,
+            )
+            total_seconds = time_per_job * job_k
 
         # 收入：产物（蓝图）市价 × 产出件数（拷贝一次产出 copies 份 BPC）
         product_id = int(plan_data.get("product_type_id") or 0)

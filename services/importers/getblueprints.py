@@ -156,6 +156,14 @@ async def run_blueprint_update(progress_cb=None):
             row = await cursor.fetchone()
             if row and row[0] > 1000:
                 log.info(f"蓝图数据已就绪 ({row[0]} 条活动记录)，跳过")
+                # 02-03 A 段：就绪 ≠ 新鲜。旧 SDE 源已冻结，这里检查官方 build 并告警
+                # （只告警不重导：新发布源布局适配属 B 段）。
+                try:
+                    from services.importers.sde_cache import warn_if_sde_stale
+
+                    await warn_if_sde_stale()
+                except Exception:
+                    log.exception("SDE 新鲜度检查失败（不影响蓝图初始化）")
                 if progress_cb:
                     progress_cb(100, "蓝图数据已就绪")
                 return

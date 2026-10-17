@@ -10,9 +10,9 @@
 - **离屏（默认）**：不弹窗、不抢焦点、不受单实例锁影响，可反复执行；但
   `QT_QPA_PLATFORM=offscreen` 下 **`QFontDatabase.families()` 是 0 个字体**，
   文字全渲染成方框 —— 只能验结构/配色/布局。
-- **`--real`**：真窗口 + 真字体 + 真 DWM 毛玻璃，是**唯一**能确认字形与合成效果的方式；
-  它会真的在屏幕上开一个窗，所以用**隔离的应用根目录**（复制 database/ 与 data/ 到临时目录），
-  绝不会写用户真实的设置与数据库。
+- **`--real`**：真窗口 + 真字体 + 真 DWM 毛玻璃，是**唯一**能确认字形与合成效果的方式。
+  两种模式都默认使用**隔离的应用根目录**（复制 database/ 与 data/ 到临时目录，退出时删除），
+  绝不会写用户真实的设置与数据库；确需对真实数据出图时显式加 `--no-isolate`。
 
 用法：
     python scripts/shell_snapshot.py                    # 离屏 → .claude/ui-snapshots/shell.png
@@ -27,8 +27,10 @@ import argparse
 import atexit
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 _REAL = "--real" in sys.argv
@@ -53,15 +55,55 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _OUT_DIR = _ROOT / ".claude" / "ui-snapshots"
 
-# 当前隔离出来的应用根目录（只有 --real 会设）。清理由两条路径兜：main() 的 finally
-# 管正常返回，atexit 管 sys.exit 与未捕获异常 —— 重复调用是幂等的。
+# 当前隔离出来的应用根目录（默认模式与 --real 都会设；--no-isolate 时不设）。
+# 清理由两条路径兜：main() 的 finally 管正常返回，atexit 管 sys.exit 与未捕获异常 —— 重复调用是幂等的。
 _ISOLATED_ROOT: str | None = None
 
 
 def _cleanup_isolated_root() -> None:
     """删掉隔离的应用根目录。删不动（被占用）就放弃，绝不因为收尾失败而中断脚本。"""
-    if _ISOLATED_ROOT:
+    if not _ISOLATED_ROOT:
+        return
+    # SQLite 连接（模块级 DatabaseManager 与后台 worker）此时可能还开着文件句柄；
+    # Windows 上文件被占用会让 rmtree 半途失败，把 1~1.5 GB 的临时目录留在 %TEMP%
+    # （2026-10-17 实测：只删掉 data/，database/ 被锁住留下）。先关连接，再带重试地删。
+    try:
+        from services.database_manager import get_db
+
+        get_db().close_all()
+    except Exception:  # 收尾路径：数据库模块未加载/已卸载都不该挡住清理
+        pass
+    for _attempt in range(3):
+        if not os.path.exists(_ISOLATED_ROOT):
+            return
         shutil.rmtree(_ISOLATED_ROOT, ignore_errors=True)
+        if os.path.exists(_ISOLATED_ROOT):
+            time.sleep(0.3)
+    if os.path.exists(_ISOLATED_ROOT):
+        # 仍被后台 worker（如还在等 ESI 的 QThread）占着：本进程删不掉，交给一个
+        # **独立子进程**在本进程退出、文件句柄释放后再删（实测：留着会累积 1~1.5 GB/次）。
+        try:
+            subprocess.Popen(
+                [
+                    "cmd",
+                    "/c",
+                    "ping",
+                    "-n",
+                    "4",
+                    "127.0.0.1",
+                    ">nul",
+                    "&",
+                    "rmdir",
+                    "/s",
+                    "/q",
+                    _ISOLATED_ROOT,
+                ],
+                creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:  # 收尾路径：清理失败不影响截图结果
+            pass
 
 
 def _isolate_app_root() -> str:
@@ -128,15 +170,29 @@ def main() -> int:
         action="store_true",
         help="真窗口模式下强制不透明底色 —— 排掉「透明窗口合成」的干扰，用于判定重影来源",
     )
+    parser.add_argument(
+        "--no-isolate",
+        action="store_true",
+        help="不隔离应用根目录（直接读写真实 database/ 与 data/；仅用于核对真实数据，慎用）",
+    )
     args = parser.parse_args()
 
     width, _, height = args.size.partition("x")
 
-    if args.real:
+    if not args.no_isolate:
         tmp = _isolate_app_root()
-        print(f"[外壳] 真窗口模式，应用根目录已隔离到：{tmp}")
+        print(f"[外壳] 应用根目录已隔离到：{tmp}（database/ + data/ 的副本，退出时删除）")
 
     app = QApplication([])
+
+    # 生产样式必须与 Main.py 一致：不设样式时每页会刷 253 条
+    # `The current style does not support customization` 假告警，且渲染结果偏离生产。
+    try:
+        from PySide6.QtQuickControls2 import QQuickStyle
+
+        QQuickStyle.setStyle("FluentWinUI3")
+    except Exception:  # 样式不可用不致命：快照仍可拍，但会偏离生产样式
+        print("[警告] QQuickStyle 不可用，快照渲染将偏离生产样式", file=sys.stderr)
     from ui_qml.shell_window import ShellWindow
 
     # 掐掉真实价格检查/下载：否则每跑一次都快照都会联网拉 ESI（慢、且结果不确定）。
@@ -276,6 +332,13 @@ def main() -> int:
         return 5
 
     win.close()
+    # GUI 关闭后可能有被 drop_worker/detach_worker 摘出的后台线程仍在跑；解释器收尾时
+    # 这些 QThread 被析构会让 Qt abort()，表现为「截图成功但退出码 -1073740791」。
+    from ui_qml.workers.lifecycle import wait_detached
+
+    left = wait_detached()
+    if left:
+        print(f"[警告] 仍有 {left} 个后台线程未退出", file=sys.stderr)
     return 0
 
 

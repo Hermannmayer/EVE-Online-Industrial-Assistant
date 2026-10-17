@@ -22,25 +22,15 @@ _FP_EPSILON = 1e-10
 # ═══════════════════════════════════════════════════════════
 
 DEFAULT_WASTEFACTOR = 10  # T1 兜底
-WASTEFACTOR_BY_CATEGORY: dict[str, int] = {
-    "T1": 10,
-    "T2": 2,
-    "T3_rig": 5,
-    "capital": 12,
-    "faction": 15,
-}
 
 SCC_SURCHARGE = 0.04  # 固定 4%，Viridian 引入
 FACILITY_TAX_NPC = 0.0025  # NPC 空间站设施税率 0.25%
-ALPHA_TAX = 0.0025  # Alpha 克隆额外税（Omega=0）
+#: Alpha 克隆额外税（Omega=0）；`domain/scoring` 的制造安装费与这里共用同一常量。
+ALPHA_TAX = 0.0025
 
-STRUCTURE_TIME_RAITARU = 0.85  # 小型工程站 -15%
-STRUCTURE_TIME_ATHANOR = 0.80  # 中型 -20%
-STRUCTURE_TIME_TATARA = 0.75  # 大型 -25%
-STRUCTURE_TIME_SOTIYO = 0.70  # 超大型 -30%
-
-STRUCTURE_MAT_SAVING = 1.0  # 工程站材料减免乘数（默认无，Upwell 结构 0.99 = -1%）
-
+#: 结构/改装件的材料与时间倍率唯一来源是 `services.hangar_industry_config.STRUCTURE_BASE`
+#: （值来自 SDE 属性 2600/2601/2602）。这里不再保留 Athanor/Tatara 等历史死常量：
+#: 它们零引用，且 Athanor/Tatara 在 SDE 里没有 `strEngTimeBonus` 属性（属精炼结构）。
 INDUSTRY_SKILL_MULT = 0.04  # 工业理论 (3380) 每级 -4% 时间
 ADV_INDUSTRY_SKILL_MULT = 0.03  # 高级工业理论 (3388) 每级 -3% 时间
 TE_MULT_PER_LEVEL = 0.01  # TE 每级 -1% 时间（TE 存 0-20 的百分比，故等价于游戏里每级 2%×10 级）
@@ -55,6 +45,40 @@ SCIENCE_SKILL_MULT = 0.05  # 科学原理（仅复制）
 REACTIONS_SKILL_MULT = 0.04  # 反应理论（仅反应）
 # 蓝图所需技能：11452 机械工程学「每升一级，所有需要机械工程学技能的物品的生产时间减少 1%」
 BP_SKILL_TIME_MULT = 0.01
+#: 「蓝图技能每级 −1% 生产时间」只对**技能自身 dogma 带属性 `1982 manufactureTimePerLevel`
+#: 的技能**生效。3380 工业理论 / 3388 高级工业理论 的减免已由 `INDUSTRY_SKILL_MULT` /
+#: `ADV_INDUSTRY_SKILL_MULT` 计过，不能再按「蓝图所需技能」二次计入。
+#: 来源：SDE `data/sde.zip → fsd/typeDogma.yaml` 全表扫描（2026-07 快照）——24 个技能
+#: 值 `-1.0`、81896「突变稳定」`-2.0`，共 25 个。3380/3388/22242 均**不在**表中。
+BP_TIME_SKILL_TYPE_IDS: frozenset[int] = frozenset(
+    {
+        3395,  # 高级小型舰船建造研究
+        3396,  # 高级工业舰船建造研究
+        3397,  # 高级中型舰船建造研究
+        3398,  # 高级大型舰船建造研究
+        11433,  # 高能物理学
+        11441,  # 等离子物理学
+        11442,  # 纳米工程学
+        11443,  # 磁流体物理学
+        11444,  # 艾玛星舰工程学
+        11445,  # 米玛塔尔星舰工程学
+        11446,  # 引力子物理学
+        11447,  # 激光物理学
+        11448,  # 电磁物理学
+        11449,  # 火箭科学
+        11450,  # 盖伦特星舰工程学
+        11451,  # 核芯物理学
+        11452,  # 机械工程学
+        11453,  # 电子工程学
+        11454,  # 加达里星舰工程学
+        11455,  # 量子物理学
+        11529,  # 分子工程学
+        52307,  # 三神裔量子工程学
+        77725,  # 高级旗舰建造
+        81050,  # 昇威星舰工程学
+        81896,  # 突变稳定（每级 −2%）
+    }
+)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -229,8 +253,8 @@ def calc_job_cost_fees(
 
 def calc_production_time(
     base_time: int,
-    industry_skill: int = 5,
-    adv_industry_skill: int = 5,
+    industry_skill: int = 0,
+    adv_industry_skill: int = 0,
     te_level: int = 0,
     structure_time_mod: float = 1.0,
     required_skill_levels: Sequence[int] | None = None,
@@ -248,9 +272,10 @@ def calc_production_time(
         adv_industry_skill: 高级工业理论等级（0-5）
         te_level: TE 研究等级（0-20）
         structure_time_mod: 工程站时间减免（NPC=1.0, Raitaru=0.85 等）
-        required_skill_levels: 该蓝图**制造活动所需技能**的角色等级列表（如机械工程学 L5）。
-            SDE 技能描述原文：「每升一级，所有需要机械工程学技能的物品的生产时间减少 1%」。
-            None/空 → 不计该项（保持旧调用方行为）。
+        required_skill_levels: 该蓝图**制造活动所需且带 `1982 manufactureTimePerLevel`**
+            的技能角色等级列表（如机械工程学 L5；过滤后由调用方传入，白名单见
+            `BP_TIME_SKILL_TYPE_IDS`）。SDE 技能描述原文：「每升一级，所有需要机械工程学
+            技能的物品的生产时间减少 1%」。None/空 → 不计该项（保持旧调用方行为）。
 
     返回:
         实际时间（秒）

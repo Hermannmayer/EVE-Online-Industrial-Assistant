@@ -167,3 +167,27 @@ def test_material_total_for_runs_applies_structure_saving_on_the_batch():
     assert material_total_for_runs(mat, 10, me_level=0, structure_mat_saving=0.5) == 500
     # ceil(100 × 10 × 0.9 × 0.5) = 450
     assert material_total_for_runs(mat, 10, me_level=10, structure_mat_saving=0.5) == 450
+
+
+def test_production_time_bp_skill_only_counts_1982_skills():
+    """01-2 回归：蓝图技能 −1%/级只对 SDE 带 `1982 manufactureTimePerLevel` 的技能生效。
+
+    3380 工业理论（−4%/级）与 3388 高级工业理论（−3%/级）的减免已由 skill_mod 计过；
+    旧实现把「蓝图要求的**全部**技能」都乘 1−1%/级，导致真实 8/8 制造计划偏短 5~11%。
+    """
+    from domain.formulas import calc_production_time
+
+    # bp40751（3380 + 22242，两技能都无 1982）→ 只剩 0.8×0.85
+    assert calc_production_time(36000, 5, 5, 0, 1.0, []) == pytest.approx(24480.0)
+    # bp59171（3380 + 3388）→ 同上，再乘 TE20 的 0.8
+    assert calc_production_time(40500, 5, 5, 20, 1.0, []) == pytest.approx(22032.0)
+    # 带 1982 的技能（机械工程学 L5）仍按 −1%/级
+    assert calc_production_time(1000, 0, 0, 0, 1.0, [5]) == pytest.approx(950.0)
+
+
+def test_production_time_missing_skills_defaults_to_zero_level():
+    """01-11 回归：缺技能不默认满级（旧默认 Industry/ADV=5 会让时间凭空快 32%）。"""
+    from domain.formulas import calc_production_time
+
+    assert calc_production_time(3600) == pytest.approx(3600.0)
+    assert calc_production_time(3600, 0, 0) == pytest.approx(3600.0)

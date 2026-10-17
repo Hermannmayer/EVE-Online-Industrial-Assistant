@@ -19,7 +19,7 @@ from tqdm import tqdm
 from core.logger import log
 from core.paths import reference_db_path
 from services.db_locks import get_db_write_lock
-from services.importers.sde_cache import ensure_sde_cache, load_yaml_async
+from services.importers.sde_cache import ensure_sde_cache, load_yaml_async, warn_if_sde_stale
 from services.init_check import ITEMS_NAMED_READY
 
 DATABASE_PATH = reference_db_path()
@@ -230,6 +230,13 @@ async def main(progress_cb: Callable[[int, str], None] | None = None):
 
     if named >= ITEMS_NAMED_READY and mt_cnt > 500:
         log.info(f"所有数据已就绪（item={named}, market_tree={mt_cnt}），跳过")
+        # 02-03 A 段：数据「就绪」不等于「新鲜」——旧 SDE 源已冻结在 2025-07-07，
+        # 这里检查官方 build 号并告警（只告警，不触发重导：新发布源布局适配属 B 段）。
+        try:
+            await warn_if_sde_stale()
+        except Exception:
+            # 吞的是「新鲜度检查自身的异常」——它只是告警，绝不能拦住初始化
+            log.exception("SDE 新鲜度检查失败（不影响初始化）")
         if progress_cb:
             progress_cb(90, "检查缺失名称...")
         await fill_missing_item_names_from_esi(progress_cb)
@@ -314,21 +321,23 @@ async def fill_missing_blueprint_names():
         log.info(f"补拉完成，共修复 {len(missing)} 个蓝图名称")
         return
 
-    # 降级到 SDE API（并发 + 全局限流，复用 services.client 的 APIClient）
+    # 降级到官方 ESI 类型接口（并发 + 全局限流，复用 services.client 的 APIClient）。
+    # 旧实现打的是第三方 `sde.jita.space`（已不可达，且按旧 SDE 的 {en,zh} dict 解析
+    # `name`）—— 现行 ESI 的 `name` 是**字符串**，必须按 language 分别请求（02-12）。
     from services.client import APIClient
 
-    log.info("本地缓存不可用，降级到 SDE API 补拉...")
-    API_BASE = "https://sde.jita.space/latest"
+    log.info("本地缓存不可用，降级到 ESI 类型接口补拉...")
     BATCH = 50
     fixed = 0
 
     async def _fetch_one(client: APIClient, tid: int) -> tuple[int, str, str] | None:
-        data = await client.fetch(f"{API_BASE}/universe/types/{tid}")
-        if not data:
-            return None
-        nd = data.get("name", {})
-        en = nd.get("en", "") if isinstance(nd, dict) else ""
-        zh = nd.get("zh", "") if isinstance(nd, dict) else ""
+        async def _get(lang: str) -> str:
+            data = await client.fetch(
+                f"https://esi.evetech.net/latest/universe/types/{tid}/?datasource=tranquility&language={lang}"
+            )
+            return _esi_name(data)
+
+        zh, en = await asyncio.gather(_get("zh"), _get("en"))
         return (tid, en, zh) if (en or zh) else None
 
     async with APIClient(concurrency=10, timeout=30) as client:
@@ -348,7 +357,21 @@ async def fill_missing_blueprint_names():
                     await db.commit()
                 fixed += len(updates)
                 log.info(f"  已修复 {fixed}/{len(missing)}")
-    log.info(f"补拉完成，共修复 {fixed} 个蓝图名称")
+    if fixed < len(missing):
+        log.warning("补拉完成，共修复 %s/%s 个蓝图名称（失败项下次初始化重试）", fixed, len(missing))
+    else:
+        log.info(f"补拉完成，共修复 {fixed} 个蓝图名称")
+
+
+def _esi_name(data: dict | None) -> str:
+    """现行 ESI `/universe/types/{id}/` 的 `name` 是**字符串**（旧 SDE 是 {en,zh} dict）。
+
+    02-12：旧降级分支按 dict 解析，即使站点复活也永远拿不到名字。
+    """
+    if isinstance(data, dict):
+        name = data.get("name")
+        return name if isinstance(name, str) else ""
+    return ""
 
 
 async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], None] | None = None):

@@ -59,7 +59,12 @@ case "$MODE" in
     for f in $changed; do
       if [[ -z "$f" ]]; then continue; fi
       if [[ "$f" == tests/*.py ]]; then
-        files+=("$f"); continue
+        # 删除的测试文件仍会出现在 `git diff --name-only` 里；点名一个不存在的路径会让
+        # 整个 target 档直接 "file or directory not found" 失败（2026-10-17 删死代码时踩过）。
+        if [[ -f "$f" ]]; then
+          files+=("$f")
+        fi
+        continue
       fi
       [[ "$f" == *.py ]] || continue
       # 只有这 5 个包是共享库代码；scripts/ 与入口脚本没匹配到测试也不必拖全量
