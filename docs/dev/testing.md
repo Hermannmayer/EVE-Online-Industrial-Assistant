@@ -70,8 +70,9 @@ pytestmark = pytest.mark.ui  # 整个文件是 Qt 用例时的常见写法
 > 同时带 `ui` 标记**（历史按「跑得快」加的，会同时进 fast 与 ui-retest）；要纯计算/轻服务集合用
 > `-m "fast and not ui"`（≈677 条）。改 `domain/`/`core/` 时若不确定目标文件标没标 fast，直接
 > `target` 更稳（按 import 反查，不会漏）。
-> **runner 暂保持现状**：`scripts/` 属冻结区，且 `-m fast` 实测全绿、这 122 条不依赖 qapp；是否把
-> fast 切成 `-m "fast and not ui"` 属未决项（待登记 `docs/dev/backlog.md`）。
+> **runner 已切换**（2026-10-17 用户拍板）：`scripts/run_tests.sh fast` 现在跑
+> `-m "fast and not ui"`（≈677 条）；`-m fast` 直跑仍有 ≈799 条（含 122 条 ui 双标，
+> 这些文件历史按「跑得快」加过 `fast`，现由 ui-retest 覆盖）。
 >
 > **纯逻辑用例不要整文件标 `ui`**：整文件 `pytestmark = pytest.mark.ui` 会让文件整体离开
 > validate/CI（`test_personal_margin` 曾因此把 24 条个人利润率公式用例全带出 validate 档）。

@@ -110,7 +110,7 @@ Python 3.14+ / PySide6 6.11+ / ruff 格式化 + linting；依赖用 `~=` 固定�
 | 改了什么 | 跑什么 | 明确不跑 |
 |---|---|---|
 | 删死代码 / 改注释 / 改文档 / 格式化 | `target`（纯文档/配置变更会自动跳过，秒退） | 其余全部 |
-| 单文件纯计算（`domain/`、`core/`） | `fast`（`-m fast` 白名单，见 `docs/dev/testing.md`「测试分档与标记」）；**也可直接 `target`** —— 它按 import 反查测试文件，不会漏掉未标 `fast` 的公式测试 | 其余全部 |
+| 单文件纯计算（`domain/`、`core/`） | `fast`（`-m "fast and not ui"` 白名单，见 `docs/dev/testing.md`「测试分档与标记」）；**也可直接 `target`** —— 它按 import 反查测试文件，不会漏掉未标 `fast` 的公式测试 | 其余全部 |
 | services 业务 / DB 查询 / 导入器 | `target` | validate / full |
 | QML / UI，**或任何带 `ui` 标记的测试文件** | `shell_snapshot.py` 出图 + `ui-retest` 一次 | validate / full |
 | schema 迁移 | `validate` 一次 | full |

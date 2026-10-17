@@ -703,3 +703,19 @@
   若 10 分钟内跨交易日，「再打开一次」才补当天点；③ 服务层成员表未按锚定日持久化，
   跨日后成员表重算仍需观测装载约 1.3s。
 - 下一步：如需更严格，可把锚定日缓存 TTL 降到 60s / 成员表按锚定日落盘（登记待决策）。
+
+
+### 2026-10-17 收尾提交 `4359514` 状态更新（用户点名项）
+
+| 条目 | 收盘状态 |
+|---|---|
+| BL-027 06-2/06-7 静默失败 | **已关闭（4359514）**：剩余 7 处全部补齐（inventory_manager 4 / schema_migrations 1 / scoring_service 2）；全量复核 silent 143→0；纯日志+注释，行为不变 |
+| BL-037 存量测试清理 | 已关闭（7a29337）；**备注更新**：fast 档已切 `-m "fast and not ui"`（4359514），实测 669 passed / 10.78s；`-m fast` 仍 799 条（含 122 条 ui 双标，由 ui-retest 覆盖） |
+| BL-038 data 缓存未 gitignore | **已关闭（4359514）**：`.gitignore` 增加 `data/market_monitor_cache_*.json` |
+| BL-039 合同页滚动 + 全物品内嵌视觉抽验 | **已关闭（4359514）**：ContractBridge 新增 `rowsAboutToChange`、ContractTabPane 记/还原 contentY（含 Qt.callLater 补一拍），自动补齐/手动刷新/切星域同路径生效；新增动态回归（contentY=300 保持）；点表头排序仍回顶（主动操作语义，有意保留）。`--real` 快照 2100×1350 正常；全物品内嵌探针 `allItemsVisible=True / rowCount=2000 / treeRows=19`，独立窗 8 个旧工具栏控件与右键菜单均 absent |
+| BL-036 新 SDE 源切默认 | 仍 open（默认 legacy，未变） |
+| BL-034/BL-035 T3 成本口径/输入可达性 | 仍 deferred/open（未变） |
+| BL-021 玩家建筑挂单 | 仍 deferred（用户指定留待办） |
+
+补充风险（收尾时如实记录）：
+- 合同页真实 ESI 「每 500 条连续回灌」未端到端验证（本机不联网拉合同）；机制上每批都「先记 contentY、modelReset 后还原」，但未用真补齐链路跑过。
