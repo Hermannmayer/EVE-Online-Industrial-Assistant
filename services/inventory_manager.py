@@ -114,6 +114,8 @@ def create_hangar(name: str, solar_system_id: int | None = None) -> int:
             c.execute("INSERT INTO hangars (name, solar_system_id) VALUES (?, ?)", (name, solar_system_id))
             return c.lastrowid or 0
     except Exception:
+        # 吞的是写库异常（INSERT hangars 失败）：返回 -1 是既有错误码，但写库失败必须留堆栈
+        log.exception("创建机库失败 name=%s", name)
         return -1
 
 
@@ -151,6 +153,8 @@ def get_hangar_name(hangar_id: int | None) -> str:
             row = conn.execute("SELECT name FROM hangars WHERE id = ?", (hangar_id,)).fetchone()
             return row[0] if row else ""
     except Exception:
+        # 吞的是 sqlite 查询异常：返回空串是展示层降级，不阻断调用方
+        log.warning("读取机库名失败 id=%s", hangar_id, exc_info=True)
         return ""
 
 
@@ -165,11 +169,15 @@ def get_default_mat_hangar_and_system() -> tuple[int | None, int | None]:
     try:
         settings = user_settings.load_settings()
     except Exception:
+        # 吞的是用户设置读取/解析异常：返回 (None, None) 是既有降级（按未设置处理）
+        log.warning("读取默认材料机库设置失败，按未设置处理", exc_info=True)
         return None, None
     hid = settings.get("default_mat_hangar_id")
     try:
         return hid, get_hangar_system_id(hid)
     except Exception:
+        # 吞的是机库星系查询异常（如 hangars/solar_system 表未就绪）：降级返回 (机库 id, None)
+        log.warning("读取机库星系失败 hid=%s", hid, exc_info=True)
         return hid, None
 
 

@@ -353,6 +353,45 @@ Item {
                     rowHeightProvider: function (row) { return pane.rowH }
                     columnWidthProvider: function (col) { return pane.colWidth(col) }
 
+                    /* 自动补齐每 500 条就 `set_rows`（→ `beginResetModel`）回灌一次列表；
+                     * 手动刷新/切页签/切星域也是同一条路。模型一重置，TableView 就滚回顶部
+                     * —— 用户正滚着看某一行时会被拽走。
+                     *
+                     * 照关注页 `applyRows()/restoreKeepContentY()` 同款：桥在换行前先发
+                     * `rowsAboutToChange(tabKey)`（本页唯一能"提前一拍"记位置的信号），
+                     * 这里记下 contentY，模型 `modelReset` 后还原。delegate 重建是异步的，
+                     * 故补一拍 `Qt.callLater`。用户点表头排序**不走**这条信号（那是主动操作，
+                     * 回到顶部反而符合预期）。 */
+                    property real keepContentY: 0
+                    function restoreKeepContentY() {
+                        const y = table.keepContentY
+                        if (y <= 0)
+                            return
+                        table.contentY = y
+                        Qt.callLater(function () {
+                            if (y > 0)
+                                table.contentY = y
+                        })
+                        table.keepContentY = 0
+                    }
+
+                    Connections {
+                        target: pane.c ? pane.c : null
+                        function onRowsAboutToChange(tabKey) {
+                            if (tabKey === pane.tabKey)
+                                table.keepContentY = table.contentY
+                        }
+                        ignoreUnknownSignals: true
+                    }
+
+                    Connections {
+                        target: table.model ? table.model : null
+                        function onModelReset() {
+                            table.restoreKeepContentY()
+                        }
+                        ignoreUnknownSignals: true
+                    }
+
                     /* 表第一次拿到实际尺寸时，让模型重播一次。
                      *
                      * 修的是这个静默缺陷：**数据比首次布局先到**时（页面 `Component.onCompleted`

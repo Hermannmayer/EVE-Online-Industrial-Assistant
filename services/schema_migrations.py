@@ -1005,6 +1005,8 @@ def get_db_version(db_alias: str) -> int | None:
     try:
         return _get_version(db_path)
     except Exception:
+        # 吞的是「库文件损坏/权限/版本表异常」：诊断函数按「未知版本」返回 None，不抛给调用方
+        log.warning("读取数据库 schema 版本失败 db_path=%s", db_path, exc_info=True)
         return None
 
 

@@ -58,6 +58,10 @@ def _next_sort_order(model: object, column: int, numeric: frozenset[int]) -> Qt.
 
 class ContractBridge(QObject):
     rowsChanged = Signal()  # 行数 / 状态文案 / 进度
+    #: 当前页签的表格**即将整表换行**（`set_rows` → `beginResetModel`）。
+    #: 自动补齐每 500 条就回灌一次列表；QML 侧在收到本信号时记下 `contentY`，
+    #: 模型 reset 后还原 —— 否则用户滚在哪都会被拽回顶部（同关注页的滚动保持）。
+    rowsAboutToChange = Signal(str)  # 参数 = 页签 key
     itemsChanged = Signal()  # 下方物品表
     filtersChanged = Signal()
     regionChanged = Signal()
@@ -411,6 +415,8 @@ class ContractBridge(QObject):
     def _on_loaded(self, tab_key: str, rows: list, error: str) -> None:
         if tab_key != self._tab_key:
             return  # 期间用户换了页签，丢弃过期结果
+        # 先让 QML 记下当前滚动位置，再整表换行（自动补齐每 500 条会走一次这里）
+        self.rowsAboutToChange.emit(tab_key)
         self._models[tab_key].set_rows(rows)
         self._loaded_rows = rows
         self._status = error or f"{_TABS[self._tab_index]}: {len(rows):,} 条"

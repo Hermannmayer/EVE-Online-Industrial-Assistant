@@ -160,6 +160,36 @@ def test_header_click_sorts_the_table(contract_page):
     assert [r["price_diff"] for r in bridge.auctionModel._rows] == [100.0, 500.0, 900.0]
 
 
+def test_refresh_keeps_scroll_position(contract_page):
+    """回归：自动补齐每 500 条整表换行不得把表格滚回顶部。
+
+    `ContractBridge.on_shown` / 补齐回灌 / 手动刷新都汇到 `_on_loaded` → `set_rows` →
+    `beginResetModel`，TableView 一重置就回顶部（与关注页 04-8 同构）。修法是桥先发
+    `rowsAboutToChange(tabKey)`，QML 记下 contentY 在 `modelReset` 后还原。
+    """
+    host, bridge = contract_page
+    rows = [{"contract_id": i + 1, "title": f"合同{i}"} for i in range(50)]
+    bridge.auctionModel.set_rows(rows)
+    _spin(200)
+    host.resize(1200, 800)
+    host.show()
+    _spin(250)
+
+    root = host.rootObject()
+    table = root.findChild(QObject, "contractTable_auction")
+    assert table is not None, "找不到拍卖表"
+    table.setProperty("contentY", 300.0)
+    _spin(150)
+    assert table.property("contentY") != 0, "用例自身有误：50 行内容应可滚动"
+
+    # 走桥的真实换行路径（自动补齐/手动刷新/切星域都汇到这里）
+    changed = [dict(r, title=(r["title"] + "！")) for r in rows]
+    bridge._on_loaded("auction", changed, "")
+    _spin(300)
+
+    assert table.property("contentY") == pytest.approx(300.0, abs=1.0), "刷新后滚动位置被重置回顶部"
+
+
 # ════════════════════════════════════════════════════════════
 #  桥层
 # ════════════════════════════════════════════════════════════

@@ -116,3 +116,7 @@ data/sde_cache_manifest.json
 fresh_env/
 
 data/market_monitor_cache.json
+data/market_monitor_cache_*.json
+
+# 一次性审计产物（不随仓库分发）
+audit/

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 测试分档脚本 — 开发循环用 fast/target，日常回归用 validate，提交前才用 full
 # 用法: scripts/run_tests.sh [fast|validate|ui-retest|target|full]（默认 validate）
-# fast      纯计算/轻服务（-m fast）        较快  改动 core/domain/轻服务时
+# fast      纯计算/轻服务（-m "fast and not ui"）  较快  改动 core/domain/轻服务时
 # validate  全部业务/DB/计算（非 UI）       中等  日常默认回归
 # ui-retest 全部 Qt 界面 + 真 QThread       较慢  改动 UI 或带 ui 标记的测试文件后
 # target    只跑 git 变更相关测试文件       视变更量  开发循环默认；纯文档/配置变更直接跳过
@@ -28,7 +28,9 @@ MODE="${1:-validate}"
 
 case "$MODE" in
   fast)
-    "$PY" -m pytest tests/ -q -s -m fast --maxfail=1
+    # 2026-10-17 用户拍板：fast 排除带 ui 标记的用例（历史上 122 条双标用例
+    # 不依赖 qapp，但「fast = 纯计算/轻服务」语义应排除 ui；ui 用例由 ui-retest 覆盖）。
+    "$PY" -m pytest tests/ -q -s -m "fast and not ui" --maxfail=1
     ;;
   validate)
     "$PY" -m pytest tests/ -q -s -m "not ui" --maxfail=5

@@ -229,10 +229,20 @@ def test_refining_skill_name_consistency(sde_skills, terminology_data):
     assert "提炼学概论" in registered_zh, '"提炼学概论" 不在 terminology.json 的 skill_names 中'
     assert "提炼效率理论" in registered_zh, '"提炼效率理论" 不在 terminology.json 的 skill_names 中'
 
-    # 公式代码中的技能 key 应包含 SDE 官方名
-    formula_keys = _extract_skill_keys_from_eve_formulas()
-    assert "提炼学概论" in formula_keys, 'eve_formulas.py 中没有使用 "提炼学概论" 作为技能 key'
-    assert "提炼效率理论" in formula_keys, 'eve_formulas.py 中没有使用 "提炼效率理论" 作为技能 key'
+    # 公式代码中的技能 key 应包含 SDE 官方名。
+    # 2026-10-17 06-6 术语铁律：eve_formulas 改用 `core.skill_keys.REPROCESSING*` 常量
+    # 引用（不再是中文字面量），所以这里断言常量值等于 SDE 官方名，且公式代码确实引用常量。
+    from core import skill_keys
+
+    assert skill_keys.REPROCESSING == "提炼学概论", "core/skill_keys.REPROCESSING 常量值必须等于 SDE 官方名"
+    assert skill_keys.REPROCESSING_EFFICIENCY == "提炼效率理论", (
+        "core/skill_keys.REPROCESSING_EFFICIENCY 常量值必须等于 SDE 官方名"
+    )
+    formula_src = (_PROJECT_ROOT / "core" / "eve_formulas.py").read_text(encoding="utf-8")
+    assert "REPROCESSING" in formula_src, "eve_formulas.py 应引用 core.skill_keys.REPROCESSING 常量"
+    assert "REPROCESSING_EFFICIENCY" in formula_src, (
+        "eve_formulas.py 应引用 core.skill_keys.REPROCESSING_EFFICIENCY 常量"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -214,6 +214,11 @@ def _research_cost_cached(_db: DatabaseManager, type_id: int, *, solar_system_id
         _research_cost_cache.set(key, cost)
         return float(cost)
     except Exception:
+        # 吞的是研究成本计算链路异常（蓝图库缺失/查询失败）：缓存 MISS 并返回 0.0 是既有兜底；
+        # 保留堆栈便于定位，同一 key 后续命中缓存不再重复刷日志
+        from core.logger import log
+
+        log.warning("研究成本计算失败，按 0 处理并缓存 MISS: type_id=%s", type_id, exc_info=True)
         _research_cost_cache.set(key, _RESEARCH_MISS)
         return 0.0
 
@@ -499,6 +504,10 @@ class ScoringService:
                     (int(plan_id),),
                 ).fetchall()
         except Exception:  # 旧库缺 plan_blueprint_bindings / 测试库未建该表 → 不启用
+            # 吞的是「绑定表不存在/查询失败」：按无绑定 BPC 成本处理（旧库兼容路径）
+            from core.logger import log
+
+            log.warning("读取计划绑定 BPC 成本失败，按无绑定成本处理: plan_id=%s", plan_id, exc_info=True)
             return []
         return [float(r[0] or 0.0) for r in rows]
 
