@@ -13,7 +13,7 @@ import QtQuick.Controls
  *     ]}]
  *
  * `barPos` ∈ 0..1 时在单元格底部画一条横条（柱形图），`barColor` 空则用该格文字色。
- * **不用 Canvas**：它在离屏截图路径下整块不可见（见 `PriceChartDialog.qml` 头注释），
+ * **不用 Canvas**：它在离屏截图路径下整块不可见（历史记录：原价格走势图对话框的注释），
  * 柱形只用一个 `Rectangle` 即可，是场景图几何节点，截图里看得到。
  *
  * 颜色一律由桥从 `ui_qml.theme.registry` 取，本文件只做 `opacity` 压暗，不改色值。

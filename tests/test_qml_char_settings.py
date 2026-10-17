@@ -421,3 +421,15 @@ def test_reauthorize_requests_corp_wallet_scope_only_when_enabled(qapp, monkeypa
 
     monkeypatch.setattr("services.user_settings.get_include_corp_wallet", lambda: False)
     assert worker._extra_scopes() == ()
+
+
+def test_skills_config_hint_only_when_nothing_configured(harness):
+    """01-11：技能页提示「全 0 级 = 时间/利润按 0 级估算」。
+
+    缺技能不再默认满级之后，未导入 ESI / 未手填的角色会被按 0 级算，
+    用户只看到「时间偏长/利润偏低」却不知道原因 —— 技能页必须可见地说明一次。
+    """
+    skills = harness.bridge.skills
+    assert skills.configHint == "", "甲已配置工业理论/会计学 → 不提示"
+    skills.set_skills_data({})
+    assert "0 级" in skills.configHint, "一个技能都没填时必须提示"

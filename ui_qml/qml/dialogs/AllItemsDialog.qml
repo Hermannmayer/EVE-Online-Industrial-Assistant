@@ -3,18 +3,18 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
 
-/* 全物品浏览器（阶段 4b）—— 对照原 Widgets 版对应对话框。
- *
- * 工具栏（制造评分 / 设置 / 贸易评分 / 设置 / 批量对比 / 导出 + 置顶）→
+/* 全物品浏览器（阶段 4b）—— **只作为查询页工作区的内嵌面板**使用。
+
  * 筛选行（搜索 + 类别 + 状态）→ 3px 进度条 → 左「市场分类树」右「物品表」的可拖动分栏。
+ * 原独立窗形态（`AllItemsQmlDialog`）无生产入口，已随死代码清理删除：本文件现在只由
+ * `QueryPage.qml` 内嵌实例化，工具栏按钮 / 置顶 / 右键菜单一并移除（它们只服务于独立窗）。
  *
  * 业务一律不在这里实现：每次交互都调 `ai.<方法>`，由
  * `ui_qml/bridge/all_items_bridge.py` 转给既有 worker / service / 原模型。
  *
  * 与原版逐条对齐 / 有意不同的地方：
- *   1. **工具栏只有 6 个按钮**。原版 `_build_ui` 把同一组按钮 `addWidget` 了两遍
- *      （先是六次内联调用，随后又 `for b in self._toolbar_btns: bx.addWidget(b)`），
- *      界面上每个动作其实出现两次。这里按意图渲染一组。
+ *   1. **不再有「制造评分 / 设置 / 贸易评分 / 设置 / 批量对比 / 导出 / 置顶」工具栏**：
+ *      这些按钮只在已删除的独立窗里出现过；内嵌态按用户要求不带。
  *   2. **分类树是「带缩进的平表」**：QML 没有树控件，桥把树压成
  *      `treeRows`（`depth` / `hasChildren` 都在行上），箭头点击走 `toggleTreeNode`。
  *      展开/折叠状态由桥持有，与原版 `QTreeWidget` 的默认（全折叠）一致。
@@ -28,16 +28,9 @@ import "../components"
 Item {
     id: page
 
-    /* 全物品桥。独立窗那条路由 `PageHost` 以 context property `bridge` 注入；
-     * **内嵌**在查询页里时由 `QueryPage` 显式赋 `ai: page.query.allItems` —— 那时页面
-     * 上下文里的 `bridge` 是 `QueryBridge`，代理对象整体不同。所以这里**不能 `readonly`**
-     * （readonly 就没法在实例上覆盖），否则内嵌态的 `ai` 会绑到错的桥上。 */
+    /* 全物品桥。查询页以 `ai: page.query.allItems` 显式注入 —— 页面上下文里的
+     * `bridge` 是 `QueryBridge`（不是本面板的桥）。所以这里**不能 `readonly`**。 */
     property var ai: typeof bridge !== "undefined" ? bridge : null
-
-    /* 内嵌态（查询页工作区里那一块）：按用户要求去掉「制造评分设置 / 贸易评分设置 /
-     * 批量对比 / 导出」四个按钮与右键菜单；双击改为走查询页详情（见桥的 `openMaterials`）。
-     * 默认 false = 独立窗，行为与改造前一字不差。 */
-    property bool embedded: false
 
     readonly property int fntSmall: Math.round(11 * Theme.fontScale)
     readonly property int fntBase: Math.round(12 * Theme.fontScale)
@@ -73,81 +66,7 @@ Item {
         spacing: 1
 
         // ═══════════════════════════════════════════════════════
-        //  1. 工具栏
-        // ═══════════════════════════════════════════════════════
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Theme.spacingXs
-
-            FButton {
-                objectName: "mfgScoreButton"
-                visible: !page.embedded
-                text: qsTr("制造评分")
-                onClicked: if (page.ai)
-                    page.ai.showMfgMode()
-            }
-
-            /* 内嵌态（首页那个全物品查询）去掉**制造评分 / 贸易评分**以及它们的「设置」、
-             * 独立窗（从别处打开的那个）仍然全都要 —— 那里的入口不能少。
-             * 的入口之一，不能一并砍掉。 */
-            FButton {
-                objectName: "mfgSettingsButton"
-                visible: !page.embedded
-                text: qsTr("设置")
-                onClicked: if (page.ai)
-                    page.ai.openMfgSettings()
-            }
-
-            FButton {
-                objectName: "tradeScoreButton"
-                visible: !page.embedded
-                text: qsTr("贸易评分")
-                onClicked: if (page.ai)
-                    page.ai.showTradeMode()
-            }
-
-            FButton {
-                objectName: "tradeSettingsButton"
-                visible: !page.embedded
-                text: qsTr("设置")
-                onClicked: if (page.ai)
-                    page.ai.openTradeSettings()
-            }
-
-            FButton {
-                objectName: "compareButton"
-                visible: !page.embedded
-                text: qsTr("批量对比")
-                onClicked: if (page.ai)
-                    page.ai.openCompare()
-            }
-
-            FButton {
-                objectName: "exportButton"
-                visible: !page.embedded
-                text: qsTr("导出")
-                onClicked: if (page.ai)
-                    page.ai.exportData()
-            }
-
-            Item {
-                Layout.fillWidth: true
-            }
-
-            FCheckBox {
-                objectName: "pinBox"
-                // 内嵌态没有独立窗口可置顶，隐藏（是 Item 的属性，FCheckBox 继承得到）
-                visible: !page.embedded
-                text: qsTr("置顶")
-                checked: page.ai ? page.ai.pinned : false
-                onToggled: if (page.ai)
-                    page.ai.setPinned(checked)
-            }
-        }
-
-        // ═══════════════════════════════════════════════════════
-        //  2. 筛选行（含状态行 —— 原版状态就在这一行的右端）
+        //  1. 筛选行（含状态行 —— 原版状态就在这一行的右端）
         // ═══════════════════════════════════════════════════════
 
         RowLayout {
@@ -506,25 +425,6 @@ Item {
                             if (page.ai)
                                 page.ai.openMaterials(row)
                         }
-
-                        onRowRightClicked: function (row, _column, x, y) {
-                            // 内嵌态**不要右键菜单**（用户要求）。直接不弹 —— 点击区照旧
-                            // 派发单击/双击，只是不再有这一层菜单。
-                            if (page.embedded || !page.ai)
-                                return
-                            const info = page.ai.rowInfo(row)
-                            if (!info.valid)
-                                return
-                            rowMenu.row = row
-                            rowMenu.typeId = info.typeId
-                            rowMenu.itemName = info.name
-                            rowMenu.hasMfgDetail = info.hasMfgDetail
-                            rowMenu.hasTradeDetail = info.hasTradeDetail
-                            const p = mapToItem(page, x, y)
-                            rowMenu.x = p.x
-                            rowMenu.y = p.y
-                            rowMenu.openSoon()
-                        }
                     }
                 }
 
@@ -549,79 +449,6 @@ Item {
 
         function onStateChanged() {
             tableView.forceLayout()
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  行右键菜单（原 `_ctx`）
-    // ═══════════════════════════════════════════════════════════
-
-    FMenu {
-        id: rowMenu
-        objectName: "rowMenu"
-
-        property int row: -1
-        property int typeId: 0
-        property string itemName: ""
-        property bool hasMfgDetail: false
-        property bool hasTradeDetail: false
-
-        FMenuItem {
-            // 名词不能省：全仓其余同类项都是「复制<名词>: <值>」，这里原先只有 `复制: `
-            text: qsTr("复制名称: ") + rowMenu.itemName
-            onTriggered: if (page.ai)
-                page.ai.copyName(rowMenu.row)
-        }
-
-        FMenuItem {
-            // `Type ID` 的写法与估价页右键一致（那儿本来就是「复制 Type ID」）
-            text: qsTr("复制 Type ID: ") + rowMenu.typeId
-            onTriggered: if (page.ai)
-                page.ai.copyId(rowMenu.row)
-        }
-
-        FMenuSeparator {}
-
-        FMenuItem {
-            text: qsTr("制造核算明细")
-            visible: rowMenu.hasMfgDetail
-            onTriggered: if (page.ai)
-                page.ai.showBreakdown(rowMenu.row)
-        }
-
-        FMenuItem {
-            text: qsTr("贸易核算明细")
-            visible: rowMenu.hasTradeDetail
-            onTriggered: if (page.ai)
-                page.ai.showBreakdown(rowMenu.row)
-        }
-
-        FMenuSeparator {}
-
-        FMenuItem {
-            text: qsTr("加入制造列表")
-            onTriggered: if (page.ai)
-                page.ai.addToPlan(rowMenu.row)
-        }
-
-        FMenuSeparator {}
-
-        FMenuItem {
-            text: qsTr("加入拷贝规划")
-            onTriggered: if (page.ai)
-                page.ai.addResearch(rowMenu.row, "copying")
-        }
-
-        FMenuItem {
-            text: qsTr("加入发明规划")
-            onTriggered: if (page.ai)
-                page.ai.addResearch(rowMenu.row, "invention")
-        }
-
-        FMenuItem {
-            text: qsTr("加入效率研究规划")
-            onTriggered: if (page.ai)
-                page.ai.addResearch(rowMenu.row, "research")
         }
     }
 }

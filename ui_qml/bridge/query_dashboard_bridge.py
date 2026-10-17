@@ -1077,13 +1077,16 @@ class QueryDashboardBridge(QObject):
         self._pending_changes = classify_order_changes(before, after)
 
         wallet_total = payload.get("wallet_total")
+        wallet_error = ""
         if wallet_total is not None:
             svc = _asset_svc()
             if svc is not None:
                 try:
                     svc.set_wallet_balance(float(wallet_total))
-                except Exception:
+                except Exception:  # 吞的是「写 user.db 钱包余额」失败（库被占用/磁盘/表缺失）
                     log.exception("ESI 钱包余额写入失败")
+                    # 同步其余部分成功了，但钱包没写进去 —— 不能在状态文案里报「同步成功」。
+                    wallet_error = "钱包余额写入失败，详见日志"
 
         self._ensure_orders(force=True)
         self._ensure_wallet(force=True)
@@ -1095,6 +1098,8 @@ class QueryDashboardBridge(QObject):
         chars = int(payload.get("chars") or 0)
         prefix = f"已从 ESI 同步 {chars} 个角色、{len(records)} 笔挂单，{tail}"
         prefix += _wallet_breakdown(payload)
+        if wallet_error:
+            prefix += f"；{wallet_error}"
         errors = [str(e) for e in payload.get("errors") or []]
         if errors:
             # 部分角色/军团失败：成功的照常写，这里明说哪几块没拉到
@@ -1152,7 +1157,11 @@ class QueryDashboardBridge(QObject):
 
     @Slot(result=list)
     def previewOrderChanges(self) -> list[dict]:
-        """最近一次导入产生的变动（只读，供「重新打开确认框」之类的调用方用）。"""
+        """最近一次导入产生的变动（只读）。
+
+        **按设计无 UI 入口**：当前没有任何 QML/调用方在用（保留给「重新打开确认框」这类
+        将来的入口，死槽清理时确认过不删半死入口）。调试/测试可以拿来直接读。
+        """
         return [dict(row) for row in self._pending_changes]
 
     @Slot()

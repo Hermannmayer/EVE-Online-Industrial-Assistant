@@ -102,6 +102,8 @@ class InventoryBridge(QObject):
         self._bp_search = ""
         self._bp_selection: set[int] = set()
         self._bp_categories: list[dict] = []
+        #: 市场分类加载失败时的说明（非空就拼进蓝图表的状态文案，见 `_load_market_categories`）
+        self._bp_category_error = ""
         self._bp_tech_levels: dict[int, int] = {}
         self._bp_reaction_ids: set[int] = set()
         self._selection_revision = 0
@@ -123,8 +125,8 @@ class InventoryBridge(QObject):
 
     #: 选中集整批给出。
     #:
-    #: 别让 delegate 逐格调 `itemRowSelected(row)`：一张 8 列 × 25 行的表，每次选中
-    #: 变化就是 **200 次跨 QML/Python 调用**（实测），点一下就能感觉到卡。
+    #: 别让 delegate 逐格判断选中（`selectedItemRows.indexOf(row)`）：一张 8 列 × 25 行的表，
+    #: 每次选中变化就是 **200 次跨 QML/Python 调用**（实测），点一下就能感觉到卡。
     #: QML 侧读一次列表再 `indexOf` 判断，一次选中变化只剩 1 次跨边界。
     selectedItemRows = Property(list, lambda self: sorted(self._item_selection), notify=selectionChanged)
     selectedBlueprintRows = Property(list, lambda self: sorted(self._bp_selection), notify=selectionChanged)
@@ -254,24 +256,6 @@ class InventoryBridge(QObject):
         self._bp_selection = {row}
         self._notify_selection()
         return [row]
-
-    @Slot(int, result=bool)
-    def itemRowSelected(self, row: int) -> bool:
-        return row in self._item_selection
-
-    @Slot(int, result=bool)
-    def blueprintRowSelected(self, row: int) -> bool:
-        return row in self._bp_selection
-
-    @Slot()
-    def clearItemSelection(self) -> None:
-        self._item_selection = set()
-        self._notify_selection()
-
-    @Slot()
-    def clearBlueprintSelection(self) -> None:
-        self._bp_selection = set()
-        self._notify_selection()
 
     # ═══════════════════════════════════════════════════════════
     #  Tab 1：机库管理
@@ -560,7 +544,7 @@ class InventoryBridge(QObject):
         from ui_qml.models.inventory_helpers import BlueprintTableModel
 
         # (宽度, 右对齐)；「每流程利润」在「销售收入」后、「利润率」前
-        # 末列「蓝图成本」= T2 BPC 的期望单流程成本（T1 显示 —）
+        # 末列「蓝图成本」= T2/T3 BPC 的期望单流程成本（T1 显示 —）
         columns = (
             (28, False),
             (160, False),
@@ -618,14 +602,17 @@ class InventoryBridge(QObject):
         from core.container import get_container
 
         self._bp_categories = [{"name": "全部", "id": None}]
+        self._bp_category_error = ""
         try:
             for mgid, name in get_container().item_repo.get_root_market_categories():
                 if name:
                     self._bp_categories.append({"name": name, "id": mgid})
-        except Exception:
+        except Exception:  # 吞的是「读 reference.db 市场分类」失败（库缺失/被占用/表结构不符）
             from core.logger import log
 
             log.exception("加载市场分类失败")
+            # 分类下拉会只剩「全部」——与「这个库确实没有分类」外观相同，必须让用户知道是读取失败。
+            self._bp_category_error = "市场分类加载失败，详见日志"
         self.blueprintsChanged.emit()
 
     @Slot()
@@ -807,7 +794,10 @@ class InventoryBridge(QObject):
             ]
 
         self._blueprints.set_rows(rows)
-        self._bp_count = f"共 {len(rows)} 个蓝图"
+        count_text = f"共 {len(rows)} 个蓝图"
+        if self._bp_category_error:
+            count_text += f"（{self._bp_category_error}）"
+        self._bp_count = count_text
         self.blueprintsChanged.emit()
 
     def _market_descendants(self, market_group_id: int) -> set[int]:
@@ -890,16 +880,16 @@ class InventoryBridge(QObject):
 
     @Slot("QVariantList")
     def autoFillCostPerRun(self, rows: list) -> None:
-        """自动填写每流程成本（T2 发明）：走既有的批量计算 worker。"""
+        """自动填写每流程成本（T2/T3 发明）：走既有的批量计算 worker。"""
         from ui_qml.bridge.blueprint_actions import auto_fill_cost_per_run
 
         auto_fill_cost_per_run(self, self._blueprints_at(rows), self._current_hangar_id)
 
     @Slot()
     def autoFillSelectedBlueprints(self) -> None:
-        """工具栏「批量填充 T2 蓝图成本」：作用于蓝图表当前选中行。"""
+        """工具栏「批量填充 T2/T3 蓝图成本」：作用于蓝图表当前选中行。"""
         if not self._bp_selection:
-            self._set_bp_hint("请先在蓝图表选中要填充的 T2 蓝图拷贝")
+            self._set_bp_hint("请先在蓝图表选中要填充的 T2/T3 蓝图拷贝")
             return
         self.autoFillCostPerRun(sorted(self._bp_selection))
 

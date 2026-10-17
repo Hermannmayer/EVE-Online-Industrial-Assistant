@@ -187,24 +187,6 @@ def _case_blueprint_import_change(monkeypatch):
     return lambda: BlueprintImportChangeQmlDialog([], added=0, removed=0, hangar_name="测试机库")
 
 
-def _case_price_chart(monkeypatch):
-    monkeypatch.setattr("ui_qml.workers.price_history_worker.PriceHistoryWorker", _StubHistoryWorker)
-
-    from ui_qml.bridge.price_chart_bridge import PriceChartQmlDialog
-
-    return lambda: PriceChartQmlDialog(34, "三钛合金")
-
-
-def _case_batch_price(monkeypatch):
-    import ui_qml.bridge.batch_price_bridge as bp
-
-    monkeypatch.setattr(bp, "BatchPriceWorker", _StubHistoryWorker)
-
-    from ui_qml.bridge.batch_price_bridge import BatchPriceQmlDialog
-
-    return BatchPriceQmlDialog
-
-
 def _case_hangar_settings(monkeypatch):
     import services.inventory_manager as im
 
@@ -308,8 +290,6 @@ _LOADS_CASES: list[tuple[str, Any]] = [
     ("选择来源机库物品", _case_hangar_pick),
     ("蓝图导入预览", _case_blueprint_import_review),
     ("蓝图导入变动汇总", _case_blueprint_import_change),
-    ("价格走势图", _case_price_chart),
-    ("批量查价", _case_batch_price),
     ("机库设置", _case_hangar_settings),
     ("制造评分设置", _case_mfg_params),
     ("贸易评分设置", _case_trade_params),
@@ -1936,26 +1916,6 @@ def test_summary_table_row_hit_accounts_for_listview_scroll(qapp):
 
 
 # ── 批次 2（查询链路）：订单弹窗 / 价格走势图 ──
-
-
-class _StubHistoryWorker(QObject):
-    """价格历史拉取线程的同步替身（不联网）。
-
-    签名与信号**照抄** Widgets 版 `PriceHistoryWorker` ——
-    少一个信号，桥在 connect 时就会 AttributeError。
-    """
-
-    finished_signal = Signal(int, list)
-    error_signal = Signal(int, str)
-
-    def __init__(self, type_id: int, region_id: int = 10000002, parent=None) -> None:
-        super().__init__(parent)
-
-    def start(self) -> None:
-        self.finished_signal.emit(0, [])
-
-    def isRunning(self) -> bool:
-        return False
 
 
 def test_page_host_shows_a_visible_error_when_qml_fails(qapp):

@@ -18,7 +18,7 @@ import "../../components"
  * 归一化坐标都是 Python 算好的 0..1，这里只做「归一化 × 绘图区尺寸」的落点。
  *
  * **不用 Canvas**：Qt 的 Canvas 画进离屏纹理，在本仓的 offscreen 截图路径下整块是空的
- * （见 `PriceChartDialog.qml:6-23` 与 `ui_qml/icon_provider.py` 头部）。折线用
+ * （历史记录：原价格走势图对话框的注释；见 `ui_qml/icon_provider.py` 头部）。折线用
  * `Shape` + `ShapePath` + `PathPolyline`，网格与轴用 `Rectangle` + `Text` —— 都是场景图
  * 几何节点，截图里看得到。
  *

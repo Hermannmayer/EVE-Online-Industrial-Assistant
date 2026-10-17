@@ -5,13 +5,13 @@ import "../components"
 // 两态面板都在 pages/query/ 下 —— QML 只按**同目录**解析本地类型，
 // 不写这一行会报「QueryDetailPane is not a type」而整页加载失败。
 import "query"
-// 内嵌的「全物品」面板本体在 dialogs/ 下（与独立窗共用同一个 QML 文件）
+// 内嵌的「全物品」面板本体在 dialogs/ 下（该面板现在只作为查询页工作区内嵌使用）
 import "../dialogs"
 
 /* 物品查询页 —— 阶段 3。
  *
  * 对照原 Widgets 版：
- *   工具栏（全物品 / 搜索框+候选 / 清空 / 批量查价 / 区域）
+ *   工具栏（全物品 / 搜索框+候选 / 清空 / 区域）
  *   + 进度条 + 状态行 + 下方面板。
  *
  * **候选弹窗就是匹配清单**（用户明确要求）：输入即列全部前缀匹配，点一条直接出详情，
@@ -263,13 +263,12 @@ Item {
              * ⚠️ `ai` 必须显式指到查询桥的全物品子桥：本实例所在上下文里的 `bridge`
              * 是 `QueryBridge`（页面宿主注入的），与 `AllItemsDialog.qml` 默认绑的那个
              * 不是同一个对象 —— 不覆盖就会对着错桥求值。
-             * `embedded: true` 按用户要求去掉制造/贸易评分设置、批量对比、导出与右键菜单，
-             * 双击改为走查询页详情（与「输入查找物品」同一条路）。 */
+             * 该面板的独立窗形态已删除，没有 `embedded` 开关要传；双击一行走查询页详情
+             * （与「输入查找物品」同一条路）。 */
             AllItemsDialog {
                 objectName: "queryAllItems"
                 anchors.fill: parent
                 visible: workArea.showingAllItems
-                embedded: true
                 ai: page.query ? page.query.allItems : null
             }
         }

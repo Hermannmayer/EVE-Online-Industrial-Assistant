@@ -12,7 +12,7 @@ import QtQuick.Shapes
  * 调用方只需传原始序列（`x` 是序号、`y` 是真实值），轴范围/刻度/归一化都在这里做 ——
  * 两个页面的数据形态差得远，把轴数学放桥里等于要求两个桥各写一遍。
  * ⚠️ **禁用 `Canvas`**：Qt 的 Canvas 画进离屏纹理，本仓离屏截图路径下整块是空的
- * （见 `PriceChartDialog.qml` 头部与 `AssetChartPanel.qml` 的说明）。这里用
+ * （历史记录：原价格走势图对话框的头部注释；见 `AssetChartPanel.qml` 的说明）。这里用
  * `Shape + ShapePath + PathPolyline` 画线、`Rectangle` 画网格、`Text` 画轴。
 
  * 用法：

@@ -43,6 +43,22 @@ _B_NAME = _BASE + 7
 pytestmark = pytest.mark.ui
 
 
+def _clear_item_selection(bridge) -> None:
+    """清空机库表选中集。
+
+    QML 侧已不再暴露 `clearItemSelection()` 槽（死槽清理删除）；测试直接操作桥内部状态 +
+    走同一条通知路径（选中集变化必须灌进模型并递增修订号，见 `_notify_selection`）。
+    """
+    bridge._item_selection = set()
+    bridge._notify_selection()
+
+
+def _clear_blueprint_selection(bridge) -> None:
+    """清空蓝图表选中集（同 `_clear_item_selection`）。"""
+    bridge._bp_selection = set()
+    bridge._notify_selection()
+
+
 def _item(iid: int = 1, tid: int = 34, qty: int = 100, cost: float = 5.0, credible: bool | None = True) -> dict:
     return {
         "id": iid,
@@ -396,10 +412,10 @@ def test_switching_hangar_reloads_items(bridge):
 @pytest.mark.ui
 def test_plain_click_selects_only_that_row(bridge):
     bridge.selectItemRow(0)
-    assert bridge.itemRowSelected(0) is True
+    assert 0 in bridge.selectedItemRows
     bridge.selectItemRow(1)
-    assert bridge.itemRowSelected(0) is False
-    assert bridge.itemRowSelected(1) is True
+    assert 0 not in bridge.selectedItemRows
+    assert 1 in bridge.selectedItemRows
 
 
 @pytest.mark.ui
@@ -414,16 +430,16 @@ def test_ctrl_click_toggles_and_shift_click_ranges(bridge, monkeypatch):
 
     mods["value"] = Qt.KeyboardModifier.ControlModifier
     bridge.selectItemRow(1)
-    assert bridge.itemRowSelected(0) and bridge.itemRowSelected(1)
+    assert 0 in bridge.selectedItemRows and 1 in bridge.selectedItemRows
     bridge.selectItemRow(1)  # 再点一次取消
-    assert bridge.itemRowSelected(1) is False
-    assert bridge.itemRowSelected(0) is True
+    assert 1 not in bridge.selectedItemRows
+    assert 0 in bridge.selectedItemRows
 
     # Shift 从**上一次点中的行**（锚点）连选过来；此时锚点是刚 Ctrl 点过的 1，
     # 所以 Shift 点 0 得到 {0,1}
     mods["value"] = Qt.KeyboardModifier.ShiftModifier
     bridge.selectItemRow(0)
-    assert bridge.itemRowSelected(0) and bridge.itemRowSelected(1)
+    assert 0 in bridge.selectedItemRows and 1 in bridge.selectedItemRows
 
 
 @pytest.mark.ui
@@ -436,9 +452,9 @@ def test_selection_revision_bumps_so_qml_repaints(bridge):
 
 @pytest.mark.ui
 def test_menu_rows_fall_back_to_the_clicked_row(bridge):
-    bridge.clearItemSelection()
+    _clear_item_selection(bridge)
     assert bridge.itemsForMenu(1) == [1]
-    assert bridge.itemRowSelected(1) is True
+    assert 1 in bridge.selectedItemRows
 
     bridge.selectItemRow(0)
     assert bridge.itemsForMenu(0) == [0] or 0 in bridge.itemsForMenu(0)
@@ -497,9 +513,9 @@ def test_blueprint_filters_and_counts(bridge):
 
 @pytest.mark.ui
 def test_blueprint_menu_rows_fall_back(bridge):
-    bridge.clearBlueprintSelection()
+    _clear_blueprint_selection(bridge)
     assert bridge.blueprintsForMenu(2) == [2]
-    assert bridge.blueprintRowSelected(2) is True
+    assert 2 in bridge.selectedBlueprintRows
     assert bridge.blueprintMenuState(2)["single"] is True
 
 
@@ -1062,7 +1078,7 @@ def test_click_selects_the_row_under_the_cursor(storage_table):
     for content_y, row in ((0.0, 2), (0.0, 7), (140.0, 9), (4000.0, 160)):
         table.setProperty("contentY", content_y)
         _spin(180)
-        bridge.clearItemSelection()
+        _clear_item_selection(bridge)
         _spin(60)
         QTest.mouseClick(host, Qt.LeftButton, Qt.NoModifier, _press_point(root, table, row, content_y, row_h))
         _spin(120)
@@ -1079,7 +1095,7 @@ def test_click_keeps_the_pressed_row_when_content_moves(storage_table):
     for content_y, row, delta in ((0.0, 5, 1), (0.0, 5, 3), (200.0, 12, -2), (4000.0, 150, 2)):
         table.setProperty("contentY", content_y)
         _spin(180)
-        bridge.clearItemSelection()
+        _clear_item_selection(bridge)
         _spin(60)
         pt = _press_point(root, table, row, content_y, row_h)
         QTest.mousePress(host, Qt.LeftButton, Qt.NoModifier, pt)
@@ -1100,7 +1116,7 @@ def test_drag_to_scroll_does_not_select(storage_table):
     row_h = root.property("rowH")
     table.setProperty("contentY", 0.0)
     _spin(150)
-    bridge.clearItemSelection()
+    _clear_item_selection(bridge)
     _spin(60)
 
     start = _press_point(root, table, 6, 0.0, row_h)
@@ -1145,7 +1161,7 @@ def test_click_updates_the_row_highlight(storage_table):
     row_h = root.property("rowH")
     table.setProperty("contentY", 0.0)
     _spin(200)
-    bridge.clearItemSelection()
+    _clear_item_selection(bridge)
     _spin(150)
     assert _delegate_selected(table, 3) is False
 
@@ -1289,3 +1305,23 @@ def test_never_sorted_model_stays_put_on_refresh(qapp):
 
     model.set_rows([dict(r) for r in source])
     assert [r["id"] for r in model.rows()] == [1, 2, 3]
+
+
+@pytest.mark.ui
+def test_market_category_failure_is_surfaced(bridge, monkeypatch):
+    """回归：市场分类读库失败时，蓝图表状态文案要说明是「读取失败」而不是「没有分类」。"""
+    from types import SimpleNamespace
+
+    from core import container as container_mod
+
+    def _boom():
+        raise RuntimeError("reference.db 缺 market_group 表")
+
+    monkeypatch.setattr(
+        container_mod,
+        "get_container",
+        lambda: SimpleNamespace(item_repo=SimpleNamespace(get_root_market_categories=_boom)),
+    )
+    bridge._load_market_categories()
+    bridge.applyBlueprintFilter()
+    assert "市场分类加载失败" in bridge.blueprintCountText

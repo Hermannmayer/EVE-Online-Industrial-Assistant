@@ -53,7 +53,6 @@ from ui_qml.workers.score_worker import ScoreW
 
 __all__ = [
     "AllItemsBridge",
-    "AllItemsQmlDialog",
     "MatBridge",
     "MatQmlDialog",
     "breakdown_text",
@@ -63,7 +62,6 @@ __all__ = [
     "visible_tree_rows",
 ]
 
-_ALL_QML = "dialogs/AllItemsDialog.qml"
 _MAT_QML = "dialogs/MaterialsDialog.qml"
 
 #: 搜索防抖（原版 `QTimer` 的 200ms）
@@ -282,7 +280,15 @@ def _export_table(cols: list[tuple], rows: list[dict]) -> tuple[list[str], list[
 
 
 class AllItemsBridge(DialogBridge):
-    """全物品浏览器的 QML 后端。"""
+    """全物品浏览器的 QML 后端。
+
+    **独立窗已删除**：本桥在生产里只有查询页内嵌形态（`AllItemsBridge(embedded=True)`）。
+    原独立窗工具栏对应的槽（`showMfgMode` / `openMfgSettings` / `showTradeMode` /
+    `openTradeSettings` / `openCompare` / `exportData` / `setPinned` / `rowInfo` /
+    `showBreakdown` / `addToPlan` / `addResearch` / `copyName` / `copyId`）已无 QML 调用方，
+    但仍是半死入口（`tests/test_qml_all_items.py` 在用，部分能力可复用），按死槽清理的
+    边界**保留不删**；将来补独立入口或删测试时一并处理。
+    """
 
     #: 状态行 / 进度 / 列定义 / 分类下标 / 选中行
     stateChanged = Signal()
@@ -293,7 +299,7 @@ class AllItemsBridge(DialogBridge):
     #: 表头排序指示
     sortChanged = Signal()
     #: 双击一行 —— **内嵌态**交给查询页走详情（与「输入查找物品」同一条路）；
-    #: 独立窗态仍弹材料明细，见 `openMaterials`。
+    #: 可制造物品对话框（`ManufacturableItemsBridge`）覆写 `openMaterials`，仍弹材料明细。
     itemActivated = Signal(int, str)
 
     def __init__(self, manufacturable_only: bool = False, *, embedded: bool = False) -> None:
@@ -380,8 +386,9 @@ class AllItemsBridge(DialogBridge):
     def embedded(self) -> bool:
         """是否**内嵌**在查询页工作区（不是独立窗）。
 
-        内嵌态按用户要求去掉「制造评分设置 / 贸易评分设置 / 批量对比 / 导出」四个按钮
-        与右键菜单，双击改为走查询页详情；独立窗态（原「全物品」弹窗）行为一字未改。
+        生产路径只有查询页的 `AllItemsBridge(embedded=True)`；独立窗形态（原「全物品」
+        弹窗）已随死代码清理删除。保留本属性是因为 `openMaterials` 内嵌与否走不同分支，
+        而可制造物品对话框（`ManufacturableItemsBridge`）覆写了自己的 `openMaterials`。
         """
         return self._embedded
 
@@ -926,24 +933,6 @@ class AllItemsBridge(DialogBridge):
     def _set_status(self, text: str) -> None:
         self._status = str(text)
         self.stateChanged.emit()
-
-
-class AllItemsQmlDialog(QmlDialog):
-    """QML 版「全物品查询」。
-
-    `AllItemsDialog(parent, manufacturable_only)` 的调用方把类名换掉即可 ——
-    构造签名逐字一致，且和原版一样**不吃 parent**（独立顶层窗口 + 任务栏入口）。
-    """
-
-    def __init__(self, parent: Any = None, manufacturable_only: bool = False) -> None:
-        bridge = AllItemsBridge(manufacturable_only)
-        # 原版 `super().__init__()` 就没有 parent（注释：无 parent，完全独立窗口），
-        # 这里改走 `modeless=True` —— 顶层窗标志（含最小化/最大化按钮）与保活都由
-        # `QmlDialog` 统一给，不再手工 `setWindowFlags`。parent 照收以保持签名一致，但会被忽略。
-        super().__init__(_ALL_QML, bridge, parent=None, size=(1100, 680), modeless=True)
-        self._all_bridge = bridge
-        self.setMinimumSize(800, 400)
-        bridge.start()
 
 
 def _add_research_plan(parent: Any, type_id: int, name: str, kind: str) -> None:

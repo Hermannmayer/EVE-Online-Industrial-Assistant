@@ -11,6 +11,25 @@ from services import plan_execution
 from services.industry_dialog_queries import set_plan_deposit_hangar
 
 
+def _bp_attempt_short(plan_id: int | None) -> int:
+    """读该计划完成时落库的 `bp_attempt_short`（发明强制完成的尝试流程缺口）。0=无缺口。
+
+    为什么事后查库而不是读 `complete_plan` 返回值：`plan_execution` 只把缺口拼进
+    成功消息文本里（`"⚠ 发明流程不足…缺口 N 已记入审计列"`），文本解析不可靠；
+    审计列才是权威落库值（v22→v23）。读失败（旧库无列）→ 0，不影响下线。
+    """
+    if not plan_id:
+        return 0
+    try:
+        with get_container().db.connect("user") as conn:
+            row = conn.execute(
+                "SELECT COALESCE(bp_attempt_short, 0) FROM production_plans WHERE id=?", (int(plan_id),)
+            ).fetchone()
+        return int(row[0] or 0) if row else 0
+    except Exception:
+        return 0
+
+
 def complete_plans(
     plans: list[dict],
     hangar_id: int,
@@ -40,11 +59,14 @@ def complete_plans(
     对话框（计划表单行下线 / 小助手的形态不变）。用户取消 → 只跳过这批发明行
     （`skipped`），**非发明行照常完成**（整批中止是行为倒退）。
     Returns: {"completed": int, "deposited": int, "removed": int, "failed": [...],
-              "skipped": [...], "failed_reasons": [...]}
+              "skipped": [...], "failed_reasons": [...], "shortfalls": [...], "notices": [...]}
     ``removed``：母项下线时被顺带清理掉的已完成子项行数（见
     `plan_execution.remove_completed_children`）；非母项恒为 0。
     ``failed`` 只有产品名（调用方原样展示），``failed_reasons`` 带 `complete_plan`
     的拒绝原因——只报名字等于没说，用户无从判断是流程不足还是未回填发明产出。
+    ``shortfalls``：**成功**下线但落库了尝试流程缺口的行（`bp_attempt_short>0`），
+    形如 `[{name, gap}]`；`notices`：成功行里 `complete_plan` 的提示消息（此前被丢弃）。
+    批量入口必须把这两项展示给用户，否则「扣料按声明、流程按实际」的缺口无人知晓。
     """
     completed = 0
     deposited = 0
@@ -52,6 +74,8 @@ def complete_plans(
     failed: list[str] = []
     failed_reasons: list[str] = []
     skipped: list[str] = []
+    shortfalls: list[dict] = []
+    notices: list[str] = []
     scalar_deposit = hangar_id if hangar_id and hangar_id > 0 else None
 
     # 待回填的发明行先一次性收集，**整批只弹一个列表对话框**（逐条弹窗是 N 次点击）。
@@ -94,6 +118,16 @@ def complete_plans(
             if res.get("deposited"):
                 deposited += 1
             removed += int(res.get("removed") or 0)
+            name = plan.get("product_name") or str(plan.get("id"))
+            gap = _bp_attempt_short(plan.get("id"))
+            if gap > 0:
+                shortfalls.append({"name": name, "gap": gap})
+                notices.append(
+                    f"{name}：发明声明尝试数超过绑定 BPC 可用流程，缺口 {gap} 已记入审计列"
+                    "（材料按声明扣、输入流程按实际扣）"
+                )
+            elif res.get("message"):
+                notices.append(f"{name}：{res['message']}")
         else:
             name = plan.get("product_name") or str(plan.get("id"))
             failed.append(name)
@@ -105,6 +139,8 @@ def complete_plans(
         "failed": failed,
         "skipped": skipped,
         "failed_reasons": failed_reasons,
+        "shortfalls": shortfalls,
+        "notices": notices,
     }
 
 
@@ -139,6 +175,11 @@ def complete_one_plan(parent, plan: dict) -> dict | None:
         detail = "\n".join(result.get("failed_reasons") or []) or "、".join(result["failed"]) or "未知错误"
         QMessageBox.warning(parent, "下线失败", detail)
         return None
+    # 成功但**有流程缺口**：以前只回滚/拒绝时才提示，强制放行的缺口提示被丢弃，
+    # 用户看不到「材料按声明扣、输入流程按实际扣」这条审计事实（06-3/03-3 同族）。
+    if result.get("shortfalls"):
+        detail = "\n".join(note for note in (result.get("notices") or []) if "缺口" in note) or "流程缺口已记入审计列"
+        QMessageBox.information(parent, "下线完成（有流程缺口）", detail)
     return result
 
 

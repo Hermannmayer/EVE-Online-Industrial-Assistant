@@ -227,12 +227,60 @@ Item {
 
                     ListView {
                         id: watchList
+                        objectName: "watchList"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
-                        // 行卡片由桥算好（`list_rows`），这里用 JS 数组模型 —— 与仓里其它
-                        // ListView 同款（`modelData`），不走 QAbstractItemModel 的角色查找
-                        model: page.watch ? page.watch.listRows : []
+
+                        /* ⚠️ `model` **不能**直接写 `page.watch.listRows`。
+                         *
+                         * 60 秒轮询（`watchlist_bridge.CHECK_INTERVAL_MS` → `checkPriceChanges`
+                         * → `refresh`）以及增删/排序都会让 `listRows` 变成**新数组**；Qt 的
+                         * `QQuickItemView::setModel()` 一旦判定「换了个 model」就把视图重建到
+                         * 顶部，用户滚到一半看某个物品时会被弹回开头。
+                         *
+                         * 换 model 前把 `contentY` 记进 `keepContentY`，`onModelChanged` 里还原
+                         * （同 `LauncherWindow.qml` 的 `applyRows()`/`restoreKeepContentY()` ——
+                         * 那份注释记录了实测数据：contentY 500 → 0，内容没变则不跳）。
+                         * 记录必须发生在 `setModel()` 之前，所以 model 只依赖私有属性
+                         * `rowsModel`，由 `applyRows()` 按代码顺序「先记位置、再换数组」。 */
+                        model: watchList.rowsModel
+                        onModelChanged: watchList.restoreKeepContentY()
+
+                        //: 当前 model 用的行数组 —— **只有 `applyRows()` 写它**（不挂绑定，保证顺序）
+                        property var rowsModel: []
+                        //: 换 model 之前记下的滚动位置（0 = 本来就在顶部，无需还原）
+                        property real keepContentY: 0
+
+                        function applyRows() {
+                            watchList.keepContentY = watchList.contentY
+                            watchList.rowsModel = page.watch ? page.watch.listRows : []
+                        }
+
+                        /* delegate 重建是**异步**的：`setModel()` 返回时 `contentHeight` 可能
+                         * 还没重算完，这一拍赋 `contentY` 会被夹到偏小的最大可滚位置，故补一拍。 */
+                        function restoreKeepContentY() {
+                            if (watchList.keepContentY <= 0)
+                                return
+                            watchList.contentY = watchList.keepContentY
+                            Qt.callLater(function () {
+                                if (watchList.keepContentY > 0)
+                                    watchList.contentY = watchList.keepContentY
+                            })
+                        }
+
+                        // 页面建好时先拿一次行（桥的构造期 refresh 发生在 QML 实例化之前）
+                        Component.onCompleted: watchList.applyRows()
+
+                        // 刷新/排序/增删都只发 `rowsChanged` —— 统一由它驱动「先记位置、再换数组」
+                        Connections {
+                            target: page.watch
+                            function onRowsChanged() {
+                                watchList.applyRows()
+                            }
+                            ignoreUnknownSignals: true
+                        }
+
                         boundsBehavior: Flickable.StopAtBounds
                         reuseItems: true
                         spacing: 0

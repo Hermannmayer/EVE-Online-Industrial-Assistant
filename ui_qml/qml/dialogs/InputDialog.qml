@@ -82,8 +82,8 @@ FDialogFrame {
 
     /* 多行文本（`MODE_MULTILINE`，对齐 `QInputDialog.getMultiLineText`）。
      *
-     * 组件库里只有单行下划线式的 `FTextField`，所以照 `BatchPriceDialog` 的做法
-     * 就地拼一个 `Flickable + TextArea`（颜色全取 `Theme.*`，外框自绘）。
+     * 组件库里只有单行下划线式的 `FTextField`，所以这里自己拼一个
+     * `Flickable + TextArea`（颜色全取 `Theme.*`，外框自绘）。
      * 高度给死：对话框本身是固定尺寸的，`Layout.fillHeight` 会让它随窗口拉伸。
      */
     Rectangle {

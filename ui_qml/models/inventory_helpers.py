@@ -320,8 +320,8 @@ class BlueprintTableModel(QAbstractTableModel):
                 return r.get("status") or "-"
             if c == 13:
                 # 「蓝图成本」= 该 BPC 的期望单流程成本（发明成本口径）。
-                # 只有 T2 蓝图拷贝有值；T1/T3/原图显示 —（用户需求：T1 显示 —）。
-                if r.get("tech_level") != 2 or r.get("is_bpo"):
+                # 只有 T2/T3 蓝图拷贝有值；T1/原图显示 —（用户需求：T1 显示 —）。
+                if r.get("tech_level") not in (2, 3) or r.get("is_bpo"):
                     return "—"
                 cost = r.get("cost_per_run")
                 return f"{cost:,.0f} ISK" if cost else "—"

@@ -9,7 +9,7 @@
    与同一座桥里双击行开的「制造材料」（`all_items_bridge.MatQmlDialog`）同一形态。
 2. **同步取数、不开 QThread**：`get_trade_advice` 只读本地 `market.db` 的三张表
    （`market_prices` / `price_history` / `market_volume_snapshots`），没有网络请求；
-   需要打 ESI 的 `PriceChartQmlDialog` 那种才必须开线程。
+   需要打 ESI 的那种才必须开线程。
 3. **颜色只给 token 名**（`ACCENT_GREEN` / `ACCENT_YELLOW` / `PRIMARY` / `TEXT_SECONDARY`），
    QML 侧翻成 `Theme.*`（本仓惯例，见 `ImportReviewDialog.qml` 的 `tokenColor`）——
    桥里出现 hex 就是违反铁律。
@@ -196,7 +196,7 @@ class MarketAdviceQmlDialog(QmlDialog):
     只读查看器 → **非模态独立窗**（`modeless=True`），调用方用 `show()` 而非 `exec()`；
     保活与 `WA_DeleteOnClose` 由 `dialog_host` 统一负责，调用方不必自己缓存实例。
     `parent` 照吃但会被 `QmlDialog` 忽略（独立窗要的是真 top-level）—— 留着只为让调用点
-    与同族对话框（`MatQmlDialog` / `PriceChartQmlDialog`）写法一致。
+    与同族对话框（如 `MatQmlDialog`）写法一致。
     """
 
     def __init__(self, type_id: int, name: str = "", parent: Any = None) -> None:

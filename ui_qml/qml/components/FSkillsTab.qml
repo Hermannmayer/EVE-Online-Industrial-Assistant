@@ -80,6 +80,19 @@ RowLayout {
                 font.bold: true
             }
 
+            /* 01-11：缺技能=按 0 级算（不再默认满级）。一个都没填时在技能页可见地提示一次，
+             * 否则用户只会觉得「时间偏长/利润偏低」而不知道是技能没配置。 */
+            Text {
+                objectName: "skillsConfigHint"
+                Layout.fillWidth: true
+                visible: (root.source ? root.source.configHint : "") !== ""
+                text: root.source ? root.source.configHint : ""
+                color: Theme.accentOrange
+                font.family: Theme.fontFamily
+                font.pixelSize: Math.round(11 * Theme.fontScale)
+                wrapMode: Text.WordWrap
+            }
+
             ListView {
                 id: categoryList
 

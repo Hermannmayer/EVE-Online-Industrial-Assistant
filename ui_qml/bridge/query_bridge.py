@@ -360,8 +360,8 @@ class QueryBridge(QObject):
 
         改造原因（用户要求）：二级窗口挡着主界面，而「全物品」本质上是查询页的另一种
         列表形态 —— 直接在下方详细信息面板区展示，双击一行就走到与「输入查找物品」
-        完全相同的详情页。独立窗那条路仍然保留（`AllItemsQmlDialog`），它照旧带
-        制造/贸易评分设置等按钮；**内嵌态**按用户要求去掉那些按钮与右键菜单。
+        完全相同的详情页。**独立窗形态已删除**（原本的 `AllItemsQmlDialog` 无生产入口，
+        死代码清理时一并移除）；内嵌态按用户要求不带制造/贸易评分设置等按钮与右键菜单。
         """
         bridge = self._get_all_items()
         if bridge is None:
@@ -396,13 +396,6 @@ class QueryBridge(QObject):
         self._all_visible = False
         self._show_detail(int(type_id), str(name))
         self.set_status(f"已选中：{name}")
-
-    @Slot()
-    def openBatchPrice(self) -> None:
-        from ui_qml.bridge.batch_price_bridge import BatchPriceQmlDialog as BatchPriceDialog
-
-        parent = None
-        BatchPriceDialog(parent).exec()
 
     # ── 主题 ──────────────────────────────────────────────────
 

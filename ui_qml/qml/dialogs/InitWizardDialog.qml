@@ -8,8 +8,7 @@ import "../components"
  * 逐项检查 / 下载 SDE 与 ESI 数据：每步一个状态图标 + 名称 + 消息 + （运行时的）步骤进度条
  * + 失败重试 / 非关键步骤跳过；底部总进度条 + 已用时间 + 向导自己的按钮行。
  *
- * 形状与 `BatchPriceDialog.qml` 一致（进度条照它用 `Rectangle` 画，不用 `Canvas` ——
- * 离屏截图下 Canvas 整块不可见）。
+ * 进度条用 `Rectangle` 画，不用 `Canvas`（离屏截图下 Canvas 整块不可见）。
  *
  * 几处刻意的取舍：
  * - 骨架 `FDialogFrame` 的「取消 · 确定」在本对话框没有对应语义（这里是一串

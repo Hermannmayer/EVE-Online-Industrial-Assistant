@@ -1090,6 +1090,15 @@ class ProductionLauncher(QObject):
         mat = plan.get("mat_hangar_id") or self._default_mat_hangar
         executor = self._executor_value(plan)
 
+        # 03-10：无材料机库不允许启动（旧行为「跳过扣料」已移除），给可操作引导
+        if not mat:
+            FMessageDialog.warning(
+                self,
+                "无法启动",
+                "未设置材料机库，无法扣料启动。\n请右键该行 →「编辑计划」设置材料机库后重试。",
+            )
+            return
+
         # 预检必须按 **N 条**口径：用整条计划算会报出虚高的缺料
         preview = plan_execution.preview_partial_start(plan_id, lines, mat)
         if not preview.get("ok"):
@@ -1330,6 +1339,15 @@ class ProductionLauncher(QObject):
             return
         executor = self._executor_value(plan)
         mat = plan.get("mat_hangar_id") or self._default_mat_hangar
+
+        # 03-10：无材料机库不允许启动（旧行为「跳过扣料」已移除），给可操作引导
+        if not mat:
+            FMessageDialog.warning(
+                self,
+                "无法启动",
+                "未设置材料机库，无法扣料启动。\n请右键该行 →「编辑计划」设置材料机库后重试。",
+            )
+            return
 
         # 软阻塞预检：材料缺口 / 蓝图流程不足 —— 两者都可强制启动（与计划表格同口径）
         shortfalls: list[dict] = []

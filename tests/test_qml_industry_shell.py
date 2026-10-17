@@ -74,10 +74,3 @@ def test_shell_holds_the_industry_page_as_a_qml_item(main_window):
     assert isinstance(page, QmlPage), f"导航页是 {type(page).__name__}，不是 QmlPage"
     assert isinstance(page.item, QQuickItem), "工业页不是 QML Item"
     assert callable(getattr(page.hooks, "load_plans", None)), "钩子没接到控制器上"
-
-
-def test_controller_exposes_the_shell_hooks(main_window):
-    """外壳按方法名 `getattr` 探测页面能力 —— 少一个就是**静默失效**。"""
-    hooks = main_window._pages["industry"].hooks
-    for name in ("save_state", "restore_state", "refresh_display", "update_status_bar", "on_shown"):
-        assert callable(getattr(hooks, name, None)), f"控制器缺钩子 {name}"

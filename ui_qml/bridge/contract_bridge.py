@@ -193,8 +193,11 @@ class ContractBridge(QObject):
 
         try:
             self._suggestions = list_regions(self._region_query, limit=30)
-        except Exception:  # 星域表缺失不该让输入框卡住
+        except Exception:  # 星域表缺失 / 库被占用：不能让输入框卡住，但也不能让用户以为「没这个词」
+            log.exception("星域候选读取失败 query=%s", self._region_query)
             self._suggestions = []
+            self._status = "星域候选读取失败（详见日志），可改用常用贸易中心下拉"
+            self.rowsChanged.emit()
         self.suggestChanged.emit()
 
     @Slot(int)
@@ -593,23 +596,6 @@ class ContractBridge(QObject):
             return
         self._item_model.set_rows(items)
         self.itemsChanged.emit()
-
-    @Slot(result=str)
-    def itemSummary(self) -> str:
-        items = self._item_model.rows()
-        if not items:
-            return ""
-        lines = []
-        for it in items:
-            name = it.get("zh_name") or it.get("en_name") or f"ID:{it.get('type_id', '?')}"
-            price = it.get("unit_price")
-            suffix = f"  @ {price:,.0f}" if price else ""
-            lines.append(f"• {name}  x{it.get('quantity', 0)}{suffix}")
-        return "\n".join(lines)
-
-    @Slot(result=bool)
-    def hasItems(self) -> bool:
-        return bool(self._item_model.rows())
 
     @Slot()
     def shutdown(self) -> None:

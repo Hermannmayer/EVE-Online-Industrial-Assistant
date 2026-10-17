@@ -270,3 +270,23 @@ def test_row_click_survives_content_move(estimate_page):
     press_move_release(
         host, root, area_name="estimateClickArea", row=3, read_current=lambda: root.property("selectedRow"), delta=1
     )
+
+
+@pytest.mark.ui
+def test_refine_failure_is_surfaced_in_status(qapp, monkeypatch):
+    """回归：某行精炼价值算失败时状态行要报出来（表格里只显示「—」，与不可精炼同形）。"""
+    import ui_qml.bridge.estimate_bridge as eb
+
+    class _FakeRefining:
+        def ore_skill_info(self, type_id):
+            return True, "凡晶石处理技术"
+
+        def calc_value(self, type_id, quantity=1, **kwargs):
+            raise RuntimeError("取价炸了")
+
+    monkeypatch.setattr(eb, "get_container", lambda: type("C", (), {"refining_service": _FakeRefining()})())
+    b = _bridge_with_rows()
+    messages: list[str] = []
+    b.statusChanged.connect(messages.append)
+    b._rebuild_refine_values()
+    assert any("精炼价值计算失败" in m for m in messages)

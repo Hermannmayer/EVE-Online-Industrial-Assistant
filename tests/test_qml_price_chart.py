@@ -1,26 +1,21 @@
-"""价格走势图（阶段 4b）的业务契约测试。
+"""价格走势图的几何契约测试（原 QML 对话框已删除，纯函数保留）。
 
 重点是**几何**：轴范围（nice numbers）、刻度值、数据点 → 0..1 画布坐标的映射。
 这套算法是原版 QChart 自动范围 + `QValueAxis` 的等价物，算错了图就是错的；
 放进 Python 纯函数才测得动（留在 QML 的 Canvas JS 里只能靠截图肉眼看）。
+这些纯函数仍被查询页空闲态仪表盘的资产折线（`query_dashboard_bridge`）复用。
 
-另加桥的两条：结果整形（状态文案 + 画布模型）与「过期的后台结果要丢掉」。
-
-「QML 是否加载成功 / 有无告警」那两条由 `tests/test_qml_dialogs.py` 统一管。
+对话框 / 桥那一层（`PriceChartQmlDialog` / `PriceChartBridge`）已随死代码清理删除；
+本文件只保留纯几何断言。
 """
 
 from __future__ import annotations
 
 import math
-from typing import Any
 
 import pytest
-from PySide6.QtCore import QThread, Signal
 
-import ui_qml.bridge.price_chart_bridge as pcb
-from tests.qml_click import spin as _spin
 from ui_qml.bridge.price_chart_bridge import (
-    PriceChartBridge,
     axis_values,
     map_values,
     nice_range,
@@ -29,8 +24,6 @@ from ui_qml.bridge.price_chart_bridge import (
 )
 
 pytestmark = pytest.mark.ui
-
-_NAME = "三钛合金"
 
 
 def _data(days: int = 5, base: float = 100.0, volume: int = 1000) -> list[dict]:
@@ -195,85 +188,3 @@ class TestPlotModel:
     def test_bad_rows_are_skipped(self):
         rows = [*_data(2), {"date": "2026-01-03", "average": "abc", "volume": 1}, {}]
         assert plot_model(rows)["count"] == 2
-
-
-# ════════════════════════════════════════════════════════════
-#  桥
-# ════════════════════════════════════════════════════════════
-
-
-class TestPriceChartBridge:
-    def test_starts_in_loading_state(self, qapp):
-        bridge = PriceChartBridge(34, _NAME)
-        assert bridge.statusText == "加载中..."
-        assert bridge.plot["isEmpty"] is True
-        assert bridge.title_text() == "价格走势 — 三钛合金"
-
-    def test_loaded_data_fills_plot_and_status(self, qapp):
-        bridge = PriceChartBridge(34, _NAME)
-        bridge._on_data_loaded(34, _data(12))
-        assert bridge.statusText == "已加载 12 天数据"
-        assert bridge.day_count() == 12
-        assert bridge.plot["isEmpty"] is False
-        assert bridge.headerText == "三钛合金 (Type ID: 34)"
-
-    def test_stale_result_is_dropped(self, qapp):
-        """切了物品之后回来的旧结果不能覆盖新图（原版也按 type_id 过滤）。"""
-        bridge = PriceChartBridge(34, _NAME)
-        bridge._on_data_loaded(35, _data(3))
-        assert bridge.day_count() == 0
-        assert bridge.statusText == "加载中..."
-
-    def test_error_is_shown_in_the_status_line(self, qapp):
-        bridge = PriceChartBridge(34, _NAME)
-        bridge._on_error(34, "无历史数据")
-        assert bridge.statusText == "错误: 无历史数据"
-
-    def test_worker_result_reaches_the_bridge(self, qapp, monkeypatch):
-        """取价线程仍然复用原 `PriceHistoryWorker`，这里换成不发网络的替身。"""
-
-        class _StubWorker(QThread):
-            finished_signal = Signal(int, list)
-            error_signal = Signal(int, str)
-
-            def __init__(self, type_id: int, parent: Any = None) -> None:
-                super().__init__(parent)
-                self._tid = int(type_id)
-
-            def run(self) -> None:
-                self.finished_signal.emit(self._tid, _data(4))
-
-        monkeypatch.setattr(pcb, "_history_worker", lambda type_id, parent: _StubWorker(type_id, parent))
-        bridge = PriceChartBridge(34, _NAME)
-        bridge.reload()
-        _spin(300)
-        assert bridge.day_count() == 4
-        bridge.stop()  # 已经跑完的线程不该被摘出去，也不该抛
-
-    def test_reload_is_not_restarted_while_running(self, qapp, monkeypatch):
-        class _StubWorker(QThread):
-            finished_signal = Signal(int, list)
-            error_signal = Signal(int, str)
-
-            def __init__(self, type_id: int, parent: Any = None) -> None:
-                super().__init__(parent)
-                self._tid = int(type_id)
-
-            def run(self) -> None:
-                QThread.msleep(150)
-                self.finished_signal.emit(self._tid, _data(2))
-
-        created: list = []
-
-        def _make(type_id: int, parent: Any) -> _StubWorker:
-            worker = _StubWorker(type_id, parent)
-            created.append(worker)
-            return worker
-
-        monkeypatch.setattr(pcb, "_history_worker", _make)
-        bridge = PriceChartBridge(34, _NAME)
-        bridge.reload()
-        bridge.reload()  # 第二次必须被挡住，否则两个线程同时回写同一份 plot
-        assert len(created) == 1
-        bridge.stop()
-        _spin(300)

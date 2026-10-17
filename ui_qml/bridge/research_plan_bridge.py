@@ -330,6 +330,33 @@ class InventionPlanBridge(_ResearchBridgeBase):
     #: runs = 每线尝试次数、parallels = 并行作业数；计划行按两者相乘的**总尝试**扣料
     expectedSummary = Property(str, lambda self: self._build_summary(), notify=inventionChanged)
 
+    def _expected_output_runs(self) -> float:
+        """**概率期望**产出流程 = 总尝试 × 成功率 × 每张流程（01-12「期望产出」）。"""
+        oc = self._current_outcome()
+        decryptor = self._current_decryptor()
+        base_runs = int(self._base_runs.get(int(oc.get("blueprint_type_id") or 0), 10))
+        out_runs = invention_output_runs(base_runs, decryptor)
+        return self._attempts * self._parallels * (self._rate / 100.0) * out_runs
+
+    def _max_output_runs(self) -> int:
+        """**全成功上限** = 总尝试 × 每张流程（01-12「上限」，不是期望值）。"""
+        oc = self._current_outcome()
+        decryptor = self._current_decryptor()
+        base_runs = int(self._base_runs.get(int(oc.get("blueprint_type_id") or 0), 10))
+        return self._attempts * self._parallels * invention_output_runs(base_runs, decryptor)
+
+    #: 01-12 双字段（对话框底部展示；期望 ≠ 上限，旧实现把上限当期望）
+    expectedRunsText = Property(
+        str,
+        lambda self: f"期望产出：约 {self._expected_output_runs():.1f} 流程",
+        notify=inventionChanged,
+    )
+    maxRunsText = Property(
+        str,
+        lambda self: f"上限（全成功）：{self._max_output_runs()} 流程",
+        notify=inventionChanged,
+    )
+
     @Slot(int)
     def setOutcomeIndex(self, index: int) -> None:
         if not 0 <= index < len(self._outcomes):
@@ -443,7 +470,9 @@ class InventionPlanBridge(_ResearchBridgeBase):
                 f"总尝试次数：{self._attempts} × {self._parallels} = {total} 次",
                 f"需要输入：{self._parallels} 张 T1 蓝图拷贝，每张至少 {self._attempts} 流程",
                 f"单次成功产出：{out_runs} 流程的 T2 蓝图拷贝（ME{me}/TE{te}）",
+                # 01-12：期望与上限必须分开写 —— 只给「约 N 流程」会让用户把上限当期望
                 f"期望产出：约 {successes:.1f} 次成功 ≈ {successes * out_runs:.1f} 流程",
+                f"上限（全成功）：{total * out_runs} 流程",
             ]
         )
 
@@ -500,7 +529,7 @@ class InventionPlanDialogQmlDialog(QmlDialog):
             default_probability=default_probability,
             t1_blueprint_type_id=t1_blueprint_type_id,
         )
-        super().__init__(_INVENTION_QML, bridge, parent=parent, size=(560, 560))
+        super().__init__(_INVENTION_QML, bridge, parent=parent, size=(560, 600))
         self._inv_bridge = bridge
 
     def result_data(self) -> dict[str, Any] | None:
@@ -532,26 +561,40 @@ class ResearchPlanBridge(_ResearchBridgeBase):
         super().__init__(blueprint_name, title="加入效率研究规划")
         self._kind_index = 0
         self._level = 1
+        self._current_level = 0
 
     kindOptions = Property(list, lambda self: [label for _value, label in self._KINDS], constant=True)
     kindIndex = Property(int, lambda self: self._kind_index, notify=researchChanged)
     level = Property(int, lambda self: self._level, notify=researchChanged)
+    #: 当前等级（研究时长 = 当前→目标 逐级累计，01-4）；未填保持 0
+    currentLevel = Property(int, lambda self: self._current_level, notify=researchChanged)
+    #: 当前等级输入框上限：目标等级 − 1（研究到同一级没有意义）
+    currentLevelMax = Property(int, lambda self: max(0, self._level - 1), notify=researchChanged)
 
     @Slot(int)
     def setKindIndex(self, index: int) -> None:
         if 0 <= index < len(self._KINDS):
             self._kind_index = index
+            # 换 ME/TE 时当前等级含义变了，回到 0（未填）
+            self._current_level = 0
             self.researchChanged.emit()
 
     @Slot(int)
     def setLevel(self, value: int) -> None:
         self._level = max(1, min(10, int(value)))
+        if self._current_level > max(0, self._level - 1):
+            self._current_level = max(0, self._level - 1)
+        self.researchChanged.emit()
+
+    @Slot(int)
+    def setCurrentLevel(self, value: int) -> None:
+        self._current_level = max(0, min(max(0, self._level - 1), int(value)))
         self.researchChanged.emit()
 
     @Slot()
     def accept(self) -> None:
         data = self._common_data(self._KINDS[self._kind_index][0])
-        data.update({"target_level": self._level})
+        data.update({"target_level": self._level, "current_level": self._current_level})
         self._result = data
         self.accepted.emit()
 
@@ -561,7 +604,7 @@ class ResearchPlanDialogQmlDialog(QmlDialog):
 
     def __init__(self, blueprint_name: str, *, parent: Any = None) -> None:
         bridge = ResearchPlanBridge(blueprint_name)
-        super().__init__(_RESEARCH_QML, bridge, parent=parent, size=(500, 400))
+        super().__init__(_RESEARCH_QML, bridge, parent=parent, size=(500, 440))
         self._research_bridge = bridge
 
     def result_data(self) -> dict[str, Any] | None:

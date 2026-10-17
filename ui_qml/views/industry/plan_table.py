@@ -265,6 +265,11 @@ class PlanTable(QObject):
         if result["failed"]:
             detail = "\n".join(result.get("failed_reasons") or []) or "、".join(result["failed"])
             FMessageDialog.warning(self, "下线失败", detail)
+        # 成功但**有流程缺口**（bp_attempt_short>0）：以前提示只在 complete_plan 的
+        # message 里、批量路径整个丢弃；现在必须让用户看到「材料按声明扣、流程按实际扣」。
+        if result.get("shortfalls"):
+            gap_detail = "\n".join(result.get("notices") or []) or "发明尝试流程缺口已记入审计列"
+            FMessageDialog.information(self, "下线完成（有流程缺口）", gap_detail)
         self._rebuild_subitems()
         self.plan_updated.emit()
 
@@ -567,25 +572,26 @@ class PlanTable(QObject):
         mat_hangar_id = plan.get("mat_hangar_id") or getattr(self, "_mat_hangar_id", None)
         allow_short = False
 
+        # 03-10：无料造物不允许启动（旧行为是「跳过材料扣减」继续开产，材料守恒被绕过）。
+        # 启动闸门会拒绝，这里提前给可操作的引导，避免先弹「强制启动」确认再失败。
         if not mat_hangar_id:
-            if not FMessageDialog.question(
+            FMessageDialog.warning(
                 self,
-                "启动计划",
-                "材料机库未设置，跳过材料扣减？\n（可在顶部工具栏「材料机库」下拉选择）",
-            ):
-                return
+                "无法启动",
+                "未设置材料机库，无法扣料启动。\n请右键该计划 →「编辑计划」设置材料机库后重试。",
+            )
+            return
 
         # 软阻塞预检：材料缺口 / 蓝图流程不足 —— 两者都可强制启动
         allow_short = False
         allow_bp_short = False
         shortfalls: list[dict] = []
-        if mat_hangar_id:
-            all_plans = self._model._plans if self._model is not None else None
-            shortfalls = [
-                r
-                for r in plan_execution.check_materials(plan, mat_hangar_id, all_plans=all_plans)
-                if (r.get("missing") or 0) > 0
-            ]
+        all_plans = self._model._plans if self._model is not None else None
+        shortfalls = [
+            r
+            for r in plan_execution.check_materials(plan, mat_hangar_id, all_plans=all_plans)
+            if (r.get("missing") or 0) > 0
+        ]
         # 带生效材料机库：绑定蓝图还在别的机库时也要在确认框里说清（不是只有流程数不足）
         bp_short = plan_execution.binding_shortfall(plan["id"], mat_hangar_id=mat_hangar_id)
 

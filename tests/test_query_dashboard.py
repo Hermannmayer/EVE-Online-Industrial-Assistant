@@ -1469,3 +1469,29 @@ def test_refresh_recomputes_when_orders_change(h):
     bridge.refresh()
     assert len(counter) > first  # 挂单表变了 → 必须重算
     assert bridge.openOrderSummary.startswith("1 笔挂单")
+
+
+def test_esi_sync_surfaces_wallet_write_failure(h, monkeypatch):
+    """回归：钱包写库失败时，状态文案不得报「同步成功」而把失败藏进日志。
+
+    场景：ESI 同步的挂单/快照都成功，只有 `set_wallet_balance` 抛异常 —— 用户看到的
+    状态行必须带「钱包余额写入失败」，否则会以为余额已更新。
+    """
+
+    def _boom(value: float) -> None:
+        raise RuntimeError("user.db 被占用")
+
+    monkeypatch.setattr(h.assets, "set_wallet_balance", _boom)
+    bridge = h.bridge()  # 工厂每次返回新实例 —— 状态要用**同一个**实例读
+    bridge._on_esi_pulled(
+        {
+            "orders": [],
+            "wallet_total": 777.0,
+            "corp_total": None,
+            "include_corp": False,
+            "groups": [[111, 0]],
+            "chars": 1,
+            "errors": [],
+        }
+    )
+    assert "钱包余额写入失败" in bridge.statusText

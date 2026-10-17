@@ -257,3 +257,50 @@ def test_research_plan_defaults_to_material_efficiency(qapp, stub_lookups):
         assert data["char_name"] == "守夜人"
     finally:
         dlg.deleteLater()
+
+
+def test_research_plan_current_level_round_trips(qapp, stub_lookups):
+    """01-4：研究计划要能带「当前等级」——研究时长按 当前→目标 逐级累计。
+
+    未填 = 0（从零研究，旧行为不变）；上限 = 目标等级−1（研究到同一级无意义）。
+    """
+    from ui_qml.bridge.research_plan_bridge import ResearchPlanDialogQmlDialog
+
+    dlg = ResearchPlanDialogQmlDialog("渡鸦级蓝图")
+    try:
+        bridge = dlg.bridge
+        bridge.setLevel(8)
+        bridge.setCurrentLevel(5)
+        assert bridge.currentLevel == 5
+        assert bridge.currentLevelMax == 7
+        bridge.accept()
+        data = dlg.result_data() or {}
+        assert data["target_level"] == 8
+        assert data["current_level"] == 5
+
+        # 目标降到 3 → 当前等级被夹到 ≤2
+        bridge.setLevel(3)
+        assert bridge.currentLevel == 2
+    finally:
+        dlg.deleteLater()
+
+
+def test_invention_expected_and_max_runs_are_both_exposed(qapp, stub_lookups):
+    """01-12：发明对话框同时给「期望产出」与「全成功上限」，不再把上限当期望。"""
+    from ui_qml.bridge.research_plan_bridge import InventionPlanBridge
+
+    bridge = InventionPlanBridge(
+        "200mm自动加农炮蓝图 I",
+        outcomes=[{"blueprint_type_id": 2890, "name": "200mm自动加农炮蓝图 II", "base_probability": 0.34}],
+        base_runs_by_outcome={2890: 10},
+        default_probability={2890: 0.34},
+        t1_blueprint_type_id=821,
+    )
+    bridge.setAttempts(10)
+    bridge.setParallels(2)
+    expected_text = bridge.expectedRunsText
+    max_text = bridge.maxRunsText
+    assert "期望产出" in expected_text
+    assert "上限" in max_text
+    # 上限 = 总尝试 × 每张流程 = 20 × 10 = 200；期望严格小于上限（成功率为 0.34 左右）
+    assert "200 流程" in max_text

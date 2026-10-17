@@ -344,10 +344,6 @@ class PlanTableBridge(QObject):
             self._hidden_columns.add(column)
         self.columnVisibilityChanged.emit(column, visible)
 
-    @Slot(int, result=bool)
-    def columnVisible(self, column: int) -> bool:
-        return column not in self._hidden_columns
-
     @Slot(result=list)
     def autofitWidths(self) -> list:
         """按**表头 + 实际内容**实测每列宽度；不参与自适应的列返回 0。

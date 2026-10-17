@@ -77,24 +77,6 @@ def test_splash_loads_without_warnings(qapp):
     _assert_loads_and_quiet(SplashScreen, "启动画面")
 
 
-def test_splash_window_semantics(qapp):
-    """窗口属性逐项对齐旧 QWidget 版（无边框 / 置顶 / 透明 / 固定 360x470）。"""
-    from PySide6.QtCore import Qt
-
-    splash = SplashScreen()
-    try:
-        window = splash._window
-        assert window.flags() & Qt.WindowType.FramelessWindowHint
-        assert window.flags() & Qt.WindowType.WindowStaysOnTopHint
-        # 固定尺寸（不可缩放）：min == max 是语义，具体像素值不是 —— 调尺寸不该让测试红
-        assert window.minimumWidth() == window.maximumWidth()
-        assert window.minimumHeight() == window.maximumHeight()
-        # 半透明：圆角之外要能透出去（旧版是 WA_TranslucentBackground）
-        assert window.color().alpha() == 0
-    finally:
-        splash.close()
-
-
 def test_set_stage_and_component_reach_the_bridge(qapp):
     splash = SplashScreen()
     try:

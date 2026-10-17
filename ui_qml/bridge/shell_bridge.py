@@ -1,7 +1,8 @@
-"""外壳桥 —— QML 页面访问 Widgets 外壳的通道（状态栏 / 进度条 / DWM 重放）。
+"""外壳桥 —— QML 页面访问 QML 外壳的通道（状态栏 / 导航）。
 
-迁移期（阶段 0–4）外壳仍是 Widgets，QML 页面需要一种受控方式去更新状态栏与进度条。
-本桥只暴露外壳的公开 API，不直接引用私有控件。
+QML 页只需要两种外壳能力：往状态栏写一行字、按 key 切页。进度条三个槽
+（`showProgress` / `updateProgress` / `hideProgress`）原先服务 Widgets 版进度条，
+QML 迁移后**没有任何 QML 调用方**，已随死槽清理删除。
 
 DWM 毛玻璃由外壳自己的 `_apply_window_backdrop()` 负责，QML 页无需关心——
 同一个 HWND，窗口级 Mica/Acrylic 天生生效。
@@ -27,7 +28,7 @@ class ShellHost(Protocol):
 
 
 class ShellBridge(QObject):
-    """把外壳的状态栏/进度条/导航暴露给 QML。"""
+    """把外壳的状态栏/导航暴露给 QML。"""
 
     def __init__(self, shell: ShellHost, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -41,15 +42,3 @@ class ShellBridge(QObject):
     def navigate(self, key: str) -> bool:
         """切到某个导航页（找不到返回 false）。"""
         return bool(self._shell.navigate_to(key))
-
-    @Slot(str, int)
-    def showProgress(self, text: str = "", maximum: int = 0) -> None:
-        self._shell.show_progress(text, maximum)
-
-    @Slot(int, str)
-    def updateProgress(self, value: int, text: str = "") -> None:
-        self._shell.update_progress(value, text)
-
-    @Slot(str)
-    def hideProgress(self, text: str = "就绪") -> None:
-        self._shell.hide_progress(text)

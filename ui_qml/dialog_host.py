@@ -179,8 +179,7 @@ class QmlDialog(QDialog):
 
         if modeless:
             # 真顶层窗 + 最小化/最大化按钮。`QDialog` 默认只有关闭按钮，且无父窗口时
-            # 仍是对话框外观 —— 不叫「独立窗口」。这套 flag 与手工那版
-            # `AllItemsQmlDialog` 逐字一致（它是本机制出现之前的先例）。
+            # 仍是对话框外观 —— 不叫「独立窗口」。
             # 注意 `setWindowFlags` 会替换全部标志：`Qt.Window` 隐含**非模态**，
             # 所以要放在 `_match_owner_always_on_top` 之前，让后者只做叠加。
             self.setWindowFlags(

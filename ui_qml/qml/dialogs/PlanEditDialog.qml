@@ -326,8 +326,12 @@ Item {
                         font.bold: true
                     }
                     Text {
+                        objectName: "expectRunsText"
                         Layout.leftMargin: root.gap
-                        text: root.dlg ? root.dlg.expectTotalRunsText : ""
+                        // 01-12：期望产出与「全成功上限」分开展示（旧文案只给合计，用户会把上限当期望）
+                        text: root.dlg
+                              ? root.dlg.expectExpectedRunsText + "（" + root.dlg.expectMaxRunsText + "）"
+                              : ""
                         color: Theme.textSecondary
                         font.family: Theme.fontFamily
                         font.pixelSize: root.fntBase - 1

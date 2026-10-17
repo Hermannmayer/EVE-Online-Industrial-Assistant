@@ -93,6 +93,12 @@ class PlanEditBridge(DialogBridge):
         self._notes = str(self._plan.get("notes", "") or "")
         self._me = max(0, min(10, int(self._plan.get("me_level", 0) or 0)))
         self._te = max(0, min(20, int(self._plan.get("te_level", 0) or 0)))
+        # 效率研究行的「当前等级」：研究时长是「当前 → 目标」的逐级累计（01-4），
+        # 编辑框必须能改它，否则已经是 ME8 的 BPO「研究到 10」会被按 0→10 多算时长。
+        self._current_level = self._me if activity == ACTIVITY_RESEARCH_ME else self._te
+        cap = research_level_cap(activity)
+        if cap is not None:
+            self._current_level = max(0, min(self._current_level, cap))
 
         # 解码器（仅发明行）：把计划里存的 type_id 映射到下拉索引
         raw_dec = self._plan.get("decryptor_type_id")
@@ -175,6 +181,12 @@ class PlanEditBridge(DialogBridge):
     )
     #: 研究行的并行数没有意义（runs 本身就是目标等级），藏起来
     showParallel = Property(bool, lambda self: self._activity not in _RESEARCH_ACTIVITIES, constant=True)
+    #: 效率研究行：显示「当前等级」输入（研究时长 = 当前→目标的逐级累计，01-4）
+    showCurrentLevel = Property(
+        bool,
+        lambda self: self._activity in _RESEARCH_ACTIVITIES and not self._batch_mode,
+        constant=True,
+    )
     #: 解码器只对发明行有意义（它改产出流程数与成功率）
     showDecryptor = Property(bool, lambda self: self._activity == ACTIVITY_INVENTION, constant=True)
     decryptorLabels = Property(list, lambda self: decryptor_labels(), constant=True)
@@ -193,6 +205,8 @@ class PlanEditBridge(DialogBridge):
     notes = Property(str, lambda self: self._notes, notify=fieldsChanged)
     me = Property(int, lambda self: self._me, notify=fieldsChanged)
     te = Property(int, lambda self: self._te, notify=fieldsChanged)
+    #: 效率研究行的「当前等级」（研究时长 = 当前→目标的逐级累计，01-4）；未填保持 0
+    currentLevel = Property(int, lambda self: self._current_level, notify=fieldsChanged)
     decryptorIndex = Property(int, lambda self: self._decryptor_index, notify=fieldsChanged)
     #: 发明行的只读补充：总尝试 = 每线尝试次数 × 并行作业数
     totalAttempts = Property(
@@ -275,6 +289,26 @@ class PlanEditBridge(DialogBridge):
         notify=fieldsChanged,
     )
 
+    def _expect_expected_runs(self) -> float:
+        """**概率期望**产出流程 = 总尝试 × 成功率 × 每张流程（01-12 的「期望」列）。"""
+        return self._runs * self._parallels * self._expect_rate() * self._expect_runs_per_bpc()
+
+    def _expect_max_runs(self) -> int:
+        """**全成功上限**产出流程 = 总尝试 × 每张流程（01-12 的「上限」列）。"""
+        return self._runs * self._parallels * self._expect_runs_per_bpc()
+
+    #: 01-12 双字段：期望产出 / 全成功上限（此前只有「约 N 张」一个口径，把上限当期望）
+    expectExpectedRunsText = Property(
+        str,
+        lambda self: f"期望 {self._expect_expected_runs():.1f} 流程",
+        notify=fieldsChanged,
+    )
+    expectMaxRunsText = Property(
+        str,
+        lambda self: f"上限 {self._expect_max_runs()} 流程",
+        notify=fieldsChanged,
+    )
+
     @Slot(int)
     def setRuns(self, value: int) -> None:
         self._runs = max(1, min(self._runs_max(), int(value)))
@@ -326,6 +360,14 @@ class PlanEditBridge(DialogBridge):
         self.fieldsChanged.emit()
 
     @Slot(int)
+    def setCurrentLevel(self, value: int) -> None:
+        """效率研究行的当前等级：夹在 [0, 目标等级−1]（目标本身由 runs 输入框给）。"""
+        cap = research_level_cap(self._activity)
+        upper = (cap if cap is not None else self._runs) - 1
+        self._current_level = max(0, min(max(0, upper), int(value)))
+        self.fieldsChanged.emit()
+
+    @Slot(int)
     def setDecryptorIndex(self, index: int) -> None:
         if 0 <= index < len(self._decryptor_ids):
             self._decryptor_index = index
@@ -368,6 +410,15 @@ class PlanEditBridge(DialogBridge):
         if self.showMeTe:
             result["me_level"] = self._me
             result["te_level"] = self._te
+        if self.showCurrentLevel:
+            # 效率研究行：把「当前等级」写回对应列（研究时长按 当前→目标 逐级累计，01-4）。
+            # ME 研究写 me_level、TE 研究写 te_level；另一列保持原值（0）。
+            if self._activity == ACTIVITY_RESEARCH_ME:
+                result["me_level"] = self._current_level
+                result["te_level"] = self._te
+            else:
+                result["me_level"] = self._me
+                result["te_level"] = self._current_level
         if self.showDecryptor:
             dec = int(self._decryptor_ids[self._decryptor_index] or 0) or None
             result["decryptor_type_id"] = dec

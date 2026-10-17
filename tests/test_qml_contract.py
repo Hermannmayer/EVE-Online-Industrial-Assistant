@@ -232,3 +232,15 @@ def test_courier_tab_has_no_fill(no_db):
     bridge._tab_index = 2
     bridge.startFill()
     assert "没有物品详情" in bridge.statusText
+
+
+def test_region_suggest_failure_is_surfaced(qapp, no_db, monkeypatch):
+    """回归：星域候选读库失败要写进状态行，不能只是「输入后没有候选」。"""
+
+    def _boom(*_a, **_kw):
+        raise RuntimeError("reference.db 缺 region 表")
+
+    monkeypatch.setattr("services.contract_service.list_regions", _boom)
+    bridge = ContractBridge(None)
+    bridge.setRegionQuery("静谧")
+    assert "星域候选读取失败" in bridge.statusText

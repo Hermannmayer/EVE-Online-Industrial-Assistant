@@ -569,7 +569,7 @@ Item {
                     }
 
                     FButton {
-                        text: qsTr("批量填充 T2 蓝图成本")
+                        text: qsTr("批量填充 T2/T3 蓝图成本")
                         onClicked: if (page.inv)
                             page.inv.autoFillSelectedBlueprints()
 
@@ -577,7 +577,7 @@ Item {
                             id: bpFillCostHover
                         }
                         ToolTip.visible: bpFillCostHover.hovered
-                        ToolTip.text: qsTr("对蓝图表中选中的 T2 蓝图拷贝，按发明期望成本批量填写「蓝图成本」列（右键菜单里也有单张入口）")
+                        ToolTip.text: qsTr("对蓝图表中选中的 T2/T3 蓝图拷贝（发明产物），按发明期望成本批量填写「蓝图成本」列（右键菜单里也有单张入口）")
                     }
                 }
 
@@ -826,7 +826,7 @@ Item {
             onTriggered: page.inv.setBlueprintCostPerRun(bpMenu.targetRows)
         }
         FMenuItem {
-            text: qsTr("自动填写每流程成本(T2发明)")
+            text: qsTr("自动填写每流程成本(T2/T3发明)")
             onTriggered: page.inv.autoFillCostPerRun(bpMenu.targetRows)
         }
         FMenuSeparator {}

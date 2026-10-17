@@ -587,3 +587,35 @@ def test_material_series_are_absolute_in_bridge_and_normalised_by_the_chart(watc
     # 两条线都单调不降 → 归一化后全图最小值就是各线首点（= 100），最大值来自第二条线
     assert values["lo"] == 100.0
     assert values["hi"] == 200.0
+
+
+@pytest.mark.ui
+def test_refresh_keeps_scroll_position(watch_page, monkeypatch):
+    """回归：轮询/增删触发的整表重建不得把左侧列表滚回顶部。
+
+    60 秒轮询（`watchlist_bridge.CHECK_INTERVAL_MS` → `checkPriceChanges` → `refresh`）与
+    增删/排序都会让 `listRows` 变成新数组；Qt 的 `setModel()` 一旦判定换了 model 就把视图
+    重建到顶部。修法与 `LauncherWindow.qml` 的 `applyRows()`/`restoreKeepContentY()` 同款。
+    """
+    import services.watchlist_manager as wm
+
+    host, bridge = watch_page
+    rows = [_row(wid=i + 1) for i in range(50)]
+    bridge._model.set_rows(rows)
+    bridge.rowsChanged.emit()  # 让 QML 的 applyRows() 先拿到 50 行
+    _spin(250)
+
+    root = host.rootObject()
+    view = root.findChild(QObject, "watchList")
+    assert view is not None, "左侧列表应有 objectName=watchList（滚动回归的宿主）"
+    view.setProperty("contentY", 300.0)
+    _spin(150)
+    assert view.property("contentY") != 0, "用例自身有误：50 行内容应可滚动"
+
+    # 内容真的变了（价格 +1）→ refresh 发 rowsChanged → 整表重建
+    changed = [dict(r, sell_price=(r.get("sell_price") or 0) + 1.0) for r in rows]
+    monkeypatch.setattr(wm, "get_watchlist", lambda: changed)
+    bridge.refresh()
+    _spin(300)
+
+    assert view.property("contentY") == pytest.approx(300.0, abs=1.0), "刷新后滚动位置被重置回顶部"

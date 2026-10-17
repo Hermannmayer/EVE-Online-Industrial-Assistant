@@ -13,7 +13,7 @@ import "../components"
  *   1. **配色一律 `Theme.*`**：桥只给 token 名（`ACCENT_GREEN` / …），`tokenColor()` 翻；
  *      本文件里不准出现 hex / rgb / 颜色名。
  *   2. **不用 `Canvas`**（Qt 的 Canvas 画进离屏纹理，本仓离屏截图路径下整块是空的，
- *      见 `PriceChartDialog.qml` 那段记录）——这里全是场景图元素。
+ *      见原价格走势图对话框的注释）——这里全是场景图元素。
  *   3. **每一条 `Text` 都有边界**：单行用 `elide` + `Layout.fillWidth`（或固定
  *      `Layout.preferredWidth`），长句用 `wrapMode: Text.WordWrap` + `Layout.fillWidth`；
  *      没有宽度的 `elide` 是无效的，等于让文字溢出。内容整体放进 `Flickable`，

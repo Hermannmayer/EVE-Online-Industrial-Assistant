@@ -15,11 +15,14 @@ from PySide6.QtGui import QGuiApplication
 
 from tests.clipboard_wait import wait_for_clipboard
 from ui_qml.bridge import all_items_bridge as ai
+from ui_qml.dialog_host import QmlDialog
 from ui_qml.models.all_items_models import BCOLS, MCOLS, TCOLS
 from ui_qml.workers.all_items_workers import JITA_RID
 from ui_qml.workers.lifecycle import DEFAULT_WAIT_MS
 
 pytestmark = pytest.mark.ui
+
+_ALL_QML = "dialogs/AllItemsDialog.qml"
 
 _ALL_ROWS = [
     {"id": 2001, "z": "渡鸦级", "e": "Raven", "bp": 100.0, "sp": 120.0, "ap": 110.0, "v": 10000.0},
@@ -166,15 +169,24 @@ def stub_env(monkeypatch, tmp_path):
     yield
 
 
-def _dialog(manufacturable_only: bool = False) -> ai.AllItemsQmlDialog:
-    return ai.AllItemsQmlDialog(None, manufacturable_only)
+def _dialog(manufacturable_only: bool = False) -> QmlDialog:
+    """内嵌形态的宿主：查询页里那一块就是 `AllItemsBridge(embedded=True)` + 本 QML。
+
+    独立窗类（`AllItemsQmlDialog`）已删除；这里用通用 `QmlDialog` 宿主代替，只保留
+    「桥 + QML 能一起装起来」这一层，业务断言全部打在 `bridge` 上。
+    """
+    bridge = ai.AllItemsBridge(manufacturable_only, embedded=True)
+    dlg = QmlDialog(_ALL_QML, bridge, size=(1100, 680), modeless=True)
+    dlg._all_bridge = bridge  # type: ignore[attr-defined]
+    bridge.start()
+    return dlg
 
 
-def _rows(dlg: ai.AllItemsQmlDialog) -> list[dict]:
+def _rows(dlg: QmlDialog) -> list[dict]:
     return list(dlg.bridge._model._rows)  # type: ignore[attr-defined]
 
 
-def _titles(dlg: ai.AllItemsQmlDialog) -> list[str]:
+def _titles(dlg: QmlDialog) -> list[str]:
     return [c["title"] for c in dlg.bridge.columns]  # type: ignore[attr-defined]
 
 
@@ -533,17 +545,19 @@ def test_click_cell_selects_and_copies(qapp):
         dlg.deleteLater()
 
 
-def test_open_materials_uses_the_qml_material_dialog(qapp, monkeypatch):
-    monkeypatch.setattr(ai, "MatQmlDialog", _RecordingDialog)
+def test_open_materials_emits_item_activated_in_embedded_mode(qapp):
+    """内嵌态双击一行 = 发 `itemActivated` 交给查询页详情，不再弹制造材料明细窗。"""
     dlg = _dialog()
     try:
         bridge = dlg.bridge
         bridge._on_items(_ALL_ROWS)  # type: ignore[attr-defined]
+        got: list[tuple[int, str]] = []
+        bridge.itemActivated.connect(lambda tid, name: got.append((int(tid), str(name))))
         bridge.openMaterials(0)
-        assert _RecordingDialog.calls[0]["args"][0] == 2001
+        assert got == [(2001, "渡鸦级")]
 
-        bridge.openMaterials(9)  # 越界：不弹
-        assert len(_RecordingDialog.calls) == 1
+        bridge.openMaterials(9)  # 越界：不发信号
+        assert got == [(2001, "渡鸦级")]
     finally:
         dlg.deleteLater()
 

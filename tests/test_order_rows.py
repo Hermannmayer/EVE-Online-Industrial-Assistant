@@ -9,12 +9,10 @@
 
 from __future__ import annotations
 
-import pytest
-
+# 纯函数 `order_rows`（无 QApplication / 无 QML）：不再整文件标 ui，进 validate 档。
+# 仅读取 `ui_qml.theme.registry` 的配色常量，导入不需要 QGuiApplication。
 import ui_qml.theme.registry as theme
 from ui_qml.bridge.order_popup_bridge import order_rows
-
-pytestmark = pytest.mark.ui
 
 _STATION = 60003760
 

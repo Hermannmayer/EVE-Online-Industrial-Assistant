@@ -1,17 +1,15 @@
-"""价格走势图对话框的桥与 QML 宿主（阶段 4b）。
+"""价格走势图的几何纯函数（原 QML 对话框已删除，仅保留这组纯算法）。
 
-对照旧 Widgets 版的 `PriceChartDialog`（QtCharts 版）：
-后台拉某物品的历史价 → 画「日均价 + 成交量」双 Y 轴折线。
+历史：这里原先还有 `PriceChartBridge` / `PriceChartQmlDialog`（QML 版价格走势图对话框）。
+该对话框在订单弹窗删除后失去入口、长期无调用方，已随死代码清理删除；**只保留纯函数**，
+因为查询页空闲态仪表盘的资产折线（`query_dashboard_bridge`）在复用它们：
 
-**几何计算全在本模块的纯函数里**（轴范围、刻度值、点坐标归一化），QML 那份 `Canvas`
-只负责「归一化坐标 × 画布尺寸」的落点。抽出来的原因：nice-number 取整、双轴映射
-这类算法最容易错，放在 Python 里才能单测；留在 Canvas 的 JS 里就只能靠截图肉眼看。
-用归一化（0..1）而不是像素坐标，是为了不让 Python 去猜画布尺寸 —— 窗口一缩放，
-像素就会变，归一化不会。
+    from ui_qml.bridge.price_chart_bridge import axis_values, map_values, nice_range, pick_indices
 
-取数仍是原 `PriceHistoryWorker`（那份实现只留一份）。原版价格轴上没有显式
-`setRange`，靠 QChart 附加序列时的自动范围 + nice numbers，这里的 `nice_range`
-就是照那个口径重写的。
+**几何计算全在本模块的纯函数里**（轴范围、刻度值、点坐标归一化）。抽出来的原因：
+nice-number 取整、双轴映射这类算法最容易错，放在 Python 里才能单测；留在 QML 的 JS 里
+就只能靠截图肉眼看。用归一化（0..1）而不是像素坐标，是为了不让 Python 去猜画布尺寸 ——
+窗口一缩放，像素就会变，归一化不会。
 """
 
 from __future__ import annotations
@@ -20,22 +18,13 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from PySide6.QtCore import Property, Signal, Slot
-
-from ui_qml.dialog_host import DialogBridge, QmlDialog
-from ui_qml.workers.lifecycle import detach_worker
-
 __all__ = [
-    "PriceChartBridge",
-    "PriceChartQmlDialog",
     "axis_values",
     "map_values",
     "nice_range",
     "pick_indices",
     "plot_model",
 ]
-
-_QML_FILE = "dialogs/PriceChartDialog.qml"
 
 #: 数据非法时的兜底轴（下界 / 上界 / 步长）
 _DEFAULT_AXIS = (0.0, 1.0, 1.0)
@@ -130,7 +119,7 @@ def _ticks(lo: float, hi: float, step: float) -> list[dict]:
 
 
 def plot_model(data: Sequence[Mapping[str, Any]], *, max_x_ticks: int = 6, max_y_ticks: int = 5) -> dict:
-    """历史数据 → 画布模型（纯函数）。
+    """历史数据 → 画布模型（纯函数，保留给复用方与测试）。
 
     形状：
         {isEmpty, count,
@@ -180,89 +169,3 @@ def plot_model(data: Sequence[Mapping[str, Any]], *, max_x_ticks: int = 6, max_y
         "priceTicks": _ticks(price_lo, price_hi, price_step),
         "volumeTicks": _ticks(vol_lo, vol_hi, vol_step),
     }
-
-
-# ════════════════════════════════════════════════════════════
-#  桥 / 宿主
-# ════════════════════════════════════════════════════════════
-
-
-def _history_worker(type_id: int, parent: Any) -> Any:
-    """取价线程 —— 直接复用原 `PriceHistoryWorker`（区域走它的默认值，与原版一致）。
-
-    单独包一层是为了测试能替换掉它：否则每构造一次对话框就会真去读 market.db、
-    打 ESI，测试既慢又不确定。
-    """
-    from ui_qml.workers.price_history_worker import PriceHistoryWorker
-
-    return PriceHistoryWorker(type_id, parent=parent)
-
-
-class PriceChartBridge(DialogBridge):
-    """价格走势图的 QML 后端。"""
-
-    contentChanged = Signal()
-
-    def __init__(self, type_id: int, name: str) -> None:
-        super().__init__()
-        self._type_id = int(type_id)
-        self._name = str(name)
-        self._data: list[dict] = []
-        self._plot: dict = dict(_EMPTY_PLOT)
-        self._status = "加载中..."
-        self._worker: Any = None
-        self.set_title(f"价格走势 — {self._name}")
-
-    #: 顶部标题 —— 与原 `_title_label` 文案逐字一致
-    headerText = Property(str, lambda self: f"{self._name} (Type ID: {self._type_id})", constant=True)
-    #: 状态行：「加载中… / 已加载 N 天数据 / 错误: …」（与原 `_status_label` 同文案）
-    statusText = Property(str, lambda self: self._status, notify=contentChanged)
-    #: 画布模型，见 `plot_model`
-    plot = Property(dict, lambda self: self._plot, notify=contentChanged)
-
-    def day_count(self) -> int:
-        """给 Python 侧读的口子（`plot` 是 dict，直接读会拿到 QVariant）。"""
-        return int(self._plot.get("count", 0))
-
-    @Slot()
-    def reload(self) -> None:
-        """起后台线程取历史价（宿主构造时调一次）。"""
-        if self._worker is not None and self._worker.isRunning():
-            return
-        worker = _history_worker(self._type_id, self)
-        self._worker = worker
-        worker.finished_signal.connect(self._on_data_loaded)
-        worker.error_signal.connect(self._on_error)
-        worker.start()
-
-    def _on_data_loaded(self, type_id: int, data: list[dict]) -> None:
-        # 期间用户可能已经换了物品（原版同样按 type_id 过滤）
-        if int(type_id) != self._type_id:
-            return
-        self._data = list(data or [])
-        self._plot = plot_model(self._data)
-        self._status = f"已加载 {self.day_count()} 天数据"
-        self.contentChanged.emit()
-
-    def _on_error(self, type_id: int, error: str) -> None:
-        if int(type_id) != self._type_id:
-            return
-        self._status = f"错误: {error}"
-        self.contentChanged.emit()
-
-    def stop(self) -> None:
-        """关窗收尾 —— `QmlDialog.done/closeEvent` 都会调它（名字是基类约定）。"""
-        detach_worker(self._worker)
-        self._worker = None
-
-
-class PriceChartQmlDialog(QmlDialog):
-    """QML 版「价格走势图」。`PriceChartDialog(type_id, name, parent)` 的调用方原样可用。"""
-
-    def __init__(self, type_id: int, name: str, parent: Any = None) -> None:
-        bridge = PriceChartBridge(type_id, name)
-        # 尺寸与原版一致：最小 800×500、初始 900×550
-        super().__init__(_QML_FILE, bridge, parent=parent, size=(800, 500))
-        self.resize(900, 550)
-        self._chart_bridge = bridge
-        bridge.reload()

@@ -113,6 +113,7 @@ def _create_research_plan(
     decryptor_type_id: Any = None,
     success_rate: Any = None,
     research_target_level: int = 0,
+    current_level: int = 0,
 ) -> None:
     """统一落库科研计划并回报。"""
     from services.research_plans import create_research_plan
@@ -131,6 +132,7 @@ def _create_research_plan(
         decryptor_type_id=decryptor_type_id,
         success_rate=success_rate,
         research_target_level=research_target_level,
+        current_level=current_level,
     )
     if plan_id > 0:
         bridge._set_bp_hint(f"已加入规划：{name}（计划 #{plan_id}）")
@@ -219,7 +221,7 @@ def _add_invention_plan(bridge: Any, bp: dict) -> None:
         bridge._set_bp_hint("读取发明数据失败，见日志")
         return
 
-    # 发明作业跑在 **T1 蓝图** 上，产物是选中的 T2 蓝图
+    # 发明作业跑在 **输入蓝图**（T2 为 T1 蓝图；T3 为古文物类物品）上，产物是选中的 T2/T3 蓝图
     dialog = InventionPlanDialogQmlDialog(
         src["t1_name"],
         outcomes=src["outcomes"],
@@ -278,6 +280,8 @@ def _add_research_plan(bridge: Any, bp: dict) -> None:
         parallels=1,
         data=data,
         research_target_level=int(data.get("target_level") or 1),
+        # 01-4：当前等级 → 研究时长按「当前 → 目标」逐级累计（未填 = 0 = 从零研究）
+        current_level=int(data.get("current_level") or 0),
     )
 
 
@@ -286,28 +290,28 @@ def _add_research_plan(bridge: Any, bp: dict) -> None:
 # ═══════════════════════════════════════════════════════════
 
 
-def _is_t2_bpc(bp: dict) -> bool:
-    """T2 蓝图拷贝（发明产物）：批量填充的目标行。"""
-    return bool(bp.get("blueprint_type_id")) and int(bp.get("tech_level") or 0) == 2 and not bp.get("is_bpo")
+def _is_invention_bpc(bp: dict) -> bool:
+    """T2/T3 蓝图拷贝（发明产物）：批量填充的目标行。"""
+    return bool(bp.get("blueprint_type_id")) and int(bp.get("tech_level") or 0) in (2, 3) and not bp.get("is_bpo")
 
 
 def auto_fill_cost_per_run(bridge: Any, blueprints: list[dict], _hangar_id: Any = None) -> None:
     """自动填写每流程成本。
 
-    - 选中含 **T2 蓝图拷贝** → 批量路径：逐张按自己的蓝图算发明期望成本后写入
+    - 选中含 **T2/T3 蓝图拷贝** → 批量路径：逐张按自己的蓝图算发明期望成本后写入
       （同成本值分组一次 update；不弹「选产物」对话框）。
     - 否则保留**旧行为**（单张：T1 走拷贝成本、多产物弹选择框）——
       单选 T1 的「自动填写」是既有功能，不能因批量改造被砍掉。
     """
-    t2_targets = [bp for bp in blueprints if _is_t2_bpc(bp)]
-    if t2_targets:
-        _fill_t2_bpc_batch(bridge, t2_targets)
+    invention_targets = [bp for bp in blueprints if _is_invention_bpc(bp)]
+    if invention_targets:
+        _fill_invention_bpc_batch(bridge, invention_targets)
         return
     _fill_legacy(bridge, blueprints)
 
 
-def _fill_t2_bpc_batch(bridge: Any, targets: list[dict]) -> None:
-    """批量路径：T2 BPC 逐张按发明期望成本写入（同值分组）。"""
+def _fill_invention_bpc_batch(bridge: Any, targets: list[dict]) -> None:
+    """批量路径：T2/T3 BPC 逐张按发明期望成本写入（同值分组）。"""
     from core.container import get_container
     from core.logger import log
     from services.inventory_manager import update_blueprints_batch
@@ -341,14 +345,14 @@ def _fill_t2_bpc_batch(bridge: Any, targets: list[dict]) -> None:
     for grouped_cost, ids in grouped.items():
         update_blueprints_batch(ids, cost_per_run=float(grouped_cost))
     if not filled:
-        bridge._set_bp_hint("所选 T2 蓝图没有发明路径，无法估算每流程成本")
+        bridge._set_bp_hint("所选 T2/T3 蓝图没有发明路径，无法估算每流程成本")
         return
-    bridge._set_bp_hint(f"已按发明期望成本填写 {filled} 张 T2 蓝图的每流程成本")
+    bridge._set_bp_hint(f"已按发明期望成本填写 {filled} 张 T2/T3 蓝图的每流程成本")
     bridge.loadBlueprints()
 
 
 def _fill_legacy(bridge: Any, blueprints: list[dict]) -> None:
-    """旧行为（单选/非 T2）：按研究成本填**第一张**有蓝图信息的行，多产物时弹选择框。"""
+    """旧行为（单选/非 T2/T3）：按研究成本填**第一张**有蓝图信息的行，多产物时弹选择框。"""
     from core.container import get_container
     from core.logger import log
     from services.inventory_manager import update_blueprints_batch

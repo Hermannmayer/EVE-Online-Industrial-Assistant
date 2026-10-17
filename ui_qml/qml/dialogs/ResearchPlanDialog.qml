@@ -101,6 +101,39 @@ FDialogFrame {
         }
     }
 
+    // ── 当前等级（01-4：研究时长 = 当前→目标的逐级累计；留 0 = 从零研究）──
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: Theme.spacingSm
+
+        Text {
+            Layout.preferredWidth: frame.labelWidth
+            horizontalAlignment: Text.AlignRight
+            text: qsTr("当前等级:")
+            color: Theme.textPrimary
+            font.family: Theme.fontFamily
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+        FSpinBox {
+            objectName: "currentLevelBox"
+            Layout.preferredWidth: Math.round(140 * Theme.fontScale)
+            from: 0
+            to: frame.bp ? frame.bp.currentLevelMax : 0
+            value: frame.bp ? frame.bp.currentLevel : 0
+            onValueModified: if (frame.bp)
+                frame.bp.setCurrentLevel(value)
+
+            HoverHandler {
+                id: currentLevelHover
+            }
+            ToolTip.visible: currentLevelHover.hovered
+            ToolTip.text: qsTr("绑定蓝图已到的等级；研究时长按「当前 → 目标」逐级累计，留 0 = 从零开始")
+        }
+        Item {
+            Layout.fillWidth: true
+        }
+    }
+
     ResearchCommonFields {
         dlg: frame.bp
     }

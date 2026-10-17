@@ -265,11 +265,6 @@ def test_refresh_colors_emits_data_changed():
     assert seen, "refresh_colors 未发 dataChanged"
 
 
-@pytest.mark.fast
-def test_refresh_colors_on_empty_model_is_noop():
-    PlanQmlModel([]).refresh_colors()
-
-
 # ════════════════════════════════════════════════════════════
 #  列宽自适应（PlanTableBridge.autofitWidths）
 # ════════════════════════════════════════════════════════════

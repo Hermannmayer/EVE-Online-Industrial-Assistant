@@ -19,7 +19,7 @@ from core.logger import log
 from services.char_config_resolver import load_all_data, resolve_char_config
 from services.name_resolver import resolve_system_display_names_batch
 from ui_qml.models import EstimateQmlModel
-from ui_qml.workers.estimate_workers import ClipboardParseWorker, _search_item_by_name
+from ui_qml.workers.estimate_workers import ClipboardParseWorker
 
 __all__ = ["EstimateBridge"]
 
@@ -219,40 +219,6 @@ class EstimateBridge(QObject):
         self._rebuild_refine_values()
         self.summaryChanged.emit()
 
-    @Slot(str)
-    def addItem(self, name: str) -> None:
-        name = (name or "").strip()
-        if not name:
-            return
-        item = _search_item_by_name(name)
-        if item is None:
-            self._status(f"未找到物品: {name}")
-            return
-
-        display_name = item["zh_name"] or item["en_name"] or name
-        pricing = get_container().pricing_service
-        self._model.add_row(
-            {
-                "type_id": item["type_id"],
-                "name": display_name,
-                "qty": 1,
-                "sell_price": pricing.get_price(item["type_id"], "sell", self._hub) or 0,
-                "buy_price": pricing.get_price(item["type_id"], "buy", self._hub) or 0,
-                "unit_price": 0,
-                "sell_total": 0,
-                "buy_total": 0,
-                "volume": 0,
-                "_volume": item["volume"],
-                "bp_me": 0,
-                "bp_te": 0,
-            }
-        )
-        self._model.set_discount(self._discount)
-        self._rebuild_unit_prices()
-        self._rebuild_refine_values()
-        self.summaryChanged.emit()
-        self._status(f"已添加: {display_name}")
-
     # ── 价格 ──
 
     def _rebuild_unit_prices(self) -> None:
@@ -276,6 +242,7 @@ class EstimateBridge(QObject):
         svc = get_container().refining_service
         skills = self._current_skills()
         facility = self._refine_mode == _REFINE_MODES[1]
+        failed = 0
         for row in rows:
             type_id = row.get("type_id")
             if not type_id:
@@ -292,14 +259,18 @@ class EstimateBridge(QObject):
                     price_hub=self._hub,
                     ore_skill=ore_skill,
                 )
-            except Exception:
+            except Exception:  # 吞的是「精炼服务算某一行」的任何异常（缺配方/取价失败/技能表脏）
                 log.exception("精炼价值计算失败 type_id=%s", type_id)
                 row["refine_value"] = None
+                failed += 1
                 continue
             row["refine_value"] = result["total_value"] * self._discount if result["output"] else None
         self._model.dataChanged.emit(
             self._model.index(0, 2), self._model.index(len(rows) - 1, self._model.columnCount() - 1), []
         )
+        # 失败行在表里只显示「—」，与「不可精炼」外观相同 —— 用状态行明确告诉用户是算失败了。
+        if failed:
+            self._status(f"有 {failed} 行精炼价值计算失败，详见日志")
 
     @Slot()
     def refreshPrices(self) -> None:

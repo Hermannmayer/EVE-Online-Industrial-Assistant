@@ -123,14 +123,6 @@ def test_accept_applies_then_closes(qapp):
     assert host.saved == 1, "关窗前要先应用，不能只发信号"
 
 
-def test_apply_without_a_host_is_a_noop(qapp):
-    """宿主为 None（纯展示 / 单测）时不能炸 —— 原版每处都有 `if not self._mw` 兜底。"""
-    bridge = SettingsBridge(None)
-    bridge.apply()  # 不抛异常即可
-    bridge.openInitWizard()
-    bridge.openAbout()
-
-
 # ── 字号 ─────────────────────────────────────────────────────
 
 

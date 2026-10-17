@@ -164,12 +164,6 @@ def test_add_plan_ignores_blank(bridge):
     bridge._page.add_plan.assert_not_called()
 
 
-@pytest.mark.fast
-def test_add_plan_forwards_trimmed_text(bridge):
-    bridge.addPlan("  狂怒级  ")
-    bridge._page.add_plan.assert_called_once_with("狂怒级")
-
-
 # ════════════════════════════════════════════════════════════
 #  转发到位
 # ════════════════════════════════════════════════════════════

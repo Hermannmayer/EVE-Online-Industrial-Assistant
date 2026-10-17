@@ -123,6 +123,18 @@ class SkillsBridge(QObject):
     def rows(self) -> list[dict]:
         return [{"name": name, "level": int(self._data.get(name, 0))} for name in self._row_names]
 
+    @Property(str, notify=changed)
+    def configHint(self) -> str:
+        """技能页顶部提示（01-11）：一个都没填时说明「按 0 级估算」的影响。
+
+        缺技能不再默认满级之后（`domain.formulas` 默认 0），未导入 ESI / 未手填的角色
+        会被按 0 级计算 —— 制造/科研时长偏长、利润偏低。空字符串 = 不需要提示。
+        """
+        configured = sum(1 for name in ALL_SKILLS if int(self._data.get(name, 0) or 0) > 0)
+        if configured:
+            return ""
+        return "⚠ 所有技能都是 0 级：若尚未导入 ESI 或手填等级，制造/科研时长会偏长、利润偏低（右侧滑杆可直接填写）。"
+
     maxLevel = Property(int, lambda self: _MAX_SKILL_LEVEL, constant=True)
     nameWidthMin = Property(int, lambda self: _NAME_WIDTH_MIN, constant=True)
     nameWidthMax = Property(int, lambda self: _NAME_WIDTH_MAX, constant=True)
