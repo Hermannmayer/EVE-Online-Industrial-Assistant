@@ -1,6 +1,6 @@
 """异动榜口径测试 — `services.market_movers_service.get_movers`。
 
-数据全用 `conftest.temp_db`（临时 ref/mkt/bp 三库，已建好表）+ 相对 `date.today()` 的日期，
+数据全用 `conftest.temp_db`（临时 ref/mkt/bp 三库，已建好表；篮子口径取官方 MER 清单）+ 相对 `date.today()` 的日期，
 所以用例不会随时间腐烂。窗口：近 3 天 = [今天-2, 今天]，前窗口 = [今天-5, 今天-3]。
 """
 
@@ -41,9 +41,12 @@ _QUOTES = {
     2008: _span((0, 1), 1.0, 1000) + _span((2,), 1400.0, 1000) + _span((3, 4, 5), 1.0, 1000),
     # 真·极端行情（窗口内稳定、跨窗口暴涨 100×）→ 上榜但带 `extreme` 标记
     2009: _span((0, 1, 2), 100.0, 100) + _span((3, 4, 5), 1.0, 100),
-    # MPI 矿物：被 4 张有效配方当材料，产物 1001 本身也是投入品 → PPPI
-    34: _span((0, 1, 2), 4.0, 1000) + _span((3, 4, 5), 3.5, 1000),
-    # 被 4 张有效配方当材料，产物 2001/2002 不再被当材料 → SPPI
+    # 官方 MER 篮子成员（MER 2026-09）：MPI / PPPI / SPPI / CPI 各一，用于 index_keys 五线覆盖
+    34: _span((0, 1, 2), 4.0, 1000) + _span((3, 4, 5), 3.5, 1000),  # 官方 MPI
+    18: _span((0, 1, 2), 101.0, 100) + _span((3, 4, 5), 100.0, 100),  # 官方 PPPI（斜长岩）
+    691: _span((0, 1, 2), 101.0, 100) + _span((3, 4, 5), 100.0, 100),  # 官方 SPPI（蓝图）
+    178: _span((0, 1, 2), 101.0, 100) + _span((3, 4, 5), 100.0, 100),  # 官方 CPI（弹药）
+    # 旧蓝图层级启发式会把这些合成 type 判成投入品；官方篮子里没有它们（回归用）
     1001: _span((0, 1, 2), 12.0, 100) + _span((3, 4, 5), 10.0, 100),
     # PLEX
     44992: _span((0, 1), 5_000_000.0, 10) + _span((3, 4), 4_000_000.0, 10),
@@ -56,13 +59,12 @@ def _day(offset: int) -> str:
 
 @pytest.fixture
 def movers_db(temp_db):
-    """价格历史 + 蓝图；材料口径与**指数篮子**一致：被 ≥4 张**有效配方**当材料才算投入品。
+    """价格历史 + 官方篮子 type 的 `item.market_group_id`。
 
-    - 34 被 4 张蓝图（9001/9003/9004/9005）当材料，产物 1001 在 `ref.item` 里有市场分类
-      → 有效配方；且 1001 本身也是投入品 → 34 是 **PPPI**。
-    - 1001 被 4 张蓝图（3001/3002/9006/9007）当材料 → **SPPI**（产物 2001/2002 不再是投入品）。
-    - 2001 只被 3 张蓝图（9008/9009/9010）当材料 → **不够门槛，不算投入品**（回归用）。
-    - 9002 制造 2005 ← 1001：2005 在 `ref.item` 里没有市场分类（占位配方）→ 该材料关系不算数。
+    `index_keys` 的口径 = 官方 MER 篮子（`market_index_service.official_index_members`）。
+    34/18/178/691 在这里被赋予**真实 SDE 的市场分组 id**（1857/516/113/264）→ 分别命中
+    官方 MPI/PPPI/CPI/SPPI；合成 type 1001/2001 不在官方清单里 → `index_keys` 为空
+    （回归「不再按蓝图层级启发式猜」）。
     """
     with temp_db.connect("mkt", "ref", "bp") as conn:
         conn.execute(PRICE_HISTORY_DDL)
@@ -73,34 +75,14 @@ def movers_db(temp_db):
                     "volume, order_count, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
                     (type_id, REGION, _day(offset), average, average, average, volume, "2026-01-01T00:00:00+00:00"),
                 )
+    with temp_db.connect("ref") as conn:
         conn.executemany(
-            "INSERT INTO blueprint_products VALUES (?, 'manufacturing', ?, 1)",
+            "INSERT OR REPLACE INTO item (type_id, zh_name, en_name, volume, market_group_id) VALUES (?, ?, ?, 1.0, ?)",
             [
-                (9001, 1001),
-                (9003, 1001),
-                (9004, 1001),
-                (9005, 1001),  # 34 × 4 张有效配方
-                (9006, 2002),
-                (9007, 2002),  # 1001 × 4（另两张是 conftest 的 3001/3002）
-                (9008, 2002),
-                (9009, 2002),
-                (9010, 2002),  # 2001 × 3（不够门槛）
-                (9002, 2005),  # 占位配方：2005 没有市场分类
-            ],
-        )
-        conn.executemany(
-            "INSERT INTO blueprint_materials VALUES (?, 'manufacturing', ?, 10, 10)",
-            [
-                (9001, 34),
-                (9003, 34),
-                (9004, 34),
-                (9005, 34),
-                (9006, 1001),
-                (9007, 1001),
-                (9008, 2001),
-                (9009, 2001),
-                (9010, 2001),
-                (9002, 1001),
+                (34, "Tritanium", "Tritanium", 1857),  # 官方 MPI
+                (18, "Plagioclase", "Plagioclase", 516),  # 官方 PPPI
+                (178, "Carbonized Lead S", "Carbonized Lead S", 113),  # 官方 CPI
+                (691, "Rifter Blueprint", "Rifter Blueprint", 264),  # 官方 SPPI
             ],
         )
     return temp_db
@@ -118,7 +100,7 @@ def test_price_change_and_volume_windows(movers_db):
         "volume_ratio": pytest.approx(7.5),
         "qualified": True,
         "extreme": False,
-        "index_keys": ["cpi"],
+        "index_keys": [],  # 2001 是合成 type，不在官方 MER 篮子里
     }
 
 
@@ -131,6 +113,9 @@ def test_qualified_needs_turnover_and_coverage(movers_db):
         1001,
         2001,
         34,
+        18,  # 官方篮子成员（+1%）
+        178,
+        691,
     ]
 
 
@@ -169,29 +154,34 @@ def test_sorted_by_abs_change_then_limit(movers_db):
         1001,
         2001,
         34,
+        18,  # 官方篮子成员，涨幅 +1%
+        178,
+        691,
     ]
     assert [r["typeId"] for r in get_movers(days=3, limit=1, _db=movers_db)] == [2009]
 
 
 def test_index_keys_cover_all_five_lines(movers_db):
-    """index_keys 命中 MPI / PPPI / SPPI / CPI / PLEX（口径与指数篮子同一处实现）。"""
+    """index_keys 命中 MPI / PPPI / SPPI / CPI / PLEX —— 成员取官方 MER 篮子。"""
     by_id = {r["typeId"]: r for r in get_movers(days=3, limit=100, _db=movers_db)}
-    assert by_id[34]["index_keys"] == ["mpi", "pppi"]  # 矿物，且产物 1001 还是投入品
-    assert by_id[1001]["index_keys"] == ["sppi"]  # 被 4 张有效配方当材料，产物 2001/2002 不是
-    assert by_id[2001]["index_keys"] == ["cpi"]  # 有成交、不被当材料
-    assert by_id[44992]["index_keys"] == ["cpi", "plex"]
+    assert by_id[34]["index_keys"] == ["mpi"]  # 官方 MPI 矿物
+    assert by_id[18]["index_keys"] == ["pppi"]  # 官方 PPPI（Plagioclase）
+    assert by_id[691]["index_keys"] == ["sppi"]  # 官方 SPPI（Rifter Blueprint）
+    assert by_id[178]["index_keys"] == ["cpi"]  # 官方 CPI（Carbonized Lead S）
+    assert by_id[44992]["index_keys"] == ["plex"]  # PLEX 仍是独立锚（官方四指数没有它）
 
 
-def test_index_keys_follow_the_index_basket_recipe_cutoff(movers_db):
-    """回归：口径与指数篮子对齐 —— 被 **< 4 张有效配方**当材料的成品不算投入品。
+def test_index_keys_follow_official_basket_not_blueprint_heuristic(movers_db):
+    """回归：index_keys 以官方 MER 篮子为准，不再按蓝图层级/配方数量猜。
 
-    2001 只被 9008/9009/9010 三张有效配方当材料（`< market_index_service.MIN_VALID_RECIPES`）：
-    旧口径（「被任何一张制造/反应蓝图当材料」）会把它标成 `sppi`，而 SPPI 篮子里根本没有它 ——
-    同一件东西在两个页面上自相矛盾。真投入品 1001（被 4 张有效配方用）仍该命中 `sppi`。
+    用户报过「次级投入品里出现大量舰船」：旧启发式（被 ≥4 张有效配方当材料）会把
+    蓝图材料混成 PPPI/SPPI。现在不在官方清单里的合成 type（1001/2001）不该命中任何
+    指数；34 也只属于官方 MPI（旧启发式还把它算进 PPPI）。
     """
     by_id = {r["typeId"]: r for r in get_movers(days=3, limit=100, _db=movers_db)}
-    assert by_id[2001]["index_keys"] == ["cpi"]  # 3 张有效配方 < 4 → 只是消费品
-    assert by_id[1001]["index_keys"] == ["sppi"]  # 4 张有效配方 → 真投入品
+    assert by_id[34]["index_keys"] == ["mpi"]
+    assert by_id[1001]["index_keys"] == []
+    assert by_id[2001]["index_keys"] == []
 
 
 def test_no_price_history_table_returns_empty(db_manager):

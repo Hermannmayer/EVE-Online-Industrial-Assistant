@@ -829,9 +829,11 @@ def test_read_orders_imports_and_records_snapshot(h, tmp_path):
 
     # 单元格格式化：物品 / 位次 / 价格 / 剩余÷总量 / 位置 / 角色（**没有方向列** —— 表本身就是方向）
     # 这份导出没带 charID → 归属列显示「—」，而不是「#0」
+    # 位次是**全市场判定**：测试环境没有该市场的本地行情 → 「无法判定」（旧实现会误标「首位」）
+    unknown = "无法判定（无本地行情）"
     assert [cell["text"] for cell in bridge.sellOrderRows[0]["cells"]] == [
         "三钛合金",
-        "首位",
+        unknown,
         "2.50",
         "4/4",
         "Jita IV-4",
@@ -839,7 +841,7 @@ def test_read_orders_imports_and_records_snapshot(h, tmp_path):
     ]
     assert [cell["text"] for cell in bridge.buyOrderRows[0]["cells"]] == [
         "三钛合金",
-        "首位",
+        unknown,
         "100.00",
         "10/10",
         "Jita IV-4",
@@ -851,13 +853,18 @@ def test_read_orders_imports_and_records_snapshot(h, tmp_path):
     # 汇总：买卖单计数与挂单总额都是算出来的
     assert bridge.openOrderSummary.startswith("2 笔挂单 · 卖单 1 · 买单 1 · 挂单总额 1,010.00 ISK")
 
-    # 「不在首位」标记（用户要求）：每侧只有 1 行 → 它就是首位，整行默认色、位次列写「首位」
-    assert [c["color"] for c in bridge.sellOrderRows[0]["cells"]] == [theme.TEXT_PRIMARY] * 6
-    assert [c["color"] for c in bridge.buyOrderRows[0]["cells"]] == [theme.TEXT_PRIMARY] * 6
-    assert "不在首位" not in [c["text"] for c in bridge.sellOrderRows[0]["cells"]]
+    # 无法判定的行不标红：整行默认色，只有「位次」格是次要文字色（避免把「没数据」染成告警）
+    assert [c["color"] for c in bridge.sellOrderRows[0]["cells"]] == [
+        theme.TEXT_PRIMARY,
+        theme.TEXT_SECONDARY,
+        theme.TEXT_PRIMARY,
+        theme.TEXT_PRIMARY,
+        theme.TEXT_PRIMARY,
+        theme.TEXT_PRIMARY,
+    ]
 
-    # 再加两笔（一笔更贵的卖单 / 一笔更便宜的买单）验证「第 2 行起」标红 + 位次列文案：
-    # 卖单按价格升序 → 2.50 仍是首位；买单按价格降序 → 100.00 仍是首位
+    # 再加两笔（一笔更贵的卖单 / 一笔更便宜的买单）：行序仍按自己挂单最优价排，
+    # 但位次文案不再随行号变红 —— 没行情就一律「无法判定」
     with h.user_conn() as conn:
         conn.executemany(
             "INSERT INTO open_orders (order_id, is_buy, price, volume_total, volume_remain,"
@@ -866,12 +873,137 @@ def test_read_orders_imports_and_records_snapshot(h, tmp_path):
             [(13, 0, 9.0), (14, 1, 90.0)],
         )
     marked = h.bridge()
-    assert [c["text"] for c in marked.sellOrderRows[0]["cells"]][:3] == ["三钛合金", "首位", "2.50"]
-    assert [c["text"] for c in marked.sellOrderRows[1]["cells"]][:3] == ["三钛合金", "不在首位", "9.00"]
-    assert [c["color"] for c in marked.sellOrderRows[1]["cells"]] == [theme.ACCENT_RED] * 6
-    assert [c["text"] for c in marked.buyOrderRows[0]["cells"]][:3] == ["三钛合金", "首位", "100.00"]
-    assert [c["text"] for c in marked.buyOrderRows[1]["cells"]][:3] == ["三钛合金", "不在首位", "90.00"]
-    assert [c["color"] for c in marked.buyOrderRows[1]["cells"]] == [theme.ACCENT_RED] * 6
+    assert [c["text"] for c in marked.sellOrderRows[0]["cells"]][:3] == ["三钛合金", unknown, "2.50"]
+    assert [c["text"] for c in marked.sellOrderRows[1]["cells"]][:3] == ["三钛合金", unknown, "9.00"]
+    assert [c["color"] for c in marked.sellOrderRows[1]["cells"]][0] == theme.TEXT_PRIMARY
+    assert [c["text"] for c in marked.buyOrderRows[0]["cells"]][:3] == ["三钛合金", unknown, "100.00"]
+    assert [c["text"] for c in marked.buyOrderRows[1]["cells"]][:3] == ["三钛合金", unknown, "90.00"]
+
+
+# ════════════════════════════════════════════════════════════
+#  全市场「首位」判定（用户 2026-10-17 报障：旧实现是自排名）
+# ════════════════════════════════════════════════════════════
+
+
+def test_order_position_text_four_states():
+    """四态：优于→首位；同价→并列最优（不能断言首位）；劣于→不在首位；无行情→无法判定。
+
+    买单方向反向：自己出价更高才在首位。
+    """
+    fresh = {"ok": True, "price": 100.0, "time": "2026-10-17 12:00:00"}
+    assert qdb._order_position_text(99.0, False, fresh)[0].startswith(qdb._FIRST_TEXT)
+    assert qdb._order_position_text(100.0, False, fresh)[0].startswith(qdb._TIED_FIRST_TEXT)
+    assert qdb._order_position_text(101.0, False, fresh)[0].startswith(qdb._NOT_FIRST_TEXT)
+    assert qdb._order_position_text(101.0, False, None)[0].startswith(qdb._UNKNOWN_TEXT)
+
+    # 买单：出价高于市场最优买价 → 首位；低于 → 不在首位
+    assert qdb._order_position_text(101.0, True, fresh)[0].startswith(qdb._FIRST_TEXT)
+    assert qdb._order_position_text(99.0, True, fresh)[0].startswith(qdb._NOT_FIRST_TEXT)
+
+    # 标红只给「不在首位」；无法判定用次要文字色
+    assert qdb._order_position_text(101.0, False, fresh)[1] == "ACCENT_RED"
+    assert qdb._order_position_text(99.0, False, fresh)[1] == "TEXT_PRIMARY"
+    assert qdb._order_position_text(101.0, False, None)[1] == "TEXT_SECONDARY"
+    # 行情时间进文案（列内短格式）
+    assert "行情 10-17 12:00" in qdb._order_position_text(99.0, False, fresh)[0]
+
+
+def test_market_quote_freshness_gate():
+    """行情过旧 → 不可用（无法判定），不拿旧价误标首位。"""
+    assert qdb._is_fresh_market_time("2026-10-17 12:00:00", now=datetime(2026, 10, 17, 20, 0)) is True
+    assert qdb._is_fresh_market_time("2026-10-01 12:00:00", now=datetime(2026, 10, 17, 20, 0)) is False
+    assert qdb._is_fresh_market_time("", now=datetime(2026, 10, 17, 20, 0)) is False
+
+
+def test_read_orders_positions_against_local_market(h, tmp_path, monkeypatch):
+    """导入后按**本地行情最优价**判位次：优于/等于/劣于/无行情四组合（mock 行情数据）。"""
+    quotes = {
+        11: {"sell": 2.5, "buy": 100.0, "time": "2026-10-17 12:00:00"},  # 卖 2.00 → 优于
+        12: {"sell": 2.5, "buy": 100.0, "time": "2026-10-17 12:00:00"},  # 卖 2.50 → 并列
+        13: {"sell": 2.5, "buy": 100.0, "time": "2026-10-17 12:00:00"},  # 卖 3.00 → 劣于
+        # 14 不在 quotes 里 → 无行情
+    }
+    monkeypatch.setattr(qdb, "_load_market_quotes", lambda records: dict(quotes))
+    h.orders.path = _write_export(tmp_path)
+    h.orders.rows = [
+        _order(11, is_buy=False, price=2.0, remain=1),
+        _order(12, is_buy=False, price=2.5, remain=1),
+        _order(13, is_buy=False, price=3.0, remain=1),
+        _order(14, is_buy=False, price=4.0, remain=1),
+    ]
+    bridge = h.bridge()
+    bridge.readOrders()
+
+    rows = bridge.sellOrderRows
+    assert [r["cells"][1]["text"].split("（")[0] for r in rows] == [
+        qdb._FIRST_TEXT,
+        qdb._TIED_FIRST_TEXT,
+        qdb._NOT_FIRST_TEXT,
+        qdb._UNKNOWN_TEXT,
+    ]
+    assert rows[0]["cells"][1]["color"] == theme.TEXT_PRIMARY
+    assert rows[1]["cells"][1]["color"] == theme.TEXT_PRIMARY, "并列最优也是最优，不能标红"
+    assert rows[2]["cells"][1]["color"] == theme.ACCENT_RED, "只有确实不在首位才标红"
+    assert rows[3]["cells"][1]["color"] == theme.TEXT_SECONDARY
+    assert [c["color"] for c in rows[2]["cells"]] == [theme.ACCENT_RED] * 6, "不在首位整行标红"
+    # 文案带最优价（本地行情时间进括号）
+    assert "最优 2.50" in rows[0]["cells"][1]["text"]
+    assert "行情 10-17 12:00" in rows[0]["cells"][1]["text"]
+
+
+def test_refresh_market_quotes_flips_unknown_to_position(h, tmp_path, monkeypatch):
+    """刷新前=无法判定 → 「刷新行情」返回实时最优价后=按最优价判定（用户拍板：显式刷新，不自动拉）。"""
+    monkeypatch.setattr(qdb, "_load_market_quotes", lambda records: {})
+    monkeypatch.setattr(
+        qdb,
+        "_regions_by_order",
+        lambda records: {11: 10000002, 12: 10000002},
+    )
+    h.orders.path = _write_export(tmp_path)
+    h.orders.rows = [
+        _order(11, is_buy=False, price=2.0, remain=1),
+        _order(12, is_buy=True, price=100.0, remain=1),
+    ]
+    bridge = h.bridge()
+    bridge.readOrders()
+    assert bridge.sellOrderRows[0]["cells"][1]["text"].startswith(qdb._UNKNOWN_TEXT)
+    assert bridge.buyOrderRows[0]["cells"][1]["text"].startswith(qdb._UNKNOWN_TEXT)
+
+    # 模拟 worker 返回（不真起线程）：该市场卖最优 2.5 / 买最优 90
+    bridge._on_market_quotes(
+        {(1001, 10000002): {"sell": 2.5, "buy": 90.0, "time": "2026-10-17 20:21:00"}},
+        "",
+    )
+    assert bridge.sellOrderRows[0]["cells"][1]["text"].startswith(qdb._FIRST_TEXT)
+    assert bridge.buyOrderRows[0]["cells"][1]["text"].startswith(qdb._FIRST_TEXT)
+    assert "已刷新 2 条挂单行情" in bridge.marketQuoteStatus
+    assert bridge.marketQuoteBusy is False
+
+
+def test_refresh_market_quotes_entry_uses_order_pairs(h, tmp_path, monkeypatch):
+    """刷新入口只请求当前挂单涉及的 `(type_id, region)`，且不自动触发（用户拍板）。"""
+    monkeypatch.setattr(qdb, "_load_market_quotes", lambda records: {})
+    monkeypatch.setattr(qdb, "_regions_by_order", lambda records: {11: 10000002})
+    captured: list[list[tuple[int, int]]] = []
+
+    class _FakeWorker:
+        def __init__(self, pairs, parent=None):
+            captured.append(list(pairs))
+            self.result_signal = type("_Sig", (), {"connect": lambda self, cb: None})()
+            self.finished = self.result_signal
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(qdb, "_MarketQuoteWorker", _FakeWorker)
+    h.orders.path = _write_export(tmp_path)
+    h.orders.rows = [_order(11, is_buy=False, price=2.0, remain=1)]
+    bridge = h.bridge()
+    bridge.readOrders()
+    assert captured == [], "页面打开/导入不应自动拉 ESI 行情"
+    bridge.refreshMarketQuotes()
+    assert captured == [[(1001, 10000002)]]
+    assert bridge.marketQuoteBusy is True
 
 
 def test_read_orders_falls_back_to_location_id_and_name_backfill(h, tmp_path, monkeypatch):

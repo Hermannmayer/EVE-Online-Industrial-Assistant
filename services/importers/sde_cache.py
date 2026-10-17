@@ -12,7 +12,7 @@ import tempfile
 import threading
 import time
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import aiohttp
 import yaml
@@ -545,10 +545,157 @@ def _build_name_map(zip_path: str) -> dict[int, str]:
     return result
 
 
+# ════════════════════════════════════════════════════════════
+#  universe 路径层级 → 星系所属区域/星座（订单「首位」区域反查依赖）
+# ════════════════════════════════════════════════════════════
+#
+# SDE zip 的 universe/ 是**路径层级**布局（实测 data/sde.zip）：
+#   universe/<域>/<区域目录>/region.yaml                      ← 含 regionID
+#   universe/<域>/<区域目录>/<星座目录>/constellation.yaml      ← 含 constellationID
+#   universe/<域>/<区域目录>/<星座目录>/<星系目录>/solarsystem.yaml
+# 星系 YAML 本身**不含** regionID/constellationID，归属只能从路径推。
+# ⚠️ 绝不能为回填去解析 8,437 个 solarsystem.yaml：实测单线程约 11 分钟
+#    （每文件含 planets/moons/position）。本模块只读 113 个 region.yaml +
+#    1,175 个 constellation.yaml（实测 ~1.3s），星系 ID 用目录名/名称反查。
+
+_UNIVERSE_REGION_FILE = "region.yaml"
+_UNIVERSE_CONSTELLATION_FILE = "constellation.yaml"
+_UNIVERSE_SYSTEM_SUFFIXES = ("solarsystem.yaml", "system.yaml")
+
+
+def _normalize_system_dir(name: str) -> str:
+    """星系目录名 ↔ 库内星系名的宽松匹配键（去空格/大小写/标点）。
+
+    实测 `Old Man Star`（库内名）↔ `OldManStar`（SDE 目录名）这类差异；
+    归一后 8,437 个星系只剩 2 个对不上（plexMarketSystem / J140208）。
+    """
+    return "".join(ch for ch in str(name or "").lower() if ch.isalnum())
+
+
+def _universe_geo_maps(zf: zipfile.ZipFile) -> tuple[dict[tuple[str, str], int], dict[tuple[str, str, str], int]]:
+    """只读 region.yaml + constellation.yaml，返回「路径目录 → ID」两张映射。"""
+    region_by_dir: dict[tuple[str, str], int] = {}
+    const_by_dir: dict[tuple[str, str, str], int] = {}
+    for name in zf.namelist():
+        parts = name.split("/")
+        if len(parts) == 4 and parts[0] == "universe" and parts[3] == _UNIVERSE_REGION_FILE:
+            try:
+                data = yaml.safe_load(zf.read(name)) or {}
+                region_id = data.get("regionID") if isinstance(data, dict) else None
+                if region_id is not None:
+                    region_by_dir[(parts[1], parts[2])] = int(region_id)
+            except (yaml.YAMLError, UnicodeDecodeError, ValueError, TypeError):
+                continue
+        elif len(parts) == 5 and parts[0] == "universe" and parts[4] == _UNIVERSE_CONSTELLATION_FILE:
+            try:
+                data = yaml.safe_load(zf.read(name)) or {}
+                constellation_id = data.get("constellationID") if isinstance(data, dict) else None
+                if constellation_id is not None:
+                    const_by_dir[(parts[1], parts[2], parts[3])] = int(constellation_id)
+            except (yaml.YAMLError, UnicodeDecodeError, ValueError, TypeError):
+                continue
+    return region_by_dir, const_by_dir
+
+
+def load_universe_geo_maps(zip_path: str) -> tuple[dict[tuple[str, str], int], dict[tuple[str, str, str], int]]:
+    """`_universe_geo_maps` 的路径版（供 `asyncio.to_thread` 在后台线程调用）。"""
+    with zipfile.ZipFile(zip_path) as zf:
+        return _universe_geo_maps(zf)
+
+
+def _universe_path_geo(
+    path: str,
+    geo_maps: tuple[dict[tuple[str, str], int], dict[tuple[str, str, str], int]] | None,
+) -> tuple[int | None, int | None]:
+    """一条 universe 路径 → `(region_id, constellation_id)`（推不出 → None）。"""
+    if geo_maps is None:
+        return None, None
+    parts = path.split("/")
+    if len(parts) < 6:
+        return None, None
+    region_by_dir, const_by_dir = geo_maps
+    return region_by_dir.get((parts[1], parts[2])), const_by_dir.get((parts[1], parts[2], parts[3]))
+
+
+def load_universe_geo(
+    zip_path: str,
+    name_to_id: Mapping[str, int] | None = None,
+) -> dict[int, tuple[int | None, int | None]]:
+    """从 SDE zip 的 universe 路径层级解析 `{solar_system_id: (region_id, constellation_id)}`。
+
+    **只读 1,288 个 region/constellation YAML**（不解析星系 YAML，原因见本节注释）。
+    星系 ID 的确定顺序：
+      1. 星系目录名是数字（abyssal/void 域）→ 直接当 ID；
+      2. 否则用 `name_to_id`（调用方给的 星系名→ID 反查，匹配前做 `_normalize_system_dir` 归一）；
+      3. 仍匹配不上（归一后实测仅 2 个目录，如 plexMarketSystem/J140208）→ 读该星系
+         YAML 的 `solarSystemID` 兜底（只多读个位数文件）。
+    推不出 ID 或父级 ID 的项不进结果（调用方保留 NULL，不误写）。
+    """
+    normalized: dict[str, int] = {}
+    for name, system_id in (name_to_id or {}).items():
+        key = _normalize_system_dir(name)
+        if key:
+            normalized.setdefault(key, int(system_id))
+    geo: dict[int, tuple[int | None, int | None]] = {}
+    with zipfile.ZipFile(zip_path) as zf:
+        geo_maps = _universe_geo_maps(zf)
+        for path in zf.namelist():
+            if not path.startswith("universe/") or not path.endswith(_UNIVERSE_SYSTEM_SUFFIXES):
+                continue
+            parts = path.split("/")
+            if len(parts) < 6:
+                continue
+            dir_name = parts[4]
+            dir_system_id: int | None = (
+                int(dir_name) if dir_name.isdigit() else normalized.get(_normalize_system_dir(dir_name))
+            )
+            if not dir_system_id:
+                # 目录名既不是数字、库内名称也匹配不上：只对这极少数目录读一次该星系
+                # YAML 拿权威 solarSystemID，避免留下永久 NULL（也避免每次启动重复回填）。
+                try:
+                    data = yaml.safe_load(zf.read(path)) or {}
+                    raw_id = data.get("solarSystemID")
+                except (KeyError, TypeError, ValueError, yaml.YAMLError, UnicodeDecodeError):
+                    continue
+                if raw_id is None:
+                    continue
+                try:
+                    dir_system_id = int(raw_id)
+                except (TypeError, ValueError):
+                    continue
+            geo[int(dir_system_id)] = _universe_path_geo(path, geo_maps)
+    return geo
+
+
+def _attach_universe_geo(systems: list[dict], geo: Mapping[int, tuple[int | None, int | None]]) -> int:
+    """给 systems 附上 `region_id`/`constellation_id`（只填 None，不覆盖已有值）。"""
+    filled = 0
+    for system in systems:
+        raw_system_id = system.get("solar_system_id") or system.get("solarSystemID")
+        if raw_system_id is None:
+            continue
+        try:
+            system_id = int(raw_system_id)
+        except (TypeError, ValueError):
+            continue
+        region_id, constellation_id = geo.get(system_id, (None, None))
+        if region_id is None and constellation_id is None:
+            continue
+        if system.get("region_id") is None and region_id is not None:
+            system["region_id"] = region_id
+            system["regionID"] = region_id
+            filled += 1
+        if system.get("constellation_id") is None and constellation_id is not None:
+            system["constellation_id"] = constellation_id
+            system["constellationID"] = constellation_id
+    return filled
+
+
 def _parse_universe_chunk(
     paths: list[str],
     zip_path: str,
     name_map: dict[int, str] | None = None,
+    geo_maps: tuple[dict[tuple[str, str], int], dict[tuple[str, str, str], int]] | None = None,
 ) -> tuple[list, list, list, list]:
     """在线程池/进程池 worker 中解析一批 universe YAML 文件（CSafeLoader）
 
@@ -561,6 +708,8 @@ def _parse_universe_chunk(
         paths: 该 worker 负责的 universe YAML 路径列表
         zip_path: SDE zip 路径
         name_map: {itemID: itemName} 名称映射（可选，缺失时名称兜底空串）
+        geo_maps: `(区域目录→regionID, 星座目录→constellationID)`；星系 YAML 本身没有
+            区域归属，必须从**路径层级**推（见本节注释）。None → 不填（region_id=None）
 
     Returns:
         (regions, constellations, systems, stargates)
@@ -606,6 +755,8 @@ def _parse_universe_chunk(
                 sid = data.get("solarSystemID")
                 if sid is not None:
                     sid = int(sid)
+                    # 区域/星座归属只能从路径层级推（星系 YAML 里没有 regionID）
+                    region_id, constellation_id = _universe_path_geo(path, geo_maps)
                     # 只保留业务字段（写入 solar_system 表用），避免把整个 YAML
                     # （stargates/planets/position 等）塞进 JSON 缓存导致体积膨胀
                     systems.append(
@@ -616,8 +767,10 @@ def _parse_universe_chunk(
                             # 兼容键：write_universe 走 solar_system_id/solarSystemID 等 or 读取
                             "solarSystemID": sid,
                             "solarSystemName": data.get("solarSystemName", ""),
-                            "regionID": data.get("regionID"),
-                            "constellationID": data.get("constellationID"),
+                            "region_id": region_id,
+                            "constellation_id": constellation_id,
+                            "regionID": region_id,
+                            "constellationID": constellation_id,
                         }
                     )
                     # 新格式：stargates 内嵌（键为 stargate_id，值为 {"destination": system_id}）
@@ -652,24 +805,30 @@ def _parse_universe_chunk(
     return regions, constellations, systems, stargates
 
 
-def _parse_universe_chunk_with_names(paths: list[str], zip_path: str) -> tuple[list, list, list, list]:
+def _parse_universe_chunk_with_names(
+    paths: list[str],
+    zip_path: str,
+    geo_maps: tuple[dict[tuple[str, str], int], dict[tuple[str, str, str], int]] | None = None,
+) -> tuple[list, list, list, list]:
     """进程池 worker：先加载名称映射（pkl 缓存秒级），再解析一批星系 YAML。
 
     name_map 有 50 万条 itemID→name，若作为参数 pickle 传给每个子进程开销大；
-    改为各子进程独立从磁盘 pkl（_build_name_map 缓存）加载，参数只剩 paths/zip_path。
+    改为各子进程独立从磁盘 pkl（_build_name_map 缓存）加载，参数只剩 paths/zip_path/geo_maps。
     """
     name_map = _build_name_map(zip_path)
-    return _parse_universe_chunk(paths, zip_path, name_map)
+    return _parse_universe_chunk(paths, zip_path, name_map, geo_maps)
 
 
 async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None = None):
     """确保 SDE zip 已缓存，解析 universe/ 下全部星系并返回星系数据
 
-    region/constellation/stargate 无业务读取，不再解析与写入——
-    只保留 solar_system（星系名/安全等级），供星系搜索与星系名解析使用。
+    region/constellation 不再作为独立表导入，但**必须用于给星系附区域归属**
+    （`solar_system.region_id`，订单「是否在首位」按挂单地点反查区域要用）；
+    stargate 无业务读取，仍不解析。
 
     返回: (regions, constellations, systems, stargates)，其中 regions/constellations/
-          stargates 恒为空，systems 为星系 dict 列表，供 sde_loader.write_universe 写入。
+          stargates 恒为空，systems 为星系 dict 列表（含 region_id / constellation_id，
+          由路径层级 geo_maps 附带），供 sde_loader.write_universe 写入。
     """
     await ensure_sde_cache(progress_cb)
 
@@ -687,6 +846,23 @@ async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None =
                 # 旧缓存星系名全空（写入会污染 solar_system 表）→ 丢弃缓存重新解析
                 log.warning("universe 缓存星系名为空，丢弃并重新解析")
             else:
+                # 旧缓存（task-15 之前生成的）systems 里没有 region_id/constellation_id：
+                # 用路径层级便宜地补上（只读 1,288 个小 YAML，不重解 8,437 个星系文件）。
+                # zip 缺失/损坏时保留原缓存继续用（区域归属缺失只影响订单「位次」判定，
+                # 绝不能因此让 universe 缓存整体不可用）。
+                if any(s.get("region_id") is None for s in cached_systems):
+                    name_to_id = {
+                        str(s.get("solar_system_name") or ""): int(s.get("solar_system_id") or 0)
+                        for s in cached_systems
+                        if s.get("solar_system_name")
+                    }
+                    try:
+                        geo = await asyncio.to_thread(load_universe_geo, SDE_ZIP_PATH, name_to_id)
+                        filled = _attach_universe_geo(cached_systems, geo)
+                        if filled:
+                            log.info("universe 缓存已补区域归属: %s 个星系", filled)
+                    except (OSError, zipfile.BadZipFile) as e:
+                        log.warning("universe 缓存区域归属补齐失败（zip 不可用，保留原缓存）: %s", e)
                 log.info(f"Universe JSON 缓存已加载: {len(cached_systems)} systems")
                 return [], [], cached_systems, []
         except Exception as e:
@@ -696,13 +872,16 @@ async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None =
     if progress_cb:
         progress_cb(10, "解析星系目录...")
     loop = asyncio.get_running_loop()
+    # 星系归属只能从路径层级推：先读 113 个 region.yaml + 1,175 个 constellation.yaml（~1.3s）
+    geo_maps = await loop.run_in_executor(None, load_universe_geo_maps, SDE_ZIP_PATH)
     # 名称在 bsd/invNames.yaml（按 itemID 索引），解析前先确保主进程构建好
     # invnames.pkl（首次 ~28s，之后秒级；子进程 worker 各自从 pkl 加载）。
     # 同步解析会阻塞事件循环（进度停在 10% 的观感），移入默认线程池执行。
     # 返回值丢弃：主进程只需预热 invnames.pkl 缓存（子进程/线程从磁盘各加载各的）。
     await loop.run_in_executor(None, _build_name_map, SDE_ZIP_PATH)
     with zipfile.ZipFile(SDE_ZIP_PATH, "r") as zf:
-        # 只解析星系文件（region/constellation/stargates 无业务使用，跳过以提速）
+        # 只解析星系文件（stargates 无业务使用，跳过；region/constellation 已由
+        # geo_maps 从路径层级读好，不单独解析为表）
         all_paths = [
             p
             for p in zf.namelist()
@@ -726,7 +905,7 @@ async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None =
     # 无 freeze_support 时子进程挂起且不抛异常，回退兜底救不了 → 一律走线程池。
     if len(all_paths) < 200 or is_frozen():
         results = await asyncio.gather(
-            *[asyncio.to_thread(_parse_universe_chunk_with_names, chunk, SDE_ZIP_PATH) for chunk in chunks]
+            *[asyncio.to_thread(_parse_universe_chunk_with_names, chunk, SDE_ZIP_PATH, geo_maps) for chunk in chunks]
         )
     else:
         try:
@@ -735,14 +914,17 @@ async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None =
             with ProcessPoolExecutor(max_workers=workers) as pool:
                 results = await asyncio.gather(
                     *[
-                        loop.run_in_executor(pool, _parse_universe_chunk_with_names, chunk, SDE_ZIP_PATH)
+                        loop.run_in_executor(pool, _parse_universe_chunk_with_names, chunk, SDE_ZIP_PATH, geo_maps)
                         for chunk in chunks
                     ]
                 )
         except Exception:
             log.warning("多进程解析不可用，回退线程池（较慢）", exc_info=True)
             results = await asyncio.gather(
-                *[asyncio.to_thread(_parse_universe_chunk_with_names, chunk, SDE_ZIP_PATH) for chunk in chunks]
+                *[
+                    asyncio.to_thread(_parse_universe_chunk_with_names, chunk, SDE_ZIP_PATH, geo_maps)
+                    for chunk in chunks
+                ]
             )
     for _r_regions, _r_const, r_sys, _r_sg in results:
         systems.extend(r_sys)

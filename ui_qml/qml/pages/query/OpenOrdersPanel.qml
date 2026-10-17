@@ -36,12 +36,13 @@ Item {
     //: 「角色」加在**末尾**：ESI 会汇总全部已绑定角色，不标归属就分不清是谁的挂单。
     //: 它比位置列还宽 —— 名字截成「Me...」等于没标（实测过）。
     //: 「位次」那格写 0：它的宽度**不按比例分**，由 `fitTexts` 按当前字号量出来（见下）——
-    //: 按比例分时 font_size=14 下「不在首位」正好差一点被 elide。
+    //: 按比例分时 font_size=14 下状态文案正好差一点被 elide。
     readonly property var ratios: [2.1, 0, 1.3, 1.4, 1.8, 2.2]
-    //: 「位次」列必须完整显示「不在首位」；排在物品之后而不是末尾，因为 1024 窄窗口下
-    //: 右栏右边会被窗口裁掉，末尾那列（角色）整列看不见。
-    //: 文本写在桥的 `query_dashboard_bridge._NOT_FIRST_TEXT`，这里只负责「按字号量宽」。
-    readonly property var fitTexts: ["", "不在首位", "", "", "", ""]
+    //: 「位次」列是**全市场判定**（首位/并列最优/不在首位/无法判定，括号里带最优价与行情时间），
+    //: 必须完整显示最长的一种；排在物品之后而不是末尾，因为 1024 窄窗口下右栏右边会被窗口裁掉。
+    //: 文本写在桥的 `query_dashboard_bridge._FIRST_TEXT/_NOT_FIRST_TEXT/_TIED_FIRST_TEXT/_UNKNOWN_TEXT`，
+    //: 这里只负责「按字号量宽」（示例串取 10 位整数价格，比实际常见值更宽，宁宽勿截）。
+    readonly property var fitTexts: ["", "不在首位（最优 999,999,999.99，行情 10-17 12:15）", "", "", "", ""]
 
     ColumnLayout {
         anchors.fill: parent
@@ -77,6 +78,23 @@ Item {
                 }
                 ToolTip.visible: esiSyncHover.hovered
                 ToolTip.text: qsTr("从 ESI 拉取所有已绑定角色的钱包余额与未结挂单。余额是绝对值、挂单是完整集，会直接覆盖本地，不再逐条问「成交还是撤销」。")
+            }
+
+            // 显式刷新行情：默认只吃本地缓存（market_prices / 最新快照）判位次；
+            // 点这里才实时拉 ESI 最优买卖价（只影响本次显示、不写库 —— 用户 2026-10-17 拍板）。
+            FButton {
+                objectName: "refreshMarketQuotesButton"
+                text: qsTr("刷新行情")
+                Layout.preferredHeight: root.barH
+                enabled: root.dashboard !== null && !root.dashboard.busy && !root.dashboard.marketQuoteBusy
+                onClicked: if (root.dashboard)
+                    root.dashboard.refreshMarketQuotes()
+
+                HoverHandler {
+                    id: marketQuoteHover
+                }
+                ToolTip.visible: marketQuoteHover.hovered
+                ToolTip.text: root.dashboard ? root.dashboard.marketQuoteStatus : ""
             }
 
             // 与「读取订单」同排：两个都是「从游戏拿数」的动作。**不能挪到钱包余额那一排** ——

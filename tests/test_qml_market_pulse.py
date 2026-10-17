@@ -32,8 +32,8 @@ _CARD_KEYS = (
     ("mpi", "矿物指数 (MPI)"),
     ("pppi", "初级投入品 (PPPI)"),
     ("sppi", "次级投入品 (SPPI)"),
-    ("cpi", "消费品 (CPI·代理)"),
-    ("plex", "PLEX (ISK 锚)"),
+    ("cpi", "消费品 (CPI)"),
+    ("plex", "PLEX (全服统一价)"),
 )
 
 

@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date, timedelta
 
 from services import market_index_service
@@ -32,8 +33,9 @@ JITA_RID = 10000002
 
 #: 五条指数线（计划 §2.1），**顺序即 `index_keys` 的输出顺序**。
 #: 与 `services/market_index_service.INDEX_KEYS` 是同一组字面量：这里各留一份，
-#: 便于分析服务独立于指数模块的物化表/建表流程；但**成分口径不重复实现**：PPPI/SPPI
-#: 走 `market_index_service.production_input_classes`（见 `_index_membership`）。
+#: 便于分析服务独立于指数模块的物化表/建表流程；但**成分口径不重复实现**：
+#: MPI/PPPI/SPPI/CPI 一律取 `market_index_service.official_index_members`
+#: （CCP 官方 MER 成员清单，见 `_index_membership`）。
 INDEX_KEYS = ("mpi", "pppi", "sppi", "cpi", "plex")
 
 #: MPI 的 8 种矿物（CCP 官方口径，type_id 固定）
@@ -45,9 +47,6 @@ PLEX_TYPE_ID = 44992
 #: 准入窗口 / 最少覆盖天数（计划 §2.2 第 1 条「覆盖天数 ≥ 阈值」）
 ADMISSION_DAYS = 30
 ADMISSION_MIN_COVERED_DAYS = 5
-
-#: CPI 代理取「近 30 天成交额 top-N」（计划 §2.1）
-CPI_TOP_N = 300
 
 #: 上榜的**最低流动性**（用户口径：「异动榜希望更实用一些，没什么参考性的产品就不要上榜了」）。
 #: 实测（2026-10，`days=3`）原来 200 条里 **199 条**都满足 `qualified`（近 30 天成交额 > 0
@@ -118,36 +117,28 @@ def _window_price(day_rows: list[tuple[str, float, float]]) -> tuple[float, floa
     return price, spread
 
 
-def _index_membership(conn_mgr, turnover_30d: dict[int, float]) -> dict[int, list[str]]:
-    """`{type_id: 命中的指数 key}`（顺序按 `INDEX_KEYS`）。
+def _index_membership(conn_mgr, type_ids: Iterable[int]) -> dict[int, list[str]]:
+    """`{type_id: 命中的指数 key}`（顺序按 `INDEX_KEYS`），只覆盖传入的 `type_ids`。
 
-    分类口径与**指数篮子同一处实现**（`market_index_service.production_input_classes`）：
-    生产投入品 = 被 ≥ `MIN_VALID_RECIPES`（4）张**有效配方**当材料（有效配方 = 产出物在
-    `ref.item.market_group_id` 非空；见 `market_index_service.VALID_RECIPE_NOTE`）。
+    分类口径与**指数篮子同一处实现**：`market_index_service.official_index_members`
+    （CCP 官方 MER 成员清单，官方逐 type 级，经 `market_group_id` 映射到本地 SDE ——
+    见该模块 docstring）。不再按「被多少张蓝图当材料」的蓝图层级启发式猜：
 
-    - `mpi` / `plex`：固定 type 集合。
-    - `pppi` / `sppi`：生产投入品里，**其产物仍是生产投入品**的是 PPPI（初级投入品），
-      产物不再是生产投入品的是 SPPI（直接供消费品）。
-    - `cpi`：有成交、**不是生产投入品**，按近 30 天成交额取 top-N（代理口径）。
+    - `mpi` / `pppi` / `sppi` / `cpi`：直接取官方篮子成员集合；
+    - `plex`：固定 44992（独立锚，不在 MER 四指数里）。
 
-    旧口径（「被任何一张制造/反应蓝图当材料」）会把只被少量蓝图用到的成品舰船标成 `sppi` ——
-    用户能看见的矛盾：那件东西已不在 SPPI 篮子里，异动榜却还说它是次级投入品。
-
-    近 30 天成交额必须传**全部候选**（CPI 是排名，只看榜上那几条会算错）。
+    旧口径会把只被少量蓝图用到的成品舰船标成 `sppi`，用户能看见的矛盾：那件东西
+    已不在 SPPI 篮子里，异动榜却还说它是次级投入品。
     """
-    pppi, sppi = market_index_service.production_input_classes(conn_mgr)
-    materials = pppi | sppi
-    ranked = sorted(turnover_30d.items(), key=lambda kv: (-kv[1], kv[0]))
-    cpi = {tid for tid, turn in ranked[:CPI_TOP_N] if turn > 0 and tid not in materials}
-
+    official = market_index_service.official_index_members(conn_mgr)
     hit = {
-        "mpi": set(MPI_TYPE_IDS),
-        "pppi": pppi,
-        "sppi": sppi,
-        "cpi": cpi,
+        "mpi": set(official["mpi"]),
+        "pppi": set(official["pppi"]),
+        "sppi": set(official["sppi"]),
+        "cpi": set(official["cpi"]),
         "plex": {PLEX_TYPE_ID},
     }
-    return {tid: [k for k in INDEX_KEYS if tid in hit[k]] for tid in turnover_30d}
+    return {tid: [k for k in INDEX_KEYS if tid in hit[k]] for tid in type_ids}
 
 
 def get_movers(

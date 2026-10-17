@@ -15,10 +15,11 @@ SDE 扩展数据加载器 — 将 16 个新表写入 reference.db
   - researchAgents.yaml     → research_agent 表
   - npcCorporations.yaml    → npc_corporation 表
   - agents.yaml             → agent 表
-  - universe/               → solar_system 表（星系名/安全等级；region/constellation/stargate 无业务使用，不再解析）
+  - universe/               → solar_system 表（星系名/安全等级/**区域归属**）
 """
 
 import asyncio
+import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
@@ -27,7 +28,14 @@ import aiosqlite
 from core.logger import log
 from core.paths import reference_db_path
 from services.db_locks import get_db_write_lock
-from services.importers.sde_cache import ensure_sde_cache, ensure_universe_cache, load_yaml_async
+from services.importers.sde_cache import (
+    SDE_ZIP_PATH,
+    ensure_sde_cache,
+    ensure_sde_zip,
+    ensure_universe_cache,
+    load_universe_geo,
+    load_yaml_async,
+)
 
 DATABASE_PATH = reference_db_path()
 BATCH_SIZE = 500
@@ -482,20 +490,124 @@ async def write_region_names(progress_cb: Callable[[int, str], None] | None = No
     return written
 
 
-async def write_universe(progress_cb=None):
-    """写入 solar_system 表（星系名/安全等级）
+#: 增量回填 UPDATE：只补 NULL（COALESCE 保留已有值），幂等。
+_SYSTEM_GEO_UPDATE_SQL = (
+    "UPDATE solar_system SET region_id = COALESCE(region_id, ?), "
+    "constellation_id = COALESCE(constellation_id, ?) WHERE solar_system_id = ?"
+)
+_SYSTEM_REGION_UPDATE_SQL = "UPDATE solar_system SET region_id = COALESCE(region_id, ?) WHERE solar_system_id = ?"
 
-    region/constellation/stargate 无业务读取，不再解析与写入。
+
+async def _solar_system_columns(db) -> set[str]:
+    """`solar_system` 表现有列（兼容极老/测试用的最小 schema）。"""
+    cursor = await db.execute("PRAGMA table_info(solar_system)")
+    return {str(row[1]) for row in await cursor.fetchall()}
+
+
+def _region_backfill_rows(
+    existing: list[tuple[int, int | None, int | None]],
+    geo: dict[int, tuple[int | None, int | None]],
+) -> list[tuple[int | None, int | None, int]]:
+    """只挑「库里 NULL 且 SDE 能给」的行 → `[(region_id, constellation_id, solar_system_id)]`。
+
+    幂等：第一轮跑完后，库里不再有「NULL 且 geo 有值」的行 → 第二轮返回空。
+    两列都已有值的行不进来（不覆盖既有数据）；geo 里没有的星系也不进来（不误写）。
     """
-    # 以 solar_system 表是否有「非空星系名」为判空（与星系搜索/成本联动判据一致）：
-    # 若此前因空名缓存写入导致名称全空，这里必须重跑补齐（否则 UI 星系显示编号）。
+    rows: list[tuple[int | None, int | None, int]] = []
+    for system_id, region_id, constellation_id in existing:
+        geo_region, geo_constellation = geo.get(int(system_id), (None, None))
+        if (region_id is None and geo_region is not None) or (
+            constellation_id is None and geo_constellation is not None
+        ):
+            rows.append((geo_region, geo_constellation, int(system_id)))
+    return rows
+
+
+async def _backfill_universe_region_ids(progress_cb=None) -> int:
+    """历史库增量回填 `solar_system.region_id/constellation_id`（只补 NULL，不重导其它表）。
+
+    reference.db 是可重建缓存，不需要 user.db 式迁移；下次应用启动自动补齐一次即收敛。
+    只读 SDE zip 的 113 个 region.yaml + 1,175 个 constellation.yaml（**不解析 8,437 个
+    星系 YAML**——实测单线程要 ~11 分钟），星系 ID 用库内「星系名→id」归一匹配。
+    """
+    t0 = time.time()
+    await ensure_sde_zip()
     async with _ref_db() as db:
+        columns = await _solar_system_columns(db)
+        has_constellation = "constellation_id" in columns
+        select_sql = (
+            "SELECT solar_system_id, solar_system_name, region_id, constellation_id FROM solar_system"
+            if has_constellation
+            else "SELECT solar_system_id, solar_system_name, region_id, NULL FROM solar_system"
+        )
+        cursor = await db.execute(select_sql)
+        existing = await cursor.fetchall()
+        before = (await (await db.execute("SELECT COUNT(*) FROM solar_system WHERE region_id IS NULL")).fetchone())[0]
+    name_to_id = {str(row[1] or ""): int(row[0]) for row in existing if row[1]}
+    geo = await asyncio.to_thread(load_universe_geo, SDE_ZIP_PATH, name_to_id)
+    candidates = _region_backfill_rows([(int(r[0]), r[2], r[3]) for r in existing], geo)
+    if progress_cb:
+        progress_cb(60, f"回填星系区域归属 {len(candidates)} 条")
+    if candidates:
+        # 极老/最小 schema 没有 constellation_id 列时只补 region_id（不擅自 ALTER）
+        sql = _SYSTEM_GEO_UPDATE_SQL if has_constellation else _SYSTEM_REGION_UPDATE_SQL
+        params = (
+            candidates if has_constellation else [(region_id, system_id) for region_id, _cid, system_id in candidates]
+        )
+        async with _ref_db() as db:
+            for i in range(0, len(params), BATCH_SIZE):
+                await db.executemany(sql, params[i : i + BATCH_SIZE])
+            await db.commit()
+    async with _ref_db() as db:
+        after = (await (await db.execute("SELECT COUNT(*) FROM solar_system WHERE region_id IS NULL")).fetchone())[0]
+    log.info(
+        "solar_system 区域归属增量回填：更新 %s 行（region_id NULL %s → %s，耗时 %.1fs）",
+        len(candidates),
+        before,
+        after,
+        time.time() - t0,
+    )
+    return len(candidates)
+
+
+async def write_universe(progress_cb=None):
+    """写入 solar_system 表（星系名/安全等级/**区域归属**）。
+
+    就绪判据（task-15）：
+      - 名称齐 且 region_id/constellation_id 无 NULL → 就绪跳过；
+      - 名称齐 但区域归属有 NULL（历史库）→ **只增量回填** NULL 列，不动名称/安全等级；
+      - 名称缺（全新库 / 空名缓存）→ 全量导入（解析 universe 树，system 已带 region_id）。
+    region_id 是订单「是否在首位」反查挂单市场区域的依据；玩家建筑不在 station 表里，
+    仍无法判定（不在本任务范围）。
+    """
+    async with _ref_db() as db:
+        columns = await _solar_system_columns(db)
         c = await db.execute(
             "SELECT COUNT(*) FROM solar_system WHERE solar_system_name IS NOT NULL AND solar_system_name != ''"
         )
-        if (await c.fetchone())[0] > 0:
-            log.info("universe 相关表已就绪，跳过")
+        named = (await c.fetchone())[0]
+        if named and "region_id" not in columns:
+            # 极老/最小 schema 连列都没有：没有可回填的目标，保持原「就绪即跳过」语义
+            log.info("universe 相关表已就绪（该库无 region_id 列，跳过区域回填）")
             return
+        region_null = 0
+        const_null = 0
+        if named:
+            region_null = (
+                await (await db.execute("SELECT COUNT(*) FROM solar_system WHERE region_id IS NULL")).fetchone()
+            )[0]
+            if "constellation_id" in columns:
+                const_null = (
+                    await (
+                        await db.execute("SELECT COUNT(*) FROM solar_system WHERE constellation_id IS NULL")
+                    ).fetchone()
+                )[0]
+    if named and region_null == 0 and const_null == 0:
+        log.info("universe 相关表已就绪（含区域归属），跳过")
+        return
+    if named:
+        await _backfill_universe_region_ids(progress_cb)
+        return
 
     _, _, systems, _ = await ensure_universe_cache(progress_cb)
     if not systems:

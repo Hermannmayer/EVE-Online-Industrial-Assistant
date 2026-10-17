@@ -320,28 +320,18 @@ def pick_demo_items(conn: sqlite3.Connection) -> dict:
         ).fetchall()
     ]
 
-    # 「生产投入品」（与 market_index_service 同一判据：被 ≥4 张有效配方当材料）
-    index_members = [
-        int(r[0])
-        for r in conn.execute(
-            """
-            SELECT bm.material_type_id
-              FROM bp.blueprint_materials bm
-             WHERE bm.activity IN ('manufacturing', 'reaction')
-               AND EXISTS (
-                     SELECT 1 FROM bp.blueprint_products vp
-                     JOIN item vi ON vi.type_id = vp.product_type_id
-                    WHERE vp.blueprint_type_id = bm.blueprint_type_id
-                      AND vp.activity = bm.activity
-                      AND vi.market_group_id IS NOT NULL)
-             GROUP BY bm.material_type_id
-            HAVING COUNT(DISTINCT bm.blueprint_type_id) >= 4
-             ORDER BY bm.material_type_id
-            """
-        ).fetchall()
-    ]
+    # 「生产投入品」：与 market_index_service **同一口径** —— 官方 MER 篮子的 PPPI ∪ SPPI
+    # （官方逐 type 成员清单经 SDE `market_group_id` 映射；这里只取演示数据样本，
+    #  但必须复用同一分类函数，否则演示库的指数篮子会和真实库/官方清单分叉）
+    from services.market_index_service import classify_official_basket
+
+    index_members = sorted(
+        int(type_id)
+        for type_id, market_group_id in conn.execute("SELECT type_id, market_group_id FROM item")
+        if classify_official_basket(int(type_id), market_group_id) in ("pppi", "sppi")
+    )
     if len(index_members) < 60:
-        raise RuntimeError("reference/blueprint 库里「生产投入品」太少，指数篮子会空")
+        raise RuntimeError("SDE item 表里官方 MER 篮子（PPPI∪SPPI）成员太少，指数篮子会空")
     index_step = max(1, len(index_members) // 150)
     index_sample = index_members[::index_step][:150]
 

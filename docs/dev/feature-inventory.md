@@ -167,7 +167,7 @@
 
 | 功能 | 用户能拿它干什么 | 代码入口（文件:方法） |
 |------|------------------|----------------------|
-| 五个指数卡 | 矿物指数（MPI）/ 初级投入品（PPPI）/ 次级投入品（SPPI）/ 消费品（CPI·代理）/ PLEX（全服统一价），基期 = 100 | `services/market_index_service.py:INDEX_KEYS` / `INDEX_LABELS` / `get_index_cards`；`ui_qml/qml/pages/MarketPulsePane.qml`（「市场大盘」「（基期=100 · 只用 Jita 成交均价）」） |
+| 五个指数卡 | 矿物指数（MPI）/ 初级投入品（PPPI）/ 次级投入品（SPPI）/ 消费品（CPI·官方 MER 篮子）/ PLEX（全服统一价），成员取自 CCP MER 官方清单，基期 = 100 | `services/market_index_service.py:INDEX_KEYS` / `INDEX_LABELS` / `get_index_cards` / `classify_official_basket`；`ui_qml/qml/pages/MarketPulsePane.qml`（「市场大盘」「（基期=100 · 只用 Jita 成交均价）」） |
 | 指数折线 + 7 日均线 + 粒度 | 五条基期 = 100 的折线，7 日均线可开关，粒度可切（切粒度只重画已加载的点） | `MarketPulsePane.qml`（「7 日均线」+ 粒度选择）← `market_pulse_bridge.py:MarketPulseBridge.selectIndex` / `setShowMa7` / `setRangeIndex` / `rangeLabels` |
 | 卡片涨跌 | 最近一个点与 7 / 30 / 90 / 180 天涨幅 | `services/market_index_service.py:CHG_WINDOWS` / `_cards_from_points` |
 | 量价 / 广度 | 最新交易日的涨跌家数与成交额 | `MarketPulsePane.qml`（「量价 / 广度」）← `services/market_index_service.py:get_breadth`；`market_pulse_bridge.py:MarketPulseBridge._apply_breadth` |

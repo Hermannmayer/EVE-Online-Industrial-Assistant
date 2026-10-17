@@ -25,8 +25,12 @@
    （`Documents\\EVE\\logs\\Marketlogs\\`，**目录固定不设自定义**），解析走
    `services.order_export`，落 `user.db.open_orders`（`INSERT OR REPLACE`，order_id
    主键 → 重复导入幂等）。
-   **全量展示、不截断**（行数由 `open_orders` 决定，表格自己滚动）；每张表按最优价排
-   （卖升 / 买降），**第 2 行起标红并在物品列加「（不在首位）」**（用户要求）。
+   **全量展示、不截断**（行数由 `open_orders` 决定，表格自己滚动）；每张表按自己挂单的最优价排
+   （卖升 / 买降），「位次」列改为**与本地行情最优价比**的全市场判定（用户 2026-10-17 报障：
+   原实现只是角色自己挂单内部排名，不是游戏市场首位）：优于→首位、同价→并列最优、
+   劣于→不在首位（带最优价与行情时间）、无行情/过期→无法判定；行内标红只用于「不在首位」。
+   默认吃本地 `market_prices`/`market_volume_snapshots` 缓存；「刷新行情」按钮才实时拉 ESI
+   （显式动作，不随页面打开自动请求）。
 
    **导入后弹「订单变动」确认框**（`ui_qml.bridge.order_change_bridge`）：列出本次
    消失 / 数量变少的订单，逐条选「买到了 / 卖完了」（默认）或「手动撤销」；
@@ -45,6 +49,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 import sqlite3
 from collections.abc import Mapping, Sequence
@@ -52,10 +57,11 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Property, QObject, Signal, Slot
+from PySide6.QtCore import Property, QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import QApplication, QWidget
 
 import ui_qml.theme.registry as theme
+from core.constants import TRADE_HUB_IDS, TRADE_HUB_SYSTEM_IDS
 from core.container import get_container
 from core.logger import log
 from services.char_capacity import (
@@ -165,6 +171,16 @@ _TOKEN_NOT_FIRST = "ACCENT_RED"
 #: 量出「不在首位」的宽度（font_size=14 时约 68px），所以字号放大也不会被截。
 _FIRST_TEXT = "首位"
 _NOT_FIRST_TEXT = "不在首位"
+#: 全市场位次的另外两态（用户 2026-10-17 报障后新增）：同价无法确认挂单先后 → 并列；
+#: 本地行情缺失/过旧/地点查不到区域 → 无法判定（**不误标首位**）。
+_TIED_FIRST_TEXT = "并列最优"
+_UNKNOWN_TEXT = "无法判定"
+#: 无法判定用次要文字色；红色只留给「确实不在首位」，避免把「没数据」也染成告警。
+_TOKEN_UNKNOWN = "TEXT_SECONDARY"
+#: 本地行情超过这么多天 → 视为过期（判定依据是行情时间，不是打开页面的时刻）。
+_MARKET_PRICE_MAX_AGE_DAYS = 3
+#: `market_prices.fetch_time` / 快照 `date` 的显示格式（只显示到分钟，列宽才放得下）。
+_MARKET_TIME_DISPLAY = "%m-%d %H:%M"
 _EMPTY_BUY_TEXT = "暂无买单记录"
 _EMPTY_SELL_TEXT = "暂无卖单记录"
 #: 挂单导出目录**固定用游戏默认目录**（用户要求：不再提供自定义目录输入框）。
@@ -539,6 +555,13 @@ class QueryDashboardBridge(QObject):
         self._buy_rows: list[dict] = []
         self._sell_rows: list[dict] = []
         self._orders_loaded = False
+        #: 本地缓存行情（order_id → 最优买卖价+时间）；位次判定的默认依据
+        self._local_market: dict[int, dict] = {}
+        #: 「刷新行情」拉到的实时行情（order_id → 同上），覆盖本地缓存直到下次重载
+        self._live_market: dict[int, dict] = {}
+        self._market_worker: Any = None
+        self._market_busy = False
+        self._market_status = "位次按本地缓存行情判定；点「刷新行情」从 ESI 拉当前最优买卖价（只读、不写库）"
         self._pending_changes: list[dict] = []  # 最近一次导入产生的变动（待用户确认）
         self._esi_worker: Any = None  # 在途的 ESI 钱包/挂单拉取线程（页面销毁时 shutdown）
         self._busy = False
@@ -804,6 +827,70 @@ class QueryDashboardBridge(QObject):
         self._ensure_orders()
         return sum(1 for r in self._order_records if not r["is_buy"])
 
+    @Property(str, notify=changed)
+    def marketQuoteStatus(self) -> str:
+        """「刷新行情」的状态提示（本地缓存口径 / 正在刷新 / 刷新结果）。"""
+        return self._market_status
+
+    @Property(bool, notify=changed)
+    def marketQuoteBusy(self) -> bool:
+        return self._market_busy
+
+    @Slot()
+    def refreshMarketQuotes(self) -> None:
+        """显式刷新：对当前挂单涉及的 `(type_id, region)` 实时拉 ESI 订单簿取最优买卖价。
+
+        用户拍板（2026-10-17）：默认只用本地缓存行情判位次（界面标数据时间）；
+        **不随页面打开自动拉 ESI**，只有点这个按钮才请求，且只更新本次显示（不写库）。
+        """
+        if self._market_busy:
+            return
+        self._ensure_orders()
+        region_by_order = _regions_by_order(self._order_records)
+        pairs = sorted(
+            {
+                (int(r["type_id"]), region_by_order[int(r["order_id"])])
+                for r in self._order_records
+                if int(r.get("order_id") or 0) in region_by_order and int(r.get("type_id") or 0)
+            }
+        )
+        if not pairs:
+            self._market_status = "没有可查行情的挂单（地点未知或无物品类型）"
+            self.changed.emit()
+            return
+        self._market_busy = True
+        self._market_status = f"正在刷新 {len(pairs)} 个市场的行情…"
+        self.changed.emit()
+        worker = _MarketQuoteWorker(pairs, self)
+        self._market_worker = worker
+        worker.result_signal.connect(self._on_market_quotes)
+        worker.finished.connect(lambda: setattr(self, "_market_worker", None))
+        worker.start()
+
+    def _on_market_quotes(self, quotes: dict, error: str) -> None:
+        """Worker 返回实时最优价 → 按 `(type_id, region)` 摊回每条挂单，重算两张表。"""
+        self._market_busy = False
+        if error:
+            self._market_status = error
+            self.changed.emit()
+            return
+        region_by_order = _regions_by_order(self._order_records)
+        applied = 0
+        for record in self._order_records:
+            order_id = int(record.get("order_id") or 0)
+            region_id = region_by_order.get(order_id)
+            if not region_id:
+                continue
+            raw = quotes.get((int(record.get("type_id") or 0), region_id))
+            if raw:
+                self._live_market[order_id] = raw
+                applied += 1
+        self._market_status = (
+            f"已刷新 {applied} 条挂单行情（{datetime.now().strftime(_MARKET_TIME_DISPLAY)}，仅本次显示）"
+        )
+        self._rebuild_order_rows()
+        self.changed.emit()
+
     @Property(str, constant=True)
     def buyEmptyText(self) -> str:
         return _EMPTY_BUY_TEXT
@@ -1057,6 +1144,11 @@ class QueryDashboardBridge(QObject):
         worker, self._esi_worker = self._esi_worker, None
         if worker is not None:
             detach_worker(worker)
+        # 「刷新行情」的 QThread 同理：页面销毁时不能留下还在跑的线程（Qt 会直接崩）
+        market_worker, self._market_worker = self._market_worker, None
+        if market_worker is not None:
+            detach_worker(market_worker)
+        self._market_busy = False
 
     @Slot(result=list)
     def previewOrderChanges(self) -> list[dict]:
@@ -1551,15 +1643,27 @@ class QueryDashboardBridge(QObject):
             return
         self._order_records = [_normalize_order(_row_to_dict(row)) for row in raw]
         self._order_records = [r for r in self._order_records if r["order_id"]]
-        char_names = _char_names()
-        #: 买单按价格**降序**、卖单按价格**升序** —— 各自的最优价排在首位（首行不标红，见
-        #: `_order_cell_rows`）。行长与此表条数无关：这里从来不截断，全部行都交给表格。
-        self._buy_rows = self._order_cell_rows(
-            (r for r in self._order_records if r["is_buy"]), char_names, reverse=True
-        )
-        self._sell_rows = self._order_cell_rows((r for r in self._order_records if not r["is_buy"]), char_names)
+        # 位次判定的默认依据：本地缓存行情（market_prices / 最新成交量快照）。
+        # 用户拍板：默认不自动拉 ESI，实时行情只在点「刷新行情」时拉（见 refreshMarketQuotes）。
+        self._local_market = _load_market_quotes(self._order_records)
+        live_ids = {int(r["order_id"]) for r in self._order_records}
+        self._live_market = {oid: quote for oid, quote in self._live_market.items() if oid in live_ids}
+        self._rebuild_order_rows()
         imported = [str(r["imported_at"]) for r in self._order_records if r["imported_at"]]
         self._last_import_at = max(imported) if imported else ""
+
+    def _rebuild_order_rows(self) -> None:
+        """按当前挂单 + 行情（实时覆盖本地）重算两张表；不重读 user.db。"""
+        char_names = _char_names()
+        market = {**self._local_market, **self._live_market}
+        #: 买单按价格**降序**、卖单按价格**升序**（自己挂单内部排序，便于看最优那笔）；
+        #: 「位次」列才是全市场判定（见 `_order_cell_rows`）。
+        self._buy_rows = self._order_cell_rows(
+            (r for r in self._order_records if r["is_buy"]), char_names, reverse=True, market=market
+        )
+        self._sell_rows = self._order_cell_rows(
+            (r for r in self._order_records if not r["is_buy"]), char_names, market=market
+        )
 
     def _write_orders(self, records: list[dict], imported_at: str) -> None:
         """`INSERT OR REPLACE`（order_id 主键 → 重复导入同一份文件是幂等的）。"""
@@ -1621,7 +1725,11 @@ class QueryDashboardBridge(QObject):
 
     @staticmethod
     def _order_cell_rows(
-        records: Any, char_names: Mapping[int, str] | None = None, *, reverse: bool = False
+        records: Any,
+        char_names: Mapping[int, str] | None = None,
+        *,
+        reverse: bool = False,
+        market: Mapping[int, dict] | None = None,
     ) -> list[dict]:
         """挂单 → 单元格行（形状同 `order_popup_bridge.order_rows`，QML 侧表组件直接吃）。
 
@@ -1630,16 +1738,21 @@ class QueryDashboardBridge(QObject):
         `char_names` 是 `char_id → 角色名`（ESI 汇总多角色时标注归属）；查不到就显示
         `#<id>`，**`char_id` 为 0（老日志的启发式解析）显示「—」而不是「角色 #0」**。
 
-        **排序与「不在首位」标记**（用户要求）：「首位」= 本表**最优价**那一行，所以
-        这里按价格排：卖单升序（`reverse=False`）、买单降序（`reverse=True`）。
-        第 2 行起整行标红（`_TOKEN_NOT_FIRST`），「位次」列写 `_NOT_FIRST_TEXT`，
-        首位那行写 `_FIRST_TEXT`（不标红）；0 行时没有这一列的内容。
-        `sorted` 是稳定的，同价行保持 SQL 的 `order_id DESC` 相对顺序。
+        **排序**（自己挂单内部）：卖单升序（`reverse=False`）、买单降序（`reverse=True`），
+        让最优那笔排在前面；`sorted` 稳定，同价行保持 SQL 的 `order_id DESC` 相对顺序。
+
+        **「位次」列 = 全市场判定**（用户 2026-10-17 报障：旧实现是「角色自己挂单内部排名」，
+        不是游戏市场首位）：`market` 是 `{order_id: {"sell","buy","time"}}` 的行情快照，
+        逐行与**该挂单所在市场的最优价**比较，四态见 `_order_position_text`。
+        整行标红只用于「不在首位」；无法判定用次要文字色（不误标成告警）。
         """
         rows: list[dict] = []
-        for index, record in enumerate(sorted(records, key=lambda r: float(r["price"]), reverse=reverse)):
-            not_first = index > 0
-            token = _TOKEN_NOT_FIRST if not_first else _TOKEN_PLAIN
+        quotes = market or {}
+        for record in sorted(records, key=lambda r: float(r["price"]), reverse=reverse):
+            quote = _side_quote(quotes.get(int(record["order_id"])), bool(record["is_buy"]))
+            position_text, position_token = _order_position_text(float(record["price"]), bool(record["is_buy"]), quote)
+            # 行色：只有「不在首位」整行红；其余（首位/并列/无法判定）默认色
+            row_token = _TOKEN_NOT_FIRST if position_token == _TOKEN_NOT_FIRST else _TOKEN_PLAIN
             location = str(record["location_name"] or "")
             if not location:
                 location = f"#{int(record['location_id'])}" if record["location_id"] else "—"
@@ -1649,16 +1762,245 @@ class QueryDashboardBridge(QObject):
             rows.append(
                 {
                     "cells": [
-                        cell(name, token),
-                        cell(_NOT_FIRST_TEXT if not_first else _FIRST_TEXT, token),
-                        cell(f"{float(record['price']):,.2f}", token),
-                        cell(f"{int(record['volume_remain']):,}/{int(record['volume_total']):,}", token),
-                        cell(location, token),
-                        cell(owner, token),
+                        cell(name, row_token),
+                        cell(position_text, position_token),
+                        cell(f"{float(record['price']):,.2f}", row_token),
+                        cell(f"{int(record['volume_remain']):,}/{int(record['volume_total']):,}", row_token),
+                        cell(location, row_token),
+                        cell(owner, row_token),
                     ]
                 }
             )
         return rows
+
+
+# ════════════════════════════════════════════════════════════
+#  全市场位次：本地行情（默认）/ 显式刷新实时行情
+# ════════════════════════════════════════════════════════════
+
+
+def _format_market_time(raw: str) -> str:
+    """行情时间（`YYYY-MM-DD HH:MM:SS` 或快照 `YYYY-MM-DD`）→ 列内短格式 `MM-DD HH:MM`。"""
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text[:16]
+    if moment.hour or moment.minute:
+        return moment.strftime(_MARKET_TIME_DISPLAY)
+    return moment.strftime("%m-%d")
+
+
+def _is_fresh_market_time(raw: str, *, now: datetime | None = None) -> bool:
+    """行情时间是否在 `_MARKET_PRICE_MAX_AGE_DAYS` 天内（空/不可解析 → False=不能用）。"""
+    try:
+        moment = datetime.fromisoformat(str(raw or "").replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if moment.tzinfo is not None:
+        moment = moment.replace(tzinfo=None)
+    return (now or datetime.now()) - moment <= timedelta(days=_MARKET_PRICE_MAX_AGE_DAYS)
+
+
+def _side_quote(raw: Mapping[str, Any] | None, is_buy: bool) -> dict:
+    """一条挂单的某侧行情 → `{"ok", "price", "time"}` 或 `{"ok": False, "reason"}`。"""
+    if not raw:
+        return {"ok": False, "reason": "无本地行情"}
+    try:
+        best_price = float(raw.get("buy" if is_buy else "sell") or 0)
+    except (TypeError, ValueError):
+        best_price = 0.0
+    if best_price <= 0:
+        return {"ok": False, "reason": str(raw.get("reason") or "无本地行情")}
+    time_text = str(raw.get("time") or "")
+    if not _is_fresh_market_time(time_text):
+        return {"ok": False, "reason": "行情过期"}
+    return {"ok": True, "price": best_price, "time": time_text}
+
+
+def _order_position_text(price: float, is_buy: bool, quote: Mapping[str, Any] | None) -> tuple[str, str]:
+    """挂单价 vs **全市场最优价** → (位次文案, 颜色 token)。
+
+    卖单：自己更低=首位；同价=并列最优（同价先后看他人 `issued`，本地没有 → 不能断言首位）；
+    更高=不在首位。买单反向。无行情/过期/地点查不到 → 无法判定（不误标）。
+    """
+    if not quote or not quote.get("ok"):
+        reason = str((quote or {}).get("reason") or "无本地行情")
+        return f"{_UNKNOWN_TEXT}（{reason}）", _TOKEN_UNKNOWN
+    best = float(quote["price"])
+    when = _format_market_time(str(quote.get("time") or ""))
+    detail = f"最优 {best:,.2f}" + (f"，行情 {when}" if when else "")
+    if abs(float(price) - best) < 1e-6:
+        return f"{_TIED_FIRST_TEXT}（{detail}）", _TOKEN_PLAIN
+    better = float(price) < best if not is_buy else float(price) > best
+    if better:
+        return f"{_FIRST_TEXT}（{detail}）", _TOKEN_PLAIN
+    return f"{_NOT_FIRST_TEXT}（{detail}）", _TOKEN_NOT_FIRST
+
+
+def _regions_by_location(location_ids: set[int]) -> dict[int, int]:
+    """`location_id → region_id`（优先 `reference.db.station → solar_system.region_id`）。
+
+    兜底：当前真实库 `solar_system.region_id` **全部为 NULL**（SDE 解析没把 regionID 写进去，
+    实测 8,437/8,437 行都是 NULL），所以再用 `core.constants` 的贸易中心「星系 → 区域」映射
+    兜住 Jita/Amarr/Dodixie/Rens/Hek 这 5 个星系里的 NPC 空间站。都不是 → 不返回（无法判定）。
+    玩家建筑（id ≥ 1e12）不在 NPC station 表里、拿不到区域 → 同样无法判定。
+    """
+    ids = {int(lid) for lid in location_ids if lid and int(lid) < 10**12}
+    if not ids:
+        return {}
+    try:
+        with get_container().db.connect("ref") as conn:
+            marks = ",".join("?" * len(ids))
+            rows = conn.execute(
+                "SELECT s.station_id, s.solar_system_id, ss.region_id FROM station s "
+                "LEFT JOIN solar_system ss ON ss.solar_system_id = s.solar_system_id "
+                f"WHERE s.station_id IN ({marks})",
+                tuple(ids),
+            ).fetchall()
+    except sqlite3.Error:
+        log.exception("挂单地点→区域查询失败（位次显示为无法判定）")
+        return {}
+    hub_region_by_system = {int(sys_id): TRADE_HUB_IDS[name] for name, sys_id in TRADE_HUB_SYSTEM_IDS.items()}
+    out: dict[int, int] = {}
+    for station_id, solar_system_id, region_id in rows:
+        resolved = int(region_id) if region_id is not None else hub_region_by_system.get(int(solar_system_id or 0))
+        if resolved:
+            out[int(station_id)] = resolved
+    return out
+
+
+def _regions_by_order(records: Sequence[Mapping[str, Any]]) -> dict[int, int]:
+    """`order_id → region_id`（地点查不到区域的不出现在结果里）。"""
+    locations = {int(record.get("location_id") or 0) for record in records}
+    region_by_location = _regions_by_location(locations)
+    out: dict[int, int] = {}
+    for record in records:
+        order_id = int(record.get("order_id") or 0)
+        region_id = region_by_location.get(int(record.get("location_id") or 0))
+        if order_id and region_id:
+            out[order_id] = region_id
+    return out
+
+
+def _load_market_quotes(records: Sequence[Mapping[str, Any]]) -> dict[int, dict]:
+    """为每条挂单取**本地缓存**行情最优买/卖价 → `{order_id: {"sell","buy","time"}}`。
+
+    价格优先 `market_prices`（带 fetch_time），缺失再取 `market_volume_snapshots` 最新一天。
+    区域由挂单地点反查；查不到区域/两表都没有 → 该 order_id 不在返回里（行内显示无法判定）。
+    """
+    region_by_order = _regions_by_order(records)
+    pairs: dict[tuple[int, int], list[int]] = {}
+    for record in records:
+        order_id = int(record.get("order_id") or 0)
+        region_id = region_by_order.get(order_id)
+        type_id = int(record.get("type_id") or 0)
+        if order_id and region_id and type_id:
+            pairs.setdefault((type_id, region_id), []).append(order_id)
+    out: dict[int, dict] = {}
+    if not pairs:
+        return out
+    by_region: dict[int, set[int]] = {}
+    for type_id, region_id in pairs:
+        by_region.setdefault(region_id, set()).add(type_id)
+    raw_by_pair: dict[tuple[int, int], dict] = {}
+    try:
+        with get_container().db.connect("mkt") as conn:
+            has_prices = _table_exists(conn, "market_prices")
+            has_snapshots = _table_exists(conn, "market_volume_snapshots")
+            for region_id, type_ids in by_region.items():
+                marks = ",".join("?" * len(type_ids))
+                if has_prices:
+                    rows = conn.execute(
+                        "SELECT type_id, sell_price, buy_price, fetch_time FROM market_prices "
+                        f"WHERE region_id = ? AND type_id IN ({marks})",
+                        (region_id, *sorted(type_ids)),
+                    ).fetchall()
+                    for row in rows:
+                        raw_by_pair[(int(row[0]), region_id)] = {
+                            "sell": row[1],
+                            "buy": row[2],
+                            "time": str(row[3] or ""),
+                        }
+                missing = [tid for tid in type_ids if (tid, region_id) not in raw_by_pair]
+                if has_snapshots and missing:
+                    marks = ",".join("?" * len(missing))
+                    rows = conn.execute(
+                        "SELECT type_id, date, sell_price, buy_price FROM market_volume_snapshots "
+                        f"WHERE region_id = ? AND type_id IN ({marks}) ORDER BY date DESC",
+                        (region_id, *sorted(missing)),
+                    ).fetchall()
+                    for row in rows:
+                        key = (int(row[0]), region_id)
+                        if key in raw_by_pair:
+                            continue
+                        raw_by_pair[key] = {"sell": row[2], "buy": row[3], "time": str(row[1] or "")}
+    except sqlite3.Error:
+        log.exception("本地行情读取失败（位次显示为无法判定）")
+        return out
+    for (type_id, region_id), order_ids in pairs.items():
+        raw = raw_by_pair.get((type_id, region_id))
+        if raw is None:
+            raw = {"sell": None, "buy": None, "time": "", "reason": "无本地行情"}
+        for order_id in order_ids:
+            out[order_id] = raw
+    return out
+
+
+class _MarketQuoteWorker(QThread):
+    """显式刷新行情：对一批 `(type_id, region_id)` 拉 ESI 订单簿，取最优买/卖价。
+
+    **只读取、不写库**；结果只用于本次显示（用户拍板：默认吃本地缓存，点按钮才请求 ESI）。
+    """
+
+    result_signal = Signal(dict, str)  # {(type_id, region_id): {sell,buy,time}}, error
+
+    def __init__(self, pairs: Sequence[tuple[int, int]], parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._pairs = list(pairs)
+
+    def run(self) -> None:
+        try:
+            self.result_signal.emit(asyncio.run(self._fetch_all()), "")
+        except Exception as e:
+            log.exception("刷新订单行情失败")
+            self.result_signal.emit({}, f"行情刷新失败：{e}")
+
+    async def _fetch_all(self) -> dict:
+        from services.client import APIClient
+
+        now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        quotes: dict[tuple[int, int], dict] = {}
+        async with APIClient(timeout=60) as client:
+            for type_id, region_id in self._pairs:
+                base = f"https://esi.evetech.net/latest/markets/{region_id}/orders/?type_id={type_id}&order_type=all"
+                status, first, headers = await client.fetch_state(f"{base}&page=1")
+                if status is None or status == 404:
+                    continue
+                try:
+                    pages = min(int(headers.get("X-Pages", 1)), 20)
+                except (TypeError, ValueError):
+                    pages = 1
+                orders = list(first or [])
+                failed = False
+                for page in range(2, pages + 1):
+                    page_status, chunk, _ = await client.fetch_state(f"{base}&page={page}")
+                    if page_status is None:
+                        failed = True
+                        break
+                    orders.extend(chunk or [])
+                if failed:
+                    continue
+                sells = [float(o["price"]) for o in orders if not o.get("is_buy_order") and o.get("price")]
+                buys = [float(o["price"]) for o in orders if o.get("is_buy_order") and o.get("price")]
+                quotes[(type_id, region_id)] = {
+                    "sell": min(sells) if sells else None,
+                    "buy": max(buys) if buys else None,
+                    "time": now_text,
+                }
+        return quotes
 
 
 def _normalize_order(row: Mapping[str, Any]) -> dict:
