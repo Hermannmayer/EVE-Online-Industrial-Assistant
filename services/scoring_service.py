@@ -358,14 +358,25 @@ class ScoringService:
         mat_cost = breakdown.get("material_cost", 0) or 0
         revenue_per_run = per_run.get("revenue_per_run", 0) or 0
 
-        # 材料按**整批**取整（见 domain.formulas.material_total_for_runs）。
-        # 旧口径是「单轮取整 × 总倍数」，对基础量 ≥2 的材料系统性多要货。
-        materials = _batch_materials(
-            per_run.get("materials") or [],
-            total_mult,
-            int(breakdown.get("bp_me") or 0),
-            float(breakdown.get("structure_mat_saving") or 1.0),
-        )
+        # 材料**逐线（逐作业）**取整再求总和：每条并行线在 EVE 里是独立作业，
+        # 材料效率的取整只作用于单个作业；把 runs×parallels 当成**一个作业**整批取整
+        # 会抹掉每条线各自的尾数、系统性少要货。
+        # 实测计划 477「咒逐级」（runs=1/parallels=6/ME3，聚变推进器 base=30）：
+        # 整批 175 / 逐线 30×6=180 —— 按 175 采购后逐条启动，第 6 条误报缺 5（25/30）。
+        # 旧口径「单轮取整 × 总倍数」同样错（见 tests/test_scoring_service.py 的整批锚点）。
+        bp_me = int(breakdown.get("bp_me") or 0)
+        structure_saving = float(breakdown.get("structure_mat_saving") or 1.0)
+        parallels_n = max(parallels, 1)
+        materials = [
+            {
+                **mat,
+                "total_qty": material_total_for_runs(
+                    mat, runs_only, me_level=bp_me, structure_mat_saving=structure_saving
+                )
+                * parallels_n,
+            }
+            for mat in (per_run.get("materials") or [])
+        ]
         total_mat_cost = sum((m.get("total_qty") or 0) * (m.get("unit_price") or 0) for m in materials)
 
         # 利润用**增量式**重算：只把材料省下的那部分加回去。
@@ -467,6 +478,29 @@ class ScoringService:
         return per_run, total
 
     # ── 统一计划计算方法 ──
+
+    @staticmethod
+    def _bound_bpc_costs(db, plan_id: int | None) -> list[float]:
+        """计划绑定蓝图里 **BPC（is_bpo=0）** 的每流程成本，按绑定顺序返回（BPO → 0）。
+
+        只对 manufacturing 评分生效：BPC 的 `cost_per_run` 由发明完成时自动写入
+        （`plan_execution._deposit_research_output`）或用户在机库手填；有值时用它替代
+        「按市场重新推算的研究成本」，让制造利润反映真实蓝图成本。无绑定/旧库 → []。
+        """
+        if db is None or not plan_id:
+            return []
+        try:
+            with db.connect("user") as conn:
+                rows = conn.execute(
+                    "SELECT COALESCE(ub.cost_per_run, 0) "
+                    "FROM plan_blueprint_bindings b "
+                    "JOIN user_blueprints ub ON ub.id = b.blueprint_id "
+                    "WHERE b.plan_id = ? ORDER BY b.blueprint_id",
+                    (int(plan_id),),
+                ).fetchall()
+        except Exception:  # 旧库缺 plan_blueprint_bindings / 测试库未建该表 → 不启用
+            return []
+        return [float(r[0] or 0.0) for r in rows]
 
     @staticmethod
     def calculate_plan_metrics(
@@ -595,6 +629,16 @@ class ScoringService:
                     runs=runs,
                     parallels=parallels,
                 )
+            # BPC 成本（T2 发明蓝图）：绑定了有 cost_per_run 的 BPC 时，把该值作为本线
+            # 每流程的研究成本（覆盖按市场重算的口径，见 _bound_bpc_costs）。
+            bpc_costs = ScoringService._bound_bpc_costs(getattr(svc, "_db", None), plan_data.get("id"))
+            # 单次路径没有「逐线」维度：取已绑定 BPC 成本的平均值（总量与逐线一致）。
+            # 预调用与下面的正式调用必须传**同一份** research_costs —— 否则预调用会先把
+            # 「无 BPC 成本」的结果写进缓存，正式调用命中旧值（缓存 key 已含 rc 指纹）。
+            _positive_bpc_costs = [c for c in bpc_costs if c > 0]
+            _single_bpc_cost = sum(_positive_bpc_costs) / len(_positive_bpc_costs) if _positive_bpc_costs else 0.0
+            single_research_costs = {type_id: _single_bpc_cost} if _single_bpc_cost > 0 else None
+
             per_run = svc.calc_manufacturing_score(
                 type_id=type_id,
                 char_config=char_config,
@@ -611,6 +655,7 @@ class ScoringService:
                 system_id=effective_system_id,
                 mat_price_mult=mat_mult,
                 prod_price_mult=prod_mult,
+                research_costs=single_research_costs,
             )
             total = ScoringService.calculate_total_metrics(per_run, runs, parallels) or {}
 
@@ -636,8 +681,13 @@ class ScoringService:
                         system_id=effective_system_id,
                         mat_price_mult=mat_mult,
                         prod_price_mult=prod_mult,
+                        research_costs=(
+                            {type_id: bpc_costs[line_idx]}
+                            if line_idx < len(bpc_costs) and bpc_costs[line_idx] > 0
+                            else None
+                        ),
                     )
-                    for line_me, line_te in line_levels
+                    for line_idx, (line_me, line_te) in enumerate(line_levels)
                 ]
                 per_run, total = ScoringService.combine_per_line(per_line, runs)
             else:
@@ -657,6 +707,7 @@ class ScoringService:
                     system_id=effective_system_id,
                     mat_price_mult=mat_mult,
                     prod_price_mult=prod_mult,
+                    research_costs=single_research_costs,
                 )
                 total = ScoringService.calculate_total_metrics(per_run, runs, parallels) or {}
         except Exception:

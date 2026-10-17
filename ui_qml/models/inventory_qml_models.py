@@ -4,8 +4,8 @@
   「规划占用」带 tooltip、「缺口」为红色 token。展示规则照搬 `InvTableModel.data()`。
   末列「估值可信」标出卖单价离群的行（`price_credible is False`）：该行按卖单价的估值
   已不计入仓库页底部总额，这两列一起标橙并带 tooltip 说明原因。
-- `BlueprintQmlModel`：蓝图（13 列，「状态」列由 `services.inventory_manager` 批量查出、
-  多状态以 ` · ` 并列）。「类型」列在被活跃计划占用时标橙、
+- `BlueprintQmlModel`：蓝图（14 列，「状态」列由 `services.inventory_manager` 批量查出、
+  多状态以 ` · ` 并列；末列「蓝图成本」仅 T2 蓝图拷贝显示数值、其余显示 —）。「类型」列在被活跃计划占用时标橙、
   「每流程利润」与「利润率」列按正负染绿红。展示规则照搬 `BlueprintTableModel.data()`。
 
 两个模型都补了 `set_rows`：原版每次刷新都**新建**模型实例
@@ -184,8 +184,8 @@ class InvQmlModel(InvTableModel):
 class BlueprintQmlModel(BlueprintTableModel):
     """蓝图表：命名角色 + 可整体换行。"""
 
-    #: 可排序列（父类 `sort()` 覆盖 0..12 全部列）
-    SORTABLE = frozenset(range(13))
+    #: 可排序列（父类 `sort()` 覆盖 0..13 全部列）
+    SORTABLE = frozenset(range(14))
 
     def __init__(self, rows: list[dict] | None = None) -> None:
         super().__init__(list(rows or []))
@@ -234,8 +234,8 @@ class BlueprintQmlModel(BlueprintTableModel):
         if role == _B_ICON:
             return _png_url(row.get("product_type_id")) if col == 0 else ""
         if role == _B_ALIGN:
-            # 「状态」列是文字，左对齐（数值列 2..11 才右对齐）
-            return 2 <= col <= 11
+            # 「类型/状态」列是文字，左对齐；数值列（含末列「蓝图成本」）右对齐
+            return 2 <= col <= 11 or col == 13
         if role == _B_FG:
             if col == 2 and row.get("occupied"):
                 return _token("ACCENT_ORANGE")
@@ -295,6 +295,12 @@ class BlueprintQmlModel(BlueprintTableModel):
             return "-" if margin is None else f"{margin:+.1f}%"
         if col == 12:
             return str(row.get("status") or "-")
+        if col == 13:
+            # 「蓝图成本」：只有 T2 蓝图拷贝有值，T1/T3/原图显示 —（与展示模型同口径）
+            if row.get("tech_level") != 2 or row.get("is_bpo"):
+                return "—"
+            cost = row.get("cost_per_run")
+            return f"{cost:,.0f} ISK" if cost else "—"
         return ""
 
     @staticmethod

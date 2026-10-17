@@ -646,6 +646,21 @@ def _plan_total_runs(plan: dict) -> int:
     return max(int(plan.get("runs") or 0), 0) * max(int(plan.get("parallels") or 1), 1)
 
 
+def _manufacturing_need(qty: int, wastefactor: int, me_level: int, runs: int, parallels: int) -> int:
+    """一条制造配方的采购/校验需求 = **逐线各自整批取整再求和**。
+
+    每条并行线在 EVE 里是**独立作业**（一条线一张蓝图），取整只作用于单个作业：
+    `Σ_i ceil(qty × runs × (100-ME)/100 × 减免)`；均匀线时即
+    ``ceil(qty × runs × …) × parallels``。
+
+    不能把 `runs × parallels` 当成**一个作业**整批取整 —— 那会抹掉每条线各自的尾数、
+    **少要货**（实测计划 477「咒逐级」runs=1/parallels=6/ME3：聚变推进器整批 175、
+    逐线 30×6=180；按 175 采购后逐条启动，第 6 条误报缺 5（25/30）。同一批受影响的
+    还有 线性护盾 88→90、纳米电子 961→966、超立方 350→354）。
+    """
+    return calc_material_for_runs(qty, wastefactor, me_level, max(1, int(runs))) * max(1, int(parallels))
+
+
 def _science_material_requirements(plan: dict) -> list[dict]:
     """科研计划要买的材料（数据核心 / 解码器 / 拷贝与研究的耗材）[{type_id, name, need}]。
 
@@ -744,6 +759,8 @@ def aggregate_procurement(
         if total_runs <= 0:
             continue  # 0 轮 = 0 材料、0 产出：这条产线不贡献任何需求
         me = int(plan.get("me_level") or 0)
+        runs = max(int(plan.get("runs") or 0), 0)
+        parallels = max(int(plan.get("parallels") or 1), 1)
         bp = get_blueprint_products(conn, pid, ACTIVITY_MANUFACTURING)
         if not bp:
             continue
@@ -755,7 +772,8 @@ def aggregate_procurement(
         for mid, qty, wf in mats:
             if mid in sub_prod_ids:
                 continue  # 自制组件：由子项产线覆盖，买其原材料（子线计划已计入）
-            need = calc_material_for_runs(qty, wf, me, total_runs)
+            # 逐线（逐作业）取整再求和：与启动闸门 `material_requirements` 同口径
+            need = _manufacturing_need(qty, wf, me, runs, parallels)
             bucket[mid] = bucket.get(mid, 0.0) + float(need)
             _cache_item_meta(conn, mid, names, volumes, zh_en)
 
@@ -890,6 +908,8 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]:
         if total_runs <= 0:
             continue  # 与 aggregate_procurement 同一口径：0 轮不贡献需求
         me = int(plan.get("me_level") or 0)
+        runs = max(int(plan.get("runs") or 0), 0)
+        parallels = max(int(plan.get("parallels") or 1), 1)
         bp = get_blueprint_products(conn, pid, ACTIVITY_MANUFACTURING)
         if not bp:
             continue
@@ -901,7 +921,8 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]:
         for mid, qty, wf in mats:
             if mid in sub_prod_ids:
                 continue  # 自制组件：由子项产线覆盖，买其原材料（子线计划已计入）
-            need = calc_material_for_runs(qty, wf, me, total_runs)
+            # 逐线（逐作业）取整再求和：与 aggregate_procurement / 启动闸门同口径
+            need = _manufacturing_need(qty, wf, me, runs, parallels)
             entry = result.get(mid)
             if entry is None:
                 entry = result[mid] = _item_meta_entry(conn, mid)

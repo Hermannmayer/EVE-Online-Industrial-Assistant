@@ -18,6 +18,29 @@ def _inventory(db_manager, hangar_id, type_id, qty):
 
 
 class TestAggregateProcurement:
+    def test_parallel_lines_need_per_job_rounding(self, temp_db):
+        """问题 A 回归：制造需求按「逐线（逐作业）整批取整再求和」。
+
+        真实计划 477「咒逐级」：6 条并行线、每条 base=30/ME3 → 每线 ceil(29.1)=30，
+        合计 180；把 runs×parallels 当一个作业整批只有 175 → 采购少买 5，
+        逐条启动到第 6 条就误报缺料（界面 25/30，用户实测）。
+        这里用 base=23、7 条线构造判别性锚点：整批 ceil(23×7×0.97)=157，
+        逐线 ceil(23×0.97)=23 → ×7 = **161**。
+        """
+        with temp_db.connect("bp") as conn:
+            conn.execute("INSERT INTO blueprint_materials VALUES (3001, 'manufacturing', 1999, 23, 10)")
+        plan = {"product_type_id": 2001, "runs": 1, "parallels": 7, "me_level": 3}
+
+        with temp_db.connect("user", "ref", "bp", "mkt") as conn:
+            rows, _cost, _vol = aggregate_procurement(conn, [plan], price_type="sell")
+        by_type = {r["type_id"]: r for r in rows}
+        assert by_type[1999]["to_buy"] == 161, "采购小助手必须按逐线取整求和"
+
+        # 填料总表（材料汇总弹窗）同口径 —— 两条入口不能分叉
+        with temp_db.connect("user", "ref", "bp", "mkt") as conn:
+            mats = collect_direct_materials(conn, [plan])
+        assert mats[1999]["total_qty"] == 161, "collect_direct_materials 必须与采购聚合同口径"
+
     def test_basic_cost_and_volume(self, temp_db):
         """渡鸦级 1 流程：1000 三钛 + 500 类银；sell 价 5/9；无库存。"""
         plan = {"product_type_id": 2001, "runs": 1, "parallels": 1, "me_level": 0}

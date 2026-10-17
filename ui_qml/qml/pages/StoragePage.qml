@@ -567,6 +567,18 @@ Item {
                         onTextChanged: if (page.inv)
                             page.inv.setBlueprintSearch(text)
                     }
+
+                    FButton {
+                        text: qsTr("批量填充 T2 蓝图成本")
+                        onClicked: if (page.inv)
+                            page.inv.autoFillSelectedBlueprints()
+
+                        HoverHandler {
+                            id: bpFillCostHover
+                        }
+                        ToolTip.visible: bpFillCostHover.hovered
+                        ToolTip.text: qsTr("对蓝图表中选中的 T2 蓝图拷贝，按发明期望成本批量填写「蓝图成本」列（右键菜单里也有单张入口）")
+                    }
                 }
 
                 Item {

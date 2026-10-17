@@ -245,15 +245,36 @@ class TestMaterialRequirements:
     def test_regression_whole_batch_rounding_not_per_run(self, user_env):
         """回归：实机那一单 —— 材料刚好够，却被逐轮取整误判成缺 502。
 
-        基础量 22、ME10、502 轮 × 5 线 = 2510 次作业：
+        基础量 22、ME10、**一个作业 2510 轮**（runs=2510 / parallels=1）：
         逐轮口径 `ceil(22×0.9)×2510 = 20×2510 = 50,200`（错，多要 502）；
         整批口径 `ceil(22×2510×0.9) = 49,698`（对，实机 `material_short` 记的正是多要 502）。
         """
         user_env.scoring.calculate_plan_metrics.return_value = {
             "materials": [{"type_id": 16672, "name": "碳纤维", "qty": 20, "total_qty": 49698}]
         }
-        reqs = material_requirements({"runs": 502, "parallels": 5, "char_name": ""})
+        reqs = material_requirements({"runs": 2510, "parallels": 1, "char_name": ""})
         assert reqs[0]["need"] == 49698
+
+    def test_parallel_lines_round_per_job_not_one_big_job(self, user_env):
+        """问题 A 回归（2026-10-17 用户报）：parallels 条并行线 = P 个**独立作业**。
+
+        评分单次路径的 `total_qty` 是「把 runs×parallels 当一个作业」的整批量；但每条线
+        在 EVE 里是独立作业、各自取整。真实计划 477「咒逐级」（runs=1/parallels=6/ME3，
+        聚变推进器 base=30）：整批 175，逐线 30×6=180 —— 按 175 采购后逐条启动，
+        第 6 条误报缺 5（界面 25/30，用户实测）。
+        """
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 11532, "name": "聚变推进器", "qty": 30, "total_qty": 175}]
+        }
+        reqs = material_requirements({"id": 1, "product_type_id": 11188, "runs": 1, "parallels": 6, "me_level": 3})
+        assert reqs == [{"type_id": 11532, "name": "聚变推进器", "need": 180}]
+
+        # 单线（parallels=1）保持「一个作业整批取整」：30×1 → ceil(29.1)=30
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 11532, "name": "聚变推进器", "qty": 30, "total_qty": 30}]
+        }
+        single = material_requirements({"id": 2, "product_type_id": 11188, "runs": 1, "parallels": 1, "me_level": 3})
+        assert single[0]["need"] == 30
 
     def test_falls_back_to_per_run_when_total_qty_absent(self, user_env):
         """没有 `total_qty`（如科研分支或旧缓存）时回退旧口径，不炸。"""
@@ -2311,3 +2332,117 @@ class TestMaterialRequirementFailureGuard:
 
         assert _get_plan(user_env.db, pid)["status"] == "ready", "注入连接路径失败必须回滚状态"
         assert 2001 not in inventory_manager.get_hangar_stock(1)
+
+
+class TestSubitemCostSnapshotAfterChildRemoval:
+    """问题 B / 审计 03-11 回归：子项行删除后，母项的「该子项成本」不得回退买入市价。
+
+    根因：母项成本依赖同组子项计划行（`services.plan_metrics.mother_subitem_cost_map`）；
+    子项行被自动清理 / 手动删除后拿不到自制价 → 回退**买入市价**，成本偏高、利润被吃掉。
+    修复：删除/完成前把子项「单件自制成本 + 覆盖数量」固化进母项 `subitem_cost_snapshot`，
+    读端现算优先、缺失类型从 snapshot 回退 → 母项成本/利润与删除前逐值一致。
+    """
+
+    _CHILD_TYPE = 2002  # bp 3002 → 每轮 1 件
+    _UNIT_PRICE = 900.0
+
+    @staticmethod
+    def _setup(user_env, *, child_status: str = "ready") -> tuple[int, int]:
+        """母项(pending/group 7) + 子项(2 轮 → 产出 2 件、整线制造价 1200)。"""
+        db = user_env.db
+        # 子项评分结果：材料 1200 + 安装费 0 → 整线 1200；÷ 产出 2 件 = 单件 600
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "material_cost": 1200.0,
+            "breakdown": {"installation_fee": 0.0},
+        }
+        mother = _insert_plan(db, group_number=7, sub_level=0, status="pending")
+        child = _insert_plan(
+            db,
+            product_type_id=TestSubitemCostSnapshotAfterChildRemoval._CHILD_TYPE,
+            runs=2,
+            parallels=1,
+            group_number=7,
+            sub_level=1,
+            source_mother_ids=str(mother),
+            status=child_status,
+        )
+        return mother, child
+
+    @staticmethod
+    def _expected_map(child: int) -> dict:
+        """删除前读端口径：现算子项行 → 单件 600 / 覆盖 2 件。"""
+        from services.plan_metrics import SubitemCost
+
+        return {TestSubitemCostSnapshotAfterChildRemoval._CHILD_TYPE: SubitemCost(unit_cost=600.0, covered_qty=2.0)}
+
+    @classmethod
+    def _adjusted(cls, sub_cost_map: dict) -> tuple[float, float, float]:
+        """母项个人口径成本/利润/利润率（材料表里子项 10 件、其余按市价 900）。"""
+        from services.plan_metrics import adjust_mother_metrics
+
+        metrics = {
+            "revenue": 10000.0,
+            "fees": 100.0,
+            "materials": [
+                {
+                    "type_id": cls._CHILD_TYPE,
+                    "qty": 5,
+                    "total_qty": 10,
+                    "unit_price": cls._UNIT_PRICE,
+                }
+            ],
+        }
+        material, profit, margin, _overrides = adjust_mother_metrics(metrics, sub_cost_map, 2)
+        return material, profit, margin
+
+    def test_child_completion_and_auto_cleanup_keep_mother_cost(self, user_env):
+        """子项完成 → 母项下线自动清理子项行 → 母项成本/利润与删除前一致。"""
+        import json as _json
+
+        mother, child = self._setup(user_env)
+        db = user_env.db
+        expected = self._expected_map(child)
+        before = self._adjusted(expected)
+
+        # ① 子项完成时就要固化（之后子项行可能被清理）
+        res = complete_plan(_get_plan(db, child))
+        assert res["ok"], res
+        snapshot = _json.loads(_get_plan(db, mother)["subitem_cost_snapshot"])
+        assert snapshot[str(self._CHILD_TYPE)]["unit_cost"] == pytest.approx(600.0)
+        assert snapshot[str(self._CHILD_TYPE)]["covered_qty"] == pytest.approx(2.0)
+
+        # ② 母项完成 → 自动清理已完成的子项行
+        with db.connect("user") as conn:
+            conn.execute("UPDATE production_plans SET status='completed' WHERE id=?", (mother,))
+        assert plan_execution.remove_completed_children(7) == 1
+        assert _row_exists(db, child) is False
+
+        # ③ 子项行没了，母项读端必须仍用 snapshot 的自制价（而不是 900 市价）
+        from services.plan_metrics import mother_subitem_cost_map
+
+        after_map = mother_subitem_cost_map({}, _get_plan(db, mother))
+        assert after_map[self._CHILD_TYPE].unit_cost == pytest.approx(600.0)
+        assert after_map[self._CHILD_TYPE].covered_qty == pytest.approx(2.0)
+        assert self._adjusted(after_map) == pytest.approx(before), "母项成本/利润/利润率必须保持删除前数值"
+
+    def test_manual_delete_keeps_mother_cost(self, user_env):
+        """UI 手动删掉子项行（plan_repository.delete_many）→ 母项成本仍按固化值，不回落市价。"""
+        import json as _json
+
+        mother, child = self._setup(user_env, child_status="completed")
+        db = user_env.db
+        expected = self._expected_map(child)
+        before = self._adjusted(expected)
+
+        repo = PlanRepository(db)
+        assert repo.delete_many([child]) == 1
+        assert _row_exists(db, child) is False
+
+        mother_row = _get_plan(db, mother)
+        snapshot = _json.loads(mother_row["subitem_cost_snapshot"])
+        assert snapshot[str(self._CHILD_TYPE)]["unit_cost"] == pytest.approx(600.0)
+
+        from services.plan_metrics import mother_subitem_cost_map
+
+        after_map = mother_subitem_cost_map({}, mother_row)
+        assert self._adjusted(after_map) == pytest.approx(before), "手动删行后母项成本不得回退市价"

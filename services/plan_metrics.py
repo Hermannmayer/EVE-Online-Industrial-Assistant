@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from domain.formulas import calc_eiv, calc_job_cost_fees, calc_material_for_runs
@@ -45,6 +46,103 @@ class SubitemCost:
 
     unit_cost: float
     covered_qty: float | None = None
+
+
+# ── 子项自制成本固化（审计 03-11）──
+# 母项成本依赖同组子项计划行；子项行被删除（母项下线自动清理 / 手动删行）后取不到
+# 自制价，母项会回退**买入市价**→成本偏高。写端在删除前把子项的单件自制成本 +
+# 覆盖数量固化进母项 `production_plans.subitem_cost_snapshot`（JSON），读端缺失类型
+# 从 snapshot 回退。键是子项 `product_type_id`（字符串），值是
+# `{"unit_cost": float, "covered_qty": float | None}`。
+
+
+def parse_subitem_snapshot(raw: str | None) -> dict[int, SubitemCost]:
+    """母项 `subitem_cost_snapshot` 列 → ``{子项 type_id: SubitemCost}``。
+
+    容错：空串 / 坏 JSON / 结构异常 → ``{}``（读端回退现算/市价，不阻断重算）。
+    兼容值直接是数字的简写格式（``{"123": 45.6}`` → unit_cost=45.6, covered_qty=None）。
+    """
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[int, SubitemCost] = {}
+    for key, value in data.items():
+        try:
+            type_id = int(key)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(value, dict):
+            try:
+                unit_cost = float(value.get("unit_cost") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            raw_covered = value.get("covered_qty")
+            try:
+                covered = float(raw_covered) if raw_covered is not None else None
+            except (TypeError, ValueError):
+                covered = None
+        elif isinstance(value, int | float) and not isinstance(value, bool):
+            unit_cost, covered = float(value), None
+        else:
+            continue
+        if unit_cost > 0:
+            out[type_id] = SubitemCost(unit_cost=unit_cost, covered_qty=covered)
+    return out
+
+
+def merge_subitem_snapshot(raw: str | None, entries: dict[int, dict]) -> str:
+    """既有 snapshot + 新条目 → 新 JSON 串（保留已有值，同 type_id 用新值覆盖）。
+
+    entries: ``{子项 product_type_id: {"unit_cost": float, "covered_qty": float | None}}``。
+    空 entries → 原样返回（不制造无意义的空串变化）；非法条目直接跳过。
+    """
+    if not entries:
+        return raw or ""
+    merged: dict[str, dict] = {
+        str(type_id): {"unit_cost": sub.unit_cost, "covered_qty": sub.covered_qty}
+        for type_id, sub in parse_subitem_snapshot(raw).items()
+    }
+    for type_id, entry in entries.items():
+        try:
+            unit_cost = float(entry.get("unit_cost") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if unit_cost <= 0:
+            continue
+        raw_covered = entry.get("covered_qty")
+        try:
+            covered = float(raw_covered) if raw_covered is not None else None
+        except (TypeError, ValueError):
+            covered = None
+        merged[str(int(type_id))] = {"unit_cost": unit_cost, "covered_qty": covered}
+    return json.dumps(merged, ensure_ascii=False, sort_keys=True)
+
+
+def subitem_snapshot_entry(
+    plan: dict, metrics: dict, *, output_qty: int | float | None = None
+) -> tuple[int, dict] | None:
+    """子项计划 + 评分结果 → `(product_type_id, snapshot 条目)`；无可固化成本 → None。
+
+    单位成本口径与 `mother_subitem_cost_map` 的现算完全一致：整线制造价 ÷ 子项实际产出量
+    （拿不到产出量时退回整线价 + covered_qty=None，与读端旧口径同义）。
+    """
+    product_type_id = plan.get("product_type_id")
+    if not product_type_id:
+        return None
+    total_cost = child_manufacturing_cost(plan, metrics)
+    if total_cost <= 0:
+        return None
+    try:
+        covered = float(output_qty) if output_qty is not None and float(output_qty) > 0 else None
+    except (TypeError, ValueError):
+        covered = None
+    unit_cost = total_cost / covered if covered else total_cost
+    return int(product_type_id), {"unit_cost": unit_cost, "covered_qty": covered}
 
 
 def _cost_for_need(
@@ -177,7 +275,12 @@ def mother_subitem_cost_map(
     制造价为 0 的子项（0 轮产线，见 child_manufacturing_cost）**不进映射** ——
     否则「自制件成本 0 ISK」会被当成真实成本写进母项；剔除后
     `adjust_mother_metrics` 走 else 分支，该行回退市价。
-    非母项（无 group）或同组无更深子项时返回空 dict。
+
+    **子项行被删除后的回退（审计 03-11）**：子项行存在时优先用现算；某类型现算缺失时，
+    从母项的 `subitem_cost_snapshot`（删除前固化的单件成本 + 覆盖数量）回退 ——
+    否则母项成本会回退买入市价、偏高，利润凭空消失。现算优先于 snapshot
+    （重新排产了子线 → 用新成本）。
+    非母项（无 group）返回空 dict。
 
     映射值给的是**单件**制造价（整线制造价 ÷ 子项产出量）与子项产线**实际产出的数量**：
     子项产线排的是净需求（扣掉库存），产出量常小于母项需求，缺口得由消费方按
@@ -195,8 +298,6 @@ def mother_subitem_cost_map(
         if (p.get("group_id") or p.get("group_number")) == gid
         and int(p.get("child_level") or p.get("sub_level") or 0) > lvl
     ]
-    if not subs:
-        return {}
     out: dict[int, SubitemCost] = {}
     for p, r in subs:
         pid = p.get("product_type_id")
@@ -213,6 +314,10 @@ def mother_subitem_cost_map(
             # 单件价**不取整**：消费方要按 `覆盖量 × 单件价` 还原整线价
             # （先 round 到分会让母项成本少几 ISK，与另一侧汇总对不上）
             out[int(pid)] = SubitemCost(unit_cost=cost / covered, covered_qty=float(covered))
+    # 子项行已删除/缺失的类型 → 用删除前固化的成本回退（不回落市价）。
+    # setdefault：现算优先，snapshot 只补缺。
+    for type_id, sub in parse_subitem_snapshot(mother.get("subitem_cost_snapshot")).items():
+        out.setdefault(type_id, sub)
     return out
 
 

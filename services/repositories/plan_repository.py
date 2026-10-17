@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from core.logger import log
+
 
 class PlanRepository:
     """生产计划表的增删改查"""
@@ -63,6 +65,8 @@ class PlanRepository:
             "actual_output_runs",
             # v23 发明强制完成的尝试流程缺口（审计列）
             "bp_attempt_short",
+            # v24 子项自制成本固化（母项删除子项后仍按自制价折算）
+            "subitem_cost_snapshot",
         }
     )
 
@@ -114,7 +118,8 @@ class PlanRepository:
         success_rate REAL DEFAULT NULL,
         research_target_level INTEGER DEFAULT 0,
         actual_output_runs INTEGER DEFAULT NULL,
-        bp_attempt_short INTEGER DEFAULT NULL
+        bp_attempt_short INTEGER DEFAULT NULL,
+        subitem_cost_snapshot TEXT DEFAULT ''
     );"""
 
     def ensure_table(self):
@@ -307,6 +312,9 @@ class PlanRepository:
         "decryptor_type_id",
         "success_rate",
         "research_target_level",
+        # v24：部分启动拆行时，母项的「子项成本固化」必须跟着走 —— 否则余量行重算会
+        # 丢掉已固化的自制成本、回退市价，两半母项成本口径分叉。
+        "subitem_cost_snapshot",
     )
     # 重置列（括号内为写死的初值）：执行态一律清空，与 cancel_plan 的口径一致
     _SPLIT_RESET = (
@@ -356,16 +364,44 @@ class PlanRepository:
         with self._db.connect("user") as conn:
             return _do(conn)
 
+    def _snapshot_child_costs_before_delete(self, plan_ids: list[int]) -> None:
+        """删除前把「子项自制成本」固化到引用它的母项（审计 03-11）。
+
+        UI 手动删行是子项行消失的一条主路径：不固化的话，母项重算拿不到子项制造价 →
+        回退买入市价，成本偏高、利润被吃掉。**失败不阻断删除**（记日志跳过）。
+        """
+        ids = [int(pid) for pid in plan_ids if pid]
+        if not ids:
+            return
+        try:
+            from services.plan_execution import snapshot_subitem_costs
+
+            ph = ",".join("?" for _ in ids)
+            with self._db.connect("user") as conn:
+                cur = conn.execute(f"SELECT * FROM production_plans WHERE id IN ({ph})", ids)
+                cols = [d[0] for d in cur.description]
+                children = [
+                    row_dict
+                    for row in cur.fetchall()
+                    if (row_dict := dict(zip(cols, row, strict=False))).get("sub_level", 0)
+                ]
+            if children:
+                snapshot_subitem_costs(children)
+        except Exception:
+            log.exception("删除计划前固化子项成本失败（跳过，不阻断删除） ids=%s", ids)
+
     def delete_many(self, plan_ids: list[int]) -> int:
         """批量删除计划（蓝图表关联清理由调用方 release_blueprint 处理）。返回删除行数。"""
         if not plan_ids:
             return 0
+        self._snapshot_child_costs_before_delete(list(plan_ids))
         with self._db.connect("user") as conn:
-            ph = ",".join("?" * len(plan_ids))
+            ph = ",".join("?" for _ in plan_ids)
             cur = conn.execute(f"DELETE FROM production_plans WHERE id IN ({ph})", list(plan_ids))
             return int(cur.rowcount)
 
     def delete(self, plan_id: int) -> bool:
+        self._snapshot_child_costs_before_delete([plan_id])
         with self._db.connect("user") as conn:
             # 清理蓝图绑定关联表（若表存在），避免孤儿占用
             has_bindings = conn.execute(

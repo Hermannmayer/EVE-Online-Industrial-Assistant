@@ -386,6 +386,8 @@ def _attach_group_make_costs(rows: list[dict], service, *, price_type: str, mat_
     1. **子项行必须直接从 user.db 查**（按 `group_number`）—— 不能用当前 filter 的
        `rows`：大表筛成「待排」之类时子项常常不在结果集里，漏掉就会按市价算，
        母项成本虚高（这正是本方法要修的缺陷）。
+       **子项行已被删除时**（母项下线自动清理 / 手动删行）从母项
+       `subitem_cost_snapshot` 回退删除前固化的自制价（审计 03-11），仍不按市价算。
     2. 按 `sub_level` **降序**处理（深的先算）：嵌套拆解里子项要先按孙项的自制价折算完，
        母项才能读到折算后的子项成本。
 
@@ -455,6 +457,13 @@ def _attach_group_make_costs(rows: list[dict], service, *, price_type: str, mat_
             sub_cost = plan_cost.get(int(sub.get("id") or 0))
             if sub_tid and sub_cost:
                 overrides[sub_tid] = float(sub_cost)
+        # 子项行被删除后（母项下线自动清理 / 手动删行），live 子行取不到自制价 ——
+        # 从母项的 `subitem_cost_snapshot` 回退（审计 03-11）；否则母项「自制成本/件」
+        # 会静默回退买入市价、偏高。live 值优先，snapshot 只补缺。
+        from services.plan_metrics import parse_subitem_snapshot
+
+        for snap_tid, snap_cost in parse_subitem_snapshot(row.get("subitem_cost_snapshot")).items():
+            overrides.setdefault(int(snap_tid), snap_cost.unit_cost)
         if not overrides:
             continue
         try:

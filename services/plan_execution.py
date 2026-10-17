@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import UTC, datetime, timedelta
 
 from core.constants import (
@@ -169,29 +170,43 @@ def material_requirements(plan: dict, *, strict: bool = False) -> list[dict]:
         # 科研作业（拷贝/发明/研究）没有「并行产线」概念：需求量就是每轮量
         per_cycle = metrics.get("materials", []) or []
         per_cycle_mult = 1
+        uniform_parallel = False
     else:
         runs = max(int(plan.get("runs", 1)), 1)
         parallels = max(int(plan.get("parallels", 1)), 1)
         # 逐线时 metrics 带 `materials_all_lines`（Σ 各并行线的单轮量，按 type_id 合并）
-        # → 只需再乘 runs。否则沿用「单线单轮量 × runs × parallels」。
-        # 均匀绑定下两者逐值等价；逐线不同时必须走前者，否则会**多扣 parallels 倍**。
+        # → 只需再乘 runs。否则是「单次路径」：`materials` 的 `total_qty` 把
+        # `runs × parallels` 当成**一个作业**做整批取整 —— 但每条并行线是**独立作业**
+        # （一条线一张蓝图，EVE 的取整只作用于单个作业）→ 必须逐线各自取整再求和。
         all_lines = metrics.get("materials_all_lines")
         if all_lines is None:
             per_cycle = metrics.get("materials", []) or []
             per_cycle_mult = runs * parallels
+            uniform_parallel = parallels > 1
         else:
             per_cycle = all_lines
             per_cycle_mult = runs
+            uniform_parallel = False
     reqs = []
     for m in per_cycle:
         if not m.get("type_id"):
             continue
         # `total_qty` = **整批取整**后的量（`domain.formulas.material_total_for_runs`），
-        # 由评分链路按各自批次大小算好塞进来。缺失时才回退「单轮量 × 倍数」的旧口径 ——
+        # 由评分链路按各自批次大小算好塞进来。缺失时才回退「单轮量 × 倍数」的旧口径 —
         # 旧口径把 ME 减免逐轮取整后再乘轮数，对有基础量 ≥2 的材料会系统性多要货
         # （实测 22×2510 ME10：旧 50,200 / 新 49,698），正是「材料够了却报不足」的根因。
         total_qty = m.get("total_qty")
-        need = total_qty if total_qty is not None else (m.get("qty") or 0) * per_cycle_mult
+        if total_qty is None:
+            need = (m.get("qty") or 0) * per_cycle_mult
+        elif uniform_parallel:
+            # 单次路径把 P 条线当一个作业整批取整，会把逐线各自的尾数抹掉：
+            # 逐线真值 = Σ_lines ceil(单线量)，恒等于 `ceil(total_qty / parallels) × parallels`
+            # （因为 total_qty = ceil(P·x)，而 ceil(ceil(P·x)/P) = ceil(x)）。
+            # 实测计划 477（6 线 ME3）：聚变推进器整批 175 → 逐线 30×6=180；
+            # 按 175 采购后逐条启动，第 6 条必然误报缺 5（25/30）。
+            need = math.ceil(total_qty / parallels - 1e-10) * parallels
+        else:
+            need = total_qty
         reqs.append(
             {
                 "type_id": int(m["type_id"]),
@@ -739,6 +754,128 @@ def _no_other_active_mother(conn, plan_id: int, group_number: int) -> bool:
     return not (row and row[0])
 
 
+def _load_plan_row(plan_id: int) -> dict | None:
+    """按 id 读一行计划（dict；不存在 → None）。"""
+    with _container().db.connect("user") as conn:
+        cur = conn.execute("SELECT * FROM production_plans WHERE id=?", (plan_id,))
+        cols = [d[0] for d in cur.description]
+        row = cur.fetchone()
+    return dict(zip(cols, row, strict=False)) if row else None
+
+
+def _child_reference_mother_ids(conn, child: dict) -> set[int]:
+    """引用该子项行的所有母项 id：`source_mother_ids` 优先，旧行按同组更低层级兜底。"""
+    ids: set[int] = set()
+    raw = str(child.get("source_mother_ids") or "")
+    ids.update(int(x) for x in raw.split(",") if x.strip().isdigit())
+    gid = int(child.get("group_number") or 0)
+    level = int(child.get("sub_level") or 0)
+    if gid and level > 0:
+        rows = conn.execute(
+            "SELECT id FROM production_plans WHERE group_number=? AND sub_level<? AND sub_level>=0",
+            (gid, level),
+        ).fetchall()
+        ids.update(int(r[0]) for r in rows)
+    return ids
+
+
+def _subitem_snapshot_entries(children: list[dict]) -> dict[int, dict]:
+    """子项行 → 母项 snapshot 条目 ``{product_type_id: {unit_cost, covered_qty}}``。
+
+    口径与读端 `plan_metrics.mother_subitem_cost_map` 的现算一致：
+    整线制造价（材料 + 作业费）÷ 子项产线实际产出量；拿不到产出量时 covered_qty=None
+    （读端按「覆盖全部需求」处理，与旧口径同义）。
+    同型多行（部分启动拆出的两半）合并：成本求和、产出量求和后再摊成单件价。
+    单行评分失败只跳过该行（记日志），不阻断删除。
+    """
+    from services.blueprint_reader import plan_output_qty
+    from services.char_config_resolver import resolve_char_config
+    from services.plan_job_kinds import normalize as normalize_activity
+    from services.plan_metrics import child_manufacturing_cost
+
+    totals: dict[int, float] = {}
+    covered: dict[int, float | None] = {}
+    with _container().db.connect("ref", "bp") as bp_conn:
+        for child in children:
+            type_id = int(child.get("product_type_id") or 0)
+            if not type_id:
+                continue
+            try:
+                char_config = resolve_char_config(char_name=str(child.get("char_name") or "").strip()) or {}
+                metrics = _container().scoring_service().calculate_plan_metrics(child, char_config)
+                output_qty = plan_output_qty(bp_conn, child, activity=normalize_activity(child.get("activity")))
+                total_cost = child_manufacturing_cost(child, metrics)
+            except Exception:
+                log.exception("固化子项成本失败 plan=%s（跳过，不影响删除）", child.get("id"))
+                continue
+            if total_cost <= 0:
+                continue
+            totals[type_id] = totals.get(type_id, 0.0) + float(total_cost)
+            if output_qty and output_qty > 0:
+                covered[type_id] = float(covered.get(type_id) or 0.0) + float(output_qty)
+            else:
+                covered.setdefault(type_id, None)
+    entries: dict[int, dict] = {}
+    for type_id, total_cost in totals.items():
+        qty = covered.get(type_id)
+        entries[type_id] = {
+            "unit_cost": total_cost / qty if qty else total_cost,
+            "covered_qty": qty,
+        }
+    return entries
+
+
+def snapshot_subitem_costs(child_plans: list[dict], *, conn=None) -> int:
+    """把子项的「单件自制成本 + 覆盖数量」固化到所有引用母项的 `subitem_cost_snapshot`。
+
+    覆盖三条删除 / 完成路径（审计 03-11）：
+      - `complete_plan`：子项完成时（自开连接提交成功后）；
+      - `remove_completed_children`：母项下线自动清理前（同一事务 conn 传入）；
+      - `plan_repository.delete / delete_many`：UI 手动删行前。
+    多母项共享子项 → 写所有引用母项；合并规则：保留母项已有条目，同 type_id 用新值覆盖。
+    失败只记日志、不抛 —— 固化是「防成本回退」的增强，不能反过来阻断删除。
+
+    Returns: 实际更新的母项行数。
+    """
+    children = [p for p in child_plans if int(p.get("sub_level") or p.get("child_level") or 0) > 0]
+    if not children:
+        return 0
+    try:
+        entries = _subitem_snapshot_entries(children)
+        if not entries:
+            return 0
+        from services.plan_metrics import merge_subitem_snapshot
+
+        def _write(c) -> int:
+            mother_ids: set[int] = set()
+            for child in children:
+                mother_ids |= _child_reference_mother_ids(c, child)
+            changed = 0
+            for mother_id in sorted(mother_ids):
+                row = c.execute(
+                    "SELECT COALESCE(subitem_cost_snapshot, '') FROM production_plans WHERE id=?",
+                    (mother_id,),
+                ).fetchone()
+                if row is None:
+                    continue  # 母项已删除 → 无需固化
+                merged = merge_subitem_snapshot(row[0], entries)
+                if merged and merged != (row[0] or ""):
+                    c.execute(
+                        "UPDATE production_plans SET subitem_cost_snapshot=? WHERE id=?",
+                        (merged, mother_id),
+                    )
+                    changed += 1
+            return changed
+
+        if conn is not None:
+            return _write(conn)
+        with _container().db.connect("user") as c:
+            return _write(c)
+    except Exception:
+        log.exception("固化子项成本到母项失败（跳过，不影响删除）")
+        return 0
+
+
 def remove_completed_children(group_number: int, *, conn=None) -> int:
     """清理「已无归属」的已完成子项行，返回删除数（母项结束时调用）。
 
@@ -784,6 +921,17 @@ def remove_completed_children(group_number: int, *, conn=None) -> int:
             to_delete.append(int(pid))
         if not to_delete:
             return 0
+        # 删除前把子项自制成本固化到母项 snapshot（03-11）：否则母项下次重算/复用
+        # 拿不到子项行 → 成本回退买入市价（偏高）。同事务 conn，与删除同生共死。
+        child_rows: list[dict] = []
+        for pid in to_delete:
+            cur = c.execute("SELECT * FROM production_plans WHERE id=?", (pid,))
+            cols = [d[0] for d in cur.description]
+            row = cur.fetchone()
+            if row is not None:
+                child_rows.append(dict(zip(cols, row, strict=False)))
+        if child_rows:
+            snapshot_subitem_costs(child_rows, conn=c)
         for pid in to_delete:
             _clear_plan_bindings(c, pid)
         ph = ",".join("?" * len(to_delete))
@@ -947,6 +1095,29 @@ def start_plan_batch(
 # ════════════════════════════════════════════════════════════════
 
 
+def _expected_bpc_cost_per_run(product_type_id: int) -> float:
+    """T2 发明产出的**期望单流程成本**（ISK/流程）；算不出 → 0（不写库）。
+
+    复用 `services.research_plans.research_cost_per_run`（与机库「自动填写每流程成本」
+    同一口径）：取**命中该产物蓝图**的 outcome，而不是「最便宜的产物」。
+    """
+    from services.research_plans import research_cost_per_run
+
+    try:
+        info = research_cost_per_run(_container().db, int(product_type_id))
+    except Exception:  # 缺蓝图/缺价格/旧库 → 不记录成本，不影响入库本身
+        log.exception("计算发明 BPC 单流程成本失败 bp=%s", product_type_id)
+        return 0.0
+    if not info or info.get("kind") != "invention":
+        return 0.0
+    outcomes = info.get("outcomes") or []
+    matched = next((o for o in outcomes if int(o.get("blueprint_type_id") or 0) == int(product_type_id)), None)
+    value = float((matched or {}).get("cost_per_run") or 0.0)
+    if value <= 0:
+        value = float(info.get("cost_per_run") or 0.0)
+    return max(0.0, value)
+
+
 def _deposit_research_output(
     conn,
     *,
@@ -968,6 +1139,7 @@ def _deposit_research_output(
       （NULL=未回填不写；0=失败不产出），ME/TE 由解码器决定（见 domain.research）。
 
     同机库 + 同蓝图 + 同 ME/TE + 同 runs 的已有 BPC → 累加 quantity，不新增行。
+    发明产出的 T2 BPC 同时记录期望单流程成本（`cost_per_run`，制造评分按它计入利润）。
     """
     from domain.research import get_decryptor, invention_output_me_te
     from services import inventory_manager
@@ -996,15 +1168,30 @@ def _deposit_research_output(
         me, te = _input_blueprint_me_te(conn, plan_id)
         out_qty = max(1, int(parallels))
 
+    # 发明产出的 T2 BPC 自动记录期望单流程成本（T1/拷贝产物本轮不填）。
+    # 该值供制造评分使用（绑定 BPC 时计入利润，见 scoring_service._bound_bpc_costs）。
+    cost_per_run = _expected_bpc_cost_per_run(int(product_type_id)) if activity == "invention" else 0.0
+
     existing = conn.execute(
-        "SELECT id, quantity FROM user_blueprints "
+        "SELECT id, quantity, COALESCE(cost_per_run, 0) FROM user_blueprints "
         "WHERE hangar_id=? AND blueprint_type_id=? AND is_bpo=0 AND me_level=? AND te_level=? "
         "AND runs=? AND COALESCE(notes,'')='' LIMIT 1",
         (deposit_hangar_id, product_type_id, me, te, out_runs),
     ).fetchone()
     specs = f"{out_qty} 份 × {out_runs} 流程，ME{me}/TE{te}"
     if existing:
-        conn.execute("UPDATE user_blueprints SET quantity = quantity + ? WHERE id=?", (out_qty, existing[0]))
+        old_id = int(existing[0])
+        old_qty = int(existing[1] or 0)
+        old_cost = float(existing[2] or 0.0)
+        conn.execute("UPDATE user_blueprints SET quantity = quantity + ? WHERE id=?", (out_qty, old_id))
+        if cost_per_run > 0:
+            # 合并同规格行：成本按 quantity 加权平均（旧行为 0 → 直接采用新值）
+            merged_cost = (
+                (old_qty * old_cost + out_qty * cost_per_run) / (old_qty + out_qty)
+                if old_cost > 0 and old_qty + out_qty > 0
+                else cost_per_run
+            )
+            conn.execute("UPDATE user_blueprints SET cost_per_run = ? WHERE id=?", (merged_cost, old_id))
         messages.append(f"产出蓝图已并入库存同规格 BPC（{specs}）")
     else:
         inventory_manager.add_blueprint(
@@ -1015,6 +1202,7 @@ def _deposit_research_output(
             te_level=te,
             runs=out_runs,
             quantity=out_qty,
+            cost_per_run=cost_per_run,
             conn=conn,
         )
         messages.append(f"产出蓝图已入库（{specs}）")
@@ -1519,6 +1707,14 @@ def complete_plan(
     finally:
         if own_conn:
             conn.close()
+
+    # 子项完成时先把自制成本固化到母项（03-11）：之后子项行可能被下一次母项下线清理或
+    # 用户手动删除，母项重算/复用不该因为「子项行没了」而回退买入市价。
+    # 只走自开连接路径（已提交）；注入 conn 的调用方事务由它自己决定何时提交。
+    if own_conn and int(sub_level or 0) > 0:
+        child_row = _load_plan_row(plan_id)
+        if child_row is not None:
+            snapshot_subitem_costs([child_row])
 
     return {"ok": True, "message": "；".join(messages), "deposited": deposited, "removed": removed}
 

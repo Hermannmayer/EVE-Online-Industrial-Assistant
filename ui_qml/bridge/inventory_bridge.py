@@ -560,6 +560,7 @@ class InventoryBridge(QObject):
         from ui_qml.models.inventory_helpers import BlueprintTableModel
 
         # (宽度, 右对齐)；「每流程利润」在「销售收入」后、「利润率」前
+        # 末列「蓝图成本」= T2 BPC 的期望单流程成本（T1 显示 —）
         columns = (
             (28, False),
             (160, False),
@@ -574,6 +575,7 @@ class InventoryBridge(QObject):
             (110, True),
             (80, True),
             (140, False),
+            (110, True),
         )
         return [
             {"title": title, "width": width, "alignRight": align_right}
@@ -892,6 +894,14 @@ class InventoryBridge(QObject):
         from ui_qml.bridge.blueprint_actions import auto_fill_cost_per_run
 
         auto_fill_cost_per_run(self, self._blueprints_at(rows), self._current_hangar_id)
+
+    @Slot()
+    def autoFillSelectedBlueprints(self) -> None:
+        """工具栏「批量填充 T2 蓝图成本」：作用于蓝图表当前选中行。"""
+        if not self._bp_selection:
+            self._set_bp_hint("请先在蓝图表选中要填充的 T2 蓝图拷贝")
+            return
+        self.autoFillCostPerRun(sorted(self._bp_selection))
 
     @Slot("QVariantList")
     def editBlueprintLevels(self, rows: list) -> None:

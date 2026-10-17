@@ -97,6 +97,17 @@ def _char_config_fingerprint(char_config: dict | None) -> str:
         return "unknown"
 
 
+def _research_costs_fingerprint(research_costs: dict[int, float | None] | None) -> str:
+    """研究成本覆盖值的缓存指纹（必须进 cache key）。
+
+    同一 product/me/te 的两条计划可能绑定不同 BPC（各自 cost_per_run 不同）——
+    不把覆盖值写进 key 就会互相串缓存，利润数字跟着上一档计划走。
+    """
+    if not research_costs:
+        return ""
+    return ",".join(f"{tid}:{round(float(value or 0.0), 4)}" for tid, value in sorted(research_costs.items()))
+
+
 def calc_manufacturing_score(
     db,
     cache,
@@ -138,6 +149,7 @@ def calc_manufacturing_score(
         f"mfg|{mat_source_hub}|{sell_hub}|{bp_me}|{bp_te}|{price_type_mat}|{price_type_prod}|{system_id or ''}"
         f"|{structure_bonus}|{structure_time_mod}|{structure_mat_saving}|{facility_tax_pct}|{int(is_alpha)}"
         f"|{round(mat_price_mult, 4)}|{round(prod_price_mult, 4)}"
+        f"|rc={_research_costs_fingerprint(research_costs)}"
         f"|{_char_config_fingerprint(char_config)}",
         "hub",
         char_name,

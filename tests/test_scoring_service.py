@@ -733,6 +733,40 @@ def test_me_and_te_reduce_waste_and_time(temp_db):
     assert r_high["isk_per_hour"] > r_low["isk_per_hour"]
 
 
+def test_manufacturing_includes_bound_bpc_cost_per_run(temp_db):
+    """回归：计划绑定的 BPC 有 cost_per_run（T2 发明蓝图成本）时，制造成本必须计入它。
+
+    链路：`plan_blueprint_bindings JOIN user_blueprints.cost_per_run` →
+    `calc_manufacturing_score(research_costs={type_id: cost})`。未绑定 BPC 的计划
+    保持原「按市场重算研究成本」口径，数值零漂移。
+    """
+    from unittest.mock import patch
+
+    with temp_db.connect("user") as conn:
+        conn.execute("CREATE TABLE user_blueprints (id INTEGER PRIMARY KEY, is_bpo INTEGER, cost_per_run REAL)")
+        conn.execute("INSERT INTO user_blueprints VALUES (11, 0, 5000.0)")
+        conn.execute("CREATE TABLE plan_blueprint_bindings (plan_id INTEGER, blueprint_id INTEGER)")
+        conn.execute("INSERT INTO plan_blueprint_bindings VALUES (1, 11)")
+
+    svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+    base_plan = {"product_type_id": 2001, "me_level": 0, "te_level": 0, "runs": 1, "parallels": 1}
+
+    def _calc(plan):
+        with patch("core.container.get_container") as m:
+            m.return_value.scoring_service.return_value = svc
+            return ScoringService.calculate_plan_metrics(plan, {"skills": {}}, mat_hub="Jita", sell_hub="Jita")
+
+    with_bpc = _calc({**base_plan, "id": 1})  # 绑定了 cost=5000 的 BPC
+    without_bpc = _calc({**base_plan, "id": 2})  # 无绑定
+
+    assert with_bpc["breakdown"]["research_cost"] == pytest.approx(5000.0)
+    assert without_bpc["breakdown"]["research_cost"] != pytest.approx(5000.0)
+    # runs=1、parallels=1 → 计划利润差 = 研究成本差
+    assert with_bpc["profit"] == pytest.approx(
+        without_bpc["profit"] + (without_bpc["breakdown"]["research_cost"] - 5000.0)
+    )
+
+
 # ════════════════════════════════════════════════════════════════
 #  贸易评分
 # ════════════════════════════════════════════════════════════════
@@ -1179,12 +1213,17 @@ class TestPerLineCalculation:
 
 
 class TestTotalMetricsWholeBatchMaterialCost:
-    """`calculate_total_metrics` 的材料口径 —— 整批取整 + 增量式利润。
+    """`calculate_total_metrics` 的材料口径 —— **逐线（逐作业）**整批取整 + 增量式利润。
 
     背景：旧口径是 `单轮材料成本 × 总倍数`，而单轮材料成本是**逐轮取整**的
     （`ceil(基础量 × 0.9)`），乘上轮数后对基础量 ≥2 的材料系统性多要货。
-    真实一单：基础量 22、ME10、502 轮 × 5 线 → 旧 50,200 / 新 49,698，用户仓库正是 49,698，
-    于是「材料刚好够」被误判成「缺 502」（实机 `material_short` 记的就是这个 502）。
+    真实一单：基础量 22、ME10、**一个作业 2510 轮**（runs=2510 / parallels=1）→
+    旧 50,200 / 新 49,698，用户仓库正是 49,698，于是「材料刚好够」被误判成
+    「缺 502」（实机 `material_short` 记的就是这个 502）。
+
+    ⚠️ 并行线是**多个独立作业**（一条线一张蓝图）：`runs=502/parallels=5` 是
+    5 个各 502 轮的作业，逐线各自取整 = `ceil(22×502×0.9)=9940` × 5 = **49,700**，
+    不能拿 49,698 当这个组合的答案（见 `test_parallel_lines_round_per_job`）。
     """
 
     _PRICE = 87.0
@@ -1200,8 +1239,19 @@ class TestTotalMetricsWholeBatchMaterialCost:
         }
 
     def test_material_cost_is_the_whole_batch_number(self):
-        total = ScoringService.calculate_total_metrics(self._per_run(), runs=502, parallels=5)
+        total = ScoringService.calculate_total_metrics(self._per_run(), runs=2510, parallels=1)
         assert total["total_material_cost"] == 49_698 * self._PRICE
+
+    def test_parallel_lines_round_per_job(self):
+        """问题 A 回归：并行线各自取整再求和，不能把 runs×parallels 当一个作业。
+
+        `runs=502/parallels=5`：整批口径会得 49,698，逐线口径是 9940×5 = **49,700**。
+        真实计划 477 同型：6 线 ME3 聚变推进器整批 175 / 逐线 30×6=180（采购少买 5 →
+        逐条启动第 6 条误报缺料 25/30）。
+        """
+        total = ScoringService.calculate_total_metrics(self._per_run(), runs=502, parallels=5)
+        assert total["total_material_cost"] == 49_700 * self._PRICE
+        assert [m["total_qty"] for m in total["materials"]] == [49_700]
 
     def test_profit_moves_only_by_the_material_saving(self):
         """增量式重算：只把材料省下的部分加回利润，其余成本项（含 research_cost）原样保留。
@@ -1210,7 +1260,7 @@ class TestTotalMetricsWholeBatchMaterialCost:
         research_cost（它在 `domain/scoring.py:165` 才加进 total_cost），拼出来会让
         T2/T3（拷贝/发明）计划的利润虚高 `research_cost × 倍数`。
         """
-        total = ScoringService.calculate_total_metrics(self._per_run(), runs=502, parallels=5)
+        total = ScoringService.calculate_total_metrics(self._per_run(), runs=2510, parallels=1)
         saving = 20 * self._PRICE * 2510 - 49_698 * self._PRICE
         assert saving > 0, "这条用例得有判别力：整批口径必须比逐轮口径少要"
         assert total["total_profit"] == pytest.approx(1000.0 * 2510 + saving, abs=0.01)
@@ -1230,6 +1280,6 @@ class TestTotalMetricsWholeBatchMaterialCost:
 
     def test_margin_is_rescaled_with_the_new_cost(self):
         """利润率必须跟着新口径重算 —— 材料不再线性，沿用单轮 margin 会与利润对不上。"""
-        total = ScoringService.calculate_total_metrics(self._per_run(), runs=502, parallels=5)
+        total = ScoringService.calculate_total_metrics(self._per_run(), runs=2510, parallels=1)
         cost = 20000.0 * 2510 - total["total_profit"]
         assert total["total_margin_pct"] == pytest.approx(total["total_profit"] / cost * 100, abs=0.01)

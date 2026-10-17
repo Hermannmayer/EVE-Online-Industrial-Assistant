@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS user_blueprints (
     runs INTEGER NOT NULL DEFAULT 1,
     quantity INTEGER NOT NULL DEFAULT 1,
     notes TEXT DEFAULT '',
+    cost_per_run REAL DEFAULT 0,
     FOREIGN KEY (hangar_id) REFERENCES hangars(id) ON DELETE CASCADE
 );
 """
@@ -73,7 +74,8 @@ DEFAULT_HANGARS = ["矿仓", "组件仓", "产品仓", "通用仓库"]
 def init_db():
     with _default_db().connect("user") as conn:
         conn.executescript(SCHEMA)
-        # cost_per_run 列已由 schema_migrations user v1→v2 处理，此处不再需要
+        # 新建库的 cost_per_run 已在 SCHEMA 里（上表）；历史库由
+        # `schema_migrations` user v1→v2 的 ALTER 补列（两条建库路径必须同形）。
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM hangars")
         if c.fetchone()[0] == 0:
@@ -852,17 +854,31 @@ def add_blueprint(
     runs: int = 1,
     quantity: int = 1,
     notes: str = "",
+    cost_per_run: float = 0.0,
     *,
     conn=None,
 ) -> int:
-    """新增蓝图。conn 传入时在同一连接执行且不提交（由调用方统一事务）。"""
+    """新增蓝图。conn 传入时在同一连接执行且不提交（由调用方统一事务）。
+
+    ``cost_per_run``：发明的期望单流程成本（T2 BPC 用；T1/原图留 0）。
+    """
 
     def _do(c) -> int:
         cur = c.execute(
             """INSERT INTO user_blueprints (hangar_id, blueprint_type_id, is_bpo,
-                     me_level, te_level, runs, quantity, notes)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (hangar_id, blueprint_type_id, int(is_bpo), me_level, te_level, runs, quantity, notes),
+                     me_level, te_level, runs, quantity, notes, cost_per_run)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                hangar_id,
+                blueprint_type_id,
+                int(is_bpo),
+                me_level,
+                te_level,
+                runs,
+                quantity,
+                notes,
+                float(cost_per_run or 0.0),
+            ),
         )
         return cur.lastrowid or 0
 
@@ -880,7 +896,7 @@ def get_blueprints(hangar_id: int | None = None) -> list[dict]:
             c.execute(
                 """SELECT ub.id, ub.hangar_id, ub.blueprint_type_id, ub.is_bpo,
                          ub.me_level, ub.te_level, ub.runs, ub.quantity, ub.notes,
-                         i.zh_name, i.en_name
+                         i.zh_name, i.en_name, ub.cost_per_run
                          FROM user_blueprints ub
                          LEFT JOIN ref.item i ON ub.blueprint_type_id = i.type_id
                          WHERE ub.hangar_id = ?
@@ -890,7 +906,7 @@ def get_blueprints(hangar_id: int | None = None) -> list[dict]:
         else:
             c.execute("""SELECT ub.id, ub.hangar_id, ub.blueprint_type_id, ub.is_bpo,
                          ub.me_level, ub.te_level, ub.runs, ub.quantity, ub.notes,
-                         i.zh_name, i.en_name
+                         i.zh_name, i.en_name, ub.cost_per_run
                          FROM user_blueprints ub
                          LEFT JOIN ref.item i ON ub.blueprint_type_id = i.type_id
                          ORDER BY i.zh_name""")
@@ -907,6 +923,7 @@ def get_blueprints(hangar_id: int | None = None) -> list[dict]:
                 "notes": r[8],
                 "zh_name": r[9] or "",
                 "en_name": r[10] or "",
+                "cost_per_run": float(r[11] or 0.0),
             }
             for r in c.fetchall()
         ]

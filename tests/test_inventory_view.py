@@ -303,7 +303,7 @@ class TestBlueprintTableModel:
         """可构造，行数列数正确；空数据列数恒定"""
         model = BlueprintTableModel(self.SAMPLE_ROWS)
         assert model.rowCount() == 2
-        assert model.columnCount() == 13
+        assert model.columnCount() == 14  # 末列「蓝图成本」（T2 发明 BPC 成本）
         assert BlueprintTableModel([]).rowCount() == 0
 
     def test_header_data(self, qapp):
@@ -323,6 +323,7 @@ class TestBlueprintTableModel:
             "每流程利润",
             "利润率",
             "状态",
+            "蓝图成本",
         ]
         for i, h in enumerate(expected):
             assert model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == h

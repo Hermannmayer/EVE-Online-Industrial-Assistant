@@ -410,3 +410,62 @@ def test_attach_make_costs_folds_group_subitem_make_cost(temp_db, monkeypatch):
 
     assert expected < plain, "自制件比市价便宜，折算后必须更低（否则这个用例测不出折叠）"
     assert rows[0]["make_cost"] == pytest.approx(expected, abs=0.01)
+
+
+def test_attach_make_costs_uses_snapshot_after_child_removed(temp_db, monkeypatch):
+    """03-11 回归：子项行删除后，母项「自制成本/件」用删除前固化的 snapshot。
+
+    用户实测：有母项的子项跑完被删除后，母项「该子项成本」回退**买入市价**、偏高，
+    本来赚钱的母项变不赚钱。修复：子项删除前把单件自制成本写进母项
+    `subitem_cost_snapshot`；这里只剩母项一行（模拟已删除），折算仍须用 snapshot 的自制价。
+    """
+    import json
+
+    from core.cache import TtlLRUCache
+    from services.scoring_service import ScoringService
+
+    with temp_db.connect("bp") as conn:
+        # 渡鸦级(2001) 多要 2 个无人机(2002)
+        conn.execute("INSERT INTO blueprint_materials VALUES (3001, 'manufacturing', 2002, 2, 10)")
+
+    svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
+    _patch_container(temp_db, monkeypatch, svc)
+
+    # 子项 2002 的自制单件成本（= 删除前固化的值）
+    sub_cost = svc.manufacturing_unit_costs([2002], mat_hub="Jita", price_type_mat="sell")[2002]
+    plain = svc.manufacturing_unit_costs([2001], mat_hub="Jita", price_type_mat="sell")[2001]
+    expected = svc.manufacturing_unit_costs(
+        [2001], mat_hub="Jita", price_type_mat="sell", cost_overrides={2002: sub_cost}
+    )[2001]
+
+    with temp_db.connect("user") as conn:
+        conn.execute(
+            "CREATE TABLE production_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "product_type_id INTEGER, group_number INTEGER DEFAULT 0, sub_level INTEGER DEFAULT 0, "
+            "runs INTEGER DEFAULT 1, parallels INTEGER DEFAULT 1, mat_hub TEXT, mat_hangar_id INTEGER, "
+            "subitem_cost_snapshot TEXT DEFAULT '')"
+        )
+        snapshot = json.dumps({"2002": {"unit_cost": sub_cost, "covered_qty": 2.0}})
+        conn.execute(
+            "INSERT INTO production_plans "
+            "(id, product_type_id, group_number, sub_level, runs, parallels, mat_hub, subitem_cost_snapshot) "
+            "VALUES (1, 2001, 7, 0, 1, 1, 'Jita', ?)",
+            (snapshot,),
+        )
+
+    # 生产路径里 rows 来自 `_fetch_rows`（SELECT *，必带 snapshot 列）→ 模拟同一形状
+    rows = plan_service._attach_make_costs(
+        [
+            {
+                "id": 1,
+                "product_type_id": 2001,
+                "group_number": 7,
+                "sub_level": 0,
+                "mat_hub": "Jita",
+                "subitem_cost_snapshot": snapshot,
+            }
+        ]
+    )
+
+    assert expected < plain, "自制件比市价便宜，折算后必须更低（否则这个用例测不出回退）"
+    assert rows[0]["make_cost"] == pytest.approx(expected, abs=0.01), "子项行已删，母项仍须按 snapshot 自制价折算"

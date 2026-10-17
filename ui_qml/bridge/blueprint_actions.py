@@ -286,10 +286,72 @@ def _add_research_plan(bridge: Any, bp: dict) -> None:
 # ═══════════════════════════════════════════════════════════
 
 
+def _is_t2_bpc(bp: dict) -> bool:
+    """T2 蓝图拷贝（发明产物）：批量填充的目标行。"""
+    return bool(bp.get("blueprint_type_id")) and int(bp.get("tech_level") or 0) == 2 and not bp.get("is_bpo")
+
+
 def auto_fill_cost_per_run(bridge: Any, blueprints: list[dict], _hangar_id: Any = None) -> None:
-    """按发明期望成本自动填写 `cost_per_run`（多产物时让用户选）。"""
+    """自动填写每流程成本。
+
+    - 选中含 **T2 蓝图拷贝** → 批量路径：逐张按自己的蓝图算发明期望成本后写入
+      （同成本值分组一次 update；不弹「选产物」对话框）。
+    - 否则保留**旧行为**（单张：T1 走拷贝成本、多产物弹选择框）——
+      单选 T1 的「自动填写」是既有功能，不能因批量改造被砍掉。
+    """
+    t2_targets = [bp for bp in blueprints if _is_t2_bpc(bp)]
+    if t2_targets:
+        _fill_t2_bpc_batch(bridge, t2_targets)
+        return
+    _fill_legacy(bridge, blueprints)
+
+
+def _fill_t2_bpc_batch(bridge: Any, targets: list[dict]) -> None:
+    """批量路径：T2 BPC 逐张按发明期望成本写入（同值分组）。"""
     from core.container import get_container
     from core.logger import log
+    from services.inventory_manager import update_blueprints_batch
+    from services.research_plans import research_cost_per_run
+
+    db = get_container().db
+    value_by_bpid: dict[int, float] = {}
+    for bid in sorted({int(bp["blueprint_type_id"]) for bp in targets}):
+        try:
+            info = research_cost_per_run(db, bid)
+        except Exception:
+            log.exception("计算每流程成本失败 bp=%s", bid)
+            continue
+        if not info or info.get("kind") != "invention":
+            continue
+        outcomes = info.get("outcomes") or []
+        matched = next((o for o in outcomes if int(o.get("blueprint_type_id") or 0) == bid), None)
+        value = float((matched or {}).get("cost_per_run") or 0.0)
+        if value <= 0:
+            value = float(info.get("cost_per_run") or 0.0)
+        if value > 0:
+            value_by_bpid[bid] = value
+
+    grouped: dict[float, list[int]] = {}
+    for bp in targets:
+        bp_cost = value_by_bpid.get(int(bp["blueprint_type_id"]))
+        if bp_cost:
+            grouped.setdefault(round(bp_cost, 2), []).append(int(bp["id"]))
+
+    filled = sum(len(ids) for ids in grouped.values())
+    for grouped_cost, ids in grouped.items():
+        update_blueprints_batch(ids, cost_per_run=float(grouped_cost))
+    if not filled:
+        bridge._set_bp_hint("所选 T2 蓝图没有发明路径，无法估算每流程成本")
+        return
+    bridge._set_bp_hint(f"已按发明期望成本填写 {filled} 张 T2 蓝图的每流程成本")
+    bridge.loadBlueprints()
+
+
+def _fill_legacy(bridge: Any, blueprints: list[dict]) -> None:
+    """旧行为（单选/非 T2）：按研究成本填**第一张**有蓝图信息的行，多产物时弹选择框。"""
+    from core.container import get_container
+    from core.logger import log
+    from services.inventory_manager import update_blueprints_batch
     from services.research_plans import research_cost_per_run
     from ui_qml.bridge.input_dialog import InputQmlDialog
 
@@ -324,8 +386,6 @@ def auto_fill_cost_per_run(bridge: Any, blueprints: list[dict], _hangar_id: Any 
         value = outcomes[names.index(pick)]["cost_per_run"]
     else:
         value = info.get("cost_per_run", 0.0)
-
-    from services.inventory_manager import update_blueprints_batch
 
     update_blueprints_batch([bp["id"]], cost_per_run=float(value))
     bridge._set_bp_hint(f"已按研究成本填写每流程成本：{value:,.0f} ISK")

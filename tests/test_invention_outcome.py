@@ -189,6 +189,41 @@ class TestOutcomeDeposit:
         assert len(_bpcs(research_env)) == 2
 
 
+class TestDepositRecordsBpcCost:
+    """D 回归：发明完成自动把**期望单流程成本**写进产出 BPC 的 `cost_per_run`。
+
+    制造评分按绑定 BPC 的 cost_per_run 计入利润（scoring_service._bound_bpc_costs），
+    所以发明完成时必须落这个值，否则用户永远要手填。
+    """
+
+    def test_completed_invention_records_cost_per_run(self, research_env, monkeypatch):
+        monkeypatch.setattr(plan_execution, "_expected_bpc_cost_per_run", lambda bp_id: 1234.0)
+        pid = _make_invention_plan(research_env, actual=9)
+        res = plan_execution.complete_plan(_plan_row(research_env, pid))
+        assert res["ok"] is True
+        with research_env.connect("user") as conn:
+            value = conn.execute(
+                "SELECT cost_per_run FROM user_blueprints WHERE blueprint_type_id=? AND is_bpo=0",
+                (T2_BP,),
+            ).fetchone()[0]
+        assert value == pytest.approx(1234.0)
+
+    def test_merge_uses_quantity_weighted_cost(self, research_env, monkeypatch):
+        """同规格再次产出 → 成本按 quantity 加权平均（1×1234 + 1×2000）/ 2。"""
+        values = iter([1234.0, 2000.0])
+        monkeypatch.setattr(plan_execution, "_expected_bpc_cost_per_run", lambda bp_id: next(values))
+        pid1 = _make_invention_plan(research_env, actual=5)
+        plan_execution.complete_plan(_plan_row(research_env, pid1))
+        pid2 = _make_invention_plan(research_env, actual=5)
+        plan_execution.complete_plan(_plan_row(research_env, pid2))
+        with research_env.connect("user") as conn:
+            value = conn.execute(
+                "SELECT cost_per_run FROM user_blueprints WHERE blueprint_type_id=? AND is_bpo=0",
+                (T2_BP,),
+            ).fetchone()[0]
+        assert value == pytest.approx((1234.0 + 2000.0) / 2)
+
+
 class TestInputBpcConsumption:
     def test_invention_consumes_input_runs(self, research_env):
         """每次尝试消耗 1 个输入 T1 BPC 流程（runs=2 → 剩 8）。"""

@@ -1143,6 +1143,47 @@ def test_user_v22_to_v23_adds_bp_attempt_short(tmp_user_db):
     assert "新增 0 列" in sm._migrate_user_v22_to_v23(str(tmp_user_db))
 
 
+def test_user_v23_to_v24_adds_subitem_cost_snapshot(tmp_user_db):
+    """v23→v24：production_plans 新增 ``subitem_cost_snapshot``（子项自制成本固化）。
+
+    03-11：母项成本依赖同组子项计划行；子项行删除后没有 snapshot 会回退买入市价 →
+    成本偏高。存量行必须是**空串**（= 未固化过；读端按无 snapshot 处理）。
+    幂等：重复运行不再加列。
+    """
+    conn = sqlite3.connect(str(tmp_user_db))
+    conn.executescript(
+        """
+        CREATE TABLE production_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            status TEXT DEFAULT 'pending'
+        );
+        INSERT INTO production_plans (status) VALUES ('pending');
+        """
+    )
+    conn.execute("PRAGMA user_version = 23")
+    conn.commit()
+    conn.close()
+
+    result = sm.ensure_schema("user")
+
+    assert result["after"] == sm.DB_SCHEMA_VERSIONS["user"]
+    assert any("subitem_cost_snapshot" in s for s in result["applied"]), result["applied"]
+    conn = sqlite3.connect(str(tmp_user_db))
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(production_plans)")}
+        old_value = conn.execute("SELECT subitem_cost_snapshot FROM production_plans").fetchone()[0]
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
+    assert "subitem_cost_snapshot" in cols
+    assert old_value == "", "存量行留空串 = 未固化过（读端按无 snapshot 处理）"
+    assert version == sm.DB_SCHEMA_VERSIONS["user"]
+
+    # 幂等：重复运行不再产生迁移
+    assert sm.ensure_schema("user")["applied"] == []
+    assert "新增 0 列" in sm._migrate_user_v23_to_v24(str(tmp_user_db))
+
+
 def _seed_v3(path):
     _create_user_v3(path)
 
