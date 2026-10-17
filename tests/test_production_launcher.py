@@ -15,7 +15,7 @@ from PySide6.QtTest import QTest
 
 import services.plan_execution as plan_execution
 from tests.clipboard_wait import wait_for_clipboard
-from tests.qml_click import area_of, press_move_release, scrolling_table_of, spin
+from tests.qml_click import press_move_release, spin
 
 pytestmark = pytest.mark.ui
 
@@ -1153,65 +1153,6 @@ class TestLauncherRowClick:
                 read_current=lambda: w._bridge.selectedId,
                 expect=rows[3]["id"],
                 delta=1,
-            )
-        finally:
-            w.close()
-
-
-class TestLauncherScrollKept:
-    """刷新后列表不得滚回顶部（用户报：「每点一次启动，列表就恢复到最开始」）。
-
-    根因：`rows` 每次刷新都是**新数组**，而 Qt 的 `QQuickItemView::setModel()` 判定
-    「换了个 model」就把视图重建到顶部。探针实测：40 行、行数与 contentHeight 都不变，
-    只把其中一行的 `statusText` 改掉，`contentY` 就 500 → 0；同一份内容原样再给一次则不跳
-    （Qt 对相等的 QVariantList 提前返回、不重建）—— 所以它只在「这次刷新真的改动了一行」
-    时出现，即每次点启动。旁证见 `LauncherWindow.qml` 里 `planList.applyRows()` 的说明。
-    """
-
-    def test_list_keeps_scroll_position_when_a_row_changes(self, qapp, monkeypatch):
-        """点启动（改了一行 + 走 `_on_poll`）后，滚动位置必须还在原处。
-
-        5s 轮询走的是同一条 `_on_poll → _apply_filters → _sync_rows → rowsChanged` 路径，
-        所以这条回归同时兜住轮询（只要那一轮真的改动了某一行 —— 运行中计划每轮的剩余时长
-        都会变，实际每轮都算改动）。
-        """
-        plans = [_plan(1000 + i, name=f"产品{i:02d}") for i in range(40)]
-        w, pl = _make_launcher(qapp, monkeypatch, plans=plans)
-        try:
-            w.resize(1000, 700)
-            w.show()
-            spin(400)
-
-            lv = scrolling_table_of(area_of(_root(w), "launcherClickArea"))
-            assert lv.property("contentHeight") > lv.height(), "用例前提：列表要长过一屏"
-            lv.setProperty("contentY", 500.0)
-            spin(250)
-            assert float(lv.property("contentY")) == 500.0, "用例前提：先把列表滚到中间"
-
-            # 复刻真实启动：`start_plan` 会把这条计划落成 in_progress，于是下一次 `_on_poll()`
-            # 拿到的行视图与当前 model 不同 —— 这正是触发 Qt 重建 model（并弹回顶部）的条件。
-            import services.plan_execution as plan_execution
-
-            started: list[int] = []
-
-            def fake_start(plan, **kw):
-                started.append(int(plan["id"]))
-                plan["status"] = "in_progress"
-                return {"ok": True, "message": "ok"}
-
-            monkeypatch.setattr(plan_execution, "start_plan", fake_start)
-            monkeypatch.setattr(pl, "max_lines_for_category", lambda *a, **k: 99)  # 不弹超员确认
-            monkeypatch.setattr(w, "_bp_short", lambda plan: None)  # 不依赖库里的蓝图状态
-            pid = int(w.row_view_models()[10]["id"])
-            before = _row(w, pid)["statusText"]
-
-            w._on_row_start(pid)
-            spin(300)
-
-            assert started == [pid], "用例前提：这次点击要真的走到启动"
-            assert _row(w, pid)["statusText"] != before, "用例前提：这次刷新要真的换掉那行内容"
-            assert abs(float(lv.property("contentY")) - 500.0) <= 1.0, (
-                f"刷新后列表不该滚回顶部：期望仍在 500，实得 contentY={lv.property('contentY')}"
             )
         finally:
             w.close()

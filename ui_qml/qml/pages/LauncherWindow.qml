@@ -298,52 +298,7 @@ Window {
             anchors.fill: parent
             clip: true
             spacing: win.padXs
-
-            /* ⚠️ `model` **不能**直接写 `win.launcher.rows`。
-             *
-             * `rows` 每次刷新（点行内「启动」→ `_on_poll`；5s 轮询同一条路径）都是**新数组**，
-             * 而 Qt 的 `QQuickItemView::setModel()` 一旦判定「换了个 model」就把视图重建到
-             * 顶部开始。实测（临时探针，40 行、行数与 contentHeight 都不变，只改其中一行的
-             * `statusText`）：`contentY` **500 → 0**；把同一份内容原样再给一次则不跳（Qt 对
-             * 相等的 QVariantList 提前返回、不重建）。所以这个缺陷只在「这次刷新真的改动了
-             * 某一行」时出现 —— 也就是每次点启动，用户看到的就是「列表滚回最开头」。
-             *
-             * 换 model 前把 `contentY` 记进 `keepContentY`，`onModelChanged` 里还原即可。
-             * 难点在「记」的这一拍必须早于 `setModel()`：**不能**把记录写成 `model: readRows()`
-             * 这类绑定里的副作用 —— 绑定求值会把 `contentY` 一起记成依赖，于是每滚一像素都
-             * 重算一次 model（整表深比较，白烧 CPU）。所以这里让 `model` 只依赖一个私有属性
-             * `rowsModel`，由 `applyRows()` 按代码顺序「先记位置、再换数组」（由 Window 上
-             * `Connections.onRowsChanged` 驱动）。 */
-            model: rowsModel
-            onModelChanged: restoreKeepContentY()
-
-            //: 当前 model 用的行数组 —— **只有 `applyRows()` 写它**（不挂绑定，保证顺序）
-            property var rowsModel: []
-            //: 换 model 之前记下的滚动位置（0 = 本来就在顶部，无需还原）
-            property real keepContentY: 0
-
-            function applyRows() {
-                keepContentY = contentY
-                rowsModel = win.launcher ? win.launcher.rows : []
-            }
-
-            /* delegate 重建是**异步**的：`setModel()` 返回时 `contentHeight` 可能还没重算完，
-             * 这一拍赋 `contentY` 会被夹到偏小的最大可滚位置，故补一拍。
-             * 实测数据见 `tests/test_production_launcher.py::TestLauncherScrollKept`。 */
-            function restoreKeepContentY() {
-                if (keepContentY <= 0)
-                    return
-                contentY = keepContentY
-                Qt.callLater(function () {
-                    if (planList.keepContentY > 0)
-                        planList.contentY = planList.keepContentY
-                })
-            }
-
-            // 窗口建好时 `rows` 可能是空的（控制器紧接着就 `_on_poll()` 发一次 rowsChanged），
-            // 这一步只是让「已有 rows 但没有通知」的复用场景也能拿到列表。
-            Component.onCompleted: applyRows()
-
+            model: win.launcher ? win.launcher.rows : []
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ScrollBar {
                 policy: ScrollBar.AsNeeded
@@ -718,12 +673,6 @@ Window {
     // 选中行变化时把列表滚到该行（行内启动 / 阻塞提示共用）
     Connections {
         target: win.launcher
-
-        /* 行数组换了 → 换 ListView 的 model。**必须**由这里驱动、且先记滚动位置：
-         * 见 `planList.applyRows()` 那段说明（直接绑 `rows` 会把滚动位置冲回顶部）。 */
-        function onRowsChanged() {
-            planList.applyRows()
-        }
         function onSelectionRequested(planId) {
             for (let i = 0; i < planList.count; ++i) {
                 if (planList.itemAtIndex(i) && planList.itemAtIndex(i).modelData.id === planId) {

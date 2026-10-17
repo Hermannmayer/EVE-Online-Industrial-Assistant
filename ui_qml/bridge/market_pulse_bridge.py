@@ -366,18 +366,14 @@ def _ma7(points: list[dict]) -> list[dict]:
 def _card_hint(key: str, days: int, value: float | None) -> str:
     """卡片的补充说明（空串 = 不显示）。
 
-    PLEX 必须单独说清口径：它**全服统一交易、没有本地市场划分**，历史来自官方
-    **Global PLEX Market** region（`19000001`，ESI 里 region 名 `GPMR-01`，CCP ESI
-    dev blog 2025-07-04 公布）的 `/markets/19000001/history/`，随 `price_history` 一起入库，
-    **带真实 volume / order_count**。`global_price_daily`（`/markets/prices/` 每日快照，
-    只有价、没有成交量）只是它**还没拉过全域历史时的兜底**。
-    与另外四条（各贸易中心的区域成交均价）不是一个 region、也不是同一种权重口径，
-    不能让人以为它是同口径的第五个指数。
+    PLEX 必须单独说清口径：**它的价格全服统一、没有区域划分**，ESI 的区块历史对它恒返回空
+    —— 数据来自「更新价格」里 `/markets/prices/` 的每日快照，与另外四条（区域成交均价）
+    不是一回事，不能让人以为它是同口径的第五个指数。
     """
     if key == "plex":
         if value is None:
-            return "全服统一价：先在「更新价格」里拉到 PLEX 全域市场（19000001）历史才有序列"
-        return "全服统一价（历史取自官方 Global PLEX Market，口径不同于另外四条的区域成交均价）"
+            return "全服统一价：ESI 不提供区域历史，先跑一次「更新价格」才有序列"
+        return "全服统一价（口径不同于另外四条的区域成交均价）"
     if days < 30:
         return "基期短，长窗口不全"
     return ""
@@ -568,8 +564,7 @@ _GUIDE_TEXT = (
     "③ 成员表与异动榜的**每一行都能点**：左键开右侧抽屉（挂单建议 + BOM 传导链），"
     "右键出菜单（复制名称 / 加入关注列表 / 加入制造列表）—— 提前备料或提前出货。\n"
     "口径：只用 Jita 的成交均价（挂单价一个人就能推，只做供给予警）；指数 100 = 基期，"
-    "跌 = 这一篮子东西整体变便宜。PLEX 是全服统一价，历史取自官方 Global PLEX Market "
-    "（region 19000001），与另外四条的区域成交均价不是同一种口径。"
+    "跌 = 这一篮子东西整体变便宜。PLEX 是全服统一价，与另外四条不是同一种口径。"
 )
 
 
@@ -593,11 +588,10 @@ _CARD_META: dict[str, tuple[str, str]] = {
         "终端需求的温度计：成品在跌而原料没跌 → 加工利润被压缩；成品跌得比原料快 → 需求在退，别囤料、成品早出手。",
     ),
     "plex": (
-        "全服统一价 · ISK 锚（官方 Global PLEX Market 成交历史）",
-        "PLEX 价格**全服统一、没有区域划分**，历史取自官方 **Global PLEX Market** region"
-        "（region 19000001，ESI 里 region 名 GPMR-01，CCP ESI dev blog 2025-07-04 公布）的日线，"
-        "随「更新价格」入库、带真实成交量与订单量；/markets/prices/ 的每日快照仅作兜底。"
-        "它涨 = ISK 贬值；四条实体线不动而它涨，说明只是货币现象，不是供需。",
+        "全服统一价 · ISK 锚（不走区域成交历史）",
+        "PLEX 价格**全服统一、没有区域划分**，ESI 不提供它的区块历史，本线取自 "
+        "「更新价格」里 /markets/prices/ 的每日快照。它涨 = ISK 贬值；四条实体线不动而它涨，"
+        "说明只是货币现象，不是供需。",
     ),
 }
 

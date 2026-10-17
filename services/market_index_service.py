@@ -11,7 +11,7 @@
                     **且它供入的产物本身又是生产投入品**（用途层级 ≥2，近似 CCP 的 ore/moon/PI/发明用品）
 ``sppi``            次级投入品：是生产投入品，但供入的产物**不再是生产投入品**（直接供给消费品）
 ``cpi``             消费品（代理）：有成交、**不是生产投入品**，按近 30 天成交额取 top-:data:`CPI_TOP_N`
-``plex``            固定 44992（ISK 锚），序列取自官方 Global PLEX Market（region 19000001）
+``plex``            固定 44992（ISK 锚）
 ==================  ==========================================================================
 
 算法（逐条对应计划 §2.2）
@@ -91,15 +91,6 @@ MPI_TYPES: tuple[int, ...] = (34, 35, 36, 37, 38, 39, 40, 11399)
 
 #: PLEX 锚
 PLEX_TYPE_ID = 44992
-
-#: PLEX 的官方成交市场：**Global PLEX Market**（region `19000001`，官方名 `GPMR-01`）。
-#: 依据 CCP dev blog 2025-07-04（https://developers.eveonline.com/blog/global-plex-market-and-sde-updates）：
-#: PLEX 自 2025-07-07 起全服统一交易，`/markets/19000001/history/?type_id=44992` 就是它的权威日线
-#: （2026-10-11 实测 200、404 条、2025-09-01 ~ 2026-10-09，**每行带 volume / order_count**）；
-#: 4 个贸易中心的同一端点对它恒返回空（实测 `[]`）。
-#: 这里**故意重复**定义而不是从 `services.importers.getprices` 导入：那个包的 `__init__.py`
-#: 会把全部下载器（SDE / 图标 / 合同…）一并拉进来，而本模块在 UI 启动路径上、只该是轻量读端。
-PLEX_REGION_ID = 19000001
 
 #: 用途层级判定只看这两个活动（与计划 §3 一致）
 BASED_ACTIVITIES: tuple[str, str] = ("manufacturing", "reaction")
@@ -317,10 +308,9 @@ def _build_index(obs: Mapping[int, Sequence[tuple[str, float, int]]], members: I
         turnovers[tid] = turns
         returns[tid] = member_returns
         windows[tid] = (win_turn, win_cov)
-        # 整条序列**没有任何成交量**的品种（当前只有 PLEX 走 `global_price_daily` 兜底时会这样：
-        # 那张表只有价、没有成交）→ 成交额权重恒为 0，会被下面的「成交额门槛」整条筛掉。
-        # 它本身就是**固定锚**，不是「按交易活跃度加权」的对象：只按覆盖天数准入、权重按等权给。
-        # PLEX 的正常路径（`PLEX_REGION_ID` 的成交历史）是带 `volume` 的，不走这一支。
+        # 全服统一价品种（PLEX）在我们的数据里**没有成交量**（`/markets/prices/` 只给价），
+        # 成交额权重恒为 0 → 会被下面的「成交额门槛」整条筛掉。它本身就是**固定锚**，
+        # 不是「按交易活跃度加权」的对象：只按覆盖天数准入、权重按等权给。
         price_only[tid] = not any(turns)
         for i, row in enumerate(rows):
             day_rows.setdefault(row[0], []).append((tid, i))
@@ -475,18 +465,9 @@ def _last_day(conn_mgr, region_id: int) -> date | None:
 
     - 只看「MAX(date)」会被 ESI 的尾部残缺日骗到（见 `COVERAGE_RATIO`）；
     - 只看 `price_history` 又会让「只装了全服价」的库算不出 PLEX（它的序列在
-      `global_price_daily` 里）；
-    - PLEX 的成交历史写在**全域市场 region**（`PLEX_REGION_ID`）而指数区域是 Jita：
-      它的数据日也要算进来，否则「只拉到 PLEX 全域历史」的库会把 PLEX 整条线算空
-      （`_load_observations` 的装载窗口以本函数返回的日期为右端）。
-      实测/推算：正常库里 `global_price_daily` 的当日快照日 ≥ PLEX 的历史最末日
-      （ESI 在 D+1 的 11:05 才放出 D 的日线，而快照是每次「更新价格」当天写的），
-      所以这一支平时不动锚定日，只在「没有成交历史也没有全服快照」时才把 PLEX 救回来。
+      `global_price_daily` 里）。
     """
     best = _last_history_day(conn_mgr, region_id)
-    plex_day = _last_history_day(conn_mgr, PLEX_REGION_ID)
-    if plex_day and (best is None or plex_day > best):
-        best = plex_day
     with conn_mgr.connect("mkt") as conn:
         if _table_exists(conn, "global_price_daily"):
             row = conn.execute("SELECT MAX(date) FROM global_price_daily").fetchone()
@@ -495,28 +476,6 @@ def _last_day(conn_mgr, region_id: int) -> date | None:
                 if best is None or global_day > best:
                     best = global_day
     return best
-
-
-def _read_region_history(
-    conn,
-    out: dict[int, list[tuple[str, float, int]]],
-    region_id: int,
-    ids: Sequence[int],
-    start: date,
-    end: date,
-) -> None:
-    """把 `price_history` 里 `region_id` 的 `ids` 行追加进 `out`（按 `_SQL_CHUNK` 分批）。"""
-    for offset in range(0, len(ids), _SQL_CHUNK):
-        chunk = ids[offset : offset + _SQL_CHUNK]
-        placeholders = ",".join("?" * len(chunk))
-        rows = conn.execute(
-            f"SELECT type_id, date, average, volume FROM price_history "
-            f"WHERE region_id = ? AND date >= ? AND date <= ? AND type_id IN ({placeholders}) "
-            f"ORDER BY type_id, date",
-            (region_id, start.isoformat(), end.isoformat(), *chunk),
-        ).fetchall()
-        for tid, day, average, volume in rows:
-            out.setdefault(int(tid), []).append((str(day), float(average or 0.0), int(volume or 0)))
 
 
 def _load_observations(
@@ -528,31 +487,31 @@ def _load_observations(
 ) -> dict[int, list[tuple[str, float, int]]]:
     """读 `price_history` → `{type_id: [(date, average, volume), ...]}`（按日期升序）。
 
-    **PLEX 的序列改读全局市场 region**：它的价格全服统一、没有本地市场划分，
-    成交历史在官方 Global PLEX Market（`PLEX_REGION_ID`）里，贸易中心的区块历史对它
-    恒返回空（实测 `/markets/10000002/history/?type_id=44992` → `[]`）。所以命中 PLEX 时
-    改读 `region_id = PLEX_REGION_ID` 的行 —— **连 `volume` / `order_count` 一起拿到的真值**，
-    不再像以前那样只能拿全服价、成交量填 0。
-
-    两个兜底都在，且**不混进同一条序列**（命中就整段替换）：
-    PLEX 的全域历史还没拉过时退回 `global_price_daily`；其余品种照旧退回它。
+    **全服统一价的品种（PLEX）改用 `global_price_daily` 覆盖**：它的价格全服一致、没有区域
+    划分，ESI 的区块历史对它恒返回空（实测 Jita/Amarr 都是空列表），所以 `price_history`
+    里永远不会有它。两种口径不能混在同一条序列里，命中就整段替换。
     """
     ids = sorted({int(t) for t in type_ids})
     out: dict[int, list[tuple[str, float, int]]] = {}
     if not ids:
         return out
-    plex_ids = [PLEX_TYPE_ID] if PLEX_TYPE_ID in ids else []
-    other_ids = [tid for tid in ids if tid != PLEX_TYPE_ID]
     with conn_mgr.connect("mkt") as conn:
         # 两张表各自判断存在性：只装了 `global_price_daily`（还没跑过历史拉取）时，
         # PLEX 也应该有数 —— 早退会让它整条线空掉
         if _table_exists(conn, "price_history"):
-            if other_ids:
-                _read_region_history(conn, out, region_id, other_ids, start, end)
-            if plex_ids:
-                _read_region_history(conn, out, PLEX_REGION_ID, plex_ids, start, end)
+            for offset in range(0, len(ids), _SQL_CHUNK):
+                chunk = ids[offset : offset + _SQL_CHUNK]
+                placeholders = ",".join("?" * len(chunk))
+                rows = conn.execute(
+                    f"SELECT type_id, date, average, volume FROM price_history "
+                    f"WHERE region_id = ? AND date >= ? AND date <= ? AND type_id IN ({placeholders}) "
+                    f"ORDER BY type_id, date",
+                    (region_id, start.isoformat(), end.isoformat(), *chunk),
+                ).fetchall()
+                for tid, day, average, volume in rows:
+                    out.setdefault(int(tid), []).append((str(day), float(average or 0.0), int(volume or 0)))
         for tid, rows in _load_global_observations(conn, ids, start, end).items():
-            # 全服价是**退路，不是覆盖**：只有该品种在窗口里完全没有成交序列时才用它。
+            # 全服价是**退路，不是覆盖**：只有该品种在窗口里完全没有区域成交序列时才用它。
             # （曾经写成无条件覆盖 —— 那时把 8 种矿物也放进了全服快照表，结果矿物的
             #  398 天成交序列被换成 1 行当日价，MPI 直接整条空掉。）
             if not out.get(tid):
@@ -568,9 +527,7 @@ def _load_global_observations(
 ) -> dict[int, list[tuple[str, float, int]]]:
     """读 `global_price_daily`（全服统一价）→ 与 `price_history` 同形的序列。
 
-    成交量给 0：这张表只有价格，没有成交（它是 `/markets/prices/` 的每日快照，
-    不含成交量）。PLEX 的**权威序列已经换成** `PLEX_REGION_ID` 的成交历史
-    （那份**带**真实 `volume`），这里只剩「那个 region 还没拉过」时的兜底。
+    成交量给 0：这张表只有价格，没有成交（PLEX 的成交量 ESI 也不按区块给）。
     """
     ids = sorted({int(t) for t in type_ids})
     out: dict[int, list[tuple[str, float, int]]] = {}

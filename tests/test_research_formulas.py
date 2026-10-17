@@ -194,23 +194,8 @@ class TestScienceJobTime:
         )
         assert science_job_time(1000, activity=ACTIVITY_RESEARCH_TE, metallurgy_skill=5) == pytest.approx(1000)
 
-    @pytest.mark.parametrize(
-        "activity",
-        [ACTIVITY_COPYING, ACTIVITY_INVENTION, ACTIVITY_RESEARCH_ME, ACTIVITY_RESEARCH_TE],
-    )
-    def test_adv_industry_reduces_every_science_activity(self, activity):
-        """回归（2026-10-11 用户报「发明/拷贝时间比游戏长一天多」）：3388 高级工业理论覆盖
-        **全部**科研活动 —— 客户端 SDE 原文「每升一级，所有制造和研究时间减少3%」
-        （en: 3% reduction in all manufacturing and research times per skill level）。
-
-        旧实现只认 3402/3403/3409 三个「专属」技能、并断言发明无技能可套，
-        于是满级高级工业理论的角色科研时长整整偏长 15%（实测计划 364：578850 s vs 492022 s）。
-        """
-        got = science_job_time(10000, activity=activity, adv_industry_skill=5)
-        assert got == pytest.approx(10000 * 0.85)
-
-    def test_invention_has_no_activity_specific_skill(self):
-        """发明除 3388 外无专属技能：三个科学技能都不该改发明时长（客户端无此文案）"""
+    def test_invention_has_no_time_skill(self):
+        """发明时长无对应技能：客户端无此文案、Wiki 也只提结构与钻机减免"""
         got = science_job_time(
             13800,
             activity=ACTIVITY_INVENTION,
@@ -220,15 +205,9 @@ class TestScienceJobTime:
         )
         assert got == pytest.approx(13800)
 
-    def test_science_time_is_skills_times_structure_only(self):
-        """回归：科研时长只剩「技能 × 结构」两个因子，**不吃蓝图 TE**。
-
-        Wiki「Research」页原文「Copy time is also NOT affected by the level of TE on the
-        BPO」；发明时长同理，ME/TE 研究时长只由目标等级决定。旧实现额外乘
-        (1 − 0.01×TE)，会把 TE20 的 BPO 拷贝时间错误算短 20%。
-        """
-        got = science_job_time(1000, activity=ACTIVITY_COPYING, science_skill=5, structure_time_mod=0.8)
-        assert got == pytest.approx(1000 * 0.75 * 0.8)
+    def test_te_level_and_structure(self):
+        got = science_job_time(1000, activity=ACTIVITY_INVENTION, research_skill=0, te_level=10, structure_time_mod=0.8)
+        assert got == pytest.approx(1000 * 0.9 * 0.8)
 
     def test_negative_skills_treated_as_zero(self):
         assert science_job_time(1000, activity=ACTIVITY_INVENTION, research_skill=-3) == pytest.approx(1000)

@@ -220,7 +220,7 @@ class PlanTable(QObject):
         self._rebuild_subitems()
         self.plan_updated.emit()
 
-    def _complete_rows_with_dialog(self, rows: list[int], *, statuses: tuple[str, ...] = ("ready",)) -> None:
+    def _complete_rows_with_dialog(self, rows: list[int]) -> None:
         """批量下线：**一次**对话框逐行选产出机库，再整批完成。
 
         右键「下线」是批量入口，逐行调 `_complete_plan_with_dialog` 会连弹 N 次框；
@@ -229,18 +229,11 @@ class PlanTable(QObject):
 
         对话框每行一个下拉（初值 = 该计划自己的机库），所以交回的是**逐条**机库
         （`selected_hangar_ids()`）而不是一个覆盖全批的标量。
-
-        statuses: 允许进入本入口的计划状态。默认只有 `ready`（倒计时走完的待下线行）；
-        右键「立即完成」传 `("in_progress", "running", "ready")` 放过在产行 —— 底层
-        `plan_execution.complete_plan` 的 docstring 本就是「ready/pending/in_progress →
-        completed」，挡在前端的从来是这里的过滤，不是业务层。
         """
         if self._model is None:
             return
-        candidates = [
-            p for p in (self._model.get_plan(r) for r in rows) if p and (p.get("status") or "").lower() in statuses
-        ]
-        if not candidates:
+        ready = [p for p in (self._model.get_plan(r) for r in rows) if p and (p.get("status") or "").lower() == "ready"]
+        if not ready:
             return
         from services.inventory_manager import get_hangars
         from services.user_settings import get_default_hangar_id
@@ -249,38 +242,20 @@ class PlanTable(QObject):
         from ui_qml.bridge.message_dialog import FMessageDialog
         from ui_qml.views.industry.complete_plans_dialog import complete_plans
 
-        dlg = CompletePlansDialog(candidates, get_hangars(), get_default_hangar_id("default_deposit_hangar_id"), self)
+        dlg = CompletePlansDialog(ready, get_hangars(), get_default_hangar_id("default_deposit_hangar_id"), self)
         if not dlg.exec():
             return
-        allow_bp_short = confirm_bp_shortfall(self, candidates)
+        allow_bp_short = confirm_bp_shortfall(self, ready)
         if allow_bp_short is None:
             return
         result = complete_plans(
-            candidates,
-            dlg.selected_hangar_id(),
-            allow_bp_short=allow_bp_short,
-            hangar_ids=dlg.selected_hangar_ids(),
+            ready, dlg.selected_hangar_id(), allow_bp_short=allow_bp_short, hangar_ids=dlg.selected_hangar_ids()
         )
         if result["failed"]:
             detail = "\n".join(result.get("failed_reasons") or []) or "、".join(result["failed"])
             FMessageDialog.warning(self, "下线失败", detail)
         self._rebuild_subitems()
         self.plan_updated.emit()
-
-    def _finish_rows_now_with_dialog(self, rows: list[int]) -> None:
-        """右键「立即完成」：**不等倒计时走完**，把在产产线直接下线。
-
-        为什么只放这三个状态（业务规则，见 `_complete_rows_with_dialog` 的 statuses）：
-          - `in_progress` / `running`：用户要的就是这个 —— 游戏里货已到手（或想提前收工），
-            不该被软件自己的倒计时卡住。材料在「项目启动」时已扣，完成不会再扣一次。
-          - `ready`：倒计时本就走完了，与「下线」等价，一起收进来免得两个入口行为分叉。
-          - **`pending` 不放行**：待生产行还没启动（材料没扣、游戏里根本没开工），
-            完成它只会凭空入库，属于数据污染而不是「手动完成」。
-
-        交互与「下线」完全一致（同一套机库选择对话框 + 蓝图流程预检 + 失败告警），
-        所以不需要额外的二次确认 —— 对话框本身就是一次显式确认。
-        """
-        self._complete_rows_with_dialog(rows, statuses=("in_progress", "running", "ready"))
 
     def _edit_plan(self, row: int) -> None:
         """编辑生产计划 — 打开 PlanEditDialog（QML 版），保存后同步重算"""

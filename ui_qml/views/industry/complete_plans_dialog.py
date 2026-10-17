@@ -34,11 +34,6 @@ def complete_plans(
     发明行先弹 InventionOutcomeDialog 回填**成功产线数**（用户取消 → 该行不完成）。
     ⚠️ validate 档测试在**没有 QApplication** 的情况下直调本函数时必须传
     `ask_outcome=False`，否则弹窗会崩或挂死。
-
-    批量返回的发明行**只弹一次对话框**（`_ask_invention_outcomes`）：N 条各弹一次
-    的话 10 条发明要点 20 次「确认 + 关闭」。N ≥ 2 走列表对话框；N == 1 仍走单条
-    对话框（计划表单行下线 / 小助手的形态不变）。用户取消 → 只跳过这批发明行
-    （`skipped`），**非发明行照常完成**（整批中止是行为倒退）。
     Returns: {"completed": int, "deposited": int, "removed": int, "failed": [...],
               "skipped": [...], "failed_reasons": [...]}
     ``removed``：母项下线时被顺带清理掉的已完成子项行数（见
@@ -53,19 +48,6 @@ def complete_plans(
     failed_reasons: list[str] = []
     skipped: list[str] = []
     scalar_deposit = hangar_id if hangar_id and hangar_id > 0 else None
-
-    # 待回填的发明行先一次性收集，**整批只弹一个列表对话框**（逐条弹窗是 N 次点击）。
-    # 用**下标**而不是 plan id 记集合：下标与 `plans` 一一对应，不受 id 缺失/重复影响。
-    pending_indexes: set[int] = set()
-    outcomes: dict[int, tuple[int, int]] = {}
-    if ask_outcome:
-        pending_indexes = {i for i, plan in enumerate(plans) if _is_pending_invention(plan)}
-        if pending_indexes:
-            batch = _ask_invention_outcomes([plans[i] for i in sorted(pending_indexes)], parent)
-            if batch is not None:
-                outcomes = batch
-            # batch is None（用户取消）→ outcomes 留空，下面这些行落进 skipped
-
     for i, plan in enumerate(plans):
         if update_hangar:
             # 逐条优先：给了 hangar_ids 就按序号取，否则整批用同一个标量（向后兼容）
@@ -77,9 +59,9 @@ def complete_plans(
             set_plan_deposit_hangar(get_container().db, plan["id"], deposit)
         actual = None
         actual_bpc = None
-        if i in pending_indexes:
-            outcome = outcomes.get(int(plan.get("id") or 0))
-            if outcome is None:  # 用户在列表里取消 / 该行没拿到回填
+        if ask_outcome and _is_pending_invention(plan):
+            outcome = _ask_invention_outcome(plan, parent)
+            if outcome is None:  # 用户取消
                 skipped.append(plan.get("product_name") or str(plan.get("id")))
                 continue
             actual, actual_bpc = outcome
@@ -149,153 +131,31 @@ def _is_pending_invention(plan: dict) -> bool:
     return normalize(plan.get("activity")) == "invention" and plan.get("actual_output_runs") is None
 
 
-def _invention_defaults_from_sde(plan: dict) -> tuple[int, float]:
-    """从 SDE 取该发明计划的 (T1→T2 基础流程数, 基础成功率)。
-
-    为什么需要它：表格行**没跑过评分**时 `plan["breakdown"]` 是空的，而回填框的
-    「每张流程数」只从 breakdown 取 —— 于是界面上出现「每张 0 流程、共 0 流程」，
-    用户在框里填多少条成功产线都会换算成 0 流程入库（2026-10-11 用户报的 bug）。
-    这里查权威来源：
-      - 基础流程 = `blueprint_products.quantity`（T1→T2 那条发明行，缺省 10）
-      - 基础成功率 = 同一批产物条目里命中本蓝图那条的 `probability`
-
-    查不到（蓝图库未初始化 / 该蓝图不是发明产物）→ (0, 0.0)，由调用方兜底。
-    """
-    from core.container import get_container
-    from core.logger import log
-    from services.research_plans import invention_base_runs, resolve_invention_source
-
-    t2_bp = int(plan.get("blueprint_type_id") or plan.get("product_type_id") or 0)
-    if not t2_bp:
-        return 0, 0.0
-    try:
-        with get_container().db.connect("bp", "ref") as conn:
-            src = resolve_invention_source(conn, t2_bp)
-            if not src:
-                return 0, 0.0
-            base_runs = invention_base_runs(conn, t2_bp, int(src["t1_blueprint_type_id"]))
-            probability = next(
-                (
-                    float(o.get("base_probability") or 0.0)
-                    for o in (src.get("outcomes") or [])
-                    if int(o.get("blueprint_type_id") or 0) == t2_bp
-                ),
-                0.0,
-            )
-    except Exception:
-        log.exception("读取发明基础数据失败 plan=%s", plan.get("id"))
-        return 0, 0.0
-    return base_runs, probability
-
-
-def _invention_attempts(plan: dict) -> int:
-    """本发明的**总尝试次数** = `runs × parallels`（与评分侧同一口径）。
-
-    为什么必须乘 `parallels`：`runs` 是**每条并行线**的尝试次数（计划表单里那栏的标签
-    就叫「每线尝试次数」），启动时按总次数扣解码器与数据核心 —— 计划 364 runs=10 ×
-    parallels=5 实际跑了 50 次，只显示 10 的话用户没法判断成功数该填到多少，输入框上限
-    也跟着错。breakdown 有权威值时优先用它（评分侧 `total_attempts = max(1, runs) *
-    max(1, parallels)`，见 `services/scoring_service.py`）。
-    """
-    scored = int((plan.get("breakdown") or {}).get("attempts") or 0)
-    if scored > 0:
-        return scored
-    return max(int(plan.get("runs") or 1), 1) * max(int(plan.get("parallels") or 1), 1)
-
-
-def _invention_expected(plan: dict) -> tuple[int, int, int, int]:
-    """算出该发明计划的 `(每次成功产出的流程数, 期望成功产线数, 期望流程数, 总尝试次数)`。
-
-    单条对话框与批量列表**共用这一份口径** —— 两处各写一套公式必然漂移，
-    而「每张流程数」算错会让用户填多少条成功产线都换算成错数入库（2026-10-11 的 bug）。
-    breakdown 缺任一项就回 SDE 取权威值：`runs_per` = `invention_output_runs(base_runs, 解码器)`，
-    成功率优先取 breakdown 的 `success_rate`，否则用 SDE 基础成功率。
-    """
-    from domain.research import get_decryptor, invention_output_runs
-
-    bd = plan.get("breakdown") or {}
-    attempts = _invention_attempts(plan)
-    expected_runs = int(bd.get("expected_runs") or bd.get("output_runs") or 0)
-    runs_per = int(bd.get("runs_per_bpc") or 0)
-    expected_bpc = int(bd.get("expected_bpc") or 0)
-    decryptor = get_decryptor(plan.get("decryptor_type_id"))
-
-    # breakdown 缺任一项就回 SDE 取权威值 —— 尤其是 `runs_per`：「每次成功产出的流程数」
-    # 是 base_runs + 解码器修正，不该因为没跑过评分就变成 0。
-    if runs_per <= 0 or expected_bpc <= 0:
-        base_runs, base_probability = _invention_defaults_from_sde(plan)
-        if runs_per <= 0:
-            runs_per = invention_output_runs(base_runs, decryptor)
-        if expected_bpc <= 0:
-            rate = bd.get("success_rate")
-            # 有评分成功率就用它，否则用 SDE 基础成功率（未计技能加成，属保守粗估）
-            expected_bpc = round(attempts * (float(rate) if rate is not None else base_probability))
-    # 连基础成功率都取不到（蓝图库没初始化等）→ 退化为「每条产线成功一次」
-    if expected_bpc <= 0:
-        expected_bpc = attempts
-    # 最后一道兜底：仍然没有每次流程数时，从「期望流程 ÷ 期望张数」反推
-    if runs_per <= 0 and expected_bpc > 0 and expected_runs > 0:
-        runs_per = max(1, expected_runs // expected_bpc)
-    if expected_runs <= 0 and runs_per > 0:
-        expected_runs = expected_bpc * runs_per
-    return runs_per, expected_bpc, expected_runs, attempts
-
-
-def _invention_row(plan: dict) -> dict:
-    """列表对话框的一行（只读展示 + 预填期望成功数）—— 数值走 `_invention_expected`。"""
-    from domain.research import get_decryptor
-
-    runs_per, expected_bpc, _expected_runs, attempts = _invention_expected(plan)
-    decryptor = get_decryptor(plan.get("decryptor_type_id"))
-    return {
-        "plan_id": plan.get("id"),
-        "name": plan.get("product_name") or str(plan.get("id")),
-        "attempts": attempts,
-        "decryptor": decryptor.name if decryptor else "不使用",
-        "runs_per_bpc": runs_per,
-        "expected_bpc": expected_bpc,
-    }
-
-
-def _ask_invention_outcomes(plans: list[dict], parent) -> dict[int, tuple[int, int]] | None:
-    """回填本批待回填的发明行：**多条一次列表，单条仍走单条对话框**。
-
-    单条时不做「一行表格」：计划表格的单行「下线」与小助手的行内「可下线」都经
-    `complete_plan` 的单条路径，形态与改写前逐字一致（`_ask_invention_outcome`）。
-
-    Returns: `{plan_id: (实际产出流程数, BPC 张数)}`；用户取消 → None（调用方跳过这些行）。
-    """
-    if len(plans) == 1:
-        one = _ask_invention_outcome(plans[0], parent)
-        return None if one is None else {int(plans[0].get("id") or 0): one}
-
-    from ui_qml.bridge.invention_batch_bridge import InventionOutcomeListQmlDialog
-
-    dlg = InventionOutcomeListQmlDialog([_invention_row(plan) for plan in plans], parent)
-    from PySide6.QtWidgets import QDialog
-
-    if dlg.exec() != QDialog.DialogCode.Accepted:
-        return None
-    return dlg.outcome()
-
-
 def _ask_invention_outcome(plan: dict, parent) -> tuple[int, int] | None:
-    """弹**单条**发明结果回填对话框。返回 (实际产出流程数, BPC 张数)；取消 → None。
-
-    批量下线已改走 `_ask_invention_outcomes`；这里保留给单行下线与小助手路径。
-    """
+    """弹出发明结果回填对话框。返回 (实际产出流程数, BPC 张数)；取消 → None。"""
     from domain.research import get_decryptor
     from ui_qml.bridge.invention_outcome_bridge import InventionOutcomeQmlDialog as InventionOutcomeDialog
 
-    runs_per, expected_bpc, expected_runs, attempts = _invention_expected(plan)
-    decryptor = get_decryptor(plan.get("decryptor_type_id"))
-
+    bd = plan.get("breakdown") or {}
+    attempts = max(int(plan.get("runs") or 1), 1)
+    expected_runs = int(bd.get("expected_runs") or bd.get("output_runs") or 0)
+    runs_per = int(bd.get("runs_per_bpc") or 0)
+    expected_bpc = int(bd.get("expected_bpc") or 0)
+    if expected_bpc <= 0:
+        # 没跑过评分（批量行）→ 用成功率估期望张数；再没有就退化为「每条产线成功一次」
+        rate = bd.get("success_rate")
+        expected_bpc = round(attempts * float(rate)) if rate is not None else attempts
+    if runs_per <= 0 and expected_bpc > 0 and expected_runs > 0:
+        # 同样是没有 breakdown 的退化路径：从「期望流程 ÷ 期望张数」反推每次流程，
+        # 免得把成功数换算成 0 流程
+        runs_per = max(1, expected_runs // expected_bpc)
+    d = get_decryptor(plan.get("decryptor_type_id"))
     dlg = InventionOutcomeDialog(
         plan_name=plan.get("product_name") or str(plan.get("id")),
         expected_runs=expected_runs,
         expected_bpc=expected_bpc,
-        attempts=attempts,  # 与列表行同口径（runs × parallels），不再退回单线次数
-        decryptor_name=decryptor.name if decryptor else "",
+        attempts=int(plan.get("runs") or 0),
+        decryptor_name=d.name if d else "",
         runs_per_bpc=runs_per,
         parent=parent,
     )

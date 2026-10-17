@@ -93,36 +93,6 @@ def _case_research_cost(monkeypatch):
     return lambda: ResearchCostQmlDialog(_BrokenDb(), 691, "渡鸦级蓝图")
 
 
-def _case_invention_batch(monkeypatch):
-    """批量发明回填：两行覆盖「有解码器 / 不使用」两种只读列。
-
-    `attempts` 传的是**总**尝试次数（runs × 并行数），口径见
-    `complete_plans_dialog._invention_attempts` —— 它同时是 SpinBox 的上限。
-    """
-    from ui_qml.bridge.invention_batch_bridge import InventionOutcomeListQmlDialog
-
-    return lambda: InventionOutcomeListQmlDialog(
-        [
-            {
-                "plan_id": 1,
-                "name": "游击战指挥脉冲波蓝图 II",
-                "attempts": 50,  # 10 runs × 5 并行
-                "decryptor": "获取装置解码器",
-                "runs_per_bpc": 20,
-                "expected_bpc": 4,
-            },
-            {
-                "plan_id": 2,
-                "name": "渡鸦级蓝图 II",
-                "attempts": 25,  # 5 runs × 5 并行
-                "decryptor": "不使用",
-                "runs_per_bpc": 10,
-                "expected_bpc": 2,
-            },
-        ]
-    )
-
-
 def _case_input_text(monkeypatch):
     return lambda: _input_dialog("text", text="甲")
 
@@ -282,7 +252,6 @@ _LOADS_CASES: list[tuple[str, Any]] = [
     ("批量编辑生产计划", _case_plan_edit_batch),
     ("部分启动", "partial_start_factory"),
     ("发明结果回填", "invention_factory"),
-    ("发明结果回填(批量列表)", _case_invention_batch),
     ("下线确认", "complete_plans_factory"),
     ("产出总表", "output_factory"),
     ("人物占用情况", "char_usage_factory"),

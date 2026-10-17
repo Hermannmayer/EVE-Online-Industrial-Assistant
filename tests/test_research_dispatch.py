@@ -146,10 +146,7 @@ def _plan(activity: str, **over):
 
 
 def _calc(plan: dict) -> dict:
-    # 显式给「高级工业理论」0：本文件几条时长断言按**无技能**口径写。
-    # 该键缺失时按制造侧同口径兜底 5（见 scoring_service._calculate_research_metrics），
-    # 兜底值不该被这里的时长断言间接钉死。
-    return ScoringService.calculate_plan_metrics(plan, {"skills": {"高级工业理论": 0}, "market": {}})
+    return ScoringService.calculate_plan_metrics(plan, {"skills": {}, "market": {}})
 
 
 class TestInventionDispatch:
@@ -198,19 +195,6 @@ class TestInventionDispatch:
         # 墙钟按每线 runs 次串行算，并行线同时跑 —— 不乘 parallels
         assert r["calculated_time"] == pytest.approx(13800 * 3)
 
-    def test_adv_industry_skill_scales_job_time(self, research_db):
-        """回归（2026-10-11）：科研时长必须吃 3388 高级工业理论 −3%/级。
-
-        域函数的回归在 `tests/test_research_formulas.py`（改坏因子就红）；这条守的是
-        **服务层接线** —— 独立核验实测：删掉 `_calculate_research_metrics` 里传
-        `adv_industry_skill=` 的那一行，域测试仍全绿，只有这条会红。
-        """
-        r = ScoringService.calculate_plan_metrics(
-            _plan("invention", runs=3, parallels=2),
-            {"skills": {"高级工业理论": 5}, "market": {}},
-        )
-        assert r["calculated_time"] == pytest.approx(13800 * 3 * 0.85)
-
     def test_success_rate_override_used(self, research_db):
         r = _calc(_plan("invention", success_rate=0.5, runs=1))
         assert r["breakdown"]["success_rate"] == pytest.approx(0.5)
@@ -229,37 +213,6 @@ class TestInventionDispatch:
     def test_missing_blueprint_type_id(self, research_db):
         r = _calc(_plan("invention", blueprint_type_id=None))
         assert r["status"] == "no_blueprint"
-
-
-class TestInventionOutcomeDefaults:
-    """发明结果回填框的「每次成功产出流程数」。
-
-    回归（2026-10-11 用户报的 bug）：表格行没跑过评分时 `plan["breakdown"]` 为空，
-    旧实现只从 breakdown 取 `runs_per_bpc`（得到 0），那条退化路径又要求
-    `expected_runs > 0`（同样是 0）→ 框里显示「每张 0 流程、共 0 流程」，
-    用户填多少条成功产线都会被换算成 0 流程入库。
-    现在缺 breakdown 就回 SDE 取：基础流程 + 解码器修正。
-    """
-
-    def test_runs_per_bpc_comes_from_sde_when_breakdown_missing(self, research_db):
-        from domain.research import get_decryptor, invention_output_runs
-        from ui_qml.views.industry.complete_plans_dialog import _invention_defaults_from_sde
-
-        plan = {"blueprint_type_id": T2_BP, "decryptor_type_id": DECRYPTOR_AMPLIFIED}
-        base_runs, probability = _invention_defaults_from_sde(plan)
-
-        # fixture：blueprint_products(821, invention, 2890, quantity=10, probability=0.34)
-        assert base_runs == 10
-        assert probability == pytest.approx(0.34)
-        # 放大装置解码器 runs_mod = +9 → 每次成功产 19 流程（旧实现给 0）
-        assert invention_output_runs(base_runs, get_decryptor(DECRYPTOR_AMPLIFIED)) == 19
-
-    def test_unknown_blueprint_returns_zero_defaults(self, research_db):
-        """不是发明产物 / 查不到 → (0, 0.0)，让调用方走兜底而不是抛异常。"""
-        from ui_qml.views.industry.complete_plans_dialog import _invention_defaults_from_sde
-
-        assert _invention_defaults_from_sde({"blueprint_type_id": 999999}) == (0, 0.0)
-        assert _invention_defaults_from_sde({}) == (0, 0.0)
 
 
 class TestCopyingDispatch:

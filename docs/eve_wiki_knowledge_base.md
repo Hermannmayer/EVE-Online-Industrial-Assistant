@@ -61,50 +61,6 @@ ME 每级 -1%，上限 10。**取整只做一次、作用于整个作业** —�
 实现与金标准测试：`domain/research.py`、`tests/test_research_formulas.py`、
 `tests/test_research_plan_metrics.py`。
 
-**科研作业时长公式契约**（2026-10-11 核实，来源：客户端 SDE 技能文案 + EVE University Wiki
-[Research](https://wiki.eveuniversity.org/Research) 页 Skills 节）：
-
-```
-科研作业时长 = blueprint_activities.time
-             × (1 − 0.03 × 高级工业理论 3388)
-             × 活动专属技能系数
-             × structure_time_mod
-```
-
-| 技能 | type_id | 每级效果 | 覆盖的活动 |
-|---|---|---|---|
-| 高级工业理论 Advanced Industry | 3388 | −3% 时间（满级 −15%） | **全部科研**：拷贝 / 发明 / ME 研究 / TE 研究（制造侧同款减免另见 `domain/formulas.calc_production_time`） |
-| 科学原理 Science | 3402 | −5% 时间（满级 −25%） | **仅拷贝** |
-| 研究概论 Research | 3403 | −5% 时间 | **仅 TE 研究** |
-| 冶金学 Metallurgy | 3409 | −5% 时间 | **仅 ME 研究** |
-| 实验室运作理论 Laboratory Operation | 3406 | +1 并发科研槽位 | **不减时长**（只加项目槽位） |
-| 高级实验室运作理论 Advanced Laboratory Operation | 24624 | 再 +1 并发科研槽位（上限 11） | **不减时长**（只加项目槽位） |
-
-- SDE 3388 原文（`data/typeIDs.yaml` 的 `3388:` 条目）：zh「高效使用工业设施的技能。每升一级，所有制造和研究时间减少3%。」／
-  en「Skill at efficiently using industrial facilities. 3% reduction in all manufacturing and research times per skill level.」。
-  「所有研究时间」是 3388 覆盖发明/拷贝/ME-TE 研究的唯一依据；发明在游戏里归入科学项目
-  （本文件「发明」节原文：「发明项目被归类为"科学项目"，因而会和拷贝、研究蓝图原本共用项目槽位」），
-  Wiki 的 Skills 列表因此不为发明单列时长技能。
-- Wiki「Research」页 Skills 节逐条原文：`Advanced Industry (3x) - reduces all manufacturing and research times by 3% per level`；
-  `Science (1x) - reduces the time required to copy a BPO by 5% per level`；
-  `Research (1x) - reduces the time required for Time Efficiency research, by 5% per level`；
-  `Metallurgy (3x) - reduces the time required for Material Efficiency research, by 5% per level`；
-  `Laboratory Operation ... allows you to perform one additional research or copying job per level` 与
-  `Advanced Laboratory Operation ... allows you to perform further additional research or copy jobs per level`（两者只加槽位）。
-- **TE 等级不进科研时长公式**：Wiki Copying 节原文 `Copy time is also NOT affected by the level of TE on the BPO.`；
-  ME/TE 研究时长只由**目标等级**与蓝图 rank 决定（Wiki「How long does research take?」：`Research duration = Base duration × Blueprint rank`，
-  且「ME and TE levels and research duration are counted separately」）；
-  ⚠️ **实现是首级近似（已知偏短）**：`domain/research.science_job_time` 拿到的 `base_time` 是**首级**时长，
-  ME/TE 研究再线性乘目标等级（`services/scoring_service.py:958,967,971-982`），而真值要逐级累加（上引 Wiki 表 105/250/595/1414/3360…）。
-  实测 bp43546（rank 12）研究到 ME5：真值 `12×(105+250+595+1414+3360) = 68688 s`，应用只算 `1260×5 = 6300 s`，**偏短 10.90×**；
-  只有目标等级 = 1 时该近似才精确。代码里已用 `time_is_approximate` 标记（`scoring_service.py:969`，
-  UI 提示见 `ui_qml/bridge/cost_breakdown_bridge.py:422`），详见 `docs/dev/backlog.md` BL-016；
-  发明作业时长取 T1 蓝图 invention 活动那一行的 `time`（实测：`database/blueprint.db` 的 `blueprint_activities` 里
-  `(43546, 'invention', 68100, 50)`，正是计划 364 的基准值）。
-  `(1 − 0.01×TE)` 因子只属于**制造**（`domain/formulas.calc_production_time`），加到科研侧是错的。
-- 实现与回归：`domain/research.science_job_time`（`adv_industry_skill` 形参）；回归用例
-  `tests/test_research_formulas.py`（计划 364：578850 s → 492022 s）。
-
 **技能名契约**（2026-09-11 核实）：技能名就是 `char_config.json` 的键，全链路按中文名读。
 UI 曾用过 2014 改名前的老名（实测 43 个里 17 个失效），导致等级静默读成 0。
 现行做法：科研技能组从 `reference.db` `item.group_id=270`（45 个技能）派生；
@@ -267,9 +223,6 @@ _项目时间=蓝图制造流程时间*生产流程数*时间效率缩短系数_
   * 每份拷贝流程数为项目中的每份生产拷贝设置应有的授权生产流程数。此值不超过材料清单所列的最大生产流程数，该清单适用于根据已拷贝蓝图原本进行的“拷贝”活动。
 
 实际上，拷贝项目时长是根据所有待制作拷贝的许可制作总数计算的。
-
-**拷贝时长不吃 BPO 的 TE 等级**：Wiki Copying 节原文「Copy time is also NOT affected by the level of TE on the BPO.」。
-科研侧的完整技能归属（3388 覆盖全部科研 −3%/级、3402 只管拷贝 −5%/级）见上方「科研作业时长公式契约」。
 ---
 
 ## 发明

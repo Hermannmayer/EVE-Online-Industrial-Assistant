@@ -49,9 +49,8 @@ def _insert_prices(db, rows: list[tuple[int, str, float, int]], region_id: int =
 def _insert_global_prices(db, rows: list[tuple[int, str, float]]) -> None:
     """写入 `global_price_daily`（**全服统一价**，`rows` = `[(type_id, date, average_price), ...]`）。
 
-    PLEX 的权威序列在**全域市场 region**（`mis.PLEX_REGION_ID`）的 `price_history` 里
-    （BL-012）；这张表只剩「那个 region 还没拉过」时的兜底。写入时 `volume` 恒 0 ——
-    它只有价、没有成交（见 `services/importers/getprices.GLOBAL_PRICE_DDL` 的说明）。
+    PLEX 走这张表：它的价格全服一致、没有区域划分，ESI 的区块历史对它恒返回空
+    （见 `services/importers/getprices.GLOBAL_PRICE_DDL` 的说明）。
     """
     with db.connect("mkt") as conn:
         conn.execute(GLOBAL_PRICE_DDL)
@@ -323,11 +322,10 @@ def test_cards_short_window_gives_none(db_manager):
 
 
 def test_plex_uses_global_price_when_no_region_history(db_manager):
-    """PLEX 的**兜底**序列来自全服统一价（`global_price_daily`）。
+    """PLEX 的序列来自**全服统一价**（`global_price_daily`）—— 区块历史对它恒为空。
 
-    用户口径：PLEX 价格全服统一、没有本地市场划分；工具中心的区块历史对它返回空
-    （实测），所以全域 region（19000001）的成交历史还没拉过时，序列退回
-    `/markets/prices/` 的每日快照（它只有价、没有成交量）。
+    用户口径：PLEX 价格全服统一、没有本地市场划分；ESI 的区块历史端点在 Jita/Amarr
+    都返回空列表（实测），所以它的时间序列只能靠 `/markets/prices/` 的每日快照攒。
     """
     _insert_global_prices(db_manager, [(mis.PLEX_TYPE_ID, _day(i), 100.0 if i < 5 else 110.0) for i in range(6)])
 
@@ -339,19 +337,13 @@ def test_plex_uses_global_price_when_no_region_history(db_manager):
 
 
 def test_region_history_wins_over_global_fallback(db_manager):
-    """全域成交历史是**主源，全服价是兜底**：两者都在时以成交序列为准（BL-012）。
+    """全服价是**退路，不是覆盖**：区块成交序列存在时以它为准。
 
     回归用例：曾经无条件覆盖，而当时 8 种矿物也在全服快照表里 → 矿物的 398 天成交序列
     被换成「1 行当日价」，MPI 整条指数变空。
-    PLEX 的成交序列现在写在官方 Global PLEX Market region（`19000001`）里，而指数区域
-    是 Jita —— 读端口径必须认这个 region，否则 PLEX 又只剩全服价那一个点。
     """
-    # 全域成交序列：+100%（±20% 截断后 +20% → 120）
-    _insert_prices(
-        db_manager,
-        [(mis.PLEX_TYPE_ID, _day(i), 1000.0 if i < 5 else 2000.0, 10) for i in range(6)],
-        region_id=mis.PLEX_REGION_ID,
-    )
+    # 区块序列：+100%（±20% 截断后 +20% → 120）
+    _insert_prices(db_manager, [(mis.PLEX_TYPE_ID, _day(i), 1000.0 if i < 5 else 2000.0, 10) for i in range(6)])
     # 全服序列：+10%（若被误用会得 110）
     _insert_global_prices(db_manager, [(mis.PLEX_TYPE_ID, _day(i), 100.0 if i < 5 else 110.0) for i in range(6)])
 
@@ -388,12 +380,10 @@ def test_cards_and_series_without_data(db_manager):
 def test_series_members_carry_weight_price_and_source(db_manager):
     """篮子成员表：权重归一化、现价 = 锚定日（含）之前最近一次成交均价、chg30 口径。"""
     # 40 天前 80 → 最近 5 天 100（成员自身 30 天涨幅 +25%；指数那边会被 ±20% 截断）
-    # PLEX 的成交历史在全域 market region（19000001）里（BL-012）
     _insert_prices(
         db_manager,
         [(mis.PLEX_TYPE_ID, _day(i), 80.0, 10) for i in range(-40, -30)]
         + [(mis.PLEX_TYPE_ID, _day(i), 100.0, 10) for i in range(-5, 0)],
-        region_id=mis.PLEX_REGION_ID,
     )
     with db_manager.connect("ref") as conn:
         conn.execute("CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT)")
@@ -414,14 +404,8 @@ def test_series_members_carry_weight_price_and_source(db_manager):
 
 
 def test_refresh_index_daily_materializes_and_cards_use_cache(db_manager):
-    """物化表：返回行数 = 表内行数、可重复重建；重建后的卡片与实时计算逐字一致。
-
-    PLEX 走全域 market region（`PLEX_REGION_ID`）后**不再进 Jita 的 CPI 候选**
-    （它的 Jita 行不存在），所以这张临时库里只有 plex 一条线有数据。
-    """
-    _insert_prices(
-        db_manager, [(mis.PLEX_TYPE_ID, _day(i), 100.0 + i, 10) for i in range(8)], region_id=mis.PLEX_REGION_ID
-    )
+    """物化表：返回行数 = 表内行数、可重复重建；重建后的卡片与实时计算逐字一致。"""
+    _insert_prices(db_manager, [(mis.PLEX_TYPE_ID, _day(i), 100.0 + i, 10) for i in range(8)])
 
     live = mis.get_index_cards(_db=db_manager)  # 物化表还不存在 → 实时计算
     rows = mis.refresh_index_daily()
@@ -429,18 +413,15 @@ def test_refresh_index_daily_materializes_and_cards_use_cache(db_manager):
     with db_manager.connect("mkt") as conn:
         stored = conn.execute("SELECT COUNT(*) FROM market_index_daily WHERE region_id = ?", (_RID,)).fetchone()[0]
         plex_rows = conn.execute(
-            "SELECT date, price, volume FROM market_index_daily WHERE type_id = ? ORDER BY date",
+            "SELECT date, price FROM market_index_daily WHERE type_id = ? ORDER BY date",
             (mis.INDEX_TYPE_IDS["plex"],),
         ).fetchall()
 
-    assert rows == stored == 4  # 只有 plex 一条线：4 天（锚定日只看已补齐的成交/全服价数据日）
+    assert rows == stored == 8  # plex 4 天 + cpi（同一个 type 也算消费品代理）4 天
     assert [row[0] for row in plex_rows] == [_day(i) for i in range(4, 8)]
     assert [row[1] for row in plex_rows] == pytest.approx(
         [100.0, 100.0 * 105 / 104, 100.0 * 106 / 104, 100.0 * 107 / 104]
     )
-    # 日成交量/日订单量也来自这条通道：从全域 region 的历史**透传真实值**，
-    # 不再像全服价兜底那样恒为 0（= 每行 average × volume）
-    assert [row[2] for row in plex_rows] == [(100.0 + i) * 10 for i in range(4, 8)]
     assert mis.get_index_cards(_db=db_manager) == live  # 缓存路径与实时路径同值
     assert mis.refresh_index_daily() == rows  # 重建幂等（先 DELETE 再插）
 

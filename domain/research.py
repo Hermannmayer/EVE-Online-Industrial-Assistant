@@ -221,20 +221,12 @@ def copy_job_runs(copies: int, runs_per_copy: int, max_production_limit: int) ->
 #  科学作业时长
 # ═══════════════════════════════════════════════════════════
 
-# 科学作业（拷贝/发明/研究）的时间减免技能。系数与归属均取自**客户端 SDE 技能描述**
-# 与 EVE University Wiki「Research」页 Skills 节：
-#   3388 高级工业理论「每升一级，所有制造和研究时间减少 3%」
-#        （en: 3% reduction in all manufacturing and research times per skill level）
-#        → **覆盖全部科研活动**（拷贝/发明/ME-TE 研究）；制造侧同款减免见 calc_production_time
+# 科学作业（拷贝/发明/研究）的时间减免技能。系数与归属均取自**客户端 SDE 技能描述**：
 #   3402 科学原理「每升一级，蓝图复制的速度提升 5%」→ 仅拷贝
 #   3403 研究概论「每升一级，蓝图时间效率研究的速度提升 5%」→ 仅 TE 研究
 #   3409 冶金学「每升一级，材料效率研究的速度提升 5%」→ 仅 ME 研究
-#   3406 实验室运作理论 / 24624 高级实验室运作理论：文案只有「可同时多运行一个研究项目」，
-#        **只加并发作业数，不减时长**。
-# 不吃蓝图 TE 等级：Wiki「Copy time is also NOT affected by the level of TE on the BPO」；
-# 发明时长同理（输入 BPC 的 ME/TE/Runs 都不改作业时长），ME/TE 研究时长只由目标等级决定。
+#   发明：没有任何技能文案提到发明时长（Wiki 也只说结构/钻机减免）→ 不套技能
 # 制造走 domain/formulas.calc_production_time（工业理论 4% + 高级工业理论 3% + 蓝图所需技能 1%）
-ADV_INDUSTRY_TIME_SKILL = "高级工业理论"
 RESEARCH_TIME_SKILL = "研究概论"
 METALLURGY_TIME_SKILL = "冶金学"
 SCIENCE_TIME_SKILL = "科学原理"
@@ -247,43 +239,31 @@ def science_job_time(
     research_skill: int = 0,
     metallurgy_skill: int = 0,
     science_skill: int = 0,
-    adv_industry_skill: int = 0,
+    te_level: int = 0,
     structure_time_mod: float = 1.0,
 ) -> float:
     """科学作业实际时长（秒）。
 
     公式（与 calc_production_time 同形，技能按活动归属）:
-        time = base_time × (1 − 0.03×高级工业理论) × 活动技能系数 × 结构系数
+        time = base_time × 技能系数 × (1 − 0.01×TE) × 结构系数
 
     技能系数按活动取（依据客户端 SDE 技能描述，见文件头常量注释）：
-        所有活动    → × (1 − 0.03×高级工业理论)（3388「所有制造和研究时间」）
-        拷贝        → × (1 − 0.05×科学原理)
-        TE 研究     → × (1 − 0.05×研究概论)
-        ME 研究     → × (1 − 0.05×冶金学)
-        发明        → 除 3388 外无专属技能（无技能文案单独提发明时长）
-
-    `adv_industry_skill` 默认 0（不传即不计，与本函数其余技能参数同口径）；
-    调用方按项目既有口径从角色配置取，缺失时与制造侧同样兜底 5
-    （见 `services/scoring_service._calculate_research_metrics` 与 `domain/scoring.py`）。
-
-    ⚠️ 不吃蓝图 TE：Wiki「Copy time is also NOT affected by the level of TE on the BPO」，
-    发明时长同理（输入 BPC 的 ME/TE/Runs 都不改发明作业时长）。
+        拷贝        → 1 − 0.05×科学原理
+        TE 研究     → 1 − 0.05×研究概论
+        ME 研究     → 1 − 0.05×冶金学
+        发明        → 无不套技能
 
     注意: base_time 对 research_material/research_time 是**首级**时长；等级越高越长
     （收益递减）。本函数不做逐级累加，调用方需知这是首级近似。
     """
-    from domain.formulas import (
-        ADV_INDUSTRY_SKILL_MULT,
-        METALLURGY_SKILL_MULT,
-        RESEARCH_SKILL_MULT,
-        SCIENCE_SKILL_MULT,
-    )
+    from domain.formulas import METALLURGY_SKILL_MULT, RESEARCH_SKILL_MULT, SCIENCE_SKILL_MULT, TE_MULT_PER_LEVEL
 
-    mult = 1.0 - ADV_INDUSTRY_SKILL_MULT * max(0, int(adv_industry_skill))
+    mult = 1.0
     if activity == ACTIVITY_COPYING:
         mult *= 1.0 - SCIENCE_SKILL_MULT * max(0, int(science_skill))
     elif activity == ACTIVITY_RESEARCH_TE:
         mult *= 1.0 - RESEARCH_SKILL_MULT * max(0, int(research_skill))
     elif activity == ACTIVITY_RESEARCH_ME:
         mult *= 1.0 - METALLURGY_SKILL_MULT * max(0, int(metallurgy_skill))
+    mult *= 1.0 - TE_MULT_PER_LEVEL * max(0, int(te_level))
     return max(0.0, float(base_time)) * max(0.0, mult) * max(0.0, structure_time_mod)
