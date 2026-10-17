@@ -763,6 +763,7 @@ class ScoringService:
         from domain.research import (
             ACTIVITY_COPYING,
             ACTIVITY_INVENTION,
+            ADV_INDUSTRY_TIME_SKILL,
             MATERIAL_ACTIVITY,
             METALLURGY_TIME_SKILL,
             RESEARCH_TIME_SKILL,
@@ -973,7 +974,9 @@ class ScoringService:
             research_skill=int(skills.get(RESEARCH_TIME_SKILL, 0) or 0),
             metallurgy_skill=int(skills.get(METALLURGY_TIME_SKILL, 0) or 0),
             science_skill=int(skills.get(SCIENCE_TIME_SKILL, 0) or 0),
-            te_level=int(plan_data.get("te_level", 0) or 0),
+            # 3388「所有制造和研究时间 -3%/级」：缺失时与制造侧（domain/scoring.py 的
+            # skills.get("高级工业理论", 5)）同样兜底 5，两侧口径必须一致
+            adv_industry_skill=int(skills.get(ADV_INDUSTRY_TIME_SKILL, 5) or 0),
             structure_time_mod=structure_time_mod,
         )
         total_seconds = time_per_job * job_k

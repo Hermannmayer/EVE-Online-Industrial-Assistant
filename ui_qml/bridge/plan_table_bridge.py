@@ -513,6 +513,14 @@ class PlanTableBridge(QObject):
         self._table._complete_rows_with_dialog([int(r) for r in rows])
 
     @Slot("QVariantList")
+    def finishPlansNow(self, rows: list) -> None:
+        """右键「立即完成」：不等倒计时走完，把在产行直接下线。
+
+        只转发；「哪些状态可被立即完成」的规则在 `plan_table._finish_rows_now_with_dialog`。
+        """
+        self._table._finish_rows_now_with_dialog([int(r) for r in rows])
+
+    @Slot("QVariantList")
     def resetForReusePlans(self, rows: list) -> None:
         for r in rows:
             self._table._reset_for_reuse(int(r))

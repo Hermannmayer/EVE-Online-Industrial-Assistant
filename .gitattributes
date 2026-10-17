@@ -1,0 +1,9 @@
+# shell 脚本一律 LF：CRLF 会让 WSL / Linux 的 bash 把 \r 并进选项名。
+# 实测（2026-10-11，WSL Ubuntu 26.04 / GNU bash 5.3.9）：
+#   scripts/run_tests.sh: line 11: set: pipefail
+#   : invalid option name          ← \r 被当成选项名的一部分
+#   line 20: syntax error near unexpected token `elif'
+# Git Bash 容忍 CRLF，所以此前只在 WSL/Linux 下暴露。
+# 本机 `core.autocrlf=true` 会把工作区的 .sh 转成 CRLF —— 靠这条属性钉死，
+# 否则「同一个脚本换个解释器就炸」。
+*.sh text eol=lf
