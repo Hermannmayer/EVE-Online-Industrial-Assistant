@@ -475,7 +475,7 @@ class TestStartPlan:
                 ('{"1001": 7}', pid),
             )
 
-        res = start_plan(_get_plan(user_env.db, pid), mat_hangar_id=None)
+        res = start_plan(_get_plan(user_env.db, pid), mat_hangar_id=1)
 
         assert res["ok"] is False, res
         assert res["code"] == "snapshot_exists", res
@@ -517,12 +517,27 @@ class TestStartPlan:
         db_plan = _get_plan(user_env.db, pid)
         assert db_plan["assigned_blueprint_id"] is not None
 
-    def test_no_material_hangar_skips_deduction(self, user_env):
+    @pytest.mark.parametrize("mat_hangar_id", [None, 0])
+    def test_no_material_hangar_rejects_start(self, user_env, mat_hangar_id):
+        """03-10 回归：无材料机库 = 无处扣料 → 拒绝启动，计划保持 pending、不写扣料快照。
+
+        旧行为是「未设机库 → 跳过材料校验与扣减直接开产」（无料造物），材料守恒被
+        无声绕过；用户 2026-10-17 拍板：无料造物一律不允许，只给「去设置材料机库」引导。
+        """
+        _insert_item(user_env.db, 1, 1001, 500)
+        user_env.scoring.calculate_plan_metrics.return_value = {
+            "materials": [{"type_id": 1001, "name": "三钛合金", "qty": 100.0}]
+        }
         pid = _insert_plan(user_env.db)
-        plan = _get_plan(user_env.db, pid)
-        res = start_plan(plan, mat_hangar_id=None)
-        assert res["ok"]
-        assert _get_plan(user_env.db, pid)["status"] == "in_progress"
+        res = start_plan(_get_plan(user_env.db, pid), mat_hangar_id=mat_hangar_id)
+
+        assert res["ok"] is False, res
+        assert res["code"] == "material_hangar_missing", res
+        assert "材料机库" in res["message"] and "编辑计划" in res["message"], res["message"]
+        db_plan = _get_plan(user_env.db, pid)
+        assert db_plan["status"] == "pending"
+        assert db_plan["deducted_materials"] == ""
+        assert inventory_manager.get_hangar_stock(1)[1001] == 500, "拒绝启动不得扣料"
 
     def test_start_persists_mat_hangar_id(self, user_env):
         """生效材料机库应落库，供撤销时按同一机库返还"""
@@ -912,7 +927,7 @@ class TestBlueprintBinding:
         pid = _insert_plan(user_env.db, parallels=2, runs=2)
         bind_blueprints(pid, [b1])
         plan = _get_plan(user_env.db, pid)
-        res = start_plan(plan, mat_hangar_id=None)
+        res = start_plan(plan, mat_hangar_id=1)
         assert not res["ok"]
         assert res["code"] == "blueprint_short"
         assert "差" in res["message"] and "1 张" in res["message"]
@@ -921,7 +936,7 @@ class TestBlueprintBinding:
         """并行 >1 且完全未绑定 → 拒绝并提示先绑定 N 张。"""
         pid = _insert_plan(user_env.db, parallels=2, runs=2)
         plan = _get_plan(user_env.db, pid)
-        res = start_plan(plan, mat_hangar_id=None)
+        res = start_plan(plan, mat_hangar_id=1)
         assert not res["ok"]
         assert res["code"] == "blueprint_short"
 
@@ -931,7 +946,7 @@ class TestBlueprintBinding:
         pid = _insert_plan(user_env.db, parallels=1, runs=5)
         bind_blueprints(pid, [b1])
         plan = _get_plan(user_env.db, pid)
-        res = start_plan(plan, mat_hangar_id=None)
+        res = start_plan(plan, mat_hangar_id=1)
         assert not res["ok"]
         assert res["code"] == "blueprint_short"
         assert "流程不足" in res["message"]
@@ -1202,14 +1217,15 @@ class TestCompletePlansCoordinator:
         pid = _insert_plan(user_env.db, status="ready", runs=2, parallels=1, deposit_hangar_id=None)
         plan = _get_plan(user_env.db, pid)
         result = complete_plans([plan], 1)
-        assert result == {
-            "completed": 1,
-            "deposited": 1,
-            "removed": 0,
-            "failed": [],
-            "skipped": [],
-            "failed_reasons": [],
-        }
+        assert result["completed"] == 1
+        assert result["deposited"] == 1
+        assert result["removed"] == 0
+        assert result["failed"] == []
+        assert result["skipped"] == []
+        assert result["failed_reasons"] == []
+        # 06-3 同族：成功消息不再丢弃（入库提示随结果回传，单行入口据此弹窗）
+        assert result["shortfalls"] == []
+        assert any("入库" in note for note in result["notices"]), result["notices"]
         db_plan = _get_plan(user_env.db, pid)
         assert db_plan["status"] == "completed"
         assert db_plan["deposit_hangar_id"] == 1
@@ -1420,7 +1436,7 @@ class TestBlueprintForceStart:
 
     def test_start_rejects_without_flag(self, user_env):
         plan, _bp = self._plan_with_short_bp(user_env)
-        res = start_plan(plan, mat_hangar_id=None)
+        res = start_plan(plan, mat_hangar_id=1)
         assert res["ok"] is False
         assert res["code"] == "blueprint_short"
 
@@ -1430,7 +1446,7 @@ class TestBlueprintForceStart:
         只放开 start_plan 的话，这里会在 complete_plan 被拦死 —— 用户的计划收不了尾。
         """
         plan, _bp = self._plan_with_short_bp(user_env)
-        res = start_plan(plan, mat_hangar_id=None, allow_bp_short=True)
+        res = start_plan(plan, mat_hangar_id=1, allow_bp_short=True)
         assert res["ok"], res
         assert "蓝图流程不足" in res["message"]
 
@@ -1442,7 +1458,7 @@ class TestBlueprintForceStart:
     def test_complete_rejects_without_flag(self, user_env):
         """强制启动后若完成时不放行，仍应被拦住（保持既有保护）。"""
         plan, _bp = self._plan_with_short_bp(user_env)
-        assert start_plan(plan, mat_hangar_id=None, allow_bp_short=True)["ok"]
+        assert start_plan(plan, mat_hangar_id=1, allow_bp_short=True)["ok"]
         self._to_ready(user_env.db, plan["id"])
 
         done = complete_plan(_get_plan(user_env.db, plan["id"]))
@@ -1607,9 +1623,10 @@ class TestPartialStart:
 
     def test_splits_into_two_rows(self, user_env):
         pid, _bp = self._setup(user_env, parallels=3)
+        _insert_item(user_env.db, 1, 1001, 1000)
         src = _get_plan(user_env.db, pid)
 
-        res = plan_execution.start_plan_partial(pid, 1, mat_hangar_id=None)
+        res = plan_execution.start_plan_partial(pid, 1, mat_hangar_id=1)
 
         assert res["ok"], res
         assert res["started_lines"] == 1
@@ -1647,8 +1664,9 @@ class TestPartialStart:
     def test_bindings_split_by_blueprint_id(self, user_env):
         """绑定按 blueprint_id 取前 N 张留在启动半边，其余挪给余量行。"""
         pid, bp_ids = self._setup(user_env, parallels=3, blueprints=3)
+        _insert_item(user_env.db, 1, 1001, 1000)
 
-        res = plan_execution.start_plan_partial(pid, 1, mat_hangar_id=None)
+        res = plan_execution.start_plan_partial(pid, 1, mat_hangar_id=1)
 
         assert res["ok"], res
         assert get_plan_blueprints(pid) == [bp_ids[0]]
@@ -1680,9 +1698,10 @@ class TestPartialStart:
         """
         user_env.scoring.calculate_plan_metrics.side_effect = self._per_line_metrics
         pid = _insert_plan(user_env.db, parallels=3, group_number=7, sub_level=1)
+        _insert_item(user_env.db, 1, 1001, 1000)
         src = _get_plan(user_env.db, pid)
 
-        res = plan_execution.start_plan_partial(pid, 1, mat_hangar_id=None)
+        res = plan_execution.start_plan_partial(pid, 1, mat_hangar_id=1)
 
         assert res["ok"], res
         started = _get_plan(user_env.db, pid)
@@ -1696,7 +1715,7 @@ class TestPartialStart:
         mother = _insert_plan(user_env.db, parallels=3, group_number=7, sub_level=0)
         _insert_plan(user_env.db, product_type_id=2002, group_number=7, sub_level=1, status="pending")
 
-        res = plan_execution.start_plan_partial(mother, 1, mat_hangar_id=None)
+        res = plan_execution.start_plan_partial(mother, 1, mat_hangar_id=1)
 
         assert res["ok"] is False
         assert res["code"] == "children_pending"
@@ -1704,11 +1723,12 @@ class TestPartialStart:
     def test_mother_with_all_children_done_allowed(self, user_env):
         """子项全部完成的母项可以部分启动（用户拍板的口径）。"""
         mother, _bp = self._setup(user_env, parallels=3)
+        _insert_item(user_env.db, 1, 1001, 1000)
         with user_env.db.connect("user") as conn:
             conn.execute("UPDATE production_plans SET group_number=7 WHERE id=?", (mother,))
         _insert_plan(user_env.db, product_type_id=2002, group_number=7, sub_level=1, status="completed")
 
-        res = plan_execution.start_plan_partial(mother, 1, mat_hangar_id=None)
+        res = plan_execution.start_plan_partial(mother, 1, mat_hangar_id=1)
 
         assert res["ok"], res
 
@@ -1989,7 +2009,7 @@ class TestBlueprintKindGate:
 
     @staticmethod
     def _start(plan_id: int) -> dict:
-        return start_plan({"id": plan_id}, mat_hangar_id=None, auto_bind=False)
+        return start_plan({"id": plan_id}, mat_hangar_id=1, auto_bind=False)
 
     def test_copying_rejects_bpc(self, user_env):
         db = user_env.db
@@ -2062,7 +2082,7 @@ class TestBlueprintKindGate:
         bind_blueprints(plan_id, [bp_id])
 
         assert get_plan_binding_state(plan_id)["need"] == 1, "拷贝计划需覆盖的蓝图张数恒为 1"
-        res = start_plan({"id": plan_id}, mat_hangar_id=None, auto_bind=False)
+        res = start_plan({"id": plan_id}, mat_hangar_id=1, auto_bind=False)
         assert res["ok"] is True, res
         assert res["code"] == "ok", res
 

@@ -5,7 +5,8 @@ from PySide6.QtCore import Qt
 
 from services.plan_category import category_symbol, load_category_map
 
-pytestmark = pytest.mark.ui
+# 大部分用例是纯逻辑（临时 ref 库）：不再整文件标 ui，进 validate 档；
+# 仅真正需要 QGuiApplication 的 3 条图标用例按用例标 ui。
 
 
 def _build_ref(db_manager):
@@ -94,6 +95,7 @@ class TestQmlCategoryIcons:
 
         assert FIXED_WIDTHS[COL_CATEGORY] >= 38
 
+    @pytest.mark.ui
     def test_category_icons_available(self, qapp):
         from ui_qml.models.plan_qml_model import PlanQmlModel
 
@@ -102,12 +104,14 @@ class TestQmlCategoryIcons:
             url = model.data(model.index(0, 1), Qt.ItemDataRole.UserRole + 4)
             assert url.startswith("image://phosphor/"), f"{cat} 应有图标，实得 {url!r}"
 
+    @pytest.mark.ui
     def test_category_icon_unknown_is_empty(self, qapp):
         from ui_qml.models.plan_qml_model import PlanQmlModel
 
         model = PlanQmlModel([{"category": "not_a_category", "product_name": "x"}])
         assert model.data(model.index(0, 1), Qt.ItemDataRole.UserRole + 4) == ""
 
+    @pytest.mark.ui
     def test_level_icon_available(self, qapp):
         from ui_qml.models.plan_qml_model import PlanQmlModel
 

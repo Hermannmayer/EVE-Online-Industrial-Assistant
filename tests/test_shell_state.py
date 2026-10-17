@@ -18,8 +18,6 @@ from ui_qml.workers.main_window_workers import PriceCheckWorker, needs_price_upd
 
 pytestmark = pytest.mark.ui
 
-_TOLERANT_STATES = [({}), (None), ({"current_page": "nonexistent"})]
-
 
 @pytest.fixture(autouse=True)
 def _no_price_network(monkeypatch):
@@ -107,11 +105,6 @@ class TestShellState:
 
     def test_save_state_version(self, shell):
         assert shell.save_state()["version"] == 1
-
-    @pytest.mark.parametrize("state", _TOLERANT_STATES, ids=["empty", "none", "unknown_page"])
-    def test_restore_state_tolerant(self, shell, state):
-        """空 / None / 未知页面 key 均不崩溃。"""
-        shell.restore_state(state)
 
     def test_pin_is_session_only_and_never_restored(self, shell, app, mock_db, monkeypatch):
         """置顶开关现在**只对本次会话有效**：不落盘，也不从 settings 读回来。

@@ -37,6 +37,7 @@ def test_init_db_idempotent(rig_db):
     assert "type_id" in cols
     assert "mat_bonus" in cols
     assert "time_bonus" in cols
+    assert "cost_bonus" in cols
 
 
 def test_get_rig_type_ids_excludes_1818(rig_db):
@@ -48,18 +49,24 @@ def test_get_rig_type_ids_excludes_1818(rig_db):
 
 
 def test_fetch_rig_bonuses_parses():
-    """解析 attributeEngRigMatBonus=2594 / attributeEngRigTimeBonus=2593"""
+    """解析 attributeEngRigMatBonus=2594 / attributeEngRigTimeBonus=2593 / attributeEngRigCostBonus=2595"""
     client = MagicMock()
     client.fetch = AsyncMock(
         return_value={
             "dogma_attributes": [
                 {"attribute_id": 2594, "value": -2.0},
                 {"attribute_id": 2593, "value": -20.0},
+                {"attribute_id": 2595, "value": -10.0},
             ]
         }
     )
     r = asyncio.run(getrigdata.fetch_rig_bonuses(client, 43920))
-    assert r == {"type_id": 43920, "mat_bonus": -2.0, "time_bonus": -20.0}
+    assert r == {
+        "type_id": 43920,
+        "mat_bonus": -2.0,
+        "time_bonus": -20.0,
+        "cost_bonus": -10.0,
+    }
 
 
 def test_fetch_rig_bonuses_failure():
@@ -74,4 +81,9 @@ def test_fetch_rig_bonuses_missing_attrs():
     client = MagicMock()
     client.fetch = AsyncMock(return_value={"dogma_attributes": []})
     r = asyncio.run(getrigdata.fetch_rig_bonuses(client, 43920))
-    assert r == {"type_id": 43920, "mat_bonus": 0.0, "time_bonus": 0.0}
+    assert r == {
+        "type_id": 43920,
+        "mat_bonus": 0.0,
+        "time_bonus": 0.0,
+        "cost_bonus": 0.0,
+    }

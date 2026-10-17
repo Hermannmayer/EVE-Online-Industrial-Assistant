@@ -16,6 +16,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Literal
 
+from core.logger import log
 from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 
 # 数据库标识符
@@ -164,6 +165,8 @@ class DatabaseManager:
                 try:
                     conn.close()
                 except Exception:
+                    # 吞的是 sqlite 连接关闭异常：退出清理阶段，连接随进程释放
+                    log.debug("连接关闭失败（忽略，避免退出期抛错）", exc_info=True)
                     pass
             self._local.connections.clear()
 

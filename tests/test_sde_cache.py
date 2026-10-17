@@ -759,3 +759,111 @@ def test_sde_build_freshness_gate(tmp_path, monkeypatch):
     assert sde_cache.is_sde_stale(3607706, 3607705) is True
     assert sde_cache.is_sde_stale(3607705, 3607705) is False
     assert sde_cache.is_sde_stale(None, None) is False, "官方拿不到时不判过期（离线可用）"
+
+
+# ════════════════════════════════════════════════════════════════
+#  02-03 B 段：可切换发布源（旧 S3 / 官方新扁平包）
+# ════════════════════════════════════════════════════════════════
+
+
+def test_sde_source_selection_and_static_data_layout(monkeypatch):
+    """默认 legacy（行为不变）；`EVE_SDE_SOURCE=static-data` opt-in 新扁平包；非法值回退并告警。"""
+    from services.importers import sde_cache
+
+    monkeypatch.delenv(sde_cache.SDE_SOURCE_ENV, raising=False)
+    assert sde_cache.sde_source() == sde_cache.SDE_SOURCE_LEGACY
+    legacy_files = sde_cache.yaml_files_for("legacy")
+    static_files = sde_cache.yaml_files_for("static-data")
+    assert "agents.yaml" in legacy_files and "researchAgents.yaml" in legacy_files
+    assert "agents.yaml" not in static_files and "researchAgents.yaml" not in static_files
+    monkeypatch.setenv(sde_cache.SDE_SOURCE_ENV, "static-data")
+    assert sde_cache.sde_source() == "static-data"
+    monkeypatch.setenv(sde_cache.SDE_SOURCE_ENV, "bogus")
+    assert sde_cache.sde_source() == "legacy"
+
+    # 扁平包：根目录 types.yaml / npcStations.yaml / _sde.yaml；成员映射与布局识别
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("types.yaml", "1: {}\n")
+        zf.writestr("npcStations.yaml", "1: {}\n")
+        zf.writestr("_sde.yaml", "sde:\n  buildNumber: 3607705\n")
+    buf.seek(0)
+    with zipfile.ZipFile(buf) as zf:
+        assert sde_cache._zip_layout_source(zf) == "static-data"
+        assert sde_cache._zip_member_name(zf, "typeIDs.yaml", "static-data") == "types.yaml"
+        assert sde_cache._zip_member_name(zf, "staStations.yaml", "static-data") == "npcStations.yaml"
+        assert sde_cache._zip_member_name(zf, "agents.yaml", "static-data") is None
+
+    # 旧包布局（fsd/ 前缀）仍按 legacy 映射
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("fsd/types.yaml", "1: {}\n")
+        zf.writestr("bsd/staStations.yaml", "[]\n")
+    buf.seek(0)
+    with zipfile.ZipFile(buf) as zf:
+        assert sde_cache._zip_layout_source(zf) == "legacy"
+        assert sde_cache._zip_member_name(zf, "typeIDs.yaml", "legacy") == "fsd/types.yaml"
+        assert sde_cache._zip_member_name(zf, "staStations.yaml", "legacy") == "bsd/staStations.yaml"
+
+
+def test_manifest_source_switch_invalidates_cache(tmp_path, monkeypatch):
+    """manifest 记发布源：legacy ↔ static-data 换源后 `_all_cached()` 必须判否（触发重提取）。"""
+    from services.importers import sde_cache
+
+    monkeypatch.setattr(sde_cache, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(sde_cache, "MANIFEST_PATH", str(tmp_path / "manifest.json"))
+    monkeypatch.setattr(sde_cache, "cache_path", lambda name: str(tmp_path / name))
+    for fname in sde_cache.yaml_files_for("legacy"):
+        (tmp_path / fname).write_text("k: v\n", encoding="utf-8")
+    monkeypatch.setenv(sde_cache.SDE_SOURCE_ENV, "legacy")
+    sde_cache._write_manifest(build=1)
+    assert sde_cache._all_cached() is True
+    monkeypatch.setenv(sde_cache.SDE_SOURCE_ENV, "static-data")
+    assert sde_cache._all_cached() is False, "换源后旧缓存/文件集合不匹配，必须重新提取"
+
+
+def test_flat_name_map_reads_inline_localized_names():
+    """新源没有 bsd/invNames.yaml：区域/星座/星系名从 map*.yaml 的内联 name[en] 建映射。"""
+    import io
+    import zipfile
+
+    from services.importers import sde_cache
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(
+            "mapRegions.yaml",
+            "10000001:\n  name:\n    en: Derelik\n    zh: 德勒里克\n",
+        )
+        zf.writestr(
+            "mapConstellations.yaml",
+            "20000001:\n  name:\n    en: San Matar\n",
+        )
+        zf.writestr(
+            "mapSolarSystems.yaml",
+            "30000001:\n  regionID: 10000001\n  constellationID: 20000001\n"
+            "  securityStatus: 0.9\n  name:\n    en: Tanoo\n",
+        )
+    buf.seek(0)
+    with zipfile.ZipFile(buf) as zf:
+        mapping = sde_cache._flat_name_map(zf)
+        systems = sde_cache._flat_zip_systems(zf)
+    assert mapping[10000001] == "Derelik"
+    assert mapping[20000001] == "San Matar"
+    assert mapping[30000001] == "Tanoo"
+    assert systems == [
+        {
+            "solar_system_id": 30000001,
+            "solar_system_name": "Tanoo",
+            "security": 0.9,
+            "solarSystemID": 30000001,
+            "solarSystemName": "Tanoo",
+            "region_id": 10000001,
+            "constellation_id": 20000001,
+            "regionID": 10000001,
+            "constellationID": 20000001,
+        }
+    ]

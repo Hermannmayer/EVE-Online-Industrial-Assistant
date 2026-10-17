@@ -787,6 +787,8 @@ def aggregate_procurement(
         try:
             short = json.loads(raw)
         except Exception:
+            # 吞的是 material_short JSON 损坏：跳过该行，不阻断整批采购聚合
+            log.warning("采购缺口 JSON 解析失败，跳过该计划 id=%s", plan.get("id"), exc_info=True)
             continue
         gid = hangar_id if hangar_id is not None else (plan.get("mat_hangar_id") or default_hangar_id)
         bucket = group_need.setdefault(gid, {})

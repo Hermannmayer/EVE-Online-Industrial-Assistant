@@ -5,6 +5,30 @@ import os
 from typing import Any
 
 from core.logger import log
+from core.skill_keys import (
+    ACCOUNTING,
+    ADVANCED_BROKER_RELATIONS,
+    ADVANCED_INDUSTRIAL_SHIP_CONSTRUCTION,
+    ADVANCED_INDUSTRY,
+    ADVANCED_LARGE_SHIP_CONSTRUCTION,
+    ADVANCED_MASS_PRODUCTION,
+    ADVANCED_MEDIUM_SHIP_CONSTRUCTION,
+    ADVANCED_SMALL_SHIP_CONSTRUCTION,
+    BROKER_RELATIONS,
+    ELECTROMAGNETIC_PHYSICS,
+    ELECTRONIC_ENGINEERING,
+    GRAVITON_PHYSICS,
+    HIGH_ENERGY_PHYSICS,
+    INDUSTRY,
+    MASS_PRODUCTION,
+    MECHANICAL_ENGINEERING,
+    METALLURGY,
+    NUCLEAR_PHYSICS,
+    PLASMA_PHYSICS,
+    QUANTUM_PHYSICS,
+    RESEARCH,
+    SCIENCE,
+)
 
 # ═══════════════════════════════════════════
 #  默认配置
@@ -18,16 +42,16 @@ DEFAULT_CHAR_CONFIG: dict[str, Any] = {
             # 以前默认 5 级会让未导入 ESI 的用户所有时间/ISK/h 全部偏乐观（审计 01-11）；
             # 名字必须与 `reference.db item.zh_name` 一致（英文键已改成中文键）。
             "skills": {
-                "工业理论": 0,
-                "高级工业理论": 0,
-                "批量生产学": 0,
-                "高级量产技术": 0,
-                "经纪人关系学": 0,
-                "高级经纪人关系学": 0,
-                "会计学": 0,
-                "科学原理": 0,
-                "研究概论": 0,
-                "冶金学": 0,
+                INDUSTRY: 0,
+                ADVANCED_INDUSTRY: 0,
+                MASS_PRODUCTION: 0,
+                ADVANCED_MASS_PRODUCTION: 0,
+                BROKER_RELATIONS: 0,
+                ADVANCED_BROKER_RELATIONS: 0,
+                ACCOUNTING: 0,
+                SCIENCE: 0,
+                RESEARCH: 0,
+                METALLURGY: 0,
             },
             "market": {
                 "jita": {"faction_standing": 6.7, "corp_standing": 5.0},
@@ -210,21 +234,21 @@ def migrate_char_config(data: dict) -> dict:
 # 老配置里存的是旧名 → 改名后读出来全是 0 级（成功率/时长/产线容量全错）。
 # 读取时把旧键的值搬到新键；**旧键保留不删**（本函数契约：不删除用户已有配置项）。
 _LEGACY_SKILL_KEYS: dict[str, str] = {
-    "电子技术": "电子工程学",
-    "机械工程": "机械工程学",
-    "量子物理": "量子物理学",
-    "核物理": "核芯物理学",
-    "电磁物理": "电磁物理学",
-    "引力子物理": "引力子物理学",
-    "等离子物理": "等离子物理学",
-    "高频激发物理学": "高能物理学",
-    "小型舰船制造研究": "高级小型舰船建造研究",
-    "中型舰船制造研究": "高级中型舰船建造研究",
-    "大型舰船制造研究": "高级大型舰船建造研究",
-    "工业舰船制造研究": "高级工业舰船建造研究",
+    "电子技术": ELECTRONIC_ENGINEERING,
+    "机械工程": MECHANICAL_ENGINEERING,
+    "量子物理": QUANTUM_PHYSICS,
+    "核物理": NUCLEAR_PHYSICS,
+    "电磁物理": ELECTROMAGNETIC_PHYSICS,
+    "引力子物理": GRAVITON_PHYSICS,
+    "等离子物理": PLASMA_PHYSICS,
+    "高频激发物理学": HIGH_ENERGY_PHYSICS,
+    "小型舰船制造研究": ADVANCED_SMALL_SHIP_CONSTRUCTION,
+    "中型舰船制造研究": ADVANCED_MEDIUM_SHIP_CONSTRUCTION,
+    "大型舰船制造研究": ADVANCED_LARGE_SHIP_CONSTRUCTION,
+    "工业舰船制造研究": ADVANCED_INDUSTRIAL_SHIP_CONSTRUCTION,
     # 「量产技术」与「批量生产学」在 SDE 里是同一个技能（Mass Production），
     # 前者是不存在的旧名；「高级量产技术」是 Advanced Mass Production 的正确名，勿动。
-    "量产技术": "批量生产学",
+    "量产技术": MASS_PRODUCTION,
 }
 
 

@@ -6,6 +6,7 @@ import os
 import sqlite3
 from contextlib import closing
 
+from core.logger import log
 from core.paths import BP_DB_PATH, MKT_DB_PATH, REF_DB_PATH, USR_DB_PATH
 
 # item 表「已填名称」达到该数量即视为完整（typeIDs.yaml 全集约 4~5 万条）。
@@ -21,6 +22,8 @@ def check_items() -> int:
             c.execute("SELECT COUNT(*) FROM item WHERE en_name IS NOT NULL AND en_name != ''")
             return int(c.fetchone()[0])
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("item 表未建/查询失败，按默认值继续", exc_info=True)
         return 0
 
 
@@ -37,6 +40,8 @@ def check_item_names_ratio() -> float:
             missing = int(c.fetchone()[0])
             return missing / max(total, 1)
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("item 表未建/查询失败，按默认值继续", exc_info=True)
         return 1.0
 
 
@@ -48,6 +53,8 @@ def check_prices() -> int:
             c.execute("SELECT COUNT(*) FROM market_prices")
             return int(c.fetchone()[0])
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("market_prices 表未建/查询失败，按默认值继续", exc_info=True)
         return 0
 
 
@@ -62,6 +69,8 @@ def check_blueprints() -> int:
             c.execute("SELECT COUNT(*) FROM blueprint_activities")
             return int(c.fetchone()[0])
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("blueprint_activities 表未建/查询失败，按默认值继续", exc_info=True)
         return 0
 
 
@@ -83,6 +92,8 @@ def check_blueprint_names() -> int:
         conn.close()
         return count
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("蓝图库未建/查询失败，按默认值继续", exc_info=True)
         return 9999  # 无法判断时视为未就绪
 
 
@@ -97,6 +108,8 @@ def check_implants() -> int:
             c.execute("SELECT COUNT(*) FROM item_dogma")
             return int(c.fetchone()[0])
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("item_dogma 表未建/查询失败，按默认值继续", exc_info=True)
         return 0
 
 
@@ -111,6 +124,8 @@ def check_market_tree() -> int:
             c.execute("SELECT COUNT(*) FROM market_tree")
             return int(c.fetchone()[0])
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("market_tree 表未建/查询失败，按默认值继续", exc_info=True)
         return 0
 
 
@@ -125,6 +140,8 @@ def check_industry() -> int:
             c.execute("SELECT COUNT(*) FROM industry_system_costs")
             return int(c.fetchone()[0])
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("industry 表未建/查询失败，按默认值继续", exc_info=True)
         return 0
 
 
@@ -148,6 +165,8 @@ def check_icons() -> tuple[int, int]:
             c.execute("SELECT COUNT(*) FROM item WHERE market_group_id IS NOT NULL AND market_group_id > 0")
             total = c.fetchone()[0]
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("item 表未建/查询失败，按默认值继续", exc_info=True)
         total = 0
     return cached + noicon, max(total, 1)
 
@@ -160,6 +179,8 @@ def check_meta_groups() -> int:
             c.execute("SELECT COUNT(*) FROM meta_group")
             return int(c.fetchone()[0])
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("meta_group 表未建/查询失败，按默认值继续", exc_info=True)
         return 0
 
 
@@ -171,6 +192,8 @@ def check_type_materials() -> int:
             c.execute("SELECT COUNT(*) FROM reprocessing_materials")
             return int(c.fetchone()[0])
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("reprocessing_materials 表未建/查询失败，按默认值继续", exc_info=True)
         return 0
 
 
@@ -182,6 +205,8 @@ def check_dogma_attrs() -> int:
             c.execute("SELECT COUNT(*) FROM dogma_attribute")
             return int(c.fetchone()[0])
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("dogma_attribute 表未建/查询失败，按默认值继续", exc_info=True)
         return 0
 
 
@@ -193,6 +218,8 @@ def check_stations() -> int:
             c.execute("SELECT COUNT(*) FROM station")
             return int(c.fetchone()[0])
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("station 表未建/查询失败，按默认值继续", exc_info=True)
         return 0
 
 
@@ -212,6 +239,8 @@ def check_universe() -> int:
             c.execute("SELECT COUNT(*) FROM solar_system")
             return int(c.fetchone()[0])
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("solar_system 表未建/查询失败，按默认值继续", exc_info=True)
         return 0
 
 
@@ -226,6 +255,8 @@ def check_structure_rigs() -> int:
             c.execute("SELECT COUNT(*) FROM structure_rigs")
             return int(c.fetchone()[0])
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("structure_rigs 表未建/查询失败，按默认值继续", exc_info=True)
         return 0
 
 
@@ -248,6 +279,8 @@ def check_schema() -> bool:
                 return False
         return True
     except Exception:
+        # 吞的是「库未建/表缺失」等预期内异常：初始化检查用默认值表示未就绪，debug 级别避免每次启动刷屏
+        log.debug("schema 版本读取失败，按默认值继续", exc_info=True)
         return False
 
 

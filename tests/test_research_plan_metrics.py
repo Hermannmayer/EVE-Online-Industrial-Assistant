@@ -20,6 +20,9 @@ from services.plan_metrics import (
     research_plan_cost,
 )
 
+# 纯公式金标准（services/plan_metrics.py 的纯函数部分）：归 fast 档
+pytestmark = pytest.mark.fast
+
 # ── 200mm 自动加农炮 II 的实测数据 ──
 MECH_DATACORE = 20424  # 机械工程数据核心
 NUCLEAR_DATACORE = 20423  # 核芯物理数据核心
@@ -266,6 +269,27 @@ class TestInventionPlanCost:
         assert with_bpc["input_bpc_cost"] == pytest.approx(1000.0 * plain["attempts"])
         assert with_bpc["total_cost"] == pytest.approx(plain["total_cost"] + 1000.0 * plain["attempts"])
 
+    def test_invention_cost_hand_computed_anchor(self):
+        """手算锚点（05-8）：独立于实现再算一遍，防「两边同错」的同源绿。
+
+        口径：3 次尝试 × (27,890 + 96,830)；作业费 = 材料成本 × (0.25% NPC 设施税
+        + 4% SCC 附加费)；BPC 单位成本 = 总成本 ÷ 目标产出流程 10。
+        """
+        r = invention_plan_cost(
+            base_probability=BASE_PROB,
+            materials=INVENTION_MATS,
+            prices=PRICES,
+            sci=0.0,
+            base_runs=BASE_RUNS,
+            output_runs_needed=10,
+        )
+        assert r["attempts"] == 3  # ceil(10 / (0.34 × 10))
+        assert r["materials"] == [(MECH_DATACORE, 3), (NUCLEAR_DATACORE, 3)]  # 按尝试次数取总量
+        assert r["material_cost"] == pytest.approx(374_160.0)  # 3 × 124,720
+        assert r["fee"] == pytest.approx(15_901.8)  # 374,160 × 4.25%
+        assert r["total_cost"] == pytest.approx(390_061.8)
+        assert r["bpc_unit_cost"] == pytest.approx(39_006.18)  # ÷ 10 流程
+
     def test_bpc_unit_cost_divides_by_output(self):
         r = invention_plan_cost(
             base_probability=BASE_PROB,
@@ -275,6 +299,7 @@ class TestInventionPlanCost:
             base_runs=BASE_RUNS,
             output_runs_needed=10,
         )
+        # 辅助恒等式（独立数值锚点见 test_invention_cost_hand_computed_anchor）
         assert r["bpc_unit_cost"] == pytest.approx(r["total_cost"] / r["output_runs"])
 
     def test_actual_output_runs_switches_to_actual_basis(self):
@@ -292,6 +317,7 @@ class TestInventionPlanCost:
         assert actual["is_actual"] is True
         assert actual["output_runs"] == 7
         assert actual["expected_runs"] == expected["expected_runs"]
+        # 辅助恒等式（独立数值锚点见 test_invention_cost_hand_computed_anchor）
         assert actual["total_cost"] == pytest.approx(expected["total_cost"])
         assert actual["bpc_unit_cost"] == pytest.approx(expected["total_cost"] / 7)
         assert actual["bpc_unit_cost"] > expected["bpc_unit_cost"]

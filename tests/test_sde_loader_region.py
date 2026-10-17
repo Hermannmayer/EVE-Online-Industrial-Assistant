@@ -11,6 +11,8 @@
 import sqlite3
 import zipfile
 
+import aiosqlite
+import pytest
 import yaml
 
 from services.importers import sde_cache, sde_loader
@@ -150,3 +152,20 @@ def test_region_backfill_rows_skips_systems_absent_from_geo():
     assert sde_loader._region_backfill_rows([(30000142, None, None), (999, None, None)], geo) == [
         (10000002, 20000020, 30000142)
     ]
+
+
+@pytest.mark.asyncio
+async def test_region_zh_column_helper_adds_once_and_is_idempotent():
+    """06-3 回归：业务侧的「可重建缓存补列」抽成唯一入口，只在缺列时 ALTER 一次。
+
+    铁律禁止业务代码裸 `ALTER TABLE`；`reference.db` 是可重建缓存、不进 migrations，
+    所以改成 `_ensure_region_zh_column()`：存在性检查 + 只在缺失时补 + log 说明。
+    """
+    from services.importers import sde_loader
+
+    async with aiosqlite.connect(":memory:") as db:
+        await db.execute("CREATE TABLE region (region_id INTEGER PRIMARY KEY, region_name TEXT)")
+        assert await sde_loader._ensure_region_zh_column(db) is True, "缺列 → 应补"
+        cols = {r[1] for r in await (await db.execute("PRAGMA table_info(region)")).fetchall()}
+        assert "zh_name" in cols
+        assert await sde_loader._ensure_region_zh_column(db) is False, "第二次应是零操作（幂等）"

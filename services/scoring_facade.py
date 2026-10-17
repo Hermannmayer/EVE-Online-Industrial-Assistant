@@ -14,6 +14,7 @@ from typing import Any
 
 import services.scoring_service as _ss
 from core.constants import TRADE_HUB_IDS
+from core.logger import log
 from domain.formulas import BP_TIME_SKILL_TYPE_IDS
 from domain.scoring import BlueprintRecipe, Material
 from domain.scoring import calc_manufacturing_score as _pure_calc
@@ -94,6 +95,8 @@ def _char_config_fingerprint(char_config: dict | None) -> str:
         raw = json.dumps(char_config, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
     except Exception:
+        # 吞的是 json 序列化异常：指纹退化为 unknown 只会多算一次，不影响结果
+        log.warning("角色配置指纹序列化失败，使用 unknown", exc_info=True)
         return "unknown"
 
 

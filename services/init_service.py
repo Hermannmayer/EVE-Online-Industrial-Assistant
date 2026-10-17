@@ -276,6 +276,8 @@ class InitService(QObject):
                     return True
                 last_err = "ESI 状态接口未返回 200"
             except Exception as e:
+                # 吞的是网络/超时异常：已有重试与 last_err 汇总，逐次失败只记 debug
+                log.debug("ESI 连通性检查失败（第 %s 次）: %s", attempt + 1, e, exc_info=True)
                 last_err = str(e)
             if attempt < 2:
                 await asyncio.sleep(2 * (attempt + 1))  # 指数退避：2s, 4s
@@ -326,6 +328,8 @@ class InitService(QObject):
 
             clear_yaml_cache()
         except Exception:
+            # 吞的是缓存清理异常：进程内缓存，失败只影响内存释放
+            log.debug("清理 YAML 缓存失败（不影响后续步骤）", exc_info=True)
             pass
 
     async def _run_one(self, key: str):
@@ -385,6 +389,8 @@ class InitService(QObject):
             self._emit_step_completed(key, False, "已取消")
             raise
         except Exception as e:
+            # 吞的是任意步骤异常：此处按设计标记 FAILED 并汇总给 UI，必须记录原始堆栈
+            log.exception("初始化步骤失败 key=%s", key)
             self._status[key] = StepStatus.FAILED
             msg = str(e)
             self._errors[key] = msg
@@ -433,6 +439,8 @@ class InitService(QObject):
                 if is_step_satisfied(dep):
                     continue
             except Exception:
+                # 吞的是依赖检查异常：保守视为未满足，交给步骤依赖逻辑处理
+                log.debug("依赖步骤 %s 就绪检查失败，按「未满足」处理", dep, exc_info=True)
                 pass
             return False
         return True

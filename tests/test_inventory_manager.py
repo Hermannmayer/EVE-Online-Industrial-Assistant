@@ -711,3 +711,36 @@ def test_production_state_flags(db_manager, monkeypatch):
     assert got[2004] == frozenset({im.STATE_BPO})
     assert im.STATE_IN_PLAN not in got[3001], "拷贝计划不能被算成该物品正在制造"
     assert im.get_production_state_flags([]) == {}
+
+
+class TestBlueprintTechLevels:
+    def test_relic_invention_products_are_t3(self, db_manager, monkeypatch):
+        """T3 = 输入只有 invention 活动的发明产物（古文物→T3 蓝图）。
+
+        回归：旧 T3 判定「invention 产物再作为 invention 输入」在真实 SDE 上恒为空
+        （实测 t3_ids=0），72 张 T3 蓝图全部被误判成 T2。
+        """
+        import services.inventory_manager as im
+
+        with db_manager.connect("bp") as conn:
+            conn.execute(
+                "CREATE TABLE blueprint_products (blueprint_type_id INTEGER, activity TEXT, "
+                "product_type_id INTEGER, quantity INTEGER)"
+            )
+            conn.execute("CREATE TABLE blueprint_activities (blueprint_type_id INTEGER, activity TEXT, time INTEGER)")
+            # T1：普通制造蓝图
+            conn.execute("INSERT INTO blueprint_activities VALUES (3001,'manufacturing',3600)")
+            # T2：从有制造活动的 T1 蓝图发明得到
+            conn.execute("INSERT INTO blueprint_activities VALUES (3001,'invention',13800)")
+            conn.execute("INSERT INTO blueprint_products VALUES (3001,'invention',3002,10)")
+            conn.execute("INSERT INTO blueprint_activities VALUES (3002,'manufacturing',2340)")
+            # T3：输入（3100）只有 invention 活动（古文物类），产物可制造
+            conn.execute("INSERT INTO blueprint_activities VALUES (3100,'invention',13800)")
+            conn.execute("INSERT INTO blueprint_products VALUES (3100,'invention',3003,20)")
+            conn.execute("INSERT INTO blueprint_activities VALUES (3003,'manufacturing',300000)")
+
+        monkeypatch.setattr(im, "_default_db", lambda: db_manager)
+        levels = im.get_blueprint_tech_levels()
+        assert levels[3001] == 1
+        assert levels[3002] == 2
+        assert levels[3003] == 3

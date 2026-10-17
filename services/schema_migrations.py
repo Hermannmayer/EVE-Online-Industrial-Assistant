@@ -779,11 +779,21 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
 
 
 def _add_columns(db_path: str, table: str, columns: list[tuple[str, str]]) -> int:
-    """批量 ADD COLUMN，忽略已存在的列。返回实际新增的列数。"""
+    """批量 ADD COLUMN，忽略已存在的列。返回实际新增的列数。
+
+    表不存在时**留痕后跳过**（返回 0）：迁移函数可能跑在尚未建表的旧/临时库上，
+    静默跳过会让「迁移跑完但列没补上」无从排查（06-3 审计要求 warning）。
+    """
     added = 0
     conn = sqlite3.connect(db_path)
     try:
         if not _table_exists(conn, table):
+            log.warning(
+                "补列跳过：表 %s 不存在（待补 %d 列：%s）",
+                table,
+                len(columns),
+                ",".join(name for name, _type in columns),
+            )
             return 0
         for col_name, col_type in columns:
             try:

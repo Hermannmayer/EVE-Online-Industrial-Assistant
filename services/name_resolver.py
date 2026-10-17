@@ -298,6 +298,8 @@ def resolve_system_display_names_batch(solar_system_ids: list[int]) -> dict[int,
         with get_container().db.connect("ref") as conn:
             return resolve_system_names_batch(conn, solar_system_ids)
     except Exception:
+        # 吞的是 reference.db 查询异常：调用方对空 dict 已有兜底
+        log.warning("星系显示名批量解析失败，按空结果处理", exc_info=True)
         return {}
 
 

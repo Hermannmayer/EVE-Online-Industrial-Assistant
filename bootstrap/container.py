@@ -8,6 +8,7 @@ import threading
 from typing import TYPE_CHECKING
 
 from core.cache import TtlLRUCache
+from core.logger import log
 
 if TYPE_CHECKING:
     from services.database_manager import DatabaseManager
@@ -121,7 +122,9 @@ class AppContainer:
                         try:
                             return get_character(char_name)
                         except Exception:
-                            pass
+                            # 吞的是单条角色配置的读取/解析异常：下面还有 char_config 文件兜底，
+                            # 角色查询不应因此整个失败
+                            log.debug("读取角色配置失败，尝试 char_config 兜底: %s", char_name, exc_info=True)
                         try:
                             data = load_char_config(char_config_path())
                             chars = data.get("characters", {})
@@ -131,7 +134,8 @@ class AppContainer:
                             if current in chars:
                                 return dict(chars[current])
                         except Exception:
-                            pass
+                            # 吞的是 char_config 文件读取/解析异常：无配置时返回 None 是既有降级行为
+                            log.debug("char_config 兜底读取失败，按无角色配置处理", exc_info=True)
                         return None
 
                     self._char_config_resolver = CharConfigResolver(char_data_provider=_char_data_provider)

@@ -76,6 +76,8 @@ def _release_mutex(name: str) -> None:
         kernel32.ReleaseMutex(ctypes.c_void_p(handle))
         kernel32.CloseHandle(ctypes.c_void_p(handle))
     except Exception:
+        # 吞的是 Win32 句柄释放失败：进程即将退出，OS 会回收，无需阻断
+        log.debug("释放单实例句柄失败（进程退出时 OS 回收）", exc_info=True)
         pass  # 句柄释放失败无碍：进程退出时 OS 会回收
 
 
@@ -144,6 +146,8 @@ def try_lock(force: bool = False, lock_file: Path | str | None = None) -> bool:
         pid = int(data.split(":", 1)[0])
         return not _is_pid_alive(pid)
     except Exception:
+        # 吞的是锁文件读取/解析异常：文件损坏时按无锁处理（宁可放行也不阻止启动）
+        log.warning("单实例锁文件解析失败，按「未持有」继续", exc_info=True)
         return False
 
 
@@ -228,6 +232,8 @@ def _win32_is_pid_alive(pid: int) -> bool:
         finally:
             kernel32.CloseHandle(handle)
     except Exception:
+        # 吞的是 Win32 进程查询异常：查不到时按存活处理，宁可拦一次也不误双开
+        log.warning("判断 PID 存活失败，按「存活」处理（避免双开）", exc_info=True)
         return True
 
 

@@ -277,3 +277,98 @@ class TestBreakdownActualFlag:
         assert actual["is_actual"] is True
         assert actual["output_runs"] == 3
         assert actual["bpc_unit_cost"] > expected["bpc_unit_cost"]
+
+
+# ════════════════════════════════════════════════════════════════
+#  T3 发明成本（发明产物 → BPC cost_per_run）
+# ════════════════════════════════════════════════════════════════
+
+T3_INPUT = 30752  # SDE：完整的船体舱段（只有 invention 活动的古文物类输入）
+T3_BP = 29985  # SDE：金鹏级蓝图（T3 战略巡洋舰）
+T3_DATACORES = (20424, 20412)
+
+
+@pytest.fixture
+def t3_research_env(research_env):
+    """在最小科研环境上补 T3 发明链路（古文物 → T3 BPC）。
+
+    数据形状照 SDE：输入 30752 只有 invention 活动（无 manufacturing/copying），
+    产物 29985 一次成功产 20 流程、基础概率 26%。价格/SCI 用最小夹具值。
+    """
+    db = research_env
+    with db.connect("bp") as conn:
+        conn.executescript(
+            """
+            CREATE TABLE blueprint_materials (
+                blueprint_type_id INTEGER, activity TEXT, material_type_id INTEGER, quantity INTEGER);
+            CREATE TABLE blueprint_skills (
+                blueprint_type_id INTEGER, activity TEXT, skill_type_id INTEGER, level INTEGER);
+            """
+        )
+        conn.execute("INSERT INTO blueprint_products VALUES (?,?,?,?,?)", (T3_INPUT, "invention", T3_BP, 20, 0.26))
+        conn.execute("INSERT INTO blueprint_activities VALUES (?,?,?,?)", (T3_INPUT, "invention", 13800, 10))
+        for mat in T3_DATACORES:
+            conn.execute("INSERT INTO blueprint_materials VALUES (?,?,?,?)", (T3_INPUT, "invention", mat, 3))
+        for skill in (3408, 11441, 11452):
+            conn.execute("INSERT INTO blueprint_skills VALUES (?,?,?,?)", (T3_INPUT, "invention", skill, 1))
+    with db.connect("ref") as conn:
+        conn.executescript(
+            """
+            CREATE TABLE item (type_id INTEGER PRIMARY KEY, zh_name TEXT, en_name TEXT);
+            CREATE TABLE industry_system_costs (solar_system_id INTEGER, activity TEXT, cost_index REAL);
+            """
+        )
+        conn.execute("INSERT INTO item VALUES (3408, '冬眠者加密技术原理', 'Sleeper Encryption Methods')")
+        conn.execute("INSERT INTO item VALUES (11441, '等离子物理学', 'Plasma Physics')")
+        conn.execute("INSERT INTO item VALUES (11452, '机械工程学', 'Mechanical Engineering')")
+        conn.execute("INSERT INTO industry_system_costs VALUES (30000142, 'invention', 0.05)")
+    with db.connect("mkt") as conn:
+        conn.executescript(
+            """
+            CREATE TABLE market_prices (
+                type_id INTEGER, region_id INTEGER, buy_price REAL, sell_price REAL,
+                adjusted_price REAL DEFAULT 0.0, buy_volume INTEGER DEFAULT 0,
+                sell_volume INTEGER DEFAULT 0, fetch_time TEXT);
+            """
+        )
+        for mat, price in zip(T3_DATACORES, (90000.0, 95000.0), strict=True):
+            conn.execute(
+                "INSERT INTO market_prices VALUES (?,10000002,?,?,0.0,1000,1000,'2026-01-01 00:00:00')",
+                (mat, price * 0.95, price),
+            )
+    return db
+
+
+class TestT3InventionBpcCost:
+    def test_t3_invention_records_cost_per_run(self, t3_research_env):
+        """T3 发明完成 → 产出 BPC 自动写 cost_per_run > 0（与 T2 同口径）。"""
+        db = t3_research_env
+        with db.connect("user") as conn:
+            cur = conn.execute(
+                "INSERT INTO user_blueprints (hangar_id, blueprint_type_id, is_bpo, runs, quantity) "
+                "VALUES (1, ?, 0, 200, 1)",
+                (T3_INPUT,),
+            )
+            input_id = int(cur.lastrowid or 0)
+            cur = conn.execute(
+                "INSERT INTO production_plans "
+                "(product_type_id, product_name, blueprint_type_id, runs, parallels, status, activity, "
+                " deposit_hangar_id, mat_hangar_id) "
+                "VALUES (?,?,?,5,1,'ready','invention',1,1)",
+                (T3_BP, "金鹏级蓝图(T3)", T3_BP),
+            )
+            plan_id = int(cur.lastrowid or 0)
+            conn.execute(
+                "INSERT INTO plan_blueprint_bindings (plan_id, blueprint_id, runs_used) VALUES (?,?,5)",
+                (plan_id, input_id),
+            )
+        res = plan_execution.complete_plan(_plan_row(db, plan_id), actual_output_runs=20, actual_bpc_count=1)
+        assert res["ok"] is True
+        with db.connect("user") as conn:
+            row = conn.execute(
+                "SELECT runs, cost_per_run FROM user_blueprints WHERE blueprint_type_id=? AND is_bpo=0",
+                (T3_BP,),
+            ).fetchone()
+        assert row is not None, "T3 发明应产出 BPC"
+        assert row[0] == 20
+        assert row[1] > 0, "T3 发明产出必须写入期望单流程成本（与 T2 同口径）"

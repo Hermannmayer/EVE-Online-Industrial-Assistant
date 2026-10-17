@@ -8,7 +8,8 @@ SDE 扩展数据加载器 — 将 16 个新表写入 reference.db
   - dogmaAttributes.yaml    → dogma_attribute 表
   - dogmaEffects.yaml       → dogma_effect 表
   - iconIDs.yaml            → icon_ids 表
-  - staStations.yaml        → station 表
+  - staStations.yaml        → station 表（旧源 bsd/staStations.yaml；新源 npcStations.yaml
+                              无 stationName → 写库走 COALESCE 保留旧站名，见 sde_cache B 段）
   - stationOperations.yaml  → station_operation 表
   - operationServices.yaml  → station_operation_service 表
   - stationServices.yaml    → station_service 表
@@ -136,7 +137,7 @@ async def write_meta_groups():
     rows = []
     for sid, item_data in data.items():
         mgid = int(sid) if not isinstance(sid, int) else sid
-        nd = item_data.get("nameID", {}) or {}
+        nd = item_data.get("nameID") or item_data.get("name") or {}
         en = (nd.get("en") or "") if isinstance(nd, dict) else ""
         zh = (nd.get("zh") or "") if isinstance(nd, dict) else ""
         rows.append((mgid, en, zh))
@@ -230,7 +231,7 @@ async def write_dogma_attributes():
     for aid_str, adata in data.items():
         attribute_id = int(aid_str) if not isinstance(aid_str, int) else aid_str
         name = adata.get("name", "") or ""
-        display_name = adata.get("displayName", "") or ""
+        display_name = adata.get("displayName") or adata.get("name") or ""
         unit_id = adata.get("unitID")
         icon_id = adata.get("iconID")
         rows.append((attribute_id, name, display_name, unit_id, icon_id))
@@ -298,7 +299,7 @@ async def write_categories():
     rows = []
     for sid, item_data in data.items():
         cid = int(sid) if not isinstance(sid, int) else sid
-        nd = item_data.get("nameID", {}) or {}
+        nd = item_data.get("nameID") or item_data.get("name") or {}
         en = (nd.get("en") or "") if isinstance(nd, dict) else ""
         zh = (nd.get("zh") or "") if isinstance(nd, dict) else ""
         rows.append((cid, en, zh))
@@ -347,6 +348,52 @@ async def write_categories():
         log.info(f"item.category_id 更新完成 ({len(updates)} 个 group 映射)")
 
 
+def _station_rows(sta_raw) -> list[tuple]:
+    """SDE station YAML → station 表行；兼容旧列表格式与新源字典格式。
+
+    旧源 `bsd/staStations.yaml`：列表，行内 `stationID/stationName/stationTypeID/corporationID`。
+    新源 `npcStations.yaml`：字典（键=stationID），**无 stationName**、字段改名
+    `typeID/ownerID`；站名返回空串，由写库 SQL 的 COALESCE 保留旧值（不得清空）。
+    """
+    rows: list[tuple] = []
+    if isinstance(sta_raw, dict):
+        for raw_id, item in sta_raw.items():
+            if not isinstance(item, dict):
+                continue
+            try:
+                station_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            rows.append(
+                (
+                    station_id,
+                    "",  # 新源没有 stationName：空串 → upsert COALESCE 保留旧站名
+                    int(item["solarSystemID"]) if item.get("solarSystemID") else None,
+                    int(item["operationID"]) if item.get("operationID") else None,
+                    int(item["typeID"]) if item.get("typeID") else None,
+                    int(item["ownerID"]) if item.get("ownerID") else None,
+                )
+            )
+    elif isinstance(sta_raw, list):
+        for item in sta_raw:
+            if not isinstance(item, dict):
+                continue
+            raw_station_id = item.get("stationID")
+            if raw_station_id is None:
+                continue
+            rows.append(
+                (
+                    int(raw_station_id),
+                    item.get("stationName", "") or "",
+                    int(item["solarSystemID"]) if item.get("solarSystemID") else None,
+                    int(item["operationID"]) if item.get("operationID") else None,
+                    int(item["stationTypeID"]) if item.get("stationTypeID") else None,
+                    int(item["corporationID"]) if item.get("corporationID") else None,
+                )
+            )
+    return rows
+
+
 async def write_stations():
     """写入 station + station_operation + station_operation_service + station_service 表"""
     async with _ref_db() as db:
@@ -368,7 +415,11 @@ async def write_stations():
         ss_rows = []
         for sid_str, sd in ss_data.items():
             service_id = int(sid_str) if not isinstance(sid_str, int) else sid_str
-            service_name = sd.get("serviceName", "") or ""
+            raw_service_name = sd.get("serviceName", "") or ""
+            if isinstance(raw_service_name, dict):
+                # 新扁平源 stationServices.yaml 的 serviceName 是本地化字典（旧源是字符串）
+                raw_service_name = raw_service_name.get("en") or raw_service_name.get("zh") or ""
+            service_name = str(raw_service_name)
             ss_rows.append((service_id, service_name))
         if ss_rows:
             async with _ref_db() as db:
@@ -386,7 +437,7 @@ async def write_stations():
         so_rows = []
         for oid_str, od in so_data.items():
             op_id = int(oid_str) if not isinstance(oid_str, int) else oid_str
-            nd = od.get("nameID", {}) or {}
+            nd = od.get("nameID") or od.get("name") or od.get("operationName") or {}
             en = (nd.get("en") or "") if isinstance(nd, dict) else ""
             zh = (nd.get("zh") or "") if isinstance(nd, dict) else ""
             so_rows.append((op_id, en, zh))
@@ -417,33 +468,58 @@ async def write_stations():
             await db.commit()
         log.info(f"station_operation_service 写入完成 ({len(sos_rows)} 条)")
 
-    # --- station（BSD 格式：列表，用 stationID 而非 _id）---
+    # --- station ---
+    # 旧源（bsd/staStations.yaml）：列表，字段 stationID/stationName/stationTypeID/corporationID。
+    # 新源（扁平包 npcStations.yaml）：字典（键=stationID），**没有 stationName**，字段改名
+    # typeID/ownerID。直接 INSERT OR REPLACE 会把已有 5,154 个站名清成空串 —— 这里：
+    #   ① 名字缺失时 upsert 用 COALESCE(NULLIF(excluded.station_name,''), station.station_name) 保留旧值；
+    #   ② 新源没有名字的站，站名留空并记日志（ESI `/universe/stations/{id}/` 补齐为后续步骤）。
     sta_raw = await load_yaml_async("staStations.yaml")
-    if isinstance(sta_raw, list) and sta_raw:
-        sta_rows = []
-        for item in sta_raw:
-            station_id = item.get("stationID")
-            if station_id is None:
-                continue
-            sta_rows.append(
-                (
-                    int(station_id),
-                    item.get("stationName", "") or "",
-                    int(item["solarSystemID"]) if item.get("solarSystemID") else None,
-                    int(item["operationID"]) if item.get("operationID") else None,
-                    int(item["stationTypeID"]) if item.get("stationTypeID") else None,
-                    int(item["corporationID"]) if item.get("corporationID") else None,
+    sta_rows = _station_rows(sta_raw)
+    if sta_rows:
+        async with _ref_db() as db:
+            for i in range(0, len(sta_rows), BATCH_SIZE):
+                await db.executemany(
+                    "INSERT INTO station "
+                    "(station_id, station_name, solar_system_id, operation_id, station_type_id, corporation_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(station_id) DO UPDATE SET "
+                    "  station_name = COALESCE(NULLIF(excluded.station_name, ''), station.station_name), "
+                    "  solar_system_id = COALESCE(excluded.solar_system_id, station.solar_system_id), "
+                    "  operation_id = COALESCE(excluded.operation_id, station.operation_id), "
+                    "  station_type_id = COALESCE(excluded.station_type_id, station.station_type_id), "
+                    "  corporation_id = COALESCE(excluded.corporation_id, station.corporation_id)",
+                    sta_rows[i : i + BATCH_SIZE],
                 )
+            await db.commit()
+        unnamed = sum(1 for row in sta_rows if not row[1])
+        if unnamed:
+            log.warning(
+                "station 写入完成 (%s 条)，其中 %s 条无站名（新源 npcStations.yaml 不含 stationName）"
+                "—— 已保留库里已有站名；空名站名可由 ESI /universe/stations/{id}/ 后续补齐",
+                len(sta_rows),
+                unnamed,
             )
-        if sta_rows:
-            async with _ref_db() as db:
-                for i in range(0, len(sta_rows), BATCH_SIZE):
-                    await db.executemany(
-                        "INSERT OR REPLACE INTO station (station_id, station_name, solar_system_id, operation_id, station_type_id, corporation_id) VALUES (?, ?, ?, ?, ?, ?)",
-                        sta_rows[i : i + BATCH_SIZE],
-                    )
-                await db.commit()
+        else:
             log.info(f"station 写入完成 ({len(sta_rows)} 条)")
+
+
+async def _ensure_region_zh_column(db: aiosqlite.Connection) -> bool:
+    """reference.db（可重建缓存）**一次性**补 `region.zh_name` 列；补了 → True。
+
+    为什么 ALTER 在业务侧：`reference.db` 是可重建缓存，按克制条款第 3 条**不进**
+    `schema_migrations`（那是给 user.db 的），而 `region` 表在旧缓存里只有英文名。
+    规则上仍要求「补列只有这一个入口 + 有存在性检查 + 留痕」，因此抽成本函数：
+    只在列确实缺失时 ALTER 一次，其余情况零操作 —— 后续任何新增列也必须走这里，
+    不允许在业务函数里散落 `ALTER TABLE`。
+    """
+    cur = await db.execute("PRAGMA table_info(region)")
+    if "zh_name" in {r[1] for r in await cur.fetchall()}:
+        return False
+    log.info("reference.db（可重建缓存）补列 region.zh_name：新建缓存表结构落后于当前代码")
+    await db.execute("ALTER TABLE region ADD COLUMN zh_name TEXT")
+    await db.commit()
+    return True
 
 
 async def write_region_names(progress_cb: Callable[[int, str], None] | None = None) -> int:
@@ -458,12 +534,7 @@ async def write_region_names(progress_cb: Callable[[int, str], None] | None = No
     """
     async with _ref_db() as db:
         await db.execute("CREATE TABLE IF NOT EXISTS region (region_id INTEGER PRIMARY KEY, region_name TEXT)")
-        cur = await db.execute("PRAGMA table_info(region)")
-        if "zh_name" not in {r[1] for r in await cur.fetchall()}:
-            # reference.db 是可重建缓存，按克制条款第 3 条不进 schema_migrations。
-            # 这里就地补列 —— 重导 SDE 代价大，而补一列是幂等的。
-            await db.execute("ALTER TABLE region ADD COLUMN zh_name TEXT")
-            await db.commit()
+        await _ensure_region_zh_column(db)
         cur = await db.execute("SELECT region_id FROM region WHERE zh_name IS NULL OR zh_name = ''")
         missing = [int(r[0]) for r in await cur.fetchall()]
 
@@ -657,6 +728,11 @@ async def write_research():
 
     # --- research_agent ---
     ra_data = _ensure_dict(await load_yaml_async("researchAgents.yaml"))
+    if not ra_data:
+        log.warning(
+            "researchAgents.yaml 缺失（新扁平发布源已不发布该文件）—— research_agent 表保持原状，"
+            "科研 Agent 功能沿用旧库数据；如需更新须另找数据源"
+        )
     if ra_data:
         ra_rows = []
         for aid_str, ad in ra_data.items():
@@ -688,7 +764,7 @@ async def write_research():
         nc_rows = []
         for cid_str, cd in nc_data.items():
             corp_id = int(cid_str) if not isinstance(cid_str, int) else cid_str
-            nd = cd.get("nameID", {}) or {}
+            nd = cd.get("nameID") or cd.get("name") or {}
             en = (nd.get("en") or "") if isinstance(nd, dict) else ""
             zh = (nd.get("zh") or "") if isinstance(nd, dict) else ""
             nc_rows.append((corp_id, en, zh))
@@ -704,6 +780,8 @@ async def write_research():
 
     # --- agent ---
     ag_data = _ensure_dict(await load_yaml_async("agents.yaml"))
+    if not ag_data:
+        log.warning("agents.yaml 缺失（新扁平发布源已不发布该文件）—— agent 表保持原状（沿用旧库数据）")
     if ag_data:
         ag_rows = []
         for aid_str, ad in ag_data.items():
@@ -750,7 +828,7 @@ async def write_dogma_effects():
     rows = []
     for eid_str, edata in data.items():
         effect_id = int(eid_str) if not isinstance(eid_str, int) else eid_str
-        effect_name = edata.get("effectName", "") or ""
+        effect_name = edata.get("effectName") or edata.get("name") or ""
         description = edata.get("description", "") or ""
         icon_id = edata.get("iconID")
         rows.append((effect_id, effect_name, description, icon_id))

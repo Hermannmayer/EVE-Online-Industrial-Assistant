@@ -8,6 +8,7 @@ import json
 import time as _time
 from pathlib import Path
 
+from core.logger import log
 from core.paths import search_history_file
 
 HISTORY_FILE = Path(search_history_file())
@@ -27,7 +28,8 @@ def add_search_history(query: str):
         HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
         HISTORY_FILE.write_text(json.dumps(history, ensure_ascii=False), encoding="utf-8")
     except Exception:
-        pass
+        # 吞的是搜索历史文件的读/写/编码异常：纯体验功能失败不应影响查询主流程
+        log.debug("搜索历史写入失败（不阻断查询）", exc_info=True)
 
 
 def load_search_history() -> list:
@@ -36,7 +38,8 @@ def load_search_history() -> list:
         if HISTORY_FILE.exists():
             return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
     except Exception:
-        pass
+        # 吞的是历史文件损坏/不可读异常：按空历史处理是既有行为，只影响下拉候选
+        log.debug("搜索历史读取失败，按空历史处理", exc_info=True)
     return []
 
 

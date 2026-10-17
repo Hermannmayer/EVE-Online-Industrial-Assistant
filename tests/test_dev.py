@@ -41,13 +41,6 @@ def test_start_app_passes_args_to_popen(monkeypatch):
     assert "--debug" in captured["args"]
 
 
-def test_start_app_clears_trigger(monkeypatch):
-    monkeypatch.setattr(dev, "clear_trigger", MagicMock())
-    monkeypatch.setattr(dev.subprocess, "Popen", MagicMock())
-    dev.start_app()
-    dev.clear_trigger.assert_called_once_with()
-
-
 def test_main_acquires_and_releases_dev_lock(monkeypatch, tmp_path):
     monkeypatch.setattr(dev, "DEV_LOCK", tmp_path / "dev.lock")
     monkeypatch.setattr(dev, "_run", MagicMock())

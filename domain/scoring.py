@@ -16,6 +16,7 @@ from core.eve_formulas import (
     calc_relist_fee,
     calc_sales_tax_rate,
 )
+from core.skill_keys import ADVANCED_INDUSTRY, INDUSTRY, REACTIONS
 from domain.formulas import (
     ALPHA_TAX,
     REACTIONS_SKILL_MULT,
@@ -190,8 +191,8 @@ def calc_manufacturing_score(
     profit = revenue - total_cost
 
     # 时间计算（使用 calc_production_time）
-    ind_lvl = skills.get("工业理论", 0)
-    adv_lvl = skills.get("高级工业理论", 0)
+    ind_lvl = skills.get(INDUSTRY, 0)
+    adv_lvl = skills.get(ADVANCED_INDUSTRY, 0)
     actual_time = calc_production_time(
         base_time=recipe.base_time,
         industry_skill=ind_lvl,
@@ -480,7 +481,7 @@ def calc_reaction_score(
 
     # 反应时间：客户端技能文案「45746 反应理论：每升一级，反应时间减少 4%」
     # （高级工业理论的文案只管「制造和研究时间」，不含反应）
-    reactions_lvl = skills.get("反应理论", 0)
+    reactions_lvl = skills.get(REACTIONS, 0)
     skill_mod = 1 - REACTIONS_SKILL_MULT * max(0, int(reactions_lvl or 0))
     actual_time = base_time * skill_mod
     hours_per_run = actual_time / 3600

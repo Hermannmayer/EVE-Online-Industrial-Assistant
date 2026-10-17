@@ -1405,3 +1405,31 @@ class TestCompletePlansInventionBatch:
         # 无 breakdown（表格行没跑过评分）→ 同样按 runs × parallels，而不是单线次数
         no_bd = {"runs": 10, "parallels": 5, "blueprint_type_id": 0}
         assert _invention_expected(no_bd)[3] == 50
+
+
+def test_complete_plans_reports_bp_attempt_shortfall_on_success(db_manager, monkeypatch):
+    """回归：强制放行发明的**成功**下线必须把尝试流程缺口回传给调用方。
+
+    缺口写在 `bp_attempt_short`（v22→v23 审计列），但以前成功路径只返回 completed；
+    `complete_plan` 的 message 里那句「缺口 N 已记入审计列」被整个丢弃 ——
+    用户看不到「材料按声明扣、输入流程按实际扣」，批量入口也无从提示。
+    """
+    from ui_qml.views.industry import complete_plans_dialog as cpd
+
+    monkeypatch.setattr(
+        cpd.plan_execution,
+        "complete_plan",
+        lambda plan, **kwargs: {"ok": True, "deposited": 1, "message": ""},
+    )
+    monkeypatch.setattr(cpd, "_bp_attempt_short", lambda plan_id: 40 if plan_id == 7 else 0)
+
+    result = cpd.complete_plans(
+        [{"id": 7, "product_name": "T2 蓝图 X", "status": "ready"}],
+        0,
+        ask_outcome=False,
+        update_hangar=False,
+    )
+
+    assert result["completed"] == 1
+    assert result["shortfalls"] == [{"name": "T2 蓝图 X", "gap": 40}]
+    assert any("缺口 40" in note for note in result["notices"])

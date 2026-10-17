@@ -12,6 +12,7 @@ from collections import Counter
 from typing import Any
 
 from core.container import get_container
+from core.logger import log
 from domain.blueprint_sync import normalize_clipboard_attr, plan_group_sync, target_units
 from services import inventory_manager
 from services.item_kind import is_material_name
@@ -136,6 +137,8 @@ def has_solar_system_data(db=None) -> bool:
             row = conn.execute("SELECT COUNT(*) FROM solar_system").fetchone()
             return bool(row and row[0] > 0)
     except Exception:
+        # 吞的是 ref 库查询异常：返回 False 让调用方走无数据分支
+        log.warning("检查 solar_system 数据失败，按「无数据」处理", exc_info=True)
         return False
 
 

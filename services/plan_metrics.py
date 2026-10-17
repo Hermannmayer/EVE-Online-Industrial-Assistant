@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from core.logger import log
 from domain.formulas import calc_eiv, calc_job_cost_fees, calc_material_for_runs
 from domain.research import (
     Decryptor,
@@ -228,6 +229,8 @@ def calculate_personal_margin(
         margin = (total_revenue - total_cost) / total_cost * 100
         return round(margin, 2)
     except Exception:
+        # 吞的是计算链路异常：回退 result 里的市场 margin 是既有兜底
+        log.warning("个人利润率计算失败，回退市场利润率", exc_info=True)
         return result.get("margin", 0) or 0
 
 

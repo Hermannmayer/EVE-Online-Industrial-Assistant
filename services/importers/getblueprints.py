@@ -95,9 +95,18 @@ async def ensure_cache(progress_cb=None) -> str:
     os.makedirs(CACHE_DIR, exist_ok=True)
 
     if os.path.exists(CACHE_FILE):
-        size = os.path.getsize(CACHE_FILE)
-        log.info(f"使用本地缓存: {CACHE_FILE} ({size / 1024 / 1024:.1f} MB)")
-        return CACHE_FILE
+        # 缓存比 SDE zip 旧 → 重新提取：否则从旧源切到新扁平源（或 SDE build 更新）后，
+        # 仍会拿上一版 blueprints.yaml 解析（行数闸门 `>1000` 还会让整步跳过）。
+        try:
+            # 只在 zip 确实存在时比 mtime；检测/读取阶段的 OSError（文件恰被换源清理）视作「无 zip」
+            zip_newer = os.path.exists(SDE_ZIP_PATH) and os.path.getmtime(SDE_ZIP_PATH) > os.path.getmtime(CACHE_FILE)
+        except OSError:
+            zip_newer = False
+        if not zip_newer:
+            size = os.path.getsize(CACHE_FILE)
+            log.info(f"使用本地缓存: {CACHE_FILE} ({size / 1024 / 1024:.1f} MB)")
+            return CACHE_FILE
+        log.info("blueprints.yaml 缓存早于 SDE zip（换源/升级），重新提取")
 
     # 复用共享的 SDE zip（items 等步骤已下载），避免重复下载 112MB
     if os.path.exists(SDE_ZIP_PATH):

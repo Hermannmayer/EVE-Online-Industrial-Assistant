@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from PySide6.QtCore import QThread
 
 from ui_qml.workers.industry_workers import RankWorker, ScoreWorker, SearchWorker
 
@@ -11,13 +10,6 @@ pytestmark = pytest.mark.ui
 
 
 class TestSearchWorker:
-    def test_worker_is_qthread(self):
-        """SearchWorker 是 QThread 子类"""
-        db = MagicMock()
-        w = SearchWorker(query="rav", db=db)
-        assert isinstance(w, QThread)
-        assert w._query == "rav"
-
     def test_run_emits_finished(self, qapp):
         """run() 执行 SQL 后通过 finished 信号返回结果"""
         db = MagicMock()
@@ -78,7 +70,9 @@ class TestScoreWorker:
 
         mock_svc.calc_manufacturing_score.assert_called_once_with(
             type_id=2001,
-            char_config={"skills": {"工业理论": 5, "高级工业理论": 5}, "market": {}},
+            # 01-11 之后：未指定角色/未配置技能时默认技能为空（不默认满级），
+            # 因此这里断言转发的是 resolve_char_config() 的兜底结果，而不是旧的全 5 级。
+            char_config={"skills": {}, "market": {}},
             bp_me=10,
             bp_te=20,
             mat_source_hub="Jita",

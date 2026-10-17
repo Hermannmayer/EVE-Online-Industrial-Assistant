@@ -14,6 +14,9 @@ from core.eve_formulas import BROKER_FEE_BASE, SALES_TAX_BASE
 from services.market_advice_service import CALIBER, NO_DATA_ADVICE, get_trade_advice
 from services.price_history import PRICE_HISTORY_DDL
 
+# 纯函数 `get_trade_advice`（临时库、无 Qt）：归 fast 档
+pytestmark = pytest.mark.fast
+
 REGION = 10000002
 #: 默认费率（经纪人 3% × 两侧 + 销售税 7.5%）下的来回费用
 DEFAULT_FEE = 2 * BROKER_FEE_BASE + SALES_TAX_BASE

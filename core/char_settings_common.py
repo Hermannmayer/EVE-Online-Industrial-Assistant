@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from core.skill_keys import RETAIL, TRADE, TYCOON, WHOLESALE
+
 SKILL_CATEGORIES = [
     (
         "制造",
@@ -232,10 +234,10 @@ def calc_sales_tax(skills: dict, base_tax: float = 7.5) -> float:
 
 def calc_max_orders(skills: dict, base_orders: int = 15) -> int:
     """计算最大订单数。"""
-    trade = skills.get("贸易学", 0)
-    retail = skills.get("零售技巧", 0)
-    wholesale = skills.get("批发技巧", 0)
-    tycoon = skills.get("商业巨头", 0)
+    trade = skills.get(TRADE, 0)
+    retail = skills.get(RETAIL, 0)
+    wholesale = skills.get(WHOLESALE, 0)
+    tycoon = skills.get(TYCOON, 0)
     return base_orders + 4 * trade + 8 * retail + 16 * wholesale + 32 * tycoon  # type: ignore[no-any-return]
 
 

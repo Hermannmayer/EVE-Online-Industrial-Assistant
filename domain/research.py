@@ -13,6 +13,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from core.skill_keys import ADVANCED_INDUSTRY, METALLURGY, RESEARCH, SCIENCE
+
 # ═══════════════════════════════════════════════════════════
 #  活动常量（与 blueprint.db 的 blueprint_activities.activity 取值一致）
 # ═══════════════════════════════════════════════════════════
@@ -235,10 +237,10 @@ def copy_job_runs(copies: int, runs_per_copy: int, max_production_limit: int) ->
 # 不吃蓝图 TE 等级：Wiki「Copy time is also NOT affected by the level of TE on the BPO」；
 # 发明时长同理（输入 BPC 的 ME/TE/Runs 都不改作业时长），ME/TE 研究时长只由目标等级决定。
 # 制造走 domain/formulas.calc_production_time（工业理论 4% + 高级工业理论 3% + 蓝图所需技能 1%）
-ADV_INDUSTRY_TIME_SKILL = "高级工业理论"
-RESEARCH_TIME_SKILL = "研究概论"
-METALLURGY_TIME_SKILL = "冶金学"
-SCIENCE_TIME_SKILL = "科学原理"
+ADV_INDUSTRY_TIME_SKILL = ADVANCED_INDUSTRY
+RESEARCH_TIME_SKILL = RESEARCH
+METALLURGY_TIME_SKILL = METALLURGY
+SCIENCE_TIME_SKILL = SCIENCE
 
 
 def science_job_time(

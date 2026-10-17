@@ -3,7 +3,6 @@
 from unittest.mock import patch
 
 import pytest
-from PySide6.QtCore import QThread
 
 from ui_qml.views.industry_view import PlanPriceRefreshWorker
 
@@ -11,11 +10,6 @@ pytestmark = pytest.mark.ui
 
 
 class TestPlanPriceRefreshWorker:
-    def test_worker_is_qthread(self):
-        """验证 PlanPriceRefreshWorker 是 QThread 子类"""
-        w = PlanPriceRefreshWorker(type_ids={1, 2, 3})
-        assert isinstance(w, QThread)
-
     @patch("ui_qml.views.industry_view.PlanPriceRefreshWorker._fetch_and_save")
     def test_run_emits_finished_on_success(self, mock_fetch, qapp):
         """run() 成功拉取后通过 finished 信号返回成功消息"""

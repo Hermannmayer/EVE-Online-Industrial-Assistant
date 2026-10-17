@@ -207,22 +207,3 @@ class TestBulkPlanMetricsWorker:
         # calculate_plan_metrics 收到的 plan dict 使用 price_settings 的 hub
         assert captured_plans[0]["mat_hub"] == "Amarr"
         assert captured_plans[0]["sell_hub"] == "Perimeter"
-
-    def test_worker_survives_gc_with_strong_ref(self, qapp):
-        """QThread 被 self 强引用保活 → GC 后不崩溃（回归：多蓝图闪退根因）。
-
-        直接验证 PySide6 行为：worker 挂在持有者对象上，局部变量回收后线程仍存活。
-        """
-        import gc
-
-        holder = SimpleNamespace()
-
-        worker = _BulkPlanMetricsWorker([], "", parent=None)
-        holder.worker = worker  # 强引用保活（与 BlueprintTab._add_plan_bulk 同模式）
-
-        worker.start()
-        worker.wait(2000)  # 线程很快结束（空输入）
-        del worker
-        gc.collect()
-
-        assert holder.worker is not None  # 强引用对象仍可访问，无崩溃

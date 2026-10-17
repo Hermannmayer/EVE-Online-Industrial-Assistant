@@ -188,6 +188,8 @@ def industry_data_is_fresh(db_path: str, max_age_days: int = 1) -> bool:
         age = datetime.now(UTC) - latest
         return age.total_seconds() <= max_age_days * 86400
     except Exception:
+        # 吞的是 sqlite/时间解析异常：保守返回 False 触发重新拉取，不阻断启动
+        log.warning("工业数据新鲜度检查失败，按「未就绪」处理", exc_info=True)
         return False
 
 

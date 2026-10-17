@@ -1120,21 +1120,26 @@ def get_blueprint_tech_levels():
     """从 reference.db 获取各蓝图的科技等级
 
     返回 dict[blueprint_type_id, int] — 1=T1, 2=T2, 3=T3
+
+    T3 的判定口径（2026-10-17 修）：**发明输入是「古文物类」物品**的产物。
+    古文物在 SDE 里只有 `invention` 活动（没有 manufacturing/copying），例如
+    「完整的船体舱段」(30752) → 金鹏/圣卒/海神/洛基级 T3 船体蓝图。旧口径
+    「invention 产物再作为 invention 输入」（T3 从 T2 BPC 发明）在真实 SDE 上
+    **恒为空**（实测 t3_ids=0），导致 72 张 T3 蓝图全部被误判成 T2。
     """
     levels = {}
     with _default_db().connect("bp") as conn:
         c = conn.cursor()
-        # T2: 作为 invention 产物的 blueprint_type_id
+        # T2: 作为 invention 产物的 blueprint_type_id（含 T3 产物，下列再用 t3_ids 覆盖）
         c.execute("SELECT DISTINCT product_type_id FROM blueprint_products WHERE activity = 'invention'")
         t2_ids = {r[0] for r in c.fetchall()}
-        # T3: 自身为 invention 产物（从 T2 BPC 发明得到的设计图）
-        c.execute("SELECT DISTINCT blueprint_type_id FROM blueprint_products WHERE activity = 'invention'")
-        {r[0] for r in c.fetchall()}
+        # T3: 输入（古文物类）只有 invention 活动、没有 manufacturing/copying 的发明产物
         c.execute(
-            "SELECT DISTINCT bp2.product_type_id FROM blueprint_products bp1"
-            " JOIN blueprint_products bp2"
-            " ON bp2.blueprint_type_id = bp1.product_type_id"
-            " WHERE bp1.activity = 'invention' AND bp2.activity = 'invention'"
+            "SELECT DISTINCT bp.product_type_id FROM blueprint_products bp"
+            " WHERE bp.activity = 'invention' AND NOT EXISTS ("
+            "   SELECT 1 FROM blueprint_activities ba"
+            "   WHERE ba.blueprint_type_id = bp.blueprint_type_id"
+            "     AND ba.activity IN ('manufacturing', 'copying'))"
         )
         t3_ids = {r[0] for r in c.fetchall()}
         # 所有有 manufacturing 活动的蓝图

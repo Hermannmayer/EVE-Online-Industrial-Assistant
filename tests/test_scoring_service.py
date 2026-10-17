@@ -716,8 +716,9 @@ class TestManufacturingScore:
 def test_me_and_te_reduce_waste_and_time(temp_db):
     """ME/TE 越高：材料越省、耗时越短、ISK/h 越高。
 
-    公式本身的数值锚点在 test_manufacturing_calculator_golden.py；这里只验评分链路的
-    单调方向，确保 ME/TE 参数真的接进了 calc_manufacturing_score。
+    材料公式的数值锚点在 test_manufacturing_calculator_golden.py；制造时长锚点在同文件的
+    test_production_time_* 用例（05-2 修复后）。这里只验评分链路的单调方向，
+    确保 ME/TE 参数真的接进了 calc_manufacturing_score。
     """
     svc = ScoringService(temp_db, TtlLRUCache(max_size=10))
     r_low = svc.calc_manufacturing_score(type_id=2002, char_config=DEFAULT_CHAR, bp_me=0, bp_te=0)

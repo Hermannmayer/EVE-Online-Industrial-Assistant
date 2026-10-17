@@ -4,6 +4,9 @@ import pytest
 
 from domain.market_depth import BUY, SELL, depth_price, sell_price_reliable
 
+# 纯计算（domain/market_depth.py）：归 fast 档，改 domain 纯计算时必跑
+pytestmark = pytest.mark.fast
+
 # 真实订单簿（type 3993 大型EMP立体炸弹 I，Jita 4-4）
 # 卖单里有一笔 2 个 @543,800 的凑数单，真实深度在 995,900（1,640 个）
 SELL_BOOK: list[tuple[float, int]] = [

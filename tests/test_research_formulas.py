@@ -26,6 +26,9 @@ from domain.research import (
     science_job_time,
 )
 
+# 纯公式金标准（domain/research.py）：归 fast 档，改 domain 纯计算时必跑
+pytestmark = pytest.mark.fast
+
 
 class TestInventionProbability:
     def test_base_only_no_skills(self):

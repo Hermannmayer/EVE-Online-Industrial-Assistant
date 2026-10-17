@@ -18,7 +18,8 @@ from core.cache import TtlLRUCache
 from services.plan_metrics import SubitemCost, mother_subitem_cost_map
 from services.scoring_service import ScoringService
 
-pytestmark = pytest.mark.ui
+# 纯公式/纯数据逻辑（无 QApplication）：不再整文件标 ui，进 validate 档；
+# 仅真正起 BatchPlanCalcWorker（QThread）或需要 qapp 的 5 条按用例标 ui。
 
 # ════════════════════════════════════════════════════════════════
 #  辅助 fixture / 构造器
@@ -230,6 +231,7 @@ def test_blueprint_activities_has_no_quantity_column(temp_db):
 # ════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.ui
 def test_worker_personal_margin(qapp, sample_char_config):
     """worker 的 _calc_personal_margin 走 result + 库存快照，不再直连蓝图库"""
     from ui_qml.workers.industry_workers import BatchPlanCalcWorker
@@ -258,6 +260,7 @@ def test_worker_personal_margin(qapp, sample_char_config):
     assert w._inv_map is not None  # 快照只取一次
 
 
+@pytest.mark.ui
 def test_mother_subitem_override_feeds_cost_and_profit(qapp, sample_char_config, temp_db, monkeypatch):
     """拆解母项：子项自制价既进 overrides（供个人利润率），也**折算进成本/利润/利润率**。
 
@@ -318,6 +321,7 @@ def test_mother_subitem_override_feeds_cost_and_profit(qapp, sample_char_config,
     assert result["profit"] == pytest.approx(17852.0, abs=0.01)
 
 
+@pytest.mark.ui
 def test_ungrouped_mother_not_adjusted(qapp, sample_char_config):
     """无子项的普通计划不受子项分摊影响：四个返回值都原样回吐 result 的口径。"""
     from ui_qml.workers.industry_workers import BatchPlanCalcWorker
@@ -343,6 +347,7 @@ def test_ungrouped_mother_not_adjusted(qapp, sample_char_config):
     assert (mat, profit, margin, overrides) == (0, 0, 0, {})
 
 
+@pytest.mark.ui
 def test_personal_margin_uses_cost_override(qapp):
     """子项自制件按其**自制单件价**计：覆盖到的按自制价，**缺口仍按市价**（不再当 0 成本）。"""
     from services.scoring_service import ScoringService
@@ -417,6 +422,7 @@ def test_adjust_mother_metrics_does_not_mutate_input():
     assert "material_cost" not in metrics  # 入参未被修改
 
 
+@pytest.mark.ui
 def test_worker_run_uses_personal_basis_for_cost_profit(qapp, sample_char_config, temp_db, monkeypatch):
     """run()：成本/利润/利润率/ISK/h 走**个人口径**（同组自制件按自制单件价），市场口径另存 market_margin。
 

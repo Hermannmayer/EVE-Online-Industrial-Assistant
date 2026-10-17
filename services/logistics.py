@@ -11,6 +11,7 @@ market.db market_prices（经 PricingService）。
 （`calc_transport_profit`）没有 UI 调用方，已按 2026-10-17 审计 04-4 删除；将来接合同市场时再按需加回。
 """
 
+import threading
 from collections import deque
 
 from core.constants import TRADE_HUB_SYSTEM_IDS
@@ -52,11 +53,18 @@ for (a, b), d in list(TRADE_HUB_DISTANCES.items()):
 
 
 #: 星系邻接表与安全等级表 —— 进程内只建一次（13,776 行的星门表，建图约几十毫秒）。
+#:
+#: **并发约定**（2026-10-17 06-9 加固）：合同页的查询若将来下放 QThread、或同一进程内
+#: 有第二个线程调 `compute_jumps`，这些缓存就会被并发访问。`_CACHE_LOCK` **只**包缓存
+#: 的读写与发布，不包 DB I/O（建图）与 BFS（都是慢操作）—— 首建并发时两个线程可能各建
+#: 一次图，结果同源、最后写者胜，**可接受的唯一代价是几十毫秒重复建图**；
+#: 换来的是锁内没有慢操作、不会把 UI 线程卡在 DB 上。
 _GATE_GRAPH: dict[int, set[int]] | None = None
 _GATE_SECURITY: dict[int, float] = {}
 #: `(起点, 终点, 口径, 最低安全) → 跳数 | None`。单次 BFS 是毫秒级，缓存是为了让
 #: 表格滚动/重排时不重复算。
 _JUMP_CACHE: dict[tuple[int, int, str, float | None], int | None] = {}
+_CACHE_LOCK = threading.Lock()
 
 
 def _load_gate_graph() -> tuple[dict[int, set[int]], dict[int, float]]:
@@ -69,13 +77,18 @@ def _load_gate_graph() -> tuple[dict[int, set[int]], dict[int, float]]:
         sg1.solar_system_id → sg2.solar_system_id WHERE sg2.stargate_id = sg1.destination_system_id
 
     实测该图正确：Jita→Amarr 最短 11 跳（走 Ahbazon 低安捷径）、限高安 45 跳，与游戏一致。
-    """
-    global _GATE_GRAPH
-    if _GATE_GRAPH is not None:
-        return _GATE_GRAPH, _GATE_SECURITY
 
-    graph: dict[int, set[int]] = {}
-    security: dict[int, float] = {}
+    并发：建图（DB I/O）**不在锁内**；发布时先换 `_GATE_SECURITY` 再换 `_GATE_GRAPH`，
+    且两者都是整体替换引用 —— 读侧只要看到 graph 非 None，security 必已完整。
+    首建并发时可能重复建图（结果同源），不做去重，避免把 DB I/O 塞进锁里。
+    """
+    global _GATE_GRAPH, _GATE_SECURITY
+    graph, security = _GATE_GRAPH, _GATE_SECURITY
+    if graph is not None:  # 快路径：发布顺序保证「graph 可见 ⇒ security 已完整」
+        return graph, security
+
+    graph = {}
+    security = {}
     with _default_db().connect("ref") as conn:
         for sys_id, sec in conn.execute("SELECT solar_system_id, security FROM solar_system"):
             security[int(sys_id)] = float(sec or 0.0)
@@ -92,9 +105,12 @@ def _load_gate_graph() -> tuple[dict[int, set[int]], dict[int, float]]:
 
     if not graph:
         log.warning("星门表为空 —— 跳跃数将回退到内置距离表（重新导入 SDE 可修复）")
-    _GATE_GRAPH = graph
-    _GATE_SECURITY.clear()
-    _GATE_SECURITY.update(security)
+    # 发布顺序：**先 security、后 graph**（graph 是「已就绪」标志）。两件事都写成
+    # 「整体替换引用」而不是原地 clear/update —— 旧写法先发布 graph 再清空 security，
+    # 窗口期的并发读会拿到空安全表（highsec 跳数变 None）且被 _JUMP_CACHE 固化。
+    with _CACHE_LOCK:
+        _GATE_SECURITY = security
+        _GATE_GRAPH = graph
     return graph, security
 
 
@@ -119,12 +135,14 @@ def compute_jumps(
         return 0
 
     key = (origin_system_id, destination_system_id, mode, min_security)
-    if key in _JUMP_CACHE:
-        return _JUMP_CACHE[key]
+    with _CACHE_LOCK:
+        if key in _JUMP_CACHE:
+            return _JUMP_CACHE[key]
 
     graph, security = _load_gate_graph()
     if not graph:
-        _JUMP_CACHE[key] = None
+        with _CACHE_LOCK:
+            _JUMP_CACHE[key] = None
         return None
 
     floor = HIGHSEC_MIN_SECURITY if mode == "highsec" else (min_security if mode == "custom" else None)
@@ -148,7 +166,8 @@ def compute_jumps(
                 seen.add(nxt)
                 queue.append((nxt, dist + 1))
 
-    _JUMP_CACHE[key] = jumps
+    with _CACHE_LOCK:
+        _JUMP_CACHE[key] = jumps
     return jumps
 
 

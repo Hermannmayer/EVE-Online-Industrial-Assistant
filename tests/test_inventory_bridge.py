@@ -1,4 +1,4 @@
-"""机库桥「批量填充 T2 蓝图成本」的 mock 契约。
+"""机库桥「批量填充 T2/T3 蓝图成本」的 mock 契约。
 
 只断言**落库参数**（repo 收到哪些 id、cost_per_run 值）与提示，不碰 Qt/QML：
 `auto_fill_cost_per_run` 是纯编排函数（依赖在函数内 import，便于 patch）。
@@ -43,26 +43,27 @@ def _invention(bid: int, cost: float, outcomes: list[tuple[int, float]] | None =
     }
 
 
-def test_fills_every_selected_t2_bpc(monkeypatch):
-    """多选 2 张 T2 BPC + 1 张 T1 + 1 张原图 → 只写 2 张 T2 BPC，各按自己的成本。"""
+def test_fills_every_selected_t2_t3_bpc(monkeypatch):
+    """多选 T2 BPC + T3 BPC + T1 + 原图 → 只写 T2/T3 拷贝，各按自己的成本；T1 仍跳过。"""
     calls: list[tuple[list[int], dict]] = []
-    _patch_deps(
-        monkeypatch,
-        {5001: _invention(5001, 100.0), 5002: _invention(5002, 200.0)},
-        calls,
-    )
     bridge = _FakeBridge()
     rows = [
         {"id": 1, "blueprint_type_id": 5001, "tech_level": 2, "is_bpo": False},
         {"id": 2, "blueprint_type_id": 5002, "tech_level": 2, "is_bpo": False},
         {"id": 3, "blueprint_type_id": 5003, "tech_level": 1, "is_bpo": False},  # T1 跳过
         {"id": 4, "blueprint_type_id": 5004, "tech_level": 2, "is_bpo": True},  # 原图跳过
+        {"id": 5, "blueprint_type_id": 5005, "tech_level": 3, "is_bpo": False},  # T3 BPC 写入
     ]
+    _patch_deps(
+        monkeypatch,
+        {5001: _invention(5001, 100.0), 5002: _invention(5002, 200.0), 5005: _invention(5005, 300.0)},
+        calls,
+    )
     auto_fill_cost_per_run(bridge, rows)
 
-    assert calls == [([1], {"cost_per_run": 100.0}), ([2], {"cost_per_run": 200.0})]
+    assert calls == [([1], {"cost_per_run": 100.0}), ([2], {"cost_per_run": 200.0}), ([5], {"cost_per_run": 300.0})]
     assert bridge.reloaded == 1
-    assert "2 张" in bridge.hints[-1]
+    assert "3 张" in bridge.hints[-1]
 
 
 def test_same_cost_grouped_into_one_update(monkeypatch):

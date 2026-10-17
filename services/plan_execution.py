@@ -141,6 +141,13 @@ class MaterialRequirementError(RuntimeError):
     """
 
 
+#: 03-10：无材料机库时的统一拒绝文案（启动 / 部分启动 / 部分启动预览三处共用，防口径漂移）。
+_MATERIAL_HANGAR_MISSING = (
+    "未设置材料机库，无法扣料启动。请先编辑计划（右键 →「编辑计划」）"
+    "设置材料机库后重试：材料从该机库扣减，撤销启动时按同一机库返还。"
+)
+
+
 def material_requirements(plan: dict, *, strict: bool = False) -> list[dict]:
     """计算计划总材料需求 [{type_id, name, need}]。
 
@@ -426,7 +433,8 @@ def start_plan(
 
     Returns:
         {"ok": bool, "code": str, "message": str, "shortfalls": list, "plan_id": int}
-    code 取值: already_started / already_ready / already_completed / material_short /
+    code 取值: already_started / already_ready / already_completed /
+              material_hangar_missing / material_short /
               blueprint_missing / blueprint_kind / blueprint_short / requirement_failed /
               snapshot_exists / ok
     """
@@ -443,35 +451,47 @@ def start_plan(
         code, message = _START_STATUS_REJECTIONS.get(status, ("no_id", "计划不存在"))
         return {"ok": False, "code": code, "message": message, "shortfalls": [], "plan_id": plan_id}
 
-    # 1. 材料校验（mat_hangar_id 未设置则跳过）
+    # 1. 材料机库闸门（03-10 用户决策）：没有材料机库 = 无处扣料，一律拒绝启动。
+    #    旧行为是「未设机库 → 跳过校验与扣减直接开产」（无料造物），材料守恒被绕过；
+    #    现在与「材料不足」同族拒绝。返回 dict 而不抛异常：本文件所有拒绝（material_short /
+    #    blueprint_missing / …）都走同一契约，`start_plan_batch` 也需要逐条失败继续。
+    if not mat_hangar_id or int(mat_hangar_id) <= 0:
+        return {
+            "ok": False,
+            "code": "material_hangar_missing",
+            "message": _MATERIAL_HANGAR_MISSING,
+            "shortfalls": [],
+            "plan_id": plan_id,
+        }
+
+    # 2. 材料校验（机库已在上面强制要求）
     reqs: list[dict] = []
     shortfalls: list[dict] = []
     short_json = ""
-    if mat_hangar_id:
-        try:
-            # strict：评分链路失败时**拒绝启动**，不能按「零材料需求」不校验不扣料直接开产
-            reqs = check_materials(plan, mat_hangar_id, all_plans=_active_plans_for_material_check(), strict=True)
-        except MaterialRequirementError:
-            return {
-                "ok": False,
-                "code": "requirement_failed",
-                "message": "材料需求计算失败，已阻止启动（详见日志）",
-                "shortfalls": [],
-                "plan_id": plan_id,
-            }
-        shortfalls = [r for r in reqs if (r.get("missing") or 0) > 0]
-        if shortfalls and not allow_short:
-            return {
-                "ok": False,
-                "code": "material_short",
-                "message": f"材料不足 {len(shortfalls)} 种",
-                "shortfalls": shortfalls,
-                "plan_id": plan_id,
-            }
-        if shortfalls:
-            short_json = json.dumps({str(r["type_id"]): int(r["missing"]) for r in shortfalls}, ensure_ascii=False)
+    try:
+        # strict：评分链路失败时**拒绝启动**，不能按「零材料需求」不校验不扣料直接开产
+        reqs = check_materials(plan, mat_hangar_id, all_plans=_active_plans_for_material_check(), strict=True)
+    except MaterialRequirementError:
+        return {
+            "ok": False,
+            "code": "requirement_failed",
+            "message": "材料需求计算失败，已阻止启动（详见日志）",
+            "shortfalls": [],
+            "plan_id": plan_id,
+        }
+    shortfalls = [r for r in reqs if (r.get("missing") or 0) > 0]
+    if shortfalls and not allow_short:
+        return {
+            "ok": False,
+            "code": "material_short",
+            "message": f"材料不足 {len(shortfalls)} 种",
+            "shortfalls": shortfalls,
+            "plan_id": plan_id,
+        }
+    if shortfalls:
+        short_json = json.dumps({str(r["type_id"]): int(r["missing"]) for r in shortfalls}, ensure_ascii=False)
 
-    # 2. 绑定蓝图：以 DB 权威关联表绑定为准。一条产线一张蓝图：
+    # 3. 绑定蓝图：以 DB 权威关联表绑定为准。一条产线一张蓝图：
     #    parallels 条产线需绑定 parallels 张、每张流程 ≥ runs。
     #    未绑定时仅并行=1 自动选最优（BPO 优先 → ME 最高的够用 BPC）并写入关联表；
     #    并行>1 未绑定 → 明确拒绝，引导用户在蓝图列勾选。
@@ -551,7 +571,7 @@ def start_plan(
             "plan_id": plan_id,
         }
 
-    # 3. 持久化：先用条件 UPDATE 原子抢占状态，再用同一事务扣减材料；
+    # 4. 持久化：先用条件 UPDATE 原子抢占状态，再用同一事务扣减材料；
     #    任一步失败整体回滚，避免部分扣减残留和并发重复启动。
     #    白名单只放 **pending**（旧黑名单漏了 ready → 到期待下线的计划可再启动，
     #    二次扣料并覆盖撤销快照，撤销只退一轮，净丢一轮材料）；`deducted_materials`
@@ -685,6 +705,14 @@ def preview_partial_start(plan_id: int, lines: int, mat_hangar_id: int | None) -
     total = max(int(fresh.get("parallels") or 1), 1)
     lines = max(min(int(lines), total - 1), 1) if total > 1 else 0
     preview = {**fresh, "parallels": lines, "line_levels": list(fresh.get("line_levels") or [])[:lines]}
+    if not mat_hangar_id or int(mat_hangar_id) <= 0:
+        return {
+            "ok": False,
+            "code": "material_hangar_missing",
+            "message": _MATERIAL_HANGAR_MISSING,
+            "shortfalls": [],
+            "bp_short": None,
+        }
     shortfalls = [
         r
         for r in check_materials(preview, mat_hangar_id, all_plans=_active_plans_for_material_check())
@@ -996,6 +1024,16 @@ def start_plan_partial(
             }
     finally:
         gate.close()
+
+    # 材料机库闸门（03-10 用户决策）：部分启动同样必须先有材料机库，否则拆出的半条线
+    # 无处扣料。放在拆行**之前**，避免「先拆后回滚」的无效写库。
+    if not mat_hangar_id or int(mat_hangar_id) <= 0:
+        return {
+            "ok": False,
+            "code": "material_hangar_missing",
+            "message": _MATERIAL_HANGAR_MISSING,
+            "started_lines": 0,
+        }
 
     bound = list(get_plan_binding_state(plan_id).get("bound") or [])
     remainder_lines = total - lines

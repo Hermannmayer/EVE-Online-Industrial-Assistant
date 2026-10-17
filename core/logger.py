@@ -53,6 +53,7 @@ class _Logger:
             fh.setFormatter(logging.Formatter(_LOG_FORMAT, _DATE_FORMAT))
             self._logger.addHandler(fh)
         except Exception:
+            # 日志系统自身初始化失败（此时还没有可用的 log）：只能把提示写到 stderr，属唯一可观测通道
             stream = sys.stderr if sys.stderr is not None else NullWriter()
             stream.write("[logger] 无法创建文件日志，运行信息不会落盘\n")
 

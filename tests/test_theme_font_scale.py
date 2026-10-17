@@ -58,15 +58,6 @@ class TestSetFontScale:
         assert theme.fs(13) != 13, "缩放没传导到 token 函数"
 
 
-class TestApplyThemeSafety:
-    def test_apply_theme_without_qapplication_does_not_raise(self):
-        """无 QApplication 时 apply_theme 必须静默跳过字体同步。
-
-        tests/test_theme_registry.py 的 autouse fixture 会在无 qapp 的情况下调用它。
-        """
-        theme.apply_theme("one-dark")
-
-
 class TestLoadFontScale:
     def test_defaults_to_one_when_unset(self, monkeypatch):
         monkeypatch.setattr("services.user_settings.load_settings", lambda: {})

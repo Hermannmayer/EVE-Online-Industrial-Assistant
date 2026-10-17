@@ -584,7 +584,10 @@ class ScoringService:
         # 改件按**活动**筛选：发明/研究/拷贝类 rig 不再影响制造作业（反之亦然），审计 01-13
         plan_activity = str(plan_data.get("activity") or "manufacturing")
         hangar_cfg = resolve_hangar_industry_config(
-            plan_data.get("mat_hangar_id"), activity=plan_activity, _db=getattr(svc, "_db", None)
+            plan_data.get("mat_hangar_id"),
+            activity=plan_activity,
+            product_type_id=plan_data.get("product_type_id"),
+            _db=getattr(svc, "_db", None),
         )
         # 成本倍率：计划 facility_cost_mult 显式(≠1.0) > 机库 > 1.0
         plan_mult = float(plan_data.get("facility_cost_mult", 1.0) or 1.0)

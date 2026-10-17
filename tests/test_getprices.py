@@ -1,4 +1,4 @@
-"""测试 services/workers/getprices.py — 价格拉取流程
+"""测试 services/importers/getprices.py — 价格拉取流程
 
 覆盖 5 个核心函数：
   - init_db: 数据库表结构创建

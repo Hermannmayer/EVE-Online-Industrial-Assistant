@@ -69,6 +69,138 @@ ZIP_LOOKUP = {
     "groupIDs.yaml": "groups.yaml",
 }
 
+# ════════════════════════════════════════════════════════════════
+#  02-03 B 段：可切换的 SDE 发布源（默认旧 S3 保持不变）
+# ════════════════════════════════════════════════════════════════
+#
+# 官方自 2025-07-07 起把 SDE 迁到 `developers.eveonline.com/static-data/`：新包是
+# **扁平 102 个 YAML 文件**（根目录直接是 types.yaml/blueprints.yaml/...，没有 fsd/、bsd/、
+# universe/ 目录），且部分数据改名/消失（npcStations.yaml 取代 bsd/staStations.yaml 且
+# 不含 stationName；agents.yaml / researchAgents.yaml 不再发布；区域/星座/星系名内联在
+# mapRegions/mapConstellations/mapSolarSystems.yaml）。
+# 本模块只负责「下载缓存 + 布局/字段映射 + 源感知 manifest」；各导入器按映射表适配
+# （station 名保护见 sde_loader.write_stations）。
+
+#: 源选择环境变量：`legacy`（默认，旧 S3 冻结包）| `static-data`（官方新扁平包，opt-in）。
+SDE_SOURCE_ENV = "EVE_SDE_SOURCE"
+SDE_SOURCE_LEGACY = "legacy"
+SDE_SOURCE_STATIC_DATA = "static-data"
+SDE_SELECTABLE_SOURCES = (SDE_SOURCE_LEGACY, SDE_SOURCE_STATIC_DATA)
+
+#: 显式覆盖 zip URL（测试/内网/固定版本验证用；不改变默认行为）。
+SDE_ZIP_URL_ENV = "EVE_SDE_ZIP_URL"
+
+#: 新源 URL 模板：build 号来自 `latest.jsonl`（`SDE_LATEST_URL`）。
+SDE_STATIC_DATA_ZIP_TEMPLATE = (
+    "https://developers.eveonline.com/static-data/tranquility/eve-online-static-data-{build}-yaml.zip"
+)
+
+#: 新源（扁平布局）里「缓存文件名 → zip 成员名」。新源没有 agents/researchAgents，
+#: 且 station 数据改名 + 缺字段（stationName 没了）——导入器侧按本表 + 字段映射适配。
+STATIC_DATA_ZIP_NAMES: dict[str, str] = {
+    "typeIDs.yaml": "types.yaml",
+    "groupIDs.yaml": "groups.yaml",
+    "marketGroups.yaml": "marketGroups.yaml",
+    "metaGroups.yaml": "metaGroups.yaml",
+    "typeMaterials.yaml": "typeMaterials.yaml",
+    "dogmaAttributes.yaml": "dogmaAttributes.yaml",
+    "dogmaEffects.yaml": "dogmaEffects.yaml",
+    "iconIDs.yaml": "icons.yaml",  # 新源改名（旧源 iconIDs.yaml）
+    "categories.yaml": "categories.yaml",
+    "staStations.yaml": "npcStations.yaml",  # ← 改名；新成员不含 stationName
+    "stationOperations.yaml": "stationOperations.yaml",
+    "stationServices.yaml": "stationServices.yaml",
+    "npcCorporations.yaml": "npcCorporations.yaml",
+}
+
+#: 新源不再发布的文件（导入器必须降级：保留旧库数据、不拿空数据覆盖）。
+STATIC_DATA_UNAVAILABLE: frozenset[str] = frozenset({"agents.yaml", "researchAgents.yaml"})
+
+#: 最近一次从 `latest.jsonl` 解析出的 build（下载/提取时记录到 manifest）。
+_LAST_RESOLVED_BUILD: int | None = None
+
+
+def sde_source() -> str:
+    """当前 SDE 发布源（`EVE_SDE_SOURCE`，非法值回退 legacy 并告警）。"""
+    raw = (os.environ.get(SDE_SOURCE_ENV) or "").strip().lower()
+    if not raw:
+        return SDE_SOURCE_LEGACY
+    if raw not in SDE_SELECTABLE_SOURCES:
+        log.warning("未知 %s=%r，回退 legacy（可选: %s）", SDE_SOURCE_ENV, raw, ", ".join(SDE_SELECTABLE_SOURCES))
+        return SDE_SOURCE_LEGACY
+    return raw
+
+
+def yaml_files_for(source: str | None = None) -> set[str]:
+    """某发布源需要提取到 `data/` 的缓存文件集合（新源少了 agents/researchAgents）。"""
+    src = source or sde_source()
+    if src == SDE_SOURCE_STATIC_DATA:
+        return YAML_FILES - STATIC_DATA_UNAVAILABLE
+    return set(YAML_FILES)
+
+
+def _zip_member_name(zf: zipfile.ZipFile, cache_name: str, source: str) -> str | None:
+    """缓存文件名 → zip 内成员名（兼容新旧两种布局；找不到 → None）。"""
+    names = zf.namelist()
+    if source == SDE_SOURCE_STATIC_DATA:
+        exact = STATIC_DATA_ZIP_NAMES.get(cache_name)
+        if exact and exact in names:
+            return exact
+        return None
+    target = ZIP_LOOKUP.get(cache_name, cache_name)
+    for name in names:
+        if name.endswith(target):
+            return name
+    return None
+
+
+def _zip_layout_source(zf: zipfile.ZipFile) -> str:
+    """从 zip 中央目录判断布局来源：根目录有 types.yaml/_sde.yaml → 新扁平包。"""
+    names = set(zf.namelist())
+    if "types.yaml" in names or "_sde.yaml" in names or "npcStations.yaml" in names:
+        return SDE_SOURCE_STATIC_DATA
+    return SDE_SOURCE_LEGACY
+
+
+def _resolve_sde_zip_url_sync() -> tuple[str, int | None]:
+    """同步解析当前源应下载的 zip URL（+ 新源的 build 号）。
+
+    - 测试/内网：`EVE_SDE_ZIP_URL` 显式覆盖（返回 build=None，由 zip 自身 `_sde.yaml` 兜底）。
+    - legacy：常量 `SDE_ZIP_URL`。
+    - static-data：请求 `latest.jsonl` 拿 build 再拼模板 URL；失败则抛错（opt-in 源不静默降级，
+      否则会拿旧包当新源数据）。
+    """
+    override = (os.environ.get(SDE_ZIP_URL_ENV) or "").strip()
+    if override:
+        return override, None
+    if sde_source() == SDE_SOURCE_LEGACY:
+        return SDE_ZIP_URL, None
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(SDE_LATEST_URL, timeout=15) as resp:  # 固定官方 HTTPS 常量
+            raw = resp.read().decode("utf-8")
+    except OSError as e:
+        raise RuntimeError(
+            f"新 SDE 源需要先拿到官方 build 号，但请求 {SDE_LATEST_URL} 失败：{e}。"
+            f"离线/内网可设 {SDE_ZIP_URL_ENV} 指向已下载的 yaml zip。"
+        ) from e
+    build: int | None = None
+    for line in raw.splitlines():
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and data.get("_key") == "sde" and data.get("buildNumber") is not None:
+            build = int(data["buildNumber"])
+            break
+    if build is None:
+        raise RuntimeError(f"官方 {SDE_LATEST_URL} 里找不到 sde.buildNumber")
+    global _LAST_RESOLVED_BUILD
+    _LAST_RESOLVED_BUILD = build
+    return SDE_STATIC_DATA_ZIP_TEMPLATE.format(build=build), build
+
+
 # Universe 数据 JSON 缓存路径（避免每次从 ZIP 解析 50K+ YAML 文件）
 UNIVERSE_CACHE_PATH = os.path.join(CACHE_DIR, "universe_data.json")
 
@@ -102,9 +234,13 @@ def _all_cached() -> bool:
         return False
     if manifest.get("version") != MANIFEST_VERSION:
         return False
-    if set(manifest.get("files") or ()) != YAML_FILES:
-        return False  # 本版要求的 YAML 集合变了（新增/删除）→ 重新提取
-    for fname in YAML_FILES:
+    source = sde_source()
+    if set(manifest.get("files") or ()) != yaml_files_for(source):
+        return False  # 本版/本源要求的 YAML 集合变了（新增/删除/换源）→ 重新提取
+    # 旧 manifest（A 段之前）没记 source：只对 legacy 兼容；static-data 必须重新提取。
+    if manifest.get("source") not in (None, source):
+        return False
+    for fname in yaml_files_for(source):
         path = cache_path(fname)
         if not os.path.exists(path) or os.path.getsize(path) == 0:
             return False
@@ -166,16 +302,18 @@ def _zip_build_number(zf: zipfile.ZipFile) -> int | None:
         return None
 
 
-def _write_manifest(build: int | None = None) -> None:
+def _write_manifest(build: int | None = None, source: str | None = None) -> None:
     """原子写完成标记（临时文件名唯一，多进程互踩不影响正确性）。
 
-    build = 产生这批 YAML 的 SDE build 号（旧冻结包没有 → None，读端视同未知）。
+    build = 产生这批 YAML 的 SDE build 号（旧冻结包没有 → None，读端视同未知）；
+    source = 这批缓存的发布源（legacy / static-data，换源后 `_all_cached` 判否以触发重导）。
     """
+    src = source or sde_source()
     fd, tmp = tempfile.mkstemp(dir=CACHE_DIR, prefix=".manifest_", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(
-                {"version": MANIFEST_VERSION, "files": sorted(YAML_FILES), "build": build},
+                {"version": MANIFEST_VERSION, "files": sorted(yaml_files_for(src)), "build": build, "source": src},
                 f,
             )
         os.replace(tmp, MANIFEST_PATH)
@@ -201,17 +339,24 @@ def _backfill_manifest_from_zip() -> bool:
         with zipfile.ZipFile(SDE_ZIP_PATH) as zf:
             sizes = {info.filename: info.file_size for info in zf.infolist()}
             build = _zip_build_number(zf)
+            source = _zip_layout_source(zf)
     except (zipfile.BadZipFile, OSError):
         return False
-    for fname in YAML_FILES:
+    for fname in yaml_files_for(source):
         dest = cache_path(fname)
         if not os.path.exists(dest):
             return False
-        zip_name = ZIP_LOOKUP.get(fname, fname)
-        matches = [name for name in sizes if name.endswith(zip_name)]
-        if not matches or sizes[matches[0]] != os.path.getsize(dest):
+        if source == SDE_SOURCE_STATIC_DATA:
+            zip_name = STATIC_DATA_ZIP_NAMES.get(fname)
+            if not zip_name:
+                return False
+        else:
+            zip_name = ZIP_LOOKUP.get(fname, fname)
+            matches = [name for name in sizes if name.endswith(zip_name)]
+            zip_name = matches[0] if matches else None
+        if not zip_name or zip_name not in sizes or sizes[zip_name] != os.path.getsize(dest):
             return False
-    _write_manifest(build=build)
+    _write_manifest(build=build, source=source)
     return True
 
 
@@ -246,18 +391,20 @@ def _retry_after_seconds(resp: aiohttp.ClientResponse) -> float:
         return _DL_DEFAULT_BACKOFF
 
 
-async def _download_zip(progress_cb: Callable[[int, str], None] | None = None) -> str:
+async def _download_zip(progress_cb: Callable[[int, str], None] | None = None, url: str | None = None) -> str:
     """下载 SDE zip 到 .part（断点续传 + 流式写盘）。由 _zip_dl_lock 保证串行。
 
     限流（429/503）不立即失败：按 Retry-After 等待后重试，最多 _DL_MAX_RETRIES 次。
     重试时重新计算 .part 大小与 Range 头，续传位置只前进不回退。
+    `url` 省略时按当前源解析（见 `_resolve_sde_zip_url_sync`）。
     """
+    download_url = url or _resolve_sde_zip_url_sync()[0]
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=120)
     for attempt in range(_DL_MAX_RETRIES + 1):
         offset = os.path.getsize(ZIP_PART_PATH) if os.path.exists(ZIP_PART_PATH) else 0
         headers = {"Range": f"bytes={offset}-"} if offset else {}
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(SDE_ZIP_URL, headers=headers) as resp:
+            async with session.get(download_url, headers=headers) as resp:
                 if resp.status in (429, 503):
                     if attempt >= _DL_MAX_RETRIES:
                         raise RuntimeError(
@@ -312,12 +459,38 @@ async def _download_zip(progress_cb: Callable[[int, str], None] | None = None) -
     raise RuntimeError("SDE 下载重试耗尽")  # 循环内必 return 或 raise，此行只为类型收窄
 
 
+def _cached_zip_matches_source() -> bool:
+    """本地 sde.zip 的**布局**是否与当前源一致（换源后必须重下，不能拿旧包当新源）。"""
+    if not os.path.exists(SDE_ZIP_PATH):
+        return False
+    try:
+        with zipfile.ZipFile(SDE_ZIP_PATH) as zf:
+            return _zip_layout_source(zf) == sde_source()
+    except (zipfile.BadZipFile, OSError):
+        return False
+
+
+def _drop_stale_zip() -> None:
+    """换源时删掉与当前源布局不符的旧 zip/.part（可重下；不删已提取的 YAML）。"""
+    for path in (SDE_ZIP_PATH, ZIP_PART_PATH):
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError as e:
+            log.warning("换源清理旧 SDE 包失败 %s: %s", path, e)
+
+
 def _sync_ensure_zip(progress_cb: Callable[[int, str], None] | None = None) -> str:
     """线程安全的 zip 下载（threading.Lock 串行，跨线程/事件循环安全）。"""
     with _zip_dl_lock:
+        # 只有 opt-in 的新源才做「布局核对 + 换源清理」；legacy 默认路径保持原行为
+        # （不多碰文件系统：既有测试按调用次数桩了 os.path.exists）。
+        if sde_source() == SDE_SOURCE_STATIC_DATA and not _cached_zip_matches_source():
+            _drop_stale_zip()
         if os.path.exists(SDE_ZIP_PATH):
             return SDE_ZIP_PATH
-        asyncio.run(_download_zip(progress_cb))
+        url, _build = _resolve_sde_zip_url_sync()
+        asyncio.run(_download_zip(progress_cb, url))
         return SDE_ZIP_PATH
 
 
@@ -374,15 +547,19 @@ async def _download_and_extract(progress_cb: Callable[[int, str], None] | None =
     每个 YAML 先写 .part 再原子替换；全部到位后才写完成标记。
     缺任一文件则不写标记（下次启动重新提取），且不会删除 .part 之外的任何缓存。
     """
+    source = sde_source()
+    files = yaml_files_for(source)
+    if source == SDE_SOURCE_STATIC_DATA and not _cached_zip_matches_source():
+        _drop_stale_zip()
     if _zip_is_usable():
-        log.info("本地已有可用的 sde.zip，跳过下载，直接提取 YAML")
+        log.info("本地已有可用的 sde.zip（布局=%s），跳过下载，直接提取 YAML", _zip_layout_source_quiet())
     else:
-        log.info("本地无 SDE 缓存，从 S3 下载 SDE 数据包 (~112 MB)...")
-        log.info(f"  URL: {SDE_ZIP_URL}")
-        await _download_zip(progress_cb)
-    log.info("提取 YAML 文件...")
+        url, _build = _resolve_sde_zip_url_sync()
+        log.info("本地无 SDE 缓存，下载 SDE 数据包（源=%s）... URL: %s", source, url)
+        await _download_zip(progress_cb, url)
+    log.info("提取 YAML 文件（源=%s）...", source)
     # 清掉上一轮提取残留的 .part（不碰 ZIP_PART_PATH：那是下载断点）
-    for fname in YAML_FILES:
+    for fname in files:
         stale = cache_path(fname) + ".part"
         if os.path.exists(stale):
             try:
@@ -391,26 +568,44 @@ async def _download_and_extract(progress_cb: Callable[[int, str], None] | None =
                 log.warning("清理提取残留失败 %s: %s", stale, e)
 
     missing: list[str] = []
-    build: int | None = None
+    build: int | None = _LAST_RESOLVED_BUILD
     with zipfile.ZipFile(SDE_ZIP_PATH) as zf:
-        build = _zip_build_number(zf)
-        for fname in sorted(YAML_FILES):
-            zip_name = ZIP_LOOKUP.get(fname, fname)
-            candidates = [p for p in zf.namelist() if p.endswith(zip_name)]
-            if not candidates:
-                log.warning(f"SDE 包中未找到 {zip_name} (→ {fname})")
+        build = _zip_build_number(zf) or build
+        for fname in sorted(files):
+            zip_name = _zip_member_name(zf, fname, source)
+            if zip_name is None:
+                log.warning("SDE 包中未找到 %s (→ %s, 源=%s)", fname, STATIC_DATA_ZIP_NAMES.get(fname, fname), source)
                 missing.append(fname)
                 continue
-            raw = zf.read(candidates[0]).decode("utf-8")
+            raw = zf.read(zip_name).decode("utf-8")
             _write_yaml_atomic(fname, raw)
-            log.info(f"  已缓存: {fname} ({len(raw) / 1024 / 1024:.1f} MB)")
+            log.info("  已缓存: %s (%s) %.1f MB", fname, zip_name, len(raw) / 1024 / 1024)
 
     if missing:
         # 不写标记 → 下次启动重试；此时 _all_cached() 为假，不会把缺文件的缓存当成完整缓存
         log.error("SDE YAML 提取不完整，缺少: %s（未写完成标记，下次启动会重新提取）", ", ".join(missing))
         return
-    _write_manifest(build=build)
-    log.info("SDE YAML 缓存完成（build=%s）", build)
+    if source == SDE_SOURCE_STATIC_DATA:
+        # 新源不发布 agents/researchAgents：删掉旧源遗留的缓存文件，避免 sde_loader 读到旧数据
+        for stale_name in STATIC_DATA_UNAVAILABLE:
+            stale_path = cache_path(stale_name)
+            if os.path.exists(stale_path):
+                try:
+                    os.unlink(stale_path)
+                    log.info("新源不发布 %s，已移除旧缓存（导入器将保留旧库数据并告警）", stale_name)
+                except OSError as e:
+                    log.warning("移除旧源遗留缓存失败 %s: %s", stale_path, e)
+    _write_manifest(build=build, source=source)
+    log.info("SDE YAML 缓存完成（源=%s, build=%s）", source, build)
+
+
+def _zip_layout_source_quiet() -> str:
+    """日志用：本地 zip 布局（读不到 → unknown）。"""
+    try:
+        with zipfile.ZipFile(SDE_ZIP_PATH) as zf:
+            return _zip_layout_source(zf)
+    except (zipfile.BadZipFile, OSError):
+        return "unknown"
 
 
 async def ensure_sde_cache(progress_cb: Callable[[int, str], None] | None = None):
@@ -471,8 +666,10 @@ async def warn_if_sde_stale() -> dict:
     local = cached_sde_build()
     remote = await fetch_latest_sde_build()
     stale = is_sde_stale(remote, local)
-    _FRESHNESS.clear()
-    _FRESHNESS.update({"local_build": local, "remote_build": remote, "stale": stale})
+    # 发布模式：整体替换引用（先 `clear()` 再 `update()` 会让并发读看到半空 dict）。
+    # 读侧 `get_sde_freshness()` 先取全局引用再 `dict(...)` 快照 —— 要么旧完整 dict、要么新完整 dict。
+    global _FRESHNESS
+    _FRESHNESS = {"local_build": local, "remote_build": remote, "stale": stale, "source": sde_source()}
     if stale:
         log.warning(
             "SDE 静态数据已过期：本地 build=%s / 官方 build=%s。"
@@ -485,8 +682,91 @@ async def warn_if_sde_stale() -> dict:
 
 
 def get_sde_freshness() -> dict:
-    """最近一次 SDE 新鲜度检查结果（未检查过 → 空 dict）。"""
-    return dict(_FRESHNESS)
+    """最近一次 SDE 新鲜度检查结果（未检查过 → 空 dict）。
+
+    并发安全：写侧整体替换 `_FRESHNESS` 引用，这里先取引用再拷贝 —— 不会读到「已 clear
+    未 update」的半空状态（06-9 同型缺陷；logistics 有同类端到端回归，这里按判定表不重复写）。
+    """
+    snapshot = _FRESHNESS
+    return dict(snapshot)
+
+
+def _localized_name(data: Mapping) -> str:
+    """取本地化名称里的 `en`（再退 `zh`/纯字符串）；没有 → 空串。"""
+    name = data.get("name") if isinstance(data, Mapping) else None
+    if isinstance(name, str):
+        return name
+    if isinstance(name, Mapping):
+        for key in ("en", "zh"):
+            value = name.get(key)
+            if value:
+                return str(value)
+    return ""
+
+
+def _flat_zip_systems(zf: zipfile.ZipFile) -> list[dict]:
+    """新源（扁平布局）`mapSolarSystems.yaml` → 与旧 universe 解析同形的 systems 列表。
+
+    新源把星系/区域/星座信息内联（`mapSolarSystems.yaml` 每项含 name/regionID/
+    constellationID/securityStatus/starID），不再有 `universe/` 目录树。
+    """
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    systems: list[dict] = []
+    try:
+        raw = zf.read("mapSolarSystems.yaml").decode("utf-8")
+        data = yaml.load(raw, Loader=loader) or {}
+    except (KeyError, yaml.YAMLError, UnicodeDecodeError) as e:
+        log.warning("新源 mapSolarSystems.yaml 解析失败，universe 数据为空: %s", e)
+        return systems
+    if not isinstance(data, dict):
+        return systems
+    for sid, item in data.items():
+        if not isinstance(item, dict):
+            continue
+        try:
+            system_id = int(sid)
+        except (TypeError, ValueError):
+            continue
+        rid = item.get("regionID")
+        cid = item.get("constellationID")
+        security = item.get("securityStatus", item.get("security", 0.0))
+        name = _localized_name(item)
+        systems.append(
+            {
+                "solar_system_id": system_id,
+                "solar_system_name": name,
+                "security": security if security is not None else 0.0,
+                "solarSystemID": system_id,
+                "solarSystemName": name,
+                "region_id": int(rid) if rid is not None else None,
+                "constellation_id": int(cid) if cid is not None else None,
+                "regionID": int(rid) if rid is not None else None,
+                "constellationID": int(cid) if cid is not None else None,
+            }
+        )
+    return systems
+
+
+def _flat_name_map(zf: zipfile.ZipFile) -> dict[int, str]:
+    """新源：从 mapRegions/mapConstellations/mapSolarSystems 的名称内联字段建 `{id: en名}`。"""
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    result: dict[int, str] = {}
+    for member in ("mapRegions.yaml", "mapConstellations.yaml", "mapSolarSystems.yaml"):
+        try:
+            data = yaml.load(zf.read(member).decode("utf-8"), Loader=loader) or {}
+        except (KeyError, yaml.YAMLError, UnicodeDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        for raw_id, item in data.items():
+            try:
+                item_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            name = _localized_name(item) if isinstance(item, Mapping) else ""
+            if name:
+                result[item_id] = name
+    return result
 
 
 def _build_name_map(zip_path: str) -> dict[int, str]:
@@ -506,22 +786,28 @@ def _build_name_map(zip_path: str) -> dict[int, str]:
             if isinstance(cached, dict):
                 return cached
     except Exception:
+        # 吞的是 pkl 读/反序列化异常：只是缓存，回退正常解析
+        log.debug("invNames 磁盘缓存读取失败，回退重新解析", exc_info=True)
         pass  # 缓存读失败 → 走正常解析
 
     result: dict[int, str] = {}
     _Loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
-            raw = zf.read("bsd/invNames.yaml").decode("utf-8")
-        rows = yaml.load(raw, Loader=_Loader) or []
-        for row in rows:
-            if isinstance(row, dict) and row.get("itemName"):
-                try:
-                    result[int(row["itemID"])] = row["itemName"]
-                except (TypeError, ValueError):
-                    continue
+            if _zip_layout_source(zf) == SDE_SOURCE_STATIC_DATA:
+                # 新扁平包：没有 bsd/invNames.yaml，名称内联在 map*.yaml（见模块顶部 B 段说明）
+                result = _flat_name_map(zf)
+            else:
+                raw = zf.read("bsd/invNames.yaml").decode("utf-8")
+                rows = yaml.load(raw, Loader=_Loader) or []
+                for row in rows:
+                    if isinstance(row, dict) and row.get("itemName"):
+                        try:
+                            result[int(row["itemID"])] = row["itemName"]
+                        except (TypeError, ValueError):
+                            continue
     except Exception as e:
-        log.warning("invNames 名称解析失败，星系名将为空: %s", e)
+        log.warning("SDE 名称解析失败，星系名将为空: %s", e)
         return result
 
     # 解析成功才原子写 pkl（写失败/并发写不中断主流程；临时文件名唯一避免多进程互踩）
@@ -541,6 +827,8 @@ def _build_name_map(zip_path: str) -> dict[int, str]:
                 pass
             raise
     except Exception:
+        # 吞的是 pkl 写盘异常：解析结果已拿到，写缓存失败不阻断
+        log.debug("invNames pkl 写入失败（只影响下次解析速度）", exc_info=True)
         pass
     return result
 
@@ -638,6 +926,13 @@ def load_universe_geo(
             normalized.setdefault(key, int(system_id))
     geo: dict[int, tuple[int | None, int | None]] = {}
     with zipfile.ZipFile(zip_path) as zf:
+        if _zip_layout_source(zf) == SDE_SOURCE_STATIC_DATA:
+            # 新扁平包：mapSolarSystems.yaml 每项直接带 regionID/constellationID
+            for system in _flat_zip_systems(zf):
+                sid = system.get("solar_system_id")
+                if sid is not None:
+                    geo[int(sid)] = (system.get("region_id"), system.get("constellation_id"))
+            return geo
         geo_maps = _universe_geo_maps(zf)
         for path in zf.namelist():
             if not path.startswith("universe/") or not path.endswith(_UNIVERSE_SYSTEM_SUFFIXES):
@@ -726,11 +1021,15 @@ def _parse_universe_chunk(
             try:
                 raw = zf.read(path).decode("utf-8")
             except Exception:
+                # 吞的是 zip 成员读取/解码异常：单个坏文件不应中断整批解析
+                log.debug("universe YAML 成员读取失败，跳过该文件: %s", path, exc_info=True)
                 continue
 
             try:
                 data = yaml.load(raw, Loader=_Loader) or {}
             except Exception:
+                # 吞的是 YAML 语法/结构异常：跳过坏文件继续解析其余（缺星系会在日志可见）
+                log.warning("universe YAML 解析失败，跳过该文件: %s", path, exc_info=True)
                 continue
 
             parts = path.split("/")
@@ -842,6 +1141,11 @@ async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None =
             with open(UNIVERSE_CACHE_PATH, encoding="utf-8") as f:
                 data = json.load(f)
             cached_systems = data.get("systems", [])
+            cached_source = data.get("source")
+            if cached_source not in (None, sde_source()) and cached_source != SDE_SOURCE_LEGACY:
+                # 换源（legacy ↔ static-data）→ 旧缓存不可复用（名称/归属口径可能不同）
+                log.info("universe 缓存来自其它发布源（%s），丢弃并重新解析", cached_source)
+                cached_systems = []
             if not _universe_cache_has_names(cached_systems):
                 # 旧缓存星系名全空（写入会污染 solar_system 表）→ 丢弃缓存重新解析
                 log.warning("universe 缓存星系名为空，丢弃并重新解析")
@@ -867,6 +1171,22 @@ async def ensure_universe_cache(progress_cb: Callable[[int, str], None] | None =
                 return [], [], cached_systems, []
         except Exception as e:
             log.warning(f"Universe JSON 缓存读取失败，重新解析: {e}")
+
+    # 新源（扁平 102 文件包）专用快速路径：直接读 mapSolarSystems.yaml（无需 universe/ 目录树）
+    try:
+        with zipfile.ZipFile(SDE_ZIP_PATH, "r") as zf:
+            if _zip_layout_source(zf) == SDE_SOURCE_STATIC_DATA:
+                flat_systems = _flat_zip_systems(zf)
+                log.info("新源扁平布局：从 mapSolarSystems.yaml 解析 %s 个星系", len(flat_systems))
+                try:
+                    with open(UNIVERSE_CACHE_PATH, "w", encoding="utf-8") as f:
+                        json.dump({"systems": flat_systems, "source": SDE_SOURCE_STATIC_DATA}, f, ensure_ascii=False)
+                    log.info("Universe 数据已缓存至: %s（source=static-data）", UNIVERSE_CACHE_PATH)
+                except Exception as e:
+                    log.warning("Universe JSON 缓存写入失败（不影响使用）: %s", e)
+                return [], [], flat_systems, []
+    except (zipfile.BadZipFile, OSError):
+        pass
 
     log.info("正在并行解析 universe/ 星系 YAML 文件...")
     if progress_cb:
@@ -982,6 +1302,8 @@ def _load_yaml_from_disk(name: str, path: str) -> dict:
                     cached = pickle.load(f)
                 return cached if isinstance(cached, dict) else {}
     except Exception:
+        # 吞的是 pkl 读/反序列化异常：只是缓存，回退解析 YAML
+        log.debug("YAML 磁盘缓存读取失败，回退正常解析", exc_info=True)
         pass  # 缓存读失败 → 走正常解析
 
     loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
@@ -1005,6 +1327,8 @@ def _load_yaml_from_disk(name: str, path: str) -> dict:
                     pass
                 raise
     except Exception:
+        # 吞的是 pkl 写盘异常：数据已解析，写缓存失败不阻断
+        log.debug("YAML pkl 写入失败（只影响下次加载速度）", exc_info=True)
         pass
     return data
 

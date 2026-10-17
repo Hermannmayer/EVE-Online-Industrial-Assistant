@@ -241,3 +241,53 @@ class TestWriteUniverse:
         name = conn.execute("SELECT solar_system_name FROM solar_system WHERE solar_system_id=30000142").fetchone()[0]
         conn.close()
         assert name == "Jita"  # 未被覆盖
+
+
+# ─── Test: 新扁平源 station 名保护（02-03 B 段）────────────────
+
+
+class TestStationNameProtection:
+    """新源 npcStations.yaml 无 stationName：重导不得清空旧站名。"""
+
+    @pytest.mark.asyncio
+    async def test_new_source_keeps_existing_station_names(self, temp_db_path):
+        """旧名保留（upsert COALESCE）+ 新源字段改名 typeID/ownerID 正确落库。"""
+        from services.importers import sde_loader
+
+        new_stations = {
+            60000004: {"solarSystemID": 30002780, "operationID": 26, "typeID": 1531, "ownerID": 1000002},
+            60000005: {"solarSystemID": 30000142, "operationID": 26, "typeID": 1531, "ownerID": 1000003},
+        }
+        yaml_by_name = {
+            "staStations.yaml": new_stations,
+            "stationServices.yaml": {1: {"serviceName": {"en": "Bounty Missions"}}},
+            "stationOperations.yaml": {26: {"name": {"en": "Caldari Navy", "zh": "加达里海军"}, "services": [1]}},
+        }
+
+        async def fake_load(name):
+            return yaml_by_name.get(name, {})
+
+        with (
+            patch("services.importers.sde_loader.DATABASE_PATH", temp_db_path),
+            patch("services.importers.sde_loader.load_yaml_async", side_effect=fake_load),
+        ):
+            await initialize_database()
+            conn = sqlite3.connect(temp_db_path)
+            conn.execute(
+                "INSERT INTO station (station_id, station_name, solar_system_id) "
+                "VALUES (60000004, '旧站名不要被清空', 30000142)"
+            )
+            conn.commit()
+            conn.close()
+            await sde_loader.write_stations()
+
+        conn = sqlite3.connect(temp_db_path)
+        kept = conn.execute(
+            "SELECT station_name, solar_system_id, operation_id, station_type_id, corporation_id "
+            "FROM station WHERE station_id = 60000004"
+        ).fetchone()
+        unnamed = conn.execute("SELECT station_name FROM station WHERE station_id = 60000005").fetchone()
+        conn.close()
+        assert kept[0] == "旧站名不要被清空", "新源缺 stationName 时不得覆盖已有站名"
+        assert kept[1:] == (30002780, 26, 1531, 1000002)
+        assert unnamed[0] == "", "新站没有名字就留空，不伪造"

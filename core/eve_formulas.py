@@ -10,6 +10,13 @@ from core.constants import (
     HUB_NAMES,  # noqa: F401 — re-export
     TRADE_HUB_IDS,
 )
+from core.skill_keys import (
+    ACCOUNTING,
+    ADVANCED_BROKER_RELATIONS,
+    BROKER_RELATIONS,
+    REPROCESSING,
+    REPROCESSING_EFFICIENCY,
+)
 
 # ════════════════════════════════════════════════════
 #  经纪人费（NPC 空间站）— Broker Fee = 3% − 0.3%×BrokerRelations
@@ -132,8 +139,8 @@ def calc_refining_yield(
     else:
         base = REPROCESSING_STATION_BASE
     mult = (
-        (1.0 + SKILL_REPROCESSING * max(0, int(skills.get("提炼学概论", 0) or 0)))
-        * (1.0 + SKILL_REPROCESSING_EFFICIENCY * max(0, int(skills.get("提炼效率理论", 0) or 0)))
+        (1.0 + SKILL_REPROCESSING * max(0, int(skills.get(REPROCESSING, 0) or 0)))
+        * (1.0 + SKILL_REPROCESSING_EFFICIENCY * max(0, int(skills.get(REPROCESSING_EFFICIENCY, 0) or 0)))
         * (1.0 + SKILL_SPECIALIZATION * max(0, int(ore_skill_level or 0)))
         * (1.0 + max(0.0, implant_bonus))
         * (1.0 + max(0.0, float(security_mult)))
@@ -155,7 +162,7 @@ def calc_broker_rate(skills: dict, market_data: dict) -> float:
     声望缺失按 0 处理（= 无声望加成，最差档）；负声望会抬高费率，与游戏一致。
     玩家 Upwell 结构市场由结构主定价、技能无效，本函数不适用。
     """
-    broker_rel = max(0, int(skills.get("经纪人关系学", 0) or 0))
+    broker_rel = max(0, int(skills.get(BROKER_RELATIONS, 0) or 0))
     faction_standing = float(market_data.get("faction_standing", 0.0) or 0.0)
     corp_standing = float(market_data.get("corp_standing", 0.0) or 0.0)
     rate = (
@@ -169,13 +176,13 @@ def calc_broker_rate(skills: dict, market_data: dict) -> float:
 
 def calc_relist_discount(skills: dict) -> float:
     """计算改单折扣 (%)。基础 50%，高级经纪人关系学每级 +6 个百分点（V 级 = 80%）。"""
-    adv_rel = max(0, int(skills.get("高级经纪人关系学", 0) or 0))
+    adv_rel = max(0, int(skills.get(ADVANCED_BROKER_RELATIONS, 0) or 0))
     return min(RELIST_BASE_DISCOUNT + adv_rel * ADV_BROKER_DISCOUNT, 100)
 
 
 def calc_sales_tax_rate(skills: dict) -> float:
     """计算销售税率 (%)。基础 7.5%，会计学每级 -11%（V 级 = 3.375%）。"""
-    accounting = max(0, int(skills.get("会计学", 0) or 0))
+    accounting = max(0, int(skills.get(ACCOUNTING, 0) or 0))
     return SALES_TAX_BASE * (1 - ACCOUNTING_MULT * accounting)
 
 

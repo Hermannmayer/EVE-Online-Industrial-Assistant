@@ -13,6 +13,7 @@ from sqlite3 import Connection
 
 from core.constants import DEFAULT_SYSTEM_COST_INDEX
 from core.container import get_container
+from core.logger import log
 from domain.formulas import calc_job_cost_fees
 from services import user_settings
 
@@ -30,6 +31,8 @@ def _default_research_system_id() -> int:
     try:
         settings = user_settings.load_settings()
     except Exception:
+        # 吞的是 settings 文件读/解析异常：回退 Jita 是既有行为
+        log.warning("读取用户设置失败，按默认研究星系处理", exc_info=True)
         settings = {}
     for key in ("default_research_hangar_id", "default_mat_hangar_id"):
         hid = settings.get(key)
@@ -41,6 +44,8 @@ def _default_research_system_id() -> int:
             if row and row[0]:
                 return int(row[0])
         except Exception:
+            # 吞的是单次 sqlite 查询异常：换下一个候选机库继续
+            log.debug("按机库 id 查星系失败，尝试下一个设置键 hid=%s", hid, exc_info=True)
             continue
     return _JITA_SYSTEM_ID
 
@@ -66,6 +71,8 @@ def _installation_fee(activity: str, job_value: float, solar_system_id: int | No
             if row and row[0]:
                 default_sci = float(row[0])
         except Exception:
+            # 吞的是 sqlite 查询异常：用模块默认 SCI 是既有兜底
+            log.debug("默认 SCI 查询失败，使用兜底值", exc_info=True)
             pass
         sci = default_sci
     fees = calc_job_cost_fees(job_value, sci, _STRUCTURE_MULT, _FACILITY_TAX)
@@ -86,6 +93,8 @@ def _batch_installation_sci(solar_system_id: int | None) -> dict[str, float]:
                 if row and row[0]:
                     sci[activity] = float(row[0])
     except Exception:
+        # 吞的是 sqlite 查询异常：SCI 留空由调用方默认值兜底
+        log.debug("批量 SCI 查询失败，按默认值处理", exc_info=True)
         pass  # SCI 查不到 → 用默认值（与单件路径一致）
     return sci
 

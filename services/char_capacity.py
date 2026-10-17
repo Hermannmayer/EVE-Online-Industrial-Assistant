@@ -15,6 +15,14 @@ from __future__ import annotations
 
 from core.constants import PLAN_ACTIVE_STATUSES, PLAN_RUNNING_STATUSES
 from core.container import get_container
+from core.skill_keys import (
+    ADVANCED_LABORATORY_OPERATION,
+    ADVANCED_MASS_PRODUCTION,
+    ADVANCED_MASS_REACTIONS,
+    LABORATORY_OPERATION,
+    MASS_PRODUCTION,
+    MASS_REACTIONS,
+)
 from services.char_config_resolver import get_character_list, load_all_data, resolve_char_config
 from services.terminology import term
 
@@ -38,11 +46,11 @@ _LINE_LABELS = {
     CAPACITY_LINE_REACTION: "反应",
 }
 
-# 线型 → 容量技能（中文名，与 char_config.json 的 skills key 一致）
+# 线型 → 容量技能（中文名，与 char_config.json 的 skills key 一致；常量见 core/skill_keys.py）
 _CATEGORY_SKILLS: dict[str, tuple[str, str]] = {
-    CAPACITY_LINE_MANUFACTURING: ("高级量产技术", "批量生产学"),
-    CAPACITY_LINE_RESEARCH: ("实验室运作理论", "高级实验室运作理论"),
-    CAPACITY_LINE_REACTION: ("大规模反应理论", "高级大规模反应理论"),
+    CAPACITY_LINE_MANUFACTURING: (ADVANCED_MASS_PRODUCTION, MASS_PRODUCTION),
+    CAPACITY_LINE_RESEARCH: (LABORATORY_OPERATION, ADVANCED_LABORATORY_OPERATION),
+    CAPACITY_LINE_REACTION: (MASS_REACTIONS, ADVANCED_MASS_REACTIONS),
 }
 
 # 计划 category（plan_category）→ 线型：拷贝/发明/ME-TE 研究都占科研线
@@ -141,8 +149,8 @@ def char_line_usage(
 
 
 def _skill_key() -> str:
-    """ "高级量产技术"（skill_names 注册；未命中时兜底中文名）。惰性求值，避免 import 时加载术语表。"""
-    return term.skill_name("Advanced Mass Production") or "高级量产技术"
+    """ "高级量产技术" 的中文键（优先走术语服务；未命中时回退常量）。惰性求值，避免 import 时加载术语表。"""
+    return term.skill_name("Advanced Mass Production") or ADVANCED_MASS_PRODUCTION
 
 
 def max_production_lines(char_name: str | None) -> int:
