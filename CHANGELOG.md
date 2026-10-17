@@ -6,6 +6,56 @@
 
 <!-- version list -->
 
+## v0.27.0 (2026-10-17)
+
+### Bug Fixes
+
+- **industry**: 修启动小助手刷新列表后滚动位置跳回顶部
+  ([`ed2780f`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/ed2780f6de4f13d255de43f05f627672f2a371ea))
+
+- **industry**: 发明结果回填框的「每张 0 流程」——缺 breakdown 时回 SDE 取权威值
+  ([`470a966`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/470a966351decdb1e5c7967200d7424f1ca3aa5c))
+
+- **industry**: 科研作业时长补 3388 减免，去掉误用的蓝图 TE
+  ([`5f502eb`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5f502ebd0be7283cbced18ea2c0d68702d885759))
+
+- **market**: PLEX 历史改走官方全域市场 region 19000001，历史拉取加前置过滤
+  ([`ad9ef4e`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/ad9ef4e5a9f73d9c10c1c01aab0c5b055b836199))
+
+### Chores
+
+- 钉住 *.sh 为 LF，修 WSL/Linux 下 scripts/*.sh 跑不了
+  ([`aa4a9c8`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/aa4a9c8d1d16e1f48163b56e9f68354cd35fc0a3))
+
+- **revert**: 撤销误推送的 0.27.0 发版与本轮工业/市场修复
+  ([`4ca4d46`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/4ca4d464de37bcc356224e3d1ffb50e7d8819b05))
+
+- **版本**: Uv.lock 的虚拟包版本同步到 0.26.2
+  ([`cda3b7c`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/cda3b7c5088f642543abe6bd135cdc5315e90df2))
+
+### Documentation
+
+- 台账结案 + 知识库补科研时长公式契约与首级近似说明
+  ([`79bf12d`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/79bf12d339abc2de5b9fd8eb6fb8d73fe2d1e53b))
+
+- **backlog**: 登记 BL-019（发明回填「每张 0 流程」+ 尝试次数漏乘 parallels），状态已关闭
+  ([`8a36ad9`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/8a36ad9cef93a8df454041ddf4e7e2198105b2a3))
+
+- **backlog**: 登记 BL-020（小助手刷新后滚动位置跳回顶部）并结案 ed2780f
+  ([`5dd2743`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/5dd2743eceab5935153aaa5f86de35ac3dc9aaa2))
+
+- **工程化**: 补决策因果链归档与缺陷台账，全量文档索引下沉到 CLAUDE.md
+  ([`af6b81d`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/af6b81d194581e4098897c3bfe7b44557c622ca3))
+
+### Features
+
+- **industry**: 发明结果回填改列表式批量填写；修正尝试次数漏乘 parallels
+  ([`0a6cdf7`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/0a6cdf73768a3793ac9a22b92c8568f0f2cb2909))
+
+- **industry**: 生产计划右键加「立即完成」，不等倒计时走完
+  ([`faa13b4`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/faa13b4484ca95a96363a4bce11533db1c9ee7c2))
+
+
 ## v0.26.2 (2026-10-10)
 
 ### Bug Fixes
