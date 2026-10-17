@@ -29,6 +29,16 @@ async def create_tables()
 
 定义行：`50`
 
+### `_facility_row`
+
+```python
+def _facility_row(fac: dict, now: str) -> tuple
+```
+
+一条 `/industry/facilities/` 响应 → industry_facilities 行（02-09）。
+
+定义行：`94`
+
 ### `run_industry_update`
 
 ```python
@@ -39,7 +49,7 @@ async def run_industry_update(progress_cb=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`94`
+定义行：`111`
 
 ### `industry_data_is_fresh`
 
@@ -49,4 +59,4 @@ def industry_data_is_fresh(db_path: str, max_age_days: int=1) -> bool
 
 判断工业数据（成本指数/设施）是否就绪且新鲜。
 
-定义行：`162`
+定义行：`168`

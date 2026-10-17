@@ -24,7 +24,7 @@ def get_db() -> DatabaseManager
 
 获取全局 DatabaseManager 单例
 
-定义行：`176`
+定义行：`179`
 
 ## 类
 
@@ -35,7 +35,7 @@ def get_db() -> DatabaseManager
 同一线程内，相同 (primary, attach) 配置的连接会自动复用，
 避免重复打开物理连接和执行 ATTACH DATABASE。
 
-定义行：`56`
+定义行：`57`
 
 #### 方法
 
@@ -49,7 +49,7 @@ def __init__(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`63`
+定义行：`64`
 ##### `_get_cache`
 
 ```python
@@ -58,7 +58,7 @@ def _get_cache(self) -> dict[str, sqlite3.Connection]
 
 获取当前线程的连接缓存字典
 
-定义行：`68`
+定义行：`69`
 ##### `_cache_key`
 
 ```python
@@ -67,7 +67,7 @@ def _cache_key(primary: str, attach: tuple[str, ...]) -> str
 
 生成连接配置的唯一缓存 key：primary:sorted_unique_attach
 
-定义行：`76`
+定义行：`77`
 ##### `_get_or_create`
 
 ```python
@@ -76,7 +76,7 @@ def _get_or_create(self, primary: DB_ALIAS, attach: tuple[str, ...]) -> sqlite3.
 
 从缓存获取连接，不存在则创建并缓存
 
-定义行：`81`
+定义行：`82`
 ##### `connect`
 
 ```python
@@ -85,7 +85,7 @@ def connect(self, primary: DB_ALIAS, *attach: DB_ALIAS) -> Generator[sqlite3.Con
 
 获取连接（自动复用），ATTACH 需要的辅助库。
 
-定义行：`122`
+定义行：`123`
 ##### `direct_connect`
 
 ```python
@@ -94,7 +94,7 @@ def direct_connect(self, db_alias: DB_ALIAS) -> sqlite3.Connection
 
 直接连接（不经过 context manager，不走缓存），用于 Worker/后台线程等简单场景。
 
-定义行：`146`
+定义行：`147`
 ##### `close_all`
 
 ```python
@@ -103,4 +103,4 @@ def close_all(self)
 
 关闭当前线程的所有缓存连接（应用退出时调用）
 
-定义行：`160`
+定义行：`161`

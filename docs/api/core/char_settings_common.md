@@ -11,12 +11,12 @@
 ### `calc_broker_fee`
 
 ```python
-def calc_broker_fee(skills: dict, faction_standing: float, corp_standing: float, base_rate: float=1.0) -> float
+def calc_broker_fee(skills: dict, faction_standing: float, corp_standing: float, base_rate: float=3.0) -> float
 ```
 
-计算经纪人费率 (%)。委托 core.eve_formulas.calc_broker_rate。
+计算 NPC 空间站经纪人费率 (%)。委托 core.eve_formulas.calc_broker_rate。
 
-定义行：`155`
+定义行：`203`
 
 ### `calc_relist_discount`
 
@@ -26,17 +26,17 @@ def calc_relist_discount(skills: dict) -> float
 
 计算改单折扣 (%)。委托 core.eve_formulas。
 
-定义行：`166`
+定义行：`218`
 
 ### `calc_sales_tax`
 
 ```python
-def calc_sales_tax(skills: dict, base_tax: float=2.0) -> float
+def calc_sales_tax(skills: dict, base_tax: float=7.5) -> float
 ```
 
-计算销售税率 (%)。委托 core.eve_formulas。
+计算销售税率 (%)。委托 core.eve_formulas。``base_tax`` 非常规缩放用（基准 7.5%）。
 
-定义行：`173`
+定义行：`225`
 
 ### `calc_max_orders`
 
@@ -46,7 +46,7 @@ def calc_max_orders(skills: dict, base_orders: int=15) -> int
 
 计算最大订单数。
 
-定义行：`183`
+定义行：`235`
 
 ### `format_pct`
 
@@ -58,7 +58,7 @@ def format_pct(value: float) -> str
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`192`
+定义行：`244`
 
 ### `apply_skill_queue_finished`
 
@@ -68,7 +68,7 @@ def apply_skill_queue_finished(levels: dict[int, int], queue: list[dict], now: s
 
 把技能队列里已练完的条目叠加到 `/skills` 的结果上。
 
-定义行：`196`
+定义行：`248`
 
 ### `merge_esi_skill_levels`
 
@@ -78,7 +78,7 @@ def merge_esi_skill_levels(existing: dict[str, int], esi: dict[str, int], panel_
 
 把 ESI 等级落到「面板能显示的名字 ∪ 配置里已有的名字」上。
 
-定义行：`216`
+定义行：`268`
 
 ### `union_skill_levels`
 
@@ -88,4 +88,4 @@ def union_skill_levels(characters: dict, esi: dict[str, int], panel_names: list[
 
 新导入角色的初始技能集 = 面板全集 ∪ 其它角色用过的技能名，等级取自 ESI。
 
-定义行：`231`
+定义行：`283`

@@ -12,7 +12,7 @@
 
 生产计划表的增删改查
 
-定义行：`8`
+定义行：`10`
 
 #### 方法
 
@@ -26,7 +26,7 @@ def __init__(self, db)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`11`
+定义行：`13`
 ##### `ensure_table`
 
 ```python
@@ -37,7 +37,7 @@ def ensure_table(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`117`
+定义行：`125`
 ##### `get_by_id`
 
 ```python
@@ -48,7 +48,7 @@ def get_by_id(self, plan_id: int) -> dict | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`121`
+定义行：`129`
 ##### `get_all`
 
 ```python
@@ -59,7 +59,7 @@ def get_all(self, status: str | None=None) -> list[dict]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`126`
+定义行：`134`
 ##### `find_by_group_product`
 
 ```python
@@ -68,7 +68,7 @@ def find_by_group_product(self, group_number: int, product_type_id: int) -> int 
 
 按分组号+产品查找已存在的子计划 id。
 
-定义行：`136`
+定义行：`144`
 ##### `save`
 
 ```python
@@ -79,7 +79,7 @@ def save(self, plan: dict) -> int
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`145`
+定义行：`153`
 ##### `_allowed_fields`
 
 ```python
@@ -90,7 +90,7 @@ def _allowed_fields(fields: dict) -> dict
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`178`
+定义行：`186`
 ##### `update`
 
 ```python
@@ -101,7 +101,7 @@ def update(self, plan_id: int, **fields) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`181`
+定义行：`189`
 ##### `update_many`
 
 ```python
@@ -110,7 +110,7 @@ def update_many(self, plan_ids: list[int], **fields) -> int
 
 批量更新多条计划的同一组字段（列名来自内部，参数化值）。返回受影响行数。
 
-定义行：`191`
+定义行：`199`
 ##### `update_batch`
 
 ```python
@@ -119,7 +119,7 @@ def update_batch(self, rows: list[tuple[int, dict]]) -> int
 
 批量异构更新：rows = [(plan_id, &#123;field: value&#125;), ...]，单连接单事务。返回更新行数。
 
-定义行：`203`
+定义行：`211`
 ##### `insert_child_plan`
 
 ```python
@@ -128,7 +128,7 @@ def insert_child_plan(self, *, product_type_id: int, product_name: str, blueprin
 
 插入一条拆解子计划（含分组/层级/机库/引用式需求字段）。
 
-定义行：`219`
+定义行：`227`
 ##### `insert_split_remainder`
 
 ```python
@@ -137,7 +137,16 @@ def insert_split_remainder(self, plan_id: int, *, parallels: int, assigned_bluep
 
 复制 plan_id 的结构列，生成「部分启动」的未启动余量行（pending），返回新行 id。
 
-定义行：`325`
+定义行：`336`
+##### `_snapshot_child_costs_before_delete`
+
+```python
+def _snapshot_child_costs_before_delete(self, plan_ids: list[int]) -> None
+```
+
+删除前把「子项自制成本」固化到引用它的母项（审计 03-11）。
+
+定义行：`367`
 ##### `delete_many`
 
 ```python
@@ -146,7 +155,7 @@ def delete_many(self, plan_ids: list[int]) -> int
 
 批量删除计划（蓝图表关联清理由调用方 release_blueprint 处理）。返回删除行数。
 
-定义行：`356`
+定义行：`393`
 ##### `delete`
 
 ```python
@@ -157,4 +166,4 @@ def delete(self, plan_id: int) -> bool
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`365`
+定义行：`403`

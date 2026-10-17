@@ -110,7 +110,7 @@ Python 3.14+ / PySide6 6.11+ / ruff 格式化 + linting；依赖用 `~=` 固定�
 | 改了什么 | 跑什么 | 明确不跑 |
 |---|---|---|
 | 删死代码 / 改注释 / 改文档 / 格式化 | `target`（纯文档/配置变更会自动跳过，秒退） | 其余全部 |
-| 单文件纯计算（`domain/`、`core/`） | `fast` | 其余全部 |
+| 单文件纯计算（`domain/`、`core/`） | `fast`（`-m fast` 白名单，见 `docs/dev/testing.md`「测试分档与标记」）；**也可直接 `target`** —— 它按 import 反查测试文件，不会漏掉未标 `fast` 的公式测试 | 其余全部 |
 | services 业务 / DB 查询 / 导入器 | `target` | validate / full |
 | QML / UI，**或任何带 `ui` 标记的测试文件** | `shell_snapshot.py` 出图 + `ui-retest` 一次 | validate / full |
 | schema 迁移 | `validate` 一次 | full |
@@ -118,6 +118,9 @@ Python 3.14+ / PySide6 6.11+ / ruff 格式化 + linting；依赖用 `~=` 固定�
 > ⚠️ **`ui` 标记的文件被 `validate` 跳过** —— `validate` 是 `-m "not ui"`。改了这类测试文件（`test_qml_*`、
 > 表格模型等，文件头有 `pytestmark = pytest.mark.ui`）之后跑 `validate` 会得到**假绿**：文件根本没被收集。
 > 要么走 `ui-retest`，要么按下面的例外直接跑那个文件。这一条是踩过的坑。
+> **纯逻辑用例不要整文件标 `ui`**：整文件标记会让它们离开 validate/CI；只有真需要 `QApplication`/QML 的
+> 用例才标 `ui`（可按用例标）。注意 `git grep -l "pytestmark = pytest.mark.ui"` 会漏掉**按用例标**的文件，
+> 清单要搜 `git grep -n "@pytest.mark.ui"`。
 
 **选定的那一档跑绿即为通过。不要为了"更保险"往上加档。**
 

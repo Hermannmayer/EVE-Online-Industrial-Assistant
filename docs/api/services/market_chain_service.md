@@ -26,6 +26,10 @@ DAG（同一材料出现在多条支路）按 `typeId` **合并成一行**并用
 `not_caught_up` 是**父项级**的残差 = 父项 30 天涨幅 − Σ(子项 cost_share × 子项 30 天涨幅)，
 同一个父项下的所有子项行共享同一个值；正数 = 子项还没跟上父项。
 
+条款 1 例外（2026-10-17 审计 06-1）：本模块自 2026-10-05 引入起只有
+`ui_qml/bridge/market_pulse_bridge.py` 一个生产调用方，低于「≥2 个现存调用方」门槛。
+经审计确认暂保留为**已登记例外**（274 行内联进调用方不划算）；新增依赖本模块的调用方前先复核。
+
 ## 函数
 
 ### `_table_exists`
@@ -36,7 +40,7 @@ def _table_exists(conn, name: str) -> bool
 
 market.db 里有没有这张表。
 
-定义行：`46`
+定义行：`50`
 
 ### `_chunks`
 
@@ -48,7 +52,7 @@ def _chunks(ids: list[int]) -> Iterator[list[int]]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`55`
+定义行：`59`
 
 ### `_fetch_series`
 
@@ -58,7 +62,7 @@ def _fetch_series(conn, ids: list[int], region_id: int, lookback_start: str) -> 
 
 `&#123;type_id: (source, [(date, price, weight)])&#125;` —— 成交均价优先，挂单价兜底。
 
-定义行：`60`
+定义行：`64`
 
 ### `_window_price`
 
@@ -68,7 +72,7 @@ def _window_price(points: list[_Point], start: str, end: str) -> float | None
 
 窗口均价：有权重就加权，权重全 0（挂单价）就算术平均，窗口内无记录给 None。
 
-定义行：`94`
+定义行：`98`
 
 ### `_change_pct`
 
@@ -78,7 +82,7 @@ def _change_pct(points: list[_Point], window: int, today: date) -> float | None
 
 近 `window` 天均价 vs 前一个等长窗口均价的涨幅（%）；缺任一窗口给 None。
 
-定义行：`105`
+定义行：`109`
 
 ### `get_transmission_chain`
 
@@ -88,4 +92,4 @@ def get_transmission_chain(type_id: int, depth: int=2, region_id: int=JITA_RID, 
 
 把 `type_id` 的 BOM 逐级展开成传导链。
 
-定义行：`118`
+定义行：`122`

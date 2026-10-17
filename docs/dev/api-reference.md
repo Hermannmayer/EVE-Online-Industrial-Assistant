@@ -99,9 +99,7 @@
 | [`ui_qml.workers.score_worker`](/api/ui_qml/workers/score_worker) | 评分线程 `ScoreW`（全物品 / 可制造页共用） |
 | [`ui_qml.workers.query_workers`](/api/ui_qml/workers/query_workers) | 查询页搜索 / 候选 / 类别树线程 |
 | [`ui_qml.workers.order_workers`](/api/ui_qml/workers/order_workers) | 订单缓存 + ESI 取数线程 |
-| [`ui_qml.workers.batch_price_workers`](/api/ui_qml/workers/batch_price_workers) | 批量查价线程与搜索助手 |
 | [`ui_qml.workers.mfg_tree_worker`](/api/ui_qml/workers/mfg_tree_worker) | 可制造物品分类树线程 |
-| [`ui_qml.workers.price_history_worker`](/api/ui_qml/workers/price_history_worker) | 价格历史取数线程 |
 | [`ui_qml.workers.blueprint_import_worker`](/api/ui_qml/workers/blueprint_import_worker) | 蓝图剪贴板导入线程 |
 | [`ui_qml.workers.blueprint_plan_worker`](/api/ui_qml/workers/blueprint_plan_worker) | 蓝图批量加入规划的指标计算线程 |
 | [`ui_qml.workers.estimate_workers`](/api/ui_qml/workers/estimate_workers) | 估价 / 剪贴板解析线程 |

@@ -19,7 +19,7 @@ def add_search_history(query: str)
 
 保存搜索历史到文件
 
-定义行：`17`
+定义行：`18`
 
 ### `load_search_history`
 
@@ -29,14 +29,4 @@ def load_search_history() -> list
 
 从文件加载搜索历史
 
-定义行：`33`
-
-### `clear_search_history`
-
-```python
-def clear_search_history()
-```
-
-清空搜索历史文件
-
-定义行：`43`
+定义行：`35`

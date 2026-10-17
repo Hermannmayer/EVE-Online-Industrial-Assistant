@@ -43,6 +43,17 @@
 | `quantity` | INTEGER | 数量 |
 | `notes` | TEXT | 备注 |
 
+## 蓝图成本（T2/T3）
+
+蓝图管理表末列「蓝图成本」显示 `user_blueprints.cost_per_run`（ISK/流程）：
+
+- 只有 **T2/T3 蓝图拷贝**显示数值；T1、T3 原图、未填写显示 `—`；
+- 右键「修改蓝图每流程成本」可手填；
+- 工具栏「批量填充 T2/T3 蓝图成本」按发明期望单流程成本批量写入（多选时同值合并一次写库）；
+- 制造计划绑定该 BPC 时，制造利润会计入这笔蓝图成本。
+
+> 发明完成产出的 T2/T3 BPC 会自动记录期望单流程成本；存量 BPC 需要手动批量填充一次。
+
 ## 加权平均成本
 
 当多次入库同一物品时，成本按加权平均计算：
@@ -61,7 +72,7 @@
 |------|------|
 | `ui_qml/qml/pages/StoragePage.qml` | 仓库管理页（机库管理 / 蓝图管理 两个 Tab） |
 | `ui_qml/bridge/inventory_bridge.py` | QML ↔ 既有服务 / worker 的通道（含多选与对话框编排） |
-| `ui_qml/models/inventory_qml_models.py` | QML 表适配（机库物品 9 列 / 蓝图 13 列） |
+| `ui_qml/models/inventory_qml_models.py` | QML 表适配（机库物品 9 列 / 蓝图 14 列，末列为「蓝图成本」） |
 | `ui_qml/models/inventory_helpers.py` | 公共表模型与常量（`InvTableModel` / `BlueprintTableModel`） |
 | `ui_qml/workers/blueprint_import_worker.py` | 蓝图剪贴板批量导入 Worker |
 

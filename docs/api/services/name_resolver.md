@@ -141,3 +141,23 @@ def resolve_system_display_names_batch(solar_system_ids: list[int]) -> dict[int,
 批量查询星系显示名；异常返回空 dict。
 
 定义行：`291`
+
+### `resolve_stations`
+
+```python
+def resolve_stations(conn: sqlite3.Connection, location_ids: set[int]) -> dict[int, tuple[str, str]]
+```
+
+location_id → (空间站名, 星系名)。NPC 空间站的 location_id 即 `station.station_id`。
+
+定义行：`316`
+
+### `resolve_stations_by_ids`
+
+```python
+def resolve_stations_by_ids(location_ids: set[int]) -> dict[int, tuple[str, str]]
+```
+
+打开 reference.db 并解析空间站名称（订单地点列兜底）。
+
+定义行：`331`

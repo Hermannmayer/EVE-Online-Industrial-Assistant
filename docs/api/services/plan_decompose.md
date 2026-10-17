@@ -11,7 +11,7 @@
 子项 ME/TE 读库存蓝图最优等级，无蓝图 → 0/0 且 has_blueprint=False。
 
 连接约定：ref 主库（物品/星系表），bp 附随含蓝图表（未限定查询经附随解析到 bp），
-user 附随含 user_blueprints（限定 user.）。
+user 附随含 user_blueprints / user.production_plans（限定 user.）。
 
 ## 函数
 
@@ -23,7 +23,17 @@ def best_inventory_blueprint(conn: Connection, blueprint_type_id: int) -> dict |
 
 从 user_blueprints 挑 ME 最优的库存蓝图 → &#123;me_level, te_level&#125;；无则 None。
 
-定义行：`22`
+定义行：`21`
+
+### `_existing_parallels`
+
+```python
+def _existing_parallels(conn: Connection) -> dict[int, int]
+```
+
+全库既有子项产线的并行数 &#123;product_type_id: parallels&#125; —— 口径同落库侧。
+
+定义行：`36`
 
 ### `decompose_plan`
 
@@ -33,7 +43,7 @@ def decompose_plan(plan: dict, *, mat_hangar_id: int | None=None) -> list[dict]
 
 递归拆解母项 → 子项产线行列表（不含母项自身）。
 
-定义行：`37`
+定义行：`58`
 
 ### `parent_needs`
 
@@ -43,7 +53,7 @@ def parent_needs(conn: Connection, group_plans: list[dict]) -> dict[int, int]
 
 组内全部母项（sub_level=0）对每个直接组件的总需求 &#123;type_id: need&#125;。
 
-定义行：`63`
+定义行：`104`
 
 ### `is_leaf_plan`
 
@@ -53,7 +63,7 @@ def is_leaf_plan(plan: dict, all_plans: list[dict]) -> bool
 
 该计划是否为叶子产线（组内无更深子项）。
 
-定义行：`82`
+定义行：`123`
 
 ### `collect_cascade_delete_ids`
 
@@ -63,7 +73,7 @@ def collect_cascade_delete_ids(plans: list[dict], selected_ids: set[int]) -> set
 
 删除指定计划时级联删除同组更深子项（含传递层级）。
 
-定义行：`99`
+定义行：`140`
 
 ### `collect_removed_child_ids`
 
@@ -73,7 +83,7 @@ def collect_removed_child_ids(rows: list[dict], removed_type_ids: set[int]) -> s
 
 母项拆解删除集：被删组件类型的合并子项行 + 其同组子孙（沿 component_parent_type_id）。
 
-定义行：`133`
+定义行：`174`
 
 ### `collect_group_members`
 
@@ -83,14 +93,4 @@ def collect_group_members(all_plans: list[dict], selected: list[dict]) -> tuple[
 
 跨选中行聚合相关组的母项与子项（按 plan id 去重）→ (parents, children)。
 
-定义行：`168`
-
-### `_decompose`
-
-```python
-def _decompose(conn: Connection, type_id: int, needed_qty: float, depth: int, stock: dict[int, int], seen: set[int], mat_hangar_id: int | None=None) -> tuple[list[dict], int]
-```
-
-递归展开一层。返回 (子项产线行, 本层可被库存覆盖的产出量)。
-
-定义行：`206`
+定义行：`209`

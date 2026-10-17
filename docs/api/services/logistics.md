@@ -11,9 +11,9 @@
 数据来源：硬编码 TRADE_HUB_DISTANCES 距离表、reference.db item.volume、
 market.db market_prices（经 PricingService）。
 
-⚠️ **运费/运输利润当前没有 UI 调用方**：市场贸易页的「运输利润」Tab 已删除（2026-09），
-`estimate_freight_cost` / `calc_transport_profit` 保留待合同市场接入。
-**`compute_jumps` 不受此限 —— 它仍被 `services/contract_service.py` 使用**（合同运输页每行算跳数）。
+⚠️ **`compute_jumps` / 距离工具仍在使用**：`services/contract_service.py` 用它给合同每行算跳数，
+`list_trade_hub_distances` 供 UI 距离表。原运费估算（`estimate_freight_cost`）与运输利润
+（`calc_transport_profit`）没有 UI 调用方，已按 2026-10-17 审计 04-4 删除；将来接合同市场时再按需加回。
 
 ## 函数
 
@@ -25,17 +25,7 @@ def _default_db()
 
 惰性获取 DatabaseManager（经容器）。
 
-定义行：`32`
-
-### `_default_pricing`
-
-```python
-def _default_pricing()
-```
-
-惰性获取 PricingService（经容器）。
-
-定义行：`37`
+定义行：`22`
 
 ### `_load_gate_graph`
 
@@ -45,7 +35,7 @@ def _load_gate_graph() -> tuple[dict[int, set[int]], dict[int, float]]
 
 从 reference.db 建星系邻接表 + 安全等级表。
 
-定义行：`78`
+定义行：`70`
 
 ### `compute_jumps`
 
@@ -65,27 +55,7 @@ def get_distance_jumps(source: str, destination: str) -> int | None
 
 两个**贸易中心**之间的跳跃数（按高安路线 —— 跑货实际会飞的那条）。
 
-定义行：`171`
-
-### `estimate_freight_cost`
-
-```python
-def estimate_freight_cost(volume_m3: float, distance_jumps: int, collateral: float, price_per_jump: float=500000, price_per_m3: float=200, use_public_freight: bool=True) -> dict
-```
-
-估算跨区域货物运输的运费。
-
-定义行：`185`
-
-### `calc_transport_profit`
-
-```python
-def calc_transport_profit(type_id: int, buy_hub: str, sell_hub: str, buy_price_type: str, sell_price_type: str, quantity: int, distance_jumps: int, char_config: dict | None=None, use_public_freight: bool=True) -> dict
-```
-
-计算跨区域运输的净利润（包含运费和贸易费用）。
-
-定义行：`267`
+定义行：`174`
 
 ### `list_trade_hub_distances`
 
@@ -95,4 +65,4 @@ def list_trade_hub_distances() -> list[dict]
 
 返回所有贸易中心对的跳跃距离（走高安路线），供 UI 使用。
 
-定义行：`415`
+定义行：`188`

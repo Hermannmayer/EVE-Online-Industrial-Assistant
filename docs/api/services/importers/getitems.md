@@ -85,7 +85,17 @@ async def fill_missing_blueprint_names()
 
 补充 item 表中缺失的蓝图名称
 
-定义行：`269`
+定义行：`276`
+
+### `_esi_name`
+
+```python
+def _esi_name(data: dict | None) -> str
+```
+
+现行 ESI `/universe/types/&#123;id&#125;/` 的 `name` 是**字符串**（旧 SDE 是 &#123;en,zh&#125; dict）。
+
+定义行：`366`
 
 ### `fill_missing_item_names_from_esi`
 
@@ -95,4 +105,4 @@ async def fill_missing_item_names_from_esi(progress_cb: Callable[[int, str], Non
 
 从 ESI 补拉 item 表中缺失名称的物品（并发 + 全局限流）。
 
-定义行：`354`
+定义行：`377`

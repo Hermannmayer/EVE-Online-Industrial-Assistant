@@ -51,3 +51,13 @@ def detach_worker(worker: Any) -> None
 中断不了就直接保活（阻塞式请求专用）。
 
 定义行：`58`
+
+### `wait_detached`
+
+```python
+def wait_detached(timeout_ms: int=15000) -> int
+```
+
+等所有被摘出的线程结束（工具脚本退场前用）。
+
+定义行：`73`

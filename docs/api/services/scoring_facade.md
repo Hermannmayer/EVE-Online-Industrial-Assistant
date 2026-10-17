@@ -21,7 +21,7 @@ def _preload_material_prices(db, mat_ids: list[int], price_type: str, hub: str |
 
 一次 IN 查询预取材料价格与 adjusted price（EIV）。
 
-定义行：`57`
+定义行：`59`
 
 ### `_char_config_fingerprint`
 
@@ -31,7 +31,17 @@ def _char_config_fingerprint(char_config: dict | None) -> str
 
 生成角色配置的稳定摘要，用于缓存 key，避免角色配置变更后命中旧评分。
 
-定义行：`88`
+定义行：`90`
+
+### `_research_costs_fingerprint`
+
+```python
+def _research_costs_fingerprint(research_costs: dict[int, float | None] | None) -> str
+```
+
+研究成本覆盖值的缓存指纹（必须进 cache key）。
+
+定义行：`103`
 
 ### `calc_manufacturing_score`
 
@@ -41,7 +51,7 @@ def calc_manufacturing_score(db, cache, *, type_id: int, char_config: dict | Non
 
 制造评分用例：编排 DB 读取 + 领域纯函数 + 缓存。
 
-定义行：`99`
+定义行：`114`
 
 ### `calc_trade_score`
 
@@ -51,7 +61,7 @@ def calc_trade_score(db, cache, *, type_id: int, buy_hub: str, sell_hub: str, bu
 
 贸易评分用例：编排 DB 读取 + 领域纯函数 + 缓存。
 
-定义行：`251`
+定义行：`272`
 
 ### `calc_reaction_score`
 
@@ -61,7 +71,7 @@ def calc_reaction_score(db, *, type_id: int, char_config: dict | None, mat_sourc
 
 反应评分用例：编排 DB 读取 + 领域纯函数（反应无缓存）。
 
-定义行：`317`
+定义行：`338`
 
 ## 类
 
@@ -73,7 +83,7 @@ PriceProvider 适配 — 委托给 scoring_service 模块级定价函数（可�
 只装「一次查询就能确定」的键，查不到的一律回落模块级单条函数 —— 跨区域降级、
 无价格、旧库缺列等语义全部保持原样。
 
-定义行：`25`
+定义行：`27`
 
 #### 方法
 
@@ -87,7 +97,7 @@ def __init__(self, db, preloaded: dict[tuple[int, str], float | None] | None=Non
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`33`
+定义行：`35`
 ##### `get_price`
 
 ```python
@@ -98,7 +108,7 @@ def get_price(self, type_id: int, price_type: str, hub: str | None=None) -> floa
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`37`
+定义行：`39`
 ##### `get_volume`
 
 ```python
@@ -109,7 +119,7 @@ def get_volume(self, type_id: int, vol_type: str='total', hub: str | None=None) 
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`43`
+定义行：`45`
 ##### `get_system_cost_index`
 
 ```python
@@ -120,7 +130,7 @@ def get_system_cost_index(self, system_id: int | None, activity: str='manufactur
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`46`
+定义行：`48`
 ##### `get_adjusted_price`
 
 ```python
@@ -131,4 +141,4 @@ def get_adjusted_price(self, type_id: int) -> float | None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`49`
+定义行：`51`

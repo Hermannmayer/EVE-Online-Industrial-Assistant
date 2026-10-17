@@ -66,6 +66,18 @@ scripts/run_tests.sh full       # validate + ui-retest 两阶段
 pytestmark = pytest.mark.ui  # 整个文件是 Qt 用例时的常见写法
 ```
 
+> **`fast` 是 marker 白名单，不是自动分类**：2026-10-17 实测 `-m fast` ≈ 799 条，其中 **122 条
+> 同时带 `ui` 标记**（历史按「跑得快」加的，会同时进 fast 与 ui-retest）；要纯计算/轻服务集合用
+> `-m "fast and not ui"`（≈677 条）。改 `domain/`/`core/` 时若不确定目标文件标没标 fast，直接
+> `target` 更稳（按 import 反查，不会漏）。
+> **runner 暂保持现状**：`scripts/` 属冻结区，且 `-m fast` 实测全绿、这 122 条不依赖 qapp；是否把
+> fast 切成 `-m "fast and not ui"` 属未决项（待登记 `docs/dev/backlog.md`）。
+>
+> **纯逻辑用例不要整文件标 `ui`**：整文件 `pytestmark = pytest.mark.ui` 会让文件整体离开
+> validate/CI（`test_personal_margin` 曾因此把 24 条个人利润率公式用例全带出 validate 档）。
+> 只有真需要 QApplication/QML 的用例才标 `ui`，可按用例标。清点 ui 标记用
+> `git grep -n "@pytest.mark.ui"` —— 只搜 `pytestmark = pytest.mark.ui` 会漏掉按用例标的那几个文件。
+
 `validate`（`-m "not ui"`）与 `ui-retest`（`-m ui`）**互斥**，二者并集恰好覆盖全部用例、
 恒等于 `full` —— 一个用例必须落进其中一档，没有「两档都不跑」的漏网空间。
 
@@ -90,7 +102,9 @@ pytestmark = pytest.mark.ui  # 整个文件是 Qt 用例时的常见写法
 ⚠️ 与 QML 相关的本仓特有约定（写在各自的 `test_qml_*.py` 里）。
 **新增用例前先读 CLAUDE.md 的「测试边界」、克制条款第 4 条与「测试判定表」 —— 测试有硬预算，不按覆盖率补用例。**
 **先过判定表确认这次改动到底要不要写测试**：外观断言 / 标准库断言 / 仅非 None / mock 调用次数都在禁止档；
-判定表外的用例可用 `python scripts/test_audit.py` 自查。
+判定表外的用例可用 `python scripts/test_audit.py` 自查。该脚本是**启发式提示、不做门禁**：
+2026-10-17 实测 88 条命中里真违规约 6 条（精确率约 7%），其余是允许的负向断言 / 替身契约 /
+渲染存在性 / `and` 复合断言误报（见 `audit/reports/05-测试可信度-报告.md` 附录 A）。
 
 - **新对话框并入统一的「加载无 QML 告警」冒烟用例**（`tests/test_qml_dialogs.py` 的
   `_assert_loads_and_quiet`）—— 缺 import / 绑错属性这类问题只在运行时吐一条，静态扫描看不见。

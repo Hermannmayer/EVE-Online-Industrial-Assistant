@@ -66,9 +66,9 @@ def ore_skill_info(self, type_id: int) -> tuple[bool, str]
 ##### `calc_value`
 
 ```python
-def calc_value(self, type_id, quantity=1, *, skills=None, is_player_facility=False, price_hub='Jita', yield_override=None, ore_skill=0) -> dict
+def calc_value(self, type_id, quantity=1, *, skills=None, is_player_facility=False, structure_type=None, security_mult=0.0, rig_mult=0.0, price_hub='Jita', yield_override=None, ore_skill=0) -> dict
 ```
 
-完整实现（从 scoring_service.py 迁移）
+完整实现（从 scoring_service.py 迁移）。
 
 定义行：`92`

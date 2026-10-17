@@ -26,25 +26,35 @@
 
 ## 函数
 
+### `_weighted_quantile`
+
+```python
+def _weighted_quantile(pairs: list[tuple[float, float]], q: float) -> float
+```
+
+按成交量加权的分位数（`pairs` 需按价格升序）。
+
+定义行：`76`
+
 ### `_window_price`
 
 ```python
-def _window_price(turnover: float, volume: float, avg_sum: float, covered: int) -> float | None
+def _window_price(day_rows: list[tuple[str, float, float]]) -> tuple[float, float] | None
 ```
 
-窗口成交均价：有成交量就按成交量加权，成交量全 0 时退回算术均价，无记录给 None。
+`(窗口价, 稳定度)`；稳定度 = 成交量加权 `p90 / p10`。数据不足 → `None`。
 
-定义行：`53`
+定义行：`90`
 
 ### `_index_membership`
 
 ```python
-def _index_membership(conn, turnover_30d: dict[int, float]) -> dict[int, list[str]]
+def _index_membership(conn_mgr, type_ids: Iterable[int]) -> dict[int, list[str]]
 ```
 
-`&#123;type_id: 命中的指数 key&#125;`（顺序按 `INDEX_KEYS`）。
+`&#123;type_id: 命中的指数 key&#125;`（顺序按 `INDEX_KEYS`），只覆盖传入的 `type_ids`。
 
-定义行：`62`
+定义行：`120`
 
 ### `get_movers`
 
@@ -54,4 +64,4 @@ def get_movers(days: int=3, limit: int=50, region_id: int=JITA_RID, qualified_on
 
 近 `days` 个日历天的异动榜，按 |涨幅| 降序取前 `limit` 条。
 
-定义行：`107`
+定义行：`144`

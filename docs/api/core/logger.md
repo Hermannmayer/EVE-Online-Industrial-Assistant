@@ -23,7 +23,7 @@ def set_debug(enabled: bool=True)
 
 切换 debug 模式
 
-定义行：`81`
+定义行：`82`
 
 ### `prune_logs`
 
@@ -33,7 +33,7 @@ def prune_logs(logs_dir: Path, crashes_dir: Path, retention_days: int=14) -> int
 
 删除超过 retention_days 天的日志与崩溃转储文件，返回删除数量。
 
-定义行：`89`
+定义行：`90`
 
 ### `prune_temp_workspaces`
 
@@ -43,7 +43,7 @@ def prune_temp_workspaces(prefixes: tuple[str, ...]=_TEMP_WORKSPACE_PREFIXES, ma
 
 删除 %TEMP% 下超过 max_age_days 天的临时工作目录，返回删除数量。
 
-定义行：`131`
+定义行：`132`
 
 ## 类
 
@@ -76,7 +76,7 @@ def info(self, msg: str, *args, **kwargs)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`59`
+定义行：`60`
 ##### `warning`
 
 ```python
@@ -87,7 +87,7 @@ def warning(self, msg: str, *args, **kwargs)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`62`
+定义行：`63`
 ##### `error`
 
 ```python
@@ -98,7 +98,7 @@ def error(self, msg: str, *args, **kwargs)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`65`
+定义行：`66`
 ##### `debug`
 
 ```python
@@ -109,7 +109,7 @@ def debug(self, msg: str, *args, **kwargs)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`68`
+定义行：`69`
 ##### `critical`
 
 ```python
@@ -120,7 +120,7 @@ def critical(self, msg: str, *args, **kwargs)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`71`
+定义行：`72`
 ##### `exception`
 
 ```python
@@ -131,4 +131,4 @@ def exception(self, msg: str, *args, **kwargs)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`74`
+定义行：`75`

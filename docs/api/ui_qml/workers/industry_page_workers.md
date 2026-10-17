@@ -69,7 +69,7 @@ def run(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`51`
+定义行：`52`
 ##### `_fetch_and_save`
 
 ```python
@@ -78,4 +78,4 @@ async def _fetch_and_save(self) -> int
 
 异步拉取 ESI + 写入 market.db（仅拉取缓存过期的物品）
 
-定义行：`62`
+定义行：`68`

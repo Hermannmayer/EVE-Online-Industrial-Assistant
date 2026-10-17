@@ -10,8 +10,8 @@
   「规划占用」带 tooltip、「缺口」为红色 token。展示规则照搬 `InvTableModel.data()`。
   末列「估值可信」标出卖单价离群的行（`price_credible is False`）：该行按卖单价的估值
   已不计入仓库页底部总额，这两列一起标橙并带 tooltip 说明原因。
-- `BlueprintQmlModel`：蓝图（13 列，「状态」列由 `services.inventory_manager` 批量查出、
-  多状态以 ` · ` 并列）。「类型」列在被活跃计划占用时标橙、
+- `BlueprintQmlModel`：蓝图（14 列，「状态」列由 `services.inventory_manager` 批量查出、
+  多状态以 ` · ` 并列；末列「蓝图成本」仅 T2/T3 蓝图拷贝显示数值、其余显示 —）。「类型」列在被活跃计划占用时标橙、
   「每流程利润」与「利润率」列按正负染绿红。展示规则照搬 `BlueprintTableModel.data()`。
 
 两个模型都补了 `set_rows`：原版每次刷新都**新建**模型实例
@@ -192,7 +192,7 @@ def _name(row: dict) -> str
 
 与父类同一套取名口径（terminology 覆盖优先）。
 
-定义行：`301`
+定义行：`307`
 ##### `refresh_colors`
 
 ```python
@@ -203,4 +203,4 @@ def refresh_colors(self) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`312`
+定义行：`318`

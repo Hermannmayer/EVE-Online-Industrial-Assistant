@@ -121,7 +121,7 @@ def load_series(days: int=90) -> list[dict]
 
 按日期升序返回最近 ``days`` 天内的快照序列。
 
-定义行：`252`
+定义行：`255`
 
 ### `adjust_wallet_balance`
 
@@ -131,7 +131,7 @@ def adjust_wallet_balance(delta: float) -> float
 
 按订单变动增减钱包余额（返回调整后的值）。
 
-定义行：`272`
+定义行：`275`
 
 ### `get_wallet_balance`
 
@@ -141,7 +141,7 @@ def get_wallet_balance() -> float
 
 wallet 线：读 settings.json 里的钱包余额；缺失/非数值一律 0.0。
 
-定义行：`283`
+定义行：`286`
 
 ### `set_wallet_balance`
 
@@ -151,4 +151,4 @@ def set_wallet_balance(value: float) -> None
 
 写回钱包余额（read-modify-write，保留 settings.json 其余键）。
 
-定义行：`292`
+定义行：`295`

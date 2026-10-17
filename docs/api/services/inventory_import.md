@@ -30,6 +30,26 @@ def compute_row_delta(mode: str, qty: int, current: int) -> tuple[int, int]
 
 定义行：`55`
 
+### `merge_same_type_rows`
+
+```python
+def merge_same_type_rows(items: list[dict]) -> list[dict]
+```
+
+把**同一个 type_id 的多堆**合并成一行、数量相加（纯函数，无 DB/Qt 依赖）。
+
+定义行：`75`
+
+### `compute_missing_in_hangar`
+
+```python
+def compute_missing_in_hangar(hangar_qty: dict[int, int], clipboard_type_ids: set[int]) -> dict[int, int]
+```
+
+全量同步的**反向差集**：「目标机库里有、剪贴板里没有」的物品 → &#123;type_id: 现有数量&#125;。
+
+定义行：`117`
+
 ### `compute_import_diff`
 
 ```python
@@ -38,4 +58,4 @@ def compute_import_diff(before: dict[int, tuple[int, float]], after: dict[int, t
 
 对比导入前后库存，返回发生变化行列表。
 
-定义行：`75`
+定义行：`136`

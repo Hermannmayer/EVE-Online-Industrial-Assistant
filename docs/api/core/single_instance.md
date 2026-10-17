@@ -62,7 +62,7 @@ def try_lock(force: bool=False, lock_file: Path | str | None=None) -> bool
 
 Attempt to acquire the single-instance lock.
 
-定义行：`82`
+定义行：`84`
 
 ### `_try_exclusive_acquire`
 
@@ -72,7 +72,7 @@ def _try_exclusive_acquire(own_pid: int, target: Path) -> bool | None
 
 原子创建锁文件（O_EXCL），消除 check-then-act 竞态。
 
-定义行：`150`
+定义行：`154`
 
 ### `_safe_unlink`
 
@@ -82,7 +82,7 @@ def _safe_unlink(target: Path)
 
 删除锁文件；删除失败（句柄被占用）时不抛出。
 
-定义行：`171`
+定义行：`175`
 
 ### `_is_pid_alive`
 
@@ -92,7 +92,7 @@ def _is_pid_alive(pid: int) -> bool
 
 探活：pid 对应的进程是否还在。
 
-定义行：`179`
+定义行：`183`
 
 ### `_win32_is_pid_alive`
 
@@ -102,7 +102,7 @@ def _win32_is_pid_alive(pid: int) -> bool
 
 Win32 探活：打不开句柄要区分「进程不存在」与「权限不足」。
 
-定义行：`204`
+定义行：`208`
 
 ### `unlock`
 
@@ -112,7 +112,7 @@ def unlock(lock_file: Path | str | None=None)
 
 Release the single-instance lock.
 
-定义行：`234`
+定义行：`240`
 
 ### `show_message`
 
@@ -122,4 +122,4 @@ def show_message()
 
 Print a notice to stderr that another instance is already running.
 
-定义行：`253`
+定义行：`259`

@@ -82,7 +82,7 @@ def _skill_levels(conn, blueprint_type_id: int, activity: str, skills: dict) -> 
 ### `create_research_plan`
 
 ```python
-def create_research_plan(blueprint_type_id: int, *, activity: str, blueprint_name: str, runs: int=1, parallels: int=1, mat_hangar_id: int | None=None, deposit_hangar_id: int | None=None, solar_system_id: int | None=None, char_name: str='', facility: str='', decryptor_type_id: int | None=None, success_rate: float | None=None, research_target_level: int=0, mat_hub: str='Jita', sell_hub: str='Jita') -> int
+def create_research_plan(blueprint_type_id: int, *, activity: str, blueprint_name: str, runs: int=1, parallels: int=1, mat_hangar_id: int | None=None, deposit_hangar_id: int | None=None, solar_system_id: int | None=None, char_name: str='', facility: str='', decryptor_type_id: int | None=None, success_rate: float | None=None, research_target_level: int=0, current_level: int=0, mat_hub: str='Jita', sell_hub: str='Jita') -> int
 ```
 
 建一条科研计划行（pending，含科研专属列），返回 plan_id；失败 → -1。

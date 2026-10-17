@@ -102,6 +102,15 @@ async def _fetch(self, client: APIClient | None=None) -> tuple[list, list]
 取买单 / 卖单。
 
 定义行：`144`
+##### `_fetch_side`
+
+```python
+async def _fetch_side(self, client: APIClient, url: str, order_type: str) -> tuple[int | None, list]
+```
+
+取一个方向的**全部页**；返回 `(status, rows)`（02-08/02-11）。
+
+定义行：`157`
 ##### `_fetch_orders`
 
 ```python
@@ -112,7 +121,7 @@ async def _fetch_orders(self, client: APIClient) -> tuple[list, list]
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`157`
+定义行：`182`
 ##### `_resolve_names`
 
 ```python
@@ -121,7 +130,7 @@ async def _resolve_names(self, location_ids: list[int], client: APIClient | None
 
 location_id → 站名：**先查本地 SDE，只有本地没有的才打 ESI**。
 
-定义行：`187`
+定义行：`216`
 ##### `_resolve_names_remote`
 
 ```python
@@ -130,7 +139,7 @@ async def _resolve_names_remote(self, client: APIClient, ids: list[int]) -> None
 
 ESI `/universe/names/` 兜底（实际只会走到玩家建筑）。
 
-定义行：`222`
+定义行：`251`
 ##### `_resolve_names_one_by_one`
 
 ```python
@@ -141,7 +150,7 @@ async def _resolve_names_one_by_one(self, client, ids: list[int], url: str) -> N
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`253`
+定义行：`282`
 ##### `_absorb`
 
 ```python
@@ -152,4 +161,4 @@ def _absorb(payload: list) -> None
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`270`
+定义行：`299`

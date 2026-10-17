@@ -59,7 +59,7 @@ def parse_activities(bp_id: int, bp_data: dict)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`114`
+定义行：`123`
 
 ### `_load_blueprints_yaml`
 
@@ -69,7 +69,7 @@ def _load_blueprints_yaml(path: str, loader) -> dict
 
 同步解析 blueprints.yaml（在 to_thread 中运行，避免阻塞事件循环）。
 
-定义行：`144`
+定义行：`153`
 
 ### `run_blueprint_update`
 
@@ -81,4 +81,4 @@ async def run_blueprint_update(progress_cb=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`150`
+定义行：`159`

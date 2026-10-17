@@ -260,7 +260,16 @@ def combine_per_line(per_line: list[dict], runs: int=1) -> tuple[dict, dict]
 
 逐线结果 → 计划级 ``(per_run, total)``。
 
-定义行：`396`
+定义行：`417`
+##### `_bound_bpc_costs`
+
+```python
+def _bound_bpc_costs(db, plan_id: int | None) -> list[float]
+```
+
+计划绑定蓝图里 **BPC（is_bpo=0）** 的每流程成本，按绑定顺序返回（BPO → 0）。
+
+定义行：`483`
 ##### `calculate_plan_metrics`
 
 ```python
@@ -269,7 +278,7 @@ def calculate_plan_metrics(plan_data: dict, char_config: dict, *, mat_hub: str |
 
 从一条生产计划数据计算所有派生指标。
 
-定义行：`453`
+定义行：`506`
 ##### `_research_skill_levels`
 
 ```python
@@ -278,7 +287,7 @@ def _research_skill_levels(conn, blueprint_type_id: int, activity: str, skills: 
 
 从 blueprint_skills 解析该活动的技能要求并读角色等级。
 
-定义行：`689`
+定义行：`766`
 ##### `_calculate_research_metrics`
 
 ```python
@@ -287,7 +296,7 @@ def _calculate_research_metrics(plan_data: dict, char_config: dict, *, activity:
 
 拷贝/发明/研究作业的指标（编排：查蓝图/SDE → 调 services.plan_metrics 纯函数）。
 
-定义行：`729`
+定义行：`806`
 ##### `calculate_personal_margin`
 
 ```python
@@ -296,7 +305,7 @@ def calculate_personal_margin(result: dict, inv_map: dict[int, tuple[int, float]
 
 计算考虑库存成本的个人利润率（%）。实现见 services.plan_metrics。
 
-定义行：`1043`
+定义行：`1186`
 ##### `child_manufacturing_cost`
 
 ```python
@@ -305,7 +314,7 @@ def child_manufacturing_cost(plan: dict, metrics: dict) -> float
 
 一条子项产线的总制造价 = 材料成本 + 制造作业费。实现见 services.plan_metrics。
 
-定义行：`1056`
+定义行：`1199`
 ##### `adjust_mother_metrics`
 
 ```python
@@ -314,7 +323,7 @@ def adjust_mother_metrics(metrics: dict, sub_cost_map: dict[int, SubitemCost], t
 
 把拆解母项的自制子项按其制造价计入成本。实现见 services.plan_metrics。
 
-定义行：`1063`
+定义行：`1206`
 ##### `calc_manufacturing_score`
 
 ```python
@@ -323,7 +332,7 @@ def calc_manufacturing_score(self, type_id: int, char_config: dict, mat_source_h
 
 计算制造评分。
 
-定义行：`1075`
+定义行：`1218`
 ##### `manufacturing_unit_costs`
 
 ```python
@@ -332,7 +341,7 @@ def manufacturing_unit_costs(self, type_ids: list[int] | set[int], *, mat_hub: s
 
 这些物品**自己造一件**要多少钱 → `&#123;type_id: 单件自制成本&#125;`（算不出的物品不在结果里）。
 
-定义行：`1129`
+定义行：`1272`
 ##### `_reaction_product_ids`
 
 ```python
@@ -341,7 +350,7 @@ def _reaction_product_ids(self, type_ids: list[int]) -> set[int]
 
 这批里哪些是**反应产物**（产物只挂在 `activity='reaction'` 上）—— 一次查询。
 
-定义行：`1228`
+定义行：`1371`
 ##### `_best_blueprint_levels`
 
 ```python
@@ -350,7 +359,7 @@ def _best_blueprint_levels(self, type_ids: list[int]) -> dict[int, tuple[int, in
 
 `&#123;物品 type_id: (ME, TE)&#125;` —— 用户库存里「该物品的制造蓝图」最好的那一张。
 
-定义行：`1247`
+定义行：`1390`
 ##### `calc_trade_score`
 
 ```python
@@ -359,7 +368,7 @@ def calc_trade_score(self, type_id: int, buy_hub: str='Jita', sell_hub: str='Jit
 
 计算贸易评分。纯算法在 domain.scoring，编排在 services.scoring_facade。
 
-定义行：`1283`
+定义行：`1426`
 ##### `calc_reaction_score`
 
 ```python
@@ -368,4 +377,4 @@ def calc_reaction_score(self, type_id: int, char_config: dict, mat_source_hub: s
 
 计算反应（Reaction）利润评分。纯算法在 domain.scoring，编排在 services.scoring_facade。
 
-定义行：`1310`
+定义行：`1453`

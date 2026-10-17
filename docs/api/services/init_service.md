@@ -187,7 +187,7 @@ async def _run_sequence(self, keys: list[str])
 
 按依赖图并行执行步骤列表。
 
-定义行：`289`
+定义行：`291`
 ##### `_run_one`
 
 ```python
@@ -196,7 +196,7 @@ async def _run_one(self, key: str)
 
 单个步骤任务：等依赖 → 网络检查 → 执行 → 上报（可并行运行）
 
-定义行：`331`
+定义行：`335`
 ##### `_ensure_net_once`
 
 ```python
@@ -205,7 +205,7 @@ async def _ensure_net_once(self) -> bool
 
 网络检查单飞：并发请求合并为一次 check_network，结果共享。
 
-定义行：`395`
+定义行：`401`
 ##### `_prepare_ref_db_for_parallel`
 
 ```python
@@ -214,7 +214,7 @@ def _prepare_ref_db_for_parallel()
 
 并行前准备 reference.db：WAL + 长 busy_timeout。
 
-定义行：`402`
+定义行：`408`
 ##### `_deps_satisfied`
 
 ```python
@@ -223,7 +223,7 @@ def _deps_satisfied(self, step: InitStep) -> bool
 
 检查前置步骤是否已完成。
 
-定义行：`422`
+定义行：`428`
 ##### `_run_step`
 
 ```python
@@ -232,7 +232,7 @@ async def _run_step(self, key: str) -> tuple[bool, str]
 
 实际执行一个初始化步骤
 
-定义行：`440`
+定义行：`448`
 ##### `_inject_progress_callback`
 
 ```python
@@ -241,7 +241,7 @@ def _inject_progress_callback(self, key: str)
 
 设置进度回调环境变量（给 write_progress 使用）
 
-定义行：`507`
+定义行：`515`
 ##### `_emit_step_started`
 
 ```python
@@ -252,7 +252,7 @@ def _emit_step_started(self, key: str, name: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`516`
+定义行：`524`
 ##### `_emit_step_progress`
 
 ```python
@@ -263,7 +263,7 @@ def _emit_step_progress(self, key: str, percent: int, message: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`523`
+定义行：`531`
 ##### `_emit_step_completed`
 
 ```python
@@ -274,7 +274,7 @@ def _emit_step_completed(self, key: str, success: bool, message: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`530`
+定义行：`538`
 ##### `_emit_all_completed`
 
 ```python
@@ -285,7 +285,7 @@ def _emit_all_completed(self, success: bool, summary: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`537`
+定义行：`545`
 ##### `_emit_network`
 
 ```python
@@ -296,4 +296,4 @@ def _emit_network(self, ok: bool, message: str)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`544`
+定义行：`552`

@@ -224,6 +224,16 @@ def _plan_total_runs(plan: dict) -> int
 
 定义行：`638`
 
+### `_manufacturing_need`
+
+```python
+def _manufacturing_need(qty: int, wastefactor: int, me_level: int, runs: int, parallels: int) -> int
+```
+
+一条制造配方的采购/校验需求 = **逐线各自整批取整再求和**。
+
+定义行：`649`
+
 ### `_science_material_requirements`
 
 ```python
@@ -232,7 +242,7 @@ def _science_material_requirements(plan: dict) -> list[dict]
 
 科研计划要买的材料（数据核心 / 解码器 / 拷贝与研究的耗材）[&#123;type_id, name, need&#125;]。
 
-定义行：`649`
+定义行：`664`
 
 ### `_cache_item_meta`
 
@@ -242,7 +252,7 @@ def _cache_item_meta(conn, mid: int, names: dict, volumes: dict, zh_en: dict) ->
 
 补一份该材料的名称/体积缓存（制造、科研、强制启动缺口三条取料分支共用）。
 
-定义行：`664`
+定义行：`679`
 
 ### `aggregate_procurement`
 
@@ -252,7 +262,7 @@ def aggregate_procurement(conn, plans: list[dict], *, hangar_id: int | None=None
 
 聚合「备料中」计划的待采购材料并扣库存 → (rows, total_cost, total_volume)。
 
-定义行：`677`
+定义行：`692`
 
 ### `_item_meta_entry`
 
@@ -262,7 +272,7 @@ def _item_meta_entry(conn, mid: int) -> dict
 
 材料条目的元数据骨架 `&#123;name, total_qty, volume&#125;`（`expand_material_requirements` 同结构）。
 
-定义行：`840`
+定义行：`860`
 
 ### `collect_direct_materials`
 
@@ -272,4 +282,4 @@ def collect_direct_materials(conn, plans: list[dict]) -> dict[int, dict]
 
 聚合各计划的直接材料（recipe 一层，非递归），排除由子项产线自制的组件。
 
-定义行：`853`
+定义行：`873`

@@ -34,13 +34,11 @@ adj_price = pricing.get_adjusted_price(type_id=34)
 | 调整价格 | ESI `/markets/prices/` | 7 日加权均价 |
 | 系统成本指数 | ESI `/industry/systems/` | 各系统的工业制造成本指数 |
 
-### 价格走势图
+### 价格走势图（已移除）
 
-查询页面（QML `ui_qml/qml/pages/QueryPage.qml` + `ui_qml/bridge/price_chart_bridge.py`）支持价格走势图功能：
-
-- 从订单弹窗 → 点击「走势图」按钮
-- 基于 `services/price_history.py` 的历史价格缓存
-- 显示时间序列价格趋势
+> 2026-10-17 起查询页不再提供「价格走势图」对话框（无生产入口的死链已删除）。
+> 历史价格仍由 `services/price_history.py` 维护，供仪表盘资产折线等使用；
+> 查询页的走势图按钮、`PriceChartBridge`/`PriceChartDialog` 已删除，仅保留几何纯函数供仪表盘复用。
 
 ## 贸易评分
 

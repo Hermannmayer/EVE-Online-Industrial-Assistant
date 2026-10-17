@@ -26,7 +26,7 @@ def display_text(row: dict, key: str) -> str
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`74`
+定义行：`75`
 
 #### 方法
 
@@ -40,7 +40,7 @@ def __init__(self)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`75`
+定义行：`76`
 ##### `set_rows`
 
 ```python
@@ -51,7 +51,7 @@ def set_rows(self, r)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`80`
+定义行：`81`
 ##### `set_cols`
 
 ```python
@@ -62,7 +62,7 @@ def set_cols(self, c)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`85`
+定义行：`86`
 ##### `rowCount`
 
 ```python
@@ -73,7 +73,7 @@ def rowCount(self, p=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`90`
+定义行：`91`
 ##### `columnCount`
 
 ```python
@@ -84,7 +84,7 @@ def columnCount(self, p=None)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`93`
+定义行：`94`
 ##### `data`
 
 ```python
@@ -95,7 +95,7 @@ def data(self, idx, role=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`96`
+定义行：`97`
 ##### `headerData`
 
 ```python
@@ -106,7 +106,7 @@ def headerData(self, s, o, r=Qt.ItemDataRole.DisplayRole)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`134`
+定义行：`135`
 
 ### `class Proxy`（继承 `QSortFilterProxyModel`）
 
@@ -114,7 +114,7 @@ def headerData(self, s, o, r=Qt.ItemDataRole.DisplayRole)
 此类暂无 docstring，欢迎补充。
 :::
 
-定义行：`140`
+定义行：`141`
 
 #### 方法
 
@@ -128,4 +128,4 @@ def lessThan(self, left, right)
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`141`
+定义行：`142`

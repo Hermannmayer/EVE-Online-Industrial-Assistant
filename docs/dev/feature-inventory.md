@@ -239,7 +239,8 @@
 | 蓝图表（13 列） | 图标 / 名称 / 类型 / 材料等级 / 时间等级 / 产物名称 / 制造时间 / 流程数量 / 材料成本 / 销售收入 / 每流程利润 / 利润率 / 状态 | `ui_qml/models/inventory_helpers.py:BlueprintTableModel._HEADERS`；列定义 `inventory_bridge.py:InventoryBridge.blueprintColumns` |
 | 蓝图经济性 | 按材料 / 成品价格来源算每张蓝图的成本、收入、每流程利润与利润率 | `StoragePage.qml`（两个 `FPriceSourceRow`：`label: 材料` / `label: 成品`）← `inventory_bridge.py:InventoryBridge.setPriceSetting` / `refreshEconomics` / `_calc_economics` |
 | 蓝图筛选 | 类型 / 科技等级 / 市场分类 / 搜索 | `StoragePage.qml`（「类型:」「科技等级:」「市场分类:」「搜索:」）← `inventory_bridge.py:InventoryBridge.setTypeFilterIndex` / `setTechFilterIndex` / `setMarketFilterIndex` / `setBlueprintSearch` / `applyBlueprintFilter` |
-| 蓝图行操作 | 研究分析、删除行、修改所在机库、修改每流程成本、自动填写每流程成本（T2 发明）、修改蓝图等级、修改流程数、复制该格 | `StoragePage.qml`（蓝图右键菜单）← `inventory_bridge.py:InventoryBridge.showResearchAnalysis` / `deleteBlueprints` / `moveBlueprints` / `setBlueprintCostPerRun` / `autoFillCostPerRun` / `editBlueprintLevels` / `editBlueprintRuns` / `copyBlueprintCell` |
+| 蓝图行操作 | 研究分析、删除行、修改所在机库、修改每流程成本、自动填写每流程成本（T2/T3 发明，支持批量）、修改蓝图等级、修改流程数、复制该格 | `StoragePage.qml`（蓝图右键菜单）← `inventory_bridge.py:InventoryBridge.showResearchAnalysis` / `deleteBlueprints` / `moveBlueprints` / `setBlueprintCostPerRun` / `autoFillCostPerRun` / `editBlueprintLevels` / `editBlueprintRuns` / `copyBlueprintCell` |
+| 「蓝图成本」列（T2/T3 BPC） | 蓝图管理表末列显示 `user_blueprints.cost_per_run`：仅 T2/T3 蓝图拷贝显示数值，T1/T3 原图等显示 `—`；工具栏「批量填充 T2/T3 蓝图成本」按发明期望单流程成本批量写入；制造计划绑定该 BPC 时利润计入这笔成本 | `inventory_helpers.BlueprintTableModel`（14 列）/ `blueprint_actions.auto_fill_cost_per_run` / `inventory_bridge.autoFillSelectedBlueprints` |
 | 加入四种规划 | 加入制造业规划 / 加入拷贝规划 / 加入发明规划 / 加入效率研究规划 | `StoragePage.qml`（蓝图右键）← `inventory_bridge.py:InventoryBridge.addToManufacturingPlan` / `addCopyPlan` / `addInventionPlan` / `addResearchPlan` |
 | 粘贴导入蓝图 | 从游戏复制蓝图清单批量导入 | `StoragePage.qml`（「粘贴导入蓝图」）← `inventory_bridge.py:InventoryBridge.pasteBlueprints`；`ui_qml/workers/blueprint_import_worker.py` |
 | 刷新计算 | 重算估值与状态列 | `StoragePage.qml`（「刷新计算」）← `inventory_bridge.py:InventoryBridge.refreshAll` |
@@ -299,11 +300,11 @@
 
 | 功能 | 现状证据 | 说明 |
 |------|----------|------|
-| 批量查价（含 CSV 导出） | 对话框 `ui_qml/bridge/batch_price_bridge.py:BatchPriceQmlDialog` 只在 `tests/test_qml_batch_price.py` 实例化；`ui_qml/bridge/query_bridge.py:QueryBridge.openBatchPrice` **无任何调用方**；`QueryPage.qml` 工具栏只有「全物品 / 清空 / 区域」三个控件 | 曾挂在查询页工具栏，现已移除按钮 |
-| 全物品**独立窗口**（含制造评分 / 贸易评分 / 设置 / 批量对比 / 导出 / 置顶 / 右键菜单） | 类 `ui_qml/bridge/all_items_bridge.py:AllItemsQmlDialog` 只在 `tests/test_qml_all_items.py` 实例化；查询页只走**内嵌**形态 `QueryBridge.openAllItems`，内嵌态把这些按钮全部隐藏（`AllItemsDialog.qml` 各按钮 `visible: !page.embedded`） | 内嵌态仍可用：分类树、全表、排序、搜索、双击进详情 |
-| 批量对比（制造 / 贸易 / 反应三种口径） | `ui_qml/bridge/compare_bridge.py:CompareQmlDialog` / `open_compare_qml_dialog` 只在测试里调用；唯一入口是 `all_items_bridge.py:AllItemsBridge.openCompare`，而它只挂在独立窗的按钮上 | 连带不可达 |
-| CSV / Excel 导出（物品表、批量查价、批量对比） | `core/export_helper.py:export_to_csv` / `export_to_excel` 只有两个调用方（`batch_price_bridge.exportCsv`、`all_items_bridge.exportData`），两者都在上面两个不可达对话框里 | 目前**唯一可用的文件导出**是设置页的「导出用户数据…」（`settings_bridge.py:SettingsBridge.exportNow`） |
-| 价格走势图对话框 | `ui_qml/bridge/price_chart_bridge.py:PriceChartQmlDialog` 无调用方；查询页没有「走势图」按钮 | `price_chart_bridge` 的几何纯函数仍被 `query_dashboard_bridge` 复用 |
+| 批量查价 | **已删除（2026-10-17，路线 C）**：`batch_price_bridge.py` / `batch_price_workers.py` / `BatchPriceDialog.qml` / 测试与 `QueryBridge.openBatchPrice` 整链移除，生产代码 0 残留 | 历史功能，不再提供 |
+| 全物品**独立窗口** | **已删除（2026-10-17，路线 C）**：`AllItemsQmlDialog` 类与独立窗专属按钮/置顶/右键菜单已移除；只保留查询页**内嵌**形态（分类树、全表、排序、搜索、双击进详情） | 独立窗不再存在 |
+| 批量对比（制造 / 贸易 / 反应三种口径） | 独立窗入口已随 2026-10-17 清理删除；`compare_bridge.py` 与 `open_compare_qml_dialog` 目前仍无生产调用方（待决策：删除或补回入口） | 不可达（登记） |
+| CSV / Excel 导出（物品表、批量对比） | 批量查价链已删除；`all_items_bridge.exportData` 随独立窗清理失去入口，`core/export_helper` 暂无生产调用方 | 目前**唯一可用的文件导出**是设置页的「导出用户数据…」（`settings_bridge.py:SettingsBridge.exportNow`）；是否补入口待决策 |
+| 价格走势图 | **已删除（2026-10-17，路线 C）**：`PriceChartQmlDialog` / `PriceChartBridge` / `price_history_worker` / `PriceChartDialog.qml` 已移除；几何纯函数（`nice_range`/`axis_values`/`map_values`/`pick_indices`）保留在 `price_chart_bridge` 供仪表盘复用 | 不再提供走势图对话框 |
 | 物流运费计算（公开货运 / 自有运输的运费与利润） | `services/logistics.py:calc_transport_profit` / `estimate_freight_cost` 无 UI 调用方（`docs/dev/flows.md` 也把它标为「当前无 UI 入口」）；用户可见的只有合同页的跳数与每跳 ISK | 不要写成「物流规划页」 |
 
 ---
@@ -331,11 +332,11 @@
 
 | 位置 | 不一致 | 建议 |
 |------|--------|------|
-| `docs/user/query.md` | 说查询页工具栏有「批量查价」「制造配方」按钮、全物品是二级窗口 | 与现状不符（工具栏只剩「全物品 / 清空 / 区域」，全物品是内嵌面板） |
+| `docs/user/query.md` | 说查询页工具栏有「批量查价」「制造配方」按钮、全物品是二级窗口 | 已更新（2026-10-17）：工具栏只剩「全物品 / 清空 / 区域」，全物品是内嵌面板 |
 | `docs/user/overview.md` | 导航表只列 5 项（漏「市场监控」「合同市场」），ASCII 图列 6 项；页面 key 仍写 `estimate_view` / `query_view` 等旧命名；主题名写 One Dark Pro / One Light；Hub 只列 4 个 | 补齐 7 项、换成 page key、改主题名、补 Hek |
 | `docs/user/industry.md` | 写「19 列」（实际 20 列，含勾选列，见 `ui_qml/models/industry_models.py:PlanTableModel._HEADERS`）；Hub 只列 4 个 —— 注意 `ui_qml/models/plan_qml_model.py` 的类 docstring 自己也写着「19 列」，同样过时，别当依据 | 改成 20 列并说明含勾选列；补 Hek |
 | `docs/user/inventory.md` | 写物品表 9 列（实际 10 列：多了「按卖单总价值」「估值可信」之外还有规划占用/剩余/缺口/占用资金）；写「仓库页已迁到 QML（原 `ui_pyside6/`…）」 | 按当前 `_HEADERS` 重写；去掉沿革叙述 |
-| `docs/user/pricing.md` | 通篇是 service 级 API 示例；「价格走势图」一节描述的功能没有界面入口 | 改为用户口径或标注未接入 |
+| `docs/user/pricing.md` | 通篇是 service 级 API 示例；「价格走势图」一节描述的功能没有界面入口 | 已更新（2026-10-17）：走势图标注「已移除」，并说明历史价格仅服务内部使用 |
 | `docs/guide/quickstart.md` | Hub 只列 4 个；主题名写 One Dark Pro / One Light；流程里含「物流运输」 | 与现状对齐 |
 | `docs/dev/flows.md` | 标题「贸易评分（无 UI 入口）」**结论是对的**（贸易评分只挂在无生产调用方的独立窗里）；只是没说清「为什么无入口」 | 保留结论，补一句原因：评分模式所在的全物品独立窗没有调用方，内嵌态把评分按钮隐藏了 |
 | `docs/dev/feature-inventory.md` 的姊妹问题 | 旧 README 与部分文档把「全物品查询 / 批量对比 / 导出」当功能宣传 | 这三项当前都没有界面入口（见第 10 节） |
