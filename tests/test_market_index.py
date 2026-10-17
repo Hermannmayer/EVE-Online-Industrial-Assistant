@@ -435,3 +435,139 @@ def test_breadth_counts_advancers_decliners_and_turnover(db_manager):
     assert breadth["date"] == _day(11)
     assert (breadth["advancers"], breadth["decliners"], breadth["unchanged"]) == (1, 1, 1)
     assert breadth["turnover"] == pytest.approx(110.0 * 2 + 90.0 * 4 + 100.0 * 6)
+
+
+# ════════════════════════════════════════════════════════════════
+#  冷启动取数优化：等价性回归
+# ════════════════════════════════════════════════════════════════
+
+
+def test_active_member_filter_is_output_equivalent(db_manager, monkeypatch):
+    """冷启动优化回归：只装载「有历史行」的成员**不改变任何输出**（序列/篮子成员/权重/涨跌）。
+
+    优化点（`_load_observations`）：官方 CPI 本地有 14,218 个成员，但 Jita 的历史里只有
+    ~4,700 个 type 有行；优化前对全部 18,411 个成员逐个探测（21 个 SQL 分块），优化后先取
+    「有数据的成员」交集再批量查（6 块）。篮子定义、指数算法均不变。
+
+    这里造出：官方成员（34/18/691/178）+ 非官方 type（9999，也有历史但不在任何篮子）+ PLEX；
+    先跑正常路径，再把「活跃成员过滤」替换成「返回全部历史 type」（= 优化前的全量探测），
+    断言两张 dashboard 逐字段完全相同（含 points 浮点值、members 权重/价格）。
+    """
+    _seed_official_items(db_manager)
+    price_rows = []
+    for tid in (34, 18, 178, 691, 9999):
+        price_rows += [(tid, _day(i), 100.0 + i, 10 + i) for i in range(12)]
+    _insert_prices(db_manager, price_rows)
+    _insert_global_prices(db_manager, [(mis.PLEX_TYPE_ID, _day(i), 1000.0 + i) for i in range(12)])
+
+    filtered = mis.get_dashboard(_db=db_manager)
+    # 非空校验：「相等」不能是「都空转」
+    assert any(card["value"] is not None for card in filtered["cards"])
+    assert any(series["members"] for series in filtered["series"])
+
+    def all_history_ids(conn, region_id):
+        return {int(r[0]) for r in conn.execute("SELECT DISTINCT type_id FROM price_history")}
+
+    monkeypatch.setattr(mis, "_active_history_ids", all_history_ids)
+    unfiltered = mis.get_dashboard(_db=db_manager)
+
+    assert filtered == unfiltered
+
+
+def test_dashboard_memory_cache_hits_and_refresh_invalidates(db_manager, monkeypatch):
+    """进程内 TTL 缓存：第二次命中返回等值（深拷贝防污染）；refresh 成功后缓存失效重算。"""
+    _seed_official_items(db_manager)
+    _insert_prices(db_manager, [(34, _day(i), 100.0 + i, 10 + i) for i in range(12)])
+    _insert_global_prices(db_manager, [(mis.PLEX_TYPE_ID, _day(i), 1000.0 + i) for i in range(12)])
+
+    loads = {"count": 0}
+    real_load = mis._load_observations
+
+    def counting_load(*args, **kwargs):
+        loads["count"] += 1
+        return real_load(*args, **kwargs)
+
+    monkeypatch.setattr(mis, "_load_observations", counting_load)
+    # 缓存走 `_db is None` 的生产路径，`get_db()` 指向临时库；refresh 内部也走它。
+    monkeypatch.setattr(mis, "get_db", lambda: db_manager)
+    mis.clear_index_memory_cache()
+    try:
+        first = mis.get_dashboard()
+        assert loads["count"] == 1, "首次未命中应装载一次观测"
+        first["cards"][0]["value"] = -999.0  # 原地改返回值不得污染缓存
+        first["series"][0]["members"].clear()
+
+        second = mis.get_dashboard()
+        assert loads["count"] == 1, "第二次应命中缓存，不再装载观测"
+        assert second["cards"][0]["value"] != -999.0
+        assert second["series"][0]["members"], "缓存命中必须是原值的深拷贝"
+
+        mis.refresh_index_daily()
+        assert loads["count"] == 2, "refresh 应重建一次（写物化表）"
+        third = mis.get_dashboard()
+        assert loads["count"] == 3, "refresh 成功后缓存失效，应重新装载观测"
+        assert third == second
+    finally:
+        mis.clear_index_memory_cache()
+
+
+def test_incremental_points_only_append_missing_days(db_manager, monkeypatch):
+    """历史点位**一律不重算**：物化表已有 0/1/N 天缺口时只增量续算缺失日期。
+
+    正确性底线（与全量重算逐点一致）在副本真实库上做过等价验证；这里用替身计数锁死
+    「读路径不得再调用 `_build_index` 重算历史」，并验 0/1/N 天缺口只补缺失点。
+    """
+    _seed_official_items(db_manager)
+    with db_manager.connect("mkt") as conn:
+        conn.execute(mis.MARKET_INDEX_DDL)
+        conn.executemany(
+            "INSERT INTO market_index_daily (type_id, region_id, date, price, volume) VALUES (?, ?, ?, ?, ?)",
+            [(mis.INDEX_TYPE_IDS[key], _RID, _day(i), 100.0, 0) for key in mis.INDEX_KEYS for i in range(12)],
+        )
+    _insert_prices(db_manager, [(34, _day(i), 100.0, 10) for i in range(12)])
+    monkeypatch.setattr(
+        mis, "_build_index", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("历史被重算！"))
+    )
+
+    # ① 缺 0 天（anchor = 物化表最后一天）：只读点位，不触发任何计算
+    series = {item["key"]: item for item in mis.get_index_series(_db=db_manager)}
+    assert len(series["mpi"]["points"]) == 12
+    assert series["mpi"]["points"][-1]["date"] == _day(11)
+    assert [p["value"] for p in series["mpi"]["points"]] == [100.0] * 12
+
+    # ② 缺 1 天：day12 成员均价 +10% → 只 append 1 个点，历史前缀逐点不变
+    _insert_prices(db_manager, [(34, _day(12), 110.0, 10)])
+    mis.clear_index_memory_cache()  # 锚定日/结果有 10 分钟进程缓存，新交易日要让它重新取
+    mpi = {item["key"]: item for item in mis.get_index_series(_db=db_manager)}["mpi"]
+    assert len(mpi["points"]) == 13 and mpi["points"][-1]["date"] == _day(12)
+    assert mpi["points"][-1]["value"] == pytest.approx(110.0)
+    assert [p["value"] for p in mpi["points"][:12]] == [100.0] * 12
+    with db_manager.connect("mkt") as conn:
+        stored = conn.execute(
+            "SELECT COUNT(*) FROM market_index_daily WHERE type_id = ?", (mis.INDEX_TYPE_IDS["mpi"],)
+        ).fetchone()[0]
+    assert stored == 13, "增量补的点必须落库（否则下次打开又重算）"
+
+    # ③ 缺 N=3 天（物化表仍停在 day11）：只补 day12~14，历史不动
+    _insert_prices(db_manager, [(34, _day(13), 121.0, 10), (34, _day(14), 133.1, 10)])
+    mis.clear_index_memory_cache()
+    series = {item["key"]: item for item in mis.get_index_series(_db=db_manager)}
+    mpi = series["mpi"]
+    assert len(mpi["points"]) == 15
+    assert [p["date"] for p in mpi["points"][-3:]] == [_day(12), _day(13), _day(14)]
+    assert [p["value"] for p in mpi["points"][-3:]] == pytest.approx([110.0, 121.0, 133.1])
+    assert len(series["cpi"]["points"]) == 12, "无新数据的指数必须保持原样"
+
+    # ④ 同日重复打开：物化点位已补齐到锚定日 → 不再新增任何点（增量函数只做空跑）
+    appended_counts: list[int] = []
+    real_append = mis._append_missing_days
+
+    def counting_append(points, obs, members, anchor):
+        result = real_append(points, obs, members, anchor)
+        appended_counts.append(len(result) - len(points))
+        return result
+
+    monkeypatch.setattr(mis, "_append_missing_days", counting_append)
+    again = {item["key"]: item for item in mis.get_index_series(_db=db_manager)}["mpi"]
+    assert sum(appended_counts) == 0, "同日重复打开不得新增任何点位"
+    assert again["points"] == mpi["points"]

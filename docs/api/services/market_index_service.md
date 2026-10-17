@@ -74,6 +74,15 @@ MER 新闻页（https://www.eveonline.com/news/view/monthly-economic-report-sept
 大盘页要「卡片 + 序列」两样：用 :func:`get_dashboard` 一次算完（成分集 / 观测装载 / 逐日累乘
 只跑一遍），不要分别调那两个函数 —— 那会把同一套计算整跑两遍。
 
+进程内缓存
+----------
+物化表只负责「点位」，成员表/权重/成员价格每次仍要从 `price_history` 装载 ~74 万行重算
+（真实库一次约 1.9s）。故三个公开读接口还有一层**进程内短 TTL 缓存**
+（:data:`INDEX_MEMO_TTL_S`，键 = 函数名 + 区域 + keys + 锚定日）：命中时返回
+`copy.deepcopy`，调用方原地改返回值不会污染缓存；``_db`` 显式注入（测试/特殊调用）不走缓存，
+避免同一进程里不同库串数据。:func:`refresh_index_daily` 成功与
+:func:`clear_index_memory_cache` 都会清空它。
+
 ## 函数
 
 ### `clamp_return`
@@ -84,7 +93,7 @@ def clamp_return(value: float | None) -> float | None
 
 单成分日收益去极值：超过 :data:`RETURN_CLAMP`（±20%）按 ±20% 计。
 
-定义行：`538`
+定义行：`555`
 
 ### `weighted_median`
 
@@ -94,7 +103,7 @@ def weighted_median(values: Sequence[float], weights: Sequence[float]) -> float 
 
 成交量加权中位数（权重非正的样本不参与）。
 
-定义行：`549`
+定义行：`566`
 
 ### `cap_weights`
 
@@ -104,7 +113,7 @@ def cap_weights(raw: Mapping[K, float]) -> dict[K, tuple[float, bool]]
 
 成交额权重：单成分上限 :data:`WEIGHT_CAP`（25%）后按合计归一化。
 
-定义行：`576`
+定义行：`593`
 
 ### `classify_official_basket`
 
@@ -114,7 +123,7 @@ def classify_official_basket(type_id: int, market_group_id: int | None) -> str |
 
 官方 MER 篮子分类（纯函数，不查库）：`type_id` + SDE `market_group_id` → 指数 key 或 `None`。
 
-定义行：`598`
+定义行：`615`
 
 ### `_build_index`
 
@@ -124,7 +133,7 @@ def _build_index(obs: Mapping[int, Sequence[tuple[str, float, int]]], members: I
 
 把「成员 → 逐日 `(date, average, volume)`」链式累乘成指数。
 
-定义行：`621`
+定义行：`638`
 
 ### `_price_change`
 
@@ -134,7 +143,7 @@ def _price_change(rows: Sequence[tuple[str, float, int]], days: int) -> float | 
 
 成员自身近 `days` 个日历天的成交均价涨幅（%）—— 数据不足 → `None`。
 
-定义行：`716`
+定义行：`743`
 
 ### `_last_price`
 
@@ -144,7 +153,7 @@ def _last_price(rows: Sequence[tuple[str, float, int]], anchor: date | None) -> 
 
 成员在 `anchor` 日（含）之前**最近一次**成交均价；没有可用观测 → `None`（不用 0 冒充）。
 
-定义行：`732`
+定义行：`761`
 
 ### `_weights_at`
 
@@ -154,7 +163,17 @@ def _weights_at(obs: Mapping[int, Sequence[tuple[str, float, int]]], members: It
 
 以 `anchor` 为最后一天，算成员表用的 30 天成交额权重（准入 + 25% 上限 + 归一化）。
 
-定义行：`745`
+定义行：`777`
+
+### `_append_missing_days`
+
+```python
+def _append_missing_days(points: list[dict], obs: Mapping[int, Sequence[tuple[str, float, int]]], members: Iterable[int], anchor: date) -> list[dict]
+```
+
+在已物化点位后**只补缺失的指数日**（通常今天 1 个点），历史点位一棵不动。
+
+定义行：`804`
 
 ### `_table_has_column`
 
@@ -164,7 +183,7 @@ def _table_has_column(conn, table: str, column: str) -> bool
 
 `table` 是否存在且含 `column`（表不存在 → False）。
 
-定义行：`773`
+定义行：`906`
 
 ### `_table_exists`
 
@@ -174,7 +193,7 @@ def _table_exists(conn, name: str) -> bool
 
 表是否存在。`name` 可以带库前缀（如 `ref.item`）—— 带前缀时查那张库的 `sqlite_master`。
 
-定义行：`784`
+定义行：`917`
 
 ### `_last_history_day`
 
@@ -184,7 +203,17 @@ def _last_history_day(conn_mgr, region_id: int) -> date | None
 
 最新**已补齐**的**成交**数据日（只看 `price_history`，覆盖数达标的那天）。
 
-定义行：`805`
+定义行：`938`
+
+### `latest_price_day`
+
+```python
+def latest_price_day(region_id: int=JITA_RID, _db=None) -> str | None
+```
+
+`price_history` / 全服价的最新日期（**不做覆盖度校验**，~ms）。
+
+定义行：`962`
 
 ### `_last_day`
 
@@ -194,7 +223,27 @@ def _last_day(conn_mgr, region_id: int) -> date | None
 
 指数计算用的最新数据日：**成交**的已补齐日 与 **全服价**的最新日取较晚者。
 
-定义行：`829`
+定义行：`986`
+
+### `_active_history_ids`
+
+```python
+def _active_history_ids(conn, region_id: int) -> set[int]
+```
+
+该区域 `price_history` 里**有任意历史行**的 type_id 集合（覆盖索引扫描，不读表）。
+
+定义行：`1020`
+
+### `_global_price_type_ids`
+
+```python
+def _global_price_type_ids(conn) -> set[int]
+```
+
+`global_price_daily` 里有行的 type_id（只有 PLEX 这类全服统一价品种，表很小）。
+
+定义行：`1031`
 
 ### `_read_region_history`
 
@@ -204,7 +253,7 @@ def _read_region_history(conn, out: dict[int, list[tuple[str, float, int]]], reg
 
 把 `price_history` 里 `region_id` 的 `ids` 行追加进 `out`（按 `_SQL_CHUNK` 分批）。
 
-定义行：`856`
+定义行：`1038`
 
 ### `_load_observations`
 
@@ -214,7 +263,7 @@ def _load_observations(conn_mgr, region_id: int, type_ids: Iterable[int], start:
 
 读 `price_history` → `&#123;type_id: [(date, average, volume), ...]&#125;`（按日期升序）。
 
-定义行：`878`
+定义行：`1061`
 
 ### `_load_global_observations`
 
@@ -224,7 +273,7 @@ def _load_global_observations(conn, type_ids: Iterable[int], start: date, end: d
 
 读 `global_price_daily`（全服统一价）→ 与 `price_history` 同形的序列。
 
-定义行：`919`
+定义行：`1112`
 
 ### `_load_names`
 
@@ -234,7 +283,7 @@ def _load_names(conn_mgr, type_ids: Iterable[int]) -> dict[int, str]
 
 `&#123;type_id: 中文名（退回英文名，再退回 #id）&#125;`；reference.db 没表 → `&#123;&#125;`。
 
-定义行：`948`
+定义行：`1141`
 
 ### `official_index_members`
 
@@ -244,7 +293,7 @@ def official_index_members(conn_mgr=None) -> dict[str, set[int]]
 
 官方 MER 四指数篮子（`&#123;mpi, pppi, sppi, cpi&#125;` → type_id 集合）—— 指数与异动榜的唯一口径。
 
-定义行：`968`
+定义行：`1161`
 
 ### `_official_classes`
 
@@ -254,7 +303,7 @@ def _official_classes(conn_mgr) -> tuple[set[int], set[int]]
 
 官方 MER 篮子的 PPPI / SPPI 成员集合（= :func:`official_index_members` 的对应两项）。
 
-定义行：`994`
+定义行：`1187`
 
 ### `production_input_classes`
 
@@ -264,7 +313,7 @@ def production_input_classes(db=None) -> tuple[set[int], set[int]]
 
 **生产投入品**的 PPPI / SPPI 划分 —— 指数篮子与异动榜共用的唯一口径。
 
-定义行：`1000`
+定义行：`1193`
 
 ### `production_inputs`
 
@@ -274,27 +323,27 @@ def production_inputs(db=None) -> set[int]
 
 生产投入品 = PPPI ∪ SPPI（见 :func:`production_input_classes`）。
 
-定义行：`1013`
+定义行：`1206`
 
 ### `_member_sets`
 
 ```python
-def _member_sets(conn_mgr, keys: Sequence[str]) -> tuple[dict[str, set[int]], set[int]]
+def _member_sets(conn_mgr, keys: Sequence[str]) -> dict[str, set[int]]
 ```
 
-`(&#123;key: 候选成分&#125;)`, **生产投入品**集合（= PPPI ∪ SPPI）。
+`&#123;key: 候选成分&#125;`：**官方 MER 篮子**的成员集合（指数与异动榜同一口径）。
 
-定义行：`1019`
+定义行：`1212`
 
 ### `_build_for`
 
 ```python
-def _build_for(conn_mgr, region_id: int, keys: Sequence[str], anchor: date | None=None, sets: Mapping[str, set[int]] | None=None) -> dict[str, _IndexPoints]
+def _build_for(conn_mgr, region_id: int, keys: Sequence[str], anchor: date | None=None, sets: Mapping[str, set[int]] | None=None, obs: Mapping[int, Sequence[tuple[str, float, int]]] | None=None) -> dict[str, _IndexPoints]
 ```
 
 实时计算若干指数的点位（不写库）。
 
-定义行：`1038`
+定义行：`1230`
 
 ### `_read_materialized`
 
@@ -304,17 +353,78 @@ def _read_materialized(conn_mgr, region_id: int, key: str) -> list[dict]
 
 读物化表里某指数的点位；没有表/没有行 → `[]`。
 
-定义行：`1065`
+定义行：`1259`
+
+### `_persist_points`
+
+```python
+def _persist_points(conn_mgr, region_id: int, key: str, points: Sequence[dict], *, replace: bool=False) -> None
+```
+
+把点位写回 `market_index_daily` —— 读路径算出的增量结果也必须落库，否则下次打开又重算。
+
+定义行：`1274`
 
 ### `_resolve_points`
 
 ```python
-def _resolve_points(conn_mgr, region_id: int, keys: Sequence[str], anchor: date | None=None, sets: Mapping[str, set[int]] | None=None) -> dict[str, list[dict]]
+def _resolve_points(conn_mgr, region_id: int, keys: Sequence[str], anchor: date | None=None, sets: Mapping[str, set[int]] | None=None, obs: Mapping[int, Sequence[tuple[str, float, int]]] | None=None) -> dict[str, list[dict]]
 ```
 
-点位：优先读物化缓存，缺失的指数实时计算（**不**写库）。
+点位：**历史一律读已物化缓存、不重算**；只对「最后点位日 → 锚定日」的缺口做增量续算。
 
-定义行：`1080`
+定义行：`1303`
+
+### `_anchor_key`
+
+```python
+def _anchor_key(anchor: date | None) -> str | None
+```
+
+锚定日 → 缓存 key 片段（`None` 表无数据）。
+
+定义行：`1374`
+
+### `_cached_anchor`
+
+```python
+def _cached_anchor(conn_mgr, region_id: int) -> date | None
+```
+
+锚定日（`_last_day`）随指数结果一起缓存：该查询在真实库上实测 ~170ms，是缓存命中路径的
+主要残费；TTL 内复用同一锚定日即可（`refresh_index_daily` 清缓存后重新查）。
+
+定义行：`1379`
+
+### `_memo_lookup`
+
+```python
+def _memo_lookup(key: tuple[Any, ...]) -> Any
+```
+
+命中且未过期 → 返回深拷贝；未命中/已过期 → `_MEMO_MISS`。
+
+定义行：`1392`
+
+### `_memo_store`
+
+```python
+def _memo_store(key: tuple[Any, ...], value: Any) -> None
+```
+
+写入缓存（值应视为不可变规范副本）；顺带清掉过期项，键数量有界。
+
+定义行：`1408`
+
+### `clear_index_memory_cache`
+
+```python
+def clear_index_memory_cache() -> None
+```
+
+清空进程内指数缓存（`refresh_index_daily` 成功后自动调用；测试/价格刷新可显式调）。
+
+定义行：`1418`
 
 ### `refresh_index_daily`
 
@@ -324,7 +434,7 @@ def refresh_index_daily(region_id: int=JITA_RID) -> int
 
 重建 `market.db.market_index_daily`（五个指数逐日点位），返回写入行数。
 
-定义行：`1109`
+定义行：`1424`
 
 ### `_pct`
 
@@ -334,7 +444,7 @@ def _pct(value: float | None, base: float | None) -> float | None
 
 百分比涨幅；基数缺失/为 0 → `None`（不用 0 冒充）。
 
-定义行：`1133`
+定义行：`1452`
 
 ### `_value_before`
 
@@ -344,7 +454,7 @@ def _value_before(points: Sequence[dict], days: int) -> float | None
 
 最后一个点往前 `days` 个日历天（含）之前最近一个点的点位；不够长 → `None`。
 
-定义行：`1140`
+定义行：`1459`
 
 ### `_cards_from_points`
 
@@ -354,17 +464,17 @@ def _cards_from_points(points_map: Mapping[str, Sequence[dict]]) -> list[dict]
 
 点位表 → 五张指数卡（`get_index_cards` / `get_dashboard` 共用这一份口径）。
 
-定义行：`1154`
+定义行：`1473`
 
 ### `_series_from_points`
 
 ```python
-def _series_from_points(conn_mgr, region_id: int, keys: Sequence[str], points_map: Mapping[str, Sequence[dict]], member_sets: Mapping[str, set[int]]) -> list[dict]
+def _series_from_points(conn_mgr, region_id: int, keys: Sequence[str], points_map: Mapping[str, Sequence[dict]], member_sets: Mapping[str, set[int]], obs: Mapping[int, Sequence[tuple[str, float, int]]] | None=None) -> list[dict]
 ```
 
 点位表 + 成分集 → 折线 + 篮子成员表（`get_index_series` / `get_dashboard` 共用）。
 
-定义行：`1181`
+定义行：`1500`
 
 ### `get_index_cards`
 
@@ -374,7 +484,7 @@ def get_index_cards(region_id: int=JITA_RID, _db=None) -> list[dict]
 
 五张指数卡：`[&#123;key,label,value,chg1,chg7,chg30,chg90,chg180,days,base_date&#125;]`。
 
-定义行：`1230`
+定义行：`1552`
 
 ### `get_index_series`
 
@@ -384,7 +494,7 @@ def get_index_series(keys: Sequence[str] | None=None, region_id: int=JITA_RID, _
 
 指数折线 + 篮子成员表：`[&#123;key,label,points:[&#123;date,value&#125;],members:[...]&#125;]`。
 
-定义行：`1239`
+定义行：`1573`
 
 ### `get_dashboard`
 
@@ -394,7 +504,7 @@ def get_dashboard(region_id: int=JITA_RID, _db=None) -> dict
 
 卡片 + 序列**一次算完** → `&#123;"cards": [...], "series": [...]&#125;`。
 
-定义行：`1256`
+定义行：`1610`
 
 ### `_member_row`
 
@@ -406,7 +516,7 @@ def _member_row(tid: int, weight: float, capped: bool, names: Mapping[int, str],
 此函数暂无 docstring，欢迎补充。
 :::
 
-定义行：`1274`
+定义行：`1645`
 
 ### `get_breadth`
 
@@ -416,7 +526,7 @@ def get_breadth(region_id: int=JITA_RID, _db=None) -> dict
 
 最新交易日的市场广度：`&#123;date,advancers,decliners,unchanged,turnover&#125;`。
 
-定义行：`1295`
+定义行：`1666`
 
 ## 类
 
@@ -424,4 +534,4 @@ def get_breadth(region_id: int=JITA_RID, _db=None) -> dict
 
 一条指数的计算结果：逐日点位 + 最后一个指数日的成分权重。
 
-定义行：`526`
+定义行：`543`

@@ -420,9 +420,13 @@ def _settings_path() -> str:
     return os.path.join(data_dir(), "market_monitor_settings.json")
 
 
-def _cache_path() -> str:
-    """上一份整页数据的缓存文件 —— **让首屏秒出**，不用等十几秒重算。"""
-    return os.path.join(data_dir(), "market_monitor_cache.json")
+def _cache_path(region_id: int) -> str:
+    """整页数据的磁盘缓存文件（按区域分开）—— **大盘的默认数据源**。
+
+    用户口径（2026-10-17）：「数据不要求实时性，只是看大盘趋势」→ 24h 内打开直接显示、
+    不再后台重算；缺失/超期才拉一次新数据。
+    """
+    return os.path.join(data_dir(), f"market_monitor_cache_{int(region_id)}.json")
 
 
 def _read_json(path: str) -> dict:
@@ -454,9 +458,10 @@ def _write_settings(payload: dict) -> None:
     _atomic_write_json(_settings_path(), payload)
 
 
-#: 磁盘缓存的保鲜期（秒）。超过就不再用它铺首屏（历史/成分都可能已经变了），
-#: 但要**立即**拉一次新数据 —— 缓存只是「别让首屏空白」，不是数据源。
-_CACHE_MAX_AGE_S = 12 * 3600
+#: 磁盘缓存的保鲜期（秒）。用户口径：「数据不要求实时性，只是看大盘趋势」——24h 内打开
+#: **直接显示缓存、不再自动重算**；超期/缺失才由页面 `refresh()` 拉一次新数据。
+#: 「刷新指数」按钮永远 `force=True` 重算并重写缓存（见 `_on_index_refreshed`）。
+_CACHE_MAX_AGE_S = 24 * 3600
 
 
 def _clamp_range_index(raw: Any) -> int:
@@ -468,24 +473,60 @@ def _clamp_range_index(raw: Any) -> int:
     return index if 0 <= index < len(RANGE_OPTIONS) else DEFAULT_RANGE_INDEX
 
 
-def _load_cached_payload() -> dict:
-    """读上一份 dashboard 缓存（过期/损坏 → `{}`）。"""
-    cached = _read_json(_cache_path())
+def _format_data_time(fetched_at: Any) -> str:
+    """缓存时间戳 → 「数据时间 MM-DD HH:MM」（界面用；坏值给 `—`）。"""
+    try:
+        return time.strftime("%m-%d %H:%M", time.localtime(float(fetched_at)))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "—"
+
+
+def _latest_data_day(region_id: int) -> str | None:
+    """最新成交日（毫秒级 MAX(date)，**不做覆盖度校验**）—— 判断缓存有没有跨交易日。
+
+    服务侧不可用/接口漂移时返回 `None`：此时只按 `_CACHE_MAX_AGE_S` 兜底，不因这个
+    新鲜度检查失败而把整页缓存判死。
+    """
+    try:
+        day = _index_service().latest_price_day(region_id)
+        return None if day is None else str(day)
+    except Exception:
+        # 吞的是「后端服务未落地/接口漂移」（ModuleNotFoundError/AttributeError）——
+        # 缓存新鲜度退化为 24h 时间窗，不影响页面本身
+        log.exception("读取最新成交日失败（缓存新鲜度退回 24h 时间窗）")
+        return None
+
+
+def _load_cached_payload(region_id: int) -> dict:
+    """读本区域的 dashboard 缓存（缺失/超期/跨交易日/损坏 → `{}`）。
+
+    返回值带上 `_fetched_at`（缓存时间戳，供界面显示「数据时间」）；其余键与 worker
+    payload 同构，可直接交给 `_apply_payload`。
+
+    「同日重复打开」命中：缓存未超 24h **且**最新成交日与缓存记录的一致（`_anchor`）。
+    一旦出现新成交日（哪怕尾部残缺日），就返回空 → 页面 `refresh()` 走一次增量刷新。
+    """
+    cached = _read_json(_cache_path(region_id))
     fetched = cached.get("fetched_at")
     if not isinstance(fetched, (int, float)):
         return {}
     if time.time() - float(fetched) > _CACHE_MAX_AGE_S:
         return {}
     payload = cached.get("payload")
-    return payload if isinstance(payload, dict) else {}
+    if not isinstance(payload, dict):
+        return {}
+    current_day = _latest_data_day(region_id)
+    if current_day is not None and payload.get("_anchor") != current_day:
+        return {}
+    return {**payload, "_fetched_at": float(fetched)}
 
 
-def _save_cached_payload(payload: dict) -> None:
-    """存一份 dashboard 缓存（失败只记日志：缓存坏了不该影响页面）。"""
+def _save_cached_payload(payload: dict, region_id: int) -> None:
+    """存一份本区域的 dashboard 缓存（失败只记日志：缓存坏了不该影响页面）。"""
     try:
-        _atomic_write_json(_cache_path(), {"fetched_at": time.time(), "payload": payload})
+        _atomic_write_json(_cache_path(region_id), {"fetched_at": time.time(), "payload": payload})
     except Exception:
-        log.exception("写大盘页缓存失败（首屏下次仍要等重算）")
+        log.exception("写大盘页缓存失败（下次打开仍要等重算）")
 
 
 def _series_views(raw_series: list[dict]) -> tuple[list[dict], list[dict], list[str]]:
@@ -1028,24 +1069,18 @@ class MarketPulseBridge(QObject):
         self._series_raw: list[dict] = []
         self._base_note = ""
 
-        # 首屏秒出：先把**上次的整页结果**（磁盘缓存）铺上，再让后台去读新的。
-        # 用户口径：「点开市场监控之后，这个指数要过很长一段时间，好几秒才能显示出来。没有本地缓存吗？」
-        cached = _load_cached_payload()
+        # 持久化缓存 = **默认数据源**（用户口径 2026-10-17：「数据不要求实时性，只是看大盘趋势」）：
+        # 24h 内直接显示上次结果、**不再**后台自动重算；缺失/超期才由页面 onCompleted 的
+        # `refresh()` 拉一次（`_loaded_at` 保证同一页面不重复触发；「刷新指数」按钮走 force）。
+        cached = _load_cached_payload(self._region_id())
         if cached:
-            self._on_loaded(cached)
-            self._status_text = "已显示上次数据，正在后台刷新…"
-            self.refreshStateChanged.emit()
+            self._apply_payload(cached, fetched_at=cached.get("_fetched_at"), persist=False)
 
         self._detail_open = False
         self._detail_title = ""
         self._detail_status = ""
         self._detail_rows: list[dict] = []
         self._advice: dict = dict(_EMPTY_ADVICE)
-
-        # 缓存铺完之后**立刻**发起一次后台刷新（`_loaded_at` 已在 `_on_loaded` 里被写成「刚刚」，
-        # 这里显式 force 一次，否则会被 TTL 挡掉、用户就一直看着旧数据）
-        if cached:
-            self.refresh(force=True)
 
     # ── 指数卡 / 主图 ────────────────────────────────────────
 
@@ -1166,21 +1201,39 @@ class MarketPulseBridge(QObject):
     @Slot(object)
     def _on_loaded(self, payload: object) -> None:
         """后台读完了：把结果装上并通知 QML（主线程）。"""
+        self._apply_payload(payload)
+
+    def _apply_payload(self, payload: object, *, fetched_at: float | None = None, persist: bool = True) -> None:
+        """装配整页 payload。
+
+        `fetched_at` 是数据时间（缓存路径传缓存时间戳，实时路径不传 = 现在）；
+        `persist=False` 用于「直接把磁盘缓存铺上」——不必把刚读出来的缓存再写回去。
+        """
         data = dict(payload or {}) if isinstance(payload, dict) else {}
         self._apply_indices(list(data.get("cards") or []), list(data.get("series") or []))
         self._apply_movers(list(data.get("movers") or []))
         self._apply_breadth(dict(data.get("breadth") or {}), list(data.get("turnover") or []))
         self._apply_status(list(data.get("status") or []))
-        self._status_text = (
+        counts = (
             f"指数 {len(self._cards)} 个 · 异动 {len(self._qualified)} 条合格成分 / "
             f"{len(self._market)} 条全市场 · 成交额窗口 {len(self._turnover)} 天"
         )
+        data_time = _format_data_time(fetched_at if fetched_at is not None else time.time())
+        # 缓存路径如实标「本地缓存」，让用户知道不是实时数据（用户明确要求显示数据时间）
+        suffix = "" if persist else "（本地缓存，点「刷新指数」更新）"
+        self._status_text = f"数据时间 {data_time}{suffix} · {counts}"
         self._loaded_at = time.monotonic()
         self._loading = False
         self._load_worker = None
-        # 落盘一份（首屏秒出用）；只在**真实读到了东西**时写，避免把空态当缓存
-        if self._cards or self._series_raw:
-            _save_cached_payload(data)
+        # 落盘一份（默认数据源）；只在**真实读到了东西**时写，避免把空态当缓存。
+        # `_anchor`（最新成交日）随缓存一起存：下一次打开若已跨交易日就判缓存过期，
+        # 走增量刷新而不是继续显示旧图。
+        if persist and (self._cards or self._series_raw):
+            to_save = dict(data)
+            anchor_day = _latest_data_day(self._region_id())
+            if anchor_day is not None:
+                to_save["_anchor"] = anchor_day
+            _save_cached_payload(to_save, self._region_id())
         self.dataChanged.emit()
         self.refreshStateChanged.emit()
 

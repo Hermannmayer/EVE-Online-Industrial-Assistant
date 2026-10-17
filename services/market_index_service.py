@@ -67,14 +67,26 @@ MER 新闻页（https://www.eveonline.com/news/view/monthly-economic-report-sept
 
 大盘页要「卡片 + 序列」两样：用 :func:`get_dashboard` 一次算完（成分集 / 观测装载 / 逐日累乘
 只跑一遍），不要分别调那两个函数 —— 那会把同一套计算整跑两遍。
+
+进程内缓存
+----------
+物化表只负责「点位」，成员表/权重/成员价格每次仍要从 `price_history` 装载 ~74 万行重算
+（真实库一次约 1.9s）。故三个公开读接口还有一层**进程内短 TTL 缓存**
+（:data:`INDEX_MEMO_TTL_S`，键 = 函数名 + 区域 + keys + 锚定日）：命中时返回
+`copy.deepcopy`，调用方原地改返回值不会污染缓存；``_db`` 显式注入（测试/特殊调用）不走缓存，
+避免同一进程里不同库串数据。:func:`refresh_index_daily` 成功与
+:func:`clear_index_memory_cache` 都会清空它。
 """
 
 from __future__ import annotations
 
+import copy
 import logging
+import threading
+import time
 from collections.abc import Hashable, Iterable, Mapping, Sequence
 from datetime import date, timedelta
-from typing import NamedTuple
+from typing import Any, NamedTuple, cast
 
 from services.database_manager import get_db
 
@@ -82,6 +94,11 @@ log = logging.getLogger(__name__)
 
 #: Jita（The Forge）—— 目前唯一历史天数够长的中心（计划 §6 风险表）
 JITA_RID = 10000002
+
+#: 进程内短 TTL 缓存（秒）。切页/重开大盘时同一 (区域, keys, 锚定日) 直接返回深拷贝，
+#: 不再重算「官方成员表 + 74 万行观测装载 + 逐成员价格/涨幅」；`refresh_index_daily()`
+#: 成功后会立即清空，价格导入等其它写路径最迟 TTL 后自然失效。
+INDEX_MEMO_TTL_S = 600.0
 
 INDEX_KEYS: tuple[str, ...] = ("mpi", "pppi", "sppi", "cpi", "plex")
 
@@ -625,6 +642,9 @@ def _build_index(obs: Mapping[int, Sequence[tuple[str, float, int]]], members: I
     只有「当日有成交均价 + 参考价可用 + 通过准入」的成员参与当日加权中位数。
     """
     member_ids = sorted({int(m) for m in members})
+    #: 日期串 → ordinal 缓存：一轮里同一日期被 N 个成员重复解析（14,218 个 CPI 成员 × ~150 行），
+    #: 而不同日期串只有 ~220 个；实测 `date.fromisoformat` 调用从 ~2M 次降到 ~220 次。
+    ordinal_cache: dict[str, int] = {}
     day_rows: dict[str, list[tuple[int, int]]] = {}
     turnovers: dict[int, list[float]] = {}
     returns: dict[int, list[float | None]] = {}
@@ -636,7 +656,13 @@ def _build_index(obs: Mapping[int, Sequence[tuple[str, float, int]]], members: I
         rows = list(obs.get(tid) or [])
         if len(rows) < 2:
             continue  # 单点算不出收益，也无法构成指数
-        ords = [date.fromisoformat(row[0]).toordinal() for row in rows]
+        ords: list[int] = []
+        for row in rows:
+            ordinal = ordinal_cache.get(row[0])
+            if ordinal is None:
+                ordinal = date.fromisoformat(row[0]).toordinal()
+                ordinal_cache[row[0]] = ordinal
+            ords.append(ordinal)
         avgs = [float(row[1]) for row in rows]
         turns = [float(row[1]) * float(row[2]) for row in rows]
 
@@ -708,35 +734,41 @@ def _build_index(obs: Mapping[int, Sequence[tuple[str, float, int]]], members: I
         # 首个可算日就是基期（100），当日收益从**下一个**指数日开始计入
         level = BASE_VALUE if level is None else level * (1.0 + aggregate)
         points.append({"date": day, "value": level, "volume": int(round(day_turnover))})
-        last_weights = dict(weights)
+        # `weights` 每天都是新 dict、之后不再修改 → 直接留引用，避免再拷贝一份（214 天 × ~4k 项）。
+        last_weights = weights
 
     return _IndexPoints(points=points, weights=last_weights)
 
 
 def _price_change(rows: Sequence[tuple[str, float, int]], days: int) -> float | None:
-    """成员自身近 `days` 个日历天的成交均价涨幅（%）—— 数据不足 → `None`。"""
+    """成员自身近 `days` 个日历天的成交均价涨幅（%）—— 数据不足 → `None`。
+
+    日期是 `YYYY-MM-DD` 的 ISO 串，**字典序即时间序**，直接比字符串（不逐行 `fromisoformat`）。
+    """
     if len(rows) < 2:
         return None
-    cutoff = date.fromisoformat(rows[-1][0]).toordinal() - days
+    cutoff = (date.fromisoformat(rows[-1][0]) - timedelta(days=days)).isoformat()
     base: float | None = None
     for item in rows:
-        if date.fromisoformat(item[0]).toordinal() <= cutoff:
-            base = float(item[1])
-        else:
+        if item[0] > cutoff:
             break
+        base = float(item[1])
     if base is None or base <= 0:
         return None
     return (float(rows[-1][1]) / base - 1.0) * 100.0
 
 
 def _last_price(rows: Sequence[tuple[str, float, int]], anchor: date | None) -> float | None:
-    """成员在 `anchor` 日（含）之前**最近一次**成交均价；没有可用观测 → `None`（不用 0 冒充）。"""
+    """成员在 `anchor` 日（含）之前**最近一次**成交均价；没有可用观测 → `None`（不用 0 冒充）。
+
+    `rows` 按日期升序，日期是 ISO 串 → 直接比字符串（不逐行解析）。
+    """
     if anchor is None:
         return None
+    limit = anchor.isoformat()
     last: float | None = None
-    limit = anchor.toordinal()
     for day, average, _volume in rows:
-        if date.fromisoformat(day).toordinal() > limit:
+        if day > limit:
             break
         last = float(average)
     return last
@@ -747,22 +779,123 @@ def _weights_at(
     members: Iterable[int],
     anchor: date,
 ) -> dict[int, tuple[float, bool]]:
-    """以 `anchor` 为最后一天，算成员表用的 30 天成交额权重（准入 + 25% 上限 + 归一化）。"""
-    last = anchor.toordinal()
-    first = last - (REBALANCE_DAYS - 1)
+    """以 `anchor` 为最后一天，算成员表用的 30 天成交额权重（准入 + 25% 上限 + 归一化）。
+
+    `rows` 按日期升序、日期是 ISO 串 → 用字符串边界比较并提前 `break`（不逐行解析）。
+    """
+    last = anchor.isoformat()
+    first = (anchor - timedelta(days=REBALANCE_DAYS - 1)).isoformat()
     raw: dict[int, float] = {}
     for tid in members:
         covered = 0
         turnover = 0.0
         for day, average, volume in obs.get(tid) or []:
-            ordinal = date.fromisoformat(day).toordinal()
-            if ordinal < first or ordinal > last:
+            if day < first:
                 continue
+            if day > last:
+                break
             covered += 1
             turnover += float(average) * float(volume)
         if turnover > MIN_TURNOVER_ISK and covered >= MIN_COVERED_DAYS:
             raw[tid] = turnover
     return cap_weights(raw)
+
+
+def _append_missing_days(
+    points: list[dict],
+    obs: Mapping[int, Sequence[tuple[str, float, int]]],
+    members: Iterable[int],
+    anchor: date,
+) -> list[dict]:
+    """在已物化点位后**只补缺失的指数日**（通常今天 1 个点），历史点位一棵不动。
+
+    口径逐点对齐 :func:`_build_index`：成员日收益用「当日均价 ÷ 上一有效均价」（间隔
+    > :data:`RETURN_GAP_DAYS` → 当日不参与）、权重用当日往前 :data:`REBALANCE_DAYS`
+    天成交额（准入 + :data:`WEIGHT_CAP` 上限 + 归一化）、聚合用加权中位数、点位从
+    `points[-1].value` 续乘。**不重跑 220 天窗口**：每成员只扫「最后点位日之前
+    :data:`REBALANCE_DAYS` 天」起的行。
+
+    `obs` 由调用方按需装载（必须覆盖到缺口的窗口，见 :func:`_resolve_points`）。
+    """
+    if not points:
+        return list(points)
+    last_date = str(points[-1]["date"])
+    level = float(points[-1]["value"])
+    window_start = (date.fromisoformat(last_date) - timedelta(days=REBALANCE_DAYS - 1)).isoformat()
+    #: 缺失日 → [(tid, turn, ret, win_turn, win_cov, price_only)]
+    day_rows: dict[str, list[tuple[int, float, float | None, float, int, bool]]] = {}
+    ordinal_cache: dict[str, int] = {}
+    for raw_tid in members:
+        tid = int(raw_tid)
+        rows = list(obs.get(tid) or [])
+        if len(rows) < 2:
+            continue
+        turns = [float(row[1]) * float(row[2]) for row in rows]
+        price_only = not any(turns)
+        # 窗口起点所在行（再往前留一行做「上一观测」基数）
+        start = len(rows)
+        for idx, row in enumerate(rows):
+            if row[0] >= window_start:
+                start = idx
+                break
+        start = max(start - 1, 0)
+        if start >= len(rows) - 1:
+            continue
+        window_rows = rows[start:]
+        ords: list[int] = []
+        for row in window_rows:
+            ordinal = ordinal_cache.get(row[0])
+            if ordinal is None:
+                ordinal = date.fromisoformat(row[0]).toordinal()
+                ordinal_cache[row[0]] = ordinal
+            ords.append(ordinal)
+        avgs = [float(row[1]) for row in window_rows]
+        turns_w = turns[start:]
+        prefix = [0.0]
+        for turn in turns_w:
+            prefix.append(prefix[-1] + turn)
+        left = 0
+        for i, row in enumerate(window_rows):
+            while ords[i] - ords[left] >= REBALANCE_DAYS:
+                left += 1
+            if row[0] <= last_date:
+                continue
+            ret: float | None = None
+            if i > 0 and ords[i] - ords[i - 1] <= RETURN_GAP_DAYS and avgs[i - 1] > 0:
+                ret = clamp_return(avgs[i] / avgs[i - 1] - 1.0)
+            day_rows.setdefault(row[0], []).append(
+                (tid, turns_w[i], ret, prefix[i + 1] - prefix[left], i + 1 - left, price_only)
+            )
+
+    appended: list[dict] = []
+    for day in sorted(day_rows):
+        day_turnover = 0.0
+        day_returns: dict[int, float] = {}
+        raw_weights: dict[int, float] = {}
+        for tid, turn, ret, win_turn, win_cov, price_only in day_rows[day]:
+            day_turnover += turn
+            if ret is None:
+                continue
+            if price_only:
+                if win_cov >= MIN_COVERED_DAYS:
+                    day_returns[tid] = ret
+                    raw_weights[tid] = 1.0
+                continue
+            if win_turn > MIN_TURNOVER_ISK and win_cov >= MIN_COVERED_DAYS:
+                day_returns[tid] = ret
+                raw_weights[tid] = win_turn
+        weights = cap_weights(raw_weights)
+        if not weights:
+            continue
+        aggregate = weighted_median(
+            [day_returns[tid] for tid in weights],
+            [weight for weight, _capped in weights.values()],
+        )
+        if aggregate is None:
+            continue
+        level = level * (1.0 + aggregate)
+        appended.append({"date": day, "value": level, "volume": int(round(day_turnover))})
+    return [*points, *appended]
 
 
 # ════════════════════════════════════════════════════════════════
@@ -826,6 +959,30 @@ def _last_history_day(conn_mgr, region_id: int) -> date | None:
     return date.fromisoformat(best) if best else None
 
 
+def latest_price_day(region_id: int = JITA_RID, _db=None) -> str | None:
+    """`price_history` / 全服价的最新日期（**不做覆盖度校验**，~ms）。
+
+    仅供桥层判断「磁盘缓存是否已经跨了交易日」：同一天重复打开可继续用 payload 文件；
+    出现新日期（哪怕尾部残缺日）就认为需要增量刷新一次。口径与 :func:`_last_day` 不同：
+    这里要的是「有没有新行」而不是「指数锚定日」，所以故意取裸 MAX(date)。
+    """
+    conn_mgr = _db or get_db()
+    with conn_mgr.connect("mkt") as conn:
+        best: str | None = None
+        if _table_exists(conn, "price_history"):
+            row = conn.execute(
+                "SELECT MAX(date) FROM price_history WHERE region_id IN (?, ?)",
+                (region_id, PLEX_REGION_ID),
+            ).fetchone()
+            if row and row[0]:
+                best = str(row[0])
+        if _table_exists(conn, "global_price_daily"):
+            row = conn.execute("SELECT MAX(date) FROM global_price_daily").fetchone()
+            if row and row[0]:
+                best = max(best or "", str(row[0])) or None
+    return best
+
+
 def _last_day(conn_mgr, region_id: int) -> date | None:
     """指数计算用的最新数据日：**成交**的已补齐日 与 **全服价**的最新日取较晚者。
 
@@ -853,6 +1010,31 @@ def _last_day(conn_mgr, region_id: int) -> date | None:
     return best
 
 
+#: `price_history` 的主键索引名（SQLite 为 `PRIMARY KEY (type_id, region_id, date)` 自动生成）。
+#: 取「有数据的成员集合」时**强制走它**：这是覆盖索引，只读索引页不回表，
+#: 实测 139 万行 ~0.3s；不强制时优化器会走 `idx_price_history_region_date` + 回表 +
+#: TEMP B-TREE 去重（同一查询实测 ~6s）。
+_HISTORY_PK_INDEX = "sqlite_autoindex_price_history_1"
+
+
+def _active_history_ids(conn, region_id: int) -> set[int]:
+    """该区域 `price_history` 里**有任意历史行**的 type_id 集合（覆盖索引扫描，不读表）。"""
+    return {
+        int(row[0])
+        for row in conn.execute(
+            f"SELECT DISTINCT type_id FROM price_history INDEXED BY {_HISTORY_PK_INDEX} WHERE region_id = ?",
+            (region_id,),
+        )
+    }
+
+
+def _global_price_type_ids(conn) -> set[int]:
+    """`global_price_daily` 里有行的 type_id（只有 PLEX 这类全服统一价品种，表很小）。"""
+    if not _table_exists(conn, "global_price_daily"):
+        return set()
+    return {int(row[0]) for row in conn.execute("SELECT DISTINCT type_id FROM global_price_daily")}
+
+
 def _read_region_history(
     conn,
     out: dict[int, list[tuple[str, float, int]]],
@@ -865,14 +1047,15 @@ def _read_region_history(
     for offset in range(0, len(ids), _SQL_CHUNK):
         chunk = ids[offset : offset + _SQL_CHUNK]
         placeholders = ",".join("?" * len(chunk))
-        rows = conn.execute(
+        # 流式迭代（不先 fetchall 出 70 万行列表）+ 不再逐值 str()/float()/int() 转换：
+        # price_history 的列亲和性保证返回已是 str/float/int，转换只是白花 ~3×70 万次调用。
+        for tid, day, average, volume in conn.execute(
             f"SELECT type_id, date, average, volume FROM price_history "
             f"WHERE region_id = ? AND date >= ? AND date <= ? AND type_id IN ({placeholders}) "
             f"ORDER BY type_id, date",
             (region_id, start.isoformat(), end.isoformat(), *chunk),
-        ).fetchall()
-        for tid, day, average, volume in rows:
-            out.setdefault(int(tid), []).append((str(day), float(average or 0.0), int(volume or 0)))
+        ):
+            out.setdefault(tid, []).append((day, average, volume))
 
 
 def _load_observations(
@@ -897,12 +1080,22 @@ def _load_observations(
     out: dict[int, list[tuple[str, float, int]]] = {}
     if not ids:
         return out
-    plex_ids = [PLEX_TYPE_ID] if PLEX_TYPE_ID in ids else []
-    other_ids = [tid for tid in ids if tid != PLEX_TYPE_ID]
     with conn_mgr.connect("mkt") as conn:
         # 两张表各自判断存在性：只装了 `global_price_daily`（还没跑过历史拉取）时，
         # PLEX 也应该有数 —— 早退会让它整条线空掉
         if _table_exists(conn, "price_history"):
+            # **只装载真的有历史行的成员**：官方 CPI 篮子本地有 14,218 个成员，但 Jita 的
+            # price_history 只有 ~4,700 个 type 有成交行；其余成员本来就不参与任何一天的
+            # 收益/权重（`_build_index` 对空序列直接跳过），逐个探测只是白跑索引查找与
+            # SQL 分块（21 块 → 6 块）。篮子集合本身**不变**，只是取数前先取交集。
+            active = _active_history_ids(conn, region_id)
+            active |= _global_price_type_ids(conn)
+            if PLEX_TYPE_ID in ids:
+                # PLEX 的成交历史在官方全域市场 region（PLEX_REGION_ID），不在贸易中心里
+                active.add(PLEX_TYPE_ID)
+            ids = [tid for tid in ids if tid in active]
+            plex_ids = [PLEX_TYPE_ID] if PLEX_TYPE_ID in ids else []
+            other_ids = [tid for tid in ids if tid != PLEX_TYPE_ID]
             if other_ids:
                 _read_region_history(conn, out, region_id, other_ids, start, end)
             if plex_ids:
@@ -1040,6 +1233,7 @@ def _build_for(
     keys: Sequence[str],
     anchor: date | None = None,
     sets: Mapping[str, set[int]] | None = None,
+    obs: Mapping[int, Sequence[tuple[str, float, int]]] | None = None,
 ) -> dict[str, _IndexPoints]:
     """实时计算若干指数的点位（不写库）。
 
@@ -1054,10 +1248,11 @@ def _build_for(
         return empty
     if sets is None:
         sets = _member_sets(conn_mgr, keys)
-    union: set[int] = set()
-    for key in keys:
-        union |= sets[key]
-    obs = _load_observations(conn_mgr, region_id, union, anchor - timedelta(days=LOAD_WINDOW_DAYS - 1), anchor)
+    if obs is None:
+        union: set[int] = set()
+        for key in keys:
+            union |= sets[key]
+        obs = _load_observations(conn_mgr, region_id, union, anchor - timedelta(days=LOAD_WINDOW_DAYS - 1), anchor)
     return {key: _build_index(obs, sets[key]) for key in keys}
 
 
@@ -1076,27 +1271,93 @@ def _read_materialized(conn_mgr, region_id: int, key: str) -> list[dict]:
     return [{"date": str(day), "value": float(price), "volume": int(volume or 0)} for day, price, volume in rows]
 
 
+def _persist_points(
+    conn_mgr,
+    region_id: int,
+    key: str,
+    points: Sequence[dict],
+    *,
+    replace: bool = False,
+) -> None:
+    """把点位写回 `market_index_daily` —— 读路径算出的增量结果也必须落库，否则下次打开又重算。
+
+    `replace=True` 用于「整条指数重建」（初始化 / 缺口超出装载窗口的安全兜底）：先删本区域
+    本指数的旧行再写；`replace=False` 只写增量日期（`INSERT OR REPLACE` 幂等）。
+    """
+    tid = INDEX_TYPE_IDS.get(key)
+    if tid is None:
+        return
+    rows = [(tid, region_id, str(p["date"]), float(p["value"]), int(p.get("volume") or 0)) for p in points]
+    with conn_mgr.connect("mkt") as conn:
+        conn.execute(MARKET_INDEX_DDL)
+        if replace:
+            conn.execute("DELETE FROM market_index_daily WHERE type_id = ? AND region_id = ?", (tid, region_id))
+        if rows:
+            conn.executemany(
+                "INSERT OR REPLACE INTO market_index_daily (type_id, region_id, date, price, volume) "
+                "VALUES (?, ?, ?, ?, ?)",
+                rows,
+            )
+
+
 def _resolve_points(
     conn_mgr,
     region_id: int,
     keys: Sequence[str],
     anchor: date | None = None,
     sets: Mapping[str, set[int]] | None = None,
+    obs: Mapping[int, Sequence[tuple[str, float, int]]] | None = None,
 ) -> dict[str, list[dict]]:
-    """点位：优先读物化缓存，缺失的指数实时计算（**不**写库）。
+    """点位：**历史一律读已物化缓存、不重算**；只对「最后点位日 → 锚定日」的缺口做增量续算。
 
-    `anchor` / `sets` 透传给 :func:`_build_for`（:func:`get_dashboard` 一次算完时用）。
+    - 缓存为空 → 全量算一次（初始化，:func:`_build_for`）；
+    - 缓存停在今天/更早、缺口在全量装载窗口内 → :func:`_append_missing_days` 只补缺失日期；
+    - 缺口超过 :data:`LOAD_WINDOW_DAYS`（观测已无法覆盖）→ 退回全量（安全兜底）。
+
+    `anchor` / `sets` / `obs` 透传（:func:`get_dashboard` 一次算完时用）；没传时这里按需装载。
+    增量续算与全量重算逐点一致（口径同 :func:`_build_index`，见副本库等价验证用例）。
     """
     out: dict[str, list[dict]] = {}
-    missing: list[str] = []
+    rebuild: list[str] = []
+    rebuild_replace: set[str] = set()  # 旧点位存在但不连续（缺口超窗口）→ 重建时整条替换
+    to_append: list[tuple[str, list[dict]]] = []
+    horizon = anchor - timedelta(days=LOAD_WINDOW_DAYS - 1) if anchor is not None else None
     for key in keys:
         cached = _read_materialized(conn_mgr, region_id, key)
         out[key] = cached
         if not cached:
-            missing.append(key)
-    if missing:
-        for key, built in _build_for(conn_mgr, region_id, missing, anchor, sets).items():
+            rebuild.append(key)
+        elif anchor is not None:
+            last = date.fromisoformat(str(cached[-1]["date"]))
+            if last < anchor:
+                if horizon is not None and last >= horizon:
+                    to_append.append((key, cached))
+                else:
+                    rebuild.append(key)  # 缺口超出装载窗口：续算不可靠，退回全量
+                    rebuild_replace.add(key)
+    if rebuild:
+        for key, built in _build_for(conn_mgr, region_id, rebuild, anchor, sets, obs).items():
             out[key] = built.points
+            # 初始化/兜底重建也落库：下次打开直接读表，不再全量算。
+            _persist_points(conn_mgr, region_id, key, built.points, replace=key in rebuild_replace)
+    if to_append:
+        if anchor is None:
+            anchor = _last_day(conn_mgr, region_id)
+        if anchor is not None:
+            append_keys = [key for key, _cached in to_append]
+            if sets is None:
+                sets = _member_sets(conn_mgr, append_keys)
+            if obs is None:
+                union: set[int] = set()
+                for key in append_keys:
+                    union |= sets[key]
+                obs = _load_observations(
+                    conn_mgr, region_id, union, anchor - timedelta(days=LOAD_WINDOW_DAYS - 1), anchor
+                )
+            for key, cached in to_append:
+                out[key] = _append_missing_days(cached, obs, sets[key], anchor)
+                # 只把**新增日期**写回表（历史点位不动）——「除初始化外只算今天」的落点。
+                _persist_points(conn_mgr, region_id, key, out[key][len(cached) :])
     return out
 
 
@@ -1104,9 +1365,67 @@ def _resolve_points(
 #  公开接口
 # ════════════════════════════════════════════════════════════════
 
+#: 进程内缓存：key → (过期 monotonic 时间, 值)。值只存**规范副本**，读出一律深拷贝。
+_INDEX_MEMO: dict[tuple[Any, ...], tuple[float, Any]] = {}
+_INDEX_MEMO_LOCK = threading.Lock()
+_MEMO_MISS = object()
+
+
+def _anchor_key(anchor: date | None) -> str | None:
+    """锚定日 → 缓存 key 片段（`None` 表无数据）。"""
+    return anchor.isoformat() if anchor is not None else None
+
+
+def _cached_anchor(conn_mgr, region_id: int) -> date | None:
+    """锚定日（`_last_day`）随指数结果一起缓存：该查询在真实库上实测 ~170ms，是缓存命中路径的
+    主要残费；TTL 内复用同一锚定日即可（`refresh_index_daily` 清缓存后重新查）。
+    """
+    key = ("anchor", region_id)
+    cached = _memo_lookup(key)
+    if cached is not _MEMO_MISS:
+        return cast("date | None", cached)
+    anchor = _last_day(conn_mgr, region_id)
+    _memo_store(key, anchor)
+    return anchor
+
+
+def _memo_lookup(key: tuple[Any, ...]) -> Any:
+    """命中且未过期 → 返回深拷贝；未命中/已过期 → `_MEMO_MISS`。"""
+    now = time.monotonic()
+    with _INDEX_MEMO_LOCK:
+        entry = _INDEX_MEMO.get(key)
+        if entry is None:
+            return _MEMO_MISS
+        expires_at, value = entry
+        if expires_at <= now:
+            _INDEX_MEMO.pop(key, None)
+            return _MEMO_MISS
+    log.debug("大盘指数进程内缓存命中：%s", key)
+    # 深拷贝：调用方（桥/测试）可能原地改返回的 list/dict，不能让它污染缓存规范值。
+    return copy.deepcopy(value)
+
+
+def _memo_store(key: tuple[Any, ...], value: Any) -> None:
+    """写入缓存（值应视为不可变规范副本）；顺带清掉过期项，键数量有界。"""
+    now = time.monotonic()
+    with _INDEX_MEMO_LOCK:
+        if len(_INDEX_MEMO) > 64:
+            for stale in [k for k, (expires_at, _v) in _INDEX_MEMO.items() if expires_at <= now]:
+                _INDEX_MEMO.pop(stale, None)
+        _INDEX_MEMO[key] = (now + INDEX_MEMO_TTL_S, value)
+
+
+def clear_index_memory_cache() -> None:
+    """清空进程内指数缓存（`refresh_index_daily` 成功后自动调用；测试/价格刷新可显式调）。"""
+    with _INDEX_MEMO_LOCK:
+        _INDEX_MEMO.clear()
+
 
 def refresh_index_daily(region_id: int = JITA_RID) -> int:
-    """重建 `market.db.market_index_daily`（五个指数逐日点位），返回写入行数。"""
+    """重建 `market.db.market_index_daily`（五个指数逐日点位），返回写入行数。
+
+    成功重建后清空进程内指数缓存：物化点位已换新，旧缓存必须立即失效（不能等 TTL）。
+    """
     conn_mgr = get_db()
     with conn_mgr.connect("mkt") as conn:
         conn.execute(MARKET_INDEX_DDL)
@@ -1126,6 +1445,7 @@ def refresh_index_daily(region_id: int = JITA_RID) -> int:
                 "VALUES (?, ?, ?, ?, ?)",
                 rows,
             )
+    clear_index_memory_cache()
     return len(rows)
 
 
@@ -1183,6 +1503,7 @@ def _series_from_points(
     keys: Sequence[str],
     points_map: Mapping[str, Sequence[dict]],
     member_sets: Mapping[str, set[int]],
+    obs: Mapping[int, Sequence[tuple[str, float, int]]] | None = None,
 ) -> list[dict]:
     """点位表 + 成分集 → 折线 + 篮子成员表（`get_index_series` / `get_dashboard` 共用）。
 
@@ -1198,10 +1519,12 @@ def _series_from_points(
     union: set[int] = set()
     for members in member_sets.values():
         union |= members
-    obs: dict[int, list[tuple[str, float, int]]] = {}
-    if anchors and union:
-        end = max(anchors.values())
-        obs = _load_observations(conn_mgr, region_id, union, end - timedelta(days=LOAD_WINDOW_DAYS - 1), end)
+    if obs is None:
+        loaded: dict[int, list[tuple[str, float, int]]] = {}
+        if anchors and union:
+            end = max(anchors.values())
+            loaded = _load_observations(conn_mgr, region_id, union, end - timedelta(days=LOAD_WINDOW_DAYS - 1), end)
+        obs = loaded
     names = _load_names(conn_mgr, union)
 
     out: list[dict] = []
@@ -1230,9 +1553,21 @@ def get_index_cards(region_id: int = JITA_RID, _db=None) -> list[dict]:
     """五张指数卡：`[{key,label,value,chg1,chg7,chg30,chg90,chg180,days,base_date}]`。
 
     涨跌是百分比（`float`）；数据不足的窗口给 `None`（不用 0 冒充）。
+    走进程内 TTL 缓存（`_db` 显式注入时不缓存，见模块 docstring「进程内缓存」）。
     """
     conn_mgr = _db or get_db()
-    return _cards_from_points(_resolve_points(conn_mgr, region_id, INDEX_KEYS))
+    key: tuple[Any, ...] | None = None
+    if _db is None:
+        anchor = _cached_anchor(conn_mgr, region_id)
+        key = ("cards", region_id, _anchor_key(anchor))
+        cached = _memo_lookup(key)
+        if cached is not _MEMO_MISS:
+            return cast("list[dict[Any, Any]]", cached)
+    result = _cards_from_points(_resolve_points(conn_mgr, region_id, INDEX_KEYS))
+    if key is not None:
+        _memo_store(key, result)
+        return copy.deepcopy(result)
+    return result
 
 
 def get_index_series(keys: Sequence[str] | None = None, region_id: int = JITA_RID, _db=None) -> list[dict]:
@@ -1242,14 +1577,34 @@ def get_index_series(keys: Sequence[str] | None = None, region_id: int = JITA_RI
     的近 30 天成交额权重（准入 + 25% 上限后归一化），`price` = 该成员在同一锚定日（含）之前最近一次
     成交均价（当日没成交则取此前最近一次；完全没有 → `None`）。固定篮子（MPI/PLEX）恒列出全部固定成员
     （不满足准入的权重 0），其余篮子只列当日有正权重的成员。未知 key 直接忽略。
+    走进程内 TTL 缓存（`_db` 显式注入时不缓存，见模块 docstring「进程内缓存」）。
     """
     conn_mgr = _db or get_db()
     wanted = [key for key in (keys if keys is not None else INDEX_KEYS) if key in INDEX_LABELS]
     if not wanted:
         return []
-    points_map = _resolve_points(conn_mgr, region_id, wanted)
+    # anchor / 成分集 / 观测各只算一次：优化前 `_resolve_points`（缺物化行时）与
+    # `_series_from_points` 会各装一遍观测（736k 行 ~1.3s/遍）、`_member_sets` 跑两遍。
+    anchor = _cached_anchor(conn_mgr, region_id)
+    key: tuple[Any, ...] | None = None
+    if _db is None:
+        key = ("series", region_id, tuple(wanted), _anchor_key(anchor))
+        cached = _memo_lookup(key)
+        if cached is not _MEMO_MISS:
+            return cast("list[dict[Any, Any]]", cached)
     member_sets = _member_sets(conn_mgr, wanted)
-    return _series_from_points(conn_mgr, region_id, wanted, points_map, member_sets)
+    union: set[int] = set()
+    for members in member_sets.values():
+        union |= members
+    obs: Mapping[int, Sequence[tuple[str, float, int]]] | None = None
+    if anchor is not None and union:
+        obs = _load_observations(conn_mgr, region_id, union, anchor - timedelta(days=LOAD_WINDOW_DAYS - 1), anchor)
+    points_map = _resolve_points(conn_mgr, region_id, wanted, anchor, member_sets, obs)
+    result = _series_from_points(conn_mgr, region_id, wanted, points_map, member_sets, obs)
+    if key is not None:
+        _memo_store(key, result)
+        return copy.deepcopy(result)
+    return result
 
 
 def get_dashboard(region_id: int = JITA_RID, _db=None) -> dict:
@@ -1259,15 +1614,32 @@ def get_dashboard(region_id: int = JITA_RID, _db=None) -> dict:
     区别只在「只算一遍」：成分集（官方 MER 篮子）、观测装载、逐日累乘都只跑一次，
     两个返回值从同一份中间结果派生。大盘页原先分别调那两个函数 —— 同一套计算整跑两遍
     （真实库实测合计约 13s，虽在后台线程不卡 UI，但没必要）。
+    结果进进程内 TTL 缓存（切页/重开大盘命中 ~ms；`refresh_index_daily` 成功后清空）。
     """
     conn_mgr = _db or get_db()
-    anchor = _last_day(conn_mgr, region_id)
+    anchor = _cached_anchor(conn_mgr, region_id)
+    key: tuple[Any, ...] | None = None
+    if _db is None:
+        key = ("dashboard", region_id, _anchor_key(anchor))
+        cached = _memo_lookup(key)
+        if cached is not _MEMO_MISS:
+            return cast("dict[Any, Any]", cached)
     member_sets = _member_sets(conn_mgr, INDEX_KEYS)
-    points_map = _resolve_points(conn_mgr, region_id, INDEX_KEYS, anchor, member_sets)
-    return {
+    union: set[int] = set()
+    for members in member_sets.values():
+        union |= members
+    obs: Mapping[int, Sequence[tuple[str, float, int]]] | None = None
+    if anchor is not None and union:
+        obs = _load_observations(conn_mgr, region_id, union, anchor - timedelta(days=LOAD_WINDOW_DAYS - 1), anchor)
+    points_map = _resolve_points(conn_mgr, region_id, INDEX_KEYS, anchor, member_sets, obs)
+    result = {
         "cards": _cards_from_points(points_map),
-        "series": _series_from_points(conn_mgr, region_id, INDEX_KEYS, points_map, member_sets),
+        "series": _series_from_points(conn_mgr, region_id, INDEX_KEYS, points_map, member_sets, obs),
     }
+    if key is not None:
+        _memo_store(key, result)
+        return copy.deepcopy(result)
+    return result
 
 
 def _member_row(

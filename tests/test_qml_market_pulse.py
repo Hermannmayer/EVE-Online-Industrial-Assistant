@@ -20,6 +20,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from tests.clipboard_wait import wait_for_copy
@@ -110,6 +112,11 @@ class _FakeIndexService:
     def refresh_index_daily(self, region_id: int = _JITA) -> int:
         self.calls.append(("refresh", region_id))
         return 29
+
+    def latest_price_day(self, region_id: int = _JITA, _db=None) -> str:
+        """磁盘缓存新鲜度检查用：固定返回最近成交日（与下面的价格数据末日一致）。"""
+        self.calls.append(("latest_day", region_id))
+        return "2026-10-05"
 
 
 class _FakeMoversService:
@@ -297,11 +304,11 @@ def stubs(monkeypatch) -> _FakeBackend:
         backend.plan_calls.append((int(type_id), str(name)))
 
     monkeypatch.setattr(mpb, "_index_service", lambda: backend.index)
-    # 磁盘缓存与设置必须隔离：桥的 `__init__` 会先用**上次运行的整页缓存**铺首屏
-    # （用户要的「点开就出数」），跑测试时那份缓存是真实数据、会把替身数据盖掉
-    monkeypatch.setattr(mpb, "_load_cached_payload", lambda: {})
+    # 磁盘缓存与设置必须隔离：桥的 `__init__` 会用**上次运行的整页缓存**当默认数据源
+    # （用户要的「打开就出数、不重算」），跑测试时那份缓存是真实数据、会把替身数据盖掉
+    monkeypatch.setattr(mpb, "_load_cached_payload", lambda region_id: {})
     monkeypatch.setattr(mpb, "_read_settings", lambda: {})
-    monkeypatch.setattr(mpb, "_save_cached_payload", lambda payload: None)
+    monkeypatch.setattr(mpb, "_save_cached_payload", lambda payload, region_id: None)
     monkeypatch.setattr(mpb, "_write_settings", lambda payload: None)
     monkeypatch.setattr(mpb, "_movers_service", lambda: backend.movers)
     monkeypatch.setattr(mpb, "_chain_service", lambda: backend.chain)
@@ -524,3 +531,99 @@ def test_page_loads_and_is_quiet(pulse_page):
     """
     host, bridge = pulse_page
     assert_page_loads_quietly(host, bridge, key="pulse", size=(1280, 720))
+
+
+# ════════════════════════════════════════════════════════════
+#  持久化缓存策略（用户口径：数据不要求实时性，看趋势即可）
+# ════════════════════════════════════════════════════════════
+
+
+def _sync_spawn(monkeypatch, ran: list[str]) -> None:
+    """把后台线程的 `spawn(worker)` 换成当前线程直接 `run()` —— 测试不等真 QThread。"""
+    import ui_qml.workers.trade_workers as trade_workers
+
+    def fake_spawn(worker) -> None:
+        ran.append(type(worker).__name__)
+        worker.run()
+
+    monkeypatch.setattr(trade_workers, "spawn", fake_spawn)
+
+
+def test_fresh_disk_cache_is_default_source_without_recompute(qapp, stubs, monkeypatch):
+    """24h 内的磁盘缓存 → 直接显示、不重算；界面显示「数据时间 MM-DD HH:MM」。"""
+    import ui_qml.bridge.market_pulse_bridge as mpb
+    from ui_qml.bridge.market_pulse_bridge import MarketPulseBridge
+
+    cached_at = time.time() - 3600.0
+    payload = mpb._load_payload(_JITA)
+    payload["_fetched_at"] = cached_at
+    stubs.index.calls.clear()
+    monkeypatch.setattr(mpb, "_load_cached_payload", lambda region_id: dict(payload))
+    writes: list[int] = []
+    monkeypatch.setattr(mpb, "_save_cached_payload", lambda payload, region_id: writes.append(region_id))
+
+    bridge = MarketPulseBridge(None)
+    assert [card["key"] for card in bridge.cards] == [key for key, _label in _CARD_KEYS]
+    assert bridge.members, "缓存里整页都能铺出来（不需要后台重算）"
+    expected_time = time.strftime("%m-%d %H:%M", time.localtime(cached_at))
+    assert "数据时间" in bridge.statusText and expected_time in bridge.statusText
+    assert "本地缓存" in bridge.statusText, "必须让用户知道不是实时数据"
+    assert writes == [], "直接铺缓存不该回写磁盘"
+    assert f"_{_JITA}.json" in mpb._cache_path(_JITA), "缓存文件按区域区分"
+
+    # 页面打开时（QML onCompleted / 外壳切页钩子）会调一次 refresh()：
+    # 新鲜缓存是默认数据源 → 不得重算（60s TTL 挡住）
+    bridge.refresh()
+    assert bridge._loading is False and bridge._load_worker is None
+    assert stubs.index.calls == []
+
+
+def test_missing_or_stale_cache_triggers_exactly_one_refresh(qapp, stubs, monkeypatch):
+    """缓存缺失/超期 → 页面打开时后台刷一次；成功读取后写缓存供下次直接打开。"""
+    import ui_qml.bridge.market_pulse_bridge as mpb
+    from ui_qml.bridge.market_pulse_bridge import MarketPulseBridge
+
+    ran: list[str] = []
+    _sync_spawn(monkeypatch, ran)
+    # 缺失与超期在 `_load_cached_payload` 里都表现为 `{}`（超期由 24h 判定过滤）
+    monkeypatch.setattr(mpb, "_load_cached_payload", lambda region_id: {})
+    writes: list[int] = []
+    monkeypatch.setattr(mpb, "_save_cached_payload", lambda payload, region_id: writes.append(region_id))
+
+    bridge = MarketPulseBridge(None)
+    assert bridge.cards == [], "没有缓存时先空态，不装假数据"
+    assert ran == [], "构造桥本身不重算（由页面 onCompleted 触发）"
+
+    bridge.refresh()  # 页面打开那一次
+    assert ran == ["PulseLoadWorker"]
+    assert [card["key"] for card in bridge.cards] == [key for key, _label in _CARD_KEYS]
+    assert writes == [_JITA], "读到真实数据后写缓存，成为下次打开的默认数据源"
+    assert "数据时间" in bridge.statusText
+
+    bridge.refresh()  # 刚读完 60s 内切回本页：不重复读
+    assert ran == ["PulseLoadWorker"]
+
+
+def test_forced_index_refresh_always_recomputes_and_rewrites_cache(qapp, stubs, monkeypatch):
+    """「刷新指数」按钮始终生效：即便有新鲜缓存也强制重算 + 重写缓存。"""
+    import ui_qml.bridge.market_pulse_bridge as mpb
+    from ui_qml.bridge.market_pulse_bridge import MarketPulseBridge
+
+    payload = mpb._load_payload(_JITA)
+    payload["_fetched_at"] = time.time()
+    stubs.index.calls.clear()
+    monkeypatch.setattr(mpb, "_load_cached_payload", lambda region_id: dict(payload))
+    writes: list[int] = []
+    monkeypatch.setattr(mpb, "_save_cached_payload", lambda payload, region_id: writes.append(region_id))
+    ran: list[str] = []
+    _sync_spawn(monkeypatch, ran)
+
+    bridge = MarketPulseBridge(None)
+    assert bridge.cards, "打开先显示缓存"
+    assert ran == [], "新鲜缓存不触发任何后台线程"
+
+    bridge.refreshIndex()
+    assert ran == ["IndexRefreshWorker", "PulseLoadWorker"]
+    assert ("refresh", _JITA) in stubs.index.calls, "按钮必须真的重算指数"
+    assert writes == [_JITA], "重算完成后重写缓存"
+    assert "数据时间" in bridge.statusText
