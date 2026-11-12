@@ -762,6 +762,36 @@
 - 复验：`mypy tests/conftest.py` → Success；本地全量 `mypy .` 剩 58 条**全部**落在未跟踪的
   `research/analysis/*.py`（CI 不检出该目录），故 CI 侧应为 0 条。
 
+## BL-044 两条查询盘用例把行情时间写死，3 天新鲜度窗口一过必红
+
+- 类型：缺陷（测试）
+- 状态：已关闭（e13c553）
+- 证据：
+  - 本地复现（2026-11-12）：
+    `pytest tests/test_query_dashboard.py::test_read_orders_positions_against_local_market` →
+    `AssertionError: assert ['无法判定', '无法判定', '无法判定', '无法判定'] == ['首位', '并列最优', '不在首位', '无法判定']`；
+    `::test_refresh_market_quotes_flips_unknown_to_position` → `'无法判定（行情过期）'`。
+  - `ui_qml/bridge/query_dashboard_bridge.py:181` `_MARKET_PRICE_MAX_AGE_DAYS = 3`，而用例把行情时间
+    写死成 `2026-10-17 12:00:00` / `2026-10-17 20:21:00` —— 2026-11-12 已经是 26 天前，恒判过期。
+  - 此前一直被 BL-043 的 mypy 失败挡在 pytest 之前（测试根本没跑到），所以藏了一个月。
+- 修法（e13c553）：新增 `_fresh_market_stamp()`（now - 1h）；断言里的短格式时间不再写死，
+  按 `_format_market_time` 同一规则从该时间戳算出（含「整点只出日期」分支）。
+- 复验：`pytest tests/test_query_dashboard.py -q` → 57 passed；本地全量 `-m "not ui"` → 1737 passed / 100.49s。
+
+## BL-045 CI（Linux）上 test_qt_noise 偶发红：Qt 事件循环里捕到 sqlite「no such table」
+
+- 类型：缺陷
+- 状态：open
+- 证据：run `43158724023` 的 `test (3.14)`：
+  `FAILED tests/test_qt_noise.py::test_the_shell_marks_shutdown_when_the_close_button_is_used - Failed: CALL ERROR: Exceptions caught in Qt event loop:`，
+  堆栈两条：`estimate_bridge.hangars → inventory_manager.get_hangars → sqlite3.OperationalError: no such table: hangars`、
+  `contract_bridge.refreshRegionLabel → contract_service.region_name → sqlite3.OperationalError: no such table: region`。
+- 影响：同一条用例在本机（Windows）单跑是**通过**的，CI 跑在 ubuntu。看着像前面用例遗留的桥对象排队
+  slot 在本用例事件循环里被处理，打到已拆除（临时目录已删）的库上。
+- 下一步：先在 CI 复跑确认是否稳定复现（`gh run rerun --failed`）；修复方向是给桥加「宿主已销毁」守卫，
+  或 teardown 里先断信号再关库。**本次未夹带修**（本地无法复现）。
+
+
 
 
 
