@@ -747,7 +747,7 @@
 ## BL-043 CI 的 `test (3.14)` 档长期红：tests/conftest.py mypy 报错
 
 - 类型：缺陷
-- 状态：open
+- 状态：已关闭（5c66f37）
 - 证据：`gh run view 43157209854 --log-failed` →
   `tests/conftest.py:324: error: "QCoreApplication" has no attribute "topLevelWidgets"  [attr-defined]`，
   `Found 1 error in 1 file (checked 404 source files)` → `Process completed with exit code 1`。
@@ -756,7 +756,11 @@
   红久了等于没有信号价值 —— 真回归也会被当成「又红了」忽略。
 - 下一步：`tests/conftest.py:324` 用的是 `QCoreApplication.instance().topLevelWidgets()`，该方法是
   `QApplication` 的；补 `cast(QApplication, ...)` 或改用 `QApplication.instance()`。纯类型修正，行为不变，
-  按判定表不补测试。**需用户决定是否动**（本次发版未夹带）。
+  按判定表不补测试。
+- 修法（5c66f37）：`if app is None` → `if not isinstance(app, QApplication)`，给 mypy 收窄类型，
+  行为不变。提交类型用 `test:` 而非 `fix:`，避免 PSR 把版本顶到 0.27.2（用户要求保持 0.27.1）。
+- 复验：`mypy tests/conftest.py` → Success；本地全量 `mypy .` 剩 58 条**全部**落在未跟踪的
+  `research/analysis/*.py`（CI 不检出该目录），故 CI 侧应为 0 条。
 
 
 
