@@ -726,6 +726,39 @@
     `test_another_alive_process_denies` 参数化补上「创建时刻一致 → 仍拒绝」这一支。
 - 现场处置：残留锁改名备份为 `~/.eve-assistant/instance.lock.stale-20261112-1234.bak`，`try_lock() -> True`，软件已正常启动。
 
+## BL-042 CI 发版：PSR 在「HEAD 已打 tag」时仍输出 tag，Release 被建成空正文
+
+- 类型：缺陷
+- 状态：已关闭（6bbc849）
+- 证据（2026-11-12 v0.27.1 实测）：
+  - `gh release view v0.27.1 --json body -q '.body | length'` → **0**；对照 v0.27.0=2707、v0.26.2=1278、v0.26.1=1385、v0.26.0=405。
+  - PSR 步骤日志：`0.27.1` + `No release will be made, 0.27.1 has already been released!`，
+    但 `Resolve release tag` 渲染出的脚本首行是 `TAG="v0.27.1"` —— PSR **仍然输出**了 `tag`。
+  - 上传步骤 `with:` 只有 `tag_name: v0.27.1` / `files:` / `overwrite_files` / `token`，**没有 `body_path`**。
+  - 旧逻辑 `if [ -n "$TAG" ]; then NEEDED=true`（注释写「说明也由 PSR 写好」）；但本 workflow 只跑
+    `semantic_release version`、从不跑 `publish`，PSR **根本不会建 GitHub Release** —— 说明永远得自己给。
+- 影响：走「手改版本号的小版本」这条路（HEAD 已打 tag）时，Release 页面永远没有更新说明；
+  历史各版本只是因为当时 PSR 输出 tag 为空、走了回退分支才带上正文。
+- 修法（6bbc849）：判定回到事实 —— `gh release view "$TAG" --json assets` 里有 `EVE*.zip` 才算
+  「已有 Release 且带安装包」→ 跳过打包；其余情况一律打包并由 `scripts/release_notes.py` 抽 CHANGELOG
+  该版本段当说明。顺带修掉「Release 已存在但资产缺失 → 永远不补包」的次生问题。
+- 现场处置：v0.27.1 的说明已用 `gh release edit v0.27.1 --notes-file` 补回（2227 字符）。
+
+## BL-043 CI 的 `test (3.14)` 档长期红：tests/conftest.py mypy 报错
+
+- 类型：缺陷
+- 状态：open
+- 证据：`gh run view 43157209854 --log-failed` →
+  `tests/conftest.py:324: error: "QCoreApplication" has no attribute "topLevelWidgets"  [attr-defined]`，
+  `Found 1 error in 1 file (checked 404 source files)` → `Process completed with exit code 1`。
+- 影响：CI 的 `test (3.14)` 作业自 **2026-10-10** 起每次 push 都是红的（`gh run list --workflow=CI` 最近 5 条
+  全 failure），失败的只是「Type check with mypy」这一步；`version-check` 一直是绿的。
+  红久了等于没有信号价值 —— 真回归也会被当成「又红了」忽略。
+- 下一步：`tests/conftest.py:324` 用的是 `QCoreApplication.instance().topLevelWidgets()`，该方法是
+  `QApplication` 的；补 `cast(QApplication, ...)` 或改用 `QApplication.instance()`。纯类型修正，行为不变，
+  按判定表不补测试。**需用户决定是否动**（本次发版未夹带）。
+
+
 
 
 ### 2026-10-17 收尾提交 `4359514` 状态更新（用户点名项）
