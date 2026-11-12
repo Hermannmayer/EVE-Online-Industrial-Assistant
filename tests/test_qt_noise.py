@@ -45,6 +45,13 @@ def test_the_shell_marks_shutdown_when_the_close_button_is_used(app, mock_db, mo
     from ui_qml.shell_window import ShellWindow
 
     monkeypatch.setattr(ShellWindow, "_init_price_check", lambda self: None)
+    # CI 是「无本地库」环境（没有 database/reference.db）：QML 页面装载时会真去查
+    # `hangars` / `region` 两张表，sqlite 抛的 OperationalError 落进 Qt 事件循环，被
+    # pytest-qt 记成 CALL ERROR（2026-11-12 run 43159395628 实测，Windows 本机因有库不触发）。
+    # 本用例只验「关闭按钮 → 关机标记」，把这两个数据源换掉即可；两处都是函数内 import，
+    # patch 源模块就生效，不动生产代码。
+    monkeypatch.setattr("services.inventory_manager.get_hangars", lambda: [{"id": 1, "name": "默认机库"}])
+    monkeypatch.setattr("services.contract_service.region_name", lambda region_id: "测试星域")
     original = qt_noise._shutting_down
     try:
         qt_noise._shutting_down = False
