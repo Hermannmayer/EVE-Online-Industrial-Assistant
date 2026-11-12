@@ -703,6 +703,29 @@
   若 10 分钟内跨交易日，「再打开一次」才补当天点；③ 服务层成员表未按锚定日持久化，
   跨日后成员表重算仍需观测装载约 1.3s。
 - 下一步：如需更严格，可把锚定日缓存 TTL 降到 60s / 成员表按锚定日落盘（登记待决策）。
+## BL-041 单实例锁把「PID 被复用」当成真·运行实例，程序启动即静默退出
+
+- 类型：缺陷
+- 状态：已关闭（0786e91）
+- 证据（2026-11-12 现场）：
+  - 12:32:56 / 12:33:59 两次启动，`~/.eve-assistant/crashes/` 各留下一个 **0 字节** `crash_faulthandler_20261112_1232*z`，
+    `logs/app_20261112.log` 同样 0 字节 —— 一行日志都没写就退出（崩溃钩子在 `Main.py:215`，锁检查在 `:233`）。
+  - `~/.eve-assistant/instance.lock` 内容 `8480:nt`，mtime **2026-10-19 23:13:08**：旧实例被强杀，没走到 `unlock()`。
+  - `Get-Process -Id 8480` → **`svchost.exe`**，创建于 2026-11-12 11:07:53：开机后号码被系统服务捡走。
+  - 复现：`.venv\Scripts\python.exe -c "from core.single_instance import try_lock; print(try_lock())"` → `False`（清理残留锁后 → `True`）。
+  - 旧代码路径：`Main.py:233` → `core/single_instance.py:133` `if _is_pid_alive(pid): return False`；
+    `_is_pid_alive` 只能答「这个号码现在有没有人用」，答不了「是不是本应用」。
+- 影响：软件彻底启动不了，且**没有任何可见报错** —— 失败分支 `show_message()`（`core/single_instance.py:259-262`）
+  只往 stderr 打两行，无控制台时等于静默。任何一次强杀/崩溃 + 事后 PID 被别的进程复用都会复发，用户只能手工删锁。
+- 修法（本次）：
+  - 锁文件由 `{pid}:{os.name}` 扩为 `{pid}:{os.name}:{进程创建时刻}`（`_lock_payload` / `_parse_lock`）。
+  - 新增 `_win32_process_start_time`（`OpenProcess` + `GetProcessTimes`，FILETIME → epoch 秒）与 `_is_reused_pid`：
+    pid 活着但**创建时刻**与锁里记录的不符（容差 1s）⇒ 判为残留锁，接管后正常启动。
+  - 旧格式（两段）与「查不到创建时刻」保持原有保守口径（一律按真实例拦下），不放松防双开。
+  - 回归：`tests/test_single_instance.py::TestTryLock::test_reused_pid_is_treated_as_stale`；
+    `test_another_alive_process_denies` 参数化补上「创建时刻一致 → 仍拒绝」这一支。
+- 现场处置：残留锁改名备份为 `~/.eve-assistant/instance.lock.stale-20261112-1234.bak`，`try_lock() -> True`，软件已正常启动。
+
 
 
 ### 2026-10-17 收尾提交 `4359514` 状态更新（用户点名项）
