@@ -317,7 +317,11 @@ def _teardown_qt_leftovers() -> None:
     from PySide6.QtGui import QGuiApplication
 
     app = QApplication.instance()
-    if app is None:
+    # 用 isinstance 而不是 `is None`：stub 里 instance() 返回 QCoreApplication | None，
+    # 而 topLevelWidgets() 定义在 QApplication 上 —— mypy 会报 attr-defined
+    # （2026-11-12 起 CI 的 test (3.14) 档每次 push 都红就是这一条）。运行时顺带挡住
+    # 「拿到的是裸 QCoreApplication」这种不该出现的情况。
+    if not isinstance(app, QApplication):
         return
     for window in list(QGuiApplication.topLevelWindows()):
         window.close()
