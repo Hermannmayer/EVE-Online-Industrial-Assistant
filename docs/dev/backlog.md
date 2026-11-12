@@ -781,15 +781,21 @@
 ## BL-045 CI（Linux）上 test_qt_noise 偶发红：Qt 事件循环里捕到 sqlite「no such table」
 
 - 类型：缺陷
-- 状态：open
+- 状态：已关闭（e5b949e）
 - 证据：run `43158724023` 的 `test (3.14)`：
   `FAILED tests/test_qt_noise.py::test_the_shell_marks_shutdown_when_the_close_button_is_used - Failed: CALL ERROR: Exceptions caught in Qt event loop:`，
   堆栈两条：`estimate_bridge.hangars → inventory_manager.get_hangars → sqlite3.OperationalError: no such table: hangars`、
   `contract_bridge.refreshRegionLabel → contract_service.region_name → sqlite3.OperationalError: no such table: region`。
 - 影响：同一条用例在本机（Windows）单跑是**通过**的，CI 跑在 ubuntu。看着像前面用例遗留的桥对象排队
   slot 在本用例事件循环里被处理，打到已拆除（临时目录已删）的库上。
-- 下一步：先在 CI 复跑确认是否稳定复现（`gh run rerun --failed`）；修复方向是给桥加「宿主已销毁」守卫，
-  或 teardown 里先断信号再关库。**本次未夹带修**（本地无法复现）。
+- 复现结论（2026-11-12）：连续两次 CI（`43158724023`、`43159395628`）**稳定复现**，不是偶发。
+  本机 Windows 单跑通过；用空 `EVE_ASSISTANT_APP_ROOT` 也复现不了 —— 不是平台差异，而是
+  **CI 没有本地库**（无 `database/reference.db`）：QML 页面装载时真去查表，`OperationalError`
+  落进 Qt 事件循环被 pytest-qt 记成 CALL ERROR。
+- 修法（e5b949e）：用例只验「关闭按钮 → 关机标记」，构造 `ShellWindow` 前把
+  `services.inventory_manager.get_hangars` / `services.contract_service.region_name` 换成假数据
+  （两处都是函数内 import，patch 源模块即生效，不动生产代码）。
+- 复验：`pytest tests/test_qt_noise.py -q` → 3 passed；CI 以下一轮 run 为准。
 
 
 
