@@ -53,21 +53,27 @@ jobs:
       id: rel
       shell: bash
       run: |
+        # ⚠️ PSR 输出的 tag **不等于**「Release 已经建好」：HEAD 已打 tag 时它会打印
+        # `0.27.1` + `No release will be made, ... already been released`，却**仍把 tag
+        # 输出成 vX.Y.Z**（2026-11-12 v0.27.1 实测）。若据此认定「说明由 PSR 写好」，
+        # body_path 就会留空 → `action-gh-release` 建出无正文的空 Release。
+        # 判定一律回到事实：这个 tag 的 Release 在不在、安装包在不在。
         TAG="${{ steps.semver.outputs.tag }}"
-        BODY=""
         if [ -n "$TAG" ]; then
-          NEEDED=true                      # PSR 刚发版 → 必然要打包（说明也由 PSR 写好）
+          VER="${TAG#v}"
         else
           VER=$(uv run python -c "import core.version as v; print(v.__version__)")
           TAG="v$VER"
-          # 该版本的 Release 已存在 → 不重复打包（省 CI，也避免同名资产冲突）
-          if gh release view "$TAG" >/dev/null 2>&1; then NEEDED=false; else NEEDED=true; fi
-          # 回退分支的说明要自己给：`action-gh-release` 没有 body 时会把**提交信息**
-          # 当成 Release 说明（2026-10-06 实测：v0.26.0 页面被贴上整段提交正文）。
-          if [ "$NEEDED" = "true" ]; then
-            uv run python scripts/release_notes.py "$VER" release_notes.md
-            BODY=release_notes.md
-          fi
+        fi
+        BODY=""
+        if gh release view "$TAG" --json assets -q '.assets[].name' 2>/dev/null | grep -q '^EVE.*\.zip$'; then
+          NEEDED=false                     # 该版本 Release 已带安装包 → 不重复打包（省 CI，也避免同名资产冲突）
+        else
+          NEEDED=true
+          # 只要 Release 由本 action 建/补，就必须显式给说明：没有 body 时它会把
+          # **提交信息**当说明（2026-10-06 实测：v0.26.0 页面被贴上整段提交正文）。
+          uv run python scripts/release_notes.py "$VER" release_notes.md
+          BODY=release_notes.md
         fi
         echo "tag=$TAG" >> "$GITHUB_OUTPUT"
         echo "needed=$NEEDED" >> "$GITHUB_OUTPUT"
