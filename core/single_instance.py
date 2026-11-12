@@ -21,6 +21,10 @@ _MUTEX_HANDLES: dict[str, int] = {}
 # 本进程实际持有并拥有删除权的锁文件（force 模式不会写入/拥有）。
 _OWNED_LOCKS: set[str] = set()
 
+# 判定「同一个进程」时允许的创建时刻偏差（秒）：两次读数来自同一系统时钟，
+# 正常应完全相等，留 1s 只是吸收 FILETIME→float 的舍入。
+_PID_START_TOLERANCE = 1.0
+
 
 def _resolve(lock_file: Path | str | None) -> Path:
     """None → 默认 instance.lock;str → Path 归一化(Path(Path) 幂等)。"""
@@ -115,9 +119,7 @@ def try_lock(force: bool = False, lock_file: Path | str | None = None) -> bool:
 
     # 2) 文件已存在：读取 PID 判定是残留还是存活实例
     try:
-        data = target.read_text().strip()
-        pid_str, _hostname = data.split(":", 1)
-        pid = int(pid_str)
+        pid, stored_start = _parse_lock(target.read_text().strip())
     except (ValueError, OSError):
         # 锁文件损坏 → 清理后重试原子获取
         _safe_unlink(target)
@@ -130,9 +132,9 @@ def try_lock(force: bool = False, lock_file: Path | str | None = None) -> bool:
     if pid == own_pid:
         _OWNED_LOCKS.add(str(target))
         return True  # 自身已持有（重入）
-    if _is_pid_alive(pid):
+    if _is_pid_alive(pid) and not _is_reused_pid(pid, stored_start):
         return False  # 另一实例正在运行
-    # 残留 PID（已死进程）→ 清理后原子重取
+    # 残留锁（进程已死，或 pid 被系统复用给了别的进程）→ 清理后原子重取
     _safe_unlink(target)
     got = _try_exclusive_acquire(own_pid, target)
     if got is True:
@@ -161,7 +163,7 @@ def _try_exclusive_acquire(own_pid: int, target: Path) -> bool | None:
     try:
         fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         try:
-            os.write(fd, f"{own_pid}:{os.name}".encode())
+            os.write(fd, _lock_payload(own_pid).encode())
         finally:
             os.close(fd)
         return True
@@ -235,6 +237,101 @@ def _win32_is_pid_alive(pid: int) -> bool:
         # 吞的是 Win32 进程查询异常：查不到时按存活处理，宁可拦一次也不误双开
         log.warning("判断 PID 存活失败，按「存活」处理（避免双开）", exc_info=True)
         return True
+
+
+def _win32_process_start_time(pid: int) -> float | None:
+    """pid 对应进程的创建时刻（epoch 秒）；非 Windows 或查不到时返回 None。
+
+    比存活更细的一层身份：同一个 pid 在旧实例退出后会被系统复用给**别的**进程，
+    仅凭「活着」无法区分。句柄权限与 `_win32_is_pid_alive` 一致（受保护进程打不开
+    → None，调用方按「不确定」保守处理）。
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+        class _FILETIME(ctypes.Structure):
+            _fields_ = [("dwLowDateTime", ctypes.c_uint32), ("dwHighDateTime", ctypes.c_uint32)]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return None
+        try:
+            created = _FILETIME()
+            exit_time = _FILETIME()
+            kernel_time = _FILETIME()
+            user_time = _FILETIME()
+            kernel32.GetProcessTimes.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+            ]
+            ok = kernel32.GetProcessTimes(
+                handle,
+                ctypes.byref(created),
+                ctypes.byref(exit_time),
+                ctypes.byref(kernel_time),
+                ctypes.byref(user_time),
+            )
+            if not ok:
+                return None
+            # FILETIME：自 1601-01-01 起的 100ns 计数 → epoch 秒
+            # （ctypes 结构字段是 Any，显式转 int 才能让 mypy 落到 float | None）
+            ticks = (int(created.dwHighDateTime) << 32) | int(created.dwLowDateTime)
+            return ticks / 10_000_000 - 11_644_473_600.0
+        finally:
+            kernel32.CloseHandle(ctypes.c_void_p(handle))
+    except Exception:
+        # 吞的是 Win32 调用异常：拿不到创建时刻 → 调用方保守按「真实例」处理，不阻断启动判定以外的事
+        log.debug("读取进程创建时刻失败 pid=%s", pid, exc_info=True)
+        return None
+
+
+def _lock_payload(pid: int) -> str:
+    """锁文件内容：`{pid}:{os.name}:{进程创建时刻}`（取不到创建时刻时第三段写 `-`）。"""
+    start = _win32_process_start_time(pid)
+    return f"{pid}:{os.name}:{'-' if start is None else f'{start:.6f}'}"
+
+
+def _parse_lock(data: str) -> tuple[int, float | None]:
+    """解析锁文件内容 → `(pid, 创建时刻或 None)`。
+
+    第三段是 2026-11-12 补上的：只有它能区分「真·运行中的实例」与「pid 被系统
+    复用给别的进程」。旧格式（两段）解析出 None，调用方按不确定保守处理。
+
+    Raises:
+        ValueError: 内容损坏 —— 调用方按残留锁清理后重取。
+    """
+    parts = data.split(":")
+    if len(parts) < 2:
+        raise ValueError(f"锁文件内容损坏: {data!r}")
+    pid = int(parts[0])
+    start = float(parts[2]) if len(parts) >= 3 and parts[2] not in ("", "-") else None
+    return pid, start
+
+
+def _is_reused_pid(pid: int, stored_start: float | None) -> bool:
+    """锁里的 pid 虽然活着，但它**不是**写锁的那个进程吧？—— PID 复用判定。
+
+    2026-11-12 真实故障：残留锁写着 pid 8480（10-19 强杀退出留下的），号码后来被
+    `svchost.exe` 捡走 —— `_is_pid_alive` 于是永远为真，程序每次启动都判定「已在
+    运行」并静默退出。存活与否区分不了，必须比对**进程创建时刻**：号码被复用 ⇒
+    现持有者的创建时刻与锁里记下的必然不同。
+    """
+    if stored_start is None:
+        return False  # 旧格式/创建时刻未知：保守当作真实例（宁可多拦一次也不误双开）
+    live_start = _win32_process_start_time(pid)
+    if live_start is None:
+        return False  # 查不到（权限不足等）：同样保守
+    return abs(live_start - stored_start) > _PID_START_TOLERANCE
 
 
 def unlock(lock_file: Path | str | None = None):

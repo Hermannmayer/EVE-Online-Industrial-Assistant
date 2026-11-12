@@ -29,7 +29,8 @@ def lock_path(tmp_path, monkeypatch):
 class TestTryLock:
     def test_first_acquire_succeeds(self, lock_path):
         assert try_lock(force=False) is True
-        assert lock_path.read_text() == f"{os.getpid()}:{os.name}"
+        # 第三段是进程创建时刻（PID 复用判定用），见 BL-041
+        assert lock_path.read_text().startswith(f"{os.getpid()}:{os.name}:")
 
     def test_force_skips_check(self, lock_path):
         # force 只跳过检查：既不写锁文件、也不拥有它
@@ -45,16 +46,34 @@ class TestTryLock:
         unlock()
         assert not si._LOCK_FILE.exists()
 
-    def test_another_alive_process_denies(self, lock_path, monkeypatch):
-        lock_path.write_text("999999:nt")
+    @pytest.mark.parametrize("lock_text", ["999999:nt", "999999:nt:1758200000.000000"])
+    def test_another_alive_process_denies(self, lock_path, monkeypatch, lock_text):
+        """活着且创建时刻一致 = 真·另一实例 → 拒绝。旧格式（无创建时刻）按保守口径同样拒绝。"""
+        lock_path.write_text(lock_text)
         monkeypatch.setattr(si, "_is_pid_alive", lambda pid: True)
+        monkeypatch.setattr(si, "_win32_process_start_time", lambda pid: 1758200000.0)
         assert try_lock(force=False) is False
-        assert lock_path.read_text() == "999999:nt", "不应覆盖存活实例的锁文件"
+        assert lock_path.read_text() == lock_text, "不应覆盖存活实例的锁文件"
 
     def test_dead_process_stale_lock_reacquires(self, lock_path):
         lock_path.write_text("999999:nt")
         assert try_lock(force=False) is True
-        assert lock_path.read_text() == f"{os.getpid()}:{os.name}", "残留锁应被本进程 PID 覆盖"
+        assert lock_path.read_text().startswith(f"{os.getpid()}:{os.name}:"), "残留锁应被本进程 PID 覆盖"
+
+    def test_reused_pid_is_treated_as_stale(self, lock_path, monkeypatch):
+        """回归（2026-11-12）：残留锁的 pid 被系统复用给别的进程时，不得判定「已在运行」。
+
+        真实故障：锁里是 pid 8480（10-19 强杀退出留下的残留），该号码今天开机后被
+        `svchost.exe` 捡走 —— `_is_pid_alive` 永远为真，程序每次启动都以为已有实例，
+        只在 stderr 打一行提示（无控制台时完全静默），表现为「双击没反应」。
+        光看存活区分不了，必须比创建时刻。
+        """
+        lock_path.write_text("8480:nt:1758200000.000000")
+        monkeypatch.setattr(si, "_is_pid_alive", lambda pid: True)
+        # 该 pid 现在的持有者比写锁时晚一小时才创建 → 号码被复用，不是活的实例
+        monkeypatch.setattr(si, "_win32_process_start_time", lambda pid: 1758200000.0 + 3600)
+        assert try_lock(force=False) is True
+        assert lock_path.read_text().startswith(f"{os.getpid()}:{os.name}:"), "复用号码的残留锁应被本进程接管"
 
     def test_write_failure_degrades_to_run(self, lock_path, monkeypatch):
         """Windows 瞬时锁冲突：原子建锁失败时应降级运行而非崩溃。"""
