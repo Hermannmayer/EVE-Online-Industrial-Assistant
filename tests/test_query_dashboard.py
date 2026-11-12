@@ -885,6 +885,16 @@ def test_read_orders_imports_and_records_snapshot(h, tmp_path):
 # ════════════════════════════════════════════════════════════
 
 
+def _fresh_market_stamp(hours_ago: int = 1) -> str:
+    """新鲜行情时间戳（相对 now）。**不要硬编码日期**。
+
+    `_is_fresh_market_time` 的窗口是 `_MARKET_PRICE_MAX_AGE_DAYS = 3` 天：写死
+    `2026-10-17` 这种值，三天后就必然判成「行情过期」（BL-044，2026-11-12 实测
+    两条用例同时红，只是此前一直被 CI 的 mypy 失败挡在前面没暴露）。
+    """
+    return (datetime.now() - timedelta(hours=hours_ago)).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def test_order_position_text_four_states():
     """四态：优于→首位；同价→并列最优（不能断言首位）；劣于→不在首位；无行情→无法判定。
 
@@ -917,10 +927,11 @@ def test_market_quote_freshness_gate():
 
 def test_read_orders_positions_against_local_market(h, tmp_path, monkeypatch):
     """导入后按**本地行情最优价**判位次：优于/等于/劣于/无行情四组合（mock 行情数据）。"""
+    stamp = _fresh_market_stamp()
     quotes = {
-        11: {"sell": 2.5, "buy": 100.0, "time": "2026-10-17 12:00:00"},  # 卖 2.00 → 优于
-        12: {"sell": 2.5, "buy": 100.0, "time": "2026-10-17 12:00:00"},  # 卖 2.50 → 并列
-        13: {"sell": 2.5, "buy": 100.0, "time": "2026-10-17 12:00:00"},  # 卖 3.00 → 劣于
+        11: {"sell": 2.5, "buy": 100.0, "time": stamp},  # 卖 2.00 → 优于
+        12: {"sell": 2.5, "buy": 100.0, "time": stamp},  # 卖 2.50 → 并列
+        13: {"sell": 2.5, "buy": 100.0, "time": stamp},  # 卖 3.00 → 劣于
         # 14 不在 quotes 里 → 无行情
     }
     monkeypatch.setattr(qdb, "_load_market_quotes", lambda records: dict(quotes))
@@ -948,7 +959,10 @@ def test_read_orders_positions_against_local_market(h, tmp_path, monkeypatch):
     assert [c["color"] for c in rows[2]["cells"]] == [theme.ACCENT_RED] * 6, "不在首位整行标红"
     # 文案带最优价（本地行情时间进括号）
     assert "最优 2.50" in rows[0]["cells"][1]["text"]
-    assert "行情 10-17 12:00" in rows[0]["cells"][1]["text"]
+    when = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S")
+    # 与 `_format_market_time` 同规则：有分秒才带 "%m-%d %H:%M"，整点只出日期
+    expected_when = when.strftime("%m-%d %H:%M") if (when.hour or when.minute) else when.strftime("%m-%d")
+    assert f"行情 {expected_when}" in rows[0]["cells"][1]["text"]
 
 
 def test_refresh_market_quotes_flips_unknown_to_position(h, tmp_path, monkeypatch):
@@ -971,7 +985,7 @@ def test_refresh_market_quotes_flips_unknown_to_position(h, tmp_path, monkeypatc
 
     # 模拟 worker 返回（不真起线程）：该市场卖最优 2.5 / 买最优 90
     bridge._on_market_quotes(
-        {(1001, 10000002): {"sell": 2.5, "buy": 90.0, "time": "2026-10-17 20:21:00"}},
+        {(1001, 10000002): {"sell": 2.5, "buy": 90.0, "time": _fresh_market_stamp()}},
         "",
     )
     assert bridge.sellOrderRows[0]["cells"][1]["text"].startswith(qdb._FIRST_TEXT)
