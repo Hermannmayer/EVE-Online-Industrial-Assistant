@@ -6,6 +6,53 @@
 
 <!-- version list -->
 
+## v0.27.1 (2026-11-12)
+
+### Bug Fixes
+
+- **启动**: 单实例锁按进程创建时刻区分 PID 复用，残留锁不再静默阻断启动
+  ([`0786e91`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/0786e91b0dff48a5da417e640353d15fc586c61f))
+
+- **收尾**: 合同页滚动保持 + 剩余静默失败收尾 + fast 档切纯计算
+  ([`4359514`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/4359514a78f382a48260029ed681cd7e4a29d6f2))
+
+- **计划/规则/sde/测试**: 无料造物拒绝启动 + 结构改件成本 + 静默失败收尾 + 测试清理
+  ([`7a29337`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/7a293372a6f66cac4f3608a5ec8b51749101d363))
+
+- **用户报障**: 订单首位改全市场判定 + SDE region_id 回填 + 官方 MER 指数篮子
+  ([`ac8d668`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/ac8d668e61279500d272af6cd496cbde58eb70f8))
+
+- **用户报障**: 计划材料逐线取整 + 子项成本快照 + T2 蓝图成本全链路
+  ([`c014d0b`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/c014d0bb0bd19e636bbbb04b4f9aa55dee18f1e1))
+
+- **路线c**: 审计缺陷全量修复第一批（状态机/数值/契约/工具）
+  ([`2db26ff`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/2db26ff4af90f33702892e461f68ca2f35056fb7))
+
+- **工业/市场/台账**: 重放撤销的修复（D1）并恢复 20 条台账（D2）
+  ([`3489034`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/34890347719ff1542289c1e011042f07ae21c775))
+
+### Documentation
+
+- **backlog**: 登记 BL-041（单实例锁 PID 复用）并结案 `0786e91`
+  ([`df7b037`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/df7b03764cd822f33b85e49b995ecde6d6ee7599))
+
+- 收尾文档同步（fast 选档 / testing 现状 / backlog 状态）
+  ([`bae2786`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/bae2786660509604ba68081771689f602313d5c0))
+
+- 再生成 API 文档并同步用户/开发文档与台账（路线 C 第二批 D）
+  ([`d143e36`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d143e36282448d5e1884f5a79220ed8fd6bdb3e0))
+
+### Features
+
+- **大盘**: 指数历史点位不重算 + 只增量补今天 + 持久化缓存（路线 C 第二批 C）
+  ([`d534d68`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/d534d6886c50ed60264e2e00aa359a99c694d6c5))
+
+### Refactor
+
+- **ui**: 清理死链功能链并修复界面状态（路线 C 第二批 A）
+  ([`8698a2f`](https://github.com/Hermannmayer/EVE-Online-Industrial-Assistant/commit/8698a2fb660287d8bfb28d58339fe176b1d46a55))
+
+
 ## v0.27.0 (2026-10-17)
 
 ### Bug Fixes
